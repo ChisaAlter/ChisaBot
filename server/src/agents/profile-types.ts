@@ -51,4 +51,11 @@ export type CreateAgentInput = Pick<
    * why it is optional rather than defaulting to empty; a blank field must not drop a key.
    */
   auth?: { header: string; value: string };
+  /**
+   * A cropped portrait data URL, validated like a person's profile image.
+   *
+   * Absent keeps the generated face on create (the new id) and the stored seed on update. A
+   * short seed cannot be supplied here: the client only sends a portrait it just cropped.
+   */
+  avatarSeed?: string;
 };

@@ -1,7 +1,10 @@
 import { IconArrowRight } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 import Avatar from "boring-avatars";
-import { AbstractAvatar } from "@/components/agents/abstract-avatar";
+import {
+  AbstractAvatar,
+  portraitSrc,
+} from "@/components/agents/abstract-avatar";
 import { Button } from "@/components/ui/button";
 import type { AgentProfile } from "@/lib/agents/queries";
 
@@ -19,7 +22,16 @@ export function AgentCard({
           aria-hidden="true"
           className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
         >
-          <Avatar name={agent.avatarSeed} size={250} />
+          {portraitSrc(agent.avatarSeed) ? (
+            <img
+              alt=""
+              className="h-[250px] w-[250px] object-cover"
+              draggable={false}
+              src={agent.avatarSeed}
+            />
+          ) : (
+            <Avatar name={agent.avatarSeed} size={250} />
+          )}
         </div>
         <div className="absolute top-0 left-0 h-full w-full bg-background/40 dark:bg-background/50" />
         <div className="absolute top-0 left-0 flex h-full w-full flex-col justify-end gap-2 p-3">

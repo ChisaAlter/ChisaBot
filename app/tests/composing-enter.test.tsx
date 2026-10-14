@@ -175,6 +175,7 @@ test("the new-coworker form does not create from the Enter that confirms a compo
   expect(view.queryByText("谁可以看到它？")).toBeNull();
   expect(view.queryByText("它在哪里运行？")).toBeNull();
   expect(view.queryByPlaceholderText("报销助手")).toBeNull();
+  expect(view.getByRole("button", { name: "上传头像" })).toBeTruthy();
   await type(name, "経費");
   await type(view.getByLabelText("职责"), "Finance Operations");
   await type(view.getByLabelText("角色"), "Review receipts.");

@@ -1,5 +1,18 @@
 import { useMutation } from "@tanstack/react-query";
-import { memo, useCallback, useLayoutEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  type AvatarCrop,
+  AvatarCropper,
+  avatarCropFromFile,
+  exportAvatarCrop,
+} from "@/components/avatar-crop";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,10 +44,13 @@ import { queryClient } from "@/query-client";
 /**
  * Creating a coworker.
  *
- * One form: name, title, and role. Every new coworker is private and runs on this server — there
- * is no visibility choice and no self-hosted endpoint. An empty endpoint is what the API treats as
- * the in-process Bot; the role text is the prompt it runs on.
+ * One form: an optional portrait, then name, title, and role. Every new coworker is private and
+ * runs on this server — there is no visibility choice and no self-hosted endpoint. An empty
+ * endpoint is what the API treats as the in-process Bot; the role text is the prompt it runs on.
+ * A portrait uses the account cropper and is stored as this coworker's avatar seed.
  */
+/** Smaller than the account dialog so this sheet still fits the three fields. */
+const CREATE_AVATAR_STAGE = 128;
 export function CreateAgentDialog({
   open,
   onClose,
@@ -104,6 +120,16 @@ const CreateAgentForm = memo(function CreateAgentForm({
   /** Whether Create was pressed, which is when errors become worth showing. */
   const [tried, setTried] = useState(false);
   const [values, setValues] = useState<AgentFormValues>(emptyAgentForm);
+  const [crop, setCrop] = useState<AvatarCrop | null>(null);
+  const [pickError, setPickError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const cropSrc = crop?.src;
+  useEffect(
+    () => () => {
+      if (cropSrc) URL.revokeObjectURL(cropSrc);
+    },
+    [cropSrc],
+  );
 
   const set = <K extends keyof AgentFormValues>(
     key: K,
@@ -121,19 +147,42 @@ const CreateAgentForm = memo(function CreateAgentForm({
       setTried(true);
       return;
     }
+    let portrait: string | undefined;
+    if (crop) {
+      try {
+        portrait = await exportAvatarCrop(crop, CREATE_AVATAR_STAGE);
+      } catch (error) {
+        setPickError(error instanceof Error ? error.message : "图片无法读取");
+        return;
+      }
+    }
     try {
       const agent = await createAgent.mutateAsync(
-        agentInputFrom({
-          ...values,
-          visibility: "private",
-          endpoint: "",
-          authValue: "",
-        }),
+        agentInputFrom(
+          {
+            ...values,
+            visibility: "private",
+            endpoint: "",
+            authValue: "",
+          },
+          portrait,
+        ),
       );
       onCreated(agent.id);
     } catch {
       // The mutation's error is what the form shows.
     }
+  };
+
+  const onFile = async (file: File | undefined) => {
+    setPickError(null);
+    if (!file) return;
+    const picked = await avatarCropFromFile(file);
+    if (!picked.ok) {
+      setPickError(picked.error);
+      return;
+    }
+    setCrop(picked.crop);
   };
 
   return (
@@ -163,6 +212,28 @@ const CreateAgentForm = memo(function CreateAgentForm({
             void submit();
           }}
         >
+          <AvatarCropper
+            crop={crop}
+            current={null}
+            onChange={setCrop}
+            onPick={() => fileRef.current?.click()}
+            stage={CREATE_AVATAR_STAGE}
+          />
+          <input
+            accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+            className="hidden"
+            onChange={(event) => {
+              void onFile(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+            ref={fileRef}
+            type="file"
+          />
+          {pickError ? (
+            <p className="text-center text-destructive text-xs" role="alert">
+              {pickError}
+            </p>
+          ) : null}
           <FieldGroup>
             <Field data-invalid={errors.name ? true : undefined}>
               <FieldLabel htmlFor="create-agent-name">{"名称"}</FieldLabel>

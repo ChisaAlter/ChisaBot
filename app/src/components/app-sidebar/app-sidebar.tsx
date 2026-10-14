@@ -44,7 +44,7 @@ import { openCreateBot } from "@/lib/agents/create-bot";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { relativeTime } from "@/lib/relative-time";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import { ChannelAvatar } from "@/components/channels/avatar";
+import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { showPanels } from "@/lib/panels/rail-open";
 import { BotChatMenuItems, BotRowComputerChip } from "@/components/agents/bot-chat-actions";
 import { useBotChat, useCurrentBotChat } from "@/lib/agents/bot-chat-context";
@@ -232,6 +232,8 @@ type RosterBot = {
   id: string;
   name: string;
   title?: string | null;
+  /** Generated seed, or a cropped portrait data URL. Falls back to the id. */
+  avatarSeed?: string;
   canManage?: boolean;
   /** 部署包机器人不能改但管理员能删；旧服务器没有这个字段时按 canManage。 */
   canDelete?: boolean;
@@ -272,7 +274,7 @@ function BotRow({
   const content = (
     <>
       <span className="glass-bot-ava">
-        <ChannelAvatar participantIds={[bot.id]} size={28} />
+        <AbstractAvatar name={bot.name} seed={bot.avatarSeed || bot.id} size={28} />
         {main ? (
           <span aria-hidden className="glass-bot-star">
             <IconStarFilled className="size-2.5" />
@@ -488,6 +490,7 @@ function HiddenChatBotRow({ known }: { known: Set<string> }) {
     id: current.agentId,
     name: profile?.name ?? current.fallbackName ?? "",
     title: profile?.title ?? null,
+    avatarSeed: profile?.avatarSeed,
   };
   return (
     <>
@@ -507,7 +510,7 @@ function HiddenBotRow({ bot, chat }: { bot: RosterBot; chat: NonNullable<ReturnT
     <div className={cn("glass-bot-row is-on", menuOpen && "menu-open")}>
       <span className="glass-bot-link">
         <span className="glass-bot-ava">
-          <ChannelAvatar participantIds={[bot.id]} size={28} />
+          <AbstractAvatar name={bot.name} seed={bot.avatarSeed || bot.id} size={28} />
         </span>
         <span className="glass-bot-text">
           <span className="glass-item-t">{bot.name}</span>
@@ -843,7 +846,7 @@ function MiniBot({
   const computer = chat?.canComputer && (chat.needsYou || chat.computerOpen) ? (chat.needsYou ? "needs" : "open") : null;
   const inner = (
     <>
-      <ChannelAvatar participantIds={[bot.id]} size={36} />
+      <AbstractAvatar name={bot.name} seed={bot.avatarSeed || bot.id} size={36} />
       {main ? (
         <span aria-hidden className="glass-bot-star">
           <IconStarFilled className="size-2.5" />
@@ -954,6 +957,7 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
     id: current.agentId,
     name: profile?.name ?? current.fallbackName ?? "",
     title: profile?.title ?? null,
+    avatarSeed: profile?.avatarSeed,
   };
   const label = `当前对话：${bot.name}`;
   const computer =
@@ -974,7 +978,7 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
       >
         <RailTip label={label}>
           <span aria-current="page" aria-label={label} className="glass-mini-bot is-on" role="img">
-            <ChannelAvatar participantIds={[bot.id]} size={36} />
+            <AbstractAvatar name={bot.name} seed={bot.avatarSeed || bot.id} size={36} />
           </span>
         </RailTip>
         {computer ? (

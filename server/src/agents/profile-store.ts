@@ -516,7 +516,7 @@ export function createAgentProfileStore(
       ownerUserId: actor.id,
       title: input.title,
       roleDescription: input.roleDescription,
-      avatarSeed: id,
+      avatarSeed: input.avatarSeed ?? id,
       visibility: input.visibility,
     });
 
@@ -670,6 +670,7 @@ export function createAgentProfileStore(
               title: input.title,
               roleDescription: input.roleDescription,
               visibility: input.visibility,
+              ...(input.avatarSeed ? { avatarSeed: input.avatarSeed } : {}),
               updatedAt,
             })
             .where(eq(agentProfiles.agentId, id));

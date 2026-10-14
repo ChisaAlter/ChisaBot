@@ -92,7 +92,7 @@ agents:
     endpoint: http://risk.internal/ag-ui
 ```
 
-In the product, creating a coworker asks for a name, a title, and a role description. The new coworker is private and runs on this server; the create flow does not ask who can see it or for an AG-UI endpoint. Editing a coworker can still change visibility. Remote agents are registered in `agents.yaml`, as above, not in that form.
+In the product, creating a coworker asks for an optional portrait, a name, a title, and a role description. The portrait is the same cropped JPEG a person's profile image uses, stored in `avatar_seed`; without one the face is generated from the new id. The new coworker is private and runs on this server; the create flow does not ask who can see it or for an AG-UI endpoint. Editing a coworker can still change visibility. Remote agents are registered in `agents.yaml`, as above, not in that form.
 
 Endpoint registration uses target checks. Cloud metadata addresses are refused under every configuration. Optional keys are write-only: sending a key stores/replaces it, omitting it keeps the existing key, and APIs do not return it.
 

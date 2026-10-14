@@ -5,11 +5,7 @@ import { z } from "zod";
  * shown next to fields before submit.
  */
 export const agentFormSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "请填写名称。")
-    .max(80, "名称最多 80 个字。"),
+  name: z.string().trim().min(1, "请填写名称。").max(80, "名称最多 80 个字。"),
   title: z
     .string()
     .trim()
@@ -51,8 +47,13 @@ export const emptyAgentForm: AgentFormValues = {
   authValue: "",
 };
 
-/** Convert form values to API input; omit an empty key so editing preserves the current credential. */
-export function agentInputFrom(values: AgentFormValues) {
+/**
+ * Convert form values to API input; omit an empty key so editing preserves the current credential.
+ *
+ * `portrait` is the cropped JPEG data URL from the shared avatar cropper. Omitted leaves the
+ * generated face (create) or the stored one (edit) alone.
+ */
+export function agentInputFrom(values: AgentFormValues, portrait?: string) {
   return {
     name: values.name,
     title: values.title,
@@ -62,5 +63,6 @@ export function agentInputFrom(values: AgentFormValues) {
     ...(values.authValue.trim()
       ? { auth: { header: "Authorization", value: values.authValue.trim() } }
       : {}),
+    ...(portrait ? { avatarSeed: portrait } : {}),
   };
 }
