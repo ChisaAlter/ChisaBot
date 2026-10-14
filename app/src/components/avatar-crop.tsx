@@ -112,12 +112,19 @@ export function AvatarCropper({
   crop,
   current,
   stage = PROFILE_AVATAR_STAGE,
+  layout = "profile",
   onChange,
   onPick,
 }: {
   crop: AvatarCrop | null;
   current: string | null;
   stage?: number;
+  /**
+   * `profile` is the account sheet: a centred circle on the pink glass.
+   * `field` is a form row: the same crop, drawn as the bot face (glass squircle)
+   * beside the same outline button the other sheets use.
+   */
+  layout?: "profile" | "field";
   onChange: (crop: AvatarCrop) => void;
   onPick: () => void;
 }) {
@@ -151,38 +158,69 @@ export function AvatarCropper({
     drag.current = null;
   };
   const scale = crop ? baseScale(crop, stage) * crop.zoom : 1;
+  /* 40 matches the text fields and the outline button on this row (DESIGN §10.3). */
+  const frame = crop ? stage : layout === "field" ? 40 : stage;
+  const face = crop ? (
+    <img
+      alt=""
+      draggable={false}
+      src={crop.src}
+      style={{
+        width: crop.w * scale,
+        height: crop.h * scale,
+        transform: `translate(calc(-50% + ${crop.x}px), calc(-50% + ${crop.y}px))`,
+      }}
+    />
+  ) : current ? (
+    <img alt="" className="profile-crop-current" src={current} />
+  ) : (
+    <IconUser className={layout === "field" ? "size-5" : "profile-crop-empty"} />
+  );
+  const frameClass = cn(
+    "profile-crop-stage",
+    layout === "field" && "is-bot",
+    crop && "is-cropping",
+  );
 
   return (
-    <div className="profile-avatar-edit">
-      <div
-        aria-label={crop ? "拖动调整头像位置" : "头像"}
-        className={cn("profile-crop-stage", crop && "is-cropping")}
-        onPointerCancel={onUp}
-        onPointerDown={onDown}
-        onPointerMove={onMove}
-        onPointerUp={onUp}
-        role="img"
-        style={{ width: stage, height: stage }}
-      >
-        {crop ? (
-          <img
-            alt=""
-            draggable={false}
-            src={crop.src}
-            style={{
-              width: crop.w * scale,
-              height: crop.h * scale,
-              transform: `translate(calc(-50% + ${crop.x}px), calc(-50% + ${crop.y}px))`,
-            }}
-          />
-        ) : current ? (
-          <img alt="" className="profile-crop-current" src={current} />
+    <div className={layout === "field" ? "flex flex-col items-start gap-2" : "profile-avatar-edit"}>
+      <div className={layout === "field" ? "flex items-center gap-3" : "contents"}>
+        {layout === "field" && !crop ? (
+          <button
+            aria-label={"头像"}
+            className={frameClass}
+            onClick={onPick}
+            style={{ width: frame, height: frame }}
+            type="button"
+          >
+            {face}
+          </button>
         ) : (
-          <IconUser className="profile-crop-empty" />
+          <div
+            aria-label={crop ? "拖动调整头像位置" : "头像"}
+            className={frameClass}
+            onPointerCancel={onUp}
+            onPointerDown={onDown}
+            onPointerMove={onMove}
+            onPointerUp={onUp}
+            role="img"
+            style={{ width: frame, height: frame }}
+          >
+            {face}
+          </div>
         )}
+        {layout === "field" && !crop ? (
+          <Button onClick={onPick} type="button" variant="outline">
+            <IconCamera className="size-4" />
+            {current ? "更换头像" : "上传头像"}
+          </Button>
+        ) : null}
       </div>
       {crop ? (
-        <label className="profile-zoom" style={{ width: stage }}>
+        <label
+          className={cn("profile-zoom", layout === "field" && "is-bot")}
+          style={{ width: stage }}
+        >
           <span>{"缩放"}</span>
           <input
             aria-label={"缩放头像"}
@@ -202,10 +240,18 @@ export function AvatarCropper({
           />
         </label>
       ) : null}
-      <Button onClick={onPick} size="sm" type="button" variant="outline">
-        <IconCamera className="size-4" />
-        {crop || current ? "更换头像" : "上传头像"}
-      </Button>
+      {layout === "field" && crop ? (
+        <Button onClick={onPick} type="button" variant="outline">
+          <IconCamera className="size-4" />
+          {"更换头像"}
+        </Button>
+      ) : null}
+      {layout === "profile" ? (
+        <Button onClick={onPick} size="sm" type="button" variant="outline">
+          <IconCamera className="size-4" />
+          {crop || current ? "更换头像" : "上传头像"}
+        </Button>
+      ) : null}
     </div>
   );
 }

@@ -188,12 +188,12 @@ const CreateAgentForm = memo(function CreateAgentForm({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{"新建机器人"}</DialogTitle>
-        <DialogDescription>
+        <DialogTitle className="font-semibold text-lg">{"新建机器人"}</DialogTitle>
+        <DialogDescription className="text-xs">
           {"名字和角色会出现在左栏；角色就是它每次对话的工作说明。"}
         </DialogDescription>
       </DialogHeader>
-      <DialogBody className="overflow-y-auto">
+      <DialogBody className="mt-4 overflow-y-auto">
         <form
           noValidate
           onKeyDown={(event) => {
@@ -201,7 +201,8 @@ const CreateAgentForm = memo(function CreateAgentForm({
               event.key === "Enter" &&
               !event.shiftKey &&
               !isComposing(event) &&
-              event.target instanceof HTMLInputElement
+              event.target instanceof HTMLInputElement &&
+              event.target.type !== "range"
             ) {
               event.preventDefault();
               void submit();
@@ -212,29 +213,33 @@ const CreateAgentForm = memo(function CreateAgentForm({
             void submit();
           }}
         >
-          <AvatarCropper
-            crop={crop}
-            current={null}
-            onChange={setCrop}
-            onPick={() => fileRef.current?.click()}
-            stage={CREATE_AVATAR_STAGE}
-          />
-          <input
-            accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
-            className="hidden"
-            onChange={(event) => {
-              void onFile(event.target.files?.[0]);
-              event.target.value = "";
-            }}
-            ref={fileRef}
-            type="file"
-          />
-          {pickError ? (
-            <p className="text-center text-destructive text-xs" role="alert">
-              {pickError}
-            </p>
-          ) : null}
           <FieldGroup>
+            <Field>
+              <FieldLabel>{"头像"}</FieldLabel>
+              <AvatarCropper
+                crop={crop}
+                current={null}
+                layout="field"
+                onChange={setCrop}
+                onPick={() => fileRef.current?.click()}
+                stage={CREATE_AVATAR_STAGE}
+              />
+              <input
+                accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+                className="hidden"
+                onChange={(event) => {
+                  void onFile(event.target.files?.[0]);
+                  event.target.value = "";
+                }}
+                ref={fileRef}
+                type="file"
+              />
+              {pickError ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {pickError}
+                </p>
+              ) : null}
+            </Field>
             <Field data-invalid={errors.name ? true : undefined}>
               <FieldLabel htmlFor="create-agent-name">{"名称"}</FieldLabel>
               <Input
@@ -283,7 +288,7 @@ const CreateAgentForm = memo(function CreateAgentForm({
           ) : null}
         </form>
       </DialogBody>
-      <DialogFooter className="mt-4 justify-between">
+      <DialogFooter className="mt-4">
         <Button onClick={onClose} type="button" variant="outline">
           {"取消"}
         </Button>

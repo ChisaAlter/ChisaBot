@@ -4376,6 +4376,21 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 .profile-crop-empty { width: 72px; height: 72px; color: rgba(255, 255, 255, 0.9); }
 .profile-zoom { display: flex; align-items: center; gap: 10px; width: 200px; font-size: 12px; color: var(--ink-3); }
 .profile-zoom input { flex: 1; accent-color: var(--accent-blue, #3b82f6); }
+/* 新建机器人里的头像：玻璃底 + 输入框同款圆角，不用个人资料那圈渐变圆。 */
+.profile-crop-stage.is-bot {
+  border-radius: var(--r-md);
+  background: var(--glass-2);
+  box-shadow: none;
+  border: 1px solid var(--stroke);
+  color: var(--ink-3);
+  padding: 0;
+}
+.profile-crop-stage.is-bot:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--ink-1) 28%, transparent);
+  box-shadow: none;
+}
+.profile-zoom.is-bot input { accent-color: var(--ink-2); }
 .profile-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-2); }
 .profile-setup-overlay { backdrop-filter: blur(14px) saturate(1.1); background: rgba(40, 60, 100, 0.18); }
 
