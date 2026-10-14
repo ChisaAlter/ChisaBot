@@ -4,10 +4,11 @@ import { refreshWouldInterrupt } from "@/lib/activity";
 import { useNewVersion } from "@/lib/version";
 
 /**
- * 「有新版本，点此刷新」（docs/online-update.md，DESIGN.md §22）。
+ * 「有新版本，点此刷新」（docs/online-update.md，DESIGN.md §22 / §36.5）。
  *
- * 顶部居中的一枚玻璃胶囊（L3），只在服务器上的构建号和这页打包时的不一样时出现；可以关掉，同一个
- * 版本关掉后不再出现。从不自动刷新：机器人还在回复、或输入框里有没发出去的字时，点了也先确认。
+ * 顶栏下靠右的一枚玻璃胶囊（L3；手机上左右贴边成提示条），只在服务器上的构建号和这页打包时的不一
+ * 样时出现；可以关掉，同一个版本关掉后不再出现。从不自动刷新：机器人还在回复、或输入框里有没发出
+ * 去的字时，点了也先确认。
  */
 export function UpdateBanner({ bundled, pollMs }: { bundled?: string; pollMs?: number } = {}) {
   const { available, dismiss } = useNewVersion({ bundled, pollMs });
