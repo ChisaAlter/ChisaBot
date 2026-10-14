@@ -63,4 +63,27 @@ describe("机器人聊天消息列表不虚拟化", () => {
     );
     expect(thinking.container.querySelector('[data-testid="copilot-loading-cursor"]')).toBeNull();
   });
+
+  test("光标与排队位不带 data-message-id，content-visibility 只按消息节点数最后几条（CB-005）", () => {
+    const running = render(
+      renderUnvirtualizedMessageList({
+        isRunning: true,
+        messages: many,
+        messageElements: elements.slice(0, 4),
+        interruptElement: null,
+      }),
+    );
+    const list = running.container.querySelector(".cb-message-list");
+    expect(list).not.toBeNull();
+    const kids = [...(list?.children ?? [])] as HTMLElement[];
+    const withId = kids.filter((el) => el.hasAttribute("data-message-id"));
+    const withoutId = kids.filter((el) => !el.hasAttribute("data-message-id"));
+    expect(withId.length).toBe(4);
+    // 光标包裹层在列表末尾，不能带 data-message-id，否则会挤掉「最后 N 条消息」的热区。
+    expect(withoutId.length).toBeGreaterThanOrEqual(1);
+    expect(list?.querySelector('[data-testid="copilot-loading-cursor"]')).not.toBeNull();
+    expect(
+      list?.querySelector('[data-testid="copilot-loading-cursor"]')?.closest("[data-message-id]"),
+    ).toBeNull();
+  });
 });
