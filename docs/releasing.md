@@ -1,6 +1,8 @@
 # Releasing
 
-> **ChisaBot 分支：** 本文描述上游发布基础设施。私有分支的源码提交不代表发布公共镜像或客户端安装包；分发前需使用自己的构建、签名、镜像与发布配置。当前分支的验证范围见实际 CI 和部署验收记录，不能将定向检查通过描述为整个上游测试集通过。
+> **ChisaBot：** 容器发布在本仓库执行。[Create release PR](../.github/workflows/release-pr.yml) 和 [Publish release](../.github/workflows/publish-release.yml) 的仓库条件是 `ChisaAlter/ChisaBot`。镜像推到 `ghcr.io/chisaalter/chisabot`，组件镜像是 `ghcr.io/chisaalter/chisabot-<service>`，登录用工作流自带的 `GITHUB_TOKEN`。`container-images.json` 里主镜像的键仍是 `openbot`，`repository` 字段是上面的地址。生产 VPS 不拉这些镜像，仍用 [deploy/](../deploy/README.zh-CN.md) 从 `main` 构建 `local/chisabot`。PC / Android 安装包仍由 [release.yml](../.github/workflows/release.yml) 在 `v*` 标签上发布。流水记录见 [pipeline-runs](pipeline-runs/README.md)。
+>
+> Windows 桌面签名仍指向 CopilotKit 的 Azure 联合身份（`desktop/signing/azure-federation.json`）。本仓库没有那份证书，签名工作流在配好自己的 Key Vault 之前不会成功。那不是容器发布的前置条件。
 
 A release is one person choosing a version, and a reviewed pull request doing everything else. No
 step involves a terminal, a tag pushed by hand, or an image built on somebody's laptop.
@@ -59,10 +61,10 @@ Then, in order:
 
 - the version in the tree is checked against the branch that is publishing it, and the changelog is
   checked for a section with that number
-- one image is built and pushed to `ghcr.io/copilotkit/openbot`, tagged with the version, the commit
+- one image is built and pushed to `ghcr.io/chisaalter/chisabot`, tagged with the version, the commit
   and `latest`
 - the services `docker-compose.yml` can build are published too, one image each, at
-  `ghcr.io/copilotkit/openbot-<service>`. Those are `linux/amd64` and `linux/arm64`, built on native
+  `ghcr.io/chisaalter/chisabot-<service>`. Those are `linux/amd64` and `linux/arm64`, built on native
   runners of each architecture and joined into one manifest list, because the machines pulling them
   are laptops as well as servers. `.github/published-images.json` is the list, and CI fails if it
   stops matching the Dockerfiles in the tree
@@ -106,8 +108,8 @@ Before deploying, you can check an image is the one this repository built. Every
 carries its own attestation:
 
 ```sh
-gh attestation verify oci://ghcr.io/copilotkit/openbot:v0.1.0 -R CopilotKit/OpenBot
-gh attestation verify oci://ghcr.io/copilotkit/openbot-supervisor:v0.1.0 -R CopilotKit/OpenBot
+gh attestation verify oci://ghcr.io/chisaalter/chisabot:vX.Y.Z -R ChisaAlter/ChisaBot
+gh attestation verify oci://ghcr.io/chisaalter/chisabot-supervisor:vX.Y.Z -R ChisaAlter/ChisaBot
 ```
 
 ## What has to be green
@@ -141,6 +143,15 @@ not matter: a pull request opened by a workflow does not trigger them.
 
 **No secrets are required to release.** CI and both release workflows use only the built-in
 `GITHUB_TOKEN`. The desktop build workflows also read `OPENBOT_GOOGLE_MODEL_OAUTH_CLIENT_SECRET`.
+
+The `release` label is created by **Create release PR** the first time it opens a pull request.
+Publish accepts the merge only when that label is on a same-repository branch named
+`release/publish/vX.Y.Z`. The organization must allow Actions to create packages under
+`chisaalter`. After the first push, confirm `ghcr.io/chisaalter/chisabot` and each
+`ghcr.io/chisaalter/chisabot-<service>` package are visible to the people who pull them. A package
+created by `GITHUB_TOKEN` can stay private until that visibility is set. Existing v0.1.x GitHub
+Releases are client installers; they do not contain these container images until a container
+release is cut.
 
 ## The one thing CI cannot do
 

@@ -21,18 +21,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: openbot-release-pr
+  group: chisabot-release-pr
   cancel-in-progress: false
 
 jobs:
   create:
     name: create
-    if: github.repository == 'CopilotKit/OpenBot' && github.ref == 'refs/heads/main'
+    # This repository only. The previous gate was CopilotKit/OpenBot, so the job never ran here.
+    if: github.repository == 'ChisaAlter/ChisaBot' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
+      # Creating the `release` label the first time uses the issues API.
+      issues: write
     steps:
       # Two open release PRs would each carry a version computed before the other existed, and
       # whichever merged second would publish notes that skip a release.
@@ -152,6 +155,26 @@ jobs:
       # release PR arrives without its own checks. That is deliberate rather than tolerated: the
       # publish path runs the full suite against the release commit before it builds anything, which
       # gates the release itself instead of the proposal for one.
+      # Publish trusts this label, and it did not exist on the fork. Create it with GITHUB_TOKEN
+      # rather than requiring a person to add it before the first release.
+      - name: Ensure the release label exists
+        if: '!inputs.dry_run'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: "release" });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: "release",
+                color: "0E8A16",
+                description: "Reviewed release pull request. Publish runs only when this label is set.",
+              });
+            }
       - name: Open the release PR
         if: '!inputs.dry_run'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1

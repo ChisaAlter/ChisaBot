@@ -364,7 +364,7 @@ sh /opt/chisabot-updater/smoke.sh                                               
 | `docs/` | 中文使用指南、模型集成与上游技术参考；`docs/images/` 是 README 截图 |
 | `assets/brand/` | 品牌头像原图与生成脚本（`python3 assets/brand/generate.py` 生成网页、登录页、PC、Android 的全部图标），规则见 `DESIGN.md` §28 |
 
-上游 Intelligence、第三方连接器与发布流程按需使用。桌面和移动源码保留上游的安装、OAuth 和发布集成，分发前需按自己的环境配置并构建；本仓库不提供 ChisaBot 公共镜像。PC（`pc/`）和 Android（`android/`）客户端的通用安装包在本仓库的 GitHub Releases（CI 构建，首次运行填自己的服务器地址）；也可以自己构建并放到自己的更新源（见上文第 8 步）。
+上游 Intelligence 与第三方连接器按需使用。桌面和移动源码保留上游的安装、OAuth 和发布集成，分发前需按自己的环境配置并构建。容器发布镜像是 `ghcr.io/chisaalter/chisabot`（组件镜像 `ghcr.io/chisaalter/chisabot-<服务名>`），见 [docs/releasing.md](docs/releasing.md)。生产机仍用 `deploy/` 从 `main` 构建 `local/chisabot`。PC（`pc/`）和 Android（`android/`）客户端的通用安装包在本仓库的 GitHub Releases（CI 构建，首次运行填自己的服务器地址）；也可以自己构建并放到自己的更新源（见上文第 8 步）。
 
 ## 来源与许可证
 

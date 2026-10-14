@@ -1,6 +1,6 @@
 # Deployment
 
-> **ChisaBot 分支：** 正式部署使用 [本分支模板](../deploy/README.zh-CN.md) 构建自己的 ChisaBot 镜像。下文为上游容器与平台参考，`ghcr.io/copilotkit/openbot` 是上游镜像，不包含本分支全部改动，也不是 ChisaBot 发布镜像。
+> **ChisaBot：** 生产机用 [本仓库部署模板](../deploy/README.zh-CN.md) 从 `main` 构建 `local/chisabot`。下面的 `docker run` 用的是本仓库发布的 `ghcr.io/chisaalter/chisabot`（第一次容器发布之后才有 `latest`）。不要拉 `ghcr.io/copilotkit/openbot`，那是上游镜像，不含本分支的改动。
 
 OpenBot ships as one container. It carries the app, the API that serves it, and the browser the Bots
 drive, and it can carry its own PostgreSQL as well. It does what it does on a laptop.
@@ -8,7 +8,7 @@ drive, and it can carry its own PostgreSQL as well. It does what it does on a la
 ```sh
 # Every release publishes this image, so a deployment needs no clone and no build.
 # `latest` is the most recent; a version tag such as `:v0.0.9` pins one.
-image=ghcr.io/copilotkit/openbot:latest
+image=ghcr.io/chisaalter/chisabot:latest
 
 # A database you already run.
 docker run -p 3001:3001 --env-file .env "$image"

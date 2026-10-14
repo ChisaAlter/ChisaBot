@@ -330,6 +330,13 @@ test("plan selection requires the matching deployment-owned harness and does not
         "ghcr.io/copilotkit/openbot-agent-langgraph-agui@sha256:6489cdcff5dc1b4f4d8fd34f0bd1b3e68019fd6c6249e8327097c16b5faac183",
     })?.provider,
   ).toBe("chatgpt");
+  expect(
+    planModelForEnvironment({
+      ...selected,
+      PICKED_HARNESS_IMAGE:
+        "ghcr.io/chisaalter/chisabot-agent-langgraph-agui:v0.1.7",
+    })?.provider,
+  ).toBe("chatgpt");
   expect(() =>
     planModelForEnvironment({ ...selected, PICKED_HARNESS_SOURCE: "byo" }),
   ).toThrow("installed");

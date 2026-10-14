@@ -24,7 +24,7 @@ Use this when they are deploying a container.
 
   docker run -p 3001:3001 --env-file .env \
     -e EMBEDDED_POSTGRES=on -v openbot-data:/var/lib/postgresql \
-    ghcr.io/copilotkit/openbot:latest
+    ghcr.io/chisaalter/chisabot:latest
 
 One port. The app is on 3001 as well, so open http://localhost:3001, not 3010. `latest` is the most
 recent release; a version tag such as `:v0.0.15` pins one.
