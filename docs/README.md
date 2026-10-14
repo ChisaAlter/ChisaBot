@@ -31,7 +31,7 @@ ChisaBot 是中文自托管 AI 助手平台，提供网页登录、本地会话�
 
 ## 上游技术参考
 
-以下资料继承自 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot)，用于查阅保留的工具、权限、框架与可选集成。Intelligence、上游镜像/发布基础设施和自动学习步骤，仅在选用相应能力时适用；本地自托管不要求 CopilotKit 托管服务。
+以下资料继承自 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot)，用于查阅保留的工具、权限、框架与可选集成。Intelligence 和自动学习步骤，仅在选用相应能力时适用；本地自托管不要求 CopilotKit 托管服务。容器发布见 [发布](releasing.md)。功能流水记录见 [pipeline-runs](pipeline-runs/README.md)。
 
 - [架构](architecture.md)：服务、端口、电脑、工具及安全边界。
 - [环境配置](configuration.md)：环境变量和租户包 YAML。
@@ -41,8 +41,9 @@ ChisaBot 是中文自托管 AI 助手平台，提供网页登录、本地会话�
 - [自动学习](automatic-learning.md)：依赖 Intelligence 的可选能力。
 - [联网研究](parallel-research.md)：Parallel Search 连接器。
 - [Composio](plugins/composio.md)、[Google Drive](plugins/google-drive.md)、[Notion](plugins/notion.md)：按需配置的外部连接器。
-- [上游容器参考](deployment.md)、[Kubernetes](../charts/openbot/README.md)：原镜像与平台资料。
-- [上游发布参考](releasing.md)、[Windows 签名](windows-signing.md)：继承的发布和签名流程。
+- [容器部署](deployment.md)、[Kubernetes](../charts/openbot/README.md)：发布镜像 `ghcr.io/chisaalter/chisabot`。生产机仍用 `deploy/` 构建本地镜像。
+- [发布](releasing.md)、[Windows 签名](windows-signing.md)：本仓库的容器镜像与 GitHub Release；Windows 签名仍是上游证书，见发布文首。
+- [流水记录](pipeline-runs/README.md)：每次功能流水的需求、方案和拉取请求。
 - [桌面模型 OAuth](../desktop/PROVIDER_OAUTH.md)、[桌面遥测](../desktop/TELEMETRY.md)：客户端可选配置。
 
 文档只保存可复用说明与脱敏示例。真实登录密码、模型密钥、客户数据、对话和私人部署资料不写入文档或仓库。

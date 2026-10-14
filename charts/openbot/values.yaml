@@ -11,7 +11,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/copilotkit/openbot
+  repository: ghcr.io/chisaalter/chisabot
   # Empty means the chart's appVersion prefixed with `v` (the form published tags take), so an
   # upgrade of the chart moves the image with it. A value set here is used verbatim.
   tag: ""

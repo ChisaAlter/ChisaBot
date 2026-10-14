@@ -7,7 +7,7 @@ only difference between them is values.
 
 Four things this chart assumes and does not create.
 
-**An image the cluster can pull.** A release publishes `ghcr.io/copilotkit/openbot:vX.Y.Z`
+**An image the cluster can pull.** A release publishes `ghcr.io/chisaalter/chisabot:vX.Y.Z`
 publicly, and that tag is what `image.tag` wants. It is built for **`linux/amd64` only**, so an
 arm64 node group (Graviton on EKS, Tau T2A on GKE, Ampere on AKS) cannot run it: the pods sit in
 `ImagePullBackOff`, which is the same thing a wrong tag or a missing pull secret looks like, so the
@@ -15,7 +15,7 @@ node pool being the wrong shape is the last thing anybody checks. Either run amd
 architecture you have and push it somewhere the cluster can reach. Check before assuming:
 
 ```sh
-docker manifest inspect ghcr.io/copilotkit/openbot:v0.0.9 | grep architecture
+docker manifest inspect ghcr.io/chisaalter/chisabot:vX.Y.Z | grep architecture
 ```
 
 **Intelligence credentials.** OpenBot requires CopilotKit Intelligence and the chart refuses to

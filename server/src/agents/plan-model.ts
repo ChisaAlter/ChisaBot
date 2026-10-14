@@ -37,9 +37,14 @@ export function planModelForEnvironment(
     throw new Error("Choose one model plan for built-in Bots.");
   const image = environment.PICKED_HARNESS_IMAGE?.trim() ?? "";
   const harness = claude ? "agent-claude-sdk" : "agent-langgraph-agui";
+  // Compose's local tags are `openbot-<harness>`. Images this repository publishes are
+  // `ghcr.io/chisaalter/chisabot-<harness>`. A path segment that is exactly the harness name
+  // also counts. The check is the image name, not which registry hosted an older build.
   if (
     environment.PICKED_HARNESS_SOURCE?.trim() === "byo" ||
-    !new RegExp(`(?:^|/)(?:openbot-)?${harness}(?::|@|$)`).test(image)
+    !new RegExp(`(?:^|/)(?:(?:openbot|chisabot)-)?${harness}(?::|@|$)`).test(
+      image,
+    )
   ) {
     throw new Error(
       `The selected plan requires the installed ${harness} harness for built-in Bots.`,
