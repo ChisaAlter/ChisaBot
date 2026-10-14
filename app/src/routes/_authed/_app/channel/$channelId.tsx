@@ -8,11 +8,11 @@ import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 import { z } from "zod";
 import { AgentProfile } from "@/components/agents/agent-profile";
+import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
 import { hasUnseenActivity } from "@/components/app-sidebar/app-sidebar";
 import { BotPausedBanner } from "@/components/bot-profile/pause-banner";
 import { ChannelChat } from "@/components/channels/channel-chat";
 import { DetailPanel } from "@/components/layout/detail-panel";
-import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
 import { markChannelReadMutationOptions } from "@/lib/channels/mutations";
 import {
   type AgentChannel,
@@ -85,10 +85,20 @@ function RouteComponent() {
   return (
     <DetailPanel
       onClose={() =>
-        void navigate({ search: (previous) => ({ ...previous, settings: undefined }) })
+        void navigate({
+          search: (previous) => ({ ...previous, settings: undefined }),
+        })
       }
       open={isSettingsOpen && agentId !== undefined}
-      detail={agentId === undefined ? null : <AgentProfile agentId={agentId} />}
+      detail={
+        agentId === undefined ? null : (
+          <AgentProfile
+            agentId={agentId}
+            key={agentId}
+            onOpenComputer={() => setWatching(true)}
+          />
+        )
+      }
     >
       {/* DESIGN v4.1：聊天列没有头部；机器人「⋯」与计算机提示在左栏它那一行。 */}
       <RegisterBotChat
@@ -97,12 +107,18 @@ function RouteComponent() {
         onComputerChange={setWatching}
         onNewTopic={() =>
           agentId
-            ? void navigate({ to: "/channel/new", search: { agent: agentId, topic: "new" } })
+            ? void navigate({
+                to: "/channel/new",
+                search: { agent: agentId, topic: "new" },
+              })
             : undefined
         }
         onSettingsChange={(open) =>
           void navigate({
-            search: (previous) => ({ ...previous, settings: open ? true : undefined }),
+            search: (previous) => ({
+              ...previous,
+              settings: open ? true : undefined,
+            }),
           })
         }
         settingsOpen={isSettingsOpen}

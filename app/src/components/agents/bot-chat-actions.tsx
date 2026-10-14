@@ -117,7 +117,7 @@ export function BotRowComputerChip({ chat }: { chat: BotChatContext | null }) {
 }
 
 /**
- * 机器人「⋯」菜单的上半部分（机器人设置 · 查看计算机 · 新话题 · 历史对话）。
+ * 机器人「⋯」菜单的上半部分（机器人详情 · 查看计算机 · 新话题 · 历史对话）。
  *
  * 对正在打开的这个机器人：直接操作当前对话（切换设置窗格 / 计算机、清空上下文）。
  * 对其他机器人：先打开它最近的对话，并带上对应的窗格；没有对话时设置去资料页、新话题去空聊天。
@@ -150,7 +150,7 @@ export function BotChatMenuItems({
       >
         <IconSettings className={icon} />
         <span className="min-w-0 flex-1">
-          {chat?.canSettings && chat.settingsOpen ? "收起机器人设置" : "机器人设置"}
+          {chat?.canSettings && chat.settingsOpen ? "收起详情" : "机器人详情"}
         </span>
       </DropdownMenuItem>
       {chat?.canComputer || latest ? (

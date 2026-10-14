@@ -9,12 +9,6 @@ import {
 } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Fragment } from "react";
-import {
-  PageEmpty,
-  PageRows,
-  PageSection,
-} from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import {
   Item,
@@ -24,7 +18,6 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import { Separator } from "@/components/ui/separator";
 import {
   cancelFollowUpMutationOptions,
   stopHandoffMutationOptions,
@@ -153,67 +146,78 @@ function ActivityRow({
   );
 }
 
-function ActivitySection({
+function WorkBlock({
   agentId,
   empty,
   items,
   title,
 }: {
   agentId: string;
-  empty: string;
+  empty?: string;
   items: ActivityItem[];
   title: string;
 }) {
   return (
-    <PageSection title={title}>
+    <section>
+      <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
       {items.length === 0 ? (
-        <PageEmpty>{empty}</PageEmpty>
+        <p className="py-3 text-sm text-muted-foreground">{empty}</p>
       ) : (
-        <PageRows>
-          {items.map((item, index) => (
-            <Fragment key={item.id}>
-              {index > 0 ? <Separator /> : null}
-              <ActivityRow agentId={agentId} item={item} />
-            </Fragment>
+        <div className="mt-1">
+          {items.map((item) => (
+            <ActivityRow agentId={agentId} item={item} key={item.id} />
           ))}
-        </PageRows>
+        </div>
       )}
-    </PageSection>
+    </section>
   );
 }
 
-/** In progress, Scheduled and Completed, read from the ledgers the work already lives in. */
-export function BotActivitySections({ agentId }: { agentId: string }) {
+/**
+ * What this Bot is doing, as a short list.
+ *
+ * Routines stay in their own block even when empty — that empty sentence is the prompt to set one
+ * in chat. Other planned or finished work only appears when there is some, so the pane does not
+ * stack three blank cards.
+ */
+export function BotWorkLists({ agentId }: { agentId: string }) {
   const activity = useQuery(botActivityQueryOptions(agentId));
   if (activity.isPending) return null;
-  if (activity.error)
+  if (activity.error) {
     return (
-      <PageSection title={"活动"}>
-        <p className="mt-4 text-destructive text-sm" role="alert">
-          {"无法加载此机器人的活动。"}
-        </p>
-      </PageSection>
+      <p className="py-3 text-destructive text-sm" role="alert">
+        {"无法加载此机器人的活动。"}
+      </p>
     );
+  }
+  const routines = [
+    ...activity.data.inProgress.filter((item) => item.kind === "routine"),
+    ...activity.data.scheduled.filter((item) => item.kind === "routine"),
+  ];
+  const inProgress = activity.data.inProgress.filter(
+    (item) => item.kind !== "routine",
+  );
+  const planned = activity.data.scheduled.filter(
+    (item) => item.kind !== "routine",
+  );
+  const recent = activity.data.completed.slice(0, 3);
   return (
-    <>
-      <ActivitySection
+    <div className="grid gap-6">
+      {inProgress.length > 0 ? (
+        <WorkBlock agentId={agentId} items={inProgress} title={"进行中"} />
+      ) : null}
+      <WorkBlock
         agentId={agentId}
-        empty="当前没有正在运行或等待你处理的任务。"
-        items={activity.data.inProgress}
-        title={"进行中"}
+        empty={"请在聊天中设置例行任务。"}
+        items={routines}
+        title={"例行任务"}
       />
-      <ActivitySection
-        agentId={agentId}
-        empty="暂无计划任务。"
-        items={activity.data.scheduled}
-        title={"已计划"}
-      />
-      <ActivitySection
-        agentId={agentId}
-        empty="暂时还没有已完成的任务。"
-        items={activity.data.completed}
-        title={"已完成"}
-      />
-    </>
+      {planned.length > 0 ? (
+        <WorkBlock agentId={agentId} items={planned} title={"已计划"} />
+      ) : null}
+      {recent.length > 0 ? (
+        <WorkBlock agentId={agentId} items={recent} title={"最近完成"} />
+      ) : null}
+    </div>
   );
 }
