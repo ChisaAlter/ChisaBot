@@ -54,11 +54,13 @@ export function createOpenTagTransport(config: OpenTagConfig) {
   const bearer = `Bearer ${config.secret}`;
   function iconUrl(sender?: DeliverySender) {
     if (!sender || !config.iconUrlTemplate) return undefined;
+    // A portrait is a data URL stored in the seed column. It is not a path segment.
+    const seed =
+      sender.avatarSeed && !sender.avatarSeed.startsWith("data:")
+        ? sender.avatarSeed
+        : sender.name;
     return config.iconUrlTemplate
-      .replaceAll(
-        "{seed}",
-        encodeURIComponent(sender.avatarSeed ?? sender.name),
-      )
+      .replaceAll("{seed}", encodeURIComponent(seed))
       .replaceAll("{agentId}", encodeURIComponent(sender.agentId));
   }
   return {

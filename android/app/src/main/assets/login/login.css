@@ -40,7 +40,7 @@ body.login-page { overflow: auto; }
 .combo-btn svg { width: 18px; height: 18px; transition: rotate var(--dur-2) var(--ease-out); }
 .combo-btn[aria-expanded="true"] svg { rotate: 180deg; }
 .combo-btn:hover, .pw-toggle:hover { color: var(--ink-1); background: var(--glass-hover); }
-.combo-btn:focus-visible, .pw-toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus); }
+.combo-btn:focus-visible, .pw-toggle:focus-visible { outline: 2px solid color-mix(in srgb, var(--ink-1) 35%, transparent); outline-offset: 2px; box-shadow: none; }
 
 .history {
   position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 6px); margin: 0; padding: 6px; list-style: none;
@@ -85,7 +85,7 @@ body.login-page { overflow: auto; }
 }
 .check .box svg { width: 14px; height: 14px; }
 .check input:checked + .box { background: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
-.check input:focus-visible + .box { box-shadow: 0 0 0 3px var(--focus); }
+.check input:focus-visible + .box { outline: 2px solid color-mix(in srgb, var(--ink-1) 35%, transparent); outline-offset: 2px; box-shadow: none; }
 .check-text { display: flex; flex-direction: column; font-size: var(--fs-14); color: var(--ink-1); line-height: 1.35; }
 .check-text small { margin-top: 2px; font-size: var(--fs-12); color: var(--ink-3); }
 

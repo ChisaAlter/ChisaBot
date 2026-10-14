@@ -2,11 +2,11 @@ import type { Message } from "@ag-ui/core";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
 import { LandingRedirect } from "@/components/agents/landing-redirect";
 import { channelListQueryOptions } from "@/lib/channels/queries";
 import { latestChannelFor } from "@/lib/channels/latest";
-import { ChannelAvatar } from "@/components/channels/avatar";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
 import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
@@ -119,7 +119,7 @@ function BotChat({ agent, fresh }: { agent: string; fresh: boolean }) {
       {chosen && !sent ? (
         // Quiet identity of the Bot picked in the left column, until the first message replaces it.
         <div aria-hidden className="chat-intro">
-          <ChannelAvatar participantIds={[chosen.id]} size={48} />
+          <AbstractAvatar name={chosen.name} seed={chosen.avatarSeed} size={48} />
           <p className="chat-intro-name">{chosen.name}</p>
           {chosen.title ? <p className="chat-intro-sub">{chosen.title}</p> : null}
           {fresh ? <p className="chat-intro-topic">{"新话题 · 之前的对话不会发给它"}</p> : null}

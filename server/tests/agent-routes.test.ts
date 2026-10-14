@@ -187,6 +187,29 @@ describe("agent input parser", () => {
     });
   });
 
+  test("accepts a cropped portrait and ignores a forged seed", () => {
+    const portrait = "data:image/jpeg;base64,aaaa";
+    expect(parseAgentInput({ ...validInput, avatarSeed: portrait })).toEqual({
+      ok: true,
+      value: { ...validInput, avatarSeed: portrait },
+    });
+    expect(
+      parseAgentInput({ ...validInput, avatarSeed: "forged-avatar" }),
+    ).toEqual({
+      ok: true,
+      value: validInput,
+    });
+    expect(
+      parseAgentInput({
+        ...validInput,
+        avatarSeed: "data:image/svg+xml;base64,aaaa",
+      }),
+    ).toEqual({
+      ok: false,
+      error: "头像格式无效。",
+    });
+  });
+
   test("trims every accepted field and ignores forged fields", () => {
     expect(
       parseAgentInput({

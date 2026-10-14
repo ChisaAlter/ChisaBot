@@ -2274,8 +2274,8 @@ button.chat-bottom-pill:hover {
 [data-slot="textarea"]:focus-visible,
 [data-slot="select-trigger"]:focus-visible {
   background-color: rgba(255, 255, 255, 0.8);
-  border-color: rgba(59, 130, 246, 0.55);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+  border-color: color-mix(in srgb, var(--ink-1) 28%, transparent);
+  box-shadow: none;
 }
 .dark [data-slot="input"]:focus-visible,
 .dark [data-slot="textarea"]:focus-visible,
@@ -2630,7 +2630,7 @@ button.chat-bottom-pill:hover {
 .glass-seg-item.is-on { box-shadow: var(--shadow-1); }
 .glass-home { background: var(--ink-primary); color: var(--on-primary); }
 .glass-search { height: 44px; width: 240px; border: 1px solid var(--stroke); }
-.glass-search:focus-within { width: 280px; box-shadow: 0 0 0 3px var(--focus), var(--shadow-1); }
+.glass-search:focus-within { width: 280px; box-shadow: var(--shadow-1); }
 .glass-menu-btn { display: grid !important; width: 44px; height: 44px; }
 @media (max-width: 767px) {
   .glass-shell { --glass-top: 60px; }
@@ -2875,9 +2875,9 @@ button.chat-bottom-pill:hover {
 [data-slot="input"]:focus-visible,
 [data-slot="textarea"]:focus-visible,
 [data-slot="select-trigger"]:focus-visible {
-  border-color: var(--accent-blue);
+  border-color: color-mix(in srgb, var(--ink-1) 28%, transparent);
   background-color: var(--glass-3);
-  box-shadow: 0 0 0 3px var(--focus);
+  box-shadow: none;
 }
 [data-slot="select-trigger"] { min-height: 40px; }
 [data-slot="switch"][data-size="default"] { width: 40px; height: 24px; }
@@ -2915,7 +2915,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
   box-shadow: var(--shadow-1), var(--inset-hl);
 }
 .glass-composer { border-radius: var(--r-xl); border: 1px solid var(--stroke); }
-.glass-composer:focus-within { box-shadow: 0 0 0 3px var(--focus), var(--shadow-2); }
+.glass-composer:focus-within { box-shadow: var(--shadow-2); }
 .glass-composer-send:not(:disabled) { background: var(--ink-primary); color: var(--on-primary); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3393,7 +3393,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 .jr-field { display: flex; flex-direction: column; gap: 6px; }
 .jr-label { font-size: 13px; font-weight: 500; color: var(--ink-2); }
 .jr-control, .jr-select { background: var(--glass-2); border-color: var(--line-strong); border-radius: var(--r-md); }
-.jr-control:focus-visible, .jr-select:focus-visible { background: var(--glass-3); border-color: var(--accent-blue); box-shadow: 0 0 0 3px var(--focus); }
+.jr-control:focus-visible, .jr-select:focus-visible { background: var(--glass-3); border-color: color-mix(in srgb, var(--ink-1) 28%, transparent); box-shadow: none; }
 .jr-select { height: 40px; width: 100%; padding: 0 12px; border-width: 1px; border-style: solid; font: inherit; font-size: 14px; color: var(--ink-1); outline: none; transition: border-color var(--dur-1), box-shadow var(--dur-1), background var(--dur-1); }
 .jr-helper { font-size: 12px; color: var(--ink-3); }
 .jr-check { display: flex; align-items: flex-start; gap: 10px; }
@@ -3937,8 +3937,8 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
   transition: background var(--dur-2) var(--ease-std), border-color var(--dur-2) var(--ease-std), box-shadow var(--dur-2) var(--ease-out);
 }
 .side-search:hover { background: var(--glass-2); }
-.side-search:focus-within { background: var(--glass-3); border-color: rgba(56, 128, 220, 0.45); box-shadow: 0 0 0 3px rgba(56, 128, 220, 0.12); color: var(--ink-2); }
-.dark .side-search:focus-within { border-color: rgba(120, 175, 255, 0.45); box-shadow: 0 0 0 3px rgba(120, 175, 255, 0.12); }
+.side-search:focus-within { background: var(--glass-3); border-color: color-mix(in srgb, var(--ink-1) 28%, transparent); box-shadow: none; color: var(--ink-2); }
+.dark .side-search:focus-within { border-color: color-mix(in srgb, var(--ink-1) 40%, transparent); box-shadow: none; }
 .side-search-ico { width: 16px; height: 16px; flex: none; }
 .side-search-input { flex: 1; min-width: 0; height: 100%; background: transparent; outline: none; font-size: 13px; color: var(--ink-1); }
 .side-search-input::placeholder { color: var(--ink-3); }
@@ -4376,6 +4376,21 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 .profile-crop-empty { width: 72px; height: 72px; color: rgba(255, 255, 255, 0.9); }
 .profile-zoom { display: flex; align-items: center; gap: 10px; width: 200px; font-size: 12px; color: var(--ink-3); }
 .profile-zoom input { flex: 1; accent-color: var(--accent-blue, #3b82f6); }
+/* 新建机器人里的头像：玻璃底 + 输入框同款圆角，不用个人资料那圈渐变圆。 */
+.profile-crop-stage.is-bot {
+  border-radius: var(--r-md);
+  background: var(--glass-2);
+  box-shadow: none;
+  border: 1px solid var(--stroke);
+  color: var(--ink-3);
+  padding: 0;
+}
+.profile-crop-stage.is-bot:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--ink-1) 28%, transparent);
+  box-shadow: none;
+}
+.profile-zoom.is-bot input { accent-color: var(--ink-2); }
 .profile-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-2); }
 .profile-setup-overlay { backdrop-filter: blur(14px) saturate(1.1); background: rgba(40, 60, 100, 0.18); }
 
@@ -4435,7 +4450,7 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 .computer-urlbar-btn:hover:not(:disabled) { background: var(--glass-hover); color: var(--ink-1); }
 .computer-urlbar-btn:disabled { opacity: 0.4; }
 .computer-urlbar-field { flex: 1; min-width: 0; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-radius: var(--r-pill); background: var(--glass-hover); border: 1px solid var(--line); color: var(--ink-2); transition: box-shadow var(--dur-1), border-color var(--dur-1); }
-.computer-urlbar-field:focus-within { border-color: transparent; box-shadow: 0 0 0 2px var(--focus); }
+.computer-urlbar-field:focus-within { border-color: color-mix(in srgb, var(--ink-1) 28%, transparent); box-shadow: none; }
 .computer-urlbar-field input { flex: 1; min-width: 0; height: 100%; background: transparent; outline: none; font-size: 13px; color: var(--ink-1); }
 .computer-urlbar-field input::placeholder { color: var(--ink-4, var(--ink-3)); }
 .computer-urlbar-problem { margin: 0 6px; font-size: 13px; color: var(--destructive, #dc2626); }
@@ -5888,7 +5903,7 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
   flex: 1; min-width: 0; height: 28px; padding: 0 10px; border-radius: var(--r-pill); font-size: 13px; color: var(--ink-1);
   border: 1px solid var(--line-strong); background: var(--glass-3); outline: none; transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
-.worker-steer-input:focus { border-color: var(--accent-blue); box-shadow: 0 0 0 3px var(--focus); }
+.worker-steer-input:focus { border-color: color-mix(in srgb, var(--ink-1) 28%, transparent); box-shadow: none; }
 .worker-error { padding-left: 28px; font-size: 12px; color: var(--danger); }
 /* 结束后收成一行：图标 · 标题 · 一句结果 · 用时；点它跳到结果消息。 */
 .worker-card.is-collapsed { flex-direction: row; align-items: center; gap: 4px; padding: 6px 8px 6px 10px; }
@@ -6162,3 +6177,33 @@ html[data-phone] .bot-chat-sky .copilotKitAssistantMessage [data-streamdown="tab
 .bot-history-empty { padding: 16px 12px; font-size: 14px; color: var(--glass-ink-4); }
 .bot-history-retry { margin-left: 8px; color: var(--accent-blue-ink); }
 @media (prefers-reduced-motion: reduce) { .bot-history-skel { animation: none; } }
+
+/*
+ * Form controls never paint a blue focus halo.
+ *
+ * The field rules above draw a slightly stronger edge instead. This zeroes Tailwind's
+ * ring, which is a box-shadow built from `--tw-ring-shadow`, on text controls, checks,
+ * and switches. The web app, the desktop webview, and the Android webview all load
+ * this sheet, so the halo stays off on every client.
+ */
+:is(
+  input,
+  textarea,
+  select,
+  [data-slot="input"],
+  [data-slot="textarea"],
+  [data-slot="select-trigger"],
+  [data-slot="checkbox"],
+  [data-slot="switch"],
+  [data-slot="combobox-chips"],
+  [data-slot="input-group"],
+  [data-slot="questionnaire-input"],
+  [data-slot="questionnaire-choice"]
+):is(:focus, :focus-visible, :focus-within) {
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-ring-offset-shadow: 0 0 #0000;
+}
+:is([data-slot="checkbox"], [data-slot="switch"]):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ink-1) 35%, transparent);
+  outline-offset: 2px;
+}

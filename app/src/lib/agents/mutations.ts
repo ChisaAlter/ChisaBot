@@ -1,6 +1,6 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
-import { client } from "@/lib/client";
 import { channelKeys } from "@/lib/channels/queries";
+import { client } from "@/lib/client";
 import { forgetStoredPanelBot } from "@/lib/panels/active-bot";
 import {
   type AgentProfile,
@@ -18,6 +18,11 @@ export type AgentInput = {
   endpoint?: string;
   /** Write-only auth value; omitted when the user leaves the key field empty. */
   auth?: { header: string; value: string };
+  /**
+   * Cropped portrait data URL. Omitted when the person did not pick one, so create keeps the
+   * generated face and an edit that does not send it leaves the stored seed alone.
+   */
+  avatarSeed?: string;
 };
 
 /** The sentence for every write here, since they all fail the same way to a reader. */
@@ -117,7 +122,8 @@ export async function forgetDeletedBot(
   forgetStoredPanelBot(agentId);
   queryClient.setQueriesData<AgentProfile[]>(
     { queryKey: [...agentKeys.all, "list"] },
-    (list) => (Array.isArray(list) ? list.filter((agent) => agent.id !== agentId) : list),
+    (list) =>
+      Array.isArray(list) ? list.filter((agent) => agent.id !== agentId) : list,
   );
   queryClient.removeQueries({
     predicate: (query) =>

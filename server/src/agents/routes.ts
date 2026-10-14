@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { AuditEventType, AuditStore } from "../audit";
 import { recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
+import { parsePortraitDataUrl } from "../people/onboarding";
 import { testAgentConnection } from "./connection-test";
 import { checkAgentEndpoint } from "./endpoint";
 import { canDeleteAgent, canManageAgent } from "./profile-policy";
@@ -32,6 +33,7 @@ type AgentInputObject = {
   visibility?: unknown;
   endpoint?: unknown;
   auth?: unknown;
+  avatarSeed?: unknown;
 };
 
 /**
@@ -122,9 +124,33 @@ export function parseAgentInput(
     }
   }
 
+  /*
+   * A portrait is optional and is the only avatar a client may set. Anything else in `avatarSeed`
+   * — including a short forged seed — is ignored, which is what creating without a picture and
+   * editing a name both rely on. A string that claims to be an image and is not one is an error,
+   * so a failed upload is not stored as a generated face.
+   */
+  let avatarSeed: string | undefined;
+  if (
+    typeof input.avatarSeed === "string" &&
+    input.avatarSeed.startsWith("data:")
+  ) {
+    const portrait = parsePortraitDataUrl(input.avatarSeed);
+    if (!portrait.ok) return portrait;
+    avatarSeed = portrait.image;
+  }
+
   return {
     ok: true,
-    value: { name, title, roleDescription, visibility, endpoint, auth },
+    value: {
+      name,
+      title,
+      roleDescription,
+      visibility,
+      endpoint,
+      auth,
+      ...(avatarSeed ? { avatarSeed } : {}),
+    },
   };
 }
 
@@ -723,7 +749,10 @@ export function createAgentRoutes(
         try {
           purged = await purge.purge(context.var.actor, agentId);
         } catch (error) {
-          console.error(`[agents] purge after deleting ${agentId} failed:`, error);
+          console.error(
+            `[agents] purge after deleting ${agentId} failed:`,
+            error,
+          );
         }
       }
       await record(context, "bot.deleted", agentId, purged ? { purged } : {});

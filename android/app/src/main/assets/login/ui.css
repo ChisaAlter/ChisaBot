@@ -55,7 +55,7 @@ button, input { font: inherit; color: inherit; }
 }
 .btn:hover { background: var(--ink-primary-hover); }
 .btn:active { translate: 0 1px; }
-.btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus); }
+.btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--ink-1) 35%, transparent); outline-offset: 2px; }
 .btn:disabled { opacity: .5; pointer-events: none; }
 .btn.outline { color: var(--ink-1); background: var(--glass-2); border-color: var(--line-strong); box-shadow: none; }
 .btn.outline:hover { background: var(--glass-3); }
@@ -91,7 +91,7 @@ button, input { font: inherit; color: inherit; }
 }
 .dark .input { background: rgba(255, 255, 255, .05); }
 .input::placeholder { color: var(--ink-4); }
-.input:focus { border-color: var(--accent-blue); box-shadow: 0 0 0 3px var(--focus); background: var(--glass-3); }
+.input:focus { border-color: color-mix(in srgb, var(--ink-1) 28%, transparent); box-shadow: none; background: var(--glass-3); }
 .hint { font-size: var(--fs-12); color: var(--ink-3); }
 .alert { padding: 10px 14px; border-radius: var(--r-md); font-size: var(--fs-13); color: var(--danger); background: var(--danger-soft); }
 
