@@ -8,6 +8,7 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+- 新建机器人只剩一步：填写名称、职责、角色后直接创建。新机器人固定为私有，并在这台服务器上运行，不再询问谁可以看见、也不再要求自托管 AG-UI 端点。三个字段从空白开始，不再预填报销助手的示例。输入框、多行文本、下拉、勾选和开关获得焦点时不再出现蓝色光晕（网页，以及加载同一套网页的 PC / 安卓客户端；登录页同样不再用蓝色光环）。
 - 修复：与机器人对话时，对话记录有时会往回跳一截（本机刚答完一轮后较常见）。全端同步在本机跑完后若服务器还短暂显示「正在回答」会误重连一次，消息节点重挂后高度估算乱掉；现在只有刚打开会话时才会为了「正在回答」去接上。顺带：content-visibility 只按消息节点数最后几条（不再把光标 / 排队气泡算进去），贴底跟随改为瞬间对齐。只改网页。见 DESIGN.md §35.5、§42.8。
 
 - 发布：本仓库可以自己打容器版本了。Actions 里的「Create release PR」和「Publish release」不再绑在上游仓库 `CopilotKit/OpenBot` 上。合并带 `release` 标签、分支名为 `release/publish/vX.Y.Z` 的拉取请求后，镜像推到 `ghcr.io/chisaalter/chisabot`（各服务镜像是 `ghcr.io/chisaalter/chisabot-<服务名>`），并用仓库自带的 `GITHUB_TOKEN` 创建 GitHub Release。Helm chart 的默认镜像仓库改为同一地址。已经用 `deploy/` 在服务器上从 `main` 构建的 `local/chisabot` 不变。PC / Android 安装包仍是推 `v*` 标签时构建。

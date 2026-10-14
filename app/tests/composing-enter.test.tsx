@@ -31,8 +31,8 @@ import { Route as BoundariesRoute } from "@/routes/_authed/admin/boundaries";
  * Chromium marks it `isComposing`, and WebKit sends it after `compositionend` with the key code 229.
  * The chat composer already skips it: `prompt-area` checks `isComposing` on every Enter it handles.
  * Three text fields in the app acted on it instead, each with a text field's text still unconfirmed:
- * a coworker's name saved in place, the new-coworker wizard moving on to its next step, and a
- * boundary rule saved into the policy in force.
+ * a coworker's name saved in place, the new-coworker form creating the Bot, and a boundary rule
+ * saved into the policy in force.
  *
  * THE HARNESS IS THIS REPOSITORY'S: `GlobalRegistrator` in `beforeAll`/`afterAll`, `cleanup` in
  * `afterEach`, queries off `render()`'s own return, and a `QueryClient` with `retry: false`. Each
@@ -165,25 +165,42 @@ test("a coworker's name is not saved by the Enter that confirms a composed chara
   expect(writes[0]?.body).toMatchObject({ name: "経費" });
 });
 
-test("the new-coworker wizard does not move on from the Enter that confirms a composed character", async () => {
+test("the new-coworker form does not create from the Enter that confirms a composed character", async () => {
   const view = draw(
     <CreateAgentDialog onClose={() => {}} onCreated={() => {}} open />,
   );
 
-  const name = await view.findByLabelText("Name");
+  const name = await view.findByLabelText("名称");
+  expect((name as HTMLInputElement).value).toBe("");
+  expect(view.queryByText("谁可以看到它？")).toBeNull();
+  expect(view.queryByText("它在哪里运行？")).toBeNull();
+  expect(view.queryByPlaceholderText("报销助手")).toBeNull();
   await type(name, "経費");
-  await type(view.getByLabelText("Title"), "Finance Operations");
-  await type(view.getByLabelText("Role"), "Review receipts.");
+  await type(view.getByLabelText("职责"), "Finance Operations");
+  await type(view.getByLabelText("角色"), "Review receipts.");
 
   await confirmComposedCharacter(name);
   await settle();
-  expect(view.getByText("Step 1 of 3")).toBeTruthy();
+  expect(writes).toEqual([]);
+  expect(view.getByText("新建机器人")).toBeTruthy();
 
-  // An ordinary Enter still means Continue.
+  // An ordinary Enter creates it, private, on this server.
   await act(async () => {
     fireEvent.keyDown(name, { key: "Enter", keyCode: 13 });
   });
-  expect(await view.findByText("Step 2 of 3")).toBeTruthy();
+  await settle();
+  expect(writes).toEqual([
+    {
+      request: "POST /api/agents",
+      body: {
+        name: "経費",
+        title: "Finance Operations",
+        roleDescription: "Review receipts.",
+        visibility: "private",
+        endpoint: "",
+      },
+    },
+  ]);
 });
 
 test("a boundary rule is not saved by the Enter that confirms a composed character", async () => {

@@ -319,7 +319,7 @@ function FormEntry({
                 ) : field.type === "select" ? (
                   <select
                     {...shared}
-                    className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50"
+                    className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none disabled:opacity-50"
                     onChange={(event) => change(event.target.value)}
                   >
                     <option value="">{"选择一个选项"}</option>

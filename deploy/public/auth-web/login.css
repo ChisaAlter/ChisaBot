@@ -235,7 +235,7 @@ body.chisabot {
     --glow: radial-gradient(560px 480px at 80% 10%, rgba(170, 190, 240, .16), transparent 62%);
   }
 }
-body.chisabot :focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus); }
+body.chisabot :focus-visible { outline: 2px solid color-mix(in srgb, var(--ink-1) 35%, transparent); outline-offset: 2px; box-shadow: none; }
 body.chisabot .login-page { max-width: 1440px; border: 0 !important; }
 
 /* 左：品牌，直接放在天空上 */
@@ -290,7 +290,7 @@ body.chisabot .field input {
   transition: border-color .18s ease-out, box-shadow .18s ease-out, background .18s ease-out;
 }
 body.chisabot .field input:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong)); }
-body.chisabot .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus); background: var(--glass-3); }
+body.chisabot .field input:focus { border-color: color-mix(in srgb, var(--ink-1) 28%, transparent); box-shadow: none; background: var(--glass-3); outline: none; }
 body.chisabot .field input[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
 body.chisabot .password-toggle { top: 5px; height: 36px; border-radius: 999px; color: var(--ink-3); font-size: 13px; transition: background .15s, color .15s; }
 body.chisabot .password-toggle:hover { background: var(--glass-3); color: var(--ink-1); }
