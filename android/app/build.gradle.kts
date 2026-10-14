@@ -23,8 +23,8 @@ android {
         applicationId = "cn.ayase.chisabot"
         minSdk = 24
         targetSdk = 34
-        versionCode = 212        // 只增不减（已安装的 Android 按它判断更新）；2026-10-12 版本号重置为 0.1.0 时从 206 接着往上
-        versionName = "0.1.6"
+        versionCode = 213        // 只增不减（已安装的 Android 按它判断更新）；2026-10-12 版本号重置为 0.1.0 时从 206 接着往上
+        versionName = "0.1.8"
         buildConfigField("String", "DEFAULT_SERVER", quoted(defaultServer))
         buildConfigField("String", "UPDATE_FEED", quoted(updateFeed))
     }

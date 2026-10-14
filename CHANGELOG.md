@@ -8,6 +8,8 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+## 0.1.8
+
 - 自动更新提示不再居中：网页「有新版本」和「安装应用」胶囊改到顶栏下面靠右（手机上左右贴边成一条提示条，不挡输入框）；ChisaBot PC「新版本已下载」窗口在主窗口可见时也改到顶栏下靠右（托盘时仍在工作区右下角）。外观仍是原来的玻璃胶囊。见 DESIGN.md §22、§36.5、§40.3。
 
 ## 0.1.7
