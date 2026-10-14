@@ -4126,13 +4126,14 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 @media (hover: none) { .glass-mini-more { opacity: 0.8; scale: 1; } }
 @media (prefers-reduced-motion: reduce) { .glass-mini-more { transition: none; } .glass-mini-comp { animation: none; } }
 
-/* ---------- 在线更新：新版本提示 + 管理后台 → 系统更新 (DESIGN.md §22, docs/online-update.md) ---------- */
+/* ---------- 在线更新：新版本提示 + 管理后台 → 系统更新 (DESIGN.md §22 / §36.5, docs/online-update.md) ---------- */
+/* CB-006：不居中。桌面顶栏下靠右；手机顶栏下左右贴边成一条提示条，不挡输入框。 */
 .update-banner {
   position: fixed;
   z-index: 101;
   top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 16px;
+  left: auto;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -4186,10 +4187,22 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 }
 .update-banner-x:hover { background: var(--glass-2); color: var(--ink-1); }
 @keyframes update-banner-in {
-  from { opacity: 0; transform: translate(-50%, -8px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
 }
 @media (max-width: 520px) { .update-banner-v { display: none; } }
+/* 窄屏 / 手机：顶栏下左右贴边，整条可读，不再是屏幕正中一颗胶囊。 */
+@media (max-width: 767px) {
+  .update-banner {
+    left: 12px;
+    right: 12px;
+    max-width: none;
+    width: auto;
+    justify-content: space-between;
+  }
+  .update-banner-main { flex: 1; min-width: 0; }
+  .update-banner-t { overflow: hidden; text-overflow: ellipsis; }
+}
 
 .sysupd-mono, .sysupd-sha, .sysupd-image { font-family: var(--font-mono, ui-monospace, Menlo, Consolas, monospace); }
 .sysupd-image { font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
@@ -5674,7 +5687,7 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 }
 @media (max-width: 380px) { .glass-seg-item { padding: 6px 10px; font-size: 13px; } }
 
-/* 「有新版本」提示放在顶栏下面，不再盖住主导航。 */
+/* 「有新版本」提示放在顶栏下面靠右，不再盖住主导航（CB-006）。 */
 .update-banner { top: 64px; }
 
 /*
@@ -5977,7 +5990,12 @@ html[data-phone] .glass-topbar-start { width: 44px; }
 html[data-phone] .glass-seg-item { min-height: 40px; display: inline-flex; align-items: center; }
 /* 手机上没有键盘快捷键。 */
 html[data-phone] .side-search-kbd { display: none; }
-html[data-phone] .update-banner { top: calc(64px + var(--safe-t)); }
+html[data-phone] .update-banner {
+  top: calc(64px + var(--safe-t));
+  left: calc(12px + var(--safe-l));
+  right: calc(12px + var(--safe-r));
+  max-width: none;
+}
 
 /* 左栏抽屉、面板抽屉：让开状态栏、底部横条和横屏刘海。 */
 html[data-phone] .glass-shell [data-slot="sidebar"][data-mobile="true"],
@@ -6067,15 +6085,15 @@ html[data-phone] .glass-topbar { transition: transform var(--dur-2, 200ms) var(-
   html[data-phone] .glass-topbar { transition: none; }
 }
 
-/* §40.3「安装 ChisaBot 应用」：与「有新版本」同一种玻璃胶囊，顶栏下面居中；「有新版本」在时让位。 */
+/* §40.3「安装 ChisaBot 应用」：与「有新版本」同一种玻璃胶囊；桌面顶栏下靠右，手机顶栏下左右贴边；「有新版本」在时让位。 */
 .install-hint {
   position: fixed;
   z-index: 100;
   top: calc(64px + var(--safe-t, 0px));
-  left: 50%;
-  translate: -50% 0;
+  right: 16px;
+  left: auto;
   width: max-content;
-  max-width: calc(100vw - 24px);
+  max-width: calc(100vw - 32px);
   padding: 4px;
   border-radius: 22px;
   background: var(--glass-3);
@@ -6084,6 +6102,16 @@ html[data-phone] .glass-topbar { transition: transform var(--dur-2, 200ms) var(-
   box-shadow: var(--shadow-2), var(--inset-hl, inset 0 1px 0 rgba(255, 255, 255, 0.6));
   color: var(--ink-1);
   animation: install-hint-in var(--dur-3, 300ms) var(--ease-out, ease-out) both;
+}
+@media (max-width: 767px) {
+  .install-hint {
+    left: calc(12px + var(--safe-l, 0px));
+    right: calc(12px + var(--safe-r, 0px));
+    width: auto;
+    max-width: none;
+  }
+  .install-hint-row { width: 100%; }
+  .install-hint-main { flex: 1; min-width: 0; }
 }
 .install-hint[data-state="closed"] { animation: install-hint-out var(--dur-1, 150ms) var(--ease-in, ease-in) both; pointer-events: none; }
 body:has(.update-banner) .install-hint { display: none; }

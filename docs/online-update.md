@@ -9,7 +9,7 @@ ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、
 - `GET /api/version`（`server/src/build-info.ts`）返回 `{ version, commit, buildId, builtAt }`，`Cache-Control: no-store`。
   应用里不要求登录（和 `/health` 一样只有版本信息），公网网关照常先认证会话。
 - 网页每 5 分钟（页面可见时）、切回前台 / 窗口获得焦点时（距上次 ≥ 30 秒）问一次；打开后 20 秒做第一次。
-  构建号不同就在顶部居中显示玻璃胶囊「有新版本，点此刷新」（`components/update-banner.tsx`，DESIGN.md §22）。
+  构建号不同就在顶栏下靠右显示玻璃胶囊「有新版本，点此刷新」（手机上左右贴边成提示条；`components/update-banner.tsx`，DESIGN.md §22 / §36.5）。
   可以关掉，同一个构建号关掉后不再提示。开发环境（`dev`）永不提示。
 - **从不自动刷新。** 用户点了刷新时，如果机器人还在回复（`channel-chat.tsx` 通过 `useReportBusy` 登记）或页面上有
   没发出去的文字，先弹确认框（`lib/activity.ts`）。
