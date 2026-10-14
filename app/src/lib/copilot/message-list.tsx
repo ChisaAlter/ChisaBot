@@ -15,7 +15,9 @@ import { QueuedMessages } from "@/components/chat/queued-messages";
  * 修法：给 messageView 传 `children` 渲染函数（CopilotKit 文档里关闭虚拟化的正式写法），所有消息
  * 都挂载、高度都是真实的，贴底 / 上滑不再被估算值打乱。消息组件本身是 memo 的，流式时只有最后一条
  * 重渲染；顺带让 turn-compaction 在长会话里也能工作（虚拟化时 `.copilotKitMessages` 下面只有一个
- * 包裹层，它找不到消息）。
+ * 包裹层，它找不到消息）。屏幕外旧消息用 content-visibility（styles.css §35；只按 [data-message-id]
+ * 数最后几条，别把光标 / 排队气泡算进去）。本机跑完一轮后同步不要为了服务器还亮着的 running 误重连
+ * （use-conversation-sync shouldCatchRunningOnRebase，CB-005）。
  *
  * 结构与 CopilotKit 不虚拟化时自己画的一致：同样的类名 / testid、打断（interrupt）元素、
  * 运行中的光标（最后一条是思考时不画），所以 styles.css 和 turn-compaction 的选择器都照常认得。

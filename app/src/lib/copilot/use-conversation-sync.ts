@@ -59,6 +59,18 @@ export function userOrderDiffers(local: readonly string[], server: readonly stri
   return a.some((id, at) => id !== b[at]);
 }
 
+/**
+ * rebase 之后要不要因为「服务器还在回答」立刻 join。
+ *
+ * 只有第一次观察到活动（还没有 previous）才接：刚打开 / 刚挂上同步时那一轮已经在跑。
+ * 本机刚跑完一轮也会把 rebase 设上，这时 previous 还在——服务器 running 位常常晚几十到几百毫秒才落下，
+ * 若这里再 join，会无谓重连、消息节点重挂，content-visibility 的高度记忆清掉，视口上方突然变高，
+ * 看起来就像对话记录往回跳（CB-005）。之后若真有别的设备在跑，普通分支里的 `activity.running` 仍会 join。
+ */
+export function shouldCatchRunningOnRebase(previous: unknown, running: boolean): boolean {
+  return running && previous == null;
+}
+
 type Connect = (options: { agent: AbstractAgent }) => Promise<unknown>;
 
 /**
@@ -184,8 +196,8 @@ export function useConversationSync(
       last = activity;
       if (rebase || !previous) {
         rebase = false;
-        // 服务器在回答、这台却没在跟（刚回到前台、刚打开时那一轮还没开始）：接上。
-        if (activity.running) join();
+        // 刚打开时服务器已经在回答：接上。本机刚跑完一轮的 rebase 不要为了 running 再 join（见 shouldCatchRunningOnRebase）。
+        if (shouldCatchRunningOnRebase(previous, activity.running)) join();
         return;
       }
       if (activity.workers !== previous.workers)

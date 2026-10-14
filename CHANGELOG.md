@@ -8,6 +8,8 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+- 修复：与机器人对话时，对话记录有时会往回跳一截（本机刚答完一轮后较常见）。全端同步在本机跑完后若服务器还短暂显示「正在回答」会误重连一次，消息节点重挂后高度估算乱掉；现在只有刚打开会话时才会为了「正在回答」去接上。顺带：content-visibility 只按消息节点数最后几条（不再把光标 / 排队气泡算进去），贴底跟随改为瞬间对齐。只改网页。见 DESIGN.md §35.5、§42.8。
+
 - 发布：本仓库可以自己打容器版本了。Actions 里的「Create release PR」和「Publish release」不再绑在上游仓库 `CopilotKit/OpenBot` 上。合并带 `release` 标签、分支名为 `release/publish/vX.Y.Z` 的拉取请求后，镜像推到 `ghcr.io/chisaalter/chisabot`（各服务镜像是 `ghcr.io/chisaalter/chisabot-<服务名>`），并用仓库自带的 `GITHUB_TOKEN` 创建 GitHub Release。Helm chart 的默认镜像仓库改为同一地址。已经用 `deploy/` 在服务器上从 `main` 构建的 `local/chisabot` 不变。PC / Android 安装包仍是推 `v*` 标签时构建。
 - 修复：模型如果把推理写在正文里、用 `<think>…</think>` 包着（部分 OpenAI 兼容模型会这样），现在也放进可折叠的「思考」里，不再出现在回复气泡、历史和复制内容中。没有这种标签的模型不受影响。只改服务器。见 DESIGN.md §44.1。
 - 修复：机器人的英文「思考过程」不再混进聊天正文。收起的「思考了 N 秒」以前只是视觉上折叠，英文其实一直在页面里——Ctrl+F 搜得到、全选复制会夹在回答中间、读屏会念出来；现在收起时内容不在页面里，点开才显示。删除机器人时连带删除它右栏的面板并停止它们的定时刷新（以前面板行留着、到点还会刷新）；以前删机器人留下的孤儿面板在服务启动时自动清掉。只改服务器和网页，PC / Android 不用更新。见 DESIGN.md §44。

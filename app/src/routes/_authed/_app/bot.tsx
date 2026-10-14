@@ -282,6 +282,9 @@ function BotChat({ agentId, name }: { agentId: string; name: string }) {
               // 「正在思考… / 思考了 3 秒」中文，流式时不展开英文推理（reasoning-zh.tsx）；
               // 消息下面的链接卡 / 图片一摞 / 文件卡（rich-message-view.tsx，DESIGN.md §31）。
               messageView={RICH_MESSAGE_VIEW as never}
+              // 贴底跟随时高度变化用瞬间对齐，不用弹簧（CB-005）：content-visibility / 重挂载若让上方
+              // 高度抖一下，smooth 会先露出更早的记录再滑回来；instant 同一帧钉回底部。
+              scrollView={{ resize: "instant", initial: "instant" } as never}
               key={`${agentId}:${threadId}`}
               threadId={threadId}
             />

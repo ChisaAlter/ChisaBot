@@ -644,6 +644,12 @@
   - **规则**：聊天顶上的提示一律是**浮层**（`.bot-chat-notices`，绝对定位在 `.bot-chat-sky` 里，宽度与消息列一致，最高 `min(40vh, 240px)` 自己滚动，可关），**不占版面**；任何会出现 / 消失的东西都不能放在滚动区的上下方改变它的大小或位置。提示在**任何一轮开始**（包括历史重放里的 `RUN_STARTED`）时清掉，只有最后一轮出错才显示（`stoppedTurnSubscriber`，`lib/copilot/stopped-turn.ts`）。
   - **验证**：`tests/chat-scroll/send-jump.mjs`（真实长会话副本、逐帧记录：滚动区在屏幕上的位置、scrollTop、发送时视口里一条消息的屏幕位置）——发送后任意相邻两帧：滚动区不许移动、scrollTop 不许回退 > 24px、那条消息不许往下跳 > 24px / 往上跳 > 120px；`ASSERT=1` 时不过就退出码 1。场景：宽 1280×800 / 窄 420×860、贴底 / 上滑 700px、短 / 长回复、多行输入、4× CPU、上一轮出错再发（`FAIL=1 TWICE=1`）。单测 `app/tests/stopped-turn.test.ts`（重放后旧错误不显示）。
 
+- **35.5 本机跑完一轮后对话记录又往回跳（2026-10-14，CB-005）**：
+  - **根因 ①**：全端同步在 rebase（本机刚跑完 / 刚接完）时，若服务器 `running` 还亮着就立刻 `connectAgent` 重连。本机刚结束时 running 常常晚几十到几百毫秒才落下，于是几乎每轮结束后都会误重连一次；消息节点重挂后 `content-visibility` 的高度记忆清掉，视口上方突然按 240px 占位再撑开，贴底弹簧动画先露出更早的记录再滑回来。
+  - **根因 ②**：`content-visibility` 用普通 `:nth-last-child(-n+6)` 把列表末尾的光标 / 排队气泡也算进去，流式时多一个光标就把一条真消息推进冷区。
+  - **修法**：rebase 时只有「还没有 previous」（刚打开）才为了 running 去接（`shouldCatchRunningOnRebase`）；之后靠普通的 seq / running 分支。content-visibility 改成只按 `[data-message-id]` 数最后 8 条；StickToBottom 的 resize/initial 用 `instant`；滚动层 `overflow-anchor: none`。
+  - **验证**：`app/tests/sync-rebase-join.test.ts`（`shouldCatchRunningOnRebase`）、`app/tests/bot-message-list.test.tsx`（光标不带 data-message-id）；有预览环境时再跑 `tests/chat-scroll/regression.sh`。
+
 ## 36. PC 小窗模式与窄窗口整理（2026-10-13）
 
 用户原话：「增加一个按键，一键可以变成这种比例。然后优化一下这个状态下的显示问题」；追加「面板库弹层比右侧面板本身还大，缩小」。样式在 `styles.css` 末尾的「§36」段。
@@ -811,6 +817,8 @@
 
 **42.6 历史对话**：共用一条当前对话后，一台设备原来的那条（迁移时没被采用的、点「新对话」之前的）就看不到了，所以机器人 ⋯ 菜单最后一项是「历史对话」（只在正在打开的机器人对话页里出现）。小弹窗（宽 440）列出你和这个机器人最近 30 条有消息的对话：标题 = 对话名或第一条用户消息（压成一行、最多 60 字）、「N 条消息 · 3 分钟前」，当前那条蓝底 +「当前」标签；加载是三条骨架（只动 opacity）。点一条 = `PUT` 当前对话（所有设备一起换，和「新对话」同一条路），弹窗关闭。只切换，不删、不改名。弹窗按 §41.3 用到才加载（`bot-thread-history-lazy.ts`，⋯ 菜单打开时 preload）。接口 `GET /api/bot-threads/:agentId/history`（不含后台任务的 `worker-*` 隐藏对话和空对话；不是本地会话模式返回空列表）。
 **42.7 发送失败的那条留在这台、不重建**（2026-10-13 修回归）：#75 上线后，一轮在上游 / 网络上失败（服务器没存下用户那条）时，结束后的顺序比对把「这台有、服务器没有」当成顺序不一致 → 整段重建 → 刚发的气泡被删、整段聊天约 1 秒后往回跳 119px（`send-jump.mjs FAIL=1 TWICE=1` 实测；#74 时不跳）。现在比对只看两边都有的用户消息：失败的那条留在这台照旧显示（和 #75 之前一样，刷新后才没），只有真正先后不一致才重建。回归：`tests/chat-scroll/send-jump.mjs` 的 `FAIL=1 TWICE=1` 和 `POLLTICK=1`（发送期间及之后几秒，把每次 `/sync` 的回复改成「序号变了 + 服务器在回答」，逼同步在本机发送前后反复尝试接入）都必须 0 跳；`app/tests/conversation-sync.test.ts` 覆盖 `userOrderDiffers`。
+
+**42.8 rebase 后不要为了 running 误重连**（2026-10-14，CB-005 / §35.5）：本机 `onRunFinalized` 会把 rebase 设上；下一拍同步若服务器 running 还亮就 join，等于每轮结束后白重连一次。rebase 分支里只有还没有 previous 时才为 running 去接；有 previous 时只记基线，真有别的设备在跑走普通的 `activity.running` 分支。
 
 ### 41.4 首屏不带从不执行的库（构建时换成小桩）
 
