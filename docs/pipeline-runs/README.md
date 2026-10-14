@@ -21,3 +21,4 @@ workflow, image name, or release step looks the way it does.
 | --- | --- | --- |
 | [CB-003](20261014-CB-003.md) | 2026-10-14 | Create Bot is one step (private, on this server, empty defaults, optional portrait). The sheet matches the other dialogs, and form fields no longer draw a blue focus ring. |
 | [CB-001](20261014-CB-001.md) | 2026-10-14 | Container release runs on `ChisaAlter/ChisaBot` and publishes `ghcr.io/chisaalter/chisabot`. |
+| [CB-004](20261014-CB-004.md) | 2026-10-14 | Bot profile moves from a center settings stack into a tabbed detail pane. |

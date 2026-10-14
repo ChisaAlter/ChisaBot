@@ -2981,8 +2981,10 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 .sg-segmented { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-pill); background: var(--glass-hover); border: 1px solid var(--line); }
 .sg-segmented-item { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 14px; border-radius: var(--r-pill); font-size: 13px; font-weight: 500; color: var(--ink-2); transition: background var(--dur-2), color var(--dur-2), box-shadow var(--dur-2); }
 .sg-segmented-item:hover { color: var(--ink-1); }
-.sg-segmented-item[aria-checked="true"] { background: var(--glass-3); color: var(--ink-1); box-shadow: var(--shadow-1); }
-.dark .sg-segmented-item[aria-checked="true"] { background: rgba(255, 255, 255, 0.12); }
+.sg-segmented-item[aria-checked="true"],
+.sg-segmented-item[aria-selected="true"] { background: var(--glass-3); color: var(--ink-1); box-shadow: var(--shadow-1); }
+.dark .sg-segmented-item[aria-checked="true"],
+.dark .sg-segmented-item[aria-selected="true"] { background: rgba(255, 255, 255, 0.12); }
 /* A form that sits directly in a page section is a settings card (template C/D/E). */
 .page-section > form {
   margin-top: 12px;
