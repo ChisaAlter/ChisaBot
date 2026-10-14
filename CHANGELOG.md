@@ -8,6 +8,10 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+## 0.3.0
+
+- 版本号抬到 **0.3.0**，让仍装在内部测试版 **0.2.x**（如 0.2.4）的 ChisaBot PC 能自动更新到公开频道（electron-updater 不允许降级，0.1.x 推不过去）。Android `versionName` 同步为 0.3.0，`versionCode` 升到 214。内容等同当前 `main`（含 0.1.7 / 0.1.8：新建机器人单步与头像、资料分栏、对话跳回修复、自动更新提示位置）。见 `docs/online-update.md` §2、`docs/pipeline-runs/20261014-CB-007.md`。
+
 ## 0.1.8
 
 - 自动更新提示不再居中：网页「有新版本」和「安装应用」胶囊改到顶栏下面靠右（手机上左右贴边成一条提示条，不挡输入框）；ChisaBot PC「新版本已下载」窗口在主窗口可见时也改到顶栏下靠右（托盘时仍在工作区右下角）。外观仍是原来的玻璃胶囊。见 DESIGN.md §22、§36.5、§40.3。
