@@ -12,10 +12,10 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Fragment, type KeyboardEvent, useState } from "react";
-import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { AgentDialog } from "@/components/agents/agent-dialog";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { DeleteBotDialog } from "@/components/agents/delete-bot-dialog";
+import { ChannelAvatar } from "@/components/channels/avatar";
 import { BotComputerAccess } from "@/components/devices/bot-computer-access";
 import { PageRows } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,13 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { runWithPageLoader } from "@/components/ui/page-loader";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import type { AgentProfile } from "@/lib/agents/queries";
@@ -71,10 +78,14 @@ import { BotWorkLists } from "./activity";
 /**
  * Who this Bot is, in a pane beside the conversation (or on its own when it has no conversation yet).
  *
- * This is not a PageShell configuration essay. The identity, the three tabs, and the short task
- * list are the page; model, pause, notifications, reset, and delete stay reachable inside 详情,
- * in one settings card, instead of a stack of sections down the center column. Settings rows
- * still use PageRows and Item — only the frame around them is a pane.
+ * This is not a PageShell configuration essay. The three sections and the short task list are the
+ * page; model, pause, notifications, reset, and delete stay reachable inside 详情, in one settings
+ * card, instead of a stack of sections down the center column.
+ *
+ * The frame is existing chrome: the same avatar and type as a roster row, and the settings-page
+ * segmented control (`sg-segmented`). The right rail uses that control too, with a two-item thumb
+ * this three-way switch does not copy. Settings rows still use PageRows and Item. A centered
+ * portrait, tag pills, and a full-width underline bar are not part of this surface.
  */
 
 const TABS = [
@@ -326,8 +337,8 @@ function RuntimeCard({
   });
 
   return (
-    <div className="mt-8 grid gap-3">
-      <h3 className="text-xs font-medium text-muted-foreground">{"运行"}</h3>
+    <div className="mt-6">
+      <h3 className="sh-title">{"运行"}</h3>
       {lifecycle.isPending ? null : lifecycle.error ? (
         <p className="text-destructive text-sm" role="alert">
           {"无法加载此机器人的状态。"}
@@ -383,24 +394,29 @@ function RuntimeCard({
               </ItemDescription>
             </ItemContent>
             <ItemActions>
-              <select
-                aria-label={"通知"}
-                className="h-8 max-w-full rounded-md border bg-background px-2 text-sm"
+              <Select
                 disabled={notify.isPending}
-                onChange={(event) =>
+                items={NOTIFY_LABEL}
+                onValueChange={(next) => {
+                  if (!next || next === lifecycle.data.notify) return;
                   notify.mutate({
                     agentId: agent.id,
-                    notify: event.target.value as BotNotify,
-                  })
-                }
+                    notify: next as BotNotify,
+                  });
+                }}
                 value={lifecycle.data.notify}
               >
-                {(Object.keys(NOTIFY_LABEL) as BotNotify[]).map((value) => (
-                  <option key={value} value={value}>
-                    {NOTIFY_LABEL[value]}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger aria-label={"通知"} size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(NOTIFY_LABEL) as BotNotify[]).map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {NOTIFY_LABEL[value]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </ItemActions>
           </Item>
           {permission === "default" ? (
@@ -510,28 +526,34 @@ function RuntimeCard({
           ) : null}
         </PageRows>
       )}
-      <button
-        aria-expanded={routingOpen}
-        className="flex w-full items-center justify-between rounded-md py-1 text-left text-sm text-muted-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-        onClick={() => setRoutingOpen((open) => !open)}
-        type="button"
-      >
-        <span>{"不在时，更新去哪里"}</span>
-        <IconChevronRight
-          className={cn(
-            "size-4 transition-transform",
-            routingOpen && "rotate-90",
-          )}
-        />
-      </button>
-      {routingOpen ? (
-        <div className="grid gap-2">
-          <p className="text-muted-foreground text-xs">
-            {"网页总是显示一切。这里的选择适用于你的所有机器人。"}
-          </p>
-          <UpdateRoutingRows />
-        </div>
-      ) : null}
+      <PageRows className="mt-3">
+        <Item
+          render={
+            <button
+              aria-expanded={routingOpen}
+              onClick={() => setRoutingOpen((open) => !open)}
+              type="button"
+            />
+          }
+          size="sm"
+        >
+          <ItemMedia variant="icon">
+            <IconRoute />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>{"不在时，更新去哪里"}</ItemTitle>
+            <ItemDescription>
+              {"网页总是显示一切。这里的选择适用于你的所有机器人。"}
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <IconChevronRight
+              className={cn("size-4", routingOpen && "rotate-90")}
+            />
+          </ItemActions>
+        </Item>
+      </PageRows>
+      {routingOpen ? <UpdateRoutingRows /> : null}
       <ResetDialog agent={agent} onOpenChange={setResetOpen} open={resetOpen} />
       {deleteOpen ? (
         <DeleteBotDialog
@@ -561,65 +583,76 @@ function LibraryTab({ agentId }: { agentId: string }) {
   const feeds = (sources.data ?? []).filter(
     (source: MemorySource) => source.agentId === agentId,
   );
+  const openLibrary = (
+    <Button
+      nativeButton={false}
+      render={<Link to="/memory" />}
+      size="sm"
+      variant="outline"
+    >
+      {"打开全部记忆"}
+    </Button>
+  );
   if (mine.length === 0 && feeds.length === 0) {
     return (
-      <div className="grid gap-3 py-3">
+      <div className="grid justify-items-start gap-3">
         <p className="text-muted-foreground text-sm">
           {"还没有这个机器人写下的资料。它形成的记忆会出现在这里。"}
         </p>
-        <Link
-          className="text-sm underline-offset-4 hover:underline"
-          to="/memory"
-        >
-          {"打开全部记忆"}
-        </Link>
+        {openLibrary}
       </div>
     );
   }
   return (
-    <div className="grid gap-6 py-1">
+    <div className="grid gap-6">
       {feeds.length > 0 ? (
         <section>
-          <h3 className="text-xs font-medium text-muted-foreground">
-            {"来源"}
-          </h3>
-          <ul className="mt-2 grid gap-2">
-            {feeds.map((source) => (
-              <li className="min-w-0" key={source.id}>
-                <p className="truncate text-sm">{source.title}</p>
-                <p className="text-muted-foreground text-xs">
-                  {source.enabled ? "启用" : "已停用"}
-                  {" · "}
-                  {source.syncStatus === "running"
-                    ? "正在同步"
-                    : source.syncStatus === "error"
-                      ? "同步失败"
-                      : source.syncStatus === "succeeded"
-                        ? "已同步"
-                        : "尚未同步"}
-                </p>
-              </li>
+          <h3 className="sh-title">{"来源"}</h3>
+          <PageRows>
+            {feeds.map((source, index) => (
+              <Fragment key={source.id}>
+                {index > 0 ? <Separator /> : null}
+                <Item size="sm">
+                  <ItemContent>
+                    <ItemTitle>{source.title}</ItemTitle>
+                    <ItemDescription>
+                      {source.enabled ? "启用" : "已停用"}
+                      {" · "}
+                      {source.syncStatus === "running"
+                        ? "正在同步"
+                        : source.syncStatus === "error"
+                          ? "同步失败"
+                          : source.syncStatus === "succeeded"
+                            ? "已同步"
+                            : "尚未同步"}
+                    </ItemDescription>
+                  </ItemContent>
+                </Item>
+              </Fragment>
             ))}
-          </ul>
+          </PageRows>
         </section>
       ) : null}
       {mine.length > 0 ? (
         <section>
-          <h3 className="text-xs font-medium text-muted-foreground">
-            {"它记住的"}
-          </h3>
-          <ul className="mt-2 grid gap-3">
-            {mine.map((memory) => (
-              <li className="min-w-0" key={memory.id}>
-                <p className="line-clamp-3 text-sm">{memory.content}</p>
-              </li>
+          <h3 className="sh-title">{"它记住的"}</h3>
+          <PageRows>
+            {mine.map((memory, index) => (
+              <Fragment key={memory.id}>
+                {index > 0 ? <Separator /> : null}
+                <Item size="sm">
+                  <ItemContent>
+                    <ItemDescription className="line-clamp-3">
+                      {memory.content}
+                    </ItemDescription>
+                  </ItemContent>
+                </Item>
+              </Fragment>
             ))}
-          </ul>
+          </PageRows>
         </section>
       ) : null}
-      <Link className="text-sm underline-offset-4 hover:underline" to="/memory">
-        {"打开全部记忆"}
-      </Link>
+      {openLibrary}
     </div>
   );
 }
@@ -634,7 +667,7 @@ function ComputerTab({
   onOpenComputer?: () => void;
 }) {
   return (
-    <div className="grid gap-4 py-1">
+    <div className="grid justify-items-start gap-3">
       <p className="text-muted-foreground text-sm">
         {"设备属于你的账号。这个机器人可以使用在线、并且已经打开能力的设备。"}
       </p>
@@ -655,35 +688,35 @@ function Identity({
   onEdit: () => void;
   profile: AgentProfile;
 }) {
+  const subtitle = [
+    profile.title,
+    profile.visibility === "private" ? "私有" : "公开",
+    profile.systemOwned ? "系统" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <header className="flex flex-col items-center gap-2 px-5 pt-6 text-center">
-      <AbstractAvatar name={profile.name} seed={profile.avatarSeed} size={72} />
-      <h2 className="text-balance font-semibold text-xl tracking-tight">
-        {profile.name}
-      </h2>
-      {profile.title ? (
-        <p className="text-balance text-muted-foreground text-sm">
-          {profile.title}
-        </p>
-      ) : null}
-      <div className="flex flex-wrap justify-center gap-1.5">
-        <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-muted-foreground text-xs">
-          {profile.visibility === "private" ? "私有" : "公开"}
-        </span>
-        {profile.systemOwned ? (
-          <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-muted-foreground text-xs">
-            {"系统"}
-          </span>
-        ) : null}
+    <header className="px-4">
+      <div className="flex items-center gap-3">
+        <ChannelAvatar participantIds={[profile.id]} size={36} />
+        <div className="glass-bot-text">
+          <h2 className="glass-item-t font-medium">{profile.name}</h2>
+          <p className="glass-item-s">{subtitle}</p>
+        </div>
+        <Button
+          className="shrink-0"
+          onClick={onEdit}
+          size="sm"
+          variant="outline"
+        >
+          {profile.canManage ? "编辑资料" : "查看资料"}
+        </Button>
       </div>
       {profile.roleDescription ? (
-        <p className="line-clamp-2 max-w-sm text-pretty text-muted-foreground text-sm">
+        <p className="mt-2 line-clamp-2 text-muted-foreground text-sm">
           {profile.roleDescription}
         </p>
       ) : null}
-      <Button onClick={onEdit} size="sm" variant="ghost">
-        {profile.canManage ? "编辑资料" : "查看资料"}
-      </Button>
     </header>
   );
 }
@@ -706,7 +739,7 @@ export function BotDetailPane({
   if (agent.isPending) return null;
   if (agent.error || !agent.data) {
     return (
-      <div className="px-5 py-8">
+      <div className="px-4 py-6">
         <p className="text-destructive text-sm" role="alert">
           {"无法加载这个机器人。"}
         </p>
@@ -737,11 +770,11 @@ export function BotDetailPane({
   };
 
   return (
-    <div className="flex w-full flex-col pb-8">
+    <div className="flex w-full flex-col px-0 pt-1 pb-8">
       <Identity onEdit={() => setEditing(true)} profile={profile} />
       <div
         aria-label={"机器人详情"}
-        className="mt-4 flex border-[var(--line)] border-b px-2"
+        className="sg-segmented mx-4 mt-3"
         onKeyDown={onTabKey}
         role="tablist"
       >
@@ -751,12 +784,7 @@ export function BotDetailPane({
             <button
               aria-controls={`bot-panel-${profile.id}-${item.id}`}
               aria-selected={selected}
-              className={cn(
-                "-mb-px inline-flex h-10 flex-1 items-center justify-center border-b-2 font-medium text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
-                selected
-                  ? "border-[var(--accent-blue)] text-[var(--ink-1)]"
-                  : "border-transparent text-[var(--ink-3)] hover:text-[var(--ink-1)]",
-              )}
+              className="sg-segmented-item"
               id={`bot-tab-${profile.id}-${item.id}`}
               key={item.id}
               onClick={() => setTab(item.id)}
@@ -769,11 +797,10 @@ export function BotDetailPane({
           );
         })}
       </div>
-      <div
+      <section
         aria-labelledby={`bot-tab-${profile.id}-${tab}`}
-        className="px-5 pt-4"
+        className="px-4 pt-4"
         id={`bot-panel-${profile.id}-${tab}`}
-        role="tabpanel"
       >
         {tab === "details" ? (
           <>
@@ -789,7 +816,7 @@ export function BotDetailPane({
             onOpenComputer={onOpenComputer}
           />
         ) : null}
-      </div>
+      </section>
       {editing ? (
         <AgentDialog
           agentId={profile.id}

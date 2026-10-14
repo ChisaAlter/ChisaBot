@@ -9,6 +9,8 @@ import {
 } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { Fragment } from "react";
+import { PageRows } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import {
   Item,
@@ -18,6 +20,7 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
+import { Separator } from "@/components/ui/separator";
 import {
   cancelFollowUpMutationOptions,
   stopHandoffMutationOptions,
@@ -159,15 +162,18 @@ function WorkBlock({
 }) {
   return (
     <section>
-      <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
+      <h3 className="sh-title">{title}</h3>
       {items.length === 0 ? (
-        <p className="py-3 text-sm text-muted-foreground">{empty}</p>
+        <p className="mt-2 text-muted-foreground text-sm">{empty}</p>
       ) : (
-        <div className="mt-1">
-          {items.map((item) => (
-            <ActivityRow agentId={agentId} item={item} key={item.id} />
+        <PageRows>
+          {items.map((item, index) => (
+            <Fragment key={item.id}>
+              {index > 0 ? <Separator /> : null}
+              <ActivityRow agentId={agentId} item={item} />
+            </Fragment>
           ))}
-        </div>
+        </PageRows>
       )}
     </section>
   );

@@ -2,6 +2,7 @@ import { IconChevronLeft } from "@tabler/icons-react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { BotDetailPane } from "@/components/bot-profile/detail-pane";
+import { Button } from "@/components/ui/button";
 import { latestChannelFor } from "@/lib/channels/latest";
 import { channelListQueryOptions } from "@/lib/channels/queries";
 
@@ -32,14 +33,17 @@ function BotProfilePage() {
   return (
     <div className="page-scroll min-h-0 flex-1 overflow-y-auto">
       {/* Same open width as DetailPanel, so this fallback lines up with the pane beside chat. */}
-      <div className="mx-auto flex w-full max-w-[400px] flex-col px-2 py-4">
-        <Link
-          className="inline-flex h-8 items-center gap-1 self-start rounded-md px-2 text-muted-foreground text-sm outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-          to="/bots"
+      <div className="mx-auto flex w-full max-w-[400px] flex-col py-2">
+        <Button
+          className="mx-2 self-start"
+          nativeButton={false}
+          render={<Link to="/bots" />}
+          size="sm"
+          variant="ghost"
         >
-          <IconChevronLeft className="size-3.5" />
+          <IconChevronLeft />
           {"机器人"}
-        </Link>
+        </Button>
         <BotDetailPane agentId={agentId} showChatLink />
       </div>
     </div>

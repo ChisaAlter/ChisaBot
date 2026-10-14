@@ -129,6 +129,7 @@ test("bot details are a tabbed pane, with routines and runtime under 详情", as
   expect(view.getByRole("tab", { name: "资料库" })).toBeTruthy();
   expect(view.getByRole("tab", { name: "电脑" })).toBeTruthy();
   await view.findByRole("combobox", { name: "模型选择" });
+  await view.findByRole("combobox", { name: "通知" });
   await view.findByText("请在聊天中设置例行任务。");
   await view.findByText("运行");
   expect(view.getByText("已暂停")).toBeTruthy();
