@@ -120,3 +120,46 @@ describe("pending worker title", () => {
     expect(pendingWorkerTitle(undefined)).toBeUndefined();
   });
 });
+
+/** DESIGN.md §74：干活卡画在这一轮第一个干活的工具那一行；以卡片收尾的一轮卡片就是结果。 */
+describe("work card row (§74)", () => {
+  const call = (id: string, name: string, args: Record<string, unknown> = {}, result: string | undefined = "ok"): Item =>
+    ({ kind: "tool", id, toolCall: { id, type: "function", function: { name, arguments: JSON.stringify(args) } }, ...(result === undefined ? {} : { result }) }) as Item;
+  test("live: the card sits on the first real tool (not skill_list), stays there while text and tools follow", () => {
+    const items = [user("u1", "查价格"), call("s1", "skill_list"), bot("a1", "我去查一下。"), call("t1", "web_search", { query: "x" }), bot("a2", "再核对一下"), call("t2", "web_fetch", { url: "https://a.com" }, undefined)];
+    const compact = compactTurns(items, true, new Set());
+    expect([...compact.work.keys()]).toEqual(["t1"]);
+    const work = compact.work.get("t1")!;
+    expect(work.live).toBe(true);
+    expect(work.key).toBe("u1");
+    expect(work.calls.map((c) => c.name)).toEqual(["skill_list", "web_search", "web_fetch"]);
+  });
+  test("done: same row, not live; only skill_list / render_ui → no row", () => {
+    const items = [user("u1", "查价格"), call("t1", "web_search", { query: "x" }), bot("a1", "8999 元")];
+    const compact = compactTurns(items, false, new Set());
+    expect(compact.work.get("t1")?.live).toBe(false);
+    expect(compact.tone.get("a1")).toBe("final");
+    const prep = compactTurns([user("u1", "画个表"), call("s1", "skill_list"), call("r1", "render_ui"), bot("a1", "好了")], false, new Set());
+    expect(prep.work.size).toBe(0);
+  });
+  test("a turn that ends with a render_ui card: the last text before it is the result, earlier process talk folds", () => {
+    const items = [
+      user("u1", "列个表"),
+      bot("a1", "我去查一下。"),
+      call("t1", "web_search", { query: "x" }),
+      bot("a2", "深圳没查到，我再核对。"),
+      call("t2", "web_search", { query: "y" }),
+      bot("a3", "表里深圳降水未核实。"),
+      call("r1", "render_ui"),
+    ];
+    const compact = compactTurns(items, false, new Set());
+    expect(compact.tone.get("a1")).toBe("lead");
+    expect(compact.tone.get("a3")).toBe("final");
+    expect(compact.hidden.has("a2")).toBe(true);
+    expect(compact.hidden.has("a3")).toBe(false);
+    // 还在跑：不提前改
+    const running = compactTurns(items, true, new Set());
+    expect(running.tone.get("a3")).toBe("step");
+    expect(running.hidden.has("a2")).toBe(false);
+  });
+});

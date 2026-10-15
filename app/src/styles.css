@@ -6682,29 +6682,26 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 }
 .chat-draft-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .chat-draft-body { padding: 12px 16px 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; color: var(--ink-1); }
-/* §70 干活卡：沿用「思考中」胶囊，多一行当前步骤 + 第几步 · 用时 */
-.chat-work-card { max-width: min(100%, 520px); }
+/* §70 / §74 干活卡：沿用「思考中」胶囊，一行当前步骤 + 第几步 · 用时 + ⌄；画在这一轮第一个干活的工具那一行里。
+   结束时同一个按钮换成「✓ 搜索 2 次 · 12 秒 ⌄」：同样的内边距和字号 → 同样高，结束那一刻不跳（§74.1）。 */
+.chat-work { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
+.chat-work-card { max-width: min(100%, 520px); border: 0; font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; text-align: left; transition: background-color 0.24s ease, box-shadow 0.24s ease, color 0.24s ease; }
+.chat-work-card:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent-blue) 55%, transparent); outline-offset: 2px; }
 .chat-work-step { position: relative; display: inline-flex; min-width: 0; overflow: hidden; }
 .chat-work-step-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-work-meta { flex-shrink: 0; color: var(--ink-4); font-size: 12px; font-variant-numeric: tabular-nums; }
-/* §70.2 干活卡收成的一行：在结果下面那一排里一直看得见，其余按钮仍悬停才出现（类名而不是 :has()，不拖慢输入时的样式计算） */
-.chat-msg-actions.has-work { opacity: 1; }
-.chat-msg-actions.has-work > :not(.chat-work-done) { opacity: 0; transition: opacity 0.15s ease; }
-[data-slot="message-scroller-item"]:hover .chat-msg-actions.has-work > *,
-.chat-msg-actions.has-work:focus-within > * { opacity: 1; }
-@media (hover: none) { .chat-msg-actions.has-work > :not(.chat-work-done) { opacity: 1; } }
-.chat-work-done { color: var(--ink-3); font-variant-numeric: tabular-nums; min-width: 0; flex-shrink: 1; }
-.chat-msg-actions.has-work { flex-wrap: nowrap; }
-.chat-msg-actions.has-work > * { white-space: nowrap; flex-shrink: 0; }
-.chat-msg-actions.has-work > .chat-work-done { flex-shrink: 1; }
-.chat-work-done-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 窄屏一排放不下：用时让位（次数和步骤还在） */
-@media (max-width: 560px) { .chat-work-done-secs { display: none; } }
-.chat-work-done-chevron { transition: transform 0.18s ease; }
-.chat-work-done-chevron[data-open] { transform: rotate(180deg); }
-.chat-work-steps { margin: 4px 0 0 9px; padding: 6px 0 6px 14px; border-left: 2px solid color-mix(in srgb, var(--accent-blue) 35%, transparent); list-style: none; display: grid; gap: 3px; font-size: 12.5px; line-height: 1.5; color: var(--ink-3); max-width: min(100%, 520px); }
+.chat-work-meta:empty { display: none; }
+.chat-work-chevron { flex-shrink: 0; color: var(--ink-4); margin-left: -4px; transition: transform 0.18s ease; }
+.chat-work-chevron[data-open] { transform: rotate(180deg); }
+/* 结束后：胶囊底色淡出，只剩一行淡色字（Hark「Searched 3 sites ⌄」） */
+.chat-work-card.chat-work-done { background: transparent; box-shadow: none; backdrop-filter: none; color: var(--ink-3); animation: none; font-variant-numeric: tabular-nums; }
+.chat-work-card.chat-work-done:hover { background: var(--glass-1); }
+.chat-work-check { display: inline-flex; align-items: center; justify-content: center; width: 26px; color: color-mix(in srgb, var(--accent-blue) 70%, var(--ink-3)); }
+@media (max-width: 560px) { .chat-work-card.chat-work-done .chat-work-meta { display: none; } }
+.chat-work-steps { margin: 4px 0 0 9px; padding: 6px 0 6px 14px; border-left: 2px solid color-mix(in srgb, var(--accent-blue) 35%, transparent); list-style: none; display: grid; gap: 3px; font-size: 12.5px; line-height: 1.5; color: var(--ink-3); max-width: min(100%, 520px); animation: p3-rise 0.2s cubic-bezier(0.23, 1, 0.32, 1) both; }
 .chat-work-steps li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (prefers-reduced-motion: reduce) { .chat-work-done-chevron { transition: none; } }
+.chat-work-steps li.is-current { color: var(--ink-2); }
+@media (prefers-reduced-motion: reduce) { .chat-work-chevron, .chat-work-card { transition: none; } .chat-work-steps { animation: none; } }
 
 /* 活动记录：窄屏一条记录一张小卡（时间 · 操作 / 对象 / 机器人 · 谁发起 / 结果），不再横向截掉列（CB-057，DESIGN.md §71.6）。
    用换行的 flex 而不是网格：网格的 auto 列会被很长的机器人 id 撑宽，把「操作」挤成一字一行。 */

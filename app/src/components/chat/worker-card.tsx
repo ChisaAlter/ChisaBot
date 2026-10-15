@@ -66,10 +66,23 @@ export function WorkerCard({ workerId, pendingTitle }: { workerId?: string; pend
   return <WorkerCardBody compact={running > 1} threadId={threadId!} worker={worker} />;
 }
 
+/** 收成一行的摘要是给眼睛看的纯文字：去掉 markdown 记号（审计里出现过「截至 **2026-10-16**」）。 */
+export function plainSummary(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|~~|`)/g, "")
+    .replace(/^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+|\d+\.\s+)/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** 当前步骤那一行：服务器给的；还没有就用清单里正在做的那一步。 */
 function stepLine(worker: WorkerView): string {
   if (worker.status === "queued") return "排队中，前面的任务做完就开始";
-  if (worker.step) return worker.step;
+  // 没有中文说法的工具（服务器写成「正在使用 skill_load」）不给用户看工具名（§69.3 / §74.2），改看清单。
+  if (worker.step && !worker.step.startsWith("正在使用 ")) return worker.step;
   const current = worker.plan.find((step) => step.status === "current") ?? worker.plan.find((step) => step.status === "pending");
   return current?.text || "正在看任务要求";
 }
@@ -165,7 +178,7 @@ function WorkerCardBody({ compact, threadId, worker }: { compact: boolean; threa
           </span>
           <span className="worker-title">{worker.title}</span>
           <span className="worker-line-text">
-            {ok ? worker.summary || "已完成" : worker.status === "cancelled" ? "已停止" : worker.error || "没有完成"}
+            {ok ? (worker.summary ? plainSummary(worker.summary) : "") || "已完成" : worker.status === "cancelled" ? "已停止" : worker.error || "没有完成"}
           </span>
           <span className="worker-time">{elapsed}</span>
         </button>
@@ -206,7 +219,7 @@ function WorkerCardBody({ compact, threadId, worker }: { compact: boolean; threa
         {active
           ? stepLine(worker)
           : worker.status === "done"
-            ? worker.summary || "已完成"
+            ? (worker.summary ? plainSummary(worker.summary) : "") || "已完成"
             : worker.error || WORKER_STATUS_ZH[worker.status]}
       </div>
       {worker.plan.length ? (

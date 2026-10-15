@@ -56,8 +56,8 @@ import { readFiring } from "@/lib/channels/routine-firing";
 import { splitChatOrigin } from "./chat-origin";
 import { markdownComponents } from "@/lib/markdown";
 import { BotBubbles } from "@/components/chat/bot-bubbles";
-import { WorkCard, workSeconds } from "@/components/chat/work-card";
-import { summarizeDoneWork, type WorkCall } from "@/lib/chat/work-steps";
+import { WorkRow } from "@/components/chat/work-card";
+import { isWorkCall, type WorkCall } from "@/lib/chat/work-steps";
 import { supersededPageCalls } from "@/lib/chat/page-cards";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { EditAction, MessageEditor, RegenerateAction } from "@/components/chat/message-actions";
@@ -753,7 +753,6 @@ const TranscriptMessage = memo(function TranscriptMessage({
   role,
   text,
   tone,
-  work,
 }: {
   /** 这是最后一轮的回答：下面带「重新生成」（DESIGN.md §67）。 */
   canRegenerate?: boolean;
@@ -766,11 +765,8 @@ const TranscriptMessage = memo(function TranscriptMessage({
   text: string;
   /** compactTurns：开场一句 / 过程话 / 结果。过程话画成一行淡色小字，开场和过程都没有复制。 */
   tone?: "lead" | "step" | "final" | undefined;
-  /** 这一轮调过工具：结果下面那一排带「搜索 2 次 · 看了 3 个网页 · 12 秒 ⌄」，点开是每一步（§70.2）。 */
-  work?: { label: string; steps: string; key: string } | undefined;
 }) {
   const [editing, setEditing] = useState(false);
-  const [workOpen, setWorkOpen] = useState(false);
   const isUser = role === "user";
   if (!isUser && tone === "step") {
     return (
@@ -918,14 +914,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
               </div>
             ) : null
           ) : (
-            <>
-              <CopyMessage
-                text={text}
-                lead={work ? <WorkDone label={work.label} onToggle={() => setWorkOpen((open) => !open)} open={workOpen} turnKey={work.key} /> : null}
-                extra={canRegenerate ? <RegenerateAction /> : null}
-              />
-              {work && workOpen ? <WorkSteps steps={work.steps} /> : null}
-            </>
+            <CopyMessage text={text} extra={canRegenerate ? <RegenerateAction /> : null} />
           )}
         </Arriving>
       </MessageContent>
@@ -933,50 +922,14 @@ const TranscriptMessage = memo(function TranscriptMessage({
   );
 });
 
-/**
- * 干活卡收成的一行（DESIGN.md §70.2）：在结果下面那一排（复制 / 重新生成的同一行，一直看得见），
- * 「搜索 2 次 · 看了 3 个网页 · 12 秒 ⌄」。放在这一排而不是结果上面：这一排在回答结束那一刻本来就出现，
- * 多一个按钮不多一行，所以结束时画面不跳（§35 / §68.4）。点开在下面列出每一步（用户自己点的才长高）。
- */
-function WorkDone({ label, open, onToggle, turnKey }: { label: string; open: boolean; onToggle: () => void; turnKey: string }) {
-  // 用时只在这台页面看着它干完时知道（workSeconds 第一次调用记下结束时间）；从历史打开的不写。
-  const [seconds] = useState(() => workSeconds(turnKey));
-  return (
-    <button
-      aria-expanded={open}
-      className="chat-msg-action chat-work-done"
-      data-testid="chat-work-done"
-      onClick={onToggle}
-      type="button"
-    >
-      <span className="chat-work-done-label">
-        {label}
-        {seconds ? <span className="chat-work-done-secs">{` · ${seconds} 秒`}</span> : null}
-      </span>
-      <IconChevronDown aria-hidden="true" className="chat-work-done-chevron size-3.5" data-open={open || undefined} />
-    </button>
-  );
-}
-
-function WorkSteps({ steps }: { steps: string }) {
-  return (
-    <ol className="chat-work-steps" data-testid="chat-work-steps">
-      {steps.split("\n").filter(Boolean).map((step, index) => (
-        <li key={`${index}:${step}`}>{step}</li>
-      ))}
-    </ol>
-  );
-}
-
 /** A quiet copy action under a Bot's answer; shows on hover, always reachable by keyboard. */
-function CopyMessage({ text, extra, lead }: { text: string; extra?: React.ReactNode; lead?: React.ReactNode }) {
+function CopyMessage({ text, extra }: { text: string; extra?: React.ReactNode }) {
   const copy = useAsyncAction(() => writeClipboard(text), {
     errorToast: "复制失败，请手动选择文本复制。",
   });
   const label = { idle: "复制", pending: "复制", success: "已复制", error: "复制失败" }[copy.state];
   return (
-    <div className={lead ? "chat-msg-actions has-work" : "chat-msg-actions"}>
-      {lead}
+    <div className="chat-msg-actions">
       <button
         aria-label={copy.state === "idle" ? "复制回答" : label}
         className="chat-msg-action"
@@ -1926,30 +1879,8 @@ export function ChatTranscript({
       (!showToolActivity &&
         (lastItem?.kind === "tool" || lastItem?.kind === "browser")));
 
-  // 这一轮（最后一条人发的消息之后）调过的工具，给干活卡用（DESIGN.md §70）。每次渲染重算（items 每次都是新数组，见 toVisibleChatItems）。
-  const liveWork = (() => {
-    if (!busy) return null;
-    let start = -1;
-    for (let i = items.length - 1; i >= 0; i--) {
-      const item = items[i]!;
-      if (item.kind === "attachments" || (item.kind === "text" && isPersonSentMessage(item.role, item.text))) {
-        start = i;
-        break;
-      }
-    }
-    const calls: WorkCall[] = [];
-    for (const item of items.slice(start + 1)) {
-      const tools = item.kind === "tool" ? [item] : item.kind === "browser" ? item.steps : [];
-      for (const tool of tools) {
-        calls.push({
-          name: tool.toolCall.function.name,
-          arguments: tool.toolCall.function.arguments,
-          done: tool.result !== undefined,
-        });
-      }
-    }
-    return calls.length > 0 ? { calls, key: items[start]?.id ?? "turn" } : null;
-  })();
+  // 这一轮已经有干活卡（在第一个干活的工具那一行里，DESIGN.md §74.1）：末尾不再画「思考中」。
+  const liveWorking = busy && !showToolActivity && [...compact.work.values()].some((work) => work.live);
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const newestUserMessageId =
@@ -2060,7 +1991,8 @@ export function ChatTranscript({
                 <Stopped onRetry={onRetry} reason={stopped} />
               ) : waitingOnFirstToken ? (
                 // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
-                liveWork ? <WorkCard calls={liveWork.calls} turnKey={liveWork.key} /> : <Thinking />
+                // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §74.1），这里不再画「思考中」。
+                liveWorking ? null : <Thinking />
               ) : null}
               {queued.map((message) => (
                 <Queued
@@ -2111,6 +2043,13 @@ export function ChatTranscript({
     </MessageScrollerProvider>
   );
 
+  /** 这一轮的干活卡 / 收成的一行，画在这一轮第一个干活的工具那一行里（DESIGN.md §74.1）。打开「调试：显示工具调用」时不画（每一步本来就画着）。 */
+  function workRowFor(id: string) {
+    if (showToolActivity) return null;
+    const work = compact.work.get(id);
+    return work ? <WorkRow calls={work.calls} live={work.live} turnKey={work.key} /> : null;
+  }
+
   function renderRow(item: TranscriptItem, index: number) {
     return (
               item.kind === "browser" ? (
@@ -2127,6 +2066,7 @@ export function ChatTranscript({
                       active={busy && index === items.length - 1}
                     />
                   </Arriving>
+                  {workRowFor(item.id)}
                 </MessageScrollerItem>
               ) : item.kind === "tool" ? (
                 <MessageScrollerItem
@@ -2147,6 +2087,7 @@ export function ChatTranscript({
                     recent={index >= items.length - 8}
                     toolCallId={item.toolCall.id}
                   />
+                  {workRowFor(item.id)}
                 </MessageScrollerItem>
               ) : item.kind === "activity" ? (
                 <MessageScrollerItem key={item.id} messageId={item.id}>
@@ -2170,7 +2111,6 @@ export function ChatTranscript({
                     role={item.role}
                     text={item.text}
                     tone={compact.tone.get(item.id)}
-                    work={showToolActivity ? undefined : compact.work.get(item.id)}
                   />
                 </MessageScrollerItem>
               ) : item.kind === "attachments" ? (
@@ -2231,14 +2171,17 @@ export function compactTurns(
   stoppedAfter: Set<string>;
   /** 换了备用模型的轮次：最后一个看得见的行 → 说明（§61）。 */
   fallbackAfter: Map<string, string>;
-  /** 调过工具、已经有结果的轮次：结果那一条 → 收成的一行（§70.2）；key = 这一轮开头那条消息（干活卡记用时用的同一个）。 */
-  work: Map<string, { label: string; steps: string; key: string }>;
+  /**
+   * 干活卡（§74.1）：这一轮第一个干活的工具那一行 → 这一轮的全部调用、是否还在跑；key = 这一轮开头那条消息（记用时用）。
+   * 还在跑时画实时卡，结束后同一个位置收成「搜索 2 次 · 12 秒 ⌄」。
+   */
+  work: Map<string, { calls: WorkCall[]; key: string; live: boolean }>;
 } {
   const tone = new Map<string, "lead" | "step" | "final">();
   const hidden = new Set<string>();
   const stoppedAfter = new Set<string>();
   const fallbackAfter = new Map<string, string>();
-  const work = new Map<string, { label: string; steps: string; key: string }>();
+  const work = new Map<string, { calls: WorkCall[]; key: string; live: boolean }>();
   // 一轮的开头：人发的消息，或服务器放进来、接着跑一轮的那几种（定时任务 / 任务结果 / 后来确认，CB-046）。
   const sent = (item: TranscriptItem) =>
     item.kind === "attachments" ||
@@ -2267,19 +2210,38 @@ export function compactTurns(
         tone.set(item.id, "final");
       } else tone.set(item.id, i === 0 ? "lead" : "step");
     });
-    if (final) for (const item of texts) if (tone.get(item.id) === "step") hidden.add(item.id);
-    if (final) {
-      const calls: WorkCall[] = [];
-      for (const item of turn.rest) {
-        const tools = item.kind === "tool" ? [item] : item.kind === "browser" ? item.steps : [];
-        for (const tool of tools) calls.push({ name: tool.toolCall.function.name, arguments: tool.toolCall.function.arguments, done: tool.result !== undefined });
+    /*
+     * 以卡片收尾的一轮（最后一个看得见的是 render_ui 画的卡片，后面没有文字，§74.3）：卡片就是结果。
+     * 卡片前最后一段话当结果那句话（气泡，带复制），更早的过程话收起——以前它们一直是一行行淡色小字，
+     * 把「我再核对一下深圳」这种过程留在了答案上面。
+     */
+    if (!final && !live && !isStopped && texts.length > 1) {
+      const lastRest = [...turn.rest].reverse().find((item) => item.kind !== "text" || item.role !== "assistant" || item.text.trim());
+      if (lastRest?.kind === "tool" && lastRest.toolCall.function.name === "render_ui") {
+        const promoted = texts[texts.length - 1]!;
+        final = promoted.id;
+        tone.set(promoted.id, "final");
       }
-      const done = summarizeDoneWork(calls);
-      const key = turn.users[turn.users.length - 1]?.id;
-      if (done && key) work.set(final, { label: done.label, steps: done.steps.join("\n"), key });
     }
+    if (final) for (const item of texts) if (tone.get(item.id) === "step") hidden.add(item.id);
     const browsers = turn.rest.filter((item) => item.kind === "browser");
     for (const item of browsers.slice(0, -1)) hidden.add(item.id);
+    // 干活卡（§74.1）：这一轮全部调用；画在第一个干活的工具那一行（浏览只留最后一组，所以落在浏览上时用最后那一组）。
+    {
+      const calls: WorkCall[] = [];
+      let anchor: string | null = null;
+      for (const item of turn.rest) {
+        const tools = item.kind === "tool" ? [item] : item.kind === "browser" ? item.steps : [];
+        for (const tool of tools) {
+          const name = tool.toolCall.function.name;
+          calls.push({ name, arguments: tool.toolCall.function.arguments, done: tool.result !== undefined });
+          if (anchor === null && isWorkCall(name)) anchor = item.id;
+        }
+      }
+      if (anchor !== null && hidden.has(anchor)) anchor = browsers.at(-1)?.id ?? null;
+      const key = turn.users[turn.users.length - 1]?.id;
+      if (anchor !== null && key) work.set(anchor, { calls, key, live });
+    }
     // CB-021：同一轮里同一个页面只留一张卡（§54「同一轮同一页面一张卡」）。
     const pageCalls = turn.rest.flatMap((item) =>
       item.kind === "tool" ? [{ id: item.id, name: item.toolCall.function.name, args: item.toolCall.function.arguments, result: item.result }] : [],
