@@ -3,7 +3,7 @@
 ## 0.1.34 — 2026-10-19
 
 ### 生产成熟度
-- nginx 模板与生产同步：`sync-nginx.sh` apply-or-fail；deploy-serial 漂移检测；CI check-repo（#TBD）
+- nginx 模板与生产同步：`sync-nginx.sh` apply-or-fail；deploy-serial 漂移检测；CI check-repo（#233）
 - 非电车定时复验：fail→pause、stuck reclaim 计入连续失败、paused 永不 auto-resume；`partitionScheduleList`；电车仍暂停
 
 ## 0.1.33
