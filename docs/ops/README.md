@@ -41,6 +41,7 @@
 | 应用 compose 目录 | `/opt/openbot-zh/`（或你的检出里的 `deploy/`，以 `config.env` 的 `COMPOSE_DIR` 为准） |
 | 更新器 | `/opt/chisabot-updater/`，systemd 服务 `chisabot-updater` |
 | 上线 | `sh deploy-serial.sh <合并提交前 7 位> <你的名字>`（[deploy.md](deploy.md) §1）；纯文档 PR 不需要部署 |
+| 切流回滚窗口 | [traffic-cut-rollback.md](traffic-cut-rollback.md)（`cutback.sh` 默认 dry-run） |
 | 回滚 | 网页：设置 → 系统更新 →「回滚到上一版」；或运行 `ls -t /opt/openbot-zh/rollback-to-*.sh` 列出的第一个（最新）脚本 |
 | 自检 | `sh /opt/chisabot-updater/smoke.sh` 或 `POST /api/admin/smoke`（模型往返）；聚合健康 `GET /api/admin/health`；部署后烟雾 `request.sh smoke` |
 | 版本 | `curl -s 127.0.0.1:3001/api/version`（版本号 + 提交号） |

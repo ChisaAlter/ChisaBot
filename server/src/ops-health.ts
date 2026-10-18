@@ -19,6 +19,7 @@ import { OPS_CODES, opsLogLine } from "../../shared/ops-codes";
 import {
   type OpsCounterSnapshot,
   opsCounterSnapshot,
+  opsHistorySeries,
 } from "../../shared/ops-counters";
 import type { BuildVersion } from "../../shared/system-update";
 import type { AppVariables } from "./auth/guards";
@@ -72,7 +73,7 @@ export type OpsHealthReport = {
     computer: ComputerCheck;
     localCaller: LocalCallerCheck;
   };
-  /** PRD-P1-02: process-local SEND/STREAM/SSRF budgets since boot (+ 15m window). */
+  /** PRD-P1-02: SEND/STREAM/SSRF budgets — totals, last15m, rates, 1h series. */
   budgets: OpsCounterSnapshot;
 };
 
@@ -263,6 +264,27 @@ export function createOpsHealthRoutes(options: {
       log: options.log,
     });
     return context.json(report, report.ok ? 200 : 503);
+  });
+
+  /**
+   * Scrape-friendly budget history (admin only).
+   * `?hours=1|6|24` (default 6). Sparse minute points; no secrets.
+   */
+  routes.get("/budgets", (context) => {
+    const raw = context.req.query("hours");
+    const hours = raw === "1" || raw === "24" || raw === "6" ? Number(raw) : 6;
+    const now = Date.now();
+    const snap = opsCounterSnapshot(now);
+    return context.json({
+      at: snap.at,
+      hours,
+      bucketMs: snap.series.bucketMs,
+      retentionMs: snap.series.retentionMs,
+      totals: snap.totals,
+      last15m: snap.last15m,
+      rates: snap.rates,
+      points: opsHistorySeries(now, hours * 60 * 60_000),
+    });
   });
 
   return routes;

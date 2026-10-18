@@ -90,9 +90,19 @@ docker logs --since 30m openbot-zh 2>&1 | grep -E 'OPS_|PostgresError|bind messa
   "at": "2026-10-19T05:00:00.000Z",
   "windowMs": 900000,
   "totals": { "SEND_UNREACHABLE": 0, "STREAM_DISCONNECT": 0, "SSRF_DENIED": 0 },
-  "last15m": { "SEND_UNREACHABLE": 0, "STREAM_DISCONNECT": 0, "SSRF_DENIED": 0 }
+  "last15m": { "SEND_UNREACHABLE": 0, "STREAM_DISCONNECT": 0, "SSRF_DENIED": 0 },
+  "rates": {
+    "last1h": { "SSRF_DENIED": 0 },
+    "last6h": { "SSRF_DENIED": 0 },
+    "last24h": { "SSRF_DENIED": 0 },
+    "perHour1h": { "SSRF_DENIED": 0 },
+    "perHour6h": { "SSRF_DENIED": 0 }
+  },
+  "series": { "bucketMs": 60000, "retentionMs": 86400000, "points": [] }
 }
 ```
+
+更长历史：`GET /api/admin/health/budgets?hours=6`。磁盘：`/workspace/.chisabot-ops/budgets.json`（见 [ops/monitoring.md](ops/monitoring.md) §5）。
 
 | 谁 bump | 怎么看见 |
 |---------|----------|
@@ -127,3 +137,12 @@ CI 红线：`server/tests/ssrf-redline.test.ts`（PRD-P1-06）。备份演练：
 | 已落库回答挂死 | 「已经发出去了，但回答迟迟没回来」；`SEND_REPLY_HANG` |
 | MCP 工具中点停止 | 入口或进行中 JSON-RPC 中止；结果为停止拒绝，非迟到成功 |
 | 自动化 | `connection-drop` + `mcp-protocol` + `plugin-tools-abort` 测试绿 |
+
+## 8. 切流回滚窗口（v0.1.32）
+
+| 检查 | 期望 |
+|------|------|
+| `KEEP_IMAGES` | ≥ 5（`deploy/updater/config.env`；扩大窗口需改主机 config） |
+| Dry-run | `sh scripts/ops/cutback.sh` → image present、DRY-RUN、**不**切流量 |
+| 真切流 | 仅变更窗口 + `CUTBACK_EXECUTE=1`；RTO ~2–5 min |
+| 文档 | [ops/traffic-cut-rollback.md](ops/traffic-cut-rollback.md) |

@@ -61,3 +61,27 @@ openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.p
 - 看门狗：`journalctl -t chisabot-syncwatch`。
 
 排查时把 UTC 时间（镜像标签、备份目录、日志）和你所在时区的时间对清楚再下结论。
+
+## 5. 错误预算时序（无 SaaS）
+
+进程内计数仍在 `GET /api/admin/health` → `budgets`（totals / last15m）。自 v0.1.32 起额外提供：
+
+| 字段 / 端点 | 含义 |
+|-------------|------|
+| `budgets.rates` | `last1h` / `last6h` / `last24h` 事件数；`perHour1h` / `perHour6h` |
+| `budgets.series.points` | 近 60 分钟**非零**分钟桶（稀疏） |
+| `GET /api/admin/health/budgets?hours=1\|6\|24` | 刮数友好：同结构 + 更长 `points` |
+| 磁盘文件 | 默认 `/workspace/.chisabot-ops/budgets.json`（compose `workspace` 卷）；`CHISABOT_OPS_METRICS_PATH` 可覆盖。重启后 `import` 进分钟环 |
+
+本机读取示例：
+
+```sh
+SECRET=$(grep -E '^[[:space:]]*CHISABOT_GATEWAY_SECRET=' /opt/openbot-zh/.env | head -1 | cut -d= -f2- | tr -d '"'\'')
+curl -s -H "X-ChisaBot-Local-Caller: $SECRET" \
+  'http://127.0.0.1:3001/api/admin/health/budgets?hours=6' | jq '{at, rates, points: (.points|length)}'
+# 或看持久化文件（容器内）：
+docker exec openbot-zh sh -c 'wc -c /workspace/.chisabot-ops/budgets.json; tail -c 200 /workspace/.chisabot-ops/budgets.json'
+```
+
+仍**没有**托管 Prometheus/Grafana；需要看板时用上述 JSON + 你自己的 Uptime/脚本即可。
+

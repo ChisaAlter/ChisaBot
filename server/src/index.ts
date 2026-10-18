@@ -280,6 +280,7 @@ import {
   createOpsHealthRoutes,
 } from "./ops-health";
 import { createOpsBudgetRoutes } from "./ops-budget";
+import { flushOpsMetrics, startOpsMetricsStore } from "./ops-metrics-store";
 import { OPS_CODES } from "../../shared/ops-codes";
 import { bumpOps } from "../../shared/ops-counters";
 import { createModelFallbackService, createModelFallbackStore } from "./agents/model-fallback-settings";
@@ -4029,6 +4030,7 @@ if (config.singleUser) {
 // so a watch-mode restart does not leave two behind on every reload.
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
+    void flushOpsMetrics().catch(() => {});
     responsibilitySweep.stop();
     livePanelService.stop();
     wakeUpSweep.stop();
@@ -4049,6 +4051,22 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 }
 
 console.info(`OpenBot server listening on http://127.0.0.1:${port}`);
+
+void startOpsMetricsStore()
+  .then(({ path: metricsPath, loaded }) => {
+    console.info(
+      JSON.stringify({
+        type: "ops-metrics",
+        path: metricsPath,
+        loaded,
+      }),
+    );
+  })
+  .catch((error) => {
+    console.warn(
+      `[ops-metrics] start failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
 
 // IM 接入：服务起来以后再连各平台（适配器自己断线重连）。CHISABOT_IM=0 关掉（不连任何平台）。
 if (process.env.CHISABOT_IM !== "0") {

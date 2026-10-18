@@ -28,7 +28,7 @@ ChisaBot 有两种「发布」：
    - **快速更新**：依赖指纹没变 → 在底座镜像上只换代码层（约 1–2 分钟）；
    - **完整构建**：依赖 / Dockerfile 变了，或底座镜像不存在 → 仓库根 Dockerfile 限内存构建（约 4–6 分钟），成功后成为新底座。
 4. 切换前 `pg_dump` 备份（保留 5 份）；切换后健康检查 + 模型自检；**失败自动回滚**到上一镜像。每次切换都留下
-   `rollback-to-<上一镜像>.sh`（只有镜像还在时才有效，更新器保留最近 3 个镜像）。
+   `rollback-to-<上一镜像>.sh`（只有镜像还在时才有效，更新器保留最近 5 个镜像（见 docs/ops/traffic-cut-rollback.md））。
 5. 上线后按 [testing.md](testing.md) §4 做生产检查。纯文档 PR（只改 `docs/`、`*.md`、`.github/` 模板）**不需要部署**。
 
 细节：[ops/deploy.md](ops/deploy.md)、[online-update.md](online-update.md)。网关 / 登录服务 / 云端节点 / Magpie 不随一键更新，要手工部署。

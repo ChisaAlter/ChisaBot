@@ -43,6 +43,9 @@ test("collectOpsHealth: all green when optional deps skipped", async () => {
   expect(report.budgets.totals.SSRF_DENIED).toBe(0);
   expect(report.budgets.last15m.SEND_UNREACHABLE).toBe(0);
   expect(report.budgets.windowMs).toBe(15 * 60_000);
+  expect(report.budgets.rates.last1h.SSRF_DENIED).toBe(0);
+  expect(report.budgets.series.bucketMs).toBe(60_000);
+  expect(Array.isArray(report.budgets.series.points)).toBe(true);
 });
 
 test("collectOpsHealth: database failure fails overall and logs OPS code", async () => {
@@ -192,4 +195,18 @@ test("GET /api/admin/health: 503 when database down", async () => {
   const body = await response.json();
   expect(body.ok).toBe(false);
   expect(body.checks.database.ok).toBe(false);
+});
+
+test("GET /api/admin/health/budgets: scrape history shape", async () => {
+  resetOpsCountersForTests();
+  const response = await app("admin").request(
+    "/api/admin/health/budgets?hours=1",
+  );
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  const body = await response.json();
+  expect(body.hours).toBe(1);
+  expect(body.bucketMs).toBe(60_000);
+  expect(body.rates.last1h.SSRF_DENIED).toBe(0);
+  expect(Array.isArray(body.points)).toBe(true);
 });

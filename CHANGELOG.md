@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.32
+
+- Ops maturity **metrics timeseries + traffic-cut rollback**: minute-ring budgets with `rates` / `series` on `GET /api/admin/health` and scrape `GET /api/admin/health/budgets?hours=…`; file persist `/workspace/.chisabot-ops/budgets.json` (no managed SaaS). `scripts/ops/cutback.sh` dry-run by default (`CUTBACK_EXECUTE=1` to cut); `KEEP_IMAGES` default 5; RTO ~2–5 min in `docs/ops/traffic-cut-rollback.md`.
+
+
 ## 0.1.31
 
 - Production maturity **send honesty + MCP abort**: `decideSendWatchdogAction` + automated tests that timeout/unpersisted/reply-hang never look like success; MCP SDK `AbortSignal` on connect/callTool; `grantedTools` honours Stop and suppresses late success; Drive merges abort; Composio/builtin entry-check (mid-flight vendor SDK limits documented).
