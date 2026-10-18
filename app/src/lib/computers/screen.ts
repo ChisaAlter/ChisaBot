@@ -18,28 +18,53 @@ export type Screenshot = {
   startPage?: boolean;
 };
 
+/** 面板上给人看的默认句（英文服务端文案不直接上屏）。 */
+export const SCREEN_UNAVAILABLE_ZH = "暂时看不到屏幕。";
+
+/** 503 / 电脑未就绪时的说明（DOG-05）。 */
+export const SCREEN_BUSY_ZH = "电脑正忙或还没就绪，屏幕暂时拿不到。";
+
+/**
+ * 把 HTTP 状态 / 服务端 error 翻成中文面板文案。
+ * 服务端 `describe` 常是英文；有中文（含「暂时」「不可用」等）时原样用。
+ */
+export function screenshotErrorMessage(
+  status: number | undefined,
+  serverError: string | undefined,
+): string {
+  const raw = serverError?.trim();
+  if (raw && /[\u4e00-\u9fff]/.test(raw)) return raw;
+  if (status === 503 || status === 502 || status === 504) return SCREEN_BUSY_ZH;
+  if (status === 404) return "找不到这台计算机的屏幕。";
+  if (status === 403) return "没有权限查看这台计算机的屏幕。";
+  return SCREEN_UNAVAILABLE_ZH;
+}
+
 /**
  * Read the current frame.
  *
  * Fails closed, and says why: the screen going unavailable is something the person watching needs
  * told, and it is not a reason to tear down the panel they are watching it in. The caller decides
- * whether to keep polling.
+ * whether to keep polling — and MUST clear any previous frame so a stale shot is not shown as live
+ * (DOG-05).
  */
 export async function readScreenshot(
   computerId: string,
-): Promise<{ frame?: Screenshot; error?: string }> {
-  const unavailable = "The screen is not available right now.";
+): Promise<{ frame?: Screenshot; error?: string; status?: number }> {
   try {
     const response = await tryClient(`/api/computers/${computerId}/screenshot`);
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as {
         error?: string;
       } | null;
-      return { error: body?.error ?? unavailable };
+      return {
+        status: response.status,
+        error: screenshotErrorMessage(response.status, body?.error),
+      };
     }
     return parseScreenshot(await response.json().catch(() => null));
   } catch {
-    return { error: unavailable };
+    return { error: SCREEN_UNAVAILABLE_ZH };
   }
 }
 
@@ -47,13 +72,12 @@ function parseScreenshot(body: unknown): {
   frame?: Screenshot;
   error?: string;
 } {
-  const unavailable = "The screen is not available right now.";
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return { error: unavailable };
+    return { error: SCREEN_UNAVAILABLE_ZH };
   }
   const frame = (body as { frame?: unknown }).frame ?? body;
   if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
-    return { error: unavailable };
+    return { error: SCREEN_UNAVAILABLE_ZH };
   }
   const { base64, width, height } = frame as {
     base64?: unknown;
@@ -71,7 +95,7 @@ function parseScreenshot(body: unknown): {
     !Number.isFinite(height) ||
     height <= 0
   ) {
-    return { error: unavailable };
+    return { error: SCREEN_UNAVAILABLE_ZH };
   }
   return { frame: frame as Screenshot };
 }

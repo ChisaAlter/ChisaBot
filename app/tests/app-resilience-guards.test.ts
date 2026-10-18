@@ -82,10 +82,27 @@ describe("control/screen/client guards", () => {
         status: 200,
         headers: { "content-type": "application/json" },
       })) as unknown as typeof fetch;
-    const { readScreenshot } = await import("../src/lib/computers/screen");
+    const { readScreenshot, SCREEN_UNAVAILABLE_ZH } = await import(
+      "../src/lib/computers/screen"
+    );
     const result = await readScreenshot("bot-1");
     expect(result.frame).toBeUndefined();
-    expect(typeof result.error).toBe("string");
+    expect(result.error).toBe(SCREEN_UNAVAILABLE_ZH);
+  });
+
+  test("readScreenshot 503 clears to Chinese busy copy (DOG-05)", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "computer is warming up" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    const { readScreenshot, SCREEN_BUSY_ZH } = await import(
+      "../src/lib/computers/screen"
+    );
+    const result = await readScreenshot("bot-1");
+    expect(result.frame).toBeUndefined();
+    expect(result.status).toBe(503);
+    expect(result.error).toBe(SCREEN_BUSY_ZH);
   });
 
   test("readPageFrame answers null on an array frame", async () => {

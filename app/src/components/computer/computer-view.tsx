@@ -1,13 +1,23 @@
 import { IconAlertTriangle, IconWorld, IconX } from "@tabler/icons-react";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import {
+  browserPresenceCardLabel,
+  browserPresenceFootLabel,
+  browserPresenceKind,
+} from "@/lib/computers/browser-presence";
 import { supplySecret } from "@/lib/computers/control";
 import {
   readPageFrame,
   readScreenshot,
   type Screenshot,
 } from "@/lib/computers/screen";
+import {
+  applyScreenshotPollResult,
+  nextScreenshotPollDelay,
+} from "@/lib/computers/screenshot-poll";
 import { useComputerControl } from "@/lib/computers/use-control";
+import { useComputerStatus } from "@/lib/computers/use-status";
 import { ChannelAvatar } from "../channels/avatar";
 import { ComputerControlButton } from "./computer-controls";
 import { syncStartLinks } from "@/lib/browser-bookmarks";
@@ -114,6 +124,7 @@ function NothingToSee({
   blankBrowser,
   settled,
   page,
+  onRetry,
 }: {
   problem: string | null;
   blankBrowser: boolean;
@@ -121,6 +132,8 @@ function NothingToSee({
   settled?: boolean;
   /** The page that turn opened, named when there is no picture of it. */
   page?: { url?: string; title?: string } | undefined;
+  /** 截图失败时手动再拉一帧（轮询也会继续；这是给人不想干等的按钮）。 */
+  onRetry?: (() => void) | undefined;
 }) {
   return (
     <span className="computer-idle absolute inset-0 flex flex-col items-center justify-center gap-1 p-4 text-center text-muted-foreground text-sm">
@@ -158,6 +171,18 @@ function NothingToSee({
           <IconAlertTriangle className="computer-idle-ic is-warn" />
           <span className="computer-idle-t">{"暂时看不到屏幕"}</span>
           <span className="computer-idle-s">{problem}</span>
+          {onRetry ? (
+            <button
+              type="button"
+              className="mt-2 underline text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRetry();
+              }}
+            >
+              {"重试"}
+            </button>
+          ) : null}
         </>
       ) : blankBrowser ? (
         /*
@@ -272,6 +297,12 @@ export function ComputerView({
     change: changeControl,
     refresh: refreshControl,
   } = useComputerControl(computerId, !settled);
+  /**
+   * 状态行还在 = 机器人这一轮真的在用电脑（或刚停手 linger）。空闲时不要再说「在用浏览器」。
+   * DOG-05：和顶栏 useComputerStatus 同一信号。
+   */
+  const computerStatus = useComputerStatus(settled ? undefined : computerId);
+  const botActive = computerStatus !== null;
   /** Held only until it is sent. Never lifted into a URL, a log, or anything that outlives this form. */
   const [secret, setSecret] = useState("");
   const [secretProblem, setSecretProblem] = useState<string | null>(null);
@@ -344,7 +375,7 @@ export function ComputerView({
     };
   }, [computerId, toolCallId, settled]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `secretPending` intentionally restarts settled polling.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `secretPending` / `retryKey` intentionally restart settled polling.
   useEffect(() => {
     if (settled) return;
     if (!visualVisible) return;
@@ -353,6 +384,7 @@ export function ComputerView({
     // Consecutive identical frames observed during post-action settling.
     let unchanged = 0;
     let lastFrame = "";
+    let failStreak = 0;
     const graceStartedAt = Date.now();
 
     /** Continue while active, human-driven, secret-pending, or not yet visually settled. */
@@ -368,24 +400,29 @@ export function ComputerView({
     // Always fetch at least one frame; only repeated refreshes are conditional.
     const tick = async () => {
       try {
-        const { frame, error } = await readScreenshot(computerId);
+        const result = await readScreenshot(computerId);
         if (generation.current !== mine) return;
 
-        if (!frame) {
-          setProblem(error ?? "屏幕暂时不可用。");
+        const next = applyScreenshotPollResult(result);
+        if (!next.shot) {
+          // DOG-05：清掉陈旧帧，占位「暂时看不到屏幕」，不要把上一张当直播。
+          failStreak += 1;
+          setShot(null);
+          setProblem(next.problem);
         } else {
+          failStreak = 0;
           // Exact byte comparison is the settling signal.
-          unchanged = frame.base64 === lastFrame ? unchanged + 1 : 0;
-          lastFrame = frame.base64;
+          unchanged = next.shot.base64 === lastFrame ? unchanged + 1 : 0;
+          lastFrame = next.shot.base64;
           // Decode before swapping to avoid blanking the visible image during data URL changes.
-          await preloadFrame(frame.base64);
+          await preloadFrame(next.shot.base64);
           if (generation.current !== mine) return;
-          setShot(frame);
+          setShot(next.shot);
           setProblem(null);
         }
       } finally {
         if (generation.current === mine && shouldContinue()) {
-          timer = setTimeout(tick, intervalMs);
+          timer = setTimeout(tick, nextScreenshotPollDelay(failStreak, intervalMs));
         }
       }
     };
@@ -395,7 +432,7 @@ export function ComputerView({
       generation.current++;
       clearTimeout(timer);
     };
-  }, [computerId, active, intervalMs, secretPending, settled, visualVisible]);
+  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey]);
 
   /*
    * 交还之后收起大屏。交还就是「我弄完了」，留着一个只读的大屏还要再点一次关闭，
@@ -430,6 +467,13 @@ export function ComputerView({
    * live browser can be sitting on about:blank.
    */
   const blankBrowser = !settled && shot ? isBlankBrowser(shot) : false;
+  const presence = browserPresenceKind({
+    control,
+    botActive,
+    screenUnavailable: !settled && Boolean(problem) && !shot,
+  });
+  const cardPresence = browserPresenceCardLabel(presence);
+  const footPresence = browserPresenceFootLabel(presence);
 
   /*
    * Sized from the ratio, never from the payload, so the frame is identical while a screen is
@@ -548,6 +592,14 @@ export function ComputerView({
           {showScreen ? null : (
             <NothingToSee
               blankBrowser={blankBrowser}
+              onRetry={
+                settled || !problem
+                  ? undefined
+                  : () => {
+                      setProblem(null);
+                      setRetryKey((value) => value + 1);
+                    }
+              }
               page={knownPage}
               problem={problem}
               settled={settled}
@@ -643,15 +695,7 @@ export function ComputerView({
 
         {!settled ? (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2">
-            <span className="text-xs text-muted-foreground">
-              {!control
-                ? "正在检查谁有控制权…"
-                : control.transitioning
-                  ? "正在完成当前操作…"
-                  : driving
-                    ? "你在控制浏览器，打开大屏点击和输入，用完点「交还」。"
-                    : "机器人在用浏览器，你可以随时接管。"}
-            </span>
+            <span className="text-xs text-muted-foreground">{cardPresence}</span>
             <ComputerControlButton
               computerId={computerId}
               onTakeControl={() => setExpanded(true)}
@@ -787,6 +831,14 @@ export function ComputerView({
                       <div className="computer-frame ctk-screen relative w-full rounded-lg" data-ctk-screen style={{ aspectRatio }}>
                         <NothingToSee
                           blankBrowser={blankBrowser}
+                          onRetry={
+                            settled || !problem
+                              ? undefined
+                              : () => {
+                                  setProblem(null);
+                                  setRetryKey((value) => value + 1);
+                                }
+                          }
                           page={knownPage}
                           problem={problem}
                           settled={settled}
@@ -813,17 +865,13 @@ export function ComputerView({
                       className="ctk-status"
                       title={control?.reason ? control.reason : undefined}
                     >
-                      {control?.transitioning ? (
-                        "正在完成当前操作，马上交给你…"
-                      ) : driving ? (
-                        "你正在控制浏览器"
-                      ) : control?.requested ? (
+                      {control?.requested && !driving && !control.transitioning ? (
                         <>
                           <strong className="font-medium text-foreground">{"机器人需要你"}</strong>
                           {control.reason ? `：${control.reason}` : null}
                         </>
                       ) : (
-                        "机器人在用浏览器，接管后可以点击和输入"
+                        footPresence
                       )}
                     </span>
                     <span className="ctk-act">
