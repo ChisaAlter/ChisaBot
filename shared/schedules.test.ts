@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyScheduleReply, failStreakShouldPause, formatWhen, formatWhenAbsolute } from "./schedules";
+import { classifyScheduleReply, failStreakShouldPause, formatWhen, formatWhenAbsolute, partitionScheduleList, type ScheduleView } from "./schedules";
 
 describe("classifyScheduleReply (FIX-01)", () => {
   test("marks deferred confirm as waiting", () => {
@@ -50,5 +50,54 @@ describe("failStreakShouldPause (Track B)", () => {
     expect(failStreakShouldPause(["failed", "failed", "failed"], 3)).toBe(true);
     expect(failStreakShouldPause(["failed", "ok", "failed", "failed", "failed"], 3)).toBe(false);
     expect(failStreakShouldPause(["failed", "failed", "failed", "ok"], 3)).toBe(true);
+  });
+});
+
+
+describe("partitionScheduleList (v0.1.34 non-tram re-verify)", () => {
+  const base = (over: Partial<ScheduleView> & Pick<ScheduleView, "id" | "agentId" | "status">): ScheduleView => ({
+    threadId: "t1",
+    source: "web",
+    title: over.id,
+    instruction: "x",
+    kind: "cron",
+    cron: "0 9 * * *",
+    runAt: null,
+    timezone: "Asia/Shanghai",
+    nextRunAt: null,
+    lastRunAt: null,
+    lastStatus: null,
+    lastResult: null,
+    runCount: 0,
+    createdAt: "2026-10-19T00:00:00Z",
+    schedule: "每天 09:00",
+    running: false,
+    ...over,
+  });
+
+  test("needsAttention pulls failed/waiting/running; paused never auto-promoted", () => {
+    const items = [
+      base({ id: "a1", agentId: "bot1", status: "active", lastStatus: "ok" }),
+      base({ id: "a2", agentId: "bot1", status: "active", lastStatus: "failed" }),
+      base({ id: "a3", agentId: "bot1", status: "active", lastStatus: "waiting" }),
+      base({ id: "p1", agentId: "bot1", status: "paused", lastStatus: "failed", title: "和 Claude 聊电车" }),
+      base({ id: "d1", agentId: "gone", status: "done" }),
+      base({ id: "o1", agentId: "gone", status: "paused" }),
+    ];
+    const part = partitionScheduleList(items, ["bot1"]);
+    expect(part.needsAttention.map((s) => s.id).sort()).toEqual(["a2", "a3"]);
+    expect(part.activeRest.map((s) => s.id)).toEqual(["a1"]);
+    expect(part.paused.map((s) => s.id).sort()).toEqual(["o1", "p1"]);
+    // paused tram stays in paused — never moved to activeRest / needsAttention as active
+    expect(part.activeRest.every((s) => s.status === "active")).toBe(true);
+    expect(part.orphanLive.map((s) => s.id)).toEqual(["o1"]);
+    expect(part.orphanEnded.map((s) => s.id)).toEqual(["d1"]);
+    expect(part.orphanAll.map((s) => s.id).sort()).toEqual(["d1", "o1"]);
+  });
+
+  test("empty bot set treats everyone as orphan when bots loaded empty", () => {
+    const items = [base({ id: "x", agentId: "bot1", status: "active" })];
+    const part = partitionScheduleList(items, []);
+    expect(part.orphanLive).toHaveLength(1);
   });
 });

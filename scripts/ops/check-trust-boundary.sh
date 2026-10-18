@@ -1,7 +1,7 @@
 #!/bin/sh
-# Deny-by-default trust-boundary check (v0.1.33).
+# Deny-by-default trust-boundary check (v0.1.33+; nginx sync in v0.1.34).
 # Run from repo root or any cwd; validates compose binds, nginx Local-Caller clear,
-# friend TRUSTED_ORIGINS. Exit 0 = green. Used by CI red-line (via bun test) and hosts.
+# friend TRUSTED_ORIGINS, sync-nginx round-trip. Exit 0 = green. Used by CI red-line (via bun test) and hosts.
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 cd "$ROOT"
@@ -46,5 +46,10 @@ if command -v bun >/dev/null 2>&1; then
 else
   ok "bun not installed — skipped unit red-line"
 fi
+
+# 5) nginx template render round-trip (v0.1.34 — durable sync, apply-or-fail on host)
+test -f scripts/ops/sync-nginx.sh || fail "missing scripts/ops/sync-nginx.sh"
+sh scripts/ops/sync-nginx.sh --check-repo
+ok "sync-nginx --check-repo"
 
 printf '\ncheck-trust-boundary: ALL GREEN\n'

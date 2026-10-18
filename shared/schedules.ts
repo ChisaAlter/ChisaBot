@@ -83,6 +83,59 @@ export function failStreakShouldPause(
   return recentStatuses.slice(0, streak).every((s) => s === "failed");
 }
 
+
+/**
+ * 设置页分区（Track B + v0.1.34 复验）：需要关注 / 进行中 / 暂停 / 结束 / 孤儿。
+ * 纯函数，便于单测；UI 与策略文档共用同一规则。
+ * - needsAttention：active 且上次 failed / waiting / running
+ * - orphans：agentId 不在现有机器人集合（含 active/paused/ended）
+ * 电车等噪音任务：策略上保持 paused，本函数从不把 paused 自动挪回 active。
+ */
+export function partitionScheduleList(
+  items: readonly ScheduleView[],
+  knownAgentIds: ReadonlySet<string> | readonly string[],
+): {
+  needsAttention: ScheduleView[];
+  activeRest: ScheduleView[];
+  paused: ScheduleView[];
+  ended: ScheduleView[];
+  orphanLive: ScheduleView[];
+  orphanEnded: ScheduleView[];
+  orphanAll: ScheduleView[];
+} {
+  const bots =
+    knownAgentIds instanceof Set
+      ? knownAgentIds
+      : new Set(knownAgentIds);
+  const active = items.filter((s) => s.status === "active");
+  const paused = items.filter((s) => s.status === "paused");
+  const ended = items.filter(
+    (s) => s.status === "done" || s.status === "cancelled",
+  );
+  const needsAttention = active.filter(
+    (s) =>
+      s.lastStatus === "failed" ||
+      s.lastStatus === "waiting" ||
+      (s.running && s.lastStatus === "running"),
+  );
+  const activeRest = active.filter((s) => !needsAttention.includes(s));
+  const orphanEnded = ended.filter((s) => !bots.has(s.agentId));
+  const orphanLive = items.filter(
+    (s) =>
+      (s.status === "active" || s.status === "paused") && !bots.has(s.agentId),
+  );
+  return {
+    needsAttention,
+    activeRest,
+    paused,
+    ended,
+    orphanLive,
+    orphanEnded,
+    orphanAll: [...orphanLive, ...orphanEnded],
+  };
+}
+
+
 export function classifyScheduleReply(
   text: string,
 ): Exclude<ScheduleRunStatus, "running" | "queued"> {

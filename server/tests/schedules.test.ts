@@ -232,4 +232,73 @@ describe.skipIf(!url)("schedules (database)", () => {
     const cancel = await tools.find((t) => t.name === "schedule_cancel")!.execute({ id: out.schedule.id });
     expect(cancel).toMatch(/已删除/);
   });
+
+  // v0.1.34：非电车定时 create→run→fail→pause→needs-attention；paused 永不被 sweep 自动 resume。
+  test("fail streak auto-pauses; paused never auto-resumes on sweep", async () => {
+    const failDeps = {
+      ...deps,
+      runTurn: async () => {
+        throw new Error("模拟硬失败 ERR_TUNNEL");
+      },
+    };
+    const failing = createSchedules(database, failDeps as never);
+    const s = await failing.create({
+      owner,
+      agentId: "bot1",
+      threadId: "t-fail-streak",
+      title: "普通日报",
+      instruction: "总结今天",
+      when: { repeat: "hourly" },
+    });
+    for (let i = 0; i < 3; i++) {
+      await due(s.id);
+      await failing.sweep();
+      await settle();
+    }
+    const after = await failing.get(owner, s.id);
+    expect(after.status).toBe("paused");
+    expect(after.lastStatus).toBe("failed");
+    expect(after.lastResult).toMatch(/自动暂停|运行失败/);
+    // 即使把 next_run_at 拨到过去，paused 也不会被 sweep 触发（永不 auto-resume）
+    await sql.unsafe(
+      `UPDATE chisabot_schedules SET next_run_at = now() - interval '1 minute' WHERE id = $1`,
+      [s.id],
+    );
+    const r = await failing.sweep();
+    expect(r.fired).not.toContain(s.id);
+    const still = await failing.get(owner, s.id);
+    expect(still.status).toBe("paused");
+    // 只有人手 paused=false 才恢复
+    const resumed = await failing.update(owner, s.id, { paused: false });
+    expect(resumed.status).toBe("active");
+    await failing.update(owner, s.id, { paused: true });
+  });
+
+  test("reclaimStuckRuns marks failed and can auto-pause on streak", async () => {
+    const s = await a.create({
+      owner,
+      agentId: "bot1",
+      threadId: "t-stuck",
+      title: "卡住回收",
+      instruction: "x",
+      when: { repeat: "hourly" },
+    });
+    // 造 3 条卡住的 running（>20min），reclaim 后计入连续失败 → pause
+    for (let i = 0; i < 3; i++) {
+      const runId = `run_stuck_${i}_${s.id.slice(-4)}`;
+      await sql.unsafe(
+        `INSERT INTO chisabot_schedule_runs (id, schedule_id, owner_user_id, scheduled_for, status, started_at)
+         VALUES ($1,$2,$3,now(),'running', now() - interval '25 minutes')`,
+        [runId, s.id, owner],
+      );
+    }
+    const n = await a.reclaimStuckRuns();
+    expect(n).toBeGreaterThanOrEqual(3);
+    const after = await a.get(owner, s.id);
+    expect(after.status).toBe("paused");
+    expect(after.lastStatus).toBe("failed");
+    // reclaim 不会 resume
+    await due(s.id);
+    expect((await a.sweep()).fired).not.toContain(s.id);
+  });
 });

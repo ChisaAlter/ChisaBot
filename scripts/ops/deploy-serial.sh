@@ -26,5 +26,34 @@ case "$HEAD" in $WANT*) ;; *) echo "mirror main $HEAD != wanted $WANT (someone m
 ACTOR=$WHO sh $U/request.sh update; sleep 8
 for i in $(seq 1 180); do busy || break; sleep 10; done
 sh $U/request.sh status
-docker ps --format '{{.Image}}' --filter name=^$APP\$ | grep -q "$(echo $HEAD | cut -c1-7)" && { echo "DEPLOYED $HEAD"; exit 0; }
-echo "NOT DEPLOYED"; exit 6
+docker ps --format '{{.Image}}' --filter name=^$APP\$ | grep -q "$(echo $HEAD | cut -c1-7)" || { echo "NOT DEPLOYED"; exit 6; }
+# v0.1.34: nginx template sync — never silent-drift Local-Caller clears.
+# Default: --check live conf (apply-or-fail). Set CHISABOT_SYNC_NGINX=apply to render+reload from repo template.
+SYNC_NGINX=${CHISABOT_SYNC_NGINX:-check}
+REPO_OPS=${CHISABOT_REPO_OPS:-}
+if [ -z "$REPO_OPS" ]; then
+  for cand in /opt/chisabot-ops /opt/openbot-zh/../ChisaBot/repo /opt/chisabot-src; do
+    if [ -f "$cand/scripts/ops/sync-nginx.sh" ]; then REPO_OPS=$cand; break; fi
+  done
+fi
+# Also try alongside this script (when deploy-serial lives in repo checkout)
+HERE_OPS=$(CDPATH= cd -- "$(dirname "$0")/../.." 2>/dev/null && pwd || true)
+if [ -z "$REPO_OPS" ] && [ -n "$HERE_OPS" ] && [ -f "$HERE_OPS/scripts/ops/sync-nginx.sh" ]; then
+  REPO_OPS=$HERE_OPS
+fi
+if [ -n "$REPO_OPS" ] && [ -f "$REPO_OPS/scripts/ops/sync-nginx.sh" ]; then
+  case "$SYNC_NGINX" in
+    apply|1|yes)
+      echo "[$(date -u +%T)] sync-nginx --apply"
+      sh "$REPO_OPS/scripts/ops/sync-nginx.sh" --apply || { echo "NGINX SYNC APPLY FAILED"; exit 7; }
+      ;;
+    skip|0|no) echo "[$(date -u +%T)] sync-nginx skipped (CHISABOT_SYNC_NGINX=$SYNC_NGINX)" ;;
+    *)
+      echo "[$(date -u +%T)] sync-nginx --check"
+      sh "$REPO_OPS/scripts/ops/sync-nginx.sh" --check || { echo "NGINX DRIFT — run: CHISABOT_SYNC_NGINX=apply sh deploy-serial … or sh scripts/ops/sync-nginx.sh --apply"; exit 7; }
+      ;;
+  esac
+else
+  echo "[$(date -u +%T)] sync-nginx script not found — skipped (install repo ops scripts on host)"
+fi
+echo "DEPLOYED $HEAD"; exit 0

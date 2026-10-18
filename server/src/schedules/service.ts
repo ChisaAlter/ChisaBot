@@ -773,7 +773,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     }
   }
 
-  /** Track B：卡死的 running 记录标失败；若对话仍被占着则 releaseThread。 */
+  /** Track B / v0.1.34：卡死的 running 记录标失败；对话仍被占着则 releaseThread；连续失败则暂停（从不 auto-resume）。 */
   async function reclaimStuckRuns(): Promise<number> {
     const stuck = await sql.unsafe<
       { id: string; schedule_id: string; thread_id: string | null }[]
@@ -786,7 +786,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
          AND r.started_at < now() - interval '20 minutes'
        RETURNING r.id, r.schedule_id, s.thread_id`,
     );
+    const touched = new Set<string>();
     for (const row of stuck) {
+      touched.add(row.schedule_id);
       await sql
         .unsafe(
           "UPDATE chisabot_schedules SET last_status='failed', last_result=$2, updated_at=now() WHERE id=$1",
@@ -796,6 +798,42 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       running.delete(row.schedule_id);
       if (row.thread_id)
         await deps.releaseThread?.(row.thread_id).catch(() => {});
+    }
+    // 回收后的失败同样计入连续失败：只 paused←active，从不自动 resume（电车策略同）。
+    for (const scheduleId of touched) {
+      const recent = await sql.unsafe<{ status: string }[]>(
+        "SELECT status FROM chisabot_schedule_runs WHERE schedule_id = $1 ORDER BY started_at DESC LIMIT $2",
+        [scheduleId, FAIL_STREAK_PAUSE],
+      );
+      if (
+        failStreakShouldPause(
+          recent.map((r) => r.status as ScheduleRunStatus),
+          FAIL_STREAK_PAUSE,
+        )
+      ) {
+        const paused = await sql.unsafe(
+          `UPDATE chisabot_schedules SET status='paused', next_run_at=NULL, updated_at=now(),
+           last_result = coalesce($2, last_result)
+           WHERE id=$1 AND status='active' RETURNING id`,
+          [
+            scheduleId,
+            clip(
+              `连续失败 ${FAIL_STREAK_PAUSE} 次，已自动暂停。修好后再打开开关恢复（不会自动恢复）。`,
+              RESULT_LIMIT,
+            ),
+          ],
+        );
+        if (paused.length) {
+          console.warn(
+            JSON.stringify({
+              type: "schedule-auto-paused",
+              schedule: scheduleId,
+              streak: FAIL_STREAK_PAUSE,
+              via: "stuck-reclaim",
+            }),
+          );
+        }
+      }
     }
     if (stuck.length) {
       console.warn(
@@ -1440,6 +1478,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     skipNext,
     runNow,
     sweep,
+    reclaimStuckRuns,
     start,
     stop,
     events,

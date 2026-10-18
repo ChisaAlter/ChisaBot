@@ -22,6 +22,22 @@
 
 ## 2. nginx 网关
 
+## 2.1 模板与生产同步（v0.1.34 · apply-or-fail）
+
+网关 **不**随应用一键更新；以前手工改过 `/opt/openbot-zh/public/nginx.conf` 后，仓库模板与生产会漂移（v0.1.33 曾因此漏清 Local-Caller）。现用脚本强制对齐：
+
+| 命令 | 场景 |
+|---|---|
+| `sh scripts/ops/sync-nginx.sh --check-repo` | CI / 合并前：模板 + 合成渲染仍含 Local-Caller 清头与安全标记 |
+| `sh scripts/ops/sync-nginx.sh --check` | 宿主机：对照 live `nginx.conf` / `nginx.generated.conf`；漂移 → **非 0**（不要忽略） |
+| `sh scripts/ops/sync-nginx.sh --apply` | 宿主机：按 `deploy/.env` 渲染 → 备份 → 安装 → `nginx -t` → reload |
+| `sh scripts/ops/sync-nginx.sh --apply --dry-run` | 只渲染校验，不写盘 |
+
+`deploy-serial.sh` 在镜像切换成功后默认跑 `--check`（`CHISABOT_SYNC_NGINX=check`）。若要随发版自动套模板：`CHISABOT_SYNC_NGINX=apply sh deploy-serial.sh …`。脚本找不到时跳过并打日志；**有**脚本而 check 失败则部署退出码 **7**。
+
+相关：`scripts/ops/check-trust-boundary.sh` §5、[trust-boundary.md](trust-boundary.md) §7。
+
+
 **改法**：
 
 ```sh

@@ -1,3 +1,7 @@
+## 0.1.34
+
+- nginx sync-nginx apply-or-fail + 非电车定时 fail→pause 复验（电车仍暂停）
+
 # ChisaBot 版本记录（按版本 / PR）
 
 ChisaBot 自己的版本史，从 0.1.0（首个公开版本）起，按**发版标签**分组，每组列出进入该版本的 PR。时间均为北京时间（UTC+8）。

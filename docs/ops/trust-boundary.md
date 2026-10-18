@@ -107,7 +107,8 @@ Local-Caller 只给**宿主机 → `127.0.0.1:3001`** 的刮数 / 烟雾 / 更�
 |------|------|
 | SSRF 地址 / 重定向 | `server/tests/ssrf-redline.test.ts`（CI） |
 | Local-Caller 经网关拒绝、compose loopback、nginx 清头、friend origins | `server/tests/trust-boundary-redline.test.ts` + `shared/trust-boundary.test.ts`（CI） |
-| 宿主机一键 | `sh scripts/ops/check-trust-boundary.sh` |
+| 宿主机一键 | `sh scripts/ops/check-trust-boundary.sh`（含 sync-nginx --check-repo） |
 | 部署后 | `post-deploy-smoke.sh`：匿名 admin health 401 + Local-Caller 聚合绿 |
+| nginx 模板同步 | `scripts/ops/sync-nginx.sh`：`--check-repo` / `--check` / `--apply`；`deploy-serial` 默认 check，漂移失败退出 7（v0.1.34） |
 
-纯函数：`shared/trust-boundary.ts`。
+纯函数：`shared/trust-boundary.ts`。网关改法见 [gateway.md](gateway.md) §2.1。

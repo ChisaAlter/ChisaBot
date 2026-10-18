@@ -158,3 +158,15 @@ CI 红线：`server/tests/ssrf-redline.test.ts`（PRD-P1-06）。备份演练：
 | CI | `trust-boundary-redline` + `ssrf-redline`；`sh scripts/ops/check-trust-boundary.sh` |
 | 文档 | [ops/trust-boundary.md](ops/trust-boundary.md) |
 
+
+## 10. nginx 模板同步 / 非电车定时（v0.1.34）
+
+| 检查 | 期望 |
+|------|------|
+| 仓库模板 | `sh scripts/ops/sync-nginx.sh --check-repo` 绿；CI 同 |
+| 生产 live | `sync-nginx.sh --check` 绿；漂移 → `--apply`（备份 + nginx -t + reload） |
+| deploy-serial | 默认 check；`CHISABOT_SYNC_NGINX=apply` 可随发版套模板；失败退出 7 |
+| 普通定时 | create→run→fail×3→paused；paused 不被 sweep 触发；人手才 resume |
+| 孤儿 / 需要关注 | 设置页分区；`partitionScheduleList` 单测 |
+| 电车 | **保持 paused**（政策）；不 auto-resume |
+| 多用户 UI | 仍需显式 `CHISABOT_ACCOUNTS_UI=1` |

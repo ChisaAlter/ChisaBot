@@ -23,7 +23,7 @@
    - `request.sh check` 匿名拉公开仓库的 main 到 `mirror.git`，确认 main 包含你的提交（别人后来又合并的会一起上线）；
    - `request.sh update` 并等完成，确认 `openbot-zh` 的镜像标签含新提交。
    - 环境变量 `CHISABOT_UPDATER_DIR`、`CHISABOT_APP_CONTAINER` 可覆盖默认目录 / 容器名。
-3. 退出码：**0** 已上线 · **3** 等部署锁超时 · **4** 线程锁一直不为 0（有对话在跑）· **5** 提交不在 main · **6** 没切换成功（看 `request.sh status`）。
+3. 退出码：**0** 已上线 · **3** 等部署锁超时 · **4** 线程锁一直不为 0（有对话在跑）· **5** 提交不在 main · **6** 没切换成功（看 `request.sh status`）· **7** nginx 模板漂移（`sync-nginx --check` 失败；跑 `--apply` 或设 `CHISABOT_SYNC_NGINX=apply`）。
 4. **不要**直接运行 `update.sh`（网页看不到进度、按钮会卡住）或 `request.sh update`（会和别人的部署撞车）。
 5. 上线后做 §5 的检查。
 
@@ -94,7 +94,7 @@ sh /opt/openbot-zh/rollback-to-auto-<时间>-<提交>.sh
 
 | 部分 | 怎么更新 | 详见 |
 |---|---|---|
-| 公网网关 nginx（`deploy/public/nginx.conf`） | 改模板 → 拷到网关目录 → `nginx -t` → reload；先留备份 | [gateway.md](gateway.md) |
+| 公网网关 nginx（`deploy/public/nginx.conf`） | **`sync-nginx.sh --apply`**（备份+渲染+`nginx -t`+reload）；`deploy-serial` 默认 `--check` 漂移则失败 | [gateway.md](gateway.md) §2.1 |
 | 登录服务（`deploy/public/auth/server.ts`、`auth-web/`） | 拷文件 → 重启 `openbot-web-auth` | [gateway.md](gateway.md) |
 | 更新器自己（`deploy/updater/`） | 每次成功更新后自升级；老部署跑一次 `install-updater.sh` | §2 |
 | 云端工作区节点 / 同步边车 | 手工构建镜像、`compose up -d`；改了 `pc/src/cloud-cc` 的部署后 `docker restart chisabot-cloudnode` | [cloud-node.md](cloud-node.md) |

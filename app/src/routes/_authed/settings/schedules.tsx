@@ -51,6 +51,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   formatWhen,
+  partitionScheduleList,
   RUN_STATUS_ZH,
   type ScheduleRunStatus,
   type ScheduleView,
@@ -69,31 +70,19 @@ function SchedulesPage() {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [detail, setDetail] = useState<string | null>(null);
   const items = (list.data ?? []).filter((s) => !hidden.has(s.id));
-  const active = items.filter((s) => s.status === "active");
-  const paused = items.filter((s) => s.status === "paused");
-  const ended = items.filter(
-    (s) => s.status === "done" || s.status === "cancelled",
+  // v0.1.34：分区规则抽到 shared（可测）；电车等 paused 任务从不自动回 active。
+  const {
+    needsAttention,
+    activeRest,
+    paused,
+    ended,
+    orphanLive,
+    orphanEnded,
+    orphanAll,
+  } = partitionScheduleList(
+    items,
+    bots.isSuccess ? (bots.data ?? []).map((b) => b.id) : items.map((s) => s.agentId),
   );
-  // FIX-16 + Track B：已删除机器人下的任务（含进行中/暂停）可一键清理，避免孤儿继续占扫描。
-  const orphanEnded = bots.isSuccess
-    ? ended.filter((s) => !botName.has(s.agentId))
-    : [];
-  const orphanLive = bots.isSuccess
-    ? items.filter(
-        (s) =>
-          (s.status === "active" || s.status === "paused") &&
-          !botName.has(s.agentId),
-      )
-    : [];
-  const orphanAll = [...orphanLive, ...orphanEnded];
-  // Track B：上次失败 / 等确认的进行中任务，提到「需要关注」分区，避免淹没在绿列表里。
-  const needsAttention = active.filter(
-    (s) =>
-      s.lastStatus === "failed" ||
-      s.lastStatus === "waiting" ||
-      (s.running && s.lastStatus === "running"),
-  );
-  const activeRest = active.filter((s) => !needsAttention.includes(s));
   const shown = items.find((s) => s.id === detail) ?? null;
   const clearOrphans = async () => {
     if (!orphanAll.length) return;

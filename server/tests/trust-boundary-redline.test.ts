@@ -113,3 +113,13 @@ describe("deploy scripts refuse 0.0.0.0 app bind", () => {
     expect(friend).toMatch(/TRUSTED_ORIGINS/);
   });
 });
+
+describe("nginx sync process (v0.1.34)", () => {
+  test("sync-nginx.sh is executable and mentions Local-Caller + apply", () => {
+    const sh = read("scripts/ops/sync-nginx.sh");
+    expect(sh).toMatch(/X-ChisaBot-Local-Caller/);
+    expect(sh).toMatch(/--apply/);
+    expect(sh).toMatch(/--check-repo/);
+    expect(read("scripts/ops/deploy-serial.sh")).toMatch(/sync-nginx/);
+  });
+});

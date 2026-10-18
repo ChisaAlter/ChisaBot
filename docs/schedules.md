@@ -20,3 +20,12 @@
 
 ## 表
 `chisabot_schedules`（任务）、`chisabot_schedule_runs`（每次运行，每个任务留最近 50 次）；IM 会话表加了 `chisabot_im_chats.last_inbound`。全部开机 `CREATE … IF NOT EXISTS`，回滚安全（旧版本忽略这些表）。
+
+## 失败诚实与暂停策略（Track B / v0.1.34）
+
+- 回复按正文归类：`ok` / `waiting` / `failed` / `skipped`（见 `classifyScheduleReply`）。
+- **连续 3 次硬失败** → 自动 `paused`（`next_run_at` 清空）。**从不自动 resume**；人手在设置页打开开关或 `paused=false` 才恢复。
+- 卡死 `running` >20 分钟：扫表回收为 failed；同样计入连续失败，可触发自动暂停。
+- 设置页分区：`needsAttention`（失败/等确认/运行中）· 孤儿（已删机器人）可一键清理（`partitionScheduleList`）。
+- **电车类噪音定时（如「和 Claude 聊电车」）按产品策略保持 paused**，发版列车不 resume；本仓库自动化也不自动恢复任何 paused 任务。
+
