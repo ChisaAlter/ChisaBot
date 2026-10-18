@@ -41,4 +41,5 @@ DOG-01（发消息假成功）已在 v0.1.18，**不重开**。
 3. 回归：聊天发消息仍正常（DOG-01）；接管时横幅仍隐藏。
 
 ## PR / release
-（合入后补）
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/211 （open，**HOLD**：不 merge / 不发版 / 不部署，等聊天 P0（v0.1.18 仍假成功）先合入）
+- 分支: `fix/dog-02-03-audit-install` @ `50c0ac8b`
