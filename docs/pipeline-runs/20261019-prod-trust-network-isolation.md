@@ -29,7 +29,10 @@
 
 ## PR / release / deploy
 
-- PR: (fill after open)
-- Release: v0.1.33
-- Deploy: (fill after Haupt)
-- **未** resume 电车定时
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/231 (squash → `83a17422`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.33
+- Deploy: `deploy-serial.sh 83a1742 grok-bot` → `local/chisabot:auto-202610181827-83a1742`
+- `/api/version` = **0.1.33**; post-deploy-smoke **PASSED** (含模型)
+- 匿名 `/api/admin/health` → **401**；Local-Caller → 200 + `localCaller.gatewayMode=on`
+- 生产 `/opt/openbot-zh/public/nginx.conf` 已补 5 处 Local-Caller 清头并 reload（模板与生产曾漂移）
+- **未** resume 电车定时（`和 Claude 聊电车` = paused）
