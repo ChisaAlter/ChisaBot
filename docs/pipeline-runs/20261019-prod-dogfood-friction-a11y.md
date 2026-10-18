@@ -27,4 +27,12 @@
 3. 电车仍暂停
 
 ## PR / release / deploy
-（发版后填）
+
+## PR / release / deploy
+
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/236 (squash → `33d6a792`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.35
+- Deploy: `deploy-serial.sh 33d6a79 grok-bot` → `local/chisabot:auto-202610181909-33d6a79`
+- `/api/version` = **0.1.35**; post-deploy-smoke **PASSED** (含模型 + 匿名 admin 401)
+- `sync-nginx --check` ALL GREEN
+- **未** resume 电车定时
