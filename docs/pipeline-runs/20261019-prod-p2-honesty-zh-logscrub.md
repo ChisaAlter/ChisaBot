@@ -26,5 +26,12 @@
 2. 硬刷新 → 芯片 0.1.36；机器人活动失败项中文+红色；CC 空会话标「空草稿」
 3. 电车仍暂停
 
+
 ## PR / release / deploy
 
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/238 (squash → `ba97c842`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.36
+- Deploy: `deploy-serial.sh ba97c84 grok-bot` → `local/chisabot:auto-202610181929-ba97c84`
+- `/api/version` = **0.1.36**; post-deploy-smoke **PASSED** (含模型 + 匿名 admin 401)
+- `sync-nginx --check` ALL GREEN
+- **未** resume 电车定时
