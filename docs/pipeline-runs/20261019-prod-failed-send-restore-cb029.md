@@ -25,4 +25,9 @@
 
 ## PR / release / deploy
 
-（合入后填写）
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/242 (squash → `4f137e6b`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.38
+- Deploy: `deploy-serial.sh 4f137e6 grok-bot` → `local/chisabot:auto-202610182000-4f137e6`
+- `/api/version` = **0.1.38**; post-deploy-smoke **PASSED** (含模型 + 匿名 admin 401)
+- `sync-nginx --check` ALL GREEN
+- **未** resume 电车定时
