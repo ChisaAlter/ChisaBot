@@ -1,6 +1,6 @@
-import { Children, type ReactNode } from "react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { cva, type VariantProps } from "class-variance-authority";
+import { Children, type ReactNode } from "react";
 
 import {
   type AsyncState,
@@ -17,7 +17,8 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground shadow-[var(--shadow-1)] hover:bg-[var(--ink-primary-hover)]",
+        default:
+          "bg-primary text-primary-foreground shadow-[var(--shadow-1)] hover:bg-[var(--ink-primary-hover)]",
         outline:
           "border-[var(--line-strong)] bg-[var(--glass-2)] hover:bg-[var(--glass-3)] hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         secondary:
@@ -101,7 +102,10 @@ function Button({
     mutation?: MutationLike;
     mutationWhen?: boolean;
   }) {
-  const followed = useMutationFeedback(mutation ?? IDLE_MUTATION, mutation !== undefined && mutationWhen);
+  const followed = useMutationFeedback(
+    mutation ?? IDLE_MUTATION,
+    mutation !== undefined && mutationWhen,
+  );
   const active: AsyncState =
     state && state !== "idle"
       ? state
@@ -112,6 +116,7 @@ function Button({
           : "idle";
   const labels = resolveFeedback(feedback);
   const iconOnly = typeof size === "string" && size.startsWith("icon");
+  const liveName = labels && active !== "idle" ? labels[active] : undefined;
   return (
     <ButtonPrimitive
       data-slot="button"
@@ -124,11 +129,18 @@ function Button({
       nativeButton={nativeButton}
       render={render}
       {...props}
+      // Single live accessible name matching the visible state (not stacked 复制/已复制/复制失败).
+      aria-label={
+        liveName ?? (props as { "aria-label"?: string })["aria-label"]
+      }
     >
       <AsyncContent
         iconOnly={iconOnly}
         labels={labels}
-        stacked={Boolean(labels) || (iconOnly && (state !== undefined || mutation !== undefined))}
+        stacked={
+          Boolean(labels) ||
+          (iconOnly && (state !== undefined || mutation !== undefined))
+        }
         state={active}
       >
         {children}
@@ -164,24 +176,33 @@ export function AsyncContent({
   }
   return (
     <span className="btn-stack" data-state={state}>
-      <span aria-hidden={state !== "idle" || undefined} className="btn-face" data-face="idle">
+      <span
+        aria-hidden={state !== "idle" || undefined}
+        className="btn-face"
+        data-face="idle"
+      >
         {labelText(children)}
       </span>
-      <span aria-hidden={state === "idle" || undefined} className="btn-face" data-face="status">
+      <span
+        aria-hidden={state === "idle" || undefined}
+        className="btn-face"
+        data-face="status"
+      >
         <StatusGlyph />
         {labels && !iconOnly ? (
-          <span className="btn-labels">
-            <span className="btn-t" data-for="pending">{labels.pending}</span>
-            <span className="btn-t" data-for="success">{labels.success}</span>
-            <span className="btn-t" data-for="error">{labels.error}</span>
+          <span aria-hidden="true" className="btn-labels">
+            <span className="btn-t" data-for="pending">
+              {labels.pending}
+            </span>
+            <span className="btn-t" data-for="success">
+              {labels.success}
+            </span>
+            <span className="btn-t" data-for="error">
+              {labels.error}
+            </span>
           </span>
         ) : null}
       </span>
-      {labels && state !== "idle" ? (
-        <span className="sr-only" role="status">
-          {labels[state]}
-        </span>
-      ) : null}
     </span>
   );
 }
@@ -193,20 +214,35 @@ export function AsyncContent({
  * 只包字符串 / 数字；图标和别的元素原样放着（`truncate` 的 span 不能包：裁掉的盒子会把字形裁掉）。
  */
 export function labelText(children: ReactNode): ReactNode {
-  if (typeof children === "string" || typeof children === "number") return <span className="btn-t">{edgePunct(String(children))}</span>;
+  if (typeof children === "string" || typeof children === "number")
+    return <span className="btn-t">{edgePunct(String(children))}</span>;
   const items = Children.toArray(children);
-  if (!items.some((child) => typeof child === "string" || typeof child === "number")) return children;
+  if (
+    !items.some(
+      (child) => typeof child === "string" || typeof child === "number",
+    )
+  )
+    return children;
   // 连着的几段文字（「全部 」{n}）合成一个 span：分开包的话按钮的 gap 会插在它们中间。
   const out: ReactNode[] = [];
   let text: (string | number)[] = [];
   const flush = () => {
     if (!text.length) return;
     const joined = text.join("");
-    out.push(joined.trim() ? <span className="btn-t" key={`t${out.length}`}>{edgePunct(joined)}</span> : joined);
+    out.push(
+      joined.trim() ? (
+        <span className="btn-t" key={`t${out.length}`}>
+          {edgePunct(joined)}
+        </span>
+      ) : (
+        joined
+      ),
+    );
     text = [];
   };
   for (const child of items) {
-    if (typeof child === "string" || typeof child === "number") text.push(child);
+    if (typeof child === "string" || typeof child === "number")
+      text.push(child);
     else {
       flush();
       out.push(child);
@@ -225,7 +261,10 @@ const CLOSE_PUNCT = "）」』】〉》〕";
  */
 export function edgePunct(text: string): ReactNode {
   const head = text.length > 1 && OPEN_PUNCT.includes(text[0]!) ? text[0]! : "";
-  const tail = text.length > 1 && CLOSE_PUNCT.includes(text[text.length - 1]!) ? text[text.length - 1]! : "";
+  const tail =
+    text.length > 1 && CLOSE_PUNCT.includes(text[text.length - 1]!)
+      ? text[text.length - 1]!
+      : "";
   if (!head && !tail) return text;
   const middle = text.slice(head ? 1 : 0, tail ? -1 : undefined);
   return (
@@ -239,7 +278,11 @@ export function edgePunct(text: string): ReactNode {
 
 /** 胶囊 / 小标签里的文字（不是 `Button` 的那些）用同一层，和按钮一样居中。 */
 export function T({ children }: { children?: ReactNode }) {
-  return <span className="btn-t">{typeof children === "string" ? edgePunct(children) : children}</span>;
+  return (
+    <span className="btn-t">
+      {typeof children === "string" ? edgePunct(children) : children}
+    </span>
+  );
 }
 
 const IDLE_MUTATION: MutationLike = { status: "idle", submittedAt: 0 };
@@ -261,8 +304,18 @@ export function StatusGlyph() {
       strokeWidth={2.4}
       viewBox="0 0 24 24"
     >
-      <circle className="btn-glyph-ring" cx="12" cy="12" pathLength={100} r="9" />
-      <path className="btn-glyph-check" d="M7.5 12.4l3.1 3.1 6-6.6" pathLength={100} />
+      <circle
+        className="btn-glyph-ring"
+        cx="12"
+        cy="12"
+        pathLength={100}
+        r="9"
+      />
+      <path
+        className="btn-glyph-check"
+        d="M7.5 12.4l3.1 3.1 6-6.6"
+        pathLength={100}
+      />
       <path className="btn-glyph-x" d="M9 9l6 6M15 9l-6 6" pathLength={100} />
     </svg>
   );

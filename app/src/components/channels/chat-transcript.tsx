@@ -1,16 +1,17 @@
 import type { ActivityMessage, Message } from "@ag-ui/core";
 import type { Attachment } from "@copilotkit/react-core/v2";
 import {
+  useCopilotChatConfiguration,
   useRenderActivityMessage,
   useRenderToolCall,
 } from "@copilotkit/react-core/v2";
 import {
   IconAlertTriangle,
   IconBox,
-  IconCopy,
-  IconRefresh,
   IconChevronDown,
   IconClock,
+  IconCopy,
+  IconRefresh,
   IconX,
 } from "@tabler/icons-react";
 import { motion, useReducedMotion } from "motion/react";
@@ -25,9 +26,34 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
-import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
-import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { BotBubbles } from "@/components/chat/bot-bubbles";
+import {
+  ConfirmResumeRow,
+  confirmResumeId,
+  isConfirmResume,
+  LooseConfirmCards,
+  ToolCallConfirmCards,
+} from "@/components/chat/confirm-card";
+import { LocalAgentResultRow } from "@/components/chat/local-agent-card";
+import {
+  EditAction,
+  MessageEditor,
+  RegenerateAction,
+} from "@/components/chat/message-actions";
+import { QueuedMessages } from "@/components/chat/queued-messages";
+import { ScheduleFiredRow } from "@/components/chat/schedule-row";
+import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
+import { knownWorkSeconds, WorkRow } from "@/components/chat/work-card";
+import { WorkerResultRow } from "@/components/chat/worker-card";
+import {
+  FileCard,
+  HiddenMarkdownImage,
+  ImagePile,
+  MessageRichPreviews,
+  RichBotStreamdown,
+} from "@/components/rich-previews/rich-previews";
 import { useAsyncAction } from "@/components/ui/async-action";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { StatusGlyph } from "@/components/ui/button";
 import { writeClipboard } from "@/components/ui/copy-button";
 import {
@@ -55,28 +81,31 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { readFiring } from "@/lib/channels/routine-firing";
-import { splitChatOrigin } from "./chat-origin";
-import { markdownComponents } from "@/lib/markdown";
-import { BotBubbles } from "@/components/chat/bot-bubbles";
-import { knownWorkSeconds, WorkRow } from "@/components/chat/work-card";
-import { isQuietWork, isWorkCall, workCallFailed, type WorkCall, type WorkNote } from "@/lib/chat/work-steps";
-import { useThreadConfirmations } from "@/lib/confirmations";
-import { useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
-import { supersededPageCalls } from "@/lib/chat/page-cards";
-import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
-import { EditAction, MessageEditor, RegenerateAction } from "@/components/chat/message-actions";
-import { isEditableUserText } from "@/lib/copilot/regenerate";
-import {
-  FileCard,
-  HiddenMarkdownImage,
-  ImagePile,
-  MessageRichPreviews,
-  RichBotStreamdown,
-} from "@/components/rich-previews/rich-previews";
 import { friendlyError } from "@/lib/chat/friendly-error";
+import { supersededPageCalls } from "@/lib/chat/page-cards";
+import {
+  isContinuousSend,
+  previousSentAt,
+  rememberSent,
+  type SentAtReading,
+} from "@/lib/chat/send-scroll";
+import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
+import { useToolActivityVisible } from "@/lib/chat/tool-activity";
+import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
+import {
+  isQuietWork,
+  isWorkCall,
+  type WorkCall,
+  type WorkNote,
+  workCallFailed,
+} from "@/lib/chat/work-steps";
+import { useThreadConfirmations } from "@/lib/confirmations";
+import { isEditableUserText } from "@/lib/copilot/regenerate";
+import { useReadMark } from "@/lib/copilot/thread-inbox";
+import { WORKER_RESULT_MARKER } from "@/lib/copilot/workers";
+import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { readToolName } from "@/lib/plugins/tool-name";
-import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import {
   asText,
   forDisplay,
@@ -84,6 +113,8 @@ import {
   toolResultFailed,
 } from "@/lib/plugins/tool-result";
 import { cn } from "@/lib/utils";
+import { LOCAL_AGENT_RESULT_MARKER } from "../../../../shared/local-agents";
+import { SCHEDULE_MARKER } from "../../../../shared/schedules";
 import {
   BrowserActivity,
   groupBrowserSteps,
@@ -94,20 +125,10 @@ import {
   type SentAttachment,
   toVisibleChatItems,
 } from "./chat-messages";
+import { splitChatOrigin } from "./chat-origin";
 import type { QueuedMessage } from "./composer";
 import { ToolRenderBoundary } from "./tool-boundary";
-import { ConfirmResumeRow, confirmResumeId, isConfirmResume, LooseConfirmCards, ToolCallConfirmCards } from "@/components/chat/confirm-card";
-import { ScheduleFiredRow } from "@/components/chat/schedule-row";
-import { WorkerResultRow } from "@/components/chat/worker-card";
-import { LocalAgentResultRow } from "@/components/chat/local-agent-card";
-import { QueuedMessages } from "@/components/chat/queued-messages";
-import { useReadMark } from "@/lib/copilot/thread-inbox";
-import { WORKER_RESULT_MARKER } from "@/lib/copilot/workers";
-import { SCHEDULE_MARKER } from "../../../../shared/schedules";
-import { LOCAL_AGENT_RESULT_MARKER } from "../../../../shared/local-agents";
 import { ToolLine } from "./tool-line";
-import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
-import { isContinuousSend, previousSentAt, rememberSent, type SentAtReading } from "@/lib/chat/send-scroll";
 
 type ChatTranscriptProps = {
   busy?: boolean;
@@ -156,7 +177,9 @@ type ChatTranscriptProps = {
  * 后台任务交回结果（§38.2）、本地 agent 交回结果（§66）、后来才确认的那一步（§58）。画成一行，不是用户气泡，
  * 不能编辑；但它们各自开启一轮（服务器接着跑），所以收轮次时算一轮的开头。
  */
-export function serverRowKind(text: string): "schedule" | "worker" | "local-agent" | "confirm" | null {
+export function serverRowKind(
+  text: string,
+): "schedule" | "worker" | "local-agent" | "confirm" | null {
   if (text.startsWith(SCHEDULE_MARKER)) return "schedule";
   if (text.startsWith(LOCAL_AGENT_RESULT_MARKER)) return "local-agent";
   if (text.startsWith(WORKER_RESULT_MARKER)) return "worker";
@@ -174,7 +197,10 @@ function ServerRow({ messageId, text }: { messageId: string; text: string }) {
     );
   if (kind === "local-agent")
     return (
-      <div className="worker-result-msg" data-testid="local-agent-result-message">
+      <div
+        className="worker-result-msg"
+        data-testid="local-agent-result-message"
+      >
         <LocalAgentResultRow messageId={messageId} text={text} />
       </div>
     );
@@ -195,7 +221,9 @@ function ServerRow({ messageId, text }: { messageId: string; text: string }) {
 function ReadMark({ messageId }: { messageId: string }) {
   return useReadMark(messageId) ? (
     <div className="flex justify-end">
-      <span className="queued-read-mark" data-testid="queued-read">{"已读取"}</span>
+      <span className="queued-read-mark" data-testid="queued-read">
+        {"已读取"}
+      </span>
     </div>
   ) : null;
 }
@@ -305,7 +333,11 @@ function PauseDots({ watch }: { watch: string }) {
   }, [watch]);
   if (!shown) return null;
   return (
-    <div aria-hidden="true" className="chat-pause-dots" data-testid="transcript-pause-dots">
+    <div
+      aria-hidden="true"
+      className="chat-pause-dots"
+      data-testid="transcript-pause-dots"
+    >
       <span className="chat-thinking-dots">
         <i />
         <i />
@@ -361,7 +393,9 @@ function Stopped({
             >
               {open ? "收起详情" : "查看详情"}
             </button>
-            {open ? <pre className="chat-error-detail">{friendly.detail}</pre> : null}
+            {open ? (
+              <pre className="chat-error-detail">{friendly.detail}</pre>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -585,9 +619,13 @@ function rowGapOf(content: HTMLElement): number {
  */
 function blankArea(content: HTMLElement, slack: number): number {
   const gap = rowGapOf(content);
-  const spacer = content.querySelector<HTMLElement>("[data-message-scroller-spacer]");
+  const spacer = content.querySelector<HTMLElement>(
+    "[data-message-scroller-spacer]",
+  );
   const spacerHeight = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
-  return (spacerHeight > 0 ? spacerHeight - gap : 0) + (slack > 0 ? slack - gap : 0);
+  return (
+    (spacerHeight > 0 ? spacerHeight - gap : 0) + (slack > 0 ? slack - gap : 0)
+  );
 }
 
 /** 恢复完成后还钉在底部多久（毫秒）：晚到的「已停止」行、图片撑高、存储补进来的几轮都在这段时间里。 */
@@ -633,7 +671,9 @@ function SettleAtEnd({
    * 上次离开这段对话时的位置（§88.3）：不在底部 → 回到那一条、离顶边一样远；在底部 → 钉在底部，最后一条下面
    * 照样留出当时的空白（新一轮对齐到顶上时滚动容器留的），画面和离开时一样。只在打开时读一次。
    */
-  const [memo] = useState(() => (scrollKey ? (threadUi(scrollKey)?.scroll ?? null) : null));
+  const [memo] = useState(() =>
+    scrollKey ? (threadUi(scrollKey)?.scroll ?? null) : null,
+  );
   const state = useRef({
     // 一打开就不在恢复（从新建对话页带着第一条消息来的）：不需要钉。
     until: hydrating ? Number.POSITIVE_INFINITY : 0,
@@ -694,7 +734,10 @@ function SettleAtEnd({
       s.baseline = newestUserMessageId;
       // 「跟着变」的留白先按现在的高度冻成固定的（§94.6）：下面两条路（连续 / 翻页）都按固定高度算，滚动容器对齐时也不受影响。
       if (s.floor !== null) setSlack(s.slack);
-      if (sendMode?.current.continuous && sendMode.current.id === newestUserMessageId) {
+      if (
+        sendMode?.current.continuous &&
+        sendMode.current.id === newestUserMessageId
+      ) {
         /*
          * §94 连续聊天：这一条不带对齐标记，不翻页。滚动容器可能还停在上一轮的「对齐到顶上」状态（下面有它的
          * spacer）——不处理的话它会继续把上一轮钉在顶上，新内容长到视口下面去。这里同一次提交里把它切回「跟着
@@ -703,19 +746,27 @@ function SettleAtEnd({
          * （往上翻着）时不留白，直接回到底部（发了一句就该看到它）。
          */
         const element = viewport.current;
-        const content = element?.querySelector<HTMLElement>('[data-slot="message-scroller-content"]');
+        const content = element?.querySelector<HTMLElement>(
+          '[data-slot="message-scroller-content"]',
+        );
         if (element && content) {
           const before = s.lastTop;
           const wasAtBottom = s.lastAtBottom;
           const gap = rowGapOf(content);
           const blank = wasAtBottom ? blankArea(content, s.slack) : 0;
           // 新那一行（连同前面的行距）已经在 DOM 里：它比空白矮多少，就留多少（两块留白都用负的上边距抵掉一道行距）。
-          const growth = content.offsetHeight - blankArea(content, s.slack) - s.lastRows;
+          const growth =
+            content.offsetHeight - blankArea(content, s.slack) - s.lastRows;
           const keep = blank - Math.max(0, growth);
           setSlack(keep > 0 ? keep + gap : 0);
           element.style.scrollBehavior = "auto";
           scrollToEnd({ behavior: "auto" });
-          if (wasAtBottom && blank > 0 && Math.abs(element.scrollTop - before) <= 2) element.scrollTop = before;
+          if (
+            wasAtBottom &&
+            blank > 0 &&
+            Math.abs(element.scrollTop - before) <= 2
+          )
+            element.scrollTop = before;
           element.style.scrollBehavior = "";
         } else {
           setSlack(0);
@@ -740,7 +791,8 @@ function SettleAtEnd({
     state.current.slackPx = next;
     // 设固定高度：先退出「跟着变」（§94.6）。
     state.current.floor = null;
-    if (el?.parentElement?.parentElement) el.parentElement.parentElement.style.minHeight = "";
+    if (el?.parentElement?.parentElement)
+      el.parentElement.parentElement.style.minHeight = "";
     if (el) el.style.flex = "";
     if (!el) return;
     if (next === 0) {
@@ -748,7 +800,9 @@ function SettleAtEnd({
       return;
     }
     // 它是这一列的一项，前面会多出一道行距（gap）：用负的上边距抵掉，加上的正好是 `next`。
-    const gap = el.parentElement?.parentElement ? getComputedStyle(el.parentElement.parentElement).rowGap : "0px";
+    const gap = el.parentElement?.parentElement
+      ? getComputedStyle(el.parentElement.parentElement).rowGap
+      : "0px";
     el.style.display = "block";
     el.style.marginTop = gap && gap !== "normal" ? `calc(-1 * ${gap})` : "0px";
     el.style.height = `${next}px`;
@@ -800,7 +854,9 @@ function SettleAtEnd({
 
   useEffect(() => {
     const element = viewport.current;
-    const content = element?.querySelector<HTMLElement>('[data-slot="message-scroller-content"]');
+    const content = element?.querySelector<HTMLElement>(
+      '[data-slot="message-scroller-content"]',
+    );
     if (!element || !content) return;
     const s = state.current;
     const active = () => !s.released && performance.now() < s.until;
@@ -809,12 +865,21 @@ function SettleAtEnd({
     const toRemembered = () => {
       const r = s.restore;
       if (!r?.anchor) return false;
-      const row = content.querySelector(`[data-message-id="${CSS.escape(r.anchor)}"]`);
+      const row = content.querySelector(
+        `[data-message-id="${CSS.escape(r.anchor)}"]`,
+      );
       if (!row) return false;
       element.style.scrollBehavior = "auto";
-      const ok = scrollToMessage(r.anchor, { align: "start", behavior: "auto", scrollMargin: r.offset });
+      const ok = scrollToMessage(r.anchor, {
+        align: "start",
+        behavior: "auto",
+        scrollMargin: r.offset,
+      });
       // 滚动容器对齐时会算上行距 / 内边距，差那么一点：量一下，补齐到离开时的那个像素。
-      const off = row.getBoundingClientRect().top - element.getBoundingClientRect().top - r.offset;
+      const off =
+        row.getBoundingClientRect().top -
+        element.getBoundingClientRect().top -
+        r.offset;
       if (Math.abs(off) > 1) element.scrollTop += off;
       element.style.scrollBehavior = "";
       return ok;
@@ -848,7 +913,18 @@ function SettleAtEnd({
       window.cancelAnimationFrame(frame);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) release();
+      if (
+        [
+          "ArrowUp",
+          "ArrowDown",
+          "PageUp",
+          "PageDown",
+          "Home",
+          "End",
+          " ",
+        ].includes(event.key)
+      )
+        release();
     };
     const onPointer = (event: PointerEvent) => {
       // 按在滚动条上（视口自己，不是里面的消息）= 要拖着翻。
@@ -861,7 +937,8 @@ function SettleAtEnd({
     const seen = { top: element.scrollTop, atBottom: true };
     const look = () => {
       seen.top = element.scrollTop;
-      seen.atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
+      seen.atBottom =
+        element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
       s.lastTop = seen.top;
       s.lastAtBottom = seen.atBottom;
       s.lastRows = content.offsetHeight - blankArea(content, s.slack);
@@ -877,7 +954,9 @@ function SettleAtEnd({
     const elastic = () => {
       const el = slack.current;
       if (!el || el.parentElement?.parentElement !== content) return;
-      const spacer = content.querySelector<HTMLElement>("[data-message-scroller-spacer]");
+      const spacer = content.querySelector<HTMLElement>(
+        "[data-message-scroller-spacer]",
+      );
       const ok =
         seen.atBottom &&
         !s.releasing &&
@@ -973,13 +1052,19 @@ function SettleAtEnd({
         element.scrollTop >= max - 1
       ) {
         const back = seen.top;
-        setSlack(s.slack + Math.min(back - element.scrollTop, element.clientHeight));
+        setSlack(
+          s.slack + Math.min(back - element.scrollTop, element.clientHeight),
+        );
         element.scrollTop = back;
         lastHeight = content.offsetHeight;
       }
       look();
       // 留白整个在视口下面（人往上翻了）：收掉，看得见的东西一点都不动。
-      if (s.slack > 0 && element.scrollTop + element.clientHeight < element.scrollHeight - s.slack - 1) {
+      if (
+        s.slack > 0 &&
+        element.scrollTop + element.clientHeight <
+          element.scrollHeight - s.slack - 1
+      ) {
         setSlack(0);
         lastHeight = content.offsetHeight;
       }
@@ -993,20 +1078,45 @@ function SettleAtEnd({
     const write = () => {
       saveTimer = null;
       // 已经从页面上拿掉了（量出来全是 0）：不记，留着上一次记的。
-      if (!scrollKey || s.hydrating || !element.isConnected || element.clientHeight === 0) return;
-      const gap = element.scrollHeight - element.scrollTop - element.clientHeight;
+      if (
+        !scrollKey ||
+        s.hydrating ||
+        !element.isConnected ||
+        element.clientHeight === 0
+      )
+        return;
+      const gap =
+        element.scrollHeight - element.scrollTop - element.clientHeight;
       if (gap <= 4) {
-        const spacer = content.querySelector<HTMLElement>("[data-message-scroller-spacer]");
+        const spacer = content.querySelector<HTMLElement>(
+          "[data-message-scroller-spacer]",
+        );
         const spacerHeight = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
-        setThreadUi(scrollKey, { scroll: { atBottom: true, spacer: spacerHeight + s.slack, anchor: null, offset: 0, at: Date.now() } });
+        setThreadUi(scrollKey, {
+          scroll: {
+            atBottom: true,
+            spacer: spacerHeight + s.slack,
+            anchor: null,
+            offset: 0,
+            at: Date.now(),
+          },
+        });
         return;
       }
       const top = element.getBoundingClientRect().top;
-      for (const row of content.querySelectorAll<HTMLElement>("[data-message-id]")) {
+      for (const row of content.querySelectorAll<HTMLElement>(
+        "[data-message-id]",
+      )) {
         const box = row.getBoundingClientRect();
         if (box.bottom > top + 1) {
           setThreadUi(scrollKey, {
-            scroll: { atBottom: false, spacer: 0, anchor: row.dataset.messageId ?? null, offset: Math.round(box.top - top), at: Date.now() },
+            scroll: {
+              atBottom: false,
+              spacer: 0,
+              anchor: row.dataset.messageId ?? null,
+              offset: Math.round(box.top - top),
+              at: Date.now(),
+            },
           });
           return;
         }
@@ -1027,11 +1137,17 @@ function SettleAtEnd({
         element.dataset.cbRelease = reason;
         return false;
       };
-      if (s.busy || s.releasing || s.restore || active()) return why(`skip:${s.busy ? "busy" : s.releasing ? "releasing" : s.restore ? "restore" : "settling"}`);
+      if (s.busy || s.releasing || s.restore || active())
+        return why(
+          `skip:${s.busy ? "busy" : s.releasing ? "releasing" : s.restore ? "restore" : "settling"}`,
+        );
       if (performance.now() - touchedAt < 400) return why("touched");
-      const gap = element.scrollHeight - element.scrollTop - element.clientHeight;
+      const gap =
+        element.scrollHeight - element.scrollTop - element.clientHeight;
       if (gap > 4) return why(`gap:${Math.round(gap)}`); // 人不在底部：留白在视口外，§88.1 自己会收
-      const spacer = content.querySelector<HTMLElement>("[data-message-scroller-spacer]");
+      const spacer = content.querySelector<HTMLElement>(
+        "[data-message-scroller-spacer]",
+      );
       const spacerHeight = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
       const total = spacerHeight + s.slack;
       if (total <= 1) return why("none");
@@ -1076,12 +1192,18 @@ function SettleAtEnd({
      * 比滚动容器的 ResizeObserver → requestAnimationFrame 早，留白当场吃掉 / 补上，不等下一帧。
      */
     const mutations = new MutationObserver(() => {
-      if (!active() && !s.restore && content.offsetHeight !== lastHeight) pinNow();
+      if (!active() && !s.restore && content.offsetHeight !== lastHeight)
+        pinNow();
       pin();
     });
     // characterData：回答一个字一个字往外冒时改的是文字节点本身（不是加减节点）——多出一行也要当场吃留白（§94.6，390 实测 20px）。
-    mutations.observe(content, { childList: true, subtree: true, characterData: true });
-    const sizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(pinNow);
+    mutations.observe(content, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    const sizes =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(pinNow);
     sizes?.observe(content);
     /*
      * 视口变矮（输入框打字长高、加了小块 / 附件、手机键盘弹出）时人在底部看着：同一帧把 scrollTop 加上变矮的量，
@@ -1096,8 +1218,16 @@ function SettleAtEnd({
             const height = element.clientHeight;
             const shrink = lastClient - height;
             lastClient = height;
-            const spacer = content.querySelector<HTMLElement>("[data-message-scroller-spacer]");
-            if (shrink > 0 && seen.atBottom && !active() && !s.restore && (!spacer || spacer.hidden)) {
+            const spacer = content.querySelector<HTMLElement>(
+              "[data-message-scroller-spacer]",
+            );
+            if (
+              shrink > 0 &&
+              seen.atBottom &&
+              !active() &&
+              !s.restore &&
+              (!spacer || spacer.hidden)
+            ) {
               element.style.scrollBehavior = "auto";
               element.scrollTop += shrink;
               element.style.scrollBehavior = "";
@@ -1345,7 +1475,10 @@ function ResponsibilityFiring({
  * It is also what keeps the entrance honest — no remount means no replay of the fade.
  */
 /** 正文里的 Markdown 图片不内联画，统一进气泡下面的图片卡 / 一摞（DESIGN.md §31）。 */
-const richMarkdownComponents = { ...markdownComponents, img: HiddenMarkdownImage };
+const richMarkdownComponents = {
+  ...markdownComponents,
+  img: HiddenMarkdownImage,
+};
 
 const TranscriptMessage = memo(function TranscriptMessage({
   canRegenerate = false,
@@ -1377,7 +1510,9 @@ const TranscriptMessage = memo(function TranscriptMessage({
         <MessageContent>
           <Arriving delay={delay}>
             <div className="chat-step-line" data-cb-turn="step">
-              <SmoothStreamdown components={markdownComponents}>{text}</SmoothStreamdown>
+              <SmoothStreamdown components={markdownComponents}>
+                {text}
+              </SmoothStreamdown>
             </div>
           </Arriving>
         </MessageContent>
@@ -1422,7 +1557,11 @@ const TranscriptMessage = memo(function TranscriptMessage({
     return (
       <MessageRow align={align}>
         <MessageContent className="w-full">
-          <MessageEditor initial={said} messageId={messageId} onClose={() => setEditing(false)} />
+          <MessageEditor
+            initial={said}
+            messageId={messageId}
+            onClose={() => setEditing(false)}
+          />
         </MessageContent>
       </MessageRow>
     );
@@ -1448,61 +1587,66 @@ const TranscriptMessage = memo(function TranscriptMessage({
               tone={tone === "lead" ? "lead" : "final"}
             />
           ) : (
-          <Bubble
-            data-cb-turn={isUser ? undefined : tone}
-            align={align}
-            variant={isUser ? "muted" : "ghost"}
-            className={isUser ? undefined : "w-full"}
-          >
-            <BubbleContent className={isUser ? undefined : "w-full"}>
-              {isUser ? (
-                // A person's own message is shown exactly as they typed it. Rendering it as markdown
-                // would silently reformat what they said, and an asterisk in a sentence is not
-                // emphasis. The chip is the one exception, and it is not reformatting: it is drawing
-                // the thing that was already a chip in the composer as a chip here too, so the
-                // transcript shows a skill was used rather than a slash that was typed.
-                <span className="whitespace-pre-wrap">
-                  {origin && (
-                    <span className="mr-1.5 inline-flex items-center rounded bg-foreground/10 px-1.5 py-0.5 align-middle text-foreground/70 text-xs">
-                      {"通过"}
-                      {origin.via}
-                    </span>
-                  )}
-                  {invoked ? (
-                    <>
-                      {/*
-                       * The same icon the sidebar uses for Skills, so the badge says WHAT KIND of
-                       * thing was invoked before it says which one. `inline-flex` with
-                       * `align-middle` rather than a block: this sits mid-sentence, and a badge that
-                       * breaks the line it is in reads as a separate message.
-                       */}
-                      <span className="mr-1 inline-flex items-center gap-1 rounded bg-foreground/10 px-1.5 py-0.5 align-middle font-mono text-foreground/80 text-xs">
-                        <IconBox className="size-3 shrink-0" />/{invoked.chip}
+            <Bubble
+              data-cb-turn={isUser ? undefined : tone}
+              align={align}
+              variant={isUser ? "muted" : "ghost"}
+              className={isUser ? undefined : "w-full"}
+            >
+              <BubbleContent className={isUser ? undefined : "w-full"}>
+                {isUser ? (
+                  // A person's own message is shown exactly as they typed it. Rendering it as markdown
+                  // would silently reformat what they said, and an asterisk in a sentence is not
+                  // emphasis. The chip is the one exception, and it is not reformatting: it is drawing
+                  // the thing that was already a chip in the composer as a chip here too, so the
+                  // transcript shows a skill was used rather than a slash that was typed.
+                  <span className="whitespace-pre-wrap">
+                    {origin && (
+                      <span className="mr-1.5 inline-flex items-center rounded bg-foreground/10 px-1.5 py-0.5 align-middle text-foreground/70 text-xs">
+                        {"通过"}
+                        {origin.via}
                       </span>
-                      {invoked.rest}
-                    </>
-                  ) : (
-                    said
-                  )}
-                </span>
-              ) : (
-                /*
-                 * A Bot's prose is markdown, and it arrives in pieces.
-                 *
-                 * Rendered with a streaming-aware renderer rather than an ordinary one: half a fenced
-                 * code block or an unclosed bold marker is the NORMAL state for most of a run, and a
-                 * plain markdown parser draws that as literal asterisks and backticks until the
-                 * closing token arrives, so the answer visibly rewrites itself as it lands. This
-                 * closes them for the duration.
-                 */
-                // 单独一行的链接变成下面的链接卡，正文里那一行拿掉（DESIGN.md §48）。
-                <RichBotStreamdown components={richMarkdownComponents} text={text} />
-              )}
-            </BubbleContent>
-          </Bubble>
+                    )}
+                    {invoked ? (
+                      <>
+                        {/*
+                         * The same icon the sidebar uses for Skills, so the badge says WHAT KIND of
+                         * thing was invoked before it says which one. `inline-flex` with
+                         * `align-middle` rather than a block: this sits mid-sentence, and a badge that
+                         * breaks the line it is in reads as a separate message.
+                         */}
+                        <span className="mr-1 inline-flex items-center gap-1 rounded bg-foreground/10 px-1.5 py-0.5 align-middle font-mono text-foreground/80 text-xs">
+                          <IconBox className="size-3 shrink-0" />/{invoked.chip}
+                        </span>
+                        {invoked.rest}
+                      </>
+                    ) : (
+                      said
+                    )}
+                  </span>
+                ) : (
+                  /*
+                   * A Bot's prose is markdown, and it arrives in pieces.
+                   *
+                   * Rendered with a streaming-aware renderer rather than an ordinary one: half a fenced
+                   * code block or an unclosed bold marker is the NORMAL state for most of a run, and a
+                   * plain markdown parser draws that as literal asterisks and backticks until the
+                   * closing token arrives, so the answer visibly rewrites itself as it lands. This
+                   * closes them for the duration.
+                   */
+                  // 单独一行的链接变成下面的链接卡，正文里那一行拿掉（DESIGN.md §48）。
+                  <RichBotStreamdown
+                    components={richMarkdownComponents}
+                    text={text}
+                  />
+                )}
+              </BubbleContent>
+            </Bubble>
           )}
           {/* 链接卡 / 图片一摞（DESIGN.md §31）；开场一句不带。 */}
-          {tone === "lead" ? null : <MessageRichPreviews align={align} text={isUser ? said : text} />}
+          {tone === "lead" ? null : (
+            <MessageRichPreviews align={align} text={isUser ? said : text} />
+          )}
           {isUser && messageId ? <ReadMark messageId={messageId} /> : null}
           {isUser ? (
             editable && messageId ? (
@@ -1517,7 +1661,10 @@ const TranscriptMessage = memo(function TranscriptMessage({
               </div>
             ) : null
           ) : (
-            <CopyMessage text={text} extra={canRegenerate ? <RegenerateAction /> : null} />
+            <CopyMessage
+              text={text}
+              extra={canRegenerate ? <RegenerateAction /> : null}
+            />
           )}
         </Arriving>
       </MessageContent>
@@ -1526,11 +1673,22 @@ const TranscriptMessage = memo(function TranscriptMessage({
 });
 
 /** A quiet copy action under a Bot's answer; shows on hover, always reachable by keyboard. */
-function CopyMessage({ text, extra }: { text: string; extra?: React.ReactNode }) {
+function CopyMessage({
+  text,
+  extra,
+}: {
+  text: string;
+  extra?: React.ReactNode;
+}) {
   const copy = useAsyncAction(() => writeClipboard(text), {
     errorToast: "复制失败，请手动选择文本复制。",
   });
-  const label = { idle: "复制", pending: "复制", success: "已复制", error: "复制失败" }[copy.state];
+  const label = {
+    idle: "复制",
+    pending: "复制",
+    success: "已复制",
+    error: "复制失败",
+  }[copy.state];
   return (
     <div className="chat-msg-actions">
       <button
@@ -1549,12 +1707,18 @@ function CopyMessage({ text, extra }: { text: string; extra?: React.ReactNode })
             <StatusGlyph />
           </span>
         </span>
-        <span className="btn-labels">
+        {/* Visual stack only — accessible name is the single live aria-label above. */}
+        <span aria-hidden="true" className="btn-labels">
           {(["idle", "success", "error"] as const).map((key) => (
             <span
               data-for={key}
               key={key}
-              style={{ opacity: (copy.state === "pending" ? "idle" : copy.state) === key ? 1 : 0 }}
+              style={{
+                opacity:
+                  (copy.state === "pending" ? "idle" : copy.state) === key
+                    ? 1
+                    : 0,
+              }}
             >
               {{ idle: "复制", success: "已复制", error: "复制失败" }[key]}
             </span>
@@ -1674,9 +1838,13 @@ function AttachmentTiles({
    * 附件仍是一格一格。哪张图读不出来，它自己从一摞里退出。
    */
   const pictures = attachments.filter(
-    (attachment) => attachment.modality === "image" && attachment.url.startsWith(ATTACHMENT_URL_PREFIX),
+    (attachment) =>
+      attachment.modality === "image" &&
+      attachment.url.startsWith(ATTACHMENT_URL_PREFIX),
   );
-  const rest = attachments.filter((attachment) => !pictures.includes(attachment));
+  const rest = attachments.filter(
+    (attachment) => !pictures.includes(attachment),
+  );
   return (
     <ul
       className={cn(
@@ -1690,8 +1858,12 @@ function AttachmentTiles({
             align="end"
             images={pictures.map((picture) => ({
               src: picture.url,
-              ...(picture.filename ? { name: picture.filename, alt: `附件：${picture.filename}` } : { alt: "附件" }),
-              ...(picture.width && picture.height ? { width: picture.width, height: picture.height } : {}),
+              ...(picture.filename
+                ? { name: picture.filename, alt: `附件：${picture.filename}` }
+                : { alt: "附件" }),
+              ...(picture.width && picture.height
+                ? { width: picture.width, height: picture.height }
+                : {}),
             }))}
           />
         </li>
@@ -1770,7 +1942,8 @@ function probeDocument(url: string): Promise<DocumentProbe> {
       const length = Number(response.headers.get("content-length"));
       return {
         missing: response.status === 404,
-        size: response.ok && Number.isFinite(length) && length > 0 ? length : null,
+        size:
+          response.ok && Number.isFinite(length) && length > 0 ? length : null,
       };
     })
     .finally(() => {
@@ -1831,7 +2004,10 @@ function probeDocument(url: string): Promise<DocumentProbe> {
  * also puts a document back in step with the picture beside it — an `<img>` handed a 401 shows a
  * broken image, not a sentence swearing the file was deleted.
  */
-function useDocumentIsGone(url: string, ask: boolean): { gone: boolean; size: number | null } {
+function useDocumentIsGone(
+  url: string,
+  ask: boolean,
+): { gone: boolean; size: number | null } {
   const [gone, setGone] = useState(false);
   const [size, setSize] = useState<number | null>(null);
 
@@ -1883,7 +2059,10 @@ function SentAttachmentTile({ attachment }: { attachment: SentAttachment }) {
    * announces the reader exactly as fetching it would. An off-site url is already unavailable
    * without anybody being asked.
    */
-  const { gone, size } = useDocumentIsGone(url, servable && modality === "document");
+  const { gone, size } = useDocumentIsGone(
+    url,
+    servable && modality === "document",
+  );
   const unavailable = failedToLoad || gone || !servable;
 
   /*
@@ -1945,9 +2124,7 @@ function SentAttachmentTile({ attachment }: { attachment: SentAttachment }) {
  * and "this attachment" is the honest way to refer to a thing whose name we never had.
  */
 function unavailableSentence(filename?: string): string {
-  return filename
-    ? `${filename} is unavailable.`
-    : "此附件不可用。";
+  return filename ? `${filename} is unavailable.` : "此附件不可用。";
 }
 
 /**
@@ -2249,7 +2426,10 @@ function ServerToolLine({ name, result }: { name: string; result?: string }) {
       running={result === undefined}
     >
       {body ? (
-        <Streamdown components={markdownComponents} translations={STREAMDOWN_ZH}>
+        <Streamdown
+          components={markdownComponents}
+          translations={STREAMDOWN_ZH}
+        >
           {forDisplay(body)}
         </Streamdown>
       ) : null}
@@ -2260,7 +2440,9 @@ function ServerToolLine({ name, result }: { name: string; result?: string }) {
 function HostAccessHint() {
   return (
     <p className="chat-host-hint" role="note">
-      {"机器人想读取这台电脑上的文件夹，但电脑还没有连接或没有授权。可以在机器人「⋯」菜单 → "}
+      {
+        "机器人想读取这台电脑上的文件夹，但电脑还没有连接或没有授权。可以在机器人「⋯」菜单 → "
+      }
       <strong>{"电脑操作"}</strong>
       {" 里连接电脑并授权文件夹。"}
     </p>
@@ -2282,7 +2464,9 @@ export function isPersonSentMessage(
   role: "user" | "assistant",
   text: string,
 ): boolean {
-  return role === "user" && readFiring(text) === null && serverRowKind(text) === null;
+  return (
+    role === "user" && readFiring(text) === null && serverRowKind(text) === null
+  );
 }
 
 /**
@@ -2400,14 +2584,18 @@ function useSmoothSendScroll(
  * 第一行换了（前面补进来了 / 换了对话）而人在底部时，画完那一刻直接回到底部（不平滑，不算跳）。
  * 人往上翻着看的时候不动，交给浏览器的滚动锚定。
  */
-function useKeepBottomOnPrepend(viewport: React.RefObject<HTMLDivElement | null>, firstId: string | null) {
+function useKeepBottomOnPrepend(
+  viewport: React.RefObject<HTMLDivElement | null>,
+  firstId: string | null,
+) {
   const atBottom = useRef(true);
   const seen = useRef<string | null>(null);
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
     const onScroll = () => {
-      atBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+      atBottom.current =
+        element.scrollHeight - element.scrollTop - element.clientHeight < 80;
     };
     element.addEventListener("scroll", onScroll, { passive: true });
     return () => element.removeEventListener("scroll", onScroll);
@@ -2416,7 +2604,14 @@ function useKeepBottomOnPrepend(viewport: React.RefObject<HTMLDivElement | null>
     const element = viewport.current;
     const previous = seen.current;
     seen.current = firstId;
-    if (!element || previous === null || firstId === null || previous === firstId || !atBottom.current) return;
+    if (
+      !element ||
+      previous === null ||
+      firstId === null ||
+      previous === firstId ||
+      !atBottom.current
+    )
+      return;
     const behavior = element.style.scrollBehavior;
     element.style.scrollBehavior = "auto";
     element.scrollTop = element.scrollHeight;
@@ -2457,14 +2652,26 @@ export function ChatTranscript({
    * 开场一句、丢掉下面那行按钮，整页矮一截、往下一跳。所以：空闲时记下列表的样子，busy 之后列表没变就还算答完。
    * 重新生成 / 编辑重发会先截断列表，长度变了，照样算正在跑。
    */
-  const settledRef = useRef<{ length: number; last: string | null } | null>(null);
+  const settledRef = useRef<{ length: number; last: string | null } | null>(
+    null,
+  );
   const shape = { length: items.length, last: items.at(-1)?.id ?? null };
   if (!busy) settledRef.current = shape;
   const settled = settledRef.current;
   const live =
-    busy && !(settled !== null && settled.length === shape.length && settled.last === shape.last);
+    busy &&
+    !(
+      settled !== null &&
+      settled.length === shape.length &&
+      settled.last === shape.last
+    );
   // 一轮收成「开场一句 → 结果」，与机器人聊天同一规则（compactTurns，2026-10-13 第四轮）。
-  const compact = compactTurns(items, live, stoppedTurns ?? EMPTY_STOPS, fallbacks);
+  const compact = compactTurns(
+    items,
+    live,
+    stoppedTurns ?? EMPTY_STOPS,
+    fallbacks,
+  );
   const showToolActivity = useToolActivityVisible();
   /*
    * 简单回合（DESIGN.md §93）：做完了、只读的一两步、有结果——干活卡那一行整行收起，只留结果。结构上的判断在
@@ -2472,10 +2679,15 @@ export function ChatTranscript({
    * 缓存（同一个 queryKey），不多发请求。打开「调试：显示工具调用」时不收（每一步本来就画着）。
    */
   const chatConfig = useCopilotChatConfiguration();
-  const hasQuiet = !showToolActivity && [...compact.work.values()].some((work) => work.quiet);
-  const confirmations = useThreadConfirmations(hasQuiet ? (chatConfig?.threadId ?? null) : null, false);
+  const hasQuiet =
+    !showToolActivity && [...compact.work.values()].some((work) => work.quiet);
+  const confirmations = useThreadConfirmations(
+    hasQuiet ? (chatConfig?.threadId ?? null) : null,
+    false,
+  );
   const confirmed = new Set<string>();
-  for (const request of confirmations.data ?? []) if (request.toolCallId) confirmed.add(request.toolCallId);
+  for (const request of confirmations.data ?? [])
+    if (request.toolCallId) confirmed.add(request.toolCallId);
   // 没绑到工具调用的确认卡片（§101.9）画在最下面；「用户确认了」那条已经进来的不再画（那一行就是记录）。
   const resumedCards = new Set<string>();
   for (const item of items) {
@@ -2487,7 +2699,15 @@ export function ChatTranscript({
   if (hasQuiet) {
     for (const [anchor, work] of compact.work) {
       if (!work.quiet) continue;
-      if (isQuietWork({ calls: work.calls, live: work.live, hasFinal: true, confirmed, seconds: knownWorkSeconds(work.key) })) {
+      if (
+        isQuietWork({
+          calls: work.calls,
+          live: work.live,
+          hasFinal: true,
+          confirmed,
+          seconds: knownWorkSeconds(work.key),
+        })
+      ) {
         quietRows.add(anchor);
       }
     }
@@ -2502,14 +2722,16 @@ export function ChatTranscript({
   const shownRef = useRef<Set<string>>(new Set());
   const foldedRef = useRef<Set<string>>(new Set());
   for (const item of items) {
-    if (rowHidden(item.id) && shownRef.current.has(item.id)) foldedRef.current.add(item.id);
+    if (rowHidden(item.id) && shownRef.current.has(item.id))
+      foldedRef.current.add(item.id);
   }
   useLayoutEffect(() => {
     const ids = new Set(items.map((item) => item.id));
     const shown = new Set<string>();
     for (const id of ids) if (!rowHidden(id)) shown.add(id);
     shownRef.current = shown;
-    for (const id of foldedRef.current) if (!ids.has(id)) foldedRef.current.delete(id);
+    for (const id of foldedRef.current)
+      if (!ids.has(id)) foldedRef.current.delete(id);
   });
 
   /*
@@ -2540,10 +2762,18 @@ export function ChatTranscript({
         (lastItem?.kind === "tool" || lastItem?.kind === "browser")));
 
   // 这一轮已经有干活卡（在第一个干活的工具那一行里，DESIGN.md §75.1）：末尾不再画「思考中」。
-  const liveWorking = busy && !showToolActivity && [...compact.work.values()].some((work) => work.live);
+  const liveWorking =
+    busy &&
+    !showToolActivity &&
+    [...compact.work.values()].some((work) => work.live);
   // 机器人说了一句、还在想下一步（还没有干活卡）：§78.2 的小点。
   const pausedAfterText =
-    busy && !liveWorking && lastItem?.kind === "text" && lastItem.role === "assistant" ? lastItem.text : null;
+    busy &&
+    !liveWorking &&
+    lastItem?.kind === "text" &&
+    lastItem.role === "assistant"
+      ? lastItem.text
+      : null;
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const newestUserMessageId =
@@ -2577,8 +2807,14 @@ export function ChatTranscript({
    * sendMode 在渲染时定（滚动容器在这次提交后的微任务里读标记），SettleAtEnd 的 layout effect 读同一个 ref。
    */
   const sendMode = useRef<SendMode>({ id: null, continuous: false });
-  const freshAnchor = useFreshAnchor(newestUserMessageId, hydrating, lastSentAt, sendMode);
-  const newestAnchor = freshAnchor === null ? undefined : [...anchorRowIds(items)].at(-1);
+  const freshAnchor = useFreshAnchor(
+    newestUserMessageId,
+    hydrating,
+    lastSentAt,
+    sendMode,
+  );
+  const newestAnchor =
+    freshAnchor === null ? undefined : [...anchorRowIds(items)].at(-1);
   const anchorRows = newestAnchor ? new Set([newestAnchor]) : EMPTY_ANCHORS;
   const slackRef = useRef<HTMLDivElement | null>(null);
   // 重新生成挂在最后一轮最后一段看得见的回答下面；回答进行中谁都不挂（DESIGN.md §67）。
@@ -2678,11 +2914,16 @@ export function ChatTranscript({
               ) : waitingOnFirstToken ? (
                 // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
                 // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。
-                liveWorking ? null : <Thinking />
+                liveWorking ? null : (
+                  <Thinking />
+                )
               ) : pausedAfterText !== null ? (
                 <PauseDots watch={pausedAfterText} />
               ) : null}
-              <LooseConfirmCards resumed={resumedCards} version={items.length} />
+              <LooseConfirmCards
+                resumed={resumedCards}
+                version={items.length}
+              />
               {queued.map((message) => (
                 <Queued
                   attachments={message.attachments}
@@ -2698,27 +2939,56 @@ export function ChatTranscript({
               {/* 回答期间发的、进了服务器收件箱的（DESIGN.md §38.1）：读到之前画在这里，读到后出现在它被读到的位置。 */}
               <QueuedMessages />
               {/* 最后一条下面的留白（§88.1）：在这一格里，不算一行；高度由 SettleAtEnd 直接改。 */}
-              <div aria-hidden className="chat-slack" data-chat-slack="" ref={slackRef} style={{ display: "none" }} />
+              <div
+                aria-hidden
+                className="chat-slack"
+                data-chat-slack=""
+                ref={slackRef}
+                style={{ display: "none" }}
+              />
             </div>
             {topNotice ? (
               <div className="chat-top-notice">{topNotice}</div>
             ) : null}
             {items.length === 0 && restoring ? <RestoringTranscript /> : null}
             {items.map((item, index) => {
-              if (rowHidden(item.id)) return foldedRef.current.has(item.id) ? renderFolded(item, index) : null;
               const stoppedHere = compact.stoppedAfter.has(item.id);
               const fallback = compact.fallbackAfter.get(item.id);
-              if (!stoppedHere && !fallback) return renderRow(item, index);
+              const hidden = rowHidden(item.id);
+              const row = hidden
+                ? foldedRef.current.has(item.id)
+                  ? renderFolded(item, index)
+                  : null
+                : renderRow(item, index);
+              // 「已停止」/备用说明必须跟着 compact 锚点画出来：锚点行若因 quiet/fold 卸掉，
+              // 以前连标记一起 return null，刷新后只剩服务器误锚时就像挂在上一轮回答下面。
+              if (!stoppedHere && !fallback) return row;
               return [
-                renderRow(item, index),
+                row,
                 stoppedHere ? (
-                  <MessageScrollerItem key={`${item.id}:stopped`} messageId={`${item.id}:stopped`}>
-                    <div className="chat-stopped-mark" data-testid="turn-stopped">{"◼ 已停止"}</div>
+                  <MessageScrollerItem
+                    key={`${item.id}:stopped`}
+                    messageId={`${item.id}:stopped`}
+                  >
+                    <div
+                      className="chat-stopped-mark"
+                      data-testid="turn-stopped"
+                    >
+                      {"◼ 已停止"}
+                    </div>
                   </MessageScrollerItem>
                 ) : null,
                 fallback ? (
-                  <MessageScrollerItem key={`${item.id}:fallback`} messageId={`${item.id}:fallback`}>
-                    <div className="chat-fallback-note" data-testid="turn-fallback">{fallback}</div>
+                  <MessageScrollerItem
+                    key={`${item.id}:fallback`}
+                    messageId={`${item.id}:fallback`}
+                  >
+                    <div
+                      className="chat-fallback-note"
+                      data-testid="turn-fallback"
+                    >
+                      {fallback}
+                    </div>
                   </MessageScrollerItem>
                 ) : null,
               ];
@@ -2730,7 +3000,15 @@ export function ChatTranscript({
           <span className="chat-bottom-pill-t">{"回到底部"}</span>
         </MessageScrollerButton>
         <ScrollNewestQueuedIntoView newest={queued.at(-1)?.id ?? null} />
-        <SettleAtEnd busy={busy} hydrating={hydrating} newestUserMessageId={newestUserMessageId} viewport={viewportRef} slack={slackRef} sendMode={sendMode} {...(scrollKey ? { scrollKey } : {})} />
+        <SettleAtEnd
+          busy={busy}
+          hydrating={hydrating}
+          newestUserMessageId={newestUserMessageId}
+          viewport={viewportRef}
+          slack={slackRef}
+          sendMode={sendMode}
+          {...(scrollKey ? { scrollKey } : {})}
+        />
       </MessageScroller>
     </MessageScrollerProvider>
   );
@@ -2739,96 +3017,107 @@ export function ChatTranscript({
   function workRowFor(id: string) {
     if (showToolActivity) return null;
     const work = compact.work.get(id);
-    return work ? <WorkRow calls={work.calls} live={work.live} notes={work.notes} turnKey={work.key} /> : null;
+    return work ? (
+      <WorkRow
+        calls={work.calls}
+        live={work.live}
+        notes={work.notes}
+        turnKey={work.key}
+      />
+    ) : null;
   }
 
   /** 刚被收起的一行：原样画着，外层 `data-folded` 收成 0 高（§82.9）；读屏和 Tab 都跳过它。 */
   function renderFolded(item: TranscriptItem, index: number) {
     const row = renderRow(item, index);
     if (!isValidElement<Record<string, unknown>>(row)) return null;
-    return cloneElement(row, { "aria-hidden": true, "data-folded": "", inert: true, scrollAnchor: false });
+    return cloneElement(row, {
+      "aria-hidden": true,
+      "data-folded": "",
+      inert: true,
+      scrollAnchor: false,
+    });
   }
 
   function renderRow(item: TranscriptItem, index: number) {
-    return (
-              item.kind === "browser" ? (
-                <MessageScrollerItem
-                  data-row="activity"
-                  key={item.id}
-                  messageId={item.id}
-                >
-                  <Arriving
-                    delay={delays.delayFor(item.id, index, items.length)}
-                  >
-                    <BrowserActivity
-                      group={item}
-                      active={busy && index === items.length - 1}
-                    />
-                  </Arriving>
-                  {workRowFor(item.id)}
-                </MessageScrollerItem>
-              ) : item.kind === "tool" ? (
-                <MessageScrollerItem
-                  data-row="activity"
-                  key={item.id}
-                  messageId={item.id}
-                >
-                  <TranscriptToolCall
-                    args={item.toolCall.function.arguments}
-                    delay={delays.delayFor(item.id, index, items.length)}
-                    name={item.toolCall.function.name}
-                    result={item.result}
-                    toolCallId={item.toolCall.id}
-                  />
-                  {/* 确认卡片（DESIGN.md §58）：画在这个工具调用下面；设备改文件时带 diff（§62）。 */}
-                  <ToolCallConfirmCards
-                    answered={item.result !== undefined}
-                    recent={index >= items.length - 8}
-                    toolCallId={item.toolCall.id}
-                  />
-                  {workRowFor(item.id)}
-                </MessageScrollerItem>
-              ) : item.kind === "activity" ? (
-                <MessageScrollerItem key={item.id} messageId={item.id}>
-                  <TranscriptActivity
-                    delay={delays.delayFor(item.id, index, items.length)}
-                    message={item.message}
-                  />
-                </MessageScrollerItem>
-              ) : item.kind === "text" ? (
-                <MessageScrollerItem
-                  key={item.id}
-                  messageId={item.id}
-                  scrollAnchor={anchorRows.has(item.id)}
-                >
-                  <TranscriptMessage
-                    canRegenerate={item.id === regenerateId}
-                    commandNames={commandNames}
-                    delay={delays.delayFor(item.id, index, items.length)}
-                    editable={isPersonSentMessage(item.role, item.text) && isEditableUserText(item.text)}
-                    messageId={item.id}
-                    role={item.role}
-                    text={item.text}
-                    tone={compact.tone.get(item.id)}
-                  />
-                </MessageScrollerItem>
-              ) : item.kind === "attachments" ? (
-                <MessageScrollerItem
-                  key={item.id}
-                  messageId={item.id}
-                  scrollAnchor={anchorRows.has(item.id)}
-                >
-                  <TranscriptAttachments
-                    attachments={item.attachments}
-                    delay={delays.delayFor(item.id, index, items.length)}
-                  />
-                </MessageScrollerItem>
-              ) : (
-                // Every member of the union is handled above. `assertNever` types `item` as
-                // `never` here, so a future addition to `VisibleChatItem` fails to typecheck at
-                // this call instead of silently falling into this branch and rendering nothing.
-                assertNever(item)
-              )
+    return item.kind === "browser" ? (
+      <MessageScrollerItem
+        data-row="activity"
+        key={item.id}
+        messageId={item.id}
+      >
+        <Arriving delay={delays.delayFor(item.id, index, items.length)}>
+          <BrowserActivity
+            group={item}
+            active={busy && index === items.length - 1}
+          />
+        </Arriving>
+        {workRowFor(item.id)}
+      </MessageScrollerItem>
+    ) : item.kind === "tool" ? (
+      <MessageScrollerItem
+        data-row="activity"
+        key={item.id}
+        messageId={item.id}
+      >
+        <TranscriptToolCall
+          args={item.toolCall.function.arguments}
+          delay={delays.delayFor(item.id, index, items.length)}
+          name={item.toolCall.function.name}
+          result={item.result}
+          toolCallId={item.toolCall.id}
+        />
+        {/* 确认卡片（DESIGN.md §58）：画在这个工具调用下面；设备改文件时带 diff（§62）。 */}
+        <ToolCallConfirmCards
+          answered={item.result !== undefined}
+          recent={index >= items.length - 8}
+          toolCallId={item.toolCall.id}
+        />
+        {workRowFor(item.id)}
+      </MessageScrollerItem>
+    ) : item.kind === "activity" ? (
+      <MessageScrollerItem key={item.id} messageId={item.id}>
+        <TranscriptActivity
+          delay={delays.delayFor(item.id, index, items.length)}
+          message={item.message}
+        />
+      </MessageScrollerItem>
+    ) : item.kind === "text" ? (
+      <MessageScrollerItem
+        key={item.id}
+        messageId={item.id}
+        scrollAnchor={anchorRows.has(item.id)}
+      >
+        <TranscriptMessage
+          canRegenerate={item.id === regenerateId}
+          commandNames={commandNames}
+          delay={delays.delayFor(item.id, index, items.length)}
+          editable={
+            isPersonSentMessage(item.role, item.text) &&
+            isEditableUserText(item.text)
+          }
+          messageId={item.id}
+          role={item.role}
+          text={item.text}
+          tone={compact.tone.get(item.id)}
+        />
+      </MessageScrollerItem>
+    ) : item.kind === "attachments" ? (
+      <MessageScrollerItem
+        key={item.id}
+        messageId={item.id}
+        scrollAnchor={anchorRows.has(item.id)}
+      >
+        <TranscriptAttachments
+          attachments={item.attachments}
+          delay={delays.delayFor(item.id, index, items.length)}
+        />
+      </MessageScrollerItem>
+    ) : (
+      // Every member of the union is handled above. `assertNever` types `item` as
+      // `never` here, so a future addition to `VisibleChatItem` fails to typecheck at
+      // this call instead of silently falling into this branch and rendering nothing.
+      assertNever(item)
     );
   }
 }
@@ -2853,29 +3142,60 @@ function useFreshAnchor(
   lastSentAt: SentAtReading | null = null,
   sendMode?: React.RefObject<SendMode>,
 ): string | null {
-  const seen = useRef<{ baseline: string | null; id: string | null; at: number; last: string | null; continuous: boolean } | null>(null);
-  if (seen.current === null) seen.current = { baseline: newestUserMessageId, id: null, at: 0, last: newestUserMessageId, continuous: false };
+  const seen = useRef<{
+    baseline: string | null;
+    id: string | null;
+    at: number;
+    last: string | null;
+    continuous: boolean;
+  } | null>(null);
+  if (seen.current === null)
+    seen.current = {
+      baseline: newestUserMessageId,
+      id: null,
+      at: 0,
+      last: newestUserMessageId,
+      continuous: false,
+    };
   const memo = seen.current;
   if (hydrating) {
     memo.baseline = newestUserMessageId;
     memo.id = null;
     memo.continuous = false;
-  } else if (newestUserMessageId !== null && newestUserMessageId !== memo.baseline && newestUserMessageId !== memo.id) {
+  } else if (
+    newestUserMessageId !== null &&
+    newestUserMessageId !== memo.baseline &&
+    newestUserMessageId !== memo.id
+  ) {
     const now = Date.now();
     // 上一条（这条出现之前的最新一条用户消息）什么时候发的：服务器读数优先，本机记的兜底（§94）。
-    memo.continuous = isContinuousSend(previousSentAt(memo.last, lastSentAt), now);
+    memo.continuous = isContinuousSend(
+      previousSentAt(memo.last, lastSentAt),
+      now,
+    );
     memo.id = newestUserMessageId;
     memo.at = now;
     rememberSent(newestUserMessageId, now);
-    if (sendMode) sendMode.current = { id: newestUserMessageId, continuous: memo.continuous };
+    if (sendMode)
+      sendMode.current = {
+        id: newestUserMessageId,
+        continuous: memo.continuous,
+      };
   }
   memo.last = newestUserMessageId;
-  const fresh = !memo.continuous && memo.id !== null && memo.id === newestUserMessageId && Date.now() - memo.at < FRESH_ANCHOR_MS;
+  const fresh =
+    !memo.continuous &&
+    memo.id !== null &&
+    memo.id === newestUserMessageId &&
+    Date.now() - memo.at < FRESH_ANCHOR_MS;
   // 过期后重画一次，把标记拿掉。
   const [, expire] = useState(0);
   useEffect(() => {
     if (!fresh) return;
-    const timer = window.setTimeout(() => expire((n) => n + 1), FRESH_ANCHOR_MS - (Date.now() - memo.at) + 20);
+    const timer = window.setTimeout(
+      () => expire((n) => n + 1),
+      FRESH_ANCHOR_MS - (Date.now() - memo.at) + 20,
+    );
     return () => window.clearTimeout(timer);
   }, [fresh, memo]);
   return fresh ? memo.id : null;
@@ -2884,13 +3204,17 @@ function useFreshAnchor(
 /**
  * 最后一轮（最后一条用户自己发的消息之后）最后一段看得见的回答文字；没有为 null。重新生成挂在它下面。
  */
-export function lastAnswerId(items: readonly TranscriptItem[], hidden: ReadonlySet<string>): string | null {
+export function lastAnswerId(
+  items: readonly TranscriptItem[],
+  hidden: ReadonlySet<string>,
+): string | null {
   for (let at = items.length - 1; at >= 0; at -= 1) {
     const item = items[at]!;
     if (item.kind === "attachments") return null;
     if (item.kind !== "text") continue;
     if (isPersonSentMessage(item.role, item.text)) return null;
-    if (item.role === "assistant" && item.text.trim() && !hidden.has(item.id)) return item.id;
+    if (item.role === "assistant" && item.text.trim() && !hidden.has(item.id))
+      return item.id;
   }
   return null;
 }
@@ -2943,21 +3267,31 @@ export function compactTurns(
   // 一轮的开头：人发的消息，或服务器放进来、接着跑一轮的那几种（定时任务 / 任务结果 / 后来确认，CB-046）。
   const sent = (item: TranscriptItem) =>
     item.kind === "attachments" ||
-    (item.kind === "text" && (isPersonSentMessage(item.role, item.text) || (item.role === "user" && serverRowKind(item.text) !== null)));
-  const turns: { users: TranscriptItem[]; rest: TranscriptItem[] }[] = [{ users: [], rest: [] }];
+    (item.kind === "text" &&
+      (isPersonSentMessage(item.role, item.text) ||
+        (item.role === "user" && serverRowKind(item.text) !== null)));
+  const turns: { users: TranscriptItem[]; rest: TranscriptItem[] }[] = [
+    { users: [], rest: [] },
+  ];
   for (const item of items) {
     const current = turns[turns.length - 1]!;
     if (sent(item)) {
-      if (current.rest.length === 0 && current.users.length > 0) current.users.push(item);
+      if (current.rest.length === 0 && current.users.length > 0)
+        current.users.push(item);
       else turns.push({ users: [item], rest: [] });
     } else current.rest.push(item);
   }
   turns.forEach((turn, index) => {
     const live = busy && index === turns.length - 1;
-    const isStopped = !live && turn.users.some((user) => stopped.has(turnOf(user)));
-    const callsTool = (item: TranscriptItem) => item.kind === "tool" || item.kind === "browser";
+    const isStopped =
+      !live && turn.users.some((user) => stopped.has(turnOf(user)));
+    const callsTool = (item: TranscriptItem) =>
+      item.kind === "tool" || item.kind === "browser";
     const texts = turn.rest.filter(
-      (item): item is Extract<TranscriptItem, { kind: "text" }> => item.kind === "text" && item.role === "assistant" && item.text.trim().length > 0,
+      (item): item is Extract<TranscriptItem, { kind: "text" }> =>
+        item.kind === "text" &&
+        item.role === "assistant" &&
+        item.text.trim().length > 0,
     );
     let final: string | null = null;
     texts.forEach((item, i) => {
@@ -2974,14 +3308,26 @@ export function compactTurns(
      * 把「我再核对一下深圳」这种过程留在了答案上面。
      */
     if (!final && !live && !isStopped && texts.length > 1) {
-      const lastRest = [...turn.rest].reverse().find((item) => item.kind !== "text" || item.role !== "assistant" || item.text.trim());
-      if (lastRest?.kind === "tool" && lastRest.toolCall.function.name === "render_ui") {
+      const lastRest = [...turn.rest]
+        .reverse()
+        .find(
+          (item) =>
+            item.kind !== "text" ||
+            item.role !== "assistant" ||
+            item.text.trim(),
+        );
+      if (
+        lastRest?.kind === "tool" &&
+        lastRest.toolCall.function.name === "render_ui"
+      ) {
         const promoted = texts[texts.length - 1]!;
         final = promoted.id;
         tone.set(promoted.id, "final");
       }
     }
-    if (final) for (const item of texts) if (tone.get(item.id) === "step") hidden.add(item.id);
+    if (final)
+      for (const item of texts)
+        if (tone.get(item.id) === "step") hidden.add(item.id);
     const browsers = turn.rest.filter((item) => item.kind === "browser");
     for (const item of browsers.slice(0, -1)) hidden.add(item.id);
     // 干活卡（§75.1）：这一轮全部调用；画在第一个干活的工具那一行（浏览只留最后一组，所以落在浏览上时用最后那一组）。
@@ -2989,7 +3335,12 @@ export function compactTurns(
       const calls: WorkCall[] = [];
       let anchor: string | null = null;
       for (const item of turn.rest) {
-        const tools = item.kind === "tool" ? [item] : item.kind === "browser" ? item.steps : [];
+        const tools =
+          item.kind === "tool"
+            ? [item]
+            : item.kind === "browser"
+              ? item.steps
+              : [];
         for (const tool of tools) {
           const name = tool.toolCall.function.name;
           calls.push({
@@ -3002,7 +3353,8 @@ export function compactTurns(
           if (anchor === null && isWorkCall(name)) anchor = item.id;
         }
       }
-      if (anchor !== null && hidden.has(anchor)) anchor = browsers.at(-1)?.id ?? null;
+      if (anchor !== null && hidden.has(anchor))
+        anchor = browsers.at(-1)?.id ?? null;
       const key = turn.users[turn.users.length - 1]?.id;
       if (anchor !== null && key) {
         /*
@@ -3018,11 +3370,18 @@ export function compactTurns(
            * 开场一句也是过程话（§93，改 §90 的「卡片之前的开场一句照旧是气泡」）：有干活卡的一轮里，
            * 「我来查看你当前在线电脑的屏幕…」后面就是干活的工具，和两步之间的话一样收进卡片（实时时下一步一开始就收）。
            * 出现在卡片之后的开场一句（先干活后说话）同理。
-           */
-          else if (item.kind === "text" && (tone.get(item.id) === "step" || tone.get(item.id) === "lead")) {
-            const workAfter = turn.rest.slice(at + 1).some(
-              (next) => next.kind === "browser" || (next.kind === "tool" && isWorkCall(next.toolCall.function.name)),
-            );
+           */ else if (
+            item.kind === "text" &&
+            (tone.get(item.id) === "step" || tone.get(item.id) === "lead")
+          ) {
+            const workAfter = turn.rest
+              .slice(at + 1)
+              .some(
+                (next) =>
+                  next.kind === "browser" ||
+                  (next.kind === "tool" &&
+                    isWorkCall(next.toolCall.function.name)),
+              );
             if (!live || workAfter) {
               hidden.add(item.id);
               notes.push({ at: seen, text: item.text });
@@ -3030,20 +3389,38 @@ export function compactTurns(
           }
         });
         // 简单回合（§93）：结构上的判断在这里；确认卡、用时只有渲染时知道，ChatTranscript 再看一遍。
-        const quiet = isQuietWork({ calls, live, stopped: isStopped, hasFinal: final !== null });
+        const quiet = isQuietWork({
+          calls,
+          live,
+          stopped: isStopped,
+          hasFinal: final !== null,
+        });
         work.set(anchor, { calls, key, live, notes, quiet });
       }
     }
     // CB-021：同一轮里同一个页面只留一张卡（§54「同一轮同一页面一张卡」）。
     const pageCalls = turn.rest.flatMap((item) =>
-      item.kind === "tool" ? [{ id: item.id, name: item.toolCall.function.name, args: item.toolCall.function.arguments, result: item.result }] : [],
+      item.kind === "tool"
+        ? [
+            {
+              id: item.id,
+              name: item.toolCall.function.name,
+              args: item.toolCall.function.arguments,
+              result: item.result,
+            },
+          ]
+        : [],
     );
     for (const id of supersededPageCalls(pageCalls)) hidden.add(id);
-    const visible = [...turn.users, ...turn.rest].filter((item) => !hidden.has(item.id));
+    const visible = [...turn.users, ...turn.rest].filter(
+      (item) => !hidden.has(item.id),
+    );
     const last = visible[visible.length - 1]?.id;
     if (isStopped && last) stoppedAfter.add(last);
     if (!live && last && fallbacks?.size) {
-      const notice = turn.users.map((user) => fallbacks.get(turnOf(user))).find(Boolean);
+      const notice = turn.users
+        .map((user) => fallbacks.get(turnOf(user)))
+        .find(Boolean);
       if (notice) fallbackAfter.set(last, notice);
     }
   });

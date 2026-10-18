@@ -1,5 +1,11 @@
 import { IconPencil, IconRefresh } from "@tabler/icons-react";
-import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, StatusGlyph } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,9 +37,12 @@ function PillAction({
   run: () => Promise<unknown> | void;
   testId: string;
 }) {
-  const action = useAsyncAction(async () => {
-    await run();
-  }, { errorToast: FAILED });
+  const action = useAsyncAction(
+    async () => {
+      await run();
+    },
+    { errorToast: FAILED },
+  );
   const state = action.state;
   return (
     <button
@@ -56,9 +65,16 @@ function PillAction({
           <StatusGlyph />
         </span>
       </span>
-      <span className="btn-labels">
+      {/* Visual stack only — accessible name is the single live aria-label on the button. */}
+      <span aria-hidden="true" className="btn-labels">
         {(["idle", "pending", "error"] as const).map((key) => (
-          <span data-for={key} key={key} style={{ opacity: (state === "success" ? "idle" : state) === key ? 1 : 0 }}>
+          <span
+            data-for={key}
+            key={key}
+            style={{
+              opacity: (state === "success" ? "idle" : state) === key ? 1 : 0,
+            }}
+          >
             {{ idle: label, pending, error: "失败" }[key]}
           </span>
         ))}
@@ -129,19 +145,27 @@ export function MessageEditor({
     element.focus();
     element.setSelectionRange(element.value.length, element.value.length);
   }, []);
-  const send = useAsyncAction(async () => {
-    if (!actions) throw new Error("现在不能重发。");
-    await actions.edit(messageId, text);
-    onClose();
-  }, { errorToast: FAILED });
-  const blocked = !text.trim() || text.trim() === initial.trim() || !actions?.canAct;
+  const send = useAsyncAction(
+    async () => {
+      if (!actions) throw new Error("现在不能重发。");
+      await actions.edit(messageId, text);
+      onClose();
+    },
+    { errorToast: FAILED },
+  );
+  const blocked =
+    !text.trim() || text.trim() === initial.trim() || !actions?.canAct;
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
       onClose();
       return;
     }
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
       event.preventDefault();
       if (!blocked) void send.run();
     }
@@ -158,8 +182,16 @@ export function MessageEditor({
         value={text}
       />
       <div className="chat-msg-editor-bar">
-        <span className="chat-msg-editor-hint">{"发送后，这条之后的对话会换成新的回答"}</span>
-        <Button onClick={onClose} size="sm" type="button" variant="ghost" disabled={send.state === "pending"}>
+        <span className="chat-msg-editor-hint">
+          {"发送后，这条之后的对话会换成新的回答"}
+        </span>
+        <Button
+          onClick={onClose}
+          size="sm"
+          type="button"
+          variant="ghost"
+          disabled={send.state === "pending"}
+        >
           {"取消"}
         </Button>
         <Button

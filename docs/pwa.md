@@ -19,7 +19,7 @@ ChisaBot 的网页版可以直接在手机浏览器里用，也可以「安装�
 
 - **安卓 Chrome / 电脑 Chrome、Edge**：打开网页版 8 秒后，顶栏下面出现「安装 ChisaBot 应用」，点「安装」弹出浏览器自己的确认；也可以从浏览器菜单「安装应用 / 添加到主屏幕」。
 - **iPhone / iPad Safari**：提示里点「怎么装」看步骤：点分享按钮 → 添加到主屏幕。
-- 提示关掉后 14 天内不再出现（`localStorage` 的 `chisabot-install-hint`）。ChisaBot PC、安卓客户端、已经以应用方式打开时都不提示。
+- ×「不再提示」永久关掉；点「安装」后取消/超时则 14 天内不再出现（`localStorage` 的 `chisabot-install-hint`）。ChisaBot PC、安卓客户端、已经以应用方式打开时都不提示。
 - 安装需要 HTTPS（或 localhost）。清单和图标在登录网关后面：清单用 `crossorigin="use-credentials"` 带上登录 cookie。
 
 ## Service worker（`app/public/sw.js`）

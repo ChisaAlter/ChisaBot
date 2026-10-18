@@ -77,6 +77,32 @@ export function slimReplay(events: readonly BaseEvent[]): BaseEvent[] {
   });
 }
 
+/**
+ * Which user message opened a stopped run (DOG-friction 2026-10-19).
+ *
+ * RUN_STARTED.input.messages is the *new* messages for that run — often the latest user
+ * turn, sometimes several (inbox claim + send). Walk from the *latest* id in that input
+ * back to the nearest user row (same rule as fallbackTurns). Using Math.min here used to
+ * pin 「已停止」 to an earlier turn's reply when the input carried more than one user message.
+ */
+export function userMessageIdForStoppedRun(
+  inputMessageIds: readonly string[],
+  messages: readonly { id: string; role: string }[],
+): string | null {
+  const position = new Map(
+    messages.map((message, index) => [message.id, index]),
+  );
+  const indexes = inputMessageIds
+    .map((id) => position.get(id))
+    .filter((index): index is number => index !== undefined);
+  if (!indexes.length) return null;
+  for (let at = Math.max(...indexes); at >= 0; at -= 1) {
+    const message = messages[at];
+    if (message?.role === "user") return message.id;
+  }
+  return null;
+}
+
 /** Errors also satisfy the existing history reader's platform-error contract. */
 export class LocalConversationError extends Error {
   constructor(
@@ -1352,6 +1378,7 @@ export async function createLocalConversations(
     if (!messages.length) return null;
     return { tokens: estimateTokens(messages), source: "estimate" };
   };
+
   /**
    * 「已停止」标记（2026-10-13 第四轮）：用户按停止的那些轮次，用开启那一轮的用户消息 id 表示。
    * 一轮里用到浏览器时会拆成好几次运行（前端工具要回到浏览器执行），被停的那次运行输入里可能只有工具
@@ -1372,21 +1399,13 @@ export async function createLocalConversations(
       [threadId],
     );
     if (!started.length) return [];
-    const position = new Map(
-      messages.map((message, index) => [message.id, index]),
-    );
     const ids = new Set<string>();
     for (const { event } of started) {
-      const indexes = (event.input?.messages ?? [])
-        .map((message) => position.get(String(message.id)))
-        .filter((index): index is number => index !== undefined);
-      if (!indexes.length) continue;
-      for (let at = Math.min(...indexes); at >= 0; at--) {
-        if (messages[at]?.role === "user") {
-          ids.add(messages[at]!.id);
-          break;
-        }
-      }
+      const inputIds = (event.input?.messages ?? [])
+        .map((message) => message.id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
+      const userId = userMessageIdForStoppedRun(inputIds, messages);
+      if (userId) ids.add(userId);
     }
     return [...ids];
   };

@@ -35,15 +35,15 @@ import {
   mediaTypeOf,
   shouldClaimPaste,
 } from "@/lib/channels/attachments";
-import { newId } from "@/lib/new-id";
 import {
   markDraftSent,
   rememberedDraft,
   setThreadUi,
-  wasJustSent,
   stashDraftFiles,
   takeDraftFiles,
+  wasJustSent,
 } from "@/lib/chat/ui-memory";
+import { newId } from "@/lib/new-id";
 import { cn } from "@/lib/utils";
 import { Button } from "../../ui/button";
 import { AttachmentStrip } from "./attachment-strip";
@@ -361,8 +361,11 @@ export function Composer({
 }: ComposerProps) {
   const [value, setValue] = useState<Segment[]>(
     () =>
-      rememberedDraft(draftKey, isPromptSegment, (segments) => toDraft(segments).text) ??
-      (initialValue ? [{ type: "text", text: initialValue }] : []),
+      rememberedDraft(
+        draftKey,
+        isPromptSegment,
+        (segments) => toDraft(segments).text,
+      ) ?? (initialValue ? [{ type: "text", text: initialValue }] : []),
   );
   /*
    * 草稿跟着打字记下来（§88）。第一次画出来的那一份不用写；发出去后输入框清空，记下的草稿也一起清掉。
@@ -373,7 +376,8 @@ export function Composer({
     if (!draftKey || draftWritten.current === value) return;
     draftWritten.current = value;
     // 发送失败放回来的字（和刚发出去的那句一样）只留在这个输入框里，不当草稿记：离开再回来不会再冒出来（§88.4）。
-    const keep = !isSegmentsEmpty(value) && !wasJustSent(draftKey, toDraft(value).text);
+    const keep =
+      !isSegmentsEmpty(value) && !wasJustSent(draftKey, toDraft(value).text);
     setThreadUi(draftKey, { draft: keep ? value : undefined });
   }, [draftKey, value]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -396,14 +400,11 @@ export function Composer({
   /** A send has completed and the caret is owed back, as soon as the editor will take it. */
   const wantsFocus = useRef(false);
   const sendDictatedDraft = useRef(false);
-  const dictation = useDictation(
-    (transcript, intent) => {
-      setValue((current) => appendDictation(current, transcript));
-      sendDictatedDraft.current = intent === "send";
-      wantsFocus.current = true;
-    },
-    disabled,
-  );
+  const dictation = useDictation((transcript, intent) => {
+    setValue((current) => appendDictation(current, transcript));
+    sendDictatedDraft.current = intent === "send";
+    wantsFocus.current = true;
+  }, disabled);
   /** `autoFocus` has been honoured once, and is not owed again for the life of this composer. */
   const claimedAutoFocus = useRef(false);
   /**
@@ -812,7 +813,9 @@ export function Composer({
       const keep: File[] = [];
       for (const attachment of latestStaged.current) {
         const at = pool.findIndex(
-          (file) => file.name === attachment.filename && (attachment.size === undefined || file.size === attachment.size),
+          (file) =>
+            file.name === attachment.filename &&
+            (attachment.size === undefined || file.size === attachment.size),
         );
         if (at < 0) continue;
         keep.push(pool[at]!);
@@ -1132,7 +1135,10 @@ export function Composer({
     [agents, commands],
   );
   const draft = useMemo(() => toDraft(value, staged), [staged, value]);
-  useEffect(() => onAgentChange?.(draft.agentId ?? undefined), [draft.agentId, onAgentChange]);
+  useEffect(
+    () => onAgentChange?.(draft.agentId ?? undefined),
+    [draft.agentId, onAgentChange],
+  );
 
   /**
    * MORE FILES ON THIS STRIP THAN ONE MESSAGE MAY CARRY — a state the screening is supposed to make
@@ -1399,7 +1405,11 @@ export function Composer({
   /** Something to send, mid-turn, with a queue to put it in. */
   const parking = canQueue && sendable;
   const canSend =
-    !disabled && !sendBlocked && !dictation.busy && sendable && (!isBusy || canQueue);
+    !disabled &&
+    !sendBlocked &&
+    !dictation.busy &&
+    sendable &&
+    (!isBusy || canQueue);
   const canSendRecording =
     !disabled &&
     !sendBlocked &&
@@ -1502,6 +1512,7 @@ export function Composer({
   const filePicker = attachmentsEnabled ? (
     <input
       accept={FILE_PICKER_ACCEPT}
+      aria-label={"选择文件"}
       className="sr-only"
       // The input the `+` button clicks, shut along with it: a `click()` on a disabled input opens
       // no dialog, so the door is closed even to a caller that reaches past the button for the ref.
@@ -1621,12 +1632,13 @@ export function Composer({
                 {leadingControl}
               </div>
               <div className="flex min-w-0 items-center gap-1.5">
-                {modelControl ? <div className="flex min-w-0 items-center">{modelControl}</div> : null}
+                {modelControl ? (
+                  <div className="flex min-w-0 items-center">
+                    {modelControl}
+                  </div>
+                ) : null}
                 {contextControl}
-                <DictationButton
-                  dictation={dictation}
-                  disabled={disabled}
-                />
+                <DictationButton dictation={dictation} disabled={disabled} />
                 {primaryAction}
               </div>
             </div>
@@ -1651,10 +1663,7 @@ export function Composer({
         className="glass-composer glass-composer-hero"
         onSubmit={handleFormSubmit}
       >
-        <DictationSurface
-          dictation={dictation}
-          canSend={canSendRecording}
-        >
+        <DictationSurface dictation={dictation} canSend={canSendRecording}>
           {filePicker}
 
           <div className="grow pb-2">
@@ -1698,14 +1707,13 @@ export function Composer({
                 </Button>
               ) : null}
               {leadingControl}
-              {modelControl ? <div className="flex min-w-0 items-center">{modelControl}</div> : null}
+              {modelControl ? (
+                <div className="flex min-w-0 items-center">{modelControl}</div>
+              ) : null}
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
-              <DictationButton
-                dictation={dictation}
-                disabled={disabled}
-              />
+              <DictationButton dictation={dictation} disabled={disabled} />
               {primaryAction}
             </div>
           </div>

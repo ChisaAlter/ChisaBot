@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { ContextMeter } from "@/components/agents/context-meter";
 import { attachmentModality } from "@/components/channels/chat-messages";
+import { isPersonSentMessage } from "@/components/channels/chat-transcript";
 import { toAgentOptions } from "@/components/channels/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
 import {
@@ -1298,9 +1299,15 @@ export function ChannelChat({
     [serverStops, localStops],
   );
   const stopTask = () => {
-    const lastUser = [...agent.messages]
-      .reverse()
-      .find((message) => message.role === "user");
+    // Anchor 「已停止」 on the person-sent user turn that opened this run — skip schedule/worker
+    // markers that also wear role=user, otherwise the chip can stick to an earlier completed reply.
+    const lastUser =
+      [...agent.messages].reverse().find((message) => {
+        if (message.role !== "user") return false;
+        const text = typeof message.content === "string" ? message.content : "";
+        return isPersonSentMessage("user", text);
+      }) ??
+      [...agent.messages].reverse().find((message) => message.role === "user");
     if (lastUser)
       setLocalStops((previous) => new Set([...previous, lastUser.id]));
     awaitingReply.current = false;
