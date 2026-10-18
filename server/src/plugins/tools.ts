@@ -64,11 +64,14 @@ export function vendorAnswer(result: { text: string; isError: boolean }) {
     : markUntrusted(result.text, "connector result");
 }
 
+export type ToolExecuteContext = { signal?: AbortSignal };
+
 export type GrantedTool = {
   name: string;
   description: string;
   parameters: z.ZodType;
-  execute: (args: unknown) => Promise<string>;
+  /** `ctx.signal` 在用户按停止时 abort（FIX-04）；旧工具可忽略第二参。 */
+  execute: (args: unknown, ctx?: ToolExecuteContext) => Promise<string>;
   initiator?: AuditInitiator;
   /**
    * `<serverId>/<toolName>`, carried alongside the name the model is offered.

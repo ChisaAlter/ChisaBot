@@ -35,6 +35,7 @@ import {
   type ChannelEventHub,
 } from "./events";
 import { upgradeWebSocket } from "./socket";
+import { searchChannelMessages } from "./search";
 import { oneLine } from "./text";
 import type { ThreadIdentity } from "./thread-identity";
 
@@ -1065,6 +1066,8 @@ export function createChannelRoutes(
   events?: ChannelEventHub,
   /** Where a channel's removal is written. Absent in tests that do not care about the trail. */
   auditStore?: AuditStore,
+  /** FIX-03：会话正文搜索。不给则 /search 回空列表。 */
+  database?: Database,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
 
@@ -1151,6 +1154,22 @@ export function createChannelRoutes(
       return context.json({ channel: channelDto(channel) }, 201);
     } catch (error) {
       return mapStoreError(context, error);
+    }
+  });
+
+
+  // FIX-03：Ctrl+K 搜消息正文（在 /:channelId 之前注册）。
+  routes.get("/search", requireUser, async (context) => {
+    const q = (context.req.query("q") ?? "").trim();
+    if (!q) return context.json({ hits: [] });
+    if (q.length > 100) return context.json({ error: "搜索词太长了。" }, 400);
+    if (!database) return context.json({ hits: [] });
+    try {
+      const hits = await searchChannelMessages(database, context.var.actor, q);
+      return context.json({ hits });
+    } catch (error) {
+      console.error(JSON.stringify({ type: "channel-search-failed", error: String(error).slice(0, 300) }));
+      return context.json({ error: "搜索暂时不可用，请重试。" }, 503);
     }
   });
 

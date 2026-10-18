@@ -1,6 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { z } from "zod";
+import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
 import { markUntrusted } from "../untrusted-content";
 
@@ -203,17 +204,21 @@ export function webTools(): GrantedTool[] {
       description:
         "联网搜索（只读，不带用户身份）。返回标题、网址和摘要。查事实、新闻、价格、天气、某个网站的地址时先用它；需要细节再用 web_fetch 读其中一个网址。比打开浏览器快得多。",
       parameters: searchParameters,
-      execute: async (args) => {
+      execute: async (args, ctx) => {
+        const signal = ctx?.signal ?? currentToolAbort();
+        if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
         const parsed = searchParameters.safeParse(args);
         if (!parsed.success) return `${REFUSAL_MARKER} web_search 需要 query。`;
         try {
-          const hits = await webSearch(parsed.data.query, parsed.data.count ?? 6);
+          const hits = await webSearch(parsed.data.query, parsed.data.count ?? 6, signal);
           if (hits.length === 0) return "没有搜到结果。换个说法再搜一次，或者直接 web_fetch 一个你知道的网址。";
           return markUntrusted(
             hits.map((h, i) => `${i + 1}. ${h.title}\n   ${h.url}\n   ${h.snippet}`).join("\n"),
             "web search results",
           );
         } catch (error) {
+          if (signal?.aborted || (error instanceof Error && /abort/i.test(error.name + error.message)))
+            return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
           return `${REFUSAL_MARKER} 搜索失败：${error instanceof Error ? error.message : "未知原因"}`;
         }
       },
@@ -224,14 +229,18 @@ export function webTools(): GrantedTool[] {
       description:
         "读取一个公开网址的内容（只读，不带用户身份，不执行脚本）。网页返回标题和正文文字，接口返回原始 JSON。适合读文章、文档、公开数据接口（行情、天气等）。需要登录、点击或脚本渲染的页面才用浏览器。",
       parameters: fetchParameters,
-      execute: async (args) => {
+      execute: async (args, ctx) => {
+        const signal = ctx?.signal ?? currentToolAbort();
+        if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
         const parsed = fetchParameters.safeParse(args);
         if (!parsed.success) return `${REFUSAL_MARKER} web_fetch 需要 url。`;
         try {
-          const page = await webFetch(parsed.data.url);
+          const page = await webFetch(parsed.data.url, signal);
           const head = `网址：${page.url}\n状态：${page.status}${page.title ? `\n标题：${page.title}` : ""}${page.truncated ? "\n（内容过长，已截断）" : ""}`;
           return `${head}\n${markUntrusted(page.text || "（没有可读文字，可能需要浏览器渲染）", page.url)}`;
         } catch (error) {
+          if (signal?.aborted || (error instanceof Error && /abort/i.test(error.name + error.message)))
+            return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
           return `${REFUSAL_MARKER} 读取失败：${error instanceof Error ? error.message : "未知原因"}`;
         }
       },

@@ -62,6 +62,27 @@ export const SCHEDULE_STATUS_ZH: Record<ScheduleStatus, string> = {
   cancelled: "已取消",
 };
 
+
+/**
+ * 根据定时任务回合的回复文字，判断这次运行该记成什么状态（FIX-01）。
+ *
+ * 以前只要回合没抛错就标「已完成」，但回复里可能是「弹不出确认卡片 / 已放确认卡等你确认 /
+ * ERR_TUNNEL」——列表上一片绿，详情才看出没做成。这里按正文归类；拿不准仍算 ok。
+ */
+export function classifyScheduleReply(text: string): Exclude<ScheduleRunStatus, "running" | "queued"> {
+  const t = text.trim();
+  if (!t) return "ok";
+  // 真的弹不出卡（无对话 / 非网页）：跳过这一次。
+  if (/弹不出确认卡片/.test(t) && !/放了一张确认卡片/.test(t)) return "skipped";
+  // 已放确认卡、在等用户：等你确认（非绿）。
+  if (/放了一张确认卡片|在等他确认|需要你在网页上确认|做到一步需要你在网页上确认|等你确认/.test(t)) return "waiting";
+  // 硬失败：隧道、工具拒绝、明确没做成。
+  if (/ERR_TUNNEL|ERR_[A-Z0-9_]+|隧道|运行失败：|没有执行[：:]|无法完成这次|没能完成|浏览器.*(失败|不可用|中断)/.test(t)) {
+    return "failed";
+  }
+  return "ok";
+}
+
 export const RUN_STATUS_ZH: Record<ScheduleRunStatus, string> = {
   running: "运行中",
   ok: "已完成",

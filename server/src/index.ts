@@ -2201,6 +2201,11 @@ const schedules = createSchedules(database, {
   pushToIm: (threadId, text) => imService!.pushToThread(threadId, text),
   isThreadActive: (threadId) => localBackend?.control.isActive(threadId) ?? false,
   ...(localBackend ? { enqueueToThread: (input: { threadId: string; ownerUserId: string; message: Message }) => localBackend.inbox.enqueue({ ...input, kind: "message" }) } : {}),
+  // FIX-02：定时回合结束后若仍占着对话锁，放开，避免输入框一直灰、消息发不出去。
+  releaseThread: async (threadId) => {
+    if (!localBackend) return;
+    await localBackend.control.stop({ threadId }).catch(() => undefined);
+  },
   botAvailable: async (ownerUserId, agentId) => {
     try {
       const profile = await agentProfileStore.get(await actorFor(ownerUserId), agentId);

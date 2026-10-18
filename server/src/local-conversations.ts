@@ -3,7 +3,7 @@ import { compactEvents, EventType, type AbstractAgent, type BaseEvent, type Mess
 import { AgentRunner, createRunEventFinalizer, type AgentRunnerConnectRequest, type AgentRunnerRunRequest, type AgentRunnerStopRequest } from "@copilotkit/runtime/v2";
 import { Observable, ReplaySubject, Subject } from "rxjs";
 import { estimateTokens, readingFromRunFinished, type ThreadContextReading } from "./context-usage";
-import { withConfirmTurn } from "./confirmations/context";
+import { withConfirmTurn, withToolAbort } from "./confirmations/context";
 import { anchorsPresent, INBOX_TEXT_LIMIT, newSteerSession, ThreadInbox, type TranscriptInjection, weaveMessages, withSteering } from "./thread-inbox";
 import type { Database } from "./db/client";
 import { imageDimsFor } from "./image-dims";
@@ -331,6 +331,8 @@ type LiveEvent = { sequence: bigint; event: BaseEvent };
 type ActiveRun = {
   runId: string; agent: AbstractAgent; stream: ReplaySubject<BaseEvent>;
   live: Subject<LiveEvent>; stopped: boolean; done: Promise<void>;
+  /** 用户按停止时 abort：工具（web_search 等）通过 currentToolAbort 收到（FIX-04）。 */
+  abort: AbortController;
   /** 这一轮里读进来的插话（排队消息 / 后台任务结果），存档和推给界面前织进消息列表。 */
   injections: TranscriptInjection[];
 };
@@ -380,7 +382,7 @@ class PostgresAgentRunner extends AgentRunner {
     const entry: ActiveRun = {
       runId: request.input.runId, agent: request.agent,
       stream: new ReplaySubject<BaseEvent>(), live: new Subject<LiveEvent>(),
-      stopped: false, done: Promise.resolve(), injections: [],
+      stopped: false, abort: new AbortController(), done: Promise.resolve(), injections: [],
     };
     this.active.set(request.threadId, entry);
     entry.done = this.execute(request, entry);
@@ -569,12 +571,13 @@ class PostgresAgentRunner extends AgentRunner {
         let finalized!: () => void;
         const finalization = new Promise<void>((resolve) => { finalized = resolve; });
         const segmentInput = segment === 0 ? input : { ...input, runId: entry.runId, messages: agent.messages };
-        await withConfirmTurn({ threadId, runId: entry.runId, stopped: () => entry.stopped }, () => withSteering(steering(), () => agent.runAgent(segmentInput, {
+        await withConfirmTurn({ threadId, runId: entry.runId, stopped: () => entry.stopped }, () =>
+          withToolAbort(entry.abort.signal, () => withSteering(steering(), () => agent.runAgent(segmentInput, {
           onEvent: ({ event }) => guarded(() => emit(structuredClone(event))),
           onMessagesChanged: ({ messages, state }) => capture(messages, state),
           onStateChanged: ({ messages, state }) => capture(messages, state),
           onRunFinalized: () => { finalized(); },
-        })));
+        }))));
         await finalization;
         await durableWrites;
         if (persistenceError || failed || entry.stopped || !heldFinish) break;
@@ -679,6 +682,7 @@ class PostgresAgentRunner extends AgentRunner {
     if (!entry) return await this.client.ɵreleaseOrphanedLock(threadId, runId);
     if (entry.stopped || (runId !== undefined && entry.runId !== runId)) return false;
     entry.stopped = true;
+    entry.abort.abort();
     entry.agent.abortRun();
     await entry.agent.detachActiveRun();
     return true;

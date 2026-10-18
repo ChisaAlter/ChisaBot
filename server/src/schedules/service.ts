@@ -4,6 +4,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import {
+  classifyScheduleReply,
   describeSchedule,
   formatWhen,
   partsIn,
@@ -262,6 +263,8 @@ export type ScheduleDeps = {
   botAvailable?: (ownerUserId: string, agentId: string) => Promise<boolean>;
   isSuspension?: (error: unknown) => boolean;
   isPaused?: (error: unknown) => boolean;
+  /** 回合结束后释放对话锁（防定时挂起后输入框一直灰）。 */
+  releaseThread?: (threadId: string) => Promise<void>;
   now?: () => Date;
 };
 
@@ -577,11 +580,21 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
               text += `\n（推送到 IM 失败：${error instanceof Error ? error.message : String(error)}）`;
             }
           }
-          await finishRun(runId, row.id, "ok", text);
+          // FIX-01：按回复正文归类，别把「弹不出卡 / 等确认 / 隧道失败」标成绿的已完成。
+          const status = classifyScheduleReply(text);
+          await finishRun(runId, row.id, status, text);
+          if (status !== "ok") await deps.releaseThread?.(threadId).catch(() => {});
           return;
         } catch (error) {
           if (deps.isSuspension?.(error)) {
-            await finishRun(runId, row.id, "waiting", "做到一步需要你在网页上确认，确认后机器人会接着做。");
+            // FIX-02：定时任务里需要人在场的一步（浏览器交还 / 登录）不再挂成「等你确认」占着对话；
+            // 快速失败并释放锁，用户可继续聊天。要做这类事请在网页聊天里当面让机器人做。
+            const detail = error instanceof Error ? error.message : String(error);
+            const reason =
+              `这次定时任务做到需要你在场的一步（${detail.slice(0, 160)}），没有继续。` +
+              "请在网页聊天里让机器人再做一次，或在 设置 → 权限与审批 把相关类别改成「直接做」。";
+            await finishRun(runId, row.id, "failed", reason);
+            await deps.releaseThread?.(threadId).catch(() => {});
             return;
           }
           if (deps.isPaused?.(error)) {
@@ -600,6 +613,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       const reason = error instanceof Error ? error.message : String(error);
       console.warn(JSON.stringify({ type: "schedule-run-failed", schedule: row.id, run: runId, reason: reason.slice(0, 300) }));
       await finishRun(runId, row.id, "failed", `运行失败：${reason.slice(0, 300)}`).catch(() => {});
+      const threadId = await threadFor(row).catch(() => null);
+      if (threadId) await deps.releaseThread?.(threadId).catch(() => {});
     } finally {
       running.delete(row.id);
     }

@@ -5,7 +5,7 @@
  * 交还后从同一步接着跑；但聊天里没有任何东西会在交还后把这一轮接上，用户看到的是机器人说了句
  * 「我来救回面板」就再也没有下文；后台刷新面板时则把英文报错原样写在卡片上，还按失败退避。
  *
- * 现在：只有真正的工作流（initiator 是 routine 且不是实时面板 lp_…）还挂起等待；聊天和面板刷新拿到
+ * 现在：只有能续跑的工作流（routine，且不是定时 schedule: / IM im: / 实时面板 lp_…）还挂起等待；聊天、定时、面板刷新拿到
  * 一个普通的、中文的工具结果（{ ok:false, humanHasControl:true, reason }），机器人照常把话说完。
  * 面板刷新在这里记一笔，刷新服务据此把卡片标成「等你交还」并很快重试，而不是算作失败。
  */
@@ -36,9 +36,23 @@ export function takeHumanControlBlock(initiatorId: string, since: number): boole
   return at !== undefined && at >= since;
 }
 
-/** 真正的工作流（定时任务）才挂起等交还；聊天、实时面板刷新（lp_…）不挂起。 */
+/**
+ * 只有能从同一步接着跑的工作流才挂起等交还。
+ * 定时任务 / IM（用户不在场）挂起后确认卡或交还 UI 对不上，会挂死对话（FIX-02）；
+ * 聊天、实时面板刷新（lp_…）也不挂起。
+ */
 export function suspendsOnHumanControl(initiator: AuditInitiator | undefined): boolean {
-  return initiator?.kind === "routine" && !initiator.id.startsWith("lp_");
+  if (initiator?.kind !== "routine") return false;
+  const id = initiator.id;
+  if (id.startsWith("lp_") || id.startsWith("schedule:") || id.startsWith("im:")) return false;
+  return true;
+}
+
+/** 定时任务 / IM：用户不在场，不能弹确认 / 交还；需要人在场的步骤应快速失败。 */
+export function isUnattendedInitiator(initiator: AuditInitiator | undefined): boolean {
+  if (initiator?.kind !== "routine") return false;
+  const id = initiator.id;
+  return id.startsWith("schedule:") || id.startsWith("im:");
 }
 
 type ReleaseListener = (ownerUserId: string) => void;

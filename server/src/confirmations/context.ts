@@ -29,3 +29,13 @@ export const currentConfirmInteractive = () => interactiveCalls.getStore() === t
 const computerActors = new AsyncLocalStorage<{ initiator?: AuditInitiator }>();
 export const withConfirmActor = <T>(initiator: AuditInitiator | undefined, run: () => T): T => computerActors.run({ ...(initiator ? { initiator } : {}) }, run);
 export const currentConfirmActor = () => computerActors.getStore();
+
+/**
+ * 这一轮工具执行的取消信号（FIX-04）：用户按「停止」时 abort，web_search / 浏览器长操作应立刻停。
+ * local-conversations 在跑回合时挂上；copilot 执工具前检查。
+ */
+const toolAborts = new AsyncLocalStorage<AbortSignal>();
+export const withToolAbort = <T>(signal: AbortSignal, run: () => T): T => toolAborts.run(signal, run);
+export const currentToolAbort = () => toolAborts.getStore();
+
+export const TOOL_STOPPED_ZH = "用户已停止这一轮，这一步没有执行。";

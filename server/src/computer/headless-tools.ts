@@ -25,7 +25,7 @@ import {
   type ComputerGateway,
   HumanHasControlError,
 } from "./gateway";
-import { HUMAN_CONTROL_ZH, noteHumanControlBlock, suspendsOnHumanControl } from "./control-blocks";
+import { HUMAN_CONTROL_ZH, isUnattendedInitiator, noteHumanControlBlock, suspendsOnHumanControl } from "./control-blocks";
 import type { ControlState } from "./schema";
 import { withConfirmActor } from "../confirmations/context";
 import {
@@ -65,6 +65,11 @@ export class HeadlessToolSuspension extends Error {
     this.name = "HeadlessToolSuspension";
   }
 }
+
+/** 定时 / IM 回合要人在场时的中文拒绝（FIX-02）：不挂起，让回合正常结束。 */
+const UNATTENDED_NEED_HUMAN_ZH = (what: string) =>
+  `没有执行：${what}。这一轮是定时任务 / 后台触发，用户不在场，没法请他接管浏览器或登录。告诉用户：在 ChisaBot 网页聊天里当面让你再做一次。`;
+
 
 const MAX_TOOL_SEGMENTS = 30;
 
@@ -451,13 +456,18 @@ export function createHeadlessComputerTools(options: {
       z.strictObject({ url: text }),
       async ({ url }, { toolCallId }) => {
         const result = await gateway.navigate(botId, actor, url, toolCallId);
-        if (result.challenge)
+        if (result.challenge) {
+          if (isUnattendedInitiator(actor.initiator)) {
+            const reason = UNATTENDED_NEED_HUMAN_ZH(result.challenge.reason);
+            return { ok: false, error: reason, reason, siteBlock: { notice: reason } };
+          }
           throw new HeadlessToolSuspension(result.challenge.reason, {
             kind: "computer_handoff",
             botId,
             requestId: result.challenge.requestId,
             source: result.challenge.kind,
           });
+        }
         return { ok: true, ...result };
       },
     ),
@@ -605,22 +615,32 @@ export function createHeadlessComputerTools(options: {
       "computer_request_help",
       "Create a durable request for the person to take the browser and sign in or clear a challenge. This unattended turn pauses until a person helps; never ask them to send you a password.",
       z.strictObject({ reason: text }),
-      async ({ reason }, { toolCallId }) =>
-        waiting(
+      async ({ reason }, { toolCallId }) => {
+        if (isUnattendedInitiator(actor.initiator)) {
+          const msg = UNATTENDED_NEED_HUMAN_ZH(reason);
+          return { ok: false, error: msg, reason: msg };
+        }
+        return waiting(
           await gateway.requestHelp(botId, actor, reason, toolCallId),
           reason,
-        ),
+        );
+      },
     ),
     tool(
       "computer_request_secret",
       "Ask the person to enter one secret directly into the focused field. Click the field first. You must never receive the secret; this unattended turn pauses for the person.",
       z.strictObject({ label: text, ref, snapshotId }),
-      async (input) =>
-        waiting(
+      async (input) => {
+        if (isUnattendedInitiator(actor.initiator)) {
+          const msg = UNATTENDED_NEED_HUMAN_ZH(`请用户亲自输入「${input.label}」`);
+          return { ok: false, error: msg, reason: msg };
+        }
+        return waiting(
           await gateway.requestSecret(botId, actor, input),
           `The person must enter ${input.label} directly into the page.`,
           "computer_secret",
-        ),
+        );
+      },
     ),
   ];
   if (signIn)
@@ -631,6 +651,10 @@ export function createHeadlessComputerTools(options: {
         z.strictObject({ site: text, reason: z.string().optional() }),
         async ({ site, reason }, { toolCallId }) => {
           const continuation = currentApprovalContext();
+          if (isUnattendedInitiator(actor.initiator)) {
+            const msg = UNATTENDED_NEED_HUMAN_ZH(`登录 ${site}`);
+            return { ok: false, error: msg, reason: msg };
+          }
           const request = await signIn.request({
             ownerUserId: actor.userId ?? actor.id,
             botId,

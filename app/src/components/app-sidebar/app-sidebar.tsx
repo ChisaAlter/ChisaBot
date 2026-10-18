@@ -34,6 +34,11 @@ import {
   type ChannelSummary,
   channelListQueryOptions,
 } from "@/lib/channels/queries";
+import {
+  highlightParts,
+  useChannelMessageSearch,
+  type ChannelSearchHit,
+} from "@/lib/channels/search";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
 import { latestChannelFor } from "@/lib/channels/latest";
 import { prefetchBotChat, usePrefetchBotChats } from "@/lib/channels/prefetch";
@@ -98,13 +103,8 @@ import { ChannelPagination } from "./channel-pagination";
  */
 
 /**
- * The roster, narrowed to what the person typed.
- *
- * Matches the channel's name, its summary, and the last message, because those are the things the
- * row can actually show — searching against something invisible returns results a person cannot
- * account for. The last message is included because it is still what the second line draws until the
- * conversation has been named. Message history beyond that line is not here to search: it lives in
- * the thread store, and reaching for it is a server endpoint rather than a filter.
+ * 左栏本地过滤：会话名、摘要、最后一条（立刻出结果）。
+ * 消息正文由 `useChannelMessageSearch` 打服务器（FIX-03），两边合并展示。
  *
  * An empty query returns the input array unchanged rather than a copy, so typing and clearing does
  * not hand `AnimatePresence` a new array identity and restage the whole list.
@@ -217,6 +217,32 @@ function ChannelRow({
         busy={channel.busy ?? false}
       />
     </motion.div>
+  );
+}
+
+
+/** FIX-03：正文命中行 — 第二行是带高亮的摘要。 */
+function SearchHitRow({ hit, agentIds = [] }: { hit: ChannelSearchHit; agentIds?: string[] }) {
+  const parts = highlightParts(hit.snippet, hit.highlight);
+  const title = hit.summary?.trim() || hit.name;
+  return (
+    <Link
+      className="flex flex-row py-2 px-2 gap-2 items-center w-full hover:bg-foreground/5 rounded-lg"
+      params={{ channelId: hit.channelId }}
+      to="/channel/$channelId"
+    >
+      <span className="shrink-0">
+        <ChannelAvatar participantIds={agentIds} size={32} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[0.9rem] leading-5 font-medium tracking-[-1%]">{title}</span>
+        <span className="mt-px block truncate text-[12px] leading-4 text-muted-foreground">
+          {parts.before}
+          {parts.match ? <mark className="rounded-sm bg-primary/20 px-0.5 text-foreground">{parts.match}</mark> : null}
+          {parts.after}
+        </span>
+      </span>
+    </Link>
   );
 }
 
@@ -569,9 +595,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   );
 
   const searching = search.trim().length > 0;
-  const visibleChannels = searching
-    ? pinnedFirst(matchingChannels(channels.data, search))
-    : [];
+  const titleMatches = searching ? pinnedFirst(matchingChannels(channels.data, search)) : [];
+  const contentSearch = useChannelMessageSearch(search);
+  const contentHits = contentSearch.data ?? [];
+  // 标题命中优先；正文命中补上标题没扫到的会话。
+  const titleIds = new Set(titleMatches.map((c) => c.id));
+  const extraHits = contentHits.filter((hit) => !titleIds.has(hit.channelId));
+  const visibleChannels = titleMatches;
+  const searchEmpty =
+    searching &&
+    visibleChannels.length === 0 &&
+    extraHits.length === 0 &&
+    !contentSearch.isFetching;
 
   const row = (bot: RosterBot, isMain: boolean) => (
     <BotRow
@@ -620,32 +655,57 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <div ref={scrollRoot} className="glass-side-scroll scroll-fade-b">
                 <SidebarMenu>
                   <SidebarGroup className="gap-px p-0">
-                    {visibleChannels.length === 0 ? (
+                    {searchEmpty ? (
                       <div className="py-4">
                         <Empty className="border border-dashed min-h-[30dvh]">
                           <EmptyHeader>
-                            <EmptyTitle>
-                              {channels.hasNextPage
-                                ? "没有加载的会话匹配您的搜索"
-                                : "没有会话匹配您的搜索"}
-                            </EmptyTitle>
+                            <EmptyTitle>{"没有会话匹配您的搜索"}</EmptyTitle>
                             <EmptyDescription className="text-pretty">
-                              {channels.hasNextPage
-                                ? "加载更早的会话以搜索更多历史。"
-                                : `“${search.trim()}”在这里没有被命名，也没有任何人最近说过它。`}
+                              {`“${search.trim()}”不在会话名、摘要里，消息正文里也没有找到。`}
                             </EmptyDescription>
                           </EmptyHeader>
                         </Empty>
                       </div>
                     ) : null}
+                    {contentSearch.isFetching && visibleChannels.length === 0 && extraHits.length === 0 ? (
+                      <div className="px-2 py-3 text-[12px] text-muted-foreground">{"正在搜索消息…"}</div>
+                    ) : null}
                     <AnimatePresence initial={false}>
-                      {visibleChannels.map((channel) => (
-                        <ChannelRow
-                          animateOrder={false}
-                          channel={channel}
-                          emphasis={emphasis}
-                          key={channel.id}
-                        />
+                      {visibleChannels.map((channel) => {
+                        const hit = contentHits.find((h) => h.channelId === channel.id);
+                        if (hit) {
+                          return (
+                            <motion.div
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              initial={{ opacity: 0 }}
+                              key={`hit-${channel.id}`}
+                            >
+                              <SearchHitRow agentIds={channel.agentIds} hit={{ ...hit, name: channel.name, summary: channel.summary ?? hit.summary }} />
+                            </motion.div>
+                          );
+                        }
+                        return (
+                          <ChannelRow
+                            animateOrder={false}
+                            channel={channel}
+                            emphasis={emphasis}
+                            key={channel.id}
+                          />
+                        );
+                      })}
+                      {extraHits.map((hit) => (
+                        <motion.div
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          initial={{ opacity: 0 }}
+                          key={`extra-${hit.channelId}-${hit.messageId ?? hit.snippet.slice(0, 12)}`}
+                        >
+                          <SearchHitRow
+                            agentIds={channels.data?.find((c) => c.id === hit.channelId)?.agentIds ?? []}
+                            hit={hit}
+                          />
+                        </motion.div>
                       ))}
                     </AnimatePresence>
                     <ChannelPagination

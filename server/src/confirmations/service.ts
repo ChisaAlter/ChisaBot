@@ -22,7 +22,7 @@ import type { Database } from "../db/client";
 import type { DeviceConfirmLink } from "../devices/hub";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { categoryOfPageAction, categoryOfTool, decideMode, detailsFromArgs, flattenForMatch, titleForTool } from "./classify";
-import { currentConfirmActor, currentConfirmInteractive, currentConfirmToolCall, currentConfirmTurn, withConfirmInteractive } from "./context";
+import { currentConfirmActor, currentConfirmInteractive, currentConfirmToolCall, currentConfirmTurn, currentToolAbort, TOOL_STOPPED_ZH, withConfirmInteractive } from "./context";
 
 /**
  * 确认卡片 + 审批偏好（DESIGN.md §58，docs/confirmations.md）。
@@ -448,7 +448,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
         const status = rows[0]?.status;
         if (!status) return "cancelled";
         if (status !== "pending") return status;
-        if (stopped()) {
+        if (stopped() || currentToolAbort()?.aborted) {
           await setStatus(id, ["pending"], "cancelled");
           return "cancelled";
         }
@@ -748,7 +748,10 @@ export function createConfirmations(database: Database, options: { auditStore?: 
         return tool.name.startsWith("device_") ? { ...tool, execute: (args: unknown) => withConfirmInteractive(interactive(tool), () => tool.execute(args)) } : tool;
       return {
         ...tool,
-        execute: async (args: unknown) => {
+        execute: async (args: unknown, ctx) => {
+          if (currentConfirmTurn()?.stopped() || currentToolAbort()?.aborted) {
+            return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
+          }
           const outcome = await check({
             ownerUserId: context.ownerUserId,
             agentId: context.agentId,
@@ -762,7 +765,10 @@ export function createConfirmations(database: Database, options: { auditStore?: 
             initiator: tool.initiator ?? context.initiator,
           });
           if (!outcome.ok) return `${REFUSAL_MARKER} ${outcome.message}`;
-          return tool.execute(args);
+          if (currentConfirmTurn()?.stopped() || currentToolAbort()?.aborted) {
+            return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
+          }
+          return tool.execute(args, ctx);
         },
       };
     });

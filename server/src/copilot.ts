@@ -33,7 +33,7 @@ import {
 import type { AgentActor } from "./agents/profile-types";
 import { modelOverrideFromValue } from "./agents/model-selection";
 import { thinkTagLanguageModel } from "./agents/think-tags";
-import { currentConfirmTurn, withConfirmToolCall } from "./confirmations/context";
+import { currentConfirmTurn, currentToolAbort, TOOL_STOPPED_ZH, withConfirmToolCall } from "./confirmations/context";
 import { fallbackCandidates, fallbackLanguageModel } from "./agents/model-fallback";
 import {
   executeNativeApprovalTool,
@@ -65,8 +65,7 @@ import {
   SELECTION_FLOOR,
   selectTools,
 } from "./plugins/selection";
-import type { GrantedTool } from "./plugins/tools";
-import { grantedToolGuidance, parametersFor, toolCarriedGuidance } from "./plugins/tools";
+import { REFUSAL_MARKER, type GrantedTool, grantedToolGuidance, parametersFor, toolCarriedGuidance } from "./plugins/tools";
 import { UNTRUSTED_GUIDANCE } from "./untrusted-content";
 
 /**
@@ -569,7 +568,12 @@ export function builtInAgentConfiguration(
       ? {
           tools: allTools.map((tool) => ({
             ...tool,
-            execute: async (args: unknown, execution?: { toolCallId?: string }) => {
+            execute: async (args: unknown, execution?: { toolCallId?: string; abortSignal?: AbortSignal }) => {
+              // FIX-04：用户已按停止 → 立刻拒绝，不再开新工具；并把 signal 传给 web_search 等长操作。
+              const signal = execution?.abortSignal ?? currentToolAbort();
+              if (signal?.aborted || currentConfirmTurn()?.stopped()) {
+                return withStepBudgetNote(`${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`);
+              }
               // 确认卡片要画在这条工具调用下面：把 toolCallId 带给 server/src/confirmations。
               const result = await withConfirmToolCall(execution?.toolCallId, tool.name, () =>
                 executeNativeApprovalTool(
@@ -577,7 +581,7 @@ export function builtInAgentConfiguration(
                   args,
                   execution?.toolCallId,
                   tools.find((granted) => granted.name === tool.name)?.initiator,
-                  () => tool.execute(args),
+                  () => tool.execute(args, signal ? { signal } : undefined),
                 ),
               );
               // 步数快用完时提醒收尾（§101）。
