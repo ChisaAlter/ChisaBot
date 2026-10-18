@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.39 — 2026-10-19
+
+### 生产成熟度 · PRD-P0-02 Magpie/边车隔离
+
+- **网络隔离**：`scripts/ops/isolate-sidecar-app.sh` 在 `DOCKER-USER` 对 Magpie 及同网边车 **DROP → app:3001**（注释 `chisabot-sidecar-iso`）；App→Magpie `:3425`/`:3430` 保持畅通。
+- **br_netfilter**：同桥流量必须 `bridge-nf-call-iptables=1`；`--apply` 会 modprobe 并写 sysctl.d / modules-load.d。
+- **部署**：`deploy-serial` 默认 `--apply` + `--verify`（失败退出 8）；`deploy/magpie-isolate.service` 开机重放；`start.sh` root 时顺带 apply。
+- **CI**：`isolateScriptCoversSidecarDeny` + trust-boundary red-line；`check-trust-boundary.sh` 校验脚本存在。
+- **文档**：`docs/ops/trust-boundary.md` §5.1 who-can-reach-whom；production-checklist §9b。
+- 电车仍暂停；多用户 UI 仍 opt-in；未强制卸下 shared Docker 网（可选人工拓扑，见信任边界文档）。
+
 ## 0.1.38 — 2026-10-19
 
 ### 生产成熟度 · 发送恢复诚实 + 弹窗毛玻璃

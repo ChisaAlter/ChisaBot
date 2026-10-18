@@ -158,6 +158,18 @@ CI 红线：`server/tests/ssrf-redline.test.ts`（PRD-P1-06）。备份演练：
 | CI | `trust-boundary-redline` + `ssrf-redline`；`sh scripts/ops/check-trust-boundary.sh` |
 | 文档 | [ops/trust-boundary.md](ops/trust-boundary.md) |
 
+## 9b. Magpie / 边车 → 应用隔离（v0.1.39 · PRD-P0-02）
+
+| 检查 | 期望 |
+|------|------|
+| br_netfilter | `bridge-nf-call-iptables=1`（`--apply` 写入 sysctl.d） |
+| DOCKER-USER | Magpie（及同网边车）→ app:3001 DROP；注释 `chisabot-sidecar-iso` |
+| 活探 | `isolate-sidecar-app.sh --verify`：Magpie!-app 超时；App→magpie:3425 仍通 |
+| deploy-serial | 默认 apply+verify；失败退出 8 |
+| Local-Caller | 仍仅宿主机刮数；边车无密钥 → 401（即使 TCP 曾通） |
+| 电车 / 多用户 | **不** resume；多用户仍 opt-in |
+| 文档 | [ops/trust-boundary.md](ops/trust-boundary.md) §5.1 |
+
 
 ## 10. nginx 模板同步 / 非电车定时（v0.1.34）
 

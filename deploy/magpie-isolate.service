@@ -1,0 +1,16 @@
+[Unit]
+Description=ChisaBot Magpie/sidecar -> app:3001 isolation (PRD-P0-02)
+Documentation=file:///opt/chisabot-ops/../docs/ops/trust-boundary.md
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Script lives next to deploy-serial on the host (/opt/chisabot-ops) or in a repo checkout.
+ExecStart=/bin/sh -c 'for s in /opt/chisabot-ops/isolate-sidecar-app.sh /opt/chisabot-src/scripts/ops/isolate-sidecar-app.sh; do if [ -f "$s" ]; then exec sh "$s" --apply; fi; done; echo "isolate-sidecar-app.sh not found" >&2; exit 1'
+ExecStop=/bin/sh -c 'for s in /opt/chisabot-ops/isolate-sidecar-app.sh /opt/chisabot-src/scripts/ops/isolate-sidecar-app.sh; do if [ -f "$s" ]; then exec sh "$s" remove; fi; done; exit 0'
+
+[Install]
+WantedBy=multi-user.target

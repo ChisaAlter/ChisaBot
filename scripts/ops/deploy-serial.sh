@@ -56,4 +56,39 @@ if [ -n "$REPO_OPS" ] && [ -f "$REPO_OPS/scripts/ops/sync-nginx.sh" ]; then
 else
   echo "[$(date -u +%T)] sync-nginx script not found — skipped (install repo ops scripts on host)"
 fi
+
+# v0.1.39: Magpie/sidecar -> app:3001 isolation (PRD-P0-02). apply-or-fail + live verify.
+# Set CHISABOT_ISOLATE_SIDECAR=skip to skip (not recommended on Haupt).
+ISOLATE=${CHISABOT_ISOLATE_SIDECAR:-apply}
+ISO_SH=""
+for cand in "$REPO_OPS/scripts/ops/isolate-sidecar-app.sh" /opt/chisabot-ops/isolate-sidecar-app.sh "$HERE_OPS/scripts/ops/isolate-sidecar-app.sh"; do
+  if [ -n "$cand" ] && [ -f "$cand" ]; then ISO_SH=$cand; break; fi
+done
+# Prefer copy into /opt/chisabot-ops when we have a repo script (durable across updater rebuilds of app image)
+if [ -n "$ISO_SH" ] && [ -d /opt/chisabot-ops ]; then
+  cp -f "$ISO_SH" /opt/chisabot-ops/isolate-sidecar-app.sh
+  chmod +x /opt/chisabot-ops/isolate-sidecar-app.sh
+  ISO_SH=/opt/chisabot-ops/isolate-sidecar-app.sh
+  if [ -f "$REPO_OPS/deploy/magpie-isolate.service" ] || [ -f /opt/chisabot-src/deploy/magpie-isolate.service ]; then
+    unit=${REPO_OPS:+$REPO_OPS/deploy/magpie-isolate.service}
+    [ -f "$unit" ] || unit=/opt/chisabot-src/deploy/magpie-isolate.service
+    if [ -f "$unit" ] && command -v systemctl >/dev/null 2>&1; then
+      cp -f "$unit" /etc/systemd/system/chisabot-magpie-isolate.service
+      systemctl daemon-reload
+      systemctl enable chisabot-magpie-isolate.service >/dev/null 2>&1 || true
+    fi
+  fi
+fi
+if [ -n "$ISO_SH" ]; then
+  case "$ISOLATE" in
+    skip|0|no) echo "[$(date -u +%T)] isolate-sidecar skipped (CHISABOT_ISOLATE_SIDECAR=$ISOLATE)" ;;
+    *)
+      echo "[$(date -u +%T)] isolate-sidecar --apply + --verify"
+      sh "$ISO_SH" --apply || { echo "SIDECAR ISOLATE APPLY FAILED"; exit 8; }
+      sh "$ISO_SH" --verify || { echo "SIDECAR ISOLATE VERIFY FAILED (Magpie still reaches app, or App->Magpie broken)"; exit 8; }
+      ;;
+  esac
+else
+  echo "[$(date -u +%T)] isolate-sidecar-app.sh not found — skipped (install scripts/ops on host)"
+fi
 echo "DEPLOYED $HEAD"; exit 0

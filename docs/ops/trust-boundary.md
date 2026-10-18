@@ -33,7 +33,8 @@ flowchart TB
   Auth -->|X-ChisaBot-Identity<br/>HMAC 签名| GW
   GW -->|反代 + 身份头<br/>清空 Local-Caller| App
   GW -->|:2053 仅 admin| Magpie
-  App --> Magpie
+  App -->|模型 API / 管理反代| Magpie
+  Magpie -.->|DOCKER-USER DROP :3001| App
   App -->|COMPUTER_TOKEN<br/>checkComputerAddress| Node
   Node --> Sync
   App -.->|请求文件| Updater
@@ -49,7 +50,8 @@ flowchart TB
 | PC / 手机客户端 | 网关 `/api/devices/agent/`（**免浏览器登录**） | 应用 loopback | 设备令牌；网关在该路径**清空**身份头与 Local-Caller |
 | IM 适配器 | 网关 `/api/im/onebot/` | 同上 | `Authorization`；仅此处允许无 Origin 的 WS 升级 |
 | 宿主机脚本 / 烟雾 | `127.0.0.1:3001` | 公网 URL 刮管理员面 | `X-ChisaBot-Local-Caller: $CHISABOT_GATEWAY_SECRET`（**禁止**经网关；无会话时 `/api/admin/health` 必须 401） |
-| 应用 → Magpie | Docker 网 `magpie:3425` 或 loopback | 公网直连 Magpie 管理口 | 管理口经网关 `:2053` + admin 角色头 |
+| 应用 → Magpie | Docker 网 `magpie:3425` / `:3430` | 公网直连 Magpie 管理口 | 管理口经网关 `:2053` + admin 角色头 |
+| Magpie / 边车 → 应用 | **无**（DOCKER-USER DROP） | 应用 `:3001` | 不依赖身份头；网络层拒绝发起 |
 | 应用 → 电脑节点 | 节点桥接 IP（经 `locate` + 地址检查） | 节点任意出网打私网（防火墙丢） | `COMPUTER_TOKEN`；`checkComputerAddress` 拒外站 |
 | 云端节点出站 | 公网（可选经出口代理） | 私网 / 元数据 / 宿主机（`DOCKER-USER`） | 节点防火墙；浏览器导航另有 SSRF 地板 |
 
@@ -91,7 +93,31 @@ Local-Caller 只给**宿主机 → `127.0.0.1:3001`** 的刮数 / 烟雾 / 更�
 
 好友包 `TRUSTED_ORIGINS`：**仅** `http://localhost…` / `http://127.0.0.1…`；禁止 https 公网与局域网 Origin（公网 Origin 在网关层）。
 
-共享 Docker 网 `openbot_magpie`：同网容器可 TCP 到应用容器 `:3001`。网关密钥开启后仍需 Local-Caller（兄弟容器默认没有）；**未**配密钥的单用户部署里同网等同管理员——生产务必配 `CHISABOT_GATEWAY_SECRET`。
+共享 Docker 网（`openbot_magpie`、以及应用挂上的其它用户网如 `newapi_*`）：同网容器**默认**可 TCP 到应用容器 `:3001`。
+
+| 方向 | 策略（v0.1.39） |
+|------|----------------|
+| 应用 → Magpie `:3425` / `:3430` | **允许**（模型 API + 内嵌管理反代；DNS 名 `magpie`） |
+| Magpie / 其它边车 → 应用 `:3001` | **拒绝**（`DOCKER-USER` DROP，注释 `chisabot-sidecar-iso`） |
+| 宿主机刮数 → `127.0.0.1:3001` | **允许**（不经 DOCKER-USER；仍需 Local-Caller） |
+
+网关密钥开启后边车即便打通 TCP 也当不了管理员（无 Local-Caller → 401）。网络 DROP 是第二层，挡住探测 / DoS / 单用户无密钥部署。
+
+### 5.1 Magpie / 边车隔离（PRD-P0-02）
+
+```sh
+# 宿主机 root：加载 br_netfilter + 写入 DOCKER-USER DROP（幂等）
+sh scripts/ops/isolate-sidecar-app.sh --apply
+sh scripts/ops/isolate-sidecar-app.sh --check
+sh scripts/ops/isolate-sidecar-app.sh --verify   # Magpie!-app 超时；App->magpie:3425 仍通
+```
+
+要点：
+
+1. **同桥流量要进 iptables**：必须 `br_netfilter` + `net.bridge.bridge-nf-call-iptables=1`（`--apply` 会 modprobe 并写 `/etc/sysctl.d/99-chisabot-sidecar-iso.conf`）。未开时 DROP 规则存在但计数永远为 0。
+2. **部署**：`deploy-serial.sh` 在镜像切换后默认 `--apply` + `--verify`（失败退出 8）。`CHISABOT_ISOLATE_SIDECAR=skip` 可跳过（不推荐）。
+3. **开机**：安装 `deploy/magpie-isolate.service`（`systemctl enable --now chisabot-magpie-isolate`）；规则在 Docker 重启后会丢，靠该 oneshot / 每次 deploy-serial 重放。
+4. **可选更硬拓扑（人工）**：把应用从 `openbot_magpie` 卸下，改用 `host.docker.internal:3425/3430` 打 Magpie 的 loopback 发布口——要改生产 `.env` / 库内模型 URL，本批**不**强制，以免打断 live Magpie↔ChisaBot。
 
 ## 6. 部署时别踩的坑
 
@@ -107,7 +133,8 @@ Local-Caller 只给**宿主机 → `127.0.0.1:3001`** 的刮数 / 烟雾 / 更�
 |------|------|
 | SSRF 地址 / 重定向 | `server/tests/ssrf-redline.test.ts`（CI） |
 | Local-Caller 经网关拒绝、compose loopback、nginx 清头、friend origins | `server/tests/trust-boundary-redline.test.ts` + `shared/trust-boundary.test.ts`（CI） |
-| 宿主机一键 | `sh scripts/ops/check-trust-boundary.sh`（含 sync-nginx --check-repo） |
+| 宿主机一键 | `sh scripts/ops/check-trust-boundary.sh`（含 sync-nginx --check-repo + isolate 脚本存在） |
+| Magpie/边车隔离 | `scripts/ops/isolate-sidecar-app.sh` `--apply`/`--check`/`--verify`；`deploy-serial` 失败退出 8（v0.1.39） |
 | 部署后 | `post-deploy-smoke.sh`：匿名 admin health 401 + Local-Caller 聚合绿 |
 | nginx 模板同步 | `scripts/ops/sync-nginx.sh`：`--check-repo` / `--check` / `--apply`；`deploy-serial` 默认 check，漂移失败退出 7（v0.1.34） |
 

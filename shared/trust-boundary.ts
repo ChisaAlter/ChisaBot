@@ -1,5 +1,5 @@
 /**
- * Trust-boundary helpers (network isolation residual → v0.1.33).
+ * Trust-boundary helpers (network isolation → v0.1.33; Magpie/sidecar isolate → v0.1.39).
  *
  * Pure checks used by CI red-line tests and (conceptually) by deploy scripts:
  * - compose host binds must be loopback for internal-only ports
@@ -130,4 +130,35 @@ export function nginxClearsLocalCallerForAppProxies(nginxConf: string): {
     }
   }
   return { ok: missingNear.length === 0, missingNear };
+}
+
+/** iptables DOCKER-USER comment for Magpie/sidecar -> app:3001 DROP (PRD-P0-02 / v0.1.39). */
+export const SIDECAR_ISOLATE_COMMENT = "chisabot-sidecar-iso";
+
+/** App port sidecars must not initiate to. */
+export const SIDECAR_ISOLATE_APP_PORT = 3001;
+
+/**
+ * Isolate script text must teach br_netfilter + DOCKER-USER DROP + live verify.
+ * Pure string checks for CI (no root/iptables on runners).
+ */
+export function isolateScriptCoversSidecarDeny(scriptText: string): {
+  ok: boolean;
+  missing: string[];
+} {
+  const missing: string[] = [];
+  const needles: Array<[string, RegExp]> = [
+    ["comment marker", /chisabot-sidecar-iso/],
+    ["br_netfilter", /br_netfilter/],
+    ["bridge-nf-call-iptables", /bridge-nf-call-iptables/],
+    ["--apply", /--apply/],
+    ["--check", /--check/],
+    ["--verify", /--verify/],
+    ["DOCKER-USER", /DOCKER-USER/],
+    ["DROP dport app", /--dport/],
+  ];
+  for (const [label, re] of needles) {
+    if (!re.test(scriptText)) missing.push(label);
+  }
+  return { ok: missing.length === 0, missing };
 }

@@ -1,3 +1,7 @@
+## 0.1.39
+
+- Magpie/边车 → app:3001 DOCKER-USER 隔离（PRD-P0-02；电车仍暂停）
+
 ## 0.1.38
 
 - 发送失败附件恢复诚实（failed-send-attachments）+ CB-029 弹窗静止态去大面积毛玻璃（电车仍暂停）

@@ -18,6 +18,7 @@ import {
   composeHostBindIsLoopback,
   extractComposePortLines,
   nginxClearsLocalCallerForAppProxies,
+  isolateScriptCoversSidecarDeny,
 } from "../../shared/trust-boundary";
 
 const root = join(import.meta.dir, "../..");
@@ -121,5 +122,19 @@ describe("nginx sync process (v0.1.34)", () => {
     expect(sh).toMatch(/--apply/);
     expect(sh).toMatch(/--check-repo/);
     expect(read("scripts/ops/deploy-serial.sh")).toMatch(/sync-nginx/);
+  });
+});
+
+
+describe("sidecar isolate (PRD-P0-02 / v0.1.39)", () => {
+  test("isolate-sidecar-app.sh + deploy-serial + systemd unit", () => {
+    const iso = read("scripts/ops/isolate-sidecar-app.sh");
+    expect(isolateScriptCoversSidecarDeny(iso).ok).toBe(true);
+    const serial = read("scripts/ops/deploy-serial.sh");
+    expect(serial).toMatch(/isolate-sidecar-app/);
+    expect(serial).toMatch(/exit 8/);
+    expect(read("deploy/magpie-isolate.service")).toMatch(/isolate-sidecar-app/);
+    expect(read("deploy/start.sh")).toMatch(/isolate-sidecar-app/);
+    expect(read("scripts/ops/check-trust-boundary.sh")).toMatch(/isolate-sidecar-app/);
   });
 });

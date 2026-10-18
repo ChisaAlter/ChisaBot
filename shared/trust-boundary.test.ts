@@ -6,7 +6,12 @@ import {
   isLoopbackHostname,
   isLoopbackOrigin,
   nginxClearsLocalCallerForAppProxies,
+  isolateScriptCoversSidecarDeny,
+  SIDECAR_ISOLATE_APP_PORT,
+  SIDECAR_ISOLATE_COMMENT,
 } from "./trust-boundary";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe("loopback hostname / origin", () => {
   test("loopback hosts accepted", () => {
@@ -89,5 +94,23 @@ describe("nginx Local-Caller clear", () => {
         }
 `;
     expect(nginxClearsLocalCallerForAppProxies(good).ok).toBe(true);
+  });
+});
+
+
+describe("sidecar isolate script (PRD-P0-02)", () => {
+  test("constants", () => {
+    expect(SIDECAR_ISOLATE_COMMENT).toBe("chisabot-sidecar-iso");
+    expect(SIDECAR_ISOLATE_APP_PORT).toBe(3001);
+  });
+
+  test("scripts/ops/isolate-sidecar-app.sh covers deny path", () => {
+    const text = readFileSync(
+      join(import.meta.dir, "../scripts/ops/isolate-sidecar-app.sh"),
+      "utf8",
+    );
+    const result = isolateScriptCoversSidecarDeny(text);
+    expect(result.missing).toEqual([]);
+    expect(result.ok).toBe(true);
   });
 });

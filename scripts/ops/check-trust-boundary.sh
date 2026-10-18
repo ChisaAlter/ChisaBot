@@ -52,4 +52,23 @@ test -f scripts/ops/sync-nginx.sh || fail "missing scripts/ops/sync-nginx.sh"
 sh scripts/ops/sync-nginx.sh --check-repo
 ok "sync-nginx --check-repo"
 
+
+# 6) sidecar isolate script present (PRD-P0-02 / v0.1.39)
+ISO=scripts/ops/isolate-sidecar-app.sh
+test -f "$ISO" || fail "missing $ISO"
+grep -q 'chisabot-sidecar-iso' "$ISO" || fail "$ISO missing comment marker"
+grep -q 'br_netfilter' "$ISO" || fail "$ISO missing br_netfilter ensure"
+grep -q -- '--verify' "$ISO" || fail "$ISO missing --verify"
+ok "isolate-sidecar-app.sh present (apply/check/verify)"
+# Live --check only when docker+iptables+root and app is up (hosts); CI skips.
+if [ "$(id -u)" = 0 ] && command -v docker >/dev/null 2>&1 && command -v iptables >/dev/null 2>&1; then
+  if docker inspect openbot-zh >/dev/null 2>&1; then
+    sh "$ISO" --check
+    ok "live isolate --check"
+  else
+    ok "openbot-zh not running — skip live isolate --check"
+  fi
+else
+  ok "not root/docker host — skip live isolate --check"
+fi
 printf '\ncheck-trust-boundary: ALL GREEN\n'

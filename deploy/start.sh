@@ -100,4 +100,13 @@ if [ "${CHISABOT_ENABLE_TIMERS:-0}" = 1 ]; then
   systemctl daemon-reload
   systemctl enable --now openbot-zh-attachments.timer
 fi
+
+# PRD-P0-02: Magpie/sidecar must not initiate to app:3001 (DOCKER-USER DROP).
+# Skip when not root / no iptables (dev machines). Production deploy-serial always applies.
+if [ "$(id -u)" = 0 ] && command -v iptables >/dev/null 2>&1; then
+  iso=../scripts/ops/isolate-sidecar-app.sh
+  if [ -f "$iso" ]; then
+    sh "$iso" --apply || echo "[isolate] apply failed — see docs/ops/trust-boundary.md §5.1" >&2
+  fi
+fi
 echo 'ChisaBot is bound to 127.0.0.1:3001. Configure the HTTPS gateway before public access.'
