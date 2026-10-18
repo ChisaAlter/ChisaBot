@@ -6,7 +6,9 @@
 
 ## 构建与启动
 
-在仓库根目录执行：
+**好友可装包（推荐新装）**：`sh deploy/friend-up.sh` —— 安全默认模板、自动填密钥、拒绝公网直连应用端口。说明见 [docs/friend-deploy.md](../docs/friend-deploy.md)。
+
+在仓库根目录执行（手动）：
 
 ```sh
 bun install --frozen-lockfile

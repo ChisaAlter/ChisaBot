@@ -3,6 +3,13 @@ set -eu
 cd "$(dirname "$0")"
 if ! test -f .env; then
   echo 'Missing deploy/.env. Copy .env.example and configure encryption keys first.' >&2
+  echo '好友可装包一键入口：sh deploy/friend-up.sh（见 docs/friend-deploy.md）。' >&2
+  exit 1
+fi
+
+# Track D 安全默认：拒绝把应用端口写成 0.0.0.0（单用户公网直连 = 人人管理员）。
+if grep -E '^[[:space:]]*-[[:space:]]*"?0\.0\.0\.0:' compose.yaml >/dev/null 2>&1; then
+  echo 'deploy/compose.yaml binds 0.0.0.0 — refused. Keep 127.0.0.1:3001 and put HTTPS in deploy/public/.' >&2
   exit 1
 fi
 

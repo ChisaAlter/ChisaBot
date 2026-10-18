@@ -46,6 +46,7 @@ import { Route as AuthedSettingsApprovalsRouteImport } from './routes/_authed/se
 import { Route as AuthedSettingsCloudWorkspaceRouteImport } from './routes/_authed/settings/cloud-workspace'
 import { Route as AuthedSettingsComponentsGalleryRouteImport } from './routes/_authed/settings/components-gallery'
 import { Route as AuthedSettingsImRouteImport } from './routes/_authed/settings/im'
+import { Route as AuthedSettingsShareRouteImport } from './routes/_authed/settings/share'
 import { Route as AuthedSettingsMediaRouteImport } from './routes/_authed/settings/media'
 import { Route as AuthedSettingsMemoryRouteImport } from './routes/_authed/settings/memory'
 import { Route as AuthedSettingsPagesRouteImport } from './routes/_authed/settings/pages'
@@ -267,6 +268,11 @@ const AuthedSettingsImRoute = AuthedSettingsImRouteImport.update({
   path: '/im',
   getParentRoute: () => AuthedSettingsRouteRoute,
 } as any)
+const AuthedSettingsShareRoute = AuthedSettingsShareRouteImport.update({
+  id: '/share',
+  path: '/share',
+  getParentRoute: () => AuthedSettingsRouteRoute,
+} as any)
 const AuthedSettingsMediaRoute = AuthedSettingsMediaRouteImport.update({
   id: '/media',
   path: '/media',
@@ -480,6 +486,7 @@ export interface FileRoutesByFullPath {
   '/settings/cloud-workspace': typeof AuthedSettingsCloudWorkspaceRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/settings/im': typeof AuthedSettingsImRoute
+  '/settings/share': typeof AuthedSettingsShareRoute
   '/settings/media': typeof AuthedSettingsMediaRoute
   '/settings/memory': typeof AuthedSettingsMemoryRoute
   '/settings/pages': typeof AuthedSettingsPagesRoute
@@ -547,6 +554,7 @@ export interface FileRoutesByTo {
   '/settings/cloud-workspace': typeof AuthedSettingsCloudWorkspaceRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/settings/im': typeof AuthedSettingsImRoute
+  '/settings/share': typeof AuthedSettingsShareRoute
   '/settings/media': typeof AuthedSettingsMediaRoute
   '/settings/memory': typeof AuthedSettingsMemoryRoute
   '/settings/pages': typeof AuthedSettingsPagesRoute
@@ -619,6 +627,7 @@ export interface FileRoutesById {
   '/_authed/settings/cloud-workspace': typeof AuthedSettingsCloudWorkspaceRoute
   '/_authed/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/_authed/settings/im': typeof AuthedSettingsImRoute
+  '/_authed/settings/share': typeof AuthedSettingsShareRoute
   '/_authed/settings/media': typeof AuthedSettingsMediaRoute
   '/_authed/settings/memory': typeof AuthedSettingsMemoryRoute
   '/_authed/settings/pages': typeof AuthedSettingsPagesRoute
@@ -692,6 +701,7 @@ export interface FileRouteTypes {
     | '/settings/cloud-workspace'
     | '/settings/components-gallery'
     | '/settings/im'
+    | '/settings/share'
     | '/settings/media'
     | '/settings/memory'
     | '/settings/pages'
@@ -759,6 +769,7 @@ export interface FileRouteTypes {
     | '/settings/cloud-workspace'
     | '/settings/components-gallery'
     | '/settings/im'
+    | '/settings/share'
     | '/settings/media'
     | '/settings/memory'
     | '/settings/pages'
@@ -830,6 +841,7 @@ export interface FileRouteTypes {
     | '/_authed/settings/cloud-workspace'
     | '/_authed/settings/components-gallery'
     | '/_authed/settings/im'
+    | '/_authed/settings/share'
     | '/_authed/settings/media'
     | '/_authed/settings/memory'
     | '/_authed/settings/pages'
@@ -1134,6 +1146,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedSettingsImRouteImport
       parentRoute: typeof AuthedSettingsRouteRoute
     }
+    '/_authed/settings/share': {
+      id: '/_authed/settings/share'
+      path: '/share'
+      fullPath: '/settings/share'
+      preLoaderRoute: typeof AuthedSettingsShareRouteImport
+      parentRoute: typeof AuthedSettingsRouteRoute
+    }
     '/_authed/settings/media': {
       id: '/_authed/settings/media'
       path: '/media'
@@ -1432,6 +1451,7 @@ interface AuthedSettingsRouteRouteChildren {
   AuthedSettingsCloudWorkspaceRoute: typeof AuthedSettingsCloudWorkspaceRoute
   AuthedSettingsComponentsGalleryRoute: typeof AuthedSettingsComponentsGalleryRoute
   AuthedSettingsImRoute: typeof AuthedSettingsImRoute
+  AuthedSettingsShareRoute: typeof AuthedSettingsShareRoute
   AuthedSettingsMediaRoute: typeof AuthedSettingsMediaRoute
   AuthedSettingsMemoryRoute: typeof AuthedSettingsMemoryRoute
   AuthedSettingsPagesRoute: typeof AuthedSettingsPagesRoute
@@ -1451,6 +1471,7 @@ const AuthedSettingsRouteRouteChildren: AuthedSettingsRouteRouteChildren = {
   AuthedSettingsCloudWorkspaceRoute: AuthedSettingsCloudWorkspaceRoute,
   AuthedSettingsComponentsGalleryRoute: AuthedSettingsComponentsGalleryRoute,
   AuthedSettingsImRoute: AuthedSettingsImRoute,
+  AuthedSettingsShareRoute: AuthedSettingsShareRoute,
   AuthedSettingsMediaRoute: AuthedSettingsMediaRoute,
   AuthedSettingsMemoryRoute: AuthedSettingsMemoryRoute,
   AuthedSettingsPagesRoute: AuthedSettingsPagesRoute,

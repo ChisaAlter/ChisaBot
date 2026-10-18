@@ -304,7 +304,21 @@ describe("deployment configuration", () => {
       // Nothing set, so no opinion and everybody is admitted: the shape a deployment that has not
       // heard of SIGNIN_ALLOWED_EMAIL_DOMAINS has, which is every deployment running today.
       allowedEmailDomains: [],
+      useSecureCookies: false,
     });
+  });
+
+  test("forces Secure cookies when OPENBOT_PUBLIC_URL is https (Track D)", () => {
+    const config = loadConfig({
+      ...baseEnvironment,
+      GOOGLE_OAUTH_CLIENT_ID: "google-client-id",
+      GOOGLE_OAUTH_CLIENT_SECRET: "google-client-secret",
+      BETTER_AUTH_SECRET: "a-long-enough-local-development-auth-secret",
+      BETTER_AUTH_URL: "http://localhost:3001",
+      OPENBOT_PUBLIC_URL: "https://chat.example.com",
+      INITIAL_ADMIN_EMAILS: "admin@openbot.test",
+    });
+    expect(config.auth?.useSecureCookies).toBe(true);
   });
 
   test("names domains the way somebody writes them", () => {

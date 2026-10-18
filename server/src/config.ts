@@ -3,6 +3,7 @@ import { singleUserEnabled } from "./auth/dev-actor";
 import { normalizeDomain } from "./auth/email-domain";
 import type { ActionPolicy } from "./computer/policy";
 import { parseActionPolicy } from "./computer/policy-store";
+import { useSecureCookies as decideSecureCookies } from "../../shared/secure-cookies";
 import {
   type TranscriptionConfig,
   transcriptionConfig,
@@ -95,6 +96,11 @@ export type AuthConfig = {
   microsoft?: OAuthClient & { tenantId: string };
   /** Okta is an OIDC provider rather than a named one, so it is identified by its issuer. */
   okta?: OAuthClient & { issuer: string };
+  /**
+   * Better Auth session cookies carry Secure when this is true (Track D / PRD-P2-04).
+   * Derived from https public/auth URLs or CHISABOT_SECURE_COOKIES; see shared/secure-cookies.ts.
+   */
+  useSecureCookies: boolean;
 };
 
 /**
@@ -801,6 +807,12 @@ function authConfig(
         ["http://127.0.0.1:3010", "http://[::1]:3010", "http://localhost:3010"],
     initialAdminEmails,
     allowedEmailDomains,
+    useSecureCookies: decideSecureCookies({
+      authBaseUrl: baseUrl,
+      publicUrl: optional(environment, "OPENBOT_PUBLIC_URL"),
+      appUrl: optional(environment, "OPENBOT_APP_URL"),
+      force: optional(environment, "CHISABOT_SECURE_COOKIES"),
+    }),
     ...(google ? { google } : {}),
     ...(microsoft ? { microsoft } : {}),
     ...(okta ? { okta } : {}),

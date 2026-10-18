@@ -107,3 +107,14 @@ CI 红线：`server/tests/ssrf-redline.test.ts`（PRD-P1-06）。备份演练：
 ## 5. 部署失败怎么处理
 
 见 [ops/incidents.md](ops/incidents.md) §「部署失败速查」：看 `request.sh status` → 容器日志 → 自动回滚是否成功 → 必要时手动 `rollback-to-*.sh`。
+
+
+## 6. 好友可装包 / 安全默认（Track D）
+
+| 检查 | 期望 |
+|------|------|
+| 应用端口 | compose 仅 `127.0.0.1:3001`（`start.sh` / `friend-up.sh` 拒 `0.0.0.0`） |
+| 单用户 | `TRUSTED_ORIGINS` 无 https 公网；公网走 `deploy/public` |
+| Cookie | 网关 Cookie 已 Secure；Better Auth 在 https 公网 URL 或 `CHISABOT_SECURE_COOKIES=1` 时 Secure |
+| 一键入口 | `sh deploy/friend-up.sh`；说明见 [friend-deploy.md](friend-deploy.md) |
+| 设置页 | 管理员可见「分享给朋友」 |

@@ -173,9 +173,9 @@ export function createAuth(
     baseURL: authConfig.baseUrl,
     secret: authConfig.secret,
     trustedOrigins: authConfig.trustedOrigins,
-    // CR-P2-11：生产 https 部署显式 Secure；http 本机开发不加。应用态 /api/* 仍靠 SameSite=Lax + 无 CORS。
+    // CR-P2-11 + Track D：https 公网 / CHISABOT_SECURE_COOKIES 强制 Secure；http 本机开发不加。
     advanced: {
-      useSecureCookies: authConfig.baseUrl.startsWith("https://"),
+      useSecureCookies: authConfig.useSecureCookies,
     },
     database: drizzleAdapter(database, {
       provider: "pg",

@@ -16,6 +16,7 @@ import {
   IconShieldCheck,
   IconShieldLock,
   IconSparkles,
+  IconUserPlus,
   IconUsers,
   IconWorld,
   IconWorldWww,
@@ -236,6 +237,20 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     accountsUi: true,
     keywords: ["zh", "多用户", "朋友", "邀请", "用户", "accounts", "users", "invite"],
     items: [],
+  },
+  {
+    id: "share",
+    group: "accounts",
+    title: "分享给朋友",
+    sub: "邀请进实例，或一键 compose 自托管",
+    icon: IconUserPlus,
+    to: "/settings/share",
+    admin: true,
+    keywords: ["fx", "分享", "朋友", "邀请", "部署", "compose", "friend", "share", "install"],
+    items: [
+      { id: "share-invite", title: "邀请进你的实例", description: "多账号邀请链接", find: "路径一" },
+      { id: "share-pack", title: "一键 compose 自托管", description: "friend-up.sh 好友可装包", find: "路径二" },
+    ],
   },
 
   // ── 模型 ──────────────────────────────────────────────

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.30
+
+- Production maturity **Track D** (friend pack + safe defaults): `deploy/friend-up.sh` one-click compose with loopback bind / no public single-user TRUSTED_ORIGINS; Better Auth Secure cookies when https public URL or `CHISABOT_SECURE_COOKIES`; `start.sh` refuses `0.0.0.0` app binds.
+- UX: 设置 → 分享给朋友；机器人列表一点开聊（正确 bot 上下文）；docs/friend-deploy.md。
+
 ## 0.1.29
 
 - Production maturity **Track B** (stability): hung-turn stop clears busy + force-unlock; 25min wall-clock abort; periodic expired lock sweep; connect snapshot capped by count/bytes for long threads.
