@@ -7730,6 +7730,15 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 @media (prefers-reduced-motion: reduce) {
   .setting-flash { animation: none; box-shadow: 0 0 0 3px rgba(47, 124, 246, 0.45); }
 }
+/* DOG-04：Ctrl+K 正文命中滚到消息时闪一下（与设置搜索同色、同时长）。 */
+.message-flash { animation: message-flash 2.2s ease-out; border-radius: var(--r-md, 14px); }
+@keyframes message-flash {
+  0%, 30% { box-shadow: 0 0 0 3px rgba(47, 124, 246, 0.45); background-color: rgba(47, 124, 246, 0.08); }
+  100% { box-shadow: 0 0 0 3px rgba(47, 124, 246, 0); background-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .message-flash { animation: none; box-shadow: 0 0 0 3px rgba(47, 124, 246, 0.45); }
+}
 .perm-seg .sg-segmented-item.is-full[aria-checked="true"] { color: #c25a0c; }
 .dark .perm-seg .sg-segmented-item.is-full[aria-checked="true"] { color: #ffab6b; }
 .perm-about { padding: 6px 4px; }

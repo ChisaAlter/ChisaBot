@@ -14,54 +14,17 @@ import {
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { PresenceItem, PresenceList } from "@/components/ui/presence";
-import { openTriggerByLabel, snapAnchor } from "@/components/ui/snap-anchor";
 import type * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
-import { SidebarSearchField } from "@/components/layout/sidebar-search-field";
 import {
-  type Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarMenu,
-  useOptionalSidebar,
-} from "@/components/ui/sidebar";
-import { RailSidebar, RailSidebarEdge } from "@/components/layout/rail-sidebar";
-import { requestSidebarSearchFocus, useSidebarSearch } from "@/lib/sidebar-search";
-import { cn } from "@/lib/utils";
-import {
-  type ChannelSummary,
-  channelListQueryOptions,
-} from "@/lib/channels/queries";
-import {
-  highlightParts,
-  useChannelMessageSearch,
-  type ChannelSearchHit,
-} from "@/lib/channels/search";
-import { useChannelEvents } from "@/lib/channels/use-channel-events";
-import { latestChannelFor } from "@/lib/channels/latest";
-import { prefetchBotChat, usePrefetchBotChats } from "@/lib/channels/prefetch";
-import { openCreateBot } from "@/lib/agents/create-bot";
-import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
-import { relativeTime, useRelativeNow } from "@/lib/relative-time";
-import { agentListQueryOptions } from "@/lib/agents/queries";
+  BotChatMenuItems,
+  BotRowComputerChip,
+} from "@/components/agents/bot-chat-actions";
+import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-history-lazy";
 import { ChannelAvatar } from "@/components/channels/avatar";
-import { showPanels } from "@/lib/panels/rail-open";
-import { BotChatMenuItems, BotRowComputerChip } from "@/components/agents/bot-chat-actions";
-import { useBotChat, useCurrentBotChat } from "@/lib/agents/bot-chat-context";
-import {
-  type MessageListEmphasis,
-  useMainBot,
-  useMessageListEmphasis,
-} from "@/lib/settings/message-list";
-import { usePanelBot } from "@/lib/panels/active-bot";
-import { setBotPausedMutationOptions } from "@/lib/bot-lifecycle/mutations";
-import {
-  type BotAttention,
-  botAttentionQueryOptions,
-} from "@/lib/bot-lifecycle/queries";
-import { queryClient } from "@/query-client";
+import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
+import { RailSidebar, RailSidebarEdge } from "@/components/layout/rail-sidebar";
+import { SidebarSearchField } from "@/components/layout/sidebar-search-field";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,32 +32,82 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { lazyDialog } from "@/components/ui/lazy-dialog";
+import { PresenceItem, PresenceList } from "@/components/ui/presence";
+import {
+  type Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarMenu,
+  useOptionalSidebar,
+} from "@/components/ui/sidebar";
+import { openTriggerByLabel, snapAnchor } from "@/components/ui/snap-anchor";
+import { useBotChat, useCurrentBotChat } from "@/lib/agents/bot-chat-context";
+import { openCreateBot } from "@/lib/agents/create-bot";
+import { agentListQueryOptions } from "@/lib/agents/queries";
+import { setBotPausedMutationOptions } from "@/lib/bot-lifecycle/mutations";
+import {
+  type BotAttention,
+  botAttentionQueryOptions,
+} from "@/lib/bot-lifecycle/queries";
+import { latestChannelFor } from "@/lib/channels/latest";
+import { prefetchBotChat, usePrefetchBotChats } from "@/lib/channels/prefetch";
+import {
+  type ChannelSummary,
+  channelListQueryOptions,
+} from "@/lib/channels/queries";
+import {
+  type ChannelSearchHit,
+  highlightParts,
+  useChannelMessageSearch,
+} from "@/lib/channels/search";
+import { useChannelEvents } from "@/lib/channels/use-channel-events";
+import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
+import { usePanelBot } from "@/lib/panels/active-bot";
+import { showPanels } from "@/lib/panels/rail-open";
+import { relativeTime, useRelativeNow } from "@/lib/relative-time";
+import {
+  type MessageListEmphasis,
+  useMainBot,
+  useMessageListEmphasis,
+} from "@/lib/settings/message-list";
+import {
+  requestSidebarSearchFocus,
+  useSidebarSearch,
+} from "@/lib/sidebar-search";
+import { cn } from "@/lib/utils";
+import { queryClient } from "@/query-client";
 import {
   attentionSummary,
   needsInput,
   useAttentionNotifications,
 } from "../bot-profile/attention";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
-import { lazyDialog } from "@/components/ui/lazy-dialog";
-import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-history-lazy";
 
 // 每个机器人行都带这两个弹窗：用到才加载、打开过才挂载（DESIGN.md §41.3）。「电脑操作」以前把整个设备页拖进了左栏的包。
-const DeleteBotDialog = lazyDialog(() => import("@/components/agents/delete-bot-dialog").then((m) => m.DeleteBotDialog));
+const DeleteBotDialog = lazyDialog(() =>
+  import("@/components/agents/delete-bot-dialog").then(
+    (m) => m.DeleteBotDialog,
+  ),
+);
 const BotComputerAccessDialog = lazyDialog(() =>
-  import("@/components/devices/bot-computer-access").then((m) => m.BotComputerAccessDialog),
+  import("@/components/devices/bot-computer-access").then(
+    (m) => m.BotComputerAccessDialog,
+  ),
 );
 function preloadBotDialogs() {
   DeleteBotDialog.preload();
   LazyBotThreadHistoryDialog.preload();
   BotComputerAccessDialog.preload();
 }
-import { Channel } from "./channel";
+
 import { LeftModeSwitch } from "@/components/cloud-cc/left-mode-switch";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Channel } from "./channel";
 import { ChannelPagination } from "./channel-pagination";
 
 /*
@@ -221,25 +234,43 @@ function ChannelRow({
   );
 }
 
-
-/** FIX-03：正文命中行 — 第二行是带高亮的摘要。 */
-function SearchHitRow({ hit, agentIds = [] }: { hit: ChannelSearchHit; agentIds?: string[] }) {
+/** FIX-03 / DOG-04：正文命中行 — 第二行带高亮摘要；有 messageId 时深链 ?message= 滚到该条。 */
+function SearchHitRow({
+  hit,
+  agentIds = [],
+}: {
+  hit: ChannelSearchHit;
+  agentIds?: string[];
+}) {
   const parts = highlightParts(hit.snippet, hit.highlight);
   const title = hit.summary?.trim() || hit.name;
+  const message = hit.messageId?.trim() || undefined;
+  const sidebar = useOptionalSidebar();
+  const closeDrawer = () => {
+    if (sidebar?.isMobile && sidebar.openMobile) sidebar.setOpenMobile(false);
+  };
   return (
     <Link
       className="flex flex-row py-2 px-2 gap-2 items-center w-full hover:bg-foreground/5 rounded-lg"
+      onClick={closeDrawer}
       params={{ channelId: hit.channelId }}
+      search={message ? { message } : {}}
       to="/channel/$channelId"
     >
       <span className="shrink-0">
         <ChannelAvatar participantIds={agentIds} size={32} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[0.9rem] leading-5 font-medium tracking-[-1%]">{title}</span>
+        <span className="block truncate text-[0.9rem] leading-5 font-medium tracking-[-1%]">
+          {title}
+        </span>
         <span className="mt-px block truncate text-[12px] leading-4 text-muted-foreground">
           {parts.before}
-          {parts.match ? <mark className="rounded-sm bg-primary/20 px-0.5 text-foreground">{parts.match}</mark> : null}
+          {parts.match ? (
+            <mark className="rounded-sm bg-primary/20 px-0.5 text-foreground">
+              {parts.match}
+            </mark>
+          ) : null}
           {parts.after}
         </span>
       </span>
@@ -315,17 +346,27 @@ function BotRow({
         ) : null}
       </span>
       {waiting > 0 ? (
-        <span className="glass-bot-badge" title={attention ? attentionSummary(attention) : undefined}>
+        <span
+          className="glass-bot-badge"
+          title={attention ? attentionSummary(attention) : undefined}
+        >
           {waiting}
         </span>
       ) : unread ? (
-        <span className="glass-bot-dot" title={attention ? attentionSummary(attention) : undefined} />
+        <span
+          className="glass-bot-dot"
+          title={attention ? attentionSummary(attention) : undefined}
+        />
       ) : null}
     </>
   );
   return (
     <div
-      className={cn("glass-bot-row", (selected || chat) && "is-on", menuOpen && "menu-open")}
+      className={cn(
+        "glass-bot-row",
+        (selected || chat) && "is-on",
+        menuOpen && "menu-open",
+      )}
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);
@@ -442,7 +483,11 @@ function BotMenuContent({
   // 面板跟着「当前机器人」走：不是当前的就先进入它的对话，再打开面板（宽窗口右栏，窄窗口抽屉）。
   const openPanels = async () => {
     if (panelBotId !== bot.id) {
-      if (latest) await navigate({ to: "/channel/$channelId", params: { channelId: latest.id } });
+      if (latest)
+        await navigate({
+          to: "/channel/$channelId",
+          params: { channelId: latest.id },
+        });
       else await navigate({ to: "/channel/new", search: { agent: bot.id } });
     }
     showPanels();
@@ -477,15 +522,25 @@ function BotMenuContent({
           <IconDeviceDesktop className={icon} />
           <span className="min-w-0 flex-1">
             <span className="block">{"电脑操作…"}</span>
-            <span className="glass-mi-sub">{"你关联的设备，所有机器人共用"}</span>
+            <span className="glass-mi-sub">
+              {"你关联的设备，所有机器人共用"}
+            </span>
           </span>
         </DropdownMenuItem>
       ) : null}
-      {onToggleMain || paused ? <DropdownMenuSeparator className="glass-sep" /> : null}
+      {onToggleMain || paused ? (
+        <DropdownMenuSeparator className="glass-sep" />
+      ) : null}
       {onToggleMain ? (
         <DropdownMenuItem className="glass-mi" onClick={onToggleMain}>
-          {main ? <IconStarOff className={icon} /> : <IconStar className={icon} />}
-          <span className="min-w-0 flex-1">{main ? "取消主机器人" : "设为主机器人"}</span>
+          {main ? (
+            <IconStarOff className={icon} />
+          ) : (
+            <IconStar className={icon} />
+          )}
+          <span className="min-w-0 flex-1">
+            {main ? "取消主机器人" : "设为主机器人"}
+          </span>
         </DropdownMenuItem>
       ) : null}
       {paused ? (
@@ -497,7 +552,11 @@ function BotMenuContent({
       {canDeleteBot(bot) ? (
         <>
           <DropdownMenuSeparator className="glass-sep" />
-          <DropdownMenuItem className="glass-mi is-danger" onClick={onDelete} variant="destructive">
+          <DropdownMenuItem
+            className="glass-mi is-danger"
+            onClick={onDelete}
+            variant="destructive"
+          >
             <IconTrash className={icon} />
             <span className="min-w-0 flex-1">{"删除机器人…"}</span>
           </DropdownMenuItem>
@@ -533,7 +592,13 @@ function HiddenChatBotRow({ known }: { known: Set<string> }) {
   );
 }
 
-function HiddenBotRow({ bot, chat }: { bot: RosterBot; chat: NonNullable<ReturnType<typeof useBotChat>> }) {
+function HiddenBotRow({
+  bot,
+  chat,
+}: {
+  bot: RosterBot;
+  chat: NonNullable<ReturnType<typeof useBotChat>>;
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
   return (
     <div className={cn("glass-bot-row is-on", menuOpen && "menu-open")}>
@@ -550,7 +615,12 @@ function HiddenBotRow({ bot, chat }: { bot: RosterBot; chat: NonNullable<ReturnT
       <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>
         <DropdownMenuTrigger
           render={
-            <button aria-label={`${bot.name} 机器人菜单`} className="glass-bot-more" title={"机器人菜单"} type="button" />
+            <button
+              aria-label={`${bot.name} 机器人菜单`}
+              className="glass-bot-more"
+              title={"机器人菜单"}
+              type="button"
+            />
           }
         >
           <IconDots className="size-4" />
@@ -583,11 +653,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const roster = (agents.data ?? []).filter((bot) => !bot.hidden);
   const attention = useQuery(botAttentionQueryOptions());
   useAttentionNotifications(attention.data);
-  const attentionById = new Map((attention.data ?? []).map((a) => [a.agentId, a]));
+  const attentionById = new Map(
+    (attention.data ?? []).map((a) => [a.agentId, a]),
+  );
   const { botId: selectedBotId } = usePanelBot();
   const { mainBotId, setMainBot } = useMainBot();
-  const mainBot = mainBotId ? roster.find((bot) => bot.id === mainBotId) : undefined;
-  const others = mainBot ? roster.filter((bot) => bot.id !== mainBot.id) : roster;
+  const mainBot = mainBotId
+    ? roster.find((bot) => bot.id === mainBotId)
+    : undefined;
+  const others = mainBot
+    ? roster.filter((bot) => bot.id !== mainBot.id)
+    : roster;
   // 空闲时预取主机器人和左栏前几个的对话，切过去就是现成的（DESIGN.md §83）。
   usePrefetchBotChats(
     [...(mainBot ? [mainBot.id] : []), ...others.map((bot) => bot.id)],
@@ -596,7 +672,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   );
 
   const searching = search.trim().length > 0;
-  const titleMatches = searching ? pinnedFirst(matchingChannels(channels.data, search)) : [];
+  const titleMatches = searching
+    ? pinnedFirst(matchingChannels(channels.data, search))
+    : [];
   const contentSearch = useChannelMessageSearch(search);
   const contentHits = contentSearch.data ?? [];
   // 标题命中优先；正文命中补上标题没扫到的会话。
@@ -621,7 +699,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     />
   );
 
-  const collapsed = Boolean(sidebar && !sidebar.isMobile && sidebar.state === "collapsed");
+  const collapsed = Boolean(
+    sidebar && !sidebar.isMobile && sidebar.state === "collapsed",
+  );
   if (collapsed) {
     const railBots = mainBot ? [mainBot, ...others] : roster;
     return (
@@ -640,7 +720,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   return (
     <RailSidebar collapsible="icon" variant="floating" {...props}>
-      <SidebarContent className="glass-side-full gap-3 overflow-hidden" id="chisabot-bot-list">
+      <SidebarContent
+        className="glass-side-full gap-3 overflow-hidden"
+        id="chisabot-bot-list"
+      >
         <LeftModeSwitch mode="bots" />
         <section
           aria-label={searching ? "搜索结果" : "机器人"}
@@ -668,12 +751,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         </Empty>
                       </div>
                     ) : null}
-                    {contentSearch.isFetching && visibleChannels.length === 0 && extraHits.length === 0 ? (
-                      <div className="px-2 py-3 text-[12px] text-muted-foreground">{"正在搜索消息…"}</div>
+                    {contentSearch.isFetching &&
+                    visibleChannels.length === 0 &&
+                    extraHits.length === 0 ? (
+                      <div className="px-2 py-3 text-[12px] text-muted-foreground">
+                        {"正在搜索消息…"}
+                      </div>
                     ) : null}
                     <AnimatePresence initial={false}>
                       {visibleChannels.map((channel) => {
-                        const hit = contentHits.find((h) => h.channelId === channel.id);
+                        const hit = contentHits.find(
+                          (h) => h.channelId === channel.id,
+                        );
                         if (hit) {
                           return (
                             <motion.div
@@ -682,7 +771,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                               initial={{ opacity: 0 }}
                               key={`hit-${channel.id}`}
                             >
-                              <SearchHitRow agentIds={channel.agentIds} hit={{ ...hit, name: channel.name, summary: channel.summary ?? hit.summary }} />
+                              <SearchHitRow
+                                agentIds={channel.agentIds}
+                                hit={{
+                                  ...hit,
+                                  name: channel.name,
+                                  summary: channel.summary ?? hit.summary,
+                                }}
+                              />
                             </motion.div>
                           );
                         }
@@ -703,7 +799,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                           key={`extra-${hit.channelId}-${hit.messageId ?? hit.snippet.slice(0, 12)}`}
                         >
                           <SearchHitRow
-                            agentIds={channels.data?.find((c) => c.id === hit.channelId)?.agentIds ?? []}
+                            agentIds={
+                              channels.data?.find((c) => c.id === hit.channelId)
+                                ?.agentIds ?? []
+                            }
                             hit={hit}
                           />
                         </motion.div>
@@ -742,7 +841,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </Tooltip>
               </div>
               <div className="glass-side-scroll glass-bot-scroll scroll-fade-b">
-                <HiddenChatBotRow known={new Set(roster.map((bot) => bot.id))} />
+                <HiddenChatBotRow
+                  known={new Set(roster.map((bot) => bot.id))}
+                />
                 {mainBot ? (
                   <>
                     <div className="glass-sec">
@@ -762,11 +863,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <div className="glass-bot-list relative">
                   <PresenceList>
                     {others.map((bot) => (
-                      <PresenceItem key={bot.id}>{row(bot, false)}</PresenceItem>
+                      <PresenceItem key={bot.id}>
+                        {row(bot, false)}
+                      </PresenceItem>
                     ))}
                   </PresenceList>
                   {roster.length === 0 && agents.isSuccess ? (
-                    <button className="glass-list-empty" onClick={openCreateBot} type="button">
+                    <button
+                      className="glass-list-empty"
+                      onClick={openCreateBot}
+                      type="button"
+                    >
                       <IconPlus className="size-4" />
                       {"新建一个机器人"}
                     </button>
@@ -784,7 +891,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   );
 }
 
-function RailTip({ label, children }: { label: string; children: React.ReactElement }) {
+function RailTip({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactElement;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger render={children} />
@@ -819,7 +932,12 @@ function BotMiniRail({
     <nav aria-label={"机器人"} className="glass-mini" id="chisabot-bot-list">
       <MiniSearchButton />
       <RailTip label={"新建机器人"}>
-        <button aria-label={"新建机器人"} className="glass-mini-new" onClick={openCreateBot} type="button">
+        <button
+          aria-label={"新建机器人"}
+          className="glass-mini-new"
+          onClick={openCreateBot}
+          type="button"
+        >
           <IconPlus className="size-5" />
         </button>
       </RailTip>
@@ -833,7 +951,9 @@ function BotMiniRail({
               key={bot.id}
               latest={latestChannelFor(bot.id, channels)}
               main={bot.id === mainBotId}
-              onToggleMain={() => setMainBot(bot.id === mainBotId ? null : bot.id)}
+              onToggleMain={() =>
+                setMainBot(bot.id === mainBotId ? null : bot.id)
+              }
               selected={selectedBotId === bot.id}
             />
           ))}
@@ -878,7 +998,12 @@ function MiniBot({
   const unread = !selected && attention ? attention.unread > 0 : false;
   const paused = attention?.paused ?? false;
   const label = main ? `${bot.name}（主机器人）` : bot.name;
-  const computer = chat?.canComputer && (chat.needsYou || chat.computerOpen) ? (chat.needsYou ? "needs" : "open") : null;
+  const computer =
+    chat?.canComputer && (chat.needsYou || chat.computerOpen)
+      ? chat.needsYou
+        ? "needs"
+        : "open"
+      : null;
   const inner = (
     <>
       <ChannelAvatar participantIds={[bot.id]} size={36} />
@@ -897,7 +1022,11 @@ function MiniBot({
   const linkClass = cn("glass-mini-bot", (selected || chat) && "is-on");
   return (
     <div
-      className={cn("glass-mini-slot", (selected || chat) && "is-on", menuOpen && "menu-open")}
+      className={cn(
+        "glass-mini-slot",
+        (selected || chat) && "is-on",
+        menuOpen && "menu-open",
+      )}
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);
@@ -1014,13 +1143,21 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
         }}
       >
         <RailTip label={label}>
-          <span aria-current="page" aria-label={label} className="glass-mini-bot is-on" role="img">
+          <span
+            aria-current="page"
+            aria-label={label}
+            className="glass-mini-bot is-on"
+            role="img"
+          >
             <ChannelAvatar participantIds={[bot.id]} size={36} />
           </span>
         </RailTip>
         {computer ? (
           <span
-            className={cn("glass-mini-comp", computer === "needs" && "is-needs")}
+            className={cn(
+              "glass-mini-comp",
+              computer === "needs" && "is-needs",
+            )}
             role="img"
             aria-label={computer === "needs" ? "计算机需要你" : "计算机已打开"}
             title={computer === "needs" ? "计算机需要你" : "计算机已打开"}

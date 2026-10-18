@@ -5,34 +5,41 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Button } from "@/components/ui/button";
-import { ErrorCard } from "@/components/ui/skyglass";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { AgentProfile } from "@/components/agents/agent-profile";
+import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
+import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-history-lazy";
 import { hasUnseenActivity } from "@/components/app-sidebar/app-sidebar";
 import { BotPausedBanner } from "@/components/bot-profile/pause-banner";
 import { ChannelChat } from "@/components/channels/channel-chat";
+import { MessageFind } from "@/components/channels/message-find";
 import { DetailPanel } from "@/components/layout/detail-panel";
-import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
-import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-history-lazy";
-import { useOpenThread } from "@/lib/channels/open-thread";
+import { Button } from "@/components/ui/button";
+import { ErrorCard } from "@/components/ui/skyglass";
+import { normalizeMessageSearchParam } from "@/lib/channels/focus-message";
 import { markChannelReadMutationOptions } from "@/lib/channels/mutations";
+import { useOpenThread } from "@/lib/channels/open-thread";
 import {
   type AgentChannel,
   channelFromRoster,
   channelListQueryOptions,
   channelQueryOptions,
 } from "@/lib/channels/queries";
-import { useComputerAutoWatch } from "@/lib/computers/auto-watch";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
 import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
+import { useComputerAutoWatch } from "@/lib/computers/auto-watch";
 import { useMarkBotHidden } from "@/lib/kept-visible";
 
 export const chatSearchSchema = z.object({
   settings: z.boolean().optional(),
   /** Opens the Bot's screen in the right column's 计算机 tab. */
   watch: z.boolean().optional(),
+  /** DOG-04：Ctrl+K 正文命中深链到这条消息（滚入并短暂高亮）。 */
+  message: z
+    .string()
+    .optional()
+    .transform((v) => normalizeMessageSearchParam(v)),
 });
 
 /** 聊天路由的 id（外壳按它认出「地址是一段聊天」）。 */
@@ -52,7 +59,13 @@ export type ChannelPageProps = {
  * 一段聊天的整页（聊天列 + 机器人设置窗格 + 历史对话 + 暂停横幅）。由外壳的 `KeepAliveStage` 挂着，
  * 离开聊天时不卸载（DESIGN.md §98）。
  */
-export function ChannelPage({ channelId, settings, watch, visible, epoch }: ChannelPageProps) {
+export function ChannelPage({
+  channelId,
+  settings,
+  watch,
+  visible,
+  epoch,
+}: ChannelPageProps) {
   const queryClient = useQueryClient();
   /*
    * 左栏里点过来的对话，左栏的列表里已经有它（DESIGN.md §83）：先用那一行画聊天，详情读到再换上，
@@ -74,7 +87,8 @@ export function ChannelPage({ channelId, settings, watch, visible, epoch }: Chan
   const agentId = channel.data?.agentIds[0] ?? threadUi(channelId)?.agent;
   useEffect(() => {
     const id = channel.data?.agentIds[0];
-    if (id && threadUi(channelId)?.agent !== id) setThreadUi(channelId, { agent: id });
+    if (id && threadUi(channelId)?.agent !== id)
+      setThreadUi(channelId, { agent: id });
   }, [channelId, channel.data]);
 
   // 藏着时，全局的组件授权轮询不再为这个机器人跑（DESIGN.md §98.3）。
@@ -121,7 +135,12 @@ export function ChannelPage({ channelId, settings, watch, visible, epoch }: Chan
     },
     [navigate],
   );
-  const [isWatching, setWatching] = useBotComputerTab(agentId, watch, writeWatch, epoch);
+  const [isWatching, setWatching] = useBotComputerTab(
+    agentId,
+    watch,
+    writeWatch,
+    epoch,
+  );
   // 机器人开始用计算机时自动切到「计算机」，停手后自动切回「面板」（用户没动手的话）。
   useComputerAutoWatch(agentId, isWatching, setWatching);
   // 「历史对话」（DESIGN.md §42.6 / §68）：这个机器人的所有对话（频道的、旧 `/bot` 的），点一条在这里打开。
@@ -131,50 +150,70 @@ export function ChannelPage({ channelId, settings, watch, visible, epoch }: Chan
   const openThread = useOpenThread();
 
   return (
-    <DetailPanel
-      onClose={() => {
-        if (visibleRef.current) void navigate({ search: (previous) => ({ ...previous, settings: undefined }) });
-      }}
-      // 设置窗格在窄窗口里是画在 body 上的抽屉：藏着时关掉，别盖在别的页面上。
-      open={visible && isSettingsOpen && agentId !== undefined}
-      detail={agentId === undefined ? null : <AgentProfile agentId={agentId} />}
+    <div
+      className="contents"
+      data-channel-id={channelId}
+      {...(visible ? { "data-channel-visible": "" } : {})}
     >
-      {/* DESIGN v4.1：聊天列没有头部；机器人「⋯」与计算机提示在左栏它那一行。藏着时不登记（§98）。 */}
-      {visible ? <RegisterBotChat
-        agentId={agentId}
-        computerOpen={isWatching}
-        onComputerChange={setWatching}
-        onNewTopic={() =>
-          agentId
-            ? void navigate({ to: "/channel/new", search: { agent: agentId, topic: "new" } })
-            : undefined
+      <MessageFind channelId={channelId} visible={visible} />
+      <DetailPanel
+        onClose={() => {
+          if (visibleRef.current)
+            void navigate({
+              search: (previous) => ({ ...previous, settings: undefined }),
+            });
+        }}
+        // 设置窗格在窄窗口里是画在 body 上的抽屉：藏着时关掉，别盖在别的页面上。
+        open={visible && isSettingsOpen && agentId !== undefined}
+        detail={
+          agentId === undefined ? null : <AgentProfile agentId={agentId} />
         }
-        onSettingsChange={(open) =>
-          void navigate({
-            search: (previous) => ({ ...previous, settings: open ? true : undefined }),
-          })
-        }
-        settingsOpen={isSettingsOpen}
-        onHistory={() => setHistoryOpen(true)}
-      /> : null}
-      {agentId ? (
-        <LazyBotThreadHistoryDialog
-          agentId={agentId}
-          currentThreadId={channel.data?.threadId}
-          onOpenChange={setHistoryOpen}
-          onPick={(threadId) => void openThread(agentId, threadId)}
-          open={historyOpen}
+      >
+        {/* DESIGN v4.1：聊天列没有头部；机器人「⋯」与计算机提示在左栏它那一行。藏着时不登记（§98）。 */}
+        {visible ? (
+          <RegisterBotChat
+            agentId={agentId}
+            computerOpen={isWatching}
+            onComputerChange={setWatching}
+            onNewTopic={() =>
+              agentId
+                ? void navigate({
+                    to: "/channel/new",
+                    search: { agent: agentId, topic: "new" },
+                  })
+                : undefined
+            }
+            onSettingsChange={(open) =>
+              void navigate({
+                search: (previous) => ({
+                  ...previous,
+                  settings: open ? true : undefined,
+                }),
+              })
+            }
+            settingsOpen={isSettingsOpen}
+            onHistory={() => setHistoryOpen(true)}
+          />
+        ) : null}
+        {agentId ? (
+          <LazyBotThreadHistoryDialog
+            agentId={agentId}
+            currentThreadId={channel.data?.threadId}
+            onOpenChange={setHistoryOpen}
+            onPick={(threadId) => void openThread(agentId, threadId)}
+            open={historyOpen}
+          />
+        ) : null}
+        {agentId && channel.data?.agentIds.length === 1 ? (
+          <BotPausedBanner agentId={agentId} />
+        ) : null}
+        <ChannelBody
+          channel={channel.data}
+          isPending={channel.isPending}
+          hasError={Boolean(channel.error)}
         />
-      ) : null}
-      {agentId && channel.data?.agentIds.length === 1 ? (
-        <BotPausedBanner agentId={agentId} />
-      ) : null}
-      <ChannelBody
-        channel={channel.data}
-        isPending={channel.isPending}
-        hasError={Boolean(channel.error)}
-      />
-    </DetailPanel>
+      </DetailPanel>
+    </div>
   );
 }
 
@@ -199,7 +238,13 @@ function ChannelBody({
       <div className="mx-auto w-full max-w-[520px] p-6 pt-16">
         <ErrorCard
           action={
-            <Button className="mt-2" nativeButton={false} render={<Link to="/" />} size="sm" variant="outline">
+            <Button
+              className="mt-2"
+              nativeButton={false}
+              render={<Link to="/" />}
+              size="sm"
+              variant="outline"
+            >
               {"回到聊天"}
             </Button>
           }
