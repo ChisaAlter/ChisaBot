@@ -141,6 +141,16 @@ export function formatWhen(at: Date | string, timeZone: string, now: Date = new 
   return `${year}${p.month}月${p.day}日 ${WEEK_ZH[p.weekday] ?? ""} ${time}`;
 }
 
+/** FIX-09：写进聊天记录的时间用绝对日，避免第二天仍显示「今天」。 */
+export function formatWhenAbsolute(at: Date | string, timeZone: string, now: Date = new Date()): string {
+  const date = typeof at === "string" ? new Date(at) : at;
+  const p = partsIn(date, timeZone);
+  const n = partsIn(now, timeZone);
+  const time = `${pad(p.hour)}:${pad(p.minute)}`;
+  const year = p.year !== n.year ? `${p.year}年` : "";
+  return `${year}${p.month}月${p.day}日 ${WEEK_ZH[p.weekday] ?? ""} ${time}`.replace(/  +/g, " ").trim();
+}
+
 const TZ_ZH: Record<string, string> = {
   "Asia/Shanghai": "北京时间",
   "Asia/Hong_Kong": "香港时间",

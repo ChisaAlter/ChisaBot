@@ -250,6 +250,14 @@ export const ACTION_LABEL: Record<string, string> = {
   exec_kill: "结束命令",
   file_upload: "传文件到设备",
   file_download: "从设备取文件",
+  list_files: "列出文件",
+  read_file: "读取文件",
+  write_file: "写入文件",
+  shell: "运行命令",
+  screenshot: "截屏",
+  open: "打开",
+  input: "输入",
+  system_info: "系统信息",
 };
 
 // ---- 手机扫码绑定（DESIGN.md §33） ----

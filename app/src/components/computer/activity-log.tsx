@@ -29,10 +29,10 @@ const ICONS = {
 
 /** What the line says was done. The subject beside it says what it was done to. */
 const LABELS = {
-  command: "Ran",
-  read_file: "Read",
-  write_file: "Saved",
-  list_files: "Listed",
+  command: "运行",
+  read_file: "读取",
+  write_file: "保存",
+  list_files: "列出",
 } as const;
 
 function timeOf(at: number): string {
@@ -51,27 +51,31 @@ function Entry({ entry }: { entry: ComputerActivity }) {
 
   return (
     <li className="border-border/60 border-b py-2 last:border-b-0">
-      <div className="flex items-baseline gap-2">
+      <div className="flex items-start gap-2">
         <Icon
           aria-hidden
           className={`size-3.5 shrink-0 translate-y-0.5 ${
             failed ? "text-destructive" : "text-muted-foreground"
           }`}
         />
-        <span className="shrink-0 text-muted-foreground text-xs">
-          {LABELS[entry.kind]}
-        </span>
-        {/*
-          The command wraps rather than truncating. In the transcript one line per call is what keeps
-          it readable; here the whole point is to see exactly what ran, and a long command with its
-          middle cut out is the one thing this pane must not do.
-        */}
-        <code className="min-w-0 break-all font-mono text-xs">
-          {entry.subject}
-        </code>
-        <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
-          {timeOf(entry.at)}
-        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="shrink-0 text-muted-foreground text-xs">
+              {LABELS[entry.kind]}
+            </span>
+            <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+              {timeOf(entry.at)}
+            </span>
+          </div>
+          {/*
+            The command wraps rather than truncating. In the transcript one line per call is what keeps
+            it readable; here the whole point is to see exactly what ran, and a long command with its
+            middle cut out is the one thing this pane must not do.
+          */}
+          <code className="mt-0.5 block min-w-0 break-all font-mono text-xs">
+            {entry.subject}
+          </code>
+        </div>
       </div>
 
       {entry.refused === true ? (

@@ -540,12 +540,19 @@ export function createHeadlessComputerTools(options: {
     ),
     tool(
       "computer_list_files",
-      "List files and folders in your workspace. Call first before reading an uncertain filename.",
+      "List files and folders in YOUR cloud workspace (not the person's PC). " +
+        "Paths are relative to the Bot workspace root (often includes a projects/ folder). " +
+        "To list folders on the person's linked computer, use device_list_files instead. " +
+        "Call first before reading an uncertain workspace filename.",
       z.strictObject({ path: z.string().optional() }),
-      async (input) => ({
-        ok: true,
-        ...(await gateway.listFiles(botId, actor, input)),
-      }),
+      async (input) => {
+        const listed = await gateway.listFiles(botId, actor, input);
+        return {
+          ok: true,
+          ...listed,
+          note: "这是机器人云端工作区（不是用户电脑）。用户电脑请用 device_list_files。",
+        };
+      },
     ),
     tool(
       "computer_read_file",

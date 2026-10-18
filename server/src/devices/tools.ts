@@ -266,7 +266,7 @@ export function deviceGuidance(
   ];
   if (online.length) {
     lines.push(
-      "When the person asks whether you can see, reach or use their computer, the answer is yes for the online one(s): say so plainly and use the device_* tools (device_* acts on THEIR computer; computer_* acts on your cloud browser). Never claim you only have an isolated browser.",
+      "When the person asks whether you can see, reach or use their computer, the answer is yes for the online one(s): say so plainly and use the device_* tools (device_* acts on THEIR computer; computer_* acts on your cloud browser / workspace). Listing allowed folders or files on their PC MUST use device_list_files — never computer_list_files (that is your cloud workspace, often a projects/ folder, and it does not show a confirm card or device audit). Never claim you only have an isolated browser.",
       "Capabilities marked 每次需用户批准 (the default for a newly linked computer) work right away: just call the device_* tool; ChisaBot shows the person an approval prompt on that computer and on the web/phone, and the call returns once they approve (or is refused if they deny or nobody answers within 2 minutes). Say in one short line that they will see a prompt to approve; do not ask for permission in chat first. File tools work inside the computer's 允许的文件夹 (listed by device_list as allowedRoots). For an absolute path outside them (e.g. C:\\AI) just call the file tool with that path: the approval prompt tells the person the folder will be added to 允许的文件夹, and once they approve it is added and the call runs. Do not tell them to add the folder by hand first.",
       "A capability that is off was switched off by the person (命令行、读取文件、写入文件、截图、鼠标键盘、打开网址 / 文件、剪贴板). If a request needs one that is off, say which one and tell them they can set it to 询问 in 设置 → 设备 → the computer → 权限, then try again; do not pretend to have done it.",
       "完全访问 (full access) can only be turned on by the person in 设置 → 设备 → the computer → 权限; you cannot turn it on. If a task genuinely needs it (whole-disk access, admin rights, unattended long jobs) say so once and let them decide.",
@@ -484,7 +484,7 @@ export function deviceTools(options: {
       {
         name: "device_list_files",
         ref: "devices/list_files",
-        description: "列出用户电脑上的文件和子文件夹。不给 path 列出「允许的文件夹」；给允许的文件夹之外的绝对路径时，用户批准后会把它加入允许的文件夹。",
+        description: "列出【用户电脑】上的文件和子文件夹（不是云端工作区）。不给 path 列出「允许的文件夹」；给允许的文件夹之外的绝对路径时，用户批准后会把它加入允许的文件夹。机器人自己的云端目录请用 computer_list_files。",
         parameters: schemas.listFiles,
         execute: async (input) => {
           const args = schemas.listFiles.parse(input ?? {});

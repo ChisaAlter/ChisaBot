@@ -44,7 +44,7 @@ import { latestChannelFor } from "@/lib/channels/latest";
 import { prefetchBotChat, usePrefetchBotChats } from "@/lib/channels/prefetch";
 import { openCreateBot } from "@/lib/agents/create-bot";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
-import { relativeTime } from "@/lib/relative-time";
+import { relativeTime, useRelativeNow } from "@/lib/relative-time";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { showPanels } from "@/lib/panels/rail-open";
@@ -182,6 +182,7 @@ function ChannelRow({
   emphasis: MessageListEmphasis;
 }) {
   const shouldReduceMotion = useReducedMotion();
+  const now = useRelativeNow();
   // Whether this row is unread, as a boolean, for the same reason `Channel` computes `isOpen`
   // that way: navigating re-renders the rows whose answer changed, not the whole roster.
   const unread = useParams({
@@ -209,7 +210,7 @@ function ChannelRow({
         lastMessage={channel.lastMessage ?? undefined}
         lastMessageAt={
           channel.lastMessageAt
-            ? relativeTime(channel.lastMessageAt)
+            ? relativeTime(channel.lastMessageAt, now)
             : undefined
         }
         pinned={channel.pinned}

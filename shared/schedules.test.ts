@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyScheduleReply } from "./schedules";
+import { classifyScheduleReply, formatWhen, formatWhenAbsolute } from "./schedules";
 
 describe("classifyScheduleReply (FIX-01)", () => {
   test("marks deferred confirm as waiting", () => {
@@ -27,5 +27,18 @@ describe("classifyScheduleReply (FIX-01)", () => {
   test("ordinary success stays ok", () => {
     expect(classifyScheduleReply("⏰ 该喝水了")).toBe("ok");
     expect(classifyScheduleReply("今天上海多云，气温 22℃。")).toBe("ok");
+  });
+});
+
+
+describe("formatWhenAbsolute (FIX-09)", () => {
+  test("persisted labels never say 今天/昨天", () => {
+    const at = new Date("2026-10-17T13:00:00Z"); // 21:00 Asia/Shanghai
+    const now = new Date("2026-10-17T14:00:00Z");
+    const abs = formatWhenAbsolute(at, "Asia/Shanghai", now);
+    expect(abs).not.toMatch(/今天|昨天|明天/);
+    expect(abs).toMatch(/10月17日/);
+    // live UI may still say 今天
+    expect(formatWhen(at, "Asia/Shanghai", now)).toMatch(/今天/);
   });
 });

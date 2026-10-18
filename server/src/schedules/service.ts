@@ -7,6 +7,7 @@ import {
   classifyScheduleReply,
   describeSchedule,
   formatWhen,
+  formatWhenAbsolute,
   partsIn,
   SCHEDULE_DEFAULT_TZ,
   SCHEDULE_MARKER,
@@ -519,7 +520,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
   }
 
   function messageFor(row: Row, runId: string, lateMs: number, manual: boolean): Message {
-    const at = formatWhen(now(), row.timezone, now());
+    // FIX-09：落库/进聊天的时间用绝对日，避免跨日仍写「今天」。
+    const at = formatWhenAbsolute(now(), row.timezone, now());
     const late = lateMs > 2 * 60_000 ? `，服务器晚了 ${Math.round(lateMs / 60_000)} 分钟才发出` : "";
     const head = manual ? `定时任务「${row.title}」手动运行（${at}）。` : `定时任务「${row.title}」到点了（${at}${late}）。`;
     return {
