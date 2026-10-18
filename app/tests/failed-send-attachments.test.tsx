@@ -46,7 +46,7 @@ import { settleReactWork } from "./settle-react-work";
  *
  * So everything below the HTTP boundary is real: the provider, the agent, `say`/`deliver`, the
  * conversation view's queue, and the composer. Only `fetch` is a fixture, and it is the fixture
- * that decides the two failures under test — a run that answers 503, and an upload that answers
+ * that decides the two failures under test — a run that answers 500, and an upload that answers
  * with a stored row id.
  *
  * TEXT FILES RATHER THAN THE REVIEWER'S SCREENSHOT, and nothing in the path cares: a staged row is
@@ -180,6 +180,12 @@ beforeAll(() => {
           { status: 201 },
         );
       }
+      // Channel chats have no bot-thread sync surface; 404 → readSync "unsupported" →
+      // settleDroppedTurn("lost") immediately. Without this, a 5xx /run is treated as a
+      // connection drop and the harness polls for ~10s (null sync), so restore assertions
+      // time out while the product path on channels would already have failed honestly.
+      if (url.pathname.startsWith("/api/bot-threads/"))
+        return new NativeResponse(null, { status: 404 });
       if (/\/api\/channels\/[^/]+\/(activity|busy)$/.test(url.pathname))
         return new NativeResponse(null, { status: 204 });
       if (/\/threads\/[^/]+\/messages$/.test(url.pathname))
@@ -312,8 +318,9 @@ test("a drained turn whose send fails keeps the rows behind the message the tran
   runAnswers = [
     // The turn the file is parked behind: held open until this test ends it.
     () => firstRun.promise,
-    // The drained turn: a transient 503 before anything is stamped.
-    async () => new NativeResponse("upstream unavailable", { status: 503 }),
+    // The drained turn: a transient upstream failure before anything is stamped.
+    // HTTP 500 (not 502/503/504): those statuses are connection-drops and settle via sync.
+    async () => new NativeResponse("upstream unavailable", { status: 500 }),
   ];
 
   const view = await mounted();
@@ -421,7 +428,7 @@ test("a failed send restored beside a second batch cannot be retried over the pe
   expect(uploads).toHaveLength(MAX_ATTACHMENTS_PER_MESSAGE * 2);
 
   // The response fails, so the first batch comes back beside the second.
-  firstRun.settle(new NativeResponse("upstream unavailable", { status: 503 }));
+  firstRun.settle(new NativeResponse("upstream unavailable", { status: 500 }));
   await waitFor(() =>
     expect(chips(view)).toHaveLength(MAX_ATTACHMENTS_PER_MESSAGE * 2),
   );
@@ -471,7 +478,7 @@ test("the next turn carries a restored message, with its file, ahead of the newe
   const firstRun = deferred();
   runAnswers = [
     () => firstRun.promise,
-    async () => new NativeResponse("upstream unavailable", { status: 503 }),
+    async () => new NativeResponse("upstream unavailable", { status: 500 }),
   ];
 
   const view = await mounted();

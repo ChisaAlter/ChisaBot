@@ -5815,6 +5815,25 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   :is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"], [data-slot="dialog-content"], [data-slot="sheet-content"])[data-open] { animation: none; }
 }
 
+/* §37.3 CB-029（2026-10-19）：弹窗 / 抽屉 / 菜单静止后也不做大面积毛玻璃。
+ * glass-hold 只挡开启动画；动画一结束仍要付 10–50ms 的 saturate+blur(22px) 光栅化（低端 INP）。
+ * 卡片 / 菜单底色已是 glass-3（≥0.86 不透明），毛玻璃几乎看不见——拿掉 backdrop-filter，外观不变、
+ * 打开到可点更快。遮罩保留轻 blur(2px)+glass-hold（上面 §37.2）。右栏 live-panel 在 .rail-card 里
+ * 本就 backdrop-filter:none（用玻璃底色），不在这里重复。只写不带前缀的 backdrop-filter。 */
+:is(
+  [data-slot="dialog-content"],
+  [data-slot="sheet-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="combobox-content"],
+  [data-slot="popover-content"]
+) {
+  backdrop-filter: none;
+}
+
 /* ── 回答期间也能发消息 + 后台任务卡片（DESIGN.md §38，2026-10-13）──────────────────────── */
 /* 「已排队」气泡：和用户气泡同位置同圆角，淡一点、虚线描边；被读到时从这里消失、出现在记录里。 */
 .queued-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; padding-top: 16px; }

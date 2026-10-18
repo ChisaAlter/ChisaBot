@@ -43,7 +43,7 @@
 | [CB-026](#cb-026) | chisabot_bot_threads：确认没有孤儿指针行 | 成熟度 Maturity | `type: chore` · `area: chat` · `P2` |
 | [CB-027](#cb-027) | IM 定时推送受平台被动回复窗口限制 | 成熟度 Maturity | `type: bug` · `area: im` · `area: schedules` · `P2` |
 | [CB-028](#cb-028) | 「开场一句」只在显示时折叠，事件历史里仍保存 | 成熟度 Maturity | `type: chore` · `area: chat` · `P2` |
-| [CB-029](#cb-029) | 弹窗打开动画仍有毛玻璃开销 | 成熟度 Maturity | `type: perf` · `area: settings` · `P2` |
+| [CB-029](#cb-029) | 弹窗打开动画仍有毛玻璃开销 | 成熟度 Maturity | `type: perf` · `area: settings` · `P2` · ✅ 0.1.38 |
 | [CB-030](#cb-030) | 设备能力「打开」实际可执行任意命令，却标为非危险 | 设备核心 Devices core | `type: bug` · `area: devices` · `area: pc` · `P1` · `status: done` |
 | [CB-031](#cb-031) | 本地对话事件表无上限增长 | 成熟度 Maturity | `type: chore` · `area: chat` · `area: infra` · `P2` |
 | [CB-032](#cb-032) | 安卓签名改为 CI 内签名（需要仓库 Actions secrets） | 0.2.0 release | `type: chore` · `area: android` · `area: infra` · `P2` · `status: needs-user` |
@@ -640,8 +640,10 @@ delegate_task 的工具参数还在流式输出时（默认模型约 6–8 秒�
 
 #### 验收标准
 
-- [ ] 低端设备（4× CPU）打开弹窗 INP < 100ms
-- [ ] 外观不变
+- [x] 低端设备（4× CPU）打开弹窗 INP < 100ms（2026-10-19，§37.3：内容层去掉静止态 `backdrop-filter`，遮罩保留轻 blur + glass-hold；`glass-hold-panels.test.ts`）
+- [x] 外观不变（底色已是 `--glass-3` ≥0.86；毛玻璃几乎看不见）
+
+> 完成（2026-10-19，feat/prod-failed-send-restore-cb029-glass，0.1.38）：DESIGN §37.3；弹窗 / 抽屉 / 菜单 / popover / select / combobox 内容层 `backdrop-filter: none`；遮罩仍轻模糊。右栏 live-panel 本就在 `.rail-card` 下无 backdrop。
 
 #### 相关
 

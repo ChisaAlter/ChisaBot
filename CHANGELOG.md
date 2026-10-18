@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.38 — 2026-10-19
+
+### 生产成熟度 · 发送恢复诚实 + 弹窗毛玻璃
+
+- **failed-send-attachments**：失败发送后附件 / 队列恢复 3 条路径转绿。频道 harness 补 `/api/bot-threads` 404（与生产频道「无 sync」一致，断线结算立即 `lost`）；失败 fixture 用 HTTP 500（非 502/503/504 连接断开类），恢复路径诚实、无假成功。
+- **CB-029 / DESIGN §37.3**：弹窗・抽屉・菜单・popover 内容层静止后 `backdrop-filter: none`（底色已是 glass-3）；遮罩保留轻 blur + glass-hold。钉死 `glass-hold-panels.test.ts`。
+
 ## 0.1.37 — 2026-10-19
 
 ### 性能 / 测试
