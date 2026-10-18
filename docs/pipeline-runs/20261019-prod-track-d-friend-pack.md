@@ -25,4 +25,8 @@
 
 ## PR / release / deploy
 
-（合入后填）
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/225 (squash → `eb83b734`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.30
+- Deploy: `deploy-serial.sh eb83b73 grok-bot` → `local/chisabot:auto-202610181747-eb83b73`
+- `/api/version` = **0.1.30**; post-deploy-smoke **PASSED** (含模型)
+- **未** resume 电车定时
