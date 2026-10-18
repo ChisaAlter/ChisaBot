@@ -185,9 +185,19 @@ export function useConversationSync(
   agent: AbstractAgent,
   connect: Connect,
   onActivity: (listener: (activity: ThreadActivity) => void) => () => void,
-  options: { liveTail?: boolean } = {},
+  options: {
+    liveTail?: boolean;
+    /**
+     * 本机正在发消息 / 等回答：不要再开一次 connect。
+     * `agent.isRunning` 只在 run/connect 真正开始后才为 true；`say` 里还有 joinGate /
+     * panelAuthoring 等空档，这段空档里 sync 若重接，会和即将发出的 `/run` 抢同一条 agent
+     *（CopilotKit `runAgent` 会先 `detachActiveRun`，超大回放时主线程卡住，/run 迟迟发不出）。
+     */
+    suppressConnect?: () => boolean;
+  } = {},
 ) {
   const liveTail = options.liveTail === true;
+  const suppressConnect = options.suppressConnect;
   const queryClient = useQueryClient();
   useEffect(() => {
     if (!threadId) return;
@@ -208,7 +218,7 @@ export function useConversationSync(
      * mode "rebuild"（顺序和服务器不一致时）：照 SDK 原样，先清空再按服务器回放重建。
      */
     const join = (mode: "merge" | "rebuild" = "merge", running = false) => {
-      if (connecting || agent.isRunning) return;
+      if (connecting || agent.isRunning || suppressConnect?.()) return;
       connecting = true;
       merge = mode === "merge" ? knownForMerge(agent.messages as never, liveTail && running) : null;
       tail = mode === "merge" && liveTail && running ? liveTailOf(agent.messages as never) : null;
@@ -290,8 +300,8 @@ export function useConversationSync(
         join("rebuild");
         return;
       }
-      if (agent.isRunning || connecting) {
-        // 本机在跑或正在接：它收到的就是最新的，等它结束再记基线。
+      if (agent.isRunning || connecting || suppressConnect?.()) {
+        // 本机在跑 / 正在接 / 本机刚点了发送：它收到的就是最新的，等它结束再记基线。
         rebase = true;
         return;
       }
@@ -314,5 +324,5 @@ export function useConversationSync(
       off();
       subscription.unsubscribe();
     };
-  }, [threadId, agent, connect, onActivity, queryClient, liveTail]);
+  }, [threadId, agent, connect, onActivity, queryClient, liveTail, suppressConnect]);
 }

@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
 import {
   CONNECTION_LOST_REASON,
+  SEND_HANG_REASON,
   SEND_UNREACHABLE_REASON,
+  SEND_WATCHDOG_MS,
   isConnectionDrop,
+  raceSendWatchdog,
   settleDroppedTurn,
   storedTurnAnswered,
 } from "../src/lib/copilot/connection-drop";
@@ -122,4 +125,41 @@ test("stored turn counts as answered only when it ends with a plain reply", () =
   expect(storedTurnAnswered([...midTool, { id: "a2", role: "assistant", content: "装好了。" }], "u1")).toBe(true);
   expect(storedTurnAnswered([...midTool, { id: "a2", role: "assistant", content: [{ type: "text", text: "装好了" }] }], "u1")).toBe(true);
   expect(storedTurnAnswered(base, "missing")).toBe(false);
+});
+
+
+test("send hang sentence tells the person to resend, not that the model failed", () => {
+  expect(SEND_HANG_REASON).toContain("没发出去");
+  expect(SEND_HANG_REASON).not.toContain("模型");
+  expect(SEND_WATCHDOG_MS).toBeGreaterThan(5_000);
+  expect(SEND_WATCHDOG_MS).toBeLessThan(30_000);
+});
+
+test("raceSendWatchdog: run finishes first → done", async () => {
+  const afterMs = async (ms: number) => {
+    await new Promise((r) => setTimeout(r, ms));
+  };
+  const run = Promise.resolve("ok");
+  const outcome = await raceSendWatchdog(run, { afterMs, timeoutMs: 50 });
+  expect(outcome).toBe("done");
+});
+
+test("raceSendWatchdog: timeout wins when run never settles", async () => {
+  let t = 0;
+  const afterMs = async (ms: number) => void (t += ms);
+  const run = new Promise<void>(() => {});
+  const outcome = await raceSendWatchdog(run, { afterMs, timeoutMs: 12_000 });
+  expect(outcome).toBe("timeout");
+  expect(t).toBe(12_000);
+});
+
+test("raceSendWatchdog: a rejected run still counts as done (error path owns the message)", async () => {
+  const afterMs = async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  };
+  const run = Promise.reject(new Error("boom"));
+  // Prevent unhandled rejection noise.
+  void run.catch(() => undefined);
+  const outcome = await raceSendWatchdog(run, { afterMs, timeoutMs: 12_000 });
+  expect(outcome).toBe("done");
 });

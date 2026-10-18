@@ -155,6 +155,15 @@ class ConversationStore {
     );
   }
 
+  /** 只要最大序号，接入时不必把整段事件日志读进内存（长对话可达数千条 / 上 MB）。 */
+  async lastEventSequence(threadId: string): Promise<bigint> {
+    const rows = await this.database.$client.unsafe<{ sequence: string | number | bigint | null }[]>(
+      "SELECT max(sequence) AS sequence FROM openbot_local_events WHERE thread_id = $1", [threadId],
+    );
+    const value = rows[0]?.sequence;
+    return value == null ? 0n : BigInt(value);
+  }
+
   async snapshot(threadId: string, runId: string, messages: readonly Message[], state: unknown) {
     const rows = await this.database.$client.unsafe(
       `UPDATE openbot_local_threads SET messages = $3::text::jsonb, state = $4::text::jsonb, updated_at = now()
@@ -650,12 +659,22 @@ class PostgresAgentRunner extends AgentRunner {
         complete: () => { completed = true; if (ready) subscriber.complete(); },
       });
       void (async () => {
+        /*
+         * DOG-01 follow-up（2026-10-18）：长对话的事件日志可达数千条 / ~1MB。旧逻辑把 slimReplay 后的
+         * 全量事件回放给浏览器——实测 星灵 一条对话 connect 仍 ~825KB、3882 条事件。浏览器主线程解析 /
+         * apply 这些事件时，发消息的 `/run` 被拖住（busy/activity 已发出、/run 迟迟不到 nginx），乐观气泡
+         * 干等几十秒；sync 仍 200，v0.1.18 的「连不上」路径也不会触发。
+         *
+         * 存档消息列才是权威快照（和 GET .../messages 同源）。接入时发一条 MESSAGES_SNAPSHOT + STATE，
+         * 再接上正在跑的那一轮的 live 事件即可；历史事件日志不再整段下发。仍保留 events() 给调试接口。
+         */
         const row = await this.store.thread(request.threadId);
         if (request.agentId && row.agent_id !== request.agentId) throw new LocalConversationError("Thread not found", 404);
-        const saved = await this.store.events(request.threadId);
-        lastSequence = saved.length ? BigInt(saved[saved.length - 1]!.sequence) : 0n;
-        const replay = await imageDimsFor(this.store.database).annotateEvents(slimReplay(compactEvents(saved.map((item) => item.event))));
-        for (const event of replay) subscriber.next(event);
+        lastSequence = await this.store.lastEventSequence(request.threadId);
+        const dims = imageDimsFor(this.store.database);
+        const messages = await dims.annotateMessages(row.messages ?? []);
+        subscriber.next({ type: EventType.MESSAGES_SNAPSHOT, messages } as BaseEvent);
+        subscriber.next({ type: EventType.STATE_SNAPSHOT, snapshot: row.state ?? {} } as BaseEvent);
         ready = true;
         for (const item of pending) if (item.sequence > lastSequence) {
           lastSequence = item.sequence;

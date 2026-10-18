@@ -15,6 +15,10 @@
  * 最多干等 75 秒——期间气泡在、无「停止」、无错误；一刷新气泡没了（根本没落到服务器）。所以：
  * 一旦连变化戳都问不到，用更短的「完全连不上」时限尽快报错并把字放回输入框；只有至少成功问到过一次
  * 服务器之后，才继续用长时限等重启。
+ *
+ * DOG-01 实机 FAIL（v0.1.18）：sync 仍 200，上面的 unreachable 路径根本进不去；乐观气泡 ~40s 无停止 /
+ * 无错误，刷新消失。根因是 `/run` 被同线程的超大 connect 回放拖住（或 run 本身挂起）而不是「断网」。
+ * 所以另加 SEND_WATCHDOG_MS：发消息后若 run 既未落库也未结束，超时后可见失败并恢复草稿。
  */
 
 /** 浏览器发起的请求 / 读流时连接断了（不是服务器发来的 RUN_ERROR，也不是用户按停止）。 */
@@ -40,6 +44,40 @@ export const CONNECTION_LOST_REASON =
  */
 export const SEND_UNREACHABLE_REASON =
   "连不上 ChisaBot 服务器，这句可能没发出去。请检查网络后重新发送。";
+
+/**
+ * 发出去之后既没有 `/run` 落库、promise 也一直不结束（主线程被大 connect 拖住、请求排队、
+ * 或 runAgent 在 detach/ensure 里挂起）。比「断网」更贴切：网络可能是通的，但这句就是没发出去。
+ */
+export const SEND_HANG_REASON =
+  "这句迟迟没发出去。请再发一次；若反复如此，试试刷新页面。";
+
+/** 发消息后等多久还没结束 / 没落库就改报错。略长于常见模型首字，远短于 40s 假成功。 */
+export const SEND_WATCHDOG_MS = 12_000;
+
+/**
+ * 和 `run` 赛跑：超时返回 `"timeout"`，run 先结束返回 `"done"`。
+ * 不取消 run——调用方决定要不要 stop / 查落库；测的是「有没有在时限内给出结果」。
+ */
+export function raceSendWatchdog<T>(
+  run: Promise<T>,
+  deps: { afterMs: (ms: number) => Promise<void>; timeoutMs?: number },
+): Promise<"done" | "timeout"> {
+  const timeoutMs = deps.timeoutMs ?? SEND_WATCHDOG_MS;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: "done" | "timeout") => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    void run.then(
+      () => finish("done"),
+      () => finish("done"),
+    );
+    void deps.afterMs(timeoutMs).then(() => finish("timeout"));
+  });
+}
 
 export type DropOutcome = "continuing" | "finished" | "lost" | "unreachable";
 

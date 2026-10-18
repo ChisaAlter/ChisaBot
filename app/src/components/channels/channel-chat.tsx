@@ -53,7 +53,7 @@ import { useConversationSync } from "@/lib/copilot/use-conversation-sync";
 import { repairUnansweredToolCalls } from "@/lib/copilot/repair-history";
 import { isAbortFailure, pausedForApproval, stoppedReason, unfinishedTurnReason } from "@/lib/copilot/stopped-turn";
 import { readSync } from "@/lib/copilot/bot-thread";
-import { CONNECTION_LOST_REASON, SEND_UNREACHABLE_REASON, isConnectionDrop, settleDroppedTurn, storedTurnAnswered } from "@/lib/copilot/connection-drop";
+import { CONNECTION_LOST_REASON, SEND_HANG_REASON, SEND_UNREACHABLE_REASON, SEND_WATCHDOG_MS, isConnectionDrop, raceSendWatchdog, settleDroppedTurn, storedTurnAnswered } from "@/lib/copilot/connection-drop";
 import { useFallbackTurns, useLastSentAt, useStoppedTurnIds } from "@/lib/copilot/turn-compaction";
 import { queueMessage } from "@/lib/copilot/thread-inbox";
 import { useThreadInbox } from "@/lib/copilot/use-thread-inbox";
@@ -381,6 +381,12 @@ export function ChannelChat({
   }
   const joinGatePromise = joinGate.current;
 
+  /**
+   * 本机点了发送、整轮还没从 `say` 出来。比 `agent.isRunning` 早：joinGate / panelAuthoring 空档里
+   * sync 不得再开 connect（否则会和即将发出的 `/run` 抢 agent，超大回放时主线程卡住）。
+   */
+  const sendInFlightRef = useRef(false);
+
   /** Promise gate so messages typed before runtime readiness wait instead of being discarded. */
   const openReadyGate = useRef<() => void>(() => {});
   const readyGate = useRef<Promise<void> | null>(null);
@@ -561,7 +567,11 @@ export function ChannelChat({
     (options: { agent: typeof agent }) => copilotkit.connectAgent(options),
     [copilotkit],
   );
-  useConversationSync(channel.threadId, agent, connectChat as never, onJoinedActivity, { liveTail: true });
+  const suppressConnectDuringSend = useCallback(() => sendInFlightRef.current, []);
+  useConversationSync(channel.threadId, agent, connectChat as never, onJoinedActivity, {
+    liveTail: true,
+    suppressConnect: suppressConnectDuringSend,
+  });
   useEffect(() => {
     let wasRunning = false;
     return onJoinedActivity((value) => {
@@ -905,10 +915,38 @@ export function ChannelChat({
 
     setRunsInFlight((count) => count + 1);
     try {
-      await copilotkit.runAgent({
+      /*
+       * DOG-01 实机 FAIL（v0.1.18）：sync 仍通时 connection-drop 的 10s unreachable 不会触发；
+       * `/run` 被同线程超大 connect 回放拖住（或 runAgent 挂起）→ 乐观气泡静默几十秒、刷新消失。
+       * 这里给 run 加硬超时：超时后停掉、查落库；没落库就可见失败并让外层把草稿放回输入框。
+       */
+      const runPromise = copilotkit.runAgent({
         agent: target,
         ...(panelAuthoring ? { forwardedProps: panelAuthoring } : {}),
       });
+      const race = await raceSendWatchdog(runPromise, { afterMs, timeoutMs: SEND_WATCHDOG_MS });
+      if (race === "timeout") {
+        try {
+          copilotkit.stopAgent({ agent: target });
+        } catch {
+          /* stop best-effort */
+        }
+        const stored = await readThreadMessages(channel.threadId, runtimeAgentId).catch(() => null);
+        const persisted =
+          stored != null &&
+          stored.availability === "ready" &&
+          stored.messages.some((message) => message.id === userMessageId);
+        if (!persisted) {
+          failRef.current(SEND_HANG_REASON);
+          // Still let runPromise settle in the background so CopilotKit counters clear.
+          void runPromise.catch(() => undefined);
+          throw new Error(SEND_HANG_REASON);
+        }
+        // Message reached the server; keep waiting for the rest of the turn (model may be slow).
+        await runPromise;
+      } else {
+        await runPromise;
+      }
     } finally {
       setRunsInFlight((count) => count - 1);
     }
@@ -1030,6 +1068,7 @@ export function ChannelChat({
 
     turnsRef.current += 1;
     setTurnsInFlight(turnsRef.current);
+    sendInFlightRef.current = true;
     if (turnsRef.current === 1) {
       void setChannelBusy({ channelId: channel.id, busy: true });
     }
@@ -1038,6 +1077,7 @@ export function ChannelChat({
     } finally {
       turnsRef.current -= 1;
       setTurnsInFlight(turnsRef.current);
+      if (turnsRef.current === 0) sendInFlightRef.current = false;
       // Sent from here rather than from an effect on `turnsInFlight`: this runs after unmount, that
       // does not, and the last turn out is what takes the roster's working indicator down.
       if (turnsRef.current === 0) {
@@ -1359,11 +1399,11 @@ export function ChannelChat({
             restoring={restoring || retryingHistory}
             hydrating={restoring}
             /*
-             * The run, not the turn. Stop reaches a run through the core's abort controller, and that
-             * controller does not exist until `say` has finished waiting for the runtime agent — so
-             * this is the one place the narrower fact is the honest one to draw a button from.
+             * The turn, not only the run. DOG-01：`/run` 被拖住时 runsInFlight 已加、但主线程可能来不及
+             * 重绘；更要紧的是 joinGate / panelAuthoring 空档里还没有 run——这时也必须能按停止取消发送，
+             * 不能干等 watchdog。Stop 在无 abortController 时仍清 awaitingReply + stopAgent（best-effort）。
              */
-            stoppable={agent.isRunning || runsInFlight > 0}
+            stoppable={agent.isRunning || runsInFlight > 0 || turnsInFlight > 0}
             /*
              * At the END OF THE TRANSCRIPT rather than above the composer, which is where this used to
              * be. A turn that ends without an answer leaves a gap exactly where the reply was going to

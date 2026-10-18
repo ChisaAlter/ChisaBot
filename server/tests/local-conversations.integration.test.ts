@@ -108,8 +108,11 @@ suite("local conversations on a dedicated PostgreSQL database", () => {
     expect(history.messages.find((message) => message.id === "answer")?.toolCalls).toEqual([{ id: "call", name: "search", args: '{"q":"hello"}' }]);
     expect(history.messages.find((message) => message.id === "result")?.toolCallId).toBe("call");
     const restored = await collect(backend.runner.connect({ threadId: thread, agentId: bot }));
-    expect(restored.some((event) => event.type === EventType.TOOL_CALL_RESULT)).toBe(true);
+    // DOG-01 follow-up：接入发消息快照，不再回放 TOOL_CALL_* 事件；工具结果在快照消息里。
+    expect(restored.some((event) => event.type === EventType.MESSAGES_SNAPSHOT)).toBe(true);
     expect(restored.some((event) => event.type === EventType.STATE_SNAPSHOT)).toBe(true);
+    const snap = restored.find((event) => event.type === EventType.MESSAGES_SNAPSHOT) as { messages?: { id: string; toolCallId?: string }[] };
+    expect(snap.messages?.find((message) => message.id === "result")?.toolCallId).toBe("call");
     const state = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${thread}/state`), owner);
     expect(await state?.json()).toEqual({ state: { count: 1 } });
   });
