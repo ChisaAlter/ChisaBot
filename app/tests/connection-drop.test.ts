@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   CONNECTION_LOST_REASON,
+  SEND_UNREACHABLE_REASON,
   isConnectionDrop,
   settleDroppedTurn,
   storedTurnAnswered,
@@ -14,6 +15,9 @@ test("browser-side stream failures are connection drops, not model errors", () =
   expect(isConnectionDrop(new Error("HTTP 502: <html>"))).toBe(true);
   expect(isConnectionDrop(new Error("HTTP 524: timeout"))).toBe(true);
   expect(isConnectionDrop(new Error("net::ERR_HTTP2_PROTOCOL_ERROR"))).toBe(true);
+  expect(isConnectionDrop(new Error("net::ERR_TUNNEL_CONNECTION_FAILED"))).toBe(true);
+  expect(isConnectionDrop(new Error("net::ERR_PROXY_CONNECTION_FAILED"))).toBe(true);
+  expect(isConnectionDrop(new Error("net::ERR_NAME_NOT_RESOLVED"))).toBe(true);
 });
 
 test("a user stop, an HTTP refusal or a model error is not a connection drop", () => {
@@ -28,6 +32,8 @@ test("a user stop, an HTTP refusal or a model error is not a connection drop", (
 
 test("the lost-connection sentence does not blame the model", () => {
   expect(CONNECTION_LOST_REASON).not.toContain("模型");
+  expect(SEND_UNREACHABLE_REASON).not.toContain("模型");
+  expect(SEND_UNREACHABLE_REASON).toContain("没发出去");
   // 服务器写来的 RUN_ERROR（上游真的连不上）仍然说模型。
   expect(friendlyStopReason("fetch failed")).toContain("模型");
 });
@@ -69,18 +75,39 @@ test("server idle and the turn has no answer → lost", async () => {
   expect(outcome).toBe("lost");
 });
 
-test("never reachable → lost once the deadline passes", async () => {
+test("never reachable → unreachable on the short budget, not the restart budget", async () => {
   const clock = fakeClock();
   const outcome = await settleDroppedTurn({
     running: async () => {
       throw new Error("offline");
     },
     answered: async () => true,
-    deadlineMs: 10_000,
+    deadlineMs: 75_000,
+    unreachableMs: 10_000,
+    ...clock,
+  });
+  expect(outcome).toBe("unreachable");
+  expect(clock.now()).toBeLessThanOrEqual(10_000);
+  expect(clock.now()).toBeGreaterThan(0);
+});
+
+test("once the server has been seen, keep the long restart budget", async () => {
+  const clock = fakeClock();
+  // false + answered null = saw server, then stay unreachable until restart deadline.
+  let n = 0;
+  const outcome = await settleDroppedTurn({
+    running: async () => {
+      n += 1;
+      return n === 1 ? false : null;
+    },
+    answered: async () => null,
+    deadlineMs: 12_000,
+    unreachableMs: 4_000,
     ...clock,
   });
   expect(outcome).toBe("lost");
-  expect(clock.now()).toBeLessThanOrEqual(10_000);
+  expect(clock.now()).toBeGreaterThan(4_000);
+  expect(clock.now()).toBeLessThanOrEqual(12_000);
 });
 
 test("stored turn counts as answered only when it ends with a plain reply", () => {

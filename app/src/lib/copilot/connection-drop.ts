@@ -10,6 +10,11 @@
  *   - 还在跑：什么都不报，接入同步（useConversationSync，§64）会自己接上、接着往下写；
  *   - 已经答完：把存下的回答读回来，也不报错；
  *   - 都不是（服务器重启了 / 一直连不上）：报「和 ChisaBot 的连接断了」，不再冤枉模型。
+ *
+ * DOG-01（2026-10-18 狗粮）：隧道 / 代理整段挂掉时，`/run`、sync、WebSocket 一起失败。旧逻辑按「服务重启」
+ * 最多干等 75 秒——期间气泡在、无「停止」、无错误；一刷新气泡没了（根本没落到服务器）。所以：
+ * 一旦连变化戳都问不到，用更短的「完全连不上」时限尽快报错并把字放回输入框；只有至少成功问到过一次
+ * 服务器之后，才继续用长时限等重启。
  */
 
 /** 浏览器发起的请求 / 读流时连接断了（不是服务器发来的 RUN_ERROR，也不是用户按停止）。 */
@@ -20,7 +25,7 @@ export function isConnectionDrop(error: unknown): boolean {
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   if (/^HTTP (502|503|504|520|521|522|523|524|525|530)\b/.test(message)) return true;
   if (/^HTTP \d{3}/.test(message)) return false;
-  return /network ?error|failed to fetch|load failed|networkerror|network connection was lost|internet connection appears to be offline|err_(network|connection|http2|quic|internet)|bodystreambuffer|terminated|connection (reset|closed|lost)|socket hang up|econnreset|premature close|incomplete chunked/i.test(
+  return /network ?error|failed to fetch|load failed|networkerror|network connection was lost|internet connection appears to be offline|err_([a-z]+_)*(network|connection|http2|quic|internet|tunnel|proxy|ssl|cert|timed_out|name_not_resolved)|tunnel_connection|bodystreambuffer|terminated|connection (reset|closed|lost)|socket hang up|econnreset|premature close|incomplete chunked/i.test(
     message,
   );
 }
@@ -29,7 +34,14 @@ export function isConnectionDrop(error: unknown): boolean {
 export const CONNECTION_LOST_REASON =
   "和 ChisaBot 服务器的连接断了，这一轮没做完（服务器可能刚重启）。再发一次，机器人会接着做。";
 
-export type DropOutcome = "continuing" | "finished" | "lost";
+/**
+ * 变化戳一路问不到（隧道 / 断网）：这句很可能根本没到服务器。比 CONNECTION_LOST_REASON 更直白，
+ * 好让人重发而不是干等。
+ */
+export const SEND_UNREACHABLE_REASON =
+  "连不上 ChisaBot 服务器，这句可能没发出去。请检查网络后重新发送。";
+
+export type DropOutcome = "continuing" | "finished" | "lost" | "unreachable";
 
 export type SettleDeps = {
   /** 服务器说这条对话现在是否还在回答；连不上返回 null，不支持返回 "unsupported"。 */
@@ -38,27 +50,42 @@ export type SettleDeps = {
   answered: () => Promise<boolean | null>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
-  /** 最多等多久（服务重启要 30–60 秒才回来）。 */
+  /** 最多等多久（服务重启要 30–60 秒才回来）。已成功问到过服务器之后才用这个。 */
   deadlineMs?: number;
   intervalMs?: number;
+  /**
+   * 变化戳一路问不到时最多等多久。比 deadline 短：隧道挂掉时不该按重启干等 75 秒。
+   * 默认 10 秒（约 5 次探测）；已经成功问到过服务器后不再受这个限制。
+   */
+  unreachableMs?: number;
 };
 
 /** 断线之后，这一轮到底怎么样了。只读，不重发任何东西（设备命令绝不会因此再跑一遍）。 */
 export async function settleDroppedTurn(deps: SettleDeps): Promise<DropOutcome> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = deps.now ?? Date.now;
-  const deadline = now() + (deps.deadlineMs ?? 75_000);
+  const start = now();
+  const deadline = start + (deps.deadlineMs ?? 75_000);
+  const unreachableDeadline = start + (deps.unreachableMs ?? 10_000);
   const interval = deps.intervalMs ?? 2_000;
+  /** 至少成功问到过一次变化戳（true/false）之后，才按重启长等。 */
+  let sawServer = false;
   for (;;) {
     const running = await deps.running().catch(() => null);
     if (running === "unsupported") return "lost";
-    if (running === true) return "continuing";
+    if (running === true) {
+      sawServer = true;
+      return "continuing";
+    }
     if (running === false) {
+      sawServer = true;
       const answered = await deps.answered().catch(() => null);
       if (answered === true) return "finished";
       if (answered === false) return "lost";
+      // answered === null：历史也读不到，当作短暂连不上，继续等。
     }
-    if (now() + interval > deadline) return "lost";
+    const limit = sawServer ? deadline : Math.min(deadline, unreachableDeadline);
+    if (now() + interval > limit) return sawServer ? "lost" : "unreachable";
     await sleep(interval);
   }
 }

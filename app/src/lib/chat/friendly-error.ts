@@ -61,7 +61,12 @@ const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boo
     hint: "这一轮的回答没写完。点「重试」再来一次；经常这样就换一个模型。",
   },
   {
-    test: /failed to fetch|network|ECONN|ENOTFOUND|socket|fetch failed|网络/i,
+    test: /连不上 ChisaBot 服务器|这句可能没发出去|和 ChisaBot 服务器的连接断了/i,
+    title: "连不上服务器",
+    hint: "消息可能还没发出去。检查网络后重新发送。",
+  },
+  {
+    test: /failed to fetch|network|ECONN|ENOTFOUND|socket|fetch failed|网络|ERR_TUNNEL|tunnel_connection/i,
     title: "网络连接中断",
     hint: "请检查网络后重试。",
   },

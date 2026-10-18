@@ -53,7 +53,7 @@ import { useConversationSync } from "@/lib/copilot/use-conversation-sync";
 import { repairUnansweredToolCalls } from "@/lib/copilot/repair-history";
 import { isAbortFailure, pausedForApproval, stoppedReason, unfinishedTurnReason } from "@/lib/copilot/stopped-turn";
 import { readSync } from "@/lib/copilot/bot-thread";
-import { CONNECTION_LOST_REASON, isConnectionDrop, settleDroppedTurn, storedTurnAnswered } from "@/lib/copilot/connection-drop";
+import { CONNECTION_LOST_REASON, SEND_UNREACHABLE_REASON, isConnectionDrop, settleDroppedTurn, storedTurnAnswered } from "@/lib/copilot/connection-drop";
 import { useFallbackTurns, useLastSentAt, useStoppedTurnIds } from "@/lib/copilot/turn-compaction";
 import { queueMessage } from "@/lib/copilot/thread-inbox";
 import { useThreadInbox } from "@/lib/copilot/use-thread-inbox";
@@ -936,11 +936,11 @@ export function ChannelChat({
           return true;
         },
       });
-      if (outcome === "lost") {
+      if (outcome === "lost" || outcome === "unreachable") {
         const current = agentRef.current;
         const closed = repairUnansweredToolCalls(current.messages);
         if (closed !== current.messages) current.setMessages(closed as typeof current.messages);
-        failRef.current(CONNECTION_LOST_REASON);
+        failRef.current(outcome === "unreachable" ? SEND_UNREACHABLE_REASON : CONNECTION_LOST_REASON);
       } else {
         awaitingReply.current = false;
         activity.kick();
