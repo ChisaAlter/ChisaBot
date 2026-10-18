@@ -16,7 +16,7 @@ import {
   type RenderResult,
   waitFor,
 } from "@testing-library/react";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import * as ReactCoreV2 from "@copilotkit/react-core/v2";
 import { useCallback } from "react";
 import { Composer } from "@/components/channels/composer/composer";
@@ -38,7 +38,8 @@ function render(ui: ReactElement): RenderResult {
   const result = rtlRender(wrap(ui));
   return {
     ...result,
-    rerender: (next: ReactElement) => result.rerender(wrap(next)),
+    rerender: (next: ReactNode) =>
+      result.rerender(wrap(next as ReactElement)),
   };
 }
 
