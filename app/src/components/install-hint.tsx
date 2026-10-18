@@ -13,7 +13,7 @@ import { isIOSSafari, isNativeClient, promptInstall, useInstallState } from "@/l
  * - ChisaBot PC、安卓客户端、已经安装后打开（独立窗口）、引导页：都不出现。
  * 打开页面 8 秒后才出现，不在加载的第一秒打扰；关掉后永久不再出现（localStorage）。
  * 「有新版本」提示在的时候让位（styles.css）。
- * DOG-03：仅在 beforeinstallprompt（或 iOS Safari）时出现；「安装」无响应 / 超时则永久关掉；
+ * DOG-03：仅在 beforeinstallprompt（或 iOS Safari）时出现；装成或点「不再提示」才永久关掉；
  * 显示时 body 带 data-install-hint，正文顶距让出胶囊高度，避免盖住标题。
  */
 const KEY = "chisabot-install-hint";
@@ -85,9 +85,10 @@ export function InstallHint() {
       setIosOpen((open) => !open);
       return;
     }
-    // 无论装成、取消还是超时无弹窗：都永久关掉，避免 Chromium 点「安装」无反应横幅又回来。
-    await promptInstall();
-    close(true);
+    // CR-P2-05：只有真正装成才永久关掉；取消 / 超时只收起本轮，下次还可以再提示。
+    // 「不再提示」仍走右上角 X（close(true)）。
+    const accepted = await promptInstall();
+    close(accepted);
   };
 
   const DeviceIcon = isPhone() ? IconDeviceMobileDown : IconDeviceDesktopDown;

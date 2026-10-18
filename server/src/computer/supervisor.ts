@@ -78,7 +78,9 @@ export function createDockerSupervisorProvider(
    * Bot has nothing here, and an unknown run skips the generation check rather than failing it, so
    * `sessionOf` falls back to asking rather than letting an empty map quietly stop checking.
    */
+  // CR-P2-12：进程内 run 缓存；生产少用，但仍封顶，避免永远只增不减。
   const sessions = new Map<string, string>();
+  const SESSIONS_CAP = 256;
 
   async function call(path: string, method = "POST"): Promise<unknown> {
     let response: Response;
@@ -199,7 +201,13 @@ export function createDockerSupervisorProvider(
         const startedAt = computers.find(
           (computer) => computer.botId === botId,
         )?.startedAt;
-        if (startedAt) sessions.set(botId, startedAt);
+        if (startedAt) {
+          sessions.set(botId, startedAt);
+          if (sessions.size > SESSIONS_CAP) {
+            const oldest = sessions.keys().next().value;
+            if (oldest !== undefined) sessions.delete(oldest);
+          }
+        }
         return startedAt;
       } catch {
         // Unknown, not mismatched. A supervisor that cannot be reached must not turn every ref into
@@ -213,7 +221,13 @@ export function createDockerSupervisorProvider(
         `/computers/${encodeURIComponent(botId)}/ensure`,
       )) as SupervisorComputerLocation;
       // Recorded on every ensure, so a replaced container is visible to whatever asks next.
-      if (state?.startedAt) sessions.set(botId, state.startedAt);
+      if (state?.startedAt) {
+        sessions.set(botId, state.startedAt);
+        if (sessions.size > SESSIONS_CAP) {
+          const oldest = sessions.keys().next().value;
+          if (oldest !== undefined) sessions.delete(oldest);
+        }
+      }
       // The supervisor says where it is, because only it knows whether these computers sit on a
       // shared network or answer on a published port.
       if (state?.url) return state.url;

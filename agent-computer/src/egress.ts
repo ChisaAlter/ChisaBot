@@ -354,16 +354,26 @@ export type EgressDecision = { allowed: boolean; reason: string };
 /**
  * Addresses no Bot may reach, whatever its policy says, allow_all included.
  *
- * Link-local is where every cloud keeps the endpoint that hands a machine its credentials:
- * 169.254.169.254 on AWS, Azure, GCP and Oracle, with AWS and GCP also answering on the IPv6
- * addresses below, and Alibaba on 100.100.100.200. The chart's NetworkPolicy cuts out 169.254/16
- * too, but it is off by default and says nothing about IPv6, so this is the guard a default install
- * actually has. It covers the browser and every command that honours the proxy variables.
+ * Same private-net floor as navigation (`checkNavigationTarget` / `isPrivateIpv4` /
+ * `isPrivateIpv6`): RFC1918, loopback, link-local, and IPv6 unique-local. Plus the cloud
+ * metadata endpoints (169.254/16, Alibaba 100.100.100.200, AWS/GCP IPv6 aliases). A chart
+ * NetworkPolicy may also cut these out, but it is off by default — this is the guard a
+ * default install actually has. It covers the browser and every command that honours the
+ * proxy variables. An allowlist cidr cannot override it.
  */
 const ALWAYS_DENIED: readonly [string, number, "ipv4" | "ipv6"][] = [
+  // Deployment private network (matches navigation; CR-P1-04 / CB-CR-05).
+  ["10.0.0.0", 8, "ipv4"],
+  ["172.16.0.0", 12, "ipv4"],
+  ["192.168.0.0", 16, "ipv4"],
+  ["127.0.0.0", 8, "ipv4"],
+  // Cloud metadata / link-local.
   ["169.254.0.0", 16, "ipv4"],
   ["100.100.100.200", 32, "ipv4"],
+  // IPv6: loopback, link-local, unique-local (ULA), plus cloud metadata aliases.
+  ["::1", 128, "ipv6"],
   ["fe80::", 10, "ipv6"],
+  ["fc00::", 7, "ipv6"],
   ["fd00:ec2::254", 128, "ipv6"],
   ["fd20:ce::254", 128, "ipv6"],
 ];
@@ -397,8 +407,8 @@ function nat64Ipv4(address: string): string | null {
 }
 
 /**
- * True for a metadata or link-local address, including one written as IPv4-mapped IPv6 or reached
- * through the NAT64 prefix.
+ * True for a private, loopback, metadata or link-local address, including one written as
+ * IPv4-mapped IPv6 or reached through the NAT64 prefix.
  */
 export function isAlwaysDenied(addressInput: string): boolean {
   const address = normalizeHost(addressInput);
@@ -428,7 +438,7 @@ export function egressDecision(
   if (denied !== undefined) {
     return {
       allowed: false,
-      reason: `${host} is a cloud metadata or link-local address, which no Bot may reach.`,
+      reason: `${host} is inside this deployment's own network (or a cloud metadata address), which no Bot may reach.`,
     };
   }
   if (policy.mode === "allow_all") {
@@ -475,13 +485,19 @@ export function egressDecision(
   };
 }
 
-/** True when deciding needs the host's addresses: a name, and at least one IP-range rule. */
+/**
+ * True when deciding needs the host's addresses under this policy.
+ *
+ * Any mode other than allow_all / deny_all resolves so domain allowlist entries are checked
+ * against the addresses they resolve to (ALWAYS_DENIED + cidr rules), not just spelling
+ * (CR-P1-04). allow_all still resolves in {@link decide} so the private-net floor sees
+ * addresses through an upstream proxy too.
+ */
 export function needsResolution(policy: EgressPolicy, host: string): boolean {
   return (
     isIP(normalizeHost(host)) === 0 &&
     policy.mode !== "allow_all" &&
-    policy.mode !== "deny_all" &&
-    policy.rules.some((rule) => rule.type === "cidr")
+    policy.mode !== "deny_all"
   );
 }
 
@@ -536,7 +552,7 @@ async function decide(
   botId: string | undefined,
   host: string,
   port: number,
-  direct: boolean,
+  _direct: boolean,
 ): Promise<EgressDecision & { addresses?: string[] }> {
   const judging = policiesFor(botId);
   if (judging === "refuse") {
@@ -548,16 +564,13 @@ async function decide(
   }
   let resolved: string[] = [];
   /*
-   * Resolved whenever this filter makes the connection itself, so the address checked is the
-   * address connected to and a name cannot reach a metadata endpoint by resolving to one. Through an
-   * upstream proxy, that proxy resolves on its own network, which may be the only one with DNS, so a
-   * name is resolved here only when a range rule needs it.
+   * Always resolve names so ALWAYS_DENIED (RFC1918 + loopback + metadata) sees addresses —
+   * including through an upstream proxy and under allow_all. A name that only the upstream can
+   * resolve fails closed here rather than skipping the private-net floor. Direct connections
+   * also pin to these addresses so a second lookup cannot answer differently.
    */
   const named = isIP(normalizeHost(host)) === 0;
-  if (
-    named &&
-    (direct || judging.some((policy) => needsResolution(policy, host)))
-  ) {
+  if (named) {
     try {
       resolved = await resolver(normalizeHost(host));
     } catch {

@@ -9,7 +9,7 @@ import { decryptSecret, encryptSecret } from "../credentials";
 import type { Database } from "../db/client";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { markUntrusted } from "../untrusted-content";
-import { assertPublicUrl } from "../web/tools";
+import { BlockedUrlError, guardedFetch } from "../../../shared/net/guarded-fetch";
 
 /**
  * 密钥保险箱（DESIGN.md §52，docs/vault.md）。
@@ -222,17 +222,64 @@ export function createVault(database: Database, options: { encryptionKey: string
     const values = new Map<string, string>();
     for (const [name, row] of used) values.set(name, await decryptSecret(options.encryptionKey, row.value));
     const fillIn = (text: string) => text.replace(PLACEHOLDER, (_, name: string) => values.get(name) ?? "");
-    const url = await assertPublicUrl(fillIn(input.url));
-    const headers = new Headers();
-    for (const [k, v] of Object.entries(input.headers ?? {})) headers.set(fillIn(k), fillIn(v));
-    if (!headers.has("user-agent")) headers.set("user-agent", "ChisaBot/0.1 (+https://github.com/ChisaAlter/ChisaBot)");
     const method = input.method.toUpperCase();
+    const headerRecord: Record<string, string> = {};
+    for (const [k, v] of Object.entries(input.headers ?? {})) headerRecord[fillIn(k)] = fillIn(v);
+    if (!Object.keys(headerRecord).some((k) => k.toLowerCase() === "user-agent")) {
+      headerRecord["user-agent"] = "ChisaBot/0.1 (+https://github.com/ChisaAlter/ChisaBot)";
+    }
+    const filledUrl = fillIn(input.url);
+    const abort = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+      : AbortSignal.timeout(30_000);
+    const scrub = (s: string) => {
+      let out = s;
+      for (const value of values.values()) if (value.length >= 4) out = out.split(value).join("••••");
+      return out;
+    };
+
+    // 默认走 guardedFetch（DNS 钉死、不跟重定向）；测试注入 fetch 时仍用强 assert + 手动 redirect。
+    if (!options.fetch) {
+      let guarded;
+      try {
+        guarded = await guardedFetch(filledUrl, {
+          method,
+          headers: headerRecord,
+          ...(input.body && method !== "GET" && method !== "HEAD"
+            ? { body: fillIn(input.body) }
+            : {}),
+          maxBytes: MAX_RESPONSE + 1,
+          timeoutMs: 30_000,
+          maxRedirects: 0,
+          signal: abort,
+        });
+      } catch (error) {
+        if (error instanceof BlockedUrlError) throw new VaultError(error.message);
+        throw error;
+      }
+      if (used.size)
+        await sql.unsafe(
+          "UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE owner_user_id = $1 AND name = ANY(string_to_array($2, ','))",
+          [owner, [...used.keys()].join(",")],
+        );
+      const bodyText = new TextDecoder("utf-8", { fatal: false }).decode(guarded.body);
+      return {
+        status: guarded.status,
+        contentType: guarded.contentType,
+        location: null,
+        body: scrub(bodyText).slice(0, 20_000),
+        truncated: guarded.truncated || bodyText.length > 20_000,
+      };
+    }
+
+    const url = await assertPublicUrl(filledUrl);
+    const headers = new Headers(headerRecord);
     const response = await doFetch(url, {
       method,
       headers,
       ...(input.body && method !== "GET" && method !== "HEAD" ? { body: fillIn(input.body) } : {}),
       redirect: "manual",
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+      signal: abort,
     });
     if (used.size)
       await sql.unsafe("UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE owner_user_id = $1 AND name = ANY(string_to_array($2, ','))", [owner, [...used.keys()].join(",")]);
@@ -251,11 +298,6 @@ export function createVault(database: Database, options: { encryptionKey: string
       chunks.push(value);
     }
     text = new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks));
-    const scrub = (s: string) => {
-      let out = s;
-      for (const value of values.values()) if (value.length >= 4) out = out.split(value).join("••••");
-      return out;
-    };
     const location = response.headers.get("location");
     return {
       status: response.status,

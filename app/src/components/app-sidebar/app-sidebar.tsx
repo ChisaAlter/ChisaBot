@@ -681,8 +681,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const titleIds = new Set(titleMatches.map((c) => c.id));
   const extraHits = contentHits.filter((hit) => !titleIds.has(hit.channelId));
   const visibleChannels = titleMatches;
+  // CR-P2-03：搜索失败不能当成「没有结果」。
+  const searchFailed =
+    searching && contentSearch.isError && !contentSearch.isFetching;
   const searchEmpty =
     searching &&
+    !searchFailed &&
     visibleChannels.length === 0 &&
     extraHits.length === 0 &&
     !contentSearch.isFetching;
@@ -739,6 +743,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <div ref={scrollRoot} className="glass-side-scroll scroll-fade-b">
                 <SidebarMenu>
                   <SidebarGroup className="gap-px p-0">
+                    {searchFailed ? (
+                      <div className="py-4">
+                        <Empty className="border border-dashed min-h-[30dvh]">
+                          <EmptyHeader>
+                            <EmptyTitle>{"搜索暂时不可用"}</EmptyTitle>
+                            <EmptyDescription className="text-pretty">
+                              {"消息正文搜索没成功，请稍后再试。会话名和摘要的匹配结果仍会显示在下面（如果有）。"}
+                            </EmptyDescription>
+                          </EmptyHeader>
+                        </Empty>
+                      </div>
+                    ) : null}
                     {searchEmpty ? (
                       <div className="py-4">
                         <Empty className="border border-dashed min-h-[30dvh]">

@@ -42,8 +42,8 @@ export function recordChannelActivityMutationOptions() {
       agentId: string | null;
       at: string;
     }) => {
-      /* Still fire-and-forget: `tryClient` does not throw, and the result is not read. */
-      await tryClient(`/api/channels/${variables.channelId}/activity`, {
+      /* Fire-and-forget for UX, but count failures so a silent 500 is not invisible (CR-P2-06). */
+      const response = await tryClient(`/api/channels/${variables.channelId}/activity`, {
         method: "POST",
         body: {
           agentId: variables.agentId,
@@ -51,6 +51,15 @@ export function recordChannelActivityMutationOptions() {
           text: variables.text,
         },
       });
+      if (!response.ok) {
+        console.warn(
+          JSON.stringify({
+            type: "channel-activity-write-failed",
+            channelId: variables.channelId,
+            status: response.status,
+          }),
+        );
+      }
     },
   });
 }
@@ -70,10 +79,20 @@ export async function setChannelBusy(variables: {
   channelId: string;
   busy: boolean;
 }) {
-  await tryClient(`/api/channels/${variables.channelId}/busy`, {
+  const response = await tryClient(`/api/channels/${variables.channelId}/busy`, {
     method: "POST",
     body: { busy: variables.busy },
   });
+  if (!response.ok) {
+    console.warn(
+      JSON.stringify({
+        type: "channel-busy-write-failed",
+        channelId: variables.channelId,
+        busy: variables.busy,
+        status: response.status,
+      }),
+    );
+  }
 }
 
 /** Pin or unpin a channel for this member. A marker, not a reorder, so no optimistic sort. */
@@ -95,9 +114,8 @@ export function setChannelPinnedMutationOptions(queryClient: QueryClient) {
  * Stamp a channel read for this member, patching the cache before the wire answers.
  *
  * Patched in onMutate rather than refetched on success: the dot must clear the instant the channel
- * opens, not a round-trip later. No rollback on failure and no invalidation — a mark-read that did
- * not land is a dot that returns on the next refetch, which is the truth reasserting itself, and a
- * refetch here would race the socket's own patches for nothing.
+ * opens, not a round-trip later. On failure we roll the list cache back (CR-P2-06) so a failed PUT
+ * does not leave the unread dot cleared locally until something else refetches.
  */
 export function markChannelReadMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
@@ -107,7 +125,11 @@ export function markChannelReadMutationOptions(queryClient: QueryClient) {
         fallback: "无法标记此会话为已读",
       });
     },
-    onMutate: (channelId) => {
+    onMutate: async (channelId) => {
+      await queryClient.cancelQueries({ queryKey: channelKeys.list() });
+      const previous = queryClient.getQueryData<InfiniteData<ChannelPage>>(
+        channelKeys.list(),
+      );
       const now = new Date().toISOString();
       queryClient.setQueryData(
         channelKeys.list(),
@@ -135,6 +157,12 @@ export function markChannelReadMutationOptions(queryClient: QueryClient) {
             })),
           },
       );
+      return { previous };
+    },
+    onError: (_error, _channelId, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(channelKeys.list(), context.previous);
+      }
     },
   });
 }

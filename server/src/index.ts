@@ -292,6 +292,7 @@ import { createLocalAgentService, type LocalAgentService } from "./local-agents/
 import { createCloudCcService, type CloudCcService } from "./cloud-cc/service";
 import { createCloudSyncService, type CloudSyncService } from "./cloud-cc/sync";
 import {
+import { reasonWithoutStatement } from "./db/query-failure";
   createWorkQueue,
   DEFAULT_MAX_ATTEMPTS,
   startWorkOfferedListener,
@@ -2794,7 +2795,7 @@ const responsibilitySweep = repeatAfterEach(async () => {
     console.error(
       JSON.stringify({
         type: "responsibility-dispatch-error",
-        error: error instanceof Error ? error.message : String(error),
+        error: reasonWithoutStatement(error).slice(0, 300),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -3889,19 +3890,42 @@ serve<SocketData>({
         return;
       }
       const stream = ws.data;
-      const inward = new WebSocket(stream.upstream);
+      // CR-P2-09：构造失败 / 两端错误都要收口，慢客户端靠 send 抛错丢帧（不排队）。
+      let inward: WebSocket;
+      try {
+        inward = new WebSocket(stream.upstream);
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            type: "computer-stream-upstream-open-failed",
+            error: reasonWithoutStatement(error).slice(0, 200),
+          }),
+        );
+        ws.close(1011, "upstream unavailable");
+        return;
+      }
       stream.inward = inward;
       // Frames outward, input inward. Buffered by neither side: a frame the browser is too slow for
       // should be dropped, not queued, because a stale frame is worse than a missing one.
+      // Bun's ws.send throws when the socket is not OPEN; if a future runtime queues instead,
+      // drop when bufferedAmount is already large rather than grow without bound.
       inward.onmessage = (event) => {
         try {
+          if (typeof (ws as { bufferedAmount?: number }).bufferedAmount === "number"
+            && (ws as { bufferedAmount: number }).bufferedAmount > 2_000_000) {
+            return; // drop stale frame
+          }
           ws.send(String(event.data));
         } catch {
-          inward.close();
+          try { inward.close(); } catch { /* ignore */ }
         }
       };
-      inward.onclose = () => ws.close();
-      inward.onerror = () => ws.close();
+      inward.onclose = () => {
+        try { ws.close(); } catch { /* ignore */ }
+      };
+      inward.onerror = () => {
+        try { ws.close(); } catch { /* ignore */ }
+      };
     },
     message(ws, raw) {
       if (!isProxiedStream(ws.data)) {

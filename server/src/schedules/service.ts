@@ -24,6 +24,7 @@ import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { CronExpressionParser } from "cron-parser";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 /**
  * 定时任务 / 提醒（DESIGN.md §55，docs/schedules.md）。
@@ -853,7 +854,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     app.onError((error, c) => {
       if (error instanceof ScheduleError) return c.json({ error: error.message }, 400);
       if (error instanceof z.ZodError) return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
-      console.error(JSON.stringify({ type: "schedules-error", error: error.name, message: String(error.message).slice(0, 200), route: c.req.path }));
+      console.error(JSON.stringify({ type: "schedules-error", error: error.name, message: reasonWithoutStatement(error).slice(0, 200), route: c.req.path }));
       return c.json({ error: "定时任务暂时不可用，请重试。" }, 503);
     });
     app.get("/", async (c) => c.json({ schedules: await list(c.var.actor.id, { includeEnded: c.req.query("all") === "1", runs: 5 }) }));

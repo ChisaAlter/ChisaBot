@@ -18,6 +18,7 @@ import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { composePage, isFullDocument, notFoundPage, PAGE_TEMPLATE_GUIDE } from "./template";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 /**
  * 页面（DESIGN.md §54，docs/pages.md）：机器人做的单页网页，发布在 /p/<随机串>/，不用登录就能看。
@@ -519,7 +520,7 @@ export function createPages(
     app.onError((error, c) => {
       if (error instanceof PageError) return c.json({ error: error.message }, 400);
       if (error instanceof z.ZodError) return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
-      console.error(JSON.stringify({ type: "pages-error", error: error.name, message: error.message.slice(0, 200), route: c.req.path }));
+      console.error(JSON.stringify({ type: "pages-error", error: error.name, message: reasonWithoutStatement(error).slice(0, 200), route: c.req.path }));
       return c.json({ error: "页面服务暂时不可用，请重试。" }, 503);
     });
     const small = bodyLimit({ maxSize: 16_384 });

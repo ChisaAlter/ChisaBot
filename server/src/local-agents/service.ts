@@ -45,6 +45,7 @@ import type { LocalRunControl } from "../local-conversations";
 import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
 import type { TurnRunner } from "../turns/types";
 import type { ThreadInbox } from "../thread-inbox";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 /**
  * 本地 agent 与权限档位（docs/local-agents.md，DESIGN.md「本地 agent」）。
@@ -1033,7 +1034,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     app.onError((error, c) => {
       if (error instanceof LocalAgentError) return c.json({ error: error.message }, error.status);
       if (error instanceof z.ZodError) return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
-      console.error(JSON.stringify({ type: "local-agents-error", error: error.name, message: String(error.message).slice(0, 200), route: c.req.path }));
+      console.error(JSON.stringify({ type: "local-agents-error", error: error.name, message: reasonWithoutStatement(error).slice(0, 200), route: c.req.path }));
       return c.json({ error: "本地 agent 暂时不可用，请重试。" }, 503);
     });
     const ownDevice = async (actorId: string, deviceId: string) => {

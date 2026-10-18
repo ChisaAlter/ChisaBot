@@ -353,21 +353,34 @@ export function ComputerView({
     if (!toolCallId || !settled) return;
     const remembered = REMEMBERED_TURNS.get(toolCallId);
     /*
-     * Asked once per turn, answer or not. Without remembering the empty answer, every turn from
-     * before this shipped refetched nothing on every remount, which on a long transcript is one
-     * pointless request per turn per scroll.
+     * Asked once per turn once we have an answer — or after a few empty replies. A single empty
+     * stamp (CR-P2-02) raced the server's keepFrameOf write and left the turn on the named-page
+     * placeholder forever. Bounded retries cover that race; after that we remember empty so old
+     * turns without frames do not refetch on every remount.
      */
     if (remembered?.frame || remembered?.asked) return;
     let current = true;
+    const delays = [0, 400, 1200];
 
     void (async () => {
-      const stored = await readPageFrame(computerId, toolCallId);
+      for (let i = 0; i < delays.length; i += 1) {
+        if (delays[i]! > 0) {
+          await new Promise((r) => setTimeout(r, delays[i]));
+        }
+        if (!current) return;
+        const stored = await readPageFrame(computerId, toolCallId);
+        if (!current) return;
+        if (stored) {
+          rememberTurn(toolCallId, {
+            asked: true,
+            frame: { base64: stored.frame, url: stored.url },
+          });
+          setFrameArrived((n) => n + 1);
+          return;
+        }
+      }
       if (!current) return;
-      rememberTurn(toolCallId, {
-        asked: true,
-        ...(stored ? { frame: { base64: stored.frame, url: stored.url } } : {}),
-      });
-      if (stored) setFrameArrived((n) => n + 1);
+      rememberTurn(toolCallId, { asked: true });
     })();
 
     return () => {

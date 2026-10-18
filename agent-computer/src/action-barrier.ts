@@ -119,6 +119,7 @@ export function createActionBarrier(options: Options = {}) {
             ),
           );
         }, timeoutMs);
+        timer.unref?.();
         waiters.add(wake);
       });
     },

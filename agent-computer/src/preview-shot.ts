@@ -108,16 +108,23 @@ export async function previewShot(
   let context: Awaited<ReturnType<Browser["newContext"]>> | null = null;
   try {
     const b = await getBrowser(options.sandbox);
-    context = await b.newContext({
-      viewport: VIEWPORT,
-      deviceScaleFactor: 1,
-      locale: "zh-CN",
-      timezoneId: "Asia/Shanghai",
-      serviceWorkers: "block",
-      acceptDownloads: false,
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 ChisaBot-LinkPreview/0.1",
-    });
+    try {
+      context = await b.newContext({
+        viewport: VIEWPORT,
+        deviceScaleFactor: 1,
+        locale: "zh-CN",
+        timezoneId: "Asia/Shanghai",
+        serviceWorkers: "block",
+        acceptDownloads: false,
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 ChisaBot-LinkPreview/0.1",
+      });
+    } catch (error) {
+      // CR-P2-10：启动成功后浏览器崩了会一直命中坏缓存；清掉好下次重开。
+      browser = null;
+      void b.close().catch(() => {});
+      throw error;
+    }
     let requests = 0;
     let bytes = 0;
     await context.routeWebSocket(/.*/, (ws) => ws.close());

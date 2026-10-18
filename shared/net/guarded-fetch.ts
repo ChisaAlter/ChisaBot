@@ -43,6 +43,10 @@ export type GuardedFetchOptions = {
   signal?: AbortSignal;
   /** 读到这么多字节就够了（例如 HTML 只要 <head>），可以提前停；默认 = maxBytes。 */
   stopAfterBytes?: number;
+  /** 默认 GET。vault api_request 等需要 POST/PUT 时传入（CR #215 残留）。 */
+  method?: string;
+  /** 与 method 一起用；只在非 GET/HEAD 时发送。 */
+  body?: string | Buffer | Uint8Array;
   /** 测试用：替换 DNS 解析。 */
   resolve?: (
     hostname: string,
@@ -128,7 +132,7 @@ function oneHop(
         hostname,
         port: url.port || (url.protocol === "https:" ? 443 : 80),
         path: `${url.pathname}${url.search}`,
-        method: "GET",
+        method: (options.method ?? "GET").toUpperCase(),
         servername: isIP(hostname) ? undefined : hostname,
         headers: {
           "user-agent": DEFAULT_UA,
@@ -234,11 +238,16 @@ function oneHop(
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
     req.on("error", (error) => finish(() => reject(error)));
-    req.end();
+    const method = (options.method ?? "GET").toUpperCase();
+    if (options.body !== undefined && method !== "GET" && method !== "HEAD") {
+      req.end(options.body);
+    } else {
+      req.end();
+    }
   });
 }
 
-/** 只连公网、钉死 IP、逐跳检查重定向的 GET。被拦时抛 {@link BlockedUrlError}。 */
+/** 只连公网、钉死 IP、逐跳检查重定向。默认 GET；可传 method/body。被拦时抛 {@link BlockedUrlError}。 */
 export async function guardedFetch(
   raw: string,
   options: GuardedFetchOptions,

@@ -27,6 +27,43 @@ describe("the network policy rules", () => {
     ).toBe(false);
   });
 
+  test("private and loopback are refused under every mode, allow_all included (CR-P1-04)", () => {
+    const allowAll = { mode: "allow_all" as const, rules: [] };
+    const allowlistPrivate = {
+      mode: "allowlist_only" as const,
+      rules: [{ type: "cidr" as const, value: "10.0.0.0/8" }],
+    };
+    for (const host of [
+      "10.0.0.5",
+      "172.16.1.1",
+      "192.168.1.1",
+      "127.0.0.1",
+      "::1",
+      "[::1]",
+      "fd00::1",
+      "[fd00::1]",
+    ]) {
+      expect(egressDecision(allowAll, host, 443).allowed).toBe(false);
+      // Allowlist cidr cannot override the floor.
+      expect(egressDecision(allowlistPrivate, host, 443).allowed).toBe(false);
+    }
+    // Resolved name pointing at private is refused even when the name is allowlisted.
+    expect(
+      egressDecision(
+        {
+          mode: "allowlist_only",
+          rules: [{ type: "domain", value: "db.internal" }],
+        },
+        "db.internal",
+        5432,
+        ["10.0.0.9"],
+      ).allowed,
+    ).toBe(false);
+    // Public stays allowed under allow_all.
+    expect(egressDecision(allowAll, "8.8.8.8", 443).allowed).toBe(true);
+    expect(egressDecision(allowAll, "example.com", 443).allowed).toBe(true);
+  });
+
   test("a domain rule covers the domain and its subdomains, a wildcard only subdomains", () => {
     const policy = {
       mode: "allowlist_only" as const,
@@ -60,34 +97,45 @@ describe("the network policy rules", () => {
   });
 
   test("an IP range rule matches addresses and ports, and every resolved address must match", () => {
+    // Use a documentation range (not RFC1918): private nets are ALWAYS_DENIED and ignore allowlist.
     const policy = {
       mode: "allowlist_only" as const,
       rules: [
-        { type: "cidr" as const, value: "10.0.0.0/8", ports: "5432,8000-8100" },
+        {
+          type: "cidr" as const,
+          value: "203.0.113.0/24",
+          ports: "5432,8000-8100",
+        },
       ],
     };
-    expect(egressDecision(policy, "10.1.2.3", 5432).allowed).toBe(true);
-    expect(egressDecision(policy, "10.1.2.3", 8050).allowed).toBe(true);
-    expect(egressDecision(policy, "10.1.2.3", 22).allowed).toBe(false);
-    expect(egressDecision(policy, "11.0.0.1", 5432).allowed).toBe(false);
+    expect(egressDecision(policy, "203.0.113.10", 5432).allowed).toBe(true);
+    expect(egressDecision(policy, "203.0.113.10", 8050).allowed).toBe(true);
+    expect(egressDecision(policy, "203.0.113.10", 22).allowed).toBe(false);
+    expect(egressDecision(policy, "203.0.114.1", 5432).allowed).toBe(false);
     expect(
-      egressDecision(policy, "db.internal", 5432, ["10.0.0.9"]).allowed,
+      egressDecision(policy, "db.example.test", 5432, ["203.0.113.9"]).allowed,
     ).toBe(true);
     // Partly outside the range is refused, not connected to the first answer.
     expect(
-      egressDecision(policy, "db.internal", 5432, ["10.0.0.9", "8.8.8.8"])
-        .allowed,
+      egressDecision(policy, "db.example.test", 5432, [
+        "203.0.113.9",
+        "8.8.8.8",
+      ]).allowed,
     ).toBe(false);
-    expect(egressDecision(policy, "db.internal", 5432, []).allowed).toBe(false);
+    expect(egressDecision(policy, "db.example.test", 5432, []).allowed).toBe(
+      false,
+    );
   });
 
   test("IPv6 ranges work", () => {
+    // Documentation prefix — ULA (fd00::/8) is ALWAYS_DENIED now.
     const policy = {
       mode: "allowlist_only" as const,
-      rules: [{ type: "cidr" as const, value: "fd00::/8" }],
+      rules: [{ type: "cidr" as const, value: "2001:db8::/32" }],
     };
-    expect(egressDecision(policy, "[fd00::1]", 443).allowed).toBe(true);
-    expect(egressDecision(policy, "2001:db8::1", 443).allowed).toBe(false);
+    expect(egressDecision(policy, "[2001:db8::1]", 443).allowed).toBe(true);
+    expect(egressDecision(policy, "2001:db9::1", 443).allowed).toBe(false);
+    expect(egressDecision(policy, "[fd00::1]", 443).allowed).toBe(false);
   });
 
   test("malformed rules are refused with a sentence, not stored", () => {
@@ -221,6 +269,7 @@ describe("the filter proxy", () => {
       ),
     ).toContain("403");
 
+    // Loopback is ALWAYS_DENIED: even an allowlist cidr cannot open it (CR-P1-04).
     setEgressPolicy("sales", {
       mode: "allowlist_only",
       rules: [
@@ -234,7 +283,7 @@ describe("the filter proxy", () => {
         "sales",
         secret,
       ),
-    ).toContain("200");
+    ).toContain("403");
     await target.close();
   });
 
@@ -256,31 +305,40 @@ describe("the filter proxy", () => {
     await target.close();
   });
 
-  test("EGRESS_POLICY_REQUIRED=0 lets a computer with no server browse before a push", async () => {
+  test("EGRESS_POLICY_REQUIRED=0 still refuses the private-net floor before a push", async () => {
     const target = await origin();
     const filter = await startEgressFilter({
       env: { EGRESS_POLICY_REQUIRED: "0" },
     });
+    // Implicit allow_all when nothing is pushed — private/loopback still denied.
     expect(
       await connectThrough(filter.port, `127.0.0.1:${target.port}`),
-    ).toContain("200");
+    ).toContain("403");
     await target.close();
   });
 
-  test("cloud metadata and link-local addresses are refused under every policy, allow_all included", async () => {
+  test("private, loopback, metadata and link-local are refused under every policy, allow_all included", async () => {
     const filter = await startEgressFilter({ env: {} });
     const secret = egressFor("sales", {})?.password;
     setEgressPolicy("sales", { mode: "allow_all", rules: [] });
     for (const target of [
+      "10.0.0.5:80",
+      "172.16.0.1:80",
+      "192.168.1.1:80",
+      "127.0.0.1:80",
+      "[::1]:80",
+      "[fd00::1]:80",
       "169.254.169.254:80",
       "[fd00:ec2::254]:80",
       "[fd20:ce::254]:80",
       "100.100.100.200:80",
       "[::ffff:169.254.169.254]:80",
+      "[::ffff:10.1.2.3]:80",
       "[fe80::1]:80",
       // The NAT64 prefix reaches the IPv4 address in its last 32 bits.
       "[64:ff9b::a9fe:a9fe]:80",
       "[64:ff9b::6464:64c8]:80",
+      "[64:ff9b::a01:203]:80", // NAT64 → 10.1.2.3
     ]) {
       expect(
         await connectThrough(filter.port, target, "sales", secret),
@@ -288,7 +346,11 @@ describe("the filter proxy", () => {
     }
     // A name is judged by what it resolves to.
     setEgressResolver(async (host) =>
-      host === "metadata.example.test" ? ["169.254.169.254"] : [],
+      host === "metadata.example.test"
+        ? ["169.254.169.254"]
+        : host === "db.example.test"
+          ? ["10.0.0.9"]
+          : [],
     );
     expect(
       await connectThrough(
@@ -298,48 +360,39 @@ describe("the filter proxy", () => {
         secret,
       ),
     ).toContain("403");
+    expect(
+      await connectThrough(
+        filter.port,
+        "db.example.test:80",
+        "sales",
+        secret,
+      ),
+    ).toContain("403");
   });
 
-  test("a plain HTTP request goes to the address that was checked, not a second lookup", async () => {
-    const target = await origin();
+  test("a name that resolves to loopback is refused even when allowlisted (pin / rebind)", async () => {
     const filter = await startEgressFilter({ env: {} });
     const secret = egressFor("sales", {})?.password;
     setEgressPolicy("sales", {
       mode: "allowlist_only",
-      rules: [
-        { type: "cidr", value: "127.0.0.1/32", ports: String(target.port) },
-      ],
+      rules: [{ type: "domain", value: "rebind.example.test" }],
     });
-    // Only this stub knows the name: a connection made by name would ask the system resolver
-    // again, which cannot answer, and fail.
     setEgressResolver(async (host) =>
       host === "rebind.example.test" ? ["127.0.0.1"] : [],
     );
-    const answer = await new Promise<string>((resolve, reject) => {
-      const socket = connect(filter.port, "127.0.0.1", () => {
-        socket.write(
-          `GET http://rebind.example.test:${target.port}/ HTTP/1.1\r\nHost: rebind.example.test:${target.port}\r\nProxy-Authorization: Basic ${Buffer.from(`sales:${secret}`).toString("base64")}\r\nConnection: close\r\n\r\n`,
-        );
-      });
-      let seen = "";
-      socket.on("data", (chunk) => {
-        seen += chunk.toString();
-      });
-      socket.on("end", () => resolve(seen));
-      socket.on("error", reject);
-    });
-    expect(answer.split("\r\n")[0]).toContain("200");
-    expect(answer).toContain("reached");
-    await target.close();
+    expect(
+      await connectThrough(
+        filter.port,
+        "rebind.example.test:80",
+        "sales",
+        secret,
+      ),
+    ).toContain("403");
   });
 
-  // A name with an address the computer cannot reach first (here ::1, where nothing listens) and a
-  // reachable one second: the connection has to fall back to the next checked address, as Node's
-  // own connect does, instead of failing on the first.
-  async function dualStack() {
-    const target = await origin();
+  test("a name that resolves only to private addresses is refused under domain allowlist", async () => {
     const filter = await startEgressFilter({ env: {} });
-    const secret = egressFor("sales", {})?.password ?? "";
+    const secret = egressFor("sales", {})?.password;
     setEgressPolicy("sales", {
       mode: "allowlist_only",
       rules: [{ type: "domain", value: "dual.example.test" }],
@@ -347,54 +400,23 @@ describe("the filter proxy", () => {
     setEgressResolver(async (host) =>
       host === "dual.example.test" ? ["::1", "127.0.0.1"] : [],
     );
-    return { target, filter, secret };
-  }
-
-  test("a plain HTTP request falls back to the next checked address", async () => {
-    const { target, filter, secret } = await dualStack();
-    const answer = await new Promise<string>((resolve, reject) => {
-      const socket = connect(filter.port, "127.0.0.1", () => {
-        socket.write(
-          `GET http://dual.example.test:${target.port}/ HTTP/1.1\r\nHost: dual.example.test:${target.port}\r\nProxy-Authorization: Basic ${Buffer.from(`sales:${secret}`).toString("base64")}\r\nConnection: close\r\n\r\n`,
-        );
-      });
-      let seen = "";
-      socket.on("data", (chunk) => {
-        seen += chunk.toString();
-      });
-      socket.on("end", () => resolve(seen));
-      socket.on("error", reject);
-    });
-    expect(answer.split("\r\n")[0]).toContain("200");
-    expect(answer).toContain("reached");
-    await target.close();
-  });
-
-  test("a CONNECT tunnel falls back to the next checked address", async () => {
-    const { target, filter, secret } = await dualStack();
     expect(
       await connectThrough(
         filter.port,
-        `dual.example.test:${target.port}`,
+        "dual.example.test:80",
         "sales",
         secret,
       ),
-    ).toContain("200");
-    await target.close();
+    ).toContain("403");
   });
 
-  test("a forwarded plain-HTTP request leaves once, not back into the filter", async () => {
-    let reached = 0;
-    const server = createServer((_request, response) => {
-      reached += 1;
-      response.end("reached");
-    });
+  test("a forwarded plain-HTTP request to loopback is refused under allow_all (CR-P1-04)", async () => {
+    const server = createServer((_request, response) => response.end("reached"));
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", () => resolve()),
     );
     const address = server.address();
     const port = typeof address === "object" && address ? address.port : 0;
-    // As the computer starts it: the shell pointed at the filter.
     const filter = await startEgressFilter({ env: {}, forShell: true });
     setEgressPolicy("sales", { mode: "allow_all", rules: [] });
     const secret = egressFor("sales", {})?.password;
@@ -413,8 +435,7 @@ describe("the filter proxy", () => {
         socket.on("end", () => resolve(seen));
         socket.on("error", reject);
       });
-      expect(answer).toContain("reached");
-      expect(reached).toBe(1);
+      expect(answer.split("\r\n")[0]).toContain("403");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -445,21 +466,46 @@ describe("the filter proxy", () => {
     return typeof address === "object" && address ? address.port : 0;
   }
 
-  test("a plain-HTTP request to an IPv6 address is forwarded, not looked up as a name", async () => {
-    const server = createServer((_request, response) =>
-      response.end("reached"),
-    );
-    const port = await listenOnIpv6Loopback(server);
+  test("a plain-HTTP request to IPv6 loopback is refused under allow_all", async () => {
     const filter = await startEgressFilter({ env: {} });
     setEgressPolicy("sales", { mode: "allow_all", rules: [] });
+    const answer = await throughFilter(
+      filter.port,
+      "GET http://[::1]:80/ HTTP/1.1\r\nHost: [::1]:80\r\nConnection: close\r\n\r\n",
+    );
+    expect(answer.split("\r\n")[0]).toContain("403");
+  });
+
+  test("an allowlisted public name through an upstream proxy is forwarded once", async () => {
+    const asked: string[] = [];
+    const upstream = createServer((request, response) => {
+      asked.push(request.url ?? "");
+      response.end("reached");
+    });
+    await new Promise<void>((resolve) =>
+      upstream.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const address = upstream.address();
+    const upPort = typeof address === "object" && address ? address.port : 0;
+    const filter = await startEgressFilter({
+      env: { EGRESS_PROXY_DEFAULT: `http://127.0.0.1:${upPort}` },
+    });
+    setEgressPolicy("sales", {
+      mode: "allowlist_only",
+      rules: [{ type: "domain", value: "site.example.test" }],
+    });
+    setEgressResolver(async (host) =>
+      host === "site.example.test" ? ["203.0.113.10"] : [],
+    );
     try {
       const answer = await throughFilter(
         filter.port,
-        `GET http://[::1]:${port}/ HTTP/1.1\r\nHost: [::1]:${port}\r\nConnection: close\r\n\r\n`,
+        "GET http://site.example.test/ HTTP/1.1\r\nHost: site.example.test\r\nConnection: close\r\n\r\n",
       );
       expect(answer).toContain("reached");
+      expect(asked).toEqual(["http://site.example.test/"]);
     } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
     }
   });
 
@@ -478,6 +524,10 @@ describe("the filter proxy", () => {
       env: { EGRESS_PROXY_DEFAULT: `http://[::1]:${port}` },
     });
     setEgressPolicy("sales", { mode: "allow_all", rules: [] });
+    // Names always resolve so ALWAYS_DENIED sees addresses under allow_all too.
+    setEgressResolver(async (host) =>
+      host === "site.example.test" ? ["203.0.113.10"] : [],
+    );
     try {
       expect(
         await throughFilter(

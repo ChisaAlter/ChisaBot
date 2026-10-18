@@ -38,17 +38,24 @@ export function MessageFind({
     if (!visible || !messageId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const started = Date.now();
+    let started = Date.now();
+    let found = false;
     const attempt = () => {
-      if (cancelled) return;
+      if (cancelled || found) return;
       // 只在露着的聊天里找：keep-alive 藏着的对话仍有 DOM（§98）。
       const root =
         document.querySelector<HTMLElement>(
           `[data-channel-id="${CSS.escape(channelId)}"][data-channel-visible]`,
         ) ?? document;
-      if (focusMessageInChat(messageId, { root })) return;
-      if (Date.now() - started < MESSAGE_FIND_WAIT_MS)
-        timer = setTimeout(attempt, 150);
+      if (focusMessageInChat(messageId, { root })) {
+        found = true;
+        return;
+      }
+      // CR-P2-04：首段 4s 内快轮询；超时后只要还露着就慢轮询（快照晚到 / 慢连），
+      // 换 ?message= 或再次点同一命中（visible 抖动）会重跑本 effect。
+      const elapsed = Date.now() - started;
+      const delay = elapsed < MESSAGE_FIND_WAIT_MS ? 150 : 1000;
+      timer = setTimeout(attempt, delay);
     };
     timer = setTimeout(attempt, 60);
     return () => {

@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { cutAtCodeUnits } from "../channels/text";
+import { BlockedUrlError, resolvePublic } from "../../../shared/net/guarded-fetch";
 
 /**
  * The only place in this deployment that speaks MCP to somebody else's server.
@@ -340,7 +341,21 @@ async function withClient<T>(
   connection: Connection,
   use: (client: Client) => Promise<T>,
 ): Promise<T> {
-  const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
+  // CR-P2-08：名字形状检查不够；连接前解析并拒绝内网 / 元数据地址。
+  const target = new URL(connection.url);
+  try {
+    await resolvePublic(target.hostname);
+  } catch (error) {
+    if (error instanceof BlockedUrlError) {
+      throw new McpServerError(
+        error.message || "That MCP address is not reachable from outside this network.",
+      );
+    }
+    throw new McpServerError(
+      error instanceof Error ? error.message : "That MCP address could not be resolved.",
+    );
+  }
+  const transport = new StreamableHTTPClientTransport(target, {
     requestInit: connection.token
       ? { headers: { Authorization: authorizationHeader(connection.token) } }
       : undefined,

@@ -13,6 +13,7 @@ import type { PgColumn } from "drizzle-orm/pg-core";
 import type { Database } from "./db/client";
 import { auditEvents } from "./db/schema";
 import { parsePageLimit } from "./paging";
+import { reasonWithoutStatement } from "./db/query-failure";
 
 const sensitiveKeys = new Set([
   "access_token",
@@ -649,7 +650,7 @@ export function createAuditStore(database: Database): AuditStore {
             JSON.stringify({
               type: "audit-tap-failed",
               eventType: row.eventType,
-              error: String(error),
+              error: reasonWithoutStatement(error).slice(0, 300),
             }),
           );
         }

@@ -38,6 +38,7 @@ import { upgradeWebSocket } from "./socket";
 import { searchChannelMessages } from "./search";
 import { oneLine } from "./text";
 import type { ThreadIdentity } from "./thread-identity";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 export type AgentChannel = {
   id: string;
@@ -1113,7 +1114,7 @@ export function createChannelRoutes(
           type: "channel-audit-write-failed",
           eventType: "channel.deleted",
           channelId,
-          error: String(error),
+          error: reasonWithoutStatement(error).slice(0, 300),
         }),
       );
     }
@@ -1168,7 +1169,7 @@ export function createChannelRoutes(
       const hits = await searchChannelMessages(database, context.var.actor, q);
       return context.json({ hits });
     } catch (error) {
-      console.error(JSON.stringify({ type: "channel-search-failed", error: String(error).slice(0, 300) }));
+      console.error(JSON.stringify({ type: "channel-search-failed", error: reasonWithoutStatement(error).slice(0, 300) }));
       return context.json({ error: "搜索暂时不可用，请重试。" }, 503);
     }
   });
