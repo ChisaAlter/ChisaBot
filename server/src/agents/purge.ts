@@ -53,6 +53,7 @@ import {
 } from "../db/schema";
 import type { BotReset, ResetPlan } from "./lifecycle-reset";
 import type { AgentActor } from "./profile-types";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 export type PurgeReport = {
   agentId: string;
@@ -250,7 +251,7 @@ export function createAgentPurge(options: {
     } catch (error) {
       console.warn(
         `[agents] could not remove browser profile for ${agentId}:`,
-        error instanceof Error ? error.message : error,
+        reasonWithoutStatement(error),
       );
     }
   }
@@ -275,12 +276,12 @@ export function createAgentPurge(options: {
     report.reset = await reset.execute(actor, agentId);
     report.mainBotCleared = await clearMainBot(agentId);
     await options.retirePanels?.(agentId).catch((error: unknown) =>
-      console.warn(`[agents] retiring live panels of ${agentId} failed:`, error instanceof Error ? error.message : error),
+      console.warn(`[agents] retiring live panels of ${agentId} failed:`, reasonWithoutStatement(error)),
     );
     report.sharedConversationsKept = await liveConversations(agentId);
     if (report.sharedConversationsKept === 0) {
       await options.stopWorkers?.(agentId).catch((error: unknown) =>
-        console.warn(`[agents] stopping background tasks of ${agentId} failed:`, error instanceof Error ? error.message : error),
+        console.warn(`[agents] stopping background tasks of ${agentId} failed:`, reasonWithoutStatement(error)),
       );
       report.panelsRemoved = await removeForGood(agentId);
       report.removed = true;
@@ -292,7 +293,7 @@ export function createAgentPurge(options: {
         } catch (error) {
           console.warn(
             `[agents] deleting the browser of ${agentId} failed:`,
-            error instanceof Error ? error.message : error,
+            reasonWithoutStatement(error),
           );
         }
       }

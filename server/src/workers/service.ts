@@ -8,6 +8,7 @@ import type { GrantedTool } from "../plugins/tools";
 import { HeadlessToolSuspension, type HeadlessTool } from "../computer/headless-tools";
 import type { TurnRunner } from "../turns/types";
 import { type ThreadInbox, WORKER_RESULT_MARKER } from "../thread-inbox";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 /**
  * 后台任务（DESIGN.md §38）：机器人把一件耗时、独立的事交给一个并行的「工人」去做，主对话继续能聊。
@@ -194,7 +195,7 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
       });
     } catch (error) {
       // 对话刚好被用户占着（锁）或者回合失败：放进收件箱，下一轮一定读到，不丢。
-      console.warn(JSON.stringify({ type: "worker-delivery-queued", worker: worker.id, reason: error instanceof Error ? error.message : String(error) }));
+      console.warn(JSON.stringify({ type: "worker-delivery-queued", worker: worker.id, reason: reasonWithoutStatement(error) }));
       await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'queued', updated_at = now() WHERE thread_id = $1 AND id = $2", [worker.parent_thread_id, messageId]);
       await enqueue().catch(() => {});
     }

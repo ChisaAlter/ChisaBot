@@ -103,7 +103,7 @@ test("the dropped reason is distinguishable from a pick-time refusal reason", as
   // The dropped reason is already on screen from mount, before any file is ever picked.
   const droppedAlert = await findByRole("alert");
   const droppedReason = droppedAlert.textContent ?? "";
-  expect(droppedReason).toContain("queued messages were merged");
+  expect(droppedReason).toContain("合并排队消息");
 
   // Now trigger the other kind of refusal: a file refused at pick time, for an unrelated reason.
   const form = container.querySelector("form") as HTMLFormElement;
@@ -129,9 +129,9 @@ test("the dropped reason is distinguishable from a pick-time refusal reason", as
   // Different sentences for a different cause: a file refused on pick names the SVG rule, and a
   // file dropped by a drain names the cap and the merge that overran it.
   expect(dropReason).not.toBe(pickTimeReason);
-  expect(dropReason).toContain("queued messages were merged");
+  expect(dropReason).toContain("合并排队消息");
   expect(pickTimeReason).toContain("SVG");
-  expect(pickTimeReason).not.toContain("queued messages were merged");
+  expect(pickTimeReason).not.toContain("合并排队消息");
 });
 
 /**
@@ -163,9 +163,9 @@ test("attachments dropped by a removal say that, not that a cap was hit", async 
   const reason = alert.textContent ?? "";
 
   expect(reason).toContain("invoice.pdf");
-  expect(reason).toContain("removed");
-  expect(reason).not.toContain("merged");
-  expect(reason).not.toContain("at most");
+  expect(reason).toContain("去掉了");
+  expect(reason).not.toContain("合并");
+  expect(reason).not.toContain("最多");
 });
 
 test("the two causes do not share a sentence", async () => {
@@ -195,7 +195,7 @@ test("the two causes do not share a sentence", async () => {
   const removedReason = (await removed.findByRole("alert")).textContent ?? "";
 
   expect(mergedReason).not.toBe(removedReason);
-  expect(mergedReason).toContain("merged");
+  expect(mergedReason).toContain("合并");
 });
 
 /**
@@ -284,6 +284,6 @@ test("a dropped attachment with no filename reads as an attachment, not as undef
   await findByRole("alert");
   const line = container.querySelector('[role="alert"] p');
 
-  expect(line?.textContent).toStartWith("Attachment: ");
+  expect(line?.textContent).toStartWith("附件: ");
   expect(line?.textContent).not.toContain("undefined");
 });

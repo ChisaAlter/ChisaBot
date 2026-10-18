@@ -36,6 +36,11 @@ import {
 } from "@/lib/bot-lifecycle/queries";
 import { relativeTime } from "@/lib/relative-time";
 import { queryClient } from "@/query-client";
+import {
+  activityStatusIsFailure,
+  activityStatusZh,
+} from "../../../../shared/activity-labels";
+import { cn } from "@/lib/utils";
 
 const ICONS: Record<ActivityKind, typeof IconBell> = {
   schedule: IconCalendarRepeat,
@@ -118,10 +123,19 @@ export function ActivityRow({
       </ItemMedia>
       <ItemContent>
         <ItemTitle>{item.title}</ItemTitle>
-        <ItemDescription>
-          {KIND_LABEL[item.kind]} · {item.needsYou ? "需要你" : item.status}
-          {when ? `· ${when}` : ""}
-          {item.detail ? `· ${item.detail}` : ""}
+        <ItemDescription
+          className={cn(
+            activityStatusIsFailure(item.status) && "text-destructive",
+          )}
+        >
+          {KIND_LABEL[item.kind]} ·{" "}
+          {item.needsYou
+            ? activityStatusIsFailure(item.status)
+              ? activityStatusZh(item.status)
+              : "需要你"
+            : activityStatusZh(item.status)}
+          {when ? ` · ${when}` : ""}
+          {item.detail ? ` · ${item.detail}` : ""}
         </ItemDescription>
       </ItemContent>
     </>
@@ -130,9 +144,10 @@ export function ActivityRow({
    * A row with a Stop or Cancel keeps the row itself unlinked, so the button is not nested inside a
    * link; the conversation is still one click away through the title's own link.
    */
+  const failed = activityStatusIsFailure(item.status);
   if (control)
     return (
-      <Item size="sm">
+      <Item className={cn(failed && "is-failed")} data-status={item.status} size="sm">
         {content}
         <ItemActions>
           {link ? (
@@ -145,11 +160,11 @@ export function ActivityRow({
       </Item>
     );
   return link ? (
-    <Item render={link} size="sm">
+    <Item className={cn(failed && "is-failed")} data-status={item.status} render={link} size="sm">
       {content}
     </Item>
   ) : (
-    <Item size="sm">{content}</Item>
+    <Item className={cn(failed && "is-failed")} data-status={item.status} size="sm">{content}</Item>
   );
 }
 

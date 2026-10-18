@@ -402,7 +402,7 @@ test("taking a queued message back releases the rows it was carrying", async () 
    */
   expect(alert.textContent).toContain("removed along with the queued message");
   expect(alert.textContent).not.toContain("merged");
-  expect(alert.textContent).not.toContain("at most");
+  expect(alert.textContent).not.toContain("最多");
 });
 
 /**
@@ -731,7 +731,7 @@ test("a ninth pick behind eight parked files is refused here, without a round tr
   // strip the person is looking at and can see is empty.
   expect(alert.textContent).toContain("ninth.txt");
   expect(alert.textContent).toContain(
-    `at most ${MAX_ATTACHMENTS_PER_MESSAGE} attachments`,
+    `最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件`,
   );
 
   // AND IT NEVER LEFT THE BROWSER. This is the half that says the refusal came from here: the

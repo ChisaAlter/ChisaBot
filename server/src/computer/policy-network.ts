@@ -10,6 +10,7 @@
  */
 import type { EgressPolicy, EgressRule } from "../../../agent-computer/src/egress";
 import type { ComputerProvider } from "./provider";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 export type { EgressPolicy, EgressRule };
 
@@ -88,7 +89,7 @@ export async function pushEgressPolicies(options: {
     } catch (error) {
       report.failed.push({
         botId: computer.botId,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: reasonWithoutStatement(error),
       });
     }
   }
@@ -174,7 +175,7 @@ export function withPolicyPushOnWake(
           type: "egress-policy-push-on-wake-failed",
           botId,
           note: "The computer refuses its network connections until a policy reaches it.",
-          error: error instanceof Error ? error.message : String(error),
+          error: reasonWithoutStatement(error),
         }),
       );
     }

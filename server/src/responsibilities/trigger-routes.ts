@@ -31,6 +31,7 @@ import {
   type TriggerDirectory,
 } from "./triggers";
 import type { ResponsibilityEvent, ResponsibilityEventResult } from "./types";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 export const TRIGGER_BODY_LIMIT = 256 * 1024;
 
@@ -100,7 +101,7 @@ export async function deliverToTrigger(
         JSON.stringify({
           type: "responsibility-trigger-audit-failed",
           triggerId: trigger.id,
-          error: error instanceof Error ? error.message : String(error),
+          error: reasonWithoutStatement(error),
         }),
       ),
     );

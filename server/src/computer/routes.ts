@@ -25,6 +25,7 @@ import {
 import type { PageFrameStore } from "./page-frames";
 import { dryRunAgainstHistory, REPLAYABLE_EVENT_TYPES } from "./policy-dry-run";
 import { type PolicyStore, parseActionPolicy } from "./policy-store";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 /**
  * The Bot computer's surface, behind the same session guard as every other API route.
@@ -236,7 +237,7 @@ export function createComputerRoutes(
     } catch (error) {
       console.warn(
         `[computer] could not keep a frame of ${url}:`,
-        error instanceof Error ? error.message : error,
+        reasonWithoutStatement(error),
       );
     }
   }
@@ -1062,7 +1063,7 @@ function asRef(
 }
 
 function describe(error: unknown): string {
-  return error instanceof Error ? error.message : "Something went wrong.";
+  return error instanceof Error ? reasonWithoutStatement(error) : "出错了，请重试";
 }
 
 /**

@@ -2977,7 +2977,7 @@ const approvalSweep = repeatAfterEach(async () => {
       )
         throw new Error("The approval work lease was lost before completion.");
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = reasonWithoutStatement(error);
       // The queue will not hand this item out again, so the conversation hears now or never.
       if (abandon && item.attempts >= DEFAULT_MAX_ATTEMPTS) {
         try {
@@ -3012,7 +3012,7 @@ const approvalSweep = repeatAfterEach(async () => {
     console.error(
       JSON.stringify({
         type: "approval-resume-error",
-        error: error instanceof Error ? error.message : String(error),
+        error: reasonWithoutStatement(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -3063,7 +3063,7 @@ const wakeUpSweep = repeatAfterEach(async () => {
     console.error(
       JSON.stringify({
         type: "bot-follow-up-error",
-        error: error instanceof Error ? error.message : String(error),
+        error: reasonWithoutStatement(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -3150,7 +3150,7 @@ const groupSweep = repeatAfterEach(async () => {
     console.error(
       JSON.stringify({
         type: "group-sweep-error",
-        error: error instanceof Error ? error.message : String(error),
+        error: reasonWithoutStatement(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -3236,7 +3236,7 @@ const personResponseSweep = repeatAfterEach(async () => {
         key: item.key,
         owner: personResponseOwner,
         delayMs: 0,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: reasonWithoutStatement(error),
       });
       throw error;
     }
@@ -3244,7 +3244,7 @@ const personResponseSweep = repeatAfterEach(async () => {
     console.error(
       JSON.stringify({
         type: "person-response-error",
-        error: error instanceof Error ? error.message : String(error),
+        error: reasonWithoutStatement(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -3364,7 +3364,7 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
       // A sweep that failed must not take the loop with it: the next one may find the database back.
       console.warn(
         "[handoff] a sweep could not run:",
-        error instanceof Error ? error.message : error,
+        reasonWithoutStatement(error),
       );
     }
   };
@@ -3444,7 +3444,7 @@ repeatAfterEach(
     } catch (error) {
       console.warn(
         "[handoff] hops that are over could not be dropped:",
-        error instanceof Error ? error.message : error,
+        reasonWithoutStatement(error),
       );
     }
   },
@@ -3482,7 +3482,7 @@ repeatAfterEach(async () => {
     // reaches this on every pass, and it has not gone wrong, it simply has no titles.
     console.warn(
       "[channels] conversations could not be named:",
-      error instanceof Error ? error.message : error,
+      reasonWithoutStatement(error),
     );
   }
 }, 10_000);
@@ -4064,7 +4064,7 @@ void startOpsMetricsStore()
   })
   .catch((error) => {
     console.warn(
-      `[ops-metrics] start failed: ${error instanceof Error ? error.message : String(error)}`,
+      `[ops-metrics] start failed: ${reasonWithoutStatement(error)}`,
     );
   });
 

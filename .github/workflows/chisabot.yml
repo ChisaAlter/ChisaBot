@@ -65,10 +65,12 @@ jobs:
         run: bun test server/tests/ssrf-redline.test.ts server/tests/guarded-fetch-ssrf.test.ts shared/ops-counters.test.ts shared/ops-codes.test.ts
       - name: Trust-boundary network isolation red-line
         run: bun test shared/trust-boundary.test.ts server/tests/trust-boundary-redline.test.ts
+      - name: Log-scrub red-line (PRD-P0-05)
+        run: bun test server/tests/log-scrub-redline.test.ts
       - name: Nginx template sync check (apply-or-fail process)
         run: sh scripts/ops/sync-nginx.sh --check-repo
       - name: Schedule honesty / partition (non-tram re-verify)
-        run: bun test shared/schedules.test.ts
+        run: bun test shared/schedules.test.ts shared/activity-labels.test.ts
       - name: Login gateway checks
         run: bun test deploy/public/auth/server.test.ts deploy/public/auth/startup-report.test.ts
       - name: Claude upstream proxy share-link parser

@@ -23,6 +23,7 @@ import type { DeviceConfirmLink } from "../devices/hub";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { categoryOfPageAction, categoryOfTool, decideMode, detailsFromArgs, flattenForMatch, titleForTool } from "./classify";
 import { currentConfirmActor, currentConfirmInteractive, currentConfirmToolCall, currentConfirmTurn, currentToolAbort, TOOL_STOPPED_ZH, withConfirmInteractive } from "./context";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 /**
  * 确认卡片 + 审批偏好（DESIGN.md §58，docs/confirmations.md）。
@@ -288,7 +289,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
           to: after.mode,
           summary: `机器人权限：${BOT_PERMISSION_INFO[before.mode].label}${before.stored ? "" : "（沿用审批偏好）"} → ${BOT_PERMISSION_INFO[after.mode].label}`,
         },
-      }).catch((error) => console.warn(JSON.stringify({ type: "bot-permission-audit-failed", reason: error instanceof Error ? error.message : String(error) })));
+      }).catch((error) => console.warn(JSON.stringify({ type: "bot-permission-audit-failed", reason: reasonWithoutStatement(error) })));
     }
     return after;
   }
@@ -554,7 +555,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
     if (decision === "approve" && !waiting.has(id) && updated.thread_id && resume) {
       const text = `${CONFIRM_RESUME_MARKER}${id}⟧\n用户确认了「${updated.title}」${updated.target ? `（${updated.target}）` : ""}。刚才那一步因为等确认停下了，现在接着做：再调用一次同样的工具、用同样的参数，这次不会再问。做完照常告诉用户结果。`;
       void resume({ ownerUserId: owner, agentId: updated.agent_id, threadId: updated.thread_id, requestId: id, text }).catch((error) =>
-        console.warn(JSON.stringify({ type: "confirm-resume-failed", id, reason: error instanceof Error ? error.message : String(error) })),
+        console.warn(JSON.stringify({ type: "confirm-resume-failed", id, reason: reasonWithoutStatement(error) })),
       );
     }
     return requestView(updated);

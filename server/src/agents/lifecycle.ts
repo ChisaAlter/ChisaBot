@@ -17,6 +17,7 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { botLifecycle, updateRoutingPreferences } from "../db/schema/lifecycle";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 /** The sentence every skipped dispatch records, so the trail and the run rows say the same thing. */
 export const BOT_PAUSED_REASON = "The Bot is paused, so it did not run.";
@@ -113,7 +114,7 @@ async function readPause(
       JSON.stringify({
         type: "bot-pause-check-failed",
         agentId,
-        error: error instanceof Error ? error.message : String(error),
+        error: reasonWithoutStatement(error),
       }),
     );
     return undefined;
@@ -419,7 +420,7 @@ export async function resolveUpdateRoute(input: {
     console.error(
       JSON.stringify({
         type: "update-route-lookup-failed",
-        error: error instanceof Error ? error.message : String(error),
+        error: reasonWithoutStatement(error),
       }),
     );
     return everything;

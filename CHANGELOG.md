@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.36 — 2026-10-19
+
+### 生产成熟度 · P2 诚实 UI / 中文一致 / 日志脱敏余量
+- **PRD-P2-01**：活动页状态中文 + 失败显眼；定时 run 卡死超过 20 分钟按失败展示（不再永远 busy）；已删机器人下的 active/paused 定时扫周期自动取消（从不 auto-resume）；Claude Code 零回合空闲会话标「空草稿」
+- **PRD-P2-02**：作曲器附件拒绝/合并/超量文案与 `picked-files` 拒因中文化
+- **PRD-P0-05 余**：更多 console 路径走 `reasonWithoutStatement`；CI `log-scrub-redline.test.ts` 红线
+
 ## 0.1.35 — 2026-10-19
 
 ### 生产成熟度 · 狗粮摩擦（浏览器 E2E follow-ups）

@@ -50,8 +50,8 @@ export function screenPickedFiles(
         reject(
           file,
           mediaType === "image/svg+xml"
-            ? `'${file.name}' is an SVG, which can carry scripts and is not accepted.`
-            : `'${file.name}' is an image format that is not supported.`,
+            ? `'${file.name}' 是 SVG，可能带脚本，不能上传。`
+            : `'${file.name}' 是不支持的图片格式。`,
         ),
       );
       continue;
@@ -76,7 +76,7 @@ export function screenPickedFiles(
 
     if (kind === "unsupported" && !unnamed) {
       rejected.push(
-        reject(file, `'${file.name}' is not a file type this chat accepts.`),
+        reject(file, `'${file.name}' 不是这个对话能接受的文件类型。`),
       );
       continue;
     }
@@ -85,7 +85,7 @@ export function screenPickedFiles(
       rejected.push(
         reject(
           file,
-          `'${file.name}' is too large for an image attachment (limit ${formatBytes(MAX_IMAGE_BYTES)}).`,
+          `'${file.name}' 图片太大（上限 ${formatBytes(MAX_IMAGE_BYTES)}）。`,
         ),
       );
       continue;
@@ -95,7 +95,7 @@ export function screenPickedFiles(
       rejected.push(
         reject(
           file,
-          `'${file.name}' is too large for a text attachment (limit ${formatBytes(MAX_FILE_BYTES)}).`,
+          `'${file.name}' 文本附件太大（上限 ${formatBytes(MAX_FILE_BYTES)}）。`,
         ),
       );
       continue;
@@ -108,7 +108,7 @@ export function screenPickedFiles(
       rejected.push(
         reject(
           file,
-          `'${file.name}' is larger than the ${formatBytes(MAX_IMAGE_BYTES)} limit for an attachment.`,
+          `'${file.name}' 超过附件上限 ${formatBytes(MAX_IMAGE_BYTES)}。`,
         ),
       );
       continue;
@@ -121,7 +121,7 @@ export function screenPickedFiles(
       rejected.push(
         reject(
           file,
-          `'${file.name}' was not added: a message can carry at most ${MAX_ATTACHMENTS_PER_MESSAGE} attachments.`,
+          `'${file.name}' 没有加上：一条消息最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件。`,
         ),
       );
       continue;

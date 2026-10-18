@@ -846,7 +846,49 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     return stuck.length;
   }
 
-  /** 原来那段对话还在吗？不在就用这个机器人最近的对话。 */
+  /**
+   * PRD-P2-01 余：已删 / 软删机器人下的 active|paused 定时自动取消（从不 auto-resume）。
+   * 结束态（done/cancelled）留给设置页一键清理；电车等 paused 孤儿同样取消，避免扫到已死机器人。
+   */
+  async function cancelOrphanSchedules(): Promise<number> {
+    const rows = await sql
+      .unsafe<{ id: string; agent_id: string }[]>(
+        `UPDATE chisabot_schedules s
+         SET status = 'cancelled', next_run_at = NULL, updated_at = now(),
+             last_result = coalesce(
+               nullif(trim(last_result), ''),
+               '机器人已删除，定时任务已自动取消'
+             )
+         WHERE s.status IN ('active', 'paused')
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_profiles p
+              WHERE p.agent_id = s.agent_id AND p.deleted_at IS NULL
+           )
+         RETURNING s.id, s.agent_id`,
+      )
+      .catch((error) => {
+        console.warn(
+          JSON.stringify({
+            type: "schedule-orphan-cancel-failed",
+            reason: reasonWithoutStatement(error).slice(0, 200),
+          }),
+        );
+        return [] as { id: string; agent_id: string }[];
+      });
+    if (rows.length) {
+      for (const row of rows) running.delete(row.id);
+      console.warn(
+        JSON.stringify({
+          type: "schedule-orphans-cancelled",
+          count: rows.length,
+          agents: [...new Set(rows.map((r) => r.agent_id))],
+        }),
+      );
+    }
+    return rows.length;
+  }
+
+    /** 原来那段对话还在吗？不在就用这个机器人最近的对话。 */
   async function threadFor(row: Row): Promise<string | null> {
     if (row.im_connection_id) return row.thread_id;
     const exists = await sql
@@ -1131,7 +1173,15 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           console.warn(
             JSON.stringify({
               type: "schedule-stuck-reclaim-failed",
-              reason: String(error).slice(0, 200),
+              reason: reasonWithoutStatement(error).slice(0, 200),
+            }),
+          ),
+        );
+        await cancelOrphanSchedules().catch((error) =>
+          console.warn(
+            JSON.stringify({
+              type: "schedule-orphan-cancel-tick-failed",
+              reason: reasonWithoutStatement(error).slice(0, 200),
             }),
           ),
         );
@@ -1142,7 +1192,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         console.error(
           JSON.stringify({
             type: "schedule-sweep-failed",
-            reason: String(error).slice(0, 300),
+            reason: reasonWithoutStatement(error).slice(0, 300),
           }),
         );
       } finally {
@@ -1479,6 +1529,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     runNow,
     sweep,
     reclaimStuckRuns,
+    cancelOrphanSchedules,
     start,
     stop,
     events,

@@ -9,6 +9,7 @@
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { reasonWithoutStatement } from "./db/query-failure";
 import {
   exportOpsMetricsFile,
   importOpsMetricsFile,
@@ -58,7 +59,7 @@ function scheduleFlush(): void {
     flushTimer = null;
     void flushOpsMetrics().catch((error) => {
       console.warn(
-        `[ops-metrics] flush failed: ${error instanceof Error ? error.message : String(error)}`,
+        `[ops-metrics] flush failed: ${reasonWithoutStatement(error)}`,
       );
     });
   }, FLUSH_DEBOUNCE_MS);
@@ -83,7 +84,7 @@ export async function loadOpsMetrics(
         : "";
     if (code !== "ENOENT") {
       console.warn(
-        `[ops-metrics] load failed (${path}): ${error instanceof Error ? error.message : String(error)}`,
+        `[ops-metrics] load failed (${path}): ${reasonWithoutStatement(error)}`,
       );
     }
     return false;

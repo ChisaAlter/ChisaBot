@@ -1,3 +1,7 @@
+## 0.1.36
+
+- P2 诚实 UI / 中文一致 / 日志脱敏余量：活动失败可见、CC 空草稿、孤儿定时自动取消、作曲器拒因中文、CI log-scrub 红线（电车仍暂停）
+
 ## 0.1.34
 
 - nginx sync-nginx apply-or-fail + 非电车定时 fail→pause 复验（电车仍暂停）

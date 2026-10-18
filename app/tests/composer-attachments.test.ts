@@ -79,7 +79,7 @@ describe("uploadToChannel", () => {
       jsonResponse(
         {
           error:
-            "'icon.svg' is an SVG, which can carry scripts and is not accepted.",
+            "'icon.svg' 是 SVG，可能带脚本，不能上传。",
         },
         415,
       )) as unknown as typeof fetch;
@@ -110,7 +110,7 @@ describe("uploadToChannel", () => {
 
     await expect(
       uploadToChannel("chan_1", "group_1")(file("receipt.png", "image/png")),
-    ).rejects.toThrow('Could not upload "receipt.png".');
+    ).rejects.toThrow('无法上传 "receipt.png"。');
   });
 
   test("a refusal whose `error` is empty throws the named fallback, not an empty refusal", async () => {
@@ -121,7 +121,7 @@ describe("uploadToChannel", () => {
 
     await expect(
       uploadToChannel("chan_1", "group_1")(file("receipt.png", "image/png")),
-    ).rejects.toThrow('Could not upload "receipt.png".');
+    ).rejects.toThrow('无法上传 "receipt.png"。');
   });
 
   test("a refusal whose `error` is not a string throws the named fallback", async () => {
@@ -130,7 +130,7 @@ describe("uploadToChannel", () => {
 
     await expect(
       uploadToChannel("chan_1", "group_1")(file("receipt.png", "image/png")),
-    ).rejects.toThrow('Could not upload "receipt.png".');
+    ).rejects.toThrow('无法上传 "receipt.png"。');
   });
 
   /**
@@ -151,7 +151,7 @@ describe("uploadToChannel", () => {
 
     const upload = uploadToChannel("chan_1", "group_1");
     await expect(upload(file("receipt.png", "image/png"))).rejects.toThrow(
-      'Could not upload "receipt.png".',
+      '无法上传 "receipt.png"。',
     );
     await expect(upload(file("receipt.png", "image/png"))).rejects.not.toThrow(
       /JSON/,
@@ -169,7 +169,7 @@ describe("uploadToChannel", () => {
 
     await expect(
       uploadToChannel("chan_1", "group_1")(file("receipt.png", "image/png")),
-    ).rejects.toThrow('Could not upload "receipt.png".');
+    ).rejects.toThrow('无法上传 "receipt.png"。');
   });
 });
 

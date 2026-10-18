@@ -21,6 +21,7 @@ import type {
   ComputerUpdate,
 } from "./provider";
 import type { ComputerStatus } from "./schema";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 const SERVICE_ACCOUNT = "/var/run/secrets/kubernetes.io/serviceaccount";
 const GROUP = "agents.x-k8s.io";
@@ -558,7 +559,7 @@ export function createSandboxComputerProvider(
             JSON.stringify({
               type: "computer-sandbox-update-resume-failed",
               botId,
-              reason: error instanceof Error ? error.message : String(error),
+              reason: reasonWithoutStatement(error),
               note: "The computer is on its new image and suspended; the next action wakes it.",
             }),
           );

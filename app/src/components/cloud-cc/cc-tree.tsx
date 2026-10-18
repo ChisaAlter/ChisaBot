@@ -163,7 +163,11 @@ export function CcTree({ onNavigate, variant = "rail" }: { onNavigate?: () => vo
                         <span className="cc-sess-title">{s.title || "新会话"}</span>
                         <span className="cc-sess-sub">{s.branch ?? (ws.source === "scratch" ? "自己的目录" : "")}</span>
                       </span>
-                      {STATUS_ZH[s.status] ? <span className="cc-sess-state">{STATUS_ZH[s.status]}</span> : null}
+                      {s.turns === 0 && s.status === "idle" ? (
+                        <span className="cc-sess-state is-empty-draft">{"空草稿"}</span>
+                      ) : STATUS_ZH[s.status] ? (
+                        <span className="cc-sess-state">{STATUS_ZH[s.status]}</span>
+                      ) : null}
                     </Link>
                     <button
                       aria-label={`删除会话「${s.title || "新会话"}」`}

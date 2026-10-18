@@ -115,7 +115,7 @@ async function uploaded(
 ) {
   await waitFor(() => {
     expect(queryByLabelText(`Remove ${name}`)).not.toBeNull();
-    expect((getByLabelText("Send message") as HTMLButtonElement).disabled).toBe(
+    expect((getByLabelText("发送消息") as HTMLButtonElement).disabled).toBe(
       false,
     );
   });
@@ -185,7 +185,7 @@ test("a composer with no channel keeps the button that says so, and takes no fil
     new File(["hello"], "ignored.txt", { type: "text/plain" }),
   ]);
   expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-    "no conversation here yet",
+    "还没有对话",
   );
 
   rerender(<Composer channelId="channel-1" compact onSubmit={() => {}} />);

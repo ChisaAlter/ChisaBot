@@ -522,7 +522,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         forwardedProps: { chisabotWorkerDelivery: { id: row.id }, chisabotLocalAgentDelivery: { id: row.id } },
       });
     } catch (error) {
-      console.warn(JSON.stringify({ type: "local-agent-delivery-queued", task: row.id, reason: error instanceof Error ? error.message : String(error) }));
+      console.warn(JSON.stringify({ type: "local-agent-delivery-queued", task: row.id, reason: reasonWithoutStatement(error) }));
       await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'queued', updated_at = now() WHERE thread_id = $1 AND id = $2", [row.thread_id, messageId]).catch(() => {});
       await enqueue().catch(() => {});
     }
@@ -642,7 +642,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           const content = await generate(row, system, messages, controller.signal);
           reply({ ok: true, content });
         } catch (error) {
-          reply({ ok: false, error: clip(error instanceof Error ? error.message : String(error), 400) });
+          reply({ ok: false, error: clip(reasonWithoutStatement(error), 400) });
         } finally {
           clearTimeout(timer);
         }
@@ -930,7 +930,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     if (!online.length) return [];
     const withSettings = await Promise.all(online.map(async (device) => ({ device, settings: await settingsFor(device.id) })));
     const guidance = guidanceText(withSettings);
-    const refuse = (error: unknown) => `${REFUSAL_MARKER} ${error instanceof Error ? error.message : String(error)}`;
+    const refuse = (error: unknown) => `${REFUSAL_MARKER} ${reasonWithoutStatement(error)}`;
     const runSchema = z.object({
       deviceId: z.string().min(1).optional().describe("目标电脑：设备 id 或名称。只有一台在线时可以省略。"),
       agent: z.enum(LOCAL_AGENT_KINDS).optional().describe("builtin = ChisaBot 内置；claude = Claude Code；codex = Codex CLI；opencode / gemini / aider。省略 = 这台电脑的默认 agent。"),

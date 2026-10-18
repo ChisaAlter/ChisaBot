@@ -280,9 +280,8 @@ function overCap(draft: ComposerDraft): boolean {
 /** What the person is told when Send is held shut by the cap, and what to do about it. */
 function tooManyStagedReason(count: number): string {
   return (
-    `${count} attachments are staged and a message can carry at most ` +
-    `${MAX_ATTACHMENTS_PER_MESSAGE}. Remove ` +
-    `${count - MAX_ATTACHMENTS_PER_MESSAGE} to send the rest.`
+    `已经选了 ${count} 个附件，一条消息最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个。` +
+    `再去掉 ${count - MAX_ATTACHMENTS_PER_MESSAGE} 个才能发送。`
   );
 }
 
@@ -295,11 +294,8 @@ function tooManyStagedReason(count: number): string {
  */
 const DROPPED_REASON: Record<DroppedAttachmentCause, string> = {
   "merged-over-cap":
-    "dropped when queued messages were merged into one: a " +
-    `message can carry at most ${MAX_ATTACHMENTS_PER_MESSAGE} ` +
-    "attachments.",
-  "queued-message-removed":
-    "removed along with the queued message it was attached to.",
+    `合并排队消息时去掉了：一条消息最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件。`,
+  "queued-message-removed": "随排队消息一起去掉了。",
 };
 
 /**
@@ -327,11 +323,9 @@ const DROPPED_REASON: Record<DroppedAttachmentCause, string> = {
  * second time.
  */
 const UNACCEPTED_DROP_REASON = {
-  "cannot-send":
-    "was not attached: this conversation can no longer take messages.",
+  "cannot-send": "没有附上：这个对话已经不能发消息了。",
   "no-conversation":
-    "was not attached: there is no conversation here yet. Send this " +
-    "message first, then attach to the one it opens.",
+    "没有附上：还没有对话。先发出这条消息，再往打开的对话里附文件。",
 } as const;
 
 export function Composer({

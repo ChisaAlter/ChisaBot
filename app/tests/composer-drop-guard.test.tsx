@@ -151,10 +151,10 @@ test("a drop with no channel behind it says so, and says what to do instead", as
   const alert = await findByRole("alert");
   expect(alert.textContent).toContain("screenshot.png");
   // The "not yet" sentence: there is a next step, and it is the one the compose screen is for.
-  expect(alert.textContent).toContain("no conversation here yet");
+  expect(alert.textContent).toContain("还没有对话");
   // And NOT the other one. Telling somebody on `/channel/new` that their conversation is over
   // would be false about a conversation that has not started.
-  expect(alert.textContent).not.toContain("can no longer take messages");
+  expect(alert.textContent).not.toContain("已经不能发消息");
 });
 
 test("a drop on a disabled conversation says that one instead", async () => {
@@ -171,9 +171,9 @@ test("a drop on a disabled conversation says that one instead", async () => {
 
   const alert = await findByRole("alert");
   expect(alert.textContent).toContain("receipt.png");
-  expect(alert.textContent).toContain("can no longer take messages");
+  expect(alert.textContent).toContain("已经不能发消息");
   // No "send this first" advice on a conversation where sending is the thing that cannot happen.
-  expect(alert.textContent).not.toContain("no conversation here yet");
+  expect(alert.textContent).not.toContain("还没有对话");
 });
 
 test("two files refused at once produce two lines, one per file", async () => {
@@ -333,11 +333,11 @@ test("a disabled composer with no channel does not tell people to send first", a
 
   const alert = await findByRole("alert");
   expect(alert.textContent).toContain("late.png");
-  expect(alert.textContent).toContain("can no longer take messages");
+  expect(alert.textContent).toContain("已经不能发消息");
   // The half that made the old sentence a lie, asserted rather than assumed: the control it sent
   // them to is shut.
-  expect((getByLabelText("Send message") as HTMLButtonElement).disabled).toBe(
+  expect((getByLabelText("发送消息") as HTMLButtonElement).disabled).toBe(
     true,
   );
-  expect(alert.textContent).not.toContain("Send this message first");
+  expect(alert.textContent).not.toContain("先发出这条消息");
 });

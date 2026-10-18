@@ -43,6 +43,7 @@ import { workItems } from "../db/schema/work";
 import type { CheckPrivateShare } from "../proactive/private-share";
 import type { TurnRunner } from "../turns/types";
 import type { WorkQueue } from "../work/queue";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 export const GROUP_TURN_KIND = "group.turn";
 
@@ -886,7 +887,7 @@ export function createGroupConversations(deps: {
         console.error(
           JSON.stringify({
             type: "group-turn-after-reply-error",
-            error: error instanceof Error ? error.message : String(error),
+            error: reasonWithoutStatement(error),
             context: { channelId: turn.channelId, agentId, rowId: id },
             timestamp: new Date().toISOString(),
           }),
@@ -930,7 +931,7 @@ export function createGroupConversations(deps: {
       else
         await deps.store.finish(
           id,
-          error instanceof Error ? error.message : String(error),
+          reasonWithoutStatement(error),
           "failed",
         );
     }
@@ -1067,7 +1068,7 @@ export function createGroupConversations(deps: {
         else
           await deps.store.finish(
             row.id,
-            error instanceof Error ? error.message : String(error),
+            reasonWithoutStatement(error),
             "failed",
           );
         throw error;
@@ -1249,7 +1250,7 @@ export function createGroupConversations(deps: {
           key: item.key,
           owner: deps.owner,
           delayMs: 10_000,
-          reason: error instanceof Error ? error.message : String(error),
+          reason: reasonWithoutStatement(error),
         });
         throw error;
       } finally {

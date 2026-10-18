@@ -26,6 +26,7 @@ import {
   workItems,
 } from "../db/schema";
 import { DEFAULT_MAX_ATTEMPTS } from "../work/queue";
+import { ACTIVITY_STALE_RUN_MS } from "../../../shared/activity-labels";
 
 export type ActivityKind =
   | "schedule"
@@ -41,7 +42,7 @@ export type ActivityItem = {
   kind: ActivityKind;
   title: string;
   detail: string | null;
-  /** A short state a person reads: running, waiting for you, queued, succeeded, failed… */
+  /** Machine status code (running / failed / …); UI maps via activityStatusZh. */
   status: string;
   /** When it started, is due, or ended, depending on the section. ISO-8601. */
   at: string;
@@ -198,20 +199,33 @@ export function createActivityStore(database: Database) {
           for (const run of runs) {
             const schedule = byId.get(run.schedule_id);
             if (!schedule) continue;
+            const startedMs = new Date(run.started_at).getTime();
+            const staleRunning =
+              run.status === "running" &&
+              Number.isFinite(startedMs) &&
+              now - startedMs > ACTIVITY_STALE_RUN_MS;
+            const status = staleRunning
+              ? "failed"
+              : run.status === "ok"
+                ? "succeeded"
+                : run.status;
             const item: ActivityItem = {
               id: `schedule-run:${run.id}`,
               kind: "schedule",
               title: clip(schedule.title || schedule.instruction, 120) ?? "定时任务",
-              detail: clip(run.result),
-              status: run.status === "ok" ? "succeeded" : run.status,
+              detail: staleRunning
+                ? "运行超时未结束，已按失败展示"
+                : clip(run.result),
+              status,
               at: iso(run.finished_at ?? run.started_at),
               channelId: channelOf.get(schedule.thread_id) ?? null,
-              needsYou: run.status === "waiting",
+              needsYou: run.status === "waiting" || staleRunning,
               stoppable: false,
               cancellable: false,
             };
             // queued = handed into a turn already running in that conversation (final for the run).
-            if (run.status === "running" || run.status === "waiting")
+            // Stale "running" must not sit in 进行中 forever (PRD-P2-01).
+            if (!staleRunning && (run.status === "running" || run.status === "waiting"))
               activity.inProgress.push(item);
             else activity.completed.push(item);
           }
@@ -235,8 +249,8 @@ export function createActivityStore(database: Database) {
             kind: "responsibility",
             title: goal.title,
             detail: goal.subscriptions.length
-              ? `Wakes on ${goal.subscriptions.map((s) => `${s.source}/${s.eventType}`).join(", ")}`
-              : "Runs when asked",
+              ? `订阅：${goal.subscriptions.map((s) => `${s.source}/${s.eventType}`).join("、")}`
+              : "按需运行",
             status: "active",
             at: iso(goal.updatedAt),
             channelId: goal.channelId,
@@ -308,8 +322,8 @@ export function createActivityStore(database: Database) {
         const item: ActivityItem = {
           id: hop.key,
           kind: "handoff",
-          title: clip(work.task, 120) ?? "Delegated task",
-          detail: asked ? `Delegated to ${other}` : `Asked by ${other}`,
+          title: clip(work.task, 120) ?? "委派任务",
+          detail: asked ? `已委派给 ${other}` : `由 ${other} 委派`,
           status: hop.finishedAt
             ? hop.lastError === "Stopped by the person"
               ? "stopped"
@@ -352,7 +366,7 @@ export function createActivityStore(database: Database) {
         activity.inProgress.push({
           id: `approval:${approval.id}`,
           kind: "approval",
-          title: `Approve ${approval.action.toolRef}`,
+          title: `批准 ${approval.action.toolRef}`,
           detail: approval.action.effect,
           status: "waiting for you",
           at: iso(approval.createdAt),
@@ -384,7 +398,7 @@ export function createActivityStore(database: Database) {
         activity.inProgress.push({
           id: `question:${row.key}`,
           kind: "question",
-          title: clip(question.question, 160) ?? "A question",
+          title: clip(question.question, 160) ?? "一个问题",
           detail: null,
           status: "waiting for you",
           at: iso(row.createdAt),
@@ -421,7 +435,7 @@ export function createActivityStore(database: Database) {
         const item: ActivityItem = {
           id: row.key,
           kind: "follow_up",
-          title: clip(payload.reason, 160) ?? "Follow-up",
+          title: clip(payload.reason, 160) ?? "跟进",
           detail: clip(payload.outcome?.detail ?? payload.instruction),
           status: row.finishedAt
             ? (payload.outcome?.status ?? "done")

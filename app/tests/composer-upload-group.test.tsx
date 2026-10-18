@@ -101,7 +101,7 @@ test("two batches staged in one tick cannot exceed the per-message cap", async (
   // have been refused go out first and be counted — an over-count shows up here as a surplus
   // rather than as a wait that merely has not finished yet.
   await waitFor(() =>
-    expect(view.queryAllByLabelText(/^Remove /)).toHaveLength(
+    expect(view.queryAllByLabelText(/^移除 /)).toHaveLength(
       MAX_ATTACHMENTS_PER_MESSAGE,
     ),
   );
@@ -116,7 +116,7 @@ test("two batches staged in one tick cannot exceed the per-message cap", async (
   // rejection-count problem rather than as a stale literal.
   expect(
     view.queryAllByText(
-      new RegExp(`at most ${MAX_ATTACHMENTS_PER_MESSAGE} attachments`),
+      new RegExp(`最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件`),
     ),
   ).toHaveLength(2);
 });
@@ -174,7 +174,7 @@ test("attachments parked in the queue are counted against the per-message cap", 
   await waitFor(() =>
     expect(
       view.queryAllByText(
-        new RegExp(`at most ${MAX_ATTACHMENTS_PER_MESSAGE} attachments`),
+        new RegExp(`最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件`),
       ),
     ).toHaveLength(1),
   );
@@ -205,7 +205,7 @@ test("parked attachments are counted alongside the ones on the strip", async () 
   await waitFor(() =>
     expect(
       view.queryAllByText(
-        new RegExp(`at most ${MAX_ATTACHMENTS_PER_MESSAGE} attachments`),
+        new RegExp(`最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件`),
       ),
     ).toHaveLength(1),
   );

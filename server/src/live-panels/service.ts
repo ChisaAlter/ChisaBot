@@ -22,6 +22,7 @@ import { lintPanelSpec, PANEL_DESIGN_GUIDE } from "./design";
 import type { AppVariables } from "../auth/guards";
 import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
 import { LivePanelError, type LivePanelRow, type LivePanelStore, MIN_REFRESH_MINUTES, normalizeRefreshAt } from "./store";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 export type LivePanelDto = {
   id: string;
@@ -241,7 +242,7 @@ export function createLivePanelService(deps: {
         if (!updated && !failedNow) await store.fail(ownerUserId, id, "这次刷新没有拿到新数据（机器人没有更新面板），稍后会再试。");
         log({ type: "live-panel-refresh", id, ok: Boolean(updated), ms: Date.now() - startedAt });
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = reasonWithoutStatement(error);
         if (takeHumanControlBlock(id, startedAt) || /A person has control|Take a fresh browser snapshot/.test(reason)) {
           await store.defer(ownerUserId, id, CONTROL_HELD_NOTE, 5 * 60_000, row.failures).catch(() => {});
         } else if (controller.signal.aborted && String(controller.signal.reason?.message ?? controller.signal.reason) === BOT_DELETED) {
@@ -302,7 +303,7 @@ export function createLivePanelService(deps: {
         await refreshNow(row.ownerUserId, row.id).catch(() => {});
       }
     } catch (error) {
-      log({ type: "live-panel-sweep-failed", reason: error instanceof Error ? error.message : String(error) });
+      log({ type: "live-panel-sweep-failed", reason: reasonWithoutStatement(error) });
     }
   }
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -317,7 +318,7 @@ export function createLivePanelService(deps: {
       for (const row of rows.slice(0, 3)) await refreshNow(ownerUserId, row.id).catch(() => {});
       if (rows.length) log({ type: "live-panel-resume-after-handback", ids: rows.map((r) => r.id) });
     } catch (error) {
-      log({ type: "live-panel-resume-failed", reason: error instanceof Error ? error.message : String(error) });
+      log({ type: "live-panel-resume-failed", reason: reasonWithoutStatement(error) });
     }
   }
 
@@ -588,7 +589,7 @@ export function createLivePanelService(deps: {
         void store
           .sweepOrphans()
           .then((ids) => ids.length && log({ type: "live-panel-orphans-removed", removed: ids.length, ids }))
-          .catch((error) => log({ type: "live-panel-orphan-sweep-failed", reason: error instanceof Error ? error.message : String(error) }));
+          .catch((error) => log({ type: "live-panel-orphan-sweep-failed", reason: reasonWithoutStatement(error) }));
       void store
         .releaseOrphanLeases()
         .then((n) => n && log({ type: "live-panel-orphan-leases", released: n }))
