@@ -20,6 +20,10 @@ export const OPS_CODES = {
   SMOKE_MODEL_FAIL: "OPS_SMOKE_MODEL_FAIL",
   /** Chat send never reached the server (tunnel / offline). */
   SEND_UNREACHABLE: "SEND_UNREACHABLE",
+  /** Send hung: run neither persisted nor finished within send watchdog. */
+  SEND_HANG: "SEND_HANG",
+  /** Message persisted but reply never finished within reply watchdog. */
+  SEND_REPLY_HANG: "SEND_REPLY_HANG",
   /** Live computer stream dropped without a clean close. */
   STREAM_DISCONNECT: "STREAM_DISCONNECT",
   /** Outbound fetch refused by SSRF / egress floor. */

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyScheduleReply, formatWhen, formatWhenAbsolute } from "./schedules";
+import { classifyScheduleReply, failStreakShouldPause, formatWhen, formatWhenAbsolute } from "./schedules";
 
 describe("classifyScheduleReply (FIX-01)", () => {
   test("marks deferred confirm as waiting", () => {
@@ -40,5 +40,15 @@ describe("formatWhenAbsolute (FIX-09)", () => {
     expect(abs).toMatch(/10月17日/);
     // live UI may still say 今天
     expect(formatWhen(at, "Asia/Shanghai", now)).toMatch(/今天/);
+  });
+});
+
+
+describe("failStreakShouldPause (Track B)", () => {
+  test("pauses only after N consecutive failures", () => {
+    expect(failStreakShouldPause(["failed", "failed"], 3)).toBe(false);
+    expect(failStreakShouldPause(["failed", "failed", "failed"], 3)).toBe(true);
+    expect(failStreakShouldPause(["failed", "ok", "failed", "failed", "failed"], 3)).toBe(false);
+    expect(failStreakShouldPause(["failed", "failed", "failed", "ok"], 3)).toBe(true);
   });
 });

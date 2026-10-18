@@ -10,6 +10,8 @@ import { OPS_CODES, type OpsCode, opsLogLine } from "./ops-codes";
 /** Codes that enter the error-budget snapshot (stable contract for monitors). */
 export const BUDGET_CODES = [
   OPS_CODES.SEND_UNREACHABLE,
+  OPS_CODES.SEND_HANG,
+  OPS_CODES.SEND_REPLY_HANG,
   OPS_CODES.STREAM_DISCONNECT,
   OPS_CODES.SSRF_DENIED,
 ] as const;

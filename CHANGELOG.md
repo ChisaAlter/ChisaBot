@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.29
+
+- Production maturity **Track B** (stability): hung-turn stop clears busy + force-unlock; 25min wall-clock abort; periodic expired lock sweep; connect snapshot capped by count/bytes for long threads.
+- Schedules: reclaim stuck `running` (>20m) during sweep; auto-pause after 3 consecutive failures (never auto-resume); settings UI「需要关注」+ orphan live cleanup for deleted bots.
+
 ## 0.1.28
 
 - Ops maturity (PRD-P1-02…06): process-local SEND/STREAM/SSRF error-budget counters on `GET /api/admin/health` (`budgets`); client beacon `POST /api/ops/budget`; `guardedFetch` / computer-stream proxy bump on deny/disconnect.

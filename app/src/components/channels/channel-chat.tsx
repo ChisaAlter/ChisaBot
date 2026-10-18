@@ -1,4 +1,3 @@
-import { readImageDims } from "@/lib/image-dims";
 import type { Message } from "@ag-ui/core";
 import {
   type Attachment,
@@ -7,24 +6,23 @@ import {
   useAgent,
   useCopilotKit,
 } from "@copilotkit/react-core/v2";
-import { observeApprovalAgent } from "@/lib/copilot/approval-context";
-import { panelAuthoringForwardedProps, panelKeys } from "@/lib/panels/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { HandoffResumeNotice } from "@/components/computer/handoff-resume-notice";
+import { BotModelSelector } from "@/components/agents/bot-model-selector";
+import { ContextMeter } from "@/components/agents/context-meter";
 import { attachmentModality } from "@/components/channels/chat-messages";
 import { toAgentOptions } from "@/components/channels/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
-import { ContextMeter } from "@/components/agents/context-meter";
-import { PermissionChip } from "@/components/chat/permission-chip";
-import { BotModelSelector } from "@/components/agents/bot-model-selector";
-import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
-import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
 import {
   seedMessage,
   takeFirstMessage,
   transcriptMessages,
 } from "@/components/channels/transcript-messages";
+import { PermissionChip } from "@/components/chat/permission-chip";
+import { HandoffResumeNotice } from "@/components/computer/handoff-resume-notice";
+import { useAsyncAction } from "@/components/ui/async-action";
+import { Button } from "@/components/ui/button";
+import { useReportBusy } from "@/lib/activity";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import {
@@ -37,10 +35,26 @@ import {
   channelKeys,
 } from "@/lib/channels/queries";
 import { bindAgentBot, useActiveBot } from "@/lib/copilot/active-bot";
+import { observeApprovalAgent } from "@/lib/copilot/approval-context";
+import type { ThreadActivity } from "@/lib/copilot/bot-thread";
+import { readSync } from "@/lib/copilot/bot-thread";
+import { reportChatRunning } from "@/lib/copilot/computer-activity";
+import {
+  CONNECTION_LOST_REASON,
+  forceUnlockThread,
+  isConnectionDrop,
+  raceSendWatchdog,
+  reportBudgetEvent,
+  SEND_HANG_REASON,
+  SEND_REPLY_HANG_REASON,
+  SEND_REPLY_WATCHDOG_MS,
+  SEND_UNREACHABLE_REASON,
+  SEND_WATCHDOG_MS,
+  settleDroppedTurn,
+  storedTurnAnswered,
+} from "@/lib/copilot/connection-drop";
 import { ConversationProvider } from "@/lib/copilot/conversation";
 import { afterMs, joinWithin } from "@/lib/copilot/join-thread";
-import type { ThreadActivity } from "@/lib/copilot/bot-thread";
-import { useThreadActivity, withStoredTail } from "@/lib/copilot/thread-activity";
 import {
   contentText,
   lastUserIndex,
@@ -49,26 +63,40 @@ import {
   truncateConversation,
   withEditedText,
 } from "@/lib/copilot/regenerate";
-import { useConversationSync } from "@/lib/copilot/use-conversation-sync";
 import { repairUnansweredToolCalls } from "@/lib/copilot/repair-history";
-import { isAbortFailure, pausedForApproval, stoppedReason, unfinishedTurnReason } from "@/lib/copilot/stopped-turn";
-import { readSync } from "@/lib/copilot/bot-thread";
-import { CONNECTION_LOST_REASON, SEND_HANG_REASON, SEND_REPLY_HANG_REASON, SEND_REPLY_WATCHDOG_MS, SEND_UNREACHABLE_REASON, SEND_WATCHDOG_MS, isConnectionDrop, raceSendWatchdog, reportBudgetEvent, settleDroppedTurn, storedTurnAnswered } from "@/lib/copilot/connection-drop";
-import { useFallbackTurns, useLastSentAt, useStoppedTurnIds } from "@/lib/copilot/turn-compaction";
+import {
+  isAbortFailure,
+  pausedForApproval,
+  stoppedReason,
+  unfinishedTurnReason,
+} from "@/lib/copilot/stopped-turn";
+import {
+  useThreadActivity,
+  withStoredTail,
+} from "@/lib/copilot/thread-activity";
 import { queueMessage } from "@/lib/copilot/thread-inbox";
-import { useThreadInbox } from "@/lib/copilot/use-thread-inbox";
-import { reportChatRunning } from "@/lib/copilot/computer-activity";
 import {
   HISTORY_RETRY_DELAYS_MS,
   readThreadMessages,
   type StoredThread,
   THREAD_MESSAGES_RETRY_DEADLINE_MS,
 } from "@/lib/copilot/thread-messages";
-import { cachedTranscript, rememberTranscript } from "@/lib/copilot/transcript-cache";
-import { useAsyncAction } from "@/components/ui/async-action";
-import { Button } from "@/components/ui/button";
+import {
+  cachedTranscript,
+  rememberTranscript,
+} from "@/lib/copilot/transcript-cache";
+import {
+  useFallbackTurns,
+  useLastSentAt,
+  useStoppedTurnIds,
+} from "@/lib/copilot/turn-compaction";
+import { useConversationSync } from "@/lib/copilot/use-conversation-sync";
+import { useThreadInbox } from "@/lib/copilot/use-thread-inbox";
+import { readImageDims } from "@/lib/image-dims";
+import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
+import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
+import { panelAuthoringForwardedProps, panelKeys } from "@/lib/panels/api";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
-import { useReportBusy } from "@/lib/activity";
 import { queryClient } from "@/query-client";
 import { newId } from "../../lib/new-id";
 
@@ -153,7 +181,12 @@ function messageText(message: Message): string {
   if (!Array.isArray(message.content)) return "";
   return message.content
     .flatMap((part) =>
-      part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part && typeof part.text === "string"
+      part &&
+      typeof part === "object" &&
+      "type" in part &&
+      part.type === "text" &&
+      "text" in part &&
+      typeof part.text === "string"
         ? [part.text]
         : [],
     )
@@ -163,7 +196,9 @@ function messageText(message: Message): string {
 /** 左栏「最后一句」（可能被截短、空白被压过）是不是已经在这段对话里了：比较最后几条机器人消息的开头。 */
 function saysActivity(messages: readonly Message[], text: string): boolean {
   const squash = (value: string) => value.replace(/\s+/g, " ").trim();
-  const head = squash(text).replace(/[…\.]+$/, "").slice(0, 24);
+  const head = squash(text)
+    .replace(/[….]+$/, "")
+    .slice(0, 24);
   if (!head) return false;
   let seen = 0;
   for (let index = messages.length - 1; index >= 0 && seen < 3; index -= 1) {
@@ -214,7 +249,12 @@ function uploadedAttachment(attachment: Attachment): {
   filename?: string;
 } {
   const metadata = attachment.metadata as
-    | { attachmentId?: unknown; filename?: unknown; width?: unknown; height?: unknown }
+    | {
+        attachmentId?: unknown;
+        filename?: unknown;
+        width?: unknown;
+        height?: unknown;
+      }
     | undefined;
   const attachmentId = metadata?.attachmentId;
   if (typeof attachmentId !== "string") {
@@ -347,11 +387,16 @@ export function ChannelChat({
    * （那会让滚动容器把每一段当成「刚发的一轮」对齐到顶上，停在半截历史）。先画这台设备上次看到的样子
    * （`transcript-cache`），没有就等存储读到——存储读和接入同时开始，谁也不等谁——再没有就是骨架。
    */
-  const [cached] = useState(() => (seed === null ? cachedTranscript(channel.threadId) : null));
+  const [cached] = useState(() =>
+    seed === null ? cachedTranscript(channel.threadId) : null,
+  );
   const [early, setEarly] = useState<readonly Message[] | null>(null);
   const earlyRead = useRef<Promise<StoredThread> | null | undefined>(undefined);
   if (earlyRead.current === undefined) {
-    earlyRead.current = seed === null ? readThreadMessages(channel.threadId, runtimeAgentId) : null;
+    earlyRead.current =
+      seed === null
+        ? readThreadMessages(channel.threadId, runtimeAgentId)
+        : null;
   }
   /** 打开时那次读存储读到了：接入之后不用为「最后一句是机器人说的」再读一遍。 */
   const mountReadOk = useRef(false);
@@ -360,7 +405,12 @@ export function ChannelChat({
     if (!read) return;
     let alive = true;
     void read.then((stored) => {
-      if (alive && stored.availability === "ready" && stored.messages.length > 0) setEarly(stored.messages);
+      if (
+        alive &&
+        stored.availability === "ready" &&
+        stored.messages.length > 0
+      )
+        setEarly(stored.messages);
     });
     return () => {
       alive = false;
@@ -531,7 +581,14 @@ export function ChannelChat({
     return () => {
       current = false;
     };
-  }, [copilotkit, agent, isReady, channel.threadId, runtimeAgentId, retryHistoryRead]);
+  }, [
+    copilotkit,
+    agent,
+    isReady,
+    channel.threadId,
+    runtimeAgentId,
+    retryHistoryRead,
+  ]);
 
   /*
    * 刷新 / 切后台 / 换设备后接着看正在写的回答，别的设备发的消息几秒内出现（DESIGN.md §64，CB-041 / CB-043）。
@@ -567,11 +624,20 @@ export function ChannelChat({
     (options: { agent: typeof agent }) => copilotkit.connectAgent(options),
     [copilotkit],
   );
-  const suppressConnectDuringSend = useCallback(() => sendInFlightRef.current, []);
-  useConversationSync(channel.threadId, agent, connectChat as never, onJoinedActivity, {
-    liveTail: true,
-    suppressConnect: suppressConnectDuringSend,
-  });
+  const suppressConnectDuringSend = useCallback(
+    () => sendInFlightRef.current,
+    [],
+  );
+  useConversationSync(
+    channel.threadId,
+    agent,
+    connectChat as never,
+    onJoinedActivity,
+    {
+      liveTail: true,
+      suppressConnect: suppressConnectDuringSend,
+    },
+  );
   useEffect(() => {
     let wasRunning = false;
     return onJoinedActivity((value) => {
@@ -583,11 +649,17 @@ export function ChannelChat({
         await new Promise((resolve) => setTimeout(resolve, 600));
         const current = agentRef.current;
         if (current.isRunning) return;
-        const stored = await readThreadMessages(channel.threadId, runtimeAgentId);
+        const stored = await readThreadMessages(
+          channel.threadId,
+          runtimeAgentId,
+        );
         if (stored.availability === "unavailable") return;
         const latest = agentRef.current;
         if (latest.isRunning) return;
-        const merged = withStoredTail(mergeStoredMessages(latest.messages, stored.messages), stored.messages);
+        const merged = withStoredTail(
+          mergeStoredMessages(latest.messages, stored.messages),
+          stored.messages,
+        );
         if (merged !== latest.messages) latest.setMessages(merged);
       })();
     });
@@ -692,7 +764,10 @@ export function ChannelChat({
         !sameActivity(selfReportedBotActivity.current, initialActivity) &&
         // 打开时读存储已经读到了左栏说的那一句（DESIGN.md §83）：不再连读三遍。存储落后（还没有这一句）
         // 时照旧重试，等它写进来。之后的新动静照旧由上面的订阅拉。
-        !(mountReadOk.current && saysActivity(agentRef.current.messages, initialActivity.text))
+        !(
+          mountReadOk.current &&
+          saysActivity(agentRef.current.messages, initialActivity.text)
+        )
       ) {
         pull();
       }
@@ -721,7 +796,8 @@ export function ChannelChat({
     const threadId = channel.threadId;
     // 恢复没完成就离开：手里只有回放的一部分，不记（下次会先画出半截）。
     return () => {
-      if (restoredRef.current) rememberTranscript(threadId, agentRef.current.messages);
+      if (restoredRef.current)
+        rememberTranscript(threadId, agentRef.current.messages);
     };
   }, [channel.threadId]);
 
@@ -897,7 +973,10 @@ export function ChannelChat({
     const panelAuthoring = await panelAuthoringForwardedProps(
       runtimeAgentId,
       trimmed,
-      () => void modelQueryClient.invalidateQueries({ queryKey: panelKeys.session(runtimeAgentId) }),
+      () =>
+        void modelQueryClient.invalidateQueries({
+          queryKey: panelKeys.session(runtimeAgentId),
+        }),
     );
     const userMessageId = newId();
     target.addMessage({
@@ -924,20 +1003,27 @@ export function ChannelChat({
         agent: target,
         ...(panelAuthoring ? { forwardedProps: panelAuthoring } : {}),
       });
-      const race = await raceSendWatchdog(runPromise, { afterMs, timeoutMs: SEND_WATCHDOG_MS });
+      const race = await raceSendWatchdog(runPromise, {
+        afterMs,
+        timeoutMs: SEND_WATCHDOG_MS,
+      });
       if (race === "timeout") {
         try {
           copilotkit.stopAgent({ agent: target });
         } catch {
           /* stop best-effort */
         }
-        const stored = await readThreadMessages(channel.threadId, runtimeAgentId).catch(() => null);
+        const stored = await readThreadMessages(
+          channel.threadId,
+          runtimeAgentId,
+        ).catch(() => null);
         const persisted =
           stored != null &&
           stored.availability === "ready" &&
           stored.messages.some((message) => message.id === userMessageId);
         if (!persisted) {
-          reportBudgetEvent("SEND_UNREACHABLE");
+          reportBudgetEvent("SEND_HANG");
+          forceUnlockThread(channel.threadId);
           failRef.current(SEND_HANG_REASON);
           // Still let runPromise settle in the background so CopilotKit counters clear.
           void runPromise.catch(() => undefined);
@@ -955,6 +1041,8 @@ export function ChannelChat({
           } catch {
             /* stop best-effort */
           }
+          reportBudgetEvent("SEND_REPLY_HANG");
+          forceUnlockThread(channel.threadId);
           failRef.current(SEND_REPLY_HANG_REASON);
           void runPromise.catch(() => undefined);
           throw new Error(SEND_REPLY_HANG_REASON);
@@ -978,14 +1066,23 @@ export function ChannelChat({
         running: async () => {
           const reply = await readSync(runtimeAgentId, channel.threadId);
           if (reply === "unsupported") return "unsupported";
-          return reply?.thread && reply.thread.threadId === channel.threadId ? reply.thread.running : null;
+          return reply?.thread && reply.thread.threadId === channel.threadId
+            ? reply.thread.running
+            : null;
         },
         answered: async () => {
-          const stored = await readThreadMessages(channel.threadId, runtimeAgentId);
+          const stored = await readThreadMessages(
+            channel.threadId,
+            runtimeAgentId,
+          );
           if (stored.availability === "unavailable") return null;
-          if (!storedTurnAnswered(stored.messages as never, userMessageId)) return false;
+          if (!storedTurnAnswered(stored.messages as never, userMessageId))
+            return false;
           const latest = agentRef.current;
-          const merged = withStoredTail(mergeStoredMessages(latest.messages, stored.messages), stored.messages);
+          const merged = withStoredTail(
+            mergeStoredMessages(latest.messages, stored.messages),
+            stored.messages,
+          );
           if (merged !== latest.messages) latest.setMessages(merged);
           return true;
         },
@@ -993,9 +1090,14 @@ export function ChannelChat({
       if (outcome === "lost" || outcome === "unreachable") {
         const current = agentRef.current;
         const closed = repairUnansweredToolCalls(current.messages);
-        if (closed !== current.messages) current.setMessages(closed as typeof current.messages);
+        if (closed !== current.messages)
+          current.setMessages(closed as typeof current.messages);
         if (outcome === "unreachable") reportBudgetEvent("SEND_UNREACHABLE");
-        failRef.current(outcome === "unreachable" ? SEND_UNREACHABLE_REASON : CONNECTION_LOST_REASON);
+        failRef.current(
+          outcome === "unreachable"
+            ? SEND_UNREACHABLE_REASON
+            : CONNECTION_LOST_REASON,
+        );
       } else {
         awaitingReply.current = false;
         activity.kick();
@@ -1007,8 +1109,15 @@ export function ChannelChat({
      * （工具出错 / 续轮到上限，CopilotKit 不再发起下一轮），或者一条空回复——都要在聊天里说清楚并给「重试」，
      * 不能静默结束。等审批卡、用户自己按停止的不算（awaitingReply 已被放下 / 最后一条是没有结果的工具调用）。
      */
-    if (awaitingReply.current && turnFailure.current === null && !pausedForApproval()) {
-      const unfinished = unfinishedTurnReason(agentRef.current.messages as never, existingMessageIds);
+    if (
+      awaitingReply.current &&
+      turnFailure.current === null &&
+      !pausedForApproval()
+    ) {
+      const unfinished = unfinishedTurnReason(
+        agentRef.current.messages as never,
+        existingMessageIds,
+      );
       if (unfinished) failRef.current(unfinished);
       else awaitingReply.current = false;
     } else if (pausedForApproval()) {
@@ -1073,7 +1182,8 @@ export function ChannelChat({
     // A pasted screenshot with no caption is still a message to send: `canSendDraft` already
     // unlocks the button for exactly this case, so refusing it here would leave the button
     // enabled and inert.
-    if (!trimmed && attachments.length === 0 && contentOverride === undefined) return "";
+    if (!trimmed && attachments.length === 0 && contentOverride === undefined)
+      return "";
 
     // Seeds and component actions share the same gate as the composer.
     assertModelSelectionNotSaving(modelQueryClient, runtimeAgentId);
@@ -1090,7 +1200,12 @@ export function ChannelChat({
       void setChannelBusy({ channelId: channel.id, busy: true });
     }
     try {
-      return await deliver(trimmed, skillInstructions, attachments, contentOverride);
+      return await deliver(
+        trimmed,
+        skillInstructions,
+        attachments,
+        contentOverride,
+      );
     } finally {
       turnsRef.current -= 1;
       setTurnsInFlight(turnsRef.current);
@@ -1145,7 +1260,11 @@ export function ChannelChat({
           );
         const content = typeof reply?.content === "string" ? reply.content : "";
         // 一轮里每个接力的 run 结束都会来这里；同一条回答只报一次。
-        if (content && reply && lastReportedReply.current !== `${reply.id}:${content.length}`) {
+        if (
+          content &&
+          reply &&
+          lastReportedReply.current !== `${reply.id}:${content.length}`
+        ) {
           lastReportedReply.current = `${reply.id}:${content.length}`;
           reportRef.current(content, runtimeAgentId);
         }
@@ -1159,16 +1278,35 @@ export function ChannelChat({
   sayRef.current = say;
 
   // 「已停止」（2026-10-13 第四轮）：本机刚按停止的那一轮 + 服务器记下的（刷新、换设备也在）。
-  const [localStops, setLocalStops] = useState<ReadonlySet<string>>(() => new Set());
+  const [localStops, setLocalStops] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const serverStops = useStoppedTurnIds(channel.threadId);
   // 上一条用户消息的服务器发送时刻（§94：5 分钟内连续发消息不翻页）。
   const lastSentAt = useLastSentAt(channel.threadId);
-  const stoppedTurns = useMemo(() => new Set([...serverStops, ...localStops]), [serverStops, localStops]);
+  const stoppedTurns = useMemo(
+    () => new Set([...serverStops, ...localStops]),
+    [serverStops, localStops],
+  );
   const stopTask = () => {
-    const lastUser = [...agent.messages].reverse().find((message) => message.role === "user");
-    if (lastUser) setLocalStops((previous) => new Set([...previous, lastUser.id]));
+    const lastUser = [...agent.messages]
+      .reverse()
+      .find((message) => message.role === "user");
+    if (lastUser)
+      setLocalStops((previous) => new Set([...previous, lastUser.id]));
     awaitingReply.current = false;
-    copilotkit.stopAgent({ agent });
+    // Track B：停止必须立刻放下 busy，不能干等 runPromise/finally——否则频道永久灰。
+    turnsRef.current = 0;
+    setTurnsInFlight(0);
+    setRunsInFlight(0);
+    sendInFlightRef.current = false;
+    void setChannelBusy({ channelId: channel.id, busy: false });
+    forceUnlockThread(channel.threadId);
+    try {
+      copilotkit.stopAgent({ agent });
+    } catch {
+      /* stop best-effort */
+    }
   };
 
   /*
@@ -1176,12 +1314,22 @@ export function ChannelChat({
    * 本机截到同一处，再照常发一轮——重新生成原样发原来的内容（新 id），编辑发改过的文字（附件留着）。
    * 回答进行中按钮不出现；万一撞上（别的设备刚发了一句）服务器回 409，按钮 ✕ + 原因。
    */
-  const resendFrom = async (fromMessageId: string, mode: TruncateMode, content: Message["content"]) => {
-    if (turnsRef.current > 0 || agentRef.current.isRunning) throw new Error("机器人正在回答，等它说完再试。");
+  const resendFrom = async (
+    fromMessageId: string,
+    mode: TruncateMode,
+    content: Message["content"],
+  ) => {
+    if (turnsRef.current > 0 || agentRef.current.isRunning)
+      throw new Error("机器人正在回答，等它说完再试。");
     await truncateConversation(channel.threadId, fromMessageId, mode);
     const target = agentRef.current;
-    const at = target.messages.findIndex((message) => message.id === fromMessageId);
-    if (at >= 0) target.setMessages(target.messages.slice(0, at) as typeof target.messages);
+    const at = target.messages.findIndex(
+      (message) => message.id === fromMessageId,
+    );
+    if (at >= 0)
+      target.setMessages(
+        target.messages.slice(0, at) as typeof target.messages,
+      );
     setRunError(null);
     setLocalStops((previous) => {
       if (!previous.has(fromMessageId)) return previous;
@@ -1199,11 +1347,18 @@ export function ChannelChat({
     const at = lastUserIndex(list);
     if (at < 0) throw new Error("没有可以重新生成的回答。");
     const user = list[at]!;
-    await resendRef.current(user.id, "regenerate", user.content as Message["content"]);
+    await resendRef.current(
+      user.id,
+      "regenerate",
+      user.content as Message["content"],
+    );
   }, []);
   const editAndResend = useCallback(async (messageId: string, text: string) => {
-    const user = agentRef.current.messages.find((message) => message.id === messageId);
-    if (!user || user.role !== "user") throw new Error("这条消息已经不在了，刷新看看。");
+    const user = agentRef.current.messages.find(
+      (message) => message.id === messageId,
+    );
+    if (!user || user.role !== "user")
+      throw new Error("这条消息已经不在了，刷新看看。");
     const content = withEditedText(user.content, text);
     if (content === null) throw new Error("消息不能是空的。");
     await resendRef.current(messageId, "edit", content as Message["content"]);
@@ -1232,7 +1387,9 @@ export function ChannelChat({
     },
     [copilotkit],
   );
-  useThreadInbox(channel.threadId, agent, runInboxTurn as never, { pullServerTurns: false });
+  useThreadInbox(channel.threadId, agent, runInboxTurn as never, {
+    pullServerTurns: false,
+  });
 
   /**
    * Component buttons speak as user turns without forcing every transcript card to re-render.
@@ -1244,18 +1401,22 @@ export function ChannelChat({
    * caller either way: the words came from a button inside a rendered card, not from a box somebody
    * is still holding, and the failed turn is already reported by `runError` under the transcript.
    */
-  const askFromComponent = useCallback((text: string) => {
-    const said = text.trim();
-    if (!said) return;
-    // 正在回答时：进收件箱，下一步读到（§38.1），不再报「代理仍在处理另一个请求」。
-    if (turnsRef.current > 0 || agentRef.current.isRunning) {
-      void queueMessage(channel.threadId, said).then((outcome) => {
-        if (outcome === "send") void sayRef.current(said).catch(() => undefined);
-      });
-      return;
-    }
-    void sayRef.current(said).catch(() => undefined);
-  }, [channel.threadId]);
+  const askFromComponent = useCallback(
+    (text: string) => {
+      const said = text.trim();
+      if (!said) return;
+      // 正在回答时：进收件箱，下一步读到（§38.1），不再报「代理仍在处理另一个请求」。
+      if (turnsRef.current > 0 || agentRef.current.isRunning) {
+        void queueMessage(channel.threadId, said).then((outcome) => {
+          if (outcome === "send")
+            void sayRef.current(said).catch(() => undefined);
+        });
+        return;
+      }
+      void sayRef.current(said).catch(() => undefined);
+    },
+    [channel.threadId],
+  );
   // 右栏面板（不在这棵组件树里）里的「问一句」发 chisabot-ask 事件（DESIGN.md §29）：发到当前对话。
   useEffect(() => {
     const on = (event: Event) => {
@@ -1308,165 +1469,190 @@ export function ChannelChat({
     >
       <ConversationProvider ask={askFromComponent}>
         <MessageActionsContext.Provider value={messageActions}>
-        <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
-          <ConversationView
-            modelControl={<BotModelSelector agentId={runtimeAgentId} compact disabled={!channel.active} />}
-            leadingControl={<PermissionChip agentId={runtimeAgentId} disabled={!channel.active} />}
-            contextControl={<ContextMeter agentId={runtimeAgentId} running={agent.isRunning || turnsInFlight > 0} threadId={channel.threadId} />}
-            sendBlocked={modelSaving}
-            agents={toAgentOptions(agentProfiles, channel.agentIds)}
-            channelId={channel.id}
-            draftKey={channel.id}
-            scrollKey={channel.id}
-            /*
-             * THE TURN, not the run. `say` waits for the runtime agent and the join before a run starts,
-             * and `agent.isRunning` alone leaves that gap unmarked — which is the one moment the
-             * "Thinking" line exists for. Same value as `pending`, deliberately.
-             */
-            busy={agent.isRunning || turnsInFlight > 0}
-            // The `/` menu exposes only skills granted to this Bot.
-            commands={skillCommands}
-            // Readiness is handled by `say`; deletion is the only disabled-chat state.
-            disabled={!channel.active}
-            messages={transcriptMessages(
-              restoring ? (early ?? cached ?? EMPTY_MESSAGES) : agent.messages,
-              seed,
-            )}
-            transcriptNotice={
-              historyNotice ? (
-                <HistoryNotice
-                  onRetry={
-                    historyNotice === HISTORY_UNAVAILABLE_NOTICE
-                      ? retryHistoryRead
-                      : undefined
-                  }
-                  text={historyNotice}
+          <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
+            <ConversationView
+              modelControl={
+                <BotModelSelector
+                  agentId={runtimeAgentId}
+                  compact
+                  disabled={!channel.active}
                 />
-              ) : null
-            }
-            notice={
-              /*
-               * Two things can be worth saying at once — a deleted coworker and a history with holes in
-               * it — and they are independent, so neither is an `else` for the other.
-               */
-              <>
-                <HandoffResumeNotice
-                  botId={runtimeAgentId}
-                  agent={agent}
-                  ready={isReady && !restoring && channel.active}
-                  run={async () => {
-                    setRunsInFlight((count) => count + 1);
-                    try {
-                      await copilotkit.runAgent({ agent });
-                    } finally {
-                      setRunsInFlight((count) => count - 1);
-                    }
-                  }}
-                />
-                {channel.active ? null : (
-                  <p
-                    className="pb-2 text-sm text-muted-foreground"
-                    role="status"
-                  >
-                    {"这个机器人已被删除。对话还能看，但它不会再回复。"}
-                  </p>
-                )}
-              </>
-            }
-            onSubmit={async (draft) => {
-              assertModelSelectionNotSaving(modelQueryClient, runtimeAgentId);
-              // `draft.agentId` carries the @mentioned coworker, but nothing routes on it yet: this
-              // channel is pinned to one `runtimeAgentId` for the life of its thread, so honouring a
-              // per-message mention is a change to that binding, not to the composer.
-              //
-              // `commandIds` are the `/` chips that survived into the send, in the order they were
-              // typed. Resolved against the same list the menu was built from, so a chip left over from
-              // a skill that has since been revoked resolves to nothing rather than to a stale
-              // instruction — the menu is refetched, and this reads from it.
-              const skillInstructions = draft.commandIds
-                .map(
-                  (id) =>
-                    skillCommands.find((command) => command.id === id)?.prompt,
-                )
-                .filter((instruction): instruction is string =>
-                  Boolean(instruction),
-                );
-
-              await say(draft.text, skillInstructions, draft.attachments);
-            }}
-            /**
-             * Stop through the core so the abort signal reaches frontend tools; `say` repairs any
-             * unanswered tool call before the next turn.
-             */
-            onStop={stopTask}
-            /*
-             * The turn, not the run. A browser action ends one run and starts another, and telling the
-             * conversation it is idle in between is what would drain a parked correction into the
-             * middle of an answer: a second turn racing the first on one thread, with a fabricated
-             * result stitched over a tool call that is still executing.
-             */
-            pending={agent.isRunning || turnsInFlight > 0}
-            /*
-             * A channel outlives its turns, so it is the screen where waiting is worth offering. A
-             * correction typed mid-answer is held here, in this tab, and runs as one follow-up turn the
-             * moment this one is over — including when it is over because somebody pressed the button
-             * above.
-             */
-            queueWhileBusy
-            restoring={restoring || retryingHistory}
-            hydrating={restoring}
-            /*
-             * The turn, not only the run. DOG-01：`/run` 被拖住时 runsInFlight 已加、但主线程可能来不及
-             * 重绘；更要紧的是 joinGate / panelAuthoring 空档里还没有 run——这时也必须能按停止取消发送，
-             * 不能干等 watchdog。Stop 在无 abortController 时仍清 awaitingReply + stopAgent（best-effort）。
-             */
-            stoppable={agent.isRunning || runsInFlight > 0 || turnsInFlight > 0}
-            /*
-             * At the END OF THE TRANSCRIPT rather than above the composer, which is where this used to
-             * be. A turn that ends without an answer leaves a gap exactly where the reply was going to
-             * appear, and the person is already looking at it; an explanation in the composer area is a
-             * different part of the screen from the thing it explains.
-             *
-             * `runError` carries whatever ended the turn, in that thing's own words. A Bot that stopped
-             * streaming says so, because the deployment's stall watchdog writes that sentence into the
-             * run before closing it; see server/src/channels/stall-guard.ts.
-             */
-            stopped={runError ?? undefined}
-            stoppedTurns={stoppedTurns}
-            fallbacks={fallbackTurns}
-            lastSentAt={lastSentAt}
-            queueToServer={queueToServer}
-            /*
-             * The retry resends the restored draft, which adds the message again. Take the failed
-             * turn's copy out first, but only when nothing came back under it: a partial answer is
-             * part of the conversation and stays.
-             */
-            onRetryTurn={() => {
-              // 中途断的一轮（已经有回答 / 工具调用）：字没放回输入框，重试 = 从这条消息起重新生成（§88.4）。
-              if (!turnAnswered(agentRef.current.messages)) return false;
-              void regenerate().catch(() => undefined);
-              return true;
-            }}
-            onBeforeRetry={() => {
-              const target = agentRef.current;
-              const list = target.messages;
-              let lastUser = -1;
-              for (let i = list.length - 1; i >= 0; i -= 1) {
-                if (list[i]?.role === "user") {
-                  lastUser = i;
-                  break;
-                }
               }
-              if (lastUser < 0) return;
-              const answered = list
-                .slice(lastUser + 1)
-                .some((message) => message.role === "assistant" || message.role === "tool");
-              if (answered) return;
-              target.setMessages(list.slice(0, lastUser) as typeof list);
-              setRunError(null);
-            }}
-          />
-        </div>
+              leadingControl={
+                <PermissionChip
+                  agentId={runtimeAgentId}
+                  disabled={!channel.active}
+                />
+              }
+              contextControl={
+                <ContextMeter
+                  agentId={runtimeAgentId}
+                  running={agent.isRunning || turnsInFlight > 0}
+                  threadId={channel.threadId}
+                />
+              }
+              sendBlocked={modelSaving}
+              agents={toAgentOptions(agentProfiles, channel.agentIds)}
+              channelId={channel.id}
+              draftKey={channel.id}
+              scrollKey={channel.id}
+              /*
+               * THE TURN, not the run. `say` waits for the runtime agent and the join before a run starts,
+               * and `agent.isRunning` alone leaves that gap unmarked — which is the one moment the
+               * "Thinking" line exists for. Same value as `pending`, deliberately.
+               */
+              busy={agent.isRunning || turnsInFlight > 0}
+              // The `/` menu exposes only skills granted to this Bot.
+              commands={skillCommands}
+              // Readiness is handled by `say`; deletion is the only disabled-chat state.
+              disabled={!channel.active}
+              messages={transcriptMessages(
+                restoring
+                  ? (early ?? cached ?? EMPTY_MESSAGES)
+                  : agent.messages,
+                seed,
+              )}
+              transcriptNotice={
+                historyNotice ? (
+                  <HistoryNotice
+                    onRetry={
+                      historyNotice === HISTORY_UNAVAILABLE_NOTICE
+                        ? retryHistoryRead
+                        : undefined
+                    }
+                    text={historyNotice}
+                  />
+                ) : null
+              }
+              notice={
+                /*
+                 * Two things can be worth saying at once — a deleted coworker and a history with holes in
+                 * it — and they are independent, so neither is an `else` for the other.
+                 */
+                <>
+                  <HandoffResumeNotice
+                    botId={runtimeAgentId}
+                    agent={agent}
+                    ready={isReady && !restoring && channel.active}
+                    run={async () => {
+                      setRunsInFlight((count) => count + 1);
+                      try {
+                        await copilotkit.runAgent({ agent });
+                      } finally {
+                        setRunsInFlight((count) => count - 1);
+                      }
+                    }}
+                  />
+                  {channel.active ? null : (
+                    <p
+                      className="pb-2 text-sm text-muted-foreground"
+                      role="status"
+                    >
+                      {"这个机器人已被删除。对话还能看，但它不会再回复。"}
+                    </p>
+                  )}
+                </>
+              }
+              onSubmit={async (draft) => {
+                assertModelSelectionNotSaving(modelQueryClient, runtimeAgentId);
+                // `draft.agentId` carries the @mentioned coworker, but nothing routes on it yet: this
+                // channel is pinned to one `runtimeAgentId` for the life of its thread, so honouring a
+                // per-message mention is a change to that binding, not to the composer.
+                //
+                // `commandIds` are the `/` chips that survived into the send, in the order they were
+                // typed. Resolved against the same list the menu was built from, so a chip left over from
+                // a skill that has since been revoked resolves to nothing rather than to a stale
+                // instruction — the menu is refetched, and this reads from it.
+                const skillInstructions = draft.commandIds
+                  .map(
+                    (id) =>
+                      skillCommands.find((command) => command.id === id)
+                        ?.prompt,
+                  )
+                  .filter((instruction): instruction is string =>
+                    Boolean(instruction),
+                  );
+
+                await say(draft.text, skillInstructions, draft.attachments);
+              }}
+              /**
+               * Stop through the core so the abort signal reaches frontend tools; `say` repairs any
+               * unanswered tool call before the next turn.
+               */
+              onStop={stopTask}
+              /*
+               * The turn, not the run. A browser action ends one run and starts another, and telling the
+               * conversation it is idle in between is what would drain a parked correction into the
+               * middle of an answer: a second turn racing the first on one thread, with a fabricated
+               * result stitched over a tool call that is still executing.
+               */
+              pending={agent.isRunning || turnsInFlight > 0}
+              /*
+               * A channel outlives its turns, so it is the screen where waiting is worth offering. A
+               * correction typed mid-answer is held here, in this tab, and runs as one follow-up turn the
+               * moment this one is over — including when it is over because somebody pressed the button
+               * above.
+               */
+              queueWhileBusy
+              restoring={restoring || retryingHistory}
+              hydrating={restoring}
+              /*
+               * The turn, not only the run. DOG-01：`/run` 被拖住时 runsInFlight 已加、但主线程可能来不及
+               * 重绘；更要紧的是 joinGate / panelAuthoring 空档里还没有 run——这时也必须能按停止取消发送，
+               * 不能干等 watchdog。Stop 在无 abortController 时仍清 awaitingReply + stopAgent（best-effort）。
+               */
+              stoppable={
+                agent.isRunning || runsInFlight > 0 || turnsInFlight > 0
+              }
+              /*
+               * At the END OF THE TRANSCRIPT rather than above the composer, which is where this used to
+               * be. A turn that ends without an answer leaves a gap exactly where the reply was going to
+               * appear, and the person is already looking at it; an explanation in the composer area is a
+               * different part of the screen from the thing it explains.
+               *
+               * `runError` carries whatever ended the turn, in that thing's own words. A Bot that stopped
+               * streaming says so, because the deployment's stall watchdog writes that sentence into the
+               * run before closing it; see server/src/channels/stall-guard.ts.
+               */
+              stopped={runError ?? undefined}
+              stoppedTurns={stoppedTurns}
+              fallbacks={fallbackTurns}
+              lastSentAt={lastSentAt}
+              queueToServer={queueToServer}
+              /*
+               * The retry resends the restored draft, which adds the message again. Take the failed
+               * turn's copy out first, but only when nothing came back under it: a partial answer is
+               * part of the conversation and stays.
+               */
+              onRetryTurn={() => {
+                // 中途断的一轮（已经有回答 / 工具调用）：字没放回输入框，重试 = 从这条消息起重新生成（§88.4）。
+                if (!turnAnswered(agentRef.current.messages)) return false;
+                void regenerate().catch(() => undefined);
+                return true;
+              }}
+              onBeforeRetry={() => {
+                const target = agentRef.current;
+                const list = target.messages;
+                let lastUser = -1;
+                for (let i = list.length - 1; i >= 0; i -= 1) {
+                  if (list[i]?.role === "user") {
+                    lastUser = i;
+                    break;
+                  }
+                }
+                if (lastUser < 0) return;
+                const answered = list
+                  .slice(lastUser + 1)
+                  .some(
+                    (message) =>
+                      message.role === "assistant" || message.role === "tool",
+                  );
+                if (answered) return;
+                target.setMessages(list.slice(0, lastUser) as typeof list);
+                setRunError(null);
+              }}
+            />
+          </div>
         </MessageActionsContext.Provider>
       </ConversationProvider>
     </CopilotChatConfigurationProvider>
@@ -1484,16 +1670,23 @@ function HistoryNotice({
   text: string;
   onRetry?: () => Promise<boolean>;
 }) {
-  const retry = useAsyncAction(async () => {
-    if (!onRetry) return;
-    if (!(await onRetry())) throw new Error("仍无法加载");
-  }, { errorToast: false });
+  const retry = useAsyncAction(
+    async () => {
+      if (!onRetry) return;
+      if (!(await onRetry())) throw new Error("仍无法加载");
+    },
+    { errorToast: false },
+  );
   return (
     <div className="chat-history-notice" role="status">
       <span>{text}</span>
       {onRetry ? (
         <Button
-          feedback={{ pending: "重试中…", success: "已加载", error: "仍无法加载" }}
+          feedback={{
+            pending: "重试中…",
+            success: "已加载",
+            error: "仍无法加载",
+          }}
           onClick={() => void retry.run()}
           size="sm"
           state={retry.state}

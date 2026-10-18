@@ -13,6 +13,8 @@ import type { AppVariables } from "./auth/guards";
 
 const CLIENT_CODES = new Set<string>([
   OPS_CODES.SEND_UNREACHABLE,
+  OPS_CODES.SEND_HANG,
+  OPS_CODES.SEND_REPLY_HANG,
   OPS_CODES.STREAM_DISCONNECT,
 ]);
 

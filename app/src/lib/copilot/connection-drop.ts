@@ -190,7 +190,11 @@ export function storedTurnAnswered(
  * STREAM_DISCONNECT. Failures are ignored — we may already be offline.
  */
 export function reportBudgetEvent(
-  code: "SEND_UNREACHABLE" | "STREAM_DISCONNECT",
+  code:
+    | "SEND_UNREACHABLE"
+    | "STREAM_DISCONNECT"
+    | "SEND_HANG"
+    | "SEND_REPLY_HANG",
   fetchImpl: typeof fetch = fetch,
 ): void {
   try {
@@ -201,6 +205,30 @@ export function reportBudgetEvent(
       credentials: "include",
       keepalive: true,
     }).catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Track B：看门狗超时或用户点停止后，确保服务器端锁也放下。
+ * CopilotKit stopAgent 管本进程 active run；这条补「无内存条目却仍占锁」的孤儿，
+ * 以及 stop 竞态下没走到 finally 的边角。失败忽略——可能已离线。
+ */
+export function forceUnlockThread(
+  threadId: string,
+  fetchImpl: typeof fetch = fetch,
+): void {
+  if (!threadId) return;
+  try {
+    void fetchImpl(
+      `/api/copilotkit/threads/${encodeURIComponent(threadId)}/unlock`,
+      {
+        method: "POST",
+        credentials: "include",
+        keepalive: true,
+      },
+    ).catch(() => {});
   } catch {
     /* ignore */
   }
