@@ -26,3 +26,11 @@ v0.1.40 只做了客户端诚实（展开停轮询 / 退避）。根因仍是 Li
 2. 硬刷新 → 芯片 0.1.41；大屏展开 Network 无 `/screenshot` 刷屏
 3. （可选）直播中用工具/卡片强制截图 → 503 body 含 `captureBusy`/`liveCast`，面板不假健康
 4. 电车仍暂停
+
+## PR / release / deploy
+
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/248 (squash → `ae79f5e9`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.41
+- Deploy: **pending** — box → `kvm18048` SSH timed out (tunnel/path down); run on Haupt when reachable:
+  `sh /opt/chisabot-ops/deploy-serial.sh ae79f5e grok-bot`
+- **未** resume 电车定时
