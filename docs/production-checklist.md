@@ -118,3 +118,12 @@ CI 红线：`server/tests/ssrf-redline.test.ts`（PRD-P1-06）。备份演练：
 | Cookie | 网关 Cookie 已 Secure；Better Auth 在 https 公网 URL 或 `CHISABOT_SECURE_COOKIES=1` 时 Secure |
 | 一键入口 | `sh deploy/friend-up.sh`；说明见 [friend-deploy.md](friend-deploy.md) |
 | 设置页 | 管理员可见「分享给朋友」 |
+
+## 7. 发送诚实 / MCP 停止（v0.1.31）
+
+| 检查 | 期望 |
+|------|------|
+| 发消息超时未落库 | UI 报「迟迟没发出去」+ 草稿恢复；`SEND_HANG` 进 budgets |
+| 已落库回答挂死 | 「已经发出去了，但回答迟迟没回来」；`SEND_REPLY_HANG` |
+| MCP 工具中点停止 | 入口或进行中 JSON-RPC 中止；结果为停止拒绝，非迟到成功 |
+| 自动化 | `connection-drop` + `mcp-protocol` + `plugin-tools-abort` 测试绿 |

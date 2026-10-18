@@ -68,7 +68,14 @@ export async function callTool(
   connection: Connection,
   toolName: string,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<McpCallResult> {
+  // Local DB work is short; honour Stop before starting (no mid-flight vendor socket to cancel).
+  if (signal?.aborted) {
+    const err = new Error("The trigger call was aborted.");
+    err.name = "AbortError";
+    throw err;
+  }
   const ownerUserId = connection.actorId?.trim();
   if (!ownerUserId) {
     return failure(
@@ -86,9 +93,12 @@ export async function callTool(
     );
   }
   try {
-    return asResult(await callTriggerTool(ownerUserId, agentId, toolName, args));
+    return asResult(
+      await callTriggerTool(ownerUserId, agentId, toolName, args),
+    );
   } catch (error) {
-    if (error instanceof ResponsibilityRefusedError) return failure(error.message);
+    if (error instanceof ResponsibilityRefusedError)
+      return failure(error.message);
     if (error instanceof ResponsibilityNotFoundError)
       return failure(
         "There is no trigger or responsibility of yours with that id for me.",

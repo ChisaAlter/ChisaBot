@@ -95,6 +95,67 @@ export function raceSendWatchdog<T>(
   });
 }
 
+/**
+ * Pure decision for the send watchdog (DOG-01 / CR-P1-03 honesty).
+ *
+ * Guarantees the UI never treats a timed-out / unpersisted send as success:
+ * - first race done → proceed (run settled; error path owns failures)
+ * - first timeout + not persisted → hang (message likely never left; restore draft)
+ * - first timeout + persisted + reply timeout → reply_hang (sent, but answer stuck)
+ * - first timeout + persisted + reply done → proceed
+ *
+ * Automated tests assert these branches; browser E2E is optional.
+ */
+export type SendWatchdogDecision =
+  | { kind: "proceed" }
+  | {
+      kind: "hang";
+      reason: typeof SEND_HANG_REASON;
+      budget: "SEND_HANG";
+    }
+  | {
+      kind: "reply_hang";
+      reason: typeof SEND_REPLY_HANG_REASON;
+      budget: "SEND_REPLY_HANG";
+    };
+
+export function decideSendWatchdogAction(input: {
+  firstRace: "done" | "timeout";
+  /** Whether the optimistic user message id is in the server thread. null = check failed. */
+  persisted: boolean | null;
+  replyRace?: "done" | "timeout";
+}): SendWatchdogDecision {
+  if (input.firstRace === "done") return { kind: "proceed" };
+  // Timeout without a confirmed persist = fake-success risk. Treat null like not persisted.
+  if (input.persisted !== true) {
+    return {
+      kind: "hang",
+      reason: SEND_HANG_REASON,
+      budget: "SEND_HANG",
+    };
+  }
+  if (input.replyRace === "timeout") {
+    return {
+      kind: "reply_hang",
+      reason: SEND_REPLY_HANG_REASON,
+      budget: "SEND_REPLY_HANG",
+    };
+  }
+  return { kind: "proceed" };
+}
+
+/** Reasons that must never be shown as a successful send (regression guard). */
+export function isHonestSendFailureReason(reason: string): boolean {
+  const hang =
+    reason === SEND_HANG_REASON ||
+    reason === SEND_REPLY_HANG_REASON ||
+    reason === SEND_UNREACHABLE_REASON ||
+    reason === CONNECTION_LOST_REASON;
+  if (!hang) return false;
+  // None of these may claim the turn succeeded.
+  return !/已发送|发送成功|成功发出|sent successfully/i.test(reason);
+}
+
 export type DropOutcome = "continuing" | "finished" | "lost" | "unreachable";
 
 export type SettleDeps = {

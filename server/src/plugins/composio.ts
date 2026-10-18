@@ -1580,7 +1580,14 @@ export async function callTool(
   connection: { url: string; actorId?: string; accountId?: string | null },
   toolName: string,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<McpCallResult> {
+  // Entry check only: Composio's SDK does not take AbortSignal for in-flight cancel (transport.ts).
+  if (signal?.aborted) {
+    const err = new Error("The connector call was aborted.");
+    err.name = "AbortError";
+    throw err;
+  }
   return (await askAction(connection, toolName, args)).result;
 }
 

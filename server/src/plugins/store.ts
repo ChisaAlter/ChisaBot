@@ -6873,6 +6873,8 @@ export function createPluginStore(options: PluginStoreOptions) {
        * reaching its owner's account (team-bots/team-bots.ts). Every gate is still the asker's.
        */
       credentialActorId?: string;
+      /** Stop / turn abort forwarded to the vendor transport (MCP SDK / Drive fetch). */
+      signal?: AbortSignal;
     }): Promise<{ text: string; isError: boolean }> {
       const [serverId, ...rest] = input.ref.split("/");
       const toolName = rest.join("/");
@@ -7192,6 +7194,11 @@ export function createPluginStore(options: PluginStoreOptions) {
         );
         const vendor =
           injectedVendor ?? transportFor(access.transport).callTool;
+        if (input.signal?.aborted) {
+          const err = new Error("The MCP call was aborted.");
+          err.name = "AbortError";
+          throw err;
+        }
         const result = await vendor(
           {
             url: effectiveUrl(row, entry),
@@ -7201,6 +7208,7 @@ export function createPluginStore(options: PluginStoreOptions) {
           },
           toolName,
           vendorArgs,
+          input.signal,
         );
         await recordAuditEvent(auditStore, {
           eventType: result.isError ? "mcp.call_failed" : "mcp.call_succeeded",

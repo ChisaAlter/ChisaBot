@@ -2,7 +2,9 @@ import { z } from "zod";
 import { ApprovalRefusedError } from "../approvals/types";
 import type { AuditInitiator } from "../audit";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
+import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { markUntrusted } from "../untrusted-content";
+import { isMcpAbortError } from "./mcp";
 import type { SelectableSkill } from "./selection";
 import {
   isDeploymentFault,
@@ -252,7 +254,10 @@ export async function grantedTools(options: {
     initiator,
     description: tool.description,
     parameters: parametersFor(tool.inputSchema),
-    execute: async (args: unknown) => {
+    execute: async (args: unknown, ctx?: ToolExecuteContext) => {
+      // FIX-04 residual: Stop must reach MCP / connector calls (ctx.signal from chat; ALS for headless).
+      const signal = ctx?.signal ?? currentToolAbort();
+      if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
       try {
         const result = await store.callTool({
           ref: tool.ref,
@@ -268,10 +273,16 @@ export async function grantedTools(options: {
           ...(credentialActorFor
             ? { credentialActorId: await credentialActorFor(tool.ref) }
             : {}),
+          ...(signal ? { signal } : {}),
         });
+        // Stop raced the vendor: do not present a late success as if the user never cancelled.
+        if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
         return vendorAnswer(result);
       } catch (error) {
         if (error instanceof HeadlessToolSuspension) throw error;
+        if (isMcpAbortError(error) || signal?.aborted) {
+          return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
+        }
         if (
           error instanceof PluginRefusedError ||
           error instanceof ApprovalRefusedError

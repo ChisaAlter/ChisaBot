@@ -105,6 +105,13 @@ export type VendorTransport = {
     },
     toolName: string,
     args: Record<string, unknown>,
+    /**
+     * Stop / turn abort (FIX-04 residual). MCP Streamable HTTP honours it mid-flight via the SDK.
+     * Drive merges it with the request timeout. Composio and builtin-routines check at entry and
+     * refuse to start when already aborted; their vendor SDKs do not always cancel an in-flight HTTP
+     * call, so Stop may still wait for that round-trip to finish before the tool returns TOOL_STOPPED.
+     */
+    signal?: AbortSignal,
   ): Promise<McpCallResult>;
 };
 

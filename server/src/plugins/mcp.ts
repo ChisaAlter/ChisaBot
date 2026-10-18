@@ -1,8 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import {
+  BlockedUrlError,
+  resolvePublic,
+} from "../../../shared/net/guarded-fetch";
 import { cutAtCodeUnits } from "../channels/text";
-import { BlockedUrlError, resolvePublic } from "../../../shared/net/guarded-fetch";
 
 /**
  * The only place in this deployment that speaks MCP to somebody else's server.
@@ -212,6 +215,11 @@ type Connection = {
   url: string;
   /** The bearer token for this server, already decrypted. Absent for a server that needs none. */
   token?: string;
+  /**
+   * Test harness only (MCPMock on 127.0.0.1). Production call sites never set this — CR-P2-08
+   * still resolves and refuses private / metadata addresses for every real vendor URL.
+   */
+  allowPrivateHost?: boolean;
 };
 
 /**
@@ -337,23 +345,49 @@ export function authorizationHeader(token: string): string {
  * The `finally` closes the transport whatever happened, because a thrown error is the case where a
  * leaked connection is most likely and least noticed.
  */
+/**
+ * True when a throw means the caller cancelled (Stop / AbortSignal), not a vendor failure.
+ * Exported so granted-tool wrappers can answer TOOL_STOPPED rather than "vendor broke".
+ */
+export function isMcpAbortError(error: unknown): boolean {
+  if (!error) return false;
+  if (typeof error === "object" && error !== null && "name" in error) {
+    const name = String((error as { name?: unknown }).name ?? "");
+    if (name === "AbortError" || name === "TimeoutError")
+      return name === "AbortError";
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /abort(ed)?|The operation was aborted|user has aborted/i.test(message);
+}
+
 async function withClient<T>(
   connection: Connection,
   use: (client: Client) => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
+  if (signal?.aborted) {
+    const err = new Error("The MCP call was aborted.");
+    err.name = "AbortError";
+    throw err;
+  }
   // CR-P2-08：名字形状检查不够；连接前解析并拒绝内网 / 元数据地址。
   const target = new URL(connection.url);
-  try {
-    await resolvePublic(target.hostname);
-  } catch (error) {
-    if (error instanceof BlockedUrlError) {
+  if (!connection.allowPrivateHost) {
+    try {
+      await resolvePublic(target.hostname);
+    } catch (error) {
+      if (error instanceof BlockedUrlError) {
+        throw new McpServerError(
+          error.message ||
+            "That MCP address is not reachable from outside this network.",
+        );
+      }
       throw new McpServerError(
-        error.message || "That MCP address is not reachable from outside this network.",
+        error instanceof Error
+          ? error.message
+          : "That MCP address could not be resolved.",
       );
     }
-    throw new McpServerError(
-      error instanceof Error ? error.message : "That MCP address could not be resolved.",
-    );
   }
   const transport = new StreamableHTTPClientTransport(target, {
     requestInit: connection.token
@@ -363,9 +397,16 @@ async function withClient<T>(
   const client = new Client({ name: "openbot", version: "1.0.0" });
 
   try {
-    await client.connect(transport);
+    // SDK RequestOptions.signal cancels connect / in-flight JSON-RPC (FIX-04 residual).
+    await client.connect(transport, signal ? { signal } : undefined);
     return await use(client);
   } catch (error) {
+    // Abort must stay AbortError so callers can distinguish Stop from vendor failure.
+    if (isMcpAbortError(error) || signal?.aborted) {
+      const err = new Error("The MCP call was aborted.");
+      err.name = "AbortError";
+      throw err;
+    }
     // Rewrapped so a caller never has to care whether the failure came from the transport, the
     // handshake or the call, and so the message that reaches an audit row and an admin page is one
     // sentence rather than a stack.
@@ -421,18 +462,26 @@ function declaredEffect(annotations: ToolAnnotations | undefined) {
 }
 
 /** What this server says it offers, right now. */
-export async function listTools(connection: Connection): Promise<ListedTool[]> {
-  return withClient(connection, async (client) => {
-    const result = await client.listTools(undefined, {
-      timeout: LIST_TIMEOUT_MS,
-    });
-    return result.tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description ?? "",
-      inputSchema: (tool.inputSchema ?? {}) as Record<string, unknown>,
-      ...declaredEffect(tool.annotations),
-    }));
-  });
+export async function listTools(
+  connection: Connection,
+  signal?: AbortSignal,
+): Promise<ListedTool[]> {
+  return withClient(
+    connection,
+    async (client) => {
+      const result = await client.listTools(undefined, {
+        timeout: LIST_TIMEOUT_MS,
+        ...(signal ? { signal } : {}),
+      });
+      return result.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description ?? "",
+        inputSchema: (tool.inputSchema ?? {}) as Record<string, unknown>,
+        ...declaredEffect(tool.annotations),
+      }));
+    },
+    signal,
+  );
 }
 
 export type McpCallResult = {
@@ -450,23 +499,33 @@ export type McpCallResult = {
  * protocol; the grant and the policy are settled before anything reaches it. Keeping the two apart
  * means the permission check cannot be accidentally satisfied by a code path that also happens to
  * make the call.
+ *
+ * Optional `signal` is the Stop / turn-abort path (FIX-04 residual). The MCP SDK cancels the
+ * in-flight JSON-RPC when the signal fires; we also refuse to start when already aborted.
+ * Composio / Drive transports accept the same optional argument on the shared seam — see
+ * `transport.ts`. Mid-flight cancel for brokered SDKs that ignore AbortSignal is documented there.
  */
 export async function callTool(
   connection: Connection,
   toolName: string,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<McpCallResult> {
-  return withClient(connection, async (client) => {
-    const result = await client.callTool(
-      { name: toolName, arguments: args },
-      undefined,
-      { timeout: CALL_TIMEOUT_MS },
-    );
+  return withClient(
+    connection,
+    async (client) => {
+      const result = await client.callTool(
+        { name: toolName, arguments: args },
+        undefined,
+        { timeout: CALL_TIMEOUT_MS, ...(signal ? { signal } : {}) },
+      );
 
-    const { text, truncated } = resultText(
-      result.content,
-      "structuredContent" in result ? result.structuredContent : undefined,
-    );
-    return { text, isError: result.isError === true, truncated };
-  });
+      const { text, truncated } = resultText(
+        result.content,
+        "structuredContent" in result ? result.structuredContent : undefined,
+      );
+      return { text, isError: result.isError === true, truncated };
+    },
+    signal,
+  );
 }

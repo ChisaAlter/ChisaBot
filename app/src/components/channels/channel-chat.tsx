@@ -41,12 +41,11 @@ import { readSync } from "@/lib/copilot/bot-thread";
 import { reportChatRunning } from "@/lib/copilot/computer-activity";
 import {
   CONNECTION_LOST_REASON,
+  decideSendWatchdogAction,
   forceUnlockThread,
   isConnectionDrop,
   raceSendWatchdog,
   reportBudgetEvent,
-  SEND_HANG_REASON,
-  SEND_REPLY_HANG_REASON,
   SEND_REPLY_WATCHDOG_MS,
   SEND_UNREACHABLE_REASON,
   SEND_WATCHDOG_MS,
@@ -1021,13 +1020,18 @@ export function ChannelChat({
           stored != null &&
           stored.availability === "ready" &&
           stored.messages.some((message) => message.id === userMessageId);
-        if (!persisted) {
-          reportBudgetEvent("SEND_HANG");
+        // First-bound decision without reply race yet.
+        const first = decideSendWatchdogAction({
+          firstRace: "timeout",
+          persisted,
+        });
+        if (first.kind === "hang") {
+          reportBudgetEvent(first.budget);
           forceUnlockThread(channel.threadId);
-          failRef.current(SEND_HANG_REASON);
+          failRef.current(first.reason);
           // Still let runPromise settle in the background so CopilotKit counters clear.
           void runPromise.catch(() => undefined);
-          throw new Error(SEND_HANG_REASON);
+          throw new Error(first.reason);
         }
         // Message reached the server; wait longer for a slow model, but still bound
         // (CR-P1-03): unbounded await here wedged runsInFlight / composer forever.
@@ -1035,17 +1039,22 @@ export function ChannelChat({
           afterMs,
           timeoutMs: SEND_REPLY_WATCHDOG_MS,
         });
-        if (raceReply === "timeout") {
+        const second = decideSendWatchdogAction({
+          firstRace: "timeout",
+          persisted: true,
+          replyRace: raceReply,
+        });
+        if (second.kind === "reply_hang") {
           try {
             copilotkit.stopAgent({ agent: target });
           } catch {
             /* stop best-effort */
           }
-          reportBudgetEvent("SEND_REPLY_HANG");
+          reportBudgetEvent(second.budget);
           forceUnlockThread(channel.threadId);
-          failRef.current(SEND_REPLY_HANG_REASON);
+          failRef.current(second.reason);
           void runPromise.catch(() => undefined);
-          throw new Error(SEND_REPLY_HANG_REASON);
+          throw new Error(second.reason);
         }
         await runPromise;
       } else {

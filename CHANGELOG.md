@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.31
+
+- Production maturity **send honesty + MCP abort**: `decideSendWatchdogAction` + automated tests that timeout/unpersisted/reply-hang never look like success; MCP SDK `AbortSignal` on connect/callTool; `grantedTools` honours Stop and suppresses late success; Drive merges abort; Composio/builtin entry-check (mid-flight vendor SDK limits documented).
+
 ## 0.1.30
 
 - Production maturity **Track D** (friend pack + safe defaults): `deploy/friend-up.sh` one-click compose with loopback bind / no public single-user TRUSTED_ORIGINS; Better Auth Secure cookies when https public URL or `CHISABOT_SECURE_COOKIES`; `start.sh` refuses `0.0.0.0` app binds.

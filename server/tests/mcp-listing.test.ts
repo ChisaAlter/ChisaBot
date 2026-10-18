@@ -125,7 +125,7 @@ describe("what an MCP listing tells the classifier", () => {
      * `notion-purge-workspace`, so before the annotations were surfaced this returned "read" — a
      * Bot with a read grant could have called it.
      */
-    const tools = await listTools({ url });
+    const tools = await listTools({ url, allowPrivateHost: true });
 
     expect(classify(tools, "notion-purge-workspace")).toBe("write");
   });
@@ -133,7 +133,7 @@ describe("what an MCP listing tells the classifier", () => {
   test("a destructive tool is also carried as destructive, not only as a write", async () => {
     // `effect` gates the call; `destructive` is what the confirmation card reads. A tool that
     // arrived as a write with `destructive` false would be gated correctly and presented wrongly.
-    const tools = await listTools({ url });
+    const tools = await listTools({ url, allowPrivateHost: true });
     const purge = tools.find((tool) => tool.name === "notion-purge-workspace");
 
     expect(purge?.destructive).toBe(true);
@@ -145,7 +145,7 @@ describe("what an MCP listing tells the classifier", () => {
      * and a server that says otherwise — whether mistakenly or because somebody stood up a server
      * that says whatever it likes — must not be able to widen what a Bot may do.
      */
-    const tools = await listTools({ url });
+    const tools = await listTools({ url, allowPrivateHost: true });
 
     expect(classify(tools, "notion-update-page")).toBe("write");
   });
@@ -162,7 +162,7 @@ describe("what an MCP listing tells the classifier", () => {
      * based on annotations received from untrusted servers. Acting only on the hint that narrows is
      * how that warning is honoured while a declared destructive tool still gets gated.
      */
-    const tools = await listTools({ url });
+    const tools = await listTools({ url, allowPrivateHost: true });
     const fetch = tools.find((tool) => tool.name === "notion-fetch");
 
     expect(fetch?.effect).toBeUndefined();
@@ -173,7 +173,7 @@ describe("what an MCP listing tells the classifier", () => {
   test("a tool with no annotations is unchanged in every respect", async () => {
     // The overwhelmingly common case, and the one that says existing Notion grants survive: no
     // annotations means nothing recorded, which means the reviewed list decides as it always did.
-    const tools = await listTools({ url });
+    const tools = await listTools({ url, allowPrivateHost: true });
     const search = tools.find((tool) => tool.name === "notion-search");
 
     expect(search?.effect).toBeUndefined();

@@ -156,9 +156,13 @@ async function request(
   connection: Connection,
   path: string,
   query: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<{ ok: true; response: Response } | { ok: false; message: string }> {
   if (!connection.token) {
     return { ok: false, message: "No credential was available for this call." };
+  }
+  if (signal?.aborted) {
+    return { ok: false, message: "The Drive call was aborted." };
   }
 
   const url = new URL(`${connection.url.replace(/\/+$/, "")}${path}`);
@@ -168,11 +172,24 @@ async function request(
 
   let response: Response;
   try {
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const combined =
+      signal && typeof AbortSignal.any === "function"
+        ? AbortSignal.any([signal, timeout])
+        : timeout;
     response = await fetch(url, {
       headers: { authorization: `Bearer ${connection.token}` },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: combined,
     });
   } catch (error) {
+    if (
+      signal?.aborted ||
+      (error instanceof Error && error.name === "AbortError")
+    ) {
+      const err = new Error("The Drive call was aborted.");
+      err.name = "AbortError";
+      throw err;
+    }
     return {
       ok: false,
       message:
@@ -381,7 +398,15 @@ export async function callTool(
   connection: Connection,
   toolName: string,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<McpCallResult> {
+  if (signal?.aborted) {
+    const err = new Error("The Drive call was aborted.");
+    err.name = "AbortError";
+    throw err;
+  }
+  const ask = (path: string, query: Record<string, string>) =>
+    request(connection, path, query, signal);
   const stringArg = (key: string): string | null => {
     const value = args[key];
     return typeof value === "string" && value.trim() !== "" ? value : null;
@@ -393,7 +418,7 @@ export async function callTool(
       return failure("A search needs something to search for.");
     }
 
-    const result = await request(connection, "/files", {
+    const result = await ask("/files", {
       ...SHARED_DRIVE_ITEMS,
       pageSize: String(PAGE_SIZE),
       fields: `files(${FILE_FIELDS})`,
@@ -413,11 +438,10 @@ export async function callTool(
     const fileId = stringArg("fileId");
     if (!fileId) return failure("A file id is needed to look a file up.");
 
-    const result = await request(
-      connection,
-      `/files/${encodeURIComponent(fileId)}`,
-      { ...SHARED_DRIVES, fields: FILE_FIELDS },
-    );
+    const result = await ask(`/files/${encodeURIComponent(fileId)}`, {
+      ...SHARED_DRIVES,
+      fields: FILE_FIELDS,
+    });
     if (!result.ok) return failure(result.message);
 
     const file = (await result.response.json()) as DriveFile;
@@ -442,14 +466,10 @@ export async function callTool(
      * bytes and must be exported; anything else is downloaded. Asking Drive rather than guessing from
      * the name means a mislabelled file still reads correctly.
      */
-    const metadata = await request(
-      connection,
-      `/files/${encodeURIComponent(fileId)}`,
-      {
-        ...SHARED_DRIVES,
-        fields: "id,name,mimeType,shortcutDetails(targetId,targetMimeType)",
-      },
-    );
+    const metadata = await ask(`/files/${encodeURIComponent(fileId)}`, {
+      ...SHARED_DRIVES,
+      fields: "id,name,mimeType,shortcutDetails(targetId,targetMimeType)",
+    });
     if (!metadata.ok) return failure(metadata.message);
     let file = (await metadata.response.json()) as DriveFile;
     let readId = fileId;
@@ -468,11 +488,10 @@ export async function callTool(
           `${file.name ?? fileId} is a shortcut that does not name a file.`,
         );
       }
-      const target = await request(
-        connection,
-        `/files/${encodeURIComponent(targetId)}`,
-        { ...SHARED_DRIVES, fields: "id,name,mimeType" },
-      );
+      const target = await ask(`/files/${encodeURIComponent(targetId)}`, {
+        ...SHARED_DRIVES,
+        fields: "id,name,mimeType",
+      });
       if (!target.ok) return failure(target.message);
       file = (await target.response.json()) as DriveFile;
       readId = targetId;
@@ -500,12 +519,10 @@ export async function callTool(
     }
 
     const content = exportAs
-      ? await request(
-          connection,
-          `/files/${encodeURIComponent(readId)}/export`,
-          { mimeType: exportAs },
-        )
-      : await request(connection, `/files/${encodeURIComponent(readId)}`, {
+      ? await ask(`/files/${encodeURIComponent(readId)}/export`, {
+          mimeType: exportAs,
+        })
+      : await ask(`/files/${encodeURIComponent(readId)}`, {
           ...SHARED_DRIVES,
           alt: "media",
         });

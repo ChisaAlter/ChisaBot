@@ -100,7 +100,7 @@ afterAll(async () => {
 
 describe("listing what a server offers", () => {
   test("reads the tools, their descriptions and their schemas", async () => {
-    const tools = await listTools({ url });
+    const tools = await listTools({ url, allowPrivateHost: true });
 
     const search = tools.find((tool) => tool.name === "search_issues");
     expect(search?.description).toBe("Find issues matching a query.");
@@ -112,7 +112,7 @@ describe("listing what a server offers", () => {
   test("a tool with no description reads as empty rather than undefined", async () => {
     // The listing is projected into what a model sees. `undefined` there becomes the string
     // "undefined" in a prompt often enough to be worth pinning.
-    const tools = await listTools({ url });
+    const tools = await listTools({ url, allowPrivateHost: true });
     const bare = tools.find((tool) => tool.name === "long_answer");
 
     expect(typeof bare?.description).toBe("string");
@@ -121,9 +121,13 @@ describe("listing what a server offers", () => {
 
 describe("calling a tool", () => {
   test("sends the arguments and returns what came back", async () => {
-    const result = await callTool({ url }, "search_issues", {
-      query: "billing",
-    });
+    const result = await callTool(
+      { url, allowPrivateHost: true },
+      "search_issues",
+      {
+        query: "billing",
+      },
+    );
 
     // The arguments really crossed the wire: the answer is derived from them by the far side.
     expect(result.text).toBe("Found 2 issues for billing");
@@ -137,7 +141,11 @@ describe("calling a tool", () => {
      * server deciding how much of our context window to spend. Truncated visibly, never silently: a
      * model that can see the cut can say the answer was incomplete.
      */
-    const result = await callTool({ url }, "long_answer", {});
+    const result = await callTool(
+      { url, allowPrivateHost: true },
+      "long_answer",
+      {},
+    );
 
     expect(result.truncated).toBe(true);
     expect(result.text.length).toBeLessThan(LONG.length);
@@ -146,13 +154,21 @@ describe("calling a tool", () => {
   test("a non-text part is named rather than dropped", async () => {
     // A model told "[image]" can say the tool returned an image. A model handed nothing concludes
     // the tool returned nothing, which is a different and wrong answer.
-    const result = await callTool({ url }, "returns_an_image", {});
+    const result = await callTool(
+      { url, allowPrivateHost: true },
+      "returns_an_image",
+      {},
+    );
 
     expect(result.text).toContain("[image]");
   });
 
   test("text and a non-text part both survive", async () => {
-    const result = await callTool({ url }, "mixed_content", {});
+    const result = await callTool(
+      { url, allowPrivateHost: true },
+      "mixed_content",
+      {},
+    );
 
     expect(result.text).toContain("here is the chart");
     expect(result.text).toContain("[image]");
@@ -164,16 +180,20 @@ describe("calling a tool", () => {
      * A Bot handed the first can explain itself; a Bot handed the second should retry or stop. The
      * protocol carries the distinction and it would be easy to flatten both into a throw.
      */
-    const result = await callTool({ url }, "always_fails", {});
+    const result = await callTool(
+      { url, allowPrivateHost: true },
+      "always_fails",
+      {},
+    );
 
     expect(result.isError).toBe(true);
     expect(result.text.length).toBeGreaterThan(0);
   });
 
   test("a tool this server does not have fails rather than answering emptily", async () => {
-    await expect(callTool({ url }, "no_such_tool", {})).rejects.toBeInstanceOf(
-      Error,
-    );
+    await expect(
+      callTool({ url, allowPrivateHost: true }, "no_such_tool", {}),
+    ).rejects.toBeInstanceOf(Error);
   });
 });
 
@@ -182,7 +202,52 @@ describe("a server that cannot be reached", () => {
     // The case a stub cannot produce. A listing that returned `[]` for an unreachable server would
     // present a Bot as having no tools rather than as having a broken connector.
     await expect(
-      listTools({ url: "http://127.0.0.1:9/mcp" }),
+      listTools({ url: "http://127.0.0.1:9/mcp", allowPrivateHost: true }),
     ).rejects.toBeInstanceOf(Error);
   });
+});
+
+test("callTool refuses to start when AbortSignal is already aborted", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    callTool(
+      { url, allowPrivateHost: true },
+      "search_issues",
+      { query: "x" },
+      controller.signal,
+    ),
+  ).rejects.toMatchObject({ name: "AbortError" });
+});
+
+test("callTool aborts an in-flight MCP call when Stop fires", async () => {
+  // Dedicated slow tool so the race is real (not a cached fast answer).
+  mock
+    .addTool({
+      name: "slow_hang",
+      description: "Takes a while.",
+      inputSchema: { type: "object", properties: {} },
+    })
+    .onToolCall("slow_hang", async () => {
+      await new Promise((r) => setTimeout(r, 30_000));
+      return "should not finish";
+    });
+  const controller = new AbortController();
+  const pending = callTool(
+    { url, allowPrivateHost: true },
+    "slow_hang",
+    {},
+    controller.signal,
+  );
+  await new Promise((r) => setTimeout(r, 50));
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+});
+
+test("private MCP URL is refused without allowPrivateHost (CR-P2-08)", async () => {
+  await expect(
+    callTool({ url: "http://127.0.0.1:9/mcp" }, "search_issues", {
+      query: "x",
+    }),
+  ).rejects.toBeInstanceOf((await import("../src/plugins/mcp")).McpServerError);
 });
