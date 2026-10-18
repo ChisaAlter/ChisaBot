@@ -665,6 +665,41 @@ describe("redeeming an authorization code", () => {
     }
   });
 
+
+  test("refuses a metadata / private token URL before fetch (SSRF leftover)", async () => {
+    let fetched = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      fetched += 1;
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      expect(
+        await redeemAuthorizationCode({
+          tokenUrl: "http://169.254.169.254/latest/meta-data/",
+          clientId: "client-id",
+          clientSecret: "secret-1",
+          code: "code-1",
+          redirectUri: "https://openbot.example/api/plugins/oauth/callback",
+          verifier: "verifier-1",
+        }),
+      ).toBeNull();
+      expect(
+        await redeemAuthorizationCode({
+          tokenUrl: "http://127.0.0.1:9/token",
+          clientId: "client-id",
+          clientSecret: "secret-1",
+          code: "code-1",
+          redirectUri: "https://openbot.example/api/plugins/oauth/callback",
+          verifier: "verifier-1",
+        }),
+      ).toBeNull();
+      expect(fetched).toBe(0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   /**
    * A 200 carrying something that is not JSON.
    *

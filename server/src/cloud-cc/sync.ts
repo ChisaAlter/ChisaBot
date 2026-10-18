@@ -5,6 +5,7 @@ import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import type { DeviceHub } from "../devices/hub";
 import type { DeviceRecord, DeviceStore } from "../devices/store";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 /**
  * 电脑文件夹同步（P4a，docs/cloud-claude-code.md §4–§5.4，DESIGN.md §73.9）：服务器这一侧。
@@ -820,7 +821,7 @@ export function createCloudSyncService(options: CloudSyncOptions) {
     if (error instanceof z.ZodError) return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
     const status = (error as { status?: number }).status;
     if (status === 409 || status === 503) return c.json({ error: error.message }, status);
-    console.error(JSON.stringify({ type: "cloud-sync-error", error: error.name, message: String(error.message).slice(0, 200) }));
+    console.error(JSON.stringify({ type: "cloud-sync-error", error: error.name, message: reasonWithoutStatement(error).slice(0, 200) }));
     return c.json({ error: "电脑同步暂时不可用，请重试。" }, 503);
   }
 

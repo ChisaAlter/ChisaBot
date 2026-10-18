@@ -8,20 +8,30 @@ ChisaBot 自己的版本史，从 0.1.0（首个公开版本）起，按**发版
   `.github/release-notes/v<版本>.md`；GitHub Release 页 `https://github.com/ChisaAlter/ChisaBot/releases/tag/v<版本>`。
 - 版本规则见 [release.md](release.md) 和 [ADR-0007](adr/0007-version-reset-0-1-0.md)。
 
-## 当前状态（2026-10-18）
+## 当前状态（2026-10-19）
 
 | 项 | 值 |
 |---|---|
-| 服务器 / 网页（main） | 本发版提交，`/api/version` = **0.1.24** |
-| 最新客户端发版 | **v0.1.24**（2026-10-18） |
+| 服务器 / 网页（main） | 本发版提交，`/api/version` = **0.1.25** |
+| 最新客户端发版 | **v0.1.25**（2026-10-19） |
 | PC 外壳指纹 `chisabotShell` | `059438f4e6c98c74`（0.1.12 起；0.1.11 及更早更新时提示「重新安装」） |
-| Android versionCode | 230（只增不减） |
+| Android versionCode | 231（只增不减） |
 
 ---
 
 ## 未发版（main 上，已随服务器上线）
 
 （无）
+
+## v0.1.25 — 2026-10-19
+
+PC 0.1.25（外壳未变，原地更新）· Android 0.1.25（vc 231）。主线：生产加固 [#TBD](https://github.com/ChisaAlter/ChisaBot/pull/TBD)（流 keepalive + 审查残留）。
+
+| PR | 日 | 说明 | 合入 |
+|----|----|------|------|
+| [#TBD](https://github.com/ChisaAlter/ChisaBot/pull/TBD) | 10-19 | 直播屏 ping/pong；OAuth/media SSRF 残留；日志脱敏；version 烟雾 | `TBD` |
+
+---
 
 ## v0.1.24 — 2026-10-18
 

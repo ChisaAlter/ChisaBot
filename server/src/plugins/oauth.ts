@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { seal, unseal } from "../auth/signed-value";
 import type { CatalogueAuth } from "./catalogue";
+import { reasonWithoutStatement } from "../db/query-failure";
+import { checkPublicUrl } from "../../../shared/net/ssrf";
 
 /**
  * The connect flow: sending a person to a vendor to consent, and believing what comes back.
@@ -346,6 +348,25 @@ export async function redeemAuthorizationCode(input: {
     );
     return null;
   }
+  // Catalogue is admin-gated, but a token request carries client_secret + code: refuse private /
+  // metadata hosts the same way web_fetch and vault do (review Limitations / SSRF leftovers).
+  // Shape-level public URL only (IP literals / localhost / .internal …). Catalogue hosts are
+  // admin-pinned HTTPS vendors; redirect is already "manual" so a 302 cannot hand the secret to
+  // metadata. Full DNS pinning belongs with guardedFetch; resolving fake *.example in unit tests
+  // (and flaky NXDOMAIN) would refuse every Connect.
+  {
+    const verdict = checkPublicUrl(input.tokenUrl);
+    if (!verdict.ok) {
+      console.error(
+        JSON.stringify({
+          type: "oauth-token-endpoint-blocked",
+          tokenUrl: input.tokenUrl,
+          note: verdict.reason,
+        }),
+      );
+      return null;
+    }
+  }
 
   /*
    * A vendor that could not be reached at all, which the refusal below cannot see.
@@ -393,7 +414,7 @@ export async function redeemAuthorizationCode(input: {
         type: "oauth-token-endpoint-unreachable",
         tokenUrl: input.tokenUrl,
         note: "A person's consent could not be redeemed. They were sent back to Settings with a failure.",
-        error: String(error),
+        error: reasonWithoutStatement(error).slice(0, 200),
       }),
     );
     return null;
@@ -462,6 +483,23 @@ export async function registerDynamicClient(input: {
     );
     return null;
   }
+  // Shape-level public URL only (IP literals / localhost / .internal …). Catalogue hosts are
+  // admin-pinned HTTPS vendors; redirect is already "manual" so a 302 cannot hand the secret to
+  // metadata. Full DNS pinning belongs with guardedFetch; resolving fake *.example in unit tests
+  // (and flaky NXDOMAIN) would refuse every Connect.
+  {
+    const verdict = checkPublicUrl(input.registrationUrl);
+    if (!verdict.ok) {
+      console.error(
+        JSON.stringify({
+          type: "oauth-registration-endpoint-blocked",
+          registrationUrl: input.registrationUrl,
+          note: verdict.reason,
+        }),
+      );
+      return null;
+    }
+  }
 
   // A vendor that could not be reached at all — see `redeemAuthorizationCode`, which states the same
   // gap in full. This one lands on an administrator pressing Connect rather than on somebody
@@ -493,7 +531,7 @@ export async function registerDynamicClient(input: {
         type: "oauth-registration-endpoint-unreachable",
         registrationUrl: input.registrationUrl,
         note: "This deployment could not introduce itself to the vendor. Connect answered 502.",
-        error: String(error),
+        error: reasonWithoutStatement(error).slice(0, 200),
       }),
     );
     return null;

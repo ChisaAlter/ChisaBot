@@ -61,7 +61,7 @@ test("connection loss disables input, retries boundedly, then asks for Retry", a
     r.sockets[i + 1]?.onclose?.();
   }
   expect(r.timers.map((t) => t.delay)).toEqual([500, 1000, 2000, 4000, 8000]);
-  expect(r.statuses.at(-1)).toContain("Retry");
+  expect(r.statuses.at(-1)).toContain("重试");
   expect(r.stopped()).toBe(6);
   r.control.stop();
 });
@@ -77,8 +77,25 @@ test("a reconnect that shows the screen again restores the whole retry budget", 
     await r.sockets[i + 1]?.onopen?.();
   }
   expect(r.timers.map((t) => t.delay)).toEqual([500, 500, 500, 500, 500, 500]);
-  expect(r.statuses.some((status) => status.includes("Retry"))).toBe(false);
+  expect(r.statuses.some((status) => status.includes("重试"))).toBe(false);
   // A reconnect still asks who holds the computer before input is ready.
+  expect(r.statuses.at(-1)).toBe("blocked");
+  r.control.stop();
+});
+
+
+test("application keepalive ping also restores the retry budget (static page, CR-P2-12)", async () => {
+  const r = rig();
+  const ping = { data: JSON.stringify({ type: "ping", t: 1 }) };
+  await r.sockets[0]?.onopen?.();
+  for (let i = 0; i < 6; i++) {
+    r.sockets[i]?.onmessage?.(ping);
+    r.sockets[i]?.onclose?.();
+    r.timers[i]?.run();
+    await r.sockets[i + 1]?.onopen?.();
+  }
+  expect(r.timers.map((t) => t.delay)).toEqual([500, 500, 500, 500, 500, 500]);
+  expect(r.statuses.some((status) => status.includes("重试"))).toBe(false);
   expect(r.statuses.at(-1)).toBe("blocked");
   r.control.stop();
 });

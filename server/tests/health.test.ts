@@ -202,3 +202,21 @@ describe("auth routes", () => {
     expect(reached()).toBe(true);
   });
 });
+
+describe("version endpoint", () => {
+  test("reports version fields without leaking secrets or build paths", async () => {
+    const response = await app.request("http://openbot.local/api/version");
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    expect(typeof parsed.version).toBe("string");
+    expect(typeof parsed.buildId).toBe("string");
+    for (const key of Object.keys(parsed)) {
+      expect(["version", "buildId", "commit", "builtAt"]).toContain(key);
+    }
+    expect(body).not.toContain("tenant-api-key");
+    expect(body).not.toContain("license-token");
+    expect(body).not.toContain("/app/");
+    expect(body).not.toMatch(/postgres(?:ql)?:\/\//i);
+  });
+});

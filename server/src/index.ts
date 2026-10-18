@@ -3884,6 +3884,11 @@ serve<SocketData>({
     return app.fetch(request, { server });
   },
   websocket: {
+    // CR-P2-12: browser ↔ proxy must not die on a static screencast. Bun auto-pings; idleTimeout
+    // matches agent-computer. Application `{type:"ping"}` from the computer also crosses this hop
+    // as a data frame (protocol pings do not).
+    sendPings: true,
+    idleTimeout: 120,
     open(ws) {
       if (!isProxiedStream(ws.data)) {
         channelSocket.open(asChannelSocket(ws));

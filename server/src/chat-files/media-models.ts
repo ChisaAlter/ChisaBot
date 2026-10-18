@@ -93,7 +93,12 @@ export function createMediaModels(
   },
 ) {
   const sql = database.$client;
-  const doFetch = options.fetch ?? fetch;
+  // Personal / admin image endpoints are checked with assertPublicUrl, but a 302 after that used to
+  // hand the Bearer token to whatever Location said. Default to redirect:"error"; injected test
+  // fetches keep their own redirect policy when they pass one.
+  const rawFetch = options.fetch ?? fetch;
+  const doFetch: typeof fetch = (input, init) =>
+    rawFetch(input, { ...init, redirect: init?.redirect ?? "error" });
   const env = options.env ?? process.env;
   const assertPublic = options.assertPublic ?? assertPublicUrl;
 

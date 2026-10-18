@@ -330,6 +330,20 @@ export function LiveScreen({
         ok?: unknown;
       };
       if (typeof message.type !== "string") return;
+      // Application keepalive from agent-computer (CR-P2-12): answer so the return path also
+      // carries a data frame through the proxy; ignore pong. Never requires holding the wheel.
+      if (message.type === "ping") {
+        const socket = socketRef.current;
+        if (socket?.readyState === WebSocket.OPEN) {
+          try {
+            socket.send(JSON.stringify({ type: "pong" }));
+          } catch {
+            /* reconnect path will replace the socket */
+          }
+        }
+        return;
+      }
+      if (message.type === "pong") return;
       // 标签列表（DESIGN §95）：直播 socket 每次有变化就推一次，写进标签栏读的那份仓库。
       if (message.type === "tabs") {
         setTabsView(computerId, parsed);

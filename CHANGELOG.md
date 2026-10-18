@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.25
+
+- Production hardening: live computer stream keepalive (protocol sendPings + application `{type:ping}` through the proxy) so a static page + idle viewer is not dropped at 120s (CR-P2-12).
+- SSRF leftovers: OAuth token/registration URLs refuse private/metadata hosts; media-model fetches default to `redirect:"error"` so API keys cannot follow a 302.
+- Log scrub: cloud-cc / sync / oauth / passwords error paths use `reasonWithoutStatement`.
+- Honesty: screen disconnect copy in Chinese; `/api/version` smoke test asserts no secret leakage; ping resets live-screen retry budget.
+
 ## 0.1.24
 
 - Bot egress floor denies RFC1918 / loopback even under `allow_all` (aligned with navigation).

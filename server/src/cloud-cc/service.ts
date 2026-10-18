@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
+import { reasonWithoutStatement } from "../db/query-failure";
 import { parseShareLink, shareScheme, toSingBoxOutbound } from "../../../shared/proxy-links";
 import {
   type CcApprovalState,
@@ -1425,7 +1426,7 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
       if (error instanceof CcError) return c.json({ error: error.message }, error.status);
       if (error instanceof GithubError) return c.json({ error: error.message }, 400);
       if (error instanceof z.ZodError) return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
-      console.error(JSON.stringify({ type: "cloud-cc-error", error: error.name, message: String(error.message).slice(0, 200), route: c.req.path }));
+      console.error(JSON.stringify({ type: "cloud-cc-error", error: error.name, message: reasonWithoutStatement(error).slice(0, 200), route: c.req.path }));
       return c.json({ error: "云端 Claude Code 暂时不可用，请重试。" }, 503);
     });
     return app;

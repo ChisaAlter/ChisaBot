@@ -40,9 +40,7 @@ export function connectScreen(options: Options) {
       options.onReady(false);
       const delay = BACKOFF[attempts++];
       if (delay === undefined) {
-        options.onProblem(
-          "The live screen is disconnected. Retry to reconnect.",
-        );
+        options.onProblem("屏幕连接已断开。点重试再连。");
         return;
       }
       options.onProblem("正在重新连接屏幕…");
@@ -85,7 +83,8 @@ export function connectScreen(options: Options) {
       }
       // A frame means this socket recovered, so the next drop starts the backoff over. Without
       // this, drops a viewer had already recovered from used up the retries for good.
-      if (message?.type === "frame") attempts = 0;
+      // Frames and application keepalives both prove the socket is live (static pages only send pings).
+      if (message?.type === "frame" || message?.type === "ping") attempts = 0;
       options.onMessage(event);
     };
     current.onerror = () => {

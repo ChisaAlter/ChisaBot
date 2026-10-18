@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { reasonWithoutStatement } from "../db/query-failure";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import type { ActionActor, ComputerGateway } from "../computer/gateway";
 import type { SignInFillResult } from "../computer/schema";
@@ -187,7 +188,7 @@ export function createSignInService(deps: SignInServiceDependencies) {
         JSON.stringify({
           type: "sign-in-resume-failed",
           request: request.id,
-          error: error instanceof Error ? error.message : String(error),
+          error: reasonWithoutStatement(error),
         }),
       );
     }
@@ -402,7 +403,7 @@ export function createSignInService(deps: SignInServiceDependencies) {
             JSON.stringify({
               type: "sign-in-notify-failed",
               request: request.id,
-              error: error instanceof Error ? error.message : String(error),
+              error: reasonWithoutStatement(error),
             }),
           );
         }

@@ -46,6 +46,13 @@ import {
 } from "./request-validation";
 import { type InputMessage, startScreencast } from "./screencast";
 import {
+  keepAlivePingPayload,
+  keepAlivePongPayload,
+  isKeepAlivePing,
+  STREAM_IDLE_TIMEOUT_S,
+  STREAM_KEEPALIVE_MS,
+} from "./stream-keepalive";
+import {
   markElementSecret,
   maskSensitiveValues,
   SECRET_ATTRIBUTE,
@@ -619,15 +626,22 @@ type StreamData = { botId: string; recordingId?: string };
 serve<StreamData>({
   port: PORT,
   ...(RUNTIME.hostname ? { hostname: RUNTIME.hostname } : {}),
-  idleTimeout: 120,
+  // HTTP idle (non-WS). /exec disables this per-request; long computer actions must not die at 10s.
+  idleTimeout: STREAM_IDLE_TIMEOUT_S,
   /**
    * The live screen, pushed by Chrome rather than polled.
    *
    * Upgraded here rather than served as HTTP because the whole point is that frames arrive when the
    * page changes and input goes back over the same connection. See screencast.ts for why polling was
    * not good enough once a person had to type into this.
+   *
+   * CR-P2-12 / CB-CR-17: protocol sendPings + application `{type:"ping"}` so a static page with an
+   * idle viewer is not dropped at idleTimeout. Application pings are required because the app-server
+   * proxy only forwards data frames.
    */
   websocket: {
+    sendPings: true,
+    idleTimeout: STREAM_IDLE_TIMEOUT_S,
     async open(ws) {
       const session = sessions.for(ws.data.botId);
       /*
@@ -695,9 +709,19 @@ serve<StreamData>({
         const botKickers = kickers.get(ws.data.botId) ?? new Set();
         botKickers.add(kicked);
         kickers.set(ws.data.botId, botKickers);
+        /*
+         * Application keepalive. Screencast frames only arrive when the page changes; without this
+         * a static page + idle viewer goes quiet and Bun / the proxy / nginx drop the socket at
+         * idleTimeout. Cleared with the follow loop so a released claim leaves no timer behind.
+         */
+        const keepAlive = setInterval(() => {
+          send(keepAlivePingPayload());
+        }, STREAM_KEEPALIVE_MS);
+        keepAlive.unref?.();
         if (
           !claim.setFollow(() => {
             clearInterval(follow);
+            clearInterval(keepAlive);
             botKickers.delete(kicked);
             if (botKickers.size === 0 && kickers.get(ws.data.botId) === botKickers)
               kickers.delete(ws.data.botId);
@@ -723,6 +747,21 @@ serve<StreamData>({
     },
 
     async message(ws, raw) {
+      // Application keepalive answered before ownership / control: a static idle viewer must be
+      // able to keep the socket alive without holding the wheel or waiting for the cast to start.
+      try {
+        const maybe = JSON.parse(String(raw)) as unknown;
+        if (isKeepAlivePing(maybe)) {
+          try {
+            ws.send(JSON.stringify(keepAlivePongPayload()));
+          } catch {
+            /* socket already gone */
+          }
+          return;
+        }
+      } catch {
+        /* fall through to the ordinary parser below */
+      }
       const session = sessions.for(ws.data.botId);
       /*
        * Whose screen this is, asked before anything is done with the input.
