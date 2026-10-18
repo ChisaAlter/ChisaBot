@@ -29,7 +29,10 @@
 
 ## PR / release / deploy
 
-- PR: (pending)
-- Release: (pending)
-- Deploy: (pending)
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/244 (squash → `4a27682e`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.39
+- Deploy: `deploy-serial.sh 4a27682 grok-bot` → `local/chisabot:auto-202610182030-4a27682`
+- `/api/version` = **0.1.39**; post-deploy-smoke **PASSED** (含模型 + 匿名 admin 401)
+- `isolate-sidecar --verify` ALL GREEN（Magpie!-app；App→magpie:3425 → 401）
+- `chisabot-magpie-isolate.service` enabled；br_netfilter + sysctl.d 已写
 - **未** resume 电车定时

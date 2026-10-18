@@ -66,9 +66,12 @@ for cand in "$REPO_OPS/scripts/ops/isolate-sidecar-app.sh" /opt/chisabot-ops/iso
 done
 # Prefer copy into /opt/chisabot-ops when we have a repo script (durable across updater rebuilds of app image)
 if [ -n "$ISO_SH" ] && [ -d /opt/chisabot-ops ]; then
-  cp -f "$ISO_SH" /opt/chisabot-ops/isolate-sidecar-app.sh
-  chmod +x /opt/chisabot-ops/isolate-sidecar-app.sh
-  ISO_SH=/opt/chisabot-ops/isolate-sidecar-app.sh
+  dest=/opt/chisabot-ops/isolate-sidecar-app.sh
+  if [ "$ISO_SH" != "$dest" ]; then
+    cp -f "$ISO_SH" "$dest"
+  fi
+  chmod +x "$dest"
+  ISO_SH=$dest
   if [ -f "$REPO_OPS/deploy/magpie-isolate.service" ] || [ -f /opt/chisabot-src/deploy/magpie-isolate.service ]; then
     unit=${REPO_OPS:+$REPO_OPS/deploy/magpie-isolate.service}
     [ -f "$unit" ] || unit=/opt/chisabot-src/deploy/magpie-isolate.service
