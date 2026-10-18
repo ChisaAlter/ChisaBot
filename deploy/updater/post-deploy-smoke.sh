@@ -59,8 +59,16 @@ esac
 if [ "$HCODE" = 200 ] || [ "$HCODE" = 503 ]; then
   HBODY=$(cat /tmp/cb-smoke-admin-health.json)
   echo "aggregate health: $HBODY" | head -c 800; echo
-  echo "$HBODY" | grep -q '"ok":true' || fail "aggregate health not ok (HTTP $HCODE)"
   echo "$HBODY" | grep -q '"localCaller"' || fail "aggregate missing localCaller check"
+  # Top-level ok only (nested checks.app.ok must not fool grep).
+  if command -v python3 >/dev/null 2>&1; then
+    echo "$HBODY" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("ok") is True else 1)'       || fail "aggregate health top-level ok!=true (HTTP $HCODE)"
+  else
+    echo "$HBODY" | grep -qE '"ok"[[:space:]]*:[[:space:]]*true' || fail "aggregate health not ok (HTTP $HCODE)"
+    # Prefer start-of-object: fragile without python — require HTTP 200 as well
+    [ "$HCODE" = 200 ] || fail "aggregate health HTTP $HCODE without python parser"
+  fi
+  [ "$HCODE" = 200 ] || fail "aggregate health HTTP $HCODE (expected 200 when ok)"
   ok "/api/admin/health aggregate ok"
 fi
 

@@ -12,8 +12,8 @@ ChisaBot 自己的版本史，从 0.1.0（首个公开版本）起，按**发版
 
 | 项 | 值 |
 |---|---|
-| 服务器 / 网页（main） | 本发版提交，`/api/version` = **0.1.26** |
-| 最新客户端发版 | **v0.1.26**（2026-10-19） |
+| 服务器 / 网页（main） | 本发版提交，`/api/version` = **0.1.27** |
+| 最新客户端发版 | **v0.1.27**（2026-10-19） |
 | PC 外壳指纹 `chisabotShell` | `059438f4e6c98c74`（0.1.12 起；0.1.11 及更早更新时提示「重新安装」） |
 | Android versionCode | 231（只增不减） |
 
@@ -22,6 +22,16 @@ ChisaBot 自己的版本史，从 0.1.0（首个公开版本）起，按**发版
 ## 未发版（main 上，已随服务器上线）
 
 （无）
+
+## v0.1.27 — 2026-10-19
+
+PC 0.1.27 · Android vc 233。热修 [#219](https://github.com/ChisaAlter/ChisaBot/pull/219)：computer 探活 + 烟雾顶层 ok。
+
+| PR | 日 | 说明 | 合入 |
+|----|----|------|------|
+| [#219](https://github.com/ChisaAlter/ChisaBot/pull/219) | 10-19 | computer probe / smoke parse | （合入后填） |
+
+---
 
 ## v0.1.26 — 2026-10-19
 

@@ -3687,21 +3687,25 @@ const app = createApp(
             ? {
                 probeComputer: async () => {
                   try {
-                    const status = await computerProvider.status("__ops_health__");
-                    const list = await computerProvider.list().catch(
-                      (): Array<{ status: string }> => [],
-                    );
-                    const ready = status.state === "ready";
+                    // list() proves the provider answers. Do NOT invent a fake bot id:
+                    // agent-computer /health with x-openbot-bot-id opens a session and 500s.
+                    const list = await computerProvider.list();
+                    let reachable = list.length === 0;
+                    let error: string | undefined;
+                    if (list[0]) {
+                      const status = await computerProvider.status(list[0].botId);
+                      reachable = status.state === "ready";
+                      if (!reachable && status.reason) error = status.reason.slice(0, 200);
+                    }
                     return {
-                      ok: ready,
+                      // Provider reachable (list worked). Per-bot ready is informational.
+                      ok: true as const,
                       configured: true as const,
                       provider: computerProvider.name,
-                      reachable: ready,
+                      reachable,
                       running: list.filter((c) => c.status === "running").length,
                       total: list.length,
-                      ...(!ready && status.reason
-                        ? { error: status.reason.slice(0, 200) }
-                        : {}),
+                      ...(error ? { error } : {}),
                     };
                   } catch (error) {
                     return {

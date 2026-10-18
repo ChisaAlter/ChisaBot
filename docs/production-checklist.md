@@ -25,7 +25,7 @@
     "app": { "ok": true, "status": "ok" },
     "database": { "ok": true, "latencyMs": 3 },
     "magpie": { "ok": true, "configured": true, "reachable": true, "providersReady": 2, "providersTotal": 3 },
-    "computer": { "ok": null, "configured": false },
+    "computer": { "ok": true, "configured": true, "reachable": false, "total": 3 },
     "localCaller": { "ok": true, "authenticated": true, "gatewayMode": "on" }
   }
 }
@@ -33,6 +33,7 @@
 
 - `ok: null` = 未配置，**不算失败**。
 - `ok: false` = 已配置但探失败 → 整体 `ok: false`、HTTP 503。
+- computer：`ok` 表示 provider `list()` 通；某机器人是否 ready 看 `reachable`（假 botId 会让 agent-computer 500，已避免）。
 - 日志里失败会打一行 `{"type":"ops","code":"OPS_HEALTH_DEGRADED",…}`（见 `shared/ops-codes.ts`）。
 
 本机示例（网关模式）：

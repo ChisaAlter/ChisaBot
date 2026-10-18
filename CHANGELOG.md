@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.27
+
+- Hotfix ops health: computer probe uses real bot ids from `list()` (fake `__ops_health__` caused agent-computer 500); post-deploy smoke parses top-level `ok` only.
+
 ## 0.1.26
 
 - Ops maturity (PRD-P1-01…03): `GET /api/admin/health` aggregates app/version, DB ping, Magpie, computer node, Local-Caller for monitors.

@@ -28,8 +28,9 @@
 - 未 resume 电车定时；无表结构变更；PC 外壳指纹未变
 
 ## PR / release
-- PR: （开 PR 后填）
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/218
 - Release: v0.1.26
 
 ## Deploy
-- pending
+- v0.1.26: `deploy-serial.sh b463e7f` → `auto-202610181702-b463e7f`；烟雾脚本曾被嵌套 ok 骗过，computer 因假 botId 500 → 热修 0.1.27
+
