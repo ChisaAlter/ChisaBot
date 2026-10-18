@@ -34,3 +34,13 @@
 ## Deploy
 - v0.1.26: `deploy-serial.sh b463e7f` → `auto-202610181702-b463e7f`；烟雾脚本曾被嵌套 ok 骗过，computer 因假 botId 500 → 热修 0.1.27
 
+## Ship result (2026-10-19 Asia/Shanghai)
+
+- PR #218 squash-merged as `b463e7ff` → Release **v0.1.26**
+- Deploy 0.1.26: `deploy-serial.sh b463e7f` → `local/chisabot:auto-202610181702-b463e7f`
+  - 实机发现：computer 假 botId 500；烟雾 grep 嵌套 ok 误绿
+- PR #219 squash-merged as `76cf6b6d` → Release **v0.1.27**
+- Deploy 0.1.27: `deploy-serial.sh 76cf6b6` → `local/chisabot:auto-202610181706-76cf6b6`
+- `/api/version` = **0.1.27**；`/api/admin/health` 顶层 `ok:true`；`post-deploy-smoke PASSED`（含模型）
+- **未** resume 电车定时
+- 路线图：`/workspace/ChisaBot-production-readiness.md`

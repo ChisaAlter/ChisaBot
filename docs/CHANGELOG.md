@@ -29,7 +29,7 @@ PC 0.1.27 · Android vc 233。热修 [#219](https://github.com/ChisaAlter/ChisaB
 
 | PR | 日 | 说明 | 合入 |
 |----|----|------|------|
-| [#219](https://github.com/ChisaAlter/ChisaBot/pull/219) | 10-19 | computer probe / smoke parse | （合入后填） |
+| [#219](https://github.com/ChisaAlter/ChisaBot/pull/219) | 10-19 | computer probe / smoke parse | `76cf6b6d` |
 
 ---
 
@@ -39,7 +39,7 @@ PC 0.1.26（外壳未变，原地更新）· Android 0.1.26（vc 232）。主线
 
 | PR | 日 | 说明 | 合入 |
 |----|----|------|------|
-| [#218](https://github.com/ChisaAlter/ChisaBot/pull/218) | 10-19 | `/api/admin/health`；post-deploy-smoke；production-checklist；ops-codes | （合入后填） |
+| [#218](https://github.com/ChisaAlter/ChisaBot/pull/218) | 10-19 | `/api/admin/health`；post-deploy-smoke；production-checklist；ops-codes | `b463e7ff` |
 
 ---
 
