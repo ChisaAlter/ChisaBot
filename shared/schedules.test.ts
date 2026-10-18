@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { classifyScheduleReply, failStreakShouldPause, formatWhen, formatWhenAbsolute, partitionScheduleList, type ScheduleView } from "./schedules";
+import { classifyScheduleReply, failStreakShouldPause, formatWhen, formatWhenAbsolute, partitionScheduleList,
+  scheduleLastLineZh,
+  scheduleLastTone, type ScheduleView } from "./schedules";
 
 describe("classifyScheduleReply (FIX-01)", () => {
   test("marks deferred confirm as waiting", () => {
@@ -99,5 +101,45 @@ describe("partitionScheduleList (v0.1.34 non-tram re-verify)", () => {
     const items = [base({ id: "x", agentId: "bot1", status: "active" })];
     const part = partitionScheduleList(items, []);
     expect(part.orphanLive).toHaveLength(1);
+  });
+});
+
+describe("scheduleLastLineZh (dogfood paused waiting)", () => {
+  const base = (over: Partial<ScheduleView> = {}): ScheduleView => ({
+    id: "s1",
+    agentId: "bot1",
+    threadId: "t1",
+    source: "web",
+    title: "和 Claude 聊电车",
+    instruction: "x",
+    kind: "cron",
+    cron: "0 9 * * *",
+    runAt: null,
+    timezone: "Asia/Shanghai",
+    status: "paused",
+    nextRunAt: null,
+    lastRunAt: "2026-10-18T12:00:00Z",
+    lastStatus: "waiting",
+    lastResult: null,
+    runCount: 1,
+    createdAt: "2026-10-18T00:00:00Z",
+    schedule: "每天 09:00",
+    running: false,
+    ...over,
+  });
+
+  test("paused + waiting is reframed, not actionable hang", () => {
+    const line = scheduleLastLineZh(base(), "16小时前");
+    expect(line).toContain("暂停前在等确认");
+    expect(line).toContain("已暂停，不会自动继续");
+    expect(line).not.toContain("打开对话处理");
+    expect(scheduleLastTone(base())).toBeNull();
+  });
+
+  test("active waiting keeps open-thread prompt", () => {
+    const line = scheduleLastLineZh(base({ status: "active" }), "刚");
+    expect(line).toContain("在等你确认");
+    expect(line).toContain("打开对话处理");
+    expect(scheduleLastTone(base({ status: "active" }))).toBe("waiting");
   });
 });

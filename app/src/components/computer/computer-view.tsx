@@ -15,6 +15,7 @@ import {
 import {
   applyScreenshotPollResult,
   nextScreenshotPollDelay,
+  shouldPauseScreenshotPoll,
 } from "@/lib/computers/screenshot-poll";
 import { useComputerControl } from "@/lib/computers/use-control";
 import { useComputerStatus } from "@/lib/computers/use-status";
@@ -392,6 +393,11 @@ export function ComputerView({
   useEffect(() => {
     if (settled) return;
     if (!visualVisible) return;
+    /*
+     * 大屏展开时 LiveScreen 走 websocket 出图。HTTP /screenshot 再轮询会跟流抢电脑，
+     * 控制台 503 刷屏，而画布仍像健康直播（狗粮 0.1.39 → 0.1.40）。收起后再拉卡片帧。
+     */
+    if (expanded) return;
     const mine = ++generation.current;
     let timer: ReturnType<typeof setTimeout>;
     // Consecutive identical frames observed during post-action settling.
@@ -434,7 +440,10 @@ export function ComputerView({
           setProblem(null);
         }
       } finally {
-        if (generation.current === mine && shouldContinue()) {
+        if (generation.current !== mine) return;
+        // 连续 503 后停自动轮询，等「重试」；避免控制台刷屏。
+        if (shouldPauseScreenshotPoll(failStreak)) return;
+        if (shouldContinue()) {
           timer = setTimeout(tick, nextScreenshotPollDelay(failStreak, intervalMs));
         }
       }
@@ -445,7 +454,7 @@ export function ComputerView({
       generation.current++;
       clearTimeout(timer);
     };
-  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey]);
+  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey, expanded]);
 
   /*
    * 交还之后收起大屏。交还就是「我弄完了」，留着一个只读的大屏还要再点一次关闭，

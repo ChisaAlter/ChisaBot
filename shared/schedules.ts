@@ -161,6 +161,41 @@ export function classifyScheduleReply(
   return "ok";
 }
 
+
+/**
+ * 设置页「上次…」一行（狗粮 0.1.40）。
+ * paused + waiting：暂停前留下的确认态，不当成「还在等你点」的可操作挂起；从不暗示会自动恢复。
+ */
+export function scheduleLastLineZh(
+  s: Pick<ScheduleView, "status" | "lastStatus" | "running">,
+  ago: string | null,
+): string {
+  if (s.running || s.lastStatus === "running") return "正在运行…";
+  const agoPart = ago ? ` · ${ago}` : "";
+  if (s.status === "paused" && s.lastStatus === "waiting") {
+    return `暂停前在等确认${agoPart} · 已暂停，不会自动继续`;
+  }
+  if (s.lastStatus === "waiting") {
+    return `在等你确认${agoPart} · 打开对话处理`;
+  }
+  if (s.lastStatus === "failed") {
+    return `上次失败${agoPart}`;
+  }
+  if (s.lastStatus) {
+    return `上次${RUN_STATUS_ZH[s.lastStatus]}${agoPart}`;
+  }
+  return "还没运行过";
+}
+
+/** paused 上的陈旧 waiting 用 muted，不标成「在等」行动态。 */
+export function scheduleLastTone(
+  s: Pick<ScheduleView, "status" | "lastStatus" | "running">,
+): ScheduleRunStatus | null {
+  if (s.running || s.lastStatus === "running") return "running";
+  if (s.status === "paused" && s.lastStatus === "waiting") return null;
+  return s.lastStatus;
+}
+
 export const RUN_STATUS_ZH: Record<ScheduleRunStatus, string> = {
   running: "运行中",
   ok: "已完成",

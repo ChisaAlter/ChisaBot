@@ -7,6 +7,8 @@ import {
 import {
   applyScreenshotPollResult,
   nextScreenshotPollDelay,
+  SCREENSHOT_POLL_PAUSE_AFTER,
+  shouldPauseScreenshotPoll,
 } from "@/lib/computers/screenshot-poll";
 import {
   SCREEN_BUSY_ZH,
@@ -86,13 +88,23 @@ describe("applyScreenshotPollResult (DOG-05)", () => {
 });
 
 describe("nextScreenshotPollDelay", () => {
-  test("backs off on consecutive failures, caps at 8s", () => {
+  test("backs off on consecutive failures, caps at 30s", () => {
     expect(nextScreenshotPollDelay(0, 1000)).toBe(1000);
     expect(nextScreenshotPollDelay(1, 1000)).toBe(1000);
     expect(nextScreenshotPollDelay(2, 1000)).toBe(2000);
     expect(nextScreenshotPollDelay(3, 1000)).toBe(4000);
     expect(nextScreenshotPollDelay(4, 1000)).toBe(8000);
-    expect(nextScreenshotPollDelay(9, 1000)).toBe(8000);
+    expect(nextScreenshotPollDelay(5, 1000)).toBe(16000);
+    expect(nextScreenshotPollDelay(6, 1000)).toBe(30000);
+    expect(nextScreenshotPollDelay(9, 1000)).toBe(30000);
+  });
+});
+
+describe("shouldPauseScreenshotPoll", () => {
+  test("pauses after consecutive 503 streak", () => {
+    expect(shouldPauseScreenshotPoll(0)).toBe(false);
+    expect(shouldPauseScreenshotPoll(SCREENSHOT_POLL_PAUSE_AFTER - 1)).toBe(false);
+    expect(shouldPauseScreenshotPoll(SCREENSHOT_POLL_PAUSE_AFTER)).toBe(true);
   });
 });
 

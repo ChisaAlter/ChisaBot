@@ -848,7 +848,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
 
   /**
    * PRD-P2-01 余：已删 / 软删机器人下的 active|paused 定时自动取消（从不 auto-resume）。
-   * 结束态（done/cancelled）留给设置页一键清理；电车等 paused 孤儿同样取消，避免扫到已死机器人。
+   * 结束态（done/cancelled）由 purgeOrphanSchedules 硬删；电车等 paused 孤儿同样取消。
    */
   async function cancelOrphanSchedules(): Promise<number> {
     const rows = await sql
@@ -882,6 +882,59 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           type: "schedule-orphans-cancelled",
           count: rows.length,
           agents: [...new Set(rows.map((r) => r.agent_id))],
+        }),
+      );
+    }
+    return rows.length;
+  }
+
+  /**
+   * 狗粮 0.1.40：硬删已删/软删机器人下的全部定时（任意状态）。
+   * 设置页一键 + 扫周期都会走这里；owner 有值时只清该用户。从不 auto-resume。
+   */
+  async function purgeOrphanSchedules(owner?: string): Promise<number> {
+    const rows = await sql
+      .unsafe<{ id: string; agent_id: string }[]>(
+        owner
+          ? `DELETE FROM chisabot_schedules s
+             WHERE s.owner_user_id = $1
+               AND NOT EXISTS (
+                 SELECT 1 FROM agent_profiles p
+                  WHERE p.agent_id = s.agent_id AND p.deleted_at IS NULL
+               )
+             RETURNING s.id, s.agent_id`
+          : `DELETE FROM chisabot_schedules s
+             WHERE NOT EXISTS (
+               SELECT 1 FROM agent_profiles p
+                WHERE p.agent_id = s.agent_id AND p.deleted_at IS NULL
+             )
+             RETURNING s.id, s.agent_id`,
+        owner ? [owner] : [],
+      )
+      .catch((error) => {
+        console.warn(
+          JSON.stringify({
+            type: "schedule-orphan-purge-failed",
+            reason: reasonWithoutStatement(error).slice(0, 200),
+          }),
+        );
+        return [] as { id: string; agent_id: string }[];
+      });
+    if (rows.length) {
+      const ids = rows.map((r) => r.id);
+      for (const id of ids) running.delete(id);
+      await sql
+        .unsafe(
+          `DELETE FROM chisabot_schedule_runs WHERE schedule_id = ANY($1::text[])`,
+          [ids],
+        )
+        .catch(() => undefined);
+      console.warn(
+        JSON.stringify({
+          type: "schedule-orphans-purged",
+          count: rows.length,
+          agents: [...new Set(rows.map((r) => r.agent_id))],
+          owner: owner ?? null,
         }),
       );
     }
@@ -1181,6 +1234,15 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           console.warn(
             JSON.stringify({
               type: "schedule-orphan-cancel-tick-failed",
+              reason: reasonWithoutStatement(error).slice(0, 200),
+            }),
+          ),
+        );
+        // 硬删结束态孤儿（cancel 只把 live 标 cancelled，按钮会一直显示「清理 N 条」）
+        await purgeOrphanSchedules().catch((error) =>
+          console.warn(
+            JSON.stringify({
+              type: "schedule-orphan-purge-tick-failed",
               reason: reasonWithoutStatement(error).slice(0, 200),
             }),
           ),
@@ -1510,6 +1572,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     app.post("/:id/run", async (c) =>
       c.json(await runNow(c.var.actor.id, c.req.param("id")), 202),
     );
+    app.delete("/orphans", async (c) =>
+      c.json({ deleted: await purgeOrphanSchedules(c.var.actor.id) }),
+    );
     app.delete("/:id", async (c) =>
       (await remove(c.var.actor.id, c.req.param("id")))
         ? c.body(null, 204)
@@ -1530,6 +1595,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     sweep,
     reclaimStuckRuns,
     cancelOrphanSchedules,
+    purgeOrphanSchedules,
     start,
     stop,
     events,

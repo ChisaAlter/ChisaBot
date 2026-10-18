@@ -6169,7 +6169,11 @@ body:has(.update-banner) .install-hint { display: none; }
 body:has(.computer-takeover) .install-hint { display: none; }
 /* DOG-03：胶囊在顶栏下方时给正文让出高度，避免盖住「活动记录 / 设置」等标题。 */
 body[data-install-hint="open"] {
-  --install-hint-gap: 48px;
+  /* 0.1.40：略增高，减少胶囊压住对话首行标题 */
+  --install-hint-gap: 56px;
+}
+body[data-install-hint="open"] [data-testid="chat-transcript"] {
+  scroll-margin-top: 8px;
 }
 body[data-install-hint="open"] .glass-body {
   padding-top: calc(var(--glass-top) + var(--install-hint-gap, 0px));

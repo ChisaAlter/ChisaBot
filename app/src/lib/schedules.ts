@@ -35,3 +35,12 @@ export async function scheduleEvents(after: string, signal?: AbortSignal): Promi
   const response = await client(`/api/schedules/events?after=${encodeURIComponent(after)}`, { fallback: "", ...(signal ? { signal } : {}) });
   return (await response.json()) as { events: ScheduleEvent[]; now: string };
 }
+
+/** 服务端一键清已删机器人下的全部定时（任意状态；从不 auto-resume）。 */
+export async function purgeOrphanSchedules(): Promise<{ deleted: number }> {
+  const deleted = await client<number>("/api/schedules/orphans", "deleted", {
+    method: "DELETE",
+    fallback: "清理失败，请重试",
+  });
+  return { deleted: typeof deleted === "number" ? deleted : 0 };
+}

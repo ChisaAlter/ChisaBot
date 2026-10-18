@@ -9,7 +9,7 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   PageEmpty,
   PageSection,
@@ -43,6 +43,7 @@ import { agoText } from "@/lib/im";
 import {
   deleteSchedule,
   patchSchedule,
+  purgeOrphanSchedules,
   runScheduleNow,
   scheduleKeys,
   schedulesQueryOptions,
@@ -53,6 +54,8 @@ import {
   formatWhen,
   partitionScheduleList,
   RUN_STATUS_ZH,
+  scheduleLastLineZh,
+  scheduleLastTone,
   type ScheduleRunStatus,
   type ScheduleView,
 } from "../../../../../shared/schedules";
@@ -65,11 +68,20 @@ export const Route = createFileRoute("/_authed/settings/schedules")({
 function SchedulesPage() {
   const list = useQuery(schedulesQueryOptions());
   const bots = useQuery(agentListQueryOptions());
+  const hiddenBots = useQuery(agentListQueryOptions(true));
   const queryClient = useQueryClient();
-  const botName = new Map((bots.data ?? []).map((bot) => [bot.id, bot.name]));
+  const botName = new Map(
+    [...(bots.data ?? []), ...(hiddenBots.data ?? [])].map((bot) => [bot.id, bot.name]),
+  );
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [detail, setDetail] = useState<string | null>(null);
+  const [purging, setPurging] = useState(false);
   const items = (list.data ?? []).filter((s) => !hidden.has(s.id));
+  // 可见 + 隐藏机器人都算「还在」：只把真删除的标成孤儿（0.1.40），避免隐藏机器人任务被误清。
+  const botsReady = bots.isSuccess && hiddenBots.isSuccess;
+  const knownBotIds = botsReady
+    ? [...(bots.data ?? []), ...(hiddenBots.data ?? [])].map((b) => b.id)
+    : items.map((s) => s.agentId);
   // v0.1.34：分区规则抽到 shared（可测）；电车等 paused 任务从不自动回 active。
   const {
     needsAttention,
@@ -79,13 +91,27 @@ function SchedulesPage() {
     orphanLive,
     orphanEnded,
     orphanAll,
-  } = partitionScheduleList(
-    items,
-    bots.isSuccess ? (bots.data ?? []).map((b) => b.id) : items.map((s) => s.agentId),
-  );
+  } = partitionScheduleList(items, knownBotIds);
   const shown = items.find((s) => s.id === detail) ?? null;
+  // 进设置页自动扫一次真孤儿（服务端 DELETE）；不 resume 任何 paused。
+  useEffect(() => {
+    if (!botsReady || !list.isSuccess) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await purgeOrphanSchedules();
+        if (cancelled || !r.deleted) return;
+        await queryClient.invalidateQueries({ queryKey: scheduleKeys.all });
+      } catch {
+        // 一键按钮仍可用；自动清失败不弹窗打扰。
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [botsReady, list.isSuccess, queryClient]);
   const clearOrphans = async () => {
-    if (!orphanAll.length) return;
+    if (!orphanAll.length || purging) return;
     const ok = await confirmDialog({
       title: `清理 ${orphanAll.length} 条已删除机器人下的定时任务？`,
       description:
@@ -96,17 +122,29 @@ function SchedulesPage() {
       destructive: true,
     });
     if (!ok) return;
-    let failed = 0;
-    for (const s of orphanAll) {
-      try {
-        await deleteSchedule(s.id);
-      } catch {
-        failed += 1;
+    setPurging(true);
+    try {
+      const r = await purgeOrphanSchedules();
+      let n = r.deleted;
+      // 服务端按 agent_profiles 硬删；若 UI 仍看见孤儿（隐藏/列表不同步），再逐条兜底。
+      if (n === 0 && orphanAll.length) {
+        for (const s of orphanAll) {
+          try {
+            await deleteSchedule(s.id);
+            n += 1;
+          } catch {
+            // 已不存在或无权限：跳过
+          }
+        }
       }
+      await queryClient.invalidateQueries({ queryKey: scheduleKeys.all });
+      if (n) toast.success(`已清理 ${n} 条`);
+      else toast.success("没有可清理的条目");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "清理失败");
+    } finally {
+      setPurging(false);
     }
-    await queryClient.invalidateQueries({ queryKey: scheduleKeys.all });
-    if (failed) toast.error(`${failed} 条没删掉`);
-    else toast.success(`已清理 ${orphanAll.length} 条`);
   };
   const rows = (group: ScheduleView[]) => (
     <Card className="mem-card sch-card">
@@ -154,11 +192,14 @@ function SchedulesPage() {
             {orphanAll.length ? (
               <div className="mb-3">
                 <Button
+                  disabled={purging}
                   onClick={() => void clearOrphans()}
                   size="sm"
                   variant="outline"
                 >
-                  {`清理已删除机器人的任务（${orphanAll.length}）`}
+                  {purging
+                    ? "清理中…"
+                    : `清理已删除机器人的任务（${orphanAll.length}）`}
                 </Button>
               </div>
             ) : null}
@@ -278,15 +319,11 @@ function ScheduleRow({
     }
   }
   const running = s.running || s.lastStatus === "running";
-  const last = running
-    ? "正在运行…"
-    : s.lastStatus === "waiting"
-      ? `在等你确认${s.lastRunAt ? ` · ${agoText(s.lastRunAt)}` : ""} · 打开对话处理`
-      : s.lastStatus === "failed"
-        ? `上次失败${s.lastRunAt ? ` · ${agoText(s.lastRunAt)}` : ""}`
-        : s.lastStatus
-          ? `上次${RUN_STATUS_ZH[s.lastStatus]}${s.lastRunAt ? ` · ${agoText(s.lastRunAt)}` : ""}`
-          : "还没运行过";
+  const last = scheduleLastLineZh(
+    s,
+    s.lastRunAt ? agoText(s.lastRunAt) : null,
+  );
+  const lastTone = scheduleLastTone(s);
   return (
     <div
       className={cn("im-row sch-row", ended && "is-ended")}
@@ -325,7 +362,7 @@ function ScheduleRow({
                 <span
                   className={cn(
                     "sch-last",
-                    statusTone(running ? "running" : s.lastStatus),
+                    statusTone(lastTone),
                   )}
                 >
                   {last}
@@ -342,7 +379,7 @@ function ScheduleRow({
         />
       </button>
       <div className="sch-actions">
-        {!ended ? (
+        {!ended && !(s.status === "paused" && s.lastStatus === "waiting") ? (
           <Button
             aria-label={`立即运行「${s.title}」`}
             className="sch-run"

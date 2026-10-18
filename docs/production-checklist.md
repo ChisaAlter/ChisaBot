@@ -191,3 +191,13 @@ CI 红线：`server/tests/ssrf-redline.test.ts`（PRD-P1-06）。备份演练：
 | 深链 | `?message=` 仍 MessageFind 轮询；全量挂完通常 <300ms |
 | 不做 | 虚拟列表；content-visibility；电车 resume；多用户默认开 |
 
+## 11. 狗粮摩擦 · v0.1.39 冒烟 follow-ups（v0.1.40）
+
+| 检查 | 期望 |
+|------|------|
+| 截图 503 | 大屏展开不打 HTTP `/screenshot`；失败清帧 + 退避≤30s；连续 5 次停轮询等重试 |
+| 暂停 + waiting | 文案「暂停前在等确认 · 已暂停，不会自动继续」；主按钮无「立即运行」 |
+| 孤儿定时 | `DELETE /api/schedules/orphans`；扫周期 purge；设置页进页自动清；隐藏机器人不算孤儿 |
+| 电车 | **保持 paused**；不 auto-resume |
+| 安装胶囊 | `--install-hint-gap: 56px` |
+
