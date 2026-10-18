@@ -23,3 +23,12 @@
 1. `bun test shared/connect-snapshot.test.ts shared/schedules.test.ts server/tests/connect-snapshot.test.ts`
 2. 硬刷新 → 芯片 0.1.29；长对话发一句不假成功
 3. 设置 → 定时：失败/等确认进「需要关注」；电车仍暂停
+
+
+## PR / release / deploy
+
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/223 (squash → `2d5a79c2`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.29
+- Deploy: `deploy-serial.sh 2d5a79c grok-bot` → `local/chisabot:auto-202610181727-2d5a79c`
+- `/api/version` = **0.1.29**; post-deploy-smoke **PASSED** (含模型)
+- **未** resume 电车定时
