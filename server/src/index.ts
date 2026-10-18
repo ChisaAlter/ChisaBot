@@ -279,6 +279,9 @@ import {
   createDatabasePinger,
   createOpsHealthRoutes,
 } from "./ops-health";
+import { createOpsBudgetRoutes } from "./ops-budget";
+import { OPS_CODES } from "../../shared/ops-codes";
+import { bumpOps } from "../../shared/ops-counters";
 import { createModelFallbackService, createModelFallbackStore } from "./agents/model-fallback-settings";
 import { createSelfHostBanner } from "./self-host-banner";
 import { createTeamBots } from "./team-bots/team-bots";
@@ -3677,6 +3680,10 @@ const app = createApp(
         }),
       ],
       [
+        "/api/ops/budget",
+        createOpsBudgetRoutes({ requireUser }),
+      ],
+      [
         "/api/admin/health",
         createOpsHealthRoutes({
           requireUser,
@@ -3954,6 +3961,9 @@ serve<SocketData>({
             error: reasonWithoutStatement(error).slice(0, 200),
           }),
         );
+        bumpOps(OPS_CODES.STREAM_DISCONNECT, {
+          fields: { reason: "upstream-open-failed" },
+        });
         ws.close(1011, "upstream unavailable");
         return;
       }
@@ -3977,6 +3987,9 @@ serve<SocketData>({
         try { ws.close(); } catch { /* ignore */ }
       };
       inward.onerror = () => {
+        bumpOps(OPS_CODES.STREAM_DISCONNECT, {
+          fields: { reason: "upstream-error" },
+        });
         try { ws.close(); } catch { /* ignore */ }
       };
     },
@@ -3991,6 +4004,12 @@ serve<SocketData>({
       if (!isProxiedStream(ws.data)) {
         channelSocket.close(asChannelSocket(ws), code, reason);
         return;
+      }
+      // 1000/1001 = clean; anything else is a budget event (idle kick, proxy death, …).
+      if (code !== 1000 && code !== 1001) {
+        bumpOps(OPS_CODES.STREAM_DISCONNECT, {
+          fields: { reason: "ws-close", code },
+        });
       }
       ws.data.inward?.close();
     },

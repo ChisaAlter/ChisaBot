@@ -61,6 +61,8 @@ jobs:
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
         run: bun install --frozen-lockfile && bun test tests/native-select.test.ts tests/aria-snapshot.test.ts
+      - name: SSRF red-line (PRD-P1-06)
+        run: bun test server/tests/ssrf-redline.test.ts server/tests/guarded-fetch-ssrf.test.ts shared/ops-counters.test.ts shared/ops-codes.test.ts
       - name: Login gateway checks
         run: bun test deploy/public/auth/server.test.ts deploy/public/auth/startup-report.test.ts
       - name: Claude upstream proxy share-link parser

@@ -11,10 +11,15 @@
  * Uptime monitors without admin credentials should keep probing public `/health` and `/login`;
  * this endpoint is for authenticated ops (see docs/production-checklist.md).
  */
-import type { MiddlewareHandler } from "hono";
+
 import { sql } from "drizzle-orm";
+import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { OPS_CODES, opsLogLine } from "../../shared/ops-codes";
+import {
+  type OpsCounterSnapshot,
+  opsCounterSnapshot,
+} from "../../shared/ops-counters";
 import type { BuildVersion } from "../../shared/system-update";
 import type { AppVariables } from "./auth/guards";
 import { requireAdmin } from "./auth/guards";
@@ -67,6 +72,8 @@ export type OpsHealthReport = {
     computer: ComputerCheck;
     localCaller: LocalCallerCheck;
   };
+  /** PRD-P1-02: process-local SEND/STREAM/SSRF budgets since boot (+ 15m window). */
+  budgets: OpsCounterSnapshot;
 };
 
 export type PingDatabase = () => Promise<DatabaseCheck>;
@@ -76,9 +83,16 @@ const DB_TIMEOUT_MS = 5_000;
 const MAGPIE_BUDGET_MS = 8_000;
 const COMPUTER_BUDGET_MS = 8_000;
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms,
+    );
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -114,7 +128,11 @@ export async function collectOpsHealth(options: {
 
   let database: DatabaseCheck;
   try {
-    database = await withTimeout(options.pingDatabase(), DB_TIMEOUT_MS, "database");
+    database = await withTimeout(
+      options.pingDatabase(),
+      DB_TIMEOUT_MS,
+      "database",
+    );
   } catch (error) {
     database = { ok: false, error: reasonWithoutStatement(error) };
   }
@@ -130,7 +148,9 @@ export async function collectOpsHealth(options: {
         "magpie",
       );
       const providersTotal = status.providers.length;
-      const providersReady = status.providers.filter((p) => p.ready && p.enabled).length;
+      const providersReady = status.providers.filter(
+        (p) => p.ready && p.enabled,
+      ).length;
       magpie = {
         ok: status.reachable,
         configured: true,
@@ -156,7 +176,11 @@ export async function collectOpsHealth(options: {
     computer = { ok: null, configured: false };
   } else {
     try {
-      computer = await withTimeout(options.probeComputer(), COMPUTER_BUDGET_MS, "computer");
+      computer = await withTimeout(
+        options.probeComputer(),
+        COMPUTER_BUDGET_MS,
+        "computer",
+      );
     } catch (error) {
       computer = {
         ok: false,
@@ -185,10 +209,14 @@ export async function collectOpsHealth(options: {
         computer: computer.ok,
       }),
     );
-    if (database.ok === false) log(opsLogLine(OPS_CODES.HEALTH_DB, { error: database.error ?? "" }));
-    if (magpie.ok === false) log(opsLogLine(OPS_CODES.HEALTH_MAGPIE, { error: magpie.error ?? "" }));
+    if (database.ok === false)
+      log(opsLogLine(OPS_CODES.HEALTH_DB, { error: database.error ?? "" }));
+    if (magpie.ok === false)
+      log(opsLogLine(OPS_CODES.HEALTH_MAGPIE, { error: magpie.error ?? "" }));
     if (computer.ok === false)
-      log(opsLogLine(OPS_CODES.HEALTH_COMPUTER, { error: computer.error ?? "" }));
+      log(
+        opsLogLine(OPS_CODES.HEALTH_COMPUTER, { error: computer.error ?? "" }),
+      );
   }
 
   return {
@@ -196,6 +224,7 @@ export async function collectOpsHealth(options: {
     checkedAt,
     version,
     checks: { app, database, magpie, computer, localCaller },
+    budgets: opsCounterSnapshot(options.now?.() ?? Date.now()),
   };
 }
 

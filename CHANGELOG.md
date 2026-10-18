@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.28
+
+- Ops maturity (PRD-P1-02…06): process-local SEND/STREAM/SSRF error-budget counters on `GET /api/admin/health` (`budgets`); client beacon `POST /api/ops/budget`; `guardedFetch` / computer-stream proxy bump on deny/disconnect.
+- CI SSRF red-line suite (`server/tests/ssrf-redline.test.ts`) — redirect→internal + mapped IPv6 must stay green.
+- Docs: gateway/node trust-boundary diagram; recorded backup/rollback dry-run on Haupt (`docs/ops/backup-rollback-drill.md`).
+
 ## 0.1.27
 
 - Hotfix ops health: computer probe uses real bot ids from `list()` (fake `__ops_health__` caused agent-computer 500); post-deploy smoke parses top-level `ok` only.

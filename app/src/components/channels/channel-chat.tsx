@@ -53,7 +53,7 @@ import { useConversationSync } from "@/lib/copilot/use-conversation-sync";
 import { repairUnansweredToolCalls } from "@/lib/copilot/repair-history";
 import { isAbortFailure, pausedForApproval, stoppedReason, unfinishedTurnReason } from "@/lib/copilot/stopped-turn";
 import { readSync } from "@/lib/copilot/bot-thread";
-import { CONNECTION_LOST_REASON, SEND_HANG_REASON, SEND_REPLY_HANG_REASON, SEND_REPLY_WATCHDOG_MS, SEND_UNREACHABLE_REASON, SEND_WATCHDOG_MS, isConnectionDrop, raceSendWatchdog, settleDroppedTurn, storedTurnAnswered } from "@/lib/copilot/connection-drop";
+import { CONNECTION_LOST_REASON, SEND_HANG_REASON, SEND_REPLY_HANG_REASON, SEND_REPLY_WATCHDOG_MS, SEND_UNREACHABLE_REASON, SEND_WATCHDOG_MS, isConnectionDrop, raceSendWatchdog, reportBudgetEvent, settleDroppedTurn, storedTurnAnswered } from "@/lib/copilot/connection-drop";
 import { useFallbackTurns, useLastSentAt, useStoppedTurnIds } from "@/lib/copilot/turn-compaction";
 import { queueMessage } from "@/lib/copilot/thread-inbox";
 import { useThreadInbox } from "@/lib/copilot/use-thread-inbox";
@@ -937,6 +937,7 @@ export function ChannelChat({
           stored.availability === "ready" &&
           stored.messages.some((message) => message.id === userMessageId);
         if (!persisted) {
+          reportBudgetEvent("SEND_UNREACHABLE");
           failRef.current(SEND_HANG_REASON);
           // Still let runPromise settle in the background so CopilotKit counters clear.
           void runPromise.catch(() => undefined);
@@ -993,6 +994,7 @@ export function ChannelChat({
         const current = agentRef.current;
         const closed = repairUnansweredToolCalls(current.messages);
         if (closed !== current.messages) current.setMessages(closed as typeof current.messages);
+        if (outcome === "unreachable") reportBudgetEvent("SEND_UNREACHABLE");
         failRef.current(outcome === "unreachable" ? SEND_UNREACHABLE_REASON : CONNECTION_LOST_REASON);
       } else {
         awaitingReply.current = false;

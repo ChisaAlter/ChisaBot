@@ -1,4 +1,4 @@
-# 生产上线清单（PRD-P1-01…03）
+# 生产上线清单（PRD-P1-01…06）
 
 面向值班的一页纸：合并后怎样确认「版本对、自检过、无密钥泄露」，以及监控该探什么。
 
@@ -81,7 +81,28 @@ docker logs --since 30m openbot-zh 2>&1 | grep -E 'OPS_|PostgresError|bind messa
 | `STREAM_DISCONNECT` | 直播屏非正常断开 |
 | `SSRF_DENIED` | 出站被 SSRF/出口地板拒绝 |
 
-实现：`shared/ops-codes.ts` 的 `opsLogLine`。后续把发送失败率、流断开率接到同一字段约定。
+实现：`shared/ops-codes.ts` 的 `opsLogLine` + `shared/ops-counters.ts` 进程内计数。
+
+`GET /api/admin/health` 现含 `budgets`（进程启动以来的 totals + 近 15 分钟 `last15m`）：
+
+```json
+"budgets": {
+  "at": "2026-10-19T05:00:00.000Z",
+  "windowMs": 900000,
+  "totals": { "SEND_UNREACHABLE": 0, "STREAM_DISCONNECT": 0, "SSRF_DENIED": 0 },
+  "last15m": { "SEND_UNREACHABLE": 0, "STREAM_DISCONNECT": 0, "SSRF_DENIED": 0 }
+}
+```
+
+| 谁 bump | 怎么看见 |
+|---------|----------|
+| `SSRF_DENIED` | `guardedFetch` / `resolvePublic` 拒绝时；日志一行 + health |
+| `STREAM_DISCONNECT` | 电脑流代理异常关闭 / 上游 open 失败 / `onerror` |
+| `SEND_UNREACHABLE` | 浏览器判定「没发出去」时 `POST /api/ops/budget`（需登录 Cookie） |
+
+部署后：`curl …/api/admin/health | jq .budgets`。进程重启（每次发版）计数归零——正常。
+
+CI 红线：`server/tests/ssrf-redline.test.ts`（PRD-P1-06）。备份演练：[ops/backup-rollback-drill.md](ops/backup-rollback-drill.md)。信任边界：[ops/trust-boundary.md](ops/trust-boundary.md)。
 
 ## 5. 部署失败怎么处理
 

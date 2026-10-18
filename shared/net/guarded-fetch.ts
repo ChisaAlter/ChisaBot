@@ -3,6 +3,8 @@ import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
+import { OPS_CODES } from "../ops-codes";
+import { bumpOps } from "../ops-counters";
 import { checkPublicUrl, isBlockedAddress } from "./ssrf";
 
 /**
@@ -22,6 +24,13 @@ export class BlockedUrlError extends Error {
     super(message);
     this.name = "BlockedUrlError";
   }
+}
+
+function denySsrf(message?: string): never {
+  bumpOps(OPS_CODES.SSRF_DENIED, {
+    fields: message ? { reason: message.slice(0, 80) } : {},
+  });
+  throw new BlockedUrlError(message);
 }
 
 export type GuardedResponse = {
@@ -75,8 +84,8 @@ export async function resolvePublic(
   const addresses = literal
     ? [{ address: bare, family: literal }]
     : await (options.resolve ?? defaultResolve)(bare);
-  if (addresses.length === 0) throw new BlockedUrlError("域名解析不到地址");
-  if (addresses.some((a) => blocked(a.address))) throw new BlockedUrlError();
+  if (addresses.length === 0) denySsrf("域名解析不到地址");
+  if (addresses.some((a) => blocked(a.address))) denySsrf();
   return addresses[0]!;
 }
 
@@ -257,7 +266,7 @@ export async function guardedFetch(
   let current = raw;
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
     const verdict = checkPublicUrl(current);
-    if (!verdict.ok) throw new BlockedUrlError(verdict.reason);
+    if (!verdict.ok) denySsrf(verdict.reason);
     const pinned = await resolvePublic(verdict.url.hostname, options);
     const result = await oneHop(verdict.url, pinned, options, deadline);
     if (result.location) {

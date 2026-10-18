@@ -1,14 +1,15 @@
 import { expect, test } from "bun:test";
 import { Hono } from "hono";
+import { OPS_CODES } from "../../shared/ops-codes";
+import { resetOpsCountersForTests } from "../../shared/ops-counters";
 import type { AppVariables } from "../src/auth/guards";
 import type { MagpieService, MagpieStatus } from "../src/magpie";
 import {
+  type ComputerCheck,
   collectOpsHealth,
   createOpsHealthRoutes,
-  type ComputerCheck,
   type DatabaseCheck,
 } from "../src/ops-health";
-import { OPS_CODES } from "../../shared/ops-codes";
 
 function magpieStub(status: MagpieStatus): MagpieService {
   return {
@@ -21,6 +22,7 @@ function magpieStub(status: MagpieStatus): MagpieService {
 }
 
 test("collectOpsHealth: all green when optional deps skipped", async () => {
+  resetOpsCountersForTests();
   const report = await collectOpsHealth({
     pingDatabase: async () => ({ ok: true, latencyMs: 2 }),
     gatewayMode: "off",
@@ -38,6 +40,9 @@ test("collectOpsHealth: all green when optional deps skipped", async () => {
     gatewayMode: "off",
   });
   expect(report.version.version).toMatch(/^\d+\.\d+\.\d+/u);
+  expect(report.budgets.totals.SSRF_DENIED).toBe(0);
+  expect(report.budgets.last15m.SEND_UNREACHABLE).toBe(0);
+  expect(report.budgets.windowMs).toBe(15 * 60_000);
 });
 
 test("collectOpsHealth: database failure fails overall and logs OPS code", async () => {
@@ -56,7 +61,10 @@ test("collectOpsHealth: database failure fails overall and logs OPS code", async
 
 test("collectOpsHealth: configured Magpie down fails; computer skip stays null", async () => {
   const report = await collectOpsHealth({
-    pingDatabase: async (): Promise<DatabaseCheck> => ({ ok: true, latencyMs: 1 }),
+    pingDatabase: async (): Promise<DatabaseCheck> => ({
+      ok: true,
+      latencyMs: 1,
+    }),
     magpie: magpieStub({
       configured: true,
       managementAvailable: true,
@@ -123,7 +131,7 @@ test("collectOpsHealth: database timeout becomes failure without leaking interna
   expect(report.ok).toBe(false);
   expect(report.checks.database.ok).toBe(false);
   expect(report.checks.database.error).toMatch(/timed out/u);
-});
+}, 15_000);
 
 function app(
   role: "admin" | "user",
@@ -136,7 +144,12 @@ function app(
     context: { set: (k: string, v: unknown) => void },
     next: () => Promise<void>,
   ) => {
-    context.set("actor", { id: `${role}-1`, email: `${role}@x`, name: role, role });
+    context.set("actor", {
+      id: `${role}-1`,
+      email: `${role}@x`,
+      name: role,
+      role,
+    });
     await next();
   }) as never;
   const root = new Hono<{ Variables: AppVariables }>();
@@ -144,7 +157,8 @@ function app(
     "/api/admin/health",
     createOpsHealthRoutes({
       requireUser,
-      pingDatabase: deps.pingDatabase ?? (async () => ({ ok: true, latencyMs: 1 })),
+      pingDatabase:
+        deps.pingDatabase ?? (async () => ({ ok: true, latencyMs: 1 })),
       probeComputer: deps.probeComputer,
       gatewayMode: "on",
     }),

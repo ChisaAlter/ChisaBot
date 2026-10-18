@@ -10,6 +10,7 @@ import {
   raceSendWatchdog,
   settleDroppedTurn,
   storedTurnAnswered,
+  reportBudgetEvent,
 } from "../src/lib/copilot/connection-drop";
 import { friendlyStopReason } from "../src/lib/copilot/stopped-turn";
 
@@ -182,3 +183,14 @@ test("raceSendWatchdog: second (reply) bound still times out a hung run", async 
   expect(t).toBe(SEND_REPLY_WATCHDOG_MS);
 });
 
+
+test("reportBudgetEvent POSTs whitelist code and swallows network errors", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  reportBudgetEvent("SEND_UNREACHABLE", ((url, init) => {
+    calls.push({ url: String(url), init });
+    return Promise.reject(new Error("offline"));
+  }) as typeof fetch);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.url).toBe("/api/ops/budget");
+  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ code: "SEND_UNREACHABLE" });
+});
