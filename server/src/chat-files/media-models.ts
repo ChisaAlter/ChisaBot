@@ -97,8 +97,10 @@ export function createMediaModels(
   // hand the Bearer token to whatever Location said. Default to redirect:"error"; injected test
   // fetches keep their own redirect policy when they pass one.
   const rawFetch = options.fetch ?? fetch;
-  const doFetch: typeof fetch = (input, init) =>
-    rawFetch(input, { ...init, redirect: init?.redirect ?? "error" });
+  // Narrow wrapper keeps redirect:"error" by default; cast back so callers that expect
+  // `typeof fetch` (incl. Bun's `preconnect`) still typecheck.
+  const doFetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+    rawFetch(input, { ...init, redirect: init?.redirect ?? "error" })) as typeof fetch;
   const env = options.env ?? process.env;
   const assertPublic = options.assertPublic ?? assertPublicUrl;
 
