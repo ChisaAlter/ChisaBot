@@ -30,7 +30,7 @@
 |---|---|
 | `sh scripts/ops/sync-nginx.sh --check-repo` | CI / 合并前：模板 + 合成渲染仍含 Local-Caller 清头与安全标记 |
 | `sh scripts/ops/sync-nginx.sh --check` | 宿主机：对照 live `nginx.conf` / `nginx.generated.conf`；漂移 → **非 0**（不要忽略） |
-| `sh scripts/ops/sync-nginx.sh --apply` | 宿主机：按 `deploy/.env` 渲染 → 备份 → 安装 → `nginx -t` → reload |
+| `sh scripts/ops/sync-nginx.sh --apply` | 宿主机：按 `deploy/.env` 的 `CHISABOT_DOMAIN` 渲染；若 `.env` 无域名则从 **live nginx** 的 `server_name`/`listen` 推导 → 备份 → 安装 → `nginx -t` → reload |
 | `sh scripts/ops/sync-nginx.sh --apply --dry-run` | 只渲染校验，不写盘 |
 
 `deploy-serial.sh` 在镜像切换成功后默认跑 `--check`（`CHISABOT_SYNC_NGINX=check`）。若要随发版自动套模板：`CHISABOT_SYNC_NGINX=apply sh deploy-serial.sh …`。脚本找不到时跳过并打日志；**有**脚本而 check 失败则部署退出码 **7**。

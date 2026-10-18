@@ -80,13 +80,13 @@ render_into() {
   if [ -z "$env_file" ] && [ -f "$PUBLIC_DIR/../.env" ]; then
     env_file=$PUBLIC_DIR/../.env
   fi
-  if [ -n "$env_file" ] && [ -f "$env_file" ]; then
+  if [ -n "$env_file" ] && [ -f "$env_file" ] && sed -n "s/^CHISABOT_DOMAIN=//p" "$env_file" | head -1 | grep -q .; then
     cp "$RENDER" "$tmpd/render-nginx.sh"
     chmod +x "$tmpd/render-nginx.sh"
     ENV_FILE=$env_file sh "$tmpd/render-nginx.sh" || fail "render-nginx.sh failed (need CHISABOT_DOMAIN in $env_file)"
     cp "$tmpd/nginx.generated.conf" "$out"
   else
-    # Synthetic: prove sed substitutions keep Local-Caller clears
+    # Env-var / synthetic: prove sed substitutions keep Local-Caller clears
     D=${CHISABOT_DOMAIN:-ci.example.test}
     P=${CHISABOT_HTTPS_PORT:-8443}
     M=${CHISABOT_MAGPIE_PORT:-2053}
@@ -139,7 +139,27 @@ case "$MODE" in
       ENV_FILE=$PUBLIC_DIR/../.env
       export ENV_FILE
     fi
-    [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ] || fail "ENV_FILE / $PUBLIC_DIR/../.env required for --apply (need CHISABOT_DOMAIN)"
+    # Prefer CHISABOT_DOMAIN from ENV_FILE; else derive from live nginx (Haupt often has domain only in conf).
+    has_domain=0
+    if [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ]; then
+      if sed -n 's/^CHISABOT_DOMAIN=//p' "$ENV_FILE" | head -1 | grep -q .; then
+        has_domain=1
+      fi
+    fi
+    if [ "$has_domain" = 0 ]; then
+      live_probe=${CHISABOT_NGINX_LIVE:-$PUBLIC_DIR/nginx.conf}
+      test -f "$live_probe" || fail "no CHISABOT_DOMAIN in env and no live nginx at $live_probe"
+      D=$(grep -E '^[[:space:]]*server_name[[:space:]]+' "$live_probe" | head -1 | awk '{print $2}' | tr -d ';')
+      [ -n "$D" ] || fail "could not parse server_name from $live_probe"
+      P=$(grep -E '^[[:space:]]*listen[[:space:]]+[0-9]+[[:space:]]+ssl' "$live_probe" | head -1 | awk '{print $2}')
+      M=$(grep -E '^[[:space:]]*listen[[:space:]]+[0-9]+[[:space:]]+ssl' "$live_probe" | sed -n '2p' | awk '{print $2}')
+      P=${P:-8443}; M=${M:-2053}
+      export CHISABOT_DOMAIN=$D CHISABOT_HTTPS_PORT=$P CHISABOT_MAGPIE_PORT=$M CHISABOT_CERT_NAME=$D
+      # Force synthetic/env-var render path (skip empty ENV_FILE domain)
+      ENV_FILE=
+      export ENV_FILE
+      ok "derived domain=$D ports=$P/$M from live nginx"
+    fi
     out=$(mktemp)
     render_into "$out"
     if [ "$DRY" = 1 ]; then
