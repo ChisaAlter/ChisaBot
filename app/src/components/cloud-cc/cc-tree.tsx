@@ -50,6 +50,22 @@ export function CcTree({ onNavigate, variant = "rail" }: { onNavigate?: () => vo
     },
     { errorToast: (e) => `新建会话失败：${e.message}` },
   );
+  const archiveSession = async (sessionId: string, title: string) => {
+    const ok = await confirmDialog({
+      title: `删除会话「${title || "未命名"}」？`,
+      description: "会话从列表里去掉；记录归档保留。这一步不能撤销。",
+      confirmLabel: "删除",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await ccApi.archiveSession(sessionId);
+      await queryClient.invalidateQueries({ queryKey: ccKeys.workspaces });
+      if (params.sessionId === sessionId) void navigate({ to: "/cc" });
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+  };
   const wsAction = async (ws: CcWorkspaceView, action: "retry" | "delete") => {
     try {
       if (action === "retry") await ccApi.retryClone(ws.id);
@@ -134,22 +150,35 @@ export function CcTree({ onNavigate, variant = "rail" }: { onNavigate?: () => vo
             <div className="cc-ws-fold" inert={!open || ws.cloneState !== "ready"}>
               <div className="cc-ws-fold-in">
                 {ws.sessions.map((s) => (
-                  <Link
-                    className={cn("cc-sess", params.sessionId === s.id && "is-active")}
-                    data-status={s.status}
-                    data-testid="cc-session-row"
-                    key={s.id}
-                    onClick={() => onNavigate?.()}
-                    params={{ sessionId: s.id }}
-                    to="/cc/$sessionId"
-                  >
-                    <i aria-hidden className="cc-sess-dot" />
-                    <span className="cc-sess-main">
-                      <span className="cc-sess-title">{s.title}</span>
-                      <span className="cc-sess-sub">{s.branch ?? (ws.source === "scratch" ? "自己的目录" : "")}</span>
-                    </span>
-                    {STATUS_ZH[s.status] ? <span className="cc-sess-state">{STATUS_ZH[s.status]}</span> : null}
-                  </Link>
+                  <div className={cn("cc-sess-row", params.sessionId === s.id && "is-active")} data-testid="cc-session-row" key={s.id}>
+                    <Link
+                      className={cn("cc-sess", params.sessionId === s.id && "is-active")}
+                      data-status={s.status}
+                      onClick={() => onNavigate?.()}
+                      params={{ sessionId: s.id }}
+                      to="/cc/$sessionId"
+                    >
+                      <i aria-hidden className="cc-sess-dot" />
+                      <span className="cc-sess-main">
+                        <span className="cc-sess-title">{s.title || "新会话"}</span>
+                        <span className="cc-sess-sub">{s.branch ?? (ws.source === "scratch" ? "自己的目录" : "")}</span>
+                      </span>
+                      {STATUS_ZH[s.status] ? <span className="cc-sess-state">{STATUS_ZH[s.status]}</span> : null}
+                    </Link>
+                    <button
+                      aria-label={`删除会话「${s.title || "新会话"}」`}
+                      className="cc-sess-del"
+                      data-testid="cc-session-delete"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        void archiveSession(s.id, s.title);
+                      }}
+                      type="button"
+                    >
+                      <IconTrash className="size-3.5" />
+                    </button>
+                  </div>
                 ))}
                 {ws.cloneState !== "ready" ? null : <Button
                   className="cc-new-sess"

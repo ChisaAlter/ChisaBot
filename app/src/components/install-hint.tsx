@@ -15,23 +15,25 @@ import { isIOSSafari, isNativeClient, promptInstall, useInstallState } from "@/l
  * 「有新版本」提示在的时候让位（styles.css）。
  */
 const KEY = "chisabot-install-hint";
-const SNOOZE_MS = 14 * 24 * 60 * 60 * 1000;
 const DELAY_MS = 8000;
 
-function snoozed(): boolean {
+/** FIX-11：关掉后记住，不再挡内容（含接管窗）。 */
+function dismissed(): boolean {
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return false;
-    const { dismissedAt } = JSON.parse(raw) as { dismissedAt?: number };
-    return typeof dismissedAt === "number" && Date.now() - dismissedAt < SNOOZE_MS;
+    const value = JSON.parse(raw) as { dismissed?: boolean; dismissedAt?: number };
+    if (value.dismissed === true) return true;
+    // 兼容旧的 14 天 snooze：只要写过 dismissedAt 就当已关。
+    return typeof value.dismissedAt === "number";
   } catch {
     return false;
   }
 }
 
-function snooze() {
+function rememberDismiss() {
   try {
-    window.localStorage.setItem(KEY, JSON.stringify({ dismissedAt: Date.now() }));
+    window.localStorage.setItem(KEY, JSON.stringify({ dismissed: true, dismissedAt: Date.now() }));
   } catch {}
 }
 
@@ -49,7 +51,7 @@ export function InstallHint() {
 
   useEffect(() => {
     if (!eligible || ready) return;
-    if (snoozed()) {
+    if (dismissed()) {
       setGone(true);
       return;
     }
@@ -60,7 +62,7 @@ export function InstallHint() {
   if (!eligible || !ready) return null;
 
   const close = (remember: boolean) => {
-    if (remember) snooze();
+    if (remember) rememberDismiss();
     setClosing(true);
     window.setTimeout(() => setGone(true), 160);
   };

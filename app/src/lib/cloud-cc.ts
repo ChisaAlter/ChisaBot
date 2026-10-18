@@ -157,6 +157,9 @@ export const ccApi = {
     client<CcSessionView>(`/api/claude-code/workspaces/${encodeURIComponent(workspaceId)}/sessions`, "session", { method: "POST", body, fallback: "新建会话失败" }),
   patchSession: (id: string, body: { title?: string; model?: string | null; effort?: string | null; archived?: boolean }) =>
     client<CcSessionView>(`/api/claude-code/sessions/${encodeURIComponent(id)}`, "session", { method: "PATCH", body, fallback: "保存失败" }),
+  /** FIX-15：归档会话（空草稿 / 不要的会话从列表消失）。 */
+  archiveSession: (id: string) =>
+    client<CcSessionView>(`/api/claude-code/sessions/${encodeURIComponent(id)}`, "session", { method: "PATCH", body: { archived: true }, fallback: "删除失败" }),
   send: (id: string, text: string) =>
     client(`/api/claude-code/sessions/${encodeURIComponent(id)}/messages`, { method: "POST", body: { text }, fallback: "发送失败" }).then((r) => r.json() as Promise<{ message: CcMessage; queued: boolean }>),
   stop: (id: string) => client(`/api/claude-code/sessions/${encodeURIComponent(id)}/stop`, { method: "POST", fallback: "停止失败" }),

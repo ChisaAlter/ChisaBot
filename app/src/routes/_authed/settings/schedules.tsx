@@ -34,6 +34,7 @@ export const Route = createFileRoute("/_authed/settings/schedules")({
 function SchedulesPage() {
   const list = useQuery(schedulesQueryOptions());
   const bots = useQuery(agentListQueryOptions());
+  const queryClient = useQueryClient();
   const botName = new Map((bots.data ?? []).map((bot) => [bot.id, bot.name]));
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [detail, setDetail] = useState<string | null>(null);
@@ -41,7 +42,30 @@ function SchedulesPage() {
   const active = items.filter((s) => s.status === "active");
   const paused = items.filter((s) => s.status === "paused");
   const ended = items.filter((s) => s.status === "done" || s.status === "cancelled");
+  // FIX-16：已删除机器人下的已结束任务，一键清理（等机器人列表到了再判断，避免全员误判）。
+  const orphanEnded = bots.isSuccess ? ended.filter((s) => !botName.has(s.agentId)) : [];
   const shown = items.find((s) => s.id === detail) ?? null;
+  const clearOrphans = async () => {
+    if (!orphanEnded.length) return;
+    const ok = await confirmDialog({
+      title: `清理 ${orphanEnded.length} 条已删除机器人下的定时任务？`,
+      description: "只删「已结束 / 已取消」且机器人已不在的条目；进行中的不动。",
+      confirmLabel: "全部删除",
+      destructive: true,
+    });
+    if (!ok) return;
+    let failed = 0;
+    for (const s of orphanEnded) {
+      try {
+        await deleteSchedule(s.id);
+      } catch {
+        failed += 1;
+      }
+    }
+    await queryClient.invalidateQueries({ queryKey: scheduleKeys.all });
+    if (failed) toast.error(`${failed} 条没删掉`);
+    else toast.success(`已清理 ${orphanEnded.length} 条`);
+  };
   const rows = (group: ScheduleView[]) => (
     <Card className="mem-card sch-card">
       {group.map((s) => (
@@ -72,7 +96,20 @@ function SchedulesPage() {
           <>
             {active.length ? <PageSection title={`进行中 · ${active.length}`}>{rows(active)}</PageSection> : null}
             {paused.length ? <PageSection title={`已暂停 · ${paused.length}`}>{rows(paused)}</PageSection> : null}
-            {ended.length ? <PageSection title={`最近结束 · ${ended.length}`}>{rows(ended)}</PageSection> : null}
+            {ended.length ? (
+              <PageSection
+                title={`最近结束 · ${ended.length}`}
+                action={
+                  orphanEnded.length ? (
+                    <Button onClick={() => void clearOrphans()} size="sm" variant="outline">
+                      {`清理已删除机器人（${orphanEnded.length}）`}
+                    </Button>
+                  ) : null
+                }
+              >
+                {rows(ended)}
+              </PageSection>
+            ) : null}
           </>
         ) : (
           <PageEmpty>{"还没有定时任务。在对话里对机器人说「明早 9 点提醒我给妈妈打电话」或「每天 18:00 总结一下今天的新闻」试试。"}</PageEmpty>
