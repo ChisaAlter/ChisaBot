@@ -25,11 +25,11 @@ ChisaBot 自己的版本史，从 0.1.0（首个公开版本）起，按**发版
 
 ## v0.1.25 — 2026-10-19
 
-PC 0.1.25（外壳未变，原地更新）· Android 0.1.25（vc 231）。主线：生产加固 [#TBD](https://github.com/ChisaAlter/ChisaBot/pull/TBD)（流 keepalive + 审查残留）。
+PC 0.1.25（外壳未变，原地更新）· Android 0.1.25（vc 231）。主线：生产加固 [#217](https://github.com/ChisaAlter/ChisaBot/pull/217)（流 keepalive + 审查残留）。
 
 | PR | 日 | 说明 | 合入 |
 |----|----|------|------|
-| [#TBD](https://github.com/ChisaAlter/ChisaBot/pull/TBD) | 10-19 | 直播屏 ping/pong；OAuth/media SSRF 残留；日志脱敏；version 烟雾 | `TBD` |
+| [#217](https://github.com/ChisaAlter/ChisaBot/pull/217) | 10-19 | 直播屏 ping/pong；OAuth/media SSRF 残留；日志脱敏；version 烟雾 | （合并后） |
 
 ---
 

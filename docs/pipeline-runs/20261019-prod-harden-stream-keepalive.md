@@ -35,5 +35,5 @@
 - 无表结构变更；PC 外壳指纹未变
 
 ## PR / release
-- PR: TBD
+- PR: 217
 - Release: v0.1.25
