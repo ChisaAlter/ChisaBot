@@ -97,7 +97,7 @@ function drop(form: Element, files: File[]) {
  *
  * Neither of the two obvious conditions is that one. The stub above records a request BEFORE it
  * answers it, so a wait on `uploads` is over while `POST .../attachments` is still outstanding; and
- * the chip goes on the strip the moment an upload starts, so a wait on `Remove <name>` can be over
+ * the chip goes on the strip the moment an upload starts, so a wait on `移除 <name>` can be over
  * there too. A test that ends on either one ends with a `fetch` continuation still to come:
  * `cleanup` takes the document away, `afterAll` unregisters happy-dom, and React lands the state
  * update in a world with no `window`. That is the ` 1 error` this suite used to print next to 0
@@ -114,7 +114,7 @@ async function uploaded(
   name: string,
 ) {
   await waitFor(() => {
-    expect(queryByLabelText(`Remove ${name}`)).not.toBeNull();
+    expect(queryByLabelText(`移除 ${name}`)).not.toBeNull();
     expect((getByLabelText("发送消息") as HTMLButtonElement).disabled).toBe(
       false,
     );
@@ -126,7 +126,7 @@ test("a composer with a channel offers a file picker behind the plus button", ()
     <Composer channelId="channel-1" compact onSubmit={() => {}} />,
   );
 
-  const attach = getByLabelText("Attach a file") as HTMLButtonElement;
+  const attach = getByLabelText("附加文件") as HTMLButtonElement;
   expect(attach.disabled).toBe(false);
 
   // The button is only worth anything if it has an input to open. Clicking it must reach a real
@@ -162,10 +162,10 @@ test("a composer with no channel keeps the button that says so, and takes no fil
   // The old affordance, untouched: nothing to offer and it says so, rather than a live button
   // that would open a picker with nowhere to upload to.
   const placeholder = getByLabelText(
-    "More message options unavailable",
+    "更多消息选项不可用",
   ) as HTMLButtonElement;
   expect(placeholder.disabled).toBe(true);
-  expect(queryByLabelText("Attach a file")).toBeNull();
+  expect(queryByLabelText("附加文件")).toBeNull();
   expect(container.querySelector('input[type="file"]')).toBeNull();
 
   /*
@@ -194,8 +194,8 @@ test("a composer with no channel keeps the button that says so, and takes no fil
 
   // Only the file dropped once there was somewhere to put it.
   expect(uploads.map((upload) => upload.name)).toEqual(["kept.txt"]);
-  expect(queryByLabelText("Remove ignored.txt")).toBeNull();
-  expect(queryByLabelText("Remove logo.svg")).toBeNull();
+  expect(queryByLabelText("移除 ignored.txt")).toBeNull();
+  expect(queryByLabelText("移除 logo.svg")).toBeNull();
   /*
    * AND THE SVG WAS NEVER SCREENED FOR BEING AN SVG, which is the claim this line still carries
    * after the assertion above it changed. `screenPickedFiles` phrases that particular refusal with
@@ -279,7 +279,7 @@ test("a disabled composer takes no dropped file, and offers no way to pick one",
 
   // Visibly shut rather than merely ignored: a button that opens a picker whose file will be
   // dropped on the floor is worse than one that says it cannot.
-  expect((getByLabelText("Attach a file") as HTMLButtonElement).disabled).toBe(
+  expect((getByLabelText("附加文件") as HTMLButtonElement).disabled).toBe(
     true,
   );
   expect(
@@ -292,7 +292,7 @@ test("a disabled composer takes no dropped file, and offers no way to pick one",
   await uploaded(view, "kept.txt");
 
   expect(uploads.map((upload) => upload.name)).toEqual(["kept.txt"]);
-  expect(queryByLabelText("Remove refused.txt")).toBeNull();
+  expect(queryByLabelText("移除 refused.txt")).toBeNull();
   /*
    * REFUSED OUT LOUD RATHER THAN SWALLOWED, and this line used to pin the swallow.
    *
@@ -302,10 +302,10 @@ test("a disabled composer takes no dropped file, and offers no way to pick one",
    * person's cursor, so it gets the same one sentence every other refusal on this composer gets.
    *
    * The claims this test is named for are untouched by that: `uploads` above proves nothing was
-   * sent, and `Remove refused.txt` proves nothing was staged.
+   * sent, and `移除 refused.txt` proves nothing was staged.
    */
   expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-    "can no longer take messages",
+    "已经不能发消息了",
   );
 });
 
@@ -359,7 +359,7 @@ test("a text file whose type differs only in case is not refused by the SDK", as
  *
  * `img[alt=...]` IS THE DISCRIMINATOR because it is the whole difference: an image tile renders an
  * `<img>` with the filename as its alt text, a file tile renders an `IconFile` and the name. Both
- * carry a `Remove <name>` button, so that label cannot tell the two apart.
+ * carry a `移除 <name>` button, so that label cannot tell the two apart.
  */
 test("a screenshot the browser could not name is drawn as a picture once the server names it", async () => {
   serverSniffs("image/png");
@@ -427,7 +427,7 @@ test("warns on a large file the browser called an image and the server read as t
 
   await uploaded(view, "notes.png");
 
-  expect(container.textContent).toContain("may be cut");
+  expect(container.textContent).toContain("可能被截断");
 });
 
 /** The same file under the ceiling earns no warning, so the one above is the size and not the path. */
@@ -444,5 +444,5 @@ test("does not warn on a small file the server read as text", async () => {
 
   await uploaded(view, "notes.png");
 
-  expect(container.textContent).not.toContain("may be cut");
+  expect(container.textContent).not.toContain("可能被截断");
 });

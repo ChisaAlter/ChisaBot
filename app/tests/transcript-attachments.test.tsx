@@ -720,7 +720,7 @@ test("a parked message that is only a file draws the file, not an empty bubble",
 
 /*
  * The button that takes it back is named after what it deletes — and with no words to name it by,
- * the files are what it is. "Remove queued message: " was the label before, which tells somebody
+ * the files are what it is. "移除队列消息：" was the label before, which tells somebody
  * reading by name alone that there is something to remove and nothing whatever about what.
  */
 test("taking back a parked file names the file", () => {
@@ -729,7 +729,7 @@ test("taking back a parked file names the file", () => {
     queued: [parked("", [staged("att-image", "shot.png")])],
   });
 
-  expect(getByLabelText("Remove queued message: shot.png")).toBeTruthy();
+  expect(getByLabelText("移除队列消息：shot.png")).toBeTruthy();
 });
 
 /*

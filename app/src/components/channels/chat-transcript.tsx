@@ -92,6 +92,7 @@ import {
 import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
+import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";
 import {
   isQuietWork,
   isWorkCall,
@@ -2789,7 +2790,16 @@ export function ChatTranscript({
         item.kind === "attachments",
     )?.id ?? null;
   useSmoothSendScroll(viewportRef, newestUserMessageId, hydrating);
-  useKeepBottomOnPrepend(viewportRef, items[0]?.id ?? null);
+  /*
+   * CB-025：长对话首屏只挂尾巴再分批往前补。keep-bottom 盯的是「当前挂着的第一行」——
+   * 窗口上沿往前挪时 firstId 变了，人还在底部就立刻钉回底（与历史 prepend 同一条路）。
+   */
+  const { startIndex: tailStart, pending: tailPending } = useTailFirstMount(
+    items.length,
+    scrollKey,
+    viewportRef,
+  );
+  useKeepBottomOnPrepend(viewportRef, items[tailStart]?.id ?? null);
 
   /* One rule for both kinds of row — see `anchorRowIds`, which is where it is written down. */
   /*
@@ -2852,6 +2862,7 @@ export function ChatTranscript({
           <MessageScrollerContent
             aria-busy={busy}
             data-testid="chat-transcript"
+            data-tail-first-pending={tailPending ? "" : undefined}
             className="mx-auto w-full max-w-2xl px-4 py-6"
             spacerClassName="order-2"
           >
@@ -2951,48 +2962,51 @@ export function ChatTranscript({
               <div className="chat-top-notice">{topNotice}</div>
             ) : null}
             {items.length === 0 && restoring ? <RestoringTranscript /> : null}
-            {items.map((item, index) => {
-              const stoppedHere = compact.stoppedAfter.has(item.id);
-              const fallback = compact.fallbackAfter.get(item.id);
-              const hidden = rowHidden(item.id);
-              const row = hidden
-                ? foldedRef.current.has(item.id)
-                  ? renderFolded(item, index)
-                  : null
-                : renderRow(item, index);
-              // 「已停止」/备用说明必须跟着 compact 锚点画出来：锚点行若因 quiet/fold 卸掉，
-              // 以前连标记一起 return null，刷新后只剩服务器误锚时就像挂在上一轮回答下面。
-              if (!stoppedHere && !fallback) return row;
-              return [
-                row,
-                stoppedHere ? (
-                  <MessageScrollerItem
-                    key={`${item.id}:stopped`}
-                    messageId={`${item.id}:stopped`}
-                  >
-                    <div
-                      className="chat-stopped-mark"
-                      data-testid="turn-stopped"
+            {(tailStart > 0 ? items.slice(tailStart) : items).map(
+              (item, offset) => {
+                const index = tailStart + offset;
+                const stoppedHere = compact.stoppedAfter.has(item.id);
+                const fallback = compact.fallbackAfter.get(item.id);
+                const hidden = rowHidden(item.id);
+                const row = hidden
+                  ? foldedRef.current.has(item.id)
+                    ? renderFolded(item, index)
+                    : null
+                  : renderRow(item, index);
+                // 「已停止」/备用说明必须跟着 compact 锚点画出来：锚点行若因 quiet/fold 卸掉，
+                // 以前连标记一起 return null，刷新后只剩服务器误锚时就像挂在上一轮回答下面。
+                if (!stoppedHere && !fallback) return row;
+                return [
+                  row,
+                  stoppedHere ? (
+                    <MessageScrollerItem
+                      key={`${item.id}:stopped`}
+                      messageId={`${item.id}:stopped`}
                     >
-                      {"◼ 已停止"}
-                    </div>
-                  </MessageScrollerItem>
-                ) : null,
-                fallback ? (
-                  <MessageScrollerItem
-                    key={`${item.id}:fallback`}
-                    messageId={`${item.id}:fallback`}
-                  >
-                    <div
-                      className="chat-fallback-note"
-                      data-testid="turn-fallback"
+                      <div
+                        className="chat-stopped-mark"
+                        data-testid="turn-stopped"
+                      >
+                        {"◼ 已停止"}
+                      </div>
+                    </MessageScrollerItem>
+                  ) : null,
+                  fallback ? (
+                    <MessageScrollerItem
+                      key={`${item.id}:fallback`}
+                      messageId={`${item.id}:fallback`}
                     >
-                      {fallback}
-                    </div>
-                  </MessageScrollerItem>
-                ) : null,
-              ];
-            })}
+                      <div
+                        className="chat-fallback-note"
+                        data-testid="turn-fallback"
+                      >
+                        {fallback}
+                      </div>
+                    </MessageScrollerItem>
+                  ) : null,
+                ];
+              },
+            )}
           </MessageScrollerContent>
         </MessageScrollerViewport>
         <MessageScrollerButton className="chat-bottom-pill">

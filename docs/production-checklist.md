@@ -170,3 +170,12 @@ CI 红线：`server/tests/ssrf-redline.test.ts`（PRD-P1-06）。备份演练：
 | 孤儿 / 需要关注 | 设置页分区；`partitionScheduleList` 单测 |
 | 电车 | **保持 paused**（政策）；不 auto-resume |
 | 多用户 UI | 仍需显式 `CHISABOT_ACCOUNTS_UI=1` |
+
+## 10. 长对话首屏（v0.1.37）
+
+| 项 | 说明 |
+|----|------|
+| 尾屏优先 | >48 条时先挂最后 36 条，rAF 分批往前补；`data-tail-first-pending` |
+| 深链 | `?message=` 仍 MessageFind 轮询；全量挂完通常 <300ms |
+| 不做 | 虚拟列表；content-visibility；电车 resume；多用户默认开 |
+

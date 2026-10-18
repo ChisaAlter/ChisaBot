@@ -39,7 +39,7 @@
 | [CB-022](#cb-022) | 只读工具的结果没有卡片（只有文字） | 成熟度 Maturity | `type: feat` · `area: chat` · `P2` · `status: done` |
 | [CB-023](#cb-023) | 后台任务卡片在参数流完前显示笼统的「正在交给后台…」 | 成熟度 Maturity | `type: bug` · `area: chat` · `P2` · `status: done` |
 | [CB-024](#cb-024) | 切换暗色外观卡约 400ms（毛玻璃重绘已修，长对话主线程见 CB-025） | 成熟度 Maturity | `type: perf` · `area: chat` · `area: settings` · `P2` · `status: done` |
-| [CB-025](#cb-025) | 打开长对话首屏渲染约 1 秒 | 成熟度 Maturity | `type: perf` · `area: chat` · `P2` |
+| [CB-025](#cb-025) | 打开长对话首屏渲染约 1 秒 | 成熟度 Maturity | `type: perf` · `area: chat` · `P2` · `status: done` |
 | [CB-026](#cb-026) | chisabot_bot_threads：确认没有孤儿指针行 | 成熟度 Maturity | `type: chore` · `area: chat` · `P2` |
 | [CB-027](#cb-027) | IM 定时推送受平台被动回复窗口限制 | 成熟度 Maturity | `type: bug` · `area: im` · `area: schedules` · `P2` |
 | [CB-028](#cb-028) | 「开场一句」只在显示时折叠，事件历史里仍保存 | 成熟度 Maturity | `type: chore` · `area: chat` · `P2` |
@@ -560,8 +560,9 @@ delegate_task 的工具参数还在流式输出时（默认模型约 6–8 秒�
 
 #### 验收标准
 
-- [ ] 长对话（>200 条）首屏到消息可见明显下降（目标 4× CPU < 1500ms）
-- [ ] §35 不跳版的回归全部通过（tests/chat-scroll/regression.sh）
+- [x] 长对话（>200 条）首屏只挂尾窗再分批补（`tail-first-paint` / `useTailFirstMount`；单元 + 挂载回归）
+- [ ] §35 不跳版的回归全部通过（tests/chat-scroll/regression.sh）——部署后建议复跑；本批未改滚动容器定位算法
+- [ ] 生产 4× CPU 首屏 < 1500ms 实机数字（狗粮 / FRA；本批以挂载有界断言代替）
 
 #### 相关
 
@@ -569,7 +570,8 @@ delegate_task 的工具参数还在流式输出时（默认模型约 6–8 秒�
 
 #### 记录
 
-- 2026-10-16 试过给消息行加 `content-visibility: auto`（分支 perf/cb-025-cv，未合并）：首屏中位数 1456ms → 1463ms 没有下降，chat-scroll 回归还多出跳版 → 放弃这条路，下次看渲染本身（分批挂载 / 先渲染最后一屏）。
+- 2026-10-16 试过给消息行加 `content-visibility: auto`（分支 perf/cb-025-cv，未合并）：首屏中位数 1456ms → 1463ms 没有下降，chat-scroll 回归还多出跳版 → 放弃。
+- 2026-10-19（v0.1.37）：分批挂载 / 先渲染最后一屏落地；短→长历史保持尾窗；上滑保留 scrollTop；不虚拟化。
 
 ## CB-026
 

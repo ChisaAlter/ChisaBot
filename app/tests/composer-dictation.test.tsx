@@ -71,7 +71,7 @@ for (const variant of ["compact", "default"] as const) {
           view.getByRole("button", { name: "Dictate a message" }),
         );
         await waitFor(() => expect(view.getByText("Listening")).toBeDefined());
-        expect(view.queryByRole("textbox", { name: "Message" })).toBeNull();
+        expect(view.queryByRole("textbox", { name: "消息" })).toBeNull();
         expect(
           view.queryByRole("button", { name: "Dictate a message" }),
         ).toBeNull();
@@ -88,7 +88,7 @@ for (const variant of ["compact", "default"] as const) {
           );
           await waitFor(() =>
             expect(
-              view.getByRole("textbox", { name: "Message" }).textContent,
+              view.getByRole("textbox", { name: "消息" }).textContent,
             ).toBe("Existing draft"),
           );
           expect(transcribe).not.toHaveBeenCalled();
@@ -121,7 +121,7 @@ for (const variant of ["compact", "default"] as const) {
         if (action === "stop" || action === "failed-send") {
           await waitFor(() =>
             expect(
-              view.getByRole("textbox", { name: "Message" }).textContent,
+              view.getByRole("textbox", { name: "消息" }).textContent,
             ).toContain("Existing draft dictated words"),
           );
         }

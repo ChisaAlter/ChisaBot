@@ -49,7 +49,7 @@ ChisaBot 现在要做什么、接下来做什么、以后做什么。这一页�
 | [CB-013](BACKLOG.md#cb-013) | Google 账号连接 | 所有者说不急，Hark parity 最后一项 |
 | [CB-014](BACKLOG.md#cb-014) | 每日简报（可选） | 定时任务稳定后 |
 | [CB-045](BACKLOG.md#cb-045) | 每人模型额度 / 用量上限 | 多用户打开时 |
-| [CB-025](BACKLOG.md#cb-025) / [CB-029](BACKLOG.md#cb-029) | 长对话首屏、弹窗模糊性能 | 性能轮（content-visibility 方案试过无收益，未合并） |
+| [CB-025](BACKLOG.md#cb-025) / [CB-029](BACKLOG.md#cb-029) | 长对话首屏、弹窗模糊性能 | ✅ CB-025 0.1.37 尾屏优先；CB-029 弹窗毛玻璃仍开放 |
 | [CB-026](BACKLOG.md#cb-026) / [CB-028](BACKLOG.md#cb-028) / [CB-031](BACKLOG.md#cb-031) | 数据卫生：线程指针、过程话、事件表 | 数据轮 |
 | [CB-032](BACKLOG.md#cb-032) / [CB-033](BACKLOG.md#cb-033) | CI 内安卓签名、生产 stale-chunk 测试 | 发布流程 |
 

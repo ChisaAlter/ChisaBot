@@ -106,7 +106,7 @@ for (const claim of unnamed) {
     // `File "notes.txt" is not accepted. Supported types: …`, which is the machine sentence
     // `stageFiles` promises a screened file can never produce.
     await waitFor(() =>
-      expect(view.queryByLabelText("Remove notes.txt")).not.toBeNull(),
+      expect(view.queryByLabelText("移除 notes.txt")).not.toBeNull(),
     );
     expect(view.queryByRole("alert")).toBeNull();
   });
@@ -128,8 +128,8 @@ test("a file that does name its format is still refused here, in our words", asy
 
   await waitFor(() => expect(view.queryByRole("alert")).not.toBeNull());
   expect(
-    view.queryByText(/can carry scripts and is not accepted/),
+    view.queryByText(/是 SVG，可能带脚本，不能上传/),
   ).not.toBeNull();
-  expect(view.queryByText(/Supported types:/)).toBeNull();
+  expect(view.queryByText(/支持的类型/)).toBeNull();
   expect(uploaded).toEqual([]);
 });

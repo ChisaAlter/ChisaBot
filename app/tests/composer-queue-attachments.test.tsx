@@ -8,13 +8,15 @@ import {
   test,
 } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
   fireEvent,
-  render,
+  render as rtlRender,
   type RenderResult,
   waitFor,
 } from "@testing-library/react";
+import type { ReactElement } from "react";
 import * as ReactCoreV2 from "@copilotkit/react-core/v2";
 import { useCallback } from "react";
 import { Composer } from "@/components/channels/composer/composer";
@@ -25,6 +27,21 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
 } from "@/lib/channels/attachments";
 import { settleReactWork } from "./settle-react-work";
+
+function render(ui: ReactElement): RenderResult {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const wrap = (node: ReactElement) => (
+    <QueryClientProvider client={client}>{node}</QueryClientProvider>
+  );
+  const result = rtlRender(wrap(ui));
+  return {
+    ...result,
+    rerender: (next: ReactElement) => result.rerender(wrap(next)),
+  };
+}
+
 
 /**
  * WHAT THE QUEUE DOES TO AN ATTACHMENT BEHIND SOMEBODY'S BACK, AT BOTH ENDS OF THE SAME ROW.
@@ -204,7 +221,7 @@ function correction() {
 /**
  * A dropped file, all the way up.
  *
- * `Remove <name>` on its own is not that condition — the chip goes on the strip the moment the
+ * `移除 <name>` on its own is not that condition — the chip goes on the strip the moment the
  * upload starts, so a wait on it can be over while `POST .../attachments` is still outstanding, and
  * both tests below then depend on a race they never state. See the note on `uploaded` in
  * `composer-attachments-ui.test.tsx` for what a test that ends mid-upload does to the document.
@@ -216,9 +233,9 @@ function correction() {
  */
 async function uploaded({ queryByLabelText }: RenderResult, name: string) {
   await waitFor(() => {
-    expect(queryByLabelText(`Remove ${name}`)).not.toBeNull();
-    const button = (queryByLabelText("Send message") ??
-      queryByLabelText("Queue message")) as HTMLButtonElement | null;
+    expect(queryByLabelText(`移除 ${name}`)).not.toBeNull();
+    const button = (queryByLabelText("发送消息") ??
+      queryByLabelText("队列消息")) as HTMLButtonElement | null;
     expect(button?.disabled).toBe(false);
   });
 }
@@ -251,7 +268,7 @@ test("queuing a correction mid-send removes only what it takes, never sweeps the
   await uploaded(view, "notes.txt");
   fireEvent.submit(form);
   await waitFor(() => expect(submitted).toHaveLength(1));
-  expect(queryByLabelText("Remove notes.txt")).toBeNull();
+  expect(queryByLabelText("移除 notes.txt")).toBeNull();
 
   // A correction, staged while the first send is still out — the next message's file, not this
   // one's.
@@ -266,7 +283,7 @@ test("queuing a correction mid-send removes only what it takes, never sweeps the
   expect(queued[0].attachments).toHaveLength(1);
   expect(queued[0].attachments[0].filename).toBe("correction.txt");
   // Taken off the strip because it was queued, same as any parked attachment.
-  expect(queryByLabelText("Remove correction.txt")).toBeNull();
+  expect(queryByLabelText("移除 correction.txt")).toBeNull();
 
   // THE REGRESSION, PINNED DIRECTLY. The old code called `consumeAttachments()`, which sweeps
   // every `ready` attachment regardless of `sending` — including notes.txt, which this send is
@@ -293,14 +310,14 @@ test("removing a ready attachment issues the DELETE through attachmentUrl(), not
   // it and issues no DELETE at all, so pressing Remove too early would pin nothing.
   await uploaded(view, "notes.txt");
 
-  fireEvent.click(getByLabelText("Remove notes.txt"));
+  fireEvent.click(getByLabelText("移除 notes.txt"));
 
   // Built from the same helper the server-side comment and `chat-transcript.tsx` both insist on:
   // a hand-typed literal here is exactly the fifth spelling this repository forbids.
   await waitFor(() =>
     expect(deletes).toEqual([attachmentUrl("stored-notes.txt")]),
   );
-  expect(queryByLabelText("Remove notes.txt")).toBeNull();
+  expect(queryByLabelText("移除 notes.txt")).toBeNull();
 });
 
 /**
@@ -317,11 +334,11 @@ test("removing a ready attachment issues the DELETE through attachmentUrl(), not
  * re-check bumping the excess off a drained turn — is reachable from the composer alone.
  */
 
-/** Every `Remove <name>` chip currently on the composer's strip. */
+/** Every `移除 <name>` chip currently on the composer's strip. */
 function chips({ container }: RenderResult): string[] {
-  return Array.from(container.querySelectorAll("[aria-label^='Remove ']"))
+  return Array.from(container.querySelectorAll("[aria-label^='移除 ']"))
     .map((button) => button.getAttribute("aria-label") ?? "")
-    .filter((label) => !label.startsWith("Remove queued message"));
+    .filter((label) => !label.startsWith("移除队列消息"));
 }
 
 /** Drop `files` on the composer and wait for every one of them to finish uploading. */
@@ -329,8 +346,8 @@ async function dropAndWait(view: RenderResult, files: File[]) {
   drop(view.container.querySelector("form") as HTMLFormElement, files);
   await waitFor(() => expect(chips(view)).toHaveLength(files.length));
   await waitFor(() => {
-    const button = (view.queryByLabelText("Send message") ??
-      view.queryByLabelText("Queue message")) as HTMLButtonElement | null;
+    const button = (view.queryByLabelText("发送消息") ??
+      view.queryByLabelText("队列消息")) as HTMLButtonElement | null;
     expect(button?.disabled).toBe(false);
   });
 }
@@ -358,7 +375,7 @@ test("taking a queued message back releases the rows it was carrying", async () 
   // Parked: off the composer's strip, onto the transcript, and now referenced by nothing else.
   await waitFor(() =>
     expect(
-      container.querySelector("[aria-label^='Remove queued message']"),
+      container.querySelector("[aria-label^='移除队列消息']"),
     ).not.toBeNull(),
   );
   expect(chips(view)).toEqual([]);
@@ -369,7 +386,7 @@ test("taking a queued message back releases the rows it was carrying", async () 
   // the row's label ends at the colon with nothing after it to match on.
   fireEvent.click(
     container.querySelector(
-      "[aria-label^='Remove queued message']",
+      "[aria-label^='移除队列消息']",
     ) as HTMLButtonElement,
   );
 
@@ -400,7 +417,7 @@ test("taking a queued message back releases the rows it was carrying", async () 
    * both sentences are live — so declining now leaves the wiring between them unpinned, and
    * swapping the two arms of that ternary passed the whole suite.
    */
-  expect(alert.textContent).toContain("removed along with the queued message");
+  expect(alert.textContent).toContain("随排队消息一起去掉了");
   expect(alert.textContent).not.toContain("merged");
   expect(alert.textContent).not.toContain("最多");
 });
@@ -484,7 +501,7 @@ test("the spy hands the composer one stable pair of callbacks, not a fresh pair 
   // Several renders: the placeholder going on the strip, the upload resolving, the strip
   // re-rendering without it.
   await dropAndWait(view, [notes()]);
-  fireEvent.click(view.getByLabelText("Remove notes.txt"));
+  fireEvent.click(view.getByLabelText("移除 notes.txt"));
   await waitFor(() => expect(chips(view)).toEqual([]));
 
   expect(handedOut.removeAttachment.size).toBe(1);
@@ -560,7 +577,7 @@ test("a drained turn whose send fails puts the queue back instead of releasing i
   // THE INVERSION. The parked message is back, carrying the same row, and nothing was deleted.
   await waitFor(() =>
     expect(
-      container.querySelector("[aria-label^='Remove queued message']"),
+      container.querySelector("[aria-label^='移除队列消息']"),
     ).not.toBeNull(),
   );
   expect(deletes).toEqual([]);
@@ -573,7 +590,7 @@ test("a drained turn whose send fails puts the queue back instead of releasing i
   // The one gesture that still releases the row: taking the restored message back by hand.
   fireEvent.click(
     container.querySelector(
-      "[aria-label^='Remove queued message']",
+      "[aria-label^='移除队列消息']",
     ) as HTMLElement,
   );
   await waitFor(() =>
@@ -613,7 +630,7 @@ test("walking away with a message still parked releases the rows it was holding"
 
   await waitFor(() =>
     expect(
-      container.querySelector("[aria-label^='Remove queued message']"),
+      container.querySelector("[aria-label^='移除队列消息']"),
     ).not.toBeNull(),
   );
   expect(chips(view)).toEqual([]);
@@ -679,7 +696,7 @@ test("an ordinary send that fails releases nothing, because the chips come back"
 
   await waitFor(() => expect(attempted).toHaveLength(1));
   // Back on the strip, which is the fact the assertion after it depends on.
-  await waitFor(() => expect(chips(view)).toEqual(["Remove notes.txt"]));
+  await waitFor(() => expect(chips(view)).toEqual(["移除 notes.txt"]));
   expect(deletes).toEqual([]);
 });
 
@@ -770,7 +787,7 @@ test("taking the parked message back frees the slots it was holding", async () =
 
   fireEvent.click(
     container.querySelector(
-      "[aria-label^='Remove queued message']",
+      "[aria-label^='移除队列消息']",
     ) as HTMLButtonElement,
   );
   await waitFor(() =>
@@ -781,7 +798,7 @@ test("taking the parked message back frees the slots it was holding", async () =
   await dropAndWait(view, [named("ninth.txt")]);
 
   expect(uploads).toContain("ninth.txt");
-  expect(chips(view)).toEqual(["Remove ninth.txt"]);
+  expect(chips(view)).toEqual(["移除 ninth.txt"]);
 });
 
 /**
@@ -823,7 +840,7 @@ test("a disabled conversation keeps what is parked instead of draining it", asyn
   fireEvent.submit(container.querySelector("form") as HTMLFormElement);
   await waitFor(() =>
     expect(
-      container.querySelector("[aria-label^='Remove queued message']"),
+      container.querySelector("[aria-label^='移除队列消息']"),
     ).not.toBeNull(),
   );
 
@@ -843,7 +860,7 @@ test("a disabled conversation keeps what is parked instead of draining it", asyn
   // a channel the notice under the composer has already said cannot reply.
   expect(attempted).toEqual([]);
   expect(
-    container.querySelector("[aria-label^='Remove queued message']"),
+    container.querySelector("[aria-label^='移除队列消息']"),
   ).not.toBeNull();
   // And nothing was released either — the message is still there to be taken back by hand, so its
   // rows still have something pointing at them.
