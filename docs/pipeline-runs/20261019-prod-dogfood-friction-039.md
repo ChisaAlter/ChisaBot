@@ -28,6 +28,12 @@ v0.1.39 线上冒烟狗粮摩擦（baseline **v0.1.39** → **v0.1.40**），弥
 3. 设置→定时：暂停电车不再写「打开对话处理」；孤儿按钮清零或一键清空
 4. 电车仍暂停
 
+
 ## PR / release / deploy
 
-（合入后填）
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/246 (squash → `037fbce3`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.40
+- Deploy: `deploy-serial.sh 037fbce grok-bot` → `local/chisabot:auto-202610182051-037fbce`
+- `/api/version` = **0.1.40**; post-deploy-smoke **PASSED** (含模型 + 匿名 admin 401)
+- `sync-nginx --check` ALL GREEN; Magpie isolate verify ALL GREEN
+- **未** resume 电车定时
