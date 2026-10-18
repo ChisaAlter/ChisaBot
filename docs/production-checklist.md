@@ -201,3 +201,13 @@ CI 红线：`server/tests/ssrf-redline.test.ts`（PRD-P1-06）。备份演练：
 | 电车 | **保持 paused**；不 auto-resume |
 | 安装胶囊 | `--install-hint-gap: 56px` |
 
+## 12. 截图 503 根因协调（v0.1.41）
+
+| 检查 | 期望 |
+|------|------|
+| LiveScreen 展开 | Network 无刷屏 HTTP `/screenshot`；流正常出图 |
+| 直播中 HTTP 截图 | agent-computer 503 + `captureBusy` + `liveCast`（不抢 CDP）；UI「大屏正在直播…」并停轮询 |
+| 并发 HTTP | 第二路 captureBusy；失败清帧 |
+| 页面忙 | 422 + `pageTimeout` →「页面还在忙…」（非假电脑挂了） |
+| 电车 | **保持 paused**；不 resume |
+

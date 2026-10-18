@@ -17,6 +17,9 @@ import {
   offeredToken,
 } from "./authorisation";
 import { isPlainBotId } from "./bot-id";
+import {
+  CaptureBusyError,
+} from "./capture-gate";
 import { PreviewShotBusyError, PreviewShotRefusedError, previewShot } from "./preview-shot";
 import { browserRuntimeFromEnv } from "./browser-runtime";
 import { detectChallenge } from "./challenge";
@@ -1411,7 +1414,14 @@ serve<StreamData>({
       }
 
       if (url.pathname === "/screenshot" && request.method === "GET") {
+        /*
+         * Capture gate (0.1.41 / DOG-05 root): LiveScreen screencast and HTTP page.screenshot share
+         * CDP. Fighting produces timeouts → opaque 502 → gateway 503 while the live panel still
+         * looks fine. Refuse with captureBusy when casting; serialise concurrent HTTP shots.
+         */
+        let releaseCapture: (() => void) | undefined;
         try {
+          releaseCapture = session.capture.enter(session.viewer.casting());
           const target = await currentPage(botId);
           // 空白页先画上起始页，截图才不是一张纯白图。
           await ensureStartPage(target, linksFor(botId));
@@ -1419,6 +1429,9 @@ serve<StreamData>({
           const buffer = await target.screenshot({
             type: "png",
             mask: [target.locator(SENSITIVE_FIELD_SELECTOR)],
+            // Bound the fight: a page stuck under screencast load must not hold the default
+            // Playwright timeout and then look like the computer is down.
+            timeout: 15_000,
           });
           const size = target.viewportSize() ?? { width: 1280, height: 800 };
           return json({
@@ -1435,13 +1448,33 @@ serve<StreamData>({
             startPage: target.url() === "about:blank",
           });
         } catch (error) {
-          return json(
-            {
-              error:
-                error instanceof Error ? error.message : "Screenshot failed.",
-            },
-            502,
-          );
+          if (error instanceof CaptureBusyError) {
+            return json(
+              {
+                error: error.message,
+                captureBusy: true,
+                liveCast: error.liveCast,
+              },
+              // 503 is the busy code the web UI already maps to「电脑正忙…」(DOG-05).
+              503,
+            );
+          }
+          const detail =
+            error instanceof Error ? error.message : "Screenshot failed.";
+          // Page busy drawing → 422 (same as acting path §101.12), not "computer down" 502.
+          if (/Timeout \d+\s*ms exceeded|timed out/i.test(detail)) {
+            return json(
+              {
+                error:
+                  "The page did not respond in time (it may still be loading or busy drawing).",
+                pageTimeout: true,
+              },
+              422,
+            );
+          }
+          return json({ error: detail }, 502);
+        } finally {
+          releaseCapture?.();
         }
       }
 

@@ -33,6 +33,14 @@ export function nextScreenshotPollDelay(failStreak: number, baseMs: number): num
 /** 连续失败到此次数后停止自动轮询，等「重试」或展开/收起再开（避免 503 刷屏）。 */
 export const SCREENSHOT_POLL_PAUSE_AFTER = 5;
 
-export function shouldPauseScreenshotPoll(failStreak: number): boolean {
+/**
+ * 是否停自动轮询。
+ * `liveCast`：agent-computer 说大屏正在出图 — HTTP 再打只会 captureBusy，立刻停，等收起/重试。
+ */
+export function shouldPauseScreenshotPoll(
+  failStreak: number,
+  options: { liveCast?: boolean } = {},
+): boolean {
+  if (options.liveCast) return true;
   return failStreak >= SCREENSHOT_POLL_PAUSE_AFTER;
 }

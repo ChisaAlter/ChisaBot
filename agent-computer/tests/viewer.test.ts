@@ -538,3 +538,30 @@ describe("a cast that cannot be stopped", () => {
     expect(slot.occupied()).toBe(false);
   });
 });
+
+
+describe("casting vs occupied (screenshot gate)", () => {
+  test("claim without cast is occupied but not casting", () => {
+    const slot = createViewerSlot();
+    slot.claim({ id: "a" }, () => {});
+    expect(slot.occupied()).toBe(true);
+    expect(slot.casting()).toBe(false);
+  });
+
+  test("installed cast is casting", async () => {
+    const slot = createViewerSlot();
+    const claim = slot.claim({ id: "a" }, () => {});
+    await claim.install(fakeCast());
+    expect(slot.casting()).toBe(true);
+    expect(slot.occupied()).toBe(true);
+  });
+
+  test("release clears casting", async () => {
+    const slot = createViewerSlot();
+    const socket = { id: "a" };
+    const claim = slot.claim(socket, () => {});
+    await claim.install(fakeCast());
+    await slot.release(socket);
+    expect(slot.casting()).toBe(false);
+  });
+});

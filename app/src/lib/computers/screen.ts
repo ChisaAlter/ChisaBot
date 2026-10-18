@@ -24,19 +24,39 @@ export const SCREEN_UNAVAILABLE_ZH = "暂时看不到屏幕。";
 /** 503 / 电脑未就绪时的说明（DOG-05）。 */
 export const SCREEN_BUSY_ZH = "电脑正忙或还没就绪，屏幕暂时拿不到。";
 
+/** 大屏 LiveScreen 正在出图时，HTTP 截图主动让路（0.1.41）。 */
+export const SCREEN_LIVE_CAST_ZH =
+  "大屏正在直播，卡片截图已暂停，避免抢电脑。";
+
+/** 页面绘制超时（422 / pageTimeout），不是电脑挂了。 */
+export const SCREEN_PAGE_TIMEOUT_ZH =
+  "页面还在忙，屏幕暂时拿不到。稍后再试。";
+
+export type ScreenshotErrorFlags = {
+  captureBusy?: boolean;
+  liveCast?: boolean;
+  pageTimeout?: boolean;
+};
+
 /**
  * 把 HTTP 状态 / 服务端 error 翻成中文面板文案。
  * 服务端 `describe` 常是英文；有中文（含「暂时」「不可用」等）时原样用。
+ * `captureBusy` / `liveCast` / `pageTimeout` 是 0.1.41 起网关透传的忙态码。
  */
 export function screenshotErrorMessage(
   status: number | undefined,
   serverError: string | undefined,
+  flags: ScreenshotErrorFlags = {},
 ): string {
   const raw = serverError?.trim();
   if (raw && /[\u4e00-\u9fff]/.test(raw)) return raw;
+  if (flags.liveCast) return SCREEN_LIVE_CAST_ZH;
+  if (flags.captureBusy) return SCREEN_BUSY_ZH;
+  if (flags.pageTimeout || status === 422) return SCREEN_PAGE_TIMEOUT_ZH;
   if (status === 503 || status === 502 || status === 504) return SCREEN_BUSY_ZH;
   if (status === 404) return "找不到这台计算机的屏幕。";
   if (status === 403) return "没有权限查看这台计算机的屏幕。";
+  if (status === 409) return SCREEN_BUSY_ZH;
   return SCREEN_UNAVAILABLE_ZH;
 }
 
@@ -50,16 +70,32 @@ export function screenshotErrorMessage(
  */
 export async function readScreenshot(
   computerId: string,
-): Promise<{ frame?: Screenshot; error?: string; status?: number }> {
+): Promise<{
+  frame?: Screenshot;
+  error?: string;
+  status?: number;
+  captureBusy?: boolean;
+  liveCast?: boolean;
+  pageTimeout?: boolean;
+}> {
   try {
     const response = await tryClient(`/api/computers/${computerId}/screenshot`);
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as {
         error?: string;
+        captureBusy?: boolean;
+        liveCast?: boolean;
+        pageTimeout?: boolean;
       } | null;
+      const flags: ScreenshotErrorFlags = {
+        captureBusy: body?.captureBusy === true,
+        liveCast: body?.liveCast === true,
+        pageTimeout: body?.pageTimeout === true,
+      };
       return {
         status: response.status,
-        error: screenshotErrorMessage(response.status, body?.error),
+        error: screenshotErrorMessage(response.status, body?.error, flags),
+        ...flags,
       };
     }
     return parseScreenshot(await response.json().catch(() => null));

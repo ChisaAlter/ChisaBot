@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  CaptureBusyError,
   ComputerStoppedError,
   ComputerUnavailableError,
   createComputerTransport,
@@ -588,5 +589,54 @@ describe("a person's Stop", () => {
     await expect(
       transport.post("http://computer", "bot-1", "/click", {}),
     ).rejects.toThrow("The assistant's computer is not running.");
+  });
+});
+
+
+/**
+ * 0.1.41 / DOG-05 root：LiveScreen 出图时 HTTP /screenshot 主动 503+captureBusy，
+ * 或页面忙 422+pageTimeout。必须保留标志，不能吞成「电脑挂了」。
+ */
+describe("screenshot captureBusy / pageTimeout from agent-computer", () => {
+  const answering = (status: number, body: unknown) =>
+    clientWith(
+      () =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+  test("503 + captureBusy + liveCast → CaptureBusyError", async () => {
+    const pending = answering(503, {
+      error: "Live screen is streaming; HTTP screenshot paused so they do not fight.",
+      captureBusy: true,
+      liveCast: true,
+    }).screenshot();
+    await expect(pending).rejects.toBeInstanceOf(CaptureBusyError);
+    await pending.catch((error: CaptureBusyError) => {
+      expect(error.captureBusy).toBe(true);
+      expect(error.liveCast).toBe(true);
+      expect(error).toBeInstanceOf(ComputerUnavailableError);
+    });
+  });
+
+  test("503 + captureBusy in-flight → CaptureBusyError without liveCast", async () => {
+    await expect(
+      answering(503, {
+        error: "Another screenshot is already in progress.",
+        captureBusy: true,
+        liveCast: false,
+      }).screenshot(),
+    ).rejects.toMatchObject({ name: "CaptureBusyError", liveCast: false });
+  });
+
+  test("422 + pageTimeout → PageTimeoutError", async () => {
+    await expect(
+      answering(422, {
+        error: "The page did not respond in time (it may still be loading or busy drawing).",
+        pageTimeout: true,
+      }).screenshot(),
+    ).rejects.toBeInstanceOf(PageTimeoutError);
   });
 });

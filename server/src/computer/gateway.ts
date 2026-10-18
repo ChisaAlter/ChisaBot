@@ -40,6 +40,7 @@ import { checkComputerAddress } from "./target";
 import { workspaceUrlFor } from "./workspace-url";
 
 export {
+  CaptureBusyError,
   ComputerUnavailableError,
   ElementNotFoundError,
   PageTimeoutError,

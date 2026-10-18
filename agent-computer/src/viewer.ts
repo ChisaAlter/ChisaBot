@@ -83,6 +83,15 @@ export type ViewerSlot = {
   standingOf(socket: unknown): ViewerStanding;
   /** Is anybody watching, or about to be? What the session sweep asks. */
   occupied(): boolean;
+  /**
+   * Is a screencast installed right now?
+   *
+   * Stricter than `occupied`: a claim mid-launch or a cast still tearing down is occupied but not
+   * casting. HTTP `/screenshot` only refuses when Chrome is actually encoding frames — that is the
+   * CDP fight. A starting claim does not hold CDP screencast yet, so a card poll may still take a
+   * frame while the big screen is connecting.
+   */
+  casting(): boolean;
   /** Settle in-flight teardowns. A test seam; nothing on the acting path waits on this. */
   settled(): Promise<void>;
 };
@@ -231,6 +240,10 @@ export function createViewerSlot(): ViewerSlot {
 
     occupied() {
       return current !== undefined || tearing.size > 0;
+    },
+
+    casting() {
+      return current?.cast !== undefined;
     },
 
     async settled() {

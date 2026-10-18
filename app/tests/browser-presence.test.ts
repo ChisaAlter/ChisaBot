@@ -12,6 +12,8 @@ import {
 } from "@/lib/computers/screenshot-poll";
 import {
   SCREEN_BUSY_ZH,
+  SCREEN_LIVE_CAST_ZH,
+  SCREEN_PAGE_TIMEOUT_ZH,
   SCREEN_UNAVAILABLE_ZH,
   screenshotErrorMessage,
 } from "@/lib/computers/screen";
@@ -106,6 +108,11 @@ describe("shouldPauseScreenshotPoll", () => {
     expect(shouldPauseScreenshotPoll(SCREENSHOT_POLL_PAUSE_AFTER - 1)).toBe(false);
     expect(shouldPauseScreenshotPoll(SCREENSHOT_POLL_PAUSE_AFTER)).toBe(true);
   });
+
+  test("pauses immediately when liveCast (HTTP yields to LiveScreen)", () => {
+    expect(shouldPauseScreenshotPoll(0, { liveCast: true })).toBe(true);
+    expect(shouldPauseScreenshotPoll(1, { liveCast: true })).toBe(true);
+  });
 });
 
 describe("screenshotErrorMessage", () => {
@@ -118,5 +125,23 @@ describe("screenshotErrorMessage", () => {
     expect(screenshotErrorMessage(undefined, undefined)).toBe(
       SCREEN_UNAVAILABLE_ZH,
     );
+  });
+
+  test("captureBusy / liveCast / pageTimeout flags", () => {
+    expect(
+      screenshotErrorMessage(503, "Live screen is streaming…", {
+        captureBusy: true,
+        liveCast: true,
+      }),
+    ).toBe(SCREEN_LIVE_CAST_ZH);
+    expect(
+      screenshotErrorMessage(503, "Another screenshot…", { captureBusy: true }),
+    ).toBe(SCREEN_BUSY_ZH);
+    expect(
+      screenshotErrorMessage(422, "The page did not respond…", {
+        pageTimeout: true,
+      }),
+    ).toBe(SCREEN_PAGE_TIMEOUT_ZH);
+    expect(screenshotErrorMessage(422, undefined)).toBe(SCREEN_PAGE_TIMEOUT_ZH);
   });
 });

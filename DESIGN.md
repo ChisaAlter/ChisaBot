@@ -2077,13 +2077,14 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 - 卡片外留白：宽 > 900 时 32px，≤ 900 时 16px；**≤ 640（手机）整屏抽屉**：没有圆角和外边，上下留安全区，工具条在顶、底栏贴底，屏幕在工具条下面。
 - 实测（预览，生产库副本 + 真云端浏览器，GitHub + example 两个标签，亮 / 暗 × 只看 / 接管）：1280×840 卡片 962–1020×776、1440×900 1058–1116×836、900×760 868×681–717、390×844 整屏；全部 `scrollHeight − clientHeight = 0`、卡片在视口内、底栏离卡片底 9px、屏幕宽高比 1.600、「+」离最后一个标签 4px、× 离标签栏右沿 6px、标签栏离卡片上沿 10px；暗色下 GitHub 标签图标、收藏栏 / 下拉 / 管理面板里的 GitHub 字母块都带底板。
 
-### 96.5 计算机画面要诚实（DOG-05，2026-10-18）
+### 96.5 计算机画面要诚实（DOG-05，2026-10-18；根因协调 0.1.41）
 - **问题**：右栏写「机器人在用浏览器」并一直显示上一张截图，活动为空、截图 API 已 503 时仍像直播。
 - **做法**：
-  1. 截图轮询失败 → **清掉上一帧**，占位「暂时看不到屏幕」+ 中文原因 +「重试」；连续失败放慢轮询（最长 8s），成功后恢复。
+  1. 截图轮询失败 → **清掉上一帧**，占位「暂时看不到屏幕」+ 中文原因 +「重试」；连续失败放慢轮询（最长 30s / 0.1.40），成功后恢复；连续 5 次停自动轮询。
   2. 「在用浏览器」只在计算机状态行还在时说（`useComputerStatus`）；空闲写「浏览器空闲…」；画面不可用写「暂时看不到屏幕…」。文案在 `lib/computers/browser-presence.ts`。
   3. `readScreenshot` 对 503/502/504 用中文「电脑正忙或还没就绪…」，不再把英文 `The screen is not available…` 直接上屏。
-- 回归：`app/tests/browser-presence.test.ts`、`app-resilience-guards` 的 503 用例。
+  4. **0.1.41 根因**：大屏 LiveScreen（CDP screencast）与 HTTP `page.screenshot` 抢 CDP → 超时/ opaque 503。agent-computer `capture-gate`：直播中 HTTP `/screenshot` 立刻 503+`captureBusy`+`liveCast`（不打 CDP）；并发 HTTP 串行；超时 422+`pageTimeout`。网关透传标志；UI 认 `liveCast`（「大屏正在直播…」并立刻停轮询）。展开大屏时客户端仍不打 HTTP（0.1.40）。
+- 回归：`app/tests/browser-presence.test.ts`、`agent-computer/tests/capture-gate.test.ts`、`server/tests/computer-client.test.ts` captureBusy 用例。
 
 ### 96.4 回归
 - `app/tests/favicon-dark.test.tsx`（深色判断：颜色 / 像素 / 字母块 class；可用高度计算；没有标签时标签栏仍放得下 ×）。

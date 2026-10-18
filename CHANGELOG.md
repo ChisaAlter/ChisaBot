@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.41 — 2026-10-19
+
+### 生产成熟度 · 截图 503 根因（LiveScreen ↔ HTTP 协调）
+
+- **根因**：LiveScreen CDP screencast 与 HTTP `page.screenshot` 抢同一页面 → 超时/502 → 网关 opaque 503，大屏仍像健康直播。0.1.40 只停了展开时的客户端轮询。
+- **agent-computer**：`capture-gate` — 直播中 HTTP `/screenshot` 立刻 503+`captureBusy`+`liveCast`（不打 CDP）；并发 HTTP 截图串行，第二路同样 busy；截图超时改 422+`pageTimeout`（15s 上限）。
+- **网关**：`CaptureBusyError` 透传标志；422→`PageTimeoutError`。
+- **UI**：识别 `liveCast` / `captureBusy` / `pageTimeout` 中文；liveCast 立刻停轮询；失败仍清帧（DOG-05）。
+- 电车仍暂停。未改 PC / Android 外壳。
+
 ## 0.1.40 — 2026-10-19
 
 ### 生产成熟度 · 狗粮摩擦（v0.1.39 冒烟）

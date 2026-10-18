@@ -11,6 +11,22 @@ export class ComputerUnavailableError extends Error {
 }
 
 /**
+ * HTTP `/screenshot` refused because LiveScreen is casting or another capture is in flight
+ * (0.1.41 / DOG-05 root). Subclass of unavailable so tool outcomes still catch it; the flags tell
+ * the web UI this is intentional busy, not a dead computer.
+ */
+export class CaptureBusyError extends ComputerUnavailableError {
+  readonly captureBusy = true as const;
+  constructor(
+    reason: string,
+    readonly liveCast = false,
+  ) {
+    super(reason);
+    this.name = "CaptureBusyError";
+  }
+}
+
+/**
  * A person pressed Stop and the action was aborted mid-flight.
  *
  * A subclass of `ComputerUnavailableError` on purpose: everything downstream that catches an
@@ -413,6 +429,17 @@ function throwMappedError(
     throw new PageTimeoutError(
       "The page did not respond in time (it may still be loading or busy drawing). Do not repeat the same call in a loop: wait a few seconds and try once more, use computer_read to get the page text, or tell the person the page is not responding.",
     );
+  }
+  // agent-computer /screenshot: page busy drawing (bounded timeout), not "computer down".
+  if (status === 422 || body?.pageTimeout === true) {
+    throw new PageTimeoutError(
+      detail ||
+        "The page did not respond in time (it may still be loading or busy drawing). Do not repeat the same call in a loop: wait a few seconds and try once more, use computer_read to get the page text, or tell the person the page is not responding.",
+    );
+  }
+  // LiveScreen casting or another HTTP capture in flight — clear busy, not an outage.
+  if (body?.captureBusy === true) {
+    throw new CaptureBusyError(detail, body.liveCast === true);
   }
   throw new ComputerUnavailableError(detail);
 }

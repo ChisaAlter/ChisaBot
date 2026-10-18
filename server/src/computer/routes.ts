@@ -10,6 +10,7 @@ import {
   type ActionActor,
   ActionRefusedError,
   type ComputerGateway,
+  CaptureBusyError,
   ComputerUnavailableError,
   ElementNotFoundError,
   PageTimeoutError,
@@ -1101,6 +1102,10 @@ function errorBody(error: unknown): Record<string, unknown> {
     ...(error instanceof HandoffRequestError
       ? { controlRequestError: true }
       : {}),
+    ...(error instanceof CaptureBusyError
+      ? { captureBusy: true, liveCast: error.liveCast }
+      : {}),
+    ...(error instanceof PageTimeoutError ? { pageTimeout: true } : {}),
   };
 }
 
@@ -1139,6 +1144,8 @@ function statusFor(error: unknown): 400 | 403 | 404 | 409 | 413 | 422 | 500 | 50
   if (error instanceof WorkspaceRequestError) return 400;
   if (error instanceof WorkspaceNotFoundError) return 404;
   if (error instanceof WorkspaceTooLargeError) return 413;
+  // Intentional screenshot busy (live cast / in-flight) — same 503 the UI maps to「电脑正忙…」.
+  if (error instanceof CaptureBusyError) return 503;
   if (error instanceof ComputerUnavailableError) return 503;
   return 500;
 }

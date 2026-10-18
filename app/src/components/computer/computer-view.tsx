@@ -15,6 +15,7 @@ import {
 import {
   applyScreenshotPollResult,
   nextScreenshotPollDelay,
+  SCREENSHOT_POLL_PAUSE_AFTER,
   shouldPauseScreenshotPoll,
 } from "@/lib/computers/screenshot-poll";
 import { useComputerControl } from "@/lib/computers/use-control";
@@ -418,9 +419,11 @@ export function ComputerView({
 
     // Always fetch at least one frame; only repeated refreshes are conditional.
     const tick = async () => {
+      let liveCastBusy = false;
       try {
         const result = await readScreenshot(computerId);
         if (generation.current !== mine) return;
+        liveCastBusy = result.liveCast === true;
 
         const next = applyScreenshotPollResult(result);
         if (!next.shot) {
@@ -428,6 +431,8 @@ export function ComputerView({
           failStreak += 1;
           setShot(null);
           setProblem(next.problem);
+          // 大屏正在直播：服务端 captureBusy+liveCast，立刻停 HTTP，别跟流抢。
+          if (liveCastBusy) failStreak = SCREENSHOT_POLL_PAUSE_AFTER;
         } else {
           failStreak = 0;
           // Exact byte comparison is the settling signal.
@@ -441,8 +446,8 @@ export function ComputerView({
         }
       } finally {
         if (generation.current !== mine) return;
-        // 连续 503 后停自动轮询，等「重试」；避免控制台刷屏。
-        if (shouldPauseScreenshotPoll(failStreak)) return;
+        // 连续 503 / liveCast 后停自动轮询，等「重试」；避免控制台刷屏。
+        if (shouldPauseScreenshotPoll(failStreak, { liveCast: liveCastBusy })) return;
         if (shouldContinue()) {
           timer = setTimeout(tick, nextScreenshotPollDelay(failStreak, intervalMs));
         }

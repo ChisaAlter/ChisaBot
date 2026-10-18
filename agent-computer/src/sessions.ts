@@ -28,6 +28,7 @@ import type { Page } from "playwright";
 import type { ExpiredLease } from "./action-barrier";
 import { type Control, createControl } from "./control";
 import { createControlStore } from "./control-store";
+import { createCaptureGate, type CaptureGate } from "./capture-gate";
 import { createViewerSlot, type ViewerSlot } from "./viewer";
 
 /** Per-Bot browser-control state. Profiles are isolated, but this process is not a security boundary. */
@@ -54,6 +55,12 @@ export type BotSession = {
    * whoever is. An empty slot is a Bot nobody is watching; there is no second way to say that.
    */
   viewer: ViewerSlot;
+  /**
+   * HTTP `/screenshot` admission for this Bot.
+   *
+   * Refuses while LiveScreen is casting, and serialises concurrent captures. See capture-gate.ts.
+   */
+  capture: CaptureGate;
 };
 
 export type SessionsOptions = {
@@ -134,6 +141,7 @@ export function createSessions(options: SessionsOptions) {
       },
       run: mintRun(),
       viewer: createViewerSlot(),
+      capture: createCaptureGate(),
     };
     sessions.set(botId, created);
     // Cheap, and only ever on the path that adds one, so the map cannot grow without this running.
