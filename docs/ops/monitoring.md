@@ -11,6 +11,7 @@ df -h / | tail -1                                      # 根分区 < 80%，超�
 docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'openbot|chisabot|magpie'
 curl -s 127.0.0.1:3001/api/version                     # 提交号 = 你期望的 main
 sh /opt/chisabot-updater/request.sh status             # 最近一次更新成功
+bash /opt/chisabot-updater/post-deploy-smoke.sh        # 版本 + capabilities + 聚合健康（硬）
 sh /opt/chisabot-updater/smoke.sh                      # 模型往返自检（不保存）
 docker logs --since 24h openbot-zh 2>&1 | grep -cE 'bind message supplies|PostgresError'   # 应为 0
 systemctl is-active chisabot-updater openbot-public-cert-reload.timer \
@@ -23,6 +24,9 @@ openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.p
 
 外部探活（从别的机器）：`curl -sI https://<YOUR_DOMAIN>:8443/login` 返回 200。可以接任何你习惯的监控（Uptime Kuma、
 云厂商探测等），探 `/login` 即可，不要探需要登录的接口。
+
+**聚合健康面（本机 / 值班）**：`GET /api/admin/health`（管理员会话或 `X-ChisaBot-Local-Caller`）一次看 app / DB / Magpie / 电脑节点。
+部署后自动跑 `post-deploy-smoke.sh`（见 [production-checklist.md](../production-checklist.md)）。手动：`sh /opt/chisabot-updater/request.sh smoke`。
 
 ## 2. 关注的信号
 

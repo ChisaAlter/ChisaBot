@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.26
+
+- Ops maturity (PRD-P1-01…03): `GET /api/admin/health` aggregates app/version, DB ping, Magpie, computer node, Local-Caller for monitors.
+- Post-deploy hard smoke (`post-deploy-smoke.sh`) runs from updater `health.sh` after image swap; fails deploy (rollback) on version/capabilities/aggregate red. Model smoke stays advisory unless `STRICT_MODEL_SMOKE=1`.
+- Docs: `docs/production-checklist.md`; monitoring/deploy/incidents playbook stub; `request.sh smoke`.
+- Structured ops codes starter in `shared/ops-codes.ts` (`OPS_HEALTH_*`, greppable JSON lines).
+
 ## 0.1.25
 
 - Production hardening: live computer stream keepalive (protocol sendPings + application `{type:ping}` through the proxy) so a static page + idle viewer is not dropped at 120s (CR-P2-12).

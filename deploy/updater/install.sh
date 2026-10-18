@@ -25,7 +25,7 @@ case "${1:-}" in
   "") ;;
   *) BASE_COMMIT=$1 ;;
 esac
-FILES="compose-image.sh update.sh request.sh rollback.sh health.sh smoke.sh deps-fingerprint.sh rollback.template.sh git-askpass.sh chisabot-updater.py Dockerfile.update install.sh"
+FILES="compose-image.sh update.sh request.sh rollback.sh health.sh post-deploy-smoke.sh smoke.sh deps-fingerprint.sh rollback.template.sh git-askpass.sh chisabot-updater.py Dockerfile.update install.sh"
 pick_python() { # python3 (>= 3.6) first, then python2
   local c
   for c in python3 python2 python; do

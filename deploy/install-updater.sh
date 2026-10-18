@@ -79,7 +79,7 @@ set_env() {
 file_sum() { [ -f "$1" ] && cksum < "$1" || echo missing; }
 
 # ---------- 现状 ----------
-SCRIPTS="compose-image.sh update.sh request.sh rollback.sh health.sh smoke.sh deps-fingerprint.sh rollback.template.sh git-askpass.sh chisabot-updater.py Dockerfile.update install.sh"
+SCRIPTS="compose-image.sh update.sh request.sh rollback.sh health.sh post-deploy-smoke.sh smoke.sh deps-fingerprint.sh rollback.template.sh git-askpass.sh chisabot-updater.py Dockerfile.update install.sh"
 WANT_VERSION=$(sed -n 's/^VERSION = "\([0-9]*\)".*/\1/p' "$SRC/chisabot-updater.py")
 HAVE_VERSION=$(sed -n 's/^VERSION = "\([0-9]*\)".*/\1/p' "$U/chisabot-updater.py" 2>/dev/null || true)
 STALE=""

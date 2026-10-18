@@ -100,13 +100,14 @@ sh /opt/openbot-zh/rollback-to-auto-<时间>-<提交>.sh
 ## 5. 上线后检查（不碰任何真实对话）
 
 1. `sh /opt/chisabot-updater/request.sh status` 显示刚才的任务成功；`curl -s 127.0.0.1:3001/api/version` 的提交号是你的。
-2. **管理员自检**：设置 → 系统更新 →「自检」，或 `sh /opt/chisabot-updater/smoke.sh`（模型往返一次，什么都不保存，[admin-smoke.md](../admin-smoke.md)）。
-3. **快照对比**：上线前后各取一次——线程数、机器人数、设备数、用户数、关键设置的哈希（如 `enterprise_settings`、`media_models`）、
+2. **部署后烟雾**（更新器已在 `health.sh` 里自动跑）：失败会回滚。人手复跑：`bash /opt/chisabot-updater/post-deploy-smoke.sh` 或 `request.sh smoke`（[production-checklist.md](../production-checklist.md)）。
+3. **管理员自检（模型）**：设置 → 系统更新 →「自检」，或 `sh /opt/chisabot-updater/smoke.sh`（[admin-smoke.md](../admin-smoke.md)）。默认不因模型红灯回滚。
+4. **快照对比**：上线前后各取一次——线程数、机器人数、设备数、用户数、关键设置的哈希（如 `enterprise_settings`、`media_models`）、
    备用模型列表。除镜像 / 版本外应一致。
-4. **只读浏览器检查**（需要时）：临时签发会话 + 拦截所有非 GET 请求（[preview.md](preview.md) §4）。
-5. 改到聊天 / 同步 / 滚动的 PR：在预览里跑 `tests/chat-scroll/regression.sh`（[testing.md](../testing.md) §3）。
-6. 改了 `pc/src/cloud-cc`（节点程序）：`docker restart chisabot-cloudnode`——节点只在容器启动时从应用下载 `chisabot-node.cjs`。
-7. 更新项目看板：ROADMAP「最近完成」、BACKLOG 状态、[CHANGELOG](../CHANGELOG.md)。
+5. **只读浏览器检查**（需要时）：临时签发会话 + 拦截所有非 GET 请求（[preview.md](preview.md) §4）。
+6. 改到聊天 / 同步 / 滚动的 PR：在预览里跑 `tests/chat-scroll/regression.sh`（[testing.md](../testing.md) §3）。
+7. 改了 `pc/src/cloud-cc`（节点程序）：`docker restart chisabot-cloudnode`——节点只在容器启动时从应用下载 `chisabot-node.cjs`。
+8. 更新项目看板：ROADMAP「最近完成」、BACKLOG 状态、[CHANGELOG](../CHANGELOG.md)。
 
 ## 6. 并行开发时
 

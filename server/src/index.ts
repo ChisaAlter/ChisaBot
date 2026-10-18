@@ -275,6 +275,10 @@ import { createMagpieService, readMagpieWebKey } from "./magpie";
 import { readRunningBuild } from "./build-info";
 import { createSystemUpdateRoutes, createSystemUpdateService } from "./system-update";
 import { createAdminSmokeRoutes } from "./admin-smoke";
+import {
+  createDatabasePinger,
+  createOpsHealthRoutes,
+} from "./ops-health";
 import { createModelFallbackService, createModelFallbackStore } from "./agents/model-fallback-settings";
 import { createSelfHostBanner } from "./self-host-banner";
 import { createTeamBots } from "./team-bots/team-bots";
@@ -3670,6 +3674,46 @@ const app = createApp(
           requireUser,
           resolveConnection: resolveRuntimeConnection,
           resolveConnectionForAgent: resolveRuntimeConnectionForAgent,
+        }),
+      ],
+      [
+        "/api/admin/health",
+        createOpsHealthRoutes({
+          requireUser,
+          pingDatabase: createDatabasePinger(database),
+          magpie,
+          gatewayMode: gatewaySecret ? "on" : "off",
+          ...(computerProvider
+            ? {
+                probeComputer: async () => {
+                  try {
+                    const status = await computerProvider.status("__ops_health__");
+                    const list = await computerProvider.list().catch(
+                      (): Array<{ status: string }> => [],
+                    );
+                    const ready = status.state === "ready";
+                    return {
+                      ok: ready,
+                      configured: true as const,
+                      provider: computerProvider.name,
+                      reachable: ready,
+                      running: list.filter((c) => c.status === "running").length,
+                      total: list.length,
+                      ...(!ready && status.reason
+                        ? { error: status.reason.slice(0, 200) }
+                        : {}),
+                    };
+                  } catch (error) {
+                    return {
+                      ok: false,
+                      configured: true as const,
+                      provider: computerProvider.name,
+                      error: reasonWithoutStatement(error),
+                    };
+                  }
+                },
+              }
+            : {}),
         }),
       ],
       ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],

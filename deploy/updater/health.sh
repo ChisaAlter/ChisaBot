@@ -3,6 +3,7 @@
 # 给了构建号时 /api/version 必须是这一版。用法：health.sh <镜像> [构建号]
 set -uo pipefail
 . /opt/chisabot-updater/config.env
+U=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
 # CR-P1-02：网关模式下本机管理员接口要带 X-ChisaBot-Local-Caller。
 LOCAL_CALLER=""
 if [ -f "${COMPOSE_DIR}/.env" ]; then
@@ -42,9 +43,15 @@ if [ -n "$TAG" ]; then
   echo "/api/version $V"
   echo "$V" | grep -q "\"buildId\":\"$TAG\"" || { echo "/api/version 不是新构建 $TAG"; exit 1; }
 fi
-# 模型往返自检（docs/admin-smoke.md）：不建对话、不写消息。只记录，不影响结果 —— 模型服务商一时不通不该把新版本回滚掉。
+# 部署后硬烟雾（docs/production-checklist.md）：version / capabilities / 聚合健康。失败 → 整次健康检查失败 → 更新器回滚。
+# 模型往返默认仍只告警（STRICT_MODEL_SMOKE=1 才硬失败），避免上游额度抖动误回滚。
 if [ -n "$TAG" ]; then
-  S=$(curl -s --max-time 60 -X POST -H 'content-type: application/json' "${HDR_CALLER[@]}" -d '{}' "$LOCAL_URL/api/admin/smoke" | head -c 400)
-  echo "模型自检（不影响结果）$S"
+  if [ -x "$U/post-deploy-smoke.sh" ] || [ -f "$U/post-deploy-smoke.sh" ]; then
+    bash "$U/post-deploy-smoke.sh" "$TAG" || { echo "部署后烟雾失败"; exit 1; }
+  else
+    echo "warn: post-deploy-smoke.sh 未安装，回退到旧的模型自检（仅记录）"
+    S=$(curl -s --max-time 60 -X POST -H 'content-type: application/json' "${HDR_CALLER[@]}" -d '{}' "$LOCAL_URL/api/admin/smoke" | head -c 400)
+    echo "模型自检（不影响结果）$S"
+  fi
 fi
 echo "健康检查通过"

@@ -26,7 +26,7 @@
 | 11 | [磁盘清理指南](cleanup.md) | 保留什么、可以删什么、清理顺序、清理后的副作用 |
 | 12 | [常见故障与事故复盘](incidents.md) | 典型故障的现象与处理，过去事故的教训 |
 
-相关的项目级文档：[发布流程](../release.md)（版本号规则、发版清单）、[测试与验证](../testing.md)（测试分层、回归套件）、
+相关的项目级文档：[生产上线清单](../production-checklist.md)、[发布流程](../release.md)（版本号规则、发版清单）、[测试与验证](../testing.md)（测试分层、回归套件）、
 [在线更新](../online-update.md)（更新器内部设计）、[维护与排错](../operations.md)（备份、升级、连接故障）、[环境配置](../configuration.md)。
 
 ## 一页速查
@@ -40,7 +40,7 @@
 | 更新器 | `/opt/chisabot-updater/`，systemd 服务 `chisabot-updater` |
 | 上线 | `sh deploy-serial.sh <合并提交前 7 位> <你的名字>`（[deploy.md](deploy.md) §1）；纯文档 PR 不需要部署 |
 | 回滚 | 网页：设置 → 系统更新 →「回滚到上一版」；或运行 `ls -t /opt/openbot-zh/rollback-to-*.sh` 列出的第一个（最新）脚本 |
-| 自检 | `sh /opt/chisabot-updater/smoke.sh` 或 `POST /api/admin/smoke`（模型往返一次，不保存任何东西） |
+| 自检 | `sh /opt/chisabot-updater/smoke.sh` 或 `POST /api/admin/smoke`（模型往返）；聚合健康 `GET /api/admin/health`；部署后烟雾 `request.sh smoke` |
 | 版本 | `curl -s 127.0.0.1:3001/api/version`（版本号 + 提交号） |
 | 巡检 | [monitoring.md](monitoring.md) 的清单，根分区保持在 80% 以下 |
 

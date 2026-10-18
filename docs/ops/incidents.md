@@ -69,3 +69,17 @@
 3. 新主机恢复数据、起服务、跑 [monitoring.md](monitoring.md) 的巡检和自检。
 4. 切 DNS（或在旧主机上临时把入口端口转发到新主机，等 DNS 生效）。
 5. 旧主机保留为停止状态的回滚副本一段时间，确认稳定后再退役，并安全擦除上面的数据和密钥。
+
+## 4. 部署失败速查（playbook stub）
+
+更新器切换后健康检查 / `post-deploy-smoke.sh` 红灯时：
+
+1. **看任务**：`sh /opt/chisabot-updater/request.sh status` — `status` / `step` / 最后几行 log；`audit.log` 与 `jobs/<id>/`。
+2. **看容器**：`docker ps -a --filter name=openbot-zh`；`docker logs --tail 80 openbot-zh`。常见：迁移失败、`bind message supplies`、镜像拉错。
+3. **确认回滚**：健康失败应自动跑 `rollback-to-*.sh`。再查 `/api/version` 是否已回到上一 `buildId`；容器 `RestartCount` 是否在涨。
+4. **烟雾细节**：在宿主机 `bash /opt/chisabot-updater/post-deploy-smoke.sh <buildId>`；缺 Local-Caller 时先核对 compose `.env` 的 `CHISABOT_GATEWAY_SECRET`。
+5. **聚合面**：`curl -s -H "X-ChisaBot-Local-Caller: …" 127.0.0.1:3001/api/admin/health` — 看 `checks.database` / `magpie` / `computer` 哪项 `ok:false`。
+6. **仍红**：不要强推 main。修 PR → 合并 → `deploy-serial.sh`。镜像已不在时走 revert PR 或 `request.sh update --full`。
+7. **写复盘**：把现象、根因、是否误回滚、后续监控项记进本节或新小节。
+
+完整上线清单：[production-checklist.md](../production-checklist.md)。
