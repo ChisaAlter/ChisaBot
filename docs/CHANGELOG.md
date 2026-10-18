@@ -12,6 +12,7 @@ ChisaBot 自己的版本史，从 0.1.0（首个公开版本）起，按**发版
 
 | 项 | 值 |
 |---|---|
+| [#TBD](https://github.com/ChisaAlter/ChisaBot/pull/TBD) | 10-19 | 信任边界网络隔离；Local-Caller 绑定；deny-by-default 端口；CI red-line | `TBD` |
 | 服务器 / 网页（main） | 本发版提交，`/api/version` = **0.1.32** |
 | 最新客户端发版 | **v0.1.32**（2026-10-19） |
 | PC 外壳指纹 `chisabotShell` | `059438f4e6c98c74`（0.1.12 起；0.1.11 及更早更新时提示「重新安装」） |

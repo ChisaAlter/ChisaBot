@@ -42,7 +42,17 @@ echo "$CAP" | grep -qiE 'api[_-]?key|sk-[a-zA-Z0-9]|license-token|tenant-api-key
   && fail "/api/capabilities looks like it leaked a secret"
 ok "/api/capabilities (no secrets)"
 
+# 4a) 网关模式：无 Local-Caller / 无会话时管理员面必须 401（刮数不得匿名）
+if [ -n "${LOCAL_CALLER}" ]; then
+  NCODE=$(curl -s -o /tmp/cb-smoke-admin-neg.json -w '%{http_code}' --max-time 10     "$LOCAL_URL/api/admin/health" || echo 000)
+  case "$NCODE" in
+    401|403) ok "/api/admin/health unauthenticated → $NCODE (expected)" ;;
+    *) fail "/api/admin/health without Local-Caller → $NCODE (expected 401/403 in gateway mode)" ;;
+  esac
+fi
+
 # 4) 聚合健康面（管理员 / Local-Caller）
+
 HCODE=$(curl -s -o /tmp/cb-smoke-admin-health.json -w '%{http_code}' --max-time 20 \
   "${HDR_CALLER[@]}" "$LOCAL_URL/api/admin/health" || echo 000)
 case "$HCODE" in

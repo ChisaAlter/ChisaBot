@@ -21,6 +21,9 @@ import type { OpenBotRole } from "./roles";
  *  - 没有身份头、带 {@link LOCAL_CALLER_HEADER}（值 = 网关密钥，常量时间比较）→ 管理员
  *    （发布脚本、自检、更新器、登录网关对本机的设备状态探测）。**不再**把「没有代理头」当成受信：
  *    容器挂在共享 Docker 网络上时，兄弟容器直连 :3001 也不会带这些头（CR-P1-02）。
+ *  - Local-Caller **绑定**：仅接受「非网关直连」（无 X-Forwarded-For / X-Real-IP）。公网 nginx
+ *    必须清空该头（deploy/public/nginx.conf）；经网关带 Local-Caller 一律 refuse。刮数只用
+ *    `127.0.0.1:3001` + Local-Caller（见 docs/ops/trust-boundary.md）。
  *  - 都没有 → 401。紧急逃生：环境变量 CHISABOT_TRUST_UNSIGNED_LOCAL=1（不安全，见 pipeline-run）。
  */
 

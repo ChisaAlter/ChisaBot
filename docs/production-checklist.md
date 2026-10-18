@@ -146,3 +146,15 @@ CI 红线：`server/tests/ssrf-redline.test.ts`（PRD-P1-06）。备份演练：
 | Dry-run | `sh scripts/ops/cutback.sh` → image present、DRY-RUN、**不**切流量 |
 | 真切流 | 仅变更窗口 + `CUTBACK_EXECUTE=1`；RTO ~2–5 min |
 | 文档 | [ops/traffic-cut-rollback.md](ops/traffic-cut-rollback.md) |
+
+## 9. 信任边界网络隔离（v0.1.33）
+
+| 检查 | 期望 |
+|------|------|
+| 应用 / Magpie 端口 | compose 仅 `127.0.0.1`；`start.sh` / `friend-up.sh` 拒 `0.0.0.0` 与裸 `端口:端口` |
+| TRUSTED_ORIGINS（好友包） | 仅 loopback `http://localhost` / `127.0.0.1` |
+| Local-Caller | 仅宿主机 → `127.0.0.1:3001`；经网关（XFF）refuse；nginx 清空该头 |
+| 管理员刮数 | 网关模式无 Local-Caller → `/api/admin/health` 401；带密钥 → 聚合绿 |
+| CI | `trust-boundary-redline` + `ssrf-redline`；`sh scripts/ops/check-trust-boundary.sh` |
+| 文档 | [ops/trust-boundary.md](ops/trust-boundary.md) |
+

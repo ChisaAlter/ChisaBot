@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.33
+
+### Added
+- Trust-boundary network isolation: nginx clears Local-Caller; friend-up/start deny-by-default port binds; TRUSTED_ORIGINS loopback-only; CI `trust-boundary-redline`; `scripts/ops/check-trust-boundary.sh`; post-deploy anonymous admin-health 401 check; expanded `docs/ops/trust-boundary.md`.
+
+### Notes
+- Tram schedules stay paused. Multi-user accounts UI stays opt-in. No live CUTBACK_EXECUTE.
+
 ## 0.1.32
 
 - Ops maturity **metrics timeseries + traffic-cut rollback**: minute-ring budgets with `rates` / `series` on `GET /api/admin/health` and scrape `GET /api/admin/health/budgets?hours=…`; file persist `/workspace/.chisabot-ops/budgets.json` (no managed SaaS). `scripts/ops/cutback.sh` dry-run by default (`CUTBACK_EXECUTE=1` to cut); `KEEP_IMAGES` default 5; RTO ~2–5 min in `docs/ops/traffic-cut-rollback.md`.

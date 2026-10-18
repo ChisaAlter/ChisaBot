@@ -18,7 +18,7 @@
 | 3 | [目录布局与凭据存放](layout.md) | 宿主机上每个目录放什么；各类密钥和凭据应该放在哪里、权限多少 |
 | 4 | [部署、回滚与上线检查](deploy.md) | 合并后怎么上线、更新器怎么工作、怎么回滚、上线后查什么 |
 | 5 | [网关与登录服务](gateway.md) | HTTPS 网关 nginx、登录服务、多账号开关、签名身份密钥、证书续期 |
-| 5b | [信任边界图](trust-boundary.md) | Magpie / 网关 / 节点 / Local-Caller「谁可直连谁」（PRD-P1-05） |
+| 5b | [信任边界 / 网络隔离](trust-boundary.md) | Magpie / 网关 / 节点 / Local-Caller 绑定 / 内部口 deny-by-default（PRD-P1-05） |
 | 5c | [备份与回滚演练](backup-rollback-drill.md) | 生产 dry-run 记录：转储 TOC、rollback 脚本、镜像在否（PRD-P1-04） |
 | 6 | [云端工作区节点](cloud-node.md) | 云端 Claude Code 节点、同步边车、防火墙、可选的 Claude 出口路由 |
 | 7 | [客户端发布](client-release.md) | PC / Android 的更新源目录、签名、发版流程、临时文件的安全删除 |

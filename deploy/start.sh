@@ -7,11 +7,21 @@ if ! test -f .env; then
   exit 1
 fi
 
-# Track D 安全默认：拒绝把应用端口写成 0.0.0.0（单用户公网直连 = 人人管理员）。
-if grep -E '^[[:space:]]*-[[:space:]]*"?0\.0\.0\.0:' compose.yaml >/dev/null 2>&1; then
-  echo 'deploy/compose.yaml binds 0.0.0.0 — refused. Keep 127.0.0.1:3001 and put HTTPS in deploy/public/.' >&2
-  exit 1
-fi
+# Track D + 网络隔离：内部口 deny-by-default —— 拒绝 0.0.0.0 / 无主机绑定发布。
+refuse_bad_binds() {
+  f=$1
+  test -f "$f" || return 0
+  if grep -E '^[[:space:]]*-[[:space:]]*"?0\.0\.0\.0:' "$f" >/dev/null 2>&1; then
+    echo "$f binds 0.0.0.0 — refused. Keep 127.0.0.1:<port>:<port> (docs/ops/trust-boundary.md)." >&2
+    exit 1
+  fi
+  if grep -E '^[[:space:]]*-[[:space:]]*"?[0-9]+:[0-9]+("|$|/)' "$f" >/dev/null 2>&1; then
+    echo "$f has bare host port publish (e.g. 3001:3001) — refused. Bind 127.0.0.1." >&2
+    exit 1
+  fi
+}
+refuse_bad_binds compose.yaml
+refuse_bad_binds magpie.compose.yaml
 
 # 读 .env 里的非机密值（不把 .env 当 shell 执行）。
 env_value() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d '\r"\047'; }

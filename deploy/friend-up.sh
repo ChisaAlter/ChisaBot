@@ -39,16 +39,38 @@ if [ -n "$(env_value CHISABOT_DOMAIN)" ] || [ "$(env_value CHISABOT_ACCOUNTS_UI)
   fill_secret CHISABOT_GATEWAY_SECRET 32
 fi
 
-# 3) 安全默认硬检查：TRUSTED_ORIGINS 不得含 https 公网；compose 端口必须是 127.0.0.1。
+# 3) 安全默认硬检查：TRUSTED_ORIGINS 仅 loopback http；compose 端口必须是 127.0.0.1（deny-by-default）。
 origins=$(env_value TRUSTED_ORIGINS)
-case "$origins" in
-  *https://*)
-    die "OPENBOT_SINGLE_USER 下 TRUSTED_ORIGINS 不能含 https 公网地址；公网请走 deploy/public 网关，应用侧保持 loopback。"
-    ;;
-esac
-if grep -E '^[[:space:]]*-[[:space:]]*"?0\.0\.0\.0:' compose.yaml >/dev/null 2>&1; then
-  die "compose.yaml 把端口绑到 0.0.0.0：单用户模式禁止公网直连应用端口。请保持 127.0.0.1:3001。"
-fi
+[ -n "$origins" ] || die "TRUSTED_ORIGINS 为空；好友包要求 http://localhost:3001,http://127.0.0.1:3001"
+old_ifs=$IFS
+IFS=,
+for origin in $origins; do
+  origin=$(printf '%s' "$origin" | tr -d ' \r')
+  [ -n "$origin" ] || continue
+  case "$origin" in
+    https://*)
+      die "OPENBOT_SINGLE_USER 下 TRUSTED_ORIGINS 不能含 https；公网请走 deploy/public 网关：$origin"
+      ;;
+    http://localhost|http://localhost:*|http://127.0.0.1|http://127.0.0.1:*)
+      ;;
+    *)
+      die "TRUSTED_ORIGINS 条目必须是 loopback http（localhost / 127.0.0.1），拒绝：$origin"
+      ;;
+  esac
+done
+IFS=$old_ifs
+check_compose_loopback() {
+  f=$1
+  test -f "$f" || return 0
+  if grep -E '^[[:space:]]*-[[:space:]]*"?0\.0\.0\.0:' "$f" >/dev/null 2>&1; then
+    die "$f 把端口绑到 0.0.0.0：内部口 deny-by-default，请绑 127.0.0.1。"
+  fi
+  if grep -E '^[[:space:]]*-[[:space:]]*"?[0-9]+:[0-9]+("|$|/)' "$f" >/dev/null 2>&1; then
+    die "$f 含无主机绑定的端口发布（如 3001:3001）；必须写成 127.0.0.1:端口:端口。"
+  fi
+}
+check_compose_loopback compose.yaml
+check_compose_loopback magpie.compose.yaml
 if ! grep -E '127\.0\.0\.1:3001:3001' compose.yaml >/dev/null 2>&1; then
   die "compose.yaml 未把应用绑在 127.0.0.1:3001；好友包要求 loopback。"
 fi
