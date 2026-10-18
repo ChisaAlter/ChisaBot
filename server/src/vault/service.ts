@@ -10,6 +10,7 @@ import type { Database } from "../db/client";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { markUntrusted } from "../untrusted-content";
 import { BlockedUrlError, guardedFetch } from "../../../shared/net/guarded-fetch";
+import { assertPublicUrl } from "../web/tools";
 
 /**
  * 密钥保险箱（DESIGN.md §52，docs/vault.md）。

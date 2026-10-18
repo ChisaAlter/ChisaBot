@@ -3911,9 +3911,9 @@ serve<SocketData>({
       // drop when bufferedAmount is already large rather than grow without bound.
       inward.onmessage = (event) => {
         try {
-          if (typeof (ws as { bufferedAmount?: number }).bufferedAmount === "number"
-            && (ws as { bufferedAmount: number }).bufferedAmount > 2_000_000) {
-            return; // drop stale frame
+          const buffered = (ws as unknown as { bufferedAmount?: number }).bufferedAmount;
+          if (typeof buffered === "number" && buffered > 2_000_000) {
+            return; // drop stale frame rather than queue forever
           }
           ws.send(String(event.data));
         } catch {
