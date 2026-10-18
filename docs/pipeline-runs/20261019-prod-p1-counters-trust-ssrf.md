@@ -19,3 +19,12 @@
 ## Not in this PR
 - 完整 metrics 时序库；真回滚切流量（dry-run only）
 - 未 resume 电车；无表结构变更；PC 外壳指纹未变
+
+## PR / release / deploy
+
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/221 (squash → `f9eff34a`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.28
+- Deploy: `deploy-serial.sh f9eff34` → `local/chisabot:auto-202610181715-f9eff34`
+- `/api/version` = **0.1.28**; post-deploy-smoke **PASSED** (含模型)
+- `budgets` present on `/api/admin/health`
+- **未** resume 电车定时
