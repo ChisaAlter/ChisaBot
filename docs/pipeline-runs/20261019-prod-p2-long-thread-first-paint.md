@@ -23,3 +23,12 @@
 1. `bun test app/tests/tail-first-paint.test.ts app/tests/tail-first-mount.test.tsx app/tests/composer-inflight-removal.test.tsx app/tests/composer-attachment-strip.test.tsx`
 2. 硬刷新 → 芯片 0.1.37；打开 >100 条对话应更快见尾屏
 3. 电车仍暂停
+
+## PR / release / deploy
+
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/240 (squash → `d195f343`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.37
+- Deploy: `deploy-serial.sh d195f34 grok-bot` → `local/chisabot:auto-202610181947-43720ab`
+- `/api/version` = **0.1.37**; post-deploy-smoke **PASSED** (含模型 + 匿名 admin 401)
+- `sync-nginx --check` ALL GREEN
+- **未** resume 电车定时
