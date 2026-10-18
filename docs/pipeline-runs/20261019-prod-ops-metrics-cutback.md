@@ -27,4 +27,9 @@
 
 ## PR / release / deploy
 
-（合入后回填）
+- PR: https://github.com/ChisaAlter/ChisaBot/pull/229 (squash → `08d827ce`)
+- Release: https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.32
+- Deploy: `deploy-serial.sh 08d827c grok-bot` → `local/chisabot:auto-202610181814-08d827c`
+- `/api/version` = **0.1.32**; post-deploy-smoke **PASSED** (含模型)
+- `budgets.rates` + `/api/admin/health/budgets` present；`ops-metrics` boot log `loaded:false`（首事件后写文件）
+- Haupt `KEEP_IMAGES=5`；cutback dry-run 绿；**未** resume 电车定时
