@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { RefreshButton } from "@/components/ui/refresh-button";
 import { useBotNames } from "@/lib/agents/bot-names";
+import { auditFailureLabel, computerActionLabel } from "@/lib/audit/action-label";
 import {
   DID_NOT_HAPPEN_EVENT_TYPES,
   eventTypeFilter,
@@ -116,7 +117,7 @@ function AuditPage() {
                   <th className="px-4 py-2 font-medium">{"操作"}</th>
                   <th className="px-4 py-2 font-medium">{"对象"}</th>
                   <th className="px-4 py-2 font-medium">{"机器人"}</th>
-                  <th className="px-4 py-2 font-medium">{"谁发起"}</th>
+                  <th className="whitespace-nowrap px-4 py-2 font-medium">{"谁发起"}</th>
                   <th className="px-4 py-2 font-medium">{"结果"}</th>
                 </tr>
               </thead>
@@ -228,9 +229,9 @@ function Row({
         {new Date(event.createdAt).toLocaleTimeString("zh-CN")}
       </td>
       <td className="px-4 py-2 font-medium">
-        {/* Strip the internal computer tool namespace for display. */}
+        {/* 电脑工具名中文化（DOG-02）；原始 computer_* 仍在 payload。 */}
         {typeof payload.action === "string" ? (
-          payload.action.replace("computer_", "")
+          computerActionLabel(payload.action)
         ) : (
           // 事件类型显示中文名，原始类型放悬停（CB-056，DESIGN.md §71.6）。
           <span title={event.eventType}>{eventLabel(event.eventType)}</span>
@@ -282,7 +283,7 @@ function Row({
             ) : null}
           </span>
         ) : typeof element === "string" ? (
-          <span className="text-muted-foreground">{element}</span>
+          <span className="text-muted-foreground">{auditFailureLabel(element)}</span>
         ) : (
           <span className="text-muted-foreground">-</span>
         )}
@@ -304,7 +305,7 @@ function Row({
           "-"
         )}
       </td>
-      <td className="px-4 py-2">
+      <td className="whitespace-nowrap px-4 py-2">
         <StartedBy event={event} nameFor={nameFor} />
       </td>
       <td className="px-4 py-2">
@@ -326,8 +327,8 @@ function Row({
           event.eventType === "component.function_refused" ||
           event.eventType === "mcp.call_rejected") &&
         typeof payload.reason === "string" ? (
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {payload.reason}
+          <div className="mt-0.5 max-w-[22rem] break-words text-xs text-muted-foreground">
+            {auditFailureLabel(payload.reason)}
           </div>
         ) : null}
         {/*
@@ -376,8 +377,8 @@ function Row({
           </div>
         ) : null}
         {failed && typeof payload.failure === "string" ? (
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {payload.failure}
+          <div className="mt-0.5 max-w-[22rem] break-words text-xs text-muted-foreground">
+            {auditFailureLabel(payload.failure)}
           </div>
         ) : null}
         {/*

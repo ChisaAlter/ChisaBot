@@ -11,8 +11,10 @@ import { isIOSSafari, isNativeClient, promptInstall, useInstallState } from "@/l
  * - Chrome / Edge（安卓、Windows、macOS…）：浏览器说可以安装时出现，「安装」弹出浏览器自己的安装确认；
  * - iPhone / iPad 的 Safari：点开是一张小卡片，教「点分享 → 添加到主屏幕」；
  * - ChisaBot PC、安卓客户端、已经安装后打开（独立窗口）、引导页：都不出现。
- * 打开页面 8 秒后才出现，不在加载的第一秒打扰；关掉后 14 天内不再出现（localStorage）。
+ * 打开页面 8 秒后才出现，不在加载的第一秒打扰；关掉后永久不再出现（localStorage）。
  * 「有新版本」提示在的时候让位（styles.css）。
+ * DOG-03：仅在 beforeinstallprompt（或 iOS Safari）时出现；「安装」无响应 / 超时则永久关掉；
+ * 显示时 body 带 data-install-hint，正文顶距让出胶囊高度，避免盖住标题。
  */
 const KEY = "chisabot-install-hint";
 const DELAY_MS = 8000;
@@ -59,7 +61,18 @@ export function InstallHint() {
     return () => window.clearTimeout(timer);
   }, [eligible, ready]);
 
-  if (!eligible || !ready) return null;
+  // 关掉动画期间仍占位，避免正文顶距猛地缩回盖住标题一闪。
+  const visible = Boolean(eligible && ready && !gone);
+  useEffect(() => {
+    if (!visible) {
+      document.body.removeAttribute("data-install-hint");
+      return;
+    }
+    document.body.setAttribute("data-install-hint", "open");
+    return () => document.body.removeAttribute("data-install-hint");
+  }, [visible]);
+
+  if (!eligible || !ready || gone) return null;
 
   const close = (remember: boolean) => {
     if (remember) rememberDismiss();
@@ -72,8 +85,9 @@ export function InstallHint() {
       setIosOpen((open) => !open);
       return;
     }
-    const accepted = await promptInstall();
-    close(!accepted);
+    // 无论装成、取消还是超时无弹窗：都永久关掉，避免 Chromium 点「安装」无反应横幅又回来。
+    await promptInstall();
+    close(true);
   };
 
   const DeviceIcon = isPhone() ? IconDeviceMobileDown : IconDeviceDesktopDown;

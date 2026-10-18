@@ -50,9 +50,18 @@ export async function promptInstall(): Promise<boolean> {
   deferred = null;
   refreshSnapshot();
   try {
-    await event.prompt();
-    const choice = await event.userChoice;
-    return choice.outcome === "accepted";
+    // Chromium 无头 / 部分桌面环境会挂住不弹窗也不 resolve；限时后当取消，避免横幅卡死。
+    const outcome = await Promise.race([
+      (async () => {
+        await event.prompt();
+        const choice = await event.userChoice;
+        return choice.outcome === "accepted";
+      })(),
+      new Promise<boolean>((resolve) => {
+        window.setTimeout(() => resolve(false), 12_000);
+      }),
+    ]);
+    return outcome;
   } catch {
     return false;
   }

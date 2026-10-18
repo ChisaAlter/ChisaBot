@@ -6148,6 +6148,17 @@ html[data-phone] .glass-topbar { transition: transform var(--dur-2, 200ms) var(-
 body:has(.update-banner) .install-hint { display: none; }
 /* FIX-11：接管大屏打开时别挡工具条 / 交还（install-hint 原 z-index 100 > takeover 70）。 */
 body:has(.computer-takeover) .install-hint { display: none; }
+/* DOG-03：胶囊在顶栏下方时给正文让出高度，避免盖住「活动记录 / 设置」等标题。 */
+body[data-install-hint="open"] {
+  --install-hint-gap: 48px;
+}
+body[data-install-hint="open"] .glass-body {
+  padding-top: calc(var(--glass-top) + var(--install-hint-gap, 0px));
+}
+body[data-install-hint="open"] [data-slot="sidebar-container"].glass-sidebar-container {
+  top: calc(var(--glass-top) + var(--install-hint-gap, 0px));
+  height: calc(100svh - var(--glass-top) - var(--install-hint-gap, 0px));
+}
 .install-hint-row { display: flex; align-items: center; gap: 2px; }
 .install-hint-main {
   display: inline-flex; align-items: center; gap: 8px; min-width: 0;
