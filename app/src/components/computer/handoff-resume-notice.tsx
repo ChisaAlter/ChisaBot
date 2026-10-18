@@ -38,10 +38,10 @@ export function HandoffResumeNotice({
     let timer: ReturnType<typeof setTimeout>;
     const check = async () => {
       let stored = pendingHandoff(botId);
+      const state = await readControl(botId).catch(() => null);
       if (!stored) {
-        const state = await readControl(botId).catch(() => null);
         const request = state?.request;
-        if (request?.toolCallId) {
+        if (request?.toolCallId && request.status === "waiting") {
           const candidate = {
             requestId: request.id,
             toolCallId: request.toolCallId,
@@ -53,6 +53,19 @@ export function HandoffResumeNotice({
         }
       }
       if (!live) return;
+      // FIX-06：控制权已回到机器人或请求已中断时，清掉本地「请点交还」残留，不假装当前还在等。
+      if (
+        stored &&
+        state &&
+        (state.request?.status === "interrupted" ||
+          state.request?.status === "completed" ||
+          state.request?.status === "cancelled" ||
+          state.request?.status === "expired" ||
+          (state.holder === "bot" && !state.requested))
+      ) {
+        forgetHandoff(botId, stored.requestId);
+        stored = null;
+      }
       if (stored && !findPendingTool(agent.messages, stored)) {
         const toolCallId = stored.toolCallId;
         const answered = agent.messages.some(

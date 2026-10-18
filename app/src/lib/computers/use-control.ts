@@ -52,10 +52,10 @@ function createControlStore(computerId: string): ControlStore {
       ...snapshot,
       control,
       problem: control
-        ? snapshot.problem?.startsWith("Reconnecting:")
+        ? snapshot.problem?.startsWith("正在重连")
           ? null
           : snapshot.problem
-        : "Reconnecting: browser ownership could not be checked. Input is paused.",
+        : "正在重连：暂时查不到谁有控制权，输入已暂停。",
     });
   };
   // Keep the same store through Strict Mode resubscriptions and pending mutations.
@@ -67,12 +67,38 @@ function createControlStore(computerId: string): ControlStore {
   const change = async (action: Action): Promise<boolean> => {
     if (snapshot.busy || snapshot.control?.transitioning) return false;
     const control = snapshot.control;
-    const requestId = control?.request?.id;
+    let requestId = control?.request?.id;
+    // FIX-06：进程重启后 request 可能已 interrupted / 消失，holder 仍是 human。
+    // 交还时若没有 requestId，先发起一次接管请求再立刻交还，清掉卡住的 holder。
+    if (action === "release" && !requestId && control?.holder === "human") {
+      version++;
+      reading?.abort();
+      publish({ ...snapshot, busy: true, problem: null });
+      try {
+        const taken = await takeControl(computerId);
+        requestId = taken?.request?.id;
+        const next = requestId ? await releaseControl(computerId, requestId) : null;
+        publish({
+          control: next ?? taken ?? control,
+          busy: false,
+          problem: next ? null : "控制权没改成功，请检查连接后重试。",
+        });
+        return next !== null;
+      } catch {
+        publish({
+          ...snapshot,
+          busy: false,
+          problem: "连不上这台计算机，重连后再试。",
+        });
+        return false;
+      } finally {
+        disposeWhenUnused();
+      }
+    }
     if (action !== "take" && !requestId) {
       publish({
         ...snapshot,
-        problem:
-          "The handoff request could not be identified. Retry the connection.",
+        problem: "找不到这次交还请求，请重试连接。",
       });
       return false;
     }
@@ -94,16 +120,14 @@ function createControlStore(computerId: string): ControlStore {
       publish({
         control: next ?? control,
         busy: false,
-        problem: next
-          ? null
-          : "Control could not be changed. Check the connection and retry.",
+        problem: next ? null : "控制权没改成功，请检查连接后重试。",
       });
       return next !== null;
     } catch {
       publish({
         ...snapshot,
         busy: false,
-        problem: "The computer could not be reached. Retry when it reconnects.",
+        problem: "连不上这台计算机，重连后再试。",
       });
       return false;
     } finally {

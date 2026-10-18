@@ -4994,8 +4994,16 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 }
 .dark .computer-takeover-card { --ctk-strip: rgba(255, 255, 255, 0.035); --ctk-tool: rgba(255, 255, 255, 0.075); --ctk-field: rgba(255, 255, 255, 0.06); }
 .computer-takeover-card > * { flex: none; }
-.ctk-stage { min-width: 0; min-height: 0; }
-.ctk-stage .computer-live { gap: 8px; }
+.ctk-stage {
+  /* FIX-05：舞台可收缩，别把底栏「交还」顶出 overflow:hidden 的卡片外或盖住点击。 */
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  z-index: 0;
+}
+.ctk-stage .computer-live { gap: 8px; min-height: 0; }
 .ctk-screen, .computer-takeover-card .computer-screen { width: min(100%, calc(var(--ctk-avail, 9999px) * var(--ctk-ar, 1.6))); margin-inline: auto; border-radius: 8px; }
 /* 工具条 */
 .computer-chrome { display: flex; flex-direction: column; border-radius: 12px; background: var(--ctk-strip); border: 1px solid var(--line); }
@@ -5028,11 +5036,25 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .computer-chrome .bm-chip, .computer-chrome .bm-drop { height: 26px; border-radius: 8px; }
 .computer-chrome .bm-manage-btn, .computer-chrome .bm-icon-btn { width: 26px; height: 26px; border-radius: 8px; }
 /* 底栏 */
-.ctk-foot { margin-top: auto; min-height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 2px 0 6px; font-size: 13px; }
+.ctk-foot {
+  /* FIX-05：底栏叠在画布之上，pointer-events 不被舞台抢走。 */
+  position: relative;
+  z-index: 5;
+  flex: none;
+  margin-top: auto;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 2px 0 6px;
+  font-size: 13px;
+  pointer-events: auto;
+  background: inherit;
+}
 .ctk-who { flex: none; display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--ink-1); }
 .ctk-who-n { max-width: 10em; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ctk-status { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink-3); }
-.ctk-act { flex: none; margin-left: auto; }
+.ctk-act { flex: none; margin-left: auto; position: relative; z-index: 6; pointer-events: auto; }
 @media (max-width: 900px) { .computer-takeover { --ctk-pad: 16px; } }
 /* 手机：整屏抽屉 */
 @media (max-width: 640px) {
@@ -6124,6 +6146,8 @@ html[data-phone] .glass-topbar { transition: transform var(--dur-2, 200ms) var(-
 }
 .install-hint[data-state="closed"] { animation: install-hint-out var(--dur-1, 150ms) var(--ease-in, ease-in) both; pointer-events: none; }
 body:has(.update-banner) .install-hint { display: none; }
+/* FIX-11：接管大屏打开时别挡工具条 / 交还（install-hint 原 z-index 100 > takeover 70）。 */
+body:has(.computer-takeover) .install-hint { display: none; }
 .install-hint-row { display: flex; align-items: center; gap: 2px; }
 .install-hint-main {
   display: inline-flex; align-items: center; gap: 8px; min-width: 0;
@@ -7714,3 +7738,13 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 }
 /* §98 留着的聊天藏起来时关掉滚动锚定：visibility: hidden 下浏览器会重新挑锚点并把滚动容器挪几十像素，回来时位置就对不上了。 */
 .kept-chat[data-visible="false"], .kept-chat[data-visible="false"] * { overflow-anchor: none; }
+
+/* FIX-15：会话行删除（空草稿也好删） */
+.cc-sess-row { position: relative; display: flex; align-items: center; gap: 2px; }
+.cc-sess-row > .cc-sess { flex: 1 1 auto; min-width: 0; }
+.cc-sess-del {
+  flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px;
+  color: var(--ink-3); opacity: 0; transition: opacity var(--dur-1), background var(--dur-1), color var(--dur-1);
+}
+.cc-sess-row:hover .cc-sess-del, .cc-sess-row:focus-within .cc-sess-del, .cc-sess-del:focus-visible { opacity: 1; }
+.cc-sess-del:hover { background: var(--glass-hover); color: var(--destructive, #dc2626); }

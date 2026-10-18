@@ -145,8 +145,9 @@ export function WorkRow({
           </AnimatePresence>
         </span>
         <span className="chat-work-meta">
-          {live ? (summary!.count > 0 ? `第 ${summary!.count} 步` : "") : ""}
+          {live ? (summary!.count > 0 ? `第 ${summary!.count} 步` : "") : done?.failed ? `${done.failed} 步失败` : ""}
           {live && summary!.count > 0 && seconds !== null && seconds >= 2 ? " · " : ""}
+          {!live && done?.failed && seconds !== null && seconds >= 2 ? " · " : ""}
           {seconds !== null && seconds >= 2 ? `${seconds} 秒` : ""}
         </span>
         <IconChevronDown aria-hidden="true" className="chat-work-chevron size-3.5" data-open={open || undefined} />

@@ -45,7 +45,7 @@ export function connectScreen(options: Options) {
         );
         return;
       }
-      options.onProblem("Reconnecting to the live screen…");
+      options.onProblem("正在重新连接屏幕…");
       cancelTimer = schedule(connect, delay);
     };
     current.onopen = async () => {

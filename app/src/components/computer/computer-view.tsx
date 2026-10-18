@@ -670,7 +670,7 @@ export function ComputerView({
               aria-modal="true"
               aria-label={"助手的屏幕"}
               // 高于抽屉（窄窗口时右栏是 z-50 的抽屉），接管的大屏永远在最上层、可以点。
-              className="computer-takeover fixed inset-0 z-[70] flex items-center justify-center"
+              className="computer-takeover fixed inset-0 z-[110] flex items-center justify-center"
             >
               {/*
                 Backdrop closes only while read-only; during driving, Escape remains the exit. A

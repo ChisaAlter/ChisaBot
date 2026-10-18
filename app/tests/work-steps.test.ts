@@ -109,3 +109,25 @@ describe("后台任务卡片收成一行的摘要（§75.2）", () => {
     expect(plainSummary("## 结论\n- 一\n- 二")).toBe("结论 一 二");
   });
 });
+
+
+describe("失败浏览不计「看了」（FIX-07）", () => {
+  const call = (name: string, args: Record<string, unknown> = {}, extra: { failed?: boolean; done?: boolean } = {}) => ({
+    name,
+    arguments: JSON.stringify(args),
+    done: extra.done ?? true,
+    failed: extra.failed,
+  });
+  test("失败的 web_fetch 不算看了网页", () => {
+    const done = summarizeDoneWork([
+      call("web_search", { query: "HN" }),
+      call("web_fetch", { url: "https://news.ycombinator.com" }, { failed: true }),
+    ]);
+    expect(done?.label).toBe("搜索 1 次 · 1 步失败");
+    expect(done?.steps.some((s) => s.includes("失败"))).toBe(true);
+  });
+  test("全部失败时不说「看了 N 个网页」", () => {
+    const done = summarizeDoneWork([call("web_fetch", { url: "https://example.com" }, { failed: true })]);
+    expect(done?.label).toBe("1 步失败");
+  });
+});

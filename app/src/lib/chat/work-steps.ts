@@ -62,7 +62,7 @@ export function summarizeWork(calls: readonly WorkCall[]): WorkSummary | null {
 /** 不算「干活」的工具：画卡片、维护清单、读技能说明（结束后的一行里不数它们）。 */
 const NOT_WORK = new Set(["render_ui", "worker_plan", "skill_load", "skill_list"]);
 
-export type DoneWork = { label: string; steps: string[] };
+export type DoneWork = { label: string; steps: string[]; /** 失败 / 未完成的步数（FIX-07 / FIX-12）。 */ failed?: number };
 
 /** 真的在干活的调用（干活卡从第一个这样的调用出现、画在它那一行，DESIGN.md §75.1）。 */
 export function isWorkCall(name: string): boolean {
@@ -76,10 +76,15 @@ export function isWorkCall(name: string): boolean {
 export function summarizeDoneWork(calls: readonly WorkCall[]): DoneWork | null {
   const work = calls.filter((call) => !NOT_WORK.has(call.name));
   if (work.length === 0) return null;
-  return { label: doneLabel(work), steps: workStepLines(work) };
+  const failed = work.filter((call) => call.failed || !call.done).length;
+  return {
+    label: doneLabel(work),
+    steps: workStepLines(work),
+    ...(failed ? { failed } : {}),
+  };
 }
 
-/** 每一步一句（去掉「正在」，相同的连着只记一次，说不出来的不列）。干活卡点开、收成的一行点开都用它。 */
+/** 每一步一句（去掉「正在」，相同的连着只记一次，说不出来的不列）。干活卡点开、收成的一行点开都用它。失败步带「（失败）」。 */
 export function workStepLines(calls: readonly WorkCall[]): string[] {
   const steps: string[] = [];
   for (const call of calls) {
@@ -87,7 +92,8 @@ export function workStepLines(calls: readonly WorkCall[]): string[] {
     const line = describeWorkerStep(call.name, parseArgs(call.arguments));
     if (!line || line.startsWith("正在使用 ")) continue;
     const past = line.replace(/^正在/, "");
-    if (steps[steps.length - 1] !== past) steps.push(past);
+    const marked = call.failed || !call.done ? `${past}（失败）` : past;
+    if (steps[steps.length - 1] !== marked) steps.push(marked);
   }
   return steps;
 }
@@ -129,25 +135,46 @@ export function workTimeline(calls: readonly WorkCall[], notes: readonly WorkNot
     const line = describeWorkerStep(call.name, parseArgs(call.arguments));
     if (!line || line.startsWith("正在使用 ")) return;
     const past = line.replace(/^正在/, "");
-    if (lines.at(-1)?.kind === "step" && lastStep === past) return;
-    lastStep = past;
-    lines.push({ kind: "step", text: past });
+    const marked = call.failed || !call.done ? `${past}（失败）` : past;
+    if (lines.at(-1)?.kind === "step" && lastStep === marked) return;
+    lastStep = marked;
+    lines.push({ kind: "step", text: marked });
   });
   flush(Number.POSITIVE_INFINITY);
   return lines;
 }
 
 function doneLabel(work: readonly WorkCall[]): string {
+  // FIX-07：只数做成的搜索 / 读页；失败的不算「看了」。
   let searches = 0;
   let pages = 0;
+  let failedPages = 0;
+  let failedSearches = 0;
   for (const call of work) {
-    if (call.name === "web_search") searches += 1;
-    else if (call.name === "web_fetch" || call.name === "computer_navigate") pages += 1;
+    const bad = Boolean(call.failed) || !call.done;
+    if (call.name === "web_search") {
+      if (bad) failedSearches += 1;
+      else searches += 1;
+    } else if (call.name === "web_fetch" || call.name === "computer_navigate") {
+      if (bad) failedPages += 1;
+      else pages += 1;
+    }
   }
-  const webOnly = searches + pages === work.length;
-  return webOnly
-    ? [searches ? `搜索 ${searches} 次` : "", pages ? `看了 ${pages} 个网页` : ""].filter(Boolean).join(" · ")
-    : `做了 ${work.length} 步`;
+  const webOnly =
+    searches + pages + failedSearches + failedPages === work.length &&
+    work.every((c) => c.name === "web_search" || c.name === "web_fetch" || c.name === "computer_navigate");
+  if (webOnly) {
+    const parts = [
+      searches ? `搜索 ${searches} 次` : "",
+      pages ? `看了 ${pages} 个网页` : "",
+      failedPages || failedSearches
+        ? `${failedPages + failedSearches} 步失败`
+        : "",
+    ].filter(Boolean);
+    return parts.join(" · ") || "未读到网页";
+  }
+  const failed = work.filter((c) => c.failed || !c.done).length;
+  return failed ? `做了 ${work.length} 步 · ${failed} 步失败` : `做了 ${work.length} 步`;
 }
 
 /**

@@ -23,3 +23,7 @@ describe("suspendsOnHumanControl (FIX-02)", () => {
     expect(isUnattendedInitiator({ kind: "routine", id: "workflow:wf_1" })).toBe(false);
   });
 });
+
+
+// FIX-13 / FIX-14：挂起 turn 吞掉记忆 / 面板写入 — 由 #208 FIX-02 无人值守快失败解决。
+// 回归：unattended initiator 碰到交还应 fail-fast，而不是挂死对话占住队列。
