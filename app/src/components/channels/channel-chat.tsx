@@ -53,7 +53,7 @@ import { useConversationSync } from "@/lib/copilot/use-conversation-sync";
 import { repairUnansweredToolCalls } from "@/lib/copilot/repair-history";
 import { isAbortFailure, pausedForApproval, stoppedReason, unfinishedTurnReason } from "@/lib/copilot/stopped-turn";
 import { readSync } from "@/lib/copilot/bot-thread";
-import { CONNECTION_LOST_REASON, SEND_HANG_REASON, SEND_UNREACHABLE_REASON, SEND_WATCHDOG_MS, isConnectionDrop, raceSendWatchdog, settleDroppedTurn, storedTurnAnswered } from "@/lib/copilot/connection-drop";
+import { CONNECTION_LOST_REASON, SEND_HANG_REASON, SEND_REPLY_HANG_REASON, SEND_REPLY_WATCHDOG_MS, SEND_UNREACHABLE_REASON, SEND_WATCHDOG_MS, isConnectionDrop, raceSendWatchdog, settleDroppedTurn, storedTurnAnswered } from "@/lib/copilot/connection-drop";
 import { useFallbackTurns, useLastSentAt, useStoppedTurnIds } from "@/lib/copilot/turn-compaction";
 import { queueMessage } from "@/lib/copilot/thread-inbox";
 import { useThreadInbox } from "@/lib/copilot/use-thread-inbox";
@@ -942,7 +942,22 @@ export function ChannelChat({
           void runPromise.catch(() => undefined);
           throw new Error(SEND_HANG_REASON);
         }
-        // Message reached the server; keep waiting for the rest of the turn (model may be slow).
+        // Message reached the server; wait longer for a slow model, but still bound
+        // (CR-P1-03): unbounded await here wedged runsInFlight / composer forever.
+        const raceReply = await raceSendWatchdog(runPromise, {
+          afterMs,
+          timeoutMs: SEND_REPLY_WATCHDOG_MS,
+        });
+        if (raceReply === "timeout") {
+          try {
+            copilotkit.stopAgent({ agent: target });
+          } catch {
+            /* stop best-effort */
+          }
+          failRef.current(SEND_REPLY_HANG_REASON);
+          void runPromise.catch(() => undefined);
+          throw new Error(SEND_REPLY_HANG_REASON);
+        }
         await runPromise;
       } else {
         await runPromise;

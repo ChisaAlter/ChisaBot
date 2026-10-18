@@ -19,7 +19,7 @@ import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { imageDimsFor } from "../image-dims";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
-import { assertPublicUrl } from "../web/tools";
+import { BlockedUrlError, guardedFetch } from "../../../shared/net/guarded-fetch";
 import { ImageProviderError, type ImageProviderConfig, probeImageModel, runImageModel } from "./image-provider";
 import { createMediaModels } from "./media-models";
 
@@ -177,14 +177,18 @@ export function createChatFiles(
   });
 
   async function defaultDownload(url: string): Promise<Buffer> {
-    const checked = await assertPublicUrl(url);
-    const response = await doFetch(checked, { redirect: "follow", signal: AbortSignal.timeout(60_000) });
-    if (!response.ok) throw new ImageProviderError(`取图片失败（HTTP ${response.status}）。`);
-    const length = Number(response.headers.get("content-length") ?? 0);
-    if (length > MAX_CHAT_FILE_BYTES) throw new ImageProviderError("图片太大。");
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > MAX_CHAT_FILE_BYTES) throw new ImageProviderError("图片太大。");
-    return bytes;
+    // CR-P0-01：不许再用 assertPublicUrl + redirect:follow（公网 302 → 元数据会跟过去）。
+    // guardedFetch 钉死 DNS、逐跳重验，超大截断。
+    let response;
+    try {
+      response = await guardedFetch(url, { maxBytes: MAX_CHAT_FILE_BYTES + 1, timeoutMs: 60_000 });
+    } catch (error) {
+      if (error instanceof BlockedUrlError) throw new ImageProviderError(error.message);
+      throw error;
+    }
+    if (response.status >= 400) throw new ImageProviderError(`取图片失败（HTTP ${response.status}）。`);
+    if (response.truncated || response.body.length > MAX_CHAT_FILE_BYTES) throw new ImageProviderError("图片太大。");
+    return response.body;
   }
   const download = options.download ?? defaultDownload;
 

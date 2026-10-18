@@ -8,6 +8,7 @@ import {
   type DeviceCapabilities,
 } from "../../../shared/devices";
 import { type AuditStore, recordAuditEvent } from "../audit";
+import { localCallerAuthorized, trustUnsignedLocal } from "../auth/gateway-identity";
 import type { AppVariables } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
 import { DeviceRefusedError, type DeviceHub, describeChange } from "./hub";
@@ -133,6 +134,11 @@ export function createDeviceRoutes(options: {
     onDeviceRevoked: (deviceId: string) => Promise<unknown>;
     closeDeviceTunnels: (deviceId: string) => number;
   } | null;
+  /**
+   * 配了网关密钥时：/agent/state 也要求 X-ChisaBot-Local-Caller（与 resolveGatewayRequest 同一把钥匙）。
+   * 未配 = 保持旧行为（仅拦带 X-Forwarded-For 的公网探测）。
+   */
+  localCallerSecret?: string;
 }) {
   const { store, hub, requireUser, auditStore, toolsFor } = options;
   const pairing = options.pairing ?? createPairingStore();
@@ -368,10 +374,15 @@ export function createDeviceRoutes(options: {
 
   /**
    * 网关定期（约 30 秒）问一次：这台手机还有效吗？撤销后网关立刻作废它的会话，手机回到登录页。
-   * 只回答直连本服务的请求（网关在本机直连 127.0.0.1:3001）：经过公网 Nginx 的请求都带 X-Forwarded-For，一律 404。
+   * 只回答直连本服务的请求：经过公网 Nginx 的请求都带 X-Forwarded-For，一律 404。
+   * 配了 localCallerSecret 时还要带 X-ChisaBot-Local-Caller（CR-P1-02 / CR-P2-01）：共享 Docker
+   * 网络上的兄弟容器不能靠「没有代理头」枚举设备。
    */
   routes.get("/agent/state/:id", async (context) => {
     if (context.req.header("x-forwarded-for") || context.req.header("x-real-ip"))
+      return context.json({ error: "页面不存在。" }, 404);
+    const secret = options.localCallerSecret;
+    if (secret && !localCallerAuthorized(secret, context.req.raw.headers) && !trustUnsignedLocal())
       return context.json({ error: "页面不存在。" }, 404);
     const device = await store.get(context.req.param("id"));
     const active = !!device && !device.revoked && isMobilePlatform(device.platform);

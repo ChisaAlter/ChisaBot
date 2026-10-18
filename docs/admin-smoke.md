@@ -32,6 +32,9 @@
 
    ```sh
    curl -s -X POST -H 'content-type: application/json' -d '{}' http://127.0.0.1:3001/api/admin/smoke
+
+   若部署开了朋友账号（`CHISABOT_GATEWAY_SECRET`），本机还要加头：
+   `-H "X-ChisaBot-Local-Caller: $CHISABOT_GATEWAY_SECRET"`（`deploy/updater/smoke.sh` 已从 compose `.env` 自动带上）。
    ```
 
    或者 `sh /opt/chisabot-updater/smoke.sh [机器人 id]`（`deploy/updater/smoke.sh`，打印结果，失败时退出码非 0）。

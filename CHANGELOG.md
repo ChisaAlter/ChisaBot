@@ -8,6 +8,8 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+- 代码审查安全批（CR-P0-01 / P1-01 / P1-02 / P1-03）：图片下载与 web_fetch 统一走 `guardedFetch`（钉死 DNS、逐跳拦 SSRF）；网关模式下本机管理员须带 `X-ChisaBot-Local-Caller`；发消息已落库后的第二段等待封顶，避免 composer 永久卡住。
+
 - 计算机陈旧截图不再当直播（#214，v0.1.22 / DOG-05）：截图失败清帧 + 中文占位/重试；「在用浏览器」仅在有计算机活动时；空闲写「浏览器空闲」。PC / Android 外壳未变，版本号对齐到 0.1.22（Android vc 228）。
 - Ctrl+K 正文命中深链到消息并高亮（#213，v0.1.21 / DOG-04）：`?message=<id>` + MessageFind（scrollIntoViewWithin + message-flash）；KeepAlive 地址键不含 message。PC / Android 外壳未变，版本号对齐到 0.1.21（Android vc 227）。
 - 活动记录中文工具名/拒因 + 安装横幅不挡标题（#211，v0.1.20 / DOG-02/03）：审计页 computer_* 映射为打开网页/填写/运行命令等；接管英文拒因译中文；横幅显示时正文让位，安装失败/超时/关闭均永久记住。PC / Android 外壳未变，版本号对齐到 0.1.20（Android vc 226）。

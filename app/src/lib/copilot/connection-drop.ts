@@ -52,8 +52,18 @@ export const SEND_UNREACHABLE_REASON =
 export const SEND_HANG_REASON =
   "这句迟迟没发出去。请再发一次；若反复如此，试试刷新页面。";
 
+/**
+ * 消息已落库，但这一轮的回答一直不结束（模型挂起 / 流卡住）。
+ * CR-P1-03：若第二次等待也不封顶，composer 会永远 busy。
+ */
+export const SEND_REPLY_HANG_REASON =
+  "这句已经发出去了，但回答迟迟没回来。可以点停止，或刷新后再看。";
+
 /** 发消息后等多久还没结束 / 没落库就改报错。略长于常见模型首字，远短于 40s 假成功。 */
 export const SEND_WATCHDOG_MS = 12_000;
+
+/** 已落库后继续等回答的上限。比 SEND_WATCHDOG_MS 长（模型可能慢），但仍封顶以免永久卡住。 */
+export const SEND_REPLY_WATCHDOG_MS = 180_000;
 
 /**
  * 和 `run` 赛跑：超时返回 `"timeout"`，run 先结束返回 `"done"`。

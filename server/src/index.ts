@@ -3741,6 +3741,7 @@ const app = createApp(
           refuseFullAccess: (device) => cloudCc?.refuseFullAccess(device.id) ?? null,
           sync: cloudSync ?? null,
           ...(config.appDistDir ? { appDistDir: config.appDistDir } : {}),
+          ...(gatewaySecret ? { localCallerSecret: gatewaySecret } : {}),
         }),
       ],
     ],

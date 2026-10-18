@@ -76,7 +76,8 @@ export type AuthConfig = {
   now?: () => number;
   /**
    * 应用服务的本机地址（手机扫码绑定用，DESIGN.md §33）：网关用它校验手机的设备令牌、定期确认手机没被撤销。
-   * 默认 http://127.0.0.1:3001；必须是直连，不能经过公网 Nginx（应用只回答不带 X-Forwarded-For 的状态查询）。
+   * 默认 http://127.0.0.1:3001；必须是直连，不能经过公网 Nginx（带 X-Forwarded-For 会被 404）。
+   * 多账号时还要在请求头带 X-ChisaBot-Local-Caller = identitySecret（应用侧 CR-P1-02）。
    */
   appUrl?: string;
   /** 测试注入用。 */
@@ -187,7 +188,11 @@ export function createAuthApp(config: AuthConfig) {
   async function deviceActive(deviceId: string): Promise<boolean | null> {
     try {
       const response = await appFetch(`${appUrl}/api/devices/agent/state/${encodeURIComponent(deviceId)}`, {
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          // CR-P1-02：应用不再把「没有代理头」当成受信；多账号时本机探测要带同一把密钥。
+          ...(multi && config.identitySecret ? { "X-ChisaBot-Local-Caller": config.identitySecret } : {}),
+        },
         signal: AbortSignal.timeout(3000),
       });
       if (!response.ok) return null;

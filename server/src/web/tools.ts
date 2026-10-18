@@ -1,6 +1,6 @@
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
 import { z } from "zod";
+import { BlockedUrlError, guardedFetch, resolvePublic } from "../../../shared/net/guarded-fetch";
+import { checkPublicUrl } from "../../../shared/net/ssrf";
 import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
 import { markUntrusted } from "../untrusted-content";
@@ -21,74 +21,34 @@ const UA =
 const MAX_BYTES = 2_000_000;
 const MAX_TEXT = 12_000;
 
-function privateV4(ip: string): boolean {
-  const [a = 0, b = 0] = ip.split(".").map(Number);
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 198 && (b === 18 || b === 19)) ||
-    a >= 224
-  );
-}
-function privateIp(ip: string): boolean {
-  if (isIP(ip) === 4) return privateV4(ip);
-  const v6 = ip.toLowerCase();
-  if (v6.startsWith("::ffff:")) return privateV4(v6.slice(7));
-  return v6 === "::1" || v6 === "::" || v6.startsWith("fc") || v6.startsWith("fd") || v6.startsWith("fe80");
-}
-
-/** 只放行公网 http(s) 地址；内网、本机、元数据地址一律拒绝。 */
+/**
+ * 只放行公网 http(s)；内网 / 本机 / 元数据 / 映射写法一律拒绝。
+ * 实现走 shared/net（与链接预览同一套），不再维护本地弱副本（CR-P0-01 / CR-P1-01）。
+ * 真正下载请用 {@link guardedFetch}（DNS 钉死 + 逐跳重定向），本函数只做「能不能连」的前置检查
+ *（vault / media-models 在自带 fetch 前调用）。
+ */
 export async function assertPublicUrl(raw: string): Promise<URL> {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("不是有效的网址");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("只支持 http / https 网址");
-  const host = url.hostname.replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) throw new Error("不能访问内网地址");
-  const addresses = isIP(host) ? [host] : (await lookup(host, { all: true })).map((a) => a.address);
-  if (addresses.length === 0 || addresses.some(privateIp)) throw new Error("不能访问内网地址");
-  return url;
+  const verdict = checkPublicUrl(raw);
+  if (!verdict.ok) throw new Error(verdict.reason);
+  await resolvePublic(verdict.url.hostname);
+  return verdict.url;
 }
 
 async function fetchPublic(raw: string, signal?: AbortSignal, accept = "text/html,application/json;q=0.9,*/*;q=0.8", userAgent = UA) {
-  let current = raw;
-  for (let hop = 0; hop < 5; hop += 1) {
-    const url = await assertPublicUrl(current);
-    const response = await fetch(url, {
+  try {
+    const response = await guardedFetch(raw, {
+      maxBytes: MAX_BYTES,
+      timeoutMs: 20_000,
+      maxRedirects: 4,
       headers: { "user-agent": userAgent, accept, "accept-language": "zh-CN,zh;q=0.9,en;q=0.8" },
-      redirect: "manual",
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000),
+      ...(signal ? { signal } : {}),
     });
-    const location = response.headers.get("location");
-    if (response.status >= 300 && response.status < 400 && location) {
-      current = new URL(location, url).toString();
-      continue;
-    }
-    const reader = response.body?.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    while (reader) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_BYTES) {
-        await reader.cancel().catch(() => {});
-        break;
-      }
-      chunks.push(value);
-    }
-    const body = new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks));
-    return { url: url.toString(), status: response.status, contentType: response.headers.get("content-type") ?? "", body };
+    const body = new TextDecoder("utf-8", { fatal: false }).decode(response.body);
+    return { url: response.url, status: response.status, contentType: response.contentType, body };
+  } catch (error) {
+    if (error instanceof BlockedUrlError) throw new Error(error.message);
+    throw error;
   }
-  throw new Error("重定向次数太多");
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", apos: "'", nbsp: " " };

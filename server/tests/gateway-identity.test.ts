@@ -4,6 +4,8 @@ import { signIdentity } from "../../deploy/public/auth/server";
 import {
   createGatewayRequireUser,
   gatewaySecretFromEnvironment,
+  LOCAL_CALLER_HEADER,
+  localCallerAuthorized,
   resolveGatewayRequest,
   signGatewayIdentity,
   verifyGatewayIdentity,
@@ -59,8 +61,23 @@ describe("who is asking", () => {
     expect(resolveGatewayRequest(secret, new Headers({ "x-real-ip": "1.2.3.4" })).kind).toBe("refuse");
     expect(resolveGatewayRequest(secret, new Headers({ "x-chisabot-identity": "v1.x.y" })).kind).toBe("refuse");
   });
-  test("direct loopback call (deploy scripts, updater) → admin as before", () => {
-    expect(resolveGatewayRequest(secret, new Headers())).toEqual({ kind: "actor", actor: DEV_ACTOR });
+  test("bare request without identity or local-caller proof → refused (CR-P1-02)", () => {
+    expect(resolveGatewayRequest(secret, new Headers(), Date.now(), {})).toEqual({ kind: "refuse" });
+  });
+  test("local-caller header with gateway secret → admin (deploy scripts, updater, auth probe)", () => {
+    const headers = new Headers({ [LOCAL_CALLER_HEADER]: secret });
+    expect(localCallerAuthorized(secret, headers)).toBe(true);
+    expect(resolveGatewayRequest(secret, headers, Date.now(), {})).toEqual({ kind: "actor", actor: DEV_ACTOR });
+  });
+  test("wrong local-caller secret → refused", () => {
+    const headers = new Headers({ [LOCAL_CALLER_HEADER]: "not-the-gateway-secret-0123456789ab" });
+    expect(resolveGatewayRequest(secret, headers, Date.now(), {})).toEqual({ kind: "refuse" });
+  });
+  test("CHISABOT_TRUST_UNSIGNED_LOCAL=1 emergency escape → admin", () => {
+    expect(resolveGatewayRequest(secret, new Headers(), Date.now(), { CHISABOT_TRUST_UNSIGNED_LOCAL: "1" })).toEqual({
+      kind: "actor",
+      actor: DEV_ACTOR,
+    });
   });
   test("middleware: 401 with openbotAuthRequired, provisions friends once per request", async () => {
     const provisioned: AuthenticatedActor[] = [];

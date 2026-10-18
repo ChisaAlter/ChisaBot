@@ -26,7 +26,7 @@
 1. 生成一个密钥：`openssl rand -base64 48 | tr -d '\n/+='`。
 2. 登录服务 `deploy/public/auth/config.json` 加 `"identitySecret": "<密钥>"`（可选 `"adminUserId"`，默认 `dev-local-user`，
    即 `OPENBOT_SINGLE_USER` 时的那个管理员）。
-3. 应用环境（`.env`）加 `CHISABOT_GATEWAY_SECRET=<同一个密钥>`（或 `CHISABOT_GATEWAY_SECRET_FILE=/path`）。只在
+3. 应用环境（`.env`）加 `CHISABOT_GATEWAY_SECRET=<同一个密钥>`（或 `CHISABOT_GATEWAY_SECRET_FILE=/path`）。 本机调用（更新器自检、登录网关的设备状态探测）还要带请求头 `X-ChisaBot-Local-Caller: <同一个密钥>`——应用不再把「没有 X-Forwarded-For」当成管理员（CR-P1-02）；兄弟容器在共享 Docker 网络上直连 :3001 会被拒。紧急逃生：`CHISABOT_TRUST_UNSIGNED_LOCAL=1`（不安全，仅排障）。只在
    `OPENBOT_SINGLE_USER=true` 时生效。
 4. nginx 用新模板 `deploy/public/nginx.conf`（`auth_request_set $cb_identity …` + `proxy_set_header X-ChisaBot-Identity …`，
    Magpie 的 `auth_request` 带 `X-ChisaBot-Require-Role admin`）。

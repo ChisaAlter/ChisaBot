@@ -3,6 +3,13 @@
 # 给了构建号时 /api/version 必须是这一版。用法：health.sh <镜像> [构建号]
 set -uo pipefail
 . /opt/chisabot-updater/config.env
+# CR-P1-02：网关模式下本机管理员接口要带 X-ChisaBot-Local-Caller。
+LOCAL_CALLER=""
+if [ -f "${COMPOSE_DIR}/.env" ]; then
+  LOCAL_CALLER=$(grep -E '^[[:space:]]*CHISABOT_GATEWAY_SECRET=' "${COMPOSE_DIR}/.env" | head -1 | sed 's/^[^=]*=//' | tr -d '\r' | sed 's/^["'\'']//;s/["'\'']$//')
+fi
+HDR_CALLER=()
+if [ -n "${LOCAL_CALLER}" ]; then HDR_CALLER=(-H "X-ChisaBot-Local-Caller: ${LOCAL_CALLER}"); fi
 IMAGE="$1" TAG="${2:-}"
 for i in $(seq 1 36); do
   H=$(docker inspect -f '{{.State.Health.Status}}' "$CONTAINER" 2>/dev/null)
@@ -37,7 +44,7 @@ if [ -n "$TAG" ]; then
 fi
 # 模型往返自检（docs/admin-smoke.md）：不建对话、不写消息。只记录，不影响结果 —— 模型服务商一时不通不该把新版本回滚掉。
 if [ -n "$TAG" ]; then
-  S=$(curl -s --max-time 60 -X POST -H 'content-type: application/json' -d '{}' "$LOCAL_URL/api/admin/smoke" | head -c 400)
+  S=$(curl -s --max-time 60 -X POST -H 'content-type: application/json' "${HDR_CALLER[@]}" -d '{}' "$LOCAL_URL/api/admin/smoke" | head -c 400)
   echo "模型自检（不影响结果）$S"
 fi
 echo "健康检查通过"

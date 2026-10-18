@@ -18,10 +18,15 @@ import type { OpenBotRole } from "./roles";
  *  - 有身份头且验签通过 → 这个人；
  *  - 有身份头但无效 → 401；
  *  - 没有身份头、但请求经过了网关（带 X-Forwarded-For / X-Real-IP，nginx 每个转发都会设）→ 401；
- *  - 没有身份头、直连本机 127.0.0.1:3001（发布脚本、自检、更新器）→ 管理员（和以前一样）。
+ *  - 没有身份头、带 {@link LOCAL_CALLER_HEADER}（值 = 网关密钥，常量时间比较）→ 管理员
+ *    （发布脚本、自检、更新器、登录网关对本机的设备状态探测）。**不再**把「没有代理头」当成受信：
+ *    容器挂在共享 Docker 网络上时，兄弟容器直连 :3001 也不会带这些头（CR-P1-02）。
+ *  - 都没有 → 401。紧急逃生：环境变量 CHISABOT_TRUST_UNSIGNED_LOCAL=1（不安全，见 pipeline-run）。
  */
 
 export const GATEWAY_IDENTITY_HEADER = "x-chisabot-identity";
+/** 本机受信调用方证明（值 = CHISABOT_GATEWAY_SECRET）。没有身份头时必须带这个，才能当管理员。 */
+export const LOCAL_CALLER_HEADER = "x-chisabot-local-caller";
 const MAX_SKEW_MS = 2 * 60_000;
 
 export type GatewayIdentity = { id: string; name: string; role: OpenBotRole; issuedAt: number };
@@ -99,6 +104,22 @@ function viaGateway(headers: Headers): boolean {
   return Boolean(headers.get("x-forwarded-for") || headers.get("x-real-ip"));
 }
 
+/** 本机调用方是否出示了与网关密钥匹配的 {@link LOCAL_CALLER_HEADER}（常量时间比较）。 */
+export function localCallerAuthorized(secret: string, headers: Headers): boolean {
+  if (!secret) return false;
+  const given = headers.get(LOCAL_CALLER_HEADER);
+  if (typeof given !== "string" || !given) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(secret);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/** 紧急：允许没有身份头、也没有本机证明的直连当管理员（默认关）。 */
+export function trustUnsignedLocal(environment: Record<string, string | undefined> = process.env): boolean {
+  return environment.CHISABOT_TRUST_UNSIGNED_LOCAL?.trim() === "1";
+}
+
 export type GatewayResolution =
   | { kind: "actor"; actor: AuthenticatedActor }
   | { kind: "refuse" };
@@ -119,14 +140,21 @@ export function gatewayUserEmail(id: string): string {
   return `${id}@accounts.chisabot.local`;
 }
 
-export function resolveGatewayRequest(secret: string, headers: Headers, now = Date.now()): GatewayResolution {
+export function resolveGatewayRequest(
+  secret: string,
+  headers: Headers,
+  now = Date.now(),
+  environment: Record<string, string | undefined> = process.env,
+): GatewayResolution {
   const header = headers.get(GATEWAY_IDENTITY_HEADER);
   if (header) {
     const identity = verifyGatewayIdentity(secret, header, now);
     return identity ? { kind: "actor", actor: actorForIdentity(identity) } : { kind: "refuse" };
   }
   if (viaGateway(headers)) return { kind: "refuse" };
-  return { kind: "actor", actor: DEV_ACTOR };
+  if (localCallerAuthorized(secret, headers)) return { kind: "actor", actor: DEV_ACTOR };
+  if (trustUnsignedLocal(environment)) return { kind: "actor", actor: DEV_ACTOR };
+  return { kind: "refuse" };
 }
 
 export type ProvisionUser = (actor: AuthenticatedActor) => Promise<void>;

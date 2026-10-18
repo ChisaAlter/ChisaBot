@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import {
   CONNECTION_LOST_REASON,
   SEND_HANG_REASON,
+  SEND_REPLY_HANG_REASON,
+  SEND_REPLY_WATCHDOG_MS,
   SEND_UNREACHABLE_REASON,
   SEND_WATCHDOG_MS,
   isConnectionDrop,
@@ -163,3 +165,20 @@ test("raceSendWatchdog: a rejected run still counts as done (error path owns the
   const outcome = await raceSendWatchdog(run, { afterMs, timeoutMs: 12_000 });
   expect(outcome).toBe("done");
 });
+
+test("reply hang sentence says the message was sent, not that it failed to leave", () => {
+  expect(SEND_REPLY_HANG_REASON).toContain("已经发出去");
+  expect(SEND_REPLY_HANG_REASON).not.toContain("没发出去");
+  expect(SEND_REPLY_WATCHDOG_MS).toBeGreaterThan(SEND_WATCHDOG_MS);
+  expect(SEND_REPLY_WATCHDOG_MS).toBeLessThanOrEqual(300_000);
+});
+
+test("raceSendWatchdog: second (reply) bound still times out a hung run", async () => {
+  let t = 0;
+  const afterMs = async (ms: number) => void (t += ms);
+  const run = new Promise<void>(() => {});
+  const outcome = await raceSendWatchdog(run, { afterMs, timeoutMs: SEND_REPLY_WATCHDOG_MS });
+  expect(outcome).toBe("timeout");
+  expect(t).toBe(SEND_REPLY_WATCHDOG_MS);
+});
+
