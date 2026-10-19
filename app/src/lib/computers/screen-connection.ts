@@ -8,7 +8,6 @@ export type ScreenSocket = {
 };
 type Options = {
   open: () => ScreenSocket;
-  verifyOwnership: () => Promise<boolean>;
   onReady: (ready: boolean) => void;
   onProblem: (problem: string | null) => void;
   onDisconnect: () => void;
@@ -46,13 +45,23 @@ export function connectScreen(options: Options) {
       options.onProblem("正在重新连接屏幕…");
       cancelTimer = schedule(connect, delay);
     };
-    current.onopen = async () => {
-      // The initial mount receives freshly polled ownership from its parent. Reconnect must refresh it.
-      const permitted =
-        attempts === 0 || (await options.verifyOwnership().catch(() => false));
+    current.onopen = () => {
       if (!owns()) return;
       options.onProblem(null);
-      options.onReady(permitted);
+      /*
+       * OPEN IS READY. This used to answer a second question as well — "did the ownership read,
+       * taken right now, say a person still holds the wheel?" — and only report ready for a socket
+       * that passed both. A reconnect whose ownership read failed therefore left `ready` false for
+       * the rest of the session: the screen kept streaming, every click, keystroke, address-bar
+       * navigation and wheel turn was dropped without a word, and nothing ever asked again. The two
+       * facts are not the same one, and folding them together made a failed read look like a dead
+       * screen.
+       *
+       * Who holds the wheel is the control state's answer, polled every second and shown in the
+       * footer; this module only carries the screen. The computer refuses input from someone who is
+       * not driving and says so, which is a far better answer than silence.
+       */
+      options.onReady(true);
     };
     current.onmessage = (event) => {
       if (!owns()) return;

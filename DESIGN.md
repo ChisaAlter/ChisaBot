@@ -95,6 +95,7 @@
 | [101](#101-真实任务验收修复工具打到对的机器人备用模型定时任务的确认步数收尾python后台确认卡片2026-10-18) | 真实任务验收修复：工具打到对的机器人、备用模型、定时任务的确认、步数收尾、Python、后台确认卡片、主模型卡住换备用 | 2026-10-18 |
 | [102](#102-机器人自己电脑上的长命令前台超时最多-600-秒2026-10-18) | 机器人自己电脑上的长命令：前台超时最多 600 秒 | 2026-10-18 |
 | [103](#103-模型网关的版本与更新一张卡两个按钮2026-10-19) | 模型网关的版本与更新：一张卡、两个按钮 | 2026-10-19 |
+| [104](#104-接管后点不动滚不动把屏幕连上了和谁有控制权分开2026-10-19) | 接管后点不动、滚不动：把「屏幕连上了」和「谁有控制权」分开 | 2026-10-19 |
 
 ## 0. 总原则
 
@@ -2371,3 +2372,39 @@ Magpie」只显示一行 `Magpie <版本>`，看不出有没有新版，也没�
 `app/src/lib/system-update.ts`、`server/src/system-update.ts`、`shared/system-update.ts`（动作 `magpie` +
 `projectMagpieGatewayState`）、宿主机 `deploy/updater/magpie.sh` 与 `chisabot-updater.py`。
 回归：`shared/system-update.test.ts`、`server/tests/system-update.test.ts`、`deploy/updater/test_updater.py`。
+
+## 104. 接管后点不动、滚不动：把「屏幕连上了」和「谁有控制权」分开（2026-10-19）
+
+用户 2026-10-19：「bot 的电脑里的浏览器，无法进行下滑」「浏览器内容超过一屏，但是滚轮无法下滑」「没反应，什么都点不动」。
+
+### 104.1 根因：一次失败的归属查询把整个输入关掉了
+- 输入（点击 / 键盘 / 地址栏 / 滚轮）唯一的闸门是 `live-screen.tsx` 的 `send()`：
+  `driving && inputReady.current && socket 是 OPEN` 才发。`driving` 来自每秒轮询的控制权状态，是页面上那句
+  「你正在控制浏览器」和地址栏显示与否的同一个事实；**`inputReady` 是另存的一份副本**。
+- `inputReady`（`screen-connection.ts` 的 `onReady`）在 #645 被定成同时回答两件事：**socket 开了没有**，以及
+  **连上这一刻再去读一次控制权、那个人还拿不拿着轮子**。第二次读（`verifyOwnership` → `GET /control`）失败
+  （部署重启、计算机正忙、笔记本刚唤醒、网断一下）就是 `false`。
+- 结果是：断线重连之后，画面照旧一帧一帧地来，**所有输入被无声丢掉**，而且**再也不会重新问一次**——
+  `inputReady` 只在 `driving` 由 false 变 true 的那一下重查，人已经在开车，这个边沿不会再来。
+  页面上写着「你正在控制浏览器」、按钮写着「交还」，点、打、滚全无反应。用户看到的就是「什么都没反应」。
+- 同类错误还在 `connected` 上：键盘和滚轮的监听、地址栏的禁用都读 `connected`，于是它们跟着一起死。
+
+### 104.2 规则：一个问题一个来源
+- **`onReady` 只回答「这个 socket 能发东西了吗」**：`open` 就是 ready，`close` 就是 not ready。
+  `verifyOwnership` 整个删掉，`inputReady` 这个副本一起删。
+- **能不能操作，只看 `driving`**（= `control.holder === "human" && !control.transitioning`）。这是页面上
+  已经在显示的那个事实，也是唯一的来源。
+- **人到底拿不拿着轮子，是计算机说了算**：`humanMayDrive()` 不成立时 agent-computer 回一条中文拒绝，
+  大屏把它显示出来。**说一句「先接管」远好过什么都不说。**
+- 键盘 / 滚轮的监听只依赖 `driving`；`send()` 在发送那一刻看 socket 开没开。socket 没开时地址栏不再空转
+  （`navigate` 显示「屏幕正在重新连接，稍后再试。」），而不是留一个永远转的圈。
+- **滚轮单位**：`WheelEvent.deltaMode` 是「行」（1）或「页」（2）时，`deltaY` 只有 3 而不是约 100，
+  而 CDP 的 `Input.dispatchMouseEvent` 一律按像素算——按 16px / 行、一个屏幕高 / 页折算后再发。
+  否则一个从 Firefox 这类报告「行」的浏览器来的滚轮，在机器人的页面上一次只挪 3px，看起来就是「滚不动」。
+
+### 104.3 回归
+- `app/tests/screen-connection.test.ts`：「a reconnect makes input ready again without waiting on the control state」
+  （重连即 ready，不再等控制权），以及重连后重试预算恢复的两条。
+- `app/tests/live-screen-mouse.test.tsx`：「input still goes through after the screen reconnects」
+  （socket 断掉重连后，滚轮仍然带着坐标发出去）。
+- `agent-computer` 侧不变：拒绝仍然由 `humanMayDrive()` 给，`/stream` 的输入校验不变。

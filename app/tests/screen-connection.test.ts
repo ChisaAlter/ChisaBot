@@ -8,7 +8,6 @@ function rig() {
   const sockets: ScreenSocket[] = [];
   const timers: { run: () => void; delay: number; cancelled: boolean }[] = [];
   const statuses: string[] = [];
-  let verified = false;
   let stopped = 0;
   const control = connectScreen({
     open: () => {
@@ -29,7 +28,6 @@ function rig() {
         timer.cancelled = true;
       };
     },
-    verifyOwnership: async () => verified,
     onReady: (ready) => statuses.push(ready ? "ready" : "blocked"),
     onProblem: (problem) => {
       if (problem) statuses.push(problem);
@@ -44,9 +42,6 @@ function rig() {
     timers,
     statuses,
     control,
-    verify: () => {
-      verified = true;
-    },
     stopped: () => stopped,
   };
 }
@@ -78,8 +73,8 @@ test("a reconnect that shows the screen again restores the whole retry budget", 
   }
   expect(r.timers.map((t) => t.delay)).toEqual([500, 500, 500, 500, 500, 500]);
   expect(r.statuses.some((status) => status.includes("重试"))).toBe(false);
-  // A reconnect still asks who holds the computer before input is ready.
-  expect(r.statuses.at(-1)).toBe("blocked");
+  // The screen is back, so input is ready again without asking anybody anything.
+  expect(r.statuses.at(-1)).toBe("ready");
   r.control.stop();
 });
 
@@ -96,16 +91,22 @@ test("application keepalive ping also restores the retry budget (static page, CR
   }
   expect(r.timers.map((t) => t.delay)).toEqual([500, 500, 500, 500, 500, 500]);
   expect(r.statuses.some((status) => status.includes("重试"))).toBe(false);
-  expect(r.statuses.at(-1)).toBe("blocked");
+  expect(r.statuses.at(-1)).toBe("ready");
   r.control.stop();
 });
 
-test("reconnect reacquires ownership before input becomes ready", async () => {
+test("a reconnect makes input ready again without waiting on the control state", async () => {
+  // The bug this replaces: on a reconnect the module also asked who held the wheel, and reported
+  // input ready only if that read said "a person does". When the read failed — a deploy, a busy
+  // computer, a laptop waking up — input stayed blocked for the rest of the session while frames
+  // kept arriving: the picture was live and every click, keystroke and wheel turn was dropped with
+  // nothing said. Whether the person may drive is the control state's answer and the computer's to
+  // refuse; the screen coming back is the transport's.
   const r = rig();
   r.sockets[0]?.onclose?.();
   r.timers[0]?.run();
   await r.sockets[1]?.onopen?.();
-  expect(r.statuses.at(-1)).toBe("blocked");
+  expect(r.statuses.at(-1)).toBe("ready");
   r.control.stop();
 });
 

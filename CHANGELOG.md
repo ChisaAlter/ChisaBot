@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### 接管后点不动、滚不动：输入不再被一次失败的查询关掉
+
+- **根因**：大屏的输入（点击 / 键盘 / 地址栏 / 滚轮）除了 `driving`（控制权轮询给的那个事实）之外，还要看
+  `inputReady` —— 它把「socket 开了」和「连上这一刻再读一次控制权、那个人还拿不拿着轮子」合成一个答案。
+  断线重连时第二次读失败（部署、计算机忙、笔记本唤醒、网络闪断）就一直是 `false`，而它**只会在 `driving`
+  由 false 变 true 的那一下重查**，人已经在开车，这个边沿不会再来：画面照旧一帧帧地来，点、打、滚全被无声丢掉。
+  页面上写着「你正在控制浏览器」、按钮写着「交还」，却什么都没反应。
+- **修**：`onReady` 只回答「这个 socket 能发了没有」（`open` = ready），`verifyOwnership` 和 `inputReady` 一起删；
+  能不能操作只看 `driving`；人到底拿不拿着轮子由 agent-computer 的 `humanMayDrive()` 判断并回中文拒绝，
+  大屏把它显示出来（说一句「先接管」好过什么都不说）。键盘 / 滚轮的监听不再依赖 `connected`。
+- **顺带**：滚轮按 `deltaMode` 折算（行 ×16px、页 ×一个屏幕高）。报告「行」的浏览器一次只有 3，
+  而 CDP 按像素算 —— 不折算是「一次挪 3px」，看起来就是滚不动。
+- **顺带**：socket 没开时点地址栏不再留一个永远转的圈，改显示「屏幕正在重新连接，稍后再试。」
+- 回归：`app/tests/screen-connection.test.ts`（重连即 ready）、
+  `app/tests/live-screen-mouse.test.tsx`（重连后滚轮照样带坐标发出去）。只改网页，不动数据。
+
 ### 模型网关 Magpie：不再写死版本，页面上可以一键升到最新
 
 - **镜像不再钉死摘要**：`deploy/magpie.compose.yaml` 改成 `${MAGPIE_IMAGE:-ghcr.io/yetone/magpie:latest}`。
