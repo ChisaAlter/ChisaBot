@@ -15,8 +15,11 @@
 - **顺带**：滚轮按 `deltaMode` 折算（行 ×16px、页 ×一个屏幕高）。报告「行」的浏览器一次只有 3，
   而 CDP 按像素算 —— 不折算是「一次挪 3px」，看起来就是滚不动。
 - **顺带**：socket 没开时点地址栏不再留一个永远转的圈，改显示「屏幕正在重新连接，稍后再试。」
+- **顺带**：计算机的英文拒因（「先接管才能操作」「屏幕还在打开」等）翻成中文再盖到画面上，认不出的原样显示。
+  这些话在直播这条路上原来到不了：App 自己不通过就不发，计算机也就没机会拒绝。
 - 回归：`app/tests/screen-connection.test.ts`（重连即 ready）、
-  `app/tests/live-screen-mouse.test.tsx`（重连后滚轮照样带坐标发出去）。只改网页，不动数据。
+  `app/tests/live-screen-mouse.test.tsx`（重连后滚轮照样带坐标发出去）、
+  `app/tests/live-screen-blank-page.test.ts`（拒因说中文、认不出的不吞）。只改网页，不动数据。
 
 ### 模型网关 Magpie：不再写死版本，页面上可以一键升到最新
 

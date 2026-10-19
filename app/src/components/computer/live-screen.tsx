@@ -135,6 +135,27 @@ type FrameMessage = {
   url?: string;
 };
 
+/**
+ * 计算机回过来的拒绝，说成这个界面里的中文。
+ *
+ * 这些句子在直播这条路上原来是到不了的：只有 App 自己那份控制权状态说「有人在开车」时才会发输入，
+ * 而计算机和那份状态一致，所以它不会拒绝。现在由计算机来判断并回话，它说的是英文；这个界面里其他
+ * 每一句都是中文，把英文原样盖在画面上就等于没有好好说话。认不出的错误照原样显示，不吞掉。
+ */
+const SCREEN_REFUSALS: [RegExp, string][] = [
+  [/take control before/i, "请先点下面的「接管控制」，再操作机器人浏览器。"],
+  [/still starting/i, "屏幕正在打开，稍等一下再试。"],
+  [/no longer live/i, "这块屏幕已经不归这个窗口了，关掉大屏重开再试。"],
+  [/somewhere else/i, "这块屏幕现在在另一个窗口看着，这边停下了。"],
+  [/computer stopped|screen ended/i, "这台电脑已经停了，屏幕结束了。需要的话重新打开电脑。"],
+];
+
+export function screenProblem(error: string): string {
+  for (const [pattern, text] of SCREEN_REFUSALS)
+    if (pattern.test(error)) return text;
+  return error;
+}
+
 /** 浏览器还没打开任何网页：about:blank 或空网址。没带网址的帧当作真页面。 */
 export function isBlankPageUrl(url: string | undefined): boolean {
   if (url === undefined) return false;
@@ -368,7 +389,7 @@ export function LiveScreen({
         return;
       }
       if (message.type === "error") {
-        onProblem?.(message.error ?? "无法显示屏幕。");
+        onProblem?.(screenProblem(message.error ?? "无法显示屏幕。"));
         return;
       }
       if (message.type !== "frame" || !message.data) return;
@@ -446,7 +467,8 @@ export function LiveScreen({
       onReady: (ready) => {
         setConnected(ready);
       },
-      onProblem: (problem) => onProblem?.(problem),
+      onProblem: (problem) =>
+        onProblem?.(problem === null ? null : screenProblem(problem)),
       onDisconnect: () => {
         frameSize.current = null;
         latestFrame.current = null;

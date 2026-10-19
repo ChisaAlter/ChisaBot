@@ -2394,8 +2394,12 @@ Magpie」只显示一行 `Magpie <版本>`，看不出有没有新版，也没�
   `verifyOwnership` 整个删掉，`inputReady` 这个副本一起删。
 - **能不能操作，只看 `driving`**（= `control.holder === "human" && !control.transitioning`）。这是页面上
   已经在显示的那个事实，也是唯一的来源。
-- **人到底拿不拿着轮子，是计算机说了算**：`humanMayDrive()` 不成立时 agent-computer 回一条中文拒绝，
+- **人到底拿不拿着轮子，是计算机说了算**：`humanMayDrive()` 不成立时 agent-computer 回一条拒绝，
   大屏把它显示出来。**说一句「先接管」远好过什么都不说。**
+- **拒绝得说人话**：计算机的拒因是英文（`Take control before driving the computer yourself.` 等），而这个界面里
+  其他每一句都是中文。`screenProblem()` 把「先接管 / 屏幕还在打开 / 这块屏幕不归这个窗口 / 电脑停了」翻成中文，
+  认不出的错误原样显示（不吞掉，英文也比没说强）。这些话在直播这条路上原来到不了——App 自己不通过就不发，
+  计算机也就没机会拒绝。
 - 键盘 / 滚轮的监听只依赖 `driving`；`send()` 在发送那一刻看 socket 开没开。socket 没开时地址栏不再空转
   （`navigate` 显示「屏幕正在重新连接，稍后再试。」），而不是留一个永远转的圈。
 - **滚轮单位**：`WheelEvent.deltaMode` 是「行」（1）或「页」（2）时，`deltaY` 只有 3 而不是约 100，
@@ -2407,4 +2411,5 @@ Magpie」只显示一行 `Magpie <版本>`，看不出有没有新版，也没�
   （重连即 ready，不再等控制权），以及重连后重试预算恢复的两条。
 - `app/tests/live-screen-mouse.test.tsx`：「input still goes through after the screen reconnects」
   （socket 断掉重连后，滚轮仍然带着坐标发出去）。
+- `app/tests/live-screen-blank-page.test.ts`：拒因译成中文；认不出的错误原样透出。
 - `agent-computer` 侧不变：拒绝仍然由 `humanMayDrive()` 给，`/stream` 的输入校验不变。

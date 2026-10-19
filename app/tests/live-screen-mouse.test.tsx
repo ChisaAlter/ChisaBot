@@ -219,19 +219,22 @@ test("input still goes through after the screen reconnects", async () => {
   const { canvas, socket } = await liveCanvas();
   const first = socket;
 
-  // Drop the stream and let the view's own backoff bring it back. Wrapped in `act` because the
-  // reconnect is a timer rather than a user event: its state updates would otherwise land outside
-  // React's knowledge and print an act() warning that has nothing to do with what this asserts.
-  await act(async () => {
+  // Drop the stream and let the view's own backoff bring it back. The close arrives from a socket
+  // callback rather than a user event, so React has to be told about it; the reconnect that follows
+  // runs inside `waitFor`, which is wrapped in `act` already.
+  act(() => {
     first.close();
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+  });
+  await waitFor(() => expect(SocketDouble.latest).not.toBe(first), {
+    timeout: 3000,
   });
   const reconnected = SocketDouble.latest as SocketDouble;
-  expect(reconnected).not.toBe(first);
 
   // The reconnected socket sends its own opening frame, which is what the coordinates are mapped to.
-  reconnected.onmessage?.({
-    data: JSON.stringify({ type: "frame", data: "AAAA", ...FRAME }),
+  act(() => {
+    reconnected.onmessage?.({
+      data: JSON.stringify({ type: "frame", data: "AAAA", ...FRAME }),
+    });
   });
   expect(reconnected.readyState).toBe(SocketDouble.OPEN);
 
