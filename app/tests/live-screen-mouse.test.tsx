@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { LiveScreen } from "@/components/computer/live-screen";
 
 /**
@@ -219,17 +219,21 @@ test("input still goes through after the screen reconnects", async () => {
   const { canvas, socket } = await liveCanvas();
   const first = socket;
 
-  first.close();
-  await waitFor(() => expect(SocketDouble.latest).not.toBe(first), {
-    timeout: 3000,
+  // Drop the stream and let the view's own backoff bring it back. Wrapped in `act` because the
+  // reconnect is a timer rather than a user event: its state updates would otherwise land outside
+  // React's knowledge and print an act() warning that has nothing to do with what this asserts.
+  await act(async () => {
+    first.close();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
   });
   const reconnected = SocketDouble.latest as SocketDouble;
+  expect(reconnected).not.toBe(first);
 
   // The reconnected socket sends its own opening frame, which is what the coordinates are mapped to.
   reconnected.onmessage?.({
     data: JSON.stringify({ type: "frame", data: "AAAA", ...FRAME }),
   });
-  await waitFor(() => expect(reconnected.readyState).toBe(SocketDouble.OPEN));
+  expect(reconnected.readyState).toBe(SocketDouble.OPEN);
 
   const wheel = new MouseEvent("wheel", {
     clientX: 40,
