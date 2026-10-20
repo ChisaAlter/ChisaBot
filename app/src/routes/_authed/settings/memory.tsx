@@ -15,6 +15,7 @@ import {
 } from "@/components/memory/memory-notes";
 import { Button, T } from "@/components/ui/button";
 import { Card, ErrorCard, Toolbar } from "@/components/ui/skyglass";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { memoryNoteKeys, memoryNotesQueryOptions } from "@/lib/memory-notes";
 
@@ -47,6 +48,18 @@ function MemoryPage() {
   const groups = MEMORY_KINDS.filter((kind) => filter === "all" || kind === filter)
     .map((kind) => ({ kind, notes: shown.filter((note) => note.kind === kind) }))
     .filter((group) => group.notes.length);
+  /*
+   * 筛选条是 radiogroup（2026-10-20）：渲染出来的只有「有记录的种类」，方向键要按**渲染顺序**走，
+   * 所以先把可见项算出来，钩子和 map 用同一份，不然焦点会落到不存在的项上。
+   */
+  const kindOptions = (["all", ...MEMORY_KINDS] as const).filter(
+    (kind) => kind === "all" || (counts.get(kind) ?? 0) > 0,
+  );
+  const filterKeys = useSegmentedKeys<MemoryKind | "all">({
+    value: filter,
+    values: kindOptions,
+    onChange: setFilter,
+  });
 
   return (
     <>
@@ -76,12 +89,11 @@ function MemoryPage() {
         ) : (
           <>
             <Toolbar className="mem-toolbar">
-              <div aria-label={"按种类筛选"} className="sg-segmented mem-seg" role="radiogroup">
-                {(["all", ...MEMORY_KINDS] as const).map((kind) => {
+              <div aria-label={"按种类筛选"} className="sg-segmented mem-seg" {...filterKeys.groupProps} ref={filterKeys.groupRef} role="radiogroup">
+                {kindOptions.map((kind) => {
                   const count = kind === "all" ? notes.length : (counts.get(kind) ?? 0);
-                  if (kind !== "all" && !count) return null;
                   return (
-                    <button aria-checked={filter === kind} className="sg-segmented-item" key={kind} onClick={() => setFilter(kind)} role="radio" type="button">
+                    <button aria-checked={filter === kind} className="sg-segmented-item" key={kind} onClick={() => setFilter(kind)} role="radio" tabIndex={filterKeys.itemTabIndex(kind)} type="button">
                       <T>{kind === "all" ? "全部" : MEMORY_KIND_LABELS[kind]}</T>
                       <span className="mem-count"><T>{count}</T></span>
                     </button>

@@ -16,6 +16,7 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,6 +36,12 @@ export const Route = createFileRoute("/_authed/settings/")({
 function RouteComponent() {
   const { dark, setDark } = useTheme();
   const [keysOpen, setKeysOpen] = React.useState(false);
+  // 分段选择的键盘约定（2026-10-20）：roving tabindex + 方向键在浅色 / 深色之间换。
+  const themeKeys = useSegmentedKeys<"light" | "dark">({
+    value: dark ? "dark" : "light",
+    values: ["light", "dark"],
+    onChange: (next) => setDark(next === "dark"),
+  });
 
   /*
    * The measurements that used to be written out here now live in `PageShell`, which Skills, Admin
@@ -60,7 +67,7 @@ function RouteComponent() {
             </ItemContent>
             <ItemActions>
               {/* 分段控件 (DESIGN.md §11). 跟随系统 is not offered: the theme is stored as a boolean. */}
-              <div aria-label={"主题"} className="sg-segmented" role="radiogroup">
+              <div aria-label={"主题"} className="sg-segmented" {...themeKeys.groupProps} ref={themeKeys.groupRef} role="radiogroup">
                 {[
                   { on: false, label: "浅色", Icon: IconSun },
                   { on: true, label: "深色", Icon: IconMoon },
@@ -71,6 +78,7 @@ function RouteComponent() {
                     key={label}
                     onClick={() => setDark(on)}
                     role="radio"
+                    tabIndex={themeKeys.itemTabIndex(on ? "dark" : "light")}
                     type="button"
                   >
                     <Icon className="size-3.5" />
