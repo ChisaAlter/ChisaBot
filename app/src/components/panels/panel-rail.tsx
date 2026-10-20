@@ -49,6 +49,8 @@ const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 380;
+/** 常驻栏两侧的内边距合计：卡片宽度 = 栏宽 − 它（拖动期两格一起写）。 */
+const CARD_INSET = 24;
 const PANEL_CARD_CLASS = "glass-card glass-rail-inner rail-card flex h-full min-h-0 flex-col";
 
 function storedWidth() {
@@ -67,10 +69,29 @@ export function PanelRail({ className }: { className?: string }) {
   const [dragging, setDragging] = useState(false);
   const open = usePanelRailOpen();
   const start = useRef<{ x: number; width: number } | null>(null);
+  const railRef = useRef<HTMLElement | null>(null);
+  const cardRef = useRef<HTMLElement | null>(null);
+  /** 拖动期真正生效的宽度：指针事件只改它和 DOM，不动 state（见下）。 */
+  const liveWidth = useRef(width);
+
+  /*
+   * 拖动期不经过 React。面板栏里挂着实时面板、计算机卡和它们各自的轮询 / 查询，
+   * 每帧 setWidth 会把整栏 reconciliation 一遍，正好和聊天列「重新换行 + 贴底」抢同一帧；而宽度真的
+   * 要改的只有两格 inline style（栏 = width，卡 = width − 24）。这里直接写 DOM，松手才 setWidth +
+   * 落盘：一次拖动从 ~60–120 次渲染降到 2 次（开始那一下的 dragging 覆盖层 + 松手）。
+   *
+   * 不会被 React 覆盖回去：state 在拖动期不变，React 按自己上一次渲染的值 diff inline style，不会重写。
+   */
+  const applyWidth = (next: number) => {
+    liveWidth.current = next;
+    if (railRef.current) railRef.current.style.width = `${next}px`;
+    if (cardRef.current) cardRef.current.style.width = `${next - CARD_INSET}px`;
+  };
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     start.current = { x: event.clientX, width };
+    liveWidth.current = width;
     setDragging(true);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -82,7 +103,7 @@ export function PanelRail({ className }: { className?: string }) {
         Math.max(MIN_WIDTH, start.current.width + start.current.x - event.clientX),
       ),
     );
-    setWidth(next);
+    if (next !== liveWidth.current) applyWidth(next);
   };
   /*
    * 右栏宽度和展开 / 收起按机器人记（DESIGN.md §88）：换了机器人，在绘制之前换成它上次的样子；
@@ -93,9 +114,10 @@ export function PanelRail({ className }: { className?: string }) {
   widthBotRef.current = widthBot;
   useLayoutEffect(() => {
     const remembered = showRailFor(widthBot);
-    setWidth(
-      remembered !== undefined && remembered >= MIN_WIDTH && remembered <= MAX_WIDTH ? remembered : storedWidth(),
-    );
+    const next =
+      remembered !== undefined && remembered >= MIN_WIDTH && remembered <= MAX_WIDTH ? remembered : storedWidth();
+    liveWidth.current = next;
+    setWidth(next);
   }, [widthBot]);
   const keepWidth = (w: number) => {
     writeStoredPreference(WIDTH_KEY, String(w));
@@ -106,10 +128,10 @@ export function PanelRail({ className }: { className?: string }) {
     if (!start.current) return;
     start.current = null;
     setDragging(false);
-    setWidth((w) => {
-      keepWidth(w);
-      return w;
-    });
+    // 拖动期只写了 DOM：到这里才把最终宽度交给 React + localStorage / 按机器人记的那份。
+    const next = liveWidth.current;
+    setWidth(next);
+    keepWidth(next);
   };
 
   // Ctrl+Alt+B（⌘⌥B）收起 / 展开面板卡。只在面板栏存在的宽度（≥1280px）生效。
@@ -181,7 +203,7 @@ export function PanelRail({ className }: { className?: string }) {
     setPanelSheetOpen(false);
   }, [closeComputer]);
   // 抽屉和常驻栏用同一张卡片、同一个内容宽度；24px 是常驻栏左右的留边。
-  const cardWidth = width - 24;
+  const cardWidth = width - CARD_INSET;
   const panelBody = (
     <PanelRailBody
       controlsId={wide ? "chisabot-panel-rail" : "chisabot-panel-sheet"}
@@ -246,6 +268,7 @@ export function PanelRail({ className }: { className?: string }) {
       inert={!open}
       // Collapsed = zero width and no side padding; the inner column keeps its width, so it slides
       // off the right edge (clipped by .glass-body) instead of reflowing while it narrows.
+      ref={railRef}
       style={open ? { width } : { width: 0, paddingLeft: 0, paddingRight: 0 }}
     >
       {/* biome-ignore lint/a11y/useSemanticElements: a draggable splitter has no native element. */}
@@ -278,7 +301,7 @@ export function PanelRail({ className }: { className?: string }) {
       />
       {dragging ? <div className="fixed inset-0 z-40 cursor-col-resize" /> : null}
       {/* DESIGN-v4：面板栏是一张独立的玻璃卡；标题和收起在卡片自己的头部里。 */}
-      <section className={PANEL_CARD_CLASS} style={{ width: cardWidth }}>
+      <section className={PANEL_CARD_CLASS} ref={cardRef} style={{ width: cardWidth }}>
         {panelBody}
       </section>
     </aside>
