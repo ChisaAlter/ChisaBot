@@ -92,7 +92,7 @@ function CcHome() {
     <div className="cc-center" data-testid="cc-home">
       {gate ?? (
         <EmptyState
-          description="在左边的「草稿」里点「＋新会话」，就可以让 Claude Code 在云端写代码。每个会话有自己的目录，隔天回来接着说。"
+          description="点左边顶部的「新建会话」，或者在某个工作区下点「＋新会话」，Claude Code 就会在云端写代码。每个会话有自己的目录，隔天回来接着说。"
           icon={<IconTerminal2 className="size-6" />}
           title={workspaces.isPending ? "正在读取工作区…" : "选一个会话，或者新建一个"}
         />
