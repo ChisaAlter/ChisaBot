@@ -22,6 +22,11 @@ COPY --chown=apiuser:apiuser app/dist /app/app/dist
 COPY --chown=apiuser:apiuser server /app/server
 COPY --chown=apiuser:apiuser shared /app/shared
 COPY --chown=apiuser:apiuser examples/zh-CN /app/examples/zh-CN
+# 计算机服务（机器人的浏览器 / 接管直播屏）也用本仓库的代码，和 updater 的 Dockerfile.update 一致。
+# 以前只换了 app/server，计算机仍是底座镜像里的旧 agent-computer：网页的直播屏协议（keepalive pong、
+# 地址栏、标签）它不认识，接管大屏直接显示「That input message has an unknown type.」。
+RUN rm -rf /app/agent-computer/src
+COPY --chown=apiuser:apiuser agent-computer/src /app/agent-computer/src
 
 RUN cd /app/server \
     && bun -e 'await import("@copilotkit/runtime/v2"); console.log("runtime_import_ok")'
