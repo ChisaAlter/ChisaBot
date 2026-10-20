@@ -96,6 +96,7 @@ import { useThreadInbox } from "@/lib/copilot/use-thread-inbox";
 import { readImageDims } from "@/lib/image-dims";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
 import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
+import { agentModelQueryOptions, modelCatalogQueryOptions } from "@/lib/model-selection/queries";
 import { panelAuthoringForwardedProps, panelKeys } from "@/lib/panels/api";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { queryClient } from "@/query-client";
@@ -358,6 +359,20 @@ export function ChannelChat({
   const { copilotkit } = useCopilotKit();
   const modelQueryClient = useQueryClient();
   const modelSaving = useModelSelectionSaving(runtimeAgentId);
+  /*
+   * 选中的模型还在不在模型列表里（P1，2026-10-20）。space-bunny-free 被下线那天，药丸只是变个颜色，
+   * 发出去必然 410、失败卡还说不出原因。现在发送前直接挡下来并说清楚，别浪费一轮。
+   * catalog 读不到时不挡（宁可发一次，也不要在网关抽风时把整个输入框锁死）。
+   */
+  const modelState = useQuery(agentModelQueryOptions(runtimeAgentId));
+  const modelCatalog = useQuery(modelCatalogQueryOptions());
+  const modelMissing = Boolean(
+    modelState.data &&
+      modelCatalog.data &&
+      !modelCatalog.data.models.some((item) => item.id === modelState.data!.model),
+  );
+  const modelMissingRef = useRef(modelMissing);
+  modelMissingRef.current = modelMissing;
   // Mentions are scoped to the channel's permitted agents.
   const { data: agentProfiles } = useQuery(agentListQueryOptions());
   const channelAgentId = `channel:${channel.id}`;
@@ -928,6 +943,11 @@ export function ChannelChat({
     /** 重新生成 / 编辑后重发（§67）：原样发这份内容（带着原来的附件段），不再从文字和附件拼。 */
     contentOverride?: Message["content"],
   ) => {
+    // 模型已经不在列表里：这一轮必失败，先挡下来，别让消息堆在对话里没人回答（P1，2026-10-20）。
+    if (modelMissingRef.current)
+      throw new Error(
+        "这个模型已下线（不在模型列表里），这一条没有发出去。点输入框右下角的模型名换一个再发。",
+      );
     // Wait briefly for the runtime agent instance before adding the message.
     if (!isReadyRef.current) {
       await Promise.race([
@@ -1422,6 +1442,19 @@ export function ChannelChat({
       user.content as Message["content"],
     );
   }, []);
+  /**
+   * 重发「发出去但没有回答」的那一条（刷新后才认出来的那种，P1 2026-10-20）：从它那里重发一轮，
+   * 走和「重新生成」同一条路（服务器截断 → 本机截断 → 原样再发）。
+   */
+  const retryUnanswered = useCallback(() => {
+    const list = agentRef.current.messages;
+    const at = lastUserIndex(list);
+    if (at < 0) return;
+    const user = list[at]!;
+    void resendRef
+      .current(user.id, "regenerate", user.content as Message["content"])
+      .catch(() => undefined);
+  }, []);
   const editAndResend = useCallback(async (messageId: string, text: string) => {
     const user = agentRef.current.messages.find(
       (message) => message.id === messageId,
@@ -1699,6 +1732,7 @@ export function ChannelChat({
                 void regenerate().catch(() => undefined);
                 return true;
               }}
+              onRetryUnanswered={retryUnanswered}
               onBeforeRetry={() => {
                 const target = agentRef.current;
                 const list = target.messages;

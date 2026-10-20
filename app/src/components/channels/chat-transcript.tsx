@@ -81,7 +81,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { readFiring } from "@/lib/channels/routine-firing";
-import { friendlyError } from "@/lib/chat/friendly-error";
+import { friendlyError, UNANSWERED_TURN_REASON } from "@/lib/chat/friendly-error";
 import { supersededPageCalls } from "@/lib/chat/page-cards";
 import {
   isContinuousSend,
@@ -168,6 +168,11 @@ type ChatTranscriptProps = {
   stoppedTurns?: ReadonlySet<string>;
   /** Re-run the turn that failed. Without it the error card has no retry button. */
   onRetry?: () => void;
+  /**
+   * 重发「发出去了但没有回答」的那一条（刷新后才认出来的那种，2026-10-20 P1）。
+   * 和 `onRetry` 分开：那条消息已经在历史里，重试是「从它那里重发」，不是把草稿里的字再发一次。
+   */
+  onRetryUnanswered?: () => void;
   /** 会话最上方的一句提示（例如较早的消息读不到），在第一条消息之前。 */
   topNotice?: React.ReactNode;
   /** 换了备用模型的轮次（开启那一轮的用户消息 id → 一句说明），那一轮末尾一行淡色小字（DESIGN.md §61）。 */
@@ -2621,6 +2626,27 @@ function useKeepBottomOnPrepend(
   }, [firstId, viewport]);
 }
 
+/**
+ * 历史里最后一轮是不是「人说了、后面什么都没有」——刷新之后错误卡和「重试」据此重建（P1，2026-10-20）。
+ *
+ * 只认最后一条：中间那些「人发了、没人回」的老消息不逐条弹卡（那是历史，重发从最后一条开始）。
+ * 还在跑、有排队消息、有「已停止」标记、或者这一轮本来是服务器放的（定时任务 / 任务结果）都不算。
+ * 纯函数，单测直接喂列表。
+ */
+export function unansweredTurn(
+  items: readonly TranscriptItem[],
+  busy: boolean,
+  stoppedTurns: ReadonlySet<string> | undefined,
+  queued = 0,
+): TranscriptItem | null {
+  if (busy || queued > 0) return null;
+  const last = items.at(-1);
+  if (!last || last.kind !== "text" || last.role !== "user") return null;
+  if (!isPersonSentMessage(last.role, last.text)) return null;
+  if (stoppedTurns?.has(last.id)) return null;
+  return last;
+}
+
 export function ChatTranscript({
   busy = false,
   scrollKey,
@@ -2633,6 +2659,7 @@ export function ChatTranscript({
   stopped,
   stoppedTurns,
   onRetry,
+  onRetryUnanswered,
   topNotice,
   fallbacks,
   lastSentAt = null,
@@ -2667,6 +2694,16 @@ export function ChatTranscript({
       settled.length === shape.length &&
       settled.last === shape.last
     );
+  /*
+   * 刷新后照样认得出「发出去但没人回答」的那一轮（P1，2026-10-20）：重开对话时 RUN_ERROR 早没了，
+   * 只剩人那条消息。卡片跟着这一条重建，别让它凭空消失、也没有重试的入口。
+   * 恢复历史期间先不判（列表还是半截），认的是 `restoring` / `hydrating` 两个标记。
+   */
+  const unanswered =
+    !stopped && !restoring && !hydrating
+      ? unansweredTurn(items, busy, stoppedTurns, queued.length)
+      : null;
+  const tailStop = stopped ?? (unanswered ? UNANSWERED_TURN_REASON : undefined);
   // 一轮收成「开场一句 → 结果」，与机器人聊天同一规则（compactTurns，2026-10-13 第四轮）。
   const compact = compactTurns(
     items,
@@ -2923,8 +2960,11 @@ export function ChatTranscript({
              * 下一帧留白吃掉了再夹回来 = 往回挪一下（§94.6，1280 实测 5–8px）。这一格不参与锚定，锚落在看得见的第一条消息上。
              */}
             <div className="chat-tail contents [&>*]:order-1">
-              {stopped ? (
-                <Stopped onRetry={onRetry} reason={stopped} />
+              {tailStop ? (
+                <Stopped
+                  onRetry={stopped ? onRetry : onRetryUnanswered}
+                  reason={tailStop}
+                />
               ) : waitingOnFirstToken ? (
                 // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
                 // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。

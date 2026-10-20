@@ -43,6 +43,7 @@ export function ConversationView({
   stoppedTurns,
   onBeforeRetry,
   onRetryTurn,
+  onRetryUnanswered,
   stoppable,
   queueWhileBusy = false,
   restoring = false,
@@ -113,6 +114,8 @@ export function ConversationView({
   onBeforeRetry?: () => void;
   /** 先问调用方要不要自己重试这一轮（中途断的一轮从那条消息起重新生成，DESIGN.md §88.4）；返回 true 就不再走输入框。 */
   onRetryTurn?: () => boolean;
+  /** 重发一条「发出去但没有回答」的历史消息（刷新后才认出来的那种，P1）。 */
+  onRetryUnanswered?: () => void;
   /**
    * There is a run for Stop to abort, which is a narrower fact than `pending` and is the honest one
    * to draw a Stop button from. Defaults to `pending` for a caller with no gap between the two.
@@ -501,6 +504,7 @@ export function ConversationView({
           {...(lastSentAt ? { lastSentAt } : {})}
           {...(stoppedTurns ? { stoppedTurns } : {})}
           {...(stopped ? { stopped, onRetry: retry } : {})}
+          {...(onRetryUnanswered ? { onRetryUnanswered } : {})}
         />
       </div>
       {/* 输入框列：和消息列同宽同心，左右至少 16px、窄窗口有「面板」把手时右边让开把手（DESIGN.md §24 / §92，styles.css `.chat-composer-box`）。 */}

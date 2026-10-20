@@ -160,6 +160,11 @@ export function ModelPicker({ agentId, disabled = false }: { agentId: string; di
       >
         <ProviderMark provider={effectiveProvider} />
         <span className="model-pill-name truncate">{shortName(effective, models)}</span>
+        {/*
+          被下线的模型要一眼看得出来（2026-10-20）：以前只有颜色和 tooltip，发送照样失败。
+          现在药丸上直接写「已失效」，配合发送前的拦截。
+        */}
+        {modelMissing ? <span className="model-pill-tag">已失效</span> : null}
         {healthOf(effectiveProvider, catalog.data) === "bad" ? <HealthDot health="bad" /> : null}
         {saving ? <IconRefresh className="size-3 shrink-0 animate-spin opacity-60" /> : <IconChevronDown className="model-pill-chevron" />}
       </ComboboxPrimitive.Trigger>
