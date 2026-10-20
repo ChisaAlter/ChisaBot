@@ -978,6 +978,11 @@ export function ChannelChat({
           queryKey: panelKeys.session(runtimeAgentId),
         }),
     );
+    // 人在这段等待里按了停止：不要加消息、也不要开 run，把字交回输入框（composer 收到失败会还原）。
+    if (stopRequestedRef.current) {
+      stopRequestedRef.current = false;
+      throw new Error("已停止发送。");
+    }
     const userMessageId = newId();
     target.addMessage({
       content: contentOverride ?? toMessageContent(trimmed, attachments),
@@ -1182,6 +1187,12 @@ export function ChannelChat({
    * keeping here rather than in the view: the view sees only the turns it started itself, and a
    * queue that drains on the wrong one of those posts a correction into the middle of an answer.
    */
+  /**
+   * 停止发生在发送链路中途（消息还没进 agent）时的取消标记。`deliver` 在下一个 await 之后看到它
+   * 就放弃这一轮；否则停止只 abort 一个还不存在的 run，消息照发、回答照流（实机复现见 CHAT-01）。
+   */
+  const stopRequestedRef = useRef(false);
+
   const say = async (
     text: string,
     skillInstructions: string[] = [],
@@ -1194,6 +1205,8 @@ export function ChannelChat({
     // enabled and inert.
     if (!trimmed && attachments.length === 0 && contentOverride === undefined)
       return "";
+
+    stopRequestedRef.current = false;
 
     // Seeds and component actions share the same gate as the composer.
     assertModelSelectionNotSaving(modelQueryClient, runtimeAgentId);
@@ -1217,7 +1230,8 @@ export function ChannelChat({
         contentOverride,
       );
     } finally {
-      turnsRef.current -= 1;
+      // 停止会把计数直接清零，这里无条件减会变成负数，导致 sendInFlight 永远卡住（CHAT-02）。
+      turnsRef.current = Math.max(0, turnsRef.current - 1);
       setTurnsInFlight(turnsRef.current);
       if (turnsRef.current === 0) sendInFlightRef.current = false;
       // Sent from here rather than from an effect on `turnsInFlight`: this runs after unmount, that
@@ -1310,6 +1324,8 @@ export function ChannelChat({
       [...agent.messages].reverse().find((message) => message.role === "user");
     if (lastUser)
       setLocalStops((previous) => new Set([...previous, lastUser.id]));
+    // run 还没开始的停止：给发送链路留取消标记（deliver 会在下一个 await 之后放弃这一轮）。
+    if (!awaitingReply.current) stopRequestedRef.current = true;
     awaitingReply.current = false;
     // Track B：停止必须立刻放下 busy，不能干等 runPromise/finally——否则频道永久灰。
     turnsRef.current = 0;

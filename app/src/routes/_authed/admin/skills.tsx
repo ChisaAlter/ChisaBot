@@ -69,6 +69,11 @@ function RouteComponent() {
   const saveSkill = useMutation({
     ...saveSkillMutationOptions(queryClient),
     ...report,
+    onSuccess: () => {
+      setDraft(EMPTY_DRAFT);
+      setWriting(false);
+      setError(null);
+    },
   });
   const removeSkill = useMutation({
     ...removeSkillMutationOptions(queryClient),
@@ -256,9 +261,8 @@ function RouteComponent() {
               disabled={!(draft.slug && draft.title && draft.instructions)}
               onClick={() => {
                 // Admin-authored skills are the deployment's; a person's own are made elsewhere.
+                // 只有保存成功才清空草稿、关窗（失败时整篇指令必须留下来）。
                 saveSkill.mutate({ ...draft, global: true });
-                setDraft(EMPTY_DRAFT);
-                setWriting(false);
               }}
               size="sm"
             >
