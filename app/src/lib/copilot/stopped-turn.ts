@@ -62,6 +62,10 @@ export function friendlyStopReason(said: string): string {
   if (/timed? ?out|ETIMEDOUT|deadline/i.test(text)) return "模型太久没有回应。稍后再发，或换一个模型。";
   if (/fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|network|\b50[234]\b|bad gateway|service unavailable|overloaded/i.test(text))
     return "暂时连不上模型服务。稍后再发，或换一个模型。";
+  // 模型被服务商下线（2026-10-20 线上：space-bunny-free → 410「…has been deprecated」）。
+  // 以前落到底下那句英文原样的「这一轮出错了：…」，看不出是模型没了。
+  if (/deprecat|retired|已下线|不再提供/i.test(text))
+    return "这个模型已经下线了（服务商不再提供）。点输入框右下角的模型名换一个再发。";
   // 浏览器 AbortError 的原话：这一轮是被中断的，不是模型出错，别让人以为是程序坏了。
   if (/aborted without reason|AbortError|signal is aborted/i.test(text))
     return "这一轮被中断了（不是模型出错）。再发一次试试；一直这样就刷新一下页面。";

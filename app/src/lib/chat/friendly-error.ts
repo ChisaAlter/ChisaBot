@@ -76,6 +76,17 @@ const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boo
     hint: "该模型可能已下线，请在下方切换模型。",
     retryable: false,
   },
+  {
+    /*
+     * 选中的模型被服务商下线（2026-10-20 线上：space-bunny-free 返回 410
+     * 「OpenCode Zen: Model space-bunny-free has been deprecated. Use minimax-m3.1-flash-free instead.」）。
+     * 以前这条落到兜底，用户只看到「机器人在回答前停止了」，以为应用坏了——真实原因是模型没了。
+     */
+    test: /deprecat|retired|已下线|不再提供|no longer (available|supported)/i,
+    title: "这个模型已经下线了",
+    hint: "服务商不再提供这个模型。点输入框右下角的模型名换一个再发。",
+    retryable: false,
+  },
 ];
 
 export function friendlyError(raw: string): FriendlyError {
@@ -99,5 +110,11 @@ export function friendlyError(raw: string): FriendlyError {
   if (/[\u4e00-\u9fff]/.test(detail) && detail.length <= 60) {
     return { title: detail, detail: "", retryable: true };
   }
-  return { title: "这一轮没有完成", hint: "机器人在回答前停止了。", detail, retryable: true };
+  // 一句话都没有收到（模型不可用、这一轮被打断）：别只说「回答前停止了」，给一条能走的下一步。
+  return {
+    title: "这一轮没有收到回答",
+    hint: "可能是模型不可用（例如已下线）或这一轮被打断了。换一个模型再试，或点「重试」。",
+    detail,
+    retryable: true,
+  };
 }
