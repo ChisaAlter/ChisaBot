@@ -84,9 +84,10 @@ import { readFiring } from "@/lib/channels/routine-firing";
 import { friendlyError, UNANSWERED_TURN_REASON } from "@/lib/chat/friendly-error";
 import { supersededPageCalls } from "@/lib/chat/page-cards";
 import {
-  isContinuousSend,
   previousSentAt,
   rememberSent,
+  staysInSameTurn,
+  takeSendWhileBusy,
   type SentAtReading,
 } from "@/lib/chat/send-scroll";
 import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
@@ -2911,7 +2912,8 @@ export function ChatTranscript({
    * 别的行一概不会被拉到顶上。
    */
   /*
-   * §94：上一条用户消息发出不到 5 分钟（连续聊天）→ 这一条不带对齐标记，SettleAtEnd 让底部跟着长，不翻页。
+   * §94：上一条用户消息发出不到 30 分钟（连续聊天）**或者这一轮还在跑**（§94.7）→ 这一条不带对齐标记，
+   * SettleAtEnd 让底部跟着长，不翻页。
    * sendMode 在渲染时定（滚动容器在这次提交后的微任务里读标记），SettleAtEnd 的 layout effect 读同一个 ref。
    */
   const sendMode = useRef<SendMode>({ id: null, continuous: false });
@@ -2953,8 +2955,29 @@ export function ChatTranscript({
     }
   }, [hasItems, delays]);
 
+  /*
+   * 翻页对齐落在视口上 1/3，而不是顶到最上（DESIGN.md §94.7）：上面留着上一轮、下面留 2/3 给回答，
+   * 不会一发出就剩一整屏空白。滚动容器把「上一句露 48px」加在 scrollMargin 上，所以这里减掉它。
+   * 只影响「新的一轮对齐」这一条路：恢复位置（§88.3）自己带着 scrollMargin，不受影响。
+   */
+  const [paneHeight, setPaneHeight] = useState(0);
+  useEffect(() => {
+    const element = viewportRef.current;
+    if (!element) return;
+    const measure = () => setPaneHeight(Math.round(element.getBoundingClientRect().height));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const anchorOffset = paneHeight > 0 ? Math.max(0, Math.round(paneHeight / 3) - 48) : 0;
+
   return (
-    <MessageScrollerProvider autoScroll scrollPreviousItemPeek={48}>
+    <MessageScrollerProvider
+      autoScroll
+      scrollMargin={anchorOffset}
+      scrollPreviousItemPeek={48}
+    >
       <MessageScroller>
         <MessageScrollerViewport ref={viewportRef}>
           <MessageScrollerContent
@@ -3284,9 +3307,11 @@ function useFreshAnchor(
   ) {
     const now = Date.now();
     // 上一条（这条出现之前的最新一条用户消息）什么时候发的：服务器读数优先，本机记的兜底（§94）。
-    memo.continuous = isContinuousSend(
+    // 回答还在跑的时候人也算在同一轮里（§94.7）：长任务跑到十几分钟，补一句话不该把回答推走。
+    memo.continuous = staysInSameTurn(
       previousSentAt(memo.last, lastSentAt),
       now,
+      takeSendWhileBusy(now),
     );
     memo.id = newestUserMessageId;
     memo.at = now;

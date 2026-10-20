@@ -1,6 +1,6 @@
-// cb-sendscroll: §94 —— 5 分钟内连续发消息不翻页上跳；超过 5 分钟照旧对齐到顶上；打字不挪动对话。PREVIEW ONLY（向假模型发消息）。
+// cb-sendscroll: §94 / §94.7 —— 30 分钟内连续发消息不翻页上跳（回答中补话也算连续）；空闲超过 30 分钟照旧翻页，但落在视口上 1/3；打字不挪动对话。PREVIEW ONLY（向假模型发消息）。
 // env: BASE (preview), WIDTHS=1280,390, OUT=/out
-// 时钟：页面里的 Date 被换成可加偏移的版本（localStorage cbsend-off，ms），用来模拟「过了 6 分钟」。
+// 时钟：页面里的 Date 被换成可加偏移的版本（localStorage cbsend-off，ms），用来模拟「过了 35 分钟」。
 import { chromium } from "playwright-core";
 import fs from "node:fs";
 const base = process.env.BASE || "http://127.0.0.1:3291";
@@ -155,8 +155,8 @@ async function run(width) {
     const nu = newUserTop(f, before);
     const maxSp = Math.max(...f.map((x) => x.sp));
     const m = motion(f);
-    if (nu.min >= 140) fs.writeFileSync(`${OUT}/frames-${TAG}-${width}-${tag}.json`, JSON.stringify(f.map(({ rows, ...x }) => ({ ...x, n: Object.keys(rows).length, users: Object.entries(rows).filter(([, r]) => r[2]).map(([id, r]) => id.slice(0, 8) + "@" + r[0]) })), null, 0));
-    check(nu.min < 140, `${width} ${tag}: 隔了 >5 分钟 → 照旧对齐到顶上（新消息离顶 ${nu.min}px）`);
+    if (nu.min < 80 || nu.min > 320) fs.writeFileSync(`${OUT}/frames-${TAG}-${width}-${tag}.json`, JSON.stringify(f.map(({ rows, ...x }) => ({ ...x, n: Object.keys(rows).length, users: Object.entries(rows).filter(([, r]) => r[2]).map(([id, r]) => id.slice(0, 8) + "@" + r[0]) })), null, 0));
+    check(nu.min >= 80 && nu.min <= 320, `${width} ${tag}: 隔了 >30 分钟 → 翻页，但落在视口上 1/3（新消息离顶 ${nu.min}px）`);
     check(maxSp > 100, `${width} ${tag}: 照旧留出空白（spacer 最大 ${maxSp}px）`);
     check(m.back.length === 0, `${width} ${tag}: 0 次往回挪 ${m.back.length ? JSON.stringify(m.back.slice(0, 3)) : ""}`);
     await idle(); await page.waitForTimeout(1500);
@@ -168,10 +168,10 @@ async function run(width) {
   rows.push(await continuous("c2", "SLOW 接着问（连续）"));
   // 3) 短的一句
   rows.push(await continuous("c3", "你好"));
-  // 4) 过了 6 分钟：照旧翻页
-  await setOff(6 * 60 * 1000);
-  rows.push(await anchored("a4", "SLOW 隔了六分钟"));
-  // 5) 又接着发（以 a4 的发送时刻算 <5 分钟）
+  // 4) 过了 35 分钟（超过 30 分钟的界限）：照旧翻页
+  await setOff(35 * 60 * 1000);
+  rows.push(await anchored("a4", "SLOW 隔了三十五分钟"));
+  // 5) 又接着发（以 a4 的发送时刻算 <30 分钟）
   rows.push(await continuous("c5", "WORK 接着（连续，带干活卡）"));
 
   // 6) 打字：多行、长高，对话不跳
@@ -191,22 +191,22 @@ async function run(width) {
     await page.keyboard.press("Control+A"); await page.keyboard.press("Backspace"); await page.waitForTimeout(600);
   }
 
-  // 7) 刷新后：服务器时刻 <5 分钟 → 不翻页（走服务器读数，本机记的没了）
+  // 7) 刷新后：服务器时刻 <30 分钟 → 不翻页（走服务器读数，本机记的没了）
   await page.goto(channelUrl, { waitUntil: "domcontentloaded" }); await editor().waitFor({ timeout: 60000 }); await page.waitForTimeout(6000);
   const thread = await page.evaluate(async (u) => { const id = u.split("/channel/")[1]; const c = (await (await fetch("/api/channels")).json()).channels.find((x) => x.id === id); return c?.threadId; }, channelUrl);
   const sa = await api(`/api/copilotkit/threads/${encodeURIComponent(thread)}/sent-at`);
   log(width, "sent-at", sa.status, sa.body.slice(0, 200));
   check(sa.status === 200 && JSON.parse(sa.body).at, `${width} GET sent-at 有服务器时刻`);
   rows.push(await continuous("r7", "刷新后接着问（连续）"));
-  // 8) 刷新 + 服务器说上一条是 6 分钟前发的 → 照旧翻页。服务器时刻是真的，换算用的是它自己的「现在」，本机拨表骗不了它；
-  //    所以这里把 sent-at 的回复改成「6 分钟前」（只改这一个 GET 的回复）。
+  // 8) 刷新 + 服务器说上一条是 35 分钟前发的 → 照旧翻页。服务器时刻是真的，换算用的是它自己的「现在」，本机拨表骗不了它；
+  //    所以这里把 sent-at 的回复改成「35 分钟前」（只改这一个 GET 的回复）。
   await page.route("**/sent-at", async (route) => {
     const resp = await route.fetch(); const j = await resp.json();
-    if (j.at && j.now) j.at = new Date(Date.parse(j.now) - 6 * 60 * 1000).toISOString();
+    if (j.at && j.now) j.at = new Date(Date.parse(j.now) - 35 * 60 * 1000).toISOString();
     await route.fulfill({ response: resp, json: j });
   });
   await page.goto(channelUrl, { waitUntil: "domcontentloaded" }); await editor().waitFor({ timeout: 60000 }); await page.waitForTimeout(6000);
-  rows.push(await anchored("r8", "SLOW 刷新后隔了六分钟"));
+  rows.push(await anchored("r8", "SLOW 刷新后隔了三十五分钟"));
 
   await page.screenshot({ path: `${OUT}/send-${TAG}-${width}.png` }).catch(() => {});
   fs.writeFileSync(`${OUT}/send-${TAG}-${width}.json`, JSON.stringify(rows, null, 1));

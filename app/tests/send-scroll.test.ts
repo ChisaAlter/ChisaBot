@@ -5,26 +5,29 @@ import {
   localSentAt,
   previousSentAt,
   readSentAt,
+  noteSendWhileBusy,
   rememberSent,
   sentMessageId,
+  staysInSameTurn,
+  takeSendWhileBusy,
 } from "../src/lib/chat/send-scroll";
 
-describe("5 分钟内连续发消息不翻页（DESIGN.md §94）", () => {
+describe("连续发消息不翻页（DESIGN.md §94 / §94.7）", () => {
   const now = 1_800_000_000_000;
 
-  test("界限是 5 分钟", () => {
-    expect(CONTINUOUS_SEND_MS).toBe(300_000);
+  test("界限是 30 分钟", () => {
+    expect(CONTINUOUS_SEND_MS).toBe(1_800_000);
   });
 
-  test("上一条不到 5 分钟 → 连续", () => {
+  test("上一条不到 30 分钟 → 连续", () => {
     expect(isContinuousSend(now - 1_000, now)).toBe(true);
-    expect(isContinuousSend(now - 299_999, now)).toBe(true);
+    expect(isContinuousSend(now - 1_799_999, now)).toBe(true);
     expect(isContinuousSend(now, now)).toBe(true);
   });
 
-  test("满 5 分钟及以上 → 不连续（照旧翻页）", () => {
-    expect(isContinuousSend(now - 300_000, now)).toBe(false);
-    expect(isContinuousSend(now - 3_600_000, now)).toBe(false);
+  test("满 30 分钟及以上 → 不连续（照旧翻页）", () => {
+    expect(isContinuousSend(now - 1_800_000, now)).toBe(false);
+    expect(isContinuousSend(now - 7_200_000, now)).toBe(false);
   });
 
   test("不知道上一条什么时候发的 / 时钟倒了 → 不连续", () => {
@@ -32,6 +35,18 @@ describe("5 分钟内连续发消息不翻页（DESIGN.md §94）", () => {
     expect(isContinuousSend(undefined, now)).toBe(false);
     expect(isContinuousSend(Number.NaN, now)).toBe(false);
     expect(isContinuousSend(now + 5_000, now)).toBe(false);
+  });
+
+  test("回答还在跑 → 不管上一条隔了多久都算同一轮（§94.7）", () => {
+    expect(staysInSameTurn(now - 20 * 60_000, now, true)).toBe(true);
+    expect(staysInSameTurn(now - 3 * 3_600_000, now, true)).toBe(true);
+    expect(staysInSameTurn(null, now, true)).toBe(true);
+  });
+
+  test("空闲时照旧按时刻判断", () => {
+    expect(staysInSameTurn(now - 60_000, now, false)).toBe(true);
+    expect(staysInSameTurn(now - 31 * 60_000, now, false)).toBe(false);
+    expect(staysInSameTurn(null, now, false)).toBe(false);
   });
 
   test("服务器时刻按服务器的「现在」换算到本机时钟", () => {
@@ -67,5 +82,25 @@ describe("5 分钟内连续发消息不翻页（DESIGN.md §94）", () => {
     expect(previousSentAt("srv:attachments", { userMessageId: "srv", at: now - 7_000 })).toBe(now - 7_000);
     expect(previousSentAt("unknown", null)).toBeNull();
     expect(previousSentAt(null, null)).toBeNull();
+  });
+});
+
+describe("回答还在跑时补的那一句（DESIGN.md §94.7）", () => {
+  const at = 1_800_000_000_000;
+
+  test("提交时在回答 → 这一条算连续，取一次就清掉", () => {
+    noteSendWhileBusy(true, at);
+    expect(takeSendWhileBusy(at + 1_000)).toBe(true);
+    expect(takeSendWhileBusy(at + 1_000)).toBe(false);
+  });
+
+  test("提交时没在回答 → 不记", () => {
+    noteSendWhileBusy(false, at);
+    expect(takeSendWhileBusy(at + 1_000)).toBe(false);
+  });
+
+  test("发送没落地、过了 60 秒 → 过期，不误伤下一条", () => {
+    noteSendWhileBusy(true, at);
+    expect(takeSendWhileBusy(at + 61_000)).toBe(false);
   });
 });
