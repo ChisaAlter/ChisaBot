@@ -61,29 +61,31 @@ describe("简单回合（§93）", () => {
     expect(compact.work.get("t1")?.quiet).toBe(false);
   });
 
-  test("有一步失败 / 被拒 / 被中断：不收", () => {
+  /*
+   * 2026-10-20 用户：「全部不显示步数吧，只留回答」。做完、有回答的一轮，那行步数一律收起——
+   * 失败过的、步数多的、搜索网页的都不例外；还在跑 / 被停掉 / 没有回答的照旧（那时它是唯一的说明）。
+   */
+  test("做完有回答：那行步数一律收起，失败过的也一样", () => {
     for (const bad of [
       '"Refused. 设备离线 可用设备：…"',
       '"This call produced no result: the surface was interrupted before it could answer. Do not assume it succeeded."',
       JSON.stringify(JSON.stringify({ error: "设备离线" })),
     ]) {
       const items = [user("u1", "看电脑"), bot("a1", LEAD), call("t1", "device_list", DEVICES), call("t2", "device_screenshot", bad), bot("a2", ANSWER)];
-      expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(false);
+      expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(true);
     }
   });
 
-  test("说得出做了什么的照旧露着，只说得出「做了 N 步」的收起（2026-10-20）", () => {
-    // 全是搜索 / 读网页：这一行说的是「搜索 1 次 · 看了 1 个网页」，有信息量，不收。
+  test("说得出做了什么、跑命令、步数多：一样收起（只留回答）", () => {
     const web = [user("u1", "查"), call("t1", "web_search"), call("t2", "web_fetch"), bot("a2", "好了")];
-    expect(compactTurns(web, false, new Set()).work.get("t1")?.quiet).toBe(false);
-    // 命令 / 写文件 / 输入 / 存记忆：这一行只会写「做了 2 步」，收起，只留回答。
+    expect(compactTurns(web, false, new Set()).work.get("t1")?.quiet).toBe(true);
     for (const name of ["device_run_shell", "device_write_file", "device_input", "memory_save"]) {
       const items = [user("u1", "做"), call("t1", "device_list", DEVICES), call("t2", name), bot("a2", "好了")];
       expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(true);
     }
   });
 
-  test("超过 3 步：不收", () => {
+  test("超过 3 步也收起（只留回答）；还在跑 / 没回答时不收", () => {
     const items = [
       user("u1", "看"),
       call("t1", "device_list"),
@@ -92,8 +94,9 @@ describe("简单回合（§93）", () => {
       call("t4", "device_read_file"),
       bot("a2", "好了"),
     ];
-    expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(false);
-    expect(compactTurns([...items.slice(0, 4), items[5]!], false, new Set()).work.get("t1")?.quiet).toBe(true);
+    expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(true);
+    expect(compactTurns(items, true, new Set()).work.get("t1")?.quiet).toBe(false);
+    expect(compactTurns(items.slice(0, 5), false, new Set()).work.get("t1")?.quiet).toBe(false);
   });
 
   test("准备动作（看技能）不算步骤、也不挡", () => {
@@ -101,68 +104,75 @@ describe("简单回合（§93）", () => {
     expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(true);
   });
 
-  test("isQuietWork：确认卡、知道的用时", () => {
+  test("isQuietWork：默认做完就收，关掉才回到 §93 的细规则", () => {
     const calls: WorkCall[] = [
       { name: "device_list", arguments: "{}", done: true, id: "t1" },
       { name: "device_screenshot", arguments: "{}", done: true, id: "t2" },
     ];
+    // 默认（HIDE_FINISHED_WORK_SUMMARY）：做完、有回答 → 一律收起，不再看确认卡 / 用时。
     expect(isQuietWork({ calls, live: false, hasFinal: true })).toBe(true);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, confirmed: new Set(["t2"]) })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: 7 })).toBe(true);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: QUIET_MAX_SECONDS + 1 })).toBe(false);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, confirmed: new Set(["t2"]) })).toBe(true);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: QUIET_MAX_SECONDS + 1 })).toBe(true);
+    // 还在跑 / 没有回答 / 被停掉：不收——那时这一行是唯一的说明。
     expect(isQuietWork({ calls, live: true, hasFinal: true })).toBe(false);
-    expect(isQuietWork({ calls: [{ ...calls[0]!, done: false }], live: false, hasFinal: true })).toBe(false);
-    expect(isQuietWork({ calls: [], live: false, hasFinal: true })).toBe(false);
+    expect(isQuietWork({ calls, live: false, hasFinal: false })).toBe(false);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, stopped: true })).toBe(false);
+    // hideSummary: false 时是原来的 §93：确认卡、用时、失败、步数都还有效。
+    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false })).toBe(true);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, confirmed: new Set(["t2"]) })).toBe(false);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, seconds: 7 })).toBe(true);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, seconds: QUIET_MAX_SECONDS + 1 })).toBe(false);
+    expect(isQuietWork({ calls: [], live: false, hasFinal: true, hideSummary: false })).toBe(false);
+    expect(isQuietWork({ calls: [{ ...calls[0]!, done: false }], live: false, hasFinal: true, hideSummary: false })).toBe(false);
   });
 
   /*
-   * 2026-10-20 用户（截图「做了 2 步 · 13 秒」+「Claude Code 已装好…」）：「把做了几步去掉，隐藏」。
-   * 只说得出「做了 N 步」的一轮不再占一行；失败的（「1 步失败」）和搜索/网页次数照旧显示。
+   * 2026-10-20 用户（截图「做了 2 步 · 13 秒」压在回答上面）：「全部不显示步数吧，只留回答」。
+   * 跑命令的一轮、有失败的一轮，做完都收起；调用还在 compactTurns().work 里，调试开关一开就能看。
    */
-  test("只说得出「做了 N 步」的一轮整行收起（跑命令也算）", () => {
-    const items = [
+  test("只留回答：跑命令的一轮、有失败的一轮，做完都收起", () => {
+    const command = [
       user("u1", "装 Claude Code"),
       call("c1", "computer_run_command", JSON.stringify(JSON.stringify({ exitCode: 0, stdout: "done" }))),
       call("c2", "computer_run_command", JSON.stringify(JSON.stringify({ exitCode: 0 }))),
       bot("a2", "装好了：版本 2.1.303"),
     ];
-    const compact = compactTurns(items, false, new Set());
+    const compact = compactTurns(command, false, new Set());
     expect(compact.work.get("c1")?.quiet).toBe(true);
-    // 调用都还在（只是不画），打开「调试：显示工具调用」照常看得到。
     expect(compact.work.get("c1")?.calls.map((c) => c.name)).toEqual(["computer_run_command", "computer_run_command"]);
-  });
-
-  test("有一条失败就不收：这一行还有话要说", () => {
-    const items = [
+    const failed = [
       user("u1", "装 Claude Code"),
       call("c1", "computer_run_command", JSON.stringify(JSON.stringify({ exitCode: 0 }))),
       call("c2", "computer_run_command", "Error: signal is aborted without reason"),
       bot("a2", "没装成。"),
     ];
-    expect(compactTurns(items, false, new Set()).work.get("c1")?.quiet).toBe(false);
+    expect(compactTurns(failed, false, new Set()).work.get("c1")?.quiet).toBe(true);
   });
 
-  test("isQuietWork：genericSummary 越过工具白名单和用时，但越过不了失败 / 确认卡 / 没结果", () => {
+  test("§93 的 genericSummary 判定还在（hideSummary: false 时用）", () => {
     const calls: WorkCall[] = [
       { name: "computer_run_command", arguments: "{}", done: true, id: "c1" },
       { name: "computer_run_command", arguments: "{}", done: true, id: "c2" },
     ];
-    // 跑命令本来不在 QUIET_TOOLS 里，用时 600 秒也一样收（只说得出「做了 2 步」）。
-    expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: 600 })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: 600, genericSummary: true })).toBe(true);
-    expect(isQuietWork({ calls, live: false, hasFinal: false, genericSummary: true })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, genericSummary: true, confirmed: new Set(["c1"]) })).toBe(false);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, seconds: 600 })).toBe(false);
+    expect(
+      isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, seconds: 600, genericSummary: true }),
+    ).toBe(true);
+    expect(isQuietWork({ calls, live: false, hasFinal: false, hideSummary: false, genericSummary: true })).toBe(false);
     expect(
       isQuietWork({
-        calls: [{ ...calls[0]!, failed: true }],
+        calls,
         live: false,
         hasFinal: true,
+        hideSummary: false,
         genericSummary: true,
+        confirmed: new Set(["c1"]),
       }),
     ).toBe(false);
   });
 
-  test("workCallFailed", () => {    expect(workCallFailed(undefined)).toBe(true);
+  test("workCallFailed", () => {
+    expect(workCallFailed(undefined)).toBe(true);
     expect(workCallFailed(DEVICES)).toBe(false);
     expect(workCallFailed(SHOT)).toBe(false);
     expect(workCallFailed('"Refused. no"')).toBe(true);

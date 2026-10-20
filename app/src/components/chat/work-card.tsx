@@ -145,8 +145,10 @@ export function WorkRow({
           </AnimatePresence>
         </span>
         <span className="chat-work-meta">
-          {live ? (summary!.count > 0 ? `第 ${summary!.count} 步` : "") : done?.failed ? `${done.failed} 步失败` : ""}
-          {live && summary!.count > 0 && seconds !== null && seconds >= 2 ? " · " : ""}
+          {/*
+           * 跑着的时候只报时间，不再报「第 N 步」；做完的那一行整行不画（用户：全部不显示步数，只留回答）。
+           */}
+          {!live && done?.failed ? `${done.failed} 步失败` : ""}
           {!live && done?.failed && seconds !== null && seconds >= 2 ? " · " : ""}
           {seconds !== null && seconds >= 2 ? `${seconds} 秒` : ""}
         </span>

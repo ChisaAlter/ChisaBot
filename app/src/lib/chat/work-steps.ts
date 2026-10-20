@@ -251,6 +251,17 @@ export const QUIET_MAX_STEPS = 3;
 export const QUIET_MAX_SECONDS = 15;
 
 /**
+ * 做完的一轮还画不画那行步数。
+ *
+ * 2026-10-20 用户：「全部不显示步数吧，只留回答」。所以做完、有结果的一轮，那行步数一律收起——
+ * 失败过的、步数多的、搜索网页的都不再单独占一行，回答就是回答（失败的提示卡「这一轮没有做完」
+ * 和确认卡是另外的东西，不受影响）。还在跑的那一行照旧（不然聊天像卡住），只是不再写「第 N 步」。
+ *
+ * 想改回 §93 的「只收简单回合」，把这里改成 `false` 即可，下面的白名单 / 步数 / 用时规则都还在。
+ */
+export const HIDE_FINISHED_WORK_SUMMARY = true;
+
+/**
  * 这一轮做完以后要不要把干活卡整行收起（DESIGN.md §93，用户 2026-10-16「做了 2 步 7 秒这个应该隐藏」）。
  * 唯一的判断，渲染和测试都用它。全部成立才收：
  *  - 这一轮结束了（不在跑）、没被停掉，并且有结果（最后一段回答）；
@@ -273,6 +284,7 @@ export function isQuietWork({
   confirmed,
   seconds = null,
   genericSummary = false,
+  hideSummary = HIDE_FINISHED_WORK_SUMMARY,
 }: {
   calls: readonly WorkCall[];
   live: boolean;
@@ -281,8 +293,12 @@ export function isQuietWork({
   confirmed?: ReadonlySet<string> | undefined;
   seconds?: number | null;
   genericSummary?: boolean;
+  /** 见 `HIDE_FINISHED_WORK_SUMMARY`：做完有结果就整行收起，不再看失败 / 步数 / 用时。 */
+  hideSummary?: boolean;
 }): boolean {
   if (live || stopped || !hasFinal) return false;
+  // 用户要的是「只留回答」：不跑的时候那行步数一律不画（2026-10-20）。
+  if (hideSummary) return true;
   let steps = 0;
   for (const call of calls) {
     if (!call.done || call.failed) return false;
