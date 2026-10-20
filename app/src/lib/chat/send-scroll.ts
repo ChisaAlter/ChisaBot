@@ -8,15 +8,17 @@
  * 下面留出一屏空白给回答——隔了一段时间再开口，新的一轮从头看起，这是对的。可一来一回聊着的时候，每发一句
  * 整段对话就往上翻一页，眼睛刚读到的回答被推走，看着就是「上跳」。
  *
- * 规则：这一条之前的那条用户消息发出不到 CONTINUOUS_SEND_MS（5 分钟）→ 连续聊天：不带对齐标记、不新留空白，
- * 底部跟着内容平滑长高；否则（这段对话第一句、隔了 5 分钟以上、刷新后上一条早就发了）照旧对齐到顶上。
+ * 规则（2026-10-20 起，§94.7）：这一条之前的那条用户消息发出不到 CONTINUOUS_SEND_MS（30 分钟），**或者回答
+ * 还在跑**（`staysInSameTurn` 的 `busy`）→ 连续聊天：不带对齐标记、不新留空白，底部跟着内容平滑长高；否则
+ * （这段对话第一句、空闲且隔了 30 分钟以上、刷新后上一条早就发了）照旧对齐到顶上——但不再顶到最上，落在视口
+ * 上 1/3，上面留着上一轮、下面留 2/3 给回答（§94.7）。
  *
  * 时间以服务器为准（`GET /threads/:id/sent-at`：上一条用户消息第一次进入运行的时刻），换算到本机时钟
  * （服务器同时回它的「现在」，两边时钟差不进来）；服务器没回来 / 读不到时，用本机记下的发送时刻。
  */
 
-/** 连续聊天的界限（毫秒）。改这一个数就行。 */
-export const CONTINUOUS_SEND_MS = 5 * 60 * 1000;
+/** 连续聊天的界限（毫秒）。改这一个数就行（2026-10-20 从 5 分钟改成 30 分钟，见 §94.7）。 */
+export const CONTINUOUS_SEND_MS = 30 * 60 * 1000;
 
 /**
  * 这一条算不算「接着上一条聊」：上一条用户消息的发送时刻（本机时钟，毫秒）距现在不到 CONTINUOUS_SEND_MS。
@@ -26,6 +28,42 @@ export function isContinuousSend(previousSentAt: number | null | undefined, now:
   if (previousSentAt === null || previousSentAt === undefined || !Number.isFinite(previousSentAt)) return false;
   const gap = now - previousSentAt;
   return gap >= 0 && gap < limit;
+}
+
+/**
+ * 这一条要不要当成「新的一轮」翻页对齐（DESIGN.md §94.7）：**回答还在跑的时候人补的那一句不算新的一轮**——
+ * 机器人跑一个长任务十几分钟很常见，那时候补话，上一条早就过了 30 分钟，只看时刻会被判成「隔了很久重新开口」，
+ * 把正在看的回答推走。跑着的时候人显然还在这一轮里，接着聊。
+ *
+ * 其余照旧看 `isContinuousSend`：空闲时（上一轮答完了）隔了 30 分钟以上才开口，才算新的一轮、翻页对齐。
+ */
+export function staysInSameTurn(
+  previousSentAt: number | null | undefined,
+  now: number,
+  busy: boolean,
+  limit = CONTINUOUS_SEND_MS,
+): boolean {
+  return busy || isContinuousSend(previousSentAt, now, limit);
+}
+
+/*
+ * 「按下发送那一刻机器人还在回答」这一个事实，只有输入框知道：`busy` 在按下发送的同时就变 true，等到人那条
+ * 消息被持久化、出现在列表里时它已经是 true 了——在列表那边看，每一次发送都是「回答中」，那样就永远不翻页。
+ * 所以提交的那一刻记一下，消息出现时（`useFreshAnchor`）取走。只认 60 秒内的（发送失败、没落地时自然过期）。
+ */
+const SEND_WHILE_BUSY_MS = 60_000;
+let sentWhileBusyAt = 0;
+
+/** 提交发送：记下那一刻机器人是不是还在回答。 */
+export function noteSendWhileBusy(busy: boolean, at = Date.now()): void {
+  sentWhileBusyAt = busy ? at : 0;
+}
+
+/** 新的一条用户消息出现了：它在回答中补的哪一句吗？取一次就清掉。 */
+export function takeSendWhileBusy(now = Date.now()): boolean {
+  const at = sentWhileBusyAt;
+  sentWhileBusyAt = 0;
+  return at > 0 && now - at < SEND_WHILE_BUSY_MS;
 }
 
 /** 服务器读到的「最新一条用户消息什么时候发的」，已换算到本机时钟。 */

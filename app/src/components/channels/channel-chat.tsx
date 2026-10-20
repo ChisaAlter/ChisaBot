@@ -35,6 +35,7 @@ import {
   type ChannelSummary,
   channelKeys,
 } from "@/lib/channels/queries";
+import { noteSendWhileBusy } from "@/lib/chat/send-scroll";
 import { bindAgentBot, useActiveBot } from "@/lib/copilot/active-bot";
 import { observeApprovalAgent } from "@/lib/copilot/approval-context";
 import type { ThreadActivity } from "@/lib/copilot/bot-thread";
@@ -1360,7 +1361,7 @@ export function ChannelChat({
     () => new Set(),
   );
   const serverStops = useStoppedTurnIds(channel.threadId);
-  // 上一条用户消息的服务器发送时刻（§94：5 分钟内连续发消息不翻页）。
+  // 上一条用户消息的服务器发送时刻（§94：30 分钟内连续发消息不翻页；§94.7 补了「回答中补话」）。
   const lastSentAt = useLastSentAt(channel.threadId);
   const stoppedTurns = useMemo(
     () => new Set([...serverStops, ...localStops]),
@@ -1672,6 +1673,9 @@ export function ChannelChat({
                     Boolean(instruction),
                   );
 
+                // §94.7：提交这一刻机器人还在回答 → 这一句是接着聊，不翻页。busy 在按下发送的同时就变 true，
+                // 等这条消息落地、出现在列表里时它已经是 true 了，那时候再判会把每一次发送都当成「回答中」。
+                noteSendWhileBusy(agent.isRunning || turnsInFlight > 0);
                 await say(draft.text, skillInstructions, draft.attachments);
               }}
               /**
