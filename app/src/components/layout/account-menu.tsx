@@ -100,8 +100,12 @@ export function AccountMenu({
       toast.info("原型预览：退出登录已停用（会话与线上共用）");
       return;
     }
-    await signOut.mutateAsync();
-    await navigate({ to: "/sign" });
+    try {
+      await signOut.mutateAsync();
+      await navigate({ to: "/sign" });
+    } catch {
+      toast.error("退出失败，请检查网络后重试。");
+    }
   };
 
   // 只显示头像 + 名称 + 版本号；不显示邮箱和身份。

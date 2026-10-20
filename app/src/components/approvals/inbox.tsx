@@ -33,7 +33,7 @@ export function PendingInbox() {
   const requests = (upstream.data?.requests ?? []).filter((request) => request.status === "pending");
   const questions = upstream.data?.questions ?? [];
   const loading = recent.isPending || upstream.isPending;
-  const failed = recent.error && upstream.error;
+  const failed = recent.error || upstream.error;
   const total = confirms.length + requests.length + questions.length;
 
   return (

@@ -210,7 +210,7 @@ function ProfileForm({
   useEffect(() => () => (crop ? URL.revokeObjectURL(crop.src) : undefined), [crop?.src]);
 
   const trimmed = name.trim();
-  const ready = trimmed.length > 0 && [...trimmed].length <= 40 && (!required || Boolean(crop || current));
+  const ready = trimmed.length > 0 && [...trimmed].length <= 40;
   const dirty = trimmed !== initialName || Boolean(crop);
 
   return (
@@ -267,7 +267,7 @@ function ProfileForm({
         {required ? "保存并进入" : "保存"}
       </Button>
       {required && !ready ? (
-        <p className="text-center text-muted-foreground text-xs">{"请先上传头像并填写名称。"}</p>
+        <p className="text-center text-muted-foreground text-xs">{"填写显示名称即可开始；头像可以以后再换。"}</p>
       ) : null}
     </form>
   );

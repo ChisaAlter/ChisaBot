@@ -4,7 +4,7 @@ import { channelKeys } from "@/lib/channels/queries";
 import { client } from "@/lib/client";
 
 /** The sentence for every write here, since they all fail the same way to a reader. */
-const FALLBACK = "Onboarding could not be saved";
+const FALLBACK = "无法保存引导进度，请稍后重试。";
 
 /**
  * The status lives on the current user, so that is what a write refreshes.
