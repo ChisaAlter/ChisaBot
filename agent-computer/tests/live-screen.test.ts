@@ -226,6 +226,7 @@ afterAll(async () => {
     "wont-launch",
     "still-starting",
     "punctuation",
+    "pong-reply",
   ]) {
     await api("/computers/stop", botId, { method: "POST" }).catch(
       () => undefined,
@@ -292,6 +293,24 @@ describe.skipIf(!asked)("a socket that another connection replaced", () => {
     const read = await api("/read", botId);
     const { text } = (await read.json()) as { text: string };
     expect(text).not.toContain("z");
+  }, 30_000);
+});
+
+describe.skipIf(!asked)("a viewer answering the keepalive", () => {
+  test("its pong is not refused as unknown input", async () => {
+    // The viewer replies to the computer's `{type:"ping"}` with `{type:"pong"}`. That reply used to
+    // fall through to the input parser, which answered "That input message has an unknown type."
+    // and the takeover screen showed that error instead of the page.
+    const botId = "pong-reply";
+    await api("/navigate", botId, {
+      method: "POST",
+      body: JSON.stringify({ url: TYPING_PAGE }),
+    });
+    const viewer = watch(botId);
+    await viewer.casting;
+    viewer.socket.send(JSON.stringify({ type: "pong" }));
+    await wait(500);
+    expect(viewer.errors).toEqual([]);
   }, 30_000);
 });
 

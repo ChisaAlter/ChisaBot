@@ -52,6 +52,7 @@ import {
   keepAlivePingPayload,
   keepAlivePongPayload,
   isKeepAlivePing,
+  isKeepAlivePong,
   STREAM_IDLE_TIMEOUT_S,
   STREAM_KEEPALIVE_MS,
 } from "./stream-keepalive";
@@ -762,6 +763,10 @@ serve<StreamData>({
           }
           return;
         }
+        // The viewer answers our own `{type:"ping"}` with `{type:"pong"}` (live-screen.tsx). It is
+        // a heartbeat, not input: dropping it here keeps it away from parseInputMessage, which used
+        // to refuse it as an unknown type and cover the takeover screen with an error every 30s.
+        if (isKeepAlivePong(maybe)) return;
       } catch {
         /* fall through to the ordinary parser below */
       }
