@@ -96,6 +96,7 @@ import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";
 import {
   isQuietWork,
   isWorkCall,
+  summarizeDoneWork,
   type WorkCall,
   type WorkNote,
   workCallFailed,
@@ -2707,6 +2708,8 @@ export function ChatTranscript({
           hasFinal: true,
           confirmed,
           seconds: knownWorkSeconds(work.key),
+          // 除了「做了 N 步」什么也说不出的行：成功做完就整行收起（2026-10-20 用户要求）。
+          genericSummary: summarizeDoneWork(work.calls)?.generic === true,
         })
       ) {
         quietRows.add(anchor);
@@ -3408,6 +3411,8 @@ export function compactTurns(
           live,
           stopped: isStopped,
           hasFinal: final !== null,
+          // 只说得出「做了 N 步」的一轮（例如跑了几条命令）：收起这一行，只留回答（2026-10-20 用户要求）。
+          genericSummary: summarizeDoneWork(calls)?.generic === true,
         });
         work.set(anchor, { calls, key, live, notes, quiet });
       }

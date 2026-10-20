@@ -62,7 +62,17 @@ export function summarizeWork(calls: readonly WorkCall[]): WorkSummary | null {
 /** 不算「干活」的工具：画卡片、维护清单、读技能说明（结束后的一行里不数它们）。 */
 const NOT_WORK = new Set(["render_ui", "worker_plan", "skill_load", "skill_list"]);
 
-export type DoneWork = { label: string; steps: string[]; /** 失败 / 未完成的步数（FIX-07 / FIX-12）。 */ failed?: number };
+export type DoneWork = {
+  label: string;
+  steps: string[];
+  /** 失败 / 未完成的步数（FIX-07 / FIX-12）。 */
+  failed?: number;
+  /**
+   * 这一行只说得出「做了 N 步」，没有任何有信息量的说法（没有搜索 / 网页次数、没有失败）。
+   * 2026-10-20 用户：「把做了几步去掉，隐藏」——这种行整行收起，只留回答。
+   */
+  generic?: boolean;
+};
 
 /** 真的在干活的调用（干活卡从第一个这样的调用出现、画在它那一行，DESIGN.md §75.1）。 */
 export function isWorkCall(name: string): boolean {
@@ -77,9 +87,12 @@ export function summarizeDoneWork(calls: readonly WorkCall[]): DoneWork | null {
   const work = calls.filter((call) => !NOT_WORK.has(call.name));
   if (work.length === 0) return null;
   const failed = work.filter((call) => call.failed || !call.done).length;
+  const label = doneLabel(work);
   return {
-    label: doneLabel(work),
+    label,
     steps: workStepLines(work),
+    // 只是「做了 N 步」：除了步数什么也没说，收起来（§93，2026-10-20）。
+    ...(label === `做了 ${work.length} 步` ? { generic: true } : {}),
     ...(failed ? { failed } : {}),
   };
 }
@@ -246,6 +259,11 @@ export const QUIET_MAX_SECONDS = 15;
  *  - 没有确认卡（`confirmed` = 有确认请求的调用 id）；
  *  - 用时：这一页知道（亲眼看着跑过 / 记下过）时不超过 QUIET_MAX_SECONDS 秒；不知道就不看。
  * 收起的只是这一行的画法：调用、过程话都还在 `compactTurns().work` 里，打开「调试：显示工具调用」照常全画。
+ *
+ * `genericSummary`（2026-10-20 用户「把做了几步去掉，隐藏」）：这一行除了「做了 N 步」什么也说不出
+ * （`summarizeDoneWork().generic`，例如跑了几条命令）。这种行没有信息量：工具白名单和用时都不再拦它，
+ * 成功做完、步数不超过 QUIET_MAX_STEPS 就整行收起——「做了 2 步 · 13 秒」不该占在回答上面。
+ * 失败的（「1 步失败」）照常显示；步数多的（>QUIET_MAX_STEPS）也照常显示。
  */
 export function isQuietWork({
   calls,
@@ -254,6 +272,7 @@ export function isQuietWork({
   hasFinal,
   confirmed,
   seconds = null,
+  genericSummary = false,
 }: {
   calls: readonly WorkCall[];
   live: boolean;
@@ -261,6 +280,7 @@ export function isQuietWork({
   hasFinal: boolean;
   confirmed?: ReadonlySet<string> | undefined;
   seconds?: number | null;
+  genericSummary?: boolean;
 }): boolean {
   if (live || stopped || !hasFinal) return false;
   let steps = 0;
@@ -268,9 +288,12 @@ export function isQuietWork({
     if (!call.done || call.failed) return false;
     if (call.id && confirmed?.has(call.id)) return false;
     if (NOT_WORK.has(call.name)) continue;
-    if (!QUIET_TOOLS.has(call.name)) return false;
+    // 只说得出「做了 N 步」的一轮，工具在不在白名单里都不影响：这一行本来就没说做了什么。
+    if (!QUIET_TOOLS.has(call.name) && !genericSummary) return false;
     steps += 1;
   }
   if (steps === 0 || steps > QUIET_MAX_STEPS) return false;
+  // 说得出「跑了很久」的那几轮不再悄悄收起；「做了 N 步」本身没有信息量，用时也不拦它。
+  if (genericSummary) return true;
   return seconds === null || seconds <= QUIET_MAX_SECONDS;
 }

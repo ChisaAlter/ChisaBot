@@ -72,10 +72,14 @@ describe("简单回合（§93）", () => {
     }
   });
 
-  test("跑了命令 / 改了文件 / 上网搜索：不收（那些步骤本身就是用户想看的）", () => {
-    for (const name of ["device_run_shell", "device_write_file", "device_input", "web_search", "web_fetch", "memory_save"]) {
+  test("说得出做了什么的照旧露着，只说得出「做了 N 步」的收起（2026-10-20）", () => {
+    // 全是搜索 / 读网页：这一行说的是「搜索 1 次 · 看了 1 个网页」，有信息量，不收。
+    const web = [user("u1", "查"), call("t1", "web_search"), call("t2", "web_fetch"), bot("a2", "好了")];
+    expect(compactTurns(web, false, new Set()).work.get("t1")?.quiet).toBe(false);
+    // 命令 / 写文件 / 输入 / 存记忆：这一行只会写「做了 2 步」，收起，只留回答。
+    for (const name of ["device_run_shell", "device_write_file", "device_input", "memory_save"]) {
       const items = [user("u1", "做"), call("t1", "device_list", DEVICES), call("t2", name), bot("a2", "好了")];
-      expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(false);
+      expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(true);
     }
   });
 
@@ -111,8 +115,54 @@ describe("简单回合（§93）", () => {
     expect(isQuietWork({ calls: [], live: false, hasFinal: true })).toBe(false);
   });
 
-  test("workCallFailed", () => {
-    expect(workCallFailed(undefined)).toBe(true);
+  /*
+   * 2026-10-20 用户（截图「做了 2 步 · 13 秒」+「Claude Code 已装好…」）：「把做了几步去掉，隐藏」。
+   * 只说得出「做了 N 步」的一轮不再占一行；失败的（「1 步失败」）和搜索/网页次数照旧显示。
+   */
+  test("只说得出「做了 N 步」的一轮整行收起（跑命令也算）", () => {
+    const items = [
+      user("u1", "装 Claude Code"),
+      call("c1", "computer_run_command", JSON.stringify(JSON.stringify({ exitCode: 0, stdout: "done" }))),
+      call("c2", "computer_run_command", JSON.stringify(JSON.stringify({ exitCode: 0 }))),
+      bot("a2", "装好了：版本 2.1.303"),
+    ];
+    const compact = compactTurns(items, false, new Set());
+    expect(compact.work.get("c1")?.quiet).toBe(true);
+    // 调用都还在（只是不画），打开「调试：显示工具调用」照常看得到。
+    expect(compact.work.get("c1")?.calls.map((c) => c.name)).toEqual(["computer_run_command", "computer_run_command"]);
+  });
+
+  test("有一条失败就不收：这一行还有话要说", () => {
+    const items = [
+      user("u1", "装 Claude Code"),
+      call("c1", "computer_run_command", JSON.stringify(JSON.stringify({ exitCode: 0 }))),
+      call("c2", "computer_run_command", "Error: signal is aborted without reason"),
+      bot("a2", "没装成。"),
+    ];
+    expect(compactTurns(items, false, new Set()).work.get("c1")?.quiet).toBe(false);
+  });
+
+  test("isQuietWork：genericSummary 越过工具白名单和用时，但越过不了失败 / 确认卡 / 没结果", () => {
+    const calls: WorkCall[] = [
+      { name: "computer_run_command", arguments: "{}", done: true, id: "c1" },
+      { name: "computer_run_command", arguments: "{}", done: true, id: "c2" },
+    ];
+    // 跑命令本来不在 QUIET_TOOLS 里，用时 600 秒也一样收（只说得出「做了 2 步」）。
+    expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: 600 })).toBe(false);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: 600, genericSummary: true })).toBe(true);
+    expect(isQuietWork({ calls, live: false, hasFinal: false, genericSummary: true })).toBe(false);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, genericSummary: true, confirmed: new Set(["c1"]) })).toBe(false);
+    expect(
+      isQuietWork({
+        calls: [{ ...calls[0]!, failed: true }],
+        live: false,
+        hasFinal: true,
+        genericSummary: true,
+      }),
+    ).toBe(false);
+  });
+
+  test("workCallFailed", () => {    expect(workCallFailed(undefined)).toBe(true);
     expect(workCallFailed(DEVICES)).toBe(false);
     expect(workCallFailed(SHOT)).toBe(false);
     expect(workCallFailed('"Refused. no"')).toBe(true);
