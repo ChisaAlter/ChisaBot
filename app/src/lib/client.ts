@@ -24,9 +24,18 @@ export type ClientOptions = {
    * is the sentence that reaches the screen when the server is the one that broke.
    */
   fallback?: string;
-  /** For the calls a Bot makes on a person's behalf, which are abandoned when the turn is. */
+  /**
+   * For the calls a Bot makes on a person's behalf, which are abandoned when the turn is.
+   *
+   * Absent means a 30s default timeout (DEFAULT_TIMEOUT_MS): a hung server turns the page into an
+   * endless spinner otherwise. Calls that need a long-lived connection (SSE / long-polling) must
+   * pass their own signal.
+   */
   signal?: AbortSignal;
 };
+
+/** Default budget for one request when the caller did not bring its own signal. */
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** Every request in this app is authenticated, and every one of them is JSON or nothing. */
 async function send(path: string, options: ClientOptions): Promise<Response> {
@@ -38,7 +47,7 @@ async function send(path: string, options: ClientOptions): Promise<Response> {
         ? undefined
         : { "content-type": "application/json" },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    ...(options.signal ? { signal: options.signal } : {}),
+    signal: options.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
   });
 }
 

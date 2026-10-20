@@ -127,21 +127,20 @@ export async function collectOpsHealth(options: {
     gatewayMode: options.gatewayMode,
   };
 
-  let database: DatabaseCheck;
-  try {
-    database = await withTimeout(
-      options.pingDatabase(),
-      DB_TIMEOUT_MS,
-      "database",
-    );
-  } catch (error) {
-    database = { ok: false, error: reasonWithoutStatement(error) };
-  }
+  const checkDatabase = async (): Promise<DatabaseCheck> => {
+    try {
+      return await withTimeout(
+        options.pingDatabase(),
+        DB_TIMEOUT_MS,
+        "database",
+      );
+    } catch (error) {
+      return { ok: false, error: reasonWithoutStatement(error) };
+    }
+  };
 
-  let magpie: MagpieCheck;
-  if (!options.magpie?.configured) {
-    magpie = { ok: null, configured: false };
-  } else {
+  const checkMagpie = async (): Promise<MagpieCheck> => {
+    if (!options.magpie?.configured) return { ok: null, configured: false };
     try {
       const status = await withTimeout(
         options.magpie.status({ refresh: true }),
@@ -152,7 +151,7 @@ export async function collectOpsHealth(options: {
       const providersReady = status.providers.filter(
         (p) => p.ready && p.enabled,
       ).length;
-      magpie = {
+      return {
         ok: status.reachable,
         configured: true,
         reachable: status.reachable,
@@ -163,33 +162,39 @@ export async function collectOpsHealth(options: {
         ...(status.error ? { error: status.error.slice(0, 200) } : {}),
       };
     } catch (error) {
-      magpie = {
+      return {
         ok: false,
         configured: true,
         reachable: false,
         error: reasonWithoutStatement(error),
       };
     }
-  }
+  };
 
-  let computer: ComputerCheck;
-  if (!options.probeComputer) {
-    computer = { ok: null, configured: false };
-  } else {
+  const checkComputer = async (): Promise<ComputerCheck> => {
+    if (!options.probeComputer) return { ok: null, configured: false };
     try {
-      computer = await withTimeout(
+      return await withTimeout(
         options.probeComputer(),
         COMPUTER_BUDGET_MS,
         "computer",
       );
     } catch (error) {
-      computer = {
+      return {
         ok: false,
         configured: true,
         error: reasonWithoutStatement(error),
       };
     }
-  }
+  };
+
+  // 三个检查互相独立，并行跑：最坏耗时从 21s（5+8+8 串行）降到 8s（取最慢的那个）。
+  // 各自的超时和返回结构不变。
+  const [database, magpie, computer] = await Promise.all([
+    checkDatabase(),
+    checkMagpie(),
+    checkComputer(),
+  ]);
 
   const required: Array<{ name: string; ok: CheckOk }> = [
     { name: "app", ok: app.ok },

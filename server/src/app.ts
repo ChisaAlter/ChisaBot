@@ -3,6 +3,7 @@ import type { Hono as HonoApp, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
+import { compress } from "hono/compress";
 import { MAX_IMAGE_BYTES } from "../../shared/attachments";
 import type { PanelServices } from "./panels/service";
 import {
@@ -373,6 +374,35 @@ export function createApp(
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.use("*", async (_context, next) => withModelConnectionScope(next));
+  /*
+   * 慢请求日志：只记耗时超过 1 秒的 API 请求（一行 JSON：method/path/耗时），正常请求零开销。
+   * 线上有人反馈「某个页面慢」时，用它定位是哪个接口慢。path 不带 query，不记请求体和请求头。
+   */
+  app.use("/api/*", async (context, next) => {
+    const start = performance.now();
+    await next();
+    const durationMs = Math.round(performance.now() - start);
+    if (durationMs > 1000) {
+      console.info(
+        JSON.stringify({
+          type: "slow-request",
+          method: context.req.method,
+          path: context.req.path,
+          durationMs,
+        }),
+      );
+    }
+  });
+  /*
+   * API 响应 gzip 压缩：远程访问（Tailscale 等）省带宽、首屏更快。
+   * /api/copilotkit/* 是 SSE 流式接口（markEventStreamUnbuffered 已声明别压缩），必须排除——
+   * gzip 会攒够一块才发，流式回复就一段一段地蹦了。
+   */
+  const compressApi = compress();
+  app.use("/api/*", async (context, next) => {
+    if (context.req.path.startsWith("/api/copilotkit/")) return next();
+    return compressApi(context, next);
+  });
   mountDesktopConnectionFailure(app, desktopHostToken);
   mountProviderOAuthProxy(app, modelProviderProxy);
 
