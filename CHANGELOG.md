@@ -10,6 +10,12 @@
 
 - **侧栏一致性**：机器人列表去掉独立标题行，搜索框右侧保留新建按钮；窄窗口弹出面板与常驻面板共用卡片样式和记住的宽度。部署服务器网页后，PC 客户端刷新即可生效，无需重装。
 
+### 拖右栏更跟手：拖动期只写 DOM，不再每帧重渲染整栏
+
+- **改法**：`PanelRail` 的 `pointermove` 不再 `setWidth`，直接写栏 / 卡片两格 inline style；松手才 `setWidth` + 写 `localStorage` 与按机器人记的那份。React 按自己上一次渲染的值 diff inline style，拖动期 state 不变就不会覆盖回去。
+- **实测**（真浏览器 1280×800、CPU 4×、40 次 pointermove 往返、两次取中位数）：script 922ms → 446ms（−52%），task 4138ms → 3563ms（−14%），layout / style 次数不变（122 / 167）——省掉的是 React 那一层，排版照做。
+- **功能不变**：拖到 500 松手 → 500 / localStorage 500；双击 → 380；方向键 ±20；Ctrl+Alt+B 收起 0 / 展开 400；`tests/rail-drag-scroll` 三场景在改后构建上仍全过。
+
 ## 0.1.48 — 2026-10-20
 
 ### 性能：省带宽、少等几秒、慢接口有日志
