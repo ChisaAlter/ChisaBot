@@ -197,12 +197,14 @@ test("a pending change is drawn in the conversation where the action was, and de
       />
     </QueryClientProvider>,
   );
-  await view.findByRole("region", { name: "Waiting for your approval" });
-  expect(view.getByText(/This needs you: click on shop.example/)).toBeTruthy();
+  await view.findByRole("region", { name: /^需要你确认：/ });
+  expect(view.getByText(/付款、购买、转账要你亲自完成/)).toBeTruthy();
+  // 动作的对象仍是这一行自己的事实，随标题下方单独一行给出。
+  expect(view.getByText("shop.example")).toBeTruthy();
   // Another call's line is left to its own renderer.
   expect(view.getByText("Filled in field")).toBeTruthy();
   expect(view.queryByText("Clicked on page")).toBeNull();
-  fireEvent.click(view.getByRole("button", { name: "I did it myself" }));
+  fireEvent.click(view.getByRole("button", { name: "我已自己完成" }));
   await waitFor(() =>
     expect(sent).toContainEqual({
       path: "/api/approvals/request-1/decision",
@@ -261,10 +263,10 @@ test("in the real transcript shape a waiting click is folded into browser activi
       <BrowserActivity group={group} active={false} />
     </QueryClientProvider>,
   );
-  await view.findByRole("region", { name: "Waiting for your approval" });
+  await view.findByRole("region", { name: /^需要你确认：/ });
   // Only the waiting call gets a card; the finished navigate does not.
   expect(
-    view.getAllByRole("region", { name: "Waiting for your approval" }),
+    view.getAllByRole("region", { name: /^需要你确认：/ }),
   ).toHaveLength(1);
-  expect(view.getByRole("button", { name: "I did it myself" })).toBeTruthy();
+  expect(view.getByRole("button", { name: "我已自己完成" })).toBeTruthy();
 });

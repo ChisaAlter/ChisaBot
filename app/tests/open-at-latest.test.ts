@@ -16,20 +16,31 @@ describe("打开对话落在最新一条", () => {
   const transcript = src("components/channels/chat-transcript.tsx");
 
   test("恢复中画缓存 / 先读到的存储，不画回放的半截", () => {
-    expect(chat).toMatch(/restoring \? \(early \?\? cached \?\? EMPTY_MESSAGES\) : agent\.messages/);
+    // 这一句现在跨了三行（恢复中 → 早读到的 / 缓存 / 空，否则 agent.messages），所以按空白匹配而不是整行字面量。
+    expect(chat).toMatch(
+      /restoring\s*\?\s*\(early \?\? cached \?\? EMPTY_MESSAGES\)\s*:\s*agent\.messages/,
+    );
     expect(chat).toContain("hydrating={restoring}");
   });
 
   test("读存储和接入同时开始，只读一次", () => {
-    const mount = chat.indexOf("earlyRead.current = seed === null ? readThreadMessages(");
+    // 早读同样跨行（`earlyRead.current =` 换行后才是三元），用带空白的三元找它的位置。
+    const mount = chat.search(
+      /earlyRead\.current\s*=\s*seed === null\s*\?\s*readThreadMessages\(/,
+    );
     const join = chat.indexOf("await joinWithin({");
     expect(mount).toBeGreaterThan(-1);
     expect(mount).toBeLessThan(join);
-    expect(chat).toContain("!(mountReadOk.current && saysActivity(agentRef.current.messages, initialActivity.text))");
+    expect(chat).toMatch(
+      /!\(\s*mountReadOk\.current &&\s*saysActivity\(agentRef\.current\.messages, initialActivity\.text\)\s*\)/,
+    );
   });
 
   test("SettleAtEnd 在滚动容器里，平滑滚动跳过恢复期", () => {
-    expect(transcript).toMatch(/<SettleAtEnd hydrating=\{hydrating\}/);
+    // 属性各占一行：`<SettleAtEnd` 之后不远就是 `hydrating={hydrating}`。
+    expect(transcript).toMatch(
+      /<SettleAtEnd[\s\S]{0,400}?hydrating=\{hydrating\}/,
+    );
     expect(transcript).toContain("useSmoothSendScroll(viewportRef, newestUserMessageId, hydrating)");
     // 钉底部用滚动容器自己的 scrollToEnd（同时把它切回「跟着底部」），不是直接改 scrollTop。
     const settle = transcript.slice(transcript.indexOf("function SettleAtEnd"), transcript.indexOf("const FIRST_PAINT_STAGGER_COUNT"));

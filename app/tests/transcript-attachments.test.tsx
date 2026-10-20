@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import type { Message, UserMessage } from "@ag-ui/core";
 import type { Attachment } from "@copilotkit/react-core/v2";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
   cleanup,
@@ -135,7 +136,30 @@ function renderTranscript(
     queued?: readonly QueuedMessage[];
   } = {},
 ) {
-  return render(<ChatTranscript messages={messages} {...props} />);
+  /*
+   * ChatTranscript 会读这一串会话里的确认卡（react-query）。以前它不读，所以这个夹具直接 render；
+   * 现在每个用例都得有 QueryClient，否则整个文件红在「No QueryClient set」上（2026-10-20 清基线）。
+   */
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  const tree = (next: readonly Message[]) => (
+    <QueryClientProvider client={queryClient}>
+      <ChatTranscript messages={next} {...props} />
+    </QueryClientProvider>
+  );
+  const view = render(tree(messages));
+  return {
+    ...view,
+    /*
+     * 再画一次，像新消息到达时那样（props 不变，只是 messages 变长）。
+     *
+     * 滚动锚只出现在「首次绘制之后新来的那一条用户消息」上（`useFreshAnchor`，DESIGN.md §88.1）：
+     * 直接带着这一轮挂载，它就是历史，一个锚都没有。所以断言「刚发出去的附件轮会被对齐」时，
+     * 要先按历史挂上去、再把这一条追加进来——否则测的是挂着历史的样子，不是发送。
+     */
+    rerenderWith: (next: readonly Message[]) => view.rerender(tree(next)),
+  };
 }
 
 /** A file staged on the composer, as the SDK hands it over: settled, and pointing at its own row. */
@@ -173,22 +197,33 @@ test("an image attachment renders as an img carrying the attachment url", () => 
     userMessage([imagePart(url, "shot.png")]),
   ]);
 
-  const img = getByRole("img", { name: /attachment/i });
+  const img = getByRole("img", { name: /附件/ });
   expect(img.getAttribute("src")).toBe(url);
 });
 
-test("a broken image is replaced by a stated absence, not a broken-image glyph", () => {
-  const { getByRole, getByText, queryByRole } = renderTranscript([
+/*
+ * A PICTURE THAT WILL NOT LOAD LEAVES NOTHING BROKEN BEHIND — AND NOW SAYS WHY.
+ *
+ * `ImagePile.markBroken` drops a failed picture out of the pile, and a single picture IS the whole
+ * pile. Until 2026-10-20 that meant `shown.length === 0` → `return null`: the turn went blank with
+ * no word about it (this file's run flags it as a product gap; the gap is now closed). The pile
+ * keeps the reader's browser from drawing its own broken-image box AND, when nothing is left,
+ * says 「看不到这张附件了。」 in the same words the document tile and the opened picture use.
+ */
+test("a broken image says so instead of leaving a broken-image glyph", () => {
+  const { container, getByRole, queryByRole, getByText } = renderTranscript([
     userMessage([imagePart(attachmentUrl("att-image"), "gone.png")]),
   ]);
 
-  const img = getByRole("img", { name: /attachment/i });
-  fireEvent.error(img);
+  fireEvent.error(getByRole("img", { name: /附件/ }));
 
   // The <img> element is gone entirely — this reader is never left staring at the browser's own
   // broken-image box, which says nothing about what actually happened.
   expect(queryByRole("img")).toBeNull();
-  expect(getByText(/unavailable/i)).toBeTruthy();
+  // Nor is a tile left behind offering the file as though it were still there.
+  expect(container.querySelector(".rp-image-single")).toBeNull();
+  // A blank row is not the answer either: the absence is stated.
+  expect(getByText("看不到这张附件了。")).toBeTruthy();
 });
 
 test("an off-site attachment url is never fetched, it is reported missing", () => {
@@ -199,7 +234,7 @@ test("an off-site attachment url is never fetched, it is reported missing", () =
   ]);
 
   expect(queryByRole("img")).toBeNull();
-  expect(getByText("shot.png is unavailable.")).toBeTruthy();
+  expect(getByText("看不到「shot.png」了。")).toBeTruthy();
 });
 
 test("a message that is only an attachment still appears", () => {
@@ -221,24 +256,35 @@ test("a turn that is only an attachment is still waited on", () => {
     { busy: true },
   );
 
-  expect(getByRole("status").textContent).toBe("Thinking");
+  expect(getByRole("status").textContent).toBe("思考中");
 });
 
 test("a turn that is only an attachment anchors the scroller on itself", () => {
+  const earlier = userMessage("earlier");
   const message = userMessage([
     imagePart(attachmentUrl("att-image"), "shot.png"),
   ]);
-  const { container } = renderTranscript([message]);
+  const { container, rerenderWith } = renderTranscript([earlier]);
+
+  /*
+   * 挂载时带进来的每一轮都是历史，一个锚都不带（`useFreshAnchor`：只有首次绘制之后新出现的那一条
+   * 用户消息才带，而且只带 3 秒）。所以这里先按历史画出来、再把它追加进来——这正是频道里发送的那一刻。
+   */
+  expect(anchoredRows(container)).toEqual([]);
+
+  rerenderWith([earlier, message]);
 
   expect(anchoredRows(container)).toEqual([`${message.id}:attachments`]);
 });
 
 test("two files sent together anchor their turn exactly once", () => {
+  const earlier = userMessage("earlier");
   const message = userMessage([
     imagePart(attachmentUrl("att-image"), "one.png"),
     imagePart(attachmentUrl("att-image"), "two.png"),
   ]);
-  const { container } = renderTranscript([message]);
+  const { container, rerenderWith } = renderTranscript([earlier]);
+  rerenderWith([earlier, message]);
 
   // Two files are ONE row now, so there is only one thing that could be an anchor. Kept anyway:
   // the assertion that survives the grouping is the one worth having if the grouping is ever undone.
@@ -246,11 +292,13 @@ test("two files sent together anchor their turn exactly once", () => {
 });
 
 test("a caption and its attachment anchor their turn exactly once", () => {
+  const earlier = userMessage("earlier");
   const message = userMessage([
     textPart("does this look right?"),
     imagePart(attachmentUrl("att-image"), "shot.png"),
   ]);
-  const { container } = renderTranscript([message]);
+  const { container, rerenderWith } = renderTranscript([earlier]);
+  rerenderWith([earlier, message]);
 
   // ONE, and it is the PICTURES, which is the row the caption now sits under. A second anchor among
   // rows appended together makes the scroller give up and jump to the end, which would quietly cost
@@ -283,19 +331,13 @@ test("two files sent together are drawn as one row, not two", () => {
   expect(lists[0].querySelectorAll(".rp-pile .rp-pile-card")).toHaveLength(2);
 });
 
-test("a thumbnail is a crop, and what opens it is a button rather than a link", () => {
+test("a picture tile opens the whole picture from a button rather than a link", () => {
   /*
-   * WHAT THIS CANNOT ASSERT, SAID PLAINLY RATHER THAN LEFT AS A GAP. The picture opens in a dialog
-   * now, and none of that is observable here: Base UI portals its popup and under happy-dom the
-   * portal never mounts, while `aria-expanded` on the trigger stays `false` even though
-   * `onOpenChange(true)` demonstrably fires — the primitive's own state does not settle without a
-   * frame this environment never delivers. Both were checked before this comment was written.
-   *
-   * So the dialog was verified in Chrome instead — centred at its own aspect ratio, close button at
-   * the viewport's top right, and closing on the button, on Escape and on a click outside — and
-   * what is pinned here is the contract around it that a unit test CAN see: the tile is a crop, so
-   * something has to open the whole picture, and the thing that does is a button on this page
-   * rather than a link out of it.
+   * 单张图现在按原样画（`.rp-image-single img` 是 `object-fit: contain`，最高 300px），只有一摞里的
+   * 那几个缩略图才是裁的（`.rp-pile-card img` 是 `cover`）。所以这张卡片要断言的不是「裁过」，而是：
+   * 图在应用自己的图片块里，打开它的是本页的一个按钮，而不是一个指向原始字节的链接——原来的
+   * `aria-haspopup="dialog"` 是 Base UI 的触发器才有的，现在这层用的是自绘的 `Lightbox`（portal 到
+   * body），所以改成点开、看那个对话本身。
    */
   const url = attachmentUrl("att-image");
   const { getByRole, getByLabelText, queryByRole } = renderTranscript([
@@ -303,16 +345,21 @@ test("a thumbnail is a crop, and what opens it is a button rather than a link", 
   ]);
 
   expect(queryByRole("dialog")).toBeNull();
-  // `object-cover` is what makes it a square crop, and therefore what makes the dialog necessary.
-  expect(getByRole("img", { name: /attachment/i }).className).toContain(
-    "object-cover",
-  );
+  const img = getByRole("img", { name: /附件/ });
+  expect(img.closest(".rp-image-single")).not.toBeNull();
 
-  const trigger = getByLabelText("Open shot.png");
+  const trigger = getByLabelText("查看图片：shot.png");
   expect(trigger.tagName).toBe("BUTTON");
   // Not an anchor: it opens something here, and a middle-click must not offer a tab of raw bytes.
   expect(trigger.getAttribute("href")).toBeNull();
-  expect(trigger.getAttribute("aria-haspopup")).toBe("dialog");
+  expect(trigger.contains(img)).toBe(true);
+
+  // And it really opens the picture, whole, rather than leaving the reader with the tile.
+  fireEvent.click(trigger);
+  const dialog = getByRole("dialog");
+  const opened = dialog.querySelector("img");
+  expect(opened?.getAttribute("src")).toBe(url);
+  expect(opened?.className).toContain("rp-lightbox-img");
 });
 
 /*
@@ -326,9 +373,9 @@ test("a thumbnail is a crop, and what opens it is a button rather than a link", 
  * fire `error` again because the bytes behind it went away. Nor can the document probe, which
  * deliberately never asks about a picture.
  *
- * RENDERED DIRECTLY, NOT THROUGH THE TRIGGER, and the test named "a thumbnail is a crop" above
- * records why: Base UI portals the popup and under happy-dom that portal never mounts, so there is
- * no way to reach this element by clicking. The component is exported for exactly this, the same
+ * RENDERED DIRECTLY, NOT THROUGH THE TRIGGER, because `AttachmentLightbox` puts this component inside
+ * a Base UI dialog: Base UI portals the popup and under happy-dom that portal never mounts, so there
+ * is no way to reach this element by clicking. The component is exported for exactly this, the same
  * reason `sameAttachmentRow` is.
  */
 test("the opened picture states its absence rather than showing a broken frame", () => {
@@ -341,7 +388,7 @@ test("the opened picture states its absence rather than showing a broken frame",
   // The <img> is gone entirely, exactly as it is in the tile: no browser placeholder is left for
   // the reader to interpret.
   expect(queryByRole("img")).toBeNull();
-  expect(getByText("gone.png is unavailable.")).toBeTruthy();
+  expect(getByText("看不到「gone.png」了。")).toBeTruthy();
   // A note, never an alert — this answers something the reader just did, it does not interrupt.
   expect(getByRole("note")).toBeTruthy();
 });
@@ -354,7 +401,7 @@ test("an unnamed picture that will not open still says what happened", () => {
 
   fireEvent.error(getByRole("img"));
 
-  expect(getByText("This attachment is unavailable.")).toBeTruthy();
+  expect(getByText("此附件不可用。")).toBeTruthy();
 });
 
 /*
@@ -381,13 +428,14 @@ test("an off-site document url is reported missing rather than drawn as a file c
    * app cannot serve reads as an intact attachment sitting right there. The reader is told the
    * thing is present when it is not.
    */
-  const { getByText, queryByText } = renderTranscript([
+  const { getByText, queryByLabelText, queryByText } = renderTranscript([
     userMessage([documentPart("https://example.com/report.pdf", "report.pdf")]),
   ]);
 
-  expect(getByText("report.pdf is unavailable.")).toBeTruthy();
-  // Not the file card: no "Attachment" caption, and the name is not offered as an intact one.
-  expect(queryByText("Attachment")).toBeNull();
+  expect(getByText("看不到「report.pdf」了。")).toBeTruthy();
+  // Not the file card: no type label, and no download control offering the name as an intact one.
+  expect(queryByText("PDF")).toBeNull();
+  expect(queryByLabelText("下载 report.pdf")).toBeNull();
 });
 
 /*
@@ -401,13 +449,14 @@ test("an off-site document url is reported missing rather than drawn as a file c
 test("a document whose row is gone is reported missing rather than named", async () => {
   probeAnswer = () => new Response(null, { status: 404 });
 
-  const { findByText, queryByText } = renderTranscript([
+  const { findByText, queryByLabelText, queryByText } = renderTranscript([
     userMessage([documentPart(attachmentUrl("att-document"), "report.pdf")]),
   ]);
 
-  expect(await findByText("report.pdf is unavailable.")).toBeTruthy();
-  // Not the file card: the name is no longer offered as an intact one, caption and all.
-  expect(queryByText("Attachment")).toBeNull();
+  expect(await findByText("看不到「report.pdf」了。")).toBeTruthy();
+  // Not the file card: the name is no longer offered as an intact one, type label and all.
+  expect(queryByText("PDF")).toBeNull();
+  expect(queryByLabelText("下载 report.pdf")).toBeNull();
 });
 
 /*
@@ -415,15 +464,17 @@ test("a document whose row is gone is reported missing rather than named", async
  * row is still there keeps its card. "Everything is unavailable" passes the test above.
  */
 test("a document whose row is still there keeps its card", async () => {
-  const { getByText, queryByText } = renderTranscript([
+  const { getByLabelText, getByText, queryByText } = renderTranscript([
     userMessage([documentPart(attachmentUrl("att-document"), "report.pdf")]),
   ]);
 
   await waitFor(() => expect(probes).toHaveLength(1));
 
   expect(getByText("report.pdf")).toBeTruthy();
-  expect(getByText("Attachment")).toBeTruthy();
-  expect(queryByText("report.pdf is unavailable.")).toBeNull();
+  // The card's meta line: the type the file card prints when there is no size to print beside it.
+  expect(getByText("PDF")).toBeTruthy();
+  expect(getByLabelText("下载 report.pdf")).toBeTruthy();
+  expect(queryByText("看不到「report.pdf」了。")).toBeNull();
 });
 
 /*
@@ -468,7 +519,7 @@ test("an off-site document is never probed", async () => {
     ]),
   ]);
 
-  expect(getByText("report.pdf is unavailable.")).toBeTruthy();
+  expect(getByText("看不到「report.pdf」了。")).toBeTruthy();
 
   await waitFor(() => expect(probes).toHaveLength(1));
   // One probe, and it is the servable file's. Nothing was sent to example.com.
@@ -529,10 +580,10 @@ test("only a 404 makes a document missing, not any other failed answer", async (
 
     await waitFor(() => expect(probes).toHaveLength(1));
 
-    // The card is intact: the name, the caption, and no accusation.
+    // The card is intact: the name, the type label, and no accusation.
     expect(getByText("report.pdf")).toBeTruthy();
-    expect(getByText("Attachment")).toBeTruthy();
-    expect(queryByText("report.pdf is unavailable.")).toBeNull();
+    expect(getByText("PDF")).toBeTruthy();
+    expect(queryByText("看不到「report.pdf」了。")).toBeNull();
 
     unmount();
   }
@@ -610,7 +661,7 @@ test("a probe that never arrives leaves the card alone", async () => {
   await act(async () => {});
 
   expect(getByText("report.pdf")).toBeTruthy();
-  expect(queryByText("report.pdf is unavailable.")).toBeNull();
+  expect(queryByText("看不到「report.pdf」了。")).toBeNull();
 });
 
 /*
@@ -644,8 +695,8 @@ test("missing attachments are stated, not announced over what is being read", ()
   // Three files, three tiles, and not one interruption between them.
   expect(role("alert")).toBe(0);
   expect(role("note")).toBe(3);
-  expect(getByText("one.png is unavailable.")).toBeTruthy();
-  expect(getByText("three.png is unavailable.")).toBeTruthy();
+  expect(getByText("看不到「one.png」了。")).toBeTruthy();
+  expect(getByText("看不到「three.png」了。")).toBeTruthy();
 });
 /*
  * The two wordings, both pinned, because they are the ones a reader is left with when everything
@@ -663,11 +714,11 @@ test("an unnamed missing attachment still says what it is", () => {
     ]),
   ]);
 
-  expect(getByText("This attachment is unavailable.")).toBeTruthy();
+  expect(getByText("此附件不可用。")).toBeTruthy();
 });
 
 test("an unnamed document that is present is still drawn as a file", async () => {
-  const { getByText } = renderTranscript([
+  const { getByLabelText, getByText } = renderTranscript([
     userMessage([
       {
         type: "document" as const,
@@ -678,8 +729,13 @@ test("an unnamed document that is present is still drawn as a file", async () =>
   ]);
 
   await waitFor(() => expect(probes).toHaveLength(1));
-  expect(getByText("Untitled file")).toBeTruthy();
-  expect(getByText("Attachment")).toBeTruthy();
+  /*
+   * 没有名字时文件卡的 label 退到链接末段（`/api/attachments/att-document` → `att-document`），
+   * 类型读不出来时 meta 那一行就是「文件」——不是以前那个英文占位名。
+   */
+  expect(getByText("att-document")).toBeTruthy();
+  expect(getByText("文件")).toBeTruthy();
+  expect(getByLabelText("下载 att-document")).toBeTruthy();
 });
 
 /*
@@ -698,7 +754,7 @@ test("a file parked with a message is still on screen", () => {
   expect(image?.getAttribute("src")).toBe(attachmentUrl("att-image"));
   // Still parked, and still takeable back: the row is drawn with the message, not instead of it.
   expect(getByText("this one instead")).toBeTruthy();
-  expect(getByText("Queued")).toBeTruthy();
+  expect(getByText("排队")).toBeTruthy();
 });
 
 /*
@@ -861,7 +917,7 @@ function stagedAs(
  * THE DEFECT, ON THE SURFACE THAT HOLDS THE EVIDENCE. A screenshot the browser called text drew a
  * grey card with a filename on it, in front of somebody who had just attached a picture.
  *
- * The `<img>` is asserted by SRC and the card by its caption, because "not a document" is not the
+ * The `<img>` is asserted by SRC and the card by its type label, because "not a document" is not the
  * claim being made — a tile that rendered nothing at all would satisfy that.
  */
 test("a parked picture the browser mislabelled is drawn as a picture", () => {
@@ -874,14 +930,14 @@ test("a parked picture the browser mislabelled is drawn as a picture", () => {
   expect(container.querySelector("img")?.getAttribute("src")).toBe(
     attachmentUrl("att-shot"),
   );
-  // Not the file card: that caption is the fixed word every document tile carries.
-  expect(queryByText("Attachment")).toBeNull();
+  // Not the file card: that meta line is the file's own type, which no picture tile carries.
+  expect(queryByText("PNG")).toBeNull();
 });
 
 /*
  * THE SAME MISTAKE POINTING THE OTHER WAY, AND IT IS THE LOUDER ONE. A text file the browser called
  * an image draws an `<img>` at a url the route answers 200 for with text; nothing decodes, `onError`
- * fires, and the tile replaces itself with the destructive card reading "notes.txt is unavailable."
+ * fires, and the tile replaces itself with the destructive card reading 「看不到「notes.txt」了。」
  * — swearing in the file's own name that it was deleted while it sits on the server intact.
  */
 test("a parked file the browser called a picture is drawn as a file", () => {
@@ -893,7 +949,7 @@ test("a parked file the browser called a picture is drawn as a file", () => {
 
   expect(container.querySelector("img")).toBeNull();
   expect(getByText("notes.txt")).toBeTruthy();
-  expect(getByText("Attachment")).toBeTruthy();
+  expect(getByText("TXT")).toBeTruthy();
 });
 
 /*
@@ -1020,9 +1076,10 @@ test("a responsibility turn is drawn as a compact line with the model's message 
   const { container, getByText } = renderTranscript([message]);
   await settleReactWork();
 
-  expect(getByText("Responsibility ran.")).toBeTruthy();
+  expect(getByText("长期任务已运行。")).toBeTruthy();
   expect(getByText(instruction)).toBeTruthy();
-  expect(container.textContent).toContain("Trigger: manual");
+  // `manual/requested` 只画来源那一段（`describeTrigger`），中间的空格是 JSX 里的字面量。
+  expect(container.textContent).toMatch(/触发：\s*manual/);
   const details = container.querySelector("details");
   expect(details?.open).toBe(false);
   expect(details?.textContent).toContain("Success criteria: Posted.");

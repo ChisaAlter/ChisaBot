@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import type { AgentModelState, ModelCatalog } from "../../shared/model-selection";
@@ -75,6 +75,20 @@ async function choose(view: ReturnType<typeof draw>, id = "other/second") {
   await user.click(item);
 }
 
+/*
+ * 输入框旁那颗药丸（`ModelPicker`）只放得下一个短名：目录里的 label，没有 label 时取 id 的最后
+ * 一段。完整 id 在它的 title 上（悬停提示里也是它），所以两处一起断言 —— 只看短名分不出
+ * 「Second」是 other/second 还是别的提供方下的同名模型。
+ */
+function pill(view: ReturnType<typeof draw>, section: "composer" | "settings" | "other-bot") {
+  return within(view.getByTestId(section)).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement;
+}
+
+/** 刷新 Magpie 模型列表的按钮现在在药丸弹层的页脚里，弹层开着才有。 */
+function refreshButton(view: ReturnType<typeof draw>) {
+  return view.getByRole("button", { name: "刷新" });
+}
+
 test("composer and BOT settings save one value without changing another BOT", async () => {
   const view = draw();
   await view.findAllByRole("combobox", { name: "模型选择" });
@@ -82,8 +96,11 @@ test("composer and BOT settings save one value without changing another BOT", as
   await waitFor(() => {
     expect((within(view.getByTestId("settings")).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement).textContent).toContain("other/second");
   });
-  expect((within(view.getByTestId("composer")).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement).textContent).toContain("other/second");
-  expect((within(view.getByTestId("other-bot")).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement).textContent).toContain("vendor/first");
+  expect(within(view.getByTestId("settings")).getByRole("combobox", { name: "模型选择" }).textContent).toContain("other/second");
+  expect(pill(view, "composer").textContent).toContain("Second");
+  expect(pill(view, "composer").title).toContain("other/second");
+  expect(pill(view, "other-bot").textContent).toContain("First");
+  expect(pill(view, "other-bot").title).toContain("vendor/first");
 });
 
 test("a pending model write disables both selectors until the server acknowledges", async () => {
@@ -104,32 +121,48 @@ test("a rejected save keeps the last saved model in both controls", async () => 
   const view = draw();
   await view.findAllByRole("combobox", { name: "模型选择" });
   await choose(view);
-  await view.findByText("模型保存失败");
-  await waitFor(() => expect((within(view.getByTestId("composer")).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement).textContent).toContain("vendor/first"));
-  expect((within(view.getByTestId("settings")).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement).textContent).toContain("vendor/first");
+  /*
+   * 没有乐观更新：保存失败时两个控件都回到服务端那一个模型。失败原因写在药丸弹层的页脚里，
+   * 而选中后弹层就关了 —— 所以重新打开才看得到，也才证明这一次确实保存失败了。
+   */
+  await waitFor(() => expect(pill(view, "composer").disabled).toBe(false));
+  const user = userEvent.setup({ document: view.baseElement.ownerDocument });
+  await user.click(pill(view, "composer"));
+  expect(await view.findByText("模型保存失败")).toBeTruthy();
+  await waitFor(() => expect(pill(view, "composer").textContent).toContain("First"));
+  expect(pill(view, "composer").title).toContain("vendor/first");
+  expect(pill(view, "settings").textContent).toContain("vendor/first");
 });
 
 test("a missing model stays visible and never selects the first catalog entry", async () => {
   states["bot-a"] = { ...states["bot-a"], model: "gone/model", overrideModel: "gone/model", available: true };
   const view = draw();
   await view.findAllByRole("combobox", { name: "模型选择" });
-  expect((within(view.getByTestId("composer")).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement).textContent).toContain("gone/model");
+  // 药丸上是 id 的最后一段加「已失效」标签；完整 id 在 title 里，别让它被悄悄换掉。
+  expect(pill(view, "composer").textContent).toContain("model");
+  expect(pill(view, "composer").textContent).toContain("已失效");
+  expect(pill(view, "composer").title).toContain("gone/model");
   expect(within(view.getByTestId("settings")).getByRole("alert").textContent).toContain("不可用");
+  expect(within(view.getByTestId("settings")).getByRole("alert").textContent).toContain("gone/model");
   expect(states["bot-a"].model).toBe("gone/model");
 });
 
 test("refresh fetches new Magpie models and failed refresh keeps the selection", async () => {
   const view = draw();
   await view.findAllByRole("combobox", { name: "模型选择" });
+  const user = userEvent.setup({ document: view.baseElement.ownerDocument });
   catalog.models.push({ id: "new/third", label: "Third", provider: "New" });
-  fireEvent.click(within(view.getByTestId("composer")).getByRole("button", { name: "刷新模型列表" }));
+  await user.click(pill(view, "composer"));
+  await user.click(refreshButton(view));
   await waitFor(() => expect(refreshed).toBe(true));
+  await user.keyboard("{Escape}");
   await choose(view, "new/third");
   await waitFor(() => expect(states["bot-a"].model).toBe("new/third"));
   catalogError = true;
-  fireEvent.click(within(view.getByTestId("composer")).getByRole("button", { name: "刷新模型列表" }));
+  await user.click(pill(view, "composer"));
+  await user.click(refreshButton(view));
   await view.findByText("目录暂时不可用");
-  expect((within(view.getByTestId("settings")).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement).textContent).toContain("new/third");
+  expect(pill(view, "settings").textContent).toContain("new/third");
 });
 
 test("an external tab change reloads the server value in both controls", async () => {
@@ -139,8 +172,9 @@ test("an external tab change reloads the server value in both controls", async (
   await act(async () => {
     window.dispatchEvent(new StorageEvent("storage", { key: "openbot-model-selection-changed", newValue: JSON.stringify({ agentId: "bot-a", at: 20 }) }));
   });
-  await waitFor(() => expect((within(view.getByTestId("settings")).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement).textContent).toContain("other/second"));
-  expect((within(view.getByTestId("composer")).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement).textContent).toContain("other/second");
+  await waitFor(() => expect(pill(view, "settings").textContent).toContain("other/second"));
+  expect(pill(view, "composer").textContent).toContain("Second");
+  expect(pill(view, "composer").title).toContain("other/second");
 });
 
 test("a remote BOT explains that its model is configured externally", async () => {

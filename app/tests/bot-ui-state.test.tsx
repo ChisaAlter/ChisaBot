@@ -112,9 +112,17 @@ describe("接线", () => {
   const fresh = src("routes/_authed/_app/channel/new.tsx");
 
   test("只有刚发出去的那一条带对齐标记（历史里的用户消息不会被拉到顶上）", () => {
-    expect(transcript).toContain("const freshAnchor = useFreshAnchor(newestUserMessageId, hydrating, lastSentAt, sendMode)");
+    /*
+     * 换行和缩进是排版，不是行为：这几条断言用能跨行的正则写，锁的仍然是同一件事 ——
+     * 对齐标记由 `useFreshAnchor` 用这四个输入决定，而不是「列表里每个用户消息都带」。
+     */
+    expect(transcript).toMatch(
+      /const freshAnchor = useFreshAnchor\(\s*newestUserMessageId,\s*hydrating,\s*lastSentAt,\s*sendMode,?\s*\)/,
+    );
     // §94：连续聊天（上一条 <5 分钟）不带对齐标记
-    expect(transcript).toContain("const fresh = !memo.continuous && memo.id !== null");
+    expect(transcript).toMatch(
+      /const fresh =\s*!memo\.continuous &&\s*memo\.id !== null/,
+    );
     expect(transcript).toContain("const anchorRows = newestAnchor ? new Set([newestAnchor]) : EMPTY_ANCHORS");
     expect(transcript).not.toMatch(/const anchorRows = anchorRowIds\(items\);/);
   });
@@ -130,7 +138,10 @@ describe("接线", () => {
   });
 
   test("对话页 / 空聊天都用按机器人记住的「计算机」", () => {
-    expect(route).toContain("useBotComputerTab(agentId, watch, writeWatch, epoch)");
+    // 同上：这次调用被格式化成了多行，参数和顺序才是要锁的东西。
+    expect(route).toMatch(
+      /useBotComputerTab\(\s*agentId,\s*watch,\s*writeWatch,\s*epoch,?\s*\)/,
+    );
     expect(fresh).toContain("useBotComputerTab(");
     expect(src("components/channels/channel-chat.tsx")).toContain("draftKey={channel.id}");
     expect(src("components/channels/conversation-view.tsx")).toContain("{...(draftKey ? { draftKey } : {})}");

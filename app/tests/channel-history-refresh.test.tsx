@@ -7,7 +7,7 @@ import { type InfiniteData, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { z } from "zod";
-import { ChannelChat } from "@/components/channels/channel-chat";
+import { ChannelChat, HISTORY_UNAVAILABLE_NOTICE } from "@/components/channels/channel-chat";
 import {
   type AgentChannel,
   type ChannelPage,
@@ -49,10 +49,26 @@ const local: Message = {
   content: "Local message stays",
 };
 const broken = { id: "broken", role: "user", content: null };
-const unavailable =
-  "Earlier messages are temporarily unavailable. You can keep using this conversation.";
-const oneHole =
-  "One earlier message could not be read and is not shown. The rest of this conversation is complete.";
+// 这两句现在是产品里的中文常量（channel-chat.tsx）：从那里取，别再抄英文原文。
+const unavailable = HISTORY_UNAVAILABLE_NOTICE;
+const oneHole = "有一条较早的消息无法读取，未显示。会话其余部分完整。";
+
+/*
+ * 按 2026-10 的新行为调整（app/src/components/channels/channel-chat.tsx 的 channelHistoryNotice，
+ * 以及 lib/copilot/thread-messages.ts 的 HISTORY_RETRY_DELAYS_MS）：
+ *
+ *   1. 「较早的消息暂时无法加载。」只在**什么都没恢复出来**时出现
+ *      （availability unavailable && messageCount === 0 && (读失败 || 有过最后一句)）。
+ *      会话里已经有消息（网关快照、刚发出的那句、后台重试补回来的部分）时不再说：再多一句
+ *      「无法加载」只会让人以为丢了东西，而后台还在重试。刷新失败（Bot 在别处说了话，这次没拉下来）
+ *      同样一句都不说——屏幕上的会话是完好的。
+ *   2. 首次读取失败后后台会按 [1.5s, 4s, 10s] 再读；这段期间（retryingHistory）算「恢复中」，也不提示。
+ *      所以「什么都没恢复出来」的那句提示要等 15.5s 的重试全部失败才出现，已经有消息的用例则永远不等它。
+ *      纯函数层面的三条（有消息→null、重试中→null、空会话失败→提示）在 channel-history-notice.test.ts。
+ *
+ * 因此下面这些用例保住的是别的东西：消息不丢、顺序正确、不重复、后台重试后恢复、发送闸门释放；
+ * notice 只按上面的语义断言（有东西看的时候不出现，什么都不剩时才出现）。
+ */
 let originalFetch: typeof fetch;
 let history: (threadId: string) => Promise<Response>;
 let historyReads: string[];
@@ -131,6 +147,13 @@ beforeAll(() => {
       if (match) {
         const threadId = match[1];
         if (!threadId) throw new Error("Missing fixture thread id");
+        /*
+         * useConversationSync 在每一轮结束 800ms 后还会探一次「两边消息顺序一致吗」：同一个 URL，
+         * 但不带 agentId（见 use-conversation-sync.ts 的 reconcile）。那不是恢复历史，所以既不算进
+         * historyReads，也不吃掉用例按次数摆的 fixture——否则谁先落地就成了计时器彩票，条数与提示
+         * 都会被它搅乱。空列表就是「没有要对的顺序」。
+         */
+        if (!url.searchParams.has("agentId")) return stored([]);
         historyReads.push(threadId);
         return history(threadId);
       }
@@ -252,25 +275,35 @@ function delayedResponse() {
 }
 
 // Real provider, ChannelChat, history reader, and query cache; only the HTTP boundary is synthetic.
+/*
+ * 按 2026-10 的新行为调整：notice 只在什么都没恢复出来时出现。这里两种读失败要分开看——
+ * 网关快照里已经有消息时从头到尾不提示（消息还在、发送照常）；快照也是空的才轮到那句提示，
+ * 而且要等后台重试 [1.5s, 4s, 10s] 全部失败之后。发出去一句之后，提示一样让位。
+ */
 test.each([
   { name: "partial gateway snapshot", snapshot: [initial] },
   { name: "empty gateway snapshot", snapshot: [] },
 ])(
-  "a failed mount restore warns over $name and after a same-thread send",
+  "a failed mount restore keeps $name and releases the send, warning only when nothing was recovered",
   async ({ snapshot }) => {
     const view = mounting(
       async () => new NativeResponse("failed", { status: 500 }),
       snapshot,
     );
-    await view.findByText(unavailable);
-    if (snapshot.length > 0)
-      expect(view.getByText(initial.content)).toBeTruthy();
+    if (snapshot.length > 0) {
+      // 有东西可看：一句都不说，快照里的消息原样在。
+      await view.findByText(initial.content);
+      expect(view.queryByText(unavailable)).toBeNull();
+    } else {
+      // 什么都没恢复出来：提示要等后台重试全部失败才出现，这期间不打扰（空会话显示骨架）。
+      await view.findByText(unavailable, {}, { timeout: 20_000 });
+    }
     const user = userEvent.setup({ document: view.container.ownerDocument });
     await user.type(
-      view.getByRole("textbox", { name: "Message" }),
+      view.getByRole("textbox", { name: "消息" }),
       "Later local turn",
     );
-    await user.click(view.getByRole("button", { name: "Send message" }));
+    await user.click(view.getByRole("button", { name: "发送消息" }));
     await waitFor(() => expect(runRequests).toHaveLength(1));
     expect(runRequests[0]?.path).toBe("/api/copilotkit/agent/refresh-bot/run");
     expect(runRequests[0]?.input.threadId).toBe(channel.threadId);
@@ -281,9 +314,12 @@ test.each([
       role: "user",
       content: "Later local turn",
     });
-    expect(view.getByText(unavailable)).toBeTruthy();
+    // 会话里已经有消息（快照或刚发出去的这句）：提示不再挂在那里。
+    await waitFor(() => expect(view.queryByText(unavailable)).toBeNull());
     expect(view.queryByText(/different CopilotKit project/)).toBeNull();
   },
+  // 空快照那一种要等真实的后台重试表（1.5s + 4s + 10s）走完，默认 5s 不够。
+  30_000,
 );
 
 test("a finished run without new assistant text does not report a prior assistant as new activity", async () => {
@@ -312,10 +348,10 @@ test("a finished run without new assistant text does not report a prior assistan
 
   const user = userEvent.setup({ document: view.container.ownerDocument });
   await user.type(
-    view.getByRole("textbox", { name: "Message" }),
+    view.getByRole("textbox", { name: "消息" }),
     "Ask for the first answer",
   );
-  await user.click(view.getByRole("button", { name: "Send message" }));
+  await user.click(view.getByRole("button", { name: "发送消息" }));
   await view.findByText(priorReply.content);
   await waitFor(() =>
     expect(
@@ -332,10 +368,10 @@ test("a finished run without new assistant text does not report a prior assistan
     { type: "RUN_FINISHED", threadId: input.threadId, runId: input.runId },
   ];
   await user.type(
-    view.getByRole("textbox", { name: "Message" }),
+    view.getByRole("textbox", { name: "消息" }),
     "Ask for a no-text follow-up",
   );
-  await user.click(view.getByRole("button", { name: "Send message" }));
+  await user.click(view.getByRole("button", { name: "发送消息" }));
   await waitFor(() => expect(runRequests).toHaveLength(2));
   await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -370,10 +406,10 @@ test("a finished run with new assistant text still reports that assistant text a
 
   const user = userEvent.setup({ document: view.container.ownerDocument });
   await user.type(
-    view.getByRole("textbox", { name: "Message" }),
+    view.getByRole("textbox", { name: "消息" }),
     "Ask for current answer",
   );
-  await user.click(view.getByRole("button", { name: "Send message" }));
+  await user.click(view.getByRole("button", { name: "发送消息" }));
   await view.findByText(reply.content);
   await waitFor(() =>
     expect(
@@ -416,10 +452,10 @@ test("a same-tab activity echo does not append a lagging durable partial beside 
 
   const user = userEvent.setup({ document: view.container.ownerDocument });
   await user.type(
-    view.getByRole("textbox", { name: "Message" }),
+    view.getByRole("textbox", { name: "消息" }),
     "Ask for live answer",
   );
-  await user.click(view.getByRole("button", { name: "Send message" }));
+  await user.click(view.getByRole("button", { name: "发送消息" }));
   await view.findByText(fullReply.content);
   await waitFor(() =>
     expect(
@@ -480,10 +516,10 @@ test("a same-timestamp different activity after a self echo still refreshes dura
 
   const user = userEvent.setup({ document: view.container.ownerDocument });
   await user.type(
-    view.getByRole("textbox", { name: "Message" }),
+    view.getByRole("textbox", { name: "消息" }),
     "Ask before same-time relay",
   );
-  await user.click(view.getByRole("button", { name: "Send message" }));
+  await user.click(view.getByRole("button", { name: "发送消息" }));
   await view.findByText(fullReply.content);
   await waitFor(() =>
     expect(
@@ -556,10 +592,10 @@ test.each([
 
     const user = userEvent.setup({ document: view.container.ownerDocument });
     await user.type(
-      view.getByRole("textbox", { name: "Message" }),
+      view.getByRole("textbox", { name: "消息" }),
       "Ask before relay",
     );
-    await user.click(view.getByRole("button", { name: "Send message" }));
+    await user.click(view.getByRole("button", { name: "发送消息" }));
     await view.findByText(fullReply.content);
     await waitFor(() =>
       expect(
@@ -641,10 +677,10 @@ test.each([false, true])(
     expect(currentAgent().messages).toEqual([...snapshot, ...later]);
     const user = userEvent.setup({ document: view.container.ownerDocument });
     await user.type(
-      view.getByRole("textbox", { name: "Message" }),
+      view.getByRole("textbox", { name: "消息" }),
       "Continue restored conversation",
     );
-    await user.click(view.getByRole("button", { name: "Send message" }));
+    await user.click(view.getByRole("button", { name: "发送消息" }));
     await waitFor(() => expect(runRequests).toHaveLength(1));
     expect(runRequests[0]?.input.threadId).toBe(channel.threadId);
     expect(runRequests[0]?.input.messages.slice(0, -1)).toEqual([
@@ -654,18 +690,23 @@ test.each([false, true])(
   },
 );
 
-test("a stalled mount history read releases the send gate and shows unavailable history", async () => {
+/*
+ * 按 2026-10 的新行为调整：notice 只在什么都没恢复出来时出现。这里的网关快照里有一条 initial，
+ * 后台重试又在跑，所以从头到尾不提示。这条保住的是两件别的事：卡住的读取 4 秒截止后照样放行
+ * 第一条消息（闸门松开，不是把消息扣下），以及被放弃的那次读取迟到的答案不再追加。
+ */
+test("a stalled mount history read releases the send gate without appending its late answer", async () => {
   const pending = delayedResponse();
   const view = mounting((_threadId) => pending.promise, [initial]);
   await waitFor(() => expect(historyReads).toHaveLength(1));
   const user = userEvent.setup({ document: view.container.ownerDocument });
   await user.type(
-    view.getByRole("textbox", { name: "Message" }),
+    view.getByRole("textbox", { name: "消息" }),
     "Send while history stalls",
   );
-  await user.click(view.getByRole("button", { name: "Send message" }));
+  await user.click(view.getByRole("button", { name: "发送消息" }));
 
-  await view.findByText(unavailable, {}, { timeout: 4000 });
+  // 读存储 4 秒截止（THREAD_MESSAGES_DEADLINE_MS）后放行：消息带着网关快照发出去。
   await waitFor(() => expect(runRequests).toHaveLength(1), { timeout: 4000 });
   expect(runRequests[0]?.path).toBe("/api/copilotkit/agent/refresh-bot/run");
   expect(runRequests[0]?.input.threadId).toBe(channel.threadId);
@@ -674,13 +715,21 @@ test("a stalled mount history read releases the send gate and shows unavailable 
     role: "user",
     content: "Send while history stalls",
   });
+  // 手里有网关快照：不挂「较早的消息暂时无法加载」。
+  expect(view.queryByText(unavailable)).toBeNull();
 
+  // 之后的后台重试也读不到（500）。这条只问一件事：被放弃的那次读取迟到的答案不能追加进来。
+  history = async () => new NativeResponse("failed", { status: 500 });
   await act(async () => pending.resolve(stored([initial, fresh])));
+  await waitFor(() => expect(historyReads.length).toBeGreaterThan(1), {
+    timeout: 4000,
+  });
   expect(view.queryByText(fresh.content)).toBeNull();
   expect(currentAgent().messages.map((message) => message.id)).not.toContain(
     fresh.id,
   );
-});
+  // 4s 截止 + 1.5s 后的第一次后台重试，默认 5s 不够。
+}, 12_000);
 
 test("a UI send waits for mount history before adding its message", async () => {
   const pending = delayedResponse();
@@ -688,10 +737,10 @@ test("a UI send waits for mount history before adding its message", async () => 
   await waitFor(() => expect(historyReads).toHaveLength(1));
   const user = userEvent.setup({ document: view.container.ownerDocument });
   await user.type(
-    view.getByRole("textbox", { name: "Message" }),
+    view.getByRole("textbox", { name: "消息" }),
     "Send after restore",
   );
-  await user.click(view.getByRole("button", { name: "Send message" }));
+  await user.click(view.getByRole("button", { name: "发送消息" }));
   expect(runRequests).toHaveLength(0);
   expect(currentAgent().messages).toEqual([initial]);
   await act(async () => pending.resolve(stored([initial, fresh])));
@@ -719,7 +768,7 @@ test("explicit valid-empty durable history finishes without a failure notice", a
   await waitFor(() =>
     expect(
       view
-        .getByRole("textbox", { name: "Message" })
+        .getByRole("textbox", { name: "消息" })
         .getAttribute("contenteditable"),
     ).toBe("true"),
   );
@@ -739,6 +788,11 @@ test("headless unreadable-only history updates the notice while preserving local
   ]);
 });
 
+/*
+ * 按 2026-10 的新行为调整：刷新失败不再挂「较早的消息暂时无法加载」（这条刷新还成功读到过一次，
+ * 而且会话里本来就有消息），所以后面两次 500 不能让屏幕上任何东西变样——上一次成功读到的
+ * 「有一条较早的消息无法读取」还得挂着，消息也不能被重试洗掉。
+ */
 test("a successful same-message refresh is not overwritten by later unavailable retries", async () => {
   const view = await mounted();
   await act(async () => currentAgent().addMessage(local));
@@ -753,7 +807,8 @@ test("a successful same-message refresh is not overwritten by later unavailable 
 
   await announce(1);
   await view.findByText(oneHole);
-  await new Promise((resolve) => setTimeout(resolve, 2300));
+  // 刷新那条的节奏是 0 / 750 / 1500ms：睡够三遍。
+  await new Promise((resolve) => setTimeout(resolve, 2600));
 
   expect(historyReads.length - beforeRefresh).toBe(3);
   expect(view.getByText(oneHole)).toBeTruthy();
@@ -799,6 +854,10 @@ test("a cached Bot activity before mount retries stale durable history and resto
   expect(view.queryByText(unavailable)).toBeNull();
 });
 
+/*
+ * 按 2026-10 的新行为调整：这条刷新第一次读到的是旧的一份（和屏幕一致，不算失败），750ms 后
+ * 第二次读到新的一条才并进来；两次都成功，所以那条「较早的消息暂时无法加载」从头到尾都不该出现。
+ */
 test("a first ready stale refresh still retries and renders a later stored message", async () => {
   const view = await mounted();
   const beforeRefresh = historyReads.length;
@@ -819,6 +878,12 @@ test("a first ready stale refresh still retries and renders a later stored messa
   ]);
 }, 3000);
 
+/*
+ * 按 2026-10 的新行为调整：刷新失败不再挂「较早的消息暂时无法加载」——那只是「别处新到的一条
+ * 回复」没拉下来，屏幕上的会话完好，下一次活动还会再拉。所以失败之后一个字都不多，上一次读到
+ * 的东西（fresh 和那条「有一条较早的消息无法读取」）原样留着；重试读到了，洞自然补上。
+ * 这条保住的是：三次重试都打过、没有重复消息、恢复后回到干净状态。
+ */
 test("mixed history, exhausted failure, and recovery update the notice without duplicating messages", async () => {
   const view = await mounted();
   await act(async () => currentAgent().addMessage(local));
@@ -829,13 +894,18 @@ test("mixed history, exhausted failure, and recovery update the notice without d
   const beforeFailure = historyReads.length;
   history = async () => new NativeResponse("failed", { status: 500 });
   await announce(2);
-  await view.findByText(unavailable, {}, { timeout: 4000 });
-  expect(historyReads.length - beforeFailure).toBe(3);
-  expect(view.queryByText(oneHole)).toBeNull();
+  // 刷新那条拉三遍（0 / 750 / 1500ms）都失败，然后什么都不改。
+  await waitFor(() => expect(historyReads.length - beforeFailure).toBe(3), {
+    timeout: 4000,
+  });
+  expect(view.queryByText(unavailable)).toBeNull();
+  // 上一次成功读到的那句「有一条…无法读取」还挂着：只有读到的人才配改它。
+  expect(view.getByText(oneHole)).toBeTruthy();
   history = async () => stored([initial, fresh]);
   await announce(3);
-  await waitFor(() => expect(view.queryByText(unavailable)).toBeNull());
-  expect(view.queryByText(oneHole)).toBeNull();
+  // 读到完整的一份：洞的数字回到 0，提示消失。
+  await waitFor(() => expect(view.queryByText(oneHole)).toBeNull());
+  expect(view.queryByText(unavailable)).toBeNull();
   expect(currentAgent().messages.map((message) => message.id)).toEqual([
     "initial",
     "local",
@@ -920,6 +990,11 @@ test.each(["unavailable", "unreadable", "readable"])(
   },
 );
 
+/*
+ * 按 2026-10 的新行为调整：读取失败时那句「较早的消息暂时无法加载」要等后台重试全部失败
+ * （1.5s + 4s + 10s）才出现，所以读失败的这一支不再等它——这条要保的是失败之后顺序能不能恢复。
+ * 读成功就有已知前缀；读失败就直接发，闸门照常放行，随后的一次刷新把 durable 的历史补回原位。
+ */
 test.each([false, true])(
   "recovery restores durable order after a UI send (known prefix: %s)",
   async (prefixPresent) => {
@@ -928,17 +1003,19 @@ test.each([false, true])(
         ? stored([initial])
         : new NativeResponse("failed", { status: 500 }),
     );
-    await view.findByText(prefixPresent ? initial.content : unavailable);
+    if (prefixPresent) await view.findByText(initial.content);
+    else await waitFor(() => expect(historyReads).toHaveLength(1));
     const user = userEvent.setup({ document: view.container.ownerDocument });
-    const editor = view.getByRole("textbox", { name: "Message" });
+    const editor = view.getByRole("textbox", { name: "消息" });
     await user.type(editor, "Local turn after mount completed");
-    await user.click(view.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(runRequests).toHaveLength(1));
+    await user.click(view.getByRole("button", { name: "发送消息" }));
+    await waitFor(() => expect(runRequests).toHaveLength(1), { timeout: 4000 });
     const sent = runRequests[0]?.input.messages.at(-1);
     if (sent?.role !== "user") throw new Error("Missing UI user message");
     history = async () => stored([initial, sent, fresh]);
     await announce(1);
     await view.findByText(fresh.content);
+    // 读到东西了（哪怕前缀是这次补回来的）：不提示无法加载。
     expect(view.queryByText(unavailable)).toBeNull();
     const transcript = view.container.textContent ?? "";
     expect(transcript.indexOf(initial.content)).toBeLessThan(
@@ -948,7 +1025,7 @@ test.each([false, true])(
       transcript.indexOf(fresh.content),
     );
     await user.type(editor, "Capture restored ordering");
-    await user.click(view.getByRole("button", { name: "Send message" }));
+    await user.click(view.getByRole("button", { name: "发送消息" }));
     await waitFor(() => expect(runRequests).toHaveLength(2));
     expect(runRequests[1]?.input.threadId).toBe(channel.threadId);
     expect(runRequests[1]?.input.messages.slice(0, 3)).toEqual([

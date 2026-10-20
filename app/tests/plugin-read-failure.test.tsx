@@ -58,6 +58,12 @@ beforeEach(() => {
         });
       if (path === "/api/plugins/connections") return json({ connections: [] });
       if (path === "/api/agents") return json({ agents: [] });
+      /*
+       * 插件页的 `beforeLoad` 用 `requireExtra("plugins")` 读部署能力，没打开就重定向回设置
+       * （功能精简，DESIGN.md §74）。不答这个请求的话测试连页面都进不去，测的就不是页面本身了。
+       */
+      if (path === "/api/capabilities")
+        return json({ extras: ["plugins"] });
       // The one read under test: a 500 with no body, the shape a broken server sends.
       return new Response(null, { status: 500 });
     },
@@ -157,6 +163,8 @@ function renderAdmin(client: QueryClient, at: string) {
   const router = createRouter({
     routeTree: tree,
     history: createMemoryHistory({ initialEntries: [at] }),
+    /* 生产路由把 QueryClient 放在 context 里（`app/src/router.tsx`），`beforeLoad` 要读它。 */
+    context: { queryClient: client },
   });
   return render(
     <QueryClientProvider client={client}>
@@ -198,6 +206,7 @@ function renderAccount(client: QueryClient) {
     history: createMemoryHistory({
       initialEntries: [`/settings/connected-accounts/${APP_KEY}`],
     }),
+    context: { queryClient: client },
   });
   return render(
     <QueryClientProvider client={client}>
@@ -217,9 +226,9 @@ test("a connector's admin page says the plugin list failed, not that there is no
   const view = renderAdmin(client, `/admin/plugins/${APP_KEY}`);
   await waitForFailedRead(client);
 
-  expect(await view.findByText("Plugins could not be loaded.")).toBeTruthy();
-  expect(view.queryByText("Not a plugin")).toBeNull();
-  expect(view.queryByText("Nothing to configure.")).toBeNull();
+  expect(await view.findByText("插件无法加载。")).toBeTruthy();
+  expect(view.queryByText("不是插件")).toBeNull();
+  expect(view.queryByText("无需配置。")).toBeNull();
 });
 
 test("a list that genuinely lacks the connector still says it is not a plugin", async () => {
@@ -227,8 +236,8 @@ test("a list that genuinely lacks the connector still says it is not a plugin", 
   const view = renderAdmin(client, `/admin/plugins/${APP_KEY}`);
   await waitForFailedRead(client);
 
-  expect(await view.findByText("Not a plugin")).toBeTruthy();
-  expect(view.queryByText("Plugins could not be loaded.")).toBeNull();
+  expect(await view.findByText("不是插件")).toBeTruthy();
+  expect(view.queryByText("插件无法加载。")).toBeNull();
 });
 
 test("a tool's admin page says the plugin list failed, not that the connector is off", async () => {
@@ -239,13 +248,9 @@ test("a tool's admin page says the plugin list failed, not that the connector is
   );
   await waitForFailedRead(client);
 
-  expect(await view.findByText("Plugins could not be loaded.")).toBeTruthy();
-  expect(
-    view.queryByText("This deployment has not enabled that connector."),
-  ).toBeNull();
-  expect(
-    view.queryByText("This connector does not advertise a tool by that name."),
-  ).toBeNull();
+  expect(await view.findByText("插件无法加载。")).toBeTruthy();
+  expect(view.queryByText("此部署未启用该连接器。")).toBeNull();
+  expect(view.queryByText("此连接器未以该名称公布工具。")).toBeNull();
 });
 
 test("a list that genuinely lacks the connector still says it is not enabled, on the tool page", async () => {
@@ -257,9 +262,9 @@ test("a list that genuinely lacks the connector still says it is not enabled, on
   await waitForFailedRead(client);
 
   expect(
-    await view.findByText("This deployment has not enabled that connector."),
+    await view.findByText("此部署未启用该连接器。"),
   ).toBeTruthy();
-  expect(view.queryByText("Plugins could not be loaded.")).toBeNull();
+  expect(view.queryByText("插件无法加载。")).toBeNull();
 });
 
 test("a connected account's page says the plugin list failed, not that it is not a service to connect", async () => {
@@ -269,6 +274,9 @@ test("a connected account's page says the plugin list failed, not that it is not
 
   expect(await view.findByRole("alert")).toBeTruthy();
   expect(
-    view.queryByText("This is not a service you connect for yourself."),
+    view.queryByText(
+      "这个链接里的服务不存在，可能已经移除了。回到「账号连接」看看能连接哪些服务。",
+    ),
   ).toBeNull();
+  expect(view.queryByText("找不到这项连接")).toBeNull();
 });

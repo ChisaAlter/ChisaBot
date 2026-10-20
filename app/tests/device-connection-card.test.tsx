@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type * as React from "react";
@@ -25,6 +25,10 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   delete (window as { chisabotPC?: unknown }).chisabotPC;
+});
+// 2026-10-20 清基线：这个文件以前注册了就留着，后面的文件撞「already been globally registered」。
+afterAll(() => {
+  if (GlobalRegistrator.isRegistered) GlobalRegistrator.unregister();
 });
 
 function device(overrides: Partial<DeviceView> = {}): DeviceView {

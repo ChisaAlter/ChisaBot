@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { type HTMLButtonElement, Window } from "happy-dom";
+import { type HTMLButtonElement, type HTMLElement, Window } from "happy-dom";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
@@ -80,9 +80,13 @@ function stageEvent(window: Window, detail: string) {
 
 test("the initial document remains visible before its application bundle arrives", () => {
   const { document } = startup();
-  expect(document.querySelector("[role=status]")?.textContent).toContain(
-    "正在加载",
-  );
+  /*
+   * 启动画面现在是一张骨架（先占住版式，脚本到了再换内容），屏幕上没有一行字——「正在加载」从可见文字
+   * 变成了这张骨架的无障碍名字，骨架节点本身还在 DOM 里。
+   */
+  const status = document.querySelector("[role=status]");
+  expect(status?.getAttribute("aria-label")).toContain("正在加载");
+  expect(status?.querySelectorAll(".boot-bar").length).toBeGreaterThan(0);
 });
 
 test("a failed application script offers a safe manual reload", () => {
@@ -105,7 +109,19 @@ test("a failed application script offers a safe manual reload", () => {
 test("a stalled bundle remains visible and offers retry instead of automatic navigation", () => {
   const { document, timers, window } = startup();
   for (const callback of timers) callback();
-  expect(document.querySelector("[role=alert]")?.textContent).toContain("加载");
+  /*
+   * 超时说「慢」，不说「坏」：`role` 还是 `status`（只有 `showFailure` 会把它改成 `alert`），骨架还在，
+   * 只是提示条露出来、标题换成超时那一句。
+   */
+  expect(
+    document.querySelector("[role=status]")?.getAttribute("aria-label"),
+  ).toContain("正在加载");
+  expect(
+    document.querySelector<HTMLElement>("#openbot-startup-note")?.hidden,
+  ).toBe(false);
+  expect(document.querySelector("#openbot-startup-title")?.textContent).toBe(
+    "加载时间较长，请检查网络连接",
+  );
   expect(
     document.querySelector<HTMLButtonElement>("#openbot-reload")?.hidden,
   ).toBe(false);
@@ -128,7 +144,7 @@ test("the startup deadline preserves the first script failure instead of replaci
   window.dispatchEvent(applicationError(window));
   for (const callback of timers) callback();
   expect(document.querySelector("#openbot-startup-title")?.textContent).toBe(
-    "无法加载 ChisaBot",
+    "无法加载 ChisaBot，请检查网络连接",
   );
   expect(reports.map((report) => report.event)).toEqual(["shell", "error"]);
 });
@@ -208,7 +224,7 @@ test("unsupported or failed diagnostic transport never interrupts startup recove
     for (const callback of timers) callback();
     await Promise.resolve();
     expect(document.querySelector("#openbot-startup-title")?.textContent).toBe(
-      "无法加载 ChisaBot",
+      "无法加载 ChisaBot，请检查网络连接",
     );
     expect(window.location.pathname).toBe("/admin/models");
   }
@@ -229,9 +245,16 @@ test("third-party scripts and their runtime errors cannot mark the application a
       message: "private-error",
     }),
   );
+  /*
+   * 第三方脚本的失败连「坏」都算不上：骨架原地不动，`role` 没变成 `alert`，提示条也没露出来。
+   */
   expect(document.querySelector("#openbot-startup-title")?.textContent).toBe(
-    "正在加载 ChisaBot…",
+    "加载时间比平时长一些…",
   );
+  expect(document.querySelector("[role=alert]")).toBeNull();
+  expect(
+    document.querySelector<HTMLElement>("#openbot-startup-note")?.hidden,
+  ).toBe(true);
   expect(reports.map((report) => report.event)).toEqual(["shell"]);
 });
 

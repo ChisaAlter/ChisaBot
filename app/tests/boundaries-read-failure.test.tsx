@@ -68,7 +68,7 @@ test("a boundary that could not be read says so instead of leaving the page blan
   const view = drawBoundaries();
 
   const alert = await view.findByRole("alert");
-  expect(alert.textContent).toBe("The boundary could not be read.");
+  expect(alert.textContent).toBe("权限规则无法读取。");
 });
 
 test("a refused read shows the server's own reason", async () => {

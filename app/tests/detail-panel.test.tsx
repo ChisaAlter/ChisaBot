@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { useEffect } from "react";
 import { DetailPanel } from "@/components/layout/detail-panel";
+import { settleReactWork } from "./settle-react-work";
 
 class Observer implements ResizeObserver {
   static targets = new Map<Element, Observer>();
@@ -49,7 +50,13 @@ afterEach(() => {
   cleanup();
   Observer.targets.clear();
 });
-afterAll(() => {
+afterAll(async () => {
+  /*
+   * 抽掉 document 之前先把 React 排着的活干完（见 `settle-react-work.ts`）：抽屉关闭 / 重绘留下的
+   * 那一帧如果落在 `unregister()` 之后，会在 scheduler 里对着已经没了的 window 跑，报成
+   * 「Unhandled error between tests」—— 零个失败用例，非零退出码。
+   */
+  await settleReactWork();
   globalThis.ResizeObserver = originalObserver;
   GlobalRegistrator.unregister();
 });
@@ -105,7 +112,8 @@ test("closing narrow details invokes the owner and unmounts detail work", async 
   const view = render(<DetailPanel {...props} open />);
   await resize(view.container, 380);
   expect(await view.findByRole("dialog", { name: "Computer" })).toBeTruthy();
-  fireEvent.click(view.getByRole("button", { name: "Close" }));
+  // 窄窗口里详情是一张抽屉，关闭按钮是 Sheet 自己那颗，读屏名字是「关闭」。
+  fireEvent.click(view.getByRole("button", { name: "关闭" }));
   expect(closed).toBe(1);
   view.rerender(<DetailPanel {...props} open={false} />);
   await waitFor(() => expect(view.queryByText("Browser preview")).toBeNull());

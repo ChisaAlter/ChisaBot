@@ -61,6 +61,8 @@ afterEach(() => {
 });
 afterAll(() => {
   globalThis.fetch = realFetch;
+  // 2026-10-20 清基线：注册过就要收回来，否则后面的文件会撞「Happy DOM has already been globally registered」。
+  if (GlobalRegistrator.isRegistered) GlobalRegistrator.unregister();
 });
 
 const wrap = (node: React.ReactNode) => (
@@ -103,6 +105,30 @@ describe("TabStrip", () => {
     fireEvent.click(tabs[0]?.querySelector("button") as HTMLElement);
     expect(calls.filter((c) => c.url.includes("/human/tab")).length).toBe(0);
     expect((ui.getByLabelText("新标签页") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("TabStrip is one keyboard tab stop: arrows move between tabs and activate them (2026-10-20)", async () => {
+    setTabsView("botK", view("t1"));
+    const ui = render(<TabStrip computerId="botK" driving poll={false} />);
+    const tabs = ui.getAllByRole("tab") as HTMLElement[];
+    // roving tabindex：只有选中那个在 Tab 顺序里，内部的主按钮不再单独占一个停靠点。
+    expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1]);
+    expect((tabs[0]?.querySelector("button") as HTMLButtonElement).tabIndex).toBe(-1);
+
+    await act(async () => {
+      fireEvent.keyDown(tabs[0] as HTMLElement, { key: "ArrowRight" });
+    });
+    expect(document.activeElement).toBe(tabs[1]);
+    const switched = calls.find((call) => call.url.includes("/human/tab"));
+    expect(switched?.body).toMatchObject({ action: "activate", id: "t2" });
+
+    setTabsView("botK", view("t1"));
+    const again = render(<TabStrip computerId="botK" driving poll={false} />);
+    const list = again.getAllByRole("tab") as HTMLElement[];
+    await act(async () => {
+      fireEvent.keyDown(list[0] as HTMLElement, { key: "End" });
+    });
+    expect(document.activeElement).toBe(list[2]);
   });
 
   test("driving: switch, close and new go to /human/tab and update the strip", async () => {

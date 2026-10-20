@@ -23,6 +23,7 @@ import {
   type PluginTool,
   pluginKeys,
 } from "@/lib/plugins/queries";
+import { deploymentKeys } from "@/lib/deployment/queries";
 import { Route as BotAppRoute } from "@/routes/_authed/admin/plugins/$key_.bots.$agentId";
 
 /**
@@ -81,9 +82,18 @@ const BOT_ID = "bot-1";
 
 /** A client the failing queries settle on in one attempt, so no test waits on a retry. */
 function failingQueryClient() {
-  return new QueryClient({
+  const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  // The screen's `beforeLoad` (`requireExtra("plugins")`) is a deployment capability read, fetched
+  // through `context.queryClient`; seed it so the route admits this page instead of redirecting to
+  // settings, exactly as a deployment with CHISABOT_EXTRAS containing `plugins` would answer.
+  queryClient.setQueryData(deploymentKeys.capabilities(), {
+    generativeUi: false,
+    selfHostBanner: false,
+    extras: ["plugins"],
+  });
+  return queryClient;
 }
 
 /**
@@ -243,6 +253,7 @@ function renderScreen(queryClient: QueryClient) {
   ]);
   const router = createRouter({
     routeTree: tree,
+    context: { queryClient },
     history: createMemoryHistory({
       initialEntries: [`/admin/plugins/${APP_KEY}/bots/${BOT_ID}`],
     }),
@@ -257,27 +268,27 @@ function renderScreen(queryClient: QueryClient) {
 test("a failed plugin read reports the failure instead of claiming the app is not enabled", async () => {
   const view = renderScreen(failingQueryClient());
 
-  expect(await view.findByText("Plugins could not be loaded.")).toBeTruthy();
+  expect(await view.findByText("插件无法加载。")).toBeTruthy();
 
   // The whole point: an app that may be enabled, with grants on it right now, must never be
   // reported as absent on the evidence of a request that never came back.
   expect(
-    view.queryByText("This deployment has not enabled an app by that name."),
+    view.queryByText("此部署未启用名为该名称的应用程序。"),
   ).toBeNull();
-  expect(view.queryByText("There is nothing here to grant.")).toBeNull();
+  expect(view.queryByText("这里没有可授权的内容。")).toBeNull();
 });
 
 test("a failed plugin read draws no switches, so nothing reads as a Bot holding nothing", async () => {
   const view = renderScreen(failingQueryClient());
 
-  await view.findByText("Plugins could not be loaded.");
+  await view.findByText("插件无法加载。");
 
   expect(view.container.querySelectorAll('[role="switch"]').length).toBe(0);
-  expect(view.queryByText("Turn on every read-only action")).toBeNull();
+  expect(view.queryByText("开启所有只读操作")).toBeNull();
   // The two section headings the grant list is drawn under: neither belongs on a page built from
   // an answer that never arrived.
-  expect(view.queryByText("Reads")).toBeNull();
-  expect(view.queryByText("Changes things")).toBeNull();
+  expect(view.queryByText("读取")).toBeNull();
+  expect(view.queryByText("更改事物")).toBeNull();
 });
 
 test("an answer that genuinely lacks the app still says the app is not enabled", async () => {
@@ -289,11 +300,9 @@ test("an answer that genuinely lacks the app still says the app is not enabled",
   await waitForFailedRefetch(queryClient);
 
   expect(
-    await view.findByText(
-      "This deployment has not enabled an app by that name.",
-    ),
+    await view.findByText("此部署未启用名为该名称的应用程序。"),
   ).toBeTruthy();
-  expect(view.queryByText("Plugins could not be loaded.")).toBeNull();
+  expect(view.queryByText("插件无法加载。")).toBeNull();
 });
 
 test("a failed REFETCH keeps the grant list it already had, not the error", async () => {
@@ -312,9 +321,9 @@ test("a failed REFETCH keeps the grant list it already had, not the error", asyn
   await waitForFailedRefetch(queryClient);
 
   expect(await view.findByText("list_channels")).toBeTruthy();
-  expect(view.queryByText("Plugins could not be loaded.")).toBeNull();
+  expect(view.queryByText("插件无法加载。")).toBeNull();
   expect(
-    view.queryByText("This deployment has not enabled an app by that name."),
+    view.queryByText("此部署未启用名为该名称的应用程序。"),
   ).toBeNull();
 });
 
@@ -356,9 +365,9 @@ test("a hidden Bot's own page draws its grants instead of saying there is no suc
   const view = renderScreen(queryClient);
   await waitForFailedRefetch(queryClient);
 
-  const held = await view.findByLabelText("Let Tucked Bot call list_channels");
+  const held = await view.findByLabelText("让 Tucked Bot 调用 list_channels");
   expect(held.getAttribute("aria-checked")).toBe("true");
-  expect(view.queryByText("Not a Bot")).toBeNull();
+  expect(view.queryByText("不是机器人")).toBeNull();
 });
 
 /**
@@ -370,7 +379,7 @@ test("a hidden Bot's own page draws its grants instead of saying there is no suc
  */
 function rowActions(view: ReturnType<typeof renderScreen>, name: string) {
   const actions = view
-    .getByLabelText(`Let ${BOT_ID} call ${name}`)
+    .getByLabelText(`让 ${BOT_ID} 调用 ${name}`)
     .closest('[data-slot="item-actions"]');
   if (!actions) throw new Error(`No row drawn for ${name}.`);
   return actions;
@@ -402,7 +411,7 @@ test("an action the vendor calls destructive is marked, and a write it says noth
   // The mark itself, on the row that earned it: the heading already says these rows change things,
   // and this is the one saying what this row changes does not come back.
   expect(rowActions(view, "delete_channel").textContent).toContain(
-    "destroys things",
+    "销毁东西",
   );
 
   // The other half, which matters as much. `destructive: false` is the vendor having made no claim,

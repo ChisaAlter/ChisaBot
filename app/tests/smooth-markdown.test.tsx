@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, render } from "@testing-library/react";
 import { useSmoothText } from "@/lib/chat/use-smooth-text";
@@ -6,6 +6,11 @@ import { useSmoothText } from "@/lib/chat/use-smooth-text";
 if (typeof document === "undefined") GlobalRegistrator.register();
 
 afterEach(() => cleanup());
+
+// 2026-10-20 清基线：注册过就要收回来，否则后面的文件会撞「already been globally registered」。
+afterAll(() => {
+  if (GlobalRegistrator.isRegistered) GlobalRegistrator.unregister();
+});
 
 function Probe({ text }: { text: string }) {
   return <p data-testid="out">{useSmoothText(text)}</p>;

@@ -43,7 +43,8 @@ describe("relativeTime", () => {
 
   test("still formats a valid date", () => {
     const iso = new Date(Date.now() - 30_000).toISOString();
-    expect(relativeTime(iso)).toMatch(/second/);
+    // `Intl.RelativeTimeFormat` 现在按 zh-CN 输出：半分钟前是「30秒钟前」，不是 "30 seconds ago"。
+    expect(relativeTime(iso)).toMatch(/^30\s*秒钟前$/);
   });
 });
 

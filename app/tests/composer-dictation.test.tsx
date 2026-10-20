@@ -67,25 +67,21 @@ for (const variant of ["compact", "default"] as const) {
             }}
           />,
         );
-        fireEvent.click(
-          view.getByRole("button", { name: "Dictate a message" }),
+        fireEvent.click(view.getByRole("button", { name: "口述消息" }));
+        await waitFor(() =>
+          expect(view.getByText("正在监听")).toBeDefined(),
         );
-        await waitFor(() => expect(view.getByText("Listening")).toBeDefined());
         expect(view.queryByRole("textbox", { name: "消息" })).toBeNull();
+        expect(view.queryByRole("button", { name: "口述消息" })).toBeNull();
         expect(
-          view.queryByRole("button", { name: "Dictate a message" }),
-        ).toBeNull();
-        expect(
-          view.getByRole("img", { name: "Live audio waveform" }),
+          view.getByRole("img", { name: "实时音频波形" }),
         ).toBeDefined();
         const form = view.container.querySelector("form");
         if (!form) throw new Error("Missing composer form");
         fireEvent.submit(form);
         expect(sent).toEqual([]);
         if (action === "cancel") {
-          fireEvent.click(
-            view.getByRole("button", { name: "Cancel dictation" }),
-          );
+          fireEvent.click(view.getByRole("button", { name: "取消听写" }));
           await waitFor(() =>
             expect(
               view.getByRole("textbox", { name: "消息" }).textContent,
@@ -98,7 +94,7 @@ for (const variant of ["compact", "default"] as const) {
         fireEvent.click(
           view.getByRole("button", {
             name:
-              action === "stop" ? "Stop and transcribe" : "Transcribe and send",
+              action === "stop" ? "停止并转录" : "转录并发送",
           }),
         );
         await waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
@@ -109,7 +105,7 @@ for (const variant of ["compact", "default"] as const) {
             ),
           );
           expect(sent).toEqual([]);
-          fireEvent.click(view.getByRole("button", { name: "Retry" }));
+          fireEvent.click(view.getByRole("button", { name: "重试" }));
           await waitFor(() => expect(transcribe).toHaveBeenCalledTimes(2));
         }
         fireEvent.submit(form);

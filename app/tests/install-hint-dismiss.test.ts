@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
   INSTALL_HINT_KEY,
@@ -14,6 +14,11 @@ beforeAll(() => {
 
 afterEach(() => {
   window.localStorage.removeItem(INSTALL_HINT_KEY);
+});
+
+// 2026-10-20 清基线：注册过就要收回来，否则后面的文件会撞「already been globally registered」。
+afterAll(() => {
+  if (GlobalRegistrator.isRegistered) GlobalRegistrator.unregister();
 });
 
 test("× dismiss is permanent", () => {

@@ -18,24 +18,31 @@ import {
 } from "@tanstack/react-router";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { type AgentProfile, agentKeys } from "@/lib/agents/queries";
-import { Route as AgentsRoute } from "@/routes/_authed/_app/agents/index";
+import { Route as BotsRoute } from "@/routes/_authed/_app/bots.index";
 import { Route as HomeRoute } from "@/routes/_authed/_app/index";
 
 /**
- * Both agent-facing screens read the same `agentListQueryOptions()` query, and both drew their
- * empty state on a FAILED query, not just an empty one: `isPending` (what each screen branches on)
- * goes false on failure exactly as it does on success, so a broken fetch fell through to "you have
- * nothing" and told somebody who may own twenty coworkers that they own none.
+ * What the two person-facing entry screens say when the roster cannot be read.
+ *
+ * REWRITTEN, NOT TRANSLATED. This file used to drive the `/agents` roster (two columns: your agents
+ * and the ones shared with you, plus Pinned and Hidden sections) and the old `/` home page. Commit
+ * 5ade3780 (「导航收敛」) deleted both screens: `/agents` is now a redirect to `/bots`
+ * (`routes/_authed/_app/agents/index.tsx`), `/` is `LandingRedirect`
+ * (`routes/_authed/_app/index.tsx`) and the roster, pin and hide UI it asserted no longer exists.
+ * No assertion could be translated into a passing one, so the coverage target moved to the screens
+ * that replaced them: the Bot list at `/bots`, and the landing redirect that puts somebody straight
+ * into a conversation. The invariant the old file existed for is unchanged and is what every test
+ * below pins: a request that never came back must never be rendered as "you have nothing".
  *
  * THE HARNESS IS THIS REPOSITORY'S. `GlobalRegistrator` in `beforeAll`/`afterAll`, `cleanup` in
- * `afterEach`, and queries off `render()`'s own return, matching the other dialog tests for
- * the reason recorded there: bun walks every file into one process, and a document another file
- * tore down mid-run fails invisibly.
+ * `afterEach`, and queries off `render()`'s own return, matching the other dialog tests for the
+ * reason recorded there: bun walks every file into one process, and a document another file tore
+ * down mid-run fails invisibly.
  *
  * Each test builds its own `QueryClient` with `retry: false` — the app's own client (see
  * `query-client.ts`) retries once, which is correct for production and would just slow this test
  * down for no assertion it needs. Both screens are exercised through their real, exported `Route`,
- * not a stand-in; see `renderAgents` below for what that costs on `/agents`.
+ * not a stand-in; see `renderBots` below for what that costs on `/bots`.
  */
 
 beforeAll(() => GlobalRegistrator.register());
@@ -45,6 +52,9 @@ afterAll(() => GlobalRegistrator.unregister());
 const originalFetch = global.fetch;
 
 beforeEach(() => {
+  // `readStoredPanelBot()` and the "last left mode" both read this; a key left by another test
+  // would silently decide where `/` lands.
+  localStorage.clear();
   // Every read in this app goes through `client()` in `lib/client.ts`, which throws once the
   // response is not `ok`. A 500 with no body is the shape a broken server actually sends, and is
   // exactly what `client()`'s fallback message path exists for.
@@ -56,6 +66,48 @@ afterEach(() => {
   global.fetch = originalFetch;
 });
 
+/**
+ * Serves the URLs one of these screens reads; anything else is the 500 above.
+ *
+ * A handler rather than a map so a test can hold one response open forever (the pending case) or
+ * answer differently per URL (`/api/me` succeeding while the roster fails is one real state).
+ */
+function installFetch(
+  handler: (url: string) => Response | Promise<Response> | undefined,
+): void {
+  global.fetch = Object.assign(
+    async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      return (await handler(url)) ?? new Response(null, { status: 500 });
+    },
+    { preconnect: originalFetch.preconnect },
+  ) as unknown as typeof fetch;
+}
+
+const ME = { user: { id: "me", email: "me@example.test", role: "user" } };
+
+/** `/bots` reads the roster and nothing else this test cares about; the rest of its reads may fail. */
+function servingBots(agents: () => Response | Promise<Response>): void {
+  installFetch((url) => (url.startsWith("/api/agents") ? agents() : undefined));
+}
+
+/**
+ * `/` needs more than the roster to leave its loading state: the current user (whose preferences
+ * `useMainBot` waits for) and the channel list. Only the roster is varied, because only it decides
+ * between the error card and the empty state.
+ */
+function servingLanding(agents: () => Response | Promise<Response>): void {
+  installFetch((url) => {
+    if (url === "/api/me") return Response.json(ME);
+    if (url.startsWith("/api/settings/preferences"))
+      return Response.json({ preferences: { mainBotId: null } });
+    if (url.startsWith("/api/channels"))
+      return Response.json({ channels: [], nextCursor: null });
+    if (url.startsWith("/api/agents")) return agents();
+    return undefined;
+  });
+}
+
 /** A client the failing query settles on in one attempt, so the test does not wait on a retry. */
 function failingQueryClient() {
   return new QueryClient({
@@ -65,9 +117,9 @@ function failingQueryClient() {
 
 /**
  * A client that already holds a successful `agents` list under the exact key
- * `agentListQueryOptions()` reads (`agentKeys.list(false)`, the default `hidden` param both
- * screens call it with), built on `failingQueryClient()` so the one refetch it triggers on mount
- * settles without a retry.
+ * `agentListQueryOptions()` reads (`agentKeys.list(false)`, the default `hidden` param both screens
+ * call it with), built on `failingQueryClient()` so the one refetch it triggers on mount settles
+ * without a retry.
  *
  * Combined with the always-failing `global.fetch` this file's `beforeEach` installs, mounting a
  * screen against this client reproduces a failed BACKGROUND refetch: TanStack Query's default
@@ -117,66 +169,17 @@ async function waitForFailedRefetch(queryClient: QueryClient) {
 }
 
 /**
- * `findByText`'s own default wait is 1000ms, and `/` additionally mounts the heavy rich-text
- * `Composer` on top of the roster query this file already exercises, so a render on `/` is
- * measurably slower than its `/agents` twin. Under load that gap crosses 1000ms and the default
- * times out around 1010ms — not a logic bug (data is never cleared or corrupted through the error
- * transition; this was checked with a `Profiler`), just too little headroom for a busy machine. Do
- * not remove this as a redundant-looking argument: every `findByText` in a test that renders `/`
- * needs it, and `/agents`-only tests do not, because they never mount `Composer`.
- */
-const HOME_FIND_TIMEOUT = { timeout: 5000 };
-
-/** `/`'s component makes no `Route.useSearch()` / `Route.useNavigate()` call of its own, so mounting
- *  it directly as a memory router's root is enough — no ancestor chain to reconstruct. */
-function renderHome(queryClient: QueryClient) {
-  const rootRoute = createRootRoute({ component: HomeRoute.options.component });
-  const router = createRouter({
-    routeTree: rootRoute,
-    history: createMemoryHistory({ initialEntries: ["/"] }),
-  });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router as never} />
-    </QueryClientProvider>,
-  );
-}
-
-/**
- * `/agents`'s component calls `Route.useSearch()` and `Route.useNavigate()`, which read `this.id`
- * off the very `Route` singleton the source file exports — so, unlike `/`, a bare root standing in
- * for it is not enough; those hooks fail to resolve a match unless that exact object is present in
- * the router's tree with the id it expects.
+ * `/bots`'s component makes no `useParams()` / `useSearch()` call of its own — only `useNavigate()`
+ * and `Link`s to `"/bots/$agentId"` — so mounting its real `Route` under two decoy pathless parents
+ * that reproduce the `/_authed/_app` join is enough; the real ancestors (a session check and the
+ * shell) are not what this file is about. The detail route is registered because `Link` needs it
+ * in the tree to build an href, and is never navigated to.
  *
- * That id is not a free choice: `Route.useSearch()`/`useNavigate()` read it from `this.id`, which
- * TanStack Router computes by walking `getParentRoute()` up to the root and joining each ancestor's
- * own id, so it is fixed by the file's real position — `/_authed/_app/agents/` for a leaf declared
- * `createFileRoute("/_authed/_app/agents/")` under pathless `_authed`/`_app` parents. Reproducing
- * that with two throwaway pathless routes (`id`-only, no `path`, so they contribute nothing to the
- * URL — exactly what `_authed`/`_app` do) is enough for the join to land on the same id; it does not
- * require the real ancestors, whose `beforeLoad` checks a signed-in session and whose components
- * mount the sidebar shell and the Copilot provider — none of which this test is about.
- *
- * The real `Route` singleton is `.update()`d in place to attach to this decoy chain, because
- * `Route.useSearch()`/`useNavigate()` are bound to the one object the source module exports — there
- * is no way to hand the component a stand-in. `beforeEach`/`afterEach` capture and restore its
- * *entire own state* — not just `options`, and not by replaying it through `.update()` — around each
- * render, so a real router built elsewhere in this same bun process (there is exactly one:
- * `router.test.ts`, which never inspects this route) is never left pointed at the decoy.
- *
- * A restore that merely replayed the captured `options` through `.update()` would not work: the
- * installed `update()` (`@tanstack/router-core@1.171.27`'s `dist/esm/route.js`) is
- * `Object.assign(this.options, options); return this;` — a merge. `Object.assign` only overwrites
- * or adds keys, it never deletes one, so merging a snapshot that predates this file's `id`/`path`/
- * `getParentRoute` back on top leaves those decoy keys sitting in `options` untouched. Worse,
- * `update()` never touches the *derived* state `router.js`'s `buildRouteTree()` computes by calling
- * `route.init({ originalIndex })` once per route each time a router is built (`_id`, `_path`,
- * `_fullPath`, `_to`, `parentRoute`, `originalIndex`) — those stay pinned to whatever this file's own
- * `createRouter()` last resolved them to, decoy parent included, since nothing re-runs `init()` on
- * `.update()`. The only restore that actually undoes a render is a full replace: snapshot every own
- * property up front (with `options` itself shallow-cloned, since `update()` mutates that very object
- * in place rather than replacing it) and, afterward, delete whatever the render added and reassign
- * the rest verbatim.
+ * The exported `Route` singleton is `.update()`d in place and its *entire own state* captured and
+ * restored around each render, because `router.js`'s `buildRouteTree()` derives `_id`/`parentRoute`
+ * off it and `.update()` merges rather than replaces. See `bot-app-grants-screen.test.tsx` and the
+ * long note this scheme came from: a restore that merely replayed `options` through `.update()`
+ * cannot delete the decoy keys a render adds.
  */
 function captureRouteState(route: object): Record<string, unknown> {
   return { ...route, options: { ...(route as { options: object }).options } };
@@ -194,47 +197,25 @@ function restoreRouteState(
   Object.assign(route, snapshot);
 }
 
-/**
- * Captured exactly once, at module scope, the instant this line of top-level code runs — which is
- * before any `test()` body in this file has had a chance to run. That timing, not any claim about
- * the route being untouched, is what makes this the right fixed point.
- *
- * It is deliberately NOT described as "pristine in the absolute". `AgentsRoute` gains its derived
- * keys (`_id`, `_fullPath`, `parentRoute`, ...) when `route.init()` runs, which `createRouter()`
- * triggers — and that is NOT confined to this file: `app/src/router.tsx` calls `createRouter()` at
- * module top level over the generated `routeTree`, which contains this very route, so merely
- * importing it initialises `AgentsRoute`. `app/tests/router.test.ts` imports it, and bun runs every
- * file in one process, so depending on file order this constant may capture a route that the real
- * router has already initialised.
- *
- * That is fine, and it is the point: what this has to restore is the state the route was in before
- * THIS file interfered with it, whatever that state was. Either way the rest of the process gets
- * back exactly what it had. A snapshot taken in `beforeEach` instead — as this used to do — would
- * be reading the *live*, already-rendered-on `AgentsRoute` from test two onward, which is exactly
- * how a broken `restoreRouteState` (one that merges but never deletes the stray keys a render adds)
- * went undetected: each test's "before" picture already had last test's leak baked in as normal.
- *
- * `captureRouteState` is called again on this constant, rather than using it directly, everywhere
- * below it is needed. `restoreRouteState`'s `Object.assign(route, snapshot)` step aliases
- * `route.options` to `snapshot.options` — not a clone — and `Route.update()` mutates `this.options`
- * in place. Handing the very same object out of every `beforeEach` would let the next render's
- * `.update()` mutate this "pristine" constant through that alias, corrupting the one fixed point
- * this whole scheme depends on. Re-running it through `captureRouteState` produces a fresh
- * `options` clone each time, so the constant itself is never written to after this line.
- */
-const pristineAgentsRouteState = captureRouteState(AgentsRoute);
+/** Captured once, at module scope, the instant this line runs — before any test body in this file.
+ *  That timing, not a claim that the route is untouched, is what makes it the right fixed point:
+ *  `routeTree.gen.ts` may already have initialised `BotsRoute` in this process, and what has to be
+ *  handed back is whatever state this file found. `captureRouteState` is called again on the
+ *  constant everywhere it is used, because `restoreRouteState` aliases `route.options` to the
+ *  snapshot's clone and `.update()` mutates it in place. */
+const pristineBotsRouteState = captureRouteState(BotsRoute);
 
-let agentsRouteSnapshot: Record<string, unknown>;
+let botsRouteSnapshot: Record<string, unknown>;
 
 beforeEach(() => {
-  agentsRouteSnapshot = captureRouteState(pristineAgentsRouteState);
+  botsRouteSnapshot = captureRouteState(pristineBotsRouteState);
 });
 
 afterEach(() => {
-  restoreRouteState(AgentsRoute, agentsRouteSnapshot);
+  restoreRouteState(BotsRoute, botsRouteSnapshot);
 });
 
-function renderAgents(queryClient: QueryClient) {
+function renderBots(queryClient: QueryClient) {
   const rootRoute = createRootRoute({ component: Outlet });
   const authedRoute = createRoute({
     id: "/_authed",
@@ -246,21 +227,26 @@ function renderAgents(queryClient: QueryClient) {
     getParentRoute: () => authedRoute,
     component: Outlet,
   });
+  const detailRoute = createRoute({
+    path: "/bots/$agentId",
+    getParentRoute: () => appRoute,
+    component: () => null,
+  });
   const wired = (
-    AgentsRoute as unknown as {
-      update: (options: unknown) => typeof AgentsRoute;
+    BotsRoute as unknown as {
+      update: (options: unknown) => typeof BotsRoute;
     }
   ).update({
-    id: "/agents/",
-    path: "/agents/",
+    id: "/bots/",
+    path: "/bots",
     getParentRoute: () => appRoute,
   });
   const tree = rootRoute.addChildren([
-    authedRoute.addChildren([appRoute.addChildren([wired])]),
+    authedRoute.addChildren([appRoute.addChildren([wired, detailRoute])]),
   ]);
   const router = createRouter({
     routeTree: tree,
-    history: createMemoryHistory({ initialEntries: ["/agents"] }),
+    history: createMemoryHistory({ initialEntries: ["/bots"] }),
   });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -269,407 +255,264 @@ function renderAgents(queryClient: QueryClient) {
   );
 }
 
-test("a failed roster on /agents reports the failure, not an empty roster", async () => {
-  const view = renderAgents(failingQueryClient());
-
-  expect(await view.findByText("Your agents couldn't be loaded.")).toBeTruthy();
-  expect(
-    await view.findByText("Agents shared with you couldn't be loaded."),
-  ).toBeTruthy();
-
-  // The whole point: a person with agents must never be told they have none because the request
-  // that would have proven otherwise never came back.
-  expect(view.queryByText("You don't have any agents created.")).toBeNull();
-  expect(
-    view.queryByText("Nobody has shared an agent with you yet."),
-  ).toBeNull();
-});
-
-test("a failed roster on / reports the failure and explains the disabled composer", async () => {
-  const view = renderHome(failingQueryClient());
-
-  expect(
-    await view.findByText(
-      "Agents shared with you couldn't be loaded.",
-      {},
-      HOME_FIND_TIMEOUT,
-    ),
-  ).toBeTruthy();
-  expect(
-    view.queryByText("Nobody has shared an agent with you yet."),
-  ).toBeNull();
-
-  // The composer goes `disabled={!fallback}` on the very same failure, with nothing on screen
-  // saying why unless this alert renders.
-  expect(
-    await view.findByText(
-      "Your coworkers couldn't be loaded, so there's no one to send this to yet.",
-      {},
-      HOME_FIND_TIMEOUT,
-    ),
-  ).toBeTruthy();
-});
-
-test("both /agents sections hold a skeleton while the roster is pending, not an empty state", async () => {
-  // A fetch that never settles is `isPending` forever — the state each section's loading arm
-  // renders once the router has finished its own (also async) initial match, which is why this
-  // still waits rather than reading `view.container` on the very next line.
-  global.fetch = (() =>
-    new Promise<Response>(() => {})) as unknown as typeof fetch;
-
-  const view = renderAgents(failingQueryClient());
-
-  const skeletons = await waitFor(() => {
-    const found = view.container.querySelectorAll('[data-slot="skeleton"]');
-    expect(found.length).toBe(2);
-    return found;
+/** `/`'s component calls no `Route.use*` hook, so mounting the real exported component as a memory
+ *  router's root is enough. The two channel routes are registered so a landing target has somewhere
+ *  to resolve to; the assertion reads the router's location rather than drawing either one. */
+function renderLanding(queryClient: QueryClient) {
+  const rootRoute = createRootRoute({
+    component: HomeRoute.options.component,
   });
-  expect(skeletons.length).toBe(2);
-
-  // A skeleton sitting beside a premature empty or error sentence would be no fix at all: the
-  // point is that loading reserves the section's height instead of claiming an answer it doesn't
-  // have yet.
-  expect(view.queryByText("You don't have any agents created.")).toBeNull();
-  expect(
-    view.queryByText("Nobody has shared an agent with you yet."),
-  ).toBeNull();
-  expect(view.queryByText("Your agents couldn't be loaded.")).toBeNull();
-  expect(
-    view.queryByText("Agents shared with you couldn't be loaded."),
-  ).toBeNull();
-});
-
-/*
- * The three tests above all exercise a query that has NEVER succeeded: `isPending` and `isError`
- * both come from a first attempt. TanStack Query keeps a query's last good `data` across a failed
- * BACKGROUND refetch — the library's own comment on that code path reads "flag existing data as
- * invalidated if we get a background error" — so `isError === true` beside a perfectly good,
- * previously-loaded roster is an ordinary state, not the one the tests above cover. Both screens
- * used to let `failed` outrank the populated-list check regardless of which of these two `isError`
- * causes produced it, which replaced a working roster with an error card, and on `/` also showed an
- * alert claiming the composer had nothing to send to while it was, in fact, still enabled.
- */
-test("a failed REFETCH on /agents keeps the roster it already had, not the error", async () => {
-  const mine = agent({ id: "mine-1", name: "Mine Agent", mine: true });
-  const shared = agent({
-    id: "shared-1",
-    name: "Shared Agent",
-    mine: false,
-    visibility: "public",
+  const channelNew = createRoute({
+    path: "/channel/new",
+    getParentRoute: () => rootRoute,
+    component: () => null,
   });
-  const queryClient = staleQueryClient([mine, shared]);
-
-  const view = renderAgents(queryClient);
-  await waitForFailedRefetch(queryClient);
-
-  expect(await view.findByText("Mine Agent")).toBeTruthy();
-  expect(await view.findByText("Shared Agent")).toBeTruthy();
-  expect(view.queryByText("Your agents couldn't be loaded.")).toBeNull();
-  expect(
-    view.queryByText("Agents shared with you couldn't be loaded."),
-  ).toBeNull();
-});
-
-test("a failed REFETCH on / keeps the roster and does not disclaim the composer", async () => {
-  const shared = agent({
-    id: "shared-1",
-    name: "Shared Agent",
-    mine: false,
-    visibility: "public",
+  const channel = createRoute({
+    path: "/channel/$channelId",
+    getParentRoute: () => rootRoute,
+    component: () => null,
   });
-  const queryClient = staleQueryClient([shared]);
-
-  const view = renderHome(queryClient);
-  await waitForFailedRefetch(queryClient);
-
-  expect(
-    await view.findByText("Shared Agent", {}, HOME_FIND_TIMEOUT),
-  ).toBeTruthy();
-  // Only renders while `fallback` is set, which the retained roster still supplies — the direct
-  // evidence that the composer is not the disabled, nothing-to-send-to state its alert describes.
-  expect(
-    await view.findByText(
-      "Sent to the coworker it is for.",
-      { exact: false },
-      HOME_FIND_TIMEOUT,
-    ),
-  ).toBeTruthy();
-  expect(
-    view.queryByText(
-      "Your coworkers couldn't be loaded, so there's no one to send this to yet.",
-    ),
-  ).toBeNull();
-  expect(
-    view.queryByText("Agents shared with you couldn't be loaded."),
-  ).toBeNull();
-});
-
-/*
- * A failed REFETCH can also land on cache that is ASYMMETRIC: one slice populated, its sibling
- * genuinely empty. `?.length` cannot tell "loaded, and this slice is empty" apart from "never
- * loaded" — both read as falsy — so gating the destructive arm on `failed` alone (once the
- * populated-list check above it doesn't fire) puts the "couldn't be loaded" card on the empty
- * sibling, right beside a section rendering real cards from that very same query. The real cards
- * are the proof: the response came back, and this slice of it is just empty.
- */
-test("a failed REFETCH on /agents with one empty slice shows it as empty, not broken", async () => {
-  const mine = agent({ id: "mine-1", name: "Mine Agent", mine: true });
-  const queryClient = staleQueryClient([mine]);
-
-  const view = renderAgents(queryClient);
-  await waitForFailedRefetch(queryClient);
-
-  expect(await view.findByText("Mine Agent")).toBeTruthy();
-  expect(
-    await view.findByText("Nobody has shared an agent with you yet."),
-  ).toBeTruthy();
-  expect(
-    view.queryByText("Agents shared with you couldn't be loaded."),
-  ).toBeNull();
-});
-
-test("a failed REFETCH on /agents with the other slice empty also shows it as empty", async () => {
-  const shared = agent({
-    id: "shared-1",
-    name: "Shared Agent",
-    mine: false,
-    visibility: "public",
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([channelNew, channel]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
   });
-  const queryClient = staleQueryClient([shared]);
-
-  const view = renderAgents(queryClient);
-  await waitForFailedRefetch(queryClient);
-
-  expect(await view.findByText("Shared Agent")).toBeTruthy();
-  expect(
-    await view.findByText("You don't have any agents created."),
-  ).toBeTruthy();
-  expect(view.queryByText("Your agents couldn't be loaded.")).toBeNull();
-});
-
-/*
- * Hiding a coworker takes it off both rosters, and Unhide is only in its dialog, which only a card
- * opens. These serve the two list requests from their real URLs so the hidden roster arrives the
- * way the server sends it: `GET /api/agents?hidden=true`.
- */
-function servingRosters(visible: AgentProfile[], hidden: AgentProfile[]) {
-  global.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
-    const agents = url.includes("hidden=true") ? hidden : visible;
-    return Response.json({ agents });
-  }) as unknown as typeof fetch;
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router as never} />
+    </QueryClientProvider>,
+  );
+  return { view, router };
 }
 
-test("a hidden coworker is on /agents under Hidden, collapsed, with a card that opens it", async () => {
-  const mine = agent({ id: "mine-1", name: "Mine Agent" });
-  const tucked = agent({ id: "hidden-1", name: "Tucked Agent", hidden: true });
-  servingRosters([mine], [tucked]);
+test("a failed roster on /bots reports the failure, not an empty roster", async () => {
+  servingBots(() => new Response(null, { status: 500 }));
+  const view = renderBots(failingQueryClient());
 
-  const view = renderAgents(failingQueryClient());
+  expect(await view.findByText("机器人列表暂时无法加载。")).toBeTruthy();
 
-  expect(await view.findByText("Hidden")).toBeTruthy();
-  const section = view.container.querySelector("details");
-  expect(section).not.toBeNull();
-  // Collapsed until asked for, so it does not push the two rosters apart.
-  expect(section?.open).toBe(false);
-  // Inside the section rather than in either roster above it.
-  expect(section?.textContent).toContain("Tucked Agent");
-  expect(section?.textContent).not.toContain("Mine Agent");
-  // The card's own Details link is the way to the dialog that holds Unhide.
-  const link = view.getByLabelText("View details for Tucked Agent");
-  expect(link.getAttribute("href")).toBe("/agents?agent=hidden-1");
+  // The whole point: a person with Bots must never be told they have none because the request that
+  // would have proven otherwise never came back.
+  expect(view.queryByText("你还没有机器人。")).toBeNull();
+  expect(view.container.querySelectorAll('[data-slot="item"]')).toHaveLength(0);
 });
 
-test("with nothing hidden, /agents has no Hidden section at all", async () => {
-  servingRosters([agent({ id: "mine-1", name: "Mine Agent" })], []);
-  const queryClient = failingQueryClient();
+test("a failed roster on / reports the failure and offers a way back", async () => {
+  servingLanding(() => new Response(null, { status: 500 }));
+  const { view } = renderLanding(failingQueryClient());
 
-  const view = renderAgents(queryClient);
+  expect(await view.findByText("机器人列表加载失败")).toBeTruthy();
+  expect(view.getByText("请检查网络后重试。")).toBeTruthy();
+  expect(view.getByRole("button", { name: "重试" })).toBeTruthy();
 
-  expect(await view.findByText("Mine Agent")).toBeTruthy();
-  // Absent because the hidden roster came back empty, not because it has not come back yet.
-  await waitFor(() => {
-    expect(queryClient.getQueryState(agentKeys.list(true))?.status).toBe(
-      "success",
-    );
+  // Not the empty state, which would claim the account owns no Bot at all.
+  expect(view.queryByText("还没有可用的机器人")).toBeNull();
+});
+
+test("a pending roster on /bots holds a skeleton, not an empty state", async () => {
+  // A fetch that never settles is `isPending` forever — the state the screen's loading arm renders.
+  servingBots(() => new Promise<Response>(() => {}));
+
+  const view = renderBots(failingQueryClient());
+
+  const skeleton = await waitFor(() => {
+    const found = view.getByRole("status", { name: "正在加载" });
+    expect(found.querySelectorAll(".page-skeleton-row")).toHaveLength(3);
+    return found;
   });
-  expect(view.queryByText("Hidden")).toBeNull();
-  expect(view.container.querySelector("details")).toBeNull();
+  expect(skeleton.getAttribute("aria-busy")).toBe("true");
+
+  // A skeleton beside a premature empty or error sentence would be no fix at all: the point is
+  // that loading reserves the section instead of claiming an answer it does not have yet.
+  expect(view.queryByText("你还没有机器人。")).toBeNull();
+  expect(view.queryByText("机器人列表暂时无法加载。")).toBeNull();
 });
 
-test("a pinned coworker moves into Pinned at the top, out of its roster", async () => {
-  const kept = agent({ id: "mine-1", name: "Kept Agent" });
-  const favourite = agent({ id: "mine-2", name: "Favourite", pinned: true });
-  servingRosters([kept, favourite], []);
-
-  const view = renderAgents(failingQueryClient());
-
-  expect(await view.findByText("Pinned")).toBeTruthy();
-  const headings = [...view.container.querySelectorAll("h2")].map(
-    (heading) => heading.textContent,
-  );
-  expect(headings).toEqual(["Pinned", "Your agents", "Explore agents"]);
-  // Once, in Pinned, rather than twice.
-  expect(view.getAllByText("Favourite")).toHaveLength(1);
-  const pinnedSection = view.getByText("Pinned").parentElement;
-  expect(pinnedSection?.textContent).toContain("Favourite");
-  expect(pinnedSection?.textContent).not.toContain("Kept Agent");
-});
-
-test("with every coworker of yours pinned, Your agents says so instead of claiming none", async () => {
-  servingRosters(
-    [agent({ id: "mine-1", name: "Favourite", pinned: true })],
-    [],
-  );
-
-  const view = renderAgents(failingQueryClient());
-
-  expect(
-    await view.findByText("Your agents are all pinned above."),
-  ).toBeTruthy();
-  expect(view.queryByText("You don't have any agents created.")).toBeNull();
-});
-
-test("with nothing pinned, /agents has no Pinned section", async () => {
-  servingRosters([agent({ id: "mine-1", name: "Mine Agent" })], []);
-
-  const view = renderAgents(failingQueryClient());
-
-  expect(await view.findByText("Mine Agent")).toBeTruthy();
-  expect(view.queryByText("Pinned")).toBeNull();
-});
-
-test("a failed REFETCH on / with explore empty shows it as empty, not broken", async () => {
+test("a failed REFETCH on /bots keeps the roster it already had, not the error", async () => {
   const mine = agent({ id: "mine-1", name: "Mine Agent", mine: true });
-  const queryClient = staleQueryClient([mine]);
+  const shared = agent({
+    id: "shared-1",
+    name: "Shared Agent",
+    mine: false,
+    visibility: "public",
+  });
+  servingBots(() => new Response(null, { status: 500 }));
+  const queryClient = staleQueryClient([mine, shared]);
 
-  const view = renderHome(queryClient);
+  const view = renderBots(queryClient);
   await waitForFailedRefetch(queryClient);
 
+  // A failed background refetch is an ordinary state, not an empty answer: the roster it already
+  // had is still the truth, and replacing it with an error card would throw away a working list.
+  expect(await view.findByText("Mine Agent")).toBeTruthy();
+  expect(await view.findByText("Shared Agent")).toBeTruthy();
+  expect(view.queryByText("机器人列表暂时无法加载。")).toBeNull();
+  expect(view.queryByText("你还没有机器人。")).toBeNull();
+  expect(view.container.querySelectorAll('[data-slot="item"]')).toHaveLength(2);
+});
+
+test("an empty roster on /bots says you have none", async () => {
+  servingBots(() => Response.json({ agents: [] }));
+  const view = renderBots(failingQueryClient());
+
+  expect(await view.findByText("你还没有机器人。")).toBeTruthy();
+  expect(view.queryByText("机器人列表暂时无法加载。")).toBeNull();
+});
+
+test("an empty roster on / offers to create the first Bot, not an error", async () => {
+  servingLanding(() => Response.json({ agents: [] }));
+  const { view, router } = renderLanding(failingQueryClient());
+
+  expect(await view.findByText("还没有可用的机器人")).toBeTruthy();
+  expect(view.getByText("新建一个机器人，就可以开始聊天。")).toBeTruthy();
+  expect(view.getByRole("button", { name: "新建机器人" })).toBeTruthy();
+  expect(view.queryByText("机器人列表加载失败")).toBeNull();
+  expect(router.state.location.pathname).toBe("/");
+});
+
+test("each Bot on /bots links to its profile and to its chat", async () => {
+  const mine = agent({ id: "mine-1", name: "Mine Agent" });
+  servingBots(() => Response.json({ agents: [mine] }));
+  const view = renderBots(failingQueryClient());
+
+  expect(await view.findByText("Mine Agent")).toBeTruthy();
+  expect(view.getByRole("heading", { level: 1, name: "机器人" })).toBeTruthy();
+
+  // The two ways into a Bot, both carrying its name rather than a bare arrow.
   expect(
-    await view.findByText(
-      "Nobody has shared an agent with you yet.",
-      {},
-      HOME_FIND_TIMEOUT,
-    ),
+    view.getByLabelText("「Mine Agent」的资料").getAttribute("href"),
+  ).toBe("/bots/mine-1");
+  expect(
+    view.getByRole("button", { name: "和「Mine Agent」聊天" }),
   ).toBeTruthy();
+});
+
+test("a roster of only hidden Bots gives / nothing to open, not an error", async () => {
+  const tucked = agent({ id: "hidden-1", hidden: true });
+  servingLanding(() => Response.json({ agents: [tucked] }));
+  const { view, router } = renderLanding(failingQueryClient());
+
+  // Hidden Bots are the person's own preference and are not where the app opens; that is an empty
+  // landing, not a failed read, and must not be drawn as one.
+  expect(await view.findByText("还没有可用的机器人")).toBeTruthy();
+  expect(view.queryByText("机器人列表加载失败")).toBeNull();
+  expect(router.state.location.pathname).toBe("/");
+});
+
+test("a loaded roster on / lands in that Bot's conversation", async () => {
+  const mine = agent({ id: "bot-1", name: "Mine Agent" });
+  servingLanding(() => Response.json({ agents: [mine] }));
+  const { router } = renderLanding(failingQueryClient());
+
+  await waitFor(() =>
+    expect(router.state.location.pathname).toBe("/channel/new"),
+  );
   expect(
-    view.queryByText("Agents shared with you couldn't be loaded."),
-  ).toBeNull();
-  // `agents` loaded (it holds "Mine Agent"), so `fallback` falls back to it and the composer is
-  // enabled — the alert claiming a load failure must not appear beside that working composer.
+    (router.state.location.search as { agent?: string }).agent,
+  ).toBe("bot-1");
+});
+
+test("a failed REFETCH on / still lands in the Bot it already had, not the error card", async () => {
+  const mine = agent({ id: "bot-1", name: "Mine Agent" });
+  servingLanding(() => new Response(null, { status: 500 }));
+  const queryClient = staleQueryClient([mine]);
+
+  const { view, router } = renderLanding(queryClient);
+  await waitFor(() =>
+    expect(router.state.location.pathname).toBe("/channel/new"),
+  );
+  await waitForFailedRefetch(queryClient);
+
+  // The retained roster still supplies a target — the direct evidence that the landing screen is
+  // not the "nothing to open" state its error card would describe.
   expect(
-    view.queryByText(
-      "Your coworkers couldn't be loaded, so there's no one to send this to yet.",
-    ),
-  ).toBeNull();
+    (router.state.location.search as { agent?: string }).agent,
+  ).toBe("bot-1");
+  expect(view.queryByText("机器人列表加载失败")).toBeNull();
+  expect(view.queryByText("还没有可用的机器人")).toBeNull();
+});
+
+test("while the roster is pending / claims neither an error nor an empty roster", async () => {
+  servingLanding(() => new Promise<Response>(() => {}));
+  const queryClient = failingQueryClient();
+  const { view } = renderLanding(queryClient);
+
+  await waitFor(() =>
+    expect(queryClient.getQueryState(agentKeys.list(false))).toBeDefined(),
+  );
+  expect(
+    queryClient.getQueryState(agentKeys.list(false))?.status,
+  ).toBe("pending");
+  // Nothing is drawn while the roster loads: the chat appears in place, no flash of a page that is
+  // about to leave, and no sentence asserting an answer that has not arrived.
+  expect(view.container.innerHTML).toBe("");
 });
 
 /**
  * Proves the restore itself, rather than trusting the doc comment above it: it drives
  * `captureRouteState`/`restoreRouteState` directly, sandwiched around a corruption that reproduces
- * both halves of what `renderAgents` does to the singleton — the `.update()` merge that plants
+ * both halves of what `renderBots` does to the singleton — the `.update()` merge that plants
  * `id`/`path`/`getParentRoute`, and the `route.init()` call `createRouter()` makes for every route in
  * a tree it builds, which is what actually derives `_id`/`_fullPath`/`_to`/`parentRoute` from those
- * options. Checking inside a test's own body can never observe what that test's own `afterEach` did
- * — the hook has not run yet at that point — so this calls `restoreRouteState` itself rather than
- * waiting on a hook, which observes the exact same restore path `afterEach` uses without depending on
- * bun's cross-test hook ordering.
- *
- * `before` is `pristineAgentsRouteState`, not a fresh `captureRouteState(AgentsRoute)` read here.
- * This test runs last, after every `renderAgents()`-driven test before it has already rendered on
- * (and had its `afterEach` "restore") the live singleton; reading `AgentsRoute` at this point trusts
- * that every prior restore actually worked, which is the very thing under test here. Comparing
- * against the one snapshot taken before any router ever touched the route is what turns a leaked key
- * into a visible diff instead of two contaminated pictures agreeing with each other.
+ * options.
  */
 test("restoring after a decoy render leaves no trace on the exported Route singleton", () => {
-  const before = captureRouteState(pristineAgentsRouteState);
+  const before = captureRouteState(pristineBotsRouteState);
 
   const decoyParentRoute = { id: "/_app", fullPath: "/" };
-  const route = AgentsRoute as unknown as {
+  const route = BotsRoute as unknown as {
     update: (options: unknown) => unknown;
     init: (opts: { originalIndex: number }) => void;
   };
   route.update({
-    id: "/agents/",
-    path: "/agents/",
+    id: "/bots/",
+    path: "/bots",
     getParentRoute: () => decoyParentRoute,
   });
   route.init({ originalIndex: 0 });
 
   // Sanity check: the corruption actually took, so the restore below proves something.
-  expect((AgentsRoute as { parentRoute: unknown }).parentRoute).toBe(
+  expect((BotsRoute as { parentRoute: unknown }).parentRoute).toBe(
     decoyParentRoute,
   );
 
-  restoreRouteState(AgentsRoute, before);
+  restoreRouteState(BotsRoute, before);
 
-  expect(captureRouteState(AgentsRoute)).toEqual(before);
+  expect(captureRouteState(BotsRoute)).toEqual(before);
 });
 
 /**
  * The test above compares one `captureRouteState` snapshot against another. That is only as
  * trustworthy as `captureRouteState`'s own `options` clone and `beforeEach`'s own re-clone off
- * `pristineAgentsRouteState` — and this file has now shipped three separate breakages that drop
- * one of those two clones. Each one aliases `pristineAgentsRouteState.options` to the live route's
- * `options` object, so `Route.update()`'s in-place mutation reaches the "pristine" constant too.
- * Once that happens, `before`'s own `options` in the test above is read off the very same corrupted
- * constant that `AgentsRoute` gets restored to, so the two sides of that `toEqual` are corrupted in
- * lockstep and agree with each other anyway — the assertion goes tautological and the suite stays
- * green with the pristine constant silently ruined for the rest of the process.
- *
- * The only way to catch that is to anchor to something the corruption itself cannot drag along: an
- * object-identity check against `pristineAgentsRouteState` itself, and a second identity check
- * against a decoy value created fresh inside THIS test — neither is derived from
- * `pristineAgentsRouteState` or `agentsRouteSnapshot` the way `before` is, so neither can be dragged
- * into the corruption alongside them.
- *
- * The second anchor is deliberately NOT "these key names must be absent from `options`" (`id`,
- * `path`, `getParentRoute`), even though those are the very keys this test's own decoy `.update()`
- * plants: `app/src/routeTree.gen.ts` calls the REAL `AgentsRoute.update({ id: '/agents/', path:
- * '/agents/', getParentRoute: () => AuthedAppRoute })` too, as part of wiring the real app router —
- * see `app/src/router.tsx`. Whenever this file shares a bun process with anything that imports that
- * real router (e.g. `router.test.ts`, or any component test that mounts the real app shell), those
- * exact key names are legitimately present in the pristine state this file must restore, so
- * asserting their bare absence goes red on correct code the moment file ordering changes — the very
- * "not pristine in the absolute" trap `pristineAgentsRouteState`'s own doc comment warns about.
- * Anchoring to a function reference this test just created sidesteps that: no real code, past or
- * future, can ever hold a reference to it.
- *
- * This test drives the exact same decoy-and-restore sequence as the one above, but reads
- * `agentsRouteSnapshot` — the real module-scope variable this test's own `beforeEach` already
- * populated, the same one the real `afterEach` restores through — rather than taking a fresh
- * snapshot of its own, so it is exercising the actual hook wiring rather than a stand-in for it.
+ * `pristineBotsRouteState`. This anchors to two things the corruption cannot drag along: an
+ * object-identity check against `pristineBotsRouteState.options` itself, and a second identity
+ * check against a closure created fresh in this test — neither is derived from the "pristine"
+ * constant, so neither can be corrupted in lockstep with it.
  */
 test("the pristine snapshot's options is never the live route's, and a restore leaves no decoy behind — checked by identity, not against another snapshot", () => {
   const decoyParentRoute = { id: "/_app", fullPath: "/" };
   const decoyGetParentRoute = () => decoyParentRoute;
-  const route = AgentsRoute as unknown as {
+  const route = BotsRoute as unknown as {
     update: (options: unknown) => unknown;
     init: (opts: { originalIndex: number }) => void;
   };
   route.update({
-    id: "/agents/",
-    path: "/agents/",
+    id: "/bots/",
+    path: "/bots",
     getParentRoute: decoyGetParentRoute,
   });
   route.init({ originalIndex: 0 });
 
-  restoreRouteState(AgentsRoute, agentsRouteSnapshot);
+  restoreRouteState(BotsRoute, botsRouteSnapshot);
 
   const liveOptions = (
-    AgentsRoute as unknown as {
+    BotsRoute as unknown as {
       options: { getParentRoute?: unknown };
     }
   ).options;
 
-  // Anchor 1 — identity, not a snapshot: the constant this whole file's restore promise rests on
-  // must never be the very object `Route.update()` writes into, restore or no restore.
-  expect(pristineAgentsRouteState.options).not.toBe(liveOptions);
+  // Anchor 1 — identity, not a snapshot.
+  expect(pristineBotsRouteState.options).not.toBe(liveOptions);
 
-  // Anchor 2 — identity against a value created fresh in this test, not a snapshot and not a key
-  // name: no real caller, past or future, can ever hold a reference to this closure, so its
-  // survival past the restore is unambiguous corruption either way.
+  // Anchor 2 — identity against a value created fresh in this test.
   expect(liveOptions.getParentRoute).not.toBe(decoyGetParentRoute);
 });

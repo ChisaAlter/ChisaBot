@@ -112,7 +112,7 @@ test("permission errors have an actionable recovery", async () => {
   expect(session.getSnapshot()).toMatchObject({
     phase: "error",
     canRetry: false,
-    error:
-      "Microphone access was denied. Allow it in your browser and try again.",
+    // 2026-10-20：这句跟着产品一起说中文了。
+    error: "浏览器没给麦克风权限。允许之后再试一次。",
   });
 });

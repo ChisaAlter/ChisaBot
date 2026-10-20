@@ -41,7 +41,7 @@ test("a draft still streaming shows no controls to press", () => {
     <ProposedSkillCard args={{ slug: "weekly" }} save={async () => {}} />,
   );
 
-  expect(getByText("Writing the skill…")).toBeTruthy();
+  expect(getByText("正在编写技能…")).toBeTruthy();
   expect(queryByRole("button")).toBeNull();
 });
 
@@ -60,10 +60,8 @@ test("a complete draft shows the whole instruction before anything is written", 
   ).toBeTruthy();
   expect(getByText("/weekly-summary")).toBeTruthy();
   expect(getByText("google-drive/search_files")).toBeTruthy();
-  expect(
-    getByText("Nothing is saved until you press the button."),
-  ).toBeTruthy();
-  expect(getByRole("button", { name: "Create it" })).toBeTruthy();
+  expect(getByText("直到按下按钮才会保存任何内容。")).toBeTruthy();
+  expect(getByRole("button", { name: "创建" })).toBeTruthy();
 });
 
 test("pressing create saves the checked fields, then resumes the run", async () => {
@@ -81,7 +79,7 @@ test("pressing create saves the checked fields, then resumes the run", async () 
     />,
   );
 
-  await userEvent.click(getByRole("button", { name: "Create it" }));
+  await userEvent.click(getByRole("button", { name: "创建" }));
 
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0]).toEqual(DRAFT);
@@ -102,8 +100,8 @@ test("a slug that already exists is offered as a replacement, not a create", () 
   );
 
   // Saving is how an edit is spelled here, so the wording has to say which one this press is.
-  expect(getByRole("button", { name: "Replace it" })).toBeTruthy();
-  expect(getByText(/This replaces Weekly summary/)).toBeTruthy();
+  expect(getByRole("button", { name: "替换它" })).toBeTruthy();
+  expect(getByText(/这将替换 Weekly summary/)).toBeTruthy();
 });
 
 test("a refusal from the server stays on the card and leaves the run suspended", async () => {
@@ -120,7 +118,7 @@ test("a refusal from the server stays on the card and leaves the run suspended",
     />,
   );
 
-  await userEvent.click(getByRole("button", { name: "Create it" }));
+  await userEvent.click(getByRole("button", { name: "创建" }));
 
   // The server's own sentence, because paraphrasing it throws away the only part worth reading.
   await waitFor(() =>
@@ -128,7 +126,7 @@ test("a refusal from the server stays on the card and leaves the run suspended",
   );
   // Not answered: the two useful next moves — press again, or decline — both need the run still there.
   expect(answers).toHaveLength(0);
-  expect(getByRole("button", { name: "Create it" })).toBeTruthy();
+  expect(getByRole("button", { name: "创建" })).toBeTruthy();
 });
 
 test("declining answers the run and tells the Bot to ask rather than retry", async () => {
@@ -146,7 +144,7 @@ test("declining answers the run and tells the Bot to ask rather than retry", asy
     />,
   );
 
-  await userEvent.click(getByRole("button", { name: "Don't save" }));
+  await userEvent.click(getByRole("button", { name: "不要保存" }));
 
   await waitFor(() => expect(answers).toHaveLength(1));
   expect(answers[0]).toBe(skillCardAnswer.declined());

@@ -13,6 +13,8 @@ import {
 } from "@tanstack/react-router";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { type AgentProfile, agentKeys } from "@/lib/agents/queries";
+import { authKeys } from "@/lib/auth/queries";
+import { userPreferencesQueryOptions } from "@/lib/settings/message-list";
 import { Route as ChannelNewRoute } from "@/routes/_authed/_app/channel/new";
 
 beforeAll(() => GlobalRegistrator.register());
@@ -143,7 +145,7 @@ async function expectMessageComposerDisabled(
 ) {
   const editor = await view.findByRole("textbox", {
     hidden: true,
-    name: "Message",
+    name: "消息",
   });
   await waitFor(() =>
     expect(editor.getAttribute("aria-disabled") === "true").toBe(disabled),
@@ -157,12 +159,24 @@ const GENERAL_ASSISTANT = agent({
 });
 
 test("/channel/new reports a failed initial roster load", async () => {
-  const view = renderChannelNew(queryClientWithFailingAgents());
+  /*
+   * THE `?agent=` IS PART OF THE ROUTE'S CONTRACT NOW, not a detail of this test: a bare
+   * `/channel/new` has no "new chat" to draw — the route forwards it to the landing Bot — so the
+   * page that reports this failure is only rendered for a recipient carried in the URL. The failure
+   * being reported is still the INITIAL ROSTER load: it is the query this page needs before it can
+   * say who the recipient is.
+   */
+  const view = renderChannelNew(
+    queryClientWithFailingAgents(),
+    "/channel/new?agent=general-assistant",
+  );
 
   expect((await view.findByRole("alert")).textContent).toBe(
-    "Coworkers couldn't be loaded.",
+    "机器人列表没有加载出来，请刷新重试。",
   );
-  expect(view.queryByText("No agents found.")).toBeNull();
+  // The failure must not be reported as an empty roster — which is a different page, and the one
+  // `/` draws when there is genuinely nobody to talk to.
+  expect(view.queryByText(/还没有可用的机器人/)).toBeNull();
   await expectMessageComposerDisabled(view, true);
 });
 
@@ -175,17 +189,46 @@ test("/channel/new reports a failed URL-selected hidden detail load", async () =
   );
 
   expect((await view.findByRole("alert")).textContent).toBe(
-    "Coworker couldn't be loaded.",
+    "这个机器人没有加载出来，请刷新重试。",
   );
-  expect(view.queryByText("No agents found.")).toBeNull();
+  expect(view.queryByText(/还没有可用的机器人/)).toBeNull();
   await expectMessageComposerDisabled(view, true);
 });
 
-test("/channel/new keeps a successful empty roster as an empty picker", async () => {
-  const view = renderChannelNew(queryClientWithAgents([]));
+test("/channel/new keeps a successful empty roster as an empty state, not a failure", async () => {
+  /*
+   * THE OTHER HALF OF THE PAIR: a roster that loaded and holds nobody must not be drawn as a load
+   * that failed — and `/channel/new` is where a person arrives when there is no Bot to open.
+   *
+   * THE SEEDED USER AND PREFERENCES ARE PART OF REACHING THAT PAGE, not decoration. A bare
+   * `/channel/new` has no "new chat" of its own any more: it forwards to the landing Bot, which
+   * waits on the roster AND on this person's own preferences before it can say whether there is
+   * anybody to forward to. Without them the landing is still loading and the page is blank for
+   * reasons that have nothing to do with the roster.
+   */
+  const queryClient = queryClientWithAgents([]);
+  queryClient.setQueryData(authKeys.currentUser(), {
+    id: "user",
+    email: "user@example.com",
+    role: "user",
+    onboarding: null,
+  });
+  queryClient.setQueryData(userPreferencesQueryOptions("user").queryKey, {
+    messageListEmphasis: "thread",
+    selfHostBannerDismissed: false,
+    mainBotId: null,
+    brandAccent: "Chisa",
+    brandRest: "Bot",
+  });
+
+  const view = renderChannelNew(queryClient);
 
   expect(view.queryByRole("alert")).toBeNull();
-  await expectMessageComposerDisabled(view, true);
+  // The empty state, and the one press that ends it.
+  expect(await view.findByText("还没有可用的机器人")).toBeTruthy();
+  expect(view.getByRole("button", { name: "新建机器人" })).toBeTruthy();
+  // And no composer: a box that would take a message has nowhere to send it.
+  expect(view.queryByRole("textbox", { hidden: true })).toBeNull();
 });
 
 test("/channel/new keeps a successful visible recipient enabled", async () => {

@@ -90,7 +90,7 @@ test("accepted tool results cannot be resumed or duplicated", async () => {
   expect(findPendingTool(r.agent.messages, pending)).toBeNull();
   await expect(
     resumeHandoffTask("bot-1", pending, r.agent, r.run),
-  ).rejects.toThrow("already answered");
+  ).rejects.toThrow("此工具调用已回答。");
   expect(r.order).toEqual([]);
 });
 
@@ -99,7 +99,7 @@ test("a different thread without the restored call cannot start a new task", asy
   r.agent.messages = [];
   await expect(
     resumeHandoffTask("bot-1", pending, r.agent, r.run),
-  ).rejects.toThrow("not in this conversation");
+  ).rejects.toThrow("移交的工具调用不在此对话中。");
   expect(r.order).toEqual([]);
 });
 

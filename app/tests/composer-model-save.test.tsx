@@ -1,6 +1,8 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { Composer } from "@/components/channels/composer/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
 import { settleReactWork } from "./settle-react-work";
@@ -11,6 +13,15 @@ afterAll(async () => {
   await settleReactWork();
   GlobalRegistrator.unregister();
 });
+
+/*
+ * ConversationView 里的会话流会读这一串对话的确认卡（react-query，2026-10-20 起）。直接 render 会
+ * 「No QueryClient set」，所以这里给两层包装；rerender 也用同一份 client，免得每次换一棵新树。
+ */
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+});
+const wrap = (node: ReactNode) => <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>;
 
 test("saving a model blocks click and Enter sends while retaining the draft", async () => {
   let sent = 0;
@@ -45,7 +56,7 @@ test("saving a model blocks message parking instead of treating it as a busy tur
 test("a parked message waits for the model save and drains when it finishes", async () => {
   let sent = 0;
   const props = { messages: [], onSubmit: () => { sent += 1; }, queueWhileBusy: true };
-  const view = render(<ConversationView {...props} pending />);
+  const view = render(wrap(<ConversationView {...props} pending />));
   const editor = view.container.querySelector("[contenteditable]") as HTMLElement;
   editor.focus();
   const caret = document.createRange();
@@ -58,11 +69,11 @@ test("a parked message waits for the model save and drains when it finishes", as
   });
   await act(async () => fireEvent.click(view.getByLabelText("队列消息")));
   expect(sent).toBe(0);
-  view.rerender(<ConversationView {...props} pending={false} sendBlocked />);
+  view.rerender(wrap(<ConversationView {...props} pending={false} sendBlocked />));
   await act(async () => {});
   expect(sent).toBe(0);
   expect(view.container.textContent).toContain("parked correction");
-  view.rerender(<ConversationView {...props} pending={false} sendBlocked={false} />);
+  view.rerender(wrap(<ConversationView {...props} pending={false} sendBlocked={false} />));
   await act(async () => {});
   expect(sent).toBe(1);
 });
