@@ -72,6 +72,18 @@ export function createApprovalRoutes(
   routes.post("/computer/:botId", async (context) => {
     const botId = context.req.param("botId");
     const input = await context.req.json();
+    // This request owns only the unfinished frontend action. Approval decisions and their durable
+    // continuations run through separate routes and must keep their own lifetime.
+    const action = new AbortController();
+    const caller = context.req.raw.signal;
+    const onAbort = () => action.abort(caller.reason);
+    if (caller.aborted) onAbort();
+    else caller.addEventListener("abort", onAbort, { once: true });
+    let beat: ReturnType<typeof setInterval> | undefined;
+    const cleanup = () => {
+      caller.removeEventListener("abort", onAbort);
+      clearInterval(beat);
+    };
     /*
      * 结果 → 状态码 + 内容。和以前一样：200 { result }、202 { waiting… }，别的错误交给 onError 的规则。
      * 抽成一个函数，是因为长动作（§102，最长 600 秒的前台命令）要在响应已经开始之后才知道结果。
@@ -80,7 +92,7 @@ export function createApprovalRoutes(
       try {
         return {
           status: 200,
-          body: { result: await service.frontendAction(context.var.actor.id, botId, input) },
+          body: { result: await service.frontendAction(context.var.actor.id, botId, input, action.signal) },
         };
       } catch (error) {
         if (error instanceof HeadlessToolSuspension)
@@ -111,11 +123,15 @@ export function createApprovalRoutes(
         };
       }
     };
-    const work = settle();
+    const work = settle().finally(cleanup);
+    let streamTimer: ReturnType<typeof setTimeout> | undefined;
     const quick = await Promise.race([
       work,
-      Bun.sleep(streamAfterMs).then(() => null),
+      new Promise<null>((resolve) => {
+        streamTimer = setTimeout(() => resolve(null), streamAfterMs);
+      }),
     ]);
+    clearTimeout(streamTimer);
     if (quick) return context.json(quick.body, quick.status);
     /*
      * §102：动作还在跑（多半是长命令）。浏览器直接等这个请求，中间隔着 Cloudflare：100 秒内源站一个字节
@@ -125,14 +141,15 @@ export function createApprovalRoutes(
      * text/event-stream：nginx 的 gzip 不压它（不攒缓冲），Cloudflare 也按流式转发。
      */
     const encoder = new TextEncoder();
-    let beat: ReturnType<typeof setInterval> | undefined;
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         const write = (text: string) => {
           try {
             controller.enqueue(encoder.encode(text));
           } catch {
-            // 浏览器已经断开：动作照样在服务器上跑完、记进审计，只是没人收结果了。
+            // A cancelled response no longer owns an executing computer action.
+            action.abort();
+            cleanup();
           }
         };
         write(" ");
@@ -149,8 +166,10 @@ export function createApprovalRoutes(
           } catch {}
         });
       },
-      cancel() {
-        clearInterval(beat);
+      cancel(reason) {
+        // Bun can surface a disconnected streaming response here as well as on request.signal.
+        action.abort(reason);
+        cleanup();
       },
     });
     return new Response(stream, {

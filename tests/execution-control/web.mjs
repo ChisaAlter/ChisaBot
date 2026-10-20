@@ -1,0 +1,90 @@
+// Real browser regression against the isolated preview and a deterministic model.
+// BASE must be an isolated test origin. Creates/deletes only a guarded temporary bot.
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { chromium } from "playwright-core";
+import { guardInit, trackBot, guardedDeleteBot } from "../realtest/guard.mjs";
+const base=process.env.BASE||"http://127.0.0.1:3298";
+const out=process.env.OUT||path.resolve("audit/execution-control-web");
+fs.mkdirSync(out,{recursive:true});
+const browser=await chromium.launch({executablePath:process.env.CHROME||"C:/Program Files/Google/Chrome/Application/chrome.exe",headless:true,args:["--no-sandbox","--disable-dev-shm-usage"]});
+const context=await browser.newContext({viewport:{width:1280,height:820},locale:"zh-CN",timezoneId:"Asia/Shanghai"});
+const page=await context.newPage();
+const errors=[];const events=[];const results=[];
+page.on("pageerror",e=>errors.push(String(e)));
+page.on("response",r=>{if(r.status()>=400)events.push({at:new Date().toISOString(),url:r.url().replace(base,""),status:r.status()});});
+const api=async(p,o={})=>{const r=await context.request.fetch(base+p,{...o,headers:{"content-type":"application/json",...o.headers},data:o.body});return {status:r.status(),body:await r.text()};};
+let bot;let thread;
+const get=async p=>{const r=await api(p);assert.equal(r.status,200,p+" "+r.body.slice(0,200));return JSON.parse(r.body);};
+const send=async text=>{events.push({at:new Date().toISOString(),send:text});await page.locator('[aria-label="消息"]:visible').fill(text);await page.keyboard.press("Enter");};
+const until=async(fn,label,timeout=45000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await new Promise(r=>setTimeout(r,200));}throw new Error("Timeout: "+label);};
+const inbox=()=>get(`/api/copilotkit/threads/${thread}/inbox`);
+const messages=async()=>{const r=await get(`/api/copilotkit/threads/${thread}/messages`);return r.messages||r;};
+const idle=async()=>{let quiet=0;await until(async()=>{const s=await inbox();const stopped=await page.locator('[data-testid="composer-stop"]:visible').count();if(!s.running&&!stopped)quiet++;else quiet=0;return quiet>=8;},"whole turn idle",60000);};
+const shot=async name=>page.screenshot({path:path.join(out,name+".png")});
+try{
+ await until(()=>context.request.get(base+"/api/version").then(r=>r.ok(),()=>false),"preview ready");
+ // The schema-only preview has a new dev account. Complete its onboarding before bot navigation.
+ const onboarding=await api("/api/me/onboarding",{method:"POST",body:JSON.stringify({completed:true})});
+ assert.equal(onboarding.status,200,onboarding.body);
+ const profile=await api("/api/me/profile",{method:"PATCH",body:JSON.stringify({name:"执行控制测试"})});
+ assert.equal(profile.status,200,profile.body);
+ await page.goto(base,{waitUntil:"domcontentloaded"});
+ await page.waitForTimeout(1000);
+ if(await page.getByRole("button",{name:"保存并进入",exact:true}).count()){
+  await page.getByPlaceholder("例如：千咲").fill("执行控制测试");
+  await page.getByRole("button",{name:"保存并进入",exact:true}).click();
+  await page.getByRole("button",{name:"保存并进入",exact:true}).waitFor({state:"hidden"});
+ }
+ await guardInit(api);
+ const create=await api("/api/agents",{method:"POST",body:JSON.stringify({name:"执行控制隔离回归",title:"临时测试",roleDescription:"按要求执行测试命令。",visibility:"private"})});
+ assert.equal(create.status,201,create.body);bot=trackBot(JSON.parse(create.body).agent.id);
+ await api(`/api/agents/${bot}/model`,{method:"PUT",body:JSON.stringify({model:"mock-execution-control"})});
+ await page.goto(`${base}/bot?agent=${bot}`,{waitUntil:"domcontentloaded"});
+ await page.locator('[aria-label="消息"]:visible').waitFor({timeout:45000});
+ const runTag=crypto.randomUUID().replaceAll("-","");
+ await send("EXEC_ONCE RUN_TAG="+runTag+" 请只执行一次原命令。");
+ await page.waitForURL(u=>/\/channel\/(?!new)/.test(u.pathname),{timeout:15000});
+ const channel=page.url().split("/channel/")[1].split(/[?#]/)[0];
+ const channelData=await get(`/api/channels/${channel}`);thread=channelData.channel?.threadId||channelData.threadId;
+ assert(thread,"channel threadId");
+ await page.locator('[data-testid="composer-stop"]:visible').waitFor();
+ await send("早期补充：只报告结果，不重跑。");
+ await until(async()=>{const m=await messages();return m.some(x=>x.role==="assistant"&&x.toolCalls?.some(t=>t.function.name==="computer_run_command"));},"tool emitted");
+ await new Promise(r=>setTimeout(r,700));
+ await send("工具执行中补充：同样只跑一次。");
+ await shot("queued");await idle();
+ let m=await messages();
+ fs.writeFileSync(path.join(out,"once-messages.json"),JSON.stringify(m,null,2));
+ const onceCalls=m.flatMap(x=>x.toolCalls||[]).filter(t=>t.function.name==="computer_run_command"&&JSON.parse(t.function.arguments).command.includes("once.log"));
+ assert.equal(onceCalls.length,1,"logical original command must be dispatched once");
+ assert(m.some(x=>x.role==="assistant"&&String(x.content).includes("EXEC_ONCE_OK")),"final reply");
+ results.push({case:"early and tool-time queue",pass:true,calls:onceCalls.length});await shot("once-done");
+ await send("EXEC_STOP 执行长命令，我将按停止。");
+ await until(async()=>{const a=await messages();return a.some(x=>x.toolCalls?.some(t=>JSON.parse(t.function.arguments).command?.includes("stop.log")));},"stop tool emitted");
+ await new Promise(r=>setTimeout(r,1000));
+ events.push({at:new Date().toISOString(),action:"Stop click"});
+ await page.locator('[data-testid="composer-stop"]:visible').click();
+ await until(async()=>!(await inbox()).running,"Stop clears relay");await shot("stopped");
+ await new Promise(r=>setTimeout(r,6500));
+ await send("EXEC_READ 只读取两个日志，不要重跑原命令。");await idle();
+ m=await messages();
+ const read=m.filter(x=>x.role==="tool"&&String(x.content).includes("STOP_LOG")).at(-1);
+ assert(read,"log readback result");
+ assert(!String(read.content).includes("DONE"),"Stop must prevent descendant DONE");
+ assert(String(read.content).includes("START"),"command started before Stop");
+ fs.writeFileSync(path.join(out,"readback-messages.json"),JSON.stringify(m,null,2));
+ const readValue=typeof read.content==="string"?JSON.parse(read.content):read.content;
+ const readText=readValue.stdout||readValue.output||JSON.stringify(readValue);
+ const onceLog=readText.split("ONCE_LOG")[1]?.split("STOP_LOG")[0];
+ assert.equal((onceLog?.match(/RUN/g)||[]).length,1,"actual once.log side effect count");
+ results.push({case:"Stop kills descendants",pass:true,readback:read.content});
+ await send("EXEC_RECOVER 恢复后执行短命令。");await idle();
+ m=await messages();assert(m.some(x=>x.role==="tool"&&String(x.content).includes("RECOVERY_OK")));results.push({case:"recovery",pass:true});
+ await page.reload({waitUntil:"domcontentloaded"});await page.locator('[aria-label="消息"]:visible').waitFor();await new Promise(r=>setTimeout(r,1500));await shot("reload");
+ assert((await page.locator("body").innerText()).includes("RECOVERY_OK"));results.push({case:"refresh persistence",pass:true});
+ fs.writeFileSync(path.join(out,"messages.json"),JSON.stringify(await messages(),null,2));
+ assert.deepEqual(errors,[]);results.push({case:"no page errors",pass:true});
+}catch(e){results.push({case:"failure",pass:false,error:String(e.stack||e)});await shot("error").catch(()=>{});throw e;}
+finally{fs.writeFileSync(path.join(out,"results.json"),JSON.stringify({base,bot,thread,results,errors,events},null,2));if(bot)console.log("cleanup",await guardedDeleteBot(api,bot));await browser.close();console.log(JSON.stringify(results,null,2));}
