@@ -3,6 +3,7 @@ import { IconCheck, IconChevronDown, IconRefresh, IconSearch, IconSparkles } fro
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import type { ModelCatalog, ModelCatalogEntry } from "../../../../shared/model-selection";
+import { modelMissingFromCatalog } from "../../../../shared/model-selection";
 import { useModelSelectionSaving, useModelSelectionSync } from "@/lib/model-selection/hooks";
 import { refreshModelsMutationOptions, saveAgentModelMutationOptions } from "@/lib/model-selection/mutations";
 import { agentModelQueryOptions, modelCatalogQueryOptions, modelSelectionKeys } from "@/lib/model-selection/queries";
@@ -126,7 +127,7 @@ export function ModelPicker({ agentId, disabled = false }: { agentId: string; di
 
   const effective = state.data.model;
   const effectiveProvider = providerOf(effective, models);
-  const modelMissing = Boolean(catalog.data && !models.some((item) => item.id === effective));
+  const modelMissing = modelMissingFromCatalog({ model: effective }, catalog.data);
   const locked = disabled || saving || !state.data.canManage || !catalog.data;
   const error = save.error?.message ?? refresh.error?.message ?? catalog.error?.message;
   const pillTitle = [

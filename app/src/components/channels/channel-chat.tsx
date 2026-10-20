@@ -97,6 +97,7 @@ import { readImageDims } from "@/lib/image-dims";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
 import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
 import { agentModelQueryOptions, modelCatalogQueryOptions } from "@/lib/model-selection/queries";
+import { modelMissingFromCatalog } from "../../../../shared/model-selection";
 import { panelAuthoringForwardedProps, panelKeys } from "@/lib/panels/api";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { queryClient } from "@/query-client";
@@ -366,11 +367,7 @@ export function ChannelChat({
    */
   const modelState = useQuery(agentModelQueryOptions(runtimeAgentId));
   const modelCatalog = useQuery(modelCatalogQueryOptions());
-  const modelMissing = Boolean(
-    modelState.data &&
-      modelCatalog.data &&
-      !modelCatalog.data.models.some((item) => item.id === modelState.data!.model),
-  );
+  const modelMissing = modelMissingFromCatalog(modelState.data, modelCatalog.data);
   const modelMissingRef = useRef(modelMissing);
   modelMissingRef.current = modelMissing;
   // Mentions are scoped to the channel's permitted agents.

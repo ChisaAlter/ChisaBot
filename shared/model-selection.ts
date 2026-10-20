@@ -68,3 +68,17 @@ export type AgentModelState = {
   available: boolean;
   canManage: boolean;
 };
+
+/**
+ * 选中的模型还在不在模型列表里（2026-10-20：space-bunny-free 被下线那天，发出去的每一条都失败）。
+ *
+ * 只认「两份数据都读到了」的情况：列表没读到时一律不判，宁可发一次，也不要在网关抽风时把输入框锁死。
+ * 纯函数——发送前的拦截、药丸上的「已失效」和单测都问它同一个问题。
+ */
+export function modelMissingFromCatalog(
+  state: Pick<AgentModelState, "model"> | undefined,
+  catalog: Pick<ModelCatalog, "models"> | undefined,
+): boolean {
+  if (!state || !catalog) return false;
+  return !catalog.models.some((item) => item.id === state.model);
+}
