@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import type { ModelCatalog } from "../../shared/model-selection";
 import { modelMissingFromCatalog } from "../../shared/model-selection";
 
 /**
  * P1（2026-10-20）：选中的模型被服务商下线后，发送前要拦下来。
  * 只认「两份数据都读到了」——列表没读到时一律不判，别把输入框锁死。
  */
-const catalog = { models: [{ id: "codex/gpt-6-luna" }, { id: "minimax-m3.1-flash-free" }] };
+const entry = (id: string) => ({ id, label: id, provider: "magpie" });
+const catalog: Pick<ModelCatalog, "models"> = {
+  models: [entry("codex/gpt-6-luna"), entry("minimax-m3.1-flash-free")],
+};
 
 describe("模型还在不在列表里", () => {
   test("在列表里 → 不拦", () => {
