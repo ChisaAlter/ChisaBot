@@ -1,16 +1,24 @@
 import {
   IconArrowBackUp,
   IconArrowUp,
+  IconArchive,
+  IconBrandGithub,
+  IconChevronDown,
   IconChevronLeft,
   IconDots,
+  IconFileDiff,
+  IconFolder,
+  IconGauge,
   IconGitMerge,
   IconGitPullRequest,
+  IconInfoCircle,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPencil,
-  IconArchive,
   IconPlayerStopFilled,
+  IconPlus,
   IconRefreshDot,
+  IconTerminal2,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
@@ -22,13 +30,13 @@ import { CcMessageView } from "@/components/cloud-cc/cc-transcript";
 import { CcSyncPillButton } from "@/components/cloud-cc/cc-sync";
 import { PageSkeleton } from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
-import { Button, T } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { ErrorCard } from "@/components/ui/skyglass";
 import { toast } from "@/components/ui/toast";
-import { ccApi, ccKeys, ccSessionQueryOptions, ccWorkspacesQueryOptions, LAST_CC_SESSION_KEY, rememberLeftMode, type SessionDetail, useCcSessionStream } from "@/lib/cloud-cc";
+import { ccApi, ccDiffQueryOptions, ccKeys, ccSessionQueryOptions, ccWorkspacesQueryOptions, LAST_CC_SESSION_KEY, rememberLeftMode, type SessionDetail, useCcSessionStream } from "@/lib/cloud-cc";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authed/_app/cc/$sessionId")({
@@ -77,13 +85,19 @@ function CcSession({ sessionId, detail }: { sessionId: string; detail: SessionDe
   const workspaces = useQuery(ccWorkspacesQueryOptions());
   const ws = workspaces.data?.find((w) => w.id === detail.session.workspaceId);
   const session = workspaces.data?.flatMap((w) => w.sessions).find((s) => s.id === sessionId) ?? detail.session;
+  const diff = useQuery(ccDiffQueryOptions(sessionId, null, !phone));
+  const diffFiles = diff.data?.files ?? [];
+  const diffAdd = diffFiles.reduce((n, f) => n + (f.add ?? 0), 0);
+  const diffDel = diffFiles.reduce((n, f) => n + (f.del ?? 0), 0);
   const running = stream.status === "running" || stream.status === "waiting";
   const [rightOpen, setRightOpen] = useState(() => {
     try {
-      return localStorage.getItem(RIGHT_KEY) !== "closed";
-    } catch {
-      return true;
-    }
+      const stored = localStorage.getItem(RIGHT_KEY);
+      if (stored === "closed") return false;
+      if (stored === "open") return true;
+    } catch {}
+    // 窗口不够宽时默认收起：否则 1024 宽的窗口里正文只剩 380px。
+    return window.innerWidth >= 1100;
   });
   const [drawer, setDrawer] = useState<"closed" | "half" | "full">("closed");
   const [tab, setTab] = useState<RightTab>("changes");
@@ -187,12 +201,44 @@ function CcSession({ sessionId, detail }: { sessionId: string; detail: SessionDe
         <h1 className="cc-title" data-testid="cc-title">
           {session.title}
         </h1>
-        <div className="cc-head-pills">
-          <span className="cc-pill is-info"><T>{`${ws?.name ?? "工作区"} · ${session.branch ?? "自己的目录"}`}</T></span>
-          {!phone ? <span className="cc-pill" data-testid="cc-resume-pill"><T>{session.resumable ? `接着上次 · ${session.turns} 轮` : "新的 Claude 会话"}</T></span> : null}
-          {ws ? <CcSyncPillButton ws={ws} /> : null}
+        <div className="cc-head-meta">
+          <span className="cc-head-ws">
+            {ws?.source === "github" ? (
+              <IconBrandGithub aria-hidden className="size-3.5" />
+            ) : (
+              <IconFolder aria-hidden className="size-3.5" />
+            )}
+            {ws?.name ?? "工作区"}
+          </span>
+          <span aria-hidden className="cc-head-sep is-ws">
+            {"/"}
+          </span>
+          <code className="cc-head-branch">
+            {session.branch ?? "自己的目录"}
+          </code>
+          {!phone ? (
+            <>
+              <span aria-hidden className="cc-head-sep is-meta">
+                {"·"}
+              </span>
+              <span data-testid="cc-resume-pill">
+                {session.resumable
+                  ? `接着上次 · ${session.turns} 轮`
+                  : "新的 Claude 会话"}
+              </span>
+            </>
+          ) : null}
+          {ws && ws.syncState !== "cloud_only" ? (
+            <CcSyncPillButton ws={ws} />
+          ) : null}
           {session.prUrl ? (
-            <a className="cc-pill is-ok" data-testid="cc-pr-pill" href={session.prUrl} rel="noreferrer noopener" target="_blank">
+            <a
+              className="cc-head-pr"
+              data-testid="cc-pr-pill"
+              href={session.prUrl}
+              rel="noreferrer noopener"
+              target="_blank"
+            >
               <IconGitPullRequest className="size-3.5" />
               {session.prNumber ? `PR #${session.prNumber}` : "PR"}
             </a>
@@ -200,41 +246,42 @@ function CcSession({ sessionId, detail }: { sessionId: string; detail: SessionDe
         </div>
       </div>
       <div className="cc-head-actions">
-        {isGit && !phone ? (
-          <>
-            <Button
-              data-testid="cc-merge"
-              disabled={running}
-              feedback={{ pending: "合入中…", success: "已合入", error: "没合入" }}
-              onClick={() => void merge.run()}
-              size="sm"
-              state={merge.state}
-              variant="outline"
-            >
-              <IconGitMerge className="size-4" />
-              {"合入工作目录"}
-            </Button>
-            {canPush ? (
-              <Button data-testid="cc-push" disabled={running} onClick={() => setPushOpen(true)} size="sm">
-                <IconGitPullRequest className="size-4" />
-                {"推送并开 PR"}
-              </Button>
-            ) : null}
-          </>
-        ) : null}
+        <button
+          aria-label="查看改动"
+          className="cc-head-changes"
+          data-testid="cc-head-changes"
+          onClick={() => {
+            setTab("changes");
+            if (phone) setDrawer("half");
+            else setRightOpen(true);
+          }}
+          type="button"
+        >
+          <IconFileDiff aria-hidden className="size-4" />
+          <span className="cc-head-changes-t">{"改动"}</span>
+          {diffFiles.length ? (
+            <span className="cc-head-changes-n">{diffFiles.length}</span>
+          ) : null}
+          {diffAdd || diffDel ? (
+            <span className="cc-diffstat">
+              <span className="cc-plus">{`+${diffAdd}`}</span>
+              <span className="cc-minus">{`−${diffDel}`}</span>
+            </span>
+          ) : null}
+        </button>
         <DropdownMenu>
           <DropdownMenuTrigger render={<button aria-label="更多" className="cc-icon-btn is-lg" data-testid="cc-menu" type="button" />}>
             <IconDots className="size-5" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-60">
-            {isGit && phone ? (
+            {isGit ? (
               <>
-                <DropdownMenuItem data-testid="cc-menu-merge" disabled={running} onClick={() => void merge.run()}>
+                <DropdownMenuItem data-testid="cc-merge" disabled={running} onClick={() => void merge.run()}>
                   <IconGitMerge className="size-4" />
                   {"合入工作目录"}
                 </DropdownMenuItem>
                 {canPush ? (
-                  <DropdownMenuItem data-testid="cc-menu-push" disabled={running} onClick={() => setPushOpen(true)}>
+                  <DropdownMenuItem data-testid="cc-push" disabled={running} onClick={() => setPushOpen(true)}>
                     <IconGitPullRequest className="size-4" />
                     {"推送并开 PR"}
                   </DropdownMenuItem>
@@ -279,7 +326,15 @@ function CcSession({ sessionId, detail }: { sessionId: string; detail: SessionDe
       <div className="cc-chat">
         {header}
         <Transcript messages={stream.messages} onOpenDiff={openDiff} sessionId={sessionId} statusText={stream.statusText} />
-        <Composer onStop={() => void stop.run()} phone={phone} running={running} session={session} sessionId={sessionId} stopState={stop.state} />
+        <Composer
+          onAction={(action) => void menu(action)}
+          onStop={() => void stop.run()}
+          phone={phone}
+          running={running}
+          session={session}
+          sessionId={sessionId}
+          stopState={stop.state}
+        />
       </div>
       {phone ? (
         <Drawer state={drawer} onState={setDrawer}>
@@ -316,8 +371,15 @@ function Transcript({ messages, statusText, onOpenDiff, sessionId }: { messages:
       <div className="cc-scroll-in">
         {messages.length === 0 ? (
           <div className="cc-first">
+            <span aria-hidden className="cc-first-ic">
+              <IconTerminal2 className="size-5" />
+            </span>
             <div className="cc-first-t">{"想让 Claude Code 做什么？"}</div>
-            <div className="cc-first-s">{"比如「写一个 Python 脚本，把 CSV 转成 JSON」。只读操作和会话目录里的改动直接做；运行命令前会先问你。"}</div>
+            <div className="cc-first-s">
+              {
+                "比如「写一个 Python 脚本，把 CSV 转成 JSON」。只读操作和会话目录里的改动直接做；运行命令前会先问你。"
+              }
+            </div>
           </div>
         ) : (
           messages.map((m, i) => <CcMessageView key={m.id} message={m} onOpenDiff={onOpenDiff} sessionId={sessionId} statusText={i === messages.length - 1 ? statusText : null} />)
@@ -332,6 +394,7 @@ function Composer({
   session,
   running,
   onStop,
+  onAction,
   stopState,
   phone,
 }: {
@@ -339,6 +402,7 @@ function Composer({
   session: { model: string | null; effort: string | null };
   running: boolean;
   onStop: () => void;
+  onAction: (action: "new" | "undo") => void;
   stopState: ReturnType<typeof useAsyncAction>["state"];
   phone: boolean;
 }) {
@@ -373,36 +437,20 @@ function Composer({
       toast.error((error as Error).message);
     }
   };
+  const stopping = running && !text.trim();
+  const modelLabel =
+    CC_MODELS.find((m) => m.id === (session.model ?? ""))?.label ?? "默认模型";
+  const modelLetter = session.model ? modelLabel.slice(0, 1) : "C";
+  const effortLabel = session.effort ? CC_EFFORT_ZH[session.effort] : "默认";
   return (
     <form
-      className="glass-composer cc-composer"
+      className="cc-composer"
       onSubmit={(event) => {
         event.preventDefault();
         void send.run();
       }}
     >
-      <div className="cc-composer-pills">
-        <label className="cc-select-pill">
-          <span className="sr-only">{"模型"}</span>
-          <select data-testid="cc-model" onChange={(e) => void patch({ model: e.target.value || null })} value={session.model ?? ""}>
-            {CC_MODELS.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="cc-select-pill">
-          <span className="sr-only">{"努力程度"}</span>
-          <select data-testid="cc-effort" onChange={(e) => void patch({ effort: e.target.value || null })} value={session.effort ?? ""}>
-            <option value="">{"努力：默认"}</option>
-            {CC_EFFORTS.map((e) => (
-              <option key={e} value={e}>{`努力：${CC_EFFORT_ZH[e]}`}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="cc-composer-row">
+      <div className="cc-composer-box">
         <textarea
           aria-label="和 Claude Code 说"
           data-testid="cc-input"
@@ -413,19 +461,116 @@ function Composer({
               void send.run();
             }
           }}
-          placeholder={running ? "回答中也可以先写，发出后排队" : "和 Claude Code 说…"}
+          placeholder="输入消息…"
           ref={area}
           rows={1}
           value={text}
         />
-        {running ? (
-          <Button aria-label="停止" className="cc-send" data-testid="cc-stop" feedback={{ pending: "停止中…", success: "已停止", error: "没停下" }} onClick={onStop} size="icon-lg" state={stopState} type="button" variant="outline">
-            <IconPlayerStopFilled className="size-4" />
-          </Button>
-        ) : null}
-        <Button aria-label="发送" className="cc-send" data-testid="cc-send" disabled={!text.trim()} feedback="send" size="icon-lg" state={send.state} type="submit">
-          <IconArrowUp className="size-5" />
-        </Button>
+        <div className="cc-composer-bar">
+          <div className="cc-composer-left">
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    aria-label="更多输入操作"
+                    className="cc-plus-btn"
+                    title="更多输入操作"
+                    type="button"
+                  />
+                }
+              >
+                <IconPlus className="size-[18px]" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" className="min-w-56">
+                {running ? (
+                  <DropdownMenuItem
+                    disabled={stopState === "pending"}
+                    onClick={onStop}
+                  >
+                    <IconPlayerStopFilled className="size-4" />
+                    {stopState === "pending" ? "停止中…" : "停止这一轮"}
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem disabled={running} onClick={() => onAction("new")}>
+                  <IconRefreshDot className="size-4" />
+                  {"新的 Claude 会话（清掉上下文）"}
+                </DropdownMenuItem>
+                <DropdownMenuItem disabled={running} onClick={() => onAction("undo")}>
+                  <IconArrowBackUp className="size-4" />
+                  {"撤销最后一轮的改动"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <span
+              className="cc-perm-pill"
+              title="运行命令、改文件前会先问你；选「本会话总是允许」后不再问同类操作。"
+            >
+              <IconInfoCircle aria-hidden className="size-3.5" />
+              {"按需批准"}
+            </span>
+          </div>
+          <div className="cc-composer-right">
+            <label className="cc-model-pill" title={`模型：${modelLabel}`}>
+              <span
+                aria-hidden
+                className="cc-model-dot"
+                data-model={session.model || "default"}
+              >
+                {modelLetter}
+              </span>
+              <span className="sr-only">{"模型"}</span>
+              <select
+                data-testid="cc-model"
+                onChange={(e) => void patch({ model: e.target.value || null })}
+                value={session.model ?? ""}
+              >
+                {CC_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+              <IconChevronDown aria-hidden className="cc-model-caret size-3.5" />
+            </label>
+            <label className="cc-effort-round" title={`努力程度：${effortLabel}`}>
+              <IconGauge aria-hidden className="size-4" />
+              <span className="sr-only">{"努力程度"}</span>
+              <select
+                data-testid="cc-effort"
+                onChange={(e) => void patch({ effort: e.target.value || null })}
+                value={session.effort ?? ""}
+              >
+                <option value="">{"默认"}</option>
+                {CC_EFFORTS.map((e) => (
+                  <option key={e} value={e}>
+                    {CC_EFFORT_ZH[e]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button
+              aria-label={stopping ? "停止" : "发送"}
+              className="cc-send"
+              data-testid={stopping ? "cc-stop" : "cc-send"}
+              disabled={!stopping && !text.trim()}
+              feedback={
+                stopping
+                  ? { pending: "停止中…", success: "已停止", error: "没停下" }
+                  : "send"
+              }
+              onClick={stopping ? onStop : undefined}
+              size="icon-lg"
+              state={stopping ? stopState : send.state}
+              type={stopping ? "button" : "submit"}
+            >
+              {stopping ? (
+                <IconPlayerStopFilled className="size-4" />
+              ) : (
+                <IconArrowUp className="size-[18px]" />
+              )}
+            </Button>
+          </div>
+        </div>
       </div>
     </form>
   );
