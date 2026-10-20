@@ -780,14 +780,36 @@ function SettleAtEnd({
           setSlack(0);
           scrollToEnd({ behavior: "auto" });
         }
-      } else if (s.slack > 0) {
+      } else {
         /*
-         * 新的一轮有滚动容器自己的留白（spacer），我们的留白让给它——但要等它对齐完（它在这次提交后的微任务里
-         * 读标记、算 spacer、开始滚）再拿掉。当场拿掉的话总高度先变矮，浏览器把 scrollTop 夹小，平滑滚动从夹过的
-         * 位置出发：先往回跳一截（刷新后回到留着空白的对话再发，实测 193px / 238px）再往前滚。等它算完再拿：
-         * 它的目标位置正好是没有这块留白时的最底，现在的位置在它前面，拿掉不会夹，看得见的东西不动。
+         * 新的一轮：滚动容器要把问题对齐到视口上 1/3（§94.7 的 scrollMargin），它的对齐在**这次提交后的微任务**
+         * 里算目标再滚。可回答还没开始，问题下面是空的——它算出的目标比能滚到的更远，会被夹回最底（实测目标
+         * 194px、落在 114px）。这里赶在它之前（layout effect 早于那次微任务）把我们的留白垫到「问题下面有
+         * 2/3 视口」：它算 spacer 时内容已经够高，算出 0，不会叠成两块空白；回答开始长出来时照旧先吃这块留白。
          */
-        queueMicrotask(() => setSlack(0));
+        const element = viewport.current;
+        const column = element?.querySelector<HTMLElement>(
+          '[data-slot="message-scroller-content"]',
+        );
+        const row = column?.querySelector<HTMLElement>(
+          '[data-scroll-anchor="true"]',
+        );
+        if (element && column && row) {
+          const blank = blankArea(column, s.slack);
+          const below =
+            column.getBoundingClientRect().bottom -
+            row.getBoundingClientRect().bottom -
+            blank;
+          const want = Math.round((element.clientHeight * 2) / 3) - below;
+          setSlack(want > 0 ? want : 0);
+        } else if (s.slack > 0) {
+          /*
+           * 没有可以垫的目标（标记不在这批 DOM 里）：照旧把留白让给滚动容器的 spacer。等它对齐完（微任务之后）
+           * 再拿掉——当场拿掉的话总高度先变矮，浏览器把 scrollTop 夹小，平滑滚动从夹过的位置出发，先往回跳一截
+           * （实测 193px / 238px）再往前滚。
+           */
+          queueMicrotask(() => setSlack(0));
+        }
       }
     }
     s.wasHydrating = hydrating;
@@ -957,11 +979,17 @@ function SettleAtEnd({
      * 才不会算错），位置交回「贴底 / 浏览器的滚动锚定」。返回 true 表示这一帧的高度差来自换行，不是内容增减。
      */
     let layoutWidth = content.clientWidth;
+    /*
+     * 新的一轮刚对齐（标记还在）：这一刻的宽度变化不是「拖把手 / 缩窗口」，是滚动条出现 / 消失那几像素。
+     * 拿掉留白会把刚对齐好的位置顶回去（§94.7：目标 1/3 会被夹回底部），所以标记在的时候只同步宽度。
+     */
+    const anchoring = () =>
+      content.querySelector('[data-scroll-anchor="true"]') !== null;
     const reflowed = () => {
       const width = content.clientWidth;
       if (width === layoutWidth) return false;
       layoutWidth = width;
-      if (s.floor !== null || s.slack > 0) setSlack(0);
+      if (!anchoring() && (s.floor !== null || s.slack > 0)) setSlack(0);
       lastHeight = content.offsetHeight;
       return true;
     };
@@ -1048,7 +1076,7 @@ function SettleAtEnd({
           // 打开对话的那几秒（§83）：照旧由 settle 决定落点（回到底部 / 回到上次那一条）。
           window.cancelAnimationFrame(frame);
           settle();
-        } else if (seen.atBottom && !s.restore) {
+        } else if (seen.atBottom && !s.restore && !anchoring()) {
           stickToBottom();
         }
         look();
