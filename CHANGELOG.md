@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.48 — 2026-10-20
+
+### 性能：省带宽、少等几秒、慢接口有日志
+
+这一版没有新功能，只有 6 处性能改动（#263）；`pc/` / `android/` 没有代码改动，客户端只对齐版本号。
+
+- **API gzip**：`/api/*` 加压缩；`/api/copilotkit/*`（SSE 流式）排除，避免攒块后一截一截地蹦。远程访问省带宽、首屏更快。
+- **健康检查并行**：数据库 ping、Magpie、Computer 三个独立检查从顺序 `await` 改成 `Promise.all`，各自超时与返回结构不变；最坏耗时 21s → 8s。
+- **前端请求缓存**：React Query 全局 `staleTime: 30_000`，切页面 / 开关弹窗导致组件重挂载时不再重复请求；显式设置 staleTime 的调用不受影响。
+- **模型列表**：去掉 `refetchOnWindowFocus: "always"`，切回标签页不再每次重拉。
+- **请求超时**：`client()` 默认 30s `AbortSignal.timeout`，服务端 hang 住时页面不再无限转圈；调用方显式传 `signal` 时用调用方的（SSE / 长轮询不受影响）。
+- **慢请求日志**：服务端只记耗时 >1s 的 `/api/*` 请求（一行 JSON：method / path / durationMs），不记 query、请求体和请求头。
+- **客户端**：三处版本号对齐 `0.1.48`，Android `versionCode` 245 → **246**；外壳指纹不变，原地更新。
+- **验证**：CI 通过（typecheck / build / 相关测试）；`server/tests/ops-health.test.ts` 9 项通过。没有做线上压测，真实体感要等部署后再看。
+
 ## 0.1.47 — 2026-10-20
 
 ### 易用性第一批：失败与取消不再「假成功」
