@@ -942,7 +942,41 @@ function SettleAtEnd({
      * 夹之前的数（滚动事件要到下一帧才来）。
      */
     const seen = { top: element.scrollTop, atBottom: true };
+    let lastHeight = content.offsetHeight;
+    /*
+     * 上一次量到的列宽。宽度变了 = 整列重新换行（拖右栏把手、收左栏、缩窗口、开详情列），§94.6 的「总高度不变」
+     * 就不成立了（DESIGN.md §106）。
+     *
+     * floor / 留白按的是**上一次换行**的高度：拖窄几像素，文字多折两行，floor 抬上去；拖回来，行数回到原样，
+     * floor 却降不下来（min-height 撑着，offsetHeight 永远等于 floor，elastic 里 `s.floor === height` 直接返回），
+     * 差额全变成最后一条下面的留白，滚动容器又按「跟着底部」把 scrollTop 落在新的最底——人看到的是一整屏空白
+     * 被当成「底部」（1280 宽、右栏 380→500→380 实测：内容 6362 → 7749px、留白 1388px、视口里一条消息都没有）。
+     *
+     * 换行不是「内容多了 / 少了」，不该由留白来接：把 floor 与留白一起收掉、同步 lastHeight（下一帧的 grew
+     * 才不会算错），位置交回「贴底 / 浏览器的滚动锚定」。返回 true 表示这一帧的高度差来自换行，不是内容增减。
+     */
+    let layoutWidth = content.clientWidth;
+    const reflowed = () => {
+      const width = content.clientWidth;
+      if (width === layoutWidth) return false;
+      layoutWidth = width;
+      if (s.floor !== null || s.slack > 0) setSlack(0);
+      lastHeight = content.offsetHeight;
+      return true;
+    };
+    /*
+     * 换行之后人还贴着底部：同一帧就贴回去。滚动容器自己也会贴（它的 handleResize → scrollToEnd），但排在
+     * 下一帧的 rAF 里，中间那一帧会先画「最后一条掉到折线下面」。只在本来就在底部、不在恢复 / 对齐某一轮时动手。
+     */
+    const stickToBottom = () => {
+      const max = element.scrollHeight - element.clientHeight;
+      if (element.scrollTop >= max - 1) return;
+      element.style.scrollBehavior = "auto";
+      element.scrollTop = max;
+      element.style.scrollBehavior = "";
+    };
     const look = () => {
+      reflowed();
       seen.top = element.scrollTop;
       seen.atBottom =
         element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
@@ -992,7 +1026,6 @@ function SettleAtEnd({
       lastHeight = content.offsetHeight;
     };
     s.lastTop = element.scrollTop;
-    let lastHeight = content.offsetHeight;
     /*
      * 高度变了（图片加载完撑高、晚到的小行）：ResizeObserver 的回调在布局之后、绘制之前跑，这里当场回到底部，
      * 这一帧画出来就已经在底部。等到下一帧（requestAnimationFrame）再回去，慢设备上会先画一帧「被顶上去」
@@ -1004,6 +1037,22 @@ function SettleAtEnd({
      * 后来长出来的内容先填这块留白，人往上翻到看不见它时悄悄收掉。
      */
     const pinNow = () => {
+      /*
+       * 换行（宽度变了）：这一帧的高度差是整列重新折行算出来的，不是内容长了 / 少了——不补留白、不写 scrollTop，
+       * 只把「原来贴在底部」这件事接着做完（§106）。翻在中间那一半交给浏览器的滚动锚定（`.chat-tail` 不参与，
+       * 见 §82.10 上面那一段），实测第一条可见消息位移 0px。
+       */
+      if (reflowed()) {
+        if (active()) {
+          // 打开对话的那几秒（§83）：照旧由 settle 决定落点（回到底部 / 回到上次那一条）。
+          window.cancelAnimationFrame(frame);
+          settle();
+        } else if (seen.atBottom && !s.restore) {
+          stickToBottom();
+        }
+        look();
+        return;
+      }
       const height = content.offsetHeight;
       const grew = height - lastHeight;
       lastHeight = height;
@@ -1043,6 +1092,15 @@ function SettleAtEnd({
       look();
     };
     const onScroll = () => {
+      /*
+       * 换行引起的那一下（浏览器夹小 scrollTop / 内容变矮）不是「内容变少了」：留白已经收掉、位置由
+       * pinNow 的贴底负责，这里不能再按 §88.1 补一块回去（§106）。
+       */
+      if (reflowed()) {
+        look();
+        save();
+        return;
+      }
       /*
        * 浏览器自己夹小 scrollTop 的那一下（§88.1）：钉在底部、没人动，内容变矮被夹回去——有时 React 提交里有人量了
        * 一下布局，夹在 ResizeObserver 之前就发生了，等它来时「上一次的位置」已经是夹过的数。滚动事件在下一次绘制

@@ -1,6 +1,6 @@
 import { IconArrowBackUp, IconChevronDown, IconFileText, IconPencil } from "@tabler/icons-react";
 import { motion, useReducedMotion } from "motion/react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { useDisplayText } from "@/components/rich-previews/rich-previews";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
@@ -118,15 +118,17 @@ export function DocCard({ text, title, components }: { text: string; title?: str
   const body = useRef<HTMLDivElement>(null);
   const [tall, setTall] = useState(false);
   const [open, setOpen] = useState(false);
-  useEffect(() => {
+  /*
+   * 只在「这段文字变了」时量一次，宽度变化不再重算（DESIGN.md §106）：拖右栏把手时整列重新换行，同一篇文档
+   * 在窄几像素的地方就多折两行、跨过 300px 的门槛——以前 ResizeObserver 盯着它，卡片会当场收起 / 展开，
+   * 几百 px 的跳。是不是「一篇长文」是这条消息的属性，不该随窗口宽度变。
+   * layout effect：量完再画，打开对话时不会先展开一次、再当着人面收起。
+   */
+  useLayoutEffect(() => {
     const el = body.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const measure = () => setTall(el.scrollHeight > DOC_COLLAPSED_PX + 24);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el.firstElementChild ?? el);
-    return () => observer.disconnect();
-  }, []);
+    if (!el) return;
+    setTall(text.trim().length > 0 && el.scrollHeight > DOC_COLLAPSED_PX + 24);
+  }, [text]);
   const collapsed = tall && !open;
   return (
     <section aria-label={title ? `文档：${title}` : "文档"} className="chat-draft-card chat-doc-card" data-testid="chat-doc-card">
