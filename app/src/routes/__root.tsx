@@ -1,10 +1,10 @@
 import {
   createRootRouteWithContext,
-  Navigate,
   Outlet,
 } from "@tanstack/react-router";
 import { MotionConfig } from "motion/react";
 import { useEffect } from "react";
+import { NotFoundRoute } from "@/components/not-found";
 import { StartupFailure } from "@/components/startup-status";
 import { SkyBackground } from "@/components/sky-background";
 import { DesktopStrip } from "@/components/layout/desktop-strip";
@@ -23,11 +23,11 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   component: RootComponent,
   errorComponent: StartupFailure,
   /*
-   * An address this build does not know goes home rather than to a dead end. Home sits behind the
-   * auth gate, so the guard decides what that means: /sign for a visitor, /onboarding for somebody
-   * who has not finished it, the app for everyone else.
+   * 认不出的地址给一个真正的 404（`not-found.tsx`）。不再 `<Navigate replace to="/" />`：`/` 会按
+   * 「上次停在哪」跳到 Claude Code，打错一个地址就变成「应用突然换了页面」的错觉，人也说不出原本想看
+   * 的是什么（2026-10-20 审查）。地址栏不改写，刷新 / 后退 / 复制链接都还是那个地址。
    */
-  notFoundComponent: () => <Navigate replace to="/" />,
+  notFoundComponent: NotFoundRoute,
 });
 
 /**
