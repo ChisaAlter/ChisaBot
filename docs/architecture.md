@@ -50,7 +50,7 @@ ChisaBot 现在实际在跑的结构；上游 OpenBot 的原始架构（Intellig
 ### 2.2 网页（`app/`）
 
 React + TanStack Router + CopilotKit。一个应用覆盖聊天、设置、管理；PC 和 Android 加载的就是服务器上的这份网页，所以网页
-改动不需要客户端发版。界面规范见 DESIGN.md（顶部有章节索引）。
+改动不需要客户端发版。桌面端仍需服务器发布新前端后刷新；本地预览构建不更新线上网页。右侧常驻栏和窄窗口弹出层共享内容与卡片表面，见 [侧栏与弹出面板一致性](sidebar-panel-parity.md)。界面规范见 DESIGN.md（顶部有章节索引）。
 
 ### 2.3 公网网关与登录（`deploy/public/`）
 

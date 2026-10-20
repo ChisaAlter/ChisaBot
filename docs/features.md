@@ -50,7 +50,7 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 
 | 功能 | 做什么 | 入口 | 代码 | 数据 | DESIGN | 状态 · 文档 |
 |---|---|---|---|---|---|---|
-| 实时面板 | 机器人按设计规范搭面板（≤2 磁贴 + 2 块），按小时或每天固定时刻刷新；来源 + 更新时间一行 | 右栏「面板」；在聊天里说 | `server/src/live-panels/`（`design.ts` 规范 + lint） | `live_panels`（迁移 0056/0057） | §29、§43、§77 | 上线 |
+| 实时面板 | 机器人按设计规范搭面板（≤2 磁贴 + 2 块），按小时或每天固定时刻刷新；常驻和弹出模式共用卡片布局及记住的宽度（[一致性](sidebar-panel-parity.md)）；来源 + 更新时间一行 | 右栏「面板」；在聊天里说 | `server/src/live-panels/`（`design.ts` 规范 + lint） | `live_panels`（迁移 0056/0057） | §29、§43、§77 | 上线 |
 | 云端浏览器（计算机） | 每个机器人一个 Chromium 配置（Xvfb 有界面，Cookie / 登录各自独立；同一进程、共用 `/workspace`）；原生下拉框用「填写」选中（§100）；工作区文件经 `https://workspace.local/` 打开 | 右栏「计算机」；放大后接管 / 交还 | `agent-computer/`、`server/src/computer/`、`app/src/components/computer/` | `computer_snapshot`、`computer_page_frame`（上游） | §23、§39、§79 | 上线 |
 | 浏览器多标签 · 收藏夹 | 真标签（≤8，人和机器人同一组，重启恢复）；每账号收藏夹（星标、收藏栏、窄屏下拉、管理） | 放大的浏览器工具条 | `agent-computer/src/tabs.ts`、`server/src/browser-bookmarks/` | `chisabot_browser_bookmarks`、`chisabot_browser_bookmark_seeds` | §95、§96 | 上线 · [browser-tabs.md](browser-tabs.md) |
 | 网站被拦时 | 硬拦截页返回中文提示，建议接管或出口代理 | — | `agent-computer/src/site-block.ts` | — | — | 上线 |
