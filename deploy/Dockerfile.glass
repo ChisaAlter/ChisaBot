@@ -9,6 +9,9 @@ RUN rm -rf /app/app/dist
 COPY --chown=apiuser:apiuser app/dist /app/app/dist
 COPY --chown=apiuser:apiuser server /app/server
 COPY --chown=apiuser:apiuser shared /app/shared
+# The browser/server and the computer must use the same cancellation protocol.
+RUN rm -rf /app/agent-computer/src
+COPY --chown=apiuser:apiuser agent-computer/src /app/agent-computer/src
 COPY --chown=apiuser:apiuser examples/zh-CN /app/examples/zh-CN
 RUN cd /app/server \
     && bun -e 'await import("@copilotkit/runtime/v2"); await import("./src/panels/routes.ts"); console.log("runtime_and_panels_import_ok")'

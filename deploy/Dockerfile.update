@@ -5,6 +5,9 @@ USER root
 COPY --chown=apiuser:apiuser app/dist /app/app/dist
 COPY --chown=apiuser:apiuser server /app/server
 COPY --chown=apiuser:apiuser shared /app/shared
+# Keep the computer process in step with the server cancellation protocol.
+RUN rm -rf /app/agent-computer/src
+COPY --chown=apiuser:apiuser agent-computer/src /app/agent-computer/src
 COPY --chown=apiuser:apiuser server/package.json /app/server/package.json
 COPY --chown=apiuser:apiuser bun.lock /app/bun.lock
 RUN cd /app/server && bun -e 'await import("@copilotkit/runtime/v2"); await import("@ai-sdk/openai"); await import("@ai-sdk/anthropic"); await import("./src/model-settings.ts"); console.log("model_settings_runtime_import_ok")'

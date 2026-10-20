@@ -136,6 +136,31 @@ function sameActivity(
   );
 }
 
+/** Failed frontend handlers do not cause CopilotKit to send a continuation request. */
+async function persistFailedFrontendResults(threadId: string, messages: readonly Message[]) {
+  // Only the last wire segment can still own a relay. Older errors are ordinary history.
+  let callAt = -1;
+  for (let at = messages.length - 1; at >= 0; at--) {
+    const message = messages[at];
+    if (message?.role === "assistant") {
+      if (!message.toolCalls?.length) return;
+      callAt = at;
+      break;
+    }
+    if (message?.role === "user") return;
+  }
+  if (callAt < 0) return false;
+  const results = messages.slice(callAt + 1).filter((message) => message.role === "tool");
+  if (!results.some((message) => typeof message.content === "string" && message.content.startsWith("Error:"))) return;
+  await fetch(`/api/copilotkit/threads/${encodeURIComponent(threadId)}/frontend-finished`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ results }),
+  }).catch(() => null);
+  return true;
+}
+
 /** 恢复中、手里还什么都没有时画的（骨架）。模块级，免得每次渲染一个新数组。 */
 const EMPTY_MESSAGES: readonly Message[] = [];
 
@@ -1111,8 +1136,9 @@ export function ChannelChat({
         await runPromise;
       }
     } finally {
-      setRunsInFlight((count) => count - 1);
+      setRunsInFlight((count) => Math.max(0, count - 1));
     }
+    if (!stopRequestedRef.current) await persistFailedFrontendResults(channel.threadId, target.messages);
 
     /*
      * 流断了而不是模型出错（DESIGN.md §89）：问服务器这一轮怎样了。只读——不重发消息，设备命令不会再跑一遍。
@@ -1379,8 +1405,8 @@ export function ChannelChat({
       [...agent.messages].reverse().find((message) => message.role === "user");
     if (lastUser)
       setLocalStops((previous) => new Set([...previous, lastUser.id]));
-    // run 还没开始的停止：给发送链路留取消标记（deliver 会在下一个 await 之后放弃这一轮）。
-    if (!awaitingReply.current) stopRequestedRef.current = true;
+    // Also blocks inbox fallback after Stop during a frontend tool handoff.
+    stopRequestedRef.current = true;
     awaitingReply.current = false;
     // Track B：停止必须立刻放下 busy，不能干等 runPromise/finally——否则频道永久灰。
     turnsRef.current = 0;
@@ -1478,17 +1504,30 @@ export function ChannelChat({
   );
   const runInboxTurn = useCallback(
     async (options: { agent: typeof agent }) => {
+      turnsRef.current += 1;
+      setTurnsInFlight(turnsRef.current);
+      sendInFlightRef.current = true;
+      stopRequestedRef.current = false;
       setRunsInFlight((count) => count + 1);
       try {
-        return await copilotkit.runAgent(options);
+        const result = await copilotkit.runAgent(options);
+        if (!stopRequestedRef.current && await persistFailedFrontendResults(channel.threadId, options.agent.messages)) {
+          turnFailure.current = unfinishedTurnReason(options.agent.messages as never, new Set()) ?? "工具执行失败。";
+        }
+        return result;
       } finally {
-        setRunsInFlight((count) => count - 1);
+        setRunsInFlight((count) => Math.max(0, count - 1));
+        turnsRef.current = Math.max(0, turnsRef.current - 1);
+        setTurnsInFlight(turnsRef.current);
+        if (turnsRef.current === 0) sendInFlightRef.current = false;
       }
     },
-    [copilotkit],
+    [copilotkit, channel.threadId],
   );
   useThreadInbox(channel.threadId, agent, runInboxTurn as never, {
     pullServerTurns: false,
+    turnRunning: turnsInFlight > 0,
+    canFlush: () => turnsRef.current === 0 && !stopRequestedRef.current && turnFailure.current === null,
   });
 
   /**

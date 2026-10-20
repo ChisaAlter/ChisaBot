@@ -129,6 +129,7 @@ export function createApprovalService(
     ownerUserId: string,
     botId: string,
     snapshot: ApprovalContinuation,
+    signal: AbortSignal,
   ) => Promise<unknown>,
   options: {
     /** The deployment's configured model, for auto-review and pre-approval checks. */
@@ -195,7 +196,12 @@ export function createApprovalService(
   }
   return {
     store,
-    async frontendAction(ownerUserId: string, botId: string, input: unknown) {
+    async frontendAction(
+      ownerUserId: string,
+      botId: string,
+      input: unknown,
+      signal: AbortSignal = new AbortController().signal,
+    ) {
       if (!frontend)
         throw new ApprovalRefusedError(
           "Computer approvals are unavailable in this deployment.",
@@ -226,8 +232,9 @@ export function createApprovalService(
         throw new ApprovalRefusedError(
           "The action does not match an unanswered tool call in this conversation.",
         );
+      signal.throwIfAborted();
       return withApprovalContext(snapshot, () =>
-        frontend(ownerUserId, botId, snapshot),
+        frontend(ownerUserId, botId, snapshot, signal),
       );
     },
     async validateReentry(

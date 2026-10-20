@@ -624,7 +624,8 @@ const approvalService = createApprovalService(
     },
   },
   createApprovalQuestions(database, authoriseQuestion),
-  async (ownerUserId, botId, snapshot) => {
+  async (ownerUserId, botId, snapshot, signal) => {
+    signal.throwIfAborted();
     const source = await sourceForCoordinationRun({
       actorId: ownerUserId,
       botId,
@@ -650,6 +651,7 @@ const approvalService = createApprovalService(
         .find((call) => call.id === snapshot.toolCallId);
     for (let attempt = 0; !findCall() && attempt < 10; attempt++) {
       await Bun.sleep(500);
+      signal.throwIfAborted();
       history = await routineIntelligence.getThreadMessages({
         threadId: snapshot.threadId,
         userId: ownerUserId,
@@ -680,7 +682,7 @@ const approvalService = createApprovalService(
       throw new ApprovalRefusedError("That computer tool is not available.");
     return tool.execute(snapshot.args, {
       toolCallId: snapshot.toolCallId,
-      signal: new AbortController().signal,
+      signal,
     });
   },
   { review: (prompt, signal) => chooseSkills(prompt, signal) },

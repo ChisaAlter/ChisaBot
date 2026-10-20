@@ -5,6 +5,7 @@ import {
   EventType,
   type Message,
 } from "@ag-ui/client";
+import { MessageSchema } from "@ag-ui/core/schemas";
 import {
   AgentRunner,
   type AgentRunnerConnectRequest,
@@ -13,6 +14,7 @@ import {
   createRunEventFinalizer,
 } from "@copilotkit/runtime/v2";
 import { Observable, ReplaySubject, Subject } from "rxjs";
+import { concatMap } from "rxjs/operators";
 import { capConnectMessages } from "../../shared/connect-snapshot";
 import { fallbackNotice } from "./agents/model-fallback";
 import { withConfirmTurn, withToolAbort } from "./confirmations/context";
@@ -599,6 +601,21 @@ export class LocalConversationClient {
   }
 }
 
+/** A wire run can end while its frontend tools are still executing in the browser. */
+function pendingFrontendCalls(messages: readonly Message[], tools: readonly { name: string }[]): string[] {
+  const frontend = new Set(tools.map((tool) => tool.name));
+  const answered = new Set(messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
+  return messages.flatMap((message) => message.role === "assistant"
+    ? (message.toolCalls ?? []).filter((call) => frontend.has(call.function.name) && !answered.has(call.id)).map((call) => call.id)
+    : []);
+}
+
+type FrontendRelay = {
+  runId: string;
+  inboxRunIds: string[];
+  callIds: string[];
+  timer: ReturnType<typeof setTimeout>;
+};
 type LiveEvent = { sequence: bigint; event: BaseEvent };
 type ActiveRun = {
   runId: string;
@@ -611,6 +628,9 @@ type ActiveRun = {
   abort: AbortController;
   /** 这一轮里读进来的插话（排队消息 / 后台任务结果），存档和推给界面前织进消息列表。 */
   injections: TranscriptInjection[];
+  /** Inbox claims belong to the logical turn, including earlier frontend handoffs. */
+  inboxRunIds: string[];
+  inputMessageIds: Set<string>;
 };
 
 /** 一次运行最多接着跑几段（每段 = 一次完整的模型循环；段与段之间读进新排队的消息）。 */
@@ -638,6 +658,18 @@ const EMPTY_THREAD_READS: Record<string, unknown> = {
 /** Public OSS runner with our own PostgreSQL transcript and per-thread lease. */
 class PostgresAgentRunner extends AgentRunner {
   private readonly active = new Map<string, ActiveRun>();
+  /** Kept between wire runs, until all dispatched frontend results arrive or the turn is stopped. */
+  private readonly frontend = new Map<string, FrontendRelay>();
+  private clearFrontend(threadId: string): FrontendRelay | undefined {
+    const relay = this.frontend.get(threadId);
+    if (relay) clearTimeout(relay.timer);
+    this.frontend.delete(threadId);
+    return relay;
+  }
+  private pendingFrontend(entry: ActiveRun, tools: readonly { name: string }[]): string[] {
+    const fresh = entry.agent.messages.filter((message) => !entry.inputMessageIds.has(message.id));
+    return pendingFrontendCalls(fresh, tools);
+  }
   private readonly observers = new Map<
     string,
     Set<(event: BaseEvent) => void>
@@ -650,9 +682,9 @@ class PostgresAgentRunner extends AgentRunner {
     super();
   }
 
-  /** 这个进程里这个对话是不是正在跑。 */
+  /** Includes browser tools running between two server requests in the same logical turn. */
   isActive(threadId: string): boolean {
-    return this.active.has(threadId);
+    return this.active.has(threadId) || this.frontend.has(threadId);
   }
 
   /** 在进程内旁听一个对话的事件（后台任务卡片读它的步骤）。返回取消函数。 */
@@ -678,7 +710,46 @@ class PostgresAgentRunner extends AgentRunner {
       );
     const running = this.active.get(request.threadId);
     // 正在回答时又发来消息：不拒绝、不打断。新的用户消息进收件箱（下一步读进去），这个请求接上正在跑的那一轮。
-    if (running) return this.join(request, running);
+    if (running) {
+      // RUN_FINISHED can reach the browser a few awaits before execute's cleanup finishes.
+      // A frontend result in that window must resume after cleanup, rather than join and lose it.
+      const pending = this.pendingFrontend(running, request.input.tools);
+      const answered = new Set(request.input.messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
+      if (pending.length && pending.every((id) => answered.has(id))) {
+        return new Observable<BaseEvent>((subscriber) => {
+          let subscription: { unsubscribe(): void } | undefined;
+          let closed = false;
+          void running.done.then(() => {
+            if (!closed) subscription = this.run(request).subscribe(subscriber);
+          }).catch((error) => subscriber.error(error));
+          return () => { closed = true; subscription?.unsubscribe(); };
+        });
+      }
+      return this.join(request, running);
+    }
+    const relay = this.frontend.get(request.threadId);
+    if (relay) {
+      const answered = new Set(request.input.messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
+      // A concurrent user send is not a tool continuation. Park it without replaying the old
+      // tool events (which would dispatch those tools again on the joining browser).
+      if (!relay.callIds.every((id) => answered.has(id))) {
+        return new Observable<BaseEvent>((subscriber) => {
+          void (async () => {
+            const row = await this.store.thread(request.threadId);
+            const known = new Set(row.messages.map((message) => message.id));
+            const dead = await tombstones(this.store.database, request.threadId);
+            for (const message of dropTombstoned(request.input.messages, dead)) {
+              if (message.role !== "user" || known.has(message.id)) continue;
+              await this.inbox.enqueue({ threadId: request.threadId, ownerUserId: row.owner_user_id, message });
+            }
+            subscriber.next({ type: EventType.RUN_STARTED, threadId: request.threadId, runId: request.input.runId } as BaseEvent);
+            subscriber.next({ type: EventType.RUN_FINISHED, threadId: request.threadId, runId: request.input.runId } as BaseEvent);
+            subscriber.complete();
+          })().catch((error) => subscriber.error(error));
+        });
+      }
+      this.clearFrontend(request.threadId);
+    }
     const entry: ActiveRun = {
       runId: request.input.runId,
       agent: request.agent,
@@ -688,10 +759,16 @@ class PostgresAgentRunner extends AgentRunner {
       abort: new AbortController(),
       done: Promise.resolve(),
       injections: [],
+      inboxRunIds: [...(relay?.inboxRunIds ?? []), request.input.runId],
+      inputMessageIds: new Set(),
     };
     this.active.set(request.threadId, entry);
     entry.done = this.execute(request, entry);
-    return entry.stream.asObservable();
+    // Do not let a fast frontend continuation overtake the old lease cleanup.
+    return entry.stream.pipe(concatMap(async (event) => {
+      if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) await entry.done;
+      return event;
+    }));
   }
 
   private join(
@@ -718,7 +795,10 @@ class PostgresAgentRunner extends AgentRunner {
           });
         }
         if (closed) return;
-        subscription = running.stream.subscribe(subscriber);
+        subscription = running.stream.pipe(concatMap(async (event) => {
+          if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) await running.done;
+          return event;
+        })).subscribe(subscriber);
       })().catch((error) => subscriber.error(error));
       return () => {
         closed = true;
@@ -941,6 +1021,7 @@ class PostgresAgentRunner extends AgentRunner {
           ? dropTombstoned(request.persistedInputMessages, dead)
           : undefined,
       );
+      entry.inputMessageIds = new Set(prepared.execution.map((message) => message.id));
       const oldIds = new Set(row.messages.map((message) => message.id));
       newMessages.push(
         ...prepared.visible.filter((message) => !oldIds.has(message.id)),
@@ -1057,6 +1138,10 @@ class PostgresAgentRunner extends AgentRunner {
         await finalization;
         await durableWrites;
         if (persistenceError || failed || entry.stopped || !heldFinish) break;
+        // RUN_FINISHED ends only the wire segment when frontend tools have no results yet.
+        // Claiming here would put a user row ahead of those results; the seeded-history
+        // sanitizer then correctly removes the dangling call and the model issues it again.
+        if (this.pendingFrontend(entry, input.tools).length) break;
         // 这一段正常结束了，收件箱里还有没读的：同一次运行接着开下一段，把它们读进去。
         const more =
           segment + 1 < MAX_SEGMENTS
@@ -1126,15 +1211,44 @@ class PostgresAgentRunner extends AgentRunner {
               entry.stopped ? "stopped" : failed ? "error" : "finished",
             ],
           );
-          await this.inbox.settle(
-            threadId,
-            entry.runId,
-            entry.stopped ? "stopped" : failed ? "owed" : "answered",
-          );
+          const callIds = !entry.stopped && !failed && !persistenceError
+            ? this.pendingFrontend(entry, input.tools)
+            : [];
+          if (callIds.length) {
+            const relay: FrontendRelay = {
+              runId: entry.runId,
+              inboxRunIds: entry.inboxRunIds,
+              callIds,
+              timer: setTimeout(() => {
+                if (this.frontend.get(threadId) !== relay) return;
+                this.clearFrontend(threadId);
+                for (const runId of relay.inboxRunIds) void this.inbox.settle(threadId, runId, "owed").catch(() => {});
+              }, MAX_RUN_WALL_MS),
+            };
+            relay.timer.unref?.();
+            this.frontend.set(threadId, relay);
+          } else {
+            for (const runId of entry.inboxRunIds) await this.inbox.settle(
+              threadId,
+              runId,
+              entry.stopped ? "stopped" : failed ? "owed" : "answered",
+            );
+          }
           await this.client.ɵcleanupThreadLock({
             threadId,
             runId: entry.runId,
           });
+          // Stop can arrive while lease cleanup awaits the database, after the relay was
+          // installed. It still targets the active entry then, so reconcile that late stop
+          // before deleting active and exposing a stray relay as a 25-minute busy turn.
+          if (entry.stopped) {
+            if (this.frontend.get(threadId)?.runId === entry.runId) this.clearFrontend(threadId);
+            for (const runId of entry.inboxRunIds) await this.inbox.settle(threadId, runId, "stopped");
+            await this.store.database.$client.unsafe(
+              "UPDATE openbot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2",
+              [threadId, entry.runId],
+            );
+          }
         } catch (error) {
           entry.stream.error(error);
           entry.live.error(error);
@@ -1225,7 +1339,7 @@ class PostgresAgentRunner extends AgentRunner {
   }
 
   async isRunning({ threadId }: { threadId: string }): Promise<boolean> {
-    if (this.active.has(threadId)) return true;
+    if (this.isActive(threadId)) return true;
     const rows = await this.store.database.$client.unsafe(
       "SELECT id FROM openbot_local_threads WHERE id = $1 AND run_id IS NOT NULL AND lock_expires_at > now()",
       [threadId],
@@ -1233,10 +1347,60 @@ class PostgresAgentRunner extends AgentRunner {
     return rows.length > 0;
   }
 
+  /** A failed frontend handler has a real result, but CopilotKit does not open a follow-up run. */
+  async finishFrontend(threadId: string, results: readonly Message[]): Promise<boolean> {
+    const relay = this.frontend.get(threadId);
+    if (!relay) return false;
+    const allowed = new Set(relay.callIds);
+    const accepted = results.filter((message): message is Message & { role: "tool"; toolCallId: string } => message.role === "tool" && allowed.has(message.toolCallId));
+    const answered = new Set(accepted.map((message) => message.toolCallId));
+    if (!relay.callIds.every((id) => answered.has(id))) return false;
+    const row = await this.store.thread(threadId);
+    if (this.frontend.get(threadId) !== relay) return false;
+    // Preserve call/result adjacency without inventing a second model run just to persist an error.
+    const messages = [...row.messages];
+    for (const result of accepted) {
+      if (messages.some((message) => message.id === result.id || (message.role === "tool" && message.toolCallId === result.toolCallId))) continue;
+      const at = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.id === result.toolCallId));
+      if (at < 0) continue;
+      let insertAt = at + 1;
+      while (messages[insertAt]?.role === "tool") insertAt++;
+      messages.splice(insertAt, 0, result);
+    }
+    const changed = await this.store.database.$client.unsafe(
+      `UPDATE openbot_local_threads t SET messages = $2::text::jsonb, updated_at = now()
+       WHERE t.id = $1 AND t.run_id IS NULL AND t.messages = $3::text::jsonb
+       AND EXISTS (SELECT 1 FROM openbot_local_runs r WHERE r.thread_id = t.id
+         AND r.run_id = $4 AND r.status = 'finished')
+       AND (SELECT r.run_id FROM openbot_local_runs r WHERE r.thread_id = t.id
+         ORDER BY r.created_at DESC, r.run_id DESC LIMIT 1) = $4
+       RETURNING t.id`,
+      [threadId, JSON.stringify(messages), JSON.stringify(row.messages), relay.runId],
+    );
+    if (!changed.length || this.frontend.get(threadId) !== relay) return false;
+    this.clearFrontend(threadId);
+    for (const runId of relay.inboxRunIds) await this.inbox.settle(threadId, runId, "owed");
+    return true;
+  }
+
   async stop({ threadId, runId }: AgentRunnerStopRequest): Promise<boolean> {
     const entry = this.active.get(threadId);
-    // 不在本进程里跑、库里却锁着：是重启前留下的孤儿锁，停止 = 释放它。
-    if (!entry) return await this.client.ɵreleaseOrphanedLock(threadId, runId);
+    if (!entry) {
+      const relay = this.frontend.get(threadId);
+      if (relay && runId !== undefined && relay.runId !== runId) return false;
+      if (relay) {
+        this.clearFrontend(threadId);
+        for (const claimedRunId of relay.inboxRunIds) await this.inbox.settle(threadId, claimedRunId, "stopped");
+        // The wire run already finished; record Stop for history and leave queued messages parked.
+        await this.store.database.$client.unsafe(
+          "UPDATE openbot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2",
+          [threadId, relay.runId],
+        );
+        return true;
+      }
+      // 不在本进程里跑、库里却锁着：是重启前留下的孤儿锁，停止 = 释放它。
+      return await this.client.ɵreleaseOrphanedLock(threadId, runId);
+    }
     if (entry.stopped || (runId !== undefined && entry.runId !== runId))
       return false;
     entry.stopped = true;
@@ -1688,6 +1852,19 @@ export async function createLocalConversations(
           kept: result.kept,
           revision: result.revision,
         });
+      }
+      if (operation === "frontend-finished" && request.method === "POST") {
+        const body = (await request.json()) as { results?: unknown };
+        if (!Array.isArray(body.results) || body.results.length > 100)
+          throw new LocalConversationError("Frontend tool results are required", 400);
+        const results: Message[] = [];
+        for (const value of body.results) {
+          const parsed = MessageSchema.safeParse(value);
+          if (!parsed.success || parsed.data.role !== "tool")
+            throw new LocalConversationError("Invalid frontend tool result", 400);
+          results.push(parsed.data);
+        }
+        return Response.json({ finished: await runner.finishFrontend(threadId, results) });
       }
       if (operation === "inbox" && request.method === "POST") {
         // 正在回答时又发来的一条：进收件箱（这一轮的下一步读进去）。没在跑就告诉客户端照常发送。
