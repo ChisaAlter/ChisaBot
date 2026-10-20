@@ -172,7 +172,7 @@ export function channelHistoryNotice({
   if (unreadable > 0) {
     return unreadable === 1
       ? "有一条较早的消息无法读取，未显示。会话其余部分完整。"
-      : `${unreadable} earlier messages could not be read and are not shown. The rest of this conversation is complete.`;
+      : `${unreadable} 条较早的消息无法读取，未显示。会话其余部分完整。`;
   }
 
   return null;
@@ -338,7 +338,7 @@ export function toMessageContent(
 function describeAttachments(attachments: readonly Attachment[]): string {
   if (attachments.length === 1) {
     const { filename } = uploadedAttachment(attachments[0]);
-    return filename ? `Sent ${filename}` : "发送了附件";
+    return filename ? `已发送 ${filename}` : "发送了附件";
   }
   return `已发送 ${attachments.length} 个附件`;
 }

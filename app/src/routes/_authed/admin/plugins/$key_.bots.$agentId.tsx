@@ -347,7 +347,7 @@ function RouteComponent() {
           {ungranted.length > 0 ? (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
               <p className="text-muted-foreground text-xs">
-                {`此机器人将从此应用中持有 ${wouldHold} ${wouldHold === 1 ? "工具" : "工具"}。`}
+                {`此机器人将从此应用中持有 ${wouldHold} 个工具。`}
               </p>
               <Button
                 disabled={granting !== null}

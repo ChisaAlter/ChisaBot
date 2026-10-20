@@ -2189,7 +2189,7 @@ function SentAttachmentTile({ attachment }: { attachment: SentAttachment }) {
  * and "this attachment" is the honest way to refer to a thing whose name we never had.
  */
 function unavailableSentence(filename?: string): string {
-  return filename ? `${filename} is unavailable.` : "此附件不可用。";
+  return filename ? `看不到「${filename}」了。` : "此附件不可用。";
 }
 
 /**

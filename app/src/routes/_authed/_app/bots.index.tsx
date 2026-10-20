@@ -52,9 +52,14 @@ function BotsPage() {
       description={"点一行就打开和这个机器人的对话；箭头进资料。"}
       title={"机器人"}
     >
+      {/*
+        只有「手里没有列表 + 读失败」才把整页换成错误：react-query 在「有缓存数据 + 后台 refetch 失败」时
+        isError 仍为 true，按 `agents.error` 判断会把本来正常的名单替换成「暂时无法加载」（和上游 #463 同一类，
+        2026-10-20 清基线时抓到）。
+      */}
       {agents.isPending ? (
         <PageSkeleton />
-      ) : agents.error ? (
+      ) : agents.error && !agents.data ? (
         <p className="mt-6 text-destructive text-sm" role="alert">
           {"机器人列表暂时无法加载。"}
         </p>
@@ -65,7 +70,7 @@ function BotsPage() {
           {agents.data.map((agent, index) => {
             const state = byId.get(agent.id);
             const summary = state
-              ? [state.paused ? "Paused" : "", attentionSummary(state)].filter(Boolean).join(" · ")
+              ? [state.paused ? "已暂停" : "", attentionSummary(state)].filter(Boolean).join(" · ")
               : "";
             return (
               <Fragment key={agent.id}>

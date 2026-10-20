@@ -88,8 +88,8 @@ export class DictationSession {
         phase: "error",
         error:
           error instanceof Error && error.name === "NotAllowedError"
-            ? "Microphone access was denied. Allow it in your browser and try again."
-            : "Could not start recording. Check your microphone and try again.",
+            ? "浏览器没给麦克风权限。允许之后再试一次。"
+            : "没能开始录音，检查一下麦克风再试。",
       });
     }
   };
@@ -113,7 +113,7 @@ export class DictationSession {
       this.update({
         ...idle,
         phase: "error",
-        error: "Could not finish recording. Please record again.",
+        error: "没能录完这一段，请重新录一次。",
       });
     }
   };
@@ -151,7 +151,7 @@ export class DictationSession {
         error:
           error instanceof Error
             ? error.message
-            : "Transcription failed. Please retry.",
+            : "转写失败，请重试。",
       });
     }
   }

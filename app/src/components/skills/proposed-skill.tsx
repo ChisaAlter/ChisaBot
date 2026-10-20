@@ -182,8 +182,8 @@ function titleFor(
   slug: string | undefined,
   replaces: { title: string } | undefined,
 ): string {
-  const name = slug ? `/${slug}` : "a new skill";
-  return replaces ? `Replace ${name}` : `Create ${name}`;
+  const name = slug ? `/${slug}` : "新技能";
+  return replaces ? `替换 ${name}` : `创建 ${name}`;
 }
 
 /** Where the remaining step happens. A skill on no Bot is inert, and saying so beats implying done. */

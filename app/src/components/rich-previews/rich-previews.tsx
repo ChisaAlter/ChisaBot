@@ -377,7 +377,21 @@ export function ImagePile({
     return () => observer.disconnect();
   }, [shown.length]);
 
-  if (shown.length === 0) return null;
+  if (images.length === 0) return null;
+  /*
+   * 一张都没剩（全加载失败）：以前这里 `return null`，一个只带一张图的轮次就变成空白——
+   * 不留破图、也不留任何说明（2026-10-20 清基线时由 transcript-attachments 的用例发现）。
+   * 现在留一句「看不到」，和文档卡、看大图用的是同一种说法。
+   */
+  if (shown.length === 0) {
+    return (
+      <div className="rp-images" data-align={align}>
+        <p className="text-sm text-muted-foreground">
+          {images.length === 1 ? "看不到这张附件了。" : "看不到这几个附件了。"}
+        </p>
+      </div>
+    );
+  }
   const markBroken = (src: string) => setBroken((b) => ({ ...b, [src]: true }));
 
   if (shown.length === 1) {

@@ -10,6 +10,7 @@ import { agentModelQueryOptions, modelCatalogQueryOptions, modelSelectionKeys } 
 import { cn } from "@/lib/utils";
 import { FEEDBACK_PRESETS, useMutationFeedback } from "@/components/ui/async-action";
 import { AsyncContent } from "@/components/ui/button";
+import { toast } from "@/components/ui/toast";
 
 type Option = ModelCatalogEntry & { missing?: boolean; inherited?: boolean };
 type Health = "ok" | "bad" | "off" | "unknown";
@@ -149,7 +150,13 @@ export function ModelPicker({ agentId, disabled = false }: { agentId: string; di
       onValueChange={(next: Option | null) => {
         if (!next || next.missing || next.id === (state.data?.overrideModel ?? "")) return;
         if (queryClient.isMutating({ mutationKey: modelSelectionKeys.save(agentId) }) > 0) return;
-        save.mutate(next.id || null);
+        /*
+         * 选完就关弹层，而失败原因只画在弹层页脚里——在输入框旁边换模型失败时，屏幕上什么都不说
+         * （2026-10-20 清基线时发现）。失败补一条 toast，弹层关着也看得见。
+         */
+        save.mutate(next.id || null, {
+          onError: (error) => toast.error(error instanceof Error ? error.message : "模型没保存上，请重试。"),
+        });
         setOpen(false);
       }}
     >

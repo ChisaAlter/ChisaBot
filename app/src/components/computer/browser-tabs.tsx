@@ -1,5 +1,11 @@
 import { IconLoader2, IconPlus, IconWorld, IconX } from "@tabler/icons-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { siteMonogram } from "@/lib/browser-bookmarks";
 import { DARK_INK_LUMINANCE, hexLuminance, useDarkInk } from "@/lib/favicon-tone";
 import { type BrowserTab, humanTab, useBrowserTabs } from "@/lib/computers/tabs";
@@ -102,11 +108,36 @@ export function TabStrip({
       ? undefined
       : "接管控制后可以切换、关闭和新开标签";
 
+  /*
+   * 方向键在标签之间走（ARIA 标签页的键盘约定，2026-10-20）：选中项跟着走、焦点也跟过去，
+   * Home / End 到首尾。没接管控制时只移动焦点，不发切换请求。
+   */
+  const onStripKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const key = event.key;
+    if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
+    const ids = view.tabs.map((tab) => tab.id);
+    if (ids.length === 0) return;
+    const current = activeId ?? view.tabs.find((tab) => tab.active)?.id ?? ids[0]!;
+    const at = Math.max(0, ids.indexOf(current));
+    const next =
+      key === "Home"
+        ? 0
+        : key === "End"
+          ? ids.length - 1
+          : key === "ArrowLeft"
+            ? (at - 1 + ids.length) % ids.length
+            : (at + 1) % ids.length;
+    event.preventDefault();
+    const id = ids[next]!;
+    strip.current?.querySelector<HTMLElement>(`[data-tab-id="${id}"]`)?.focus();
+    if (canAct && id !== current) void run(`a:${id}`, "activate", id);
+  };
+
   return (
     <div className={`btabs${view.running ? "" : " is-saved"}`}>
       {/* 标签 + 「+」挨在一起（和 Chrome / Edge 一样「+」紧跟最后一个标签），右端留给 `end`。 */}
       <div className="btabs-lead">
-      <div aria-label={"标签页"} className="btabs-track" ref={strip} role="tablist">
+      <div aria-label={"标签页"} className="btabs-track" onKeyDown={onStripKeyDown} ref={strip} role="tablist">
         {view.tabs.map((tab) => {
           const active = tab.id === activeId || (!activeId && tab.active);
           return (
@@ -115,7 +146,18 @@ export function TabStrip({
               className={`btab${active ? " is-active" : ""}`}
               data-tab-id={tab.id}
               key={tab.id}
+              /*
+               * ARIA 标签页的键盘约定（2026-10-20）：整条 Tab 列表只有一个停靠点（选中那个），
+               * 左右 / Home / End 在标签之间走并切换，回车 / 空格激活当前标签。以前 role="tab" 挂在
+               * 一个不可聚焦的 div 上，键盘只能一个个 Tab 过内部按钮，读屏也念不到「已选中」。
+               */
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                if (!active && canAct) void run(`a:${tab.id}`, "activate", tab.id);
+              }}
               role="tab"
+              tabIndex={active ? 0 : -1}
               title={hint ? `${tab.title}\n${hint}` : tab.title}
             >
               <button
@@ -128,6 +170,7 @@ export function TabStrip({
                   // 中键关标签，和桌面浏览器一样。
                   if (event.button === 1) void run(`c:${tab.id}`, "close", tab.id);
                 }}
+                tabIndex={-1}
                 type="button"
               >
                 {busy === `a:${tab.id}` ? (
