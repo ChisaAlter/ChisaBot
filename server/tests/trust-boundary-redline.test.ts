@@ -90,7 +90,14 @@ describe("friend-pack TRUSTED_ORIGINS", () => {
     const text = read("deploy/compose.yaml");
     const m = /TRUSTED_ORIGINS:\s*(\S+)/.exec(text);
     expect(m).toBeTruthy();
-    expect(assertTrustedOriginsLoopbackOnly(m![1]!).ok).toBe(true);
+    const raw = m![1]!;
+    // compose 允许 `${TRUSTED_ORIGINS:-…}` 让部署者用 .env 扩展；红线校验的是**回退默认值**。
+    // 没写 `:-` 的插值会让空值绕过 loopback 检查，所以那种写法直接判失败。
+    if (raw.startsWith("${")) expect(raw).toContain(":-");
+    const fallback = raw.startsWith("${")
+      ? raw.slice(raw.indexOf(":-") + 2, -1)
+      : raw;
+    expect(assertTrustedOriginsLoopbackOnly(fallback).ok).toBe(true);
   });
 });
 
