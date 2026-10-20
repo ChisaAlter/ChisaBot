@@ -11,7 +11,7 @@ import { documentChipKind } from "../src/lib/markdown";
 describe("recognising a document link", () => {
   test("a Google Doc URL is drawn as a Doc chip", () => {
     expect(documentChipKind("https://docs.google.com/document/d/x")).toEqual(
-      expect.objectContaining({ label: "Doc" }),
+      expect.objectContaining({ label: "文档" }),
     );
   });
 

@@ -19,6 +19,7 @@ import {
 import { cleanup, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route as ComposioRoute } from "@/routes/_authed/admin/plugins/composio";
+import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
 
 /**
  * WHAT A FAILED ADD SAYS WHEN A SECOND ADD IS PRESSED BEFORE THE FIRST ONE ANSWERS.
@@ -155,18 +156,21 @@ function renderPicker() {
   const tree = rootRoute.addChildren([
     authedRoute.addChildren([adminRoute.addChildren([pluginsRoute, wired])]),
   ]);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // 管理路由现在带 requireExtra("plugins")：beforeLoad 会从 router context 读 queryClient，
+  // 再 ensureQueryData 能力清单——不 seed 就会被当成「没打开」而重定向（2026-10-20）。
+  queryClient.setQueryData(deploymentCapabilitiesQueryOptions().queryKey, {
+    extras: ["plugins"],
+  } as never);
   const router = createRouter({
+    context: { queryClient },
     routeTree: tree,
     history: createMemoryHistory({
       initialEntries: ["/admin/plugins/composio"],
     }),
   });
   return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={queryClient}>
       <RouterProvider router={router as never} />
     </QueryClientProvider>,
   );
@@ -181,11 +185,11 @@ test("an add that fails while a second one is pressed still says what went wrong
 
   // The press that will fail, held open by the stub.
   await userEvent.click(
-    await within(slackRow).findByRole("button", { name: "Add" }),
+    await within(slackRow).findByRole("button", { name: "添加" }),
   );
   // And the press that overtakes it, which rebuilds the shared observer under the first one.
   await userEvent.click(
-    await within(gmailRow).findByRole("button", { name: "Add" }),
+    await within(gmailRow).findByRole("button", { name: "添加" }),
   );
 
   /*
@@ -196,7 +200,7 @@ test("an add that fails while a second one is pressed still says what went wrong
    */
   expect(
     within(slackRow)
-      .getByRole("button", { name: "Adding…" })
+      .getByRole("button", { name: "正在添加…" })
       .hasAttribute("disabled"),
   ).toBe(true);
 
@@ -209,6 +213,6 @@ test("an add that fails while a second one is pressed still says what went wrong
 
   // And the row drains on the refusal exactly as it would on a success, so a retry is possible.
   await waitFor(() => {
-    expect(within(slackRow).getByRole("button", { name: "Add" })).toBeTruthy();
+    expect(within(slackRow).getByRole("button", { name: "添加" })).toBeTruthy();
   });
 });

@@ -168,7 +168,8 @@ test("接线：聊天路由自己不画东西，外壳只有一个，设置 / �
   const page = src("components/channels/channel-page.tsx");
   expect(page).toContain("if (!visibleRef.current) return;");
   expect(page).toContain("if (unseen && visible)");
-  expect(page).toContain("{visible ? <RegisterBotChat");
+  // 2026-10-20：JSX 被格式化成了多行，断言改成允许换行（同一件事：藏起来时不登记）。
+  expect(page).toMatch(/\{visible \?\s*\(\s*<RegisterBotChat/);
 });
 
 test("藏着的聊天读到「不在屏幕上」（轮询 / 画面据此停下），回来变回在", () => {

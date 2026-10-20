@@ -134,7 +134,8 @@ test("marking read PUTs the read route and patches lastReadAt in place", async (
   } satisfies InfiniteData<ChannelPage>);
   const options = markChannelReadMutationOptions(queryClient);
 
-  options.onMutate?.("channel-1", mutationContext(queryClient));
+  // onMutate 是 async（先 cancelQueries 再打补丁）：不 await 的话断言跑在补丁之前。
+  await options.onMutate?.("channel-1", mutationContext(queryClient));
   await options.mutationFn?.("channel-1", mutationContext(queryClient));
 
   expect(seen).toHaveLength(1);
@@ -179,7 +180,8 @@ test("a message stamped by a clock ahead of ours still reads as seen after marki
   } satisfies InfiniteData<ChannelPage>);
   const options = markChannelReadMutationOptions(queryClient);
 
-  options.onMutate?.("channel-1", mutationContext(queryClient));
+  // onMutate 是 async（先 cancelQueries 再打补丁）：不 await 的话断言跑在补丁之前。
+  await options.onMutate?.("channel-1", mutationContext(queryClient));
 
   const patched = queryClient.getQueryData<InfiniteData<ChannelPage>>(
     channelKeys.list(),

@@ -86,8 +86,11 @@ test("a protected page shows loading while the actual authentication guard waits
   );
   const view = protectedPage();
   try {
+    // 「正在加载」现在挂在 role=status 的 aria-label 上（里面画的是骨架，没有可见文字）。
     expect(
-      (await view.findByRole("status", {}, { timeout: 1600 })).textContent,
+      (await view.findByRole("status", {}, { timeout: 1600 })).getAttribute(
+        "aria-label",
+      ),
     ).toContain("正在加载");
   } finally {
     await act(async () =>
@@ -111,7 +114,7 @@ test("a failed authentication request gives a visible retry without exposing the
     Response.json({ error: "upstream-private-detail" }, { status: 503 }),
   );
   const view = protectedPage();
-  expect((await view.findByRole("alert")).textContent).toContain("无法加载");
+  expect((await view.findByRole("alert")).textContent).toContain("没能加载出来");
   expect(view.getByRole("button", { name: "重新加载" })).toBeTruthy();
   expect(view.container.textContent).not.toContain("503");
   expect(view.container.textContent).not.toContain("upstream-private-detail");
@@ -136,7 +139,7 @@ test("a failed route chunk gives a visible retry instead of an empty application
     context: { queryClient: new QueryClient() },
   });
   const view = render(<RouterProvider router={router} />);
-  expect((await view.findByRole("alert")).textContent).toContain("无法加载");
+  expect((await view.findByRole("alert")).textContent).toContain("没能加载出来");
   expect(view.getByRole("button", { name: "重新加载" })).toBeTruthy();
   expect(view.container.textContent).not.toContain("private-chunk-url");
 });
@@ -197,7 +200,9 @@ test("a pending lazy route replaces the static startup shell before the chunk re
   );
   try {
     expect(
-      (await view.findByRole("status", {}, { timeout: 1600 })).textContent,
+      (await view.findByRole("status", {}, { timeout: 1600 })).getAttribute(
+        "aria-label",
+      ),
     ).toContain("正在加载");
     expect(chunkStarted).toBe(true);
     expect(container.querySelector("#openbot-startup")).toBeNull();

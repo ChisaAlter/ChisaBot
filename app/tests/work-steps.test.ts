@@ -75,7 +75,8 @@ describe("只读工具的说法（CB-022，DESIGN.md §70.3）", () => {
   });
   test("收成的一行把读类步骤列出来（去掉「正在」）", () => {
     const done = summarizeDoneWork([call("memory_search", { query: "护照" }), call("schedule_list")]);
-    expect(done).toEqual({ label: "做了 2 步", steps: ["翻记忆「护照」", "看定时任务"] });
+    // generic：这条「做了 N 步」是通用说法，聊天里据此收起整行（2026-10 的 §93 规则）。
+    expect(done).toEqual({ label: "做了 2 步", generic: true, steps: ["翻记忆「护照」", "看定时任务"] });
   });
 });
 

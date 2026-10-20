@@ -174,7 +174,7 @@ test("the dismiss button hands back every refusal at once, not one line", () => 
     />,
   );
 
-  fireEvent.click(getByLabelText("Dismiss these 2 refusals"));
+  fireEvent.click(getByLabelText("驳回这些 2 拒绝"));
 
   expect(dismissed).toBe(1);
 });
