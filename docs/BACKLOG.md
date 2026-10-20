@@ -94,20 +94,20 @@
 | [CB-083](#cb-083) | 设置重新整合 + 设置搜索；输入框权限（请求批准 / 完全访问） | 成熟度 Maturity | `type: feat` · `area: web` · `area: devices` · `P1` · `status: done` |
 | [CB-084](#cb-084) | 从其他页面切回机器人页总要刷新一次 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: web` · `P1` · `status: done` |
 | [CB-085](#cb-085) | 搜索旁新建机器人；弹出面板与常驻面板一致 | 成熟度 Maturity | `type: bug` · `area: web` · `P1` · `status: done` |
-| [CB-086](#cb-086) | 连续补话不重复执行；停止按钮终止当次计算机命令 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: in-progress` |
+| [CB-086](#cb-086) | 连续补话不重复执行；停止按钮终止当次计算机命令 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: done` |
 
 ## CB-086
 
 **连续补话不重复执行；停止按钮终止当次计算机命令**
 
-里程碑：成熟度 Maturity · 标签：`type: bug` `area: chat` `area: computer` `P1` `status: in-progress`
+里程碑：成熟度 Maturity · 标签：`type: bug` `area: chat` `area: computer` `P1` `status: done`
 
-- [ ] 前端工具待返回时保留完整任务边界，补话排队且同一任务只执行一次。
-- [ ] 停止信号经过计算机审批入口传到实际进程组，停止后不再写入延迟副作用。
-- [ ] 回归测试与隔离 Web 连续办公、代码、补话、停止和恢复测试通过。
-- [ ] 发布修复，核对 Web 资源与服务提交并保留实测证据。
+- [x] 前端工具待返回时保留完整任务边界，补话排队且同一任务只执行一次。
+- [x] 停止信号经过计算机审批入口传到实际进程组，停止后不再写入延迟副作用。
+- [x] 回归测试、隔离 Web 执行控制与正式 Web 连续办公、代码、补话、停止和恢复测试通过。
+- [x] 发布修复，核对 Web 资源与服务提交并保留实测证据。
 
-分支：`fix/web-execution-control`。
+完成：PR #278，合并提交 `e36fb3e2`，已上线并完成 12 条真实模型连续消息验收。基线滚动检查保留同类失败，详情见[发布验收](pipeline-runs/20261020-web-execution-control.md)。
 
 ## CB-085
 
