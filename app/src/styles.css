@@ -3721,22 +3721,7 @@ body:has(.glass-topbar) .desk-strip { display: none; }
 .glass-shell:has([data-slot="sidebar"][data-state="collapsed"]) .glass-topbar-start { width: auto; gap: 12px; }
 /* Send key is ink (DESIGN.md §11), not blue. */
 .glass-composer .glass-composer-send:not(:disabled):not([data-testid="composer-stop"]) { background: var(--ink-primary) !important; color: var(--on-primary) !important; }
-/* ---------- Bot list header: 机器人 ＋ (新建机器人) … 管理 — no home page, no 新聊天 ---------- */
-.glass-list-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 4px 0 8px;
-  margin-bottom: 6px;
-  flex: none;
-}
-.glass-list-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink-1);
-  letter-spacing: 0.01em;
-}
+/* ---------- 新建机器人：搜索框右侧的图标按钮 ---------- */
 .glass-list-add {
   width: 26px;
   height: 26px;
@@ -3986,7 +3971,16 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 }
 .dark .proto-badge { color: #ffd27a; background: rgba(255, 196, 77, 0.12); border-color: rgba(255, 196, 77, 0.28); }
 
-/* ---------- 左栏：搜索框在卡片顶部 ---------- */
+/* ---------- 左栏：搜索框和新建按钮在卡片顶部 ---------- */
+.side-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex: none;
+}
+.side-search-row .side-search { flex: 1; min-width: 0; margin: 0; }
+.side-search-row .glass-list-add { width: 36px; height: 36px; flex: none; border-radius: var(--r-md); }
 .side-search {
   display: flex;
   align-items: center;
@@ -4137,7 +4131,28 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 @media (min-width: 1280px) { .rail-tab.xl\:flex { display: flex; } }
 /* 窄窗口（< 1280px）：面板栏放不下，右边缘的「面板」把手打开抽屉（components/panels/panel-rail.tsx）。 */
 .rail-tab.is-narrow { display: flex; }
-.rail-sheet .rail-card { background: transparent; }
+/* 抽屉直接使用常驻栏的 rail-card；Portal 在外壳之外，只覆盖定位和视口约束。 */
+.rail-sheet[data-slot="sheet-content"] {
+  position: fixed;
+  top: var(--glass-top, 56px);
+  right: 16px;
+  bottom: 16px;
+  height: auto;
+  min-width: 0;
+  max-width: calc(100vw - 32px);
+  font: inherit;
+  color: var(--glass-ink);
+}
+@media (max-width: 640px) {
+  .rail-sheet[data-slot="sheet-content"] { top: 8px; right: 8px; bottom: 8px; max-width: calc(100vw - 16px); }
+}
+html[data-phone] .rail-sheet[data-slot="sheet-content"] {
+  top: calc(8px + var(--safe-t));
+  right: calc(8px + var(--safe-r));
+  bottom: calc(8px + var(--safe-b));
+  max-width: calc(100vw - 16px - var(--safe-l) - var(--safe-r));
+  max-height: calc(var(--app-h, 100dvh) - 16px - var(--safe-t) - var(--safe-b));
+}
 
 @media (prefers-reduced-motion: reduce) {
   .rail-tab { animation: rail-tab-fade var(--dur-2) linear 120ms both; transition: background var(--dur-1), color var(--dur-1); }

@@ -733,8 +733,27 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           aria-label={searching ? "搜索结果" : "机器人"}
           className="glass-card glass-side-card min-h-0 flex-1"
         >
-          {/* DESIGN-v4：搜索在它要搜的列表上面，同一张卡片里（Ctrl K 聚焦这里）。 */}
-          <SidebarSearchField />
+          {/* 搜索和新建共用一行，列表直接接在下面（Ctrl K 聚焦搜索）。 */}
+          <div className="side-search-row">
+            <SidebarSearchField />
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    aria-label={"新建机器人"}
+                    className="glass-list-add"
+                    onClick={openCreateBot}
+                    type="button"
+                  />
+                }
+              >
+                <IconPlus className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={6}>
+                {"新建机器人"}
+              </TooltipContent>
+            </Tooltip>
+          </div>
           {searching ? (
             <>
               <div className="glass-sec">
@@ -835,27 +854,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </>
           ) : (
             <>
-              {/* 列表头：标题 + 「＋ 新建机器人」。 */}
-              <div className="glass-list-head">
-                <span className="glass-list-title">{"机器人"}</span>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <button
-                        aria-label={"新建机器人"}
-                        className="glass-list-add"
-                        onClick={openCreateBot}
-                        type="button"
-                      />
-                    }
-                  >
-                    <IconPlus className="size-4" />
-                  </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={6}>
-                    {"新建机器人"}
-                  </TooltipContent>
-                </Tooltip>
-              </div>
               <div className="glass-side-scroll glass-bot-scroll scroll-fade-b">
                 <HiddenChatBotRow
                   known={new Set(roster.map((bot) => bot.id))}

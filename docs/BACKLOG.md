@@ -93,6 +93,19 @@
 | [CB-082](#cb-082) | 浏览器暗色图标 + 外侧去掉标签 + 放大页重排 + 旧测试 | 成熟度 Maturity | `type: bug` · `area: computer` · `P1` · `status: done` |
 | [CB-083](#cb-083) | 设置重新整合 + 设置搜索；输入框权限（请求批准 / 完全访问） | 成熟度 Maturity | `type: feat` · `area: web` · `area: devices` · `P1` · `status: done` |
 | [CB-084](#cb-084) | 从其他页面切回机器人页总要刷新一次 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: web` · `P1` · `status: done` |
+| [CB-085](#cb-085) | 搜索旁新建机器人；弹出面板与常驻面板一致 | 成熟度 Maturity | `type: bug` · `area: web` · `P1` · `status: in-progress` |
+
+## CB-085
+
+**搜索旁新建机器人；弹出面板与常驻面板一致**  
+里程碑：成熟度 Maturity · 标签：`type: bug` `area: web` `P1` `status: in-progress`
+
+- [x] 左栏去掉独立「机器人」标题行，搜索框右侧保留新建按钮。
+- [x] 弹出与常驻共用卡片底色、圆角、边框、间距和记住的内容宽度；窄屏不溢出。
+- [x] 面板 / 计算机切换、收起按钮、Esc 和遮罩关闭行为通过浏览器验证。
+- [ ] 发布服务器网页，并确认桌面端加载新资源。
+
+说明：[侧栏与弹出面板一致性](sidebar-panel-parity.md)。
 
 ## CB-001
 
