@@ -83,7 +83,10 @@ if ! test -f ../app/dist/index.html; then
   say "安装依赖…"
   (cd .. && bun install --frozen-lockfile --linker hoisted) || die "依赖安装失败"
   say "构建前端…"
-  (cd .. && TENANT_PACKAGE_DIR=../examples/zh-CN bun run --cwd app build) || die "前端构建失败"
+  # hoisted 安装把 vite 放在仓库根 node_modules，app/node_modules 里没有；app 的 build 脚本写死
+  # app/node_modules/vite，会 "Module not found"。和 updater/update.sh 一样：先找 app 下，找不到用根目录的。
+  (cd ../app && V=node_modules/vite/bin/vite.js && { [ -f "$V" ] || V=../$V; } \
+    && TENANT_PACKAGE_DIR=../examples/zh-CN bun --bun "$V" build) || die "前端构建失败"
 fi
 
 # 5) 启动（复用 start.sh：装更新器、建 magpie 网、up）
