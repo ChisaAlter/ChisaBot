@@ -54,6 +54,7 @@ import {
   storedTurnAnswered,
 } from "@/lib/copilot/connection-drop";
 import { ConversationProvider } from "@/lib/copilot/conversation";
+import { frontendToolProgressAt } from "@/lib/copilot/frontend-tool-activity";
 import { afterMs, joinWithin } from "@/lib/copilot/join-thread";
 import {
   contentText,
@@ -814,6 +815,22 @@ export function ChannelChat({
   const [runError, setRunError] = useState<string | null>(null);
   const awaitingReply = useRef(false);
   /**
+   * 这一轮最后一次「确实动了」的时刻（DESIGN.md §100 / DOG-01）。
+   *
+   * 发送看门狗原来只看「整轮多久没结束」。可一轮里用浏览器做事是好几段 run 接力，中间那一段是浏览器里
+   * 的工具在跑（`computer_run_command` 最长 600 秒，见 lib/copilot/frontend-tool-activity.ts），
+   * 这期间聊天这头一个字节的进展都没有：没有模型输出、没有工具结果。于是 12 秒一到就 `stopAgent()`，
+   * CopilotKit 用**不带 reason** 的 `abort()` 掐掉正在跑的命令，工具结果变成
+   * `Error: signal is aborted without reason`，这一轮以「运行命令 这一步出错」收尾（2026-10-20 真机）。
+   *
+   * 现在看门狗看的是**静默**：模型在写、工具在跑、工具结果在回来，都刷新这个时刻；真的什么都没动满
+   * 12 秒（首段）/ 180 秒（等回答）才算挂起。
+   */
+  const runProgressAt = useRef(0);
+  const noteRunProgress = useRef(() => {
+    runProgressAt.current = Date.now();
+  });
+  /**
    * WHY THIS TURN ENDED WITHOUT AN ANSWER, KEPT WHERE `deliver` CAN STILL SEE IT — because the one
    * thing that knows is a subscriber, and the one thing that has to act on it is an `await`.
    *
@@ -1004,13 +1021,21 @@ export function ChannelChat({
        * `/run` 被同线程超大 connect 回放拖住（或 runAgent 挂起）→ 乐观气泡静默几十秒、刷新消失。
        * 这里给 run 加硬超时：超时后停掉、查落库；没落库就可见失败并让外层把草稿放回输入框。
        */
+      noteRunProgress.current();
       const runPromise = copilotkit.runAgent({
         agent: target,
         ...(panelAuthoring ? { forwardedProps: panelAuthoring } : {}),
       });
+      /**
+       * 看门狗问的「最近一次有进展」：这一轮的 run 事件（模型在写、工具结果在回来…），或者浏览器里
+       * 正在跑的前端工具（`computer_run_command` 那种，执行期间没有任何事件）。
+       */
+      const lastProgressAt = () =>
+        Math.max(runProgressAt.current, frontendToolProgressAt());
       const race = await raceSendWatchdog(runPromise, {
         afterMs,
         timeoutMs: SEND_WATCHDOG_MS,
+        lastProgressAt,
       });
       if (race === "timeout") {
         try {
@@ -1044,6 +1069,7 @@ export function ChannelChat({
         const raceReply = await raceSendWatchdog(runPromise, {
           afterMs,
           timeoutMs: SEND_REPLY_WATCHDOG_MS,
+          lastProgressAt,
         });
         const second = decideSendWatchdogAction({
           firstRace: "timeout",
@@ -1254,10 +1280,20 @@ export function ChannelChat({
     };
     failRef.current = fail;
     const subscription = agent.subscribe?.({
+      /*
+       * 任何事件都算「这一轮在动」，看门狗只对静默报警（见 runProgressAt）。文案在写、工具调用在长、
+       * 工具结果回来了，都在这里刷新；浏览器里的工具执行没有事件，由 frontend-tool-activity 代言。
+       */
+      onEvent: () => noteRunProgress.current(),
+      onRunStartedEvent: () => noteRunProgress.current(),
       // Both surfaces fall back to the same sentence, from the same place, so a person who uses
       // both is not told two different things about the same silence.
-      onRunErrorEvent: ({ event }) => fail(stoppedReason(event?.message)),
+      onRunErrorEvent: ({ event }) => {
+        noteRunProgress.current();
+        fail(stoppedReason(event?.message));
+      },
       onRunFailed: ({ error }) => {
+        noteRunProgress.current();
         // 等审批卡时的那次中止是正常暂停，不是出错（§100）。
         if (pausedForApproval() && isAbortFailure(error)) return;
         // 浏览器这头的连接断了：先别报（更别说成「连不上模型服务」），deliver 里问过服务器再定（§89）。
@@ -1268,6 +1304,7 @@ export function ChannelChat({
         fail(stoppedReason(error));
       },
       onRunFinishedEvent: () => {
+        noteRunProgress.current();
         /*
          * 不在这里把 awaitingReply 放下（DESIGN.md §100）。一轮里用浏览器做事是好几个 run 接力：第一个 run
          * 以工具调用结束，浏览器做完再发起下一个。以前第一个 run 一结束就放下，后面接力的 run 出错、断流，

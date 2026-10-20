@@ -62,6 +62,9 @@ export function friendlyStopReason(said: string): string {
   if (/timed? ?out|ETIMEDOUT|deadline/i.test(text)) return "模型太久没有回应。稍后再发，或换一个模型。";
   if (/fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|network|\b50[234]\b|bad gateway|service unavailable|overloaded/i.test(text))
     return "暂时连不上模型服务。稍后再发，或换一个模型。";
+  // 浏览器 AbortError 的原话：这一轮是被中断的，不是模型出错，别让人以为是程序坏了。
+  if (/aborted without reason|AbortError|signal is aborted/i.test(text))
+    return "这一轮被中断了（不是模型出错）。再发一次试试；一直这样就刷新一下页面。";
   if (/[\u4e00-\u9fff]/.test(said)) return said;
   return `这一轮出错了：${text}`;
 }
@@ -163,6 +166,13 @@ function stepName(tool: string | undefined): string {
 }
 /** 工具报错多是英文的内部说法；认得的翻成人话，其余原样（保留原文便于排查）。 */
 function friendlyToolError(detail: string): string {
+  /*
+   * 「signal is aborted without reason」是浏览器 AbortError 的原话（没有 reason 的 abort）。
+   * 它说的是「这一轮被掐了」，不是「这条命令本身出错」：以前原样端到人面前，看着像程序坏了。
+   * 中止本身的成因见 lib/copilot/frontend-tool-activity.ts（长命令被发送看门狗打断）。
+   */
+  if (/aborted without reason|AbortError|signal is aborted/i.test(detail))
+    return "这一轮被中断了，这条命令没跑完（不是命令本身出错）。再让它跑一次试试。";
   if (/not on the page any more|Nothing on this page has the ref|out of date/i.test(detail))
     return "页面已经变了，它要找的元素不在了。";
   if (/could not be reached|unavailable|ECONNREFUSED|fetch failed/i.test(detail)) return "云端电脑暂时连不上。";

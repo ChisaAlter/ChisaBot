@@ -71,15 +71,32 @@ export const SEND_WATCHDOG_MS = 12_000;
 /** 已落库后继续等回答的上限。比 SEND_WATCHDOG_MS 长（模型可能慢），但仍封顶以免永久卡住。 */
 export const SEND_REPLY_WATCHDOG_MS = 180_000;
 
+/** 有 `lastProgressAt` 时重新看一次的粒度：一秒一次，够准，也不吵。 */
+export const SEND_WATCHDOG_POLL_MS = 1_000;
+
 /**
  * 和 `run` 赛跑：超时返回 `"timeout"`，run 先结束返回 `"done"`。
  * 不取消 run——调用方决定要不要 stop / 查落库；测的是「有没有在时限内给出结果」。
+ *
+ * `lastProgressAt`（2026-10-20，「运行命令」被 12 秒看门狗打断）：给了它，时限算的是**静默**而不是
+ * 总时长。一轮里用浏览器做事是好几段 run 接力，中间那一段由浏览器里的工具执行（`computer_run_command`
+ * 最长 600 秒），聊天这头一个字节都没有——按总时长算就会在工具干到一半时 `stopAgent()`，工具拿到
+ * `signal is aborted without reason`，这一轮以「运行命令 这一步出错」收尾。按静默算：工具在跑、
+ * 模型在写、工具结果在回来，都算有进展；真的什么都没动满 `timeoutMs` 才报挂起。
+ *
+ * 不给它时行为与以前完全一样（固定时限），既有调用方和测试不受影响。
  */
 export function raceSendWatchdog<T>(
   run: Promise<T>,
-  deps: { afterMs: (ms: number) => Promise<void>; timeoutMs?: number },
+  deps: {
+    afterMs: (ms: number) => Promise<void>;
+    timeoutMs?: number;
+    /** 最近一次有进展的时刻（毫秒时间戳）。 */
+    lastProgressAt?: () => number;
+  },
 ): Promise<"done" | "timeout"> {
   const timeoutMs = deps.timeoutMs ?? SEND_WATCHDOG_MS;
+  const progress = deps.lastProgressAt;
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value: "done" | "timeout") => {
@@ -91,7 +108,19 @@ export function raceSendWatchdog<T>(
       () => finish("done"),
       () => finish("done"),
     );
-    void deps.afterMs(timeoutMs).then(() => finish("timeout"));
+    if (!progress) {
+      void deps.afterMs(timeoutMs).then(() => finish("timeout"));
+      return;
+    }
+    const watch = async () => {
+      while (!settled) {
+        const silentFor = Date.now() - progress();
+        const left = timeoutMs - silentFor;
+        if (left <= 0) return finish("timeout");
+        await deps.afterMs(Math.min(SEND_WATCHDOG_POLL_MS, left));
+      }
+    };
+    void watch();
   });
 }
 

@@ -9,6 +9,7 @@ import { InlineApproval } from "@/components/approvals/inline-approval";
 import { tryClient } from "@/lib/client";
 import { botForAgent, useActiveBotHolder, withRunBot } from "./active-bot";
 import { frontendApprovalSnapshot } from "./approval-context";
+import { beginFrontendTool } from "./frontend-tool-activity";
 import { markApprovalPause } from "./stopped-turn";
 
 type RenderProps = { toolCallId: string; [key: string]: unknown };
@@ -101,76 +102,88 @@ export function useFrontendTool<T extends Record<string, unknown>>(
         }
       : {}),
     handler: tool.handler
-      ? async (args, context) =>
-          neverThrow(context.signal, async () => {
-          // 这次调用属于哪段对话的机器人（§101），不是「现在看着的」那个。
-          const runBot = botForAgent(context.agent) ?? bot.current;
-          if (!writes.has(tool.name)) return withRunBot(bot, runBot, () => tool.handler?.(args, context));
-          let snapshot: ReturnType<typeof frontendApprovalSnapshot>;
-          try {
-            snapshot = frontendApprovalSnapshot(context);
-          } catch {
-            // A surface with no observed conversation. The server still gates the action; it can
-            // run it when nothing asks, and says why when something does.
-            return withRunBot(bot, runBot, () => tool.handler?.(args, context));
-          }
-          const response = await tryClient(
-            `/api/approvals/computer/${encodeURIComponent(runBot)}`,
-            { method: "POST", body: snapshot, signal: context.signal },
-          );
-          const payload: unknown = await response.json();
+      ? async (args, context) => {
           /*
-           * §102：动作跑得久（长命令）时服务器先回 200 再流式写结果，等待 / 错误的状态码写在正文的 `status` 里。
-           * 这里按正文还原成原来的状态，后面的判断不用变。
+           * 工具在浏览器里跑，这一轮就没有 SSE 进展可看：`computer_run_command` 最长 600 秒，中间没有任何
+           * 事件。开始 / 结束各打一次点，让发送看门狗知道「在动」，而不是到点把它掐掉
+           * （frontend-tool-activity.ts 记着 2026-10-20 那次「运行命令 一直失败」）。
            */
-          const status = effectiveStatus(response.status, payload);
-          const ok = status >= 200 && status < 300;
-          if (status === 202) {
-            const kind =
-              payload && typeof payload === "object" && "kind" in payload && typeof payload.kind === "string"
-                ? payload.kind
-                : "approval";
-            // 只有审批会在决定之后接上这一轮。别的等待（例如等人交还计算机）没有东西会接上：
-            // 以前这里一样 stopAgent，用户只看到机器人说了一句就再没下文（2026-10-13）。
-            // 现在把原因作为工具结果交回去，让机器人把话说完。
-            if (!kind.startsWith("approval")) {
-              const reason =
-                payload && typeof payload === "object" && "reason" in payload && typeof payload.reason === "string"
-                  ? payload.reason
-                  : "";
-              return {
-                ok: false,
-                reason: `没有执行，需要用户先处理右栏「计算机」里的请求（${reason || kind}）。如实告诉用户，不要说已经完成。`,
-              };
-            }
-            if (!context.agent) throw new Error("中断的对话不可用。");
-            markApprovalPause();
-            // Stop signals the SDK to discard this handler's unfinished result. The server owns
-            // resume: the decision executes the action once and continues this conversation.
-            copilotkit.stopAgent({ agent: context.agent });
-            // Draw the card now rather than on the inbox's next poll.
-            void queryClient.invalidateQueries({ queryKey: ["approvals"] });
-            return { waiting: true };
+          const done = beginFrontendTool();
+          try {
+            return await neverThrow(context.signal, async () => {
+              // 这次调用属于哪段对话的机器人（§101），不是「现在看着的」那个。
+              const runBot = botForAgent(context.agent) ?? bot.current;
+              if (!writes.has(tool.name))
+                return withRunBot(bot, runBot, () => tool.handler?.(args, context));
+              let snapshot: ReturnType<typeof frontendApprovalSnapshot>;
+              try {
+                snapshot = frontendApprovalSnapshot(context);
+              } catch {
+                // A surface with no observed conversation. The server still gates the action; it can
+                // run it when nothing asks, and says why when something does.
+                return withRunBot(bot, runBot, () => tool.handler?.(args, context));
+              }
+              const response = await tryClient(
+                `/api/approvals/computer/${encodeURIComponent(runBot)}`,
+                { method: "POST", body: snapshot, signal: context.signal },
+              );
+              const payload: unknown = await response.json();
+              /*
+               * §102：动作跑得久（长命令）时服务器先回 200 再流式写结果，等待 / 错误的状态码写在正文的 `status` 里。
+               * 这里按正文还原成原来的状态，后面的判断不用变。
+               */
+              const status = effectiveStatus(response.status, payload);
+              const ok = status >= 200 && status < 300;
+              if (status === 202) {
+                const kind =
+                  payload && typeof payload === "object" && "kind" in payload && typeof payload.kind === "string"
+                    ? payload.kind
+                    : "approval";
+                // 只有审批会在决定之后接上这一轮。别的等待（例如等人交还计算机）没有东西会接上：
+                // 以前这里一样 stopAgent，用户只看到机器人说了一句就再没下文（2026-10-13）。
+                // 现在把原因作为工具结果交回去，让机器人把话说完。
+                if (!kind.startsWith("approval")) {
+                  const reason =
+                    payload && typeof payload === "object" && "reason" in payload && typeof payload.reason === "string"
+                      ? payload.reason
+                      : "";
+                  return {
+                    ok: false,
+                    reason: `没有执行，需要用户先处理右栏「计算机」里的请求（${reason || kind}）。如实告诉用户，不要说已经完成。`,
+                  };
+                }
+                if (!context.agent) throw new Error("中断的对话不可用。");
+                markApprovalPause();
+                // Stop signals the SDK to discard this handler's unfinished result. The server owns
+                // resume: the decision executes the action once and continues this conversation.
+                copilotkit.stopAgent({ agent: context.agent });
+                // Draw the card now rather than on the inbox's next poll.
+                void queryClient.invalidateQueries({ queryKey: ["approvals"] });
+                return { waiting: true };
+              }
+              if (!ok) {
+                const error =
+                  payload &&
+                  typeof payload === "object" &&
+                  "error" in payload &&
+                  typeof payload.error === "string"
+                    ? payload.error
+                    : "";
+                // 交回一个「没做成」的结果而不是抛错：抛错会让 CopilotKit 不再发起下一轮，这一轮静默结束（§100）。
+                return {
+                  ok: false,
+                  reason: error || `计算机操作没有成功（HTTP ${status}）。`,
+                  ...(status === 400 || status === 403 ? { refused: true } : {}),
+                };
+              }
+              if (!payload || typeof payload !== "object" || !("result" in payload))
+                return { ok: false, reason: "计算机操作没有返回结果。" };
+              return payload.result;
+            });
+          } finally {
+            done();
           }
-          if (!ok) {
-            const error =
-              payload &&
-              typeof payload === "object" &&
-              "error" in payload &&
-              typeof payload.error === "string"
-                ? payload.error
-                : "";
-            // 交回一个「没做成」的结果而不是抛错：抛错会让 CopilotKit 不再发起下一轮，这一轮静默结束（§100）。
-            return {
-              ok: false,
-              reason: error || `计算机操作没有成功（HTTP ${status}）。`,
-              ...(status === 400 || status === 403 ? { refused: true } : {}),
-            };
-          }
-          if (!payload || typeof payload !== "object" || !("result" in payload))
-            return { ok: false, reason: "计算机操作没有返回结果。" };
-          return payload.result;
-        })
+        }
       : undefined,
   });
 }

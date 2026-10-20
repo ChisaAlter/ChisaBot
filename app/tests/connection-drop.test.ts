@@ -211,6 +211,54 @@ test("raceSendWatchdog: a rejected run still counts as done (error path owns the
   expect(outcome).toBe("done");
 });
 
+/*
+ * 2026-10-20 真机：「运行命令」每次都在十几秒后失败，报 `signal is aborted without reason`。
+ * 原因是看门狗按**总时长**算：浏览器里的 `computer_run_command` 跑着（最长 600 秒）期间聊天这头
+ * 没有任何事件，12 秒一到就 stopAgent()，用不带 reason 的 abort 掐掉命令。下面钉住新语义：
+ * 有进展不算挂起，静默满时限才算。
+ */
+test("raceSendWatchdog: progress keeps a long turn alive (a command runs inside it)", async () => {
+  const afterMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  let progress = Date.now();
+  const beating = setInterval(() => {
+    progress = Date.now();
+  }, 10);
+  const run = new Promise<void>((resolve) => setTimeout(resolve, 150));
+  const outcome = await raceSendWatchdog(run, {
+    afterMs,
+    timeoutMs: 40,
+    lastProgressAt: () => progress,
+  });
+  clearInterval(beating);
+  // 40ms 的时限里一直在动，所以只有 run 先结束这一种结果。
+  expect(outcome).toBe("done");
+});
+
+test("raceSendWatchdog: silence for the whole window still reports a hang", async () => {
+  const afterMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  let progress = Date.now();
+  // 20ms 时还有一次进展；之后彻底安静，40ms 的静默从那一刻重新算。
+  setTimeout(() => {
+    progress = Date.now();
+  }, 20);
+  const run = new Promise<void>(() => {});
+  const started = Date.now();
+  const outcome = await raceSendWatchdog(run, {
+    afterMs,
+    timeoutMs: 40,
+    lastProgressAt: () => progress,
+  });
+  expect(outcome).toBe("timeout");
+  // 那次进展之后又静默满 40ms 才报，不是从头一刀切。
+  expect(Date.now() - started).toBeGreaterThanOrEqual(55);
+});
+
+test("a stopped-by-the-client command is explained, not echoed as an English abort", () => {
+  const reason = friendlyStopReason("signal is aborted without reason");
+  expect(reason).toContain("这一轮被中断");
+  expect(reason).not.toContain("aborted");
+});
+
 test("reply hang sentence says the message was sent, not that it failed to leave", () => {
   expect(SEND_REPLY_HANG_REASON).toContain("已经发出去");
   expect(SEND_REPLY_HANG_REASON).not.toContain("没发出去");
