@@ -989,7 +989,7 @@ test("a key app nobody has connected says it will ask for a key, not send you of
 
   expect(
     await view.findByText(
-      /connected with a key you already hold, not a trip to Gmail's consent screen/,
+      /这个应用是靠你手里的密钥连上的，不会打开 Gmail 的授权页/,
     ),
   ).toBeTruthy();
   /*
@@ -1015,7 +1015,7 @@ test("a key app nobody has connected keeps the screen's own reassurance", async 
 
   // The row's own sentence, which is the one the screen's cannot be: pressing Connect here opens a
   // form rather than leaving for a consent screen.
-  expect(await view.findByText(/Connect asks for it\./)).toBeTruthy();
+  expect(await view.findByText(/点「连接」会直接向你要这把密钥/)).toBeTruthy();
   /*
    * And the half of the screen's line that survives it. Replacing the whole line took away the one
    * thing an administrator reading this row needs to know — that the connector is finished whether
@@ -1023,7 +1023,7 @@ test("a key app nobody has connected keeps the screen's own reassurance", async 
    */
   expect(
     view.getByText(
-      /Setup is complete without it, and it reaches your documents only/,
+      /不连它也能把这个应用配好；它只读得到你的文档/,
     ),
   ).toBeTruthy();
 });
@@ -1182,7 +1182,7 @@ test("a typed scheme this screen does not know is refused, not navigated to unde
      * does not exist.
      */
     await waitFor(() =>
-      expect(view.queryByText(/no page to send you to/)).toBeTruthy(),
+      expect(view.queryByText(/没有可以送你过去的页面/)).toBeTruthy(),
     );
     // The defect in its plainest form: before the fix this array held the one string "undefined".
     expect(watched.navigations).toEqual([]);
@@ -1289,7 +1289,7 @@ test("both kinds say Connected, and the line beneath says how", () => {
   const consent = renderRow(accountState({ connected: true, kind: "consent" }));
 
   expect(consent.getByText("已连接")).toBeTruthy();
-  expect(consent.getByText(/through Gmail's consent screen/)).toBeTruthy();
+  expect(consent.getByText(/已通过 Gmail 的授权页连上/)).toBeTruthy();
 
   cleanup();
 
@@ -1396,7 +1396,7 @@ test("a connected consent app offers no Re-check at all", () => {
   expect(view.queryByRole("button", { name: "重新检查" })).toBeNull();
   // The row is otherwise itself: a live account somebody can still end.
   expect(view.getByRole("button", { name: "断开连接" })).toBeTruthy();
-  expect(view.getByText(/through Gmail's consent screen/)).toBeTruthy();
+  expect(view.getByText(/已通过 Gmail 的授权页连上/)).toBeTruthy();
 });
 
 /**

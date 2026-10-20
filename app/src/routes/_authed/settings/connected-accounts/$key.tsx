@@ -198,7 +198,7 @@ function RouteComponent() {
   if (brokered && server) {
     /* Bound once because the row below is told it twice — once inside the whole disconnected
        sentence and once on its own — and two copies of it would drift. */
-    const reassurance = "No Bot can read this as you.";
+    const reassurance = "还没有机器人能以你的身份读它。";
 
     return (
       <PageShell
@@ -222,8 +222,8 @@ function RouteComponent() {
               /* Said beside the button rather than after it: disconnecting ends the account at
                  Composio, so what it undoes is not the row here but the grant on your own mailbox,
                  and connecting again is a fresh consent. */
-              connectedDescription={`A Bot granted its tools reads your ${server.title} as you. Disconnecting ends the account at Composio, not just here.`}
-              disconnectedDescription={`${reassurance} Connecting takes you to Composio and then to the vendor to consent.`}
+              connectedDescription={`被授予这些工具的机器人会以你的身份读 ${server.title}。断开连接会连 Composio 那边的账号一起断掉，不只是这里的这一行。`}
+              disconnectedDescription={`${reassurance}点「连接」会先去 Composio，再去对方的授权页。`}
               /* What is true either way. The trip to Composio is not — an app whose key somebody
                  types never leaves this page — but which Bots can read this person's mail is the
                  whole point of the screen and holds for both kinds. */

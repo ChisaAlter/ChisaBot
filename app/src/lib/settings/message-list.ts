@@ -26,10 +26,17 @@ export function userPreferencesQueryOptions(userId: string | undefined) {
 }
 
 export function useUserPreferences() {
-  const { data: user } = useQuery(currentUserQueryOptions());
+  const user = useQuery(currentUserQueryOptions());
+  const preferences = useQuery(userPreferencesQueryOptions(user.data?.id));
   return {
-    userId: user?.id,
-    ...useQuery(userPreferencesQueryOptions(user?.id)),
+    userId: user.data?.id,
+    ...preferences,
+    /*
+     * 当前用户读失败时，偏好查询根本不会开始（没 userId → enabled: false），isSuccess / isError 都是
+     * false。调用方按「偏好已经定下来」来等就永远等不到：首页 landing 会一直 loading，`/` 渲染成空白，
+     * 连错误都没有（2026-10-20 清测试基线时发现）。所以把「用户读失败」也算作定下来。
+     */
+    settled: preferences.isSuccess || preferences.isError || user.isError,
   };
 }
 
@@ -129,7 +136,7 @@ export function useMainBot() {
   });
   return {
     mainBotId: preferences.data?.mainBotId ?? null,
-    settled: preferences.isSuccess || preferences.isError,
+    settled: preferences.settled,
     setMainBot: (botId: string | null) => save.mutate(botId),
   };
 }

@@ -308,7 +308,7 @@ function RouteComponent() {
   /* Bound once because the brokered row below is told it twice — once inside the whole
      disconnected sentence and once on its own — and two copies of it would drift. */
   const reassurance =
-    "Setup is complete without it, and it reaches your documents only.";
+    "不连它也能把这个应用配好；它只读得到你的文档。";
 
   /*
    * Everything the brokered row below reads and does, shared with the personal connected-accounts
@@ -697,8 +697,8 @@ function RouteComponent() {
                     /* Said beside the button rather than after it: disconnecting ends the account
                        at Composio, so what it undoes is not the row here but the grant on this
                        person's mailbox, and connecting again is a fresh consent. */
-                    connectedDescription={`Connected, so a Bot granted these tools uses your ${title} as you. Disconnecting ends the account at Composio, not just here.`}
-                    disconnectedDescription={`Connect your own account to try this connector. ${reassurance}`}
+                    connectedDescription={`已连接：被授予这些工具的机器人会以你的身份读 ${title}。断开连接会连 Composio 那边的账号一起断掉，不只是这里的这一行。`}
+                    disconnectedDescription={`连上你自己的账号就能试这个连接器。${reassurance}`}
                     /* The half of the line above that is true whichever way this app connects.
                        An app whose key somebody types gets a different first sentence from the
                        row — pressing Connect opens a form rather than leaving for a consent

@@ -396,7 +396,7 @@ export function useBrokeredAccount(input: {
        */
       if (authorizationUrl === null) {
         report(
-          "This app is connected with a key you hold rather than through a consent screen, so there was no page to send you to and nothing was connected. Reload this page and press Connect again.",
+          "这个应用是靠你手里的密钥连上的，不走对方的授权页，所以没有可以送你过去的页面，这次也什么都没连上。刷新这个页面，再按一次「连接」。",
         );
         return;
       }
@@ -788,7 +788,7 @@ function accountSentence(input: {
      * way this app is connected, and a row that replaced the whole line took it away with the trip
      * it was right to drop.
      */
-    const asked = `This app is connected with a key you already hold, not a trip to ${title}'s consent screen. Connect asks for it.`;
+    const asked = `这个应用是靠你手里的密钥连上的，不会打开 ${title} 的授权页。点「连接」会直接向你要这把密钥。`;
     return disconnectedReassurance
       ? `${asked} ${disconnectedReassurance}`
       : asked;
@@ -800,7 +800,7 @@ function accountSentence(input: {
    * mail is an argument, not a branch — see this file's opening comment.
    */
   return account.connected
-    ? `Connected through ${title}'s consent screen. ${connectedDescription}`
+    ? `已通过 ${title} 的授权页连上。${connectedDescription}`
     : disconnectedDescription;
 }
 
