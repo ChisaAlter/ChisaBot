@@ -296,9 +296,11 @@ export function isQuietWork({
   /** 见 `HIDE_FINISHED_WORK_SUMMARY`：做完有结果就整行收起，不再看失败 / 步数 / 用时。 */
   hideSummary?: boolean;
 }): boolean {
-  if (live || stopped || !hasFinal) return false;
-  // 用户要的是「只留回答」：不跑的时候那行步数一律不画（2026-10-20）。
+  if (live) return false;
+  // 用户要的是「只留回答」：不跑的时候那行步数一律不画（2026-10-20）——被停掉的、没回答的也一样，
+  // 那几种情况另有「已停止」「这一轮没有做完」的提示，不靠这行字。
   if (hideSummary) return true;
+  if (stopped || !hasFinal) return false;
   let steps = 0;
   for (const call of calls) {
     if (!call.done || call.failed) return false;

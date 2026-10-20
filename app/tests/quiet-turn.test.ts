@@ -51,19 +51,19 @@ describe("简单回合（§93）", () => {
     expect(compact.hidden.has("a1")).toBe(false);
   });
 
-  test("有结果才收：工具后面没有回答（出错 / 中断）卡片照常显示", () => {
+  test("跑完就收：工具后面没有回答（出错 / 中断）也一样，那一轮另有「这一轮没有做完」", () => {
     const compact = compactTurns(userTurn(), false, new Set());
-    expect(compact.work.get("t1")?.quiet).toBe(false);
+    expect(compact.work.get("t1")?.quiet).toBe(true);
   });
 
-  test("被停掉的一轮不收", () => {
-    const compact = compactTurns([...userTurn(), bot("a2", ANSWER)], false, new Set(["u1"]));
-    expect(compact.work.get("t1")?.quiet).toBe(false);
+  test("被停掉的一轮也收（另有「已停止」），只有还在跑的照旧画着", () => {
+    expect(compactTurns([...userTurn(), bot("a2", ANSWER)], false, new Set(["u1"])).work.get("t1")?.quiet).toBe(true);
+    expect(compactTurns(userTurn(), true, new Set()).work.get("t1")?.quiet).toBe(false);
   });
 
   /*
-   * 2026-10-20 用户：「全部不显示步数吧，只留回答」。做完、有回答的一轮，那行步数一律收起——
-   * 失败过的、步数多的、搜索网页的都不例外；还在跑 / 被停掉 / 没有回答的照旧（那时它是唯一的说明）。
+   * 2026-10-20 用户：「全部不显示步数吧，只留回答」。一轮结束（做完 / 失败 / 被停掉）那行步数一律收起，
+   * 只有还在跑的那一行照旧，且不再写「第 N 步」。
    */
   test("做完有回答：那行步数一律收起，失败过的也一样", () => {
     for (const bad of [
@@ -85,7 +85,7 @@ describe("简单回合（§93）", () => {
     }
   });
 
-  test("超过 3 步也收起（只留回答）；还在跑 / 没回答时不收", () => {
+  test("超过 3 步也收起（只留回答）；还在跑时不收", () => {
     const items = [
       user("u1", "看"),
       call("t1", "device_list"),
@@ -96,7 +96,8 @@ describe("简单回合（§93）", () => {
     ];
     expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(true);
     expect(compactTurns(items, true, new Set()).work.get("t1")?.quiet).toBe(false);
-    expect(compactTurns(items.slice(0, 5), false, new Set()).work.get("t1")?.quiet).toBe(false);
+    // 没回答（中断 / 出错）跑完也收，提示走「这一轮没有做完」。
+    expect(compactTurns(items.slice(0, 5), false, new Set()).work.get("t1")?.quiet).toBe(true);
   });
 
   test("准备动作（看技能）不算步骤、也不挡", () => {
@@ -113,11 +114,13 @@ describe("简单回合（§93）", () => {
     expect(isQuietWork({ calls, live: false, hasFinal: true })).toBe(true);
     expect(isQuietWork({ calls, live: false, hasFinal: true, confirmed: new Set(["t2"]) })).toBe(true);
     expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: QUIET_MAX_SECONDS + 1 })).toBe(true);
-    // 还在跑 / 没有回答 / 被停掉：不收——那时这一行是唯一的说明。
+    // 还在跑：不收（它是进度）。跑完的，有没有回答、被没被停掉，一律收起。
     expect(isQuietWork({ calls, live: true, hasFinal: true })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: false })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, stopped: true })).toBe(false);
-    // hideSummary: false 时是原来的 §93：确认卡、用时、失败、步数都还有效。
+    expect(isQuietWork({ calls, live: false, hasFinal: false })).toBe(true);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, stopped: true })).toBe(true);
+    // hideSummary: false 时是原来的 §93：没回答 / 被停掉 / 确认卡 / 用时都还有效。
+    expect(isQuietWork({ calls, live: false, hasFinal: false, hideSummary: false })).toBe(false);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, stopped: true })).toBe(false);
     expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false })).toBe(true);
     expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, confirmed: new Set(["t2"]) })).toBe(false);
     expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, seconds: 7 })).toBe(true);
