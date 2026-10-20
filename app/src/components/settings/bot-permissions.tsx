@@ -4,6 +4,7 @@ import { BOT_PERMISSION_INFO, BOT_PERMISSION_MODES, type BotPermissionMode } fro
 import { BotAvatar } from "@/components/agents/bot-avatar";
 import { PageSection } from "@/components/layout/page-shell";
 import { Card, ListRow } from "@/components/ui/skyglass";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import { toast } from "@/components/ui/toast";
 import { type AgentProfile, agentListQueryOptions } from "@/lib/agents/queries";
 import { botPermissionQueryOptions, useSetBotPermission } from "@/lib/bot-permission";
@@ -44,6 +45,13 @@ function BotPermissionRow({ bot }: { bot: AgentProfile }) {
   const state = useQuery(botPermissionQueryOptions(bot.id));
   const { choose, mutation } = useSetBotPermission(bot.id, bot.name);
   const mode = state.data?.mode ?? "ask";
+  // 分段选择的键盘约定（2026-10-20）：Tab 停在选中档，方向键换档、焦点跟随。
+  const keys = useSegmentedKeys<BotPermissionMode>({
+    value: mode,
+    values: BOT_PERMISSION_MODES,
+    onChange: (next) => void pick(next),
+    disabled: !state.data || mutation.isPending,
+  });
   async function pick(next: BotPermissionMode) {
     if (next === mode && state.data?.stored) return;
     try {
@@ -55,7 +63,7 @@ function BotPermissionRow({ bot }: { bot: AgentProfile }) {
   return (
     <ListRow
       actions={
-        <div aria-label={`「${bot.name}」的权限`} className="sg-segmented perm-seg" data-testid="bot-permission-seg" role="radiogroup">
+        <div aria-label={`「${bot.name}」的权限`} className="sg-segmented perm-seg" data-testid="bot-permission-seg" {...keys.groupProps} ref={keys.groupRef} role="radiogroup">
           {BOT_PERMISSION_MODES.map((option) => {
             const Icon = ICON[option];
             return (
@@ -66,6 +74,7 @@ function BotPermissionRow({ bot }: { bot: AgentProfile }) {
                 key={option}
                 onClick={() => void pick(option)}
                 role="radio"
+                tabIndex={keys.itemTabIndex(option)}
                 type="button"
               >
                 <Icon className="size-3.5" />

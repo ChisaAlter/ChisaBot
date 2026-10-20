@@ -14,6 +14,7 @@ import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Card, SettingRow } from "@/components/ui/skyglass";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import {
   createPairing,
@@ -75,6 +76,13 @@ export function FullAccessCard({ device }: { device: DeviceView }) {
     if (ok) void apply.run(duration);
   };
   const disabled = device.revoked || device.paused;
+  // 分段选择的键盘约定（2026-10-20）：Tab 停在当前时长，方向键换时长、焦点跟随。
+  const durationKeys = useSegmentedKeys<Duration>({
+    value: duration,
+    values: DURATIONS.map((item) => item.value),
+    onChange: setDuration,
+    disabled,
+  });
   return (
     <section className="device-section">
       <h2 className="device-section-t">{"完全访问"}</h2>
@@ -111,7 +119,7 @@ export function FullAccessCard({ device }: { device: DeviceView }) {
             </Button>
           ) : (
             <>
-              <div aria-label="完全访问时长" className="sg-segmented" role="radiogroup">
+              <div aria-label="完全访问时长" className="sg-segmented" {...durationKeys.groupProps} ref={durationKeys.groupRef} role="radiogroup">
                 {DURATIONS.map((item) => (
                   <button
                     aria-checked={duration === item.value}
@@ -120,6 +128,7 @@ export function FullAccessCard({ device }: { device: DeviceView }) {
                     key={item.value}
                     onClick={() => setDuration(item.value)}
                     role="radio"
+                    tabIndex={durationKeys.itemTabIndex(item.value)}
                     type="button"
                   >
                     <T>{item.label}</T>

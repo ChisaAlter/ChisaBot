@@ -1,4 +1,5 @@
 import { LivePanelList, useLivePanels } from "./live-panels";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import {
   IconDeviceDesktop,
   IconLayoutGrid,
@@ -48,6 +49,7 @@ const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 380;
+const PANEL_CARD_CLASS = "glass-card glass-rail-inner rail-card flex h-full min-h-0 flex-col";
 
 function storedWidth() {
   const raw = Number(readStoredPreference(WIDTH_KEY));
@@ -178,6 +180,15 @@ export function PanelRail({ className }: { className?: string }) {
     closeComputer();
     setPanelSheetOpen(false);
   }, [closeComputer]);
+  // 抽屉和常驻栏用同一张卡片、同一个内容宽度；24px 是常驻栏左右的留边。
+  const cardWidth = width - 24;
+  const panelBody = (
+    <PanelRailBody
+      controlsId={wide ? "chisabot-panel-rail" : "chisabot-panel-sheet"}
+      onCollapse={wide ? collapseWide : closeSheet}
+      showHotkey={wide}
+    />
+  );
 
   if (!wide) {
     // 窄窗口（< 1280px）：没有右侧栏的位置，面板改成右边缘把手 + 滑出的抽屉，入口一直在。
@@ -203,16 +214,15 @@ export function PanelRail({ className }: { className?: string }) {
           open={sheetOpen}
         >
           <SheetContent
-            className="glass-drawer rail-sheet gap-0 p-3 data-[side=right]:sm:max-w-[420px] data-[side=right]:w-[min(420px,100vw)]"
+            className={cn(PANEL_CARD_CLASS, "rail-sheet")}
             id="chisabot-panel-sheet"
             showCloseButton={false}
             side="right"
+            style={{ width: cardWidth }}
           >
             <SheetTitle className="sr-only">{computerOn ? "计算机" : "自定义面板"}</SheetTitle>
             <SheetDescription className="sr-only">{"当前机器人的自定义面板和计算机"}</SheetDescription>
-            <section className="rail-card flex h-full min-h-0 flex-col">
-              <PanelRailBody onCollapse={closeSheet} />
-            </section>
+            {panelBody}
           </SheetContent>
         </Sheet>
       </>
@@ -268,8 +278,8 @@ export function PanelRail({ className }: { className?: string }) {
       />
       {dragging ? <div className="fixed inset-0 z-40 cursor-col-resize" /> : null}
       {/* DESIGN-v4：面板栏是一张独立的玻璃卡；标题和收起在卡片自己的头部里。 */}
-      <section className="glass-card glass-rail-inner rail-card flex h-full min-h-0 flex-col" style={{ width: width - 24 }}>
-        <PanelRailBody onCollapse={collapseWide} />
+      <section className={PANEL_CARD_CLASS} style={{ width: cardWidth }}>
+        {panelBody}
       </section>
     </aside>
     </>
@@ -299,7 +309,15 @@ function PanelRailHandle({ open }: { open: boolean }) {
   );
 }
 
-function PanelRailBody({ onCollapse }: { onCollapse?: () => void } = {}) {
+function PanelRailBody({
+  onCollapse,
+  controlsId,
+  showHotkey,
+}: {
+  onCollapse: () => void;
+  controlsId: string;
+  showHotkey: boolean;
+}) {
   const { botId } = usePanelBot();
   const chat = useCurrentBotChat();
   const canComputer = Boolean(chat?.canComputer);
@@ -327,13 +345,13 @@ function PanelRailBody({ onCollapse }: { onCollapse?: () => void } = {}) {
         )}
         <span className="flex-1" />
         <span aria-hidden className="rail-head-div" />
-        <ToggleTip keys={PANEL_RAIL_HOTKEY_LABEL} label={"收起右栏"} side="bottom">
+        <ToggleTip keys={showHotkey ? PANEL_RAIL_HOTKEY_LABEL : undefined} label={"收起右栏"} side="bottom">
           <button
-            aria-controls={"chisabot-panel-rail"}
+            aria-controls={controlsId}
             aria-expanded={true}
             aria-label={"收起右栏"}
             className="rail-head-icon"
-            onClick={() => (onCollapse ? onCollapse() : setPanelRailOpen(false))}
+            onClick={onCollapse}
             type="button"
           >
             <IconLayoutSidebarRightCollapse className="size-[18px]" />
@@ -382,19 +400,15 @@ function RailSwitch({
   onChange: (tab: RailTab) => void;
   needsYou: boolean;
 }) {
+  // 键盘约定走共用的 `useSegmentedKeys`（2026-10-20）：以前这里手写了一份，方向键换了项但焦点留在原处。
+  const keys = useSegmentedKeys<RailTab>({ value: tab, values: ["panels", "computer"], onChange });
   const item = (value: RailTab, label: string, icon: React.ReactNode) => (
     <button
       aria-checked={tab === value}
       className="sg-segmented-item rail-tabs-item"
       onClick={() => onChange(value)}
-      onKeyDown={(event) => {
-        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-          event.preventDefault();
-          onChange(value === "panels" ? "computer" : "panels");
-        }
-      }}
       role="radio"
-      tabIndex={tab === value ? 0 : -1}
+      tabIndex={keys.itemTabIndex(value)}
       type="button"
     >
       {icon}
@@ -405,7 +419,7 @@ function RailSwitch({
     </button>
   );
   return (
-    <div aria-label={"右栏内容"} className="sg-segmented rail-tabs" data-tab={tab} role="radiogroup">
+    <div aria-label={"右栏内容"} className="sg-segmented rail-tabs" data-tab={tab} {...keys.groupProps} ref={keys.groupRef} role="radiogroup">
       <span aria-hidden className="rail-tabs-thumb" />
       {item("panels", "面板", <IconLayoutGrid className="size-[15px]" />)}
       {item("computer", "计算机", <IconDeviceDesktop className="size-[15px]" />)}

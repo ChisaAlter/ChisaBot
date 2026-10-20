@@ -7,6 +7,7 @@ import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import { Textarea } from "@/components/ui/textarea";
 import { ccApi, ccGithubQueryOptions, ccKeys, ccPushPreviewQueryOptions, ccReposQueryOptions } from "@/lib/cloud-cc";
 import { client } from "@/lib/client";
@@ -86,6 +87,13 @@ export function CcNewWorkspaceDialog({ open, onOpenChange }: { open: boolean; on
     { errorToast: false },
   );
   const busy = create.state === "pending" || localBusy;
+  // 分段选择的键盘约定（2026-10-20）：Tab 停在当前来源，方向键换来源、焦点跟随。
+  const srcKeys = useSegmentedKeys<"github" | "local">({
+    value: src,
+    values: ["github", "local"],
+    onChange: setSrc,
+    disabled: busy,
+  });
 
   return (
     <Dialog onOpenChange={(o) => (!busy || !o ? onOpenChange(o) : undefined)} open={open}>
@@ -101,8 +109,8 @@ export function CcNewWorkspaceDialog({ open, onOpenChange }: { open: boolean; on
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="mt-4 overflow-y-auto">
-          <div aria-label="来源" className="sg-segmented cc-src-seg" role="radiogroup">
-            <button aria-checked={src === "github"} className="sg-segmented-item" data-testid="cc-src-github" disabled={busy} onClick={() => setSrc("github")} role="radio" type="button">
+          <div aria-label="来源" className="sg-segmented cc-src-seg" {...srcKeys.groupProps} ref={srcKeys.groupRef} role="radiogroup">
+            <button aria-checked={src === "github"} className="sg-segmented-item" data-testid="cc-src-github" disabled={busy} onClick={() => setSrc("github")} role="radio" tabIndex={srcKeys.itemTabIndex("github")} type="button">
               <IconBrandGithub className="size-4" />
               {"GitHub"}
             </button>
@@ -113,6 +121,7 @@ export function CcNewWorkspaceDialog({ open, onOpenChange }: { open: boolean; on
               disabled={!canLocal || busy}
               onClick={() => setSrc("local")}
               role="radio"
+              tabIndex={srcKeys.itemTabIndex("local")}
               title={canLocal ? undefined : "只有 ChisaBot PC 客户端能选电脑上的文件夹"}
               type="button"
             >

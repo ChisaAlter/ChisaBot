@@ -62,6 +62,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { Card, CardHeader, EmptyState, ListRow, SaveBar, SettingRow } from "@/components/ui/skyglass";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import {
   ACTION_LABEL,
   bytesText,
@@ -692,8 +693,15 @@ function PolicySegmented({
   label: string;
   disabled?: boolean;
 }) {
+  // 分段选择的键盘约定（2026-10-20）：roving tabindex + 方向键换档。
+  const keys = useSegmentedKeys<CapabilityPolicy>({
+    value,
+    values: POLICIES.map((policy) => policy.value),
+    onChange,
+    disabled,
+  });
   return (
-    <div aria-label={label} className="sg-segmented device-seg" role="radiogroup">
+    <div aria-label={label} className="sg-segmented device-seg" {...keys.groupProps} ref={keys.groupRef} role="radiogroup">
       {POLICIES.map((policy) => (
         <button
           aria-checked={value === policy.value}
@@ -702,6 +710,7 @@ function PolicySegmented({
           key={policy.value}
           onClick={() => onChange(policy.value)}
           role="radio"
+          tabIndex={keys.itemTabIndex(policy.value)}
           type="button"
         >
           {policy.label}

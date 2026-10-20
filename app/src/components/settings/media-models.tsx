@@ -7,6 +7,7 @@ import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import { SettingRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -32,10 +33,12 @@ type AsyncHandle = Pick<ReturnType<typeof useAsyncAction<[], void>>, "state" | "
 const validUrl = (v: string) => /^https?:\/\/\S+$/.test(v.trim());
 
 function Segmented<T extends string>({ value, onChange, options, label, testId }: { value: T; onChange: (v: T) => void; options: { value: T; label: string }[]; label: string; testId?: string }) {
+  // 分段选择的键盘约定集中在这一个钩子里（2026-10-20）：roving tabindex + 方向键换项、焦点跟随。
+  const keys = useSegmentedKeys<T>({ value, values: options.map((option) => option.value), onChange });
   return (
-    <div aria-label={label} className="sg-segmented media-seg" data-testid={testId} role="radiogroup">
+    <div aria-label={label} className="sg-segmented media-seg" data-testid={testId} {...keys.groupProps} ref={keys.groupRef} role="radiogroup">
       {options.map((option) => (
-        <button aria-checked={value === option.value} className="sg-segmented-item" key={option.value} onClick={() => onChange(option.value)} role="radio" type="button">
+        <button aria-checked={value === option.value} className="sg-segmented-item" key={option.value} onClick={() => onChange(option.value)} role="radio" tabIndex={keys.itemTabIndex(option.value)} type="button">
           <T>{option.label}</T>
         </button>
       ))}

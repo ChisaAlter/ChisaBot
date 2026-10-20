@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardBody, CardHeader } from "@/components/ui/skyglass";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { agentListQueryOptions } from "@/lib/agents/queries";
@@ -160,21 +161,7 @@ export function ToolRuleEditor({ value, onChange, disabled }: { value: ToolRule;
             <div className="wf-tool-name">{TOOL_GROUP_INFO[group].label}</div>
             <div className="wf-help">{TOOL_GROUP_INFO[group].description}</div>
           </div>
-          <div className="wf-seg" role="radiogroup" aria-label={TOOL_GROUP_INFO[group].label}>
-            {(["default", "allow", "deny"] as const).map((option) => (
-              <button
-                aria-checked={state(group) === option}
-                className={cn("wf-seg-item", state(group) === option && "is-on", option === "deny" && "is-deny", option === "allow" && "is-allow")}
-                disabled={disabled}
-                key={option}
-                onClick={() => set(group, option)}
-                role="radio"
-                type="button"
-              >
-                {option === "default" ? "默认" : option === "allow" ? "允许" : "禁止"}
-              </button>
-            ))}
-          </div>
+          <ToolRuleSeg current={state(group)} disabled={disabled} group={group} onPick={(next) => set(group, next)} />
         </div>
       ))}
       {extra.length ? <p className="wf-help">{`另外按名字限制的工具：${extra.join("、")}（在 WORKFLOW.md 里编辑）`}</p> : null}
@@ -183,9 +170,37 @@ export function ToolRuleEditor({ value, onChange, disabled }: { value: ToolRule;
   );
 }
 
+type RuleValue = "default" | "allow" | "deny";
+const RULE_VALUES: RuleValue[] = ["default", "allow", "deny"];
+
+/** 每一行一条三态规则；键盘约定走共用的 `useSegmentedKeys`（2026-10-20）。 */
+function ToolRuleSeg({ group, current, onPick, disabled }: { group: WorkflowToolGroup; current: RuleValue; onPick: (next: RuleValue) => void; disabled?: boolean }) {
+  const keys = useSegmentedKeys<RuleValue>({ value: current, values: RULE_VALUES, onChange: onPick, disabled });
+  return (
+    <div className="wf-seg" {...keys.groupProps} ref={keys.groupRef} role="radiogroup" aria-label={TOOL_GROUP_INFO[group].label}>
+      {RULE_VALUES.map((option) => (
+        <button
+          aria-checked={current === option}
+          className={cn("wf-seg-item", current === option && "is-on", option === "deny" && "is-deny", option === "allow" && "is-allow")}
+          disabled={disabled}
+          key={option}
+          onClick={() => onPick(option)}
+          role="radio"
+          tabIndex={keys.itemTabIndex(option)}
+          type="button"
+        >
+          {option === "default" ? "默认" : option === "allow" ? "允许" : "禁止"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowDefinition; onChange: Patch; readOnly?: boolean }) {
   const def = value;
   const set = (patch: Partial<WorkflowDefinition>) => onChange({ ...def, ...patch });
+  // 图标选择也是 radiogroup：键盘约定走共用钩子（2026-10-20）。
+  const iconKeys = useSegmentedKeys<string>({ value: def.icon, values: ICONS, onChange: (icon) => set({ icon }), disabled: readOnly });
   const agents = useQuery(agentListQueryOptions());
   const plugins = useQuery(pluginsPageQueryOptions());
   const roster = (agents.data ?? []).filter((b) => !b.hidden);
@@ -213,7 +228,7 @@ export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowD
         <CardHeader description="名字、图标和一句话说明会出现在工作流库里。" title="基本信息" />
         <CardBody className="wf-grid-2">
           <Field className="wf-span-2" label="图标">
-            <div className="wf-icons" role="radiogroup" aria-label="图标">
+            <div className="wf-icons" {...iconKeys.groupProps} ref={iconKeys.groupRef} role="radiogroup" aria-label="图标">
               {ICONS.map((icon) => (
                 <button
                   aria-checked={def.icon === icon}
@@ -222,6 +237,7 @@ export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowD
                   key={icon}
                   onClick={() => set({ icon })}
                   role="radio"
+                  tabIndex={iconKeys.itemTabIndex(icon)}
                   type="button"
                 >
                   {icon}

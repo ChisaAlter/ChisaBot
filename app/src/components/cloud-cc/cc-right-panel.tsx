@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { type CcRef, ccDiffQueryOptions, ccFileQueryOptions, ccFilesQueryOptions } from "@/lib/cloud-cc";
 import { cn } from "@/lib/utils";
 import { T } from "@/components/ui/button";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 
 export type RightTab = "changes" | "files";
 
@@ -52,10 +53,12 @@ function DiffView({ patch }: { patch: string }) {
 
 /** 右栏里的第二层小分段（P3：「这一轮｜相对 main」「会话目录｜工作目录」）。 */
 function SubSwitch<T extends string>({ value, options, onChange, label }: { value: T; options: { id: T; label: string }[]; onChange: (v: T) => void; label: string }) {
+  // 分段选择的键盘约定（2026-10-20）：roving tabindex + 方向键换项。
+  const keys = useSegmentedKeys<T>({ value, values: options.map((o) => o.id), onChange });
   return (
-    <div aria-label={label} className="cc-subseg" role="radiogroup">
+    <div aria-label={label} className="cc-subseg" {...keys.groupProps} ref={keys.groupRef} role="radiogroup">
       {options.map((o) => (
-        <button aria-checked={value === o.id} data-testid={`cc-sub-${o.id}`} key={o.id} onClick={() => onChange(o.id)} role="radio" type="button">
+        <button aria-checked={value === o.id} data-testid={`cc-sub-${o.id}`} key={o.id} onClick={() => onChange(o.id)} role="radio" tabIndex={keys.itemTabIndex(o.id)} type="button">
           {o.label}
         </button>
       ))}
@@ -244,13 +247,15 @@ export function CcRightContent({
   /** GitHub 工作区：目标分支（多出「相对 main」「工作目录」两个视图）；草稿工作区是 null。 */
   base?: string | null;
 }) {
+  // 分段选择的键盘约定（2026-10-20）：roving tabindex + 方向键在「改动｜文件」之间换。
+  const tabKeys = useSegmentedKeys<RightTab>({ value: tab, values: ["changes", "files"], onChange: onTab });
   return (
     <div className="cc-rp-body">
-      <div aria-label="右栏内容" className="sg-segmented cc-rp-seg" role="radiogroup">
-        <button aria-checked={tab === "changes"} className="sg-segmented-item" data-testid="cc-tab-changes" onClick={() => onTab("changes")} role="radio" type="button">
+      <div aria-label="右栏内容" className="sg-segmented cc-rp-seg" {...tabKeys.groupProps} ref={tabKeys.groupRef} role="radiogroup">
+        <button aria-checked={tab === "changes"} className="sg-segmented-item" data-testid="cc-tab-changes" onClick={() => onTab("changes")} role="radio" tabIndex={tabKeys.itemTabIndex("changes")} type="button">
           <T>{"改动"}</T>
         </button>
-        <button aria-checked={tab === "files"} className="sg-segmented-item" data-testid="cc-tab-files" onClick={() => onTab("files")} role="radio" type="button">
+        <button aria-checked={tab === "files"} className="sg-segmented-item" data-testid="cc-tab-files" onClick={() => onTab("files")} role="radio" tabIndex={tabKeys.itemTabIndex("files")} type="button">
           <T>{"文件"}</T>
         </button>
       </div>

@@ -22,6 +22,7 @@ import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, ErrorCard, ListRow, SaveBar, SettingRow } from "@/components/ui/skyglass";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { deviceAgentQueryOptions, localAgentKeys, redetectDeviceAgents, saveDeviceAgent } from "@/lib/local-agents";
 import { pcBridge } from "@/lib/pc-bridge";
@@ -117,6 +118,26 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
   };
   const rootPlaceholder = device.platform === "win32" ? "C:\\Users\\你\\code\\项目" : "/home/你/code/项目";
   const builtin = draft.builtinModel;
+  // 分段选择的键盘约定（2026-10-20）：roving tabindex + 方向键换档；「完全访问」那档按下去是滚到下面，和点它一致。
+  const profileKeys = useSegmentedKeys<AgentProfile>({
+    value: activeProfile,
+    values: AGENT_PROFILES,
+    onChange: chooseProfile,
+  });
+  /*
+   * 隔离方式这几行以前是「能点、但既不在 Tab 顺序里、也没有分组」的 div（`ListRow` 渲染的是 div，
+   * 上面挂着 role="radio"）：鼠标能选，键盘完全到不了。现在整组是 radiogroup，行按 roving tabindex 走。
+   */
+  const isolationOptions = ISOLATIONS.filter((iso) => iso !== "wsl" || device.platform === "win32")
+    .filter((iso) => iso !== "sandbox-exec" || device.platform === "darwin")
+    .filter((iso) => iso !== "bwrap" || device.platform === "linux");
+  const isolationKeys = useSegmentedKeys<Isolation>({
+    value: draft.isolation,
+    values: isolationOptions,
+    onChange: (iso) => {
+      if (available(iso)) update((d) => ({ ...d, isolation: iso }));
+    },
+  });
 
   return (
     <>
@@ -127,7 +148,7 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
             ? `完全访问开启中，到期或关闭后回到「${PROFILE_INFO[storedProfile].label}」。`
             : "对这台电脑上的所有机器人操作和本地 agent 任务都有效。档位只会收紧：档位之外的操作，能力是「允许」也会先问你；「关闭」的能力仍然关闭。任务可以要求更严的档位，不能更宽。"}
         </p>
-        <div className="la-profiles" role="radiogroup" aria-label="权限档位">
+        <div className="la-profiles" {...profileKeys.groupProps} ref={profileKeys.groupRef} role="radiogroup" aria-label="权限档位">
           {AGENT_PROFILES.map((profile) => {
             const Icon = PROFILE_ICON[profile];
             return (
@@ -138,6 +159,7 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
                 key={profile}
                 onClick={() => void chooseProfile(profile)}
                 role="radio"
+                tabIndex={profileKeys.itemTabIndex(profile)}
                 type="button"
               >
                 <span className="la-profile-opt-t">
@@ -204,11 +226,8 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
       <section className="device-section">
         <h2 className="device-section-t">{"沙盒与网络"}</h2>
         <p className="device-section-s">{"本地 agent 任务默认怎么隔离。一次性副本里的改动要你在任务卡片上点「应用改动」才回到原文件夹。灰色的是这台电脑上没检测到的。"}</p>
-        <Card>
-          {ISOLATIONS.filter((iso) => iso !== "wsl" || device.platform === "win32")
-            .filter((iso) => iso !== "sandbox-exec" || device.platform === "darwin")
-            .filter((iso) => iso !== "bwrap" || device.platform === "linux")
-            .map((iso) => {
+        <Card {...isolationKeys.groupProps} aria-label="隔离方式" ref={isolationKeys.groupRef} role="radiogroup">
+          {isolationOptions.map((iso) => {
               const ok = available(iso);
               return (
                 <ListRow
@@ -221,6 +240,7 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
                   onClick={() => ok && update((d) => ({ ...d, isolation: iso }))}
                   role="radio"
                   sub={ISOLATION_INFO[iso].description}
+                  tabIndex={isolationKeys.itemTabIndex(iso)}
                   title={ISOLATION_INFO[iso].label}
                 />
               );

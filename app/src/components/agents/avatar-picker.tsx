@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { monogramOf } from "../../../../shared/bot-avatars";
 import { BotAvatar } from "@/components/agents/bot-avatar";
 import { Button } from "@/components/ui/button";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import {
   Dialog,
   DialogBody,
@@ -177,6 +178,24 @@ function AvatarDialogBody({
     if (next === "emoji") setChoice({ kind: "emoji", emoji, color });
     if (next === "monogram") setChoice({ kind: "monogram", color });
   };
+  // 三处分段选择（来源 / 表情 / 底色）都走共用的键盘约定（2026-10-20）：roving tabindex + 方向键。
+  const tabKeys = useSegmentedKeys<Tab>({ value: tab, values: ["upload", "emoji", "monogram"], onChange: pick });
+  const emojiKeys = useSegmentedKeys<string>({
+    value: emoji,
+    values: AVATAR_EMOJIS,
+    onChange: (next) => {
+      setEmoji(next);
+      setChoice({ kind: "emoji", emoji: next, color });
+    },
+  });
+  const colorKeys = useSegmentedKeys<AvatarColor>({
+    value: color,
+    values: AVATAR_COLORS,
+    onChange: (next) => {
+      setColor(next);
+      setChoice(tab === "emoji" ? { kind: "emoji", emoji, color: next } : { kind: "monogram", color: next });
+    },
+  });
   const chooseFile = async (file: File | undefined) => {
     if (!file) return;
     setError(null);
@@ -212,7 +231,7 @@ function AvatarDialogBody({
         <DialogDescription>{"所有地方都显示成圆形。"}</DialogDescription>
       </DialogHeader>
       <DialogBody>
-        <div aria-label={"头像来源"} className="sg-segmented bot-ava-seg" role="radiogroup">
+        <div aria-label={"头像来源"} className="sg-segmented bot-ava-seg" {...tabKeys.groupProps} ref={tabKeys.groupRef} role="radiogroup">
           {(
             [
               ["upload", "上传图片"],
@@ -227,6 +246,7 @@ function AvatarDialogBody({
               key={id}
               onClick={() => pick(id)}
               role="radio"
+              tabIndex={tabKeys.itemTabIndex(id)}
               type="button"
             >
               {label}
@@ -269,7 +289,7 @@ function AvatarDialogBody({
             <div className="bot-ava-preset">
               <BotAvatar decorative draft={choice} name={name} size={96} />
               {tab === "emoji" ? (
-                <div aria-label={"表情"} className="bot-ava-emojis" role="radiogroup">
+                <div aria-label={"表情"} className="bot-ava-emojis" {...emojiKeys.groupProps} ref={emojiKeys.groupRef} role="radiogroup">
                   {AVATAR_EMOJIS.map((item) => (
                     <button
                       aria-checked={emoji === item}
@@ -281,6 +301,7 @@ function AvatarDialogBody({
                         setChoice({ kind: "emoji", emoji: item, color });
                       }}
                       role="radio"
+                      tabIndex={emojiKeys.itemTabIndex(item)}
                       type="button"
                     >
                       {item}
@@ -290,7 +311,7 @@ function AvatarDialogBody({
               ) : (
                 <p className="bot-ava-mono-note">{`用名字的第一个字「${monogramOf(name)}」，改名后跟着变。`}</p>
               )}
-              <div aria-label={"底色"} className="bot-ava-colors" role="radiogroup">
+              <div aria-label={"底色"} className="bot-ava-colors" {...colorKeys.groupProps} ref={colorKeys.groupRef} role="radiogroup">
                 {AVATAR_COLORS.map((item) => (
                   <button
                     aria-checked={color === item}
@@ -302,6 +323,7 @@ function AvatarDialogBody({
                       setChoice(tab === "emoji" ? { kind: "emoji", emoji, color: item } : { kind: "monogram", color: item });
                     }}
                     role="radio"
+                    tabIndex={colorKeys.itemTabIndex(item)}
                     title={COLOR_LABEL[item]}
                     type="button"
                   />
