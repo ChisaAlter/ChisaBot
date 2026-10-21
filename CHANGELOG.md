@@ -1,10 +1,34 @@
 # Changelog
 
-## Unreleased
+## 0.1.52 — 2026-10-21
 
-- 连续对话执行控制（CB-086）：前端工具结果返回前，补话继续排队，接力期间保持忙碌状态；完整回合结束后才兜底补送，失败或停止时保留队列。修复补话导致同一命令以不同调用 ID 再执行的问题。
+这一版是服务器 / 网页发版：带路由前缀的模型 id 以前被判成「走 chat completions」，网关把 function tools 全丢掉，机器人于是只会道歉、不会动手——现在它们走 Responses API、先动手再回话；另外执行控制收口（用户按下停止之后，延迟子进程不再继续写文件）。`pc/` / `android/` 没有代码改动，客户端只对齐版本号。
+
+### 模型：带前缀的 id 也走 Responses API
+
+- **`requiresResponsesApi` 只看最后一段**：网关的 id 是「路由/模型」（这个部署跑的是 `codex/gpt-6-luna`），旧实现拿整串匹配 → 判 false → 模型被推去 chat completions → 网关丢掉 function tools → 机器人对每个「你去办一下」都回一句道歉，而不是发工具调用。
+- **有工具时追加 `ACTION_GUIDANCE`**：先把事做了再回话，不许在调用工具之前声称没有权限。
+- **验证**：`server/tests/model-providers.test.ts` + `shared/model-providers.test.ts` 46 项、`server/tests/copilot.test.ts` 72 项。
+
+### 执行控制（CB-086）
+
+- 连续对话执行控制：前端工具结果返回前，补话继续排队，接力期间保持忙碌状态；完整回合结束后才兜底补送，失败或停止时保留队列。修复补话导致同一命令以不同调用 ID 再执行的问题。
 - Web 停止按钮的取消信号贯通计算机审批入口、执行器与 shell 进程组；取消响应流也会终止当次未完成命令，避免页面已停止但延迟子进程继续写文件。
 - 增加真实 SDK、独立 PostgreSQL、Linux 实际进程及 Web 副作用回归，并保护清锁期间 Stop 与失败结果写入的竞态。增量镜像同时更新计算机服务源码。
+
+### 计算机接管与好友包
+
+- 接管大屏不再被 keepalive pong 报「unknown type」；friend-up 前端构建找根 `node_modules` 的 vite。
+- `Dockerfile.zh` 也安装本仓库的 `agent-computer`（好友包接管屏不再跑底座旧计算机）。
+
+### Claude Code 工作台与侧栏收尾
+
+- 会话树 / 左栏 / 切换按钮的一轮整理（`cc-tree`、`left-rail`、`left-mode-switch`、`cc/index`）。
+- 侧栏翻页里那条永远不跑的滚动加载分支删掉（会话列表只在搜索态渲染，它没有调用点）。
+
+### 文档
+
+- `docs/audit-2026-10-21.md`：48 条路由 + 6 条关键流程的实机审查记录、这一轮修掉的 12 个产品问题、测试基线 210 → 0 的过程与那条运行器限制。
 
 ## 0.1.51 — 2026-10-20
 
