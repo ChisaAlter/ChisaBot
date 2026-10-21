@@ -77,7 +77,8 @@ jobs:
         # Separate test processes keep SDK module registrations and DOM globals isolated.
         run: |
           bun test tests/client-deadline.test.ts tests/computer-tool-refusals.test.ts
-          bun test tests/message-node-identity.test.tsx tests/message-blank-release.test.ts tests/tail-first-paint.test.ts
+          bun test tests/message-node-identity.test.tsx tests/message-blank-release.test.ts
+          bun test tests/tail-first-paint.test.ts
           bun test tests/message-scroll-reduced-motion.test.tsx
           bun test tests/thread-inbox-paused.test.tsx tests/thread-inbox-concurrency.test.tsx tests/conversation-sync.test.ts
       - name: Install actual computer service dependencies
