@@ -23,7 +23,6 @@ ChisaBot 现在要做什么、接下来做什么、以后做什么。这一页�
 | 条目 | 内容 | 里程碑 | 分支 |
 |---|---|---|---|
 | [CB-012](BACKLOG.md#cb-012) | 文档整理：概览、功能目录、版本记录、决策日志、发布 / 测试手册、术语、数据模型 | 成熟度 | `docs/handbook-20261017` |
-| [CB-087](BACKLOG.md#cb-087) | 滚动七项严格回归、持久暂停队列、请求与编码兼容 | 成熟度 | `fix/chat-reliability`，预览 `3299` |
 
 ## 接下来
 
@@ -56,6 +55,7 @@ ChisaBot 现在要做什么、接下来做什么、以后做什么。这一页�
 
 | 日期 | 内容 | PR | 设计 / 文档 |
 |---|---|---|---|
+| 2026-10-21 | 滚动严格回归、持久暂停与单条发送、请求/数据库恢复、Office 与 Windows 编码验收（CB-087） | #283 / #284 / #285 | [完整发布验收](pipeline-runs/20261021-comprehensive-reliability.md) |
 | 2026-10-20 | 补话不重复执行；Stop 终止后台命令；12 条正式 Web 办公/代码连续消息验收（CB-086） | #278 | [发布验收](pipeline-runs/20261020-web-execution-control.md) |
 | 2026-10-20 | 搜索右侧新建机器人；弹出面板与常驻栏一致，已发布并通过已安装 PC 验证（CB-085） | #269 | [发布验收](pipeline-runs/20261020-sidebar-panel-parity.md) |
 | 2026-10-19 | 生产加固：直播屏 keepalive + SSRF/日志残留 + version 烟雾（→ v0.1.25） | #217 | /workspace/ChisaBot-production-readiness.md |
