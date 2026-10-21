@@ -1,0 +1,1 @@
+v0.1.52：模型走正确的 Responses API（带前缀的 id 不再被误判成 chat completions）、机器人先动手再回话；执行控制收口（停止后延迟子进程不再写文件）；外壳未变（Android 版本码 250）。
