@@ -1025,6 +1025,22 @@ async function inlineAttachments(
  * 工具刻意传空：Hermes 用自己的工具集。把 ChisaBot 的工具清单发过去，只会让模型调用一堆
  * 在这条链路上不存在的东西；`grantedToolGuidance` 也会把一段它会去照做的能力说明塞进提示词。
  */
+/**
+ * What the Hermes kernel is told about acting, on top of the Bot's own role.
+ *
+ * The built-in loop's prompt was written for a Bot that may hold ChisaBot's tools; Hermes holds a
+ * different set (shell, files, web/MCP). Handing it the old prose unchanged is what produced the
+ * "我没有这个连接器" answer to "了解一下 ima 怎么接": the model read a permission boundary where it
+ * had a terminal. This is deliberately about the first move — investigate before refusing — not
+ * about promising an integration the deployment does not have.
+ */
+const KERNEL_ACTION_GUIDANCE = [
+  "【行动准则】",
+  "遇到「接入 / 连接 / 了解一下某个服务」的请求，先自己查：用终端 curl、网页/搜索工具或 MCP 去看官方文档、开放平台、API。",
+  "不要把「我没有连接器 / 需要管理员开通」当作第一反应。查完再回答：给出你查到的接入方式、缺哪一步、下一步怎么接。",
+  "确实查不到时，说清楚你查过什么、卡在哪里，而不是直接拒绝。",
+].join("\n");
+
 async function hermesKernelAgent(
   agent: RegisteredBuiltInAgent,
   kernel: Extract<AgentKernel, { kind: "hermes" }>,
@@ -1036,7 +1052,11 @@ async function hermesKernelAgent(
   markAttachmentsSent: MarkAttachmentsSent | undefined,
   handoff: HandoffForRun | undefined,
 ): Promise<AbstractAgent> {
-  const roleDescription = [agent.systemPrompt.trim(), standingInstructions?.trim()]
+  const roleDescription = [
+    agent.systemPrompt.trim(),
+    standingInstructions?.trim(),
+    KERNEL_ACTION_GUIDANCE,
+  ]
     .filter((part): part is string => Boolean(part))
     .join("\n\n");
   const remote: RegisteredRemoteAgent = {
