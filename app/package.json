@@ -33,7 +33,7 @@
     "clsx": "^2.1.1",
     "embla-carousel-react": "^8.6.0",
     "motion": "^13.1.0",
-    "prompt-area": "^0.6.3",
+    "prompt-area": "^0.6.8",
     "quickjs-emscripten": "0.32.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

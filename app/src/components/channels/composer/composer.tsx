@@ -1210,6 +1210,17 @@ export function Composer({
     }
   }, [commands]);
 
+  /**
+   * COMPOSITION IS TRACKED ON THE DOM, NOT THROUGH REACT STATE, for the reason `composingRef`
+   * records: a render mid-composition is exactly what cancelled it.
+   *
+   * THE BLUR RESET IS NOT BELT AND BRACES. `compositionend` is the only event that clears the flag,
+   * and an interrupted composition does not always deliver one — switching windows, clicking away,
+   * an IME that cancels on focus loss. Without a second way out, the flag stayed true for the rest
+   * of the session and every later keystroke was held instead of committed: the box would show the
+   * text and send nothing of it, which is worse than the bug this file fixes. A blurred editor
+   * cannot still be composing, and whatever it holds at that moment is committed text.
+   */
   useEffect(() => {
     const element = containerRef.current;
     if (!element) return;
@@ -1220,11 +1231,18 @@ export function Composer({
       composingRef.current = false;
       flushPendingChange();
     };
+    const interrupted = () => {
+      if (!composingRef.current) return;
+      composingRef.current = false;
+      flushPendingChange();
+    };
     element.addEventListener("compositionstart", start, true);
     element.addEventListener("compositionend", end, true);
+    element.addEventListener("blur", interrupted, true);
     return () => {
       element.removeEventListener("compositionstart", start, true);
       element.removeEventListener("compositionend", end, true);
+      element.removeEventListener("blur", interrupted, true);
     };
   }, [flushPendingChange]);
 
