@@ -129,6 +129,11 @@ describe("Bun SQL recovery", () => {
       expect(fake.commands.map((command) => command.sql)).toEqual(["SELECT 1"]);
       expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
       expect(fake.connections).toBe(2);
+      // The kernel delivers the old socket's close event asynchronously, possibly after the new
+      // connection has already answered. Require its bounded close rather than same-tick delivery.
+      const closingStarted = performance.now();
+      while (fake.closed < 1 && performance.now() - closingStarted < 500)
+        await new Promise((resolve) => setTimeout(resolve, 1));
       expect(fake.closed).toBeGreaterThanOrEqual(1);
       expect(fake.commands.filter((command) => /^INSERT/.test(command.sql))).toHaveLength(0);
     } finally { await database.$client.close(); await fake.close(); }
