@@ -354,6 +354,11 @@ if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then HERMES_PENDING_FILE="$COMPOSE_DI
   exec 8>.deploy.lock
   flock -w 60 8 || { echo "拿不到 $COMPOSE_DIR/.deploy.lock"; exit 1; }
   snapshot_hermes_release "$TAG" || { echo "Hermes 回滚快照失败；没有切换"; exit 1; }
+  # The generated rollback uses this record to identify env mode. Commit it before changing
+  # Hermes env so an interruption cannot send rollback through the compose-file branch.
+  if [ "$IMAGE_MODE" = env ]; then
+    printf '%s\n' "$CUR_IMAGE" > ".image.before-$TAG" || exit 1
+  fi
   if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then
     # Create the record before the atomic env replacement so SIGTERM cannot lose the transaction.
     : > "$HERMES_PENDING_FILE" || exit 1
@@ -361,7 +366,6 @@ if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then HERMES_PENDING_FILE="$COMPOSE_DI
   configure_hermes_release || { restore_hermes_release "$TAG"; echo "Hermes 应用环境配置失败"; exit 1; }
   if [ "$IMAGE_MODE" = env ]; then
     # 仓库自带的 compose.yaml 不改，镜像写进同目录 .env 的 CHISABOT_IMAGE。
-    echo "$CUR_IMAGE" > ".image.before-$TAG"
     restore() { set_image "$CUR_IMAGE" && restore_hermes_release "$TAG"; }
     set_image "$NEW_IMAGE" || { restore; echo "无法把 CHISABOT_IMAGE 写进 $COMPOSE_DIR/.env"; exit 1; }
   else
