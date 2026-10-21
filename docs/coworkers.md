@@ -92,6 +92,15 @@ agents:
     endpoint: http://risk.internal/ag-ui
 ```
 
+### Hermes / DeepSeek Harness as the kernel
+
+[`examples/acp-agent/`](../examples/acp-agent/) is an ACP ↔ AG-UI bridge: run `hermes acp` or
+`dsh acp` behind it, then register `http://127.0.0.1:4100/ag-ui` as a `remote-ag-ui` coworker.
+One bridge serves both kernels; switching is one environment variable (`ACP_AGENT_CMD`). The
+coworker then runs on that agent's own loop and tools (shell, files, web, MCP), not on ChisaBot's
+built-in loop. See that README for the approval and workspace boundaries before pointing it at a
+real home directory.
+
 In the product, create or edit a coworker from `/agents` and set:
 
 - name;

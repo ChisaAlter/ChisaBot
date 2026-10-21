@@ -113,12 +113,29 @@ agents:
 
 服务器旁的独立容器跑 Claude Code CLI，网页/手机直接和它对话（左栏「Claude Code」）。它不走机器人的模型循环，适合长编码任务，不是聊天机器人的内核。
 
-### 3.4 把鲸屿/DSH 接进来（要写适配）
+### 3.4 把鲸屿/DSH 或 Hermes 接进来（已写桥）
 
-DSH 是完整 harness（自己的循环、工作区、终端、浏览器、子 agent、技能），但它不暴露 AG-UI，也没有一个「一次性任务」的稳定 CLI 契约可当 `device_agent_run` 用。两条落地方式：
+DSH 和 Hermes 都能说 **ACP（Agent Client Protocol）**：
 
-1. **本地 agent 适配**：给 DSH 加一个 headless 的一次性任务入口，然后像 Claude Code 一样加进 `agent-detect` 和本地 agent 运行时。改动小，但只覆盖「在电脑上跑一整件活」。
-2. **AG-UI 适配器**：包一层 `dsh` 服务，把会话/工具/审批映射成 AG-UI 事件，注册成 `remote-ag-ui`。改动大，但能整台机器人换内核，保留 ChisaBot 的渠道/审批/记忆。
+- DSH：`dsh --profile acp`（`dsh acp`）
+- Hermes：`hermes acp`（需要 ACP extra）
+
+[`examples/acp-agent/`](../examples/acp-agent/) 是一个 ACP ↔ AG-UI 桥：ChisaBot 的 `remote-ag-ui`
+机器人指向它，会话 → `session/new`，一轮 → `session/prompt`，`session/update` → 文本/推理/工具事件，
+`session/request_permission` 由桥回答，`stopReason` → `RUN_FINISHED` / `RUN_ERROR`。换内核只换
+`ACP_AGENT_CMD`。
+
+本机对真 DSH 跑通了 `initialize → session/new → session/prompt`；没配 `DEEPSEEK_API_KEY` 时它返回
+明确的 `RUN_ERROR`，不是挂起。Hermes 侧命令/握手按 ACP 规范实现，未在本机安装验证。
+
+边界：
+
+- 这条链路里 agent 用的是**它自己的工具**（shell / 文件 / 网页 / MCP / 子 agent），ChisaBot 的
+  Notion / Gmail / 面板 / 记忆不在里面；要保留，需要把 ChisaBot 工具暴露成 MCP，再用
+  `session/new` 的 `mcpServers` 传进去。
+- ChisaBot 的审批卡覆盖不到 ACP 的 shell / 文件操作。桥默认自动 `allow_once`，必须收紧时用
+  `ACP_APPROVAL=deny` 或在内核侧裁工具集（Hermes 的 `platform_toolsets.acp`、DSH 的 profile）。
+- ACP session 映射在桥内存里，桥重启后重建；`session/load` 还没接。
 
 ### 3.5 重写内置循环（中等改动，保留平台）
 
@@ -141,7 +158,8 @@ DSH 是完整 harness（自己的循环、工作区、终端、浏览器、子 a
 | P1 | 任务型请求自动建议 `device_agent_run`（有设备时） | 待做 |
 | P2 | 工具合并（`panel_*`、`device_*` 各收成一个带 action 的工具） | 待做 |
 | P2 | 计划/待办/复核 | 待做 |
-| P3 | DSH 适配器或 AG-UI 远程内核 | 待评估 |
+| P3 | Hermes / DSH 内核（ACP 桥） | 已提供 `examples/acp-agent/`，待真机配凭据验证 |
+| P3 | 把 ChisaBot 工具暴露成 MCP，接进 ACP `mcpServers` | 待做 |
 
 ## 5. 验收指标
 
