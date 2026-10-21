@@ -80,6 +80,9 @@ jobs:
           bun test tests/message-node-identity.test.tsx tests/message-blank-release.test.ts tests/tail-first-paint.test.ts
           bun test tests/message-scroll-reduced-motion.test.tsx
           bun test tests/thread-inbox-paused.test.tsx tests/thread-inbox-concurrency.test.tsx tests/conversation-sync.test.ts
+      - name: Install actual computer service dependencies
+        working-directory: agent-computer
+        run: bun install --frozen-lockfile
       - name: Durable inbox and database recovery checks
         env:
           TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/openbot_test
