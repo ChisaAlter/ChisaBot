@@ -1072,7 +1072,7 @@ class PostgresAgentRunner extends AgentRunner {
         visible = visible.map((message) => message.id === resume.messageId ? shown : message);
         incoming = incoming.map((message) => message.id === resume.messageId ? {
           ...shown,
-          content: `用户主动发送之前暂停的这条补充。只处理这条补充；上一轮已经执行、停止或失败的工具操作不得自动重试。需要再次执行时先询问用户。\n\n${typeof source.content === "string" ? source.content : JSON.stringify(source.content)}`,
+          content: `用户刚刚主动点击“发送这条”，现在要求处理下面这一条此前暂停的补充。这次点击已经满足原文“等我主动发送”“收到确认后”等等待条件；不要再次等待发送或仅回复收到。若这条补充明确要求新的工具操作，现在只执行所选补充的操作一次。上一轮已经执行、停止或失败的其他工具操作不得自动重试；本次只授权所选补充，没有授权重跑上一轮任务。\n\n所选补充原文：\n${typeof source.content === "string" ? source.content : JSON.stringify(source.content)}`,
         } as Message : message);
       } else if (!freshUser && await this.inbox.isPaused(threadId)) {
         // A background completion is useful data, not authority to resume a stopped turn.
