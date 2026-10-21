@@ -125,8 +125,16 @@ DSH 和 Hermes 都能说 **ACP（Agent Client Protocol）**：
 `session/request_permission` 由桥回答，`stopReason` → `RUN_FINISHED` / `RUN_ERROR`。换内核只换
 `ACP_AGENT_CMD`。
 
+**全面替换**是 `CHISABOT_HERMES_URL`：设置后 `buildAgent` 在加载工具之前把所有 `built_in` 机器人
+转成指向桥的 remote-ag-ui 机器人，现有的和以后新建的都走 Hermes。机器人的名字和 `system_prompt`
+通过 standing role 送过去，桥在每会话第一轮作为宿主设定带给 Hermes；模型、插件工具、记忆工具不再
+参与。未设置时行为不变。
+
 本机对真 DSH 跑通了 `initialize → session/new → session/prompt`；没配 `DEEPSEEK_API_KEY` 时它返回
-明确的 `RUN_ERROR`，不是挂起。Hermes 侧命令/握手按 ACP 规范实现，未在本机安装验证。
+明确的 `RUN_ERROR`，不是挂起。**真 Hermes 也已经跑通**：Magpie 的 `codex/gpt-6-luna`，Hermes 在
+ACP 会话里主动执行 `terminal(date)`，桥把 tool call/result 映射成 AG-UI，最后返回中文回答并
+`RUN_FINISHED`。源码 checkout 上用 `hermes-acp` 时，桥会给它设 `HERMES_DISABLE_LAZY_INSTALLS=1`，
+避免它每次启动都去补 PM 的依赖同步。
 
 边界：
 
@@ -158,7 +166,7 @@ DSH 和 Hermes 都能说 **ACP（Agent Client Protocol）**：
 | P1 | 任务型请求自动建议 `device_agent_run`（有设备时） | 待做 |
 | P2 | 工具合并（`panel_*`、`device_*` 各收成一个带 action 的工具） | 待做 |
 | P2 | 计划/待办/复核 | 待做 |
-| P3 | Hermes / DSH 内核（ACP 桥） | 已提供 `examples/acp-agent/`，待真机配凭据验证 |
+| P3 | Hermes / DSH 内核（ACP 桥 + `CHISABOT_HERMES_URL`） | 已实现；Hermes 真机已验证 |
 | P3 | 把 ChisaBot 工具暴露成 MCP，接进 ACP `mcpServers` | 待做 |
 
 ## 5. 验收指标

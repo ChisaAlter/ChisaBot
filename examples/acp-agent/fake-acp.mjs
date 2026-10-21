@@ -49,6 +49,9 @@ lines.on("line", (line) => {
 
   const sessionId = message.params?.sessionId ?? "acp-session-1";
   const text = message.params?.prompt?.find((block) => block.type === "text")?.text ?? "";
+  if (process.env.FAKE_ACP_PROMPT_FILE) {
+    writeFileSync(process.env.FAKE_ACP_PROMPT_FILE, JSON.stringify(message.params?.prompt ?? []));
+  }
   const fail = process.env.FAKE_ACP_ERROR === "1";
   const turn = sessionSeq;
   const permissionId = `permission-${turn}`;

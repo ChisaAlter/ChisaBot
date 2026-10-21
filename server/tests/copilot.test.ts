@@ -25,6 +25,7 @@ import {
   registeredAgentFromRow,
   resolveRuntimeAgents,
   runtimeModelForEnvironment,
+  setAgentKernel,
   standingRoleMessage,
 } from "../src/copilot";
 import { grantedToolGuidance } from "../src/plugins/tools";
@@ -1213,6 +1214,48 @@ describe("acting before saying it cannot", () => {
     expect(ACTION_GUIDANCE).toContain("我没有");
     expect(ACTION_GUIDANCE).toContain("需要管理员开通");
     expect(ACTION_GUIDANCE).toContain("web_search");
+  });
+});
+
+/**
+ * 全面换内核：`CHISABOT_HERMES_URL` 设置后，所有 built-in 机器人变成指向 Hermes 桥的 remote
+ * AG-UI 机器人。这里钉住三件事：真的打到桥、机器人的角色跟着走、ChisaBot 的工具不被发过去。
+ *
+ * 工具不发是刻意的：Hermes 用它自己的 shell / 文件 / 网页 / MCP 工具；把 ChisaBot 的工具清单
+ * 发过去，模型会去调用一堆在 ACP 链路上不存在的东西。
+ */
+describe("full kernel replacement with Hermes", () => {
+  const assistant = {
+    id: "general-assistant",
+    name: "General Assistant",
+    type: "built_in" as const,
+    systemPrompt: "Be the general assistant.",
+  };
+  const model = { provider: "openai" as const, defaultModel: "gpt-5.6-terra" };
+
+  test("routes a built-in Bot to the bridge with its role and no ChisaBot tools", async () => {
+    await using endpoint = fakeAgUiEndpoint();
+    setAgentKernel({ kind: "hermes", url: endpoint.url });
+    try {
+      const agents = await buildAgents([assistant], model, null);
+      const agent = built(agents, "general-assistant");
+      agent.addMessage({ id: "u", role: "user", content: "Hello" });
+      await agent.runAgent();
+
+      expect(agent.messages.at(-1)).toMatchObject({
+        role: "assistant",
+        content: "Categorized.",
+      });
+      const sent = endpoint.requests.at(-1) as
+        | { messages?: { role?: string; content?: unknown }[]; tools?: unknown[] }
+        | undefined;
+      const system = sent?.messages?.find((message) => message.role === "system");
+      expect(JSON.stringify(system)).toContain("General Assistant");
+      expect(JSON.stringify(system)).toContain("Be the general assistant.");
+      expect(sent?.tools ?? []).toEqual([]);
+    } finally {
+      setAgentKernel({ kind: "builtin" });
+    }
   });
 });
 

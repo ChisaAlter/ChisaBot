@@ -200,6 +200,27 @@ export type RuntimeModelConnection = {
 };
 export type RuntimeModelResolver = () => Promise<RuntimeModelConnection>;
 
+/**
+ * 机器人用哪个内核回答。
+ *
+ * `builtin` 是原来的 CopilotKit + AI SDK 工具循环。`hermes` 把所有 built-in 机器人转成
+ * remote-ag-ui，指向 `examples/acp-agent` 的桥；Hermes 的 ACP session 就是新的循环。
+ *
+ * 这是部署级开关，不是每个机器人的字段：现有机器人都有 `built_in` 行，逐个改会漏掉新建的；
+ * 一个开关让「以后新建的机器人」也自动走新内核。
+ */
+export type AgentKernel =
+  | { kind: "builtin" }
+  | { kind: "hermes"; url: string; token?: string };
+let agentKernel: AgentKernel = { kind: "builtin" };
+export function setAgentKernel(kernel: AgentKernel): void {
+  agentKernel = kernel;
+}
+/** 测试和健康检查读它；不要用它改状态。 */
+export function currentAgentKernel(): AgentKernel {
+  return agentKernel;
+}
+
 export function connectionLanguageModel(
   model: RuntimeModel,
   apiKey: string | null,
@@ -995,6 +1016,57 @@ async function inlineAttachments(
   return inlined;
 }
 
+/**
+ * 把一个 built-in 机器人变成指向 Hermes 桥的 remote AG-UI 机器人。
+ *
+ * 复用 remote 路径而不是另写一个 agent，是因为那边已经有：standing role 的注入、附件内联、
+ * 交接、stall guard、重定向后的地址校验。这里只做三件事——地址、token、角色。
+ *
+ * 工具刻意传空：Hermes 用自己的工具集。把 ChisaBot 的工具清单发过去，只会让模型调用一堆
+ * 在这条链路上不存在的东西；`grantedToolGuidance` 也会把一段它会去照做的能力说明塞进提示词。
+ */
+async function hermesKernelAgent(
+  agent: RegisteredBuiltInAgent,
+  kernel: Extract<AgentKernel, { kind: "hermes" }>,
+  standingInstructions: string | null,
+  stallGuard: StallGuard | undefined,
+  agentFetch: AgentFetch | undefined,
+  initiator: AuditInitiator | undefined,
+  loadAttachment: LoadAttachment | undefined,
+  markAttachmentsSent: MarkAttachmentsSent | undefined,
+  handoff: HandoffForRun | undefined,
+): Promise<AbstractAgent> {
+  const roleDescription = [agent.systemPrompt.trim(), standingInstructions?.trim()]
+    .filter((part): part is string => Boolean(part))
+    .join("\n\n");
+  const remote: RegisteredRemoteAgent = {
+    id: agent.id,
+    name: agent.name,
+    type: "remote_ag_ui",
+    endpoint: kernel.url,
+    ...(kernel.token ? { headers: { authorization: `Bearer ${kernel.token}` } } : {}),
+    standingMessage: standingRoleMessage({
+      id: agent.id,
+      name: agent.name,
+      title: "ChisaBot assistant",
+      roleDescription,
+    }),
+  };
+  const transport = await remoteTransport(remote, stallGuard, agentFetch, initiator);
+  return remoteAgentWithStandingRole(
+    remote,
+    transport,
+    [],
+    undefined,
+    [],
+    undefined,
+    loadAttachment,
+    markAttachmentsSent,
+    handoff,
+    initiator,
+  );
+}
+
 async function buildAgent(
   agent: RegisteredAgent,
   model: RuntimeModel,
@@ -1017,6 +1089,29 @@ async function buildAgent(
 ): Promise<AbstractAgent> {
   if (agent.type === "unavailable") {
     return new UnavailableAgent(agent);
+  }
+
+  /*
+   * 全面换内核：`CHISABOT_HERMES_URL` 设置后，所有 built-in 机器人都不再走 CopilotKit 的
+   * 工具循环，而是被当作一个 remote AG-UI 机器人，指向 Hermes 的 ACP ↔ AG-UI 桥。
+   *
+   * 这里刻意在 `loadTools` 之前返回：Hermes 用的是它自己的工具（shell / 文件 / 网页 / MCP /
+   * 子 agent），ChisaBot 的插件工具在这条链路里不可调用，读出来只会给模型一份它会去调用、
+   * 然后被 404 的清单。角色仍然通过 standing role 送过去（桥会在第一轮把它作为宿主设定带进
+   * ACP），所以「星灵」这个名字和它的人设不会丢。
+   */
+  if (agentKernel.kind === "hermes" && agent.type === "built_in") {
+    return hermesKernelAgent(
+      agent,
+      agentKernel,
+      standingInstructions,
+      stallGuard,
+      agentFetch,
+      initiator,
+      loadAttachment,
+      markAttachmentsSent,
+      handoff,
+    );
   }
 
   const granted = await loadTools(agent.id);

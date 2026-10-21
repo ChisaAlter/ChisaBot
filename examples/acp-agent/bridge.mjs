@@ -87,7 +87,13 @@ class AcpClient {
       : splitCommand(this.options.command);
     this.child = spawn(bin, args, {
       cwd: this.options.cwd,
-      env: process.env,
+      env: {
+        ...process.env,
+        // Hermes checks its source tree for an owed dependency sync on every entry point. On a
+        // checkout installed outside its installer that check tries to re-run PM and can hang for
+        // minutes before serving ACP. The bridge's job is to run the agent, not to finish installs.
+        HERMES_DISABLE_LAZY_INSTALLS: process.env.HERMES_DISABLE_LAZY_INSTALLS ?? "1",
+      },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -262,12 +268,39 @@ function lastUserText(input) {
   return "";
 }
 
+/**
+ * ChisaBot 发来的 system 消息（机器人是谁、它的角色和长期指令）。
+ *
+ * ACP 的 session/new 没有 system prompt 字段，所以桥在**每个 session 的第一轮**把它作为一段
+ * 独立的 text block 放在用户消息前面，标成宿主设定。之后不再重复，免得每轮都占上下文。
+ */
+function systemText(input) {
+  const messages = Array.isArray(input?.messages) ? input.messages : [];
+  const parts = [];
+  for (const message of messages) {
+    if (!message || message.role !== "system") continue;
+    if (typeof message.content === "string" && message.content.trim()) {
+      parts.push(message.content.trim());
+    } else if (Array.isArray(message.content)) {
+      const text = message.content
+        .filter((part) => part && part.type === "text" && typeof part.text === "string")
+        .map((part) => part.text)
+        .join("\n")
+        .trim();
+      if (text) parts.push(text);
+    }
+  }
+  return parts.join("\n\n");
+}
+
 export function createAcpBridge(overrides = {}) {
   const options = { ...DEFAULTS, ...overrides };
   const client = new AcpClient(options);
   let initialized = null;
   /** threadId → ACP sessionId */
   const sessions = new Map();
+  /** 已经带过宿主设定的 ACP session；每个 session 只带一次。 */
+  const seededSessions = new Set();
   const sessionQueues = new Map();
 
   const ensureInitialized = async () => {
@@ -322,6 +355,7 @@ export function createAcpBridge(overrides = {}) {
     const threadId = typeof input?.threadId === "string" ? input.threadId : "thread";
     const runId = typeof input?.runId === "string" ? input.runId : randomUUID();
     const text = lastUserText(input);
+    const hostSystem = systemText(input);
 
     let closed = false;
     let controllerRef = null;
@@ -440,7 +474,7 @@ export function createAcpBridge(overrides = {}) {
                     send({
                       type: "TOOL_CALL_START",
                       toolCallId,
-                      toolCallName: String(update.name || update.kind || "tool"),
+                      toolCallName: String(update.name || update.title || update.kind || "tool"),
                     });
                     send({
                       type: "TOOL_CALL_ARGS",
@@ -499,10 +533,17 @@ export function createAcpBridge(overrides = {}) {
                 settle(`ACP 这一轮超过 ${Math.round(options.turnTimeoutMs / 1000)} 秒没有结束`);
               }, options.turnTimeoutMs);
 
+              const prompt = [];
+              if (hostSystem && !seededSessions.has(sessionId)) {
+                prompt.push({ type: "text", text: `【宿主设定】\n${hostSystem}` });
+                seededSessions.add(sessionId);
+              }
+              prompt.push({ type: "text", text });
+
               client
                 .request("session/prompt", {
                   sessionId,
-                  prompt: [{ type: "text", text }],
+                  prompt,
                 })
                 .then((result) => {
                   const stopReason = result?.stopReason;

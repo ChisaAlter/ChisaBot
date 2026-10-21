@@ -156,6 +156,7 @@ import {
   mountCopilotRuntime,
   normalizeModelBaseUrls,
   runtimeModelForEnvironment,
+  setAgentKernel,
   setModelOutputLimitResolver,
   setModelFallbackCatalog,
   setModelFallbackList,
@@ -1121,6 +1122,21 @@ setModelFallbackCatalog(async () => (await modelCatalog.list()).models.map((entr
 // 设置 → 模型 →「备用模型」（DESIGN.md §61）：管理员排好的顺序优先于环境变量 / 同平台自动挑选。
 const modelFallbacks = createModelFallbackService({ store: createModelFallbackStore(database) });
 setModelFallbackList(() => modelFallbacks.models());
+/*
+ * 全面换内核（CHISABOT_HERMES_URL）：所有 built-in 机器人改由 Hermes 的 ACP 桥回答。
+ *
+ * 未设置时 `builtin`，和以前一模一样。设置后 `buildAgent` 在加载工具之前就把 built-in 转成
+ * remote-ag-ui，所以插件工具不会出现在 Hermes 的上下文里——它用自己的工具集。
+ */
+setAgentKernel(
+  config.hermesKernel
+    ? {
+        kind: "hermes",
+        url: config.hermesKernel.url,
+        ...(config.hermesKernel.token ? { token: config.hermesKernel.token } : {}),
+      }
+    : { kind: "builtin" },
+);
 /*
  * Magpie, the model gateway. MAGPIE_ADMIN_URL (e.g. http://magpie:3430) plus its web key
  * (MAGPIE_WEB_KEY_FILE, readable only by the API user) turn on 管理后台 → 模型平台 Magpie and the

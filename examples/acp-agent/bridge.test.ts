@@ -59,7 +59,7 @@ describe("ACP AG-UI bridge", () => {
 
     expect(events[0]).toEqual({ type: "RUN_STARTED", threadId: "thread-1", runId: "run-1" });
     expect(events.some((event) => event.type === "TEXT_MESSAGE_CONTENT" && event.delta === "收到：你好，ACP")).toBe(true);
-    expect(events.some((event) => event.type === "TOOL_CALL_START" && event.toolCallName === "execute")).toBe(true);
+    expect(events.some((event) => event.type === "TOOL_CALL_START" && event.toolCallName === "运行 echo hi")).toBe(true);
     const args = events.find((event) => event.type === "TOOL_CALL_ARGS");
     expect(JSON.parse(args.delta)).toEqual({ command: "echo hi" });
     expect(events.some((event) => event.type === "TOOL_CALL_RESULT" && event.content === "hi")).toBe(true);
@@ -95,6 +95,35 @@ describe("ACP AG-UI bridge", () => {
       rmSync(countFile, { force: true });
       if (previous === undefined) delete process.env.FAKE_ACP_SESSION_COUNT_FILE;
       else process.env.FAKE_ACP_SESSION_COUNT_FILE = previous;
+    }
+  });
+
+  test("seeds the host's system prompt once, then stops repeating it", async () => {
+    const promptFile = join(tmpdir(), `acp-prompt-${crypto.randomUUID()}.json`);
+    const previous = process.env.FAKE_ACP_PROMPT_FILE;
+    process.env.FAKE_ACP_PROMPT_FILE = promptFile;
+    try {
+      const created = bridge();
+      running.push(created);
+      const url = `http://127.0.0.1:${created.server.port}/ag-ui`;
+      const messages = [
+        { id: "s", role: "system", content: "你是星灵，用户的私人助手。" },
+        { id: "u", role: "user", content: "你好" },
+      ];
+      await run(url, { threadId: "thread-seed", runId: "seed-1", messages });
+      const first = JSON.parse(readFileSync(promptFile, "utf8"));
+      expect(first).toHaveLength(2);
+      expect(first[0].text).toContain("宿主设定");
+      expect(first[0].text).toContain("星灵");
+
+      await run(url, { threadId: "thread-seed", runId: "seed-2", messages });
+      const second = JSON.parse(readFileSync(promptFile, "utf8"));
+      expect(second).toHaveLength(1);
+      expect(second[0].text).toBe("你好");
+    } finally {
+      rmSync(promptFile, { force: true });
+      if (previous === undefined) delete process.env.FAKE_ACP_PROMPT_FILE;
+      else process.env.FAKE_ACP_PROMPT_FILE = previous;
     }
   });
 
