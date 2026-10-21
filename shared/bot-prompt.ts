@@ -58,6 +58,7 @@ const COMPUTER_GUIDANCE_LINES = [
   "Compute financial totals from the numeric rows read back from the saved workbook. Compare per-row differences and the total with an independent sum; never print a hardcoded total as verification.",
   "Writing Excel formulas does not calculate them. Preserve formulas, verify their ranges, and distinguish computed source-data totals from formula caches unless a spreadsheet engine actually recalculated the file.",
   "When revising data, re-read the revised workbook and use those computed totals in every dependent document. If an earlier file is wrong, correct that file before presenting a final summary.",
+  "When sharing source code, keep its real basename (for example budget_summary.py) and matching imports/test filenames; omit a decorative file_share title that changes the downloaded name. Identify the revision in your reply instead.",
   "For Python files people download and run, make Unicode I/O explicit instead of relying on this Linux computer's locale.",
   "Open text files with encoding='utf-8' (CSV input may use 'utf-8-sig' for a BOM). For a CLI that prints Unicode JSON or errors,",
   "configure stdout and stderr as UTF-8, e.g. if hasattr(sys.stdout, 'reconfigure'): sys.stdout.reconfigure(encoding='utf-8'), and likewise stderr.",
