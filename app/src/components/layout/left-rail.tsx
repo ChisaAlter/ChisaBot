@@ -1,8 +1,8 @@
 import { type ReactNode, useEffect, useReducer, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar/app-sidebar";
-import { RailPaneActive } from "@/components/cloud-cc/left-mode-switch";
+import { LeftModeSwitch } from "@/components/cloud-cc/left-mode-switch";
 import { InLeftRail } from "@/components/layout/rail-sidebar";
-import { Sidebar, SidebarRail } from "@/components/ui/sidebar";
+import { Sidebar, SidebarRail, useOptionalSidebar } from "@/components/ui/sidebar";
 import { type LeftMode, loadCcSidebar, loadedCcSidebar } from "@/lib/left-mode";
 
 /**
@@ -10,11 +10,17 @@ import { type LeftMode, loadCcSidebar, loadedCcSidebar } from "@/lib/left-mode";
  * 之后都留着（滚动位置、展开的工作区、搜索词都还在），只显示当前那块，换的时候交叉淡入（约 200ms，
  * 减少动态效果时直接换）。藏起来的那块 `inert`：点不到、Tab 不进去、读屏不读。
  * Claude Code 那块是单独的分包：还没取到时先留着原来那块（没有原来那块才画左栏骨架），取到再换。
+ *
+ * 「机器人｜Claude Code」只有一颗，放在两块内容**外面**（2026-10-21）：以前两边各画一颗，Claude Code
+ * 那颗还缩在面板卡片里，尺寸和位置都跟机器人那边对不上；现在同一个控件、同一个位置，切换时也不跟着淡入。
  */
 export function LeftRail({ mode, className }: { mode: LeftMode; className?: string }) {
   const [, loaded] = useReducer((n: number) => n + 1, 0);
   const [failed, setFailed] = useState(false);
+  const sidebar = useOptionalSidebar();
   const CcSidebar = loadedCcSidebar();
+  // 收成 80px 图标栏时两颗内容各自只剩图标（机器人头像 / 展开箭头），切换没有位置，藏起来。
+  const collapsed = Boolean(sidebar && !sidebar.isMobile && sidebar.state === "collapsed");
   useEffect(() => {
     if (mode !== "cc" || loadedCcSidebar()) return;
     let live = true;
@@ -29,7 +35,14 @@ export function LeftRail({ mode, className }: { mode: LeftMode; className?: stri
 
   return (
     <Sidebar className={className} collapsible="icon" variant="floating">
-      <LeftRailPanes bots={<AppSidebar />} cc={CcSidebar ? <CcSidebar /> : null} ccFailed={failed} mode={mode} />
+      <div className="left-rail-shell">
+        {collapsed ? null : (
+          <div className="left-rail-mode">
+            <LeftModeSwitch mode={mode} />
+          </div>
+        )}
+        <LeftRailPanes bots={<AppSidebar />} cc={CcSidebar ? <CcSidebar /> : null} ccFailed={failed} mode={mode} />
+      </div>
       <SidebarRail />
     </Sidebar>
   );
@@ -53,7 +66,7 @@ export function LeftRailPanes({ mode, bots, cc, ccFailed = false }: { mode: Left
         inert={which !== shown}
         key={which}
       >
-        <RailPaneActive.Provider value={which === shown}>{node}</RailPaneActive.Provider>
+        {node}
       </div>
     ) : null;
   return (

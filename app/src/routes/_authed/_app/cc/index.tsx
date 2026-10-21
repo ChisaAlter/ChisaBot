@@ -2,8 +2,7 @@ import { IconCloudComputing, IconKey, IconLoader2, IconTerminal2 } from "@tabler
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { CcNodeCard, CcTree } from "@/components/cloud-cc/cc-tree";
-import { LeftModeSwitch } from "@/components/cloud-cc/left-mode-switch";
+import { CcNodeCard, CcTree, railCcWorkspaces } from "@/components/cloud-cc/cc-tree";
 import { PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
@@ -27,7 +26,9 @@ function CcHome() {
   const { checking } = useClaudeAuthRecheck();
   const workspaces = useQuery(ccWorkspacesQueryOptions(!!status.data?.node));
   const navigate = useNavigate();
-  const latest = (workspaces.data ?? []).flatMap((w) => w.sessions).sort((a, b) => (b.lastTurnAt ?? b.createdAt).localeCompare(a.lastTurnAt ?? a.createdAt))[0];
+  const latest = railCcWorkspaces(workspaces.data ?? [])
+    .flatMap((w) => w.sessions)
+    .sort((a, b) => (b.lastTurnAt ?? b.createdAt).localeCompare(a.lastTurnAt ?? a.createdAt))[0];
   useEffect(() => {
     if (phone || !latest) return;
     void navigate({ to: "/cc/$sessionId", params: { sessionId: latest.id }, replace: true });
@@ -79,7 +80,6 @@ function CcHome() {
   if (phone)
     return (
       <div className="cc-phone-home page-scroll min-h-0 flex-1 overflow-y-auto" data-testid="cc-phone-home">
-        <LeftModeSwitch mode="cc" />
         {gate ?? (
           <>
             <CcTree variant="page" />
@@ -92,7 +92,7 @@ function CcHome() {
     <div className="cc-center" data-testid="cc-home">
       {gate ?? (
         <EmptyState
-          description="点左边顶部的「新建会话」，或者在某个工作区下点「＋新会话」，Claude Code 就会在云端写代码。每个会话有自己的目录，隔天回来接着说。"
+          description="在左边某个工作区下面点「＋」，Claude Code 就会在云端写代码。还没有工作区就先点「工作区」右边的 + 建一个。每个会话有自己的目录，隔天回来接着说。"
           icon={<IconTerminal2 className="size-6" />}
           title={workspaces.isPending ? "正在读取工作区…" : "选一个会话，或者新建一个"}
         />

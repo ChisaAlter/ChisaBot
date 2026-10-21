@@ -7023,7 +7023,11 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .cc-mode-switch { display: flex; width: 100%; flex: none; }
 .cc-mode-switch .sg-segmented-item { flex: 1; justify-content: center; }
 /* §84 机器人 ↔ Claude Code 原地切换：左栏容器只有一个，两块内容叠在同一格里交叉淡入；主区淡入一次（不从 0 开始，不出现空白帧）。 */
-.left-rail-stack { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; height: 100%; }
+.left-rail-shell { display: flex; flex: 1 1 auto; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; }
+/* 切换在左栏最上面、两块内容之外（2026-10-21：以前两边各画一颗，位置和尺寸对不上）。 */
+.left-rail-mode { flex: none; min-width: 0; }
+.left-rail-mode:empty { display: none; }
+.left-rail-stack { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
 .left-rail-pane { grid-area: 1 / 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; opacity: 1; transition: opacity var(--dur-2) var(--ease-out); }
 .left-rail-pane[data-active="false"] { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--dur-1) var(--ease-std), visibility 0s linear var(--dur-1); }
 .glass-main[data-mode="cc"] { animation: mode-in-cc var(--dur-2) var(--ease-out); }
@@ -7883,80 +7887,6 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 }
 .dark .cc-rail { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 12px 32px rgba(0, 0, 0, 0.28), var(--inset-hl); }
 .cc-rail-head { display: flex; flex: none; flex-direction: column; gap: 8px; padding: 2px 2px 8px; }
-.cc-rail .cc-mode-switch {
-  width: 100%;
-  height: 32px;
-  padding: 2px;
-  gap: 2px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--glass-hover);
-}
-.cc-rail .cc-mode-switch .sg-segmented-item {
-  flex: 1;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ink-3);
-}
-.cc-rail .cc-mode-switch .sg-segmented-item[aria-checked="true"] {
-  background: var(--glass-3);
-  color: var(--ink-1);
-  box-shadow: 0 1px 2px rgba(22, 36, 62, 0.1);
-}
-.cc-rail .cc-mode-switch .sg-segmented-item:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-line); }
-
-/* 新建会话：整栏唯一的主操作，深墨色，和输入框的发送键同一套颜色。 */
-.cc-new-session {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  min-height: 40px;
-  padding: 5px 10px;
-  border: 0;
-  border-radius: 11px;
-  background: var(--ink-primary);
-  color: var(--on-primary);
-  text-align: left;
-  box-shadow: 0 2px 6px rgba(21, 32, 58, 0.16);
-  transition: background var(--dur-1), transform var(--dur-1), opacity var(--dur-1), box-shadow var(--dur-1);
-}
-.cc-new-session:hover:not(:disabled) { background: var(--ink-primary-hover); box-shadow: 0 4px 10px rgba(21, 32, 58, 0.2); }
-.cc-new-session:active:not(:disabled) { transform: translateY(1px); box-shadow: 0 1px 3px rgba(21, 32, 58, 0.18); }
-.cc-new-session:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(47, 116, 240, 0.16), 0 2px 6px rgba(21, 32, 58, 0.16); }
-.cc-new-session:disabled { opacity: 0.45; cursor: default; }
-.cc-new-session-ic {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.14);
-}
-.cc-new-session-main { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
-.cc-new-session-t { font-size: 12.5px; font-weight: 600; line-height: 1.35; }
-.cc-new-session-s {
-  font-size: 10.5px;
-  line-height: 1.3;
-  color: rgba(255, 255, 255, 0.62);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 暗色下主色会翻成浅色：不要一整条白，换成安静的灰面，蓝色状态仍然只给运行 / 焦点。 */
-.dark .cc-new-session {
-  border: 1px solid var(--line-strong);
-  background: rgba(255, 255, 255, 0.07);
-  color: var(--ink-1);
-  box-shadow: none;
-}
-.dark .cc-new-session:hover:not(:disabled) { background: rgba(255, 255, 255, 0.11); }
-.dark .cc-new-session-ic { background: rgba(255, 255, 255, 0.09); color: var(--ink-1); }
-.dark .cc-new-session-s { color: var(--ink-3); }
 
 .cc-rail-search {
   display: flex;
@@ -8641,7 +8571,8 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cc-new-session, .cc-rail .cc-ws-more, .cc-rail .cc-sess-del { transition: none; }
+  .cc-rail .cc-ws-more,
+  .cc-rail .cc-sess-del { transition: none; }
 }
 
 /* 窄窗口：右栏先让路（面板本身可以收起），标题栏不再和会话抢宽度。 */
