@@ -23,15 +23,20 @@ export function useTailFirstMount(
   total: number,
   scrollKey: string | undefined,
   viewport: RefObject<HTMLElement | null>,
+  /** Same first row means new rows were appended, rather than older history prepended. */
+  firstId?: string,
 ): { startIndex: number; pending: boolean } {
   const [mounted, setMounted] = useState(() => initialMountedCount(total));
   const totalRef = useRef(total);
   const keyRef = useRef(scrollKey);
+  const firstRef = useRef(firstId);
+  const appended = firstId !== undefined && firstRef.current === firstId;
   const startRef = useRef(mountStartIndex(total, mounted));
   const scrollHeightRef = useRef(0);
   const atBottomRef = useRef(true);
 
   useLayoutEffect(() => {
+    firstRef.current = firstId;
     if (keyRef.current !== scrollKey) {
       keyRef.current = scrollKey;
       totalRef.current = total;
@@ -45,10 +50,17 @@ export function useTailFirstMount(
     const prev = totalRef.current;
     totalRef.current = total;
     if (prev === total) return;
-    setMounted((m) => reconcileMountedCount(prev, total, m));
-  }, [scrollKey, total]);
+    setMounted((m) => reconcileMountedCount(prev, total, m, appended));
+  }, [scrollKey, total, firstId, appended]);
 
-  const startIndex = mountStartIndex(total, mounted);
+  // Reconcile before rendering: after an append, `mounted` still describes the previous total.
+  // Using it directly moves a full window's start from 0 to 1 for one commit, unmounting the oldest
+  // message before the layout effect mounts it again. Keep every already-mounted row in that commit.
+  const renderedMounted =
+    keyRef.current !== scrollKey
+      ? initialMountedCount(total)
+      : reconcileMountedCount(totalRef.current, total, mounted, appended);
+  const startIndex = mountStartIndex(total, renderedMounted);
 
   useLayoutEffect(() => {
     const el = viewport.current;
@@ -103,6 +115,6 @@ export function useTailFirstMount(
 
   return {
     startIndex,
-    pending: mounted < total,
+    pending: renderedMounted < total,
   };
 }

@@ -21,7 +21,8 @@ ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `openbot`）�
 | 表 | 用途 | 代码 | DESIGN |
 |---|---|---|---|
 | `chisabot_bot_threads` | 每个 (用户, 机器人) 当前的对话指针 + 历史对话；全端同步的依据 | `bot-threads.ts` | §42 |
-| `chisabot_thread_inbox` | 回答期间发来的消息队列（已排队 → 已读取）；定时任务到点时线程忙也排进这里 | `thread-inbox.ts` | §38 |
+| `chisabot_thread_inbox` | 回答期间的消息与后台结果队列；Stop/失败后持久暂停，用户显式发送或撤回；HTTP 撤回预留终态防晚到提交 | `thread-inbox.ts` | §38、§108 |
+| `chisabot_thread_inbox_control` | 每线程暂停状态；行锁串行暂停、晚入队、认领和单条恢复；删线程/机器人一并清理 | `thread-inbox.ts` | §108 |
 | `chisabot_workers` | 后台任务（delegate_task）的状态、步骤、结果 | `workers/service.ts` | §38 |
 | `chisabot_thread_truncations` | 「重新生成 / 编辑后重发」的截断记录（同步戳版本号） | `thread-truncate.ts` | §67 |
 | `chisabot_chat_shots` | 聊天里的截图缩略图（≤400KB，每人 200 张，30 天） | `chat-shots.ts` | §27 |

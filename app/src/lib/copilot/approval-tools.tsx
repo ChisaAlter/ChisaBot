@@ -125,7 +125,12 @@ export function useFrontendTool<T extends Record<string, unknown>>(
               }
               const response = await tryClient(
                 `/api/approvals/computer/${encodeURIComponent(runBot)}`,
-                { method: "POST", body: snapshot, signal: context.signal },
+                {
+                  method: "POST", body: snapshot, signal: context.signal,
+                  // Leave room for approval evaluation plus the server's 615s command backstop.
+                  // This deadline and Stop both apply while the heartbeat response is consumed.
+                  timeoutMs: 660_000,
+                },
               );
               const payload: unknown = await response.json();
               /*

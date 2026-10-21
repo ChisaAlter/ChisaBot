@@ -38,20 +38,22 @@ export function mountStartIndex(total: number, mountedCount: number): number {
 
 /**
  * 列表变长（历史 prepend / 新消息）时怎么调窗口。
- * - 已经全挂：继续全挂。
- * - 还在补：保持窗口大小（新尾巴自动进窗；新历史等下一轮 rAF）。
+ * - 末尾追加：扩窗保留已挂行（短对话跨过阈值、历史还在补时也一样）。
+ * - 前面补历史：已经全挂的长对话继续全挂；否则保持尾窗，新历史等下一轮 rAF。
  * - 变短（截断 / 重生成）：夹到新长度。
  */
 export function reconcileMountedCount(
   previousTotal: number,
   nextTotal: number,
   mounted: number,
+  appended = false,
 ): number {
   const prev = Math.max(0, Math.floor(previousTotal));
   const next = Math.max(0, Math.floor(nextTotal));
   const m = Math.max(0, Math.floor(mounted));
   if (next <= TAIL_FIRST_THRESHOLD) return next;
   if (next < prev) return Math.min(m, next);
+  if (next > prev && appended) return Math.min(next, m + next - prev);
   // 短对话刚涨成长对话（接入快照 → 历史补上）：别一次全挂，保持尾窗。
   if (m >= prev && prev > TAIL_FIRST_THRESHOLD) return next;
   if (m >= prev) return initialMountedCount(next);

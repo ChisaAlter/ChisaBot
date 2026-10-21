@@ -2,7 +2,8 @@ import type { Message } from "@ag-ui/core";
 import type { AbstractAgent } from "@copilotkit/react-core/v2";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { inboxState, markRead, queuedFor, restoreQueue, takeQueued } from "./thread-inbox";
+import { tryClient } from "../client";
+import { applyInboxState, inboxState, markRead, queuedFor, restoreQueue, takeQueued } from "./thread-inbox";
 import { ACTIVE_WORKER, type WorkerView, workerKeys } from "./workers";
 
 type RunAgent = (options: { agent: AbstractAgent }) => Promise<unknown>;
@@ -43,7 +44,7 @@ export function useThreadInbox(
     let alive = true;
     const reconcile = () => {
       const ids = new Set(agent.messages.map((message) => message.id));
-      for (const item of queuedFor(threadId)) if (ids.has(item.id)) markRead(threadId, item.id);
+      for (const item of queuedFor(threadId)) if (item.status !== "paused" && ids.has(item.id)) markRead(threadId, item.id);
     };
     let flushing = false;
     let failed = false;
@@ -59,11 +60,9 @@ export function useThreadInbox(
         // state too, and reconcile claims whose snapshot has not reached this tab yet.
         const state = await inboxState(threadId);
         if (!state || !idle()) return;
-        for (const item of state.items) {
-          if (["read", "answered", "stopped", "withdrawn", "merged"].includes(item.status)) markRead(threadId, item.id);
-        }
+        applyInboxState(threadId, state);
         reconcile();
-        if (state.running) return;
+        if (state.running || state.paused) return;
         const left = takeQueued(threadId);
         if (!left.length) return;
         for (const item of left) agent.addMessage({ id: item.id, role: "user", content: item.text } as Message);
@@ -84,7 +83,7 @@ export function useThreadInbox(
     });
     void restoreQueue(threadId).then((state) => {
       reconcile();
-      if (state && !state.running) scheduleFlush();
+      if (state && !state.running && !state.paused) scheduleFlush();
     });
     return () => {
       alive = false;
@@ -128,13 +127,18 @@ export function useThreadInbox(
       );
     };
     const pull = async () => {
-      const response = await fetch(`/api/copilotkit/threads/${encodeURIComponent(threadId)}/messages`, { credentials: "include" }).catch(() => null);
-      if (!response?.ok || !alive || agent.isRunning) return;
-      const { messages } = (await response.json()) as { messages?: Message[] };
-      if (!messages || agent.isRunning) return;
-      const current = JSON.stringify(agent.messages.map((message) => [message.id, (message as { content?: unknown }).content]));
-      const next = JSON.stringify(messages.map((message) => [message.id, (message as { content?: unknown }).content]));
-      if (current !== next) agent.setMessages(messages);
+      try {
+        const response = await tryClient(`/api/copilotkit/threads/${encodeURIComponent(threadId)}/messages`);
+        if (!response.ok || !alive || agent.isRunning) return;
+        const body = await response.json() as { messages?: Message[] } | null;
+        const messages = body?.messages;
+        if (!Array.isArray(messages) || !messages.every((message) => message && typeof message.id === "string" && typeof message.role === "string") || !alive || agent.isRunning) return;
+        const current = JSON.stringify(agent.messages.map((message) => [message.id, (message as { content?: unknown }).content]));
+        const next = JSON.stringify(messages.map((message) => [message.id, (message as { content?: unknown }).content]));
+        if (current !== next) agent.setMessages(messages);
+      } catch {
+        // A timed-out or malformed snapshot cannot erase the readable local conversation.
+      }
     };
     const tick = async () => {
       if (busy || !alive || agent.isRunning) return;
@@ -146,6 +150,8 @@ export function useThreadInbox(
         serverRunning = Boolean(state?.running);
         // 交付那一轮很短时可能两次轮询之间就跑完了：交回的消息还没到，也拉一次。
         if (serverRunning || wasRunning || resultMissing()) await pull();
+      } catch {
+        // Preserve the current transcript and let the next polling opportunity reconcile.
       } finally {
         busy = false;
       }

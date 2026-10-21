@@ -65,12 +65,11 @@ ChisaBot 的测试分四层：**单元 / 集成测试 → 预览容器里的端�
 
 | 问题 | 现象 | 处理 |
 |---|---|---|
-| **Bun 1.3.x SQL 连接错位（只在预览出现）** | 被端到端反复冲击的预览容器里，某个连接在事务中 EOF 后，下一条语句报 `bind message supplies 1 parameters, but prepared statement "" requires 8` → 之后所有 `/api` 挂起，对话加载不出来。通常每个新容器跑约 2 轮后出现 | **一个预览容器只跑一轮**，下一轮重建；生产上至今没出现过（发生时重启容器应能恢复——由预览推断，生产未验证）；根治要升级 Bun 或在协议错误时重置连接池 |
+| **Bun 1.3.x SQL 连接错位（已加恢复，CB-087）** | 旧预览在事务 EOF 后出现 `bind message supplies 1 parameters, but prepared statement "" requires 8`，随后请求等待不结束；未证实生产发生 | SQL 监督层对协议错误/连接关闭立即淘汰故障池，查询及池等待有期限，取消未完成工作；失败请求不重放，新请求用新池。真实 PostgreSQL 与协议 fixture 覆盖静默连接、未确认 COMMIT、池等待及恢复；预览仍按一容器一轮保持隔离 |
 | `approvals-rules.test.tsx` / `approval-tools.test.tsx` | main 上 2 个失败（「等待点击并入浏览器活动」DOM 用例），不是新改动引起；有时表现为超时 | 对比 main 时视为基线；修复待办 |
 | app 全量测试中的上游英文用例 | 按文件跑时约 45 个上游测试文件在 main 上就失败（英文界面时代的文案断言） | 基线，不在范围内 |
 | 全量跑时测试相互污染 | 个别改名后的测试在全量里失败、单独跑通过 | 单独复跑确认 |
-| chat-scroll 在**本地构建**的镜像上 | narrowfail / polltick / narrowpoll 偶发 1–2 项「回答结束时一帧跳动」；更新器构建的正式镜像 9/9 通过 | 先用同样方式构建的 main 对照，再判断是不是 PR 的问题 |
-| chat-scroll `narrowfail` `removed:1` | 窄屏回答结束时一个消息节点被替换（无跳动），自 #141 起在 main 上 | 已知，归聊天 UI |
+| chat-scroll 节点替换与结束跳动（CB-087） | 基线七项出现旧消息重挂；结束留白按墙上时间追赶，慢帧倒退 | 渲染前协调窗口、稳定平级 keyed children、每帧有界收白；原七项严格阈值不变，整合构建复测并留 DOM reference / 逐帧数据。reduced-motion 额外覆盖宽窄屏；对应组件测试独立进程避免 Motion 媒体偏好缓存污染 |
 | 长对话历史晚到（CB-047） | 冷预览上第一次打开超长对话，历史约 20 秒后到 → 偶发滚动回归 | 预热后再跑 |
 | `live-screen-keyboard` Dvorak 用例 | 偶发失败，复跑通过 | 视为不稳定 |
 | 冷启动第一个浏览器上下文 | 只读检查里客户端可能发两次 connect，被拦截后对话显示为空 | 测试脚本的已知假象，不代表生产问题 |

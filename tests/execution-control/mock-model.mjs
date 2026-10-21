@@ -4,7 +4,7 @@ const port=Number(process.env.PORT||4012);
 const textOf=m=>typeof m.content==="string"?m.content:(m.content||[]).map(x=>x.text||"").join("");
 const calls=[];
 function plan(messages){
-  const main=messages.findLastIndex(m=>m.role==="user"&&/EXEC_ONCE|EXEC_STOP|EXEC_READ|EXEC_RECOVER/.test(textOf(m)));
+  const main=messages.findLastIndex(m=>m.role==="user"&&/EXEC_ONCE|EXEC_STOP|EXEC_READ|EXEC_RECOVER|EXEC_RESUME/.test(textOf(m)));
   const first=main<0?"":textOf(messages[main]);
   const tag=messages.filter(m=>m.role==="user").map(textOf).join(" ").match(/RUN_TAG=([a-z0-9]+)/)?.[1]||"default";
   const dir="execution_control_probe_"+tag;
@@ -16,6 +16,7 @@ function plan(messages){
   if(first.includes("EXEC_STOP"))return {command:`mkdir -p ${dir}; printf 'START\\n' >> ${dir}/stop.log; printf STOP_STARTED; (sleep 6; printf 'DONE\\n' >> ${dir}/stop.log) & wait`};
   if(first.includes("EXEC_READ"))return {command:`printf 'ONCE_LOG\\n'; cat ${dir}/once.log; printf 'STOP_LOG\\n'; cat ${dir}/stop.log`};
   if(first.includes("EXEC_RECOVER"))return {command:"printf RECOVERY_OK"};
+  if(first.includes("EXEC_RESUME"))return {command:`mkdir -p ${dir}; printf 'RESUMED\\n' >> ${dir}/resume.log; printf PAUSED_RESUMED_OK`};
   return {text:"READY for execution-control regression."};
 }
 http.createServer(async(req,res)=>{
