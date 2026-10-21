@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import {
   filterCcTree,
   parsePinnedSessions,
-  recentCcWorkspace,
+  railCcWorkspaces,
   sortPinnedSessions,
   togglePinnedSession,
 } from "@/components/cloud-cc/cc-tree";
@@ -98,21 +98,23 @@ test("no hit returns an empty list", () => {
   expect(filterCcTree([alpha, beta], "不存在的会话")).toEqual([]);
 });
 
-test("recent workspace is the one whose newest session moved last", () => {
-  expect(recentCcWorkspace([alpha, beta])?.id).toBe("w2");
-});
-
-test("recent workspace skips workspaces that are still cloning", () => {
-  const cloning = workspace("w3", "clone", [session("s4", "新")], {
-    cloneState: "cloning",
+test("the rail leaves the built-in drafts workspace out, sessions stay on the server", () => {
+  const scratch = workspace("w9", "草稿", [session("s9", "随手写")]);
+  const github = workspace("w1", "dsh-pad", [], {
+    source: "github",
+    sourceLabel: "GitHub",
+    repoFullName: "ChisaAlter/dsh-pad",
   });
-  expect(recentCcWorkspace([cloning, alpha])?.id).toBe("w1");
-});
-
-test("recent workspace falls back to the first ready workspace with no sessions", () => {
-  const empty = workspace("w4", "empty", []);
-  const later = workspace("w5", "later", []);
-  expect(recentCcWorkspace([empty, later])?.id).toBe("w4");
+  const local = workspace("w2", "chisabot", [], {
+    source: "local",
+    sourceLabel: "电脑文件夹",
+  });
+  expect(railCcWorkspaces([scratch, github, local]).map((ws) => ws.id)).toEqual([
+    "w1",
+    "w2",
+  ]);
+  // 过滤只发生在画树这一层：搜索函数本身仍能处理草稿工作区（直接打开旧会话的路由要用它）。
+  expect(filterCcTree([scratch], "")[0]?.ws.id).toBe("w9");
 });
 
 test("pinned sessions parse defensively from localStorage", () => {

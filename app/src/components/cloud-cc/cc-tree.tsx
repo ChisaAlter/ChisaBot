@@ -114,24 +114,17 @@ export function filterCcTree(
     .map(({ ws, sessions }) => ({ ws, sessions }));
 }
 
-/** 最近动过的工作区：新建会话默认落在这里（DESIGN.md §105.1）。 */
-export function recentCcWorkspace(
+/**
+ * 左栏 / 手机工作区页只列真正的工作区（2026-10-21 用户要求去掉「草稿」）。
+ *
+ * 内置的「草稿」工作区（`source: "scratch"`）是服务器上的一个常驻工作区，建会话不用建目录；
+ * 现在左栏不再显示它，也不再有「新会话默认落在草稿」的入口。它的会话记录仍在服务器上
+ * （直接打开 `/cc/<会话>` 还能看），要恢复显示只要把这里的过滤去掉。
+ */
+export function railCcWorkspaces(
   workspaces: readonly CcWorkspaceView[],
-): CcWorkspaceView | null {
-  let best: CcWorkspaceView | null = null;
-  let bestAt = Number.NEGATIVE_INFINITY;
-  for (const ws of workspaces) {
-    if (ws.cloneState !== "ready") continue;
-    const at = ws.sessions.reduce(
-      (max, s) => Math.max(max, Date.parse(s.lastTurnAt ?? s.createdAt) || 0),
-      0,
-    );
-    if (at > bestAt || (at === bestAt && best === null)) {
-      best = ws;
-      bestAt = at;
-    }
-  }
-  return best;
+): CcWorkspaceView[] {
+  return workspaces.filter((ws) => ws.source !== "scratch");
 }
 
 /**
@@ -280,7 +273,8 @@ export function CcTree({
   if (workspaces.isPending) return <div className="cc-tree-skel" aria-busy />;
   if (workspaces.isError)
     return <div className="cc-tree-err">{workspaces.error.message}</div>;
-  const groups = filterCcTree(workspaces.data, query);
+  const all = railCcWorkspaces(workspaces.data);
+  const groups = filterCcTree(all, query);
   const searching = query.trim().length > 0;
   return (
     <div
@@ -290,7 +284,7 @@ export function CcTree({
       {variant === "page" ? (
         <div className="cc-tree-page-head">
           <span className="cc-section-label">{"工作区"}</span>
-          <span className="cc-section-count">{workspaces.data.length}</span>
+          <span className="cc-section-count">{all.length}</span>
         </div>
       ) : null}
       {groups.length === 0 ? (

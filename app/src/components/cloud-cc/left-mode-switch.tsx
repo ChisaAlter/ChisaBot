@@ -1,45 +1,35 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouter } from "@tanstack/react-router";
-import { createContext, useContext, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
+import { T } from "@/components/ui/button";
+import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { rememberLeftMode } from "@/lib/cloud-cc";
 import { type LeftMode, modeTarget, preloadMode } from "@/lib/left-mode";
-import { T } from "@/components/ui/button";
-import { useOptionalSidebar } from "@/components/ui/sidebar";
 
-/**
- * 左栏里两块内容（机器人 / Claude Code）都挂着、只显示一块（`LeftRail`，DESIGN.md §84）。
- * 藏起来那块里的切换不带 testid、不抢焦点，测试和读屏只看得到正在显示的那个。
- */
-export const RailPaneActive = createContext(true);
-
-/**
- * 方向键换到对面那块以后，焦点该落在哪个切换上（ARIA radio：方向键换选项，焦点跟着选中项走）。
- *
- * 两块左栏里的切换是两个实例，换过去以后原来那个随整块 `inert`，焦点会掉到 body；所以记下目标，
- * 等那块真的显示出来（`active` 变 true）再接过去。模块级的，因为跨实例。
- */
+/** 方向键换到对面以后，焦点落在新页面的切换上（ARIA radio：方向键换选项，焦点跟着选中项走）。 */
 let pendingModeFocus: LeftMode | null = null;
 
 /**
- * 左栏顶部「机器人｜Claude Code」（ADR-0014 修订 ADR-0001，DESIGN.md §73.2 / §84）。机器人那边仍然只放机器人。
- * 只有管理员看得到（Claude Code 用的是管理员自己的 Claude 订阅）。
- * 切换是同一个外壳里的原地切换：外壳、顶栏、左栏容器都不动，只换左栏内容和主区；
- * 机器人回到上次停的对话，Claude Code 回到上次的会话。空闲时和指针移上来时先把对面预取好。
+ * 左栏最上面「机器人｜Claude Code」（ADR-0014 修订 ADR-0001，DESIGN.md §73.2 / §84）。
+ *
+ * 只有一颗，放在 `LeftRail` 里、两块内容之上（2026-10-21 用户要求两边同步）：机器人那边和 Claude Code
+ * 那边看到的是同一个控件、同一个位置、同一套尺寸，切换时它不跟着淡入淡出。只有管理员看得到
+ * （Claude Code 用的是管理员自己的 Claude 订阅）。切换是同一个外壳里的原地切换：外壳、顶栏、左栏容器
+ * 都不动，只换左栏内容和主区；机器人回到上次停的对话，Claude Code 回到上次的会话。空闲时和指针移上来时先把对面预取好。
  */
 export function LeftModeSwitch({ mode }: { mode: LeftMode }) {
   const user = useQuery(currentUserQueryOptions());
   const navigate = useNavigate();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const active = useContext(RailPaneActive);
   const sidebar = useOptionalSidebar();
   const admin = user.data?.role === "admin";
   const other: LeftMode = mode === "bots" ? "cc" : "bots";
 
   // 空闲时预取对面（分包 + 第一眼的数据），第一次点也不等。
   useEffect(() => {
-    if (!admin || !active) return;
+    if (!admin) return;
     const run = () => preloadMode(router, queryClient, other);
     const idle = window.requestIdleCallback?.(run, { timeout: 3000 });
     const timer = idle === undefined ? window.setTimeout(run, 1500) : undefined;
@@ -47,9 +37,8 @@ export function LeftModeSwitch({ mode }: { mode: LeftMode }) {
       if (idle !== undefined) window.cancelIdleCallback?.(idle);
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [admin, active, other, router, queryClient]);
+  }, [admin, other, router, queryClient]);
 
-  if (!admin) return null;
   const warm = (next: LeftMode) => {
     if (next !== mode) preloadMode(router, queryClient, next);
   };
@@ -64,10 +53,12 @@ export function LeftModeSwitch({ mode }: { mode: LeftMode }) {
   const botsRef = useRef<HTMLButtonElement | null>(null);
   const ccRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
-    if (!active || pendingModeFocus !== mode) return;
+    if (pendingModeFocus !== mode) return;
     pendingModeFocus = null;
     (mode === "bots" ? botsRef : ccRef).current?.focus();
-  }, [active, mode]);
+  }, [mode]);
+
+  if (!admin) return null;
 
   /*
    * ARIA 的 radio 组：Tab 只停在当前选中那一项（roving tabindex），方向键换选项、焦点跟着走。
@@ -93,7 +84,7 @@ export function LeftModeSwitch({ mode }: { mode: LeftMode }) {
       aria-label="左栏内容"
       aria-orientation="horizontal"
       className="sg-segmented cc-mode-switch"
-      data-testid={active ? "left-mode-switch" : undefined}
+      data-testid="left-mode-switch"
       onKeyDown={onKeyDown}
       role="radiogroup"
     >
@@ -114,7 +105,7 @@ export function LeftModeSwitch({ mode }: { mode: LeftMode }) {
       <button
         aria-checked={mode === "cc"}
         className="sg-segmented-item"
-        data-testid={active ? "left-mode-cc" : undefined}
+        data-testid="left-mode-cc"
         onClick={() => go("cc")}
         onFocus={() => warm("cc")}
         onPointerEnter={() => warm("cc")}

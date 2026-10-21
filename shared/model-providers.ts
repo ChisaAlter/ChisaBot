@@ -287,7 +287,16 @@ export function botSettings(
  * model and `agent-langgraph` uses it to select a flag, and neither name fits both.
  */
 export function requiresResponsesApi(model: string): boolean {
-  return /^gpt-5\.[6-9]|^gpt-[6-9]/.test(model);
+  /*
+   * THE FAMILY IS THE LAST SEGMENT, NOT THE WHOLE ID. A gateway names a route as well as a model —
+   * `codex/gpt-6-luna` on Magpie is the `gpt-6-luna` model behind the codex account — and the first
+   * version of this predicate tested the whole string, so every prefixed id answered false. That is
+   * exactly the id this deployment runs, and it was the one case the predicate existed for: the Bot
+   * was driven over chat completions, the provider dropped its function tools, and it answered
+   * every "go and do it" request with an apology instead of a tool call.
+   */
+  const family = model.trim().toLowerCase().split("/").pop() ?? "";
+  return /^gpt-5\.[6-9]|^gpt-[6-9]/.test(family);
 }
 
 /**

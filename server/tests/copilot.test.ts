@@ -8,6 +8,7 @@ import { BuiltInAgent } from "@copilotkit/runtime/v2";
 import { EMPTY, lastValueFrom } from "rxjs";
 import { z } from "zod";
 import {
+  ACTION_GUIDANCE,
   botIdentityGuidance,
   PROVENANCE_GUIDANCE,
   WORK_STYLE_GUIDANCE,
@@ -1166,6 +1167,52 @@ describe("where a Bot says its answer came from", () => {
     ]) {
       expect(guidance).toContain(kind);
     }
+  });
+});
+
+/**
+ * 行动优先：被要求“去做”时先调用工具，而不是先宣布做不到。
+ *
+ * 现场是 v0.1.51 的星灵：用户让它去接腾讯 ima，它连查都没查，三遍回“没有连接器 / 需要管理员开通”。
+ * ima 确实没有现成连接器，但 web_search / web_fetch 一直在它手里。规则只在它有工具时出现，因为一个
+ * 没有工具的 Bot 被要求“先调用工具”只会更困惑。
+ */
+describe("acting before saying it cannot", () => {
+  const tool = {
+    name: "web_search",
+    ref: "web/web_search",
+    description: "Search the web.",
+    parameters: z.object({ query: z.string() }),
+    execute: async () => "",
+  };
+  const assistant = {
+    id: "general-assistant",
+    name: "General Assistant",
+    type: "built_in" as const,
+    systemPrompt: "Be helpful.",
+  };
+  const model = { provider: "openai" as const, defaultModel: "gpt-5.6-terra" };
+
+  test("a Bot holding a tool is told to act first", () => {
+    const prompt = builtInAgentConfiguration(
+      assistant,
+      model,
+      "openai-secret",
+      [tool],
+    ).prompt as string;
+
+    expect(prompt).toContain(ACTION_GUIDANCE);
+    // 有工具时它才拿得到这条；没有工具的 Bot 不该被要求调用一个不存在的工具。
+    expect(
+      builtInAgentConfiguration(assistant, model, "openai-secret").prompt,
+    ).not.toContain(ACTION_GUIDANCE);
+  });
+
+  test("the rule bans the apology the screenshot is made of", () => {
+    expect(ACTION_GUIDANCE).toContain("没调用过工具之前");
+    expect(ACTION_GUIDANCE).toContain("我没有");
+    expect(ACTION_GUIDANCE).toContain("需要管理员开通");
+    expect(ACTION_GUIDANCE).toContain("web_search");
   });
 });
 

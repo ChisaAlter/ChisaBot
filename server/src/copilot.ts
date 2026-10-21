@@ -13,10 +13,12 @@ import type { Observable } from "rxjs";
 import { defer, finalize, from, fromEvent, switchMap, takeUntil } from "rxjs";
 import { z } from "zod";
 import {
+  ACTION_GUIDANCE,
   botIdentityGuidance,
   PROVENANCE_GUIDANCE,
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
+import { requiresResponsesApi } from "../../shared/model-providers";
 import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
 import { WEB_GUIDANCE } from "./web/tools";
 import {
@@ -223,8 +225,30 @@ export function connectionLanguageModel(
   return thinkTagLanguageModel(
     model.provider === "anthropic"
       ? outputLimitLanguageModel(createAnthropic(options)(model.defaultModel), model.defaultModel)
-      : createOpenAI(options).chat(model.defaultModel),
+      : openAiLanguageModel(options, model.defaultModel),
   );
+}
+
+/**
+ * The OpenAI wire a model has to be spoken to with.
+ *
+ * `createOpenAI(...)(id)` is the Responses API and `.chat(id)` is chat completions, and the choice
+ * is not cosmetic: `gpt-5.6-*` and `gpt-6*` reject function tools on chat completions ("To use
+ * function tools, use /v1/responses or set reasoning_effort to 'none'"). A gateway in front of them
+ * may pass that rejection through, or drop the tools and answer anyway — either way the model never
+ * sees a tool, so a Bot driven this way answers every "go and do it" request from memory: the
+ * apology this deployment kept getting instead of a tool call. Models that do not need Responses
+ * keep chat completions, because that is the only wire the local OpenAI-compatible servers (Ollama,
+ * vLLM, LM Studio) implement.
+ */
+function openAiLanguageModel(
+  options: Parameters<typeof createOpenAI>[0],
+  modelId: string,
+) {
+  const provider = createOpenAI(options);
+  return requiresResponsesApi(modelId)
+    ? provider.responses(modelId)
+    : provider.chat(modelId);
 }
 
 /** 模型目录（index.ts 接上），给额度用完时找候选模型用（agents/model-fallback.ts）。 */
@@ -539,6 +563,8 @@ export function builtInAgentConfiguration(
       UNTRUSTED_GUIDANCE,
       // 说话方式：开工一句话、不念工具、结果先行、必要时卡片、一个下一步（向 Hark 看齐）。
       WORK_STYLE_GUIDANCE,
+      // 行动优先：手里有工具时，先把事做了再回话；不许在调用工具之前说“我没有权限”。
+      ...(tools.length > 0 ? [ACTION_GUIDANCE] : []),
       // 机器人的名字（不然它会自称模型名，DESIGN.md §69）。
       botIdentityGuidance(agent.name),
       ...(tools.some((tool) => tool.name === "web_search") ? [WEB_GUIDANCE] : []),
