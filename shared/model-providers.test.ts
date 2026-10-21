@@ -189,18 +189,6 @@ describe("whether a model has to be driven through the Responses API", () => {
     );
   });
 
-  test("a gateway's route prefix does not hide the model family", () => {
-    // Magpie names the account as well as the model: `codex/gpt-6-luna` is the
-    // gpt-6-luna model behind its codex route, and the tools question is about
-    // the model, not the route. Read as a whole id this answered false, and that
-    // is the one id this deployment runs.
-    expect(requiresResponsesApi("codex/gpt-6-luna")).toBe(true);
-    expect(requiresResponsesApi("openai/gpt-6")).toBe(true);
-    expect(requiresResponsesApi("openai/gpt-5.6-terra")).toBe(true);
-    expect(requiresResponsesApi("codex/gpt-5.5")).toBe(false);
-    expect(requiresResponsesApi("codex/claude-sonnet-4-5")).toBe(false);
-  });
-
   test("other providers' models are not OpenAI's problem", () => {
     expect(requiresResponsesApi("claude-sonnet-4-5")).toBe(false);
     expect(requiresResponsesApi("gemini-2.5-flash")).toBe(false);

@@ -253,7 +253,8 @@ import { createTurnRunner } from "./turns/run-turn";
 import { createWorkflowEngine, type WorkflowEngine } from "./workflows/engine";
 import { createLivePanelService } from "./live-panels/service";
 import { createLivePanelStore } from "./live-panels/store";
-import { webTools } from "./web/tools";
+import { connectServiceTools } from "./plugins/connect-service";
+import { webSearch, webTools } from "./web/tools";
 import {
   restrictNamedToolsForWorkflow,
   restrictToolsForWorkflow,
@@ -1420,6 +1421,14 @@ const loadToolsForActor =
     ...(config.generativeUi && !imConnection ? renderUiTools() : []),
     // 内置联网（web_search / web_fetch）：先搜、再读，浏览器留给需要点击 / 登录 / 给人看的时候。
     ...webTools(),
+    // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。
+    // 26 个工具时模型会去挑 device_list / connector_call 这类近邻，只有这个对口的工具才稳定被选中。
+    ...connectServiceTools({
+      store: pluginStore,
+      ownerUserId: actorId,
+      botId,
+      search: (query, count) => webSearch(query, count ?? 5),
+    }),
     // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
     // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：
     // 以前它也拿到 panel_refresh，刷新里又触发一次刷新，回合叠回合（2026-10-13 实测）。

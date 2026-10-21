@@ -18,7 +18,6 @@ import {
   PROVENANCE_GUIDANCE,
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
-import { requiresResponsesApi } from "../../shared/model-providers";
 import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
 import { WEB_GUIDANCE } from "./web/tools";
 import {
@@ -225,30 +224,8 @@ export function connectionLanguageModel(
   return thinkTagLanguageModel(
     model.provider === "anthropic"
       ? outputLimitLanguageModel(createAnthropic(options)(model.defaultModel), model.defaultModel)
-      : openAiLanguageModel(options, model.defaultModel),
+      : createOpenAI(options).chat(model.defaultModel),
   );
-}
-
-/**
- * The OpenAI wire a model has to be spoken to with.
- *
- * `createOpenAI(...)(id)` is the Responses API and `.chat(id)` is chat completions, and the choice
- * is not cosmetic: `gpt-5.6-*` and `gpt-6*` reject function tools on chat completions ("To use
- * function tools, use /v1/responses or set reasoning_effort to 'none'"). A gateway in front of them
- * may pass that rejection through, or drop the tools and answer anyway — either way the model never
- * sees a tool, so a Bot driven this way answers every "go and do it" request from memory: the
- * apology this deployment kept getting instead of a tool call. Models that do not need Responses
- * keep chat completions, because that is the only wire the local OpenAI-compatible servers (Ollama,
- * vLLM, LM Studio) implement.
- */
-function openAiLanguageModel(
-  options: Parameters<typeof createOpenAI>[0],
-  modelId: string,
-) {
-  const provider = createOpenAI(options);
-  return requiresResponsesApi(modelId)
-    ? provider.responses(modelId)
-    : provider.chat(modelId);
 }
 
 /** 模型目录（index.ts 接上），给额度用完时找候选模型用（agents/model-fallback.ts）。 */

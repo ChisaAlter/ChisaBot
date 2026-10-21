@@ -162,7 +162,7 @@ export function webTools(): GrantedTool[] {
       name: "web_search",
       ref: "web/web_search",
       description:
-        "联网搜索（只读，不带用户身份）。返回标题、网址和摘要。查事实、新闻、价格、天气、某个网站的地址时先用它；需要细节再用 web_fetch 读其中一个网址。比打开浏览器快得多。",
+        "联网搜索（只读，不带用户身份）。返回标题、网址和摘要。查事实、新闻、价格、天气、某个网站的地址，或者查一个外部服务（腾讯 ima、Notion、Gmail……）怎么接入、有没有官方 API / MCP / 开放平台时，先用它；需要细节再用 web_fetch 读其中一个网址。比打开浏览器快得多。",
       parameters: searchParameters,
       execute: async (args, ctx) => {
         const signal = ctx?.signal ?? currentToolAbort();

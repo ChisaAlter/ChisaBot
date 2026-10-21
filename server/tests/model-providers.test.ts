@@ -2,7 +2,6 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { LLMock } from "@copilotkit/aimock";
 import { z } from "zod";
 import {
-  connectionLanguageModel,
   normalizeModelBaseUrls,
   resolveRuntimeAgents,
   runtimeModelForEnvironment,
@@ -321,93 +320,6 @@ test.each([
     }
   },
 );
-
-test("only the models that need Responses are moved off chat completions", () => {
-  const gateway = "https://gateway.example/v1";
-  const chat = connectionLanguageModel(
-    { provider: "openai", defaultModel: "gpt-5.5", baseUrl: gateway },
-    "synthetic-key",
-  );
-  const responses = connectionLanguageModel(
-    { provider: "openai", defaultModel: "codex/gpt-6-luna", baseUrl: gateway },
-    "synthetic-key",
-  );
-
-  expect(chat.provider).toBe("openai.chat");
-  expect(responses.provider).toBe("openai.responses");
-});
-
-test("a model that needs the Responses API is driven there, and its tools execute", async () => {
-  const mock = new LLMock();
-  const executed: unknown[] = [];
-  try {
-    const base = await mock.start();
-    mock.on({ hasToolResult: true }, { content: "The balance is 42." });
-    mock.onMessage(/balance/, {
-      toolCalls: [
-        {
-          id: "balance-call",
-          name: "read_balance",
-          arguments: { account: "demo" },
-        },
-      ],
-    });
-    const agents = await resolveRuntimeAgents(
-      async () => [
-        {
-          id: "general-assistant",
-          name: "General Assistant",
-          type: "built_in",
-          systemPrompt: "Answer using the granted balance tool.",
-        },
-      ],
-      /*
-       * The production shape of this deployment: a gateway base URL and a routed
-       * gpt-6 id. Tool calls are the whole point — gpt-6 rejects function tools on
-       * chat completions, so this path has to be the Responses API or the Bot has
-       * no hands and every "go and do it" request becomes an apology.
-       */
-      {
-        provider: "openai",
-        defaultModel: "codex/gpt-6-luna",
-        baseUrl: `${base}/v1`,
-      },
-      async () => "synthetic-key",
-      undefined,
-      async () => [
-        {
-          name: "read_balance",
-          ref: "bank/read_balance",
-          description: "Read the balance.",
-          parameters: z.object({ account: z.string() }),
-          execute: async (args) => {
-            executed.push(args);
-            return "42";
-          },
-        },
-      ],
-    );
-    const agent = agents["general-assistant"]?.clone();
-    if (!agent) throw new Error("The built-in agent was not constructed");
-    agent.addMessage({
-      id: "request",
-      role: "user",
-      content: "Read my balance.",
-    });
-    await agent.runAgent();
-    expect(agent.messages.at(-1)).toMatchObject({
-      role: "assistant",
-      content: "The balance is 42.",
-    });
-    expect(executed).toEqual([{ account: "demo" }]);
-    expect(mock.getRequests().map((entry) => entry.path)).toEqual([
-      "/v1/responses",
-      "/v1/responses",
-    ]);
-  } finally {
-    await mock.stop();
-  }
-});
 
 test.each([
   {
