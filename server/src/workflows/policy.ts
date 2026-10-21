@@ -61,13 +61,13 @@ export function restrictToolsForWorkflow<A extends unknown[]>(
       .filter((tool) => workflowToolAllowed(initiator, tool.name, tool.ref))
       .map((tool) => ({
         ...tool,
-        execute: async (input: unknown) => {
+        execute: async (input: unknown, context) => {
           if (!workflowToolAllowed(initiator, tool.name, tool.ref)) {
             const policy = policyFor(initiator);
             if (policy && policy !== "deny-all") policy.onBlocked?.(tool.name);
             return refusal(tool.name);
           }
-          return tool.execute(input);
+          return tool.execute(input, context);
         },
       }));
   };

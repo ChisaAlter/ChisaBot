@@ -126,6 +126,9 @@ import { createThreadIdentity } from "./channels/thread-identity";
 import { createChannelTitler } from "./channels/titler";
 import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
+import { createHeadlessComponentTools } from "./components/headless";
+import { hermesRuntimeTools } from "./agents/hermes-runtime";
+import { createRuntimeToolsRoutes } from "./agents/runtime-tools";
 import { createComputerGateway } from "./computer/gateway";
 import { onControlReleased } from "./computer/control-blocks";
 import {
@@ -259,6 +262,8 @@ import { webSearch, webTools } from "./web/tools";
 import {
   restrictNamedToolsForWorkflow,
   restrictToolsForWorkflow,
+  filterHeadlessForWorkflow,
+  workflowToolAllowed,
 } from "./workflows/policy";
 import { createWorkflowRoutes } from "./workflows/routes";
 import { createWorkflowStore } from "./workflows/store";
@@ -1122,18 +1127,49 @@ setModelFallbackCatalog(async () => (await modelCatalog.list()).models.map((entr
 // 设置 → 模型 →「备用模型」（DESIGN.md §61）：管理员排好的顺序优先于环境变量 / 同平台自动挑选。
 const modelFallbacks = createModelFallbackService({ store: createModelFallbackStore(database) });
 setModelFallbackList(() => modelFallbacks.models());
-/*
- * 全面换内核（CHISABOT_HERMES_URL）：所有 built-in 机器人改由 Hermes 的 ACP 桥回答。
- *
- * 未设置时 `builtin`，和以前一模一样。设置后 `buildAgent` 在加载工具之前就把 built-in 转成
- * remote-ag-ui，所以插件工具不会出现在 Hermes 的上下文里——它用自己的工具集。
- */
+/* Hermes replaces the execution loop while every host tool keeps its existing policy and identity. */
 setAgentKernel(
   config.hermesKernel
     ? {
         kind: "hermes",
         url: config.hermesKernel.url,
         ...(config.hermesKernel.token ? { token: config.hermesKernel.token } : {}),
+        binding: {
+          toolGatewayUrl: process.env.CHISABOT_HERMES_TOOL_GATEWAY_URL?.trim() || `http://127.0.0.1:${config.port}/api/internal/runtime-tools`,
+          readRun: (value) => readRunAssertion(value, config.keyEncryptionKey),
+          loadSurfaceTools: async (scope) => {
+            const actor = await actorFor(scope.actorId);
+            const profile = await agentProfileStore.get(actor, scope.botId);
+            if (!profile) throw new Error("That Bot is no longer available to this actor.");
+            const initiator = scope.initiator ?? PERSON_INITIATOR;
+            const imConnection = imConnectionOf(initiator);
+            const allowDevices = !imConnection || imService?.allowsDevices(imConnection) === true;
+            const computer = computerGateway && allowDevices && canUseComputer(profile, actor)
+              ? createHeadlessComputerTools({
+                  gateway: computerGateway,
+                  botId: scope.botId,
+                  actor: { id: actor.id, userId: actor.id, initiator },
+                  auditStore: bootAuditStore,
+                  ...(signInService ? { signIn: signInService } : {}),
+                })
+              : [];
+            const components = !imConnection ? await createHeadlessComponentTools({
+              store: componentStore, botId: scope.botId, ownerUserId: scope.actorId, initiator, auditStore: bootAuditStore,
+            }) : [];
+            const allowed = filterHeadlessForWorkflow(initiator, [...computer, ...components]);
+            return allowed.map((tool) => ({
+              ...tool,
+              execute: async (args, context) => {
+                if (!workflowToolAllowed(initiator, tool.definition.name))
+                  throw new ApprovalRefusedError("This workflow no longer permits that tool.");
+                const fresh = await agentProfileStore.get(actor, scope.botId);
+                if (!fresh || (tool.definition.name.startsWith("computer_") && !canUseComputer(fresh, actor)))
+                  throw new ApprovalRefusedError("That Bot or computer is no longer available to this actor.");
+                return tool.execute(args, context);
+              },
+            }));
+          },
+        },
       }
     : { kind: "builtin" },
 );
@@ -3699,6 +3735,7 @@ const app = createApp(
     modelCatalogRefreshMinutes,
     ...(gatewaySecret ? { singleUserGuard: createGatewayRequireUser(gatewaySecret, provisionGatewayUser) } : {}),
     extraRoutes: ({ requireUser }) => [
+      ["/api/internal/runtime-tools", createRuntimeToolsRoutes(hermesRuntimeTools)],
       [
         "/api/admin/smoke",
         createAdminSmokeRoutes({
@@ -3887,6 +3924,8 @@ serve<SocketData>({
     if (url.pathname.startsWith("/api/computers/") && !request.headers.get("upgrade")) server.timeout(request, 0);
     // §102：网页聊天里的计算机动作（含最长 600 秒的前台命令）经审批网关同步执行，同样不设空闲超时。
     if (url.pathname.startsWith("/api/approvals/computer/")) server.timeout(request, 0);
+    // Hermes waits on the same governed long-running tools and approvals; the run owns cancellation.
+    if (url.pathname.startsWith("/api/internal/runtime-tools/")) server.timeout(request, 0);
     // IM 接入：微信扫码状态是长轮询（约 25 秒），「测试连接」要等平台握手（最多 15 秒），超过 Bun 默认的 10 秒空闲。
     if (url.pathname.startsWith("/api/im/") && !request.headers.get("upgrade")) server.timeout(request, 60);
     // 模型回合是流式的（SSE）：免费 / 慢模型首个 token 前常常要想十几秒，带很多工具时更久。Bun 默认

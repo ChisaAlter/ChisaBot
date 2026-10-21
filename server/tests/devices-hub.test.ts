@@ -153,10 +153,16 @@ describe("device hub", () => {
   test("approval expires", async () => {
     const fake = fakeStore(record());
     const hub = createDeviceHub({ store: fake.store as never, approvalTtlMs: 30 });
-    hub.attach(record(), fakeSocket().socket, null);
-    await expect(
-      hub.invoke({ device: record(), operation: "clipboard_read", args: {}, bot: { id: "bot1", name: "B" }, summary: "x" }),
-    ).rejects.toThrow("超时");
+    const handlers = hub.attach(record(), fakeSocket().socket, null);
+    const keepAlive = setTimeout(() => {}, 1000);
+    try {
+      await expect(
+        hub.invoke({ device: record(), operation: "clipboard_read", args: {}, bot: { id: "bot1", name: "B" }, summary: "x" }),
+      ).rejects.toThrow("超时");
+    } finally {
+      clearTimeout(keepAlive);
+      handlers.onClose();
+    }
   });
 
   test("call timeout, device error, kill switch from PC, revoke kick", async () => {
@@ -164,9 +170,14 @@ describe("device hub", () => {
     const hub = createDeviceHub({ store: fake.store as never });
     const s = fakeSocket();
     const handlers = hub.attach(record(), s.socket, null);
-    await expect(
-      hub.invoke({ device: record(), operation: "shell", args: {}, bot: { id: "b", name: null }, summary: "x", timeoutMs: 1000 }),
-    ).rejects.toThrow("没有返回");
+    const keepAlive = setTimeout(() => {}, 2000);
+    try {
+      await expect(
+        hub.invoke({ device: record(), operation: "shell", args: {}, bot: { id: "b", name: null }, summary: "x", timeoutMs: 1000 }),
+      ).rejects.toThrow("没有返回");
+    } finally {
+      clearTimeout(keepAlive);
+    }
     const failing = hub.invoke({ device: record(), operation: "shell", args: {}, bot: { id: "b", name: null }, summary: "x" });
     await tick();
     const call = s.sent.filter((m) => m.type === "call").at(-1) as { id: string };

@@ -9,6 +9,7 @@ import {
   type ServerToDevice,
   capabilityFor,
 } from "../../../shared/devices";
+import { TOOL_STOPPED_ZH } from "../confirmations/context";
 import { isMobilePlatform, MOBILE_ONLINE_WINDOW_MS } from "./pairing";
 import { outsideRoots, outsideRootsNote } from "./roots";
 import { type DevicePatch, type DeviceRecord, type DeviceStore, fullAccessActive } from "./store";
@@ -45,6 +46,7 @@ type Pending = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  cleanup?: () => void;
 };
 
 type Connection = {
@@ -63,6 +65,8 @@ type Approval = {
   ownerUserId: string;
   resolve: (decision: { approved: boolean; by: string }) => void;
   timer: ReturnType<typeof setTimeout>;
+  cleanup?: () => void;
+  opening?: Promise<void>;
 };
 
 type Screenshot = { deviceId: string; png: Buffer; at: number };
@@ -76,6 +80,8 @@ export type InvokeInput = {
   actorType?: "bot" | "user";
   summary: string;
   timeoutMs?: number;
+  /** Only this invocation is cancelled when its run stops. */
+  signal?: AbortSignal;
   /** 改文件类操作的改动预览（unified diff），放进审批卡片。 */
   diff?: string | null;
 };
@@ -249,6 +255,7 @@ export function createDeviceHub(options: {
       connections.delete(connection.deviceId);
     for (const [id, pending] of connection.pending) {
       clearTimeout(pending.timer);
+      pending.cleanup?.();
       pending.reject(new Error(reason));
       connection.pending.delete(id);
     }
@@ -306,6 +313,7 @@ export function createDeviceHub(options: {
       for (const [id, pending] of connection.pending) {
         send(connection, { type: "cancel", id });
         clearTimeout(pending.timer);
+        pending.cleanup?.();
         pending.reject(new DeviceRefusedError(reason));
         connection.pending.delete(id);
       }
@@ -321,13 +329,15 @@ export function createDeviceHub(options: {
     if (!approval) return false;
     approvals.delete(id);
     clearTimeout(approval.timer);
-    send(connections.get(approval.view.deviceId), {
-      type: "approval_closed",
-      id,
-      decision: by === "expired" ? "expired" : approved ? "approve" : "deny",
-    });
+    approval.cleanup?.();
+    const decision = by === "expired" ? "expired" : approved ? "approve" : "deny";
+    send(connections.get(approval.view.deviceId), { type: "approval_closed", id, decision });
     approval.resolve({ approved, by });
-    void confirm?.closed(id, by === "expired" ? "expired" : approved ? "approve" : "deny", by).catch(() => {});
+    // A stop may arrive while the chat card is still being inserted. Close it after that insert,
+    // otherwise a late insert would leave a cancelled invocation's card pending.
+    void Promise.resolve(approval.opening)
+      .then(() => confirm?.closed(id, decision, by))
+      .catch(() => {});
     return true;
   }
 
@@ -336,6 +346,7 @@ export function createDeviceHub(options: {
     input: InvokeInput,
     onCreated?: (id: string) => void,
   ): Promise<{ approved: boolean; by: string }> {
+    if (input.signal?.aborted) return Promise.resolve({ approved: false, by: "aborted" });
     const id = randomUUID();
     onCreated?.(id);
     const createdAt = now();
@@ -356,7 +367,14 @@ export function createDeviceHub(options: {
     return new Promise((resolve) => {
       const timer = setTimeout(() => decideInternal(id, false, "expired"), ttlMs);
       unref(timer);
-      approvals.set(id, { view, ownerUserId: record.ownerUserId, resolve, timer });
+      const onAbort = () => decideInternal(id, false, "aborted");
+      const approval: Approval = {
+        view, ownerUserId: record.ownerUserId, resolve, timer,
+        cleanup: () => input.signal?.removeEventListener("abort", onAbort),
+      };
+      approvals.set(id, approval);
+      input.signal?.addEventListener("abort", onAbort, { once: true });
+      if (input.signal?.aborted) { onAbort(); return; }
       send(connections.get(record.id), {
         type: "approval_request",
         id,
@@ -368,8 +386,8 @@ export function createDeviceHub(options: {
         // PC 的时钟可能和服务器不一致，所以同时给出按服务器时钟算的剩余毫秒数，PC 用它倒数。
         remainingMs: ttlMs,
       });
-      if (chat && confirm)
-        void confirm
+      if (chat && confirm && approvals.has(id))
+        approval.opening = confirm
           .opened({
             approvalId: id,
             ownerUserId: record.ownerUserId,
@@ -471,6 +489,7 @@ export function createDeviceHub(options: {
               if (!pending) return;
               connection.pending.delete(String(message.id));
               clearTimeout(pending.timer);
+              pending.cleanup?.();
               if (message.ok) pending.resolve(message.result);
               else
                 pending.reject(
@@ -619,7 +638,7 @@ export function createDeviceHub(options: {
       // git push 总要人点头（完全访问除外）：推送是对外可见、难撤回的操作。
       if (!full && policy === "allow" && input.operation === "git" && input.args.subcommand === "push") policy = "ask";
       // 权限档位（docs/local-agents.md）：档位之外的操作，能力是「允许」也改成先审批；从不放宽。完全访问开着时不再收紧。
-      if (!full && policy === "allow" && extension?.gate) {
+      if (!input.signal?.aborted && !full && policy === "allow" && extension?.gate) {
         const reason = await Promise.resolve(extension.gate(record, input.operation, input.args)).catch(() => "档位检查失败");
         if (reason) {
           policy = "ask";
@@ -652,6 +671,7 @@ export function createDeviceHub(options: {
         throw new DeviceRefusedError(message);
       };
 
+      if (input.signal?.aborted) return refuse("cancelled", TOOL_STOPPED_ZH);
       if (record.revoked) return refuse("refused", "这台设备已被撤销。");
       if (record.paused) return refuse("refused", "这台设备已紧急停止，所有远程操作都被拒绝。");
       if (policy === "off")
@@ -686,6 +706,7 @@ export function createDeviceHub(options: {
               })
               .catch(() => "ask" as const)
           : "ask";
+      if (input.signal?.aborted) return refuse("cancelled", TOOL_STOPPED_ZH);
       if (policy === "ask" && preference === "auto" && !outside) {
         approvalNote = "按审批偏好直接执行";
       } else if (policy === "ask" && preference === "full") {
@@ -693,6 +714,7 @@ export function createDeviceHub(options: {
         approvalNote = "机器人完全访问，直接执行";
         if (outside) {
           const fresh = await store.get(record.id);
+          if (input.signal?.aborted) return refuse("cancelled", TOOL_STOPPED_ZH);
           if (!fresh || fresh.revoked || fresh.paused) return refuse("refused", "设备已停止或被撤销。");
           const added = await addOutsideRoot(fresh, outside.folder, "完全访问自动");
           if (added !== true) return refuse("refused", added);
@@ -700,6 +722,7 @@ export function createDeviceHub(options: {
         }
       } else if (policy === "ask") {
         const decision = await requestApproval(record, input);
+        if (input.signal?.aborted || decision.by === "aborted") return refuse("cancelled", TOOL_STOPPED_ZH);
         const who = decision.by === "device" ? "PC 上" : decision.by === "expired" ? "" : "网页上";
         if (!decision.approved)
           return refuse(
@@ -711,6 +734,7 @@ export function createDeviceHub(options: {
         approvalNote = `已在${who}批准`;
         // 审批期间配置可能变了（例如按了紧急停止）。
         const fresh = await store.get(record.id);
+        if (input.signal?.aborted) return refuse("cancelled", TOOL_STOPPED_ZH);
         if (!fresh || fresh.revoked || fresh.paused)
           return refuse("refused", "审批期间设备已停止或被撤销。");
         if (outside) {
@@ -720,19 +744,33 @@ export function createDeviceHub(options: {
         }
       }
 
+      if (input.signal?.aborted) return refuse("cancelled", TOOL_STOPPED_ZH);
       const connection = connections.get(record.id);
       if (!connection) return refuse("offline", "这台设备当前离线。");
       const id = randomUUID();
       const timeoutMs = Math.min(Math.max(input.timeoutMs ?? defaultTimeoutMs, 1_000), 15 * 60_000);
       try {
         let result = await new Promise<unknown>((resolve, reject) => {
+          const cleanup = () => {
+            clearTimeout(timer);
+            input.signal?.removeEventListener("abort", onAbort);
+          };
+          const onAbort = () => {
+            if (!connection.pending.delete(id)) return;
+            cleanup();
+            send(connection, { type: "cancel", id });
+            reject(new DeviceRefusedError(TOOL_STOPPED_ZH));
+          };
           const timer = setTimeout(() => {
-            connection.pending.delete(id);
+            if (!connection.pending.delete(id)) return;
+            cleanup();
             send(connection, { type: "cancel", id });
             reject(new DeviceRefusedError(`PC 端 ${Math.round(timeoutMs / 1000)} 秒内没有返回结果。`));
           }, timeoutMs);
           unref(timer);
-          connection.pending.set(id, { resolve, reject, timer });
+          connection.pending.set(id, { resolve, reject, timer, cleanup });
+          input.signal?.addEventListener("abort", onAbort, { once: true });
+          if (input.signal?.aborted) { onAbort(); return; }
           const sent = send(connection, {
             type: "call",
             id,
@@ -742,11 +780,12 @@ export function createDeviceHub(options: {
             timeoutMs,
           });
           if (!sent) {
-            clearTimeout(timer);
+            cleanup();
             connection.pending.delete(id);
             reject(new DeviceRefusedError("无法把调用发送到设备。"));
           }
         });
+        if (input.signal?.aborted) throw new DeviceRefusedError(TOOL_STOPPED_ZH);
         if (
           input.operation === "screenshot" &&
           result &&
@@ -767,7 +806,7 @@ export function createDeviceHub(options: {
         return result;
       } catch (error) {
         const message = errorText(error);
-        await finish(/超时|没有返回/.test(message) ? "timeout" : "failed", [approvalNote, message].filter(Boolean).join("；"));
+        await finish(input.signal?.aborted ? "cancelled" : /超时|没有返回/.test(message) ? "timeout" : "failed", [approvalNote, message].filter(Boolean).join("；"));
         throw error instanceof DeviceRefusedError ? error : new DeviceRefusedError(message);
       }
     },

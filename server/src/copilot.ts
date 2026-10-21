@@ -25,6 +25,7 @@ import {
   CoworkerUnavailableError,
 } from "./agents/agent-resolver";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
+import { HermesRuntimeAgent, type HermesRuntimeBinding } from "./agents/hermes-runtime";
 import {
   PLAN_RUN_COMPLETED,
   PlanModel,
@@ -211,7 +212,7 @@ export type RuntimeModelResolver = () => Promise<RuntimeModelConnection>;
  */
 export type AgentKernel =
   | { kind: "builtin" }
-  | { kind: "hermes"; url: string; token?: string };
+  | { kind: "hermes"; url: string; token?: string; binding?: HermesRuntimeBinding };
 let agentKernel: AgentKernel = { kind: "builtin" };
 export function setAgentKernel(kernel: AgentKernel): void {
   agentKernel = kernel;
@@ -1016,75 +1017,64 @@ async function inlineAttachments(
   return inlined;
 }
 
-/**
- * 把一个 built-in 机器人变成指向 Hermes 桥的 remote AG-UI 机器人。
- *
- * 复用 remote 路径而不是另写一个 agent，是因为那边已经有：standing role 的注入、附件内联、
- * 交接、stall guard、重定向后的地址校验。这里只做三件事——地址、token、角色。
- *
- * 工具刻意传空：Hermes 用自己的工具集。把 ChisaBot 的工具清单发过去，只会让模型调用一堆
- * 在这条链路上不存在的东西；`grantedToolGuidance` 也会把一段它会去照做的能力说明塞进提示词。
- */
-/**
- * What the Hermes kernel is told about acting, on top of the Bot's own role.
- *
- * The built-in loop's prompt was written for a Bot that may hold ChisaBot's tools; Hermes holds a
- * different set (shell, files, web/MCP). Handing it the old prose unchanged is what produced the
- * "我没有这个连接器" answer to "了解一下 ima 怎么接": the model read a permission boundary where it
- * had a terminal. This is deliberately about the first move — investigate before refusing — not
- * about promising an integration the deployment does not have.
- */
-const KERNEL_ACTION_GUIDANCE = [
-  "【行动准则】",
-  "遇到「接入 / 连接 / 了解一下某个服务」的请求，先自己查：用终端 curl、网页/搜索工具或 MCP 去看官方文档、开放平台、API。",
-  "不要把「我没有连接器 / 需要管理员开通」当作第一反应。查完再回答：给出你查到的接入方式、缺哪一步、下一步怎么接。",
-  "确实查不到时，说清楚你查过什么、卡在哪里，而不是直接拒绝。",
-].join("\n");
-
-async function hermesKernelAgent(
-  agent: RegisteredBuiltInAgent,
-  kernel: Extract<AgentKernel, { kind: "hermes" }>,
-  standingInstructions: string | null,
-  stallGuard: StallGuard | undefined,
-  agentFetch: AgentFetch | undefined,
-  initiator: AuditInitiator | undefined,
-  loadAttachment: LoadAttachment | undefined,
-  markAttachmentsSent: MarkAttachmentsSent | undefined,
-  handoff: HandoffForRun | undefined,
-): Promise<AbstractAgent> {
-  const roleDescription = [
-    agent.systemPrompt.trim(),
-    standingInstructions?.trim(),
-    KERNEL_ACTION_GUIDANCE,
-  ]
-    .filter((part): part is string => Boolean(part))
-    .join("\n\n");
-  const remote: RegisteredRemoteAgent = {
+/** The host still owns tools, identity, memory and settings; Hermes owns the execution loop. */
+async function hermesKernelAgent(options: {
+  agent: RegisteredBuiltInAgent;
+  kernel: Extract<AgentKernel, { kind: "hermes" }>;
+  model: RuntimeModel;
+  tools: GrantedTool[];
+  signRun?: SignRun;
+  standingInstructions: string | null;
+  computerGuidance?: string;
+  connectedVendors: readonly string[];
+  stallGuard?: StallGuard;
+  agentFetch?: AgentFetch;
+  initiator?: AuditInitiator;
+  loadAttachment?: LoadAttachment;
+  markAttachmentsSent?: MarkAttachmentsSent;
+  handoff?: HandoffForRun;
+}): Promise<AbstractAgent> {
+  const { agent, kernel, signRun } = options;
+  if (!kernel.binding || !signRun)
+    throw new Error("Hermes requires an authenticated host tool binding before it can run.");
+  const transport = await remoteTransport({
     id: agent.id,
     name: agent.name,
     type: "remote_ag_ui",
     endpoint: kernel.url,
     ...(kernel.token ? { headers: { authorization: `Bearer ${kernel.token}` } } : {}),
-    standingMessage: standingRoleMessage({
-      id: agent.id,
-      name: agent.name,
-      title: "ChisaBot assistant",
-      roleDescription,
-    }),
-  };
-  const transport = await remoteTransport(remote, stallGuard, agentFetch, initiator);
-  return remoteAgentWithStandingRole(
-    remote,
-    transport,
-    [],
-    undefined,
-    [],
-    undefined,
-    loadAttachment,
-    markAttachmentsSent,
-    handoff,
-    initiator,
-  );
+    standingMessage: standingRoleMessage({ id: agent.id, name: agent.name, title: "ChisaBot assistant", roleDescription: agent.systemPrompt }),
+  }, options.stallGuard, options.agentFetch, options.initiator);
+  return new HermesRuntimeAgent(transport, {
+    botId: agent.id,
+    modelId: options.model.defaultModel,
+    binding: kernel.binding,
+    signRun: (runId, threadId, previous) => signRun(agent.id, runId, threadId, previous),
+    toolsFor: async (input, signal) => {
+      const passing = (await options.handoff?.(agent.id, input)) ?? [];
+      signal.throwIfAborted();
+      return [...options.tools, ...passing];
+    },
+    prepare: async (input, tools) => {
+      // Reuse the shipped prompt and host tool guidance; no provider client is constructed here.
+      const configured = builtInAgentConfiguration(agent, { ...options.model, useApiKey: false }, null, [...tools], options.computerGuidance, options.connectedVendors, options.standingInstructions);
+      const prompt = "prompt" in configured ? configured.prompt : undefined;
+      if (typeof prompt !== "string") throw new Error("The Hermes host instructions could not be prepared.");
+      const answeredByResume = new Set((input.resume ?? []).map((entry) => entry.interruptId));
+      const existingResults = new Set(input.messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
+      const resumed: Message[] = (input.resume ?? []).filter((entry) => entry.status === "resolved" && !existingResults.has(entry.interruptId)).map((entry) => ({
+        id: `hermes-resume:${entry.interruptId}`,
+        role: "tool" as const,
+        toolCallId: entry.interruptId,
+        content: typeof entry.payload === "string" ? entry.payload : JSON.stringify(entry.payload ?? null),
+      }));
+      const history = sanitizeSeededHistory([...input.messages.filter((message) => message.id !== `hermes-role:${agent.id}`), ...resumed], answeredByResume);
+      const messages = options.loadAttachment
+        ? await inlineAttachments(history, options.loadAttachment, input.threadId, options.markAttachmentsSent)
+        : history;
+      return { ...input, messages: [{ id: `hermes-role:${agent.id}`, role: "system", content: prompt }, ...messages] };
+    },
+  });
 }
 
 async function buildAgent(
@@ -1111,30 +1101,25 @@ async function buildAgent(
     return new UnavailableAgent(agent);
   }
 
-  /*
-   * 全面换内核：`CHISABOT_HERMES_URL` 设置后，所有 built-in 机器人都不再走 CopilotKit 的
-   * 工具循环，而是被当作一个 remote AG-UI 机器人，指向 Hermes 的 ACP ↔ AG-UI 桥。
-   *
-   * 这里刻意在 `loadTools` 之前返回：Hermes 用的是它自己的工具（shell / 文件 / 网页 / MCP /
-   * 子 agent），ChisaBot 的插件工具在这条链路里不可调用，读出来只会给模型一份它会去调用、
-   * 然后被 404 的清单。角色仍然通过 standing role 送过去（桥会在第一轮把它作为宿主设定带进
-   * ACP），所以「星灵」这个名字和它的人设不会丢。
-   */
+  const granted = await loadTools(agent.id);
   if (agentKernel.kind === "hermes" && agent.type === "built_in") {
-    return hermesKernelAgent(
+    return hermesKernelAgent({
       agent,
-      agentKernel,
+      kernel: agentKernel,
+      model,
+      tools: granted,
+      signRun,
       standingInstructions,
+      computerGuidance,
+      connectedVendors,
       stallGuard,
       agentFetch,
       initiator,
       loadAttachment,
       markAttachmentsSent,
       handoff,
-    );
+    });
   }
-
-  const granted = await loadTools(agent.id);
 
   /*
    * Whether narrowing can do anything here at all.
@@ -1692,7 +1677,7 @@ function remoteAgentWithStandingRole(
                 unknown
               >,
             },
-            execute: (args) => tool.execute(args),
+            execute: (args, context) => tool.execute(args, { signal: context.signal }),
           })),
           initiator,
         ).run(prepared, next);

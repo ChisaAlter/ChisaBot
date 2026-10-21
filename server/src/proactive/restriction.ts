@@ -97,11 +97,11 @@ export function restrictToolsForRun<A extends unknown[]>(
       .filter((tool) => allowed.has(tool.ref) || allowed.has(tool.name))
       .map((tool) => ({
         ...tool,
-        execute: async (input: unknown) => {
+        execute: async (input: unknown, context) => {
           const current = await readOnlyRefs();
           if (!current.has(tool.ref) && !current.has(tool.name))
             return refused(tool.name);
-          return tool.execute(input);
+          return tool.execute(input, context);
         },
       }));
   };

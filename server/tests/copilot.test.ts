@@ -1217,13 +1217,7 @@ describe("acting before saying it cannot", () => {
   });
 });
 
-/**
- * 全面换内核：`CHISABOT_HERMES_URL` 设置后，所有 built-in 机器人变成指向 Hermes 桥的 remote
- * AG-UI 机器人。这里钉住三件事：真的打到桥、机器人的角色跟着走、ChisaBot 的工具不被发过去。
- *
- * 工具不发是刻意的：Hermes 用它自己的 shell / 文件 / 网页 / MCP 工具；把 ChisaBot 的工具清单
- * 发过去，模型会去调用一堆在 ACP 链路上不存在的东西。
- */
+/** Hermes must retain the host identity, tools and selected model when replacing the loop. */
 describe("full kernel replacement with Hermes", () => {
   const assistant = {
     id: "general-assistant",
@@ -1233,14 +1227,18 @@ describe("full kernel replacement with Hermes", () => {
   };
   const model = { provider: "openai" as const, defaultModel: "gpt-5.6-terra" };
 
-  test("routes a built-in Bot to the bridge with its role and no ChisaBot tools", async () => {
+  test("routes a built-in Bot with its host tools, role and model", async () => {
     await using endpoint = fakeAgUiEndpoint();
-    setAgentKernel({ kind: "hermes", url: endpoint.url });
+    setAgentKernel({ kind: "hermes", url: endpoint.url, binding: {
+      toolGatewayUrl: "http://host/api/internal/runtime-tools",
+      readRun: () => ({ actorId: "owner", botId: "general-assistant", threadId: "hermes-thread", runId: "hermes-run" }),
+    } });
     try {
-      const agents = await buildAgents([assistant], model, null);
+      const agents = await buildAgents([assistant], model, null, undefined, async () => [{ name: "web_search", ref: "web/search", description: "Search", parameters: z.object({ query: z.string() }), execute: async () => "result" }], () => "signed-run");
       const agent = built(agents, "general-assistant");
+      agent.threadId = "hermes-thread";
       agent.addMessage({ id: "u", role: "user", content: "Hello" });
-      await agent.runAgent();
+      await agent.runAgent({ runId: "hermes-run" });
 
       expect(agent.messages.at(-1)).toMatchObject({
         role: "assistant",
@@ -1252,7 +1250,8 @@ describe("full kernel replacement with Hermes", () => {
       const system = sent?.messages?.find((message) => message.role === "system");
       expect(JSON.stringify(system)).toContain("General Assistant");
       expect(JSON.stringify(system)).toContain("Be the general assistant.");
-      expect(sent?.tools ?? []).toEqual([]);
+      expect(sent?.tools).toMatchObject([{ name: "web_search" }]);
+      expect(endpoint.requests.at(-1)).toMatchObject({ forwardedProps: { chisabotHermes: { version: 1, model: { id: model.defaultModel }, scope: { actorId: "owner", botId: "general-assistant" } } } });
     } finally {
       setAgentKernel({ kind: "builtin" });
     }
