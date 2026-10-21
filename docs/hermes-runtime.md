@@ -31,6 +31,8 @@ Hermes 与宿主发出同一 toolCallId。后端拥有的调用由 `openbot.back
 
 `POST /ready` 需要桥 token，仅初始化 ACP；它不执行模型任务，也不能代替真实工具验收。`/health` 显示实际 child 初始化、退出和账本健康状态，不返回凭据。
 
+管理后台 → 系统更新 的「执行内核」读取 `/api/admin/runtime-kernel`，显示当前循环（Hermes 或内置）和桥接健康；`/api/admin/health` 也带 `checks.hermes`，但它只是提示项，不参与整体 `ok`，避免桥接维护或重启把镜像健康、更新冒烟和自动回滚误判成失败。
+
 `ACP_CWD` 是工作目录，不是沙箱；`ACP_APPROVAL=deny` 只拒绝真正到达 ACP 的权限请求。进程文件边界与 ChisaBot 工具权限分别由 systemd 和宿主执行器保证。
 
 ## 验证范围

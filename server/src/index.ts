@@ -128,6 +128,8 @@ import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
 import { createHeadlessComponentTools } from "./components/headless";
 import { hermesRuntimeTools } from "./agents/hermes-runtime";
+import { probeHermesHealth } from "./agents/hermes-health";
+import { createRuntimeKernelRoutes } from "./agents/kernel-status";
 import { createRuntimeToolsRoutes } from "./agents/runtime-tools";
 import { createComputerGateway } from "./computer/gateway";
 import { onControlReleased } from "./computer/control-blocks";
@@ -1173,6 +1175,11 @@ setAgentKernel(
       }
     : { kind: "builtin" },
 );
+// One probe, shared by the settings status row and the informational ops-health entry.
+const hermesKernelUrl = config.hermesKernel?.url;
+const probeConfiguredHermes = hermesKernelUrl
+  ? () => probeHermesHealth(hermesKernelUrl)
+  : undefined;
 /*
  * Magpie, the model gateway. MAGPIE_ADMIN_URL (e.g. http://magpie:3430) plus its web key
  * (MAGPIE_WEB_KEY_FILE, readable only by the API user) turn on 管理后台 → 模型平台 Magpie and the
@@ -3755,6 +3762,8 @@ const app = createApp(
           pingDatabase: createDatabasePinger(database),
           magpie,
           gatewayMode: gatewaySecret ? "on" : "off",
+          // Informational: Hermes being down does not turn /api/admin/health red or roll back a release.
+          ...(probeConfiguredHermes ? { probeHermes: probeConfiguredHermes } : {}),
           ...(computerProvider
             ? {
                 probeComputer: async () => {
@@ -3793,6 +3802,14 @@ const app = createApp(
         }),
       ],
       ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
+      [
+        "/api/admin/runtime-kernel",
+        createRuntimeKernelRoutes({
+          requireUser,
+          kernel: probeConfiguredHermes ? "hermes" : "builtin",
+          ...(probeConfiguredHermes ? { probe: probeConfiguredHermes } : {}),
+        }),
+      ],
       [
         "/api/admin/system-update",
         createSystemUpdateRoutes({

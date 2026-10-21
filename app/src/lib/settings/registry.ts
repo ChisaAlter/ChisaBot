@@ -295,6 +295,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     admin: true,
     keywords: ["xtgx", "更新", "升级", "版本", "update", "upgrade", "version", "关于", "about"],
     items: [
+      { id: "runtime-kernel", title: "执行内核", description: "Hermes 是否接入、桥接是否在线", find: "执行内核", keywords: ["hermes", "内核", "kernel", "执行循环", "运行循环"] },
       { id: "rollback", title: "回滚到上一版", description: "更新出问题时退回上一个版本", find: "回滚", keywords: ["rollback", "退回", "hg"] },
       { id: "selftest", title: "自检", description: "模型往返自检", find: "自检", keywords: ["smoke", "测试", "健康检查"] },
       { id: "debug-tools", title: "调试：显示工具调用", description: "聊天里显示每一步工具调用", find: "调试", keywords: ["debug", "工具调用"] },
