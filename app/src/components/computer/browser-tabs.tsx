@@ -51,6 +51,7 @@ export function TabStrip({
   driving,
   poll,
   end,
+  onTakeControl,
 }: {
   computerId: string;
   /** 人拿着控制权（可以切 / 关 / 开）。 */
@@ -59,6 +60,14 @@ export function TabStrip({
   poll: boolean;
   /** 标签栏最右端（放大页把关闭按钮放在这里）。 */
   end?: ReactNode;
+  /**
+   * 点标签 / + 时先接管控制（和「接管控制」按钮同一条路）。
+   *
+   * 以前这里只问 `driving`，没接管就直接 return：标签栏看得见、点下去一点反应都没有，
+   * 用户以为标签坏了（2026-10-21 反馈「切不过去」）。现在第一次点击顺手接管，再继续这次操作；
+   * 接管不成才把原因写在标签栏下面。没有这个回调（例如单元测试或旧调用）时不接管，只解释。
+   */
+  onTakeControl?: () => Promise<boolean>;
 }) {
   const view = useBrowserTabs(computerId, poll);
   const [busy, setBusy] = useState<string | null>(null);
@@ -90,9 +99,32 @@ export function TabStrip({
   const canAct = driving && view.running;
 
   const run = async (key: string, action: "new" | "activate" | "close", id?: string) => {
-    if (!canAct || busy) return;
-    setBusy(key);
-    setProblem(null);
+    if (busy) return;
+    if (!view.running) {
+      setProblem("浏览器没在运行；打开一个网址后会恢复这些标签。");
+      return;
+    }
+    if (!driving) {
+      /*
+       * 没接管时点标签不是「什么都不做」：先按同一条接管路走（请求 → 接管），成功就继续这次点击。
+       * 接管会等人和机器人的当前动作结束，失败（忙、断线）才落到下面的提示。
+       */
+      if (!onTakeControl) {
+        setProblem("接管控制后才能切换、关闭和新开标签页。");
+        return;
+      }
+      setBusy(key);
+      setProblem(null);
+      const taken = await onTakeControl().catch(() => false);
+      if (!taken) {
+        setBusy(null);
+        setProblem("没能接管控制；再点一次，或先点「接管控制」。");
+        return;
+      }
+    } else {
+      setBusy(key);
+      setProblem(null);
+    }
     const started = Date.now();
     const result = await humanTab(computerId, action, id);
     // 最少 300ms，免得一闪（DESIGN §6 按钮状态机）。
@@ -103,10 +135,10 @@ export function TabStrip({
   };
 
   const hint = !view.running
-    ? "浏览器没在运行；下次打开时会恢复这些标签"
+    ? "浏览器没在运行；打开一个网址后会恢复这些标签"
     : driving
       ? undefined
-      : "接管控制后可以切换、关闭和新开标签";
+      : "点一下会先接管控制，再切换 / 新开标签页";
 
   /*
    * 方向键在标签之间走（ARIA 标签页的键盘约定，2026-10-20）：选中项跟着走、焦点也跟过去，
@@ -130,7 +162,7 @@ export function TabStrip({
     event.preventDefault();
     const id = ids[next]!;
     strip.current?.querySelector<HTMLElement>(`[data-tab-id="${id}"]`)?.focus();
-    if (canAct && id !== current) void run(`a:${id}`, "activate", id);
+    if (view.running && id !== current) void run(`a:${id}`, "activate", id);
   };
 
   return (
@@ -154,14 +186,14 @@ export function TabStrip({
               onKeyDown={(event) => {
                 if (event.key !== "Enter" && event.key !== " ") return;
                 event.preventDefault();
-                if (!active && canAct) void run(`a:${tab.id}`, "activate", tab.id);
+                if (!active && view.running) void run(`a:${tab.id}`, "activate", tab.id);
               }}
               role="tab"
               tabIndex={active ? 0 : -1}
               title={hint ? `${tab.title}\n${hint}` : tab.title}
             >
               <button
-                aria-disabled={!canAct}
+                aria-disabled={!view.running}
                 className="btab-main"
                 onClick={() => {
                   if (!active) void run(`a:${tab.id}`, "activate", tab.id);
@@ -203,9 +235,9 @@ export function TabStrip({
         <button
           aria-label={"新标签页"}
           className="btabs-new"
-          disabled={!canAct || Boolean(busy) || full}
+          disabled={!view.running || Boolean(busy) || full}
           onClick={() => void run("new", "new")}
-          title={full ? `最多同时打开 ${view.max} 个标签页` : canAct ? "新标签页" : (hint ?? "新标签页")}
+          title={full ? `最多同时打开 ${view.max} 个标签页` : (hint ?? "新标签页")}
           type="button"
         >
           {busy === "new" ? <IconLoader2 className="animate-spin" size={16} /> : <IconPlus size={16} />}

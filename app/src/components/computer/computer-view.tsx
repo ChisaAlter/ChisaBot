@@ -798,6 +798,7 @@ export function ComputerView({
                           computerId={computerId}
                           driving={driving}
                           end={closeButton}
+                          onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)}
                           poll={!showLiveScreen}
                         />
                       }
@@ -853,7 +854,7 @@ export function ComputerView({
                   */
                   <>
                     <div className="computer-chrome">
-                      {settled ? recordTitle : <TabStrip computerId={computerId} driving={driving} end={closeButton} poll />}
+                      {settled ? recordTitle : <TabStrip computerId={computerId} driving={driving} end={closeButton} onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)} poll />}
                     </div>
                     <div className="ctk-stage">
                       <div className="computer-frame ctk-screen relative w-full rounded-lg" data-ctk-screen style={{ aspectRatio }}>
