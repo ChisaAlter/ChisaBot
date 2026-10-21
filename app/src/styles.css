@@ -8775,3 +8775,17 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   .cc-tree .cc-sess-actions,
   .cc-tree .cc-ws-actions { opacity: 1; pointer-events: auto; }
 }
+
+/*
+ * 触屏：工作区行加高，把「＋ / ⋯」做成 44px 的点按区（DESIGN §40 的手指尺寸）。
+ * 2026-10-21 去掉顶部那颗大「新建会话」以后，工作区行的＋就是手机上唯一的新建入口，
+ * 原来 26×26 太小；只在没有悬停的设备上放大，桌面那套 32px 行高不变。
+ */
+@media (hover: none) {
+  .cc-tree .cc-ws-head { min-height: 44px; }
+  .cc-tree .cc-ws-actions { top: 0; right: 2px; gap: 0; transform: none; }
+  .cc-tree.is-page .cc-ws-actions { top: 4px; }
+  .cc-tree .cc-ws-actions .cc-ws-more,
+  .cc-tree .cc-ws-add { width: 44px; height: 44px; border-radius: 10px; }
+  .cc-tree .cc-ws:has(> .cc-ws-actions) > .cc-ws-head { padding-right: 94px; }
+}
