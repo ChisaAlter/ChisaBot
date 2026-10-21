@@ -22,7 +22,6 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useRef } from "react";
 import { AppSidebar } from "@/components/app-sidebar/app-sidebar";
 import { ChannelPagination } from "@/components/app-sidebar/channel-pagination";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -270,12 +269,6 @@ function renderSidebar() {
   );
 }
 
-function activeObserver() {
-  const observer = [...ScrollObserver.active][0];
-  if (!observer) throw new Error("No active pagination observer");
-  return observer;
-}
-
 test("message emphasis restyles the mounted rows from the account preferences cache", async () => {
   const view = renderSidebar();
   // The list is a filter now, so this is how a person opens it.
@@ -442,50 +435,42 @@ test("a search filters what is loaded and the history is opened by hand", async 
 });
 
 /**
- * The sentinel's own contract, driven directly.
+ * 直接测组件本身：翻页只有按钮这一条路。
  *
- * DRIVEN DIRECTLY BECAUSE NO SCREEN REACHES IT. `ChannelPagination` is drawn by the sidebar's
- * conversation list, and that list is only drawn while `searching` is true — the one state in which
- * this component deliberately creates no observer. So the branch below is currently unreachable from
- * the product; it is pinned here so that whoever gives it a calling screen again gets it with its
- * wiring intact, and so that the wiring is not quietly deleted as dead code.
+ * 以前这里还钉着一条 IntersectionObserver 的契约（不处于搜索态时滚动自动翻页）。导航收敛之后左栏
+ * 只列机器人，会话列表**只在搜索态**渲染，而搜索态正是那条分支主动退出的情况——它没有任何调用点。
+ * 2026-10-21 实机审查把那条死分支删掉了，这里改成钉住现在的契约：一次点击发一次请求、取数中按钮禁用、
+ * 最后一页没有按钮、全程不创建任何 observer。
  */
 function PaginationProbe({
   fetchNextPage,
   hasNextPage,
   isFetching = false,
   isFetchNextPageError = false,
-  searching = false,
 }: {
   fetchNextPage: (options?: { cancelRefetch?: boolean }) => Promise<unknown>;
   hasNextPage: boolean;
   isFetching?: boolean;
   isFetchNextPageError?: boolean;
-  searching?: boolean;
 }) {
-  const scrollRoot = useRef<HTMLDivElement>(null);
   // 探针只关心「有没有人调了翻页」，不关心无限查询的返回类型；在边界上收窄一次，别把整条链路的类型都放开。
   const nextPage = fetchNextPage as unknown as React.ComponentProps<
     typeof ChannelPagination
   >["query"]["fetchNextPage"];
   return (
-    <div ref={scrollRoot}>
-      <ChannelPagination
-        query={{
-          fetchNextPage: nextPage,
-          hasNextPage,
-          isFetching,
-          isFetchingNextPage: false,
-          isFetchNextPageError,
-        }}
-        scrollRoot={scrollRoot}
-        searching={searching}
-      />
-    </div>
+    <ChannelPagination
+      query={{
+        fetchNextPage: nextPage,
+        hasNextPage,
+        isFetching,
+        isFetchingNextPage: false,
+        isFetchNextPageError,
+      }}
+    />
   );
 }
 
-test("the sentinel asks for the next page on the list's own scroller", async () => {
+test("the button asks for the next page, once per press, and disappears on the last page", async () => {
   const asked: unknown[] = [];
   const fetchNextPage = (options?: { cancelRefetch?: boolean }) => {
     asked.push(options);
@@ -496,35 +481,24 @@ test("the sentinel asks for the next page on the list's own scroller", async () 
     <PaginationProbe fetchNextPage={fetchNextPage} hasNextPage />,
   );
 
-  await waitFor(() => expect(ScrollObserver.active.size).toBe(1));
-  /*
-   * THE SCROLLER, HANDED DOWN RATHER THAN GUESSED. A sentinel watching `null` watches the viewport,
-   * which in a sidebar is the wrong box entirely: the list scrolls inside its own card, and a row
-   * two screens down in a document that never scrolls would never intersect.
-   */
-  expect(activeObserver().root).toBe(view.container.firstElementChild);
-
+  // 2026-10-21：滚动自动翻页那条分支删掉了（会话列表只在搜索态渲染，它没有调用点）。
+  // 翻页只能来自一次明确的点击，而且一次点击只发一次请求。
+  expect(ScrollObserver.active.size).toBe(0);
   await act(async () => {
-    activeObserver().intersect();
+    fireEvent.click(view.getByRole("button"));
   });
   expect(asked).toEqual([{ cancelRefetch: false }]);
 
-  // A page already in flight is not asked for again by scrolling: the sentinel goes away while the
-  // query is fetching, and comes back when it settles.
+  // A page already in flight is not asked for again: the button is disabled while fetching.
   view.rerender(
     <PaginationProbe fetchNextPage={fetchNextPage} hasNextPage isFetching />,
   );
-  await waitFor(() => expect(ScrollObserver.active.size).toBe(0));
-  expect(asked).toHaveLength(1);
+  expect(view.getByRole("button").hasAttribute("disabled")).toBe(true);
 
   // The final page has nothing left to ask for, so it carries no press either.
   view.rerender(
     <PaginationProbe fetchNextPage={fetchNextPage} hasNextPage={false} />,
   );
   expect(view.queryByRole("button")).toBeNull();
-
-  // And a filtered list observes nothing at all, which is why the sidebar's list never scrolls.
-  view.rerender(<PaginationProbe fetchNextPage={fetchNextPage} hasNextPage searching />);
   expect(ScrollObserver.active.size).toBe(0);
-  expect(asked).toHaveLength(1);
 });

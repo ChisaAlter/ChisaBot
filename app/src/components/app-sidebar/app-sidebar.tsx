@@ -101,7 +101,6 @@ function preloadBotDialogs() {
   BotComputerAccessDialog.preload();
 }
 
-import { LeftModeSwitch } from "@/components/cloud-cc/left-mode-switch";
 import {
   Tooltip,
   TooltipContent,
@@ -728,7 +727,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         className="glass-side-full gap-3 overflow-hidden"
         id="chisabot-bot-list"
       >
-        <LeftModeSwitch mode="bots" />
         <section
           aria-label={searching ? "搜索结果" : "机器人"}
           className="glass-card glass-side-card min-h-0 flex-1"
@@ -843,11 +841,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         </motion.div>
                       ))}
                     </AnimatePresence>
-                    <ChannelPagination
-                      query={channels}
-                      scrollRoot={scrollRoot}
-                      searching={searching}
-                    />
+                    <ChannelPagination query={channels} />
                   </SidebarGroup>
                 </SidebarMenu>
               </div>
