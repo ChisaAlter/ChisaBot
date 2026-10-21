@@ -28,6 +28,7 @@ import { imageDimsFor } from "./image-dims";
 import {
   anchorsPresent,
   INBOX_TEXT_LIMIT,
+  isWorkerResult,
   newSteerSession,
   ThreadInbox,
   type TranscriptInjection,
@@ -163,8 +164,12 @@ export function prepareConversationMessages(
   stored: readonly Message[],
   input: readonly Message[],
   persistedInput?: readonly Message[],
+  pausedUserIds: ReadonlySet<string> = new Set(),
 ) {
-  const execution = mergeConversationMessages(stored, input);
+  // Already-read supplements stay visible as history, but a later turn must not execute them.
+  // Assistant calls and their tool results remain paired in the execution history.
+  const execution = mergeConversationMessages(stored, input)
+    .filter((message) => message.role !== "user" || !pausedUserIds.has(message.id));
   const visible = mergeConversationMessages(stored, persistedInput ?? input);
   const visibleById = new Map(visible.map((message) => [message.id, message]));
   const inputIds = new Set(execution.map((message) => message.id));
@@ -615,6 +620,7 @@ type FrontendRelay = {
   inboxRunIds: string[];
   callIds: string[];
   timer: ReturnType<typeof setTimeout>;
+  closing?: Promise<void>;
 };
 type LiveEvent = { sequence: bigint; event: BaseEvent };
 type ActiveRun = {
@@ -650,7 +656,7 @@ const EMPTY_THREAD_READS: Record<string, unknown> = {
   context: { context: null },
   stopped: { userMessageIds: [] },
   fallbacks: { turns: [] },
-  inbox: { running: false, items: [] },
+  inbox: { running: false, paused: false, items: [] },
   workers: { workers: [] },
   "sent-at": { userMessageId: null, at: null, now: null },
 };
@@ -665,6 +671,29 @@ class PostgresAgentRunner extends AgentRunner {
     if (relay) clearTimeout(relay.timer);
     this.frontend.delete(threadId);
     return relay;
+  }
+  /** Keep the old relay busy until its durable pause is committed, before any fresh turn starts. */
+  private closeFrontend(threadId: string, relay: FrontendRelay, outcome: "owed" | "stopped", recordStop = false): Promise<void> {
+    if (relay.closing) return relay.closing;
+    clearTimeout(relay.timer);
+    relay.closing = (async () => {
+      while (this.frontend.get(threadId) === relay) {
+        try {
+          // These state transitions are idempotent, including an unknown COMMIT result.
+          for (const runId of relay.inboxRunIds) await this.inbox.settle(threadId, runId, outcome);
+          if (recordStop) await this.store.database.$client.unsafe(
+            "UPDATE openbot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2", [threadId, relay.runId],
+          );
+          if (this.frontend.get(threadId) === relay) this.clearFrontend(threadId);
+          return;
+        } catch {
+          // The database bounds each attempt. Keep one closing owner while it recovers;
+          // retry only inbox/Stop bookkeeping, never a model request or tool execution.
+          await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+    })();
+    return relay.closing;
   }
   private pendingFrontend(entry: ActiveRun, tools: readonly { name: string }[]): string[] {
     const fresh = entry.agent.messages.filter((message) => !entry.inputMessageIds.has(message.id));
@@ -729,6 +758,14 @@ class PostgresAgentRunner extends AgentRunner {
     }
     const relay = this.frontend.get(request.threadId);
     if (relay) {
+      if (relay.closing) return new Observable<BaseEvent>((subscriber) => {
+        let subscription: { unsubscribe(): void } | undefined;
+        let closed = false;
+        void relay.closing!.then(() => {
+          if (!closed) subscription = this.run(request).subscribe(subscriber);
+        }).catch((error) => subscriber.error(error));
+        return () => { closed = true; subscription?.unsubscribe(); };
+      });
       const answered = new Set(request.input.messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
       // A concurrent user send is not a tool continuation. Park it without replaying the old
       // tool events (which would dispatch those tools again on the joining browser).
@@ -1014,13 +1051,39 @@ class PostgresAgentRunner extends AgentRunner {
       const row = await this.store.thread(threadId);
       // 重新生成 / 编辑后重发截掉的消息（DESIGN.md §67）：还没收到截断的旧设备会把它们一起发上来，滤掉，不让它们复活。
       const dead = await tombstones(this.store.database, threadId);
-      prepared = prepareConversationMessages(
-        row.messages,
-        dropTombstoned(input.messages, dead),
-        request.persistedInputMessages
-          ? dropTombstoned(request.persistedInputMessages, dead)
-          : undefined,
-      );
+      const held = await this.inbox.heldIds(threadId);
+      // A stale tab may still append a paused row as ordinary input. Only a new explicit
+      // user message or the per-row action below can authorize new work after Stop.
+      let incoming = dropTombstoned(input.messages, dead).filter((message) => !held.has(message.id));
+      let visible = request.persistedInputMessages
+        ? dropTombstoned(request.persistedInputMessages, dead).filter((message) => !held.has(message.id))
+        : incoming;
+      const storedIds = new Set(row.messages.map((message) => message.id));
+      const backgroundDelivery = Boolean(input.forwardedProps?.chisabotWorkerDelivery) || request.persistedInputMessages !== undefined;
+      const freshUser = !backgroundDelivery && incoming.some((message) => message.role === "user" && !isWorkerResult(message) && !storedIds.has(message.id));
+      const resume = input.forwardedProps?.chisabotInboxResume as { sourceId?: unknown; messageId?: unknown } | undefined;
+      if (resume) {
+        if (typeof resume.sourceId !== "string" || typeof resume.messageId !== "string" ||
+          !incoming.some((message) => message.id === resume.messageId && message.role === "user" && !storedIds.has(message.id)))
+          throw new LocalConversationError("A new message is required to send a paused supplement", 400);
+        const source = await this.inbox.resumeOne(threadId, resume.sourceId, entry.runId);
+        if (!source) throw new LocalConversationError("这条保留消息已被发送或撤回，请刷新后查看。", 409);
+        const shown = { ...source, id: resume.messageId } as Message;
+        visible = visible.map((message) => message.id === resume.messageId ? shown : message);
+        incoming = incoming.map((message) => message.id === resume.messageId ? {
+          ...shown,
+          content: `用户刚刚主动点击“发送这条”，现在要求处理下面这一条此前暂停的补充。这次点击已经满足原文“等我主动发送”“收到确认后”等等待条件；不要再次等待发送或仅回复收到。若这条补充明确要求新的工具操作，现在只执行所选补充的操作一次。上一轮已经执行、停止或失败的其他工具操作不得自动重试；本次只授权所选补充，没有授权重跑上一轮任务。\n\n所选补充原文：\n${typeof source.content === "string" ? source.content : JSON.stringify(source.content)}`,
+        } as Message : message);
+      } else if (!freshUser && await this.inbox.isPaused(threadId)) {
+        // A background completion is useful data, not authority to resume a stopped turn.
+        for (const message of incoming) {
+          if (message.role !== "user" || storedIds.has(message.id)) continue;
+          await this.inbox.enqueue({ threadId, ownerUserId: row.owner_user_id, message, kind: isWorkerResult(message) ? "worker_result" : "message" });
+        }
+        throw new LocalConversationError("保留的消息已暂停，请主动发送新消息或点击“发送这条”。", 409);
+      }
+      if (freshUser) await this.inbox.startExplicitTurn(threadId);
+      prepared = prepareConversationMessages(row.messages, incoming, visible, held);
       entry.inputMessageIds = new Set(prepared.execution.map((message) => message.id));
       const oldIds = new Set(row.messages.map((message) => message.id));
       newMessages.push(
@@ -1034,8 +1097,7 @@ class PostgresAgentRunner extends AgentRunner {
           .filter((message) => message.role === "user")
           .map((message) => message.id),
       );
-      // 欠回答的（上一轮出错 / 服务重启）和还在排队的，跟着这一轮一起读进去。
-      await this.inbox.requeueOwed(threadId);
+      // Paused supplements stay held; only newly queued messages can enter this turn.
       const early = await this.inbox.claim(threadId, entry.runId);
       const execution = [...prepared.execution];
       for (const claimed of early) {
@@ -1112,10 +1174,7 @@ class PostgresAgentRunner extends AgentRunner {
         const finalization = new Promise<void>((resolve) => {
           finalized = resolve;
         });
-        const segmentInput =
-          segment === 0
-            ? input
-            : { ...input, runId: entry.runId, messages: agent.messages };
+        const segmentInput = { ...input, runId: entry.runId, messages: agent.messages };
         await withConfirmTurn(
           { threadId, runId: entry.runId, stopped: () => entry.stopped },
           () =>
@@ -1221,8 +1280,7 @@ class PostgresAgentRunner extends AgentRunner {
               callIds,
               timer: setTimeout(() => {
                 if (this.frontend.get(threadId) !== relay) return;
-                this.clearFrontend(threadId);
-                for (const runId of relay.inboxRunIds) void this.inbox.settle(threadId, runId, "owed").catch(() => {});
+                void this.closeFrontend(threadId, relay, "owed").catch(() => {});
               }, MAX_RUN_WALL_MS),
             };
             relay.timer.unref?.();
@@ -1378,8 +1436,7 @@ class PostgresAgentRunner extends AgentRunner {
       [threadId, JSON.stringify(messages), JSON.stringify(row.messages), relay.runId],
     );
     if (!changed.length || this.frontend.get(threadId) !== relay) return false;
-    this.clearFrontend(threadId);
-    for (const runId of relay.inboxRunIds) await this.inbox.settle(threadId, runId, "owed");
+    await this.closeFrontend(threadId, relay, "owed");
     return true;
   }
 
@@ -1389,16 +1446,11 @@ class PostgresAgentRunner extends AgentRunner {
       const relay = this.frontend.get(threadId);
       if (relay && runId !== undefined && relay.runId !== runId) return false;
       if (relay) {
-        this.clearFrontend(threadId);
-        for (const claimedRunId of relay.inboxRunIds) await this.inbox.settle(threadId, claimedRunId, "stopped");
-        // The wire run already finished; record Stop for history and leave queued messages parked.
-        await this.store.database.$client.unsafe(
-          "UPDATE openbot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2",
-          [threadId, relay.runId],
-        );
+        await this.closeFrontend(threadId, relay, "stopped", true);
         return true;
       }
-      // 不在本进程里跑、库里却锁着：是重启前留下的孤儿锁，停止 = 释放它。
+      // Stop in a browser tool/idle gap still durably holds unseen supplements.
+      if (runId === undefined) await this.inbox.pause(threadId);
       return await this.client.ɵreleaseOrphanedLock(threadId, runId);
     }
     if (entry.stopped || (runId !== undefined && entry.runId !== runId))
@@ -1406,6 +1458,7 @@ class PostgresAgentRunner extends AgentRunner {
     entry.stopped = true;
     entry.abort.abort();
     entry.agent.abortRun();
+    await this.inbox.pause(threadId);
     await entry.agent.detachActiveRun();
     return true;
   }
@@ -1718,6 +1771,8 @@ export async function createLocalConversations(
               "Stop running threads before clearing history",
               409,
             );
+          await transaction.unsafe("DELETE FROM chisabot_thread_inbox_control WHERE thread_id IN (SELECT id FROM openbot_local_threads WHERE owner_user_id = $1)", [actorId]);
+          await transaction.unsafe("DELETE FROM chisabot_thread_inbox WHERE thread_id IN (SELECT id FROM openbot_local_threads WHERE owner_user_id = $1)", [actorId]);
           await transaction.unsafe(
             "DELETE FROM openbot_local_threads WHERE owner_user_id = $1",
             [actorId],
@@ -1744,6 +1799,16 @@ export async function createLocalConversations(
         ]);
         if (!found[0] || found[0].owner_user_id !== actorId)
           return Response.json(EMPTY_THREAD_READS[operation]);
+      }
+      // Inbox polling needs identity and queue rows, never the growing transcript JSON.
+      if (operation === "inbox" && request.method === "GET") {
+        const [identity] = await database.$client.unsafe<{ agent_id: string }[]>(
+          "SELECT agent_id FROM openbot_local_threads WHERE id = $1 AND owner_user_id = $2", [threadId, actorId],
+        );
+        if (!identity) return Response.json(EMPTY_THREAD_READS.inbox);
+        const requestedAgent = url.searchParams.get("agentId");
+        if (requestedAgent && requestedAgent !== identity.agent_id) throw new LocalConversationError("Thread not found", 404);
+        return Response.json({ running: runner.isActive(threadId), paused: await inbox.isPaused(threadId), items: await inbox.list(threadId) });
       }
       const row = await store.owned({ threadId, userId: actorId });
       const requestedAgent = url.searchParams.get("agentId");
@@ -1781,6 +1846,7 @@ export async function createLocalConversations(
         if (operation === "inbox")
           return Response.json({
             running: runner.isActive(threadId),
+            paused: await inbox.isPaused(threadId),
             items: await inbox.list(threadId),
           });
         if (operation === "workers")
@@ -1826,6 +1892,8 @@ export async function createLocalConversations(
           ownerUserId: actorId,
           removedToolCalls: result.removedToolCalls,
         });
+        // A regenerated thread must not retain paused supplements from its removed history.
+        await database.$client.unsafe("UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now() WHERE thread_id = $1 AND status IN ('paused', 'stopped')", [threadId]);
         if (workers) {
           for (const workerId of await workersSince(
             database,
@@ -1877,7 +1945,9 @@ export async function createLocalConversations(
           throw new LocalConversationError("Message text is required", 400);
         if (text.length > INBOX_TEXT_LIMIT)
           throw new LocalConversationError("Message is too long", 413);
-        if (!runner.isActive(threadId)) return Response.json({ queued: false });
+        const existing = await inbox.get(threadId, id);
+        if (existing) return Response.json({ queued: true, status: existing.status });
+        if (!runner.isActive(threadId) && !await inbox.isPaused(threadId)) return Response.json({ queued: false });
         if (row.messages.some((message) => message.id === id))
           return Response.json({ queued: true, status: "read" });
         try {
@@ -1892,13 +1962,12 @@ export async function createLocalConversations(
             429,
           );
         }
-        return Response.json({ queued: true, status: "queued" });
+        return Response.json({ queued: true, status: (await inbox.get(threadId, id))?.status ?? "queued" });
       }
       if (operation === "inbox" && request.method === "DELETE") {
-        const id = url.searchParams.get("id") ?? "";
-        return Response.json({
-          withdrawn: id ? await inbox.withdraw(threadId, id) : false,
-        });
+        const id = (url.searchParams.get("id") ?? "").trim();
+        if (!id || id.length > 128) throw new LocalConversationError("Message id is required", 400);
+        return Response.json({ withdrawn: await inbox.withdrawPending(threadId, id, actorId) });
       }
       if (operation === "workers" && request.method === "POST") {
         if (!workers)
@@ -1940,6 +2009,8 @@ export async function createLocalConversations(
             "Stop the running thread before deleting it",
             409,
           );
+        await database.$client.unsafe("DELETE FROM chisabot_thread_inbox_control WHERE thread_id = $1", [threadId]);
+        await database.$client.unsafe("DELETE FROM chisabot_thread_inbox WHERE thread_id = $1", [threadId]);
         return new Response(null, { status: 204 });
       }
       if (

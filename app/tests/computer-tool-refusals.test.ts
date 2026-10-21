@@ -25,6 +25,58 @@ function serverAnswering(status: number, body: unknown) {
     })) as unknown as typeof fetch;
 }
 
+describe("computer operation lifetime", () => {
+  test("long command/download budgets and caller cancellation survive the common deadline", async () => {
+    const realTimeout = AbortSignal.timeout;
+    const budgets: number[] = [];
+    AbortSignal.timeout = ((ms: number) => {
+      budgets.push(ms);
+      return realTimeout(ms);
+    }) as typeof AbortSignal.timeout;
+    let received: AbortSignal | undefined;
+    globalThis.fetch = (async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      received = init?.signal ?? undefined;
+      return Response.json({ stdout: "done" });
+    }) as unknown as typeof fetch;
+    try {
+      const owner = new AbortController();
+      expect((await callComputer("bot-1", "/exec", { method: "POST", body: { timeoutMs: 600_000 } }, owner.signal)).ok).toBe(true);
+      expect(budgets).toEqual([630_000]);
+      owner.abort();
+      expect(received?.aborted).toBe(true);
+      await callComputer("bot-1", "/download", { method: "POST" });
+      expect(budgets.at(-1)).toBe(315_000);
+    } finally { AbortSignal.timeout = realTimeout; }
+  });
+});
+
+describe("an unconfirmed computer result", () => {
+  test("HTTP 200 with an interrupted or malformed body never claims success or retries", async () => {
+    for (const response of [
+      new Response("not JSON"),
+      Response.json(null),
+      Response.json([]),
+      Object.assign(new Response(), { json: async () => { throw new DOMException("deadline", "TimeoutError"); } }),
+    ]) {
+      let calls = 0;
+      globalThis.fetch = (async () => { calls++; return response; }) as unknown as typeof fetch;
+      const outcome = await callComputer("bot-1", "/exec", { method: "POST", body: { command: "write once" } });
+      expect(outcome.ok).toBe(false);
+      expect(outcome.reason).toContain("未能确认");
+      expect(calls).toBe(1);
+    }
+  });
+
+  test("Stop during body consumption retains the stopped outcome", async () => {
+    const owner = new AbortController();
+    globalThis.fetch = (async () => Object.assign(new Response(), { json: async () => {
+      owner.abort();
+      throw owner.signal.reason;
+    } })) as unknown as typeof fetch;
+    expect(await callComputer("bot-1", "/exec", { method: "POST" }, owner.signal)).toMatchObject({ ok: false, stopped: true });
+  });
+});
+
 describe("a computer call the server refused", () => {
   test("a person holding the wheel is reported as that, not as stale refs", async () => {
     serverAnswering(409, {

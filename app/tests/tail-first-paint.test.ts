@@ -50,6 +50,14 @@ describe("tail-first-paint (CB-025)", () => {
     expect(reconcileMountedCount(100, 40, 80)).toBe(40);
   });
 
+  test("appends retain mounted rows across the threshold and while history is still catching up", () => {
+    expect(reconcileMountedCount(48, 49, 48, true)).toBe(49);
+    expect(reconcileMountedCount(120, 121, 36, true)).toBe(37);
+    expect(reconcileMountedCount(200, 202, 200, true)).toBe(202);
+    // Older history arriving on a short snapshot keeps the bounded tail window.
+    expect(reconcileMountedCount(36, 200, 36, false)).toBe(TAIL_FIRST_INITIAL);
+  });
+
   test("200-message catch-up stays under a dozen frames", () => {
     expect(stepsToFullMount(200)).toBeLessThanOrEqual(12);
     expect(stepsToFullMount(400)).toBeLessThanOrEqual(20);

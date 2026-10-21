@@ -197,8 +197,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # things people ask a Bot to do, and Python is what they mean by it; without an interpreter the Bot
 # fell back to Node and answered with Python it never ran (2026-10-18 real-use test). venv and pip
 # come with it, so `python -m venv` + pip works without sudo (Ubuntu's system pip is PEP 668-locked).
+# Common Office tasks work immediately with the system Python; missing libraries led the Bot to
+# hand-build OOXML and skip real numeric verification in the continuous Web acceptance run.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python3-pip python3-venv python-is-python3 \
+      python3 python3-pip python3-venv python-is-python3 python3-openpyxl python3-docx \
+  && python -c 'import openpyxl, docx' \
   && rm -rf /var/lib/apt/lists/*
 
 # A Bot can install what a task needs, and nothing else as root.

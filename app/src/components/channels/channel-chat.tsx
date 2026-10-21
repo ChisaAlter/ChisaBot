@@ -76,7 +76,7 @@ import {
   useThreadActivity,
   withStoredTail,
 } from "@/lib/copilot/thread-activity";
-import { queueMessage } from "@/lib/copilot/thread-inbox";
+import { queueMessage, queuedFor, restoreQueue } from "@/lib/copilot/thread-inbox";
 import {
   HISTORY_RETRY_DELAYS_MS,
   readThreadMessages,
@@ -965,6 +965,7 @@ export function ChannelChat({
     attachments: Attachment[],
     /** 重新生成 / 编辑后重发（§67）：原样发这份内容（带着原来的附件段），不再从文字和附件拼。 */
     contentOverride?: Message["content"],
+    inboxSourceId?: string,
   ) => {
     // 模型已经不在列表里：这一轮必失败，先挡下来，别让消息堆在对话里没人回答（P1，2026-10-20）。
     if (modelMissingRef.current)
@@ -1067,7 +1068,10 @@ export function ChannelChat({
       noteRunProgress.current();
       const runPromise = copilotkit.runAgent({
         agent: target,
-        ...(panelAuthoring ? { forwardedProps: panelAuthoring } : {}),
+        ...((panelAuthoring || inboxSourceId) ? { forwardedProps: {
+          ...panelAuthoring,
+          ...(inboxSourceId ? { chisabotInboxResume: { sourceId: inboxSourceId, messageId: userMessageId } } : {}),
+        } } : {}),
       });
       /**
        * 看门狗问的「最近一次有进展」：这一轮的 run 事件（模型在写、工具结果在回来…），或者浏览器里
@@ -1268,6 +1272,7 @@ export function ChannelChat({
     skillInstructions: string[] = [],
     attachments: Attachment[] = [],
     contentOverride?: Message["content"],
+    inboxSourceId?: string,
   ) => {
     const trimmed = text.trim();
     // A pasted screenshot with no caption is still a message to send: `canSendDraft` already
@@ -1298,6 +1303,7 @@ export function ChannelChat({
         skillInstructions,
         attachments,
         contentOverride,
+        inboxSourceId,
       );
     } finally {
       // 停止会把计数直接清零，这里无条件减会变成负数，导致 sendInFlight 永远卡住（CHAT-02）。
@@ -1381,6 +1387,23 @@ export function ChannelChat({
   /** Stable reference for effects and component callbacks. */
   const sayRef = useRef(say);
   sayRef.current = say;
+  useEffect(() => {
+    const onSendPaused = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId: string; id: string; accept: (run: () => Promise<unknown>) => void }>).detail;
+      if (!detail || detail.threadId !== channel.threadId || typeof detail.accept !== "function") return;
+      detail.accept(async () => {
+        const item = queuedFor(channel.threadId).find((item) => item.id === detail.id && item.status === "paused");
+        if (!item) throw new Error("这条消息已不再暂停，请刷新后查看。");
+        try {
+          return await sayRef.current(item.text, [], [], undefined, item.id);
+        } finally {
+          await restoreQueue(channel.threadId);
+        }
+      });
+    };
+    window.addEventListener("chisabot-send-paused", onSendPaused);
+    return () => window.removeEventListener("chisabot-send-paused", onSendPaused);
+  }, [channel.threadId]);
 
   // 「已停止」（2026-10-13 第四轮）：本机刚按停止的那一轮 + 服务器记下的（刷新、换设备也在）。
   const [localStops, setLocalStops] = useState<ReadonlySet<string>>(

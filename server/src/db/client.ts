@@ -2,6 +2,7 @@ import { SQL } from "bun";
 import { readFileSync } from "node:fs";
 import { drizzle } from "drizzle-orm/bun-sql";
 import * as schema from "./schema";
+import { recoveringSql } from "./recovery";
 
 /**
  * One percent-decoded part of the address, or a refusal that names it.
@@ -196,7 +197,7 @@ export function addressOf(
  */
 export function createDatabase(
   databaseUrl: string,
-  options: { max?: number } = {},
+  options: { max?: number; queryTimeoutMs?: number } = {},
 ) {
   /*
    * Loud rather than silent when the arguments are the wrong way round.
@@ -227,10 +228,19 @@ export function createDatabase(
    */
   delete process.env.DATABASE_URL;
 
-  const client = new SQL({
-    ...addressOf(databaseUrl),
+  const address = addressOf(databaseUrl);
+  const client = recoveringSql(() => new SQL({
+    ...address,
+    // Bound the work on PostgreSQL itself, so a browser deadline does not leave a locked or
+    // expensive query occupying the pool forever. Operators can override these per deployment
+    // with connection parameters in DATABASE_URL; transactions may still set a local budget.
+    connection: {
+      statement_timeout: "25000",
+      lock_timeout: "5000",
+      ...address.connection,
+    },
     ...(options.max === undefined ? {} : { max: options.max }),
-  });
+  }), options.queryTimeoutMs);
 
   return drizzle({ client, schema });
 }

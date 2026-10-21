@@ -18,6 +18,18 @@ jobs:
     name: Web, model settings and Magpie catalog
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: openbot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d openbot_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,6 +70,28 @@ jobs:
       - name: Chat UI checks
         working-directory: app
         run: bun test tests/no-group-has.test.ts tests/stopped-turn.test.ts tests/bot-message-list.test.tsx tests/link-cards.test.tsx tests/rich-previews-extract.test.ts tests/ui-align.test.ts tests/connection-drop.test.ts tests/fold-narration.test.ts tests/chat-unify.test.ts tests/turn-unfinished.test.tsx tests/workspace-links.test.ts
+      - name: Request, message identity and persistent queue checks
+        working-directory: app
+        env:
+          NODE_ENV: test
+        # Separate test processes keep SDK module registrations and DOM globals isolated.
+        run: |
+          bun test tests/client-deadline.test.ts tests/computer-tool-refusals.test.ts
+          bun test tests/message-node-identity.test.tsx tests/message-blank-release.test.ts
+          bun test tests/tail-first-paint.test.ts
+          bun test tests/message-scroll-reduced-motion.test.tsx
+          bun test tests/thread-inbox-paused.test.tsx tests/thread-inbox-concurrency.test.tsx tests/conversation-sync.test.ts
+      - name: Install actual computer service dependencies
+        working-directory: agent-computer
+        run: bun install --frozen-lockfile
+      - name: Durable inbox and database recovery checks
+        env:
+          TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/openbot_test
+          OPENBOT_COMPUTER_STOP_HTTP: "1"
+        run: |
+          bun test server/tests/database-deadline.integration.test.ts server/tests/database-recovery.test.ts
+          bun test server/tests/local-conversations-inbox.integration.test.ts server/tests/thread-inbox-paused.integration.test.ts server/tests/thread-inbox.test.ts
+          bun test server/tests/computer-stop.test.ts
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
         run: bun install --frozen-lockfile && bun test tests/native-select.test.ts tests/aria-snapshot.test.ts

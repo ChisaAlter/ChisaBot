@@ -20,6 +20,8 @@ export async function runAdminSmoke(agentId?: string): Promise<AdminSmokeResult>
   const response = await tryClient("/api/admin/smoke", {
     method: "POST",
     body: agentId ? { agentId } : {},
+    // The server allows the model 45s, plus response transport.
+    timeoutMs: 60_000,
   });
   const body = (await response.json().catch(() => null)) as
     | (Partial<AdminSmokeResult> & { error?: string })

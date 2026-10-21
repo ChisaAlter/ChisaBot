@@ -81,6 +81,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { readFiring } from "@/lib/channels/routine-firing";
+import { nextBlankHeight } from "@/lib/chat/blank-release";
 import { friendlyError, UNANSWERED_TURN_REASON } from "@/lib/chat/friendly-error";
 import { supersededPageCalls } from "@/lib/chat/page-cards";
 import {
@@ -847,8 +848,8 @@ function SettleAtEnd({
    *
    * 现在：回答结束（busy 变 false）的那一次提交里（和收起动画同时开始），人还在底部、没动过滚动：先把滚动容器的空
    * 原样挪进我们的留白（总高度不变，画面不动），让滚动容器改成「跟着底部」（scrollToEnd 把它的 spacer 清零），
-   * 再把留白在 300ms 里缩到 0——浏览器把 scrollTop 一点点夹小，整段对话平滑地往下落到正常的底边距。
-   * 人往上翻过、或者又开始回答了：不动。`prefers-reduced-motion`：一下收掉。
+   * 再按实际绘制帧逐步收掉留白——浏览器把 scrollTop 一点点夹小，整段对话平滑地往下落到正常的底边距。
+   * 人往上翻过、或者又开始回答了：不动。`prefers-reduced-motion` 发新消息时直接贴底，不制造翻页留白。
    */
   const wasBusy = useRef(busy);
   useLayoutEffect(() => {
@@ -1254,8 +1255,8 @@ function SettleAtEnd({
       scrollToEnd({ behavior: "auto" });
       element.scrollTop = top;
       element.style.scrollBehavior = "";
-      const finish = () => {
-        setSlack(0);
+      const finish = (remaining = 0) => {
+        setSlack(remaining);
         lastHeight = content.offsetHeight;
         s.releasing = false;
         look();
@@ -1265,16 +1266,24 @@ function SettleAtEnd({
         finish();
         return true;
       }
-      // 3) 留白缩到 0：ease-out，RELEASE_MS。
-      const start = performance.now();
+      // 3) Integrate each rendered frame. Catching up to a 300ms wall-clock ease after a slow
+      // Markdown/layout frame used to remove 70–120px at once and clamp scrollTop backwards.
+      let remaining = total;
+      let previous = performance.now();
       const step = (now: number) => {
-        const t = Math.min(1, (now - start) / RELEASE_MS);
-        const eased = 1 - (1 - t) ** 3;
-        if (t >= 1 || s.busy || performance.now() - touchedAt < 50) {
+        if (s.busy || performance.now() - touchedAt < 400) {
+          // A new reply or the reader scrolling owns the viewport now. Preserve this frame's
+          // remaining blank rather than snapping it to zero underneath them.
+          finish(s.slack);
+          return;
+        }
+        remaining = nextBlankHeight(remaining, now - previous);
+        previous = now;
+        if (remaining === 0) {
           finish();
           return;
         }
-        setSlack(total * (1 - eased));
+        setSlack(remaining);
         lastHeight = content.offsetHeight;
         releaseFrame = window.requestAnimationFrame(step);
       };
@@ -1356,9 +1365,6 @@ function SettleAtEnd({
 
   return null;
 }
-
-/** 一轮结束后底下的空收掉用多久（毫秒，§93.3）。 */
-const RELEASE_MS = 300;
 
 /**
  * How many of the newest turns cascade when a channel is opened, and how far apart.
@@ -2925,6 +2931,7 @@ export function ChatTranscript({
     items.length,
     scrollKey,
     viewportRef,
+    items[0]?.id,
   );
   useKeepBottomOnPrepend(viewportRef, items[tailStart]?.id ?? null);
 
@@ -3114,7 +3121,7 @@ export function ChatTranscript({
               <div className="chat-top-notice">{topNotice}</div>
             ) : null}
             {items.length === 0 && restoring ? <RestoringTranscript /> : null}
-            {(tailStart > 0 ? items.slice(tailStart) : items).map(
+            {(tailStart > 0 ? items.slice(tailStart) : items).flatMap(
               (item, offset) => {
                 const index = tailStart + offset;
                 const stoppedHere = compact.stoppedAfter.has(item.id);
@@ -3127,7 +3134,9 @@ export function ChatTranscript({
                   : renderRow(item, index);
                 // 「已停止」/备用说明必须跟着 compact 锚点画出来：锚点行若因 quiet/fold 卸掉，
                 // 以前连标记一起 return null，刷新后只剩服务器误锚时就像挂在上一轮回答下面。
-                if (!stoppedHere && !fallback) return row;
+                // Keep every keyed row in one flat sibling list. Returning a nested array only
+                // when a marker appears changes the anchor row's React parent and remounts it.
+                if (!stoppedHere && !fallback) return [row];
                 return [
                   row,
                   stoppedHere ? (
@@ -3308,6 +3317,7 @@ function useFreshAnchor(
   lastSentAt: SentAtReading | null = null,
   sendMode?: React.RefObject<SendMode>,
 ): string | null {
+  const reducedMotion = useReducedMotion();
   const seen = useRef<{
     baseline: string | null;
     id: string | null;
@@ -3336,11 +3346,14 @@ function useFreshAnchor(
     const now = Date.now();
     // 上一条（这条出现之前的最新一条用户消息）什么时候发的：服务器读数优先，本机记的兜底（§94）。
     // 回答还在跑的时候人也算在同一轮里（§94.7）：长任务跑到十几分钟，补一句话不该把回答推走。
-    memo.continuous = staysInSameTurn(
+    const sameTurn = staysInSameTurn(
       previousSentAt(memo.last, lastSentAt),
       now,
       takeSendWhileBusy(now),
     );
+    // Reduced motion follows the actual bottom instead of moving the question to 1/3 and
+    // inserting an artificial screen of blank space that would need another scroll to remove.
+    memo.continuous = reducedMotion === true || sameTurn;
     memo.id = newestUserMessageId;
     memo.at = now;
     rememberSent(newestUserMessageId, now);

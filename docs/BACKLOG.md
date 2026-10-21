@@ -95,6 +95,20 @@
 | [CB-084](#cb-084) | 从其他页面切回机器人页总要刷新一次 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: web` · `P1` · `status: done` |
 | [CB-085](#cb-085) | 搜索旁新建机器人；弹出面板与常驻面板一致 | 成熟度 Maturity | `type: bug` · `area: web` · `P1` · `status: done` |
 | [CB-086](#cb-086) | 连续补话不重复执行；停止按钮终止当次计算机命令 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: done` |
+| [CB-087](#cb-087) | 聊天可靠性全面修复：滚动、队列恢复、请求与编码 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: in-progress` |
+
+## CB-087
+
+**聊天可靠性全面修复：滚动、队列恢复、请求与编码**
+
+里程碑：成熟度 Maturity · 标签：`type: bug` `area: chat` `area: computer` `P1` `status: in-progress`
+
+- [ ] 修复长对话发送与结束时节点替换、滚动跳动，七项严格回归通过。
+- [ ] Stop/失败后补话跨刷新、重启和另一页面保留暂停，用户主动操作才恢复。
+- [ ] 以可复现用例修复已证实的读取超时和生成代码编码兼容问题。
+- [ ] 保持原有一次执行与命令取消回归，通过完整相关检查并发布、Web 复测。
+
+分支：`fix/chat-reliability`。隔离预览：loopback `3299`。
 
 ## CB-086
 

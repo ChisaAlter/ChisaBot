@@ -16,7 +16,7 @@ import type { Database } from "./db/client";
  *   没有一条会被悄悄丢掉。
  */
 export type InboxKind = "message" | "worker_result";
-export type InboxStatus = "queued" | "read" | "answered" | "stopped" | "owed" | "withdrawn" | "merged";
+export type InboxStatus = "queued" | "paused" | "read" | "answered" | "stopped" | "owed" | "withdrawn" | "merged";
 export type InboxItem = {
   id: string;
   threadId: string;
@@ -59,20 +59,72 @@ export class ThreadInbox {
     await this.database.$client.unsafe(
       "CREATE INDEX IF NOT EXISTS chisabot_thread_inbox_status ON chisabot_thread_inbox(thread_id, status, created_at)",
     );
+    // Like inbox rows, control is also used by workers before the local thread is created.
+    // Thread deletion and Bot purge remove it explicitly rather than imposing an FK here.
+    await this.database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_thread_inbox_control (
+      thread_id text PRIMARY KEY, paused boolean NOT NULL DEFAULT false, updated_at timestamptz NOT NULL DEFAULT now()
+    )`);
   }
 
-  /** 进队。同一个 id 再来一次什么也不做（客户端重试、两个设备）。返回是否真的新进了队。 */
+  /** One durable row serializes pause, late enqueue, claim and explicit send across devices. */
+  private async locked<T>(threadId: string, action: (sql: Database["$client"], paused: boolean) => Promise<T>): Promise<T> {
+    return this.database.$client.begin(async (sql) => {
+      await sql.unsafe("INSERT INTO chisabot_thread_inbox_control (thread_id) VALUES ($1) ON CONFLICT DO NOTHING", [threadId]);
+      const [state] = await sql.unsafe<{ paused: boolean }[]>("SELECT paused FROM chisabot_thread_inbox_control WHERE thread_id = $1 FOR UPDATE", [threadId]);
+      return action(sql as unknown as Database["$client"], Boolean(state?.paused));
+    }) as Promise<T>;
+  }
+
+  async isPaused(threadId: string): Promise<boolean> {
+    const [row] = await this.database.$client.unsafe<{ paused: boolean }[]>("SELECT paused FROM chisabot_thread_inbox_control WHERE thread_id = $1", [threadId]);
+    return Boolean(row?.paused);
+  }
+
+  /** Stop/error holds unseen supplements, including enqueues that arrive after Stop. */
+  async pause(threadId: string) {
+    await this.locked(threadId, async (sql) => {
+      await sql.unsafe("UPDATE chisabot_thread_inbox_control SET paused = true, updated_at = now() WHERE thread_id = $1", [threadId]);
+      await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE thread_id = $1 AND status IN ('queued', 'owed', 'stopped')", [threadId]);
+    });
+  }
+
+  /** A fresh explicit user turn permits future supplements, without resuming old paused rows. */
+  async startExplicitTurn(threadId: string) {
+    await this.locked(threadId, async (sql) => {
+      await sql.unsafe("UPDATE chisabot_thread_inbox_control SET paused = false, updated_at = now() WHERE thread_id = $1", [threadId]);
+    });
+  }
+
+  /** The user sends exactly one paused row again as a new message; no old tool call is replayed. */
+  async resumeOne(threadId: string, sourceId: string, runId: string): Promise<Message | null> {
+    return this.locked(threadId, async (sql) => {
+      const [row] = await sql.unsafe<InboxRow[]>(`UPDATE chisabot_thread_inbox SET status = 'read', run_id = $3,
+        read_at = now(), updated_at = now() WHERE thread_id = $1 AND id = $2 AND status IN ('paused', 'owed', 'stopped') RETURNING *`, [threadId, sourceId, runId]);
+      return row?.message ?? null;
+    });
+  }
+
+  async heldIds(threadId: string): Promise<Set<string>> {
+    const rows = await this.database.$client.unsafe<{ id: string }[]>("SELECT id FROM chisabot_thread_inbox WHERE thread_id = $1 AND status IN ('paused', 'owed', 'stopped')", [threadId]);
+    return new Set(rows.map((row) => row.id));
+  }
+
+  /** 同一个 id 的重试不改变暂停状态。 */
   async enqueue(input: { threadId: string; ownerUserId: string; message: Message; kind?: InboxKind }): Promise<boolean> {
-    const queued = await this.database.$client.unsafe<{ n: number }[]>(
-      "SELECT count(*)::int AS n FROM chisabot_thread_inbox WHERE thread_id = $1 AND status = 'queued'", [input.threadId],
-    );
-    if ((queued[0]?.n ?? 0) >= INBOX_QUEUE_LIMIT) throw new Error("排队的消息太多了，请等机器人先处理一下。");
-    const rows = await this.database.$client.unsafe(
-      `INSERT INTO chisabot_thread_inbox (thread_id, id, owner_user_id, kind, message)
-       VALUES ($1, $2, $3, $4, $5::text::jsonb) ON CONFLICT (thread_id, id) DO NOTHING RETURNING id`,
-      [input.threadId, input.message.id, input.ownerUserId, input.kind ?? "message", JSON.stringify(input.message)],
-    );
-    return rows.length > 0;
+    return this.locked(input.threadId, async (sql, paused) => {
+      const existing = await sql.unsafe("SELECT id FROM chisabot_thread_inbox WHERE thread_id = $1 AND id = $2", [input.threadId, input.message.id]);
+      if (existing.length) {
+        // Older background-delivery fallbacks may have changed this row back to queued.
+        if (paused) await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'owed', 'stopped')", [input.threadId, input.message.id]);
+        return false;
+      }
+      const [queued] = await sql.unsafe<{ n: number }[]>("SELECT count(*)::int AS n FROM chisabot_thread_inbox WHERE thread_id = $1 AND status IN ('queued', 'paused', 'owed', 'stopped')", [input.threadId]);
+      if ((queued?.n ?? 0) >= INBOX_QUEUE_LIMIT) throw new Error("排队的消息太多了，请先发送或撤回保留的消息。");
+      const rows = await sql.unsafe(`INSERT INTO chisabot_thread_inbox (thread_id, id, owner_user_id, kind, message, status)
+        VALUES ($1, $2, $3, $4, $5::text::jsonb, $6) ON CONFLICT (thread_id, id) DO NOTHING RETURNING id`,
+        [input.threadId, input.message.id, input.ownerUserId, input.kind ?? "message", JSON.stringify(input.message), paused ? "paused" : "queued"]);
+      return rows.length > 0;
+    });
   }
 
   async queued(threadId: string): Promise<InboxItem[]> {
@@ -84,64 +136,91 @@ export class ThreadInbox {
 
   /** 把排队的全部标成「已读」并归到这次运行，按进队顺序返回。 */
   async claim(threadId: string, runId: string): Promise<InboxItem[]> {
-    const rows = await this.database.$client.unsafe<InboxRow[]>(
-      `UPDATE chisabot_thread_inbox SET status = 'read', run_id = $2, read_at = now(), updated_at = now()
-       WHERE thread_id = $1 AND status = 'queued' RETURNING *`, [threadId, runId],
-    );
-    return rows.map(item).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    return this.locked(threadId, async (sql, paused) => {
+      if (paused) return [];
+      const rows = await sql.unsafe<InboxRow[]>(
+        `UPDATE chisabot_thread_inbox SET status = 'read', run_id = $2, read_at = now(), updated_at = now()
+         WHERE thread_id = $1 AND status = 'queued' RETURNING *`, [threadId, runId],
+      );
+      return rows.map(item).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    });
   }
 
   /** 客户端把排队的消息改成普通发送了（运行刚好结束）：这些不再由收件箱负责。 */
   async merge(threadId: string, runId: string, ids: readonly string[]) {
     if (!ids.length) return;
     // Bun SQL 的 unsafe 不会把 JS 数组变成 text[]，用 jsonb 展开。
-    await this.database.$client.unsafe(
-      `UPDATE chisabot_thread_inbox SET status = 'read', run_id = $2, read_at = coalesce(read_at, now()), updated_at = now()
-       WHERE thread_id = $1 AND status IN ('queued', 'owed')
-       AND id IN (SELECT jsonb_array_elements_text($3::text::jsonb))`, [threadId, runId, JSON.stringify(ids)],
-    );
+    await this.locked(threadId, async (sql, paused) => {
+      if (paused) return;
+      await sql.unsafe(
+        `UPDATE chisabot_thread_inbox SET status = 'read', run_id = $2, read_at = coalesce(read_at, now()), updated_at = now()
+         WHERE thread_id = $1 AND status = 'queued'
+         AND id IN (SELECT jsonb_array_elements_text($3::text::jsonb))`, [threadId, runId, JSON.stringify(ids)],
+      );
+    });
   }
 
   /** 一次运行结束：它读过的消息按结局落定。 */
   async settle(threadId: string, runId: string, outcome: "answered" | "stopped" | "owed") {
-    await this.database.$client.unsafe(
-      `UPDATE chisabot_thread_inbox SET status = $3, updated_at = now()
-       WHERE thread_id = $1 AND run_id = $2 AND status = 'read'`, [threadId, runId, outcome],
-    );
+    await this.locked(threadId, async (sql) => {
+      if (outcome !== "answered") {
+        await sql.unsafe("UPDATE chisabot_thread_inbox_control SET paused = true, updated_at = now() WHERE thread_id = $1", [threadId]);
+        await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE thread_id = $1 AND status IN ('queued', 'owed', 'stopped')", [threadId]);
+      }
+      await sql.unsafe(
+        `UPDATE chisabot_thread_inbox SET status = $3, updated_at = now()
+         WHERE thread_id = $1 AND run_id = $2 AND status = 'read'`, [threadId, runId, outcome === "answered" ? outcome : "paused"],
+      );
+    });
   }
 
   async withdraw(threadId: string, id: string): Promise<boolean> {
     const rows = await this.database.$client.unsafe(
       `UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now()
-       WHERE thread_id = $1 AND id = $2 AND status = 'queued' RETURNING id`, [threadId, id],
+       WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'paused', 'owed', 'stopped') RETURNING id`, [threadId, id],
     );
     return rows.length > 0;
+  }
+
+  /** HTTP withdrawal also reserves absent IDs, so a timed-out POST cannot arrive after withdrawal. */
+  async withdrawPending(threadId: string, id: string, ownerUserId: string): Promise<boolean> {
+    return this.locked(threadId, async (sql) => {
+      await sql.unsafe(`INSERT INTO chisabot_thread_inbox (thread_id, id, owner_user_id, message, status)
+        VALUES ($1, $2, $3, $4::text::jsonb, 'withdrawn') ON CONFLICT (thread_id, id) DO NOTHING`,
+        [threadId, id, ownerUserId, JSON.stringify({ id, role: "user", content: "" })]);
+      const rows = await sql.unsafe(`UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now()
+        WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'paused', 'owed', 'stopped', 'withdrawn') RETURNING id`, [threadId, id]);
+      return rows.length > 0;
+    });
+  }
+
+  async get(threadId: string, id: string): Promise<InboxItem | null> {
+    const [row] = await this.database.$client.unsafe<InboxRow[]>("SELECT * FROM chisabot_thread_inbox WHERE thread_id = $1 AND id = $2", [threadId, id]);
+    return row ? item(row) : null;
   }
 
   /** 界面要看的：还在排队的、欠回答的，以及最近 10 分钟内状态变过的（「已读取」的淡出）。 */
   async list(threadId: string): Promise<InboxItem[]> {
     const rows = await this.database.$client.unsafe<InboxRow[]>(
-      `SELECT * FROM chisabot_thread_inbox WHERE thread_id = $1
-       AND (status IN ('queued', 'owed') OR updated_at > now() - interval '10 minutes')
-       ORDER BY created_at, id LIMIT 100`, [threadId],
+      `SELECT * FROM (
+         SELECT * FROM chisabot_thread_inbox WHERE thread_id = $1 AND status IN ('queued', 'paused', 'owed', 'stopped')
+         UNION ALL
+         (SELECT * FROM chisabot_thread_inbox WHERE thread_id = $1 AND status NOT IN ('queued', 'paused', 'owed', 'stopped')
+          AND updated_at > now() - interval '10 minutes' ORDER BY updated_at DESC, id DESC LIMIT 100)
+       ) visible ORDER BY created_at, id`, [threadId],
     );
     return rows.map(item);
   }
 
-  /** 进程启动：上一个进程里「已读」但那一轮没跑完的，算欠回答。 */
+  /** After restart there is no live tool owner. Keep every unfinished row for an explicit send. */
   async releaseInterrupted(): Promise<number> {
-    const rows = await this.database.$client.unsafe(
-      "UPDATE chisabot_thread_inbox SET status = 'owed', updated_at = now() WHERE status = 'read' RETURNING id",
-    );
-    return rows.length;
-  }
-
-  /** 欠回答的重新排队（下一轮开始时一起读进去）。 */
-  async requeueOwed(threadId: string) {
-    await this.database.$client.unsafe(
-      "UPDATE chisabot_thread_inbox SET status = 'queued', run_id = NULL, updated_at = now() WHERE thread_id = $1 AND status = 'owed'",
-      [threadId],
-    );
+    return this.database.$client.begin(async (sql) => {
+      await sql.unsafe(`INSERT INTO chisabot_thread_inbox_control (thread_id, paused)
+        SELECT DISTINCT thread_id, true FROM chisabot_thread_inbox WHERE status IN ('queued', 'read', 'owed', 'stopped', 'paused')
+        ON CONFLICT (thread_id) DO UPDATE SET paused = true, updated_at = now()`);
+      const rows = await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE status IN ('queued', 'read', 'owed', 'stopped') RETURNING id");
+      return rows.length;
+    }) as Promise<number>;
   }
 }
 

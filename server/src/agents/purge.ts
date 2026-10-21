@@ -207,6 +207,11 @@ export function createAgentPurge(options: {
           await tx.execute(
             sql`delete from chisabot_thread_inbox where thread_id in (select id from openbot_local_threads where agent_id = ${agentId})`,
           );
+        const [inboxControl] = await tx.execute<{ present: boolean }>(
+          sql`select to_regclass('public.chisabot_thread_inbox_control') is not null as present`,
+        );
+        if ((inboxControl as { present?: boolean } | undefined)?.present)
+          await tx.execute(sql`delete from chisabot_thread_inbox_control where thread_id in (select id from openbot_local_threads where agent_id = ${agentId})`);
         await tx.execute(
           sql`delete from openbot_local_threads where agent_id = ${agentId}`,
         );
