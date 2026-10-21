@@ -1511,6 +1511,14 @@ html[data-sky-ease] body::before {
   line-height: 1.6;
   caret-color: var(--composer-accent);
 }
+/*
+ * The editor's inline `height 150ms` transition was animating every auto-grow measurement, so the
+ * first line appeared to hop up and settle back while typing. Height is feedback, not decoration:
+ * it should land on the measured value in the same frame.
+ */
+.glass-composer .prompt-area-editor {
+  transition: none !important;
+}
 .glass-composer [data-placeholder]::before,
 .glass-composer .is-empty::before,
 .glass-composer textarea::placeholder {
