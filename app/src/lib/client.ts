@@ -27,15 +27,26 @@ export type ClientOptions = {
   /**
    * For the calls a Bot makes on a person's behalf, which are abandoned when the turn is.
    *
-   * Absent means a 30s default timeout (DEFAULT_TIMEOUT_MS): a hung server turns the page into an
-   * endless spinner otherwise. Calls that need a long-lived connection (SSE / long-polling) must
-   * pass their own signal.
+   * Caller cancellation is combined with the request deadline, including body consumption.
+   * A query's cancellation-only signal must not disable the timeout.
    */
   signal?: AbortSignal;
+  /** Default 30s. Long actions set their own budget; 0 explicitly disables the deadline. */
+  timeoutMs?: number;
 };
 
-/** Default budget for one request when the caller did not bring its own signal. */
+/** Default budget for ordinary requests, with or without caller cancellation. */
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+function requestSignal(options: ClientOptions): AbortSignal | undefined {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0)
+    throw new RangeError("timeoutMs must be a non-negative integer.");
+  if (timeoutMs === 0) return options.signal;
+  const deadline = AbortSignal.timeout(timeoutMs);
+  // Keep the native deadline alive after headers: callers may read the Response body later.
+  return options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+}
 
 /** Every request in this app is authenticated, and every one of them is JSON or nothing. */
 async function send(path: string, options: ClientOptions): Promise<Response> {
@@ -47,7 +58,7 @@ async function send(path: string, options: ClientOptions): Promise<Response> {
         ? undefined
         : { "content-type": "application/json" },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    signal: options.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    signal: requestSignal(options),
   });
 }
 
