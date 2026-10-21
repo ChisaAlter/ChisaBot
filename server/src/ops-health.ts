@@ -276,6 +276,8 @@ export function createOpsHealthRoutes(options: {
   pingDatabase: PingDatabase;
   magpie?: MagpieService | null;
   probeComputer?: ProbeComputer | null;
+  /** Informational: forwarded to {@link collectOpsHealth}, never part of the aggregate. */
+  probeHermes?: (() => Promise<HermesHealthCheck>) | null;
   gatewayMode: "on" | "off";
   log?: (line: string) => void;
 }) {
@@ -293,6 +295,7 @@ export function createOpsHealthRoutes(options: {
       pingDatabase: options.pingDatabase,
       magpie: options.magpie,
       probeComputer: options.probeComputer,
+      probeHermes: options.probeHermes,
       gatewayMode: options.gatewayMode,
       log: options.log,
     });
