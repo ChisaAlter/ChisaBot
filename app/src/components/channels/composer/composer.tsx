@@ -389,6 +389,18 @@ export function Composer({
   const composingRef = useRef(false);
   const pendingChangeRef = useRef<Segment[] | null>(null);
   /**
+   * WHETHER THE PLACEHOLDER HAS TO STEP ASIDE, as React sees it. The ref above is what decides to
+   * hold the change; this is only what the placeholder is drawn from.
+   *
+   * WHY IT IS NEEDED AT ALL: `prompt-area` draws its placeholder when the controlled `value` is
+   * empty — and during a composition the value deliberately IS empty, because the composing text is
+   * not committed until `compositionend`. The placeholder therefore sat on top of the pinyin the
+   * input method was still drawing. Hiding it takes a render, and a render is safe here only
+   * because nothing it changes touches the editor: `value` keeps its identity, so prompt-area's
+   * write-back effect does not run, and the only thing that changes is the placeholder string.
+   */
+  const [composing, setComposing] = useState(false);
+  /**
    * The composer's outer element, and the reason the hook's own `containerRef` is left on the
    * floor.
    *
@@ -1212,7 +1224,8 @@ export function Composer({
 
   /**
    * COMPOSITION IS TRACKED ON THE DOM, NOT THROUGH REACT STATE, for the reason `composingRef`
-   * records: a render mid-composition is exactly what cancelled it.
+   * records: a render mid-composition is exactly what cancelled it. `setComposing` below does not
+   * contradict that — see its comment: it changes the placeholder only, never `value`.
    *
    * THE BLUR RESET IS NOT BELT AND BRACES. `compositionend` is the only event that clears the flag,
    * and an interrupted composition does not always deliver one — switching windows, clicking away,
@@ -1226,14 +1239,17 @@ export function Composer({
     if (!element) return;
     const start = () => {
       composingRef.current = true;
+      setComposing(true);
     };
     const end = () => {
       composingRef.current = false;
+      setComposing(false);
       flushPendingChange();
     };
     const interrupted = () => {
       if (!composingRef.current) return;
       composingRef.current = false;
+      setComposing(false);
       flushPendingChange();
     };
     element.addEventListener("compositionstart", start, true);
@@ -1662,7 +1678,7 @@ export function Composer({
               onChange={handleChange}
               onImagePaste={canAttach ? stagePastedImage : undefined}
               onSubmit={submitDraft}
-              placeholder={"输入消息…"}
+              placeholder={composing ? "" : "输入消息…"}
               ref={promptAreaRef}
               triggers={triggers}
               value={value}
@@ -1750,7 +1766,9 @@ export function Composer({
               onChange={handleChange}
               onImagePaste={canAttach ? stagePastedImage : undefined}
               onSubmit={submitDraft}
-              placeholder={"有什么想让 BOT 帮你做的？用 @ 指定 BOT"}
+              placeholder={
+                composing ? "" : "有什么想让 BOT 帮你做的？用 @ 指定 BOT"
+              }
               ref={promptAreaRef}
               triggers={triggers}
               value={value}
