@@ -557,7 +557,12 @@ export function ComputerView({
       <IconX size={16} stroke={2} />
     </button>
   );
-  /** 一轮已经结束：没有标签栏，只写这是哪一轮留下的画面。 */
+  /**
+   * 一轮已经结束：没有标签栏，只写这是哪一轮留下的画面。
+   *
+   * 关闭大屏的 × 不在这里，也不在标签栏里：它浮在大屏卡片外面的右上角（暗色遮罩上），
+   * 这样它是「关掉这个大屏」而不是「浏览器窗口上的一个按钮」，也不会和标签、地址栏星标挤成一列。
+   */
   const recordTitle = (
     <div className="btabs is-empty">
       <div className="btabs-lead">
@@ -566,7 +571,6 @@ export function ComputerView({
           {knownPage?.title || knownPage?.url || "这一轮打开的页面"}
         </span>
       </div>
-      <div className="btabs-end">{closeButton}</div>
     </div>
   );
 
@@ -757,9 +761,16 @@ export function ComputerView({
                 className={`absolute inset-0 bg-black/80 ${wheelHere ? "cursor-default" : "cursor-zoom-out"}`}
               />
               {/*
-                放大的浏览器（DESIGN §96）：卡片永远不滚动。上面一块玻璃工具条（标签栏 + 地址栏 + 收藏栏，
-                关闭按钮在标签栏最右端），中间是按剩余高度等比缩放的屏幕，底部一行「谁 · 状态 · 交还」
-                始终在卡片里面。可用高度由 useTakeoverFit 量出来写进 --ctk-avail。
+                The way out is the card's, not the browser's: a floating × on the dim backdrop just outside
+                the card's top-right corner. Inside the tab strip it read as a browser-window button and
+                stacked on top of the address bar's star (2026-10-22 反馈「关闭按键的位置不对」).
+                Esc does the same thing.
+              */}
+              {closeButton}
+              {/*
+                放大的浏览器（DESIGN §96）：卡片永远不滚动。上面一块玻璃工具条（标签栏 + 地址栏 + 收藏栏），
+                中间是按剩余高度等比缩放的屏幕，底部一行「谁 · 状态 · 交还」始终在卡片里面。可用高度由
+                useTakeoverFit 量出来写进 --ctk-avail。
               */}
               <div
                 ref={takeoverRef}
@@ -797,7 +808,6 @@ export function ComputerView({
                         <TabStrip
                           computerId={computerId}
                           driving={driving}
-                          end={closeButton}
                           onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)}
                           poll={!showLiveScreen}
                         />
@@ -854,7 +864,7 @@ export function ComputerView({
                   */
                   <>
                     <div className="computer-chrome">
-                      {settled ? recordTitle : <TabStrip computerId={computerId} driving={driving} end={closeButton} onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)} poll />}
+                      {settled ? recordTitle : <TabStrip computerId={computerId} driving={driving} onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)} poll />}
                     </div>
                     <div className="ctk-stage">
                       <div className="computer-frame ctk-screen relative w-full rounded-lg" data-ctk-screen style={{ aspectRatio }}>

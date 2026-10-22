@@ -5047,9 +5047,29 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .computer-chrome .btab-x { border-radius: 8px; }
 .computer-chrome .btabs-new { width: 28px; height: 28px; margin: 0 0 3px 2px; align-self: flex-end; border-radius: 8px; }
 .computer-chrome .btabs-problem { top: calc(100% + 4px); }
-.computer-takeover-close { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 8px; color: var(--ink-2); transition: background var(--dur-1), color var(--dur-1); }
-.computer-takeover-close:hover { background: var(--glass-hover); color: var(--ink-1); }
-.computer-takeover-close:focus-visible { outline: 2px solid var(--focus-line); outline-offset: 1px; }
+/*
+ * 关闭大屏的 ×：在大屏卡片外面、暗色遮罩的右上角（2026-10-22 用户反馈「位置不对」）。
+ * 它是「关掉这个大屏」的动作，不是浏览器窗口上的按钮，所以不参与标签栏 / 地址栏那一列图标。
+ * 卡片满屏（窄屏）时它仍然浮在右上角，不挤占工具条。
+ */
+.computer-takeover-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 6;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #111;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  transition: background var(--dur-1), color var(--dur-1);
+}
+.computer-takeover-close:hover { background: #fff; color: #000; }
+.computer-takeover-close:focus-visible { outline: 2px solid var(--focus-line); outline-offset: 2px; }
 .ctk-record-t { align-self: center; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; color: var(--ink-2); }
 .computer-chrome .computer-urlbar { gap: 2px; padding: 4px 6px; }
 .computer-chrome .computer-urlbar-btn { width: 30px; height: 30px; border-radius: 8px; }
