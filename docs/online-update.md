@@ -11,8 +11,12 @@ ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、
 - 网页每 5 分钟（页面可见时）、切回前台 / 窗口获得焦点时（距上次 ≥ 30 秒）问一次；打开后 20 秒做第一次。
   构建号不同就在顶部居中显示玻璃胶囊「有新版本，点此刷新」（`components/update-banner.tsx`，DESIGN.md §22）。
   可以关掉，同一个构建号关掉后不再提示。开发环境（`dev`）永不提示。
-- **从不自动刷新。** 用户点了刷新时，如果机器人还在回复（`channel-chat.tsx` 通过 `useReportBusy` 登记）或页面上有
-  没发出去的文字，先弹确认框（`lib/activity.ts`）。
+- **从不自动刷新。** 用户点了刷新时，如果机器人还在回复（`channel-chat.tsx` 通过 `useReportBusy` 登记），
+  输入框上还挂着没发出去的附件（`composer.tsx` 通过 `useReportPendingAttachments` 登记：File 只在内存里，
+  刷新就没了），或页面上有 **刷新会丢** 的没发出去的字（编辑中的消息、还没提交的审批回答——这些输入标
+  `data-unsent-watch`），先弹确认框（`lib/activity.ts`），把三样会丢 / 会打断的事一起写清。聊天输入框的草稿
+  不在其中：它记在 localStorage 里（`lib/chat/ui-memory.ts`，DESIGN.md §88），刷新回来还在。这里不扫整页的
+  输入框：卡片表单、面板、搜索框里的字不是聊天草稿。
 - 缓存：应用对 `index.html` 一律 `Cache-Control: no-cache`、带哈希的 `/assets/*` 永久缓存（直连 3001 时生效）。
   经公网网关（`/opt/openbot-zh/public/nginx.conf`）时入口页和接口仍是 `no-store`（`security-headers.conf`），入口页不会是旧的；
   **带哈希的 `/assets/*` 单独一段 `location ^~ /assets/`**：仍要登录（`auth_request`），成功响应

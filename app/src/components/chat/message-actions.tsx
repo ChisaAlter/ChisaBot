@@ -172,9 +172,11 @@ export function MessageEditor({
   };
   return (
     <div className="chat-msg-editor" data-testid="msg-editor">
+      {/* 刷新会丢掉正在改的这一版：`lib/activity.ts` 的「有新版本」确认只认带这个标记的输入。 */}
       <Textarea
         aria-label="编辑消息"
         className="chat-msg-editor-input"
+        data-unsent-watch
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}
         ref={ref}

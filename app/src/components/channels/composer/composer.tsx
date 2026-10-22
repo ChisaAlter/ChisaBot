@@ -27,6 +27,7 @@ import {
   useState,
 } from "react";
 import { attachmentModality } from "@/components/channels/chat-messages";
+import { useReportPendingAttachments } from "@/lib/activity";
 import {
   attachmentUrl,
   classifyAttachment,
@@ -622,6 +623,12 @@ export function Composer({
     () => attachments.filter((attachment) => !sending.includes(attachment.id)),
     [attachments, sending],
   );
+
+  /**
+   * 这些附件只在内存里（`stashDraftFiles`，`takeDraftFiles` 也只在内存里）：刷新就没了，不像聊天草稿会记回来。
+   * 「有新版本，点此刷新」靠这个登记知道输入框上还挂着东西（`lib/activity.ts`），发出去 / 移走了就清零。
+   */
+  useReportPendingAttachments(draftKey ?? channelId, staged.length);
 
   /**
    * Take a chip off the strip. That is all this does, and the row it stood for is deliberately

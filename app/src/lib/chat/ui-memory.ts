@@ -294,3 +294,14 @@ export function takeDraftFiles(threadKey: string | undefined): File[] {
   draftFiles.delete(threadKey);
   return files;
 }
+
+/**
+ * 收了几个「离开对话时收起来、还没发出去」的附件。这些同样只在内存里——在别的页面点「有新版本，点此刷新」
+ * 一样会丢，所以 `lib/activity.ts` 把它也算进刷新前的那道确认。
+ */
+export function stashedAttachmentCount(): number {
+  let total = 0;
+  for (const files of draftFiles.values()) total += files.length;
+  return total;
+}
+

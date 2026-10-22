@@ -153,7 +153,7 @@ function QuestionCard({ question, botName, onDone }: { question: ApprovalInboxDa
     <Card className="pending-card">
       <div className="pending-card-t">{`${botName}问：${question.question}`}</div>
       {question.why ? <div className="pending-card-s">{question.why}</div> : null}
-      <Textarea aria-label={"你的回答"} onChange={(event) => setText(event.target.value)} placeholder={"你的回答"} value={text} />
+      <Textarea aria-label={"你的回答"} data-unsent-watch onChange={(event) => setText(event.target.value)} placeholder={"你的回答"} value={text} />
       <div className="pending-card-a">
         <Button disabled={!text.trim()} feedback={{ pending: "发送中…", success: "已发送", error: "发送失败" }} onClick={() => void send.run()} size="sm" state={send.state}>
           {"发送"}

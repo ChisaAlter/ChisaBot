@@ -7,21 +7,35 @@ import { useNewVersion } from "@/lib/version";
  * 「有新版本，点此刷新」（docs/online-update.md，DESIGN.md §22）。
  *
  * 顶部居中的一枚玻璃胶囊（L3），只在服务器上的构建号和这页打包时的不一样时出现；可以关掉，同一个
- * 版本关掉后不再出现。从不自动刷新：机器人还在回复、或输入框里有没发出去的字时，点了也先确认。
+ * 版本关掉后不再出现。从不自动刷新：机器人还在回复、输入框上挂着没发出去的附件、或编辑中的消息 /
+ * 审批回答还没发出去时，点了也先确认——这三样刷新都会丢 / 打断。聊天输入框里的字不算：它记在
+ * localStorage 里（`lib/chat/ui-memory.ts`），刷新回来还在。
  */
 export function UpdateBanner({ bundled, pollMs }: { bundled?: string; pollMs?: number } = {}) {
   const { available, dismiss } = useNewVersion({ bundled, pollMs });
   if (!available) return null;
 
   async function refresh() {
-    const interrupt = refreshWouldInterrupt();
-    if (interrupt) {
+    const blocker = refreshWouldInterrupt();
+    if (blocker) {
+      const reasons = [
+        blocker.running
+          ? "刷新后回复会在后台继续，回来时可以在对话里看到结果；正在显示的流式内容会重新加载。"
+          : "",
+        blocker.attachments > 0
+          ? `还有 ${blocker.attachments} 个附件没发出去，刷新后要重新选一遍（附件只在这个页面里，不像聊天草稿会记住）。`
+          : "",
+        blocker.unsent
+          ? "刷新会清掉正在编辑的消息和还没提交的回答；聊天输入框里的草稿会记住，回来还在。"
+          : "",
+      ].filter(Boolean);
       const ok = await confirmDialog({
-        title: interrupt === "running" ? "机器人还在回复，现在刷新？" : "输入框里还有没发送的内容，现在刷新？",
-        description:
-          interrupt === "running"
-            ? "刷新后回复会在后台继续，回来时可以在对话里看到结果；正在显示的流式内容会重新加载。"
-            : "刷新会清掉还没发送的文字。可以先发送或复制，再点「有新版本」刷新。",
+        title: blocker.running
+          ? "机器人还在回复，现在刷新？"
+          : blocker.attachments > 0
+            ? "还有没发出去的附件，现在刷新？"
+            : "还有没发出去的内容，现在刷新？",
+        description: reasons.join(" "),
         confirmLabel: "仍然刷新",
       });
       if (!ok) return;
