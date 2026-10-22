@@ -120,3 +120,61 @@ test("an interrupted composition does not leave the box swallowing every later k
   });
   expect(send.sent).toEqual(["ni好"]);
 });
+
+/**
+ * THE PROMPT UNDER THE PINYIN.
+ *
+ * `prompt-area` draws its placeholder whenever the controlled `value` is empty, and during a
+ * composition the value IS empty on purpose: the text the IME is still building is not committed
+ * until `compositionend`. So the box showed "输入消息…" underneath the letters of the composition,
+ * two sets of glyphs in the same place. The placeholder now steps aside for the duration.
+ *
+ * This is the one place a render during a composition is allowed here: it changes the placeholder
+ * string and nothing else, while `value` keeps its identity, so the editor's DOM is never written.
+ */
+test("the placeholder does not sit on top of the composition", async () => {
+  const { container } = render(
+    <Composer compact initialValue="" onSubmit={() => {}} />,
+  );
+  const editor = editorOf(container);
+  const prompt = "输入消息…";
+
+  // The empty box shows its prompt.
+  expect(container.textContent).toContain(prompt);
+
+  await act(async () => {
+    fireEvent.compositionStart(editor);
+  });
+  composingStep(editor, "ni");
+
+  // The pinyin is on screen, and the prompt is not drawn under it.
+  expect(editor.textContent).toBe("ni");
+  expect(container.textContent).not.toContain(prompt);
+
+  await act(async () => {
+    fireEvent.compositionEnd(editor);
+  });
+  // The composition committed real text, so the prompt stays away for the same reason it always
+  // would — there is something in the box.
+  expect(container.textContent).not.toContain(prompt);
+});
+
+test("a composition that commits nothing gives the prompt back", async () => {
+  const { container } = render(
+    <Composer compact initialValue="" onSubmit={() => {}} />,
+  );
+  const editor = editorOf(container);
+  const prompt = "输入消息…";
+
+  await act(async () => {
+    fireEvent.compositionStart(editor);
+  });
+  expect(container.textContent).not.toContain(prompt);
+
+  // Cancelled before any character was committed: the box is empty again, and so is the prompt
+  // story — it has to come back, or the empty box would have no words in it at all.
+  await act(async () => {
+    fireEvent.compositionEnd(editor);
+  });
+  expect(container.textContent).toContain(prompt);
+});
