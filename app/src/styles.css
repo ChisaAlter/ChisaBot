@@ -8754,3 +8754,240 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   .cc-tree .cc-ws-add { width: 44px; height: 44px; border-radius: 10px; }
   .cc-tree .cc-ws:has(> .cc-ws-actions) > .cc-ws-head { padding-right: 94px; }
 }
+
+/* ── 面板看板（2026-10-22，docs/live-panel-sources.md 第 2–3 节）─────────────────
+   右栏宽 ≥480px 时最多两张并排、中间一条细分隔条调比例；每张卡标题左边一个握把（拖动换行 / 并排，
+   方向键也能调），底部一条细横条拖高（最小 120px，卡内滚动，双击回自动）；点标题折叠。
+   拖动期只改 DOM（`is-dragging` / `is-drop-target`），松手才提交布局——不逐帧重排整栏。
+   只用现有的 --glass-* / --ink-* / --warn / --r-* 变量，跟随亮暗与减少动效。 */
+.live-board { position: relative; display: flex; flex-direction: column; gap: 12px; }
+.live-board-row { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+.live-board-row[data-pair] { align-items: stretch; }
+.live-board-slot { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.live-board-slot > .live-panel { flex: 1 1 auto; min-height: 0; }
+.live-board-slot > .live-panel > .live-panel-body { flex: 1 1 auto; min-height: 0; }
+/* 拖高之后：卡片固定高度，内容区在卡里滚（标题和底部来源行不滚）。 */
+.live-board-slot[data-height] > .live-panel { height: 100%; }
+.live-board-slot[data-height] .live-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+/* 折叠：只留标题那一行，不占整行的高度。 */
+.live-board-slot[data-collapsed] { align-self: start; }
+.live-panel[data-collapsed] { padding-top: 10px; padding-bottom: 10px; gap: 0; }
+
+/* 标题左边：拖动握把 + 点标题折叠。 */
+.live-panel-grip {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 24px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: var(--r-xs, 6px);
+  background: transparent;
+  color: var(--ink-4);
+  cursor: grab;
+  opacity: 0;
+  outline: none;
+  touch-action: none;
+  transition: opacity var(--dur-1, 150ms), background var(--dur-1, 150ms), color var(--dur-1, 150ms);
+}
+.live-panel:hover .live-panel-grip,
+.live-panel-grip:focus-visible { opacity: 1; }
+.live-panel-grip:hover { background: var(--glass-2); color: var(--ink-2); }
+.live-panel-grip:focus-visible { box-shadow: 0 0 0 2px var(--ink-4); }
+.live-panel-grip:active { cursor: grabbing; }
+@media (hover: none) { .live-panel-grip { opacity: 0.65; } }
+
+.live-panel-heading { flex: 1 1 auto; min-width: 0; margin: 0; display: flex; }
+.live-panel-collapse {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+}
+.live-panel-collapse:focus-visible { box-shadow: 0 0 0 2px var(--ink-4); }
+.live-panel-collapse .live-panel-title { flex: 1 1 auto; min-width: 0; }
+.live-panel-caret {
+  flex: none;
+  color: var(--ink-4);
+  transition: transform var(--dur-1, 150ms) var(--ease-out, ease-out);
+}
+.live-panel-collapse[aria-expanded="true"] .live-panel-caret { transform: rotate(90deg); }
+
+/* 行内分隔条：12px 宽的拖动带，中间一条细线。 */
+.live-board-vsep {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+  border-radius: var(--r-pill, 999px);
+}
+.live-board-vsep::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 10%;
+  bottom: 10%;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: var(--r-pill, 999px);
+  background: var(--ink-4);
+  opacity: 0.25;
+  transition: opacity var(--dur-1, 150ms);
+}
+.live-board-vsep:hover::after,
+.live-board-vsep:focus-visible::after { opacity: 0.9; background: var(--ink-3); }
+.live-board-vsep:focus-visible { box-shadow: 0 0 0 2px var(--ink-4); }
+
+/* 卡底细横条：拖高；双击回自动。 */
+.live-board-hbar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -4px;
+  z-index: 3;
+  height: 8px;
+  cursor: ns-resize;
+  outline: none;
+  touch-action: none;
+  border-radius: var(--r-pill, 999px);
+}
+.live-board-hbar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 26px;
+  height: 3px;
+  margin-left: -13px;
+  border-radius: var(--r-pill, 999px);
+  background: var(--ink-4);
+  opacity: 0.45;
+  transition: opacity var(--dur-1, 150ms), width var(--dur-1, 150ms);
+}
+.live-board-hbar:hover::after,
+.live-board-hbar:focus-visible::after { opacity: 1; width: 44px; background: var(--ink-3); }
+.live-board-hbar:focus-visible { box-shadow: 0 0 0 2px var(--ink-4); }
+
+/* 拖动 / 调比例：同一条覆盖层只负责光标与「整栏在拖」的姿态（指针事件仍归握把 / 分隔条）。 */
+.live-board-drag-cover { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+.live-board-drag-cover[data-mode="move"] { cursor: grabbing; }
+.live-board-drag-cover[data-mode="resize"] { cursor: col-resize; }
+.live-board.is-dragging { user-select: none; }
+.live-board.is-dragging .live-panel { transition: none; }
+.live-board-slot.is-dragging-source { opacity: 0.45; pointer-events: none; }
+.live-board-slot.is-drop-target {
+  border-radius: var(--r-lg, 18px);
+  box-shadow: 0 0 0 2px var(--ink-3), 0 0 0 5px var(--glass-2);
+}
+.live-board[data-drop-blank] .live-board-slot { box-shadow: 0 0 0 1px var(--ink-4); }
+
+/* ⋯ →「数据来源…」：卡片里的小弹层（非模态；点外面 / Esc 关闭）。 */
+.live-panel:has(.live-panel-src-pop) { z-index: 6; }
+.live-panel-src-pop {
+  position: absolute;
+  right: 8px;
+  top: 38px;
+  z-index: 35;
+  width: min(272px, calc(100% - 16px));
+  max-height: min(56vh, 340px);
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--r-md, 14px);
+  background: var(--glass-strong);
+  box-shadow: var(--glass-shadow-pop);
+  backdrop-filter: var(--glass-blur);
+  color: var(--ink-1);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.live-panel-src-pop-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.live-panel-src-pop-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--ink-1); }
+.live-panel-src-pop-x {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 0;
+  border-radius: var(--r-xs, 6px);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  outline: none;
+}
+.live-panel-src-pop-x:hover { background: var(--glass-2); color: var(--ink-1); }
+.live-panel-src-pop-x:focus-visible { box-shadow: 0 0 0 2px var(--ink-4); }
+.live-panel-src-empty,
+.live-panel-src-wait { margin: 4px 0; color: var(--ink-3); }
+.live-panel-src-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.live-panel-src-row { padding: 7px 8px; border-radius: var(--r-sm, 10px); background: var(--glass-1); }
+.live-panel-src-row[data-failed] { box-shadow: inset 0 0 0 1px var(--warn-soft); }
+.live-panel-src-row-h { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.live-panel-src-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--ink-1); }
+.live-panel-src-kind,
+.live-panel-src-every {
+  flex: none;
+  padding: 0 5px;
+  border-radius: var(--r-pill, 999px);
+  font-size: 11px;
+  color: var(--ink-3);
+  background: var(--glass-2);
+  white-space: nowrap;
+}
+.live-panel-src-label {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.live-panel-src-state { margin-top: 3px; font-variant-numeric: tabular-nums; }
+.live-panel-src-ok { color: var(--ink-3); }
+.live-panel-src-bad { color: var(--danger, #c62828); }
+.live-panel-src-bad-block { margin: 6px 0 0; }
+.live-panel-src-pop-foot { display: flex; justify-content: flex-end; margin-top: 8px; }
+.live-panel-src-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-pill, 999px);
+  background: var(--glass-2);
+  color: var(--ink-1);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--dur-1, 150ms);
+}
+.live-panel-src-refresh:hover:not(:disabled) { background: var(--glass-3); }
+.live-panel-src-refresh:disabled { opacity: 0.55; cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  .live-panel-grip,
+  .live-panel-caret,
+  .live-board-vsep::after,
+  .live-board-hbar::after,
+  .live-panel-src-refresh { transition: none; }
+  .live-panel-collapse[aria-expanded="true"] .live-panel-caret { transition: none; }
+}
+

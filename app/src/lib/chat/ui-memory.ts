@@ -16,6 +16,8 @@
  * 只在这台设备、这个浏览器里，不上传，不跨设备。
  */
 
+import type { PanelLayout } from "@/lib/panels/panel-layout";
+
 export const UI_MEMORY_KEY = "chisabot-ui-memory:v1";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -35,6 +37,11 @@ export type BotUi = {
   railOpen?: boolean;
   /** 宽窗口右栏宽度（px）。 */
   railWidth?: number;
+  /**
+   * 右栏面板的看板布局（2026-10-22）：哪两张并排、分隔条比例、拖高的卡片、折叠了哪些。
+   * 结构见 `lib/panels/panel-layout.ts`；服务端只记面板的先后（position），这里记这个人的摆法。
+   */
+  panelLayout?: PanelLayout;
   at: number;
 };
 

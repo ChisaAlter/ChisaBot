@@ -19,6 +19,7 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 | `CHISABOT_IM=0` · `CHISABOT_SCHEDULES_SWEEP=0` · `CHISABOT_LIVE_PANEL_SWEEP=0` | 开 | 关掉 IM 连接 / 定时任务扫描 / 面板刷新扫描 |
 | `CHISABOT_MODEL_FALLBACKS`（列表或 `off`） | 自动挑同平台 | 备用模型候选（设置里的「备用模型」优先） |
 | `CHISABOT_LINK_PREVIEW_SHOTS=1` | 关 | 没有 og:image 时截图做链接卡缩略图 |
+| `CHISABOT_PANEL_COMMANDS=1` | 关 | 允许管理员给右栏面板挂「本机命令」数据源（秒级取数；只给管理员，默认关） |
 | `BOT_HANDOFF_MAX_DEPTH=1` | 0（关） | 恢复机器人之间交接 |
 | 其他 | — | [architecture.md](architecture.md) §4、[configuration.md](configuration.md) |
 
@@ -51,6 +52,8 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 | 功能 | 做什么 | 入口 | 代码 | 数据 | DESIGN | 状态 · 文档 |
 |---|---|---|---|---|---|---|
 | 实时面板 | 机器人按设计规范搭面板（≤2 磁贴 + 2 块），按小时或每天固定时刻刷新；常驻和弹出模式共用卡片布局及记住的宽度（[一致性](sidebar-panel-parity.md)）；来源 + 更新时间一行 | 右栏「面板」；在聊天里说 | `server/src/live-panels/`（`design.ts` 规范 + lint） | `live_panels`（迁移 0056/0057） | §29、§43、§77 | 上线 |
+| 直连数据源 | 面板挂 ≤3 个 http / 本机命令数据源，宿主按 2–3600 秒取数并回填 `/live/<id>`（不花 token）；密钥走保险箱、内网拦截；命令源只给管理员且默认关 | 机器人 `panel_create` / `panel_update` 的 `dataSources` | `server/src/live-panels/sources.ts` | `live_panels.data_sources` / `source_state`（迁移 0059） | §109 | 上线 · [live-panel-sources.md](live-panel-sources.md) |
+| 看板布局 · 卡片菜单 | 两两并排 / 调比例 / 拖高 / 折叠（按机器人记在本机）；⋯ 菜单加「让 AI 修改…」「数据来源…」 | 右栏面板卡片 | `app/src/components/panels/` | 浏览器 localStorage | §109 | 上线 · [live-panel-sources.md](live-panel-sources.md) |
 | 云端浏览器（计算机） | 每个机器人一个 Chromium 配置（Xvfb 有界面，Cookie / 登录各自独立；同一进程、共用 `/workspace`）；原生下拉框用「填写」选中（§100）；工作区文件经 `https://workspace.local/` 打开 | 右栏「计算机」；放大后接管 / 交还 | `agent-computer/`、`server/src/computer/`、`app/src/components/computer/` | `computer_snapshot`、`computer_page_frame`（上游） | §23、§39、§79 | 上线 |
 | 浏览器多标签 · 收藏夹 | 真标签（≤8，人和机器人同一组，重启恢复）；每账号收藏夹（星标、收藏栏、窄屏下拉、管理） | 放大的浏览器工具条 | `agent-computer/src/tabs.ts`、`server/src/browser-bookmarks/` | `chisabot_browser_bookmarks`、`chisabot_browser_bookmark_seeds` | §95、§96 | 上线 · [browser-tabs.md](browser-tabs.md) |
 | 网站被拦时 | 硬拦截页返回中文提示，建议接管或出口代理 | — | `agent-computer/src/site-block.ts` | — | — | 上线 |

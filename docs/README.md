@@ -50,7 +50,7 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 | 机器人 | [机器人头像](bot-avatars.md) · [BOT 配置](coworkers.md) | §46、§47、§74、§81 |
 | 确认与权限 | [确认卡片与审批偏好](confirmations.md) | §58、§97 |
 | 模型 | [模型配置与切换](models.md) · [Magpie 深度集成](magpie.md) | §15、§59–§61 |
-| 面板 / 计算机 | [浏览器多标签与收藏夹](browser-tabs.md) · [侧栏与弹出面板一致性](sidebar-panel-parity.md) | §23、§29、§39、§43、§77、§79、§95、§96 |
+| 面板 / 计算机 | [浏览器多标签与收藏夹](browser-tabs.md) · [侧栏与弹出面板一致性](sidebar-panel-parity.md) · [面板的直连数据源与看板布局](live-panel-sources.md) | §23、§29、§39、§43、§77、§79、§95、§96、§109 |
 | 设备 / PC / 手机 | [PC 节点与扫码绑定](pc-node.md) · [本地 agent 与权限档位](local-agents.md) · [Android 原生版](android-native.md) · [手机网页版与 PWA](pwa.md) | §16、§33、§36、§40、§45、§62、§66、§80、§86、§91 |
 | 云端 Claude Code | [云端 Claude Code](cloud-claude-code.md) | §73、§84、§85、§87 |
 | 记忆 · 技能 · 保险箱 | [长期记忆](memory.md) · [技能](skills.md) · [密钥保险箱](vault.md) | §50–§52 |

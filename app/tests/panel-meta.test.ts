@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildStepText, groupSources } from "../src/components/panels/panel-meta";
+import { buildStepText, groupSources, panelEditPrompt } from "../src/components/panels/panel-meta";
 import { splitDotted } from "../src/lib/copilot/json-render/rich-utils";
 import { currentWorkStep } from "../src/lib/chat/work-steps";
 
@@ -60,5 +60,13 @@ describe("dotted text (DESIGN.md §77.3)", () => {
     expect(splitDotted("当前降水 0 mm · 风速 5.4 km/h")).toEqual(["当前降水 0 mm", "风速 5.4 km/h"]);
     expect(splitDotted("体感 15.9℃")).toBeNull();
     expect(splitDotted("·")).toBeNull();
+  });
+});
+
+describe("让 AI 修改…的提示词 (DESIGN.md §109.3)", () => {
+  test("带上卡片标题，冒号后面留给用户写要改什么", () => {
+    expect(panelEditPrompt("比特币价格")).toBe("帮我改一下右栏这张「比特币价格」面板：");
+    // 标题两边的空格不该变成两对引号里的空格。
+    expect(panelEditPrompt("  服务器性能  ")).toBe("帮我改一下右栏这张「服务器性能」面板：");
   });
 });

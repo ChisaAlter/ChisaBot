@@ -378,6 +378,35 @@ export function Composer({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitInFlight = useRef(false);
   const promptAreaRef = useRef<PromptAreaHandle>(null);
+  /**
+   * 右栏面板 ⋯ →「让 AI 修改…」：把提示词填进输入框（`components/panels/live-panels.tsx` 发
+   * `chisabot-prefill`），**不发送**——用户补完要改什么再自己按发送。
+   *
+   * 追加在现有草稿的末尾（已有内容先换行）：不清空正在写的字，光标也放到最后。
+   * 直接改 `value` 而不是 PromptArea 的 imperative `appendText`，因为草稿的记忆（§88）与受控值都以
+   * 这里为准；写完把焦点交回输入框，接着打字即可。没有输入框的页面（长期任务、设置…）收不到事件。
+   */
+  useEffect(() => {
+    const onPrefill = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      const addition = typeof detail === "string" ? detail.trim() : "";
+      if (!addition || disabled) return;
+      setValue((current) =>
+        mergeAdjacentTextSegments([
+          ...current,
+          text(isSegmentsEmpty(current) ? addition : `\n${addition}`),
+        ]),
+      );
+      const placeCaret = () => {
+        promptAreaRef.current?.focus();
+        promptAreaRef.current?.setCursorToEnd();
+      };
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(placeCaret);
+      else setTimeout(placeCaret, 0);
+    };
+    window.addEventListener("chisabot-prefill", onPrefill);
+    return () => window.removeEventListener("chisabot-prefill", onPrefill);
+  }, [disabled]);
   /*
    * IME state, kept outside React.
    *

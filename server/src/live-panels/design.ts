@@ -252,11 +252,26 @@ function badUrl(value: unknown, httpsOnly: boolean): string | null {
   return null;
 }
 
+export type PanelLintOptions = {
+  /**
+   * 面板挂了直连数据源：值在运行时才由 `/live/<id>` 填进来，检查时还没解析出来。
+   * 这里只放行这类绑定，其余规则一条不动（没有数据源时仍然按静态值检查）。
+   */
+  liveSources?: boolean;
+};
+
+/** `{"$state": "/live/..."}`：运行时才有的直连数据源绑定。 */
+function isLiveBinding(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const path = (value as { $state?: unknown }).$state;
+  return typeof path === "string" && path.startsWith("/live/");
+}
+
 /**
  * panel_update 保存前的检查。返回给机器人看的修改意见（每条都说清楚哪一处、怎么改）；空数组 = 通过。
  * 只查规范里写明的硬限制，宁可放过也不误伤：拿不准的（动态值、$state 绑定）不算。
  */
-export function lintPanelSpec(source: string, panelTitle: string): string[] {
+export function lintPanelSpec(source: string, panelTitle: string, options: PanelLintOptions = {}): string[] {
   const spec = sanitizeRenderUiSpec(parseRenderUiSpec(source, false))?.spec as
     | { root?: string; elements?: Record<string, El> }
     | undefined;
@@ -366,7 +381,8 @@ export function lintPanelSpec(source: string, panelTitle: string): string[] {
 
   for (const [key, el] of reachable) {
     const p = el.props ?? {};
-    const tooLong = (value: unknown, limit: number) => typeof value === "string" && textWidth(value) > limit;
+    const tooLong = (value: unknown, limit: number) =>
+      !(options.liveSources && isLiveBinding(value)) && typeof value === "string" && textWidth(value) > limit;
     switch (el.type) {
       case "Metric": {
         if (tooLong(p.label, L.label)) issues.push(`Metric 的 label「${p.label}」太长：不超过 ${L.label} 个汉字，例如「体感」「24h 最高」。`);
@@ -474,6 +490,7 @@ export function lintPanelSpec(source: string, panelTitle: string): string[] {
   for (const [key, el] of reachable) {
     const p = el.props ?? {};
     const check = (value: unknown, field: string, httpsOnly: boolean) => {
+      if (options.liveSources && isLiveBinding(value)) return;
       const why = badUrl(value, httpsOnly);
       if (why) urlIssues.push(`${name(key, el)} 的 ${field}「${String(value).slice(0, 40)}」${why}。`);
     };

@@ -62,6 +62,14 @@ export function groupSources(sources: readonly PanelSource[]): SourceGroup[] {
 }
 
 /**
+ * ⋯ 菜单 →「让 AI 修改…」：塞进输入框的那句话（不发送）。标题原样带引号，机器人一眼知道是哪张卡；
+ * 冒号后面留给用户接着写要改什么。
+ */
+export function panelEditPrompt(title: string): string {
+  return `帮我改一下右栏这张「${title.trim()}」面板：`;
+}
+
+/**
  * 搭建中的卡片写机器人正在做的那一步（干活卡广播 `chisabot-work-step`）。建卡、交数据这两个面板工具
  * 换成用户听得懂的说法；还没有步骤时是「正在准备」。
  */

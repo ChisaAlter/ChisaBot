@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 右栏自定义面板（§109，参考 dsh-pad）：面板可以挂最多 3 个直连数据源（https / 本机命令），宿主按秒级取数、值回填 `/live/<id>`，不再为刷新花 token；卡片可以两两并排、拖比例、单卡拖高、折叠，布局按机器人记在本机；⋯ 菜单新增「让 AI 修改…」与「数据来源…」。命令数据源默认关闭且只给管理员（`CHISABOT_PANEL_COMMANDS=1`）。见 [docs/live-panel-sources.md](docs/live-panel-sources.md)。
+
 ## 0.1.56 — 2026-10-22
 
 这一版是服务器 / 网页发版：网页顶部「有新版本，点此刷新」点下去，输入框明明空着也会弹「输入框里还有没发送的内容」。现在这道确认只拦真会丢 / 会打断的事——机器人还在回复、没发出去的附件、编辑中的消息与还没提交的审批回答。`pc/` / `android/` 没有代码改动，客户端只对齐版本号。
@@ -447,7 +451,8 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
-- 代码审查安全批（#215，v0.1.23 / CR-P0-01…P1-03）：图片下载与 web_fetch 统一走 `guardedFetch`（钉死 DNS、逐跳拦 SSRF）；网关模式下本机管理员须带 `X-ChisaBot-Local-Caller`；发消息已落库后的第二段等待封顶，避免 composer 永久卡住。PC / Android 外壳未变，版本号对齐到 0.1.23（Android vc 229）。
+- 修「有新版本，点此刷新」明明输入框是空的也弹「输入框里还有没发送的内容」：那道确认原来扫整页的 `textarea` / contenteditable / `type="text"`，机器人画的卡片表单、面板、搜索框都会被当成聊天草稿；现在只认显式标了 `data-unsent-watch` 的输入（编辑中的消息、还没提交的审批回答），聊天的草稿本来记在 localStorage 里、刷新会恢复，不再拦人。文案也改成说清到底会丢什么。输入框上还挂着的附件（File 只在内存里）现在单独拦一下，确认框写明刷新后要重新选。
+- 右栏自定义面板（§109，参考 dsh-pad）：面板可以挂最多 3 个直连数据源（https / 本机命令），宿主按秒级取数、值回填 `/live/<id>`，不再为刷新花 token；卡片可以两两并排、拖比例、单卡拖高、折叠，布局按机器人记在本机；⋯ 菜单新增「让 AI 修改…」与「数据来源…」。命令数据源默认关闭且只给管理员（`CHISABOT_PANEL_COMMANDS=1`）。见 [docs/live-panel-sources.md](docs/live-panel-sources.md)。
 
 - 计算机陈旧截图不再当直播（#214，v0.1.22 / DOG-05）：截图失败清帧 + 中文占位/重试；「在用浏览器」仅在有计算机活动时；空闲写「浏览器空闲」。PC / Android 外壳未变，版本号对齐到 0.1.22（Android vc 228）。
 - Ctrl+K 正文命中深链到消息并高亮（#213，v0.1.21 / DOG-04）：`?message=<id>` + MessageFind（scrollIntoViewWithin + message-flash）；KeepAlive 地址键不含 message。PC / Android 外壳未变，版本号对齐到 0.1.21（Android vc 227）。
