@@ -115,13 +115,18 @@ describe("接线", () => {
     /*
      * 换行和缩进是排版，不是行为：这几条断言用能跨行的正则写，锁的仍然是同一件事 ——
      * 对齐标记由 `useFreshAnchor` 用这四个输入决定，而不是「列表里每个用户消息都带」。
+     *
+     * 第三个输入是 `opening` 而不是 `hydrating`（2026-10-22）：恢复完成那一刻 `hydrating` 就和恢复好的消息
+     * 一起变 false，只看它的话，那一次提交里出现的最新一条用户消息会被当成「刚发的」——切个机器人 / 从设置
+     * 回来，整段对话就像发了一次消息（翻到 1/3、底下垫 2/3 屏空白）。
      */
     expect(transcript).toMatch(
-      /const freshAnchor = useFreshAnchor\(\s*newestUserMessageId,\s*hydrating,\s*lastSentAt,\s*sendMode,?\s*\)/,
+      /const freshAnchor = useFreshAnchor\(\s*newestUserMessageId,\s*opening,\s*lastSentAt,\s*sendMode,?\s*\)/,
     );
-    // §94：连续聊天（上一条 <5 分钟）不带对齐标记
+    expect(transcript).toMatch(/const opening = useOpeningWindow\(hydrating\);/);
+    // §94：连续聊天（上一条 <5 分钟）不带对齐标记；还在「打开」窗口里也不带
     expect(transcript).toMatch(
-      /const fresh =\s*!memo\.continuous &&\s*memo\.id !== null/,
+      /const fresh =\s*!opening &&\s*!memo\.continuous &&\s*memo\.id !== null/,
     );
     expect(transcript).toContain("const anchorRows = newestAnchor ? new Set([newestAnchor]) : EMPTY_ANCHORS");
     expect(transcript).not.toMatch(/const anchorRows = anchorRowIds\(items\);/);

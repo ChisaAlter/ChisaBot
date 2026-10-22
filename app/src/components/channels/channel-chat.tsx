@@ -612,6 +612,8 @@ export function ChannelChat({
         // Cleared on failure too: placeholders over an empty transcript promise messages that are
         // never coming.
         if (current) setRestoring(false);
+        // 接入结束（不管成败）：从这里起 `agent.isRunning` 说的是「服务器真在写」，不再是 connect（见 `joining`）。
+        if (current) setJoined(true);
         // Release even on join/restore failure; the gate orders messages, not withholds them.
         openJoinGate.current();
       }
@@ -1608,15 +1610,48 @@ export function ChannelChat({
     // Keep `seed` in state; transcriptMessages gives it up once the agent holds a user turn.
   }, []);
 
+  /*
+   * 挂载时的「接入」不是一轮回答（2026-10-22）。
+   *
+   * `@copilotkit/core` 的 connect 从开始到回放结束都把 `agent.isRunning` 设成 true（`connectWithoutEventVerification`，
+   * 只在那一轮的 finalize 里清掉）。于是每次打开 / 切换机器人 / 从设置回来（留着的那个超过 10 分钟被放掉了），
+   * 输入框的发送键先画成「停止机器人」、对话末尾挂一行「思考中」，回放完再收回去——用户看到的就是
+   * 「切个机器人像发了一次消息」。更糟的是那个「停止」按下去撤掉的是这一次接入 / 回放本身。
+   *
+   * 所以把它拆开：接入期间（`joining`）不把 `agent.isRunning` 当成「一轮在回答」；本机真在跑（turnsInFlight /
+   * runsInFlight）照旧算忙。接入结束（下面那段 join 的 finally）之后 `agent.isRunning` 若是 true，那就是服务器
+   * 真在写（这一段对话在别处被问着），照旧画停止、画思考。兜底 6 秒：接入因为任何原因没有走到 finally
+   * （运行时不就绪），也不能让发送键永远不变成停止。
+   */
+  const [joined, setJoined] = useState(false);
+  useEffect(() => {
+    if (joined) return;
+    const timer = window.setTimeout(() => setJoined(true), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [joined]);
+  /** 这一段对话还在接入（回放 / 读历史）：`agent.isRunning` 这时说的是 connect，不是一轮回答。 */
+  const joining = !joined;
+
+  /*
+   * 两个事实，分开用（2026-10-22）：
+   * - `agentLive`：这条对话**真的**在跑一轮（本机发起的 / 服务器在写 / 有 run 在路上）。决定「发出去还是排队」，
+   *   以及能不能重新生成。这里仍然算上 `agent.isRunning`——接入期间它为 true，那时候发出去会被 `say` 拒
+   *   （「代理仍在处理另一个请求」），排队等接入结束才是对的。
+   * - `chatBusy`：**画给人看的**「机器人在回答」。接入（回放）不算，否则每次切换机器人，发送键都先变成
+   *   「停止机器人」、末尾挂一行「思考中」，回放完再收回去；那个「停止」按下去撤掉的是回放本身。
+   */
+  const agentLive = agent.isRunning || turnsInFlight > 0 || runsInFlight > 0;
+  const chatBusy =
+    turnsInFlight > 0 ||
+    runsInFlight > 0 ||
+    (agent.isRunning && !joining);
   // 机器人还在回复时，「有新版本」的刷新先确认（lib/activity.ts）。
-  useReportBusy(`chat:${channel.id}`, agent.isRunning || turnsInFlight > 0);
-  // 计算机状态行在两步之间不退回空闲提示（use-status.ts）。
-  const chatBusy = agent.isRunning || turnsInFlight > 0;
+  useReportBusy(`chat:${channel.id}`, chatBusy);
   useEffect(() => {
     reportChatRunning(chatBusy);
     return () => reportChatRunning(false);
   }, [chatBusy]);
-  const canResend = !chatBusy && channel.active && !restoring && !modelSaving;
+  const canResend = !agentLive && channel.active && !restoring && !modelSaving;
   const messageActions = useMemo(
     () => ({ canAct: canResend, regenerate, edit: editAndResend }),
     [canResend, regenerate, editAndResend],
@@ -1649,7 +1684,7 @@ export function ChannelChat({
               contextControl={
                 <ContextMeter
                   agentId={runtimeAgentId}
-                  running={agent.isRunning || turnsInFlight > 0}
+                  running={chatBusy}
                   threadId={channel.threadId}
                 />
               }
@@ -1663,7 +1698,7 @@ export function ChannelChat({
                * and `agent.isRunning` alone leaves that gap unmarked — which is the one moment the
                * "Thinking" line exists for. Same value as `pending`, deliberately.
                */
-              busy={agent.isRunning || turnsInFlight > 0}
+              busy={chatBusy}
               // The `/` menu exposes only skills granted to this Bot.
               commands={skillCommands}
               // Readiness is handled by `say`; deletion is the only disabled-chat state.
@@ -1737,7 +1772,7 @@ export function ChannelChat({
 
                 // §94.7：提交这一刻机器人还在回答 → 这一句是接着聊，不翻页。busy 在按下发送的同时就变 true，
                 // 等这条消息落地、出现在列表里时它已经是 true 了，那时候再判会把每一次发送都当成「回答中」。
-                noteSendWhileBusy(agent.isRunning || turnsInFlight > 0);
+                noteSendWhileBusy(agentLive);
                 await say(draft.text, skillInstructions, draft.attachments);
               }}
               /**
@@ -1751,7 +1786,7 @@ export function ChannelChat({
                * middle of an answer: a second turn racing the first on one thread, with a fabricated
                * result stitched over a tool call that is still executing.
                */
-              pending={agent.isRunning || turnsInFlight > 0}
+              pending={agentLive}
               /*
                * A channel outlives its turns, so it is the screen where waiting is worth offering. A
                * correction typed mid-answer is held here, in this tab, and runs as one follow-up turn the
@@ -1765,10 +1800,11 @@ export function ChannelChat({
                * The turn, not only the run. DOG-01：`/run` 被拖住时 runsInFlight 已加、但主线程可能来不及
                * 重绘；更要紧的是 joinGate / panelAuthoring 空档里还没有 run——这时也必须能按停止取消发送，
                * 不能干等 watchdog。Stop 在无 abortController 时仍清 awaitingReply + stopAgent（best-effort）。
+               *
+               * `chatBusy` 而不是 `agent.isRunning`：打开 / 切换机器人时 connect 期间也是 true，那时按停止
+               * 撤掉的是回放本身（见上面的 `joining`）。
                */
-              stoppable={
-                agent.isRunning || runsInFlight > 0 || turnsInFlight > 0
-              }
+              stoppable={chatBusy}
               /*
                * At the END OF THE TRANSCRIPT rather than above the composer, which is where this used to
                * be. A turn that ends without an answer leaves a gap exactly where the reply was going to

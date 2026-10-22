@@ -603,15 +603,32 @@ function Queued({
  * alternative is threading a ref out through three components with no other reason to know a
  * scroller exists.
  */
-function ScrollNewestQueuedIntoView({ newest }: { newest: string | null }) {
+function ScrollNewestQueuedIntoView({
+  newest,
+  viewport,
+}: {
+  newest: string | null;
+  viewport?: React.RefObject<HTMLDivElement | null>;
+}) {
   const { scrollToEnd } = useMessageScroller();
 
   useEffect(() => {
     if (newest === null) {
       return;
     }
+    /*
+     * 只有本来就在底部（或几乎在底部）才跟下去：往上翻着读的人排了一句补充，不该被拽回底部——
+     * 那一行在列表末尾，翻回去看得到，而且「它已经排上了」由输入框清空 + 末尾那一行一起说清楚。
+     * 关掉也走这里（`newest` 换成上一条 / null）：同样不拽人。
+     */
+    const element = viewport?.current;
+    if (element) {
+      const fromBottom =
+        element.scrollHeight - element.scrollTop - element.clientHeight;
+      if (fromBottom > 80) return;
+    }
     scrollToEnd();
-  }, [newest, scrollToEnd]);
+  }, [newest, scrollToEnd, viewport]);
 
   return null;
 }
@@ -657,6 +674,7 @@ export const SETTLE_AFTER_HYDRATE_MS = 2500;
 function SettleAtEnd({
   busy = false,
   hydrating,
+  opening = false,
   newestUserMessageId,
   viewport,
   scrollKey,
@@ -668,6 +686,8 @@ function SettleAtEnd({
   /** 刚出现的那条用户消息是不是连续聊天里发的（§94）：是就不翻页，底部跟着长。 */
   sendMode?: React.RefObject<SendMode>;
   hydrating: boolean;
+  /** 还在「打开」这段对话的窗口里（`useOpeningWindow`）：历史补齐不是新的一轮。 */
+  opening?: boolean;
   newestUserMessageId: string | null;
   viewport: React.RefObject<HTMLDivElement | null>;
   /** 滚动位置记在哪（DESIGN.md §88）；没有就只管钉在底部。 */
@@ -738,12 +758,17 @@ function SettleAtEnd({
       if (!s.busy && s.slack > 0) setSlack(0);
     } else if (newestUserMessageId !== s.baseline) {
       // 恢复完成后又多了一条用户消息：人发的（或别的设备发的），交回「新一轮对齐到顶上」。
-      s.until = 0;
-      s.restore = null;
       s.baseline = newestUserMessageId;
-      // 「跟着变」的留白先按现在的高度冻成固定的（§94.6）：下面两条路（连续 / 翻页）都按固定高度算，滚动容器对齐时也不受影响。
-      if (s.floor !== null) setSlack(s.slack);
-      if (
+      /*
+       * 还在「打开」的窗口里（`opening`，DESIGN.md §83）：历史是分几段到的（上次看到的样子 → 存下的整段 →
+       * 晚到的「已停止」/备用说明），最新一条用户消息变了只说明这一段补进来了，不是有人刚发了一句——
+       * 垫 2/3 屏空白、翻页、把位置交回滚动容器，都会让刚打开 / 刚切回来的对话像发了一次消息。
+       * 基线已经跟着走了，窗口过后的第一条才算新的一轮。
+       */
+      if (opening) {
+        // 打开窗口里：只把「跟着变」的留白冻成固定高度（§94.6），不垫空白、不翻页、不动位置。
+        if (s.floor !== null) setSlack(s.slack);
+      } else if (
         sendMode?.current.continuous &&
         sendMode.current.id === newestUserMessageId
       ) {
@@ -782,6 +807,10 @@ function SettleAtEnd({
           scrollToEnd({ behavior: "auto" });
         }
       } else {
+        s.until = 0;
+        s.restore = null;
+        // 「跟着变」的留白先按现在的高度冻成固定的（§94.6）：下面两条路（连续 / 翻页）都按固定高度算，滚动容器对齐时也不受影响。
+        if (s.floor !== null) setSlack(s.slack);
         /*
          * 新的一轮：滚动容器要把问题对齐到视口上 1/3（§94.7 的 scrollMargin），它的对齐在**这次提交后的微任务**
          * 里算目标再滚。可回答还没开始，问题下面是空的——它算出的目标比能滚到的更远，会被夹回最底（实测目标
@@ -814,7 +843,7 @@ function SettleAtEnd({
       }
     }
     s.wasHydrating = hydrating;
-  }, [hydrating, newestUserMessageId]);
+  }, [hydrating, newestUserMessageId, opening]);
 
   function setSlack(px: number) {
     const el = slack.current;
@@ -2638,18 +2667,19 @@ const SEND_SCROLL_MS = 700;
 function useSmoothSendScroll(
   viewport: React.RefObject<HTMLDivElement | null>,
   newestUserMessageId: string | null,
-  hydrating = false,
+  opening = false,
 ) {
   const reducedMotion = useReducedMotion();
   const seenRef = useRef<string | null>(null);
-  const wasHydrating = useRef(hydrating);
+  const wasOpening = useRef(opening);
 
   useLayoutEffect(() => {
     const element = viewport.current;
     const previous = seenRef.current;
     seenRef.current = newestUserMessageId;
-    const quiet = hydrating || wasHydrating.current;
-    wasHydrating.current = hydrating;
+    // 打开对话（以及恢复完成后的那一小段）里最新一条换了不是「刚发的」，不平滑滚动。
+    const quiet = opening || wasOpening.current;
+    wasOpening.current = opening;
 
     if (
       // 打开对话时历史一段段到（DESIGN.md §83）：最新一条用户消息换了不是「刚发的」，不平滑滚动。
@@ -2672,7 +2702,7 @@ function useSmoothSendScroll(
       window.clearTimeout(timer);
       element.style.scrollBehavior = "";
     };
-  }, [newestUserMessageId, reducedMotion, viewport, hydrating]);
+  }, [newestUserMessageId, reducedMotion, viewport, opening]);
 }
 
 /**
@@ -2680,15 +2710,21 @@ function useSmoothSendScroll(
  *
  * 打开很长的对话时，先画的是接入快照里的尾巴（常常不满一屏，scrollTop 停在 0）；存下的整段历史晚几秒到
  * （`readThreadMessages` 4 秒截止后后台重试），并进来是补在最上面——浏览器的滚动锚定在 scrollTop 为 0 时
- * 不起作用，画面就停在最上面，离底部两万 px。这里记着「人是不是在底部」（滚动时更新，一开始算在底部），
+ * 不起作用，画面就停在最上面，离底部两万 px。这里记着「人是不是在底部」（滚动时更新），
  * 第一行换了（前面补进来了 / 换了对话）而人在底部时，画完那一刻直接回到底部（不平滑，不算跳）。
  * 人往上翻着看的时候不动，交给浏览器的滚动锚定。
+ *
+ * 两个「别动手」的时机（2026-10-22）：
+ * - 还没收到过任何滚动事件时不知道人在哪，就不动——以前一开始就算「在底部」，打开一段上次停在中间的对话，
+ *   第一批补上来的行（长对话首屏分几帧补齐）会把位置钉到底部一下，再被 §88.3 的恢复拽回去，闪一下；
+ * - 还在「打开」窗口里（`opening`）时位置归 `SettleAtEnd`（回到底部 / 回到上次那一条），这里再钉一次是抢。
  */
 function useKeepBottomOnPrepend(
   viewport: React.RefObject<HTMLDivElement | null>,
   firstId: string | null,
+  opening = false,
 ) {
-  const atBottom = useRef(true);
+  const atBottom = useRef<boolean | null>(null);
   const seen = useRef<string | null>(null);
   useEffect(() => {
     const element = viewport.current;
@@ -2706,17 +2742,18 @@ function useKeepBottomOnPrepend(
     seen.current = firstId;
     if (
       !element ||
+      opening ||
       previous === null ||
       firstId === null ||
       previous === firstId ||
-      !atBottom.current
+      atBottom.current !== true
     )
       return;
     const behavior = element.style.scrollBehavior;
     element.style.scrollBehavior = "auto";
     element.scrollTop = element.scrollHeight;
     element.style.scrollBehavior = behavior;
-  }, [firstId, viewport]);
+  }, [firstId, viewport, opening]);
 }
 
 /**
@@ -2922,7 +2959,16 @@ export function ChatTranscript({
          */
         item.kind === "attachments",
     )?.id ?? null;
-  useSmoothSendScroll(viewportRef, newestUserMessageId, hydrating);
+  /*
+   * 打开这段对话的这段窗口（DESIGN.md §83）：`hydrating` 加上恢复完成后的 SETTLE_AFTER_HYDRATE_MS。
+   *
+   * 为什么要多这 2.5 秒：历史不是一次到的（这台设备上次看到的样子 → 存下的整段 → 晚到的「已停止」/备用说明），
+   * 而且 `hydrating` 在**同一次提交里**就和恢复好的消息一起变 false。只看 `hydrating` 的话，恢复那一刻出现的
+   * 最新一条用户消息会被当成「人刚发的」：带上对齐标记、平滑滚一下、下面垫 2/3 屏空白——用户看到的就是
+   * 「切个机器人 / 从设置回来，整段对话像发了一次消息一样刷新一次」。
+   */
+  const opening = useOpeningWindow(hydrating);
+  useSmoothSendScroll(viewportRef, newestUserMessageId, opening);
   /*
    * CB-025：长对话首屏只挂尾巴再分批往前补。keep-bottom 盯的是「当前挂着的第一行」——
    * 窗口上沿往前挪时 firstId 变了，人还在底部就立刻钉回底（与历史 prepend 同一条路）。
@@ -2933,7 +2979,7 @@ export function ChatTranscript({
     viewportRef,
     items[0]?.id,
   );
-  useKeepBottomOnPrepend(viewportRef, items[tailStart]?.id ?? null);
+  useKeepBottomOnPrepend(viewportRef, items[tailStart]?.id ?? null, opening);
 
   /* One rule for both kinds of row — see `anchorRowIds`, which is where it is written down. */
   /*
@@ -2954,7 +3000,7 @@ export function ChatTranscript({
   const sendMode = useRef<SendMode>({ id: null, continuous: false });
   const freshAnchor = useFreshAnchor(
     newestUserMessageId,
-    hydrating,
+    opening,
     lastSentAt,
     sendMode,
   );
@@ -3174,11 +3220,15 @@ export function ChatTranscript({
           <IconChevronDown className="size-4" />
           <span className="chat-bottom-pill-t">{"回到底部"}</span>
         </MessageScrollerButton>
-        <ScrollNewestQueuedIntoView newest={queued.at(-1)?.id ?? null} />
+        <ScrollNewestQueuedIntoView
+          newest={queued.at(-1)?.id ?? null}
+          viewport={viewportRef}
+        />
         <SettleAtEnd
           busy={busy}
           hydrating={hydrating}
           newestUserMessageId={newestUserMessageId}
+          opening={opening}
           viewport={viewportRef}
           slack={slackRef}
           sendMode={sendMode}
@@ -3307,13 +3357,44 @@ export const FRESH_ANCHOR_MS = 3000;
 type SendMode = { id: string | null; continuous: boolean };
 
 /**
- * 恢复完成之后新出现的最新一条用户消息（人刚发的，或者别的设备发来的）；出现 FRESH_ANCHOR_MS 之后、
- * 或者在恢复中（历史一段段到）都是 null。在渲染时算出来：滚动容器在这一次提交后的微任务里读标记，
- * 晚一拍（effect 里再 setState）就错过了。
+ * 这段对话还在「打开」：`hydrating`，以及恢复完成后 SETTLE_AFTER_HYDRATE_MS 之内（DESIGN.md §83）。
+ *
+ * 恢复完成的那一刻 `hydrating` 就和恢复好的消息一起变 false，所以只看它不够：那一次提交里最先出现的最新一条
+ * 用户消息是历史，不是「人刚发的」。这段时间里到的消息一律按「历史补齐」处理——不带对齐标记、不平滑滚、
+ * 不记成本机发出的时刻。这段时间里人真的发了消息（少见，刚打开就发）也按贴底处理，不翻页。
+ */
+function useOpeningWindow(hydrating: boolean): boolean {
+  /*
+   * 不用 state：恢复完成的那一次提交里就要算对。用 state 的话那一次渲染拿到的还是旧值（`setUntil` 要等下一次
+   * 渲染），那一次提交里出现的用户消息已经先被当成「刚发的」处理过了——滚动容器正是在那一次提交后的微任务里
+   * 读标记的。
+   *
+   * 只有「确实恢复过」（`hydrating` 真为 true 过）才有这个窗口：从新建对话页带着第一条消息挂上来的（`hydrating`
+   * 一直是 false）没有历史要补，第一句话照旧翻页到视口上 1/3。
+   */
+  const recovered = useRef(hydrating);
+  const startedAt = useRef(0);
+  if (hydrating) {
+    recovered.current = true;
+    startedAt.current = 0;
+  } else if (recovered.current && startedAt.current === 0) {
+    startedAt.current = performance.now();
+  }
+  return (
+    hydrating ||
+    (startedAt.current > 0 &&
+      performance.now() < startedAt.current + SETTLE_AFTER_HYDRATE_MS)
+  );
+}
+
+/**
+ * 恢复完成之后新出现的最新一条用户消息（人刚发的，或者别的设备发来的）；出现 FRESH_ANCHOR_MS 之后就没了。
+ * 打开这段对话的窗口里（`opening`）到的都不是新消息：那时最新一条变了只说明历史补齐了，只重新记基线。
+ * 在渲染时算出来：滚动容器在这一次提交后的微任务里读标记，晚一拍（effect 里再 setState）就错过了。
  */
 function useFreshAnchor(
   newestUserMessageId: string | null,
-  hydrating: boolean,
+  opening: boolean,
   lastSentAt: SentAtReading | null = null,
   sendMode?: React.RefObject<SendMode>,
 ): string | null {
@@ -3334,10 +3415,16 @@ function useFreshAnchor(
       continuous: false,
     };
   const memo = seen.current;
-  if (hydrating) {
-    memo.baseline = newestUserMessageId;
+  if (opening) {
+    /*
+     * 历史到的每一段都只是「这一段原来是这样」：最新一条换了就重新记基线，不当成新的一轮。
+     * `memo.last` 照常跟着走，下一个真的发送才能拿服务器读数算出「上一条多久之前」。
+     */
+    if (newestUserMessageId !== memo.baseline)
+      memo.baseline = newestUserMessageId;
     memo.id = null;
     memo.continuous = false;
+    if (sendMode) sendMode.current = { id: null, continuous: false };
   } else if (
     newestUserMessageId !== null &&
     newestUserMessageId !== memo.baseline &&
@@ -3365,6 +3452,7 @@ function useFreshAnchor(
   }
   memo.last = newestUserMessageId;
   const fresh =
+    !opening &&
     !memo.continuous &&
     memo.id !== null &&
     memo.id === newestUserMessageId &&

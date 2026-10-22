@@ -41,7 +41,16 @@ describe("打开对话落在最新一条", () => {
     expect(transcript).toMatch(
       /<SettleAtEnd[\s\S]{0,400}?hydrating=\{hydrating\}/,
     );
-    expect(transcript).toContain("useSmoothSendScroll(viewportRef, newestUserMessageId, hydrating)");
+    /*
+     * 第三个数是 `opening` 而不是 `hydrating`（2026-10-22）：恢复完成那一刻 `hydrating` 和恢复好的消息在同一次
+     * 提交里一起变，只看它会漏掉那一次——历史里的最新一条被当成「刚发的」，平滑滚一下、翻页、垫空白。
+     */
+    expect(transcript).toContain(
+      "const opening = useOpeningWindow(hydrating);",
+    );
+    expect(transcript).toContain(
+      "useSmoothSendScroll(viewportRef, newestUserMessageId, opening)",
+    );
     // 钉底部用滚动容器自己的 scrollToEnd（同时把它切回「跟着底部」），不是直接改 scrollTop。
     const settle = transcript.slice(transcript.indexOf("function SettleAtEnd"), transcript.indexOf("const FIRST_PAINT_STAGGER_COUNT"));
     expect(settle).toContain('scrollToEnd({ behavior: "auto" })');

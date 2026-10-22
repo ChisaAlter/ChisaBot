@@ -1342,6 +1342,8 @@ export function Composer({
         setValue([]);
         markDraftSent(draftKey, submitted.text);
         dismissRejections();
+        // 停在输入框里：排队补话是这里本来的用法（一段回答里可以连着补），点过发送按钮之后只要按字就行。
+        promptAreaRef.current?.focus();
         // Taken off the composer as the message is parked, so the strip empties with the words
         // rather than leaving the files looking like they are still to be sent. Only these —
         // `consumeAttachments()` takes every `ready` attachment, including ones a send already
@@ -1376,6 +1378,13 @@ export function Composer({
        * them; putting them back would be an old complaint reappearing next to a new attempt.
        */
       dismissRejections();
+      /*
+       * 焦点立刻交回输入框，而不是等整轮回答结束（`:1411` 那笔「欠一次光标」照旧保留，给失败重来用）。
+       *
+       * 以前点发送按钮：焦点留在按钮上，编辑器失焦 → prompt-area 150ms 后把高度收成一行，输入框整块塌一下；
+       * 回答跑完再 focus 一次又弹回来。人在这段时间里是想接着打字的（排队补话 / 下一句），光标就该在这里。
+       */
+      promptAreaRef.current?.focus();
       // The strip is cleared optimistically too, but by hiding rather than by consuming: these
       // ids leave the composer now, so nothing on screen can send them a second time, and the
       // `finally` below is what decides whether they come back.

@@ -36,6 +36,12 @@ const ISOLATED = [
   "app/tests/home-fallback-routing.test.tsx",
   "app/tests/startup-resilience.test.tsx",
   "app/tests/tail-first-paint.test.ts",
+  /*
+   * Motion 在**第一次 import 时**就把 `prefers-reduced-motion` 记下来了（它自己的全局状态），之后再改
+   * `matchMedia` 也不认。这份用例在 `beforeAll` 里把 matchMedia 换成「开了减少动效」，所以必须自己一个进程；
+   * 跟别的文件一起跑时永远拿到「没开」，断言的是检查项而不是代码（2026-10-22 起单列）。
+   */
+  "app/tests/message-scroll-reduced-motion.test.tsx",
 ];
 
 const files = [...new Glob("app/tests/**/*.test.{ts,tsx}").scanSync(".")]
