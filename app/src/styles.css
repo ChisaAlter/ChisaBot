@@ -6999,6 +6999,11 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .cc-account-t { font-size: 15px; font-weight: 600; color: var(--ink-1); overflow-wrap: anywhere; }
 .cc-account-s { margin-top: 2px; font-size: 13px; color: var(--ink-3); }
 .cc-account-err { margin: 0 20px 16px; padding: 10px 12px; border-radius: var(--r-sm); font-size: 13px; color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent); }
+/* 节点还在跑旧版节点程序（§73.1）：警告条 +「重启节点」/ 复制命令。 */
+.cc-account-warn { margin: 0 20px 16px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent); display: flex; flex-direction: column; gap: 8px; }
+.cc-account-warn-t { font-size: 13px; font-weight: 600; color: var(--ink-1); }
+.cc-account-warn-s { font-size: 13px; color: var(--ink-3); line-height: 1.5; }
+.cc-account-warn-a { display: flex; flex-wrap: wrap; gap: 8px; }
 .cc-steps { display: flex; flex-direction: column; gap: 18px; }
 .cc-step { display: flex; gap: 14px; animation: list-enter var(--dur-2) ease-out both; }
 .cc-step-n { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: none; border-radius: 999px; font-size: 13px; font-weight: 600; color: #fff; background: var(--accent-blue); }

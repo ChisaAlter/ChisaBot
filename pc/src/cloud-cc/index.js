@@ -52,6 +52,12 @@ const LOGIN_MS = 10 * 60_000;
  *  最坏 8 + 10 + 8 + 8 = 34 秒（服务器 38 秒、网页 45 秒的预算之内）。 */
 const LOGOUT_MS = 10_000;
 const LOGOUT_STATUS_MS = 8_000;
+/** 节点程序自更新（容器里）：同一个新版指纹至少隔这么久才再试，任何自动重启一小时最多一次。
+ *  下载失败时入口脚本会继续用旧文件，没有这两道闸就会「重启 → 还是旧的 → 又重启」地循环。 */
+const SELF_UPDATE_RETRY_MS = 15 * 60_000;
+const SELF_UPDATE_COOLDOWN_MS = 60 * 60_000;
+/** 自动重启前的缓冲：先把 cc_info 等消息发出去，再让容器重启。 */
+const SELF_UPDATE_DELAY_MS = 1500;
 const FILE_CAP = 1024 * 1024;
 const PATCH_CAP = 400 * 1024;
 const SNAP_EXCLUDE = ["node_modules/", ".venv/", "venv/", "__pycache__/", ".next/", ".cache/", "dist/", "build/", "coverage/", ".git"].join("\n");
@@ -115,7 +121,21 @@ function parseStatus(stdout) {
 }
 
 /**
- * @param {{ send: (m: object) => boolean, log?: (s: string) => void, root?: string, claude?: string, hookCommand?: string[], serverUrl?: string, getToken?: () => string }} options
+ * 正在跑的节点程序文件（`chisabot-node.cjs`）的 sha256。服务器拿它和「现在发给节点的程序」比，
+ * 判断节点是不是当前版本：云端节点只在容器启动时下载一次，改过 pc/src/cloud-cc 又不重启容器，
+ * 进程就一直在跑旧代码（2026-10-22「退出 Claude 无效」就是这样：服务器和网页都是新的，节点还是旧的）。
+ */
+function scriptHash(file = process.argv[1]) {
+  try {
+    if (!file) return null;
+    return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {{ send: (m: object) => boolean, log?: (s: string) => void, root?: string, claude?: string, hookCommand?: string[], serverUrl?: string, getToken?: () => string, exit?: (code: number) => void }} options
  */
 function createCloudCc(options) {
   const log = options.log || (() => {});
@@ -146,6 +166,59 @@ function createCloudCc(options) {
   const gitWs = createGitWorkspaces({ root, log });
   // 电脑文件夹同步（P4，sync.js）：隧道、公钥、租约
   const syncNode = createSyncNode({ root, log, serverUrl: options.serverUrl, getToken: options.getToken });
+
+  // ---------- 节点程序自更新 ----------
+  /** 进程退出（测试可换掉，否则一自更新整个测试进程就没了）。 */
+  const exit = options.exit || ((code) => process.exit(code));
+  /** 自己在跑的文件指纹；服务器下发的指纹对不上就是要重启换程序。 */
+  const script = scriptHash();
+  let expectedScript = null;
+  /** 自动重启的闸门写在节点目录里：容器重启后还记得「这个版本刚试过」，下载失败时不至于来回重启。 */
+  function selfUpdateFile() {
+    const dir = process.env.CHISABOT_NODE_DIR || path.join(process.env.HOME || os.homedir(), ".chisabot-node");
+    return path.join(dir, "self-update.json");
+  }
+  function lastAttempt() {
+    try {
+      const j = JSON.parse(fs.readFileSync(selfUpdateFile(), "utf8"));
+      return { script: String(j.script || ""), at: Number(j.at) || 0 };
+    } catch {
+      return null;
+    }
+  }
+  function noteAttempt(sha) {
+    try {
+      fs.mkdirSync(path.dirname(selfUpdateFile()), { recursive: true });
+      fs.writeFileSync(selfUpdateFile(), JSON.stringify({ script: sha, at: Date.now() }));
+    } catch (error) {
+      log(`记下自动更新失败：${error.message}`);
+    }
+  }
+  /** 能不能现在重启：没有会话、没有登录流程、没有云端登录浏览器。 */
+  function idle() {
+    return turns.size === 0 && !login && !remote;
+  }
+  /**
+   * 节点程序过期时自己退出，让容器按 restart 策略重新起来、入口脚本顺手把最新的程序下载下来——
+   * 不用等人想起来 `docker restart`。只在云端节点镜像里做（CHISABOT_CLOUD_WORKSPACE=1）：
+   * 普通服务器节点由 systemd `Restart=on-failure` 管，干净退出不会被拉起，绝不能这么做。
+   */
+  function maybeSelfUpdate() {
+    if (process.env.CHISABOT_CLOUD_WORKSPACE !== "1") return;
+    if (!script || !expectedScript || expectedScript === script) return;
+    if (!idle()) return;
+    const last = lastAttempt();
+    if (last) {
+      const same = last.script === expectedScript;
+      if (Date.now() - last.at < (same ? SELF_UPDATE_RETRY_MS : SELF_UPDATE_COOLDOWN_MS)) return;
+    }
+    noteAttempt(expectedScript);
+    log(`节点程序有新版本（${script.slice(0, 8)} → ${expectedScript.slice(0, 8)}）：空闲，重启以更新（容器会自动起来并下载新程序）`);
+    // 这 1.5 秒里可能刚好来了一轮：再看一眼，忙就等下一次探测（尝试记录照留，15 分钟内不会再试）。
+    setTimeout(() => {
+      if (idle()) exit(0);
+    }, SELF_UPDATE_DELAY_MS).unref?.();
+  }
 
   function out(message) {
     if (options.send(message)) return;
@@ -736,6 +809,13 @@ function createCloudCc(options) {
         endLogin("退出");
         return await logoutClaude();
       }
+      case "restart_node": {
+        if (process.env.CHISABOT_CLOUD_WORKSPACE !== "1") throw new Error("这台节点不是云端工作区容器：请在服务器上重启节点程序。");
+        if (!idle()) throw new Error("还有会话在跑，先停止再重启节点。");
+        log("网页请求重启节点（容器会重新下载最新的节点程序）");
+        setTimeout(() => exit(0), 800).unref?.();
+        return { restarting: true };
+      }
       case "session_init":
         await ensureTree(args.workspaceId, args.sessionId, args.branch);
         return { tree: path.relative(root, treeDir(args.workspaceId, args.sessionId)) };
@@ -845,7 +925,7 @@ function createCloudCc(options) {
 
   async function info() {
     const v = await run(claude, ["--version"], { timeout: 15_000 });
-    out({ type: "cc_info", root, claudeVersion: v.code === 0 ? v.stdout.trim().split("\n")[0].slice(0, 120) : null, running: [...bySession.keys()], browser: !!findChromium(), proxy: !!forwarder.upstream(), singbox: await singboxVer() });
+    out({ type: "cc_info", root, script, claudeVersion: v.code === 0 ? v.stdout.trim().split("\n")[0].slice(0, 120) : null, running: [...bySession.keys()], browser: !!findChromium(), proxy: !!forwarder.upstream(), singbox: await singboxVer() });
   }
 
   return {
@@ -855,7 +935,10 @@ function createCloudCc(options) {
       if (!message || !HANDLED.has(message.type)) return false;
       switch (message.type) {
         case "cc_probe":
+          // 服务器在探测里带上它现在发的节点程序指纹（旧服务器没有这个字段 = 不判断）。
+          expectedScript = typeof message.script === "string" ? message.script : null;
           void info();
+          maybeSelfUpdate();
           break;
         case "cc_rpc":
           Promise.resolve()

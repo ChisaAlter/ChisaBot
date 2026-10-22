@@ -154,6 +154,8 @@ export const ccApi = {
   /** 退出：节点要「auth status → claude auth logout → auth status（必要时删凭据再确认）」，最坏约 34 秒；预算给到 45 秒。 */
   logout: () => client<ClaudeAuth>("/api/cloud-workspace/claude/logout", "claude", { method: "POST", fallback: "退出失败", timeoutMs: 45_000 }),
   check: () => client("/api/cloud-workspace/claude/check", { method: "POST", fallback: "检查失败" }).then((r) => r.json() as Promise<{ claude: ClaudeAuth }>),
+  /** 让云端节点重启一次以换上新版节点程序（容器起来时重新下载）：节点要几秒才回来，预算 20 秒。 */
+  restartNode: () => client<boolean>("/api/cloud-workspace/node/restart", "restarting", { method: "POST", fallback: "重启节点失败", timeoutMs: 20_000 }),
   createSession: (workspaceId: string, body: { title?: string } = {}) =>
     client<CcSessionView>(`/api/claude-code/workspaces/${encodeURIComponent(workspaceId)}/sessions`, "session", { method: "POST", body, fallback: "新建会话失败" }),
   patchSession: (id: string, body: { title?: string; model?: string | null; effort?: string | null; archived?: boolean }) =>

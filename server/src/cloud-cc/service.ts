@@ -32,6 +32,7 @@ import type { DeviceHub, DeviceHubExtension } from "../devices/hub";
 import type { DeviceRecord, DeviceStore } from "../devices/store";
 import type { Vault } from "../vault/service";
 import { type Github, GithubError } from "../github/service";
+import { createNodeScriptHash, normalizeScript, scriptIsStale } from "./node-script";
 
 /**
  * 云端 Claude Code（docs/cloud-claude-code.md，ADR-0014，DESIGN.md §73）。
@@ -63,6 +64,8 @@ const LOGIN_CODE_MS = 80_000;
 const PERSIST_EVERY_MS = 2_000;
 /** 节点在线时服务器定期复查一次 Claude 登录状态（缓存在 chisabot_cloud_workspaces.claude_auth）。 */
 const AUTH_REFRESH_MS = 5 * 60_000;
+/** 节点在线时定期比对「节点程序」指纹：不一样就提醒 / 让节点空闲时自己重启换程序（§73.1）。 */
+const SCRIPT_PROBE_MS = 5 * 60_000;
 const SCRATCH_ID_PREFIX = "scratch";
 
 type Json = Record<string, unknown>;
@@ -175,6 +178,10 @@ export type CloudCcServiceOptions = {
   gitBase?: string;
   /** 节点在线时定期复查 Claude 登录状态的间隔，默认 5 分钟（测试可以调短）。 */
   authRefreshMs?: number;
+  /** 现在发给节点的程序（node-agent/chisabot-node.cjs）：算 sha256 判断节点跑的是不是这个版本。 */
+  nodeBundle?: () => Promise<Buffer | null>;
+  /** 节点在线时定期比对节点程序指纹的间隔，默认 5 分钟（测试可以调短）。 */
+  scriptProbeMs?: number;
 };
 
 export const PROXY_SECRET = "claude-proxy";
@@ -201,6 +208,9 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
   const { database, hub, deviceStore } = options;
   const sql = database.$client;
   const nodes = new Set<string>(); // 已登记的云端节点 device id
+  /** 每个节点最近一次报上来的「节点程序」指纹：undefined = 还没报；null = 报了但没有（比这个功能还旧的程序）。 */
+  const nodeScripts = new Map<string, string | null>();
+  const nodeScript = createNodeScriptHash(options.nodeBundle ?? (async () => null));
   const rpcs = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; deviceId: string }>();
   const live = new Map<string, LiveTurn>(); // sessionId -> 当前一轮
   const subscribers = new Map<string, Set<Subscriber>>(); // sessionId -> 网页
@@ -416,13 +426,31 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
     for (const id of nodes) if (hub.isOnline(id)) void refreshAuth(id, 25_000).catch(() => {});
   }, options.authRefreshMs ?? AUTH_REFRESH_MS);
   unref(authTimer);
+  /**
+   * 节点程序指纹对不上就补一次探测：节点收到后会在空闲时自己重启换程序（pc/src/cloud-cc 的 maybeSelfUpdate），
+   * 页面也据此提示「节点在跑旧程序」。发版之后不用等人想起来 `docker restart`。
+   */
+  const scriptTimer = setInterval(() => {
+    void (async () => {
+      const current = await nodeScript();
+      if (!current) return;
+      for (const id of nodes) {
+        if (!hub.isOnline(id) || nodeScripts.get(id) === current) continue;
+        hub.sendRaw(id, { type: "cc_probe", script: current });
+      }
+    })().catch(() => {});
+  }, options.scriptProbeMs ?? SCRIPT_PROBE_MS);
+  unref(scriptTimer);
 
   async function register(record: DeviceRecord, info: Json) {
+    const reportedScript = normalizeScript(info.script);
+    nodeScripts.set(record.id, reportedScript);
     const clean = {
       claudeVersion: typeof info.claudeVersion === "string" ? info.claudeVersion.slice(0, 120) : null,
       root: typeof info.root === "string" ? info.root.slice(0, 200) : null,
       browser: info.browser === true,
       singbox: typeof info.singbox === "string" ? info.singbox.slice(0, 40) : null,
+      script: reportedScript,
     };
     await sql.unsafe(
       `INSERT INTO chisabot_cloud_workspaces (device_id, owner_user_id, info) VALUES ($1, $2, $3::text::jsonb)
@@ -459,7 +487,12 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
 
   const extension: DeviceHubExtension = {
     onHello(record) {
-      if (!/^(android|ios)$/i.test(record.platform)) hub.sendRaw(record.id, { type: "cc_probe" });
+      if (!/^(android|ios)$/i.test(record.platform)) {
+        // 探测里带上「现在发出去的节点程序」的指纹：节点自己判断在跑的是不是旧程序（§73.1）。
+        void nodeScript().then((script) => {
+          hub.sendRaw(record.id, script ? { type: "cc_probe", script } : { type: "cc_probe" });
+        });
+      }
       return options.next?.onHello?.(record);
     },
     gate(record, operation, args) {
@@ -1357,10 +1390,21 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
     const row = await nodeFor(ownerUserId);
     if (!row) return { node: null, claude: EMPTY_AUTH, running: 0, maxConcurrent: MAX_CONCURRENT, browserLogin: false, proxy: await proxyView(ownerUserId) };
     const device = await deviceStore.get(row.device_id).catch(() => null);
-    const info = (row.info ?? {}) as { claudeVersion?: string | null; browser?: boolean };
+    const info = (row.info ?? {}) as { claudeVersion?: string | null; browser?: boolean; script?: string | null };
+    // 节点刚连上还没报 cc_info 时用库里上次报的；两边都没有才是「说不好」。
+    const reported = nodeScripts.has(row.device_id) ? nodeScripts.get(row.device_id) : normalizeScript(info.script);
+    const current = await nodeScript();
     return {
       node: device
-        ? { deviceId: device.id, name: device.name, online: hub.isOnline(device.id), claudeVersion: info.claudeVersion ?? null, lastSeenAt: device.lastSeenAt }
+        ? {
+            deviceId: device.id,
+            name: device.name,
+            online: hub.isOnline(device.id),
+            claudeVersion: info.claudeVersion ?? null,
+            lastSeenAt: device.lastSeenAt,
+            scriptStale: scriptIsStale(reported, current),
+            scriptRestartable: reported !== null && reported !== undefined,
+          }
         : null,
       claude: row.claude_auth ?? EMPTY_AUTH,
       running: [...live.values()].filter((t) => t.ownerUserId === ownerUserId).length,
@@ -1447,6 +1491,24 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
   async function check(ownerUserId: string) {
     const node = await onlineNode(ownerUserId);
     return { claude: await refreshAuth(node.device_id) };
+  }
+
+  /**
+   * 让节点重启一次以换上新程序（§73.1）：容器按 restart 策略重新起来时，入口脚本会重新下载最新的
+   * `chisabot-node.cjs`。只有认得自己程序指纹的节点（新版）能做；比这个还旧的节点只能人工重启容器。
+   */
+  async function restartNode(ownerUserId: string) {
+    const node = await onlineNode(ownerUserId);
+    try {
+      await rpc<{ restarting?: boolean }>(node.device_id, "restart_node", {}, 15_000);
+    } catch (error) {
+      await audit(ownerUserId, null, "node_restart_failed", { reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
+      throw error;
+    }
+    await audit(ownerUserId, null, "node_restart", { deviceId: node.device_id });
+    // 重启之前报的指纹已经过时：清掉，节点回来会重新报一次 cc_info。
+    nodeScripts.delete(node.device_id);
+    return { restarting: true };
   }
 
   async function emergencyStop(ownerUserId: string) {
@@ -1564,6 +1626,7 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
     app.post("/claude/proxy/test", async (c) => c.json(await testProxy(c.var.actor.id, proxyTestBody.parse(await c.req.json().catch(() => ({}))).url)));
     app.post("/claude/logout", async (c) => c.json(await logout(c.var.actor.id)));
     app.post("/claude/check", async (c) => c.json(await check(c.var.actor.id)));
+    app.post("/node/restart", async (c) => c.json(await restartNode(c.var.actor.id)));
     app.get("/permission-rules", async (c) => {
       const rows = await sql.unsafe<{ id: string; scope: string; scope_id: string; kind: string; value: string; created_at: Date; title: string | null }[]>(
         "SELECT r.*, s.title FROM chisabot_cc_permission_rules r LEFT JOIN chisabot_cc_sessions s ON s.id = r.scope_id WHERE r.owner_user_id = $1 ORDER BY r.created_at DESC LIMIT 200",
@@ -1706,6 +1769,6 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
       syncHooks.forgetWorkspace = hooks.forgetWorkspace ?? null;
     },
     // 测试用
-    _internal: { live, nodes, check, logout, refreshAuth, authTimer, startTurn, send, decideApproval, workspaces, createSession, status, createGithubWorkspace, mergeSession, pushSession },
+    _internal: { live, nodes, check, logout, refreshAuth, authTimer, scriptTimer, startTurn, send, decideApproval, workspaces, createSession, status, createGithubWorkspace, mergeSession, pushSession, nodeScript, nodeScripts, restartNode },
   };
 }

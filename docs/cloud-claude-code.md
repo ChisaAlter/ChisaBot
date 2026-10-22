@@ -28,8 +28,8 @@
 
 **设备连接上的消息**（同一条 WSS；旧客户端不认识就忽略）
 
-- 服务器 → 节点：`cc_probe`（连上时问一次）、`cc_rpc{id, op, args}`（`status` / `login_start` / `login_code` / `login_cancel` / `logout` / `session_init` / `tree` / `read` / `diff` / `undo` / `running`；P3：`ws_clone` / `ws_merge` / `ws_push_preview` / `ws_push` / `ws_base_diff` / `ws_delete` / `ws_drop_tree`，`tree` / `read` 多了 `ref: "work"`）、`cc_turn{sessionId, turnId, workspaceId, prompt, claudeSessionId, resume, model, effort, rules, git?: {branch}}`、`cc_stop{sessionId}`、`cc_approval_result{approvalId, decision, always}`。
-- 节点 → 服务器：`cc_info{claudeVersion, root, running}`（服务器据此登记云端工作区）、`cc_rpc_result{id, ok, result | error}`、`cc_event{sessionId, turnId, seq, event}`、`cc_approval_request{…, tool, summary, input, rule}`、`cc_done{ok, stopped, error, claudeSessionId, resumable, costUsd, turns, changes}`。
+- 服务器 → 节点：`cc_probe{script?}`（连上时问一次；`script` = 现在发出去的节点程序的 sha256，旧服务器不带）、`cc_rpc{id, op, args}`（`status` / `login_start` / `login_code` / `login_cancel` / `logout` / `restart_node` / `session_init` / `tree` / `read` / `diff` / `undo` / `running`；P3：`ws_clone` / `ws_merge` / `ws_push_preview` / `ws_push` / `ws_base_diff` / `ws_delete` / `ws_drop_tree`，`tree` / `read` 多了 `ref: "work"`）、`cc_turn{sessionId, turnId, workspaceId, prompt, claudeSessionId, resume, model, effort, rules, git?: {branch}}`、`cc_stop{sessionId}`、`cc_approval_result{approvalId, decision, always}`。
+- 节点 → 服务器：`cc_info{claudeVersion, root, running, script}`（服务器据此登记云端工作区；`script` = 节点在跑的那份程序的 sha256）、`cc_rpc_result{id, ok, result | error}`、`cc_event{sessionId, turnId, seq, event}`、`cc_approval_request{…, tool, summary, input, rule}`、`cc_done{ok, stopped, error, claudeSessionId, resumable, costUsd, turns, changes}`。
 
 **一轮**：节点在 `projects/<工作区>/trees/<会话>` 里跑 `claude -p --output-format stream-json --verbose --include-partial-messages --permission-mode default --settings <钩子> [--session-id U | --resume U] [--model] [--effort]`，提示词走标准输入；会话 id 由服务器生成（第一轮 `--session-id`，之后 `--resume`，「新的 Claude 会话」换一个）。每一轮前后用独立的 `GIT_DIR`（`.chisabot/snap/<会话>.git`）拍快照，diff 进改动卡和右栏，「撤销最后一轮」恢复到这一轮之前（之后目录又被改过就拒绝）。
 
@@ -369,6 +369,8 @@ Claude 会话在**自己的工作树**里改，不碰 `work/`，所以 PC 开着
 登录状态缓存在 `chisabot_cloud_workspaces.claude_auth`，在节点重连、`/claude/check`、以及节点在线时服务器每 5 分钟的定期复查时刷新（同一节点并发检查合并）。网页打开 Claude Code / 设置 → 云端工作区、窗口回到前台时，若缓存「未登录」或超过 60 秒，会节流地自动调 `/claude/check`（`app/src/lib/claude-auth-recheck.ts`，DESIGN.md §73.1）。
 
 **退出 Claude**（`POST /api/cloud-workspace/claude/logout`，2026-10-22 修「退出无效」）：节点以 `claude auth status --json` 为准——先问一次确认确实登着，再跑 `claude auth logout`（最多 10 秒，卡住就 SIGKILL），然后**必须再问一次** `auth status`；CLI 没退掉（旧版没有 `auth logout`、网络卡住被超时结束、凭据没删掉）就直接删掉它自己报告的 `configDirectory` 里的 `.credentials.json`，再确认一次，还登着才回错误（页面卡片底部一行红字）。服务器在发 `logout` 之前把该节点的「登录状态代次」+1：退出之前发出、退出之后才回来的 `status` 结果一律不写回缓存，否则一次并发的自动检查会把刚退掉的账号改回「已登录」。
+
+**节点程序版本**（同一天的第二条反馈「退出还是不管用」）：容器里的 `chisabot-node.cjs` 只在启动时下载一次，所以改了 `pc/src/cloud-cc` 而不重启容器，节点就一直跑旧代码——退出这一套只在新程序里，旧节点回「还登着」，页面看起来像「修了没用」。现在服务器把「现在发出去的程序」的 sha256 随 `cc_probe` 发下去，节点在 `cc_info` 里报自己在跑的那份：对不上就是旧程序。云端容器里的节点在空闲（没有会话、没有登录流程、没有云端登录浏览器）时自己退出，容器 `restart: unless-stopped` 重新起来、入口脚本下载新版；同一个指纹 15 分钟内只试一次、任何自动重启一小时最多一次（下载失败不会来回重启）；普通服务器节点（systemd `Restart=on-failure`）不这么做。`GET /api/cloud-workspace` 的 `node.scriptStale` 给页面提示，`node.scriptRestartable` 表示节点够新、可以用 `POST /api/cloud-workspace/node/restart` 让它重启；更旧的节点只能人工 `docker restart chisabot-cloudnode`。指纹比较在 `server/src/cloud-cc/node-script.ts`，自更新在 `pc/src/cloud-cc/index.js`（`maybeSelfUpdate`）。
 
 **设备连接上的消息**（复用同一条 WSS，旧客户端会忽略不认识的消息）
 

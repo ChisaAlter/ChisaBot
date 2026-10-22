@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 云端 Claude Code：修「退出 Claude 还是不管用」。根因不在退出逻辑，而在云端节点容器：「节点程序」（`chisabot-node.cjs`）只在容器启动时从服务器下载一次，上一版修好的「退出必须真的退出」（0.1.55）只有服务器和网页生效，节点还在跑旧程序、回的还是「还登着」，页面照着新逻辑报「没有退出」。现在服务器把当前发出去的节点程序的 sha256 随 `cc_probe` 下发，节点在 `cc_info` 里报自己在跑的那份：对不上时，云端容器里的节点会在空闲（没有会话 / 登录流程 / 云端登录浏览器）时自己退出，容器按 `restart: unless-stopped` 重新起来并下载新程序——同一个版本 15 分钟内只试一次、任何自动重启一小时最多一次，下载失败不会来回重启；普通服务器节点（systemd `Restart=on-failure`）不这么做。网页账号卡下面显示「云端节点还在跑旧版节点程序」：新版节点给「重启节点」（`POST /api/cloud-workspace/node/restart`），比这个功能还旧的节点给 `docker restart chisabot-cloudnode` 的复制按钮；退出失败而节点是旧程序时红字直接点名，不再让人以为是自己账号的问题。节点程序随网页构建下发（`node-agent/chisabot-node.cjs`），PC / Android 外壳没有改动。
+
 ## 0.1.59 — 2026-10-22
 
 这一版把机器人的待回答问题放到对话里直接处理（§110），并对齐 Claude Code 左栏与机器人侧的外壳位置（§73.2）。`pc/` / `android/` 没有代码改动，客户端三处版本号对齐到 0.1.59（Android `versionCode` 256）。

@@ -33,6 +33,8 @@ CHISABOT_SERVER=https://你的域名:8443 CHISABOT_PAIR_CODE=cbp_xxx \
 
 第一次启动用安装码配对，以后重启直接用 home 卷里的设备令牌；每次启动都从服务器下载最新的 `chisabot-node.cjs`。
 
+应用发版改了节点程序时不用手动重启：节点连着服务器，空闲（没有会话 / 登录流程）时会发现自己在跑的程序和服务器现在发的不一样，自己退出，容器按 `restart: unless-stopped` 重新起来并下载新版（同一个新版 15 分钟内只试一次、任何自动重启一小时最多一次）。网页 设置 → 云端工作区 的账号卡下面会提示「云端节点还在跑旧版节点程序」：新版给「重启节点」按钮，比这个功能还旧的节点给 `docker restart chisabot-cloudnode`。
+
 ## 登录 Claude
 
 ChisaBot 网页：设置 → 云端工作区 →「**在云端完成登录**」：镜像里的无头 Chromium（和 Claude Code 同一个容器，所以同一个出口 IP、同一套防火墙）

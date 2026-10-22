@@ -77,6 +77,9 @@ function ClaudeAccount() {
   const status = useQuery(cloudWorkspaceQueryOptions());
   const claude = status.data?.claude;
   const online = !!status.data?.node?.online;
+  // 节点程序只在容器启动时从服务器下载（§73.1）：改了 pc/src/cloud-cc 而容器没重启，节点会一直回旧逻辑的答案。
+  const staleNode = online && !!status.data?.node?.scriptStale;
+  const scriptRestartable = !!status.data?.node?.scriptRestartable;
   // 打开这一页 / 回到窗口时，缓存「未登录」或超过 60 秒就后台复查一次（§73.1）。
   const { checking } = useClaudeAuthRecheck();
   const [login, setLogin] = useState<CcLoginStart | null>(null);
@@ -132,13 +135,23 @@ function ClaudeAccount() {
     await ccApi.check();
     await refresh();
   });
+  /** 让节点重启换上新版节点程序（容器起来时重新下载）：几秒后它会自己连回来。 */
+  const restart = useAsyncAction(
+    async () => {
+      await ccApi.restartNode();
+      toast.info("云端节点正在重启，几秒后自动回来。");
+      setTimeout(() => void refresh(), 6000);
+    },
+    { errorToast: (e) => `没能重启节点：${e.message}` },
+  );
   const logout = useAsyncAction(
     async () => {
       setError(null);
       try {
         const result = await ccApi.logout();
         // 服务器已经核对过节点（节点以 auth status 为准）。这里还是「已登录」= 没退掉，别让按钮显示「已退出」。
-        if (result?.loggedIn) throw new Error("云端工作区里的 Claude 还没有退出，请再试一次。");
+        // 节点跑的是旧程序时，回答「还登着」本来就是这个旧逻辑的结论——直接点名，别让人以为是自己账号的问题。
+        if (result?.loggedIn) throw new Error(staleNode ? "云端节点还在跑旧版节点程序：新的退出逻辑要节点重启后才生效（见下方提示）。" : "云端工作区里的 Claude 还没有退出，请再试一次。");
       } catch (thrown) {
         const text =
           thrown instanceof Error
@@ -287,6 +300,27 @@ function ClaudeAccount() {
         {error ? (
           <div className="cc-account-err" data-testid="cc-login-error" role="alert">
             {error}
+          </div>
+        ) : null}
+        {staleNode ? (
+          <div className="cc-account-warn" data-testid="cc-node-stale">
+            <div className="cc-account-warn-t">{"云端节点还在跑旧版节点程序"}</div>
+            <div className="cc-account-warn-s">
+              {scriptRestartable
+                ? "节点程序只在容器启动时从服务器下载一次，所以登录 / 退出的新逻辑要节点重启后才生效。点「重启节点」让它换成新版本，几秒后自己连回来。"
+                : "节点程序只在容器启动时从服务器下载一次，而这个节点还不支持在线更新：在服务器上执行下面这条命令，几秒后它会自己连回来。"}
+            </div>
+            <div className="cc-account-warn-a">
+              {scriptRestartable ? (
+                <Button feedback={{ pending: "重启中…", success: "已重启", error: "没有重启" }} onClick={() => void restart.run()} size="sm" state={restart.state} variant="outline">
+                  {"重启节点"}
+                </Button>
+              ) : (
+                <CopyButton size="sm" value="docker restart chisabot-cloudnode" variant="outline">
+                  {"复制命令"}
+                </CopyButton>
+              )}
+            </div>
           </div>
         ) : null}
       </Card>
@@ -527,6 +561,8 @@ const EVENT_ZH: Record<string, string> = {
   claude_login_failed: "Claude 登录没有成功",
   claude_logout: "退出 Claude",
   claude_logout_failed: "退出 Claude 没有成功",
+  node_restart: "重启云端节点（更新节点程序）",
+  node_restart_failed: "重启云端节点没有成功",
   claude_login_browser_started: "在云端打开登录浏览器",
   claude_login_browser_egress: "登录浏览器出口",
   claude_proxy_set: "设置 Claude 上游代理",

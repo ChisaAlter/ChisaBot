@@ -12,7 +12,7 @@ const { parseLine } = require("../src/cloud-cc/stream");
 const MOCK = process.env.CHISABOT_MOCK_CLAUDE || path.resolve(__dirname, "../../tests/cloud-cc/mock-claude.cjs");
 const HEADLESS = path.resolve(__dirname, "../src/headless.js");
 
-function harness() {
+function harness(extra = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "cc-home-"));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-root-"));
   process.env.HOME = home;
@@ -30,6 +30,7 @@ function harness() {
     root,
     claude: MOCK,
     hookCommand: [process.execPath, HEADLESS, "cc-hook"],
+    ...extra,
   });
   const next = (match, ms = 20000) =>
     new Promise((resolve, reject) => {
@@ -136,6 +137,57 @@ test("logout: CLI 没删掉凭据时节点自己删；删完还登着必须报�
     delete process.env.CHISABOT_MOCK_STATUS_GARBAGE;
   }
   h.cc.close();
+});
+
+test("节点程序：报自己的指纹；云端容器里空闲时自己重启换新程序；restart_node 只给容器用", async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const exits = [];
+  delete process.env.CHISABOT_CLOUD_WORKSPACE;
+  const h = harness({ exit: (code) => exits.push(code) });
+  // cc_info 带上自己在跑的那份程序的 sha256：服务器靠它判断节点是不是旧程序
+  h.cc.handle({ type: "cc_probe", script: "f".repeat(64) });
+  const info = await h.next((m) => m.type === "cc_info");
+  assert.match(info.script, /^[a-f0-9]{64}$/);
+
+  // 普通服务器节点（不是容器）：指针对不上也不退出——systemd 是 Restart=on-failure，干净退出不会被拉起
+  await sleep(1800);
+  assert.deepEqual(exits, []);
+
+  // 同一个指针对得上：什么都不做
+  h.cc.handle({ type: "cc_probe", script: info.script });
+  await sleep(300);
+  assert.deepEqual(exits, []);
+
+  // 云端容器：服务器的指纹变了 → 空闲时自己退出，让容器重启、入口脚本下新的程序
+  process.env.CHISABOT_CLOUD_WORKSPACE = "1";
+  process.env.CHISABOT_NODE_DIR = path.join(h.home, ".chisabot-node");
+  try {
+    h.cc.handle({ type: "cc_probe", script: "e".repeat(64) });
+    await sleep(2600);
+    assert.deepEqual(exits, [0]);
+    // 同一个版本 15 分钟内不再重启（下载失败时不至于来回重启）
+    h.cc.handle({ type: "cc_probe", script: "e".repeat(64) });
+    await sleep(2000);
+    assert.deepEqual(exits, [0]);
+  } finally {
+    delete process.env.CHISABOT_CLOUD_WORKSPACE;
+    delete process.env.CHISABOT_NODE_DIR;
+  }
+  h.cc.close();
+
+  // 网页上的「重启节点」：容器里回 restarting 再退出；不是容器就报错（让人去服务器上重启）
+  const exits2 = [];
+  const h2 = harness({ exit: (code) => exits2.push(code) });
+  await assert.rejects(h2.rpc("restart_node"), /不是云端工作区容器/);
+  process.env.CHISABOT_CLOUD_WORKSPACE = "1";
+  try {
+    assert.equal((await h2.rpc("restart_node")).restarting, true);
+    await sleep(1600);
+    assert.deepEqual(exits2, [0]);
+  } finally {
+    delete process.env.CHISABOT_CLOUD_WORKSPACE;
+  }
+  h2.cc.close();
 });
 
 test("turns: write + diff, resume context, approval approve/deny/always, push denied, stop, undo", async () => {

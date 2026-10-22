@@ -20,6 +20,10 @@ export type CloudWorkspaceView = {
     online: boolean;
     claudeVersion: string | null;
     lastSeenAt: string | null;
+    /** 节点还在跑旧版节点程序（只在容器启动时下载）：新的登录 / 退出逻辑要节点重启换程序才生效。 */
+    scriptStale: boolean;
+    /** 节点认得自己的程序指纹（新版）：可以让它自己重启换程序；false = 太旧，只能人工重启容器。 */
+    scriptRestartable: boolean;
   } | null;
   claude: ClaudeAuth;
   running: number;

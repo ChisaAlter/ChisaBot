@@ -76,7 +76,7 @@ sudo sh firewall.sh <节点网段> remove     # 删除
 | 操作 | 做法 |
 |---|---|
 | 重启 / 按新配置重建 | `docker compose -f compose.yaml up -d`（没变化时是空操作）；只重启：`docker restart chisabot-cloudnode` |
-| 应用上线后改了 `pc/src/cloud-cc` | `docker restart chisabot-cloudnode`（节点程序只在启动时从应用下载） |
+| 应用上线后改了 `pc/src/cloud-cc` | 不用管：节点空闲时比对服务器发来的指纹，自己退出让容器重启并下载新程序（2026-10-22 起；网页账号卡也会提示，「重启节点」可以立刻做）。**比这版更旧的节点**还是 `docker restart chisabot-cloudnode`（节点程序只在启动时从应用下载）。节点重启后记得看同步边车有没有被看门狗拉起（§4） |
 | 升级 Claude Code | 改 `CLAUDE_CODE_VERSION` 重新构建，换 `CLOUDNODE_TAG` 后 `up -d` |
 | 从头重新配对 | 网页删除设备 → `docker volume rm chisabot-cloudnode_home` → 用新安装码 `up -d` |
 | 登录 Claude / 连接 GitHub / 设置上游代理 | 网页 设置 → 云端工作区（需要所有者本人操作） |

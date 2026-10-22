@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { createCloudCcService } from "../src/cloud-cc/service";
+import { sha256Hex } from "../src/cloud-cc/node-script";
 import { createDatabase } from "../src/db/client";
 import type { DeviceRecord } from "../src/devices/store";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -129,5 +130,41 @@ describe.skipIf(!url)("cloud Claude auth refresh", () => {
     statusCalls.length = 0;
     await Bun.sleep(400);
     expect(statusCalls.length).toBe(0);
+  });
+
+  // 「退出 Claude 还是不管用」（2026-10-22）：云端节点只在容器启动时下载节点程序，旧程序回的还是旧逻辑的答案。
+  test("节点程序指纹对不上就是旧程序：页面据此提示，认得指纹的节点可以自己重启", async () => {
+    online = true;
+    const bundle = Buffer.from("node bundle v1");
+    const cc = createCloudCcService({
+      database,
+      hub: hub as never,
+      deviceStore: { get: async (id: string) => (id === nodeId ? ({ id, revoked: false } as never) : null) },
+      nodeBundle: async () => bundle,
+      scriptProbeMs: 60_000,
+    });
+    try {
+      await cc.ensure();
+      // 报了一个和服务器现在发的不一样的 = 旧程序；它认得自己的指纹，所以能点「重启节点」
+      await cc.extension.onMessage?.(record, { type: "cc_info", script: "b".repeat(64) } as never);
+      let view = await cc._internal.status(owner);
+      expect(view.node?.scriptStale).toBe(true);
+      expect(view.node?.scriptRestartable).toBe(true);
+
+      // 报的和现在发的一样 = 新程序
+      await cc.extension.onMessage?.(record, { type: "cc_info", script: sha256Hex(bundle) } as never);
+      view = await cc._internal.status(owner);
+      expect(view.node?.scriptStale).toBe(false);
+      expect(view.node?.scriptRestartable).toBe(true);
+
+      // 比这个功能还旧的节点：报不出指纹，只能人工 docker restart
+      await cc.extension.onMessage?.(record, { type: "cc_info", claudeVersion: "2.1.165" } as never);
+      view = await cc._internal.status(owner);
+      expect(view.node?.scriptStale).toBe(true);
+      expect(view.node?.scriptRestartable).toBe(false);
+    } finally {
+      clearInterval(cc._internal.authTimer);
+      clearInterval(cc._internal.scriptTimer);
+    }
   });
 });

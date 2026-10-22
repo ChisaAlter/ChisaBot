@@ -184,6 +184,7 @@ import {
 import { createDeliveryStore } from "./delivery/store";
 import type { DeliveryScope } from "./delivery/types";
 import { createDeviceHub } from "./devices/hub";
+import { readNodeBundle } from "./devices/node-install";
 import { createDeviceRoutes } from "./devices/routes";
 import { createDeviceStore } from "./devices/store";
 import { deviceTools } from "./devices/tools";
@@ -2204,6 +2205,8 @@ try {
     next: localAgents?.extension ?? null,
     github,
     vault,
+    // 节点程序指纹：判断云端节点跑的是不是现在这一版（§73.1）。
+    nodeBundle: () => readNodeBundle(config.appDistDir),
     ...(process.env.CHISABOT_GITHUB_GIT_BASE ? { gitBase: process.env.CHISABOT_GITHUB_GIT_BASE } : {}),
   });
   await cloudCc.ensure();

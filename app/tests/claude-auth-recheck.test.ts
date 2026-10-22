@@ -22,7 +22,7 @@ const ago = (ms: number) => new Date(NOW - ms).toISOString();
 const auth = (loggedIn: boolean, checkedAt: string | null): ClaudeAuth => ({ loggedIn, email: loggedIn ? "a@example.com" : null, plan: loggedIn ? "pro" : null, method: null, checkedAt });
 const view = (online: boolean, claude: ClaudeAuth): CloudWorkspaceView =>
   ({
-    node: { deviceId: "dev_x", name: "云端工作区", online, claudeVersion: null, lastSeenAt: null },
+    node: { deviceId: "dev_x", name: "云端工作区", online, claudeVersion: null, lastSeenAt: null, scriptStale: false, scriptRestartable: true },
     claude,
     running: 0,
     maxConcurrent: 2,
