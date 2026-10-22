@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { assertPublicUrl, htmlToText, parseDuckDuckGo } from "../src/web/tools";
+import { assertPublicUrl, htmlToText, parseDuckDuckGo, webTools } from "../src/web/tools";
 import { clampRefresh } from "../src/live-panels/store";
 
 describe("web tools", () => {
@@ -20,6 +20,18 @@ describe("web tools", () => {
     await expect(assertPublicUrl("http://[::1]/")).rejects.toThrow();
     await expect(assertPublicUrl("file:///etc/passwd")).rejects.toThrow();
     await expect(assertPublicUrl("http://localhost:3000/")).rejects.toThrow();
+  });
+  test("web_search advertises that it also covers how to connect a service", () => {
+    /*
+     * 2026-10-21，生产 v0.1.51：用户让星灵「去连腾讯 ima」，它一次工具都没调，回了三遍「没有连接器 /
+     * 需要管理员开通」。同一模型（Magpie 的 codex/gpt-6-luna）在同一条提示词下，只把描述从
+     * 「查事实、新闻、价格、天气、某个网站的地址」扩到「也查外部服务怎么接入」，第一轮就调了
+     * web_search。模型不是不会用工具，是它没把「接入一个服务」当成搜索能回答的问题。
+     */
+    const search = webTools().find((tool) => tool.name === "web_search");
+    expect(search?.description).toContain("怎么接入");
+    expect(search?.description).toContain("MCP");
+    expect(search?.description).toContain("开放平台");
   });
   test("live panel refresh floor is one hour", () => {
     expect(clampRefresh(5)).toBe(60);

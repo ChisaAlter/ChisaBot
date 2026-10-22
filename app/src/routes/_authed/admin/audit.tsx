@@ -110,14 +110,14 @@ function AuditPage() {
           <PageEmpty>{"这一类还没有记录。"}</PageEmpty>
         ) : (
           <div className="mt-4 overflow-x-auto rounded-lg border border-border bg-card">
-            <table className="audit-table w-full text-left text-sm">
+            <table className="audit-table w-full min-w-[1020px] table-fixed text-left text-sm">
               <thead className="text-muted-foreground text-xs uppercase">
                 <tr className="border-border border-b">
-                  <th className="px-4 py-2 font-medium">{"时间"}</th>
-                  <th className="px-4 py-2 font-medium">{"操作"}</th>
-                  <th className="px-4 py-2 font-medium">{"对象"}</th>
-                  <th className="px-4 py-2 font-medium">{"机器人"}</th>
-                  <th className="whitespace-nowrap px-4 py-2 font-medium">{"谁发起"}</th>
+                  <th className="w-[104px] whitespace-nowrap px-4 py-2 font-medium">{"时间"}</th>
+                  <th className="w-[128px] px-4 py-2 font-medium">{"操作"}</th>
+                  <th className="w-[280px] px-4 py-2 font-medium">{"对象"}</th>
+                  <th className="w-[104px] px-4 py-2 font-medium">{"机器人"}</th>
+                  <th className="w-[92px] whitespace-nowrap px-4 py-2 font-medium">{"谁发起"}</th>
                   <th className="px-4 py-2 font-medium">{"结果"}</th>
                 </tr>
               </thead>
@@ -228,7 +228,7 @@ function Row({
       <td className="whitespace-nowrap px-4 py-2 text-muted-foreground">
         {new Date(event.createdAt).toLocaleTimeString("zh-CN")}
       </td>
-      <td className="px-4 py-2 font-medium">
+      <td className="min-w-[7.5rem] px-4 py-2 font-medium">
         {/* 电脑工具名中文化（DOG-02）；原始 computer_* 仍在 payload。 */}
         {typeof payload.action === "string" ? (
           computerActionLabel(payload.action)
@@ -237,7 +237,7 @@ function Row({
           <span title={event.eventType}>{eventLabel(event.eventType)}</span>
         )}
       </td>
-      <td className="px-4 py-2">
+      <td className="min-w-[9rem] break-words px-4 py-2">
         {/*
          * A routing row's subject is the coworker it went to, and it is the only thing on the row
          * worth reading. Its target type is `agent`, which is not a named target because everywhere
@@ -297,7 +297,7 @@ function Row({
           </div>
         ) : null}
       </td>
-      <td className="px-4 py-2 text-muted-foreground">
+      <td className="min-w-[6rem] px-4 py-2 text-muted-foreground">
         {typeof payload.bot === "string" ? (
           // Keep the immutable bot id available even when names collide.
           <span title={payload.bot}>{nameFor(payload.bot)}</span>
@@ -308,7 +308,7 @@ function Row({
       <td className="whitespace-nowrap px-4 py-2">
         <StartedBy event={event} nameFor={nameFor} />
       </td>
-      <td className="px-4 py-2">
+      <td className="min-w-[9rem] break-words px-4 py-2">
         <span
           className={
             refused

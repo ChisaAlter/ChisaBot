@@ -25,6 +25,7 @@ import {
   registeredAgentFromRow,
   resolveRuntimeAgents,
   runtimeModelForEnvironment,
+  setAgentKernel,
   standingRoleMessage,
 } from "../src/copilot";
 import { grantedToolGuidance } from "../src/plugins/tools";
@@ -1213,6 +1214,47 @@ describe("acting before saying it cannot", () => {
     expect(ACTION_GUIDANCE).toContain("我没有");
     expect(ACTION_GUIDANCE).toContain("需要管理员开通");
     expect(ACTION_GUIDANCE).toContain("web_search");
+  });
+});
+
+/** Hermes must retain the host identity, tools and selected model when replacing the loop. */
+describe("full kernel replacement with Hermes", () => {
+  const assistant = {
+    id: "general-assistant",
+    name: "General Assistant",
+    type: "built_in" as const,
+    systemPrompt: "Be the general assistant.",
+  };
+  const model = { provider: "openai" as const, defaultModel: "gpt-5.6-terra" };
+
+  test("routes a built-in Bot with its host tools, role and model", async () => {
+    await using endpoint = fakeAgUiEndpoint();
+    setAgentKernel({ kind: "hermes", url: endpoint.url, binding: {
+      toolGatewayUrl: "http://host/api/internal/runtime-tools",
+      readRun: () => ({ actorId: "owner", botId: "general-assistant", threadId: "hermes-thread", runId: "hermes-run" }),
+    } });
+    try {
+      const agents = await buildAgents([assistant], model, null, undefined, async () => [{ name: "web_search", ref: "web/search", description: "Search", parameters: z.object({ query: z.string() }), execute: async () => "result" }], () => "signed-run");
+      const agent = built(agents, "general-assistant");
+      agent.threadId = "hermes-thread";
+      agent.addMessage({ id: "u", role: "user", content: "Hello" });
+      await agent.runAgent({ runId: "hermes-run" });
+
+      expect(agent.messages.at(-1)).toMatchObject({
+        role: "assistant",
+        content: "Categorized.",
+      });
+      const sent = endpoint.requests.at(-1) as
+        | { messages?: { role?: string; content?: unknown }[]; tools?: unknown[] }
+        | undefined;
+      const system = sent?.messages?.find((message) => message.role === "system");
+      expect(JSON.stringify(system)).toContain("General Assistant");
+      expect(JSON.stringify(system)).toContain("Be the general assistant.");
+      expect(sent?.tools).toMatchObject([{ name: "web_search" }]);
+      expect(endpoint.requests.at(-1)).toMatchObject({ forwardedProps: { chisabotHermes: { version: 1, model: { id: model.defaultModel }, scope: { actorId: "owner", botId: "general-assistant" } } } });
+    } finally {
+      setAgentKernel({ kind: "builtin" });
+    }
   });
 });
 

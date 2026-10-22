@@ -35,6 +35,7 @@ function rig() {
     onDisconnect: () => {
       stopped++;
     },
+    onStopped: (problem) => statuses.push(`stop:${problem}`),
     onMessage: () => undefined,
   });
   return {
@@ -46,18 +47,23 @@ function rig() {
   };
 }
 
-test("connection loss disables input, retries boundedly, then asks for Retry", async () => {
+test("connection loss disables input, retries for about a minute and a half, then asks for Retry", async () => {
   const r = rig();
   r.sockets[0]?.onopen?.();
   r.sockets[0]?.onclose?.();
   expect(r.statuses.at(-2)).toBe("blocked");
-  for (let i = 0; i < 5; i++) {
+  // A deploy keeps the socket refused for tens of seconds; five attempts over 15s gave up in the
+  // middle of every update. The budget now covers the restart, and still ends in an explicit Retry
+  // rather than retrying a dead deployment forever.
+  for (let i = 0; i < 15; i++) {
     r.timers[i]?.run();
     r.sockets[i + 1]?.onclose?.();
   }
-  expect(r.timers.map((t) => t.delay)).toEqual([500, 1000, 2000, 4000, 8000]);
+  expect(r.timers.map((t) => t.delay)).toEqual([
+    500, 1000, 2000, 4000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000,
+  ]);
   expect(r.statuses.at(-1)).toContain("重试");
-  expect(r.stopped()).toBe(6);
+  expect(r.stopped()).toBe(16);
   r.control.stop();
 });
 
@@ -110,7 +116,7 @@ test("a reconnect makes input ready again without waiting on the control state",
   r.control.stop();
 });
 
-test("a superseded viewer stays stopped until explicit Retry", () => {
+test("a superseded viewer stays stopped until explicit Retry, without a false reconnect", () => {
   const r = rig();
   r.sockets[0]?.onmessage?.({
     data: JSON.stringify({
@@ -121,7 +127,27 @@ test("a superseded viewer stays stopped until explicit Retry", () => {
   });
   r.sockets[0]?.onclose?.();
   expect(r.timers).toHaveLength(0);
-  expect(r.statuses.at(-1)).toContain("watched somewhere else");
+  // Stops as a stop, not as a disconnect: the view must not draw "正在重新连接…" over the reason.
+  expect(r.stopped()).toBe(0);
+  expect(r.statuses.at(-1)).toBe(
+    "stop:This screen is now being watched somewhere else, so it stopped here.",
+  );
+  r.control.stop();
+});
+
+test("a computer that stopped also stops the screen instead of retrying", () => {
+  const r = rig();
+  r.sockets[0]?.onmessage?.({
+    data: JSON.stringify({
+      type: "error",
+      error:
+        "This computer stopped, so the screen ended. Start it again to carry on watching.",
+    }),
+  });
+  r.sockets[0]?.onclose?.();
+  expect(r.timers).toHaveLength(0);
+  expect(r.stopped()).toBe(0);
+  expect(r.statuses.at(-1)).toContain("computer stopped");
   r.control.stop();
 });
 

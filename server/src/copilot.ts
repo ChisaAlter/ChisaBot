@@ -18,7 +18,6 @@ import {
   PROVENANCE_GUIDANCE,
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
-import { requiresResponsesApi } from "../../shared/model-providers";
 import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
 import { WEB_GUIDANCE } from "./web/tools";
 import {
@@ -26,6 +25,7 @@ import {
   CoworkerUnavailableError,
 } from "./agents/agent-resolver";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
+import { HermesRuntimeAgent, type HermesRuntimeBinding } from "./agents/hermes-runtime";
 import {
   PLAN_RUN_COMPLETED,
   PlanModel,
@@ -201,6 +201,27 @@ export type RuntimeModelConnection = {
 };
 export type RuntimeModelResolver = () => Promise<RuntimeModelConnection>;
 
+/**
+ * 机器人用哪个内核回答。
+ *
+ * `builtin` 是原来的 CopilotKit + AI SDK 工具循环。`hermes` 把所有 built-in 机器人转成
+ * remote-ag-ui，指向 `examples/acp-agent` 的桥；Hermes 的 ACP session 就是新的循环。
+ *
+ * 这是部署级开关，不是每个机器人的字段：现有机器人都有 `built_in` 行，逐个改会漏掉新建的；
+ * 一个开关让「以后新建的机器人」也自动走新内核。
+ */
+export type AgentKernel =
+  | { kind: "builtin" }
+  | { kind: "hermes"; url: string; token?: string; binding?: HermesRuntimeBinding };
+let agentKernel: AgentKernel = { kind: "builtin" };
+export function setAgentKernel(kernel: AgentKernel): void {
+  agentKernel = kernel;
+}
+/** 测试和健康检查读它；不要用它改状态。 */
+export function currentAgentKernel(): AgentKernel {
+  return agentKernel;
+}
+
 export function connectionLanguageModel(
   model: RuntimeModel,
   apiKey: string | null,
@@ -225,30 +246,8 @@ export function connectionLanguageModel(
   return thinkTagLanguageModel(
     model.provider === "anthropic"
       ? outputLimitLanguageModel(createAnthropic(options)(model.defaultModel), model.defaultModel)
-      : openAiLanguageModel(options, model.defaultModel),
+      : createOpenAI(options).chat(model.defaultModel),
   );
-}
-
-/**
- * The OpenAI wire a model has to be spoken to with.
- *
- * `createOpenAI(...)(id)` is the Responses API and `.chat(id)` is chat completions, and the choice
- * is not cosmetic: `gpt-5.6-*` and `gpt-6*` reject function tools on chat completions ("To use
- * function tools, use /v1/responses or set reasoning_effort to 'none'"). A gateway in front of them
- * may pass that rejection through, or drop the tools and answer anyway — either way the model never
- * sees a tool, so a Bot driven this way answers every "go and do it" request from memory: the
- * apology this deployment kept getting instead of a tool call. Models that do not need Responses
- * keep chat completions, because that is the only wire the local OpenAI-compatible servers (Ollama,
- * vLLM, LM Studio) implement.
- */
-function openAiLanguageModel(
-  options: Parameters<typeof createOpenAI>[0],
-  modelId: string,
-) {
-  const provider = createOpenAI(options);
-  return requiresResponsesApi(modelId)
-    ? provider.responses(modelId)
-    : provider.chat(modelId);
 }
 
 /** 模型目录（index.ts 接上），给额度用完时找候选模型用（agents/model-fallback.ts）。 */
@@ -1018,6 +1017,66 @@ async function inlineAttachments(
   return inlined;
 }
 
+/** The host still owns tools, identity, memory and settings; Hermes owns the execution loop. */
+async function hermesKernelAgent(options: {
+  agent: RegisteredBuiltInAgent;
+  kernel: Extract<AgentKernel, { kind: "hermes" }>;
+  model: RuntimeModel;
+  tools: GrantedTool[];
+  signRun?: SignRun;
+  standingInstructions: string | null;
+  computerGuidance?: string;
+  connectedVendors: readonly string[];
+  stallGuard?: StallGuard;
+  agentFetch?: AgentFetch;
+  initiator?: AuditInitiator;
+  loadAttachment?: LoadAttachment;
+  markAttachmentsSent?: MarkAttachmentsSent;
+  handoff?: HandoffForRun;
+}): Promise<AbstractAgent> {
+  const { agent, kernel, signRun } = options;
+  if (!kernel.binding || !signRun)
+    throw new Error("Hermes requires an authenticated host tool binding before it can run.");
+  const transport = await remoteTransport({
+    id: agent.id,
+    name: agent.name,
+    type: "remote_ag_ui",
+    endpoint: kernel.url,
+    ...(kernel.token ? { headers: { authorization: `Bearer ${kernel.token}` } } : {}),
+    standingMessage: standingRoleMessage({ id: agent.id, name: agent.name, title: "ChisaBot assistant", roleDescription: agent.systemPrompt }),
+  }, options.stallGuard, options.agentFetch, options.initiator);
+  return new HermesRuntimeAgent(transport, {
+    botId: agent.id,
+    modelId: options.model.defaultModel,
+    binding: kernel.binding,
+    signRun: (runId, threadId, previous) => signRun(agent.id, runId, threadId, previous),
+    toolsFor: async (input, signal) => {
+      const passing = (await options.handoff?.(agent.id, input)) ?? [];
+      signal.throwIfAborted();
+      return [...options.tools, ...passing];
+    },
+    prepare: async (input, tools) => {
+      // Reuse the shipped prompt and host tool guidance; no provider client is constructed here.
+      const configured = builtInAgentConfiguration(agent, { ...options.model, useApiKey: false }, null, [...tools], options.computerGuidance, options.connectedVendors, options.standingInstructions);
+      const prompt = "prompt" in configured ? configured.prompt : undefined;
+      if (typeof prompt !== "string") throw new Error("The Hermes host instructions could not be prepared.");
+      const answeredByResume = new Set((input.resume ?? []).map((entry) => entry.interruptId));
+      const existingResults = new Set(input.messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
+      const resumed: Message[] = (input.resume ?? []).filter((entry) => entry.status === "resolved" && !existingResults.has(entry.interruptId)).map((entry) => ({
+        id: `hermes-resume:${entry.interruptId}`,
+        role: "tool" as const,
+        toolCallId: entry.interruptId,
+        content: typeof entry.payload === "string" ? entry.payload : JSON.stringify(entry.payload ?? null),
+      }));
+      const history = sanitizeSeededHistory([...input.messages.filter((message) => message.id !== `hermes-role:${agent.id}`), ...resumed], answeredByResume);
+      const messages = options.loadAttachment
+        ? await inlineAttachments(history, options.loadAttachment, input.threadId, options.markAttachmentsSent)
+        : history;
+      return { ...input, messages: [{ id: `hermes-role:${agent.id}`, role: "system", content: prompt }, ...messages] };
+    },
+  });
+}
+
 async function buildAgent(
   agent: RegisteredAgent,
   model: RuntimeModel,
@@ -1043,6 +1102,24 @@ async function buildAgent(
   }
 
   const granted = await loadTools(agent.id);
+  if (agentKernel.kind === "hermes" && agent.type === "built_in") {
+    return hermesKernelAgent({
+      agent,
+      kernel: agentKernel,
+      model,
+      tools: granted,
+      signRun,
+      standingInstructions,
+      computerGuidance,
+      connectedVendors,
+      stallGuard,
+      agentFetch,
+      initiator,
+      loadAttachment,
+      markAttachmentsSent,
+      handoff,
+    });
+  }
 
   /*
    * Whether narrowing can do anything here at all.
@@ -1600,7 +1677,7 @@ function remoteAgentWithStandingRole(
                 unknown
               >,
             },
-            execute: (args) => tool.execute(args),
+            execute: (args, context) => tool.execute(args, { signal: context.signal }),
           })),
           initiator,
         ).run(prepared, next);

@@ -60,9 +60,27 @@ describe("deployment configuration", () => {
       }),
     ).toThrow(/OPENBOT_ORGANIZATION_AUTH_URL/);
   });
+  test("the Hermes kernel is opt-in and normalises its URL", () => {
+    expect(loadConfig(baseEnvironment).hermesKernel).toBeUndefined();
+
+    expect(
+      loadConfig({
+        ...baseEnvironment,
+        CHISABOT_HERMES_URL: "http://127.0.0.1:4100/ag-ui/",
+      }).hermesKernel,
+    ).toEqual({ url: "http://127.0.0.1:4100/ag-ui" });
+
+    expect(
+      loadConfig({
+        ...baseEnvironment,
+        CHISABOT_HERMES_URL: "http://127.0.0.1:4100/ag-ui",
+        CHISABOT_HERMES_TOKEN: "bridge-secret",
+      }).hermesKernel,
+    ).toEqual({ url: "http://127.0.0.1:4100/ag-ui", token: "bridge-secret" });
+  });
+
   test("resolves the Intelligence runtime, which is the only runtime", () => {
     const config = loadConfig(baseEnvironment);
-
     expect(config.runtime).toEqual({
       mode: "intelligence",
       durableHistory: true,

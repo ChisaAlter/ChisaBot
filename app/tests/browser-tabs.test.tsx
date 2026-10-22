@@ -95,16 +95,43 @@ describe("helpers", () => {
 });
 
 describe("TabStrip", () => {
-  test("shows tabs, highlights the active one; viewing-only cannot switch", async () => {
+  test("viewing-only: the first click takes control, then switches", async () => {
     setTabsView("botA", view("t2"));
-    const ui = render(<TabStrip computerId="botA" driving={false} poll={false} />);
+    const took: string[] = [];
+    const ui = render(
+      <TabStrip
+        computerId="botA"
+        driving={false}
+        onTakeControl={() => {
+          took.push("take");
+          return Promise.resolve(true);
+        }}
+        poll={false}
+      />,
+    );
     const tabs = ui.getAllByRole("tab");
     expect(tabs.length).toBe(3);
     expect(tabs[1]?.getAttribute("aria-selected")).toBe("true");
+    // 没接管时没有关闭按钮；+ 仍可点（点它会先接管），不再是一按就没反应的灰按钮。
     expect(ui.queryByLabelText(/关闭标签页/)).toBeNull();
-    fireEvent.click(tabs[0]?.querySelector("button") as HTMLElement);
-    expect(calls.filter((c) => c.url.includes("/human/tab")).length).toBe(0);
-    expect((ui.getByLabelText("新标签页") as HTMLButtonElement).disabled).toBe(true);
+    expect((ui.getByLabelText("新标签页") as HTMLButtonElement).disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(tabs[0]?.querySelector("button") as HTMLElement);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(took).toEqual(["take"]);
+    expect(calls.find((call) => call.url.includes("/human/tab"))?.body).toMatchObject({ action: "activate", id: "t1" });
+  });
+
+  test("viewing-only without a takeover path explains instead of doing nothing", async () => {
+    setTabsView("botA2", view("t1"));
+    const ui = render(<TabStrip computerId="botA2" driving={false} poll={false} />);
+    await act(async () => {
+      fireEvent.click(ui.getByLabelText("新标签页"));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+    expect(calls.filter((call) => call.url.includes("/human/tab")).length).toBe(0);
+    expect(await ui.findByText(/接管控制后才能/)).toBeTruthy();
   });
 
   test("TabStrip is one keyboard tab stop: arrows move between tabs and activate them (2026-10-20)", async () => {

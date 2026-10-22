@@ -3989,6 +3989,7 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 }
 .side-search-row .side-search { flex: 1; min-width: 0; margin: 0; }
 .side-search-row .glass-list-add { width: 36px; height: 36px; flex: none; border-radius: var(--r-md); }
+.side-search-row .glass-list-add:disabled { opacity: 0.45; cursor: default; }
 .side-search {
   display: flex;
   align-items: center;
@@ -5046,9 +5047,29 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .computer-chrome .btab-x { border-radius: 8px; }
 .computer-chrome .btabs-new { width: 28px; height: 28px; margin: 0 0 3px 2px; align-self: flex-end; border-radius: 8px; }
 .computer-chrome .btabs-problem { top: calc(100% + 4px); }
-.computer-takeover-close { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 8px; color: var(--ink-2); transition: background var(--dur-1), color var(--dur-1); }
-.computer-takeover-close:hover { background: var(--glass-hover); color: var(--ink-1); }
-.computer-takeover-close:focus-visible { outline: 2px solid var(--focus-line); outline-offset: 1px; }
+/*
+ * 关闭大屏的 ×：在大屏卡片外面、暗色遮罩的右上角（2026-10-22 用户反馈「位置不对」）。
+ * 它是「关掉这个大屏」的动作，不是浏览器窗口上的按钮，所以不参与标签栏 / 地址栏那一列图标。
+ * 卡片满屏（窄屏）时它仍然浮在右上角，不挤占工具条。
+ */
+.computer-takeover-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 6;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #111;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  transition: background var(--dur-1), color var(--dur-1);
+}
+.computer-takeover-close:hover { background: #fff; color: #000; }
+.computer-takeover-close:focus-visible { outline: 2px solid var(--focus-line); outline-offset: 2px; }
 .ctk-record-t { align-self: center; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; color: var(--ink-2); }
 .computer-chrome .computer-urlbar { gap: 2px; padding: 4px 6px; }
 .computer-chrome .computer-urlbar-btn { width: 30px; height: 30px; border-radius: 8px; }
@@ -7878,14 +7899,15 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
  * 这样左栏和机器人那侧还是同一个应用，但读起来像一个正经的 coding workspace。
  * ========================================================================================== */
 
-/* ---------- 左栏：一张玻璃面板 ---------- */
-.glass-shell [data-slot="sidebar-content"].cc-rail,
+/* ---------- 左栏：一张玻璃面板（账号卡在面板外，和机器人那边同一个位置） ---------- */
 .cc-rail {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 0;
   min-width: 0;
-  padding: 8px;
+  min-height: 0;
+  padding: 12px 10px;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: color-mix(in srgb, var(--glass-2) 75%, transparent);
@@ -7894,44 +7916,6 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   overflow: hidden !important;
 }
 .dark .cc-rail { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 12px 32px rgba(0, 0, 0, 0.28), var(--inset-hl); }
-.cc-rail-head { display: flex; flex: none; flex-direction: column; gap: 8px; padding: 2px 2px 8px; }
-
-.cc-rail-search {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 30px;
-  padding: 0 9px;
-  border-radius: 9px;
-  background: var(--glass-hover);
-  color: var(--ink-3);
-  transition: background var(--dur-1), box-shadow var(--dur-1);
-}
-.cc-rail-search:focus-within { background: var(--glass-2); box-shadow: 0 0 0 2px var(--focus); }
-.cc-rail-search-ic { flex: none; color: var(--ink-3); }
-.cc-rail-search input {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--ink-1);
-  font: inherit;
-  font-size: 12.5px;
-}
-.cc-rail-search input::placeholder { color: var(--ink-3); }
-.cc-rail-search input::-webkit-search-cancel-button { display: none; }
-.cc-rail-search-x {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  color: var(--ink-3);
-}
-.cc-rail-search-x:hover { background: var(--glass-hover); color: var(--ink-1); }
 
 .cc-rail-mid { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .cc-tree-head { display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 3px 5px 2px; }
@@ -7947,19 +7931,6 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.cc-section-add {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  margin-left: auto;
-  border-radius: 7px;
-  color: var(--ink-3);
-  transition: background var(--dur-1), color var(--dur-1);
-}
-.cc-section-add:hover:not(:disabled) { background: var(--glass-hover); color: var(--ink-1); }
-.cc-section-add:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-line); }
-.cc-section-add:disabled { opacity: 0.4; cursor: default; }
 .cc-tree-scroll {
   flex: 1;
   min-height: 0;
@@ -8142,19 +8113,6 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 .cc-rail-foot .cc-node-card > svg { width: 14px; height: 14px; flex: none; color: var(--ink-3); opacity: 0; transition: opacity var(--dur-1); }
 .cc-rail-foot .cc-node-card:hover > svg,
 .cc-rail-foot .cc-node-card:focus-visible > svg { opacity: 1; }
-.cc-rail-foot .acct-card {
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-}
-.cc-rail-foot .acct-row { height: 42px; padding: 0 6px; border-radius: 8px; }
-.cc-rail-foot .acct-row:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-line); }
-.cc-rail-foot .acct-name { font-size: 12.5px; }
-.cc-rail-foot .acct-sub { font-size: 10.5px; }
-.cc-rail-foot .acct-chev { width: 14px; height: 14px; color: var(--ink-3); }
 
 .cc-mini { align-items: center; gap: 10px; padding-top: 2px; }
 .cc-mini .glass-mini-new { width: 46px; height: 46px; }
@@ -8547,14 +8505,13 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 /* 抽屉里的左栏：外面已经是一张玻璃，别再套一张。 */
 @media (max-width: 767px) {
   .cc-rail {
-    padding: 0;
+    padding: 12px 10px;
     border: 0;
     border-radius: 0;
     background: transparent;
     box-shadow: none;
     backdrop-filter: none;
   }
-  .cc-rail-head { padding-inline: 0; }
   .cc-session, .cc-session.is-phone { padding: 0 12px calc(12px + var(--safe-b, 0px)); }
   .cc-head { min-height: 52px; padding: 6px 2px; }
   .cc-title { font-size: 16px; }
@@ -8782,4 +8739,18 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 @media (hover: none) {
   .cc-tree .cc-sess-actions,
   .cc-tree .cc-ws-actions { opacity: 1; pointer-events: auto; }
+}
+
+/*
+ * 触屏：工作区行加高，把「＋ / ⋯」做成 44px 的点按区（DESIGN §40 的手指尺寸）。
+ * 2026-10-21 去掉顶部那颗大「新建会话」以后，工作区行的＋就是手机上唯一的新建入口，
+ * 原来 26×26 太小；只在没有悬停的设备上放大，桌面那套 32px 行高不变。
+ */
+@media (hover: none) {
+  .cc-tree .cc-ws-head { min-height: 44px; }
+  .cc-tree .cc-ws-actions { top: 0; right: 2px; gap: 0; transform: none; }
+  .cc-tree.is-page .cc-ws-actions { top: 4px; }
+  .cc-tree .cc-ws-actions .cc-ws-more,
+  .cc-tree .cc-ws-add { width: 44px; height: 44px; border-radius: 10px; }
+  .cc-tree .cc-ws:has(> .cc-ws-actions) > .cc-ws-head { padding-right: 94px; }
 }

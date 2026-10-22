@@ -126,6 +126,11 @@ import { createThreadIdentity } from "./channels/thread-identity";
 import { createChannelTitler } from "./channels/titler";
 import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
+import { createHeadlessComponentTools } from "./components/headless";
+import { hermesRuntimeTools } from "./agents/hermes-runtime";
+import { probeHermesHealth } from "./agents/hermes-health";
+import { createRuntimeKernelRoutes } from "./agents/kernel-status";
+import { createRuntimeToolsRoutes } from "./agents/runtime-tools";
 import { createComputerGateway } from "./computer/gateway";
 import { onControlReleased } from "./computer/control-blocks";
 import {
@@ -156,6 +161,7 @@ import {
   mountCopilotRuntime,
   normalizeModelBaseUrls,
   runtimeModelForEnvironment,
+  setAgentKernel,
   setModelOutputLimitResolver,
   setModelFallbackCatalog,
   setModelFallbackList,
@@ -253,10 +259,13 @@ import { createTurnRunner } from "./turns/run-turn";
 import { createWorkflowEngine, type WorkflowEngine } from "./workflows/engine";
 import { createLivePanelService } from "./live-panels/service";
 import { createLivePanelStore } from "./live-panels/store";
-import { webTools } from "./web/tools";
+import { connectServiceTools } from "./plugins/connect-service";
+import { webSearch, webTools } from "./web/tools";
 import {
   restrictNamedToolsForWorkflow,
   restrictToolsForWorkflow,
+  filterHeadlessForWorkflow,
+  workflowToolAllowed,
 } from "./workflows/policy";
 import { createWorkflowRoutes } from "./workflows/routes";
 import { createWorkflowStore } from "./workflows/store";
@@ -1120,6 +1129,57 @@ setModelFallbackCatalog(async () => (await modelCatalog.list()).models.map((entr
 // 设置 → 模型 →「备用模型」（DESIGN.md §61）：管理员排好的顺序优先于环境变量 / 同平台自动挑选。
 const modelFallbacks = createModelFallbackService({ store: createModelFallbackStore(database) });
 setModelFallbackList(() => modelFallbacks.models());
+/* Hermes replaces the execution loop while every host tool keeps its existing policy and identity. */
+setAgentKernel(
+  config.hermesKernel
+    ? {
+        kind: "hermes",
+        url: config.hermesKernel.url,
+        ...(config.hermesKernel.token ? { token: config.hermesKernel.token } : {}),
+        binding: {
+          toolGatewayUrl: process.env.CHISABOT_HERMES_TOOL_GATEWAY_URL?.trim() || `http://127.0.0.1:${config.port}/api/internal/runtime-tools`,
+          readRun: (value) => readRunAssertion(value, config.keyEncryptionKey),
+          loadSurfaceTools: async (scope) => {
+            const actor = await actorFor(scope.actorId);
+            const profile = await agentProfileStore.get(actor, scope.botId);
+            if (!profile) throw new Error("That Bot is no longer available to this actor.");
+            const initiator = scope.initiator ?? PERSON_INITIATOR;
+            const imConnection = imConnectionOf(initiator);
+            const allowDevices = !imConnection || imService?.allowsDevices(imConnection) === true;
+            const computer = computerGateway && allowDevices && canUseComputer(profile, actor)
+              ? createHeadlessComputerTools({
+                  gateway: computerGateway,
+                  botId: scope.botId,
+                  actor: { id: actor.id, userId: actor.id, initiator },
+                  auditStore: bootAuditStore,
+                  ...(signInService ? { signIn: signInService } : {}),
+                })
+              : [];
+            const components = !imConnection ? await createHeadlessComponentTools({
+              store: componentStore, botId: scope.botId, ownerUserId: scope.actorId, initiator, auditStore: bootAuditStore,
+            }) : [];
+            const allowed = filterHeadlessForWorkflow(initiator, [...computer, ...components]);
+            return allowed.map((tool) => ({
+              ...tool,
+              execute: async (args, context) => {
+                if (!workflowToolAllowed(initiator, tool.definition.name))
+                  throw new ApprovalRefusedError("This workflow no longer permits that tool.");
+                const fresh = await agentProfileStore.get(actor, scope.botId);
+                if (!fresh || (tool.definition.name.startsWith("computer_") && !canUseComputer(fresh, actor)))
+                  throw new ApprovalRefusedError("That Bot or computer is no longer available to this actor.");
+                return tool.execute(args, context);
+              },
+            }));
+          },
+        },
+      }
+    : { kind: "builtin" },
+);
+// One probe, shared by the settings status row and the informational ops-health entry.
+const hermesKernelUrl = config.hermesKernel?.url;
+const probeConfiguredHermes = hermesKernelUrl
+  ? () => probeHermesHealth(hermesKernelUrl)
+  : undefined;
 /*
  * Magpie, the model gateway. MAGPIE_ADMIN_URL (e.g. http://magpie:3430) plus its web key
  * (MAGPIE_WEB_KEY_FILE, readable only by the API user) turn on 管理后台 → 模型平台 Magpie and the
@@ -1420,6 +1480,14 @@ const loadToolsForActor =
     ...(config.generativeUi && !imConnection ? renderUiTools() : []),
     // 内置联网（web_search / web_fetch）：先搜、再读，浏览器留给需要点击 / 登录 / 给人看的时候。
     ...webTools(),
+    // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。
+    // 26 个工具时模型会去挑 device_list / connector_call 这类近邻，只有这个对口的工具才稳定被选中。
+    ...connectServiceTools({
+      store: pluginStore,
+      ownerUserId: actorId,
+      botId,
+      search: (query, count) => webSearch(query, count ?? 5),
+    }),
     // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
     // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：
     // 以前它也拿到 panel_refresh，刷新里又触发一次刷新，回合叠回合（2026-10-13 实测）。
@@ -3674,6 +3742,7 @@ const app = createApp(
     modelCatalogRefreshMinutes,
     ...(gatewaySecret ? { singleUserGuard: createGatewayRequireUser(gatewaySecret, provisionGatewayUser) } : {}),
     extraRoutes: ({ requireUser }) => [
+      ["/api/internal/runtime-tools", createRuntimeToolsRoutes(hermesRuntimeTools)],
       [
         "/api/admin/smoke",
         createAdminSmokeRoutes({
@@ -3693,6 +3762,8 @@ const app = createApp(
           pingDatabase: createDatabasePinger(database),
           magpie,
           gatewayMode: gatewaySecret ? "on" : "off",
+          // Informational: Hermes being down does not turn /api/admin/health red or roll back a release.
+          ...(probeConfiguredHermes ? { probeHermes: probeConfiguredHermes } : {}),
           ...(computerProvider
             ? {
                 probeComputer: async () => {
@@ -3731,6 +3802,14 @@ const app = createApp(
         }),
       ],
       ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
+      [
+        "/api/admin/runtime-kernel",
+        createRuntimeKernelRoutes({
+          requireUser,
+          kernel: probeConfiguredHermes ? "hermes" : "builtin",
+          ...(probeConfiguredHermes ? { probe: probeConfiguredHermes } : {}),
+        }),
+      ],
       [
         "/api/admin/system-update",
         createSystemUpdateRoutes({
@@ -3862,6 +3941,8 @@ serve<SocketData>({
     if (url.pathname.startsWith("/api/computers/") && !request.headers.get("upgrade")) server.timeout(request, 0);
     // §102：网页聊天里的计算机动作（含最长 600 秒的前台命令）经审批网关同步执行，同样不设空闲超时。
     if (url.pathname.startsWith("/api/approvals/computer/")) server.timeout(request, 0);
+    // Hermes waits on the same governed long-running tools and approvals; the run owns cancellation.
+    if (url.pathname.startsWith("/api/internal/runtime-tools/")) server.timeout(request, 0);
     // IM 接入：微信扫码状态是长轮询（约 25 秒），「测试连接」要等平台握手（最多 15 秒），超过 Bun 默认的 10 秒空闲。
     if (url.pathname.startsWith("/api/im/") && !request.headers.get("upgrade")) server.timeout(request, 60);
     // 模型回合是流式的（SSE）：免费 / 慢模型首个 token 前常常要想十几秒，带很多工具时更久。Bun 默认

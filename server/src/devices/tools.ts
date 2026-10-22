@@ -8,6 +8,7 @@ import {
   GIT_SUBCOMMANDS,
 } from "../../../shared/devices";
 import type { AuditInitiator } from "../audit";
+import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
 import { DeviceRefusedError, type DeviceHub } from "./hub";
 import { type DeviceRecord, type DeviceStore, fullAccessActive } from "./store";
@@ -329,7 +330,10 @@ export function deviceTools(options: {
     timeoutMs?: number,
     diff?: string | null,
   ): Promise<unknown> {
+    const signal = currentToolAbort();
+    if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
     const picked = await resolveDevice(store, actorId, selector, (id) => hub.isOnline(id));
+    if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
     if (typeof picked === "string") return `${REFUSAL_MARKER} ${picked} 可用设备：${roster}`;
     const device = picked;
     try {
@@ -341,7 +345,9 @@ export function deviceTools(options: {
         summary,
         timeoutMs,
         diff: diff ?? null,
+        ...(signal ? { signal } : {}),
       });
+      if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
       if (operation === "screenshot" && result && typeof result === "object" && "url" in result) {
         const shot = result as { url: string; width?: number; height?: number };
         return JSON.stringify({
@@ -351,6 +357,7 @@ export function deviceTools(options: {
       }
       return result;
     } catch (error) {
+      if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
       const message = error instanceof Error ? error.message : "设备操作失败。";
       return error instanceof DeviceRefusedError
         ? `${REFUSAL_MARKER} ${message}`

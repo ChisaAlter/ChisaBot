@@ -3,8 +3,11 @@
  *
  * `GET /api/admin/health` — administrators only (gateway session or X-ChisaBot-Local-Caller).
  * Combines app/version, database ping, Magpie status (when configured), computer node (when
- * configured), and a local-caller / gateway-mode marker. Overall `ok` is false when any configured
- * check fails; unconfigured optional deps are `ok: null` and do not fail the aggregate.
+ * configured), the host Hermes bridge (informational), and a local-caller / gateway-mode marker.
+ * Overall `ok` is false when any REQUIRED configured check fails; unconfigured optional deps are
+ * `ok: null` and do not fail the aggregate. Hermes is deliberately informational: a deployment may
+ * restart or upgrade the bridge on its own schedule, and that must not turn the image health red or
+ * roll a release back.
  *
  * HTTP 200 when overall ok, 503 otherwise. Never returns secrets. Cache-Control: no-store.
  *
@@ -22,6 +25,7 @@ import {
   opsHistorySeries,
 } from "../../shared/ops-counters";
 import type { BuildVersion } from "../../shared/system-update";
+import type { HermesHealthCheck } from "./agents/hermes-health";
 import type { AppVariables } from "./auth/guards";
 import { requireAdmin } from "./auth/guards";
 import { readRunningBuild, versionPayload } from "./build-info";
@@ -71,6 +75,8 @@ export type OpsHealthReport = {
     database: DatabaseCheck;
     magpie: MagpieCheck;
     computer: ComputerCheck;
+    /** Informational only: never part of the aggregate verdict. */
+    hermes: HermesHealthCheck;
     localCaller: LocalCallerCheck;
   };
   /** PRD-P1-02: SEND/STREAM/SSRF budgets — totals, last15m, rates, 1h series. */
@@ -83,6 +89,7 @@ export type ProbeComputer = () => Promise<ComputerCheck>;
 const DB_TIMEOUT_MS = 5_000;
 const MAGPIE_BUDGET_MS = 8_000;
 const COMPUTER_BUDGET_MS = 8_000;
+const HERMES_BUDGET_MS = 5_000;
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -112,6 +119,8 @@ export async function collectOpsHealth(options: {
   pingDatabase: PingDatabase;
   magpie?: MagpieService | null;
   probeComputer?: ProbeComputer | null;
+  /** Informational: its result never changes the aggregate `ok`. */
+  probeHermes?: (() => Promise<HermesHealthCheck>) | null;
   gatewayMode: "on" | "off";
   now?: () => number;
   log?: (line: string) => void;
@@ -189,11 +198,30 @@ export async function collectOpsHealth(options: {
   };
 
   // 三个检查互相独立，并行跑：最坏耗时从 21s（5+8+8 串行）降到 8s（取最慢的那个）。
-  // 各自的超时和返回结构不变。
-  const [database, magpie, computer] = await Promise.all([
+  // 各自的超时和返回结构不变。Hermes 健康只提示：超时或失败都不参与 overall。
+  const checkHermes = async (): Promise<HermesHealthCheck> => {
+    if (!options.probeHermes) return { ok: null, configured: false };
+    try {
+      return await withTimeout(
+        options.probeHermes(),
+        HERMES_BUDGET_MS,
+        "hermes",
+      );
+    } catch {
+      // Fixed sentence: an unexpected throw may name an internal host or upstream body.
+      return {
+        ok: false,
+        configured: true,
+        reachable: false,
+        error: "Hermes 健康检查失败",
+      };
+    }
+  };
+  const [database, magpie, computer, hermes] = await Promise.all([
     checkDatabase(),
     checkMagpie(),
     checkComputer(),
+    checkHermes(),
   ]);
 
   const required: Array<{ name: string; ok: CheckOk }> = [
@@ -229,7 +257,7 @@ export async function collectOpsHealth(options: {
     ok,
     checkedAt,
     version,
-    checks: { app, database, magpie, computer, localCaller },
+    checks: { app, database, magpie, computer, hermes, localCaller },
     budgets: opsCounterSnapshot(options.now?.() ?? Date.now()),
   };
 }
@@ -248,6 +276,8 @@ export function createOpsHealthRoutes(options: {
   pingDatabase: PingDatabase;
   magpie?: MagpieService | null;
   probeComputer?: ProbeComputer | null;
+  /** Informational: forwarded to {@link collectOpsHealth}, never part of the aggregate. */
+  probeHermes?: (() => Promise<HermesHealthCheck>) | null;
   gatewayMode: "on" | "off";
   log?: (line: string) => void;
 }) {
@@ -265,6 +295,7 @@ export function createOpsHealthRoutes(options: {
       pingDatabase: options.pingDatabase,
       magpie: options.magpie,
       probeComputer: options.probeComputer,
+      probeHermes: options.probeHermes,
       gatewayMode: options.gatewayMode,
       log: options.log,
     });

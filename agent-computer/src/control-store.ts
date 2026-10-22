@@ -61,7 +61,13 @@ function validRequest(v: unknown): v is HandoffRequest {
     (v.finishedAt === undefined || timestamp(v.finishedAt)) &&
     (v.interruption === undefined || typeof v.interruption === "string") &&
     (v.status !== "waiting" || timestamp(v.expiresAt)) &&
-    (v.status === "waiting" || v.expiresAt === undefined) &&
+    /*
+     * A waiting request has a deadline; a taken one now carries its own idle deadline too (the
+     * hour after which an abandoned takeover goes back to the Bot). Terminal requests must not.
+     */
+    (v.status === "waiting" ||
+      v.status === "taken" ||
+      v.expiresAt === undefined) &&
     (v.status === "waiting" || v.status === "taken"
       ? v.finishedAt === undefined
       : timestamp(v.finishedAt))

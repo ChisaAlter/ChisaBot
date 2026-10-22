@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconWorld, IconX } from "@tabler/icons-react";
+import { IconAlertTriangle, IconDeviceDesktop, IconWorld, IconX } from "@tabler/icons-react";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -125,6 +125,7 @@ function NothingToSee({
   settled,
   page,
   onRetry,
+  castingElsewhere = false,
 }: {
   problem: string | null;
   blankBrowser: boolean;
@@ -134,6 +135,13 @@ function NothingToSee({
   page?: { url?: string; title?: string } | undefined;
   /** 截图失败时手动再拉一帧（轮询也会继续；这是给人不想干等的按钮）。 */
   onRetry?: (() => void) | undefined;
+  /**
+   * The big screen is open somewhere (this window or another one), so the card's screenshot is
+   * yielding to the live cast. That is not a failure: no warning icon, no Retry, and the words say
+   * what is actually happening. Before this, the card showed the same ⚠️「暂时看不到屏幕」 as a real
+   * outage, which is what made a working computer look broken (2026-10-22).
+   */
+  castingElsewhere?: boolean;
 }) {
   return (
     <span className="computer-idle absolute inset-0 flex flex-col items-center justify-center gap-1 p-4 text-center text-muted-foreground text-sm">
@@ -165,6 +173,14 @@ function NothingToSee({
              */
             <span>{"此轮次未打开页面。"}</span>
           )}
+        </>
+      ) : castingElsewhere ? (
+        <>
+          <IconDeviceDesktop className="computer-idle-ic" />
+          <span className="computer-idle-t">{"大屏正在直播"}</span>
+          <span className="computer-idle-s">
+            {"同一块屏幕正在大屏里实时显示；关掉大屏后，这里会自动接回画面。"}
+          </span>
         </>
       ) : problem ? (
         <>
@@ -258,6 +274,8 @@ export function ComputerView({
 }: Props) {
   const [shot, setShot] = useState<Screenshot | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  /** The card's screenshot is yielding to a live cast (this window's big screen or another window's). */
+  const [castingElsewhere, setCastingElsewhere] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [streamProblem, setStreamProblem] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
@@ -429,8 +447,11 @@ export function ComputerView({
           failStreak += 1;
           setShot(null);
           setProblem(next.problem);
+          // 直播占着 CDP 是「大屏正在放」，不是「看不到屏幕」：换一张不带警告的卡。
+          setCastingElsewhere(liveCastBusy);
         } else {
           failStreak = 0;
+          setCastingElsewhere(false);
           // Exact byte comparison is the settling signal.
           unchanged = next.shot.base64 === lastFrame ? unchanged + 1 : 0;
           lastFrame = next.shot.base64;
@@ -447,9 +468,17 @@ export function ComputerView({
         // 所以「慢」是允许的，「停」不是：liveCast 固定 10s 探一次，连续失败按退避上限 30s 探。
         const recovering = liveCastBusy || failStreak > 0;
         if (shouldContinue() || recovering) {
+          /*
+           * 刚收起大屏时直播刚停，第一次探测会撞上「大屏正在直播」的 503；下一次如果还按 10 秒的
+           * liveCast 间隔走，右栏要空着「暂时看不到屏幕」十秒才回来（2026-10-22 实测约 12 秒）。
+           * 头两次改用 1.2 秒，让卡片在收起大屏后一两秒内接回截图；仍然失败才退回 10 秒探测。
+           */
+          const quick = liveCastBusy && failStreak <= 2;
           timer = setTimeout(
             tick,
-            nextScreenshotPollDelay(failStreak, intervalMs, { liveCast: liveCastBusy }),
+            quick
+              ? 1200
+              : nextScreenshotPollDelay(failStreak, intervalMs, { liveCast: liveCastBusy }),
           );
         }
       }
@@ -498,7 +527,7 @@ export function ComputerView({
   const presence = browserPresenceKind({
     control,
     botActive,
-    screenUnavailable: !settled && Boolean(problem) && !shot,
+    screenUnavailable: !settled && !castingElsewhere && Boolean(problem) && !shot,
   });
   const cardPresence = browserPresenceCardLabel(presence);
   const footPresence = browserPresenceFootLabel(presence);
@@ -529,8 +558,15 @@ export function ComputerView({
    * Nothing to draw, and it says so in the same words the card does — but somebody holding the wheel
    * gets the live socket whatever is on it, because once a person is driving the stream is the truth
    * about the page and a placeholder over it would be the view arguing with them.
+   *
+   * The big screen also opens the stream whenever it is already open, regardless of whether the card
+   * managed to keep a screenshot: a second window watching the same screen used to find the card's
+   * `/screenshot` refused with `liveCast` (the first window is casting), so `showScreen` stayed false
+   * and the second window never mounted its own LiveScreen — it sat on "暂时看不到屏幕" while the first
+   * window watched (2026-10-22, the multi-window pass). One cast, many viewers: the second window
+   * should join it, and the stream is the only source that knows how.
    */
-  const showLiveScreen = !settled && (showScreen || driving);
+  const showLiveScreen = !settled && (expanded || showScreen || driving);
   /**
    * Whether the wheel in somebody's hands is the wheel THIS tile is showing.
    *
@@ -557,7 +593,12 @@ export function ComputerView({
       <IconX size={16} stroke={2} />
     </button>
   );
-  /** 一轮已经结束：没有标签栏，只写这是哪一轮留下的画面。 */
+  /**
+   * 一轮已经结束：没有标签栏，只写这是哪一轮留下的画面。
+   *
+   * 关闭大屏的 × 不在这里，也不在标签栏里：它浮在大屏卡片外面的右上角（暗色遮罩上），
+   * 这样它是「关掉这个大屏」而不是「浏览器窗口上的一个按钮」，也不会和标签、地址栏星标挤成一列。
+   */
   const recordTitle = (
     <div className="btabs is-empty">
       <div className="btabs-lead">
@@ -566,7 +607,6 @@ export function ComputerView({
           {knownPage?.title || knownPage?.url || "这一轮打开的页面"}
         </span>
       </div>
-      <div className="btabs-end">{closeButton}</div>
     </div>
   );
 
@@ -620,8 +660,9 @@ export function ComputerView({
           {showScreen ? null : (
             <NothingToSee
               blankBrowser={blankBrowser}
+              castingElsewhere={castingElsewhere}
               onRetry={
-                settled || !problem
+                settled || !problem || castingElsewhere
                   ? undefined
                   : () => {
                       setProblem(null);
@@ -757,9 +798,16 @@ export function ComputerView({
                 className={`absolute inset-0 bg-black/80 ${wheelHere ? "cursor-default" : "cursor-zoom-out"}`}
               />
               {/*
-                放大的浏览器（DESIGN §96）：卡片永远不滚动。上面一块玻璃工具条（标签栏 + 地址栏 + 收藏栏，
-                关闭按钮在标签栏最右端），中间是按剩余高度等比缩放的屏幕，底部一行「谁 · 状态 · 交还」
-                始终在卡片里面。可用高度由 useTakeoverFit 量出来写进 --ctk-avail。
+                The way out is the card's, not the browser's: a floating × on the dim backdrop just outside
+                the card's top-right corner. Inside the tab strip it read as a browser-window button and
+                stacked on top of the address bar's star (2026-10-22 反馈「关闭按键的位置不对」).
+                Esc does the same thing.
+              */}
+              {closeButton}
+              {/*
+                放大的浏览器（DESIGN §96）：卡片永远不滚动。上面一块玻璃工具条（标签栏 + 地址栏 + 收藏栏），
+                中间是按剩余高度等比缩放的屏幕，底部一行「谁 · 状态 · 交还」始终在卡片里面。可用高度由
+                useTakeoverFit 量出来写进 --ctk-avail。
               */}
               <div
                 ref={takeoverRef}
@@ -797,7 +845,7 @@ export function ComputerView({
                         <TabStrip
                           computerId={computerId}
                           driving={driving}
-                          end={closeButton}
+                          onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)}
                           poll={!showLiveScreen}
                         />
                       }
@@ -853,7 +901,7 @@ export function ComputerView({
                   */
                   <>
                     <div className="computer-chrome">
-                      {settled ? recordTitle : <TabStrip computerId={computerId} driving={driving} end={closeButton} poll />}
+                      {settled ? recordTitle : <TabStrip computerId={computerId} driving={driving} onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)} poll />}
                     </div>
                     <div className="ctk-stage">
                       <div className="computer-frame ctk-screen relative w-full rounded-lg" data-ctk-screen style={{ aspectRatio }}>

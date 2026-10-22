@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 import { InlineApproval } from "@/components/approvals/inline-approval";
 import { tryClient } from "@/lib/client";
 import { botForAgent, useActiveBotHolder, withRunBot } from "./active-bot";
-import { frontendApprovalSnapshot } from "./approval-context";
+import { backendOwnsFrontendCall, frontendApprovalSnapshot } from "./approval-context";
 import { beginFrontendTool } from "./frontend-tool-activity";
 import { markApprovalPause } from "./stopped-turn";
 
@@ -103,6 +103,11 @@ export function useFrontendTool<T extends Record<string, unknown>>(
       : {}),
     handler: tool.handler
       ? async (args, context) => {
+          if (backendOwnsFrontendCall(context) && context.agent) {
+            markApprovalPause();
+            copilotkit.stopAgent({ agent: context.agent });
+            return undefined;
+          }
           /*
            * 工具在浏览器里跑，这一轮就没有 SSE 进展可看：`computer_run_command` 最长 600 秒，中间没有任何
            * 事件。开始 / 结束各打一次点，让发送看门狗知道「在动」，而不是到点把它掐掉

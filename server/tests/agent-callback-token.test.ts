@@ -56,6 +56,12 @@ describe("the run assertion", () => {
     });
   });
 
+  test("preserves workflow provenance so scoped tools cannot become a person run", () => {
+    const initiator = { kind: "workflow" as const, id: "workflow-run/step" };
+    const signed = mintRunAssertion({ ...RUN, initiator }, KEY);
+    expect(readRunAssertion(signed, KEY)?.initiator).toEqual(initiator);
+  });
+
   test("is refused when signed with another key", () => {
     const signed = mintRunAssertion(RUN, "another-key");
     expect(readRunAssertion(signed, KEY)).toBeNull();

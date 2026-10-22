@@ -27,7 +27,8 @@ import {
 } from "./gateway";
 import { HUMAN_CONTROL_ZH, isUnattendedInitiator, noteHumanControlBlock, suspendsOnHumanControl } from "./control-blocks";
 import type { ControlState } from "./schema";
-import { withConfirmActor } from "../confirmations/context";
+import { withConfirmActor, withConfirmToolCall, withToolAbort } from "../confirmations/context";
+import { withRuntimeSurfaceTools } from "../agents/runtime-tool-context";
 import {
   COMMAND_DEFAULT_TIMEOUT_SEC,
   COMMAND_MAX_TIMEOUT_SEC,
@@ -98,6 +99,7 @@ export class HeadlessToolsMiddleware extends Middleware {
         this.tools.map((tool) => [tool.definition.name, tool]),
       );
       const executed = new Set<string>();
+      const backendOwned = new Set<string>();
       let subscription: Subscription | undefined;
       let started = false;
       const work = async () => {
@@ -125,7 +127,7 @@ export class HeadlessToolsMiddleware extends Middleware {
           let terminal: RunFinishedEvent | undefined;
           let failed = false;
           await new Promise<void>((resolve, reject) => {
-            subscription = this.runNextWithState(
+            subscription = withRuntimeSurfaceTools(this.tools, () => this.runNextWithState(
               request,
               new InvocationTransport(next, request),
             ).subscribe({
@@ -136,6 +138,10 @@ export class HeadlessToolsMiddleware extends Middleware {
               }) => {
                 messages = updatedMessages;
                 state = updatedState;
+                if (event.type === EventType.CUSTOM && event.name === "openbot.backend-owned-tools") {
+                  const value = event.value as { names?: unknown } | undefined;
+                  if (Array.isArray(value?.names)) for (const name of value.names) if (typeof name === "string") backendOwned.add(name);
+                }
                 if (event.type === EventType.TOOL_CALL_START)
                   emitted.add(String(event.toolCallId));
                 if (event.type === EventType.MESSAGES_SNAPSHOT) {
@@ -159,7 +165,7 @@ export class HeadlessToolsMiddleware extends Middleware {
               },
               error: reject,
               complete: resolve,
-            });
+            }));
           });
           if (subscriber.closed || failed) return;
           if (!terminal)
@@ -182,10 +188,18 @@ export class HeadlessToolsMiddleware extends Middleware {
                 )
               : [],
           );
+          if (pending.some((call) => backendOwned.has(call.function.name))) {
+            if (terminal.outcome?.type === "interrupt") {
+              subscriber.next(terminal);
+              return;
+            }
+            throw new Error("A backend-owned tool has no execution receipt; it will not be executed again by the host.");
+          }
           const owned = pending.filter(
             (call) =>
-              tools.has(call.function.name) ||
-              call.function.name.startsWith("computer_"),
+              !backendOwned.has(call.function.name) &&
+              (tools.has(call.function.name) ||
+              call.function.name.startsWith("computer_")),
           );
           if (owned.length === 0) {
             subscriber.next(terminal);
@@ -220,11 +234,13 @@ export class HeadlessToolsMiddleware extends Middleware {
                 forwardedProps: request.forwardedProps,
                 initiator: this.initiator,
               };
-              const result = await withApprovalContext(continuation, () =>
-                tool.execute(args, {
-                  toolCallId: call.id,
-                  signal: controller.signal,
-                }),
+              const result = await withConfirmToolCall(call.id, call.function.name, () =>
+                withToolAbort(controller.signal, () => withApprovalContext(continuation, () =>
+                  tool.execute(args, {
+                    toolCallId: call.id,
+                    signal: controller.signal,
+                  }),
+                )),
               );
               content =
                 typeof result === "string" ? result : JSON.stringify(result);

@@ -748,6 +748,22 @@ from: cite what a tool returned, and say plainly when the answer is from the mod
 rather than from anything it read. That rule is not written per agent, so it cannot be missing from
 the next one somebody adds.
 
+## 用 Hermes 替换内置内核
+
+设置 `CHISABOT_HERMES_URL`（`http://127.0.0.1:4100/ag-ui`）后，**所有** `built_in` 机器人都改由
+Hermes 的 ACP session 回答，不再走 CopilotKit + AI SDK 的内置循环。它是部署级开关，所以现有的
+机器人和以后新建的都一样，不会漏掉某一个；`CHISABOT_HERMES_TOKEN` 对应桥的 `ACP_BRIDGE_TOKEN`。
+
+桥在 [`examples/acp-agent/`](../examples/acp-agent/)：跑 `hermes acp`（或 `dsh acp`），再把
+`/ag-ui` 地址填进 `CHISABOT_HERMES_URL`。换内核后：
+
+- Hermes 用**它自己的工具**（shell / 文件 / 网页 / MCP / 子 agent）；ChisaBot 的插件工具不在这条
+  链路里，`built_in` 机器人的模型选择也被 Hermes 的配置取代。
+- 机器人的名字和 `system_prompt` 仍会通过 standing role 送到桥，桥在每个 ACP session 的第一轮
+  把它作为宿主设定带给 Hermes。
+- ACP 的 `session/request_permission` 默认被桥自动同意，ChisaBot 的审批卡覆盖不到它。收紧方式见
+  那个目录的 README（`ACP_APPROVAL=deny`、内核侧裁工具集、只监听 127.0.0.1 + token）。
+
 Any `${NAME}` in a package file is replaced with that environment variable, so one package works
 against a local stack, a staging one and production. `${NAME:-fallback}` uses the fallback when the
 name is unset or empty, which is how the example package points at the Bot in the box without

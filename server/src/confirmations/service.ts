@@ -746,7 +746,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
     return list.map((tool) => {
       const category = categoryOfTool(tool.name, tool.ref);
       if (!category)
-        return tool.name.startsWith("device_") ? { ...tool, execute: (args: unknown) => withConfirmInteractive(interactive(tool), () => tool.execute(args)) } : tool;
+        return tool.name.startsWith("device_") ? { ...tool, execute: (args: unknown, ctx) => withConfirmInteractive(interactive(tool), () => tool.execute(args, ctx)) } : tool;
       return {
         ...tool,
         execute: async (args: unknown, ctx) => {

@@ -224,7 +224,8 @@ function readInitiator(value: unknown): AuditInitiator {
     kind !== "routine" &&
     kind !== "handoff" &&
     kind !== "responsibility" &&
-    kind !== "memory"
+    kind !== "memory" &&
+    kind !== "workflow"
   )
     return PERSON_INITIATOR;
   const id = (value as { id?: unknown }).id;

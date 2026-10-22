@@ -33,6 +33,7 @@ step swap "切换到 $PREV"
   cd "$COMPOSE_DIR" || exit 1
   exec 8>.deploy.lock
   flock -w 60 8 || exit 1
+  restore_hermes_release "$CUR_TAG" || exit 1
   if [ "$(image_mode)" = env ]; then
     set_image "$PREV" || exit 1
   else

@@ -262,11 +262,12 @@ describe.skipIf(!asked)(
   },
 );
 
-describe.skipIf(!asked)("a socket that another connection replaced", () => {
-  test("cannot type into the screen that replaced it, and is told so", async () => {
-    // Failure 3. The input handler dispatched through whatever the session held, so the replaced
-    // window's keys went into the page the current viewer was watching, and the sender heard nothing
-    // because the old check returned before reaching anything that could report.
+describe.skipIf(!asked)("two windows watching the same screen", () => {
+  test("the older window keeps its picture and its input when a second one joins", async () => {
+    // Before 2026-10-22 the second `/stream` replaced the first: the older window was told its
+    // screen was being watched somewhere else and stopped, while the newcomer took over. That is the
+    // reported "用着浏览器还是报错" when the PC client and a browser tab were both open. Now the cast
+    // is shared, both windows get frames, and input is gated by control alone.
     const botId = "supersede";
     await api("/navigate", botId, {
       method: "POST",
@@ -281,18 +282,19 @@ describe.skipIf(!asked)("a socket that another connection replaced", () => {
     await takeControl(botId);
     first.socket.send(JSON.stringify({ type: "key", key: "z" }));
 
-    // The exact refusal, not merely some error. Dispatching through a cast the sender does not own
-    // also fails, and fails loudly, so "an error arrived" passes just as well when the ownership
-    // check is gone. Only the wording separates being refused from blundering into a null.
+    let landed = "";
     await until(
-      () => first.errors.some((e) => /no longer live/i.test(e)),
+      () => landed.includes("z"),
       5_000,
-      "the replaced socket to be told its screen is no longer live",
+      "the first window's key to reach the page the second window is also watching",
+      async () => {
+        const read = await api("/read", botId);
+        landed = ((await read.json()) as { text: string }).text;
+      },
     );
 
-    const read = await api("/read", botId);
-    const { text } = (await read.json()) as { text: string };
-    expect(text).not.toContain("z");
+    expect(first.errors).toEqual([]);
+    expect(second.errors).toEqual([]);
   }, 30_000);
 });
 
@@ -314,13 +316,11 @@ describe.skipIf(!asked)("a viewer answering the keepalive", () => {
   }, 30_000);
 });
 
-describe.skipIf(!asked)("a superseded socket closing later", () => {
-  test("does not take the screen down with it", async () => {
-    // What #191 fixed, at the level where it can actually go wrong again. Replacement does not close
-    // the socket it superseded, so that socket closes on its own schedule, which on an ordinary
-    // make-before-break reconnect is after the replacement is already casting. A close that stopped
-    // whatever the slot held rather than naming its own socket would leave the person who just
-    // reconnected watching a still image with input going nowhere, and nothing would say so.
+describe.skipIf(!asked)("one of two windows closing", () => {
+  test("does not take the shared screen down with it", async () => {
+    // Two windows share one cast now. One of them closing must leave the other watching: a close that
+    // stopped the slot's cast rather than removing its own subscription would freeze the survivor on
+    // its last frame, with input going nowhere and nothing said.
     const botId = "late-close";
     await api("/navigate", botId, {
       method: "POST",
@@ -332,12 +332,12 @@ describe.skipIf(!asked)("a superseded socket closing later", () => {
     const second = watch(botId);
     await second.casting;
 
-    // The replaced socket goes away now, after its replacement is live.
+    // One window goes away while the other is still watching.
     first.close();
     await wait(AFTER_ONE_FOLLOW_TICK_MS);
 
-    // The survivor still owns the screen, and the proof is that its typing arrives: a cast that was
-    // stopped underneath it, or an ownership it quietly lost, would refuse this instead.
+    // The survivor still has the screen, and the proof is that its typing arrives: a cast that was
+    // stopped underneath it would refuse this instead.
     await takeControl(botId);
     second.socket.send(JSON.stringify({ type: "key", key: "k" }));
 

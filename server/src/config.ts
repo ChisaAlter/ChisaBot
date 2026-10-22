@@ -205,6 +205,14 @@ export type DeploymentConfig = {
    */
   composioApiKey: string | undefined;
   /**
+   * 全面换内核：设置后，所有 built-in 机器人改由 Hermes 的 ACP 桥回答。
+   *
+   * `url` 是 `examples/acp-agent` 桥的 AG-UI 地址；`token` 是它的 `ACP_BRIDGE_TOKEN`。未设置时
+   * 行为不变（CopilotKit + AI SDK 的内置循环）。这是一个部署级开关，不是每个机器人的字段：
+   * 现有的和以后新建的 `built_in` 机器人都会走新内核，不会漏掉某一个。
+   */
+  hermesKernel?: { url: string; token?: string };
+  /**
    * Where this deployment is reached from outside, with no trailing slash.
    *
    * Needed because an OAuth redirect URI has to match what an administrator registered with the
@@ -1229,6 +1237,8 @@ export function loadConfig(
   }
   const managedAgent = managedAgentConfig(environment);
   const runtime = runtimeCapabilities(environment);
+  const hermesUrl = optional(environment, "CHISABOT_HERMES_URL")?.replace(/\/+$/, "");
+  const hermesToken = optional(environment, "CHISABOT_HERMES_TOKEN");
 
   return {
     port: serverPort(environment),
@@ -1236,6 +1246,14 @@ export function loadConfig(
     databaseUrl: required(environment, "DATABASE_URL"),
     keyEncryptionKey: keyEncryptionKey(environment),
     ...(managedAgent ? { managedAgent } : {}),
+    ...(hermesUrl
+      ? {
+          hermesKernel: {
+            url: hermesUrl,
+            ...(hermesToken ? { token: hermesToken } : {}),
+          },
+        }
+      : {}),
     agentEndpointAllowedHosts: agentEndpointAllowedHosts(environment),
     deploymentId: optional(environment, "DEPLOYMENT_ID"),
     composioApiKey: optional(environment, "COMPOSIO_API_KEY"),
