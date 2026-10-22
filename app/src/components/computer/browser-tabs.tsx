@@ -197,6 +197,14 @@ export function TabStrip({
                 className="btab-main"
                 onClick={() => {
                   if (!active) void run(`a:${tab.id}`, "activate", tab.id);
+                  /*
+                   * 已经高亮的标签也照样再按一次（只在接管时）。
+                   *
+                   * 刚新开的标签在服务端一出生就是「当前标签」，但直播画面可能还停在上一页；这时点它以前
+                   * 什么都不发，用户以为「这个标签点不进去」（2026-10-22 反馈）。重新 activate 是幂等的：
+                   * 计算机会把它带到前台并踢一次转播，卡住的画面就跟着回来了。
+                   */
+                  else if (driving) void run(`a:${tab.id}`, "activate", tab.id);
                 }}
                 onAuxClick={(event) => {
                   // 中键关标签，和桌面浏览器一样。

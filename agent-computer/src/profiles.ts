@@ -954,6 +954,14 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
       record.pinned = created;
       record.retarget();
       record.usedAt = Date.now();
+      /*
+       * 新标签也要拿到前台，和 activateTab 一样。
+       *
+       * 这里以前只 pin 不 bringToFront：标签栏把它画成当前标签，直播却还停在上一页——Chromium 的
+       * screencast 只合成真的在显示的那一页。看起来就是「多了一个标签，点不进去」（2026-10-22 反馈）。
+       * 失败不算错：有些平台不给前台权限，follow 循环照样会按 record.page 重挂转播。
+       */
+      await created.bringToFront().catch(() => undefined);
       return created;
     },
 

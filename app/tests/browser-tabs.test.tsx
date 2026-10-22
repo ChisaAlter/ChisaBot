@@ -134,6 +134,41 @@ describe("TabStrip", () => {
     expect(await ui.findByText(/接管控制后才能/)).toBeTruthy();
   });
 
+  test("clicking the tab that is already highlighted re-asserts it, so a lagging screen comes back (2026-10-22)", async () => {
+    setTabsView("botA3", view("t2"));
+    const ui = render(<TabStrip computerId="botA3" driving poll={false} />);
+    const tabs = ui.getAllByRole("tab");
+    // t2 本来就是当前标签，以前点它一个请求都不发。新开的标签一出生就是当前标签，画面却可能还停在
+    // 上一页，用户点那个标签当然「点不进去」；现在重新 activate 一次，计算机顺手把转播踢回这一页。
+    await act(async () => {
+      fireEvent.click(tabs[1]?.querySelector("button") as HTMLElement);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(calls.find((call) => call.url.includes("/human/tab"))?.body).toMatchObject({ action: "activate", id: "t2" });
+  });
+
+  test("viewing-only: clicking the current tab does not grab control", async () => {
+    setTabsView("botA4", view("t1"));
+    const took: string[] = [];
+    const ui = render(
+      <TabStrip
+        computerId="botA4"
+        driving={false}
+        onTakeControl={() => {
+          took.push("take");
+          return Promise.resolve(true);
+        }}
+        poll={false}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(ui.getAllByRole("tab")[0]?.querySelector("button") as HTMLElement);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+    expect(took).toEqual([]);
+    expect(calls.filter((call) => call.url.includes("/human/tab")).length).toBe(0);
+  });
+
   test("TabStrip is one keyboard tab stop: arrows move between tabs and activate them (2026-10-20)", async () => {
     setTabsView("botK", view("t1"));
     const ui = render(<TabStrip computerId="botK" driving poll={false} />);
