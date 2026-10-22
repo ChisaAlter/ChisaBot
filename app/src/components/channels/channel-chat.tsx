@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { ContextMeter } from "@/components/agents/context-meter";
+import { PendingQuestion } from "@/components/approvals/pending-question";
 import { attachmentModality } from "@/components/channels/chat-messages";
 import { isPersonSentMessage } from "@/components/channels/chat-transcript";
 import { toAgentOptions } from "@/components/channels/composer";
@@ -1727,6 +1728,9 @@ export function ChannelChat({
                  * it — and they are independent, so neither is an `else` for the other.
                  */
                 <>
+                  {/* 机器人在这个对话里问的问题：回答框就放在输入框上面（DESIGN.md §110），
+                      侧栏那个数点进来之后原来没有任何可做的事。 */}
+                  <PendingQuestion channelId={channel.id} />
                   <HandoffResumeNotice
                     botId={runtimeAgentId}
                     agent={agent}

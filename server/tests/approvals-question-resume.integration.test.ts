@@ -105,6 +105,56 @@ test("the question's initiator survives being asked and answered", async () => {
   });
 });
 
+test("the inbox says which conversation asked, so the answer box can be drawn there", async () => {
+  const key = randomUUID();
+  keys.push(key);
+  await database.insert(workItems).values({
+    kind: "person.question",
+    key,
+    payload: question({ channelId: `${prefix}-channel` }),
+  });
+  const entry = (await questions.list(owner)).find((row) => row.id === key);
+  expect(entry?.channelId).toBe(`${prefix}-channel`);
+});
+
+test("a question whose conversation is gone is closed rather than counted for ever", async () => {
+  const key = randomUUID();
+  keys.push(key);
+  await database.insert(workItems).values({
+    kind: "person.question",
+    key,
+    payload: question(),
+  });
+  expect((await questions.list(owner)).some((row) => row.id === key)).toBeTrue();
+
+  expect(await questions.dismiss(owner, key)).toEqual({
+    id: key,
+    dismissed: true,
+  });
+
+  // Gone from「在等你回答」, which is what the rail's number counts.
+  expect((await questions.list(owner)).some((row) => row.id === key)).toBeFalse();
+  const [row] = await database
+    .select()
+    .from(workItems)
+    .where(
+      and(eq(workItems.kind, "person.question"), eq(workItems.key, key)),
+    );
+  expect(row?.finishedAt).not.toBeNull();
+  // No answer was queued: closing a question resumes nothing.
+  expect(
+    await database
+      .select()
+      .from(workItems)
+      .where(and(eq(workItems.kind, "person.response"), eq(workItems.key, key))),
+  ).toHaveLength(0);
+  // Closing one that is already closed is a no-op, not a second revive of the row.
+  expect(await questions.dismiss(owner, key)).toEqual({
+    id: key,
+    dismissed: false,
+  });
+});
+
 test("an answer to a responsibility's question resumes it with its own tools, run and initiator", async () => {
   const recorded: unknown[] = [];
   const store = {

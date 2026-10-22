@@ -69,6 +69,9 @@ export function createApprovalQuestions(
                 id: row.key,
                 botId: value.data.botId,
                 threadId: value.data.threadId,
+                // Which conversation to draw the answer box in. Saved when the question was offered;
+                // absent on rows written before it was, and the Approvals page still lists those.
+                channelId: value.data.channelId ?? null,
                 question: value.data.question,
                 why: value.data.why,
                 createdAt: row.createdAt,
@@ -122,6 +125,30 @@ export function createApprovalQuestions(
         );
         return { id, queued: true };
       });
+    },
+    /**
+     * Close a question that will not be answered.
+     *
+     * A question's conversation can go away — the channel was deleted, the Bot was removed or access
+     * was revoked — and then `respond` refuses at the authorisation step, before it clears the row.
+     * The count in the rail would sit there for ever with nothing on screen that could move it. This
+     * is the person saying so: finish the row without writing an answer, so nothing is resumed. An
+     * already answered question is a no-op rather than a second resume.
+     */
+    async dismiss(owner: string, id: string) {
+      const [closed] = await database
+        .update(workItems)
+        .set({ finishedAt: sql`now()`, updatedAt: sql`now()` })
+        .where(and(owned(owner, id), isNull(workItems.finishedAt)))
+        .returning({ key: workItems.key });
+      if (closed) return { id: closed.key, dismissed: true };
+      const [known] = await database
+        .select({ key: workItems.key })
+        .from(workItems)
+        .where(owned(owner, id))
+        .limit(1);
+      if (!known) throw new ApprovalNotFoundError();
+      return { id, dismissed: false };
     },
   };
 }

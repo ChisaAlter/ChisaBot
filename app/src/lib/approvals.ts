@@ -61,6 +61,8 @@ export type ApprovalInboxData = {
     id: string;
     botId: string;
     threadId: string;
+    /** The conversation the question was asked in; null on rows saved before it was recorded. */
+    channelId?: string | null;
     question: string;
     why?: string;
     createdAt: string;
@@ -132,6 +134,15 @@ export const answerPersonQuestion = (id: string, response: string) =>
     method: "POST",
     body: { response },
     fallback: "您的回答无法保存。",
+  });
+/**
+ * 关掉一个答不了的问题（它那段对话已经不在了）：不写回答、不恢复那一轮，只把这条记录结束掉。
+ * 没有这个出口，侧栏那个数就永远清不掉（DESIGN.md §110）。
+ */
+export const dismissPersonQuestion = (id: string) =>
+  client(`/api/approvals/questions/${encodeURIComponent(id)}/dismiss`, {
+    method: "POST",
+    fallback: "这个问题无法关闭。",
   });
 export const updateApprovalRule = (
   id: string,

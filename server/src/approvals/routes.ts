@@ -277,6 +277,14 @@ export function createApprovalRoutes(
       ),
     );
   });
+  routes.post("/questions/:id/dismiss", async (context) =>
+    context.json(
+      await service.dismissQuestion(
+        context.var.actor.id,
+        context.req.param("id"),
+      ),
+    ),
+  );
   routes.post("/:id/decision", async (context) => {
     const input = z
       .strictObject({

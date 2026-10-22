@@ -6,10 +6,12 @@ import { ConfirmRow } from "@/components/approvals/confirm-row";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
+import { confirmDialog } from "@/components/ui/confirm";
 import { Card, EmptyState, ErrorCard } from "@/components/ui/skyglass";
 import { Textarea } from "@/components/ui/textarea";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import { type ApprovalDecision, type ApprovalInboxData, answerPersonQuestion, approvalInboxOptions, decideApproval } from "@/lib/approvals";
+import { type ApprovalDecision, type ApprovalInboxData, answerPersonQuestion, approvalInboxOptions, decideApproval, dismissPersonQuestion } from "@/lib/approvals";
+import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
 import { confirmKeys, recentConfirmationsQueryOptions } from "@/lib/confirmations";
 import { agoText } from "@/lib/im";
 
@@ -27,7 +29,7 @@ export function PendingInbox() {
     const names = new Map((bots.data ?? []).map((bot) => [bot.id, bot.name]));
     return (id: string) => names.get(id) ?? "机器人";
   }, [bots.data]);
-  const refresh = () => Promise.all([cache.invalidateQueries({ queryKey: ["approvals"] }), cache.invalidateQueries({ queryKey: confirmKeys.all })]);
+  const refresh = () => Promise.all([cache.invalidateQueries({ queryKey: ["approvals"] }), cache.invalidateQueries({ queryKey: confirmKeys.all }), cache.invalidateQueries({ queryKey: botLifecycleKeys.all })]);
 
   const confirms = (recent.data ?? []).filter((request) => request.status === "pending");
   const requests = (upstream.data?.requests ?? []).filter((request) => request.status === "pending");
@@ -149,6 +151,17 @@ function QuestionCard({ question, botName, onDone }: { question: ApprovalInboxDa
     },
     { errorToast: (error) => error.message },
   );
+  /*
+   * 一段对话没了，它问的问题就永远答不上：respond 会在授权那一步拒绝，而这行记录不会结束。
+   * 关掉它不写回答、不恢复那一轮，只是把侧栏那个数清掉（DESIGN.md §110）。
+   */
+  const dismiss = useAsyncAction(
+    async () => {
+      await dismissPersonQuestion(question.id);
+      await onDone();
+    },
+    { errorToast: (error) => error.message },
+  );
   return (
     <Card className="pending-card">
       <div className="pending-card-t">{`${botName}问：${question.question}`}</div>
@@ -157,6 +170,23 @@ function QuestionCard({ question, botName, onDone }: { question: ApprovalInboxDa
       <div className="pending-card-a">
         <Button disabled={!text.trim()} feedback={{ pending: "发送中…", success: "已发送", error: "发送失败" }} onClick={() => void send.run()} size="sm" state={send.state}>
           {"发送"}
+        </Button>
+        <Button
+          feedback={{ pending: "关闭中…", success: "已关闭", error: "关闭失败" }}
+          onClick={async () => {
+            const ok = await confirmDialog({
+              title: "不用回答这个问题了？",
+              description: "这条问题会被关掉，机器人不会再等它。想让它接着做，在这里回答就好。",
+              confirmLabel: "关掉问题",
+              destructive: true,
+            });
+            if (ok) void dismiss.run();
+          }}
+          size="sm"
+          state={dismiss.state}
+          variant="outline"
+        >
+          {"不用回答了"}
         </Button>
       </div>
     </Card>
