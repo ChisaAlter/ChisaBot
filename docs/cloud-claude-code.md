@@ -368,6 +368,8 @@ Claude 会话在**自己的工作树**里改，不碰 `work/`，所以 PC 开着
 
 登录状态缓存在 `chisabot_cloud_workspaces.claude_auth`，在节点重连、`/claude/check`、以及节点在线时服务器每 5 分钟的定期复查时刷新（同一节点并发检查合并）。网页打开 Claude Code / 设置 → 云端工作区、窗口回到前台时，若缓存「未登录」或超过 60 秒，会节流地自动调 `/claude/check`（`app/src/lib/claude-auth-recheck.ts`，DESIGN.md §73.1）。
 
+**退出 Claude**（`POST /api/cloud-workspace/claude/logout`，2026-10-22 修「退出无效」）：节点以 `claude auth status --json` 为准——先问一次确认确实登着，再跑 `claude auth logout`（最多 10 秒，卡住就 SIGKILL），然后**必须再问一次** `auth status`；CLI 没退掉（旧版没有 `auth logout`、网络卡住被超时结束、凭据没删掉）就直接删掉它自己报告的 `configDirectory` 里的 `.credentials.json`，再确认一次，还登着才回错误（页面卡片底部一行红字）。服务器在发 `logout` 之前把该节点的「登录状态代次」+1：退出之前发出、退出之后才回来的 `status` 结果一律不写回缓存，否则一次并发的自动检查会把刚退掉的账号改回「已登录」。
+
 **设备连接上的消息**（复用同一条 WSS，旧客户端会忽略不认识的消息）
 
 - 服务器 → 节点：v1 的 `cc_*`、`ws_clone`、`ws_tree`、`ws_read`、`ws_push`，再加 `ws_merge{session, handoffId}`、`ws_manifest`、`ws_lease{holder, handoffId}`、`sync_key_add/remove`、`sync_tunnel_open{ticket}`。

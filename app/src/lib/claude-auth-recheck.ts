@@ -59,6 +59,8 @@ export function resetClaudeAuthRecheck() {
 /**
  * 需要时触发一次复查；返回是否真的发起了。`check` 默认是 POST /claude/check，测试可以替换。
  * 成功后只把新的 claude 写回缓存（不整页刷新）；失败安静吞掉（下一次聚焦 / 轮询再说）。
+ * 检查期间缓存被别的路径（退出、手动重新检查）换过（`checkedAt` 不同）时，这份结果已经过时，不写回——
+ * 否则刚退出的账号会被一次早就发出的自动检查改回「已登录」。
  */
 export function maybeRecheckClaudeAuth(
   queryClient: QueryClient,
@@ -68,10 +70,17 @@ export function maybeRecheckClaudeAuth(
   const view = queryClient.getQueryData<CloudWorkspaceView>(ccKeys.status);
   if (!shouldRecheck(view, now, lastAttemptAt, inFlight !== null)) return false;
   lastAttemptAt = now;
+  const startedWith = view?.claude.checkedAt ?? null;
   inFlight = (async () => {
     try {
       const { claude } = await check();
-      if (claude) queryClient.setQueryData<CloudWorkspaceView>(ccKeys.status, (old) => (old ? { ...old, claude } : old));
+      if (claude) {
+        queryClient.setQueryData<CloudWorkspaceView>(ccKeys.status, (old) => {
+          if (!old) return old;
+          if ((old.claude.checkedAt ?? null) !== startedWith) return old;
+          return { ...old, claude };
+        });
+      }
     } catch {
       // 节点刚好离线 / 超时：保留缓存值，按节流下次再试。
     } finally {

@@ -151,7 +151,8 @@ export const ccApi = {
       (r) => r.json() as Promise<{ ok: boolean; error: string | null; claude: ClaudeAuth }>,
     ),
   loginCancel: (id: string) => client(`/api/cloud-workspace/claude/login/${encodeURIComponent(id)}`, { method: "DELETE", fallback: "取消失败" }),
-  logout: () => client("/api/cloud-workspace/claude/logout", { method: "POST", fallback: "退出失败" }),
+  /** 退出：节点要「auth status → claude auth logout → auth status（必要时删凭据再确认）」，最坏约 34 秒；预算给到 45 秒。 */
+  logout: () => client<ClaudeAuth>("/api/cloud-workspace/claude/logout", "claude", { method: "POST", fallback: "退出失败", timeoutMs: 45_000 }),
   check: () => client("/api/cloud-workspace/claude/check", { method: "POST", fallback: "检查失败" }).then((r) => r.json() as Promise<{ claude: ClaudeAuth }>),
   createSession: (workspaceId: string, body: { title?: string } = {}) =>
     client<CcSessionView>(`/api/claude-code/workspaces/${encodeURIComponent(workspaceId)}/sessions`, "session", { method: "POST", body, fallback: "新建会话失败" }),

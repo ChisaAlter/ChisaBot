@@ -56,6 +56,9 @@ import { type Github, GithubError } from "../github/service";
 const MAX_CONCURRENT = 2;
 const APPROVAL_MS = 120_000;
 const RPC_MS = 40_000;
+/** 退出：节点那边最坏是「auth status 8s → claude auth logout 10s → auth status 8s（→ 删凭据后再查 8s）」= 34 秒，
+ *  这里留 38 秒；网页给这次请求 45 秒，保证先拿到服务器自己的错误，而不是浏览器先超时。 */
+const LOGOUT_MS = 38_000;
 const LOGIN_CODE_MS = 80_000;
 const PERSIST_EVERY_MS = 2_000;
 /** 节点在线时服务器定期复查一次 Claude 登录状态（缓存在 chisabot_cloud_workspaces.claude_auth）。 */
@@ -372,12 +375,42 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
 
   // 同一节点同时只查一次登录状态（打开页面、聚焦、定时复查可能撞在一起）。
   const authChecks = new Map<string, Promise<ClaudeAuth>>();
+  /**
+   * 登录状态写入的代次（DESIGN.md §73.1）：退出时 +1。
+   * 之前发出、退出之后才回来的 `status` 结果一律不写回缓存——否则「退出」刚生效就被一次旧检查改回「已登录」，
+   * 用户看到的就是「退出无效」（2026-10-22 反馈）。
+   */
+  const authEpoch = new Map<string, number>();
+  /** 正在进行的退出：这期间开始的检查不和它抢写（它们只会拿到「退出前」的状态）。 */
+  const authLogouts = new Map<string, Promise<unknown>>();
+  function bumpAuthEpoch(deviceId: string) {
+    const next = (authEpoch.get(deviceId) ?? 0) + 1;
+    authEpoch.set(deviceId, next);
+    return next;
+  }
+  /** 缓存里现在的登录状态（作废掉一次过期检查后回给调用方的是这个，而不是旧结果）。 */
+  async function cachedAuth(deviceId: string): Promise<ClaudeAuth> {
+    const rows = await sql.unsafe<{ claude_auth: ClaudeAuth | null }[]>("SELECT claude_auth FROM chisabot_cloud_workspaces WHERE device_id = $1", [deviceId]);
+    return rows[0]?.claude_auth ?? EMPTY_AUTH;
+  }
   function refreshAuth(deviceId: string, timeoutMs = RPC_MS): Promise<ClaudeAuth> {
     const pending = authChecks.get(deviceId);
     if (pending) return pending;
-    const p = (async () => saveAuth(deviceId, await rpc<ClaudeAuth>(deviceId, "status", {}, timeoutMs)))().finally(() => authChecks.delete(deviceId));
-    authChecks.set(deviceId, p);
-    return p;
+    const epoch = authEpoch.get(deviceId) ?? 0;
+    const work = (async () => {
+      // 退出正在进行：问节点只会得到「退出前」的答案，直接回缓存，等退出落定之后下一次检查再说。
+      if (authLogouts.has(deviceId)) return cachedAuth(deviceId);
+      const auth = await rpc<ClaudeAuth>(deviceId, "status", {}, timeoutMs);
+      // 这次检查开始之后有人退出过：结果已经过时，既不写缓存，也不回给页面。
+      if ((authEpoch.get(deviceId) ?? 0) !== epoch) return cachedAuth(deviceId);
+      return saveAuth(deviceId, auth);
+    })();
+    // 只清掉自己这一条：退出会先删掉在途检查，之后新起的检查不能被旧的那条顺手删掉。
+    const tracked = work.finally(() => {
+      if (authChecks.get(deviceId) === tracked) authChecks.delete(deviceId);
+    });
+    authChecks.set(deviceId, tracked);
+    return tracked;
   }
   const authTimer = setInterval(() => {
     for (const id of nodes) if (hub.isOnline(id)) void refreshAuth(id, 25_000).catch(() => {});
@@ -1376,11 +1409,39 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
     return { cancelled: true };
   }
 
+  /**
+   * 退出 Claude。节点那边以 `auth status` 为准（CLI 没做到就删凭据、再确认，见 pc/src/cloud-cc），
+   * 这里再做两道：先让在途的 / 这期间开始的旧 status 结果作废（否则退出会被一次并发检查改回去），
+   * 再核对结果确实是「没登录」。
+   */
   async function logout(ownerUserId: string) {
     const node = await onlineNode(ownerUserId);
-    const result = await rpc<ClaudeAuth>(node.device_id, "logout", {}, RPC_MS);
-    await audit(ownerUserId, null, "claude_logout");
-    return { claude: await saveAuth(node.device_id, result) };
+    const deviceId = node.device_id;
+    bumpAuthEpoch(deviceId);
+    authChecks.delete(deviceId);
+    let release!: () => void;
+    const running = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    authLogouts.set(deviceId, running);
+    try {
+      let result: ClaudeAuth;
+      try {
+        result = await rpc<ClaudeAuth>(deviceId, "logout", {}, LOGOUT_MS);
+      } catch (error) {
+        await audit(ownerUserId, null, "claude_logout_failed", { reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
+        throw error;
+      }
+      if (result.loggedIn) {
+        await audit(ownerUserId, null, "claude_logout_failed", { reason: "节点上的 Claude 还在登录状态" });
+        throw new CcError("云端工作区里的 Claude 还没有退出，请再试一次。", 409);
+      }
+      await audit(ownerUserId, null, "claude_logout");
+      return { claude: await saveAuth(deviceId, result) };
+    } finally {
+      if (authLogouts.get(deviceId) === running) authLogouts.delete(deviceId);
+      release();
+    }
   }
 
   async function check(ownerUserId: string) {
@@ -1645,6 +1706,6 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
       syncHooks.forgetWorkspace = hooks.forgetWorkspace ?? null;
     },
     // 测试用
-    _internal: { live, nodes, check, refreshAuth, authTimer, startTurn, send, decideApproval, workspaces, createSession, status, createGithubWorkspace, mergeSession, pushSession },
+    _internal: { live, nodes, check, logout, refreshAuth, authTimer, startTurn, send, decideApproval, workspaces, createSession, status, createGithubWorkspace, mergeSession, pushSession },
   };
 }

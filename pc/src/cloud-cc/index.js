@@ -48,6 +48,10 @@ const TRACE_URL = process.env.CHISABOT_EGRESS_TRACE_URL || "https://claude.ai/cd
 const ID = /^[A-Za-z0-9_-]{1,80}$/;
 const APPROVAL_MS = 125_000;
 const LOGIN_MS = 10 * 60_000;
+/** 退出：`claude auth logout` 最多等这么久（卡住就直接结束进程），之后每次 `auth status` 各有自己的预算。
+ *  最坏 8 + 10 + 8 + 8 = 34 秒（服务器 38 秒、网页 45 秒的预算之内）。 */
+const LOGOUT_MS = 10_000;
+const LOGOUT_STATUS_MS = 8_000;
 const FILE_CAP = 1024 * 1024;
 const PATCH_CAP = 400 * 1024;
 const SNAP_EXCLUDE = ["node_modules/", ".venv/", "venv/", "__pycache__/", ".next/", ".cache/", "dist/", "build/", "coverage/", ".git"].join("\n");
@@ -103,9 +107,10 @@ function parseStatus(stdout) {
     const j = JSON.parse(stdout);
     const email = j.email || (j.account && j.account.email) || j.emailAddress || null;
     const plan = j.subscriptionType || j.plan || (j.account && j.account.subscriptionType) || null;
-    return { loggedIn: !!j.loggedIn, method: j.authMethod || null, email, plan: plan ? String(plan) : null, org: j.orgName || null };
+    // configDirectory：退出时 CLI 没删掉凭据的话，节点照着这个目录自己删（见 clearCredentials）
+    return { loggedIn: !!j.loggedIn, method: j.authMethod || null, email, plan: plan ? String(plan) : null, org: j.orgName || null, configDirectory: typeof j.configDirectory === "string" ? j.configDirectory : null };
   } catch {
-    return { loggedIn: false, method: null, email: null, plan: null, org: null, error: "读不懂 claude auth status 的输出" };
+    return { loggedIn: false, method: null, email: null, plan: null, org: null, configDirectory: null, error: "读不懂 claude auth status 的输出" };
   }
 }
 
@@ -456,10 +461,67 @@ function createCloudCc(options) {
   }
 
   // ---------- 登录 ----------
-  async function authStatus() {
-    const r = await run(claude, ["auth", "status", "--json"], { timeout: 20_000, env: { ...process.env, TERM: "dumb", ...proxyEnv() } });
-    if (r.error && r.error.code === "ENOENT") return { loggedIn: false, error: "云端节点上没有找到 claude 命令" };
+  async function authStatus(timeoutMs = 20_000) {
+    const r = await run(claude, ["auth", "status", "--json"], { timeout: timeoutMs, env: { ...process.env, TERM: "dumb", ...proxyEnv() } });
+    if (r.error && r.error.code === "ENOENT") return { loggedIn: false, configDirectory: null, error: "云端节点上没有找到 claude 命令" };
     return parseStatus(r.stdout);
+  }
+  /** claude 认的凭据文件：优先用它自己报告的 configDirectory，其次 $HOME/.claude（容器里就是这两处）。 */
+  function credentialFiles(status) {
+    const home = process.env.HOME || os.homedir();
+    const dirs = new Set([path.join(home, ".claude")]);
+    if (status && typeof status.configDirectory === "string" && status.configDirectory) dirs.add(status.configDirectory);
+    if (process.env.CLAUDE_CONFIG_DIR) dirs.add(process.env.CLAUDE_CONFIG_DIR);
+    return [...dirs].map((dir) => path.join(dir, ".credentials.json"));
+  }
+  /** 直接删掉凭据文件（`claude auth logout` 做的就是这件事）。返回真正删掉的路径。 */
+  function clearCredentials(status) {
+    const removed = [];
+    for (const file of credentialFiles(status)) {
+      try {
+        if (fs.existsSync(file)) {
+          fs.rmSync(file, { force: true });
+          removed.push(file);
+        }
+      } catch (error) {
+        log(`删除 Claude 凭据失败（${file}）：${error.message}`);
+      }
+    }
+    return removed;
+  }
+  /** 一句人话：CLI 为什么没退掉（stdout / stderr 的最后一行 + 退出码 / 超时）。令牌、地址一律抹掉。 */
+  function cliNote(r) {
+    const text = `${r.stderr || ""}\n${r.stdout || ""}`
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-1)[0];
+    const clean = (text || "没有输出").replace(/sk-ant-[A-Za-z0-9_-]+/g, "[令牌]").replace(/https?:\/\/\S+/g, "[地址]").slice(0, 200);
+    const code = r.error && r.error.killed ? "超时被结束" : String(typeof r.code === "number" ? r.code : (r.error && r.error.code) || "?");
+    return `${clean}（退出码 ${code}）`;
+  }
+  /**
+   * 退出 Claude（用户报告「退出无效」）。以前只看命令跑完没有，CLI 没真退出（旧版没有 `auth logout`、
+   * 网络卡住被超时结束、凭据没删掉）时也回「已退出」，下一次检查又变回「已登录」。
+   * 现在以 `auth status` 为准：CLI 没做到就直接删掉它认的凭据文件，再确认一次；还登着才报错。
+   */
+  async function logoutClaude() {
+    // 「没登录」只认一次读得懂的 status：读不懂（CLI 没输出 / 找不到）不当成「本来就没登录」。
+    const verified = (s) => !!s && s.loggedIn === false && !s.error;
+    const before = await authStatus(LOGOUT_STATUS_MS);
+    if (verified(before)) return before;
+    const r = await run(claude, ["auth", "logout"], { timeout: LOGOUT_MS, killSignal: "SIGKILL", env: { ...process.env, TERM: "dumb", ...proxyEnv() } });
+    let after = await authStatus(LOGOUT_STATUS_MS);
+    if (!verified(after)) {
+      const removed = clearCredentials(after);
+      log(`claude auth logout 没有退出（${cliNote(r)}）${removed.length ? `，已删除凭据 ${removed.join(", ")}` : ""}`);
+      if (removed.length) after = await authStatus(LOGOUT_STATUS_MS);
+      if (!verified(after)) {
+        const reason = removed.length ? (after.error ? `删掉凭据后仍然读不懂登录状态（${after.error}）` : "删掉凭据后它还是登录状态") : "也没有找到凭据文件";
+        throw new Error(`Claude 没有退出：${cliNote(r)}，${reason}。可以再试一次，或更新云端节点镜像。`);
+      }
+    }
+    return after;
   }
   function endLogin(reason) {
     if (remote && login && remote.loginId === login.id) void remote.browser.stop(reason);
@@ -672,8 +734,7 @@ function createCloudCc(options) {
         return { cancelled: true };
       case "logout": {
         endLogin("退出");
-        await run(claude, ["auth", "logout"], { timeout: 20_000, env: { ...process.env, ...proxyEnv() } });
-        return await authStatus();
+        return await logoutClaude();
       }
       case "session_init":
         await ensureTree(args.workspaceId, args.sessionId, args.branch);
