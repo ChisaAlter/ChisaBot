@@ -1515,8 +1515,14 @@ html[data-sky-ease] body::before {
  * The editor's inline `height 150ms` transition was animating every auto-grow measurement, so the
  * first line appeared to hop up and settle back while typing. Height is feedback, not decoration:
  * it should land on the measured value in the same frame.
+ *
+ * 高度只看内容，不看焦点（2026-10-22）。prompt-area 自己在失焦 150ms 后把高度钉回 minHeight、overflow 设成
+ * hidden：写好的两行字，点一下「+」/ 模型药丸 / 权限 / 消息区，整块输入框就塌成一行、字被裁掉；再点回来又弹开。
+ * 用户说的「输入框特别容易闪」就是这两下。超过组件给的 maxHeight 照旧在框里滚。
  */
 .glass-composer .prompt-area-editor {
+  height: auto !important;
+  overflow-y: auto !important;
   transition: none !important;
 }
 .glass-composer [data-placeholder]::before,
@@ -3600,7 +3606,10 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
   border-color: var(--stroke);
   box-shadow: var(--shadow-2), var(--inset-hl);
 }
-.glass-composer:focus-within { background: var(--glass-3); }
+/*
+ * 底色只在下面「输入框不透字」那一处定义（§25）：两支渐变，聚焦时只更实一点。这里以前还有一条
+ * `background: var(--glass-3)`（纯色）——渐变和纯色之间插不了值，0.2s 的过渡只能瞬间跳，正是「输入框闪一下」。
+ */
 
 /* ---------- Chat: the chosen Bot, quietly, before the first message ---------- */
 .chat-intro {
@@ -6279,9 +6288,13 @@ body[data-install-hint="open"] [data-slot="sidebar-container"].glass-sidebar-con
  * 遮罩要么进布局（§35.4 不许），要么得在大滚动区上用 mask（每帧重绘，伤性能）。
  * ========================================================================================== */
 .glass-composer { background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(255, 255, 255, 0.93)); }
-.glass-composer:focus-within { background: rgba(255, 255, 255, 0.98); }
+/*
+ * 聚焦时也是同一个渐变（只更实一点）：`background` 有 0.2s 过渡，可渐变和纯色之间插不了值——以前这里是个
+ * rgba，浏览器只能直接跳，于是每次点进 / 点出输入框（包括按发送、点消息区），整块板子闪一下。
+ */
+.glass-composer:focus-within { background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(255, 255, 255, 0.96)); }
 .dark .glass-composer { background: linear-gradient(180deg, rgba(36, 48, 69, 0.97), rgba(27, 37, 56, 0.95)); }
-.dark .glass-composer:focus-within { background: rgba(30, 41, 61, 0.98); }
+.dark .glass-composer:focus-within { background: linear-gradient(180deg, rgba(33, 45, 66, 0.99), rgba(25, 34, 52, 0.97)); }
 /* 结果行收起时正文的下内边距不留白（内边距收不进 0fr 的行里，行会多出 10px）。 */
 .worker-result .worker-plan-collapse:not([data-open]) .worker-result-body { padding-bottom: 0; }
 

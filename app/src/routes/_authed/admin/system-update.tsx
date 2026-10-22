@@ -475,7 +475,9 @@ function KernelSection() {
       <Card>
         <SettingRow description={details} title="运行循环">
           <div className="flex items-center gap-2">
-            <span className={cn("device-badge is-sm", `is-${tone}`)}>{label}</span>
+            <span className={cn("device-badge is-sm", `is-${tone}`)}>
+              <T>{label}</T>
+            </span>
             <Button
               aria-label="重新检查执行内核"
               disabled={kernel.isFetching}

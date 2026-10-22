@@ -103,6 +103,12 @@ function ChatStage({ pathname }: { pathname: string }) {
         <ChannelPage
           channelId={kept.channelId}
           epoch={epoch}
+          /*
+           * 换一段对话就是换一页（2026-10-22）：`ChannelPage` 自己也有「这段对话的」状态——历史对话弹窗开着没有、
+           * 计算机自动切标签上一个机器人是不是在干活。不按 channelId 分开的话，从左栏换机器人时那两样都跟着过去了
+           * （弹窗突然开在新机器人上）。聊天本身由下面 `ChannelBody` 的 `key={channel.id}` 换，这里只是把壳也换掉。
+           */
+          key={kept.channelId}
           settings={kept.settings}
           visible={visible}
           watch={kept.watch}

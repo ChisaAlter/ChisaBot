@@ -43,6 +43,12 @@ afterEach(async () => {
 afterAll(async () => {
   await settleReactWork();
   globalThis.ResizeObserver = originalObserver;
+  /*
+   * 收掉自己注册的 happy-dom（`settle-react-work.ts` 写了为什么：bun 把每个测试文件走一遍同一个进程，
+   * 下一个自己 `register()` 的文件会撞「Happy DOM has already been globally registered」）。
+   * 少了这一行，`plugin-logo.test.tsx` 在整套里必红、单独跑却全绿。
+   */
+  GlobalRegistrator.unregister();
 });
 
 const panels = [
