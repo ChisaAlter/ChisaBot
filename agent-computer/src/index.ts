@@ -648,34 +648,43 @@ serve<StreamData>({
     idleTimeout: STREAM_IDLE_TIMEOUT_S,
     async open(ws) {
       const session = sessions.for(ws.data.botId);
-      /*
-       * Claimed before anything is awaited, and that order is the fix.
-       *
-       * Below this line the Bot's browser may have to be launched, which takes long enough for a
-       * client to connect and go away inside it. A close arriving in that window used to find nothing
-       * installed and so did nothing, while this function carried on to install a cast and a 1Hz
-       * interval for a socket that had already gone: no second close ever came, and the interval went
-       * on relaunching a browser somebody had stopped. With the claim taken first there is always
-       * something for that close to release, and everything below goes through the claim and is
-       * refused once it is gone.
-       */
-      const claim = session.viewer.claim(ws, (reason) => {
+      const slot = session.viewer;
+      const say = (frame: unknown) => {
         try {
-          ws.send(JSON.stringify({ type: "error", error: reason }));
+          ws.send(JSON.stringify(frame));
         } catch {
-          // Best effort. The socket may already be gone, which is not a reason to stop tearing down.
+          // Best effort. The socket may already be gone, which is not a reason to stop anything.
         }
+      };
+      const send = (frame: unknown) => {
+        try {
+          ws.send(JSON.stringify(frame));
+        } catch {
+          // A closed socket is removed by its close handler; until then it simply misses frames.
+        }
+      };
+      /*
+       * A second window watching the same Bot joins the screen already running instead of replacing
+       * it. Before 2026-10-22 the newcomer took the screen, and the window already open was told
+       * "这块屏幕现在在另一个窗口看着，这边停下了" — which is what "用着浏览器还是报错" turned out to be
+       * (the PC client and a browser tab, or two tabs, both watching).
+       *
+       * The first viewer starts the one cast, the follow loop and the keepalive; everybody after that
+       * receives the same frames. Joining hands the newcomer the latest frame before returning, so a
+       * static page does not leave it on a black canvas until something moves.
+       */
+      const first = slot.join({
+        socket: ws,
+        notify: (reason) => say({ type: "error", error: reason }),
+        send,
       });
+      if (!first) {
+        // The owner's loop pushes tabs when they change; the newcomer still needs today's list.
+        const view = await profiles.tabs(ws.data.botId).catch(() => null);
+        if (view) say({ type: "tabs", ...view });
+        return;
+      }
       try {
-        const send = (frame: unknown) => {
-          // A closed socket starts a fresh cast on the next connection.
-          try {
-            ws.send(JSON.stringify(frame));
-          } catch {
-            void session.viewer.release(ws);
-          }
-        };
-
         /*
          * The cast follows the Bot's current page. Re-checking also handles a page being closed
          * underneath us without a listener per page.
@@ -689,7 +698,7 @@ serve<StreamData>({
           const encoded = JSON.stringify(view);
           if (encoded === lastTabs) return;
           lastTabs = encoded;
-          send({ type: "tabs", ...view });
+          slot.broadcast({ type: "tabs", ...view });
         };
         const attach = async () => {
           const target = await currentPage(ws.data.botId);
@@ -697,10 +706,10 @@ serve<StreamData>({
           void ensureStartPage(target, linksFor(ws.data.botId));
           void pushTabs();
           if (target === casting) return;
-          const cast = await startScreencast(target, send);
-          // The claim stops a cast it refuses, so a launch that lost the screen leaks nothing.
-          if (!(await claim.install(cast))) return;
-          casting = target;
+          const cast = await startScreencast(target, (frame) => slot.broadcast(frame));
+          // The slot refuses (and stops) a cast that lost its viewers while it was starting.
+          if (await slot.install(cast)) casting = target;
+          else casting = undefined;
         };
 
         await attach();
@@ -716,36 +725,35 @@ serve<StreamData>({
         /*
          * Application keepalive. Screencast frames only arrive when the page changes; without this
          * a static page + idle viewer goes quiet and Bun / the proxy / nginx drop the socket at
-         * idleTimeout. Cleared with the follow loop so a released claim leaves no timer behind.
+         * idleTimeout. Cleared with the follow loop so the last viewer leaving leaves no timer behind.
          */
         const keepAlive = setInterval(() => {
-          send(keepAlivePingPayload());
+          slot.broadcast(keepAlivePingPayload());
         }, STREAM_KEEPALIVE_MS);
         keepAlive.unref?.();
-        if (
-          !claim.setFollow(() => {
-            clearInterval(follow);
-            clearInterval(keepAlive);
-            botKickers.delete(kicked);
-            if (botKickers.size === 0 && kickers.get(ws.data.botId) === botKickers)
-              kickers.delete(ws.data.botId);
-          })
-        )
-          return;
+        slot.setFollow(() => {
+          clearInterval(follow);
+          clearInterval(keepAlive);
+          botKickers.delete(kicked);
+          if (botKickers.size === 0 && kickers.get(ws.data.botId) === botKickers)
+            kickers.delete(ws.data.botId);
+        });
       } catch (error) {
         /*
-         * Released before the socket is told, because this path is reachable in exactly the timing
-         * the claim exists for. A claim left behind here would keep the session occupied for the life
-         * of the process, and the sweep in sessions.ts could never take it: the unbounded growth that
-         * function was written to stop, reintroduced by the error path of the fix for it.
+         * Removed before the socket is told, because this path is reachable in exactly the timing
+         * the join exists for. A viewer left behind here would keep the session occupied for the
+         * life of the process, and the sweep in sessions.ts could never take it: the unbounded
+         * growth that function was written to stop, reintroduced by the error path of the fix for it.
          */
-        await session.viewer.release(ws);
-        ws.send(
-          JSON.stringify({
-            type: "error",
-            error: describe(error, "The screen could not be started."),
-          }),
-        );
+        await slot.leave(ws);
+        /*
+         * A second window may have joined while this one was starting the browser. It has no loop of
+         * its own (the first viewer owns those), so leaving it behind would show "starting" forever.
+         * It is told the same reason and dropped; both windows then show it and a Retry.
+         */
+        if (slot.viewers() > 0)
+          await slot.releaseAll(describe(error, "The screen could not be started."));
+        say({ type: "error", error: describe(error, "The screen could not be started.") });
         ws.close();
       }
     },
@@ -774,10 +782,10 @@ serve<StreamData>({
       /*
        * Whose screen this is, asked before anything is done with the input.
        *
-       * A superseded socket used to dispatch through whatever the session held, so a replaced
-       * window's typing landed in the page the current viewer was watching. It heard nothing about
-       * it either, because the old missing-viewer check returned before reaching anything that could
-       * report, which is why this answers the sender rather than returning quietly.
+       * Input from a socket that is not watching this Bot's screen used to dispatch through whatever
+       * the session held, so a replaced window's typing landed in the page the current viewer was
+       * watching. It heard nothing about it either, because the old missing-viewer check returned
+       * before reaching anything that could report, which is why this answers the sender.
        *
        * Starting and gone are told apart deliberately. Both own no cast, and answering them the same
        * way tells somebody whose screen is still opening that their session ended.
@@ -877,13 +885,13 @@ serve<StreamData>({
     },
 
     async close(ws) {
-      // Names the socket, so it can only ever give up its own screen. A superseded socket closing
-      // after its replacement has started releases nothing; see viewer.ts.
+      // Names the socket, so one window closing only ever removes its own subscription. The cast
+      // and the follow loop stop when the last viewer has gone; see viewer.ts.
       //
-      // `get`, not `for`: a socket closing for a Bot with no session has nothing to release,
-      // and creating one here would add a map entry on a teardown path, which is the direction the
-      // map is meant to shrink in.
-      await sessions.get(ws.data.botId)?.viewer.release(ws);
+      // `get`, not `for`: a socket closing for a Bot with no session has nothing to leave, and
+      // creating one here would add a map entry on a teardown path, which is the direction the map
+      // is meant to shrink in.
+      await sessions.get(ws.data.botId)?.viewer.leave(ws);
     },
   },
   async fetch(request, server) {

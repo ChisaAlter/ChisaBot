@@ -480,6 +480,19 @@ export function LiveScreen({
           setReconnecting(true);
         }
       },
+      /*
+       * 屏幕彻底结束（另一个窗口接管 / 电脑停了）：不会自己重连，所以不能盖「正在重新连接…」。
+       * 以前这里和断线走同一条路，停止原因下面叠着一层假的「正在重新连接…」，看起来一直在重试。
+       */
+      onStopped: (problem) => {
+        frameSize.current = null;
+        latestFrame.current = null;
+        latestFrameId.current++;
+        setNavBusy(false);
+        reconnectingRef.current = false;
+        setReconnecting(false);
+        onProblem?.(screenProblem(problem));
+      },
       onMessage,
     });
     document.addEventListener("visibilitychange", drawLatestFrame);

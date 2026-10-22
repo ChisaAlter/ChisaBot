@@ -11,10 +11,31 @@ type Options = {
   onReady: (ready: boolean) => void;
   onProblem: (problem: string | null) => void;
   onDisconnect: () => void;
+  /**
+   * The screen ended for good: another window took it (old servers), the computer stopped, or the
+   * socket was replaced. Nothing will reconnect by itself, so the view must not draw its
+   * "正在重新连接…" overlay — that is what stacked a false "reconnecting" on top of the stop message
+   * (2026-10-22 screenshot: "这块屏幕现在在另一个窗口看着… / 正在重新连接…").
+   */
+  onStopped?: (problem: string) => void;
   onMessage: (event: { data: unknown }) => void;
   schedule?: (run: () => void, delay: number) => () => void;
 };
-const BACKOFF = [500, 1000, 2000, 4000, 8000];
+/**
+ * Errors after which there is nothing to reconnect to: retrying would only flap. Kept in one place so
+ * the server's wording can change in either language without the view promising a reconnect it will
+ * not make.
+ */
+const TERMINAL =
+  /superseded|another (?:viewer|screen)|opened elsewhere|watched somewhere else|another tab|computer stopped|screen ended|no longer live/i;
+/**
+ * Retry delays, in order. About a minute and a half in total, because that is what a deploy looks
+ * like from the browser: the container is replaced and the socket refused for tens of seconds. Five
+ * attempts over 15s gave up in the middle of every update and left a permanent "连接已断开，点重试"
+ * on screen (2026-10-22) — the update produced the error, not a broken computer. The cap keeps a
+ * genuinely dead deployment from being retried forever.
+ */
+const BACKOFF = [500, 1000, 2000, 4000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000];
 export function connectScreen(options: Options) {
   let stopped = false;
   let attempts = 0;
@@ -73,19 +94,17 @@ export function connectScreen(options: Options) {
       }
       if (message?.type === "error") {
         // The server deliberately leaves superseded sockets open. Never compete with the other tab.
-        if (
-          /superseded|another (?:viewer|screen)|opened elsewhere|watched somewhere else|another tab/i.test(
-            message.error ?? "",
-          )
-        ) {
+        if (TERMINAL.test(message.error ?? "")) {
           stopped = true;
           cancelTimer?.();
-          options.onDisconnect();
           options.onReady(false);
-          options.onProblem(
+          const reason =
             message.error ??
-              "This screen is open in another tab. Retry to take it here.",
-          );
+            "This screen is open in another tab. Retry to take it here.";
+          // Stopped, not disconnected: there is no reconnect to draw. The view shows the reason and
+          // its Retry button and this module stays quiet until the caller opens a new connection.
+          if (options.onStopped) options.onStopped(reason);
+          else options.onProblem(reason);
           current.close();
           return;
         }

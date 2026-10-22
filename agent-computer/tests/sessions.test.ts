@@ -91,9 +91,9 @@ describe("the run a session carries", () => {
       cap: 1,
     });
     const watched = sessions.for("bot-1");
-    // Through the slot's own claim, not by assigning the field: occupancy starts at the claim, so a
+    // Through the slot's own join, not by assigning the field: occupancy starts at the join, so a
     // test that set some other shape would pass while the sweep read the real one.
-    watched.viewer.claim({}, () => undefined);
+    watched.viewer.join({ socket: {}, notify: () => undefined, send: () => undefined });
     sessions.for("bot-2");
     expect(sessions.for("bot-1").run).toBe(watched.run);
   });
