@@ -59,3 +59,15 @@ test("chat composer keeps 16px side gutters and clears the panel handle at narro
   const cc = [...css.matchAll(/\n\.cc-session\s*\{([^}]*)\}/g)].map((m) => m[1]).pop() ?? "";
   expect(cc).toMatch(/padding:\s*0 16px 16px/);
 });
+
+test("Claude Code thinking pill keeps horizontal padding inside its rounded capsule", () => {
+  // `.cc-thinking` 挂在 `.chat-thinking` 药丸上；以前 `.cc-thinking { padding: 2px 0; }` 把左右内边距清成 0，
+  // 三个圆点和「Claude 正在想」两端直接挤出圆角边框。
+  const rules = [...css.matchAll(/\n\.cc-thinking\s*\{([^}]*)\}/g)].map((m) => m[1]);
+  expect(rules.length).toBeGreaterThan(0);
+  for (const body of rules) {
+    expect(body).not.toMatch(/padding:\s*\d+(?:px)?\s+0\b/);
+  }
+  const last = rules.at(-1) ?? "";
+  expect(last).toMatch(/padding:\s*8px 14px 8px 12px/);
+});
