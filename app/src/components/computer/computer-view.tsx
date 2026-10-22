@@ -529,8 +529,15 @@ export function ComputerView({
    * Nothing to draw, and it says so in the same words the card does — but somebody holding the wheel
    * gets the live socket whatever is on it, because once a person is driving the stream is the truth
    * about the page and a placeholder over it would be the view arguing with them.
+   *
+   * The big screen also opens the stream whenever it is already open, regardless of whether the card
+   * managed to keep a screenshot: a second window watching the same screen used to find the card's
+   * `/screenshot` refused with `liveCast` (the first window is casting), so `showScreen` stayed false
+   * and the second window never mounted its own LiveScreen — it sat on "暂时看不到屏幕" while the first
+   * window watched (2026-10-22, the multi-window pass). One cast, many viewers: the second window
+   * should join it, and the stream is the only source that knows how.
    */
-  const showLiveScreen = !settled && (showScreen || driving);
+  const showLiveScreen = !settled && (expanded || showScreen || driving);
   /**
    * Whether the wheel in somebody's hands is the wheel THIS tile is showing.
    *
