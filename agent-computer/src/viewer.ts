@@ -76,10 +76,19 @@ export type ViewerSlot = {
    * the big screen is connecting.
    */
   casting(): boolean;
-  /** Put a cast behind the slot, replacing one already there. Refused (and stopped) with no viewers. */
+  /**
+   * Put a cast behind the slot, replacing one already there. Refused (and stopped) with no viewers.
+   */
   install(cast: Screencast): Promise<boolean>;
-  /** Register the loop that keeps the cast on the Bot's current page. Replaces any previous one. */
-  setFollow(cancel: () => void): void;
+  /**
+   * Register the loop that keeps the cast on the Bot's current page.
+   *
+   * Answers false — and cancels what it was given — when the last viewer left while the browser was
+   * still starting. Otherwise an interval registered after everybody had gone would keep asking for
+   * a page every second, which is a launch path: the computer somebody stopped would come back up and
+   * refresh its own idle timestamp forever.
+   */
+  setFollow(cancel: () => void): boolean;
   /** Send a frame to every viewer and remember it for the next one. */
   broadcast(frame: unknown): void;
   /** The last frame, for replaying to somebody who joins later. */
@@ -203,7 +212,17 @@ export function createViewerSlot(): ViewerSlot {
 
     setFollow(cancel) {
       cancelFollow?.();
+      /*
+       * Everybody left while the browser was starting. The loop being offered was created after that
+       * close and has nobody to cast for; cancelled here rather than returned, so the caller cannot
+       * leak an interval by forgetting to check.
+       */
+      if (watching.size === 0) {
+        cancel();
+        return false;
+      }
       cancelFollow = cancel;
+      return true;
     },
 
     broadcast(frame) {

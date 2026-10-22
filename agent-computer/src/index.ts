@@ -731,13 +731,18 @@ serve<StreamData>({
           slot.broadcast(keepAlivePingPayload());
         }, STREAM_KEEPALIVE_MS);
         keepAlive.unref?.();
-        slot.setFollow(() => {
+        const following = slot.setFollow(() => {
           clearInterval(follow);
           clearInterval(keepAlive);
           botKickers.delete(kicked);
           if (botKickers.size === 0 && kickers.get(ws.data.botId) === botKickers)
             kickers.delete(ws.data.botId);
         });
+        /*
+         * Everybody left while the browser was still starting. The slot has already cancelled these
+         * loops, and returning here keeps a follow tick from relaunching a computer somebody stopped.
+         */
+        if (!following) return;
       } catch (error) {
         /*
          * Removed before the socket is told, because this path is reachable in exactly the timing
@@ -1098,6 +1103,7 @@ serve<StreamData>({
           // Cleared only after it actually landed, so a failure leaves the request open and the person
           // can try again rather than being told to start over.
           session.control.secretSupplied();
+          session.control.noteHumanActivity();
           return json({ supplied: true, characters, url: target.url() });
         } catch (error) {
           if (error instanceof StaleSnapshotError) {
@@ -1175,9 +1181,9 @@ serve<StreamData>({
         }
         try {
           const target = await currentPage(botId);
-          return json(
-            await performHumanInput(target, url.pathname, body ?? {}),
-          );
+          const result = await performHumanInput(target, url.pathname, body ?? {});
+          session.control.noteHumanActivity();
+          return json(result);
         } catch (error) {
           return json({ error: describe(error, "That did not work.") }, 502);
         }
@@ -1326,6 +1332,7 @@ serve<StreamData>({
           else return json({ error: "标签页操作只能是 new / activate / close。" }, 400);
           await currentPage(botId);
           kick(botId);
+          session.control.noteHumanActivity();
           return json(await profiles.tabs(botId));
         } catch (error) {
           return tabFailure(error);

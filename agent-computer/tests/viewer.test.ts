@@ -347,11 +347,30 @@ describe("the follow loop", () => {
     const slot = createViewerSlot();
     let cancelled = 0;
     slot.join(window_("a").viewer);
-    slot.setFollow(() => {
-      cancelled += 1;
-    });
+    expect(
+      slot.setFollow(() => {
+        cancelled += 1;
+      }),
+    ).toBe(true);
     slot.setFollow(() => {});
 
+    expect(cancelled).toBe(1);
+  });
+
+  test("a loop offered after the last viewer left is cancelled and refused", async () => {
+    // The close can land while the browser is still starting; the loop is created after that await.
+    // Installing it anyway is what used to relaunch a stopped computer once a second.
+    const slot = createViewerSlot();
+    const a = window_("a");
+    slot.join(a.viewer);
+    await slot.leave(a.socket);
+
+    let cancelled = 0;
+    expect(
+      slot.setFollow(() => {
+        cancelled += 1;
+      }),
+    ).toBe(false);
     expect(cancelled).toBe(1);
   });
 });
