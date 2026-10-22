@@ -207,8 +207,10 @@ export function PanelRail({ className }: { className?: string }) {
   const panelBody = (
     <PanelRailBody
       controlsId={wide ? "chisabot-panel-rail" : "chisabot-panel-sheet"}
+      drawer={!wide}
       onCollapse={wide ? collapseWide : closeSheet}
       showHotkey={wide}
+      width={width}
     />
   );
 
@@ -336,10 +338,16 @@ function PanelRailBody({
   onCollapse,
   controlsId,
   showHotkey,
+  width,
+  drawer,
 }: {
   onCollapse: () => void;
   controlsId: string;
   showHotkey: boolean;
+  /** 右栏实测宽度（栏宽，不是卡片内容宽）：看板据此决定能不能并排。 */
+  width: number;
+  /** 窄窗口抽屉：面板看板永远单列。 */
+  drawer: boolean;
 }) {
   const { botId } = usePanelBot();
   const chat = useCurrentBotChat();
@@ -393,7 +401,7 @@ function PanelRailBody({
             <RailNote>{"还没有可用的机器人。"}</RailNote>
           ) : (
             <>
-              <LivePanelList botId={botId} />
+              <LivePanelList botId={botId} drawer={drawer} width={width} />
               {liveList.isSuccess && (liveList.data?.length ?? 0) === 0 ? (
                 <p className="rail-empty">
                   {"还没有面板。在对话里说一句，比如「帮我做一个比特币价格面板」，机器人会做好放在这里并按时刷新。"}

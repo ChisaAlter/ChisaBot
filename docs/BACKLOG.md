@@ -96,6 +96,20 @@
 | [CB-085](#cb-085) | 搜索旁新建机器人；弹出面板与常驻面板一致 | 成熟度 Maturity | `type: bug` · `area: web` · `P1` · `status: done` |
 | [CB-086](#cb-086) | 连续补话不重复执行；停止按钮终止当次计算机命令 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: done` |
 | [CB-087](#cb-087) | 聊天可靠性全面修复：滚动、队列恢复、请求与编码 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: done` |
+| [CB-088](#cb-088) | 面板级模型：刷新回合可以用面板自己选的模型 | 成熟度 Maturity | `type: feat` · `area: web` · `area: models` · `P2` · `status: planned` |
+
+## CB-088
+
+**面板级模型（dsh-pad 的「面板模型」）**
+
+里程碑：成熟度 Maturity · 标签：`type: feat` `area: web` `area: models` `P2` `status: planned`
+
+- [ ] 给 `TurnRunner` 加可选的模型覆盖，`governedTurnRunner` 按它解析连接，审计里记下用的是哪个模型。
+- [ ] `live_panels` 加 `model` 列；卡片 ⋯ 菜单列出可用模型（与输入框的模型选择同一份目录），改完下一轮刷新生效。
+- [ ] 无头回合里模型不可用（被删、没有凭据）时退回全局默认，并在卡片上写一句原因。
+- [ ] 回归：面板刷新用指定模型、失败退回、菜单切换持久化。
+
+背景：DESIGN.md §109.4；dsh-pad 的面板可以单独选模型，ChisaBot 现在只能跟随机器人 / 全局默认。
 
 ## CB-087
 

@@ -1492,7 +1492,11 @@ const loadToolsForActor =
     // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：
     // 以前它也拿到 panel_refresh，刷新里又触发一次刷新，回合叠回合（2026-10-13 实测）。
     ...(config.generativeUi && !imConnection
-      ? livePanelService.tools(actorId, botId, initiator.kind === "routine" && initiator.id.startsWith("lp_") ? { refreshOf: initiator.id } : {})
+      ? livePanelService.tools(actorId, botId, {
+          ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? { refreshOf: initiator.id } : {}),
+          // 懒查：只有机器人真的交上数据源时才读一次角色（命令源只给管理员）。
+          isAdmin: async () => (await actorFor(actorId)).role === "admin",
+        })
       : []),
     // 工作流（docs/workflows.md）：在聊天和长期任务里运行工作流；工作流自己的步骤拿不到。
     // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 workflows 才给机器人这两个工具。
@@ -2560,6 +2564,9 @@ const linkPreviews = await createLinkPreviews(database, {
 const livePanelStore = createLivePanelStore(database);
 const livePanelService = createLivePanelService({
   store: livePanelStore,
+  // 直连数据源（docs/live-panel-sources.md）：HTTP 走保险箱的 request，{{secret:名}} 只发往它绑定的域名、
+  // guardedFetch 钉死 DNS、不跟重定向、回来的正文抹掉密钥值。命令源只给管理员（tools 的 isAdmin）。
+  requestHttp: (ownerUserId, input, signal) => vault.request(ownerUserId, input, signal),
   runHeadless: async ({ ownerUserId, botId, instruction, panelId, signal }) => {
     const actor = await actorFor(ownerUserId);
     const channel = await channelStore.create(actor, [botId]);

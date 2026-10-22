@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { livePanels } from "../db/schema";
+import type { LivePanelDataSource, LivePanelSourceState } from "./source-types";
 
 /** url 为空 = 没有网址的来源（本机命令等），卡片上只写名字、不做成链接。 */
 export type LivePanelSource = { name: string; url: string };
@@ -114,6 +115,14 @@ function nextFor(refreshMinutes: number | null, refreshAt: string | null | undef
 const ORPHAN_BOT = sql`(not exists (select 1 from agents a where a.id = ${livePanels.botId})
   or exists (select 1 from agent_profiles p where p.agent_id = ${livePanels.botId} and p.deleted_at is not null))`;
 
+/** 只留下还存在的源的读数：删掉 / 改名 / 换 id 的源，不再把旧值挂在库里。 */
+function pruneSourceState(state: LivePanelSourceState | null | undefined, keep: readonly string[]): LivePanelSourceState {
+  const ids = new Set(keep);
+  const out: LivePanelSourceState = {};
+  for (const [id, reading] of Object.entries(state ?? {})) if (ids.has(id)) out[id] = reading;
+  return out;
+}
+
 export function createLivePanelStore(db: Database) {
   const own = (owner: string, id: string) => and(eq(livePanels.id, id), eq(livePanels.ownerUserId, owner));
   async function get(owner: string, id: string): Promise<LivePanelRow> {
@@ -130,7 +139,18 @@ export function createLivePanelStore(db: Database) {
         .where(and(eq(livePanels.ownerUserId, owner), eq(livePanels.botId, botId), eq(livePanels.removed, false)))
         .orderBy(asc(livePanels.position), asc(livePanels.createdAt));
     },
-    async create(owner: string, botId: string, input: { title: string; instruction: string; refreshMinutes?: number | null; refreshAt?: string | null }) {
+    async create(
+      owner: string,
+      botId: string,
+      input: {
+        title: string;
+        instruction: string;
+        refreshMinutes?: number | null;
+        refreshAt?: string | null;
+        /** 直连数据源（第一次 panel_create 就带上时存下来）。 */
+        dataSources?: LivePanelDataSource[];
+      },
+    ) {
       const [{ count = 0 } = { count: 0 }] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(livePanels)
@@ -148,6 +168,8 @@ export function createLivePanelStore(db: Database) {
         status: "building",
         spec: null,
         sources: [],
+        dataSources: input.dataSources ?? [],
+        sourceState: {},
         instruction: input.instruction.trim().slice(0, 2000),
         refreshMinutes: input.refreshAt ? 1440 : clampRefresh(input.refreshMinutes ?? null),
         refreshAt: input.refreshAt ?? null,
@@ -160,7 +182,17 @@ export function createLivePanelStore(db: Database) {
     async update(
       owner: string,
       id: string,
-      input: { spec: string; sources?: { name: string; url?: string }[]; title?: string; instruction?: string; refreshMinutes?: number | null; refreshAt?: string | null; edit?: boolean },
+      input: {
+        spec: string;
+        sources?: { name: string; url?: string }[];
+        title?: string;
+        instruction?: string;
+        refreshMinutes?: number | null;
+        refreshAt?: string | null;
+        edit?: boolean;
+        /** 传了就整份替换（含 id 复用后的结果）；不传保持。 */
+        dataSources?: LivePanelDataSource[];
+      },
     ) {
       const current = await get(owner, id);
       if (current.removed) throw new LivePanelError("这个面板已经删除了", 404);
@@ -171,11 +203,17 @@ export function createLivePanelStore(db: Database) {
       const changedShape =
         (input.title !== undefined && input.title.trim() !== current.title) ||
         (input.instruction !== undefined && input.instruction.trim() !== current.instruction);
+      // 数据源换了：删掉不再存在的源的旧读数，免得卡片底部还挂着上一个源的数。
+      const dataSources = input.dataSources;
+      const sourcesChanged = dataSources !== undefined && JSON.stringify(dataSources) !== JSON.stringify(current.dataSources ?? []);
+      const sourceState =
+        dataSources !== undefined ? pruneSourceState(current.sourceState, dataSources.map((source) => source.id)) : current.sourceState;
       await db
         .update(livePanels)
         .set({
           spec: input.spec,
           sources: cleanSources(input.sources?.length ? input.sources : current.sources),
+          ...(dataSources !== undefined ? { dataSources, sourceState } : {}),
           ...(input.title?.trim() ? { title: input.title.trim().slice(0, 60) } : {}),
           ...(input.instruction?.trim() ? { instruction: input.instruction.trim().slice(0, 2000) } : {}),
           refreshMinutes,
@@ -188,12 +226,14 @@ export function createLivePanelStore(db: Database) {
           // 租约不在这里放：后台刷新的回合交完数据后还没结束，放了就会被「立即刷新」/ 定时扫描
           // 再认领一次，两个回合叠在一起（2026-10-13 实测）。回合结束时 release() 统一放。
           updatedAt: now,
-          ...((input.edit || changedShape) && current.spec
+          ...((input.edit || changedShape || sourcesChanged) && current.spec
             ? {
                 previous: {
                   title: current.title,
                   spec: current.spec,
                   sources: current.sources,
+                  dataSources: current.dataSources,
+                  sourceState: current.sourceState,
                   instruction: current.instruction,
                   refreshMinutes: current.refreshMinutes,
                   refreshAt: current.refreshAt,
@@ -245,7 +285,16 @@ export function createLivePanelStore(db: Database) {
     },
     async undoEdit(owner: string, id: string) {
       const current = await get(owner, id);
-      const prev = current.previous as { title?: string; spec?: string; sources?: LivePanelSource[]; instruction?: string; refreshMinutes?: number | null; refreshAt?: string | null } | null;
+      const prev = current.previous as {
+        title?: string;
+        spec?: string;
+        sources?: LivePanelSource[];
+        dataSources?: LivePanelDataSource[];
+        sourceState?: LivePanelSourceState;
+        instruction?: string;
+        refreshMinutes?: number | null;
+        refreshAt?: string | null;
+      } | null;
       if (!prev?.spec) throw new LivePanelError("没有可以撤销的修改", 409);
       await db
         .update(livePanels)
@@ -253,6 +302,8 @@ export function createLivePanelStore(db: Database) {
           title: prev.title ?? current.title,
           spec: prev.spec,
           sources: prev.sources ?? current.sources,
+          // 旧版 previous 没有这两个字段：留当前值，别把数据源弄丢。
+          ...(prev.dataSources !== undefined ? { dataSources: prev.dataSources, sourceState: prev.sourceState ?? {} } : {}),
           instruction: prev.instruction ?? current.instruction,
           refreshMinutes: prev.refreshMinutes ?? current.refreshMinutes,
           refreshAt: prev.refreshAt !== undefined ? prev.refreshAt : current.refreshAt,
@@ -352,6 +403,14 @@ export function createLivePanelStore(db: Database) {
     },
     async release(owner: string, id: string) {
       await db.update(livePanels).set({ leaseUntil: null }).where(own(owner, id));
+    },
+    /**
+     * 直连数据源的读数写回（sources.ts 的 createSourceRunner）。只动 source_state + updated_at：
+     * refreshed_at 是「机器人回合刷新」的时间，秒级取数不能把它刷成刚刚，否则卡片上的「x 分钟前更新」会乱。
+     */
+    async setSourceState(owner: string, id: string, state: LivePanelSourceState) {
+      await get(owner, id);
+      await db.update(livePanels).set({ sourceState: state, updatedAt: new Date() }).where(own(owner, id));
     },
     /** 到点该刷新的面板（没有被删、有刷新间隔、没在刷新）。 */
     async due(limit = 4): Promise<LivePanelRow[]> {

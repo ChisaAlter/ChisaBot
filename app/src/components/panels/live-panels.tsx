@@ -3,13 +3,17 @@ import { useKeptVisible } from "@/lib/kept-visible";
 import {
   IconAlertTriangle,
   IconArrowBackUp,
+  IconChevronRight,
+  IconDatabase,
   IconDots,
   IconRefresh,
   IconTrash,
+  IconWand,
+  IconX,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { lastWorkStep, WORK_STEP_EVENT, type WorkStepDetail } from "@/components/chat/work-card";
 import {
   DropdownMenu,
@@ -22,14 +26,22 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { PresenceItem, PresenceList } from "@/components/ui/presence";
 import { toast } from "@/components/ui/toast";
 import { parseRenderUiSpec, sanitizeRenderUiSpec } from "../../../../shared/json-render/catalog";
 import { pruneEmptySections } from "../../../../shared/json-render/empty-sections";
 import { dropDuplicateTitle } from "../../../../shared/json-render/panel-title";
 import { client } from "@/lib/client";
 import { isChatRunning } from "@/lib/copilot/computer-activity";
-import { buildStepText, groupSources } from "./panel-meta";
+import {
+  everyText,
+  liveFailures,
+  liveKindText,
+  type LiveSource,
+  type LiveSourceReadings,
+  useLiveValues,
+} from "@/lib/panels/live-values";
+import { buildStepText, groupSources, panelEditPrompt } from "./panel-meta";
+import { PanelBoard } from "./panel-board";
 import { jsonRenderRegistry } from "@/lib/copilot/json-render/registry";
 import { copyText, openInNewTab, RichUiProvider, useNow } from "@/lib/copilot/json-render/rich-context";
 
@@ -37,6 +49,14 @@ import { copyText, openInNewTab, RichUiProvider, useNow } from "@/lib/copilot/js
 function askBot(text: string) {
   const said = text.trim();
   if (said) window.dispatchEvent(new CustomEvent("chisabot-ask", { detail: said }));
+}
+
+/**
+ * ⋯ →「让 AI 修改…」：把这句话塞进输入框当草稿（`component/channels/composer/composer.tsx` 监听
+ * `chisabot-prefill`），**不发送**——用户自己补完要改什么再按发送。
+ */
+function prefillPanelEdit(title: string) {
+  window.dispatchEvent(new CustomEvent("chisabot-prefill", { detail: panelEditPrompt(title) }));
 }
 
 /**
@@ -58,6 +78,8 @@ export type LivePanel = {
   /** 每天固定时刻刷新（「08:00」）；null = 按间隔。 */
   refreshAt?: string | null;
   refreshTimeZone?: string | null;
+  /** 直连数据源（秒级，不靠机器人回合）：卡片可见时浏览器自己轮询。 */
+  dataSources: LiveSource[];
   error: string | null;
   refreshedAt: string | null;
   nextRefreshAt: string | null;
@@ -124,7 +146,18 @@ function cadence(minutes: number | null, at?: string | null, zone?: string | nul
   return `每 ${minutes} 分钟刷新`;
 }
 
-const LiveBody = memo(function LiveBody({ spec: source, title, onRefresh }: { spec: string; title: string; onRefresh?: () => void }) {
+const LiveBody = memo(function LiveBody({
+  spec: source,
+  title,
+  live,
+  onRefresh,
+}: {
+  spec: string;
+  title: string;
+  /** 直连数据源的最新值：`{ [sourceId]: value }`，规范里绑 `/live/<id>` 的地方读它。 */
+  live: Record<string, unknown>;
+  onRefresh?: () => void;
+}) {
   // 空列表 / 空重复区块不画，免得只剩一个孤零零的小标题（shared/json-render/empty-sections.ts）；
   // 和卡片头同名的标题也不再画第二遍（shared/json-render/panel-title.ts）。
   const spec = useMemo(
@@ -134,9 +167,27 @@ const LiveBody = memo(function LiveBody({ spec: source, title, onRefresh }: { sp
   /*
    * 刷新只换数据（DESIGN.md §32）：新规范到了也不重新挂载——元素 key 没变，React 复用同一批组件，
    * 数字从旧值滚到新值并闪一下（rich-context useLiveValue）。state 仓库按规范版本换新，表格 / 列表直接用字面值。
+   *
+   * 直连数据源：服务端会把最近一次的好值塞进 `spec.state.live`（手机 / 第一帧也有数字），这里用
+   * 轮询拿到的更快的值按来源覆盖同名项；之后用 store.update 写 `/live/<id>`：仓库不重建、组件不重挂。
    */
   // biome-ignore lint/correctness/useExhaustiveDependencies: one store per spec version.
-  const store = useMemo(() => createStateStore({ ...((spec as Spec | null)?.state ?? {}) }), [source]);
+  const store = useMemo(() => {
+    const baked = ((spec as Spec | null)?.state?.live ?? {}) as Record<string, unknown>;
+    return createStateStore({ ...((spec as Spec | null)?.state ?? {}), live: { ...baked, ...live } });
+  }, [source]);
+  /*
+   * 读数变化只写变化的路径。先比一次当前值：同一个值重复 update 会让订阅它的组件白闪一下；
+   * 规范换新时新仓库第一帧就带着 live，这里也不会重复写。
+   */
+  useEffect(() => {
+    const updates: Record<string, unknown> = {};
+    for (const [id, value] of Object.entries(live)) {
+      const path = `/live/${id}`;
+      if (store.get(path) !== value) updates[path] = value;
+    }
+    if (Object.keys(updates).length > 0) store.update(updates);
+  }, [live, store]);
   const refreshRef = useRef(onRefresh);
   refreshRef.current = onRefresh;
   const handlers = useMemo(
@@ -239,37 +290,82 @@ function clock(iso: string | null): string {
   return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
+/** 数据来源弹层里「最近一次结果」的时间说法：10 秒内「刚刚」，一分钟内「N 秒前」，再久写时刻。 */
+function readingAgo(iso: string, now = Date.now()): string {
+  const time = new Date(iso).getTime();
+  if (!Number.isFinite(time)) return "";
+  const seconds = Math.max(0, (now - time) / 1000);
+  if (seconds < 10) return "刚刚";
+  if (seconds < 60) return `${Math.floor(seconds)} 秒前`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+  return clock(iso);
+}
+
+const NO_LIVE_SOURCES: LiveSource[] = [];
+
 /**
  * 卡片底部一行（§77.2）：左边来源（按网站合并，写第一个，其余「+N」，点开看全部），右边更新时间 + 频率（「每小时」），
  * 刷新中换成小圈 +「正在刷新…」。不换行；窄卡里来源先省略。
+ *
+ * 直连数据源（2026-10-22）也写在这一行：「名字 · 每 5 秒」，和网页来源一起按第一个 +「+N」收起；
+ * 时间位优先写最近一次取数的时刻（`liveAt`），没有直连来源时仍是机器人刷新的「更新于… · 每小时」。
  */
-function PanelFoot({ panel, busy }: { panel: LivePanel; busy: boolean }) {
+function PanelFoot({ panel, busy, liveAt }: { panel: LivePanel; busy: boolean; liveAt: string | null }) {
   const [open, setOpen] = useState(false);
   const groups = useMemo(() => groupSources(panel.sources), [panel.sources]);
+  const direct = panel.dataSources ?? NO_LIVE_SOURCES;
+  const items = useMemo(() => {
+    const rows: { key: string; label: string; url?: string; hint?: string }[] = direct.map((source) => ({
+      key: `live-${source.id}`,
+      label: `${source.name} · ${everyText(source.intervalSec)}`,
+      hint: source.label,
+    }));
+    for (const group of groups) {
+      rows.push({
+        key: `src-${group.label}-${group.url}`,
+        label: group.label,
+        ...(group.url ? { url: group.url } : {}),
+        hint: group.names.join("\n"),
+      });
+    }
+    return rows;
+  }, [direct, groups]);
   // 窄卡（300px 左右）一行只放得下一个来源名 + 时间：第一个写出来，其余「+N」。
-  const shown = open ? groups : groups.slice(0, 1);
-  const more = groups.length - shown.length;
+  const shown = open ? items : items.slice(0, 1);
+  const more = items.length - shown.length;
   const next = clock(panel.nextRefreshAt);
+  const shortest = direct.length ? Math.min(...direct.map((source) => source.intervalSec)) : null;
+  const cadenceText =
+    shortest !== null ? everyText(shortest) : shortCadence(cadence(panel.refreshMinutes, panel.refreshAt, panel.refreshTimeZone));
+  const stampAt = liveAt ?? panel.refreshedAt;
   const stampTitle = [
-    panel.refreshedAt ? `更新于 ${new Date(panel.refreshedAt).toLocaleString("zh-CN", { hour12: false })}` : "",
+    liveAt ? `最近取数 ${new Date(liveAt).toLocaleString("zh-CN", { hour12: false })}` : "",
+    stampAt && stampAt !== liveAt ? `更新于 ${new Date(stampAt).toLocaleString("zh-CN", { hour12: false })}` : "",
     next && !busy ? `下次刷新 ${next}` : "",
   ]
     .filter(Boolean)
     .join("\n");
   return (
     <footer className="live-panel-foot" data-open={open || undefined}>
-      {groups.length ? (
+      {items.length ? (
         <span className="live-panel-sources" data-testid="live-panel-sources">
           <span className="live-panel-sources-k">{"来源"}</span>
-          {shown.map((g) =>
-            g.url ? (
-              <a className="live-panel-src" href={g.url} key={`${g.label}-${g.url}`} rel="noopener noreferrer" target="_blank" title={g.names.join("\n")}>
-                {g.label}
+          {shown.map((item) =>
+            item.url ? (
+              <a
+                className="live-panel-src"
+                href={item.url}
+                key={item.key}
+                rel="noopener noreferrer"
+                target="_blank"
+                title={item.hint}
+              >
+                {item.label}
               </a>
             ) : (
-              // 没有网址的来源（本机命令等）：只写名字，不做成点不开的链接。
-              <span className="live-panel-src is-plain" key={g.label} title={g.names.join("\n")}>
-                {g.label}
+              // 没有网址的来源（本机命令、直连数据源）：只写名字，不做成点不开的链接。
+              <span className="live-panel-src is-plain" key={item.key} title={item.hint}>
+                {item.label}
               </span>
             ),
           )}
@@ -277,7 +373,7 @@ function PanelFoot({ panel, busy }: { panel: LivePanel; busy: boolean }) {
             <button aria-label={`还有 ${more} 个来源`} className="live-panel-src-more" onClick={() => setOpen(true)} type="button">
               {`+${more}`}
             </button>
-          ) : open && groups.length > 1 ? (
+          ) : open && items.length > 1 ? (
             <button className="live-panel-src-more" onClick={() => setOpen(false)} type="button">
               {"收起"}
             </button>
@@ -294,8 +390,8 @@ function PanelFoot({ panel, busy }: { panel: LivePanel; busy: boolean }) {
           </>
         ) : (
           <>
-            <UpdatedAgo at={panel.refreshedAt} />
-            {`${panel.refreshedAt ? " · " : ""}${shortCadence(cadence(panel.refreshMinutes, panel.refreshAt, panel.refreshTimeZone))}`}
+            <UpdatedAgo at={stampAt} />
+            {`${stampAt ? " · " : ""}${cadenceText}`}
           </>
         )}
       </span>
@@ -309,9 +405,132 @@ function UpdatedAgo({ at }: { at: string | null }) {
   return <>{ago(at, now)}</>;
 }
 
-function LivePanelCard({ panel, onRemove }: { panel: LivePanel; onRemove: (p: LivePanel) => void }) {
+/**
+ * ⋯ →「数据来源…」的小弹层（docs/live-panel-sources.md 第 3 节）：每个直连来源的名字、种类
+ * （网址 / 本机命令）、间隔、最近一次取数结果（成功「刚刚 · 12 ms」，失败写原因并标红），底部
+ * 「立即取数」强制重取一次。点外面 / Esc 关闭。
+ */
+function DataSourcePanel({
+  panel,
+  readings,
+  error,
+  refreshing,
+  onRefresh,
+  onClose,
+}: {
+  panel: LivePanel;
+  readings: LiveSourceReadings;
+  error: string | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onClose: () => void;
+}) {
+  const box = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const onPointer = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && box.current && !box.current.contains(target)) onClose();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+  const sources = panel.dataSources ?? NO_LIVE_SOURCES;
+  return (
+    <div
+      aria-label={`「${panel.title}」的数据来源`}
+      className="live-panel-src-pop"
+      ref={box}
+      role="dialog"
+    >
+      <div className="live-panel-src-pop-head">
+        <span className="live-panel-src-pop-title">{"数据来源"}</span>
+        <button aria-label={"关闭"} className="live-panel-src-pop-x" onClick={onClose} type="button">
+          <IconX aria-hidden className="size-3.5" />
+        </button>
+      </div>
+      {sources.length === 0 ? (
+        <p className="live-panel-src-empty">{"这张面板没有直连数据源，内容按机器人的刷新频率更新。"}</p>
+      ) : (
+        <ul className="live-panel-src-list">
+          {sources.map((source) => {
+            const reading = readings[source.id];
+            const failed = Boolean(reading && !reading.ok);
+            return (
+              <li className="live-panel-src-row" data-failed={failed || undefined} key={source.id}>
+                <div className="live-panel-src-row-h">
+                  <span className="live-panel-src-name">{source.name}</span>
+                  <span className="live-panel-src-kind">{liveKindText(source.kind)}</span>
+                  <span className="live-panel-src-every">{everyText(source.intervalSec)}</span>
+                </div>
+                <div className="live-panel-src-label" title={source.label}>
+                  {source.label}
+                </div>
+                <div className="live-panel-src-state">
+                  {reading ? (
+                    reading.ok ? (
+                      <span className="live-panel-src-ok">{`${readingAgo(reading.at)} · ${reading.ms} ms`}</span>
+                    ) : (
+                      // 失败原因服务器已经写成中文并抹掉密钥；这里原样说清楚。
+                      <span className="live-panel-src-bad">{reading.error ?? "取数失败。"}</span>
+                    )
+                  ) : (
+                    <span className="live-panel-src-wait">{"还没有取数。"}</span>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {error ? <p className="live-panel-src-bad live-panel-src-bad-block">{error}</p> : null}
+      <div className="live-panel-src-pop-foot">
+        <button
+          className="live-panel-src-refresh"
+          disabled={refreshing || sources.length === 0}
+          onClick={onRefresh}
+          type="button"
+        >
+          <IconRefresh aria-hidden className={refreshing ? "live-panel-spin size-3" : "size-3"} />
+          {refreshing ? "正在取数…" : "立即取数"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LivePanelCard({
+  panel,
+  onRemove,
+  collapsed,
+  onToggleCollapse,
+  grip,
+}: {
+  panel: LivePanel;
+  onRemove: (p: LivePanel) => void;
+  /** 折叠只留标题行：不渲染内容、不取数（看板把状态存在 panelLayout 里）。 */
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+  /** 标题左边的拖动握把（PanelBoard 给的）。 */
+  grip: ReactNode;
+}) {
   const queryClient = useQueryClient();
   const [problem, setProblem] = useState<string | null>(null);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const closeSources = useCallback(() => setSourcesOpen(false), []);
+  const dataSources = panel.dataSources ?? NO_LIVE_SOURCES;
+  // 折叠就收起「数据来源…」小弹层：只留标题行。
+  useEffect(() => {
+    if (collapsed) setSourcesOpen(false);
+  }, [collapsed]);
+  // 直连数据源：卡片可见且没折叠时轮询；折叠时 active=false，一次请求都不发。
+  const live = useLiveValues(panel, !collapsed);
   const key = livePanelKeys.list(panel.botId);
   const invalidate = () => queryClient.invalidateQueries({ queryKey: key });
   // 乐观更新（DESIGN.md §34.6）：先改界面，请求失败再退回并说明原因。
@@ -348,22 +567,41 @@ function LivePanelCard({ panel, onRemove }: { panel: LivePanel; onRemove: (p: Li
 
   const busy = panel.refreshing || refresh.isPending;
   const building = panel.status === "building" || (!panel.spec && busy);
-  // 有内容但最近一次刷新失败：内容照常显示，标成「可能已过期」（DESIGN.md §32）。
-  const stale = Boolean(panel.error && panel.spec && !building);
+  /*
+   * 有内容但最近一次刷新 / 取数失败：内容照常显示，标成「可能已过期」（DESIGN.md §32）。
+   * 直连来源的错误由「数据来源…」说清原因；单个源失败也把这张卡标成可能过期。
+   */
+  const liveError = liveFailures(live.readings)[0]?.error ?? live.error ?? null;
+  const staleReason = panel.error ?? liveError;
+  const stale = Boolean(staleReason && panel.spec && !building);
 
   return (
     <article
       aria-busy={building || busy || undefined}
       className="glass-card live-panel"
+      data-collapsed={collapsed || undefined}
+      data-has-live={dataSources.length > 0 || undefined}
       data-live-panel={panel.id}
       data-refreshing={(busy && !building) || undefined}
       data-stale={stale || undefined}
       data-status={panel.status}
     >
       <header className="live-panel-head">
-        <h3 className="live-panel-title">{panel.title}</h3>
+        {grip}
+        <h3 className="live-panel-heading">
+          <button
+            aria-expanded={!collapsed}
+            className="live-panel-collapse"
+            onClick={onToggleCollapse}
+            title={collapsed ? "展开面板" : "折叠面板"}
+            type="button"
+          >
+            <IconChevronRight aria-hidden className="live-panel-caret size-3.5" />
+            <span className="live-panel-title">{panel.title}</span>
+          </button>
+        </h3>
         {stale && !busy ? (
-          <span className="live-panel-stale" title={panel.error ?? undefined}>
+          <span className="live-panel-stale" title={staleReason ?? undefined}>
             <IconAlertTriangle aria-hidden className="size-3" />
             {"可能已过期"}
           </span>
@@ -405,6 +643,19 @@ function LivePanelCard({ panel, onRemove }: { panel: LivePanel; onRemove: (p: Li
               </DropdownMenuRadioGroup>
             </DropdownMenuGroup>
             <DropdownMenuSeparator className="glass-sep" />
+            <DropdownMenuItem className="glass-mi" onClick={() => prefillPanelEdit(panel.title)}>
+              <IconWand className={icon} />
+              <span className="min-w-0 flex-1">{"让 AI 修改…"}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="glass-mi"
+              disabled={dataSources.length === 0}
+              onClick={() => setSourcesOpen(true)}
+            >
+              <IconDatabase className={icon} />
+              <span className="min-w-0 flex-1">{"数据来源…"}</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="glass-sep" />
             {panel.canUndoEdit ? (
               <DropdownMenuItem className="glass-mi" onClick={() => undoEdit.mutate()}>
                 <IconArrowBackUp className={icon} />
@@ -419,21 +670,36 @@ function LivePanelCard({ panel, onRemove }: { panel: LivePanel; onRemove: (p: Li
         </DropdownMenu>
       </header>
 
-      {building ? (
-        <BuildingSkeleton />
-      ) : panel.spec ? (
-        <LiveBody onRefresh={() => refresh.mutate()} spec={panel.spec} title={panel.title} />
+      {sourcesOpen ? (
+        <DataSourcePanel
+          error={live.error}
+          onClose={closeSources}
+          onRefresh={live.refresh}
+          panel={panel}
+          readings={live.readings}
+          refreshing={live.refreshing}
+        />
       ) : null}
 
-      {panel.error && !building ? (
-        <p className="live-panel-error" role="alert">
-          <IconAlertTriangle className="size-3.5 shrink-0" />
-          <span>{panel.error}</span>
-        </p>
-      ) : null}
-      {problem ? <p className="live-panel-error" role="alert">{problem}</p> : null}
+      {collapsed ? null : (
+        <>
+          {building ? (
+            <BuildingSkeleton />
+          ) : panel.spec ? (
+            <LiveBody live={live.values} onRefresh={() => refresh.mutate()} spec={panel.spec} title={panel.title} />
+          ) : null}
 
-      {!building ? <PanelFoot busy={busy} panel={panel} /> : null}
+          {panel.error && !building ? (
+            <p className="live-panel-error" role="alert">
+              <IconAlertTriangle className="size-3.5 shrink-0" />
+              <span>{panel.error}</span>
+            </p>
+          ) : null}
+          {problem ? <p className="live-panel-error" role="alert">{problem}</p> : null}
+
+          {!building ? <PanelFoot busy={busy} liveAt={live.at} panel={panel} /> : null}
+        </>
+      )}
     </article>
   );
 }
@@ -441,8 +707,19 @@ function LivePanelCard({ panel, onRemove }: { panel: LivePanel; onRemove: (p: Li
 /**
  * 右栏面板标签里的实时面板列表。删除是乐观的（DESIGN.md §34.6）：点「删除面板」卡片立刻淡出、
  * 下面的卡片补位，同时底部弹出带「撤销」的提示；请求失败就把卡片放回去并提示原因。
+ *
+ * 卡片怎么摆（并排 / 单独一行、分隔条比例、拖高、折叠）由 `PanelBoard` 按机器人的 `panelLayout` 决定；
+ * `width` 是右栏实测内容宽度，`drawer` 是窄窗口抽屉（永远单列）。
  */
-export function LivePanelList({ botId }: { botId: string }) {
+export function LivePanelList({
+  botId,
+  width = 0,
+  drawer = false,
+}: {
+  botId: string;
+  width?: number;
+  drawer?: boolean;
+}) {
   const list = useLivePanels(botId);
   const queryClient = useQueryClient();
   const key = livePanelKeys.list(botId);
@@ -483,12 +760,21 @@ export function LivePanelList({ botId }: { botId: string }) {
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   });
   return (
-    <PresenceList>
-      {(list.data ?? []).map((panel) => (
-        <PresenceItem key={panel.id}>
-          <LivePanelCard onRemove={(p) => remove.mutate(p)} panel={panel} />
-        </PresenceItem>
-      ))}
-    </PresenceList>
+    <PanelBoard
+      botId={botId}
+      drawer={drawer}
+      key={botId}
+      panels={list.data ?? []}
+      width={width}
+      renderCard={(panel, chrome) => (
+        <LivePanelCard
+          collapsed={chrome.collapsed}
+          grip={chrome.grip}
+          onRemove={(p) => remove.mutate(p)}
+          onToggleCollapse={chrome.toggleCollapsed}
+          panel={panel}
+        />
+      )}
+    />
   );
 }

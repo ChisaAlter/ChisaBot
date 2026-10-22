@@ -414,6 +414,13 @@
       "when": 1791964177379,
       "tag": "0058_private_bots",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0059_live_panel_sources",
+      "breakpoints": true
     }
   ]
 }
