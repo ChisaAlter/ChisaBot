@@ -1,8 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.1.59 — 2026-10-22
 
-- 修「侧栏显示 1 个问题，点进对话没处答、数字还一直挂着」（§110）：机器人的待回答现在画在**它提问的那个对话**里、输入框正上方，回答走同一个接口；「待处理」和对话里的问题都多了「不用回答了」，答不了的问题（那段对话已经没了）可以关掉，不再永远占着一个数；回答或关闭之后侧栏的计数当场刷新，不用等 15 秒轮询。
+这一版把机器人的待回答问题放到对话里直接处理（§110），并对齐 Claude Code 左栏与机器人侧的外壳位置（§73.2）。`pc/` / `android/` 没有代码改动，客户端三处版本号对齐到 0.1.59（Android `versionCode` 256）。
+
+### 对话里直接回答或关掉机器人的问题（§110）
+
+- **点进对话就能答**：`questions.list()` 随问题返回 `channelId`，`PendingQuestion` 在提问所在的对话里、输入框正上方画出回答卡片，与「待处理」走同一个 `/api/approvals/questions/:id/respond` 接口；别的对话不会混入。
+- **答不了的问题可以关掉**：新增 `POST /api/approvals/questions/:id/dismiss`（不写回答、不恢复回合，已答过则幂等 no-op）；「待处理」与对话内卡片都提供「不用回答了」，那段对话已经不存在时也能把侧栏挂着的数字清掉。
+- **侧栏计数当场刷新**：回答或关闭后同时作废 `["approvals"]` 与 `["bot-lifecycle"]`，不用再等 15 秒轮询。
+
+### 左栏外壳对齐（§73.2）
+
+- Claude Code 左栏复用 `side-search-row`（搜索框 + 右侧「＋」新建工作区），账号卡放到面板外，与机器人侧共享同一套位置与尺寸，切换时不再跳动。
+
+### 验证
+
+- 新增 `app/tests/channel-question.test.tsx`，`server/tests/approvals-question-resume.integration.test.ts` 补齐 `channelId` 与 `dismiss` 用例。
 
 ## 0.1.58 — 2026-10-22
 
