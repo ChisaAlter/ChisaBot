@@ -4,6 +4,7 @@ import {
   ControlRequestError,
   createControl,
   HELP_REQUEST_TTL_MS,
+  HUMAN_HOLD_TTL_MS,
   SnapshotRequiredError,
 } from "../src/control";
 
@@ -48,7 +49,7 @@ describe("request-aware handoff", () => {
     expect(control.get().transitioning).toBe(false);
   });
 
-  test("only waiting expires; taken control has no ten-minute limit", async () => {
+  test("waiting expires after ten minutes; an idle taken hold expires after an hour", async () => {
     const waiting = fixture();
     const help = waiting.request();
     waiting.advance(HELP_REQUEST_TTL_MS + 1);
@@ -59,10 +60,32 @@ describe("request-aware handoff", () => {
     const taken = fixture();
     const held = taken.request();
     await taken.control.take(held.id);
-    taken.advance(HELP_REQUEST_TTL_MS * 10);
+    // A sign-in may take longer than the ten-minute request deadline; that is not an idle hold.
+    taken.advance(HELP_REQUEST_TTL_MS * 3);
     expect(taken.control.get(held.id).request?.status).toBe("taken");
-    expect(taken.control.get().request?.expiresAt).toBeUndefined();
     expect(taken.control.humanMayDrive()).toBe(true);
+    // But a closed tab must not lock the Bot out for the rest of the day.
+    taken.advance(HUMAN_HOLD_TTL_MS);
+    expect(taken.control.get(held.id).request?.status).toBe("expired");
+    expect(taken.control.get().holder).toBe("bot");
+    expect(() => taken.control.admitBotAction()).not.toThrow();
+    expect(() => taken.control.admitBotAction(true)).toThrow(
+      SnapshotRequiredError,
+    );
+  });
+
+  test("a person still using the browser keeps the hold alive", async () => {
+    const { control, advance, request } = fixture();
+    const held = request();
+    await control.take(held.id);
+    advance(HUMAN_HOLD_TTL_MS - 10 * 60_000);
+    control.noteHumanActivity();
+    advance(HUMAN_HOLD_TTL_MS - 10 * 60_000);
+    expect(control.get().holder).toBe("human");
+    expect(control.humanMayDrive()).toBe(true);
+    advance(HUMAN_HOLD_TTL_MS + 1);
+    expect(control.get().holder).toBe("bot");
+    expect(control.get(held.id).request?.status).toBe("expired");
   });
 
   test("completion requires fresh snapshot even on the same page; files need only ownership", async () => {
@@ -201,7 +224,9 @@ describe("2026-10-17: a stuck action cannot block 接管 for ever", () => {
     // Before the lease runs out: the old behaviour, but now it says what it waited for.
     await expect(control.take(help.id)).rejects.toThrow(/still finishing/);
     expect(waiting).toEqual([["/navigate"]]);
-    expect(control.admittedActions().map((a) => a.label)).toEqual(["/navigate"]);
+    expect(control.admittedActions().map((a) => a.label)).toEqual([
+      "/navigate",
+    ]);
     await new Promise((r) => setTimeout(r, 60));
     expect(expired).toEqual(["/navigate"]);
     const taken = await control.take(help.id);

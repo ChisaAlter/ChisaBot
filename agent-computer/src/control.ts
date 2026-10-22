@@ -34,6 +34,15 @@ export class SnapshotRequiredError extends Error {
 export const NO_SECRET_PENDING = "Nothing is waiting for a secret.";
 export const HELP_REQUEST_TTL_MS = 10 * 60 * 1000;
 export const SECRET_REQUEST_TTL_MS = HELP_REQUEST_TTL_MS;
+/**
+ * How long a person may keep the wheel without doing anything before it goes back to the Bot.
+ *
+ * A waiting request had a ten-minute deadline from the start; a *taken* one had none, so a closed tab
+ * or a forgotten handback locked the Bot out of its own browser until somebody remembered. Every
+ * human click, key and scroll pushes this deadline forward (see `noteHumanActivity`), so it is an
+ * idle limit rather than a limit on how long a sign-in may take.
+ */
+export const HUMAN_HOLD_TTL_MS = 60 * 60 * 1000;
 export const HUMAN_HAS_CONTROL =
   "A person has control or has been asked to take control. Wait for them to hand it back before acting.";
 export const TAKE_CONTROL_FIRST =
@@ -73,6 +82,8 @@ export function createControl(
     | { label: string; ref: string; snapshotId?: number; requestedAt: string }
     | undefined;
   let storageError: Error | undefined;
+  /** Last time a person actually drove the browser; keeps a taken hold from expiring under them. */
+  let lastHumanActivityAt = 0;
   const current = () =>
     data.requests.find((r) => r.id === data.currentRequestId);
   const active = (request: HandoffRequest | undefined) =>
@@ -133,11 +144,47 @@ export function createControl(
       persist();
       syncAdmission();
     }
+    /*
+     * A taken hold expires only after an idle hour. The request's deadline is pushed forward by
+     * `noteHumanActivity` on every human click, key and scroll, so somebody working through a login
+     * or a 2FA flow keeps the wheel; somebody who closed the tab does not hold it for eight hours.
+     */
+    if (
+      request?.status === "taken" &&
+      data.holder === "human" &&
+      request.expiresAt &&
+      Date.parse(now()) > Date.parse(request.expiresAt)
+    ) {
+      finish(request, "expired");
+      data.holder = "bot";
+      data.since = now();
+      data.resumeSnapshotRequired = true;
+      data.recoveryRequired = false;
+      secret = undefined;
+      options.invalidateSnapshot?.();
+      persist();
+      syncAdmission();
+    }
     if (
       secret &&
       Date.parse(now()) - Date.parse(secret.requestedAt) > SECRET_REQUEST_TTL_MS
     )
       secret = undefined;
+  }
+  /**
+   * A person just clicked, typed or scrolled. Keep the hold alive without writing on every keystroke:
+   * one persist a minute is enough for an hour-long idle deadline.
+   */
+  function noteHumanActivity() {
+    expire();
+    const request = current();
+    if (data.holder !== "human" || request?.status !== "taken") return;
+    const at = Date.parse(now());
+    if (at - lastHumanActivityAt < 60_000) return;
+    lastHumanActivityAt = at;
+    request.updatedAt = new Date(at).toISOString();
+    request.expiresAt = new Date(at + HUMAN_HOLD_TTL_MS).toISOString();
+    persist();
   }
   function get(requestId?: string): ControlState {
     expire();
@@ -199,7 +246,10 @@ export function createControl(
   }
   // A persisted active request names a page in a previous process. Never call that completion.
   // 旧版本留下的 recoveryRequired（见 interrupt）也一并解开：进程是新的，浏览器也是新的。
-  if (restored && (active(current()) || data.holder === "human" || data.recoveryRequired))
+  if (
+    restored &&
+    (active(current()) || data.holder === "human" || data.recoveryRequired)
+  )
     interrupt(
       "The computer process restarted; the previous page was interrupted. Request help again to continue.",
     );
@@ -294,7 +344,10 @@ export function createControl(
         );
       after.status = "taken";
       after.updatedAt = now();
-      delete after.expiresAt;
+      after.expiresAt = new Date(
+        Date.parse(now()) + HUMAN_HOLD_TTL_MS,
+      ).toISOString();
+      lastHumanActivityAt = Date.parse(now());
       data.holder = "human";
       data.since = now();
       secret = undefined;
@@ -364,8 +417,10 @@ export function createControl(
       return barrier.holders();
     },
     humanMayDrive(): boolean {
+      expire();
       return data.holder === "human" && barrier.pending() === 0;
     },
+    noteHumanActivity,
     requestSecret(input: {
       label?: unknown;
       ref?: unknown;
