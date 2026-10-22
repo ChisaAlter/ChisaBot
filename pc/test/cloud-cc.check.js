@@ -9,7 +9,7 @@ const { createCloudCc, findUrl, parseStatus } = require("../src/cloud-cc");
 const { decide, readonlyCommand } = require("../src/cloud-cc/policy");
 const { parseLine } = require("../src/cloud-cc/stream");
 
-const MOCK = path.resolve(__dirname, "../../tests/cloud-cc/mock-claude.cjs");
+const MOCK = process.env.CHISABOT_MOCK_CLAUDE || path.resolve(__dirname, "../../tests/cloud-cc/mock-claude.cjs");
 const HEADLESS = path.resolve(__dirname, "../src/headless.js");
 
 function harness() {
@@ -96,6 +96,45 @@ test("login: bad code, good code, logout", async () => {
   await h.rpc("login_start", { id: "L3" });
   assert.equal((await h.rpc("login_cancel")).cancelled, true);
   assert.equal((await h.rpc("logout")).loggedIn, false);
+  h.cc.close();
+});
+
+// 用户报告「退出无效」：`claude auth logout` 没真退出时，节点以前也回「已退出」，下一次检查又变回「已登录」。
+test("logout: CLI 没删掉凭据时节点自己删；删完还登着必须报错，不能假装成功", async () => {
+  const h = harness();
+  const cred = path.join(h.home, ".claude", ".credentials.json");
+  await h.rpc("login_start", { id: "L" });
+  await h.rpc("login_code", { id: "L", code: "ok" });
+  assert.equal(fs.existsSync(cred), true);
+
+  // 旧版 CLI（没有 auth logout）：命令失败、凭据还在 → 节点删掉凭据，再问一次 auth status
+  process.env.CHISABOT_MOCK_LOGOUT = "none";
+  try {
+    assert.equal((await h.rpc("logout")).loggedIn, false);
+    assert.equal(fs.existsSync(cred), false);
+  } finally {
+    delete process.env.CHISABOT_MOCK_LOGOUT;
+  }
+
+  // CLI 失败 + 删了凭据还说已登录（凭据在别处 / CLI 不认这份）：必须报错，页面才能显示「没有退出」
+  await h.rpc("login_start", { id: "L2" });
+  await h.rpc("login_code", { id: "L2", code: "ok" });
+  process.env.CHISABOT_MOCK_LOGOUT = "none";
+  process.env.CHISABOT_MOCK_ALWAYS_LOGGED_IN = "1";
+  try {
+    await assert.rejects(h.rpc("logout"), /没有退出/);
+  } finally {
+    delete process.env.CHISABOT_MOCK_LOGOUT;
+    delete process.env.CHISABOT_MOCK_ALWAYS_LOGGED_IN;
+  }
+
+  // status 读不懂：不能当成「本来就没登录」直接回成功，否则页面显示「已退出」而凭据还在
+  process.env.CHISABOT_MOCK_STATUS_GARBAGE = "1";
+  try {
+    await assert.rejects(h.rpc("logout"), /没有退出/);
+  } finally {
+    delete process.env.CHISABOT_MOCK_STATUS_GARBAGE;
+  }
   h.cc.close();
 });
 

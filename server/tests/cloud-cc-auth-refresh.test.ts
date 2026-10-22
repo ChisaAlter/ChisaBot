@@ -20,6 +20,8 @@ describe.skipIf(!url)("cloud Claude auth refresh", () => {
   const record = { id: nodeId, ownerUserId: owner, platform: "linux", revoked: false, paused: false, name: "云端工作区" } as unknown as DeviceRecord;
   let online = true;
   let loggedIn = true;
+  let statusDelay = 30;
+  let logoutDelay = 0;
   const statusCalls: string[] = [];
   let service: ReturnType<typeof createCloudCcService>;
   const hub = {
@@ -29,15 +31,23 @@ describe.skipIf(!url)("cloud Claude auth refresh", () => {
       if (message.type === "cc_rpc") {
         const op = String(message.op);
         if (op === "status") statusCalls.push(deviceId);
+        // 节点在「收到」时就决定了答案：退出之前发出、退出之后才回来的 status 仍然说「已登录」。
+        const answer = loggedIn;
+        if (op === "logout") loggedIn = false;
         // 节点稍后回答（让并发的检查有机会撞在一起）
         setTimeout(() => {
           void service.extension.onMessage?.(record, {
             type: "cc_rpc_result",
             id: message.id,
             ok: true,
-            result: op === "status" ? { loggedIn, email: loggedIn ? "a@example.com" : null, plan: loggedIn ? "pro" : null, method: "claude.ai" } : {},
+            result:
+              op === "status"
+                ? { loggedIn: answer, email: answer ? "a@example.com" : null, plan: answer ? "pro" : null, method: "claude.ai" }
+                : op === "logout"
+                  ? { loggedIn: false, email: null, plan: null, method: null, checkedAt: new Date().toISOString() }
+                  : {},
           } as never);
-        }, 30);
+        }, op === "status" ? statusDelay : op === "logout" ? logoutDelay : 0);
       }
       return true;
     },
@@ -68,6 +78,43 @@ describe.skipIf(!url)("cloud Claude auth refresh", () => {
     expect(b.claude).toEqual(a.claude);
     expect(c.claude).toEqual(a.claude);
     expect((await cached())?.loggedIn).toBe(false);
+  });
+
+  test("退出之后才回来的旧 status 不能把缓存改回「已登录」（「退出无效」）", async () => {
+    loggedIn = true;
+    statusDelay = 30;
+    await service._internal.check(owner);
+    expect((await cached())?.loggedIn).toBe(true);
+
+    statusDelay = 120; // 这次检查很慢：退出发出之后它才回来
+    const stale = service._internal.refreshAuth(nodeId);
+    await Bun.sleep(20);
+    const out = await service._internal.logout(owner);
+    expect(out.claude.loggedIn).toBe(false);
+    expect((await cached())?.loggedIn).toBe(false);
+
+    await stale; // 旧的 status 回来了：不许写回缓存
+    expect((await cached())?.loggedIn).toBe(false);
+    statusDelay = 30;
+  });
+
+  test("退出进行中的检查直接回缓存，不和退出抢写", async () => {
+    loggedIn = true;
+    statusDelay = 30;
+    await service._internal.check(owner);
+    expect((await cached())?.loggedIn).toBe(true);
+
+    logoutDelay = 60; // 退出要一会儿，期间自动复查会来敲门
+    const running = service._internal.logout(owner);
+    await Bun.sleep(10);
+    statusCalls.length = 0;
+    const during = await service._internal.check(owner);
+    expect(during.claude.loggedIn).toBe(true); // 退出还没落定：给缓存，不写
+    expect(statusCalls.length).toBe(0); // 也没有去问节点
+
+    expect((await running).claude.loggedIn).toBe(false);
+    expect((await cached())?.loggedIn).toBe(false);
+    logoutDelay = 0;
   });
 
   test("server refreshes periodically while the node is online, not while offline", async () => {

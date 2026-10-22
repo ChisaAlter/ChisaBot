@@ -114,6 +114,26 @@ describe("maybeRecheckClaudeAuth", () => {
     await Bun.sleep(0);
     expect(qc.getQueryData<CloudWorkspaceView>(ccKeys.status)!.claude.loggedIn).toBe(false);
   });
+
+  // 「退出无效」的另一半：检查是在退出之前发出的，回来时缓存已经是「已退出」，这份旧结果不能把它改回已登录。
+  test("a check that started before a logout does not overwrite the logged-out cache", async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(ccKeys.status, view(true, auth(false, ago(10 * 60_000))));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const check = async () => {
+      await gate;
+      return { claude: auth(true, new Date(NOW).toISOString()) };
+    };
+    expect(maybeRecheckClaudeAuth(qc, NOW, check)).toBe(true);
+    // 退出成功：页面刷新拿到了「没登录」，checkedAt 也换了新的
+    qc.setQueryData(ccKeys.status, view(true, auth(false, new Date(NOW + 1_000).toISOString())));
+    release();
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+    const after = qc.getQueryData<CloudWorkspaceView>(ccKeys.status)!;
+    expect(after.claude.loggedIn).toBe(false);
+  });
 });
 
 describe("useClaudeAuthRecheck (page wiring)", () => {

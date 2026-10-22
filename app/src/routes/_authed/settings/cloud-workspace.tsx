@@ -132,10 +132,28 @@ function ClaudeAccount() {
     await ccApi.check();
     await refresh();
   });
-  const logout = useAsyncAction(async () => {
-    await ccApi.logout();
-    await refresh();
-  });
+  const logout = useAsyncAction(
+    async () => {
+      setError(null);
+      try {
+        const result = await ccApi.logout();
+        // 服务器已经核对过节点（节点以 auth status 为准）。这里还是「已登录」= 没退掉，别让按钮显示「已退出」。
+        if (result?.loggedIn) throw new Error("云端工作区里的 Claude 还没有退出，请再试一次。");
+      } catch (thrown) {
+        const text =
+          thrown instanceof Error
+            ? thrown.name === "TimeoutError"
+              ? "云端工作区没有及时回应（45 秒），请稍后再试。"
+              : thrown.message
+            : String(thrown);
+        setError(`没有退出：${text}`);
+        throw thrown;
+      }
+      await refresh();
+    },
+    // DESIGN.md §73.1：失败在卡片底部一行红字，不弹 toast。
+    { errorToast: false },
+  );
   const askLogout = async () => {
     const ok = await confirmDialog({ title: "退出 Claude 账号？", description: "云端工作区里的 Claude Code 会退出登录，正在跑的会话会失败。以后可以重新登录。", confirmLabel: "退出", destructive: true });
     if (ok) void logout.run();
@@ -508,6 +526,7 @@ const EVENT_ZH: Record<string, string> = {
   claude_login_succeeded: "Claude 登录成功",
   claude_login_failed: "Claude 登录没有成功",
   claude_logout: "退出 Claude",
+  claude_logout_failed: "退出 Claude 没有成功",
   claude_login_browser_started: "在云端打开登录浏览器",
   claude_login_browser_egress: "登录浏览器出口",
   claude_proxy_set: "设置 Claude 上游代理",

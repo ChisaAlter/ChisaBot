@@ -41,13 +41,24 @@ async function main() {
   }
   if (argv[0] === "auth") {
     if (argv[1] === "status") {
-      if (fs.existsSync(CRED)) {
-        const c = JSON.parse(fs.readFileSync(CRED, "utf8"));
-        out({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty", email: c.email, orgName: "e2e", subscriptionType: "pro" });
-      } else out({ loggedIn: false, authMethod: "none", apiProvider: "firstParty" });
+      // CHISABOT_MOCK_STATUS_GARBAGE=1：读不懂的输出（测「不能把读不懂当成没登录」）
+      if (process.env.CHISABOT_MOCK_STATUS_GARBAGE === "1") {
+        console.log("Welcome to Claude Code");
+        return 0;
+      }
+      // CHISABOT_MOCK_ALWAYS_LOGGED_IN=1：不管凭据在不在都说已登录（测「退出失败要报错」）
+      if (fs.existsSync(CRED) || process.env.CHISABOT_MOCK_ALWAYS_LOGGED_IN === "1") {
+        const c = fs.existsSync(CRED) ? JSON.parse(fs.readFileSync(CRED, "utf8")) : { email: "e2e@example.com" };
+        out({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty", email: c.email, orgName: "e2e", subscriptionType: "pro", configDirectory: path.join(HOME, ".claude") });
+      } else out({ loggedIn: false, authMethod: "none", apiProvider: "firstParty", configDirectory: path.join(HOME, ".claude") });
       return 0;
     }
     if (argv[1] === "logout") {
+      // CHISABOT_MOCK_LOGOUT=none：旧版 CLI（没有 auth logout）——报错退出，凭据原样留着
+      if (process.env.CHISABOT_MOCK_LOGOUT === "none") {
+        console.error("error: unknown command 'logout'");
+        return 1;
+      }
       fs.rmSync(CRED, { force: true });
       console.log("Successfully logged out from your Anthropic account.");
       return 0;
