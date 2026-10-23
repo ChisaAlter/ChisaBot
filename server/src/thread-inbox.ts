@@ -256,6 +256,11 @@ export function withSteering<T>(session: SteerSession, run: () => T): T {
   return sessions.run(session, run);
 }
 
+/** 当前回合若在本地对话运行器里，返回它的插话会话（供 Hermes 等外部循环在工具边界领消息）。 */
+export function currentSteerSession(): SteerSession | undefined {
+  return sessions.getStore();
+}
+
 export function textOfMessage(message: Pick<Message, "content">): string {
   const content = (message as { content?: unknown }).content;
   if (typeof content === "string") return content;
@@ -274,13 +279,88 @@ export function isWorkerResult(message: Pick<Message, "content">) {
   return text.startsWith(WORKER_RESULT_MARKER) || text.startsWith("⟦chisabot:local-agent-result:");
 }
 
+export type MidTurnIntent = "interrupt" | "concurrent" | "supplement";
+
+/**
+ * 智能判断用户在机器人干活过程中发来的消息意图：
+ * - `interrupt`：打断之前需求的新指令 / 紧急叫停换方向（需立即中止当前正在执行的旧动作，直接切到新指令）
+ * - `concurrent`：在当前任务之外提出的独立新需求 / 新问题（需与当前任务多并发并行处理）
+ * - `supplement`：对当前正在执行任务的补充说明、条件修正或细节追加（并入当前任务继续推进）
+ */
+export function classifyMidTurnIntent(text: string): MidTurnIntent {
+  const t = text.trim();
+  if (!t) return "supplement";
+  if (isWorkerResult({ content: t }) || t.startsWith("⟦chisabot:")) {
+    return "supplement";
+  }
+  // 1. 明确打断 / 取消 / 叫停 / 推翻旧方向
+  if (
+    /^(?:停|先停|停一下|停下|打住|暂停|算了|不用了|不用查了|不用做了|不用找了|不用看了|不用写了|别查了|别找了|别做了|别管了|别弄了|别看了|别写了|别搜了|取消|先取消|放弃|重来|换个方向|stop|cancel|abort|never\s*mind|forget\s*(?:it|that))(?:[，,。.！!？?\s]|$)/i.test(t) ||
+    /(?:先?别(?:再)?(?:查|找|做|弄|管|看|写|跑|搜|执行)|不用(?:再)?(?:查|找|做|弄|管|看|写|跑|搜)|停一下|打断一下|取消刚才|放弃刚才|刚才(?:那个|说的|让你做的)(?:算了|不用|取消|别做了|作废)|不要刚才那个|换个方向|重新来|不对[，,\s]*(?:不是这个意思|我是说|重来|改成|我要的是)|搞错了[，,\s]*(?:我是要|重来|不是))/.test(t)
+  ) {
+    return "interrupt";
+  }
+  // 2. 明确的补充 / 修正前缀优先判为 supplement
+  if (
+    /^(?:补充(?:一下|一点)?|更正(?:一下)?|修正(?:一下)?|顺便说一下|忘了说|加上|再加上|再加一条|还要|只要|不要|限定|限制|预算|时间改|日期改|用中文|用英文|格式用|记得)/.test(t)
+  ) {
+    return "supplement";
+  }
+  // 3. 明确的新需求 / 多并发指令，或与当前操作并列的独立问题
+  if (
+    /^(?:另外|还有(?:一件事|个问题|一个事|一个问题)?|顺便(?:帮我|问一下|查一下|看看|做个)|再帮我|同时(?:帮我)?|对了[，,\s]*|此外|再问(?:个问题|一下)?|另起一个|单开一个|后台帮我|顺带(?:帮我)?)/.test(t) ||
+    /(?:另外|同时|顺便)(?:再)?(?:帮我|查|看|搜|写|做|整理|安排|对比)/.test(t) ||
+    (/[？?]$/.test(t) && !/^(?:那|这|它|他|她|那个|这个|上面|刚才)/.test(t))
+  ) {
+    return "concurrent";
+  }
+  return "supplement";
+}
+
+/** 插进上下文时给模型看的意图说明：区分「打断换方向」「独立新需求（多并发）」「当前任务补充」；后台任务结果原样保留。 */
+export function formatMidTurnMessageForModel(message: Message): string {
+  const text = textOfMessage(message);
+  if (isWorkerResult(message) || text.startsWith("⟦chisabot:")) return text;
+  const intent = classifyMidTurnIntent(text);
+  if (intent === "interrupt") {
+    return `（你在处理上一条消息的过程中，用户发来了【打断指令 / 切换新方向】。请立即停止并放弃刚才正在执行的旧方向，不要继续旧任务，直接响应并执行用户的新指令。）\n${text}`;
+  }
+  if (intent === "concurrent") {
+    return `（你在处理上一条消息的过程中，用户又发来了【新的独立需求】。请主动多并发处理：若当前任务或这条新需求较耗时，主动用 delegate_task 交给后台并行执行，同时在主对话处理另一项；结束时确保原任务与新需求都回应到。）\n${text}`;
+  }
+  return `（你在处理上一条消息的过程中，用户又发来下面这条消息。请先判断它是对当前工作的【补充更正】还是【独立新需求】：若是补充或更正就并入当前工作接着做；若是独立新需求就并发处理或用 delegate_task 委派后台；若是打断旧需求就立即切换新方向。结束时每条用户消息都要回应到。）\n${text}`;
+}
+
+/**
+ * 供 Hermes 等通过 HTTP 工具网关运行的内核在工具返回时顺带把收件箱里刚领到的中途消息带给模型，
+ * 让模型在下一步立刻看到用户的补充或新需求，而不必等整轮结束。
+ */
+export function attachMidTurnNoticeToToolResult(
+  rawResult: string,
+  messages: readonly Message[],
+): string {
+  if (!messages.length) return rawResult;
+  const notice = messages.map(formatMidTurnMessageForModel).join("\n\n");
+  const trimmed = rawResult.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return JSON.stringify({
+          ...(parsed as Record<string, unknown>),
+          _userMidTurnNotice: notice,
+        });
+      }
+    } catch {
+      // 不是普通 JSON 对象则走文本追加。
+    }
+  }
+  return `${rawResult}\n\n${notice}`;
+}
+
 /** 插进 prompt 时给模型看的样子：用户插话带一句说明，后台任务结果本身已经写清楚了。 */
 export function promptMessageFor(message: Message): PromptMessage {
-  const text = textOfMessage(message);
-  const framed = isWorkerResult(message)
-    ? text
-    : `（你在处理上一条消息的过程中，用户又发来下面这条消息。把它当作对当前工作的补充或更正，接着做；结束时每条用户消息都要回应到。）\n${text}`;
-  return { role: "user", content: [{ type: "text", text: framed }] };
+  return { role: "user", content: [{ type: "text", text: formatMidTurnMessageForModel(message) }] };
 }
 
 /** 原始 prompt + 已插的话，按记录的位置插回去（位置是相对原始 prompt 的，逐个加偏移）。 */

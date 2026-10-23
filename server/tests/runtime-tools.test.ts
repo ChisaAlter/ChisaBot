@@ -398,6 +398,34 @@ describe("runtime tool run", () => {
       expect(suspension.waiting.continuation).toBe(existing);
     } finally { f.run.close(); }
   });
+
+  test("claims mid-turn steerSession messages after tool execution and appends notice to result", async () => {
+    const injected: Array<{ ids: string[]; afterToolCallIds: string[] }> = [];
+    const midTurnMsg = { id: "mid-1", role: "user" as const, content: "另外顺便帮我查一下明天的天气" };
+    let queue = [midTurnMsg];
+    const f = fixture({
+      steerSession: {
+        claim: () => {
+          const taken = queue;
+          queue = [];
+          return taken;
+        },
+        onInjected: (messages, afterToolCallIds) => {
+          injected.push({ ids: messages.map((m) => m.id), afterToolCallIds });
+        },
+      },
+    });
+    try {
+      const res = await f.run.execute("call-1", name, args);
+      expect(typeof res).toBe("string");
+      expect(String(res)).toContain("written");
+      expect(String(res)).toContain("另外顺便帮我查一下明天的天气");
+      expect(String(res)).toContain("新的独立需求");
+      expect(injected).toEqual([{ ids: ["mid-1"], afterToolCallIds: ["call-1"] }]);
+    } finally {
+      f.run.close();
+    }
+  });
 });
 
 describe("runtime tool HTTP helper", () => {

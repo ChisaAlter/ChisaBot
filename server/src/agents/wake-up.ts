@@ -332,7 +332,7 @@ export function wakeUpTools(options: {
   return [
     tool(
       "schedule_follow_up",
-      `Wake yourself up later to continue this work without the person asking: once, at one moment between 1 minute and 7 days from now. Give the reason (shown to the person) and either in_minutes or an ISO-8601 time in at. At most ${WAKE_UP_MAX_PENDING} may be waiting at once. Use it when something needs checking again later, not to repeat on a schedule (that is a routine).`,
+      `主动给自己排一个延时唤醒（1 分钟到 7 天内），到点自动醒来继续跟进当前未闭环的事，无需用户再次催问。遇到还在等结果的事（构建/部署进行中、待办事项截止前跟进、赛事/航班/价格变动复查、长流程分阶段检查）时，应主动调用它安排复查。传 reason（给用户看的跟进原因）、instruction（醒来时要执行的具体检查动作）以及 in_minutes 或 ISO-8601 时间 at。同一时间最多保留 ${WAKE_UP_MAX_PENDING} 个待触发跟进。周期性日常提醒或巡检请用 schedule_create。`,
       scheduleSchema,
       async (value) => {
         const dueAt =
@@ -397,7 +397,7 @@ export function wakeUpInstruction(payload: WakeUpPayload): string {
   if (payload.instruction)
     lines.push(`What you meant to do: ${payload.instruction}`);
   lines.push(
-    "Pick it up now. Tell the person what you found or did, in a sentence or two.",
+    "Pick it up now. Call the needed tools to check the latest status or finish the next step, and tell the person what you found or did in a sentence or two (if it is still in progress and needs another check later, you may call schedule_follow_up again).",
   );
   return lines.join("\n");
 }

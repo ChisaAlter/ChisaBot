@@ -15,6 +15,10 @@ import {
   withToolAbort,
 } from "../confirmations/context";
 import type { GrantedTool } from "../plugins/tools";
+import {
+  attachMidTurnNoticeToToolResult,
+  type SteerSession,
+} from "../thread-inbox";
 
 export type RuntimeToolDefinition = {
   name: string;
@@ -28,6 +32,8 @@ export type RuntimeToolRegistration = {
   scope: RuntimeToolScope;
   signal?: AbortSignal;
   initiator?: AuditInitiator;
+  /** 本地对话运行器里的插话会话：Hermes 在每次工具调用完成时领走用户中途发来的排队消息并注入上下文。 */
+  steerSession?: SteerSession;
   /** Defaults to 3 seconds, capped at 5 seconds. */
   callCaptureTimeoutMs?: number;
 };
@@ -237,7 +243,20 @@ export function createRuntimeToolRegistry() {
             try {
               // Validation must not rewrite the model's call: tools may already parse or be wrapped
               // by confirmations, and approval reentry compares against the original arguments.
-              return await tool.execute(args, { signal: controller.signal });
+              const rawResult = await tool.execute(args, { signal: controller.signal });
+              if (options.steerSession && !controller.signal.aborted) {
+                let claimed: Message[] = [];
+                try {
+                  claimed = await options.steerSession.claim();
+                } catch (claimError) {
+                  console.warn("runtime-tools steer claim failed", claimError);
+                }
+                if (claimed.length) {
+                  options.steerSession.onInjected(claimed, [callId]);
+                  return attachMidTurnNoticeToToolResult(rawResult, claimed);
+                }
+              }
+              return rawResult;
             } catch (error) {
               if (error instanceof HeadlessToolSuspension) {
                 error.waiting.continuation ??= continuation;

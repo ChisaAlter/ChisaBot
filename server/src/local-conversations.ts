@@ -27,9 +27,11 @@ import type { Database } from "./db/client";
 import { imageDimsFor } from "./image-dims";
 import {
   anchorsPresent,
+  classifyMidTurnIntent,
   INBOX_TEXT_LIMIT,
   isWorkerResult,
   newSteerSession,
+  textOfMessage,
   ThreadInbox,
   type TranscriptInjection,
   weaveMessages,
@@ -632,6 +634,9 @@ type ActiveRun = {
   done: Promise<void>;
   /** 用户按停止时 abort：工具（web_search 等）通过 currentToolAbort 收到（FIX-04）。 */
   abort: AbortController;
+  /** 当前分段（segment）的取消控制器：用户中途发来「打断/换方向」指令时只中断当前段，接着开下一段处理新指令。 */
+  segmentAbort?: AbortController;
+  segmentInterrupted?: boolean;
   /** 这一轮里读进来的插话（排队消息 / 后台任务结果），存档和推给界面前织进消息列表。 */
   injections: TranscriptInjection[];
   /** Inbox claims belong to the logical turn, including earlier frontend handoffs. */
@@ -714,6 +719,28 @@ class PostgresAgentRunner extends AgentRunner {
   /** Includes browser tools running between two server requests in the same logical turn. */
   isActive(threadId: string): boolean {
     return this.active.has(threadId) || this.frontend.has(threadId);
+  }
+
+  /**
+   * 用户在运行中途发来「打断之前需求的新指令」（classifyMidTurnIntent === "interrupt"）：
+   * 立即中止当前正在执行的分段（停掉旧方向的模型生成和工具调用），不把整轮标成 stopped，
+   * 让分段循环立刻进入下一段读取收件箱里的新指令并执行。
+   */
+  interruptSegment(threadId: string): boolean {
+    const entry = this.active.get(threadId);
+    if (!entry || entry.stopped) return false;
+    entry.segmentInterrupted = true;
+    try {
+      entry.segmentAbort?.abort(new Error("segment_interrupted_by_user"));
+    } catch {
+      /* ignore */
+    }
+    try {
+      entry.agent.abortRun();
+    } catch {
+      /* ignore */
+    }
+    return true;
   }
 
   /** 在进程内旁听一个对话的事件（后台任务卡片读它的步骤）。返回取消函数。 */
@@ -830,6 +857,9 @@ class PostgresAgentRunner extends AgentRunner {
             ownerUserId: row.owner_user_id,
             message,
           });
+          if (classifyMidTurnIntent(textOfMessage(message)) === "interrupt") {
+            this.interruptSegment(request.threadId);
+          }
         }
         if (closed) return;
         subscription = running.stream.pipe(concatMap(async (event) => {
@@ -862,6 +892,7 @@ class PostgresAgentRunner extends AgentRunner {
     /** 段与段之间扣下的 RUN_FINISHED：还要接着跑就丢掉，最后一段的才发出去。 */
     let heldFinish: BaseEvent | undefined;
     let segmenting = false;
+    let segFinalizer = createRunEventFinalizer();
     /** 智能体最近一次报告的消息列表（不含插话）。 */
     let latest: Message[] = [];
     /** 已读进来、但它紧跟的工具结果还没到消息列表里的插话：等到了再推快照。 */
@@ -880,6 +911,11 @@ class PostgresAgentRunner extends AgentRunner {
     const emit = async (source: BaseEvent) => {
       let event = source;
       if (event.type === EventType.RUN_STARTED) {
+        segFinalizer.observe({
+          ...event,
+          threadId,
+          runId: entry.runId,
+        } as BaseEvent);
         // 第二段起的 RUN_STARTED 不发：对用户来说这还是同一次回复。
         if (runStarted) return;
         event = {
@@ -894,6 +930,19 @@ class PostgresAgentRunner extends AgentRunner {
           heldFinish = event;
           return;
         }
+      } else if (
+        event.type === EventType.RUN_ERROR &&
+        segmenting &&
+        entry.segmentInterrupted &&
+        !entry.stopped
+      ) {
+        // 用户中途发来打断新指令主动中止了当前分段：吞掉取消产生的 RUN_ERROR，无缝进入下一段执行新指令。
+        heldFinish = {
+          type: EventType.RUN_FINISHED,
+          threadId,
+          runId: entry.runId,
+        } as BaseEvent;
+        return;
       }
       const published = prepared.event(event);
       if (!published) return;
@@ -902,6 +951,9 @@ class PostgresAgentRunner extends AgentRunner {
         entry.runId,
         published,
       );
+      if (published.type !== EventType.RUN_STARTED) {
+        segFinalizer.observe(published);
+      }
       finalizer.observe(published);
       runStarted ||= published.type === EventType.RUN_STARTED;
       terminal ||=
@@ -1170,38 +1222,92 @@ class PostgresAgentRunner extends AgentRunner {
         segment++
       ) {
         segmenting = true;
+        segFinalizer = createRunEventFinalizer();
+        const segAbort = new AbortController();
+        entry.segmentAbort = segAbort;
+        const onRunAbort = () => segAbort.abort(entry.abort.signal.reason);
+        entry.abort.signal.addEventListener("abort", onRunAbort, { once: true });
+        if (entry.abort.signal.aborted) onRunAbort();
         let finalized!: () => void;
         const finalization = new Promise<void>((resolve) => {
           finalized = resolve;
         });
         const segmentInput = { ...input, runId: entry.runId, messages: agent.messages };
-        await withConfirmTurn(
-          { threadId, runId: entry.runId, stopped: () => entry.stopped },
-          () =>
-            withToolAbort(entry.abort.signal, () =>
-              withSteering(steering(), () =>
-                agent.runAgent(segmentInput, {
-                  onEvent: ({ event }) =>
-                    guarded(() => emit(structuredClone(event))),
-                  onMessagesChanged: ({ messages, state }) =>
-                    capture(messages, state),
-                  onStateChanged: ({ messages, state }) =>
-                    capture(messages, state),
-                  onRunFinalized: () => {
-                    finalized();
-                  },
-                }),
+        try {
+          await withConfirmTurn(
+            { threadId, runId: entry.runId, stopped: () => entry.stopped || Boolean(entry.segmentInterrupted) },
+            () =>
+              withToolAbort(segAbort.signal, () =>
+                withSteering(steering(), () =>
+                  agent.runAgent(segmentInput, {
+                    onEvent: ({ event }) =>
+                      guarded(() => emit(structuredClone(event))),
+                    onMessagesChanged: ({ messages, state }) =>
+                      capture(messages, state),
+                    onStateChanged: ({ messages, state }) =>
+                      capture(messages, state),
+                    onRunFinalized: () => {
+                      finalized();
+                    },
+                  }),
+                ),
               ),
-            ),
-        );
-        await finalization;
+          );
+          await finalization;
+        } catch (segError) {
+          if (!entry.segmentInterrupted || entry.stopped) throw segError;
+          heldFinish = {
+            type: EventType.RUN_FINISHED,
+            threadId,
+            runId: entry.runId,
+          } as BaseEvent;
+        } finally {
+          entry.abort.signal.removeEventListener("abort", onRunAbort);
+          if (entry.segmentAbort === segAbort) entry.segmentAbort = undefined;
+        }
         await durableWrites;
-        if (persistenceError || failed || entry.stopped || !heldFinish) break;
+        const wasInterrupted = Boolean(entry.segmentInterrupted) && !entry.stopped;
+        entry.segmentInterrupted = false;
+        if (wasInterrupted) {
+          // 补齐被打断分段里未闭合的消息或工具调用结果，保持 AG-UI 事件流与消息历史成对合法。
+          for (const closing of segFinalizer.finalize({
+            stopRequested: true,
+            protocolVersion: input.protocolVersion,
+            interruptionMessage: "【用户中途打断了当前任务并下达新指令】已中止该旧工具操作，请直接执行用户接下来的新指令。",
+          })) {
+            if (
+              closing.type === EventType.RUN_FINISHED ||
+              closing.type === EventType.RUN_ERROR
+            ) {
+              continue;
+            }
+            if (closing.type === EventType.TOOL_CALL_RESULT) {
+              const result = closing as BaseEvent & {
+                messageId: string;
+                toolCallId: string;
+                content: string;
+              };
+              agent.setMessages(
+                mergeConversationMessages(agent.messages, [
+                  {
+                    id: result.messageId,
+                    role: "tool",
+                    content: result.content,
+                    toolCallId: result.toolCallId,
+                  },
+                ]),
+              );
+            }
+            await emit(closing);
+          }
+          await durableWrites;
+        }
+        if (persistenceError || failed || entry.stopped || (!heldFinish && !wasInterrupted)) break;
         // RUN_FINISHED ends only the wire segment when frontend tools have no results yet.
         // Claiming here would put a user row ahead of those results; the seeded-history
         // sanitizer then correctly removes the dangling call and the model issues it again.
-        if (this.pendingFrontend(entry, input.tools).length) break;
-        // 这一段正常结束了，收件箱里还有没读的：同一次运行接着开下一段，把它们读进去。
+        if (!wasInterrupted && this.pendingFrontend(entry, input.tools).length) break;
+        // 这一段正常结束（或被用户新指令打断）了，收件箱里还有没读的：同一次运行接着开下一段，把它们读进去。
         const more =
           segment + 1 < MAX_SEGMENTS
             ? await this.inbox.claim(threadId, entry.runId)
@@ -1962,7 +2068,11 @@ export async function createLocalConversations(
             429,
           );
         }
-        return Response.json({ queued: true, status: (await inbox.get(threadId, id))?.status ?? "queued" });
+        const status = (await inbox.get(threadId, id))?.status ?? "queued";
+        if (status === "queued" && classifyMidTurnIntent(text) === "interrupt") {
+          runner.interruptSegment(threadId);
+        }
+        return Response.json({ queued: true, status });
       }
       if (operation === "inbox" && request.method === "DELETE") {
         const id = (url.searchParams.get("id") ?? "").trim();

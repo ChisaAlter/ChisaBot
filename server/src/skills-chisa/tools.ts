@@ -81,7 +81,7 @@ export function createChisaSkills(options: { store: PluginStore; actorFor: (user
       ),
       tool(
         "skill_save",
-        "新建或整体改写用户自己的技能。只在用户同意后调用（先问「要不要把这套做法存成技能？」）。名字是小写英文字母、数字和连字符（如 weekly-report）；说明写成以后照着就能做的步骤、要注意的偏好和坑，不写一次性的细节。",
+        "新建或整体改写用户自己的技能。当你摸索出一套可复用的多步骤做法、工作流或排障套路，或用户交代了「以后某类事都这样做」时，直接主动调用它保存为技能，并在回复末尾顺带告知用户一句即可，无需事先询问。名字是小写英文字母、数字和连字符（如 weekly-report）；说明写成以后照着就能做的步骤、要注意的偏好和坑，不写一次性的细节。",
         z
           .object({
             slug: z.string().max(40).describe("小写字母、数字、连字符，2–40 个字符"),
@@ -107,7 +107,7 @@ export function createChisaSkills(options: { store: PluginStore; actorFor: (user
       ),
       tool(
         "skill_edit",
-        "局部修改用户自己的一个技能：把说明里的一段原文换成新文字（原文必须一字不差且只出现一次）。小改用它，大改用 skill_save。只在用户同意后调用。",
+        "局部修改用户自己的一个技能：把说明里的一段原文换成新文字（原文必须一字不差且只出现一次）。小改用它，大改用 skill_save。执行技能过程中发现更优做法或过时步骤时，可直接主动调用更新并顺带告知用户。",
         z.object({ slug: z.string().max(60), find: z.string().min(1).max(4000), replace: z.string().max(8000) }).strict(),
         async ({ slug, find: needle, replace }) => {
           const skill = await find(slug);
@@ -172,6 +172,6 @@ export type ChisaSkills = ReturnType<typeof createChisaSkills>;
 /** 给机器人的技能用法（ChisaBot 自己的写法）。 */
 export const SKILL_GUIDANCE = `技能是用户自己存下来的「某类事怎么做」的方法说明（工具 skill_list / skill_load / skill_save / skill_edit）。
 - 开始做事前看一眼下面的目录：有对得上的就先 skill_load，按里面的方法和偏好做；技能和用户这次说的冲突时听用户的。
-- 用户反复让你做同一类事、或者这次摸索出了一套以后还用得上的做法（步骤、要用的网站、用户的偏好、踩过的坑）时，做完后问一句「要不要把这套做法存成技能，下次直接照着做？」。用户同意了才 skill_save；不要自作主张存。
-- 做的过程中发现技能里有过时或更好的做法，告诉用户并问要不要更新（skill_edit 小改，skill_save 整体改写）。
-- 用户说「记住以后都这样做 X」这类关于做事方法的要求，适合存成技能；关于他本人的事实和偏好存进记忆。`;
+- 主动沉淀与自我进化：当你帮用户跑通了一套以后还用得上的复杂做法（多步调研/操作流程、特定网站的用法、格式规范、踩过的坑），或者用户反复让你做同一类事时，**做完正事后直接主动调用 skill_save 存成技能**，在回复末尾用半句话告诉用户（「已顺手把这套做法存为技能 /xxx，下次直接照做」），不要停下来问「要不要存成技能」。
+- 做的过程中发现已有技能里有过时步骤或更好的做法，直接主动调用 skill_edit（小改）或 skill_save（整体改写）更新它，顺带告诉用户一声即可。
+- 用户说「记住以后都这样做 X」这类关于做事方法的要求，直接主动存成技能；关于他本人的事实和偏好存进记忆。`;

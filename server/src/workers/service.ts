@@ -38,9 +38,9 @@ type WorkerRow = {
   created_at: Date | string; started_at: Date | string | null; finished_at: Date | string | null;
 };
 
-export const PER_USER_RUNNING = Number(process.env.CHISABOT_WORKERS_PER_USER) || 3;
-export const GLOBAL_RUNNING = Number(process.env.CHISABOT_WORKERS_GLOBAL) || 6;
-export const PER_USER_BACKLOG = 6;
+export const PER_USER_RUNNING = Number(process.env.CHISABOT_WORKERS_PER_USER) || 5;
+export const GLOBAL_RUNNING = Number(process.env.CHISABOT_WORKERS_GLOBAL) || 10;
+export const PER_USER_BACKLOG = 10;
 export const WORKER_TIMEOUT_MS = 15 * 60_000;
 export const RESULT_LIMIT = 6_000;
 const ACTIVE: WorkerStatus[] = ["queued", "running", "waiting"];
@@ -468,7 +468,8 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
             },
           ),
           guidance: [
-            "后台任务：耗时较长、可以独立完成的事（多来源调研、大量整理、多步骤网上操作）用 delegate_task 交给后台并行做，主对话保持能聊；每个任务给一个几个字的标题和完整说明（后台看不到这段对话）。",
+            "后台任务与主动多并发：耗时较长、可以独立完成的事（多来源调研、大量整理、多步骤网上操作）用 delegate_task 交给后台并行做，主对话保持能聊；每个任务给一个几个字的标题和完整说明（后台看不到这段对话）。",
+            "主动并发拆解：当用户一次提出多个独立问题或需求（例如「帮我调研 A 和 B，再顺便回答 C」），或者你在干活中途收到用户发来的【新的独立需求】时，主动在同一轮里连续调用多个 delegate_task 把各独立子任务并行派给后台同时推进，主对话当场回答简短问题或继续当前动作，绝不串行干等。",
             `同时最多 ${PER_USER_RUNNING} 个在跑；多出来的会自动排队（卡片显示「排队中」），前面的做完就自动开始，最多 ${PER_USER_BACKLOG} 个没结束的。所以用户要几个就照常委派几个，不要自己设提醒等空位再补开。后台任务和你共用同一个浏览器，所以同一时间最多委派一个需要用浏览器的任务，而且它在用浏览器时你自己不要用。`,
             "用户想给某个后台任务补充要求就用 worker_message；想取消就用 worker_cancel；问进度用 worker_status。结果回来时会是一条以「⟦chisabot:worker-result:」开头的消息。",
             "结果消息说「已停止」时，是用户自己在任务卡片上停掉的：只用一句话确认已经停止，不要重新开始、不要重新委派，也不要追问。",

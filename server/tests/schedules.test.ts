@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { describeCronZh, describeSchedule, formatWhen, parseScheduleMessage } from "../../shared/schedules";
+import { describeCronZh, describeSchedule, formatWhen, isSilentScheduleReply, parseScheduleMessage, SCHEDULE_SILENT_MARKER } from "../../shared/schedules";
 import { createDatabase } from "../src/db/client";
 import { createSchedules, resolveWhen, ScheduleError, zonedToUtc } from "../src/schedules/service";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -61,6 +61,9 @@ describe("resolveWhen", () => {
     expect(zonedToUtc(2026, 10, 15, 9, 0, TZ).toISOString()).toBe("2026-10-15T01:00:00.000Z");
     const parsed = parseScheduleMessage("⟦chisabot:schedule:sch_1:run_2⟧\n定时任务「喝水」到点了（今天 21:42）。\n这是…\n说明：提醒用户：喝水");
     expect(parsed).toEqual({ scheduleId: "sch_1", runId: "run_2", headline: "定时任务「喝水」到点了（今天 21:42）。", instruction: "提醒用户：喝水" });
+    expect(isSilentScheduleReply(SCHEDULE_SILENT_MARKER)).toBe(true);
+    expect(isSilentScheduleReply("HEARTBEAT_OK")).toBe(true);
+    expect(isSilentScheduleReply("⏰ 该喝水了")).toBe(false);
   });
 });
 

@@ -10,9 +10,11 @@ import {
   failStreakShouldPause,
   formatWhen,
   formatWhenAbsolute,
+  isSilentScheduleReply,
   partsIn,
   SCHEDULE_DEFAULT_TZ,
   SCHEDULE_MARKER,
+  SCHEDULE_SILENT_MARKER,
   type ScheduleEvent,
   type ScheduleKind,
   type ScheduleRunStatus,
@@ -982,8 +984,13 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         `${SCHEDULE_MARKER}${row.id}:${runId}⟧`,
         head,
         "这是你之前替用户设好的定时任务（不是用户刚发的消息）。现在就照下面的说明做，做完用一两句话告诉用户结果；如果是提醒，就直接、简短地提醒用户要做的事。不要再新建或修改定时任务，除非说明里要求。",
+        !manual
+          ? `如果这是一个「主动巡检 / 日常关怀 / 盯盘监控」类任务，请先调用工具（如 memory_search、web_search 等）检查是否有未闭环待办、重要变化或值得主动开口提醒用户的事：若有，请直接简短开口汇报或关怀；若一切正常、没有任何值得打扰用户的新情况，请只回复 ${SCHEDULE_SILENT_MARKER}（系统会静默记为巡检完成，不在聊天窗刷屏打扰用户）。`
+          : "",
         `说明：${row.instruction}`,
-      ].join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n"),
     } as Message;
   }
 
@@ -1062,7 +1069,30 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
             forwardedProps: { chisabotSchedule: { id: row.id, runId } },
           });
           let text = result.replyText?.trim() || "（机器人这次没有文字回复）";
-          if (im && deps.pushToIm) {
+          const silent = !options.manual && isSilentScheduleReply(text);
+          if (silent) {
+            text = "巡检完成：暂无需要打扰用户的事项";
+            // 静默巡检无事发生：把刚塞进本地对话的触发消息和静默回复收起，不在聊天窗刷屏（「无事不打扰，有事主动开口」）。
+            await sql
+              .unsafe<{ messages: Message[] }[]>(
+                "SELECT messages FROM openbot_local_threads WHERE id = $1 AND owner_user_id = $2",
+                [threadId, row.owner_user_id],
+              )
+              .then(async (rows) => {
+                const msgs = rows[0]?.messages;
+                if (!Array.isArray(msgs)) return;
+                const idx = msgs.findIndex((m) => m?.id === `schedule-${runId}`);
+                if (idx < 0) return;
+                const after = msgs.slice(idx + 1);
+                if (after.some((m) => m?.role === "user")) return;
+                const cleaned = msgs.slice(0, idx);
+                await sql.unsafe(
+                  "UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1 AND owner_user_id = $3",
+                  [threadId, JSON.stringify(cleaned), row.owner_user_id],
+                );
+              })
+              .catch(() => {});
+          } else if (im && deps.pushToIm) {
             try {
               await deps.pushToIm(threadId, result.replyText?.trim() || text);
             } catch (error) {
@@ -1070,7 +1100,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
             }
           }
           // FIX-01：按回复正文归类，别把「弹不出卡 / 等确认 / 隧道失败」标成绿的已完成。
-          const status = classifyScheduleReply(text);
+          const status = silent ? "ok" : classifyScheduleReply(text);
           await finishRun(runId, row.id, status, text);
           if (status !== "ok")
             await deps.releaseThread?.(threadId).catch(() => {});
@@ -1304,7 +1334,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       "周期给 daily / weekdays / weekly(days) / monthly(day) / hourly / every_minutes / cron。instruction 写到点时要做的一件事（祈使句，不重复时间），例如「提醒用户：给妈妈打电话」「搜一下今天的科技新闻，挑 5 条给用户」。",
       "建好后用工具返回的 confirmation 原样回一句确认（含时间和下次运行），不要自己另算时间。到点时会在这段对话里收到一条「⟦chisabot:schedule:」开头的消息，照说明做。",
       "看、改、暂停 / 恢复、删、跳过下一次、立即运行分别用 schedule_list / schedule_update / schedule_cancel / schedule_skip_next / schedule_run_now（先 list 拿 id）。",
-      "用户要的提醒和定时任务一律用这些工具，不要用 schedule_follow_up（那个只给你自己回头检查用）。用户也可以在 设置 → 定时任务 里管理。",
+      "日常主动巡检与关怀（Heartbeat）：当用户希望你每天主动关心日程/待办、早间简报、或定时盯某个话题/数据变动（无事不打扰、有事主动开口）时，主动用 schedule_create 设一个周期任务（instruction 里写明：先查记忆日志/待办或外部动态，有重要进展或待办就主动提醒用户，无事则只回复 ⟦chisabot:silent⟧）。",
+      "用户要的提醒和定时任务一律用这些工具；临时未闭环事项的延时自检用 schedule_follow_up。用户也可以在 设置 → 定时任务 里管理。",
     ].join("");
   }
 

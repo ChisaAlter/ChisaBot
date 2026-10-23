@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { Message } from "@ag-ui/client";
 import {
   anchorsPresent,
+  attachMidTurnNoticeToToolResult,
+  classifyMidTurnIntent,
+  formatMidTurnMessageForModel,
   isWorkerResult,
   newSteerSession,
   promptMessageFor,
@@ -100,6 +103,37 @@ describe("steerLanguageModel", () => {
     const result = user("r", `${WORKER_RESULT_MARKER}w1:done⟧\n后台任务「x」已完成。`);
     expect(isWorkerResult(result)).toBe(true);
     expect(JSON.stringify(promptMessageFor(result))).not.toContain("过程中");
+  });
+
+  test("classifyMidTurnIntent differentiates interrupt, concurrent new task, and supplement", () => {
+    expect(classifyMidTurnIntent("停，别查了，改成看明天上海天气")).toBe("interrupt");
+    expect(classifyMidTurnIntent("算了，不用弄刚才那个了")).toBe("interrupt");
+    expect(classifyMidTurnIntent("不对，不是这个意思，我是要查高铁")).toBe("interrupt");
+    expect(classifyMidTurnIntent("另外帮我查一下下周去东京的机票")).toBe("concurrent");
+    expect(classifyMidTurnIntent("顺便帮我整理一份周报草稿")).toBe("concurrent");
+    expect(classifyMidTurnIntent("同时再帮我对比一下索尼的型号")).toBe("concurrent");
+    expect(classifyMidTurnIntent("预算改成 2000 以内")).toBe("supplement");
+    expect(classifyMidTurnIntent("只要京东自营的")).toBe("supplement");
+    expect(classifyMidTurnIntent("再加一条：需要支持多设备连接")).toBe("supplement");
+
+    expect(formatMidTurnMessageForModel(user("i1", "停一下，改成查天气"))).toContain("打断指令");
+    expect(formatMidTurnMessageForModel(user("c1", "另外帮我查一下机票"))).toContain("新的独立需求");
+    expect(formatMidTurnMessageForModel(user("s1", "预算改成 2000"))).toContain("补充更正");
+  });
+
+  test("attachMidTurnNoticeToToolResult preserves JSON structure or appends text", () => {
+    const jsonOut = attachMidTurnNoticeToToolResult(
+      JSON.stringify({ ok: true, count: 3 }),
+      [user("m1", "另外帮我查一下机票")],
+    );
+    const parsed = JSON.parse(jsonOut) as { ok: boolean; count: number; _userMidTurnNotice: string };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.count).toBe(3);
+    expect(parsed._userMidTurnNotice).toContain("新的独立需求");
+
+    const textOut = attachMidTurnNoticeToToolResult("搜索完成", [user("m2", "只要 256G 的")]);
+    expect(textOut).toContain("搜索完成");
+    expect(textOut).toContain("只要 256G 的");
   });
 
   test("trailing tool call ids", () => {

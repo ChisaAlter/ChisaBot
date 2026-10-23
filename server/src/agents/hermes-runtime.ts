@@ -16,6 +16,7 @@ import { createRuntimeToolRegistry, type RuntimeToolRun } from "./runtime-tools"
 import type { HeadlessTool } from "../computer/headless-tools";
 import { currentToolAbort } from "../confirmations/context";
 import type { GrantedTool } from "../plugins/tools";
+import { currentSteerSession } from "../thread-inbox";
 
 export const hermesRuntimeTools = createRuntimeToolRegistry();
 
@@ -109,6 +110,7 @@ export class HermesRuntimeAgent extends AbstractAgent {
     return new Observable((subscriber) => {
       const controller = new AbortController();
       const hostAbort = currentToolAbort();
+      const steerSession = currentSteerSession();
       const remote = this.transport.clone();
       const active = { controller, remote };
       this.active = active;
@@ -157,7 +159,14 @@ export class HermesRuntimeAgent extends AbstractAgent {
           openbotBotId: scope.botId,
           openbotDeploymentTools: assembled.map((tool) => tool.name),
         };
-        runTools = hermesRuntimeTools.register({ input: prepared, tools: assembled, scope, signal: controller.signal, initiator: scope.initiator });
+        runTools = hermesRuntimeTools.register({
+          input: prepared,
+          tools: assembled,
+          scope,
+          signal: controller.signal,
+          initiator: scope.initiator,
+          ...(steerSession ? { steerSession } : {}),
+        });
         const wire: RunAgentInput = {
           ...prepared,
           forwardedProps: {

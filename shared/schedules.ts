@@ -2,7 +2,22 @@
  * 定时任务 / 提醒（DESIGN.md §55，docs/schedules.md）：服务器和网页共用的类型与中文描述。
  */
 export const SCHEDULE_MARKER = "⟦chisabot:schedule:";
+export const SCHEDULE_SILENT_MARKER = "⟦chisabot:silent⟧";
 export const SCHEDULE_DEFAULT_TZ = "Asia/Shanghai";
+
+/**
+ * 主动巡检 / 盯盘类定时任务：当机器人检查后发现「暂无新动态 / 无需打扰用户」时，
+ * 回复 ⟦chisabot:silent⟧ 或 HEARTBEAT_OK，系统将静默记录运行完成并从对话历史中收起该次空巡检，做到「无事不打扰，有事主动开口」。
+ */
+export function isSilentScheduleReply(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  return (
+    t.includes(SCHEDULE_SILENT_MARKER) ||
+    /^HEARTBEAT_OK\b/i.test(t) ||
+    /^(?:无事不打扰|无需打扰|暂无异常无需打扰)[。.！!]?$/.test(t)
+  );
+}
 
 export type ScheduleKind = "once" | "cron";
 export type ScheduleStatus = "active" | "paused" | "done" | "cancelled";
