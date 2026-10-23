@@ -30,7 +30,7 @@ import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
 export function extractQuestionOptions(questionText: string): string[] {
   const matches = [
     ...questionText.matchAll(
-      /(?:^|[^A-Za-z0-9])([A-F])[.、:：)\]]\s*([^\n]+?)(?=(?:\s*[A-F][.、:：)\]]\s)|\n|$)/g,
+      /(?<![A-Za-z0-9])([A-F])[.、:：)\]]\s*([^\n]+?)(?=(?:[\s；;，,、/]*[A-F][.、:：)\]])|\n|$)/g,
     ),
   ];
   const aIdx = matches.findIndex((m) => m[1] === "A");
@@ -40,7 +40,7 @@ export function extractQuestionOptions(questionText: string): string[] {
     return [];
   }
   return slice
-    .map((m) => `${m[1]}. ${(m[2] ?? "").trim().replace(/[；;，,。]+$/, "")}`)
+    .map((m) => `${m[1]}. ${(m[2] ?? "").trim().replace(/[；;，,。、/]+$/, "")}`)
     .filter((item) => item.length > 3 && item.length <= 80);
 }
 

@@ -165,7 +165,7 @@ test("选择题问题自动提取 A/B/C 快捷选项", () => {
   ).toEqual(["A. 有氧（跑步、骑行）", "B. 力量训练", "C. 球类或拉伸"]);
   expect(
     extractQuestionOptions(
-      "下周你更偏好哪类运动？A. 有氧运动 B. 力量训练 C. 球类或拉伸",
+      "下周你更偏好哪类运动？A. 有氧运动；B. 力量训练；C. 球类或拉伸",
     ),
   ).toEqual(["A. 有氧运动", "B. 力量训练", "C. 球类或拉伸"]);
   expect(extractQuestionOptions("要不要现在发这封邮件？")).toEqual([]);
