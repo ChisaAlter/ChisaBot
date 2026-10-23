@@ -204,45 +204,10 @@ export function Lightbox({
       role="dialog"
     >
       <div className="rp-lightbox-bar">
-        <span className="rp-lightbox-count">
-          {count > 1 ? `${index + 1} / ${count}` : ""}
-          {image.alt || image.name ? (
-            <span className="rp-lightbox-name">{image.alt || image.name}</span>
-          ) : null}
-        </span>
-        <div className="rp-lightbox-actions">
-          <button
-            aria-label="缩小"
-            className="rp-lb-btn"
-            disabled={zoom <= MIN_ZOOM}
-            onClick={() => zoomTo(zoom - 0.5)}
-            title="缩小（-）"
-            type="button"
-          >
-            <IconZoomOut className="size-5" />
-          </button>
-          <button
-            aria-label="放大"
-            className="rp-lb-btn"
-            disabled={zoom >= MAX_ZOOM}
-            onClick={() => zoomTo(zoom + 0.5)}
-            title="放大（+）"
-            type="button"
-          >
-            <IconZoomIn className="size-5" />
-          </button>
-          <a
-            aria-label="下载"
-            className="rp-lb-btn"
-            download={downloadNameOf(image, index)}
-            href={image.src}
-            title="下载"
-          >
-            <IconDownload className="size-5" />
-          </a>
+        <div className="rp-lightbox-bar-left">
           <button
             aria-label="关闭"
-            className="rp-lb-btn"
+            className="rp-lb-btn rp-lb-close"
             onClick={close}
             ref={closeRef}
             title="关闭（Esc）"
@@ -250,6 +215,43 @@ export function Lightbox({
           >
             <IconX className="size-5" />
           </button>
+        </div>
+        <div className="rp-lightbox-bar-center">
+          <span className="rp-lightbox-name">
+            {image.name || image.alt || downloadNameOf(image, index)}
+          </span>
+        </div>
+        <div className="rp-lightbox-actions">
+          <button
+            aria-label="缩小"
+            className="rp-lb-btn rp-lb-zoom"
+            disabled={zoom <= MIN_ZOOM}
+            onClick={() => zoomTo(zoom - 0.5)}
+            title="缩小（-）"
+            type="button"
+          >
+            <IconZoomOut className="size-4" />
+          </button>
+          <button
+            aria-label="放大"
+            className="rp-lb-btn rp-lb-zoom"
+            disabled={zoom >= MAX_ZOOM}
+            onClick={() => zoomTo(zoom + 0.5)}
+            title="放大（+）"
+            type="button"
+          >
+            <IconZoomIn className="size-4" />
+          </button>
+          <a
+            aria-label="下载"
+            className="rp-lb-btn rp-lb-download"
+            download={downloadNameOf(image, index)}
+            href={image.src}
+            title="下载"
+          >
+            <IconDownload className="size-4" />
+            <span>{"下载"}</span>
+          </a>
         </div>
       </div>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: 拖动 / 滑动 / 双击缩放是指针手势；键盘有 ←→ ± 0 Esc */}
@@ -313,11 +315,14 @@ export function Lightbox({
           >
             <IconChevronRight className="size-6" />
           </button>
-          <div aria-hidden className="rp-lightbox-dots">
-            {images.map((_, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: 圆点只按位置区分
-              <span data-active={i === index || undefined} key={i} />
-            ))}
+          <div className="rp-lightbox-foot">
+            <span className="rp-lightbox-count">{`${index + 1} / ${count}`}</span>
+            <div aria-hidden className="rp-lightbox-dots">
+              {images.map((_, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: 圆点只按位置区分
+                <span data-active={i === index || undefined} key={i} />
+              ))}
+            </div>
           </div>
         </>
       ) : null}

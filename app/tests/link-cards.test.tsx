@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { MessageRichPreviews, RichBotStreamdown } from "@/components/rich-previews/rich-previews";
 
 /** 链接卡（DESIGN.md §48）：卡片内容、兜底卡、骨架；正文里出卡的行被拿掉。 */
@@ -98,5 +98,23 @@ describe("链接卡", () => {
     expect(view.container.textContent).toContain("看这里");
     expect(view.container.textContent).toContain("结束");
     expect(view.container.textContent).not.toContain("example.com/page");
+  });
+
+  test("多卡扇形牌组：悬停某张卡片时该卡聚焦置顶（data-focused），其余卡片背景虚化（data-dimmed）", async () => {
+    const u1 = "https://a.example.com/1";
+    const u2 = "https://b.example.com/2";
+    responses[u1] = { status: 200, body: preview({ url: u1, finalUrl: u1, title: "Card A", domain: "a.example.com" }) };
+    responses[u2] = { status: 200, body: preview({ url: u2, finalUrl: u2, title: "Card B", domain: "b.example.com" }) };
+    const view = render(<MessageRichPreviews text={`${u1}\n${u2}`} />);
+    const cards = await view.findAllByTestId("link-card");
+    expect(cards.length).toBe(2);
+    const deck = view.getByTestId("link-cards");
+    expect(deck.hasAttribute("data-deck")).toBe(true);
+    fireEvent.mouseEnter(cards[0]!);
+    expect(cards[0]!.hasAttribute("data-focused")).toBe(true);
+    expect(cards[1]!.hasAttribute("data-dimmed")).toBe(true);
+    fireEvent.mouseLeave(cards[0]!);
+    expect(cards[0]!.hasAttribute("data-focused")).toBe(false);
+    expect(cards[1]!.hasAttribute("data-dimmed")).toBe(false);
   });
 });

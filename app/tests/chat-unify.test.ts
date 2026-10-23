@@ -164,4 +164,17 @@ describe("work card row (§75)", () => {
     expect(running.hidden.has("a2")).toBe(true);
     expect(running.hidden.has("a3")).toBe(false);
   });
+
+  test("Hark reply quote: multi-message turn or mid-turn interjection attaches replyTo to the assistant reply", () => {
+    const items = [
+      user("u1", "推进。chisabot的需求都做完了吗"),
+      user("u2", "全修"),
+      bot("a1", "所有需求都已经全部做完了。"),
+      call("t1", "web_search", { query: "x" }),
+      bot("a2", "两处都修好了。"),
+    ];
+    const compact = compactTurns(items, false, new Set());
+    expect(compact.replyTo.get("a1")).toEqual({ id: "u1", text: "推进。chisabot的需求都做完了吗" });
+    expect(compact.replyTo.get("a2")).toEqual({ id: "u2", text: "全修" });
+  });
 });

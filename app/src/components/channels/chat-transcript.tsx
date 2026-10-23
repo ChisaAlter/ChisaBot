@@ -26,7 +26,7 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
-import { BotBubbles } from "@/components/chat/bot-bubbles";
+import { BotBubbles, type ReplyTarget } from "@/components/chat/bot-bubbles";
 import {
   ConfirmResumeRow,
   confirmResumeId,
@@ -1615,6 +1615,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
   delay,
   editable = false,
   messageId,
+  replyTo,
   role,
   text,
   tone,
@@ -1626,6 +1627,8 @@ const TranscriptMessage = memo(function TranscriptMessage({
   /** 用户自己发的一条：下面带「编辑」，点了气泡原地变编辑框（DESIGN.md §67）。 */
   editable?: boolean;
   messageId?: string;
+  /** Hark 式回复引用（`╭─` + 原话胶囊）：多条消息插话或跨步骤回应时指向对应的用户消息。 */
+  replyTo?: ReplyTarget | undefined;
   role: "user" | "assistant";
   text: string;
   /** compactTurns：开场一句 / 过程话 / 结果。过程话画成一行淡色小字，开场和过程都没有复制。 */
@@ -1712,6 +1715,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
           {!isUser ? (
             <BotBubbles
               components={richMarkdownComponents}
+              replyTo={replyTo}
               text={text}
               tone={tone === "lead" ? "lead" : "final"}
             />
@@ -3322,6 +3326,7 @@ export function ChatTranscript({
             isEditableUserText(item.text)
           }
           messageId={item.id}
+          replyTo={compact.replyTo.get(item.id)}
           role={item.role}
           text={item.text}
           tone={compact.tone.get(item.id)}
@@ -3527,12 +3532,19 @@ export function compactTurns(
    * 还在跑时画实时卡，结束后同一个位置收成「搜索 2 次 · 12 秒 ⌄」。
    */
   work: Map<string, WorkEntry>;
+  /** Hark 式回复引用（`╭─`）：当用户连发多条或中途插话时，助手回复自动挂上所回应的用户原话与消息 id。 */
+  replyTo: Map<string, ReplyTarget>;
 } {
   const tone = new Map<string, "lead" | "step" | "final">();
   const hidden = new Set<string>();
   const stoppedAfter = new Set<string>();
   const fallbackAfter = new Map<string, string>();
   const work = new Map<string, WorkEntry>();
+  const replyTo = new Map<string, ReplyTarget>();
+  const formatQuoteText = (raw: string): string => {
+    const clean = (splitChatOrigin(raw)?.text ?? raw).replace(/\s+/g, " ").trim();
+    return clean.length > 64 ? `${clean.slice(0, 63)}…` : clean;
+  };
   // 一轮的开头：人发的消息，或服务器放进来、接着跑一轮的那几种（定时任务 / 任务结果 / 后来确认，CB-046）。
   const sent = (item: TranscriptItem) =>
     item.kind === "attachments" ||
@@ -3550,6 +3562,11 @@ export function compactTurns(
       else turns.push({ users: [item], rest: [] });
     } else current.rest.push(item);
   }
+  const personTextsOf = (list: readonly TranscriptItem[]) =>
+    list.filter(
+      (u): u is Extract<TranscriptItem, { kind: "text" }> =>
+        u.kind === "text" && isPersonSentMessage(u.role, u.text) && u.text.trim().length > 0,
+    );
   turns.forEach((turn, index) => {
     const live = busy && index === turns.length - 1;
     const isStopped =
@@ -3594,9 +3611,19 @@ export function compactTurns(
         tone.set(promoted.id, "final");
       }
     }
+    const personUsers = personTextsOf(turn.users);
+    const prevTurn = index > 0 ? turns[index - 1] : undefined;
+    const prevUsers = prevTurn ? personTextsOf(prevTurn.users) : [];
+    const prevInterjected =
+      prevTurn !== undefined &&
+      prevUsers.length > 0 &&
+      prevTurn.rest.length > 0 &&
+      !prevTurn.rest.some((r) => r.kind === "text" && tone.get(r.id) === "final");
+    const multiReplyTurn = (personUsers.length > 1 || prevInterjected) && texts.length > 1;
     if (final)
       for (const item of texts)
-        if (tone.get(item.id) === "step") hidden.add(item.id);
+        if (tone.get(item.id) === "step" && !(multiReplyTurn && item.id === texts[0]?.id))
+          hidden.add(item.id);
     const browsers = turn.rest.filter((item) => item.kind === "browser");
     for (const item of browsers.slice(0, -1)) hidden.add(item.id);
     // 干活卡（§75.1）：这一轮全部调用；画在第一个干活的工具那一行（浏览只留最后一组，所以落在浏览上时用最后那一组）。
@@ -3639,9 +3666,12 @@ export function compactTurns(
            * 开场一句也是过程话（§93，改 §90 的「卡片之前的开场一句照旧是气泡」）：有干活卡的一轮里，
            * 「我来查看你当前在线电脑的屏幕…」后面就是干活的工具，和两步之间的话一样收进卡片（实时时下一步一开始就收）。
            * 出现在卡片之后的开场一句（先干活后说话）同理。
+           * 例外：当用户连发多条或中途插话（multiReplyTurn）且第一段是在回应前一条消息时，保留该气泡不折叠。
            */ else if (
             item.kind === "text" &&
-            (tone.get(item.id) === "step" || tone.get(item.id) === "lead")
+            (tone.get(item.id) === "step" || tone.get(item.id) === "lead") &&
+            !(multiReplyTurn && item.id === texts[0]?.id) &&
+            !/^\s*>\s+\S/.test(item.text)
           ) {
             const workAfter = turn.rest
               .slice(at + 1)
@@ -3683,6 +3713,43 @@ export function compactTurns(
         : [],
     );
     for (const id of supersededPageCalls(pageCalls)) hidden.add(id);
+    // Hark 式回复引用（`╭─`）：当用户连发了多条消息，或上一轮干活期间用户插话开启了新轮次时，
+    // 为助手可见的回复气泡自动附上所回应的用户原话胶囊。
+    const visibleBotTexts = texts.filter((t) => !hidden.has(t.id));
+    if (multiReplyTurn && visibleBotTexts.length >= 2) {
+      const firstUser = prevInterjected ? prevUsers[prevUsers.length - 1] : personUsers[0];
+      const lastUser = personUsers[personUsers.length - 1];
+      const firstBot = visibleBotTexts[0]!;
+      const lastBot = visibleBotTexts[visibleBotTexts.length - 1]!;
+      if (firstUser) {
+        const q1 = formatQuoteText(firstUser.text);
+        if (q1) replyTo.set(firstBot.id, { id: firstUser.id, text: q1 });
+      }
+      if (lastUser) {
+        const q2 = formatQuoteText(lastUser.text);
+        if (q2) replyTo.set(lastBot.id, { id: lastUser.id, text: q2 });
+      }
+    } else {
+      const replyTargetId = final ?? visibleBotTexts[0]?.id ?? null;
+      if (replyTargetId && personUsers.length > 0 && (personUsers.length > 1 || prevInterjected)) {
+        const targetUser = personUsers[personUsers.length - 1]!;
+        const quoteText = formatQuoteText(targetUser.text);
+        if (quoteText) replyTo.set(replyTargetId, { id: targetUser.id, text: quoteText });
+      }
+      if (prevInterjected && prevTurn) {
+        const prevVisibleBot = [...prevTurn.rest]
+          .reverse()
+          .find(
+            (r): r is Extract<TranscriptItem, { kind: "text" }> =>
+              r.kind === "text" && r.role === "assistant" && !hidden.has(r.id) && r.text.trim().length > 0,
+          );
+        const prevUser = prevUsers[prevUsers.length - 1];
+        if (prevVisibleBot && prevUser && !replyTo.has(prevVisibleBot.id)) {
+          const quoteText = formatQuoteText(prevUser.text);
+          if (quoteText) replyTo.set(prevVisibleBot.id, { id: prevUser.id, text: quoteText });
+        }
+      }
+    }
     const visible = [...turn.users, ...turn.rest].filter(
       (item) => !hidden.has(item.id),
     );
@@ -3695,5 +3762,5 @@ export function compactTurns(
       if (notice) fallbackAfter.set(last, notice);
     }
   });
-  return { tone, hidden, stoppedAfter, fallbackAfter, work };
+  return { tone, hidden, stoppedAfter, fallbackAfter, work, replyTo };
 }

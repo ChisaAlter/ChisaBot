@@ -37,7 +37,9 @@ import {
 } from "@/lib/rich-previews/extract";
 import { readImageDims } from "@/lib/image-dims";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
+import { CopyButton } from "@/components/ui/copy-button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { markdownComponents } from "@/lib/markdown";
 import { Lightbox, type LightboxImage } from "./lightbox";
 
 /**
@@ -214,25 +216,75 @@ function isSquarish(img: HTMLImageElement): boolean {
   return img.naturalHeight > 0 && img.naturalWidth / img.naturalHeight < 1.25;
 }
 
-function LinkCardSkeleton() {
+const LINK_DECK_ROTATIONS: Record<number, readonly number[]> = {
+  1: [0],
+  2: [-4.5, 4.5],
+  3: [-6, 0.5, 6],
+};
+const LINK_DECK_OFFSET_Y: Record<number, readonly number[]> = {
+  1: [0],
+  2: [0, 12],
+  3: [10, -2, 14],
+};
+
+function linkDeckStyle(index: number, total: number): CSSProperties | undefined {
+  if (total <= 1) return undefined;
+  const rots = LINK_DECK_ROTATIONS[Math.min(total, 3)] ?? LINK_DECK_ROTATIONS[3]!;
+  const ys = LINK_DECK_OFFSET_Y[Math.min(total, 3)] ?? LINK_DECK_OFFSET_Y[3]!;
+  const rot = rots[index % rots.length] ?? 0;
+  const y = ys[index % ys.length] ?? 0;
+  return {
+    "--rp-card-i": index,
+    "--rp-card-rot": `${rot}deg`,
+    "--rp-card-y": `${y}px`,
+    zIndex: index + 1,
+  } as CSSProperties;
+}
+
+function LinkCardSkeleton({
+  index = 0,
+  total = 1,
+}: {
+  index?: number;
+  total?: number;
+}) {
   return (
-    <div aria-hidden className="rp-link rp-link-skel" data-testid="link-card-skeleton">
+    <div
+      aria-hidden
+      className="rp-link rp-link-skel"
+      data-testid="link-card-skeleton"
+      style={linkDeckStyle(index, total)}
+    >
       <span className="rp-link-tile sky-skel-block" />
       <span className="rp-link-body">
-        <span className="rp-skel-bar sky-skel-bar" style={{ width: "78%" }} />
-        <span className="rp-skel-bar sky-skel-bar" style={{ width: "40%" }} />
+        <span className="rp-skel-bar sky-skel-bar" style={{ width: "82%" }} />
+        <span className="rp-skel-bar sky-skel-bar" style={{ width: "48%" }} />
       </span>
     </div>
   );
 }
 
-function LinkCard({ link }: { link: LinkRef }) {
+function LinkCard({
+  link,
+  index = 0,
+  total = 1,
+  focused = false,
+  dimmed = false,
+  onHoverChange,
+}: {
+  link: LinkRef;
+  index?: number;
+  total?: number;
+  focused?: boolean;
+  dimmed?: boolean;
+  onHoverChange?: (hovered: boolean) => void;
+}) {
   const { data, isPending, isError } = useQuery(previewQuery(link.url));
   const [imageBroken, setImageBroken] = useState(false);
   const [iconBroken, setIconBroken] = useState(false);
   // 接近方形的 og 图（logo）整张放进缩略图，宽的分享图居中裁（styles.css §48）。
   const [square, setSquare] = useState(false);
-  if (isPending && !isError) return <LinkCardSkeleton />;
+  if (isPending && !isError) return <LinkCardSkeleton index={index} total={total} />;
   const domain = data?.domain || hostOf(link.url);
   const degraded = !data || data.degraded === true;
   const image =
@@ -247,9 +299,16 @@ function LinkCard({ link }: { link: LinkRef }) {
       aria-label={`${link.label ? `${link.label}：` : ""}${title}（${domain}），在新窗口打开`}
       className="rp-link"
       data-degraded={degraded ? "" : undefined}
+      data-dimmed={dimmed ? "" : undefined}
+      data-focused={focused ? "" : undefined}
       data-testid="link-card"
       href={link.url}
+      onBlur={() => onHoverChange?.(false)}
+      onFocus={() => onHoverChange?.(true)}
+      onMouseEnter={() => onHoverChange?.(true)}
+      onMouseLeave={() => onHoverChange?.(false)}
       rel="noopener noreferrer"
+      style={linkDeckStyle(index, total)}
       target="_blank"
       title={data?.finalUrl || link.url}
     >
@@ -272,16 +331,20 @@ function LinkCard({ link }: { link: LinkRef }) {
             referrerPolicy="no-referrer"
             src={image}
           />
-        ) : favicon ? (
-          <img
-            alt=""
-            decoding="async"
-            onError={() => setIconBroken(true)}
-            referrerPolicy="no-referrer"
-            src={favicon}
-          />
         ) : (
-          <IconWorld aria-hidden />
+          <span className="rp-link-stage-badge">
+            {favicon ? (
+              <img
+                alt=""
+                decoding="async"
+                onError={() => setIconBroken(true)}
+                referrerPolicy="no-referrer"
+                src={favicon}
+              />
+            ) : (
+              <IconWorld aria-hidden />
+            )}
+          </span>
         )}
       </span>
       <span className="rp-link-body">
@@ -312,14 +375,30 @@ function LinkPreviewCardsInner({
   /** 流式中最后一行像是一行链接：多放一个骨架占位。 */
   pending?: boolean;
 }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const count = links.length + (pending ? 1 : 0);
   if (count === 0) return null;
+  const isDeck = count > 1;
   return (
-    <div className="rp-links" data-count={count} data-testid="link-cards">
-      {links.map((link) => (
-        <LinkCard key={link.url} link={link} />
+    <div
+      className="rp-links"
+      data-count={count}
+      data-deck={isDeck ? "" : undefined}
+      data-focused={isDeck && hoveredIndex !== null ? "" : undefined}
+      data-testid="link-cards"
+    >
+      {links.map((link, i) => (
+        <LinkCard
+          dimmed={isDeck && hoveredIndex !== null && hoveredIndex !== i}
+          focused={isDeck && hoveredIndex === i}
+          index={i}
+          key={link.url}
+          link={link}
+          onHoverChange={(on) => setHoveredIndex(on ? i : null)}
+          total={count}
+        />
       ))}
-      {pending ? <LinkCardSkeleton key="pending" /> : null}
+      {pending ? <LinkCardSkeleton index={links.length} key="pending" total={count} /> : null}
     </div>
   );
 }
@@ -343,7 +422,8 @@ export function ImagePile({
   const [open, setOpen] = useState<number | null>(null);
   const [broken, setBroken] = useState<Record<string, boolean>>({});
   const [spread, setSpread] = useState(false);
-  const [step, setStep] = useState(64);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [step, setStep] = useState(110);
   const root = useRef<HTMLDivElement | null>(null);
   // 按下那一刻是否已经摊开：轻点会先触发 focus（把这一摞摊开），click 时再读 state 就晚了。
   const spreadAtPress = useRef<boolean | null>(null);
@@ -439,17 +519,25 @@ export function ImagePile({
       <div
         aria-label={`${shown.length} 张图片`}
         className="rp-pile"
+        data-focused={hoveredIndex !== null ? "" : undefined}
         data-spread={spread || undefined}
         onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
             setSpread(false);
+            setHoveredIndex(null);
+          }
         }}
         onFocus={() => setSpread(true)}
         onMouseEnter={() => !coarse && setSpread(true)}
         onPointerDownCapture={() => {
           spreadAtPress.current = spread;
         }}
-        onMouseLeave={() => !coarse && setSpread(false)}
+        onMouseLeave={() => {
+          if (!coarse) {
+            setSpread(false);
+            setHoveredIndex(null);
+          }
+        }}
         ref={root}
         role="group"
         style={
@@ -461,12 +549,17 @@ export function ImagePile({
       >
         {visible.map((image, i) => {
           const order = visible.length - 1 - i; // 第一张在最上面
+          const isFocused = hoveredIndex === i;
+          const isDimmed = hoveredIndex !== null && hoveredIndex !== i;
           return (
             <button
               aria-label={`查看第 ${i + 1} 张图片（共 ${shown.length} 张）`}
               className="rp-pile-card"
+              data-dimmed={isDimmed ? "" : undefined}
+              data-focused={isFocused ? "" : undefined}
               // biome-ignore lint/suspicious/noArrayIndexKey: 同一地址可以出现两次（两个附件指向同一份文件），位置才是唯一的
               key={`${i}:${image.src}`}
+              onBlur={() => setHoveredIndex(null)}
               onClick={() => {
                 // 手机上第一次轻点先摊开，再点哪张开哪张。
                 const wasSpread = spreadAtPress.current ?? spread;
@@ -477,11 +570,14 @@ export function ImagePile({
                 }
                 setOpen(i);
               }}
+              onFocus={() => setHoveredIndex(i)}
+              onMouseEnter={() => !coarse && setHoveredIndex(i)}
+              onMouseLeave={() => !coarse && setHoveredIndex(null)}
               style={
                 {
                   "--rp-i": i,
                   "--rp-rot": `${ROTATIONS[i % ROTATIONS.length]}deg`,
-                  zIndex: order + 1,
+                  zIndex: isFocused ? 25 : order + 1,
                 } as CSSProperties
               }
               type="button"
@@ -607,6 +703,31 @@ function lastSegment(url: string): string {
   }
 }
 
+const READABLE_TEXT_EXTS = new Set([
+  "md",
+  "markdown",
+  "txt",
+  "log",
+  "json",
+  "csv",
+  "tsv",
+  "yaml",
+  "yml",
+  "toml",
+  "xml",
+  "html",
+  "css",
+  "js",
+  "ts",
+  "tsx",
+  "jsx",
+  "py",
+  "go",
+  "rs",
+  "sh",
+  "sql",
+]);
+
 function FileCardInner({
   url,
   name,
@@ -622,23 +743,52 @@ function FileCardInner({
   probeSize?: boolean;
 }) {
   const label = name || lastSegment(url) || "未命名文件";
-  const ext =
+  const ext = (
     extensionOf(label) ||
-    (mimeType?.split("/")[1] ?? "").replace(/^x-/, "").slice(0, 6);
+    (mimeType?.split("/")[1] ?? "").replace(/^x-/, "").slice(0, 6)
+  ).toLowerCase();
   const bytes = useRemoteSize(url, size, probeSize);
   const Icon = fileIcon(ext);
   const meta = [ext ? ext.toUpperCase() : "文件", formatBytes(bytes)]
     .filter(Boolean)
     .join(" · ");
-  // 本站文件才预览（DESIGN.md §56）：位图出缩略图、点开看大图；PDF 出「预览」。
+  // 本站文件才预览（DESIGN.md §56）：位图出缩略图、点开看大图；PDF 出「预览」；文本/Markdown 点开弹窗阅读。
   const sameOrigin = url.startsWith("/") && !url.startsWith("//");
   const isImage = sameOrigin && /^image\/(png|jpeg|gif|webp)$/.test(mimeType ?? "");
   const isPdf = sameOrigin && (mimeType === "application/pdf" || ext === "pdf");
+  const isTextDoc =
+    sameOrigin &&
+    !isImage &&
+    !isPdf &&
+    (READABLE_TEXT_EXTS.has(ext) ||
+      Boolean(mimeType?.startsWith("text/")) ||
+      mimeType === "application/json");
+  const isMarkdownDoc = ext === "md" || ext === "markdown" || mimeType === "text/markdown";
   const downloadHref = url.startsWith("/api/chat-files/") ? `${url}?download=1` : url;
   const [viewing, setViewing] = useState(false);
   const [thumbBroken, setThumbBroken] = useState(false);
+  const textQuery = useQuery(
+    {
+      queryKey: ["file-text-preview", url],
+      enabled: viewing && isTextDoc,
+      staleTime: 5 * 60_000,
+      retry: false,
+      queryFn: async () => {
+        const response = await fetch(url, { credentials: "include" });
+        if (!response.ok) throw new Error(String(response.status));
+        return response.text();
+      },
+    },
+    previewClient,
+  );
+  const canPreviewModal = (isImage && !thumbBroken) || isPdf || isTextDoc;
   return (
-    <div className="rp-file" data-preview={isImage && !thumbBroken ? "image" : isPdf ? "pdf" : undefined}>
+    <div
+      className="rp-file"
+      data-preview={
+        isImage && !thumbBroken ? "image" : isPdf ? "pdf" : isTextDoc ? "text" : undefined
+      }
+    >
       {isImage && !thumbBroken ? (
         <button aria-label={`查看 ${label}`} className="rp-file-thumb" onClick={() => setViewing(true)} type="button">
           <img alt="" decoding="async" loading="lazy" onError={() => setThumbBroken(true)} src={url} />
@@ -652,7 +802,7 @@ function FileCardInner({
         className="rp-file-text"
         href={url}
         onClick={(event) => {
-          if (isImage && !thumbBroken) {
+          if (canPreviewModal) {
             event.preventDefault();
             setViewing(true);
           }
@@ -664,8 +814,15 @@ function FileCardInner({
         <span className="rp-file-name">{label}</span>
         <span className="rp-file-meta">{meta}</span>
       </a>
-      {isPdf ? (
-        <button aria-label={`预览 ${label}`} className="rp-file-dl" data-testid="file-preview" onClick={() => setViewing(true)} title="预览" type="button">
+      {isPdf || isTextDoc ? (
+        <button
+          aria-label={`预览 ${label}`}
+          className="rp-file-dl"
+          data-testid="file-preview"
+          onClick={() => setViewing(true)}
+          title="预览"
+          type="button"
+        >
           <IconEye className="size-4" />
         </button>
       ) : null}
@@ -688,6 +845,49 @@ function FileCardInner({
               <DialogTitle className="truncate">{label}</DialogTitle>
             </DialogHeader>
             {viewing ? <iframe className="rp-pdf-frame" src={url} title={label} /> : null}
+          </DialogContent>
+        </Dialog>
+      ) : null}
+      {isTextDoc ? (
+        <Dialog onOpenChange={setViewing} open={viewing}>
+          <DialogContent className="chat-doc-dialog">
+            <DialogHeader className="chat-doc-dialog-head">
+              <div className="chat-doc-dialog-title-wrap">
+                <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                <DialogTitle className="truncate">{label}</DialogTitle>
+              </div>
+              <div className="chat-doc-dialog-actions mr-7">
+                {typeof textQuery.data === "string" ? (
+                  <CopyButton className="chat-draft-copy" size="sm" value={textQuery.data} variant="ghost">
+                    {"复制"}
+                  </CopyButton>
+                ) : null}
+                <a
+                  aria-label={`下载 ${label}`}
+                  className="rp-file-dl"
+                  download={label}
+                  href={downloadHref}
+                  title="下载"
+                >
+                  <IconDownload className="size-4" />
+                </a>
+              </div>
+            </DialogHeader>
+            <div className="chat-doc-dialog-body">
+              {textQuery.isPending ? (
+                <p className="text-sm text-muted-foreground">{"正在加载文档内容…"}</p>
+              ) : textQuery.isError ? (
+                <p className="text-sm text-muted-foreground">{"无法预览该文件，请点击右上角下载查看。"}</p>
+              ) : isMarkdownDoc ? (
+                <div className="chat-doc-inner">
+                  <SmoothStreamdown components={markdownComponents as never}>
+                    {textQuery.data ?? ""}
+                  </SmoothStreamdown>
+                </div>
+              ) : (
+                <pre className="rp-doc-pre">{textQuery.data ?? ""}</pre>
+              )}
+            </div>
           </DialogContent>
         </Dialog>
       ) : null}
