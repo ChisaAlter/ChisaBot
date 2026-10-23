@@ -1426,23 +1426,34 @@ const FIRST_PAINT_STAGGER_SECONDS = 0.04;
  */
 function createFirstPaintDelays() {
   const decided = new Map<string, number>();
+  const animated = new Map<string, boolean>();
   let settled = false;
 
   return {
+    seedHistory(items: readonly { id: string }[], isOpening: boolean) {
+      if (!settled || isOpening) {
+        for (const item of items) {
+          if (!decided.has(item.id)) {
+            decided.set(item.id, 0);
+            animated.set(item.id, false);
+          }
+        }
+      }
+    },
     settle() {
       settled = true;
     },
-    delayFor(id: string, index: number, total: number): number {
+    delayFor(id: string, _index: number, _total: number): number {
       const known = decided.get(id);
       if (known !== undefined) {
         return known;
       }
-      const offset = total - FIRST_PAINT_STAGGER_COUNT;
-      const place = index - Math.max(0, offset);
-      const delay =
-        settled || place < 0 ? 0 : place * FIRST_PAINT_STAGGER_SECONDS;
-      decided.set(id, delay);
-      return delay;
+      decided.set(id, 0);
+      animated.set(id, settled);
+      return 0;
+    },
+    animateFor(id: string): boolean {
+      return animated.get(id) ?? false;
     },
   };
 }
@@ -1472,9 +1483,11 @@ function createFirstPaintDelays() {
  * rather than as a page appearing all at once. `createFirstPaintDelays` decides which is which.
  */
 function Arriving({
+  animate = false,
   children,
   delay = 0,
 }: {
+  animate?: boolean | undefined;
   children: React.ReactNode;
   delay?: number;
 }) {
@@ -1499,15 +1512,19 @@ function Arriving({
        * all outside a flex container.
        */
       className="flex w-full flex-col"
-      initial={{
-        opacity: 0,
-        // Reduced motion keeps the fade and drops the movement: gentler, not absent.
-        transform: shouldReduceMotion ? "none" : "translateY(8px)",
-      }}
+      initial={
+        animate
+          ? {
+              opacity: 0,
+              // Reduced motion keeps the fade and drops the movement: gentler, not absent.
+              transform: shouldReduceMotion ? "none" : "translateY(8px)",
+            }
+          : false
+      }
       transition={{
         // Reduced motion gets the fade with no queue: a cascade is movement too, just spread over
         // time, and somebody who asked for less of it should not wait for their history to arrive.
-        delay: shouldReduceMotion ? 0 : delay,
+        delay: !animate || shouldReduceMotion ? 0 : delay,
         duration: ENTRANCE_SECONDS,
         ease: EASE_OUT,
       }}
@@ -1789,18 +1806,8 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
   );
 }
 
-const TranscriptMessage = memo(function TranscriptMessage({
-  canRegenerate = false,
-  commandNames = "",
-  delay,
-  editable = false,
-  memories,
-  messageId,
-  replyTo,
-  role,
-  text,
-  tone,
-}: {
+type TranscriptMessageProps = {
+  animate?: boolean | undefined;
   /** 这是最后一轮的回答：下面带「重新生成」（DESIGN.md §67）。 */
   canRegenerate?: boolean;
   commandNames?: string;
@@ -1810,19 +1817,76 @@ const TranscriptMessage = memo(function TranscriptMessage({
   memories?: readonly MemoryPillItem[] | undefined;
   messageId?: string;
   /** Hark 式回复引用（`╭─` + 原话胶囊）：多条消息插话或跨步骤回应时指向对应的用户消息。 */
-  replyTo?: ReplyTarget | undefined;
+  replyToId?: string | undefined;
+  replyToText?: string | undefined;
   role: "user" | "assistant";
   text: string;
   /** compactTurns：开场一句 / 过程话 / 结果。过程话画成一行淡色小字，开场和过程都没有复制。 */
   tone?: "lead" | "step" | "final" | undefined;
-}) {
+};
+
+function sameMemories(
+  a: readonly MemoryPillItem[] | undefined,
+  b: readonly MemoryPillItem[] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return (a?.length ?? 0) === (b?.length ?? 0);
+  if (a.length !== b.length) return false;
+  return a.every((item, index) => {
+    const other = b[index];
+    return (
+      other !== undefined &&
+      item.id === other.id &&
+      item.noteId === other.noteId &&
+      item.summary === other.summary &&
+      item.kind === other.kind &&
+      item.subject === other.subject &&
+      item.action === other.action
+    );
+  });
+}
+
+function sameTranscriptMessage(
+  prev: TranscriptMessageProps,
+  next: TranscriptMessageProps,
+): boolean {
+  return (
+    prev.animate === next.animate &&
+    prev.canRegenerate === next.canRegenerate &&
+    prev.commandNames === next.commandNames &&
+    prev.delay === next.delay &&
+    prev.editable === next.editable &&
+    prev.messageId === next.messageId &&
+    prev.replyToId === next.replyToId &&
+    prev.replyToText === next.replyToText &&
+    prev.role === next.role &&
+    prev.text === next.text &&
+    prev.tone === next.tone &&
+    sameMemories(prev.memories, next.memories)
+  );
+}
+
+const TranscriptMessage = memo(function TranscriptMessage({
+  animate = false,
+  canRegenerate = false,
+  commandNames = "",
+  delay,
+  editable = false,
+  memories,
+  messageId,
+  replyToId,
+  replyToText,
+  role,
+  text,
+  tone,
+}: TranscriptMessageProps) {
   const [editing, setEditing] = useState(false);
   const isUser = role === "user";
   if (!isUser && tone === "step") {
     return (
       <MessageRow align="start">
         <MessageContent>
-          <Arriving delay={delay}>
+          <Arriving animate={animate} delay={delay}>
             <div className="chat-step-line" data-cb-turn="step">
               <SmoothStreamdown components={markdownComponents}>
                 {text}
@@ -1842,7 +1906,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
     return (
       <MessageRow align="start">
         <MessageContent className="w-full">
-          <Arriving delay={delay}>
+          <Arriving animate={animate} delay={delay}>
             <ServerRow messageId={messageId ?? ""} text={text} />
           </Arriving>
         </MessageContent>
@@ -1854,7 +1918,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
     return (
       <MessageRow align="start">
         <MessageContent>
-          <Arriving delay={delay}>
+          <Arriving animate={animate} delay={delay}>
             <RoutineFiring instruction={firing} />
           </Arriving>
         </MessageContent>
@@ -1886,7 +1950,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
   return (
     <MessageRow align={align}>
       <MessageContent>
-        <Arriving delay={delay}>
+        <Arriving animate={animate} delay={delay}>
           {/*
             A Bot's message takes the whole column, not the width of its words: block content
             inside it — a fenced code block, a table — should span the transcript rather than
@@ -1898,13 +1962,16 @@ const TranscriptMessage = memo(function TranscriptMessage({
           */}
           {!isUser ? (
             <BotBubbles
+              animate={animate}
               components={richMarkdownComponents}
-              replyTo={replyTo}
+              delay={delay}
+              replyToId={replyToId}
+              replyToText={replyToText}
               text={text}
               tone={tone === "lead" ? "lead" : "final"}
             />
           ) : (
-            <div className="flex flex-col items-end gap-1">
+            <>
               {userQuoteSplit.quote ? (
                 <ReplyQuote align="end" text={userQuoteSplit.quote} />
               ) : null}
@@ -1953,7 +2020,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
                   )}
                 </BubbleContent>
               </Bubble>
-            </div>
+            </>
           )}
           {/* 链接卡 / 图片一摞（DESIGN.md §31）；开场一句不带。 */}
           {tone === "lead" ? null : (
@@ -1988,7 +2055,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
       </MessageContent>
     </MessageRow>
   );
-});
+}, sameTranscriptMessage);
 
 /** A quiet copy action under a Bot's answer; shows on hover, always reachable by keyboard. */
 function CopyMessage({
@@ -3126,12 +3193,12 @@ export function ChatTranscript({
 
   // 这一轮已经有干活卡（在第一个干活的工具那一行里，DESIGN.md §75.1）：末尾不再画「思考中」。
   const liveWorking =
-    busy &&
+    live &&
     !showToolActivity &&
     [...compact.work.values()].some((work) => work.live);
   // 机器人说了一句、还在想下一步（还没有干活卡）：§78.2 的小点。
   const pausedAfterText =
-    busy &&
+    live &&
     !liveWorking &&
     lastItem?.kind === "text" &&
     lastItem.role === "assistant"
@@ -3215,6 +3282,7 @@ export function ChatTranscript({
     delaysRef.current = createFirstPaintDelays();
   }
   const delays = delaysRef.current;
+  delays.seedHistory(items, opening);
 
   /*
    * Settled AFTER the render that first had items, not on mount: history arrives asynchronously, so
@@ -3223,10 +3291,10 @@ export function ChatTranscript({
    */
   const hasItems = items.length > 0;
   useEffect(() => {
-    if (hasItems) {
+    if (hasItems && !opening) {
       delays.settle();
     }
-  }, [hasItems, delays]);
+  }, [hasItems, opening, delays]);
 
   /*
    * 翻页对齐落在视口上 1/3，而不是顶到最上（DESIGN.md §94.7）：上面留着上一轮、下面留 2/3 给回答，
@@ -3506,6 +3574,7 @@ export function ChatTranscript({
         scrollAnchor={anchorRows.has(item.id)}
       >
         <TranscriptMessage
+          animate={delays.animateFor(item.id)}
           canRegenerate={item.id === regenerateId}
           commandNames={commandNames}
           delay={delays.delayFor(item.id, index, items.length)}
@@ -3515,7 +3584,8 @@ export function ChatTranscript({
           }
           memories={compact.memories.get(item.id)}
           messageId={item.id}
-          replyTo={compact.replyTo.get(item.id)}
+          replyToId={compact.replyTo.get(item.id)?.id}
+          replyToText={compact.replyTo.get(item.id)?.text}
           role={item.role}
           text={item.text}
           tone={compact.tone.get(item.id)}

@@ -1,8 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import { channelQueryOptions } from "@/lib/channels/queries";
+import { channelFromRoster, channelQueryOptions } from "@/lib/channels/queries";
+import { threadUi } from "@/lib/chat/ui-memory";
 import { useMainBot } from "@/lib/settings/message-list";
 import {
   readStoredPreference,
@@ -23,6 +24,7 @@ export function usePanelBot(): {
   routeBotId: string | undefined;
   choose: (botId: string) => void;
 } {
+  const queryClient = useQueryClient();
   const channelId = useParams({
     strict: false,
     select: (params) => (params as { channelId?: string }).channelId,
@@ -38,6 +40,8 @@ export function usePanelBot(): {
   const channel = useQuery({
     ...channelQueryOptions(channelId ?? ""),
     enabled: Boolean(channelId) && isChannel,
+    placeholderData: () =>
+      channelId ? channelFromRoster(queryClient, channelId) : undefined,
   });
   const agents = useQuery(agentListQueryOptions());
   const [stored, setStored] = useState<string | undefined>(
@@ -45,8 +49,12 @@ export function usePanelBot(): {
   );
 
   const routeBotId =
-    (isChannel && channel.data?.agentIds.length === 1
-      ? channel.data.agentIds[0]
+    (isChannel
+      ? channel.data?.agentIds.length === 1
+        ? channel.data.agentIds[0]
+        : channelId
+          ? threadUi(channelId)?.agent
+          : undefined
       : undefined) ??
     (typeof searchAgent === "string" && searchAgent ? searchAgent : undefined);
 

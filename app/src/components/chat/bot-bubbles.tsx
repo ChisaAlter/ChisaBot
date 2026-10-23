@@ -41,20 +41,31 @@ export type ReplyTarget = {
  */
 export const BEAT_SECONDS = 0.16;
 
+const EMPTY_COMPONENTS: Record<string, unknown> = {};
+
 export const BotBubbles = memo(function BotBubbles({
   text,
-  components,
+  components = EMPTY_COMPONENTS,
   delay = 0,
+  animate = false,
   tone,
   replyTo,
+  replyToId,
+  replyToText,
 }: {
   text: string;
-  components: Record<string, unknown>;
+  components?: Record<string, unknown>;
   delay?: number;
+  /** 仅对当前会话实时新到的回复播放逐段淡入；打开/切换会话时的历史消息直接实心绘制，避免整屏闪烁。 */
+  animate?: boolean | undefined;
   tone?: "lead" | "final" | undefined;
   /** 智能回复引用：当用户在回合内连发多条或隔着干活步骤时，若机器人未手写 `> 引用`，首段自动挂上 `╭─` 引用胶囊。 */
   replyTo?: ReplyTarget | undefined;
+  replyToId?: string | undefined;
+  replyToText?: string | undefined;
 }) {
+  const effectiveReplyText = replyToText ?? replyTo?.text;
+  const effectiveReplyId = replyToId ?? replyTo?.id;
   const display = useDisplayText(text);
   const segments = useMemo(() => splitBubbles(display), [display]);
   const hasExplicitQuote = useMemo(() => segments.some((s) => Boolean(s.quote)), [segments]);
@@ -63,28 +74,28 @@ export const BotBubbles = memo(function BotBubbles({
   if (initial.current === null) initial.current = segments.length;
   const reduce = useReducedMotion();
   if (segments.length === 0) {
-    return replyTo?.text ? (
+    return effectiveReplyText ? (
       <div className="chat-bubbles" data-cb-turn={tone}>
-        <ReplyQuote targetMessageId={replyTo.id} text={replyTo.text} />
+        <ReplyQuote targetMessageId={effectiveReplyId} text={effectiveReplyText} />
       </div>
     ) : null;
   }
   return (
     <div className="chat-bubbles" data-cb-turn={tone}>
       {segments.map((seg, i) => {
-        const effectiveQuote = seg.quote ?? (!hasExplicitQuote && i === 0 ? replyTo?.text : undefined);
-        const targetId = seg.quote ? undefined : replyTo?.id;
+        const effectiveQuote = seg.quote ?? (!hasExplicitQuote && i === 0 ? effectiveReplyText : undefined);
+        const targetId = seg.quote ? undefined : effectiveReplyId;
         return (
           <motion.div
             animate={{ opacity: 1, transform: "translateY(0px)" }}
             className="chat-bubble-arrive"
             data-slot="bubble-arriving"
-            initial={i === 0 ? false : { opacity: 0, transform: reduce ? "none" : "translateY(6px)" }}
+            initial={!animate || i === 0 ? false : { opacity: 0, transform: reduce ? "none" : "translateY(6px)" }}
             // 段落的序号就是它的身份：流式时只会在末尾追加，前面的段不会换位置。
             // biome-ignore lint/suspicious/noArrayIndexKey: 见上
             key={i}
             transition={{
-              delay: reduce || i >= (initial.current ?? 0) ? 0 : delay + i * BEAT_SECONDS,
+              delay: !animate || reduce || i >= (initial.current ?? 0) ? 0 : delay + i * BEAT_SECONDS,
               duration: ENTRANCE_SECONDS,
               ease: EASE_OUT,
             }}
@@ -93,7 +104,7 @@ export const BotBubbles = memo(function BotBubbles({
               components={components}
               quote={effectiveQuote}
               seg={seg}
-              targetMessageId={targetId ?? replyTo?.id}
+              targetMessageId={targetId ?? effectiveReplyId}
             />
           </motion.div>
         );
@@ -295,8 +306,9 @@ export function ReplyQuote({
   return (
     <button
       aria-label={`回应：${text}`}
-      className="chat-reply-quote"
+      className={align === "end" ? "chat-reply-quote self-end" : "chat-reply-quote"}
       data-align={align}
+      data-slot="reply-quote"
       data-testid="chat-reply-quote"
       onClick={(e) => {
         const selfRow = (e.currentTarget as HTMLElement).closest<HTMLElement>("[data-message-id]");

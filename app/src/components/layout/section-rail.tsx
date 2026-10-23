@@ -64,7 +64,7 @@ export function SectionRail({
   title: string;
   groups: RailGroup[];
   /** The icon button in the footer: the way across to the other area (settings ↔ admin). */
-  footerLink?: { label: string; to: string; icon: React.ComponentType<{ className?: string }> };
+  footerLink?: { label: string; to: string; search?: Record<string, unknown>; icon: React.ComponentType<{ className?: string }> };
   /** 标题下面、列表上面的东西（设置搜索框，DESIGN.md §97）。只在展开的左栏里画。 */
   header?: React.ReactNode;
   /** 给了就替换掉分组列表（设置搜索有结果 / 没结果时）。 */
@@ -118,7 +118,7 @@ export function SectionRail({
             {footerLink ? (
               <div className="glass-mini-links">
                 <RailTip label={footerLink.label}>
-                  <Link aria-label={footerLink.label} className="glass-mini-link" to={footerLink.to}>
+                  <Link aria-label={footerLink.label} className="glass-mini-link" search={footerLink.search as never} to={footerLink.to}>
                     <footerLink.icon className="size-[18px]" />
                   </Link>
                 </RailTip>
@@ -257,11 +257,11 @@ function NavRow({ item }: { item: RailItem }) {
  * 卡片底部只留一条「切换到另一个区域」（偏好设置 ⇄ 管理后台，只有管理员有）。账号在卡片下面单独的账号卡里
  * （DESIGN-v4，三个区域同一位置）。
  */
-function RailFooter({ link }: { link?: { label: string; to: string; icon: React.ComponentType<{ className?: string }> } }) {
+function RailFooter({ link }: { link?: { label: string; to: string; search?: Record<string, unknown>; icon: React.ComponentType<{ className?: string }> } }) {
   if (!link) return null;
   return (
     <div className="rail-foot">
-      <Link className="rail-switch" to={link.to}>
+      <Link className="rail-switch" search={link.search as never} to={link.to}>
         <link.icon className="size-[17px] shrink-0" />
         <span className="min-w-0 flex-1 truncate">{link.label}</span>
         <IconArrowRight className="rail-switch-arrow size-4" />

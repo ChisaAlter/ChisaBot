@@ -201,11 +201,15 @@ function socketUrl() {
   return buildSocketUrl("/api/channels/events");
 }
 
+const activeClients = new WeakSet<object>();
+
 export function useChannelEvents() {
   const queryClient = useQueryClient();
   const router = useRouter();
 
   useEffect(() => {
+    if (activeClients.has(queryClient)) return;
+    activeClients.add(queryClient);
     let socket: WebSocket | undefined;
     let retryTimer: number | undefined;
     let retryDelay = FIRST_RETRY_MS;
@@ -286,6 +290,7 @@ export function useChannelEvents() {
     connect();
 
     return () => {
+      activeClients.delete(queryClient);
       stopped = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       // Cleared first: the close below must not schedule a reconnect for a screen that is gone.

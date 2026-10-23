@@ -454,7 +454,13 @@ export function ChannelChat({
       if (
         alive &&
         stored.availability === "ready" &&
-        stored.messages.length > 0
+        stored.messages.length > 0 &&
+        !(
+          cached !== null &&
+          cached.length === stored.messages.length &&
+          cached.at(-1)?.id === stored.messages.at(-1)?.id &&
+          cached.at(-1)?.content === stored.messages.at(-1)?.content
+        )
       )
         setEarly(stored.messages);
     });

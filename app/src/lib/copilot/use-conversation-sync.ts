@@ -213,6 +213,7 @@ export function useConversationSync(
     /** 对话版本基线（§67）；版本变了（别的设备截断过）就按服务器回放重建，本机在跑时等它结束再重建。 */
     let knownRevision: string | null = null;
     let rebuildPending = false;
+    let lastOwnFinishAt = 0;
     /**
      * mode "merge"（平时）：不清空列表，只把新的接上——见下面的 onEvent。
      * mode "rebuild"（顺序和服务器不一致时）：照 SDK 原样，先清空再按服务器回放重建。
@@ -282,10 +283,12 @@ export function useConversationSync(
       },
       onRunFinalized: () => {
         rebase = true;
+        lastOwnFinishAt = Date.now();
         if (!connecting) reconcile();
       },
       onRunFailed: () => {
         rebase = true;
+        lastOwnFinishAt = Date.now();
       },
     });
     const off = onActivity((activity) => {
@@ -310,7 +313,8 @@ export function useConversationSync(
       if (rebase || !previous) {
         rebase = false;
         // 服务器在回答、这台却没在跟（刚回到前台、刚打开时那一轮还没开始）：接上。
-        if (activity.running) join("merge", true);
+        // 本机刚跑完一轮（3 秒内）收到的在途 running=true 是本机那一轮的尾声，不重接回放（否则会清空刚流完的回答）。
+        if (activity.running && Date.now() - lastOwnFinishAt > 3000) join("merge", true);
         return;
       }
       if (activity.workers !== previous.workers)

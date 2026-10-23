@@ -11,13 +11,16 @@ import { readSentAt, type SentAtReading } from "@/lib/chat/send-scroll";
 export function useStoppedTurnIds(threadId: string | null | undefined): Set<string> {
   const [ids, setIds] = useState<Set<string>>(() => new Set());
   useEffect(() => {
+    setIds((previous) => (previous.size === 0 ? previous : new Set()));
     if (!threadId) return;
     let alive = true;
     const load = () =>
       fetch(`/api/copilotkit/threads/${encodeURIComponent(threadId)}/stopped`, { credentials: "include" })
         .then((r) => (r.ok ? r.json() : { userMessageIds: [] }))
         .then((body: { userMessageIds?: string[] }) => {
-          if (alive) setIds(new Set(body.userMessageIds ?? []));
+          if (!alive) return;
+          const next = new Set(body.userMessageIds ?? []);
+          setIds((previous) => (sameSet(previous, next) ? previous : next));
         })
         .catch(() => {});
     void load();
@@ -33,6 +36,12 @@ export function useStoppedTurnIds(threadId: string | null | undefined): Set<stri
   return ids;
 }
 
+function sameSet(a: Set<string>, b: Set<string>) {
+  if (a.size !== b.size) return false;
+  for (const item of a) if (!b.has(item)) return false;
+  return true;
+}
+
 /**
  * 换过备用模型的轮次（DESIGN.md §61）：用户消息 id → 「主模型额度用完，已改用 X」。
  * 服务器从这一轮的 RUN_FINISHED 读出来；每轮结束后 1.5 秒重读一次（同「已停止」）。
@@ -40,7 +49,7 @@ export function useStoppedTurnIds(threadId: string | null | undefined): Set<stri
 export function useFallbackTurns(threadId: string | null | undefined): Map<string, string> {
   const [turns, setTurns] = useState<Map<string, string>>(() => new Map());
   useEffect(() => {
-    setTurns(new Map());
+    setTurns((previous) => (previous.size === 0 ? previous : new Map()));
     if (!threadId) return;
     let alive = true;
     const load = () =>

@@ -71,9 +71,10 @@ export function useTailFirstMount(
     startRef.current = startIndex;
     scrollHeightRef.current = nextHeight;
     if (startIndex >= prevStart || prevHeight <= 0) return;
-    if (atBottomRef.current) return;
     const delta = nextHeight - prevHeight;
-    if (delta > 0) el.scrollTop += delta;
+    if (delta > 0) {
+      el.scrollTop = atBottomRef.current ? nextHeight : el.scrollTop + delta;
+    }
   }, [startIndex, viewport]);
 
   useEffect(() => {

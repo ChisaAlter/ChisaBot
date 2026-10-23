@@ -10,6 +10,7 @@ import { SettingsSidebar } from "@/components/settings/settings-sidebar";
 import { type LeftMode, modeOfPath } from "@/lib/left-mode";
 import { CHANNEL_ROUTE_ID, ChannelPage } from "@/components/channels/channel-page";
 import { useLanding } from "@/lib/agents/landing";
+import { useChannelEvents } from "@/lib/channels/use-channel-events";
 
 /**
  * 登录之后的那一个外壳（DESIGN.md §98）。
@@ -28,6 +29,7 @@ export function AuthedShell() {
 }
 
 function ShellFrame({ pathname }: { pathname: string }) {
+  useChannelEvents();
   const scope = scopeOfPath(pathname);
   const mode = modeOfPath(pathname);
   const switched = useModeSwitched(scope === "app" ? mode : null);
@@ -98,7 +100,7 @@ function ChatStage({ pathname }: { pathname: string }) {
   return (
     <KeepAliveStage
       address={address}
-      idleVisible={(kept) => pathname === "/" && landingChannel === kept.channelId}
+      idleVisible={(kept) => pathname === "/" && (landing.state === "loading" || landingChannel === kept.channelId)}
       renderKept={(kept, { visible, epoch }) => (
         <ChannelPage
           channelId={kept.channelId}

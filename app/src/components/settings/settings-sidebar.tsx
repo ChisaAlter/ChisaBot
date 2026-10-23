@@ -8,6 +8,7 @@ import { SettingsFind, SettingsSearchBox, SettingsSearchResults, useSettingsSear
 import type { Sidebar } from "@/components/ui/sidebar";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
+import { modeTarget } from "@/lib/left-mode";
 import { type SettingsViewer, visibleGroups } from "@/lib/settings/registry";
 
 /**
@@ -45,13 +46,14 @@ export function SettingsSidebar(props: React.ComponentProps<typeof Sidebar>) {
     [viewer],
   );
   const search = useSettingsSearch(viewer);
+  const back = modeTarget("bots");
   return (
     <>
       <SettingsFind />
       <SectionRail
         ariaLabel={"设置分区"}
         title={"设置"}
-        footerLink={{ label: "返回聊天", to: "/", icon: IconMessageCircle }}
+        footerLink={{ label: "返回聊天", to: back.to, ...(back.search ? { search: back.search } : {}), icon: IconMessageCircle }}
         groups={groups}
         header={<SettingsSearchBox search={search} />}
         body={search.query.trim() ? <SettingsSearchResults search={search} /> : undefined}
