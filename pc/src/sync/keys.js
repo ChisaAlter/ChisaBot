@@ -6,7 +6,18 @@
  */
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+
+function tightenWindowsKeyAcl(keyFile) {
+  if (process.platform !== "win32") return;
+  try {
+    const user = process.env.USERNAME || os.userInfo().username;
+    if (!user) return;
+    execFileSync("icacls", [keyFile, "/inheritance:r", "/grant:r", `${user}:(F)`, "*S-1-5-18:(F)", "*S-1-5-32-544:(F)"], { stdio: "ignore", windowsHide: true, timeout: 5000 });
+  } catch {}
+}
 
 function sshString(buf) {
   const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
@@ -57,7 +68,10 @@ function ensureKey(dir, comment) {
   const pubFile = `${keyFile}.pub`;
   try {
     const pub = fs.readFileSync(pubFile, "utf8").trim();
-    if (/^ssh-ed25519 [A-Za-z0-9+/=]{60,120}( |$)/.test(pub) && fs.statSync(keyFile).size > 100) return { keyFile, publicKey: pub };
+    if (/^ssh-ed25519 [A-Za-z0-9+/=]{60,120}( |$)/.test(pub) && fs.statSync(keyFile).size > 100) {
+      tightenWindowsKeyAcl(keyFile);
+      return { keyFile, publicKey: pub };
+    }
   } catch {}
   fs.mkdirSync(dir, { recursive: true });
   const pair = generateKeyPair(comment);
@@ -65,6 +79,7 @@ function ensureKey(dir, comment) {
   try {
     fs.chmodSync(keyFile, 0o600);
   } catch {}
+  tightenWindowsKeyAcl(keyFile);
   fs.writeFileSync(pubFile, `${pair.publicKey}\n`, { mode: 0o644 });
   return { keyFile, publicKey: pair.publicKey };
 }

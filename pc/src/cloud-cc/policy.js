@@ -31,6 +31,14 @@ function inside(root, target, cwd) {
   return t === base || t.startsWith(`${base}/`);
 }
 
+function insideWorkspaceWork(root, target, cwd) {
+  if (!root) return false;
+  const base = normalize(root).replace(/\/+$/, "");
+  if (!/\/trees\/[^/]+$/.test(base)) return false;
+  const workRoot = normalize(`${base}/../../work`);
+  return inside(workRoot, target, cwd);
+}
+
 function pathOf(input) {
   if (!input || typeof input !== "object") return null;
   return input.file_path || input.notebook_path || input.path || null;
@@ -108,7 +116,7 @@ function decide(q) {
   if (SAFE_TOOLS.has(tool)) return { decision: "allow", reason: "不碰文件" };
   if (READ_TOOLS.has(tool)) {
     const p = pathOf(input);
-    if (!p || inside(root, p, cwd)) return { decision: "allow", reason: "会话目录里的只读操作" };
+    if (!p || inside(root, p, cwd) || (insideWorkspaceWork(root, p, cwd) && !/(^|\/)\.git(\/|$)/.test(normalize(p)))) return { decision: "allow", reason: "会话或主工作目录里的只读操作" };
     if (/(^|\/)\.claude(\/|$)/.test(normalize(p))) return { decision: "deny", reason: "不能读 Claude 自己的凭据目录。" };
     if (hasRule(q.rules, "read", normalize(p))) return { decision: "allow", reason: "本会话已允许" };
     return { decision: "ask", reason: `要读会话目录之外的文件：${p}`, rule: { kind: "read", value: normalize(p) } };

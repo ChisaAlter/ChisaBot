@@ -402,7 +402,14 @@ function createCloudCc(options) {
     let before = null;
     try {
       ctx.tree = await ensureTree(m.workspaceId, sessionId, m.git && m.git.branch);
+      const syncInfo = gitWs.takeSyncResult ? gitWs.takeSyncResult(m.workspaceId, sessionId) : null;
       before = await snapshot(m.workspaceId, sessionId, `before ${turnId}`);
+      if (syncInfo && syncInfo.conflicts && syncInfo.conflicts.length) {
+        emit(ctx, {
+          kind: "notice",
+          text: `主工作目录也改了 ${syncInfo.conflicts.slice(0, 8).join("、")}${syncInfo.conflicts.length > 8 ? ` 等 ${syncInfo.conflicts.length} 个文件` : ""}，与本会话已有改动同处冲突，会话目录保留了 Claude 当前版本（未覆盖）。`,
+        });
+      }
       const sock = await ensureHookServer();
       const settingsFile = path.join(os.tmpdir(), `chisabot-cc-settings-${turnId}.json`);
       const hook = hookCommand.map((p) => (/[\s"'$]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p)).join(" ");
@@ -465,7 +472,11 @@ function createCloudCc(options) {
           resolve({ code });
         });
         child.stdin.on("error", () => {});
-        child.stdin.end(String(m.prompt || ""));
+        const conflictHint =
+          syncInfo && syncInfo.conflicts && syncInfo.conflicts.length
+            ? `\n\n[系统提示：主工作目录近期也修改了 ${syncInfo.conflicts.slice(0, 8).join("、")}，因与本会话未合入改动同处冲突，本会话工作树保留了你的版本而未自动覆盖。若需修改这些文件或处理冲突，请先读取 ../../work/ 下对应的文件，将主工作目录的修改与当前会话的修改合并到当前目录中。]`
+            : "";
+        child.stdin.end(String(m.prompt || "") + conflictHint);
       });
       try {
         fs.unlinkSync(settingsFile);

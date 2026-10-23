@@ -218,12 +218,13 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
   const browserSubs = new Map<string, Set<(op: CcBrowserOp) => void>>(); // loginId -> 设置页
   const lastFrame = new Map<string, CcBrowserOp>(); // 新打开的画面先给最后一帧
   const vault = options.vault ?? null;
-  /** 电脑同步（sync.ts）挂进来的交接：PC 正在使用时写 work/ 要先交接。 */
+  /** 电脑同步（sync.ts）挂进来的交接：PC 正在使用时写 work/ 要先交接；每轮对话前先让在线电脑 flush 增量。 */
   const syncHooks: {
     withHandoff: null | (<T>(ownerUserId: string, workspaceId: string, write: (handoffId: string) => Promise<T>, changed: (result: T) => boolean) => Promise<T>);
+    beforeTurn?: null | ((ownerUserId: string, workspaceId: string) => Promise<unknown>);
     /** 删工作区时把电脑同步一起拆掉（绑定、租约、公钥、隧道、通知电脑），DESIGN.md §87。 */
     forgetWorkspace?: null | ((ownerUserId: string, workspaceId: string, nodeDeviceId: string | null) => Promise<unknown>);
-  } = { withHandoff: null, forgetWorkspace: null };
+  } = { withHandoff: null, beforeTurn: null, forgetWorkspace: null };
   const busyWorkspaces = new Set<string>(); // 正在克隆 / 合入 / 推送的工作区（同一时间只做一件写 git 的事）
   const github = options.github ?? null;
   const gitBase = (options.gitBase || "https://github.com").replace(/\/+$/, "");
@@ -552,6 +553,9 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
     switch (event.kind) {
       case "status":
         setStatus(turn, turn.status, typeof event.text === "string" ? event.text : null);
+        break;
+      case "notice":
+        if (typeof event.text === "string" && event.text) pushPart(turn, { type: "notice", text: event.text.slice(0, 600) });
         break;
       case "init":
         if (turn.statusText) setStatus(turn, turn.status, "Claude 正在想");
@@ -883,6 +887,12 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
     live.set(sessionId, turn);
     await sql.unsafe("UPDATE chisabot_cc_sessions SET status = 'running', updated_at = now() WHERE id = $1", [sessionId]);
     broadcast(sessionId, { op: "message", seq: turn.seq, message });
+    if (["pc_active", "syncing"].includes(ws.sync_state) && syncHooks.beforeTurn) {
+      setStatus(turn, "running", "正在同步电脑最新保存的改动");
+      await syncHooks.beforeTurn(ownerUserId, ws.id).catch(() => {});
+      if (turn.stopRequested || live.get(sessionId) !== turn) return { turnId, messageId: message.id };
+      setStatus(turn, "running", "正在连接云端工作区");
+    }
     const sent = hub.sendRaw(ws.node_device_id, {
       type: "cc_turn",
       sessionId,
@@ -1282,7 +1292,7 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
   async function mergeSession(ownerUserId: string, sessionId: string) {
     const { session, ws } = await gitSession(ownerUserId, sessionId);
     const handoff = ["cloud_only", "paused"].includes(ws.sync_state) ? null : syncHooks.withHandoff;
-    if (!["cloud_only", "paused"].includes(ws.sync_state) && (!handoff || ws.sync_state !== "pc_active"))
+    if (!["cloud_only", "paused"].includes(ws.sync_state) && (!handoff || !["pc_active", "syncing"].includes(ws.sync_state)))
       throw new CcError(ws.sync_state === "conflict" ? "这个工作区有没处理完的同步冲突，先在电脑上处理。" : "电脑正在同步这个工作区，等同步完成再合入。", 409);
     busyWorkspaces.add(ws.id);
     try {
@@ -1764,8 +1774,9 @@ export function createCloudCcService(options: CloudCcServiceOptions) {
     /** 电脑文件夹同步（sync.ts）用：节点上的 cc_rpc，和这个人的节点。 */
     nodeRpc: rpc,
     nodeFor,
-    setSyncHooks: (hooks: { withHandoff: (typeof syncHooks)["withHandoff"]; forgetWorkspace?: (typeof syncHooks)["forgetWorkspace"] }) => {
+    setSyncHooks: (hooks: { withHandoff: (typeof syncHooks)["withHandoff"]; beforeTurn?: (typeof syncHooks)["beforeTurn"]; forgetWorkspace?: (typeof syncHooks)["forgetWorkspace"] }) => {
       syncHooks.withHandoff = hooks.withHandoff;
+      syncHooks.beforeTurn = hooks.beforeTurn ?? null;
       syncHooks.forgetWorkspace = hooks.forgetWorkspace ?? null;
     },
     // 测试用

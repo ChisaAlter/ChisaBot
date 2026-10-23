@@ -158,9 +158,11 @@ export function CcGitCard({ part, sessionId }: { part: Extract<CcPart, { type: "
   const fix = useAsyncAction(
     async () => {
       if (!sessionId) return;
+      const targetDesc = part.target ? `（${part.target}）` : "";
+      const rebaseHint = part.target ? `；若为 Git 分支提交冲突也可执行 git rebase ${part.target}` : "";
       await ccApi.send(
         sessionId,
-        `把会话分支 ${part.branch} 合入工作目录（${part.target}）时有冲突${part.files?.length ? `，冲突的文件：${part.files.join("、")}` : ""}。请在这个会话里把分支 rebase 到 ${part.target} 上（git rebase ${part.target}），解决冲突后提交，然后告诉我，我再点「合入工作目录」。`,
+        `把会话分支 ${part.branch} 合入工作目录${targetDesc}时有冲突${part.files?.length ? `，冲突的文件：${part.files.join("、")}` : ""}。请先读取主工作目录（../../work/ 下对应文件）的最新内容，在当前会话目录里把双方修改合并好${rebaseHint}，完成后告诉我，我再点「合入工作目录」。`,
       );
     },
     { errorToast: (e) => e.message },
@@ -175,7 +177,7 @@ export function CcGitCard({ part, sessionId }: { part: Extract<CcPart, { type: "
           ? "已放进工作目录（没有提交）"
           : `已合入工作目录 · ${part.target}`;
     const sub = conflict
-      ? `工作目录没有动。${part.files?.length ? `冲突：${part.files.slice(0, 4).join("、")}${part.files.length > 4 ? ` 等 ${part.files.length} 个` : ""}。` : ""}让 Claude 先 rebase 再合入。`
+      ? `工作目录没有动。${part.files?.length ? `冲突：${part.files.slice(0, 4).join("、")}${part.files.length > 4 ? ` 等 ${part.files.length} 个` : ""}。` : ""}可点下方按钮让 Claude 合并冲突后再合入。`
       : part.state === "up_to_date"
         ? "没有新的提交需要合入。"
         : part.state === "applied"

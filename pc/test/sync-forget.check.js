@@ -20,11 +20,15 @@ function fakeMutagen() {
   const sessions = new Map();
   const calls = [];
   let failCreate = null;
+  let failFlush = null;
   return {
     calls,
     sessions,
     failNextCreate(msg) {
       failCreate = msg;
+    },
+    failNextFlush(msg) {
+      failFlush = msg;
     },
     startDaemon: async () => true,
     stopDaemon: async () => true,
@@ -44,7 +48,14 @@ function fakeMutagen() {
     },
     pause: async (ws) => calls.push(["pause", ws]),
     resume: async (ws) => calls.push(["resume", ws]),
-    flush: async (ws) => calls.push(["flush", ws]),
+    flush: async (ws) => {
+      calls.push(["flush", ws]);
+      if (failFlush) {
+        const m = failFlush;
+        failFlush = null;
+        throw new Error(m);
+      }
+    },
     terminate: async (ws) => {
       calls.push(["terminate", ws]);
       sessions.delete(sessionName(ws));
@@ -217,3 +228,33 @@ test("explain(): ssh / mutagen noise → one Chinese line; server's own Chinese 
   assert.equal(explain(new Error("云端的同步组件没有就绪（连不上同步边车：ECONNREFUSED），这次什么都没有建。")), "云端的同步组件没有就绪（连不上同步边车：ECONNREFUSED），这次什么都没有建。");
   assert.equal(explain(new Error("云端工作区不在线。")), "云端工作区不在线。");
 });
+
+test("createFromFolder: initial flush failure keeps workspace in syncing state (no rollback) and sync_flush flushes on demand", async () => {
+  const { folder, mut, srv, m } = setup();
+  assert.equal(await m.start(), true);
+  mut.failNextFlush("flush timed out");
+  const r = await m.createFromFolder({ dir: folder, name: "Seelen-UI" });
+  assert.equal(r.state, "syncing");
+  assert.equal(r.deferred, true);
+  const wsId = r.workspace.id;
+  assert.equal(srv.workspaces.size, 1, "workspace kept on server");
+  assert.equal(srv.calls.some(([p]) => p === "/abandon"), false, "did not abandon workspace");
+  assert.ok(m._internal.binding(wsId), "local binding kept");
+
+  // Server sends sync_flush before starting a turn
+  srv.calls.length = 0;
+  m.onServerMessage({ type: "sync_flush", workspaceId: wsId, flushId: "fl_123" });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(mut.calls.some(([op, ws]) => op === "flush" && ws === wsId));
+  assert.ok(srv.calls.some(([p, b]) => p === "/flush" && b.workspaceId === wsId && b.flushId === "fl_123" && b.ok === true));
+  assert.equal(m._internal.binding(wsId).lastState, "pc_active", "onFlush transitions deferred syncing to pc_active");
+
+  // Release and re-enable with deferred flush
+  await m.release(wsId);
+  mut.failNextFlush("enable flush timed out");
+  const en = await m.enable({ workspaceId: wsId });
+  assert.equal(en.state, "syncing");
+  assert.equal(en.deferred, true);
+  await m.stop();
+});
+

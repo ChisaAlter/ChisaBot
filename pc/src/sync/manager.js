@@ -349,7 +349,33 @@ function createSyncManager(options) {
     return { available: started, reason: startError || null, platform, ignores: IGNORES, bindings: items };
   }
 
-  /** 监视：Mutagen 状态 → 服务器（五种状态）。 */
+  /** 轻量读取本机 .git/HEAD 与当前分支引用指纹（不拉起子进程），用于在 tick 中感知本地新 commit 或切分支。 */
+  function gitHeadStamp(dir) {
+    try {
+      const gitDir = path.join(dir, ".git");
+      const headRaw = fs.readFileSync(path.join(gitDir, "HEAD"), "utf8").trim();
+      if (headRaw.startsWith("ref:")) {
+        const ref = headRaw.slice(4).trim();
+        let sha = "";
+        try {
+          sha = fs.readFileSync(path.join(gitDir, ref), "utf8").trim();
+        } catch {
+          try {
+            const packed = fs.readFileSync(path.join(gitDir, "packed-refs"), "utf8");
+            const m = new RegExp(`^([0-9a-f]{40})\\s+${ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m").exec(packed);
+            if (m) sha = m[1];
+          } catch {}
+        }
+        return `${ref}:${sha}`;
+      }
+      return headRaw;
+    } catch {
+      return "";
+    }
+  }
+
+  /** 监视：Mutagen 状态 → 服务器（五种状态）；当后台首次上传完成或本地产生新 Git 提交时自动对齐 Git 历史。 */
+  const lastGitStamp = new Map();
   let ticking = false;
   async function tick() {
     if (ticking || !started) return;
@@ -363,8 +389,24 @@ function createSyncManager(options) {
         const s = sessions.find((x) => x.name === sessionName(b.workspaceId)) || null;
         const c = classify(s);
         if (c.state === "paused") continue;
-        if (c.state === "conflict") await report(b.workspaceId, "conflict", c.detail, conflictList(s));
-        else await report(b.workspaceId, c.state, c.detail);
+        if (c.state === "conflict") {
+          await report(b.workspaceId, "conflict", c.detail, conflictList(s));
+          continue;
+        }
+        if (c.state === "pc_active") {
+          const stamp = b.path ? gitHeadStamp(b.path) : "";
+          const prevStamp = lastGitStamp.get(b.workspaceId);
+          const becameActive = b.lastState && b.lastState !== "pc_active";
+          const headMoved = !!stamp && prevStamp !== undefined && prevStamp !== stamp;
+          if (stamp) lastGitStamp.set(b.workspaceId, stamp);
+          if (becameActive || headMoved) {
+            const g = await gitSync(b.workspaceId).catch(() => "error");
+            if (g === "diverged") continue;
+            const afterStamp = b.path ? gitHeadStamp(b.path) : "";
+            if (afterStamp) lastGitStamp.set(b.workspaceId, afterStamp);
+          }
+        }
+        await report(b.workspaceId, c.state, c.detail);
       }
       changed();
     } finally {
@@ -643,11 +685,18 @@ function createSyncManager(options) {
       return await withBusy(created.id, "上传中", async (setText) => {
         await bindAndSession(created.id, dir, { name: created.name, source: "local" }, setText);
         await report(created.id, "syncing", "第一次上传");
-        await flushWithProgress(created.id, setText, "上传中");
-        const result = await afterFlush(created.id);
-        if (!enableSync && result === "pc_active") await releaseInner(created.id, setText);
-        audit({ operation: "sync_create", summary: `工作区「${created.name}」已上传（${info.files} 个文件）`, outcome: "succeeded" });
-        return { workspace: created, state: enableSync ? result : "paused", files: info.files, bytes: info.bytes };
+        try {
+          await flushWithProgress(created.id, setText, "上传中");
+          const result = await afterFlush(created.id);
+          if (!enableSync && result === "pc_active") await releaseInner(created.id, setText);
+          audit({ operation: "sync_create", summary: `工作区「${created.name}」已上传（${info.files} 个文件）`, outcome: "succeeded" });
+          return { workspace: created, state: enableSync ? result : "paused", files: info.files, bytes: info.bytes };
+        } catch (flushErr) {
+          log(`首次全量上传未在单次 flush 内完成，转为后台继续同步（${created.id}）：${flushErr.message}`);
+          await report(created.id, "syncing", "后台继续上传中").catch(() => {});
+          audit({ operation: "sync_create", summary: `工作区「${created.name}」已创建，首次上传转入后台继续（${explain(flushErr)}）`, outcome: "succeeded" });
+          return { workspace: created, state: "syncing", deferred: true, files: info.files, bytes: info.bytes };
+        }
       });
     } catch (e) {
       if (!ws) throw new Error(`新建没有成功：${explain(e)}`);
@@ -676,10 +725,17 @@ function createSyncManager(options) {
       await report(workspaceId, "syncing", empty ? "第一次从云端下载" : "对比两边");
       // 第一次拉到空文件夹：Git 历史先从云端拉下来（§4.4），文件由 Mutagen 搬
       if (empty && r.isGit && (await gitAvailable())) await gitCloneInto(workspaceId, target).catch((e) => log(`git 拉取失败：${e.message}`));
-      await flushWithProgress(workspaceId, setText, empty ? "下载中" : "对比中");
-      const result = await afterFlush(workspaceId);
-      audit({ operation: "sync_enable", summary: `开启同步「${binding(workspaceId)?.name}」→ ${target}`, outcome: result });
-      return { state: result };
+      try {
+        await flushWithProgress(workspaceId, setText, empty ? "下载中" : "对比中");
+        const result = await afterFlush(workspaceId);
+        audit({ operation: "sync_enable", summary: `开启同步「${binding(workspaceId)?.name}」→ ${target}`, outcome: result });
+        return { state: result };
+      } catch (flushErr) {
+        log(`开启同步首次 flush 未在单次内完成，转为后台继续（${workspaceId}）：${flushErr.message}`);
+        await report(workspaceId, "syncing", "后台继续同步中").catch(() => {});
+        audit({ operation: "sync_enable", summary: `开启同步「${binding(workspaceId)?.name}」已转入后台继续（${explain(flushErr)}）`, outcome: "succeeded" });
+        return { state: "syncing", deferred: true };
+      }
     });
   }
 
@@ -1002,6 +1058,29 @@ function createSyncManager(options) {
     }
   }
 
+  /** 云端对话启动前请求增量 flush：把刚在编辑器保存的文件尽快推上云端 work/，不暂停同步。 */
+  async function onFlush({ workspaceId, flushId }) {
+    const b = binding(workspaceId);
+    if (!b || !b.enabled || !started || handoffs.has(workspaceId)) {
+      await api("POST", "/flush", { workspaceId, flushId, ok: false }).catch(() => {});
+      return;
+    }
+    let ok = true;
+    try {
+      await mutagen.resume(workspaceId).catch(() => {});
+      await mutagen.flush(workspaceId, 6_000);
+      if (!busy.has(workspaceId) && b.lastState && b.lastState !== "pc_active") {
+        await afterFlush(workspaceId).catch(() => {});
+      } else if (!b.gitConflict) {
+        await gitSync(workspaceId).catch(() => {});
+      }
+    } catch (e) {
+      ok = false;
+      log(`回合前增量 flush 未在时限内完成（后台继续）：${e.message}`);
+    }
+    await api("POST", "/flush", { workspaceId, flushId, ok }).catch(() => {});
+  }
+
   /** 设备 WSS 上服务器发来的同步消息（core.js 的 onExtra）。 */
   function onServerMessage(message) {
     if (!message || typeof message.type !== "string") return false;
@@ -1009,6 +1088,11 @@ function createSyncManager(options) {
       // 工作区在网页上删了（§87）：服务器确认后放下本机记录（对账，不光凭这一条消息）
       if (!ID.test(String(message.workspaceId || ""))) return false;
       if (started) void reconcileGone([String(message.workspaceId)]).catch((e) => log(`对账失败：${e.message}`));
+      return true;
+    }
+    if (message.type === "sync_flush") {
+      if (!ID.test(String(message.workspaceId || "")) || !ID.test(String(message.flushId || ""))) return false;
+      void onFlush(message);
       return true;
     }
     if (!ID.test(String(message.workspaceId || "")) || !ID.test(String(message.handoffId || ""))) return false;

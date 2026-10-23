@@ -53,6 +53,8 @@ function harness(extra = {}) {
 test("policy: read-only whitelist, forbidden, ask", () => {
   const root = "/w/projects/scratch/trees/s1";
   assert.equal(decide({ tool: "Read", input: { file_path: `${root}/a.txt` }, root }).decision, "allow");
+  assert.equal(decide({ tool: "Read", input: { file_path: "../../work/a.txt" }, root }).decision, "allow");
+  assert.equal(decide({ tool: "Edit", input: { file_path: "../../work/a.txt" }, root }).decision, "deny");
   assert.equal(decide({ tool: "Read", input: { file_path: "/etc/passwd" }, root }).decision, "ask");
   assert.equal(decide({ tool: "Write", input: { file_path: "/etc/x" }, root }).decision, "deny");
   assert.equal(decide({ tool: "Edit", input: { file_path: "src/a.ts" }, root }).decision, "allow");

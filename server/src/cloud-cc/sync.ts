@@ -408,23 +408,78 @@ export function createCloudSyncService(options: CloudSyncOptions) {
     return r;
   }
 
-  // ── 交接（§4.3 ①–⑤） ───────────────────────────────────────────────
+  // ── 交接（§4.3 ①–⑤）与回合前增量对齐 ──────────────────────────────────
 
   type Handoff = { id: string; workspaceId: string; deviceId: string; ready: () => void; fail: (e: Error) => void; released: () => void; changed: boolean | null };
   const handoffs = new Map<string, Handoff>(); // workspaceId → 正在进行的交接
+  type PendingFlush = { id: string; workspaceId: string; deviceId: string; done: (ok: boolean) => void };
+  const flushes = new Map<string, PendingFlush>(); // workspaceId → 回合前正在等待的电脑增量上传
+
+  /**
+   * 云端 Claude Code 启动新一轮对话前：若工作区正处于 pc_active 且绑定电脑在线，通知电脑立即做一次轻量
+   * Mutagen flush（不暂停同步、不抢租约），确保本地刚保存的文件先到云端 work/ 再切会话快照。
+   * 电脑离线或超时（默认 8 秒）自动放行，不阻塞云端对话。
+   */
+  async function flushBeforeTurn(ownerUserId: string, workspaceId: string, timeoutMs = 8_000): Promise<{ synced: boolean; skipped?: string }> {
+    const ws = await workspaceFor(ownerUserId, workspaceId).catch(() => null);
+    if (!ws || !["pc_active", "syncing"].includes(ws.sync_state)) return { synced: false, skipped: "not_pc_active" };
+    const b = await activeBinding(ws.id);
+    if (!b) return { synced: false, skipped: "no_binding" };
+    if (handoffs.has(ws.id) || flushes.has(ws.id)) return { synced: false, skipped: "busy" };
+    if (!hub.isOnline(b.pc_device_id)) return { synced: false, skipped: "pc_offline" };
+    const id = `fl_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+    return await new Promise<{ synced: boolean; skipped?: string }>((resolve) => {
+      let settled = false;
+      const finish = (ok: boolean, skipped?: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (flushes.get(ws.id)?.id === id) flushes.delete(ws.id);
+        resolve(skipped ? { synced: ok, skipped } : { synced: ok });
+      };
+      const timer = setTimeout(() => finish(false, "timeout"), timeoutMs);
+      unref(timer);
+      flushes.set(ws.id, { id, workspaceId: ws.id, deviceId: b.pc_device_id, done: (ok) => finish(ok) });
+      if (!hub.sendRaw(b.pc_device_id, { type: "sync_flush", workspaceId: ws.id, flushId: id })) {
+        finish(false, "pc_offline");
+      }
+    });
+  }
+
+  async function flushDone(device: DeviceRecord, input: { workspaceId: string; flushId: string; ok?: boolean }) {
+    const { ws } = await needBinding(device, input.workspaceId);
+    const f = flushes.get(ws.id);
+    if (f && f.id === input.flushId && f.deviceId === device.id) f.done(input.ok !== false);
+    return { ok: true };
+  }
+
+  /** 绑定电脑离线时云端要合入：自动将同步降级为 paused（租约收回 cloud），立即完成云端合入，待电脑重连后对齐。 */
+  async function autoPauseOffline(ownerUserId: string, ws: WorkspaceRow, b: BindingRow, why: string) {
+    await sql.unsafe("UPDATE chisabot_cc_sync_bindings SET enabled = false, last_state = 'paused', last_detail = $2, updated_at = now() WHERE id = $1", [b.id, why]);
+    await setState(ws, "paused", "cloud", null, b.binding_epoch);
+    await pushKeys(ws.node_device_id).catch(() => false);
+    const closed = closeTunnels((t) => t.bindingId === b.id, why);
+    await event(ownerUserId, ws.id, "auto_paused_offline", null, { device: b.pc_device_id, tunnels: closed, why });
+  }
 
   /**
    * PC 正在使用时云端要写 work/：① 发 sync_begin 给电脑 → ② 电脑先把改动推上去（Mutagen flush + Git），暂停 Mutagen，
    * 记下交接记录，回 ready → ③ 租约 = 云端:交接号（节点只认带这个号的写入），write(handoffId) → ④ sync_end{changed}：
-   * 电脑恢复同步、拉回结果 → ⑤ 电脑回 released，租约回电脑。电脑 30 秒没回 ready：这次不写，租约不动，报错（可以等它上线或强制收回）。
-   * 写完后电脑没回 released（断线、被关掉）：租约留在「交接」，等电脑上线拿交接记录来对（recover），对不上就是冲突。
+   * 电脑恢复同步、拉回结果 → ⑤ 电脑回 released，租约回电脑。
+   * 若绑定电脑已离线，自动转为「已暂停」（租约收回云端）并直接在云端写入，不等电脑上线。
    */
   async function withHandoff<T>(ownerUserId: string, workspaceId: string, write: (handoffId: string) => Promise<T>, changed: (result: T) => boolean): Promise<T> {
     const ws = await workspaceFor(ownerUserId, workspaceId);
     const b = await activeBinding(ws.id);
     if (!b) return await write("");
     if (handoffs.has(ws.id)) throw new SyncError("这个工作区正在和电脑交接，等一下再试。", 409);
-    if (!hub.isOnline(b.pc_device_id)) throw new SyncError("电脑离线，没法交接。等电脑上线，或者在工作区的同步面板里「强制收回到云端」。", 409);
+    if (!hub.isOnline(b.pc_device_id)) {
+      if (!hub.isOnline(ws.node_device_id)) throw new SyncError("云端工作区不在线。", 409);
+      await autoPauseOffline(ownerUserId, ws, b, "电脑离线，云端合入时自动暂停同步");
+      await nodeRpc(ws.node_device_id, "sync_lease", { workspaceId: ws.id, holder: "cloud", handoffId: null, epoch: b.binding_epoch });
+      return await write("");
+    }
+    if (ws.sync_state === "syncing") throw new SyncError("电脑正在同步这个工作区，等同步完成再合入。", 409);
     const id = `ho_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
     let onReady: () => void = () => {};
     let onFail: (e: Error) => void = () => {};
@@ -442,7 +497,13 @@ export function createCloudSyncService(options: CloudSyncOptions) {
     let wrote = false;
     try {
       // ①
-      if (!hub.sendRaw(b.pc_device_id, { type: "sync_begin", workspaceId: ws.id, handoffId: id })) throw new SyncError("电脑离线，没法交接。", 409);
+      if (!hub.sendRaw(b.pc_device_id, { type: "sync_begin", workspaceId: ws.id, handoffId: id })) {
+        if (!hub.isOnline(ws.node_device_id)) throw new SyncError("云端工作区不在线。", 409);
+        await autoPauseOffline(ownerUserId, ws, b, "电脑离线，云端合入时自动暂停同步");
+        await nodeRpc(ws.node_device_id, "sync_lease", { workspaceId: ws.id, holder: "cloud", handoffId: null, epoch: b.binding_epoch });
+        wrote = true;
+        return await write("");
+      }
       const t = setTimeout(() => h.fail(new SyncError("电脑 30 秒没有响应交接，这次没有写工作目录。等电脑上线再试，或者在同步面板里「强制收回到云端」。", 409)), HANDOFF_READY_MS);
       unref(t);
       try {
@@ -813,6 +874,7 @@ export function createCloudSyncService(options: CloudSyncOptions) {
   const resolveBody = z.object({ workspaceId: z.string().max(80), path: z.string().max(1000), choice: z.enum(["cloud", "pc", "both", "git_cloud", "git_retry"]) });
   const gitBody = z.object({ workspaceId: z.string().max(80), op: z.enum(["info", "adopt"]), branch: z.string().max(200).nullable().optional(), sha: z.string().max(64).nullable().optional() });
   const handoffBody = z.object({ workspaceId: z.string().max(80), handoffId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/), step: z.enum(["ready", "released", "failed", "recover"]), detail: z.string().max(500).nullable().optional() });
+  const flushBody = z.object({ workspaceId: z.string().max(80), flushId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/), ok: z.boolean().optional() });
   const wsBody = z.object({ workspaceId: z.string().max(80) });
   const reconcileBody = z.object({ workspaceIds: z.array(z.string().max(80)).max(200) });
 
@@ -838,6 +900,7 @@ export function createCloudSyncService(options: CloudSyncOptions) {
     sub.post("/resolve", async (c) => c.json(await resolve(c.get("device"), resolveBody.parse(await c.req.json().catch(() => ({}))))));
     sub.post("/git", async (c) => c.json(await git(c.get("device"), gitBody.parse(await c.req.json().catch(() => ({}))))));
     sub.post("/handoff", async (c) => c.json(await handoffStep(c.get("device"), handoffBody.parse(await c.req.json().catch(() => ({}))))));
+    sub.post("/flush", async (c) => c.json(await flushDone(c.get("device"), flushBody.parse(await c.req.json().catch(() => ({}))))));
     sub.post("/reconcile", async (c) => c.json(await reconcile(c.get("device"), reconcileBody.parse(await c.req.json().catch(() => ({}))))));
     sub.post("/abandon", async (c) => {
       const device = c.get("device");
@@ -879,9 +942,10 @@ export function createCloudSyncService(options: CloudSyncOptions) {
     closeDeviceTunnels,
     emergencyStop,
     withHandoff,
+    flushBeforeTurn,
     forgetWorkspace,
     cleanupOrphans,
     // 测试用
-    _internal: { tickets, tunnels, bind, report, release, ticket, view, forceReclaim, createLocalWorkspace, createLocal, lease, resolve, git, handoffStep, handoffs, reconcile, dropNewLocal },
+    _internal: { tickets, tunnels, bind, report, release, ticket, view, forceReclaim, createLocalWorkspace, createLocal, lease, resolve, git, handoffStep, handoffs, flushBeforeTurn, flushDone, flushes, reconcile, dropNewLocal },
   };
 }
