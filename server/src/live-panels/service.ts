@@ -456,6 +456,10 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
      */
     const amAdmin = async () =>
       typeof options.isAdmin === "function" ? await options.isAdmin().catch(() => false) : options.isAdmin === true;
+    const panelEnv = () => ({
+      ...process.env,
+      CHISABOT_PANEL_COMMANDS: process.env.CHISABOT_PANEL_COMMANDS ?? "1",
+    });
     const list: GrantedTool[] = [
       {
         name: "panel_update",
@@ -468,11 +472,9 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
           if (!parsed.success) return `${REFUSAL_MARKER} 参数不对：${parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("；")}`;
           try {
             const current = await guard(parsed.data.id);
-            // 直连数据源：传了才整份替换，不传保持。id 按 name 复用，规范里的 /live/<id> 绑定不会因为改间隔失效。
-            const rawSources = parsed.data.dataSources;
-            const dataSources =
-              rawSources === undefined ? undefined : normalizeSources(rawSources, { isAdmin: await amAdmin(), existing: current.dataSources ?? [] });
-            const live = hasLiveSources(dataSources !== undefined ? dataSources : current.dataSources);
+            const isAdmin = await amAdmin();
+            const env = panelEnv();
+            const canUseCommandSources = isAdmin && env.CHISABOT_PANEL_COMMANDS === "1";
             // 只换数据：把 data 合并进上一版规范的 state（布局不变，浏览器里数字原地滚动）。
             let specText = parsed.data.spec;
             if (!specText) {
@@ -481,6 +483,17 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
               if (!merged) return `${REFUSAL_MARKER} 这张面板还没有可以只换数据的规范（第一次填充或没有用 $state 绑定），请交完整的 spec。`;
               specText = merged;
             }
+            // 直连数据源：传了才整份替换，不传保持。id 按 name 复用，规范里的 /live/<id> 绑定不会因为改间隔失效。
+            let rawSources = parsed.data.dataSources;
+            if (rawSources && !canUseCommandSources && rawSources.some((s) => s.kind === "command")) {
+              if (specText.includes('"/live/')) {
+                return `${REFUSAL_MARKER} 当前账号或部署不支持本机命令直连数据源（command）：请去掉 dataSources，并把规范里的 {"$state":"/live/..."} 替换为你刚刚用工具查到的真实数值字面量（如 "18%"、"2.4 GB"），直接重新调用 panel_update 保存即可（不要调用 panel_fail）。`;
+              }
+              rawSources = rawSources.filter((s) => s.kind !== "command");
+            }
+            const dataSources =
+              rawSources === undefined ? undefined : normalizeSources(rawSources, { isAdmin, existing: current.dataSources ?? [], env });
+            const live = hasLiveSources(dataSources !== undefined ? dataSources : current.dataSources);
             const verdict = inspectRenderUiSpec(specText);
             if (!verdict.ok) return [`${REFUSAL_MARKER} 面板规范无效，没有保存。修正后再调用 panel_update：`, ...verdict.issues.map((i) => `- ${i}`)].join("\n");
             const empty = emptyMetrics(specText, { live });
@@ -569,13 +582,21 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
             const { duplicate: _duplicate, refreshAt: rawAt, timeZone, dataSources: rawSources, ...input } = parsed.data;
             const refreshAt = rawAt ? normalizeRefreshAt(rawAt, timeZone) : null;
             if (rawAt && !refreshAt) return `${REFUSAL_MARKER} refreshAt 要写成 24 小时制「HH:MM」（如 "08:00"），timeZone 要是 IANA 时区（如 Asia/Shanghai）。`;
-            const dataSources = normalizeSources(rawSources, { isAdmin: await amAdmin() });
+            const isAdmin = await amAdmin();
+            const env = panelEnv();
+            const canUseCommandSources = isAdmin && env.CHISABOT_PANEL_COMMANDS === "1";
+            const filteredSources =
+              rawSources && !canUseCommandSources ? rawSources.filter((s) => s.kind !== "command") : rawSources;
+            const strippedCommand = Boolean(rawSources && filteredSources && filteredSources.length < rawSources.length);
+            const dataSources = normalizeSources(filteredSources, { isAdmin, env });
             const row = await store.create(actorId, botId, { ...input, dataSources, refreshAt, refreshMinutes: input.refreshMinutes ?? MIN_REFRESH_MINUTES });
             return JSON.stringify({
               id: row.id,
               status: "building",
               dataSources: (row.dataSources ?? []).map((source) => ({ id: source.id, name: source.name, kind: source.kind, intervalSec: source.intervalSec })),
-              next: "卡片已出现在右栏（正在搭建）。现在用 web_search / web_fetch 取真实数据，然后调用 panel_update 填好；挂了数据源的，用返回的 dataSources[].id 写 {\"$state\":\"/live/<id>\"} 绑定。",
+              next: strippedCommand
+                ? "卡片已出现在右栏（正在搭建）。当前不支持挂载本机命令直连数据源，已自动忽略 command 数据源；请用工具取到真实数据后直接把具体数字写进 spec 调用 panel_update（不要绑定 /live，也不要调用 panel_fail）。"
+                : "卡片已出现在右栏（正在搭建）。现在用 web_search / web_fetch 或本机命令取真实数据，然后调用 panel_update 填好；挂了数据源的，用返回的 dataSources[].id 写 {\"$state\":\"/live/<id>\"} 绑定。",
             });
           } catch (error) {
             return say(error);
@@ -665,7 +686,8 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
         const owner = c.var.actor.id;
         const row = await store.get(owner, c.req.param("id"));
         if (row.removed) throw new LivePanelError("这个面板已经删除了", 404);
-        return c.json(await sourceRunner.readings(owner, row, { isAdmin: c.var.actor.role === "admin", signal: c.req.raw.signal }));
+        const env = { ...process.env, CHISABOT_PANEL_COMMANDS: process.env.CHISABOT_PANEL_COMMANDS ?? "1" };
+        return c.json(await sourceRunner.readings(owner, row, { isAdmin: c.var.actor.role === "admin", env, signal: c.req.raw.signal }));
       } catch (error) {
         return fail(c, error);
       }
@@ -675,8 +697,9 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
         const owner = c.var.actor.id;
         const row = await store.get(owner, c.req.param("id"));
         if (row.removed) throw new LivePanelError("这个面板已经删除了", 404);
+        const env = { ...process.env, CHISABOT_PANEL_COMMANDS: process.env.CHISABOT_PANEL_COMMANDS ?? "1" };
         return c.json(
-          await sourceRunner.readings(owner, row, { force: true, isAdmin: c.var.actor.role === "admin", signal: c.req.raw.signal }),
+          await sourceRunner.readings(owner, row, { force: true, isAdmin: c.var.actor.role === "admin", env, signal: c.req.raw.signal }),
         );
       } catch (error) {
         return fail(c, error);

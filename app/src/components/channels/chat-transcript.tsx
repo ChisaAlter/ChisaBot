@@ -1789,88 +1789,6 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
   );
 }
 
-function SelectionQuoteToolbar() {
-  const [selection, setSelection] = useState<{
-    text: string;
-    top: number;
-    left: number;
-    messageId?: string | undefined;
-  } | null>(null);
-
-  useEffect(() => {
-    const updateSelection = () => {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-        setSelection(null);
-        return;
-      }
-      const raw = sel.toString().replace(/\s+/g, " ").trim();
-      if (raw.length < 2 || raw.length > 260) {
-        setSelection(null);
-        return;
-      }
-      const range = sel.getRangeAt(0);
-      const anchorEl =
-        range.commonAncestorContainer instanceof HTMLElement
-          ? range.commonAncestorContainer
-          : range.commonAncestorContainer.parentElement;
-      if (!anchorEl) {
-        setSelection(null);
-        return;
-      }
-      const inTranscript = anchorEl.closest('[data-testid="chat-transcript"], .chat-doc-dialog-body');
-      if (!inTranscript) {
-        setSelection(null);
-        return;
-      }
-      const rect = range.getBoundingClientRect();
-      if (rect.width === 0 && rect.height === 0) {
-        setSelection(null);
-        return;
-      }
-      const msgRow = anchorEl.closest<HTMLElement>("[data-message-id]");
-      setSelection({
-        text: raw.slice(0, 140),
-        top: Math.max(12, rect.top - 40),
-        left: Math.min(window.innerWidth - 120, Math.max(24, rect.left + rect.width / 2)),
-        messageId: msgRow?.getAttribute("data-message-id") ?? undefined,
-      });
-    };
-
-    document.addEventListener("mouseup", updateSelection);
-    document.addEventListener("keyup", updateSelection);
-    return () => {
-      document.removeEventListener("mouseup", updateSelection);
-      document.removeEventListener("keyup", updateSelection);
-    };
-  }, []);
-
-  if (!selection) return null;
-
-  return (
-    <button
-      className="chat-selection-quote-btn"
-      data-testid="selection-quote-btn"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dispatchComposerQuote({
-          text: selection.text,
-          messageId: selection.messageId,
-          source: "划词引用",
-        });
-        window.getSelection()?.removeAllRanges();
-        setSelection(null);
-      }}
-      style={{ top: `${selection.top}px`, left: `${selection.left}px` }}
-      type="button"
-    >
-      <IconMessageReply className="size-3.5" />
-      <span>{"引用追问"}</span>
-    </button>
-  );
-}
-
 const TranscriptMessage = memo(function TranscriptMessage({
   canRegenerate = false,
   commandNames = "",
@@ -3494,7 +3412,6 @@ export function ChatTranscript({
           <IconChevronDown className="size-4" />
           <span className="chat-bottom-pill-t">{"回到底部"}</span>
         </MessageScrollerButton>
-        <SelectionQuoteToolbar />
         <ScrollNewestQueuedIntoView
           newest={queued.at(-1)?.id ?? null}
           viewport={viewportRef}

@@ -30,10 +30,9 @@ export function QuickSpotlight() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      // Alt+Space or Ctrl/Cmd+K summons Quick Spotlight
+      // Alt+Space summons Quick Spotlight (Ctrl+K is reserved for sidebar conversation search)
       const isAltSpace = e.altKey && !e.ctrlKey && !e.metaKey && e.code === "Space";
-      const isCmdK = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k";
-      if (isAltSpace || isCmdK) {
+      if (isAltSpace) {
         e.preventDefault();
         setOpen((prev) => !prev);
       } else if (e.key === "Escape" && open) {
@@ -70,27 +69,11 @@ export function QuickSpotlight() {
     if (!trimmed) return;
     setOpen(false);
     setQuery("");
-    // Focus composer textarea and insert or quote
-    const textarea = document.querySelector<HTMLTextAreaElement>(
-      '[data-testid="composer-textarea"], .composer textarea, textarea',
-    );
     if (sourceLabel) {
       dispatchComposerQuote({ text: trimmed, source: sourceLabel });
       return;
     }
-    if (textarea) {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype,
-        "value",
-      )?.set;
-      if (setter) {
-        setter.call(textarea, trimmed);
-        textarea.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-      textarea.focus();
-    } else {
-      dispatchComposerQuote({ text: trimmed, source: "快捷唤起" });
-    }
+    window.dispatchEvent(new CustomEvent("chisabot-prefill", { detail: trimmed }));
   };
 
   const handlePreviewMorningBrief = async () => {
@@ -136,7 +119,7 @@ export function QuickSpotlight() {
             className="chat-spotlight-input"
             data-testid="quick-spotlight-input"
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="随手问 ChisaBot，或输入引用内容回车直达输入框… (Alt+Space / Ctrl+K)"
+            placeholder="随手问 ChisaBot，或输入引用内容回车直达输入框… (Alt+Space)"
             ref={inputRef}
             value={query}
           />

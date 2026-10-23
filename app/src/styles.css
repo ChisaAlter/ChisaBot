@@ -9244,8 +9244,9 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 
 /* ---------- §100 Hark 全功能升级：双向引用追问 · 内联可视化卡 · 每日晨报卡 · 记忆微胶囊 · 随手问浮窗 · 看板独立小模型 ---------- */
 
-/* 1. 用户侧双向引用胶囊 + 划词引用 + 卡片级追问 + 输入框引用条 */
-.chat-reply-quote.chat-reply-quote-end {
+/* 1. 用户侧双向引用胶囊 + 卡片级追问 + 输入框引用条 */
+.chat-reply-quote.chat-reply-quote-end,
+.chat-reply-quote[data-align="end"] {
   align-self: flex-end;
   margin: 2px 6px 4px 0;
   justify-content: flex-end;
@@ -9270,6 +9271,12 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   line-height: 1.45;
   animation: list-enter 160ms var(--ease-out) both;
 }
+.composer-reply-elbow {
+  flex: none;
+  width: 18px;
+  height: 14px;
+  color: var(--accent-blue);
+}
 .composer-reply-quote-bar {
   width: 3px;
   align-self: stretch;
@@ -9284,6 +9291,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   min-width: 0;
   flex: 1;
 }
+.composer-reply-source,
 .composer-reply-quote-source {
   flex: none;
   padding: 1px 7px;
@@ -9293,6 +9301,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   font-size: 11.5px;
   font-weight: 600;
 }
+.composer-reply-text,
 .composer-reply-quote-text {
   min-width: 0;
   flex: 1;
@@ -9301,6 +9310,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   white-space: nowrap;
   color: var(--ink-2);
 }
+.composer-reply-clear,
 .composer-reply-quote-close {
   display: inline-grid;
   place-items: center;
@@ -9311,37 +9321,44 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   background: transparent;
   color: var(--ink-3);
   cursor: pointer;
+  flex: none;
 }
+.composer-reply-clear:hover,
 .composer-reply-quote-close:hover {
   background: var(--glass-hover);
   color: var(--ink-1);
 }
-.chat-selection-quote-bar {
-  position: fixed;
-  z-index: 80;
-  transform: translate(-50%, -100%);
-  pointer-events: auto;
-  animation: list-enter 120ms var(--ease-out) both;
-}
-.chat-selection-quote-btn {
+.rp-link-followup {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 12px;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
   border-radius: 999px;
-  border: 1px solid var(--glass-line);
-  background: var(--glass-strong);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.22);
-  backdrop-filter: var(--glass-blur);
-  color: var(--ink-1);
-  font-size: 12.5px;
-  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(15, 20, 32, 0.65);
+  color: #fff;
+  backdrop-filter: blur(8px);
+  font-size: 11.5px;
+  font-weight: 500;
   cursor: pointer;
-  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out), background 150ms;
 }
-.chat-selection-quote-btn:hover {
+.rp-link:hover .rp-link-followup,
+.rp-link[data-focused] .rp-link-followup,
+.rp-link:focus-visible .rp-link-followup {
+  opacity: 1;
+  transform: none;
+}
+.rp-link-followup:hover {
+  background: var(--accent-blue);
   border-color: var(--accent-blue);
-  color: var(--accent-blue);
 }
 .chat-card-followup-btn,
 .jr-followup-btn {
@@ -9499,7 +9516,8 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   border-radius: 10px;
   background: #fff;
 }
-.chat-artifact-iframe.is-modal {
+.chat-artifact-iframe.is-modal,
+.chat-artifact-iframe-modal {
   height: 62vh;
 }
 .chat-artifact-code {
@@ -9740,6 +9758,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   white-space: nowrap;
   font-weight: 500;
 }
+.chat-memory-pill-cta,
 .chat-memory-pill-action {
   flex: none;
   color: var(--ink-3);

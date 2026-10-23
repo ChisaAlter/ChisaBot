@@ -320,6 +320,7 @@ RUN chmod 755 /etc/s6-overlay/scripts/migrate-wait.sh \
   && printf '%s\n' '/command/with-contenv /etc/s6-overlay/scripts/migrate-wait.sh' \
     > /etc/s6-overlay/s6-rc.d/migrate/up
 ENV TENANT_PACKAGE_DIR=../examples/zh-CN
+ENV CHISABOT_PANEL_COMMANDS=1
 
 # What GET /api/version reports (server/src/build-info.ts). Last, so a new build id costs one tiny layer.
 ARG CHISABOT_VERSION=0.0.0

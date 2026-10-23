@@ -465,6 +465,39 @@ describe("面板工具：dataSources 传入与 /live 绑定", () => {
     expect(result.dataSources[0]!.intervalSec).toBe(60);
     expect(getRow().dataSources).toHaveLength(1);
   });
+
+  test("panel_create / panel_update 默认对管理员开启 command 数据源，非管理员自动降级不报错", async () => {
+    const { service, getRow } = fakeService();
+    const adminCreate = service.tools("u1", "b1", { isAdmin: true }).find((tool) => tool.name === "panel_create")!;
+    const createdAdmin = JSON.parse(
+      String(
+        await adminCreate.execute({
+          title: "云服务器性能监控",
+          instruction: "采集 CPU 与内存",
+          dataSources: [{ kind: "command", name: "本机负载", command: "uptime", intervalSec: 15, parse: "text" }],
+        }),
+      ),
+    ) as { id: string; dataSources: { id: string; kind: string }[] };
+    expect(createdAdmin.id).toBe("lp_new");
+    expect(createdAdmin.dataSources).toHaveLength(1);
+    expect(createdAdmin.dataSources[0]!.kind).toBe("command");
+
+    const userCreate = service.tools("u1", "b1", { isAdmin: false }).find((tool) => tool.name === "panel_create")!;
+    const createdUser = JSON.parse(
+      String(
+        await userCreate.execute({
+          title: "服务器状态",
+          instruction: "采集负载",
+          duplicate: true,
+          dataSources: [{ kind: "command", name: "本机负载", command: "uptime", intervalSec: 15, parse: "text" }],
+        }),
+      ),
+    ) as { id: string; dataSources: unknown[]; next: string };
+    expect(createdUser.id).toBe("lp_new");
+    expect(createdUser.dataSources).toHaveLength(0);
+    expect(createdUser.next).toContain("已自动忽略 command 数据源");
+    expect(getRow().dataSources).toHaveLength(0);
+  });
 });
 
 describe("DTO 与路由形状", () => {
