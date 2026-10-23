@@ -30,13 +30,16 @@ import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
 export function extractQuestionOptions(questionText: string): string[] {
   const matches = [
     ...questionText.matchAll(
-      /(?:^|[\s：:；;，,（(])([A-F])[.、:：)\]]\s*([^\n]+?)(?=(?:\s+[A-F][.、:：)\]]\s)|\n|$)/g,
+      /(?:^|[^A-Za-z0-9])([A-F])[.、:：)\]]\s*([^\n]+?)(?=(?:\s*[A-F][.、:：)\]]\s)|\n|$)/g,
     ),
   ];
-  if (matches.length < 2 || matches[0]?.[1] !== "A" || matches[1]?.[1] !== "B") {
+  const aIdx = matches.findIndex((m) => m[1] === "A");
+  if (aIdx < 0) return [];
+  const slice = matches.slice(aIdx);
+  if (slice.length < 2 || slice[0]?.[1] !== "A" || slice[1]?.[1] !== "B") {
     return [];
   }
-  return matches
+  return slice
     .map((m) => `${m[1]}. ${(m[2] ?? "").trim().replace(/[；;，,。]+$/, "")}`)
     .filter((item) => item.length > 3 && item.length <= 80);
 }
