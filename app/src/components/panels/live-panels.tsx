@@ -32,6 +32,7 @@ import { pruneEmptySections } from "../../../../shared/json-render/empty-section
 import { dropDuplicateTitle } from "../../../../shared/json-render/panel-title";
 import { client } from "@/lib/client";
 import { isChatRunning } from "@/lib/copilot/computer-activity";
+import { modelCatalogQueryOptions } from "@/lib/model-selection/queries";
 import {
   everyText,
   liveFailures,
@@ -78,6 +79,8 @@ export type LivePanel = {
   /** 每天固定时刻刷新（「08:00」）；null = 按间隔。 */
   refreshAt?: string | null;
   refreshTimeZone?: string | null;
+  /** 面板后台刷新使用的独立模型（CB-088）；null = 跟随机器人主模型。 */
+  refreshModel?: string | null;
   /** 直连数据源（秒级，不靠机器人回合）：卡片可见时浏览器自己轮询。 */
   dataSources: LiveSource[];
   error: string | null;
@@ -563,6 +566,36 @@ function LivePanelCard({
     },
     onSettled: invalidate,
   });
+  const catalog = useQuery(modelCatalogQueryOptions());
+  const modelChoices = useMemo(() => {
+    const all = catalog.data?.models ?? [];
+    const fast = all.filter((m) => /flash|haiku|mini|lite|nano|fast|small/i.test(`${m.id} ${m.label}`));
+    const rest = all.filter((m) => !fast.includes(m));
+    const picked = [...fast, ...rest].slice(0, 6);
+    if (panel.refreshModel && !picked.some((m) => m.id === panel.refreshModel)) {
+      const found = all.find((m) => m.id === panel.refreshModel);
+      picked.unshift(found ?? { id: panel.refreshModel, label: panel.refreshModel, provider: "" });
+    }
+    return picked;
+  }, [catalog.data, panel.refreshModel]);
+  const setPanelModel = useMutation({
+    mutationFn: (model: string | null) =>
+      client(`/api/live-panels/${panel.id}`, {
+        method: "PATCH",
+        body: { refreshModel: model },
+        fallback: "修改刷新模型失败",
+      }),
+    onMutate: (model) => {
+      const before = panel.refreshModel ?? null;
+      patchLocal({ refreshModel: model });
+      return { before };
+    },
+    onError: (e, _m, ctx) => {
+      if (ctx) patchLocal({ refreshModel: ctx.before });
+      setProblem(e instanceof Error ? e.message : "修改刷新模型失败");
+    },
+    onSettled: invalidate,
+  });
   const icon = "size-[18px] shrink-0";
 
   const busy = panel.refreshing || refresh.isPending;
@@ -606,42 +639,70 @@ function LivePanelCard({
             {"可能已过期"}
           </span>
         ) : null}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<button aria-label={`「${panel.title}」的更多操作`} className="rail-head-icon live-panel-more ml-auto" type="button" />}
-          >
-            <IconDots className="size-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="glass-pop sg-menu w-[208px]" side="bottom" sideOffset={6}>
-            <DropdownMenuItem className="glass-mi" disabled={busy} onClick={() => refresh.mutate()}>
-              <IconRefresh className={icon} />
-              <span className="min-w-0 flex-1">{busy ? "正在刷新…" : "立即刷新"}</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator className="glass-sep" />
-            <DropdownMenuGroup>
-              <DropdownMenuLabel className="glass-mi-label">{"自动刷新"}</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                onValueChange={(v) => {
-                  if (v !== "at") setCadence.mutate(v === "off" ? null : Number(v));
-                }}
-                value={panel.refreshAt ? "at" : panel.refreshMinutes == null ? "off" : String(panel.refreshMinutes)}
+            {panel.refreshModel ? (
+              <span
+                className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary/90 truncate max-w-[96px]"
+                data-testid="panel-model-badge"
+                title={`后台刷新模型：${panel.refreshModel}`}
               >
-                {(
-                  [
-                    // 机器人按用户说的「每天几点」设的固定时刻；选别的频率就取消它。
-                    ...(panel.refreshAt ? ([["at", `每天 ${panel.refreshAt}`]] as const) : []),
-                    ["60", "每小时"],
-                    ["360", "每 6 小时"],
-                    ["1440", "每天"],
-                    ["off", "不自动刷新"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <DropdownMenuRadioItem className="glass-mi" closeOnClick key={value} value={value}>
-                    {label}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
+                {`⚡ ${panel.refreshModel.split("/").pop()}`}
+              </span>
+            ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={<button aria-label={`「${panel.title}」的更多操作`} className="rail-head-icon live-panel-more ml-auto" type="button" />}
+              >
+                <IconDots className="size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="glass-pop sg-menu w-[224px]" side="bottom" sideOffset={6}>
+                <DropdownMenuItem className="glass-mi" disabled={busy} onClick={() => refresh.mutate()}>
+                  <IconRefresh className={icon} />
+                  <span className="min-w-0 flex-1">{busy ? "正在刷新…" : "立即刷新"}</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="glass-sep" />
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="glass-mi-label">{"自动刷新"}</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    onValueChange={(v) => {
+                      if (v !== "at") setCadence.mutate(v === "off" ? null : Number(v));
+                    }}
+                    value={panel.refreshAt ? "at" : panel.refreshMinutes == null ? "off" : String(panel.refreshMinutes)}
+                  >
+                    {(
+                      [
+                        // 机器人按用户说的「每天几点」设的固定时刻；选别的频率就取消它。
+                        ...(panel.refreshAt ? ([["at", `每天 ${panel.refreshAt}`]] as const) : []),
+                        ["60", "每小时"],
+                        ["360", "每 6 小时"],
+                        ["1440", "每天"],
+                        ["off", "不自动刷新"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <DropdownMenuRadioItem className="glass-mi" closeOnClick key={value} value={value}>
+                        {label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator className="glass-sep" />
+                <DropdownMenuGroup data-testid="panel-model-group">
+                  <DropdownMenuLabel className="glass-mi-label">{"刷新模型（省配额）"}</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    onValueChange={(v) => {
+                      setPanelModel.mutate(v === "__default__" ? null : v);
+                    }}
+                    value={panel.refreshModel || "__default__"}
+                  >
+                    <DropdownMenuRadioItem className="glass-mi" closeOnClick value="__default__">
+                      {"跟随机器人主模型"}
+                    </DropdownMenuRadioItem>
+                    {modelChoices.map((m) => (
+                      <DropdownMenuRadioItem className="glass-mi" closeOnClick key={m.id} value={m.id}>
+                        <span className="truncate">{m.label || m.id}</span>
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuGroup>
             <DropdownMenuSeparator className="glass-sep" />
             <DropdownMenuItem className="glass-mi" onClick={() => prefillPanelEdit(panel.title)}>
               <IconWand className={icon} />

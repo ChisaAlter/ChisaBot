@@ -1,4 +1,6 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
+import { createPersonalSources } from "./personal-sources/service";
 import { PanelError, type PanelCapability } from "../../shared/panels/types";
 import { createPanelServices } from "./panels/service";
 import { createNormalPanelTaskService } from "./panels/normal-task-service";
@@ -1215,18 +1217,20 @@ const agentModels = createAgentModelService({
     (await resolveRuntimeConnection()).model.defaultModel,
   catalog: modelCatalog,
 });
+const panelModelOverrideStorage = new AsyncLocalStorage<string | null>();
 const resolveRuntimeConnectionForAgent = (agentId: string) =>
   resolveScopedAgentModelConnection(agentId, async () => {
     const [connection, selected] = await Promise.all([
       resolveRuntimeConnection(),
       agentModels.resolveModel(agentId),
     ]);
-    return selected === null
+    const effective = panelModelOverrideStorage.getStore() || selected;
+    return effective === null
       ? connection
       : {
           model: {
             ...connection.model,
-            defaultModel: selected,
+            defaultModel: effective,
             plan: undefined,
           },
           apiKey: connection.apiKey,
@@ -1354,6 +1358,9 @@ await vault.ensure();
 /** GitHub 账号连接（DESIGN.md §53）：令牌在保险箱（保留名 github），读直接做，写先在聊天里确认。 */
 const github = createGithub(database, { vault, apiBase: process.env.CHISABOT_GITHUB_API_BASE });
 await github.ensure();
+/** 个人日程与收件箱只读接入（CB-013）+ 每日晨报（CB-014）。 */
+const personalSources = createPersonalSources(database, { encryptionKey: config.keyEncryptionKey });
+await personalSources.ensure();
 /** 页面（DESIGN.md §54）：机器人做的单页网页，/p/<随机串>/ 公开可看（沙箱 CSP），设置 → 页面。 */
 const pages = createPages(database, {
   publicUrl: process.env.CHISABOT_PUBLIC_URL?.trim() || null,
@@ -1478,6 +1485,7 @@ const loadToolsForActor =
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : chisaSkills.tools(actorId, botId)),
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : vault.tools(actorId, botId, initiator)),
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : await github.tools(actorId, botId, initiator).catch(() => [])),
+    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : personalSources.tools(actorId)),
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : pages.tools(actorId, botId, initiator)),
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : await chatFiles.tools(actorId, botId, initiator).catch(() => [])),
     ...(await grantedTools({
@@ -2585,20 +2593,22 @@ const livePanelService = createLivePanelService({
   // 直连数据源（docs/live-panel-sources.md）：HTTP 走保险箱的 request，{{secret:名}} 只发往它绑定的域名、
   // guardedFetch 钉死 DNS、不跟重定向、回来的正文抹掉密钥值。命令源只给管理员（tools 的 isAdmin）。
   requestHttp: (ownerUserId, input, signal) => vault.request(ownerUserId, input, signal),
-  runHeadless: async ({ ownerUserId, botId, instruction, panelId, signal }) => {
+  runHeadless: async ({ ownerUserId, botId, instruction, panelId, model, signal }) => {
     const actor = await actorFor(ownerUserId);
     const channel = await channelStore.create(actor, [botId]);
     try {
-      await governedTurnRunner({
-        ownerUserId,
-        routineId: panelId,
-        agentId: botId,
-        threadId: channel.threadId,
-        instruction,
-        initiator: { kind: "routine", id: panelId },
-        signal,
-        userMessage: { id: `${panelId}:${Date.now()}`, role: "user", content: instruction },
-      });
+      await panelModelOverrideStorage.run(model ?? null, () =>
+        governedTurnRunner({
+          ownerUserId,
+          routineId: panelId,
+          agentId: botId,
+          threadId: channel.threadId,
+          instruction,
+          initiator: { kind: "routine", id: panelId },
+          signal,
+          userMessage: { id: `${panelId}:${Date.now()}`, role: "user", content: instruction },
+        }),
+      );
     } finally {
       await channelStore.softDelete(actor, channel.id).catch(() => {});
     }
@@ -3853,6 +3863,7 @@ const app = createApp(
       ["/api/chisa-skills", chisaSkills.routes(requireUser)],
       ["/api/vault", vault.routes(requireUser)],
       ["/api/github", github.routes(requireUser)],
+      ["/api/personal-sources", personalSources.routes(requireUser)],
       ["/api/pages", pages.routes(requireUser)],
       // 公开页面：不用登录（沙箱 CSP，见 server/src/pages/service.ts）。
       ["/p", pages.publicRoutes()],

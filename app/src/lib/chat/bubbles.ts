@@ -12,12 +12,12 @@
  * - 最多 MAX_BUBBLES 个气泡，多出来的并进最后一个；空段丢掉。
  */
 export type BubbleSegment = {
-  kind: "text" | "draft" | "doc" | "code";
-  /** 这一段的 Markdown 原文（kind "draft" / "doc" 时是正文，不含围栏和标题行）。 */
+  kind: "text" | "draft" | "doc" | "brief" | "code";
+  /** 这一段的 Markdown 原文（kind "draft" / "doc" / "brief" 时是正文，不含围栏和标题行）。 */
   text: string;
   /** kind "text"：段首引用的原话（去掉 `> `）。 */
   quote?: string;
-  /** kind "draft" / "doc"：卡片标题。 */
+  /** kind "draft" / "doc" / "brief"：卡片标题。 */
   title?: string;
   /** 这一段的内容需要整列宽（表格、代码、清单、草稿）；否则气泡贴着文字宽度。 */
   wide: boolean;
@@ -26,6 +26,7 @@ export type BubbleSegment = {
 export const MAX_BUBBLES = 6;
 
 const DOC_INFOS = new Set(["doc", "summary"]);
+const BRIEF_INFOS = new Set(["brief", "morning-brief"]);
 
 const FENCE = /^\s{0,3}(```+|~~~+)\s*([^\s`]*)?(.*)$/;
 const LIST = /^\s{0,3}([-*+]|\d{1,3}[.)、])\s+/;
@@ -97,8 +98,8 @@ function mergeBlocks(blocks: Block[]): Block[] {
         continue;
       }
     }
-    if (prev && !prev.fence && isHeadingOnly(prev) && b.fence && (b.info === "draft" || DOC_INFOS.has(b.info ?? ""))) {
-      // 标题 + 草稿 / 文档卡：标题当卡片标题（卡片本身有头部），不把标题行塞进围栏里。
+    if (prev && !prev.fence && isHeadingOnly(prev) && b.fence && (b.info === "draft" || DOC_INFOS.has(b.info ?? "") || BRIEF_INFOS.has(b.info ?? ""))) {
+      // 标题 + 草稿 / 文档卡 / 晨报卡：标题当卡片标题（卡片本身有头部），不把标题行塞进围栏里。
       out.pop();
       out.push({ ...b, lines: [...b.lines], heading: (prev.lines[0] ?? "").replace(HEADING, "").trim() });
       continue;
@@ -114,18 +115,18 @@ function mergeBlocks(blocks: Block[]): Block[] {
   return out;
 }
 
-function draftOf(b: Block, kind: "draft" | "doc" = "draft"): BubbleSegment {
+function draftOf(b: Block, kind: "draft" | "doc" | "brief" = "draft"): BubbleSegment {
   const body = b.lines.slice(1, b.open ? undefined : -1);
   while (body.length && !body[0]?.trim()) body.shift();
   let title: string | undefined;
   const t = /^\s*(?:标题|title)\s*[：:]\s*(.+)$/i.exec(body[0] ?? "");
   if (t) {
-    title = t[1]?.trim().slice(0, 40);
+    title = t[1]?.trim().slice(0, 48);
     body.shift();
     while (body.length && !body[0]?.trim()) body.shift();
   }
   while (body.length && !body[body.length - 1]?.trim()) body.pop();
-  title ??= b.heading?.slice(0, 40) || undefined;
+  title ??= b.heading?.slice(0, 48) || undefined;
   return { kind, text: body.join("\n"), ...(title ? { title } : {}), wide: true };
 }
 
@@ -171,18 +172,26 @@ export function splitBubbles(text: string): BubbleSegment[] {
     joined.push(b);
   }
   let segs = joined.map((b) =>
-    b.fence && b.info === "draft" ? draftOf(b) : b.fence && DOC_INFOS.has(b.info ?? "") ? draftOf(b, "doc") : textOf(b),
+    b.fence && b.info === "draft"
+      ? draftOf(b)
+      : b.fence && DOC_INFOS.has(b.info ?? "")
+        ? draftOf(b, "doc")
+        : b.fence && BRIEF_INFOS.has(b.info ?? "")
+          ? draftOf(b, "brief")
+          : textOf(b),
   );
   // 只有图片的一段（`![截图](/api/…)`）：正文里的图片不内联画、统一进下面的图片卡（§31，HiddenMarkdownImage），
   // 留着它就是一个空的小气泡（DESIGN.md §93.2）。流式写到一半的图片（`![当前电脑截图](/api/dev`）同理。
-  segs = segs.filter((s) => (s.text.trim() && !(s.kind === "text" && isMediaOnly(s.text))) || s.kind === "draft" || s.kind === "doc");
+  segs = segs.filter(
+    (s) => (s.text.trim() && !(s.kind === "text" && isMediaOnly(s.text))) || s.kind === "draft" || s.kind === "doc" || s.kind === "brief",
+  );
   if (segs.length > MAX_BUBBLES) {
     const head = segs.slice(0, MAX_BUBBLES - 1);
     const tail = segs.slice(MAX_BUBBLES - 1);
     // 多出来的按原文并成一段（草稿 / 引用照原样写回 Markdown，不丢内容）。
     const md = tail
       .map((s) =>
-        s.kind === "draft" || s.kind === "doc"
+        s.kind === "draft" || s.kind === "doc" || s.kind === "brief"
           ? [`\`\`\`${s.kind}`, ...(s.title ? [`标题：${s.title}`] : []), s.text, "```"].join("\n")
           : s.quote
             ? `> ${s.quote}\n${s.text}`

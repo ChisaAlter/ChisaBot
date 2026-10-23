@@ -7,6 +7,7 @@ import {
   IconArrowUp,
   IconPlayerStopFilled,
   IconPlus,
+  IconX,
 } from "@tabler/icons-react";
 import { PromptArea, type PromptAreaHandle } from "prompt-area";
 import {
@@ -28,6 +29,10 @@ import {
 } from "react";
 import { attachmentModality } from "@/components/channels/chat-messages";
 import { useReportPendingAttachments } from "@/lib/activity";
+import {
+  CHISABOT_QUOTE_EVENT,
+  type ComposerQuotePayload,
+} from "@/lib/chat/quote-event";
 import {
   attachmentUrl,
   classifyAttachment,
@@ -378,6 +383,33 @@ export function Composer({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitInFlight = useRef(false);
   const promptAreaRef = useRef<PromptAreaHandle>(null);
+  const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(null);
+  useEffect(() => {
+    const onQuote = (event: Event) => {
+      const detail = (event as CustomEvent<ComposerQuotePayload>).detail;
+      if (!detail || !detail.text || disabled) return;
+      setReplyQuote(detail);
+      if (detail.prompt) {
+        const addition = detail.prompt.trim();
+        if (addition) {
+          setValue((current) =>
+            mergeAdjacentTextSegments([
+              ...current,
+              text(isSegmentsEmpty(current) ? addition : `\n${addition}`),
+            ]),
+          );
+        }
+      }
+      const placeCaret = () => {
+        promptAreaRef.current?.focus();
+        promptAreaRef.current?.setCursorToEnd();
+      };
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(placeCaret);
+      else setTimeout(placeCaret, 0);
+    };
+    window.addEventListener(CHISABOT_QUOTE_EVENT, onQuote);
+    return () => window.removeEventListener(CHISABOT_QUOTE_EVENT, onQuote);
+  }, [disabled]);
   /**
    * 右栏面板 ⋯ →「让 AI 修改…」：把提示词填进输入框（`components/panels/live-panels.tsx` 发
    * `chisabot-prefill`），**不发送**——用户补完要改什么再自己按发送。
@@ -1312,15 +1344,25 @@ export function Composer({
       // `overCap` is asked here as well as at the button, and not only there: Enter reaches this
       // function through prompt-area's own `onSubmit`, which has never looked at `canSend`. A gate
       // drawn on the button alone would refuse the press and accept the keystroke.
-      const submitted = toDraft(segments, staged);
+      const rawSubmitted = toDraft(segments, staged);
       if (
-        !canSendDraft(submitted) ||
-        overCap(submitted) ||
+        !canSendDraft(rawSubmitted) ||
+        overCap(rawSubmitted) ||
         sendBlocked ||
         disabled ||
         dictation.session.getSnapshot().phase !== "idle"
       ) {
         return;
+      }
+
+      const quoteLine = replyQuote
+        ? `> ${replyQuote.source && replyQuote.source !== "引用回复" && replyQuote.source !== "我的消息" && replyQuote.source !== "机器人回复" ? `[${replyQuote.source}] ` : ""}${replyQuote.text.replace(/\s+/g, " ").trim()}\n\n`
+        : "";
+      const submitted = quoteLine
+        ? { ...rawSubmitted, text: `${quoteLine}${rawSubmitted.text}` }
+        : rawSubmitted;
+      if (replyQuote) {
+        setReplyQuote(null);
       }
 
       /*
@@ -1467,6 +1509,7 @@ export function Composer({
       onSubmit,
       releaseStagedRows,
       removeAttachment,
+      replyQuote,
       staged,
       draftKey,
     ],
@@ -1670,6 +1713,33 @@ export function Composer({
     </p>
   ) : null;
 
+  const replyQuoteBar = replyQuote ? (
+    <div className="composer-reply-quote" data-testid="composer-reply-quote">
+      <svg aria-hidden="true" className="composer-reply-elbow" fill="none" viewBox="0 0 22 18">
+        <path
+          d="M5 17V9.5C5 6.462 7.462 4 10.5 4H20"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth="1.75"
+        />
+      </svg>
+      {replyQuote.source ? (
+        <span className="composer-reply-source">{replyQuote.source}</span>
+      ) : null}
+      <span className="composer-reply-text truncate">{replyQuote.text}</span>
+      <button
+        aria-label="取消引用"
+        className="composer-reply-clear"
+        data-testid="composer-reply-quote-clear"
+        onClick={() => setReplyQuote(null)}
+        title="取消引用"
+        type="button"
+      >
+        <IconX className="size-3.5" />
+      </button>
+    </div>
+  ) : null;
+
   if (compact) {
     return (
       /*
@@ -1706,6 +1776,7 @@ export function Composer({
               images={images}
               onRemove={discardAttachment}
             />
+            {replyQuoteBar}
             {/*
              * The editor takes the full width and grows to COMPACT_MAX_HEIGHT_PX before it scrolls;
              * the controls live in their own toolbar row underneath, so they never float mid-text.
@@ -1799,6 +1870,7 @@ export function Composer({
               images={images}
               onRemove={discardAttachment}
             />
+            {replyQuoteBar}
             <PromptArea
               aria-label={"消息"}
               autoGrow

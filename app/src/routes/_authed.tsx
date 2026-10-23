@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { AuthedShell } from "../components/layout/authed-shell";
+import { QuickSpotlight } from "../components/chat/quick-spotlight";
 import { currentUserQueryOptions, needsOnboarding } from "../lib/auth/queries";
 import { ProfileSetupGate } from "../components/layout/profile-dialog";
 import { CopilotProvider } from "../lib/copilot/provider";
@@ -28,6 +29,7 @@ export const Route = createFileRoute("/_authed")({
   component: () => (
     <CopilotProvider>
       <AppHotkeys />
+      <QuickSpotlight />
       <ScheduleNotifier />
       <AuthedShell />
       <ProfileSetupGate />

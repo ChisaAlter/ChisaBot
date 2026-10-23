@@ -11,7 +11,10 @@ import {
   IconChevronDown,
   IconClock,
   IconCopy,
+  IconMessageReply,
   IconRefresh,
+  IconSparkles,
+  IconTrash,
   IconX,
 } from "@tabler/icons-react";
 import { motion, useReducedMotion } from "motion/react";
@@ -26,7 +29,8 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
-import { BotBubbles, type ReplyTarget } from "@/components/chat/bot-bubbles";
+import { BotBubbles, ReplyQuote, type ReplyTarget } from "@/components/chat/bot-bubbles";
+import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import {
   ConfirmResumeRow,
   confirmResumeId,
@@ -1609,11 +1613,270 @@ const richMarkdownComponents = {
   img: HiddenMarkdownImage,
 };
 
+export type MemoryPillItem = {
+  id: string;
+  noteId?: string | undefined;
+  summary: string;
+  kind?: string | undefined;
+  subject?: string | undefined;
+  action: "save" | "update" | "log";
+};
+
+function splitUserQuote(raw: string): { quote?: string | undefined; body: string } {
+  const lines = raw.replace(/\r\n?/g, "\n").split("\n");
+  let q = 0;
+  while (q < lines.length && /^\s{0,3}>\s?/.test(lines[q] ?? "")) q++;
+  if (q > 0 && q < lines.length) {
+    const quote = lines
+      .slice(0, q)
+      .map((l) => l.replace(/^\s{0,3}>\s?/, ""))
+      .join(" ")
+      .trim();
+    const rest = lines.slice(q);
+    while (rest.length && !rest[0]?.trim()) rest.shift();
+    if (quote && rest.length) {
+      return { quote: quote.slice(0, 140), body: rest.join("\n") };
+    }
+  }
+  return { body: raw };
+}
+
+function QuoteReplyAction({
+  text,
+  messageId,
+  role,
+}: {
+  text: string;
+  messageId?: string | undefined;
+  role: "user" | "assistant";
+}) {
+  return (
+    <button
+      aria-label="引用追问"
+      className="chat-msg-action"
+      data-testid="msg-quote-reply"
+      onClick={() => {
+        const clean = text
+          .replace(/```[\s\S]*?```/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 110);
+        if (!clean) return;
+        dispatchComposerQuote({
+          text: clean,
+          messageId,
+          source: role === "user" ? "我的消息" : "机器人回复",
+        });
+      }}
+      title="引用此消息继续追问"
+      type="button"
+    >
+      <IconMessageReply className="size-3.5" />
+      <span>{"引用"}</span>
+    </button>
+  );
+}
+
+const KIND_LABELS: Record<string, string> = {
+  preference: "偏好",
+  fact: "事实",
+  decision: "决定",
+  todo: "待办",
+  log: "日志",
+};
+
+function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
+  const [active, setActive] = useState<MemoryPillItem | null>(null);
+  const [undoneIds, setUndoneIds] = useState<Record<string, boolean>>({});
+  const [undoBusy, setUndoBusy] = useState(false);
+
+  if (items.length === 0) return null;
+
+  const handleUndo = async (item: MemoryPillItem) => {
+    setUndoBusy(true);
+    try {
+      if (item.noteId && item.noteId.startsWith("mem_")) {
+        await fetch(`/api/memory-notes/${encodeURIComponent(item.noteId)}`, {
+          method: "DELETE",
+          credentials: "include",
+        });
+      }
+      setUndoneIds((prev) => ({ ...prev, [item.id]: true }));
+    } finally {
+      setUndoBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="chat-memory-pills" data-testid="memory-pills">
+        {items.map((item) => {
+          const isUndone = Boolean(undoneIds[item.id]);
+          return (
+            <button
+              className="chat-memory-pill"
+              data-testid="memory-pill"
+              data-undone={isUndone || undefined}
+              key={item.id}
+              onClick={() => setActive(item)}
+              type="button"
+            >
+              <IconSparkles aria-hidden="true" className="size-3.5 shrink-0 text-amber-400" />
+              <span className="chat-memory-pill-text truncate">
+                {isUndone ? `已撤销记忆：${item.summary}` : `已记住：${item.summary}`}
+              </span>
+              <span className="chat-memory-pill-cta">
+                {isUndone ? "已撤销" : "点击查看/撤销"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <Dialog onOpenChange={(open) => !open && setActive(null)} open={active !== null}>
+        {active ? (
+          <DialogContent className="max-w-md" data-testid="memory-pill-dialog">
+            <div className="flex items-center gap-2 pb-2">
+              <IconSparkles aria-hidden="true" className="size-4 text-amber-400" />
+              <DialogTitle className="text-base">{"记忆写入详情"}</DialogTitle>
+            </div>
+            <div className="space-y-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span className="rounded-md bg-muted px-2 py-0.5 font-medium text-foreground">
+                  {KIND_LABELS[active.kind ?? "fact"] ?? "记忆"}
+                </span>
+                {active.subject ? (
+                  <span className="rounded-md bg-muted/60 px-2 py-0.5">
+                    {`对象：${active.subject}`}
+                  </span>
+                ) : null}
+                {active.noteId ? (
+                  <span className="font-mono text-[11px] opacity-70">{active.noteId}</span>
+                ) : null}
+              </div>
+              <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5 leading-relaxed text-foreground">
+                {active.summary}
+              </div>
+              <div className="flex items-center justify-between pt-2">
+                <a
+                  className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                  href="/settings/memory"
+                >
+                  {"管理全部长期记忆 →"}
+                </a>
+                {undoneIds[active.id] ? (
+                  <span className="text-xs font-medium text-emerald-400" data-testid="memory-undone-status">
+                    {"✓ 已从长期记忆中撤销"}
+                  </span>
+                ) : (
+                  <button
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition hover:bg-destructive/20 disabled:opacity-50"
+                    data-testid="memory-undo-btn"
+                    disabled={undoBusy}
+                    onClick={() => void handleUndo(active)}
+                    type="button"
+                  >
+                    <IconTrash className="size-3.5" />
+                    <span>{undoBusy ? "正在撤销…" : "撤销此记忆"}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+    </>
+  );
+}
+
+function SelectionQuoteToolbar() {
+  const [selection, setSelection] = useState<{
+    text: string;
+    top: number;
+    left: number;
+    messageId?: string | undefined;
+  } | null>(null);
+
+  useEffect(() => {
+    const updateSelection = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+        setSelection(null);
+        return;
+      }
+      const raw = sel.toString().replace(/\s+/g, " ").trim();
+      if (raw.length < 2 || raw.length > 260) {
+        setSelection(null);
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      const anchorEl =
+        range.commonAncestorContainer instanceof HTMLElement
+          ? range.commonAncestorContainer
+          : range.commonAncestorContainer.parentElement;
+      if (!anchorEl) {
+        setSelection(null);
+        return;
+      }
+      const inTranscript = anchorEl.closest('[data-testid="chat-transcript"], .chat-doc-dialog-body');
+      if (!inTranscript) {
+        setSelection(null);
+        return;
+      }
+      const rect = range.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        setSelection(null);
+        return;
+      }
+      const msgRow = anchorEl.closest<HTMLElement>("[data-message-id]");
+      setSelection({
+        text: raw.slice(0, 140),
+        top: Math.max(12, rect.top - 40),
+        left: Math.min(window.innerWidth - 120, Math.max(24, rect.left + rect.width / 2)),
+        messageId: msgRow?.getAttribute("data-message-id") ?? undefined,
+      });
+    };
+
+    document.addEventListener("mouseup", updateSelection);
+    document.addEventListener("keyup", updateSelection);
+    return () => {
+      document.removeEventListener("mouseup", updateSelection);
+      document.removeEventListener("keyup", updateSelection);
+    };
+  }, []);
+
+  if (!selection) return null;
+
+  return (
+    <button
+      className="chat-selection-quote-btn"
+      data-testid="selection-quote-btn"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dispatchComposerQuote({
+          text: selection.text,
+          messageId: selection.messageId,
+          source: "划词引用",
+        });
+        window.getSelection()?.removeAllRanges();
+        setSelection(null);
+      }}
+      style={{ top: `${selection.top}px`, left: `${selection.left}px` }}
+      type="button"
+    >
+      <IconMessageReply className="size-3.5" />
+      <span>{"引用追问"}</span>
+    </button>
+  );
+}
+
 const TranscriptMessage = memo(function TranscriptMessage({
   canRegenerate = false,
   commandNames = "",
   delay,
   editable = false,
+  memories,
   messageId,
   replyTo,
   role,
@@ -1626,6 +1889,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
   delay: number;
   /** 用户自己发的一条：下面带「编辑」，点了气泡原地变编辑框（DESIGN.md §67）。 */
   editable?: boolean;
+  memories?: readonly MemoryPillItem[] | undefined;
   messageId?: string;
   /** Hark 式回复引用（`╭─` + 原话胶囊）：多条消息插话或跨步骤回应时指向对应的用户消息。 */
   replyTo?: ReplyTarget | undefined;
@@ -1682,7 +1946,9 @@ const TranscriptMessage = memo(function TranscriptMessage({
   const align = isUser ? "end" : "start";
   // Slack/Teams turns carry a model-facing participant line; show a marker instead of the line.
   const origin = isUser ? splitChatOrigin(text) : null;
-  const said = origin ? origin.text : text;
+  const rawSaid = origin ? origin.text : text;
+  const userQuoteSplit = isUser ? splitUserQuote(rawSaid) : { body: rawSaid };
+  const said = userQuoteSplit.body;
   const invoked = isUser ? splitSkillChip(said, commandNames) : null;
 
   if (isUser && editing && messageId) {
@@ -1690,7 +1956,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
       <MessageRow align={align}>
         <MessageContent className="w-full">
           <MessageEditor
-            initial={said}
+            initial={rawSaid}
             messageId={messageId}
             onClose={() => setEditing(false)}
           />
@@ -1720,81 +1986,82 @@ const TranscriptMessage = memo(function TranscriptMessage({
               tone={tone === "lead" ? "lead" : "final"}
             />
           ) : (
-            <Bubble
-              data-cb-turn={isUser ? undefined : tone}
-              align={align}
-              variant={isUser ? "muted" : "ghost"}
-              className={isUser ? undefined : "w-full"}
-            >
-              <BubbleContent className={isUser ? undefined : "w-full"}>
-                {isUser ? (
-                  // A person's own message is shown exactly as they typed it. Rendering it as markdown
-                  // would silently reformat what they said, and an asterisk in a sentence is not
-                  // emphasis. The chip is the one exception, and it is not reformatting: it is drawing
-                  // the thing that was already a chip in the composer as a chip here too, so the
-                  // transcript shows a skill was used rather than a slash that was typed.
-                  <span className="whitespace-pre-wrap">
-                    {origin && (
-                      <span className="mr-1.5 inline-flex items-center rounded bg-foreground/10 px-1.5 py-0.5 align-middle text-foreground/70 text-xs">
-                        {"通过"}
-                        {origin.via}
-                      </span>
-                    )}
-                    {invoked ? (
-                      <>
-                        {/*
-                         * The same icon the sidebar uses for Skills, so the badge says WHAT KIND of
-                         * thing was invoked before it says which one. `inline-flex` with
-                         * `align-middle` rather than a block: this sits mid-sentence, and a badge that
-                         * breaks the line it is in reads as a separate message.
-                         */}
-                        <span className="mr-1 inline-flex items-center gap-1 rounded bg-foreground/10 px-1.5 py-0.5 align-middle font-mono text-foreground/80 text-xs">
-                          <IconBox className="size-3 shrink-0" />/{invoked.chip}
+            <div className="flex flex-col items-end gap-1">
+              {userQuoteSplit.quote ? (
+                <ReplyQuote align="end" text={userQuoteSplit.quote} />
+              ) : null}
+              <Bubble
+                data-cb-turn={isUser ? undefined : tone}
+                align={align}
+                variant={isUser ? "muted" : "ghost"}
+                className={isUser ? undefined : "w-full"}
+              >
+                <BubbleContent className={isUser ? undefined : "w-full"}>
+                  {isUser ? (
+                    // A person's own message is shown exactly as they typed it. Rendering it as markdown
+                    // would silently reformat what they said, and an asterisk in a sentence is not
+                    // emphasis. The chip is the one exception, and it is not reformatting: it is drawing
+                    // the thing that was already a chip in the composer as a chip here too, so the
+                    // transcript shows a skill was used rather than a slash that was typed.
+                    <span className="whitespace-pre-wrap">
+                      {origin && (
+                        <span className="mr-1.5 inline-flex items-center rounded bg-foreground/10 px-1.5 py-0.5 align-middle text-foreground/70 text-xs">
+                          {"通过"}
+                          {origin.via}
                         </span>
-                        {invoked.rest}
-                      </>
-                    ) : (
-                      said
-                    )}
-                  </span>
-                ) : (
-                  /*
-                   * A Bot's prose is markdown, and it arrives in pieces.
-                   *
-                   * Rendered with a streaming-aware renderer rather than an ordinary one: half a fenced
-                   * code block or an unclosed bold marker is the NORMAL state for most of a run, and a
-                   * plain markdown parser draws that as literal asterisks and backticks until the
-                   * closing token arrives, so the answer visibly rewrites itself as it lands. This
-                   * closes them for the duration.
-                   */
-                  // 单独一行的链接变成下面的链接卡，正文里那一行拿掉（DESIGN.md §48）。
-                  <RichBotStreamdown
-                    components={richMarkdownComponents}
-                    text={text}
-                  />
-                )}
-              </BubbleContent>
-            </Bubble>
+                      )}
+                      {invoked ? (
+                        <>
+                          {/*
+                           * The same icon the sidebar uses for Skills, so the badge says WHAT KIND of
+                           * thing was invoked before it says which one. `inline-flex` with
+                           * `align-middle` rather than a block: this sits mid-sentence, and a badge that
+                           * breaks the line it is in reads as a separate message.
+                           */}
+                          <span className="mr-1 inline-flex items-center gap-1 rounded bg-foreground/10 px-1.5 py-0.5 align-middle font-mono text-foreground/80 text-xs">
+                            <IconBox className="size-3 shrink-0" />/{invoked.chip}
+                          </span>
+                          {invoked.rest}
+                        </>
+                      ) : (
+                        said
+                      )}
+                    </span>
+                  ) : (
+                    <RichBotStreamdown
+                      components={richMarkdownComponents}
+                      text={text}
+                    />
+                  )}
+                </BubbleContent>
+              </Bubble>
+            </div>
           )}
           {/* 链接卡 / 图片一摞（DESIGN.md §31）；开场一句不带。 */}
           {tone === "lead" ? null : (
             <MessageRichPreviews align={align} text={isUser ? said : text} />
           )}
+          {!isUser && memories && memories.length > 0 ? (
+            <MemoryPills items={memories} />
+          ) : null}
           {isUser && messageId ? <ReadMark messageId={messageId} /> : null}
           {isUser ? (
             editable && messageId ? (
               <div className="chat-msg-actions" data-align="end">
+                <QuoteReplyAction messageId={messageId} role="user" text={said} />
                 <EditAction onEdit={() => setEditing(true)} />
               </div>
             ) : null
           ) : !text.trim() ? null : tone === "lead" ? (
             canRegenerate ? (
               <div className="chat-msg-actions">
+                <QuoteReplyAction messageId={messageId} role="assistant" text={text} />
                 <RegenerateAction />
               </div>
             ) : null
           ) : (
             <CopyMessage
+              messageId={messageId}
               text={text}
               extra={canRegenerate ? <RegenerateAction /> : null}
             />
@@ -1808,9 +2075,11 @@ const TranscriptMessage = memo(function TranscriptMessage({
 /** A quiet copy action under a Bot's answer; shows on hover, always reachable by keyboard. */
 function CopyMessage({
   text,
+  messageId,
   extra,
 }: {
   text: string;
+  messageId?: string | undefined;
   extra?: React.ReactNode;
 }) {
   const copy = useAsyncAction(() => writeClipboard(text), {
@@ -1858,6 +2127,7 @@ function CopyMessage({
           ))}
         </span>
       </button>
+      <QuoteReplyAction messageId={messageId} role="assistant" text={text} />
       {extra}
     </div>
   );
@@ -3224,6 +3494,7 @@ export function ChatTranscript({
           <IconChevronDown className="size-4" />
           <span className="chat-bottom-pill-t">{"回到底部"}</span>
         </MessageScrollerButton>
+        <SelectionQuoteToolbar />
         <ScrollNewestQueuedIntoView
           newest={queued.at(-1)?.id ?? null}
           viewport={viewportRef}
@@ -3325,6 +3596,7 @@ export function ChatTranscript({
             isPersonSentMessage(item.role, item.text) &&
             isEditableUserText(item.text)
           }
+          memories={compact.memories.get(item.id)}
           messageId={item.id}
           replyTo={compact.replyTo.get(item.id)}
           role={item.role}
@@ -3534,6 +3806,8 @@ export function compactTurns(
   work: Map<string, WorkEntry>;
   /** Hark 式回复引用（`╭─`）：当用户连发多条或中途插话时，助手回复自动挂上所回应的用户原话与消息 id。 */
   replyTo: Map<string, ReplyTarget>;
+  /** 记忆写入微胶囊提示（Memory Pill）：本轮调用了 memory_save / memory_update / memory_log 时挂在回复气泡下方。 */
+  memories: Map<string, MemoryPillItem[]>;
 } {
   const tone = new Map<string, "lead" | "step" | "final">();
   const hidden = new Set<string>();
@@ -3541,6 +3815,7 @@ export function compactTurns(
   const fallbackAfter = new Map<string, string>();
   const work = new Map<string, WorkEntry>();
   const replyTo = new Map<string, ReplyTarget>();
+  const memories = new Map<string, MemoryPillItem[]>();
   const formatQuoteText = (raw: string): string => {
     const clean = (splitChatOrigin(raw)?.text ?? raw).replace(/\s+/g, " ").trim();
     return clean.length > 64 ? `${clean.slice(0, 63)}…` : clean;
@@ -3761,6 +4036,61 @@ export function compactTurns(
         .find(Boolean);
       if (notice) fallbackAfter.set(last, notice);
     }
+    // 采集本轮的记忆写入调用（memory_save / memory_update / memory_log），挂在可见的助手回复气泡下方。
+    const turnMemories: MemoryPillItem[] = [];
+    for (const item of turn.rest) {
+      if (item.kind !== "tool") continue;
+      const fnName = item.toolCall.function.name;
+      if (
+        fnName !== "memory_save" &&
+        fnName !== "memory_update" &&
+        fnName !== "memory_log"
+      ) {
+        continue;
+      }
+      if (item.result !== undefined && workCallFailed(item.result)) continue;
+      let parsedArgs: Record<string, unknown> = {};
+      try {
+        const raw = JSON.parse(item.toolCall.function.arguments || "{}");
+        if (raw && typeof raw === "object") parsedArgs = raw as Record<string, unknown>;
+      } catch {
+        // ignore
+      }
+      const resStr = typeof item.result === "string" ? item.result : "";
+      const idMatch = /\[(mem_[A-Za-z0-9_-]+)\]/.exec(resStr);
+      const noteId =
+        idMatch?.[1] ??
+        (typeof parsedArgs.id === "string" && parsedArgs.id.startsWith("mem_")
+          ? parsedArgs.id
+          : undefined);
+      const rawSummary =
+        (typeof parsedArgs.content === "string" && parsedArgs.content.trim()) ||
+        (typeof parsedArgs.entry === "string" && parsedArgs.entry.trim()) ||
+        resStr.replace(/^已(?:记下|并入|更新)[：:]\s*(?:\[mem_[^\]]+\]\s*)?/, "").trim();
+      if (!rawSummary) continue;
+      turnMemories.push({
+        id: item.toolCall.id || item.id,
+        noteId,
+        summary: rawSummary.slice(0, 120),
+        kind:
+          fnName === "memory_log"
+            ? "log"
+            : typeof parsedArgs.kind === "string"
+              ? parsedArgs.kind
+              : "fact",
+        subject: typeof parsedArgs.subject === "string" ? parsedArgs.subject : undefined,
+        action:
+          fnName === "memory_save"
+            ? "save"
+            : fnName === "memory_update"
+              ? "update"
+              : "log",
+      });
+    }
+    const memTargetId = final ?? visibleBotTexts[visibleBotTexts.length - 1]?.id ?? null;
+    if (memTargetId && turnMemories.length > 0) {
+      memories.set(memTargetId, turnMemories);
+    }
   });
-  return { tone, hidden, stoppedAfter, fallbackAfter, work, replyTo };
+  return { tone, hidden, stoppedAfter, fallbackAfter, work, replyTo, memories };
 }

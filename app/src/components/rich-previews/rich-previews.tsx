@@ -9,6 +9,7 @@ import {
   IconFileTypeDoc,
   IconFileTypePdf,
   IconFileZip,
+  IconMessageReply,
   IconPhoto,
   IconWorld,
 } from "@tabler/icons-react";
@@ -39,6 +40,7 @@ import { readImageDims } from "@/lib/image-dims";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import { markdownComponents } from "@/lib/markdown";
 import { Lightbox, type LightboxImage } from "./lightbox";
 
@@ -362,6 +364,24 @@ function LinkCard({
           <span className="rp-link-domain">{meta}</span>
         </span>
       </span>
+      <button
+        aria-label={`追问 ${title}`}
+        className="rp-link-followup"
+        data-testid="card-followup-btn"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dispatchComposerQuote({
+            text: `${title} (${link.url})`,
+            source: `链接 · ${meta}`,
+          });
+        }}
+        title={`针对「${title}」继续追问`}
+        type="button"
+      >
+        <IconMessageReply aria-hidden="true" className="size-3.5" />
+        <span>{"追问"}</span>
+      </button>
       <IconArrowUpRight aria-hidden className="rp-link-go" />
     </a>
   );
@@ -826,6 +846,22 @@ function FileCardInner({
           <IconEye className="size-4" />
         </button>
       ) : null}
+      <button
+        aria-label={`追问 ${label}`}
+        className="rp-file-dl"
+        data-testid="card-followup-btn"
+        onClick={(e) => {
+          e.stopPropagation();
+          dispatchComposerQuote({
+            text: `${label} (${meta})`,
+            source: `文件 · ${label}`,
+          });
+        }}
+        title={`针对「${label}」继续追问`}
+        type="button"
+      >
+        <IconMessageReply className="size-4" />
+      </button>
       <a
         aria-label={`下载 ${label}`}
         className="rp-file-dl"

@@ -3,7 +3,9 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
 import {
   recordingSupported,
+  speechRecognitionSupported,
   startRecording,
+  startSpeechRecognitionRecording,
   transcribeRecording,
 } from "@/lib/dictation/recording";
 import {
@@ -22,10 +24,15 @@ export function useDictation(
   );
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
+  const serverTranscriptionRef = useRef(false);
+  serverTranscriptionRef.current = data?.transcription === true;
   const [session] = useState(
     () =>
       new DictationSession({
-        record: startRecording,
+        record: (onError) =>
+          !serverTranscriptionRef.current && speechRecognitionSupported()
+            ? startSpeechRecognitionRecording(onError)
+            : startRecording(onError),
         transcribe: transcribeRecording,
         onTranscript: (text, intent) => onTranscriptRef.current(text, intent),
       }),
@@ -35,7 +42,8 @@ export function useDictation(
     session.getSnapshot,
     session.getSnapshot,
   );
-  const available = data?.transcription === true;
+  const browserSpeech = speechRecognitionSupported();
+  const available = data?.transcription === true || browserSpeech;
   useEffect(() => {
     if (disabled || !available) session.cancel();
     return () => session.cancel();
@@ -44,7 +52,7 @@ export function useDictation(
     session,
     state,
     available,
-    supported: recordingSupported(),
+    supported: recordingSupported() || browserSpeech,
     busy: state.phase !== "idle",
   };
 }

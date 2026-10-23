@@ -115,11 +115,23 @@ function nextFor(refreshMinutes: number | null, refreshAt: string | null | undef
 const ORPHAN_BOT = sql`(not exists (select 1 from agents a where a.id = ${livePanels.botId})
   or exists (select 1 from agent_profiles p where p.agent_id = ${livePanels.botId} and p.deleted_at is not null))`;
 
-/** 只留下还存在的源的读数：删掉 / 改名 / 换 id 的源，不再把旧值挂在库里。 */
+export const PANEL_MODEL_KEY = "__meta_model";
+
+export function readPanelModel(row: LivePanelRow): string | null {
+  const entry = row.sourceState?.[PANEL_MODEL_KEY];
+  if (entry && typeof entry.value === "string" && entry.value.trim()) {
+    return entry.value.trim();
+  }
+  return null;
+}
+
+/** 只留下还存在的源的读数：删掉 / 改名 / 换 id 的源，不再把旧值挂在库里（保留 __meta_model）。 */
 function pruneSourceState(state: LivePanelSourceState | null | undefined, keep: readonly string[]): LivePanelSourceState {
   const ids = new Set(keep);
   const out: LivePanelSourceState = {};
-  for (const [id, reading] of Object.entries(state ?? {})) if (ids.has(id)) out[id] = reading;
+  for (const [id, reading] of Object.entries(state ?? {})) {
+    if (ids.has(id) || id === PANEL_MODEL_KEY) out[id] = reading;
+  }
   return out;
 }
 
@@ -329,6 +341,24 @@ export function createLivePanelStore(db: Database) {
       await db.update(livePanels).set({ refreshMinutes, refreshAt: at, nextRefreshAt, updatedAt: new Date() }).where(own(owner, id));
       return get(owner, id);
     },
+    /** 右栏 ⋯ 菜单改面板独立刷新模型（CB-088）：null = 跟随机器人主模型。 */
+    async setModel(owner: string, id: string, model: string | null) {
+      const current = await get(owner, id);
+      const state: LivePanelSourceState = { ...(current.sourceState ?? {}) };
+      const cleaned = model?.trim() ?? "";
+      if (cleaned) {
+        state[PANEL_MODEL_KEY] = {
+          ok: false,
+          value: cleaned.slice(0, 120),
+          at: new Date().toISOString(),
+          ms: 0,
+        };
+      } else {
+        delete state[PANEL_MODEL_KEY];
+      }
+      await db.update(livePanels).set({ sourceState: state, updatedAt: new Date() }).where(own(owner, id));
+      return get(owner, id);
+    },
     /** 交还计算机之后：因为「有人接管」被推迟的面板（卡片上写着 note），马上到点。 */
     async dueNowIfNoted(owner: string, note: string): Promise<LivePanelRow[]> {
       return db
@@ -409,8 +439,10 @@ export function createLivePanelStore(db: Database) {
      * refreshed_at 是「机器人回合刷新」的时间，秒级取数不能把它刷成刚刚，否则卡片上的「x 分钟前更新」会乱。
      */
     async setSourceState(owner: string, id: string, state: LivePanelSourceState) {
-      await get(owner, id);
-      await db.update(livePanels).set({ sourceState: state, updatedAt: new Date() }).where(own(owner, id));
+      const current = await get(owner, id);
+      const modelMeta = current.sourceState?.[PANEL_MODEL_KEY];
+      const nextState = modelMeta ? { ...state, [PANEL_MODEL_KEY]: modelMeta } : state;
+      await db.update(livePanels).set({ sourceState: nextState, updatedAt: new Date() }).where(own(owner, id));
     },
     /** 到点该刷新的面板（没有被删、有刷新间隔、没在刷新）。 */
     async due(limit = 4): Promise<LivePanelRow[]> {

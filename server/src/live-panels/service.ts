@@ -21,7 +21,7 @@ import { takeHumanControlBlock } from "../computer/control-blocks";
 import { lintPanelSpec, PANEL_DESIGN_GUIDE } from "./design";
 import type { AppVariables } from "../auth/guards";
 import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
-import { LivePanelError, type LivePanelRow, type LivePanelStore, MIN_REFRESH_MINUTES, normalizeRefreshAt } from "./store";
+import { LivePanelError, type LivePanelRow, type LivePanelStore, MIN_REFRESH_MINUTES, normalizeRefreshAt, readPanelModel } from "./store";
 import type { LivePanelDataSource, LivePanelSourceState } from "./source-types";
 import {
   createSourceRunner,
@@ -46,6 +46,8 @@ export type LivePanelDto = {
   /** 每天固定时刻刷新：「08:00」（时区见 refreshTimeZone）；null = 按间隔。 */
   refreshAt: string | null;
   refreshTimeZone: string | null;
+  /** 面板后台刷新使用的独立模型（CB-088）；null = 跟随机器人主模型。 */
+  refreshModel?: string | null;
   error: string | null;
   refreshedAt: string | null;
   nextRefreshAt: string | null;
@@ -98,6 +100,7 @@ export function toDto(row: LivePanelRow): LivePanelDto {
     refreshMinutes: row.refreshMinutes,
     refreshAt: row.refreshAt?.split("@")[0] ?? null,
     refreshTimeZone: row.refreshAt?.split("@")[1] ?? null,
+    refreshModel: readPanelModel(row),
     error: row.error,
     refreshedAt: row.refreshedAt?.toISOString() ?? null,
     nextRefreshAt: row.nextRefreshAt?.toISOString() ?? null,
@@ -291,7 +294,7 @@ export const BOT_DELETED = "机器人已删除";
 export type LivePanelServiceDeps = {
   store: LivePanelStore;
   /** 在一个用完即删的对话里，以面板主人的身份跑这个机器人的一个无头回合（工作流同一条路）。 */
-  runHeadless(input: { ownerUserId: string; botId: string; instruction: string; panelId: string; signal: AbortSignal }): Promise<void>;
+  runHeadless(input: { ownerUserId: string; botId: string; instruction: string; panelId: string; model?: string | null; signal: AbortSignal }): Promise<void>;
   /** 直连数据源的 HTTP 通道：正式部署注入 vault.request（{{secret:名}}、域名绑定、guardedFetch、抹密钥）。 */
   requestHttp?: LivePanelRequestHttp;
   /** 测试注入；不注入时命令源直接用 Bun.spawn 跑本机命令。 */
@@ -338,7 +341,14 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
     const self: { job?: Promise<void> } = {};
     const job = (async () => {
       try {
-        await deps.runHeadless({ ownerUserId, botId: row.botId, instruction: refreshPrompt(row, !row.spec), panelId: id, signal: controller.signal });
+        await deps.runHeadless({
+          ownerUserId,
+          botId: row.botId,
+          instruction: refreshPrompt(row, !row.spec),
+          panelId: id,
+          model: readPanelModel(row),
+          signal: controller.signal,
+        });
         const after = await store.get(ownerUserId, id);
         const updated = after.refreshedAt && after.refreshedAt.getTime() >= startedAt;
         if (!updated && takeHumanControlBlock(id, startedAt)) {
@@ -688,16 +698,28 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
       }
     });
     app.patch("/:id", async (c) => {
-      const body = (await c.req.json().catch(() => ({}))) as { refreshMinutes?: number | null; refreshAt?: string | null; timeZone?: string };
+      const body = (await c.req.json().catch(() => ({}))) as {
+        refreshMinutes?: number | null;
+        refreshAt?: string | null;
+        timeZone?: string;
+        refreshModel?: string | null;
+      };
       try {
+        const panelId = c.req.param("id");
+        if (body.refreshModel !== undefined) {
+          await store.setModel(c.var.actor.id, panelId, body.refreshModel);
+          if (body.refreshAt === undefined && body.refreshMinutes === undefined) {
+            return c.json({ panel: toDto(await store.get(c.var.actor.id, panelId)) });
+          }
+        }
         if (body.refreshAt) {
-          const current = await store.get(c.var.actor.id, c.req.param("id"));
+          const current = await store.get(c.var.actor.id, panelId);
           const at = normalizeRefreshAt(body.refreshAt, body.timeZone ?? current.refreshAt?.split("@")[1] ?? "Asia/Shanghai");
           if (!at) return c.json({ error: "时间格式不对" }, 400);
-          return c.json({ panel: toDto(await store.setRefresh(c.var.actor.id, c.req.param("id"), 1440, at)) });
+          return c.json({ panel: toDto(await store.setRefresh(c.var.actor.id, panelId, 1440, at)) });
         }
         if (body.refreshMinutes === undefined) return c.json({ error: "没有要改的内容" }, 400);
-        return c.json({ panel: toDto(await store.setRefresh(c.var.actor.id, c.req.param("id"), body.refreshMinutes)) });
+        return c.json({ panel: toDto(await store.setRefresh(c.var.actor.id, panelId, body.refreshMinutes)) });
       } catch (error) {
         return fail(c, error);
       }

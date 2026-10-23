@@ -12,11 +12,127 @@ export interface Recording {
   cancel(): void;
 }
 
+const BROWSER_SPEECH_MIME = "application/x-chisabot-speech";
+
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: { results: ArrayLike<{ isFinal?: boolean; 0?: { transcript?: string } }> }) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+};
+
+function getSpeechRecognitionCtor(): (new () => BrowserSpeechRecognition) | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as {
+    SpeechRecognition?: new () => BrowserSpeechRecognition;
+    webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
+export function speechRecognitionSupported(): boolean {
+  return getSpeechRecognitionCtor() !== null;
+}
+
 export function recordingSupported(): boolean {
   return (
     typeof MediaRecorder !== "undefined" &&
     Boolean(navigator.mediaDevices?.getUserMedia)
   );
+}
+
+export async function startSpeechRecognitionRecording(
+  onError: (error: Error) => void,
+): Promise<Recording> {
+  const Ctor = getSpeechRecognitionCtor();
+  if (!Ctor) {
+    throw new Error("当前浏览器不支持本地语音识别。");
+  }
+  let stream: MediaStream | undefined;
+  if (navigator.mediaDevices?.getUserMedia) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      // 即使未授予独立音频流可视化，也继续尝试 SpeechRecognition
+    }
+  }
+  const releaseStream = () => {
+    if (!stream) return;
+    for (const track of stream.getTracks()) track.stop();
+  };
+
+  const recognition = new Ctor();
+  recognition.lang = (typeof navigator !== "undefined" && navigator.language) || "zh-CN";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  let transcript = "";
+  let done: ReturnType<typeof Promise.withResolvers<Blob>> | undefined;
+  let cancelled = false;
+
+  recognition.onresult = (event) => {
+    const parts: string[] = [];
+    for (let i = 0; i < event.results.length; i++) {
+      const item = event.results[i];
+      const piece = item?.[0]?.transcript ?? "";
+      if (piece) parts.push(piece);
+    }
+    transcript = parts.join("").trim();
+  };
+
+  recognition.onerror = (event) => {
+    if (cancelled) return;
+    if (event.error === "no-speech") return;
+    releaseStream();
+    onError(new Error(event.error === "not-allowed" ? "浏览器未授予麦克风权限。" : "语音速记中断，请重试。"));
+  };
+
+  recognition.onend = () => {
+    releaseStream();
+    if (done) {
+      done.resolve(new Blob([transcript], { type: BROWSER_SPEECH_MIME }));
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch (err) {
+    releaseStream();
+    throw err;
+  }
+
+  return {
+    stream,
+    cancel() {
+      cancelled = true;
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      try {
+        recognition.abort();
+      } catch {
+        // ignore
+      }
+      releaseStream();
+      done?.reject(new DOMException("Recording cancelled", "AbortError"));
+    },
+    finish() {
+      if (done) return done.promise;
+      done = Promise.withResolvers<Blob>();
+      try {
+        recognition.stop();
+      } catch {
+        releaseStream();
+        done.resolve(new Blob([transcript], { type: BROWSER_SPEECH_MIME }));
+      }
+      return done.promise;
+    },
+  };
 }
 
 export async function startRecording(
@@ -103,6 +219,13 @@ export async function transcribeRecording(
   audio: Blob,
   signal: AbortSignal,
 ): Promise<string> {
+  if (audio.type.startsWith(BROWSER_SPEECH_MIME)) {
+    const text = (await audio.text()).trim();
+    if (!text) {
+      throw new Error("未检测到语音。请尝试再次录音。");
+    }
+    return text;
+  }
   const type = dictationMediaType(audio.type);
   const extension = dictationExtension(type);
   if (!extension || !audio.size || audio.size > MAX_DICTATION_BYTES) {

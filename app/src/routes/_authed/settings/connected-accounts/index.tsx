@@ -14,6 +14,7 @@ import {
   PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { RowMark } from "@/components/layout/row-mark";
 import { GithubConnectionSection } from "@/components/settings/github-connection";
+import { PersonalSourcesSection } from "@/components/settings/personal-sources";
 import { SavedLoginsSection } from "@/components/settings/saved-logins";
 import { PluginLogo } from "@/components/plugins/plugin-logo";
 import {
@@ -167,6 +168,9 @@ function RouteComponent() {
     >
       {/* GitHub（DESIGN.md §53）：自己的连接，不依赖管理员启用的连接器，所以放在最上面、总是显示。 */}
       <GithubConnectionSection />
+      <div className="mt-8">
+        <PersonalSourcesSection />
+      </div>
       {/*
        * Only the failure is worth saying. A success needs no sentence: the row it came back to now
        * reads "Connected", which is the same news told by the thing it is news about.

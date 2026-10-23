@@ -35,6 +35,7 @@ const {
   nativeTheme,
   net,
   powerMonitor,
+  globalShortcut,
 } = require("electron");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { createConfig } = require("./config");
@@ -1456,6 +1457,9 @@ app.on("window-all-closed", () => {
 });
 app.on("before-quit", () => {
   quitting = true;
+  try {
+    globalShortcut?.unregisterAll?.();
+  } catch {}
   agent?.stop();
   // 下载好的更新需要重新安装（换了图标 / 组件）而用户选了「稍后」：退出这一刻静默重新安装。
   if (updater?.installOnQuit())
@@ -1519,6 +1523,20 @@ app.whenReady().then(() => {
   nativeTheme.themeSource = typeof appearance.dark === "boolean" ? (appearance.dark ? "dark" : "light") : "system";
   registerIpc();
   startUpdater();
+  // 全局快捷键 Alt+Space 呼出 ChisaBot 随手问浮窗（Spotlight 模式）
+  try {
+    globalShortcut?.register?.("Alt+Space", () => {
+      void Promise.resolve(openApp()).then((win) => {
+        if (win && !win.isDestroyed()) {
+          win.show();
+          win.focus();
+          win.webContents.executeJavaScript(
+            'window.dispatchEvent(new CustomEvent("chisabot-spotlight"))',
+          ).catch(() => {});
+        }
+      });
+    });
+  } catch {}
   setTimeout(() => {
     try {
       refreshShellIfChanged();

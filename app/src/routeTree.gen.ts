@@ -46,12 +46,12 @@ import { Route as AuthedSettingsApprovalsRouteImport } from './routes/_authed/se
 import { Route as AuthedSettingsCloudWorkspaceRouteImport } from './routes/_authed/settings/cloud-workspace'
 import { Route as AuthedSettingsComponentsGalleryRouteImport } from './routes/_authed/settings/components-gallery'
 import { Route as AuthedSettingsImRouteImport } from './routes/_authed/settings/im'
-import { Route as AuthedSettingsShareRouteImport } from './routes/_authed/settings/share'
 import { Route as AuthedSettingsMediaRouteImport } from './routes/_authed/settings/media'
 import { Route as AuthedSettingsMemoryRouteImport } from './routes/_authed/settings/memory'
 import { Route as AuthedSettingsPagesRouteImport } from './routes/_authed/settings/pages'
 import { Route as AuthedSettingsPasswordsRouteImport } from './routes/_authed/settings/passwords'
 import { Route as AuthedSettingsSchedulesRouteImport } from './routes/_authed/settings/schedules'
+import { Route as AuthedSettingsShareRouteImport } from './routes/_authed/settings/share'
 import { Route as AuthedSettingsSkillsRouteImport } from './routes/_authed/settings/skills'
 import { Route as AuthedSettingsVaultRouteImport } from './routes/_authed/settings/vault'
 import { Route as AuthedSignInRequestIdRouteImport } from './routes/_authed/sign-in/$requestId'
@@ -268,11 +268,6 @@ const AuthedSettingsImRoute = AuthedSettingsImRouteImport.update({
   path: '/im',
   getParentRoute: () => AuthedSettingsRouteRoute,
 } as any)
-const AuthedSettingsShareRoute = AuthedSettingsShareRouteImport.update({
-  id: '/share',
-  path: '/share',
-  getParentRoute: () => AuthedSettingsRouteRoute,
-} as any)
 const AuthedSettingsMediaRoute = AuthedSettingsMediaRouteImport.update({
   id: '/media',
   path: '/media',
@@ -296,6 +291,11 @@ const AuthedSettingsPasswordsRoute = AuthedSettingsPasswordsRouteImport.update({
 const AuthedSettingsSchedulesRoute = AuthedSettingsSchedulesRouteImport.update({
   id: '/schedules',
   path: '/schedules',
+  getParentRoute: () => AuthedSettingsRouteRoute,
+} as any)
+const AuthedSettingsShareRoute = AuthedSettingsShareRouteImport.update({
+  id: '/share',
+  path: '/share',
   getParentRoute: () => AuthedSettingsRouteRoute,
 } as any)
 const AuthedSettingsSkillsRoute = AuthedSettingsSkillsRouteImport.update({
@@ -486,12 +486,12 @@ export interface FileRoutesByFullPath {
   '/settings/cloud-workspace': typeof AuthedSettingsCloudWorkspaceRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/settings/im': typeof AuthedSettingsImRoute
-  '/settings/share': typeof AuthedSettingsShareRoute
   '/settings/media': typeof AuthedSettingsMediaRoute
   '/settings/memory': typeof AuthedSettingsMemoryRoute
   '/settings/pages': typeof AuthedSettingsPagesRoute
   '/settings/passwords': typeof AuthedSettingsPasswordsRoute
   '/settings/schedules': typeof AuthedSettingsSchedulesRoute
+  '/settings/share': typeof AuthedSettingsShareRoute
   '/settings/skills': typeof AuthedSettingsSkillsRoute
   '/settings/vault': typeof AuthedSettingsVaultRoute
   '/sign-in/$requestId': typeof AuthedSignInRequestIdRoute
@@ -554,12 +554,12 @@ export interface FileRoutesByTo {
   '/settings/cloud-workspace': typeof AuthedSettingsCloudWorkspaceRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/settings/im': typeof AuthedSettingsImRoute
-  '/settings/share': typeof AuthedSettingsShareRoute
   '/settings/media': typeof AuthedSettingsMediaRoute
   '/settings/memory': typeof AuthedSettingsMemoryRoute
   '/settings/pages': typeof AuthedSettingsPagesRoute
   '/settings/passwords': typeof AuthedSettingsPasswordsRoute
   '/settings/schedules': typeof AuthedSettingsSchedulesRoute
+  '/settings/share': typeof AuthedSettingsShareRoute
   '/settings/skills': typeof AuthedSettingsSkillsRoute
   '/settings/vault': typeof AuthedSettingsVaultRoute
   '/sign-in/$requestId': typeof AuthedSignInRequestIdRoute
@@ -627,12 +627,12 @@ export interface FileRoutesById {
   '/_authed/settings/cloud-workspace': typeof AuthedSettingsCloudWorkspaceRoute
   '/_authed/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/_authed/settings/im': typeof AuthedSettingsImRoute
-  '/_authed/settings/share': typeof AuthedSettingsShareRoute
   '/_authed/settings/media': typeof AuthedSettingsMediaRoute
   '/_authed/settings/memory': typeof AuthedSettingsMemoryRoute
   '/_authed/settings/pages': typeof AuthedSettingsPagesRoute
   '/_authed/settings/passwords': typeof AuthedSettingsPasswordsRoute
   '/_authed/settings/schedules': typeof AuthedSettingsSchedulesRoute
+  '/_authed/settings/share': typeof AuthedSettingsShareRoute
   '/_authed/settings/skills': typeof AuthedSettingsSkillsRoute
   '/_authed/settings/vault': typeof AuthedSettingsVaultRoute
   '/_authed/sign-in/$requestId': typeof AuthedSignInRequestIdRoute
@@ -701,12 +701,12 @@ export interface FileRouteTypes {
     | '/settings/cloud-workspace'
     | '/settings/components-gallery'
     | '/settings/im'
-    | '/settings/share'
     | '/settings/media'
     | '/settings/memory'
     | '/settings/pages'
     | '/settings/passwords'
     | '/settings/schedules'
+    | '/settings/share'
     | '/settings/skills'
     | '/settings/vault'
     | '/sign-in/$requestId'
@@ -769,12 +769,12 @@ export interface FileRouteTypes {
     | '/settings/cloud-workspace'
     | '/settings/components-gallery'
     | '/settings/im'
-    | '/settings/share'
     | '/settings/media'
     | '/settings/memory'
     | '/settings/pages'
     | '/settings/passwords'
     | '/settings/schedules'
+    | '/settings/share'
     | '/settings/skills'
     | '/settings/vault'
     | '/sign-in/$requestId'
@@ -841,12 +841,12 @@ export interface FileRouteTypes {
     | '/_authed/settings/cloud-workspace'
     | '/_authed/settings/components-gallery'
     | '/_authed/settings/im'
-    | '/_authed/settings/share'
     | '/_authed/settings/media'
     | '/_authed/settings/memory'
     | '/_authed/settings/pages'
     | '/_authed/settings/passwords'
     | '/_authed/settings/schedules'
+    | '/_authed/settings/share'
     | '/_authed/settings/skills'
     | '/_authed/settings/vault'
     | '/_authed/sign-in/$requestId'
@@ -1146,13 +1146,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedSettingsImRouteImport
       parentRoute: typeof AuthedSettingsRouteRoute
     }
-    '/_authed/settings/share': {
-      id: '/_authed/settings/share'
-      path: '/share'
-      fullPath: '/settings/share'
-      preLoaderRoute: typeof AuthedSettingsShareRouteImport
-      parentRoute: typeof AuthedSettingsRouteRoute
-    }
     '/_authed/settings/media': {
       id: '/_authed/settings/media'
       path: '/media'
@@ -1186,6 +1179,13 @@ declare module '@tanstack/react-router' {
       path: '/schedules'
       fullPath: '/settings/schedules'
       preLoaderRoute: typeof AuthedSettingsSchedulesRouteImport
+      parentRoute: typeof AuthedSettingsRouteRoute
+    }
+    '/_authed/settings/share': {
+      id: '/_authed/settings/share'
+      path: '/share'
+      fullPath: '/settings/share'
+      preLoaderRoute: typeof AuthedSettingsShareRouteImport
       parentRoute: typeof AuthedSettingsRouteRoute
     }
     '/_authed/settings/skills': {
@@ -1451,12 +1451,12 @@ interface AuthedSettingsRouteRouteChildren {
   AuthedSettingsCloudWorkspaceRoute: typeof AuthedSettingsCloudWorkspaceRoute
   AuthedSettingsComponentsGalleryRoute: typeof AuthedSettingsComponentsGalleryRoute
   AuthedSettingsImRoute: typeof AuthedSettingsImRoute
-  AuthedSettingsShareRoute: typeof AuthedSettingsShareRoute
   AuthedSettingsMediaRoute: typeof AuthedSettingsMediaRoute
   AuthedSettingsMemoryRoute: typeof AuthedSettingsMemoryRoute
   AuthedSettingsPagesRoute: typeof AuthedSettingsPagesRoute
   AuthedSettingsPasswordsRoute: typeof AuthedSettingsPasswordsRoute
   AuthedSettingsSchedulesRoute: typeof AuthedSettingsSchedulesRoute
+  AuthedSettingsShareRoute: typeof AuthedSettingsShareRoute
   AuthedSettingsSkillsRoute: typeof AuthedSettingsSkillsRoute
   AuthedSettingsVaultRoute: typeof AuthedSettingsVaultRoute
   AuthedSettingsIndexRoute: typeof AuthedSettingsIndexRoute
@@ -1471,12 +1471,12 @@ const AuthedSettingsRouteRouteChildren: AuthedSettingsRouteRouteChildren = {
   AuthedSettingsCloudWorkspaceRoute: AuthedSettingsCloudWorkspaceRoute,
   AuthedSettingsComponentsGalleryRoute: AuthedSettingsComponentsGalleryRoute,
   AuthedSettingsImRoute: AuthedSettingsImRoute,
-  AuthedSettingsShareRoute: AuthedSettingsShareRoute,
   AuthedSettingsMediaRoute: AuthedSettingsMediaRoute,
   AuthedSettingsMemoryRoute: AuthedSettingsMemoryRoute,
   AuthedSettingsPagesRoute: AuthedSettingsPagesRoute,
   AuthedSettingsPasswordsRoute: AuthedSettingsPasswordsRoute,
   AuthedSettingsSchedulesRoute: AuthedSettingsSchedulesRoute,
+  AuthedSettingsShareRoute: AuthedSettingsShareRoute,
   AuthedSettingsSkillsRoute: AuthedSettingsSkillsRoute,
   AuthedSettingsVaultRoute: AuthedSettingsVaultRoute,
   AuthedSettingsIndexRoute: AuthedSettingsIndexRoute,
