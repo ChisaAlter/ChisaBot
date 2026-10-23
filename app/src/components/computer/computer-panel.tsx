@@ -1,5 +1,6 @@
 import { markComputerEngaged } from "@/lib/computers/auto-watch";
 import { useComputerStatus } from "@/lib/computers/use-status";
+import { lastComputerStatusFor } from "@/lib/copilot/computer-activity";
 import { ActivityLog } from "./activity-log";
 import { ComputerView } from "./computer-view";
 
@@ -19,7 +20,8 @@ export function ComputerViewPanel({
   variant?: "pane" | "rail";
 }) {
   const engaged = () => markComputerEngaged(agentId);
-  const status = useComputerStatus(agentId);
+  const liveStatus = useComputerStatus(agentId);
+  const status = liveStatus ?? lastComputerStatusFor(agentId);
   return (
     <section
       aria-label={"计算机"}

@@ -4,7 +4,8 @@ import {
   clearActivity,
   recordActivity,
 } from "../src/lib/computers/activity";
-import { outputOf } from "../src/lib/copilot/computer-tools";
+import { outputOf, syncComputerMessages } from "../src/lib/copilot/computer-tools";
+import { lastComputerStatusFor } from "../src/lib/copilot/computer-activity";
 
 /**
  * What a Bot did on its computer, other than browse.
@@ -136,5 +137,58 @@ describe("the activity a pane shows", () => {
 
     const [first, second] = activityFor("bot-1");
     expect(first?.id).not.toBe(second?.id);
+  });
+
+  test("syncs server-executed computer tool calls from messages without duplicating toolCallId", () => {
+    const messages = [
+      {
+        id: "m1",
+        role: "assistant",
+        toolCalls: [
+          {
+            id: "tc-write-1",
+            function: {
+              name: "computer_write_file",
+              arguments: JSON.stringify({ path: "summary.md", contents: "# Example" }),
+            },
+          },
+          {
+            id: "tc-cmd-1",
+            function: {
+              name: "computer_run_command",
+              arguments: JSON.stringify({ command: "python3 primes.py" }),
+            },
+          },
+        ],
+      },
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "tc-write-1",
+        content: JSON.stringify({ ok: true, path: "summary.md", bytes: 9 }),
+      },
+      {
+        id: "t2",
+        role: "tool",
+        toolCallId: "tc-cmd-1",
+        content: JSON.stringify({ ok: true, stdout: "9592\n", stderr: "", exitCode: 0 }),
+      },
+    ];
+    syncComputerMessages("bot-1", messages, true);
+    syncComputerMessages("bot-1", messages, false);
+    const items = activityFor("bot-1");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({
+      kind: "write_file",
+      subject: "summary.md",
+      output: "9 bytes",
+    });
+    expect(items[1]).toMatchObject({
+      kind: "command",
+      subject: "python3 primes.py",
+      output: "9592\n",
+      exitCode: 0,
+    });
+    expect(lastComputerStatusFor("bot-1")?.label).toBe("正在运行命令");
   });
 });

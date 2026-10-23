@@ -26,6 +26,11 @@ import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { useReportBusy } from "@/lib/activity";
 import { agentListQueryOptions } from "@/lib/agents/queries";
+import {
+  type ApprovalInboxData,
+  dismissPersonQuestion,
+} from "@/lib/approvals";
+import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import {
   recordChannelActivityMutationOptions,
@@ -42,6 +47,7 @@ import { observeApprovalAgent } from "@/lib/copilot/approval-context";
 import type { ThreadActivity } from "@/lib/copilot/bot-thread";
 import { readSync } from "@/lib/copilot/bot-thread";
 import { reportChatRunning } from "@/lib/copilot/computer-activity";
+import { syncComputerMessages } from "@/lib/copilot/computer-tools";
 import {
   CONNECTION_LOST_REASON,
   decideSendWatchdogAction,
@@ -1652,6 +1658,12 @@ export function ChannelChat({
     reportChatRunning(chatBusy);
     return () => reportChatRunning(false);
   }, [chatBusy]);
+  const activeMessages = restoring
+    ? (early ?? cached ?? EMPTY_MESSAGES)
+    : agent.messages;
+  useEffect(() => {
+    syncComputerMessages(runtimeAgentId, activeMessages, chatBusy);
+  }, [runtimeAgentId, activeMessages, chatBusy]);
   const canResend = !agentLive && channel.active && !restoring && !modelSaving;
   const messageActions = useMemo(
     () => ({ canAct: canResend, regenerate, edit: editAndResend }),
@@ -1730,7 +1742,10 @@ export function ChannelChat({
                 <>
                   {/* 机器人在这个对话里问的问题：回答框就放在输入框上面（DESIGN.md §110），
                       侧栏那个数点进来之后原来没有任何可做的事。 */}
-                  <PendingQuestion channelId={channel.id} />
+                  <PendingQuestion
+                    channelId={channel.id}
+                    onAnswer={(response) => say(response, [], [])}
+                  />
                   <HandoffResumeNotice
                     botId={runtimeAgentId}
                     agent={agent}
@@ -1777,6 +1792,30 @@ export function ChannelChat({
                 // §94.7：提交这一刻机器人还在回答 → 这一句是接着聊，不翻页。busy 在按下发送的同时就变 true，
                 // 等这条消息落地、出现在列表里时它已经是 true 了，那时候再判会把每一次发送都当成「回答中」。
                 noteSendWhileBusy(agentLive);
+                const openQuestions = (
+                  modelQueryClient.getQueryData<ApprovalInboxData>([
+                    "approvals",
+                  ])?.questions ?? []
+                ).filter(
+                  (q) =>
+                    (q.channelId === channel.id ||
+                      q.threadId === channel.threadId) &&
+                    q.initiatorKind !== "responsibility",
+                );
+                if (openQuestions.length > 0) {
+                  void Promise.all(
+                    openQuestions.map((q) =>
+                      dismissPersonQuestion(q.id).catch(() => null),
+                    ),
+                  ).then(() => {
+                    void modelQueryClient.invalidateQueries({
+                      queryKey: ["approvals"],
+                    });
+                    void modelQueryClient.invalidateQueries({
+                      queryKey: botLifecycleKeys.all,
+                    });
+                  });
+                }
                 await say(draft.text, skillInstructions, draft.attachments);
               }}
               /**

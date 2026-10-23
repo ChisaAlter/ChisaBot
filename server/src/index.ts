@@ -581,6 +581,7 @@ const authoriseQuestion = async (question: PersonQuestion) => {
     throw new ApprovalRefusedError("That Bot is no longer available to you.");
 };
 const storedApprovals = createApprovalStore(database);
+const approvalQuestions = createApprovalQuestions(database, authoriseQuestion);
 const approvalService = createApprovalService(
   {
     ...storedApprovals,
@@ -633,7 +634,7 @@ const approvalService = createApprovalService(
       return request;
     },
   },
-  createApprovalQuestions(database, authoriseQuestion),
+  approvalQuestions,
   async (ownerUserId, botId, snapshot, signal) => {
     signal.throwIfAborted();
     const source = await sourceForCoordinationRun({
@@ -1418,8 +1419,19 @@ const chisaSkills = createChisaSkills({
     return { id: actor.id, isAdmin: actor.role === "admin" };
   },
 });
+const currentDateContext = () => {
+  const now = new Date();
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const zh = new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "full",
+    timeStyle: "short",
+    timeZone: tz,
+  }).format(now);
+  return `【当前时间】${zh}（时区：${tz}，ISO：${now.toISOString()}）。回答今天几月几号、星期几、当前时间或计算相对日期（明天、下周等）时直接据此作答，无需调用 computer_run_command 运行 date。`;
+};
 const loadPersonalMemoryForActor = (ownerUserId: string) => async (botId: string) =>
   [
+    currentDateContext(),
     await memoryNotes.context(ownerUserId, botId).catch(() => ""),
     await chisaSkills.catalog(ownerUserId).catch(() => ""),
     VAULT_GUIDANCE,
@@ -1617,6 +1629,9 @@ const signRunForActor =
           "The delegated run identity does not match this Bot and owner.",
         );
       return previousAssertion as string;
+    }
+    if (initiator.kind === "person" && threadId) {
+      void approvalQuestions.dismissForThread(actorId, threadId).catch(() => undefined);
     }
     return mintRunAssertion(
       {

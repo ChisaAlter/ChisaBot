@@ -535,7 +535,7 @@ export function createChatFiles(
           z.object({ path: z.string().min(1).max(400).describe("工作区里的相对路径，如 report.pdf"), title: z.string().max(80).optional().describe("给用户看的文件名（可选）") }).strict(),
           async (input) => {
             const file = await share(owner, agentId, input.path.trim(), input.title);
-            return withFiles(`已把「${file.name}」交给用户（聊天里有下载卡片）。不要再贴路径或链接。${describe(file)}`, [file]);
+            return withFiles(`已把「${file.name}」交给用户（聊天里有下载卡片）。不要再贴路径或链接，但在回复正文里请直接写出文件中的关键结论或摘要，让用户不打开文件也能一眼看到结果。${describe(file)}`, [file]);
           },
         ),
       );
@@ -582,7 +582,7 @@ export function createChatFiles(
     const vision = owner && agentId ? await media.visionFor(owner, agentId).catch(() => null) : null;
     return [
       "【文件】用户在聊天里上传的文件会存进你的工作区 uploads/（消息里能看到图片和说明）。",
-      options.workspace ? "要把工作区里的文件给用户，用 file_share（聊天里出下载卡片），不要贴路径或 workspace.local 链接。" : "",
+      options.workspace ? "要把工作区里的文件给用户，用 file_share（聊天里出下载卡片），不要贴路径或 workspace.local 链接；同时在回复正文里直接写出关键结论或内容摘要。" : "",
       images?.ready
         ? "要画图用 image_generate，要改图（包括用户刚上传的）用 image_edit；结果会自动显示，不要再用 Markdown 贴图。"
         : "还没打开图片生成：用户要你画图时，告诉他请管理员在 设置 → 模型 → 生图模型 里打开，或在 设置 → 生图与识图 里填自己的生图模型。",

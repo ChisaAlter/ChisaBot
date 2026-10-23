@@ -4,7 +4,12 @@ import { CommandOutput } from "@/components/computer/command-output";
 import { BrowseChip } from "@/components/computer/browse-chip";
 import { keepShot, ScreenshotCard, shrinkPng } from "@/components/computer/screenshot-card";
 import { readScreenshot } from "@/lib/computers/screen";
-import { reportComputerActivity } from "@/lib/copilot/computer-activity";
+import {
+  describeComputerToolCall,
+  lastComputerStatusFor,
+  reportComputerActivity,
+  reportComputerStatus,
+} from "@/lib/copilot/computer-activity";
 import { tryClient } from "@/lib/client";
 import { syncStartLinks } from "@/lib/browser-bookmarks";
 import { noteBrowsed, recordActivity } from "@/lib/computers/activity";
@@ -799,13 +804,17 @@ export function ComputerTools() {
         .optional()
         .describe("Optional folder to list. Omit for the whole workspace."),
     }),
-    handler: async (input: { path?: string }) => {
+    handler: async (
+      input: { path?: string },
+      { toolCall }: { toolCall?: { id?: string } } = {},
+    ) => {
       const computerId = bot.current;
       const result = await callComputer(computerId, "/files/list", {
         method: "POST",
         body: input ?? {},
       });
       recordActivity(computerId, {
+        ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
         kind: "list_files",
         subject: input?.path ?? "the workspace",
         output: outputOf(result),
@@ -846,13 +855,17 @@ export function ComputerTools() {
         .string()
         .describe("Path relative to your workspace, such as notes.md"),
     }),
-    handler: async (input: { path: string }) => {
+    handler: async (
+      input: { path: string },
+      { toolCall }: { toolCall?: { id?: string } } = {},
+    ) => {
       const computerId = bot.current;
       const result = await callComputer(computerId, "/files/read", {
         method: "POST",
         body: input,
       });
       recordActivity(computerId, {
+        ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
         kind: "read_file",
         subject: input.path,
         output: outputOf(result),
@@ -913,7 +926,7 @@ export function ComputerTools() {
     }),
     handler: async (
       input: { command: string; timeoutSec?: number; timeoutMs?: number },
-      { signal }: { signal?: AbortSignal } = {},
+      { signal, toolCall }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
       // 直连 /exec 时（没有对话快照的界面）也要折算：路由只认整数毫秒 1000–600000。
@@ -938,6 +951,7 @@ export function ComputerTools() {
        * command and what it printed.
        */
       recordActivity(computerId, {
+        ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
         kind: "command",
         subject: input.command,
         output: outputOf(result),
@@ -1008,11 +1022,14 @@ export function ComputerTools() {
         .optional()
         .describe("Add to the end of the file instead of replacing it"),
     }),
-    handler: async (input: {
-      path: string;
-      contents: string;
-      append?: boolean;
-    }) => {
+    handler: async (
+      input: {
+        path: string;
+        contents: string;
+        append?: boolean;
+      },
+      { toolCall }: { toolCall?: { id?: string } } = {},
+    ) => {
       const computerId = bot.current;
       const result = await callComputer(computerId, "/files/write", {
         method: "POST",
@@ -1024,6 +1041,7 @@ export function ComputerTools() {
        * in a pane would undo that.
        */
       recordActivity(computerId, {
+        ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
         kind: "write_file",
         subject: input.path,
         output:
@@ -1091,4 +1109,165 @@ export function ComputerTools() {
   });
 
   return null;
+}
+
+const lastSyncedStatusKey = new Map<string, string>();
+const BROWSER_VISUAL_TOOLS = new Set([
+  "computer_navigate",
+  "computer_read",
+  "computer_snapshot",
+  "computer_screenshot",
+  "computer_type",
+  "computer_click",
+  "computer_key",
+  "computer_scroll",
+  "computer_tabs",
+  "computer_bookmarks",
+  "computer_request_help",
+  "computer_request_sign_in",
+  "computer_request_secret",
+]);
+
+/**
+ * 同步服务端（Hermes / 无头工具）执行过的 computer_* 工具调用到右栏「计算机」状态行与「活动」列表。
+ * 通过 toolCallId 去重，即使前端 handler 同时跑了也不会重复记。
+ */
+export function syncComputerMessages(
+  computerId: string | undefined,
+  messages: readonly {
+    id?: string;
+    role?: string;
+    toolCallId?: string;
+    content?: unknown;
+    toolCalls?: readonly {
+      id?: string;
+      function?: { name?: string; arguments?: string };
+    }[];
+  }[],
+  isLive: boolean,
+): void {
+  if (!computerId || !Array.isArray(messages) || messages.length === 0) return;
+  const toolResults = new Map<string, string>();
+  for (const msg of messages) {
+    if (msg?.role === "tool" && typeof msg.toolCallId === "string") {
+      toolResults.set(
+        msg.toolCallId,
+        typeof msg.content === "string"
+          ? msg.content
+          : JSON.stringify(msg.content ?? ""),
+      );
+    }
+  }
+  let latestCall: {
+    callId: string;
+    name: string;
+    args: Record<string, unknown>;
+    finished: boolean;
+  } | null = null;
+
+  for (const msg of messages) {
+    if (msg?.role !== "assistant" || !Array.isArray(msg.toolCalls)) continue;
+    for (const call of msg.toolCalls) {
+      const callId = call?.id;
+      const name = call?.function?.name;
+      if (
+        typeof callId !== "string" ||
+        typeof name !== "string" ||
+        !name.startsWith("computer_")
+      )
+        continue;
+      let args: Record<string, unknown> = {};
+      if (
+        typeof call.function?.arguments === "string" &&
+        call.function.arguments.trim()
+      ) {
+        try {
+          const parsed = JSON.parse(call.function.arguments) as unknown;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            args = parsed as Record<string, unknown>;
+          }
+        } catch {}
+      }
+      const rawResult = toolResults.get(callId);
+      const finished = rawResult !== undefined;
+      latestCall = { callId, name, args, finished };
+      if (!finished) continue;
+
+      const outcome = outcomeOf(rawResult);
+      if (name === "computer_navigate" && outcome.ok !== false) {
+        noteBrowsed(computerId);
+      } else if (
+        name === "computer_run_command" &&
+        typeof args.command === "string"
+      ) {
+        recordActivity(computerId, {
+          toolCallId: callId,
+          kind: "command",
+          subject: args.command,
+          output: outputOf(outcome as ToolOutcome),
+          ...(typeof outcome.exitCode === "number"
+            ? { exitCode: outcome.exitCode }
+            : {}),
+          ...(outcome.refused === true ? { refused: true } : {}),
+          ...(outcome.truncated === true ? { truncated: true } : {}),
+          ...(outcome.timedOut === true ? { timedOut: true } : {}),
+        });
+      } else if (
+        name === "computer_read_file" &&
+        typeof args.path === "string"
+      ) {
+        recordActivity(computerId, {
+          toolCallId: callId,
+          kind: "read_file",
+          subject: args.path,
+          output: outputOf(outcome as ToolOutcome),
+          ...(outcome.refused === true ? { refused: true } : {}),
+        });
+      } else if (
+        name === "computer_write_file" &&
+        typeof args.path === "string"
+      ) {
+        recordActivity(computerId, {
+          toolCallId: callId,
+          kind: "write_file",
+          subject: args.path,
+          output:
+            outcome.refused === true
+              ? outputOf(outcome as ToolOutcome)
+              : typeof outcome.bytes === "number"
+                ? `${outcome.bytes} bytes${args.append === true ? ", appended" : ""}`
+                : "",
+          ...(outcome.refused === true ? { refused: true } : {}),
+        });
+      } else if (name === "computer_list_files") {
+        recordActivity(computerId, {
+          toolCallId: callId,
+          kind: "list_files",
+          subject:
+            typeof args.path === "string" && args.path.trim()
+              ? args.path
+              : "the workspace",
+          output: outputOf(outcome as ToolOutcome),
+          ...(outcome.refused === true ? { refused: true } : {}),
+        });
+      }
+    }
+  }
+
+  if (!latestCall) return;
+  const label = describeComputerToolCall(latestCall.name, latestCall.args);
+  const stateKey = `${latestCall.callId}:${latestCall.finished ? "done" : "pending"}`;
+  if (lastSyncedStatusKey.get(computerId) === stateKey) return;
+  lastSyncedStatusKey.set(computerId, stateKey);
+
+  if (isLive) {
+    if (BROWSER_VISUAL_TOOLS.has(latestCall.name)) {
+      reportComputerActivity(computerId);
+    }
+    if (label) {
+      reportComputerStatus(computerId, label, !latestCall.finished);
+    }
+  } else if (label && !lastComputerStatusFor(computerId)) {
+    reportComputerStatus(computerId, label, false);
+  }
 }

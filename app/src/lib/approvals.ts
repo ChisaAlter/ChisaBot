@@ -65,6 +65,7 @@ export type ApprovalInboxData = {
     channelId?: string | null;
     question: string;
     why?: string;
+    initiatorKind?: string;
     createdAt: string;
   }[];
 };

@@ -24,7 +24,30 @@ import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
  * place is the one answer. The 作废 button beside it is for a question whose conversation is gone:
  * without it the number could never be cleared (§110).
  */
-export function PendingQuestion({ channelId }: { channelId: string }) {
+/**
+ * 提取问题文本里的 A/B/C/D 选项（如「A. 有氧 B. 力量训练 C. 球类」），生成一键点选的快捷胶囊。
+ */
+export function extractQuestionOptions(questionText: string): string[] {
+  const matches = [
+    ...questionText.matchAll(
+      /(?:^|[\s：:；;，,（(])([A-F])[.、:：)\]]\s*([^\n]+?)(?=(?:\s+[A-F][.、:：)\]]\s)|\n|$)/g,
+    ),
+  ];
+  if (matches.length < 2 || matches[0]?.[1] !== "A" || matches[1]?.[1] !== "B") {
+    return [];
+  }
+  return matches
+    .map((m) => `${m[1]}. ${(m[2] ?? "").trim().replace(/[；;，,。]+$/, "")}`)
+    .filter((item) => item.length > 3 && item.length <= 80);
+}
+
+export function PendingQuestion({
+  channelId,
+  onAnswer,
+}: {
+  channelId: string;
+  onAnswer?: (response: string) => unknown;
+}) {
   const cache = useQueryClient();
   const inbox = useQuery(approvalInboxOptions());
   const bots = useQuery(agentListQueryOptions());
@@ -41,8 +64,19 @@ export function PendingQuestion({ channelId }: { channelId: string }) {
     ]);
   };
   const answer = useMutation({
-    mutationFn: (input: { id: string; response: string }) =>
-      answerPersonQuestion(input.id, input.response),
+    mutationFn: async (input: {
+      id: string;
+      response: string;
+      initiatorKind?: string;
+    }) => {
+      if (onAnswer && input.initiatorKind !== "responsibility") {
+        await dismissPersonQuestion(input.id).catch(() => null);
+        await settled();
+        await onAnswer(input.response);
+        return;
+      }
+      await answerPersonQuestion(input.id, input.response);
+    },
     onSuccess: settled,
     // The usual reason this fails is that the conversation it belongs to is gone, which is what
     // 不用回答了 is for — say so rather than leaving a button that silently does nothing.
@@ -57,6 +91,16 @@ export function PendingQuestion({ channelId }: { channelId: string }) {
   const name =
     bots.data?.find((bot) => bot.id === question.botId)?.name ?? "机器人";
   const busy = answer.isPending || dismiss.isPending;
+  const options = extractQuestionOptions(question.question);
+  const submit = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || busy) return;
+    answer.mutate({
+      id: question.id,
+      response: trimmed,
+      initiatorKind: question.initiatorKind,
+    });
+  };
   const askToDismiss = async (id: string) => {
     const ok = await confirmDialog({
       title: "不用回答这个问题了？",
@@ -72,17 +116,8 @@ export function PendingQuestion({ channelId }: { channelId: string }) {
       aria-label={`需要你回答：${question.question}`}
       className="chat-question"
     >
-      <p className="chat-question-t">{`${name}问你：${question.question}`}</p>
-      {question.why ? <p className="chat-question-s">{question.why}</p> : null}
-      <Textarea
-        aria-label="你的回答"
-        data-unsent-watch
-        onChange={(event) => setText(event.target.value)}
-        placeholder="你的回答"
-        rows={2}
-        value={text}
-      />
-      <div className="chat-question-a">
+      <div className="chat-question-head">
+        <p className="chat-question-t">{`${name}问你：${question.question}`}</p>
         <Button
           disabled={busy}
           onClick={() => void askToDismiss(question.id)}
@@ -91,11 +126,45 @@ export function PendingQuestion({ channelId }: { channelId: string }) {
         >
           {"不用回答了"}
         </Button>
+      </div>
+      {question.why ? <p className="chat-question-s">{question.why}</p> : null}
+      {options.length > 0 ? (
+        <div className="chat-question-opts" role="group" aria-label="快捷选项">
+          {options.map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              disabled={busy}
+              className="chat-question-opt"
+              onClick={() => submit(opt)}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="chat-question-row">
+        <Textarea
+          aria-label="你的回答"
+          data-unsent-watch
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault();
+              submit(text);
+            }
+          }}
+          placeholder="输入回答（也可直接在下方输入框回复）…"
+          rows={1}
+          value={text}
+        />
         <Button
           disabled={busy || !text.trim()}
-          onClick={() =>
-            answer.mutate({ id: question.id, response: text.trim() })
-          }
+          onClick={() => submit(text)}
           size="sm"
         >
           {answer.isPending ? "发送中…" : "发送"}

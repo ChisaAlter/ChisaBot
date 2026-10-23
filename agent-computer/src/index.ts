@@ -1942,6 +1942,47 @@ async function performAction(
     await field.fill(body.text, acting);
     if (body.submit === true) {
       await field.press("Enter", acting);
+    } else if (body.text.length > 0) {
+      // JS 日期选择器（如 Bootstrap Datepicker）在 fill 后内部状态未同步且弹窗挡住下方控件，失焦时会把值清空。
+      await field
+        .evaluate(
+          (el: Element, value: string) => {
+            if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return;
+            const jq = (
+              window as unknown as {
+                jQuery?: (node: Element) => {
+                  datepicker?: (cmd: string, arg?: string) => unknown;
+                };
+              }
+            ).jQuery;
+            const dp = jq ? jq(el) : undefined;
+            if (dp && typeof dp.datepicker === "function") {
+              try {
+                dp.datepicker("update", value);
+                dp.datepicker("hide");
+              } catch {}
+            }
+            if (el.value !== value) {
+              el.value = value;
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+            el.addEventListener(
+              "blur",
+              () => {
+                if (el.value === "") {
+                  el.value = value;
+                  el.dispatchEvent(new Event("input", { bubbles: true }));
+                  el.dispatchEvent(new Event("change", { bubbles: true }));
+                }
+              },
+              { once: true },
+            );
+          },
+          body.text,
+          { timeout: ACTION_TIMEOUT_MS },
+        )
+        .catch(() => undefined);
     }
     // The text itself is deliberately NOT returned. It is echoed nowhere: this response is read by
     // the model and logged by the server, and a value typed into a form is exactly where a password

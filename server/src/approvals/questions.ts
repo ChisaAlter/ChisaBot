@@ -74,11 +74,33 @@ export function createApprovalQuestions(
                 channelId: value.data.channelId ?? null,
                 question: value.data.question,
                 why: value.data.why,
+                initiatorKind: value.data.initiator?.kind ?? "person",
                 createdAt: row.createdAt,
               }
             : null;
         })
         .filter((row) => row !== null);
+    },
+    /**
+     * When the person replies directly via the conversation's main composer on `threadId`, any open
+     * ordinary question in that thread has been answered in-place and should no longer stay pending.
+     * Questions from suspended responsibilities still wait for their explicit resume path.
+     */
+    async dismissForThread(owner: string, threadId: string) {
+      if (!threadId) return 0;
+      const closed = await database
+        .update(workItems)
+        .set({ finishedAt: sql`now()`, updatedAt: sql`now()` })
+        .where(
+          and(
+            owned(owner),
+            isNull(workItems.finishedAt),
+            sql`${workItems.payload}->>'threadId' = ${threadId}`,
+            sql`coalesce(${workItems.payload}->'initiator'->>'kind', 'person') <> 'responsibility'`,
+          ),
+        )
+        .returning({ key: workItems.key });
+      return closed.length;
     },
     async respond(owner: string, id: string, response: string) {
       const answer = z.string().trim().min(1).max(6000).parse(response);

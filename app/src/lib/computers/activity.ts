@@ -44,6 +44,7 @@ export type ComputerActivity = {
 const LIMIT = 200;
 
 const byComputer = new Map<string, ComputerActivity[]>();
+const seenToolCallIds = new Map<string, Set<string>>();
 const listeners = new Set<() => void>();
 
 /** A stable empty array, so `useSyncExternalStore` does not see a new value on every render. */
@@ -53,13 +54,23 @@ let counter = 0;
 
 export function recordActivity(
   computerId: string,
-  entry: Omit<ComputerActivity, "id" | "at">,
+  entry: Omit<ComputerActivity, "id" | "at"> & { toolCallId?: string },
 ): void {
+  if (entry.toolCallId) {
+    let seen = seenToolCallIds.get(computerId);
+    if (!seen) {
+      seen = new Set<string>();
+      seenToolCallIds.set(computerId, seen);
+    }
+    if (seen.has(entry.toolCallId)) return;
+    seen.add(entry.toolCallId);
+  }
   counter += 1;
+  const { toolCallId: _toolCallId, ...rest } = entry;
   const existing = byComputer.get(computerId) ?? [];
   const next = [
     ...existing,
-    { ...entry, id: `activity-${counter}`, at: Date.now() },
+    { ...rest, id: `activity-${counter}`, at: Date.now() },
   ];
   byComputer.set(computerId, next.slice(-LIMIT));
   for (const listener of listeners) listener();
@@ -104,6 +115,7 @@ export function subscribeToActivity(listener: () => void): () => void {
  */
 export function clearActivity(computerId: string): void {
   byComputer.delete(computerId);
+  seenToolCallIds.delete(computerId);
   browsed.delete(computerId);
   for (const listener of listeners) listener();
 }

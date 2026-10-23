@@ -10,7 +10,10 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { PendingQuestion } from "@/components/approvals/pending-question";
+import {
+  extractQuestionOptions,
+  PendingQuestion,
+} from "@/components/approvals/pending-question";
 import { dismissPersonQuestion } from "@/lib/approvals";
 
 /**
@@ -152,4 +155,13 @@ test("关掉一个答不了的问题走 dismiss，不写回答也不恢复那一
   expect(seen).toEqual([
     { url: "/api/approvals/questions/q1/dismiss", method: "POST" },
   ]);
+});
+
+test("选择题问题自动提取 A/B/C 快捷选项", () => {
+  expect(
+    extractQuestionOptions(
+      "你下周更偏好哪种运动安排？选一个最接近的：A. 有氧（跑步、骑行） B. 力量训练 C. 球类或拉伸",
+    ),
+  ).toEqual(["A. 有氧（跑步、骑行）", "B. 力量训练", "C. 球类或拉伸"]);
+  expect(extractQuestionOptions("要不要现在发这封邮件？")).toEqual([]);
 });

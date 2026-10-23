@@ -71,9 +71,58 @@ export function describeComputerCall(path: string, body: unknown): string | null
   return null;
 }
 
+/** 把服务端 / 消息流里的 computer_* 工具调用翻成同一句状态行。 */
+export function describeComputerToolCall(toolName: string, args: unknown): string | null {
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  switch (toolName) {
+    case "computer_navigate":
+      return describeComputerCall("/navigate", a);
+    case "computer_snapshot":
+      return describeComputerCall("/snapshot", a);
+    case "computer_read":
+      return describeComputerCall("/read", a);
+    case "computer_type":
+      return describeComputerCall("/type", a);
+    case "computer_click":
+      return describeComputerCall("/click", a);
+    case "computer_key":
+      return describeComputerCall("/key", a);
+    case "computer_scroll":
+      return describeComputerCall("/scroll", a);
+    case "computer_write_file":
+      return describeComputerCall("/files/write", a);
+    case "computer_read_file":
+      return describeComputerCall("/files/read", a);
+    case "computer_list_files":
+      return describeComputerCall("/files/list", a);
+    case "computer_run_command":
+      return describeComputerCall("/exec", a);
+    case "computer_request_help":
+    case "computer_request_sign_in":
+    case "computer_request_secret":
+      return describeComputerCall("/control/request", a);
+    case "computer_tabs":
+      return describeComputerCall("/tabs", {
+        ...a,
+        action: a.action === "switch" ? "activate" : a.action,
+      });
+    case "computer_screenshot":
+      return "正在截图";
+    default:
+      return null;
+  }
+}
+
+const lastStatusByBot = new Map<string, ComputerStatus>();
+
 export function reportComputerStatus(botId: string, label: string, pending: boolean): void {
   status = { botId, label, pending, at: Date.now() };
+  lastStatusByBot.set(botId, status);
   for (const listener of statusListeners) listener(status);
+}
+
+export function lastComputerStatusFor(botId: string | undefined): ComputerStatus | null {
+  return botId ? (lastStatusByBot.get(botId) ?? null) : null;
 }
 
 export function currentComputerStatus(): ComputerStatus | null {
