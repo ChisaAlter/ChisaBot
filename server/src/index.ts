@@ -2240,7 +2240,7 @@ if (cloudCc) {
     cloudSync = createCloudSyncService({ database, hub: deviceHub, deviceStore, nodeRpc: (id, op, args, ms) => cc.nodeRpc(id, op, args as never, ms), nodeFor: (owner) => cc.nodeFor(owner) });
     await cloudSync.ensure();
     await cloudSync.recover();
-    cc.setSyncHooks({ withHandoff: cloudSync.withHandoff, forgetWorkspace: cloudSync.forgetWorkspace });
+    cc.setSyncHooks({ withHandoff: cloudSync.withHandoff, beforeTurn: cloudSync.flushBeforeTurn, forgetWorkspace: cloudSync.forgetWorkspace });
   } catch (error) {
     console.warn("cloud folder sync unavailable", error);
     cloudSync = undefined;

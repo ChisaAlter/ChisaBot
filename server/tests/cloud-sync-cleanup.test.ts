@@ -25,9 +25,11 @@ describe.skipIf(!url)("cloud folder sync cleanup", () => {
   const sent: { deviceId: string; message: Record<string, unknown> }[] = [];
   const rpcCalls: { op: string; args: unknown }[] = [];
   let probe: { ok: boolean; error?: string } | "unknown" = { ok: true };
+  let pcOnline = true;
   const hub = {
-    isOnline: (id: string) => id === nodeId || id === pcId,
+    isOnline: (id: string) => id === nodeId || (id === pcId && pcOnline),
     sendRaw: (deviceId: string, message: Record<string, unknown>) => {
+      if (deviceId === pcId && !pcOnline) return false;
       sent.push({ deviceId, message });
       return true;
     },
@@ -148,5 +150,39 @@ describe.skipIf(!url)("cloud folder sync cleanup", () => {
     expect(cleaned).not.toContain(live.id);
     expect(await count("chisabot_cc_leases", orphan)).toBe(0);
     expect(await count("chisabot_cc_sync_bindings", live.id)).toBe(1);
+  });
+
+  test("flushBeforeTurn syncs when PC is online; withHandoff auto-pauses and completes write when PC is offline", async () => {
+    const ws = await sync._internal.createLocalWorkspace(pc, { name: "handoff-test", label: "C:\\handoff" });
+    ids.push(ws.id);
+    await sync._internal.bind(pc, { workspaceId: ws.id, pubKey: key, label: "C:\\handoff" });
+    await sync._internal.report(pc, { workspaceId: ws.id, state: "pc_active" });
+
+    sent.length = 0;
+    const flushPromise = sync.flushBeforeTurn(owner, ws.id, 2000);
+    // Wait a tick for sync_flush to be sent
+    await new Promise((r) => setTimeout(r, 20));
+    const flushMsg = sent.find((s) => s.message.type === "sync_flush" && s.message.workspaceId === ws.id);
+    expect(flushMsg).toBeDefined();
+    await sync._internal.flushDone(pc, { workspaceId: ws.id, flushId: String(flushMsg!.message.flushId), ok: true });
+    expect(await flushPromise).toEqual({ synced: true });
+
+    // When PC goes offline, flushBeforeTurn returns skipped: pc_offline without throwing
+    pcOnline = false;
+    expect(await sync.flushBeforeTurn(owner, ws.id, 500)).toEqual({ synced: false, skipped: "pc_offline" });
+
+    // When PC is offline during withHandoff (e.g. mergeSession), auto-pause binding & reclaim lease to cloud
+    const res = await sync.withHandoff(
+      owner,
+      ws.id,
+      async () => ({ merged: true }),
+      (x) => x.merged,
+    );
+    expect(res).toEqual({ merged: true });
+    const [wsAfter] = await sql.unsafe<{ sync_state: string }[]>("SELECT sync_state FROM chisabot_cc_workspaces WHERE id = $1", [ws.id]);
+    expect(wsAfter?.sync_state).toBe("paused");
+    const [leaseAfter] = await sql.unsafe<{ holder: string }[]>("SELECT holder FROM chisabot_cc_leases WHERE workspace_id = $1", [ws.id]);
+    expect(leaseAfter?.holder).toBe("cloud");
+    pcOnline = true;
   });
 });

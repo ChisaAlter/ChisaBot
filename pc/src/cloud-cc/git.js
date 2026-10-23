@@ -12,6 +12,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { execFile } = require("node:child_process");
 
 const BRANCH = /^cc\/[A-Za-z0-9._-]{1,80}$/;
@@ -125,8 +126,41 @@ function createGitWorkspaces({ root, log = () => {} }) {
     return { branch, head: sha, sizeBytes: bytes };
   }
 
+  const syncResults = new Map(); // `${workspaceId}/${sessionId}` -> { updated: string[], conflicts: string[] }
+
   function baseFile(workspaceId, branch) {
     return path.join(workDir(workspaceId), ".git", "chisabot-base", String(branch).replace(/[^A-Za-z0-9._-]/g, "_"));
+  }
+  function syncBaseFile(workspaceId, branch) {
+    return path.join(workDir(workspaceId), ".git", "chisabot-sync-base", String(branch).replace(/[^A-Za-z0-9._-]/g, "_"));
+  }
+  function conflictFile(workspaceId, branch) {
+    return path.join(workDir(workspaceId), ".git", "chisabot-conflicts", `${String(branch).replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+  }
+  function fileHash(file) {
+    try {
+      return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+    } catch {
+      return "missing";
+    }
+  }
+  function writeRefFile(file, sha) {
+    if (!sha) return;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${sha}\n`);
+  }
+  function readRefFile(file) {
+    try {
+      return fs.readFileSync(file, "utf8").trim();
+    } catch {
+      return "";
+    }
+  }
+  function takeSyncResult(workspaceId, sessionId) {
+    const key = `${workspaceId}/${sessionId}`;
+    const val = syncResults.get(key) || null;
+    syncResults.delete(key);
+    return val;
   }
 
   /**
@@ -158,10 +192,207 @@ function createGitWorkspaces({ root, log = () => {} }) {
     return r.code === 0 && !!r.stdout.trim();
   }
 
-  /** 会话的工作树：第一次用时从工作目录当前的提交切出分支 cc/…（work/ 有没提交的改动 / 还没有提交时，从快照切）。 */
+  /**
+   * 把带完整 blob 索引（--full-index）的补丁放进目标目录 cwd：
+   * 1. 先走 `git apply --check` 快路径；
+   * 2. 对不上时用临时 index 走 `git apply --cached --3way` 三方合并（不同文件或同文件不同行自动合并，
+   *    不动 cwd 的真实 .git/index 和 HEAD；真的同处冲突时 cwd 里一个字节都不写，返回冲突文件列表）。
+   */
+  async function applyPatchThreeWay(cwd, patchText, files) {
+    const patchFile = path.join(os.tmpdir(), `chisabot-apply-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`);
+    const idx = `${patchFile}.idx`;
+    try {
+      fs.writeFileSync(patchFile, patchText);
+      const check = await run(["apply", "--check", "--whitespace=nowarn", patchFile], { cwd });
+      if (check.code === 0) {
+        const r = await run(["apply", "--whitespace=nowarn", patchFile], { cwd });
+        if (r.code !== 0) throw new Error(`应用补丁失败：${scrub(r.stderr).slice(-300)}`);
+        return { ok: true, conflicts: [] };
+      }
+      const env = { ...gitEnv(), GIT_INDEX_FILE: idx };
+      if (await head(cwd)) await run(["read-tree", "HEAD"], { cwd, env });
+      await run(["add", "-A", "."], { cwd, env });
+      const three = await run(["apply", "--cached", "--3way", "--whitespace=nowarn", patchFile], { cwd, env });
+      if (three.code === 0) {
+        for (const f of files) {
+          const inIdx = await run(["ls-files", "--error-unmatch", "--", f], { cwd, env });
+          if (inIdx.code === 0) {
+            const co = await run(["checkout-index", "-f", "--", f], { cwd, env });
+            if (co.code !== 0) throw new Error(`写出三方合并文件失败：${scrub(co.stderr).slice(-300)}`);
+          } else {
+            fs.rmSync(path.join(cwd, f), { force: true });
+          }
+        }
+        return { ok: true, conflicts: [] };
+      }
+      const u = await run(["diff", "--name-only", "-z", "--diff-filter=U"], { cwd, env });
+      const unmerged = u.stdout.split("\0").map((s) => s.trim()).filter(Boolean);
+      const fromErr = [...new Set([...`${three.stderr}\n${check.stderr}`.matchAll(/(?:patch failed|error|conflict):?\s+([^:\n]+?)(?::\d+)?(?::|$)/gim)].map((m) => m[1].trim()))].filter((f) => files.includes(f));
+      const bad = [...new Set([...unmerged, ...fromErr])].filter((f) => files.includes(f));
+      return { ok: false, conflicts: bad.length ? bad : files };
+    } finally {
+      fs.rmSync(patchFile, { force: true });
+      fs.rmSync(idx, { force: true });
+    }
+  }
+
+  /** 将已同步进会话目录的文件差异同步推进到 baseFile 基线提交，使后续合入只计算 Claude 自己的增量。 */
+  async function advanceBase(work, oldBase, prevSync, latestSnap, updated, allFilesCount) {
+    if (!updated.length || !oldBase) return oldBase;
+    if (oldBase === prevSync && updated.length === allFilesCount) return latestSnap;
+    const idx = path.join(os.tmpdir(), `chisabot-baseidx-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const patchFile = `${idx}.patch`;
+    try {
+      const env = { ...gitEnv(), GIT_INDEX_FILE: idx };
+      await run(["read-tree", oldBase], { cwd: work, env });
+      const p = await run(["diff", "--binary", "--full-index", "--no-renames", "--no-color", prevSync, latestSnap, "--", ...updated], { cwd: work });
+      if (!p.stdout.trim()) return oldBase;
+      fs.writeFileSync(patchFile, p.stdout);
+      const a = await run(["apply", "--cached", "--3way", "--whitespace=nowarn", patchFile], { cwd: work, env });
+      if (a.code !== 0) return oldBase;
+      const tree = (await run(["write-tree"], { cwd: work, env })).stdout.trim();
+      if (!tree) return oldBase;
+      const ident = gitEnv({ GIT_AUTHOR_NAME: "ChisaBot", GIT_AUTHOR_EMAIL: "chisabot@localhost", GIT_COMMITTER_NAME: "ChisaBot", GIT_COMMITTER_EMAIL: "chisabot@localhost" });
+      const r = await run(["commit-tree", tree, "-p", oldBase, "-m", "ChisaBot：同步工作目录基线"], { cwd: work, env: ident });
+      return r.code === 0 && r.stdout.trim() ? r.stdout.trim() : oldBase;
+    } finally {
+      fs.rmSync(idx, { force: true });
+      fs.rmSync(patchFile, { force: true });
+    }
+  }
+
+  /** 将指定文件在 oldBase 基线中的树条目直接对齐到 latestSnap，用于 Claude 已在会话目录中解决冲突后的基线推进。 */
+  async function resetBaseFiles(work, oldBase, latestSnap, files) {
+    if (!files.length || !oldBase || !latestSnap) return oldBase;
+    const idx = path.join(os.tmpdir(), `chisabot-rstidx-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const env = { ...gitEnv(), GIT_INDEX_FILE: idx };
+      await run(["read-tree", oldBase], { cwd: work, env });
+      await run(["reset", "-q", latestSnap, "--", ...files], { cwd: work, env });
+      const tree = (await run(["write-tree"], { cwd: work, env })).stdout.trim();
+      if (!tree) return oldBase;
+      const ident = gitEnv({ GIT_AUTHOR_NAME: "ChisaBot", GIT_AUTHOR_EMAIL: "chisabot@localhost", GIT_COMMITTER_NAME: "ChisaBot", GIT_COMMITTER_EMAIL: "chisabot@localhost" });
+      const r = await run(["commit-tree", tree, "-p", oldBase, "-m", "ChisaBot：推进已解决冲突文件的基线"], { cwd: work, env: ident });
+      return r.code === 0 && r.stdout.trim() ? r.stdout.trim() : oldBase;
+    } finally {
+      fs.rmSync(idx, { force: true });
+    }
+  }
+
+  function recordConflictState(workspaceId, tree, branch, latestSnap, conflictFiles) {
+    if (!tree || !latestSnap || !conflictFiles.length) return;
+    const cFile = conflictFile(workspaceId, branch);
+    let existing = {};
+    try {
+      existing = JSON.parse(fs.readFileSync(cFile, "utf8")).files || {};
+    } catch {}
+    const files = { ...existing };
+    for (const f of conflictFiles) files[f] = fileHash(path.join(tree, f));
+    fs.mkdirSync(path.dirname(cFile), { recursive: true });
+    fs.writeFileSync(cFile, JSON.stringify({ latestSnap, files }));
+  }
+
+  /** 检查之前记录的冲突文件是否已被 Claude 修改（合并解决）；若已修改则将其在 baseFile 与 syncBaseFile 中的基线对齐到 latestSnap。 */
+  async function settleResolvedConflicts(workspaceId, tree, branch) {
+    if (!tree || !branch) return;
+    const cFile = conflictFile(workspaceId, branch);
+    let data = null;
+    try {
+      data = JSON.parse(fs.readFileSync(cFile, "utf8"));
+    } catch {
+      return;
+    }
+    if (!data || !data.latestSnap || !data.files || typeof data.files !== "object") return;
+    const resolved = Object.keys(data.files).filter((f) => fileHash(path.join(tree, f)) !== data.files[f]);
+    if (!resolved.length) return;
+    const work = workDir(workspaceId);
+    const oldBase = readRefFile(baseFile(workspaceId, branch)) || readRefFile(syncBaseFile(workspaceId, branch));
+    if (oldBase) {
+      const nextBase = await resetBaseFiles(work, oldBase, data.latestSnap, resolved);
+      if (nextBase) writeRefFile(baseFile(workspaceId, branch), nextBase);
+    }
+    const oldSync = readRefFile(syncBaseFile(workspaceId, branch)) || oldBase;
+    if (oldSync) {
+      const nextSync = await resetBaseFiles(work, oldSync, data.latestSnap, resolved);
+      if (nextSync) writeRefFile(syncBaseFile(workspaceId, branch), nextSync);
+    }
+    for (const f of resolved) delete data.files[f];
+    if (!Object.keys(data.files).length) fs.rmSync(cFile, { force: true });
+    else fs.writeFileSync(cFile, JSON.stringify(data));
+  }
+
+  /**
+   * 已有会话在新一轮对话前，把主工作目录 work/ 相对上次同步基线的新改动三方合并进会话目录 tree/：
+   * 无冲突文件自动更新；与 Claude 未合入改动同处冲突的文件跳过（保留 Claude 版本，不留冲突标记）并返回给上层提示。
+   */
+  async function refreshTreeFromWork(workspaceId, sessionId, branch) {
+    const tree = treeDir(workspaceId, sessionId);
+    const work = workDir(workspaceId);
+    if (!fs.existsSync(path.join(tree, ".git"))) return { updated: [], conflicts: [] };
+    const curBranch = await currentBranch(tree);
+    const activeBranch = branch || curBranch;
+    if (!activeBranch || (curBranch && curBranch !== activeBranch)) return { updated: [], conflicts: [] };
+    await settleResolvedConflicts(workspaceId, tree, activeBranch);
+    let prevSync = readRefFile(syncBaseFile(workspaceId, activeBranch)) || readRefFile(baseFile(workspaceId, activeBranch));
+    if (!prevSync && (await head(work))) {
+      prevSync = (await run(["merge-base", "HEAD", activeBranch], { cwd: work })).stdout.trim();
+    }
+    const workDirty = await isDirty(work);
+    const workHead = await head(work);
+    if (!prevSync) {
+      const snap = workDirty || !workHead ? await snapshotWork(workspaceId).catch(() => null) : workHead;
+      if (snap) writeRefFile(syncBaseFile(workspaceId, activeBranch), snap);
+      return { updated: [], conflicts: [] };
+    }
+    if (!workDirty && workHead && workHead === prevSync) return { updated: [], conflicts: [] };
+    const latestSnap = workDirty || !workHead ? await snapshotWork(workspaceId) : workHead;
+    if (!latestSnap || latestSnap === prevSync) return { updated: [], conflicts: [] };
+    const names = await run(["diff", "--name-only", "-z", "--no-renames", prevSync, latestSnap], { cwd: work });
+    const files = names.stdout.split("\0").filter(Boolean).slice(0, 200);
+    if (!files.length) {
+      writeRefFile(syncBaseFile(workspaceId, activeBranch), latestSnap);
+      return { updated: [], conflicts: [] };
+    }
+    let updated = [];
+    let conflicts = [];
+    const fullPatch = await run(["diff", "--binary", "--full-index", "--no-renames", "--no-color", prevSync, latestSnap], { cwd: work });
+    const batch = await applyPatchThreeWay(tree, fullPatch.stdout, files);
+    if (batch.ok) {
+      updated = files;
+    } else {
+      for (const f of files) {
+        const pf = await run(["diff", "--binary", "--full-index", "--no-renames", "--no-color", prevSync, latestSnap, "--", f], { cwd: work });
+        if (!pf.stdout.trim()) continue;
+        const single = await applyPatchThreeWay(tree, pf.stdout, [f]);
+        if (single.ok) updated.push(f);
+        else conflicts.push(f);
+      }
+    }
+    if (updated.length) {
+      const oldBase = readRefFile(baseFile(workspaceId, activeBranch)) || prevSync;
+      const nextBase = await advanceBase(work, oldBase, prevSync, latestSnap, updated, files.length);
+      if (nextBase) writeRefFile(baseFile(workspaceId, activeBranch), nextBase);
+      const nextSync = await advanceBase(work, prevSync, prevSync, latestSnap, updated, files.length);
+      if (nextSync) writeRefFile(syncBaseFile(workspaceId, activeBranch), nextSync);
+    } else if (!conflicts.length) {
+      writeRefFile(syncBaseFile(workspaceId, activeBranch), latestSnap);
+    }
+    if (conflicts.length) {
+      recordConflictState(workspaceId, tree, activeBranch, latestSnap, conflicts);
+    } else {
+      fs.rmSync(conflictFile(workspaceId, activeBranch), { force: true });
+    }
+    return { updated, conflicts };
+  }
+
+  /** 会话的工作树：第一次用时从工作目录当前的提交切出分支 cc/…（work/ 有没提交的改动 / 还没有提交时，从快照切）；已有工作树则增量同步 work/ 的新改动。 */
   async function ensureTree(workspaceId, sessionId, branch) {
     const tree = treeDir(workspaceId, sessionId);
-    if (fs.existsSync(path.join(tree, ".git"))) return tree;
+    if (fs.existsSync(path.join(tree, ".git"))) {
+      const synced = await refreshTreeFromWork(workspaceId, sessionId, branch);
+      if (synced.updated.length || synced.conflicts.length) syncResults.set(`${workspaceId}/${sessionId}`, synced);
+      return tree;
+    }
     if (!BRANCH.test(String(branch || ""))) throw new Error("会话分支名不对");
     const work = workDir(workspaceId);
     fs.mkdirSync(path.dirname(tree), { recursive: true });
@@ -171,10 +402,13 @@ function createGitWorkspaces({ root, log = () => {} }) {
     await run(["worktree", "prune"], { cwd: work });
     const exists = (await run(["rev-parse", "--verify", "-q", `refs/heads/${branch}`], { cwd: work })).code === 0;
     let start = "HEAD";
-    if (!exists && (!(await head(work)) || (await isDirty(work)))) {
+    const workHead = await head(work);
+    if (!exists && (!workHead || (await isDirty(work)))) {
       start = await snapshotWork(workspaceId);
-      fs.mkdirSync(path.dirname(baseFile(workspaceId, branch)), { recursive: true });
-      fs.writeFileSync(baseFile(workspaceId, branch), `${start}\n`);
+      writeRefFile(baseFile(workspaceId, branch), start);
+      writeRefFile(syncBaseFile(workspaceId, branch), start);
+    } else if (workHead) {
+      writeRefFile(syncBaseFile(workspaceId, branch), workHead);
     }
     const r = await run(["worktree", "add", ...(exists ? [] : ["-b", branch]), tree, ...(exists ? [branch] : [start])], { cwd: work });
     if (r.code !== 0) throw new Error(`建会话工作树失败：${scrub(r.stderr).slice(-300)}`);
@@ -205,8 +439,7 @@ function createGitWorkspaces({ root, log = () => {} }) {
   /**
    * 合入工作目录（§3.4 第 3 条）：会话分支合进 work/ 当前分支；有冲突就放弃合并，work/ 保持原样。
    * 「放进工作目录」模式（mode=apply：电脑文件夹工作区，或者 work/ 有电脑同步来的没提交改动）：只把会话的改动
-   * （快照 / 分叉点 → 会话分支）写进 work/ 的文件，不提交、不动 HEAD——电脑上自己决定怎么提交。先 `apply --check`，
-   * 有一处对不上就一个文件都不写。
+   * （快照 / 分叉点 → 会话分支）写进 work/ 的文件，不提交、不动 HEAD——电脑上自己决定怎么提交。
    */
   async function merge(args) {
     const tree = treeDir(args.workspaceId, args.sessionId);
@@ -216,17 +449,17 @@ function createGitWorkspaces({ root, log = () => {} }) {
     if (!branch || !BRANCH.test(branch)) throw new Error("会话目录不在 cc/ 分支上（可能被切走了），先让 Claude 切回来");
     const committed = await commitPending(tree, String(args.message || `ChisaBot 会话「${branch}」的改动`).slice(0, 200));
     const target = (await currentBranch(work)) || "";
-    const dirty = await run(["status", "--porcelain", "--untracked-files=no"], { cwd: work });
-    const apply = args.mode === "apply" || !target || !!dirty.stdout.trim() || fs.existsSync(baseFile(args.workspaceId, branch));
-    if (apply) return await applyInto(args.workspaceId, branch, target, committed);
+    const dirty = await isDirty(work);
+    const apply = args.mode === "apply" || !target || dirty || fs.existsSync(baseFile(args.workspaceId, branch));
+    if (apply) return await applyInto(args.workspaceId, branch, target, committed, tree);
     const commits = await ahead(work, target, branch);
     if (!commits.length) return { result: "up_to_date", branch, target, head: await head(work), commits: [], committed };
     const before = await head(work);
     const ff = (await run(["merge-base", "--is-ancestor", target, branch], { cwd: work })).code === 0;
     const r = await run(["merge", "--no-edit", ff ? "--ff-only" : "--no-ff", "-m", `合入 ${branch}`, branch], { cwd: work });
     if (r.code !== 0) {
-      const u = await run(["diff", "--name-only", "--diff-filter=U"], { cwd: work });
-      const files = u.stdout.split("\n").filter(Boolean).slice(0, 100);
+      const u = await run(["diff", "--name-only", "-z", "--diff-filter=U"], { cwd: work });
+      const files = u.stdout.split("\0").filter(Boolean).slice(0, 100);
       await run(["merge", "--abort"], { cwd: work });
       await run(["reset", "--hard", "-q", before], { cwd: work });
       return { result: "conflict", branch, target, head: before, files, commits, committed };
@@ -234,36 +467,30 @@ function createGitWorkspaces({ root, log = () => {} }) {
     return { result: ff ? "fast_forward" : "merged", branch, target, head: await head(work), commits, committed };
   }
 
-  async function applyInto(workspaceId, branch, target, committed) {
+  async function applyInto(workspaceId, branch, target, committed, tree = null) {
     const work = workDir(workspaceId);
-    let base = "";
-    try {
-      base = fs.readFileSync(baseFile(workspaceId, branch), "utf8").trim();
-    } catch {}
+    await settleResolvedConflicts(workspaceId, tree, branch);
+    let base = readRefFile(baseFile(workspaceId, branch));
     if (!base) base = (await run(["merge-base", "HEAD", branch], { cwd: work })).stdout.trim();
     if (!base) throw new Error("找不到会话的起点，没法放进工作目录");
     const commits = await ahead(work, base, branch);
-    const names = await run(["diff", "--name-only", "--no-renames", base, branch], { cwd: work });
-    const files = names.stdout.split("\n").filter(Boolean).slice(0, 100);
+    const names = await run(["diff", "--name-only", "-z", "--no-renames", base, branch], { cwd: work });
+    const files = names.stdout.split("\0").filter(Boolean).slice(0, 100);
     if (!files.length) return { result: "up_to_date", branch, target, head: await head(work), commits, committed, files: [] };
-    const patchFile = path.join(os.tmpdir(), `chisabot-apply-${process.pid}-${Date.now()}.patch`);
-    try {
-      const p = await run(["diff", "--binary", "--no-renames", "--no-color", base, branch], { cwd: work });
-      fs.writeFileSync(patchFile, p.stdout);
-      const check = await run(["apply", "--check", "--whitespace=nowarn", patchFile], { cwd: work });
-      if (check.code !== 0) {
-        const bad = [...new Set([...check.stderr.matchAll(/(?:patch failed|error): ([^:\n]+?)(?::\d+)?(?::|$)/gm)].map((m) => m[1].trim()))].filter((f) => files.includes(f));
-        return { result: "conflict", branch, target, head: await head(work), files: bad.length ? bad : files, commits, committed, applied: false };
-      }
-      const r = await run(["apply", "--whitespace=nowarn", patchFile], { cwd: work });
-      if (r.code !== 0) throw new Error(`放进工作目录失败：${scrub(r.stderr).slice(-300)}`);
-      // 下次合入从这里接着算（同一个会话再合一次只放新的改动）
-      fs.mkdirSync(path.dirname(baseFile(workspaceId, branch)), { recursive: true });
-      fs.writeFileSync(baseFile(workspaceId, branch), `${(await run(["rev-parse", branch], { cwd: work })).stdout.trim()}\n`);
-      return { result: "applied", branch, target, head: await head(work), files, commits, committed };
-    } finally {
-      fs.rmSync(patchFile, { force: true });
+    const p = await run(["diff", "--binary", "--full-index", "--no-renames", "--no-color", base, branch], { cwd: work });
+    const applied = await applyPatchThreeWay(work, p.stdout, files);
+    if (!applied.ok) {
+      const latestSnap = (await isDirty(work)) || !(await head(work)) ? await snapshotWork(workspaceId).catch(() => null) : await head(work);
+      if (latestSnap && tree) recordConflictState(workspaceId, tree, branch, latestSnap, applied.conflicts);
+      return { result: "conflict", branch, target, head: await head(work), files: applied.conflicts, commits, committed, applied: false };
     }
+    fs.rmSync(conflictFile(workspaceId, branch), { force: true });
+    // 下次合入从这里接着算（同一个会话再合一次只放新的改动）
+    const tip = (await run(["rev-parse", branch], { cwd: work })).stdout.trim();
+    writeRefFile(baseFile(workspaceId, branch), tip);
+    const snap = (await isDirty(work)) || !(await head(work)) ? await snapshotWork(workspaceId).catch(() => null) : await head(work);
+    if (snap) writeRefFile(syncBaseFile(workspaceId, branch), snap);
+    return { result: "applied", branch, target, head: await head(work), files, commits, committed };
   }
 
   /** 电脑同步的 Git（§4.5）：云端 work/ 的分支 / HEAD。 */
@@ -345,9 +572,12 @@ function createGitWorkspaces({ root, log = () => {} }) {
     const tree = treeDir(args.workspaceId, args.sessionId);
     const base = String(args.base || "main");
     if (!fs.existsSync(path.join(tree, ".git"))) return { base, files: [], patch: "", started: false };
-    const remoteBase = (await run(["rev-parse", "--verify", "-q", `refs/remotes/origin/${base}`], { cwd: tree })).code === 0 ? `origin/${base}` : base;
+    const hasOrigin = (await run(["rev-parse", "--verify", "-q", `refs/remotes/origin/${base}`], { cwd: tree })).code === 0;
+    const remoteBase = hasOrigin ? `origin/${base}` : base;
+    const branch = await currentBranch(tree);
+    const trackedBase = branch ? readRefFile(baseFile(args.workspaceId, branch)) : "";
     const mb = await run(["merge-base", remoteBase, "HEAD"], { cwd: tree });
-    const from = mb.stdout.trim();
+    const from = (!hasOrigin && trackedBase) ? trackedBase : (mb.stdout.trim() || trackedBase);
     if (!from) return { base, files: [], patch: "", started: true };
     const idx = path.join(os.tmpdir(), `chisabot-idx-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     try {
@@ -366,7 +596,7 @@ function createGitWorkspaces({ root, log = () => {} }) {
       }
       const p = await run(["diff", "--cached", "--no-renames", "--no-color", from], { cwd: tree, env });
       const patch = p.stdout.length > cap ? `${p.stdout.slice(0, cap)}\n…（diff 太长，已截断）` : p.stdout;
-      return { base, files: files.slice(0, 500), patch, started: true, commits: (await ahead(tree, remoteBase)).length };
+      return { base, files: files.slice(0, 500), patch, started: true, commits: (await ahead(tree, hasOrigin ? remoteBase : from)).length };
     } finally {
       fs.rmSync(idx, { force: true });
     }
@@ -391,7 +621,7 @@ function createGitWorkspaces({ root, log = () => {} }) {
     return { removed: true };
   }
 
-  return { workDir, treeDir, isGitWorkspace, clone, describe, ensureTree, merge, gitInfo, adopt, snapshotWork, push, pushPreview, baseDiff, remove, dropTree, BRANCH };
+  return { workDir, treeDir, isGitWorkspace, clone, describe, ensureTree, refreshTreeFromWork, takeSyncResult, merge, gitInfo, adopt, snapshotWork, push, pushPreview, baseDiff, remove, dropTree, BRANCH };
 }
 
 module.exports = { createGitWorkspaces, scrub, BRANCH };

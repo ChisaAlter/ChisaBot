@@ -212,3 +212,61 @@ test("node ws_sync_drop: only while the lease is conflict, moves the cloud copy 
   assert.equal(fs.readFileSync(path.join(root, "projects", "ws_d", r.backup), "utf8"), "cloud");
   assert.equal(node.rpc("ws_sync_drop", { workspaceId: "ws_d", path: "src/x.txt" }).missing, true);
 });
+
+test("node git: 3-way applyInto merges same-file different-line edits; multi-turn ensureTree syncs work/ changes and skips conflicting files", { skip: !haveBin("git") }, async () => {
+  const root = tmp();
+  const node = createSyncNode({ root, keysDir: path.join(root, "k") });
+  node.rpc("ws_init_local", { workspaceId: "ws_3w" });
+  const work = path.join(root, "projects", "ws_3w", "work");
+  const lines = Array.from({ length: 12 }, (_, i) => `line-${i + 1}`).join("\n") + "\n";
+  fs.writeFileSync(path.join(work, "login.ts"), lines);
+  fs.writeFileSync(path.join(work, "pay.ts"), "pay-v0\n");
+  fs.writeFileSync(path.join(work, "conflict.ts"), "shared-line\n");
+  const g = createGitWorkspaces({ root });
+
+  // 第一轮：创建会话工作树
+  const tree = await g.ensureTree("ws_3w", "s_3w", "cc/s-3w");
+  // Claude 在第一轮修改 login.ts 末尾（第 12 行）和 conflict.ts
+  fs.writeFileSync(path.join(tree, "login.ts"), lines.replace("line-12", "line-12-claude"));
+  fs.writeFileSync(path.join(tree, "conflict.ts"), "claude-version\n");
+
+  // 与此同时电脑上（work/）修改了 pay.ts、login.ts 开头（第 1 行）以及 conflict.ts 同一行
+  fs.writeFileSync(path.join(work, "pay.ts"), "pay-v1-from-pc\n");
+  fs.writeFileSync(path.join(work, "login.ts"), lines.replace("line-1\n", "line-1-pc\n"));
+  fs.writeFileSync(path.join(work, "conflict.ts"), "pc-version\n");
+
+  // 第二轮开始前：ensureTree 自动将 work/ 新改动三方合并进会话工作树
+  await g.ensureTree("ws_3w", "s_3w", "cc/s-3w");
+  const syncRes = g.takeSyncResult("ws_3w", "s_3w");
+  assert.ok(syncRes);
+  assert.deepEqual(syncRes.updated.sort(), ["login.ts", "pay.ts"]);
+  assert.deepEqual(syncRes.conflicts, ["conflict.ts"]);
+
+  // pay.ts 已更新为电脑版；login.ts 同时包含电脑第 1 行和 Claude 第 12 行；conflict.ts 保留 Claude 版本且无冲突标记
+  assert.equal(fs.readFileSync(path.join(tree, "pay.ts"), "utf8"), "pay-v1-from-pc\n");
+  const mergedLogin = fs.readFileSync(path.join(tree, "login.ts"), "utf8");
+  assert.match(mergedLogin, /^line-1-pc\n/);
+  assert.match(mergedLogin, /line-12-claude\n$/);
+  assert.equal(fs.readFileSync(path.join(tree, "conflict.ts"), "utf8"), "claude-version\n");
+
+  // 若此时直接合入，conflict.ts 仍会被准确识别为冲突，work/ 保持不动
+  const mConflict = await g.merge({ workspaceId: "ws_3w", sessionId: "s_3w", mode: "apply" });
+  assert.equal(mConflict.result, "conflict");
+  assert.deepEqual(mConflict.files, ["conflict.ts"]);
+  assert.equal(fs.readFileSync(path.join(work, "conflict.ts"), "utf8"), "pc-version\n");
+
+  // Claude 在第二轮将 conflict.ts 合并为双方内容（既不同于原始 orig 也不同于单纯的 pc-version），且电脑在第二轮期间又把 pay.ts 改成了 pay-v2
+  fs.writeFileSync(path.join(tree, "conflict.ts"), "merged-pc-and-claude-version\n");
+  fs.writeFileSync(path.join(work, "pay.ts"), "pay-v2-from-pc\n");
+  // 同时电脑又改了 login.ts 的第 2 行（与 Claude 的第 12 行不冲突）
+  fs.writeFileSync(path.join(work, "login.ts"), lines.replace("line-1\nline-2\n", "line-1-pc\nline-2-pc\n"));
+
+  const mOk = await g.merge({ workspaceId: "ws_3w", sessionId: "s_3w", mode: "apply" });
+  assert.equal(mOk.result, "applied");
+  assert.equal(fs.readFileSync(path.join(work, "conflict.ts"), "utf8"), "merged-pc-and-claude-version\n");
+  // 合入后：pay.ts 保持电脑最新的 pay-v2（未被会话里的 pay-v1 回退），login.ts 三方合并包含第 1、2 行（电脑）与第 12 行（Claude）
+  assert.equal(fs.readFileSync(path.join(work, "pay.ts"), "utf8"), "pay-v2-from-pc\n");
+  const workLogin = fs.readFileSync(path.join(work, "login.ts"), "utf8");
+  assert.match(workLogin, /^line-1-pc\nline-2-pc\n/);
+  assert.match(workLogin, /line-12-claude\n$/);
+});
