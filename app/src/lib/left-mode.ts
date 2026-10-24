@@ -17,9 +17,13 @@ export type BotsLocation = { pathname: string; search: Record<string, unknown> }
 
 let lastBots: BotsLocation | null = null;
 
-/** 记住机器人这边最后停的位置（`/` 只是跳板，不记）。 */
+export function isBotsChatPath(pathname: string): boolean {
+  return pathname.startsWith("/channel/") || pathname.startsWith("/group/");
+}
+
+/** 记住机器人这边最后停的对话位置（只记 `/channel/...` 与 `/group/...`；`/`、设置、管理、Claude Code 都不记）。 */
 export function rememberBotsLocation(pathname: string, search: Record<string, unknown> | undefined) {
-  if (modeOfPath(pathname) !== "bots" || pathname === "/" || pathname === "") return;
+  if (!isBotsChatPath(pathname)) return;
   lastBots = { pathname, search: { ...(search ?? {}) } };
 }
 

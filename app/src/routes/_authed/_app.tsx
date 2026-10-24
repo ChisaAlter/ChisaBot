@@ -33,8 +33,8 @@ export const Route = createFileRoute("/_authed/_app")({
  */
 function RouteComponent() {
   useIdleRoutePreload();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const search = useRouterState({ select: (s) => s.location.search });
+  const pathname = useRouterState({ select: (s) => (s.resolvedLocation ?? s.location).pathname });
+  const search = useRouterState({ select: (s) => (s.resolvedLocation ?? s.location).search });
   useEffect(() => {
     rememberBotsLocation(pathname, search as Record<string, unknown>);
   }, [pathname, search]);
