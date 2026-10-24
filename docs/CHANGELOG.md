@@ -1,3 +1,7 @@
+## 0.1.64
+
+- 彻底消除切换页面、切换机器人与发送消息时的对话列表闪烁、全量重绘与高度跳动：历史消息与多段气泡在打开/切换会话时首帧 `initial={false}` 直接实心绘制；修复 `useTailFirstMount` 顶部渐进挂载时的 `scrollTop` 同步补偿；`useChannelEvents()` 提升至 `ShellFrame` 常驻且设置页「返回聊天」一步直达原会话；`usePanelBot()` 首帧同步解析 `routeBotId`；`TranscriptMessage` 与 `BotBubbles` 补齐值级 `React.memo` 隔离，消除流式 token 全量重绘、点击发送瞬间 `<PauseDots />` 弹跳及流结束被在途 `/sync` 误清空重放（versionCode 261）
+
 ## 0.1.63
 
 - 修复聊天流划选文字出现异常弹窗及按 `Ctrl+C` 复制时把聊天记录往上顶的问题（移除 `MessageScroller` 内联 `SelectionQuoteToolbar`，保留消息操作栏「引用」与卡片「追问」）；实时看板对管理员默认开启 `CHISABOT_PANEL_COMMANDS=1` 并支持非管理员平滑降级，修复创建云服务器性能监控面板失败；释放 `Ctrl+K` 快捷键冲突并对齐引用栏与链接卡追问样式（versionCode 260）

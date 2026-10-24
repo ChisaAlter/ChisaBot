@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.64 — 2026-10-24
+
+这一版彻底消除了切换页面、切换机器人与发送消息时的对话列表闪烁、全量重绘和高度跳动问题，使会话切换与流式收发全面丝滑化。PC 客户端与服务端同步更新至 0.1.64（Android `versionCode` 261）。
+
+### 对话列表零闪烁切换与丝滑收发优化
+
+- **历史消息首帧实心直绘（消除切换闪烁）**：重构 `createFirstPaintDelays()`、`Arriving` 与 `BotBubbles` 的入场动画条件，打开或切换到已有历史消息的会话时统一以 `initial={false}` 在首帧直接实心渲染，不再重播 `opacity: 0` 与多段 `BEAT_SECONDS` 阶梯淡入；仅当会话稳定后实时新到达的消息才播放轻量入场过渡。
+- **分段渐进挂载（Tail-First Mount）视口锁定**：修复 `useTailFirstMount` 在 `atBottomRef.current === true` 时向上分批补齐更早历史消息未同步补偿 `scrollTop` 的问题，在浏览器绘制前（`useLayoutEffect`）同步锁死视口位置。
+- **跨页返回一步直达与全局事件流常驻**：将 `useChannelEvents()` 提升至顶层 `ShellFrame` 常驻（按 `QueryClient` 去重），进出「设置 / 管理后台」不再断开重连 `/api/channels/events` 或触发全列表 `invalidateQueries`；设置页「返回聊天」直接走 `modeTarget("bots")` 一步回到原会话路径，消除 `/` 中转空白帧；`usePanelBot()` 增加名册缓存与 `threadUi` 同步兜底，消除右栏延迟 50ms 显隐引起的宽度跳动。
+- **流式输出 `React.memo` 隔离与底部零弹跳**：将 `replyTo` 拆为基础类型属性 `replyToId` / `replyToText` 并为 `TranscriptMessage` 提供值级比较函数 `sameTranscriptMessage`，彻底解决流式输出每个 token 到来时历史消息与富媒体卡片全量重绘的问题；将 `liveWorking` 与 `pausedAfterText` 收紧为仅在 `live` 阶段生效，消除点击发送瞬间 `<PauseDots />` 挂载又卸载造成的底部上下弹跳；本地流结束增加 3 秒保护期，防止被在途 `/sync` 轮询误触发 `liveTail` 清空重放。
+
 ## 0.1.63 — 2026-10-24
 
 这一版修复了聊天流选中文本弹出底部横条、复制时将聊天记录向上顶起、以及云服务器性能监控看板因 `CHISABOT_PANEL_COMMANDS` 未默认开启导致创建失败的问题，并对齐了引用栏与链接卡片追问按钮样式。PC 客户端与服务端同步更新至 0.1.63（Android `versionCode` 260）。
