@@ -2326,6 +2326,13 @@ imService = createImService({
     }
   },
   isSuspension: (error) => error instanceof HeadlessToolSuspension,
+  resolveApproval: async (ownerUserId, threadId, decision) => {
+    const allPending = (await confirmations.list(ownerUserId, { limit: 20 })).filter((r) => r.status === "pending");
+    const target = (threadId ? allPending.find((r) => r.threadId === threadId) : null) ?? allPending[0];
+    if (!target) return null;
+    const decided = await confirmations.decide(ownerUserId, target.id, decision);
+    return { title: decided.title, target: decided.target };
+  },
 });
 await imService.ensure();
 
@@ -3714,6 +3721,11 @@ const app = createApp(
       ...chisaSkills.tools(actorId, botId),
       ...vault.tools(actorId, botId, initiator ?? undefined),
       ...pages.tools(actorId, botId, initiator ?? undefined),
+      ...confirmations.wrap(personalSources.tools(actorId), {
+        ownerUserId: actorId,
+        agentId: botId,
+        ...(initiator ? { initiator } : {}),
+      }),
       ...(name.startsWith("github_") ? await github.tools(actorId, botId, initiator ?? undefined) : []),
       ...(/^(image_|file_share$|chat_files_)/.test(name) ? await chatFiles.tools(actorId, botId, initiator ?? undefined).catch(() => []) : []),
     ].find((candidate) => candidate.name === name);

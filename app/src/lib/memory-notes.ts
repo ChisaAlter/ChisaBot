@@ -44,3 +44,18 @@ export async function deleteMemoryNotes(ids: string[]): Promise<number> {
 export async function setMemoryBot(agentId: string, enabled: boolean) {
   await client(`/api/memory-notes/bots/${encodeURIComponent(agentId)}`, { method: "PUT", body: { enabled }, fallback: "保存失败，请重试" });
 }
+
+export async function dreamMemoryNotes(): Promise<{
+  mergedCount: number;
+  deduplicatedCount: number;
+  totalRemaining: number;
+  summary: string;
+}> {
+  const response = await client("/api/memory-notes/dream", { method: "POST", body: {}, fallback: "整理记忆失败，请重试" });
+  return (await response.json()) as {
+    mergedCount: number;
+    deduplicatedCount: number;
+    totalRemaining: number;
+    summary: string;
+  };
+}

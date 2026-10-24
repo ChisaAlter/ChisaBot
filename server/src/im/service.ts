@@ -56,6 +56,12 @@ export type ImServiceOptions = {
   botAvailable: (ownerUserId: string, agentId: string) => Promise<boolean>;
   /** 回合因为要网页审批而停下（HeadlessToolSuspension）。 */
   isSuspension?: (error: unknown) => boolean;
+  /** IM 快捷审批：用户在 IM 里回复「允许 / 批准 / 拒绝」时，直接处理该用户挂起的确认卡片。 */
+  resolveApproval?: (
+    ownerUserId: string,
+    threadId: string | null,
+    decision: "approve" | "deny",
+  ) => Promise<{ title: string; target?: string | null } | null>;
   fetch?: FetchLike;
   ws?: WsFactory;
 };
@@ -81,6 +87,8 @@ export function chatKey(inbound: Pick<ImInbound, "chatType" | "chatId">) {
 }
 
 const NEW_TOPIC = new Set(["/new", "/reset", "新话题", "/新话题", "重新开始"]);
+const IM_APPROVE_WORDS = new Set(["允许", "批准", "确认执行", "/approve", "/allow"]);
+const IM_DENY_WORDS = new Set(["拒绝", "取消执行", "/deny", "/reject"]);
 
 /** 给机器人看的那条用户消息：哪个平台、谁发的，然后是原文。 */
 export function frameInbound(platformName: string, inbound: ImInbound): string {
@@ -307,8 +315,32 @@ export function createImService(options: ImServiceOptions) {
       return;
     }
     if (text === "/help" || text === "/帮助") {
-      await reply(row, entry.adapter, inbound, "直接发消息就会由机器人回复。\n/new 开始新话题\n/id 查看自己的用户 id").catch(() => {});
+      await reply(
+        row,
+        entry.adapter,
+        inbound,
+        "直接发消息就会由机器人回复。\n/new 开始新话题\n/id 查看自己的用户 id\n允许 / 拒绝 直接审批待确认的操作卡片",
+      ).catch(() => {});
       return;
+    }
+    const approvalDecision = IM_APPROVE_WORDS.has(text.toLowerCase())
+      ? ("approve" as const)
+      : IM_DENY_WORDS.has(text.toLowerCase())
+        ? ("deny" as const)
+        : null;
+    if (approvalDecision && options.resolveApproval) {
+      const currentThread = await threadFor(row, key).catch(() => null);
+      const resolved = await options.resolveApproval(row.owner_user_id, currentThread, approvalDecision).catch(() => null);
+      if (resolved) {
+        const targetStr = resolved.target ? `（${resolved.target}）` : "";
+        const msg =
+          approvalDecision === "approve"
+            ? `✅ 已批准「${resolved.title}」${targetStr}，机器人正在继续执行。`
+            : `🚫 已拒绝「${resolved.title}」${targetStr}，该操作已取消。`;
+        log(row.id, "info", `${who} 在 IM 中${approvalDecision === "approve" ? "批准" : "拒绝"}了操作：${resolved.title}`);
+        await reply(row, entry.adapter, inbound, msg).catch(() => {});
+        return;
+      }
     }
     const queueKey = `${row.id}|${key}`;
     const queue = queues.get(queueKey) ?? { tail: Promise.resolve(), size: 0 };

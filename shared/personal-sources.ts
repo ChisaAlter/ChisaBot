@@ -14,16 +14,34 @@ export type EmailConnectionView = {
   email: string;
   imapHost: string;
   imapPort: number;
+  smtpHost?: string;
+  smtpPort?: number;
   hint: string;
   unreadCount: number;
   connectedAt: string;
   checkedAt: string;
 };
 
+export type NotifyWebhookView = {
+  kind: "feishu" | "dingtalk" | "wecom" | "bark" | "serverchan" | "custom" | "demo";
+  label: string;
+  urlHint: string;
+  connectedAt: string;
+};
+
+export type InboundWebhookView = {
+  token: string;
+  path: string;
+  lastTriggeredAt: string | null;
+  lastSummary: string | null;
+};
+
 export type PersonalSourcesStatusView = {
   calendar: CalendarConnectionView | null;
   email: EmailConnectionView | null;
   weatherCity: string;
+  notifyWebhook?: NotifyWebhookView | null;
+  inboundWebhook?: InboundWebhookView | null;
 };
 
 export type CalendarEventItem = {

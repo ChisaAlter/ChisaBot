@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fetchImapInboxSummary, parseIcsEvents } from "./service";
+import { normalizeSkillSourceUrl, parseSkillMarkdown, SKILL_HUB_CATALOG } from "../skills-chisa/tools";
+import { categoryOfTool, titleForTool } from "../confirmations/classify";
 import { renderMermaidToSvg } from "../../../app/src/lib/chat/mermaid-lite";
 import { splitBubbles } from "../../../app/src/lib/chat/bubbles";
 
@@ -73,5 +75,37 @@ describe("personal-sources & new Hark features", () => {
     const items = splitBubbles(md);
     expect(items[0]?.quote).toBe("早安，今天有什么安排？");
     expect(items.some((i) => i.kind === "brief" && i.title?.includes("今日晨报"))).toBe(true);
+  });
+
+  test("SKILL_HUB_CATALOG and parseSkillMarkdown support OpenClaw / GitHub SKILL.md", () => {
+    expect(SKILL_HUB_CATALOG.length).toBeGreaterThanOrEqual(8);
+    expect(SKILL_HUB_CATALOG.some((s) => s.slug === "morning-brief")).toBe(true);
+
+    const rawUrl = normalizeSkillSourceUrl(
+      "https://github.com/openclaw/clawhub/blob/main/skills/inbox-zero/SKILL.md",
+    );
+    expect(rawUrl).toBe("https://raw.githubusercontent.com/openclaw/clawhub/main/skills/inbox-zero/SKILL.md");
+
+    const parsed = parseSkillMarkdown(
+      [
+        "---",
+        "name: inbox-zero",
+        "description: 自动分拣收件箱并起草回信",
+        "---",
+        "# 收件箱清零助手",
+        "1. 先调用 email_list_recent",
+        "2. 再调用 email_send",
+      ].join("\n"),
+    );
+    expect(parsed.slug).toBe("inbox-zero");
+    expect(parsed.summary).toBe("自动分拣收件箱并起草回信");
+    expect(parsed.instructions).toContain("email_send");
+  });
+
+  test("email_send requires confirmation as message category while notify_push does not", () => {
+    expect(categoryOfTool("email_send", "personal-sources/email_send")).toBe("message");
+    expect(titleForTool("email_send", "message")).toBe("通过已连接邮箱发送一封邮件");
+    expect(categoryOfTool("notify_push", "personal-sources/notify_push")).toBeNull();
+    expect(categoryOfTool("email_connect", "personal-sources/email_connect")).toBeNull();
   });
 });

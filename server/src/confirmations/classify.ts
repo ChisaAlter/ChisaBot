@@ -16,7 +16,16 @@ const MESSAGE = /(^|[_\-/])(send|reply|post|publish|tweet|comment|forward|invite
 
 /** 自带的群聊发言（机器人在群里说话就是这样说的），不是代用户对外发消息。 */
 /** page_publish：页面建好就是公开的，发布 / 下线只是开关（页面本身见 §页面），不再问。 */
-const NOT_OUTBOUND = new Set(["post_to_group", "page_publish"]);
+const NOT_OUTBOUND = new Set([
+  "post_to_group",
+  "page_publish",
+  "email_connect",
+  "calendar_connect",
+  "notify_push",
+  "notify_webhook_connect",
+  "webhook_trigger_info",
+  "personal_check_updates",
+]);
 
 export function categoryOfTool(name: string, ref?: string): ConfirmCategory | null {
   const id = ref ?? name;
@@ -116,6 +125,7 @@ export function titleForTool(name: string, category: ConfirmCategory): string {
     delete_trigger: "删除一个触发器",
     panel_remove: "删除右栏的一张面板",
     page_delete: "删除一个页面（链接立刻失效，素材一起删）",
+    email_send: "通过已连接邮箱发送一封邮件",
   };
   if (known[name]) return known[name];
   const verb = { message: "发送", delete: "删除", purchase: "付款 / 下单", device: "电脑操作" }[category];

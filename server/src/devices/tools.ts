@@ -154,6 +154,21 @@ const schemas = {
     action: z.enum(["read", "write"]),
     text: z.string().max(100_000).optional(),
   }),
+  desktopContext: z.object({
+    deviceId,
+    includeClipboard: z.boolean().optional().describe("是否一并读取当前剪贴板文字，默认 true"),
+  }),
+  mcpCall: z.object({
+    deviceId,
+    command: z
+      .string()
+      .min(1)
+      .max(2000)
+      .describe("在用户电脑上启动本地 stdio MCP 服务的命令，例如 \"npx -y @modelcontextprotocol/server-filesystem D:/work\""),
+    action: z.enum(["list_tools", "call_tool"]).describe("list_tools=列出该本地 MCP 服务的全部工具；call_tool=调用其中一个工具"),
+    toolName: z.string().max(200).optional().describe("action=call_tool 时要调用的 MCP 工具名"),
+    toolArgs: z.record(z.string(), z.unknown()).optional().describe("action=call_tool 时传给工具的 JSON 参数对象"),
+  }),
 };
 
 /**
@@ -741,6 +756,66 @@ export function deviceTools(options: {
               `写入剪贴板：${clip(args.text ?? "", 80)}`,
               60_000,
             );
+      },
+    });
+
+  if (enabledAnywhere("clipboard_read"))
+    tools.push({
+      name: "device_desktop_context",
+      ref: "devices/desktop_context",
+      description:
+        "一键感知用户电脑当前的桌面上下文（当前剪贴板内容 + 设备基本状态）。当用户说「帮我看下这个报错」「翻译/解释我刚复制的内容」时，直接调用本工具获取上下文。",
+      parameters: schemas.desktopContext,
+      execute: async (input) => {
+        const args = schemas.desktopContext.parse(input ?? {});
+        if (args.includeClipboard === false) {
+          return run("system_info", args.deviceId, {}, "读取设备上下文信息", 30_000);
+        }
+        return run("clipboard_read", args.deviceId, {}, "读取桌面剪贴板上下文", 30_000);
+      },
+    });
+
+  if (enabledAnywhere("shell"))
+    tools.push({
+      name: "device_mcp_call",
+      ref: "devices/mcp_call",
+      description:
+        "在用户已配对的电脑/节点上直接调用本地 stdio MCP 服务（借鉴 OpenClaw 本地节点桥接：无需公网暴露 HTTP，通过 JSON-RPC 2.0 over stdio 列出或调用本地 MCP 工具，如 filesystem / sqlite / git / 浏览器插件等）。",
+      parameters: schemas.mcpCall,
+      execute: async (input) => {
+        const args = schemas.mcpCall.parse(input ?? {});
+        if (args.action === "call_tool" && !args.toolName?.trim()) {
+          return `${REFUSAL_MARKER} action 为 call_tool 时必须提供 toolName。`;
+        }
+        const initMsg = JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2024-11-05",
+            capabilities: {},
+            clientInfo: { name: "chisabot-device-bridge", version: "1.0.0" },
+          },
+        });
+        const notifyMsg = JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" });
+        const reqMsg =
+          args.action === "list_tools"
+            ? JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })
+            : JSON.stringify({
+                jsonrpc: "2.0",
+                id: 2,
+                method: "tools/call",
+                params: { name: args.toolName, arguments: args.toolArgs ?? {} },
+              });
+        const payloadB64 = Buffer.from(`${initMsg}\n${notifyMsg}\n${reqMsg}\n`, "utf8").toString("base64");
+        const wrappedCmd = `node -e "const {spawn}=require('child_process');const p=spawn(${JSON.stringify(args.command)},{shell:true,stdio:['pipe','pipe','pipe']});let out='';p.stdout.on('data',d=>{out+=d.toString();if(out.includes('\\\"id\\\":2')){console.log(out);process.exit(0);}});p.stderr.on('data',d=>process.stderr.write(d));p.stdin.write(Buffer.from('${payloadB64}','base64'));setTimeout(()=>{console.log(out);process.exit(0);},12000);"`;
+        return run(
+          "shell",
+          args.deviceId,
+          { command: wrappedCmd, timeoutSec: 25 },
+          `本地 MCP (${args.action === "list_tools" ? "列出工具" : `调用 ${args.toolName}`})：${clip(args.command, 80)}`,
+          30_000,
+        );
       },
     });
 
