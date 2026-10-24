@@ -1,5 +1,7 @@
 import {
+  IconBellRinging,
   IconCalendarEvent,
+  IconCopy,
   IconMail,
   IconPlugConnectedX,
   IconSparkles,
@@ -49,6 +51,7 @@ export function PersonalSourcesSection() {
 
   const [calOpen, setCalOpen] = useState(false);
   const [mailOpen, setMailOpen] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
   const [briefMarkdown, setBriefMarkdown] = useState<string | null>(null);
   const [cityInput, setCityInput] = useState("");
 
@@ -122,13 +125,48 @@ export function PersonalSourcesSection() {
     }
   }
 
+  async function disconnectNotifyWebhook() {
+    const ok = await confirmDialog({
+      title: "断开随身通知推送？",
+      description: "将移除已绑定的通知 Webhook 地址。",
+      confirmLabel: "断开",
+      destructive: true,
+    });
+    if (!ok) return;
+    const res = await fetch("/api/personal-sources/notify-webhook", {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (res.ok) {
+      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
+      toast.success("已断开随身通知推送");
+    }
+  }
+
+  const testNotify = useAsyncAction(
+    async () => {
+      const res = await fetch("/api/personal-sources/notify-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({}),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok) throw new Error(data.error || "发送测试通知失败");
+      toast.success("测试通知已发出！");
+    },
+    { errorToast: (err) => err.message },
+  );
+
   const cal = status.data?.calendar ?? null;
   const mail = status.data?.email ?? null;
+  const notifyWh = status.data?.notifyWebhook ?? null;
+  const inboundWh = status.data?.inboundWebhook ?? null;
 
   return (
     <PageSection
-      description="轻量只读接入你的日历（ICS/WebCal）与邮箱收件箱（IMAP），供机器人在对话中解答「今天有什么安排」「有没有重要邮件」并生成每日晨报卡片。"
-      title="日程、收件箱与每日晨报"
+      description="轻量接入你的日历（ICS/WebCal）、邮箱（IMAP 收件箱读取 + SMTP 审批发信）、随身通知推送（飞书/钉钉/Bark Webhook）与外部事件触发器，并支持一键生成每日晨报卡片。"
+      title="日程、收件箱、通知推送与每日晨报"
     >
       <CalendarConnectDialog
         onOpenChange={setCalOpen}
@@ -139,6 +177,11 @@ export function PersonalSourcesSection() {
         onOpenChange={setMailOpen}
         onSaved={(next) => queryClient.setQueryData(personalSourcesKeys.all, next)}
         open={mailOpen}
+      />
+      <NotifyWebhookDialog
+        onOpenChange={setNotifyOpen}
+        onSaved={(next) => queryClient.setQueryData(personalSourcesKeys.all, next)}
+        open={notifyOpen}
       />
       <Dialog
         onOpenChange={(open) => {
@@ -222,7 +265,7 @@ export function PersonalSourcesSection() {
             </div>
           </Card>
 
-          {/* 邮箱 IMAP 只读接入 */}
+          {/* 邮箱 IMAP 收信 + SMTP 审批发信 */}
           <Card className="mem-card" data-testid="personal-email-card">
             <div className="im-row">
               <div className="im-row-main is-static">
@@ -236,7 +279,7 @@ export function PersonalSourcesSection() {
                     mail ? (
                       <>
                         <span className="device-row-meta">
-                          <span className="gh-state is-ok">{"已连接（只读）"}</span>
+                          <span className="gh-state is-ok">{"已连接（IMAP 收信 + SMTP 发信）"}</span>
                           <span className="device-cap-chip">
                             <T>{`未读 ${mail.unreadCount} 封`}</T>
                           </span>
@@ -244,13 +287,13 @@ export function PersonalSourcesSection() {
                             <T>{`${mail.imapHost}:${mail.imapPort}`}</T>
                           </span>
                         </span>
-                        <span className="mem-by">{`${agoText(mail.checkedAt)}检查过 · 密码 AES-256-GCM 加密保存，仅读取邮件摘要`}</span>
+                        <span className="mem-by">{`${agoText(mail.checkedAt)}检查过 · 密码 AES-256-GCM 加密保存，代发邮件前必弹确认卡片`}</span>
                       </>
                     ) : (
-                      "未连接 · 用应用专用密码只读连接 QQ / 163 / Gmail / Outlook / iCloud 收件箱"
+                      "未连接 · 用应用专用密码连接 QQ / 163 / Gmail / Outlook / iCloud（支持收件箱摘要与确认后发信）"
                     )
                   }
-                  title={mail ? mail.email : "电子邮箱收件箱（IMAP 只读）"}
+                  title={mail ? mail.email : "电子邮箱（IMAP 收件箱 + SMTP 确认发信）"}
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -266,6 +309,90 @@ export function PersonalSourcesSection() {
                   <Button
                     aria-label="断开收件箱"
                     onClick={() => void disconnectEmail()}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <IconPlugConnectedX className="size-4" />
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </Card>
+
+          {/* 随身通知推送 & 外部事件入站 Webhook */}
+          <Card className="mem-card" data-testid="personal-webhook-card">
+            <div className="im-row flex-wrap gap-3">
+              <div className="im-row-main is-static">
+                <ListRow
+                  icon={
+                    <span className="gh-mark">
+                      <IconBellRinging className="size-5" />
+                    </span>
+                  }
+                  sub={
+                    <>
+                      {notifyWh ? (
+                        <span className="device-row-meta">
+                          <span className="gh-state is-ok">{`已绑定推送 · ${notifyWh.label}`}</span>
+                          <span className="device-cap-chip">
+                            <T>{notifyWh.urlHint}</T>
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="mem-body">
+                          {"支持飞书 / 钉钉 / 企业微信群机器人、Bark (iOS)、Server酱或自定义 Webhook，让机器人随时向你推送提醒。"}
+                        </span>
+                      )}
+                      {inboundWh ? (
+                        <span className="mem-by">
+                          {`入站事件触发地址：${inboundWh.path}${inboundWh.lastSummary ? ` · 最近触发：${inboundWh.lastSummary}` : ""}`}
+                        </span>
+                      ) : null}
+                    </>
+                  }
+                  title={notifyWh ? notifyWh.label : "随身通知推送 & 外部 Webhook 触发器"}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {inboundWh ? (
+                  <Button
+                    data-testid="copy-inbound-webhook-btn"
+                    onClick={() => {
+                      const fullUrl = `${window.location.origin}${inboundWh.path}`;
+                      void navigator.clipboard?.writeText(fullUrl);
+                      toast.success("已复制入站 Webhook 完整地址");
+                    }}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <IconCopy className="mr-1 size-3.5" />
+                    {"复制入站地址"}
+                  </Button>
+                ) : null}
+                {notifyWh ? (
+                  <Button
+                    data-testid="test-notify-webhook-btn"
+                    feedback={{ pending: "推送中…", success: "已推送", error: "失败" }}
+                    onClick={() => void testNotify.run()}
+                    size="sm"
+                    state={testNotify.state}
+                    variant="outline"
+                  >
+                    {"测试推送"}
+                  </Button>
+                ) : null}
+                <Button
+                  data-testid="connect-notify-webhook-btn"
+                  onClick={() => setNotifyOpen(true)}
+                  size="sm"
+                  variant={notifyWh ? "outline" : "default"}
+                >
+                  {notifyWh ? "更换推送" : "绑定通知推送"}
+                </Button>
+                {notifyWh ? (
+                  <Button
+                    aria-label="断开通知推送"
+                    onClick={() => void disconnectNotifyWebhook()}
                     size="sm"
                     variant="ghost"
                   >
@@ -596,6 +723,113 @@ function EmailConnectDialog({
               type="submit"
             >
               {"验证并连接"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function NotifyWebhookDialog({
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSaved: (next: PersonalSourcesStatusView) => void;
+}) {
+  const [label, setLabel] = useState("我的随身通知");
+  const [url, setUrl] = useState("");
+
+  const save = useAsyncAction(
+    async () => {
+      const res = await fetch("/api/personal-sources/notify-webhook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          label: label.trim() || undefined,
+          url: url.trim(),
+        }),
+      });
+      const data = (await res.json()) as PersonalSourcesStatusView & { error?: string };
+      if (!res.ok) throw new Error(data.error || "绑定通知推送失败");
+      onSaved(data);
+      toast.success("随身通知推送已绑定");
+      onOpenChange(false);
+    },
+    { errorToast: (err) => err.message },
+  );
+
+  const valid = Boolean(url.trim().startsWith("http") || url.trim().toLowerCase() === "demo");
+
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="im-dialog max-w-lg" data-testid="notify-webhook-dialog">
+        <DialogHeader>
+          <DialogTitle>{"绑定随身通知推送 Webhook"}</DialogTitle>
+          <DialogDescription>
+            {"填入飞书群机器人、钉钉群机器人、企业微信机器人、Bark (iOS)、Server酱或任意自定义 JSON Webhook 链接。"}
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (valid && save.state !== "pending") void save.run();
+          }}
+        >
+          <DialogBody className="im-form mt-2 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
+                {"自动识别飞书 / 钉钉 / 企业微信 / Bark / Server酱 消息格式"}
+              </span>
+              <button
+                className="text-xs text-primary hover:underline"
+                data-testid="notify-fill-demo-btn"
+                onClick={() => {
+                  setLabel("演示随身通知");
+                  setUrl("https://demo.webhook.local/push");
+                }}
+                type="button"
+              >
+                {"填入演示推送"}
+              </button>
+            </div>
+            <label className="im-field">
+              <span className="gh-step-t">{"通知渠道名称"}</span>
+              <Input
+                data-testid="notify-label-input"
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="飞书提醒 / Bark 手机推送"
+                value={label}
+              />
+            </label>
+            <label className="im-field">
+              <span className="gh-step-t">{"Webhook URL"}</span>
+              <Input
+                className="font-mono text-xs"
+                data-testid="notify-url-input"
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/... 或 https://api.day.app/..."
+                value={url}
+              />
+            </label>
+          </DialogBody>
+          <DialogFooter className="mt-3">
+            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+              {"取消"}
+            </Button>
+            <Button
+              data-testid="notify-save-btn"
+              disabled={!valid}
+              feedback={{ pending: "保存中…", success: "已绑定", error: "失败" }}
+              state={save.state}
+              type="submit"
+            >
+              {"保存并启用"}
             </Button>
           </DialogFooter>
         </form>

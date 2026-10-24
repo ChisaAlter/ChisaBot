@@ -1,6 +1,7 @@
 import {
   IconArrowRight,
   IconCalendarEvent,
+  IconClipboardText,
   IconCommand,
   IconMail,
   IconMessageReply,
@@ -178,6 +179,35 @@ export function QuickSpotlight() {
                 </span>
                 <span className="chat-spotlight-action-sub">
                   {"将上方输入内容挂为引用胶囊，发给当前机器人"}
+                </span>
+              </span>
+              <IconArrowRight className="size-3.5 opacity-55" />
+            </button>
+
+            <button
+              className="chat-spotlight-action"
+              data-testid="spotlight-action-clipboard"
+              onClick={async () => {
+                try {
+                  const clip = (await navigator.clipboard.readText())?.trim();
+                  if (clip) {
+                    submitToComposer(clip.slice(0, 2000), "剪贴板上下文");
+                  } else {
+                    submitToComposer("请调用 device_desktop_context 读取我电脑当前的剪贴板内容并帮我分析");
+                  }
+                } catch {
+                  submitToComposer("请调用 device_desktop_context 读取我电脑当前的剪贴板内容并帮我分析");
+                }
+              }}
+              type="button"
+            >
+              <IconClipboardText className="size-4 text-cyan-500" />
+              <span className="chat-spotlight-action-main">
+                <span className="chat-spotlight-action-title">
+                  {"📋 附带剪贴板 / 桌面上下文追问"}
+                </span>
+                <span className="chat-spotlight-action-sub">
+                  {"一键读取当前复制的报错、代码或段落挂入聊天框分析"}
                 </span>
               </span>
               <IconArrowRight className="size-3.5 opacity-55" />

@@ -198,6 +198,85 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
     return rows.map(view);
   }
 
+  /**
+   * 记忆整理与去重蒸馏（Memory Dream，借鉴 OpenClaw Dreaming & Khoj 记忆治理）：
+   * 1. 对多行条目（daily / project / person / note）自动清理重复行；
+   * 2. 对同类型且主题相同（或无主题但内容高度重合）的冗余条目自动合并删除；
+   * 3. 返回整理统计结果。
+   */
+  async function dream(owner: string): Promise<{
+    mergedCount: number;
+    deduplicatedCount: number;
+    totalRemaining: number;
+    summary: string;
+  }> {
+    const rows = await all(owner);
+    let mergedCount = 0;
+    let deduplicatedCount = 0;
+    const toDelete: string[] = [];
+
+    // 1. 按 (kind, lower(subject || content)) 合并完全重复或同主题的零散条目
+    const seenGroups = new Map<string, Row>();
+    for (const row of rows) {
+      const normSubj = (row.subject ?? "").trim().toLowerCase();
+      const normContent = row.content.trim().toLowerCase().replace(/\s+/g, " ");
+      const groupKey = normSubj ? `${row.kind}::subj::${normSubj}` : `${row.kind}::body::${normContent}`;
+      const existing = seenGroups.get(groupKey);
+      if (existing) {
+        if (!existing.content.includes(row.content.trim())) {
+          const combined = `${existing.content}\n${row.content.trim()}`.slice(0, MEMORY_LIMITS.content);
+          existing.content = combined;
+          await sql.unsafe(
+            "UPDATE chisabot_memory_notes SET content = $3, updated_at = now() WHERE id = $1 AND owner_user_id = $2",
+            [existing.id, owner, combined],
+          );
+        }
+        toDelete.push(row.id);
+        mergedCount++;
+      } else {
+        seenGroups.set(groupKey, row);
+      }
+    }
+
+    if (toDelete.length > 0) {
+      await remove(owner, toDelete);
+    }
+
+    // 2. 对保留下来的多行笔记做行级去重
+    for (const row of seenGroups.values()) {
+      const lines = row.content
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (lines.length <= 1) continue;
+      const uniqueLines: string[] = [];
+      const seenLine = new Set<string>();
+      for (const l of lines) {
+        // 去掉日志开头的时间戳（如 "- 14:20 xxx"）比对核心正文是否重复
+        const core = l.replace(/^-\s*(\d{1,2}:\d{2}\s+)?/, "").toLowerCase();
+        if (!seenLine.has(core)) {
+          seenLine.add(core);
+          uniqueLines.push(l);
+        }
+      }
+      if (uniqueLines.length < lines.length) {
+        const nextContent = uniqueLines.join("\n").slice(0, MEMORY_LIMITS.content);
+        await sql.unsafe(
+          "UPDATE chisabot_memory_notes SET content = $3, updated_at = now() WHERE id = $1 AND owner_user_id = $2",
+          [row.id, owner, nextContent],
+        );
+        deduplicatedCount++;
+      }
+    }
+
+    const totalRemaining = seenGroups.size;
+    const summary =
+      mergedCount === 0 && deduplicatedCount === 0
+        ? `已完成记忆巡检（共 ${totalRemaining} 条），当前记忆库整洁无冗余。`
+        : `已完成记忆整理：合并了 ${mergedCount} 条重复笔记，精简了 ${deduplicatedCount} 条多行记录，当前共保留 ${totalRemaining} 条核心记忆。`;
+    return { mergedCount, deduplicatedCount, totalRemaining, summary };
+  }
+
   async function botEnabled(owner: string, agentId: string) {
     const [row] = await sql.unsafe<{ enabled: boolean }[]>(
       "SELECT enabled FROM chisabot_memory_bots WHERE owner_user_id = $1 AND agent_id = $2",
@@ -343,6 +422,55 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
           return `已写进 ${result.note.subject} 的日志。`;
         },
       ),
+      tool(
+        "memory_dream",
+        "一键整理、去重并蒸馏用户的长期记忆库（Memory Dreaming）：自动合并同主题或重复的碎片笔记，清理每日日志里的重复行，保持长期记忆精炼准确。当用户在复盘周报、要求整理记忆或发现记忆冗余时调用。",
+        z.object({}).strict(),
+        async () => {
+          const res = await dream(owner);
+          return res.summary;
+        },
+      ),
+      tool(
+        "knowledge_save",
+        "将重要文档、读书笔记、技术资料或网页精华存入用户的「个人知识库（第二大脑）」，带标题与出处，方便日后通过 knowledge_search 检索引用。",
+        z
+          .object({
+            title: z.string().min(1).max(100).describe("知识条目/文档标题"),
+            content: z.string().min(1).max(MEMORY_LIMITS.content).describe("结构化知识正文或核心摘要"),
+            source: z.string().max(300).optional().describe("来源链接、文件名或标签"),
+          })
+          .strict(),
+        async ({ title, content, source }) => {
+          const cleanTitle = title.trim().startsWith("📚") ? title.trim() : `📚 ${title.trim()}`;
+          const result = await create(
+            owner,
+            {
+              kind: "note",
+              subject: cleanTitle.slice(0, MEMORY_LIMITS.subject),
+              content,
+              context: source?.trim() || "个人知识库",
+            },
+            agentId,
+          );
+          return `已存入个人知识库：${line(result.note)}`;
+        },
+      ),
+      tool(
+        "knowledge_search",
+        "在用户的「个人知识库（第二大脑）」与长期笔记中检索文档片段与知识条目，返回带标题与来源出处的匹配结果。",
+        z.object({ query: z.string().max(200).describe("检索关键词或问题") }).strict(),
+        async ({ query }) => {
+          const rows = await search(owner, query, undefined, 20);
+          if (!rows.length) return "个人知识库中没有找到相关内容。";
+          return rows
+            .map(
+              (r) =>
+                `- [${r.id}] **${r.subject || MEMORY_KIND_LABELS[r.kind]}**${r.context ? `（来源：${r.context}）` : ""}\n  ${r.content.replace(/\n+/g, "\n  ")}`,
+            )
+            .join("\n\n");
+        },
+      ),
     ];
   }
 
@@ -372,6 +500,9 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
       const input = noteBody.parse(await c.req.json());
       return c.json(await create(c.var.actor.id, input, null), 201);
     });
+    app.post("/dream", async (c) => {
+      return c.json(await dream(c.var.actor.id));
+    });
     app.patch("/:id", async (c) => {
       const input = noteBody.partial().parse(await c.req.json());
       return c.json({ note: await update(c.var.actor.id, c.req.param("id"), input) });
@@ -394,7 +525,7 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
     return app;
   }
 
-  return { ensure, search, create, update, remove, botEnabled, setBot, botSettings, context, tools, routes };
+  return { ensure, search, create, update, remove, dream, botEnabled, setBot, botSettings, context, tools, routes };
 }
 export type MemoryNotes = ReturnType<typeof createMemoryNotes>;
 

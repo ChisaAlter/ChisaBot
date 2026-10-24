@@ -101,6 +101,7 @@ const ALIASES: Record<string, readonly string[]> = {
     "webcal",
   ],
   github: ["github", "gh"],
+  webhook: ["webhook", "通知", "推送", "bark", "server酱", "飞书通知", "钉钉通知", "企业微信通知"],
   notion: ["notion"],
   "google-drive": ["googledrive", "谷歌云盘", "谷歌drive", "drive"],
   parallel: ["parallel", "parallelsearch"],
@@ -283,12 +284,24 @@ function builtinMatchSection(
       : "未连接";
     blocks.push(
       [
-        "✅ 【内置电子邮箱连接器（IMAP 只读收件箱）】已经内置就绪，支持 Gmail、QQ 邮箱、163 邮箱、Outlook、iCloud 等：",
+        "✅ 【内置电子邮箱连接器（IMAP 收信 + SMTP 审批发信）】已经内置就绪，支持 Gmail、QQ 邮箱、163 邮箱、Outlook、iCloud 等：",
         `  - 当前账号状态：${statusText}`,
-        "  - 当前机器人已持有工具：`email_list_recent`（查看最近邮件与未读摘要）、`email_connect`（在对话中直接绑定连接邮箱）、`morning_brief_generate`（生成含未读邮件的每日晨报卡片）",
+        "  - 当前机器人已持有工具：`email_list_recent`（查看最近邮件与未读摘要）、`email_connect`（在对话中直接绑定连接邮箱）、`email_send`（通过已连接邮箱发信/回信，发信前自动弹确认卡片）、`morning_brief_generate`（生成含未读邮件的每日晨报卡片）",
         "  - 怎么立即连上：",
         "    1. 【对话内直接代连（最快）】用户只要把邮箱地址和「应用专用密码 / IMAP 授权码」发到对话里（Gmail 在 Google 账号「安全性 → 两步验证 → 应用专用密码」生成 16 位密码；QQ/163 在邮箱设置开启 IMAP 生成授权码），你就可以直接调用 `email_connect` 自动填好 `imap.gmail.com:993` 等服务器并完成绑定；",
         "    2. 【设置页一键预设】引导用户点开下方链接卡进入「设置 → 账号连接」，在「个人日程与收件箱」点「连接邮箱」，一键选 Gmail / QQ / 163 / Outlook 预设填入即可。",
+        "  - 回复末尾请附上独立一行的链接卡：",
+        "    [打开账号连接](/settings/connected-accounts)",
+      ].join("\n"),
+    );
+  }
+
+  if (names.includes("webhook")) {
+    blocks.push(
+      [
+        "✅ 【内置随身通知推送 & 外部 Webhook 触发器】已经内置就绪，支持飞书群机器人、钉钉群机器人、企业微信机器人、Bark (iOS)、Server酱及自定义 Webhook：",
+        "  - 当前机器人已持有工具：`notify_webhook_connect`（在对话中直接绑定推送 Webhook）、`notify_push`（向手机/IM 即时推送提醒）、`webhook_trigger_info`（获取专属外部事件入站 Webhook 地址）",
+        "  - 怎么立即连上：用户只要把 Webhook 链接发到对话里（或说「开启演示推送」），直接调用 `notify_webhook_connect` 即可完成绑定。",
         "  - 回复末尾请附上独立一行的链接卡：",
         "    [打开账号连接](/settings/connected-accounts)",
       ].join("\n"),
@@ -357,8 +370,9 @@ function overviewReport(
     "【当前部署连接器全景】",
     [
       "一、内置直连数据源（已就绪，免装插件）：",
-      `- 电子邮箱（Gmail / QQ邮箱 / 163 / Outlook / iCloud IMAP 只读）：${emailStatus}｜工具：email_list_recent、email_connect、morning_brief_generate`,
+      `- 电子邮箱（Gmail / QQ邮箱 / 163 / Outlook / iCloud IMAP 收信 + SMTP 确认发信）：${emailStatus}｜工具：email_list_recent、email_connect、email_send、morning_brief_generate`,
       `- 个人日历（Google Calendar / iCloud / Outlook / 飞书 iCal/ICS）：${calStatus}｜工具：calendar_list_events、calendar_connect、morning_brief_generate`,
+      `- 随身通知推送 & 入站 Webhook（飞书 / 钉钉 / 企业微信 / Bark / Server酱）：已内置｜工具：notify_webhook_connect、notify_push、webhook_trigger_info、personal_check_updates`,
       `- GitHub：${ghStatus}｜工具：github_repos、github_issues、github_pulls 等`,
     ].join("\n"),
   ];

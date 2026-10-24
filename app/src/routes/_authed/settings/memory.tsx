@@ -1,4 +1,4 @@
-import { IconPlus } from "@tabler/icons-react";
+import { IconPlus, IconSparkles } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -13,11 +13,13 @@ import {
   NoteRow,
   SearchBox,
 } from "@/components/memory/memory-notes";
+import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { Card, ErrorCard, Toolbar } from "@/components/ui/skyglass";
 import { useSegmentedKeys } from "@/components/ui/segmented";
+import { toast } from "@/components/ui/toast";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import { memoryNoteKeys, memoryNotesQueryOptions } from "@/lib/memory-notes";
+import { dreamMemoryNotes, memoryNoteKeys, memoryNotesQueryOptions } from "@/lib/memory-notes";
 
 export const Route = createFileRoute("/_authed/settings/memory")({
   component: MemoryPage,
@@ -61,17 +63,39 @@ function MemoryPage() {
     onChange: setFilter,
   });
 
+  const dreamAction = useAsyncAction(
+    async () => {
+      const res = await dreamMemoryNotes();
+      await refresh();
+      toast.success(res.summary);
+    },
+    { errorToast: (err) => err.message },
+  );
+
   return (
     <>
       <NoteDialog note={dialog.note} onOpenChange={(open) => setDialog((current) => ({ ...current, open }))} open={dialog.open} />
       <PageShell
         action={
-          <Button onClick={() => setDialog({ open: true, note: null })} size="sm">
-            <IconPlus />
-            {"添加"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              data-testid="memory-dream-btn"
+              feedback={{ pending: "整理中…", success: "已整理", error: "失败" }}
+              onClick={() => void dreamAction.run()}
+              size="sm"
+              state={dreamAction.state}
+              variant="outline"
+            >
+              <IconSparkles />
+              {"一键整理记忆"}
+            </Button>
+            <Button onClick={() => setDialog({ open: true, note: null })} size="sm">
+              <IconPlus />
+              {"添加"}
+            </Button>
+          </div>
         }
-        description="机器人记住的关于你的事：你的情况、偏好、身边的人、常去的地方、在做的事和每天的日志。你的所有机器人共用这份记忆。对机器人说「忘掉 …」或在这里删除，都会真的删掉。"
+        description="机器人记住的关于你的事：你的情况、偏好、身边的人、常去的地方、在做的事、每天的日志与个人知识库条目（📚）。所有机器人共用这份记忆；点击「一键整理记忆」可自动去重合并碎片笔记。"
         title="记忆"
       >
         {list.isPending ? (
