@@ -1139,7 +1139,21 @@ function SettleAtEnd({
           element.style.scrollBehavior = "auto";
           element.scrollTop = seen.top;
           element.style.scrollBehavior = "";
+        } else if (
+          grew > use &&
+          seen.atBottom &&
+          !s.restore &&
+          !anchoring()
+        ) {
+          stickToBottom();
         }
+      } else if (
+        grew > 0 &&
+        seen.atBottom &&
+        !s.restore &&
+        !anchoring()
+      ) {
+        stickToBottom();
       } else if (
         grew < 0 &&
         !recentlyTouched &&
@@ -2892,7 +2906,7 @@ function turnOf(item: TranscriptItem): string {
  * end to hold: the picture is the top of what the person sent, and anchoring on the caption
  * underneath it would scroll the picture off the top of the pane.
  */
-function anchorRowIds(items: readonly TranscriptItem[]): Set<string> {
+export function anchorRowIds(items: readonly TranscriptItem[]): Set<string> {
   const anchors = new Set<string>();
   const claimed = new Set<string>();
 
@@ -2924,44 +2938,17 @@ function assertNever(_item: never): null {
 const SEND_SCROLL_MS = 700;
 
 function useSmoothSendScroll(
-  viewport: React.RefObject<HTMLDivElement | null>,
+  _viewport: React.RefObject<HTMLDivElement | null>,
   newestUserMessageId: string | null,
   opening = false,
 ) {
-  const reducedMotion = useReducedMotion();
   const seenRef = useRef<string | null>(null);
   const wasOpening = useRef(opening);
 
   useLayoutEffect(() => {
-    const element = viewport.current;
-    const previous = seenRef.current;
     seenRef.current = newestUserMessageId;
-    // 打开对话（以及恢复完成后的那一小段）里最新一条换了不是「刚发的」，不平滑滚动。
-    const quiet = opening || wasOpening.current;
     wasOpening.current = opening;
-
-    if (
-      // 打开对话时历史一段段到（DESIGN.md §83）：最新一条用户消息换了不是「刚发的」，不平滑滚动。
-      quiet ||
-      element === null ||
-      newestUserMessageId === null ||
-      previous === null ||
-      previous === newestUserMessageId ||
-      reducedMotion
-    ) {
-      return;
-    }
-
-    element.style.scrollBehavior = "smooth";
-    const timer = window.setTimeout(() => {
-      element.style.scrollBehavior = "";
-    }, SEND_SCROLL_MS);
-
-    return () => {
-      window.clearTimeout(timer);
-      element.style.scrollBehavior = "";
-    };
-  }, [newestUserMessageId, reducedMotion, viewport, opening]);
+  }, [newestUserMessageId, opening]);
 }
 
 /**
@@ -3174,7 +3161,7 @@ export function ChatTranscript({
    */
   const lastItem = items.at(-1);
   const waitingOnFirstToken =
-    busy &&
+    live &&
     ((lastItem?.kind === "text" && lastItem.role === "user") ||
       /*
        * A screenshot pasted with no caption is still a person sending something, and they are
@@ -3695,16 +3682,14 @@ function useFreshAnchor(
     newestUserMessageId !== memo.id
   ) {
     const now = Date.now();
-    // 上一条（这条出现之前的最新一条用户消息）什么时候发的：服务器读数优先，本机记的兜底（§94）。
-    // 回答还在跑的时候人也算在同一轮里（§94.7）：长任务跑到十几分钟，补一句话不该把回答推走。
-    const sameTurn = staysInSameTurn(
+    // 发消息一律走「连续跟底」模式（continuous = true），不再触发「把用户消息翻到视口上 1/3 + 底部垫 2/3 屏空白」的翻页跳动。
+    void staysInSameTurn(
       previousSentAt(memo.last, lastSentAt),
       now,
       takeSendWhileBusy(now),
     );
-    // Reduced motion follows the actual bottom instead of moving the question to 1/3 and
-    // inserting an artificial screen of blank space that would need another scroll to remove.
-    memo.continuous = reducedMotion === true || sameTurn;
+    void reducedMotion;
+    memo.continuous = true;
     memo.id = newestUserMessageId;
     memo.at = now;
     rememberSent(newestUserMessageId, now);
@@ -3876,8 +3861,12 @@ export function compactTurns(
     const personUsers = personTextsOf(turn.users);
     const prevTurn = index > 0 ? turns[index - 1] : undefined;
     const prevUsers = prevTurn ? personTextsOf(prevTurn.users) : [];
+    const prevTurnStopped =
+      prevTurn !== undefined &&
+      prevTurn.users.some((user) => stopped.has(turnOf(user)));
     const prevInterjected =
       prevTurn !== undefined &&
+      !prevTurnStopped &&
       prevUsers.length > 0 &&
       prevTurn.rest.length > 0 &&
       !prevTurn.rest.some((r) => r.kind === "text" && tone.get(r.id) === "final");
@@ -3997,19 +3986,6 @@ export function compactTurns(
         const targetUser = personUsers[personUsers.length - 1]!;
         const quoteText = formatQuoteText(targetUser.text);
         if (quoteText) replyTo.set(replyTargetId, { id: targetUser.id, text: quoteText });
-      }
-      if (prevInterjected && prevTurn) {
-        const prevVisibleBot = [...prevTurn.rest]
-          .reverse()
-          .find(
-            (r): r is Extract<TranscriptItem, { kind: "text" }> =>
-              r.kind === "text" && r.role === "assistant" && !hidden.has(r.id) && r.text.trim().length > 0,
-          );
-        const prevUser = prevUsers[prevUsers.length - 1];
-        if (prevVisibleBot && prevUser && !replyTo.has(prevVisibleBot.id)) {
-          const quoteText = formatQuoteText(prevUser.text);
-          if (quoteText) replyTo.set(prevVisibleBot.id, { id: prevUser.id, text: quoteText });
-        }
       }
     }
     const visible = [...turn.users, ...turn.rest].filter(

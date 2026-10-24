@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.65 — 2026-10-24
+
+这一版彻底消除了发送消息时对话列表往上「翻页跳动 2/3 屏 + 底部垫出一大块空白」以及按下回车到消息上屏之间的两段式跳动问题，使发送消息、等待响应与流式输出全程自然贴底、零跳动。PC 客户端与服务端同步更新至 0.1.65（Android `versionCode` 262）。
+
+### 发送消息零跳动与同步贴底优化
+
+- **取消发送消息时的 2/3 屏翻页跳动与人工留白**：`useFreshAnchor` 对新发出的用户消息统一采用连续贴底模式（`continuous = true`，不再挂载 `data-scroll-anchor="true"`），彻底消除在已停止回合或间隔较久后发消息时把用户消息强行推到视口上 1/3、底部垫出 2/3 屏空白并在回答结束时再次回落跳动的问题。
+- **同步插入乐观用户消息（消除 200ms 两段跳）**：`channel-chat.tsx` 的 `deliver()` 在已就绪且已接入的会话中跳过已完成的 `joinGatePromise` 微任务，并将 `target.addMessage(...)` 提前到 `await panelAuthoringForwardedProps(...)` 网络请求之前同步执行，使「清空输入框 + 标记运行中 + 用户消息与思考指示器上屏」合并在同一次 React 渲染提交中完成，并把 `waitingOnFirstToken` 收紧为仅在 `live` 成立时显示。
+- **同步瞬时跟底与上一轮布局锁定**：移除 `useSmoothSendScroll` 在发送后对视口设置的 700ms `scroll-behavior: smooth`，避免流式增长期间异步平滑滚动滞后于 `scrollHeight` 导致 `seen.atBottom` 翻转与双滚动控制器互抢；`SettleAtEnd` 的 `pinNow` 在贴底且内容增长时在绘制前同步执行 `stickToBottom()`；`compactTurns` 排除已停止回合触发 `prevInterjected` 并禁止跨轮次追溯修改上一轮回复的 `replyTo` 引用头。
+
 ## 0.1.64 — 2026-10-24
 
 这一版彻底消除了切换页面、切换机器人与发送消息时的对话列表闪烁、全量重绘和高度跳动问题，使会话切换与流式收发全面丝滑化。PC 客户端与服务端同步更新至 0.1.64（Android `versionCode` 261）。

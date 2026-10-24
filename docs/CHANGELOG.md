@@ -1,3 +1,7 @@
+## 0.1.65
+
+- 彻底消除发送消息时对话列表往上跳动：取消新发用户消息的 `data-scroll-anchor` 1/3 视口翻页与底部 2/3 屏空白垫高，统一走自然贴底跟进；`deliver()` 将用户消息乐观入列提前至 `panelAuthoringForwardedProps` 网络请求之前同步执行，并与 `live` 门控对齐，消除回车后 200ms 两段跳；移除 `useSmoothSendScroll` 的 700ms `scroll-behavior: smooth` 并在 `SettleAtEnd` 内容增长时绘制前同步 `stickToBottom()`；禁止已停止回合或新回合追溯给上一轮回复补挂 `╭─` 引用头（versionCode 262）
+
 ## 0.1.64
 
 - 彻底消除切换页面、切换机器人与发送消息时的对话列表闪烁、全量重绘与高度跳动：历史消息与多段气泡在打开/切换会话时首帧 `initial={false}` 直接实心绘制；修复 `useTailFirstMount` 顶部渐进挂载时的 `scrollTop` 同步补偿；`useChannelEvents()` 提升至 `ShellFrame` 常驻且设置页「返回聊天」一步直达原会话；`usePanelBot()` 首帧同步解析 `routeBotId`；`TranscriptMessage` 与 `BotBubbles` 补齐值级 `React.memo` 隔离，消除流式 token 全量重绘、点击发送瞬间 `<PauseDots />` 弹跳及流结束被在途 `/sync` 误清空重放（versionCode 261）

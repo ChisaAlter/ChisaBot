@@ -474,11 +474,15 @@ export function ChannelChat({
   seedRef.current = seed;
 
   /** Promise gate for ordering the first message after the thread join when possible. */
+  const joinGateSettledRef = useRef(false);
   const openJoinGate = useRef<() => void>(() => {});
   const joinGate = useRef<Promise<void> | null>(null);
   if (joinGate.current === null) {
     joinGate.current = new Promise<void>((resolve) => {
-      openJoinGate.current = resolve;
+      openJoinGate.current = () => {
+        joinGateSettledRef.current = true;
+        resolve();
+      };
     });
   }
   const joinGatePromise = joinGate.current;
@@ -702,19 +706,30 @@ export function ChannelChat({
         // 给回放 / 实时流一点时间收尾；这台自己在跑（刚又发了一句）时不动。
         await new Promise((resolve) => setTimeout(resolve, 600));
         const current = agentRef.current;
-        if (current.isRunning) return;
+        if (current.isRunning || turnsRef.current > 0 || sendInFlightRef.current)
+          return;
         const stored = await readThreadMessages(
           channel.threadId,
           runtimeAgentId,
         );
         if (stored.availability === "unavailable") return;
         const latest = agentRef.current;
-        if (latest.isRunning) return;
+        if (latest.isRunning || turnsRef.current > 0 || sendInFlightRef.current)
+          return;
         const merged = withStoredTail(
           mergeStoredMessages(latest.messages, stored.messages),
           stored.messages,
         );
-        if (merged !== latest.messages) latest.setMessages(merged);
+        if (
+          merged !== latest.messages &&
+          !(
+            merged.length === latest.messages.length &&
+            merged.at(-1)?.id === latest.messages.at(-1)?.id &&
+            merged.at(-1)?.content === latest.messages.at(-1)?.content
+          )
+        ) {
+          latest.setMessages(merged);
+        }
       })();
     });
   }, [onJoinedActivity, channel.threadId, runtimeAgentId]);
@@ -1001,7 +1016,7 @@ export function ChannelChat({
      * effect bounds itself and opens this gate from a `finally`. If that effect never ran there is
      * no runtime agent, and no connect in flight to wait on.
      */
-    if (isReadyRef.current) {
+    if (isReadyRef.current && !joinGateSettledRef.current) {
       await joinGatePromise;
     }
 
@@ -1044,27 +1059,39 @@ export function ChannelChat({
       });
     }
 
-    // An open custom-panel authoring session for this Bot rides along, so the server hands the Bot
-    // its draft tools for that session (see server/src/index.ts handoffForActor).
-    const panelAuthoring = await panelAuthoringForwardedProps(
-      runtimeAgentId,
-      trimmed,
-      () =>
-        void modelQueryClient.invalidateQueries({
-          queryKey: panelKeys.session(runtimeAgentId),
-        }),
-    );
-    // 人在这段等待里按了停止：不要加消息、也不要开 run，把字交回输入框（composer 收到失败会还原）。
-    if (stopRequestedRef.current) {
-      stopRequestedRef.current = false;
-      throw new Error("已停止发送。");
-    }
     const userMessageId = newId();
     target.addMessage({
       content: contentOverride ?? toMessageContent(trimmed, attachments),
       id: userMessageId,
       role: "user",
     } as Message);
+
+    // An open custom-panel authoring session for this Bot rides along, so the server hands the Bot
+    // its draft tools for that session (see server/src/index.ts handoffForActor).
+    let panelAuthoring: Awaited<ReturnType<typeof panelAuthoringForwardedProps>>;
+    try {
+      panelAuthoring = await panelAuthoringForwardedProps(
+        runtimeAgentId,
+        trimmed,
+        () =>
+          void modelQueryClient.invalidateQueries({
+            queryKey: panelKeys.session(runtimeAgentId),
+          }),
+      );
+    } catch (error) {
+      target.setMessages(
+        target.messages.filter((message) => existingMessageIds.has(message.id)),
+      );
+      throw error;
+    }
+    // 人在这段等待里按了停止：撤回刚加入列表的消息、也不要开 run，把字交回输入框（composer 收到失败会还原）。
+    if (stopRequestedRef.current) {
+      stopRequestedRef.current = false;
+      target.setMessages(
+        target.messages.filter((message) => existingMessageIds.has(message.id)),
+      );
+      throw new Error("已停止发送。");
+    }
     report(trimmed || describeAttachments(attachments), null);
 
     // Providers reject later turns if prior tool calls have no result; repair before sending.
