@@ -26,6 +26,23 @@ import type { GrantedTool } from "./tools";
 /** One result of the official-docs search, as much of it as the report needs. */
 export type ConnectSearchHit = { title: string; url: string; snippet: string };
 
+export type BuiltinSourcesSnapshot = {
+  email?: {
+    connected: boolean;
+    email?: string | null;
+    imapHost?: string | null;
+  };
+  calendar?: {
+    connected: boolean;
+    label?: string | null;
+    eventCount?: number;
+  };
+  github?: {
+    connected: boolean;
+    login?: string | null;
+  };
+};
+
 export type ConnectServiceOptions = {
   store: PluginStore;
   /** Whose accounts are being asked about. */
@@ -34,6 +51,13 @@ export type ConnectServiceOptions = {
   botId: string;
   /** Injected so tests never reach the network. */
   search: (query: string, count?: number) => Promise<ConnectSearchHit[]>;
+  /** Optional: built-in personal & dev sources status (Email IMAP, Calendar ICS, GitHub). */
+  builtinSources?: () => Promise<BuiltinSourcesSnapshot>;
+  /**
+   * Optional: when true, an admin asking to connect/enable a catalogue connector or an ungranted
+   * server proactively enables the server and grants its non-destructive tools to `botId`.
+   */
+  canAutoEnable?: () => Promise<{ allowed: boolean; by: string }>;
 };
 
 /** Lower-cased, with the punctuation a person types between words removed. */
@@ -46,11 +70,64 @@ function normalized(text: string): string {
 /** The words a service can be named by. "ima" and "腾讯ima" are the same request. */
 const ALIASES: Record<string, readonly string[]> = {
   ima: ["ima", "腾讯ima", "ima知识库", "imaknowledgebase"],
-  gmail: ["gmail", "谷歌邮箱", "谷歌邮件"],
+  gmail: [
+    "gmail",
+    "谷歌邮箱",
+    "谷歌邮件",
+    "邮箱",
+    "email",
+    "imap",
+    "qq邮箱",
+    "foxmail",
+    "163邮箱",
+    "126邮箱",
+    "outlook",
+    "hotmail",
+    "icloud邮箱",
+    "收件箱",
+    "邮件",
+  ],
+  calendar: [
+    "calendar",
+    "日历",
+    "日程",
+    "googlecalendar",
+    "谷歌日历",
+    "飞书日历",
+    "icloud日历",
+    "apple日历",
+    "ical",
+    "ics",
+    "webcal",
+  ],
+  github: ["github", "gh"],
   notion: ["notion"],
   "google-drive": ["googledrive", "谷歌云盘", "谷歌drive", "drive"],
+  parallel: ["parallel", "parallelsearch"],
   腾讯文档: ["腾讯文档", "docsqq"],
 };
+
+const OVERVIEW_KEYWORDS = new Set([
+  "全部",
+  "all",
+  "列表",
+  "list",
+  "overview",
+  "连接器",
+  "有什么连接器",
+  "所有连接器",
+  "全部连接器",
+  "connectors",
+  "plugins",
+  "插件",
+  "插件列表",
+  "能连什么",
+  "支持什么连接器",
+]);
+
+function isOverviewRequest(service: string): boolean {
+  return OVERVIEW_KEYWORDS.has(normalized(service));
+}
 
 /** Every name this deployment might know a service by, normalized. */
 function namesFor(service: string): string[] {
@@ -193,6 +270,133 @@ const CUSTOM_MCP_NOTE = [
   "第 1 步我能替你查、替你把配置写好；第 3 步是管理员页面的动作，我的工具里没有安装入口。",
 ].join("\n");
 
+function builtinMatchSection(
+  names: readonly string[],
+  builtin: BuiltinSourcesSnapshot | null,
+): string | null {
+  const blocks: string[] = [];
+
+  if (names.includes("gmail")) {
+    const emailState = builtin?.email;
+    const statusText = emailState?.connected
+      ? `已连接（${emailState.email ?? "已绑定邮箱"}${emailState.imapHost ? ` · ${emailState.imapHost}` : ""}）`
+      : "未连接";
+    blocks.push(
+      [
+        "✅ 【内置电子邮箱连接器（IMAP 只读收件箱）】已经内置就绪，支持 Gmail、QQ 邮箱、163 邮箱、Outlook、iCloud 等：",
+        `  - 当前账号状态：${statusText}`,
+        "  - 当前机器人已持有工具：`email_list_recent`（查看最近邮件与未读摘要）、`email_connect`（在对话中直接绑定连接邮箱）、`morning_brief_generate`（生成含未读邮件的每日晨报卡片）",
+        "  - 怎么立即连上：",
+        "    1. 【对话内直接代连（最快）】用户只要把邮箱地址和「应用专用密码 / IMAP 授权码」发到对话里（Gmail 在 Google 账号「安全性 → 两步验证 → 应用专用密码」生成 16 位密码；QQ/163 在邮箱设置开启 IMAP 生成授权码），你就可以直接调用 `email_connect` 自动填好 `imap.gmail.com:993` 等服务器并完成绑定；",
+        "    2. 【设置页一键预设】引导用户点开下方链接卡进入「设置 → 账号连接」，在「个人日程与收件箱」点「连接邮箱」，一键选 Gmail / QQ / 163 / Outlook 预设填入即可。",
+        "  - 回复末尾请附上独立一行的链接卡：",
+        "    [打开账号连接](/settings/connected-accounts)",
+      ].join("\n"),
+    );
+  }
+
+  if (names.includes("calendar")) {
+    const calState = builtin?.calendar;
+    const statusText = calState?.connected
+      ? `已连接（${calState.label ?? "我的日历"}，共 ${calState.eventCount ?? 0} 个日程）`
+      : "未连接";
+    blocks.push(
+      [
+        "✅ 【内置个人日历连接器（iCal / ICS 订阅）】已经内置就绪，支持 Google Calendar、Apple iCloud、Outlook、飞书日历：",
+        `  - 当前账号状态：${statusText}`,
+        "  - 当前机器人已持有工具：`calendar_list_events`（查看近期日程）、`calendar_connect`（在对话中直接绑定日历订阅链接）、`morning_brief_generate`（每日晨报卡片）",
+        "  - 怎么立即连上：",
+        "    1. 【对话内直接代连（最快）】让用户把日历的 iCal / ICS 私密订阅地址（`https://...` 或 `webcal://...`）发到对话里，你直接调用 `calendar_connect` 当场连上；",
+        "    2. 【设置页配置】或者点开下方链接卡在「设置 → 账号连接 → 个人日程与收件箱」里粘贴订阅地址。",
+        "  - 回复末尾请附上独立一行的链接卡：",
+        "    [打开账号连接](/settings/connected-accounts)",
+      ].join("\n"),
+    );
+  }
+
+  if (names.includes("github")) {
+    const ghState = builtin?.github;
+    const statusText = ghState?.connected
+      ? `已连接（@${ghState.login ?? "github"}）`
+      : "未连接";
+    blocks.push(
+      [
+        "✅ 【内置 GitHub 连接器】已经内置就绪：",
+        `  - 当前账号状态：${statusText}`,
+        "  - 支持能力：查看仓库、Issue、Pull Request、读取代码文件、创建 Issue / PR（连接后自动挂载 `github_*` 工具）",
+        "  - 怎么连接：在「设置 → 账号连接」顶部的 GitHub 卡片里填入 Personal Access Token 即可一键连接。",
+        "  - 回复末尾请附上独立一行的链接卡：",
+        "    [打开账号连接](/settings/connected-accounts)",
+      ].join("\n"),
+    );
+  }
+
+  return blocks.length > 0 ? blocks.join("\n\n") : null;
+}
+
+function overviewReport(
+  options: ConnectServiceOptions,
+  servers: readonly ServerRecord[],
+  connections: ReadonlySet<string>,
+  builtin: BuiltinSourcesSnapshot | null,
+): string {
+  const emailStatus = builtin?.email?.connected
+    ? `已连接（${builtin.email.email ?? "邮箱"}）`
+    : "未连接（支持对话内直接发邮箱+授权码由我调用 `email_connect` 代连，或在「设置 → 账号连接」连接）";
+  const calStatus = builtin?.calendar?.connected
+    ? `已连接（${builtin.calendar.label ?? "我的日历"}，${builtin.calendar.eventCount ?? 0} 个日程）`
+    : "未连接（支持直接发 iCal/ICS 链接由我调用 `calendar_connect` 代连，或在「设置 → 账号连接」连接）";
+  const ghStatus = builtin?.github?.connected
+    ? `已连接（@${builtin.github.login ?? "github"}）`
+    : "未连接（在「设置 → 账号连接」填入 GitHub 令牌即可）";
+
+  const addedIds = new Set(servers.map((s) => s.id));
+  const unaddedCatalogue = CATALOGUE.filter((entry) => !addedIds.has(entry.key));
+
+  const sections: string[] = [
+    "【当前部署连接器全景】",
+    [
+      "一、内置直连数据源（已就绪，免装插件）：",
+      `- 电子邮箱（Gmail / QQ邮箱 / 163 / Outlook / iCloud IMAP 只读）：${emailStatus}｜工具：email_list_recent、email_connect、morning_brief_generate`,
+      `- 个人日历（Google Calendar / iCloud / Outlook / 飞书 iCal/ICS）：${calStatus}｜工具：calendar_list_events、calendar_connect、morning_brief_generate`,
+      `- GitHub：${ghStatus}｜工具：github_repos、github_issues、github_pulls 等`,
+    ].join("\n"),
+  ];
+
+  if (servers.length > 0) {
+    sections.push(
+      "二、已启用的 MCP / 第三方连接器：",
+      servers
+        .map((server) => serverSection(server, options.botId, connections))
+        .join("\n"),
+    );
+  } else {
+    sections.push("二、已启用的 MCP / 第三方连接器：\n- 当前暂未启用额外的 MCP 连接器。");
+  }
+
+  if (unaddedCatalogue.length > 0) {
+    sections.push(
+      "三、官方内置 MCP 连接器目录（用户说一声「帮我开启 Notion / Google Drive」，再次调用 connect_service 即可自动启用并授权）：",
+      unaddedCatalogue
+        .map(
+          (entry) =>
+            `- ${entry.title}（${entry.key}）：${firstSentence(entry.summary)}`,
+        )
+        .join("\n"),
+    );
+  }
+
+  sections.push(
+    [
+      "四、快捷操作入口（请在回复末尾原样附上下方独立成行的链接卡，方便用户一键点击）：",
+      "[打开账号连接](/settings/connected-accounts)",
+      "[管理插件与 MCP](/admin/plugins)",
+    ].join("\n"),
+  );
+
+  return sections.join("\n\n");
+}
+
 function report(
   service: string,
   options: ConnectServiceOptions,
@@ -200,6 +404,8 @@ function report(
   connections: ReadonlySet<string>,
   hits: readonly ConnectSearchHit[],
   searchError: string | null,
+  builtinSection: string | null = null,
+  autoActions: readonly string[] = [],
 ): string {
   const names = namesFor(service);
   const matched = servers.filter((server) =>
@@ -211,6 +417,14 @@ function report(
   const catalogue = matched.length === 0 ? catalogueSection(names) : null;
   const sections: string[] = [`【${service}】`];
 
+  if (autoActions.length > 0) {
+    sections.push(autoActions.join("\n"));
+  }
+
+  if (builtinSection) {
+    sections.push(builtinSection);
+  }
+
   if (matched.length > 0) {
     sections.push(
       "这个部署里已经启用：",
@@ -218,21 +432,32 @@ function report(
         .map((server) => serverSection(server, options.botId, connections))
         .join("\n"),
     );
+    if (autoActions.length > 0) {
+      sections.push(
+        [
+          "快捷操作入口（请在回复末尾原样附上下方独立成行的链接卡）：",
+          `[去连接 ${matched[0]!.title} 账号](/settings/connected-accounts/${matched[0]!.id})`,
+          `[管理 ${matched[0]!.title} 插件设置](/admin/plugins/${matched[0]!.id})`,
+        ].join("\n"),
+      );
+    }
   } else if (catalogue) {
     sections.push("这个部署里没有启用的连接器，但目录里有：", catalogue);
-  } else {
+  } else if (!builtinSection) {
     sections.push("这个部署里没有这个服务的连接器，目录里也没有。");
   }
 
-  sections.push(
-    "官方接入方式：",
-    searchError
-      ? `联网搜索失败：${searchError}。可以直接给我官网地址，我用 web_fetch 读。`
-      : officialSection(hits),
-  );
+  if (!builtinSection) {
+    sections.push(
+      "官方接入方式：",
+      searchError
+        ? `联网搜索失败：${searchError}。可以直接给我官网地址，我用 web_fetch 读。`
+        : officialSection(hits),
+    );
 
-  if (matched.length === 0) {
-    sections.push("怎么接进来：", CUSTOM_MCP_NOTE);
+    if (matched.length === 0) {
+      sections.push("怎么接进来：", CUSTOM_MCP_NOTE);
+    }
   }
 
   return sections.join("\n\n");
@@ -246,7 +471,7 @@ export function connectServiceTools(
       name: "connect_service",
       ref: "web/connect_service",
       description:
-        "查一个外部服务（Gmail、Notion、腾讯 ima……）在这个部署里怎么接：已经启用的连接器、给这个机器人授予了哪些工具、你的账号有没有连上，以及官方 API / MCP 的接入方式。用户让你连接、接入、同步某个服务，或者问某个服务能不能接时，先用它。",
+        "查看或主动开启外部服务连接器（填「全部」可列出当前所有内置连接器、已启用 MCP 插件、官方目录与账号状态；或填具体服务名如 Gmail、日历、GitHub、Notion、Google Drive、腾讯 ima 等）。当用户问「你现在有什么连接器」「能连什么」「有 Gmail / Notion 连接器吗」或让你连接/接入/开启某个服务时，第一步就调用它。",
       parameters: z.object({
         service: z
           .string()
@@ -254,7 +479,7 @@ export function connectServiceTools(
           .min(1)
           .max(120)
           .describe(
-            "服务名，例如 腾讯ima、Notion、Gmail。用用户说的那个名字就行。",
+            "服务名（例如 Gmail、日历、Notion、Google Drive、GitHub、腾讯ima），或填「全部」查看所有可用连接器清单。",
           ),
       }),
       execute: async (args) => {
@@ -262,7 +487,7 @@ export function connectServiceTools(
           .object({ service: z.string().trim().min(1).max(120) })
           .safeParse(args);
         if (!parsed.success)
-          return "connect_service 需要一个服务名，例如「腾讯ima」。";
+          return "connect_service 需要一个服务名，例如「腾讯ima」，或填「全部」列出所有连接器。";
         const service = parsed.data.service;
 
         let servers: ServerRecord[] = [];
@@ -287,17 +512,110 @@ export function connectServiceTools(
           connections = new Set();
         }
 
+        const builtin = options.builtinSources
+          ? await options.builtinSources().catch(() => null)
+          : null;
+
+        if (isOverviewRequest(service)) {
+          return overviewReport(options, servers, connections, builtin);
+        }
+
+        const names = namesFor(service);
+        const builtinSection = builtinMatchSection(names, builtin);
+        const autoActions: string[] = [];
+
+        // Proactive auto-enable & self-grant when an admin asks about a catalogue or ungranted connector.
+        if (options.canAutoEnable) {
+          const permission = await options
+            .canAutoEnable()
+            .catch(() => ({ allowed: false, by: "unknown" }));
+          if (permission.allowed) {
+            const addedIds = new Set(servers.map((s) => s.id));
+            const catalogueHits = CATALOGUE.filter(
+              (entry) =>
+                !addedIds.has(entry.key) &&
+                entry.host !== null &&
+                entry.auth.kind === "user-oauth" &&
+                mentions(
+                  `${entry.key} ${entry.title} ${entry.vendor} ${entry.summary}`,
+                  names,
+                ),
+            );
+            for (const entry of catalogueHits) {
+              if (typeof options.store.addServer === "function") {
+                try {
+                  await options.store.addServer({
+                    key: entry.key,
+                    by: permission.by,
+                  });
+                  autoActions.push(
+                    `✅ 已主动为你启用官方连接器「${entry.title}」！`,
+                  );
+                } catch {
+                  // Ignore if dynamic registration or network refresh failed in offline/test env;
+                  // the row may still have been inserted or will be reported from catalogue.
+                }
+              }
+            }
+            if (catalogueHits.length > 0) {
+              servers = await options.store.listServers().catch(() => servers);
+            }
+
+            // Proactively grant non-destructive tools to this Bot if it currently holds 0 tools on a matched server.
+            const matchedServers = servers.filter((server) =>
+              mentions(
+                `${server.id} ${server.title} ${server.vendor} ${server.url} ${server.summary}`,
+                names,
+              ),
+            );
+            let grantedAny = false;
+            for (const srv of matchedServers) {
+              const held = toolNames(srv, options.botId);
+              if (
+                held.length === 0 &&
+                srv.tools.length > 0 &&
+                typeof options.store.grant === "function"
+              ) {
+                const safeTools = srv.tools.filter((t) => !t.destructive);
+                let count = 0;
+                for (const tool of safeTools) {
+                  try {
+                    await options.store.grant(
+                      "mcp",
+                      tool.ref,
+                      options.botId,
+                      permission.by,
+                    );
+                    count += 1;
+                  } catch {
+                    // ignore
+                  }
+                }
+                if (count > 0) {
+                  grantedAny = true;
+                  autoActions.push(
+                    `✅ 已主动将「${srv.title}」的 ${count} 个工具授权给当前机器人！`,
+                  );
+                }
+              }
+            }
+            if (grantedAny) {
+              servers = await options.store.listServers().catch(() => servers);
+            }
+          }
+        }
+
         let hits: ConnectSearchHit[] = [];
         let searchError: string | null = null;
-        // Only search when the deployment does not already have a matching connector. Otherwise the
-        // answer is "you already have it", and a web search would bury that under links.
-        const names = namesFor(service);
-        const hasMatch = servers.some((server) =>
-          mentions(
-            `${server.id} ${server.title} ${server.vendor} ${server.url} ${server.summary}`,
-            names,
-          ),
-        );
+        // Only search when the deployment does not already have a matching connector or built-in source.
+        const hasMatch =
+          Boolean(builtinSection) ||
+          servers.some((server) =>
+            mentions(
+              `${server.id} ${server.title} ${server.vendor} ${server.url} ${server.summary}`,
+              names,
+            ),
+          );
         if (!hasMatch) {
           const query = /[\u3400-\u9fff]/.test(service)
             ? `${service} 官方 API MCP 开放平台 接入`
@@ -316,6 +634,8 @@ export function connectServiceTools(
           connections,
           hits,
           searchError,
+          builtinSection,
+          autoActions,
         );
       },
     },

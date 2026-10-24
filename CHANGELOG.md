@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.68 — 2026-10-24
+
+这一版默认开放「设置 → 插件与 MCP」连接器管理，并借鉴 Muse / OpenGrokBot / Composio 等开源智能体项目将聊天内连接器体验升级为主动式（全景发现、自动开启与自授权、对话内直连个人邮箱/日历、随回复附带一键连接卡片）。PC 客户端与服务端同步更新至 0.1.68（Android `versionCode` 265）。
+
+### 默认开放插件与 MCP 及主动式连接器体验升级
+
+- **默认开放「插件与 MCP」并升级「账号连接」页面**：移除 `/admin/plugins` 路由簇的 `requireExtra("plugins")` 隐藏门控，在设置左栏「账号与连接」分组下默认展示「插件与 MCP」；`设置 → 账号连接` 页面新增「外部服务与 MCP 连接器」区块，直接展示可一键开启的官方连接器（Notion、Google Drive、Parallel Search）与插件管理入口，不再显示死胡同式的「现在没有别的应用可连」。
+- **四层连接器全景盘点（`connect_service` 支持 `service="全部"`）**：当用户询问「你现在有什么连接器」「能连什么」时，`connect_service` 自动汇总内置直连数据源（Gmail / QQ / 163 / Outlook 邮箱 IMAP、Google / iCloud / 飞书日历 iCal/ICS、GitHub）、已启用的 MCP 连接器、官方内置目录与 Composio 状态，无需盲猜或误报「没有连接器清单工具」。
+- **内置 Gmail / 邮箱与日历对话内主动直连（`email_connect` / `calendar_connect`）**：`connect_service` 直接识别 Gmail / QQ 邮箱 / 163 / Outlook 与 Google / 飞书 / iCloud 日历等内置个人数据源；`personal-sources` 新增 `email_connect`（自动按邮箱域名推断 `imap.gmail.com` 等服务器地址）与 `calendar_connect` 工具，支持用户在对话里直接发日历订阅链接或邮箱授权码由机器人当场连上，同时附带 `[打开账号连接](/settings/connected-accounts)` 链接卡。
+- **官方目录连接器主动开启与工具自授权（`canAutoEnable`）**：管理员在对话中询问或要求开启 Notion、Google Drive 等官方目录连接器时，`connect_service` 主动调用 `store.addServer` 启用该连接器（Notion 自动完成 RFC 7591 动态 OAuth 客户端注册）并自动调用 `store.grant` 将非破坏性工具授权给当前机器人，随后返回 `[去连接 Notion 账号](/settings/connected-accounts/notion)` 卡片供用户一键完成授权。
+
 ## 0.1.67 — 2026-10-24
 
 这一版修复了从聊天页进入「设置 / 管理后台」后点击左栏底部「返回聊天」无法切回聊天界面的问题。PC 客户端与服务端同步更新至 0.1.67（Android `versionCode` 264）。

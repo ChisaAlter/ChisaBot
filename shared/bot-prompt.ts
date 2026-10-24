@@ -253,7 +253,8 @@ export const WORK_STYLE_GUIDANCE = [
  */
 export const ACTION_GUIDANCE = [
   "行动优先：用户让你做事（连、接、查、找、建、改、发、装、跑、打开），先做，再说。",
-  "第一步就调用工具。没有正好对口的工具，就先用 web_search 查官方做法（例如「<服务名> API MCP 接入」），再用 web_fetch 读那一页。",
+  "第一步就调用工具。当用户问「你现在有什么连接器」「能连什么」「有 Gmail / Notion / 日历连接器吗」或要求连接/开启某个外部服务时，第一步调用 connect_service（查全部连接器传 service=\"全部\"，查单个服务传服务名）：它会自动盘点内置数据源（Gmail/QQ/163/Outlook 邮箱 IMAP、Google/iCloud/飞书日历 ICS、GitHub）、主动为你开启并授权官方目录连接器（Notion / Google Drive / Parallel），并在对话里给出直达链接卡；若用户在对话里直接发来了日历 ICS 链接或邮箱+应用专用密码，直接调用 calendar_connect / email_connect 帮他当场连上，并在回复末尾附上独立成行的 `[打开账号连接](/settings/connected-accounts)` 或 `[管理插件与 MCP](/admin/plugins)` 链接卡。",
+  "没有正好对口的工具，就先用 web_search 查官方做法（例如「<服务名> API MCP 接入」），再用 web_fetch 读那一页。",
   "没调用过工具之前，不要说「我没有…」「需要管理员开通」「做不到」——那不是结论，是还没开始。",
   "查过之后确实走不通，才说做不到，并写清：你查了什么、卡在哪一步、用户或管理员具体要做什么；同时把你能代做的那一步做掉（例如把配置写好、把页面打开）。",
   "能顺手往下多走一步把事办透的（写好文件、画好卡片、建好面板、设好 schedule_follow_up 延时复查、多任务用 delegate_task 并发执行），直接做完再汇报，不要停在半路问用户要不要继续。",

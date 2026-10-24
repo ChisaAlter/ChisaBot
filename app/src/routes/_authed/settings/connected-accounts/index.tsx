@@ -2,21 +2,22 @@ import {
   IconBrandGoogleDrive,
   IconBrandNotion,
   IconCheck,
+  IconChevronRight,
   IconPlug,
+  IconPuzzle,
   IconSearch,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import * as React from "react";
 import {
-  PageEmpty,
-  PageSection,
   PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { RowMark } from "@/components/layout/row-mark";
 import { GithubConnectionSection } from "@/components/settings/github-connection";
 import { PersonalSourcesSection } from "@/components/settings/personal-sources";
 import { SavedLoginsSection } from "@/components/settings/saved-logins";
 import { PluginLogo } from "@/components/plugins/plugin-logo";
+import { pluginSummary, pluginTitle } from "@/lib/plugins/catalogue-zh";
 import {
   InputGroup,
   InputGroupAddon,
@@ -101,6 +102,9 @@ function RouteComponent() {
    */
   const yours = (plugins.data?.catalogue ?? []).filter(
     (entry) => entry.auth === "user-oauth" && added.has(entry.key),
+  );
+  const explore = (plugins.data?.catalogue ?? []).filter(
+    (entry) => !added.has(entry.key),
   );
 
   /*
@@ -200,94 +204,155 @@ function RouteComponent() {
             "连接列表暂时读不到，刷新一下再试。"
           }
         </p>
-      ) : accounts.length === 0 ? (
-        <PageSection>
-          <PageEmpty>
-            {/* 插件与 MCP 默认隐藏（DESIGN.md §74），不再指向「插件」页。 */}
-            {"现在没有别的应用可连。"}
-          </PageEmpty>
-        </PageSection>
       ) : (
         <>
-          <p className="mt-5 text-xs text-muted-foreground">
-            {connectedCount} {"已连接 ·"}
-            {accounts.length} {"可用"}
-          </p>
-          <InputGroup className="mt-3 h-9 border-transparent bg-muted/60 shadow-none dark:bg-muted/60">
-            <InputGroupAddon>
-              <IconSearch aria-hidden="true" className="size-4" />
-            </InputGroupAddon>
-            <InputGroupInput
-              aria-label={"搜索应用"}
-              placeholder={"搜索应用"}
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </InputGroup>
-          {matching.length === 0 ? (
-            <p className="mt-8 text-sm text-muted-foreground" role="status">
-              {"没有应用匹配“"}
-              {search.trim()}”.
-            </p>
-          ) : (
-            sections
-              .filter((section) => section.accounts.length > 0)
-              .map((section) => (
-                <section
-                  className="mt-8"
-                  key={section.title}
-                  aria-label={section.title}
-                >
-                  <h2 className="mb-3 px-2 text-xs font-medium text-muted-foreground">
-                    {section.title}
-                  </h2>
-                  <div className="grid grid-cols-1 gap-x-6 gap-y-2 @min-[36rem]:grid-cols-2">
-                    {section.accounts.map((account) => (
-                      <Item
-                        key={account.key}
-                        className="min-w-0 flex-nowrap gap-3 px-2 py-3"
-                        data-testid={`account-${account.key}`}
-                        render={
-                          <Link
-                            params={{ key: account.key }}
-                            to="/settings/connected-accounts/$key"
-                          />
-                        }
-                        size="sm"
-                      >
-                        <RowMark className="size-9">{account.mark}</RowMark>
-                        <ItemContent className="min-w-0 gap-0.5">
-                          <ItemTitle className="block w-auto truncate">
-                            {account.title}
-                          </ItemTitle>
-                          <ItemDescription
-                            className="line-clamp-1 break-all text-xs"
-                            title={account.summary}
-                          >
-                            {account.summary}
-                          </ItemDescription>
-                        </ItemContent>
-                        <ItemActions className="shrink-0">
-                          {connected.has(account.key) ? (
-                            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                              <IconCheck
-                                aria-hidden="true"
-                                className="size-3.5 text-emerald-600 dark:text-emerald-400"
+          {accounts.length > 0 ? (
+            <>
+              <p className="mt-5 text-xs text-muted-foreground">
+                {connectedCount} {"已连接 ·"}
+                {accounts.length} {"可用"}
+              </p>
+              <InputGroup className="mt-3 h-9 border-transparent bg-muted/60 shadow-none dark:bg-muted/60">
+                <InputGroupAddon>
+                  <IconSearch aria-hidden="true" className="size-4" />
+                </InputGroupAddon>
+                <InputGroupInput
+                  aria-label={"搜索应用"}
+                  placeholder={"搜索应用"}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </InputGroup>
+              {matching.length === 0 ? (
+                <p className="mt-8 text-sm text-muted-foreground" role="status">
+                  {"没有应用匹配“"}
+                  {search.trim()}”.
+                </p>
+              ) : (
+                sections
+                  .filter((section) => section.accounts.length > 0)
+                  .map((section) => (
+                    <section
+                      className="mt-8"
+                      key={section.title}
+                      aria-label={section.title}
+                    >
+                      <h2 className="mb-3 px-2 text-xs font-medium text-muted-foreground">
+                        {section.title}
+                      </h2>
+                      <div className="grid grid-cols-1 gap-x-6 gap-y-2 @min-[36rem]:grid-cols-2">
+                        {section.accounts.map((account) => (
+                          <Item
+                            key={account.key}
+                            className="min-w-0 flex-nowrap gap-3 px-2 py-3"
+                            data-testid={`account-${account.key}`}
+                            render={
+                              <Link
+                                params={{ key: account.key }}
+                                to="/settings/connected-accounts/$key"
                               />
-                              {"已连接"}
-                            </span>
-                          ) : (
-                            <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium">
-                              {"连接"}
-                            </span>
-                          )}
-                        </ItemActions>
-                      </Item>
-                    ))}
-                  </div>
-                </section>
-              ))
-          )}
+                            }
+                            size="sm"
+                          >
+                            <RowMark className="size-9">{account.mark}</RowMark>
+                            <ItemContent className="min-w-0 gap-0.5">
+                              <ItemTitle className="block w-auto truncate">
+                                {account.title}
+                              </ItemTitle>
+                              <ItemDescription
+                                className="line-clamp-1 break-all text-xs"
+                                title={account.summary}
+                              >
+                                {account.summary}
+                              </ItemDescription>
+                            </ItemContent>
+                            <ItemActions className="shrink-0">
+                              {connected.has(account.key) ? (
+                                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                                  <IconCheck
+                                    aria-hidden="true"
+                                    className="size-3.5 text-emerald-600 dark:text-emerald-400"
+                                  />
+                                  {"已连接"}
+                                </span>
+                              ) : (
+                                <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium">
+                                  {"连接"}
+                                </span>
+                              )}
+                            </ItemActions>
+                          </Item>
+                        ))}
+                      </div>
+                    </section>
+                  ))
+              )}
+            </>
+          ) : null}
+
+          <section className="mt-8" aria-label="插件与官方连接器">
+            <div className="mb-3 flex items-center justify-between px-2">
+              <div>
+                <h2 className="text-sm font-medium">
+                  {"外部服务与 MCP 连接器"}
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  {"开启 Notion、Google Drive、Parallel Search 或自定义 MCP 服务器；也可以在对话里直接让机器人帮你开启。"}
+                </p>
+              </div>
+              <Link
+                className="inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1.5 text-xs font-medium hover:bg-muted/80"
+                to="/admin/plugins"
+              >
+                <IconPuzzle className="size-3.5" />
+                {"管理插件与 MCP"}
+                <IconChevronRight className="size-3.5 text-muted-foreground" />
+              </Link>
+            </div>
+            {explore.length > 0 ? (
+              <div className="grid grid-cols-1 gap-x-6 gap-y-2 @min-[36rem]:grid-cols-2">
+                {explore.map((entry) => {
+                  const Mark = markFor(entry.key);
+                  const title = pluginTitle(entry.key, entry.title);
+                  const summary = pluginSummary(entry.key, entry.summary);
+                  return (
+                    <Item
+                      key={entry.key}
+                      className="min-w-0 flex-nowrap gap-3 px-2 py-3"
+                      data-testid={`explore-connector-${entry.key}`}
+                      render={
+                        <Link
+                          params={{ key: entry.key }}
+                          to="/admin/plugins/$key"
+                        />
+                      }
+                      size="sm"
+                    >
+                      <RowMark className="size-9">
+                        <Mark className="size-4" />
+                      </RowMark>
+                      <ItemContent className="min-w-0 gap-0.5">
+                        <ItemTitle className="block w-auto truncate">
+                          {title}
+                        </ItemTitle>
+                        <ItemDescription
+                          className="line-clamp-1 break-all text-xs"
+                          title={summary}
+                        >
+                          {summary}
+                        </ItemDescription>
+                      </ItemContent>
+                      <ItemActions className="shrink-0">
+                        <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium">
+                          {"去开启"}
+                        </span>
+                      </ItemActions>
+                    </Item>
+                  );
+                })}
+              </div>
+            ) : null}
+          </section>
         </>
       )}
       <div className="mt-10">

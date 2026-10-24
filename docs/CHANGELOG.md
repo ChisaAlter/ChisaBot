@@ -1,3 +1,7 @@
+## 0.1.68
+
+- 默认开放「设置 → 插件与 MCP」并在「设置 → 账号连接」直接展示官方可开启连接器（Notion、Google Drive、Parallel Search）；升级 `connect_service` 支持 `service="全部"` 四层连接器全景盘点、识别内置 Gmail/QQ/163/Outlook 邮箱与日历数据源、对官方目录连接器主动开启并自动将工具授权给当前机器人；新增对话内直连工具 `email_connect`（自动匹配 Gmail 等 IMAP 服务器）与 `calendar_connect`，并随回复输出可点击的账号连接卡片（versionCode 265）
+
 ## 0.1.67
 
 - 修复从聊天页进入「设置 / 管理后台」后点击左栏底部「返回聊天」无法切回聊天界面的问题：`rememberBotsLocation()` 仅记录 `/channel/...` 与 `/group/...` 会话路径，且 `_authed/_app.tsx` 基于 `s.resolvedLocation ?? s.location` 读取已确认位置，防止过渡帧中把 `/settings` 误记为最近会话导致「返回聊天」指向设置页自身（versionCode 264）

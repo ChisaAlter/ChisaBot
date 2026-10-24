@@ -1508,6 +1508,35 @@ const loadToolsForActor =
       ownerUserId: actorId,
       botId,
       search: (query, count) => webSearch(query, count ?? 5),
+      builtinSources: async () => {
+        const [ps, gh] = await Promise.all([
+          personalSources.status(actorId).catch(() => null),
+          github.status(actorId).catch(() => null),
+        ]);
+        return {
+          email: {
+            connected: Boolean(ps?.email),
+            email: ps?.email?.email ?? null,
+            imapHost: ps?.email?.imapHost ?? null,
+          },
+          calendar: {
+            connected: Boolean(ps?.calendar),
+            label: ps?.calendar?.label ?? null,
+            eventCount: ps?.calendar?.eventCount ?? 0,
+          },
+          github: {
+            connected: Boolean(gh),
+            login: gh?.login ?? null,
+          },
+        };
+      },
+      canAutoEnable: async () => {
+        const actor = await actorFor(actorId);
+        return {
+          allowed: actor.role === "admin",
+          by: actor.id,
+        };
+      },
     }),
     // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
     // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：

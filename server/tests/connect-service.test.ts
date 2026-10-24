@@ -233,4 +233,109 @@ describe("connect_service", () => {
     expect(answer).toContain("需要一个服务名");
     expect(calls).toEqual([]);
   });
+
+  test("returns the full 4-layer connector panorama when asked for '全部'", async () => {
+    const { tool, calls } = connectTool({
+      servers: [
+        server({
+          tools: [toolRecord({ name: "search_pages", grantedTo: [botId] })],
+        }),
+      ],
+      connections: ["notion"],
+    });
+
+    const answer = await run(tool, "全部");
+
+    expect(answer).toContain("当前部署连接器全景");
+    expect(answer).toContain("电子邮箱（Gmail");
+    expect(answer).toContain("个人日历（Google Calendar");
+    expect(answer).toContain("GitHub");
+    expect(answer).toContain("Notion");
+    expect(answer).toContain("[打开账号连接](/settings/connected-accounts)");
+    expect(answer).toContain("[管理插件与 MCP](/admin/plugins)");
+    expect(calls).toEqual([]);
+  });
+
+  test("recognizes built-in Gmail / Email IMAP connector and provides direct connect guidance without web search", async () => {
+    const calls: string[] = [];
+    const tool = connectServiceTools({
+      store: storeWith([]),
+      ownerUserId: "owner",
+      botId,
+      search: async (q) => {
+        calls.push(q);
+        return [];
+      },
+      builtinSources: async () => ({
+        email: {
+          connected: true,
+          email: "chisa@gmail.com",
+          imapHost: "imap.gmail.com",
+        },
+      }),
+    })[0]!;
+
+    const answer = (await tool.execute({ service: "Gmail" })) as string;
+
+    expect(answer).toContain("内置电子邮箱连接器");
+    expect(answer).toContain("chisa@gmail.com");
+    expect(answer).toContain("email_connect");
+    expect(answer).toContain("[打开账号连接](/settings/connected-accounts)");
+    expect(calls).toEqual([]);
+  });
+
+  test("proactively auto-enables a catalogue connector and grants its tools when canAutoEnable is allowed", async () => {
+    const addedKeys: string[] = [];
+    const grantedRefs: string[] = [];
+    let currentServers: ServerRecord[] = [];
+    const dynamicStore = {
+      listServers: async () => currentServers,
+      connectionsFor: async () => [],
+      brokeredConnectionsFor: async () => [],
+      addServer: async (input: { key: string; by: string }) => {
+        addedKeys.push(input.key);
+        const created = server({
+          id: input.key,
+          title: "Notion",
+          tools: [
+            toolRecord({
+              name: "search_pages",
+              ref: "notion/search_pages",
+              grantedTo: [],
+            }),
+          ],
+        });
+        currentServers = [created];
+        return created;
+      },
+      grant: async (_kind: string, ref: string, agentId: string) => {
+        grantedRefs.push(`${ref}->${agentId}`);
+        currentServers = currentServers.map((s) => ({
+          ...s,
+          tools: s.tools.map((t) =>
+            t.ref === ref ? { ...t, grantedTo: [agentId] } : t,
+          ),
+        }));
+      },
+    } as unknown as PluginStore;
+
+    const tool = connectServiceTools({
+      store: dynamicStore,
+      ownerUserId: "owner",
+      botId,
+      search: async () => [],
+      canAutoEnable: async () => ({ allowed: true, by: "admin@example.com" }),
+    })[0]!;
+
+    const answer = (await tool.execute({ service: "Notion" })) as string;
+
+    expect(addedKeys).toEqual(["notion"]);
+    expect(grantedRefs).toEqual([`notion/search_pages->${botId}`]);
+    expect(answer).toContain("已主动为你启用官方连接器「Notion」");
+    expect(answer).toContain("已主动将「Notion」的 1 个工具授权给当前机器人");
+    expect(answer).toContain("这个机器人有 1 个");
+    expect(answer).toContain(
+      "[去连接 Notion 账号](/settings/connected-accounts/notion)",
+    );
+  });
 });

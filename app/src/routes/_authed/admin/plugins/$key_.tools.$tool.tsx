@@ -1,4 +1,3 @@
-import { requireExtra } from "@/lib/deployment/extras";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useParams } from "@tanstack/react-router";
 import { useState } from "react";
@@ -37,8 +36,6 @@ import { pluginsPageQueryOptions } from "@/lib/plugins/queries";
 export const Route = createFileRoute(
   "/_authed/admin/plugins/$key_/tools/$tool",
 )({
-  // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 plugins 才能进。
-  beforeLoad: requireExtra("plugins"),
   component: RouteComponent,
 });
 
