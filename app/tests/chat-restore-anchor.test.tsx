@@ -69,14 +69,10 @@ test("恢复历史时最新一条用户消息不当成「刚发的」", async ()
   await finishEntrances();
 });
 
-test("恢复之后人发的那一条照旧带到顶上（§35 / §88.1）", async () => {
+test("恢复之后人发的那一条也走连续跟底（不挂 data-scroll-anchor 触发 2/3 屏翻页跳动）", async () => {
   const view = render(tree([], true));
   view.rerender(tree(HISTORY, false));
   await settleReactWork();
-  /*
-   * 把时钟推过「打开」窗口（`useOpeningWindow` = SETTLE_AFTER_HYDRATE_MS）。真跑等 2.5 秒没有意义，
-   * 这个窗口只看 performance.now()，拨一下就是「人隔了一会儿才发」。
-   */
   const real = performance.now.bind(performance);
   performance.now = () => real() + SETTLE_AFTER_HYDRATE_MS + 1_000;
   try {
@@ -86,7 +82,7 @@ test("恢复之后人发的那一条照旧带到顶上（§35 / §88.1）", asyn
         false,
       ),
     );
-    expect(anchorOf(view.container, "real-send")).toBe("true");
+    expect(anchorOf(view.container, "real-send")).toBe("false");
   } finally {
     performance.now = real;
   }

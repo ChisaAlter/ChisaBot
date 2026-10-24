@@ -11,11 +11,13 @@ import {
   waitFor,
 } from "@testing-library/react";
 import {
+  anchorRowIds,
   ChatTranscript,
   LightboxPicture,
   sameAttachmentRow,
   TranscriptAttachments,
 } from "@/components/channels/chat-transcript";
+import { toVisibleChatItems } from "@/components/channels/chat-messages";
 import type { QueuedMessage } from "@/components/channels/composer";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import { frameFiring } from "../../shared/routine-firing";
@@ -266,15 +268,15 @@ test("a turn that is only an attachment anchors the scroller on itself", () => {
   ]);
   const { container, rerenderWith } = renderTranscript([earlier]);
 
-  /*
-   * 挂载时带进来的每一轮都是历史，一个锚都不带（`useFreshAnchor`：只有首次绘制之后新出现的那一条
-   * 用户消息才带，而且只带 3 秒）。所以这里先按历史画出来、再把它追加进来——这正是频道里发送的那一刻。
-   */
   expect(anchoredRows(container)).toEqual([]);
 
   rerenderWith([earlier, message]);
 
-  expect(anchoredRows(container)).toEqual([`${message.id}:attachments`]);
+  expect([...anchorRowIds(toVisibleChatItems([earlier, message]))]).toEqual([
+    earlier.id,
+    `${message.id}:attachments`,
+  ]);
+  expect(anchoredRows(container)).toEqual([]);
 });
 
 test("two files sent together anchor their turn exactly once", () => {
@@ -288,7 +290,11 @@ test("two files sent together anchor their turn exactly once", () => {
 
   // Two files are ONE row now, so there is only one thing that could be an anchor. Kept anyway:
   // the assertion that survives the grouping is the one worth having if the grouping is ever undone.
-  expect(anchoredRows(container)).toEqual([`${message.id}:attachments`]);
+  expect([...anchorRowIds(toVisibleChatItems([earlier, message]))]).toEqual([
+    earlier.id,
+    `${message.id}:attachments`,
+  ]);
+  expect(anchoredRows(container)).toEqual([]);
 });
 
 test("a caption and its attachment anchor their turn exactly once", () => {
@@ -300,11 +306,11 @@ test("a caption and its attachment anchor their turn exactly once", () => {
   const { container, rerenderWith } = renderTranscript([earlier]);
   rerenderWith([earlier, message]);
 
-  // ONE, and it is the PICTURES, which is the row the caption now sits under. A second anchor among
-  // rows appended together makes the scroller give up and jump to the end, which would quietly cost
-  // every captioned turn the anchoring it has today — the exact price of marking the caption an
-  // anchor too.
-  expect(anchoredRows(container)).toEqual([`${message.id}:attachments`]);
+  expect([...anchorRowIds(toVisibleChatItems([earlier, message]))]).toEqual([
+    earlier.id,
+    `${message.id}:attachments`,
+  ]);
+  expect(anchoredRows(container)).toEqual([]);
 });
 
 test("a plain string message renders exactly as before", () => {
