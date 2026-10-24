@@ -1,4 +1,3 @@
-import { requireExtra } from "@/lib/deployment/extras";
 import { IconPlug } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
@@ -42,8 +41,6 @@ import { queryClient } from "@/query-client";
  * made on their settings page, not here.
  */
 export const Route = createFileRoute("/_authed/admin/plugins/composio")({
-  // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 plugins 才能进。
-  beforeLoad: requireExtra("plugins"),
   component: RouteComponent,
 });
 

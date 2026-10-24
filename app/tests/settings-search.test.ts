@@ -52,10 +52,11 @@ describe("settings registry", () => {
     expect(shown).toContain("/settings/approvals");
     const adminShown = visiblePages(admin).map((page) => page.to);
     expect(adminShown).toContain("/admin/models");
-    expect(adminShown).not.toContain("/admin/plugins");
+    expect(adminShown).toContain("/admin/plugins");
+    expect(adminShown).not.toContain("/workflows");
     expect(adminShown).not.toContain("/admin/accounts");
-    expect(visiblePages({ ...admin, extras: ["plugins"], accountsUi: true }).map((page) => page.to)).toEqual(
-      expect.arrayContaining(["/admin/plugins", "/admin/accounts"]),
+    expect(visiblePages({ ...admin, extras: ["workflows"], accountsUi: true }).map((page) => page.to)).toEqual(
+      expect.arrayContaining(["/workflows", "/admin/plugins", "/admin/accounts"]),
     );
     // 空组不显示（「高级」默认一项都没有）。
     expect(visibleGroups(admin).map((entry) => entry.group.id)).not.toContain("advanced");

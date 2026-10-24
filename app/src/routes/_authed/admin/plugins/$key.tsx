@@ -1,4 +1,3 @@
-import { requireExtra } from "@/lib/deployment/extras";
 import {
   IconArrowUpRight,
   IconChevronRight,
@@ -69,8 +68,6 @@ import {
  * list and grew a column per Bot, which is how a grant goes unread.
  */
 export const Route = createFileRoute("/_authed/admin/plugins/$key")({
-  // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 plugins 才能进。
-  beforeLoad: requireExtra("plugins"),
   component: RouteComponent,
 });
 

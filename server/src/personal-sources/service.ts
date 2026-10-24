@@ -718,6 +718,23 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     return { title, dateStr, weather, markdown };
   }
 
+  function inferImapHost(email: string): string {
+    const clean = email.trim().toLowerCase();
+    if (clean === "demo" || clean === "demo@ayase.cn") return "demo.imap.local";
+    const domain = clean.split("@")[1] ?? "";
+    if (domain === "gmail.com" || domain === "googlemail.com") return "imap.gmail.com";
+    if (domain === "qq.com" || domain === "foxmail.com") return "imap.qq.com";
+    if (domain === "163.com") return "imap.163.com";
+    if (domain === "126.com") return "imap.126.com";
+    if (domain === "outlook.com" || domain === "hotmail.com" || domain === "live.com" || domain === "office365.com") {
+      return "outlook.office365.com";
+    }
+    if (domain === "icloud.com" || domain === "me.com") return "imap.mail.me.com";
+    if (domain === "aliyun.com") return "imap.aliyun.com";
+    if (domain === "sina.com" || domain === "sina.cn") return "imap.sina.com";
+    return domain ? `imap.${domain}` : "";
+  }
+
   function tools(actorId: string): GrantedTool[] {
     return [
       {
@@ -732,7 +749,7 @@ export function createPersonalSources(database: Database, options: PersonalSourc
           const days = parsed.success ? (parsed.data.days ?? 7) : 7;
           const row = await getRow(actorId);
           if (!row?.calendar_ics_enc) {
-            return `${REFUSAL_MARKER} 用户还没有连接日历。请引导用户在「设置 → 账号连接」里填入 iCal / ICS 日历订阅地址。`;
+            return `${REFUSAL_MARKER} 用户还没有连接日历。如果用户在对话中发来了 iCal/ICS 订阅链接，请直接调用 calendar_connect 帮他连上；否则引导用户在「设置 → 账号连接」里填入 iCal / ICS 日历订阅地址，并在回复末尾附上独立一行的链接卡：\n[打开账号连接](/settings/connected-accounts)`;
           }
           const events = await listEvents(actorId, days);
           if (events.length === 0) return `未来 ${days} 天内没有日程安排。`;
@@ -742,9 +759,45 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         },
       },
       {
+        name: "calendar_connect",
+        ref: "personal-sources/calendar_connect",
+        description:
+          "主动为用户绑定并连接个人日历（支持 Google Calendar / Apple iCloud / Outlook / 飞书日历的 iCal/ICS 订阅链接 https://... 或 webcal://...，或直接粘贴 .ics 内容，或填 demo 接入演示日历）。当用户在对话里发来日历订阅链接或要求接入演示日历时，直接调用本工具帮他连上。",
+        parameters: z.object({
+          urlOrIcs: z
+            .string()
+            .min(1)
+            .describe("iCal / ICS 订阅地址（https:// 或 webcal://）或 BEGIN:VCALENDAR 文本，或填 demo 接入演示日历"),
+          label: z.string().max(60).optional().describe("日历名称，例如「Google 日历」「工作日程」"),
+        }),
+        execute: async (args) => {
+          const parsed = z
+            .object({
+              urlOrIcs: z.string().min(1),
+              label: z.string().max(60).optional(),
+            })
+            .safeParse(args);
+          if (!parsed.success) {
+            return `${REFUSAL_MARKER} 请提供有效的 iCal / ICS 订阅链接（https:// 或 webcal://）或 .ics 内容。`;
+          }
+          try {
+            const res = await connectCalendar(actorId, parsed.data);
+            const preview = res.events
+              .slice(0, 5)
+              .map((e) => `- ${e.startIso}｜${e.summary}${e.location ? `（${e.location}）` : ""}`)
+              .join("\n");
+            return `已成功连接日历「${res.status.calendar?.label ?? "我的日历"}」（共解析到 ${res.status.calendar?.eventCount ?? res.events.length} 个日程）！${
+              preview ? `\n近期日程预览：\n${preview}` : ""
+            }`;
+          } catch (err) {
+            return `${REFUSAL_MARKER} 连接日历失败：${err instanceof Error ? err.message : "未知错误"}。也可以引导用户前往设置页配置：\n[打开账号连接](/settings/connected-accounts)`;
+          }
+        },
+      },
+      {
         name: "email_list_recent",
         ref: "personal-sources/email_list_recent",
-        description: "查看用户已连接的个人收件箱（IMAP 只读）最近邮件与未读邮件摘要。",
+        description: "查看用户已连接的个人收件箱（IMAP 只读，支持 Gmail / QQ / 163 / Outlook / iCloud）最近邮件与未读邮件摘要。",
         parameters: z.object({
           limit: z.number().int().min(1).max(20).optional().describe("最多返回几封，默认 8 封"),
         }),
@@ -753,13 +806,62 @@ export function createPersonalSources(database: Database, options: PersonalSourc
           const limit = parsed.success ? (parsed.data.limit ?? 8) : 8;
           const row = await getRow(actorId);
           if (!row?.email_address || !row.imap_pass_enc) {
-            return `${REFUSAL_MARKER} 用户还没有连接邮箱。请引导用户在「设置 → 账号连接」里接入 IMAP 只读收件箱。`;
+            return `${REFUSAL_MARKER} 用户还没有连接邮箱。若用户在对话中提供了邮箱地址与应用专用密码/授权码，可直接调用 email_connect 帮他连上；否则请引导用户在「设置 → 账号连接」里接入 IMAP 只读收件箱（支持 Gmail / QQ邮箱 / 163 / Outlook 预设），并在回复末尾附上独立一行的链接卡：\n[打开账号连接](/settings/connected-accounts)`;
           }
           const emails = await listEmails(actorId, limit);
           if (emails.length === 0) return "收件箱暂无邮件。";
           return emails
             .map((m) => `- ${m.unread ? "[未读] " : ""}${m.subject}｜发件人：${m.from}｜时间：${m.date}`)
             .join("\n");
+        },
+      },
+      {
+        name: "email_connect",
+        ref: "personal-sources/email_connect",
+        description:
+          "主动为用户绑定并连接个人邮箱收件箱（IMAP 只读，支持 Gmail / QQ邮箱 / 163邮箱 / Outlook / iCloud 等；自动根据邮箱后缀匹配 IMAP 服务器地址）。当用户在对话里提供了邮箱地址和应用专用密码/授权码（或填 demo 接入演示收件箱）时，直接调用本工具完成连接。",
+        parameters: z.object({
+          email: z.string().min(1).describe("邮箱地址（例如 xxx@gmail.com、xxx@qq.com，或填 demo 接入演示邮箱）"),
+          password: z.string().min(1).describe("应用专用密码 / IMAP 授权码（若接入演示邮箱填 demo-inbox）"),
+          imapHost: z
+            .string()
+            .optional()
+            .describe("IMAP 服务器地址（可选，不填会根据邮箱后缀自动匹配，如 imap.gmail.com / imap.qq.com / imap.163.com）"),
+          imapPort: z.number().int().optional().describe("IMAP SSL 端口，默认 993"),
+        }),
+        execute: async (args) => {
+          const parsed = z
+            .object({
+              email: z.string().min(1),
+              password: z.string().min(1),
+              imapHost: z.string().optional(),
+              imapPort: z.number().int().optional(),
+            })
+            .safeParse(args);
+          if (!parsed.success) {
+            return `${REFUSAL_MARKER} 请提供邮箱地址和应用专用密码/授权码。`;
+          }
+          const isDemo = parsed.data.email.trim().toLowerCase() === "demo";
+          const emailAddr = isDemo ? "demo@ayase.cn" : parsed.data.email.trim();
+          const imapHost = parsed.data.imapHost?.trim() || inferImapHost(emailAddr);
+          const pass = isDemo ? "demo-inbox" : parsed.data.password.trim();
+          try {
+            const res = await connectEmail(actorId, {
+              email: emailAddr,
+              imapHost,
+              imapPort: parsed.data.imapPort ?? 993,
+              password: pass,
+            });
+            const preview = res.emails
+              .slice(0, 5)
+              .map((m) => `- ${m.unread ? "[未读] " : ""}${m.subject}（${m.from}）`)
+              .join("\n");
+            return `已成功连接邮箱「${res.status.email?.email ?? emailAddr}」（服务器：${imapHost}）！${
+              preview ? `\n最近收件箱摘要：\n${preview}` : ""
+            }`;
+          } catch (err) {
+            return `${REFUSAL_MARKER} 连接邮箱失败：${err instanceof Error ? err.message : "未知错误"}。也可以引导用户点击下方卡片在「设置 → 账号连接」中配置：\n[打开账号连接](/settings/connected-accounts)`;
+          }
         },
       },
       {
@@ -854,6 +956,7 @@ export function createPersonalSources(database: Database, options: PersonalSourc
 
   return {
     ensure,
+    status: async (actorId: string) => toStatusView(await getRow(actorId)),
     tools,
     routes,
     listEvents,

@@ -1,4 +1,3 @@
-import { requireExtra } from "@/lib/deployment/extras";
 import {
   IconBrandGoogleDrive,
   IconBrandNotion,
@@ -44,8 +43,6 @@ import {
  * scrolled sideways.
  */
 export const Route = createFileRoute("/_authed/admin/plugins/")({
-  // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 plugins 才能进。
-  beforeLoad: requireExtra("plugins"),
   component: RouteComponent,
 });
 
