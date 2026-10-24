@@ -1,3 +1,7 @@
+## 0.1.67
+
+- 修复从聊天页进入「设置 / 管理后台」后点击左栏底部「返回聊天」无法切回聊天界面的问题：`rememberBotsLocation()` 仅记录 `/channel/...` 与 `/group/...` 会话路径，且 `_authed/_app.tsx` 基于 `s.resolvedLocation ?? s.location` 读取已确认位置，防止过渡帧中把 `/settings` 误记为最近会话导致「返回聊天」指向设置页自身（versionCode 264）
+
 ## 0.1.66
 
 - 修复后台工具调用（如 `panel_refresh` 刷新面板、`web_fetch` 等）耗时超过 12 秒时被首段发送看门狗提前调用 `stopAgent()` 误杀并报 `这一轮出错了：This run was stopped.` 的问题：仅在确认消息未送达服务器（`hang`）时中止，已送达服务器的回合进入 180 秒回复看门狗；识别 `HERMES_RUN_CANCELLED` 并清除已折叠行（`data-folded`）子元素外边距留白（versionCode 263）

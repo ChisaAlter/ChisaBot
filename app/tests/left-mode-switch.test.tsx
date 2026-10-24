@@ -45,11 +45,16 @@ test("mode follows the address: /cc and below is Claude Code, everything else is
   expect(modeOfPath("/")).toBe("bots");
 });
 
-test("switching back to bots returns to the last conversation, not to the / bounce", () => {
+test("switching back to bots returns to the last conversation, not to the / bounce or settings", () => {
   expect(modeTarget("bots")).toEqual({ to: "/" });
   rememberBotsLocation("/channel/c_1", { panel: "x" });
   rememberBotsLocation("/", {});
   rememberBotsLocation("/cc/s_1", {});
+  rememberBotsLocation("/settings", {});
+  rememberBotsLocation("/settings/connected-accounts", { connected: "github" });
+  rememberBotsLocation("/admin/models", {});
+  rememberBotsLocation("/approvals", {});
+  rememberBotsLocation("/workflows", {});
   expect(lastBotsLocation()).toEqual({ pathname: "/channel/c_1", search: { panel: "x" } });
   expect(modeTarget("bots")).toEqual({ to: "/channel/c_1", search: { panel: "x" } });
 });

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.67 — 2026-10-24
+
+这一版修复了从聊天页进入「设置 / 管理后台」后点击左栏底部「返回聊天」无法切回聊天界面的问题。PC 客户端与服务端同步更新至 0.1.67（Android `versionCode` 264）。
+
+### 设置与管理后台「返回聊天」导航修复
+
+- **仅记录聊天会话路径（`/channel/...` 与 `/group/...`）**：在 `left-mode.ts` 中新增 `isBotsChatPath(pathname)` 并在 `rememberBotsLocation()` 中过滤非聊天路径，防止从 `/_authed/_app` 跳转到 `/settings` 或 `/admin` 的过渡帧中把 `/settings` 误记为最近一次机器人会话，导致设置左栏底部「返回聊天」按钮指向 `/settings` 自身而无法返回聊天。
+- **使用已解析路由位置记录会话记忆**：`_authed/_app.tsx` 改为读取 `s.resolvedLocation ?? s.location`，避免在异步 `beforeLoad` 挂起阶段把目标设置路由写入会话位置记忆。
+
 ## 0.1.66 — 2026-10-24
 
 这一版修复了当后台工具调用（如 `panel_refresh` 刷新实时看板、`web_fetch` 抓取网页或远程命令执行）耗时超过 12 秒时被客户端首段发送看门狗误调 `stopAgent()` 强行掐断并报 `这一轮出错了：This run was stopped.` 的问题，同时清除了已折叠步骤行残留的子元素外边距留白。PC 客户端与服务端同步更新至 0.1.66（Android `versionCode` 263）。
