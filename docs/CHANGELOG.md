@@ -1,3 +1,7 @@
+## 0.1.66
+
+- 修复后台工具调用（如 `panel_refresh` 刷新面板、`web_fetch` 等）耗时超过 12 秒时被首段发送看门狗提前调用 `stopAgent()` 误杀并报 `这一轮出错了：This run was stopped.` 的问题：仅在确认消息未送达服务器（`hang`）时中止，已送达服务器的回合进入 180 秒回复看门狗；识别 `HERMES_RUN_CANCELLED` 并清除已折叠行（`data-folded`）子元素外边距留白（versionCode 263）
+
 ## 0.1.65
 
 - 彻底消除发送消息时对话列表往上跳动：取消新发用户消息的 `data-scroll-anchor` 1/3 视口翻页与底部 2/3 屏空白垫高，统一走自然贴底跟进；`deliver()` 将用户消息乐观入列提前至 `panelAuthoringForwardedProps` 网络请求之前同步执行，并与 `live` 门控对齐，消除回车后 200ms 两段跳；移除 `useSmoothSendScroll` 的 700ms `scroll-behavior: smooth` 并在 `SettleAtEnd` 内容增长时绘制前同步 `stickToBottom()`；禁止已停止回合或新回合追溯给上一轮回复补挂 `╭─` 引用头（versionCode 262）

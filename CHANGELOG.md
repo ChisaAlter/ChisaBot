@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.66 — 2026-10-24
+
+这一版修复了当后台工具调用（如 `panel_refresh` 刷新实时看板、`web_fetch` 抓取网页或远程命令执行）耗时超过 12 秒时被客户端首段发送看门狗误调 `stopAgent()` 强行掐断并报 `这一轮出错了：This run was stopped.` 的问题，同时清除了已折叠步骤行残留的子元素外边距留白。PC 客户端与服务端同步更新至 0.1.66（Android `versionCode` 263）。
+
+### 后台长耗时工具看门狗误停与折叠行留白修复
+
+- **修复 12 秒首段看门狗提前调用 `stopAgent()` 掐断运行中工具的问题**：`channel-chat.tsx` 的 `deliver()` 在 `SEND_WATCHDOG_MS`（12 秒）超时分支中，先通过 `runEventSeenRef` 与 `readThreadMessages` 判断当前回合是否已到达服务器（`persisted`）；仅当消息确实未送达服务器（`first.kind === "hang"`）时才调用 `copilotkit.stopAgent()`，而已在服务端开始执行的回合无缝进入 180 秒 `SEND_REPLY_WATCHDOG_MS` 等待窗口，不再误杀耗时 12 秒以上的 `panel_refresh` 等后台工具调用。
+- **运行取消事件（`HERMES_RUN_CANCELLED`）语义对齐与中文提示**：`onRunErrorEvent` 与 `stoppedTurnSubscriber` 识别 `HERMES_RUN_CANCELLED` / `This run was stopped.`，避免在已停止回合下方重复弹出英文错误卡片；`friendlyStopReason` 与 `isAbortFailure` 将 `This run was stopped` 纳入中断语义并转为中文说明。
+- **消除已折叠步骤行（`data-folded`）残留外边距留白**：为 `[data-slot="message-scroller-item"][data-folded] > *` 补充 `margin: 0 !important; overflow: hidden;`，消除折叠后的干活卡（`.chat-work:not(:first-child)` 的 `margin-top: 10px`）在消息之间留下的额外纵向空隙。
+
 ## 0.1.65 — 2026-10-24
 
 这一版彻底消除了发送消息时对话列表往上「翻页跳动 2/3 屏 + 底部垫出一大块空白」以及按下回车到消息上屏之间的两段式跳动问题，使发送消息、等待响应与流式输出全程自然贴底、零跳动。PC 客户端与服务端同步更新至 0.1.65（Android `versionCode` 262）。

@@ -66,8 +66,8 @@ export function friendlyStopReason(said: string): string {
   // 以前落到底下那句英文原样的「这一轮出错了：…」，看不出是模型没了。
   if (/deprecat|retired|已下线|不再提供/i.test(text))
     return "这个模型已经下线了（服务商不再提供）。点输入框右下角的模型名换一个再发。";
-  // 浏览器 AbortError 的原话：这一轮是被中断的，不是模型出错，别让人以为是程序坏了。
-  if (/aborted without reason|AbortError|signal is aborted/i.test(text))
+  // 浏览器 AbortError 或运行被取消的原话：这一轮是被中断的，不是模型出错，别让人以为是程序坏了。
+  if (/aborted without reason|AbortError|signal is aborted|This run was stopped|HERMES_RUN_CANCELLED/i.test(text))
     return "这一轮被中断了（不是模型出错）。再发一次试试；一直这样就刷新一下页面。";
   if (/[\u4e00-\u9fff]/.test(said)) return said;
   return `这一轮出错了：${text}`;
@@ -109,7 +109,7 @@ export function isAbortFailure(error: unknown): boolean {
   if (!error) return false;
   if (typeof error === "object" && "name" in error && (error as { name?: unknown }).name === "AbortError") return true;
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  return /\babort(ed)?\b/i.test(message);
+  return /\babort(ed)?\b|This run was stopped|HERMES_RUN_CANCELLED/i.test(message);
 }
 
 /**
@@ -194,8 +194,15 @@ export function stoppedTurnSubscriber(setStopped: (reason: string | null) => voi
      * 了一轮，那条错误就不是「上一轮」的了：任何一轮开始都清掉。
      */
     onRunStartedEvent: () => setStopped(null),
-    onRunErrorEvent: ({ event }: { event?: { message?: unknown } }) => {
-      if (!stoppedByUser()) setStopped(stoppedReason(event?.message));
+    onRunErrorEvent: ({ event }: { event?: { code?: unknown; message?: unknown } }) => {
+      if (
+        stoppedByUser() ||
+        event?.code === "HERMES_RUN_CANCELLED" ||
+        event?.message === "This run was stopped."
+      ) {
+        return;
+      }
+      setStopped(stoppedReason(event?.message));
     },
     onRunFailed: ({ error }: { error?: unknown }) => {
       if (!stoppedByUser()) setStopped(stoppedReason(error));

@@ -895,6 +895,7 @@ export function ChannelChat({
    * 12 秒（首段）/ 180 秒（等回答）才算挂起。
    */
   const runProgressAt = useRef(0);
+  const runEventSeenRef = useRef(false);
   const noteRunProgress = useRef(() => {
     runProgressAt.current = Date.now();
   });
@@ -1108,6 +1109,7 @@ export function ChannelChat({
        * 这里给 run 加硬超时：超时后停掉、查落库；没落库就可见失败并让外层把草稿放回输入框。
        */
       noteRunProgress.current();
+      runEventSeenRef.current = false;
       const runPromise = copilotkit.runAgent({
         agent: target,
         ...((panelAuthoring || inboxSourceId) ? { forwardedProps: {
@@ -1127,25 +1129,31 @@ export function ChannelChat({
         lastProgressAt,
       });
       if (race === "timeout") {
-        try {
-          copilotkit.stopAgent({ agent: target });
-        } catch {
-          /* stop best-effort */
+        let persisted = runEventSeenRef.current;
+        if (!persisted) {
+          const stored = await readThreadMessages(
+            channel.threadId,
+            runtimeAgentId,
+          ).catch(() => null);
+          persisted =
+            stored != null &&
+            stored.availability === "ready" &&
+            stored.messages.some((message) => message.id === userMessageId);
         }
-        const stored = await readThreadMessages(
-          channel.threadId,
-          runtimeAgentId,
-        ).catch(() => null);
-        const persisted =
-          stored != null &&
-          stored.availability === "ready" &&
-          stored.messages.some((message) => message.id === userMessageId);
         // First-bound decision without reply race yet.
+        // Only abort the agent if the message never reached the server (`hang`). Calling
+        // `stopAgent` unconditionally after 12s killed active backend tool runs (e.g. a 14s
+        // `panel_refresh` or `web_fetch`) with `HERMES_RUN_CANCELLED: This run was stopped.`.
         const first = decideSendWatchdogAction({
           firstRace: "timeout",
           persisted,
         });
         if (first.kind === "hang") {
+          try {
+            copilotkit.stopAgent({ agent: target });
+          } catch {
+            /* stop best-effort */
+          }
           reportBudgetEvent(first.budget);
           forceUnlockThread(channel.threadId);
           failRef.current(first.reason);
@@ -1376,12 +1384,27 @@ export function ChannelChat({
        * 任何事件都算「这一轮在动」，看门狗只对静默报警（见 runProgressAt）。文案在写、工具调用在长、
        * 工具结果回来了，都在这里刷新；浏览器里的工具执行没有事件，由 frontend-tool-activity 代言。
        */
-      onEvent: () => noteRunProgress.current(),
-      onRunStartedEvent: () => noteRunProgress.current(),
+      onEvent: () => {
+        runEventSeenRef.current = true;
+        noteRunProgress.current();
+      },
+      onRunStartedEvent: () => {
+        runEventSeenRef.current = true;
+        noteRunProgress.current();
+      },
       // Both surfaces fall back to the same sentence, from the same place, so a person who uses
       // both is not told two different things about the same silence.
       onRunErrorEvent: ({ event }) => {
         noteRunProgress.current();
+        if (
+          stopRequestedRef.current ||
+          (event as { code?: unknown } | undefined)?.code ===
+            "HERMES_RUN_CANCELLED" ||
+          event?.message === "This run was stopped."
+        ) {
+          awaitingReply.current = false;
+          return;
+        }
         fail(stoppedReason(event?.message));
       },
       onRunFailed: ({ error }) => {
