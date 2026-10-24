@@ -26,6 +26,10 @@ describe("model errors in plain Chinese (2026-10-15)", () => {
   test("Chinese reasons pass through unchanged", () => {
     expect(stoppedReason("机器人超过 2 分钟没有回应，这一轮已结束。")).toBe("机器人超过 2 分钟没有回应，这一轮已结束。");
   });
+  test("cancelled run reason is translated as an interruption rather than a raw English error", () => {
+    expect(stoppedReason("This run was stopped.")).toContain("这一轮被中断了");
+    expect(stoppedReason("This run was stopped.")).not.toContain("This run was stopped.");
+  });
 });
 
 describe("the reason a turn ended", () => {
