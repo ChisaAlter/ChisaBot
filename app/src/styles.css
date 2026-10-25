@@ -5165,7 +5165,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .live-panel-body .jr-table th, .live-panel-body .jr-table td { padding: 8px 10px; white-space: nowrap; }
 
 /* ── 聊天富预览（2026-10-13，DESIGN.md §31）：链接卡 · 图片一摞 · 看大图 · 文件卡 ───────────── */
-.rp-stack { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; max-width: 100%; min-width: 0; container-type: inline-size; }
+.rp-stack { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; width: 100%; max-width: 100%; min-width: 0; container-type: inline-size; }
 .rp-stack[data-align="end"] { align-items: flex-end; margin-left: auto; width: min(100%, 420px); }
 
 /* 链接卡（DESIGN.md §48，Hark 风格竖向大图卡片 + 多卡扇形叠放）：
@@ -5360,9 +5360,9 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .rp-files { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; max-width: 100%; }
 .rp-stack[data-align="end"] .rp-files { justify-content: flex-end; }
 .rp-file {
-  display: inline-flex; align-items: center; gap: 10px; width: fit-content; max-width: min(340px, 100%); min-width: 0;
-  padding: 8px 12px 8px 12px; border-radius: 999px; border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.94); box-shadow: 0 6px 20px rgba(18, 30, 56, 0.1), var(--inset-hl);
+  display: inline-flex; align-items: center; gap: 10px; width: fit-content; max-width: min(360px, 100%); min-width: min(240px, 100%);
+  padding: 8px 14px 8px 12px; border-radius: 999px; border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.96); box-shadow: 0 6px 20px rgba(18, 30, 56, 0.1), var(--inset-hl);
   backdrop-filter: blur(var(--blur-1)); color: #16181d;
   transition: transform 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
   animation: rp-in var(--dur-2) var(--ease-out) both;
@@ -5381,7 +5381,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .rp-file-icon[data-ext="pdf"] { background: rgba(220, 38, 38, 0.12); color: #dc2626; }
 .rp-file-icon:is([data-ext="xls"], [data-ext="xlsx"], [data-ext="csv"]) { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
 .rp-file-icon:is([data-ext="zip"], [data-ext="rar"], [data-ext="7z"], [data-ext="gz"]) { background: rgba(217, 119, 6, 0.12); color: #d97706; }
-.rp-file-text { display: flex; flex: 1; flex-direction: column; min-width: 0; color: inherit; text-decoration: none !important; }
+.rp-file-text { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 110px; color: inherit; text-decoration: none !important; }
 .rp-file-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fs-14); font-weight: 600; line-height: 1.35; color: inherit; }
 .rp-file-text:hover .rp-file-name { text-decoration: underline; text-underline-offset: 2px; }
 .rp-file-meta { font-size: 11.5px; line-height: 1.3; color: rgba(22, 24, 29, 0.58); }
@@ -7123,6 +7123,7 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
   border-color: color-mix(in srgb, var(--accent-blue) 32%, var(--line));
 }
 .chat-doc-head {
+  position: relative;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 6px 10px 10px;
 }
@@ -7133,15 +7134,26 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
   font-size: 16px; font-weight: 600; line-height: 1.4; color: var(--ink-1); letter-spacing: -0.01em;
 }
 .chat-doc-head-actions {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-56%);
   display: flex; align-items: center; gap: 4px; flex: none;
-  opacity: 0; transition: opacity 150ms var(--ease-out);
+  padding: 2px 4px; border-radius: 999px;
+  background: color-mix(in srgb, var(--glass-2) 92%, transparent);
+  backdrop-filter: blur(10px);
+  opacity: 0; pointer-events: none;
+  transition: opacity 150ms var(--ease-out);
+}
+.dark .chat-doc-head-actions {
+  background: rgba(24, 28, 36, 0.92);
 }
 .chat-doc-card:hover .chat-doc-head-actions,
 .chat-doc-card:focus-within .chat-doc-head-actions {
-  opacity: 1;
+  opacity: 1; pointer-events: auto;
 }
 [data-testid="chat-status-card"] .chat-doc-head { align-items: flex-start; }
-[data-testid="chat-status-card"] .chat-doc-head-actions { opacity: 1; }
+[data-testid="chat-status-card"] .chat-doc-head-actions {
+  position: static; transform: none; background: transparent; backdrop-filter: none; padding: 0;
+  opacity: 1; pointer-events: auto;
+}
 [data-testid="chat-status-card"] .chat-doc-head-main { flex-wrap: wrap; row-gap: 6px; }
 [data-testid="chat-status-card"] .chat-doc-title {
   flex: 1 1 150px;
