@@ -121,21 +121,21 @@ export type ParsedStatusCard = {
 };
 
 export function normalizeDirectiveCards(raw: string): string {
-  if (!raw.includes(":::card")) return raw;
-  const lines = raw.replace(/\r\n?/g, "\n").split("\n");
-  const out: string[] = [];
+  const normalizedNewlines = raw.replace(/\r\n?/g, "\n");
+  const rawLines = normalizedNewlines.split("\n");
+  const step1: string[] = [];
   let i = 0;
 
-  while (i < lines.length) {
-    const line = (lines[i] ?? "").trim();
+  while (i < rawLines.length) {
+    const line = (rawLines[i] ?? "").trim();
 
     if (line === ":::group") {
-      const groupLines: string[] = [lines[i]!];
+      const groupLines: string[] = [rawLines[i]!];
       i++;
       let inCard = false;
-      while (i < lines.length) {
-        const cur = (lines[i] ?? "").trim();
-        groupLines.push(lines[i]!);
+      while (i < rawLines.length) {
+        const cur = (rawLines[i] ?? "").trim();
+        groupLines.push(rawLines[i]!);
         i++;
         if (cur.startsWith(":::card")) {
           inCard = true;
@@ -147,28 +147,135 @@ export function normalizeDirectiveCards(raw: string): string {
           }
         }
       }
-      out.push("```cards", ...groupLines, "```");
+      step1.push("```cards", ...groupLines, "```");
       continue;
     }
 
     if (line.startsWith(":::card")) {
-      const cardLines: string[] = [lines[i]!];
+      const cardLines: string[] = [rawLines[i]!];
       i++;
-      while (i < lines.length) {
-        const cur = (lines[i] ?? "").trim();
-        cardLines.push(lines[i]!);
+      while (i < rawLines.length) {
+        const cur = (rawLines[i] ?? "").trim();
+        cardLines.push(rawLines[i]!);
         i++;
         if (cur === ":::") break;
       }
-      out.push("```cards", ...cardLines, "```");
+      step1.push("```cards", ...cardLines, "```");
       continue;
     }
 
-    out.push(lines[i]!);
+    // 独立一行的站内操作胶囊（如 `[连接 Google](/settings/connected-accounts)`）自动前后留空行，拆成独立胶囊段
+    if (/^\[([^\]]{2,32})\]\((\/[a-zA-Z0-9/_?=&#-]*)\)$/.test(line)) {
+      if (step1.length > 0 && step1[step1.length - 1]?.trim() !== "") {
+        step1.push("");
+      }
+      step1.push(line);
+      if (i + 1 < rawLines.length && rawLines[i + 1]?.trim() !== "") {
+        step1.push("");
+      }
+      i++;
+      continue;
+    }
+
+    step1.push(rawLines[i]!);
     i++;
   }
 
-  return out.join("\n");
+  const joined = step1.join("\n");
+  // 若模型输出了多小节结构化长文（≥2 个 Markdown 小标题 + 列表/表格，且未手工包裹 ```doc），
+  // 自动把中间的结构化长文段合并为 Hark 风格的 ```doc 摘要卡，保留开头导语气泡与末尾跟进建议气泡。
+  if (
+    !/^(`{3,}|~{3,})\s*(doc|document|summary|report|brief|morning-brief|daily-brief|cards|draft)\b/im.test(
+      joined,
+    )
+  ) {
+    return autoWrapMultiSectionDoc(joined);
+  }
+  return joined;
+}
+
+function autoWrapMultiSectionDoc(text: string): string {
+  const lines = text.split("\n");
+  let inFence = false;
+  const headingIndices: number[] = [];
+  for (let idx = 0; idx < lines.length; idx++) {
+    const trimmed = (lines[idx] ?? "").trim();
+    if (/^(`{3,}|~{3,})/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && /^#{1,4}\s+\S/.test(trimmed)) {
+      headingIndices.push(idx);
+    }
+  }
+  if (headingIndices.length < 2) return text;
+
+  const firstHeadingIdx = headingIndices[0]!;
+  const lastHeadingIdx = headingIndices[headingIndices.length - 1]!;
+  // 找到最后一个小节结束的位置：如果末尾有一段简短的普通话（非列表、非表格、非标题），留作结尾跟进气泡
+  let docEndIdx = lines.length - 1;
+  while (docEndIdx > lastHeadingIdx && !(lines[docEndIdx] ?? "").trim()) {
+    docEndIdx--;
+  }
+  // 检查最后一个非空段落是不是简短收尾句（无列表符号、无标题、≤120 字）
+  let tailStart = docEndIdx;
+  while (tailStart > lastHeadingIdx && (lines[tailStart] ?? "").trim() !== "") {
+    tailStart--;
+  }
+  if (tailStart > lastHeadingIdx) {
+    const tailParaLines = lines.slice(tailStart + 1, docEndIdx + 1);
+    const tailText = tailParaLines.join("\n").trim();
+    const isPlainFollowup =
+      tailParaLines.length <= 2 &&
+      tailText.length > 0 &&
+      tailText.length <= 120 &&
+      !tailParaLines.some((l) => /^(\s*[-*+]|\s*\d+[.)]|\s*#|\s*\||\[[^\]]+\]\(\/)/.test(l));
+    if (isPlainFollowup) {
+      docEndIdx = tailStart - 1;
+      while (docEndIdx > lastHeadingIdx && !(lines[docEndIdx] ?? "").trim()) {
+        docEndIdx--;
+      }
+    }
+  }
+
+  const docLines = lines.slice(firstHeadingIdx, docEndIdx + 1);
+  const nonEmptyDocLines = docLines.filter((l) => l.trim().length > 0);
+  const listOrTableLines = nonEmptyDocLines.filter((l) =>
+    /^(\s*[-*+]|\s*\d+[.)]|\s*\|)/.test(l),
+  );
+  if (nonEmptyDocLines.length < 5 || listOrTableLines.length < 2) {
+    return text;
+  }
+
+  // 提取卡片标题：如果第一行是 # 或 ## 总标题则取它；否则从导语或第一个小标题提炼
+  const firstHeadingLine = (docLines[0] ?? "").trim();
+  const hMatch = /^(#{1,4})\s+(.+)$/.exec(firstHeadingLine);
+  let docTitle = "结构化执行摘要";
+  const bodyLines = [...docLines];
+  if (hMatch) {
+    const hashes = hMatch[1]!;
+    const rawHeadingText = hMatch[2]!.replace(/[*_`~]+/g, "").trim();
+    if (hashes.length <= 2 && !/^[1一(（]/.test(rawHeadingText)) {
+      docTitle = rawHeadingText.slice(0, 40);
+      bodyLines.shift();
+    } else {
+      const leadText = lines
+        .slice(0, firstHeadingIdx)
+        .join(" ")
+        .replace(/[*_`~：:。！!？?]+/g, " ")
+        .trim();
+      const leadMatch = /(?:整理了|汇总了|生成了|如下|关于)\s*([^，,。：:\s]{3,22})/.exec(leadText);
+      docTitle = (leadMatch?.[1] ?? rawHeadingText.replace(/^[0-9一二三四五六七八九十]+[、.．)\s]+/, "")).slice(0, 36) || "重点事项总览";
+    }
+  }
+
+  const before = lines.slice(0, firstHeadingIdx).join("\n").trim();
+  const after = lines.slice(docEndIdx + 1).join("\n").trim();
+  const parts: string[] = [];
+  if (before) parts.push(before);
+  parts.push(["````doc", `标题：${docTitle}`, ...bodyLines, "````"].join("\n"));
+  if (after) parts.push(after);
+  return parts.join("\n\n");
 }
 
 export function parseStatusCardsFence(rawText: string): ParsedStatusCard[] | null {
@@ -300,6 +407,58 @@ function parseArtifactFence(rawText: string): ParsedArtifactFence | null {
   };
 }
 
+function parseActionPillSegment(rawText: string): { label: string; href: string } | null {
+  const trimmed = rawText.trim();
+  const match = /^\[([^\]]{2,32})\]\((\/[a-zA-Z0-9/_?=&#-]*)\)$/.exec(trimmed);
+  if (!match) return null;
+  const label = match[1]!.replace(/[*_`~]+/g, "").trim();
+  const href = match[2]!.trim();
+  if (!label || !href) return null;
+  return { label, href };
+}
+
+function HarkActionPill({ label, href }: { label: string; href: string }) {
+  const lower = `${label} ${href}`.toLowerCase();
+  const isGoogle = lower.includes("google") || lower.includes("gmail");
+  const isCalendar = lower.includes("日历") || lower.includes("calendar");
+  const isMail = lower.includes("邮箱") || lower.includes("邮件") || lower.includes("mail");
+  return (
+    <a
+      className="hark-action-pill"
+      data-testid="hark-action-pill"
+      href={href}
+    >
+      {isGoogle ? (
+        <svg aria-hidden="true" className="size-4 shrink-0" viewBox="0 0 24 24">
+          <path
+            d="M21.805 10.023h-9.765v3.954h5.617c-.242 1.296-.977 2.391-2.086 3.125v2.594h3.375c1.977-1.82 3.117-4.5 3.117-7.688 0-.664-.062-1.305-.258-1.985z"
+            fill="#4285F4"
+          />
+          <path
+            d="M12.04 22c2.812 0 5.172-.93 6.898-2.523l-3.375-2.594c-.937.633-2.133 1.008-3.523 1.008-2.711 0-5.008-1.828-5.828-4.289H2.727v2.68C4.445 19.695 7.969 22 12.04 22z"
+            fill="#34A853"
+          />
+          <path
+            d="M6.212 13.602A5.996 5.996 0 0 1 5.89 11.99c0-.562.102-1.109.32-1.617V7.693H2.727A9.963 9.963 0 0 0 1.65 11.99c0 1.617.39 3.148 1.077 4.305l3.485-2.693z"
+            fill="#FBBC05"
+          />
+          <path
+            d="M12.04 5.969c1.531 0 2.906.523 3.992 1.562l2.992-2.992C17.204 2.844 14.852 1.98 12.04 1.98 7.969 1.98 4.445 4.285 2.727 7.693l3.485 2.68c.82-2.461 3.117-4.404 5.828-4.404z"
+            fill="#EA4335"
+          />
+        </svg>
+      ) : isCalendar ? (
+        <IconCalendarEvent aria-hidden="true" className="size-4 shrink-0 text-[#2563eb]" />
+      ) : isMail ? (
+        <IconMail aria-hidden="true" className="size-4 shrink-0 text-[#2563eb]" />
+      ) : (
+        <IconSparkles aria-hidden="true" className="size-4 shrink-0 text-[#14171f]" />
+      )}
+      <span>{label}</span>
+    </a>
+  );
+}
+
 function Segment({
   seg,
   components,
@@ -352,6 +511,17 @@ function Segment({
         <>
           {quoteNode}
           <ArtifactCard artifact={artifact} components={components} />
+        </>
+      );
+    }
+  }
+  if (seg.kind === "text") {
+    const actionPill = parseActionPillSegment(seg.text);
+    if (actionPill) {
+      return (
+        <>
+          {quoteNode}
+          <HarkActionPill href={actionPill.href} label={actionPill.label} />
         </>
       );
     }
@@ -510,13 +680,13 @@ export function DraftCard({ text, title }: { text: string; title?: string | unde
   );
 }
 
-/** 文档卡收起时的高度（px）：大约 8–10 行正文预览。 */
-export const DOC_COLLAPSED_PX = 220;
+/** 文档卡收起时的高度（px）：对齐 Hark summary-card 的约 6–7 行紧凑预览。 */
+export const DOC_COLLAPSED_PX = 168;
 
 /**
- * 文档卡（DESIGN.md §76，Hark 的 summary doc 体验）：
- * 外层大圆角深色/玻璃卡片 + 醒目大标题，内嵌深色圆角正文预览框（带底部渐隐遮罩）；
- * 点击卡片或底部按钮弹出居中阅读弹窗（Modal），聊天流本身保持紧凑稳定。
+ * 文档卡（DESIGN.md §76，Hark 的 summary-card 体验）：
+ * 外层 24px 圆角深色毛玻璃卡片（padding: 8px, maxWidth: 440px）+ 顶部标题（悬停渐显追问/复制），
+ * 内嵌 18px 圆角深色正文预览框（底部渐隐遮罩）；点击卡片任意非按钮区域弹出居中阅读文档窗（带顶部圆形收起按钮与大号衬线标题）。
  */
 export function DocCard({
   text,
@@ -537,15 +707,26 @@ export function DocCard({
   useLayoutEffect(() => {
     const el = body.current;
     if (!el) return;
-    setTall(text.trim().length > 0 && el.scrollHeight > DOC_COLLAPSED_PX + 24);
+    setTall(text.trim().length > 0 && el.scrollHeight > DOC_COLLAPSED_PX + 20);
   }, [text]);
   const heading = title || "文档";
   return (
     <>
-      <section aria-label={title ? `文档：${title}` : "文档"} className="chat-draft-card chat-doc-card" data-testid="chat-doc-card">
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: 卡片内含显式 button 供键盘聚焦打开弹窗 */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: 点击整张 summary-card 任意区域打开阅读弹窗 */}
+      <section
+        aria-label={title ? `文档：${title}` : "文档"}
+        className="chat-draft-card chat-doc-card"
+        data-testid="chat-doc-card"
+        onClick={(event) => {
+          const sel = typeof window !== "undefined" ? window.getSelection() : null;
+          if (sel && sel.toString().length > 0) return;
+          if ((event.target as HTMLElement | null)?.closest("a, button")) return;
+          setOpen(true);
+        }}
+      >
         <header className="chat-doc-head">
           <div className="chat-doc-head-main">
-            <IconFileText aria-hidden="true" className="chat-doc-head-icon size-4 shrink-0" />
             <span className="chat-doc-title">{heading}</span>
           </div>
           <div className="chat-doc-head-actions">
@@ -555,18 +736,7 @@ export function DocCard({
             </CopyButton>
           </div>
         </header>
-        {/* biome-ignore lint/a11y/useKeyWithClickEvents: 下方有显式 button 供键盘聚焦打开弹窗 */}
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: 点击预览区打开全文阅读弹窗 */}
-        <div
-          className="chat-doc-inset"
-          onClick={(event) => {
-            // 如果用户正在选中文本或点击内部链接，不拦截。
-            const sel = typeof window !== "undefined" ? window.getSelection() : null;
-            if (sel && sel.toString().length > 0) return;
-            if ((event.target as HTMLElement | null)?.closest("a, button")) return;
-            setOpen(true);
-          }}
-        >
+        <div className="chat-doc-inset">
           <div
             className="chat-doc-body"
             data-collapsed={tall || undefined}
@@ -581,7 +751,10 @@ export function DocCard({
             aria-expanded={open}
             className="chat-doc-more"
             data-testid="chat-doc-more"
-            onClick={() => setOpen(true)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(true);
+            }}
             type="button"
           >
             <span>{tall ? "展开全文" : "阅读全文"}</span>
@@ -597,10 +770,27 @@ export function DocCard({
         <DialogContent className="chat-doc-dialog">
           <DialogHeader className="chat-doc-dialog-head">
             <div className="chat-doc-dialog-title-wrap">
-              <IconFileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-              <DialogTitle className="truncate">{heading}</DialogTitle>
+              <button
+                aria-label="收起文档"
+                className="chat-doc-collapse-btn"
+                data-testid="chat-doc-collapse-btn"
+                onClick={() => setOpen(false)}
+                title="收起文档 (Esc)"
+                type="button"
+              >
+                <svg aria-hidden="true" className="size-4" fill="none" viewBox="0 0 24 24">
+                  <path
+                    d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                  />
+                </svg>
+              </button>
+              <DialogTitle className="sr-only">{heading}</DialogTitle>
             </div>
-            <div className="mr-7 flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5">
               <CardFollowupButton
                 onDone={() => setOpen(false)}
                 snippet={text}
@@ -613,6 +803,7 @@ export function DocCard({
             </div>
           </DialogHeader>
           <div className="chat-doc-dialog-body">
+            <h1 className="chat-doc-sheet-title">{heading}</h1>
             <div className="chat-doc-inner">
               <SmoothStreamdown components={components as never}>{text}</SmoothStreamdown>
             </div>

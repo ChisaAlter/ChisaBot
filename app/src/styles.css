@@ -7083,28 +7083,65 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .chat-draft-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .chat-draft-body { padding: 12px 16px 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; color: var(--ink-1); }
 
-/* §76 Hark 风格文档卡：外层大圆角玻璃卡 + 醒目大标题，内嵌深色圆角预览框（底部渐隐），点击弹出居中全文阅读弹窗 */
+/* Hark 风格独立白色操作胶囊（如 `[连接 Google]` / `[打开账号连接]`）：高度 40px、纯白圆角胶囊、深色字 + 左侧图标 */
+.hark-action-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 40px; padding: 0 18px; border-radius: 999px;
+  background: #ffffff; color: #14171f;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+  font-size: 14px; font-weight: 600; line-height: 1; text-decoration: none;
+  cursor: pointer; user-select: none;
+  transition: transform 150ms var(--ease-out), box-shadow 150ms var(--ease-out), background-color 150ms var(--ease-out);
+}
+.dark .hark-action-pill {
+  background: #ffffff; color: #14171f;
+  border-color: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.34);
+}
+.hark-action-pill:hover {
+  background: #f8fafc;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+}
+.hark-action-pill:active { transform: translateY(0); }
+
+/* §76 Hark 风格文档卡（summary-card）：外层 24px 圆角、8px 内边距、maxWidth 440px 毛玻璃壳 + 18px 内嵌深色圆角预览框 */
 .chat-doc-card {
-  max-width: min(100%, 540px); padding: 14px 16px 16px; border-radius: 24px;
-  background: var(--glass-2); box-shadow: 0 12px 32px rgba(18, 30, 56, 0.1), var(--inset-hl);
+  max-width: min(100%, 440px); padding: 8px; border-radius: 24px;
+  background: var(--glass-2); box-shadow: 0 10px 28px rgba(18, 30, 56, 0.08), var(--inset-hl);
+  cursor: pointer;
+  transition: transform 160ms var(--ease-out), border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
 }
 .dark .chat-doc-card {
-  background: rgba(24, 30, 42, 0.92);
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(50px);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.chat-doc-card:hover {
+  border-color: color-mix(in srgb, var(--accent-blue) 32%, var(--line));
 }
 .chat-doc-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 2px 2px 12px;
+  padding: 6px 10px 10px;
 }
 .chat-doc-head-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 .chat-doc-head-icon { color: var(--ink-3); }
 .chat-doc-title {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 16.5px; font-weight: 700; line-height: 1.35; color: var(--ink-1); letter-spacing: -0.01em;
+  font-size: 16px; font-weight: 600; line-height: 1.4; color: var(--ink-1); letter-spacing: -0.01em;
 }
-.chat-doc-head-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.chat-doc-head-actions {
+  display: flex; align-items: center; gap: 4px; flex: none;
+  opacity: 0; transition: opacity 150ms var(--ease-out);
+}
+.chat-doc-card:hover .chat-doc-head-actions,
+.chat-doc-card:focus-within .chat-doc-head-actions {
+  opacity: 1;
+}
 [data-testid="chat-status-card"] .chat-doc-head { align-items: flex-start; }
+[data-testid="chat-status-card"] .chat-doc-head-actions { opacity: 1; }
 [data-testid="chat-status-card"] .chat-doc-head-main { flex-wrap: wrap; row-gap: 6px; }
 [data-testid="chat-status-card"] .chat-doc-title {
   flex: 1 1 150px;
@@ -7115,20 +7152,20 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
   line-height: 1.4;
 }
 .chat-doc-inset {
-  position: relative; overflow: hidden; border-radius: 16px;
+  position: relative; overflow: hidden; border-radius: 18px;
   border: 1px solid var(--line); background: color-mix(in srgb, var(--ink-1) 4%, var(--glass-1));
   cursor: pointer; transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out);
 }
 .dark .chat-doc-inset {
-  background: rgba(14, 18, 26, 0.78);
-  border-color: rgba(255, 255, 255, 0.07);
+  background: rgba(14, 16, 21, 0.66);
+  border-color: rgba(255, 255, 255, 0.06);
 }
-.chat-doc-inset:hover {
-  border-color: color-mix(in srgb, var(--accent-blue) 38%, var(--line));
+.chat-doc-card:hover .chat-doc-inset {
+  border-color: rgba(255, 255, 255, 0.12);
 }
 .chat-doc-body {
   position: relative; overflow: hidden; padding: 14px 16px 12px; font-size: 13.5px; line-height: 1.65; color: var(--ink-2);
-  mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 56%, transparent 100%);
 }
 .chat-doc-inner > :first-child { margin-top: 0; }
 .chat-doc-inner > :last-child { margin-bottom: 0; }
@@ -7136,24 +7173,55 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .chat-doc-inner :is(ul, ol) { margin: 2px 0 6px; padding-inline-start: 1.35em; }
 .chat-doc-inner li { margin: 2px 0; }
 .chat-doc-more {
-  display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; padding: 8px 0 10px;
-  border: 0; border-top: 1px solid var(--line, rgba(22, 24, 29, 0.06)); background: transparent;
-  color: var(--ink-3); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; padding: 6px 0 8px;
+  border: 0; border-top: 1px solid var(--line, rgba(22, 24, 29, 0.05)); background: transparent;
+  color: var(--ink-3); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
   transition: color 0.15s ease, background-color 0.15s ease;
 }
 .chat-doc-more:hover { color: var(--ink-1); background: var(--glass-hover); }
 .chat-doc-dialog {
-  width: min(760px, calc(100vw - 32px)); max-width: none; max-height: min(82svh, 860px);
+  width: min(680px, calc(100vw - 32px)); max-width: none; max-height: min(85svh, 860px);
   display: flex; flex-direction: column; padding: 0; overflow: hidden; border-radius: 24px;
+}
+.dark .chat-doc-dialog {
+  background: #181b20;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.chat-doc-dialog > [data-slot="dialog-close"] {
+  display: none;
 }
 .chat-doc-dialog-head {
   display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 16px 20px 14px; border-bottom: 1px solid var(--line);
+  padding: 16px 20px 10px; border-bottom: 0;
+}
+.chat-doc-collapse-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 999px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--ink-1) 6%, transparent);
+  color: var(--ink-2); cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease, transform 150ms ease;
+}
+.dark .chat-doc-collapse-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+}
+.chat-doc-collapse-btn:hover {
+  background: color-mix(in srgb, var(--ink-1) 12%, transparent);
+  color: var(--ink-1);
+  transform: scale(1.04);
 }
 .chat-doc-dialog-title-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 .chat-doc-dialog-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .chat-doc-dialog-body {
-  flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 26px; font-size: 14.5px; line-height: 1.72; color: var(--ink-1);
+  flex: 1; min-height: 0; overflow-y: auto; padding: 6px 28px 32px; font-size: 15px; line-height: 1.75; color: var(--ink-1);
+}
+.chat-doc-sheet-title {
+  margin: 0 0 18px;
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", Georgia, serif;
+  font-size: 25px; font-weight: 700; line-height: 1.35; letter-spacing: -0.015em;
+  color: var(--ink-1);
 }
 @media (prefers-reduced-motion: reduce) { .chat-doc-more, .chat-reply-quote { transition: none; } }
 /* §70 / §75 干活卡：沿用「思考中」胶囊，一行当前步骤 + 第几步 · 用时 + ⌄；画在这一轮第一个干活的工具那一行里。

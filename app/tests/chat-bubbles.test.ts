@@ -141,4 +141,41 @@ describe("splitBubbles（DESIGN.md §69）", () => {
       },
     ]);
   });
+
+  test("Hark 三段式自动折叠：多小节结构化 Markdown 自动折叠为 doc 卡片并保留导语与跟进句", () => {
+    const raw = [
+      "我已经把今天下午的执行清单整理好了，重点都标出来了：",
+      "",
+      "## 下午执行总览",
+      "### 1. 优先处理事项",
+      "- **客户邮件回复**：确认 Q4 报价单细节",
+      "- **技术方案评审**：15:00 与后端团队对齐接口",
+      "",
+      "### 2. 待跟进任务",
+      "- 检查生产环境日志告警",
+      "- 更新项目排期表",
+      "",
+      "需要的话，我可以帮你直接起草客户邮件的回复。",
+    ].join("\n");
+    const normalized = normalizeDirectiveCards(raw);
+    const segments = splitBubbles(normalized);
+    expect(segments.map((x) => x.kind)).toEqual(["text", "doc", "text"]);
+    expect(segments[0]?.text).toBe("我已经把今天下午的执行清单整理好了，重点都标出来了：");
+    expect(segments[1]?.title).toBe("下午执行总览");
+    expect(segments[1]?.text).toContain("### 1. 优先处理事项");
+    expect(segments[2]?.text).toBe("需要的话，我可以帮你直接起草客户邮件的回复。");
+  });
+
+  test("Hark 站内操作胶囊行：自动拆分为独立段落供 HarkActionPill 渲染", () => {
+    const raw = [
+      "你目前还没有连接 Google 日历与邮箱，连接后我就能直接帮你读取今日日程。",
+      "[连接 Google](/settings/connected-accounts)",
+    ].join("\n");
+    const normalized = normalizeDirectiveCards(raw);
+    const segments = splitBubbles(normalized);
+    expect(segments.map((x) => x.text)).toEqual([
+      "你目前还没有连接 Google 日历与邮箱，连接后我就能直接帮你读取今日日程。",
+      "[连接 Google](/settings/connected-accounts)",
+    ]);
+  });
 });
