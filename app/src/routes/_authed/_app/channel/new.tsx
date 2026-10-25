@@ -37,6 +37,8 @@ const INTRO_TRIES = [
   "帮我查一下今天的科技新闻要点",
   "怎么把我的电脑连上，让你帮我改文件？",
   "我想让你记住一些我的习惯，该怎么说？",
+  "请调用 personal_morning_brief 生成我的今日晨报卡片",
+  "请调用 connect_service (action='list') 查看我所有连接器状态",
 ] as const;
 
 /** What `GET /api/agents/:id` answers for a Bot this person cannot see. */

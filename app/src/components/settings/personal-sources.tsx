@@ -1,19 +1,24 @@
 import {
   IconBellRinging,
+  IconBolt,
   IconCalendarEvent,
   IconCopy,
   IconMail,
+  IconMessageReply,
   IconPlugConnectedX,
+  IconRefresh,
   IconSparkles,
   IconSun,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
   IMAP_PRESETS,
   type PersonalSourcesStatusView,
 } from "../../../../shared/personal-sources";
 import { BotBubbles } from "@/components/chat/bot-bubbles";
+import { sendPromptToChat } from "@/components/chat/quick-spotlight";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
@@ -44,6 +49,7 @@ async function fetchStatus(): Promise<PersonalSourcesStatusView> {
 
 export function PersonalSourcesSection() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const status = useQuery({
     queryKey: personalSourcesKeys.all,
     queryFn: fetchStatus,
@@ -53,6 +59,7 @@ export function PersonalSourcesSection() {
   const [mailOpen, setMailOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
   const [briefMarkdown, setBriefMarkdown] = useState<string | null>(null);
+  const [briefModalTitle, setBriefModalTitle] = useState("每日晨报卡片预览");
   const [cityInput, setCityInput] = useState("");
 
   useEffect(() => {
@@ -84,7 +91,58 @@ export function PersonalSourcesSection() {
       if (!res.ok || !data.markdown) {
         throw new Error(data.error || "生成晨报失败");
       }
+      setBriefModalTitle("每日晨报卡片预览");
       setBriefMarkdown(data.markdown);
+    },
+    { errorToast: (err) => err.message },
+  );
+
+  const checkUpdates = useAsyncAction(
+    async () => {
+      const res = await fetch("/api/personal-sources/check-updates", {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = (await res.json()) as { markdown?: string; error?: string };
+      if (!res.ok || !data.markdown) {
+        throw new Error(data.error || "主动巡检失败");
+      }
+      setBriefModalTitle("⚡ 个人助理主动巡检动态");
+      setBriefMarkdown(data.markdown);
+      await queryClient.invalidateQueries({ queryKey: personalSourcesKeys.all });
+    },
+    { errorToast: (err) => err.message },
+  );
+
+  const simulateInboundWebhook = useAsyncAction(
+    async () => {
+      const path = status.data?.inboundWebhook?.path;
+      if (!path) throw new Error("入站 Webhook 地址尚未就绪");
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          source: "GitHub Actions",
+          title: "PR #306 实机全量测试通过，等待确认发布",
+        }),
+      });
+      if (!res.ok) throw new Error("触发模拟事件失败");
+      await queryClient.invalidateQueries({ queryKey: personalSourcesKeys.all });
+      toast.success("已触发模拟入站事件！可点「⚡ 巡检动态」查看捕获结果");
+    },
+    { errorToast: (err) => err.message },
+  );
+
+  const rotateInboundToken = useAsyncAction(
+    async () => {
+      const res = await fetch("/api/personal-sources/inbound-webhook/rotate", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("重置入站密钥失败");
+      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
+      toast.success("已生成新的入站 Webhook 密钥");
     },
     { errorToast: (err) => err.message },
   );
@@ -189,17 +247,34 @@ export function PersonalSourcesSection() {
         }}
         open={Boolean(briefMarkdown)}
       >
-        <DialogContent className="im-dialog max-w-xl" data-testid="morning-brief-preview-dialog">
+        <DialogContent className="im-dialog max-w-2xl" data-testid="morning-brief-preview-dialog">
           <DialogHeader>
-            <DialogTitle>{"每日晨报卡片预览"}</DialogTitle>
+            <DialogTitle>{briefModalTitle}</DialogTitle>
             <DialogDescription>
-              {"在聊天中对机器人说「早安」或「生成今日晨报」，机器人也会调用 morning_brief_generate 发送这张结构化晨报卡。"}
+              {"在聊天中对机器人说「早安」或「巡检今日动态」，机器人也会自动调用对应工具生成这张结构化卡片。"}
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="mt-2">
             {briefMarkdown ? <BotBubbles text={briefMarkdown} /> : null}
           </DialogBody>
-          <DialogFooter className="mt-4">
+          <DialogFooter className="mt-4 sm:justify-between">
+            <Button
+              data-testid="brief-dialog-send-chat-btn"
+              onClick={() => {
+                setBriefMarkdown(null);
+                sendPromptToChat(
+                  navigate,
+                  "请根据刚才的晨报与动态巡检结果，帮我梳理今天最优先的 3 项行动计划",
+                  briefModalTitle,
+                );
+              }}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <IconMessageReply className="size-3.5" />
+              {"带入聊天继续追问"}
+            </Button>
             <Button onClick={() => setBriefMarkdown(null)} type="button" variant="outline">
               {"关闭"}
             </Button>
@@ -355,19 +430,43 @@ export function PersonalSourcesSection() {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {inboundWh ? (
-                  <Button
-                    data-testid="copy-inbound-webhook-btn"
-                    onClick={() => {
-                      const fullUrl = `${window.location.origin}${inboundWh.path}`;
-                      void navigator.clipboard?.writeText(fullUrl);
-                      toast.success("已复制入站 Webhook 完整地址");
-                    }}
-                    size="sm"
-                    variant="ghost"
-                  >
-                    <IconCopy className="mr-1 size-3.5" />
-                    {"复制入站地址"}
-                  </Button>
+                  <>
+                    <Button
+                      data-testid="copy-inbound-webhook-btn"
+                      onClick={() => {
+                        const fullUrl = `${window.location.origin}${inboundWh.path}`;
+                        void navigator.clipboard?.writeText(fullUrl);
+                        toast.success("已复制入站 Webhook 完整地址");
+                      }}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      <IconCopy className="mr-1 size-3.5" />
+                      {"复制入站地址"}
+                    </Button>
+                    <Button
+                      data-testid="test-inbound-webhook-btn"
+                      feedback={{ pending: "触发中…", success: "已触发", error: "失败" }}
+                      onClick={() => void simulateInboundWebhook.run()}
+                      size="sm"
+                      state={simulateInboundWebhook.state}
+                      title="发送一条模拟外部事件到入站 Webhook"
+                      variant="ghost"
+                    >
+                      <IconBolt className="mr-1 size-3.5 text-amber-500" />
+                      {"模拟入站事件"}
+                    </Button>
+                    <Button
+                      aria-label="重置入站 Webhook 密钥"
+                      data-testid="rotate-inbound-webhook-btn"
+                      onClick={() => void rotateInboundToken.run()}
+                      size="sm"
+                      title="重置入站 Webhook 密钥"
+                      variant="ghost"
+                    >
+                      <IconRefresh className="size-3.5" />
+                    </Button>
+                  </>
                 ) : null}
                 {notifyWh ? (
                   <Button
@@ -413,11 +512,11 @@ export function PersonalSourcesSection() {
                       <IconSun className="size-5" />
                     </span>
                   }
-                  sub="汇总实时天气、今日日历安排、重要未读邮件、定时任务与近期记忆，生成可交互的「每日晨报卡片」。"
-                  title="每日晨报卡片（Morning Brief）"
+                  sub="汇总实时天气、今日日历安排、重要未读邮件、定时任务与近期记忆，生成可交互的「每日晨报卡片」或「主动巡检动态」。"
+                  title="每日晨报卡片 & 主动动态巡检（Morning Brief）"
                 />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Input
                   aria-label="晨报天气城市"
                   className="h-8 w-28 text-xs"
@@ -426,6 +525,17 @@ export function PersonalSourcesSection() {
                   placeholder="城市（如 上海）"
                   value={cityInput}
                 />
+                <Button
+                  data-testid="personal-check-updates-btn"
+                  feedback={{ pending: "巡检中…", success: "已巡检", error: "失败" }}
+                  onClick={() => void checkUpdates.run()}
+                  size="sm"
+                  state={checkUpdates.state}
+                  variant="outline"
+                >
+                  <IconBolt className="size-3.5 text-amber-500" />
+                  {"巡检动态"}
+                </Button>
                 <Button
                   data-testid="generate-morning-brief-btn"
                   feedback={{ pending: "生成中…", success: "已生成", error: "失败" }}
@@ -636,9 +746,9 @@ function EmailConnectDialog({
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-lg" data-testid="email-connect-dialog">
         <DialogHeader>
-          <DialogTitle>{"连接邮箱收件箱（IMAP 只读）"}</DialogTitle>
+          <DialogTitle>{"连接电子邮箱（IMAP 收件箱 + SMTP 审批发信）"}</DialogTitle>
           <DialogDescription>
-            {"请使用邮箱后台生成的「应用专用密码 / 客户端授权码」。密码经 AES-256-GCM 加密存储，机器人只读收件箱摘要，不具备发信权限。"}
+            {"请使用邮箱后台生成的「应用专用密码 / 客户端授权码」。密码经 AES-256-GCM 加密存储，支持读取收件箱摘要，且代发邮件前必弹审批确认卡片。"}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -649,10 +759,35 @@ function EmailConnectDialog({
           }}
         >
           <DialogBody className="im-form mt-2 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                {"输入邮箱后会自动匹配 QQ / 163 / Gmail / Outlook / iCloud 的 IMAP 服务器"}
-              </span>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  { key: "qq", label: "QQ 邮箱", domain: "qq.com" },
+                  { key: "163", label: "163 邮箱", domain: "163.com" },
+                  { key: "gmail", label: "Gmail", domain: "gmail.com" },
+                  { key: "outlook", label: "Outlook", domain: "outlook.com" },
+                  { key: "icloud", label: "iCloud", domain: "icloud.com" },
+                ].map((preset) => (
+                  <button
+                    className="rounded-md border border-border/70 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                    data-testid={`email-preset-${preset.key}`}
+                    key={preset.key}
+                    onClick={() => {
+                      const info = IMAP_PRESETS[preset.domain];
+                      if (info) {
+                        setImapHost(info.host);
+                        setImapPort(String(info.port));
+                        if (!email.includes("@")) {
+                          setEmail(`user@${preset.domain}`);
+                        }
+                      }
+                    }}
+                    type="button"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
               <button
                 className="text-xs text-primary hover:underline"
                 data-testid="email-fill-demo-btn"

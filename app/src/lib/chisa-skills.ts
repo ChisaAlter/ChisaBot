@@ -23,6 +23,7 @@ export function chisaSkillsQueryOptions() {
     queryKey: chisaSkillKeys.all,
     queryFn: ({ signal }): Promise<ChisaSkill[]> => client("/api/chisa-skills", "skills", { fallback: "无法加载技能", signal }),
     refetchOnWindowFocus: "always",
+    retry: false,
   });
 }
 

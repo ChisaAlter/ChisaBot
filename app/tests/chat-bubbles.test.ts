@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { normalizeDirectiveCards, parseStatusCardsFence } from "../src/components/chat/bot-bubbles";
 import { MAX_BUBBLES, splitBubbles } from "../src/lib/chat/bubbles";
 
 describe("splitBubbles（DESIGN.md §69）", () => {
@@ -105,5 +106,39 @@ describe("splitBubbles（DESIGN.md §69）", () => {
     const s = splitBubbles("````doc\n标题：用法\n```ts\nconst a = 1;\n```\n说明\n````\n\n好了。");
     expect(s.map((x) => x.kind)).toEqual(["doc", "text"]);
     expect(s[0]?.text).toBe("```ts\nconst a = 1;\n```\n说明");
+  });
+
+  test(":::group 与 :::card 指令块归一化并解析为原生状态卡片组", () => {
+    const raw = [
+      "已为你整理外部服务全景：",
+      "",
+      ":::group",
+      ':::card{title="📬 邮件与日历" status="2 项已连"}',
+      "- 电子邮箱（已连接）",
+      "- 日历日程（已连接）",
+      ":::",
+      ':::card{title="🔔 随手推与入站触发" status="随时可用"}',
+      "- Webhook（已就绪）",
+      ":::",
+      ":::",
+      "",
+      "还需要连接哪个？",
+    ].join("\n");
+    const normalized = normalizeDirectiveCards(raw);
+    const segments = splitBubbles(normalized);
+    expect(segments.map((x) => x.kind)).toEqual(["text", "code", "text"]);
+    const cards = parseStatusCardsFence(segments[1]!.text);
+    expect(cards).toEqual([
+      {
+        title: "📬 邮件与日历",
+        status: "2 项已连",
+        body: "- 电子邮箱（已连接）\n- 日历日程（已连接）",
+      },
+      {
+        title: "🔔 随手推与入站触发",
+        status: "随时可用",
+        body: "- Webhook（已就绪）",
+      },
+    ]);
   });
 });
