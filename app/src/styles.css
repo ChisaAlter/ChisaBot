@@ -7104,6 +7104,16 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
   font-size: 16.5px; font-weight: 700; line-height: 1.35; color: var(--ink-1); letter-spacing: -0.01em;
 }
 .chat-doc-head-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+[data-testid="chat-status-card"] .chat-doc-head { align-items: flex-start; }
+[data-testid="chat-status-card"] .chat-doc-head-main { flex-wrap: wrap; row-gap: 6px; }
+[data-testid="chat-status-card"] .chat-doc-title {
+  flex: 1 1 150px;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  font-size: 15px;
+  line-height: 1.4;
+}
 .chat-doc-inset {
   position: relative; overflow: hidden; border-radius: 16px;
   border: 1px solid var(--line); background: color-mix(in srgb, var(--ink-1) 4%, var(--glass-1));
@@ -9633,15 +9643,22 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
+  color: #b45309;
+}
+.dark .chat-brief-badge {
   color: #fbbf24;
 }
 .chat-brief-weather {
   padding: 2px 9px;
   border-radius: 999px;
-  background: rgba(251, 191, 36, 0.14);
-  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
   font-size: 11.5px;
   font-weight: 600;
+}
+.dark .chat-brief-weather {
+  background: rgba(251, 191, 36, 0.14);
+  color: #fbbf24;
 }
 .chat-brief-title-row {
   display: flex;

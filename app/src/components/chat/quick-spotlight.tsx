@@ -16,7 +16,12 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { BotBubbles } from "@/components/chat/bot-bubbles";
-import { dispatchComposerQuote } from "@/lib/chat/quote-event";
+import { toast } from "@/components/ui/toast";
+import {
+  CHISABOT_QUOTE_EVENT,
+  type ComposerQuotePayload,
+  dispatchComposerQuote,
+} from "@/lib/chat/quote-event";
 import { isBotsChatPath, modeTarget } from "@/lib/left-mode";
 
 export const CHISABOT_SPOTLIGHT_EVENT = "chisabot-spotlight";
@@ -74,13 +79,38 @@ export function QuickSpotlight() {
     const onCustomOpen = () => {
       setOpen(true);
     };
+    const onQuote = (ev: Event) => {
+      const detail = (ev as CustomEvent<ComposerQuotePayload & { __forwarded?: boolean }>).detail;
+      if (open) {
+        setOpen(false);
+        setBriefMarkdown(null);
+      }
+      if (
+        detail &&
+        !detail.__forwarded &&
+        !document.querySelector(".glass-composer") &&
+        !isBotsChatPath(window.location.pathname)
+      ) {
+        const target = modeTarget("bots");
+        void navigate(target as never);
+        window.setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent(CHISABOT_QUOTE_EVENT, {
+              detail: { ...detail, __forwarded: true },
+            }),
+          );
+        }, 140);
+      }
+    };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener(CHISABOT_SPOTLIGHT_EVENT, onCustomOpen);
+    window.addEventListener(CHISABOT_QUOTE_EVENT, onQuote);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener(CHISABOT_SPOTLIGHT_EVENT, onCustomOpen);
+      window.removeEventListener(CHISABOT_QUOTE_EVENT, onQuote);
     };
-  }, [open]);
+  }, [open, navigate]);
 
   useEffect(() => {
     if (!open) {
@@ -111,10 +141,13 @@ export function QuickSpotlight() {
         method: "POST",
         credentials: "include",
       });
-      const data = (await res.json()) as { markdown?: string };
-      if (data.markdown) {
-        setBriefMarkdown(data.markdown);
+      const data = (await res.json()) as { markdown?: string; error?: string };
+      if (!res.ok || !data.markdown) {
+        throw new Error(data.error || "生成晨报失败");
       }
+      setBriefMarkdown(data.markdown);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "生成晨报失败");
     } finally {
       setLoadingBrief(false);
     }

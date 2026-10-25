@@ -51,7 +51,8 @@ export type HotkeyId = (typeof HOTKEYS)[number]["id"];
  * 监听在各自组件里：TopSearch（Ctrl K）、shadcn 侧边栏（Ctrl B）、PanelRailToggle（Ctrl Alt B）。
  */
 export const SHELL_HOTKEYS = [
-  { id: "search", label: "搜索会话", description: "展开顶栏搜索并聚焦；Esc 清空并收起。", combo: { key: "k", mod: true } },
+  { id: "spotlight", label: "快捷指令与随手问", description: "从任何页面唤出快捷浮窗：一键生成今日晨报、巡检动态或将内容作为引用塞入输入框。", combo: { key: " ", alt: true } },
+  { id: "search", label: "搜索会话", description: "在左栏聚焦搜索对话记录；Esc 清空。", combo: { key: "k", mod: true } },
   { id: "toggle-left", label: "收起 / 展开左栏", description: "机器人列表、设置分区、管理导航共用。", combo: { key: "b", mod: true } },
   { id: "toggle-panels", label: "收起 / 展开面板栏", description: "只在窗口宽度 ≥ 1280 时有右侧面板栏。", combo: { key: "b", mod: true, alt: true } },
 ] as const satisfies readonly Hotkey[];
@@ -116,6 +117,10 @@ export function formatHotkey(combo: HotkeyCombo): string[] {
   if (combo.mod) parts.push(isMac ? "⌘" : "Ctrl");
   if (combo.alt) parts.push(isMac ? "⌥" : "Alt");
   if (combo.shift) parts.push(isMac ? "⇧" : "Shift");
-  parts.push(combo.key.toUpperCase());
+  const keyLabel =
+    combo.key === " " || combo.key.toLowerCase() === "space"
+      ? "Space"
+      : combo.key.toUpperCase();
+  parts.push(keyLabel);
   return parts;
 }

@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { getHotkey, matchesHotkey } from "@/lib/hotkeys/hotkeys";
+import {
+  formatHotkey,
+  getHotkey,
+  matchesHotkey,
+  SHELL_HOTKEYS,
+} from "@/lib/hotkeys/hotkeys";
 
 /**
  * The New chat shortcut on a keyboard layout that does not write Latin letters.
@@ -76,4 +81,11 @@ test("the modifiers are still exact on the physical key", () => {
   expect(
     matchesHotkey(keydown("Shift", "ShiftLeft", { shiftKey: true }), combo),
   ).toBe(false);
+});
+
+test("SHELL_HOTKEYS includes Quick Spotlight (Alt+Space) and formats Space cleanly", () => {
+  const spotlight = SHELL_HOTKEYS.find((h) => h.id === "spotlight");
+  expect(spotlight).toBeTruthy();
+  const formatted = formatHotkey(spotlight!.combo);
+  expect(formatted.at(-1)).toBe("Space");
 });

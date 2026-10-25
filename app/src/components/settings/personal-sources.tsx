@@ -68,6 +68,13 @@ export function PersonalSourcesSection() {
     }
   }, [status.data?.weatherCity]);
 
+  useEffect(() => {
+    if (!briefMarkdown) return;
+    const onQuote = () => setBriefMarkdown(null);
+    window.addEventListener("chisabot-quote", onQuote);
+    return () => window.removeEventListener("chisabot-quote", onQuote);
+  }, [briefMarkdown]);
+
   const generateBrief = useAsyncAction(
     async () => {
       const city = cityInput.trim() || status.data?.weatherCity || "上海";

@@ -129,20 +129,28 @@ function RouteComponent() {
    * consent app, and dropping it here would hide a connection somebody does have.
    */
   const brokered = brokeredAccountsListedOn(plugins.data?.servers ?? []);
+  const enabledNonOauthServers = (plugins.data?.servers ?? []).filter(
+    (s) =>
+      s.provenance !== "composio" &&
+      !yours.some((y) => y.key === s.id),
+  );
   const accounts = [
     ...yours.map((entry) => {
       const Mark = markFor(entry.key);
       return {
         key: entry.key,
-        title: entry.title,
-        summary: entry.summary,
+        title: pluginTitle(entry.key, entry.title),
+        summary: pluginSummary(entry.key, entry.summary),
         mark: <Mark className="size-4" />,
       };
     }),
     ...brokered.map((server) => ({
       key: server.id,
-      title: server.title,
-      summary: server.summary || `连接您的 ${server.title} 账号。`,
+      title: pluginTitle(server.id, server.title),
+      summary: pluginSummary(
+        server.id,
+        server.summary || `连接您的 ${server.title} 账号。`,
+      ),
       mark: <PluginLogo logo={server.logo} />,
     })),
   ];
@@ -291,8 +299,8 @@ function RouteComponent() {
           ) : null}
 
           <section className="mt-8" aria-label="插件与官方连接器">
-            <div className="mb-3 flex items-center justify-between px-2">
-              <div>
+            <div className="mb-3 flex items-center justify-between gap-3 px-2">
+              <div className="min-w-0">
                 <h2 className="text-sm font-medium">
                   {"外部服务与 MCP 连接器"}
                 </h2>
@@ -301,7 +309,7 @@ function RouteComponent() {
                 </p>
               </div>
               <Link
-                className="inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1.5 text-xs font-medium hover:bg-muted/80"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-3 py-1.5 text-xs font-medium hover:bg-muted/80"
                 to="/admin/plugins"
               >
                 <IconPuzzle className="size-3.5" />
@@ -309,8 +317,51 @@ function RouteComponent() {
                 <IconChevronRight className="size-3.5 text-muted-foreground" />
               </Link>
             </div>
-            {explore.length > 0 ? (
+            {enabledNonOauthServers.length > 0 || explore.length > 0 ? (
               <div className="grid grid-cols-1 gap-x-6 gap-y-2 @min-[36rem]:grid-cols-2">
+                {enabledNonOauthServers.map((server) => {
+                  const Mark = markFor(server.id);
+                  const title = pluginTitle(server.id, server.title);
+                  const summary = pluginSummary(server.id, server.summary);
+                  return (
+                    <Item
+                      key={server.id}
+                      className="min-w-0 flex-nowrap gap-3 px-2 py-3"
+                      data-testid={`enabled-connector-${server.id}`}
+                      render={
+                        <Link
+                          params={{ key: server.id }}
+                          to="/admin/plugins/$key"
+                        />
+                      }
+                      size="sm"
+                    >
+                      <RowMark className="size-9">
+                        <Mark className="size-4" />
+                      </RowMark>
+                      <ItemContent className="min-w-0 gap-0.5">
+                        <ItemTitle className="block w-auto truncate">
+                          {title}
+                        </ItemTitle>
+                        <ItemDescription
+                          className="line-clamp-1 break-all text-xs"
+                          title={summary}
+                        >
+                          {summary}
+                        </ItemDescription>
+                      </ItemContent>
+                      <ItemActions className="shrink-0">
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <IconCheck
+                            aria-hidden="true"
+                            className="size-3.5 text-emerald-600 dark:text-emerald-400"
+                          />
+                          {"已启用"}
+                        </span>
+                      </ItemActions>
+                    </Item>
+                  );
+                })}
                 {explore.map((entry) => {
                   const Mark = markFor(entry.key);
                   const title = pluginTitle(entry.key, entry.title);

@@ -5,15 +5,17 @@ import {
   IconEye,
   IconEyeOff,
   IconHistory,
+  IconMessageReply,
   IconPencil,
   IconPhoto,
   IconTrash,
   IconUpload,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import type { PageView } from "../../../../../shared/pages";
+import { sendPromptToChat } from "@/components/chat/quick-spotlight";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { PageThumb } from "@/components/pages/page-card";
 import { useAsyncAction } from "@/components/ui/async-action";
@@ -49,6 +51,7 @@ const sizeText = (bytes: number) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1
 
 /** 设置 → 页面（DESIGN.md §54）：机器人做的网页。打开、复制链接、版本历史、素材、下线、删除。 */
 function PagesPage() {
+  const navigate = useNavigate();
   const list = useQuery(pagesQueryOptions());
   const queryClient = useQueryClient();
   const [hidden, setHidden] = useState<Set<string>>(new Set());
@@ -124,6 +127,23 @@ function PagesPage() {
       <VersionsDialog onOpenChange={(open) => !open && setDialog(null)} page={dialog?.kind === "versions" ? dialog.page : null} />
       <AssetsDialog onOpenChange={(open) => !open && setDialog(null)} page={dialog?.kind === "assets" ? dialog.page : null} />
       <PageShell
+        action={
+          <Button
+            data-testid="pages-go-chat-btn"
+            onClick={() =>
+              sendPromptToChat(
+                navigate,
+                "请帮我制作并发布一个精美的网页页面：",
+                "制作可分享网页",
+              )
+            }
+            size="sm"
+            variant="outline"
+          >
+            <IconMessageReply className="size-3.5" />
+            {"让机器人做个页面"}
+          </Button>
+        }
         description="机器人做的网页：行程、邀请函、报告、作品集……每个页面一个不公开列出的链接，拿到链接的人不用登录就能看。在聊天里让机器人「做个页面」或「改一下页面」即可，每次改动都存成新的一版。"
         title="页面"
       >
@@ -205,7 +225,62 @@ function PagesPage() {
             </Card>
           </PageSection>
         ) : (
-          <PageEmpty>{"还没有页面。在聊天里跟机器人说「把这个行程做成一个页面」试试。"}</PageEmpty>
+          <PageEmpty>
+            <div className="flex flex-col items-center gap-3">
+              <span>
+                {
+                  "还没有页面。在聊天里跟机器人说「把这个行程做成一个页面」，或点击下方灵感模板一键生成："
+                }
+              </span>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  data-testid="page-preset-trip"
+                  onClick={() =>
+                    sendPromptToChat(
+                      navigate,
+                      "请帮我制作一个「周末两天一夜京都赏枫行程指南」互动网页页面并生成分享链接",
+                      "网页模板",
+                    )
+                  }
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {"🗺️ 做个周末出游行程页"}
+                </Button>
+                <Button
+                  data-testid="page-preset-board"
+                  onClick={() =>
+                    sendPromptToChat(
+                      navigate,
+                      "请帮我制作一个「本周个人目标与项目进度看板」网页页面并发布",
+                      "网页模板",
+                    )
+                  }
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {"📊 做个项目进度看板页"}
+                </Button>
+                <Button
+                  data-testid="page-preset-invite"
+                  onClick={() =>
+                    sendPromptToChat(
+                      navigate,
+                      "请帮我制作一张「周五晚聚餐活动邀请函（含时间地点与地图卡片）」网页页面",
+                      "网页模板",
+                    )
+                  }
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {"💌 做个活动邀请函页面"}
+                </Button>
+              </div>
+            </div>
+          </PageEmpty>
         )}
       </PageShell>
     </>

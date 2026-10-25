@@ -403,9 +403,43 @@ function PanelRailBody({
             <>
               <LivePanelList botId={botId} drawer={drawer} width={width} />
               {liveList.isSuccess && (liveList.data?.length ?? 0) === 0 ? (
-                <p className="rail-empty">
-                  {"还没有面板。在对话里说一句，比如「帮我做一个比特币价格面板」，机器人会做好放在这里并按时刷新。"}
-                </p>
+                <div className="rail-empty flex flex-col items-center gap-2.5">
+                  <p>
+                    {"还没有面板。在对话里说一句，比如「帮我做一个比特币价格面板」，机器人会做好放在这里并按时刷新。"}
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
+                    {[
+                      {
+                        label: "☀️ 今日晨报看板",
+                        prompt: "请帮我创建一个「今日晨报与待办概览」右侧实时面板，汇总天气、今日日程与待办事项",
+                      },
+                      {
+                        label: "📈 BTC 与黄金行情",
+                        prompt: "请帮我创建一个「比特币与黄金实时价格」右侧面板，每 15 分钟自动刷新",
+                      },
+                      {
+                        label: "🌤️ 天气与汇率",
+                        prompt: "请帮我创建一个「城市实时天气与主要汇率」右侧面板",
+                      },
+                    ].map((preset) => (
+                      <button
+                        className="rounded-full border border-border/60 bg-background/60 px-2.5 py-1 text-[11.5px] font-medium text-foreground/85 transition-colors hover:bg-muted hover:text-foreground"
+                        data-testid={`rail-empty-preset-${preset.label.slice(0, 2)}`}
+                        key={preset.label}
+                        onClick={() => {
+                          window.dispatchEvent(
+                            new CustomEvent("chisabot-prefill", {
+                              detail: preset.prompt,
+                            }),
+                          );
+                        }}
+                        type="button"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ) : null}
             </>
           )}
