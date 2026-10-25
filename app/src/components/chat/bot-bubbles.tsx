@@ -897,8 +897,8 @@ export function BriefCard({
         <header className="chat-brief-hero">
           <div className="chat-brief-hero-top">
             <div className="chat-brief-badge">
-              <IconSun aria-hidden="true" className="size-4 text-amber-400" />
-              <span>{"MORNING BRIEF"}</span>
+              <IconSun aria-hidden="true" className="size-4 text-amber-500 dark:text-amber-400" />
+              <span>{"今日晨报"}</span>
             </div>
             <div className="flex items-center gap-1.5">
               {parsed.weather ? (
@@ -1015,16 +1015,16 @@ export function StatusCardGroup({
         className="chat-draft-card chat-doc-card w-full"
         data-testid="chat-status-card"
       >
-        <header className="chat-doc-head">
-          <div className="chat-doc-head-main min-w-0 flex-1">
-            <span className="chat-doc-title truncate font-semibold">{card.title}</span>
+        <header className="chat-doc-head items-start">
+          <div className="chat-doc-head-main min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="chat-doc-title whitespace-normal break-words font-semibold">{card.title}</span>
             {card.status ? (
-              <span className="chat-brief-weather ml-2 shrink-0 text-[11px]">
+              <span className="chat-brief-weather shrink-0 text-[11px]">
                 {card.status}
               </span>
             ) : null}
           </div>
-          <div className="chat-doc-head-actions">
+          <div className="chat-doc-head-actions shrink-0">
             <CardFollowupButton
               snippet={card.body || card.title}
               source={card.title}
@@ -1057,9 +1057,9 @@ export function StatusCardGroup({
           // biome-ignore lint/suspicious/noArrayIndexKey: 静态卡片组顺序
           key={idx}
         >
-          <header className="chat-doc-head">
-            <div className="chat-doc-head-main min-w-0 flex-1 items-center gap-2">
-              <span className="chat-doc-title font-semibold">{card.title}</span>
+          <header className="chat-doc-head items-start">
+            <div className="chat-doc-head-main min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="chat-doc-title whitespace-normal break-words font-semibold">{card.title}</span>
               {card.status ? (
                 <span className="chat-brief-weather shrink-0 text-[11px]">
                   {card.status}

@@ -1,6 +1,6 @@
-import { IconArrowUpRight, IconChevronDown } from "@tabler/icons-react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { createFileRoute, useParams } from "@tanstack/react-router";
+import { IconArrowUpRight, IconChevronDown, IconPlugConnected } from "@tabler/icons-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, Link, useParams } from "@tanstack/react-router";
 import { useState } from "react";
 import {
   PageEmpty,
@@ -27,7 +27,11 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
-import { connectAccountMutationOptions } from "@/lib/plugins/mutations";
+import { pluginSummary, pluginTitle } from "@/lib/plugins/catalogue-zh";
+import {
+  addCuratedServerMutationOptions,
+  connectAccountMutationOptions,
+} from "@/lib/plugins/mutations";
 import {
   connectionsQueryOptions,
   pluginsPageQueryOptions,
@@ -49,9 +53,15 @@ function RouteComponent() {
   const { key } = useParams({
     from: "/_authed/settings/connected-accounts/$key",
   });
+  const queryClient = useQueryClient();
   const plugins = useQuery(pluginsPageQueryOptions());
   const connections = useQuery(connectionsQueryOptions());
   const [notice, setNotice] = useState<string | null>(null);
+
+  const enableServer = useMutation({
+    ...addCuratedServerMutationOptions(queryClient),
+    onError: (thrown: Error) => setNotice(thrown.message),
+  });
 
   const connect = useMutation({
     ...connectAccountMutationOptions(),
@@ -242,28 +252,62 @@ function RouteComponent() {
    * say which it is rather than drawing a switch that cannot work.
    */
   if (entry?.auth !== "user-oauth") {
+    const isPersonalSourceKey =
+      key === "email" ||
+      key === "gmail" ||
+      key === "calendar" ||
+      key === "webhook" ||
+      key === "notify";
     return (
       <PageShell
         backButton={back}
-        description={entry ? "这项服务由管理员统一连接，你这里不用做什么。" : undefined}
-        title={entry?.title ?? (key === "github" ? "GitHub" : "找不到这项连接")}
+        description={
+          entry
+            ? pluginSummary(entry.key, "这项服务由管理员统一连接，你这里不用做什么。")
+            : undefined
+        }
+        title={
+          entry
+            ? pluginTitle(entry.key, entry.title)
+            : key === "github"
+              ? "GitHub"
+              : isPersonalSourceKey
+                ? "个人助理数据源与连接"
+                : "找不到这项连接"
+        }
       >
         <PageEmpty>
-          {entry
-            ? "机器人用部署统一保存的凭据使用它，所有人都一样。"
-            : key === "github"
-              ? "GitHub 在「账号连接」页最上面连接（用一个 GitHub 访问令牌）。"
-              : "这个链接里的服务不存在，可能已经移除了。回到「账号连接」看看能连接哪些服务。"}
+          <div className="flex flex-col items-center gap-3">
+            <span>
+              {entry
+                ? "机器人用部署统一保存的凭据使用它，所有人都一样。"
+                : key === "github"
+                  ? "GitHub 在「账号连接」页最上面连接（用一个 GitHub 访问令牌）。"
+                  : isPersonalSourceKey
+                    ? "个人邮箱（IMAP / SMTP）、个人日历（ICS）与随手推 Webhook 均已在「账号连接」主页直接内置，无需单独跳转子页面。"
+                    : "这个链接里的服务不存在，可能已经移除了。回到「账号连接」看看能连接哪些服务。"}
+            </span>
+            <Button
+              render={<Link to="/settings/connected-accounts" />}
+              size="sm"
+              variant="outline"
+            >
+              {"返回账号连接主页"}
+            </Button>
+          </div>
         </PageEmpty>
       </PageShell>
     );
   }
 
+  const localizedTitle = pluginTitle(entry.key, entry.title);
+  const localizedSummary = pluginSummary(entry.key, entry.summary);
+
   return (
     <PageShell
       backButton={back}
-      description={entry.summary}
-      title={entry.title}
+      description={localizedSummary}
+      title={localizedTitle}
     >
       {notice ? (
         <p className="text-destructive text-sm" role="alert">
@@ -281,14 +325,43 @@ function RouteComponent() {
               <ItemTitle>{"你的账号"}</ItemTitle>
               <ItemDescription>
                 {!enabled
-                  ? "管理员尚未启用此连接器，因此目前没有可连接的内容。"
+                  ? "尚未在此部署中启用该连接器。可点击右侧「立即启用连接器」开启，或前往「插件与 MCP」配置 OAuth 凭据。"
                   : connection
                     ? "授予其工具的机器人将此读取为你的，并只看到你能看到的内容。"
                     : "还没有连接，机器人不能以你的身份读取这里的内容。点连接会跳到服务商页面确认授权。"}
               </ItemDescription>
             </ItemContent>
-            <ItemActions>
-              {connection ? (
+            <ItemActions className="flex items-center gap-2">
+              {!enabled ? (
+                <>
+                  <Button
+                    data-testid="inline-enable-connector-btn"
+                    disabled={enableServer.isPending}
+                    onClick={() => {
+                      setNotice(null);
+                      enableServer.mutate({ key: entry.key });
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="default"
+                  >
+                    <IconPlugConnected className="size-3.5" />
+                    {enableServer.isPending ? "启用中…" : "立即启用连接器"}
+                  </Button>
+                  <Button
+                    render={
+                      <Link
+                        params={{ key: entry.key }}
+                        to="/admin/plugins/$key"
+                      />
+                    }
+                    size="sm"
+                    variant="outline"
+                  >
+                    {"插件设置"}
+                  </Button>
+                </>
+              ) : connection ? (
                 /*
                  * A state and a menu, not a switch. Connected is a fact about a grant that lives at
                  * the vendor, and withdrawing it is a deliberate act rather than the other half of a

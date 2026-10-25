@@ -80,6 +80,10 @@ describe("settings search", () => {
     expect(searchSettings("完全访问", admin)[0]!.id).toBe("permissions.bot-permission");
     expect(searchSettings("微信", admin)[0]!.page.id).toBe("im");
     expect(searchSettings("回滚", admin)[0]!.id).toBe("system-update.rollback");
+    expect(searchSettings("晨报", admin)[0]!.id).toBe("connected-accounts.morning-brief");
+    expect(searchSettings("知识库", admin)[0]!.id).toBe("memory.knowledge-base");
+    expect(searchSettings("精选技能", admin)[0]!.id).toBe("skills.curated-hub");
+    expect(searchSettings("stdio", admin)[0]!.id).toBe("plugins.local-stdio-mcp");
   });
 
   test("admin-only items are not searchable by a normal account", () => {

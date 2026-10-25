@@ -119,7 +119,11 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     icon: IconBookmark,
     to: "/settings/memory",
     keywords: ["jy", "jiyi", "memory", "记住", "备忘"],
-    items: [{ id: "memory-bots", title: "哪些机器人用记忆", description: "按机器人打开或关闭记忆", find: "哪些机器人用记忆", keywords: ["开关"] }],
+    items: [
+      { id: "memory-bots", title: "哪些机器人用记忆", description: "按机器人打开或关闭记忆", find: "哪些机器人用记忆", keywords: ["开关"] },
+      { id: "memory-dream", title: "自动整理记忆（Memory Dreaming）", description: "一键合并重复与碎片记忆，提炼长期偏好", find: "我记住的事", keywords: ["整理记忆", "dream", "去重", "合并"] },
+      { id: "knowledge-base", title: "个人知识库（文章 / 笔记 / 摘录）", description: "录入长文、文档与网页摘录供语义检索", find: "我记住的事", keywords: ["知识库", "kb", "knowledge", "录入知识库", "笔记"] },
+    ],
   },
   {
     id: "skills",
@@ -129,7 +133,10 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     icon: IconSparkles,
     to: "/settings/skills",
     keywords: ["jn", "jineng", "skill", "skills", "做法", "方法", "共享技能"],
-    items: [],
+    items: [
+      { id: "curated-hub", title: "精选个人助理技能库", description: "一键安装每日晨报、收件箱管家、知识库归档等 8 款精选技能", find: "精选个人助理技能库", keywords: ["精选技能", "精选", "模板", "一键安装", "hub"] },
+      { id: "import-skill", title: "导入 SKILL.md 技能", description: "通过 GitHub URL 或粘贴 Markdown 批量导入技能", find: "技能", keywords: ["skill.md", "导入", "github", "markdown"] },
+    ],
   },
   {
     id: "schedules",
@@ -203,8 +210,13 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     sub: "GitHub、邮箱日历、已连接的应用、保存的登录",
     icon: IconPlug,
     to: "/settings/connected-accounts",
-    keywords: ["zhlj", "连接", "连接器", "github", "gmail", "google", "notion", "日历", "邮箱", "应用", "授权", "保存的登录", "密码", "oauth", "connector", "integrations"],
-    items: [],
+    keywords: ["zhlj", "连接", "连接器", "github", "gmail", "google", "notion", "日历", "邮箱", "应用", "授权", "保存的登录", "密码", "oauth", "connector", "integrations", "晨报", "随手推", "webhook", "bark"],
+    items: [
+      { id: "personal-calendar", title: "个人日历（ICS / WebCal 只读）", description: "接入 Apple iCloud、Google、Outlook、飞书日历订阅", find: "个人助理数据源与晨报", keywords: ["日历", "ics", "webcal", "日程", "calendar"] },
+      { id: "personal-email", title: "个人邮箱（IMAP 收件 + SMTP 发件）", description: "连接 QQ、163、Gmail、Outlook 收件箱并支持审批代发", find: "个人助理数据源与晨报", keywords: ["邮箱", "邮件", "imap", "smtp", "收件箱"] },
+      { id: "notify-webhook", title: "随手推通知与入站事件 Webhook", description: "配置 Bark / 钉钉 / 飞书 / Server酱推送与外部事件触发器", find: "个人助理数据源与晨报", keywords: ["随手推", "bark", "server酱", "ntfy", "webhook", "推送", "巡检"] },
+      { id: "morning-brief", title: "每日晨报卡片与天气城市", description: "一键预览今日晨报卡片或主动巡检今日动态", find: "个人助理数据源与晨报", keywords: ["晨报", "天气", "morning brief", "巡检动态"] },
+    ],
   },
   {
     id: "plugins",
@@ -214,8 +226,11 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     icon: IconPuzzle,
     to: "/admin/plugins",
     admin: true,
-    keywords: ["cj", "ljq", "mcp", "plugin", "plugins", "connector", "插件", "连接器", "composio", "notion", "drive", "parallel"],
-    items: [],
+    keywords: ["cj", "ljq", "mcp", "plugin", "plugins", "connector", "插件", "连接器", "composio", "notion", "drive", "parallel", "stdio"],
+    items: [
+      { id: "custom-mcp", title: "添加自定义 HTTP MCP 服务器", description: "接入任意遵循 Streamable HTTP 协议的远程 MCP 服务器", find: "已连接", keywords: ["自定义 mcp", "custom mcp", "http mcp"] },
+      { id: "local-stdio-mcp", title: "本地电脑 stdio MCP 桥接", description: "免公网端口，直接通过已配对电脑调用 npx / uvx 本地 MCP 工具", find: "本地电脑 stdio MCP 桥接", keywords: ["stdio", "npx", "uvx", "本地 mcp", "device_mcp_call"] },
+    ],
   },
   {
     id: "vault",

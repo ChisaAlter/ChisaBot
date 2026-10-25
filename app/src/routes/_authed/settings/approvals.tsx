@@ -78,7 +78,7 @@ function ApprovalPrefsPage() {
   const rules = (data.data?.rules ?? []).filter((rule) => rule.id !== hiddenRule);
   return (
     <PageShell
-      description="机器人做有后果的事之前——对外发消息、删除东西、付款购买、操作你的电脑——按这里决定先问你还是直接做。问的时候聊天里会出一张确认卡片，点「确认」它才继续。你在聊天里说「以后 X 不用问我」，机器人也会记到这里。"
+      description="机器人做有后果的事之前——对外发消息、删除东西、付款购买、操作你的电脑——按这里决定先问你还是直接做。问的时候聊天里会出一张确认卡片，点「确认」它才继续；若通过微信 / QQ / 飞书 / Telegram 对话，也可直接回复「允许」或「拒绝」远程审批。你在聊天里说「以后 X 不用问我」，机器人也会记到这里。"
       title="权限与审批"
     >
       <BotPermissionsSection />
@@ -98,7 +98,7 @@ function ApprovalPrefsPage() {
         <>
           <PageSection description="所有机器人共用。单独设过权限的机器人，「操作你的电脑」按它自己的权限来。" title="哪些事先问我">
             <Card className="mem-card">
-              {data.data.prefs.map((pref) => (
+              {(data.data?.prefs ?? []).map((pref) => (
                 <PrefRow key={pref.category} pref={pref} onSaved={refresh} />
               ))}
             </Card>

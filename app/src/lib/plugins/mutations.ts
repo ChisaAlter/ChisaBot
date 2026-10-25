@@ -51,7 +51,7 @@ export type CustomServerInput = {
 /** Which kinds of plugin a grant can be about. */
 export type PluginKind = "mcp" | "skill";
 
-const FALLBACK = "That did not work.";
+const FALLBACK = "操作失败，请重试。";
 
 /**
  * Refetch everything the plugin screens read.

@@ -3,13 +3,15 @@ import {
   IconBrandWechat,
   IconDots,
   IconExternalLink,
+  IconMessageReply,
   IconPlayerPlay,
   IconPlayerSkipForward,
   IconTrash,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { sendPromptToChat } from "@/components/chat/quick-spotlight";
 import {
   PageEmpty,
   PageSection,
@@ -66,6 +68,7 @@ export const Route = createFileRoute("/_authed/settings/schedules")({
 
 /** 设置 → 定时任务（DESIGN.md §55）：机器人替你设的提醒和定时任务。 */
 function SchedulesPage() {
+  const navigate = useNavigate();
   const list = useQuery(schedulesQueryOptions());
   const bots = useQuery(agentListQueryOptions());
   const hiddenBots = useQuery(agentListQueryOptions(true));
@@ -167,6 +170,23 @@ function SchedulesPage() {
         schedule={shown}
       />
       <PageShell
+        action={
+          <Button
+            data-testid="schedules-go-chat-btn"
+            onClick={() =>
+              sendPromptToChat(
+                navigate,
+                "请帮我创建一个定时任务：每天早上 08:30 调用 personal_morning_brief 生成今日晨报并通过 notify_push 推送到我手机",
+                "创建定时任务",
+              )
+            }
+            size="sm"
+            variant="outline"
+          >
+            <IconMessageReply className="size-3.5" />
+            {"去对话创建定时任务"}
+          </Button>
+        }
         description="机器人替你设的提醒和定时任务。在任何对话里说「明早 9 点提醒我…」「每个工作日 18:00 帮我…」就会建一个；到点时结果发回原来的对话，并通知你。时间按北京时间，除非你说了别的地方。"
         title="定时任务"
       >
@@ -226,9 +246,60 @@ function SchedulesPage() {
           </>
         ) : (
           <PageEmpty>
-            {
-              "还没有定时任务。在对话里对机器人说「明早 9 点提醒我给妈妈打电话」或「每天 18:00 总结一下今天的新闻」试试。"
-            }
+            <div className="flex flex-col items-center gap-3">
+              <span>
+                {
+                  "还没有定时任务。在对话里对机器人说「明早 9 点提醒我给妈妈打电话」或点击下方模板一键创建："
+                }
+              </span>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  data-testid="schedule-preset-brief"
+                  onClick={() =>
+                    sendPromptToChat(
+                      navigate,
+                      "请帮我设置定时任务：每天早上 08:30 自动生成今日晨报（personal_morning_brief）并推送通知给我",
+                      "定时任务模板",
+                    )
+                  }
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {"☀️ 每天 08:30 生成今日晨报"}
+                </Button>
+                <Button
+                  data-testid="schedule-preset-mail"
+                  onClick={() =>
+                    sendPromptToChat(
+                      navigate,
+                      "请帮我设置定时任务：每个工作日 18:00 巡检今日重要未读邮件与待办（personal_check_updates）并汇总给我",
+                      "定时任务模板",
+                    )
+                  }
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {"📬 工作日 18:00 汇总邮件与待办"}
+                </Button>
+                <Button
+                  data-testid="schedule-preset-dream"
+                  onClick={() =>
+                    sendPromptToChat(
+                      navigate,
+                      "请帮我设置定时任务：每周日晚上 21:00 运行 memory_dream 整理我本周的记忆碎片并生成周报",
+                      "定时任务模板",
+                    )
+                  }
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {"🧠 每周日 21:00 整理记忆与周报"}
+                </Button>
+              </div>
+            </div>
           </PageEmpty>
         )}
       </PageShell>

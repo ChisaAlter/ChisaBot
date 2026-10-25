@@ -89,13 +89,13 @@ type RosterCard = Pick<AgentProfile, "id" | "name" | "avatarSeed">;
 const AGENTS_PLACEHOLDER: RosterCard[] = [
   {
     id: "placeholder-research",
-    name: "Research Analyst",
+    name: "深度调研助理",
     avatarSeed: "research-analyst",
   },
-  { id: "placeholder-data", name: "Data Analyst", avatarSeed: "data-analyst" },
+  { id: "placeholder-data", name: "数据分析助理", avatarSeed: "data-analyst" },
   {
     id: "placeholder-support",
-    name: "Support Agent",
+    name: "日常事务管家",
     avatarSeed: "support-agent",
   },
 ];

@@ -2,17 +2,32 @@ import {
   IconBrandGoogleDrive,
   IconBrandNotion,
   IconChevronRight,
+  IconDeviceDesktop,
+  IconMessageReply,
   IconPlug,
+  IconPlus,
 } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import * as React from "react";
+import { sendPromptToChat } from "@/components/chat/quick-spotlight";
 import {
   PageEmpty,
   PageRows,
   PageSection,
   PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { RowMark } from "@/components/layout/row-mark";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import {
   Item,
   ItemActions,
@@ -21,7 +36,10 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
+import { toast } from "@/components/ui/toast";
+import { storeMcpToken } from "@/lib/credentials/mutations";
 import { pluginSummary, pluginTitle } from "@/lib/plugins/catalogue-zh";
+import { addCustomServerMutationOptions } from "@/lib/plugins/mutations";
 import {
   type CatalogueItem,
   connectionsQueryOptions,
@@ -93,8 +111,11 @@ function summaryFor(
 }
 
 function RouteComponent() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const plugins = useQuery(pluginsPageQueryOptions());
   const connections = useQuery(connectionsQueryOptions());
+  const [customOpen, setCustomOpen] = React.useState(false);
 
   const connected = new Set(
     (connections.data?.connections ?? []).map((row) => row.serverId),
@@ -109,12 +130,28 @@ function RouteComponent() {
   );
 
   return (
-    <PageShell
-      description={
-        "机器人能接入的外部服务和 MCP 服务器。添加后对整个部署生效；具体哪些机器人能用，在插件自己的页面里设置。"
-      }
-      title={"插件"}
-    >
+    <>
+      <CustomMcpDialog
+        onOpenChange={setCustomOpen}
+        open={customOpen}
+        queryClient={queryClient}
+      />
+      <PageShell
+        action={
+          <Button
+            data-testid="add-custom-mcp-btn"
+            onClick={() => setCustomOpen(true)}
+            size="sm"
+          >
+            <IconPlus className="size-4" />
+            {"添加自定义 MCP"}
+          </Button>
+        }
+        description={
+          "机器人能接入的外部服务和 MCP 服务器。添加后对整个部署生效；具体哪些机器人能用，在插件自己的页面里设置。"
+        }
+        title={"插件"}
+      >
       {/* Pending, error, empty, rows — pending first, so no sentence asserts anything mid-fetch. */}
       {plugins.isPending ? <PageSkeleton /> : plugins.error ? (
         <p className="mt-12 text-destructive text-sm" role="alert">
@@ -284,8 +321,198 @@ function RouteComponent() {
               )}
             </PageRows>
           </PageSection>
+
+          <PageSection
+            description={"无需暴露公网 HTTP 端口，直接通过已配对的 PC 客户端在本地电脑上拉起 npx / uvx stdio MCP 工具。"}
+            title={"本地电脑 stdio MCP 桥接"}
+          >
+            <PageRows>
+              <Item data-testid="plugin-local-stdio-mcp" size="sm">
+                <RowMark>
+                  <IconDeviceDesktop className="size-4" />
+                </RowMark>
+                <ItemContent>
+                  <ItemTitle>{"device_mcp_call · 本地电脑 MCP 直连"}</ItemTitle>
+                  <ItemDescription>
+                    {"配对电脑客户端后，机器人可直接调用本地文件系统（@modelcontextprotocol/server-filesystem）、本地浏览器（@playwright/mcp）或任意自定义 stdio MCP。"}
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions className="shrink-0">
+                  <Button
+                    data-testid="try-local-stdio-mcp-btn"
+                    onClick={() =>
+                      sendPromptToChat(
+                        navigate,
+                        "请使用 device_mcp_call 列出我本地电脑 MCP 服务器提供的工具（例如 npx -y @modelcontextprotocol/server-filesystem）",
+                        "本地 stdio MCP 桥接",
+                      )
+                    }
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <IconMessageReply className="size-3.5" />
+                    {"去对话调用"}
+                  </Button>
+                </ItemActions>
+              </Item>
+            </PageRows>
+          </PageSection>
         </>
       )}
     </PageShell>
+    </>
+  );
+}
+
+function CustomMcpDialog({
+  open,
+  onOpenChange,
+  queryClient,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  queryClient: ReturnType<typeof useQueryClient>;
+}) {
+  const [id, setId] = React.useState("");
+  const [title, setTitle] = React.useState("");
+  const [url, setUrl] = React.useState("");
+  const [token, setToken] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+
+  const addCustom = useMutation({
+    ...addCustomServerMutationOptions(queryClient),
+    onSuccess: () => {
+      toast.success(`已添加自定义 MCP 服务器「${title.trim() || id.trim()}」`);
+      onOpenChange(false);
+      setId("");
+      setTitle("");
+      setUrl("");
+      setToken("");
+      setError(null);
+    },
+    onError: (err: Error) => {
+      setError(err.message);
+    },
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    const cleanId = id
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+    const cleanTitle = title.trim() || cleanId;
+    const cleanUrl = url.trim();
+    if (!cleanId || !cleanUrl) {
+      setError("请填写唯一标识（ID）和 MCP 服务器 HTTPS 地址。");
+      return;
+    }
+    try {
+      const credentialId = await storeMcpToken(cleanId, token);
+      addCustom.mutate({
+        id: cleanId,
+        title: cleanTitle,
+        url: cleanUrl,
+        ...(credentialId ? { credentialId } : {}),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存令牌失败");
+    }
+  };
+
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="im-dialog max-w-lg" data-testid="custom-mcp-dialog">
+        <DialogHeader>
+          <DialogTitle>{"添加自定义 HTTP MCP 服务器"}</DialogTitle>
+          <DialogDescription>
+            {"填入遵循 Model Context Protocol (Streamable HTTP) 的远程服务器地址。如果是本地 npx / uvx 命令行 MCP，无需在此添加，直接在对话中让机器人调用 device_mcp_call 即可。"}
+          </DialogDescription>
+        </DialogHeader>
+        <form className="flex flex-col" onSubmit={(e) => void handleSubmit(e)}>
+          <DialogBody className="im-form mt-2">
+            {error ? (
+              <p className="text-destructive text-xs" role="alert">
+                {error}
+              </p>
+            ) : null}
+            <label className="im-field" htmlFor="custom-mcp-title">
+              <span className="im-field-l">{"显示名称"}</span>
+              <Input
+                id="custom-mcp-title"
+                onChange={(e) => {
+                  setTitle(e.target.value);
+                  if (!id) {
+                    setId(
+                      e.target.value
+                        .toLowerCase()
+                        .replace(/[^a-z0-9-_]/g, "-")
+                        .replace(/-+/g, "-")
+                        .replace(/^-|-$/g, ""),
+                    );
+                  }
+                }}
+                placeholder="例如：内部知识库 MCP / Jira MCP"
+                value={title}
+              />
+            </label>
+            <label className="im-field" htmlFor="custom-mcp-id">
+              <span className="im-field-l">
+                {"唯一标识（ID）"}
+                <span className="im-req">{"英文小写字母、数字与连字符"}</span>
+              </span>
+              <Input
+                id="custom-mcp-id"
+                onChange={(e) => setId(e.target.value)}
+                placeholder="例如：company-kb"
+                value={id}
+              />
+            </label>
+            <label className="im-field" htmlFor="custom-mcp-url">
+              <span className="im-field-l">{"MCP Endpoint URL (HTTPS)"}</span>
+              <Input
+                id="custom-mcp-url"
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://mcp.example.com/mcp"
+                value={url}
+              />
+            </label>
+            <label className="im-field" htmlFor="custom-mcp-token">
+              <span className="im-field-l">
+                {"Bearer 令牌"}
+                <span className="im-req">{"可选，加密存入密钥保险箱"}</span>
+              </span>
+              <Input
+                id="custom-mcp-token"
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="sk-..."
+                type="password"
+                value={token}
+              />
+            </label>
+          </DialogBody>
+          <DialogFooter className="mt-4">
+            <Button
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="ghost"
+            >
+              {"取消"}
+            </Button>
+            <Button
+              data-testid="submit-custom-mcp-btn"
+              disabled={addCustom.isPending || !id.trim() || !url.trim()}
+              type="submit"
+            >
+              {addCustom.isPending ? "连接并读取工具…" : "添加服务器"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
