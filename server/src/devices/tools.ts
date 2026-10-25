@@ -169,6 +169,32 @@ const schemas = {
     toolName: z.string().max(200).optional().describe("action=call_tool 时要调用的 MCP 工具名"),
     toolArgs: z.record(z.string(), z.unknown()).optional().describe("action=call_tool 时传给工具的 JSON 参数对象"),
   }),
+  windows: z.object({
+    deviceId,
+    action: z
+      .enum(["list", "focus", "launch", "close"])
+      .describe(
+        "list=列出用户桌面上所有可见的软件与浏览器窗口（含进程名、PID、窗口标题、是否前台、坐标与宽高 Bounds）；focus=将指定软件或浏览器窗口前置激活并返回其坐标；launch=启动本地软件或用本地浏览器打开网址；close=优雅关闭指定窗口",
+      ),
+    query: z
+      .string()
+      .max(500)
+      .optional()
+      .describe("按窗口标题、进程名或应用路径匹配（例如 Chrome、Visual Studio Code、WeChat、notepad）"),
+    title: z.string().max(200).optional().describe("focus / close：按窗口标题关键词匹配（不区分大小写）"),
+    processName: z.string().max(120).optional().describe("focus / close：按进程名匹配，例如 chrome、msedge、Code、WeChat、notepad"),
+    pid: z.number().int().optional().describe("focus / close：按进程号 PID 精确指定"),
+    app: z
+      .string()
+      .max(500)
+      .optional()
+      .describe("launch：要启动的本地软件名、协议或可执行路径（例如 chrome、msedge、notepad、calc、code、explorer）"),
+    maximize: z.boolean().optional().describe("focus 时是否同时最大化该窗口"),
+    args: z
+      .union([z.string().max(1000), z.array(z.string().max(1000)).max(20)])
+      .optional()
+      .describe("launch：传给软件的启动参数或要打开的网址"),
+  }),
 };
 
 /**
@@ -287,6 +313,7 @@ export function deviceGuidance(
       "A capability that is off was switched off by the person (命令行、读取文件、写入文件、截图、鼠标键盘、打开网址 / 文件、剪贴板). If a request needs one that is off, say which one and tell them they can set it to 询问 in 设置 → 设备 → the computer → 权限, then try again; do not pretend to have done it.",
       "完全访问 (full access) can only be turned on by the person in 设置 → 设备 → the computer → 权限; you cannot turn it on. If a task genuinely needs it (whole-disk access, admin rights, unattended long jobs) say so once and let them decide.",
       "Coding / changing files on their device (also servers running chisabot-node): work like a careful engineer. 1) Find: device_search (pattern + glob) and device_list_files. 2) Read only what you need: device_read_file with startLine/endLine (numbered lines; never dump whole large files into the chat). 3) Change: device_edit_file with exact oldText/newText (copy the text from what you read, without the line-number prefix; add surrounding lines until it is unique), or device_apply_patch for multi-file changes; device_write_file only for new files or full rewrites. 4) Verify: run the tests / build with device_run_shell (cwd = the project; background: true + device_shell_output for anything longer than a minute, e.g. dev servers, big builds). 5) Report: a short summary plus the diffs the tools returned (only the relevant hunks), test results, and git status if it is a repo; commit with device_git only when the person asked or clearly expects it, and push only when asked (push always needs their approval). Use a session name (e.g. session: \"main\") when later commands depend on cd / env from earlier ones.",
+      "Operating their local desktop software & local browser (Chrome / Edge / VS Code / WeChat / WPS / Notion / etc.): 1) Use device_windows (action: \"list\") to inspect all open desktop windows, the currently active foreground window, and each window's exact screen coordinates (bounds: left, top, width, height). 2) Use device_windows (action: \"focus\" or \"launch\") or device_open to bring the target app/browser window to the front or open a URL/file in their default app. 3) Use device_screenshot to see the live window on their screen, then use device_input (click, double_click, type, key, scroll) with the window bounds from device_windows to interact with buttons, inputs, or menus. 4) For stdio MCP servers on their PC, use device_mcp_call.",
     );
   } else {
     lines.push(
@@ -816,6 +843,80 @@ export function deviceTools(options: {
           `本地 MCP (${args.action === "list_tools" ? "列出工具" : `调用 ${args.toolName}`})：${clip(args.command, 80)}`,
           30_000,
         );
+      },
+    });
+
+  if (enabledAnywhere("shell"))
+    tools.push({
+      name: "device_windows",
+      ref: "devices/windows",
+      description:
+        "列出、聚焦（置顶激活）、启动或关闭用户电脑上的本地桌面软件与浏览器窗口，并返回当前活动窗口及每个窗口的屏幕坐标矩形（left/top/width/height），便于配合 device_screenshot 与 device_input 精准操作本地软件和浏览器。",
+      parameters: schemas.windows,
+      execute: async (input) => {
+        const args = schemas.windows.parse(input ?? {});
+        const effectiveQuery = (args.query ?? args.title ?? args.processName ?? args.app ?? "").trim();
+        if ((args.action === "focus" || args.action === "close") && !effectiveQuery && !args.pid) {
+          return `${REFUSAL_MARKER} action 为 ${args.action} 时必须提供 query/title/processName（窗口标题或进程名关键词）或 pid。`;
+        }
+        if (args.action === "launch" && !effectiveQuery) {
+          return `${REFUSAL_MARKER} action 为 launch 时必须提供 query 或 app（要启动的软件名、可执行路径或网址）。`;
+        }
+        const picked = await resolveDevice(store, actorId, args.deviceId, (id) => hub.isOnline(id));
+        const platform = typeof picked === "string" ? "win32" : picked.platform;
+        const q = effectiveQuery;
+        const pid = args.pid ?? 0;
+        const max = Boolean(args.maximize);
+        const launchArgs = Array.isArray(args.args) ? args.args.join(" ").trim() : (args.args ?? "").trim();
+
+        let cmd: string;
+        if (platform === "win32") {
+          const qB64 = Buffer.from(q, "utf8").toString("base64");
+          const aB64 = Buffer.from(launchArgs, "utf8").toString("base64");
+          const win32Def = `$ProgressPreference='SilentlyContinue';Add-Type -TypeDefinition 'using System;using System.Text;using System.Collections.Generic;using System.Runtime.InteropServices;public class W32{public delegate bool E(IntPtr h,IntPtr l);[StructLayout(LayoutKind.Sequential)]public struct R{public int L,T,R2,B;}[DllImport("user32.dll")]public static extern bool EnumWindows(E f,IntPtr l);[DllImport("user32.dll")]public static extern bool IsWindowVisible(IntPtr h);[DllImport("user32.dll",CharSet=CharSet.Unicode)]public static extern int GetWindowText(IntPtr h,StringBuilder s,int m);[DllImport("user32.dll")]public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();[DllImport("user32.dll")]public static extern bool GetWindowRect(IntPtr h,out R r);[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int s);[DllImport("user32.dll")]public static extern bool SetForegroundWindow(IntPtr h);[DllImport("user32.dll")]public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);public static List<Dictionary<string,object>> All(){var res=new List<Dictionary<string,object>>();IntPtr fg=GetForegroundWindow();EnumWindows((h,l)=>{if(!IsWindowVisible(h))return true;var sb=new StringBuilder(512);if(GetWindowText(h,sb,512)<=0)return true;string t=sb.ToString();if(t=="Program Manager"||t=="Windows Input Experience")return true;uint pid;GetWindowThreadProcessId(h,out pid);R r;GetWindowRect(h,out r);if(r.R2-r.L<=10||r.B-r.T<=10)return true;string pn="";try{pn=System.Diagnostics.Process.GetProcessById((int)pid).ProcessName;}catch{}var d=new Dictionary<string,object>();d["hwnd"]=(long)h;d["pid"]=(int)pid;d["processName"]=pn;d["title"]=t;d["isActive"]=(h==fg);d["bounds"]=new Dictionary<string,int>{{"left",r.L},{"top",r.T},{"width",r.R2-r.L},{"height",r.B-r.T}};res.Add(d);return true;},IntPtr.Zero);return res;}}'`;
+          let psScript: string;
+          if (args.action === "list") {
+            psScript = `${win32Def};$q=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${qB64}'));$items=@([W32]::All()|?{(-not $q) -or $_['title'] -like "*$q*" -or $_['processName'] -like "*$q*"});$apps=@(Get-Process|?{$_.SessionId -gt 0 -and ((-not $q) -or $_.ProcessName -like "*$q*" -or $_.MainWindowTitle -like "*$q*")}|Group-Object ProcessName|%{@{processName=$_.Name;pids=@($_.Group|Select -First 5 -Expand Id);title=($_.Group|?{$_.MainWindowTitle}|Select -First 1 -Expand MainWindowTitle)}}|Select -First 40);@{ok=$true;count=$items.Count;windows=$items;runningApps=$apps}|ConvertTo-Json -Compress -Depth 5`;
+          } else if (args.action === "focus") {
+            psScript = `${win32Def};$q=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${qB64}'));$t=[W32]::All()|?{(${pid} -gt 0 -and $_['pid'] -eq ${pid}) -or ($q -and ($_['title'] -like "*$q*" -or $_['processName'] -like "*$q*"))}|Select -First 1;if(-not $t){@{ok=$false;error='未找到匹配窗口'}|ConvertTo-Json -Compress;exit 0};$h=[IntPtr][long]$t['hwnd'];[void][W32]::ShowWindow($h,${max ? 3 : 9});[void][W32]::SetForegroundWindow($h);Start-Sleep -Milliseconds 150;$r=New-Object W32+R;[void][W32]::GetWindowRect($h,[ref]$r);$t['isActive']=$true;$t['bounds']=@{left=$r.L;top=$r.T;width=$r.R2-$r.L;height=$r.B-$r.T};@{ok=$true;focused=$t}|ConvertTo-Json -Compress -Depth 5`;
+          } else if (args.action === "launch") {
+            psScript = `$ProgressPreference='SilentlyContinue';$q=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${qB64}'));$a=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${aB64}'));$p=if($a){Start-Process $q -ArgumentList $a -PassThru}else{Start-Process $q -PassThru};@{ok=$true;launched=$q;pid=$(if($p){$p.Id}else{$null})}|ConvertTo-Json -Compress`;
+          } else {
+            psScript = `${win32Def};$q=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${qB64}'));$t=[W32]::All()|?{(${pid} -gt 0 -and $_['pid'] -eq ${pid}) -or ($q -and ($_['title'] -like "*$q*" -or $_['processName'] -like "*$q*"))}|Select -First 1;if(-not $t){@{ok=$false;error='未找到匹配窗口'}|ConvertTo-Json -Compress;exit 0};$h=[IntPtr][long]$t['hwnd'];[void][W32]::PostMessage($h,0x0010,[IntPtr]::Zero,[IntPtr]::Zero);@{ok=$true;closed=$t}|ConvertTo-Json -Compress -Depth 5`;
+          }
+          const encodedCommand = Buffer.from(psScript, "utf16le").toString("base64");
+          cmd = `powershell -NoProfile -NonInteractive -EncodedCommand ${encodedCommand}`;
+        } else if (platform === "darwin") {
+          const safeQ = q.replace(/"/g, '\\"');
+          if (args.action === "list") {
+            cmd = `osascript -e 'tell application "System Events" to get {name, unix id, frontmost, title of windows} of (every process whose background only is false)'`;
+          } else if (args.action === "focus") {
+            cmd = `osascript -e 'tell application "${safeQ}" to activate'`;
+          } else if (args.action === "launch") {
+            cmd = `open -a "${safeQ}" ${launchArgs}`.trim();
+          } else {
+            cmd = `osascript -e 'tell application "${safeQ}" to quit'`;
+          }
+        } else {
+          const safeQ = q.replace(/"/g, '\\"');
+          if (args.action === "list") {
+            cmd = `wmctrl -lGpx 2>/dev/null || ps -eo pid,comm,args --sort=-%cpu | head -n 30`;
+          } else if (args.action === "focus") {
+            cmd = `wmctrl -a "${safeQ}"`;
+          } else if (args.action === "launch") {
+            cmd = `nohup ${safeQ} ${launchArgs} >/dev/null 2>&1 &`;
+          } else {
+            cmd = `wmctrl -c "${safeQ}"`;
+          }
+        }
+
+        const labelMap: Record<typeof args.action, string> = {
+          list: q ? `列出窗口（筛选：${clip(q, 40)}）` : "列出当前打开的桌面窗口",
+          focus: `聚焦窗口：${clip(q || `PID ${pid}`, 60)}`,
+          launch: `启动应用：${clip(`${q} ${launchArgs}`.trim(), 60)}`,
+          close: `关闭窗口：${clip(q || `PID ${pid}`, 60)}`,
+        };
+        return run("shell", args.deviceId, { command: cmd, timeoutSec: 20 }, labelMap[args.action], 25_000);
       },
     });
 

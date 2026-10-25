@@ -3743,9 +3743,14 @@ const app = createApp(
       return { text, isError: text.startsWith(REFUSAL_MARKER) };
     }
     if (name.startsWith("device_")) {
-      const deviceTool = (
-        await deviceToolsFor(actorId, botId, initiator ?? undefined)
-      ).find((candidate) => candidate.name === name);
+      const rawDeviceTools = await deviceToolsFor(actorId, botId, initiator ?? undefined);
+      const deviceTool = confirmations
+        .wrap(rawDeviceTools, {
+          ownerUserId: actorId,
+          agentId: botId,
+          ...(initiator ? { initiator } : {}),
+        })
+        .find((candidate) => candidate.name === name);
       if (!deviceTool) {
         return {
           text: `${REFUSAL_MARKER} 这项设备工具现在不可用：用户的电脑不在线，或这项能力在所有在线设备上都是关闭的（设置 → 设备 → 权限）。`,
@@ -3753,6 +3758,13 @@ const app = createApp(
         };
       }
       const text = await deviceTool.execute(args);
+      return { text, isError: text.startsWith(REFUSAL_MARKER) };
+    }
+    const actorTool = (
+      await loadToolsForActor(actorId, initiator ?? PERSON_INITIATOR)(botId)
+    ).find((candidate) => candidate.name === name || candidate.ref === name);
+    if (actorTool) {
+      const text = await actorTool.execute(args);
       return { text, isError: text.startsWith(REFUSAL_MARKER) };
     }
     return null;

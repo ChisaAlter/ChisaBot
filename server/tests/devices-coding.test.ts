@@ -239,9 +239,22 @@ describe("coding tools", () => {
     const text = deviceGuidance([record()], () => true);
     expect(text).toContain("device_search");
     expect(text).toContain("device_edit_file");
+    expect(text).toContain("device_windows");
     expect(text).toContain("cannot turn it on");
     const full = deviceGuidance([record({ fullAccessUntil: FULL_ACCESS_FOREVER })], () => true);
     expect(full).toContain("FULL ACCESS is ON");
+  });
+
+  test("device_windows lists, focuses, launches, and closes desktop software & browser windows", async () => {
+    const winDevice = record({ platform: "win32", osVersion: "Windows 11" });
+    const h = harness(winDevice);
+    expect(h.tools.map((t) => t.name)).toContain("device_windows");
+    await h.tool("device_windows").execute({ action: "list", query: "Chrome" });
+    expect(h.calls[0]?.operation).toBe("shell");
+    expect(String(h.calls[0]?.args.command)).toContain("-EncodedCommand");
+    await h.tool("device_windows").execute({ action: "focus", query: "Visual Studio Code", maximize: true });
+    expect(h.calls[1]?.operation).toBe("shell");
+    expect(h.calls[1]?.summary).toContain("聚焦窗口");
   });
 });
 
