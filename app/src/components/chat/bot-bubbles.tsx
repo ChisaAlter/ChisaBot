@@ -67,7 +67,8 @@ export const BotBubbles = memo(function BotBubbles({
   const effectiveReplyText = replyToText ?? replyTo?.text;
   const effectiveReplyId = replyToId ?? replyTo?.id;
   const display = useDisplayText(text);
-  const segments = useMemo(() => splitBubbles(display), [display]);
+  const normalizedDisplay = useMemo(() => normalizeDirectiveCards(display), [display]);
+  const segments = useMemo(() => splitBubbles(normalizedDisplay), [normalizedDisplay]);
   const hasExplicitQuote = useMemo(() => segments.some((s) => Boolean(s.quote)), [segments]);
   // 第一次渲染时已经在的气泡排队淡入；之后流式新增的不排队。
   const initial = useRef<number | null>(null);
@@ -112,6 +113,120 @@ export const BotBubbles = memo(function BotBubbles({
     </div>
   );
 });
+
+export type ParsedStatusCard = {
+  title: string;
+  status?: string;
+  body: string;
+};
+
+export function normalizeDirectiveCards(raw: string): string {
+  if (!raw.includes(":::card")) return raw;
+  const lines = raw.replace(/\r\n?/g, "\n").split("\n");
+  const out: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = (lines[i] ?? "").trim();
+
+    if (line === ":::group") {
+      const groupLines: string[] = [lines[i]!];
+      i++;
+      let inCard = false;
+      while (i < lines.length) {
+        const cur = (lines[i] ?? "").trim();
+        groupLines.push(lines[i]!);
+        i++;
+        if (cur.startsWith(":::card")) {
+          inCard = true;
+        } else if (cur === ":::") {
+          if (inCard) {
+            inCard = false;
+          } else {
+            break;
+          }
+        }
+      }
+      out.push("```cards", ...groupLines, "```");
+      continue;
+    }
+
+    if (line.startsWith(":::card")) {
+      const cardLines: string[] = [lines[i]!];
+      i++;
+      while (i < lines.length) {
+        const cur = (lines[i] ?? "").trim();
+        cardLines.push(lines[i]!);
+        i++;
+        if (cur === ":::") break;
+      }
+      out.push("```cards", ...cardLines, "```");
+      continue;
+    }
+
+    out.push(lines[i]!);
+    i++;
+  }
+
+  return out.join("\n");
+}
+
+export function parseStatusCardsFence(rawText: string): ParsedStatusCard[] | null {
+  const lines = rawText.replace(/\r\n?/g, "\n").split("\n");
+  const first = (lines[0] ?? "").trim();
+  if (!/^```+cards\b/i.test(first)) return null;
+  const inner = lines.slice(1);
+  if (inner.length > 0 && /^```+$/.test((inner[inner.length - 1] ?? "").trim())) {
+    inner.pop();
+  }
+
+  const cards: ParsedStatusCard[] = [];
+  let curCard: { title: string; status?: string; bodyLines: string[] } | null = null;
+
+  for (const rawLine of inner) {
+    const trimmed = rawLine.trim();
+    if (trimmed === ":::group") continue;
+    if (trimmed.startsWith(":::card")) {
+      if (curCard) {
+        cards.push({
+          title: curCard.title,
+          ...(curCard.status ? { status: curCard.status } : {}),
+          body: curCard.bodyLines.join("\n").trim(),
+        });
+      }
+      const titleMatch = /title="([^"]+)"/.exec(trimmed);
+      const statusMatch = /status="([^"]+)"/.exec(trimmed);
+      curCard = {
+        title: titleMatch?.[1]?.trim() || "信息卡片",
+        status: statusMatch?.[1]?.trim(),
+        bodyLines: [],
+      };
+      continue;
+    }
+    if (trimmed === ":::") {
+      if (curCard) {
+        cards.push({
+          title: curCard.title,
+          ...(curCard.status ? { status: curCard.status } : {}),
+          body: curCard.bodyLines.join("\n").trim(),
+        });
+        curCard = null;
+      }
+      continue;
+    }
+    if (curCard) {
+      curCard.bodyLines.push(rawLine);
+    }
+  }
+  if (curCard) {
+    cards.push({
+      title: curCard.title,
+      ...(curCard.status ? { status: curCard.status } : {}),
+      body: curCard.bodyLines.join("\n").trim(),
+    });
+  }
+  return cards.length > 0 ? cards : null;
+}
 
 type ParsedArtifactFence = {
   lang: "mermaid" | "svg" | "html";
@@ -222,6 +337,15 @@ function Segment({
     );
   }
   if (seg.kind === "code") {
+    const statusCards = parseStatusCardsFence(seg.text);
+    if (statusCards) {
+      return (
+        <>
+          {quoteNode}
+          <StatusCardGroup cards={statusCards} components={components} />
+        </>
+      );
+    }
     const artifact = parseArtifactFence(seg.text);
     if (artifact) {
       return (
@@ -869,5 +993,94 @@ export function BriefCard({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * `:::group` / `:::card{title="..." status="..."}` 结构化状态卡片与多卡片矩阵：
+ * 用于连接器全景、主动巡检动态、邮件代发确认卡片、记忆整理报告与知识库检索结果。
+ */
+export function StatusCardGroup({
+  cards,
+  components,
+}: {
+  cards: ParsedStatusCard[];
+  components: Record<string, unknown>;
+}) {
+  if (cards.length === 1) {
+    const card = cards[0]!;
+    return (
+      <section
+        aria-label={card.title}
+        className="chat-draft-card chat-doc-card w-full"
+        data-testid="chat-status-card"
+      >
+        <header className="chat-doc-head">
+          <div className="chat-doc-head-main min-w-0 flex-1">
+            <span className="chat-doc-title truncate font-semibold">{card.title}</span>
+            {card.status ? (
+              <span className="chat-brief-weather ml-2 shrink-0 text-[11px]">
+                {card.status}
+              </span>
+            ) : null}
+          </div>
+          <div className="chat-doc-head-actions">
+            <CardFollowupButton
+              snippet={card.body || card.title}
+              source={card.title}
+              title={card.title}
+            />
+            <CopyButton className="chat-draft-copy" size="sm" value={card.body} variant="ghost">
+              {"复制"}
+            </CopyButton>
+          </div>
+        </header>
+        <div className="chat-doc-inset p-3.5">
+          <div className="chat-doc-inner text-sm">
+            <SmoothStreamdown components={components as never}>{card.body}</SmoothStreamdown>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <div
+      className="flex w-full flex-col gap-2.5"
+      data-testid="chat-status-card-group"
+    >
+      {cards.map((card, idx) => (
+        <section
+          aria-label={card.title}
+          className="chat-draft-card chat-doc-card w-full"
+          data-testid="chat-status-card"
+          // biome-ignore lint/suspicious/noArrayIndexKey: 静态卡片组顺序
+          key={idx}
+        >
+          <header className="chat-doc-head">
+            <div className="chat-doc-head-main min-w-0 flex-1 items-center gap-2">
+              <span className="chat-doc-title font-semibold">{card.title}</span>
+              {card.status ? (
+                <span className="chat-brief-weather shrink-0 text-[11px]">
+                  {card.status}
+                </span>
+              ) : null}
+            </div>
+            <div className="chat-doc-head-actions shrink-0">
+              <CardFollowupButton
+                snippet={card.body || card.title}
+                source={card.title}
+                title={card.title}
+              />
+            </div>
+          </header>
+          <div className="chat-doc-inset p-3">
+            <div className="chat-doc-inner text-xs leading-relaxed">
+              <SmoothStreamdown components={components as never}>{card.body}</SmoothStreamdown>
+            </div>
+          </div>
+        </section>
+      ))}
+    </div>
   );
 }

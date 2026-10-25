@@ -1,4 +1,4 @@
-import { IconPlus, IconSparkles } from "@tabler/icons-react";
+import { IconBook, IconPlus, IconSparkles } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -35,7 +35,11 @@ function MemoryPage() {
   const [filter, setFilter] = useState<MemoryKind | "all">("all");
   const [query, setQuery] = useState("");
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
-  const [dialog, setDialog] = useState<{ open: boolean; note: MemoryNoteView | null }>({ open: false, note: null });
+  const [dialog, setDialog] = useState<{
+    open: boolean;
+    note: MemoryNoteView | null;
+    preset?: { kind?: MemoryKind; subject?: string; context?: string } | null;
+  }>({ open: false, note: null, preset: null });
   const botName = useMemo(() => new Map((bots.data ?? []).map((bot) => [bot.id, bot.name])), [bots.data]);
   const notes = (list.data?.notes ?? []).filter((note) => !hidden.has(note.id));
   const counts = useMemo(() => {
@@ -74,7 +78,12 @@ function MemoryPage() {
 
   return (
     <>
-      <NoteDialog note={dialog.note} onOpenChange={(open) => setDialog((current) => ({ ...current, open }))} open={dialog.open} />
+      <NoteDialog
+        note={dialog.note}
+        onOpenChange={(open) => setDialog((current) => ({ ...current, open }))}
+        open={dialog.open}
+        preset={dialog.preset}
+      />
       <PageShell
         action={
           <div className="flex flex-wrap gap-2">
@@ -89,7 +98,30 @@ function MemoryPage() {
               <IconSparkles />
               {"一键整理记忆"}
             </Button>
-            <Button onClick={() => setDialog({ open: true, note: null })} size="sm">
+            <Button
+              data-testid="memory-add-knowledge-btn"
+              onClick={() =>
+                setDialog({
+                  open: true,
+                  note: null,
+                  preset: {
+                    kind: "note",
+                    subject: "[知识库] ",
+                    context: "个人知识库 · 手动录入",
+                  },
+                })
+              }
+              size="sm"
+              variant="outline"
+            >
+              <IconBook />
+              {"录入知识库"}
+            </Button>
+            <Button
+              data-testid="memory-add-note-btn"
+              onClick={() => setDialog({ open: true, note: null, preset: null })}
+              size="sm"
+            >
               <IconPlus />
               {"添加"}
             </Button>

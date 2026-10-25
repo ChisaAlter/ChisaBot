@@ -1,24 +1,55 @@
 import {
+  IconArrowLeft,
   IconArrowRight,
+  IconBolt,
   IconCalendarEvent,
   IconClipboardText,
   IconCommand,
   IconMail,
   IconMessageReply,
+  IconPlugConnected,
   IconSparkles,
   IconSun,
+  IconWand,
   IconX,
 } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { BotBubbles } from "@/components/chat/bot-bubbles";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
+import { isBotsChatPath, modeTarget } from "@/lib/left-mode";
 
 export const CHISABOT_SPOTLIGHT_EVENT = "chisabot-spotlight";
 
 export function openQuickSpotlight() {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(CHISABOT_SPOTLIGHT_EVENT));
+}
+
+export function sendPromptToChat(
+  navigate: ReturnType<typeof useNavigate>,
+  text: string,
+  sourceLabel?: string,
+) {
+  const trimmed = text.trim();
+  if (!trimmed || typeof window === "undefined") return;
+  const fire = () => {
+    if (sourceLabel) {
+      dispatchComposerQuote({ text: trimmed, source: sourceLabel });
+    } else {
+      window.dispatchEvent(new CustomEvent("chisabot-prefill", { detail: trimmed }));
+    }
+  };
+  const hadComposer = Boolean(document.querySelector(".glass-composer"));
+  if (!isBotsChatPath(window.location.pathname)) {
+    const target = modeTarget("bots");
+    void navigate(target as never);
+  }
+  if (hadComposer) {
+    fire();
+  } else {
+    window.setTimeout(fire, 120);
+  }
 }
 
 export function QuickSpotlight() {
@@ -70,11 +101,7 @@ export function QuickSpotlight() {
     if (!trimmed) return;
     setOpen(false);
     setQuery("");
-    if (sourceLabel) {
-      dispatchComposerQuote({ text: trimmed, source: sourceLabel });
-      return;
-    }
-    window.dispatchEvent(new CustomEvent("chisabot-prefill", { detail: trimmed }));
+    sendPromptToChat(navigate, trimmed, sourceLabel);
   };
 
   const handlePreviewMorningBrief = async () => {
@@ -138,6 +165,31 @@ export function QuickSpotlight() {
 
         {briefMarkdown ? (
           <div className="chat-spotlight-brief" data-testid="quick-spotlight-brief">
+            <div className="mb-2.5 flex items-center justify-between gap-2 border-b border-border/50 pb-2">
+              <button
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                data-testid="spotlight-brief-back-btn"
+                onClick={() => setBriefMarkdown(null)}
+                type="button"
+              >
+                <IconArrowLeft className="size-3.5" />
+                {"返回快捷指令列表"}
+              </button>
+              <button
+                className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+                data-testid="spotlight-brief-quote-btn"
+                onClick={() =>
+                  submitToComposer(
+                    "请根据今日晨报帮我梳理今天最重要的 3 件事并安排优先级",
+                    "今日晨报摘要",
+                  )
+                }
+                type="button"
+              >
+                <IconMessageReply className="size-3.5" />
+                {"带入聊天继续追问"}
+              </button>
+            </div>
             <BotBubbles text={briefMarkdown} />
           </div>
         ) : (
@@ -156,6 +208,28 @@ export function QuickSpotlight() {
                 </span>
                 <span className="chat-spotlight-action-sub">
                   {"汇总实时天气、今日日历安排、重要未读邮件与待办记忆"}
+                </span>
+              </span>
+              <IconArrowRight className="size-3.5 opacity-55" />
+            </button>
+
+            <button
+              className="chat-spotlight-action"
+              data-testid="spotlight-action-updates"
+              onClick={() =>
+                submitToComposer(
+                  "请调用 personal_check_updates 主动巡检我即将开始的日程、未读重要邮件与外部事件",
+                )
+              }
+              type="button"
+            >
+              <IconBolt className="size-4 text-orange-500" />
+              <span className="chat-spotlight-action-main">
+                <span className="chat-spotlight-action-title">
+                  {"⚡ 主动巡检今日动态（会议 / 未读邮件 / 外部事件）"}
+                </span>
+                <span className="chat-spotlight-action-sub">
+                  {"一键检查 2 小时内临近会议、最新未读收件箱与 Webhook 推送"}
                 </span>
               </span>
               <IconArrowRight className="size-3.5 opacity-55" />
@@ -243,7 +317,48 @@ export function QuickSpotlight() {
                   {"📬 检查收件箱重要未读邮件"}
                 </span>
                 <span className="chat-spotlight-action-sub">
-                  {"通过只读 IMAP 汇总近期邮件主题与发件人"}
+                  {"通过 IMAP 汇总近期邮件主题与发件人，支持审批回复"}
+                </span>
+              </span>
+              <IconArrowRight className="size-3.5 opacity-55" />
+            </button>
+
+            <button
+              className="chat-spotlight-action"
+              data-testid="spotlight-action-connectors"
+              onClick={() =>
+                submitToComposer("请调用 connect_service (action='list') 查看我当前所有连接器与插件状态")
+              }
+              type="button"
+            >
+              <IconPlugConnected className="size-4 text-indigo-500" />
+              <span className="chat-spotlight-action-main">
+                <span className="chat-spotlight-action-title">
+                  {"🔌 查看所有可用连接器与插件状态"}
+                </span>
+                <span className="chat-spotlight-action-sub">
+                  {"全景巡检邮箱、日历、通知推送、知识库与三方 MCP 状态"}
+                </span>
+              </span>
+              <IconArrowRight className="size-3.5 opacity-55" />
+            </button>
+
+            <button
+              className="chat-spotlight-action"
+              data-testid="spotlight-action-skills"
+              onClick={() => {
+                setOpen(false);
+                void navigate({ to: "/settings/skills" });
+              }}
+              type="button"
+            >
+              <IconWand className="size-4 text-pink-500" />
+              <span className="chat-spotlight-action-main">
+                <span className="chat-spotlight-action-title">
+                  {"✨ 精选技能库与 SKILL.md 导入"}
+                </span>
+                <span className="chat-spotlight-action-sub">
+                  {"前往设置 → 技能，一键安装 8 款个人助理技能或导入 GitHub 技能"}
                 </span>
               </span>
               <IconArrowRight className="size-3.5 opacity-55" />

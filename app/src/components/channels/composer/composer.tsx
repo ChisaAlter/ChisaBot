@@ -7,6 +7,7 @@ import {
   IconArrowUp,
   IconPlayerStopFilled,
   IconPlus,
+  IconSparkles,
   IconX,
 } from "@tabler/icons-react";
 import { PromptArea, type PromptAreaHandle } from "prompt-area";
@@ -1828,6 +1829,21 @@ export function Composer({
                   </Button>
                 )}
                 {leadingControl}
+                <Button
+                  aria-label={"助理快捷指令与随手问 (Alt+Space)"}
+                  className="glass-composer-icon"
+                  data-testid="composer-spotlight-btn"
+                  disabled={disabled}
+                  onClick={() =>
+                    window.dispatchEvent(new CustomEvent("chisabot-spotlight"))
+                  }
+                  size="icon"
+                  title={"助理快捷指令与随手问 (Alt+Space)"}
+                  type="button"
+                  variant="ghost"
+                >
+                  <IconSparkles className="size-[16px]" />
+                </Button>
               </div>
               <div className="flex min-w-0 items-center gap-1.5">
                 {modelControl ? (
@@ -1908,6 +1924,21 @@ export function Composer({
                 </Button>
               ) : null}
               {leadingControl}
+              <Button
+                aria-label={"助理快捷指令与随手问 (Alt+Space)"}
+                className="glass-composer-icon"
+                data-testid="composer-spotlight-btn"
+                disabled={disabled}
+                onClick={() =>
+                  window.dispatchEvent(new CustomEvent("chisabot-spotlight"))
+                }
+                size="icon"
+                title={"助理快捷指令与随手问 (Alt+Space)"}
+                type="button"
+                variant="ghost"
+              >
+                <IconSparkles className="size-[16px]" />
+              </Button>
               {modelControl ? (
                 <div className="flex min-w-0 items-center">{modelControl}</div>
               ) : null}

@@ -1,7 +1,8 @@
-import { IconCheck, IconDownload, IconDots, IconPencil, IconPlus, IconSparkles, IconTrash, IconUsers } from "@tabler/icons-react";
+import { IconCheck, IconDownload, IconDots, IconMessageCircle, IconPencil, IconPlus, IconSparkles, IconTrash, IconUsers, IconWand } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { sendPromptToChat } from "@/components/chat/quick-spotlight";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { SearchBox } from "@/components/memory/memory-notes";
 import { useAsyncAction } from "@/components/ui/async-action";
@@ -36,6 +37,7 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
  */
 function SkillsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const list = useQuery(chisaSkillsQueryOptions());
   const hub = useQuery(chisaSkillHubQueryOptions());
   const isAdmin = useQuery(currentUserQueryOptions()).data?.role === "admin";
@@ -55,7 +57,11 @@ function SkillsPage() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: chisaSkillKeys.all }),
       queryClient.invalidateQueries({ queryKey: chisaSkillKeys.hub }),
+      queryClient.invalidateQueries({ queryKey: ["plugins"] }),
     ]);
+  };
+  const useSkillInChat = (skill: { slug: string; title: string }) => {
+    sendPromptToChat(navigate, `/${skill.slug} 请按「${skill.title}」技能帮我执行`);
   };
   async function installFromHub(hubSlug: string, title?: string) {
     setInstallingSlug(hubSlug);
@@ -112,26 +118,122 @@ function SkillsPage() {
           title={skill.title}
         />
       </button>
-      {skill.mine ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<button aria-label={`「${skill.title}」的更多操作`} className="device-row-more" title={"更多操作"} type="button" />}>
-            <IconDots className="size-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="glass-pop w-[180px] p-1.5">
-            <DropdownMenuItem className="glass-mi" onClick={() => setDialog({ open: true, skill })}>
-              <IconPencil className="size-[18px] shrink-0 opacity-80" />
-              <span className="min-w-0 flex-1">{"编辑…"}</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator className="glass-sep" />
-            <DropdownMenuItem className="glass-mi is-danger" onClick={() => void remove(skill)}>
-              <IconTrash className="size-[18px] shrink-0 opacity-80" />
-              <span className="min-w-0 flex-1">{"删除…"}</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : null}
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Button
+          data-testid={`skill-use-${skill.slug}`}
+          onClick={() => useSkillInChat(skill)}
+          size="sm"
+          title={`去对话里调用 /${skill.slug}`}
+          variant="ghost"
+        >
+          <IconMessageCircle className="size-3.5" />
+          {"去对话使用"}
+        </Button>
+        {skill.mine ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<button aria-label={`「${skill.title}」的更多操作`} className="device-row-more" title={"更多操作"} type="button" />}>
+              <IconDots className="size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="glass-pop w-[180px] p-1.5">
+              <DropdownMenuItem className="glass-mi" onClick={() => setDialog({ open: true, skill })}>
+                <IconPencil className="size-[18px] shrink-0 opacity-80" />
+                <span className="min-w-0 flex-1">{"编辑…"}</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator className="glass-sep" />
+              <DropdownMenuItem className="glass-mi is-danger" onClick={() => void remove(skill)}>
+                <IconTrash className="size-[18px] shrink-0 opacity-80" />
+                <span className="min-w-0 flex-1">{"删除…"}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </div>
     </div>
   );
+
+  const hubSection = hub.data?.length ? (
+    <PageSection
+      action={
+        <Button
+          data-testid="skill-hub-install-all-btn"
+          disabled={installingSlug === "all"}
+          onClick={() => void installFromHub("all")}
+          size="sm"
+          variant="outline"
+        >
+          <IconSparkles className="size-3.5" />
+          {installingSlug === "all" ? "安装中…" : "一键安装全部精选"}
+        </Button>
+      }
+      description="开箱即用的个人助理核心技能包（早安管家、收件箱分拣、多源深度调研、PR 审查、服务器巡检、周报蒸馏等）。安装后随时可在聊天中输入 /名字 调用，也可自由编辑。"
+      title={`✨ 精选技能库（一键安装） · ${hub.data.length}`}
+    >
+      <Card className="mem-card" data-testid="skill-hub-card">
+        {hub.data.map((item) => {
+          const isInstalled = installedSlugs.has(item.slug) || item.installed;
+          const existing = (list.data ?? []).find((s) => s.slug === item.slug);
+          return (
+            <div className="im-row" key={item.slug}>
+              <div className="im-row-main is-static">
+                <ListRow
+                  icon={
+                    <span className="mem-ico">
+                      <IconSparkles className="size-5" />
+                    </span>
+                  }
+                  sub={
+                    <>
+                      <span className="mem-body">{item.summary}</span>
+                      <span className="device-row-meta">
+                        <span className="skill-slug">{`/${item.slug}`}</span>
+                        <span className="device-cap-chip">{item.category}</span>
+                      </span>
+                    </>
+                  }
+                  title={item.title}
+                />
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {isInstalled ? (
+                  <>
+                    <Button
+                      data-testid={`skill-hub-use-${item.slug}`}
+                      onClick={() => useSkillInChat(item)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <IconMessageCircle className="size-3.5" />
+                      {"去对话使用"}
+                    </Button>
+                    <Button
+                      data-testid={`skill-hub-installed-${item.slug}`}
+                      onClick={() => existing && setDialog({ open: true, skill: existing })}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      <IconCheck className="mr-1 size-3.5 text-emerald-500" />
+                      {"已安装 · 查看"}
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    data-testid={`skill-hub-install-${item.slug}`}
+                    disabled={installingSlug === item.slug}
+                    onClick={() => void installFromHub(item.slug, item.title)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {installingSlug === item.slug ? "安装中…" : "一键安装"}
+                  </Button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+    </PageSection>
+  ) : null;
+
   return (
     <>
       <SkillDialog onOpenChange={(open) => setDialog((current) => ({ ...current, open }))} open={dialog.open} skill={dialog.skill} />
@@ -150,7 +252,7 @@ function SkillsPage() {
               <IconDownload />
               {"从 GitHub / SKILL.md 导入"}
             </Button>
-            <Button onClick={() => setDialog({ open: true, skill: null })} size="sm">
+            <Button data-testid="skill-new-btn" onClick={() => setDialog({ open: true, skill: null })} size="sm">
               <IconPlus />
               {"新建技能"}
             </Button>
@@ -179,11 +281,12 @@ function SkillsPage() {
                 <SearchBox onChange={setQuery} placeholder={"搜索技能"} value={query} />
               </Toolbar>
             ) : null}
+            {mine.length === 0 && !q ? hubSection : null}
             <PageSection title={`我的技能 · ${mine.length}`}>
               {mine.length ? (
                 <Card className="mem-card">{mine.map(row)}</Card>
               ) : (
-                <PageEmpty>{q ? "没有符合条件的技能。" : "还没有技能。可在下方「精选技能库」一键安装常用技能，或点右上角新建 / 从 GitHub 导入。"}</PageEmpty>
+                <PageEmpty>{q ? "没有符合条件的技能。" : "还没有个人技能。可在上方「精选技能库」一键安装常用技能，或点右上角新建 / 从 GitHub 导入。"}</PageEmpty>
               )}
             </PageSection>
             {shared.length ? (
@@ -191,77 +294,7 @@ function SkillsPage() {
                 <Card className="mem-card">{shared.map(row)}</Card>
               </PageSection>
             ) : null}
-            {hub.data?.length ? (
-              <PageSection
-                action={
-                  <Button
-                    data-testid="skill-hub-install-all-btn"
-                    disabled={installingSlug === "all"}
-                    onClick={() => void installFromHub("all")}
-                    size="sm"
-                    variant="outline"
-                  >
-                    <IconSparkles className="size-3.5" />
-                    {installingSlug === "all" ? "安装中…" : "一键安装全部精选"}
-                  </Button>
-                }
-                description="开箱即用的个人助理核心技能包（早安管家、收件箱分拣、多源深度调研、PR 审查、服务器巡检、周报蒸馏等）。安装后随时可在聊天中输入 /名字 调用，也可自由编辑。"
-                title={`✨ 精选技能库（一键安装） · ${hub.data.length}`}
-              >
-                <Card className="mem-card" data-testid="skill-hub-card">
-                  {hub.data.map((item) => {
-                    const isInstalled = installedSlugs.has(item.slug) || item.installed;
-                    const existing = (list.data ?? []).find((s) => s.slug === item.slug);
-                    return (
-                      <div className="im-row" key={item.slug}>
-                        <div className="im-row-main is-static">
-                          <ListRow
-                            icon={
-                              <span className="mem-ico">
-                                <IconSparkles className="size-5" />
-                              </span>
-                            }
-                            sub={
-                              <>
-                                <span className="mem-body">{item.summary}</span>
-                                <span className="device-row-meta">
-                                  <span className="skill-slug">{`/${item.slug}`}</span>
-                                  <span className="device-cap-chip">{item.category}</span>
-                                </span>
-                              </>
-                            }
-                            title={item.title}
-                          />
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          {isInstalled ? (
-                            <Button
-                              data-testid={`skill-hub-installed-${item.slug}`}
-                              onClick={() => existing && setDialog({ open: true, skill: existing })}
-                              size="sm"
-                              variant="ghost"
-                            >
-                              <IconCheck className="mr-1 size-3.5 text-emerald-500" />
-                              {"已安装 · 查看"}
-                            </Button>
-                          ) : (
-                            <Button
-                              data-testid={`skill-hub-install-${item.slug}`}
-                              disabled={installingSlug === item.slug}
-                              onClick={() => void installFromHub(item.slug, item.title)}
-                              size="sm"
-                              variant="outline"
-                            >
-                              {installingSlug === item.slug ? "安装中…" : "一键安装"}
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </Card>
-              </PageSection>
-            ) : null}
+            {mine.length > 0 || q ? hubSection : null}
           </>
         )}
       </PageShell>
@@ -365,19 +398,46 @@ function SkillImportDialog({
               />
             </label>
           </DialogBody>
-          <DialogFooter className="mt-3">
-            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
-              {"取消"}
-            </Button>
+          <DialogFooter className="mt-3 sm:justify-between">
             <Button
-              data-testid="skill-import-submit-btn"
-              disabled={!valid}
-              feedback={{ pending: "导入中…", success: "已导入", error: "导入失败" }}
-              state={importAction.state}
-              type="submit"
+              data-testid="skill-import-fill-demo-btn"
+              onClick={() => {
+                setMarkdown(
+                  [
+                    "---",
+                    "name: daily-standup-prep",
+                    "description: 每日站会 / 晨会发言提纲快速整理",
+                    "---",
+                    "",
+                    "# 每日站会发言提纲整理",
+                    "",
+                    "1. 调用 `calendar_list_events` 与 `memory_recall` 回顾昨日完成事项与今日会议安排。",
+                    "2. 按「昨日完成 · 今日计划 · 风险与阻塞」三段式生成精炼的站会发言卡片。",
+                  ].join("\n"),
+                );
+                setSlug("daily-standup-prep");
+              }}
+              size="sm"
+              type="button"
+              variant="outline"
             >
-              {"解析并导入"}
+              <IconWand className="size-3.5" />
+              {"填入示例 SKILL.md"}
             </Button>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+                {"取消"}
+              </Button>
+              <Button
+                data-testid="skill-import-submit-btn"
+                disabled={!valid}
+                feedback={{ pending: "导入中…", success: "已导入", error: "导入失败" }}
+                state={importAction.state}
+                type="submit"
+              >
+                {"解析并导入"}
+              </Button>
+            </div>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -78,6 +78,7 @@ export function MemoryKindIcon({ kind }: { kind: MemoryKind }) {
 export function NoteRow({ note, botName, onEdit, onDelete }: { note: MemoryNoteView; botName: string | null; onEdit: () => void; onDelete: () => void }) {
   const title = note.subject ?? note.content.split("\n")[0]!;
   const body = note.subject ? note.content : note.content.split("\n").slice(1).join(" ");
+  const isKnowledge = Boolean(note.subject?.startsWith("[知识库]") || note.context?.includes("个人知识库"));
   return (
     <div className="im-row mem-row">
       <button className="im-row-main" onClick={onEdit} type="button">
@@ -87,6 +88,7 @@ export function NoteRow({ note, botName, onEdit, onDelete }: { note: MemoryNoteV
             <>
               {body ? <span className="mem-body">{body.replace(/\n+/g, " · ")}</span> : null}
               <span className="device-row-meta">
+                {isKnowledge ? <span className="device-cap-chip"><T>{"📚 个人知识库"}</T></span> : null}
                 {note.context ? <span className="device-cap-chip"><T>{`情境：${note.context}`}</T></span> : null}
                 <span className="mem-by">
                   {note.author === "bot" ? (
@@ -127,7 +129,17 @@ export function NoteRow({ note, botName, onEdit, onDelete }: { note: MemoryNoteV
 
 type Form = { kind: MemoryKind; subject: string; content: string; context: string };
 
-export function NoteDialog({ open, note, onOpenChange }: { open: boolean; note: MemoryNoteView | null; onOpenChange: (open: boolean) => void }) {
+export function NoteDialog({
+  open,
+  note,
+  preset,
+  onOpenChange,
+}: {
+  open: boolean;
+  note: MemoryNoteView | null;
+  preset?: { kind?: MemoryKind; subject?: string; context?: string } | null;
+  onOpenChange: (open: boolean) => void;
+}) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Form>({ kind: "preference", subject: "", content: "", context: "" });
   useEffect(() => {
@@ -135,10 +147,15 @@ export function NoteDialog({ open, note, onOpenChange }: { open: boolean; note: 
     setForm(
       note
         ? { kind: note.kind, subject: note.subject ?? "", content: note.content, context: note.context ?? "" }
-        : { kind: "preference", subject: "", content: "", context: "" },
+        : {
+            kind: preset?.kind ?? "preference",
+            subject: preset?.subject ?? "",
+            content: "",
+            context: preset?.context ?? "",
+          },
     );
     save.reset();
-  }, [open, note]);
+  }, [open, note, preset]);
   const needsSubject = SUBJECT_KINDS.includes(form.kind);
   const save = useAsyncAction(
     async () => {
@@ -156,12 +173,17 @@ export function NoteDialog({ open, note, onOpenChange }: { open: boolean; note: 
     { errorToast: (error) => error.message },
   );
   const valid = form.content.trim().length > 0 && (!needsSubject || form.subject.trim().length > 0);
+  const isKnowledgePreset = Boolean(!note && preset?.subject?.startsWith("[知识库]"));
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="im-dialog max-w-lg">
+      <DialogContent className="im-dialog max-w-lg" data-testid="memory-note-dialog">
         <DialogHeader>
-          <DialogTitle>{note ? "编辑记忆" : "添加记忆"}</DialogTitle>
-          <DialogDescription>{"你的所有机器人都会看到这条（关掉记忆的机器人除外）。"}</DialogDescription>
+          <DialogTitle>{note ? "编辑记忆" : isKnowledgePreset ? "📚 录入个人知识库" : "添加记忆"}</DialogTitle>
+          <DialogDescription>
+            {isKnowledgePreset
+              ? "将网页摘录、工作规范、读书笔记或重要参考资料存入个人知识库，所有机器人均可通过 knowledge_search 检索引用。"
+              : "你的所有机器人都会看到这条（关掉记忆的机器人除外）。"}
+          </DialogDescription>
         </DialogHeader>
         <form
           className="flex min-h-0 flex-1 flex-col"
