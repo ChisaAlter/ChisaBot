@@ -327,7 +327,22 @@ export function MemoryBots({ disabled }: { disabled: ReadonlySet<string> }) {
   );
 }
 
-/** 删掉（可撤销：撤销 = 原样重建）。 */
+/**
+ * 一组最多先画这么多行（CB-106）。列表一次拿全（本地搜索要用全文），但 3000 条每行一个下拉菜单
+ * 全挂上去，首屏要好几秒、删一条也要整页重渲染；先画前 N 条，其余点「显示其余」再画。
+ * 搜索框里有词时不截断：那是在找东西，命中的都要看得到（命中通常很少）。
+ */
+export const MEMORY_GROUP_LIMIT = 50;
+
+export function visibleNotes<T>(notes: readonly T[], expanded: boolean, limit = MEMORY_GROUP_LIMIT): readonly T[] {
+  return expanded || notes.length <= limit ? notes : notes.slice(0, limit);
+}
+
+/**
+ * 删掉（可撤销：撤销 = 原样重建）。
+ * 「撤销」提示在删除请求成功后立刻弹出，不等列表重新拉完（CB-106：记忆多时重新拉取要好几秒，
+ * 提示晚到，8 秒窗口被白白吃掉）。列表在后台刷新，刷新完再放开本地隐藏。
+ */
 export async function deleteWithUndo(notes: MemoryNoteView[], refresh: () => Promise<unknown>, hide: (ids: string[] | null) => void) {
   const ids = notes.map((note) => note.id);
   hide(ids);
@@ -338,15 +353,34 @@ export async function deleteWithUndo(notes: MemoryNoteView[], refresh: () => Pro
     toast.error(error instanceof Error ? error.message : "删除失败");
     return;
   }
-  await refresh();
-  hide(null);
   toast.undo(notes.length === 1 ? "已删除 1 条记忆" : `已删除 ${notes.length} 条记忆`, async () => {
     try {
-      for (const note of notes) await createMemoryNote({ kind: note.kind, subject: note.subject, content: note.content, context: note.context });
+      for (const note of notes) {
+        await createMemoryNote({
+          kind: note.kind,
+          subject: note.subject,
+          content: note.content,
+          context: note.context,
+          ...(note.shared ? { shared: true } : {}),
+        });
+      }
       await refresh();
     } catch {
       toast.error("恢复失败");
     }
+  });
+  await refresh().catch(() => undefined);
+  hide(null);
+}
+
+/** 删一条也先确认（和技能页一致，CB-106）；确认后仍有 8 秒撤销。 */
+export async function confirmNoteDelete(note: MemoryNoteView) {
+  const title = note.subject ?? note.content.split("\n")[0] ?? "";
+  return confirmDialog({
+    title: `删除记忆「${title.length > 40 ? `${title.slice(0, 40)}…` : title}」？`,
+    description: "所有机器人都不会再记得这条内容。删除后 8 秒内可以撤销。",
+    confirmLabel: "删除",
+    destructive: true,
   });
 }
 

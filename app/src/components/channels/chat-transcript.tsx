@@ -17,6 +17,7 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
+import { Link } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
 import {
   cloneElement,
@@ -1722,19 +1723,25 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
   const [active, setActive] = useState<MemoryPillItem | null>(null);
   const [undoneIds, setUndoneIds] = useState<Record<string, boolean>>({});
   const [undoBusy, setUndoBusy] = useState(false);
+  const [undoError, setUndoError] = useState<string | null>(null);
 
   if (items.length === 0) return null;
 
   const handleUndo = async (item: MemoryPillItem) => {
     setUndoBusy(true);
+    setUndoError(null);
     try {
       if (item.noteId && item.noteId.startsWith("mem_")) {
-        await fetch(`/api/memory-notes/${encodeURIComponent(item.noteId)}`, {
+        const response = await fetch(`/api/memory-notes/${encodeURIComponent(item.noteId)}`, {
           method: "DELETE",
           credentials: "include",
         });
+        // 删除失败（网络、权限、已被删）不能显示「已撤销」，否则用户以为记忆没了，其实还在。
+        if (!response.ok && response.status !== 404) throw new Error(`撤销失败（${response.status}）`);
       }
       setUndoneIds((prev) => ({ ...prev, [item.id]: true }));
+    } catch (error) {
+      setUndoError(error instanceof Error ? error.message : "撤销失败");
     } finally {
       setUndoBusy(false);
     }
@@ -1766,7 +1773,15 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
         })}
       </div>
 
-      <Dialog onOpenChange={(open) => !open && setActive(null)} open={active !== null}>
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setActive(null);
+            setUndoError(null);
+          }
+        }}
+        open={active !== null}
+      >
         {active ? (
           <DialogContent className="max-w-md" data-testid="memory-pill-dialog">
             <div className="flex items-center gap-2 pb-2">
@@ -1783,20 +1798,24 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                     {`对象：${active.subject}`}
                   </span>
                 ) : null}
-                {active.noteId ? (
-                  <span className="font-mono text-[11px] opacity-70">{active.noteId}</span>
-                ) : null}
+
               </div>
               <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5 leading-relaxed text-foreground">
                 {active.summary}
               </div>
               <div className="flex items-center justify-between pt-2">
-                <a
+                {/*
+                 * 用路由内跳转，并先关掉弹窗（CB-106）。原来是 <a href>：在打开的模态弹窗里整页重载，
+                 * 整个应用（对话、CopilotKit 连接、几千条记忆）从头再来一遍，s2 里这一下把标签页拖崩过。
+                 */}
+                <Link
                   className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                  href="/settings/memory"
+                  data-testid="memory-manage-link"
+                  onClick={() => setActive(null)}
+                  to="/settings/memory"
                 >
                   {"管理全部长期记忆 →"}
-                </a>
+                </Link>
                 {undoneIds[active.id] ? (
                   <span className="text-xs font-medium text-emerald-400" data-testid="memory-undone-status">
                     {"✓ 已从长期记忆中撤销"}
@@ -1814,6 +1833,11 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                   </button>
                 )}
               </div>
+              {undoError ? (
+                <p className="text-xs text-destructive" data-testid="memory-undo-error" role="alert">
+                  {undoError}
+                </p>
+              ) : null}
             </div>
           </DialogContent>
         ) : null}
