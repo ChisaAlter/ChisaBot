@@ -47,6 +47,11 @@
       .boot-note { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 16px; border-radius: 999px; background: rgba(255,255,255,.8); box-shadow: 0 10px 30px rgba(40,70,110,.12); color: #3b3f48; font-size: 13px; white-space: nowrap; }
       html.dark .boot-note { background: rgba(30,42,60,.82); color: #c7cedb; }
       .boot-note[hidden] { display: none; }
+      .boot-loading { padding: 8px 16px; opacity: 0; animation: boot-in .3s ease-out .25s forwards; }
+      #chisabot-startup-note:not([hidden]) ~ .boot-loading { display: none; }
+      .boot-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(59,63,72,.25); border-top-color: currentColor; animation: boot-spin .9s linear infinite; }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+      @keyframes boot-in { to { opacity: 1; } }
       .boot-note button { height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: #16181d; color: #fff; font: inherit; font-size: 13px; cursor: pointer; }
       html.dark .boot-note button { background: #e8ecf3; color: #10161f; }
       .boot-note button[hidden] { display: none; }
@@ -57,7 +62,7 @@
       html[data-phone] .boot-cols > :first-child, html[data-phone] .boot-cols > :nth-child(3), html[data-phone] .boot-seg, html[data-phone] .boot-search { display: none; }
       html[data-phone] .boot-top { top: calc(14px + env(safe-area-inset-top)); left: calc(16px + env(safe-area-inset-left)); right: calc(16px + env(safe-area-inset-right)); }
       html[data-phone] .boot-cols { top: calc(76px + env(safe-area-inset-top)); left: calc(16px + env(safe-area-inset-left)); right: calc(16px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); }
-      @media (prefers-reduced-motion: reduce) { .boot .sh { animation: none; } }
+      @media (prefers-reduced-motion: reduce) { .boot .sh, .boot-spin { animation: none; } .boot-loading { animation: none; opacity: 1; } }
     </style>
     <!-- Sets the theme before the first paint. Must stay inline and classic: `defer` or `type="module"` runs too late. -->
     <script>
@@ -109,6 +114,9 @@
          app draws its own account control (sign-out lives in the avatar menu), so it adds no
          floating "退出登录" button of its own. -->
     <div id="chisabot-account-control" hidden></div>
+    <!-- CB-100c：公网网关（deploy/public）不随应用镜像更新。v0.1.75 之前的 workspace.js 只认这个旧 id，
+         少了它就会在右下角浮出一个「退出 OpenBot 登录」按钮，盖住右侧抽屉。两个标记都要留。 -->
+    <div id="openbot-account-control" hidden></div>
     <div id="root">
       <div id="chisabot-startup" class="boot" role="status" aria-label="正在加载 ChisaBot">
         <div class="boot-top">
@@ -138,6 +146,8 @@
           <button id="chisabot-reload" type="button">重新加载</button>
         </div>
         <noscript><div class="boot-note"><span>请启用浏览器的 JavaScript 后重新加载。</span></div></noscript>
+        <!-- CB-100c：骨架很淡，慢网下看起来像白屏；先给一句看得见的「正在加载」，变慢或出错后由上面的提示接替。 -->
+        <div id="chisabot-startup-loading" class="boot-note boot-loading" aria-hidden="true"><i class="boot-spin"></i><span>正在加载 ChisaBot…</span></div>
       </div>
     </div>
     <script id="chisabot-startup-script">
