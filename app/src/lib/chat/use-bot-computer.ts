@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useRef } from "react";
+import {
+  lastHistoryEventWasPop,
+  noteUserIntent,
+  overlayHistoryActive,
+  overlayHistoryMode,
+} from "@/lib/overlay-back";
 import { botUi, setBotUi } from "./ui-memory";
 
 /**
@@ -32,7 +38,10 @@ export function useBotComputerTab(
 
   // 用记下的选择打开的：把地址补上，地址和屏幕说同一件事。
   useEffect(() => {
-    if (agentId && open && watch === undefined) writeUrl(true, true);
+    if (!agentId || !open || watch !== undefined) return;
+    // 返回（popstate）带出来的这一帧不许写地址（CB-098 QA 第三轮）：那是在离开，不是在打开。
+    if (overlayHistoryMode() && lastHistoryEventWasPop()) return;
+    writeUrl(true, true);
   }, [agentId, open, watch, writeUrl]);
 
   // 同一个机器人页里，地址从「开着」变成没有（浏览器后退）= 关上。
@@ -47,8 +56,13 @@ export function useBotComputerTab(
 
   const setOpen = useCallback((next: boolean) => {
     const { agentId: id, writeUrl: write } = latest.current;
+    noteUserIntent();
     setBotUi(id, { computer: next });
-    write(next, false);
+    // 手机上右栏抽屉开着时切标签只换地址不加历史（CB-098 QA）：否则后退会在「面板 / 计算机」之间来回，
+    // 抽屉被地址重新拉开、又压一条记录，永远退不出页面。
+    // 手机网页 / PWA 上 `watch` 一律 replace（CB-098 QA 第三轮）：整个右栏抽屉只占它自己那一条历史记录，
+    // 切「面板 | 计算机」永远不加历史。桌面保持原来的 push（后退能关计算机）。
+    write(next, overlayHistoryMode() || overlayHistoryActive());
   }, []);
 
   return [open, setOpen];

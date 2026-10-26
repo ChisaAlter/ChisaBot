@@ -81,6 +81,23 @@ export function observeApprovalAgent(agent: Agent) {
   };
 }
 
+/** CB-101：计算机活动记录用的归属（哪段对话、哪一轮、哪次工具调用）。拿不到就是 undefined，不抛。 */
+export function frontendCallMeta(
+  context: HandlerContext,
+): { threadId?: string; runId?: string; toolCallId?: string } | undefined {
+  const agent = context.agent;
+  const input = agent ? inputs.get(agent) : undefined;
+  const toolCallId = context.toolCall?.id;
+  if (!toolCallId && !agent) return undefined;
+  return {
+    ...(toolCallId ? { toolCallId } : {}),
+    ...(agent?.threadId ? { threadId: agent.threadId } : {}),
+    ...(input && agent && input.threadId === agent.threadId
+      ? { runId: input.runId }
+      : {}),
+  };
+}
+
 export function frontendApprovalSnapshot(context: HandlerContext) {
   const agent = context.agent;
   const input = agent ? inputs.get(agent) : undefined;

@@ -92,6 +92,11 @@ import {
   recordAuditEvent,
 } from "./audit";
 import { startRetentionSweeps } from "./audit-retention";
+import { withComputerActivity } from "./computer/activity-recorder";
+import {
+  createActivityStore as createComputerActivityStore,
+  installActivityStore,
+} from "./computer/activity-store";
 import { createAuth } from "./auth";
 import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
 import type { AuthService } from "./auth/guards";
@@ -734,22 +739,27 @@ const confirmAwareGate: typeof approvalService.gate = async (candidate) => {
   }
   return approvalService.gate(candidate);
 };
+// CB-101：计算机活动记录。gateway 外包一层，每个动作写一条；每小时清 90 天前的记录。
+installActivityStore(createComputerActivityStore(database, config.databaseUrl));
 const computerGateway = computerProvider
-  ? createComputerGateway({
-      provider: computerProvider,
-      auditStore: bootAuditStore,
-      approvalGate: confirmAwareGate,
-      policy: () => policyStore.get(),
-      // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
-      // when the snapshot was taken by another server. A Map here would be blank on every replica
-      // but the one that snapshotted, and the boundary would decide with no element to look at.
-      snapshots: createSnapshotStore(database),
-      // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
-      // sentence on that button already promised.
-      pageFrames: pageFrameStore,
-      allowPrivateHosts: config.computer?.allowPrivateHosts,
-      token: config.computer?.token,
-    })
+  ? withComputerActivity(
+      createComputerGateway({
+        provider: computerProvider,
+        auditStore: bootAuditStore,
+        approvalGate: confirmAwareGate,
+        policy: () => policyStore.get(),
+        // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
+        // when the snapshot was taken by another server. A Map here would be blank on every replica
+        // but the one that snapshotted, and the boundary would decide with no element to look at.
+        snapshots: createSnapshotStore(database),
+        // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
+        // sentence on that button already promised.
+        pageFrames: pageFrameStore,
+        allowPrivateHosts: config.computer?.allowPrivateHosts,
+        token: config.computer?.token,
+      }),
+      { pageFrames: pageFrameStore },
+    )
   : undefined;
 
 /**

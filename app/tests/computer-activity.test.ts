@@ -181,7 +181,7 @@ describe("the activity a pane shows", () => {
     expect(items[0]).toMatchObject({
       kind: "write_file",
       subject: "summary.md",
-      output: "9 bytes",
+      output: "9 字节",
     });
     expect(items[1]).toMatchObject({
       kind: "command",

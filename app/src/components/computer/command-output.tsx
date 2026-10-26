@@ -45,8 +45,7 @@ export function CommandOutput({
       ) : null}
       {failed ? (
         <p className="text-amber-600 text-xs dark:text-amber-500">
-          {"退出代码"}
-          {exitCode}.
+          {`退出码 ${exitCode}`}
         </p>
       ) : null}
     </div>

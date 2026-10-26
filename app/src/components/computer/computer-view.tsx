@@ -266,6 +266,8 @@ type Props = {
   toolCallId?: string;
   /** 右栏「计算机」：画面上面显示一条标签（DESIGN §95）。对话里的小卡片不显示。 */
   browserChrome?: boolean;
+  /** CB-101：预览因为大屏直播让路时告诉外面，右栏状态行据此说清楚。 */
+  onLiveCastChange?: (casting: boolean) => void;
 };
 
 export function ComputerView({
@@ -280,11 +282,15 @@ export function ComputerView({
   finished,
   toolCallId,
   browserChrome = false,
+  onLiveCastChange,
 }: Props) {
   const [shot, setShot] = useState<Screenshot | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   /** The card's screenshot is yielding to a live cast (this window's big screen or another window's). */
   const [castingElsewhere, setCastingElsewhere] = useState(false);
+  useEffect(() => {
+    onLiveCastChange?.(castingElsewhere);
+  }, [castingElsewhere, onLiveCastChange]);
   const [expanded, setExpanded] = useState(false);
   const [streamProblem, setStreamProblem] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);

@@ -1,3 +1,4 @@
+/* biome-ignore-all format: 测试按源码文本断言这份样式表（app/tests 里有 6 个读 styles.css 的用例），整份重排会打断它们，所以保留手写排版。 */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -3886,8 +3887,8 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 .glass-topbar-end .glass-ghost-btn:hover { color: var(--ink-1); }
 .glass-topbar-end .topbar-more[data-popup-open] { background: var(--glass-2); color: var(--ink-1); }
 /* 搜索展开时，被它盖住的页面操作和面板开关淡出（不透过玻璃看到半个图标）。 */
-.glass-topbar-end :is(.topbar-ctx, > .glass-ghost-btn, .topbar-divider) { transition: opacity var(--dur-1) var(--ease-std); }
-.glass-topbar-end:has(.topbar-search[data-open]) :is(.topbar-ctx, > .glass-ghost-btn, .topbar-divider) { opacity: 0; pointer-events: none; }
+.glass-topbar-end :is(.topbar-ctx, .topbar-divider) { transition: opacity var(--dur-1) var(--ease-std); }
+.glass-topbar-end:has(.topbar-search[data-open]) :is(.topbar-ctx, .topbar-divider) { opacity: 0; pointer-events: none; }
 .glass-topbar .glass-avatar { width: 32px !important; height: 32px !important; font-size: 12px !important; }
 .glass-topbar-end > button[aria-label="账号与设置"] { margin-left: 4px; }
 .topbar-ctx { display: flex; align-items: center; gap: 4px; }
@@ -8707,3 +8708,132 @@ cpk-web-inspector {
   display: none !important;
 }
 
+
+
+
+/* ==========================================================================================
+ * CB-098 竖屏 / PC 小窗 / 安卓：抽屉宽度、关闭按钮、PC 拖动区、安全区。
+ * ========================================================================================== */
+/* 安全区变量对所有布局都定义（桌面上 env() 为 0，无副作用）；PC 竖屏、窄浏览器窗口和手机用同一套。 */
+:root {
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+}
+/* 左栏抽屉：宽度由 ui/sidebar.tsx 的 --sidebar-width = min(18rem, 100vw - 48px) 决定（手机也一样），
+   内容一律跟着容器，不再有东西伸出抽屉框。 */
+html[data-phone] .glass-shell [data-slot="sidebar"][data-mobile="true"],
+html[data-phone] [data-slot="sidebar"][data-mobile="true"] {
+  /* biome-ignore lint/complexity/noImportantStyles: ui/sidebar.tsx 在元素上用的是 Tailwind important 类 w-(--sidebar-width)!，这里也得是 !important 才能生效。 */
+  width: var(--sidebar-width) !important;
+}
+[data-slot="sidebar"][data-mobile="true"] * { min-width: 0; }
+[data-slot="sidebar"][data-mobile="true"] :is(.glass-card, .glass-side-card, .acct-card) { max-width: 100%; box-sizing: border-box; }
+@media (max-width: 767px) {
+  /* biome-ignore lint/style/noDescendingSpecificity: 只在手机宽度下补安全区内边距，故意写在更具体的 html[data-phone] 宽度规则之后；两条改的是不同属性，不会互相覆盖。 */
+  [data-slot="sidebar"][data-mobile="true"] {
+    padding-top: calc(16px + var(--safe-t));
+    padding-bottom: calc(16px + var(--safe-b));
+    padding-left: calc(16px + var(--safe-l));
+  }
+}
+/* 抽屉头：只有一个关闭按钮，靠右。 */
+.sidebar-mobile-head { display: flex; justify-content: flex-end; flex: none; margin: -6px -6px 6px 0; }
+.sidebar-mobile-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  color: var(--ink-2);
+  transition: background var(--dur-1) linear, color var(--dur-1) linear;
+}
+.sidebar-mobile-close:hover { background: var(--glass-hover); color: var(--ink-1); }
+.sidebar-mobile-close:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus); }
+html[data-phone] .sidebar-mobile-close { width: 44px; height: 44px; }
+
+/* PC 无边框窗口：抽屉打开时整块窗口都不当拖动区——Chromium 的拖动区按几何合并、不看层叠，
+   盖在顶栏上的抽屉 / 遮罩不会自己挖洞，点击会被系统当成拖窗口吃掉（「面板 / 计算机」点不动的根因）。 */
+html[data-desktop] [data-slot="sheet-content"],
+html[data-desktop] [data-slot="sheet-content"] *,
+html[data-desktop] [data-slot="sheet-overlay"] { -webkit-app-region: no-drag; app-region: no-drag; }
+html[data-desktop] body:has([data-slot="sheet-overlay"]) :is(.glass-topbar, .glass-topbar *, .desk-strip) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+/* 窗口控制提到遮罩之上：抽屉开着时用全局那条 desk-strip 的副本（z-60），只有按钮接收指针，
+   其余部分让点击落到遮罩上（点遮罩任何地方都关抽屉）。 */
+html[data-desktop] body:has([data-slot="sheet-overlay"]) .desk-strip { display: flex; pointer-events: none; background: transparent; }
+html[data-desktop] body:has([data-slot="sheet-overlay"]) .desk-strip .win-ctrls { pointer-events: auto; }
+/* 抽屉让开右上角那排窗口按钮（40px 高）。 */
+html[data-desktop] [data-slot="sidebar"][data-mobile="true"] { top: 40px; height: auto; bottom: 0; }
+@media (max-width: 1279px) {
+  html[data-desktop] .rail-sheet[data-slot="sheet-content"] { top: 48px; }
+}
+/* ── CB-101 计算机活动记录 ─────────────────────────────────────────── */
+.computer-status[data-casting] .computer-status-text { white-space: normal; }
+.computer-status-dot.is-cast { background: #f59e0b; }
+.activity-heading { margin: 0 0 8px; padding: 0 4px; font-size: 14px; font-weight: 600; color: var(--ink-1, var(--foreground)); }
+.activity-empty, .activity-retention { padding: 12px 4px; font-size: 13px; line-height: 1.6; color: var(--ink-2, var(--muted-foreground)); }
+.activity-retention { font-size: 12px; text-align: center; }
+.activity-log { position: relative; min-width: 0; }
+.activity-scroll { max-height: min(60vh, 640px); overflow-y: auto; overflow-x: hidden; overflow-anchor: none; padding-right: 2px; }
+.activity-unseen { position: absolute; top: 4px; left: 50%; transform: translateX(-50%); z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--background); color: var(--ink-1, var(--foreground)); font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.activity-turn { margin-bottom: 12px; }
+.activity-turn-head { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px; font-size: 13px; color: var(--ink-2, var(--muted-foreground)); }
+.activity-turn-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-1, var(--foreground)); font-weight: 500; }
+.activity-turn-status { flex: none; font-size: 12px; }
+.activity-steps, .activity-batch-list { list-style: none; margin: 0; padding: 0; min-width: 0; }
+.activity-batch-list { margin: 2px 0 4px 18px; border-left: 2px solid var(--line); padding-left: 6px; }
+.activity-step { min-width: 0; border-radius: 8px; transition: background-color 1.6s ease; }
+.activity-step.is-fresh { animation: activity-fade-in 420ms ease-out both; background: color-mix(in srgb, #0ea5e9 14%, transparent); }
+@keyframes activity-fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .activity-step.is-fresh { animation: none; } }
+.activity-step-head { display: flex; align-items: flex-start; gap: 8px; width: 100%; min-width: 0; padding: 7px 6px; text-align: left; font-size: 14px; line-height: 1.5; color: var(--ink-1, var(--foreground)); background: none; border: 0; border-radius: 8px; cursor: pointer; }
+.activity-step-head:disabled { cursor: default; }
+.activity-step-head:not(:disabled):hover { background: var(--glass-1, rgba(0,0,0,.04)); }
+.activity-step-icon { flex: none; width: 16px; height: 16px; margin-top: 3px; color: var(--ink-2, var(--muted-foreground)); }
+.activity-step-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; min-width: 0; flex: 1; }
+.activity-you { flex: none; padding: 0 6px; border-radius: 4px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, #8b5cf6 16%, transparent); color: #6d28d9; }
+.dark .activity-you { color: #c4b5fd; }
+.activity-verb { flex: none; font-weight: 500; }
+.activity-object { min-width: 0; overflow-wrap: anywhere; color: var(--ink-1, var(--foreground)); }
+.activity-object.is-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.activity-step-meta { display: flex; flex: none; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--ink-2, var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+.activity-badge { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+.activity-badge.is-running { color: #0369a1; background: color-mix(in srgb, #0ea5e9 14%, transparent); }
+.activity-badge.is-refused { color: #b45309; background: color-mix(in srgb, #f59e0b 16%, transparent); }
+.activity-badge.is-failed, .activity-badge.is-timeout { color: #b91c1c; background: color-mix(in srgb, #ef4444 12%, transparent); }
+.activity-badge.is-cancelled { color: var(--ink-2); background: var(--glass-1, rgba(0,0,0,.05)); }
+.dark .activity-badge.is-running { color: #7dd3fc; }
+.dark .activity-badge.is-refused { color: #fcd34d; }
+.dark .activity-badge.is-failed, .dark .activity-badge.is-timeout { color: #fca5a5; }
+.activity-step[data-status="refused"] > .activity-step-head .activity-object { color: var(--ink-2, var(--muted-foreground)); text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); }
+.activity-details { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 0 6px 8px 30px; min-width: 0; font-size: 13px; }
+.activity-output { width: 100%; max-height: 260px; overflow: auto; }
+.activity-output pre { font-size: 12.5px; }
+.activity-muted { color: var(--ink-2, var(--muted-foreground)); }
+.activity-error { color: #b91c1c; overflow-wrap: anywhere; }
+.activity-link { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: #0369a1; font-size: 13px; cursor: pointer; }
+.dark .activity-link { color: #7dd3fc; }
+.activity-frame { max-width: 100%; border-radius: 6px; border: 1px solid var(--line); }
+.activity-more { display: block; margin: 4px auto 8px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; background: none; font-size: 13px; color: var(--ink-1, var(--foreground)); }
+[data-message-id].is-activity-jump { animation: activity-jump 1.6s ease-out; }
+@keyframes activity-jump { 0%, 40% { background: color-mix(in srgb, #0ea5e9 16%, transparent); } 100% { background: transparent; } }
+@media (max-width: 420px) { .activity-step-meta time { display: none; } }
+
+/* CB-101：窄屏「画面 | 活动」分段切换；对话 → 活动记录跳转 */
+.computer-mobile-tabs { display: none; }
+@media (max-width: 767px) {
+  .computer-mobile-tabs { display: flex; gap: 4px; padding: 3px; border-radius: 999px; background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+  .computer-mobile-tab { position: relative; flex: 1; min-height: 36px; border-radius: 999px; font-size: 14px; color: var(--ink-2, var(--muted-foreground)); }
+  .computer-mobile-tab[aria-selected="true"] { background: var(--background); color: var(--ink-1, var(--foreground)); font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .computer-mobile-unread { position: absolute; top: 8px; margin-left: 4px; width: 8px; height: 8px; border-radius: 999px; background: #ef4444; }
+  [data-mobile-tab="screen"] > .computer-mobile-activity, [data-mobile-tab="activity"] > .computer-mobile-screen { display: none; }
+}
+.activity-jump-link { display: inline-flex; align-items: center; gap: 3px; margin: 2px 0 0; padding: 2px 6px; border-radius: 6px; font-size: 12px; color: var(--ink-2, var(--muted-foreground)); flex: none; }
+.activity-jump-link:hover { background: color-mix(in srgb, var(--foreground) 6%, transparent); color: var(--ink-1, var(--foreground)); }
+.activity-step.is-activity-jump { animation: activity-jump-flash 1.8s ease-out; }
+@keyframes activity-jump-flash { 0%, 40% { background: color-mix(in srgb, #f59e0b 28%, transparent); box-shadow: inset 3px 0 0 #f59e0b; } 100% { background: transparent; box-shadow: none; } }
+@media (max-width: 767px) { .computer-mobile-activity > .activity-heading { display: none; } }
