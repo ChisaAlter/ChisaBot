@@ -37,6 +37,7 @@ type Row = {
   content: string;
   context: string | null;
   agent_id: string | null;
+  shared?: boolean;
   created_at: Date | string;
   updated_at: Date | string;
 };
@@ -50,6 +51,7 @@ const view = (row: Row): MemoryNoteView => ({
   subject: row.subject,
   content: row.content,
   context: row.context,
+  shared: Boolean(row.shared),
   author: row.agent_id ? "bot" : "you",
   agentId: row.agent_id,
   createdAt: iso(row.created_at),
@@ -77,7 +79,7 @@ function clockIn(timeZone: string, at = new Date()): string {
   }
 }
 
-export type NoteInput = { kind: MemoryKind; subject?: string | null; content: string; context?: string | null };
+export type NoteInput = { kind: MemoryKind; subject?: string | null; content: string; context?: string | null; shared?: boolean };
 
 export function createMemoryNotes(database: Database, options: { timeZone?: string } = {}) {
   const sql = database.$client;
@@ -93,9 +95,11 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
         content text NOT NULL,
         context text,
         agent_id text,
+        shared boolean NOT NULL DEFAULT false,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
       );
+      ALTER TABLE chisabot_memory_notes ADD COLUMN IF NOT EXISTS shared boolean NOT NULL DEFAULT false;
       CREATE INDEX IF NOT EXISTS chisabot_memory_notes_owner ON chisabot_memory_notes (owner_user_id, kind, updated_at DESC);
       CREATE TABLE IF NOT EXISTS chisabot_memory_bots (
         owner_user_id text NOT NULL,
@@ -108,13 +112,14 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
 
   const all = (owner: string) =>
     sql.unsafe<Row[]>(
-      "SELECT * FROM chisabot_memory_notes WHERE owner_user_id = $1 ORDER BY updated_at DESC LIMIT $2",
+      "SELECT * FROM chisabot_memory_notes WHERE owner_user_id = $1 OR shared = true ORDER BY shared DESC, updated_at DESC LIMIT $2",
       [owner, MEMORY_LIMITS.perUser],
     );
-  const byId = async (owner: string, id: string) =>
-    ID.test(id)
-      ? ((await sql.unsafe<Row[]>("SELECT * FROM chisabot_memory_notes WHERE id = $1 AND owner_user_id = $2", [id, owner]))[0] ?? null)
-      : null;
+  const byId = async (owner: string, id: string, isAdmin = false) => {
+    if (!ID.test(id)) return null;
+    const rows = await all(owner);
+    return rows.find((r) => r.id === id && (r.owner_user_id === owner || (isAdmin && r.shared))) ?? null;
+  };
 
   async function search(owner: string, query: string, kind?: MemoryKind, limit = 30) {
     const rows = (await all(owner)).filter((row) => !kind || row.kind === kind);
@@ -128,19 +133,20 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
       .map((hit) => hit.row);
   }
 
-  async function create(owner: string, input: NoteInput, agentId: string | null) {
+  async function create(owner: string, input: NoteInput, agentId: string | null, isAdmin = false) {
     const kind = kindSchema.parse(input.kind);
     const content = clean(input.content, MEMORY_LIMITS.content);
     if (!content) throw new MemoryNoteError("内容不能为空。");
     let subject = clean(input.subject, MEMORY_LIMITS.subject);
     const context = clean(input.context, MEMORY_LIMITS.context);
+    const shared = Boolean(isAdmin && input.shared);
     if (kind === "daily") subject = subject && /^\d{4}-\d{2}-\d{2}$/.test(subject) ? subject : dayIn(timeZone);
     if (SUBJECT_KINDS.includes(kind) && !subject) throw new MemoryNoteError(`「${MEMORY_KIND_LABELS[kind]}」要写主题（名字）。`);
     // 同一个人 / 地点 / 项目 / 同一天的日志只有一条：新内容并进去，不另起一条。
     if (subject && (SUBJECT_KINDS.includes(kind) || kind === "daily")) {
       const [same] = await sql.unsafe<Row[]>(
-        "SELECT * FROM chisabot_memory_notes WHERE owner_user_id = $1 AND kind = $2 AND lower(subject) = lower($3) LIMIT 1",
-        [owner, kind, subject],
+        "SELECT * FROM chisabot_memory_notes WHERE owner_user_id = $1 AND kind = $2 AND lower(subject) = lower($3) AND shared = $4 LIMIT 1",
+        [owner, kind, subject, shared],
       );
       if (same) {
         if (same.content.includes(content)) return { note: view(same), merged: true, unchanged: true };
@@ -153,8 +159,8 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
       }
     } else {
       const [dup] = await sql.unsafe<Row[]>(
-        "SELECT * FROM chisabot_memory_notes WHERE owner_user_id = $1 AND kind = $2 AND content = $3 LIMIT 1",
-        [owner, kind, content],
+        "SELECT * FROM chisabot_memory_notes WHERE owner_user_id = $1 AND kind = $2 AND content = $3 AND shared = $4 LIMIT 1",
+        [owner, kind, content, shared],
       );
       if (dup) return { note: view(dup), merged: false, unchanged: true };
     }
@@ -164,35 +170,38 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
     );
     if (n >= MEMORY_LIMITS.perUser) throw new MemoryNoteError("记忆已满，请先在 设置 → 记忆 里删掉一些。");
     const [row] = await sql.unsafe<Row[]>(
-      `INSERT INTO chisabot_memory_notes (id, owner_user_id, kind, subject, content, context, agent_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [`mem_${randomUUID().replace(/-/g, "").slice(0, 20)}`, owner, kind, subject, content, context, agentId],
+      `INSERT INTO chisabot_memory_notes (id, owner_user_id, kind, subject, content, context, agent_id, shared)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [`mem_${randomUUID().replace(/-/g, "").slice(0, 20)}`, owner, kind, subject, content, context, agentId, shared],
     );
     return { note: view(row!), merged: false, unchanged: false };
   }
 
-  async function update(owner: string, id: string, patch: Partial<NoteInput>) {
-    const row = await byId(owner, id);
-    if (!row) throw new MemoryNoteError("找不到这条记忆（可能已经删了）。");
+  async function update(owner: string, id: string, patch: Partial<NoteInput>, isAdmin = false) {
+    const row = await byId(owner, id, isAdmin);
+    if (!row) throw new MemoryNoteError("找不到这条记忆（可能已经删了或属于只读公共知识库）。");
     const kind = patch.kind ? kindSchema.parse(patch.kind) : row.kind;
     const content = patch.content === undefined ? row.content : clean(patch.content, MEMORY_LIMITS.content);
     if (!content) throw new MemoryNoteError("内容不能为空；要删掉请用删除。");
     const subject = patch.subject === undefined ? row.subject : clean(patch.subject, MEMORY_LIMITS.subject);
     if (SUBJECT_KINDS.includes(kind) && !subject) throw new MemoryNoteError(`「${MEMORY_KIND_LABELS[kind]}」要写主题（名字）。`);
     const context = patch.context === undefined ? row.context : clean(patch.context, MEMORY_LIMITS.context);
+    const shared = isAdmin && patch.shared !== undefined ? Boolean(patch.shared) : Boolean(row.shared);
     const [next] = await sql.unsafe<Row[]>(
-      `UPDATE chisabot_memory_notes SET kind = $3, subject = $4, content = $5, context = $6, updated_at = now()
+      `UPDATE chisabot_memory_notes SET kind = $3, subject = $4, content = $5, context = $6, shared = $7, updated_at = now()
        WHERE id = $1 AND owner_user_id = $2 RETURNING *`,
-      [id, owner, kind, subject, content, context],
+      [id, row.owner_user_id, kind, subject, content, context, shared],
     );
     return view(next!);
   }
 
-  async function remove(owner: string, ids: readonly string[]) {
+  async function remove(owner: string, ids: readonly string[], isAdmin = false) {
     const valid = [...new Set(ids)].filter((id) => ID.test(id));
     if (!valid.length) return [];
     const rows = await sql.unsafe<Row[]>(
-      "DELETE FROM chisabot_memory_notes WHERE owner_user_id = $1 AND id = ANY(string_to_array($2, chr(31))) RETURNING *",
+      isAdmin
+        ? "DELETE FROM chisabot_memory_notes WHERE (owner_user_id = $1 OR shared = true) AND id = ANY(string_to_array($2, chr(31))) RETURNING *"
+        : "DELETE FROM chisabot_memory_notes WHERE owner_user_id = $1 AND id = ANY(string_to_array($2, chr(31))) RETURNING *",
       [owner, valid.join("\u001f")],
     );
     return rows.map(view);
@@ -210,7 +219,7 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
     totalRemaining: number;
     summary: string;
   }> {
-    const rows = await all(owner);
+    const rows = (await all(owner)).filter((r) => r.owner_user_id === owner && !r.shared);
     let mergedCount = 0;
     let deduplicatedCount = 0;
     const toDelete: string[] = [];
@@ -317,8 +326,11 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
       return kept.length ? `## ${title}\n${kept.join("\n")}` : "";
     };
     const fact = (row: Row) =>
-      take(`- [${row.id}] ${row.subject ? `${row.subject}：` : ""}${row.content.replace(/\n+/g, "；")}${row.context ? `（情境：${row.context}）` : ""}`);
-    const index = (row: Row) => take(`- [${row.id}] ${row.subject}：${row.content.split("\n")[0]!.slice(0, 80)}`);
+      take(
+        `- [${row.id}] ${row.shared ? "〔公共知识库〕" : ""}${row.subject ? `${row.subject}：` : ""}${row.content.replace(/\n+/g, "；")}${row.context ? `（情境：${row.context}）` : ""}`,
+      );
+    const index = (row: Row) =>
+      take(`- [${row.id}] ${row.shared ? "〔公共知识库〕" : ""}${row.subject}：${row.content.split("\n")[0]!.slice(0, 80)}`);
     const parts = [
       section("个人资料", rows.filter((r) => r.kind === "profile").map(fact)),
       section("偏好", rows.filter((r) => r.kind === "preference").map(fact)),
@@ -458,7 +470,7 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
       ),
       tool(
         "knowledge_search",
-        "在用户的「个人知识库（第二大脑）」与长期笔记中检索文档片段与知识条目，返回带标题与来源出处的匹配结果。",
+        "在用户的「个人知识库（第二大脑）」、管理员配置的「公共知识库」与长期笔记中检索文档片段与知识条目，返回带标题与来源出处的匹配结果。",
         z.object({ query: z.string().max(200).describe("检索关键词或问题") }).strict(),
         async ({ query }) => {
           const rows = await search(owner, query, undefined, 20);
@@ -466,7 +478,7 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
           return rows
             .map(
               (r) =>
-                `- [${r.id}] **${r.subject || MEMORY_KIND_LABELS[r.kind]}**${r.context ? `（来源：${r.context}）` : ""}\n  ${r.content.replace(/\n+/g, "\n  ")}`,
+                `- [${r.id}] ${r.shared ? "〔公共知识库〕" : ""}**${r.subject || MEMORY_KIND_LABELS[r.kind]}**${r.context ? `（来源：${r.context}）` : ""}\n  ${r.content.replace(/\n+/g, "\n  ")}`,
             )
             .join("\n\n");
         },
@@ -489,6 +501,7 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
         subject: z.string().max(200).nullable().optional(),
         content: z.string().max(MEMORY_LIMITS.content * 2),
         context: z.string().max(1000).nullable().optional(),
+        shared: z.boolean().optional(),
       })
       .strict();
     app.get("/", async (c) => {
@@ -498,22 +511,22 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
     });
     app.post("/", async (c) => {
       const input = noteBody.parse(await c.req.json());
-      return c.json(await create(c.var.actor.id, input, null), 201);
+      return c.json(await create(c.var.actor.id, input, null, c.var.actor.role === "admin"), 201);
     });
     app.post("/dream", async (c) => {
       return c.json(await dream(c.var.actor.id));
     });
     app.patch("/:id", async (c) => {
       const input = noteBody.partial().parse(await c.req.json());
-      return c.json({ note: await update(c.var.actor.id, c.req.param("id"), input) });
+      return c.json({ note: await update(c.var.actor.id, c.req.param("id"), input, c.var.actor.role === "admin") });
     });
     app.delete("/:id", async (c) => {
-      const removed = await remove(c.var.actor.id, [c.req.param("id")]);
+      const removed = await remove(c.var.actor.id, [c.req.param("id")], c.var.actor.role === "admin");
       return removed.length ? c.body(null, 204) : c.json({ error: "找不到这条记忆。" }, 404);
     });
     app.post("/forget", async (c) => {
       const { ids } = z.object({ ids: z.array(z.string()).min(1).max(500) }).parse(await c.req.json());
-      return c.json({ removed: (await remove(c.var.actor.id, ids)).length });
+      return c.json({ removed: (await remove(c.var.actor.id, ids, c.var.actor.role === "admin")).length });
     });
     app.put("/bots/:agentId", async (c) => {
       const agentId = c.req.param("agentId");

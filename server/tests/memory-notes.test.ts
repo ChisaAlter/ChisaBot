@@ -52,6 +52,27 @@ describe.skipIf(!url)("memory notes store", () => {
     expect(await notes.remove(other, (await notes.search(owner, "小林")).map((row) => row.id))).toHaveLength(0);
   });
 
+  test("CB-097a: shared knowledge base notes are visible to all users and editable only by admins", async () => {
+    const shared = await notes.create(owner, { kind: "note", subject: "团队规范", content: "代码提交须通过 CI 检查", shared: true }, null, true);
+    expect(shared.note.shared).toBe(true);
+    // 其他普通成员也能检索到公共知识库，并在机器人上下文里看到〔公共知识库〕标记。
+    const otherHits = await notes.search(other, "团队规范", "note");
+    expect(otherHits.some((row) => row.id === shared.note.id && row.shared)).toBe(true);
+    expect(await notes.context(other, "bot-a")).toContain("〔公共知识库〕");
+    // 普通成员（isAdmin=false）不能修改或删除他人创建的公共知识库，管理员（isAdmin=true）可以修改与删除。
+    let updateErr: Error | null = null;
+    try {
+      await notes.update(other, shared.note.id, { content: "篡改" }, false);
+    } catch (e) {
+      updateErr = e as Error;
+    }
+    expect(updateErr?.message).toContain("属于只读公共知识库");
+    expect(await notes.remove(other, [shared.note.id], false)).toHaveLength(0);
+    const updated = await notes.update(other, shared.note.id, { content: "代码提交须通过 CI 与 Code Review" }, true);
+    expect(updated?.content).toBe("代码提交须通过 CI 与 Code Review");
+    expect((await notes.remove(other, [shared.note.id], true)).map((r) => r.id)).toEqual([shared.note.id]);
+  });
+
   test("tools: log appends to today's daily note, forget deletes every copy", async () => {
     const tools = notes.tools(owner, "bot-a");
     const run = (name: string, args: unknown) => tools.find((tool) => tool.name === name)!.execute(args);

@@ -447,9 +447,12 @@ export function createChisaSkills(options: {
           url: z.string().max(1000).optional(),
           markdown: z.string().max(25000).optional(),
           slug: z.string().max(40).optional(),
+          shared: z.boolean().optional(),
         })
         .parse(await c.req.json());
       const userId = c.var.actor.id;
+      const isAdmin = c.var.actor.role === "admin";
+      const targetOwner = isAdmin && body.shared ? null : userId;
 
       if (body.hubSlug) {
         const target = body.hubSlug.trim().toLowerCase();
@@ -460,13 +463,13 @@ export function createChisaSkills(options: {
         if (!presets.length) return c.json({ error: "未找到该精选技能。" }, 404);
         for (const preset of presets) {
           const owner = await options.store.skillOwner(preset.slug);
-          if (owner !== undefined && owner !== userId) continue;
+          if (owner !== undefined && owner !== targetOwner && !(isAdmin && (owner === null || owner === userId))) continue;
           await options.store.installSkill({
             slug: preset.slug,
             title: preset.title,
             summary: preset.summary,
             instructions: preset.instructions,
-            ownerUserId: userId,
+            ownerUserId: targetOwner,
             by: userId,
           });
         }
@@ -498,7 +501,7 @@ export function createChisaSkills(options: {
       const parsed = parseSkillMarkdown(rawText, fallbackSlug);
       const finalSlug = body.slug?.trim() && SKILL_SLUG.test(body.slug.trim()) ? body.slug.trim() : parsed.slug;
       const owner = await options.store.skillOwner(finalSlug);
-      if (owner !== undefined && owner !== userId) {
+      if (owner !== undefined && owner !== targetOwner && !(isAdmin && (owner === null || owner === userId))) {
         return c.json({ error: `「${finalSlug}」已被占用，请指定另一个英文名字。` }, 409);
       }
       await options.store.installSkill({
@@ -506,7 +509,7 @@ export function createChisaSkills(options: {
         title: parsed.title,
         summary: parsed.summary,
         instructions: parsed.instructions,
-        ownerUserId: userId,
+        ownerUserId: targetOwner,
         by: userId,
       });
       const saved = (await visible(userId)).find((skill) => skill.slug === finalSlug);
@@ -516,21 +519,45 @@ export function createChisaSkills(options: {
       const slug = c.req.param("slug");
       if (!SKILL_SLUG.test(slug)) return c.json({ error: "名字只能用小写字母、数字和连字符（2–40 个字符），首尾不能是连字符。" }, 400);
       const body = z
-        .object({ title: z.string().trim().min(1).max(60), summary: z.string().trim().max(200).default(""), instructions: z.string().trim().min(1).max(20000), create: z.boolean().optional() })
+        .object({
+          title: z.string().trim().min(1).max(60),
+          summary: z.string().trim().max(200).default(""),
+          instructions: z.string().trim().min(1).max(20000),
+          create: z.boolean().optional(),
+          shared: z.boolean().optional(),
+        })
         .parse(await c.req.json());
+      const isAdmin = c.var.actor.role === "admin";
       const owner = await options.store.skillOwner(slug);
-      if (owner !== undefined && owner !== c.var.actor.id)
+      if (owner !== undefined && owner !== c.var.actor.id && !(isAdmin && owner === null))
         return c.json({ error: `「${slug}」这个名字已经被${owner === null ? "共享技能" : "别人的技能"}占用，换个名字。` }, 409);
       if (body.create && owner !== undefined) return c.json({ error: `你已经有一个叫「${slug}」的技能了。` }, 409);
-      await options.store.installSkill({ slug, title: body.title, summary: body.summary, instructions: body.instructions, ownerUserId: c.var.actor.id, by: c.var.actor.id });
+      const targetOwner =
+        isAdmin && body.shared !== undefined
+          ? body.shared
+            ? null
+            : c.var.actor.id
+          : isAdmin && owner === null
+            ? null
+            : c.var.actor.id;
+      await options.store.installSkill({
+        slug,
+        title: body.title,
+        summary: body.summary,
+        instructions: body.instructions,
+        ownerUserId: targetOwner,
+        by: c.var.actor.id,
+      });
       const saved = (await visible(c.var.actor.id)).find((skill) => skill.slug === slug);
       return c.json({ skill: saved ? view(c.var.actor.id)(saved) : null });
     });
     app.delete("/:slug", async (c) => {
       const slug = c.req.param("slug");
+      const isAdmin = c.var.actor.role === "admin";
       const owner = await options.store.skillOwner(slug);
       if (owner === undefined) return c.json({ error: "找不到这个技能。" }, 404);
-      if (owner !== c.var.actor.id) return c.json({ error: "共享技能只能由管理员在 设置 → 技能（管理）里删除。" }, 403);
+      if (owner !== c.var.actor.id && !(isAdmin && owner === null))
+        return c.json({ error: "共享技能只能由管理员删除。" }, 403);
       await options.store.uninstallSkill(slug, c.var.actor.id);
       return c.body(null, 204);
     });

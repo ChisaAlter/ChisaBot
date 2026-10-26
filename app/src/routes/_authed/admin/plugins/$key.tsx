@@ -51,6 +51,7 @@ import {
   refreshPluginServerMutationOptions,
   registerOAuthClientMutationOptions,
   removePluginServerMutationOptions,
+  setServerAutoGrantAllMutationOptions,
 } from "@/lib/plugins/mutations";
 import {
   type CatalogueItem,
@@ -252,6 +253,10 @@ function RouteComponent() {
   });
   const remove = useMutation({
     ...removePluginServerMutationOptions(queryClient),
+    ...report,
+  });
+  const setAutoGrantAll = useMutation({
+    ...setServerAutoGrantAllMutationOptions(queryClient),
     ...report,
   });
   const connectSelf = useMutation({
@@ -891,6 +896,22 @@ function RouteComponent() {
           }
           title={"工具"}
         >
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3.5 py-2.5">
+            <div className="min-w-0">
+              <div className="font-medium text-sm">{"全员默认开启（所有用户与机器人自动可用）"}</div>
+              <div className="text-muted-foreground text-xs">
+                {"开启后，无需逐个机器人手动勾选，本实例所有用户的机器人都可直接使用此 MCP 服务器的全部工具。"}
+              </div>
+            </div>
+            <Switch
+              checked={Boolean(server.autoGrantAll)}
+              disabled={setAutoGrantAll.isPending}
+              onCheckedChange={(checked) => {
+                setError(null);
+                setAutoGrantAll.mutate({ serverId: server.id, enabled: Boolean(checked) });
+              }}
+            />
+          </div>
           {server.tools.length === 0 ? (
             <PageEmpty>
               {server.lastError ?? "未列出工具。刷新以再次询问供应商。"}

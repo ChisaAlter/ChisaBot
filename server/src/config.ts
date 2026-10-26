@@ -1278,7 +1278,7 @@ export function loadConfig(
     accessibility: accessibilityEnabled(environment),
     generativeUi: generativeUiEnabled(environment),
     selfHostBanner: selfHostBannerEnabled(environment),
-    accountsUi: ["1", "true"].includes(optional(environment, "CHISABOT_ACCOUNTS_UI") ?? ""),
+    accountsUi: !["0", "false"].includes((optional(environment, "CHISABOT_ACCOUNTS_UI") ?? "").toLowerCase()),
     extras: parseChisabotExtras(optional(environment, "CHISABOT_EXTRAS")),
     ...(optional(environment, "APP_DIST_DIR")
       ? { appDistDir: optional(environment, "APP_DIST_DIR") as string }

@@ -17,7 +17,7 @@ export const Route = createFileRoute("/_authed/settings/share")({
  */
 function ShareWithFriendsPage() {
   const caps = useQuery(deploymentCapabilitiesQueryOptions());
-  const accountsUi = caps.data?.accountsUi === true;
+  const accountsUi = caps.data?.accountsUi !== false;
   const install = "sh deploy/friend-up.sh";
 
   return (

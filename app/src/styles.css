@@ -10052,4 +10052,10 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   white-space: nowrap;
 }
 
+/* 隐藏 CopilotKit 默认的 Web Inspector 浮球与推广弹窗，避免遮挡右上角面板按钮与移动端顶栏 */
+cpk-web-inspector {
+  display: none !important;
+}
+
+
 

@@ -122,7 +122,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     items: [
       { id: "memory-bots", title: "哪些机器人用记忆", description: "按机器人打开或关闭记忆", find: "哪些机器人用记忆", keywords: ["开关"] },
       { id: "memory-dream", title: "自动整理记忆（Memory Dreaming）", description: "一键合并重复与碎片记忆，提炼长期偏好", find: "我记住的事", keywords: ["整理记忆", "dream", "去重", "合并"] },
-      { id: "knowledge-base", title: "个人知识库（文章 / 笔记 / 摘录）", description: "录入长文、文档与网页摘录供语义检索", find: "我记住的事", keywords: ["知识库", "kb", "knowledge", "录入知识库", "笔记"] },
+      { id: "knowledge-base", title: "个人与公共知识库（文章 / 笔记 / 摘录）", description: "录入个人或全员共享的文档摘录供语义检索", find: "我记住的事", keywords: ["知识库", "公共知识库", "共享知识库", "kb", "knowledge", "录入知识库", "笔记"] },
     ],
   },
   {
@@ -132,9 +132,9 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     sub: "机器人照着做的方法",
     icon: IconSparkles,
     to: "/settings/skills",
-    keywords: ["jn", "jineng", "skill", "skills", "做法", "方法", "共享技能"],
+    keywords: ["jn", "jineng", "skill", "skills", "做法", "方法", "共享技能", "全局共享技能"],
     items: [
-      { id: "curated-hub", title: "精选个人助理技能库", description: "一键安装每日晨报、收件箱管家、知识库归档等 8 款精选技能", find: "精选个人助理技能库", keywords: ["精选技能", "精选", "模板", "一键安装", "hub"] },
+      { id: "curated-hub", title: "精选个人助理技能库", description: "一键安装每日晨报、收件箱管家、知识库归档等 8 款精选技能（支持全员共享安装）", find: "精选个人助理技能库", keywords: ["精选技能", "精选", "模板", "一键安装", "hub", "全员共享"] },
       { id: "import-skill", title: "导入 SKILL.md 技能", description: "通过 GitHub URL 或粘贴 Markdown 批量导入技能", find: "技能", keywords: ["skill.md", "导入", "github", "markdown"] },
     ],
   },
@@ -229,7 +229,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     admin: true,
     keywords: ["cj", "ljq", "mcp", "plugin", "plugins", "connector", "插件", "连接器", "composio", "notion", "drive", "parallel", "stdio"],
     items: [
-      { id: "custom-mcp", title: "添加自定义 HTTP MCP 服务器", description: "接入任意遵循 Streamable HTTP 协议的远程 MCP 服务器", find: "已连接", keywords: ["自定义 mcp", "custom mcp", "http mcp"] },
+      { id: "custom-mcp", title: "添加自定义 HTTP MCP 服务器", description: "接入任意遵循 Streamable HTTP 协议的远程 MCP 服务器（支持全员默认开启）", find: "已连接", keywords: ["自定义 mcp", "custom mcp", "http mcp", "全员默认开启"] },
       { id: "local-stdio-mcp", title: "本地电脑 stdio MCP 桥接", description: "免公网端口，直接通过已配对电脑调用 npx / uvx 本地 MCP 工具", find: "本地电脑 stdio MCP 桥接", keywords: ["stdio", "npx", "uvx", "本地 mcp", "device_mcp_call"] },
     ],
   },
@@ -257,13 +257,15 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     id: "accounts",
     group: "accounts",
     title: "账号",
-    sub: "邀请朋友、停用、重置密码",
+    sub: "新建账号、邀请成员、角色权限与密码管理",
     icon: IconUsers,
     to: "/admin/accounts",
     admin: true,
     accountsUi: true,
-    keywords: ["zh", "多用户", "朋友", "邀请", "用户", "accounts", "users", "invite"],
-    items: [],
+    keywords: ["zh", "多用户", "朋友", "邀请", "用户", "管理员", "新建账号", "accounts", "users", "invite", "admin"],
+    items: [
+      { id: "create-account", title: "新建账号与设置管理员", description: "直接新建成员或管理员账号、生成邀请链接、修改角色与密码", find: "账号", keywords: ["新建账号", "管理员", "角色", "修改密码", "邀请链接"] },
+    ],
   },
   {
     id: "share",
