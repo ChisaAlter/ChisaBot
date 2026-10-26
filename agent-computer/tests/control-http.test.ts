@@ -6,7 +6,7 @@ import type { ComputerControlState } from "../../shared/computer-control";
 
 // A real HTTP dispatcher and shell lease, without launching Chromium. Opt in like live-screen tests
 // because agent-computer's own Playwright dependency is not installed by the root unit-test lane.
-const asked = process.env.OPENBOT_CONTROL_HTTP === "1";
+const asked = process.env.CHISABOT_CONTROL_HTTP === "1";
 let root = "";
 let base = "";
 let child: ReturnType<typeof Bun.spawn> | undefined;
@@ -15,8 +15,8 @@ async function post(path: string, body: unknown) {
   return fetch(`${base}${path}`, {
     method: "POST",
     headers: {
-      "x-openbot-computer-token": token,
-      "x-openbot-bot-id": "bot-http",
+      "x-chisabot-computer-token": token,
+      "x-chisabot-bot-id": "bot-http",
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
@@ -27,8 +27,8 @@ async function control(requestId?: string): Promise<ComputerControlState> {
     `${base}/control${requestId ? `?requestId=${requestId}` : ""}`,
     {
       headers: {
-        "x-openbot-computer-token": token,
-        "x-openbot-bot-id": "bot-http",
+        "x-chisabot-computer-token": token,
+        "x-chisabot-bot-id": "bot-http",
       },
     },
   );

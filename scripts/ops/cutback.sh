@@ -14,9 +14,9 @@
 # Exit codes: 0 ok · 2 bad args · 3 image missing · 4 script missing · 5 execute failed
 set -u
 
-COMPOSE_DIR=${CHISABOT_COMPOSE_DIR:-/opt/openbot-zh}
+COMPOSE_DIR=${CHISABOT_COMPOSE_DIR:-/opt/chisabot-zh}
 UPDATER=${CHISABOT_UPDATER_DIR:-/opt/chisabot-updater}
-APP=${CHISABOT_APP_CONTAINER:-openbot-zh}
+APP=${CHISABOT_APP_CONTAINER:-chisabot-zh}
 IMAGE_REPO=${CHISABOT_IMAGE_REPO:-local/chisabot}
 EXECUTE=${CUTBACK_EXECUTE:-0}
 WANT_TAG=""

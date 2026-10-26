@@ -8,7 +8,7 @@ export const browser = await chromium.launch({ headless: true, executablePath: `
 export const errors = [];
 export async function context(theme, viewport, extra = {}) {
   const ctx = await browser.newContext({ viewport, locale: "zh-CN", timezoneId: "Asia/Shanghai", ignoreHTTPSErrors: true, ...extra });
-  await ctx.addInitScript((t) => { try { localStorage.setItem("openbot-theme", t); } catch {} }, theme);
+  await ctx.addInitScript((t) => { try { localStorage.setItem("chisabot-theme", t); } catch {} }, theme);
   if (TOK) await ctx.addCookies([{ name: "__Host-openbot_session", value: TOK, domain: new URL(process.env.BASE || "http://127.0.0.1:3001").hostname, path: "/", secure: true, httpOnly: true, sameSite: "Lax" }]);
   return ctx;
 }
@@ -26,7 +26,7 @@ export async function mkBot(page, name, role = "你是测试助手，回答简�
 }
 export const ta = (page) => page.locator('[aria-label="消息"]:visible').first();
 export const busy = (page) => page.locator('[data-testid="composer-stop"], [data-testid="composer-queue"]').first().isVisible().catch(() => false);
-export async function openBot(page, bot) {
+export async function chisaBot(page, bot) {
   await page.goto(`${base}/bot?agent=${encodeURIComponent(bot)}`, { waitUntil: "domcontentloaded" }); await page.waitForURL(/\/channel\//, { timeout: 60000 });
   await ta(page).waitFor({ timeout: 60000 }); await page.waitForTimeout(1500);
 }

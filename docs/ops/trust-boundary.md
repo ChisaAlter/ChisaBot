@@ -15,9 +15,9 @@ flowchart TB
   end
 
   subgraph Host["宿主机 <PROD_HOST>（默认端口）"]
-    GW["openbot-public-gateway<br/>nginx · host 网络<br/>:8443 / :2053 TLS"]
-    Auth["openbot-web-auth<br/>127.0.0.1:3002<br/>会话 SQLite"]
-    App["openbot-zh<br/>127.0.0.1:3001<br/>应用 + 网页"]
+    GW["chisabot-public-gateway<br/>nginx · host 网络<br/>:8443 / :2053 TLS"]
+    Auth["chisabot-web-auth<br/>127.0.0.1:3002<br/>会话 SQLite"]
+    App["chisabot-zh<br/>127.0.0.1:3001<br/>应用 + 网页"]
     Magpie["Magpie<br/>127.0.0.1:3425 / 3430"]
     Node["chisabot-cloudnode<br/>桥接网 · 无宿主机端口发布"]
     Sync["cloudnode-sync 边车<br/>节点 netns 内 :2222"]

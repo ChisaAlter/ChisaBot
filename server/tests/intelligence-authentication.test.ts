@@ -41,7 +41,7 @@ function platform() {
 
 async function failure() {
   const response = await desktop.request("/api/desktop/connection-failure", {
-    headers: { "x-openbot-desktop-host-token": hostToken },
+    headers: { "x-chisabot-desktop-host-token": hostToken },
   });
   return response.json();
 }

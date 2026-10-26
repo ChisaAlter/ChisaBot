@@ -216,12 +216,12 @@ describe("a seeded Mastra Bot", () => {
 
   test("is seeded as its own kind, carrying the agent it names", () => {
     const [agent] = withAgent(
-      "{ id: research, name: Research, title: Research, role_description: Look things up., type: remote-mastra, endpoint: http://mastra.internal, remote_agent_id: openbot }",
+      "{ id: research, name: Research, title: Research, role_description: Look things up., type: remote-mastra, endpoint: http://mastra.internal, remote_agent_id: chisabot }",
     ).agents;
     expect(agent?.type).toBe("remote_mastra");
     expect(agent?.configuration).toEqual({
       endpoint: "http://mastra.internal",
-      remoteAgentId: "openbot",
+      remoteAgentId: "chisabot",
     });
   });
 
@@ -402,7 +402,7 @@ describe("tenant YAML validation", () => {
       fileURLToPath(new URL("../../examples/fintech", import.meta.url)),
     );
 
-    expect(tenantPackage.tenantId).toBe("openbot");
+    expect(tenantPackage.tenantId).toBe("chisabot");
     expect(tenantPackage.stylesheet).toBeNull();
     expect(tenantPackage.themeCss).toBe("");
     expect(tenantPackage.checksum).toMatch(/^[a-f0-9]{64}$/);

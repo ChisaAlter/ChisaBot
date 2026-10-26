@@ -10,7 +10,7 @@
 #   sh scripts/ops/isolate-sidecar-app.sh remove
 #
 # Env:
-#   CHISABOT_APP_CONTAINER   default openbot-zh
+#   CHISABOT_APP_CONTAINER   default chisabot-zh
 #   CHISABOT_APP_PORT        default 3001
 #   CHISABOT_ISOLATE_NETWORKS  optional comma list; default = every user network the app is on
 #   CHISABOT_MAGPIE_CONTAINER  default magpie (for --verify)
@@ -19,7 +19,7 @@
 # (or re-run --apply from deploy-serial / start.sh). See docs/ops/trust-boundary.md §5.1.
 set -eu
 
-APP=${CHISABOT_APP_CONTAINER:-openbot-zh}
+APP=${CHISABOT_APP_CONTAINER:-chisabot-zh}
 PORT=${CHISABOT_APP_PORT:-3001}
 MAGPIE=${CHISABOT_MAGPIE_CONTAINER:-magpie}
 COMMENT=chisabot-sidecar-iso

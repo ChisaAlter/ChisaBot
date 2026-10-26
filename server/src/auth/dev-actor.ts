@@ -74,13 +74,13 @@ export function singleUserEnabled(
   // inferred from anything: every signal that could stand in for "this is only my laptop" is absent
   // by default on a server too, which is what made the previous NODE_ENV check useless.
   const asked =
-    environment.OPENBOT_SINGLE_USER?.trim() === "true" ||
+    environment.CHISABOT_SINGLE_USER?.trim() === "true" ||
     // The name this had before. Still honoured so an existing .env keeps working.
-    environment.OPENBOT_DEV_NO_AUTH?.trim() === "true";
+    environment.CHISABOT_DEV_NO_AUTH?.trim() === "true";
   if (asked) return true;
 
   throw new Error(
-    "No identity provider is configured. Set GOOGLE_OAUTH_*, MICROSOFT_OAUTH_* or OKTA_OAUTH_* with BETTER_AUTH_SECRET and BETTER_AUTH_URL, or set OPENBOT_SINGLE_USER=true to run with one administrator and no sign-in. Refusing to start rather than serving a deployment where every visitor is an administrator.",
+    "No identity provider is configured. Set GOOGLE_OAUTH_*, MICROSOFT_OAUTH_* or OKTA_OAUTH_* with BETTER_AUTH_SECRET and BETTER_AUTH_URL, or set CHISABOT_SINGLE_USER=true to run with one administrator and no sign-in. Refusing to start rather than serving a deployment where every visitor is an administrator.",
   );
 }
 

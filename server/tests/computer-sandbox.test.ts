@@ -14,7 +14,7 @@ import {
  */
 function providerWith(sandbox: unknown, seen: string[] = []) {
   return createSandboxComputerProvider({
-    namespace: "openbot",
+    namespace: "chisabot",
     template: { podTemplate: { spec: { containers: [] } } },
     idleAfterMs: 60_000,
     apiServer: "https://kubernetes.default",
@@ -30,7 +30,7 @@ const running = (readyAt: string, node: string, ip: string) => ({
   metadata: { name: "bot-knowledge-abc" },
   spec: { operatingMode: "Running" },
   status: {
-    serviceFQDN: "bot-knowledge-abc.openbot.svc.cluster.local",
+    serviceFQDN: "bot-knowledge-abc.chisabot.svc.cluster.local",
     nodeName: node,
     podIPs: [ip],
     conditions: [
@@ -137,7 +137,7 @@ describe("the credential a sandbox call carries", () => {
     const sent: string[] = [];
     let current = "first";
     const provider = createSandboxComputerProvider({
-      namespace: "openbot",
+      namespace: "chisabot",
       idleAfterMs: 60_000,
       template: { podTemplate: {} },
       apiServer: "https://cluster.test",
@@ -168,7 +168,7 @@ describe("the credential a sandbox call carries", () => {
  * Running when none exists, deleted on Suspended, and never changed while it runs.
  */
 const IMAGE = (tag: string) => ({
-  spec: { containers: [{ name: "computer", image: `openbot:${tag}` }] },
+  spec: { containers: [{ name: "computer", image: `chisabot:${tag}` }] },
 });
 
 function fakeCluster(initial: {
@@ -190,7 +190,7 @@ function fakeCluster(initial: {
   const patches: { contentType: string; body: unknown }[] = [];
   const imageOf = (template: unknown) =>
     (template as ReturnType<typeof IMAGE>).spec.containers[0]?.image.replace(
-      "openbot:",
+      "chisabot:",
       "",
     );
   // What the controller would do on its next reconcile.
@@ -209,7 +209,7 @@ function fakeCluster(initial: {
       volumeClaimTemplates: state.volumeClaimTemplates,
     },
     status: {
-      serviceFQDN: "bot-general-abc.openbot.svc.cluster.local",
+      serviceFQDN: "bot-general-abc.chisabot.svc.cluster.local",
       conditions: [
         {
           type: "Suspended",
@@ -261,7 +261,7 @@ function fakeCluster(initial: {
 
 function providerOn(cluster: ReturnType<typeof fakeCluster>, tag: string) {
   return createSandboxComputerProvider({
-    namespace: "openbot",
+    namespace: "chisabot",
     template: {
       podTemplate: IMAGE(tag),
       volumeClaimTemplates: [{ metadata: { name: "profile" } }],
@@ -373,7 +373,7 @@ describe("updating a computer on request", () => {
 
   test("a Bot with no computer has nothing to update", async () => {
     const provider = createSandboxComputerProvider({
-      namespace: "openbot",
+      namespace: "chisabot",
       template: { podTemplate: IMAGE("new") },
       idleAfterMs: 60_000,
       apiServer: "https://kubernetes.default",

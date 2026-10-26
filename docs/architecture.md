@@ -1,8 +1,8 @@
 # ChisaBot 架构
 
 ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：**一个云端服务器上的机器人（agent）+ 用户的设备作为节点**。这一页讲
-ChisaBot 现在实际在跑的结构；上游 OpenBot 的原始架构（Intelligence、AG-UI Bot 框架、supervisor、SPIRE 等）见
-[openbot-architecture.md](openbot-architecture.md)，其中很多部分正在瘦身（[slimming.md](slimming.md)）。
+ChisaBot 现在实际在跑的结构；上游 ChisaBot 的原始架构（Intelligence、AG-UI Bot 框架、supervisor、SPIRE 等）见
+[chisabot-architecture.md](chisabot-architecture.md)，其中很多部分正在瘦身（[slimming.md](slimming.md)）。
 
 关键决定都记在 [ADR](adr/README.md) 里，界面规则在 [DESIGN.md](../DESIGN.md)。一页概览见 [overview.md](overview.md)，全部功能见
 [features.md](features.md)，全部数据表见 [data-model.md](data-model.md)。本页截至 main `0e23321`（2026-10-17）。
@@ -19,7 +19,7 @@ ChisaBot 现在实际在跑的结构；上游 OpenBot 的原始架构（Intellig
  │ /p/ 公开页面（无 Cookie，CSP sandbox）              /api/im/onebot/ OneBot 反向 WS          │
  └───────────────────────────┬────────────────────────────────────────────────────────────┘
                              ▼  127.0.0.1:3001
- ┌──────────── ChisaBot 应用容器（openbot-zh）──────────────────────────────────────────────┐
+ ┌──────────── ChisaBot 应用容器（chisabot-zh）──────────────────────────────────────────────┐
  │ server（Hono + CopilotKit runtime，内置 agent 循环）  app（React/Vite 构建产物）          │
  │ PostgreSQL（容器内）   agent-computer（Chromium + Xvfb，机器人的云端浏览器 / 工作区）      │
  │ 进程内定时：定时任务 15 s · 面板刷新                                                       │

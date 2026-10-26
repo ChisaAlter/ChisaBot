@@ -84,7 +84,7 @@ class CaptureHermesRun extends Middleware {
           if (event.type === EventType.RUN_ERROR) terminal = true;
           subscriber.next(event);
           if (event.type === EventType.RUN_STARTED)
-            subscriber.next({ type: EventType.CUSTOM, name: "openbot.backend-owned-tools", value: { names: this.ownedNames } });
+            subscriber.next({ type: EventType.CUSTOM, name: "chisabot.backend-owned-tools", value: { names: this.ownedNames } });
         },
         error: (error) => subscriber.error(error),
         complete: () => {

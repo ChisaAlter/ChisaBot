@@ -97,7 +97,7 @@ test.each(["title"] as const)(
       port: 0,
       async fetch(request) {
         expect(new URL(request.url).pathname).toBe("/model");
-        expect(request.headers.get("x-openbot-agent-token")).toBe(
+        expect(request.headers.get("x-chisabot-agent-token")).toBe(
           "owned-plan-token",
         );
         const input = (await request.json()) as (typeof requests)[number];

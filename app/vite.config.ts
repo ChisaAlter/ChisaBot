@@ -22,13 +22,13 @@ import { skyBootScript } from "./src/lib/sky";
  * own middleware below.
  */
 function announceServerPort(port: number): Plugin {
-  const tag = `<script>window.__OPENBOT_WS_PORT__=${JSON.stringify(String(port))};</script>`;
+  const tag = `<script>window.__CHISABOT_WS_PORT__=${JSON.stringify(String(port))};</script>`;
   const inject = (html: string) =>
-    html.includes("__OPENBOT_WS_PORT__")
+    html.includes("__CHISABOT_WS_PORT__")
       ? html
       : html.replace("</head>", `    ${tag}\n  </head>`);
   return {
-    name: "openbot-announce-server-port",
+    name: "chisabot-announce-server-port",
     transformIndexHtml(html, ctx) {
       return ctx.server ? inject(html) : html;
     },
@@ -150,7 +150,7 @@ function routeComponentSplitPath(id: string): string | undefined {
   return filePath.slice(routesIndex + routesMarker.length);
 }
 
-export function selectOpenBotManualChunk(id: string): string | undefined {
+export function selectChisaBotManualChunk(id: string): string | undefined {
   const routePath = routeComponentSplitPath(id);
   if (!routePath) {
     return undefined;
@@ -186,7 +186,7 @@ export function selectOpenBotManualChunk(id: string): string | undefined {
 
 export const routeBuildRollupOutputOptions = {
   onlyExplicitManualChunks: true,
-  manualChunks: selectOpenBotManualChunk,
+  manualChunks: selectChisaBotManualChunk,
 };
 
 export const BUNDLE_STUBS = [

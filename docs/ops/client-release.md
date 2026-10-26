@@ -11,7 +11,7 @@
 |---|---|---|
 | PC 公开更新源 | `<PUBLIC_WEB_ROOT>/downloads/chisabot-pc/` | `latest.yml` + `ChisaBot-PC-<版本>-x64-setup.exe` + `.blockmap` |
 | Android 公开更新源 | `<PUBLIC_WEB_ROOT>/downloads/chisabot-android/` | `latest.json` + 签名 APK |
-| 登录后的下载页（可选） | `/opt/openbot-zh/public/downloads/pc/` | `latest.json`（带 sha256 / 字节数），旧版移到 `archive-<版本>/` |
+| 登录后的下载页（可选） | `/opt/chisabot-zh/public/downloads/pc/` | `latest.json`（带 sha256 / 字节数），旧版移到 `archive-<版本>/` |
 | CI 产物工作目录 | `/opt/chisabot-release/ci-<版本>/` | 每次下载下来的 artifact，留作重建更新源的来源 |
 
 不自建更新源也可以：通用版直接从 GitHub Releases 更新（首次运行让用户填服务器地址）。

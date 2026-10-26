@@ -702,7 +702,7 @@ function signedIn(): MiddlewareHandler<{ Variables: AppVariables }> {
   return async (context, next) => {
     context.set("actor", {
       id: person,
-      email: "person@openbot.test",
+      email: "person@chisabot.test",
       role: "user",
     } as never);
     await next();
@@ -724,7 +724,7 @@ const connectApp = new Hono().route(
     signedIn(),
     async () => true,
     {
-      publicUrl: "https://openbot.example",
+      publicUrl: "https://chisabot.example",
       appUrl: "https://app.example",
       encryptionKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       personHasAccess: async () => true,

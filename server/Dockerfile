@@ -40,8 +40,8 @@ FROM oven/bun:1.3.14 AS runtime
 
 # Not root. The API opens a socket and talks to Postgres; neither needs privileges, and a Chromium
 # container is a separate image with its own reasons.
-RUN groupadd --system --gid 1001 openbot \
-  && useradd --system --uid 1001 --gid openbot openbot
+RUN groupadd --system --gid 1001 chisabot \
+  && useradd --system --uid 1001 --gid chisabot chisabot
 
 WORKDIR /app
 
@@ -59,7 +59,7 @@ COPY examples examples
 COPY --from=app-build /app/app/dist app/dist
 ENV APP_DIST_DIR=/app/app/dist
 
-USER openbot:openbot
+USER chisabot:chisabot
 
 ENV NODE_ENV=production
 ENV PORT=3001

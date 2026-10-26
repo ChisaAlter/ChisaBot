@@ -1,11 +1,11 @@
 "use strict";
 
 (() => {
-  if (window.location.pathname === "/login" || window.location.pathname.startsWith("/auth/") || document.getElementById("openbot-account-control")) return;
+  if (window.location.pathname === "/login" || window.location.pathname.startsWith("/auth/") || document.getElementById("chisabot-account-control")) return;
 
   const originalFetch = window.fetch.bind(window);
   let redirecting = false;
-  const authChannel = typeof window.BroadcastChannel === "function" ? new window.BroadcastChannel("openbot-auth") : null;
+  const authChannel = typeof window.BroadcastChannel === "function" ? new window.BroadcastChannel("chisabot-auth") : null;
 
   function goToLogin(preservePath = true) {
     if (redirecting) return;
@@ -71,9 +71,9 @@
   document.addEventListener("visibilitychange", checkSession);
 
   function mountAccountControl() {
-    if (document.getElementById("openbot-account-control")) return;
+    if (document.getElementById("chisabot-account-control")) return;
     const host = document.createElement("div");
-    host.id = "openbot-account-control";
+    host.id = "chisabot-account-control";
     const shadow = host.attachShadow({ mode: "open" });
     const stylesheet = document.createElement("link");
     stylesheet.rel = "stylesheet";

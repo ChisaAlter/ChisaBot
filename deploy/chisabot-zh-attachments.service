@@ -1,0 +1,7 @@
+[Unit]
+Description=Reclaim abandoned ChisaBot attachments
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec --workdir /app/server chisabot-zh /command/s6-envdir /run/s6/container_environment /command/s6-setuidgid apiuser bun scripts/cull-staged-attachments.ts

@@ -6,7 +6,7 @@ import { testEnvironment } from "./support/environment";
 
 const MEMBER = {
   id: "member-1",
-  email: "member@openbot.test",
+  email: "member@chisabot.test",
   name: "A Member",
   image: null,
 };

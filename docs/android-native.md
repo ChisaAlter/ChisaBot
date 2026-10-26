@@ -20,7 +20,7 @@ Android 客户端（`android/`）是 Kotlin + Jetpack Compose（Material3）原�
 
 - 图片（Coil）走 `Api.imageClient`：同一份 Cookie、跟随跳转；消息 / 头像里的相对路径 `/api/…` 用 `absUrl()` 补成当前服务器地址。
 - 启动图标沿用品牌头像（mipmap 名字不变，桌面图标缓存键稳定）；自适应图标多一层 `monochrome`（头像剪影，`mipmap-xxxhdpi/ic_launcher_monochrome.png`），Android 13+ 打开「主题图标」时可以跟着壁纸变色。
-- 网页兜底页跟随系统深浅色：页面开始 / 加载完把网页的 `localStorage.openbot-theme` 和 `html.dark` 对齐到原生。
+- 网页兜底页跟随系统深浅色：页面开始 / 加载完把网页的 `localStorage.chisabot-theme` 和 `html.dark` 对齐到原生。
 
 ## 用到的服务器接口（都是已有的）
 

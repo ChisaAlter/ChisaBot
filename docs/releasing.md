@@ -42,7 +42,7 @@ APPLE_SIGNING_IDENTITY=- bun run tauri build --config src-tauri/tauri.build-vers
 
 Use `release` instead of `internal` to prepare the plain release version. This only builds an
 artifact; it does not publish a release. macOS keeps numeric system version fields and stores
-the full internal identifier in `OpenBotBuildVersion` inside the app's `Info.plist`. Windows
+the full internal identifier in `ChisaBotBuildVersion` inside the app's `Info.plist`. Windows
 retains the full identifier in `ProductVersion` and `FileVersion`; its fixed numeric fields
 contain the release number. The protected signing job checks both embedded string versions.
 
@@ -80,7 +80,7 @@ Then, in order:
 ```sh
 gh release download v0.1.0 --pattern container-images.json
 docker run -p 3001:3001 --env-file .env \
-  "$(jq -r .images.openbot.reference container-images.json)"
+  "$(jq -r .images.chisabot.reference container-images.json)"
 ```
 
 The same file is how a machine runs the stack without building any of it. Each key under `images`
@@ -142,7 +142,7 @@ publish rather than the proposal, which is why the release PR arriving without i
 not matter: a pull request opened by a workflow does not trigger them.
 
 **No secrets are required to release.** CI and both release workflows use only the built-in
-`GITHUB_TOKEN`. The desktop build workflows also read `OPENBOT_GOOGLE_MODEL_OAUTH_CLIENT_SECRET`.
+`GITHUB_TOKEN`. The desktop build workflows also read `CHISABOT_GOOGLE_MODEL_OAUTH_CLIENT_SECRET`.
 
 ## The one thing CI cannot do
 
@@ -155,7 +155,7 @@ The inherited upstream smoke journey assumes Intelligence mode and asserts that 
 is `valid`. Its configuration requires real Intelligence project values, which a hosted runner
 has no business holding. The `image` check uses placeholders because nothing is contacted at
 startup, but placeholders do not satisfy that journey's licence assertion. ChisaBot also supports
-`OPENBOT_RUNTIME_MODE=local` without these project values; verify that mode with the local runtime
+`CHISABOT_RUNTIME_MODE=local` without these project values; verify that mode with the local runtime
 checks and the deployment acceptance steps in [operations.md](operations.md).
 
 So it is a step a person takes, on a machine with real Intelligence credentials, before merging
@@ -163,7 +163,7 @@ the release PR:
 
 ```sh
 bash scripts/start.sh
-export OPENBOT_SMOKE_COOKIE='better-auth.session_token=...'   # from a signed-in browser
+export CHISABOT_SMOKE_COOKIE='better-auth.session_token=...'   # from a signed-in browser
 bun run test:smoke
 ```
 

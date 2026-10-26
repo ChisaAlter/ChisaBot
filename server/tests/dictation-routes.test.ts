@@ -22,7 +22,7 @@ function recording(type = "audio/webm", size = 8) {
     "file",
     new File([new Uint8Array(size)], `recording.${extension}`, { type }),
   );
-  return { method: "POST", headers: { "x-openbot-dictation": "1" }, body };
+  return { method: "POST", headers: { "x-chisabot-dictation": "1" }, body };
 }
 
 test("requires authentication before processing audio", async () => {
@@ -92,7 +92,7 @@ test("rejects empty, unsupported, malformed and oversized recordings", async () 
     (
       await app.request("/transcriptions", {
         method: "POST",
-        headers: { "x-openbot-dictation": "1" },
+        headers: { "x-chisabot-dictation": "1" },
         body: "broken",
       })
     ).status,

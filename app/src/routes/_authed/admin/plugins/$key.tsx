@@ -742,7 +742,7 @@ function RouteComponent() {
                           </span>
                         </>
                       ) : (
-                        /* The arrow says this leaves OpenBot for the vendor's consent page. It does. */
+                        /* The arrow says this leaves ChisaBot for the vendor's consent page. It does. */
                         <Button
                           disabled={connectSelf.isPending}
                           onClick={() => {
@@ -836,7 +836,7 @@ function RouteComponent() {
               {!plugins.data?.redirectUri ? (
                 <p className="mt-3 text-destructive text-sm" role="alert">
                   {
-                    "此部署没有公共 URL，因此没有人可以完成同意流程。请设置 OPENBOT_PUBLIC_URL。"
+                    "此部署没有公共 URL，因此没有人可以完成同意流程。请设置 CHISABOT_PUBLIC_URL。"
                   }
                 </p>
               ) : server?.dynamicClient ? null : (

@@ -3,7 +3,7 @@ services:
     # Reuse Bun from the locally built ChisaBot image; override s6 init.
     image: ${CHISABOT_IMAGE:-local/chisabot:latest}
     pull_policy: never
-    container_name: openbot-web-auth
+    container_name: chisabot-web-auth
     network_mode: host
     user: "1002:1002"
     working_dir: /auth
@@ -32,7 +32,7 @@ services:
         max-file: "3"
   gateway:
     image: ${CHISABOT_NGINX_IMAGE:-nginx:alpine}
-    container_name: openbot-public-gateway
+    container_name: chisabot-public-gateway
     network_mode: host
     restart: unless-stopped
     read_only: true

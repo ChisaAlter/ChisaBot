@@ -68,7 +68,7 @@ function appFor(baseUrl: string, permitted: string) {
   });
   const actor: AuthenticatedActor = {
     id: "somebody",
-    email: "somebody@openbot.test",
+    email: "somebody@chisabot.test",
     role: "user",
   };
   const asActor: MiddlewareHandler<{ Variables: AppVariables }> = async (
@@ -99,7 +99,7 @@ describe("a Bot named after a deployment route, end to end", () => {
     const { received, baseUrl } = serveComputer();
     const { app, asked } = appFor(baseUrl, "bot-1");
 
-    const response = await app.request("http://openbot.test/bot-1/read");
+    const response = await app.request("http://chisabot.test/bot-1/read");
 
     expect(response.status).toBe(200);
     expect(received).toEqual(["/read"]);
@@ -113,7 +113,7 @@ describe("a Bot named after a deployment route, end to end", () => {
       // arrive. Nothing arriving therefore means the guard, not the gateway, ended the request.
       const { app, asked } = appFor(baseUrl, "never-this-bot");
 
-      const response = await app.request(`http://openbot.test/${name}/read`);
+      const response = await app.request(`http://chisabot.test/${name}/read`);
 
       expect(response.status).toBe(404);
       expect(received).toEqual([]);
@@ -127,7 +127,7 @@ describe("a Bot named after a deployment route, end to end", () => {
     const { received, baseUrl } = serveComputer();
     const { app, asked } = appFor(baseUrl, "policy");
 
-    const response = await app.request("http://openbot.test/policy/read");
+    const response = await app.request("http://chisabot.test/policy/read");
 
     expect(response.status).toBe(200);
     expect(received).toEqual(["/read"]);

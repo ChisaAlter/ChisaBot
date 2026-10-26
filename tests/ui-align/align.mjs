@@ -13,7 +13,7 @@ const browser = await chromium.launch({ headless: true, executablePath: `/ms-pla
 const errors = [];
 async function context(theme, viewport, extra = {}) {
   const ctx = await browser.newContext({ viewport, locale: "zh-CN", timezoneId: "Asia/Shanghai", ignoreHTTPSErrors: true, ...extra });
-  await ctx.addInitScript((t) => { try { localStorage.setItem("openbot-theme", t); } catch {} }, theme);
+  await ctx.addInitScript((t) => { try { localStorage.setItem("chisabot-theme", t); } catch {} }, theme);
   if (process.env.TOK) await ctx.addCookies([{ name: "__Host-openbot_session", value: process.env.TOK, url: base, secure: true, httpOnly: true, sameSite: "Lax" }]);
   return ctx;
 }

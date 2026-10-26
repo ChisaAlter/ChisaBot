@@ -25,7 +25,7 @@ import { join } from "node:path";
 import type { BrowserContext, Cookie } from "playwright";
 
 /** In the profile directory, beside the Cookies database Chromium keeps there itself. */
-export const SESSION_COOKIES_FILE = "openbot-session-cookies.json";
+export const SESSION_COOKIES_FILE = "chisabot-session-cookies.json";
 
 /** How often a running browser's session cookies are checked and, when they changed, written. */
 export const SESSION_COOKIE_SAVE_MS = 30_000;

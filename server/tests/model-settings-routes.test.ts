@@ -16,7 +16,7 @@ function appFor(role: "admin" | "user" | null = "admin", fail = false) {
   const calls: unknown[] = [];
   const args: never[] = Array.from({ length: 38 }) as never[];
   args[0] = loadConfig(
-    testEnvironment({ OPENBOT_SINGLE_USER: "false" }),
+    testEnvironment({ CHISABOT_SINGLE_USER: "false" }),
   ) as never;
   args[1] = {
     handler: () => new Response(null, { status: 204 }),

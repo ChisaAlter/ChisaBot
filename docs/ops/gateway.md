@@ -7,24 +7,24 @@
 ## 1. 结构
 
 ```
-浏览器 ──HTTPS──▶ openbot-public-gateway（nginx，host 网络，:8443 / :2053）
+浏览器 ──HTTPS──▶ chisabot-public-gateway（nginx，host 网络，:8443 / :2053）
                      │ auth_request
-                     ├──────────▶ openbot-web-auth（登录服务，127.0.0.1:3002，会话库 SQLite）
+                     ├──────────▶ chisabot-web-auth（登录服务，127.0.0.1:3002，会话库 SQLite）
                      ▼
-               openbot-zh（应用，127.0.0.1:3001）
+               chisabot-zh（应用，127.0.0.1:3001）
 ```
 
 - 模板：[`deploy/public/nginx.conf`](../../deploy/public/nginx.conf)（模板里的 `chisabot.example.com`、8443、2053 是占位；`render-nginx.sh` 按 `deploy/.env` 的 `CHISABOT_DOMAIN`、
   `CHISABOT_HTTPS_PORT`、`CHISABOT_MAGPIE_PORT`、`CHISABOT_CERT_NAME` 生成 `nginx.generated.conf`，再在 `.env` 设
   `CHISABOT_NGINX_CONF=./nginx.generated.conf`）、
   [`auth/server.ts`](../../deploy/public/auth/server.ts)、`auth-web/`（登录页、Magpie 登录页、`updating.html`）。
-- 部署后的文件：`/opt/openbot-zh/public/`（[layout.md](layout.md)）。
+- 部署后的文件：`/opt/chisabot-zh/public/`（[layout.md](layout.md)）。
 
 ## 2. nginx 网关
 
 ## 2.1 模板与生产同步（v0.1.34 · apply-or-fail）
 
-网关 **不**随应用一键更新；以前手工改过 `/opt/openbot-zh/public/nginx.conf` 后，仓库模板与生产会漂移（v0.1.33 曾因此漏清 Local-Caller）。现用脚本强制对齐：
+网关 **不**随应用一键更新；以前手工改过 `/opt/chisabot-zh/public/nginx.conf` 后，仓库模板与生产会漂移（v0.1.33 曾因此漏清 Local-Caller）。现用脚本强制对齐：
 
 | 命令 | 场景 |
 |---|---|
@@ -41,10 +41,10 @@
 **改法**：
 
 ```sh
-cd /opt/openbot-zh/public
+cd /opt/chisabot-zh/public
 cp nginx.conf nginx.conf.bak-<说明>-$(date +%Y%m%d)
 # 改 nginx.conf（或从仓库模板重新渲染）
-docker exec openbot-public-gateway nginx -t && docker exec openbot-public-gateway nginx -s reload
+docker exec chisabot-public-gateway nginx -t && docker exec chisabot-public-gateway nginx -s reload
 ```
 
 需要回退时写一个 `rollback-<说明>-<日期>.sh`：拷回备份 → `nginx -t` → reload。
@@ -66,8 +66,8 @@ docker exec openbot-public-gateway nginx -t && docker exec openbot-public-gatewa
 
 ## 3. 登录服务
 
-- 改法：拷 `auth/server.ts` / `auth-web/*` 到网关目录 → `docker restart openbot-web-auth`。会话库原地加列，已有登录不受影响。
-- 自带测试：`docker exec openbot-web-auth bun test /auth/server.test.ts /auth/startup-report.test.ts`。
+- 改法：拷 `auth/server.ts` / `auth-web/*` 到网关目录 → `docker restart chisabot-web-auth`。会话库原地加列，已有登录不受影响。
+- 自带测试：`docker exec chisabot-web-auth bun test /auth/server.test.ts /auth/startup-report.test.ts`。
 - 管理员账号和密码哈希在 `auth/config.json`（键：`username`、`passwordHash`、`publicOrigin`，多账号时还有 `identitySecret`、`invites`）。
   改密码：按 [deploy/public/README.zh-CN.md](../../deploy/public/README.zh-CN.md)「初始化认证配置」重新生成哈希；旧会话会失效。
 - 登录页不预填账号名。
@@ -94,8 +94,8 @@ docker exec openbot-public-gateway nginx -t && docker exec openbot-public-gatewa
 ## 5. 证书
 
 - 证书放 `/etc/letsencrypt/live/<YOUR_DOMAIN>/{fullchain.pem,privkey.pem}`，网关挂载整个证书根目录（`CHISABOT_CERT_DIRECTORY`）。
-- 续期用 acme.sh 或 certbot 的定时任务；续期后 `openbot-public-cert-reload.timer`（每天一次）运行 `reload-cert.sh`：先 `nginx -t` 再 reload。
-- 安装 timer 前把 service 里的 `/opt/openbot-zh/public` 改成实际目录。
+- 续期用 acme.sh 或 certbot 的定时任务；续期后 `chisabot-public-cert-reload.timer`（每天一次）运行 `reload-cert.sh`：先 `nginx -t` 再 reload。
+- 安装 timer 前把 service 里的 `/opt/chisabot-zh/public` 改成实际目录。
 - 检查到期时间：`openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.pem`。
 
 ## 6. 备份

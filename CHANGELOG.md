@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.75 — 2026-10-26
+
+这一版把仓库与部署里残留的 OpenBot 命名统一改为 ChisaBot（上游归属 `CopilotKit/OpenBot` 保留）。PC 客户端与服务端同步更新至 0.1.75（Android `versionCode` 272）。
+
+### OpenBot → ChisaBot 统一命名
+
+- **代码、文档、界面、包名**：标识符、错误名、界面文案与文档统一为 ChisaBot；`@openbot/agent-computer` → `@chisabot/agent-computer`，根包名 `chisabot`；`.claude/skills`、`docs/chisabot-architecture.md`、systemd 单元文件（`chisabot-zh-attachments.*`、`chisabot-public-cert-reload.*`）改名。
+- **环境变量**：全部 `OPENBOT_*` 改为 `CHISABOT_*`；新增 `shared/env-compat.ts`，未设置新名字时自动沿用旧的 `OPENBOT_*`（登录网关同样兼容），已部署的 `.env` 不用改也能继续运行。
+- **请求头**：`x-openbot-*` 改为 `x-chisabot-*`；服务端/电脑服务/登录网关两种名字都认，发往托管 Bot 与电脑服务时两种都带，兼容旧镜像与已安装客户端。
+- **浏览器存储**：`openbot…` 本地存储键改为 `chisabot…`，首屏脚本一次性把旧值复制过来（主题、语言、布局不丢）；Android 同时写新旧主题键。
+- **部署**：compose 项目/服务/容器改为 `chisabot-zh` / `chisabot` / `chisabot-zh`，网关容器 `chisabot-web-auth`、`chisabot-public-gateway`，默认目录 `/opt/chisabot-zh`；数据卷按名字固定为原来的 `openbot-zh_*`，不会换成空卷；更新器按容器实际挂载备份数据卷，数据库备份文件改名 `chisabot.dump`。
+- **保留不改（持久化 / 外部依赖）**：Postgres 数据库与角色 `openbot`、`openbot_*` 表与迁移、`openbot_session` 等 Cookie（PC 客户端依赖）、`openbotRun` 等已存储的协议字段、`openbot_magpie` 网络、上游 `ghcr.io/copilotkit/openbot*` 镜像与 `CopilotKit/OpenBot` 归属、历史 CHANGELOG。
+
 ## 0.1.74 — 2026-10-26
 
 这一版把多用户与后台统一配置落地（`CB-096`、`CB-097`）：管理员可在线开启账号与邀请、直接新建账号或签发管理员邀请、升降角色与直接改密；并可在后台统一配置全员共享的公共知识库、全局共享技能与全员默认 MCP。PC 客户端与服务端同步更新至 0.1.74（Android `versionCode` 271）。

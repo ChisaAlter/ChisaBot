@@ -9,7 +9,7 @@ const exe = process.env.CHROME || (() => { const d = fs.existsSync("/ms-playwrig
 const browser = await chromium.launch({ headless: true, executablePath: exe, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
 async function context(theme, viewport, extra = {}) {
   const ctx = await browser.newContext({ viewport, locale: "zh-CN", timezoneId: "Asia/Shanghai", ignoreHTTPSErrors: true, ...extra });
-  await ctx.addInitScript((t) => { try { localStorage.setItem("openbot-theme", t); } catch {} }, theme);
+  await ctx.addInitScript((t) => { try { localStorage.setItem("chisabot-theme", t); } catch {} }, theme);
   if (TOK) await ctx.addCookies([{ name: "__Host-openbot_session", value: TOK, url: base, secure: true, httpOnly: true, sameSite: "Lax" }]);
   return ctx;
 }

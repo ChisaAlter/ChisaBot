@@ -18,7 +18,7 @@ import { createComputerRoutes } from "../src/computer/routes";
  * going to turn up: every test of both features passed.
  */
 
-const ADMIN = { id: "u1", email: "admin@openbot.test", role: "admin" } as const;
+const ADMIN = { id: "u1", email: "admin@chisabot.test", role: "admin" } as const;
 
 function app(role: "admin" | "user" = "admin") {
   const asActor: MiddlewareHandler<{ Variables: AppVariables }> = async (

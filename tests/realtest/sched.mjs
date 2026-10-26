@@ -1,7 +1,7 @@
 // sched.mjs — §101.3 定时任务完整流程：建一个几分钟后执行的任务 → 用户离开聊天 → 到点后台执行，遇到「发送」先放确认卡片
 // → 用户回来在聊天里点「确认」→ 机器人自动接着做完（页面显示「已发送：定时测试」）并给出最终回答。
 import fs from "node:fs";
-import { api, base, browser, context, errors, log, newPage, openBot, send, summarize, threadMessages, threadOf, waitIdle } from "./lib.mjs";
+import { api, base, browser, context, errors, log, newPage, chisaBot, send, summarize, threadMessages, threadOf, waitIdle } from "./lib.mjs";
 import { guardInit, guardedDeleteBot, trackBot } from "./guard.mjs";
 const SEND_URL = process.env.SEND_URL || "https://echo.websocket.org/.ws"; // 公开的 WebSocket 回声页：输入框 + 「Send Message」按钮（点它会出确认卡片，§101.3/§101.9）
 const MARK = process.env.MARK || `定时测试${Date.now() % 10000}`;
@@ -18,7 +18,7 @@ log("bot", bot);
 const res = { steps: [] };
 const step = (s) => { res.steps.push(`${new Date().toISOString().slice(11, 19)} ${s}`); log("STEP", s); };
 try {
-  await openBot(page, bot);
+  await chisaBot(page, bot);
   await send(page, `3 分钟后执行一次（用定时任务，现在先不要做）：用你的浏览器打开 ${SEND_URL} ，在消息输入框里填「${MARK}」，然后点「Send Message」按钮，把页面上显示的收发记录告诉我。这是公开的测试回声页，可以直接发。${process.env.DIRECT === "1" ? "到时候直接点按钮，不要先调用 confirm_action（要不要问我，系统点按钮时会自己判断）。" : ""}`);
   await page.waitForURL((u) => /\/channel\/(?!new)/.test(u.pathname), { timeout: 30000 }).catch(() => {});
   const tid = await threadOf(page);

@@ -2,7 +2,7 @@
 
 此模板使用同一域名的两个 HTTPS 入口：`https://chisabot.example.com:8443` 是 ChisaBot，`:2053` 是 Magpie 管理页。将 `nginx.conf` 中所有 `chisabot.example.com` 替换为自己的域名，包括 Origin 白名单、Host 校验、证书路径与 Magpie 登录来源映射；此处没有真实部署域名和凭据。
 
-后端和登录服务只监听 loopback。匿名页面跳转 `/login`，匿名 API 返回 JSON 401；跨站写入、外站 Origin 和缺少 Origin 的 WebSocket 被拒绝。聊天 SSE 不缓存、不缓冲；原认证、Cookie、内部路由和容器名继续使用 `openbot` 兼容标识。
+后端和登录服务只监听 loopback。匿名页面跳转 `/login`，匿名 API 返回 JSON 401；跨站写入、外站 Origin 和缺少 Origin 的 WebSocket 被拒绝。聊天 SSE 不缓存、不缓冲；原认证、Cookie、内部路由和容器名继续使用 `chisabot` 兼容标识。
 
 ## 初始化认证配置
 
@@ -57,17 +57,17 @@ Web key 必须与 Magpie 的 `MAGPIE_WEB_KEY` 一致。`magpie-private.conf`、`
 证书需已有 `/etc/letsencrypt/live/自己的域名/{fullchain.pem,privkey.pem}`。挂载整个证书根目录，包括 live 和 archive，以保证续期符号链接可解析；如实际目录不同，在 `../.env` 中设置 `CHISABOT_CERT_DIRECTORY`。镜像默认为 `nginx:alpine`，可用 `CHISABOT_NGINX_IMAGE` 固定自己的版本或 digest。
 
 ```sh
-docker compose --env-file ../.env -p openbot-public -f compose.yaml config --quiet
-docker compose --env-file ../.env -p openbot-public -f compose.yaml run --rm --no-deps gateway nginx -t
-docker compose --env-file ../.env -p openbot-public -f compose.yaml up -d --wait
+docker compose --env-file ../.env -p chisabot-public -f compose.yaml config --quiet
+docker compose --env-file ../.env -p chisabot-public -f compose.yaml run --rm --no-deps gateway nginx -t
+docker compose --env-file ../.env -p chisabot-public -f compose.yaml up -d --wait
 ```
 
 认证服务复用本地 ChisaBot 镜像，`pull_policy: never`，不需要私有的预存镜像 SHA。公网仅开放自己的 HTTPS 端口，保留其他站点的端口及配置。配置文件中的 Origin 必须与 `auth/config.json` 完全一致；两个入口使用同一 hostname，Cookie 才能共用。
 
 ```sh
-docker exec openbot-web-auth bun test /auth/server.test.ts /auth/startup-report.test.ts
-docker exec openbot-public-gateway nginx -t
+docker exec chisabot-web-auth bun test /auth/server.test.ts /auth/startup-report.test.ts
+docker exec chisabot-public-gateway nginx -t
 sh reload-cert.sh
 ```
 
-证书重载脚本先校验配置再 reload；可安装此目录的兼容 systemd timer，但要先把 service 内的 `/opt/openbot-zh/public` 改为实际路径。备份应包含应用 Docker 卷、主 `.env`、Magpie 私密目录与数据、登录配置及 SQLite 数据。SQLite 使用备份接口或停登录服务后复制，不应只复制正在写入的主数据库文件。
+证书重载脚本先校验配置再 reload；可安装此目录的兼容 systemd timer，但要先把 service 内的 `/opt/chisabot-zh/public` 改为实际路径。备份应包含应用 Docker 卷、主 `.env`、Magpie 私密目录与数据、登录配置及 SQLite 数据。SQLite 使用备份接口或停登录服务后复制，不应只复制正在写入的主数据库文件。

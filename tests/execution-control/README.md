@@ -18,7 +18,7 @@ node tests/execution-control/web.mjs
 ```sh
 TEST_DATABASE_URL=postgres://... bun test server/tests/local-conversations-inbox.integration.test.ts
 NODE_ENV=test bun test app/tests/thread-inbox-concurrency.test.tsx
-OPENBOT_COMPUTER_STOP_HTTP=1 bun test server/tests/computer-stop.test.ts agent-computer/tests/shell.test.ts
+CHISABOT_COMPUTER_STOP_HTTP=1 bun test server/tests/computer-stop.test.ts agent-computer/tests/shell.test.ts
 ```
 
 最后一项需要 Linux `/bin/bash`，会启动真实 agent-computer 服务和短生命周期命令，等待超过延迟写入期限，验证进程组已停止。集成数据库须为专用空测试库。

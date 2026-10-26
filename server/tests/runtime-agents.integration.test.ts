@@ -122,7 +122,7 @@ describe("runtime agent loading", () => {
       name: "Expense Manager",
       type: "remote_ag_ui",
       endpoint: managedEndpoint.toString(),
-      headers: { "x-openbot-agent-token": managedAgentToken },
+      headers: { "x-chisabot-agent-token": managedAgentToken },
       standingMessage: standingRoleMessage({
         id: profile.id,
         name: "Expense Manager",
@@ -140,7 +140,7 @@ describe("runtime agent loading", () => {
       type: "remote_mastra",
       configuration: {
         endpoint: mastraManagedEndpoint.toString(),
-        remoteAgentId: "openbot",
+        remoteAgentId: "chisabot",
       },
     });
 
@@ -151,8 +151,8 @@ describe("runtime agent loading", () => {
       name: "Expense Manager",
       type: "remote_mastra",
       endpoint: mastraManagedEndpoint.toString(),
-      remoteAgentId: "openbot",
-      headers: { "x-openbot-agent-token": managedAgentToken },
+      remoteAgentId: "chisabot",
+      headers: { "x-chisabot-agent-token": managedAgentToken },
       standingMessage: standingRoleMessage({
         id: profile.id,
         name: "Expense Manager",

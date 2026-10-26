@@ -34,7 +34,7 @@ async function person(
   ids.push(id);
   await database.insert(users).values({
     id,
-    email: `${id}@openbot.test`,
+    email: `${id}@chisabot.test`,
     name: name ?? `Person ${index}`,
     emailVerified: true,
     lastSignedInAt: signedInAt,
@@ -185,7 +185,7 @@ describe("reading the people in a deployment", () => {
 
     expect(found?.id).toBe(wanted);
     // The same shape the list answers with, because the screen renders both through one type.
-    expect(found?.email).toBe(`${wanted}@openbot.test`);
+    expect(found?.email).toBe(`${wanted}@chisabot.test`);
     expect(found?.role).toBe("user");
   });
 

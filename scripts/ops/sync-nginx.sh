@@ -11,17 +11,17 @@
 #   sh scripts/ops/sync-nginx.sh --apply --dry-run      # render + validate only (no write / reload)
 #
 # Env:
-#   CHISABOT_PUBLIC_DIR   live gateway public dir (default /opt/openbot-zh/public)
+#   CHISABOT_PUBLIC_DIR   live gateway public dir (default /opt/chisabot-zh/public)
 #   CHISABOT_REPO         repo root with deploy/public/nginx.conf (default: discovered)
-#   CHISABOT_GATEWAY      gateway container (default openbot-public-gateway)
+#   CHISABOT_GATEWAY      gateway container (default chisabot-public-gateway)
 #   ENV_FILE              for render-nginx.sh (default $PUBLIC_DIR/../.env)
 #
 # Exit 0 = green. Non-zero = drift / validate fail — do not ignore (apply-or-fail).
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 REPO=${CHISABOT_REPO:-$ROOT}
-PUBLIC_DIR=${CHISABOT_PUBLIC_DIR:-/opt/openbot-zh/public}
-GATEWAY=${CHISABOT_GATEWAY:-openbot-public-gateway}
+PUBLIC_DIR=${CHISABOT_PUBLIC_DIR:-/opt/chisabot-zh/public}
+GATEWAY=${CHISABOT_GATEWAY:-chisabot-public-gateway}
 MODE=check-repo
 DRY=0
 while [ $# -gt 0 ]; do
@@ -59,7 +59,7 @@ assert_security_markers() {
   label=$2
   for needle in \
     'proxy_set_header X-ChisaBot-Local-Caller "";' \
-    'auth_request /_openbot/auth-check;' \
+    'auth_request /_chisabot/auth-check;' \
     'location ^~ /api/devices/agent/' \
     'location ^~ /api/im/onebot/' \
     'location ^~ /p/'

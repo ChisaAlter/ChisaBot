@@ -27,7 +27,7 @@ function packagesStartedBy(script: string, workspaces: string[]): string[] {
   );
 }
 
-describe("OpenBot workspace", () => {
+describe("ChisaBot workspace", () => {
   test("defines the app and server packages", () => {
     const manifest = rootManifest();
 

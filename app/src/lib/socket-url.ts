@@ -11,19 +11,19 @@
  * APP_PORT and proxies `/api` to the server on SERVER_PORT, a different origin, and under bun that
  * proxy cannot carry a WebSocket at all (oven-sh/bun#24127): the upgrade is answered with a plain
  * HTTP response and the socket never opens. So those two runtimes address the server directly, by
- * the port each announces on `window.__OPENBOT_WS_PORT__`. Nothing announces it in the built bundle
+ * the port each announces on `window.__CHISABOT_WS_PORT__`. Nothing announces it in the built bundle
  * the server hands out, so a production page has no port to override with and stays same-origin.
  */
 declare global {
   interface Window {
-    __OPENBOT_WS_PORT__?: string;
+    __CHISABOT_WS_PORT__?: string;
   }
 }
 
 function announcedPort(): string {
   return typeof window !== "undefined" &&
-    typeof window.__OPENBOT_WS_PORT__ === "string"
-    ? window.__OPENBOT_WS_PORT__
+    typeof window.__CHISABOT_WS_PORT__ === "string"
+    ? window.__CHISABOT_WS_PORT__
     : "";
 }
 

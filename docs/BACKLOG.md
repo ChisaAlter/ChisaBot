@@ -389,7 +389,7 @@ PR #283 / #284 / #285 已发布，最终运行提交 `8a94383048c8c331fb7e7aa4db
 - [x] 设备上自动检测可用的本地 agent（Claude Code / Codex / OpenCode / Gemini CLI / Aider + 内置循环），设置 → 设备 → 本地 agent 选默认；聊天里可以点名。**改动**：不做「机器人资料页整体换成本地 agent 回答」，改为按任务交接（ADR-0010 写明原因）
 - [x] 本地 agent 的输出以聊天任务卡片呈现（实时输出、停止、改动、应用 / 放弃），结果回到同一段对话（沿用 §38）
 - [x] 设备离线 / 没装 / 档位不允许时，机器人拿到中文原因，卡片不出现
-- [x] 文档：docs/local-agents.md（含 OpenBot 服务器 agent 与 Claude Code / Codex 的对比）、ADR-0010、DESIGN.md §66
+- [x] 文档：docs/local-agents.md（含 ChisaBot 服务器 agent 与 Claude Code / Codex 的对比）、ADR-0010、DESIGN.md §66
 
 > 完成：PR feat/local-agent-1（`Backlog: CB-007`）。真机 Windows / macOS 验证归 CB-017。
 

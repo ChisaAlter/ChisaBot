@@ -160,16 +160,20 @@ else
   step backup "备份数据库与 compose"
   BK="$U/backups/$(date -u +%Y%m%dT%H%M%SZ)-$JOB"
   mkdir -p "$BK"
-  docker exec "$CONTAINER" sh -c 'pg_dump -Fc "$(cat /run/s6/container_environment/DATABASE_URL)"' > "$BK/openbot.dump" \
+  docker exec "$CONTAINER" sh -c 'pg_dump -Fc "$(cat /run/s6/container_environment/DATABASE_URL)"' > "$BK/chisabot.dump" \
     || fail "pg_dump 失败"
-  [ -s "$BK/openbot.dump" ] || fail "数据库备份是空的"
+  [ -s "$BK/chisabot.dump" ] || fail "数据库备份是空的"
   cp -p "$COMPOSE_DIR/$COMPOSE_FILE" "$BK/compose.yaml"
   for v in profiles workspace; do
-    tar czf "$BK/$v-volume.tgz" -C "/var/lib/docker/volumes/${PROJECT}_$v" _data 2>/dev/null || echo "（卷 $v 未备份）"
+    # The volume behind /$v in the running container, whatever the compose project calls it (the
+    # physical names stayed `openbot-zh_*` when the project became `chisabot-zh`).
+    VSRC=$(docker inspect -f "{{range .Mounts}}{{if eq .Destination \"/$v\"}}{{.Source}}{{end}}{{end}}" "$CONTAINER" 2>/dev/null)
+    [ -n "$VSRC" ] || VSRC="/var/lib/docker/volumes/${PROJECT}_$v/_data"
+    tar czf "$BK/$v-volume.tgz" -C "$(dirname "$VSRC")" "$(basename "$VSRC")" 2>/dev/null || echo "（卷 $v 未备份）"
   done
   echo "$CUR_IMAGE" > "$BK/image.txt"
   echo "::backup:: $BK"
-  echo "数据库备份 $(stat -c %s "$BK/openbot.dump") 字节 → $BK"
+  echo "数据库备份 $(stat -c %s "$BK/chisabot.dump") 字节 → $BK"
 fi
 
 rm -rf "$B" && mkdir -p "$B/src" || fail "无法准备构建目录"

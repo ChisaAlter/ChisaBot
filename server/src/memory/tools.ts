@@ -41,22 +41,22 @@ export class PersonalMemoryMiddleware extends Middleware {
               ...(content
                 ? [
                     {
-                      id: "openbot:personal-memory",
+                      id: "chisabot:personal-memory",
                       role: "system" as const,
                       content,
                     },
                   ]
                 : []),
               ...input.messages.filter(
-                (message) => message.id !== "openbot:personal-memory",
+                (message) => message.id !== "chisabot:personal-memory",
               ),
             ],
             context: [
               ...input.context.filter(
-                (entry) => entry.description !== "OpenBot personal memory",
+                (entry) => entry.description !== "ChisaBot personal memory",
               ),
               ...(content
-                ? [{ description: "OpenBot personal memory", value: content }]
+                ? [{ description: "ChisaBot personal memory", value: content }]
                 : []),
             ],
           },

@@ -205,7 +205,7 @@ test("the original built-in executes its granted tool and sends the actual match
     port: 0,
     fetch: async (request) => {
       const body = await request.json();
-      expect(request.headers.get("x-openbot-agent-token")).toBe("owned-token");
+      expect(request.headers.get("x-chisabot-agent-token")).toBe("owned-token");
       requests.push(body);
       const events =
         requests.length === 1

@@ -6,7 +6,7 @@ const COOKIE = "__Host-openbot_session";
 const SHORT_LIFETIME = 12 * 3600;
 const LONG_LIFETIME = 30 * 24 * 3600;
 const WINDOW = 15 * 60 * 1000;
-const BASE = "https://openbot.invalid";
+const BASE = "https://chisabot.invalid";
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Only relative destinations in the workspace are valid after sign-in. */
@@ -23,7 +23,7 @@ export function safeNext(value: unknown): string {
   }
   if (/%(?:2f|5c|25)/i.test(decoded)) return "/";
   const url = new URL(decoded, BASE);
-  if (url.origin !== BASE || /^\/(?:login|sign|auth|_openbot|_internal)(?:\/|$)/.test(url.pathname)) return "/";
+  if (url.origin !== BASE || /^\/(?:login|sign|auth|_chisabot|_internal)(?:\/|$)/.test(url.pathname)) return "/";
   return value;
 }
 
@@ -317,7 +317,7 @@ export function createAuthApp(config: AuthConfig) {
     if (request.method !== "POST") return json({ ok: false, error: "请求方法不支持。" }, 405, { Allow: "POST" });
     if (request.headers.get("Origin") !== config.publicOrigin) return json({ ok: false, error: "登录请求来源无效，请确认服务器地址。" }, 403);
     clean();
-    const clientKey = digest(`client:${request.headers.get("X-OpenBot-Client") || "unknown"}`);
+    const clientKey = digest(`client:${request.headers.get("X-ChisaBot-Client") || request.headers.get("X-OpenBot-Client") || "unknown"}`);
     const failures = db.query("SELECT count FROM attempts WHERE client_key = ? AND expires_at > ?").get(clientKey, now()) as { count: number } | null;
     if ((failures?.count || 0) >= 10) return json({ ok: false, error: "尝试次数过多，请稍后再试。" }, 429, { "Retry-After": "60" });
     const deviceToken = (request.headers.get("X-Device-Token") || "").trim();
@@ -519,7 +519,7 @@ export function createAuthApp(config: AuthConfig) {
   async function invite(request: Request): Promise<Response> {
     if (!multi) return json({ ok: false, error: "这个链接无效。" }, 404);
     clean();
-    const clientKey = digest("client:" + (request.headers.get("X-OpenBot-Client") || "unknown"));
+    const clientKey = digest("client:" + (request.headers.get("X-ChisaBot-Client") || request.headers.get("X-OpenBot-Client") || "unknown"));
     if (request.method === "GET") {
       const limited = tooMany(clientKey);
       if (limited) return limited;
@@ -654,7 +654,7 @@ export function createAuthApp(config: AuthConfig) {
         body = JSON.parse(text);
         if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error();
       } catch { return json({ ok: false, error: "请求格式无效。" }, 400); }
-      const clientKey = digest("client:" + (request.headers.get("X-OpenBot-Client") || "unknown"));
+      const clientKey = digest("client:" + (request.headers.get("X-ChisaBot-Client") || request.headers.get("X-OpenBot-Client") || "unknown"));
       const limited = tooMany(clientKey);
       if (limited) return limited;
       const validInput = typeof body.username === "string" && body.username.length <= 64 && typeof body.password === "string" && body.password.length > 0 && body.password.length <= 1024;
@@ -695,9 +695,13 @@ export function createAuthApp(config: AuthConfig) {
 
 if (import.meta.main) {
   process.umask(0o077);
-  const stored = await Bun.file(process.env.OPENBOT_AUTH_CONFIG || "/auth/config.json").json();
-  const app = createAuthApp({ invites: true, ...stored, databasePath: process.env.OPENBOT_AUTH_DB || "/auth-data/sessions.sqlite", ...(process.env.OPENBOT_AUTH_APP_URL ? { appUrl: process.env.OPENBOT_AUTH_APP_URL } : {}) });
-  const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.OPENBOT_AUTH_PORT || 3002), maxRequestBodySize: 4096, fetch: app.fetch });
+  // 0.1.75 rename: honour the pre-rename OPENBOT_* names when the CHISABOT_* ones are unset.
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith("OPENBOT_") && value !== undefined && process.env[`CHISABOT_${key.slice(8)}`] === undefined) process.env[`CHISABOT_${key.slice(8)}`] = value;
+  }
+  const stored = await Bun.file(process.env.CHISABOT_AUTH_CONFIG || "/auth/config.json").json();
+  const app = createAuthApp({ invites: true, ...stored, databasePath: process.env.CHISABOT_AUTH_DB || "/auth-data/sessions.sqlite", ...(process.env.CHISABOT_AUTH_APP_URL ? { appUrl: process.env.CHISABOT_AUTH_APP_URL } : {}) });
+  const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.CHISABOT_AUTH_PORT || 3002), maxRequestBodySize: 4096, fetch: app.fetch });
   console.log("ChisaBot web authentication listening on loopback");
   const stop = () => { server.stop(true); app.close(); process.exit(0); };
   process.on("SIGTERM", stop); process.on("SIGINT", stop);

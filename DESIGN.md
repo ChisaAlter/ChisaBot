@@ -232,7 +232,7 @@
 - **主机器人防误删（CB-091）**：主机器人的侧栏菜单（展开态 `BotRow` 与收起态 `MiniBot`）不直接显示「删除机器人…」，改放「更换主机器人…」（打开 `MainBotPickerDialog` 从其余可见机器人里选一个接任）；如果从详情页等其他入口触发删除主机器人，`DeleteBotDialog` 先拦截并让用户「更换主机器人…」或「取消主机器人」，卸任后才允许进入删除确认。
 - **右栏收起**：宽度 → 0、左右内边距 → 0、淡出，内部列宽保持不变向右滑出（不重排）；收起时 `inert` + `aria-hidden`，拖动调整宽度的把手隐藏；展开后拖动把手照常工作，宽度仍记在 `chisabot-panel-rail-width`。
 - **动效**：宽度过渡 260ms，`cubic-bezier(0.22, 0.8, 0.24, 1)`（变量 `--glass-collapse-ms` / `--glass-collapse-ease`）；完整列表展开时按最终宽度排版、被裁切地"推出"，不允许文字在过渡中挤压换行。中间聊天区随之平滑变宽，内容最大宽度不变、居中。减少动态效果时宽度直接切换，只保留淡入淡出。
-- **记忆**：按设备存在 `localStorage`：左栏 `openbot-sidebar`（`expanded` / `collapsed`），右栏 `chisabot-panel-rail`（同上）。只有精确的 `collapsed` 才算收起。
+- **记忆**：按设备存在 `localStorage`：左栏 `chisabot-sidebar`（`expanded` / `collapsed`），右栏 `chisabot-panel-rail`（同上）。只有精确的 `collapsed` 才算收起。
 - **窄屏**：<1280px 右栏本来就不显示（按钮也隐藏）；<768px 左栏仍是原来的抽屉（Sheet），顶栏不显示左栏收起按钮，页面内原有的侧边栏按钮照旧。桌面端页面头部不再重复显示侧边栏按钮（`TopBarOwnsSidebarToggle`）。
 - 天空背景透过收起后的空白区域正常显示，不加任何遮罩。
 
@@ -426,7 +426,7 @@
 2. 抽出 `PageHeader`、`Section`、`Card`、`ListRow`、`SettingRow`、`Toolbar` 到 `components/ui/`；`PageShell` 改为使用它们。
 3. 设置与管理的布局路由接入顶栏和统一左栏（§13 末段）。
 4. 逐页替换：先 B 类列表页（改动最机械），再 D 设置、E 管理，最后 C 详情页加未保存栏。
-5. 每步用 openbot-redesign 的截图脚本对照原型截图。
+5. 每步用 chisabot-redesign 的截图脚本对照原型截图。
 
 ### 14.1 落地记录（2026-10-10，image glass-20261010k）
 
@@ -473,7 +473,7 @@
 
 ## 17. 生成式界面 json-render（2026-10-11 glass-20261011b）
 
-- 取代 A2UI。机器人调用 `render_ui` 工具，参数是 json-render 的 SpecStream（JSONL，每行一个 JSON Patch）；服务器按共享目录 `shared/json-render/catalog.ts` 校验，浏览器用同一份目录在对话里渲染（`app/src/lib/copilot/render-ui-tool.tsx`、`json-render/registry.tsx`），参数流式到达时逐块淡入。开关仍是 `OPENBOT_GENERATIVE_UI`（关闭时既不提供工具也不注册渲染器）。
+- 取代 A2UI。机器人调用 `render_ui` 工具，参数是 json-render 的 SpecStream（JSONL，每行一个 JSON Patch）；服务器按共享目录 `shared/json-render/catalog.ts` 校验，浏览器用同一份目录在对话里渲染（`app/src/lib/copilot/render-ui-tool.tsx`、`json-render/registry.tsx`），参数流式到达时逐块淡入。开关仍是 `CHISABOT_GENERATIVE_UI`（关闭时既不提供工具也不注册渲染器）。
 - 组件（17 个，2026-10-13 扩到 37 个，见 §32）：Card、Stack、Grid、Heading、Text、Metric、Table、List、Badge、Button、Input、Select、Checkbox、Alert、Progress、Image、Separator。样式全部是 `styles.css` 的 `.jr-*`，只用 Skyglass 令牌（玻璃 L1 卡片、L2 子块、墨色主按钮、天蓝进度/焦点），亮暗自动适配；动效 `--dur-2` 淡入上移 4px，减少动态效果时只淡入。
 - 按钮动作：`send_message`（以用户身份在当前对话发一条可见消息，可用 `includeState` 附上表单值）、`open_link`（仅 http/https，新标签页）、内置 `setState / pushState / removeState / validateForm`。真正的操作仍由机器人用自己的工具完成并经过审批。
 - 生成中：同形状骨架 →「正在生成界面…」；格式错误：一行琥珀色「生成界面，无法工作 · 格式有误，机器人会修正后重新生成」，问题列表收在展开里（机器人会收到同样的问题并重试）。
@@ -1046,7 +1046,7 @@
 用户原话：「把 hark 的功能，都给 chisabot」。第一项是长期记忆：机器人跨对话记住用户本人、带情境的偏好、身边的人、地方、在做的事和每天的日志；能搜、能改、能真删；用户在设置里看得见、改得了。
 
 - **数据**（`server/src/memory-notes/`，表 `chisabot_memory_notes` / `chisabot_memory_bots`，开机建表，回滚安全）：一条笔记 = 种类（个人资料 / 偏好 / 人物 / 地点 / 项目与事项 / 其他 / 日志）+ 主题（人名、地名、项目名；日志是日期）+ 正文 + 情境（什么时候成立）。人物 / 地点 / 项目 / 同一天的日志同名只有一条，新内容并进去；其余种类内容完全相同不重复存。一个人最多 3000 条。删除是真删，不留副本。
-- **机器人**：每轮开头拿到记忆用法 + 资料和偏好全文 + 人物 / 地点 / 项目目录 + 今天和昨天的日志（约 7000 字封顶）；工具 `memory_search`（中文双字 + 英文词打分，不需要向量模型）、`memory_save`、`memory_update`、`memory_forget`（按 id 删，先搜后删）、`memory_log`。上游 OpenBot 的 personal_memories 工具不再给机器人。后台刷新面板的回合不拿记忆工具。
+- **机器人**：每轮开头拿到记忆用法 + 资料和偏好全文 + 人物 / 地点 / 项目目录 + 今天和昨天的日志（约 7000 字封顶）；工具 `memory_search`（中文双字 + 英文词打分，不需要向量模型）、`memory_save`、`memory_update`、`memory_forget`（按 id 删，先搜后删）、`memory_log`。上游 ChisaBot 的 personal_memories 工具不再给机器人。后台刷新面板的回合不拿记忆工具。
 - **共用与关闭**：一个人的所有机器人读写同一份记忆；设置里关掉某个机器人 = 它不读也不写（工具拒绝、上下文为空）。
 - **设置 → 记忆**（`/settings/memory`，左栏「通用」下面）：页头「添加」；工具栏左边按种类筛选的分段（只显示有内容的种类，带数量，窄屏横向滚动），右边搜索框；按种类分组的卡片，一行一条：种类图标（40px，偏好红、地点 / 日志绿、项目琥珀、其余蓝 / 灰）· 主题（或第一行）· 正文两行截断 · 情境小标签 · 「机器人名 / 你写的 · N 分钟前更新」· ⋯（编辑… / 删除）。点一行 = 编辑弹窗（种类、主题、内容、情境，保存走按钮状态机）。删除乐观完成 + 8 秒「撤销」（撤销 = 原样重建）。搜索框有词时出现「找到 N 条和「X」有关的记忆 · 全部删除…」（确认弹窗），和对机器人说「忘掉 X」是同一件事。最下面「哪些机器人用记忆」：每个机器人一行开关（乐观切换，失败回滚）。
 
@@ -1102,7 +1102,7 @@
 - **通知**：任务跑完，网页右下角出一条带「查看」的提示（`components/schedules/notifier.tsx`，每 20 秒问一次，只报打开页面之后的）；页面在后台且允许了浏览器通知时再发系统通知。
 - **机器人工具**：`schedule_create` / `schedule_list` / `schedule_update`（名字、说明、时间、时区、`paused`）/ `schedule_cancel` / `schedule_skip_next` / `schedule_run_now`。上游 Routines 的 `create_routine` / `list_routines` / `update_routine` / `delete_routine` 在瘦身 P4c（2026-10-15）删掉，定时只剩这一套。人自己的回合、IM 回合、到点的回合、后台结果交回的回合有；后台任务本身、面板刷新、群聊没有。上游 `schedule_follow_up` 保留，只给机器人自己回头检查用。
 - **设置 → 定时任务**（`/settings/schedules`，左栏「技能」下面）：分「进行中 / 已暂停 / 最近结束（7 天）」三组卡片，一行一个：闹钟图标（进行中蓝、其他灰）· 名字 · 时间安排 + 机器人名 chip（IM 来的加「IM」chip）· 第二行「下次 明天 09:00 · 上次已完成 · 3 分钟前 · 结果摘要（单行截断）」；右侧「立即运行」（按钮状态机：启动中… → 已开始）· 暂停开关 · ⋯（立即运行 / 跳过下一次 / 打开对话 / 删除…）。窄于 640px 时「立即运行」只在 ⋯ 里。点行打开详情弹窗：到点时做什么、下次运行、最近 5 次运行（状态色 · 时间 · 结果）。删除先确认，不可撤销。
-- **只有一套（瘦身 P4c，2026-10-15）**：上游 Routines（表 `routines` / `routine_runs`，按频道发、cron、`/api/routines`、`/internal/routines/run` + `WORKER_SHARED_SECRET` 的进程内扫描、宿主机 `openbot-zh-routines.timer`、`fire-routines.ts`）整套删掉，表留到 P5；`/routines` 重定向到 `/settings/schedules`。机器人资料「动态」里的定时项、重置 / 删除机器人提示里的「N 个定时任务」都读 `chisabot_schedules`（重置会取消这个机器人为你设的进行中 / 已暂停任务）。无头回合的运行器挪到 `server/src/turns/`，审计里无头回合的 initiator 仍记 `routine`（数据格式不变）。
+- **只有一套（瘦身 P4c，2026-10-15）**：上游 Routines（表 `routines` / `routine_runs`，按频道发、cron、`/api/routines`、`/internal/routines/run` + `WORKER_SHARED_SECRET` 的进程内扫描、宿主机 `chisabot-zh-routines.timer`、`fire-routines.ts`）整套删掉，表留到 P5；`/routines` 重定向到 `/settings/schedules`。机器人资料「动态」里的定时项、重置 / 删除机器人提示里的「N 个定时任务」都读 `chisabot_schedules`（重置会取消这个机器人为你设的进行中 / 已暂停任务）。无头回合的运行器挪到 `server/src/turns/`，审计里无头回合的 initiator 仍记 `routine`（数据格式不变）。
 
 ## 56. 聊天文件与图片生成：上传进工作区、文件卡、画图改图（2026-10-14）
 
@@ -1290,7 +1290,7 @@
 
 ## 66. 本地 agent 与权限档位：只读 / 工作区 / 完全访问，把活儿交给电脑上的 Claude Code（2026-10-15）
 
-用户原话：「做。但是本地pc的需要一些权限控制和沙盒之类的问题，以及agent选择。openbot的agent怎么样？而且按理说，本地不按照agent，让云端的agent控制本地也可以吧？」——默认仍是云端机器人用 `device_*` 操作电脑（什么都不用装）；这一节加权限档位和「交给电脑上的 agent」。机制见 docs/local-agents.md。
+用户原话：「做。但是本地pc的需要一些权限控制和沙盒之类的问题，以及agent选择。chisabot的agent怎么样？而且按理说，本地不按照agent，让云端的agent控制本地也可以吧？」——默认仍是云端机器人用 `device_*` 操作电脑（什么都不用装）；这一节加权限档位和「交给电脑上的 agent」。机制见 docs/local-agents.md。
 
 - **设备页**：页头徽标多一个蓝色「档位：工作区」（`is-accent`；完全访问开着时不显示它，由 §62 的红色「完全访问」徽标代替）；标签多一个「本地 agent」（在「权限」后面，手机设备没有）。
 - **设置 → 设备 → 某台电脑 → 本地 agent**（`components/local-agents/device-agents-panel.tsx`，模板 C 的分区）：
@@ -2085,7 +2085,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 - Android / PC 原生：都没有原生的浏览器画面（Android 原生版的计算机页走网页，PC 是网页外壳），网页改了它们就有，不用发版。
 
 ### 95.5 回归
-- `agent-computer/tests/tabs.test.ts`（规则；`OPENBOT_COMPUTER_BROWSER=1` 时真 Chromium：开 3 个、切、关、上限、停掉后列出保存的、重新拉起恢复）。
+- `agent-computer/tests/tabs.test.ts`（规则；`CHISABOT_COMPUTER_BROWSER=1` 时真 Chromium：开 3 个、切、关、上限、停掉后列出保存的、重新拉起恢复）。
 - `server/tests/browser-bookmarks.test.ts`（种子一次、增删改排、全删不再种、按用户隔离、推起始页）、`server/tests/computer-tabs-routes.test.ts`。
 - `app/tests/browser-tabs.test.tsx`（标签栏只看 / 接管、上限、收藏栏、星标）。
 - 预览 e2e（生产库副本 + 预览自己的真云端浏览器）：harness `btabs.mjs`。
@@ -2126,7 +2126,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 - **问题**：一个机器人的直播屏幕同一时刻只服务一个观看者，第二个 `/stream` 会顶掉第一个；被顶掉的大屏显示「这块屏幕现在在另一个窗口看着，这边停下了」，正在用的人以为浏览器坏了。PC 客户端 + 网页同时开着，或两个标签页，都会触发。
 - **做法**：`agent-computer` 每个机器人只保留**一份** screencast（同一页开两份 Chrome 会把每帧编码两次，两边都卡），但改成**广播**给所有订阅的窗口；新窗口加入时补发最近一帧，静止页面也不会是黑屏；最后一个窗口关闭才停 cast、跟随循环和 keepalive。输入仍然只看控制权（`humanMayDrive`），第二个窗口只读、不会替别人打字。
 - **界面**：被顶掉的旧提示保留，兼容旧镜像；屏幕真的结束（电脑停止、reset、浏览器关闭）时走 `onStopped`，只显示原因 + 重试，**不再**叠一层假的「正在重新连接…」（`onDisconnect` 只留给断线重连）。部署/重启造成的断线重连预算约 90 秒（以前 15 秒就放弃，每次更新都会留下一个「连接已断开」）。
-- 回归：`agent-computer/tests/viewer.test.ts`（多窗口 / 最后关闭 / 启动中丢观看者 / 广播与补帧）、`app/tests/screen-connection.test.ts`（终态不再重连、重连预算覆盖部署）、`agent-computer/tests/live-screen.test.ts`（`OPENBOT_LIVE_SCREEN=1`，两窗口同看 + 一个关闭不影响另一个）。
+- 回归：`agent-computer/tests/viewer.test.ts`（多窗口 / 最后关闭 / 启动中丢观看者 / 广播与补帧）、`app/tests/screen-connection.test.ts`（终态不再重连、重连预算覆盖部署）、`agent-computer/tests/live-screen.test.ts`（`CHISABOT_LIVE_SCREEN=1`，两窗口同看 + 一个关闭不影响另一个）。
 
 ### 96.4 回归
 - `app/tests/favicon-dark.test.tsx`（深色判断：颜色 / 像素 / 字母块 class；可用高度计算；没有标签时标签栏仍放得下 ×）。
@@ -2261,7 +2261,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 - 启动日志 `computer-isolation` 在没有 supervisor（provider = shared）时说「Every Bot shares one browser」，与实际不符：agent-computer 给每个机器人一个独立的 Chromium 持久配置目录（`profiles.ts`，一个机器人一个 `launchPersistentContext`），Cookie、登录、存储、标签各自独立；共享的是进程、`/workspace` 文件和出口 IP。文案改为如实描述（`provider.ts`），与本次问题无关。
 - 机器人能操作的「电脑里的浏览器」是右栏「计算机」那台**云端浏览器**。PC 本机只开放截图、鼠标键盘输入和「打开」网址 / 文件（`pc/src/agent/core.js`），没有网页元素级的浏览器控制。
 
-- 回归：`agent-computer/tests/native-select.test.ts`（选项规则、快照折叠；`OPENBOT_COMPUTER_BROWSER=1` 时真 Chromium 选出 2000-07-12 并触发 change）、`server/tests/computer-tool-outcome.test.ts`（失败映射、路由 200 / 500）、`app/tests/turn-unfinished.test.tsx`（500 交回结果不抛、`neverThrow`、`unfinishedTurnReason`、提示文案）；端到端 `tests/native-select/turn.mjs`（预览 / 生产：API 选择、真模型对话选出 2000-07-12、模拟接力 run 500 出提示、模拟计算机请求 500 后机器人自己恢复）。
+- 回归：`agent-computer/tests/native-select.test.ts`（选项规则、快照折叠；`CHISABOT_COMPUTER_BROWSER=1` 时真 Chromium 选出 2000-07-12 并触发 change）、`server/tests/computer-tool-outcome.test.ts`（失败映射、路由 200 / 500）、`app/tests/turn-unfinished.test.tsx`（500 交回结果不抛、`neverThrow`、`unfinishedTurnReason`、提示文案）；端到端 `tests/native-select/turn.mjs`（预览 / 生产：API 选择、真模型对话选出 2000-07-12、模拟接力 run 500 出提示、模拟计算机请求 500 后机器人自己恢复）。
 
 ## 101. 真实任务验收修复：工具打到对的机器人、备用模型、定时任务的确认、步数收尾、Python、后台确认卡片（2026-10-18）
 
@@ -2312,7 +2312,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 - 实测：Hark 登录页截图一切正常，机器人读到的第一句却是藏着的备用提示「This wallpaper needs WebGL…」，以为页面坏了。
   原因：以前在 body 的**克隆**上取 innerText，克隆没有布局，innerText 退化成 textContent，`display:none` / `visibility:hidden` 的字全进来了。
 - 现在取活页面的 `innerText`（按布局：藏起来的不算，script / style 本来就不算）；活页面取到的是空的才退回原来的克隆做法。
-- 回归：`agent-computer/tests/readable-text.test.ts`（真 Chromium，`OPENBOT_COMPUTER_BROWSER=1`）。
+- 回归：`agent-computer/tests/readable-text.test.ts`（真 Chromium，`CHISABOT_COMPUTER_BROWSER=1`）。
 
 ### 101.9 没绑到工具调用的确认卡片也画在聊天里（`components/chat/confirm-card.tsx` `LooseConfirmCards`）
 - 实测：定时任务到点在后台点网页上的「发送」→ 服务器照 §101.3 放了卡片，但聊天里看不到，只有「待处理」页有。

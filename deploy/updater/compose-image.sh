@@ -2,7 +2,7 @@
 # 镜像写在哪（update.sh / rollback.sh 用 source 引入；docs/online-update.md）。
 #
 # 两种部署：
-#  - compose 模式：compose 文件里直接写 `    image: local/chisabot:<标签>`（手写的 /opt/openbot-zh/compose.yaml）。
+#  - compose 模式：compose 文件里直接写 `    image: local/chisabot:<标签>`（手写的 /opt/chisabot-zh/compose.yaml）。
 #    切换 = 改这一行；上线前的 compose 留成 <compose>.before-<新标签>。
 #  - env 模式：仓库自带的 deploy/compose.yaml 写的是 `image: ${CHISABOT_IMAGE:-…}`（deploy/start.sh 部署的）。
 #    compose 文件在 git 仓库里，不能改；切换 = 改同目录 .env 的 CHISABOT_IMAGE（compose 自动读它）；

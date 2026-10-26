@@ -119,7 +119,7 @@ describe("POST /test-connection header validation", () => {
     ) => {
       context.set("actor", {
         id: "user-1",
-        email: "user@openbot.test",
+        email: "user@chisabot.test",
         role: "user",
       });
       await next();
@@ -129,7 +129,7 @@ describe("POST /test-connection header validation", () => {
 
   test("invalid headers answer 400 without probing", async () => {
     const app = appFor();
-    const response = await app.request("http://openbot.test/test-connection", {
+    const response = await app.request("http://chisabot.test/test-connection", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -150,7 +150,7 @@ describe("POST /test-connection header validation", () => {
     const rawBody = JSON.stringify({
       endpoint: "https://agent.example/ag-ui",
     }).replace(/}$/, ',"headers":{"__proto__":"polluted"}}');
-    const response = await app.request("http://openbot.test/test-connection", {
+    const response = await app.request("http://chisabot.test/test-connection", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: rawBody,
@@ -184,7 +184,7 @@ describe("a header value that cannot be sent", () => {
       }> = async (context, next) => {
         context.set("actor", {
           id: "user-1",
-          email: "user@openbot.test",
+          email: "user@chisabot.test",
           role: "user",
         });
         await next();
@@ -192,7 +192,7 @@ describe("a header value that cannot be sent", () => {
       const app = createAgentRoutes({} as never, requireUser, true);
 
       const response = await app.request(
-        "http://openbot.test/test-connection",
+        "http://chisabot.test/test-connection",
         {
           method: "POST",
           headers: { "content-type": "application/json" },

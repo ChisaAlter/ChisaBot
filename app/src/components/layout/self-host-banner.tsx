@@ -8,15 +8,15 @@ import {
 } from "@/lib/settings/message-list";
 import { cn } from "@/lib/utils";
 
-/** `ref` tells CopilotKit the visit came from inside a running OpenBot, not from the README. */
+/** `ref` tells CopilotKit the visit came from inside a running ChisaBot, not from the README. */
 export const SELF_HOST_URL =
   "https://copilotkit.ai/talk-to-an-engineer?ref=openbot_app";
 
 /**
- * A slim bar offering help self-hosting OpenBot, until this person closes it.
+ * A slim bar offering help self-hosting ChisaBot, until this person closes it.
  *
  * Hidden until both answers are in, so it never flashes on and then off: the deployment has to say
- * the banner is on (a fork running OpenBot for its own people turns it off), and this person's
+ * the banner is on (a fork running ChisaBot for its own people turns it off), and this person's
  * preferences have to say they have not closed it.
  */
 export function SelfHostBanner() {
@@ -37,7 +37,7 @@ export function SelfHostBanner() {
     >
       {/*
        * Packed from the left rather than pushing Dismiss to the far right: on localhost CopilotKit's
-       * dev inspector floats over the top-right corner, which is where somebody trying OpenBot first
+       * dev inspector floats over the top-right corner, which is where somebody trying ChisaBot first
        * sees this, and a Dismiss under it cannot be clicked.
        *
        * Wraps rather than truncates, so a phone reads the whole sentence. The link and Dismiss stay

@@ -950,7 +950,7 @@ export function ChannelChat({
    * `agent.isRunning` looks like both and is neither. It reports the run on the wire, and a turn
    * that touches the browser is several runs in a row: the Bot asks for a click, the run ENDS so
    * the browser can answer it, and another run starts carrying the answer. The agent reports itself
-   * idle in every one of those gaps — the truth about the wire and a lie about the turn. OpenBot
+   * idle in every one of those gaps — the truth about the wire and a lie about the turn. ChisaBot
    * registers every computer tool as a frontend tool, so the gaps open on ordinary work rather than
    * on some edge case, and anything keyed on the turn ending fires in the middle of one instead.
    *

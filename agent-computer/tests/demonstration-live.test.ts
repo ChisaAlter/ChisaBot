@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const asked = process.env.OPENBOT_DEMONSTRATION_LIVE === "1";
+const asked = process.env.CHISABOT_DEMONSTRATION_LIVE === "1";
 const token = "demonstration-fixture-token";
 const botId = "demonstration-fixture";
 const recordingId = "11111111-1111-1111-1111-111111111111";
@@ -16,8 +16,8 @@ async function api(path: string, input?: unknown) {
   const response = await fetch(`${base}${path}`, {
     method: input === undefined ? "GET" : "POST",
     headers: {
-      "x-openbot-computer-token": token,
-      "x-openbot-bot-id": botId,
+      "x-chisabot-computer-token": token,
+      "x-chisabot-bot-id": botId,
       "content-type": "application/json",
     },
     ...(input === undefined ? {} : { body: JSON.stringify(input) }),

@@ -15,7 +15,7 @@ async function probeServingPorts(env: {
   APP_PORT?: string;
   SERVER_PORT?: string;
 }) {
-  const directory = await mkdtemp(join(tmpdir(), "openbot-serve-ports-"));
+  const directory = await mkdtemp(join(tmpdir(), "chisabot-serve-ports-"));
   const preload = join(directory, "probe.mjs");
   try {
     // Run the real entry and API handler, stopping both boundaries before any network access.
@@ -118,7 +118,7 @@ describe("serving port configuration", () => {
  *
  * The failure that made this necessary: `vite preview` under `bun --bun` dies on the first proxied
  * call with `TypeError: socket.destroySoon is not a function`, so the app served its page, exited,
- * and the shell's window went on saying "OpenBot is running" with nothing listening.
+ * and the shell's window went on saying "ChisaBot is running" with nothing listening.
  */
 describe("what answers a request", () => {
   test("the server answers its own prefix, and nothing near it", () => {
@@ -335,7 +335,7 @@ async function startProxy(upstreamPort: number) {
 }
 
 test.each([
-  ["dictation", "/api/audio/transcriptions", "x-openbot-dictation"],
+  ["dictation", "/api/audio/transcriptions", "x-chisabot-dictation"],
 ])(
   "%s can wait for a provider past Bun's default idle timeout",
   async (_name, path, header) => {

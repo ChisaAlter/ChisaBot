@@ -29,7 +29,7 @@ function harness() {
     context,
     next,
   ) => {
-    context.set("actor", { id: "u1", email: "someone@openbot.test" });
+    context.set("actor", { id: "u1", email: "someone@chisabot.test" });
     return next();
   };
 

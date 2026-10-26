@@ -12,7 +12,7 @@ import { TEST_POOL, testDatabaseUrl } from "./support/database";
  * The snapshot a ref resolves against has to cross to another server.
  *
  * The gateway turns the opaque ref in a click into the element it points at by looking it up in the
- * snapshot this deployment took. OpenBot runs several processes behind a load balancer, and the one
+ * snapshot this deployment took. ChisaBot runs several processes behind a load balancer, and the one
  * that takes the snapshot is rarely the one that answers the click, so that mapping cannot live in a
  * `Map` in a process: on every other replica it would be empty, the policy would decide with no
  * element, and the boundary would be silently off. The row is the contract that carries the mapping

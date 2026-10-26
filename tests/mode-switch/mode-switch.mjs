@@ -62,7 +62,7 @@ for (const view of VIEWS) {
   const [w, theme] = view.split("-");
   const phone = w === "390";
   const ctx = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 860 }, locale: "zh-CN", timezoneId: "Asia/Shanghai", ignoreHTTPSErrors: true, ...(phone ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}) });
-  await ctx.addInitScript((t) => { try { localStorage.setItem("openbot-theme", t); localStorage.setItem("chisabot-left-mode", "bots"); } catch {} }, theme);
+  await ctx.addInitScript((t) => { try { localStorage.setItem("chisabot-theme", t); localStorage.setItem("chisabot-left-mode", "bots"); } catch {} }, theme);
   await ctx.addInitScript(SAMPLER);
   if (TOK) await ctx.addCookies([{ name: "__Host-openbot_session", value: TOK, url: base, secure: true, httpOnly: true, sameSite: "Lax" }]);
   const page = await ctx.newPage();

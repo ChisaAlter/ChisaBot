@@ -4,7 +4,7 @@ Description=Clean up abandoned ChisaBot attachments hourly
 [Timer]
 OnBootSec=5min
 OnUnitActiveSec=1h
-Unit=openbot-zh-attachments.service
+Unit=chisabot-zh-attachments.service
 
 [Install]
 WantedBy=timers.target

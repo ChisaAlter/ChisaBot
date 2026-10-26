@@ -1,7 +1,7 @@
 /**
  * Adapted from ElevenLabs UI LiveWaveform (static mirrored bars and edge fade):
  * https://github.com/elevenlabs/ui/blob/main/apps/www/registry/elevenlabs-ui/ui/live-waveform.tsx
- * OpenBot supplies its existing recording stream; this component never opens or stops a microphone.
+ * ChisaBot supplies its existing recording stream; this component never opens or stops a microphone.
  *
  * MIT License
  * Copyright (c) 2025 Eleven Labs Inc.

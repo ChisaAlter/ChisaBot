@@ -14,7 +14,7 @@ test("the browser SDK's channel proxy sends the real BOT ID to the policy bounda
     reactRequire.resolve("@copilotkit/core")
   );
   const proxy = new ProxiedCopilotRuntimeAgent({
-    runtimeUrl: "https://openbot.example.test/api/copilotkit",
+    runtimeUrl: "https://chisabot.example.test/api/copilotkit",
     agentId: "channel:private-local-instance",
     runtimeAgentId: "actual-bot/id",
     threadId: "thread",

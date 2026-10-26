@@ -236,7 +236,7 @@ export async function transcribeRecording(
   const response = await fetch("/api/audio/transcriptions", {
     method: "POST",
     credentials: "include",
-    headers: { "x-openbot-dictation": "1" },
+    headers: { "x-chisabot-dictation": "1" },
     body,
     signal: AbortSignal.any([
       signal,

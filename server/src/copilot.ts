@@ -442,7 +442,7 @@ function isHttpUrl(value: string) {
 /**
  * What the person asking has said they want, in every channel, from every coworker.
  *
- * The OpenBot equivalent of a CLAUDE.md, and the third instruction carrier beside the two that
+ * The ChisaBot equivalent of a CLAUDE.md, and the third instruction carrier beside the two that
  * already existed. A role is the coworker's and reads the same to everybody who talks to it; a skill
  * is pulled in for one task. This is the person's, and it is true of every task they ever ask for —
  * how they want to be written to, what their company is called, what it is not to be called.
@@ -1654,7 +1654,7 @@ function remoteAgentWithStandingRole(
             agent.type === "remote_mastra"
               ? [
                   ...callerMastraContext(input.context ?? []),
-                  ...mastraOpenBotContext({
+                  ...mastraChisaBotContext({
                     standingMessage: agent.standingMessage,
                     holdingsMessage,
                     botId: agent.id,
@@ -1705,7 +1705,8 @@ function remoteAgentWithStandingRole(
       );
       const owned =
         !!process.env.MANAGED_AGENT_TOKEN &&
-        agent.headers?.["x-openbot-agent-token"] ===
+        (agent.headers?.["x-chisabot-agent-token"] ??
+          agent.headers?.["x-openbot-agent-token"]) ===
           process.env.MANAGED_AGENT_TOKEN &&
         [
           process.env.PICKED_HARNESS_URL,
@@ -1720,12 +1721,12 @@ function remoteAgentWithStandingRole(
 }
 
 const RESERVED_MASTRA_CONTEXT_DESCRIPTIONS = new Set([
-  "OpenBot standing role",
-  "OpenBot granted tools guidance",
-  "OpenBot Bot id",
-  "OpenBot deployment tools",
-  "OpenBot signed run assertion",
-  "OpenBot learned skills",
+  "ChisaBot standing role",
+  "ChisaBot granted tools guidance",
+  "ChisaBot Bot id",
+  "ChisaBot deployment tools",
+  "ChisaBot signed run assertion",
+  "ChisaBot learned skills",
 ]);
 
 function callerMastraContext(context: AgentContext[]): AgentContext[] {
@@ -1734,7 +1735,7 @@ function callerMastraContext(context: AgentContext[]): AgentContext[] {
   );
 }
 
-function mastraOpenBotContext({
+function mastraChisaBotContext({
   standingMessage,
   holdingsMessage,
   botId,
@@ -1749,29 +1750,29 @@ function mastraOpenBotContext({
 }): AgentContext[] {
   return [
     {
-      description: "OpenBot standing role",
+      description: "ChisaBot standing role",
       value: standingMessage.content,
     },
     ...(holdingsMessage
       ? [
           {
-            description: "OpenBot granted tools guidance",
+            description: "ChisaBot granted tools guidance",
             value: holdingsMessage.content,
           },
         ]
       : []),
     {
-      description: "OpenBot Bot id",
+      description: "ChisaBot Bot id",
       value: botId,
     },
     {
-      description: "OpenBot deployment tools",
+      description: "ChisaBot deployment tools",
       value: JSON.stringify(deploymentTools),
     },
     ...(runAssertion
       ? [
           {
-            description: "OpenBot signed run assertion",
+            description: "ChisaBot signed run assertion",
             value: runAssertion,
           },
         ]
@@ -1785,7 +1786,7 @@ class CloningRemoteAgent extends AbstractAgent {
 
   constructor(
     remote: AbstractAgent,
-    private readonly attachOpenBotMiddleware: (target: AbstractAgent) => void,
+    private readonly attachChisaBotMiddleware: (target: AbstractAgent) => void,
   ) {
     super({
       agentId: remote.agentId,
@@ -1799,7 +1800,7 @@ class CloningRemoteAgent extends AbstractAgent {
     if (this.remote.headers) {
       this.headers = { ...this.remote.headers };
     }
-    this.attachOpenBotMiddleware(this);
+    this.attachChisaBotMiddleware(this);
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -1822,7 +1823,7 @@ class CloningRemoteAgent extends AbstractAgent {
     const clonedRemote = this.remote.clone() as AbstractAgent;
     const clone = new CloningRemoteAgent(
       clonedRemote,
-      this.attachOpenBotMiddleware,
+      this.attachChisaBotMiddleware,
     );
     if (this.headers) {
       clone.headers = { ...this.headers };
@@ -2376,7 +2377,7 @@ export function mountCopilotRuntime(
     // `mode` is inferred from the presence of `intelligence`; passing it is a type error.
     //
     // Intelligence needs identifyUser to scope its managed threads. Local SSE requests are guarded
-    // by OpenBot's verified actor and owner checks in app.ts before the SDK handler is reached.
+    // by ChisaBot's verified actor and owner checks in app.ts before the SDK handler is reached.
     ...(localBackend
       ? {
           runner: localBackend.runner,
@@ -2389,19 +2390,19 @@ export function mountCopilotRuntime(
           intelligence: intelligenceClient,
           licenseToken: intelligence!.licenseToken,
         }),
-    // Carried on the events the runtime already sends, so OpenBot's traffic is separable from any
+    // Carried on the events the runtime already sends, so ChisaBot's traffic is separable from any
     // other deployment's. Adds no events of its own.
     ...(!localBackend
       ? {
           telemetryProperties: {
-            ...(config.accessibility ? { accessibility_title: "OpenBot" } : {}),
+            ...(config.accessibility ? { accessibility_title: "ChisaBot" } : {}),
             ...desktopTelemetryProperties(),
           },
         }
       : {}),
     // Open Generative UI（`generateSandboxedUi`，沙箱 iframe 里的自写 HTML）已停用：json-render 的
     // `render_ui` 服务器工具（server/src/generative-ui/render-ui.ts）是唯一的生成式界面，仍由
-    // DeploymentConfig.generativeUi（OPENBOT_GENERATIVE_UI）控制。这里不再传 `openGenerativeUI`，
+    // DeploymentConfig.generativeUi（CHISABOT_GENERATIVE_UI）控制。这里不再传 `openGenerativeUI`，
     // 运行时就不会声明该能力，浏览器端也就不会把 `generateSandboxedUi` 工具提供给 Bot。
     // A2UI 已被 json-render 取代（server/src/generative-ui/render-ui.ts 的 `render_ui` 工具）。
     // 始终关闭 SDK 的 A2UI 中间件：旧的浏览器缓存仍可能带着 A2UI 目录，不能让它把中间件重新打开。

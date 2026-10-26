@@ -85,12 +85,12 @@ test("later AGUI runs reflect edited memory without rebuilding the middleware", 
 test("disabled or deleted memory removes stale replayed context", async () => {
   const request = input();
   request.messages.unshift({
-    id: "openbot:personal-memory",
+    id: "chisabot:personal-memory",
     role: "system",
     content: "deleted fact",
   });
   request.context.push({
-    description: "OpenBot personal memory",
+    description: "ChisaBot personal memory",
     value: "deleted fact",
   });
   const next = await run(async () => "", request);
@@ -100,7 +100,7 @@ test("disabled or deleted memory removes stale replayed context", async () => {
 test("personal memory retains Automatic Learning catalog and tool authority", async () => {
   const request = input();
   request.messages.unshift({
-    id: "openbot:learned-skills",
+    id: "chisabot:learned-skills",
     role: "system",
     content: "approved catalog",
   });
@@ -111,7 +111,7 @@ test("personal memory retains Automatic Learning catalog and tool authority", as
   });
   const next = await run(async () => "fact", request);
   expect(
-    next?.messages.some((message) => message.id === "openbot:learned-skills"),
+    next?.messages.some((message) => message.id === "chisabot:learned-skills"),
   ).toBe(true);
   expect(next?.tools).toEqual(request.tools);
   expect(next?.forwardedProps).toEqual(request.forwardedProps);

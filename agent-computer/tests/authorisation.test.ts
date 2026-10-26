@@ -47,7 +47,7 @@ describe("finding the secret a caller offered", () => {
   const url = (path: string) => new URL(`http://computer.test${path}`);
 
   test("a header", () => {
-    const headers = new Headers({ "x-openbot-computer-token": SECRET });
+    const headers = new Headers({ "x-chisabot-computer-token": SECRET });
     expect(offeredToken(headers, url("/snapshot"))).toBe(SECRET);
   });
 
@@ -67,7 +67,7 @@ describe("finding the secret a caller offered", () => {
     // Not a restriction that matters for security, both are checked against the same secret, but
     // the socket has one way in, and a surface that sent the header would fail loudly rather than
     // appearing to work until somebody looked.
-    const headers = new Headers({ "x-openbot-computer-token": SECRET });
+    const headers = new Headers({ "x-chisabot-computer-token": SECRET });
     expect(offeredToken(headers, url("/stream?bot=b"))).toBe("");
   });
 

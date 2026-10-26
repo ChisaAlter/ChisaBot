@@ -394,7 +394,7 @@ async function withClient<T>(
       ? { headers: { Authorization: authorizationHeader(connection.token) } }
       : undefined,
   });
-  const client = new Client({ name: "openbot", version: "1.0.0" });
+  const client = new Client({ name: "chisabot", version: "1.0.0" });
 
   try {
     // SDK RequestOptions.signal cancels connect / in-flight JSON-RPC (FIX-04 residual).

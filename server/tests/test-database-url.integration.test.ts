@@ -24,7 +24,7 @@ describe("TEST_DATABASE_URL isolation", () => {
 
         expect(firstRow?.name).toBe(databaseName);
         expect(secondRow?.name).toBe(databaseName);
-        expect(databaseName).not.toBe("openbot");
+        expect(databaseName).not.toBe("chisabot");
       } finally {
         await second.$client.close();
       }

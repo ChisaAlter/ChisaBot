@@ -5,7 +5,7 @@
  *   import { ingestSlackEvent } from "../responsibilities/slack";
  *   await ingestSlackEvent({ teamId, eventId, eventTime, type, channelId, userId, ts, ... });
  *
- * The pairing owns Slack authentication, the workspace install and which OpenBot Bot a Slack app
+ * The pairing owns Slack authentication, the workspace install and which ChisaBot Bot a Slack app
  * speaks for; this module owns deciding which responsibilities a verified event fires. It never
  * throws for an event nobody listens to: it returns what it did.
  *
@@ -81,7 +81,7 @@ export function slackTriggerMatches(
   event: SlackTriggerEvent,
 ): boolean {
   // The author's identity never decides whose trigger fires. The ingest checks each owner's own
-  // access to the channel, so a colleague who never linked OpenBot still fires the owner's trigger.
+  // access to the channel, so a colleague who never linked ChisaBot still fires the owner's trigger.
   const config = trigger.config;
   if (config.kind !== "slack" || config.teamId !== event.teamId) return false;
   if (event.isBot || event.subtype) return false;

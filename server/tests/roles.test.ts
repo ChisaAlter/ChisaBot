@@ -10,13 +10,13 @@ import type { Database } from "../src/db/client";
 
 describe("roleForEmail", () => {
   test("assigns an admin role to allowlisted addresses without case sensitivity", () => {
-    expect(roleForEmail("Admin@OpenBot.test", ["admin@openbot.test"])).toBe(
+    expect(roleForEmail("Admin@ChisaBot.test", ["admin@chisabot.test"])).toBe(
       "admin",
     );
   });
 
   test("assigns the user role to addresses outside the initial admin allowlist", () => {
-    expect(roleForEmail("member@openbot.test", ["admin@openbot.test"])).toBe(
+    expect(roleForEmail("member@chisabot.test", ["admin@chisabot.test"])).toBe(
       "user",
     );
   });
@@ -175,9 +175,9 @@ function databaseWithUser(
 
 describe("applyConfiguredAdmin", () => {
   test("promotes an address the deployment names", async () => {
-    const { database, written } = databaseWithUser("admin@openbot.test");
+    const { database, written } = databaseWithUser("admin@chisabot.test");
 
-    await applyConfiguredAdmin(database, "u1", ["admin@openbot.test"]);
+    await applyConfiguredAdmin(database, "u1", ["admin@chisabot.test"]);
 
     expect(written).toEqual(["admin"]);
   });
@@ -191,31 +191,31 @@ describe("applyConfiguredAdmin", () => {
    * every administrator would produce one and the row would say nothing.
    */
   test("says so when this sign-in is what granted the role", async () => {
-    const { database } = databaseWithUser("admin@openbot.test");
+    const { database } = databaseWithUser("admin@chisabot.test");
 
     expect(
-      await applyConfiguredAdmin(database, "u1", ["admin@openbot.test"]),
+      await applyConfiguredAdmin(database, "u1", ["admin@chisabot.test"]),
     ).toBe(true);
   });
 
   test("says nothing when they were already an administrator", async () => {
-    const { database } = databaseWithUser("admin@openbot.test", true);
+    const { database } = databaseWithUser("admin@chisabot.test", true);
 
     expect(
-      await applyConfiguredAdmin(database, "u1", ["admin@openbot.test"]),
+      await applyConfiguredAdmin(database, "u1", ["admin@chisabot.test"]),
     ).toBe(false);
   });
 
   test("says nothing for somebody the configuration does not name", async () => {
-    const { database } = databaseWithUser("member@openbot.test");
+    const { database } = databaseWithUser("member@chisabot.test");
 
     expect(
-      await applyConfiguredAdmin(database, "u1", ["admin@openbot.test"]),
+      await applyConfiguredAdmin(database, "u1", ["admin@chisabot.test"]),
     ).toBe(false);
   });
 
   test("says nothing when nothing is configured", async () => {
-    const { database } = databaseWithUser("admin@openbot.test");
+    const { database } = databaseWithUser("admin@chisabot.test");
 
     expect(await applyConfiguredAdmin(database, "u1", [])).toBe(false);
   });
@@ -227,15 +227,15 @@ describe("applyConfiguredAdmin", () => {
    * silently undo that promotion the next time they signed in.
    */
   test("leaves everybody else exactly as the admin screen set them", async () => {
-    const { database, written } = databaseWithUser("member@openbot.test");
+    const { database, written } = databaseWithUser("member@chisabot.test");
 
-    await applyConfiguredAdmin(database, "u1", ["admin@openbot.test"]);
+    await applyConfiguredAdmin(database, "u1", ["admin@chisabot.test"]);
 
     expect(written).toEqual([]);
   });
 
   test("writes nothing when the deployment names nobody", async () => {
-    const { database, written } = databaseWithUser("admin@openbot.test");
+    const { database, written } = databaseWithUser("admin@chisabot.test");
 
     await applyConfiguredAdmin(database, "u1", []);
 
@@ -245,7 +245,7 @@ describe("applyConfiguredAdmin", () => {
   test("does nothing for a session whose user is not there", async () => {
     const { database, written } = databaseWithUser(null);
 
-    await applyConfiguredAdmin(database, "u1", ["admin@openbot.test"]);
+    await applyConfiguredAdmin(database, "u1", ["admin@chisabot.test"]);
 
     expect(written).toEqual([]);
   });
@@ -253,20 +253,20 @@ describe("applyConfiguredAdmin", () => {
 
 describe("seedRole", () => {
   test("starts an address on the list as an administrator", async () => {
-    const { database, written } = databaseWithUser("admin@openbot.test");
+    const { database, written } = databaseWithUser("admin@chisabot.test");
 
-    await seedRole(database, "u1", "admin@openbot.test", [
-      "admin@openbot.test",
+    await seedRole(database, "u1", "admin@chisabot.test", [
+      "admin@chisabot.test",
     ]);
 
     expect(written).toEqual(["admin"]);
   });
 
   test("starts everybody else as a user", async () => {
-    const { database, written } = databaseWithUser("member@openbot.test");
+    const { database, written } = databaseWithUser("member@chisabot.test");
 
-    await seedRole(database, "u1", "member@openbot.test", [
-      "admin@openbot.test",
+    await seedRole(database, "u1", "member@chisabot.test", [
+      "admin@chisabot.test",
     ]);
 
     expect(written).toEqual(["user"]);
@@ -276,7 +276,7 @@ describe("seedRole", () => {
 describe("isConfiguredAdmin", () => {
   test("ignores case and surrounding space, on both sides", () => {
     expect(
-      isConfiguredAdmin("  Admin@OpenBot.test ", [" admin@openbot.TEST "]),
+      isConfiguredAdmin("  Admin@ChisaBot.test ", [" admin@chisabot.TEST "]),
     ).toBe(true);
   });
 });

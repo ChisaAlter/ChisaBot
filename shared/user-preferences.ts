@@ -2,7 +2,7 @@ export type MessageListEmphasis = "agent" | "thread";
 
 export type UserPreferences = {
   messageListEmphasis: MessageListEmphasis;
-  /** Whether this person closed the banner offering help self-hosting OpenBot. */
+  /** Whether this person closed the banner offering help self-hosting ChisaBot. */
   selfHostBannerDismissed: boolean;
   /** The Bot pinned at the top of the roster as this person's main Bot, or null for none. */
   mainBotId: string | null;

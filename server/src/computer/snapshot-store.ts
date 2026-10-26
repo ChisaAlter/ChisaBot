@@ -6,7 +6,7 @@
  * that says "never click Submit" is only worth anything if the server, not the caller, decides what
  * a ref is. See the header of gateway.ts.
  *
- * It cannot be a `Map` in the process. OpenBot is several server processes behind a load balancer,
+ * It cannot be a `Map` in the process. ChisaBot is several server processes behind a load balancer,
  * and the process that answered the snapshot is rarely the one that answers the click that uses its
  * refs. Held in memory, the mapping is missing on every other replica: the ref resolves to nothing,
  * the policy decides with no element in front of it, and the audit row cannot say what was acted on.

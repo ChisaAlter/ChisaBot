@@ -63,7 +63,18 @@
     <script>
       // localStorage throws in some privacy modes; a theme is not worth taking the app down for.
       try {
-        const dark = window.localStorage.getItem("openbot-theme") === "dark";
+        // 0.1.75 renamed every `openbot…` storage key to `chisabot…`. Copy the old values once so
+        // theme, language, layout and drafts survive the update; the old keys stay for older clients.
+        const store = window.localStorage;
+        for (let i = 0; i < store.length; i++) {
+          const key = store.key(i);
+          if (!key || key.indexOf("openbot") === -1) continue;
+          const renamed = key.split("openbot").join("chisabot");
+          if (store.getItem(renamed) === null) store.setItem(renamed, store.getItem(key));
+        }
+      } catch {}
+      try {
+        const dark = window.localStorage.getItem("chisabot-theme") === "dark";
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
       } catch {}
@@ -97,9 +108,9 @@
     <!-- Present before the gateway's workspace.js runs its DOMContentLoaded mount, which tells it the
          app draws its own account control (sign-out lives in the avatar menu), so it adds no
          floating "退出登录" button of its own. -->
-    <div id="openbot-account-control" hidden></div>
+    <div id="chisabot-account-control" hidden></div>
     <div id="root">
-      <div id="openbot-startup" class="boot" role="status" aria-label="正在加载 ChisaBot">
+      <div id="chisabot-startup" class="boot" role="status" aria-label="正在加载 ChisaBot">
         <div class="boot-top">
           <i class="boot-dot sh"></i>
           <i class="boot-seg gl"></i>
@@ -121,23 +132,23 @@
             <div class="boot-card gl"><i class="boot-bar sh" style="width:50%"></i><i class="sh" style="height:64px;border-radius:16px"></i><i class="boot-bar sh" style="width:35%"></i></div>
           </div>
         </div>
-        <div id="openbot-startup-note" class="boot-note" hidden>
-          <span id="openbot-startup-title">加载时间比平时长一些…</span>
-          <span id="openbot-startup-detail" hidden></span>
-          <button id="openbot-reload" type="button">重新加载</button>
+        <div id="chisabot-startup-note" class="boot-note" hidden>
+          <span id="chisabot-startup-title">加载时间比平时长一些…</span>
+          <span id="chisabot-startup-detail" hidden></span>
+          <button id="chisabot-reload" type="button">重新加载</button>
         </div>
         <noscript><div class="boot-note"><span>请启用浏览器的 JavaScript 后重新加载。</span></div></noscript>
       </div>
     </div>
-    <script id="openbot-startup-script">
+    <script id="chisabot-startup-script">
       // biome-ignore-all lint/complexity/useArrowFunction: Keep the pre-module recovery script compatible with older browsers.
       // biome-ignore-all lint/complexity/useOptionalChain: This must work even when newer module syntax fails to load.
       (function () {
-        var startup = document.getElementById("openbot-startup");
-        var title = document.getElementById("openbot-startup-title");
-        var detail = document.getElementById("openbot-startup-detail");
-        var reload = document.getElementById("openbot-reload");
-        var note = document.getElementById("openbot-startup-note");
+        var startup = document.getElementById("chisabot-startup");
+        var title = document.getElementById("chisabot-startup-title");
+        var detail = document.getElementById("chisabot-startup-detail");
+        var reload = document.getElementById("chisabot-reload");
+        var note = document.getElementById("chisabot-startup-note");
         var failed = false;
         var mounted = false;
         var stage = "shell";
@@ -230,7 +241,7 @@
           if (stage === "shell") stage = "entry-loaded";
           report("entry-loaded", resource);
         }, true);
-        window.addEventListener("openbot-boot-stage", function (event) {
+        window.addEventListener("chisabot-boot-stage", function (event) {
           if (mounted || (event.detail !== "entry-executing" && event.detail !== "react-mounted")) return;
           stage = event.detail;
           report(stage);

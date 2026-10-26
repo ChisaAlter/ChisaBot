@@ -22,7 +22,7 @@ async function person(
   ids.push(id);
   await database.insert(users).values({
     id,
-    email: `${id}@openbot.test`,
+    email: `${id}@chisabot.test`,
     name: id,
     emailVerified: true,
     lastSignedInAt: signedInAt,
@@ -46,7 +46,7 @@ afterEach(async () => {
   await database.delete(revokedAccess).where(
     inArray(
       revokedAccess.email,
-      ids.map((id) => `${id}@openbot.test`),
+      ids.map((id) => `${id}@chisabot.test`),
     ),
   );
   ids.length = 0;

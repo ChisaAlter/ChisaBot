@@ -1,5 +1,5 @@
 /**
- * Draws the OpenBot architecture as a hand-drawn SVG, one file per colour scheme.
+ * Draws the ChisaBot architecture as a hand-drawn SVG, one file per colour scheme.
  *
  * rough.js is the same engine Excalidraw draws with, so the shapes get the wobble of a whiteboard
  * rather than the machine-perfect boxes of a Mermaid render. The seed is fixed, so regenerating
@@ -227,7 +227,7 @@ function render(t: Theme): string {
   out.push(`<rect width="${W}" height="${H}" fill="${t.paper}"/>`);
 
   // ---- title -------------------------------------------------------------
-  text(64, 56, "OpenBot", { size: 26, weight: 700, fill: t.ink });
+  text(64, 56, "ChisaBot", { size: 26, weight: 700, fill: t.ink });
   text(
     64,
     82,
@@ -526,7 +526,7 @@ function render(t: Theme): string {
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img">`,
-    `<title>OpenBot architecture</title>`,
+    `<title>ChisaBot architecture</title>`,
     `<desc>A turn goes from the app to the server, which sends it to a Bot over AG-UI. Every tool call ` +
       `the Bot makes returns through the gateway, which resolves the target, decides it against the ` +
       `configured policy, records an audit row, and only then acts, or refuses and names the rule. ` +

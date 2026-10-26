@@ -2,10 +2,10 @@ import { afterAll, describe, expect, test } from "bun:test";
 
 /*
  * §101.8：读页面只读人看得见的字。真 Chromium 才有布局，所以和 native-select 一样只在
- *   OPENBOT_COMPUTER_BROWSER=1 bun test tests/readable-text.test.ts
+ *   CHISABOT_COMPUTER_BROWSER=1 bun test tests/readable-text.test.ts
  * 时跑（应用镜像里有 Chromium）。
  */
-const asked = process.env.OPENBOT_COMPUTER_BROWSER === "1";
+const asked = process.env.CHISABOT_COMPUTER_BROWSER === "1";
 const PAGE = `<!doctype html><title>Sign in</title><body>
 <div id="fallback" style="display:none">This wallpaper needs WebGL, which isn’t available in your browser.</div>
 <div style="visibility:hidden">藏起来的字</div>

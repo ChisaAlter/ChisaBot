@@ -1,3 +1,4 @@
+import "../../shared/env-compat";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serve } from "bun";
@@ -248,7 +249,8 @@ function actionLeaseMs(pathname: string): number {
  */
 function botIdOf(request: Request, fallback?: string | null): string {
   return (
-    request.headers.get("x-openbot-bot-id")?.trim() ||
+    request.headers.get("x-chisabot-bot-id")?.trim() ||
+    request.headers.get("x-openbot-bot-id")?.trim() || // pre-0.1.75 name
     fallback?.trim() ||
     DEFAULT_BOT_ID
   );
@@ -282,7 +284,7 @@ function botIdOf(request: Request, fallback?: string | null): string {
  * act on: chown the directory, or set `computers.podSecurityContext: null`.
  */
 async function assertWritable(label: string, directory: string) {
-  const probe = join(directory, `.openbot-write-probe-${process.pid}`);
+  const probe = join(directory, `.chisabot-write-probe-${process.pid}`);
   try {
     await mkdir(directory, { recursive: true });
     await writeFile(probe, "");
@@ -983,7 +985,7 @@ serve<StreamData>({
       if (url.pathname === "/stream") {
         /*
          * The socket carries the Bot in the query because it cannot do it in a header. Every other call here names
-         * its Bot in `x-openbot-bot-id`, but a websocket client sends no custom headers on the upgrade,
+         * its Bot in `x-chisabot-bot-id`, but a websocket client sends no custom headers on the upgrade,
          * so the stream, and only the stream, also accepts the Bot as a query parameter. The header
          * still wins where there is one.
          */

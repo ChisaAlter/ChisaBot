@@ -1068,7 +1068,7 @@ export async function listTools(connection: {
  * and takes nothing else, because the alternative is somebody's request id in a model's context and
  * an audit row the size of a response dump.
  *
- * openbot already had this lesson from Drive, where a generic message cost a round of probing and the
+ * chisabot already had this lesson from Drive, where a generic message cost a round of probing and the
  * vendor's own "The caller does not have permission" named the problem immediately.
  *
  * Null when there is no such sentence, which leaves the caller to choose a fallback rather than

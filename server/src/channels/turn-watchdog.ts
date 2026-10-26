@@ -19,7 +19,7 @@
  * WHAT THE STREAM ACTUALLY DOES IN THIS PRODUCT, measured before any of this was designed, because
  * the answer decides whether a long tool call would be reported as a stall.
  *
- * OpenBot runs in Intelligence mode and has no other mode, so `POST /api/copilotkit/agent/:id/run`
+ * ChisaBot runs in Intelligence mode and has no other mode, so `POST /api/copilotkit/agent/:id/run`
  * does not stream at all. It answers `Content-Type: application/json` with a fixed Content-Length in
  * about a second, carrying a join token, and the AG-UI events reach the browser over a WebSocket to
  * the Intelligence gateway. Wrapping that response body would watch a JSON envelope go past. The

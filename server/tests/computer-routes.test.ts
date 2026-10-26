@@ -29,7 +29,7 @@ describe("computer routes", () => {
     );
 
     const response = await routes.request(
-      "http://openbot.test/bot-17/screenshot",
+      "http://chisabot.test/bot-17/screenshot",
     );
 
     expect(response.status).toBe(200);
@@ -50,13 +50,13 @@ describe("computer routes", () => {
  */
 const member: AuthenticatedActor = {
   id: "user-1",
-  email: "member@openbot.test",
+  email: "member@chisabot.test",
   role: "user",
 };
 
 const administrator: AuthenticatedActor = {
   id: "admin-1",
-  email: "admin@openbot.test",
+  email: "admin@chisabot.test",
   role: "admin",
 };
 
@@ -100,7 +100,7 @@ describe("computer fleet listing", () => {
       ],
     }));
 
-    const response = await app.request("http://openbot.test/any-bot/computers");
+    const response = await app.request("http://chisabot.test/any-bot/computers");
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
@@ -125,7 +125,7 @@ describe("computer fleet listing", () => {
     };
     const { app, listed } = appFor(administrator, async () => fleet);
 
-    const response = await app.request("http://openbot.test/any-bot/computers");
+    const response = await app.request("http://chisabot.test/any-bot/computers");
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual(fleet);
@@ -168,7 +168,7 @@ describe("human input", () => {
   async function send(body: unknown, kind = "click") {
     const { app, calls } = recordingGateway();
     const response = await app.request(
-      `http://openbot.test/bot-1/human/${kind}`,
+      `http://chisabot.test/bot-1/human/${kind}`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },

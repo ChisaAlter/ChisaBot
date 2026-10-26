@@ -19,7 +19,7 @@ const ctx = await browser.newContext({
 });
 await ctx.addInitScript((lite) => {
   window.__lite = lite;
-  try { localStorage.setItem("openbot-theme", "light"); } catch {}
+  try { localStorage.setItem("chisabot-theme", "light"); } catch {}
   const w = window;
   w.__samples = [];
   w.__lt = [];

@@ -96,7 +96,7 @@ using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-public static class OpenBotCredentialLock {
+public static class ChisaBotCredentialLock {
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
   static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
   [DllImport("kernel32.dll", SetLastError=true)]
@@ -116,7 +116,7 @@ public static class OpenBotCredentialLock {
 $deadline=[DateTime]::UtcNow.AddSeconds(5)
 $file=$null
 while ($null -eq $file) {
-  try { $file=[OpenBotCredentialLock]::Open($env:OPENBOT_CREDENTIAL_LOCK) }
+  try { $file=[ChisaBotCredentialLock]::Open($env:CHISABOT_CREDENTIAL_LOCK) }
   catch {
     $cause=$_.Exception.GetBaseException()
     if ($cause -isnot [System.ComponentModel.Win32Exception] -or $cause.NativeErrorCode -ne 32 -or [DateTime]::UtcNow -ge $deadline) { exit 1 }
@@ -130,7 +130,7 @@ finally { $file.Dispose() }
 async function windowsLock(path: string): Promise<() => Promise<void>> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    OPENBOT_CREDENTIAL_LOCK: path,
+    CHISABOT_CREDENTIAL_LOCK: path,
   };
   delete env.PSModulePath;
   const child = Bun.spawn(

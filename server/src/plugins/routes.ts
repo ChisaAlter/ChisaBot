@@ -1032,7 +1032,7 @@ export function createPluginRoutes(
      * row met `catalogueEntry`, which has never heard of `composio-linear`, and the person
      * pressing Connect was told the app "is not connected as an individual person" — the exact
      * opposite of true about the one kind of row that is ONLY ever connected as an individual
-     * person. On a deployment with no `OPENBOT_PUBLIC_URL` it failed one step earlier still,
+     * person. On a deployment with no `CHISABOT_PUBLIC_URL` it failed one step earlier still,
      * refusing for want of a setting that has no bearing on a flow it does not enter.
      *
      * The app comes off the row's url via `toolkitOf` rather than off its id, for the reason the
@@ -1157,7 +1157,7 @@ export function createPluginRoutes(
        * ITS OWN KIND, AND THE ONE THIS FORK USED TO HAVE NO ARM FOR. `NO_AUTH` is what
        * `connectionOf` resolves thirty-four of Composio's toolkits to and what `addBrokeredApp`
        * records on their rows. It is not a field scheme, so without this it fell through into the
-       * consent arm below and met one of two dead ends: a 503 demanding `OPENBOT_APP_URL` for a
+       * consent arm below and met one of two dead ends: a 503 demanding `CHISABOT_APP_URL` for a
        * return leg this flow does not have, or `broker.authorize` — which can only fail, because
        * `ensureAuthConfig` deliberately creates NO authorization config for a no-auth app, Composio
        * having refused to hold one. The sentence that failure produces tells the person to remove
@@ -1537,8 +1537,8 @@ export function createPluginRoutes(
        * hosted page having just granted access, with no route back to the deployment that asked
        * for it and nothing here knowing it happened.
        *
-       * The OAuth flow below refuses for its missing `OPENBOT_PUBLIC_URL` in these same terms and
-       * for this same reason. `OPENBOT_APP_URL` is the setting here because the two addresses are
+       * The OAuth flow below refuses for its missing `CHISABOT_PUBLIC_URL` in these same terms and
+       * for this same reason. `CHISABOT_APP_URL` is the setting here because the two addresses are
        * genuinely different: the API is one origin and the browser app is another, and it is a
        * page this person is coming back to rather than an endpoint.
        *
@@ -1546,7 +1546,7 @@ export function createPluginRoutes(
        * GIVES ONE GUARD EARLIER. Neither an app whose secret the person types nor one that needs no
        * credential at all mints a link or has a return leg, so this setting has no bearing on either
        * flow — and standing before the fork, this guard meant no key app and no no-auth app could be
-       * connected on a deployment without `OPENBOT_APP_URL`, refused in the name of a remedy that
+       * connected on a deployment without `CHISABOT_APP_URL`, refused in the name of a remedy that
        * would not have helped. It stays after the one-account guard for
        * the reason that guard's own comment gives: somebody who already has an account attached is
        * told the step to take, rather than handed an operator's configuration complaint about a
@@ -1556,7 +1556,7 @@ export function createPluginRoutes(
         return context.json(
           {
             error:
-              "This deployment has no app URL configured, so Composio would have nowhere to send you back to. Set OPENBOT_APP_URL.",
+              "This deployment has no app URL configured, so Composio would have nowhere to send you back to. Set CHISABOT_APP_URL.",
           },
           503,
         );
@@ -1593,9 +1593,9 @@ export function createPluginRoutes(
           toolkit,
           /*
            * THE REFUSAL ABOVE CHECKS THAT A SETTING IS SET; THIS CHECKS THAT IT IS AN ADDRESS.
-           * `appUrl` is an environment string — `OPENBOT_APP_URL`, or the first `TRUSTED_ORIGINS`
+           * `appUrl` is an environment string — `CHISABOT_APP_URL`, or the first `TRUSTED_ORIGINS`
            * entry — and nothing between there and Composio has ever looked at it, so
-           * `openbot.example.com` with the scheme left off builds a callback that is not a
+           * `chisabot.example.com` with the scheme left off builds a callback that is not a
            * callback. That failure lands after somebody has consented, on the vendor's page, where
            * this deployment cannot tell them anything; the guard moves it to before the link is
            * minted, where the sentence reaches an operator who can set the variable.
@@ -1618,7 +1618,7 @@ export function createPluginRoutes(
       return context.json(
         {
           error:
-            "This deployment has no public URL configured, so it cannot complete a consent flow. Set OPENBOT_PUBLIC_URL.",
+            "This deployment has no public URL configured, so it cannot complete a consent flow. Set CHISABOT_PUBLIC_URL.",
         },
         503,
       );
@@ -1635,7 +1635,7 @@ export function createPluginRoutes(
     /*
      * A dynamic entry introduces the deployment itself on first use; a manual one still waits
      * for an administrator. Registration lives here, on the one handler that already refuses
-     * without OPENBOT_PUBLIC_URL — the redirect URI it registers is guaranteed to exist.
+     * without CHISABOT_PUBLIC_URL — the redirect URI it registers is guaranteed to exist.
      */
     /*
      * A vendor in the catalogue that nobody has added to this deployment reaches here, gets past

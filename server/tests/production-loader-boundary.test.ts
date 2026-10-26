@@ -12,14 +12,14 @@ function envFileArgument(envPath: string): string {
 }
 
 async function runProductionEntry() {
-  const proofDir = await mkdtemp(`${tmpdir()}${sep}openbot-loader-boundary-`);
+  const proofDir = await mkdtemp(`${tmpdir()}${sep}chisabot-loader-boundary-`);
   const envPath = `${proofDir}${sep}synthetic.env`;
   await writeFile(
     envPath,
     [
       "DATABASE_URL=postgres://openbot:openbot@127.0.0.1:1/openbot",
       "KEY_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-      "OPENBOT_SINGLE_USER=true",
+      "CHISABOT_SINGLE_USER=true",
       "MANAGED_AGENT_AG_UI_URL=http://127.0.0.1:4200/ag-ui",
       "MANAGED_AGENT_TOKEN=synthetic-managed-token",
       "AGENT_COMPUTER_URL=http://127.0.0.1:4300",
@@ -78,7 +78,7 @@ describe("production server loader boundary", () => {
 
     expect(result.exitCode).not.toBe(0);
     expect(output).not.toContain("require() async module");
-    expect(output).not.toContain("OPENBOT_SERVER_LOADER_SMOKE");
+    expect(output).not.toContain("CHISABOT_SERVER_LOADER_SMOKE");
     expect(output).toContain("Failed query: insert into");
     expect(output).toMatch(
       /Connection closed|Failed to connect|ERR_POSTGRES_CONNECTION_REFUSED/,
