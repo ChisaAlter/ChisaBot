@@ -86,6 +86,7 @@ jobs:
           bun test tests/message-scroll-reduced-motion.test.tsx
           bun test tests/thread-inbox-paused.test.tsx tests/thread-inbox-concurrency.test.tsx tests/conversation-sync.test.ts
           bun test tests/schedule-fired.test.tsx
+          bun test tests/schedule-edit.test.tsx
           bun test tests/stop-queue.test.tsx
           bun test tests/computer-activity-log.test.tsx tests/computer-activity.test.ts
       - name: Install actual computer service dependencies

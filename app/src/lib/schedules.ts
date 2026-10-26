@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { ScheduleEvent, ScheduleView } from "../../../shared/schedules";
 import { client } from "@/lib/client";
+import type { ScheduleEditPatch } from "@/lib/schedule-edit";
 
 /** 定时任务 / 提醒（DESIGN.md §55，docs/schedules.md）。 */
 export const scheduleKeys = { all: ["schedules"] as const };
@@ -20,7 +21,7 @@ export function schedulesQueryOptions() {
   });
 }
 
-export function patchSchedule(id: string, body: { paused?: boolean; title?: string; instruction?: string }): Promise<ScheduleView> {
+export function patchSchedule(id: string, body: { paused?: boolean; title?: string; instruction?: string; when?: ScheduleEditPatch["when"] }): Promise<ScheduleView> {
   return client(`/api/schedules/${encodeURIComponent(id)}`, "schedule", { method: "PATCH", body, fallback: "保存失败，请重试" });
 }
 
