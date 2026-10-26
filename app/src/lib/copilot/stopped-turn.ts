@@ -47,6 +47,9 @@ export function friendlyStopReason(said: string): string {
     const n = /^\d/.test(stalled[2]) ? Number.parseInt(stalled[2], 10) : 1;
     return `「${stalled[1]}」${n} ${/minute/i.test(stalled[3]) ? "分钟" : "秒"}没有任何回应，这一轮已结束。再发一次试试；一直这样就换一个模型。`;
   }
+  // CB-100：服务器在流开始前连不上智能体运行时（Hermes 桥接等）。放在 ECONNREFUSED 那条前面，免得说成「连不上模型服务」。
+  if (/智能体运行时无法连接|智能体运行时在开始回答前出错|AGENT_RUNTIME_UNREACHABLE/.test(text))
+    return "智能体运行时无法连接，这一轮没有开始。请管理员检查运行时服务（Hermes 桥接）后再发一次。";
   if (/only be used from within OpenCode/i.test(text))
     return "这个模型只能在 OpenCode 客户端里用。点输入框右下角的模型名，换一个模型再发。";
   if (/daily (free )?limit|free (tier|limit)|quota|insufficient.*(credit|balance)|\b402\b/i.test(text))

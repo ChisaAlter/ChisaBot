@@ -12,7 +12,11 @@ const connection: RuntimeModelConnection = {
 function app(
   role: "admin" | "user",
   generate: (c: RuntimeModelConnection, prompt: string) => Promise<string>,
-  extra: { forAgent?: (id: string) => Promise<RuntimeModelConnection>; logs?: string[] } = {},
+  extra: {
+    forAgent?: (id: string) => Promise<RuntimeModelConnection>;
+    logs?: string[];
+    probeHermes?: () => Promise<{ reachable: boolean; error?: string }>;
+  } = {},
 ) {
   const requireUser = (async (context: { set: (k: string, v: unknown) => void }, next: () => Promise<void>) => {
     context.set("actor", { id: `${role}-1`, email: `${role}@x`, name: role, role });
@@ -27,6 +31,7 @@ function app(
       resolveConnectionForAgent: extra.forAgent,
       generate: (c, prompt) => generate(c, prompt),
       log: (line) => extra.logs?.push(line),
+      ...(extra.probeHermes ? { probeHermes: extra.probeHermes } : {}),
     }),
   );
   return root;
@@ -152,4 +157,48 @@ test("self-test passes through a fallback model when the main model is out of qu
   expect(body.message).toContain("主模型额度用完，已改用 step-5-preview");
   expect(logs[0]).toContain("fallback=clinepass/cline-free/step-5-preview");
   resetModelCooldowns();
+});
+
+// CB-100：自检要真的连一次 Hermes。以前只直连模型，Hermes 连不上时发布照样通过。
+test("Hermes not configured: hermes=skipped and model result decides", async () => {
+  const response = await post(app("admin", async (_c, prompt) => solve(prompt)));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ ok: true, hermes: "skipped" });
+});
+
+test("Hermes reachable: hermes=ok", async () => {
+  const logs: string[] = [];
+  const response = await post(
+    app("admin", async (_c, prompt) => solve(prompt), { logs, probeHermes: async () => ({ reachable: true }) }),
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ ok: true, hermes: "ok" });
+  expect(logs[0]).toContain("hermes=ok");
+});
+
+test("Hermes unreachable fails the smoke even though the model answered", async () => {
+  const logs: string[] = [];
+  const response = await post(
+    app("admin", async (_c, prompt) => solve(prompt), {
+      logs,
+      probeHermes: async () => ({ reachable: false, error: "连接不上 Hermes 桥接（可能没有启动或端口不对）" }),
+    }),
+  );
+  expect(response.status).toBe(502);
+  const body = await response.json();
+  expect(body).toMatchObject({ ok: false, hermes: "unreachable", answered: true, persisted: false });
+  expect(body.message).toContain("Hermes");
+  expect(logs[0]).toContain("hermes=unreachable");
+});
+
+test("a throwing Hermes probe counts as unreachable", async () => {
+  const response = await post(
+    app("admin", async (_c, prompt) => solve(prompt), {
+      probeHermes: async () => {
+        throw new Error("ConnectionRefused");
+      },
+    }),
+  );
+  expect(response.status).toBe(502);
+  expect(await response.json()).toMatchObject({ ok: false, hermes: "unreachable" });
 });

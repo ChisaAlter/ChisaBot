@@ -1,3 +1,4 @@
+import { FailFastTransport } from "../src/agents/pre-stream-failure";
 import { describe, expect, spyOn, test } from "bun:test";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -133,7 +134,10 @@ function expectWrappedHttpTransport(agent: unknown): HttpAgent {
     clone: expect.any(Function),
   });
 
-  const transport = (agent as RemoteAgentProbe).remote;
+  // CB-100: the transport is wrapped so a pre-stream connect failure ends as RUN_ERROR.
+  const wrapped = (agent as RemoteAgentProbe).remote;
+  expect(wrapped).toBeInstanceOf(FailFastTransport);
+  const transport = (wrapped as FailFastTransport).inner;
   expect(transport).toBeInstanceOf(HttpAgent);
   return transport as HttpAgent;
 }

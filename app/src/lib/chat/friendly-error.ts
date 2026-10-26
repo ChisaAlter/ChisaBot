@@ -21,6 +21,13 @@ export const UNANSWERED_TURN_REASON = "unanswered-turn: no reply was stored for 
 
 const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boolean }> = [
   {
+    // CB-100：服务器在流开始前就连不上智能体运行时（Hermes 桥接 / 远程 AG-UI），发来的 RUN_ERROR。
+    // 放在最前面：原因里带的 ConnectionRefused / ECONN 不能被当成「网络连接中断」（那是浏览器这边的网络）。
+    test: /智能体运行时无法连接|智能体运行时在开始回答前出错|AGENT_RUNTIME_UNREACHABLE/,
+    title: "智能体运行时无法连接",
+    hint: "服务器连不上智能体运行时（例如 Hermes 桥接没在监听）。请管理员检查运行时服务后点「重试」。",
+  },
+  {
     test: /实名|real[-_ ]?name|identity verification|realname|未认证|身份认证/i,
     title: "模型服务商要求先完成实名认证",
     hint: "请到该模型服务商的控制台完成实名认证，或在下方切换到其他模型后重试。",

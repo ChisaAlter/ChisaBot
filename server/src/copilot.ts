@@ -25,6 +25,7 @@ import {
   CoworkerUnavailableError,
 } from "./agents/agent-resolver";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
+import { FailFastTransport } from "./agents/pre-stream-failure";
 import { HermesRuntimeAgent, type HermesRuntimeBinding } from "./agents/hermes-runtime";
 import {
   PLAN_RUN_COMPLETED,
@@ -1367,14 +1368,15 @@ async function remoteTransport(
     : agentFetch;
 
   if (agent.type === "remote_ag_ui") {
-    return new HttpAgent({
+    // CB-100: a connect failure before the first event becomes a terminal RUN_ERROR, not a hang.
+    return new FailFastTransport(new HttpAgent({
       url: agent.endpoint,
       agentId: agent.id,
       // The customer's own key, if their agent sits behind one. `HttpAgentConfig` is
       // `{ url, headers?, fetch? }`, verified against @ag-ui/client 0.0.57.
       ...(agent.headers ? { headers: agent.headers } : {}),
       ...(dial ? { fetch: dial } : {}),
-    });
+    }));
   }
 
   const [{ MastraClient }, { getRemoteAgents }] = await Promise.all([
@@ -1416,7 +1418,7 @@ async function remoteTransport(
   });
 
   const picked = pickFromRoster(Object.keys(roster), agent);
-  return roster[picked] as AbstractAgent;
+  return new FailFastTransport(roster[picked] as AbstractAgent);
 }
 
 /**

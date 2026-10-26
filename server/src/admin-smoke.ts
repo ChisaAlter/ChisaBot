@@ -50,7 +50,17 @@ export type SmokeResult = {
    * 通过就说明「用户此刻发消息能得到回答」。`model` 仍是配置的主模型。
    */
   fallback?: FallbackUse;
+  /**
+   * CB-100：配置了 Hermes（CHISABOT_HERMES_URL）时真的连一次它。`unreachable` 会让整个自检失败
+   * （以前自检只直连模型、绕过 Hermes，所以 Hermes 连不上时发布照样通过）。没配置时是 `skipped`。
+   * 只看「连得上」（任意 HTTP 状态都算 ok），就绪与否仍由 /api/admin/health 报告。
+   */
+  hermes: "ok" | "unreachable" | "skipped";
+  hermesError?: string;
 };
+
+/** 连一次 Hermes 的结果；`reachable` 为 true 表示 TCP/HTTP 握手成功（任意 HTTP 状态）。 */
+export type HermesReachability = { reachable: boolean; error?: string };
 
 type Generate = (
   connection: RuntimeModelConnection,
@@ -105,6 +115,8 @@ export function createAdminSmokeRoutes(options: {
     agentId: string,
   ) => Promise<RuntimeModelConnection>;
   generate?: Generate;
+  /** CB-100：配置了 Hermes 时传入；自检会连它一次，连不上则 ok=false。 */
+  probeHermes?: () => Promise<HermesReachability>;
   timeoutMs?: number;
   log?: (line: string) => void;
 }) {
@@ -169,8 +181,21 @@ export function createAdminSmokeRoutes(options: {
             : "模型请求失败（连接、密钥或模型名有问题）。";
       }
       const latencyMs = Math.round(performance.now() - start);
+      let hermes: SmokeResult["hermes"] = "skipped";
+      let hermesError: string | undefined;
+      if (options.probeHermes) {
+        try {
+          const probe = await options.probeHermes();
+          hermes = probe.reachable ? "ok" : "unreachable";
+          if (!probe.reachable) hermesError = (probe.error ?? "无法连接").slice(0, 200);
+        } catch (error) {
+          hermes = "unreachable";
+          hermesError = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+        }
+      }
       const answered = !failure && smokeAnswered(reply, question.answer);
-      const ok = !failure && reply.trim().length > 0;
+      const modelOk = !failure && reply.trim().length > 0;
+      const ok = modelOk && hermes !== "unreachable";
       const result: SmokeResult = {
         ok,
         persisted: false,
@@ -182,6 +207,9 @@ export function createAdminSmokeRoutes(options: {
         echoed: answered,
         reply: reply.slice(0, 200),
         message:
+          (hermes === "unreachable"
+            ? `智能体运行时（Hermes）无法连接：${hermesError ?? "无法连接"}。${modelOk ? "模型本身可用。" : ""}`
+            : "") +
           (failure ??
           (answered
             ? "自检通过：模型正确回答了测试题。"
@@ -189,10 +217,12 @@ export function createAdminSmokeRoutes(options: {
               ? "自检通过：模型有回复（答案没对上，但连接和模型往返正常）。"
               : "模型返回了空回复。")) + (fallback && !failure ? `（${fallbackNotice(fallback)}）` : ""),
         ...(fallback ? { fallback } : {}),
+        hermes,
+        ...(hermesError ? { hermesError } : {}),
       };
       // 秘密不进日志：只有结果、模型名和耗时。
       log(
-        `[admin-smoke] ok=${result.ok} answered=${answered} model=${result.model}${fallback ? ` fallback=${fallback.to}` : ""} agent=${agentId ?? "-"} ${latencyMs}ms`,
+        `[admin-smoke] ok=${result.ok} answered=${answered} model=${result.model}${fallback ? ` fallback=${fallback.to}` : ""} agent=${agentId ?? "-"} hermes=${hermes} ${latencyMs}ms`,
       );
       return context.json(result, result.ok ? 200 : 502);
     });

@@ -378,17 +378,40 @@ if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then HERMES_PENDING_FILE="$COMPOSE_DI
     set_image "$NEW_IMAGE" || { restore; echo "compose 里没有找到镜像行"; exit 1; }
   fi
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" config --quiet || { restore; exit 1; }
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never --wait --wait-timeout 240 "$SERVICE"
+  # CB-100：默认网络（名字 / 子网）和正在运行的容器不一致时强制重建，否则 up 会失败或把容器留在旧网络上。
+  RECREATE=()
+  if DRIFT=$(compose_network_drift); then
+    echo "网络配置变了（$DRIFT）：使用 --force-recreate"
+    RECREATE=(--force-recreate)
+  fi
+  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 240 "$SERVICE"
 )
 SWAP=$?
+
+# 激活后的桥接可能要几秒才开始监听：最多等 HERMES_REACH_WAIT 秒（默认 30），每 3 秒连一次。
+hermes_reachable_after_activation() {
+  local waited=0 limit=${HERMES_REACH_WAIT:-30}
+  while :; do
+    bash "$U/hermes-reach.sh" && return 0
+    [ "$waited" -ge "$limit" ] && return 1
+    sleep 3; waited=$((waited + 3))
+  done
+}
 
 # ---------- health ----------
 step health "健康检查"
 OK=0
-if [ "$SWAP" = 0 ] && bash "$U/health.sh" "$NEW_IMAGE" "$TAG"; then
+# CB-100：Hermes 运行时由这次发布激活时，桥接要等镜像健康后才（重新）启动，所以健康检查里的 Hermes 连通性
+# 只记录，激活之后再从应用容器里连一次；连不上和激活失败一样走下面的回滚。
+DEFER_HERMES=0
+[ "${HERMES_RELEASE_ENABLED:-0}" = 1 ] && DEFER_HERMES=1
+if [ "$SWAP" = 0 ] && CHISABOT_SMOKE_DEFER_HERMES=$DEFER_HERMES bash "$U/health.sh" "$NEW_IMAGE" "$TAG"; then
   # Initialize/restart the matching host adapter only after the new image passed its own health.
   # Installer readiness failure returns to the existing image+runtime rollback below.
-  if activate_hermes_release; then OK=1
+  if activate_hermes_release; then
+    if [ "$DEFER_HERMES" != 1 ] || [ ! -f "$U/hermes-reach.sh" ]; then OK=1
+    elif hermes_reachable_after_activation; then OK=1
+    else echo "::error:: 应用容器在 Hermes 激活后仍连不上 CHISABOT_HERMES_URL（hermes=unreachable）"; fi
   else echo "::error:: Hermes 运行时激活或就绪检查失败"; fi
 fi
 if [ "$OK" != 1 ]; then
