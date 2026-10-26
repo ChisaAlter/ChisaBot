@@ -449,6 +449,8 @@ function PanelRailBody({
   drawer: boolean;
 }) {
   const { botId } = usePanelBot();
+  // CB-100c：机器人名单还在加载时不说「还没有可用的机器人」（首屏会闪一下这句假话）。
+  const rosterPending = useQuery(agentListQueryOptions()).isPending;
   const chat = useCurrentBotChat();
   const canComputer = Boolean(chat?.canComputer);
   const tab: RailTab = canComputer && chat?.computerOpen ? "computer" : "panels";
@@ -501,7 +503,7 @@ function PanelRailBody({
       >
         <div className="glass-rail-scroll relative flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
           {!botId ? (
-            <RailNote>{"还没有可用的机器人。"}</RailNote>
+            <RailNote>{rosterPending ? "正在加载机器人…" : "还没有可用的机器人。"}</RailNote>
           ) : (
             <>
               <LivePanelList botId={botId} drawer={drawer} width={width} />

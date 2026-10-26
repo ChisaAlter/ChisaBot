@@ -286,7 +286,7 @@ import { createModelCatalogService } from "./model-catalog";
 import { createMagpieService, readMagpieWebKey } from "./magpie";
 import { readRunningBuild } from "./build-info";
 import { createSystemUpdateRoutes, createSystemUpdateService } from "./system-update";
-import { createAdminSmokeRoutes } from "./admin-smoke";
+import { createAdminSmokeRoutes, resolveSmokeHermesProbe } from "./admin-smoke";
 import {
   createDatabasePinger,
   createOpsHealthRoutes,
@@ -3797,14 +3797,19 @@ const app = createApp(
           resolveConnection: resolveRuntimeConnection,
           resolveConnectionForAgent: resolveRuntimeConnectionForAgent,
           // CB-100: the release smoke must reach Hermes, not only the model.
-          ...(probeConfiguredHermes
-            ? {
-                probeHermes: async () => {
-                  const probe = await probeConfiguredHermes();
-                  return { reachable: probe.reachable === true, ...(probe.error ? { error: probe.error } : {}) };
-                },
-              }
-            : {}),
+          ...(() => {
+            const probeHermes = resolveSmokeHermesProbe({
+              agentKernel: process.env.CHISABOT_AGENT_KERNEL,
+              hermesUrl: hermesKernelUrl,
+              probe: probeConfiguredHermes
+                ? async () => {
+                    const probe = await probeConfiguredHermes();
+                    return { reachable: probe.reachable === true, ...(probe.error ? { error: probe.error } : {}) };
+                  }
+                : undefined,
+            });
+            return probeHermes ? { probeHermes } : {};
+          })(),
         }),
       ],
       [

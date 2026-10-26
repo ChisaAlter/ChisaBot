@@ -1969,6 +1969,18 @@ html[data-sky-ease] body::before {
   animation: sky-fade-in 0.3s ease-out both;
   z-index: 2;
 }
+/* CB-100c：首屏加载中的可见说明（没有按钮，左右留白一样）。 */
+.sky-skel-hint.is-loading { padding: 8px 16px; animation-delay: 0.25s; }
+.sky-skel-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  animation: sky-skel-spin 0.9s linear infinite;
+}
+@keyframes sky-skel-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sky-skel-spinner { animation: none; } }
 .sky-skel-hint button {
   height: 30px;
   padding: 0 14px;
@@ -4635,12 +4647,14 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 
 /* ---------- 上下文读数 ---------- */
 .context-meter {
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
   flex-shrink: 0;
-  width: 30px;
+  min-width: 30px;
   height: 30px;
-  padding: 0;
+  padding: 0 6px 0 6px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -4661,6 +4675,12 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 .context-meter.is-full { color: var(--danger); }
 
 .context-ring { flex-shrink: 0; }
+/* CB-100c：圆环旁的可见读数。窄输入框里只留圆环（读数仍在 aria-label 和悬停提示里）。 */
+.context-meter-text { font-size: 11px; line-height: 1; letter-spacing: 0; }
+@container (max-width: 420px) {
+  .glass-composer .context-meter-text { display: none; }
+  .glass-composer .context-meter { padding: 0; }
+}
 /* §78.1 小饼图：轨道一圈细线，扇形淡墨色（不到一半时更淡），70% 以上琥珀、90% 以上红。 */
 .context-ring-track { stroke: rgba(22, 36, 62, 0.28); }
 .dark .context-ring-track { stroke: rgba(255, 255, 255, 0.3); }
