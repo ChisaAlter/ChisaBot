@@ -48,9 +48,28 @@ export function preStreamFailureMessage(error: unknown): string {
     : `智能体运行时在开始回答前出错（${raw || "unknown error"}）`;
 }
 
+/**
+ * CB-100b：连接超时只管「发请求 → 收到第一个事件」这一段。对端接受了 TCP 连接却一直不回（或地址不可路由、
+ * SYN 被丢）时，不再无限挂着「思考中」。流一旦开始（第一个事件到了）就不再计时，长回答不受影响。
+ * CHISABOT_AGENT_CONNECT_TIMEOUT_MS 可调；0 或负数关闭。默认 20 秒：Hermes / AG-UI 服务端收到请求后会先发
+ * RUN_STARTED，正常情况远小于这个值。
+ */
+export const DEFAULT_AGENT_CONNECT_TIMEOUT_MS = 20_000;
+
+export function agentConnectTimeoutMs(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.CHISABOT_AGENT_CONNECT_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_AGENT_CONNECT_TIMEOUT_MS;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return DEFAULT_AGENT_CONNECT_TIMEOUT_MS;
+  return value <= 0 ? 0 : Math.floor(value);
+}
+
 export class FailFastTransport extends AbstractAgent {
   /** `inner` is the real transport (HttpAgent / Mastra agent); readable so tests can inspect it. */
-  constructor(readonly inner: AbstractAgent) {
+  constructor(
+    readonly inner: AbstractAgent,
+    readonly connectTimeoutMs: number = agentConnectTimeoutMs(),
+  ) {
     super({
       ...(inner.agentId !== undefined ? { agentId: inner.agentId } : {}),
       ...(inner.description !== undefined ? { description: inner.description } : {}),
@@ -60,34 +79,72 @@ export class FailFastTransport extends AbstractAgent {
   run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
       let started = false;
+      let finished = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const clearTimer = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = undefined;
+      };
+      const failBeforeStream = (error: unknown) => {
+        finished = true;
+        clearTimer();
+        const message = preStreamFailureMessage(error);
+        console.error({
+          error: "agent_runtime_pre_stream_failure",
+          context: { agentId: this.inner.agentId, threadId: input.threadId, runId: input.runId },
+          message,
+          timestamp: new Date().toISOString(),
+        });
+        subscriber.next({ type: EventType.RUN_ERROR, code: AGENT_RUNTIME_UNREACHABLE, message } as BaseEvent);
+        subscriber.complete();
+      };
       const subscription = this.inner.run(input).subscribe({
         next: (event) => {
+          if (finished) return;
           started = true;
+          clearTimer();
           subscriber.next(event);
         },
         error: (error: unknown) => {
+          if (finished) return;
           if (started || isAbort(error)) {
+            finished = true;
+            clearTimer();
             subscriber.error(error);
             return;
           }
-          const message = preStreamFailureMessage(error);
-          console.error({
-            error: "agent_runtime_pre_stream_failure",
-            context: { agentId: this.inner.agentId, threadId: input.threadId, runId: input.runId },
-            message,
-            timestamp: new Date().toISOString(),
-          });
-          subscriber.next({ type: EventType.RUN_ERROR, code: AGENT_RUNTIME_UNREACHABLE, message } as BaseEvent);
+          failBeforeStream(error);
+        },
+        complete: () => {
+          if (finished) return;
+          finished = true;
+          clearTimer();
           subscriber.complete();
         },
-        complete: () => subscriber.complete(),
       });
-      return () => subscription.unsubscribe();
+      if (this.connectTimeoutMs > 0 && !started && !finished) {
+        timer = setTimeout(() => {
+          if (started || finished) return;
+          subscription.unsubscribe();
+          try {
+            this.inner.abortRun();
+          } catch {
+            // 取消失败不影响把这一轮标成失败。
+          }
+          const timeout = new Error(`ETIMEDOUT: no response within ${this.connectTimeoutMs}ms`);
+          (timeout as { code?: string }).code = "ETIMEDOUT";
+          failBeforeStream(timeout);
+        }, this.connectTimeoutMs);
+      }
+      return () => {
+        clearTimer();
+        subscription.unsubscribe();
+      };
     });
   }
 
   clone(): FailFastTransport {
-    return new FailFastTransport(this.inner.clone());
+    return new FailFastTransport(this.inner.clone(), this.connectTimeoutMs);
   }
 
   abortRun(): void {

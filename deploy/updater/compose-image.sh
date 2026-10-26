@@ -47,11 +47,13 @@ previous_image() {
 # 在 COMPOSE_DIR 里调用；需要 PROJECT、COMPOSE_FILE、CONTAINER。漂移时输出一行原因并返回 0，否则返回 1。
 # 默认网络改名 / 换子网后，普通 `compose up -d` 会报「network … not found」或「needs to be recreated」，
 # 或者把容器留在旧网络上；这时要 --force-recreate（update.sh / rollback.sh）。
-compose_network_drift() {
-  local want want_name want_subnet have have_subnet py
+# CB-100b：从 `compose config --format json`（stdin）里取默认网络的「名字 子网」。不再硬依赖 python3：
+# 依次用 python3 / python / jq / bun / node，谁在用谁。全都没有时返回 2。
+compose_default_network_from_json() {
+  local py
   py=${CHISABOT_PYTHON:-$(command -v python3 || command -v python || true)}
-  [ -n "$py" ] || return 1
-  want=$(docker compose -p "$PROJECT" -f "$COMPOSE_FILE" config --format json 2>/dev/null | "$py" -c '
+  if [ -n "$py" ]; then
+    "$py" -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
@@ -60,7 +62,36 @@ except Exception:
 n = (d.get("networks") or {}).get("default") or {}
 c = ((n.get("ipam") or {}).get("config") or [{}])[0] or {}
 print(n.get("name") or "", c.get("subnet") or "")
-') || return 1
+'
+    return
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '(.networks.default // {}) as $n | "\($n.name // "") \((($n.ipam // {}).config // [{}])[0].subnet // "")"'
+    return
+  fi
+  local js='let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{let d;try{d=JSON.parse(s)}catch{process.exit(1)}const n=(d.networks||{}).default||{};const c=((n.ipam||{}).config||[{}])[0]||{};console.log((n.name||"")+" "+(c.subnet||""))})'
+  if command -v bun >/dev/null 2>&1; then bun -e "$js"; return; fi
+  if command -v node >/dev/null 2>&1; then node -e "$js"; return; fi
+  return 2
+}
+
+# CB-100：compose_network_drift — 正在运行的容器是否不在 compose 文件声明的默认网络上（名字或子网不一致）。
+# 在 COMPOSE_DIR 里调用；需要 PROJECT、COMPOSE_FILE、CONTAINER。漂移时输出一行原因并返回 0，否则返回 1。
+# 默认网络改名 / 换子网后，普通 `compose up -d` 会报「network … not found」或「needs to be recreated」，
+# 或者把容器留在旧网络上；这时要 --force-recreate（update.sh / rollback.sh）。
+# CB-100b：主机上没有任何 JSON 解析器时，不再静默当成「没漂移」：stderr 报清楚，并按漂移处理
+# （--force-recreate 只是重建容器，比把容器留在错误网络上安全）。
+compose_network_drift() {
+  local json want want_name want_subnet have have_subnet rc
+  json=$(docker compose -p "$PROJECT" -f "$COMPOSE_FILE" config --format json 2>/dev/null) || return 1
+  rc=0
+  want=$(printf '%s' "$json" | compose_default_network_from_json) || rc=$?
+  if [ "$rc" = 2 ]; then
+    echo "::error:: 检查 compose 网络漂移需要 python3、jq、bun 或 node 之一，主机上都没有；按漂移处理（--force-recreate）" >&2
+    echo "无法判断网络是否漂移（主机缺少 python3/jq/bun/node），保守起见 --force-recreate"
+    return 0
+  fi
+  [ "$rc" = 0 ] || return 1
   want_name=${want%% *}
   want_subnet=${want#* }
   [ -n "$want_name" ] || return 1

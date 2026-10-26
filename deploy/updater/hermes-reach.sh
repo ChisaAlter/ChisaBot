@@ -14,7 +14,17 @@ TIMEOUT_MS=${HERMES_REACH_TIMEOUT_MS:-5000}
 # s6 把容器环境写在 /run/s6/container_environment（update.sh 取 DATABASE_URL 也是这样）；兜底用 printenv。
 URL=$(docker exec "$CONTAINER" sh -c 'cat /run/s6/container_environment/CHISABOT_HERMES_URL 2>/dev/null || printenv CHISABOT_HERMES_URL 2>/dev/null' 2>/dev/null | tr -d '\r\n')
 if [ -z "$URL" ]; then
-  echo "hermes=skipped（容器里没有配置 CHISABOT_HERMES_URL）"
+  # CB-100b：内核选的是 hermes（CHISABOT_AGENT_KERNEL=hermes，updater 的 hermes_release_enabled 也认它），
+  # 却没有 CHISABOT_HERMES_URL —— 服务器会退回内置运行时或根本连不上，算失败，不算 skipped。
+  KERNEL=$(docker exec "$CONTAINER" sh -c 'cat /run/s6/container_environment/CHISABOT_AGENT_KERNEL 2>/dev/null || printenv CHISABOT_AGENT_KERNEL 2>/dev/null' 2>/dev/null | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')
+  if [ -z "$KERNEL" ] && [ -f "${COMPOSE_DIR:-/nonexistent}/.env" ]; then
+    KERNEL=$(grep -E '^[[:space:]]*(export[[:space:]]+)?CHISABOT_AGENT_KERNEL=' "$COMPOSE_DIR/.env" | tail -1 | sed 's/^[^=]*=//' | tr -d '\r"'"'"' ' | tr '[:upper:]' '[:lower:]')
+  fi
+  if [ "$KERNEL" = hermes ]; then
+    echo "::error:: hermes=unreachable 内核是 hermes（CHISABOT_AGENT_KERNEL=hermes），但应用容器里没有配置 CHISABOT_HERMES_URL"
+    exit 1
+  fi
+  echo "hermes=skipped（内核不是 hermes，且没有配置 CHISABOT_HERMES_URL）"
   exit 0
 fi
 case "$URL" in

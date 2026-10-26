@@ -66,6 +66,8 @@ jobs:
           server/tests/model-settings.test.ts
           server/tests/computer-tool-outcome.test.ts
           server/tests/agent-runtime-connection-refused.test.ts
+          server/tests/agent-runtime-connect-timeout.test.ts
+          server/tests/compose-network-drift.test.ts
           server/tests/admin-smoke.test.ts
       # The chat regression set every ChisaBot PR runs on the server (the older model-chooser DOM tests
       # need a live API and never ran here while typecheck was failing; see docs/slimming.md P3).
@@ -94,6 +96,7 @@ jobs:
           bun test server/tests/database-deadline.integration.test.ts server/tests/database-recovery.test.ts
           bun test server/tests/local-conversations-inbox.integration.test.ts server/tests/thread-inbox-paused.integration.test.ts server/tests/thread-inbox.test.ts
           bun test server/tests/computer-stop.test.ts
+          bun test server/tests/agent-runtime-unreachable.integration.test.ts
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
         run: bun install --frozen-lockfile && bun test tests/native-select.test.ts tests/aria-snapshot.test.ts
