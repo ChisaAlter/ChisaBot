@@ -4,13 +4,17 @@
  * Split by owner so two people can add tables all day without touching the same lines. Add tables
  * here; never edit core.ts or coworker.ts to do it.
  */
+import { sql } from "drizzle-orm";
 import {
+  bigint,
+  boolean,
   index,
   integer,
   pgTable,
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { jsonb } from "./json";
 
@@ -129,5 +133,57 @@ export const computerPageFrame = pgTable(
     primaryKey({ columns: [table.computerId, table.toolCallId] }),
     // The reaper's query: everything older than the retention window, whoever it belongs to.
     index("computer_page_frame_captured_idx").on(table.capturedAt),
+  ],
+);
+
+/**
+ * 计算机面板「活动」里的每一步（CB-101）。
+ *
+ * 以前只存在浏览器内存里：刷新就没了、换设备看不到、时间是重放时刻、超过 200 条静默丢弃。现在由服务端
+ * gateway 在动作开始时写一行（running），结束时补上结果，记录真实发生时间。
+ *
+ * 不对 openbot_local_threads 建外键：那几张表由 local-conversations.ts 在运行时建，迁移跑的时候不一定在。
+ * 删 Bot 时由 agents/purge.ts 一并删掉；保留期由 activity-store 的定时清理负责（90 天）。
+ *
+ * 写进来的内容已经打过码（computer/activity-redact.ts）：密码、secret、URL 里的 token/key/code 参数、
+ * 命令里像密钥的串，库里都没有明文；人自己输入的文字一律不记内容。
+ */
+export const computerActivitySteps = pgTable(
+  "computer_activity_steps",
+  {
+    id: text("id").primaryKey(),
+    computerId: text("computer_id").notNull(),
+    /** openbot_local_threads.id；无头 / 后台任务可能没有。 */
+    threadId: text("thread_id"),
+    /** openbot_local_runs.run_id，即一个 turn。 */
+    runId: text("run_id"),
+    /** 与聊天里的工具调用、computer_page_frame 对应。 */
+    toolCallId: text("tool_call_id"),
+    actorUserId: text("actor_user_id"),
+    /** agent | human */
+    actorKind: text("actor_kind").notNull(),
+    seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
+    kind: text("kind").notNull(),
+    /** running | ok | failed | refused | timeout | cancelled */
+    status: text("status").notNull(),
+    refusalReason: text("refusal_reason"),
+    subject: text("subject").notNull(),
+    detail: jsonb("detail").notNull().default({}),
+    output: text("output"),
+    outputTruncated: boolean("output_truncated").notNull().default(false),
+    hasFrame: boolean("has_frame").notNull().default(false),
+    turnPrompt: text("turn_prompt"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+  },
+  (table) => [
+    uniqueIndex("computer_activity_steps_call_uq")
+      .on(table.computerId, table.toolCallId)
+      .where(sql`${table.toolCallId} is not null`),
+    index("computer_activity_steps_thread_idx").on(table.threadId, table.startedAt.desc(), table.seq.desc()),
+    index("computer_activity_steps_computer_idx").on(table.computerId, table.startedAt.desc(), table.seq.desc()),
+    index("computer_activity_steps_running_idx").on(table.status).where(sql`${table.status} = 'running'`),
+    index("computer_activity_steps_started_idx").on(table.startedAt),
   ],
 );

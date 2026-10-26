@@ -43,6 +43,7 @@ import {
   groupBotThreads,
   learningThreadBindings,
   livePanels,
+  computerActivitySteps,
   panelAuthoringSessions,
   panelCapabilityGrants,
   panelDrafts,
@@ -180,6 +181,8 @@ export function createAgentPurge(options: {
         await tx.delete(botPanelInstances).where(inArray(botPanelInstances.id, instanceIds));
       }
       await tx.delete(panelOperations).where(eq(panelOperations.botId, agentId));
+      // 计算机活动记录（CB-101）。
+      await tx.delete(computerActivitySteps).where(eq(computerActivitySteps.computerId, agentId));
       // 实时面板（2026-10-13 以前删机器人会把它们留下）。
       const live = await tx
         .delete(livePanels)

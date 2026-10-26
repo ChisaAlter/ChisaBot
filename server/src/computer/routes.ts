@@ -24,6 +24,8 @@ import {
   WorkspaceTooLargeError,
 } from "./gateway";
 import type { PageFrameStore } from "./page-frames";
+import { activityStore } from "./activity-store";
+import { activityScopeMiddleware, registerActivityRoutes } from "./activity-routes";
 import { dryRunAgainstHistory, REPLAYABLE_EVENT_TYPES } from "./policy-dry-run";
 import { type PolicyStore, parseActionPolicy } from "./policy-store";
 import { reasonWithoutStatement } from "../db/query-failure";
@@ -104,6 +106,8 @@ export function createComputerRoutes(
     }
     await next();
   });
+  routes.use("/:botId/*", activityScopeMiddleware());
+  registerActivityRoutes(routes, pageFrames);
 
   routes.get("/:botId/status", async (context) => {
     const botId = context.req.param("botId");
@@ -489,7 +493,12 @@ export function createComputerRoutes(
 
   /** Delete the profile. Every login goes with it, which is the point and also the danger. */
   routes.post("/:botId/computers/reset", (context) =>
-    act(context, (botId, actor) => gateway.resetComputer(botId, actor)),
+    act(context, async (botId, actor) => {
+      const result = await gateway.resetComputer(botId, actor);
+      // 重置后还没收尾的步骤不会再有结果了，标成已取消，免得一直转圈。
+      await activityStore()?.cancelRunning(botId).catch(() => undefined);
+      return result;
+    }),
   );
 
   /**

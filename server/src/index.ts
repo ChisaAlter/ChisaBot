@@ -92,6 +92,8 @@ import {
   recordAuditEvent,
 } from "./audit";
 import { startRetentionSweeps } from "./audit-retention";
+import { createActivityStore as createComputerActivityStore, installActivityStore } from "./computer/activity-store";
+import { withComputerActivity } from "./computer/activity-recorder";
 import { createAuth } from "./auth";
 import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
 import type { AuthService } from "./auth/guards";
@@ -734,8 +736,10 @@ const confirmAwareGate: typeof approvalService.gate = async (candidate) => {
   }
   return approvalService.gate(candidate);
 };
+// CB-101：计算机活动记录。gateway 外包一层，每个动作写一条；每小时清 90 天前的记录。
+installActivityStore(createComputerActivityStore(database, config.databaseUrl));
 const computerGateway = computerProvider
-  ? createComputerGateway({
+  ? withComputerActivity(createComputerGateway({
       provider: computerProvider,
       auditStore: bootAuditStore,
       approvalGate: confirmAwareGate,
@@ -749,7 +753,7 @@ const computerGateway = computerProvider
       pageFrames: pageFrameStore,
       allowPrivateHosts: config.computer?.allowPrivateHosts,
       token: config.computer?.token,
-    })
+    }), { pageFrames: pageFrameStore })
   : undefined;
 
 /**
