@@ -6,7 +6,9 @@ import { useEffect } from "react";
 import {
   focusMessageInChat,
   MESSAGE_FIND_WAIT_MS,
+  MESSAGE_REFOCUS_DELAYS_MS,
   normalizeMessageSearchParam,
+  refocusMessageRow,
 } from "@/lib/channels/focus-message";
 
 /** 与 channel-page / $channelId 路由 id 一致（此处不 import channel-page，避免环依赖）。 */
@@ -40,6 +42,7 @@ export function MessageFind({
     let timer: ReturnType<typeof setTimeout> | undefined;
     let started = Date.now();
     let found = false;
+    const refocus: ReturnType<typeof setTimeout>[] = [];
     const attempt = () => {
       if (cancelled || found) return;
       // 只在露着的聊天里找：keep-alive 藏着的对话仍有 DOM（§98）。
@@ -49,6 +52,13 @@ export function MessageFind({
         ) ?? document;
       if (focusMessageInChat(messageId, { root })) {
         found = true;
+        // CB-106：贴底 / 历史补高会把平滑滚动顶走，几次复查确保命中留在视口。
+        for (const ms of MESSAGE_REFOCUS_DELAYS_MS)
+          refocus.push(
+            setTimeout(() => {
+              if (!cancelled) refocusMessageRow(messageId, root);
+            }, ms),
+          );
         return;
       }
       // CR-P2-04：首段 4s 内快轮询；超时后只要还露着就慢轮询（快照晚到 / 慢连），
@@ -61,6 +71,7 @@ export function MessageFind({
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      for (const t of refocus) clearTimeout(t);
     };
   }, [visible, messageId, channelId]);
 

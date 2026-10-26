@@ -76,6 +76,7 @@ import {
   requestSidebarSearchFocus,
   useSidebarSearch,
 } from "@/lib/sidebar-search";
+import { SEARCH_RESULTS_ID } from "@/lib/sidebar-search-nav";
 import { cn } from "@/lib/utils";
 import { queryClient } from "@/query-client";
 import {
@@ -244,11 +245,17 @@ function ChannelRow({
 function SearchHitRow({
   hit,
   agentIds = [],
+  botName,
 }: {
   hit: ChannelSearchHit;
   agentIds?: string[];
+  /** CB-106：结果里带上机器人名和最近活动时间，不只是会话标题。 */
+  botName?: string | undefined;
 }) {
+  const now = useRelativeNow();
   const parts = highlightParts(hit.snippet, hit.highlight);
+  const when = hit.updatedAt ? relativeTime(hit.updatedAt, now) : undefined;
+  const meta = [botName, when].filter(Boolean).join(" · ");
   const title = hit.summary?.trim() || hit.name;
   const message = hit.messageId?.trim() || undefined;
   const sidebar = useOptionalSidebar();
@@ -267,8 +274,15 @@ function SearchHitRow({
         <ChannelAvatar participantIds={agentIds} size={32} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[0.9rem] leading-5 font-medium tracking-[-1%]">
-          {title}
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate text-[0.9rem] leading-5 font-medium tracking-[-1%]">
+            {title}
+          </span>
+          {meta ? (
+            <span className="shrink-0 text-[11px] leading-4 text-muted-foreground" data-testid="search-hit-meta">
+              {meta}
+            </span>
+          ) : null}
         </span>
         <span className="mt-px block truncate text-[12px] leading-4 text-muted-foreground">
           {parts.before}
@@ -699,6 +713,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     selectedBotId,
   );
 
+  const botNameOf = (id: string | null | undefined) =>
+    id ? (agents.data ?? []).find((bot) => bot.id === id)?.name : undefined;
   const searching = search.trim().length > 0;
   const titleMatches = searching
     ? pinnedFirst(matchingChannels(channels.data, search))
@@ -787,7 +803,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <div className="glass-sec">
                 <span>{`搜索“${search.trim()}”`}</span>
               </div>
-              <div ref={scrollRoot} className="glass-side-scroll scroll-fade-b">
+              <div ref={scrollRoot} className="glass-side-scroll scroll-fade-b" id={SEARCH_RESULTS_ID}>
                 <SidebarMenu>
                   <SidebarGroup className="gap-px p-0">
                     {searchFailed ? (
@@ -836,6 +852,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             >
                               <SearchHitRow
                                 agentIds={channel.agentIds}
+                                botName={botNameOf(hit.agentId ?? channel.agentIds[0])}
                                 hit={{
                                   ...hit,
                                   name: channel.name,
@@ -862,6 +879,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                           key={`extra-${hit.channelId}-${hit.messageId ?? hit.snippet.slice(0, 12)}`}
                         >
                           <SearchHitRow
+                            botName={botNameOf(hit.agentId)}
                             agentIds={
                               channels.data?.find((c) => c.id === hit.channelId)
                                 ?.agentIds ?? []

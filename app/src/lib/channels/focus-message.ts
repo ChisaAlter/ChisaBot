@@ -82,3 +82,25 @@ export function focusMessageInChat(
   }, ms);
   return true;
 }
+
+/** 行是否落在视口里（滚动容器都在视口内，粗判够用）。 */
+export function isRowInView(el: HTMLElement): boolean {
+  if (!el.isConnected) return false;
+  const r = el.getBoundingClientRect();
+  const vh = typeof window !== "undefined" ? window.innerHeight : 0;
+  return r.bottom > 0 && r.top < vh;
+}
+
+/** 命中后的复查时刻：transcript 补高 / 贴底会把平滑滚动顶走，到点不在视口就瞬时再滚回。 */
+export const MESSAGE_REFOCUS_DELAYS_MS = [350, 800, 1400, 2200] as const;
+
+/** 找到后若被贴底等逻辑滚走，瞬时滚回中间；返回是否重滚。 */
+export function refocusMessageRow(
+  messageId: string,
+  root: ParentNode = document,
+): boolean {
+  const target = findMessageRow(messageId, root);
+  if (!target || isRowInView(target)) return false;
+  scrollIntoViewWithin(target, { block: "center", behavior: "auto" });
+  return true;
+}
