@@ -7,7 +7,8 @@
 //
 // Covers: Stop feedback within 300 ms and the turn really ending (model stream cut) within ~2 s;
 // queued follow-ups after Stop shown once as a held item (never "已读取" + "没有收到回答");
-// a new message typed after Stop goes out at once and is answered once; 「全部发送」; Esc stops.
+// a new message typed after Stop goes out at once and is answered once; 「全部发送」; Esc stops;
+// a failed stop request (unlock → 503) shows 「停止失败，重试」 and the retry asks again.
 import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright-core";
@@ -364,7 +365,101 @@ try {
   text = await transcript();
   check(!text.includes("没有收到回答"), "no 「没有收到回答」 after Esc");
   await shot("5-esc");
-  results.push({ stop, esc });
+
+  // 6. The stop request fails (unlock → 503): 「停止失败，重试」 shows at once; retry asks again and clears it.
+  await send("LONG 第三篇。");
+  await page
+    .locator('[data-testid="composer-stop"]:visible')
+    .waitFor({ timeout: 15000 });
+  await sleep(1500);
+  let unlockCalls = 0;
+  let failUnlock = true;
+  await page.route("**/api/copilotkit/threads/*/unlock", (route) => {
+    unlockCalls++;
+    return failUnlock
+      ? route.fulfill({ status: 503, body: "unavailable" })
+      : route.continue();
+  });
+  const t6 = Date.now();
+  await page.locator('[data-testid="composer-stop"]:visible').click();
+  let failedMs = null;
+  await until(
+    async () => (await visible('[data-testid="composer-stop-failed"]')) > 0,
+    "stop-failed shown",
+    10000,
+  )
+    .then(() => {
+      failedMs = Date.now() - t6;
+    })
+    .catch(() => {});
+  check(
+    failedMs !== null && failedMs <= 2000,
+    "a failed stop request (503) shows 「停止失败，重试」 at once",
+    failedMs,
+  );
+  await shot("6-stop-failed");
+  // Retry at once (unlock now goes through); if the turn already ended the prompt has cleared itself.
+  const callsBeforeRetry = unlockCalls;
+  failUnlock = false;
+  const retried = await page
+    .locator('[data-testid="composer-stop-failed"]:visible')
+    .click({ timeout: 1000 })
+    .then(
+      () => true,
+      () => false,
+    );
+  if (retried) {
+    await until(
+      async () => unlockCalls > callsBeforeRetry,
+      "retry re-sent unlock",
+      5000,
+    ).catch(() => {});
+    check(
+      unlockCalls > callsBeforeRetry,
+      "「重试」 sends the stop request again",
+      unlockCalls - callsBeforeRetry,
+    );
+  }
+  let clearedMs = null;
+  const t6b = Date.now();
+  await until(
+    async () =>
+      !(await inbox()).running &&
+      (await visible('[data-testid="composer-stop-failed"]')) === 0 &&
+      (await visible('[data-testid="composer-send"]')) > 0,
+    "turn over, prompt cleared",
+    10000,
+  )
+    .then(() => {
+      clearedMs = Date.now() - t6b;
+    })
+    .catch(() => {});
+  check(
+    clearedMs !== null,
+    "once the turn is over 「停止失败，重试」 clears and Send is back",
+    { clearedMs, retried },
+  );
+  await sleep(500);
+  check(
+    (await visible('[data-testid="composer-stop-failed"]')) === 0,
+    "the prompt does not come back",
+  );
+  // The next turn starts clean.
+  await send("新一轮：你好");
+  await until(
+    async () => (await transcript()).includes("收到：新一轮：你好"),
+    "next turn answered",
+    20000,
+  ).catch(() => {});
+  check(
+    (await transcript()).includes("收到：新一轮：你好") &&
+      (await visible('[data-testid="composer-stop-failed"]')) === 0,
+    "a new turn does not carry 「停止失败，重试」",
+  );
+  await page.unroute("**/api/copilotkit/threads/*/unlock");
+  await sleep(1000);
+  await shot("7-retry-ok");
+  results.push({ stop, esc, stopFailed: { failedMs, unlockCalls, retried } });
 } catch (error) {
   check(
     false,

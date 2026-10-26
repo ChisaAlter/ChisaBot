@@ -1495,7 +1495,27 @@ export function ChannelChat({
   // CB-104: 「停止中…」 from the click until the stopped turn has really ended.
   const [stopping, setStopping] = useState(false);
   // CB-104: a failed stop request says so at once (「停止失败，重试」) instead of reverting quietly.
-  const stopRequest = useStopRequest(channel.threadId);
+  // CB-104: while 「停止失败，重试」 shows, ask the server whether the turn is still running; once it
+  // is not (finished, stopped or errored on its own), the prompt goes away and Send comes back.
+  const [stopFailedServerRunning, setStopFailedServerRunning] = useState<boolean | undefined>(undefined);
+  const stopRequest = useStopRequest(channel.threadId, undefined, { running: stopFailedServerRunning });
+  useEffect(() => {
+    if (!stopRequest.failed) {
+      setStopFailedServerRunning(undefined);
+      return;
+    }
+    let cancelled = false;
+    const poll = () =>
+      void restoreQueue(channel.threadId).then((state) => {
+        if (!cancelled && state) setStopFailedServerRunning(state.running);
+      });
+    poll();
+    const timer = setInterval(poll, 1_500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [stopRequest.failed, channel.threadId]);
   const sendStop = () => {
     void stopRequest.send().then((ok) => {
       if (!ok) setStopping(false);
@@ -1738,6 +1758,12 @@ export function ChannelChat({
    *   「停止机器人」、末尾挂一行「思考中」，回放完再收回去；那个「停止」按下去撤掉的是回放本身。
    */
   const agentLive = agent.isRunning || turnsInFlight > 0 || runsInFlight > 0;
+  // CB-104: a new turn never carries the previous turn's 「停止失败，重试」.
+  const agentLiveBefore = useRef(agentLive);
+  useEffect(() => {
+    if (agentLive && !agentLiveBefore.current) stopRequest.clear();
+    agentLiveBefore.current = agentLive;
+  }, [agentLive, stopRequest.clear]);
   useEffect(() => {
     if (!stopping) return;
     if (!agentLive) {

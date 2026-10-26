@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * CB-104: follow-ups held by Stop are drawn once — as a held item above the composer with
@@ -82,13 +82,36 @@ export async function requestStop(
   }
 }
 
-/** Send the stop request; `failed` stays true (prompting 「停止失败，重试」) until a retry succeeds. */
-export function useStopRequest(threadId: string, fetchImpl?: typeof fetch) {
+/** Turn statuses that mean the turn is over, so a failed stop request no longer matters. */
+export const ENDED_TURN_STATUSES: ReadonlySet<string> = new Set(["done", "stopped", "error"]);
+
+export type StopRequestTurn = {
+  /** Whether this turn is still running; `undefined` while not known yet (never clears). */
+  running?: boolean;
+  /** This turn's status, when the caller has one (`done` / `stopped` / `error` end it). */
+  status?: string | null;
+};
+
+/**
+ * Send the stop request; `failed` (prompting 「停止失败，重试」) stays true until a retry succeeds or
+ * the turn ends: `running` reported false, or `status` entering done / stopped / error. A new turn
+ * (`running` false → true) never inherits the previous turn's failure.
+ */
+export function useStopRequest(threadId: string, fetchImpl?: typeof fetch, turn: StopRequestTurn = {}) {
   const [failed, setFailed] = useState(false);
+  const { running, status } = turn;
+  const wasRunning = useRef(running);
+  const ended = running === false || (status != null && ENDED_TURN_STATUSES.has(status));
+  useEffect(() => {
+    const startedAgain = running === true && wasRunning.current === false;
+    wasRunning.current = running;
+    if (ended || startedAgain) setFailed(false);
+  }, [ended, running]);
   const send = useCallback(async () => {
     const ok = await requestStop(threadId, fetchImpl ?? fetch);
     setFailed(!ok);
     return ok;
   }, [threadId, fetchImpl]);
-  return { failed, send, clear: () => setFailed(false) };
+  const clear = useCallback(() => setFailed(false), []);
+  return { failed: failed && !ended, send, clear };
 }

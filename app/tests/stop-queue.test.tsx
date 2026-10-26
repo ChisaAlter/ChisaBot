@@ -8,6 +8,7 @@ import {
   render,
   waitFor,
 } from "@testing-library/react";
+import { useState } from "react";
 import { QueuedMessages } from "../src/components/chat/queued-messages";
 import {
   hideHeldSupplements,
@@ -279,4 +280,76 @@ test("a failed stop request says 「停止失败，重试」 at once; retry send
   await waitFor(() =>
     expect(view.queryByTestId("composer-stop-failed")).toBeNull(),
   );
+});
+
+// CB-104: once the turn is over, 「停止失败，重试」 goes away and the normal Send button is back.
+const turnEnds: Array<{ name: string; turn: { running?: boolean; status?: string } }> = [
+  { name: "the stream ends (running → false)", turn: { running: false } },
+  { name: "status → done", turn: { running: true, status: "done" } },
+  { name: "status → stopped", turn: { running: true, status: "stopped" } },
+  { name: "status → error", turn: { running: true, status: "error" } },
+];
+for (const { name, turn: endedTurn } of turnEnds) {
+  test(`「停止失败，重试」 clears when the turn ends: ${name}`, async () => {
+    const { useStopRequest } = await import("../src/lib/copilot/held-supplements");
+    const { Composer } = await import("../src/components/channels/composer/composer");
+    const fake = (async () => new NativeResponse("{}", { status: 503 })) as unknown as typeof fetch;
+    let setTurn: (t: { running?: boolean; status?: string }) => void = () => {};
+    function Harness() {
+      const [turn, set] = useState<{ running?: boolean; status?: string }>({ running: true });
+      setTurn = set;
+      const stop = useStopRequest("thread-end", fake, turn);
+      const busy = turn.running === true && !turn.status;
+      return (
+        <Composer
+          compact
+          initialValue="next"
+          onRetryStop={() => void stop.send()}
+          onStop={() => void stop.send()}
+          onSubmit={async () => {}}
+          pending={busy}
+          stopFailed={stop.failed}
+        />
+      );
+    }
+    const view = render(<Harness />);
+    fireEvent.click(view.getByTestId("composer-stop"));
+    await view.findByTestId("composer-stop-failed");
+    await act(async () => setTurn(endedTurn));
+    await waitFor(() => expect(view.queryByTestId("composer-stop-failed")).toBeNull());
+    expect(view.getByTestId("composer-send")).toBeTruthy();
+    expect(view.queryByTestId("composer-stop")).toBeNull();
+  });
+}
+
+test("a new turn does not inherit the previous turn's 「停止失败，重试」", async () => {
+  const { useStopRequest } = await import("../src/lib/copilot/held-supplements");
+  const fake = (async () => new NativeResponse("{}", { status: 503 })) as unknown as typeof fetch;
+  let api: { send: () => Promise<boolean> } | null = null;
+  let setRunning: (r: boolean | undefined) => void = () => {};
+  function Harness() {
+    const [running, set] = useState<boolean | undefined>(undefined);
+    setRunning = set;
+    const stop = useStopRequest("thread-new", fake, { running });
+    api = stop;
+    return <div data-testid="state">{stop.failed ? "failed" : "ok"}</div>;
+  }
+  const view = render(<Harness />);
+  await act(async () => {
+    await api?.send();
+  });
+  expect(view.getByTestId("state").textContent).toBe("failed");
+  // Unknown → false ends it; then the next turn starts clean.
+  await act(async () => setRunning(false));
+  expect(view.getByTestId("state").textContent).toBe("ok");
+  await act(async () => setRunning(true));
+  expect(view.getByTestId("state").textContent).toBe("ok");
+  // Fails during the new turn, the turn ends, the following turn starts clean too.
+  await act(async () => {
+    await api?.send();
+  });
+  expect(view.getByTestId("state").textContent).toBe("failed");
+  await act(async () => setRunning(false));
+  await act(async () => setRunning(true));
+  expect(view.getByTestId("state").textContent).toBe("ok");
 });
