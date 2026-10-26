@@ -10,10 +10,12 @@ import { supplySecret } from "@/lib/computers/control";
 import {
   readPageFrame,
   readScreenshot,
+  SCREEN_USER_CONTROL_ZH,
   type Screenshot,
 } from "@/lib/computers/screen";
 import {
   applyScreenshotPollResult,
+  screenshotPollBlocked,
   nextScreenshotPollDelay,
 } from "@/lib/computers/screenshot-poll";
 import { useComputerControl } from "@/lib/computers/use-control";
@@ -126,6 +128,7 @@ function NothingToSee({
   page,
   onRetry,
   castingElsewhere = false,
+  takenOver = false,
 }: {
   problem: string | null;
   blankBrowser: boolean;
@@ -142,6 +145,8 @@ function NothingToSee({
    * outage, which is what made a working computer look broken (2026-10-22).
    */
   castingElsewhere?: boolean;
+  /** CB-103：让路是因为有人接管着；文案换成「接管中」。 */
+  takenOver?: boolean;
 }) {
   return (
     <span className="computer-idle absolute inset-0 flex flex-col items-center justify-center gap-1 p-4 text-center text-muted-foreground text-sm">
@@ -177,9 +182,13 @@ function NothingToSee({
       ) : castingElsewhere ? (
         <>
           <IconDeviceDesktop className="computer-idle-ic" />
-          <span className="computer-idle-t">{"大屏正在直播"}</span>
+          <span className="computer-idle-t">
+            {takenOver ? "接管中" : "大屏正在直播"}
+          </span>
           <span className="computer-idle-s">
-            {"同一块屏幕正在大屏里实时显示；关掉大屏后，这里会自动接回画面。"}
+            {takenOver
+              ? SCREEN_USER_CONTROL_ZH
+              : "同一块屏幕正在大屏里实时显示；关掉大屏后，这里会自动接回画面。"}
           </span>
         </>
       ) : problem ? (
@@ -414,7 +423,19 @@ export function ComputerView({
      * 大屏展开时 LiveScreen 走 websocket 出图。HTTP /screenshot 再轮询会跟流抢电脑，
      * 控制台 503 刷屏，而画布仍像健康直播（狗粮 0.1.39 → 0.1.40）。收起后再拉卡片帧。
      */
-    if (expanded) return;
+    const blocked = screenshotPollBlocked({ expanded, driving });
+    if (blocked === "expanded") return;
+    /*
+     * CB-103：有人接管着（不管是这张卡的大屏还是右栏 / 别的窗口），画面都在直播里。这时再拉 HTTP
+     * 截图只会被让路拒绝，控制台多一条红字。直接显示「直播中」占位，交还后 driving 变回 false，
+     * 这个 effect 重新跑，卡片自己接回截图。
+     */
+    if (blocked === "user_control") {
+      setShot(null);
+      setProblem(null);
+      setCastingElsewhere(true);
+      return;
+    }
     const mine = ++generation.current;
     let timer: ReturnType<typeof setTimeout>;
     // Consecutive identical frames observed during post-action settling.
@@ -439,7 +460,8 @@ export function ComputerView({
       try {
         const result = await readScreenshot(computerId);
         if (generation.current !== mine) return;
-        liveCastBusy = result.liveCast === true;
+        // 接管中的让路（409 user_control）也按直播处理：慢速探、不报警告。
+        liveCastBusy = result.liveCast === true || result.userControl === true;
 
         const next = applyScreenshotPollResult(result);
         if (!next.shot) {
@@ -489,7 +511,7 @@ export function ComputerView({
       generation.current++;
       clearTimeout(timer);
     };
-  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey, expanded]);
+  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey, expanded, driving]);
 
   /*
    * 交还之后收起大屏。交还就是「我弄完了」，留着一个只读的大屏还要再点一次关闭，
@@ -661,6 +683,7 @@ export function ComputerView({
             <NothingToSee
               blankBrowser={blankBrowser}
               castingElsewhere={castingElsewhere}
+              takenOver={driving}
               onRetry={
                 settled || !problem || castingElsewhere
                   ? undefined

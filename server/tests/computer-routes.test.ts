@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import type { AppVariables, AuthenticatedActor } from "../src/auth/guards";
 import type { ComputerGateway } from "../src/computer/gateway";
 import type { PolicyStore } from "../src/computer/policy-store";
+import { CaptureBusyError } from "../src/computer/gateway";
 import { createComputerRoutes } from "../src/computer/routes";
 
 describe("computer routes", () => {
@@ -211,5 +212,46 @@ describe("human input", () => {
 
     expect(response.status).toBe(400);
     expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * CB-103：用户接管时右栏在直播，卡片截图让路。这是预期内的状态，回 409 + reason=user_control，
+ * 不是 503（服务器错误）。只是直播让路（没人接管）的老行为不变，仍是 503 + liveCast。
+ */
+describe("screenshot while a person has control (CB-103)", () => {
+  const routesThrowing = (error: Error) =>
+    createComputerRoutes(
+      {
+        screenshot: async () => {
+          throw error;
+        },
+      } as unknown as ComputerGateway,
+      {} as PolicyStore,
+      async (_context, next) => next(),
+      async () => true,
+    );
+
+  test("user control → 409 with reason=user_control", async () => {
+    const response = await routesThrowing(
+      new CaptureBusyError("Live screen is streaming.", true, true),
+    ).request("http://chisabot.test/bot-17/screenshot");
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      captureBusy: true,
+      liveCast: true,
+      userControl: true,
+      reason: "user_control",
+    });
+  });
+
+  test("live cast without a takeover stays 503 + liveCast", async () => {
+    const response = await routesThrowing(
+      new CaptureBusyError("Live screen is streaming.", true),
+    ).request("http://chisabot.test/bot-17/screenshot");
+    expect(response.status).toBe(503);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ captureBusy: true, liveCast: true });
+    expect(body.reason).toBeUndefined();
   });
 });

@@ -42,3 +42,18 @@ export function nextScreenshotPollDelay(
   const exp = Math.min(failStreak - 1, 5);
   return Math.min(base * 2 ** exp, SCREENSHOT_POLL_MAX_DELAY_MS);
 }
+
+/**
+ * CB-103：这一刻卡片该不该去拉 HTTP 截图。
+ *
+ * 大屏展开（LiveScreen 在出图）或有人接管着（画面在直播里，agent-computer 一定让路），HTTP 截图
+ * 都只会被拒绝、在控制台留一条红字，所以干脆不发。返回值说明为什么不发，卡片据此显示占位。
+ */
+export function screenshotPollBlocked(state: {
+  expanded: boolean;
+  driving: boolean;
+}): "expanded" | "user_control" | null {
+  if (state.expanded) return "expanded";
+  if (state.driving) return "user_control";
+  return null;
+}

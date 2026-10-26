@@ -1103,7 +1103,13 @@ function errorBody(error: unknown): Record<string, unknown> {
       ? { controlRequestError: true }
       : {}),
     ...(error instanceof CaptureBusyError
-      ? { captureBusy: true, liveCast: error.liveCast }
+      ? {
+          captureBusy: true,
+          liveCast: error.liveCast,
+          ...(error.userControl
+            ? { userControl: true, reason: "user_control" }
+            : {}),
+        }
       : {}),
     ...(error instanceof PageTimeoutError ? { pageTimeout: true } : {}),
   };
@@ -1132,6 +1138,8 @@ function statusFor(error: unknown): 400 | 403 | 404 | 409 | 413 | 422 | 500 | 50
   // 页面没及时回应：不是 409（那会被说成「元素不在了」），也不是 503（电脑本身好好的）。不用 504：网关 / Cloudflare
   // 会把 5xx 网关错误换成「正在更新」页，机器人拿不到这句说明。§101.12
   if (error instanceof PageTimeoutError) return 422;
+  // CB-103：用户接管着电脑、截图让给直播——预期内的「先等用户交还」，和人掌舵同一个 409，不是 503。
+  if (error instanceof CaptureBusyError && error.userControl) return 409;
   // A person holding the wheel, or a person driving before taking it. Nothing is broken; the caller
   // has to wait or take control first, and 409 is how both of those are already reported.
   if (

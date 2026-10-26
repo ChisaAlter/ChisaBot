@@ -16,7 +16,9 @@ import {
   SCREEN_PAGE_TIMEOUT_ZH,
   SCREEN_UNAVAILABLE_ZH,
   screenshotErrorMessage,
+  SCREEN_USER_CONTROL_ZH,
 } from "@/lib/computers/screen";
+import { screenshotPollBlocked } from "@/lib/computers/screenshot-poll";
 
 describe("browserPresenceKind (DOG-05)", () => {
   test("idle bot hold is idle, not bot-busy", () => {
@@ -153,5 +155,27 @@ describe("screenshotErrorMessage", () => {
       }),
     ).toBe(SCREEN_PAGE_TIMEOUT_ZH);
     expect(screenshotErrorMessage(422, undefined)).toBe(SCREEN_PAGE_TIMEOUT_ZH);
+  });
+});
+
+describe("CB-103 user control", () => {
+  test("409 + userControl → 接管中的说明，不是「忙」", () => {
+    expect(
+      screenshotErrorMessage(409, "Live screen is streaming.", {
+        captureBusy: true,
+        liveCast: true,
+        userControl: true,
+      }),
+    ).toBe(SCREEN_USER_CONTROL_ZH);
+  });
+
+  test("接管中 / 大屏展开时卡片不发截图请求", () => {
+    expect(screenshotPollBlocked({ expanded: false, driving: true })).toBe(
+      "user_control",
+    );
+    expect(screenshotPollBlocked({ expanded: true, driving: true })).toBe(
+      "expanded",
+    );
+    expect(screenshotPollBlocked({ expanded: false, driving: false })).toBeNull();
   });
 });
