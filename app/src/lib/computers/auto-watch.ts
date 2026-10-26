@@ -67,16 +67,12 @@ export function useComputerAutoWatch(
       if (activity.botId !== agentId) return;
       runEpoch.current = activity.epoch;
       clearTimeout(timer.current);
-      if (
-        !latest.current.watching &&
-        dismissedEpoch.current !== activity.epoch
-      ) {
+      if (!latest.current.watching && dismissedEpoch.current !== activity.epoch) {
         opening.current = true;
         latest.current.setWatching(true);
       }
       timer.current = setTimeout(() => {
-        if (!auto.current || engaged.current || !latest.current.watching)
-          return;
+        if (!auto.current || engaged.current || !latest.current.watching) return;
         auto.current = false;
         latest.current.setWatching(false);
       }, RETURN_AFTER_MS);

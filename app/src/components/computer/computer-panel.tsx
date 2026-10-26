@@ -61,9 +61,7 @@ export function ComputerViewPanel({
   return (
     <section
       aria-label={"计算机"}
-      className={
-        variant === "rail" ? "computer-rail flex flex-col gap-3 pb-1" : "p-4"
-      }
+      className={variant === "rail" ? "computer-rail flex flex-col gap-3 pb-1" : "p-4"}
       data-mobile-tab={tab}
       onKeyDownCapture={engaged}
       onPointerDownCapture={engaged}
@@ -87,16 +85,10 @@ export function ComputerViewPanel({
         ) : status ? (
           <>
             <span aria-hidden className="computer-status-dot" />
-            <span className="computer-status-text">
-              {status.pending
-                ? `${status.label}…`
-                : status.label.replace(/^正在/, "刚刚")}
-            </span>
+            <span className="computer-status-text">{status.pending ? `${status.label}…` : status.label.replace(/^正在/, "刚刚")}</span>
           </>
         ) : (
-          <span className="computer-status-text is-idle">
-            {"机器人用浏览器时，这里会实时显示画面和它在做什么"}
-          </span>
+          <span className="computer-status-text is-idle">{"机器人用浏览器时，这里会实时显示画面和它在做什么"}</span>
         )}
       </div>
       <div

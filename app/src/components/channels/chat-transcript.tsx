@@ -29,11 +29,8 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
-import {
-  BotBubbles,
-  ReplyQuote,
-  type ReplyTarget,
-} from "@/components/chat/bot-bubbles";
+import { BotBubbles, ReplyQuote, type ReplyTarget } from "@/components/chat/bot-bubbles";
+import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import {
   ConfirmResumeRow,
   confirmResumeId,
@@ -91,18 +88,14 @@ import { attachmentUrl } from "@/lib/channels/attachments";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { readFiring } from "@/lib/channels/routine-firing";
 import { nextBlankHeight } from "@/lib/chat/blank-release";
-import {
-  friendlyError,
-  UNANSWERED_TURN_REASON,
-} from "@/lib/chat/friendly-error";
+import { friendlyError, UNANSWERED_TURN_REASON } from "@/lib/chat/friendly-error";
 import { supersededPageCalls } from "@/lib/chat/page-cards";
-import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import {
   previousSentAt,
   rememberSent,
-  type SentAtReading,
   staysInSameTurn,
   takeSendWhileBusy,
+  type SentAtReading,
 } from "@/lib/chat/send-scroll";
 import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
@@ -348,7 +341,6 @@ function Thinking() {
  */
 function PauseDots({ watch }: { watch: string }) {
   const [shown, setShown] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: watch 是重新开始计时的触发键，故意列在依赖里
   useEffect(() => {
     setShown(false);
     const timer = window.setTimeout(() => setShown(true), 900);
@@ -756,7 +748,6 @@ function SettleAtEnd({
   /** §93.3：一轮结束后收掉底下留的空（由下面的 effect 填上；没挂上时什么都不做）。 */
   const releaseRef = useRef<(() => boolean) | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在指定依赖变化时重跑，其余值通过 ref 读取最新值
   useLayoutEffect(() => {
     const s = state.current;
     s.hydrating = hydrating;
@@ -919,15 +910,14 @@ function SettleAtEnd({
   useLayoutEffect(() => () => finalWrite.current?.(), []);
 
   // 回来时在底部、底下有留白：第一帧之前就把留白放回去（§88.3）。没在恢复、也没在回答：不放（§93.3）。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: once, on open.
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!memo?.atBottom || memo.spacer <= 0 || !element) return;
     if (!hydrating && !busy) return;
     setSlack(Math.min(memo.spacer, Math.max(0, element.clientHeight - 96)));
+    // biome-ignore lint/correctness/useExhaustiveDependencies: once, on open.
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: slack / state are refs.
   useEffect(() => {
     const element = viewport.current;
     const content = element?.querySelector<HTMLElement>(
@@ -1151,10 +1141,20 @@ function SettleAtEnd({
           element.style.scrollBehavior = "auto";
           element.scrollTop = seen.top;
           element.style.scrollBehavior = "";
-        } else if (grew > use && seen.atBottom && !s.restore && !anchoring()) {
+        } else if (
+          grew > use &&
+          seen.atBottom &&
+          !s.restore &&
+          !anchoring()
+        ) {
           stickToBottom();
         }
-      } else if (grew > 0 && seen.atBottom && !s.restore && !anchoring()) {
+      } else if (
+        grew > 0 &&
+        seen.atBottom &&
+        !s.restore &&
+        !anchoring()
+      ) {
         stickToBottom();
       } else if (
         grew < 0 &&
@@ -1409,6 +1409,7 @@ function SettleAtEnd({
       element.removeEventListener("pointerdown", onPointer);
       element.removeEventListener("scroll", onScroll);
     };
+    // biome-ignore lint/correctness/useExhaustiveDependencies: slack / state are refs.
   }, [scrollToEnd, scrollToMessage, viewport, scrollKey, reduceMotion]);
 
   return null;
@@ -1654,10 +1655,7 @@ export type MemoryPillItem = {
   action: "save" | "update" | "log";
 };
 
-function splitUserQuote(raw: string): {
-  quote?: string | undefined;
-  body: string;
-} {
+function splitUserQuote(raw: string): { quote?: string | undefined; body: string } {
   const lines = raw.replace(/\r\n?/g, "\n").split("\n");
   let q = 0;
   while (q < lines.length && /^\s{0,3}>\s?/.test(lines[q] ?? "")) q++;
@@ -1756,14 +1754,9 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
               onClick={() => setActive(item)}
               type="button"
             >
-              <IconSparkles
-                aria-hidden="true"
-                className="size-3.5 shrink-0 text-amber-400"
-              />
+              <IconSparkles aria-hidden="true" className="size-3.5 shrink-0 text-amber-400" />
               <span className="chat-memory-pill-text truncate">
-                {isUndone
-                  ? `已撤销记忆：${item.summary}`
-                  : `已记住：${item.summary}`}
+                {isUndone ? `已撤销记忆：${item.summary}` : `已记住：${item.summary}`}
               </span>
               <span className="chat-memory-pill-cta">
                 {isUndone ? "已撤销" : "点击查看/撤销"}
@@ -1773,17 +1766,11 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
         })}
       </div>
 
-      <Dialog
-        onOpenChange={(open) => !open && setActive(null)}
-        open={active !== null}
-      >
+      <Dialog onOpenChange={(open) => !open && setActive(null)} open={active !== null}>
         {active ? (
           <DialogContent className="max-w-md" data-testid="memory-pill-dialog">
             <div className="flex items-center gap-2 pb-2">
-              <IconSparkles
-                aria-hidden="true"
-                className="size-4 text-amber-400"
-              />
+              <IconSparkles aria-hidden="true" className="size-4 text-amber-400" />
               <DialogTitle className="text-base">{"记忆写入详情"}</DialogTitle>
             </div>
             <div className="space-y-3 text-sm">
@@ -1797,9 +1784,7 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                   </span>
                 ) : null}
                 {active.noteId ? (
-                  <span className="font-mono text-[11px] opacity-70">
-                    {active.noteId}
-                  </span>
+                  <span className="font-mono text-[11px] opacity-70">{active.noteId}</span>
                 ) : null}
               </div>
               <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5 leading-relaxed text-foreground">
@@ -1813,10 +1798,7 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                   {"管理全部长期记忆 →"}
                 </a>
                 {undoneIds[active.id] ? (
-                  <span
-                    className="text-xs font-medium text-emerald-400"
-                    data-testid="memory-undone-status"
-                  >
+                  <span className="text-xs font-medium text-emerald-400" data-testid="memory-undone-status">
                     {"✓ 已从长期记忆中撤销"}
                   </span>
                 ) : (
@@ -2038,8 +2020,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
                            * breaks the line it is in reads as a separate message.
                            */}
                           <span className="mr-1 inline-flex items-center gap-1 rounded bg-foreground/10 px-1.5 py-0.5 align-middle font-mono text-foreground/80 text-xs">
-                            <IconBox className="size-3 shrink-0" />/
-                            {invoked.chip}
+                            <IconBox className="size-3 shrink-0" />/{invoked.chip}
                           </span>
                           {invoked.rest}
                         </>
@@ -2068,24 +2049,14 @@ const TranscriptMessage = memo(function TranscriptMessage({
           {isUser ? (
             editable && messageId ? (
               <div className="chat-msg-actions" data-align="end">
-                {/* biome-ignore lint/a11y/useValidAriaRole: QuoteReplyAction 的 role 是消息角色（user/assistant），不是 ARIA role */}
-                <QuoteReplyAction
-                  messageId={messageId}
-                  role="user"
-                  text={said}
-                />
+                <QuoteReplyAction messageId={messageId} role="user" text={said} />
                 <EditAction onEdit={() => setEditing(true)} />
               </div>
             ) : null
           ) : !text.trim() ? null : tone === "lead" ? (
             canRegenerate ? (
               <div className="chat-msg-actions">
-                {/* biome-ignore lint/a11y/useValidAriaRole: QuoteReplyAction 的 role 是消息角色（user/assistant），不是 ARIA role */}
-                <QuoteReplyAction
-                  messageId={messageId}
-                  role="assistant"
-                  text={text}
-                />
+                <QuoteReplyAction messageId={messageId} role="assistant" text={text} />
                 <RegenerateAction />
               </div>
             ) : null
@@ -2157,7 +2128,6 @@ function CopyMessage({
           ))}
         </span>
       </button>
-      {/* biome-ignore lint/a11y/useValidAriaRole: QuoteReplyAction 的 role 是消息角色（user/assistant），不是 ARIA role */}
       <QuoteReplyAction messageId={messageId} role="assistant" text={text} />
       {extra}
     </div>
@@ -3353,15 +3323,13 @@ export function ChatTranscript({
   useEffect(() => {
     const element = viewportRef.current;
     if (!element) return;
-    const measure = () =>
-      setPaneHeight(Math.round(element.getBoundingClientRect().height));
+    const measure = () => setPaneHeight(Math.round(element.getBoundingClientRect().height));
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const anchorOffset =
-    paneHeight > 0 ? Math.max(0, Math.round(paneHeight / 3) - 48) : 0;
+  const anchorOffset = paneHeight > 0 ? Math.max(0, Math.round(paneHeight / 3) - 48) : 0;
 
   return (
     <MessageScrollerProvider
@@ -3794,7 +3762,6 @@ export function lastAnswerId(
   hidden: ReadonlySet<string>,
 ): string | null {
   for (let at = items.length - 1; at >= 0; at -= 1) {
-    // biome-ignore lint/style/noNonNullAssertion: 下标在 0..length-1 之内
     const item = items[at]!;
     if (item.kind === "attachments") return null;
     if (item.kind !== "text") continue;
@@ -3857,9 +3824,7 @@ export function compactTurns(
   const replyTo = new Map<string, ReplyTarget>();
   const memories = new Map<string, MemoryPillItem[]>();
   const formatQuoteText = (raw: string): string => {
-    const clean = (splitChatOrigin(raw)?.text ?? raw)
-      .replace(/\s+/g, " ")
-      .trim();
+    const clean = (splitChatOrigin(raw)?.text ?? raw).replace(/\s+/g, " ").trim();
     return clean.length > 64 ? `${clean.slice(0, 63)}…` : clean;
   };
   // 一轮的开头：人发的消息，或服务器放进来、接着跑一轮的那几种（定时任务 / 任务结果 / 后来确认，CB-046）。
@@ -3872,7 +3837,6 @@ export function compactTurns(
     { users: [], rest: [] },
   ];
   for (const item of items) {
-    // biome-ignore lint/style/noNonNullAssertion: turns 初始化时就有一项
     const current = turns[turns.length - 1]!;
     if (sent(item)) {
       if (current.rest.length === 0 && current.users.length > 0)
@@ -3883,9 +3847,7 @@ export function compactTurns(
   const personTextsOf = (list: readonly TranscriptItem[]) =>
     list.filter(
       (u): u is Extract<TranscriptItem, { kind: "text" }> =>
-        u.kind === "text" &&
-        isPersonSentMessage(u.role, u.text) &&
-        u.text.trim().length > 0,
+        u.kind === "text" && isPersonSentMessage(u.role, u.text) && u.text.trim().length > 0,
     );
   turns.forEach((turn, index) => {
     const live = busy && index === turns.length - 1;
@@ -3926,7 +3888,6 @@ export function compactTurns(
         lastRest?.kind === "tool" &&
         lastRest.toolCall.function.name === "render_ui"
       ) {
-        // biome-ignore lint/style/noNonNullAssertion: 上面的条件已保证 texts 非空
         const promoted = texts[texts.length - 1]!;
         final = promoted.id;
         tone.set(promoted.id, "final");
@@ -3943,17 +3904,11 @@ export function compactTurns(
       !prevTurnStopped &&
       prevUsers.length > 0 &&
       prevTurn.rest.length > 0 &&
-      !prevTurn.rest.some(
-        (r) => r.kind === "text" && tone.get(r.id) === "final",
-      );
-    const multiReplyTurn =
-      (personUsers.length > 1 || prevInterjected) && texts.length > 1;
+      !prevTurn.rest.some((r) => r.kind === "text" && tone.get(r.id) === "final");
+    const multiReplyTurn = (personUsers.length > 1 || prevInterjected) && texts.length > 1;
     if (final)
       for (const item of texts)
-        if (
-          tone.get(item.id) === "step" &&
-          !(multiReplyTurn && item.id === texts[0]?.id)
-        )
+        if (tone.get(item.id) === "step" && !(multiReplyTurn && item.id === texts[0]?.id))
           hidden.add(item.id);
     const browsers = turn.rest.filter((item) => item.kind === "browser");
     for (const item of browsers.slice(0, -1)) hidden.add(item.id);
@@ -4048,13 +4003,9 @@ export function compactTurns(
     // 为助手可见的回复气泡自动附上所回应的用户原话胶囊。
     const visibleBotTexts = texts.filter((t) => !hidden.has(t.id));
     if (multiReplyTurn && visibleBotTexts.length >= 2) {
-      const firstUser = prevInterjected
-        ? prevUsers[prevUsers.length - 1]
-        : personUsers[0];
+      const firstUser = prevInterjected ? prevUsers[prevUsers.length - 1] : personUsers[0];
       const lastUser = personUsers[personUsers.length - 1];
-      // biome-ignore lint/style/noNonNullAssertion: 上面的条件已保证 visibleBotTexts 非空
       const firstBot = visibleBotTexts[0]!;
-      // biome-ignore lint/style/noNonNullAssertion: 上面的条件已保证 visibleBotTexts 非空
       const lastBot = visibleBotTexts[visibleBotTexts.length - 1]!;
       if (firstUser) {
         const q1 = formatQuoteText(firstUser.text);
@@ -4066,16 +4017,10 @@ export function compactTurns(
       }
     } else {
       const replyTargetId = final ?? visibleBotTexts[0]?.id ?? null;
-      if (
-        replyTargetId &&
-        personUsers.length > 0 &&
-        (personUsers.length > 1 || prevInterjected)
-      ) {
-        // biome-ignore lint/style/noNonNullAssertion: 上面的条件已保证 personUsers 非空
+      if (replyTargetId && personUsers.length > 0 && (personUsers.length > 1 || prevInterjected)) {
         const targetUser = personUsers[personUsers.length - 1]!;
         const quoteText = formatQuoteText(targetUser.text);
-        if (quoteText)
-          replyTo.set(replyTargetId, { id: targetUser.id, text: quoteText });
+        if (quoteText) replyTo.set(replyTargetId, { id: targetUser.id, text: quoteText });
       }
     }
     const visible = [...turn.users, ...turn.rest].filter(
@@ -4105,8 +4050,7 @@ export function compactTurns(
       let parsedArgs: Record<string, unknown> = {};
       try {
         const raw = JSON.parse(item.toolCall.function.arguments || "{}");
-        if (raw && typeof raw === "object")
-          parsedArgs = raw as Record<string, unknown>;
+        if (raw && typeof raw === "object") parsedArgs = raw as Record<string, unknown>;
       } catch {
         // ignore
       }
@@ -4120,9 +4064,7 @@ export function compactTurns(
       const rawSummary =
         (typeof parsedArgs.content === "string" && parsedArgs.content.trim()) ||
         (typeof parsedArgs.entry === "string" && parsedArgs.entry.trim()) ||
-        resStr
-          .replace(/^已(?:记下|并入|更新)[：:]\s*(?:\[mem_[^\]]+\]\s*)?/, "")
-          .trim();
+        resStr.replace(/^已(?:记下|并入|更新)[：:]\s*(?:\[mem_[^\]]+\]\s*)?/, "").trim();
       if (!rawSummary) continue;
       turnMemories.push({
         id: item.toolCall.id || item.id,
@@ -4134,10 +4076,7 @@ export function compactTurns(
             : typeof parsedArgs.kind === "string"
               ? parsedArgs.kind
               : "fact",
-        subject:
-          typeof parsedArgs.subject === "string"
-            ? parsedArgs.subject
-            : undefined,
+        subject: typeof parsedArgs.subject === "string" ? parsedArgs.subject : undefined,
         action:
           fnName === "memory_save"
             ? "save"
@@ -4146,8 +4085,7 @@ export function compactTurns(
               : "log",
       });
     }
-    const memTargetId =
-      final ?? visibleBotTexts[visibleBotTexts.length - 1]?.id ?? null;
+    const memTargetId = final ?? visibleBotTexts[visibleBotTexts.length - 1]?.id ?? null;
     if (memTargetId && turnMemories.length > 0) {
       memories.set(memTargetId, turnMemories);
     }

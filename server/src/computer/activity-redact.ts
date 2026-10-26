@@ -116,6 +116,32 @@ function commandRule(text: string): ShortFlagRule | undefined {
 }
 
 /**
+ * 引号里是一整条命令（`bash -c "curl -u u:x"`、`sh -c 'sshpass -p x ssh h'`、`ssh h "mysql -px"`，
+ * 或者输出里回显的 `"curl -u u:x"`）：WORD 把整段引号当一个词，里面的命令要拆开再打一遍。
+ * 只处理里面带空白的引号段；以 `-` 开头的词是参数本身（`-p"hunter 2"`），交给下面的规则。
+ * 双引号里的 `\"` / `\\` 先还原再打码，改过才按原样转义回去。没有改动返回 undefined。
+ */
+function redactQuoted(text: string): string | undefined {
+  if (text.startsWith("-") || !/["'][^"']*\s/.test(text)) return undefined;
+  const out = text.replace(
+    /"((?:[^"\\]|\\.)*)"|'([^']*)'/g,
+    (whole, double: string | undefined, single: string | undefined) => {
+      if (single !== undefined) {
+        if (!/\s/.test(single)) return whole;
+        return `'${redactCommands(single)}'`;
+      }
+      const inner = double ?? "";
+      if (!/\s/.test(inner)) return whole;
+      const plain = inner.replace(/\\(["\\])/g, "$1");
+      const masked = redactCommands(plain);
+      if (masked === plain) return whole;
+      return `"${masked.replace(/(["\\])/g, "\\$1")}"`;
+    },
+  );
+  return out === text ? undefined : out;
+}
+
+/**
  * 在一段文本里**任意位置**找表里的命令并打它的短参数：不只是行首的命令，也包括输出里的回显
  * （`echo sshpass -p x`、`set -x` 的 `+ mysql -px`、`ps aux` 一行末尾的命令、`history` 的 `12  curl -u u:x`）。
  * 遇到下一个表里的命令就换成它的规则；`wraps` 的命令（sshpass）到第一个位置参数就停，后面那条命令
@@ -131,6 +157,15 @@ function redactShortFlags(segment: string): string {
   for (let j = 0; j < words.length; j++) {
     const word = words[j] as { text: string; start: number };
     const next = words[j + 1];
+    const nested = redactQuoted(word.text);
+    if (nested !== undefined) {
+      edits.push({
+        start: word.start,
+        end: word.start + word.text.length,
+        text: nested,
+      });
+      continue;
+    }
     const found = commandRule(word.text);
     if (found) {
       rule = found;

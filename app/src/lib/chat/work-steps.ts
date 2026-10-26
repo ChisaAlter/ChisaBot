@@ -26,9 +26,7 @@ const PREP = new Set(["skill_list", "skill_load"]);
 function parseArgs(raw: string): Record<string, unknown> {
   try {
     const value = JSON.parse(raw || "{}");
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   } catch {
     // 流式时参数还没写完：先当没有参数，下一次渲染再读。
     return {};
@@ -36,9 +34,7 @@ function parseArgs(raw: string): Record<string, unknown> {
 }
 
 /** 当前在做的那一步（准备动作不算）：给右栏「正在搭建」的面板看（DESIGN.md §77.1）。 */
-export function currentWorkStep(
-  calls: readonly WorkCall[],
-): { name: string; label: string } | null {
+export function currentWorkStep(calls: readonly WorkCall[]): { name: string; label: string } | null {
   const summary = summarizeWork(calls);
   const last = [...calls].reverse().find((call) => !PREP.has(call.name));
   return last && summary ? { name: last.name, label: summary.current } : null;
@@ -48,7 +44,6 @@ export function summarizeWork(calls: readonly WorkCall[]): WorkSummary | null {
   if (calls.length === 0) return null;
   let current = "";
   for (let i = calls.length - 1; i >= 0 && !current; i--) {
-    // biome-ignore lint/style/noNonNullAssertion: 下标在 0..length-1 之内
     const call = calls[i]!;
     if (PREP.has(call.name)) continue;
     const line = describeWorkerStep(call.name, parseArgs(call.arguments)) ?? "";
@@ -161,12 +156,9 @@ export function workTimeline(
   }[] = [];
   const pending = [...notes].sort((a, b) => a.at - b.at);
   const flush = (upTo: number) => {
-    // biome-ignore lint/style/noNonNullAssertion: 循环条件已保证 pending 非空
     while (pending.length && pending[0]!.at <= upTo) {
-      // biome-ignore lint/style/noNonNullAssertion: 循环条件已保证 pending 非空
       const text = plainNote(pending.shift()!.text);
-      if (text && lines.at(-1)?.text !== text)
-        lines.push({ kind: "note", text });
+      if (text && lines.at(-1)?.text !== text) lines.push({ kind: "note", text });
     }
   };
   let lastStep: string | undefined;
@@ -207,12 +199,7 @@ function doneLabel(work: readonly WorkCall[]): string {
   }
   const webOnly =
     searches + pages + failedSearches + failedPages === work.length &&
-    work.every(
-      (c) =>
-        c.name === "web_search" ||
-        c.name === "web_fetch" ||
-        c.name === "computer_navigate",
-    );
+    work.every((c) => c.name === "web_search" || c.name === "web_fetch" || c.name === "computer_navigate");
   if (webOnly) {
     const parts = [
       searches ? `搜索 ${searches} 次` : "",
@@ -224,9 +211,7 @@ function doneLabel(work: readonly WorkCall[]): string {
     return parts.join(" · ") || "未读到网页";
   }
   const failed = work.filter((c) => c.failed || !c.done).length;
-  return failed
-    ? `做了 ${work.length} 步 · ${failed} 步失败`
-    : `做了 ${work.length} 步`;
+  return failed ? `做了 ${work.length} 步 · ${failed} 步失败` : `做了 ${work.length} 步`;
 }
 
 /**
@@ -246,21 +231,12 @@ export function workCallFailed(result: string | undefined): boolean {
       // 不是 JSON 字符串：按原样看。
     }
   }
-  if (
-    text.startsWith("Refused.") ||
-    text.includes("This call produced no result")
-  )
-    return true;
+  if (text.startsWith("Refused.") || text.includes("This call produced no result")) return true;
   if (/^(error\b|错误|失败)/i.test(text)) return true;
   if (text.startsWith("{")) {
     try {
       const parsed = JSON.parse(text) as Record<string, unknown> | null;
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        (Boolean(parsed.error) || parsed.ok === false)
-      )
-        return true;
+      if (parsed && typeof parsed === "object" && (Boolean(parsed.error) || parsed.ok === false)) return true;
     } catch {
       // 截断的 JSON：不算出错。
     }

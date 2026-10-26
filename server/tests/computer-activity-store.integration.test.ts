@@ -26,6 +26,26 @@ const QA_LEAKS = [
   'curl -u "user:PW_D3" https://x.com',
   "sshpass -p 'PW_G1' scp a b:/c",
 ];
+/** QA 318-r3：命令紧跟在引号、$( 或反引号后面（嵌套写法）。左边是原文，右边是打码后的样子。 */
+const QA_NESTED: [string, string][] = [
+  ['"curl -u u:PW_N1 x"', '"curl -u u:•••• x"'],
+  ["'sshpass -p PW_N2 ssh h'", "'sshpass -p •••• ssh h'"],
+  ['bash -c "curl -u u:PW_N3 x"', 'bash -c "curl -u u:•••• x"'],
+  ["sh -c 'sshpass -p PW_N4 ssh h'", "sh -c 'sshpass -p •••• ssh h'"],
+  ['ssh host "mysql -u r -pPW_N5 db"', 'ssh host "mysql -u r -p•••• db"'],
+  ["echo $(redis-cli -a PW_N6 ping)", "echo $(redis-cli -a •••• ping)"],
+  ["x=`curl -u u:PW_N7 x`", "x=`curl -u u:•••• x`"],
+  ['bash -c "curl -u \\"u:PW_N8\\" x"', 'bash -c "curl -u \\"u:••••\\" x"'],
+  [
+    "ssh h 'bash -c \"sshpass -p PW_N9 ssh -p 22 g\"'",
+    "ssh h 'bash -c \"sshpass -p •••• ssh -p 22 g\"'",
+  ],
+  ['echo "$(mysql -p PW_N10 db)"', 'echo "$(mysql -p •••• db)"'],
+  [
+    'bash -c "cd /x; redis-cli -a PW_N11 ping"',
+    'bash -c "cd /x; redis-cli -a •••• ping"',
+  ],
+];
 /** QA 318-r2 文本变体：命令出现在一行中间。 */
 const QA_MIDLINE = [
   "+ mysql -u root -pPW2 db",
@@ -287,8 +307,8 @@ suite("computer activity store", () => {
         ) => ({
           command: input.command,
           exitCode: 0,
-          stdout: `echo ${input.command}\n${QA_MIDLINE.join("\n")}\n`,
-          stderr: QA_MIDLINE.join("\n"),
+          stdout: `echo ${input.command}\n${QA_MIDLINE.join("\n")}\n${QA_NESTED.map(([raw]) => raw).join("\n")}\n`,
+          stderr: [...QA_MIDLINE, ...QA_NESTED.map(([raw]) => raw)].join("\n"),
           truncated: false,
           timedOut: false,
           elapsedMs: 1,
@@ -298,7 +318,12 @@ suite("computer activity store", () => {
     );
     const actor = { id: user, userId: user };
     let n = 0;
-    for (const command of [...QA_LEAKS, ...QA_MIDLINE, ...KEEP])
+    for (const command of [
+      ...QA_LEAKS,
+      ...QA_MIDLINE,
+      ...QA_NESTED.map(([raw]) => raw),
+      ...KEEP,
+    ])
       await withActivityScope(
         {
           threadId: null,
@@ -310,12 +335,12 @@ suite("computer activity store", () => {
       );
     const database = createDatabase(testDatabaseUrl(), TEST_POOL);
     const leaks = (await database.execute(
-      sql`select count(*)::int as n from computer_activity_steps t where computer_id = ${qaBot} and t::text ~ 'PW_'`,
+      sql`select count(*)::int as n from computer_activity_steps t where computer_id = ${qaBot} and t::text ~ 'PW'`,
     )) as unknown as { n: number }[];
     expect(leaks[0]?.n).toBe(0);
     const page = await store.list({ computerId: qaBot, actorUserId: user });
     expect(page.steps.length).toBe(
-      QA_LEAKS.length + QA_MIDLINE.length + KEEP.length,
+      QA_LEAKS.length + QA_MIDLINE.length + QA_NESTED.length + KEEP.length,
     );
     const subjects = page.steps.map((step) => step.subject);
     for (const keep of KEEP.filter((k) => !k.includes("https://")))

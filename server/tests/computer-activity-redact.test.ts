@@ -22,6 +22,26 @@ const QA_LEAKS = [
   "sshpass -p 'PW_G1' scp a b:/c",
 ];
 /** QA 318-r2 文本变体：命令出现在一行中间。 */
+/** QA 318-r3：命令紧跟在引号、$( 或反引号后面（嵌套写法）。左边是原文，右边是打码后的样子。 */
+const QA_NESTED: [string, string][] = [
+  ['"curl -u u:PW_N1 x"', '"curl -u u:•••• x"'],
+  ["'sshpass -p PW_N2 ssh h'", "'sshpass -p •••• ssh h'"],
+  ['bash -c "curl -u u:PW_N3 x"', 'bash -c "curl -u u:•••• x"'],
+  ["sh -c 'sshpass -p PW_N4 ssh h'", "sh -c 'sshpass -p •••• ssh h'"],
+  ['ssh host "mysql -u r -pPW_N5 db"', 'ssh host "mysql -u r -p•••• db"'],
+  ["echo $(redis-cli -a PW_N6 ping)", "echo $(redis-cli -a •••• ping)"],
+  ["x=`curl -u u:PW_N7 x`", "x=`curl -u u:•••• x`"],
+  ['bash -c "curl -u \\"u:PW_N8\\" x"', 'bash -c "curl -u \\"u:••••\\" x"'],
+  [
+    "ssh h 'bash -c \"sshpass -p PW_N9 ssh -p 22 g\"'",
+    "ssh h 'bash -c \"sshpass -p •••• ssh -p 22 g\"'",
+  ],
+  ['echo "$(mysql -p PW_N10 db)"', 'echo "$(mysql -p •••• db)"'],
+  [
+    'bash -c "cd /x; redis-cli -a PW_N11 ping"',
+    'bash -c "cd /x; redis-cli -a •••• ping"',
+  ],
+];
 const QA_MIDLINE = [
   "+ mysql -u root -pPW2 db",
   "root  1234  0.0  0.1 sshpass -p PW3 ssh h",
@@ -40,6 +60,22 @@ const KEEP = [
 ];
 
 describe("activity redaction", () => {
+  test("QA 318-r3: commands right after a quote, $( or backtick are masked in subject and output", () => {
+    for (const [raw, masked] of QA_NESTED) {
+      // subject：命令本身
+      expect(redactText(raw)).toBe(masked);
+      // output：回显、多行输出里的同一段
+      expect(redactText(`echo ${raw}`)).toBe(`echo ${masked}`);
+      expect(redactText(`ok\n+ ${raw}\ndone`)).toBe(`ok\n+ ${masked}\ndone`);
+    }
+    // 引号里不是表里的命令、或者没有口令的，原样不动。
+    for (const keep of [
+      'echo "ssh -p 22 KEEP_h"',
+      'git commit -m "fix -p KEEP flag"',
+      "sh -c 'mkdir -p KEEP_d'",
+    ])
+      expect(redactText(keep)).toBe(keep);
+  });
   test("QA 318-r2: whitelisted commands are found anywhere in a line, not just at its start", () => {
     for (const command of QA_LEAKS) {
       const echoed = redactText(`echo ${command}\n`);

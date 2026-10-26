@@ -5,24 +5,18 @@ import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AuditReader } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import { requireAdmin } from "../auth/guards";
-import { reasonWithoutStatement } from "../db/query-failure";
-import {
-  activityScopeMiddleware,
-  registerActivityRoutes,
-} from "./activity-routes";
-import { activityStore } from "./activity-store";
 import { DEPLOYMENT_ROUTES } from "./deployment-routes";
 import {
   type ActionActor,
   ActionRefusedError,
-  CaptureBusyError,
   type ComputerGateway,
+  CaptureBusyError,
   ComputerUnavailableError,
   ElementNotFoundError,
+  PageTimeoutError,
   HandoffRequestError,
   HumanHasControlError,
   NavigationRefusedError,
-  PageTimeoutError,
   StaleSnapshotError,
   WorkspaceNotFoundError,
   WorkspaceRefusedError,
@@ -30,8 +24,14 @@ import {
   WorkspaceTooLargeError,
 } from "./gateway";
 import type { PageFrameStore } from "./page-frames";
+import {
+  activityScopeMiddleware,
+  registerActivityRoutes,
+} from "./activity-routes";
+import { activityStore } from "./activity-store";
 import { dryRunAgainstHistory, REPLAYABLE_EVENT_TYPES } from "./policy-dry-run";
 import { type PolicyStore, parseActionPolicy } from "./policy-store";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 /**
  * The Bot computer's surface, behind the same session guard as every other API route.
@@ -421,9 +421,7 @@ export function createComputerRoutes(
         ...fleet,
         computers: await Promise.all(
           fleet.computers.map(async (computer) => {
-            const owner = await describeBot(actor, computer.botId).catch(
-              () => null,
-            );
+            const owner = await describeBot(actor, computer.botId).catch(() => null);
             return {
               ...computer,
               ...ownerFields(computer.botId, owner),
@@ -454,24 +452,13 @@ export function createComputerRoutes(
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(botId))
       return context.json({ error: "要说明删除哪一个浏览器（botId）。" }, 400);
     if (!describeBot)
-      return context.json(
-        { error: "这个部署无法判断浏览器属于哪个机器人。" },
-        409,
-      );
+      return context.json({ error: "这个部署无法判断浏览器属于哪个机器人。" }, 409);
     if (botId === SHARED_COMPUTER_ID)
-      return context.json(
-        {
-          error:
-            "默认浏览器不属于某个机器人，不能在这里删除；需要时用「重置」。",
-        },
-        409,
-      );
+      return context.json({ error: "默认浏览器不属于某个机器人，不能在这里删除；需要时用「重置」。" }, 409);
     const owner = await describeBot(context.var.actor, botId);
     if (owner)
       return context.json(
-        {
-          error: `这个浏览器属于机器人「${owner.name}」。要清除它的登录状态请用「重置」。`,
-        },
+        { error: `这个浏览器属于机器人「${owner.name}」。要清除它的登录状态请用「重置」。` },
         409,
       );
     try {
@@ -597,8 +584,7 @@ export function createComputerRoutes(
   /* ---------- 浏览器标签（DESIGN.md §95） ---------- */
 
   routes.get("/:botId/tabs", async (context) => {
-    if (!gateway.tabs)
-      return context.json({ error: "这个计算机不支持标签页。" }, 404);
+    if (!gateway.tabs) return context.json({ error: "这个计算机不支持标签页。" }, 404);
     try {
       return context.json(await gateway.tabs(context.req.param("botId")));
     } catch (error) {
@@ -616,12 +602,8 @@ export function createComputerRoutes(
       return gateway.tabAction(botId, actor, {
         action,
         ...(typeof body?.id === "string" ? { id: body.id } : {}),
-        ...(typeof body?.url === "string" && body.url.trim()
-          ? { url: body.url.trim() }
-          : {}),
-        ...(typeof body?.toolCallId === "string"
-          ? { toolCallId: body.toolCallId }
-          : {}),
+        ...(typeof body?.url === "string" && body.url.trim() ? { url: body.url.trim() } : {}),
+        ...(typeof body?.toolCallId === "string" ? { toolCallId: body.toolCallId } : {}),
       });
     }),
   );
@@ -1096,9 +1078,7 @@ function asRef(
 }
 
 function describe(error: unknown): string {
-  return error instanceof Error
-    ? reasonWithoutStatement(error)
-    : "出错了，请重试";
+  return error instanceof Error ? reasonWithoutStatement(error) : "出错了，请重试";
 }
 
 /**
@@ -1153,9 +1133,7 @@ function handoffId(body: Record<string, unknown> | null): string {
   return body.requestId;
 }
 
-function statusFor(
-  error: unknown,
-): 400 | 403 | 404 | 409 | 413 | 422 | 500 | 503 {
+function statusFor(error: unknown): 400 | 403 | 404 | 409 | 413 | 422 | 500 | 503 {
   if (error instanceof HandoffRequestError) return error.status;
   if (error instanceof StaleSnapshotError) return 409;
   // Same status as a stale snapshot and for the same reason: nothing is broken, the caller has to do
@@ -1193,10 +1171,7 @@ const SHARED_COMPUTER_ID = "shared";
 export function ownerFields(
   botId: string,
   owner: { name: string } | null,
-):
-  | { owner: "bot"; botName: string }
-  | { owner: "default" }
-  | { owner: "deleted" } {
+): { owner: "bot"; botName: string } | { owner: "default" } | { owner: "deleted" } {
   if (owner) return { owner: "bot", botName: owner.name };
   if (botId === SHARED_COMPUTER_ID) return { owner: "default" };
   return { owner: "deleted" };

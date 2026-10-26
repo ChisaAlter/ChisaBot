@@ -4,11 +4,8 @@ import {
   clearActivity,
   recordActivity,
 } from "../src/lib/computers/activity";
+import { outputOf, syncComputerMessages } from "../src/lib/copilot/computer-tools";
 import { lastComputerStatusFor } from "../src/lib/copilot/computer-activity";
-import {
-  outputOf,
-  syncComputerMessages,
-} from "../src/lib/copilot/computer-tools";
 
 /**
  * What a Bot did on its computer, other than browse.
@@ -152,10 +149,7 @@ describe("the activity a pane shows", () => {
             id: "tc-write-1",
             function: {
               name: "computer_write_file",
-              arguments: JSON.stringify({
-                path: "summary.md",
-                contents: "# Example",
-              }),
+              arguments: JSON.stringify({ path: "summary.md", contents: "# Example" }),
             },
           },
           {
@@ -177,12 +171,7 @@ describe("the activity a pane shows", () => {
         id: "t2",
         role: "tool",
         toolCallId: "tc-cmd-1",
-        content: JSON.stringify({
-          ok: true,
-          stdout: "9592\n",
-          stderr: "",
-          exitCode: 0,
-        }),
+        content: JSON.stringify({ ok: true, stdout: "9592\n", stderr: "", exitCode: 0 }),
       },
     ];
     syncComputerMessages("bot-1", messages, true);

@@ -43,12 +43,13 @@ export async function neverThrow<T>(
     return await run();
   } catch (error) {
     if (signal?.aborted) throw error;
-    const message =
-      error instanceof Error ? error.message : String(error ?? "");
+    const message = error instanceof Error ? error.message : String(error ?? "");
     console.warn("[chisabot] frontend tool failed", message);
     return {
       ok: false,
-      reason: message ? `这一步没有成功：${message}` : "这一步没有成功。",
+      reason: message
+        ? `这一步没有成功：${message}`
+        : "这一步没有成功。",
     };
   }
 }
@@ -130,25 +131,19 @@ export function useFrontendTool<T extends Record<string, unknown>>(
               // 这次调用属于哪段对话的机器人（§101），不是「现在看着的」那个。
               const runBot = botForAgent(context.agent) ?? bot.current;
               if (!writes.has(tool.name))
-                return withRunBot(bot, runBot, () =>
-                  tool.handler?.(args, context),
-                );
+                return withRunBot(bot, runBot, () => tool.handler?.(args, context));
               let snapshot: ReturnType<typeof frontendApprovalSnapshot>;
               try {
                 snapshot = frontendApprovalSnapshot(context);
               } catch {
                 // A surface with no observed conversation. The server still gates the action; it can
                 // run it when nothing asks, and says why when something does.
-                return withRunBot(bot, runBot, () =>
-                  tool.handler?.(args, context),
-                );
+                return withRunBot(bot, runBot, () => tool.handler?.(args, context));
               }
               const response = await tryClient(
                 `/api/approvals/computer/${encodeURIComponent(runBot)}`,
                 {
-                  method: "POST",
-                  body: snapshot,
-                  signal: context.signal,
+                  method: "POST", body: snapshot, signal: context.signal,
                   // Leave room for approval evaluation plus the server's 615s command backstop.
                   // This deadline and Stop both apply while the heartbeat response is consumed.
                   timeoutMs: 660_000,
@@ -163,10 +158,7 @@ export function useFrontendTool<T extends Record<string, unknown>>(
               const ok = status >= 200 && status < 300;
               if (status === 202) {
                 const kind =
-                  payload &&
-                  typeof payload === "object" &&
-                  "kind" in payload &&
-                  typeof payload.kind === "string"
+                  payload && typeof payload === "object" && "kind" in payload && typeof payload.kind === "string"
                     ? payload.kind
                     : "approval";
                 // 只有审批会在决定之后接上这一轮。别的等待（例如等人交还计算机）没有东西会接上：
@@ -174,10 +166,7 @@ export function useFrontendTool<T extends Record<string, unknown>>(
                 // 现在把原因作为工具结果交回去，让机器人把话说完。
                 if (!kind.startsWith("approval")) {
                   const reason =
-                    payload &&
-                    typeof payload === "object" &&
-                    "reason" in payload &&
-                    typeof payload.reason === "string"
+                    payload && typeof payload === "object" && "reason" in payload && typeof payload.reason === "string"
                       ? payload.reason
                       : "";
                   return {
@@ -206,16 +195,10 @@ export function useFrontendTool<T extends Record<string, unknown>>(
                 return {
                   ok: false,
                   reason: error || `计算机操作没有成功（HTTP ${status}）。`,
-                  ...(status === 400 || status === 403
-                    ? { refused: true }
-                    : {}),
+                  ...(status === 400 || status === 403 ? { refused: true } : {}),
                 };
               }
-              if (
-                !payload ||
-                typeof payload !== "object" ||
-                !("result" in payload)
-              )
+              if (!payload || typeof payload !== "object" || !("result" in payload))
                 return { ok: false, reason: "计算机操作没有返回结果。" };
               return payload.result;
             });

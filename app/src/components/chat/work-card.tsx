@@ -3,14 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
-import {
-  currentWorkStep,
-  summarizeDoneWork,
-  summarizeWork,
-  type WorkCall,
-  type WorkNote,
-  workTimeline,
-} from "@/lib/chat/work-steps";
+import { currentWorkStep, summarizeDoneWork, summarizeWork, type WorkCall, type WorkNote, workTimeline } from "@/lib/chat/work-steps";
 
 /** 干活卡把当前这一步广播出去，右栏正在搭建的面板写「正在搜索「…」」（DESIGN.md §77.1）。 */
 export const WORK_STEP_EVENT = "chisabot-work-step";
@@ -22,9 +15,7 @@ export function lastWorkStep(): WorkStepDetail {
 }
 function announceStep(detail: WorkStepDetail) {
   lastStep = detail;
-  window.dispatchEvent(
-    new CustomEvent<WorkStepDetail>(WORK_STEP_EVENT, { detail }),
-  );
+  window.dispatchEvent(new CustomEvent<WorkStepDetail>(WORK_STEP_EVENT, { detail }));
 }
 
 /**
@@ -54,9 +45,7 @@ export function workSeconds(turnKey: string): number | null {
   const start = startedAt.get(turnKey);
   if (start === undefined) return null;
   remember(finishedAt, turnKey, Date.now());
-  const seconds = Math.round(
-    ((finishedAt.get(turnKey) ?? Date.now()) - start) / 1000,
-  );
+  const seconds = Math.round(((finishedAt.get(turnKey) ?? Date.now()) - start) / 1000);
   return seconds >= 2 ? seconds : null;
 }
 
@@ -73,12 +62,7 @@ export function WorkRow({
   turnKey,
   live,
   notes,
-}: {
-  calls: readonly WorkCall[];
-  turnKey: string;
-  live: boolean /** 收进卡片的过程话（§90）。 */;
-  notes?: readonly WorkNote[];
-}) {
+}: { calls: readonly WorkCall[]; turnKey: string; live: boolean; /** 收进卡片的过程话（§90）。 */ notes?: readonly WorkNote[] }) {
   if (live) remember(startedAt, turnKey, Date.now());
   // 点开过的干活卡离开再回来 / 刷新后还开着（按这一轮记，DESIGN.md §88）。
   const [open, setOpenState] = useState(() => workUi(turnKey)?.open === true);
@@ -121,22 +105,15 @@ export function WorkRow({
   const done = live ? null : summarizeDoneWork(calls);
   if (live ? !summary : !done) return null;
   const since = startedAt.get(turnKey) ?? now;
-  const seconds = live
-    ? Math.max(0, Math.round((now - since) / 1000))
-    : doneSeconds;
+  const seconds = live ? Math.max(0, Math.round((now - since) / 1000)) : doneSeconds;
   const steps = open ? workTimeline(calls, notes) : [];
-  // biome-ignore lint/style/noNonNullAssertion: live 时 summary 一定有，否则 done 一定有
   const text = live ? summary!.current : done!.label;
   return (
     <div className="chat-work" data-state={live ? "live" : "done"}>
       <button
         aria-expanded={open}
         aria-label={open ? "收起步骤" : "展开步骤"}
-        className={
-          live
-            ? "chat-thinking chat-work-card"
-            : "chat-thinking chat-work-card chat-work-done"
-        }
+        className={live ? "chat-thinking chat-work-card" : "chat-thinking chat-work-card chat-work-done"}
         data-state={live ? "live" : "done"}
         data-testid={live ? "chat-work-card" : "chat-work-done"}
         onClick={() => setOpen((value) => !value)}
@@ -157,19 +134,12 @@ export function WorkRow({
           <AnimatePresence initial={false} mode="popLayout">
             <motion.span
               animate={{ opacity: 1, y: 0 }}
-              className={
-                live
-                  ? "tool-line-running chat-work-step-text"
-                  : "chat-work-step-text"
-              }
+              className={live ? "tool-line-running chat-work-step-text" : "chat-work-step-text"}
               // 换字：旧的往上淡出、新的从下面淡入（§78.3），两行不在同一处叠着，读起来不像两段字。
               exit={{ opacity: 0, y: reduce ? 0 : -8 }}
               initial={{ opacity: 0, y: reduce ? 0 : 8 }}
               key={text}
-              transition={{
-                duration: reduce ? 0 : 0.2,
-                ease: [0.23, 1, 0.32, 1],
-              }}
+              transition={{ duration: reduce ? 0 : 0.2, ease: [0.23, 1, 0.32, 1] }}
             >
               {text}
             </motion.span>
@@ -180,16 +150,10 @@ export function WorkRow({
            * 跑着的时候只报时间，不再报「第 N 步」；做完的那一行整行不画（用户：全部不显示步数，只留回答）。
            */}
           {!live && done?.failed ? `${done.failed} 步失败` : ""}
-          {!live && done?.failed && seconds !== null && seconds >= 2
-            ? " · "
-            : ""}
+          {!live && done?.failed && seconds !== null && seconds >= 2 ? " · " : ""}
           {seconds !== null && seconds >= 2 ? `${seconds} 秒` : ""}
         </span>
-        <IconChevronDown
-          aria-hidden="true"
-          className="chat-work-chevron size-3.5"
-          data-open={open || undefined}
-        />
+        <IconChevronDown aria-hidden="true" className="chat-work-chevron size-3.5" data-open={open || undefined} />
       </button>
       {open ? (
         <ol className="chat-work-steps" data-testid="chat-work-steps">
@@ -197,14 +161,9 @@ export function WorkRow({
           {steps.map((step, index) => (
             <li
               className={
-                step.kind === "note"
-                  ? "chat-work-note"
-                  : live && index === steps.length - 1
-                    ? "is-current"
-                    : undefined
+                step.kind === "note" ? "chat-work-note" : live && index === steps.length - 1 ? "is-current" : undefined
               }
               data-kind={step.kind}
-              // biome-ignore lint/suspicious/noArrayIndexKey: 步骤列表只追加不重排，index+text 是稳定的 key
               key={`${index}:${step.text}`}
             >
               {step.text}

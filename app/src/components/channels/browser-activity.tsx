@@ -111,7 +111,9 @@ export function BrowserActivity({
               ? `浏览了 ${pages} ${pages === 1 ? "页" : "页"}`
               : "浏览器活动"
         }
-        detail={issues ? `${issues} 项问题` : undefined}
+        detail={
+          issues ? `${issues} 项问题` : undefined
+        }
         running={running}
       >
         <ol className="space-y-2 py-1">
