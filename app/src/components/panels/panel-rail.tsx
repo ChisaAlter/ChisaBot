@@ -53,7 +53,7 @@ import {
 import { matchesHotkey } from "@/lib/hotkeys/hotkeys";
 import { ToggleTip } from "@/components/layout/glass-topbar";
 import { cn } from "@/lib/utils";
-import { useBackDismiss } from "@/lib/overlay-back";
+import { justNavigatedHistory, useBackDismiss } from "@/lib/overlay-back";
 
 const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
@@ -226,6 +226,8 @@ export function PanelRail({ className }: { className?: string }) {
   const computerOn = Boolean(chat?.canComputer && chat.computerOpen);
   useEffect(() => {
     if (!computerOn) return;
+    // 浏览器后退回到 `watch=true` 的旧记录：那是在离开，不是要看计算机，别把抽屉重新拉出来（CB-098 QA）。
+    if (!wide && justNavigatedHistory()) return;
     if (wide) setPanelRailOpen(true);
     else setPanelSheetOpen(true);
   }, [computerOn, wide]);

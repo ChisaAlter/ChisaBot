@@ -484,6 +484,62 @@ for (const mode of MODES) {
     await ctx.close();
   }
 }
+/*
+ * CB-098 QA 回归：窄屏手机网页在 /channel/new 打开右栏抽屉，切「计算机」再切回「面板」，之后连续返回
+ * 必须最多 2 次就离开页面（以前切标签 push 了 `watch`，返回时抽屉被地址拉回来、又压一条记录，死循环）。
+ */
+const TAB_BACK_SIZES = (process.env.TAB_BACK_SIZES || "390x844,360x800")
+  .split(",")
+  .map((s) => s.split("x").map(Number));
+if (MODES.includes("web")) {
+  for (const [w, h] of TAB_BACK_SIZES) {
+    const ctx = await browser.newContext({
+      viewport: { width: w, height: h },
+      isMobile: true,
+      hasTouch: true,
+    });
+    const page = await ctx.newPage();
+    const tag = `web-${w}x${h}-tab-then-back`;
+    const rec = { tag, mode: "web", size: `${w}x${h}`, route: "/channel/new" };
+    try {
+      await page.goto("about:blank");
+      await page.goto(`${BASE}/channel/new`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".rail-tab.is-narrow", { timeout: 20000 });
+      await page.waitForTimeout(1500);
+      await page.click(".rail-tab.is-narrow");
+      await page.waitForSelector(".rail-sheet .rail-tabs-item");
+      await page.waitForTimeout(600);
+      await page.locator(".rail-sheet .rail-tabs-item").nth(1).click();
+      await page.waitForTimeout(800);
+      await page.locator(".rail-sheet .rail-tabs-item").nth(0).click();
+      await page.waitForTimeout(800);
+      await page.screenshot({ path: `${OUT}/${tag}-before-back.png` });
+      const trail = [];
+      let backs = 0;
+      for (; backs < 10; ) {
+        await page.goBack().catch(() => {});
+        backs += 1;
+        await page.waitForTimeout(900);
+        const url = page.url();
+        const drawer = url.startsWith(BASE)
+          ? await page.evaluate(() => !!document.querySelector(".rail-sheet")).catch(() => null)
+          : null;
+        trail.push({ url: url.replace(BASE, ""), drawer });
+        if (!url.startsWith(BASE)) break;
+      }
+      rec.tabThenBack = { backs, left: !page.url().startsWith(BASE), trail };
+      check(
+        rec.tabThenBack.left && backs <= 2,
+        `${tag} 切标签后返回 ${backs} 次${rec.tabThenBack.left ? "离开" : "仍未离开"}页面（应 ≤ 2）`,
+      );
+    } catch (e) {
+      check(false, `${tag} 异常 ${String(e.message).split("\n")[0]}`);
+    }
+    results.push(rec);
+    console.log(JSON.stringify({ tag, tabThenBack: rec.tabThenBack && { backs: rec.tabThenBack.backs, left: rec.tabThenBack.left } }));
+    await ctx.close();
+  }
+}
 await browser.close();
 fs.writeFileSync(
   `${OUT}/results.json`,

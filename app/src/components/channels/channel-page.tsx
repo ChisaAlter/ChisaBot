@@ -30,6 +30,7 @@ import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
 import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
 import { useComputerAutoWatch } from "@/lib/computers/auto-watch";
 import { useMarkBotHidden } from "@/lib/kept-visible";
+import { restampOverlayMarker } from "@/lib/overlay-back";
 
 export const chatSearchSchema = z.object({
   settings: z.boolean().optional(),
@@ -131,6 +132,8 @@ export function ChannelPage({
       void navigate({
         search: (previous) => ({ ...previous, watch: open ? true : undefined }),
         replace,
+      }).then(() => {
+        if (replace) restampOverlayMarker();
       });
     },
     [navigate],

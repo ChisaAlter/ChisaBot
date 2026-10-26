@@ -71,3 +71,77 @@ describe("useBackDismiss / __chisabotBack", () => {
     expect(openOverlayCount()).toBe(0);
   });
 });
+
+/**
+ * CB-098 QA 回归：390 宽在 /channel/new 打开右栏抽屉，切「计算机」再切回「面板」，之后连续返回会死循环。
+ * 这里用真实的 history + popstate 模拟那条链路：切标签走 `useBotComputerTab` 的规则（抽屉压着历史时
+ * replace），地址回到 `watch=true` 时右栏会想把抽屉拉出来（panel-rail 的 computerOn 效果）。
+ */
+describe("切标签后连续返回（CB-098 QA）", () => {
+  const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  test("抽屉里切「计算机」再切回「面板」，最多 2 次返回就离开页面", async () => {
+    const { justNavigatedHistory, overlayHistoryActive, restampOverlayMarker } = await import(
+      "@/lib/overlay-back"
+    );
+    document.documentElement.setAttribute("data-phone", "");
+    try {
+      window.history.replaceState({ outside: true }, "", "/before");
+      window.history.pushState({ page: true }, "", "/channel/new");
+
+      let open = false;
+      let watch = false;
+      const rerenders: Array<() => void> = [];
+      const hook = renderHook(
+        ({ o }: { o: boolean }) =>
+          useBackDismiss(o, () => {
+            open = false;
+            rerenders[0]?.();
+          }),
+        { initialProps: { o: open } },
+      );
+      rerenders.push(() => act(() => hook.rerender({ o: open })));
+      // 路由：地址的 watch 变化 = 「计算机」开关；回到 watch=true 时右栏想把抽屉拉出来。
+      const onPop = () => {
+        const nextWatch = new URL(window.location.href).searchParams.get("watch") === "true";
+        const was = watch;
+        watch = nextWatch;
+        if (nextWatch && !was && !justNavigatedHistory() && !open) {
+          open = true;
+          rerenders[0]?.();
+        }
+      };
+      window.addEventListener("popstate", onPop);
+      const writeWatch = (next: boolean) => {
+        watch = next;
+        const url = next ? "/channel/new?watch=true" : "/channel/new";
+        // 路由的 replace 会换掉 state（不带标记），之后由 restampOverlayMarker 补回。
+        if (overlayHistoryActive()) {
+          window.history.replaceState({ page: true }, "", url);
+          restampOverlayMarker();
+        } else window.history.pushState({ page: true }, "", url);
+      };
+
+      open = true;
+      rerenders[0]?.();
+      await tick();
+      expect(overlayHistoryActive()).toBe(true);
+      writeWatch(true);
+      writeWatch(false);
+
+      let backs = 0;
+      for (; backs < 10; ) {
+        window.history.back();
+        backs += 1;
+        await tick(50);
+        if ((window.history.state as { outside?: boolean } | null)?.outside) break;
+      }
+      window.removeEventListener("popstate", onPop);
+      expect((window.history.state as { outside?: boolean } | null)?.outside).toBe(true);
+      expect(backs).toBeLessThanOrEqual(2);
+      expect(open).toBe(false);
+    } finally {
+      document.documentElement.removeAttribute("data-phone");
+    }
+  });
+});

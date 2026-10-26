@@ -20,6 +20,9 @@ const stack: Entry[] = [];
 let seq = 0;
 let swallowPops = 0;
 let installed = false;
+/** 最近一次（没被吞掉的）popstate 的时间：这期间因为地址变化而「打开」的抽屉不压新记录（CB-098 QA）。 */
+let lastPopAt = Number.NEGATIVE_INFINITY;
+const POP_SETTLE_MS = 600;
 
 declare global {
   interface Window {
@@ -61,12 +64,37 @@ export function installOverlayBack(): void {
       swallowPops -= 1;
       return;
     }
+    lastPopAt = Date.now();
     const top = stack[stack.length - 1];
     if (!top?.pushed) return;
     // 浏览器已经退掉了那条记录：别在关闭时再退一次。
     top.pushed = false;
     top.close();
   });
+}
+
+/** 刚刚发生过浏览器后退 / 前进：调用方据此不要因为地址回到旧值而重新拉出抽屉。 */
+export function justNavigatedHistory(): boolean {
+  return Date.now() - lastPopAt < POP_SETTLE_MS;
+}
+
+/** 有抽屉压着历史记录：此时页面内的地址更新（例如右栏切标签写 `watch`）应当 replace，不能 push。 */
+export function overlayHistoryActive(): boolean {
+  return stack.some((entry) => entry.pushed);
+}
+
+/**
+ * 抽屉开着时用 replace 改了地址（路由会换掉 history.state）：把最上面抽屉的标记补回去，
+ * 关抽屉时才认得出这条记录还是自己的。
+ */
+export function restampOverlayMarker(): void {
+  if (typeof window === "undefined") return;
+  const top = [...stack].reverse().find((entry) => entry.pushed);
+  if (!top || markerOf(window.history.state) === top.id) return;
+  window.history.replaceState(
+    { ...(window.history.state ?? {}), __cbOverlay: top.id },
+    "",
+  );
 }
 
 /** 抽屉 `open` 时登记，关上 / 卸载时注销。`close` 由调用方负责真正把抽屉关上。 */
@@ -87,6 +115,9 @@ export function useBackDismiss(open: boolean, close: () => void): void {
     const timer = historyWanted()
       ? window.setTimeout(() => {
           if (!stack.includes(entry)) return;
+          // 是浏览器后退 / 前进把抽屉带出来的（回到了一条非标记记录）：不再压记录，否则前进历史被截断、
+          // 后退永远退不出这一页。
+          if (justNavigatedHistory()) return;
           window.history.pushState(
             { ...(window.history.state ?? {}), __cbOverlay: entry.id },
             "",

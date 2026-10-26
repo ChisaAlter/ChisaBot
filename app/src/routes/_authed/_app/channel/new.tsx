@@ -2,6 +2,7 @@ import type { Message } from "@ag-ui/core";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
+import { restampOverlayMarker } from "@/lib/overlay-back";
 import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
 import { LandingRedirect } from "@/components/agents/landing-redirect";
@@ -89,6 +90,8 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
       void navigateHere({
         search: (previous) => ({ ...previous, watch: open ? true : undefined }),
         replace,
+      }).then(() => {
+        if (replace) restampOverlayMarker();
       }),
     [navigateHere],
   );

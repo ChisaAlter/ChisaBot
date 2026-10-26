@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { botUi, setBotUi } from "./ui-memory";
+import { overlayHistoryActive } from "@/lib/overlay-back";
 
 /**
  * 右栏「面板 | 计算机」按机器人记住（DESIGN.md §88.2）。
@@ -48,7 +49,9 @@ export function useBotComputerTab(
   const setOpen = useCallback((next: boolean) => {
     const { agentId: id, writeUrl: write } = latest.current;
     setBotUi(id, { computer: next });
-    write(next, false);
+    // 手机上右栏抽屉开着时切标签只换地址不加历史（CB-098 QA）：否则后退会在「面板 / 计算机」之间来回，
+    // 抽屉被地址重新拉开、又压一条记录，永远退不出页面。
+    write(next, overlayHistoryActive());
   }, []);
 
   return [open, setOpen];
