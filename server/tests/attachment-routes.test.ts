@@ -751,7 +751,7 @@ describe("POST /:channelId/attachments", () => {
      * It used to end "anything still unsent is cleared within a day", which is a promise about
      * `attachments.culler.olderThanHours` — an operator's value, defaulting to 24 and documented as
      * raisable — made on a deployment that may also have set `attachments.culler.enabled: false`,
-     * which charts/openbot/README.md offers as the way to "keep every staged row for ever". On such
+     * which charts/chisabot/README.md offers as the way to "keep every staged row for ever". On such
      * a deployment the sentence was a flat lie told to the one person who could not act on it: some
      * of these rows are in channels they can no longer open, so withdrawing them is not available
      * either.
@@ -2452,7 +2452,7 @@ describe("attachment route composition", () => {
     );
 
     const unauthenticated = await app.request(
-      `http://openbot.test/api/attachments/${id}`,
+      `http://chisabot.test/api/attachments/${id}`,
     );
     expect(unauthenticated.status).toBe(401);
 
@@ -2460,13 +2460,13 @@ describe("attachment route composition", () => {
       user: {
         id: memberId,
         email: `${memberId}@example.test`,
-        name: "OpenBot Member",
+        name: "ChisaBot Member",
         image: "https://example.test/member.png",
       },
     };
 
     const authenticated = await app.request(
-      `http://openbot.test/api/attachments/${id}`,
+      `http://chisabot.test/api/attachments/${id}`,
     );
     expect(authenticated.status).toBe(200);
 
@@ -2483,7 +2483,7 @@ describe("attachment route composition", () => {
       ),
     );
     const uploadResponse = await app.request(
-      `http://openbot.test/api/channels/${channelId}/attachments`,
+      `http://chisabot.test/api/channels/${channelId}/attachments`,
       { method: "POST", body: uploadFormData },
     );
     expect(uploadResponse.status).toBe(201);
@@ -2493,12 +2493,12 @@ describe("attachment route composition", () => {
     const app = createApp(loadConfig(testEnvironment()));
 
     const fetchResponse = await app.request(
-      "http://openbot.test/api/attachments/not-a-uuid",
+      "http://chisabot.test/api/attachments/not-a-uuid",
     );
     expect(fetchResponse.status).toBe(404);
 
     const uploadResponse = await app.request(
-      "http://openbot.test/api/channels/some-channel/attachments",
+      "http://chisabot.test/api/channels/some-channel/attachments",
       { method: "POST" },
     );
     expect(uploadResponse.status).toBe(404);
@@ -2576,7 +2576,7 @@ describe("the upload route's body limit", () => {
       new File([new Uint8Array(byteLength)], "huge.png", { type: "image/png" }),
     );
     return app.request(
-      `http://openbot.test/api/channels/${channelId}/attachments`,
+      `http://chisabot.test/api/channels/${channelId}/attachments`,
       { method: "POST", body: formData },
     );
   }

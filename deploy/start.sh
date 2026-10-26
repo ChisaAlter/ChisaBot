@@ -78,16 +78,16 @@ if [ "$build" = 1 ]; then
   [ -n "$commit" ] || echo '（工作区有未提交的改动：镜像不记录来源提交，系统更新页第一次只能完整构建）'
 fi
 
-docker compose -p openbot-zh -f compose.yaml config --quiet
+docker compose -p chisabot-zh -f compose.yaml config --quiet
 # Read only the non-secret network name. Do not source .env as shell code.
 magpie_network=${MAGPIE_NETWORK:-$(env_value MAGPIE_NETWORK)}
 magpie_network=${magpie_network:-openbot_magpie}
 case "$magpie_network" in *[!a-zA-Z0-9_.-]*|"") echo 'Invalid MAGPIE_NETWORK name.' >&2; exit 1 ;; esac
 docker network inspect "$magpie_network" >/dev/null 2>&1 || docker network create "$magpie_network" >/dev/null
 if [ "$build" = 1 ]; then
-  docker compose -p openbot-zh -f compose.yaml up -d --build --wait --wait-timeout 180 openbot
+  docker compose -p chisabot-zh -f compose.yaml up -d --build --wait --wait-timeout 180 chisabot
 else
-  docker compose -p openbot-zh -f compose.yaml up -d --no-build --wait --wait-timeout 180 openbot
+  docker compose -p chisabot-zh -f compose.yaml up -d --no-build --wait --wait-timeout 180 chisabot
 fi
 
 # Opt in only on a Linux host with systemd. Keep names compatible with existing deployments.
@@ -96,9 +96,9 @@ if [ "${CHISABOT_ENABLE_TIMERS:-0}" = 1 ]; then
     echo 'CHISABOT_ENABLE_TIMERS=1 requires root and systemd.' >&2
     exit 1
   fi
-  cp openbot-zh-*.service openbot-zh-*.timer /etc/systemd/system/
+  cp chisabot-zh-*.service chisabot-zh-*.timer /etc/systemd/system/
   systemctl daemon-reload
-  systemctl enable --now openbot-zh-attachments.timer
+  systemctl enable --now chisabot-zh-attachments.timer
 fi
 
 # PRD-P0-02: Magpie/sidecar must not initiate to app:3001 (DOCKER-USER DROP).

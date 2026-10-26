@@ -66,7 +66,7 @@ function recorder(fail = false) {
     if (fail) throw new Error("the computer is not answering");
     pushes.push({
       url,
-      bot: new Headers(init?.headers).get("x-openbot-bot-id"),
+      bot: new Headers(init?.headers).get("x-chisabot-bot-id"),
       body: JSON.parse(String(init?.body)),
     });
     return new Response("{}");

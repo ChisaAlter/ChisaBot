@@ -39,7 +39,7 @@ export function planModelForEnvironment(
   const harness = claude ? "agent-claude-sdk" : "agent-langgraph-agui";
   if (
     environment.PICKED_HARNESS_SOURCE?.trim() === "byo" ||
-    !new RegExp(`(?:^|/)(?:openbot-)?${harness}(?::|@|$)`).test(image)
+    !new RegExp(`(?:^|/)(?:chisabot-|openbot-)?${harness}(?::|@|$)`).test(image)
   ) {
     throw new Error(
       `The selected plan requires the installed ${harness} harness for built-in Bots.`,
@@ -174,7 +174,7 @@ export class PlanModel implements PlanLanguageModel {
     frontendTools: ReadonlySet<string> = new Set(),
     signal?: AbortSignal,
   ) {
-    this.provider = `openbot-${config.provider}-plan`;
+    this.provider = `chisabot-${config.provider}-plan`;
     this.modelId = config.provider;
     // Separate SDK/checkpoint state for two Bots in the same channel, stable across tool continuations.
     this.threadId = createHash("sha256")
@@ -204,7 +204,8 @@ export class PlanModel implements PlanLanguageModel {
               signal: AbortSignal.timeout(5000),
               headers: {
                 "content-type": "application/json",
-                "x-openbot-agent-token": config.token,
+                "x-chisabot-agent-token": config.token,
+                "x-openbot-agent-token": config.token, // pre-0.1.75 agents
               },
               body: JSON.stringify({ threadId: this.threadId }),
             },
@@ -266,7 +267,10 @@ export class PlanModel implements PlanLanguageModel {
     const names = new Set(tools.map((tool) => tool.name));
     const agent = new HttpAgent({
       url: this.config.endpoint.href,
-      headers: { "x-openbot-agent-token": this.config.token },
+      headers: {
+        "x-chisabot-agent-token": this.config.token,
+        "x-openbot-agent-token": this.config.token, // pre-0.1.75 agents
+      },
       fetch: (url, init) =>
         fetch(url, {
           ...init,
@@ -401,8 +405,8 @@ export class PlanModel implements PlanLanguageModel {
                   }
                   case "RUN_ERROR": {
                     const error = new Error(event.message);
-                    if (event.code === "OPENBOT_MODEL_AUTH_REQUIRED") {
-                      error.name = "OpenBotModelAuthenticationError";
+                    if ((event.code === "CHISABOT_MODEL_AUTH_REQUIRED" || event.code === "OPENBOT_MODEL_AUTH_REQUIRED")) {
+                      error.name = "ChisaBotModelAuthenticationError";
                       recordDesktopConnectionFailure({
                         connection: "model",
                         code: "provider_authentication_failed",

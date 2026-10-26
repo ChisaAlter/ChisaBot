@@ -10,7 +10,7 @@ import {
 // Runs the exact production Bun and Rust lock helpers in both directions.
 const native = process.argv[2];
 if (!native) throw new Error("Native lock-owner executable is required.");
-const root = await mkdtemp(join(tmpdir(), "openbot-cross-writer-"));
+const root = await mkdtemp(join(tmpdir(), "chisabot-cross-writer-"));
 const file = join(root, "model-oauth.json");
 const children: ReturnType<typeof holder>[] = [];
 function holder(command: string[]) {

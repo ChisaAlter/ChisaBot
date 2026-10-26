@@ -46,7 +46,7 @@ describe("remote coordination on the signed tool callback", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-openbot-agent-token": TOKEN,
+        "x-chisabot-agent-token": TOKEN,
       },
       body: JSON.stringify({
         name: "message_bot",
@@ -85,7 +85,7 @@ describe("remote coordination on the signed tool callback", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-openbot-agent-token": presented,
+        "x-chisabot-agent-token": presented,
       },
       body: JSON.stringify({
         name: "ask_person",

@@ -62,11 +62,11 @@ grep -q -- '--verify' "$ISO" || fail "$ISO missing --verify"
 ok "isolate-sidecar-app.sh present (apply/check/verify)"
 # Live --check only when docker+iptables+root and app is up (hosts); CI skips.
 if [ "$(id -u)" = 0 ] && command -v docker >/dev/null 2>&1 && command -v iptables >/dev/null 2>&1; then
-  if docker inspect openbot-zh >/dev/null 2>&1; then
+  if docker inspect chisabot-zh >/dev/null 2>&1; then
     sh "$ISO" --check
     ok "live isolate --check"
   else
-    ok "openbot-zh not running — skip live isolate --check"
+    ok "chisabot-zh not running — skip live isolate --check"
   fi
 else
   ok "not root/docker host — skip live isolate --check"

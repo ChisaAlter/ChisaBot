@@ -190,7 +190,7 @@ test("a pending lazy route replaces the static startup shell before the chunk re
     }),
   );
   const container = document.createElement("div");
-  container.innerHTML = '<div id="openbot-startup">静态启动提示</div>';
+  container.innerHTML = '<div id="chisabot-startup">静态启动提示</div>';
   document.body.append(container);
   const view = render(
     <QueryClientProvider client={queryClient}>
@@ -205,7 +205,7 @@ test("a pending lazy route replaces the static startup shell before the chunk re
       ),
     ).toContain("正在加载");
     expect(chunkStarted).toBe(true);
-    expect(container.querySelector("#openbot-startup")).toBeNull();
+    expect(container.querySelector("#chisabot-startup")).toBeNull();
     expect(view.queryByText("模型设置已打开")).toBeNull();
   } finally {
     await act(async () => resolveChunk());

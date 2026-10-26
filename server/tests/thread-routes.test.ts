@@ -13,13 +13,13 @@ import { createThreadRoutes } from "../src/channels/thread-routes";
  * names itself is one nothing can later attribute to this deployment.
  */
 
-const identity = createThreadIdentity("openbot-test");
+const identity = createThreadIdentity("chisabot-test");
 
 const asSignedIn: MiddlewareHandler<{ Variables: AppVariables }> = async (
   context,
   next,
 ) => {
-  context.set("actor", { id: "u1", email: "someone@openbot.test" });
+  context.set("actor", { id: "u1", email: "someone@chisabot.test" });
   return next();
 };
 

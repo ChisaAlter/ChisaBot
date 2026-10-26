@@ -9,7 +9,7 @@ const at = (protocol: string, hostname: string, host: string) => ({
 });
 
 /**
- * `__OPENBOT_WS_PORT__` was interpolated into the WebSocket authority unchecked, so `"   "`,
+ * `__CHISABOT_WS_PORT__` was interpolated into the WebSocket authority unchecked, so `"   "`,
  * `"abc"` or `"99999"` produced `ws://host:abc/path` and `new WebSocket()` threw synchronously
  * inside the effects that open it. Only whole digits in range override same-origin now.
  */

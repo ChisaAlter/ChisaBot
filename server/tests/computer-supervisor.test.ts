@@ -28,13 +28,13 @@ describe("locating a Bot's computer", () => {
     const client = clientWith(() =>
       Response.json({
         botId: "sales",
-        container: "openbot-computer-sales",
+        container: "chisabot-computer-sales",
         status: "running",
-        url: "http://openbot-computer-sales:4100",
+        url: "http://chisabot-computer-sales:4100",
       }),
     );
     expect(await client.locate("sales")).toBe(
-      "http://openbot-computer-sales:4100",
+      "http://chisabot-computer-sales:4100",
     );
   });
 
@@ -43,7 +43,7 @@ describe("locating a Bot's computer", () => {
     const client = clientWith(() =>
       Response.json({
         botId: "sales",
-        container: "openbot-computer-sales",
+        container: "chisabot-computer-sales",
         status: "running",
         port: 49213,
       }),
@@ -57,7 +57,7 @@ describe("locating a Bot's computer", () => {
     const client = clientWith(() =>
       Response.json({
         botId: "sales",
-        container: "openbot-computer-sales",
+        container: "chisabot-computer-sales",
         status: "running",
       }),
     );
@@ -132,9 +132,9 @@ describe("Docker supervisor provider", () => {
             computers: [
               {
                 botId: "bot",
-                container: "openbot-computer-bot",
+                container: "chisabot-computer-bot",
                 status: dockerStatus,
-                url: "http://openbot-computer-bot:4100",
+                url: "http://chisabot-computer-bot:4100",
               },
             ],
           })) as unknown as typeof fetch,
@@ -267,9 +267,9 @@ describe("telling one run of a computer from the next, across replicas", () => {
     const running = [
       {
         botId,
-        container: `openbot-computer-${botId}`,
+        container: `chisabot-computer-${botId}`,
         status: "running",
-        url: `http://openbot-computer-${botId}:4100`,
+        url: `http://chisabot-computer-${botId}:4100`,
         startedAt,
       },
     ];

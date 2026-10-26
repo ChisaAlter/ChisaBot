@@ -34,7 +34,7 @@ const TOKEN_PREFIX = "obot_agt_";
 const TOKEN_BYTES = 32;
 
 /** Signed under its own label, so a signature here can never be replayed as a visitor's cookie. */
-const RUN_LABEL = "openbot:agent-run";
+const RUN_LABEL = "chisabot:agent-run";
 
 /**
  * How long an assertion is good for.
@@ -313,7 +313,7 @@ export function parseAgentToolCallInput(
  * an agent may only act as the Bot its token was issued for. Everything unclear is a refusal.
  */
 export async function authoriseAgentCall(options: {
-  /** The `x-openbot-agent-token` header, as presented. */
+  /** The `x-chisabot-agent-token` header, as presented. */
   presented: string;
   /** The `run` field from the body, as presented. */
   run: unknown;

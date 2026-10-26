@@ -8,17 +8,17 @@
 
 ```sh
 df -h / | tail -1                                      # 根分区 < 80%，超过就按 cleanup.md 清理
-docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'openbot|chisabot|magpie'
+docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'chisabot|chisabot|magpie'
 curl -s 127.0.0.1:3001/api/version                     # 提交号 = 你期望的 main
 sh /opt/chisabot-updater/request.sh status             # 最近一次更新成功
 bash /opt/chisabot-updater/post-deploy-smoke.sh        # 版本 + capabilities + 聚合健康（硬）
 sh /opt/chisabot-updater/smoke.sh                      # 模型往返自检（不保存）
-docker logs --since 24h openbot-zh 2>&1 | grep -cE 'bind message supplies|PostgresError'   # 应为 0
-systemctl is-active chisabot-updater openbot-public-cert-reload.timer \
+docker logs --since 24h chisabot-zh 2>&1 | grep -cE 'bind message supplies|PostgresError'   # 应为 0
+systemctl is-active chisabot-updater chisabot-public-cert-reload.timer \
   chisabot-cloudnode-syncwatch.timer                   # 用了出口路由 / 节点防火墙的再加上对应单元
 journalctl -t chisabot-syncwatch --since -1d | tail -3 # 看门狗最近有没有频繁重启边车
 docker system df                                       # 镜像 / 构建缓存 / 卷的占用
-ls -t /opt/openbot-zh/rollback-to-*.sh | head -3       # 并确认对应镜像还在（docker image inspect）
+ls -t /opt/chisabot-zh/rollback-to-*.sh | head -3       # 并确认对应镜像还在（docker image inspect）
 openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.pem   # 证书到期时间
 ```
 
@@ -45,18 +45,18 @@ openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.p
 | 定时任务 | 频率 | 作用 |
 |---|---|---|
 | `chisabot-cloudnode-syncwatch.timer` | 30 秒 | 同步边车看门狗 |
-| `openbot-zh-attachments.timer` | 每小时 | 清理无主附件（可选） |
-| `openbot-public-cert-reload.timer` | 每天 | 证书续期后 reload 网关 |
+| `chisabot-zh-attachments.timer` | 每小时 | 清理无主附件（可选） |
+| `chisabot-public-cert-reload.timer` | 每天 | 证书续期后 reload 网关 |
 | acme.sh / certbot 定时任务 | 每天 | 证书续期 |
-| `openbot-zh-routines.timer` | — | **已废弃，不要启用**（[containers.md](containers.md) §4） |
+| `chisabot-zh-routines.timer` | — | **已废弃，不要启用**（[containers.md](containers.md) §4） |
 
 应用内部的定时任务（ChisaBot 定时任务、附件扫描）在服务器进程里跑，不需要宿主机定时器。
 
 ## 4. 日志
 
-- 应用：`docker logs --since 1h openbot-zh`。
-- 网关：`docker logs openbot-public-gateway`（访问日志带 UA 和来源 IP）。
-- 登录服务：`docker logs openbot-web-auth`。
+- 应用：`docker logs --since 1h chisabot-zh`。
+- 网关：`docker logs chisabot-public-gateway`（访问日志带 UA 和来源 IP）。
+- 登录服务：`docker logs chisabot-web-auth`。
 - 更新器：`journalctl -u chisabot-updater`、`/opt/chisabot-updater/audit.log`、`jobs/<任务>/`。
 - 看门狗：`journalctl -t chisabot-syncwatch`。
 
@@ -76,11 +76,11 @@ openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.p
 本机读取示例：
 
 ```sh
-SECRET=$(grep -E '^[[:space:]]*CHISABOT_GATEWAY_SECRET=' /opt/openbot-zh/.env | head -1 | cut -d= -f2- | tr -d '"'\'')
+SECRET=$(grep -E '^[[:space:]]*CHISABOT_GATEWAY_SECRET=' /opt/chisabot-zh/.env | head -1 | cut -d= -f2- | tr -d '"'\'')
 curl -s -H "X-ChisaBot-Local-Caller: $SECRET" \
   'http://127.0.0.1:3001/api/admin/health/budgets?hours=6' | jq '{at, rates, points: (.points|length)}'
 # 或看持久化文件（容器内）：
-docker exec openbot-zh sh -c 'wc -c /workspace/.chisabot-ops/budgets.json; tail -c 200 /workspace/.chisabot-ops/budgets.json'
+docker exec chisabot-zh sh -c 'wc -c /workspace/.chisabot-ops/budgets.json; tail -c 200 /workspace/.chisabot-ops/budgets.json'
 ```
 
 仍**没有**托管 Prometheus/Grafana；需要看板时用上述 JSON + 你自己的 Uptime/脚本即可。

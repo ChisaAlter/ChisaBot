@@ -18,7 +18,7 @@ ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、
   不在其中：它记在 localStorage 里（`lib/chat/ui-memory.ts`，DESIGN.md §88），刷新回来还在。这里不扫整页的
   输入框：卡片表单、面板、搜索框里的字不是聊天草稿。
 - 缓存：应用对 `index.html` 一律 `Cache-Control: no-cache`、带哈希的 `/assets/*` 永久缓存（直连 3001 时生效）。
-  经公网网关（`/opt/openbot-zh/public/nginx.conf`）时入口页和接口仍是 `no-store`（`security-headers.conf`），入口页不会是旧的；
+  经公网网关（`/opt/chisabot-zh/public/nginx.conf`）时入口页和接口仍是 `no-store`（`security-headers.conf`），入口页不会是旧的；
   **带哈希的 `/assets/*` 单独一段 `location ^~ /assets/`**：仍要登录（`auth_request`），成功响应
   `Cache-Control: private, max-age=31536000, immutable`（浏览器长期缓存，`CDN-Cache-Control: no-store` 让 Cloudflare 不缓存），
   非 200 是 `no-store`。以前所有资源都是 `no-store`，每次打开都要重新下载约 1 MB（gzip 后）的脚本。没有 service worker。
@@ -128,7 +128,7 @@ GitHub Release（通用版）。配置了仓库变量 `CHISABOT_SERVER_URL` / `C
 - 认证就是文件系统权限：`spool/requests` 归 uid 1002（镜像里的 API 用户）、700；`spool/state` 归 root、只读挂载。
   公网网关先认证会话，`/api/admin/system-update` 再要求管理员。
 - 同时只有一个任务：`/opt/chisabot-updater/update.lock`（flock，更新和回滚共用）；切换 compose 时再拿
-  `/opt/openbot-zh/.deploy.lock`（和手动发布脚本同一把锁）。
+  `/opt/chisabot-zh/.deploy.lock`（和手动发布脚本同一把锁）。
 - **更新来源**：本机裸仓库 `/opt/chisabot-updater/mirror.git`，每 30 分钟和点「检查更新」时从
   `https://github.com/<GITHUB_REPO>.git` 拉 `GITHUB_BRANCH`（`config.env`）。仓库公开（ChisaAlter/ChisaBot 是公开的），**匿名拉取，
   不需要令牌**；「上次检查」显示拉取时间，拉取失败时显示原因。
@@ -163,7 +163,7 @@ GitHub Release（通用版）。配置了仓库变量 `CHISABOT_SERVER_URL` / `C
   5. 构建镜像：`FROM` 底座（`base.env` 的 `BASE_IMAGE`；最早是压平的 `flat-20261011b`），只覆盖 `app/dist`、`server/{src,drizzle,scripts}`、`shared`、
      `examples/zh-CN`、`agent-computer/src`（服务器直接 import 它的 `egress.ts`）、`build-info.json`，层数固定，不会碰到 127 层上限；标签 `auto-<UTC 时间>-<提交>`，标签
      `chisabot.commit` 记录提交；
-  6. 切换：写回滚脚本 `/opt/openbot-zh/rollback-to-<旧标签>.sh`，`compose.yaml.before-<新标签>`，改镜像行，`docker compose up --wait`；
+  6. 切换：写回滚脚本 `/opt/chisabot-zh/rollback-to-<旧标签>.sh`，`compose.yaml.before-<新标签>`，改镜像行，`docker compose up --wait`；
   7. 健康检查（`health.sh`）：容器 healthy、20 秒内没有重启、本机 `/health` 200、`PUBLIC_HEALTH_URL`（公网登录页）200（为空或示例域名时跳过）、
      `/api/version` 的构建号是新的；最后做一次模型往返自检（`POST /api/admin/smoke`，见 `docs/admin-smoke.md`，不写任何对话），
      结果只记进日志、不影响通过与否；**不通过就自动执行回滚脚本**，任务记为「已自动回滚」；
@@ -200,7 +200,7 @@ sh deploy/install-updater.sh --check         # 只检查：打印会做什么，
   `PUBLIC_HEALTH_URL` 是空的或还是示例域名 `chisabot.example.com`、而 `deploy/.env` 里有真实域名时改成真实的（原文件备份 `config.env.bak-*`）。
   有更新正在进行时拒绝运行。
 - **容器没挂更新目录**（老 compose / 老容器）：`COMPOSE_DIR` 就是这个 `deploy/` 时，把 `.env` 的 `CHISABOT_IMAGE` 设成**正在运行的镜像**，
-  用它重建一次容器（`up --no-build`，断开十几秒）；`COMPOSE_DIR` 是别的目录（手写 compose，例如 `/opt/openbot-zh`）时只打印要加的几行。
+  用它重建一次容器（`up --no-build`，断开十几秒）；`COMPOSE_DIR` 是别的目录（手写 compose，例如 `/opt/chisabot-zh`）时只打印要加的几行。
 - 前置条件不满足（不是 root、没有 systemd、没有 Python）时给出明确的一句话并退出（非 0）；`start.sh` 里只是提示，照常启动。
 
 仓库的 `deploy/compose.yaml` 自带：
@@ -264,5 +264,5 @@ cd /opt/chisabot-src && git pull && sudo sh deploy/install-updater.sh
 
 依赖或底座变了（指纹不符）：不用再手动构建，点「一键完整更新」（或 `request.sh update --full`）。
 
-回滚完整更新：和快速更新一样，「回滚到上一版」或 `/opt/openbot-zh/rollback-to-<旧标签>.sh`（只换镜像，数据库不回退）；
+回滚完整更新：和快速更新一样，「回滚到上一版」或 `/opt/chisabot-zh/rollback-to-<旧标签>.sh`（只换镜像，数据库不回退）；
 `base.env` 指向新底座不影响回滚。要连底座一起退回：`mv base.env base.env.off` 并把 `base-deps.sha256` 改回旧值。

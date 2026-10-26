@@ -11,14 +11,14 @@ import { testEnvironment } from "./support/environment";
 
 const MEMBER = {
   id: "member-1",
-  email: "member@openbot.test",
+  email: "member@chisabot.test",
   name: "A Member",
   image: null,
 };
 
 const OTHER = {
   id: "member-2",
-  email: "other@openbot.test",
+  email: "other@chisabot.test",
   name: "Another Member",
   image: null,
 };

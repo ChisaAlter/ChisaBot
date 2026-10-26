@@ -1,9 +1,9 @@
 ---
-name: openbot-screen-layout
-description: The default layout for every OpenBot configuration screen — PageShell and its prose/wide widths, PageSection and PageRows, Item row composition, the settings-row pattern where a summary and a chevron open a dialog, and the size and variant vocabulary. This is what a new screen looks like unless an instruction says otherwise. Use when adding or changing a screen under app/src/routes, adding a row to an admin or settings page, choosing a Button or Item size, picking between a bordered and a filled row, laying out a dialog, or reviewing a diff that adds max-w-*, a hand-drawn card, or a new spacing scale under app/src. Don't use for where the data comes from (that is openbot-data-access), for the gallery components under components/gallery that a Bot draws, for the chat and channel surfaces, or for editing the primitives under components/ui themselves.
+name: chisabot-screen-layout
+description: The default layout for every ChisaBot configuration screen — PageShell and its prose/wide widths, PageSection and PageRows, Item row composition, the settings-row pattern where a summary and a chevron open a dialog, and the size and variant vocabulary. This is what a new screen looks like unless an instruction says otherwise. Use when adding or changing a screen under app/src/routes, adding a row to an admin or settings page, choosing a Button or Item size, picking between a bordered and a filled row, laying out a dialog, or reviewing a diff that adds max-w-*, a hand-drawn card, or a new spacing scale under app/src. Don't use for where the data comes from (that is chisabot-data-access), for the gallery components under components/gallery that a Bot draws, for the chat and channel surfaces, or for editing the primitives under components/ui themselves.
 ---
 
-# OpenBot Screen Layout
+# ChisaBot Screen Layout
 
 ## When To Use
 
@@ -12,7 +12,7 @@ screen — a new admin page, a new settings section, a new row on an existing pa
 behind a list. Twelve screens render through `PageShell` today and seven build their rows out of
 `Item`; all of them look the same on purpose.
 
-It does not cover where the data comes from — that is `openbot-data-access`, which owns queries,
+It does not cover where the data comes from — that is `chisabot-data-access`, which owns queries,
 mutations, and the pending/error/empty/rows branching. It does not cover the gallery components
 under `components/gallery`, which a Bot draws inside a conversation rather than a person navigating
 to. It does not cover the primitives under `components/ui`, which are this repository's own design-system
@@ -170,7 +170,7 @@ to sit a centred element visibly off centre or clip a card's corners against its
 - The screen genuinely does not fit this shape → say so in the response and comment the reason in the
   code. A table is the one accepted precedent (`admin/audit.tsx`, `width="wide"`).
 - The question is which states the screen renders while loading or failing → not this skill;
-  `openbot-data-access`, Procedure 3.
+  `chisabot-data-access`, Procedure 3.
 
 ## Red Flags
 

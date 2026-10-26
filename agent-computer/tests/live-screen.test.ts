@@ -28,7 +28,7 @@ import { join } from "node:path";
  * to start, and whether input reaches a page it does not belong to.
  */
 
-const asked = process.env.OPENBOT_LIVE_SCREEN === "1";
+const asked = process.env.CHISABOT_LIVE_SCREEN === "1";
 
 const TOKEN = "test-computer-token";
 
@@ -90,8 +90,8 @@ function api(path: string, botId: string, init?: RequestInit) {
     ...init,
     headers: {
       "content-type": "application/json",
-      "x-openbot-bot-id": botId,
-      "x-openbot-computer-token": TOKEN,
+      "x-chisabot-bot-id": botId,
+      "x-chisabot-computer-token": TOKEN,
       ...(init?.headers ?? {}),
     },
   });
@@ -388,7 +388,7 @@ describe.skipIf(!asked)("printable punctuation from the live screen", () => {
         modifiers: 0,
       }),
     );
-    // Older OpenBot surfaces did not send the browser keyCode. Keep their punctuation usable while
+    // Older ChisaBot surfaces did not send the browser keyCode. Keep their punctuation usable while
     // a deployment rolls the frontend and computer images independently.
     viewer.socket.send(
       JSON.stringify({

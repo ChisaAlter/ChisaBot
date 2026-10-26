@@ -146,12 +146,12 @@ ChisaBot 把自托管的 [Magpie](https://github.com/yetone/magpie)（`ghcr.io/y
                                               └─ 模型请求            → magpie:3425/v1（网关 API）
 ```
 
-- **网关 API**：ChisaBot 容器通过 Docker 网络 `openbot_magpie` 访问 `http://magpie:3425/v1`，使用 Magpie 中名为 `OpenBot` 的调用密钥（caller key）。该密钥加密保存在 ChisaBot 数据库（「管理后台 → 模型设置」），不会出现在浏览器里。
+- **网关 API**：ChisaBot 容器通过 Docker 网络 `openbot_magpie` 访问 `http://magpie:3425/v1`，使用 Magpie 中名为 `ChisaBot` 的调用密钥（caller key）。该密钥加密保存在 ChisaBot 数据库（「管理后台 → 模型设置」），不会出现在浏览器里。
 - **管理控制台**：ChisaBot 服务器在 `/magpie-admin/` 下反向代理 `http://magpie:3430`。代理在服务端注入 Magpie 的 Web key（Cookie `magpie_web_3430`），并把控制台里的 `/api/…` 调用改写到 `/magpie-admin/api/…`。
 
 ## 部署配置
 
-`/opt/openbot-zh/compose.yaml`（ChisaBot 服务）：
+`/opt/chisabot-zh/compose.yaml`（ChisaBot 服务）：
 
 ```yaml
     volumes:
@@ -166,8 +166,8 @@ ChisaBot 把自托管的 [Magpie](https://github.com/yetone/magpie)（`ghcr.io/y
 Web key 文件从 Magpie 的私密配置复制，权限 `0400`、属主 `1002:1002`：
 
 ```sh
-install -d -m 700 /opt/openbot-zh/secrets
-install -m 400 -o 1002 -g 1002 /opt/magpie/private/web.key /opt/openbot-zh/secrets/magpie-web.key
+install -d -m 700 /opt/chisabot-zh/secrets
+install -m 400 -o 1002 -g 1002 /opt/magpie/private/web.key /opt/chisabot-zh/secrets/magpie-web.key
 ```
 
 > 使用文件而不是环境变量：容器内的环境变量对机器人计算机的用户可读，文件只给 API 用户读。重新生成 Magpie Web key 后需要重新复制文件并重启 ChisaBot。
@@ -185,7 +185,7 @@ install -m 400 -o 1002 -g 1002 /opt/magpie/private/web.key /opt/openbot-zh/secre
 - 协议：Anthropic（Magpie 同时提供 OpenAI 兼容接口，两者都可以）
 - 接口地址：`http://magpie:3425/v1`
 - 默认模型：`opencode-zen/mimo-v2.6-flash-free`
-- API Key：Magpie 的 `OpenBot` 调用密钥（只保存在服务器）
+- API Key：Magpie 的 `ChisaBot` 调用密钥（只保存在服务器）
 
 仍然可以在「模型设置」里换成任何 OpenAI 兼容或 Anthropic 接口（如 MiniMax、New API）；compose 中的 `BOT_MODEL` / `OPENAI_BASE_URL` 只是在数据库没有保存连接时的后备。
 
@@ -218,7 +218,7 @@ install -m 400 -o 1002 -g 1002 /opt/magpie/private/web.key /opt/openbot-zh/secre
 
 ## 回滚
 
-`/opt/openbot-zh/rollback-to-glass-20261010k.sh`：恢复 `compose.yaml.before-glass-20261010l`（镜像 `glass-20261010k`，去掉 Magpie 环境变量和挂载）并重建容器。
+`/opt/chisabot-zh/rollback-to-glass-20261010k.sh`：恢复 `compose.yaml.before-glass-20261010l`（镜像 `glass-20261010k`，去掉 Magpie 环境变量和挂载）并重建容器。
 
 ## 版本与更新（一键升到最新）
 

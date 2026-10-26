@@ -24,7 +24,7 @@ import { createComputerRoutes } from "../src/computer/routes";
  * Found by driving the screen against a deployment that had computers, not by reading the diff.
  */
 
-const ADMIN = { id: "u1", email: "admin@openbot.test", role: "admin" } as const;
+const ADMIN = { id: "u1", email: "admin@chisabot.test", role: "admin" } as const;
 
 function app(role: "admin" | "user" = "admin") {
   const asActor: MiddlewareHandler<{ Variables: AppVariables }> = async (

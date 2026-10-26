@@ -29,7 +29,7 @@ export type TriggerToolDeps = {
     "create" | "listForAgent" | "setEnabled" | "remove"
   >;
   responsibilities: Pick<ResponsibilityStore, "get">;
-  /** Public origin for absolute URLs, e.g. https://openbot.example.com. */
+  /** Public origin for absolute URLs, e.g. https://chisabot.example.com. */
   publicUrl?: string | null;
   emailDomain?: string | null;
 };

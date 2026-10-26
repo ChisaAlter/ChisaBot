@@ -43,9 +43,9 @@ function fakeSupervisor(startedAt: () => string, known: string[] = []) {
   const ensured = new Set(known);
   const describe = (id: string) => ({
     botId: id,
-    container: `openbot-computer-${id}`,
+    container: `chisabot-computer-${id}`,
     status: "running",
-    url: "http://openbot-computer:4100",
+    url: "http://chisabot-computer:4100",
     startedAt: startedAt(),
   });
   return (async (url: string) => {

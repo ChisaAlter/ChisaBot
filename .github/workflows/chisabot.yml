@@ -87,7 +87,7 @@ jobs:
       - name: Durable inbox and database recovery checks
         env:
           TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/openbot_test
-          OPENBOT_COMPUTER_STOP_HTTP: "1"
+          CHISABOT_COMPUTER_STOP_HTTP: "1"
         run: |
           bun test server/tests/database-deadline.integration.test.ts server/tests/database-recovery.test.ts
           bun test server/tests/local-conversations-inbox.integration.test.ts server/tests/thread-inbox-paused.integration.test.ts server/tests/thread-inbox.test.ts

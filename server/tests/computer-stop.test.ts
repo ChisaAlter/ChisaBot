@@ -15,13 +15,13 @@ import { createHeadlessComputerTools } from "../src/computer/headless-tools";
  * The browser's command goes through approvals, not the direct /computers/:id/exec route. A real
  * process writes START, waits, then writes DONE: aborting only the browser's promise cannot pass.
  * The portable fixture tests both HTTP disconnects on Bun without requiring bash or Chromium.
- * OPENBOT_COMPUTER_STOP_HTTP=1 also runs against the actual Linux agent-computer dispatcher/shell.
+ * CHISABOT_COMPUTER_STOP_HTTP=1 also runs against the actual Linux agent-computer dispatcher/shell.
  */
-const realComputer = process.env.OPENBOT_COMPUTER_STOP_HTTP === "1";
+const realComputer = process.env.CHISABOT_COMPUTER_STOP_HTTP === "1";
 const token = "computer-stop-test-token";
 const delayMs = 900;
 if (realComputer && process.platform !== "linux")
-  throw new Error("OPENBOT_COMPUTER_STOP_HTTP=1 requires Linux and /bin/bash.");
+  throw new Error("CHISABOT_COMPUTER_STOP_HTTP=1 requires Linux and /bin/bash.");
 
 async function until(check: () => Promise<boolean> | boolean) {
   const deadline = Date.now() + 10_000;

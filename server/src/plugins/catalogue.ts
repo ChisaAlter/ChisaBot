@@ -308,7 +308,7 @@ export const CATALOGUE: readonly CatalogueEntry[] = Object.freeze([
     // The upstream routine tools were merged into ChisaBot schedules (slimming P4c, `schedule_*`
     // tools, DESIGN.md §55); only the responsibility trigger tools are served here now.
     title: "Triggers",
-    vendor: "OpenBot",
+    vendor: "ChisaBot",
     summary:
       "Event triggers that wake a Bot for one of its person's responsibilities.",
     /*

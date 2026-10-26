@@ -18,18 +18,18 @@ There is deliberately no endpoint for an administrator to connect an account on 
 
 ## What an administrator does
 
-### 1. Enable the connector in OpenBot
+### 1. Enable the connector in ChisaBot
 
 At `/admin/plugins/notion`, turn on **Enable for this deployment**. There is no client to register
 and no secret to paste: this deployment introduces itself to Notion on first connect, over RFC 7591
 dynamic client registration. The prerequisite is a public URL the redirect URI can be derived from —
-`OPENBOT_PUBLIC_URL` if it is set, or the auth base URL it falls back to otherwise — nothing needs to
+`CHISABOT_PUBLIC_URL` if it is set, or the auth base URL it falls back to otherwise — nothing needs to
 be registered at Notion ahead of time.
 
 ### 2. Connect your own account
 
 On the same page, use **Your account** to connect your own Notion account before doing anything
-else here. Unlike Google Drive's tool list, which is OpenBot's own code and needs no credential to
+else here. Unlike Google Drive's tool list, which is ChisaBot's own code and needs no credential to
 read, this connector's tool list is an answer from Notion's hosted server: refreshing it takes a
 credential, and the refresh in the next step mints one from the connection belonging to whoever
 presses the button — not whichever account happens to be connected here. That is a personal grant
@@ -63,17 +63,17 @@ audit row.
 ## What each person does
 
 At `/settings/connected-accounts`, Notion appears once an administrator has enabled it. Open it and
-press **Connect**. That leaves OpenBot for Notion's own consent screen — the arrow on the button says
+press **Connect**. That leaves ChisaBot for Notion's own consent screen — the arrow on the button says
 so — where the pages and databases to share are chosen, and returns to the same page, which then
 reads **Connected**.
 
-Nothing is cached. OpenBot stores the refresh token and mints a short-lived access token for each
+Nothing is cached. ChisaBot stores the refresh token and mints a short-lived access token for each
 call, so withdrawing access at Notion takes effect on the next call rather than whenever a cache
 expires.
 
 ## See also
 
-- [Architecture](../openbot-architecture.md) — where plugins, grants, policy and audit sit.
-- [Configuration](../configuration.md) — `OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL`, `KEY_ENCRYPTION_KEY`.
+- [Architecture](../chisabot-architecture.md) — where plugins, grants, policy and audit sit.
+- [Configuration](../configuration.md) — `CHISABOT_PUBLIC_URL`, `CHISABOT_APP_URL`, `KEY_ENCRYPTION_KEY`.
 - [Notion's own guide](https://developers.notion.com/guides/mcp/build-mcp-client) to building an MCP
   client against its hosted server.

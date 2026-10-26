@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import type { MiddlewareHandler } from "hono";
 import { DEV_ACTOR } from "./dev-actor";
 import type { AppVariables, AuthenticatedActor } from "./guards";
-import type { OpenBotRole } from "./roles";
+import type { ChisaBotRole } from "./roles";
 
 /**
  * 登录网关传来的签名身份（多账号，CB-040，docs/adr/0009-gateway-accounts.md）。
@@ -14,7 +14,7 @@ import type { OpenBotRole } from "./roles";
  *   u = 用户 id（管理员固定为 dev-local-user，和以前单用户时的数据是同一个人）；n = 显示名；
  *   r = admin | user；t = 签发时间（毫秒）。只在 ±2 分钟内有效（网关每个请求现签）。
  *
- * 判定（只在 OPENBOT_SINGLE_USER + 配了密钥时启用）：
+ * 判定（只在 CHISABOT_SINGLE_USER + 配了密钥时启用）：
  *  - 有身份头且验签通过 → 这个人；
  *  - 有身份头但无效 → 401；
  *  - 没有身份头、但请求经过了网关（带 X-Forwarded-For / X-Real-IP，nginx 每个转发都会设）→ 401；
@@ -32,7 +32,7 @@ export const GATEWAY_IDENTITY_HEADER = "x-chisabot-identity";
 export const LOCAL_CALLER_HEADER = "x-chisabot-local-caller";
 const MAX_SKEW_MS = 2 * 60_000;
 
-export type GatewayIdentity = { id: string; name: string; role: OpenBotRole; issuedAt: number };
+export type GatewayIdentity = { id: string; name: string; role: ChisaBotRole; issuedAt: number };
 
 const b64 = (value: Buffer | string) => Buffer.from(value).toString("base64url");
 
@@ -43,7 +43,7 @@ function mac(secret: string, body: string): Buffer {
 /** 签一个身份（网关里有一份同样的实现；测试里互相校验）。 */
 export function signGatewayIdentity(
   secret: string,
-  identity: { id: string; name: string; role: OpenBotRole },
+  identity: { id: string; name: string; role: ChisaBotRole },
   now = Date.now(),
 ): string {
   const payload = b64(JSON.stringify({ u: identity.id, n: identity.name, r: identity.role, t: now }));

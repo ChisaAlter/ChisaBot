@@ -36,7 +36,7 @@ import {
   normalizeCommandTimeout,
 } from "../../../shared/command-timeout";
 
-/** Client tools supplied by OpenBot when the caller has no browser. */
+/** Client tools supplied by ChisaBot when the caller has no browser. */
 export type HeadlessTool = {
   definition: Tool;
   /**
@@ -138,7 +138,7 @@ export class HeadlessToolsMiddleware extends Middleware {
               }) => {
                 messages = updatedMessages;
                 state = updatedState;
-                if (event.type === EventType.CUSTOM && event.name === "openbot.backend-owned-tools") {
+                if (event.type === EventType.CUSTOM && event.name === "chisabot.backend-owned-tools") {
                   const value = event.value as { names?: unknown } | undefined;
                   if (Array.isArray(value?.names)) for (const name of value.names) if (typeof name === "string") backendOwned.add(name);
                 }
@@ -352,7 +352,7 @@ export class HeadlessToolsMiddleware extends Middleware {
           if (subscriber.closed) return;
           subscriber.next({
             type: EventType.RUN_ERROR,
-            code: "OPENBOT_HEADLESS_TOOL_ERROR",
+            code: "CHISABOT_HEADLESS_TOOL_ERROR",
             message: error instanceof Error ? error.message : String(error),
           });
           subscriber.complete();

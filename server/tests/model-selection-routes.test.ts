@@ -21,7 +21,7 @@ function setup(role: "admin" | "user" | null = "user", fail = false) {
   const calls: unknown[] = [];
   const args = Array.from({ length: 40 }) as never[];
   args[0] = loadConfig(
-    testEnvironment({ OPENBOT_SINGLE_USER: "false" }),
+    testEnvironment({ CHISABOT_SINGLE_USER: "false" }),
   ) as never;
   args[1] = {
     handler: () => new Response(null, { status: 204 }),

@@ -1,7 +1,7 @@
 // xbot.mjs — §101.1：A 的一轮还在跑时切到 B 的对话并让 B 也开浏览器干活，两边的计算机操作必须各自打到自己的浏览器。
 // 判定：A 对话里的工具结果只出现 A 的网站，B 对话里只出现 B 的网站；各自都有最终回答。
 import fs from "node:fs";
-import { api, base, browser, context, errors, log, newPage, openBot, send, threadMessages, threadOf, waitIdle } from "./lib.mjs";
+import { api, base, browser, context, errors, log, newPage, chisaBot, send, threadMessages, threadOf, waitIdle } from "./lib.mjs";
 import { guardInit, guardedDeleteBot, trackBot } from "./guard.mjs";
 const ctx = await context({});
 const page = await newPage(ctx, "x");
@@ -18,8 +18,8 @@ const SITES_B = ["python.org", "nodejs.org"];
 const sideLink = (name) => page.locator(`a[title="${name}"], a[title="${name}（主机器人）"]`).first();
 const result = { A: {}, B: {} };
 try {
-  await openBot(page, B);
-  await openBot(page, A);
+  await chisaBot(page, B);
+  await chisaBot(page, A);
   const t0 = new Date().toISOString();
   await send(page, "用你的浏览器依次打开 https://example.com 、https://www.wikipedia.org 、https://github.com/explore 、https://developer.mozilla.org 、https://www.w3.org ，每个都真的打开，读一下标题和页面上第一段正文，最后把五个标题列给我。");
   await page.waitForURL((u) => /\/channel\/(?!new)/.test(u.pathname), { timeout: 30000 }).catch(() => {});

@@ -86,9 +86,9 @@ describe("a native select in the snapshot", () => {
 
 /**
  * 真浏览器（和 tests/follows-popup.test.ts 一样按名字跑）：
- *   OPENBOT_COMPUTER_BROWSER=1 bun test tests/native-select.test.ts
+ *   CHISABOT_COMPUTER_BROWSER=1 bun test tests/native-select.test.ts
  */
-const asked = process.env.OPENBOT_COMPUTER_BROWSER === "1";
+const asked = process.env.CHISABOT_COMPUTER_BROWSER === "1";
 const FORM = `<!doctype html><title>Birthday</title><body>
 <label>Month <select id="m" name="m"><option value="" disabled selected>Month</option>${MONTHS_EN.map((m, i) => `<option value="${i}">${m}</option>`).join("")}</select></label>
 <label>Day <select id="d"><option value="">Day</option>${Array.from({ length: 31 }, (_, i) => `<option>${i + 1}</option>`).join("")}</select></label>

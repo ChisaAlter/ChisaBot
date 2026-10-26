@@ -4,7 +4,7 @@
 
 ## 发布前与升级后
 
-按部署说明备份数据库、凭据加密密钥及必要配置，记录当前镜像版本。构建并验证自己的 ChisaBot 镜像，使用版本或摘要固定发布；上游 OpenBot 镜像不包含本分支全部中文、自托管和模型选择改动。
+按部署说明备份数据库、凭据加密密钥及必要配置，记录当前镜像版本。构建并验证自己的 ChisaBot 镜像，使用版本或摘要固定发布；上游 ChisaBot 镜像不包含本分支全部中文、自托管和模型选择改动。
 
 至少验证以下实际流程：
 
@@ -56,7 +56,7 @@
 
 ## 遥测与外部能力
 
-自托管并不自动关闭所有外部访问。按环境设置 `COPILOTKIT_TELEMETRY_DISABLED=true`、`DO_NOT_TRACK=1`，按需关闭联网插件及生成界面能力。`OPENBOT_GENERATIVE_UI=false` 可关闭可能从 CDN 加载库的生成界面功能。
+自托管并不自动关闭所有外部访问。按环境设置 `COPILOTKIT_TELEMETRY_DISABLED=true`、`DO_NOT_TRACK=1`，按需关闭联网插件及生成界面能力。`CHISABOT_GENERATIVE_UI=false` 可关闭可能从 CDN 加载库的生成界面功能。
 
 当模型本身来自第三方 API，其推理请求会离开服务器；如需本地推理，接入自己运行的兼容模型服务。参见 [能力边界](chisabot.md)。
 

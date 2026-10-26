@@ -22,7 +22,7 @@
 
 | 文件 | 大小（约） | 校验 |
 |------|------------|------|
-| `openbot.dump` | 6.9M | `file` → PostgreSQL custom v1.15；`pg_restore --list` TOC **752** 条，其中 **TABLE DATA ≈ 150**；dbname `openbot`，PG 16.15 |
+| `chisabot.dump` | 6.9M | `file` → PostgreSQL custom v1.15；`pg_restore --list` TOC **752** 条，其中 **TABLE DATA ≈ 150**；dbname `chisabot`，PG 16.15 |
 | `compose.yaml` | 1.9K | 镜像行 `local/chisabot:auto-202610181702-b463e7f`（上一版 0.1.26） |
 | `image.txt` | 41B | 同上标签 |
 | `profiles-volume.tgz` | 115M | `tar -tzf` 可读 |
@@ -34,13 +34,13 @@
 
 | 项 | 值 |
 |----|-----|
-| 脚本 | `/opt/openbot-zh/rollback-to-auto-202610181702-b463e7f.sh` |
+| 脚本 | `/opt/chisabot-zh/rollback-to-auto-202610181702-b463e7f.sh` |
 | 含义 | 从当前 `…76cf6b6`（0.1.27）回到 `…b463e7f`（0.1.26） |
 | `bash -n` | **syntax_ok** |
 | 可执行位 | 是 |
 | 目标镜像 | `docker image inspect local/chisabot:auto-202610181702-b463e7f` → **存在** |
 | 行为摘要 | flock → 改 `.env` 的 `CHISABOT_IMAGE`（或 compose）→ `docker compose up -d --wait` → 探 `/health` 与公网 login → `ROLLBACK_DONE` |
-| 数据库 | **不回退**（设计如此；数据恢复另用 `openbot.dump`） |
+| 数据库 | **不回退**（设计如此；数据恢复另用 `chisabot.dump`） |
 
 同目录仍有指向 `6d2fd49` / `bd25568` / `54c54d3` / `248a6bc` 的脚本；能否用取决于 `KEEP_IMAGES` 是否还留着对应镜像。
 
@@ -49,7 +49,7 @@
 | 检查 | 结果 |
 |------|------|
 | 备份目录非空且权限 `0700` 父目录 | 通过 |
-| `openbot.dump` TOC 可列出（只读） | 通过 |
+| `chisabot.dump` TOC 可列出（只读） | 通过 |
 | 卷 tarball 可读 | 通过 |
 | 最新 `rollback-to-*.sh` 语法 + 目标镜像在 | 通过 |
 | 当前容器 healthy 且版本与 `/api/version` 一致 | 通过（0.1.27） |
@@ -62,10 +62,10 @@
 应用镜像（只换镜像，库不动）：
 
 ```sh
-ls -t /opt/openbot-zh/rollback-to-*.sh | head -3
-TAG=$(ls -t /opt/openbot-zh/rollback-to-*.sh | head -1 | xargs -n1 basename | sed 's/^rollback-to-//;s/\.sh$//')
+ls -t /opt/chisabot-zh/rollback-to-*.sh | head -3
+TAG=$(ls -t /opt/chisabot-zh/rollback-to-*.sh | head -1 | xargs -n1 basename | sed 's/^rollback-to-//;s/\.sh$//')
 docker image inspect "local/chisabot:$TAG" >/dev/null
-sh /opt/openbot-zh/rollback-to-$TAG.sh
+sh /opt/chisabot-zh/rollback-to-$TAG.sh
 curl -s 127.0.0.1:3001/api/version
 bash /opt/chisabot-updater/post-deploy-smoke.sh
 ```
@@ -77,11 +77,11 @@ bash /opt/chisabot-updater/post-deploy-smoke.sh
 ```sh
 BK=/opt/chisabot-updater/backups/<时间>-<任务>
 # 停写或停应用后：
-# pg_restore --clean --if-exists -d openbot "$BK/openbot.dump"
+# pg_restore --clean --if-exists -d openbot "$BK/chisabot.dump"
 # 具体库名/角色以 compose 为准；恢复前对当前库再 pg_dump 一次。
 ```
 
 ## 6. 下次演练建议
 
 - 选低峰窗口：**真跑一次** `rollback-to-*.sh` 再到原版本（或 revert PR），并跑 `post-deploy-smoke.sh`。
-- 可选：把 `openbot.dump` restore 到一次性旁路 Postgres 容器做完整逻辑校验，仍不碰生产库。
+- 可选：把 `chisabot.dump` restore 到一次性旁路 Postgres 容器做完整逻辑校验，仍不碰生产库。

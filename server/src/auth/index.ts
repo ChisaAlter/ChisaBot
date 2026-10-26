@@ -69,7 +69,7 @@ export async function stampSignIn(
  * configuration. `common`, the default tenant here, is multi-tenant.
  *
  * Better Auth maps `email` straight through with no fallback, so on those deployments it is
- * undefined. That matters more here than in most products: every authorization decision OpenBot
+ * undefined. That matters more here than in most products: every authorization decision ChisaBot
  * makes about a person is keyed on their address. `INITIAL_ADMIN_EMAILS`, the role, the deny list
  * and the People screen all read it, so an absent address is not a cosmetic gap. Somebody would
  * sign in successfully, match no administrator, and land as a plain user with nothing on any screen

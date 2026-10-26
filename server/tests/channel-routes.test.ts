@@ -46,7 +46,7 @@ import { testEnvironment } from "./support/environment";
 
 const actor = {
   id: "user-1",
-  email: "member@openbot.test",
+  email: "member@chisabot.test",
   role: "user",
 } as const;
 
@@ -180,7 +180,7 @@ describe("channel list limit", () => {
     async (limit) => {
       const calls = { queries: [] as unknown[] };
       const response = await listApp(calls).request(
-        `http://openbot.test/?limit=${limit}`,
+        `http://chisabot.test/?limit=${limit}`,
       );
 
       expect(response.status).toBe(400);
@@ -198,7 +198,7 @@ describe("channel list limit", () => {
   ])("passes a well-formed limit %p through as %p", async (limit, query) => {
     const calls = { queries: [] as unknown[] };
     const response = await listApp(calls).request(
-      `http://openbot.test/?limit=${limit}`,
+      `http://chisabot.test/?limit=${limit}`,
     );
 
     expect(response.status).toBe(200);
@@ -207,7 +207,7 @@ describe("channel list limit", () => {
 
   test("leaves an absent limit to the store default", async () => {
     const calls = { queries: [] as unknown[] };
-    const response = await listApp(calls).request("http://openbot.test/");
+    const response = await listApp(calls).request("http://chisabot.test/");
 
     expect(response.status).toBe(200);
     expect(calls.queries).toEqual([{}]);
@@ -221,12 +221,12 @@ describe("channel routes", () => {
       Promise.resolve(context.json({ error: "denied" }, 401));
     const app = appFor(store, denied);
 
-    const created = await app.request("http://openbot.test/", {
+    const created = await app.request("http://chisabot.test/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agentIds: ["agent-1"] }),
     });
-    const fetched = await app.request("http://openbot.test/channel-1");
+    const fetched = await app.request("http://chisabot.test/channel-1");
 
     expect(created.status).toBe(401);
     expect(fetched.status).toBe(401);
@@ -237,12 +237,12 @@ describe("channel routes", () => {
     const store = fakeStore();
     const app = appFor(store);
 
-    const created = await app.request("http://openbot.test/", {
+    const created = await app.request("http://chisabot.test/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agentIds: [" agent-2 ", "agent-1"] }),
     });
-    const fetched = await app.request("http://openbot.test/channel-1");
+    const fetched = await app.request("http://chisabot.test/channel-1");
 
     expect(created.status).toBe(201);
     expect(fetched.status).toBe(200);
@@ -263,12 +263,12 @@ describe("channel routes", () => {
     });
     const app = appFor(store);
 
-    const created = await app.request("http://openbot.test/", {
+    const created = await app.request("http://chisabot.test/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agentIds: ["agent-1"] }),
     });
-    const fetched = await app.request("http://openbot.test/channel-1");
+    const fetched = await app.request("http://chisabot.test/channel-1");
 
     expect(created.status).toBe(201);
     expect(await json(created)).toEqual({
@@ -302,7 +302,7 @@ describe("channel routes", () => {
     });
 
     const fetched = await appFor(store).request(
-      "http://openbot.test/channel-1",
+      "http://chisabot.test/channel-1",
     );
 
     expect(fetched.status).toBe(200);
@@ -319,7 +319,7 @@ describe("channel routes", () => {
     "returns safe validation errors for malformed POST bodies",
     async (body, error) => {
       const store = fakeStore();
-      const response = await appFor(store).request("http://openbot.test/", {
+      const response = await appFor(store).request("http://chisabot.test/", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
@@ -334,7 +334,7 @@ describe("channel routes", () => {
   test("returns 404 when get returns null", async () => {
     const store = fakeStore({ get: async () => null });
 
-    const response = await appFor(store).request("http://openbot.test/missing");
+    const response = await appFor(store).request("http://chisabot.test/missing");
 
     expect(response.status).toBe(404);
     expect(await json(response)).toEqual({ error: "Channel not found." });
@@ -362,12 +362,12 @@ describe("channel routes", () => {
       const app = appFor(store);
       const response =
         method === "create"
-          ? await app.request("http://openbot.test/", {
+          ? await app.request("http://chisabot.test/", {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ agentIds: ["agent-1"] }),
             })
-          : await app.request("http://openbot.test/channel-1");
+          : await app.request("http://chisabot.test/channel-1");
 
       expect(response.status).toBe(status);
       expect(await json(response)).toEqual({ error: message });
@@ -385,7 +385,7 @@ describe("channel routes", () => {
       context.json({ sentinel: error.message }, 599),
     );
 
-    const response = await app.request("http://openbot.test/", {
+    const response = await app.request("http://chisabot.test/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agentIds: ["agent-1"] }),
@@ -399,7 +399,7 @@ describe("channel routes", () => {
     const store = fakeStore();
     const app = appFor(store);
 
-    const response = await app.request("http://openbot.test/channel-1/pin", {
+    const response = await app.request("http://chisabot.test/channel-1/pin", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ pinned: true }),
@@ -418,7 +418,7 @@ describe("channel routes", () => {
   ])("rejects malformed pin bodies: %p", async (body, error) => {
     const store = fakeStore();
     const response = await appFor(store).request(
-      "http://openbot.test/channel-1/pin",
+      "http://chisabot.test/channel-1/pin",
       {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -437,7 +437,7 @@ describe("channel routes", () => {
       Promise.resolve(context.json({ error: "denied" }, 401));
     const app = appFor(store, denied);
 
-    const response = await app.request("http://openbot.test/channel-1/pin", {
+    const response = await app.request("http://chisabot.test/channel-1/pin", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ pinned: true }),
@@ -450,7 +450,7 @@ describe("channel routes", () => {
   test("marks read through the authenticated actor and answers 204", async () => {
     const store = fakeStore();
     const response = await appFor(store).request(
-      "http://openbot.test/channel-1/read",
+      "http://chisabot.test/channel-1/read",
       { method: "PUT" },
     );
 
@@ -465,7 +465,7 @@ describe("channel routes", () => {
       },
     });
     const response = await appFor(store).request(
-      "http://openbot.test/channel-1/read",
+      "http://chisabot.test/channel-1/read",
       { method: "PUT" },
     );
 
@@ -478,7 +478,7 @@ describe("channel routes", () => {
     const denied: MiddlewareHandler<{ Variables: AppVariables }> = (context) =>
       Promise.resolve(context.json({ error: "denied" }, 401));
     const response = await appFor(store, denied).request(
-      "http://openbot.test/channel-1/read",
+      "http://chisabot.test/channel-1/read",
       { method: "PUT" },
     );
 
@@ -489,7 +489,7 @@ describe("channel routes", () => {
   test("deletes through the authenticated actor and answers 204", async () => {
     const store = fakeStore();
     const response = await appFor(store).request(
-      "http://openbot.test/channel-1",
+      "http://chisabot.test/channel-1",
       { method: "DELETE" },
     );
 
@@ -504,7 +504,7 @@ describe("channel routes", () => {
       },
     });
     const response = await appFor(store).request(
-      "http://openbot.test/channel-1",
+      "http://chisabot.test/channel-1",
       { method: "DELETE" },
     );
 
@@ -521,7 +521,7 @@ describe("channel routes", () => {
       Promise.resolve(context.json({ error: "denied" }, 401));
     const app = appFor(store, denied);
 
-    const response = await app.request("http://openbot.test/channel-1", {
+    const response = await app.request("http://chisabot.test/channel-1", {
       method: "DELETE",
     });
 
@@ -561,7 +561,7 @@ describe("channel delete audit", () => {
 
   test("writes an attributed row naming the mechanism", async () => {
     const response = await appWithAudit(fakeStore()).request(
-      "http://openbot.test/channel-1",
+      "http://chisabot.test/channel-1",
       { method: "DELETE" },
     );
 
@@ -581,7 +581,7 @@ describe("channel delete audit", () => {
     // The store's answer for a channel that was already deleted: nothing changed.
     const response = await appWithAudit(
       fakeStore({ softDelete: async () => false }),
-    ).request("http://openbot.test/channel-1", { method: "DELETE" });
+    ).request("http://chisabot.test/channel-1", { method: "DELETE" });
 
     expect(response.status).toBe(204);
     expect(audited).toEqual([]);
@@ -596,7 +596,7 @@ describe("channel delete audit", () => {
     });
 
     const response = await appWithAudit(store).request(
-      "http://openbot.test/channel-1",
+      "http://chisabot.test/channel-1",
       { method: "DELETE" },
     );
 
@@ -612,7 +612,7 @@ describe("channel delete audit", () => {
     });
 
     const response = await appWithAudit(store).request(
-      "http://openbot.test/channel-1",
+      "http://chisabot.test/channel-1",
       { method: "DELETE" },
     );
 
@@ -642,7 +642,7 @@ describe("channel delete audit", () => {
       ),
     );
 
-    await app.request("http://openbot.test/channel-1", { method: "DELETE" });
+    await app.request("http://chisabot.test/channel-1", { method: "DELETE" });
 
     expect(audited[0]?.actorUserId).toBe(DEV_ACTOR.id);
   });
@@ -656,7 +656,7 @@ describe("channel delete audit", () => {
       insert: async () => {
         throw new Error("audit table is unreachable");
       },
-    }).request("http://openbot.test/channel-1", { method: "DELETE" });
+    }).request("http://chisabot.test/channel-1", { method: "DELETE" });
 
     expect(response.status).toBe(204);
   });
@@ -666,7 +666,7 @@ describe("channel delete audit", () => {
     const app = new Hono<{ Variables: AppVariables }>();
     app.route("/", createChannelRoutes(store, requireUser));
 
-    const response = await app.request("http://openbot.test/channel-1", {
+    const response = await app.request("http://chisabot.test/channel-1", {
       method: "DELETE",
     });
 
@@ -702,7 +702,7 @@ describe("channel route composition", () => {
     );
 
     const unauthenticated = await app.request(
-      "http://openbot.test/api/channels/channel-1",
+      "http://chisabot.test/api/channels/channel-1",
     );
     expect(unauthenticated.status).toBe(401);
     expect(store.calls).toEqual([]);
@@ -711,12 +711,12 @@ describe("channel route composition", () => {
       user: {
         id: actor.id,
         email: actor.email,
-        name: "OpenBot Member",
+        name: "ChisaBot Member",
         image: "https://example.test/member.png",
       },
     };
     const authenticated = await app.request(
-      "http://openbot.test/api/channels/channel-1",
+      "http://chisabot.test/api/channels/channel-1",
     );
 
     expect(authenticated.status).toBe(200);
@@ -725,7 +725,7 @@ describe("channel route composition", () => {
         "get",
         {
           ...actor,
-          name: "OpenBot Member",
+          name: "ChisaBot Member",
           image: "https://example.test/member.png",
         },
         "channel-1",
@@ -737,7 +737,7 @@ describe("channel route composition", () => {
     const app = createApp(loadConfig(testEnvironment()));
 
     const response = await app.request(
-      "http://openbot.test/api/channels/channel-1",
+      "http://chisabot.test/api/channels/channel-1",
     );
 
     expect(response.status).toBe(404);
@@ -922,7 +922,7 @@ describe("channel store integration", () => {
 
     expect(await persistentStore.get(otherUser, created.id)).toBeNull();
     const response = await appFor(persistentStore, otherUserMiddleware).request(
-      `http://openbot.test/${created.id}`,
+      `http://chisabot.test/${created.id}`,
     );
     expect(response.status).toBe(404);
     expect(await json(response)).toEqual({ error: "Channel not found." });

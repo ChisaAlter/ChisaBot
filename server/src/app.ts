@@ -440,7 +440,7 @@ export function createApp(
       accountsUi: config.accountsUi === true,
       // 功能精简（DESIGN.md §74）：默认隐藏的功能里，这台部署用 CHISABOT_EXTRAS 重新打开的。
       extras: [...(config.extras ?? [])],
-      // Whether to offer help self-hosting OpenBot. A fork running it for its own people turns it off,
+      // Whether to offer help self-hosting ChisaBot. A fork running it for its own people turns it off,
       // and a deployment that pays for Intelligence never sees it. See self-host-banner.ts.
       selfHostBanner: selfHostBanner
         ? await selfHostBanner.shown()
@@ -1010,7 +1010,7 @@ export function createApp(
     return context.json({ package: await packageStatusReader.active() });
   });
   // The CopilotKit runtime, behind the same session guard as every other API route. Mounted last so
-  // its own routing under /api/copilotkit cannot shadow an OpenBot route declared above.
+  // its own routing under /api/copilotkit cannot shadow an ChisaBot route declared above.
   if (copilotHandler) {
     // 流式回复（SSE）对任何反向代理都声明「别缓冲、别压缩」：nginx 认 X-Accel-Buffering，
     // no-transform 让 CDN / 代理不去 gzip 它（gzip 会攒够一块才发，回复就一段一段地蹦）。
@@ -1020,7 +1020,7 @@ export function createApp(
       if (!localBackend)
         throw new Error("The local conversation backend is required.");
       // SSE mode has no SDK identity callback. Every local history and execution request therefore
-      // enters through OpenBot's existing session guard before the public SDK handler.
+      // enters through ChisaBot's existing session guard before the public SDK handler.
       app.use("/api/copilotkit/*", requireUser, async (context, next) => {
         const actor = context.var.actor;
         const request = context.req.raw;
@@ -1425,7 +1425,10 @@ export function createApp(
       } | null;
 
       const verdict = await authoriseAgentCall({
-        presented: context.req.header("x-openbot-agent-token") ?? "",
+        presented:
+          context.req.header("x-chisabot-agent-token") ??
+          context.req.header("x-openbot-agent-token") ?? // pre-0.1.75 name
+          "",
         run: body?.run,
         encryptionKey: config.keyEncryptionKey,
         legacyToken,

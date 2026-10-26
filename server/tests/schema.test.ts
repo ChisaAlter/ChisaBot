@@ -24,7 +24,7 @@ import {
   verifications,
 } from "../src/db/schema";
 
-describe("OpenBot database schema", () => {
+describe("ChisaBot database schema", () => {
   test("defines the core runtime records", () => {
     expect(
       [

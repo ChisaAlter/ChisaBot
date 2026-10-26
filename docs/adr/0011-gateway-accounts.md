@@ -6,11 +6,11 @@
 
 ## 背景
 
-用户 2026-10-15 00:28：想把 ChisaBot 分享给朋友用。生产一直是「单用户」：应用以 `OPENBOT_SINGLE_USER=true` 运行，所有请求都是同一个
+用户 2026-10-15 00:28：想把 ChisaBot 分享给朋友用。生产一直是「单用户」：应用以 `CHISABOT_SINGLE_USER=true` 运行，所有请求都是同一个
 管理员 `dev-local-user`；公网只经过 nginx 网关 + 登录服务（`deploy/public/auth/server.ts`，一个账号、Argon2id、会话 Cookie）。
 把这个账号给朋友，朋友就拿到了管理员的机器人、记忆、保险箱和设备（能在用户的电脑上跑命令）。
 
-上游 OpenBot 自己的多用户走 Better Auth + Google / Microsoft / Okta OAuth，对「发个链接给朋友」太重，而且要求每个人有那些账号。
+上游 ChisaBot 自己的多用户走 Better Auth + Google / Microsoft / Okta OAuth，对「发个链接给朋友」太重，而且要求每个人有那些账号。
 
 ## 决定
 
@@ -35,7 +35,7 @@
 
 - 好处：发一个链接就能加朋友；不需要 OAuth；单账号部署（不配 `identitySecret`）行为完全不变；回滚网关文件后朋友会话自动失效、管理员不受影响。
 - 代价 / 风险：
-  - 同一 Docker 网络里的其它容器（如 Magpie、new-api）直连 `openbot-zh:3001` 不带转发头时仍是管理员——和改动前一样，没有变差；
+  - 同一 Docker 网络里的其它容器（如 Magpie、new-api）直连 `chisabot-zh:3001` 不带转发头时仍是管理员——和改动前一样，没有变差；
   - 朋友能用部署的默认模型（花管理员的额度）；没有每人限额（CB-045 未做）；
   - 网关账号与应用 `users` 行是两份：删除网关账号不删应用里的数据（他的机器人 / 对话留着，只是没人能登录）；
   - 朋友账号目前只能是普通用户（不能在网页上加第二个管理员）。

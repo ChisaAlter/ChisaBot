@@ -14,7 +14,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
  *   bash scripts/start.sh
  *   bun run test:smoke
  *
- * `OPENBOT_API_URL` points it at a deployment on other ports. Without `OPENBOT_SMOKE` the file is
+ * `CHISABOT_API_URL` points it at a deployment on other ports. Without `CHISABOT_SMOKE` the file is
  * skipped, so `bun run test` stays honest on a machine with nothing running.
  *
  * IT ALSO NEEDS A SESSION, AND SAYS SO RATHER THAN FINDING OUT THREE TIMES.
@@ -26,7 +26,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
  * was added. A release checklist that asks whether the journey passed was therefore asking for a
  * result nobody could produce.
  *
- * So `OPENBOT_SMOKE_COOKIE` carries a signed-in session, sent verbatim as the `cookie` header. It is
+ * So `CHISABOT_SMOKE_COOKIE` carries a signed-in session, sent verbatim as the `cookie` header. It is
  * a cookie rather than a token because that is what this deployment issues: Better Auth is
  * configured here with social and OIDC providers and no bearer plugin, so a session lives in a
  * cookie and nothing else opens these routes. Take it from a browser already signed in to the
@@ -35,17 +35,17 @@ import { beforeAll, describe, expect, test } from "bun:test";
  * as one: it belongs in the environment of the run and not in a file, a log or a comment on a pull
  * request.
  *
- *   OPENBOT_SMOKE_COOKIE='better-auth.session_token=...' bun run test:smoke
+ *   CHISABOT_SMOKE_COOKIE='better-auth.session_token=...' bun run test:smoke
  *
  * Without it the run stops before the first test with a sentence naming it, rather than skipping the
  * half that matters and reporting the other half as a pass. A journey that did not act on a computer
  * has not been run.
  */
 
-const asked = process.env.OPENBOT_SMOKE === "1";
-const API = process.env.OPENBOT_API_URL ?? "http://localhost:3001";
-const BOT = process.env.OPENBOT_SMOKE_BOT ?? "risk-analyst";
-const COOKIE = process.env.OPENBOT_SMOKE_COOKIE ?? "";
+const asked = process.env.CHISABOT_SMOKE === "1";
+const API = process.env.CHISABOT_API_URL ?? "http://localhost:3001";
+const BOT = process.env.CHISABOT_SMOKE_BOT ?? "risk-analyst";
+const COOKIE = process.env.CHISABOT_SMOKE_COOKIE ?? "";
 
 /** Long enough for a computer to be created and Chromium to answer on a cold deployment. */
 const COMPUTER_TIMEOUT_MS = 180_000;
@@ -78,14 +78,14 @@ beforeAll(async () => {
     .catch(() => false);
   if (!reachable) {
     throw new Error(
-      `No deployment is answering at ${API}. Start one with \`bash scripts/start.sh\`, or set OPENBOT_API_URL.`,
+      `No deployment is answering at ${API}. Start one with \`bash scripts/start.sh\`, or set CHISABOT_API_URL.`,
     );
   }
 
   if (!COOKIE) {
     throw new Error(
       "This journey acts as a person, and every route it proves is behind a session. Set " +
-        "OPENBOT_SMOKE_COOKIE to the `better-auth.session_token=...` cookie of a browser signed in " +
+        "CHISABOT_SMOKE_COOKIE to the `better-auth.session_token=...` cookie of a browser signed in " +
         `to ${API}. See the comment at the top of this file.`,
     );
   }
@@ -95,7 +95,7 @@ beforeAll(async () => {
   const accepted = await api("/api/computers/policy");
   if (accepted.status === 401) {
     throw new Error(
-      `The session in OPENBOT_SMOKE_COOKIE is not accepted by ${API}. It may have expired, or belong ` +
+      `The session in CHISABOT_SMOKE_COOKIE is not accepted by ${API}. It may have expired, or belong ` +
         "to a different deployment. Sign in again and take a fresh one.",
     );
   }

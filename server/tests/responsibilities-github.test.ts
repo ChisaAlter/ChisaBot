@@ -8,7 +8,7 @@ function request(
   body: string,
   signature = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`,
 ) {
-  return new Request("https://openbot.test/binding-1", {
+  return new Request("https://chisabot.test/binding-1", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -24,7 +24,7 @@ function fixture() {
   const routes = createGithubResponsibilityRoutes({
     async bindingFor(id) {
       return id === "binding-1"
-        ? { ownerUserId: "owner-1", repository: "openbot/demo", secret }
+        ? { ownerUserId: "owner-1", repository: "chisabot/demo", secret }
         : null;
     },
     async ingest(event) {
@@ -42,7 +42,7 @@ test("signed GitHub event binds actor from owned repository registration", async
       JSON.stringify({
         action: "opened",
         ownerUserId: "attacker",
-        repository: { full_name: "openbot/demo" },
+        repository: { full_name: "chisabot/demo" },
         issue: { number: 6 },
       }),
     ),
@@ -58,7 +58,7 @@ test("wrong signature cannot enqueue GitHub work", async () => {
     (
       await routes.fetch(
         request(
-          JSON.stringify({ repository: { full_name: "openbot/demo" } }),
+          JSON.stringify({ repository: { full_name: "chisabot/demo" } }),
           "sha256=0000",
         ),
       )
@@ -81,7 +81,7 @@ test("the same signed event replayed with a fresh X-GitHub-Delivery dedupes", as
   const { routes, events } = fixture();
   const body = JSON.stringify({
     action: "opened",
-    repository: { full_name: "openbot/demo" },
+    repository: { full_name: "chisabot/demo" },
   });
   for (const delivery of ["delivery-1", "delivery-2"]) {
     const replay = request(body);

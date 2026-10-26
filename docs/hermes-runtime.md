@@ -8,7 +8,7 @@ ChisaBot 仍是同一个个人助理。bot 身份、模型选择、长期指令�
 
 接口 `/api/internal/runtime-tools` 只接受运行能力凭据。调用必须对应已捕获的真实 assistant tool call，名称与参数一致；同一 call id 的重复请求复用同一个 Promise，参数变化被拒绝。HTTP 请求体无法改变 actor/bot/thread/run。审批 continuation 在 capability 加入传输元数据前捕获，不保存该秘密。
 
-Hermes 与宿主发出同一 toolCallId。后端拥有的调用由 `openbot.backend-owned-tools` 标记，网页和 Headless 不得补执行没有回执的调用。网络错误、服务重启或回执未知时中断，避免把不确定的副作用当成可以重做的失败。
+Hermes 与宿主发出同一 toolCallId。后端拥有的调用由 `chisabot.backend-owned-tools` 标记，网页和 Headless 不得补执行没有回执的调用。网络错误、服务重启或回执未知时中断，避免把不确定的副作用当成可以重做的失败。
 
 `delegate_task` 等与 Hermes 原生保留名冲突的工具只在 Python 内部映射为安全名称，宿主接口、事件、历史和 UI 保持原名。原生 terminal、MCP 发现、原生记忆写入及本地技能执行不进入该工具列表；所有实际操作沿用 ChisaBot 的原有执行边界。
 

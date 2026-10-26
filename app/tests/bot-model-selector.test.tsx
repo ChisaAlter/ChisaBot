@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import type { AgentModelState, ModelCatalog } from "../../shared/model-selection";
 
-beforeAll(() => GlobalRegistrator.register({ url: "https://openbot.test/" }));
+beforeAll(() => GlobalRegistrator.register({ url: "https://chisabot.test/" }));
 afterEach(async () => { await act(async () => cleanup()); });
 afterAll(() => GlobalRegistrator.unregister());
 
@@ -170,7 +170,7 @@ test("an external tab change reloads the server value in both controls", async (
   await view.findAllByRole("combobox", { name: "模型选择" });
   states["bot-a"] = { ...states["bot-a"], model: "other/second", overrideModel: "other/second" };
   await act(async () => {
-    window.dispatchEvent(new StorageEvent("storage", { key: "openbot-model-selection-changed", newValue: JSON.stringify({ agentId: "bot-a", at: 20 }) }));
+    window.dispatchEvent(new StorageEvent("storage", { key: "chisabot-model-selection-changed", newValue: JSON.stringify({ agentId: "bot-a", at: 20 }) }));
   });
   await waitFor(() => expect(pill(view, "settings").textContent).toContain("other/second"));
   expect(pill(view, "composer").textContent).toContain("Second");

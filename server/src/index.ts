@@ -1,3 +1,4 @@
+import "../../shared/env-compat";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { createPersonalSources } from "./personal-sources/service";
@@ -95,7 +96,7 @@ import { createAuth } from "./auth";
 import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
 import type { AuthService } from "./auth/guards";
 import { createRoleRepository } from "./auth/guards";
-import { type OpenBotRole, setRole } from "./auth/roles";
+import { type ChisaBotRole, setRole } from "./auth/roles";
 import {
   createGatewayRequireUser,
   gatewaySecretFromEnvironment,
@@ -329,7 +330,7 @@ import {
 async function resolveRequestActor(request: Request): Promise<{
   id: string;
   name: string;
-  role: OpenBotRole;
+  role: ChisaBotRole;
 }> {
   if (config.singleUser) {
     if (gatewaySecret) {
@@ -452,7 +453,7 @@ const roleRepository = createRoleRepository(database);
  * 第一次见到的朋友账号在 users / user_roles 建行；角色以网关为准（管理员在网关里改）。
  */
 const gatewaySecret = config.singleUser ? gatewaySecretFromEnvironment(process.env) : undefined;
-const provisionedGatewayUsers = new Map<string, { role: OpenBotRole; at: number }>();
+const provisionedGatewayUsers = new Map<string, { role: ChisaBotRole; at: number }>();
 async function provisionGatewayUser(actor: AuthenticatedActor): Promise<void> {
   if (actor.id === DEV_ACTOR.id) return;
   const seen = provisionedGatewayUsers.get(actor.id);
@@ -3696,7 +3697,7 @@ const app = createApp(
   database,
   // Positional slot of the removed native host-folder broker (slimming P6-4, upstream desktop app).
   undefined,
-  process.env.OPENBOT_DESKTOP_HOST_TOKEN,
+  process.env.CHISABOT_DESKTOP_HOST_TOKEN,
   async (input) => {
     const proactiveRefusal = await guardProactiveCallback(
       input,
@@ -3773,8 +3774,8 @@ const app = createApp(
   // Absent without a key, which leaves the routes reporting no broker rather than listing apps
   // nobody could connect.
   composio ? { broker: composio.broker } : undefined,
-  process.env.OPENBOT_MODEL_OAUTH_FILE?.trim()
-    ? createProviderOAuthProxy(process.env.OPENBOT_MODEL_OAUTH_FILE.trim())
+  process.env.CHISABOT_MODEL_OAUTH_FILE?.trim()
+    ? createProviderOAuthProxy(process.env.CHISABOT_MODEL_OAUTH_FILE.trim())
     : undefined,
   createUserPreferencesStore(database),
   undefined, // was voice sessions (removed in CB-046 step 2)
@@ -3857,7 +3858,7 @@ const app = createApp(
                 probeComputer: async () => {
                   try {
                     // list() proves the provider answers. Do NOT invent a fake bot id:
-                    // agent-computer /health with x-openbot-bot-id opens a session and 500s.
+                    // agent-computer /health with x-chisabot-bot-id opens a session and 500s.
                     const list = await computerProvider.list();
                     let reachable = list.length === 0;
                     let error: string | undefined;
@@ -4222,7 +4223,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   });
 }
 
-console.info(`OpenBot server listening on http://127.0.0.1:${port}`);
+console.info(`ChisaBot server listening on http://127.0.0.1:${port}`);
 
 void startOpsMetricsStore()
   .then(({ path: metricsPath, loaded }) => {

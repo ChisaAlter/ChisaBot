@@ -8,7 +8,7 @@ import { testDatabaseUrl } from "./support/database";
 // Any readable PEM will do: these tests check what reaches Bun, not a handshake.
 const caPem =
   "-----BEGIN CERTIFICATE-----\nMIIBtest\n-----END CERTIFICATE-----\n";
-const caFile = join(mkdtempSync(join(tmpdir(), "openbot-ca-")), "ca.pem");
+const caFile = join(mkdtempSync(join(tmpdir(), "chisabot-ca-")), "ca.pem");
 writeFileSync(caFile, caPem);
 
 /**
@@ -38,7 +38,7 @@ describe("the database address", () => {
   });
 
   test("refuses a connection string that is not a URL", () => {
-    expect(() => createDatabase("://openbot@/openbot")).toThrow(
+    expect(() => createDatabase("://chisabot@/chisabot")).toThrow(
       /DATABASE_URL is not a valid URL/,
     );
   });
@@ -60,8 +60,8 @@ describe("the database address", () => {
   });
 
   test("refuses a URL with no host, which would otherwise parse and connect nowhere", () => {
-    // `new URL` accepts this: the scheme is "openbot:" and there is no host at all.
-    expect(() => createDatabase("openbot:openbot@localhost/openbot")).toThrow(
+    // `new URL` accepts this: the scheme is "chisabot:" and there is no host at all.
+    expect(() => createDatabase("chisabot:chisabot@localhost/chisabot")).toThrow(
       /names no host/,
     );
   });

@@ -22,20 +22,20 @@ describe("running with no sign-in", () => {
   test("a configured provider always wins, whatever else is set", () => {
     // A provider means sign-in, so the flag cannot half-disable it. Asserted with the flag on,
     // because the dangerous reading is "the flag opens a deployment that has a provider".
-    expect(singleUserEnabled({ OPENBOT_SINGLE_USER: "true" }, true)).toBe(
+    expect(singleUserEnabled({ CHISABOT_SINGLE_USER: "true" }, true)).toBe(
       false,
     );
     expect(singleUserEnabled({}, true)).toBe(false);
   });
 
   test("no provider and the flag set runs open, because somebody said so", () => {
-    expect(singleUserEnabled({ OPENBOT_SINGLE_USER: "true" }, false)).toBe(
+    expect(singleUserEnabled({ CHISABOT_SINGLE_USER: "true" }, false)).toBe(
       true,
     );
   });
 
   test("the older name for the flag still works, so an existing .env keeps running", () => {
-    expect(singleUserEnabled({ OPENBOT_DEV_NO_AUTH: "true" }, false)).toBe(
+    expect(singleUserEnabled({ CHISABOT_DEV_NO_AUTH: "true" }, false)).toBe(
       true,
     );
   });
@@ -59,17 +59,17 @@ describe("running with no sign-in", () => {
     ).toThrow();
     expect(
       singleUserEnabled(
-        { NODE_ENV: "production", OPENBOT_SINGLE_USER: "true" },
+        { NODE_ENV: "production", CHISABOT_SINGLE_USER: "true" },
         false,
       ),
     ).toBe(true);
   });
 
   test("a flag set to anything but true is not a yes", () => {
-    // Read exactly, so `OPENBOT_SINGLE_USER=false` and a stray `1` both refuse rather than opening.
+    // Read exactly, so `CHISABOT_SINGLE_USER=false` and a stray `1` both refuse rather than opening.
     for (const value of ["false", "1", "yes", "TRUE", ""]) {
       expect(() =>
-        singleUserEnabled({ OPENBOT_SINGLE_USER: value }, false),
+        singleUserEnabled({ CHISABOT_SINGLE_USER: value }, false),
       ).toThrow();
     }
   });

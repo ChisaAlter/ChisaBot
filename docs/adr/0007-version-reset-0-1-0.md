@@ -11,7 +11,7 @@
 ## 决定
 
 - ChisaBot 从 0.1.0 开始：根 `package.json`（→ `/api/version`）、`pc/`、`android` versionName 同一个版本号；Android versionCode 只增不减。
-- 内部 0.2.x 构建和它们的 GitHub release / tag 删除；上游 OpenBot 版本在 CHANGELOG 里标成「OpenBot x.y.z」。
+- 内部 0.2.x 构建和它们的 GitHub release / tag 删除；上游 ChisaBot 版本在 CHANGELOG 里标成「ChisaBot x.y.z」。
 - CI 要求 pc 与 android 版本一致。
 
 ## 后果

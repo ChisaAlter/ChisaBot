@@ -15,7 +15,7 @@ import { createSandboxedRoutes } from "../src/components/sandboxed-routes";
 
 const ADMIN = {
   id: "u1",
-  email: "admin@openbot.test",
+  email: "admin@chisabot.test",
   role: "admin",
 } as const;
 

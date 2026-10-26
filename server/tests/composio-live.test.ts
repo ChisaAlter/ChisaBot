@@ -24,7 +24,7 @@ import { createComposioClient } from "../src/plugins/composio-adapter";
  * narrowed by a runtime check that says what was missing, not by a cast that asserts it was there.
  *
  * SKIPPED WITHOUT A KEY, so CI and a contributor with no Composio account are unaffected. Run it
- * deliberately: `OPENBOT_LIVE_COMPOSIO=1 COMPOSIO_API_KEY=... bun test tests/composio-live.test.ts`.
+ * deliberately: `CHISABOT_LIVE_COMPOSIO=1 COMPOSIO_API_KEY=... bun test tests/composio-live.test.ts`.
  *
  * IT READS AND IT FAILS ON PURPOSE. Every action it calls is a read; the user id it calls for is one
  * nobody has connected, and the one action it calls that is allowed to reach a third party is a
@@ -32,10 +32,10 @@ import { createComposioClient } from "../src/plugins/composio-adapter";
  * the failure is the assertion.
  */
 const key = process.env.COMPOSIO_API_KEY?.trim();
-const live = process.env.OPENBOT_LIVE_COMPOSIO === "1" && Boolean(key);
+const live = process.env.CHISABOT_LIVE_COMPOSIO === "1" && Boolean(key);
 
 /** A user id nobody has connected, so no call below can reach an account that belongs to somebody. */
-const NOBODY = "openbot-live-test-nobody";
+const NOBODY = "chisabot-live-test-nobody";
 
 /**
  * The vendor's own no-auth example action, and a record it cannot find.
@@ -46,7 +46,7 @@ const NOBODY = "openbot-live-test-nobody";
  * calls, so a toolkit that stops being no-auth says so instead of quietly asking for a connection.
  */
 const NO_AUTH_ACTION = "HACKERNEWS_GET_USER";
-const NO_SUCH_RECORD = "openbot-live-test-no-such-hacker-news-user";
+const NO_SUCH_RECORD = "chisabot-live-test-no-such-hacker-news-user";
 
 describe.skipIf(!live)("Composio, for real", () => {
   // Constructed inside each test rather than here, because Bun evaluates the body of a skipped

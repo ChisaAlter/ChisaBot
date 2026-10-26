@@ -72,7 +72,8 @@ export function createRuntimeAgentLoader(
         if (ours) {
           agent.headers = {
             ...agent.headers,
-            "x-openbot-agent-token": managedAgent.token,
+            "x-chisabot-agent-token": managedAgent.token,
+            "x-openbot-agent-token": managedAgent.token, // pre-0.1.75 agents
           };
         }
       }

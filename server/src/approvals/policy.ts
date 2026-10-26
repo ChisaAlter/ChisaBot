@@ -150,7 +150,7 @@ export function safetyRequirement(
  */
 export function reviewable(candidate: ApprovalCandidate): boolean {
   if (candidate.effect === "read") return false;
-  // OpenBot's own memory and Bot-settings tools only. Matched anywhere in the ref, "settings" also
+  // ChisaBot's own memory and Bot-settings tools only. Matched anywhere in the ref, "settings" also
   // exempted vendor tools such as `composio/GITHUB_UPDATE_REPOSITORY_SETTINGS`.
   return !/^memory\/|^bot\/[^/]*(settings|preferences)/i.test(
     candidate.toolRef,

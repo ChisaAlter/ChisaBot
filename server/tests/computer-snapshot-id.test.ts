@@ -9,7 +9,7 @@ function appWith(calls: unknown[]) {
   const gateway = {
     click: async (_botId: string, _actor: unknown, ref: unknown) => {
       calls.push(ref);
-      return { action: "click", url: "https://openbot.test/" };
+      return { action: "click", url: "https://chisabot.test/" };
     },
   } as unknown as ComputerGateway;
   const requireUser: MiddlewareHandler<{ Variables: AppVariables }> = async (
@@ -18,7 +18,7 @@ function appWith(calls: unknown[]) {
   ) => {
     context.set("actor", {
       id: "user-1",
-      email: "user@openbot.test",
+      email: "user@chisabot.test",
       role: "admin",
     });
     await next();
@@ -42,7 +42,7 @@ async function postClick(
   app: ReturnType<typeof createComputerRoutes>,
   body: string,
 ) {
-  return app.request("http://openbot.test/bot-1/click", {
+  return app.request("http://chisabot.test/bot-1/click", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body,

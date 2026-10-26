@@ -7,7 +7,7 @@ import { createComputerRoutes } from "../src/computer/routes";
 /** 浏览器标签接口（DESIGN.md §95）：路由只做形状检查和「能不能用这个机器人」，其余交给网关。 */
 function signedIn(id: string): MiddlewareHandler<{ Variables: AppVariables }> {
   return async (context, next) => {
-    context.set("actor", { id, email: `${id}@openbot.test`, role: "user" });
+    context.set("actor", { id, email: `${id}@chisabot.test`, role: "user" });
     await next();
   };
 }

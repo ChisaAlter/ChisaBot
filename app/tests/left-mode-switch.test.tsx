@@ -15,7 +15,7 @@ import { LeftRailPanes } from "@/components/layout/left-rail";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { authKeys } from "@/lib/auth/queries";
 import { lastBotsLocation, modeOfPath, modeTarget, rememberBotsLocation, resetLeftModeMemory } from "@/lib/left-mode";
-import { selectOpenBotManualChunk } from "../vite.config";
+import { selectChisaBotManualChunk } from "../vite.config";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -66,9 +66,9 @@ test("switching to Claude Code returns to the last session", () => {
 });
 
 test("Claude Code route pages get their own chunk even though they now live under _app", () => {
-  expect(selectOpenBotManualChunk("/repo/app/src/routes/_authed/_app/cc/$sessionId.tsx?tsr-split=component")).toBe("route-cc");
-  expect(selectOpenBotManualChunk("/repo/app/src/routes/_authed/_app/cc/index.tsx?tsr-split=component")).toBe("route-cc");
-  expect(selectOpenBotManualChunk("/repo/app/src/routes/_authed/_app/memory.tsx?tsr-split=component")).toBe("route-app-secondary");
+  expect(selectChisaBotManualChunk("/repo/app/src/routes/_authed/_app/cc/$sessionId.tsx?tsr-split=component")).toBe("route-cc");
+  expect(selectChisaBotManualChunk("/repo/app/src/routes/_authed/_app/cc/index.tsx?tsr-split=component")).toBe("route-cc");
+  expect(selectChisaBotManualChunk("/repo/app/src/routes/_authed/_app/memory.tsx?tsr-split=component")).toBe("route-app-secondary");
 });
 
 function counter() {

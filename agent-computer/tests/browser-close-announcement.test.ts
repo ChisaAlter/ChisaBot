@@ -23,7 +23,7 @@ import { join } from "node:path";
  *   bun run test:live-screen
  */
 
-const asked = process.env.OPENBOT_LIVE_SCREEN === "1";
+const asked = process.env.CHISABOT_LIVE_SCREEN === "1";
 
 let root = "";
 /*

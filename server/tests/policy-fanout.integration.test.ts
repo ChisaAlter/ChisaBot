@@ -12,7 +12,7 @@ import { TEST_POOL, testDatabaseUrl } from "./support/database";
 /**
  * A boundary an administrator changes has to reach every server, not the one that served the request.
  *
- * OpenBot runs several servers behind a load balancer. The policy is read from memory on every single
+ * ChisaBot runs several servers behind a load balancer. The policy is read from memory on every single
  * action, which is right: a query per keystroke would be absurd. What was wrong is that memory was
  * only ever filled at boot, so a new deny rule applied on the one server that happened to receive it
  * and nowhere else. The admin screen reported success, because the row really was saved, and the

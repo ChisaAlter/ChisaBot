@@ -1,8 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { modelSelectionKeys } from "./queries";
 
-const CHANNEL = "openbot-model-selection";
-const STORAGE_KEY = "openbot-model-selection-changed";
+const CHANNEL = "chisabot-model-selection";
+const STORAGE_KEY = "chisabot-model-selection-changed";
 type ModelChange = { agentId: string; at: number } | { catalog: true; at: number };
 
 /** Notifications carry only an identity. Each tab reads the authoritative value from the server. */

@@ -12,7 +12,7 @@ const PATHS = (process.env.PATHS || "cancel,x,esc,backdrop").split(",");
 const log = (...a) => console.log(new Date().toISOString().slice(11, 23), ...a);
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, locale: "zh-CN", timezoneId: "Asia/Shanghai" });
 await ctx.addInitScript((dark) => {
-  try { localStorage.setItem("openbot-theme", dark ? "dark" : "light"); } catch {}
+  try { localStorage.setItem("chisabot-theme", dark ? "dark" : "light"); } catch {}
   const w = window;
   w.__rec = null;
   w.__frames = [];

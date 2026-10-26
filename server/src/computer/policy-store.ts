@@ -11,7 +11,7 @@
  * and the memory copy is only updated once it has. A store that answered from the database on every
  * click would put a query on the path of every keystroke a Bot makes.
  *
- * Memory is a cache of a shared record, not a per-process copy of it. OpenBot runs several servers
+ * Memory is a cache of a shared record, not a per-process copy of it. ChisaBot runs several servers
  * behind a load balancer, and an administrator's new rule arrives at exactly one of them. Kept only
  * in that process, the rule applies to roughly one action in N while the admin screen and the audit
  * row both report success, which is the boundary silently not applying: the failure this whole file
@@ -46,7 +46,7 @@ export const ACTION_POLICY_TOPIC = "action_policy_changed";
  * an explicit `allow` rather than a special "unconfigured" case, because a Bot that can look at a page
  * and touch nothing is not a product, and the first thing a person does is ask it to fill something in.
  *
- * Out of the box, OpenBot lets a Bot act, records every action and gives an administrator somewhere
+ * Out of the box, ChisaBot lets a Bot act, records every action and gives an administrator somewhere
  * to write the first restriction.
  */
 export const DEFAULT_ACTION_POLICY: ActionPolicy = {

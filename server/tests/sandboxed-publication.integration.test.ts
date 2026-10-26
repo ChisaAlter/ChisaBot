@@ -30,7 +30,7 @@ const fixtureNames = new Set<string>();
 
 const ADMIN = {
   id: `user_${randomUUID().slice(0, 8)}`,
-  email: "admin@openbot.test",
+  email: "admin@chisabot.test",
   role: "admin",
 } as const;
 

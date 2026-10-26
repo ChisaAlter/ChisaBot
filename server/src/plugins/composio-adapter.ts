@@ -2343,7 +2343,7 @@ export type ComposioVendor = {
  * and the two are otherwise indistinguishable. The name is the only field this deployment gets to
  * choose, so it is where the provenance goes.
  */
-const CONFIG_SUFFIX = "(OpenBot)";
+const CONFIG_SUFFIX = "(ChisaBot)";
 
 /**
  * How many different unrecognised statuses one refusal names before it stops naming them.

@@ -965,7 +965,7 @@ describe("listing an app's actions", () => {
       // is only that they are root keywords `ParametersSchema` does not name.
       else: { required: [] },
       examples: [{ query: "is:unread" }],
-      "x-openbot-probe": "kept",
+      "x-chisabot-probe": "kept",
     };
     /*
      * SNAPSHOTTED BEFORE THE CALL, because comparing the answer to `schema` compares it to the very

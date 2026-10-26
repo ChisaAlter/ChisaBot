@@ -19,7 +19,7 @@ const call = (id = callId, name = toolName) => ({
   id, type: "function" as const, function: { name, arguments: '{"ref":"button-1"}' },
 });
 const ownership = (names: unknown = [toolName]): BaseEvent => ({
-  type: EventType.CUSTOM, name: "openbot.backend-owned-tools", value: { names },
+  type: EventType.CUSTOM, name: "chisabot.backend-owned-tools", value: { names },
 });
 function toolEvents(id = callId, name = toolName): BaseEvent[] {
   return [

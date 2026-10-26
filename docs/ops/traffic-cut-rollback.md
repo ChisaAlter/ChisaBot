@@ -11,7 +11,7 @@
 | 回滚窗口 | 最近 **`KEEP_IMAGES`** 个 `local/chisabot:auto-*` 镜像仍在本机（默认 **5**，见 `deploy/updater/config.env`） |
 | 双标签保底 | 更新器清理时**不删**当前镜像与上一版（`CUR_IMAGE`）；即使 `KEEP_IMAGES` 被改小，至少能回一步 |
 | **RTO（切镜像）** | **约 2–5 分钟**：`compose up --wait`（≤180s）+ `health.sh` / `post-deploy-smoke.sh` |
-| **RPO（数据）** | 本路径**不回退数据库**；需要数据恢复另用 `backups/*/openbot.dump`（破坏性，另开变更窗口） |
+| **RPO（数据）** | 本路径**不回退数据库**；需要数据恢复另用 `backups/*/chisabot.dump`（破坏性，另开变更窗口） |
 | 默认安全姿势 | `scripts/ops/cutback.sh` **不执行**回滚，只证明镜像在、脚本语法对、打印 would_run |
 
 超过窗口（镜像已被 prune）：走 revert PR + 正常 `deploy-serial.sh`，或 `request.sh update --full` 检出旧提交。
@@ -35,8 +35,8 @@ CUTBACK_EXECUTE=1 sh scripts/ops/cutback.sh
 等价手工路径（与网页「回滚到上一版」相同）：
 
 ```sh
-ls -t /opt/openbot-zh/rollback-to-*.sh | head -1
-sh /opt/openbot-zh/rollback-to-<tag>.sh
+ls -t /opt/chisabot-zh/rollback-to-*.sh | head -1
+sh /opt/chisabot-zh/rollback-to-<tag>.sh
 # 或：sh /opt/chisabot-updater/request.sh rollback
 curl -s 127.0.0.1:3001/api/version
 bash /opt/chisabot-updater/post-deploy-smoke.sh

@@ -59,7 +59,7 @@ export function observeApprovalAgent(agent: Agent) {
       reset({ ...input, runId: event.runId, threadId: event.threadId });
     },
     onCustomEvent: ({ event }) => {
-      if (event.name !== "openbot.backend-owned-tools") return;
+      if (event.name !== "chisabot.backend-owned-tools") return;
       const run = backendRuns.get(agent);
       const value: unknown = event.value;
       if (!run || !value || typeof value !== "object" || !("names" in value) || !Array.isArray(value.names)) return;

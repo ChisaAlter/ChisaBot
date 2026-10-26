@@ -14,7 +14,7 @@ import { callTool, listTools } from "../src/plugins/mcp";
  * None of that was tested. A stubbed fetch would prove we parse what we already believe the protocol
  * says, and every one of these would still pass if MCP changed underneath us or if we had misread it
  * in the first place. `@copilotkit/aimock` is ours, it is the org's deterministic backend for exactly
- * this, and it tracks the protocol as the protocol moves: using it here means OpenBot finds out about
+ * this, and it tracks the protocol as the protocol moves: using it here means ChisaBot finds out about
  * a drift in the same week as everything else that depends on it, rather than in a customer's
  * integration.
  *

@@ -104,7 +104,7 @@ function tlsOf(params: URLSearchParams, bunVersion: string) {
  * The address, taken apart, because Bun will not take it whole on every platform.
  *
  * `new SQL("postgres://user:pass@host:5432/openbot")` works on macOS and Linux and cannot work on
- * Windows: Bun reads the URL's path, `/openbot`, as the path of a unix socket, ignores the host and
+ * Windows: Bun reads the URL's path, `/chisabot`, as the path of a unix socket, ignores the host and
  * the port, and fails to open a socket that Windows does not have (oven-sh/bun#27713). The server
  * then cannot reach Postgres at all there, while `psql` inside the container and a plain TCP
  * connection from the same machine both succeed, which is what makes it look like a network fault

@@ -8,7 +8,7 @@
  * Google should narrow it there as well rather than instead.
  *
  * WHAT THIS IS NOT. A filter, not a boundary, and the difference is the address it is given.
- * OpenBot never sets `requireEmailVerification` and never reads `users.emailVerified`, and Entra's
+ * ChisaBot never sets `requireEmailVerification` and never reads `users.emailVerified`, and Entra's
  * `email` claim comes from a directory attribute that the tenant's own administrator writes. So on
  * a multi-tenant deployment this refuses somebody who fills in the form honestly and does not stop
  * somebody who does not. That is why `config.ts` refuses the combination of a list and

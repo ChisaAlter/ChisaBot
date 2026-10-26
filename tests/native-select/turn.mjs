@@ -1,7 +1,7 @@
 // turn.mjs — DESIGN §100 e2e：原生 <select> 选择 + 回合异常结束有提示。预览（pv.sh）或生产（prod.sh，临时会话）都能跑。
 // 一次性机器人（guard.mjs 建 / 删），不碰任何已有机器人和对话。
 import fs from "node:fs";
-import { api, base, browser, context, errors, log, mkBot, newPage, openBot, send, transcript, waitIdle } from "./lib.mjs";
+import { api, base, browser, context, errors, log, mkBot, newPage, chisaBot, send, transcript, waitIdle } from "./lib.mjs";
 import { guardInit, guardedDeleteBot, trackBot } from "./guard.mjs";
 
 const PARTS = (process.env.PARTS || "A,B,C,D").split(",");
@@ -66,7 +66,7 @@ try {
   }
 
   if (PARTS.includes("B")) {
-    await openBot(page, bot);
+    await chisaBot(page, bot);
     const q = `用你的浏览器打开 ${URL_} ，把出生日期选成 2000 年 7 月 12 日（三个都是下拉框）。选好后读一下页面，告诉我「已选：」后面显示的是什么。`;
     await send(page, q);
     const ms = await waitIdle(page, { max: 300000 });
@@ -81,7 +81,7 @@ try {
 
   if (PARTS.includes("C")) {
     // 一轮里接力的第二个 run 失败（模拟上游 500）：以前 awaitingReply 在第一个 run 结束时就放下了，这种失败不报。
-    if (!PARTS.includes("B")) await openBot(page, bot);
+    if (!PARTS.includes("B")) await chisaBot(page, bot);
     let runs = 0;
     await page.route("**/api/copilotkit/agent/*/run", async (route) => {
       runs += 1;
@@ -102,7 +102,7 @@ try {
 
   if (PARTS.includes("D")) {
     // 生产事故本身：计算机改动请求回 500。修好后机器人拿到「没做成」的结果，接着做并说明，不会静默结束。
-    if (!PARTS.includes("B") && !PARTS.includes("C")) await openBot(page, bot);
+    if (!PARTS.includes("B") && !PARTS.includes("C")) await chisaBot(page, bot);
     let failed = 0;
     await page.route("**/api/approvals/computer/*", async (route) => {
       if (failed === 0) { failed += 1; return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Element e99 is not on the page any more. Take a fresh snapshot and use the refs from it." }) }); }

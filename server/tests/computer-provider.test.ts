@@ -33,7 +33,7 @@ function serveAgentComputer(
 ) {
   return serve(async (request) => {
     const url = new URL(request.url);
-    const token = request.headers.get("x-openbot-computer-token");
+    const token = request.headers.get("x-chisabot-computer-token");
 
     if (
       options?.token &&
@@ -65,7 +65,7 @@ function serveAgentComputer(
 
     if (url.pathname === "/computers/reset" && request.method === "POST") {
       if (handlers.reset) return handlers.reset(request);
-      const botId = request.headers.get("x-openbot-bot-id") ?? "shared";
+      const botId = request.headers.get("x-chisabot-bot-id") ?? "shared";
       return Response.json({ reset: true, botId });
     }
 
@@ -143,12 +143,12 @@ describe("shared computer provider", () => {
     const baseUrl = serveAgentComputer(
       {
         stop: (request) => {
-          const botId = request.headers.get("x-openbot-bot-id");
+          const botId = request.headers.get("x-chisabot-bot-id");
           requests.push({
             path: new URL(request.url).pathname,
             method: request.method,
             botId,
-            token: request.headers.get("x-openbot-computer-token"),
+            token: request.headers.get("x-chisabot-computer-token"),
           });
           const wasRunning = botId === "running-bot";
           return Response.json({ stopped: true, wasRunning });
@@ -193,12 +193,12 @@ describe("shared computer provider", () => {
     const baseUrl = serveAgentComputer(
       {
         reset: (request) => {
-          const botId = request.headers.get("x-openbot-bot-id");
+          const botId = request.headers.get("x-chisabot-bot-id");
           requests.push({
             path: new URL(request.url).pathname,
             method: request.method,
             botId,
-            token: request.headers.get("x-openbot-computer-token"),
+            token: request.headers.get("x-chisabot-computer-token"),
           });
           return Response.json({ reset: true, botId });
         },
@@ -294,8 +294,8 @@ describe("shared computer provider", () => {
         run: (request) => {
           asked.push({
             path: new URL(request.url).pathname,
-            botId: request.headers.get("x-openbot-bot-id"),
-            token: request.headers.get("x-openbot-computer-token"),
+            botId: request.headers.get("x-chisabot-bot-id"),
+            token: request.headers.get("x-chisabot-computer-token"),
           });
           return Response.json({ run: "d7c0f1" });
         },
@@ -318,7 +318,7 @@ describe("shared computer provider", () => {
     const baseUrl = serveAgentComputer({
       run: (request) =>
         Response.json({
-          run: `run-of-${request.headers.get("x-openbot-bot-id")}`,
+          run: `run-of-${request.headers.get("x-chisabot-bot-id")}`,
         }),
     });
     const provider = createSharedComputerProvider({ baseUrl });
@@ -405,7 +405,7 @@ describe("building the sandbox provider", () => {
     try {
       const provider = createComputerProvider({
         provider: "sandbox",
-        namespace: "openbot",
+        namespace: "chisabot",
         idleAfterMs: 60_000,
         templateFile: "/nowhere/sandbox-template.json",
       });

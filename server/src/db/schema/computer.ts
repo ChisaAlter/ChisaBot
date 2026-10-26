@@ -47,7 +47,7 @@ export const actionPolicy = pgTable("action_policy", {
  *
  * The gateway resolves the opaque ref in an acting call into the element it points at, and it must
  * resolve it against the snapshot the ref came from, never against a label the caller supplied. That
- * mapping used to live in a `Map` inside one process. OpenBot runs several processes behind a load
+ * mapping used to live in a `Map` inside one process. ChisaBot runs several processes behind a load
  * balancer, and the process that took the snapshot is rarely the one that handles the click that
  * follows it, so the mapping was absent exactly when a click arrived on another replica: the policy
  * then decided with no element in front of it and the audit row could not name what was touched. The

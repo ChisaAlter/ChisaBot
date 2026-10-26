@@ -100,9 +100,9 @@ describe("start page links (= bookmarks)", () => {
 
 /**
  * 真浏览器（和 follows-popup 一样按需运行）：
- *   OPENBOT_COMPUTER_BROWSER=1 bun test tests/tabs.test.ts
+ *   CHISABOT_COMPUTER_BROWSER=1 bun test tests/tabs.test.ts
  */
-const asked = process.env.OPENBOT_COMPUTER_BROWSER === "1";
+const asked = process.env.CHISABOT_COMPUTER_BROWSER === "1";
 const site = asked
   ? Bun.serve({
       port: 0,

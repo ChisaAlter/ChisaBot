@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-gateway=openbot-public-gateway
+gateway=chisabot-public-gateway
 if [ "$(docker inspect --format '{{.State.Running}}' "$gateway" 2>/dev/null || true)" != true ]; then
     echo 'ChisaBot gateway is not running; certificate reload skipped.'
     exit 0

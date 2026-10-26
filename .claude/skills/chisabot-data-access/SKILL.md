@@ -1,9 +1,9 @@
 ---
-name: openbot-data-access
-description: Governs how the OpenBot browser app reads and writes server data — every request goes through `client` in app/src/lib/client.ts, every read is a queryOptions factory in app/src/lib/<entity>/queries.ts, every write is a mutationOptions factory in app/src/lib/<entity>/mutations.ts, and components consume them through useQuery/useMutation. Use when adding or changing a screen that loads server data, calling a /api/... endpoint from the browser, adding a query key, writing a create/update/delete flow, deciding where a fetch belongs, or reviewing a diff that contains the word fetch under app/src. Don't use for server-side route handlers under server/ (that is not browser code), for form validation schemas (those live in lib/<entity>/form.ts), for page layout and Item rows, or for the AG-UI stream itself, which the runtime carries rather than the client.
+name: chisabot-data-access
+description: Governs how the ChisaBot browser app reads and writes server data — every request goes through `client` in app/src/lib/client.ts, every read is a queryOptions factory in app/src/lib/<entity>/queries.ts, every write is a mutationOptions factory in app/src/lib/<entity>/mutations.ts, and components consume them through useQuery/useMutation. Use when adding or changing a screen that loads server data, calling a /api/... endpoint from the browser, adding a query key, writing a create/update/delete flow, deciding where a fetch belongs, or reviewing a diff that contains the word fetch under app/src. Don't use for server-side route handlers under server/ (that is not browser code), for form validation schemas (those live in lib/<entity>/form.ts), for page layout and Item rows, or for the AG-UI stream itself, which the runtime carries rather than the client.
 ---
 
-# OpenBot Data Access
+# ChisaBot Data Access
 
 ## When To Use
 
@@ -189,7 +189,7 @@ before writing a new one.
    )}
    ```
 
-5. **The pending branch renders nothing.** OpenBot has no loading placeholder — no "Loading…"
+5. **The pending branch renders nothing.** ChisaBot has no loading placeholder — no "Loading…"
    text, no spinner, no skeleton, no shimmer. The section's heading is already on screen; what
    arrives underneath it is the answer, and a placeholder that appears and vanishes inside a
    local round-trip is a flicker rather than information. A few screens still carry
@@ -244,14 +244,14 @@ before writing a new one.
 | `body: JSON.stringify(x)` at a call site | Double-encoded; the client serialises | Pass the object |
 | A one-shot tool call written as a `mutationOptions` factory | Gets a `queryClient` and an invalidation it has no use for | A plain function beside the factories |
 | A `fallback` sentence repeated on every write in a file | The reader cares which entity failed, and that does not change within a file | One `const FALLBACK` per file |
-| `<PageEmpty>Loading …</PageEmpty>`, a spinner, or a `Skeleton` while a query is pending | OpenBot uses no loading placeholder; the flicker costs more than the reassurance buys | Return `null` from the pending branch |
+| `<PageEmpty>Loading …</PageEmpty>`, a spinner, or a `Skeleton` while a query is pending | ChisaBot uses no loading placeholder; the flicker costs more than the reassurance buys | Return `null` from the pending branch |
 | The pending branch deleted rather than returning `null` | The empty-state sentence shows for the length of the fetch, asserting something false | Keep the branch, first in the chain, returning `null` |
 | `const queryClient = useQueryClient()` | A hook call and a local binding for an object that is one import away, and unavailable outside a component | `import { queryClient } from "@/query-client"` |
 | `new QueryClient()` anywhere outside `app/src/query-client.ts` | A second cache; queries written by one client are invisible to the other | Import the singleton. A test needing isolation constructs its own and passes it explicitly |
 | `useQuery({ queryKey: ["agents"], ... })` at a call site | An inline key drifts from the factory and silently stops matching invalidations | Call the factory: `useQuery(agentListQueryOptions())` |
 | `queryClient.setQueryData(...)` after a mutation | Guesses at server-derived fields; wrong the moment the server adds a rule | `invalidateQueries({ queryKey: <entity>Keys.all })` |
 | A component computing `user.role === "admin" && thing.ownerId === user.id` | Duplicates an authorization rule that the server already decided | Render the server's flag (`canManage`, `mine`) |
-| A read type carrying a token, key, or `plaintext` | Secrets are write-only in OpenBot | Expose `hasAuth: boolean` or a `revokedAt` timestamp |
+| A read type carrying a token, key, or `plaintext` | Secrets are write-only in ChisaBot | Expose `hasAuth: boolean` or a `revokedAt` timestamp |
 | A hand-written `body.error` extraction | `client` already does it, and did it more consistently than the four copies did | Pass `fallback` and let it raise |
 | `queryFn` returning `{ agents: [...] }` | Leaks the transport envelope into every component | Unwrap in the `queryFn`; components see the array |
 | A second `<entity>Keys` object, or keys defined in `mutations.ts` | Two sources of truth for one cache namespace | One factory per entity, in `queries.ts`; `mutations.ts` imports it |

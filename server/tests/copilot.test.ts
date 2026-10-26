@@ -776,7 +776,7 @@ describe("standing agent roles", () => {
       }),
     );
 
-    const request = new Request("http://openbot.test/api/copilotkit");
+    const request = new Request("http://chisabot.test/api/copilotkit");
     const resolved = await factory({ request });
 
     expect(seen.request).toBe(request);
@@ -810,7 +810,7 @@ describe("standing agent roles", () => {
         resolveModelApiKey: async () => null,
       }),
     );
-    const request = new Request("http://openbot.test/api/copilotkit");
+    const request = new Request("http://chisabot.test/api/copilotkit");
 
     const before = await factory({ request });
     roleDescription = "Reconcile corporate card statements.";
@@ -1578,7 +1578,7 @@ describe("a person's standing instructions", () => {
     );
 
     await factory({
-      request: new Request("http://openbot.test/api/copilotkit"),
+      request: new Request("http://chisabot.test/api/copilotkit"),
     });
 
     /*

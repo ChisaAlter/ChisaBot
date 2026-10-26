@@ -1,6 +1,6 @@
 import type { CopilotKitIntelligence } from "@copilotkit/runtime/v2";
 
-/** What Intelligence says this deployment is entitled to. Typed from the client OpenBot already uses. */
+/** What Intelligence says this deployment is entitled to. Typed from the client ChisaBot already uses. */
 export type RuntimeEntitlementResponse = Awaited<
   ReturnType<CopilotKitIntelligence["getRuntimeEntitlements"]>
 >;

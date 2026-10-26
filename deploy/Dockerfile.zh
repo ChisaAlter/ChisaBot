@@ -2,7 +2,7 @@ ARG BASE_IMAGE=ghcr.io/copilotkit/openbot@sha256:e3901de8c2b33dbe3eac5a2cfb12616
 FROM ${BASE_IMAGE} AS production-deps
 
 USER root
-WORKDIR /openbot-deps
+WORKDIR /chisabot-deps
 COPY package.json bun.lock ./
 COPY app/package.json app/package.json
 COPY server/package.json server/package.json
@@ -20,8 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python -c 'import openpyxl, docx' \
     && rm -rf /var/lib/apt/lists/*
 RUN rm -rf /app/node_modules /app/server/node_modules
-COPY --from=production-deps --chown=apiuser:apiuser /openbot-deps/node_modules /app/node_modules
-COPY --from=production-deps --chown=apiuser:apiuser /openbot-deps/server/node_modules /app/server/node_modules
+COPY --from=production-deps --chown=apiuser:apiuser /chisabot-deps/node_modules /app/node_modules
+COPY --from=production-deps --chown=apiuser:apiuser /chisabot-deps/server/node_modules /app/server/node_modules
 
 COPY --chown=apiuser:apiuser app/dist /app/app/dist
 COPY --chown=apiuser:apiuser server /app/server
@@ -58,5 +58,5 @@ RUN printf '{"version":"%s","commit":"%s","buildId":"%s","builtAt":"%s","image":
 LABEL chisabot.commit="${CHISABOT_COMMIT}" \
       chisabot.build="${CHISABOT_BUILD}" \
       org.opencontainers.image.revision="${CHISABOT_COMMIT}"
-LABEL openbot.locale="zh-CN"
+LABEL chisabot.locale="zh-CN"
 LABEL org.opencontainers.image.title="ChisaBot"

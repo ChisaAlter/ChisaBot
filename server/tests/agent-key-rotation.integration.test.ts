@@ -76,7 +76,7 @@ async function liveKeysFor(agentId: string) {
 beforeAll(async () => {
   await database.insert(users).values({
     id: actor.id,
-    email: `${actor.id}@openbot.test`,
+    email: `${actor.id}@chisabot.test`,
     name: "Key rotation tester",
     emailVerified: true,
   });

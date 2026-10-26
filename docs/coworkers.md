@@ -124,4 +124,4 @@ A coworker's role does not grant capabilities. Capabilities are governed separat
 - personal skills can be attached only to Bots the author owns;
 - deployment skills are managed by administrators.
 
-See [architecture.md](openbot-architecture.md).
+See [architecture.md](chisabot-architecture.md).

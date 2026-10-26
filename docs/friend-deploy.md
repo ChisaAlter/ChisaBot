@@ -27,13 +27,13 @@ sh deploy/friend-up.sh
 | 项 | 好友包默认 | 为何 |
 |----|------------|------|
 | 应用端口 | `127.0.0.1:3001` | 单用户 = 无登录；公网直连 = 人人管理员 |
-| `TRUSTED_ORIGINS` | 仅 localhost / 127.0.0.1 | 与 `OPENBOT_SINGLE_USER` 共存；公网 Origin 在网关层 |
+| `TRUSTED_ORIGINS` | 仅 localhost / 127.0.0.1 | 与 `CHISABOT_SINGLE_USER` 共存；公网 Origin 在网关层 |
 | 遥测 | `COPILOTKIT_TELEMETRY_DISABLED` + `DO_NOT_TRACK` | 自托管不外泄使用痕迹 |
 | Secure cookie | https 公网 URL 或 `CHISABOT_SECURE_COOKIES=1` 时 Better Auth 强制 Secure | PRD-P2-04；网关 Cookie 本身已是 Secure |
 | 私网 egress | 不默认开 `AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS` | 机器人浏览器不随便打内网 |
 | 确认偏好 | 未设 = 先问（付款锁定） | 见 [confirmations.md](confirmations.md) |
 
-应用启动时仍会拒绝「单用户 + 公网 `OPENBOT_PUBLIC_URL` / `TRUSTED_ORIGINS`」组合（已有 `singleUserAllowed`）。
+应用启动时仍会拒绝「单用户 + 公网 `CHISABOT_PUBLIC_URL` / `TRUSTED_ORIGINS`」组合（已有 `singleUserAllowed`）。
 
 ## 公网与分享给朋友
 

@@ -12,7 +12,7 @@ describe("TEST_DATABASE_URL", () => {
         TEST_DATABASE_URL: "postgres://openbot:openbot@localhost:5432/openbot",
         DATABASE_URL: "postgres://openbot:openbot@localhost:5432/openbot_test",
       }),
-    ).toThrow(/live openbot database/);
+    ).toThrow(/live chisabot database/);
   });
 
   test("does not read DATABASE_URL as a fallback", () => {

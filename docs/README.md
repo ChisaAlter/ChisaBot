@@ -38,7 +38,7 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 - [数据模型](data-model.md)：全部 `chisabot_*` 表、本地对话表、仍在用的上游表、网关 SQLite、浏览器本地存储。
 - [流式回复：从模型到屏幕](streaming.md)
 - [分支与能力边界](chisabot.md)：本地模式、第三方推理、数据兼容和客户端状态。
-- [OpenBot 原始架构](openbot-architecture.md)（上游参考；其中很多部分已瘦身掉，见 [slimming.md](slimming.md)）
+- [ChisaBot 原始架构](chisabot-architecture.md)（上游参考；其中很多部分已瘦身掉，见 [slimming.md](slimming.md)）
 
 ## 功能文档（按范围）
 
@@ -106,7 +106,7 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 - [上游容器参考](deployment.md)、[上游发布参考](releasing.md)、[Windows 签名](windows-signing.md)：继承的镜像、发布和签名流程（ChisaBot 的发版看 [release.md](release.md)）。
 - 已在瘦身中删除：Tauri 桌面端 `desktop/`、Expo `mobile/`、Helm chart `charts/`、自动学习、`worker/`（见 [slimming.md](slimming.md)）。
 
-默认中文租户包见 [examples/zh-CN](../examples/zh-CN/README.md)。内部 `OPENBOT_*` 环境变量、包名、协议及数据目录保留兼容，展示品牌为 ChisaBot。
+默认中文租户包见 [examples/zh-CN](../examples/zh-CN/README.md)。内部 `CHISABOT_*` 环境变量、包名、协议及数据目录保留兼容，展示品牌为 ChisaBot。
 
 文档只保存可复用说明与脱敏示例。真实主机、登录密码、模型密钥、客户数据、对话和私人部署资料不写入文档或仓库；
 具体部署的私有运维资料由维护者保存在仓库之外。

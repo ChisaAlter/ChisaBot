@@ -78,7 +78,7 @@ export type ActorAgentResolverDependencies = {
 };
 
 /**
- * Resolves the coworkers available to one OpenBot actor.
+ * Resolves the coworkers available to one ChisaBot actor.
  *
  * Every surface enters through this boundary so it shares the same visibility, grants, assertions,
  * skill selection, and endpoint dial policy for a person.

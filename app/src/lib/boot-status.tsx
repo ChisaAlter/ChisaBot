@@ -4,7 +4,7 @@ import { useEffect } from "react";
 export function reportBootStage(stage: "entry-executing" | "react-mounted") {
   try {
     window.dispatchEvent(
-      new CustomEvent("openbot-boot-stage", { detail: stage }),
+      new CustomEvent("chisabot-boot-stage", { detail: stage }),
     );
   } catch {}
 }

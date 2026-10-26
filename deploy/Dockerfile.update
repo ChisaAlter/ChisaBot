@@ -11,5 +11,5 @@ COPY --chown=apiuser:apiuser agent-computer/src /app/agent-computer/src
 COPY --chown=apiuser:apiuser server/package.json /app/server/package.json
 COPY --chown=apiuser:apiuser bun.lock /app/bun.lock
 RUN cd /app/server && bun -e 'await import("@copilotkit/runtime/v2"); await import("@ai-sdk/openai"); await import("@ai-sdk/anthropic"); await import("./src/model-settings.ts"); console.log("model_settings_runtime_import_ok")'
-LABEL openbot.model-settings="web"
+LABEL chisabot.model-settings="web"
 LABEL org.opencontainers.image.title="ChisaBot"

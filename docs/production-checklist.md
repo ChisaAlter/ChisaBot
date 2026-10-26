@@ -39,7 +39,7 @@
 本机示例（网关模式）：
 
 ```sh
-SECRET=$(grep -E '^[[:space:]]*CHISABOT_GATEWAY_SECRET=' /opt/openbot-zh/.env | head -1 | cut -d= -f2- | tr -d '"'\''')
+SECRET=$(grep -E '^[[:space:]]*CHISABOT_GATEWAY_SECRET=' /opt/chisabot-zh/.env | head -1 | cut -d= -f2- | tr -d '"'\''')
 curl -s -H "X-ChisaBot-Local-Caller: $SECRET" http://127.0.0.1:3001/api/admin/health | jq .
 ```
 
@@ -65,7 +65,7 @@ curl -s -H "X-ChisaBot-Local-Caller: $SECRET" http://127.0.0.1:3001/api/admin/he
 sh /opt/chisabot-updater/request.sh status
 curl -s 127.0.0.1:3001/api/version
 bash /opt/chisabot-updater/post-deploy-smoke.sh   # 或 request.sh smoke
-docker logs --since 30m openbot-zh 2>&1 | grep -E 'OPS_|PostgresError|bind message supplies' | tail
+docker logs --since 30m chisabot-zh 2>&1 | grep -E 'OPS_|PostgresError|bind message supplies' | tail
 ```
 
 通过判据：版本对、烟雾绿、无 `OPS_HEALTH_DEGRADED` / SQL bind 错位。

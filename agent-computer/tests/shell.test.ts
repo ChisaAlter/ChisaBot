@@ -223,7 +223,7 @@ describe("the command that actually runs", () => {
   let root: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), "openbot-shell-"));
+    root = await mkdtemp(join(tmpdir(), "chisabot-shell-"));
   });
 
   afterEach(async () => {
@@ -374,7 +374,7 @@ describe("what a command cannot do to the computer", () => {
   let root: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), "openbot-shell-limits-"));
+    root = await mkdtemp(join(tmpdir(), "chisabot-shell-limits-"));
   });
 
   afterEach(async () => {

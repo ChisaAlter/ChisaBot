@@ -696,7 +696,7 @@ describe("admin credential API", () => {
         handler: () => new Response(null, { status: 204 }),
         api: {
           getSession: async () => ({
-            user: { id: "admin", email: "admin@openbot.test" },
+            user: { id: "admin", email: "admin@chisabot.test" },
           }),
         },
       },
@@ -743,7 +743,7 @@ describe("admin credential API", () => {
         handler: () => new Response(null, { status: 204 }),
         api: {
           getSession: async () => ({
-            user: { id: "admin", email: "admin@openbot.test" },
+            user: { id: "admin", email: "admin@chisabot.test" },
           }),
         },
       },
@@ -811,7 +811,7 @@ describe("admin credential API", () => {
         handler: () => new Response(null, { status: 204 }),
         api: {
           getSession: async () => ({
-            user: { id: "admin", email: "admin@openbot.test" },
+            user: { id: "admin", email: "admin@chisabot.test" },
           }),
         },
       },

@@ -60,7 +60,7 @@ import { frameFiring } from "../../../shared/routine-firing";
 import { withModelConnectionScope } from "../model-connection-context";
 import { sanitizeSeededHistory } from "../agents/history-sanitize";
 import { guardBotTurn } from "../agents/lifecycle";
-import { OPENBOT_WAITING_METADATA } from "../approvals/native-context";
+import { CHISABOT_WAITING_METADATA } from "../approvals/native-context";
 import type { AuditInitiator, AuditStore } from "../audit";
 import {
   createHeadlessComponentTools,
@@ -724,7 +724,7 @@ export function createTurnRunner(options: {
      */
     // The waiting details, when the CUSTOM event did not survive the trip, ride on the interrupt.
     const carried = agent.pendingInterrupts
-      .map((interrupt) => interrupt.metadata?.[OPENBOT_WAITING_METADATA])
+      .map((interrupt) => interrupt.metadata?.[CHISABOT_WAITING_METADATA])
       .find(
         (value): value is HeadlessWaiting & { message?: string } =>
           !!value &&
