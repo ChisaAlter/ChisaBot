@@ -89,6 +89,7 @@ jobs:
           bun test tests/stop-queue.test.tsx
           bun test tests/computer-activity-log.test.tsx tests/computer-activity.test.ts
           bun test tests/computer-control-status.test.ts tests/browser-presence.test.ts
+          bun test tests/control-poll-single-source.test.tsx
       - name: Install actual computer service dependencies
         working-directory: agent-computer
         run: bun install --frozen-lockfile

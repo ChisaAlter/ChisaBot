@@ -14,6 +14,16 @@ import { tryClient } from "@/lib/client";
 export type { ComputerControlState as ControlState } from "../../../../shared/computer-control";
 import type { ComputerControlState as ControlState } from "../../../../shared/computer-control";
 
+const okListeners = new Set<(computerId: string) => void>();
+/** 同一个 bot 的别的控制请求成功了：说明连得上，轮询不必再退避。 */
+export function onControlRequestOk(listener: (computerId: string) => void) {
+  okListeners.add(listener);
+  return () => okListeners.delete(listener);
+}
+function noteOk(computerId: string) {
+  for (const listener of okListeners) listener(computerId);
+}
+
 async function callControl(
   computerId: string,
   path: string,
@@ -25,6 +35,7 @@ async function callControl(
     { ...(body === undefined ? {} : { method: "POST", body }), signal },
   );
   if (!response.ok) return null;
+  noteOk(computerId);
   const value: unknown = await response.json().catch(() => null);
   if (!value || typeof value !== "object" || !("holder" in value)) return null;
   if (value.holder !== "bot" && value.holder !== "human") return null;
@@ -45,12 +56,16 @@ export function readControl(
 }
 
 /** CB-103：GET /control 的状态。`unreachable` 也包括网关自己给的 502 / 503 / 504 和断网。 */
-export type ComputerControlKind = "none" | "live" | "user_control" | "unreachable";
+export type ComputerControlKind =
+  | "none"
+  | "live"
+  | "user_control"
+  | "unreachable";
 
 export type ControlRead =
   | { kind: Exclude<ComputerControlKind, "unreachable">; control: ControlState }
   | { kind: "unreachable"; reason: string }
-  /** 服务器回了别的错误（401 / 404 …）：沿用以前的「正在重连」。 */
+  /** 服务器回了别的错误（403 / 404 …）：按「无」处理，不提示重连、不暂停输入。 */
   | { kind: "error" };
 
 /** 连不上电脑时给人看的话。 */
@@ -88,7 +103,9 @@ export async function readControlStatus(
     return { kind: "error" };
   const control = value as ControlState;
   const kind =
-    value.state === "live" || value.state === "user_control" || value.state === "none"
+    value.state === "live" ||
+    value.state === "user_control" ||
+    value.state === "none"
       ? value.state
       : control.holder === "human"
         ? "user_control"
