@@ -80,6 +80,10 @@ export function useReadMark(messageId: string): boolean {
   return at !== undefined && Date.now() - at < 6_000;
 }
 
+/** How long a send typed during Stop waits for the stopped turn to wind down (CB-104). */
+export const STOPPING_WAIT_MS = 10_000;
+const STOPPING_POLL_MS = 250;
+
 const api = (threadId: string) => `/api/copilotkit/threads/${encodeURIComponent(threadId)}/inbox`;
 
 /**
@@ -93,10 +97,21 @@ export async function queueMessage(threadId: string, text: string, id: string = 
   const update = (status: QueuedStatus) =>
     set(threadId, queuedFor(threadId).map((other) => (other.id === id ? { ...other, status } : other)));
   try {
-    const response = await tryClient(api(threadId), { ...options, method: "POST", body: { id, text } });
-    if (!response.ok) throw new Error(String(response.status));
-    const body = (await response.json()) as { queued?: boolean; status?: string } | null;
-    if (!body || typeof body.queued !== "boolean") throw new Error("Invalid inbox response");
+    const post = async () => {
+      const response = await tryClient(api(threadId), { ...options, method: "POST", body: { id, text } });
+      if (!response.ok) throw new Error(String(response.status));
+      const body = (await response.json()) as { queued?: boolean; status?: string; stopping?: boolean } | null;
+      if (!body || typeof body.queued !== "boolean") throw new Error("Invalid inbox response");
+      return body;
+    };
+    let body = await post();
+    // CB-104: typed after Stop while the turn is still winding down. The user's intent is explicit,
+    // so it is never parked: wait for the turn to end, then the caller sends it as a fresh turn.
+    const waitUntil = Date.now() + STOPPING_WAIT_MS;
+    while (body.stopping && Date.now() < waitUntil && !options.signal?.aborted) {
+      await new Promise((resolve) => setTimeout(resolve, STOPPING_POLL_MS));
+      body = await post();
+    }
     // A confirmed withdrawal can finish before the original POST response arrives.
     if (!queuedFor(threadId).some((other) => other.id === id)) return "queued";
     if (!body.queued) {
@@ -175,7 +190,14 @@ export function applyInboxState(threadId: string, state: InboxState) {
     const text = item.kind === "worker_result" ? content.replace(/^⟦chisabot:[^⟧]*⟧\s*/, "").split("\n")[0] || "后台任务结果" : content;
     if (text) next.push({ id: item.id, text, kind: item.kind === "worker_result" ? "worker_result" : "message", status: item.status === "queued" && !state.paused ? "queued" : "paused", at: Date.now(), ...(own.has(item.id) ? {} : { remote: true }) });
   }
+  // CB-104: held items read in the order they were sent (a read-then-held one was re-added last).
+  const order = new Map(state.items.map((item, index) => [item.id, index]));
+  next.sort((a, b) => (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+  // CB-104: a supplement held by Stop got no reply — it must not keep a 「已读取」 mark.
+  let unmarked = false;
+  for (const item of next) if (item.status === "paused" && readAt.delete(item.id)) unmarked = true;
   if (JSON.stringify(next) !== JSON.stringify(current)) set(threadId, next);
+  else if (unmarked) emit();
 }
 
 export async function inboxState(threadId: string, options: Pick<ClientOptions, "signal" | "timeoutMs"> = {}): Promise<InboxState | null> {

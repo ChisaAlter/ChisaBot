@@ -666,6 +666,20 @@ const EMPTY_THREAD_READS: Record<string, unknown> = {
   "sent-at": { userMessageId: null, at: null, now: null },
 };
 
+/** How long a stopped segment may keep running before the runner stops waiting for it (CB-104). */
+export const STOP_GRACE_MS = 1_500;
+
+/** Resolves `true` once `signal` has been aborted for `ms`; never resolves otherwise. */
+export const afterStopGrace = (signal: AbortSignal, ms: number): Promise<true> =>
+  new Promise((resolve) => {
+    const arm = () => {
+      const timer = setTimeout(() => resolve(true), ms);
+      timer.unref?.();
+    };
+    if (signal.aborted) arm();
+    else signal.addEventListener("abort", arm, { once: true });
+  });
+
 /** Public OSS runner with our own PostgreSQL transcript and per-thread lease. */
 class PostgresAgentRunner extends AgentRunner {
   private readonly active = new Map<string, ActiveRun>();
@@ -719,6 +733,11 @@ class PostgresAgentRunner extends AgentRunner {
   /** Includes browser tools running between two server requests in the same logical turn. */
   isActive(threadId: string): boolean {
     return this.active.has(threadId) || this.frontend.has(threadId);
+  }
+
+  /** Stop was accepted for the running turn; it is only winding down (CB-104). */
+  isStopping(threadId: string): boolean {
+    return Boolean(this.active.get(threadId)?.stopped);
   }
 
   /**
@@ -1114,6 +1133,7 @@ class PostgresAgentRunner extends AgentRunner {
       const backgroundDelivery = Boolean(input.forwardedProps?.chisabotWorkerDelivery) || request.persistedInputMessages !== undefined;
       const freshUser = !backgroundDelivery && incoming.some((message) => message.role === "user" && !isWorkerResult(message) && !storedIds.has(message.id));
       const resume = input.forwardedProps?.chisabotInboxResume as { sourceId?: unknown; messageId?: unknown } | undefined;
+      let stored = row.messages;
       if (resume) {
         if (typeof resume.sourceId !== "string" || typeof resume.messageId !== "string" ||
           !incoming.some((message) => message.id === resume.messageId && message.role === "user" && !storedIds.has(message.id)))
@@ -1121,6 +1141,8 @@ class PostgresAgentRunner extends AgentRunner {
         const source = await this.inbox.resumeOne(threadId, resume.sourceId, entry.runId);
         if (!source) throw new LocalConversationError("这条保留消息已被发送或撤回，请刷新后查看。", 409);
         const shown = { ...source, id: resume.messageId } as Message;
+        // CB-104: the resent copy replaces the held original, so the transcript shows it once.
+        stored = row.messages.filter((message) => message.id !== resume.sourceId || message.role !== "user");
         visible = visible.map((message) => message.id === resume.messageId ? shown : message);
         incoming = incoming.map((message) => message.id === resume.messageId ? {
           ...shown,
@@ -1135,7 +1157,7 @@ class PostgresAgentRunner extends AgentRunner {
         throw new LocalConversationError("保留的消息已暂停，请主动发送新消息或点击“发送这条”。", 409);
       }
       if (freshUser) await this.inbox.startExplicitTurn(threadId);
-      prepared = prepareConversationMessages(row.messages, incoming, visible, held);
+      prepared = prepareConversationMessages(stored, incoming, visible, held);
       entry.inputMessageIds = new Set(prepared.execution.map((message) => message.id));
       const oldIds = new Set(row.messages.map((message) => message.id));
       newMessages.push(
@@ -1234,26 +1256,38 @@ class PostgresAgentRunner extends AgentRunner {
         });
         const segmentInput = { ...input, runId: entry.runId, messages: agent.messages };
         try {
-          await withConfirmTurn(
-            { threadId, runId: entry.runId, stopped: () => entry.stopped || Boolean(entry.segmentInterrupted) },
-            () =>
-              withToolAbort(segAbort.signal, () =>
-                withSteering(steering(), () =>
-                  agent.runAgent(segmentInput, {
-                    onEvent: ({ event }) =>
-                      guarded(() => emit(structuredClone(event))),
-                    onMessagesChanged: ({ messages, state }) =>
-                      capture(messages, state),
-                    onStateChanged: ({ messages, state }) =>
-                      capture(messages, state),
-                    onRunFinalized: () => {
-                      finalized();
-                    },
-                  }),
+          const segmentWork = (async () => {
+            await withConfirmTurn(
+              { threadId, runId: entry.runId, stopped: () => entry.stopped || Boolean(entry.segmentInterrupted) },
+              () =>
+                withToolAbort(segAbort.signal, () =>
+                  withSteering(steering(), () =>
+                    agent.runAgent(segmentInput, {
+                      onEvent: ({ event }) =>
+                        guarded(() => emit(structuredClone(event))),
+                      onMessagesChanged: ({ messages, state }) =>
+                        capture(messages, state),
+                      onStateChanged: ({ messages, state }) =>
+                        capture(messages, state),
+                      onRunFinalized: () => {
+                        finalized();
+                      },
+                    }),
+                  ),
                 ),
-              ),
-          );
-          await finalization;
+            );
+            await finalization;
+          })();
+          // CB-104: Stop must end the turn in ~2 s even when the runtime (Hermes, a tool) is slow to
+          // honour the abort. After a short grace the run is detached and closed as stopped.
+          const forced = await Promise.race([
+            segmentWork.then(() => false),
+            afterStopGrace(entry.abort.signal, STOP_GRACE_MS),
+          ]);
+          if (forced) {
+            segmentWork.catch(() => {});
+            void Promise.resolve(agent.detachActiveRun()).catch(() => {});
+          }
         } catch (segError) {
           if (!entry.segmentInterrupted || entry.stopped) throw segError;
           heldFinish = {
@@ -1565,7 +1599,9 @@ class PostgresAgentRunner extends AgentRunner {
     entry.abort.abort();
     entry.agent.abortRun();
     await this.inbox.pause(threadId);
-    await entry.agent.detachActiveRun();
+    // A runtime that ignores the abort must not hold the Stop request open (CB-104).
+    const detached = Promise.resolve(entry.agent.detachActiveRun()).catch(() => {});
+    await Promise.race([detached, new Promise((resolve) => setTimeout(resolve, STOP_GRACE_MS).unref?.())]);
     return true;
   }
 }
@@ -2053,7 +2089,10 @@ export async function createLocalConversations(
           throw new LocalConversationError("Message is too long", 413);
         const existing = await inbox.get(threadId, id);
         if (existing) return Response.json({ queued: true, status: existing.status });
-        if (!runner.isActive(threadId) && !await inbox.isPaused(threadId)) return Response.json({ queued: false });
+        // CB-104: a message typed after Stop is explicit intent. Idle (even with held items) → send
+        // it as a fresh turn; still winding down from Stop → tell the client to wait, never park it.
+        if (!runner.isActive(threadId)) return Response.json({ queued: false });
+        if (runner.isStopping(threadId)) return Response.json({ queued: false, stopping: true });
         if (row.messages.some((message) => message.id === id))
           return Response.json({ queued: true, status: "read" });
         try {

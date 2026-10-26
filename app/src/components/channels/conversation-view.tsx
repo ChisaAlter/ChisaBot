@@ -45,6 +45,7 @@ export function ConversationView({
   onRetryTurn,
   onRetryUnanswered,
   stoppable,
+  stopping = false,
   queueWhileBusy = false,
   restoring = false,
   hydrating = false,
@@ -121,6 +122,8 @@ export function ConversationView({
    * to draw a Stop button from. Defaults to `pending` for a caller with no gap between the two.
    */
   stoppable?: boolean;
+  /** CB-104: Stop was pressed and the turn is still winding down (composer shows 「停止中…」). */
+  stopping?: boolean;
   /**
    * Let somebody type at a Bot that is already working, and run what they typed when it finishes.
    *
@@ -584,6 +587,7 @@ export function ConversationView({
            * message goes anyway.
            */
           stoppable={stoppable ?? pending}
+          stopping={stopping}
         />
       </div>
     </div>

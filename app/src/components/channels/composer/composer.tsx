@@ -21,6 +21,7 @@ import {
   type ChangeEvent,
   type DragEvent,
   type FormEvent,
+  type KeyboardEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -50,6 +51,7 @@ import {
   takeDraftFiles,
   wasJustSent,
 } from "@/lib/chat/ui-memory";
+import { shouldStopOnEscape } from "@/lib/copilot/held-supplements";
 import { newId } from "@/lib/new-id";
 import { cn } from "@/lib/utils";
 import { Button } from "../../ui/button";
@@ -224,6 +226,8 @@ export type ComposerProps = {
    * Defaults to `pending`, which is the right answer for a caller with no gap between the two.
    */
   stoppable?: boolean;
+  /** CB-104: Stop was pressed and the turn is winding down; the button reads 「停止中…」. */
+  stopping?: boolean;
   initialValue?: string;
   /**
    * 这段对话的草稿记在哪（DESIGN.md §88）：通常是频道 id。给了它，输入框的字（含 @ / 命令小块）离开再回来、刷新后
@@ -354,6 +358,7 @@ export function Composer({
   autoFocus = false,
   channelId,
   stoppable,
+  stopping = false,
   initialValue,
   draftKey,
   droppedAttachments,
@@ -1611,7 +1616,25 @@ export function Composer({
    */
   const sendLabel = parking ? "队列消息" : "发送消息";
   const actionClassName = "glass-composer-send";
-  const primaryAction = canStop ? (
+  // CB-104: Esc in a focused composer stops the running turn (a menu that handles Esc prevents it).
+  const handleEscapeStop = (event: KeyboardEvent<HTMLFormElement>) => {
+    const running = Boolean(onStop) && Boolean(stoppable ?? pending);
+    if (!shouldStopOnEscape({ key: event.key, defaultPrevented: event.defaultPrevented, isComposing: event.nativeEvent.isComposing, running, stopping })) return;
+    event.preventDefault();
+    onStop?.();
+  };
+  const primaryAction = canStop && stopping ? (
+    <Button
+      aria-label={"停止中"}
+      className={cn(actionClassName, "w-auto whitespace-nowrap px-2.5 text-xs")}
+      data-testid="composer-stopping"
+      disabled
+      size="sm"
+      type="button"
+    >
+      停止中…
+    </Button>
+  ) : canStop ? (
     <Button
       aria-label={"停止机器人"}
       className={actionClassName}
@@ -1760,6 +1783,7 @@ export function Composer({
         {tooManyStagedNotice}
         <form
           aria-busy={isBusy}
+          onKeyDown={handleEscapeStop}
           className={cn(
             /*
              * A COLUMN: attachment strip, editor, then the toolbar. The frame's padding lives on the
@@ -1874,6 +1898,7 @@ export function Composer({
       {tooManyStagedNotice}
       <form
         aria-busy={isBusy}
+        onKeyDown={handleEscapeStop}
         className="glass-composer glass-composer-hero"
         onSubmit={handleFormSubmit}
       >
