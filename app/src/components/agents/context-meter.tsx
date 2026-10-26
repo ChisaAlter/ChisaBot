@@ -99,6 +99,8 @@ export function ContextMeter({
   const otherModel = reading?.model && modelId && tailOf(reading.model) !== tailOf(modelId) ? reading.model : undefined;
 
   const tipText = size ? `上下文 ${percent}%` : `上下文 ${used}`;
+  // CB-100c：圆环旁边直接写出读数（有窗口写百分比，没有写已用 token），不用悬停才知道是什么。
+  const shortText = size ? `${Math.round(ratio * 100)}%` : `${approx ? "≈" : ""}${formatTokens(tokens)} tok`;
 
   return (
     <Popover.Root
@@ -120,6 +122,9 @@ export function ContextMeter({
           }
         >
           <Ring level={level} ratio={ratio} unknown={!size} />
+          <span aria-hidden className="context-meter-text" data-testid="context-meter-text">
+            {shortText}
+          </span>
         </TooltipTrigger>
         <TooltipContent className="context-tip" side="top" sideOffset={8}>
           {tipText}
