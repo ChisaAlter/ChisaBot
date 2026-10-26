@@ -475,9 +475,17 @@ export function withComputerActivity(
      * 否则整组用审批上下文（无头运行）的；两边都没有就是未归属，不按时间或「最近一次」去猜，也不把两边拼起来。
      */
     const bound = scope?.toolCallId
-      ? { threadId: scope.threadId ?? null, runId: scope.runId ?? null, toolCallId: scope.toolCallId }
+      ? {
+          threadId: scope.threadId ?? null,
+          runId: scope.runId ?? null,
+          toolCallId: scope.toolCallId,
+        }
       : approval?.toolCallId
-        ? { threadId: approval.threadId ?? null, runId: approval.runId ?? null, toolCallId: approval.toolCallId }
+        ? {
+            threadId: approval.threadId ?? null,
+            runId: approval.runId ?? null,
+            toolCallId: approval.toolCallId,
+          }
         : { threadId: null, runId: null, toolCallId: null };
     const toolCallId = bound.toolCallId;
     const human = plan.human === true || (scope?.human === true && !toolCallId);
@@ -512,7 +520,8 @@ export function withComputerActivity(
     try {
       stepId = await store.begin({
         computerId: botId,
-        threadId: actorKind === "agent" ? bound.threadId : (scope?.threadId ?? null),
+        threadId:
+          actorKind === "agent" ? bound.threadId : (scope?.threadId ?? null),
         runId: actorKind === "agent" ? bound.runId : null,
         toolCallId: actorKind === "agent" ? toolCallId : null,
         actorUserId,
@@ -543,17 +552,15 @@ export function withComputerActivity(
       if (stepId) {
         const extra = plan.finish?.(result) ?? {};
         const id = stepId;
-        await store
-          .finish(id, { status: "ok", ...extra })
-          .catch((error) =>
-            console.warn(
-              JSON.stringify({
-                type: "computer-activity-write-failed",
-                phase: "finish",
-                error: String(error),
-              }),
-            ),
-          );
+        await store.finish(id, { status: "ok", ...extra }).catch((error) =>
+          console.warn(
+            JSON.stringify({
+              type: "computer-activity-write-failed",
+              phase: "finish",
+              error: String(error),
+            }),
+          ),
+        );
         if (plan.frame) void captureFrame(store, botId, id);
       }
       return result;

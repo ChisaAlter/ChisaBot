@@ -1,7 +1,11 @@
-import { normalizeCommandTimeout } from "../../../../shared/command-timeout";
 import { tryClient } from "@/lib/client";
+import {
+  describeComputerCall,
+  reportComputerActivity,
+  reportComputerStatus,
+} from "@/lib/copilot/computer-activity";
+import { normalizeCommandTimeout } from "../../../../shared/command-timeout";
 import { computerCallHeaders } from "./call-meta";
-import { describeComputerCall, reportComputerActivity, reportComputerStatus } from "@/lib/copilot/computer-activity";
 
 export type ToolOutcome = Record<string, unknown> & { ok: boolean };
 
@@ -48,9 +52,16 @@ async function callComputerInner(
       signal,
       // Match the computer's server-side operation limits, with transport margin. Ordinary queries
       // stay at 30s; a foreground command or download must not be cut off by that read budget.
-      timeoutMs: path === "/exec"
-        ? normalizeCommandTimeout((init?.body ?? {}) as { timeoutMs?: unknown }).effectiveSec * 1000 + 30_000
-        : path === "/download" ? 315_000 : 60_000,
+      timeoutMs:
+        path === "/exec"
+          ? normalizeCommandTimeout(
+              (init?.body ?? {}) as { timeoutMs?: unknown },
+            ).effectiveSec *
+              1000 +
+            30_000
+          : path === "/download"
+            ? 315_000
+            : 60_000,
     });
   } catch (error) {
     // An abort is a stopped run, not a computer failure.
@@ -70,10 +81,14 @@ async function callComputerInner(
       throw new Error("Invalid computer response");
     body = decoded as Record<string, unknown>;
   } catch {
-    if (signal?.aborted) return { ok: false, reason: "Stopped.", stopped: true };
+    if (signal?.aborted)
+      return { ok: false, reason: "Stopped.", stopped: true };
     // Headers alone do not confirm completion. In particular, do not report a write as successful
     // when its streamed result was interrupted or timed out, and never retry it automatically.
-    return { ok: false, reason: "计算机操作的结果未能确认，请先检查实际状态，避免重复执行。" };
+    return {
+      ok: false,
+      reason: "计算机操作的结果未能确认，请先检查实际状态，避免重复执行。",
+    };
   }
 
   if (!response.ok) {

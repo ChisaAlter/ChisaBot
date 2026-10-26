@@ -1,6 +1,12 @@
-import { IconAlertTriangle, IconDeviceDesktop, IconWorld, IconX } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconDeviceDesktop,
+  IconWorld,
+  IconX,
+} from "@tabler/icons-react";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { syncStartLinks } from "@/lib/browser-bookmarks";
 import {
   browserPresenceCardLabel,
   browserPresenceFootLabel,
@@ -16,14 +22,13 @@ import {
   applyScreenshotPollResult,
   nextScreenshotPollDelay,
 } from "@/lib/computers/screenshot-poll";
+import { humanTab, useBrowserTabs } from "@/lib/computers/tabs";
 import { useComputerControl } from "@/lib/computers/use-control";
 import { useComputerStatus } from "@/lib/computers/use-status";
 import { ChannelAvatar } from "../channels/avatar";
-import { ComputerControlButton } from "./computer-controls";
-import { syncStartLinks } from "@/lib/browser-bookmarks";
-import { humanTab, useBrowserTabs } from "@/lib/computers/tabs";
 import { BookmarkStar, BookmarksBar } from "./bookmarks-bar";
 import { TabStrip } from "./browser-tabs";
+import { ComputerControlButton } from "./computer-controls";
 import { LiveScreen, type LiveScreenController } from "./live-screen";
 import { useElementVisible, usePageVisible } from "./preview-visibility";
 import { useTakeoverFit } from "./takeover-fit";
@@ -388,6 +393,7 @@ export function ComputerView({
 
     void (async () => {
       for (let i = 0; i < delays.length; i += 1) {
+        // biome-ignore lint/style/noNonNullAssertion: i 在 delays 范围内
         if (delays[i]! > 0) {
           await new Promise((r) => setTimeout(r, delays[i]));
         }
@@ -468,6 +474,7 @@ export function ComputerView({
           setProblem(null);
         }
       } finally {
+        // biome-ignore lint/correctness/noUnsafeFinally: 过期的这一轮直接结束，不安排下一次重试，是有意为之
         if (generation.current !== mine) return;
         // 不变式：**只要还显示着「暂时看不到屏幕」，就必须继续重试**。底栏文案承诺「稍后会自动重试」，
         // 而停下来等用户点「重试」的话，大屏关掉、电脑恢复之后卡片都不会自己回来（线上卡死状态）。
@@ -484,7 +491,9 @@ export function ComputerView({
             tick,
             quick
               ? 1200
-              : nextScreenshotPollDelay(failStreak, intervalMs, { liveCast: liveCastBusy }),
+              : nextScreenshotPollDelay(failStreak, intervalMs, {
+                  liveCast: liveCastBusy,
+                }),
           );
         }
       }
@@ -495,7 +504,16 @@ export function ComputerView({
       generation.current++;
       clearTimeout(timer);
     };
-  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey, expanded]);
+  }, [
+    computerId,
+    active,
+    intervalMs,
+    secretPending,
+    settled,
+    visualVisible,
+    retryKey,
+    expanded,
+  ]);
 
   /*
    * 交还之后收起大屏。交还就是「我弄完了」，留着一个只读的大屏还要再点一次关闭，
@@ -503,7 +521,8 @@ export function ComputerView({
    */
   const wasDriving = useRef(false);
   useEffect(() => {
-    if (wasDriving.current && !driving && !control?.transitioning) setExpanded(false);
+    if (wasDriving.current && !driving && !control?.transitioning)
+      setExpanded(false);
     wasDriving.current = driving;
   }, [driving, control?.transitioning]);
 
@@ -533,7 +552,8 @@ export function ComputerView({
   const presence = browserPresenceKind({
     control,
     botActive,
-    screenUnavailable: !settled && !castingElsewhere && Boolean(problem) && !shot,
+    screenUnavailable:
+      !settled && !castingElsewhere && Boolean(problem) && !shot,
   });
   const cardPresence = browserPresenceCardLabel(presence);
   const footPresence = browserPresenceFootLabel(presence);
@@ -609,7 +629,9 @@ export function ComputerView({
     <div className="btabs is-empty">
       <div className="btabs-lead">
         <span className="ctk-record-t">
-          {name ? <ChannelAvatar participantIds={[computerId]} size={16} /> : null}
+          {name ? (
+            <ChannelAvatar participantIds={[computerId]} size={16} />
+          ) : null}
           {knownPage?.title || knownPage?.url || "这一轮打开的页面"}
         </span>
       </div>
@@ -770,7 +792,9 @@ export function ComputerView({
 
         {!settled ? (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2">
-            <span className="text-xs text-muted-foreground">{cardPresence}</span>
+            <span className="text-xs text-muted-foreground">
+              {cardPresence}
+            </span>
             <ComputerControlButton
               computerId={computerId}
               onTakeControl={() => setExpanded(true)}
@@ -832,7 +856,11 @@ export function ComputerView({
                   <>
                     <div className="computer-chrome">{recordTitle}</div>
                     <div className="ctk-stage">
-                      <div className="computer-screen ctk-screen relative overflow-hidden rounded-lg" data-ctk-screen style={{ aspectRatio }}>
+                      <div
+                        className="computer-screen ctk-screen relative overflow-hidden rounded-lg"
+                        data-ctk-screen
+                        style={{ aspectRatio }}
+                      >
                         <img
                           alt={"此轮次开放了什么"}
                           className="absolute inset-0 h-full w-full object-contain"
@@ -851,7 +879,9 @@ export function ComputerView({
                         <TabStrip
                           computerId={computerId}
                           driving={driving}
-                          onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)}
+                          onTakeControl={() =>
+                            changeControl?.("take") ?? Promise.resolve(false)
+                          }
                           poll={!showLiveScreen}
                         />
                       }
@@ -860,7 +890,9 @@ export function ComputerView({
                         <BookmarksBar
                           botId={computerId}
                           driving={driving}
-                          onOpen={(url, inNewTab) => void openBookmark(url, inNewTab)}
+                          onOpen={(url, inNewTab) =>
+                            void openBookmark(url, inNewTab)
+                          }
                         />
                       }
                       computerId={computerId}
@@ -872,7 +904,9 @@ export function ComputerView({
                         <BookmarkStar
                           botId={computerId}
                           disabled={!driving}
-                          title={activeTab?.url === url ? activeTab.title : undefined}
+                          title={
+                            activeTab?.url === url ? activeTab.title : undefined
+                          }
                           url={url}
                         />
                       )}
@@ -907,10 +941,25 @@ export function ComputerView({
                   */
                   <>
                     <div className="computer-chrome">
-                      {settled ? recordTitle : <TabStrip computerId={computerId} driving={driving} onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)} poll />}
+                      {settled ? (
+                        recordTitle
+                      ) : (
+                        <TabStrip
+                          computerId={computerId}
+                          driving={driving}
+                          onTakeControl={() =>
+                            changeControl?.("take") ?? Promise.resolve(false)
+                          }
+                          poll
+                        />
+                      )}
                     </div>
                     <div className="ctk-stage">
-                      <div className="computer-frame ctk-screen relative w-full rounded-lg" data-ctk-screen style={{ aspectRatio }}>
+                      <div
+                        className="computer-frame ctk-screen relative w-full rounded-lg"
+                        data-ctk-screen
+                        style={{ aspectRatio }}
+                      >
                         <NothingToSee
                           blankBrowser={blankBrowser}
                           onRetry={
@@ -939,7 +988,10 @@ export function ComputerView({
                   <div className="ctk-foot computer-takeover-controls">
                     {name ? (
                       <span className="ctk-who">
-                        <ChannelAvatar participantIds={[computerId]} size={20} />
+                        <ChannelAvatar
+                          participantIds={[computerId]}
+                          size={20}
+                        />
                         <span className="ctk-who-n">{name}</span>
                       </span>
                     ) : null}
@@ -947,9 +999,13 @@ export function ComputerView({
                       className="ctk-status"
                       title={control?.reason ? control.reason : undefined}
                     >
-                      {control?.requested && !driving && !control.transitioning ? (
+                      {control?.requested &&
+                      !driving &&
+                      !control.transitioning ? (
                         <>
-                          <strong className="font-medium text-foreground">{"机器人需要你"}</strong>
+                          <strong className="font-medium text-foreground">
+                            {"机器人需要你"}
+                          </strong>
                           {control.reason ? `：${control.reason}` : null}
                         </>
                       ) : (

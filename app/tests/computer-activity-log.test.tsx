@@ -152,12 +152,24 @@ test("falls back to the in-browser log when the server has no activity endpoint"
 });
 
 test("concurrent tool calls each send their own turn and tool call ids", async () => {
-  const { bindComputerCallMeta, computerCallHeaders } = await import("@/lib/computers/call-meta");
+  const { bindComputerCallMeta, computerCallHeaders } = await import(
+    "@/lib/computers/call-meta"
+  );
   const shared = new AbortController().signal;
-  const a = bindComputerCallMeta({ threadId: "t", runId: "turnA", toolCallId: "callA" }, shared);
-  const b = bindComputerCallMeta({ threadId: "t", runId: "turnB", toolCallId: "callB" }, shared);
+  const a = bindComputerCallMeta(
+    { threadId: "t", runId: "turnA", toolCallId: "callA" },
+    shared,
+  );
+  const b = bindComputerCallMeta(
+    { threadId: "t", runId: "turnB", toolCallId: "callB" },
+    shared,
+  );
   // B 后登记，A 的请求也不能拿到 B 的归属。
-  expect(computerCallHeaders(a)).toEqual({ "x-chisabot-thread": "t", "x-chisabot-run": "turnA", "x-chisabot-tool-call": "callA" });
+  expect(computerCallHeaders(a)).toEqual({
+    "x-chisabot-thread": "t",
+    "x-chisabot-run": "turnA",
+    "x-chisabot-tool-call": "callA",
+  });
   expect(computerCallHeaders(b)?.["x-chisabot-tool-call"]).toBe("callB");
   // 没有绑定的请求不带归属（服务端记为未归属），不取「最近一次」。
   expect(computerCallHeaders(undefined)).toBeUndefined();
@@ -166,11 +178,34 @@ test("concurrent tool calls each send their own turn and tool call ids", async (
 
 test("interleaved turns are grouped by their turn id, unattributed steps are not guessed", () => {
   const turns = groupActivity([
-    step({ id: "4", runId: "A", toolCallId: "a2", startedAt: "2026-10-26T10:00:04Z" }),
-    step({ id: "3", runId: "B", toolCallId: "b1", startedAt: "2026-10-26T10:00:03Z" }),
-    step({ id: "2", runId: "A", toolCallId: "a1", startedAt: "2026-10-26T10:00:02Z" }),
-    step({ id: "1", runId: null, threadId: "t", toolCallId: null, startedAt: "2026-10-26T10:00:01Z" }),
+    step({
+      id: "4",
+      runId: "A",
+      toolCallId: "a2",
+      startedAt: "2026-10-26T10:00:04Z",
+    }),
+    step({
+      id: "3",
+      runId: "B",
+      toolCallId: "b1",
+      startedAt: "2026-10-26T10:00:03Z",
+    }),
+    step({
+      id: "2",
+      runId: "A",
+      toolCallId: "a1",
+      startedAt: "2026-10-26T10:00:02Z",
+    }),
+    step({
+      id: "1",
+      runId: null,
+      threadId: "t",
+      toolCallId: null,
+      startedAt: "2026-10-26T10:00:01Z",
+    }),
   ]);
   expect(turns.map((turn) => turn.runId)).toEqual(["A", "B", null]);
-  expect(turns[0]?.items.map((item) => (item.type === "step" ? item.step.id : ""))).toEqual(["2", "4"]);
+  expect(
+    turns[0]?.items.map((item) => (item.type === "step" ? item.step.id : "")),
+  ).toEqual(["2", "4"]);
 });

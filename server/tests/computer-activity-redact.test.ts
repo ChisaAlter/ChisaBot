@@ -9,7 +9,69 @@ import {
   redactUrl,
 } from "../src/computer/activity-redact";
 
+const QA_LEAKS = [
+  "sshpass -p PW_A1 ssh root@h",
+  "sshpass -pPW_A2 ssh root@h",
+  "mysql -u root -pPW_B1 db",
+  "mysql -u root -p PW_B2 db",
+  "redis-cli -a PW_C1 ping",
+  "redis-cli -h x -a 'PW_C2 x' ping",
+  "curl -u user:PW_D1 https://x.com",
+  "curl --user user:PW_D2 https://x.com",
+  'curl -u "user:PW_D3" https://x.com',
+  "sshpass -p 'PW_G1' scp a b:/c",
+];
+/** QA 318-r2 文本变体：命令出现在一行中间。 */
+const QA_MIDLINE = [
+  "+ mysql -u root -pPW2 db",
+  "root  1234  0.0  0.1 sshpass -p PW3 ssh h",
+  "history: 12  curl -u u:PW6 https://a.com",
+  "echo sshpass -p PW_A1 ssh root@h",
+  "/usr/bin/sshpass -p PW_P1 ssh -p 22 h",
+  "x=`mysql -pPW_Q1`",
+];
+const KEEP = [
+  "mkdir -p KEEP_dir/a",
+  "ssh -p 22 KEEP_host",
+  "scp -P 2222 KEEP_f h:/x",
+  "curl -k https://keep.com/",
+  "tail -n 5 KEEP.log",
+  "grep -r KEEP_pat .",
+];
+
 describe("activity redaction", () => {
+  test("QA 318-r2: whitelisted commands are found anywhere in a line, not just at its start", () => {
+    for (const command of QA_LEAKS) {
+      const echoed = redactText(`echo ${command}\n`);
+      expect(echoed).not.toContain("PW_");
+      expect(echoed.startsWith("echo ")).toBe(true);
+    }
+    expect(redactText(QA_MIDLINE[0] as string)).toBe(
+      "+ mysql -u root -p•••• db",
+    );
+    expect(redactText(QA_MIDLINE[1] as string)).toBe(
+      "root  1234  0.0  0.1 sshpass -p •••• ssh h",
+    );
+    expect(redactText(QA_MIDLINE[2] as string)).toBe(
+      "history: 12  curl -u u:•••• https://a.com/",
+    );
+    expect(redactText(QA_MIDLINE[3] as string)).toBe(
+      "echo sshpass -p •••• ssh root@h",
+    );
+    expect(redactText(QA_MIDLINE[4] as string)).toBe(
+      "/usr/bin/sshpass -p •••• ssh -p 22 h",
+    );
+    expect(redactText(QA_MIDLINE[5] as string)).toBe("x=`mysql -p••••`");
+    for (const keep of KEEP) {
+      expect(redactText(keep)).toBe(
+        redactText(keep).includes("https://") ? redactText(keep) : keep,
+      );
+      expect(redactText(`echo ${keep}`)).toContain(
+        keep.replace(" https://keep.com/", ""),
+      );
+    }
+  });
+
   test("masks token-like query parameters and keeps the rest", () => {
     const out = redactUrl(
       "https://example.com/cb?code=abc123&state=ok&access_token=zzz&api_key=k",
@@ -55,9 +117,15 @@ describe("short-flag passwords, by command", () => {
   const masked: [string, string][] = [
     ["sshpass -p hunter2 ssh root@h", "sshpass -p •••• ssh root@h"],
     ["sshpass -phunter2 ssh root@h", "sshpass -p•••• ssh root@h"],
-    ['sshpass -p "hunter 2" ssh -p 22 root@h', "sshpass -p •••• ssh -p 22 root@h"],
+    [
+      'sshpass -p "hunter 2" ssh -p 22 root@h',
+      "sshpass -p •••• ssh -p 22 root@h",
+    ],
     ["/usr/bin/sshpass -p 'hunter 2' ssh h", "/usr/bin/sshpass -p •••• ssh h"],
-    ["cd /tmp && sudo -u ops sshpass -p hunter2 ssh h", "cd /tmp && sudo -u ops sshpass -p •••• ssh h"],
+    [
+      "cd /tmp && sudo -u ops sshpass -p hunter2 ssh h",
+      "cd /tmp && sudo -u ops sshpass -p •••• ssh h",
+    ],
     ["sshpass -p x mysql -phunter2", "sshpass -p •••• mysql -p••••"],
     ["mysql -u root -phunter2 db", "mysql -u root -p•••• db"],
     ["mysql -u root -p hunter2 db", "mysql -u root -p •••• db"],
@@ -74,7 +142,10 @@ describe("short-flag passwords, by command", () => {
     ["openssl enc -k hunter2 -in f", "openssl enc -k •••• -in f"],
     ["openssl rsa -passin pass:hunter2", "openssl rsa -passin ••••"],
     ["vault login -token hunter2", "vault login -token ••••"],
-    ["curl -u bob:hunter2 -k https://x.test/", "curl -u bob:•••• -k https://x.test/"],
+    [
+      "curl -u bob:hunter2 -k https://x.test/",
+      "curl -u bob:•••• -k https://x.test/",
+    ],
     ["MYSQL_PWD=hunter2 mysql", "MYSQL_PWD=•••• mysql"],
     ["SSHPASS=hunter2 sshpass -e ssh h", "SSHPASS=•••• sshpass -e ssh h"],
   ];
@@ -105,7 +176,17 @@ describe("short-flag passwords, by command", () => {
 
   test("redactDetail masks nested strings and keeps other values", () => {
     expect(
-      redactDetail({ n: 1, ok: true, a: ["sshpass -p x ssh"], o: { c: "mysql -px" } }),
-    ).toEqual({ n: 1, ok: true, a: ["sshpass -p •••• ssh"], o: { c: "mysql -p••••" } });
+      redactDetail({
+        n: 1,
+        ok: true,
+        a: ["sshpass -p x ssh"],
+        o: { c: "mysql -px" },
+      }),
+    ).toEqual({
+      n: 1,
+      ok: true,
+      a: ["sshpass -p •••• ssh"],
+      o: { c: "mysql -p••••" },
+    });
   });
 });

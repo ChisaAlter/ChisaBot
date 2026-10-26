@@ -19,9 +19,11 @@ export function backendOwnsFrontendCall(context: HandlerContext): boolean {
   const agent = context.agent;
   const run = agent ? backendRuns.get(agent) : undefined;
   return Boolean(
-    run && agent && run.threadId === agent.threadId &&
-    run.names.has(context.toolCall.function.name) &&
-    run.calls.get(context.toolCall.id) === context.toolCall.function.name,
+    run &&
+      agent &&
+      run.threadId === agent.threadId &&
+      run.names.has(context.toolCall.function.name) &&
+      run.calls.get(context.toolCall.id) === context.toolCall.function.name,
   );
 }
 
@@ -37,14 +39,25 @@ export function observeApprovalAgent(agent: Agent) {
       stopped: false,
     });
   };
-  const stopBackendFallback = (messages: ReadonlyArray<Readonly<RunAgentInput["messages"][number]>>) => {
+  const stopBackendFallback = (
+    messages: ReadonlyArray<Readonly<RunAgentInput["messages"][number]>>,
+  ) => {
     const run = backendRuns.get(agent);
     if (!run || run.stopped || run.threadId !== agent.threadId) return;
-    const answered = new Set(messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
-    const pending = messages.some((message) =>
-      message.role === "assistant" && message.toolCalls?.some((call) =>
-        run.names.has(call.function.name) && run.calls.get(call.id) === call.function.name && !answered.has(call.id),
+    const answered = new Set(
+      messages.flatMap((message) =>
+        message.role === "tool" ? [message.toolCallId] : [],
       ),
+    );
+    const pending = messages.some(
+      (message) =>
+        message.role === "assistant" &&
+        message.toolCalls?.some(
+          (call) =>
+            run.names.has(call.function.name) &&
+            run.calls.get(call.id) === call.function.name &&
+            !answered.has(call.id),
+        ),
     );
     if (!pending) return;
     run.stopped = true;
@@ -62,7 +75,14 @@ export function observeApprovalAgent(agent: Agent) {
       if (event.name !== "chisabot.backend-owned-tools") return;
       const run = backendRuns.get(agent);
       const value: unknown = event.value;
-      if (!run || !value || typeof value !== "object" || !("names" in value) || !Array.isArray(value.names)) return;
+      if (
+        !run ||
+        !value ||
+        typeof value !== "object" ||
+        !("names" in value) ||
+        !Array.isArray(value.names)
+      )
+        return;
       for (const name of value.names)
         if (typeof name === "string" && name) run.names.add(name);
     },
@@ -82,7 +102,9 @@ export function observeApprovalAgent(agent: Agent) {
 }
 
 /** CB-101：计算机活动记录用的归属（哪段对话、哪一轮、哪次工具调用）。拿不到就是 undefined，不抛。 */
-export function frontendCallMeta(context: HandlerContext): { threadId?: string; runId?: string; toolCallId?: string } | undefined {
+export function frontendCallMeta(
+  context: HandlerContext,
+): { threadId?: string; runId?: string; toolCallId?: string } | undefined {
   const agent = context.agent;
   const input = agent ? inputs.get(agent) : undefined;
   const toolCallId = context.toolCall?.id;
@@ -90,7 +112,9 @@ export function frontendCallMeta(context: HandlerContext): { threadId?: string; 
   return {
     ...(toolCallId ? { toolCallId } : {}),
     ...(agent?.threadId ? { threadId: agent.threadId } : {}),
-    ...(input && agent && input.threadId === agent.threadId ? { runId: input.runId } : {}),
+    ...(input && agent && input.threadId === agent.threadId
+      ? { runId: input.runId }
+      : {}),
   };
 }
 

@@ -180,26 +180,56 @@ describe("activity recorder", () => {
         runCommand: async (_b: unknown, _a: unknown, input: unknown) => {
           const command = (input as { command: string }).command;
           if (command === "slow") await gate;
-          return { command, exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false, elapsedMs: 1 };
+          return {
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            truncated: false,
+            timedOut: false,
+            elapsedMs: 1,
+          };
         },
       }),
       { store: () => store },
     );
     // A 先开始、B 后开始，B 先结束 A 后结束：两次调用交错，各自的归属不能串。
     const a = withActivityScope(
-      { threadId: "t1", runId: "turnA", toolCallId: "callA", actorUserId: "u1" },
+      {
+        threadId: "t1",
+        runId: "turnA",
+        toolCallId: "callA",
+        actorUserId: "u1",
+      },
       () => gateway.runCommand("bot", actor, { command: "slow" } as never),
     );
     const b = withActivityScope(
-      { threadId: "t2", runId: "turnB", toolCallId: "callB", actorUserId: "u1" },
+      {
+        threadId: "t2",
+        runId: "turnB",
+        toolCallId: "callB",
+        actorUserId: "u1",
+      },
       () => gateway.runCommand("bot", actor, { command: "fast" } as never),
     );
     await b;
     release();
     await a;
-    const bySubject = Object.fromEntries(begun.map((step) => [step.subject, step]));
-    expect(bySubject.slow).toMatchObject({ threadId: "t1", runId: "turnA", toolCallId: "callA", actorKind: "agent" });
-    expect(bySubject.fast).toMatchObject({ threadId: "t2", runId: "turnB", toolCallId: "callB", actorKind: "agent" });
+    const bySubject = Object.fromEntries(
+      begun.map((step) => [step.subject, step]),
+    );
+    expect(bySubject.slow).toMatchObject({
+      threadId: "t1",
+      runId: "turnA",
+      toolCallId: "callA",
+      actorKind: "agent",
+    });
+    expect(bySubject.fast).toMatchObject({
+      threadId: "t2",
+      runId: "turnB",
+      toolCallId: "callB",
+      actorKind: "agent",
+    });
   });
 
   test("a turn without an explicit tool call id is left unattributed, not guessed", async () => {

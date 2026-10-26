@@ -162,7 +162,9 @@ export const computerActivitySteps = pgTable(
     actorUserId: text("actor_user_id"),
     /** agent | human */
     actorKind: text("actor_kind").notNull(),
-    seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
+    seq: bigint("seq", { mode: "number" })
+      .generatedAlwaysAsIdentity()
+      .notNull(),
     kind: text("kind").notNull(),
     /** running | ok | failed | refused | timeout | cancelled */
     status: text("status").notNull(),
@@ -173,7 +175,9 @@ export const computerActivitySteps = pgTable(
     outputTruncated: boolean("output_truncated").notNull().default(false),
     hasFrame: boolean("has_frame").notNull().default(false),
     turnPrompt: text("turn_prompt"),
-    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     durationMs: integer("duration_ms"),
   },
@@ -181,9 +185,19 @@ export const computerActivitySteps = pgTable(
     uniqueIndex("computer_activity_steps_call_uq")
       .on(table.computerId, table.toolCallId)
       .where(sql`${table.toolCallId} is not null`),
-    index("computer_activity_steps_thread_idx").on(table.threadId, table.startedAt.desc(), table.seq.desc()),
-    index("computer_activity_steps_computer_idx").on(table.computerId, table.startedAt.desc(), table.seq.desc()),
-    index("computer_activity_steps_running_idx").on(table.status).where(sql`${table.status} = 'running'`),
+    index("computer_activity_steps_thread_idx").on(
+      table.threadId,
+      table.startedAt.desc(),
+      table.seq.desc(),
+    ),
+    index("computer_activity_steps_computer_idx").on(
+      table.computerId,
+      table.startedAt.desc(),
+      table.seq.desc(),
+    ),
+    index("computer_activity_steps_running_idx")
+      .on(table.status)
+      .where(sql`${table.status} = 'running'`),
     index("computer_activity_steps_started_idx").on(table.startedAt),
   ],
 );

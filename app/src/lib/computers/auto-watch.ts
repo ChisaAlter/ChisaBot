@@ -1,4 +1,3 @@
-import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { JUMP_TO_ACTIVITY } from "@/components/computer/activity-jump";
 import { onComputerActivity } from "@/lib/copilot/computer-activity";
@@ -38,9 +37,8 @@ export function useComputerAutoWatch(
   /** 下一次 watching 变成 true 是我们自己设的。 */
   const opening = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const navigate = useNavigate();
-  const latest = useRef({ watching, setWatching, navigate });
-  latest.current = { watching, setWatching, navigate };
+  const latest = useRef({ watching, setWatching });
+  latest.current = { watching, setWatching };
 
   // 打开 / 关闭的来源：我们设的是自动，其余都是用户手动。
   const previous = useRef(watching);
@@ -69,12 +67,16 @@ export function useComputerAutoWatch(
       if (activity.botId !== agentId) return;
       runEpoch.current = activity.epoch;
       clearTimeout(timer.current);
-      if (!latest.current.watching && dismissedEpoch.current !== activity.epoch) {
+      if (
+        !latest.current.watching &&
+        dismissedEpoch.current !== activity.epoch
+      ) {
         opening.current = true;
         latest.current.setWatching(true);
       }
       timer.current = setTimeout(() => {
-        if (!auto.current || engaged.current || !latest.current.watching) return;
+        if (!auto.current || engaged.current || !latest.current.watching)
+          return;
         auto.current = false;
         latest.current.setWatching(false);
       }, RETURN_AFTER_MS);
@@ -91,41 +93,18 @@ export function useComputerAutoWatch(
   }, [agentId]);
 }
 
-/** 和 ComputerPanel 的分段标签同一个断点：≥768 没有「画面 | 活动」分段。 */
-export const DESKTOP_JUMP_QUERY = "(min-width: 768px)";
-
 /**
- * 「在活动里看」怎么把计算机亮出来（CB-101）：**不多压 history**。
+ * 「在活动里看」怎么把计算机亮出来（CB-101）：和人手动切到「计算机」走**同一条路径**，所有宽度都一样。
  *
- * - 右栏 / 抽屉用 {@link showPanels} 打开：和人点「打开面板」走同一个入口（窄窗口 = `setPanelSheetOpen(true)`）。
- *   返回栈（#315 的 overlay-back）挂在这个入口上，所以跳转压的 marker 和手动打开完全一样，只有一个，
- *   按一次返回就关掉抽屉。#315 重做时如果换了打开抽屉的入口，这里跟着换。
- * - 切到「计算机」标签用 replace 改地址里的 `watch`：抽屉已经开着时，切标签不写 history。
- * - 已经在「计算机」上：什么都不做，移动端由 ComputerPanel 切到「活动」（也不走路由）。
+ * 手动路径：窄窗口点把手「打开面板」（`setPanelSheetOpen(true)`，不写 history）→ 抽屉里点「计算机」
+ * （RailSwitch → `toggleComputer` → `setWatching(true)`，push 一条 `watch=true`）；宽窗口右栏直接点「计算机」。
+ * 所以这里：{@link showPanels} 打开右栏/抽屉，没在看计算机时 `setWatching(true)` push 一条；已经在看就不写
+ * history（手动在同样情况下也不写），移动端由 ComputerPanel 切到「活动」（也不走路由）。
  */
 export function openForActivityJump(current: {
   watching: boolean;
   setWatching: (open: boolean) => void;
-  navigate: ReturnType<typeof useNavigate>;
 }): void {
   showPanels();
-  if (current.watching) return;
-  /*
-   * 桌面端（≥768，没有「画面 | 活动」分段）：和人在右栏切到「计算机」完全一样，走 setWatching（push 一条
-   * `watch=true`）。返回 = 关掉计算机、留在对话里，不会直接离开页面。窄屏才用下面的 replace。
-   */
-  if (
-    typeof window !== "undefined" &&
-    window.matchMedia(DESKTOP_JUMP_QUERY).matches
-  ) {
-    current.setWatching(true);
-    return;
-  }
-  void current.navigate({
-    search: ((previous: Record<string, unknown>) => ({
-      ...previous,
-      watch: true,
-    })) as never,
-    replace: true,
-  });
+  if (!current.watching) current.setWatching(true);
 }

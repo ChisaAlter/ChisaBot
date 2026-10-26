@@ -1,5 +1,5 @@
-import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { PendingApprovals } from "@/components/approvals/inline-approval";
+import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import type { VisibleChatItem } from "./chat-messages";
 import { ToolLine } from "./tool-line";
 
@@ -111,9 +111,7 @@ export function BrowserActivity({
               ? `浏览了 ${pages} ${pages === 1 ? "页" : "页"}`
               : "浏览器活动"
         }
-        detail={
-          issues ? `${issues} 项问题` : undefined
-        }
+        detail={issues ? `${issues} 项问题` : undefined}
         running={running}
       >
         <ol className="space-y-2 py-1">
@@ -133,7 +131,10 @@ export function BrowserActivity({
                     {step.title ?? step.href}
                   </a>
                 ) : null}
-                <ActivityJumpButton name={step.toolCall.function.name} toolCallId={step.toolCall.id} />
+                <ActivityJumpButton
+                  name={step.toolCall.function.name}
+                  toolCallId={step.toolCall.id}
+                />
                 {step.pending && (
                   <span className="text-muted-foreground">
                     {active ? "进行中" : "未完成"}

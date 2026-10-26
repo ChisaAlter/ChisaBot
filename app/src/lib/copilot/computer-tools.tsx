@@ -1,9 +1,22 @@
-import { formatBytes } from "../../../../shared/computer-activity-labels";
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
-import { CommandOutput } from "@/components/computer/command-output";
 import { BrowseChip } from "@/components/computer/browse-chip";
-import { keepShot, ScreenshotCard, shrinkPng } from "@/components/computer/screenshot-card";
+import { CommandOutput } from "@/components/computer/command-output";
+import {
+  keepShot,
+  ScreenshotCard,
+  shrinkPng,
+} from "@/components/computer/screenshot-card";
+import { syncStartLinks } from "@/lib/browser-bookmarks";
+import { tryClient } from "@/lib/client";
+import { noteBrowsed, recordActivity } from "@/lib/computers/activity";
+import { callComputer, type ToolOutcome } from "@/lib/computers/call";
+import { type ControlState, readControl } from "@/lib/computers/control";
+import {
+  runBrowserRead,
+  runHelpRequest,
+  runNavigation,
+} from "@/lib/computers/handoff";
 import { readScreenshot } from "@/lib/computers/screen";
 import {
   describeComputerToolCall,
@@ -11,22 +24,13 @@ import {
   reportComputerActivity,
   reportComputerStatus,
 } from "@/lib/copilot/computer-activity";
-import { tryClient } from "@/lib/client";
-import { syncStartLinks } from "@/lib/browser-bookmarks";
-import { noteBrowsed, recordActivity } from "@/lib/computers/activity";
-import { callComputer, type ToolOutcome } from "@/lib/computers/call";
 import {
   COMMAND_DEFAULT_TIMEOUT_SEC,
   COMMAND_MAX_TIMEOUT_SEC,
   COMMAND_TIMEOUT_GUIDE,
   normalizeCommandTimeout,
 } from "../../../../shared/command-timeout";
-import { type ControlState, readControl } from "@/lib/computers/control";
-import {
-  runBrowserRead,
-  runHelpRequest,
-  runNavigation,
-} from "@/lib/computers/handoff";
+import { formatBytes } from "../../../../shared/computer-activity-labels";
 import { useActiveBotHolder } from "./active-bot";
 import { useFrontendTool } from "./approval-tools";
 import { useComputerAvailable } from "./computer-available";
@@ -272,7 +276,9 @@ export function ComputerTools() {
       // 一行小条（BrowseChip），画面在右栏「计算机」里；失败 / 拒绝时说清楚。
       return (
         <BrowseChip
-          state={!finished ? "running" : outcome.ok === false ? "failed" : "done"}
+          state={
+            !finished ? "running" : outcome.ok === false ? "failed" : "done"
+          }
           {...(page?.title ? { title: page.title } : {})}
           {...(page?.url
             ? { url: page.url }
@@ -312,18 +318,43 @@ export function ComputerTools() {
       "e.g. to compare two pages). action=switch makes tab `id` active. action=close closes tab `id`. " +
       "At most 8 tabs; close ones you no longer need. If a person has taken control, wait for them.",
     parameters: z.object({
-      action: z.enum(["list", "new", "switch", "close"]).describe("What to do."),
-      id: z.string().optional().describe("Tab id from action=list, for switch / close."),
-      url: z.string().optional().describe("For action=new: the page to open in the new tab (full https:// address)."),
+      action: z
+        .enum(["list", "new", "switch", "close"])
+        .describe("What to do."),
+      id: z
+        .string()
+        .optional()
+        .describe("Tab id from action=list, for switch / close."),
+      url: z
+        .string()
+        .optional()
+        .describe(
+          "For action=new: the page to open in the new tab (full https:// address).",
+        ),
     }),
     handler: async (
-      { action, id, url }: { action: "list" | "new" | "switch" | "close"; id?: string; url?: string },
-      { signal, toolCall }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
+      {
+        action,
+        id,
+        url,
+      }: {
+        action: "list" | "new" | "switch" | "close";
+        id?: string;
+        url?: string;
+      },
+      {
+        signal,
+        toolCall,
+      }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
-      if (action === "list") return callComputer(computerId, "/tabs", undefined, signal);
+      if (action === "list")
+        return callComputer(computerId, "/tabs", undefined, signal);
       if ((action === "switch" || action === "close") && !id)
-        return { ok: false, reason: "Pass the tab id from computer_tabs action=list." };
+        return {
+          ok: false,
+          reason: "Pass the tab id from computer_tabs action=list.",
+        };
       const result = await callComputer(
         computerId,
         "/tabs",
@@ -332,7 +363,9 @@ export function ComputerTools() {
           body: {
             action: action === "switch" ? "activate" : action,
             ...(id ? { id } : {}),
-            ...(url ? { url, ...(toolCall?.id ? { toolCallId: toolCall.id } : {}) } : {}),
+            ...(url
+              ? { url, ...(toolCall?.id ? { toolCallId: toolCall.id } : {}) }
+              : {}),
           },
         },
         signal,
@@ -348,9 +381,13 @@ export function ComputerTools() {
       if (a.action !== "new" || !a.url) return null;
       return (
         <BrowseChip
-          state={!finished ? "running" : outcome.ok === false ? "failed" : "done"}
+          state={
+            !finished ? "running" : outcome.ok === false ? "failed" : "done"
+          }
           url={a.url}
-          {...(typeof outcome.page === "object" && outcome.page && typeof (outcome.page as { title?: unknown }).title === "string"
+          {...(typeof outcome.page === "object" &&
+          outcome.page &&
+          typeof (outcome.page as { title?: unknown }).title === "string"
             ? { title: (outcome.page as { title: string }).title }
             : {})}
         />
@@ -369,59 +406,120 @@ export function ComputerTools() {
       "ONLY do add/remove when the person explicitly asks you to bookmark (收藏) or un-bookmark something.",
     parameters: z.object({
       action: z.enum(["list", "open", "add", "remove"]),
-      id: z.string().optional().describe("Bookmark id from action=list, for open / remove."),
-      url: z.string().optional().describe("For add: the address to bookmark. Omit to bookmark the active tab."),
+      id: z
+        .string()
+        .optional()
+        .describe("Bookmark id from action=list, for open / remove."),
+      url: z
+        .string()
+        .optional()
+        .describe(
+          "For add: the address to bookmark. Omit to bookmark the active tab.",
+        ),
       title: z.string().optional().describe("For add: a short name."),
       newTab: z.boolean().optional().describe("For open: open in a new tab."),
     }),
     handler: async (
-      input: { action: "list" | "open" | "add" | "remove"; id?: string; url?: string; title?: string; newTab?: boolean },
-      { signal, toolCall }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
+      input: {
+        action: "list" | "open" | "add" | "remove";
+        id?: string;
+        url?: string;
+        title?: string;
+        newTab?: boolean;
+      },
+      {
+        signal,
+        toolCall,
+      }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
-      const listed = await tryClient("/api/browser-bookmarks", signal ? { signal } : {}).catch(() => null);
-      const listBody = (await listed?.json().catch(() => null)) as { bookmarks?: { id: string; title: string; url: string }[] } | null;
-      if (!listed?.ok || !listBody?.bookmarks) return { ok: false, reason: "The bookmarks could not be read." };
-      const bookmarks = listBody.bookmarks.map(({ id, title, url }) => ({ id, title, url }));
+      const listed = await tryClient(
+        "/api/browser-bookmarks",
+        signal ? { signal } : {},
+      ).catch(() => null);
+      const listBody = (await listed?.json().catch(() => null)) as {
+        bookmarks?: { id: string; title: string; url: string }[];
+      } | null;
+      if (!listed?.ok || !listBody?.bookmarks)
+        return { ok: false, reason: "The bookmarks could not be read." };
+      const bookmarks = listBody.bookmarks.map(({ id, title, url }) => ({
+        id,
+        title,
+        url,
+      }));
       if (input.action === "list") return { ok: true, bookmarks };
       if (input.action === "open") {
         const found = bookmarks.find((bookmark) => bookmark.id === input.id);
-        if (!found) return { ok: false, reason: "No bookmark with that id; call action=list first." };
+        if (!found)
+          return {
+            ok: false,
+            reason: "No bookmark with that id; call action=list first.",
+          };
         if (input.newTab) {
           const result = await callComputer(
             computerId,
             "/tabs",
-            { method: "POST", body: { action: "new", url: found.url, ...(toolCall?.id ? { toolCallId: toolCall.id } : {}) } },
+            {
+              method: "POST",
+              body: {
+                action: "new",
+                url: found.url,
+                ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
+              },
+            },
             signal,
           );
           if (result.ok) noteBrowsed(computerId);
           return result;
         }
-        const result = await runNavigation(computerId, found.url, toolCall?.id, signal);
+        const result = await runNavigation(
+          computerId,
+          found.url,
+          toolCall?.id,
+          signal,
+        );
         if (result.ok) noteBrowsed(computerId);
         return result;
       }
       if (input.action === "remove") {
         if (!input.id) return { ok: false, reason: "Pass the bookmark id." };
-        const response = await tryClient(`/api/browser-bookmarks/${encodeURIComponent(input.id)}`, { method: "DELETE" }).catch(() => null);
+        const response = await tryClient(
+          `/api/browser-bookmarks/${encodeURIComponent(input.id)}`,
+          { method: "DELETE" },
+        ).catch(() => null);
         if (response?.ok) syncStartLinks(computerId);
-        return response?.ok ? { ok: true, removed: input.id } : { ok: false, reason: "That bookmark could not be removed." };
+        return response?.ok
+          ? { ok: true, removed: input.id }
+          : { ok: false, reason: "That bookmark could not be removed." };
       }
       let url = input.url;
       if (!url) {
         const tabs = await callComputer(computerId, "/tabs", undefined, signal);
         const active = Array.isArray(tabs.tabs)
-          ? (tabs.tabs as { active?: boolean; url?: string }[]).find((tab) => tab.active)
+          ? (tabs.tabs as { active?: boolean; url?: string }[]).find(
+              (tab) => tab.active,
+            )
           : undefined;
         url = active?.url;
-        if (!url || !/^https?:\/\//i.test(url)) return { ok: false, reason: "The active tab is not a web page; pass url." };
+        if (!url || !/^https?:\/\//i.test(url))
+          return {
+            ok: false,
+            reason: "The active tab is not a web page; pass url.",
+          };
       }
       const response = await tryClient("/api/browser-bookmarks", {
         method: "POST",
         body: { url, ...(input.title ? { title: input.title } : {}) },
       }).catch(() => null);
-      const body = (await response?.json().catch(() => null)) as { bookmark?: unknown; error?: string } | null;
-      if (!response?.ok) return { ok: false, reason: body?.error ?? "That page could not be bookmarked." };
+      const body = (await response?.json().catch(() => null)) as {
+        bookmark?: unknown;
+        error?: string;
+      } | null;
+      if (!response?.ok)
+        return {
+          ok: false,
+          reason: body?.error ?? "That page could not be bookmarked.",
+        };
       syncStartLinks(computerId);
       return { ok: true, bookmark: body?.bookmark };
     },
@@ -438,9 +536,13 @@ export function ComputerTools() {
             : undefined;
       return (
         <BrowseChip
-          state={!finished ? "running" : outcome.ok === false ? "failed" : "done"}
+          state={
+            !finished ? "running" : outcome.ok === false ? "failed" : "done"
+          }
           {...(opened ? { url: opened } : {})}
-          {...(typeof outcome.title === "string" ? { title: outcome.title } : {})}
+          {...(typeof outcome.title === "string"
+            ? { title: outcome.title }
+            : {})}
         />
       );
     },
@@ -455,24 +557,48 @@ export function ComputerTools() {
       "Use it only when they ask for a screenshot / 截图 / 截个图 (open the page first with computer_navigate). " +
       "You do not see the image; answer from computer_navigate / computer_read text.",
     parameters: z.object({}),
-    handler: async (_input: Record<string, never>, { toolCall }: { toolCall?: { id?: string } } = {}) => {
+    handler: async (
+      _input: Record<string, never>,
+      { toolCall }: { toolCall?: { id?: string } } = {},
+    ) => {
       const computerId = bot.current;
       reportComputerActivity(computerId);
       const { frame, error } = await readScreenshot(computerId);
       if (!frame) return { ok: false, reason: error ?? "没截到图" };
       try {
-        if (toolCall?.id) keepShot(toolCall.id, await shrinkPng(frame.base64), frame.url, computerId ?? undefined);
+        if (toolCall?.id)
+          keepShot(
+            toolCall.id,
+            await shrinkPng(frame.base64),
+            frame.url,
+            computerId ?? undefined,
+          );
       } catch {}
-      return { ok: true, shown: true, url: frame.url ?? null, note: "截图已显示在对话里，不要再描述截图本身，直接回答用户。" };
+      return {
+        ok: true,
+        shown: true,
+        url: frame.url ?? null,
+        note: "截图已显示在对话里，不要再描述截图本身，直接回答用户。",
+      };
     },
-    render: ({ result, status, toolCallId }: { result?: string; status: string; toolCallId?: string }) => {
+    render: ({
+      result,
+      status,
+      toolCallId,
+    }: {
+      result?: string;
+      status: string;
+      toolCallId?: string;
+    }) => {
       const finished = status === "complete" || result !== undefined;
       const outcome = finished ? outcomeOf(result) : {};
       return (
         <ScreenshotCard
           id={toolCallId}
           running={!finished}
-          {...(outcome.ok === false ? { failed: outcome.reason ?? "没截到图" } : {})}
+          {...(outcome.ok === false
+            ? { failed: outcome.reason ?? "没截到图" }
+            : {})}
           {...(typeof outcome.url === "string" ? { url: outcome.url } : {})}
         />
       );
@@ -505,9 +631,7 @@ export function ComputerTools() {
           running={status !== "complete"}
           label={"读取页面"}
           detail={
-            elements.length
-              ? `${elements.length} 个可操作元素`
-              : undefined
+            elements.length ? `${elements.length} 个可操作元素` : undefined
           }
         />
       );
@@ -521,7 +645,7 @@ export function ComputerTools() {
       "Enter text into a field on the page. Give the ref of the field from your most recent " +
       "snapshot and the snapshotId it came from. This replaces whatever the field already contains. " +
       "Set submit to true to press Enter afterwards. For a dropdown (a combobox with `options` in the " +
-      "snapshot) give one option's text or value, e.g. \"Jul\" or \"7\" for a month, \"2000\" for a year: " +
+      'snapshot) give one option\'s text or value, e.g. "Jul" or "7" for a month, "2000" for a year: ' +
       "this selects it directly. Do not click a dropdown open or press keys on it.",
     parameters: z.object({
       ref: z
@@ -554,7 +678,8 @@ export function ComputerTools() {
       ),
     render: ({ args, result, status }) => {
       const field =
-        labelOf(result) ?? (typeof args?.ref === "string" ? args.ref : undefined);
+        labelOf(result) ??
+        (typeof args?.ref === "string" ? args.ref : undefined);
       // 原生下拉框（§100）：选中的是页面上的一个选项，不是输入的内容，可以显示。
       const picked = selectedLabel(result);
       return (
@@ -807,7 +932,10 @@ export function ComputerTools() {
     }),
     handler: async (
       input: { path?: string },
-      { signal, toolCall }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
+      {
+        signal,
+        toolCall,
+      }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
       const result = await callComputer(
@@ -860,7 +988,10 @@ export function ComputerTools() {
     }),
     handler: async (
       input: { path: string },
-      { signal, toolCall }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
+      {
+        signal,
+        toolCall,
+      }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
       const result = await callComputer(
@@ -931,7 +1062,10 @@ export function ComputerTools() {
     }),
     handler: async (
       input: { command: string; timeoutSec?: number; timeoutMs?: number },
-      { signal, toolCall }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
+      {
+        signal,
+        toolCall,
+      }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
       // 直连 /exec 时（没有对话快照的界面）也要折算：路由只认整数毫秒 1000–600000。
@@ -1033,7 +1167,10 @@ export function ComputerTools() {
         contents: string;
         append?: boolean;
       },
-      { signal, toolCall }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
+      {
+        signal,
+        toolCall,
+      }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
       const result = await callComputer(

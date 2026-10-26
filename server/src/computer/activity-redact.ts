@@ -94,56 +94,63 @@ const SHORT_FLAG_COMMANDS: Record<string, ShortFlagRule> = {
   smbclient: { userinfo: ["-U"] },
 };
 
-/** 不改变「哪个命令」的前缀词：输出里的提示符（$ # >）、sudo、env、time、nohup…，以及 FOO=bar 这样的环境变量。 */
-const WRAPPERS = new Set(["$", "#", ">", "sudo", "env", "time", "nohup", "exec", "command", "nice", "doas"]);
-
 /** 一个 shell 词：引号段和非空白段连在一起算一个（`-p"hunter 2"` 是一个词）。 */
 const WORD = /(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'|;&])+/g;
 
+/** 词尾收口的反引号/括号（`x=\`mysql -pPW\``、`(sshpass -p PW)`）保留下来，别跟口令一起吞掉。 */
+function closers(text: string): string {
+  return /[`)\]}]+$/.exec(text)?.[0] ?? "";
+}
+
+/**
+ * 一个词是不是表里的命令：去掉结尾的引号/括号/标点、路径前缀和开头的标点（`(sshpass`、`/usr/bin/sshpass`、
+ * `"mysql`），剩下的名字正好在表里才算。词本身由空白或 shell 分隔符切开，所以命令前面只能是行首、空白或标点。
+ */
+function commandRule(text: string): ShortFlagRule | undefined {
+  const name = text
+    .replace(/["'`)\]},;:]+$/, "")
+    .replace(/^.*[^A-Za-z0-9_.+-]/, "");
+  return Object.hasOwn(SHORT_FLAG_COMMANDS, name)
+    ? SHORT_FLAG_COMMANDS[name]
+    : undefined;
+}
+
+/**
+ * 在一段文本里**任意位置**找表里的命令并打它的短参数：不只是行首的命令，也包括输出里的回显
+ * （`echo sshpass -p x`、`set -x` 的 `+ mysql -px`、`ps aux` 一行末尾的命令、`history` 的 `12  curl -u u:x`）。
+ * 遇到下一个表里的命令就换成它的规则；`wraps` 的命令（sshpass）到第一个位置参数就停，后面那条命令
+ * （`ssh -p 22`）不在表里就不打。
+ */
 function redactShortFlags(segment: string): string {
   const words = [...segment.matchAll(WORD)].map((m) => ({
     text: m[0],
     start: m.index ?? 0,
   }));
-  let i = 0;
-  while (i < words.length) {
-    const text = words[i]?.text ?? "";
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(text) || WRAPPERS.has(text)) {
-      i += 1;
-      // 包装命令自己的参数（sudo -u root、nice -n 10）也跳过，找到真正的命令。
-      while (words[i]?.text.startsWith("-")) {
-        const flag = words[i]?.text ?? "";
-        i += /^-[ugnCh]$/.test(flag) ? 2 : 1;
-      }
-      continue;
-    }
-    break;
-  }
-  const commandWord = words[i]?.text;
-  if (!commandWord) return segment;
-  const command = commandWord.replace(/^["']|["']$/g, "").split("/").pop() ?? "";
-  const rule = SHORT_FLAG_COMMANDS[command];
-  if (!rule) return segment;
   const edits: { start: number; end: number; text: string }[] = [];
-  for (let j = i + 1; j < words.length; j++) {
+  let rule: ShortFlagRule | undefined;
+  for (let j = 0; j < words.length; j++) {
     const word = words[j] as { text: string; start: number };
     const next = words[j + 1];
-    if (word.text === "--") break;
-    if (rule.wraps && !word.text.startsWith("-")) {
-      const rest = segment.slice(word.start);
-      edits.push({
-        start: word.start,
-        end: segment.length,
-        text: redactShortFlags(rest),
-      });
-      break;
+    const found = commandRule(word.text);
+    if (found) {
+      rule = found;
+      continue;
+    }
+    if (!rule) continue;
+    if (word.text === "--") {
+      rule = undefined;
+      continue;
     }
     if (
       rule.separate?.includes(word.text) &&
       next &&
       !next.text.startsWith("-")
     ) {
-      edits.push({ start: next.start, end: next.start + next.text.length, text: MASK });
+      edits.push({
+        start: next.start,
+        end: next.start + next.text.length,
+        text: `${MASK}${closers(next.text)}`,
+      });
       j += 1;
       continue;
     }
@@ -155,7 +162,7 @@ function redactShortFlags(segment: string): string {
         start: word.start,
         end: word.start + word.text.length,
         // 参数之后（含引号）整段换掉。
-        text: `${attached}${MASK}`,
+        text: `${attached}${MASK}${closers(word.text)}`,
       });
       continue;
     }
@@ -171,7 +178,10 @@ function redactShortFlags(segment: string): string {
         });
       }
       j += 1;
+      continue;
     }
+    // sshpass 的选项只在它要跑的命令之前；到第一个位置参数就停。
+    if (rule.wraps && !word.text.startsWith("-")) rule = undefined;
   }
   let out = segment;
   for (const edit of edits.reverse())

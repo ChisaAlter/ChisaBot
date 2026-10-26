@@ -1,27 +1,25 @@
 import "../../shared/env-compat";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
-import { createPersonalSources } from "./personal-sources/service";
-import { PanelError, type PanelCapability } from "../../shared/panels/types";
-import { createPanelServices } from "./panels/service";
-import { createNormalPanelTaskService } from "./panels/normal-task-service";
-import { recoverPanelTaskStatus } from "./panels/task-status";
-import { createGovernedPanelTaskAdapter } from "./panels/task-adapter";
-import { panelTaskRequests } from "./db/schema/panels";
 import { isDeepStrictEqual } from "node:util";
 import type { AbstractAgent, Message } from "@ag-ui/client";
 import {
-  IntelligenceAgentRunner,
   type CopilotKitIntelligence,
+  IntelligenceAgentRunner,
 } from "@copilotkit/runtime/v2";
 import { serve } from "bun";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
 import { DICTATION_HTTP_IDLE_SECONDS } from "../../shared/dictation";
+import { RENDER_UI_TOOL } from "../../shared/json-render/catalog";
+import { OPS_CODES } from "../../shared/ops-codes";
+import { bumpOps } from "../../shared/ops-counters";
+import { type PanelCapability, PanelError } from "../../shared/panels/types";
 import { buildResponsibilityTurn } from "../../shared/responsibility-turn";
 import { workOwner } from "../../shared/work-owner";
 import { createActivityStore } from "./activity/activity";
+import { createAdminSmokeRoutes, resolveSmokeHermesProbe } from "./admin-smoke";
 import {
   CoworkerUnavailableError,
   createActorAgentResolver,
@@ -43,17 +41,25 @@ import {
   createCoordinationTools,
   readCoordinationHandoffClaim,
 } from "./agents/handoff-tool";
+import { probeHermesHealth } from "./agents/hermes-health";
+import { hermesRuntimeTools } from "./agents/hermes-runtime";
+import { createRuntimeKernelRoutes } from "./agents/kernel-status";
 import {
   BotPausedError,
   configureBotLifecycle,
   createBotLifecycleStore,
 } from "./agents/lifecycle";
 import { createBotReset } from "./agents/lifecycle-reset";
-import { createAgentPurge } from "./agents/purge";
-import { createAgentProfileStore } from "./agents/profile-store";
+import {
+  createModelFallbackService,
+  createModelFallbackStore,
+} from "./agents/model-fallback-settings";
 import { createAgentModelService } from "./agents/model-selection";
+import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
+import { createAgentPurge } from "./agents/purge";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
+import { createRuntimeToolsRoutes } from "./agents/runtime-tools";
 import {
   createWakeUpRunner,
   createWakeUpStore,
@@ -92,19 +98,20 @@ import {
   recordAuditEvent,
 } from "./audit";
 import { startRetentionSweeps } from "./audit-retention";
-import { createActivityStore as createComputerActivityStore, installActivityStore } from "./computer/activity-store";
-import { withComputerActivity } from "./computer/activity-recorder";
 import { createAuth } from "./auth";
 import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
-import type { AuthService } from "./auth/guards";
-import { createRoleRepository } from "./auth/guards";
-import { type ChisaBotRole, setRole } from "./auth/roles";
 import {
   createGatewayRequireUser,
   gatewaySecretFromEnvironment,
   resolveGatewayRequest,
 } from "./auth/gateway-identity";
-import type { AuthenticatedActor } from "./auth/guards";
+import type { AuthenticatedActor, AuthService } from "./auth/guards";
+import { createRoleRepository } from "./auth/guards";
+import { type ChisaBotRole, setRole } from "./auth/roles";
+import { createBotAvatars } from "./bot-avatars/service";
+import { createBotThreads } from "./bot-threads";
+import { createBrowserBookmarks } from "./browser-bookmarks/service";
+import { readRunningBuild } from "./build-info";
 import {
   loadAttachmentForTurn,
   markAttachmentsSent,
@@ -129,15 +136,19 @@ import {
 } from "./channels/summary";
 import { createThreadIdentity } from "./channels/thread-identity";
 import { createChannelTitler } from "./channels/titler";
+import { createChannelUploadMirror } from "./chat-files/channel-mirror";
+import { createChatFiles } from "./chat-files/service";
+import { createChatShots } from "./chat-shots";
+import { createHeadlessComponentTools } from "./components/headless";
 import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
-import { createHeadlessComponentTools } from "./components/headless";
-import { hermesRuntimeTools } from "./agents/hermes-runtime";
-import { probeHermesHealth } from "./agents/hermes-health";
-import { createRuntimeKernelRoutes } from "./agents/kernel-status";
-import { createRuntimeToolsRoutes } from "./agents/runtime-tools";
-import { createComputerGateway } from "./computer/gateway";
+import { withComputerActivity } from "./computer/activity-recorder";
+import {
+  createActivityStore as createComputerActivityStore,
+  installActivityStore,
+} from "./computer/activity-store";
 import { onControlReleased } from "./computer/control-blocks";
+import { createComputerGateway } from "./computer/gateway";
 import {
   createHeadlessComputerTools,
   HeadlessToolSuspension,
@@ -160,6 +171,7 @@ import {
 import { createSnapshotStore } from "./computer/snapshot-store";
 import { streamPathBotId } from "./computer/stream-path";
 import { loadConfig } from "./config";
+import { createConfirmations } from "./confirmations/service";
 import {
   type IdentifyActor,
   type IdentifyUser,
@@ -167,9 +179,9 @@ import {
   normalizeModelBaseUrls,
   runtimeModelForEnvironment,
   setAgentKernel,
-  setModelOutputLimitResolver,
   setModelFallbackCatalog,
   setModelFallbackList,
+  setModelOutputLimitResolver,
   type ToolSelection,
 } from "./copilot";
 import {
@@ -178,6 +190,7 @@ import {
   resolveModelApiKey,
 } from "./credentials";
 import { createDatabase } from "./db/client";
+import { reasonWithoutStatement } from "./db/query-failure";
 import {
   channelAgents,
   channelMemberships,
@@ -186,6 +199,7 @@ import {
   responsibilityRuns,
   users,
 } from "./db/schema";
+import { panelTaskRequests } from "./db/schema/panels";
 import { createDeliveryStore } from "./delivery/store";
 import type { DeliveryScope } from "./delivery/types";
 import { createDeviceHub } from "./devices/hub";
@@ -193,31 +207,45 @@ import { createDeviceRoutes } from "./devices/routes";
 import { createDeviceStore } from "./devices/store";
 import { deviceTools } from "./devices/tools";
 import { executeRenderUi, renderUiTools } from "./generative-ui/render-ui";
-import { RENDER_UI_TOOL } from "../../shared/json-render/catalog";
-import { createIntelligenceClient } from "./intelligence-client";
-import { createLocalConversations } from "./local-conversations";
-import { createBotThreads } from "./bot-threads";
-import { createChatShots } from "./chat-shots";
-import { createImService, type ImService, imConnectionOf } from "./im/service";
-import { createLinkPreviews } from "./link-preview/service";
-import { createMemoryNotes } from "./memory-notes/service";
-import { createBotAvatars } from "./bot-avatars/service";
-import { createBrowserBookmarks } from "./browser-bookmarks/service";
-import { createChisaSkills } from "./skills-chisa/tools";
-import { createVault, VAULT_GUIDANCE } from "./vault/service";
 import { createGithub } from "./github/service";
+import { createImService, type ImService, imConnectionOf } from "./im/service";
+import { createIntelligenceClient } from "./intelligence-client";
+import { createLinkPreviews } from "./link-preview/service";
+import { createLivePanelService } from "./live-panels/service";
+import { createLivePanelStore } from "./live-panels/store";
+import {
+  createLocalAgentService,
+  type LocalAgentService,
+} from "./local-agents/service";
+import { createLocalConversations } from "./local-conversations";
+import { createMagpieService, readMagpieWebKey } from "./magpie";
+import { createMemoryNotes } from "./memory-notes/service";
+import { createModelCatalogService } from "./model-catalog";
+import {
+  resolveScopedAgentModelConnection,
+  resolveScopedModelConnection,
+} from "./model-connection-context";
+import {
+  createModelSettingsService,
+  createModelSettingsStore,
+} from "./model-settings";
+import { createOpsBudgetRoutes } from "./ops-budget";
+import { createDatabasePinger, createOpsHealthRoutes } from "./ops-health";
+import { flushOpsMetrics, startOpsMetricsStore } from "./ops-metrics-store";
 import { createPages } from "./pages/service";
-import { createSchedules } from "./schedules/service";
-import { createChannelUploadMirror } from "./chat-files/channel-mirror";
-import { createChatFiles } from "./chat-files/service";
-import { createConfirmations } from "./confirmations/service";
+import { createNormalPanelTaskService } from "./panels/normal-task-service";
+import { createPanelServices } from "./panels/service";
+import { createGovernedPanelTaskAdapter } from "./panels/task-adapter";
+import { recoverPanelTaskStatus } from "./panels/task-status";
 import { createSignInNotifier, createSignInResumer } from "./passwords/resume";
 import { createSignInService } from "./passwords/service";
 import { createPasswordStore } from "./passwords/store";
 import { createOnboardingStore } from "./people/onboarding";
 import { createPeopleStore } from "./people/store";
+import { createPersonalSources } from "./personal-sources/service";
 import { useComposioClient } from "./plugins/composio";
 import { createComposioClient } from "./plugins/composio-adapter";
+import { connectServiceTools } from "./plugins/connect-service";
 import { backfillComposioLogos } from "./plugins/logos";
 import { redirectUriFor } from "./plugins/oauth";
 import { createPluginStore } from "./plugins/store";
@@ -260,64 +288,44 @@ import { createTriggerIngressRoutes } from "./responsibilities/trigger-routes";
 import { useTriggerTools } from "./responsibilities/trigger-tools";
 import { createTriggerStore } from "./responsibilities/triggers";
 import type { Responsibility } from "./responsibilities/types";
-import { createTurnRunner } from "./turns/run-turn";
-import { createWorkflowEngine, type WorkflowEngine } from "./workflows/engine";
-import { createLivePanelService } from "./live-panels/service";
-import { createLivePanelStore } from "./live-panels/store";
-import { connectServiceTools } from "./plugins/connect-service";
-import { webSearch, webTools } from "./web/tools";
-import {
-  restrictNamedToolsForWorkflow,
-  restrictToolsForWorkflow,
-  filterHeadlessForWorkflow,
-  workflowToolAllowed,
-} from "./workflows/policy";
-import { createWorkflowRoutes } from "./workflows/routes";
-import { createWorkflowStore } from "./workflows/store";
-import { workflowChatTools } from "./workflows/tools";
 import { createModelCompleter } from "./routing/model";
-import {
-  createModelSettingsService,
-  createModelSettingsStore,
-} from "./model-settings";
-import {
-  resolveScopedAgentModelConnection,
-  resolveScopedModelConnection,
-} from "./model-connection-context";
-import { createModelCatalogService } from "./model-catalog";
-import { createMagpieService, readMagpieWebKey } from "./magpie";
-import { readRunningBuild } from "./build-info";
-import { createSystemUpdateRoutes, createSystemUpdateService } from "./system-update";
-import { createAdminSmokeRoutes, resolveSmokeHermesProbe } from "./admin-smoke";
-import {
-  createDatabasePinger,
-  createOpsHealthRoutes,
-} from "./ops-health";
-import { createOpsBudgetRoutes } from "./ops-budget";
-import { flushOpsMetrics, startOpsMetricsStore } from "./ops-metrics-store";
-import { OPS_CODES } from "../../shared/ops-codes";
-import { bumpOps } from "../../shared/ops-counters";
-import { createModelFallbackService, createModelFallbackStore } from "./agents/model-fallback-settings";
+import { createSchedules } from "./schedules/service";
 import { createSelfHostBanner } from "./self-host-banner";
+import { createChisaSkills } from "./skills-chisa/tools";
+import {
+  createSystemUpdateRoutes,
+  createSystemUpdateService,
+} from "./system-update";
 import { createTeamBots } from "./team-bots/team-bots";
 import {
   createPackageStatusReader,
   loadTenantPackage,
   synchronizeTenantPackage,
 } from "./tenant-package";
+import { createTurnRunner } from "./turns/run-turn";
 import { markUntrusted } from "./untrusted-content";
 import { createUserInstructionsStore } from "./user-instructions";
 import { createUserPreferencesStore } from "./user-preferences";
+import { createVault, VAULT_GUIDANCE } from "./vault/service";
+import { webSearch, webTools } from "./web/tools";
 import { repeatAfterEach } from "./work/loop";
-import { createWorkerService, type WorkerService } from "./workers/service";
-import { createLocalAgentService, type LocalAgentService } from "./local-agents/service";
-import { reasonWithoutStatement } from "./db/query-failure";
 import {
   createWorkQueue,
   DEFAULT_MAX_ATTEMPTS,
   startWorkOfferedListener,
   type WorkOfferedListener,
 } from "./work/queue";
+import { createWorkerService, type WorkerService } from "./workers/service";
+import { createWorkflowEngine, type WorkflowEngine } from "./workflows/engine";
+import {
+  filterHeadlessForWorkflow,
+  restrictNamedToolsForWorkflow,
+  restrictToolsForWorkflow,
+  workflowToolAllowed,
+} from "./workflows/policy";
+import { createWorkflowRoutes } from "./workflows/routes";
+import { createWorkflowStore } from "./workflows/store";
+import { workflowChatTools } from "./workflows/tools";
 
 /**
  * Who is asking, for a CopilotKit request.
@@ -334,10 +342,18 @@ async function resolveRequestActor(request: Request): Promise<{
   if (config.singleUser) {
     if (gatewaySecret) {
       const resolved = resolveGatewayRequest(gatewaySecret, request.headers);
-      if (resolved.kind === "refuse") throw new Error("A CopilotKit run requires a signed-in user.");
+      if (resolved.kind === "refuse")
+        throw new Error("A CopilotKit run requires a signed-in user.");
       await provisionGatewayUser(resolved.actor);
       const actor = resolved.actor;
-      return { id: actor.id, name: actor.id === DEV_ACTOR.id ? DEV_ACTOR.email : (actor.name ?? actor.id), role: actor.role };
+      return {
+        id: actor.id,
+        name:
+          actor.id === DEV_ACTOR.id
+            ? DEV_ACTOR.email
+            : (actor.name ?? actor.id),
+        role: actor.role,
+      };
     }
     return { id: DEV_ACTOR.id, name: DEV_ACTOR.email, role: DEV_ACTOR.role };
   }
@@ -451,23 +467,38 @@ const roleRepository = createRoleRepository(database);
  * 多账号（CB-040，docs/adr/0009-gateway-accounts.md）：单用户部署前面的登录网关签名告诉应用「这是谁」。
  * 第一次见到的朋友账号在 users / user_roles 建行；角色以网关为准（管理员在网关里改）。
  */
-const gatewaySecret = config.singleUser ? gatewaySecretFromEnvironment(process.env) : undefined;
-const provisionedGatewayUsers = new Map<string, { role: ChisaBotRole; at: number }>();
+const gatewaySecret = config.singleUser
+  ? gatewaySecretFromEnvironment(process.env)
+  : undefined;
+const provisionedGatewayUsers = new Map<
+  string,
+  { role: ChisaBotRole; at: number }
+>();
 async function provisionGatewayUser(actor: AuthenticatedActor): Promise<void> {
   if (actor.id === DEV_ACTOR.id) return;
   const seen = provisionedGatewayUsers.get(actor.id);
-  if (seen && seen.role === actor.role && Date.now() - seen.at < 5 * 60_000) return;
+  if (seen && seen.role === actor.role && Date.now() - seen.at < 5 * 60_000)
+    return;
   const inserted = await database
     .insert(users)
-    .values({ id: actor.id, email: actor.email, name: actor.name ?? actor.id, emailVerified: false })
+    .values({
+      id: actor.id,
+      email: actor.email,
+      name: actor.name ?? actor.id,
+      emailVerified: false,
+    })
     .onConflictDoNothing()
     .returning({ id: users.id });
   await setRole(database, actor.id, actor.role);
   // 朋友第一次进来直接到聊天（自己的「助手」），不走上游的英文引导页；名字已在邀请页设好。
-  if (inserted.length) await createOnboardingStore(database).complete(actor.id).catch(() => undefined);
+  if (inserted.length)
+    await createOnboardingStore(database)
+      .complete(actor.id)
+      .catch(() => undefined);
   provisionedGatewayUsers.set(actor.id, { role: actor.role, at: Date.now() });
 }
-if (gatewaySecret) console.info(JSON.stringify({ type: "gateway-identity", enabled: true }));
+if (gatewaySecret)
+  console.info(JSON.stringify({ type: "gateway-identity", enabled: true }));
 const loadAgentsForActor = createRuntimeAgentLoader(
   database,
   agentVault,
@@ -550,7 +581,7 @@ const policyListener = await startPolicyListener(
 const bootAuditStore = createAuditStore(database);
 // One store: the gateway writes through it, a route reads it, and the sweep below takes the old ones out.
 const pageFrameStore = createPageFrameStore(database);
-let deliveryNotifications: (
+const deliveryNotifications: (
   scope: DeliveryScope,
   input: {
     id: string;
@@ -710,50 +741,73 @@ const retentionSweeps = startRetentionSweeps(
  * 确认卡片 + 审批偏好（server/src/confirmations，DESIGN.md §58）。云端浏览器：用户在聊天里确认过付款
  * （confirm_action 类别 purchase）之后，这段对话 20 分钟内的浏览器操作不再被上游的付款安全规则交还给人。
  */
-const confirmations = createConfirmations(database, { auditStore: bootAuditStore });
+const confirmations = createConfirmations(database, {
+  auditStore: bootAuditStore,
+});
 await confirmations.ensure();
 // 机器人权限（输入框「请求批准 / 完全访问」，§97）：看得到这个机器人（自己的或共享给自己的）就能改自己那一份。
 confirmations.setBotAccess(async (actor, agentId) => {
-  const profile = await agentProfileStore.get({ id: actor.id, role: actor.role === "admin" ? "admin" : "user" }, agentId);
+  const profile = await agentProfileStore.get(
+    { id: actor.id, role: actor.role === "admin" ? "admin" : "user" },
+    agentId,
+  );
   return Boolean(profile && profile.deletedAt === null);
 });
 const confirmAwareGate: typeof approvalService.gate = async (candidate) => {
   // 网页上点「发送 / 发布 / 删除」这类按钮：服务器自己判断，按审批偏好出确认卡片（不靠机器人先调用 confirm_action）。
   if (!isApprovalRecheck() && candidate.toolRef === "computer_click") {
-    const target = (candidate.target ?? {}) as { pageUrl?: string; element?: { role?: string; name?: string } };
+    const target = (candidate.target ?? {}) as {
+      pageUrl?: string;
+      element?: { role?: string; name?: string };
+    };
     const outcome = await confirmations.pageAction({
       ownerUserId: candidate.actorId,
       agentId: candidate.botId,
-      threadId: (candidate.continuation ?? currentApprovalContext())?.threadId ?? null,
+      threadId:
+        (candidate.continuation ?? currentApprovalContext())?.threadId ?? null,
       element: target.element ?? null,
       pageUrl: target.pageUrl ?? null,
     });
     if (outcome && !outcome.ok) throw new ApprovalRefusedError(outcome.message);
   }
-  if (!isApprovalRecheck() && candidate.toolRef.startsWith("computer_") && candidate.effect !== "read") {
-    const threadId = (candidate.continuation ?? currentApprovalContext())?.threadId;
-    if (threadId && (await confirmations.purchaseConfirmed(candidate.actorId, threadId).catch(() => false))) return undefined;
+  if (
+    !isApprovalRecheck() &&
+    candidate.toolRef.startsWith("computer_") &&
+    candidate.effect !== "read"
+  ) {
+    const threadId = (candidate.continuation ?? currentApprovalContext())
+      ?.threadId;
+    if (
+      threadId &&
+      (await confirmations
+        .purchaseConfirmed(candidate.actorId, threadId)
+        .catch(() => false))
+    )
+      return undefined;
   }
   return approvalService.gate(candidate);
 };
 // CB-101：计算机活动记录。gateway 外包一层，每个动作写一条；每小时清 90 天前的记录。
 installActivityStore(createComputerActivityStore(database, config.databaseUrl));
 const computerGateway = computerProvider
-  ? withComputerActivity(createComputerGateway({
-      provider: computerProvider,
-      auditStore: bootAuditStore,
-      approvalGate: confirmAwareGate,
-      policy: () => policyStore.get(),
-      // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
-      // when the snapshot was taken by another server. A Map here would be blank on every replica
-      // but the one that snapshotted, and the boundary would decide with no element to look at.
-      snapshots: createSnapshotStore(database),
-      // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
-      // sentence on that button already promised.
-      pageFrames: pageFrameStore,
-      allowPrivateHosts: config.computer?.allowPrivateHosts,
-      token: config.computer?.token,
-    }), { pageFrames: pageFrameStore })
+  ? withComputerActivity(
+      createComputerGateway({
+        provider: computerProvider,
+        auditStore: bootAuditStore,
+        approvalGate: confirmAwareGate,
+        policy: () => policyStore.get(),
+        // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
+        // when the snapshot was taken by another server. A Map here would be blank on every replica
+        // but the one that snapshotted, and the boundary would decide with no element to look at.
+        snapshots: createSnapshotStore(database),
+        // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
+        // sentence on that button already promised.
+        pageFrames: pageFrameStore,
+        allowPrivateHosts: config.computer?.allowPrivateHosts,
+        token: config.computer?.token,
+      }),
+      { pageFrames: pageFrameStore },
+    )
   : undefined;
 
 /**
@@ -1128,12 +1182,18 @@ const modelCatalog = createModelCatalogService({
   resolveConnection: () => modelSettings.resolve(),
 });
 // 不认识的模型（走 Anthropic 协议的非 Claude 模型）按目录里的 max_output_tokens 定输出上限，别被截在 4096。
-setModelOutputLimitResolver(async (modelId) =>
-  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.maxOutputTokens,
+setModelOutputLimitResolver(
+  async (modelId) =>
+    (await modelCatalog.list()).models.find((entry) => entry.id === modelId)
+      ?.maxOutputTokens,
 );
-setModelFallbackCatalog(async () => (await modelCatalog.list()).models.map((entry) => entry.id));
+setModelFallbackCatalog(async () =>
+  (await modelCatalog.list()).models.map((entry) => entry.id),
+);
 // 设置 → 模型 →「备用模型」（DESIGN.md §61）：管理员排好的顺序优先于环境变量 / 同平台自动挑选。
-const modelFallbacks = createModelFallbackService({ store: createModelFallbackStore(database) });
+const modelFallbacks = createModelFallbackService({
+  store: createModelFallbackStore(database),
+});
 setModelFallbackList(() => modelFallbacks.models());
 /* Hermes replaces the execution loop while every host tool keeps its existing policy and identity. */
 setAgentKernel(
@@ -1141,38 +1201,62 @@ setAgentKernel(
     ? {
         kind: "hermes",
         url: config.hermesKernel.url,
-        ...(config.hermesKernel.token ? { token: config.hermesKernel.token } : {}),
+        ...(config.hermesKernel.token
+          ? { token: config.hermesKernel.token }
+          : {}),
         binding: {
-          toolGatewayUrl: process.env.CHISABOT_HERMES_TOOL_GATEWAY_URL?.trim() || `http://127.0.0.1:${config.port}/api/internal/runtime-tools`,
+          toolGatewayUrl:
+            process.env.CHISABOT_HERMES_TOOL_GATEWAY_URL?.trim() ||
+            `http://127.0.0.1:${config.port}/api/internal/runtime-tools`,
           readRun: (value) => readRunAssertion(value, config.keyEncryptionKey),
           loadSurfaceTools: async (scope) => {
             const actor = await actorFor(scope.actorId);
             const profile = await agentProfileStore.get(actor, scope.botId);
-            if (!profile) throw new Error("That Bot is no longer available to this actor.");
+            if (!profile)
+              throw new Error("That Bot is no longer available to this actor.");
             const initiator = scope.initiator ?? PERSON_INITIATOR;
             const imConnection = imConnectionOf(initiator);
-            const allowDevices = !imConnection || imService?.allowsDevices(imConnection) === true;
-            const computer = computerGateway && allowDevices && canUseComputer(profile, actor)
-              ? createHeadlessComputerTools({
-                  gateway: computerGateway,
+            const allowDevices =
+              !imConnection || imService?.allowsDevices(imConnection) === true;
+            const computer =
+              computerGateway && allowDevices && canUseComputer(profile, actor)
+                ? createHeadlessComputerTools({
+                    gateway: computerGateway,
+                    botId: scope.botId,
+                    actor: { id: actor.id, userId: actor.id, initiator },
+                    auditStore: bootAuditStore,
+                    ...(signInService ? { signIn: signInService } : {}),
+                  })
+                : [];
+            const components = !imConnection
+              ? await createHeadlessComponentTools({
+                  store: componentStore,
                   botId: scope.botId,
-                  actor: { id: actor.id, userId: actor.id, initiator },
+                  ownerUserId: scope.actorId,
+                  initiator,
                   auditStore: bootAuditStore,
-                  ...(signInService ? { signIn: signInService } : {}),
                 })
               : [];
-            const components = !imConnection ? await createHeadlessComponentTools({
-              store: componentStore, botId: scope.botId, ownerUserId: scope.actorId, initiator, auditStore: bootAuditStore,
-            }) : [];
-            const allowed = filterHeadlessForWorkflow(initiator, [...computer, ...components]);
+            const allowed = filterHeadlessForWorkflow(initiator, [
+              ...computer,
+              ...components,
+            ]);
             return allowed.map((tool) => ({
               ...tool,
               execute: async (args, context) => {
                 if (!workflowToolAllowed(initiator, tool.definition.name))
-                  throw new ApprovalRefusedError("This workflow no longer permits that tool.");
+                  throw new ApprovalRefusedError(
+                    "This workflow no longer permits that tool.",
+                  );
                 const fresh = await agentProfileStore.get(actor, scope.botId);
-                if (!fresh || (tool.definition.name.startsWith("computer_") && !canUseComputer(fresh, actor)))
-                  throw new ApprovalRefusedError("That Bot or computer is no longer available to this actor.");
+                if (
+                  !fresh ||
+                  (tool.definition.name.startsWith("computer_") &&
+                    !canUseComputer(fresh, actor))
+                )
+                  throw new ApprovalRefusedError(
+                    "That Bot or computer is no longer available to this actor.",
+                  );
                 return tool.execute(args, context);
               },
             }));
@@ -1260,18 +1344,25 @@ const chooseSkills = createModelCompleter({
 
 // Named collaborators are bound once in actorAgentResolver for chat, hops, and headless turns.
 
-
 // PC 节点（docs/pc-node.md）：设备登记在数据库，在线连接在内存里的 hub。
 const deviceStore = createDeviceStore(database);
 await deviceStore.ensure();
-const deviceHub = createDeviceHub({ store: deviceStore, confirm: confirmations.deviceHook });
-confirmations.setDeviceDecider((approvalId, approved) => deviceHub.decide(approvalId, approved, "web"));
+const deviceHub = createDeviceHub({
+  store: deviceStore,
+  confirm: confirmations.deviceHook,
+});
+confirmations.setDeviceDecider((approvalId, approved) =>
+  deviceHub.decide(approvalId, approved, "web"),
+);
 // 2026-10-14：旧版登记、能力仍是出厂「全部关闭」且没人改过配置的电脑 → 新默认「全部询问」（每次审批）。
 // 幂等，用户自己关掉的不动；CHISABOT_DEVICE_ASK_DEFAULTS=0 关掉。
 if (process.env.CHISABOT_DEVICE_ASK_DEFAULTS !== "0") {
   try {
     const adopted = await deviceStore.adoptAskDefaults();
-    if (adopted.length) console.log(JSON.stringify({ type: "device-defaults-ask", count: adopted.length }));
+    if (adopted.length)
+      console.log(
+        JSON.stringify({ type: "device-defaults-ask", count: adopted.length }),
+      );
   } catch (error) {
     console.warn("adopting device ask defaults failed", error);
   }
@@ -1299,16 +1390,27 @@ const deviceToolsFor = async (
     const workspace = gateway?.writeBytes
       ? {
           write: async (path: string, bytes: Buffer) => {
-            await gateway.writeBytes!(botId, { id: actorId, userId: actorId, initiator: PERSON_INITIATOR }, { path, base64: bytes.toString("base64") });
+            await gateway.writeBytes!(
+              botId,
+              { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
+              { path, base64: bytes.toString("base64") },
+            );
             return true;
           },
           read: async (path: string) => {
-            const file = await gateway.downloadFile(botId, { id: actorId, userId: actorId, initiator: PERSON_INITIATOR }, { path });
+            const file = await gateway.downloadFile(
+              botId,
+              { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
+              { path },
+            );
             if (file.bytes > 200 * 1024 * 1024) {
               await file.body.cancel().catch(() => {});
               throw new Error(`文件 ${path} 超过 200 MB。`);
             }
-            return { bytes: Buffer.from(await new Response(file.body).arrayBuffer()), name: file.name };
+            return {
+              bytes: Buffer.from(await new Response(file.body).arrayBuffer()),
+              name: file.name,
+            };
           },
         }
       : undefined;
@@ -1350,7 +1452,12 @@ await botAvatars.ensure();
 const browserBookmarks = createBrowserBookmarks(database, {
   agents: agentProfileStore,
   ...(computerGateway?.startLinks
-    ? { pushStartLinks: (botId: string, links: { title: string; url: string }[]) => computerGateway.startLinks!(botId, links) }
+    ? {
+        pushStartLinks: (
+          botId: string,
+          links: { title: string; url: string }[],
+        ) => computerGateway.startLinks!(botId, links),
+      }
     : {}),
 });
 await browserBookmarks.ensure();
@@ -1358,25 +1465,52 @@ await browserBookmarks.ensure();
 const vault = createVault(database, { encryptionKey: config.keyEncryptionKey });
 await vault.ensure();
 /** GitHub 账号连接（DESIGN.md §53）：令牌在保险箱（保留名 github），读直接做，写先在聊天里确认。 */
-const github = createGithub(database, { vault, apiBase: process.env.CHISABOT_GITHUB_API_BASE });
+const github = createGithub(database, {
+  vault,
+  apiBase: process.env.CHISABOT_GITHUB_API_BASE,
+});
 await github.ensure();
 /** 个人日程与收件箱只读接入（CB-013）+ 每日晨报（CB-014）。 */
-const personalSources = createPersonalSources(database, { encryptionKey: config.keyEncryptionKey });
+const personalSources = createPersonalSources(database, {
+  encryptionKey: config.keyEncryptionKey,
+});
 await personalSources.ensure();
 /** 页面（DESIGN.md §54）：机器人做的单页网页，/p/<随机串>/ 公开可看（沙箱 CSP），设置 → 页面。 */
 const pages = createPages(database, {
   publicUrl: process.env.CHISABOT_PUBLIC_URL?.trim() || null,
   ...(computerGateway
     ? {
-        readBotFile: async ({ ownerUserId, botId, path, initiator }: { ownerUserId: string; botId: string; path: string; initiator?: AuditInitiator }) => {
+        readBotFile: async ({
+          ownerUserId,
+          botId,
+          path,
+          initiator,
+        }: {
+          ownerUserId: string;
+          botId: string;
+          path: string;
+          initiator?: AuditInitiator;
+        }) => {
           const actor = await actorFor(ownerUserId);
-          if (!(await agentProfileStore.get(actor, botId))) throw new Error("That Bot is not available to this owner.");
-          const file = await computerGateway.downloadFile(botId, { id: actor.id, userId: actor.id, ...(initiator ? { initiator } : {}) }, { path });
+          if (!(await agentProfileStore.get(actor, botId)))
+            throw new Error("That Bot is not available to this owner.");
+          const file = await computerGateway.downloadFile(
+            botId,
+            {
+              id: actor.id,
+              userId: actor.id,
+              ...(initiator ? { initiator } : {}),
+            },
+            { path },
+          );
           if (file.bytes > 8 * 1024 * 1024 + 1) {
             await file.body.cancel().catch(() => {});
             throw new Error(`file too large: ${path}`);
           }
-          return { bytes: new Uint8Array(await new Response(file.body).arrayBuffer()), name: file.name };
+          return {
+            bytes: new Uint8Array(await new Response(file.body).arrayBuffer()),
+            name: file.name,
+          };
         },
       }
     : {}),
@@ -1386,25 +1520,48 @@ const chatFiles = createChatFiles(database, {
   encryptionKey: config.keyEncryptionKey,
   // 识图模型（DESIGN.md §59）：主模型能不能看图看模型目录（Magpie 的 input modalities），不知道就当能。
   mainModelSupportsImages: async (agentId) => {
-    const modelId = (await agentModels.resolveModel(agentId).catch(() => null)) ?? (await resolveRuntimeConnection()).model.defaultModel;
-    return (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsImages;
+    const modelId =
+      (await agentModels.resolveModel(agentId).catch(() => null)) ??
+      (await resolveRuntimeConnection()).model.defaultModel;
+    return (await modelCatalog.list()).models.find(
+      (entry) => entry.id === modelId,
+    )?.supportsImages;
   },
   isAdmin: async (userId) => (await actorFor(userId)).role === "admin",
-  ownsBot: async (owner, bot) => (await agentProfileStore.get(await actorFor(owner), bot).catch(() => null)) !== null,
+  ownsBot: async (owner, bot) =>
+    (await agentProfileStore
+      .get(await actorFor(owner), bot)
+      .catch(() => null)) !== null,
   ...(computerGateway?.writeBytes
     ? {
         workspace: {
-          write: async (owner: string, bot: string, path: string, bytes: Buffer) => {
-            await computerGateway.writeBytes!(bot, { id: owner, userId: owner, initiator: PERSON_INITIATOR }, { path, base64: bytes.toString("base64") });
+          write: async (
+            owner: string,
+            bot: string,
+            path: string,
+            bytes: Buffer,
+          ) => {
+            await computerGateway.writeBytes!(
+              bot,
+              { id: owner, userId: owner, initiator: PERSON_INITIATOR },
+              { path, base64: bytes.toString("base64") },
+            );
             return true;
           },
           read: async (owner: string, bot: string, path: string) => {
-            const file = await computerGateway.downloadFile(bot, { id: owner, userId: owner, initiator: PERSON_INITIATOR }, { path });
+            const file = await computerGateway.downloadFile(
+              bot,
+              { id: owner, userId: owner, initiator: PERSON_INITIATOR },
+              { path },
+            );
             if (file.bytes > 20 * 1024 * 1024) {
               await file.body.cancel().catch(() => {});
               throw new Error(`文件 ${path} 超过 20 MB。`);
             }
-            return { bytes: Buffer.from(await new Response(file.body).arrayBuffer()), name: file.name };
+            return {
+              bytes: Buffer.from(await new Response(file.body).arrayBuffer()),
+              name: file.name,
+            };
           },
         },
       }
@@ -1416,7 +1573,12 @@ await chatFiles.ensure();
 setChannelUploadMirror(
   createChannelUploadMirror({
     botsInChannel: async (channelId) =>
-      (await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM channel_agents WHERE channel_id = $1", [channelId])).map((row) => row.agent_id),
+      (
+        await database.$client.unsafe<{ agent_id: string }[]>(
+          "SELECT agent_id FROM channel_agents WHERE channel_id = $1",
+          [channelId],
+        )
+      ).map((row) => row.agent_id),
     upload: (owner, agentId, file) => chatFiles.upload(owner, agentId, file),
   }),
 );
@@ -1438,18 +1600,19 @@ const currentDateContext = () => {
   }).format(now);
   return `【当前时间】${zh}（时区：${tz}，ISO：${now.toISOString()}）。回答今天几月几号、星期几、当前时间或计算相对日期（明天、下周等）时直接据此作答，无需调用 computer_run_command 运行 date。`;
 };
-const loadPersonalMemoryForActor = (ownerUserId: string) => async (botId: string) =>
-  [
-    currentDateContext(),
-    await memoryNotes.context(ownerUserId, botId).catch(() => ""),
-    await chisaSkills.catalog(ownerUserId).catch(() => ""),
-    VAULT_GUIDANCE,
-    await github.guidance(ownerUserId).catch(() => ""),
-    await chatFiles.guidance(ownerUserId, botId).catch(() => ""),
-    await confirmations.context(ownerUserId, botId).catch(() => ""),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+const loadPersonalMemoryForActor =
+  (ownerUserId: string) => async (botId: string) =>
+    [
+      currentDateContext(),
+      await memoryNotes.context(ownerUserId, botId).catch(() => ""),
+      await chisaSkills.catalog(ownerUserId).catch(() => ""),
+      VAULT_GUIDANCE,
+      await github.guidance(ownerUserId).catch(() => ""),
+      await chatFiles.guidance(ownerUserId, botId).catch(() => ""),
+      await confirmations.context(ownerUserId, botId).catch(() => ""),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 // Follow-ups a Bot schedules for itself, on the shared work queue. See agents/wake-up.ts.
 const wakeUpStore = createWakeUpStore(database, { auditStore: bootAuditStore });
 /** Team Bots: published Bots, their audiences, and teammates' consent to their own accounts. */
@@ -1472,96 +1635,118 @@ const loadToolsForActor =
     // IM 回合（initiator = routine「im:<连接>」）：网页才能显示的工具（render_ui、面板）不给；
     // 电脑 / 设备类工具只有连接里打开了「允许使用电脑和设备」才给。
     const imConnection = imConnectionOf(initiator);
-    const imDevices = !imConnection || imService?.allowsDevices(imConnection) === true;
+    const imDevices =
+      !imConnection || imService?.allowsDevices(imConnection) === true;
     // 有后果的工具（删除 / 付款 / 对外发消息）按审批偏好先出确认卡片（server/src/confirmations）。
-    return confirmations.wrap([
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : confirmations.tools(actorId, botId, initiator)),
-    ...wakeUpTools({
-      store: wakeUpStore,
-      ownerUserId: actorId,
-      agentId: botId,
-      initiator,
-    }),
-    // 长期记忆（server/src/memory-notes，DESIGN.md §50）：一个人的所有机器人共用；后台刷新面板的回合不给。
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : memoryNotes.tools(actorId, botId)),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : chisaSkills.tools(actorId, botId)),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : vault.tools(actorId, botId, initiator)),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : await github.tools(actorId, botId, initiator).catch(() => [])),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : personalSources.tools(actorId)),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : pages.tools(actorId, botId, initiator)),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : await chatFiles.tools(actorId, botId, initiator).catch(() => [])),
-    ...(await grantedTools({
-      store: pluginStore,
-      botId,
-      actorId,
-      initiator,
-      // A Team Bot reaches its owner's accounts, and a teammate's own only with their consent.
-      credentialActorFor: teamBots.credentialActorFor(actorId, botId),
-    })),
-    ...(imDevices ? await deviceToolsFor(actorId, botId, initiator) : []),
-    // 生成式界面（json-render，取代 A2UI）：与 /api/capabilities 的 generativeUi 同一个开关。
-    ...(config.generativeUi && !imConnection ? renderUiTools() : []),
-    // 内置联网（web_search / web_fetch）：先搜、再读，浏览器留给需要点击 / 登录 / 给人看的时候。
-    ...webTools(),
-    // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。
-    // 26 个工具时模型会去挑 device_list / connector_call 这类近邻，只有这个对口的工具才稳定被选中。
-    ...connectServiceTools({
-      store: pluginStore,
-      ownerUserId: actorId,
-      botId,
-      search: (query, count) => webSearch(query, count ?? 5),
-      builtinSources: async () => {
-        const [ps, gh] = await Promise.all([
-          personalSources.status(actorId).catch(() => null),
-          github.status(actorId).catch(() => null),
-        ]);
-        return {
-          email: {
-            connected: Boolean(ps?.email),
-            email: ps?.email?.email ?? null,
-            imapHost: ps?.email?.imapHost ?? null,
-          },
-          calendar: {
-            connected: Boolean(ps?.calendar),
-            label: ps?.calendar?.label ?? null,
-            eventCount: ps?.calendar?.eventCount ?? 0,
-          },
-          github: {
-            connected: Boolean(gh),
-            login: gh?.login ?? null,
-          },
-        };
-      },
-      canAutoEnable: async () => {
-        const actor = await actorFor(actorId);
-        return {
-          allowed: actor.role === "admin",
-          by: actor.id,
-        };
-      },
-    }),
-    // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
-    // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：
-    // 以前它也拿到 panel_refresh，刷新里又触发一次刷新，回合叠回合（2026-10-13 实测）。
-    ...(config.generativeUi && !imConnection
-      ? livePanelService.tools(actorId, botId, {
-          ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? { refreshOf: initiator.id } : {}),
-          // 懒查：只有机器人真的交上数据源时才读一次角色（命令源只给管理员）。
-          isAdmin: async () => (await actorFor(actorId)).role === "admin",
-        })
-      : []),
-    // 工作流（docs/workflows.md）：在聊天和长期任务里运行工作流；工作流自己的步骤拿不到。
-    // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 workflows 才给机器人这两个工具。
-    ...(config.extras?.includes("workflows")
-      ? workflowChatTools({
-          store: workflowStore,
-          engine: workflowEngineRef,
+    return confirmations.wrap(
+      [
+        ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+          ? []
+          : confirmations.tools(actorId, botId, initiator)),
+        ...wakeUpTools({
+          store: wakeUpStore,
+          ownerUserId: actorId,
+          agentId: botId,
+          initiator,
+        }),
+        // 长期记忆（server/src/memory-notes，DESIGN.md §50）：一个人的所有机器人共用；后台刷新面板的回合不给。
+        ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+          ? []
+          : memoryNotes.tools(actorId, botId)),
+        ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+          ? []
+          : chisaSkills.tools(actorId, botId)),
+        ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+          ? []
+          : vault.tools(actorId, botId, initiator)),
+        ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+          ? []
+          : await github.tools(actorId, botId, initiator).catch(() => [])),
+        ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+          ? []
+          : personalSources.tools(actorId)),
+        ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+          ? []
+          : pages.tools(actorId, botId, initiator)),
+        ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+          ? []
+          : await chatFiles.tools(actorId, botId, initiator).catch(() => [])),
+        ...(await grantedTools({
+          store: pluginStore,
+          botId,
+          actorId,
+          initiator,
+          // A Team Bot reaches its owner's accounts, and a teammate's own only with their consent.
+          credentialActorFor: teamBots.credentialActorFor(actorId, botId),
+        })),
+        ...(imDevices ? await deviceToolsFor(actorId, botId, initiator) : []),
+        // 生成式界面（json-render，取代 A2UI）：与 /api/capabilities 的 generativeUi 同一个开关。
+        ...(config.generativeUi && !imConnection ? renderUiTools() : []),
+        // 内置联网（web_search / web_fetch）：先搜、再读，浏览器留给需要点击 / 登录 / 给人看的时候。
+        ...webTools(),
+        // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。
+        // 26 个工具时模型会去挑 device_list / connector_call 这类近邻，只有这个对口的工具才稳定被选中。
+        ...connectServiceTools({
+          store: pluginStore,
           ownerUserId: actorId,
           botId,
-          initiator,
-        })
-      : []),
-  ], { ownerUserId: actorId, agentId: botId, initiator });
+          search: (query, count) => webSearch(query, count ?? 5),
+          builtinSources: async () => {
+            const [ps, gh] = await Promise.all([
+              personalSources.status(actorId).catch(() => null),
+              github.status(actorId).catch(() => null),
+            ]);
+            return {
+              email: {
+                connected: Boolean(ps?.email),
+                email: ps?.email?.email ?? null,
+                imapHost: ps?.email?.imapHost ?? null,
+              },
+              calendar: {
+                connected: Boolean(ps?.calendar),
+                label: ps?.calendar?.label ?? null,
+                eventCount: ps?.calendar?.eventCount ?? 0,
+              },
+              github: {
+                connected: Boolean(gh),
+                login: gh?.login ?? null,
+              },
+            };
+          },
+          canAutoEnable: async () => {
+            const actor = await actorFor(actorId);
+            return {
+              allowed: actor.role === "admin",
+              by: actor.id,
+            };
+          },
+        }),
+        // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
+        // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：
+        // 以前它也拿到 panel_refresh，刷新里又触发一次刷新，回合叠回合（2026-10-13 实测）。
+        ...(config.generativeUi && !imConnection
+          ? livePanelService.tools(actorId, botId, {
+              ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+                ? { refreshOf: initiator.id }
+                : {}),
+              // 懒查：只有机器人真的交上数据源时才读一次角色（命令源只给管理员）。
+              isAdmin: async () => (await actorFor(actorId)).role === "admin",
+            })
+          : []),
+        // 工作流（docs/workflows.md）：在聊天和长期任务里运行工作流；工作流自己的步骤拿不到。
+        // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 workflows 才给机器人这两个工具。
+        ...(config.extras?.includes("workflows")
+          ? workflowChatTools({
+              store: workflowStore,
+              engine: workflowEngineRef,
+              ownerUserId: actorId,
+              botId,
+              initiator,
+            })
+          : []),
+      ],
+      { ownerUserId: actorId, agentId: botId, initiator },
+    );
   };
 
 /** One person's standing instructions, for both the /api/settings routes and every run they start. */
@@ -1670,7 +1855,9 @@ const signRunForActor =
       return previousAssertion as string;
     }
     if (initiator.kind === "person" && threadId) {
-      void approvalQuestions.dismissForThread(actorId, threadId).catch(() => undefined);
+      void approvalQuestions
+        .dismissForThread(actorId, threadId)
+        .catch(() => undefined);
     }
     return mintRunAssertion(
       {
@@ -1776,7 +1963,8 @@ const actorFor = async (ownerUserId: string): Promise<AgentActor> => {
   // rewritten to DEV_ACTOR's: in this mode they are the same person, and if they ever were not,
   // silently borrowing the dev actor's identity would be worse than finding nothing.
   // 多账号（CB-040）：朋友账号的定时任务按他自己的角色跑，不再一律当管理员。
-  if (config.singleUser && (!gatewaySecret || ownerUserId === DEV_ACTOR.id)) return { id: ownerUserId, role: DEV_ACTOR.role };
+  if (config.singleUser && (!gatewaySecret || ownerUserId === DEV_ACTOR.id))
+    return { id: ownerUserId, role: DEV_ACTOR.role };
   const roles = await roleRepository.rolesForUser(ownerUserId);
   if (!roles.includes("admin") && !roles.includes("user")) {
     throw new Error("A routine requires an authorized owner.");
@@ -2140,7 +2328,15 @@ const governedTurnRunner = createTurnRunner({
  * 后台任务（DESIGN.md §38，workers/service.ts）：只在本地对话后端下有。工人的回合用自己的一个回合运行器
  * （超时 15 分钟、多一个 worker_plan 工具），结果交回主对话用上面的 governedTurnRunner。
  */
-const workerComputerTools = async ({ ownerUserId, agentId, initiator }: { ownerUserId: string; agentId: string; initiator: AuditInitiator }) => {
+const workerComputerTools = async ({
+  ownerUserId,
+  agentId,
+  initiator,
+}: {
+  ownerUserId: string;
+  agentId: string;
+  initiator: AuditInitiator;
+}) => {
   if (!computerGateway) return [];
   const actor = await actorFor(ownerUserId);
   const profile = await agentProfileStore.get(actor, agentId);
@@ -2162,7 +2358,9 @@ if (localBackend) {
     buildAgentFor,
     toolsForTurn: async (input) => [
       ...(await workerComputerTools(input)),
-      ...(workerService && input.threadId.startsWith("worker-") ? workerService.workerTools(input.threadId.slice("worker-".length)) : []),
+      ...(workerService && input.threadId.startsWith("worker-")
+        ? workerService.workerTools(input.threadId.slice("worker-".length))
+        : []),
     ],
     turnTimeoutMs: 15 * 60_000 + 30_000,
   });
@@ -2173,14 +2371,23 @@ if (localBackend) {
     runTurn: workerTurnRunner,
     deliverTurn: governedTurnRunner,
     agentOfThread: async (threadId) => {
-      const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM openbot_local_threads WHERE id = $1", [threadId]);
+      const rows = await database.$client.unsafe<{ agent_id: string }[]>(
+        "SELECT agent_id FROM openbot_local_threads WHERE id = $1",
+        [threadId],
+      );
       return rows[0]?.agent_id ?? null;
     },
   });
   await workerService.ensure();
   try {
     const interrupted = await workerService.recover();
-    if (interrupted) console.log(JSON.stringify({ type: "workers-interrupted-by-restart", count: interrupted }));
+    if (interrupted)
+      console.log(
+        JSON.stringify({
+          type: "workers-interrupted-by-restart",
+          count: interrupted,
+        }),
+      );
   } catch (error) {
     console.warn("marking interrupted workers failed", error);
   }
@@ -2188,7 +2395,8 @@ if (localBackend) {
   if (process.env.CHISABOT_WORKER_ORPHAN_SWEEP !== "0") {
     try {
       const swept = await workerService.sweepOrphans();
-      if (swept.workers || swept.inbox) console.log(JSON.stringify({ type: "worker-orphans-swept", ...swept }));
+      if (swept.workers || swept.inbox)
+        console.log(JSON.stringify({ type: "worker-orphans-swept", ...swept }));
     } catch (error) {
       console.warn("sweeping orphaned worker rows failed", error);
     }
@@ -2199,25 +2407,34 @@ if (localBackend) {
  * 确认卡片：工具已经不等了（超时 / 服务重启）之后用户才点「确认」——往那段对话里发一条「用户确认了」，
  * 叫机器人接着做（和后台任务交回结果同一条路：正在回答就进收件箱，空着就起一轮）。
  */
-confirmations.setResume(async ({ ownerUserId, agentId, threadId, requestId, text }) => {
-  const message = { id: `confirm-resume-${requestId}`, role: "user", content: text } as Message;
-  if (localBackend?.control.isActive(threadId)) {
-    await localBackend.inbox.enqueue({ threadId, ownerUserId, message });
-    if (localBackend.control.isActive(threadId)) return;
-    await localBackend.inbox.withdraw(threadId, message.id);
-  }
-  const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM openbot_local_threads WHERE id = $1", [threadId]);
-  await governedTurnRunner({
-    ownerUserId,
-    routineId: `confirm:${requestId}`,
-    agentId: rows[0]?.agent_id ?? agentId,
-    threadId,
-    instruction: text,
-    initiator: { kind: "routine", id: `confirm:${requestId}` },
-    userMessage: message,
-    forwardedProps: { chisabotConfirmResume: { id: requestId } },
-  });
-});
+confirmations.setResume(
+  async ({ ownerUserId, agentId, threadId, requestId, text }) => {
+    const message = {
+      id: `confirm-resume-${requestId}`,
+      role: "user",
+      content: text,
+    } as Message;
+    if (localBackend?.control.isActive(threadId)) {
+      await localBackend.inbox.enqueue({ threadId, ownerUserId, message });
+      if (localBackend.control.isActive(threadId)) return;
+      await localBackend.inbox.withdraw(threadId, message.id);
+    }
+    const rows = await database.$client.unsafe<{ agent_id: string }[]>(
+      "SELECT agent_id FROM openbot_local_threads WHERE id = $1",
+      [threadId],
+    );
+    await governedTurnRunner({
+      ownerUserId,
+      routineId: `confirm:${requestId}`,
+      agentId: rows[0]?.agent_id ?? agentId,
+      threadId,
+      instruction: text,
+      initiator: { kind: "routine", id: `confirm:${requestId}` },
+      userMessage: message,
+      forwardedProps: { chisabotConfirmResume: { id: requestId } },
+    });
+  },
+);
 
 /**
  * 本地 agent 与权限档位（server/src/local-agents，docs/local-agents.md）：设备的只读 / 工作区 / 完全访问档位挂在
@@ -2230,17 +2447,28 @@ try {
     database,
     hub: deviceHub,
     deviceStore,
-    ...(localBackend ? { inbox: localBackend.inbox, control: localBackend.control } : {}),
+    ...(localBackend
+      ? { inbox: localBackend.inbox, control: localBackend.control }
+      : {}),
     deliverTurn: governedTurnRunner,
     agentOfThread: async (threadId) => {
-      const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM openbot_local_threads WHERE id = $1", [threadId]);
+      const rows = await database.$client.unsafe<{ agent_id: string }[]>(
+        "SELECT agent_id FROM openbot_local_threads WHERE id = $1",
+        [threadId],
+      );
       return rows[0]?.agent_id ?? null;
     },
     resolveConnectionForAgent: resolveRuntimeConnectionForAgent,
   });
   await localAgents.ensure();
   const interrupted = await localAgents.recover();
-  if (interrupted) console.log(JSON.stringify({ type: "local-agent-tasks-interrupted-by-restart", count: interrupted }));
+  if (interrupted)
+    console.log(
+      JSON.stringify({
+        type: "local-agent-tasks-interrupted-by-restart",
+        count: interrupted,
+      }),
+    );
   deviceHub.setExtension(localAgents.extension);
 } catch (error) {
   console.warn("local agents unavailable", error);
@@ -2282,7 +2510,10 @@ imService = createImService({
   runTurn: imTurnRunner,
   botAvailable: async (ownerUserId, agentId) => {
     try {
-      const profile = await agentProfileStore.get(await actorFor(ownerUserId), agentId);
+      const profile = await agentProfileStore.get(
+        await actorFor(ownerUserId),
+        agentId,
+      );
       return Boolean(profile && !profile.deletedAt);
     } catch {
       return false;
@@ -2290,10 +2521,18 @@ imService = createImService({
   },
   isSuspension: (error) => error instanceof HeadlessToolSuspension,
   resolveApproval: async (ownerUserId, threadId, decision) => {
-    const allPending = (await confirmations.list(ownerUserId, { limit: 20 })).filter((r) => r.status === "pending");
-    const target = (threadId ? allPending.find((r) => r.threadId === threadId) : null) ?? allPending[0];
+    const allPending = (
+      await confirmations.list(ownerUserId, { limit: 20 })
+    ).filter((r) => r.status === "pending");
+    const target =
+      (threadId ? allPending.find((r) => r.threadId === threadId) : null) ??
+      allPending[0];
     if (!target) return null;
-    const decided = await confirmations.decide(ownerUserId, target.id, decision);
+    const decided = await confirmations.decide(
+      ownerUserId,
+      target.id,
+      decision,
+    );
     return { title: decided.title, target: decided.target };
   },
 });
@@ -2307,8 +2546,17 @@ const schedules = createSchedules(database, {
   runTurn: governedTurnRunner,
   runImTurn: imTurnRunner,
   pushToIm: (threadId, text) => imService!.pushToThread(threadId, text),
-  isThreadActive: (threadId) => localBackend?.control.isActive(threadId) ?? false,
-  ...(localBackend ? { enqueueToThread: (input: { threadId: string; ownerUserId: string; message: Message }) => localBackend.inbox.enqueue({ ...input, kind: "message" }) } : {}),
+  isThreadActive: (threadId) =>
+    localBackend?.control.isActive(threadId) ?? false,
+  ...(localBackend
+    ? {
+        enqueueToThread: (input: {
+          threadId: string;
+          ownerUserId: string;
+          message: Message;
+        }) => localBackend.inbox.enqueue({ ...input, kind: "message" }),
+      }
+    : {}),
   // FIX-02：定时回合结束后若仍占着对话锁，放开，避免输入框一直灰、消息发不出去。
   releaseThread: async (threadId) => {
     if (!localBackend) return;
@@ -2316,7 +2564,10 @@ const schedules = createSchedules(database, {
   },
   botAvailable: async (ownerUserId, agentId) => {
     try {
-      const profile = await agentProfileStore.get(await actorFor(ownerUserId), agentId);
+      const profile = await agentProfileStore.get(
+        await actorFor(ownerUserId),
+        agentId,
+      );
       return Boolean(profile && !profile.deletedAt);
     } catch {
       return true;
@@ -2326,7 +2577,11 @@ const schedules = createSchedules(database, {
   isPaused: (error) => error instanceof BotPausedError,
 });
 await schedules.ensure();
-if (process.env.NODE_ENV !== "test" && process.env.CHISABOT_SCHEDULES_SWEEP !== "0") schedules.start();
+if (
+  process.env.NODE_ENV !== "test" &&
+  process.env.CHISABOT_SCHEDULES_SWEEP !== "0"
+)
+  schedules.start();
 
 const panelTaskService = createNormalPanelTaskService({
   database,
@@ -2557,7 +2812,9 @@ workflowEngineInstance = createWorkflowEngine({
     });
     // 管理员能列出所有人的技能；工作流只用部署的和自己的。
     return skills
-      .filter((skill) => skill.ownerUserId === null || skill.ownerUserId === actor.id)
+      .filter(
+        (skill) => skill.ownerUserId === null || skill.ownerUserId === actor.id,
+      )
       .map(({ slug, title, instructions }) => ({ slug, title, instructions }));
   },
   beginPanelSession: async (ownerUserId, botId) => {
@@ -2583,7 +2840,12 @@ const botThreads = await createBotThreads(database, localBackend?.control);
 const linkPreviews = await createLinkPreviews(database, {
   screenshots: process.env.CHISABOT_LINK_PREVIEW_SHOTS === "1",
   ...(config.computer?.provider === "shared"
-    ? { computer: { baseUrl: config.computer.baseUrl, ...(config.computer.token ? { token: config.computer.token } : {}) } }
+    ? {
+        computer: {
+          baseUrl: config.computer.baseUrl,
+          ...(config.computer.token ? { token: config.computer.token } : {}),
+        },
+      }
     : {}),
 });
 const livePanelStore = createLivePanelStore(database);
@@ -2591,8 +2853,16 @@ const livePanelService = createLivePanelService({
   store: livePanelStore,
   // 直连数据源（docs/live-panel-sources.md）：HTTP 走保险箱的 request，{{secret:名}} 只发往它绑定的域名、
   // guardedFetch 钉死 DNS、不跟重定向、回来的正文抹掉密钥值。命令源只给管理员（tools 的 isAdmin）。
-  requestHttp: (ownerUserId, input, signal) => vault.request(ownerUserId, input, signal),
-  runHeadless: async ({ ownerUserId, botId, instruction, panelId, model, signal }) => {
+  requestHttp: (ownerUserId, input, signal) =>
+    vault.request(ownerUserId, input, signal),
+  runHeadless: async ({
+    ownerUserId,
+    botId,
+    instruction,
+    panelId,
+    model,
+    signal,
+  }) => {
     const actor = await actorFor(ownerUserId);
     const channel = await channelStore.create(actor, [botId]);
     try {
@@ -2605,7 +2875,11 @@ const livePanelService = createLivePanelService({
           instruction,
           initiator: { kind: "routine", id: panelId },
           signal,
-          userMessage: { id: `${panelId}:${Date.now()}`, role: "user", content: instruction },
+          userMessage: {
+            id: `${panelId}:${Date.now()}`,
+            role: "user",
+            content: instruction,
+          },
         }),
       );
     } finally {
@@ -2614,13 +2888,18 @@ const livePanelService = createLivePanelService({
   },
 });
 // 用户点「交还」：因为有人接管被推迟的面板马上重刷（control-blocks.ts onControlReleased）。
-onControlReleased((ownerUserId) => void livePanelService.resumeAfterHandback(ownerUserId));
+onControlReleased(
+  (ownerUserId) => void livePanelService.resumeAfterHandback(ownerUserId),
+);
 // CHISABOT_LIVE_PANEL_SWEEP=0：不跑后台刷新循环（只给并排的预览容器用，免得它替正式实例刷新面板）。
 if (process.env.CHISABOT_LIVE_PANEL_SWEEP !== "0") livePanelService.start();
 
 void workflowEngineInstance.recover().catch((error) =>
   console.error(
-    JSON.stringify({ type: "workflow-recover-failed", reason: String(error) }),
+    JSON.stringify({
+      type: "workflow-recover-failed",
+      reason: String(error),
+    }),
   ),
 );
 
@@ -2656,13 +2935,19 @@ const actorAgentResolver = createActorAgentResolver({
     return async (botId, input) => {
       const coordinated = await coordination(botId, input);
       const props = input.forwardedProps as
-        | { panelAuthoring?: { sessionId?: unknown }; chisabotWorker?: unknown; chisabotWorkerDelivery?: unknown }
+        | {
+            panelAuthoring?: { sessionId?: unknown };
+            chisabotWorker?: unknown;
+            chisabotWorkerDelivery?: unknown;
+          }
         | undefined;
       // 后台任务的委派工具：只给机器人私聊里人自己的回合和交付结果的回合（工人回合、群聊不给）。
       const delegating =
         workerService &&
         // 人自己的回合，或者「后台结果交回来」的那一轮（用户在那一轮里插的话也可能要委派）。
-        (!initiator || initiator.kind === "person" || Boolean(props?.chisabotWorkerDelivery)) &&
+        (!initiator ||
+          initiator.kind === "person" ||
+          Boolean(props?.chisabotWorkerDelivery)) &&
         !props?.chisabotWorker &&
         input.threadId &&
         !input.threadId.startsWith("worker-") &&
@@ -2671,25 +2956,44 @@ const actorAgentResolver = createActorAgentResolver({
         ? [
             ...coordinated,
             ...(await restrictNamedToolsForWorkflow(initiator, async () =>
-              workerService!.delegationTools({ ownerUserId: actorId, agentId: botId, threadId: input.threadId }),
+              workerService!.delegationTools({
+                ownerUserId: actorId,
+                agentId: botId,
+                threadId: input.threadId,
+              }),
             )()),
           ]
         : coordinated;
       // 定时任务（DESIGN.md §55）：人自己的回合、IM 回合、定时任务到点的回合、后台结果交回的回合；
       // 后台任务本身、面板刷新、群聊不给。工具要知道「这段对话」，所以从这里给（这里有 threadId）。
       const imOf = imConnectionOf(initiator);
-      const firing = Boolean((props as { chisabotSchedule?: unknown } | undefined)?.chisabotSchedule) || (initiator?.kind === "routine" && initiator.id.startsWith("schedule:"));
+      const firing =
+        Boolean(
+          (props as { chisabotSchedule?: unknown } | undefined)
+            ?.chisabotSchedule,
+        ) ||
+        (initiator?.kind === "routine" && initiator.id.startsWith("schedule:"));
       const scheduling =
         input.threadId &&
         !props?.chisabotWorker &&
         !input.threadId.startsWith("worker-") &&
-        (!initiator || initiator.kind === "person" || Boolean(imOf) || firing || Boolean(props?.chisabotWorkerDelivery)) &&
+        (!initiator ||
+          initiator.kind === "person" ||
+          Boolean(imOf) ||
+          firing ||
+          Boolean(props?.chisabotWorkerDelivery)) &&
         !(await isGroupChannelThread(input.threadId).catch(() => true));
       const tools = scheduling
         ? [
             ...delegated,
             ...(await restrictNamedToolsForWorkflow(initiator, async () =>
-              schedules.tools({ owner: actorId, agentId: botId, threadId: input.threadId, imConnectionId: imOf, firing }),
+              schedules.tools({
+                owner: actorId,
+                agentId: botId,
+                threadId: input.threadId,
+                imConnectionId: imOf,
+                firing,
+              }),
             )()),
           ]
         : delegated;
@@ -2701,12 +3005,21 @@ const actorAgentResolver = createActorAgentResolver({
                 .get(await actorFor(actorId), botId)
                 .then((profile) => profile?.name ?? null)
                 .catch(() => null);
-              const owner = await pluginStore.agentOwner(botId).catch(() => undefined);
+              const owner = await pluginStore
+                .agentOwner(botId)
+                .catch(() => undefined);
               if (typeof owner === "string" && owner !== actorId) return [];
-              return localAgents!.tools({ ownerUserId: actorId, botId, botName, threadId: input.threadId });
+              return localAgents!.tools({
+                ownerUserId: actorId,
+                botId,
+                botName,
+                threadId: input.threadId,
+              });
             })().catch(() => [])
           : [];
-      const withLocal = localAgentTools.length ? [...tools, ...localAgentTools] : tools;
+      const withLocal = localAgentTools.length
+        ? [...tools, ...localAgentTools]
+        : tools;
       const sessionId = props?.panelAuthoring?.sessionId;
       if (typeof sessionId !== "string" || !sessionId || sessionId.length > 128)
         return withLocal;
@@ -3689,8 +4002,14 @@ const app = createApp(
         agentId: botId,
         ...(initiator ? { initiator } : {}),
       }),
-      ...(name.startsWith("github_") ? await github.tools(actorId, botId, initiator ?? undefined) : []),
-      ...(/^(image_|file_share$|chat_files_)/.test(name) ? await chatFiles.tools(actorId, botId, initiator ?? undefined).catch(() => []) : []),
+      ...(name.startsWith("github_")
+        ? await github.tools(actorId, botId, initiator ?? undefined)
+        : []),
+      ...(/^(image_|file_share$|chat_files_)/.test(name)
+        ? await chatFiles
+            .tools(actorId, botId, initiator ?? undefined)
+            .catch(() => [])
+        : []),
     ].find((candidate) => candidate.name === name);
     if (memory) {
       const text = await memory.execute(args);
@@ -3706,7 +4025,11 @@ const app = createApp(
       return { text, isError: text.startsWith(REFUSAL_MARKER) };
     }
     if (name.startsWith("device_")) {
-      const rawDeviceTools = await deviceToolsFor(actorId, botId, initiator ?? undefined);
+      const rawDeviceTools = await deviceToolsFor(
+        actorId,
+        botId,
+        initiator ?? undefined,
+      );
       const deviceTool = confirmations
         .wrap(rawDeviceTools, {
           ownerUserId: actorId,
@@ -3791,9 +4114,19 @@ const app = createApp(
   magpie,
   {
     modelCatalogRefreshMinutes,
-    ...(gatewaySecret ? { singleUserGuard: createGatewayRequireUser(gatewaySecret, provisionGatewayUser) } : {}),
+    ...(gatewaySecret
+      ? {
+          singleUserGuard: createGatewayRequireUser(
+            gatewaySecret,
+            provisionGatewayUser,
+          ),
+        }
+      : {}),
     extraRoutes: ({ requireUser }) => [
-      ["/api/internal/runtime-tools", createRuntimeToolsRoutes(hermesRuntimeTools)],
+      [
+        "/api/internal/runtime-tools",
+        createRuntimeToolsRoutes(hermesRuntimeTools),
+      ],
       [
         "/api/admin/smoke",
         createAdminSmokeRoutes({
@@ -3808,7 +4141,10 @@ const app = createApp(
               probe: probeConfiguredHermes
                 ? async () => {
                     const probe = await probeConfiguredHermes();
-                    return { reachable: probe.reachable === true, ...(probe.error ? { error: probe.error } : {}) };
+                    return {
+                      reachable: probe.reachable === true,
+                      ...(probe.error ? { error: probe.error } : {}),
+                    };
                   }
                 : undefined,
             });
@@ -3816,10 +4152,7 @@ const app = createApp(
           })(),
         }),
       ],
-      [
-        "/api/ops/budget",
-        createOpsBudgetRoutes({ requireUser }),
-      ],
+      ["/api/ops/budget", createOpsBudgetRoutes({ requireUser })],
       [
         "/api/admin/health",
         createOpsHealthRoutes({
@@ -3828,7 +4161,9 @@ const app = createApp(
           magpie,
           gatewayMode: gatewaySecret ? "on" : "off",
           // Informational: Hermes being down does not turn /api/admin/health red or roll back a release.
-          ...(probeConfiguredHermes ? { probeHermes: probeConfiguredHermes } : {}),
+          ...(probeConfiguredHermes
+            ? { probeHermes: probeConfiguredHermes }
+            : {}),
           ...(computerProvider
             ? {
                 probeComputer: async () => {
@@ -3839,9 +4174,12 @@ const app = createApp(
                     let reachable = list.length === 0;
                     let error: string | undefined;
                     if (list[0]) {
-                      const status = await computerProvider.status(list[0].botId);
+                      const status = await computerProvider.status(
+                        list[0].botId,
+                      );
                       reachable = status.state === "ready";
-                      if (!reachable && status.reason) error = status.reason.slice(0, 200);
+                      if (!reachable && status.reason)
+                        error = status.reason.slice(0, 200);
                     }
                     return {
                       // Provider reachable (list worked). Per-bot ready is informational.
@@ -3849,7 +4187,8 @@ const app = createApp(
                       configured: true as const,
                       provider: computerProvider.name,
                       reachable,
-                      running: list.filter((c) => c.status === "running").length,
+                      running: list.filter((c) => c.status === "running")
+                        .length,
                       total: list.length,
                       ...(error ? { error } : {}),
                     };
@@ -3898,7 +4237,14 @@ const app = createApp(
       // 公开页面：不用登录（沙箱 CSP，见 server/src/pages/service.ts）。
       ["/p", pages.publicRoutes()],
       ["/api/schedules", schedules.routes(requireUser)],
-      ...(localAgents ? [["/api/local-agents", localAgents.routes(requireUser)] satisfies [string, unknown]] : []),
+      ...(localAgents
+        ? [
+            ["/api/local-agents", localAgents.routes(requireUser)] satisfies [
+              string,
+              unknown,
+            ],
+          ]
+        : []),
       ["/api/chat-files", chatFiles.routes(requireUser)],
       ["/api/confirmations", confirmations.routes(requireUser)],
       ["/api/media-models", chatFiles.media.routes(requireUser)],
@@ -3920,7 +4266,8 @@ const app = createApp(
               skills
                 .filter(
                   (skill) =>
-                    skill.ownerUserId === null || skill.ownerUserId === actor.id,
+                    skill.ownerUserId === null ||
+                    skill.ownerUserId === actor.id,
                 )
                 .map((skill) => skill.slug),
             );
@@ -3995,13 +4342,20 @@ serve<SocketData>({
     }
     // 计算机工具（打开网页、执行命令、接管）常常超过 Bun 默认的 10 秒空闲超时，被切断后用户看到
     // “计算机无法访问”而浏览器其实还在工作。由 agent-computer 自己的超时兜底。
-    if (url.pathname.startsWith("/api/computers/") && !request.headers.get("upgrade")) server.timeout(request, 0);
+    if (
+      url.pathname.startsWith("/api/computers/") &&
+      !request.headers.get("upgrade")
+    )
+      server.timeout(request, 0);
     // §102：网页聊天里的计算机动作（含最长 600 秒的前台命令）经审批网关同步执行，同样不设空闲超时。
-    if (url.pathname.startsWith("/api/approvals/computer/")) server.timeout(request, 0);
+    if (url.pathname.startsWith("/api/approvals/computer/"))
+      server.timeout(request, 0);
     // Hermes waits on the same governed long-running tools and approvals; the run owns cancellation.
-    if (url.pathname.startsWith("/api/internal/runtime-tools/")) server.timeout(request, 0);
+    if (url.pathname.startsWith("/api/internal/runtime-tools/"))
+      server.timeout(request, 0);
     // IM 接入：微信扫码状态是长轮询（约 25 秒），「测试连接」要等平台握手（最多 15 秒），超过 Bun 默认的 10 秒空闲。
-    if (url.pathname.startsWith("/api/im/") && !request.headers.get("upgrade")) server.timeout(request, 60);
+    if (url.pathname.startsWith("/api/im/") && !request.headers.get("upgrade"))
+      server.timeout(request, 60);
     // 模型回合是流式的（SSE）：免费 / 慢模型首个 token 前常常要想十几秒，带很多工具时更久。Bun 默认
     // 10 秒没有字节就切断连接，用户看到的就是「network error」、回合半途而废（2026-10-13 实测）。
     // 流式接口不设空闲超时，由运行本身的超时 / 停止兜底。
@@ -4115,23 +4469,36 @@ serve<SocketData>({
       // drop when bufferedAmount is already large rather than grow without bound.
       inward.onmessage = (event) => {
         try {
-          const buffered = (ws as unknown as { bufferedAmount?: number }).bufferedAmount;
+          const buffered = (ws as unknown as { bufferedAmount?: number })
+            .bufferedAmount;
           if (typeof buffered === "number" && buffered > 2_000_000) {
             return; // drop stale frame rather than queue forever
           }
           ws.send(String(event.data));
         } catch {
-          try { inward.close(); } catch { /* ignore */ }
+          try {
+            inward.close();
+          } catch {
+            /* ignore */
+          }
         }
       };
       inward.onclose = () => {
-        try { ws.close(); } catch { /* ignore */ }
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
       };
       inward.onerror = () => {
         bumpOps(OPS_CODES.STREAM_DISCONNECT, {
           fields: { reason: "upstream-error" },
         });
-        try { ws.close(); } catch { /* ignore */ }
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
       };
     },
     message(ws, raw) {
@@ -4213,7 +4580,17 @@ if (process.env.CHISABOT_IM !== "0") {
   setTimeout(() => {
     void imService
       ?.startAll()
-      .then((count) => count && console.info(JSON.stringify({ type: "im-started", connections: count })))
-      .catch((error) => console.error(JSON.stringify({ type: "im-start-failed", reason: String(error) })));
+      .then(
+        (count) =>
+          count &&
+          console.info(
+            JSON.stringify({ type: "im-started", connections: count }),
+          ),
+      )
+      .catch((error) =>
+        console.error(
+          JSON.stringify({ type: "im-start-failed", reason: String(error) }),
+        ),
+      );
   }, 3000);
 }

@@ -4,12 +4,13 @@
  * 推送照 channels/events.ts 的做法走 Postgres NOTIFY：写的那台和 SSE 连着的那台常常不是同一个进程。payload
  * 只带 id 和状态，前端收到后再拉这一行；NOTIFY 丢了也不丢数据，重连后整页重拉即可。
  */
-import { redactDetail, redactText } from "./activity-redact";
+
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, lt, or, type SQL, sql } from "drizzle-orm";
 import postgres from "postgres";
 import type { Database } from "../db/client";
 import { computerActivitySteps } from "../db/schema";
+import { redactDetail, redactText } from "./activity-redact";
 
 export const ACTIVITY_TOPIC = "computer_activity";
 /** 记录保留 90 天（CB-101 待确认第 3 项，按默认）。 */
@@ -348,7 +349,9 @@ export function createActivityStore(
               }
             : {}),
           ...(input.output !== undefined
-            ? { output: input.output === null ? null : redactText(input.output) }
+            ? {
+                output: input.output === null ? null : redactText(input.output),
+              }
             : {}),
           outputTruncated: input.outputTruncated ?? false,
           finishedAt: sql`now()`,
