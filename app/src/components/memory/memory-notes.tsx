@@ -75,30 +75,46 @@ export function MemoryKindIcon({ kind }: { kind: MemoryKind }) {
   );
 }
 
-export function NoteRow({ note, botName, onEdit, onDelete }: { note: MemoryNoteView; botName: string | null; onEdit: () => void; onDelete: () => void }) {
+export function NoteRow({
+  note,
+  botName,
+  isAdmin = false,
+  onEdit,
+  onDelete,
+}: {
+  note: MemoryNoteView;
+  botName: string | null;
+  isAdmin?: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   const title = note.subject ?? note.content.split("\n")[0]!;
   const body = note.subject ? note.content : note.content.split("\n").slice(1).join(" ");
-  const isKnowledge = Boolean(note.subject?.startsWith("[知识库]") || note.context?.includes("个人知识库"));
+  const isKnowledge = Boolean(note.subject?.startsWith("[知识库]") || note.subject?.startsWith("📚") || note.context?.includes("知识库"));
+  const readOnly = Boolean(note.shared && !isAdmin);
   return (
     <div className="im-row mem-row">
-      <button className="im-row-main" onClick={onEdit} type="button">
+      <button className="im-row-main" disabled={readOnly} onClick={readOnly ? undefined : onEdit} type="button">
         <ListRow
           icon={<MemoryKindIcon kind={note.kind} />}
           sub={
             <>
               {body ? <span className="mem-body">{body.replace(/\n+/g, " · ")}</span> : null}
               <span className="device-row-meta">
-                {isKnowledge ? <span className="device-cap-chip"><T>{"📚 个人知识库"}</T></span> : null}
+                {note.shared ? <span className="device-cap-chip"><T>{"🌐 公共知识库"}</T></span> : null}
+                {isKnowledge && !note.shared ? <span className="device-cap-chip"><T>{"📚 个人知识库"}</T></span> : null}
                 {note.context ? <span className="device-cap-chip"><T>{`情境：${note.context}`}</T></span> : null}
                 <span className="mem-by">
-                  {note.author === "bot" ? (
-                    <>
-                      <IconRobot aria-hidden className="size-3.5" />
-                      {botName ?? "机器人"}
-                    </>
-                  ) : (
-                    "你写的"
-                  )}
+                  {note.shared
+                    ? "管理员共享"
+                    : note.author === "bot"
+                      ? (
+                          <>
+                            <IconRobot aria-hidden className="size-3.5" />
+                            {botName ?? "机器人"}
+                          </>
+                        )
+                      : "你写的"}
                   {` · ${agoText(note.updatedAt)}更新`}
                 </span>
               </span>
@@ -107,51 +123,60 @@ export function NoteRow({ note, botName, onEdit, onDelete }: { note: MemoryNoteV
           title={title}
         />
       </button>
-      <DropdownMenu>
-        <DropdownMenuTrigger render={<button aria-label={`「${title}」的更多操作`} className="device-row-more" title={"更多操作"} type="button" />}>
-          <IconDots className="size-4" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="glass-pop w-[180px] p-1.5">
-          <DropdownMenuItem className="glass-mi" onClick={onEdit}>
-            <IconPencil className="size-[18px] shrink-0 opacity-80" />
-            <span className="min-w-0 flex-1">{"编辑…"}</span>
-          </DropdownMenuItem>
-          <DropdownMenuSeparator className="glass-sep" />
-          <DropdownMenuItem className="glass-mi is-danger" onClick={onDelete}>
-            <IconTrash className="size-[18px] shrink-0 opacity-80" />
-            <span className="min-w-0 flex-1">{"删除"}</span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {readOnly ? (
+        <span className="device-cap-chip shrink-0">
+          <T>{"只读"}</T>
+        </span>
+      ) : (
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<button aria-label={`「${title}」的更多操作`} className="device-row-more" title={"更多操作"} type="button" />}>
+            <IconDots className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="glass-pop w-[180px] p-1.5">
+            <DropdownMenuItem className="glass-mi" onClick={onEdit}>
+              <IconPencil className="size-[18px] shrink-0 opacity-80" />
+              <span className="min-w-0 flex-1">{"编辑…"}</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="glass-sep" />
+            <DropdownMenuItem className="glass-mi is-danger" onClick={onDelete}>
+              <IconTrash className="size-[18px] shrink-0 opacity-80" />
+              <span className="min-w-0 flex-1">{"删除"}</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }
 
-type Form = { kind: MemoryKind; subject: string; content: string; context: string };
+type Form = { kind: MemoryKind; subject: string; content: string; context: string; shared: boolean };
 
 export function NoteDialog({
   open,
   note,
   preset,
+  isAdmin = false,
   onOpenChange,
 }: {
   open: boolean;
   note: MemoryNoteView | null;
-  preset?: { kind?: MemoryKind; subject?: string; context?: string } | null;
+  preset?: { kind?: MemoryKind; subject?: string; context?: string; shared?: boolean } | null;
+  isAdmin?: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<Form>({ kind: "preference", subject: "", content: "", context: "" });
+  const [form, setForm] = useState<Form>({ kind: "preference", subject: "", content: "", context: "", shared: false });
   useEffect(() => {
     if (!open) return;
     setForm(
       note
-        ? { kind: note.kind, subject: note.subject ?? "", content: note.content, context: note.context ?? "" }
+        ? { kind: note.kind, subject: note.subject ?? "", content: note.content, context: note.context ?? "", shared: Boolean(note.shared) }
         : {
             kind: preset?.kind ?? "preference",
             subject: preset?.subject ?? "",
             content: "",
             context: preset?.context ?? "",
+            shared: Boolean(preset?.shared),
           },
     );
     save.reset();
@@ -164,6 +189,7 @@ export function NoteDialog({
         subject: form.subject.trim() || null,
         content: form.content,
         context: form.context.trim() || null,
+        ...(isAdmin ? { shared: form.shared } : {}),
       };
       if (note) await updateMemoryNote(note.id, input);
       else await createMemoryNote(input);
@@ -178,11 +204,13 @@ export function NoteDialog({
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-lg" data-testid="memory-note-dialog">
         <DialogHeader>
-          <DialogTitle>{note ? "编辑记忆" : isKnowledgePreset ? "📚 录入个人知识库" : "添加记忆"}</DialogTitle>
+          <DialogTitle>{note ? "编辑记忆" : isKnowledgePreset ? (form.shared ? "🌐 录入公共知识库" : "📚 录入个人知识库") : "添加记忆"}</DialogTitle>
           <DialogDescription>
-            {isKnowledgePreset
-              ? "将网页摘录、工作规范、读书笔记或重要参考资料存入个人知识库，所有机器人均可通过 knowledge_search 检索引用。"
-              : "你的所有机器人都会看到这条（关掉记忆的机器人除外）。"}
+            {form.shared
+              ? "公共知识库条目对本实例中所有成员与所有机器人可见（普通成员只读），适合存放团队规范、公共文档与共享参考资料。"
+              : isKnowledgePreset
+                ? "将网页摘录、工作规范、读书笔记或重要参考资料存入知识库，所有机器人均可通过 knowledge_search 检索引用。"
+                : "你的所有机器人都会看到这条（关掉记忆的机器人除外）。"}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -239,6 +267,15 @@ export function NoteDialog({
               </span>
               <Input id="mem-context" maxLength={300} onChange={(event) => setForm({ ...form, context: event.target.value })} placeholder={"什么时候成立，比如「工作日在公司午饭」"} value={form.context} />
             </label>
+            {isAdmin ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="font-medium text-sm">{"设为公共知识库（全员共享）"}</div>
+                  <div className="text-muted-foreground text-xs">{"开启后，所有成员的机器人都可检索并引用该条目，普通成员只读。"}</div>
+                </div>
+                <Switch checked={form.shared} onCheckedChange={(checked) => setForm({ ...form, shared: Boolean(checked) })} />
+              </div>
+            ) : null}
           </DialogBody>
           <DialogFooter className="mt-4">
             <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">

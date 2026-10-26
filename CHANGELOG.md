@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.74 — 2026-10-26
+
+这一版把多用户与后台统一配置落地（`CB-096`、`CB-097`）：管理员可在线开启账号与邀请、直接新建账号或签发管理员邀请、升降角色与直接改密；并可在后台统一配置全员共享的公共知识库、全局共享技能与全员默认 MCP。PC 客户端与服务端同步更新至 0.1.74（Android `versionCode` 271）。
+
+### 多用户管理与管理员角色（`CB-096`，DESIGN.md §117）
+
+- **账号管理默认开启并可在线开关邀请**：`CHISABOT_ACCOUNTS_UI` 默认开启；认证网关新增 `settings` 表与 `PUT /auth/admin/invites-enabled`，管理员可在 `/admin/accounts` 或 `/settings/share` 一键开启多账号与邀请，无需 SSH 改环境变量重启。
+- **双轨创建与多管理员**：`POST /auth/admin/accounts` 直接新建账号（普通成员 / 管理员）；邀请链接可指定角色（`invites.role`）；`PATCH /auth/admin/accounts/:id` 支持升降角色与直接改密（改密立即吊销旧会话，内置主管理员不可降级或停用）。
+
+### 知识库、技能与 MCP 后台统一配置（`CB-097`，DESIGN.md §118）
+
+- **公共知识库（`CB-097a`）**：共享笔记对全员可见、仅管理员可编辑。
+- **全局共享技能（`CB-097b`）**：管理员可新建、导入、编辑与删除全局技能，普通成员以只读共享技能看到。
+- **MCP 全员自动授权（`CB-097c`）**：`PUT /api/plugins/servers/:id/auto-grant` 开启后，该 MCP 服务器的全部工具对所有机器人生效，无需逐个授权。
+
+### 测试与质量
+
+- `app/src/lib/activity.test.ts` 注册的 happy-dom 现在在文件结束时注销，避免其全局 `Request` 丢弃 `Origin` 头导致同进程后续 `deploy/public/auth/accounts.test.ts` 登录全部 403；`accounts.test.ts` 增加对应自检。
+- 插件写操作回归名单补上 `setServerAutoGrantAllMutationOptions`（拒绝时刷新与 id 编码两项）。
+
 ## 0.1.73 — 2026-10-25
 
 这一版完成 Hark 网页版与 Grok Bot 桌面端实测对标全量落地（`CB-089`–`CB-095`）：新增聊天内 Word（`.docx`）文件在线预览、对话选项卡片点选即锁定（防止重复发送且跨刷新/设备还原）、主机器人防误删拦截与一键更换、机器人资料页「文件与页面」归集、单聊机器人往来锚点卡（`BotExchangeCard`）、右栏头部「＋」快速新建面板与预设轮换，以及「设置 → 账号连接」四分类标签页（`全部 / 连接 / 登录信息 / 密钥`）。

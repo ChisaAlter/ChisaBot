@@ -23,7 +23,7 @@ export function memoryNotesQueryOptions() {
   });
 }
 
-export type MemoryNoteInput = { kind: MemoryKind; subject?: string | null; content: string; context?: string | null };
+export type MemoryNoteInput = { kind: MemoryKind; subject?: string | null; content: string; context?: string | null; shared?: boolean };
 
 export async function createMemoryNote(input: MemoryNoteInput): Promise<MemoryNoteView> {
   const response = await client("/api/memory-notes", { method: "POST", body: input, fallback: "保存失败，请重试" });

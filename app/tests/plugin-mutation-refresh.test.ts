@@ -23,6 +23,7 @@ import {
   removeSkillMutationOptions,
   saveSkillMutationOptions,
   setPluginGrantMutationOptions,
+  setServerAutoGrantAllMutationOptions,
 } from "../src/lib/plugins/mutations";
 import { pluginKeys } from "../src/lib/plugins/queries";
 
@@ -284,6 +285,14 @@ const REFUSALS: {
     factory: recheckBrokeredConnectionMutationOptions,
     variables: "gmail",
   },
+  {
+    name: "turning on auto-grant for every Bot",
+    route: "PUT /api/plugins/servers/:id/auto-grant",
+    status: 500,
+    message: "That did not work.",
+    factory: setServerAutoGrantAllMutationOptions,
+    variables: { serverId: "gmail", enabled: true },
+  },
 ];
 
 for (const refusal of REFUSALS) {
@@ -525,6 +534,12 @@ const ENCODED_REQUESTS: {
     url: `/api/plugins/servers/${ENCODED_ID}/connection/recheck`,
     build: recheckBrokeredConnectionMutationOptions,
     variables: HOSTILE_ID,
+  },
+  {
+    name: "turning on auto-grant for every Bot",
+    url: `/api/plugins/servers/${ENCODED_ID}/auto-grant`,
+    build: setServerAutoGrantAllMutationOptions,
+    variables: { serverId: HOSTILE_ID, enabled: true },
   },
   {
     name: "removing a skill",

@@ -1,4 +1,4 @@
-import { IconDots, IconKey, IconLink, IconPlayerPause, IconPlayerPlay, IconPlus, IconTrash, IconUser, IconUserShield } from "@tabler/icons-react";
+import { IconDots, IconKey, IconLink, IconLock, IconPlayerPause, IconPlayerPlay, IconPlus, IconTrash, IconUser, IconUserPlus, IconUserShield } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
@@ -15,6 +15,7 @@ import { toast } from "@/components/ui/toast";
 import {
   accountKeys,
   accountsQueryOptions,
+  createAccount,
   createInvite,
   deleteAccount,
   expiresText,
@@ -24,26 +25,32 @@ import {
   resetAccount,
   revokeInvite,
   setAccountDisabled,
+  setAccountPassword,
+  setAccountRole,
+  setInvitesEnabled,
 } from "@/lib/accounts";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
 
 export const Route = createFileRoute("/_authed/admin/accounts")({
-  // 多用户以后再做（2026-10-15）：入口默认隐藏，直接打开地址也回到设置；CHISABOT_ACCOUNTS_UI=1 才能进。
+  // CB-096：多用户与管理员账号管理默认开启；仅当显式配置 CHISABOT_ACCOUNTS_UI=0 时隐藏。
   beforeLoad: async ({ context }) => {
     const capabilities = await context.queryClient.ensureQueryData(deploymentCapabilitiesQueryOptions()).catch(() => null);
-    if (!capabilities?.accountsUi) throw redirect({ to: "/settings", replace: true });
+    if (capabilities?.accountsUi === false) throw redirect({ to: "/settings", replace: true });
   },
   component: AccountsPage,
 });
 
 /**
- * 设置 → 管理 → 账号（CB-040，DESIGN.md §65）：邀请朋友、停用、重置密码。
- * 每个账号的机器人、对话、记忆、密钥、设备都是分开的；朋友看不到你的任何东西。
+ * 设置 → 管理 → 账号（CB-040 / CB-096，DESIGN.md §65）：多用户管理与管理员账户体系。
+ * 支持直接创建账号（普通成员 / 管理员）、生成一次性邀请链接、角色升降级、直接改密或发重置链接、停用与恢复。
+ * 每个账号的机器人、对话、个人记忆、密钥、设备独立隔离；管理员统一配置的公共知识库、全局技能与默认 MCP 全员共享。
  */
 function AccountsPage() {
   const list = useQuery(accountsQueryOptions());
   const queryClient = useQueryClient();
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [passwordTarget, setPasswordTarget] = useState<GatewayAccount | null>(null);
   const [link, setLink] = useState<{ title: string; url: string; expiresAt: number } | null>(null);
   const refresh = () => queryClient.invalidateQueries({ queryKey: accountKeys.all });
 
@@ -61,6 +68,25 @@ function AccountsPage() {
       await setAccountDisabled(account.id, !account.disabled);
       await refresh();
       toast.success(account.disabled ? `已恢复「${account.displayName}」` : `已停用「${account.displayName}」`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "操作失败");
+    }
+  }
+  async function toggleRole(account: GatewayAccount) {
+    const nextRole = account.role === "admin" ? "user" : "admin";
+    const ok = await confirmDialog({
+      title: nextRole === "admin" ? `将「${account.displayName}」设为管理员？` : `将「${account.displayName}」改为普通成员？`,
+      description:
+        nextRole === "admin"
+          ? "管理员可以管理所有账号、模型、公共知识库、全局技能和插件与 MCP 配置。"
+          : "改为普通成员后，他将不再拥有后台管理权限，但自己的机器人、对话和数据不受影响。",
+      confirmLabel: nextRole === "admin" ? "设为管理员" : "改为普通成员",
+    });
+    if (!ok) return;
+    try {
+      await setAccountRole(account.id, nextRole);
+      await refresh();
+      toast.success(nextRole === "admin" ? `已将「${account.displayName}」设为管理员` : `已将「${account.displayName}」改为普通成员`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "操作失败");
     }
@@ -109,29 +135,56 @@ function AccountsPage() {
   const data = list.data;
   const accounts = data?.available ? data.accounts : [];
   const invites = data?.available ? data.invites : [];
+  const invitesEnabled = data?.available ? data.invitesEnabled : false;
   const nameOf = (id: string | null) => accounts.find((a) => a.id === id)?.displayName ?? "账号";
   return (
     <>
+      <CreateAccountDialog
+        invitesEnabled={invitesEnabled}
+        onCreated={(account) => {
+          void refresh();
+          setCreateOpen(false);
+          toast.success(`已创建${account.role === "admin" ? "管理员" : "成员"}账号「${account.displayName}」`);
+        }}
+        onOpenChange={setCreateOpen}
+        open={createOpen}
+      />
       <InviteDialog
+        invitesEnabled={invitesEnabled}
         onCreated={(invite) => {
           void refresh();
           setInviteOpen(false);
-          setLink({ title: "邀请链接", url: invite.url, expiresAt: invite.expiresAt });
+          setLink({ title: invite.role === "admin" ? "管理员邀请链接" : "邀请链接", url: invite.url, expiresAt: invite.expiresAt });
         }}
         onOpenChange={setInviteOpen}
         open={inviteOpen}
       />
+      <PasswordDialog
+        account={passwordTarget}
+        onOpenChange={(open) => (open ? null : setPasswordTarget(null))}
+        onSaved={(account) => {
+          void refresh();
+          setPasswordTarget(null);
+          toast.success(`已修改「${account.displayName}」的密码`);
+        }}
+      />
       <LinkDialog link={link} onOpenChange={(open) => (open ? null : setLink(null))} />
       <PageShell
         action={
-          data?.available && data.invitesEnabled ? (
-            <Button onClick={() => setInviteOpen(true)} size="sm">
-              <IconPlus />
-              {"邀请朋友"}
-            </Button>
+          data?.available ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => setCreateOpen(true)} size="sm" variant="outline">
+                <IconUserPlus />
+                {"新建账号"}
+              </Button>
+              <Button onClick={() => setInviteOpen(true)} size="sm">
+                <IconPlus />
+                {"邀请成员"}
+              </Button>
+            </div>
           ) : null
         }
-        description="把 ChisaBot 分享给朋友：发一个邀请链接，他自己设账号名和密码。每个账号的机器人、对话、记忆、密钥、页面和设备都是分开的，朋友看不到你的任何东西，管理页也只有你能进。"
+        description="管理实例中的所有用户与管理员账号：支持直接新建账号或发送一次性邀请链接。每个账号的机器人、对话、个人记忆、密钥与设备彼此隔离；管理员在后台配置的公共知识库、全局技能与默认 MCP 可供全员共享。"
         title="账号"
       >
         {list.isPending ? (
@@ -165,7 +218,7 @@ function AccountsPage() {
                           <>
                             <span className="device-row-meta">
                               <span className="skill-slug">{account.username}</span>
-                              <span className="device-cap-chip"><T>{account.role === "admin" ? "管理员" : "朋友"}</T></span>
+                              <span className="device-cap-chip"><T>{account.role === "admin" ? "管理员" : "普通成员"}</T></span>
                               {account.disabled ? <span className="device-cap-chip is-off"><T>{"已停用"}</T></span> : null}
                               {account.id === data.me ? <span className="device-cap-chip"><T>{"你"}</T></span> : null}
                             </span>
@@ -180,10 +233,18 @@ function AccountsPage() {
                         <DropdownMenuTrigger render={<button aria-label={`「${account.displayName}」的更多操作`} className="device-row-more" title={"更多操作"} type="button" />}>
                           <IconDots className="size-4" />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="glass-pop w-[200px] p-1.5">
+                        <DropdownMenuContent align="end" className="glass-pop w-[210px] p-1.5">
+                          <DropdownMenuItem className="glass-mi" onClick={() => setPasswordTarget(account)}>
+                            <IconLock className="size-[18px] shrink-0 opacity-80" />
+                            <span className="min-w-0 flex-1">{"直接修改密码…"}</span>
+                          </DropdownMenuItem>
                           <DropdownMenuItem className="glass-mi" onClick={() => void reset(account)}>
                             <IconKey className="size-[18px] shrink-0 opacity-80" />
-                            <span className="min-w-0 flex-1">{"重置密码…"}</span>
+                            <span className="min-w-0 flex-1">{"重置密码链接…"}</span>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="glass-mi" onClick={() => void toggleRole(account)}>
+                            {account.role === "admin" ? <IconUser className="size-[18px] shrink-0 opacity-80" /> : <IconUserShield className="size-[18px] shrink-0 opacity-80" />}
+                            <span className="min-w-0 flex-1">{account.role === "admin" ? "改为普通成员…" : "设为管理员…"}</span>
                           </DropdownMenuItem>
                           <DropdownMenuItem className="glass-mi" onClick={() => void toggle(account)}>
                             {account.disabled ? <IconPlayerPlay className="size-[18px] shrink-0 opacity-80" /> : <IconPlayerPause className="size-[18px] shrink-0 opacity-80" />}
@@ -214,7 +275,11 @@ function AccountsPage() {
                             </span>
                           }
                           sub={<span className="mem-by">{expiresText(invite.expiresAt)}</span>}
-                          title={invite.kind === "reset" ? `重置密码 · ${nameOf(invite.accountId)}` : `邀请${invite.note ? ` · ${invite.note}` : ""}`}
+                          title={
+                            invite.kind === "reset"
+                              ? `重置密码 · ${nameOf(invite.accountId)}`
+                              : `${invite.role === "admin" ? "邀请管理员" : "邀请成员"}${invite.note ? ` · ${invite.note}` : ""}`
+                          }
                         />
                       </div>
                       <Button onClick={() => void revoke(invite)} size="sm" variant="ghost">
@@ -234,28 +299,239 @@ function AccountsPage() {
   );
 }
 
-function InviteDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (invite: { url: string; expiresAt: number }) => void }) {
-  const [note, setNote] = useState("");
-  const [hours, setHours] = useState(72);
-  useEffect(() => {
-    if (!open) return;
-    setNote("");
-    setHours(72);
-    create.reset();
-  }, [open]);
+function CreateAccountDialog({
+  open,
+  onOpenChange,
+  invitesEnabled,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  invitesEnabled: boolean;
+  onCreated: (account: GatewayAccount) => void;
+}) {
+  const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState<"user" | "admin">("user");
   const create = useAsyncAction(
     async () => {
-      const invite = await createInvite({ note: note.trim() || undefined, hours });
-      window.setTimeout(() => onCreated(invite), 400);
+      if (!invitesEnabled) await setInvitesEnabled(true);
+      const account = await createAccount({
+        username: username.trim(),
+        displayName: displayName.trim() || undefined,
+        password,
+        role,
+      });
+      window.setTimeout(() => onCreated(account), 300);
     },
     { errorToast: (error) => error.message },
   );
+  const resetCreate = create.reset;
+  useEffect(() => {
+    if (!open) return;
+    setUsername("");
+    setDisplayName("");
+    setPassword("");
+    setRole("user");
+    resetCreate();
+  }, [open, resetCreate]);
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-lg">
         <DialogHeader>
-          <DialogTitle>{"邀请朋友"}</DialogTitle>
-          <DialogDescription>{"生成一个一次性链接发给朋友。他打开后自己设账号名和密码，登录后会有一个自己的「助手」机器人。"}</DialogDescription>
+          <DialogTitle>{"新建账号"}</DialogTitle>
+          <DialogDescription>{"直接为团队成员或管理员创建登录账号。创建后对方即可使用账号名与密码登录。"}</DialogDescription>
+        </DialogHeader>
+        <form
+          className="flex min-h-0 flex-1 flex-col"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (create.state !== "pending") void create.run();
+          }}
+        >
+          <DialogBody className="im-form mt-2">
+            <label className="im-field" htmlFor="create-account-username">
+              <span className="im-field-l">
+                {"账号名"}
+                <span className="im-req">{"必填，2–32 个字符"}</span>
+              </span>
+              <Input
+                autoComplete="off"
+                id="create-account-username"
+                maxLength={32}
+                onChange={(event) => setUsername(event.target.value)}
+                placeholder={"例如：xiaoming"}
+                required
+                value={username}
+              />
+            </label>
+            <label className="im-field" htmlFor="create-account-display-name">
+              <span className="im-field-l">
+                {"显示名称"}
+                <span className="im-req">{"可选，留空同账号名"}</span>
+              </span>
+              <Input
+                autoComplete="off"
+                id="create-account-display-name"
+                maxLength={32}
+                onChange={(event) => setDisplayName(event.target.value)}
+                placeholder={"例如：小明"}
+                value={displayName}
+              />
+            </label>
+            <label className="im-field" htmlFor="create-account-password">
+              <span className="im-field-l">
+                {"初始密码"}
+                <span className="im-req">{"必填，至少 8 位"}</span>
+              </span>
+              <Input
+                autoComplete="new-password"
+                id="create-account-password"
+                minLength={8}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder={"至少 8 位密码"}
+                required
+                type="password"
+                value={password}
+              />
+            </label>
+            <div className="im-field">
+              <span className="im-field-l">{"角色权限"}</span>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ["user", "普通成员"],
+                    ["admin", "管理员"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <Button key={value} onClick={() => setRole(value)} size="sm" type="button" variant={role === value ? "default" : "outline"}>
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </DialogBody>
+          <DialogFooter className="mt-4">
+            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+              {"取消"}
+            </Button>
+            <Button disabled={!username.trim() || password.length < 8} feedback="create" state={create.state} type="submit">
+              {"创建账号"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PasswordDialog({
+  account,
+  onOpenChange,
+  onSaved,
+}: {
+  account: GatewayAccount | null;
+  onOpenChange: (open: boolean) => void;
+  onSaved: (account: GatewayAccount) => void;
+}) {
+  const [password, setPassword] = useState("");
+  const save = useAsyncAction(
+    async () => {
+      if (!account) return;
+      const updated = await setAccountPassword(account.id, password);
+      window.setTimeout(() => onSaved(updated), 300);
+    },
+    { errorToast: (error) => error.message },
+  );
+  const resetSave = save.reset;
+  useEffect(() => {
+    if (!account) return;
+    setPassword("");
+    resetSave();
+  }, [account, resetSave]);
+  return (
+    <Dialog onOpenChange={onOpenChange} open={!!account}>
+      <DialogContent className="im-dialog max-w-md">
+        <DialogHeader>
+          <DialogTitle>{account ? `修改「${account.displayName}」的密码` : "修改密码"}</DialogTitle>
+          <DialogDescription>{"直接为该账号设置新密码。保存后，该账号在所有已登录设备上的会话将立即失效。"}</DialogDescription>
+        </DialogHeader>
+        <form
+          className="flex min-h-0 flex-1 flex-col"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (save.state !== "pending") void save.run();
+          }}
+        >
+          <DialogBody className="im-form mt-2">
+            <label className="im-field" htmlFor="account-new-password">
+              <span className="im-field-l">
+                {"新密码"}
+                <span className="im-req">{"至少 8 位"}</span>
+              </span>
+              <Input
+                autoComplete="new-password"
+                id="account-new-password"
+                minLength={8}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder={"输入新密码（至少 8 位）"}
+                required
+                type="password"
+                value={password}
+              />
+            </label>
+          </DialogBody>
+          <DialogFooter className="mt-4">
+            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+              {"取消"}
+            </Button>
+            <Button disabled={password.length < 8} feedback="save" state={save.state} type="submit">
+              {"保存密码"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function InviteDialog({
+  open,
+  onOpenChange,
+  invitesEnabled,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  invitesEnabled: boolean;
+  onCreated: (invite: { url: string; expiresAt: number; role?: "admin" | "user" }) => void;
+}) {
+  const [note, setNote] = useState("");
+  const [hours, setHours] = useState(72);
+  const [role, setRole] = useState<"user" | "admin">("user");
+  const create = useAsyncAction(
+    async () => {
+      if (!invitesEnabled) await setInvitesEnabled(true);
+      const invite = await createInvite({ note: note.trim() || undefined, hours, role });
+      window.setTimeout(() => onCreated(invite), 400);
+    },
+    { errorToast: (error) => error.message },
+  );
+  const resetCreate = create.reset;
+  useEffect(() => {
+    if (!open) return;
+    setNote("");
+    setHours(72);
+    setRole("user");
+    resetCreate();
+  }, [open, resetCreate]);
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="im-dialog max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{"邀请成员"}</DialogTitle>
+          <DialogDescription>{"生成一个一次性链接发给对方。他打开后自己设账号名和密码，登录后会有一个自己的「助手」机器人。"}</DialogDescription>
         </DialogHeader>
         <form
           className="flex min-h-0 flex-1 flex-col"
@@ -272,6 +548,21 @@ function InviteDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpen
               </span>
               <Input id="invite-note" maxLength={32} onChange={(event) => setNote(event.target.value)} placeholder={"例如：小明"} value={note} />
             </label>
+            <div className="im-field">
+              <span className="im-field-l">{"角色权限"}</span>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ["user", "普通成员"],
+                    ["admin", "管理员"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <Button key={value} onClick={() => setRole(value)} size="sm" type="button" variant={role === value ? "default" : "outline"}>
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            </div>
             <div className="im-field">
               <span className="im-field-l">{"有效期"}</span>
               <div className="flex flex-wrap gap-2">

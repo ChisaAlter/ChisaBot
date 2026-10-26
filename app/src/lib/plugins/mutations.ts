@@ -144,6 +144,19 @@ export function setPluginGrantMutationOptions(queryClient: QueryClient) {
   });
 }
 
+export function setServerAutoGrantAllMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: async (variables: { serverId: string; enabled: boolean }) => {
+      await client(`/api/plugins/servers/${encodeURIComponent(variables.serverId)}/auto-grant`, {
+        method: "PUT",
+        body: { enabled: variables.enabled },
+        fallback: FALLBACK,
+      });
+    },
+    onSettled: () => invalidatePlugins(queryClient),
+  });
+}
+
 export function addCuratedServerMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
     mutationFn: async (input: CuratedServerInput) => {

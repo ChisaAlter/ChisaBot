@@ -2605,6 +2605,30 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **主对话流展示可展开锚点卡（`BotExchangeCard`）**：步骤抽屉内仍为单行 `ToolLine`，主对话流中画成 `.bot-exchange-card` 锚点卡（折叠态显示 `与「B」往来` + 任务摘要 + 状态徽标 `询问中 / 已转交 / 已达上限 / 对方已删除 / 已阻止`）。
 - **展开查看完整往来信封与跳转**：点开卡片展示委派任务、约束条件、期望输出、中文状态说明，以及直达对方机器人对话的入口（若对方机器人已被删除，徽标与说明如实标注「对方已删除」）。
 
+## 117. 多用户管理与管理员账户体系（2026-10-26，CB-096）
+
+把原本默认隐藏的 `/admin/accounts` 升级为开箱即用的多用户与多管理员管理台：
+
+- **默认展示与在线开启**：`CHISABOT_ACCOUNTS_UI` 默认开启（除非显式设为 `0` / `false`）；认证网关（`deploy/public/auth/server.ts`）生产启动默认开启多账号与邀请，并在 SQLite 新增 `settings (key, value)` 表与 `PUT /auth/admin/invites-enabled`，管理员可在 `/admin/accounts` 或 `/settings/share` 页面一键在线开启多账号，无需 SSH 改环境变量重启容器。
+- **双轨创建与多管理员角色**：
+  - **直接新建账号**：`POST /auth/admin/accounts` 与前端 `CreateAccountDialog` 支持管理员直接填写登录名、显示名称、初始密码与角色（`普通成员 user` / `管理员 admin`）。
+  - **邀请链接选角色**：`POST /auth/admin/invites` 与 `InviteDialog` 支持签发普通成员或管理员邀请链接（`invites.role`）。
+  - **升降级角色与直接改密**：`PATCH /auth/admin/accounts/:id` 支持修改 `role`（内置主管理员不可降级或停用）与直接设置新 `password`（改密立即吊销该账号旧会话）。
+
+## 118. 知识库、Skills、MCP 后台统一配置（2026-10-26，CB-097）
+
+管理员可在后台统一配置全员共享的公共知识库、全局共享技能与全员默认 MCP，普通成员开箱即享且保留个人自定义空间：
+
+- **118.1 公共知识库（`CB-097a`）**：
+  - `chisabot_memory_notes` 新增 `shared boolean NOT NULL DEFAULT false`。管理员在 `/settings/memory` 可点「录入公共知识库」或在编辑弹窗勾选「设为公共知识库（全员共享）」。
+  - 查询与检索（`all`、`search`、`context`、`knowledge_search`）对所有用户合并返回 `owner_user_id = 自己 OR shared = true`，公共条目带 `🌐 公共知识库` 徽标与 `〔公共知识库〕` 提示词标记；普通成员只读，仅管理员可增删改。
+- **118.2 全局共享技能（`CB-097b`）**：
+  - 管理员在 `/settings/skills` 新建、编辑、导入 `SKILL.md` 时可勾选「设为全局共享技能（全员可用）」（写入 `ownerUserId: null`），精选技能库支持「全员共享安装全部」；管理员可直接在线编辑或删除任何全局共享技能，普通成员默认启用且可按需关掉。
+- **118.3 全员默认 MCP（`CB-097c`）**：
+  - 新增 `chisabot_mcp_global_grants (server_id text PRIMARY KEY, enabled boolean)` 与 `PUT /api/plugins/servers/:id/auto-grant`。
+  - 管理员在 `/admin/plugins/:key` 打开「全员默认开启（所有用户与机器人自动可用）」后，`listForAgent()` 与 `decide()` 自动向实例内所有用户的全部机器人授予该 MCP 服务器的工具权限，无需逐个机器人手动勾选。
+
+
 
 
 
