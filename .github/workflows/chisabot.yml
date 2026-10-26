@@ -112,6 +112,10 @@ jobs:
         run: bun test shared/schedules.test.ts shared/activity-labels.test.ts
       - name: Login gateway checks
         run: bun test deploy/public/auth/server.test.ts deploy/public/auth/startup-report.test.ts
+      - name: Updater shell script checks (CB-100b)
+        run: |
+          for f in deploy/updater/*.sh; do bash -n "$f"; done
+          bash deploy/updater/test-shell.sh
       # Private host info guard. The deny list lives in the repository variable
       # PRIVATE_HOST_DENY (Settings → Secrets and variables → Actions → Variables),
       # deliberately NOT in this file: a guard that spelled out the address would

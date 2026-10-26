@@ -48,12 +48,12 @@ previous_image() {
 # 默认网络改名 / 换子网后，普通 `compose up -d` 会报「network … not found」或「needs to be recreated」，
 # 或者把容器留在旧网络上；这时要 --force-recreate（update.sh / rollback.sh）。
 # CB-100b：从 `compose config --format json`（stdin）里取默认网络的「名字 子网」。不再硬依赖 python3：
-# 依次用 python3 / python / jq / bun / node，谁在用谁。全都没有时返回 2。
+# 依次试 CHISABOT_PYTHON / python3 / python / jq / bun / node。某个工具存在但执行失败（非 0 退出、
+# 或输出不是一行「名字 子网」）时换下一个继续。一个工具都没有返回 2；有工具但全部失败返回 3。
 compose_default_network_from_json() {
-  local py
-  py=${CHISABOT_PYTHON:-$(command -v python3 || command -v python || true)}
-  if [ -n "$py" ]; then
-    "$py" -c '
+  local input out tool tried=0 py_code jq_code js
+  input=$(cat)
+  py_code='
 import json, sys
 try:
     d = json.load(sys.stdin)
@@ -63,15 +63,26 @@ n = (d.get("networks") or {}).get("default") or {}
 c = ((n.get("ipam") or {}).get("config") or [{}])[0] or {}
 print(n.get("name") or "", c.get("subnet") or "")
 '
-    return
-  fi
-  if command -v jq >/dev/null 2>&1; then
-    jq -r '(.networks.default // {}) as $n | "\($n.name // "") \((($n.ipam // {}).config // [{}])[0].subnet // "")"'
-    return
-  fi
-  local js='let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{let d;try{d=JSON.parse(s)}catch{process.exit(1)}const n=(d.networks||{}).default||{};const c=((n.ipam||{}).config||[{}])[0]||{};console.log((n.name||"")+" "+(c.subnet||""))})'
-  if command -v bun >/dev/null 2>&1; then bun -e "$js"; return; fi
-  if command -v node >/dev/null 2>&1; then node -e "$js"; return; fi
+  # shellcheck disable=SC2016  # jq 程序本身，不展开
+  jq_code='(.networks.default // {}) as $n | "\($n.name // "") \((($n.ipam // {}).config // [{}])[0].subnet // "")"'
+  js='let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{let d;try{d=JSON.parse(s)}catch{process.exit(1)}const n=(d.networks||{}).default||{};const c=((n.ipam||{}).config||[{}])[0]||{};console.log((n.name||"")+" "+(c.subnet||""))})'
+  for tool in "${CHISABOT_PYTHON:-}" python3 python jq bun node; do
+    [ -n "$tool" ] || continue
+    command -v "$tool" >/dev/null 2>&1 || [ -x "$tool" ] || continue
+    tried=1
+    case "${tool##*/}" in
+      jq) out=$(printf '%s' "$input" | "$tool" -r "$jq_code" 2>/dev/null) ;;
+      bun|node) out=$(printf '%s' "$input" | "$tool" -e "$js" 2>/dev/null) ;;
+      *) out=$(printf '%s' "$input" | "$tool" -c "$py_code" 2>/dev/null) ;;
+    esac || { echo "compose 网络漂移检查：$tool 执行失败，换下一个工具" >&2; continue; }
+    # 只接受恰好一行「名字 子网」（两段都不含空白，各自可空）。
+    if [ "$(printf '%s\n' "$out" | wc -l)" = 1 ] && [[ "$out" =~ ^[^[:space:]]*\ [^[:space:]]*$ ]]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    echo "compose 网络漂移检查：$tool 的输出无法解析，换下一个工具" >&2
+  done
+  [ "$tried" = 1 ] && return 3
   return 2
 }
 
@@ -86,9 +97,13 @@ compose_network_drift() {
   json=$(docker compose -p "$PROJECT" -f "$COMPOSE_FILE" config --format json 2>/dev/null) || return 1
   rc=0
   want=$(printf '%s' "$json" | compose_default_network_from_json) || rc=$?
-  if [ "$rc" = 2 ]; then
-    echo "::error:: 检查 compose 网络漂移需要 python3、jq、bun 或 node 之一，主机上都没有；按漂移处理（--force-recreate）" >&2
-    echo "无法判断网络是否漂移（主机缺少 python3/jq/bun/node），保守起见 --force-recreate"
+  if [ "$rc" = 2 ] || [ "$rc" = 3 ]; then
+    if [ "$rc" = 2 ]; then
+      echo "::error:: 检查 compose 网络漂移需要 python3、jq、bun 或 node 之一，主机上都没有；按漂移处理（--force-recreate）" >&2
+    else
+      echo "::error:: 检查 compose 网络漂移的工具（python3/jq/bun/node）全部执行失败或输出无法解析；按漂移处理（--force-recreate）" >&2
+    fi
+    echo "无法判断网络是否漂移（没有可用的 JSON 解析工具），保守起见 --force-recreate"
     return 0
   fi
   [ "$rc" = 0 ] || return 1
