@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.77 — 2026-10-26
+
+这一版是 CB-100 的后续修补（`CB-100b`、`CB-100c`）：Hermes 判定更严、连接超时快速失败，网关兼容旧账号控件标记，不再在应用上方多浮一个退出按钮。PC 客户端与服务端同步更新至 0.1.77（Android `versionCode` 274）。
+
+### Hermes 后续（`CB-100b`，#316）
+
+- 管理员自检里 agent 内核与 Hermes URL 不一致时判为失败；Hermes 连接超时会快速报错，不再长时间挂起。
+- 更新器的 compose 网络漂移检查不再依赖 python3（只用 bash 内建读取）；新增真实数据库的 Hermes 不可达集成测试，补充回滚文档。
+
+### 网关与界面细节（`CB-100c`，#317）
+
+- 登录网关 `workspace.js` 同时识别新旧账号控件标记（`chisabot-account-control` / `openbot-account-control`），新网关配旧应用镜像时不再浮出第二个「退出登录」按钮。
+- 上下文用量显示文字说明；首屏加载时显示启动状态提示；修复 quick-spotlight 相关测试。
+
 ## 0.1.76 — 2026-10-26
 
 这一版修复改名后 Hermes 不可达导致对话卡住的问题（`CB-100`），并彻底下线云端 Claude Code 工作区整套功能（`CB-099`）。PC 客户端与服务端同步更新至 0.1.76（Android `versionCode` 273）。

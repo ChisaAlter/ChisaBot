@@ -1,7 +1,11 @@
 "use strict";
 
 (() => {
-  if (window.location.pathname === "/login" || window.location.pathname.startsWith("/auth/") || document.getElementById("chisabot-account-control")) return;
+  // The app marks that it draws its own account control. Accept the pre-rename id too (CB-100c), so a
+  // newer gateway in front of an older app image does not float a second sign-out button over the app.
+  const appDrawsAccountControl = () =>
+    !!(document.getElementById("chisabot-account-control") || document.getElementById("openbot-account-control"));
+  if (window.location.pathname === "/login" || window.location.pathname.startsWith("/auth/") || appDrawsAccountControl()) return;
 
   const originalFetch = window.fetch.bind(window);
   let redirecting = false;
@@ -71,7 +75,7 @@
   document.addEventListener("visibilitychange", checkSession);
 
   function mountAccountControl() {
-    if (document.getElementById("chisabot-account-control")) return;
+    if (appDrawsAccountControl()) return;
     const host = document.createElement("div");
     host.id = "chisabot-account-control";
     const shadow = host.attachShadow({ mode: "open" });
