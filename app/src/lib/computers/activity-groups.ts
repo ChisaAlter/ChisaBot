@@ -28,11 +28,8 @@ export type ActivityTurn = {
 
 function groupKey(step: ActivityStep): string {
   if (step.actorKind === "human") return "human";
-  return step.runId
-    ? `run:${step.runId}`
-    : step.threadId
-      ? `thread:${step.threadId}`
-      : "agent";
+  // 只认服务端记下的轮次 id；没有就是「未归属」，不按对话或时间去猜。
+  return step.runId ? `run:${step.runId}` : "unattributed";
 }
 
 /** 合并：连续 ≥ BATCH_MIN 条成功的只读探查命令。失败的、被拒绝的、进行中的永远单独显示。 */
@@ -66,15 +63,26 @@ export function batchCommands(
 export function groupActivity(
   stepsNewestFirst: ActivityStep[],
 ): ActivityTurn[] {
+  /*
+   * 机器人的步骤按轮次 id 归组，同一轮的步骤即使被别的轮（并发）隔开也并在一起；
+   * 人自己的操作和未归属的步骤只并相邻的。组的先后按组内最新一步。
+   */
   const chunks: ActivityStep[][] = [];
+  const byRun = new Map<string, ActivityStep[]>();
   let lastKey: string | null = null;
   for (const step of stepsNewestFirst) {
     const key = groupKey(step);
-    if (key === lastKey) chunks[chunks.length - 1]?.push(step);
-    else {
-      chunks.push([step]);
-      lastKey = key;
-    }
+    if (key.startsWith("run:")) {
+      const chunk = byRun.get(key);
+      if (chunk) chunk.push(step);
+      else {
+        const fresh = [step];
+        byRun.set(key, fresh);
+        chunks.push(fresh);
+      }
+    } else if (key === lastKey) chunks[chunks.length - 1]?.push(step);
+    else chunks.push([step]);
+    lastKey = key;
   }
   return chunks.map((chunk) => {
     const newest = chunk[0] as ActivityStep;

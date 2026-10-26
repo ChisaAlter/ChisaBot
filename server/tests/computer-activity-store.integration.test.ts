@@ -6,6 +6,11 @@ import {
   type ActivityStore,
   createActivityStore,
 } from "../src/computer/activity-store";
+import {
+  withActivityScope,
+  withComputerActivity,
+} from "../src/computer/activity-recorder";
+import type { ComputerGateway } from "../src/computer/gateway";
 import { createDatabase } from "../src/db/client";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
@@ -137,5 +142,43 @@ suite("computer activity store", () => {
     await new Promise((r) => setTimeout(r, 500));
     off();
     expect(seen.length).toBeGreaterThan(0);
+  });
+
+  test("concurrent tool calls are stored under the turn each one was sent with", async () => {
+    const concurrentBot = `${bot}-concurrent`;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const gateway = withComputerActivity(
+      {
+        status: async () => ({ state: "ready" }),
+        runCommand: async (_b: string, _a: unknown, input: { command: string }) => {
+          if (input.command.startsWith("slow")) await gate;
+          return { command: input.command, exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false, elapsedMs: 1 };
+        },
+      } as unknown as ComputerGateway,
+      { store: () => store },
+    );
+    const actor = { id: user, userId: user };
+    const calls = [
+      { runId: "turnA", toolCallId: "callA", command: "slow a" },
+      { runId: "turnB", toolCallId: "callB", command: "fast b" },
+      { runId: "turnC", toolCallId: "callC", command: "slow c" },
+    ].map((call) =>
+      withActivityScope(
+        { threadId: null, runId: call.runId, toolCallId: call.toolCallId, actorUserId: user },
+        () => gateway.runCommand(concurrentBot, actor as never, { command: call.command } as never),
+      ),
+    );
+    await calls[1];
+    release();
+    await Promise.all(calls);
+    const page = await store.list({ computerId: concurrentBot, actorUserId: user });
+    const bySubject = Object.fromEntries(page.steps.map((step) => [step.subject, step]));
+    expect(bySubject["slow a"]).toMatchObject({ runId: "turnA", toolCallId: "callA", status: "ok" });
+    expect(bySubject["fast b"]).toMatchObject({ runId: "turnB", toolCallId: "callB", status: "ok" });
+    expect(bySubject["slow c"]).toMatchObject({ runId: "turnC", toolCallId: "callC", status: "ok" });
+    await store.clear(concurrentBot);
   });
 });

@@ -807,13 +807,15 @@ export function ComputerTools() {
     }),
     handler: async (
       input: { path?: string },
-      { toolCall }: { toolCall?: { id?: string } } = {},
+      { signal, toolCall }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
-      const result = await callComputer(computerId, "/files/list", {
-        method: "POST",
-        body: input ?? {},
-      });
+      const result = await callComputer(
+        computerId,
+        "/files/list",
+        { method: "POST", body: input ?? {} },
+        signal,
+      );
       recordActivity(computerId, {
         ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
         kind: "list_files",
@@ -858,13 +860,15 @@ export function ComputerTools() {
     }),
     handler: async (
       input: { path: string },
-      { toolCall }: { toolCall?: { id?: string } } = {},
+      { signal, toolCall }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
-      const result = await callComputer(computerId, "/files/read", {
-        method: "POST",
-        body: input,
-      });
+      const result = await callComputer(
+        computerId,
+        "/files/read",
+        { method: "POST", body: input },
+        signal,
+      );
       recordActivity(computerId, {
         ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
         kind: "read_file",
@@ -1029,13 +1033,15 @@ export function ComputerTools() {
         contents: string;
         append?: boolean;
       },
-      { toolCall }: { toolCall?: { id?: string } } = {},
+      { signal, toolCall }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
-      const result = await callComputer(computerId, "/files/write", {
-        method: "POST",
-        body: input,
-      });
+      const result = await callComputer(
+        computerId,
+        "/files/write",
+        { method: "POST", body: input },
+        signal,
+      );
       /*
        * The path and the size, never the contents. A Bot may well be saving something it was told in
        * confidence, and the write route declines to echo it back for exactly that reason; putting it

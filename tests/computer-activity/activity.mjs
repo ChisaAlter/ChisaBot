@@ -26,7 +26,10 @@ const seed = (phase) =>
 const browser = await chromium.launch({ executablePath: process.env.CHROME || "/usr/bin/google-chrome", headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
 const results = [];
 
-async function open(mode, [width, height], { live = false } = {}) {
+let channelId = "new";
+const narrow = (width) => width < 768;
+
+async function open(mode, [width, height], { live = false, watch = true, tab = "activity" } = {}) {
   const context = await browser.newContext({ viewport: { width, height }, locale: "zh-CN", timezoneId: "Asia/Shanghai", deviceScaleFactor: 1, isMobile: false });
   if (mode === "pc") {
     await context.addInitScript(() => {
@@ -44,8 +47,15 @@ async function open(mode, [width, height], { live = false } = {}) {
   const page = await context.newPage();
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(String(error)));
-  await page.goto(`${base}/channel/new?agent=${bot}&watch=true`, { waitUntil: "domcontentloaded" });
-  await page.locator(".activity-log").first().waitFor({ timeout: 45_000 });
+  await page.goto(`${base}/channel/${channelId}?agent=${bot}${watch ? "&watch=true" : ""}`, { waitUntil: "domcontentloaded" });
+  if (!watch) {
+    await page.locator("[data-jump-activity]").first().waitFor({ timeout: 45_000 });
+    return { context, page, pageErrors };
+  }
+  await page.locator(".activity-log").first().waitFor({ state: "attached", timeout: 45_000 });
+  // 窄屏默认「画面」，要看活动先切过去（切换不走路由）。
+  if (narrow(width) && tab === "activity") await page.locator('.computer-mobile-tab[data-tab="activity"]').click();
+  if (!narrow(width) || tab === "activity") await page.locator(".activity-log").first().waitFor({ timeout: 15_000 });
   await page.waitForTimeout(800);
   return { context, page, pageErrors };
 }
@@ -69,6 +79,9 @@ try {
   await fetch(`${base}/api/me/onboarding`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ completed: true }) });
   await fetch(`${base}/api/me/profile`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "活动验收" }) });
   process.env.USER_ID = me.user.id;
+  const created = await (await fetch(`${base}/api/channels`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agentIds: [bot] }) })).json();
+  channelId = created.channel.id;
+  process.env.THREAD = created.channel.threadId;
 
   for (const mode of MODES) {
     for (const size of SIZES) {
@@ -134,7 +147,62 @@ try {
       const liveOffenders = await overflow(liveRun.page);
       await liveRun.context.close();
 
-      const errors = [...pageErrors, ...liveRun.pageErrors];
+      // 对话 → 活动记录：面板没开（不带 watch）时点聊天里的「在活动里看」，面板打开、窄屏切到「活动」、那一步高亮。
+      seed("history");
+      const jumpRun = await open(mode, size, { watch: false });
+      const historyBefore = await jumpRun.page.evaluate(() => history.length);
+      await jumpRun.page.locator('[data-jump-activity="cb101-read-call"]').first().click();
+      const target = jumpRun.page.locator('.activity-step.is-activity-jump[data-tool-call="cb101-read-call"]');
+      await target.first().waitFor({ timeout: 15_000 });
+      if (narrow(size[0]))
+        assert.equal(await jumpRun.page.locator('.computer-mobile-tab[data-tab="activity"]').getAttribute("aria-selected"), "true", `${label}: jump switches to 活动`);
+      const inView = await target.first().evaluate((row) => {
+        const box = row.getBoundingClientRect();
+        const scroller = row.closest(".activity-scroll")?.getBoundingClientRect();
+        return Boolean(scroller) && box.top >= (scroller?.top ?? 0) - 1 && box.bottom <= (scroller?.bottom ?? 0) + 1 && box.bottom <= window.innerHeight;
+      });
+      assert(inView, `${label}: jumped step is scrolled into view`);
+      await jumpRun.page.waitForTimeout(250);
+      await jumpRun.page.screenshot({ path: path.join(out, `${label}-jump.png`) });
+      const jumpOffenders = await overflow(jumpRun.page);
+      assert.equal(jumpOffenders.length, 0, `${label}: overflow after jump ${JSON.stringify(jumpOffenders)}`);
+      const historyAfterJump = await jumpRun.page.evaluate(() => history.length);
+      await jumpRun.context.close();
+
+      // 窄屏「画面 | 活动」：默认画面；在画面时来了新活动 → 活动标签亮未读点；切过去清掉；切换不加 history。
+      let tabErrors = [];
+      if (narrow(size[0])) {
+        seed("history");
+        const tabRun = await open(mode, size, { tab: "screen" });
+        const tabs = tabRun.page.locator(".computer-mobile-tabs");
+        assert(await tabs.isVisible(), `${label}: segmented tabs visible`);
+        assert.equal(await tabRun.page.locator('.computer-mobile-tab[data-tab="screen"]').getAttribute("aria-selected"), "true", `${label}: 画面 by default`);
+        assert.equal(await tabRun.page.locator(".activity-log").first().isVisible(), false, `${label}: activity hidden on 画面`);
+        const before = await tabRun.page.evaluate(() => history.length);
+        seed("live");
+        await tabRun.page.locator('.computer-mobile-tab[data-tab="activity"][data-unread]').waitFor({ timeout: 15_000 });
+        await tabRun.page.screenshot({ path: path.join(out, `${label}-tab-unread.png`) });
+        await tabRun.page.locator('.computer-mobile-tab[data-tab="activity"]').click();
+        await tabRun.page.locator(".activity-log").first().waitFor({ timeout: 5_000 });
+        assert.equal(await tabRun.page.locator('.computer-mobile-tab[data-tab="activity"][data-unread]').count(), 0, `${label}: unread cleared`);
+        await tabRun.page.screenshot({ path: path.join(out, `${label}-tab-activity.png`) });
+        await tabRun.page.locator('.computer-mobile-tab[data-tab="screen"]').click();
+        assert.equal(await tabRun.page.evaluate(() => history.length), before, `${label}: tab switch leaves history alone`);
+        const tabOffenders = await overflow(tabRun.page);
+        assert.equal(tabOffenders.length, 0, `${label}: overflow tabs ${JSON.stringify(tabOffenders)}`);
+        tabErrors = tabRun.pageErrors;
+        await tabRun.context.close();
+      } else {
+        // 平板及以上：没有分段标签，画面和活动都在。
+        const wide = await open(mode, size);
+        assert.equal(await wide.page.locator(".computer-mobile-tabs").isVisible(), false, `${label}: no tabs on wide`);
+        tabErrors = wide.pageErrors;
+        await wide.context.close();
+      }
+
+      const errors = [...pageErrors, ...liveRun.pageErrors, ...jumpRun.pageErrors, ...tabErrors];
+      void historyBefore;
+      void historyAfterJump;
       results.push({ label, overflow: offenders.length + liveOffenders.length, offenders: [...offenders, ...liveOffenders], pageErrors: errors.length, errors, scrollJumpPx: jump, pass: true });
       assert.equal(offenders.length + liveOffenders.length, 0, `${label}: overflow ${JSON.stringify([...offenders, ...liveOffenders])}`);
       assert.equal(errors.length, 0, `${label}: page errors ${errors.join(" | ")}`);

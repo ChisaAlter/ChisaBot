@@ -1,3 +1,4 @@
+import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
@@ -166,6 +167,7 @@ export function WorkRow({
               key={`${index}:${step.text}`}
             >
               {step.text}
+              <ActivityJumpButton name={step.call?.name} toolCallId={step.call?.id} />
             </li>
           ))}
         </ol>

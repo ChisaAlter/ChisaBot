@@ -1,8 +1,9 @@
 /**
- * 当前这次前端工具调用的归属（CB-101），随计算机请求作为请求头发给服务端。
+ * 这次前端工具调用的归属（CB-101），随计算机请求作为请求头发给服务端。
  *
- * 工具 handler 由 approval-tools 的包装统一调用，那里设置、结束时释放。同一时刻一般只有一个计算机
- * 工具在跑；真有并发时取最近设置的那个（最坏只是把一步挂到同一轮的另一个工具调用上，不会跨对话）。
+ * 归属绑在这次调用自己的 AbortSignal 上：approval-tools 的包装给每次调用派生一个独立的 signal 并登记它的
+ * 对话 / 轮次 / 工具调用 id，handler 把这个 signal 传给 callComputer，请求头就从这里取。
+ * 几个工具并发时各拿各的，不会串；没有 signal（或 signal 没登记）的请求不带归属，服务端记为未归属，不去猜。
  */
 export type ComputerCallMeta = {
   threadId?: string;
@@ -10,21 +11,29 @@ export type ComputerCallMeta = {
   toolCallId?: string;
 };
 
-const stack: ComputerCallMeta[] = [];
+const bySignal = new WeakMap<AbortSignal, ComputerCallMeta>();
 
-export function setComputerCallMeta(
+/** 给这次调用派生一个独立的 signal（跟随 parent 中止），并把归属登记在它上面。 */
+export function bindComputerCallMeta(
   meta: ComputerCallMeta | undefined,
-): () => void {
-  if (!meta) return () => undefined;
-  stack.push(meta);
-  return () => {
-    const index = stack.lastIndexOf(meta);
-    if (index >= 0) stack.splice(index, 1);
-  };
+  parent?: AbortSignal,
+): AbortSignal {
+  const controller = new AbortController();
+  if (parent) {
+    if (parent.aborted) controller.abort(parent.reason);
+    else
+      parent.addEventListener("abort", () => controller.abort(parent.reason), {
+        once: true,
+      });
+  }
+  if (meta) bySignal.set(controller.signal, meta);
+  return controller.signal;
 }
 
-export function computerCallHeaders(): Record<string, string> | undefined {
-  const meta = stack.at(-1);
+export function computerCallHeaders(
+  signal?: AbortSignal,
+): Record<string, string> | undefined {
+  const meta = signal ? bySignal.get(signal) : undefined;
   if (!meta) return undefined;
   const headers: Record<string, string> = {};
   if (meta.threadId) headers["x-chisabot-thread"] = meta.threadId;

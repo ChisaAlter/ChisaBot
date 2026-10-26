@@ -1,3 +1,4 @@
+import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { PendingApprovals } from "@/components/approvals/inline-approval";
 import type { VisibleChatItem } from "./chat-messages";
 import { ToolLine } from "./tool-line";
@@ -93,6 +94,7 @@ export function BrowserActivity({
 }) {
   const steps = group.steps.map((step) => ({
     id: step.id,
+    toolCall: step.toolCall,
     ...browserStepDetails(step),
   }));
   const pages = steps.filter((step) => step.visited).length;
@@ -131,6 +133,7 @@ export function BrowserActivity({
                     {step.title ?? step.href}
                   </a>
                 ) : null}
+                <ActivityJumpButton name={step.toolCall.function.name} toolCallId={step.toolCall.id} />
                 {step.pending && (
                   <span className="text-muted-foreground">
                     {active ? "进行中" : "未完成"}

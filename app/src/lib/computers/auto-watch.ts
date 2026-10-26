@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { JUMP_TO_ACTIVITY } from "@/components/computer/activity-jump";
 import { onComputerActivity } from "@/lib/copilot/computer-activity";
 
 /**
@@ -75,7 +76,13 @@ export function useComputerAutoWatch(
         latest.current.setWatching(false);
       }, RETURN_AFTER_MS);
     });
+    // CB-101：聊天里点「在活动里看」= 用户手动打开计算机（不是自动打开，之后不会自动关掉）。
+    const onJump = () => {
+      if (!latest.current.watching) latest.current.setWatching(true);
+    };
+    window.addEventListener(JUMP_TO_ACTIVITY, onJump);
     return () => {
+      window.removeEventListener(JUMP_TO_ACTIVITY, onJump);
       engagedListeners.delete(offEngaged);
       offActivity();
       clearTimeout(timer.current);

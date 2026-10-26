@@ -44,7 +44,7 @@ async function callComputerInner(
     response = await tryClient(`/api/computers/${botId}${path}`, {
       method: init?.method,
       body: init?.body,
-      headers: computerCallHeaders(),
+      headers: computerCallHeaders(signal),
       signal,
       // Match the computer's server-side operation limits, with transport margin. Ordinary queries
       // stay at 30s; a foreground command or download must not be cut off by that read budget.

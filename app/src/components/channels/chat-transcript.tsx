@@ -1,4 +1,5 @@
 import { JUMP_TO_TOOL_CALL } from "@/components/computer/activity-jump";
+import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import type { ActivityMessage, Message } from "@ag-ui/core";
 import type { Attachment } from "@copilotkit/react-core/v2";
 import {
@@ -3564,6 +3565,7 @@ export function ChatTranscript({
           result={item.result}
           toolCallId={item.toolCall.id}
         />
+        <ActivityJumpButton name={item.toolCall.function.name} toolCallId={item.toolCall.id} />
         {/* 确认卡片（DESIGN.md §58）：画在这个工具调用下面；设备改文件时带 diff（§62）。 */}
         <ToolCallConfirmCards
           answered={item.result !== undefined}

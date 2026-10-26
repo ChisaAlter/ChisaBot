@@ -8739,3 +8739,18 @@ cpk-web-inspector {
 [data-message-id].is-activity-jump { animation: activity-jump 1.6s ease-out; }
 @keyframes activity-jump { 0%, 40% { background: color-mix(in srgb, #0ea5e9 16%, transparent); } 100% { background: transparent; } }
 @media (max-width: 420px) { .activity-step-meta time { display: none; } }
+
+/* CB-101：窄屏「画面 | 活动」分段切换；对话 → 活动记录跳转 */
+.computer-mobile-tabs { display: none; }
+@media (max-width: 767px) {
+  .computer-mobile-tabs { display: flex; gap: 4px; padding: 3px; border-radius: 999px; background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+  .computer-mobile-tab { position: relative; flex: 1; min-height: 36px; border-radius: 999px; font-size: 14px; color: var(--ink-2, var(--muted-foreground)); }
+  .computer-mobile-tab[aria-selected="true"] { background: var(--background); color: var(--ink-1, var(--foreground)); font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .computer-mobile-unread { position: absolute; top: 8px; margin-left: 4px; width: 8px; height: 8px; border-radius: 999px; background: #ef4444; }
+  [data-mobile-tab="screen"] > .computer-mobile-activity, [data-mobile-tab="activity"] > .computer-mobile-screen { display: none; }
+}
+.activity-jump-link { display: inline-flex; align-items: center; gap: 3px; margin: 2px 0 0; padding: 2px 6px; border-radius: 6px; font-size: 12px; color: var(--ink-2, var(--muted-foreground)); flex: none; }
+.activity-jump-link:hover { background: color-mix(in srgb, var(--foreground) 6%, transparent); color: var(--ink-1, var(--foreground)); }
+.activity-step.is-activity-jump { animation: activity-jump-flash 1.8s ease-out; }
+@keyframes activity-jump-flash { 0%, 40% { background: color-mix(in srgb, #f59e0b 28%, transparent); box-shadow: inset 3px 0 0 #f59e0b; } 100% { background: transparent; box-shadow: none; } }
+@media (max-width: 767px) { .computer-mobile-activity > .activity-heading { display: none; } }

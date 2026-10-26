@@ -51,25 +51,37 @@ async function ensureThread(prompt: string, runId: string) {
 }
 
 let call = 0;
-async function agent<T>(runId: string, run: () => Promise<T>) {
+const JUMP_CALL = "cb101-jump-call";
+const READ_CALL = "cb101-read-call";
+async function agent<T>(runId: string, run: () => Promise<T>, fixedId?: string) {
   call += 1;
-  const toolCallId = `${phase}-${runId}-${call}-${Date.now()}`;
+  const toolCallId = fixedId ?? `${phase}-${runId}-${call}-${Date.now()}`;
   return withActivityScope({ threadId: thread, runId, toolCallId, actorUserId: user }, run).catch(() => undefined);
 }
 
 if (phase === "history") {
   await database.execute(sql`delete from computer_activity_steps where computer_id = ${bot}`);
+  await database.execute(sql`update openbot_local_threads set messages = '[]'::jsonb where id = ${thread}`);
   // 足够多的旧记录，让面板能滚动。
   await ensureThread("先把归档文件夹里的报告读一遍", "run-0");
   for (let i = 0; i < 14; i++) await agent("run-0", () => gateway.readFile(bot, actor, { path: `archive/report-${i}.md` } as never));
   await ensureThread("帮我看看 example.com 上写了什么，再检查一下工作区", "run-1");
-  await agent("run-1", () => gateway.navigate(bot, actor, "https://example.com/?token=SECRET123&lang=zh", "x"));
+  await agent("run-1", () => gateway.navigate(bot, actor, "https://example.com/?token=SECRET123&lang=zh", "x"), JUMP_CALL);
   await agent("run-1", () => gateway.click(bot, actor, { ref: "e1" } as never, undefined as never));
   await agent("run-1", () => gateway.type(bot, actor, { ref: "e2", text: "hunter2-Pa55word!" } as never, undefined as never));
   for (const command of ["ls -la", "pwd", "whoami", "uname -a"]) await agent("run-1", () => gateway.runCommand(bot, actor, { command } as never));
   await agent("run-1", () => gateway.runCommand(bot, actor, { command: "cat missing.txt" } as never));
   await agent("run-1", () => gateway.runCommand(bot, actor, { command: "date" } as never));
-  await agent("run-1", () => gateway.readFile(bot, actor, { path: "notes/todo.md" } as never));
+  // 聊天里这次工具调用要能跳到活动记录：对话里写上同一个 toolCallId 的调用和结果。
+  await agent("run-1", () => gateway.readFile(bot, actor, { path: "notes/todo.md" } as never), READ_CALL);
+  await database.execute(sql`
+    update openbot_local_threads set messages = messages || ${JSON.stringify([
+      { id: "a-jump", role: "assistant", content: "", toolCalls: [{ id: JUMP_CALL, type: "function", function: { name: "computer_navigate", arguments: JSON.stringify({ url: "https://example.com/" }) } }] },
+      { id: "t-jump", role: "tool", toolCallId: JUMP_CALL, content: JSON.stringify({ ok: true, url: "https://example.com/", title: "Example Domain" }) },
+      { id: "a-read", role: "assistant", content: "", toolCalls: [{ id: READ_CALL, type: "function", function: { name: "computer_read_file", arguments: JSON.stringify({ path: "notes/todo.md" }) } }] },
+      { id: "t-read", role: "tool", toolCallId: READ_CALL, content: JSON.stringify({ ok: true, path: "notes/todo.md", bytes: 2048 }) },
+      { id: "a-done", role: "assistant", content: "看完了，工作区里有一份待办。" },
+    ])}::text::jsonb where id = ${thread}`);
   for (let i = 0; i < 3; i++) {
     await withActivityScope({ human: true, actorUserId: user }, () => gateway.humanInput(bot, { kind: "type", text: "我自己输入的私人内容" } as never));
   }

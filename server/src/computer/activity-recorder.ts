@@ -470,7 +470,16 @@ export function withComputerActivity(
     if (!store || !plan) return run();
     const scope = currentActivityScope();
     const approval = currentApprovalContext();
-    const toolCallId = scope?.toolCallId ?? approval?.toolCallId ?? null;
+    /*
+     * 归属只认调用方显式带来的那一组 id（CB-101 并发修复）：请求头带了工具调用 id 就整组用请求头的，
+     * 否则整组用审批上下文（无头运行）的；两边都没有就是未归属，不按时间或「最近一次」去猜，也不把两边拼起来。
+     */
+    const bound = scope?.toolCallId
+      ? { threadId: scope.threadId ?? null, runId: scope.runId ?? null, toolCallId: scope.toolCallId }
+      : approval?.toolCallId
+        ? { threadId: approval.threadId ?? null, runId: approval.runId ?? null, toolCallId: approval.toolCallId }
+        : { threadId: null, runId: null, toolCallId: null };
+    const toolCallId = bound.toolCallId;
     const human = plan.human === true || (scope?.human === true && !toolCallId);
     if (scope?.recorded) return run();
     if (plan.needsToolCall && !toolCallId) return run();
@@ -503,8 +512,8 @@ export function withComputerActivity(
     try {
       stepId = await store.begin({
         computerId: botId,
-        threadId: scope?.threadId ?? approval?.threadId ?? null,
-        runId: scope?.runId ?? approval?.runId ?? null,
+        threadId: actorKind === "agent" ? bound.threadId : (scope?.threadId ?? null),
+        runId: actorKind === "agent" ? bound.runId : null,
         toolCallId: actorKind === "agent" ? toolCallId : null,
         actorUserId,
         actorKind,

@@ -27,6 +27,7 @@ import {
 import {
   type ReactNode,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -49,7 +50,12 @@ import {
   stepObject,
   stepVerb,
 } from "../../../../shared/computer-activity-labels";
-import { JUMP_TO_TOOL_CALL } from "./activity-jump";
+import {
+  clearActivityJump,
+  JUMP_TO_ACTIVITY,
+  JUMP_TO_TOOL_CALL,
+  pendingActivityJump,
+} from "./activity-jump";
 import { CommandOutput } from "./command-output";
 import { LegacyActivityLog } from "./legacy-activity-log";
 
@@ -318,6 +324,12 @@ function BatchRow({
       className={`activity-step is-batch${steps.some((step) => fresh.has(step.id)) ? " is-fresh" : ""}`}
       data-activity-batch={steps.length}
       data-status="ok"
+      data-tool-calls={
+        steps
+          .map((step) => step.toolCallId ?? "")
+          .join(" ")
+          .trim() || undefined
+      }
     >
       <button
         aria-expanded={open}
@@ -387,7 +399,9 @@ function TurnGroup({
     ? "你自己的操作"
     : turn.prompt
       ? turn.prompt
-      : "机器人的操作";
+      : turn.runId
+        ? "机器人的操作"
+        : "未归属的操作";
   const status = turn.running
     ? "进行中"
     : turn.turnStatus
@@ -432,14 +446,21 @@ function TurnGroup({
 export function ActivityLog({
   computerId,
   threadId,
+  onNewest,
 }: {
   computerId: string;
   threadId?: string;
+  /** 最新一步的 id 变了（窄屏「活动」标签的未读点用）。 */
+  onNewest?: (id: string | undefined) => void;
 }) {
   const activity = useComputerActivity(
     computerId,
     threadId ? { threadId } : {},
   );
+  const newestId = activity.steps[0]?.id;
+  useEffect(() => {
+    onNewest?.(newestId);
+  }, [newestId, onNewest]);
   const turns = useMemo(() => groupActivity(activity.steps), [activity.steps]);
   const scroller = useRef<HTMLDivElement>(null);
   const before = useRef<{
@@ -506,6 +527,66 @@ export function ActivityLog({
     };
     if (element.scrollTop <= 4) setUnseen(0);
   }, [readAnchor]);
+
+  /*
+   * 对话 → 活动记录（和 JUMP_TO_TOOL_CALL 对称）：找到这次工具调用记下的步骤，滚到第一步、整组高亮。
+   * 被合并的命令先展开那一组。记录还没到就等数据来了再找（请求 10 秒内有效）。
+   */
+  const [jumpTick, setJumpTick] = useState(0);
+  useEffect(() => {
+    const onJump = () => setJumpTick((tick) => tick + 1);
+    window.addEventListener(JUMP_TO_ACTIVITY, onJump);
+    return () => window.removeEventListener(JUMP_TO_ACTIVITY, onJump);
+  }, []);
+  useEffect(() => {
+    void jumpTick;
+    const toolCallId = pendingActivityJump();
+    const element = scroller.current;
+    if (!toolCallId || !element || !activity.steps.length) return;
+    const selector = `[data-tool-call="${CSS.escape(toolCallId)}"]`;
+    const rows = [...element.querySelectorAll<HTMLElement>(selector)];
+    if (!rows.length) {
+      const batch = element.querySelector<HTMLElement>(
+        `[data-activity-batch][data-tool-calls~="${CSS.escape(toolCallId)}"] > button`,
+      );
+      if (batch && batch.getAttribute("aria-expanded") !== "true") {
+        batch.click();
+        setTimeout(() => setJumpTick((tick) => tick + 1), 0);
+        return;
+      }
+      if (activity.hasMore && activity.steps.length < 500) activity.loadMore();
+      return;
+    }
+    clearActivityJump(toolCallId);
+    // 组内从旧到新：DOM 里第一个就是这次调用最早的那步。
+    const target = rows[0];
+    if (!target) return;
+    const top =
+      target.getBoundingClientRect().top -
+      element.getBoundingClientRect().top +
+      element.scrollTop;
+    element.scrollTo({ top: Math.max(0, top - 24) });
+    before.current = {
+      ...before.current,
+      top: element.scrollTop,
+      anchor: readAnchor(element),
+    };
+    target
+      .closest(".computer-rail-activity, .activity-log")
+      ?.scrollIntoView?.({ block: "nearest" });
+    for (const row of rows) {
+      row.classList.remove("is-activity-jump");
+      void row.offsetWidth;
+      row.classList.add("is-activity-jump");
+      setTimeout(() => row.classList.remove("is-activity-jump"), 1800);
+    }
+  }, [
+    jumpTick,
+    activity.steps,
+    activity.hasMore,
+    activity.loadMore,
+    readAnchor,
+  ]);
 
   if (activity.legacy) return <LegacyActivityLog computerId={computerId} />;
 
