@@ -59,8 +59,8 @@ export function summarizeWork(calls: readonly WorkCall[]): WorkSummary | null {
   };
 }
 
-/** 不算「干活」的工具：画卡片、维护清单、读技能说明（结束后的一行里不数它们）。 */
-const NOT_WORK = new Set(["render_ui", "worker_plan", "skill_load", "skill_list"]);
+/** 不算「干活」的工具：画卡片、维护清单、读技能说明、机器人往来卡片（结束后的一行里不数它们，也不因 quietRows 整行折叠）。 */
+const NOT_WORK = new Set(["render_ui", "worker_plan", "skill_load", "skill_list", "message_bot"]);
 
 export type DoneWork = {
   label: string;

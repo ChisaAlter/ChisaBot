@@ -5,7 +5,16 @@ import {
   IconLayoutGrid,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
+  IconPlus,
+  IconRefresh,
 } from "@tabler/icons-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useQuery } from "@tanstack/react-query";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -52,6 +61,60 @@ const DEFAULT_WIDTH = 380;
 /** 常驻栏两侧的内边距合计：卡片宽度 = 栏宽 − 它（拖动期两格一起写）。 */
 const CARD_INSET = 24;
 const PANEL_CARD_CLASS = "glass-card glass-rail-inner rail-card flex h-full min-h-0 flex-col";
+
+export type PanelPreset = {
+  label: string;
+  prompt: string;
+};
+
+/** 右栏面板推荐预设（CB-094，DESIGN.md §114）：空态和栏头「＋」共用，支持按页轮换。 */
+export const PANEL_PRESETS: readonly PanelPreset[] = [
+  {
+    label: "☀️ 今日晨报看板",
+    prompt: "请帮我创建一个「今日晨报与待办概览」右侧实时面板，汇总天气、今日日程与待办事项",
+  },
+  {
+    label: "📈 BTC 与黄金行情",
+    prompt: "请帮我创建一个「比特币与黄金实时价格」右侧面板，每 15 分钟自动刷新",
+  },
+  {
+    label: "🌤️ 天气与汇率",
+    prompt: "请帮我创建一个「城市实时天气与主要汇率」右侧面板",
+  },
+  {
+    label: "🖥️ 服务器状态监控",
+    prompt: "请帮我创建一个「服务器 CPU / 内存 / 磁盘负载」右侧实时监控面板",
+  },
+  {
+    label: "📰 科技热点速览",
+    prompt: "请帮我创建一个「今日 AI 与科技头条」右侧面板，每小时自动刷新最新要闻",
+  },
+  {
+    label: "📦 GitHub 仓库动态",
+    prompt: "请帮我创建一个「GitHub 关注仓库最新提交与 Issue」右侧面板",
+  },
+  {
+    label: "⏱️ 倒计时与纪念日",
+    prompt: "请帮我创建一个「重要截止日与项目里程碑倒计时」右侧面板",
+  },
+  {
+    label: "📬 邮件与日程摘要",
+    prompt: "请帮我创建一个「今日未读重要邮件与接下来日程」右侧实时面板",
+  },
+  {
+    label: "💹 美股与指数看板",
+    prompt: "请帮我创建一个「纳斯达克、标普 500 与热门科技股行情」右侧面板",
+  },
+];
+
+export function panelPresetBatch(batchIndex: number, pageSize = 3): PanelPreset[] {
+  const total = PANEL_PRESETS.length;
+  if (total === 0 || pageSize <= 0) return [];
+  const batches = Math.ceil(total / pageSize);
+  const normalized = ((batchIndex % batches) + batches) % batches;
+  const start = normalized * pageSize;
+  return PANEL_PRESETS.slice(start, start + pageSize);
+}
 
 function storedWidth() {
   const raw = Number(readStoredPreference(WIDTH_KEY));
@@ -375,6 +438,9 @@ function PanelRailBody({
           <h2 className="rail-head-t">{"面板"}</h2>
         )}
         <span className="flex-1" />
+        {tab === "panels" && botId ? (
+          <RailAddPanelMenu drawer={drawer} onCloseDrawer={drawer ? onCollapse : undefined} />
+        ) : null}
         <span aria-hidden className="rail-head-div" />
         <ToggleTip keys={showHotkey ? PANEL_RAIL_HOTKEY_LABEL : undefined} label={"收起右栏"} side="bottom">
           <button
@@ -408,20 +474,7 @@ function PanelRailBody({
                     {"还没有面板。在对话里说一句，比如「帮我做一个比特币价格面板」，机器人会做好放在这里并按时刷新。"}
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
-                    {[
-                      {
-                        label: "☀️ 今日晨报看板",
-                        prompt: "请帮我创建一个「今日晨报与待办概览」右侧实时面板，汇总天气、今日日程与待办事项",
-                      },
-                      {
-                        label: "📈 BTC 与黄金行情",
-                        prompt: "请帮我创建一个「比特币与黄金实时价格」右侧面板，每 15 分钟自动刷新",
-                      },
-                      {
-                        label: "🌤️ 天气与汇率",
-                        prompt: "请帮我创建一个「城市实时天气与主要汇率」右侧面板",
-                      },
-                    ].map((preset) => (
+                    {panelPresetBatch(0).map((preset) => (
                       <button
                         className="rounded-full border border-border/60 bg-background/60 px-2.5 py-1 text-[11.5px] font-medium text-foreground/85 transition-colors hover:bg-muted hover:text-foreground"
                         data-testid={`rail-empty-preset-${preset.label.slice(0, 2)}`}
@@ -432,6 +485,7 @@ function PanelRailBody({
                               detail: preset.prompt,
                             }),
                           );
+                          if (drawer) onCollapse();
                         }}
                         type="button"
                       >
@@ -528,5 +582,80 @@ function RailComputerPane({
 function RailNote({ children }: { children: React.ReactNode }) {
   return (
     <p className="glass-card p-4 text-muted-foreground text-sm">{children}</p>
+  );
+}
+
+/**
+ * 右栏头部的「＋」新建面板入口（CB-094，DESIGN.md §114）：
+ * 已有面板以后也能随时挑一个预设填进聊天输入框（chisabot-prefill，不自动发送），点「换一批」轮换预设。
+ */
+function RailAddPanelMenu({
+  drawer,
+  onCloseDrawer,
+}: {
+  drawer: boolean;
+  onCloseDrawer?: () => void;
+}) {
+  const [batch, setBatch] = useState(0);
+  const presets = panelPresetBatch(batch);
+  const prefill = (prompt: string) => {
+    window.dispatchEvent(new CustomEvent("chisabot-prefill", { detail: prompt }));
+    if (drawer && onCloseDrawer) onCloseDrawer();
+  };
+  return (
+    <DropdownMenu>
+      <ToggleTip label={"新建面板"} side="bottom">
+        <DropdownMenuTrigger
+          render={
+            <button
+              aria-label={"新建面板"}
+              className="rail-head-icon"
+              data-testid="rail-add-panel-btn"
+              type="button"
+            />
+          }
+        >
+          <IconPlus className="size-[18px]" />
+        </DropdownMenuTrigger>
+      </ToggleTip>
+      <DropdownMenuContent align="end" className="glass-pop w-[256px] p-1.5">
+        <div className="flex items-center justify-between px-2.5 py-1 text-xs text-muted-foreground">
+          <span>{"新建右侧面板（填入输入框）"}</span>
+          <button
+            aria-label={"换一批预设"}
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-foreground/80 hover:bg-muted"
+            data-testid="rail-preset-shuffle"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setBatch((n) => n + 1);
+            }}
+            type="button"
+          >
+            <IconRefresh className="size-3" />
+            {"换一批"}
+          </button>
+        </div>
+        <DropdownMenuSeparator className="glass-sep" />
+        {presets.map((preset) => (
+          <DropdownMenuItem
+            className="glass-mi"
+            data-testid={`rail-add-preset-${preset.label.slice(0, 2)}`}
+            key={preset.label}
+            onClick={() => prefill(preset.prompt)}
+          >
+            <span className="min-w-0 flex-1 truncate">{preset.label}</span>
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator className="glass-sep" />
+        <DropdownMenuItem
+          className="glass-mi text-muted-foreground"
+          data-testid="rail-add-custom"
+          onClick={() => prefill("请帮我创建一个右侧实时面板：")}
+        >
+          <span className="min-w-0 flex-1 truncate">{"✍️ 自定义面板要求…"}</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

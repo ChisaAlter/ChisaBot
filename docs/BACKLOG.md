@@ -97,6 +97,107 @@
 | [CB-086](#cb-086) | 连续补话不重复执行；停止按钮终止当次计算机命令 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: done` |
 | [CB-087](#cb-087) | 聊天可靠性全面修复：滚动、队列恢复、请求与编码 | 成熟度 Maturity | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: done` |
 | [CB-088](#cb-088) | 面板级模型：刷新回合可以用面板自己选的模型 | 成熟度 Maturity | `type: feat` · `area: web` · `area: models` · `P2` · `status: planned` |
+| [CB-089](#cb-089) | Word（.docx）文件在线预览 | Hark parity | `type: feat` · `area: chat` · `P0` · `status: done` |
+| [CB-090](#cb-090) | 对话里的选项卡片：选完就定、不能重复点 | Hark parity | `type: feat` · `area: chat` · `P0` · `status: done` |
+| [CB-091](#cb-091) | 主机器人不能直接删除；菜单里可以更换主机器人 | 成熟度 Maturity | `type: bug` · `area: agents` · `P1` · `status: done` |
+| [CB-092](#cb-092) | 机器人资料页加「文件与页面」 | 成熟度 Maturity | `type: feat` · `area: agents` · `P1` · `status: done` |
+| [CB-093](#cb-093) | 机器人之间的往来视图（单聊里 @另一个机器人） | Hark parity | `type: feat` · `area: chat` · `area: agents` · `P1` · `status: done` |
+| [CB-094](#cb-094) | 有面板以后也能从右栏快速新建 | 成熟度 Maturity | `type: feat` · `area: web` · `P2` · `status: done` |
+| [CB-095](#cb-095) | 账号连接页分标签（全部 / 连接 / 登录信息 / 密钥） | 成熟度 Maturity | `type: feat` · `area: settings` · `area: vault` · `P2` · `status: done` |
+
+> CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-089
+
+**Word（.docx）文件在线预览**
+
+里程碑：Hark parity · 标签：`type: feat` `area: chat` `P0` `status: done`
+
+背景：机器人用 python-docx 生成 Word（`shared/bot-prompt.ts`），文件卡只能下载；PDF / 图片 / 文本早就能在弹窗里看（`rich-previews.tsx`）。Hark 点 .docx 进全屏纸张预览，Grok Bot 在文件卡下平铺页面缩略图。
+
+- [x] 本站 .docx 文件卡可以点开预览（前端按需加载渲染库，不进首屏包）；超过 10 MB 或解析失败时写「无法预览，下载查看」并给下载按钮。
+- [x] 弹窗沿用 PDF 预览的外壳（下载、Esc / 遮罩关闭、关闭动画不重算毛玻璃 §37）。
+- [x] 首屏 JS 体积不增加（构建产物对比）。
+- [x] 测试：识别规则、失败回退、非同源不预览。
+
+不做：服务器端 docx → PDF（LibreOffice 让镜像大几百 MB，和 1–1.5 GB 运行内存冲突）；不承诺真实分页。
+
+## CB-090
+
+**对话里的选项卡片：选完就定、不能重复点**
+
+里程碑：Hark parity · 标签：`type: feat` `area: chat` `P0` `status: done`
+
+背景：render_ui 的 `Button` 已经能 `ask`（替用户发一句话），但点完以后其他选项还亮着，能再点、重复发送，刷新后也看不出选了哪个。Grok Bot 的选择题卡片选完就折叠其余选项。
+
+- [x] `Button` 新增 `choice`（互斥选项）：同一张界面里带 `choice` 的按钮只能选一个；点了以后它标为已选，其余禁用；连点 / 双击只发一条。
+- [x] 不带 `choice` 的 `ask`（新闻「展开讲讲」这类可以问多次的）行为不变；右栏面板不受影响。
+- [x] 刷新 / 换设备后仍显示选过哪一个（从这张界面之后的用户消息推出来，不新建表）。
+- [x] 提示词引导：给 2–5 个互斥选项时用 `Button` + `ask` + `choice`，不要写「回复 1/2/3」。选项不替代确认卡片（付款 / 对外发消息 / 删除仍走 §58）。
+- [x] 测试：选择、恢复已选、重复点击被拦、非 choice 不受影响。
+
+## CB-091
+
+**主机器人不能直接删除；菜单里可以更换主机器人**
+
+里程碑：成熟度 Maturity · 标签：`type: bug` `area: agents` `P1` `status: done`
+
+背景：主机器人是「打开就面对的那一个」（§19），但左栏菜单、资料页、聊天旁的资料卡都能一键删掉它（连同会话、记忆、定时任务、面板，§44）。Grok Bot 的主 Bot 没有删除，只有「替换为其他 Bot」。
+
+- [x] 主机器人的左栏菜单（展开 / 收起两种）没有「删除机器人…」，有「更换主机器人…」（左栏只有它一个时不显示「更换」）。
+- [x] 任何入口打开删除弹窗时，如果它是主机器人，先显示拦截页：「更换主机器人… / 取消主机器人」；换掉之后同一个弹窗接着走删除。
+- [x] 更换后星标、排序立即更新（偏好已经跨设备同步）。
+- [x] 测试：候选列表规则、菜单项显示条件。
+
+## CB-092
+
+**机器人资料页加「文件与页面」**
+
+里程碑：成熟度 Maturity · 标签：`type: feat` `area: agents` `P1` `status: done`
+
+背景：找「三天前它做的那个文件」只能往上翻对话。数据已经按机器人存好（`chat_files.agent_id`、`pages.agent_id`，`GET /api/chat-files?agentId=` 已能筛选）。Grok Bot 的「资料库」按今天 / 本周 / 更早归集。
+
+- [x] `/bots/:id` 加「文件与页面」分区，按今天 / 本周 / 更早分组，点开走现有预览（图片灯箱 / PDF / CB-089 的 docx / 页面）。
+- [x] 一个都没有时整个分区不出现（§47）；超过 30 条可「加载更多」（文件列表接口加游标）。
+- [x] 删除机器人后列表随之消失（§44）。
+- [x] 接口分页与分桶单测。
+
+不做（这一期）：从对话正文里提取文档卡（```doc）。
+
+## CB-093
+
+**机器人之间的往来视图（单聊里 @另一个机器人）**
+
+里程碑：Hark parity · 标签：`type: feat` `area: chat` `area: agents` `P1` `status: done`
+
+背景：服务端已有 Bot ⇄ Bot 交接（`server/src/agents/handoff.ts` 与 `server/src/channels/group.ts`），主对话流里 `message_bot` 以前只走隐藏的 `ToolLine`。
+
+- [x] 主对话流新增 `BotExchangeCard` 往来锚点卡：折叠显示「与『B』往来」及状态徽标，展开显示任务、约束、期望输出与跳转入口；到达深度上限或对方已删除时在锚点注明「已达上限 / 对方已删除」。
+
+## CB-094
+
+**有面板以后也能从右栏快速新建**
+
+里程碑：成熟度 Maturity · 标签：`type: feat` `area: web` `P2` `status: done`
+
+背景：右栏只有在没有面板时显示 3 个预设（`panel-rail.tsx`），建了第一张就没有入口了。
+
+- [x] 栏头加「＋」：浮层列预设，`↺` 换一批；点一项只填进输入框、不发送（同 `chisabot-prefill`）。
+- [x] 窄窗口抽屉同样可用；键盘可操作。
+
+不做：Hark 那种对话流模糊 + 输入框变形（整列模糊会逐帧重算毛玻璃，§37 / §41）。
+
+## CB-095
+
+**账号连接页分标签（全部 / 连接 / 登录信息 / 密钥）**
+
+里程碑：成熟度 Maturity · 标签：`type: feat` `area: settings` `area: vault` `P2` `status: done`
+
+- [x] `/settings/connected-accounts` 顶部分段控件，`?tab=` 记住；「密钥」渲染现有 vault 内容，`/settings/vault` 保持兼容。
+- [x] 保险箱说明写「服务器加密保存，机器人看不到明文」，不写「零知识」（服务器持有 `KEY_ENCRYPTION_KEY`）。
+- [x] 设置搜索「密钥」「登录」可直达；补测试。
+
+不做：预置淘宝 / 京东 / 12306 等站点登录（反自动化重、封号风险）。
 
 ## CB-088
 

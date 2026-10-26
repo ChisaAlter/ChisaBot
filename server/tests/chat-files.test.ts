@@ -232,4 +232,33 @@ describe.skipIf(!url)("chat files service", () => {
     expect((await app.request(`/api/chat-files/${first!.id}`)).status).toBe(404);
     expect((await app.request("/api/chat-files/settings/image")).status).toBe(200);
   });
+
+  test("list and GET /api/chat-files support before cursor pagination (CB-092)", async () => {
+    const app = new Hono();
+    app.route(
+      "/api/chat-files",
+      files.routes(async (c, next) => {
+        c.set("actor" as never, { id: owner, email: "o@x", role: "member" } as never);
+        await next();
+      }),
+    );
+    const all = await files.list(owner, bot, { limit: 10 });
+    expect(all.length).toBeGreaterThanOrEqual(2);
+    // Ensure distinct timestamps so `before` strictly filters out the newest record
+    const newest = all[0]!;
+    const olderIso = new Date(Date.parse(newest.createdAt) - 60_000).toISOString();
+    await database.$client.unsafe("UPDATE chisabot_chat_files SET created_at = $1 WHERE id = $2", [olderIso, all[1]!.id]);
+
+    const refreshed = await files.list(owner, bot, { limit: 10 });
+    const cursor = refreshed[0]!.createdAt;
+    const page2 = await files.list(owner, bot, { limit: 10, before: cursor });
+    expect(page2.some((f) => f.id === refreshed[0]!.id)).toBe(false);
+    expect(page2.some((f) => f.id === all[1]!.id)).toBe(true);
+
+    const res = await app.request(`/api/chat-files?agentId=${encodeURIComponent(bot)}&before=${encodeURIComponent(cursor)}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { files: { id: string }[] };
+    expect(body.files.some((f) => f.id === refreshed[0]!.id)).toBe(false);
+    expect(body.files.some((f) => f.id === all[1]!.id)).toBe(true);
+  });
 });

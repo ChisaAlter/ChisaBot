@@ -216,6 +216,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
       { id: "personal-email", title: "个人邮箱（IMAP 收件 + SMTP 发件）", description: "连接 QQ、163、Gmail、Outlook 收件箱并支持审批代发", find: "个人助理数据源与晨报", keywords: ["邮箱", "邮件", "imap", "smtp", "收件箱"] },
       { id: "notify-webhook", title: "随手推通知与入站事件 Webhook", description: "配置 Bark / 钉钉 / 飞书 / Server酱推送与外部事件触发器", find: "个人助理数据源与晨报", keywords: ["随手推", "bark", "server酱", "ntfy", "webhook", "推送", "巡检"] },
       { id: "morning-brief", title: "每日晨报卡片与天气城市", description: "一键预览今日晨报卡片或主动巡检今日动态", find: "个人助理数据源与晨报", keywords: ["晨报", "天气", "morning brief", "巡检动态"] },
+      { id: "saved-logins", title: "网站登录信息", description: "管理保存的网站账号与登录凭据", find: "保存的网站登录", keywords: ["登录信息", "网站登录", "saved logins", "账号密码"] },
     ],
   },
   {

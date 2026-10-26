@@ -244,12 +244,17 @@ export function createPages(
     await sql.unsafe("DELETE FROM chisabot_pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - interval '24 hours'");
   }
 
-  async function list(owner: string) {
+  async function list(owner: string, agentId?: string) {
     await purge().catch(() => {});
-    const rows = await sql.unsafe<PageRow[]>(
-      `SELECT p.*, ${COUNTS} FROM chisabot_pages p WHERE p.owner_user_id = $1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`,
-      [owner],
-    );
+    const rows = agentId
+      ? await sql.unsafe<PageRow[]>(
+          `SELECT p.*, ${COUNTS} FROM chisabot_pages p WHERE p.owner_user_id = $1 AND p.agent_id = $2 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`,
+          [owner, agentId],
+        )
+      : await sql.unsafe<PageRow[]>(
+          `SELECT p.*, ${COUNTS} FROM chisabot_pages p WHERE p.owner_user_id = $1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`,
+          [owner],
+        );
     return rows.map(pageView);
   }
 
@@ -524,7 +529,10 @@ export function createPages(
       return c.json({ error: "页面服务暂时不可用，请重试。" }, 503);
     });
     const small = bodyLimit({ maxSize: 16_384 });
-    app.get("/", async (c) => c.json({ pages: await list(c.var.actor.id), origin: await originFor(c.var.actor.id) }));
+    app.get("/", async (c) => {
+      const agentId = c.req.query("agentId") || undefined;
+      return c.json({ pages: await list(c.var.actor.id, agentId), origin: await originFor(c.var.actor.id) });
+    });
     app.put("/origin", small, async (c) => {
       const body = z.object({ origin: z.string().max(200) }).parse(await c.req.json());
       return c.json({ origin: await setOrigin(c.var.actor.id, body.origin) });

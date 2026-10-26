@@ -5827,6 +5827,10 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .jr-image-a.jr-action:hover img { transform: scale(1.02); }
 .jr-image img { transition: transform 300ms var(--ease-out); }
 .jr-button.is-copied { color: var(--success); }
+/* 互斥选项（CB-090，DESIGN.md §112）：选中的那个保持实心、带 ✓；其余变淡、不能点。只换颜色和透明度，不做位移。 */
+.jr-button.is-choice { transition: opacity 180ms var(--ease-out), background-color 180ms var(--ease-out), color 180ms var(--ease-out); }
+.jr-button.is-choice[data-choice="picked"]:disabled { opacity: 1; cursor: default; }
+.jr-button.is-choice[data-choice="locked"]:disabled { opacity: 0.42; cursor: default; }
 /* 面板里：强调蓝的数字回到正文色（§29），但着色磁贴、图表、环、仪表照常用语义色。 */
 .live-panel-body .jr-metric.is-tinted .jr-metric-v { font-size: 20px; }
 .live-panel-body .jr-hero { min-height: 112px; }
@@ -6538,6 +6542,8 @@ body[data-install-hint="open"] [data-slot="sidebar-container"].glass-sidebar-con
 .bp-group { padding: 12px 20px 4px; font-size: 12px; font-weight: 600; color: var(--ink-3); }
 .bp-group:not(:first-child) { border-top: 1px solid var(--line); margin-top: 4px; }
 .bp-tasks { padding: 0 6px 6px; }
+.bp-files { display: flex; flex-direction: column; gap: 6px; padding: 6px 14px 12px; }
+.bp-files .rp-file { max-width: none; }
 .bp-footer { display: flex; justify-content: flex-start; margin-top: 16px; }
 .bp-footer [data-slot="button"] { color: var(--ink-3); }
 .bp-footer [data-slot="button"]:hover { color: var(--danger); }
@@ -6796,6 +6802,29 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .schedule-card-a:hover { background: color-mix(in srgb, var(--accent-blue-soft) 60%, var(--accent-blue) 14%); }
 .schedule-fired-icon { color: var(--accent-blue-ink); background: var(--accent-blue-soft); }
 .schedule-fired-link { display: inline-block; margin-left: 8px; font-size: 12px; color: var(--accent-blue-ink); }
+/* ── 机器人之间的往来锚点卡（handoff-tool.tsx，DESIGN.md §116 / CB-093）─────────── */
+.bot-exchange-card { max-width: 460px; margin: 6px 0; border-radius: 16px; border: 1px solid var(--line); background: var(--glass-3); box-shadow: var(--shadow-1); overflow: hidden; }
+.bot-exchange-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; text-align: left; cursor: pointer; background: transparent; border: 0; color: var(--ink-1); }
+.bot-exchange-head:hover { background: var(--glass-2); }
+.bot-exchange-ico { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; color: var(--accent-blue-ink); background: var(--accent-blue-soft); }
+.bot-exchange-card[data-state="refused"] .bot-exchange-ico,
+.bot-exchange-card[data-state="deleted"] .bot-exchange-ico { color: var(--ink-3); background: var(--glass-2); }
+.bot-exchange-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.bot-exchange-title { font-size: 13px; font-weight: 600; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-exchange-sub { font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-exchange-badge { flex: none; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 500; color: var(--accent-blue-ink); background: var(--accent-blue-soft); }
+.bot-exchange-card[data-state="depth-cap"] .bot-exchange-badge { color: var(--warn); background: var(--warn-soft); }
+.bot-exchange-card[data-state="refused"] .bot-exchange-badge,
+.bot-exchange-card[data-state="deleted"] .bot-exchange-badge { color: var(--ink-3); background: var(--glass-2); }
+.bot-exchange-chev { flex: none; color: var(--ink-3); transition: transform var(--dur-1) var(--ease-out); }
+.bot-exchange-chev.is-open { transform: rotate(180deg); }
+.bot-exchange-body { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px 12px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); }
+.bot-exchange-row { display: flex; flex-direction: column; gap: 2px; }
+.bot-exchange-k { font-size: 11.5px; font-weight: 500; color: var(--ink-3); }
+.bot-exchange-v { color: var(--ink-1); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bot-exchange-note { margin: 2px 0 0; font-size: 12px; color: var(--ink-3); line-height: 1.5; }
+.bot-exchange-link { align-self: flex-start; margin-top: 2px; font-size: 12px; font-weight: 500; color: var(--accent-blue-ink); }
+.bot-exchange-link:hover { text-decoration: underline; }
 /* ── 聊天文件 + 图片生成（DESIGN.md §56）──────────────────────────────────────────
  * 画图中：同尺寸骨架（最宽 320px，按画幅），出图不跳版；文件卡：位图出 36px 缩略图、PDF 多一个「预览」。 */
 .cf-image-pending {
@@ -6820,6 +6849,15 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .rp-file-thumb:focus-visible { outline: 2px solid var(--focus-line); outline-offset: 2px; }
 .rp-pdf-dialog { width: min(920px, calc(100vw - 32px)); max-width: none; }
 .rp-pdf-frame { display: block; width: 100%; height: min(78svh, 900px); margin-top: 8px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #fff; }
+/* Word（.docx）在线预览（DESIGN.md §111）：纸张白底黑字不随深色底色反色，外层托盘走主题玻璃色。 */
+.rp-docx-dialog { width: min(920px, calc(100vw - 32px)); max-width: none; }
+.rp-docx { height: min(78svh, 900px); margin-top: 8px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--glass-2); }
+.rp-docx-note { margin: 0; padding: 32px 20px; text-align: center; font-size: var(--fs-13, 13px); color: var(--ink-3); }
+.rp-docx-pages .docx-wrapper { padding: 20px 16px; background: transparent; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.rp-docx-pages .docx-wrapper > section.docx { max-width: 100%; margin: 0; box-shadow: var(--shadow-1); border-radius: 4px; overflow-x: auto; }
+@media (max-width: 640px) {
+  .rp-docx-pages .docx-wrapper { padding: 10px 6px; }
+}
 .img-settings { padding: 20px; }
 .img-probe { margin: 0; padding: 10px 12px; border-radius: 12px; font-size: 13px; line-height: 1.5; }
 .img-probe.is-ok { color: var(--success); background: var(--success-soft); }
