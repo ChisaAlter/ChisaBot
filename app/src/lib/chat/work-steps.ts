@@ -141,8 +141,19 @@ export function plainNote(text: string): string {
  * 干活卡点开后的一列（§90）：每一步一句（同 `workStepLines`），过程话按它出现的位置插在步骤之间。
  * 没有过程话时与 `workStepLines` 完全一样。
  */
-export function workTimeline(calls: readonly WorkCall[], notes: readonly WorkNote[] = []): { kind: "step" | "note"; text: string }[] {
-  const lines: { kind: "step" | "note"; text: string }[] = [];
+export function workTimeline(
+  calls: readonly WorkCall[],
+  notes: readonly WorkNote[] = [],
+): {
+  kind: "step" | "note";
+  text: string /** 这一行对应的工具调用（CB-101：点了跳到活动记录）。 */;
+  call?: { id?: string; name: string };
+}[] {
+  const lines: {
+    kind: "step" | "note";
+    text: string;
+    call?: { id?: string; name: string };
+  }[] = [];
   const pending = [...notes].sort((a, b) => a.at - b.at);
   const flush = (upTo: number) => {
     while (pending.length && pending[0]!.at <= upTo) {
@@ -160,7 +171,11 @@ export function workTimeline(calls: readonly WorkCall[], notes: readonly WorkNot
     const marked = call.failed || !call.done ? `${past}（失败）` : past;
     if (lines.at(-1)?.kind === "step" && lastStep === marked) return;
     lastStep = marked;
-    lines.push({ kind: "step", text: marked });
+    lines.push({
+      kind: "step",
+      text: marked,
+      call: { id: call.id, name: call.name },
+    });
   });
   flush(Number.POSITIVE_INFINITY);
   return lines;

@@ -17,7 +17,11 @@ import { isPhone, isStandalone } from "@/lib/device";
 /** 抽屉为什么关：`back` = 浏览器 / 手势 / 安卓返回键（popstate 或 `__chisabotBack`），`user` = 按钮、遮罩、Esc。 */
 export type OverlayCloseReason = "back" | "user";
 
-type Entry = { id: number; close: (reason: OverlayCloseReason) => void; pushed: boolean };
+type Entry = {
+  id: number;
+  close: (reason: OverlayCloseReason) => void;
+  pushed: boolean;
+};
 
 const stack: Entry[] = [];
 let seq = 0;
@@ -86,7 +90,10 @@ export function installOverlayBack(): void {
   // 用户在页面里的真实操作（点、按键）：之后的打开 / 改地址算用户意图，不算「恢复」。
   // 捕获阶段、被动监听，不影响任何业务处理。
   const intent = () => noteUserIntent();
-  window.addEventListener("pointerdown", intent, { capture: true, passive: true });
+  window.addEventListener("pointerdown", intent, {
+    capture: true,
+    passive: true,
+  });
   window.addEventListener("keydown", intent, { capture: true, passive: true });
 }
 

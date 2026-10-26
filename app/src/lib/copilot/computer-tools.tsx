@@ -20,6 +20,7 @@ import {
   COMMAND_TIMEOUT_GUIDE,
   normalizeCommandTimeout,
 } from "../../../../shared/command-timeout";
+import { formatBytes } from "../../../../shared/computer-activity-labels";
 import { type ControlState, readControl } from "@/lib/computers/control";
 import {
   runBrowserRead,
@@ -806,17 +807,22 @@ export function ComputerTools() {
     }),
     handler: async (
       input: { path?: string },
-      { toolCall }: { toolCall?: { id?: string } } = {},
+      {
+        signal,
+        toolCall,
+      }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
-      const result = await callComputer(computerId, "/files/list", {
-        method: "POST",
-        body: input ?? {},
-      });
+      const result = await callComputer(
+        computerId,
+        "/files/list",
+        { method: "POST", body: input ?? {} },
+        signal,
+      );
       recordActivity(computerId, {
         ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
         kind: "list_files",
-        subject: input?.path ?? "the workspace",
+        subject: input?.path ?? "工作区",
         output: outputOf(result),
         ...(result.refused === true ? { refused: true } : {}),
       });
@@ -857,13 +863,18 @@ export function ComputerTools() {
     }),
     handler: async (
       input: { path: string },
-      { toolCall }: { toolCall?: { id?: string } } = {},
+      {
+        signal,
+        toolCall,
+      }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
-      const result = await callComputer(computerId, "/files/read", {
-        method: "POST",
-        body: input,
-      });
+      const result = await callComputer(
+        computerId,
+        "/files/read",
+        { method: "POST", body: input },
+        signal,
+      );
       recordActivity(computerId, {
         ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
         kind: "read_file",
@@ -1028,13 +1039,18 @@ export function ComputerTools() {
         contents: string;
         append?: boolean;
       },
-      { toolCall }: { toolCall?: { id?: string } } = {},
+      {
+        signal,
+        toolCall,
+      }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
     ) => {
       const computerId = bot.current;
-      const result = await callComputer(computerId, "/files/write", {
-        method: "POST",
-        body: input,
-      });
+      const result = await callComputer(
+        computerId,
+        "/files/write",
+        { method: "POST", body: input },
+        signal,
+      );
       /*
        * The path and the size, never the contents. A Bot may well be saving something it was told in
        * confidence, and the write route declines to echo it back for exactly that reason; putting it
@@ -1048,7 +1064,7 @@ export function ComputerTools() {
           result.refused === true
             ? outputOf(result)
             : typeof result.bytes === "number"
-              ? `${result.bytes} bytes${input.append === true ? ", appended" : ""}`
+              ? `${formatBytes(result.bytes)}${input.append === true ? "，追加写入" : ""}`
               : "",
         ...(result.refused === true ? { refused: true } : {}),
       });
@@ -1202,6 +1218,7 @@ export function syncComputerMessages(
       ) {
         recordActivity(computerId, {
           toolCallId: callId,
+          at: isLive ? undefined : null,
           kind: "command",
           subject: args.command,
           output: outputOf(outcome as ToolOutcome),
@@ -1218,6 +1235,7 @@ export function syncComputerMessages(
       ) {
         recordActivity(computerId, {
           toolCallId: callId,
+          at: isLive ? undefined : null,
           kind: "read_file",
           subject: args.path,
           output: outputOf(outcome as ToolOutcome),
@@ -1229,24 +1247,26 @@ export function syncComputerMessages(
       ) {
         recordActivity(computerId, {
           toolCallId: callId,
+          at: isLive ? undefined : null,
           kind: "write_file",
           subject: args.path,
           output:
             outcome.refused === true
               ? outputOf(outcome as ToolOutcome)
               : typeof outcome.bytes === "number"
-                ? `${outcome.bytes} bytes${args.append === true ? ", appended" : ""}`
+                ? `${formatBytes(outcome.bytes)}${args.append === true ? "，追加写入" : ""}`
                 : "",
           ...(outcome.refused === true ? { refused: true } : {}),
         });
       } else if (name === "computer_list_files") {
         recordActivity(computerId, {
           toolCallId: callId,
+          at: isLive ? undefined : null,
           kind: "list_files",
           subject:
             typeof args.path === "string" && args.path.trim()
               ? args.path
-              : "the workspace",
+              : "工作区",
           output: outputOf(outcome as ToolOutcome),
           ...(outcome.refused === true ? { refused: true } : {}),
         });

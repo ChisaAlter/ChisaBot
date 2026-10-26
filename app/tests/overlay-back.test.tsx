@@ -81,9 +81,12 @@ describe("切标签后连续返回（CB-098 QA）", () => {
   const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 
   test("抽屉里切「计算机」再切回「面板」，最多 2 次返回就离开页面", async () => {
-    const { lastHistoryEventWasPop, noteUserIntent, overlayHistoryActive, restampOverlayMarker } = await import(
-      "@/lib/overlay-back"
-    );
+    const {
+      lastHistoryEventWasPop,
+      noteUserIntent,
+      overlayHistoryActive,
+      restampOverlayMarker,
+    } = await import("@/lib/overlay-back");
     document.documentElement.setAttribute("data-phone", "");
     try {
       window.history.replaceState({ outside: true }, "", "/before");
@@ -103,7 +106,8 @@ describe("切标签后连续返回（CB-098 QA）", () => {
       rerenders.push(() => act(() => hook.rerender({ o: open })));
       // 路由：地址的 watch 变化 = 「计算机」开关；回到 watch=true 时右栏想把抽屉拉出来。
       const onPop = () => {
-        const nextWatch = new URL(window.location.href).searchParams.get("watch") === "true";
+        const nextWatch =
+          new URL(window.location.href).searchParams.get("watch") === "true";
         const was = watch;
         watch = nextWatch;
         if (nextWatch && !was && !lastHistoryEventWasPop() && !open) {
@@ -135,10 +139,13 @@ describe("切标签后连续返回（CB-098 QA）", () => {
         window.history.back();
         backs += 1;
         await tick(50);
-        if ((window.history.state as { outside?: boolean } | null)?.outside) break;
+        if ((window.history.state as { outside?: boolean } | null)?.outside)
+          break;
       }
       window.removeEventListener("popstate", onPop);
-      expect((window.history.state as { outside?: boolean } | null)?.outside).toBe(true);
+      expect(
+        (window.history.state as { outside?: boolean } | null)?.outside,
+      ).toBe(true);
       expect(backs).toBeLessThanOrEqual(2);
       expect(open).toBe(false);
     } finally {
@@ -153,7 +160,8 @@ describe("切标签后连续返回（CB-098 QA）", () => {
  */
 describe("返回关抽屉后立即重开（CB-098 QA 第二轮）", () => {
   const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
-  const outside = () => (window.history.state as { outside?: boolean } | null)?.outside === true;
+  const outside = () =>
+    (window.history.state as { outside?: boolean } | null)?.outside === true;
 
   for (const side of ["左栏", "右栏"]) {
     for (const delay of [150, 400]) {
