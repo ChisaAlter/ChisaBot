@@ -8,7 +8,8 @@ import type { ReactNode } from "react";
 import { InlineApproval } from "@/components/approvals/inline-approval";
 import { tryClient } from "@/lib/client";
 import { botForAgent, useActiveBotHolder, withRunBot } from "./active-bot";
-import { backendOwnsFrontendCall, frontendApprovalSnapshot } from "./approval-context";
+import { backendOwnsFrontendCall, frontendApprovalSnapshot, frontendCallMeta } from "./approval-context";
+import { setComputerCallMeta } from "@/lib/computers/call-meta";
 import { beginFrontendTool } from "./frontend-tool-activity";
 import { markApprovalPause } from "./stopped-turn";
 
@@ -114,6 +115,8 @@ export function useFrontendTool<T extends Record<string, unknown>>(
            * （frontend-tool-activity.ts 记着 2026-10-20 那次「运行命令 一直失败」）。
            */
           const done = beginFrontendTool();
+          // CB-101：这次工具调用里发出的计算机请求带上对话 / 轮次 / 工具调用 id，服务端据此记活动。
+          const releaseMeta = setComputerCallMeta(frontendCallMeta(context));
           try {
             return await neverThrow(context.signal, async () => {
               // 这次调用属于哪段对话的机器人（§101），不是「现在看着的」那个。
@@ -192,6 +195,7 @@ export function useFrontendTool<T extends Record<string, unknown>>(
             });
           } finally {
             done();
+            releaseMeta();
           }
         }
       : undefined,

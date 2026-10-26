@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { markComputerEngaged } from "@/lib/computers/auto-watch";
 import { useComputerStatus } from "@/lib/computers/use-status";
 import { lastComputerStatusFor } from "@/lib/copilot/computer-activity";
@@ -22,6 +23,8 @@ export function ComputerViewPanel({
   const engaged = () => markComputerEngaged(agentId);
   const liveStatus = useComputerStatus(agentId);
   const status = liveStatus ?? lastComputerStatusFor(agentId);
+  // CB-101：预览给大屏直播让路时，状态行直接说明，免得以为电脑坏了。
+  const [casting, setCasting] = useState(false);
   return (
     <section
       aria-label={"计算机"}
@@ -34,10 +37,16 @@ export function ComputerViewPanel({
         aria-live="polite"
         className="computer-status"
         data-pending={status?.pending || undefined}
-        data-visible={status ? true : undefined}
+        data-casting={casting || undefined}
+        data-visible={status || casting ? true : undefined}
         role="status"
       >
-        {status ? (
+        {casting && !status?.pending ? (
+          <>
+            <span aria-hidden className="computer-status-dot is-cast" />
+            <span className="computer-status-text">{"画面正在大屏直播，这里暂停预览；活动记录照常更新"}</span>
+          </>
+        ) : status ? (
           <>
             <span aria-hidden className="computer-status-dot" />
             <span className="computer-status-text">{status.pending ? `${status.label}…` : status.label.replace(/^正在/, "刚刚")}</span>
@@ -46,9 +55,17 @@ export function ComputerViewPanel({
           <span className="computer-status-text is-idle">{"机器人用浏览器时，这里会实时显示画面和它在做什么"}</span>
         )}
       </div>
-      <ComputerView active browserChrome computerId={agentId} name={name} minWidth={0} minHeight={0} />
+      <ComputerView
+        active
+        browserChrome
+        computerId={agentId}
+        name={name}
+        minWidth={0}
+        minHeight={0}
+        onLiveCastChange={setCasting}
+      />
       <div className={variant === "rail" ? "computer-rail-activity" : "mt-8"}>
-        <h3 className="mb-2 font-medium text-sm">{"活动"}</h3>
+        <h3 className="activity-heading">{"活动"}</h3>
         <ActivityLog computerId={agentId} />
       </div>
     </section>

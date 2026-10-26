@@ -1,5 +1,6 @@
 import { normalizeCommandTimeout } from "../../../../shared/command-timeout";
 import { tryClient } from "@/lib/client";
+import { computerCallHeaders } from "./call-meta";
 import { describeComputerCall, reportComputerActivity, reportComputerStatus } from "@/lib/copilot/computer-activity";
 
 export type ToolOutcome = Record<string, unknown> & { ok: boolean };
@@ -43,6 +44,7 @@ async function callComputerInner(
     response = await tryClient(`/api/computers/${botId}${path}`, {
       method: init?.method,
       body: init?.body,
+      headers: computerCallHeaders(),
       signal,
       // Match the computer's server-side operation limits, with transport margin. Ordinary queries
       // stay at 30s; a foreground command or download must not be cut off by that read budget.

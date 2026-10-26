@@ -1,3 +1,4 @@
+import { formatBytes } from "../../../../shared/computer-activity-labels";
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { CommandOutput } from "@/components/computer/command-output";
@@ -816,7 +817,7 @@ export function ComputerTools() {
       recordActivity(computerId, {
         ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
         kind: "list_files",
-        subject: input?.path ?? "the workspace",
+        subject: input?.path ?? "工作区",
         output: outputOf(result),
         ...(result.refused === true ? { refused: true } : {}),
       });
@@ -1048,7 +1049,7 @@ export function ComputerTools() {
           result.refused === true
             ? outputOf(result)
             : typeof result.bytes === "number"
-              ? `${result.bytes} bytes${input.append === true ? ", appended" : ""}`
+              ? `${formatBytes(result.bytes)}${input.append === true ? "，追加写入" : ""}`
               : "",
         ...(result.refused === true ? { refused: true } : {}),
       });
@@ -1235,7 +1236,7 @@ export function syncComputerMessages(
             outcome.refused === true
               ? outputOf(outcome as ToolOutcome)
               : typeof outcome.bytes === "number"
-                ? `${outcome.bytes} bytes${args.append === true ? ", appended" : ""}`
+                ? `${formatBytes(outcome.bytes)}${args.append === true ? "，追加写入" : ""}`
                 : "",
           ...(outcome.refused === true ? { refused: true } : {}),
         });
@@ -1246,7 +1247,7 @@ export function syncComputerMessages(
           subject:
             typeof args.path === "string" && args.path.trim()
               ? args.path
-              : "the workspace",
+              : "工作区",
           output: outputOf(outcome as ToolOutcome),
           ...(outcome.refused === true ? { refused: true } : {}),
         });
