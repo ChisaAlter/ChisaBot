@@ -88,6 +88,7 @@ jobs:
           bun test tests/schedule-fired.test.tsx
           bun test tests/stop-queue.test.tsx
           bun test tests/computer-activity-log.test.tsx tests/computer-activity.test.ts
+          bun test tests/sidebar-search-nav.test.ts
       - name: Install actual computer service dependencies
         working-directory: agent-computer
         run: bun install --frozen-lockfile
@@ -102,6 +103,7 @@ jobs:
           bun test server/tests/computer-stop.test.ts
           bun test server/tests/agent-runtime-unreachable.integration.test.ts
           bun test server/tests/schedules-paused-next.integration.test.ts
+          bun test server/tests/channel-search-hit-meta.test.ts
           bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
