@@ -116,4 +116,56 @@ describe.skipIf(!url)("paused schedules have no next run", () => {
     );
     expect(runs.map((r) => r.status)).toEqual(["skipped"]);
   });
+
+  test("CB-105b: ensure() clears stale next_run_at on old paused rows, idempotently", async () => {
+    const paused = await s.create({
+      owner,
+      agentId: "bot1",
+      threadId: "t-cb105b-1",
+      title: "旧的暂停任务",
+      instruction: "x",
+      when: { repeat: "hourly" },
+    });
+    const active = await s.create({
+      owner,
+      agentId: "bot1",
+      threadId: "t-cb105b-2",
+      title: "在跑的任务",
+      instruction: "x",
+      when: { repeat: "hourly" },
+    });
+    // CB-105 之前暂停的数据：status=paused 但 next_run_at 还在。
+    await sql.unsafe(
+      "UPDATE chisabot_schedules SET status = 'paused', next_run_at = now() + interval '1 hour' WHERE id = $1",
+      [paused.id],
+    );
+    const activeNext = (await nextOf(active.id)).next_run_at;
+    await s.ensure();
+    expect((await nextOf(paused.id)).next_run_at).toBeNull();
+    expect((await nextOf(paused.id)).status).toBe("paused");
+    expect((await nextOf(active.id)).next_run_at).toEqual(activeNext);
+    await s.ensure(); // 再跑一次不出错、不改别的
+    expect((await nextOf(paused.id)).next_run_at).toBeNull();
+    expect((await nextOf(active.id)).next_run_at).toEqual(activeNext);
+  });
+
+  test("CB-105b: get() can return more than 20 runs", async () => {
+    const task = await s.create({
+      owner,
+      agentId: "bot1",
+      threadId: "t-cb105b-3",
+      title: "很多次",
+      instruction: "x",
+      when: { repeat: "hourly" },
+    });
+    for (let i = 0; i < 25; i++)
+      await sql.unsafe(
+        "INSERT INTO chisabot_schedule_runs (id, schedule_id, owner_user_id, scheduled_for, started_at, finished_at, status) VALUES ($1, $2, $3, now() - make_interval(hours => $4::int), now() - make_interval(hours => $4::int), now(), 'ok')",
+        [`run_cb105b_${task.id}_${i}`, task.id, owner, i],
+      );
+    expect((await s.get(owner, task.id)).recentRuns.length).toBe(20);
+    expect((await s.get(owner, task.id, 25)).recentRuns.length).toBe(25);
+    expect((await s.get(owner, task.id, 100)).recentRuns.length).toBe(25);
+    expect((await s.get(owner, task.id, 100000)).recentRuns.length).toBe(25);
+  });
 });

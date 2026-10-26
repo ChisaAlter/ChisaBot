@@ -8,21 +8,33 @@ import { client } from "@/lib/client";
 import {
   firedGroupParts,
   firedHeadline,
+  firedHeadlineParts,
   scheduleGroupOf,
   splitFiredHeadline,
 } from "@/lib/schedule-fired";
 import { scheduleKeys } from "@/lib/schedules";
 import { cn } from "@/lib/utils";
 
+/** 运行记录默认只带最近 20 条；折叠了更多条时按条数要（CB-105b），服务端封顶 RUNS_MAX。 */
+const RUNS_DEFAULT = 20;
+
 /** 运行记录里每次到点的时间（runId → startedAt）。任务删了 / 记录滚掉了就是空的，行上就不写时间。 */
-function useRunTimes(scheduleId: string): ReadonlyMap<string, string> {
+function useRunTimes(
+  scheduleId: string,
+  count = 1,
+): ReadonlyMap<string, string> {
+  const runs = Math.max(RUNS_DEFAULT, count);
   const { data } = useQuery({
-    queryKey: [...scheduleKeys.all, scheduleId, "runs"],
+    queryKey: [...scheduleKeys.all, scheduleId, "runs", runs],
     queryFn: ({ signal }): Promise<ScheduleView> =>
-      client(`/api/schedules/${encodeURIComponent(scheduleId)}`, "schedule", {
-        fallback: "",
-        signal,
-      }),
+      client(
+        `/api/schedules/${encodeURIComponent(scheduleId)}${runs > RUNS_DEFAULT ? `?runs=${runs}` : ""}`,
+        "schedule",
+        {
+          fallback: "",
+          signal,
+        },
+      ),
     enabled: Boolean(scheduleId),
     staleTime: 60_000,
     retry: false,
@@ -40,7 +52,7 @@ function useRunTimes(scheduleId: string): ReadonlyMap<string, string> {
 export function ScheduleFiredRow({ messageId, text }: { messageId: string; text: string }) {
   const parsed = parseScheduleMessage(text);
   const group = scheduleGroupOf(messageId);
-  const times = useRunTimes(parsed?.scheduleId ?? "");
+  const times = useRunTimes(parsed?.scheduleId ?? "", group?.length ?? 1);
   const [open, setOpen] = useState(false);
   if (!parsed) return null;
   if (group && group.length > 1) {
@@ -59,7 +71,10 @@ export function ScheduleFiredRow({ messageId, text }: { messageId: string; text:
           <span className="worker-result-head schedule-fired-group-head">
             <span className="schedule-fired-group-name">{summary.name}</span>
             <span className="schedule-fired-group-tail" data-testid="schedule-fired-group-tail">
-              {summary.tail}
+              {/* CB-105b：「次数，」和日期范围各自不换行；整段放不下时在逗号后换行，而不是被裁 */}
+              {summary.tail.split(/(?<=，)/).map((piece) => (
+                <span key={piece}>{piece}</span>
+              ))}
             </span>
           </span>
           <span className="worker-result-hint">{open ? "收起" : "展开"}</span>
@@ -87,7 +102,9 @@ export function ScheduleFiredRow({ messageId, text }: { messageId: string; text:
         <span className="worker-icon schedule-fired-icon">
           <IconAlarm className="size-3.5" stroke={2.2} />
         </span>
-        <span className="worker-result-head">{firedHeadline(parsed.headline, times.get(parsed.runId))}</span>
+        <SingleHead
+          parts={firedHeadlineParts(parsed.headline, times.get(parsed.runId))}
+        />
         <span className="worker-result-hint">{open ? "收起" : "详情"}</span>
         <IconChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
       </button>
@@ -100,5 +117,22 @@ export function ScheduleFiredRow({ messageId, text }: { messageId: string; text:
         </div>
       </div>
     </div>
+  );
+}
+
+/** CB-105b：单条行只省略名字，时间独立一段不缩不换行（同 schedule-fired-group-tail）。 */
+function SingleHead({ parts }: { parts: { name: string; time: string } }) {
+  return (
+    <span className="worker-result-head schedule-fired-group-head">
+      <span className="schedule-fired-group-name">{parts.name}</span>
+      {parts.time ? (
+        <span
+          className="schedule-fired-group-tail"
+          data-testid="schedule-fired-time"
+        >
+          {parts.time}
+        </span>
+      ) : null}
+    </span>
   );
 }

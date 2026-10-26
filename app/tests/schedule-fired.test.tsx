@@ -4,14 +4,14 @@ import {
   beforeAll,
   describe,
   expect,
+  mock,
   test,
 } from "bun:test";
+import type { Message } from "@ag-ui/core";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import type { Message } from "@ag-ui/core";
 import type { ReactNode } from "react";
-import { mock } from "bun:test";
 
 const router = await import("@tanstack/react-router");
 mock.module("@tanstack/react-router", () => ({
@@ -119,14 +119,33 @@ describe("collapse", () => {
     ).toBe("「和 Claude 聊电车」到点 16 次，10/16–10/18");
     expect(firedGroupSummary("x", 2, [])).toBe("「x」到点 2 次");
   });
+  test("cross-year range carries the year (CB-105b)", () => {
+    expect(
+      firedGroupSummary("喝水", 25, [
+        "2026-01-01T16:00:00Z",
+        "2025-12-29T16:00:00Z",
+      ]),
+    ).toBe("「喝水」到点 25 次，2025/12/30–2026/01/02");
+    // 同一年不带年份
+    expect(
+      firedGroupSummary("喝水", 2, [
+        "2025-12-29T16:00:00Z",
+        "2025-12-30T16:00:00Z",
+      ]),
+    ).toBe("「喝水」到点 2 次，12/30–12/31");
+  });
 });
 
-function wrap(node: ReactNode, runs: { id: string; startedAt: string }[]) {
+function wrap(
+  node: ReactNode,
+  runs: { id: string; startedAt: string }[],
+  limit = 20,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   for (const id of ["sch_a"])
-    client.setQueryData(["schedules", id, "runs"], {
+    client.setQueryData(["schedules", id, "runs", limit], {
       recentRuns: runs.map((r) => ({ ...r, scheduledFor: null })),
     });
   return render(
@@ -177,6 +196,54 @@ describe("ScheduleFiredRow", () => {
     const text = view.getByTestId("schedule-fired").textContent ?? "";
     expect(text).toContain("定时任务「和 Claude 聊电车」到点了");
     expect(text).not.toContain("今天 07:00");
+  });
+});
+
+describe("CB-105b", () => {
+  test("single row: time in its own non-shrinking element, only the name ellipsizes", async () => {
+    const { ScheduleFiredRow } = await import("@/components/chat/schedule-row");
+    const m = reminder("sch_a", "solo2");
+    collapseScheduleRuns([m]);
+    const view = wrap(
+      <ScheduleFiredRow messageId={m.id} text={m.content as string} />,
+      [{ id: "solo2", startedAt: "2026-10-15T23:00:00Z" }],
+    );
+    const time = view.getByTestId("schedule-fired-time");
+    expect(time.textContent).toBe("（10月16日 07:00）");
+    expect(time.className).toBe("schedule-fired-group-tail");
+    expect(time.previousElementSibling?.className).toBe(
+      "schedule-fired-group-name",
+    );
+    expect(time.previousElementSibling?.textContent).toBe(
+      "定时任务「和 Claude 聊电车」到点了",
+    );
+  });
+  test("group of more than 20 asks for all runs and times every one", async () => {
+    const { ScheduleFiredRow } = await import("@/components/chat/schedule-row");
+    const start = Date.parse("2025-12-29T16:00:00Z");
+    const runs = Array.from({ length: 25 }, (_, i) => ({
+      id: `x${i}`,
+      startedAt: new Date(start + i * 3 * 3600_000).toISOString(),
+    }));
+    const msgs = runs.map((r) => reminder("sch_a", r.id));
+    collapseScheduleRuns(msgs);
+    const view = wrap(
+      <ScheduleFiredRow
+        messageId={msgs[0]!.id}
+        text={msgs[0]!.content as string}
+      />,
+      runs,
+      25,
+    );
+    expect(view.getByTestId("schedule-fired-group-tail").textContent).toBe(
+      "到点 25 次，2025/12/30–2026/01/02",
+    );
+    fireEvent.click(view.getByRole("button"));
+    const items = view
+      .getByTestId("schedule-fired-group-list")
+      .querySelectorAll("li");
+    expect(items.length).toBe(25);
+    for (const li of items) expect(li.textContent).toMatch(/\d\d:\d\d）$/);
   });
 });
 
