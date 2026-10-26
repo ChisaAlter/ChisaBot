@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
@@ -56,7 +57,20 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
     }
     BackHandler {
         val w = web
-        if (w != null && w.canGoBack()) w.goBack() else vm.back()
+        val fallback = { if (w != null && w.canGoBack()) w.goBack() else vm.back() }
+        if (w == null) {
+            fallback()
+        } else {
+            // 先让网页关掉打开的抽屉（window.__chisabotBack，CB-098）；它返回 true 就到此为止，
+            // false / 旧网页没有这个接口 / 出错时走原来的 goBack 或返回上一屏。
+            try {
+                w.evaluateJavascript(
+                    "(function(){try{return typeof window.__chisabotBack==='function'&&window.__chisabotBack()===true}catch(e){return false}})()",
+                ) { result -> if (!isBackHandled(result)) fallback() }
+            } catch (_: Throwable) {
+                fallback()
+            }
+        }
     }
     Column(Modifier.fillMaxSize()) {
         TopBar(pageTitle, subtitle = "网页", onBack = { vm.back() })
@@ -104,7 +118,8 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                         web = this
                     }
                 },
-                modifier = Modifier.fillMaxSize().navigationBarsPadding(),
+                // imePadding：edge-to-edge 下 adjustResize 不再缩 WebView，键盘高度只从 insets 来（CB-098）。
+                modifier = Modifier.fillMaxSize().navigationBarsPadding().imePadding(),
                 onRelease = { it.stopLoading(); it.destroy() },
             )
             androidx.compose.animation.AnimatedVisibility(visible = progress in 1..99, exit = fadeOut(tween(200))) {
@@ -122,3 +137,6 @@ private fun syncTheme(view: WebView, theme: String) {
         null,
     )
 }
+
+/** evaluateJavascript 回来的是 JSON 文本：只有字面量 true 表示网页已经处理了返回键。 */
+internal fun isBackHandled(result: String?): Boolean = result?.trim() == "true"

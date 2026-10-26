@@ -8687,3 +8687,62 @@ cpk-web-inspector {
   display: none !important;
 }
 
+
+
+
+/* ==========================================================================================
+ * CB-098 竖屏 / PC 小窗 / 安卓：抽屉宽度、关闭按钮、PC 拖动区、安全区。
+ * ========================================================================================== */
+/* 安全区变量对所有布局都定义（桌面上 env() 为 0，无副作用）；PC 竖屏、窄浏览器窗口和手机用同一套。 */
+:root {
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+}
+/* 左栏抽屉：宽度由 ui/sidebar.tsx 的 --sidebar-width = min(18rem, 100vw - 48px) 决定（手机也一样），
+   内容一律跟着容器，不再有东西伸出抽屉框。 */
+html[data-phone] .glass-shell [data-slot="sidebar"][data-mobile="true"],
+html[data-phone] [data-slot="sidebar"][data-mobile="true"] { width: var(--sidebar-width) !important; }
+[data-slot="sidebar"][data-mobile="true"] * { min-width: 0; }
+[data-slot="sidebar"][data-mobile="true"] :is(.glass-card, .glass-side-card, .acct-card) { max-width: 100%; box-sizing: border-box; }
+@media (max-width: 767px) {
+  [data-slot="sidebar"][data-mobile="true"] {
+    padding-top: calc(16px + var(--safe-t));
+    padding-bottom: calc(16px + var(--safe-b));
+    padding-left: calc(16px + var(--safe-l));
+  }
+}
+/* 抽屉头：只有一个关闭按钮，靠右。 */
+.sidebar-mobile-head { display: flex; justify-content: flex-end; flex: none; margin: -6px -6px 6px 0; }
+.sidebar-mobile-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  color: var(--ink-2);
+  transition: background var(--dur-1) linear, color var(--dur-1) linear;
+}
+.sidebar-mobile-close:hover { background: var(--glass-hover); color: var(--ink-1); }
+.sidebar-mobile-close:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus); }
+html[data-phone] .sidebar-mobile-close { width: 44px; height: 44px; }
+
+/* PC 无边框窗口：抽屉打开时整块窗口都不当拖动区——Chromium 的拖动区按几何合并、不看层叠，
+   盖在顶栏上的抽屉 / 遮罩不会自己挖洞，点击会被系统当成拖窗口吃掉（「面板 / 计算机」点不动的根因）。 */
+html[data-desktop] [data-slot="sheet-content"],
+html[data-desktop] [data-slot="sheet-content"] *,
+html[data-desktop] [data-slot="sheet-overlay"] { -webkit-app-region: no-drag; app-region: no-drag; }
+html[data-desktop] body:has([data-slot="sheet-overlay"]) :is(.glass-topbar, .glass-topbar *, .desk-strip) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+/* 窗口控制提到遮罩之上：抽屉开着时用全局那条 desk-strip 的副本（z-60），只有按钮接收指针，
+   其余部分让点击落到遮罩上（点遮罩任何地方都关抽屉）。 */
+html[data-desktop] body:has([data-slot="sheet-overlay"]) .desk-strip { display: flex; pointer-events: none; background: transparent; }
+html[data-desktop] body:has([data-slot="sheet-overlay"]) .desk-strip .win-ctrls { pointer-events: auto; }
+/* 抽屉让开右上角那排窗口按钮（40px 高）。 */
+html[data-desktop] [data-slot="sidebar"][data-mobile="true"] { top: 40px; height: auto; bottom: 0; }
+@media (max-width: 1279px) {
+  html[data-desktop] .rail-sheet[data-slot="sheet-content"] { top: 48px; }
+}

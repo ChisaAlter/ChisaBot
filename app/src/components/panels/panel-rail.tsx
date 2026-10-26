@@ -53,6 +53,7 @@ import {
 import { matchesHotkey } from "@/lib/hotkeys/hotkeys";
 import { ToggleTip } from "@/components/layout/glass-topbar";
 import { cn } from "@/lib/utils";
+import { useBackDismiss } from "@/lib/overlay-back";
 
 const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
@@ -265,6 +266,8 @@ export function PanelRail({ className }: { className?: string }) {
     closeComputer();
     setPanelSheetOpen(false);
   }, [closeComputer]);
+  // 返回键 / 浏览器返回先关面板抽屉（CB-098）。
+  useBackDismiss(!wide && sheetOpen, closeSheet);
   // 抽屉和常驻栏用同一张卡片、同一个内容宽度；24px 是常驻栏左右的留边。
   const cardWidth = width - CARD_INSET;
   const panelBody = (
@@ -442,11 +445,12 @@ function PanelRailBody({
           <RailAddPanelMenu drawer={drawer} onCloseDrawer={drawer ? onCollapse : undefined} />
         ) : null}
         <span aria-hidden className="rail-head-div" />
-        <ToggleTip keys={showHotkey ? PANEL_RAIL_HOTKEY_LABEL : undefined} label={"收起右栏"} side="bottom">
+        <ToggleTip keys={showHotkey ? PANEL_RAIL_HOTKEY_LABEL : undefined} label={drawer ? "关闭面板" : "收起右栏"} side="bottom">
           <button
             aria-controls={controlsId}
             aria-expanded={true}
-            aria-label={"收起右栏"}
+            aria-label={drawer ? "关闭面板" : "收起右栏"}
+            data-testid={drawer ? "panel-sheet-close" : undefined}
             className="rail-head-icon"
             onClick={onCollapse}
             type="button"
