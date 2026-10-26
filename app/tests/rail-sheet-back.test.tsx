@@ -1,4 +1,11 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { useEffect, useRef, useState } from "react";
@@ -17,16 +24,25 @@ afterAll(async () => {
 afterEach(cleanup);
 
 const tick = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
-const outside = () => (window.history.state as { outside?: boolean } | null)?.outside === true;
-const markers = () => (window.history.state as { __cbOverlay?: number } | null)?.__cbOverlay ?? null;
+const outside = () =>
+  (window.history.state as { outside?: boolean } | null)?.outside === true;
+const markers = () =>
+  (window.history.state as { __cbOverlay?: number } | null)?.__cbOverlay ??
+  null;
 
 async function harness(agentId: string) {
   const { useBotComputerTab } = await import("@/lib/chat/use-bot-computer");
-  const { lastHistoryEventWasPop, noteUserIntent, restampOverlayMarker, useBackDismiss } = await import(
-    "@/lib/overlay-back"
-  );
+  const {
+    lastHistoryEventWasPop,
+    noteUserIntent,
+    restampOverlayMarker,
+    useBackDismiss,
+  } = await import("@/lib/overlay-back");
   const { closeRailSheet } = await import("@/lib/panels/rail-sheet-close");
-  const readWatch = () => (new URL(window.location.href).searchParams.get("watch") === "true" ? true : undefined);
+  const readWatch = () =>
+    new URL(window.location.href).searchParams.get("watch") === "true"
+      ? true
+      : undefined;
   const writeUrl = (open: boolean, replace: boolean) => {
     const url = open ? "/channel/new?watch=true" : "/channel/new";
     if (replace) {
@@ -47,7 +63,11 @@ async function harness(agentId: string) {
         window.removeEventListener("cb-test-url", sync);
       };
     }, []);
-    const [computerOpen, setComputer] = useBotComputerTab(agentId, watch, writeUrl);
+    const [computerOpen, setComputer] = useBotComputerTab(
+      agentId,
+      watch,
+      writeUrl,
+    );
     const [sheet, setSheet] = useState(false);
     const latest = useRef({ computerOpen, setComputer });
     latest.current = { computerOpen, setComputer };
@@ -63,7 +83,11 @@ async function harness(agentId: string) {
       });
     }, [computerOpen]);
     useBackDismiss(sheet, (reason) =>
-      closeRailSheet(reason, { agentId, closeComputer, closeSheet: () => setSheet(false) }),
+      closeRailSheet(reason, {
+        agentId,
+        closeComputer,
+        closeSheet: () => setSheet(false),
+      }),
     );
     return { sheet, computerOpen, setSheet, setComputer };
   });

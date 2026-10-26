@@ -188,7 +188,9 @@ function Sidebar({
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
   // 返回键 / 浏览器返回先关抽屉（CB-098，lib/overlay-back.ts）。
-  useBackDismiss(isMobile && openMobile && collapsible !== "none", () => setOpenMobile(false));
+  useBackDismiss(isMobile && openMobile && collapsible !== "none", () =>
+    setOpenMobile(false),
+  );
 
   if (collapsible === "none") {
     return (
@@ -238,7 +240,9 @@ function Sidebar({
               <IconX aria-hidden className="size-[18px]" />
             </SheetClose>
           </div>
-          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col *:min-w-0 *:max-w-full">{children}</div>
+          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col *:min-w-0 *:max-w-full">
+            {children}
+          </div>
         </SheetContent>
       </Sheet>
     );

@@ -1,5 +1,12 @@
 import { useEffect, useRef } from "react";
+import { JUMP_TO_ACTIVITY } from "@/components/computer/activity-jump";
 import { onComputerActivity } from "@/lib/copilot/computer-activity";
+import { overlayHistoryActive, overlayHistoryMode } from "@/lib/overlay-back";
+import {
+  openPanelSheet,
+  PANEL_RAIL_WIDE_QUERY,
+  setPanelRailOpen,
+} from "@/lib/panels/rail-open";
 
 /**
  * 右栏「面板 | 计算机」的自动切换（DESIGN.md §23）。
@@ -65,20 +72,60 @@ export function useComputerAutoWatch(
       if (activity.botId !== agentId) return;
       runEpoch.current = activity.epoch;
       clearTimeout(timer.current);
-      if (!latest.current.watching && dismissedEpoch.current !== activity.epoch) {
+      if (
+        !latest.current.watching &&
+        dismissedEpoch.current !== activity.epoch
+      ) {
         opening.current = true;
         latest.current.setWatching(true);
       }
       timer.current = setTimeout(() => {
-        if (!auto.current || engaged.current || !latest.current.watching) return;
+        if (!auto.current || engaged.current || !latest.current.watching)
+          return;
         auto.current = false;
         latest.current.setWatching(false);
       }, RETURN_AFTER_MS);
     });
+    // CB-101：聊天里点「在活动里看」= 用户手动打开计算机（不是自动打开，之后不会自动关掉）。
+    const onJump = () => openForActivityJump(latest.current);
+    window.addEventListener(JUMP_TO_ACTIVITY, onJump);
     return () => {
+      window.removeEventListener(JUMP_TO_ACTIVITY, onJump);
       engagedListeners.delete(offEngaged);
       offActivity();
       clearTimeout(timer.current);
     };
   }, [agentId]);
+}
+
+/**
+ * 「在活动里看」怎么把计算机亮出来（CB-101）：和人手动打开走**同一条路径**。
+ *
+ * - 窄窗口：{@link openPanelSheet}（用户打开右抽屉的唯一入口，source="user"）——抽屉没开时只压一个返回标记，
+ *   已经开着什么都不写；再切到「计算机」，抽屉里切标签按 CB-098 一律 replace。所以第一次返回关抽屉、第二次离开。
+ * - 宽窗口：展开右栏，没在看计算机时 `setWatching(true)` push 一条 `watch=true`（后退能关计算机）。
+ * - 已经在看计算机：不写 history。
+ */
+export function openForActivityJump(current: {
+  watching: boolean;
+  setWatching: (open: boolean) => void;
+}): void {
+  const wide =
+    typeof window !== "undefined" &&
+    window.matchMedia(PANEL_RAIL_WIDE_QUERY).matches;
+  if (wide) setPanelRailOpen(true);
+  else openPanelSheet("user");
+  if (current.watching) return;
+  // 手机网页上抽屉的返回标记是在下一拍才压进去的（overlay-back 的 useBackDismiss）。手动路径里人点「计算机」
+  // 时它早就在了；这里要等它压好再切标签，`watch=true` 才 replace 在标记那条上，返回才会连 `watch` 一起退掉。
+  if (wide || !overlayHistoryMode() || overlayHistoryActive()) {
+    current.setWatching(true);
+    return;
+  }
+  let tries = 0;
+  const waitForMarker = () => {
+    if (overlayHistoryActive() || ++tries > 30) current.setWatching(true);
+    else window.setTimeout(waitForMarker, 16);
+  };
+  window.setTimeout(waitForMarker, 0);
 }
