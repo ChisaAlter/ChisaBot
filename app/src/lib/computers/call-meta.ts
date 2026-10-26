@@ -4,11 +4,17 @@
  * 工具 handler 由 approval-tools 的包装统一调用，那里设置、结束时释放。同一时刻一般只有一个计算机
  * 工具在跑；真有并发时取最近设置的那个（最坏只是把一步挂到同一轮的另一个工具调用上，不会跨对话）。
  */
-export type ComputerCallMeta = { threadId?: string; runId?: string; toolCallId?: string };
+export type ComputerCallMeta = {
+  threadId?: string;
+  runId?: string;
+  toolCallId?: string;
+};
 
 const stack: ComputerCallMeta[] = [];
 
-export function setComputerCallMeta(meta: ComputerCallMeta | undefined): () => void {
+export function setComputerCallMeta(
+  meta: ComputerCallMeta | undefined,
+): () => void {
   if (!meta) return () => undefined;
   stack.push(meta);
   return () => {

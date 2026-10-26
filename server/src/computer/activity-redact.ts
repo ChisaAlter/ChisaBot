@@ -26,7 +26,10 @@ export function redactUrl(value: string): string {
     if (SENSITIVE_PARAM.test(name)) parsed.searchParams.set(name, MASK);
   }
   if (parsed.hash && /(token|code|key|secret)=/i.test(parsed.hash)) {
-    parsed.hash = parsed.hash.replace(/((?:access_|id_|refresh_)?(?:token|code|key|secret)[^=&]*=)[^&]*/gi, `$1${MASK}`);
+    parsed.hash = parsed.hash.replace(
+      /((?:access_|id_|refresh_)?(?:token|code|key|secret)[^=&]*=)[^&]*/gi,
+      `$1${MASK}`,
+    );
   }
   // URLSearchParams 会把 • 编成 %E2%80%A2，展示时还原。
   return parsed.toString().replaceAll(encodeURIComponent(MASK), MASK);
@@ -45,19 +48,32 @@ const SECRET_SHAPES: RegExp[] = [
 /** 文本（命令、输出）打码：像密钥的串换成 ••••；其中的 URL 也按 redactUrl 处理。 */
 export function redactText(value: string): string {
   let out = value.replace(/https?:\/\/[^\s"'<>]+/g, (url) => redactUrl(url));
-  out = out.replace(SECRET_SHAPES[0] as RegExp, (_m, scheme: string) => `${scheme} ${MASK}`);
-  out = out.replace(SECRET_SHAPES[1] as RegExp, (_m, name: string) => `${name}=${MASK}`);
-  out = out.replace(SECRET_SHAPES[2] as RegExp, (_m, flag: string) => `${flag}${MASK}`);
+  out = out.replace(
+    SECRET_SHAPES[0] as RegExp,
+    (_m, scheme: string) => `${scheme} ${MASK}`,
+  );
+  out = out.replace(
+    SECRET_SHAPES[1] as RegExp,
+    (_m, name: string) => `${name}=${MASK}`,
+  );
+  out = out.replace(
+    SECRET_SHAPES[2] as RegExp,
+    (_m, flag: string) => `${flag}${MASK}`,
+  );
   out = out.replace(SECRET_SHAPES[3] as RegExp, MASK);
   return out;
 }
 
-const SENSITIVE_FIELD = /(密码|口令|验证码|校验码|动态码|卡号|安全码|pin\b|password|passcode|passwd|otp|one[- ]?time|verification|security code|cvv|cvc|card number|secret|token|api key)/i;
+const SENSITIVE_FIELD =
+  /(密码|口令|验证码|校验码|动态码|卡号|安全码|pin\b|password|passcode|passwd|otp|one[- ]?time|verification|security code|cvv|cvc|card number|secret|token|api key)/i;
 
 /** 机器人往这个元素里输入的文字能不能显示：密码框、验证码、卡号等一律不显示。 */
-export function isSensitiveField(element: { role?: string; name?: string; type?: string } | undefined): boolean {
+export function isSensitiveField(
+  element: { role?: string; name?: string; type?: string } | undefined,
+): boolean {
   if (!element) return false;
-  if (element.type && /password|cc-|one-time-code/i.test(element.type)) return true;
+  if (element.type && /password|cc-|one-time-code/i.test(element.type))
+    return true;
   return SENSITIVE_FIELD.test(`${element.name ?? ""} ${element.role ?? ""}`);
 }
 
@@ -65,11 +81,16 @@ export function isSensitiveField(element: { role?: string; name?: string; type?:
 export function looksLikeSecret(text: string): boolean {
   if (text.length < 8 || /\s/.test(text)) return false;
   if (new RegExp((SECRET_SHAPES[3] as RegExp).source).test(text)) return true;
-  const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((re) => re.test(text)).length;
+  const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((re) =>
+    re.test(text),
+  ).length;
   return classes >= 3;
 }
 
-export function clip(value: string, max: number): { text: string; truncated: boolean } {
+export function clip(
+  value: string,
+  max: number,
+): { text: string; truncated: boolean } {
   if (value.length <= max) return { text: value, truncated: false };
   return { text: `${value.slice(0, max)}…`, truncated: true };
 }

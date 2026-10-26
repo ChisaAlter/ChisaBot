@@ -29,14 +29,21 @@ export type ActivityStep = {
   durationMs: number | null;
 };
 
-type Page = { steps: ActivityStep[]; nextCursor: string | null; retentionDays: number };
+type Page = {
+  steps: ActivityStep[];
+  nextCursor: string | null;
+  retentionDays: number;
+};
 
 export function compareSteps(a: ActivityStep, b: ActivityStep): number {
   const at = Date.parse(b.startedAt) - Date.parse(a.startedAt);
   return at !== 0 ? at : b.seq - a.seq;
 }
 
-export function mergeSteps(current: ActivityStep[], incoming: ActivityStep[]): ActivityStep[] {
+export function mergeSteps(
+  current: ActivityStep[],
+  incoming: ActivityStep[],
+): ActivityStep[] {
   const byId = new Map(current.map((step) => [step.id, step]));
   for (const step of incoming) byId.set(step.id, step);
   return [...byId.values()].sort(compareSteps);
@@ -57,7 +64,10 @@ export type ComputerActivityState = {
 
 const FRESH_MS = 2_400;
 
-export function useComputerActivity(computerId: string, options: { threadId?: string; limit?: number } = {}): ComputerActivityState {
+export function useComputerActivity(
+  computerId: string,
+  options: { threadId?: string; limit?: number } = {},
+): ComputerActivityState {
   const [steps, setSteps] = useState<ActivityStep[]>([]);
   const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
@@ -69,7 +79,9 @@ export function useComputerActivity(computerId: string, options: { threadId?: st
   const paged = useRef(false);
   const limit = options.limit ?? 50;
   const base = `/api/computers/${encodeURIComponent(computerId)}/activity`;
-  const query = options.threadId ? `&thread=${encodeURIComponent(options.threadId)}` : "";
+  const query = options.threadId
+    ? `&thread=${encodeURIComponent(options.threadId)}`
+    : "";
 
   const markFresh = useCallback((ids: string[]) => {
     if (!ids.length) return;
@@ -85,9 +97,13 @@ export function useComputerActivity(computerId: string, options: { threadId?: st
 
   const absorb = useCallback(
     (incoming: ActivityStep[], live: boolean) => {
-      const relevant = options.threadId ? incoming.filter((step) => step.threadId === options.threadId) : incoming;
+      const relevant = options.threadId
+        ? incoming.filter((step) => step.threadId === options.threadId)
+        : incoming;
       if (!relevant.length) return;
-      const added = relevant.filter((step) => !known.current.has(step.id)).map((step) => step.id);
+      const added = relevant
+        .filter((step) => !known.current.has(step.id))
+        .map((step) => step.id);
       for (const step of relevant) known.current.add(step.id);
       setSteps((current) => mergeSteps(current, relevant));
       if (live) markFresh(added);
@@ -97,7 +113,10 @@ export function useComputerActivity(computerId: string, options: { threadId?: st
 
   const fetchPage = useCallback(
     async (before: string | null) => {
-      const response = await tryClient(`${base}?limit=${limit}${query}${before ? `&before=${encodeURIComponent(before)}` : ""}`, {});
+      const response = await tryClient(
+        `${base}?limit=${limit}${query}${before ? `&before=${encodeURIComponent(before)}` : ""}`,
+        {},
+      );
       if (response.status === 404) {
         setLegacy(true);
         return null;
@@ -121,7 +140,9 @@ export function useComputerActivity(computerId: string, options: { threadId?: st
           setCursor(page.nextCursor);
         }
       })
-      .catch((failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure)))
+      .catch((failure: unknown) =>
+        setError(failure instanceof Error ? failure.message : String(failure)),
+      )
       .finally(() => setLoading(false));
   }, [absorb, fetchPage]);
 
@@ -156,7 +177,10 @@ export function useComputerActivity(computerId: string, options: { threadId?: st
     source.addEventListener("ready", () => setLive(true));
     source.addEventListener("step", (event) => {
       try {
-        absorb([JSON.parse((event as MessageEvent).data) as ActivityStep], true);
+        absorb(
+          [JSON.parse((event as MessageEvent).data) as ActivityStep],
+          true,
+        );
       } catch {
         // 坏的一条不影响后面的。
       }
@@ -174,5 +198,15 @@ export function useComputerActivity(computerId: string, options: { threadId?: st
     return () => clearInterval(timer);
   }, [legacy, live, refresh, running]);
 
-  return { steps, fresh, loading, legacy, error, hasMore: cursor !== null, retentionDays, loadMore, refresh };
+  return {
+    steps,
+    fresh,
+    loading,
+    legacy,
+    error,
+    hasMore: cursor !== null,
+    retentionDays,
+    loadMore,
+    refresh,
+  };
 }

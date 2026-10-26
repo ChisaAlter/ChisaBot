@@ -2,7 +2,10 @@
  * 活动记录分组（CB-101）：按「轮」分组（一轮 = 你说的一句话 + 机器人为它做的事），
  * 人自己的操作单独成组；连续的只读探查命令合并成「运行了 N 条命令」。
  */
-import { BATCH_MIN, isProbeCommand } from "../../../../shared/computer-activity-labels";
+import {
+  BATCH_MIN,
+  isProbeCommand,
+} from "../../../../shared/computer-activity-labels";
 import type { ActivityStep } from "./use-computer-activity";
 
 export type ActivityItem =
@@ -25,20 +28,30 @@ export type ActivityTurn = {
 
 function groupKey(step: ActivityStep): string {
   if (step.actorKind === "human") return "human";
-  return step.runId ? `run:${step.runId}` : step.threadId ? `thread:${step.threadId}` : "agent";
+  return step.runId
+    ? `run:${step.runId}`
+    : step.threadId
+      ? `thread:${step.threadId}`
+      : "agent";
 }
 
 /** 合并：连续 ≥ BATCH_MIN 条成功的只读探查命令。失败的、被拒绝的、进行中的永远单独显示。 */
-export function batchCommands(stepsOldestFirst: ActivityStep[]): ActivityItem[] {
+export function batchCommands(
+  stepsOldestFirst: ActivityStep[],
+): ActivityItem[] {
   const items: ActivityItem[] = [];
   let run: ActivityStep[] = [];
   const flush = () => {
-    if (run.length >= BATCH_MIN) items.push({ type: "batch", id: `batch:${run[0]?.id}`, steps: run });
+    if (run.length >= BATCH_MIN)
+      items.push({ type: "batch", id: `batch:${run[0]?.id}`, steps: run });
     else for (const step of run) items.push({ type: "step", step });
     run = [];
   };
   for (const step of stepsOldestFirst) {
-    const mergeable = step.kind === "run_command" && step.status === "ok" && isProbeCommand(step.subject);
+    const mergeable =
+      step.kind === "run_command" &&
+      step.status === "ok" &&
+      isProbeCommand(step.subject);
     if (mergeable) run.push(step);
     else {
       flush();
@@ -50,7 +63,9 @@ export function batchCommands(stepsOldestFirst: ActivityStep[]): ActivityItem[] 
 }
 
 /** steps：从新到旧（接口给的顺序）。返回的组从新到旧；相邻的同组步骤才并在一起。 */
-export function groupActivity(stepsNewestFirst: ActivityStep[]): ActivityTurn[] {
+export function groupActivity(
+  stepsNewestFirst: ActivityStep[],
+): ActivityTurn[] {
   const chunks: ActivityStep[][] = [];
   let lastKey: string | null = null;
   for (const step of stepsNewestFirst) {

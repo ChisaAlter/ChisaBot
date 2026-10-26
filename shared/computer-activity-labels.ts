@@ -16,7 +16,8 @@ export type ActivityStepLike = {
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "";
   if (bytes < 1024) return `${bytes} 字节`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  if (bytes < 1024 * 1024)
+    return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
@@ -54,15 +55,18 @@ export function stepVerb(step: ActivityStepLike): string {
   const running = step.status === "running";
   const human = step.actorKind === "human";
   const detail = step.detail ?? {};
-  const count = typeof detail.count === "number" && detail.count > 1 ? detail.count : 0;
-  const done = (past: string, present: string) => (running ? `正在${present}` : past);
+  const count =
+    typeof detail.count === "number" && detail.count > 1 ? detail.count : 0;
+  const done = (past: string, present: string) =>
+    running ? `正在${present}` : past;
   switch (step.kind) {
     case "navigate":
       return done("打开了", "打开");
     case "click":
       return done(count ? `点击了 ${count} 次` : "点击了", "点击");
     case "type":
-      if (human || detail.humanText === true) return done("输入了文字", "输入文字");
+      if (human || detail.humanText === true)
+        return done("输入了文字", "输入文字");
       return done("输入了", "输入");
     case "key":
       return done(count ? `按了 ${count} 次键` : "按了", "按");
@@ -75,13 +79,18 @@ export function stepVerb(step: ActivityStepLike): string {
     case "read":
       return done("读取了页面内容", "读取页面内容");
     case "tabs":
-      return running ? "正在操作标签页" : (TAB_ACTIONS[String(detail.action ?? "")] ?? "操作了标签页");
+      return running
+        ? "正在操作标签页"
+        : (TAB_ACTIONS[String(detail.action ?? "")] ?? "操作了标签页");
     case "run_command":
       return done("运行了命令", "运行命令");
     case "read_file":
       return done("读取了文件", "读取文件");
     case "write_file":
-      return done(detail.append === true ? "追加写入了文件" : "保存了文件", "保存文件");
+      return done(
+        detail.append === true ? "追加写入了文件" : "保存了文件",
+        "保存文件",
+      );
     case "list_files":
       return done("列出了文件夹", "列出文件夹");
     case "download_file":
@@ -120,7 +129,14 @@ export function shortUrl(url: string): string {
   try {
     const parsed = new URL(url);
     const path = parsed.pathname === "/" ? "" : parsed.pathname;
-    return `${parsed.host}${path}${parsed.search}`;
+    let shown = `${parsed.host}${path}${parsed.search}`;
+    try {
+      // 打码的 •••• 被 URL 编码成 %E2%80%A2…，给人看时还原。
+      shown = decodeURI(shown);
+    } catch {
+      // 编码坏了就原样显示。
+    }
+    return shown;
   } catch {
     return url;
   }
@@ -160,17 +176,24 @@ export function statusText(step: ActivityStepLike): string {
       return "已取消";
     case "failed":
       if (step.refusalReason === "live_cast") return "失败：大屏正在直播";
-      return typeof exitCode === "number" ? `失败 · 退出码 ${exitCode}` : "失败";
+      return typeof exitCode === "number"
+        ? `失败 · 退出码 ${exitCode}`
+        : "失败";
     default:
       return "";
   }
 }
 
 /** 只读的探查命令：连续几条这样的命令合成「运行了 N 条命令」。 */
-const PROBE = /^\s*(ls|ll|pwd|cat|head|tail|wc|which|whoami|date|uname|echo|env|printenv|id|hostname|df|du|free|ps|file|stat|find|rg|grep|tree|type|command -v|[\w.-]+ (--version|-v|-V|version))\b/;
+const PROBE =
+  /^\s*(ls|ll|pwd|cat|head|tail|wc|which|whoami|date|uname|echo|env|printenv|id|hostname|df|du|free|ps|file|stat|find|rg|grep|tree|type|command -v|[\w.-]+ (--version|-v|-V|version))\b/;
 
 export function isProbeCommand(command: string): boolean {
-  if (!command || /[>|]\s*(tee|sh|bash)\b|>\s*\S|\brm\b|\bmv\b|\bcp\b|\bsudo\b/.test(command)) return false;
+  if (
+    !command ||
+    /[>|]\s*(tee|sh|bash)\b|>\s*\S|\brm\b|\bmv\b|\bcp\b|\bsudo\b/.test(command)
+  )
+    return false;
   return PROBE.test(command);
 }
 
