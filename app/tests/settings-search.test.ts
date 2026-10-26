@@ -35,7 +35,6 @@ describe("settings registry", () => {
       "/admin/accounts",
       "/admin/models",
       "/admin/computers",
-      "/settings/cloud-workspace",
       "/admin/boundaries",
       "/admin/system-update",
       "/admin/audit",

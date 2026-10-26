@@ -26,9 +26,8 @@ grep -E '^BASE_IMAGE=' /opt/chisabot-updater/base.env
 | 最近 1–2 个回滚镜像（最新几个 `rollback-to-*.sh` 指向的） | 能一步回滚 |
 | 更新器底座镜像（`base.env` 的 `BASE_IMAGE`） | 删了下次部署会走完整构建（不致命，但更慢、更吃内存） |
 | 登录服务 `chisabot-web-auth` 使用的镜像 | 它不随更新换镜像，删了无法重建登录服务 |
-| 云端节点、同步边车当前镜像 | 删了无法重建节点 |
 | 所有**运行中**容器的镜像，包括同机其他项目的 | 别动别人的东西 |
-| 卷 `chisabot-zh_database`、`chisabot-zh_workspace`、`chisabot-zh_profiles`、`chisabot-cloudnode_*` | 生产数据 |
+| 卷 `chisabot-zh_database`、`chisabot-zh_workspace`、`chisabot-zh_profiles` | 生产数据 |
 | `/opt/chisabot-updater/backups/`（更新器自己保留 5 份） | 数据恢复 |
 | 发版的 CI 产物目录（至少最近几版） | 更新源损坏时的重建来源 |
 

@@ -30,7 +30,7 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 | 功能 | 做什么 | 入口 | 代码 | 数据 | DESIGN | 状态 · 文档 |
 |---|---|---|---|---|---|---|
 | 频道聊天（唯一的聊天） | 和一个机器人对话；`/bot?agent=` 旧地址跳转过来 | 左栏点机器人 | `app/src/components/channels/`、`app/src/components/chat/`、`server/src/channels/`、`server/src/local-conversations.ts` | `openbot_local_threads/_runs/_events`、`intelligence_channel_mappings`、`channel_agents` | §68 · ADR-0013 | 上线 · [streaming.md](streaming.md) |
-| 留着的聊天 | 去设置 / 待处理 / 设备 / Claude Code 再回来，聊天是同一个没卸载过的实例（不重连、不重读、滚动原样）；藏 10 分钟后放掉 | — | `app/src/components/layout/authed-shell.tsx`、`app/src/components/layout/keep-alive.tsx`、`app/src/components/channels/channel-page.tsx` | — | §98 | 上线 |
+| 留着的聊天 | 去设置 / 待处理 / 设备再回来，聊天是同一个没卸载过的实例（不重连、不重读、滚动原样）；藏 10 分钟后放掉 | — | `app/src/components/layout/authed-shell.tsx`、`app/src/components/layout/keep-alive.tsx`、`app/src/components/channels/channel-page.tsx` | — | §98 | 上线 |
 | 流式回复 | 按帧匀速放字；断线先问服务器、能接上就接上 | — | `app/src/lib/typed-reveal.ts`、`app/src/lib/chat/` | — | §30、§89 | 上线 · [streaming.md](streaming.md) |
 | 一轮的样子 | 短气泡、草稿卡、回复引用、代码卡、文档卡；开场一句 → 结果 | — | `app/src/components/chat/`、`app/src/lib/chat/` | — | §27、§69、§76 | 上线 |
 | 干活卡 | 「● 正在搜索… · 第 n 步 · 用时」，原位；结束收成一行；中途说明收进卡；简单回合不出卡 | — | `app/src/lib/chat/work-steps.ts`、`app/src/components/chat/work-card.tsx` | — | §70、§75、§90、§93 | 上线 |
@@ -84,17 +84,6 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 | PC 客户端 | 窗口 + 设备节点；小窗模式（Ctrl+Shift+M）、托盘、无边框登录窗、连接提示、更新提示 | — | `pc/` | — | §16、§36、§45、§91 | 上线 · [pc-node.md](pc-node.md) |
 | Android 原生 | 登录、机器人列表、聊天（流式、干活卡、富卡片）、面板、确认卡、附件、停止 / 重新生成 / 编辑、原生设置基础；其余页面应用内网页 | — | `android/` | — | §80、§86 | 上线 · [android-native.md](android-native.md) |
 | 手机网页 · PWA | 手机永远窄布局；manifest + Service Worker（导航不缓存） | 浏览器「安装」 | `app/public/sw.js`、`app/src/lib/device.ts` | — | §40 | 上线 · [pwa.md](pwa.md) |
-
-## 5. 云端 Claude Code
-
-| 功能 | 做什么 | 入口 | 代码 | 数据 | DESIGN | 状态 · 文档 |
-|---|---|---|---|---|---|---|
-| 云端工作区节点 | 手工部署的容器：Claude Code CLI + 节点，非 root、只读根、无 docker.sock、不发布端口 | 设置 → 电脑与设备 → 云端工作区（管理员） | `deploy/cloud-node/`、`server/src/cloud-cc/` | `chisabot_cloud_workspaces` | §73 · ADR-0014 | 上线（手工部署） · [cloud-claude-code.md](cloud-claude-code.md) |
-| Claude 登录 | 「在云端完成登录」：节点里的浏览器打开授权页，画面嵌在设置页 | 云端工作区 | `pc/src/cloud-cc/`、`server/src/cloud-cc/` | — | §73 | 上线；**需所有者登录一次** |
-| Claude 上游代理 | http / socks5，或 trojan / vless / vmess / ss / hy2 / tuic 链接（sing-box 转换）；只有 Claude 域名走它 | 云端工作区 →「Claude 上游代理」 | `server/src/cloud-cc/` | 原始链接存保险箱 | §85 | 上线 |
-| Claude Code 标签页 | 左栏「机器人｜Claude Code」切换（原地）；工作区 → 会话；流式、`--resume`、审批、排队 | 左栏顶部切换（管理员） | `app/src/routes/_authed/_app/cc/`、`app/src/components/cloud-cc/` | `chisabot_cc_workspaces`、`chisabot_cc_sessions`、`chisabot_cc_messages`、`chisabot_cc_events`、`chisabot_cc_permission_rules` | §73、§84 | 上线 |
-| GitHub 工作区 | 克隆仓库，每个会话 `cc/…` 分支，合入、推送并开 PR | 新建工作区 → 从 GitHub | `server/src/cloud-cc/` | 同上 | §73 | 上线；需连 GitHub |
-| 电脑文件夹同步 | PC「电脑上的文件夹」↔ 云端双向同步（Mutagen MIT 版，经设备隧道）；冲突对话框、交接、失败自动撤销 | PC：新建工作区 → 电脑上的文件夹 | `pc/src/sync/`、`server/src/cloud-cc/sync.ts`、`deploy/cloud-node/sync/` | `chisabot_cc_sync_bindings`、`chisabot_cc_leases`、`chisabot_cc_sync_conflicts`、`chisabot_cc_sync_events` | §73、§87 | 上线；未在真实 Windows 验证（CB-017） |
 
 ## 6. Hark 同款能力
 

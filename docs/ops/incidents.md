@@ -12,8 +12,6 @@
 | 网页一直显示「正在更新」 | 应用容器没起来（502 / 503 / 504） | `request.sh status`、`docker logs chisabot-zh`；更新失败会自动回滚，手动回滚见 [deploy.md](deploy.md) §3 |
 | 登录后马上又回到登录页 | `publicOrigin` / `TRUSTED_ORIGINS` / 端口不一致，或两个入口用了不同 hostname | 核对 [gateway.md](gateway.md)，Origin 必须完全一致 |
 | 多账号下身份被拒 | 签名身份密钥三处不一致 | [gateway.md](gateway.md) §4 |
-| 电脑文件夹同步失败（ECONNREFUSED） | 节点重启后边车留在旧网络命名空间 | 装看门狗（[cloud-node.md](cloud-node.md) §4） |
-| 改了节点程序但云端工作区行为没变 | 节点只在启动时下载程序 | `docker restart chisabot-cloudnode` |
 | 部署时间突然变长、内存吃紧 | 底座镜像不存在或依赖变了 → 完整构建 | 预期内；内存不够就调 `FULL_BUILD_MEMORY` / `FULL_BUILD_PARALLELISM`，或加 swap |
 | 回滚脚本报镜像不存在 | 镜像已被 `KEEP_IMAGES` 或手工清理删除 | 走 revert PR 或 `request.sh update --full` |
 | PC 客户端不自动更新 | 装的是内部旧版本线（如 0.2.x），不会降级 | 手动卸载重装 0.1.x（数据保留） |

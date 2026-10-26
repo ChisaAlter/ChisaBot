@@ -1,8 +1,5 @@
 import { IconPlus, IconRobot } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { currentUserQueryOptions } from "@/lib/auth/queries";
-import { LAST_CC_SESSION_KEY, lastLeftMode } from "@/lib/cloud-cc";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState, ErrorCard } from "@/components/ui/skyglass";
@@ -20,26 +17,10 @@ import { agentKeys } from "@/lib/agents/queries";
  * which makes the empty branch a last resort (e.g. every Bot hidden). Either way it is one button
  * away from a Bot.
  */
-/** 打开应用时上次停在 Claude Code（ADR-0014）：只在这次页面加载的第一次落地时跳过去，之后应用里回到 `/` 照常进聊天。 */
-let firstLanding = true;
-
 export function LandingRedirect() {
   const landing = useLanding();
   const navigate = useNavigate();
-  const user = useQuery(currentUserQueryOptions());
-  const toCc = firstLanding && user.data?.role === "admin" && lastLeftMode() === "cc";
-  useEffect(() => {
-    if (!user.data) return;
-    if (toCc) {
-      firstLanding = false;
-      let last: string | null = null;
-      try {
-        last = localStorage.getItem(LAST_CC_SESSION_KEY);
-      } catch {}
-      void navigate(last ? { to: "/cc/$sessionId", params: { sessionId: last }, replace: true } : { to: "/cc", replace: true });
-    } else firstLanding = false;
-  }, [toCc, user.data, navigate]);
-  const target = landing.state === "ready" && !toCc && user.data ? landing.target : null;
+  const target = landing.state === "ready" ? landing.target : null;
   const key = target ? JSON.stringify(target) : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is the stable identity of `target`
   useEffect(() => {

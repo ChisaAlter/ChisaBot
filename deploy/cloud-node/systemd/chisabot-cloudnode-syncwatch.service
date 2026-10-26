@@ -1,8 +1,0 @@
-[Unit]
-Description=ChisaBot cloud node: keep the sync sidecar in the node's network namespace
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/bin/sh /opt/chisabot-cloudnode/sync-watch.sh

@@ -187,7 +187,6 @@ import {
 import { createDeliveryStore } from "./delivery/store";
 import type { DeliveryScope } from "./delivery/types";
 import { createDeviceHub } from "./devices/hub";
-import { readNodeBundle } from "./devices/node-install";
 import { createDeviceRoutes } from "./devices/routes";
 import { createDeviceStore } from "./devices/store";
 import { deviceTools } from "./devices/tools";
@@ -310,8 +309,6 @@ import { createUserPreferencesStore } from "./user-preferences";
 import { repeatAfterEach } from "./work/loop";
 import { createWorkerService, type WorkerService } from "./workers/service";
 import { createLocalAgentService, type LocalAgentService } from "./local-agents/service";
-import { createCloudCcService, type CloudCcService } from "./cloud-cc/service";
-import { createCloudSyncService, type CloudSyncService } from "./cloud-cc/sync";
 import { reasonWithoutStatement } from "./db/query-failure";
 import {
   createWorkQueue,
@@ -2245,45 +2242,6 @@ try {
   console.warn("local agents unavailable", error);
   localAgents = undefined;
 }
-/**
- * 云端 Claude Code（server/src/cloud-cc，docs/cloud-claude-code.md，ADR-0014）：云端工作区节点（一台设备）上的 Claude Code
- * 登录、会话、审批。它的设备扩展排在本地 agent 前面：cc_* 消息自己处理，其余交给本地 agent。
- */
-let cloudCc: CloudCcService | undefined;
-try {
-  cloudCc = createCloudCcService({
-    database,
-    hub: deviceHub,
-    deviceStore,
-    next: localAgents?.extension ?? null,
-    github,
-    vault,
-    // 节点程序指纹：判断云端节点跑的是不是现在这一版（§73.1）。
-    nodeBundle: () => readNodeBundle(config.appDistDir),
-    ...(process.env.CHISABOT_GITHUB_GIT_BASE ? { gitBase: process.env.CHISABOT_GITHUB_GIT_BASE } : {}),
-  });
-  await cloudCc.ensure();
-  const interrupted = await cloudCc.recover();
-  if (interrupted) console.log(JSON.stringify({ type: "cloud-cc-turns-interrupted-by-restart", count: interrupted }));
-  deviceHub.setExtension(cloudCc.extension);
-} catch (error) {
-  console.warn("cloud claude code unavailable", error);
-  cloudCc = undefined;
-}
-/** 电脑文件夹同步（server/src/cloud-cc/sync.ts，P4）：绑定、租约、隧道。跟着云端 Claude Code 一起有。 */
-let cloudSync: CloudSyncService | undefined;
-if (cloudCc) {
-  try {
-    const cc = cloudCc;
-    cloudSync = createCloudSyncService({ database, hub: deviceHub, deviceStore, nodeRpc: (id, op, args, ms) => cc.nodeRpc(id, op, args as never, ms), nodeFor: (owner) => cc.nodeFor(owner) });
-    await cloudSync.ensure();
-    await cloudSync.recover();
-    cc.setSyncHooks({ withHandoff: cloudSync.withHandoff, beforeTurn: cloudSync.flushBeforeTurn, forgetWorkspace: cloudSync.forgetWorkspace });
-  } catch (error) {
-    console.warn("cloud folder sync unavailable", error);
-    cloudSync = undefined;
-  }
-}
 /** 群聊（频道）的对话不给委派：交回结果要走频道的记录，这一版只做机器人私聊。 */
 /**
  * 群聊（一个频道里不止一个机器人）的对话：不给委派、定时任务、本地 agent。
@@ -3923,13 +3881,6 @@ const app = createApp(
       ["/p", pages.publicRoutes()],
       ["/api/schedules", schedules.routes(requireUser)],
       ...(localAgents ? [["/api/local-agents", localAgents.routes(requireUser)] satisfies [string, unknown]] : []),
-      ...(cloudCc
-        ? [
-            ["/api/cloud-workspace", cloudCc.workspaceRoutes(requireUser)] satisfies [string, unknown],
-            ["/api/claude-code", cloudCc.codeRoutes(requireUser)] satisfies [string, unknown],
-            ...(cloudSync ? [["/api/claude-code", cloudSync.webRoutes(requireUser)] satisfies [string, unknown]] : []),
-          ]
-        : []),
       ["/api/chat-files", chatFiles.routes(requireUser)],
       ["/api/confirmations", confirmations.routes(requireUser)],
       ["/api/media-models", chatFiles.media.routes(requireUser)],
@@ -3966,8 +3917,6 @@ const app = createApp(
           requireUser,
           auditStore: bootAuditStore,
           toolsFor: (actorId, botId) => deviceToolsFor(actorId, botId),
-          refuseFullAccess: (device) => cloudCc?.refuseFullAccess(device.id) ?? null,
-          sync: cloudSync ?? null,
           ...(config.appDistDir ? { appDistDir: config.appDistDir } : {}),
           ...(gatewaySecret ? { localCallerSecret: gatewaySecret } : {}),
         }),

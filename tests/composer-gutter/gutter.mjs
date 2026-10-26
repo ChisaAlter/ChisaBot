@@ -2,14 +2,14 @@
 // 只读：所有非 GET 请求一律在本地 fulfill，不写任何东西。
 //
 //   BASE=http://127.0.0.1:<预览端口> CH=/channel/<对话 id> AGENT=<机器人 id> node tests/composer-gutter/gutter.mjs
-//   可选：TOK（生产只读检查的登录 cookie）、CC=/cc/<会话 id>（Claude Code 会话页）、WIDTHS=390,700,…、OUT_DIR、TAG
+//   可选：TOK（生产只读检查的登录 cookie）、WIDTHS=390,700,…、OUT_DIR、TAG
 //   MIN=16（左右 / 底边最小留白，DESIGN §24 的 16px）、HANDLE_MIN=4（输入框右沿到把手左沿至少 4px）
 //   ASSERT=0 只记录不判失败（量修复前的版本）。退出码 1 = 有失败。
 import fs from "node:fs";
 import { chromium } from "playwright-core";
 const base = process.env.BASE || "http://127.0.0.1:3001";
 const TOK = process.env.TOK;
-const CH = process.env.CH; const AGENT = process.env.AGENT; const CC = process.env.CC;
+const CH = process.env.CH; const AGENT = process.env.AGENT;
 const MIN = Number(process.env.MIN || 16); const HANDLE_MIN = Number(process.env.HANDLE_MIN || 4);
 const ASSERT = process.env.ASSERT !== "0";
 const WIDTHS = String(process.env.WIDTHS || "390,700,800,884,1000,1100,1280,1440").split(",").map(Number);
@@ -114,13 +114,6 @@ for (const { w, theme } of cases) {
     await p.locator(".glass-composer").first().waitFor({ timeout: 60000 }).catch(() => {});
     await p.waitForTimeout(2500);
     await shot(p, tag, "new-chat");
-  }
-  if (CC) {
-    await p.goto(`${base}${CC}`, { waitUntil: "domcontentloaded" });
-    await p.locator(".glass-composer").first().waitFor({ timeout: 30000 }).catch(() => {});
-    await p.waitForTimeout(2500);
-    const m = await p.evaluate(measure);
-    if (m.none) log(tag, "cc: no composer (gate / no session)"); else await shot(p, tag, "cc");
   }
   await ctx.close();
 }

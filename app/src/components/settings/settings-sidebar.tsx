@@ -8,7 +8,7 @@ import { SettingsFind, SettingsSearchBox, SettingsSearchResults, useSettingsSear
 import type { Sidebar } from "@/components/ui/sidebar";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
-import { modeTarget } from "@/lib/left-mode";
+import { botsTarget } from "@/lib/bots-location";
 import { type SettingsViewer, visibleGroups } from "@/lib/settings/registry";
 
 /**
@@ -46,7 +46,7 @@ export function SettingsSidebar(props: React.ComponentProps<typeof Sidebar>) {
     [viewer],
   );
   const search = useSettingsSearch(viewer);
-  const back = modeTarget("bots");
+  const back = botsTarget();
   return (
     <>
       <SettingsFind />

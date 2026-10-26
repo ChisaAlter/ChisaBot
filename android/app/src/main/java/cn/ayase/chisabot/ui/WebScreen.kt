@@ -37,7 +37,7 @@ import cn.ayase.chisabot.AppViewModel
 import cn.ayase.chisabot.BuildConfig
 
 /**
- * 还没做成原生的页面（设置、管理后台、Claude Code、不常见的卡片…）在这里用网页打开：同一个服务器、同一份 Cookie（会话），
+ * 还没做成原生的页面（设置、管理后台、不常见的卡片…）在这里用网页打开：同一个服务器、同一份 Cookie（会话），
  * 所以不用再登录，也不会走到死路。站外链接交给系统浏览器。
  */
 @SuppressLint("SetJavaScriptEnabled")

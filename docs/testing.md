@@ -40,13 +40,11 @@ ChisaBot 的测试分四层：**单元 / 集成测试 → 预览容器里的端�
 | `tests/open-scroll/` | 改打开对话 | 打开落在最新一条（§83） |
 | `tests/fold-narration/`、`tests/quiet-turn/` | 改干活卡 | 中途说明收进卡（§90）、简单回合不出卡（§93） |
 | `tests/composer-gutter/gutter.mjs` | 改输入框布局 | 只读的宽度扫描（§92） |
-| `tests/mode-switch/` | 改左栏切换 | 机器人 ↔ Claude Code 不重挂（§84） |
 | `tests/nav-keep/` | 改外壳 / 路由布局 / 留着的聊天 / 设置里的滚动 | 从设置 / 待处理 / 设备切回聊天不刷新、滚动原样、离开期间藏着的聊天不被挪（§98.5）、流式不断、藏着不轮询（§98）。预览里跑：全新生产库副本 + 假模型，`WIDTHS=1280,390 STREAM=1 SWITCH=1`；调试加 `NAVDBG=1 SCROLLALL=1`。一个预览容器只跑一轮 |
 | `tests/native-select/turn.mjs` | 改云端浏览器操作 / 计算机工具 / 回合结束处理 | 原生下拉框快照与选择（API）、真模型选出 2000-07-12、接力 run 500 出「这一轮没有完成」+ 重试、计算机请求 500 后机器人自己恢复（§100）；单元 `agent-computer/tests/native-select.test.ts`（`CHISABOT_COMPUTER_BROWSER=1` 跑真 Chromium）、`server/tests/computer-tool-outcome.test.ts`、`app/tests/turn-unfinished.test.tsx`。见 [README](../tests/native-select/README.md) |
 | `tests/rail-computer/` | 改右栏 | 空聊天也有「计算机」（§79） |
 | `tests/ui-align/` | 改字体 / 按钮 / 标签 | 文字垂直居中审计（§82） |
 | `tests/chat-concurrency/` | 改回答中发消息 / 后台任务 | §38 |
-| `tests/cloud-cc/` | 改云端 Claude Code / 同步 | 含 Linux 上的 PC 替身 `sync-pc-standin.cjs` |
 | `tests/dialog-close/` | 改弹窗 | 关闭性能探针（§37） |
 | `tests/smoke/` | 冒烟 | `bun run test:smoke` |
 

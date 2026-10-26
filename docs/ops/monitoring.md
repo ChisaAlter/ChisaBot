@@ -15,8 +15,7 @@ bash /opt/chisabot-updater/post-deploy-smoke.sh        # 版本 + capabilities +
 sh /opt/chisabot-updater/smoke.sh                      # 模型往返自检（不保存）
 docker logs --since 24h chisabot-zh 2>&1 | grep -cE 'bind message supplies|PostgresError'   # 应为 0
 systemctl is-active chisabot-updater chisabot-public-cert-reload.timer \
-  chisabot-cloudnode-syncwatch.timer                   # 用了出口路由 / 节点防火墙的再加上对应单元
-journalctl -t chisabot-syncwatch --since -1d | tail -3 # 看门狗最近有没有频繁重启边车
+                    # 用了出口路由 / 节点防火墙的再加上对应单元
 docker system df                                       # 镜像 / 构建缓存 / 卷的占用
 ls -t /opt/chisabot-zh/rollback-to-*.sh | head -3       # 并确认对应镜像还在（docker image inspect）
 openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.pem   # 证书到期时间
@@ -36,7 +35,6 @@ openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.p
 | `bind message supplies … requires …` | Bun SQL 连接错位，之后所有 `/api` 挂起 | 重启应用容器，见 [incidents.md](incidents.md) §1 |
 | 所有发送返回 409 | 线程锁残留（部署中断后） | [incidents.md](incidents.md) §2 |
 | 自检失败 / 机器人不答 | 模型额度或上游故障 | [model-config.md](model-config.md) |
-| 电脑文件夹同步全部失败（ECONNREFUSED） | 节点重启后边车在旧网络命名空间 | 看门狗应在 30 秒内修好；没装就装上（[cloud-node.md](cloud-node.md) §4） |
 | 回滚脚本对应的镜像不存在 | 清理或 `KEEP_IMAGES` 删掉了 | 心里有数：需要更早版本时走 revert PR |
 | 更新器底座镜像不存在 | 清理删掉了 | 下一次部署自动走完整构建（时间更长、更吃内存），成功后恢复 |
 
@@ -44,7 +42,6 @@ openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.p
 
 | 定时任务 | 频率 | 作用 |
 |---|---|---|
-| `chisabot-cloudnode-syncwatch.timer` | 30 秒 | 同步边车看门狗 |
 | `chisabot-zh-attachments.timer` | 每小时 | 清理无主附件（可选） |
 | `chisabot-public-cert-reload.timer` | 每天 | 证书续期后 reload 网关 |
 | acme.sh / certbot 定时任务 | 每天 | 证书续期 |
@@ -58,7 +55,6 @@ openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.p
 - 网关：`docker logs chisabot-public-gateway`（访问日志带 UA 和来源 IP）。
 - 登录服务：`docker logs chisabot-web-auth`。
 - 更新器：`journalctl -u chisabot-updater`、`/opt/chisabot-updater/audit.log`、`jobs/<任务>/`。
-- 看门狗：`journalctl -t chisabot-syncwatch`。
 
 排查时把 UTC 时间（镜像标签、备份目录、日志）和你所在时区的时间对清楚再下结论。
 

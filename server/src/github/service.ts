@@ -613,54 +613,6 @@ export function createGithub(database: Database, options: { vault: Vault; fetch?
     return githubGuidance(await status(owner).catch(() => null));
   }
 
-  // ---- 云端 Claude Code 的 GitHub 工作区（server/src/cloud-cc，docs/cloud-claude-code.md §3.4） ----
-  /**
-   * 克隆 / 推送那一次要下发给云端节点的令牌（节点只放在那一个 git 进程的环境变量里，用完就没了）。
-   * 只给云端 Claude Code 服务用；不进日志、不进数据库。
-   */
-  async function gitCredential(owner: string) {
-    const row = await connectionRow(owner);
-    if (!row) throw new GithubError("还没有连接 GitHub。去 设置 → 账号连接 连接 GitHub。");
-    if (row.status === "invalid") throw new GithubError("GitHub 令牌已失效，去 设置 → 账号连接 更换。");
-    return { token: await token(owner), login: row.login, name: row.name };
-  }
-
-  /** 新建工作区时查仓库：默认分支、是否私有。 */
-  async function repoInfo(owner: string, repo: string) {
-    const parsed = repoSchema.parse(repo);
-    const data = (await read(owner, `/repos/${parsed}`, `仓库 ${parsed}`)) as { full_name?: string; default_branch?: string; private?: boolean; html_url?: string };
-    return { fullName: data.full_name ?? parsed, defaultBranch: data.default_branch || "main", private: !!data.private, htmlUrl: data.html_url ?? `https://github.com/${parsed}` };
-  }
-
-  /** 新建工作区的仓库选择器：最近更新的仓库。 */
-  async function listRepos(owner: string) {
-    const data = (await read(owner, "/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member", "仓库")) as {
-      full_name: string;
-      private?: boolean;
-      description?: string | null;
-      default_branch?: string;
-      updated_at?: string;
-    }[];
-    return (Array.isArray(data) ? data : []).map((r) => ({ fullName: r.full_name, private: !!r.private, description: short(r.description, 120), defaultBranch: r.default_branch || "main", updatedAt: r.updated_at ?? null }));
-  }
-
-  /** 「推送并开 PR」的最后一步（用户已经在会话里点了允许）。PR 已经有了就返回那一个。 */
-  async function openPullRequest(owner: string, repo: string, payload: { title: string; head: string; base: string; body: string; draft: boolean }) {
-    const response = await api(owner, "POST", `/repos/${repo}/pulls`, payload);
-    if (response.status === 201) {
-      const data = response.data as { html_url?: string; number?: number };
-      return { url: data.html_url ?? "", number: data.number ?? null, existed: false };
-    }
-    if (response.status === 422 && /already exists/i.test(response.text)) {
-      const login = (await connectionRow(owner))?.login ?? "";
-      const head = `${repo.split("/")[0] || login}:${payload.head}`;
-      const list = await api(owner, "GET", `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(head)}`);
-      const first = Array.isArray(list.data) ? (list.data[0] as { html_url?: string; number?: number } | undefined) : undefined;
-      if (first?.html_url) return { url: first.html_url, number: first.number ?? null, existed: true };
-    }
-    throw new GithubError(explain(response.status, response.data, `仓库 ${repo}`));
-  }
-
-  return { ensure, status, connect, check, disconnect, tools, routes, guidance, decide, actionById, gitCredential, repoInfo, listRepos, openPullRequest, apiBase: base };
+  return { ensure, status, connect, check, disconnect, tools, routes, guidance, decide, actionById, apiBase: base };
 }
 export type Github = ReturnType<typeof createGithub>;

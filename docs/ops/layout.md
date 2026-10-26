@@ -10,7 +10,6 @@
 | `/opt/chisabot-zh/public/` | 网关与登录服务：`nginx.conf`（+ `*.bak-*`）、`security-headers.conf`、`magpie-private.conf`、`auth/server.ts`、`auth/config.json`、`auth-data/sessions.sqlite`、`auth-web/`（登录页、「正在更新」页）、`downloads/`（登录后可见的下载页，可选）、`reload-cert.sh` |
 | `/opt/chisabot-updater/` | 更新器：`request.sh`、`update.sh`、`smoke.sh`、`health.sh`、`rollback.sh`、`config.env`、`base.env`、`mirror.git`（main 的本地镜像）、`spool/`（请求 / 状态）、`jobs/`、`backups/`（最近 5 份）、`deps-*`、`audit.log` |
 | `/opt/chisabot-src/` | 仓库检出（`install-updater.sh` 和手工维护用） |
-| `/opt/chisabot-cloudnode/` | 云端节点：`compose.yaml`、`firewall.sh`、`sync-watch.sh`、自己的启动脚本（例如 `up.sh`） |
 | `/opt/chisabot-ops/`（建议） | 你自己的运维脚本：`deploy-serial.sh`（拷自 `scripts/ops/`）、测试守卫、快照脚本、部署日志 |
 | `/opt/chisabot-release/`（建议） | 客户端发版工作目录：每次 CI 产物 `ci-<版本>/`、签名脚本；**签名密钥放这里时权限 600，且不能在 Web 根目录下** |
 | `<PUBLIC_WEB_ROOT>/downloads/` | 公开的客户端更新源：`chisabot-pc/`、`chisabot-android/`（[client-release.md](client-release.md)） |
@@ -33,7 +32,6 @@
 | TLS 证书 | acme.sh / certbot 管理，安装到 `/etc/letsencrypt/live/<YOUR_DOMAIN>/` | 续期后由 `chisabot-public-cert-reload.timer` reload |
 | 数据库密码 | 应用容器内 `/var/lib/postgresql/pgpassword` | 由镜像生成，不需要手工管理 |
 | 用户保险箱、IM 凭据、个人模型密钥、Claude 上游代理地址 | 数据库（AES-GCM，主密钥 = `KEY_ENCRYPTION_KEY`） | 只能在网页里改 |
-| 云端节点的 Claude 订阅凭据、设备令牌 | 卷 `chisabot-cloudnode_home` | 600，节点进程之外看不到 |
 | 主机级出口代理的节点密码（可选） | `/etc/sing-box/config.json` | 600 |
 | Android 签名密钥 | 维护者自己的电脑或发版工作目录（不在 Web 根目录） | 600；丢了 = 用户要卸载重装，务必离线备份 |
 | GitHub 令牌（私有 fork 才需要） | `/opt/chisabot-updater/github-token`（只读权限） | 公开仓库匿名拉取，不需要令牌 |

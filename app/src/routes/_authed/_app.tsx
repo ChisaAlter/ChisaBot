@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { rememberBotsLocation } from "@/lib/left-mode";
+import { rememberBotsLocation } from "@/lib/bots-location";
 
 /** Route chunks the avatar menu leads to, fetched once the app is idle so those clicks never wait. */
 const IDLE_PRELOAD = ["/_authed/settings", "/_authed/settings/connected-accounts/", "/_authed/admin"] as const;
@@ -28,7 +28,7 @@ export const Route = createFileRoute("/_authed/_app")({
 });
 
 /**
- * 机器人和 Claude Code（`/cc`）共用登录后的那一个外壳（DESIGN.md §84、§98，`AuthedShell`）：外壳、顶栏、左栏、
+ * 机器人页面用登录后的那一个外壳（DESIGN.md §98，`AuthedShell`）：外壳、顶栏、左栏、
  * 右栏和留着的聊天都画在 `_authed`，这里只记住「机器人这边最后停在哪」和空闲时预取设置分包。
  */
 function RouteComponent() {

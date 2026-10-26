@@ -85,11 +85,6 @@ sh /opt/chisabot-zh/rollback-to-auto-<时间>-<提交>.sh
 `rollback-<说明>-<日期>.sh`（恢复备份 + `nginx -t` + reload / 重启）。回滚脚本用过一次后在文件名或旁边的说明里标出来，
 避免以后有人把已经过时的状态再放回去——尤其是会放回旧登录页、旧单用户网关这类脚本。
 
-### 3.3 云端节点
-
-节点镜像带构建号（`-b1`、`-b2`…）。回滚到旧镜像：`CLOUDNODE_TAG=<旧标签> docker compose -f compose.yaml up -d`；旧镜像被清理掉时，
-需要用当时的 `Dockerfile` 重建（改 Dockerfile 前留 `Dockerfile.bak-<说明>`）。见 [cloud-node.md](cloud-node.md)。
-
 ## 4. 不随一键更新的部分
 
 | 部分 | 怎么更新 | 详见 |
@@ -97,7 +92,6 @@ sh /opt/chisabot-zh/rollback-to-auto-<时间>-<提交>.sh
 | 公网网关 nginx（`deploy/public/nginx.conf`） | **`sync-nginx.sh --apply`**（备份+渲染+`nginx -t`+reload）；`deploy-serial` 默认 `--check` 漂移则失败 | [gateway.md](gateway.md) §2.1 |
 | 登录服务（`deploy/public/auth/server.ts`、`auth-web/`） | 拷文件 → 重启 `chisabot-web-auth` | [gateway.md](gateway.md) |
 | 更新器自己（`deploy/updater/`） | 每次成功更新后自升级；老部署跑一次 `install-updater.sh` | §2 |
-| 云端工作区节点 / 同步边车 | 手工构建镜像、`compose up -d`；改了 `pc/src/cloud-cc` 的部署后 `docker restart chisabot-cloudnode` | [cloud-node.md](cloud-node.md) |
 | PC / Android 客户端 | 发版流程 | [client-release.md](client-release.md)、[release.md](../release.md) |
 | Magpie 模型网关 | 独立 compose，手动（先备份配置） | [magpie.md](../magpie.md) |
 
@@ -110,7 +104,6 @@ sh /opt/chisabot-zh/rollback-to-auto-<时间>-<提交>.sh
    备用模型列表。除镜像 / 版本外应一致。
 5. **只读浏览器检查**（需要时）：临时签发会话 + 拦截所有非 GET 请求（[preview.md](preview.md) §4）。
 6. 改到聊天 / 同步 / 滚动的 PR：在预览里跑 `tests/chat-scroll/regression.sh`（[testing.md](../testing.md) §3）。
-7. 改了 `pc/src/cloud-cc`（节点程序）：`docker restart chisabot-cloudnode`——节点只在容器启动时从应用下载 `chisabot-node.cjs`。
 8. 更新项目看板：ROADMAP「最近完成」、BACKLOG 状态、[CHANGELOG](../CHANGELOG.md)。
 
 ## 6. 并行开发时

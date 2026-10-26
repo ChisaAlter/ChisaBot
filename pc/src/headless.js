@@ -118,20 +118,8 @@ function run(dir) {
   const ops = createOps({ clientVersion: `${VERSION}-node` });
   // 本地 agent（Claude Code / Codex / 内置循环…，docs/local-agents.md）：和节点共用这条连接。
   const agentRuntime = attachAgentRuntime({ log: (line) => console.log(new Date().toISOString(), `[本地 agent] ${line}`) });
-  // 云端工作区（docs/cloud-claude-code.md）：只有云端节点容器设 CHISABOT_CLOUD_WORKSPACE=1，cc_* 消息交给 Claude Code 运行时。
-  let agentRef = null;
-  const cloudCc =
-    process.env.CHISABOT_CLOUD_WORKSPACE === "1"
-      ? require("./cloud-cc").createCloudCc({
-          send: (message) => (agentRef ? agentRef.sendRaw(message) : false),
-          log: (line) => console.log(new Date().toISOString(), `[云端工作区] ${line}`),
-          // 同步隧道（P4）：节点自己开出站 WSS 回服务器
-          serverUrl: config.server,
-          getToken: () => config.token,
-        })
-      : null;
   const agent = createNodeAgent({
-    onExtra: cloudCc ? (message) => (cloudCc.handle(message) ? undefined : agentRuntime.onExtra(message)) : agentRuntime.onExtra,
+    onExtra: agentRuntime.onExtra,
     serverUrl: config.server,
     getToken: () => config.token,
     ops,
@@ -140,15 +128,6 @@ function run(dir) {
     unrefTimers: false,
   });
   agentRuntime.bind(agent);
-  agentRef = agent;
-  if (cloudCc) {
-    agent.events.on("state", (event) => {
-      if (event && event.state === "online") cloudCc.onOnline();
-    });
-    agent.events.on("config", (device) => {
-      if (device && device.paused) cloudCc.stopAll();
-    });
-  }
   const log = (...parts) => console.log(new Date().toISOString(), ...parts);
   agent.events.on("state", ({ state, detail }) => log(`[状态] ${state}${detail ? `（${detail}）` : ""}`));
   agent.events.on("config", (device) =>
@@ -167,7 +146,6 @@ function run(dir) {
   const stop = () => {
     ops.stopAll?.("shutdown");
     agentRuntime.runtime.stopAll?.();
-    cloudCc?.close();
     agent.stop();
     process.exit(0);
   };
@@ -281,9 +259,6 @@ async function main() {
       fs.rmSync(configPath(dir), { force: true });
       return;
     }
-    case "cc-hook":
-      process.exit(await require("./cloud-cc/hook").runHook());
-      return;
     case "version":
     case "--version":
       console.log(VERSION);

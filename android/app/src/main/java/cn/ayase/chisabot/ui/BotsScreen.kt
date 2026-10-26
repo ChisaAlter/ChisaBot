@@ -49,7 +49,6 @@ fun BotsScreen(vm: AppViewModel, onCheckUpdate: () -> Unit, onLogout: () -> Unit
             Box {
                 IconText("⋯", "更多", { menu = true }, size = 22.sp)
                 DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem({ Text("Claude Code") }, { menu = false; vm.push(Screen.Web("/cc", "Claude Code")) })
                     DropdownMenuItem({ Text("待处理") }, { menu = false; vm.push(Screen.Web("/approvals", "待处理")) })
                     DropdownMenuItem({ Text("新建机器人") }, { menu = false; vm.push(Screen.Web("/agents", "机器人")) })
                     DropdownMenuItem({ Text("完整网页版") }, { menu = false; vm.push(Screen.Web("/", "ChisaBot")) })

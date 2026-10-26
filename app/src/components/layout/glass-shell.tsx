@@ -22,12 +22,9 @@ export function GlassShell({
   right,
   rightHidden = false,
   banner,
-  mode,
   children,
 }: {
   scope: ShellScope;
-  /** 机器人 / Claude Code 原地切换后主区淡入一次（DESIGN.md §84）；不传就不动。 */
-  mode?: string;
   sidebar: ReactNode;
   right?: ReactNode;
   /** 右栏留着但不显示（设置 / 管理里），回到聊天时不重新挂载（DESIGN.md §98）。 */
@@ -45,7 +42,7 @@ export function GlassShell({
         <PhoneGestures />
         {sidebar}
         <div className="glass-body relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-scope={scope}>
-          <main className="glass-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" data-mode={mode}>
+          <main className="glass-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             {banner}
             <ShellBoundary>{children}</ShellBoundary>
           </main>
