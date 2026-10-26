@@ -19,8 +19,12 @@
 /** One thing a Bot did on its computer. */
 export type ComputerActivity = {
   id: string;
-  /** When it happened, for the timestamp beside it. */
-  at: number;
+  /**
+   * When it happened, for the timestamp beside it. `null` when the call was replayed from the
+   * transcript: the moment we read it back is not when it ran, and stamping it would give every
+   * replayed line the same time (v0.1.78 showed 00:04:19 on all of them).
+   */
+  at: number | null;
   kind: "command" | "read_file" | "write_file" | "list_files";
   /** The command, or the path. What the line says it acted on. */
   subject: string;
@@ -54,7 +58,10 @@ let counter = 0;
 
 export function recordActivity(
   computerId: string,
-  entry: Omit<ComputerActivity, "id" | "at"> & { toolCallId?: string },
+  entry: Omit<ComputerActivity, "id" | "at"> & {
+    toolCallId?: string;
+    at?: number | null;
+  },
 ): void {
   if (entry.toolCallId) {
     let seen = seenToolCallIds.get(computerId);
@@ -66,11 +73,15 @@ export function recordActivity(
     seen.add(entry.toolCallId);
   }
   counter += 1;
-  const { toolCallId: _toolCallId, ...rest } = entry;
+  const { toolCallId: _toolCallId, at, ...rest } = entry;
   const existing = byComputer.get(computerId) ?? [];
   const next = [
     ...existing,
-    { ...rest, id: `activity-${counter}`, at: Date.now() },
+    {
+      ...rest,
+      id: `activity-${counter}`,
+      at: at === undefined ? Date.now() : at,
+    },
   ];
   byComputer.set(computerId, next.slice(-LIMIT));
   for (const listener of listeners) listener();

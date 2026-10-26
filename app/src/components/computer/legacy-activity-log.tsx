@@ -35,7 +35,8 @@ const LABELS = {
   list_files: "列出",
 } as const;
 
-function timeOf(at: number): string {
+function timeOf(at: number | null): string {
+  if (at === null) return "";
   return new Date(at).toLocaleTimeString("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",

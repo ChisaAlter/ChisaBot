@@ -100,6 +100,24 @@ if (phase === "history") {
   await database.execute(
     sql`update openbot_local_threads set messages = '[]'::jsonb where id = ${thread}`,
   );
+  // 时间断言用：三步之间隔开 1 秒以上，记下每一步写入前后的真实时间，
+  // activity.mjs 拿界面上每条的 <time> 来对（v0.1.78 每条都显示同一个时间）。
+  await ensureThread("按顺序读三份计时文件", "run-t");
+  const timed: { subject: string; before: number; after: number }[] = [];
+  for (let i = 0; i < 3; i++) {
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, 1100));
+    const subject = `timing/step-${i}.md`;
+    const before = Date.now();
+    await agent("run-t", () =>
+      gateway.readFile(bot, actor, { path: subject } as never),
+    );
+    timed.push({ subject, before, after: Date.now() });
+  }
+  if (process.env.TIMES_OUT)
+    (await import("node:fs")).writeFileSync(
+      process.env.TIMES_OUT,
+      JSON.stringify(timed),
+    );
   // 足够多的旧记录，让面板能滚动。
   await ensureThread("先把归档文件夹里的报告读一遍", "run-0");
   for (let i = 0; i < 14; i++)

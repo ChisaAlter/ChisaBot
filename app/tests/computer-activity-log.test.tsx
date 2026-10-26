@@ -209,3 +209,79 @@ test("interleaved turns are grouped by their turn id, unattributed steps are not
     turns[0]?.items.map((item) => (item.type === "step" ? item.step.id : "")),
   ).toEqual(["2", "4"]);
 });
+
+test("每条记录显示自己写入时的时间：互不相同，且与 startedAt 一致（v0.1.78 全是 00:04:19）", async () => {
+  const written = [
+    "2026-10-26T16:04:19.000Z",
+    "2026-10-26T16:05:31.000Z",
+    "2026-10-26T16:07:02.000Z",
+  ];
+  const steps = written
+    .map((at, i) =>
+      step({
+        runId: `run-${i}`,
+        turnPrompt: `第 ${i} 轮`,
+        subject: `cat file-${i}.txt`,
+        status: "failed",
+        detail: { exitCode: 1 },
+        startedAt: at,
+        finishedAt: at,
+        durationMs: 259_000,
+      }),
+    )
+    .sort((a, b) => b.seq - a.seq);
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({ steps, nextCursor: null, retentionDays: 90 }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )) as never;
+  const view = render(<ActivityLog computerId="bot" />);
+  await waitFor(() =>
+    expect(view.container.textContent).toContain("file-2.txt"),
+  );
+  const times = [...view.container.querySelectorAll("time")];
+  const fmt = (at: string) =>
+    new Date(at).toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  for (const at of written) {
+    const el = times.find((t) => t.getAttribute("datetime") === at);
+    expect(el?.textContent).toBe(fmt(at));
+  }
+  const shown = new Set(
+    times
+      .filter((t) => written.includes(t.getAttribute("datetime") ?? ""))
+      .map((t) => t.textContent),
+  );
+  expect(shown.size).toBe(written.length);
+});
+
+test("旧路径：从对话记录回放的调用不盖「读回来那一刻」的时间", async () => {
+  const { syncComputerMessages } = await import("@/lib/copilot/computer-tools");
+  const { activityFor } = await import("@/lib/computers/activity");
+  const msgs = [0, 1, 2].flatMap((i) => [
+    {
+      role: "assistant",
+      toolCalls: [
+        {
+          id: `replay-${i}`,
+          function: {
+            name: "computer_run_command",
+            arguments: JSON.stringify({ command: `echo ${i}` }),
+          },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      toolCallId: `replay-${i}`,
+      content: '{"ok":true,"exitCode":0}',
+    },
+  ]);
+  syncComputerMessages("legacy-bot", msgs, false);
+  const entries = activityFor("legacy-bot");
+  expect(entries.length).toBe(3);
+  for (const e of entries) expect(e.at).toBeNull();
+});

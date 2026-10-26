@@ -25,10 +25,11 @@ const MODES = ["web", "pc"];
 const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAABAAAAAKCAIAAAA7N+mxAAAAFklEQVR4nGP8//8/AymAiST1oxpGNQAAkfMDEaoCq5oAAAAASUVORK5CYII=";
 
+const timesOut = path.join(out, "seed-times.json");
 const seed = (phase) =>
   execFileSync("bun", ["tests/computer-activity/seed.ts", phase], {
     cwd: repo,
-    env: { ...process.env, BOT: bot },
+    env: { ...process.env, BOT: bot, TIMES_OUT: timesOut },
     stdio: "inherit",
   });
 
@@ -183,6 +184,38 @@ try {
       seed("history");
       const { context, page, pageErrors } = await open(mode, size);
       const log = page.locator(".activity-log").first();
+      // 每条记录的时间：互不相同，且就是写入那一刻（不是时长、不是会话开始时间）。
+      const timed = JSON.parse(fs.readFileSync(timesOut, "utf8"));
+      const stamps = [];
+      for (const t of timed) {
+        const head = log
+          .locator(".activity-step-head", { hasText: t.subject })
+          .first();
+        await head.scrollIntoViewIfNeeded();
+        const iso = await head.locator("time").getAttribute("datetime");
+        const shown = await head.locator("time").innerText();
+        const at = Date.parse(iso ?? "");
+        assert(
+          at >= t.before - 1000 && at <= t.after + 1000,
+          `${label}: ${t.subject} startedAt ${iso} not within write window`,
+        );
+        const want = await page.evaluate(
+          (v) =>
+            new Date(v).toLocaleTimeString("zh-CN", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            }),
+          iso,
+        );
+        assert.equal(shown.trim(), want, `${label}: ${t.subject} shown time`);
+        stamps.push(shown.trim());
+      }
+      assert.equal(
+        new Set(stamps).size,
+        timed.length,
+        `${label}: step times must differ ${JSON.stringify(stamps)}`,
+      );
       const text = await log.innerText();
       // 合并命令
       assert.match(text, /运行了 4 条命令/, `${label}: merged commands`);

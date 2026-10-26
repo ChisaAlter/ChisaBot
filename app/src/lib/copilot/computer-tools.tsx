@@ -1218,6 +1218,7 @@ export function syncComputerMessages(
       ) {
         recordActivity(computerId, {
           toolCallId: callId,
+          at: isLive ? undefined : null,
           kind: "command",
           subject: args.command,
           output: outputOf(outcome as ToolOutcome),
@@ -1234,6 +1235,7 @@ export function syncComputerMessages(
       ) {
         recordActivity(computerId, {
           toolCallId: callId,
+          at: isLive ? undefined : null,
           kind: "read_file",
           subject: args.path,
           output: outputOf(outcome as ToolOutcome),
@@ -1245,6 +1247,7 @@ export function syncComputerMessages(
       ) {
         recordActivity(computerId, {
           toolCallId: callId,
+          at: isLive ? undefined : null,
           kind: "write_file",
           subject: args.path,
           output:
@@ -1258,6 +1261,7 @@ export function syncComputerMessages(
       } else if (name === "computer_list_files") {
         recordActivity(computerId, {
           toolCallId: callId,
+          at: isLive ? undefined : null,
           kind: "list_files",
           subject:
             typeof args.path === "string" && args.path.trim()
