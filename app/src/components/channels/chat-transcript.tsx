@@ -49,6 +49,8 @@ import { ScheduleFiredRow } from "@/components/chat/schedule-row";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { knownWorkSeconds, WorkRow } from "@/components/chat/work-card";
 import { WorkerResultRow } from "@/components/chat/worker-card";
+import { JUMP_TO_TOOL_CALL } from "@/components/computer/activity-jump";
+import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import {
   FileCard,
   HiddenMarkdownImage,
@@ -3289,6 +3291,35 @@ export function ChatTranscript({
    * 不会一发出就剩一整屏空白。滚动容器把「上一句露 48px」加在 scrollMargin 上，所以这里减掉它。
    * 只影响「新的一轮对齐」这一条路：恢复位置（§88.3）自己带着 scrollMargin，不受影响。
    */
+  // CB-101：活动记录里点「在对话里看这一步」，滚到发起那次工具调用的消息并闪一下。
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  useEffect(() => {
+    const onJump = (event: Event) => {
+      const toolCallId = (event as CustomEvent<{ toolCallId?: string }>).detail
+        ?.toolCallId;
+      if (!toolCallId) return;
+      const owner = messagesRef.current.find(
+        (message) =>
+          (message as { toolCallId?: string }).toolCallId === toolCallId ||
+          ((message as { toolCalls?: { id?: string }[] }).toolCalls ?? []).some(
+            (call) => call.id === toolCallId,
+          ),
+      );
+      const row = owner
+        ? viewportRef.current?.querySelector<HTMLElement>(
+            `[data-message-id="${CSS.escape(owner.id)}"]`,
+          )
+        : null;
+      if (!row) return;
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      row.classList.add("is-activity-jump");
+      setTimeout(() => row.classList.remove("is-activity-jump"), 1600);
+    };
+    window.addEventListener(JUMP_TO_TOOL_CALL, onJump);
+    return () => window.removeEventListener(JUMP_TO_TOOL_CALL, onJump);
+  }, []);
+
   const [paneHeight, setPaneHeight] = useState(0);
   useEffect(() => {
     const element = viewportRef.current;
@@ -3538,6 +3569,10 @@ export function ChatTranscript({
           delay={delays.delayFor(item.id, index, items.length)}
           name={item.toolCall.function.name}
           result={item.result}
+          toolCallId={item.toolCall.id}
+        />
+        <ActivityJumpButton
+          name={item.toolCall.function.name}
           toolCallId={item.toolCall.id}
         />
         {/* 确认卡片（DESIGN.md §58）：画在这个工具调用下面；设备改文件时带 diff（§62）。 */}

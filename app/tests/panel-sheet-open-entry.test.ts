@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { openPanelSheet, panelSheetOpenSource, setPanelSheetOpen } from "../src/lib/panels/rail-open";
+import {
+  openPanelSheet,
+  panelSheetOpenSource,
+  setPanelSheetOpen,
+} from "../src/lib/panels/rail-open";
 
 describe("用户打开右抽屉的统一入口（CB-098）", () => {
   test("抽屉没开时按来源打开；已经开着时再调用什么都不做，不改来源", () => {

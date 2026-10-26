@@ -17,6 +17,8 @@ export type ClientOptions = {
   method?: string;
   /** Serialised as JSON, which is also what sets the content type. */
   body?: unknown;
+  /** Extra request headers (CB-101: the computer activity attribution). */
+  headers?: Record<string, string>;
   /**
    * What a person reads when the server sent no message of its own.
    *
@@ -55,8 +57,8 @@ async function send(path: string, options: ClientOptions): Promise<Response> {
     credentials: "include",
     headers:
       options.body === undefined
-        ? undefined
-        : { "content-type": "application/json" },
+        ? options.headers
+        : { ...options.headers, "content-type": "application/json" },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
     signal: requestSignal(options),
   });
