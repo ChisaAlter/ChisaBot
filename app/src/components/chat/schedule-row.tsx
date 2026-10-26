@@ -6,7 +6,7 @@ import type { ScheduleView } from "../../../../shared/schedules";
 import { parseScheduleMessage } from "../../../../shared/schedules";
 import { client } from "@/lib/client";
 import {
-  firedGroupSummary,
+  firedGroupParts,
   firedHeadline,
   scheduleGroupOf,
   splitFiredHeadline,
@@ -49,13 +49,19 @@ export function ScheduleFiredRow({ messageId, text }: { messageId: string; text:
       .filter((run): run is NonNullable<typeof run> => run !== null);
     const known = runs.map((run) => times.get(run.runId)).filter((at): at is string => Boolean(at));
     const { title } = splitFiredHeadline(parsed.headline);
+    const summary = firedGroupParts(title, runs.length, known);
     return (
       <div className="worker-result schedule-fired" data-message-id={messageId} data-testid="schedule-fired-group">
         <button aria-expanded={open} className="worker-result-line" onClick={() => setOpen((value) => !value)} type="button">
           <span className="worker-icon schedule-fired-icon">
             <IconAlarm className="size-3.5" stroke={2.2} />
           </span>
-          <span className="worker-result-head">{firedGroupSummary(title, runs.length, known)}</span>
+          <span className="worker-result-head schedule-fired-group-head">
+            <span className="schedule-fired-group-name">{summary.name}</span>
+            <span className="schedule-fired-group-tail" data-testid="schedule-fired-group-tail">
+              {summary.tail}
+            </span>
+          </span>
           <span className="worker-result-hint">{open ? "收起" : "展开"}</span>
           <IconChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
         </button>

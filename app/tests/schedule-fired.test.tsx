@@ -152,6 +152,13 @@ describe("ScheduleFiredRow", () => {
     expect(view.getByTestId("schedule-fired-group").textContent).toContain(
       "「和 Claude 聊电车」到点 2 次，10/16–10/18",
     );
+    // r2：日期范围放在单独的、不省略的元素里（360 宽也完整可见）
+    const tail = view.getByTestId("schedule-fired-group-tail");
+    expect(tail.textContent).toBe("到点 2 次，10/16–10/18");
+    expect(tail.className).toBe("schedule-fired-group-tail");
+    expect(tail.previousElementSibling?.className).toBe(
+      "schedule-fired-group-name",
+    );
     expect(view.container.textContent).not.toContain("今天 07:00");
     fireEvent.click(view.getByRole("button"));
     const list =

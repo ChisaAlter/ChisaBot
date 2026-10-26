@@ -53,13 +53,15 @@ export function firedHeadline(
 }
 
 /** 折叠行：「「T」到点 16 次，10/16–10/18」。 */
-export function firedGroupSummary(
+/** CB-105 r2：折叠行拆成「任务名」（可省略）和「次数 + 日期范围」（始终完整可见）两段。 */
+export function firedGroupParts(
   title: string,
   count: number,
   times: readonly string[],
-): string {
-  const head = `「${title}」到点 ${count} 次`;
-  if (!times.length) return head;
+): { name: string; tail: string } {
+  const name = `「${title}」`;
+  const head = `到点 ${count} 次`;
+  if (!times.length) return { name, tail: head };
   const sorted = [...times].sort();
   const day = (at: string) => {
     const p = partsIn(new Date(at), SCHEDULE_DEFAULT_TZ);
@@ -67,7 +69,19 @@ export function firedGroupSummary(
   };
   const first = day(sorted[0] ?? "");
   const last = day(sorted[sorted.length - 1] ?? "");
-  return `${head}，${first === last ? first : `${first}–${last}`}`;
+  return {
+    name,
+    tail: `${head}，${first === last ? first : `${first}–${last}`}`,
+  };
+}
+
+export function firedGroupSummary(
+  title: string,
+  count: number,
+  times: readonly string[],
+): string {
+  const { name, tail } = firedGroupParts(title, count, times);
+  return `${name}${tail}`;
 }
 
 const textOf = (message: Readonly<Message>) =>
