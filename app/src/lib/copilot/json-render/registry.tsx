@@ -30,7 +30,7 @@ import {
   TimeText,
   Timeline,
 } from "./rich";
-import { ActionArea, useLiveValue, useRichActions } from "./rich-context";
+import { ActionArea, choiceState, useChoiceScope, useLiveValue, useRichActions } from "./rich-context";
 import { Products } from "./products";
 import { safeHttp, safeHttps, splitDotted, trendOfText } from "./rich-utils";
 import { Button } from "@/components/ui/button";
@@ -408,6 +408,7 @@ export const { registry: jsonRenderRegistry } = defineRegistry(jsonRenderCatalog
     ),
     Button: ({ props, emit }) => {
       const actions = useRichActions();
+      const scope = useChoiceScope();
       const [copied, setCopied] = useState(false);
       useEffect(() => {
         if (!copied) return;
@@ -415,22 +416,45 @@ export const { registry: jsonRenderRegistry } = defineRegistry(jsonRenderCatalog
         return () => clearTimeout(timer);
       }, [copied]);
       const href = safeHttp(props.href);
+      // 互斥选项（CB-090）：只在对话里、带 ask 的 choice 按钮上生效；右栏面板和普通按钮照旧。
+      const asChoice = Boolean(scope && props.choice === true && props.ask && actions.ask && !href);
+      const choice = asChoice && scope ? choiceState(scope.picked, props.ask) : { picked: false, locked: false };
       return (
         <Button
-          className={cn("jr-button jr-el", copied && "is-copied")}
-          disabled={props.disabled ?? false}
+          aria-pressed={asChoice ? choice.picked : undefined}
+          className={cn("jr-button jr-el", copied && "is-copied", asChoice && "is-choice", choice.picked && "is-picked")}
+          data-choice={asChoice ? (choice.picked ? "picked" : choice.locked ? "locked" : "open") : undefined}
+          disabled={(props.disabled ?? false) || choice.locked}
           onClick={async () => {
-            if (href) actions.openLink(href);
+            if (asChoice && scope) {
+              if (!props.ask || !scope.pick(props.ask)) return;
+            } else if (href) actions.openLink(href);
             else if (props.ask && actions.ask) actions.ask(props.ask);
             else if (props.copy && (await actions.copy(props.copy))) setCopied(true);
             emit("press");
+          }}
+          onKeyDown={(event) => {
+            if (!asChoice) return;
+            const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
+            const backward = event.key === "ArrowLeft" || event.key === "ArrowUp";
+            if (!forward && !backward) return;
+            const root = event.currentTarget.closest(".jr-surface") ?? event.currentTarget.parentElement;
+            if (!root) return;
+            const peers = Array.from(
+              root.querySelectorAll<HTMLButtonElement>(".jr-button.is-choice:not(:disabled)"),
+            );
+            const idx = peers.indexOf(event.currentTarget);
+            if (idx === -1 || peers.length < 2) return;
+            event.preventDefault();
+            const nextIdx = (idx + (forward ? 1 : -1) + peers.length) % peers.length;
+            peers[nextIdx]?.focus();
           }}
           size="sm"
           title={href ?? undefined}
           type="button"
           variant={BUTTON_VARIANT[props.variant ?? "primary"]}
         >
-          {copied ? <IconCheck aria-hidden className="size-4" /> : props.icon ? <RichIcon className="size-4" name={props.icon} /> : null}
+          {copied || choice.picked ? <IconCheck aria-hidden className="size-4" /> : props.icon ? <RichIcon className="size-4" name={props.icon} /> : null}
           {copied ? "已复制" : props.label}
           {href ? <IconArrowUpRight aria-hidden className="size-3.5 opacity-70" /> : null}
         </Button>

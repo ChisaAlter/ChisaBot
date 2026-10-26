@@ -279,13 +279,25 @@ export function createChatFiles(
     return rows[0] ?? null;
   }
 
-  async function list(owner: string, agentId?: string, opts: { imagesOnly?: boolean; limit?: number } = {}): Promise<ChatFileView[]> {
+  async function list(
+    owner: string,
+    agentId?: string,
+    opts: { imagesOnly?: boolean; limit?: number; before?: string } = {},
+  ): Promise<ChatFileView[]> {
     const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
-    const rows = await sql.unsafe<FileRow[]>(
-      `SELECT ${LIST_COLUMNS} FROM chisabot_chat_files WHERE owner_user_id = $1 ${agentId ? "AND agent_id = $2" : "AND $2::text IS NULL"}
+    const beforeMs = opts.before ? Date.parse(opts.before) : Number.NaN;
+    const beforeIso = Number.isFinite(beforeMs) ? new Date(beforeMs).toISOString() : null;
+    const rows = beforeIso
+      ? await sql.unsafe<FileRow[]>(
+          `SELECT ${LIST_COLUMNS} FROM chisabot_chat_files WHERE owner_user_id = $1 ${agentId ? "AND agent_id = $2" : "AND $2::text IS NULL"} AND created_at < $3::timestamptz
        ${opts.imagesOnly ? "AND mime_type LIKE 'image/%' AND mime_type <> 'image/svg+xml'" : ""} ORDER BY created_at DESC LIMIT ${limit}`,
-      [owner, agentId ?? null],
-    );
+          [owner, agentId ?? null, beforeIso],
+        )
+      : await sql.unsafe<FileRow[]>(
+          `SELECT ${LIST_COLUMNS} FROM chisabot_chat_files WHERE owner_user_id = $1 ${agentId ? "AND agent_id = $2" : "AND $2::text IS NULL"}
+       ${opts.imagesOnly ? "AND mime_type LIKE 'image/%' AND mime_type <> 'image/svg+xml'" : ""} ORDER BY created_at DESC LIMIT ${limit}`,
+          [owner, agentId ?? null],
+        );
     return rows.map(fileView);
   }
 
@@ -612,7 +624,14 @@ export function createChatFiles(
     app.post("/settings/image/test", admin, bodyLimit({ maxSize: 16_384 }), async (c) => c.json(await testSettings(await c.req.json().catch(() => ({})))));
     app.get("/", async (c) => {
       const agentId = c.req.query("agentId") || undefined;
-      return c.json({ files: await list(c.var.actor.id, agentId, { imagesOnly: c.req.query("images") === "1", limit: Number(c.req.query("limit") ?? 30) || 30 }) });
+      const before = c.req.query("before") || undefined;
+      return c.json({
+        files: await list(c.var.actor.id, agentId, {
+          imagesOnly: c.req.query("images") === "1",
+          limit: Number(c.req.query("limit") ?? 30) || 30,
+          ...(before ? { before } : {}),
+        }),
+      });
     });
     app.post(
       "/",

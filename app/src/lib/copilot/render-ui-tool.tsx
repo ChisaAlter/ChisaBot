@@ -12,7 +12,7 @@ import { pruneEmptySections } from "../../../../shared/json-render/empty-section
 import { ToolLine } from "@/components/channels/tool-line";
 import { useConversation } from "@/lib/copilot/conversation";
 import { jsonRenderRegistry } from "@/lib/copilot/json-render/registry";
-import { copyText, openInNewTab, RichUiProvider } from "@/lib/copilot/json-render/rich-context";
+import { ChoiceProvider, choiceOptionsOf, copyText, openInNewTab, RichUiProvider } from "@/lib/copilot/json-render/rich-context";
 import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
 
 /**
@@ -33,12 +33,13 @@ export function RenderUiTool() {
   useRenderTool({
     name: RENDER_UI_TOOL,
     parameters,
-    render: ({ parameters: given, status, result }) => (
+    render: ({ parameters: given, status, result, toolCallId }) => (
       <RenderUiCall
         result={typeof result === "string" ? result : undefined}
         spec={typeof given?.spec === "string" ? given.spec : undefined}
         streaming={status !== "complete"}
         title={typeof given?.title === "string" ? given.title : undefined}
+        toolCallId={typeof toolCallId === "string" ? toolCallId : undefined}
       />
     ),
   });
@@ -50,11 +51,13 @@ const RenderUiCall = memo(function RenderUiCall({
   title,
   streaming,
   result,
+  toolCallId,
 }: {
   spec?: string;
   title?: string;
   streaming: boolean;
   result?: string;
+  toolCallId?: string;
 }) {
   // 先宽容处理（跳过坏节点、修正参数别名），与服务器校验的是同一份。
   const spec = useMemo(
@@ -90,7 +93,7 @@ const RenderUiCall = memo(function RenderUiCall({
     return streaming ? <RenderUiPlaceholder /> : null;
   }
 
-  return <JsonRenderSurface spec={spec} streaming={streaming} title={title} />;
+  return <JsonRenderSurface spec={spec} streaming={streaming} title={title} toolCallId={toolCallId} />;
 });
 
 /** 与最终卡片同形状的骨架（DESIGN.md §1 层级 ②），第一块内容到达后原地淡入替换。 */
@@ -124,14 +127,23 @@ function JsonRenderSurface({
   spec,
   streaming,
   title,
+  toolCallId,
 }: {
   spec: Spec;
   streaming: boolean;
   title?: string;
+  toolCallId?: string;
 }) {
   const conversation = useConversation();
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
+  // 互斥选项（CB-090）：这张界面里的 choice 按钮，和对话记录里这张界面之后用户说的第一句话。
+  const choiceOptions = useMemo(
+    () => choiceOptionsOf(spec.elements as Record<string, { type?: string; props?: unknown }> | undefined),
+    [spec.elements],
+  );
+  const answered =
+    !streaming && toolCallId && choiceOptions.length > 0 ? (conversation?.replyAfter?.(toolCallId) ?? null) : null;
 
   // 每张界面一个状态仓库；表单输入写在这里，不会影响别的消息里的界面。
   // biome-ignore lint/correctness/useExhaustiveDependencies: created once per surface on purpose.
@@ -194,9 +206,11 @@ function JsonRenderSurface({
       role="region"
     >
       <RichUiProvider value={rich}>
-        <JSONUIProvider handlers={handlers} registry={jsonRenderRegistry} store={store}>
-          <Renderer loading={streaming} registry={jsonRenderRegistry} spec={spec} />
-        </JSONUIProvider>
+        <ChoiceProvider ask={rich.ask} initial={answered} options={choiceOptions}>
+          <JSONUIProvider handlers={handlers} registry={jsonRenderRegistry} store={store}>
+            <Renderer loading={streaming} registry={jsonRenderRegistry} spec={spec} />
+          </JSONUIProvider>
+        </ChoiceProvider>
       </RichUiProvider>
     </div>
   );

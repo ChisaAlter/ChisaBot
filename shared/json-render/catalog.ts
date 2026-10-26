@@ -200,12 +200,16 @@ export const jsonRenderCatalog = defineCatalog(schema, {
         label: z.string(),
         variant: z.enum(["primary", "secondary", "ghost", "danger"]).nullish(),
         disabled: z.boolean().nullish(),
+        choice: z
+          .boolean()
+          .nullish()
+          .describe("true = 互斥选项（配合 ask）：同一张界面里所有 choice 按钮只能选一个，选完其余变灰"),
         icon,
         ...itemActions,
       }),
       slots: [],
       description:
-        "胶囊按钮。最简单是写 href（打开链接）/ ask（替用户发一句话）/ copy（复制）；也可用 on.press 绑定动作：send_message、open_link、copy_text、refresh_panel 或内置的 setState。",
+        "胶囊按钮。最简单是写 href（打开链接）/ ask（替用户发一句话）/ copy（复制）；也可用 on.press 绑定动作：send_message、open_link、copy_text、refresh_panel 或内置的 setState。让用户从几个互斥方案里选一个时，每个按钮写 ask + choice: true。",
     },
     Input: {
       props: z.object({
@@ -566,6 +570,7 @@ const CUSTOM_RULES = [
   "选对组件，让界面一眼能看懂：有一串按时间的数 → Chart（大）或 Metric 的 spark / Sparkline（小）；占比 → Ring；有上下限的单值 → Gauge；每天 / 每小时的记录 → HeatStrip；有网址的条目 → List 每行带 href（有配图就带 image）或 Link；一个主角 → Hero；目标时间 → Countdown（会自己走）；时区 → Clock；状态 → Status / Badge dot；涨跌 → Delta 或 Metric 的 delta + trend；规格参数 → KeyValue；事件经过 → Timeline；同一处要切换的两三组内容 → Tabs；一排卡片 → Carousel；次要细节 → Accordion。",
   "推荐 / 比较商品（耳机、手机、家电…）或地点（餐厅、酒店、景点）时用 Products：先搜索查到现价和每个商品自己的页面（官网 / 店铺页），每项写 name、price、note、url（有真实商品图地址就写 image）；不要用纯文字 List。price 写搜索 / 网页里看到的价格（官网价、京东价都行，可写「约 ¥1,899」「¥2,299 起」），整轮都没看到价格才不写，不要编。",
   "能点就让它能点：新闻、仓库、文章、商品这类有网址的行 / 卡片都写 href（新标签页打开，自动显示 ↗）；想让用户追问的写 ask；IP、命令、地址写 copy。",
+  "要用户从 2–5 个互斥方案里选一个（用哪种格式、先做哪一步、选哪个方案）时，画一个 Card：一句问题 + horizontal Stack 里每个方案一个 Button（label 写方案，ask 写选中后替用户说的话，choice: true）；不要在文字里写「回复 1/2/3」。选项只是替用户回答，付款、对外发消息、删除这类事选完仍要照常确认。",
   "颜色有含义才用：tone 只能写 default / accent（品牌蓝）/ info / success（好、涨）/ warn / danger（坏、跌），只给涨跌、好坏、预警、品牌重点；一张界面里有颜色的地方不超过 3–4 处。",
   `icon 只能写这些名字（Tabler 图标）：${ICON_NAMES.join(" ")}。`,
   "每一项都能带动作：组件或 List / Timeline / KeyValue 的每一行可写 href（http(s) 链接，新标签页打开）、ask（替用户发一句话）、copy（复制的文字）。时间字段（List.items[].time、Timeline.items[].time、RelativeTime.time、Countdown.target）写 ISO 带时区，如 2026-10-13T09:00:00+08:00。",

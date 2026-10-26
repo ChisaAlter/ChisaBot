@@ -55,6 +55,7 @@ ChisaBot 现在要做什么、接下来做什么、以后做什么。这一页�
 
 | 日期 | 内容 | PR | 设计 / 文档 |
 |---|---|---|---|
+| 2026-10-25 | Hark / Grok Bot 实测对标全量落地：Word 在线预览、选项卡片选完就定、主机器人防误删与更换、资料页「文件与页面」、机器人往来锚点卡、右栏「＋」新建面板、账号连接页四标签（CB-089…CB-095） | `feat/preview-choice-mainbot` | DESIGN.md §8、§111–§116 |
 | 2026-10-21 | 滚动严格回归、持久暂停与单条发送、请求/数据库恢复、Office 与 Windows 编码验收（CB-087） | #283 / #284 / #285 | [完整发布验收](pipeline-runs/20261021-comprehensive-reliability.md) |
 | 2026-10-20 | 补话不重复执行；Stop 终止后台命令；12 条正式 Web 办公/代码连续消息验收（CB-086） | #278 | [发布验收](pipeline-runs/20261020-web-execution-control.md) |
 | 2026-10-20 | 搜索右侧新建机器人；弹出面板与常驻栏一致，已发布并通过已安装 PC 验证（CB-085） | #269 | [发布验收](pipeline-runs/20261020-sidebar-panel-parity.md) |

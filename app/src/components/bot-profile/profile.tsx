@@ -41,8 +41,10 @@ import {
   type ResetPlan,
 } from "@/lib/bot-lifecycle/queries";
 import { agentModelQueryOptions, modelCatalogQueryOptions } from "@/lib/model-selection/queries";
+import { useMainBot } from "@/lib/settings/message-list";
 import { queryClient as sharedQueryClient } from "@/query-client";
 import { ActivityRow } from "./activity";
+import { BotFilesAndPagesSection } from "./files-section";
 
 /*
  * 机器人资料页（/bots/:id，DESIGN.md §47，2026-10-14 用户：「机器人资料页做的太垃圾了。要简洁高效」）。
@@ -366,6 +368,8 @@ function TasksSection({ agentId }: { agentId: string }) {
 /** 机器人资料页。 */
 export function BotProfilePage({ agent }: { agent: AgentProfile }) {
   const navigate = useNavigate();
+  const { mainBotId } = useMainBot();
+  const isMain = mainBotId === agent.id;
   const [editing, setEditing] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -400,17 +404,20 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
             </Button>
           ) : null}
           {canDelete ? (
-            <Button
-              aria-label={"删除机器人"}
-              className="bp-delete"
-              onClick={() => setDeleteOpen(true)}
-              size="sm"
-              title={"删除机器人"}
-              variant="ghost"
-            >
-              <IconTrash />
-              <span className="bp-delete-text">{"删除"}</span>
-            </Button>
+            <span title={isMain ? "先把别的机器人设为主机器人" : undefined}>
+              <Button
+                aria-label={"删除机器人"}
+                className="bp-delete"
+                disabled={isMain}
+                onClick={() => setDeleteOpen(true)}
+                size="sm"
+                title={isMain ? "先把别的机器人设为主机器人" : "删除机器人"}
+                variant="ghost"
+              >
+                <IconTrash />
+                <span className="bp-delete-text">{"删除"}</span>
+              </Button>
+            </span>
           ) : null}
         </div>
       }
@@ -435,6 +442,7 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
         <RunCard agent={agent} />
       </PageSection>
       <TasksSection agentId={agent.id} />
+      <BotFilesAndPagesSection agentId={agent.id} />
       <div className="bp-footer">
         <Button onClick={() => setResetOpen(true)} size="sm" variant="ghost">
           <IconRefresh />

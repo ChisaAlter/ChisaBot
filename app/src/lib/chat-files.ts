@@ -3,7 +3,30 @@ import type { ChatFileView, ImageSettingsView } from "../../../shared/chat-files
 import { client } from "@/lib/client";
 
 /** 聊天文件 + 图片生成（DESIGN.md §56，docs/chat-files.md）。 */
-export const chatFileKeys = { imageSettings: ["chat-files", "image-settings"] as const };
+export const chatFileKeys = {
+  imageSettings: ["chat-files", "image-settings"] as const,
+  forBot: (agentId: string) => ["chat-files", "bot", agentId] as const,
+};
+
+export async function fetchBotChatFiles(
+  agentId: string,
+  opts: { limit?: number; before?: string; signal?: AbortSignal } = {},
+): Promise<ChatFileView[]> {
+  const params = new URLSearchParams({ agentId, limit: String(opts.limit ?? 31) });
+  if (opts.before) params.set("before", opts.before);
+  return client(`/api/chat-files?${params.toString()}`, "files", {
+    fallback: "无法加载文件列表",
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
+}
+
+export function botChatFilesQueryOptions(agentId: string, limit = 31) {
+  return queryOptions({
+    queryKey: chatFileKeys.forBot(agentId),
+    queryFn: ({ signal }): Promise<ChatFileView[]> => fetchBotChatFiles(agentId, { limit, signal }),
+    enabled: Boolean(agentId),
+  });
+}
 
 export async function uploadChatFile(agentId: string, file: File): Promise<ChatFileView> {
   const form = new FormData();

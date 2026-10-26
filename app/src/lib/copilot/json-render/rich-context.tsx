@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -66,6 +67,89 @@ export function RichUiProvider({ value, children }: { value: Partial<RichActions
 
 export function useRichActions(): RichActions {
   return useContext(RichUiContext);
+}
+
+/* ── 互斥选项（CB-090）：同一张对话界面里带 choice 的按钮只能选一个 ── */
+
+export type ChoiceScope = {
+  /** 已选那一项替用户说的话（`ask`，去掉首尾空白）；null = 还没选。 */
+  picked: string | null;
+  /** 选这一项：还没选过才发出去，返回是否真的发了（连点 / 双击只发一次）。 */
+  pick: (ask: string) => boolean;
+};
+
+const ChoiceContext = createContext<ChoiceScope | null>(null);
+
+/**
+ * 一张对话界面的选项状态。`initial` 来自对话记录（这张界面之后用户说的第一句话），所以刷新、换设备后
+ * 还认得选过哪一个；它不等于任何一个选项时（用户自己打了别的话）不算选过，按钮照常能点。
+ * 右栏面板不挂这个：面板里的 ask 本来就可以反复问。
+ */
+export function ChoiceProvider({
+  initial,
+  options,
+  ask,
+  children,
+}: {
+  initial: string | null;
+  /** 这张界面里所有 choice 按钮的 ask（去掉首尾空白）。 */
+  options: readonly string[];
+  ask: ((text: string) => void) | undefined;
+  children: ReactNode;
+}) {
+  const [picked, setPicked] = useState<string | null>(null);
+  const [answered, setAnswered] = useState<string | null>(initial);
+  const lock = useRef(false);
+  const askRef = useRef(ask);
+  askRef.current = ask;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+  const answeredRef = useRef(answered);
+  answeredRef.current = answered;
+  const pick = useCallback((text: string) => {
+    const said = text.trim();
+    if (!said || lock.current || !askRef.current) return false;
+    // 对话记录里已经有答案（别的设备上选的）：同样不再发。
+    if (answeredRef.current && optionsRef.current.includes(answeredRef.current)) return false;
+    lock.current = true;
+    setPicked(said);
+    askRef.current(said);
+    return true;
+  }, []);
+  // 对话记录后来才读到（恢复历史晚到）：补上，但不覆盖本机刚点的那一下。
+  useEffect(() => {
+    if (initial) setAnswered((current) => current ?? initial);
+  }, [initial]);
+  const effective = picked ?? (answered && options.includes(answered) ? answered : null);
+  const value = useMemo<ChoiceScope>(() => ({ picked: effective, pick }), [effective, pick]);
+  return <ChoiceContext.Provider value={value}>{children}</ChoiceContext.Provider>;
+}
+
+/** 这张界面的选项状态；不在对话里（右栏面板）是 null。 */
+export function useChoiceScope(): ChoiceScope | null {
+  return useContext(ChoiceContext);
+}
+
+/** 一个 choice 按钮此刻的样子：`picked` = 选的就是它，`locked` = 这张界面已经选过了，不能再点。 */
+export function choiceState(
+  scopePicked: string | null,
+  ownAsk: string | null | undefined,
+): { picked: boolean; locked: boolean } {
+  if (!scopePicked) return { picked: false, locked: false };
+  return { picked: (ownAsk?.trim() ?? "") === scopePicked, locked: true };
+}
+
+/** 从一份规范里收集所有 choice 按钮的 ask（去重、去掉首尾空白）。 */
+export function choiceOptionsOf(
+  elements: Record<string, { type?: string; props?: unknown } | undefined> | undefined,
+): string[] {
+  const found = new Set<string>();
+  for (const element of Object.values(elements ?? {})) {
+    if (element?.type !== "Button") continue;
+    const props = element.props as { choice?: unknown; ask?: unknown } | undefined;
+    if (props?.choice === true && typeof props.ask === "string" && props.ask.trim()) found.add(props.ask.trim());
+  }
+  return [...found];
 }
 
 /* ── 共用的时钟：整页一个 setInterval，倒计时 / 时钟 / 相对时间都订阅它，不各开各的定时器 ── */

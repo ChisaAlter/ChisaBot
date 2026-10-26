@@ -240,4 +240,112 @@ describe("rich components render", () => {
     expect(view.container.querySelector(".jr-metric")).toBe(before);
     expect(view.container.querySelector(".jr-flash")).not.toBeNull();
   });
+
+  /* ── 互斥选项（CB-090，DESIGN.md §112）：对话里选完就定；纯函数在 json-render-choice.test.ts ── */
+
+  const choiceSpec = {
+    root: "r",
+    elements: {
+      r: { type: "Stack", props: {}, children: ["word", "page", "more"] },
+      word: { type: "Button", props: { label: "Word 文档", ask: "用 Word", choice: true }, children: [] },
+      page: { type: "Button", props: { label: "在线页面", ask: "做成页面", choice: true }, children: [] },
+      more: { type: "Button", props: { label: "先说说区别", ask: "两种有什么区别", variant: "ghost" }, children: [] },
+    },
+  };
+
+  async function drawChoices(options: { initial?: string | null; panel?: boolean } = {}) {
+    const { jsonRenderRegistry } = await import("@/lib/copilot/json-render/registry");
+    const { ChoiceProvider, RichUiProvider, choiceOptionsOf } = await import("@/lib/copilot/json-render/rich-context");
+    const verdict = inspectRenderUiSpec(JSON.stringify(choiceSpec));
+    expect(verdict.ok).toBe(true);
+    const safe = (verdict.ok ? verdict.spec : choiceSpec) as Spec;
+    const said: string[] = [];
+    const ask = (text: string) => {
+      said.push(text);
+    };
+    const tree = (
+      <JSONUIProvider handlers={{}} registry={jsonRenderRegistry} store={createStateStore({})}>
+        <Renderer registry={jsonRenderRegistry} spec={safe} />
+      </JSONUIProvider>
+    );
+    const view = render(
+      <RichUiProvider value={{ surface: options.panel ? "panel" : "chat", ask }}>
+        {options.panel ? (
+          tree
+        ) : (
+          <ChoiceProvider ask={ask} initial={options.initial ?? null} options={choiceOptionsOf(safe.elements as never)}>
+            {tree}
+          </ChoiceProvider>
+        )}
+      </RichUiProvider>,
+    );
+    const button = (label: string) => {
+      const found = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+        b.textContent?.includes(label),
+      );
+      if (!found) throw new Error(`没有找到按钮「${label}」`);
+      return found;
+    };
+    return { said, button };
+  }
+
+  test("choice: picking one sends once, marks it, and locks the other choices", async () => {
+    const { said, button } = await drawChoices();
+    await act(async () => {
+      fireEvent.click(button("Word 文档"));
+    });
+    await act(async () => {
+      fireEvent.click(button("Word 文档"));
+      fireEvent.click(button("在线页面"));
+    });
+    expect(said).toEqual(["用 Word"]);
+    expect(button("Word 文档").getAttribute("data-choice")).toBe("picked");
+    expect(button("Word 文档").getAttribute("aria-pressed")).toBe("true");
+    expect(button("在线页面").disabled).toBe(true);
+    expect(button("在线页面").getAttribute("data-choice")).toBe("locked");
+  });
+
+  test("choice: a plain ask button in the same card keeps working", async () => {
+    const { said, button } = await drawChoices();
+    await act(async () => {
+      fireEvent.click(button("Word 文档"));
+    });
+    await act(async () => {
+      fireEvent.click(button("先说说区别"));
+      fireEvent.click(button("先说说区别"));
+    });
+    expect(button("先说说区别").disabled).toBe(false);
+    expect(said).toEqual(["用 Word", "两种有什么区别", "两种有什么区别"]);
+  });
+
+  test("choice: an answer already in the transcript restores the picked option", async () => {
+    const { said, button } = await drawChoices({ initial: "做成页面" });
+    expect(button("在线页面").getAttribute("data-choice")).toBe("picked");
+    expect(button("Word 文档").disabled).toBe(true);
+    await act(async () => {
+      fireEvent.click(button("Word 文档"));
+    });
+    expect(said).toEqual([]);
+  });
+
+  test("choice: a typed reply that matches no option does not lock the card", async () => {
+    const { said, button } = await drawChoices({ initial: "我再想想" });
+    expect(button("Word 文档").disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(button("Word 文档"));
+    });
+    expect(said).toEqual(["用 Word"]);
+  });
+
+  test("choice: in a panel (no choice scope) choice buttons behave like plain ask buttons", async () => {
+    const { said, button } = await drawChoices({ panel: true });
+    await act(async () => {
+      fireEvent.click(button("Word 文档"));
+    });
+    await act(async () => {
+      fireEvent.click(button("Word 文档"));
+    });
+    expect(said).toEqual(["用 Word", "用 Word"]);
+    expect(button("Word 文档").hasAttribute("data-choice")).toBe(false);
+  });
 });

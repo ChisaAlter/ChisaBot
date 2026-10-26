@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconTrash } from "@tabler/icons-react";
+import { IconAlertTriangle, IconStarFilled, IconTrash } from "@tabler/icons-react";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
@@ -19,6 +19,8 @@ import {
 } from "@/lib/bot-lifecycle/queries";
 import { client } from "@/lib/client";
 import { useMainBot } from "@/lib/settings/message-list";
+import { MainBotChoices, mainBotCandidates } from "@/components/agents/main-bot-picker";
+import { useState } from "react";
 
 type DeletableBot = { id: string; name: string };
 
@@ -61,6 +63,9 @@ function useShowsBot(botId: string, selectedBotId: string | undefined) {
  * schedules, panels and grants, and clears it as main Bot. This dialog says so, with the real counts,
  * then leaves the Bot's page before forgetting every cached trace of it, so nothing on screen goes on
  * showing a Bot that no longer exists and no page refetches it into a 404.
+ *
+ * 主机器人不能直接删（CB-091）：每个删除入口（左栏菜单、资料页、聊天旁的资料卡）都打开这个弹窗，
+ * 所以拦截只写在这里——先显示「更换主机器人… / 取消主机器人」，换掉之后同一个弹窗接着走删除。
  */
 export function DeleteBotDialog({
   bot,
@@ -78,14 +83,17 @@ export function DeleteBotDialog({
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { mainBotId } = useMainBot();
+  const { mainBotId, setMainBot } = useMainBot();
   const showsBot = useShowsBot(bot.id, selectedBotId);
   const isMain = mainBotId === bot.id;
+  /** 主机器人拦截页里点了「更换主机器人…」：在同一个弹窗里列出候选，不叠第二个弹窗。 */
+  const [choosing, setChoosing] = useState(false);
   const roster = useQuery({ ...agentListQueryOptions(), enabled: open });
   const profile = roster.data?.find((a) => a.id === bot.id);
   const visible = (roster.data ?? []).filter((a) => !a.hidden);
   const lastBot = roster.isSuccess && visible.length === 1 && visible[0]?.id === bot.id;
-  const plan = useQuery({ ...botResetPlanQueryOptions(bot.id), enabled: open });
+  const hasOtherBots = mainBotCandidates(roster.data, bot.id).length > 0;
+  const plan = useQuery({ ...botResetPlanQueryOptions(bot.id), enabled: open && !isMain });
   const lines = plan.data ? deletionLines(plan.data) : [];
 
   const remove = useMutation({
@@ -133,13 +141,62 @@ export function DeleteBotDialog({
     <Dialog
       onOpenChange={(next) => {
         if (!remove.isPending && !settling) {
-          if (!next) remove.reset();
+          if (!next) {
+            remove.reset();
+            setChoosing(false);
+          }
           onOpenChange(next);
         }
       }}
       open={open}
     >
       <DialogContent className="max-w-md" showCloseButton={false}>
+        {isMain && !settling ? (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-foreground">
+                  <IconStarFilled className="size-4" />
+                </span>
+                <span className="min-w-0 break-words">{`「${bot.name}」是你的主机器人`}</span>
+              </DialogTitle>
+              <DialogDescription>
+                {choosing
+                  ? "选一个新的主机器人。换好之后，可以接着删除它。"
+                  : "主机器人不能直接删除。先换一个主机器人，或者取消主机器人，再删除它。"}
+              </DialogDescription>
+            </DialogHeader>
+            {choosing ? (
+              <div className="mt-2" data-testid="main-bot-guard-choices">
+                <MainBotChoices onPicked={() => setChoosing(false)} />
+              </div>
+            ) : null}
+            <DialogFooter className="mt-4">
+              <Button
+                onClick={() => {
+                  setChoosing(false);
+                  onOpenChange(false);
+                }}
+                variant="outline"
+              >
+                {"取消"}
+              </Button>
+              {choosing ? null : (
+                <>
+                  <Button data-testid="main-bot-guard-unset" onClick={() => setMainBot(null)} variant="outline">
+                    {"取消主机器人"}
+                  </Button>
+                  {hasOtherBots ? (
+                    <Button data-testid="main-bot-guard-replace" onClick={() => setChoosing(true)}>
+                      {"更换主机器人…"}
+                    </Button>
+                  ) : null}
+                </>
+              )}
+            </DialogFooter>
+          </>
+        ) : (
+          <>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <span className="grid size-8 shrink-0 place-items-center rounded-full bg-destructive/12 text-destructive">
@@ -168,11 +225,6 @@ export function DeleteBotDialog({
           {plan.data && plan.data.sharedConversationsKept > 0 ? (
             <p className="text-muted-foreground">
               {`${plan.data.sharedConversationsKept} 个与他人共享的会话会保留，便于其他成员查看记录。`}
-            </p>
-          ) : null}
-          {isMain ? (
-            <p className="text-muted-foreground">
-              {"它是你的主机器人，删除后将取消主机器人设置，可在左栏右键其他机器人「设为主机器人」。"}
             </p>
           ) : null}
           {profile?.systemOwned ? (
@@ -213,6 +265,8 @@ export function DeleteBotDialog({
             {"删除机器人"}
           </Button>
         </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

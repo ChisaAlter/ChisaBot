@@ -1,4 +1,5 @@
 import {
+  IconArrowsExchange,
   IconDeviceDesktop,
   IconDots,
   IconLayoutDashboard,
@@ -95,10 +96,16 @@ const BotComputerAccessDialog = lazyDialog(() =>
     (m) => m.BotComputerAccessDialog,
   ),
 );
+const MainBotPickerDialog = lazyDialog(() =>
+  import("@/components/agents/main-bot-picker").then(
+    (m) => m.MainBotPickerDialog,
+  ),
+);
 function preloadBotDialogs() {
   DeleteBotDialog.preload();
   LazyBotThreadHistoryDialog.preload();
   BotComputerAccessDialog.preload();
+  MainBotPickerDialog.preload();
 }
 
 import {
@@ -301,6 +308,7 @@ function BotRow({
   latest,
   attention,
   onToggleMain,
+  canReplaceMain = false,
 }: {
   bot: RosterBot;
   selected: boolean;
@@ -308,10 +316,13 @@ function BotRow({
   latest: ChannelSummary | undefined;
   attention: BotAttention | undefined;
   onToggleMain: () => void;
+  /** 左栏里还有别的机器人可以接任主机器人。 */
+  canReplaceMain?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   useEffect(() => {
     if (menuOpen) preloadBotDialogs();
   }, [menuOpen]);
@@ -420,6 +431,7 @@ function BotRow({
           onDelete={() => setDeleteOpen(true)}
           onResume={() => resume.mutate({ agentId: bot.id, paused: false })}
           onToggleMain={onToggleMain}
+          onReplaceMain={main && canReplaceMain ? () => setPickerOpen(true) : null}
           paused={paused}
         />
       </DropdownMenu>
@@ -429,6 +441,13 @@ function BotRow({
           onOpenChange={setDeleteOpen}
           open={deleteOpen}
           selectedBotId={selected ? bot.id : undefined}
+        />
+      ) : null}
+      {main && canReplaceMain ? (
+        <MainBotPickerDialog
+          currentName={bot.name}
+          onOpenChange={setPickerOpen}
+          open={pickerOpen}
         />
       ) : null}
       <BotComputerAccessDialog
@@ -443,7 +462,7 @@ function BotRow({
 
 /**
  * 机器人「⋯」菜单（DESIGN v4.1 §W5，在左栏机器人行；DESIGN.md §57 导航收敛后的顺序）：
- * 机器人资料 · 历史对话 · 新话题 · 面板 · 电脑操作… ‖ 设为主机器人 · 恢复运行 ‖ 删除机器人…
+ * 机器人资料 · 历史对话 · 新话题 · 面板 · 电脑操作… ‖ 设为主机器人（主机器人：取消 / 更换主机器人…）· 恢复运行 ‖ 删除机器人…（主机器人没有）
  */
 function BotMenuContent({
   bot,
@@ -452,6 +471,7 @@ function BotMenuContent({
   main,
   paused,
   onToggleMain,
+  onReplaceMain,
   onResume,
   onDelete,
   onComputer,
@@ -462,6 +482,8 @@ function BotMenuContent({
   main: boolean | null;
   paused: boolean;
   onToggleMain: (() => void) | null;
+  /** 「更换主机器人…」：只在主机器人自己的菜单里、且有别的机器人可选时给。 */
+  onReplaceMain?: (() => void) | null;
   onResume: () => void;
   onDelete: () => void;
   /** 「电脑操作…」：账号下关联的设备（所有机器人共用）。null = 不显示（例如隐藏的浏览器机器人）。 */
@@ -542,13 +564,20 @@ function BotMenuContent({
           </span>
         </DropdownMenuItem>
       ) : null}
+      {main && onReplaceMain ? (
+        <DropdownMenuItem className="glass-mi" onClick={onReplaceMain}>
+          <IconArrowsExchange className={icon} />
+          <span className="min-w-0 flex-1">{"更换主机器人…"}</span>
+        </DropdownMenuItem>
+      ) : null}
       {paused ? (
         <DropdownMenuItem className="glass-mi" onClick={onResume}>
           <IconPlayerPause className={icon} />
           <span className="min-w-0 flex-1">{"恢复运行"}</span>
         </DropdownMenuItem>
       ) : null}
-      {canDeleteBot(bot) ? (
+      {/* 主机器人不能从菜单直接删（CB-091）：先取消或更换主机器人。 */}
+      {canDeleteBot(bot) && !main ? (
         <>
           <DropdownMenuSeparator className="glass-sep" />
           <DropdownMenuItem
@@ -694,6 +723,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     <BotRow
       attention={attentionById.get(bot.id)}
       bot={bot}
+      canReplaceMain={isMain && others.length > 0}
       key={bot.id}
       latest={latestChannelFor(bot.id, channels.data)}
       main={isMain}
@@ -956,6 +986,7 @@ function BotMiniRail({
             <MiniBot
               attention={attentionById.get(bot.id)}
               bot={bot}
+              canReplaceMain={bot.id === mainBotId && bots.length > 1}
               key={bot.id}
               latest={latestChannelFor(bot.id, channels)}
               main={bot.id === mainBotId}
@@ -986,6 +1017,7 @@ function MiniBot({
   latest,
   attention,
   onToggleMain,
+  canReplaceMain = false,
 }: {
   bot: RosterBot;
   selected: boolean;
@@ -993,10 +1025,12 @@ function MiniBot({
   latest: ChannelSummary | undefined;
   attention: BotAttention | undefined;
   onToggleMain: () => void;
+  canReplaceMain?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   useEffect(() => {
     if (menuOpen) preloadBotDialogs();
   }, [menuOpen]);
@@ -1096,6 +1130,7 @@ function MiniBot({
           onDelete={() => setDeleteOpen(true)}
           onResume={() => resume.mutate({ agentId: bot.id, paused: false })}
           onToggleMain={onToggleMain}
+          onReplaceMain={main && canReplaceMain ? () => setPickerOpen(true) : null}
           paused={paused}
         />
       </DropdownMenu>
@@ -1105,6 +1140,13 @@ function MiniBot({
           onOpenChange={setDeleteOpen}
           open={deleteOpen}
           selectedBotId={selected ? bot.id : undefined}
+        />
+      ) : null}
+      {main && canReplaceMain ? (
+        <MainBotPickerDialog
+          currentName={bot.name}
+          onOpenChange={setPickerOpen}
+          open={pickerOpen}
         />
       ) : null}
       <BotComputerAccessDialog

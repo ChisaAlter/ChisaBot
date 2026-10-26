@@ -42,6 +42,7 @@ import { CopyButton } from "@/components/ui/copy-button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import { markdownComponents } from "@/lib/markdown";
+import { DocxPreviewBody, isDocxFile } from "./docx-preview";
 import { Lightbox, type LightboxImage } from "./lightbox";
 
 /**
@@ -753,12 +754,15 @@ function FileCardInner({
   name,
   size,
   mimeType,
+  metaSuffix,
   probeSize = true,
 }: {
   url: string;
   name?: string;
   size?: number | null;
   mimeType?: string;
+  /** 资料页等场景追加的时间说明（例如「3 小时前」）。 */
+  metaSuffix?: string | null;
   /** 调用方自己已经 HEAD 过（频道附件），就别再问一次。 */
   probeSize?: boolean;
 }) {
@@ -769,17 +773,19 @@ function FileCardInner({
   ).toLowerCase();
   const bytes = useRemoteSize(url, size, probeSize);
   const Icon = fileIcon(ext);
-  const meta = [ext ? ext.toUpperCase() : "文件", formatBytes(bytes)]
+  const meta = [ext ? ext.toUpperCase() : "文件", formatBytes(bytes), metaSuffix]
     .filter(Boolean)
     .join(" · ");
-  // 本站文件才预览（DESIGN.md §56）：位图出缩略图、点开看大图；PDF 出「预览」；文本/Markdown 点开弹窗阅读。
+  // 本站文件才预览（DESIGN.md §56、§111）：位图出缩略图、点开看大图；PDF / .docx 出「预览」；文本/Markdown 点开弹窗阅读。
   const sameOrigin = url.startsWith("/") && !url.startsWith("//");
   const isImage = sameOrigin && /^image\/(png|jpeg|gif|webp)$/.test(mimeType ?? "");
   const isPdf = sameOrigin && (mimeType === "application/pdf" || ext === "pdf");
+  const isDocx = sameOrigin && isDocxFile(ext, mimeType);
   const isTextDoc =
     sameOrigin &&
     !isImage &&
     !isPdf &&
+    !isDocx &&
     (READABLE_TEXT_EXTS.has(ext) ||
       Boolean(mimeType?.startsWith("text/")) ||
       mimeType === "application/json");
@@ -801,12 +807,20 @@ function FileCardInner({
     },
     previewClient,
   );
-  const canPreviewModal = (isImage && !thumbBroken) || isPdf || isTextDoc;
+  const canPreviewModal = (isImage && !thumbBroken) || isPdf || isDocx || isTextDoc;
   return (
     <div
       className="rp-file"
       data-preview={
-        isImage && !thumbBroken ? "image" : isPdf ? "pdf" : isTextDoc ? "text" : undefined
+        isImage && !thumbBroken
+          ? "image"
+          : isPdf
+            ? "pdf"
+            : isDocx
+              ? "docx"
+              : isTextDoc
+                ? "text"
+                : undefined
       }
     >
       {isImage && !thumbBroken ? (
@@ -834,7 +848,7 @@ function FileCardInner({
         <span className="rp-file-name">{label}</span>
         <span className="rp-file-meta">{meta}</span>
       </a>
-      {isPdf || isTextDoc ? (
+      {isPdf || isDocx || isTextDoc ? (
         <button
           aria-label={`预览 ${label}`}
           className="rp-file-dl"
@@ -881,6 +895,46 @@ function FileCardInner({
               <DialogTitle className="truncate">{label}</DialogTitle>
             </DialogHeader>
             {viewing ? <iframe className="rp-pdf-frame" src={url} title={label} /> : null}
+          </DialogContent>
+        </Dialog>
+      ) : null}
+      {isDocx ? (
+        <Dialog onOpenChange={setViewing} open={viewing}>
+          <DialogContent className="rp-docx-dialog">
+            <DialogHeader className="chat-doc-dialog-head">
+              <div className="chat-doc-dialog-title-wrap">
+                <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                <DialogTitle className="truncate">{label}</DialogTitle>
+              </div>
+              <div className="chat-doc-dialog-actions mr-7">
+                <button
+                  aria-label={`追问 ${label}`}
+                  className="rp-file-dl"
+                  data-testid="docx-dialog-followup-btn"
+                  onClick={() => {
+                    setViewing(false);
+                    dispatchComposerQuote({
+                      text: `${label} (${meta})`,
+                      source: `文件 · ${label}`,
+                    });
+                  }}
+                  title={`针对「${label}」继续追问`}
+                  type="button"
+                >
+                  <IconMessageReply className="size-4" />
+                </button>
+                <a
+                  aria-label={`下载 ${label}`}
+                  className="rp-file-dl"
+                  download={label}
+                  href={downloadHref}
+                  title="下载"
+                >
+                  <IconDownload className="size-4" />
+                </a>
+              </div>
+            </DialogHeader>
+            {viewing ? <DocxPreviewBody knownBytes={bytes} url={url} /> : null}
           </DialogContent>
         </Dialog>
       ) : null}

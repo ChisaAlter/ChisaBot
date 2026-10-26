@@ -61,7 +61,7 @@ import {
   settleDroppedTurn,
   storedTurnAnswered,
 } from "@/lib/copilot/connection-drop";
-import { ConversationProvider } from "@/lib/copilot/conversation";
+import { ConversationProvider, replyAfterToolCall } from "@/lib/copilot/conversation";
 import { frontendToolProgressAt } from "@/lib/copilot/frontend-tool-activity";
 import { afterMs, joinWithin } from "@/lib/copilot/join-thread";
 import {
@@ -1717,6 +1717,16 @@ export function ChannelChat({
   const activeMessages = restoring
     ? (early ?? cached ?? EMPTY_MESSAGES)
     : agent.messages;
+  /*
+   * 对话里的选项卡片（CB-090）要知道「这张界面之后用户说了什么」：读一份随渲染更新的引用，函数本身不变，
+   * 不会因为新消息让整列卡片的 context 变一次。
+   */
+  const activeMessagesRef = useRef(activeMessages);
+  activeMessagesRef.current = activeMessages;
+  const replyAfter = useCallback(
+    (toolCallId: string) => replyAfterToolCall(activeMessagesRef.current, toolCallId),
+    [],
+  );
   useEffect(() => {
     syncComputerMessages(runtimeAgentId, activeMessages, chatBusy);
   }, [runtimeAgentId, activeMessages, chatBusy]);
@@ -1733,7 +1743,7 @@ export function ChannelChat({
       agentId={channelAgentId}
       threadId={channel.threadId}
     >
-      <ConversationProvider ask={askFromComponent}>
+      <ConversationProvider ask={askFromComponent} replyAfter={replyAfter}>
         <MessageActionsContext.Provider value={messageActions}>
           <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
             <ConversationView
