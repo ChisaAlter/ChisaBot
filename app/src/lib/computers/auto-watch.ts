@@ -1,7 +1,11 @@
 import { useEffect, useRef } from "react";
 import { JUMP_TO_ACTIVITY } from "@/components/computer/activity-jump";
 import { onComputerActivity } from "@/lib/copilot/computer-activity";
-import { showPanels } from "@/lib/panels/rail-open";
+import {
+  openPanelSheet,
+  PANEL_RAIL_WIDE_QUERY,
+  setPanelRailOpen,
+} from "@/lib/panels/rail-open";
 
 /**
  * 右栏「面板 | 计算机」的自动切换（DESIGN.md §23）。
@@ -90,17 +94,21 @@ export function useComputerAutoWatch(
 }
 
 /**
- * 「在活动里看」怎么把计算机亮出来（CB-101）：和人手动切到「计算机」走**同一条路径**，所有宽度都一样。
+ * 「在活动里看」怎么把计算机亮出来（CB-101）：和人手动打开走**同一条路径**。
  *
- * 手动路径：窄窗口点把手「打开面板」（`setPanelSheetOpen(true)`，不写 history）→ 抽屉里点「计算机」
- * （RailSwitch → `toggleComputer` → `setWatching(true)`，push 一条 `watch=true`）；宽窗口右栏直接点「计算机」。
- * 所以这里：{@link showPanels} 打开右栏/抽屉，没在看计算机时 `setWatching(true)` push 一条；已经在看就不写
- * history（手动在同样情况下也不写），移动端由 ComputerPanel 切到「活动」（也不走路由）。
+ * - 窄窗口：{@link openPanelSheet}（用户打开右抽屉的唯一入口，source="user"）——抽屉没开时只压一个返回标记，
+ *   已经开着什么都不写；再切到「计算机」，抽屉里切标签按 CB-098 一律 replace。所以第一次返回关抽屉、第二次离开。
+ * - 宽窗口：展开右栏，没在看计算机时 `setWatching(true)` push 一条 `watch=true`（后退能关计算机）。
+ * - 已经在看计算机：不写 history。
  */
 export function openForActivityJump(current: {
   watching: boolean;
   setWatching: (open: boolean) => void;
 }): void {
-  showPanels();
+  const wide =
+    typeof window !== "undefined" &&
+    window.matchMedia(PANEL_RAIL_WIDE_QUERY).matches;
+  if (wide) setPanelRailOpen(true);
+  else openPanelSheet("user");
   if (!current.watching) current.setWatching(true);
 }

@@ -522,7 +522,9 @@ if (MODES.includes("web")) {
         await page.waitForTimeout(900);
         const url = page.url();
         const drawer = url.startsWith(BASE)
-          ? await page.evaluate(() => !!document.querySelector(".rail-sheet")).catch(() => null)
+          ? await page
+              .evaluate(() => !!document.querySelector(".rail-sheet"))
+              .catch(() => null)
           : null;
         trail.push({ url: url.replace(BASE, ""), drawer });
         if (!url.startsWith(BASE)) break;
@@ -536,7 +538,15 @@ if (MODES.includes("web")) {
       check(false, `${tag} 异常 ${String(e.message).split("\n")[0]}`);
     }
     results.push(rec);
-    console.log(JSON.stringify({ tag, tabThenBack: rec.tabThenBack && { backs: rec.tabThenBack.backs, left: rec.tabThenBack.left } }));
+    console.log(
+      JSON.stringify({
+        tag,
+        tabThenBack: rec.tabThenBack && {
+          backs: rec.tabThenBack.backs,
+          left: rec.tabThenBack.left,
+        },
+      }),
+    );
     await ctx.close();
   }
 }
@@ -548,7 +558,11 @@ const REOPEN_SIZES = (process.env.REOPEN_SIZES || "360x800,378x842,390x844")
   .split(",")
   .map((s) => s.split("x").map(Number));
 const DRAWERS = [
-  { name: "left", open: '.glass-topbar button[aria-label^="打开"]', sel: '[data-slot="sidebar"][data-mobile="true"]' },
+  {
+    name: "left",
+    open: '.glass-topbar button[aria-label^="打开"]',
+    sel: '[data-slot="sidebar"][data-mobile="true"]',
+  },
   { name: "right", open: ".rail-tab.is-narrow", sel: ".rail-sheet" },
 ];
 if (MODES.includes("web")) {
@@ -562,10 +576,17 @@ if (MODES.includes("web")) {
         });
         const page = await ctx.newPage();
         const tag = `web-${w}x${h}-${d.name}-back-reopen-${delay}ms`;
-        const rec = { tag, mode: "web", size: `${w}x${h}`, route: "/channel/new" };
+        const rec = {
+          tag,
+          mode: "web",
+          size: `${w}x${h}`,
+          route: "/channel/new",
+        };
         try {
           await page.goto("about:blank");
-          await page.goto(`${BASE}/channel/new`, { waitUntil: "domcontentloaded" });
+          await page.goto(`${BASE}/channel/new`, {
+            waitUntil: "domcontentloaded",
+          });
           await page.waitForSelector(d.open, { timeout: 20000 });
           await page.waitForTimeout(1500);
           await page.click(d.open);
@@ -574,26 +595,42 @@ if (MODES.includes("web")) {
           // 从返回那一刻起算 delay，并用 DOM click 立刻点（Playwright 的 click 本身要好几百毫秒）。
           const t0 = Date.now();
           await page.evaluate(() => history.back());
-          await page.waitForSelector(d.sel, { state: "detached", timeout: 3000 }).catch(() => {});
+          await page
+            .waitForSelector(d.sel, { state: "detached", timeout: 3000 })
+            .catch(() => {});
           await page.waitForTimeout(Math.max(0, delay - (Date.now() - t0)));
           rec.reopenAfterMs = Date.now() - t0;
-          await page.evaluate((sel) => document.querySelector(sel)?.click(), d.open);
+          await page.evaluate(
+            (sel) => document.querySelector(sel)?.click(),
+            d.open,
+          );
           await page.waitForSelector(d.sel);
           await page.waitForTimeout(300);
           await page.goBack().catch(() => {});
           await page.waitForTimeout(900);
           const stayed = page.url().startsWith(BASE);
           const drawerOpen = stayed
-            ? await page.evaluate((sel) => !!document.querySelector(sel), d.sel).catch(() => null)
+            ? await page
+                .evaluate((sel) => !!document.querySelector(sel), d.sel)
+                .catch(() => null)
             : null;
           await page.screenshot({ path: `${OUT}/${tag}.png` }).catch(() => {});
           rec.backReopen = { stayed, drawerOpen };
-          check(stayed && drawerOpen === false, `${tag} 重开后返回：${stayed ? (drawerOpen ? "抽屉没关" : "ok") : "直接离开了页面"}`);
+          check(
+            stayed && drawerOpen === false,
+            `${tag} 重开后返回：${stayed ? (drawerOpen ? "抽屉没关" : "ok") : "直接离开了页面"}`,
+          );
         } catch (e) {
           check(false, `${tag} 异常 ${String(e.message).split("\n")[0]}`);
         }
         results.push(rec);
-        console.log(JSON.stringify({ tag, reopenAfterMs: rec.reopenAfterMs, backReopen: rec.backReopen }));
+        console.log(
+          JSON.stringify({
+            tag,
+            reopenAfterMs: rec.reopenAfterMs,
+            backReopen: rec.backReopen,
+          }),
+        );
         await ctx.close();
       }
     }
@@ -603,16 +640,27 @@ if (MODES.includes("web")) {
  * CB-098 QA 第三轮：停在「计算机」标签（地址带 watch=true）直接连续返回。要求：最多 2 次离开页面；
  * 每次返回页面都有变化（不能「按了没反应」）；history 不增长；抽屉不会被重新拉开。
  */
-const COMPUTER_BACK_SIZES = (process.env.COMPUTER_BACK_SIZES || "360x800,378x842,390x844")
+const COMPUTER_BACK_SIZES = (
+  process.env.COMPUTER_BACK_SIZES || "360x800,378x842,390x844"
+)
   .split(",")
   .map((s) => s.split("x").map(Number));
 if (MODES.includes("web")) {
   for (const [w, h] of COMPUTER_BACK_SIZES) {
     for (const reopen of [false, true]) {
-      const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: true, hasTouch: true });
+      const ctx = await browser.newContext({
+        viewport: { width: w, height: h },
+        isMobile: true,
+        hasTouch: true,
+      });
       const page = await ctx.newPage();
       const tag = `web-${w}x${h}-computer-tab-back${reopen ? "-reopen" : ""}`;
-      const rec = { tag, mode: "web", size: `${w}x${h}`, route: "/channel/new" };
+      const rec = {
+        tag,
+        mode: "web",
+        size: `${w}x${h}`,
+        route: "/channel/new",
+      };
       const snap = () =>
         page
           .evaluate(() => ({
@@ -624,7 +672,9 @@ if (MODES.includes("web")) {
           .catch(() => ({ url: page.url() }));
       try {
         await page.goto("about:blank");
-        await page.goto(`${BASE}/channel/new`, { waitUntil: "domcontentloaded" });
+        await page.goto(`${BASE}/channel/new`, {
+          waitUntil: "domcontentloaded",
+        });
         await page.waitForSelector(".rail-tab.is-narrow", { timeout: 20000 });
         await page.waitForTimeout(1500);
         await page.click(".rail-tab.is-narrow");
@@ -652,21 +702,45 @@ if (MODES.includes("web")) {
           const now = await snap();
           trail.push(now);
           if (!String(now.url).startsWith("/")) break;
-          if (now.url === before.url && now.R === before.R && now.m === before.m) stuck += 1;
+          if (
+            now.url === before.url &&
+            now.R === before.R &&
+            now.m === before.m
+          )
+            stuck += 1;
           if (now.R && !before.R) reopened += 1;
         }
         const maxLen = Math.max(...trail.map((t) => t.len ?? 0));
         const limit = reopen ? 3 : 2;
-        rec.computerBack = { backs, stuck, reopened, maxLen, startLen: start.len, trail };
+        rec.computerBack = {
+          backs,
+          stuck,
+          reopened,
+          maxLen,
+          startLen: start.len,
+          trail,
+        };
         check(
-          !page.url().startsWith(BASE) && backs <= limit && stuck === 0 && reopened === 0 && maxLen <= start.len,
+          !page.url().startsWith(BASE) &&
+            backs <= limit &&
+            stuck === 0 &&
+            reopened === 0 &&
+            maxLen <= start.len,
           `${tag} 停在计算机返回：${backs} 次（≤${limit}），无变化 ${stuck}，被拉开 ${reopened}，history ${start.len}→${maxLen}`,
         );
       } catch (e) {
         check(false, `${tag} 异常 ${String(e.message).split("\n")[0]}`);
       }
       results.push(rec);
-      console.log(JSON.stringify({ tag, computerBack: rec.computerBack && { ...rec.computerBack, trail: undefined } }));
+      console.log(
+        JSON.stringify({
+          tag,
+          computerBack: rec.computerBack && {
+            ...rec.computerBack,
+            trail: undefined,
+          },
+        }),
+      );
       await ctx.close();
     }
   }

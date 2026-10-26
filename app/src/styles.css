@@ -8724,10 +8724,14 @@ cpk-web-inspector {
 /* 左栏抽屉：宽度由 ui/sidebar.tsx 的 --sidebar-width = min(18rem, 100vw - 48px) 决定（手机也一样），
    内容一律跟着容器，不再有东西伸出抽屉框。 */
 html[data-phone] .glass-shell [data-slot="sidebar"][data-mobile="true"],
-html[data-phone] [data-slot="sidebar"][data-mobile="true"] { width: var(--sidebar-width) !important; }
+html[data-phone] [data-slot="sidebar"][data-mobile="true"] {
+  /* biome-ignore lint/complexity/noImportantStyles: ui/sidebar.tsx 在元素上用的是 Tailwind important 类 w-(--sidebar-width)!，这里也得是 !important 才能生效。 */
+  width: var(--sidebar-width) !important;
+}
 [data-slot="sidebar"][data-mobile="true"] * { min-width: 0; }
 [data-slot="sidebar"][data-mobile="true"] :is(.glass-card, .glass-side-card, .acct-card) { max-width: 100%; box-sizing: border-box; }
 @media (max-width: 767px) {
+  /* biome-ignore lint/style/noDescendingSpecificity: 只在手机宽度下补安全区内边距，故意写在更具体的 html[data-phone] 宽度规则之后；两条改的是不同属性，不会互相覆盖。 */
   [data-slot="sidebar"][data-mobile="true"] {
     padding-top: calc(16px + var(--safe-t));
     padding-bottom: calc(16px + var(--safe-b));

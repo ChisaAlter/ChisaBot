@@ -1,5 +1,9 @@
 import { setBotUi } from "@/lib/chat/ui-memory";
-import { type OverlayCloseReason, overlayHistoryMode, whenOverlayHistorySettled } from "@/lib/overlay-back";
+import {
+  type OverlayCloseReason,
+  overlayHistoryMode,
+  whenOverlayHistorySettled,
+} from "@/lib/overlay-back";
 
 /**
  * 关右栏抽屉（CB-098 QA 第三轮的状态模型）。
@@ -17,7 +21,11 @@ export function closeRailSheet(
     agentId,
     closeComputer,
     closeSheet,
-  }: { agentId: string | undefined; closeComputer: () => void; closeSheet: () => void },
+  }: {
+    agentId: string | undefined;
+    closeComputer: () => void;
+    closeSheet: () => void;
+  },
 ): void {
   if (!overlayHistoryMode()) {
     closeComputer();

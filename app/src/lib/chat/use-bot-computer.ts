@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
+import {
+  lastHistoryEventWasPop,
+  noteUserIntent,
+  overlayHistoryActive,
+  overlayHistoryMode,
+} from "@/lib/overlay-back";
 import { botUi, setBotUi } from "./ui-memory";
-import { lastHistoryEventWasPop, noteUserIntent, overlayHistoryActive, overlayHistoryMode } from "@/lib/overlay-back";
 
 /**
  * 右栏「面板 | 计算机」按机器人记住（DESIGN.md §88.2）。
