@@ -87,6 +87,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
+import { collapseScheduleRuns } from "@/lib/schedule-fired";
 import { readFiring } from "@/lib/channels/routine-firing";
 import { nextBlankHeight } from "@/lib/chat/blank-release";
 import { friendlyError, UNANSWERED_TURN_REASON } from "@/lib/chat/friendly-error";
@@ -3076,7 +3077,7 @@ export function ChatTranscript({
    * cost was markdown parsing and chart SVGs, and those are skipped by the memoised children below,
    * which is where the 25x came from. This runs per render and is not worth guarding.
    */
-  const items = groupBrowserSteps(toVisibleChatItems(messages));
+  const items = groupBrowserSteps(toVisibleChatItems(collapseScheduleRuns(messages)));
   /*
    * 「最后一轮还在跑」只从列表真的变了算起（§68.4）。按下发送的那一刻 busy 先变 true，人发的那条要再过
    * 几十毫秒才进列表；这几十毫秒里如果把「最后一轮」（上一轮，早就答完了）当成正在跑，它的结果气泡会变回
