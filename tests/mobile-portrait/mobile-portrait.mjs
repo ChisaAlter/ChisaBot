@@ -540,6 +540,65 @@ if (MODES.includes("web")) {
     await ctx.close();
   }
 }
+/*
+ * CB-098 QA 第二轮：用返回关掉抽屉后马上（150ms / 400ms）又点开，再按返回必须先关抽屉、留在页面上。
+ * 左右两个抽屉，360 / 378 / 390 三个宽度。
+ */
+const REOPEN_SIZES = (process.env.REOPEN_SIZES || "360x800,378x842,390x844")
+  .split(",")
+  .map((s) => s.split("x").map(Number));
+const DRAWERS = [
+  { name: "left", open: '.glass-topbar button[aria-label^="打开"]', sel: '[data-slot="sidebar"][data-mobile="true"]' },
+  { name: "right", open: ".rail-tab.is-narrow", sel: ".rail-sheet" },
+];
+if (MODES.includes("web")) {
+  for (const [w, h] of REOPEN_SIZES) {
+    for (const d of DRAWERS) {
+      for (const delay of [150, 400]) {
+        const ctx = await browser.newContext({
+          viewport: { width: w, height: h },
+          isMobile: true,
+          hasTouch: true,
+        });
+        const page = await ctx.newPage();
+        const tag = `web-${w}x${h}-${d.name}-back-reopen-${delay}ms`;
+        const rec = { tag, mode: "web", size: `${w}x${h}`, route: "/channel/new" };
+        try {
+          await page.goto("about:blank");
+          await page.goto(`${BASE}/channel/new`, { waitUntil: "domcontentloaded" });
+          await page.waitForSelector(d.open, { timeout: 20000 });
+          await page.waitForTimeout(1500);
+          await page.click(d.open);
+          await page.waitForSelector(d.sel);
+          await page.waitForTimeout(500);
+          // 从返回那一刻起算 delay，并用 DOM click 立刻点（Playwright 的 click 本身要好几百毫秒）。
+          const t0 = Date.now();
+          await page.evaluate(() => history.back());
+          await page.waitForSelector(d.sel, { state: "detached", timeout: 3000 }).catch(() => {});
+          await page.waitForTimeout(Math.max(0, delay - (Date.now() - t0)));
+          rec.reopenAfterMs = Date.now() - t0;
+          await page.evaluate((sel) => document.querySelector(sel)?.click(), d.open);
+          await page.waitForSelector(d.sel);
+          await page.waitForTimeout(300);
+          await page.goBack().catch(() => {});
+          await page.waitForTimeout(900);
+          const stayed = page.url().startsWith(BASE);
+          const drawerOpen = stayed
+            ? await page.evaluate((sel) => !!document.querySelector(sel), d.sel).catch(() => null)
+            : null;
+          await page.screenshot({ path: `${OUT}/${tag}.png` }).catch(() => {});
+          rec.backReopen = { stayed, drawerOpen };
+          check(stayed && drawerOpen === false, `${tag} 重开后返回：${stayed ? (drawerOpen ? "抽屉没关" : "ok") : "直接离开了页面"}`);
+        } catch (e) {
+          check(false, `${tag} 异常 ${String(e.message).split("\n")[0]}`);
+        }
+        results.push(rec);
+        console.log(JSON.stringify({ tag, reopenAfterMs: rec.reopenAfterMs, backReopen: rec.backReopen }));
+        await ctx.close();
+      }
+    }
+  }
+}
 await browser.close();
 fs.writeFileSync(
   `${OUT}/results.json`,

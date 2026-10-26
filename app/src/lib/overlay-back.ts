@@ -20,9 +20,13 @@ const stack: Entry[] = [];
 let seq = 0;
 let swallowPops = 0;
 let installed = false;
-/** 最近一次（没被吞掉的）popstate 的时间：这期间因为地址变化而「打开」的抽屉不压新记录（CB-098 QA）。 */
-let lastPopAt = Number.NEGATIVE_INFINITY;
-const POP_SETTLE_MS = 600;
+/**
+ * 历史事件的先后顺序（CB-098 QA 第二轮）：不靠时间窗口，只比较「最近一次是浏览器后退 / 前进，
+ * 还是用户在页面里的操作」。
+ */
+let eventSeq = 0;
+let lastPopSeq = 0;
+let lastUserSeq = 0;
 
 declare global {
   interface Window {
@@ -64,7 +68,8 @@ export function installOverlayBack(): void {
       swallowPops -= 1;
       return;
     }
-    lastPopAt = Date.now();
+    eventSeq += 1;
+    lastPopSeq = eventSeq;
     const top = stack[stack.length - 1];
     if (!top?.pushed) return;
     // 浏览器已经退掉了那条记录：别在关闭时再退一次。
@@ -73,10 +78,21 @@ export function installOverlayBack(): void {
   });
 }
 
-/** 刚刚发生过浏览器后退 / 前进：调用方据此不要因为地址回到旧值而重新拉出抽屉。 */
-export function justNavigatedHistory(): boolean {
-  return Date.now() - lastPopAt < POP_SETTLE_MS;
+/** 记下一次用户在页面里的操作（例如切「面板 | 计算机」），之后的地址变化算用户的意图。 */
+export function noteUserIntent(): void {
+  eventSeq += 1;
+  lastUserSeq = eventSeq;
 }
+
+/**
+ * 最近一次历史相关事件是浏览器后退 / 前进（而不是用户操作）：此时地址回到旧值（如 `watch=true`）
+ * 属于「恢复」，调用方不要因此重新拉出抽屉。
+ */
+export function lastHistoryEventWasPop(): boolean {
+  return lastPopSeq > lastUserSeq;
+}
+
+export type OverlayOpenSource = "user" | "restore";
 
 /** 有抽屉压着历史记录：此时页面内的地址更新（例如右栏切标签写 `watch`）应当 replace，不能 push。 */
 export function overlayHistoryActive(): boolean {
@@ -98,7 +114,17 @@ export function restampOverlayMarker(): void {
 }
 
 /** 抽屉 `open` 时登记，关上 / 卸载时注销。`close` 由调用方负责真正把抽屉关上。 */
-export function useBackDismiss(open: boolean, close: () => void): void {
+export function useBackDismiss(
+  open: boolean,
+  close: () => void,
+  /**
+   * 谁打开的：`user`（点击、快捷键等，默认）永远压一条历史记录；`restore`（浏览器后退 / 前进、地址里的
+   * `watch` 恢复）不压，否则前进历史被截断、后退永远退不出这一页。
+   */
+  source: OverlayOpenSource = "user",
+): void {
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
   const closeRef = useRef(close);
   closeRef.current = close;
   useEffect(() => {
@@ -115,9 +141,7 @@ export function useBackDismiss(open: boolean, close: () => void): void {
     const timer = historyWanted()
       ? window.setTimeout(() => {
           if (!stack.includes(entry)) return;
-          // 是浏览器后退 / 前进把抽屉带出来的（回到了一条非标记记录）：不再压记录，否则前进历史被截断、
-          // 后退永远退不出这一页。
-          if (justNavigatedHistory()) return;
+          if (sourceRef.current === "restore") return;
           window.history.pushState(
             { ...(window.history.state ?? {}), __cbOverlay: entry.id },
             "",

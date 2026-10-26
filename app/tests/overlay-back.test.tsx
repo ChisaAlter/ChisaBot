@@ -81,7 +81,7 @@ describe("切标签后连续返回（CB-098 QA）", () => {
   const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 
   test("抽屉里切「计算机」再切回「面板」，最多 2 次返回就离开页面", async () => {
-    const { justNavigatedHistory, overlayHistoryActive, restampOverlayMarker } = await import(
+    const { lastHistoryEventWasPop, noteUserIntent, overlayHistoryActive, restampOverlayMarker } = await import(
       "@/lib/overlay-back"
     );
     document.documentElement.setAttribute("data-phone", "");
@@ -106,13 +106,14 @@ describe("切标签后连续返回（CB-098 QA）", () => {
         const nextWatch = new URL(window.location.href).searchParams.get("watch") === "true";
         const was = watch;
         watch = nextWatch;
-        if (nextWatch && !was && !justNavigatedHistory() && !open) {
+        if (nextWatch && !was && !lastHistoryEventWasPop() && !open) {
           open = true;
           rerenders[0]?.();
         }
       };
       window.addEventListener("popstate", onPop);
       const writeWatch = (next: boolean) => {
+        noteUserIntent();
         watch = next;
         const url = next ? "/channel/new?watch=true" : "/channel/new";
         // 路由的 replace 会换掉 state（不带标记），之后由 restampOverlayMarker 补回。
@@ -140,6 +141,77 @@ describe("切标签后连续返回（CB-098 QA）", () => {
       expect((window.history.state as { outside?: boolean } | null)?.outside).toBe(true);
       expect(backs).toBeLessThanOrEqual(2);
       expect(open).toBe(false);
+    } finally {
+      document.documentElement.removeAttribute("data-phone");
+    }
+  });
+});
+
+/**
+ * CB-098 QA 第二轮：用返回关掉抽屉后马上（150ms / 400ms）又点开，必须照样压记录；
+ * 下一次返回先关抽屉、不离开页面。左栏和右栏抽屉都是 useBackDismiss，各跑一遍。
+ */
+describe("返回关抽屉后立即重开（CB-098 QA 第二轮）", () => {
+  const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+  const outside = () => (window.history.state as { outside?: boolean } | null)?.outside === true;
+
+  for (const side of ["左栏", "右栏"]) {
+    for (const delay of [150, 400]) {
+      test(`${side}：返回后 ${delay}ms 重开，再返回只关抽屉`, async () => {
+        document.documentElement.setAttribute("data-phone", "");
+        try {
+          window.history.replaceState({ outside: true }, "", "/before");
+          window.history.pushState({ page: true }, "", "/channel/new");
+          let open = false;
+          const hook = renderHook(
+            ({ o }: { o: boolean }) =>
+              useBackDismiss(o, () => {
+                open = false;
+                act(() => hook.rerender({ o: false }));
+              }),
+            { initialProps: { o: false } },
+          );
+          const userOpen = async () => {
+            open = true;
+            act(() => hook.rerender({ o: true }));
+            await tick();
+          };
+          await userOpen();
+          window.history.back();
+          await tick(30);
+          expect(open).toBe(false);
+          expect(outside()).toBe(false);
+          await tick(Math.max(0, delay - 30));
+          await userOpen();
+          expect(openOverlayCount()).toBe(1);
+          window.history.back();
+          await tick(50);
+          expect(open).toBe(false);
+          expect(outside()).toBe(false);
+          window.history.back();
+          await tick(50);
+          expect(outside()).toBe(true);
+          hook.unmount();
+        } finally {
+          document.documentElement.removeAttribute("data-phone");
+        }
+      });
+    }
+  }
+
+  test("source=restore 打开不压记录，user 打开压", async () => {
+    document.documentElement.setAttribute("data-phone", "");
+    try {
+      window.history.replaceState({ page: true }, "", "/channel/new");
+      const before = window.history.length;
+      const r = renderHook(() => useBackDismiss(true, () => {}, "restore"));
+      await tick();
+      expect(window.history.length).toBe(before);
+      r.unmount();
+      const u = renderHook(() => useBackDismiss(true, () => {}, "user"));
+      await tick();
+      expect(window.history.length).toBe(before + 1);
+      u.unmount();
     } finally {
       document.documentElement.removeAttribute("data-phone");
     }

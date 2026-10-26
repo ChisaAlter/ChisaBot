@@ -53,7 +53,7 @@ import {
 import { matchesHotkey } from "@/lib/hotkeys/hotkeys";
 import { ToggleTip } from "@/components/layout/glass-topbar";
 import { cn } from "@/lib/utils";
-import { justNavigatedHistory, useBackDismiss } from "@/lib/overlay-back";
+import { lastHistoryEventWasPop, useBackDismiss } from "@/lib/overlay-back";
 
 const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
@@ -227,7 +227,8 @@ export function PanelRail({ className }: { className?: string }) {
   useEffect(() => {
     if (!computerOn) return;
     // 浏览器后退回到 `watch=true` 的旧记录：那是在离开，不是要看计算机，别把抽屉重新拉出来（CB-098 QA）。
-    if (!wide && justNavigatedHistory()) return;
+    // 只看事件先后，不看时间：最近一次是浏览器后退 / 前进（不是用户切标签）才算恢复。
+    if (!wide && lastHistoryEventWasPop()) return;
     if (wide) setPanelRailOpen(true);
     else setPanelSheetOpen(true);
   }, [computerOn, wide]);
