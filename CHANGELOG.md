@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.76 — 2026-10-26
+
+这一版修复改名后 Hermes 不可达导致对话卡住的问题（`CB-100`），并彻底下线云端 Claude Code 工作区整套功能（`CB-099`）。PC 客户端与服务端同步更新至 0.1.76（Android `versionCode` 273）。
+
+### 固定 compose 网络，Hermes 不可达时快速失败（`CB-100`）
+
+- **默认网络固定**：`deploy/compose.yaml` 的默认网络固定为改名前的 `openbot-zh_default`（`172.19.0.0/16`，网关 `172.19.0.1`），可用 `CHISABOT_NETWORK_NAME` / `CHISABOT_NETWORK_SUBNET` / `CHISABOT_NETWORK_GATEWAY` 覆盖；应用保留旧 DNS 别名 `openbot-zh`。宿主机 Hermes 桥接（`172.19.0.1:4100`）、`.env` 与 ufw 规则无需改动。
+- **快速失败与发布自检**：Hermes 不可达时对话立即报错，不再一直挂起；更新器新增 `hermes-reach.sh`、`compose-image.sh`，发布后自检会经 Hermes 实测，网络断开时发布不再“假通过”。
+
+### 下线云端 Claude Code 工作区（`CB-099`）
+
+- 删除 `/cc` 页面、设置 → 云端工作区、服务器 `cloud-cc` 模块、云端工作区节点（`deploy/cloud-node`）与电脑文件夹同步（`/agent/sync*` 隧道、`pc/src/sync`）；左栏恢复为只有机器人列表。
+- `/cc`、`/cc/*` 重定向到 `/`；Android 去掉「Claude Code」菜单项；发布流程去掉 sync-bin。
+- 保留本地 agent 的 `claude` 类型、`CLAUDE_CODE_OAUTH_TOKEN` 与保险箱 `claude-proxy` 条目；10 张 `chisabot_cc_*` / `chisabot_cloud_workspaces` 表停用但**不 drop**。已部署云端节点需按 PR #313 的上线步骤手工撤销设备并移除容器。
+
 ## 0.1.75 — 2026-10-26
 
 这一版把仓库与部署里残留的 OpenBot 命名统一改为 ChisaBot（上游归属 `CopilotKit/OpenBot` 保留）。PC 客户端与服务端同步更新至 0.1.75（Android `versionCode` 272）。
