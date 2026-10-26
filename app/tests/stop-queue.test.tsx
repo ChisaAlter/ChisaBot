@@ -225,3 +225,58 @@ test("a single held item has no 「全部发送」", () => {
   expect(view.queryByTestId("queued-send-all")).toBeNull();
   expect(view.getByText("发送这条")).toBeTruthy();
 });
+
+test("Esc does not stop while the IME is processing the key (keyCode 229)", () => {
+  expect(
+    shouldStopOnEscape({ key: "Escape", running: true, keyCode: 229 }),
+  ).toBe(false);
+  expect(
+    shouldStopOnEscape({ key: "Escape", running: true, keyCode: 27 }),
+  ).toBe(true);
+});
+
+test("a failed stop request says 「停止失败，重试」 at once; retry sends it again", async () => {
+  const { useStopRequest } = await import("../src/lib/copilot/held-supplements");
+  const { StopFailedButton } = await import(
+    "../src/components/channels/composer/composer"
+  );
+  const calls: string[] = [];
+  const replies: Array<() => Promise<Response>> = [
+    () => Promise.reject(new TypeError("Failed to fetch")),
+    async () => new NativeResponse("{}", { status: 503 }),
+    async () => new NativeResponse("{}", { status: 200 }),
+  ];
+  const fake = ((url: string) => {
+    calls.push(String(url));
+    const next = replies.shift();
+    return next ? next() : Promise.resolve(new NativeResponse("{}"));
+  }) as unknown as typeof fetch;
+  function Harness() {
+    const stop = useStopRequest("thread-x", fake);
+    return (
+      <div>
+        <button data-testid="stop" onClick={() => void stop.send()} type="button">
+          {"停止"}
+        </button>
+        {stop.failed ? (
+          <StopFailedButton onRetry={() => void stop.send()} />
+        ) : null}
+      </div>
+    );
+  }
+  const view = render(<Harness />);
+  fireEvent.click(view.getByTestId("stop"));
+  const failed = await view.findByTestId("composer-stop-failed");
+  expect(failed.textContent).toBe("停止失败，重试");
+  expect(calls).toEqual(["/api/copilotkit/threads/thread-x/unlock"]);
+  // 5xx on retry: still failing, still offered.
+  fireEvent.click(failed);
+  await waitFor(() => expect(calls.length).toBe(2));
+  expect(view.getByTestId("composer-stop-failed")).toBeTruthy();
+  // Success on the next retry: prompt goes away.
+  fireEvent.click(view.getByTestId("composer-stop-failed"));
+  await waitFor(() => expect(calls.length).toBe(3));
+  await waitFor(() =>
+    expect(view.queryByTestId("composer-stop-failed")).toBeNull(),
+  );
+});

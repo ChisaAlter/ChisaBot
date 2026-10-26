@@ -228,6 +228,9 @@ export type ComposerProps = {
   stoppable?: boolean;
   /** CB-104: Stop was pressed and the turn is winding down; the button reads 「停止中…」. */
   stopping?: boolean;
+  /** CB-104: the stop request failed; the button reads 「停止失败，重试」 and presses `onRetryStop`. */
+  stopFailed?: boolean;
+  onRetryStop?: () => void;
   initialValue?: string;
   /**
    * 这段对话的草稿记在哪（DESIGN.md §88）：通常是频道 id。给了它，输入框的字（含 @ / 命令小块）离开再回来、刷新后
@@ -359,6 +362,8 @@ export function Composer({
   channelId,
   stoppable,
   stopping = false,
+  stopFailed = false,
+  onRetryStop,
   initialValue,
   draftKey,
   droppedAttachments,
@@ -1619,11 +1624,13 @@ export function Composer({
   // CB-104: Esc in a focused composer stops the running turn (a menu that handles Esc prevents it).
   const handleEscapeStop = (event: KeyboardEvent<HTMLFormElement>) => {
     const running = Boolean(onStop) && Boolean(stoppable ?? pending);
-    if (!shouldStopOnEscape({ key: event.key, defaultPrevented: event.defaultPrevented, isComposing: event.nativeEvent.isComposing, running, stopping })) return;
+    if (!shouldStopOnEscape({ key: event.key, defaultPrevented: event.defaultPrevented, isComposing: event.nativeEvent.isComposing, keyCode: event.nativeEvent.keyCode, running, stopping })) return;
     event.preventDefault();
     onStop?.();
   };
-  const primaryAction = canStop && stopping ? (
+  const primaryAction = stopFailed && onRetryStop && !parking ? (
+    <StopFailedButton className={actionClassName} onRetry={onRetryStop} />
+  ) : canStop && stopping ? (
     <Button
       aria-label={"停止中"}
       className={cn(actionClassName, "w-auto whitespace-nowrap px-2.5 text-xs")}
@@ -2040,5 +2047,21 @@ export function isPromptSegment(value: unknown): value is Segment {
     typeof segment.trigger === "string" &&
     typeof segment.value === "string" &&
     typeof segment.displayText === "string"
+  );
+}
+
+/** CB-104: shown at once when the stop request fails (network, non-2xx, 5xx); pressing it asks again. */
+export function StopFailedButton({ className, onRetry }: { className?: string; onRetry: () => void }) {
+  return (
+    <Button
+      aria-label={"停止失败，重试"}
+      className={cn(className, "w-auto whitespace-nowrap px-2.5 text-xs")}
+      data-testid="composer-stop-failed"
+      onClick={onRetry}
+      size="sm"
+      type="button"
+    >
+      {"停止失败，重试"}
+    </Button>
   );
 }

@@ -63,7 +63,7 @@ import {
 } from "@/lib/copilot/connection-drop";
 import { ConversationProvider, replyAfterToolCall } from "@/lib/copilot/conversation";
 import { frontendToolProgressAt } from "@/lib/copilot/frontend-tool-activity";
-import { hideHeldSupplements } from "@/lib/copilot/held-supplements";
+import { hideHeldSupplements, useStopRequest } from "@/lib/copilot/held-supplements";
 import { afterMs, joinWithin } from "@/lib/copilot/join-thread";
 import {
   contentText,
@@ -1494,6 +1494,23 @@ export function ChannelChat({
   );
   // CB-104: 「停止中…」 from the click until the stopped turn has really ended.
   const [stopping, setStopping] = useState(false);
+  // CB-104: a failed stop request says so at once (「停止失败，重试」) instead of reverting quietly.
+  const stopRequest = useStopRequest(channel.threadId);
+  const sendStop = () => {
+    void stopRequest.send().then((ok) => {
+      if (!ok) setStopping(false);
+    });
+  };
+  const retryStop = () => {
+    stopRequest.clear();
+    setStopping(true);
+    sendStop();
+    try {
+      copilotkit.stopAgent({ agent });
+    } catch {
+      /* stop best-effort */
+    }
+  };
   const stopTask = () => {
     setStopping(true);
     // The server pauses what the stopped turn read or had queued; pick that up promptly.
@@ -1519,7 +1536,7 @@ export function ChannelChat({
     setRunsInFlight(0);
     sendInFlightRef.current = false;
     void setChannelBusy({ channelId: channel.id, busy: false });
-    forceUnlockThread(channel.threadId);
+    sendStop();
     try {
       copilotkit.stopAgent({ agent });
     } catch {
@@ -1954,6 +1971,8 @@ export function ChannelChat({
               stopped={runError ?? undefined}
               stoppedTurns={heldView.stops}
               stopping={stopping}
+              stopFailed={stopRequest.failed}
+              onRetryStop={retryStop}
               fallbacks={fallbackTurns}
               lastSentAt={lastSentAt}
               queueToServer={queueToServer}
