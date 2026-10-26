@@ -91,6 +91,9 @@ export function useComputerAutoWatch(
   }, [agentId]);
 }
 
+/** 和 ComputerPanel 的分段标签同一个断点：≥768 没有「画面 | 活动」分段。 */
+export const DESKTOP_JUMP_QUERY = "(min-width: 768px)";
+
 /**
  * 「在活动里看」怎么把计算机亮出来（CB-101）：**不多压 history**。
  *
@@ -102,10 +105,22 @@ export function useComputerAutoWatch(
  */
 export function openForActivityJump(current: {
   watching: boolean;
+  setWatching: (open: boolean) => void;
   navigate: ReturnType<typeof useNavigate>;
 }): void {
   showPanels();
   if (current.watching) return;
+  /*
+   * 桌面端（≥768，没有「画面 | 活动」分段）：和人在右栏切到「计算机」完全一样，走 setWatching（push 一条
+   * `watch=true`）。返回 = 关掉计算机、留在对话里，不会直接离开页面。窄屏才用下面的 replace。
+   */
+  if (
+    typeof window !== "undefined" &&
+    window.matchMedia(DESKTOP_JUMP_QUERY).matches
+  ) {
+    current.setWatching(true);
+    return;
+  }
   void current.navigate({
     search: ((previous: Record<string, unknown>) => ({
       ...previous,

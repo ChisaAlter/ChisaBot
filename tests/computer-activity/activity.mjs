@@ -176,6 +176,51 @@ try {
       }
       await jumpRun.context.close();
 
+      // 桌面端（≥768）：「在活动里看」= 手动在右栏切到「计算机」（push）。按一次返回，两条路径的 URL、history.length、
+      // 计算机开没开都一样，而且都还在这个对话里。
+      if (!narrow(size[0])) {
+        const backState = (page) => page.evaluate(() => ({
+          url: location.pathname + location.search,
+          len: history.length,
+          computer: new URLSearchParams(location.search).get("watch") === "true" && Boolean(document.querySelector(".activity-log")),
+        }));
+        seed("history");
+        const viaJump = await open(mode, size, { watch: false });
+        const jumpStart = await viaJump.page.evaluate(() => history.length);
+        await viaJump.page.locator('[data-jump-activity="cb101-read-call"]').first().click();
+        await viaJump.page.locator(".activity-log").first().waitFor({ state: "attached", timeout: 15_000 });
+        assert.equal(await viaJump.page.evaluate(() => history.length), jumpStart + 1, `${label}: desktop jump pushes like a manual switch`);
+        await viaJump.page.goBack();
+        await viaJump.page.waitForTimeout(1000);
+        const jumpBackState = await backState(viaJump.page);
+        await viaJump.context.close();
+
+        seed("history");
+        const viaHand = await open(mode, size, { watch: false });
+        const computerTab = viaHand.page.getByRole("radio", { name: /计算机/ });
+        if (!(await computerTab.first().isVisible().catch(() => false))) {
+          await viaHand.page.getByRole("button", { name: /打开面板|展开面板|显示面板/ }).first().click();
+        }
+        await computerTab.first().click();
+        await viaHand.page.locator(".activity-log").first().waitFor({ state: "attached", timeout: 15_000 });
+        await viaHand.page.goBack();
+        await viaHand.page.waitForTimeout(1000);
+        const handBackState = await backState(viaHand.page);
+        await viaHand.context.close();
+
+        assert.deepEqual(jumpBackState, handBackState, `${label}: back after jump == back after switching by hand`);
+        assert.match(jumpBackState.url, /^\/channel\//, `${label}: back stays on the chat page`);
+
+        // 计算机已经开着时跳转：和手动在同样情况下一样，不多压 history。
+        seed("history");
+        const alreadyOpen = await open(mode, size);
+        const openLen = await alreadyOpen.page.evaluate(() => history.length);
+        await alreadyOpen.page.evaluate(() => document.querySelector('[data-jump-activity="cb101-read-call"]')?.click());
+        await alreadyOpen.page.locator('.activity-step.is-activity-jump[data-tool-call="cb101-read-call"]').first().waitFor({ timeout: 15_000 });
+        assert.equal(await alreadyOpen.page.evaluate(() => history.length), openLen, `${label}: jump with the computer open adds no history`);
+        await alreadyOpen.context.close();
+      }
+
       // 窄屏：跳转打开抽屉 = 手动点「打开面板」——history 增量一样（只压打开抽屉的那一个 marker），按一次返回的结果也一样。
       if (narrow(size[0])) {
         seed("history");
