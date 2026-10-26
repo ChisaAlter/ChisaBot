@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { JUMP_TO_ACTIVITY } from "@/components/computer/activity-jump";
 import { onComputerActivity } from "@/lib/copilot/computer-activity";
+import { overlayHistoryActive, overlayHistoryMode } from "@/lib/overlay-back";
 import {
   openPanelSheet,
   PANEL_RAIL_WIDE_QUERY,
@@ -71,12 +72,16 @@ export function useComputerAutoWatch(
       if (activity.botId !== agentId) return;
       runEpoch.current = activity.epoch;
       clearTimeout(timer.current);
-      if (!latest.current.watching && dismissedEpoch.current !== activity.epoch) {
+      if (
+        !latest.current.watching &&
+        dismissedEpoch.current !== activity.epoch
+      ) {
         opening.current = true;
         latest.current.setWatching(true);
       }
       timer.current = setTimeout(() => {
-        if (!auto.current || engaged.current || !latest.current.watching) return;
+        if (!auto.current || engaged.current || !latest.current.watching)
+          return;
         auto.current = false;
         latest.current.setWatching(false);
       }, RETURN_AFTER_MS);
@@ -110,5 +115,17 @@ export function openForActivityJump(current: {
     window.matchMedia(PANEL_RAIL_WIDE_QUERY).matches;
   if (wide) setPanelRailOpen(true);
   else openPanelSheet("user");
-  if (!current.watching) current.setWatching(true);
+  if (current.watching) return;
+  // 手机网页上抽屉的返回标记是在下一拍才压进去的（overlay-back 的 useBackDismiss）。手动路径里人点「计算机」
+  // 时它早就在了；这里要等它压好再切标签，`watch=true` 才 replace 在标记那条上，返回才会连 `watch` 一起退掉。
+  if (wide || !overlayHistoryMode() || overlayHistoryActive()) {
+    current.setWatching(true);
+    return;
+  }
+  let tries = 0;
+  const waitForMarker = () => {
+    if (overlayHistoryActive() || ++tries > 30) current.setWatching(true);
+    else window.setTimeout(waitForMarker, 16);
+  };
+  window.setTimeout(waitForMarker, 0);
 }

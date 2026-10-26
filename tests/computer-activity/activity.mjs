@@ -45,14 +45,16 @@ const narrow = (width) => width < 768;
 async function open(
   mode,
   [width, height],
-  { live = false, watch = true, tab = "activity" } = {},
+  { live = false, watch = true, tab = "activity", phone = false } = {},
 ) {
   const context = await browser.newContext({
     viewport: { width, height },
     locale: "zh-CN",
     timezoneId: "Asia/Shanghai",
     deviceScaleFactor: 1,
-    isMobile: false,
+    // phone：手机网页（触屏），页面带 data-phone，返回键按 CB-098 的抽屉历史走。
+    isMobile: phone,
+    hasTouch: phone,
   });
   if (mode === "pc") {
     await context.addInitScript(() => {
@@ -426,6 +428,8 @@ try {
       // 窄屏（360/390）：「在活动里看」= 手动路径「点把手打开面板（openPanelSheet）→ 抽屉里点『计算机』」。两条路径的 history.length、
       // 第一次 / 第二次返回后的 URL 和抽屉状态逐项一样；抽屉一开始就开着时也一样。
       if (narrow(size[0])) {
+        // 手机网页（web 模式）开触屏，按 CB-098 的抽屉历史验证返回；PC 小窗没有这套历史，只比对两条路径一致。
+        const phone = mode === "web";
         const navState = (page) =>
           page.evaluate(() =>
             location.href.startsWith("about:")
@@ -446,7 +450,7 @@ try {
           );
         const trace = async (how, drawerFirst) => {
           seed("history");
-          const run = await open(mode, size, { watch: false });
+          const run = await open(mode, size, { watch: false, phone });
           if (drawerFirst) {
             await run.page.getByRole("button", { name: "打开面板" }).click();
             await run.page
@@ -493,11 +497,13 @@ try {
           await run.context.close();
           return steps;
         };
-        {
-          // 深链接（?watch=true）进来：抽屉以 restore 打开；第一次返回关抽屉，第二次离开。
+        if (phone) {
+          // 深链接（?watch=true）进来（手机网页）：第一次返回关抽屉，第二次离开。CB-098 的现状，这里只锁住它。
           seed("history");
-          const run = await open(mode, size, { watch: true });
-          await run.page.locator("#chisabot-panel-sheet").waitFor({ timeout: 15_000 });
+          const run = await open(mode, size, { watch: true, phone });
+          await run.page
+            .locator("#chisabot-panel-sheet")
+            .waitFor({ timeout: 15_000 });
           await run.page.waitForTimeout(1000);
           const deep = { start: await navState(run.page) };
           for (const name of ["back1", "back2"]) {
@@ -508,9 +514,21 @@ try {
           }
           await run.context.close();
           console.log(`nav ${label} deep link ${JSON.stringify(deep)}`);
-          assert.equal(deep.back1.left, false, `${label} (deep link): first back stays`);
-          assert.equal(deep.back1.drawer, false, `${label} (deep link): first back closes the drawer`);
-          assert.equal(deep.back2?.left, true, `${label} (deep link): second back leaves`);
+          assert.equal(
+            deep.back1.left,
+            false,
+            `${label} (deep link): first back stays`,
+          );
+          assert.equal(
+            deep.back1.drawer,
+            false,
+            `${label} (deep link): first back closes the drawer`,
+          );
+          assert.equal(
+            deep.back2?.left,
+            true,
+            `${label} (deep link): second back leaves`,
+          );
         }
         for (const drawerFirst of [false, true]) {
           const viaJump = await trace("jump", drawerFirst);
@@ -524,17 +542,38 @@ try {
             viaHand,
             `${label} (${which}): jump and manual open give the same history / back results`,
           );
+          if (!phone) continue;
           // CB-101 第二阶段：抽屉经由 openPanelSheet 打开，只压它自己那一条；切「计算机」replace。
           assert.equal(
             viaJump.after.len,
             drawerFirst ? viaJump.start.len : viaJump.start.len + 1,
             `${label} (${which}): the drawer adds one entry, switching tabs adds none`,
           );
-          assert.equal(viaJump.after.drawer, true, `${label} (${which}): drawer open`);
-          assert.equal(viaJump.after.computer, true, `${label} (${which}): computer shown`);
-          assert.equal(viaJump.back1.left, false, `${label} (${which}): first back stays on the page`);
-          assert.equal(viaJump.back1.drawer, false, `${label} (${which}): first back closes the drawer`);
-          assert.equal(viaJump.back2?.left, true, `${label} (${which}): second back leaves`);
+          assert.equal(
+            viaJump.after.drawer,
+            true,
+            `${label} (${which}): drawer open`,
+          );
+          assert.equal(
+            viaJump.after.computer,
+            true,
+            `${label} (${which}): computer shown`,
+          );
+          assert.equal(
+            viaJump.back1.left,
+            false,
+            `${label} (${which}): first back stays on the page`,
+          );
+          assert.equal(
+            viaJump.back1.drawer,
+            false,
+            `${label} (${which}): first back closes the drawer`,
+          );
+          assert.equal(
+            viaJump.back2?.left,
+            true,
+            `${label} (${which}): second back leaves`,
+          );
         }
       }
 
