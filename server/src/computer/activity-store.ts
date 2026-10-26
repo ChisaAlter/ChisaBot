@@ -4,6 +4,7 @@
  * 推送照 channels/events.ts 的做法走 Postgres NOTIFY：写的那台和 SSE 连着的那台常常不是同一个进程。payload
  * 只带 id 和状态，前端收到后再拉这一行；NOTIFY 丢了也不丢数据，重连后整页重拉即可。
  */
+import { redactDetail, redactText } from "./activity-redact";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, lt, or, type SQL, sql } from "drizzle-orm";
 import postgres from "postgres";
@@ -287,9 +288,10 @@ export function createActivityStore(
           actorKind: input.actorKind,
           kind: input.kind,
           status: "running",
-          subject: input.subject.slice(0, 2048),
-          detail: input.detail ?? {},
-          turnPrompt,
+          // 写库的唯一入口再打一遍码：调用方漏了也不会有明文落库（打码是幂等的）。
+          subject: redactText(input.subject).slice(0, 2048),
+          detail: redactDetail(input.detail ?? {}),
+          turnPrompt: turnPrompt === null ? null : redactText(turnPrompt),
         })
         .onConflictDoNothing()
         .returning({ id: computerActivitySteps.id });
@@ -338,14 +340,16 @@ export function createActivityStore(
           status: input.status,
           refusalReason: input.refusalReason ?? null,
           ...(input.subject !== undefined
-            ? { subject: input.subject.slice(0, 2048) }
+            ? { subject: redactText(input.subject).slice(0, 2048) }
             : {}),
           ...(input.detail !== undefined
             ? {
-                detail: sql`${computerActivitySteps.detail} || ${JSON.stringify(input.detail)}::text::jsonb`,
+                detail: sql`${computerActivitySteps.detail} || ${JSON.stringify(redactDetail(input.detail))}::text::jsonb`,
               }
             : {}),
-          ...(input.output !== undefined ? { output: input.output } : {}),
+          ...(input.output !== undefined
+            ? { output: input.output === null ? null : redactText(input.output) }
+            : {}),
           outputTruncated: input.outputTruncated ?? false,
           finishedAt: sql`now()`,
           durationMs: sql`greatest(0, (extract(epoch from (now() - ${computerActivitySteps.startedAt})) * 1000)::int)`,
@@ -392,7 +396,7 @@ export function createActivityStore(
       const [row] = await database
         .update(computerActivitySteps)
         .set({
-          detail: sql`${computerActivitySteps.detail} || ${JSON.stringify(detail)}::text::jsonb`,
+          detail: sql`${computerActivitySteps.detail} || ${JSON.stringify(redactDetail(detail))}::text::jsonb`,
           finishedAt: sql`now()`,
           durationMs: sql`greatest(0, (extract(epoch from (now() - ${computerActivitySteps.startedAt})) * 1000)::int)`,
         })

@@ -42,6 +42,27 @@ suite("computer activity store", () => {
     await store.stop();
   });
 
+  test("CB-101: every write is redacted at the store, even if a caller forgot", async () => {
+    const id = await store.begin({
+      computerId: bot,
+      actorUserId: user,
+      actorKind: "agent",
+      kind: "run_command",
+      subject: "sshpass -p hunter2 ssh root@h",
+      detail: { nested: { cmd: "mysql -u root -phunter2" }, list: ["--password=hunter2"] },
+    });
+    await store.finish(id as string, {
+      status: "ok",
+      subject: "sshpass -p hunter2 ssh root@h",
+      output: "$ redis-cli -a hunter2 ping\nPONG",
+      detail: { exitCode: 0, echo: "unzip -P hunter2 a.zip" },
+    });
+    await store.bump(id as string, { again: "openssl enc -k hunter2" });
+    const row = await store.get(bot, user, id as string);
+    expect(JSON.stringify(row)).not.toContain("hunter2");
+    expect(row?.subject).toBe("sshpass -p •••• ssh root@h");
+  });
+
   test("begin, finish, list and duplicate tool calls", async () => {
     const id = await store.begin({
       computerId: bot,
