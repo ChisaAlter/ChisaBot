@@ -53,7 +53,14 @@ import {
 import { matchesHotkey } from "@/lib/hotkeys/hotkeys";
 import { ToggleTip } from "@/components/layout/glass-topbar";
 import { cn } from "@/lib/utils";
-import { lastHistoryEventWasPop, useBackDismiss } from "@/lib/overlay-back";
+import {
+  lastHistoryEventWasPop,
+  type OverlayCloseReason,
+  type OverlayOpenSource,
+  overlayHistoryMode,
+  useBackDismiss,
+} from "@/lib/overlay-back";
+import { closeRailSheet } from "@/lib/panels/rail-sheet-close";
 
 const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
@@ -224,13 +231,26 @@ export function PanelRail({ className }: { className?: string }) {
    */
   const chat = useCurrentBotChat();
   const computerOn = Boolean(chat?.canComputer && chat.computerOpen);
+  /*
+   * 窄屏抽屉的状态模型（CB-098 QA 第三轮）：
+   *  - 抽屉只占一条历史记录（overlay-back 的标记）；抽屉里切标签一律 replace。
+   *  - popstate 是唯一真相：返回 = 关抽屉 + 清掉计算机的记忆，这条路径不写地址、不压标记。
+   *  - 只有带着 `watch=true` 新进入页面（深链接 / 刷新）才以 `restore` 打开抽屉（不压标记）。
+   */
+  const sheetSource = useRef<OverlayOpenSource>("user");
+  const firstComputerRun = useRef(true);
   useEffect(() => {
+    const first = firstComputerRun.current;
+    firstComputerRun.current = false;
     if (!computerOn) return;
-    // 浏览器后退回到 `watch=true` 的旧记录：那是在离开，不是要看计算机，别把抽屉重新拉出来（CB-098 QA）。
-    // 只看事件先后，不看时间：最近一次是浏览器后退 / 前进（不是用户切标签）才算恢复。
-    if (!wide && lastHistoryEventWasPop()) return;
-    if (wide) setPanelRailOpen(true);
-    else setPanelSheetOpen(true);
+    if (wide) {
+      setPanelRailOpen(true);
+      return;
+    }
+    // 返回把地址带回 `watch=true`：在离开，不是要看计算机，不拉抽屉。
+    if (lastHistoryEventWasPop()) return;
+    sheetSource.current = first && overlayHistoryMode() ? "restore" : "user";
+    setPanelSheetOpen(true);
   }, [computerOn, wide]);
   const latestChat = useRef(chat);
   latestChat.current = chat;
@@ -265,12 +285,19 @@ export function PanelRail({ className }: { className?: string }) {
     closeComputer();
     setPanelRailOpen(false);
   }, [closeComputer]);
-  const closeSheet = useCallback(() => {
-    closeComputer();
-    setPanelSheetOpen(false);
-  }, [closeComputer]);
+  const closeSheet = useCallback(
+    (reason: OverlayCloseReason = "user") => {
+      sheetSource.current = "user";
+      closeRailSheet(reason, {
+        agentId: latestChat.current?.agentId,
+        closeComputer,
+        closeSheet: () => setPanelSheetOpen(false),
+      });
+    },
+    [closeComputer],
+  );
   // 返回键 / 浏览器返回先关面板抽屉（CB-098）。
-  useBackDismiss(!wide && sheetOpen, closeSheet);
+  useBackDismiss(!wide && sheetOpen, closeSheet, sheetSource.current);
   // 抽屉和常驻栏用同一张卡片、同一个内容宽度；24px 是常驻栏左右的留边。
   const cardWidth = width - CARD_INSET;
   const panelBody = (
@@ -294,7 +321,10 @@ export function PanelRail({ className }: { className?: string }) {
               aria-expanded={false}
               aria-label={"打开面板"}
               className="rail-tab is-narrow"
-              onClick={() => setPanelSheetOpen(true)}
+              onClick={() => {
+                sheetSource.current = "user";
+                setPanelSheetOpen(true);
+              }}
               type="button"
             >
               <IconLayoutSidebarRightExpand className="size-4" />
@@ -303,7 +333,7 @@ export function PanelRail({ className }: { className?: string }) {
           </ToggleTip>
         )}
         <Sheet
-          onOpenChange={(next) => (next ? setPanelSheetOpen(true) : closeSheet())}
+          onOpenChange={(next) => (next ? setPanelSheetOpen(true) : closeSheet("user"))}
           open={sheetOpen}
         >
           <SheetContent

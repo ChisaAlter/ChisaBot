@@ -599,6 +599,78 @@ if (MODES.includes("web")) {
     }
   }
 }
+/*
+ * CB-098 QA 第三轮：停在「计算机」标签（地址带 watch=true）直接连续返回。要求：最多 2 次离开页面；
+ * 每次返回页面都有变化（不能「按了没反应」）；history 不增长；抽屉不会被重新拉开。
+ */
+const COMPUTER_BACK_SIZES = (process.env.COMPUTER_BACK_SIZES || "360x800,378x842,390x844")
+  .split(",")
+  .map((s) => s.split("x").map(Number));
+if (MODES.includes("web")) {
+  for (const [w, h] of COMPUTER_BACK_SIZES) {
+    for (const reopen of [false, true]) {
+      const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: true, hasTouch: true });
+      const page = await ctx.newPage();
+      const tag = `web-${w}x${h}-computer-tab-back${reopen ? "-reopen" : ""}`;
+      const rec = { tag, mode: "web", size: `${w}x${h}`, route: "/channel/new" };
+      const snap = () =>
+        page
+          .evaluate(() => ({
+            len: history.length,
+            url: location.pathname + location.search,
+            m: history.state?.__cbOverlay ?? null,
+            R: !!document.querySelector(".rail-sheet"),
+          }))
+          .catch(() => ({ url: page.url() }));
+      try {
+        await page.goto("about:blank");
+        await page.goto(`${BASE}/channel/new`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(".rail-tab.is-narrow", { timeout: 20000 });
+        await page.waitForTimeout(1500);
+        await page.click(".rail-tab.is-narrow");
+        await page.waitForSelector(".rail-sheet .rail-tabs-item");
+        await page.waitForTimeout(600);
+        await page.locator(".rail-sheet .rail-tabs-item").nth(1).click();
+        await page.waitForTimeout(800);
+        const start = await snap();
+        const trail = [start];
+        if (reopen) {
+          await page.goBack().catch(() => {});
+          await page.waitForTimeout(150);
+          await page.click(".rail-tab.is-narrow");
+          await page.waitForTimeout(800);
+          trail.push(await snap());
+        }
+        let backs = 0;
+        let stuck = 0;
+        let reopened = 0;
+        while (backs < 8 && page.url().startsWith(BASE)) {
+          const before = trail[trail.length - 1];
+          await page.goBack().catch(() => {});
+          backs += 1;
+          await page.waitForTimeout(900);
+          const now = await snap();
+          trail.push(now);
+          if (!String(now.url).startsWith("/")) break;
+          if (now.url === before.url && now.R === before.R && now.m === before.m) stuck += 1;
+          if (now.R && !before.R) reopened += 1;
+        }
+        const maxLen = Math.max(...trail.map((t) => t.len ?? 0));
+        const limit = reopen ? 3 : 2;
+        rec.computerBack = { backs, stuck, reopened, maxLen, startLen: start.len, trail };
+        check(
+          !page.url().startsWith(BASE) && backs <= limit && stuck === 0 && reopened === 0 && maxLen <= start.len,
+          `${tag} 停在计算机返回：${backs} 次（≤${limit}），无变化 ${stuck}，被拉开 ${reopened}，history ${start.len}→${maxLen}`,
+        );
+      } catch (e) {
+        check(false, `${tag} 异常 ${String(e.message).split("\n")[0]}`);
+      }
+      results.push(rec);
+      console.log(JSON.stringify({ tag, computerBack: rec.computerBack && { ...rec.computerBack, trail: undefined } }));
+      await ctx.close();
+    }
+  }
+}
 await browser.close();
 fs.writeFileSync(
   `${OUT}/results.json`,

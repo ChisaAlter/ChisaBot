@@ -14,12 +14,16 @@ import { isPhone, isStandalone } from "@/lib/device";
  *  - 桌面浏览器 / PC 客户端不写历史：只有 Esc 和 `__chisabotBack`。
  */
 
-type Entry = { id: number; close: () => void; pushed: boolean };
+/** 抽屉为什么关：`back` = 浏览器 / 手势 / 安卓返回键（popstate 或 `__chisabotBack`），`user` = 按钮、遮罩、Esc。 */
+export type OverlayCloseReason = "back" | "user";
+
+type Entry = { id: number; close: (reason: OverlayCloseReason) => void; pushed: boolean };
 
 const stack: Entry[] = [];
 let seq = 0;
 let swallowPops = 0;
-let installed = false;
+/** 装在哪个文档上（测试里会换一套 DOM；同一页面只装一次）。 */
+let installedOn: Document | null = null;
 /**
  * 历史事件的先后顺序（CB-098 QA 第二轮）：不靠时间窗口，只比较「最近一次是浏览器后退 / 前进，
  * 还是用户在页面里的操作」。
@@ -38,7 +42,7 @@ declare global {
 export function closeTopOverlay(): boolean {
   const top = stack[stack.length - 1];
   if (!top) return false;
-  top.close();
+  top.close("back");
   return true;
 }
 
@@ -60,12 +64,15 @@ function markerOf(state: unknown): number | undefined {
 }
 
 export function installOverlayBack(): void {
-  if (installed || typeof window === "undefined") return;
-  installed = true;
+  if (typeof window === "undefined" || installedOn === window.document) return;
+  installedOn = window.document;
+  // 换了 window（只在测试里）：上一个 window 上还没等到的 popstate 不会再来了。
+  swallowPops = 0;
   window.__chisabotBack = closeTopOverlay;
   window.addEventListener("popstate", () => {
     if (swallowPops > 0) {
       swallowPops -= 1;
+      if (swallowPops === 0) flushSettled();
       return;
     }
     eventSeq += 1;
@@ -74,8 +81,37 @@ export function installOverlayBack(): void {
     if (!top?.pushed) return;
     // 浏览器已经退掉了那条记录：别在关闭时再退一次。
     top.pushed = false;
-    top.close();
+    top.close("back");
   });
+  // 用户在页面里的真实操作（点、按键）：之后的打开 / 改地址算用户意图，不算「恢复」。
+  // 捕获阶段、被动监听，不影响任何业务处理。
+  const intent = () => noteUserIntent();
+  window.addEventListener("pointerdown", intent, { capture: true, passive: true });
+  window.addEventListener("keydown", intent, { capture: true, passive: true });
+}
+
+/** 这台设备上抽屉用历史记录承载「返回」（手机网页 / PWA）。桌面浏览器、PC 客户端不是。 */
+export function overlayHistoryMode(): boolean {
+  return typeof window !== "undefined" && historyWanted();
+}
+
+const settledQueue: Array<() => void> = [];
+function flushSettled(): void {
+  while (settledQueue.length > 0 && swallowPops === 0) settledQueue.shift()?.();
+}
+
+/**
+ * 等抽屉自己收回的那条记录退完（被吞掉的 popstate 到了）再执行 `fn`：用户用按钮关抽屉后要改地址
+ * （例如去掉 `watch`），得改在抽屉下面那条记录上，不能改在正要被退掉的标记记录上。
+ */
+export function whenOverlayHistorySettled(fn: () => void): void {
+  settledQueue.push(fn);
+  if (typeof window === "undefined") {
+    flushSettled();
+    return;
+  }
+  // 抽屉的 cleanup（history.back）在这次提交里才发生：下一拍再看要不要等。
+  window.setTimeout(flushSettled, 0);
 }
 
 /** 记下一次用户在页面里的操作（例如切「面板 | 计算机」），之后的地址变化算用户的意图。 */
@@ -116,7 +152,7 @@ export function restampOverlayMarker(): void {
 /** 抽屉 `open` 时登记，关上 / 卸载时注销。`close` 由调用方负责真正把抽屉关上。 */
 export function useBackDismiss(
   open: boolean,
-  close: () => void,
+  close: (reason: OverlayCloseReason) => void,
   /**
    * 谁打开的：`user`（点击、快捷键等，默认）永远压一条历史记录；`restore`（浏览器后退 / 前进、地址里的
    * `watch` 恢复）不压，否则前进历史被截断、后退永远退不出这一页。
@@ -128,12 +164,14 @@ export function useBackDismiss(
   const closeRef = useRef(close);
   closeRef.current = close;
   useEffect(() => {
-    if (!open || typeof window === "undefined") return;
+    if (typeof window === "undefined") return;
+    // 挂上就开始区分「返回」和「用户操作」，不等第一次打开。
     installOverlayBack();
+    if (!open) return;
     seq += 1;
     const entry: Entry = {
       id: seq,
-      close: () => closeRef.current(),
+      close: (reason) => closeRef.current(reason),
       pushed: false,
     };
     stack.push(entry);
