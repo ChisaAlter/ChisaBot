@@ -637,6 +637,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         );
       else next = runAt;
     }
+    // CB-105：暂停 / 结束的任务没有「下次运行」；恢复时上面重新算。
+    if (status !== "active") next = null;
     const rows = await sql.unsafe<Row[]>(
       `UPDATE chisabot_schedules SET title=$3, instruction=$4, timezone=$5, kind=$6, cron=$7, run_at=$8, status=$9, next_run_at=$10, updated_at=now()
        WHERE id=$1 AND owner_user_id=$2 RETURNING *`,
@@ -994,6 +996,30 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     } as Message;
   }
 
+  /**
+   * CB-105：真正发出前再确认任务还在跑（扫描拿到之后可能刚被暂停）。不是就把这次运行记成 skipped，
+   * 不改任务本身。一次性任务被扫描抢到时已标 done，算作仍在跑。
+   */
+  async function stillLive(row: Row, runId: string): Promise<boolean> {
+    const [current] = await sql.unsafe<{ status: ScheduleStatus }[]>(
+      "SELECT status FROM chisabot_schedules WHERE id = $1",
+      [row.id],
+    );
+    const status = current?.status;
+    if (status === "active" || (row.kind === "once" && status === "done"))
+      return true;
+    await sql
+      .unsafe(
+        "UPDATE chisabot_schedule_runs SET status = 'skipped', result = $2, finished_at = now() WHERE id = $1",
+        [runId, status === "paused" ? "任务已暂停，这次没有发送。" : "任务已结束或删除，这次没有发送。"],
+      )
+      .catch(() => {});
+    console.warn(
+      JSON.stringify({ type: "schedule-fire-skipped-inactive", schedule: row.id, run: runId, status: status ?? "missing" }),
+    );
+    return false;
+  }
+
   const busyError = (error: unknown) =>
     /already running|thread.*lock|locked|正在运行/i.test(
       error instanceof Error ? error.message : String(error),
@@ -1042,6 +1068,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         : { kind: "routine", id: `schedule:${row.id}` };
       let attempt = 0;
       for (;;) {
+        if (!options.manual && !(await stillLive(row, runId))) return;
         // 对话正被一轮占着（网页）：排进收件箱，那一轮下一步就读到（和后台任务交结果一样）。
         if (!im && deps.isThreadActive?.(threadId) && deps.enqueueToThread) {
           await deps.enqueueToThread({

@@ -30,9 +30,34 @@ export function QueuedMessages() {
       if (!await withdrawMessage(threadId, id)) setError({ id, text: "还未确认撤回，请稍后重试。" });
     } finally { setSending(null); }
   };
+  // CB-104: everything Stop held, sent in order (each as its own turn), with one press.
+  const held = items.filter((item) => item.status === "paused");
+  const sendAll = async () => {
+    if (!threadId) return;
+    setSending("*");
+    setError(null);
+    let current = "";
+    try {
+      for (const item of held) {
+        current = item.id;
+        await sendPausedMessage(threadId, item.id);
+      }
+    } catch (reason) {
+      setError({ id: current, text: reason instanceof Error ? reason.message : "发送失败，请稍后重试。" });
+    } finally { setSending(null); }
+  };
   if (!threadId || !items.length) return null;
   return (
     <div className="queued-stack" data-testid="queued-messages">
+      {held.length > 1 && (
+        <div className="queued-meta">
+          <span className="queued-state">{`${held.length} 条已暂停 · 等待你发送`}</span>
+          <button className="queued-action" data-testid="queued-send-all" type="button" disabled={sending !== null} onClick={() => void sendAll()}
+            title="按顺序发送全部保留的消息">
+            {sending === "*" ? "发送中…" : "全部发送"}
+          </button>
+        </div>
+      )}
       {items.map((item) => (
         <div className="queued-msg" data-queued-id={item.id} data-status={item.status} key={item.id}>
           <div className="queued-bubble">{item.text}</div>
