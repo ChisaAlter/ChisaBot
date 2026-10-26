@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import type { AppVariables, AuthenticatedActor } from "../src/auth/guards";
 import type { ComputerGateway } from "../src/computer/gateway";
 import type { PolicyStore } from "../src/computer/policy-store";
-import { CaptureBusyError } from "../src/computer/gateway";
+import { CaptureBusyError, ComputerUnavailableError } from "../src/computer/gateway";
 import { createComputerRoutes } from "../src/computer/routes";
 
 describe("computer routes", () => {
@@ -254,4 +254,134 @@ describe("screenshot while a person has control (CB-103)", () => {
     expect(body).toMatchObject({ captureBusy: true, liveCast: true });
     expect(body.reason).toBeUndefined();
   });
+});
+
+/**
+ * CB-103：GET /control 任何情况下都是 200 + 明确状态（none / live / user_control / unreachable），
+ * 不再回 409 / 503。部署重启、电脑没起来、截图让路、3 秒没回，都归到 unreachable 并带 reason。
+ */
+describe("GET /control always answers 200 with a state (CB-103)", () => {
+  const routesWith = (control: ComputerGateway["control"]) =>
+    createComputerRoutes(
+      { control } as unknown as ComputerGateway,
+      {} as PolicyStore,
+      async (_context, next) => next(),
+      async () => true,
+    );
+  const base = {
+    since: "2026-10-27T00:00:00.000Z",
+    requested: false,
+    transitioning: false,
+    resumeSnapshotRequired: false,
+  };
+  const read = async (control: ComputerGateway["control"]) => {
+    const response = await routesWith(control).request(
+      "http://chisabot.test/bot-17/control",
+    );
+    return {
+      status: response.status,
+      body: (await response.json()) as Record<string, unknown>,
+    };
+  };
+
+  test("idle → none", async () => {
+    const { status, body } = await read(async () => ({
+      ...base,
+      holder: "bot" as const,
+      live: false,
+    }));
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ state: "none", holder: "bot" });
+  });
+
+  test("an older computer without the live flag → none", async () => {
+    const { status, body } = await read(async () => ({
+      ...base,
+      holder: "bot" as const,
+    }));
+    expect(status).toBe(200);
+    expect(body.state).toBe("none");
+  });
+
+  test("live cast → live", async () => {
+    const { status, body } = await read(async () => ({
+      ...base,
+      holder: "bot" as const,
+      live: true,
+    }));
+    expect(status).toBe(200);
+    expect(body.state).toBe("live");
+  });
+
+  test("a person holding the wheel → user_control (even while live)", async () => {
+    const { status, body } = await read(async () => ({
+      ...base,
+      holder: "human" as const,
+      live: true,
+    }));
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ state: "user_control", holder: "human" });
+  });
+
+  test("agent-computer answered 503 → unreachable", async () => {
+    const { status, body } = await read(async () => {
+      throw new ComputerUnavailableError("HTTP 503");
+    });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ state: "unreachable", reason: "unavailable" });
+  });
+
+  test("connection refused → unreachable", async () => {
+    const { status, body } = await read(async () => {
+      throw new ComputerUnavailableError(
+        "The assistant's computer could not be reached (ECONNREFUSED).",
+      );
+    });
+    expect(status).toBe(200);
+    expect(body.state).toBe("unreachable");
+  });
+
+  test("locate failed → unreachable with reason locate_failed", async () => {
+    const { status, body } = await read(async () => {
+      throw new ComputerUnavailableError("The computer address is not allowed.");
+    });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ state: "unreachable", reason: "locate_failed" });
+  });
+
+  test("CaptureBusy → unreachable, not 503", async () => {
+    const { status, body } = await read(async () => {
+      throw new CaptureBusyError("Live screen is streaming.", true, true);
+    });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ state: "unreachable", reason: "capture_busy" });
+  });
+
+  test("an unexpected error → unreachable, not 500", async () => {
+    const { status, body } = await read(async () => {
+      throw new TypeError("fetch failed");
+    });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ state: "unreachable", reason: "error" });
+  });
+
+  test("no answer within 3 seconds → unreachable timeout, and the read is aborted", async () => {
+    let aborted = false;
+    const started = Date.now();
+    const { status, body } = await read(
+      (_botId, _requestId, signal) =>
+        new Promise((_, reject) => {
+          signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
+    const elapsed = Date.now() - started;
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ state: "unreachable", reason: "timeout" });
+    expect(aborted).toBe(true);
+    expect(elapsed).toBeGreaterThanOrEqual(2900);
+    expect(elapsed).toBeLessThan(4500);
+  }, 10_000);
 });

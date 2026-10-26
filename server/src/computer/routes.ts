@@ -32,6 +32,7 @@ import { activityStore } from "./activity-store";
 import { dryRunAgainstHistory, REPLAYABLE_EVENT_TYPES } from "./policy-dry-run";
 import { type PolicyStore, parseActionPolicy } from "./policy-store";
 import { reasonWithoutStatement } from "../db/query-failure";
+import { readControlStatus } from "./control-status";
 
 /**
  * The Bot computer's surface, behind the same session guard as every other API route.
@@ -367,18 +368,16 @@ export function createComputerRoutes(
    * Who has the wheel. Polled by the surface next to the screen, so the person sees the Bot ask for
    * help without reloading anything.
    */
-  routes.get("/:botId/control", async (context) => {
-    try {
-      return context.json(
-        await gateway.control(
-          context.req.param("botId"),
-          context.req.query("requestId"),
-        ),
-      );
-    } catch (error) {
-      return context.json(errorBody(error), statusFor(error));
-    }
-  });
+  routes.get("/:botId/control", async (context) =>
+    // CB-103：一律 200 + state（none / live / user_control / unreachable），读不到也是一种状态。
+    context.json(
+      await readControlStatus(
+        (botId, requestId, signal) => gateway.control(botId, requestId, signal),
+        context.req.param("botId"),
+        context.req.query("requestId"),
+      ),
+    ),
+  );
 
   routes.post("/:botId/control/request", (context) =>
     act(context, (botId, actor, body) =>

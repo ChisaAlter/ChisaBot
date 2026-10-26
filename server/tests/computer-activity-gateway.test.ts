@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  classifyError,
   withActivityScope,
   withComputerActivity,
 } from "../src/computer/activity-recorder";
@@ -8,7 +9,8 @@ import type {
   BeginInput,
   FinishInput,
 } from "../src/computer/activity-store";
-import { HumanHasControlError } from "../src/computer/client";
+import { CaptureBusyError, HumanHasControlError } from "../src/computer/client";
+import { statusText } from "../../shared/computer-activity-labels";
 import type { ComputerGateway } from "../src/computer/gateway";
 
 function fakeStore() {
@@ -240,5 +242,50 @@ describe("activity recorder", () => {
       () => gateway.runCommand("bot", actor, { command: "pwd" } as never),
     );
     expect(begun[0]).toMatchObject({ runId: null, toolCallId: null });
+  });
+});
+
+/**
+ * CB-103：用户接管着电脑时，机器人的截图被让路拒绝（CaptureBusy + userControl）。这一步记成
+ * refused / user_in_control（界面显示「已拒绝：电脑当前由你控制」），而不是「失败：大屏正在直播」。
+ */
+describe("activity while the person holds the computer (CB-103)", () => {
+  test("a screenshot refused by a takeover is refused/user_in_control", async () => {
+    const { store, finished } = fakeStore();
+    const gateway = withComputerActivity(
+      fakeGateway({
+        screenshot: async () => {
+          throw new CaptureBusyError("Live screen is streaming.", true, true);
+        },
+      }),
+      { store: () => store },
+    );
+    await expect(
+      withActivityScope({ toolCallId: "c-shot" }, () =>
+        gateway.screenshot("bot", actor as never),
+      ),
+    ).rejects.toThrow();
+    expect(finished[0]?.input).toMatchObject({
+      status: "refused",
+      refusalReason: "user_in_control",
+    });
+    expect(
+      statusText({
+        actorKind: "agent",
+        kind: "screenshot",
+        status: finished[0].input.status,
+        refusalReason: finished[0].input.refusalReason,
+        subject: "",
+      }),
+    ).toBe("已拒绝：电脑当前由你控制");
+  });
+
+  test("a live cast without a takeover stays failed/live_cast", () => {
+    expect(
+      classifyError(new CaptureBusyError("Live screen is streaming.", true)),
+    ).toMatchObject({ status: "failed", refusalReason: "live_cast" });
+    expect(
+      classifyError(new CaptureBusyError("busy", true, true)),
+    ).toMatchObject({ status: "refused", refusalReason: "user_in_control" });
   });
 });

@@ -108,6 +108,9 @@ export function classifyError(
   if (error instanceof ApprovalRefusedError)
     return { status: "refused", refusalReason: "approval_denied", message };
   if (error instanceof PageTimeoutError) return { status: "timeout", message };
+  // CB-103：截图让路是因为用户接管着电脑，这一步是被拒绝（user_in_control），不是直播失败。
+  if (error instanceof CaptureBusyError && error.userControl)
+    return { status: "refused", refusalReason: "user_in_control", message };
   if (error instanceof CaptureBusyError)
     return { status: "failed", refusalReason: "live_cast", message };
   if (error instanceof ComputerUnavailableError && /control/i.test(message))

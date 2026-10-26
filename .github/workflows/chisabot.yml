@@ -86,6 +86,7 @@ jobs:
           bun test tests/message-scroll-reduced-motion.test.tsx
           bun test tests/thread-inbox-paused.test.tsx tests/thread-inbox-concurrency.test.tsx tests/conversation-sync.test.ts
           bun test tests/computer-activity-log.test.tsx tests/computer-activity.test.ts
+          bun test tests/computer-control-status.test.ts tests/browser-presence.test.ts
       - name: Install actual computer service dependencies
         working-directory: agent-computer
         run: bun install --frozen-lockfile
@@ -99,6 +100,9 @@ jobs:
           bun test server/tests/computer-stop.test.ts
           bun test server/tests/agent-runtime-unreachable.integration.test.ts
           bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
+      # CB-103：GET /control 一律 200 + state，截图让路回 409 user_control，接管中的拒绝记进活动记录。
+      - name: Computer control state checks (CB-103)
+        run: bun test server/tests/computer-routes.test.ts server/tests/computer-client.test.ts
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
         run: bun install --frozen-lockfile && bun test tests/native-select.test.ts tests/aria-snapshot.test.ts

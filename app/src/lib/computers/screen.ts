@@ -30,7 +30,7 @@ export const SCREEN_LIVE_CAST_ZH =
 
 /** CB-103：用户正接管着这台电脑，画面在直播里；卡片不再另外截图，这是预期内的状态。 */
 export const SCREEN_USER_CONTROL_ZH =
-  "你正在接管这台电脑，画面在直播里实时显示；交还后这里会自动接回画面。";
+  "电脑由你控制中，暂停预览；活动记录照常更新";
 
 /** 页面绘制超时（422 / pageTimeout），不是电脑挂了。 */
 export const SCREEN_PAGE_TIMEOUT_ZH =

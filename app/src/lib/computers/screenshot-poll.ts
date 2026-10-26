@@ -52,8 +52,20 @@ export function nextScreenshotPollDelay(
 export function screenshotPollBlocked(state: {
   expanded: boolean;
   driving: boolean;
-}): "expanded" | "user_control" | null {
+  /**
+   * CB-103：GET /control 读到的状态。卡片在用 control 轮询时（controlEnabled），先拿到状态再取图：
+   * 还没读到（null）就等，接管中不取，连不上也不取（只会再失败一次）。
+   */
+  controlState?: "none" | "live" | "user_control" | "unreachable" | null;
+  controlEnabled?: boolean;
+}): "expanded" | "user_control" | "pending" | "unreachable" | null {
   if (state.expanded) return "expanded";
-  if (state.driving) return "user_control";
+  if (state.driving || state.controlState === "user_control")
+    return "user_control";
+  if (state.controlEnabled) {
+    if (state.controlState === "unreachable") return "unreachable";
+    if (state.controlState === null || state.controlState === undefined)
+      return "pending";
+  }
   return null;
 }

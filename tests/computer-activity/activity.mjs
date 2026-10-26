@@ -87,6 +87,14 @@ async function open(
   await context.route("**/api/computers/*/status", (route) =>
     route.fulfill({ json: { botId: bot, state: "ready" } }),
   );
+  // CB-103：截图前先读控制状态；没有真电脑时 /control 会是 unreachable，这里按场景给出 none / live。
+  await context.route("**/api/computers/*/control", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({
+          json: { holder: "bot", state: live ? "live" : "none", live },
+        })
+      : route.continue(),
+  );
   await context.route("**/api/computers/*/screenshot*", (route) =>
     live
       ? route.fulfill({

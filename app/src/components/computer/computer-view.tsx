@@ -6,7 +6,7 @@ import {
   browserPresenceFootLabel,
   browserPresenceKind,
 } from "@/lib/computers/browser-presence";
-import { supplySecret } from "@/lib/computers/control";
+import { CONTROL_UNREACHABLE_ZH, supplySecret } from "@/lib/computers/control";
 import {
   readPageFrame,
   readScreenshot,
@@ -326,6 +326,7 @@ export function ComputerView({
   const settled = !active && (finished || Boolean(knownPage));
   const {
     control,
+    state: controlState,
     busy: changingControl,
     change: changeControl,
     refresh: refreshControl,
@@ -429,8 +430,21 @@ export function ComputerView({
      * 大屏展开时 LiveScreen 走 websocket 出图。HTTP /screenshot 再轮询会跟流抢电脑，
      * 控制台 503 刷屏，而画布仍像健康直播（狗粮 0.1.39 → 0.1.40）。收起后再拉卡片帧。
      */
-    const blocked = screenshotPollBlocked({ expanded, driving });
+    const blocked = screenshotPollBlocked({
+      expanded,
+      driving,
+      controlState,
+      controlEnabled: !settled,
+    });
     if (blocked === "expanded") return;
+    // CB-103：先拿到接管状态再取图；还没读到就等下一次状态变化（effect 会重跑）。
+    if (blocked === "pending") return;
+    if (blocked === "unreachable") {
+      setShot(null);
+      setCastingElsewhere(false);
+      setProblem(CONTROL_UNREACHABLE_ZH);
+      return;
+    }
     /*
      * CB-103：有人接管着（不管是这张卡的大屏还是右栏 / 别的窗口），画面都在直播里。这时再拉 HTTP
      * 截图只会被让路拒绝，控制台多一条红字。直接显示「直播中」占位，交还后 driving 变回 false，
@@ -517,7 +531,7 @@ export function ComputerView({
       generation.current++;
       clearTimeout(timer);
     };
-  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey, expanded, driving]);
+  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey, expanded, driving, controlState]);
 
   /*
    * 交还之后收起大屏。交还就是「我弄完了」，留着一个只读的大屏还要再点一次关闭，

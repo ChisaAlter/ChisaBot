@@ -1016,9 +1016,11 @@ serve<StreamData>({
       // Who has the wheel. Polled by the surface alongside the screen, so the person sees the Bot ask
       // for help without having to reload anything.
       if (url.pathname === "/control" && request.method === "GET") {
-        return json(
-          session.control.get(url.searchParams.get("requestId") ?? undefined),
-        );
+        return json({
+          ...session.control.get(url.searchParams.get("requestId") ?? undefined),
+          // CB-103：右栏 / 大屏是否正在直播，网关据此回 state=live。
+          live: session.viewer.casting(),
+        });
       }
 
       // The Bot asking for help. It does not take control: it says it is stuck and why, and a person
