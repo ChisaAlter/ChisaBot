@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { createAdminSmokeRoutes, smokeAnswered, smokePrompt } from "../src/admin-smoke";
+import { createAdminSmokeRoutes, resolveSmokeHermesProbe, smokeAnswered, smokePrompt } from "../src/admin-smoke";
 import type { AppVariables } from "../src/auth/guards";
 import type { RuntimeModelConnection } from "../src/copilot";
 
@@ -201,4 +201,26 @@ test("a throwing Hermes probe counts as unreachable", async () => {
   );
   expect(response.status).toBe(502);
   expect(await response.json()).toMatchObject({ ok: false, hermes: "unreachable" });
+});
+
+describe("resolveSmokeHermesProbe (CB-100b)", () => {
+  const ok = async () => ({ reachable: true });
+  test("kernel=hermes without URL is unreachable, not skipped", async () => {
+    const probe = resolveSmokeHermesProbe({ agentKernel: "hermes", hermesUrl: undefined, probe: undefined });
+    expect(probe).toBeDefined();
+    const result = await probe!();
+    expect(result.reachable).toBe(false);
+    expect(result.error).toContain("CHISABOT_HERMES_URL");
+  });
+  test("kernel=HERMES with blank URL is unreachable", async () => {
+    const probe = resolveSmokeHermesProbe({ agentKernel: " HERMES ", hermesUrl: "  ", probe: undefined });
+    expect((await probe!()).reachable).toBe(false);
+  });
+  test("URL configured uses the real probe", () => {
+    expect(resolveSmokeHermesProbe({ agentKernel: "hermes", hermesUrl: "http://h:1", probe: ok })).toBe(ok);
+  });
+  test("builtin kernel without URL stays skipped", () => {
+    expect(resolveSmokeHermesProbe({ agentKernel: undefined, hermesUrl: undefined, probe: undefined })).toBeUndefined();
+    expect(resolveSmokeHermesProbe({ agentKernel: "builtin", hermesUrl: "", probe: undefined })).toBeUndefined();
+  });
 });

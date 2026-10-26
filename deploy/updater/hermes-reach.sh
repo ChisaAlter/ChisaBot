@@ -8,13 +8,44 @@
 # 用法：hermes-reach.sh            输出一行 "hermes=ok|unreachable|skipped ..."；不可达时退出 1。
 # 环境：读 /opt/chisabot-updater/config.env 的 CONTAINER；容器里没有配置 CHISABOT_HERMES_URL 时跳过（退出 0）。
 set -uo pipefail
-. /opt/chisabot-updater/config.env
+# shellcheck disable=SC1090,SC1091
+. "${CHISABOT_UPDATER_CONFIG:-/opt/chisabot-updater/config.env}"
+
+# CB-100b：和 server 端判断内核一致（admin-smoke.ts：agentKernel?.trim().toLowerCase() === "hermes"），
+# 另外按 .env / compose env_file 的写法去掉引号和行内注释：
+#   hermes # prod → hermes；  "Hermes" → hermes；  '  hermes ' → hermes。
+# 带引号时取引号里的内容（引号内的 # 不算注释）；不带引号时「空白 + #」之后是注释。
+normalize_kernel() {
+  local v=${1//$'\r'/}
+  v=${v#"${v%%[![:space:]]*}"}
+  case "$v" in
+    \"*) v=${v#\"}; v=${v%%\"*} ;;
+    \'*) v=${v#\'}; v=${v%%\'*} ;;
+    \#*) v= ;;
+    *) v=$(printf '%s' "$v" | sed -E 's/[[:space:]]+#.*$//') ;;
+  esac
+  v=${v#"${v%%[![:space:]]*}"}
+  v=${v%"${v##*[![:space:]]}"}
+  printf '%s' "$v" | tr '[:upper:]' '[:lower:]'
+}
 TIMEOUT_MS=${HERMES_REACH_TIMEOUT_MS:-5000}
 
 # s6 把容器环境写在 /run/s6/container_environment（update.sh 取 DATABASE_URL 也是这样）；兜底用 printenv。
 URL=$(docker exec "$CONTAINER" sh -c 'cat /run/s6/container_environment/CHISABOT_HERMES_URL 2>/dev/null || printenv CHISABOT_HERMES_URL 2>/dev/null' 2>/dev/null | tr -d '\r\n')
 if [ -z "$URL" ]; then
-  echo "hermes=skipped（容器里没有配置 CHISABOT_HERMES_URL）"
+  # CB-100b：内核选的是 hermes（CHISABOT_AGENT_KERNEL=hermes，updater 的 hermes_release_enabled 也认它），
+  # 却没有 CHISABOT_HERMES_URL —— 服务器会退回内置运行时或根本连不上，算失败，不算 skipped。
+  KERNEL=$(docker exec "$CONTAINER" sh -c 'cat /run/s6/container_environment/CHISABOT_AGENT_KERNEL 2>/dev/null || printenv CHISABOT_AGENT_KERNEL 2>/dev/null' 2>/dev/null | head -n 1)
+  KERNEL=$(normalize_kernel "$KERNEL")
+  if [ -z "$KERNEL" ] && [ -f "${COMPOSE_DIR:-/nonexistent}/.env" ]; then
+    KERNEL=$(grep -E '^[[:space:]]*(export[[:space:]]+)?CHISABOT_AGENT_KERNEL=' "$COMPOSE_DIR/.env" | tail -1 | sed 's/^[^=]*=//')
+    KERNEL=$(normalize_kernel "$KERNEL")
+  fi
+  if [ "$KERNEL" = hermes ]; then
+    echo "::error:: hermes=unreachable 内核是 hermes（CHISABOT_AGENT_KERNEL=hermes），但应用容器里没有配置 CHISABOT_HERMES_URL"
+    exit 1
+  fi
+  echo "hermes=skipped（内核不是 hermes，且没有配置 CHISABOT_HERMES_URL）"
   exit 0
 fi
 case "$URL" in

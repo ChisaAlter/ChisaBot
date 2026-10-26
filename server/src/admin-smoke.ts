@@ -108,6 +108,26 @@ export function smokeAnswered(reply: string, answer: number): boolean {
   return numbers.includes(String(answer));
 }
 
+/**
+ * CB-100b：选 Hermes 内核的真实标记是 CHISABOT_AGENT_KERNEL=hermes（compose-image.sh 从 .env 读它），
+ * 而服务器只凭 CHISABOT_HERMES_URL 决定连不连 Hermes。二者不一致（内核选 hermes 却没给 URL）时，
+ * 自检必须报 unreachable，不能报 skipped。
+ */
+export function resolveSmokeHermesProbe(input: {
+  agentKernel: string | undefined;
+  hermesUrl: string | undefined;
+  probe: (() => Promise<HermesReachability>) | undefined;
+}): (() => Promise<HermesReachability>) | undefined {
+  if (input.hermesUrl?.trim() && input.probe) return input.probe;
+  if (input.agentKernel?.trim().toLowerCase() === "hermes") {
+    return async () => ({
+      reachable: false,
+      error: "内核是 hermes（CHISABOT_AGENT_KERNEL=hermes），但没有配置 CHISABOT_HERMES_URL",
+    });
+  }
+  return input.probe;
+}
+
 export function createAdminSmokeRoutes(options: {
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
   resolveConnection: () => Promise<RuntimeModelConnection>;
