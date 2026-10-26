@@ -52,7 +52,8 @@ previous_image() {
 # 或输出不是一行「名字 子网」）时换下一个继续。一个工具都没有返回 2；有工具但全部失败返回 3。
 compose_default_network_from_json() {
   local input out tool tried=0 py_code jq_code js
-  input=$(cat)
+  # 只用 bash 内建读 stdin：调用方的 PATH 里可能只有解析器本身（server/tests/compose-network-drift.test.ts）。
+  IFS= read -r -d '' input || true
   py_code='
 import json, sys
 try:
@@ -76,7 +77,7 @@ print(n.get("name") or "", c.get("subnet") or "")
       *) out=$(printf '%s' "$input" | "$tool" -c "$py_code" 2>/dev/null) ;;
     esac || { echo "compose 网络漂移检查：$tool 执行失败，换下一个工具" >&2; continue; }
     # 只接受恰好一行「名字 子网」（两段都不含空白，各自可空）。
-    if [ "$(printf '%s\n' "$out" | wc -l)" = 1 ] && [[ "$out" =~ ^[^[:space:]]*\ [^[:space:]]*$ ]]; then
+    if [[ "$out" != *$'\n'* ]] && [[ "$out" =~ ^[^[:space:]]*\ [^[:space:]]*$ ]]; then
       printf '%s\n' "$out"
       return 0
     fi
