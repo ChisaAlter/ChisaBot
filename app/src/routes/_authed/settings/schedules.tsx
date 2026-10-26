@@ -49,6 +49,7 @@ import {
   runScheduleNow,
   scheduleKeys,
   schedulesQueryOptions,
+  shownNextRun,
   skipScheduleNext,
 } from "@/lib/schedules";
 import { cn } from "@/lib/utils";
@@ -427,8 +428,8 @@ function ScheduleRow({
                 ) : null}
               </span>
               <span className="sch-line">
-                {s.status === "active" && s.nextRunAt ? (
-                  <span className="sch-next">{`下次 ${formatWhen(s.nextRunAt, s.timezone)}`}</span>
+                {shownNextRun(s) ? (
+                  <span className="sch-next">{`下次 ${formatWhen(shownNextRun(s) ?? "", s.timezone)}`}</span>
                 ) : null}
                 <span
                   className={cn(
@@ -556,11 +557,11 @@ function ScheduleDialog({
                 <div className="sch-detail-l">{"到点时做什么"}</div>
                 <div className="sch-detail-v">{s.instruction}</div>
               </div>
-              {s.status === "active" && s.nextRunAt ? (
+              {shownNextRun(s) ? (
                 <div className="sch-detail">
                   <div className="sch-detail-l">{"下次运行"}</div>
                   <div className="sch-detail-v">
-                    {formatWhen(s.nextRunAt, s.timezone)}
+                    {formatWhen(shownNextRun(s) ?? "", s.timezone)}
                   </div>
                 </div>
               ) : null}
