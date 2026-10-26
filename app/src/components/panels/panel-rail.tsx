@@ -43,6 +43,8 @@ import {
   PANEL_RAIL_HOTKEY,
   PANEL_RAIL_HOTKEY_LABEL,
   setPanelRailOpen,
+  openPanelSheet,
+  panelSheetOpenSource,
   setPanelSheetOpen,
   showRailFor,
   togglePanelRail,
@@ -56,7 +58,6 @@ import { cn } from "@/lib/utils";
 import {
   lastHistoryEventWasPop,
   type OverlayCloseReason,
-  type OverlayOpenSource,
   overlayHistoryMode,
   useBackDismiss,
 } from "@/lib/overlay-back";
@@ -237,7 +238,6 @@ export function PanelRail({ className }: { className?: string }) {
    *  - popstate 是唯一真相：返回 = 关抽屉 + 清掉计算机的记忆，这条路径不写地址、不压标记。
    *  - 只有带着 `watch=true` 新进入页面（深链接 / 刷新）才以 `restore` 打开抽屉（不压标记）。
    */
-  const sheetSource = useRef<OverlayOpenSource>("user");
   const firstComputerRun = useRef(true);
   useEffect(() => {
     const first = firstComputerRun.current;
@@ -249,8 +249,7 @@ export function PanelRail({ className }: { className?: string }) {
     }
     // 返回把地址带回 `watch=true`：在离开，不是要看计算机，不拉抽屉。
     if (lastHistoryEventWasPop()) return;
-    sheetSource.current = first && overlayHistoryMode() ? "restore" : "user";
-    setPanelSheetOpen(true);
+    openPanelSheet(first && overlayHistoryMode() ? "restore" : "user");
   }, [computerOn, wide]);
   const latestChat = useRef(chat);
   latestChat.current = chat;
@@ -275,7 +274,7 @@ export function PanelRail({ className }: { className?: string }) {
     const current = latestChat.current;
     if (current?.canComputer && current.computerOpen) current.toggleComputer();
     if (wide) setPanelRailOpen(true);
-    else setPanelSheetOpen(true);
+    else openPanelSheet("user");
   }, [live.data, railBotId, wide]);
   const closeComputer = useCallback(() => {
     const current = latestChat.current;
@@ -287,7 +286,6 @@ export function PanelRail({ className }: { className?: string }) {
   }, [closeComputer]);
   const closeSheet = useCallback(
     (reason: OverlayCloseReason = "user") => {
-      sheetSource.current = "user";
       closeRailSheet(reason, {
         agentId: latestChat.current?.agentId,
         closeComputer,
@@ -297,7 +295,7 @@ export function PanelRail({ className }: { className?: string }) {
     [closeComputer],
   );
   // 返回键 / 浏览器返回先关面板抽屉（CB-098）。
-  useBackDismiss(!wide && sheetOpen, closeSheet, sheetSource.current);
+  useBackDismiss(!wide && sheetOpen, closeSheet, panelSheetOpenSource());
   // 抽屉和常驻栏用同一张卡片、同一个内容宽度；24px 是常驻栏左右的留边。
   const cardWidth = width - CARD_INSET;
   const panelBody = (
@@ -321,10 +319,7 @@ export function PanelRail({ className }: { className?: string }) {
               aria-expanded={false}
               aria-label={"打开面板"}
               className="rail-tab is-narrow"
-              onClick={() => {
-                sheetSource.current = "user";
-                setPanelSheetOpen(true);
-              }}
+              onClick={() => openPanelSheet("user")}
               type="button"
             >
               <IconLayoutSidebarRightExpand className="size-4" />
@@ -333,7 +328,7 @@ export function PanelRail({ className }: { className?: string }) {
           </ToggleTip>
         )}
         <Sheet
-          onOpenChange={(next) => (next ? setPanelSheetOpen(true) : closeSheet("user"))}
+          onOpenChange={(next) => (next ? openPanelSheet("user") : closeSheet("user"))}
           open={sheetOpen}
         >
           <SheetContent
