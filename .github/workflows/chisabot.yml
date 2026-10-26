@@ -85,6 +85,7 @@ jobs:
           bun test tests/tail-first-paint.test.ts
           bun test tests/message-scroll-reduced-motion.test.tsx
           bun test tests/thread-inbox-paused.test.tsx tests/thread-inbox-concurrency.test.tsx tests/conversation-sync.test.ts
+          bun test tests/schedule-fired.test.tsx
           bun test tests/stop-queue.test.tsx
           bun test tests/computer-activity-log.test.tsx tests/computer-activity.test.ts
       - name: Install actual computer service dependencies
@@ -100,6 +101,7 @@ jobs:
           bun test server/tests/stop-queue.integration.test.ts
           bun test server/tests/computer-stop.test.ts
           bun test server/tests/agent-runtime-unreachable.integration.test.ts
+          bun test server/tests/schedules-paused-next.integration.test.ts
           bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer

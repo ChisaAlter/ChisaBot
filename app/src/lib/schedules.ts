@@ -5,6 +5,11 @@ import { client } from "@/lib/client";
 /** 定时任务 / 提醒（DESIGN.md §55，docs/schedules.md）。 */
 export const scheduleKeys = { all: ["schedules"] as const };
 
+/** 要显示的「下次运行」：只有在跑的任务才有。暂停 / 结束的即使旧数据里还留着 next_run_at 也不显示（CB-105）。 */
+export function shownNextRun(s: Pick<ScheduleView, "status" | "nextRunAt">): string | null {
+  return s.status === "active" ? s.nextRunAt : null;
+}
+
 export function schedulesQueryOptions() {
   return queryOptions({
     queryKey: scheduleKeys.all,
