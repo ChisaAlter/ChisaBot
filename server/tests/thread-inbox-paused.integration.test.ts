@@ -109,7 +109,8 @@ suite("durably paused thread inbox", () => {
       expect(response?.status).toBe(200);
       expect(await response!.json()).toEqual({ withdrawn: true });
     };
-    // POST committed, browser missed its response, then the user withdraws.
+    // Committed while held (POST landed during the turn), browser missed its response, then the user withdraws.
+    await enqueue(threadId, "committed");
     expect(await send("committed")).toEqual({ queued: true, status: "paused" });
     await withdraw("committed");
     await withdraw("committed"); // lost DELETE response can safely be retried
@@ -240,7 +241,7 @@ suite("durably paused thread inbox", () => {
     expect(inputs[1]?.find((item) => item.id === retry.messageId)?.content).toContain(String(held.content));
     expect((await backend.inbox.get(threadId, held.id))?.status).toBe("answered");
     saved = await backend.client.getThreadMessages({ threadId, userId: owner });
-    expect(saved.messages.filter((item) => item.id === held.id || item.id === retry.messageId).map((item) => [item.id, item.content])).toEqual([[held.id, held.content], [retry.messageId, held.content]]);
+    expect(saved.messages.filter((item) => item.id === held.id || item.id === retry.messageId).map((item) => [item.id, item.content])).toEqual([[retry.messageId, held.content]]); // CB-104: shown once, as the resent copy
     const duplicate = await collect(backend.runner.run({ threadId, agent: new CaptureReadPause(), input: { ...base, runId: randomUUID(), messages: [message("duplicate-resume")], forwardedProps: { chisabotInboxResume: { ...retry, messageId: "duplicate-resume" } } } }));
     expect(duplicate.filter((event) => event.type === EventType.RUN_ERROR)).toHaveLength(1);
     expect(inputs).toHaveLength(2);

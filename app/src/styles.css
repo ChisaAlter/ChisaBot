@@ -6823,6 +6823,10 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .schedule-card-a:hover { background: color-mix(in srgb, var(--accent-blue-soft) 60%, var(--accent-blue) 14%); }
 .schedule-fired-icon { color: var(--accent-blue-ink); background: var(--accent-blue-soft); }
 .schedule-fired-link { display: inline-block; margin-left: 8px; font-size: 12px; color: var(--accent-blue-ink); }
+/* CB-105 r2：折叠行只省略任务名，「到点 N 次，起–止」始终完整可见 */
+.schedule-fired-group-head { display: flex; min-width: 0; }
+.schedule-fired-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schedule-fired-group-tail { flex-shrink: 0; white-space: nowrap; }
 /* ── 机器人之间的往来锚点卡（handoff-tool.tsx，DESIGN.md §116 / CB-093）─────────── */
 .bot-exchange-card { max-width: 460px; margin: 6px 0; border-radius: 16px; border: 1px solid var(--line); background: var(--glass-3); box-shadow: var(--shadow-1); overflow: hidden; }
 .bot-exchange-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; text-align: left; cursor: pointer; background: transparent; border: 0; color: var(--ink-1); }
