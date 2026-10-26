@@ -88,6 +88,8 @@ jobs:
           bun test tests/schedule-fired.test.tsx
           bun test tests/stop-queue.test.tsx
           bun test tests/computer-activity-log.test.tsx tests/computer-activity.test.ts
+          # CB-106：从 app/ 跑时 bun 不读根目录 bunfig.toml，显式带上 app 的 preload（DOM 下先求值 Base UI）。
+          bun test --preload ./tests/preload.ts tests/memory-delete-undo.test.tsx
       - name: Install actual computer service dependencies
         working-directory: agent-computer
         run: bun install --frozen-lockfile
