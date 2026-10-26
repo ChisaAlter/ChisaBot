@@ -1,3 +1,5 @@
+// 先于路由装好「返回」监听（见 overlay-back-install.ts）。
+import "./lib/overlay-back-install";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";

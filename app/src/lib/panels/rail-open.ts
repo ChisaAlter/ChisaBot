@@ -76,7 +76,30 @@ const sheetListeners = new Set<() => void>();
 export function setPanelSheetOpen(next: boolean) {
   if (next === sheetOpen) return;
   sheetOpen = next;
+  if (!next) sheetSource = "user";
   for (const listener of sheetListeners) listener();
+}
+
+/**
+ * 抽屉是怎么打开的（CB-098 状态模型）：`user` = 用户点开，压一条返回标记；`restore` = 带 `watch=true`
+ * 新进入页面时恢复，不压标记。由 panel-rail 交给 useBackDismiss。
+ */
+export type PanelSheetOpenSource = "user" | "restore";
+let sheetSource: PanelSheetOpenSource = "user";
+
+export function panelSheetOpenSource(): PanelSheetOpenSource {
+  return sheetSource;
+}
+
+/**
+ * 「用户打开右抽屉」的唯一入口：右边缘「面板」把手、机器人「⋯ → 自定义面板」，以及之后
+ * 「在活动里看」这类按钮都走这里。抽屉没开时打开，只压一个返回标记；已经开着时什么都不做、不写
+ * history（之后在抽屉里切标签一律 replace）。
+ */
+export function openPanelSheet(source: PanelSheetOpenSource = "user") {
+  if (sheetOpen) return;
+  sheetSource = source;
+  setPanelSheetOpen(true);
 }
 
 export function usePanelSheetOpen(): boolean {
@@ -95,7 +118,7 @@ export function showPanels() {
   if (typeof window !== "undefined" && window.matchMedia(PANEL_RAIL_WIDE_QUERY).matches) {
     setPanelRailOpen(true);
   } else {
-    setPanelSheetOpen(true);
+    openPanelSheet("user");
   }
 }
 

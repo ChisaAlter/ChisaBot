@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import cn.ayase.chisabot.md.Block
 import cn.ayase.chisabot.md.Markdown
 import cn.ayase.chisabot.ui.hideIncompleteTail
+import cn.ayase.chisabot.ui.isBackHandled
 import cn.ayase.chisabot.ui.siteOf
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -222,5 +223,14 @@ class NativeLogicTest {
         assertTrue(plain.filterIsInstance<Row.Bot>().last().regenerate)
         assertFalse(plain.filterIsInstance<Row.User>().first().editable)
         assertFalse(Turns.build(msgs.take(2) + ChatMessage("u3", "user", "再说一次"), true, null).filterIsInstance<Row.User>().any { it.editable })
+    }
+
+    @Test
+    fun webBackOnlyStopsOnLiteralTrue() {
+        assertTrue(isBackHandled("true"))
+        assertFalse(isBackHandled("false"))
+        assertFalse(isBackHandled("null"))
+        assertFalse(isBackHandled(null))
+        assertFalse(isBackHandled("\"true\""))
     }
 }
