@@ -914,6 +914,16 @@ class PostgresAgentRunner extends AgentRunner {
     let segFinalizer = createRunEventFinalizer();
     /** 智能体最近一次报告的消息列表（不含插话）。 */
     let latest: Message[] = [];
+    let latestState: unknown = agent.state;
+    /** CB-104: output the runtime produces after Stop is dropped, never written or forwarded. */
+    let lateDropped = 0;
+    const dropLate = (kind: string): boolean => {
+      if (!entry.stopped) return false;
+      lateDropped += 1;
+      if (lateDropped === 1)
+        console.warn(JSON.stringify({ type: "local-run-late-output-dropped", threadId, runId: entry.runId, kind }));
+      return true;
+    };
     /** 已读进来、但它紧跟的工具结果还没到消息列表里的插话：等到了再推快照。 */
     let pendingNotices: string[][] = [];
     const woven = (messages: readonly Message[]) =>
@@ -1017,7 +1027,9 @@ class PostgresAgentRunner extends AgentRunner {
       messages: readonly Readonly<Message>[],
       state: unknown,
     ) => {
+      if (dropLate("messages")) return Promise.resolve();
       latest = structuredClone(messages) as Message[];
+      latestState = structuredClone(state);
       const savedMessages = prepared.project(woven(latest));
       const savedState = prepared.sanitize(structuredClone(state));
       const write = guarded(() =>
@@ -1048,6 +1060,9 @@ class PostgresAgentRunner extends AgentRunner {
         },
       );
     const finalize = async (interruptionMessage?: string) => {
+      // A stopped run closes on what was accepted before Stop, not on whatever the runtime added later.
+      let closed = entry.stopped ? (structuredClone(latest) as Message[]) : undefined;
+      if (closed) agent.setMessages(closed);
       if (heldFinish && !terminal) {
         const finish = heldFinish;
         heldFinish = undefined;
@@ -1071,16 +1086,16 @@ class PostgresAgentRunner extends AgentRunner {
             toolCallId: string;
             content: string;
           };
-          agent.setMessages(
-            mergeConversationMessages(agent.messages, [
-              {
-                id: result.messageId,
-                role: "tool",
-                content: result.content,
-                toolCallId: result.toolCallId,
-              },
-            ]),
-          );
+          const merged = mergeConversationMessages(closed ?? agent.messages, [
+            {
+              id: result.messageId,
+              role: "tool",
+              content: result.content,
+              toolCallId: result.toolCallId,
+            },
+          ]);
+          if (closed) closed = merged;
+          agent.setMessages(merged);
         }
         await emit(event);
       }
@@ -1088,9 +1103,11 @@ class PostgresAgentRunner extends AgentRunner {
       await this.store.snapshot(
         threadId,
         entry.runId,
-        prepared.project(woven(agent.messages)),
-        prepared.sanitize(agent.state),
+        prepared.project(woven(closed ?? agent.messages)),
+        prepared.sanitize(entry.stopped ? latestState : agent.state),
       );
+      if (lateDropped)
+        console.warn(JSON.stringify({ type: "local-run-late-output-dropped", threadId, runId: entry.runId, count: lateDropped }));
     };
     try {
       const identity = await this.store.thread(threadId);
@@ -1264,7 +1281,9 @@ class PostgresAgentRunner extends AgentRunner {
                   withSteering(steering(), () =>
                     agent.runAgent(segmentInput, {
                       onEvent: ({ event }) =>
-                        guarded(() => emit(structuredClone(event))),
+                        dropLate(event.type)
+                          ? undefined
+                          : guarded(() => emit(structuredClone(event))),
                       onMessagesChanged: ({ messages, state }) =>
                         capture(messages, state),
                       onStateChanged: ({ messages, state }) =>

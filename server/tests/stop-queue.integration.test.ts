@@ -52,6 +52,113 @@ class Stubborn extends AbstractAgent {
   override abortRun() {}
 }
 
+/** Ignores both abortRun and detach, then talks again a while after Stop: a runtime gone rogue. */
+class Zombie extends AbstractAgent {
+  started?: () => void;
+  late?: (subscriber: {
+    next: (event: BaseEvent) => void;
+    complete: () => void;
+  }) => void;
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    return new Observable<BaseEvent>((subscriber) => {
+      subscriber.next({
+        type: EventType.RUN_STARTED,
+        threadId: input.threadId,
+        runId: input.runId,
+      } as BaseEvent);
+      subscriber.next({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "z-text",
+        role: "assistant",
+      } as BaseEvent);
+      subscriber.next({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "z-text",
+        delta: "EARLY",
+      } as BaseEvent);
+      this.late = (s) => {
+        s.next({
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: "z-text",
+          delta: "LATE-ZOMBIE-TEXT",
+        } as BaseEvent);
+        s.next({
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: "z-text",
+        } as BaseEvent);
+        s.next({
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "z-call",
+          toolCallName: "probe",
+          parentMessageId: "z-tool-msg",
+        } as BaseEvent);
+        s.next({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "z-call",
+          delta: "{}",
+        } as BaseEvent);
+        s.next({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: "z-call",
+        } as BaseEvent);
+        s.next({
+          type: EventType.TOOL_CALL_RESULT,
+          messageId: "z-result",
+          toolCallId: "z-call",
+          content: "LATE-ZOMBIE-TOOL",
+        } as BaseEvent);
+        s.next({
+          type: EventType.RUN_FINISHED,
+          threadId: input.threadId,
+          runId: input.runId,
+        } as BaseEvent);
+        s.complete();
+      };
+      this.lateSubscriber = subscriber;
+      this.started?.();
+    });
+  }
+  lateSubscriber?: { next: (event: BaseEvent) => void; complete: () => void };
+  override abortRun() {}
+  override async detachActiveRun() {}
+}
+
+/** Answers once, slowly, so a rogue runtime from the previous turn can talk during this one. */
+class Replier extends AbstractAgent {
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    return new Observable<BaseEvent>((subscriber) => {
+      subscriber.next({
+        type: EventType.RUN_STARTED,
+        threadId: input.threadId,
+        runId: input.runId,
+      } as BaseEvent);
+      const timer = setTimeout(() => {
+        subscriber.next({
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: "fresh",
+          role: "assistant",
+        } as BaseEvent);
+        subscriber.next({
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: "fresh",
+          delta: "FRESH-ANSWER",
+        } as BaseEvent);
+        subscriber.next({
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: "fresh",
+        } as BaseEvent);
+        subscriber.next({
+          type: EventType.RUN_FINISHED,
+          threadId: input.threadId,
+          runId: input.runId,
+        } as BaseEvent);
+        subscriber.complete();
+      }, 1_500);
+      return () => clearTimeout(timer);
+    });
+  }
+}
+
 test("afterStopGrace only fires after the signal aborts, then after the grace", async () => {
   const controller = new AbortController();
   let fired = false;
@@ -186,4 +293,97 @@ suite("CB-104 stop and queue", () => {
     );
     expect(await post(threadId, "after-stop")).toEqual({ queued: false });
   });
+
+  test("output a detached runtime produces after Stop is dropped, logged, and never reaches the next turn", async () => {
+    const threadId = await thread();
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      const run = (agent: AbstractAgent, runId: string, message: Message) => {
+        const events: BaseEvent[] = [];
+        const done = new Promise<BaseEvent[]>((resolve, reject) =>
+          backend.runner
+            .run({
+              threadId,
+              agent,
+              input: {
+                threadId,
+                runId,
+                state: {},
+                tools: [],
+                context: [],
+                forwardedProps: {},
+                messages: [message],
+              },
+            })
+            .subscribe({
+              next: (event) => events.push(event),
+              error: reject,
+              complete: () => resolve(events),
+            }),
+        );
+        return done;
+      };
+      const zombie = new Zombie();
+      const started = new Promise<void>((resolve) => {
+        zombie.started = resolve;
+      });
+      const first = randomUUID();
+      const firstDone = run(zombie, first, {
+        id: "q1",
+        role: "user",
+        content: "LONG",
+      } as Message);
+      await started;
+      await Bun.sleep(100);
+      expect(await backend.runner.stop({ threadId, runId: first })).toBe(true);
+      // It also keeps talking inside the grace window, while the stopped turn is still closing.
+      await Bun.sleep(300);
+      zombie.lateSubscriber?.next({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "z-text",
+        delta: "LATE-ZOMBIE-GRACE",
+      } as BaseEvent);
+      const firstEvents = await firstDone;
+      // The next turn starts at once and is still running when the rogue runtime talks 3 s after Stop.
+      const second = randomUUID();
+      const secondDone = run(new Replier(), second, {
+        id: "q2",
+        role: "user",
+        content: "again",
+      } as Message);
+      await Bun.sleep(Math.max(0, 3_000 - STOP_GRACE_MS));
+      zombie.late?.(zombie.lateSubscriber!);
+      const secondEvents = await secondDone;
+      await Bun.sleep(200);
+      const late = /LATE-ZOMBIE/;
+      expect(JSON.stringify(firstEvents)).not.toMatch(late);
+      expect(JSON.stringify(secondEvents)).not.toMatch(late);
+      expect(JSON.stringify(secondEvents)).toContain("FRESH-ANSWER");
+      const [row] = await database.$client.unsafe<{ messages: Message[] }[]>(
+        "SELECT messages FROM openbot_local_threads WHERE id = $1",
+        [threadId],
+      );
+      const transcript = JSON.stringify(row?.messages);
+      expect(transcript).not.toMatch(late);
+      expect(transcript).toContain("FRESH-ANSWER");
+      const stored = await database.$client.unsafe<{ event: unknown }[]>(
+        "SELECT event FROM openbot_local_events WHERE thread_id = $1",
+        [threadId],
+      );
+      expect(JSON.stringify(stored)).not.toMatch(late);
+      expect(
+        warnings.some(
+          (line) =>
+            line.includes("local-run-late-output-dropped") &&
+            line.includes(first),
+        ),
+      ).toBe(true);
+    } finally {
+      console.warn = warn;
+    }
+  }, 20_000);
 });
