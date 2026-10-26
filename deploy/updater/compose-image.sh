@@ -43,6 +43,42 @@ previous_image() {
   fi
 }
 
+# CB-100：compose_network_drift — 正在运行的容器是否不在 compose 文件声明的默认网络上（名字或子网不一致）。
+# 在 COMPOSE_DIR 里调用；需要 PROJECT、COMPOSE_FILE、CONTAINER。漂移时输出一行原因并返回 0，否则返回 1。
+# 默认网络改名 / 换子网后，普通 `compose up -d` 会报「network … not found」或「needs to be recreated」，
+# 或者把容器留在旧网络上；这时要 --force-recreate（update.sh / rollback.sh）。
+compose_network_drift() {
+  local want want_name want_subnet have have_subnet py
+  py=${CHISABOT_PYTHON:-$(command -v python3 || command -v python || true)}
+  [ -n "$py" ] || return 1
+  want=$(docker compose -p "$PROJECT" -f "$COMPOSE_FILE" config --format json 2>/dev/null | "$py" -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+n = (d.get("networks") or {}).get("default") or {}
+c = ((n.get("ipam") or {}).get("config") or [{}])[0] or {}
+print(n.get("name") or "", c.get("subnet") or "")
+') || return 1
+  want_name=${want%% *}
+  want_subnet=${want#* }
+  [ -n "$want_name" ] || return 1
+  have=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$CONTAINER" 2>/dev/null) || return 1
+  case " $have " in
+    *" $want_name "*) ;;
+    *) echo "容器 $CONTAINER 在网络 [${have% }] 上，compose 要求 $want_name"; return 0 ;;
+  esac
+  if [ -n "$want_subnet" ]; then
+    have_subnet=$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$want_name" 2>/dev/null)
+    case " $have_subnet " in
+      *" $want_subnet "*) ;;
+      *) echo "网络 $want_name 的子网是 [${have_subnet% }]，compose 要求 $want_subnet"; return 0 ;;
+    esac
+  fi
+  return 1
+}
+
 hermes_update_python() {
   local interpreter=${CHISABOT_HERMES_UPDATE_PYTHON:-${HERMES_VENV_DIR:-/opt/hermes/venv}/bin/python}
   [ -x "$interpreter" ] || { echo "Hermes 更新需要已有服务端 Python；没有安装依赖" >&2; return 1; }

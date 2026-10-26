@@ -40,3 +40,16 @@ Hermes 与宿主发出同一 toolCallId。后端拥有的调用由 `chisabot.bac
 本地使用 fake ACP、标准库 Hermes stub 和真实 ChisaBot HTTP gateway 检查：身份隔离、schema、确认上下文、原始调用 id、历史/模型/记忆、挂起恢复、取消、重复请求、子进程重启、参数快照与缺失回执。测试不要求本机安装 Hermes。
 
 服务端隔离验证必须另跑：已有 venv `--check`、专用服务用户初始化、真实模型调用实际宿主工具，并检查参数、回执与最终回答。生产发布后再用正式 bot、原有偏好和模型设置验收。
+
+## compose 默认网络与 Hermes 桥接（CB-100）
+
+`deploy/compose.yaml` 把默认网络固定为 `${CHISABOT_NETWORK_NAME:-openbot-zh_default}`，子网 `${CHISABOT_NETWORK_SUBNET:-172.19.0.0/16}`，网关 `${CHISABOT_NETWORK_GATEWAY:-172.19.0.1}`（和卷一样沿用改名前的名字）。宿主机上的 Hermes 桥接从容器里经这个网关访问，所以下面四处必须一致：
+
+| 位置 | 值 |
+| --- | --- |
+| compose 默认网络网关 | `172.19.0.1`（子网 `172.19.0.0/16`） |
+| `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST` | `172.19.0.1` |
+| `.env` 的 `CHISABOT_HERMES_URL` / `AGENT_ENDPOINT_ALLOWED_HOSTS` | `http://172.19.0.1:4100/ag-ui` / `172.19.0.1:4100` |
+| ufw | `allow from 172.19.0.0/16 to any port 4100` |
+
+改网络名或子网时四处要一起改。更新程序发现正在运行的容器不在 compose 声明的默认网络上（名字或子网不一致）时，会自动用 `--force-recreate`。部署后自检（`post-deploy-smoke.sh` → `hermes-reach.sh`）会从应用容器里按 `CHISABOT_HERMES_URL` 真的连一次 Hermes（任意 HTTP 状态都算连得上），`/api/admin/smoke` 也会报告 `hermes=ok|unreachable|skipped`；连不上就让部署失败并走自动回滚。Hermes 运行时由这次发布激活时，这一步放在激活之后做。

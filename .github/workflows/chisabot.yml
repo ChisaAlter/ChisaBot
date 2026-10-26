@@ -65,11 +65,13 @@ jobs:
           server/tests/model-settings-routes.test.ts
           server/tests/model-settings.test.ts
           server/tests/computer-tool-outcome.test.ts
+          server/tests/agent-runtime-connection-refused.test.ts
+          server/tests/admin-smoke.test.ts
       # The chat regression set every ChisaBot PR runs on the server (the older model-chooser DOM tests
       # need a live API and never ran here while typecheck was failing; see docs/slimming.md P3).
       - name: Chat UI checks
         working-directory: app
-        run: bun test tests/no-group-has.test.ts tests/stopped-turn.test.ts tests/bot-message-list.test.tsx tests/link-cards.test.tsx tests/rich-previews-extract.test.ts tests/ui-align.test.ts tests/connection-drop.test.ts tests/fold-narration.test.ts tests/chat-unify.test.ts tests/turn-unfinished.test.tsx tests/workspace-links.test.ts
+        run: bun test tests/no-group-has.test.ts tests/stopped-turn.test.ts tests/bot-message-list.test.tsx tests/link-cards.test.tsx tests/rich-previews-extract.test.ts tests/ui-align.test.ts tests/connection-drop.test.ts tests/fold-narration.test.ts tests/chat-unify.test.ts tests/turn-unfinished.test.tsx tests/workspace-links.test.ts tests/agent-runtime-unreachable.test.ts
       - name: Request, message identity and persistent queue checks
         working-directory: app
         env:

@@ -3838,6 +3838,15 @@ const app = createApp(
           requireUser,
           resolveConnection: resolveRuntimeConnection,
           resolveConnectionForAgent: resolveRuntimeConnectionForAgent,
+          // CB-100: the release smoke must reach Hermes, not only the model.
+          ...(probeConfiguredHermes
+            ? {
+                probeHermes: async () => {
+                  const probe = await probeConfiguredHermes();
+                  return { reachable: probe.reachable === true, ...(probe.error ? { error: probe.error } : {}) };
+                },
+              }
+            : {}),
         }),
       ],
       [

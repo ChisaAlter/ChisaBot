@@ -266,3 +266,16 @@ cd /opt/chisabot-src && git pull && sudo sh deploy/install-updater.sh
 
 回滚完整更新：和快速更新一样，「回滚到上一版」或 `/opt/chisabot-zh/rollback-to-<旧标签>.sh`（只换镜像，数据库不回退）；
 `base.env` 指向新底座不影响回滚。要连底座一起退回：`mv base.env base.env.off` 并把 `base-deps.sha256` 改回旧值。
+
+### compose 默认网络与 Hermes 桥接（CB-100）
+
+`deploy/compose.yaml` 把默认网络固定为 `${CHISABOT_NETWORK_NAME:-openbot-zh_default}`，子网 `${CHISABOT_NETWORK_SUBNET:-172.19.0.0/16}`，网关 `${CHISABOT_NETWORK_GATEWAY:-172.19.0.1}`（和卷一样沿用改名前的名字）。宿主机上的 Hermes 桥接从容器里经这个网关访问，所以下面四处必须一致：
+
+| 位置 | 值 |
+| --- | --- |
+| compose 默认网络网关 | `172.19.0.1`（子网 `172.19.0.0/16`） |
+| `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST` | `172.19.0.1` |
+| `.env` 的 `CHISABOT_HERMES_URL` / `AGENT_ENDPOINT_ALLOWED_HOSTS` | `http://172.19.0.1:4100/ag-ui` / `172.19.0.1:4100` |
+| ufw | `allow from 172.19.0.0/16 to any port 4100` |
+
+改网络名或子网时四处要一起改。更新程序发现正在运行的容器不在 compose 声明的默认网络上（名字或子网不一致）时，会自动用 `--force-recreate`。部署后自检（`post-deploy-smoke.sh` → `hermes-reach.sh`）会从应用容器里按 `CHISABOT_HERMES_URL` 真的连一次 Hermes（任意 HTTP 状态都算连得上），`/api/admin/smoke` 也会报告 `hermes=ok|unreachable|skipped`；连不上就让部署失败并走自动回滚。Hermes 运行时由这次发布激活时，这一步放在激活之后做。
