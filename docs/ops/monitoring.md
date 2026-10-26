@@ -14,8 +14,7 @@ sh /opt/chisabot-updater/request.sh status             # 最近一次更新成�
 bash /opt/chisabot-updater/post-deploy-smoke.sh        # 版本 + capabilities + 聚合健康（硬）
 sh /opt/chisabot-updater/smoke.sh                      # 模型往返自检（不保存）
 docker logs --since 24h chisabot-zh 2>&1 | grep -cE 'bind message supplies|PostgresError'   # 应为 0
-systemctl is-active chisabot-updater chisabot-public-cert-reload.timer \
-                    # 用了出口路由 / 节点防火墙的再加上对应单元
+systemctl is-active chisabot-updater chisabot-public-cert-reload.timer
 docker system df                                       # 镜像 / 构建缓存 / 卷的占用
 ls -t /opt/chisabot-zh/rollback-to-*.sh | head -3       # 并确认对应镜像还在（docker image inspect）
 openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.pem   # 证书到期时间
