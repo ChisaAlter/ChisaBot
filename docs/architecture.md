@@ -29,7 +29,6 @@ ChisaBot 现在实际在跑的结构；上游 ChisaBot 的原始架构（Intelli
      Magpie 模型网关（可选）        宿主机 chisabot-updater（systemd，root）
                                      拉 GitHub main → 构建镜像 → 备份 → 切换 → 健康检查 → 失败回滚
 
- 云端工作区节点（可选，手工部署）：Claude Code CLI + chisabot-node + 同步边车，作为一台「设备」连回应用
 ```
 
 ## 2. 组件
@@ -99,15 +98,6 @@ Kotlin + Jetpack Compose 原生应用（v0.1.13 起，DESIGN §80、[android-nat
 少了这一步，机器人 `npm i -g` 成功、下一条命令 `command not found`，它就把装好了读成装失败（2026-10-19 在测试机上实测）。
 此前前缀还是 root 拥有的 `/usr/local`，机器人每次 `npm i -g` 都在一两秒内 EACCES 失败。
 
-### 2.8 云端工作区节点（`deploy/cloud-node/`、`server/src/cloud-cc/`）
-
-手工部署的容器（非 root、只读根文件系统、没有 docker.sock、不发布端口、防火墙只放公网），里面是 Claude Code CLI + chisabot-node，
-配对后就是一台特殊的设备。管理员在 设置 → 云端工作区 用自己的 Claude 订阅登录（「在云端完成登录」：节点里的浏览器）、可设 Claude 上游代理
-（sing-box 转换节点链接）；左栏「机器人｜Claude Code」切换到 Claude Code 会话；工作区可以来自草稿、GitHub 克隆，或 PC 上的文件夹
-（同步边车 `cloudnode-sync`：节点网络命名空间里的 sshd + MIT 版 mutagen-agent，经设备隧道，不开新端口）。
-**节点程序只在容器启动时下载**：改了 `pc/src/cloud-cc` 的部署之后要重启节点容器。详见 [cloud-claude-code.md](cloud-claude-code.md)、
-[ADR-0014](adr/0014-cloud-claude-code.md)。
-
 ## 3. 功能 → 代码 → 数据
 
 ChisaBot 自己的表大多在服务启动时 `CREATE TABLE IF NOT EXISTS`（不走迁移，回滚到旧镜像时旧代码直接忽略它们）；
@@ -126,7 +116,6 @@ ChisaBot 自己的表大多在服务启动时 `CREATE TABLE IF NOT EXISTS`（不
 | 图片宽高预留 | §83.2 | — | `server/src/image-dims/` | `chisabot_image_dims` |
 | 链接卡 | §48 | — | `server/src/link-preview/`、`app/src/lib/rich-previews/` | `chisabot_link_previews`、`chisabot_link_preview_assets` |
 | 设备 / PC 节点 · 扫码绑定 | §16、§33、§45 | [pc-node.md](pc-node.md) | `server/src/devices/`、`pc/` | `devices`、`device_audit_events`（迁移 0054；`device_bot_access` 已不用） |
-| 云端 Claude Code（云端工作区节点、Claude 登录、Claude Code 标签页） | §73 · ADR-0014 | [cloud-claude-code.md](cloud-claude-code.md) | `server/src/cloud-cc/`、`pc/src/cloud-cc/`、`deploy/cloud-node/`、`app/src/routes/_authed/_app/cc/`、`app/src/components/cloud-cc/` | `chisabot_cloud_workspaces`、`chisabot_cc_*` |
 | 新建机器人 · 资料页 | §46、§47、§81 | [coworkers.md](coworkers.md) | `server/src/agents/` | 上游 agents 表（迁移 0058 一律私有） |
 | 机器人头像 | §81 | [bot-avatars.md](bot-avatars.md) | `server/src/bot-avatars/` | `chisabot_bot_avatars` |
 | 确认卡片 · 权限与审批 · 每个机器人的权限 | §58、§97 | [confirmations.md](confirmations.md)、[settings-ia.md](settings-ia.md) | `server/src/confirmations/` | `chisabot_confirm_prefs/_rules/_requests`、`chisabot_bot_permissions` |

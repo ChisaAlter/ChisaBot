@@ -161,9 +161,9 @@ test("接线：聊天路由自己不画东西，外壳只有一个，设置 / �
   }
   const shell = src("components/layout/authed-shell.tsx");
   expect(shell).toContain("<KeepAliveStage");
-  // 右栏在设置里藏起来，不卸载；data-mode 不随设置变（否则回聊天时主区淡入重播）。
+  // 右栏在设置里藏起来，不卸载。左栏没有模式切换了（CB-099），外壳不再带 mode。
   expect(shell).toContain("rightHidden=");
-  expect(shell).toContain("mode={switched ? mode : undefined}");
+  expect(shell).not.toContain("mode=");
   // 藏着的聊天不改地址、不标已读、不登记左栏「⋯」。
   const page = src("components/channels/channel-page.tsx");
   expect(page).toContain("if (!visibleRef.current) return;");

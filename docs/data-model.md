@@ -54,7 +54,9 @@ ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `chisabot`）�
 
 设备本身在上游表 `devices`（迁移 0054；开机加列 `full_access_until`）和 `device_audit_events`；`device_bot_access` 已不用（设备属于账号）。
 
-### 云端 Claude Code
+### 云端 Claude Code（已删除，CB-099，2026-10-26）
+
+功能代码已删除，下面这些表**没有 drop**（`CREATE TABLE IF NOT EXISTS` 也不会再执行），留着旧数据，以后可以手工清理。
 
 | 表 | 用途 | 代码 | DESIGN |
 |---|---|---|---|

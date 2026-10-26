@@ -1,5 +1,4 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
-import { useRef, useState } from "react";
 import { KeepAliveStage } from "@/components/layout/keep-alive";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
@@ -7,7 +6,6 @@ import { LeftRail } from "@/components/layout/left-rail";
 import { SelfHostBanner } from "@/components/layout/self-host-banner";
 import { PanelRail } from "@/components/panels/panel-rail";
 import { SettingsSidebar } from "@/components/settings/settings-sidebar";
-import { type LeftMode, modeOfPath } from "@/lib/left-mode";
 import { CHANNEL_ROUTE_ID, ChannelPage } from "@/components/channels/channel-page";
 import { useLanding } from "@/lib/agents/landing";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
@@ -31,39 +29,26 @@ export function AuthedShell() {
 function ShellFrame({ pathname }: { pathname: string }) {
   useChannelEvents();
   const scope = scopeOfPath(pathname);
-  const mode = modeOfPath(pathname);
-  const switched = useModeSwitched(scope === "app" ? mode : null);
   const sidebar =
     scope === "settings" ? (
       <SettingsSidebar className="glass-sidebar-container" />
     ) : scope === "admin" ? (
       <AdminSidebar className="glass-sidebar-container" />
     ) : (
-      <LeftRail className="glass-sidebar-container" mode={mode} />
+      <LeftRail className="glass-sidebar-container" />
     );
   return (
     <GlassShell
       banner={scope === "app" ? <SelfHostBanner /> : undefined}
-      // 设置 / 管理里不改 data-mode：改了再改回来，主区的淡入动画会在回聊天时重播一次。
-      mode={switched ? mode : undefined}
-      // 右栏面板卡只属于机器人；在设置 / 管理 / Claude Code 里藏起来而不是卸载，回来不重载。
+      // 右栏面板卡只属于机器人；在设置 / 管理里藏起来而不是卸载，回来不重载。
       right={<PanelRail />}
-      rightHidden={!(scope === "app" && mode === "bots")}
+      rightHidden={scope !== "app"}
       scope={scope}
       sidebar={sidebar}
     >
       <ChatStage pathname={pathname} />
     </GlassShell>
   );
-}
-
-/** 第一次「机器人 ↔ Claude Code」切换之后才给主区加淡入（打开应用时不闪一下，DESIGN.md §84）。 */
-function useModeSwitched(mode: LeftMode | null) {
-  const first = useRef(mode);
-  const [switched, setSwitched] = useState(false);
-  if (first.current === null && mode !== null) first.current = mode;
-  if (!switched && mode !== null && first.current !== null && mode !== first.current) setSwitched(true);
-  return switched;
 }
 
 type ChatAddress = { channelId: string; settings?: boolean; watch?: boolean };

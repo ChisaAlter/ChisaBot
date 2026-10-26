@@ -1,8 +1,22 @@
 # ADR-0014：云端工作区 + Claude Code + 电脑同步
 
-- 状态：已采纳
+- 状态：已作废（2026-10-26，CB-099）
 - 日期：2026-10-15
-- 相关：[docs/cloud-claude-code.md](../cloud-claude-code.md)、DESIGN.md §73、BACKLOG CB-061…CB-065、ADR-0001（左栏只有机器人，本 ADR 修订）、ADR-0003（云端 agent + 设备节点）、ADR-0010（本地 agent）、ADR-0013（只有一套聊天）
+- 相关：docs/cloud-claude-code.md（已删除）、DESIGN.md §73、BACKLOG CB-061…CB-065、ADR-0001（左栏只有机器人，本 ADR 修订）、ADR-0003（云端 agent + 设备节点）、ADR-0010（本地 agent）、ADR-0013（只有一套聊天）
+
+## 作废说明（2026-10-26，CB-099）
+
+整个「Claude Code 工作区」功能已经从产品里删掉：`/cc` 视图、左栏的「机器人｜Claude Code」切换、设置 → 云端工作区、
+云端工作区节点（`deploy/cloud-node/`）、电脑文件夹同步（server `cloud-cc/sync.ts`、`pc/src/sync`、`/agent/sync*`），以及
+Claude 上游代理（`shared/proxy-links.ts`）。
+
+原因：这个功能维护成本高（单独的节点容器、同步边车、Mutagen 组件、Claude 登录和代理），但用的人很少；它和产品主线
+（机器人 + 本地 agent）也是两套界面。删掉以后左栏回到 ADR-0001：只有机器人列表。
+
+保留：本地 agent（ADR-0010）的 `claude` 类型、`pc/src/agent-runtime`，以及规划模型用的 `CLAUDE_CODE_OAUTH_TOKEN`，这些都不属于本 ADR。
+数据库里的 `chisabot_cloud_workspaces` 和 `chisabot_cc_*` 表没有 drop，只是不再使用（见 CB-099 PR 说明）。
+
+下面是原来的决定，保留作记录。
 
 ## 背景
 

@@ -45,7 +45,7 @@ function submits(node: ts.JsxOpeningLikeElement): boolean {
   const type = attribute(node, "type")?.initializer;
   if (type && ts.isJsxExpression(type) && type.expression) {
     /*
-     * `type={stopping ? "button" : "submit"}` 是一个在某个状态里确实提交表单的控件（Claude Code 的发送键：
+     * `type={stopping ? "button" : "submit"}` 是一个在某个状态里确实提交表单的控件（例如发送键：
      * 正在回答时是停止，别的时侯是提交）。表达式里出现 `"submit"` 就算它能提交；认不出来的表达式照旧当
      * 不能提交 —— 宁可多报一个，也不放过一个真死掉的按钮。
      */

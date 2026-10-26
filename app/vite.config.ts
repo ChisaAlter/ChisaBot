@@ -171,10 +171,6 @@ export function selectChisaBotManualChunk(id: string): string | undefined {
   if (routePath.startsWith("_authed/settings/")) {
     return "route-settings";
   }
-  // Claude Code 视图挂在 `_app` 下（同一个外壳，DESIGN.md §84），但分包仍然单独一块。
-  if (routePath.startsWith("_authed/_app/cc/")) {
-    return "route-cc";
-  }
   if (
     routePath.startsWith("_authed/_app/") ||
     routePath === "_authed/onboarding.tsx"
