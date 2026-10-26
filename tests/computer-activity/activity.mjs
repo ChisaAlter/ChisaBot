@@ -167,7 +167,50 @@ try {
       const jumpOffenders = await overflow(jumpRun.page);
       assert.equal(jumpOffenders.length, 0, `${label}: overflow after jump ${JSON.stringify(jumpOffenders)}`);
       const historyAfterJump = await jumpRun.page.evaluate(() => history.length);
+      const drawerState = (page) => page.evaluate(() => ({ path: location.pathname, sheet: Boolean(document.querySelector("#chisabot-panel-sheet")) }));
+      let jumpBack = null;
+      if (narrow(size[0])) {
+        await jumpRun.page.goBack();
+        await jumpRun.page.waitForTimeout(800);
+        jumpBack = await drawerState(jumpRun.page);
+      }
       await jumpRun.context.close();
+
+      // 窄屏：跳转打开抽屉 = 手动点「打开面板」——history 增量一样（只压打开抽屉的那一个 marker），按一次返回的结果也一样。
+      if (narrow(size[0])) {
+        seed("history");
+        const manual = await open(mode, size, { watch: false });
+        const manualBefore = await manual.page.evaluate(() => history.length);
+        await manual.page.getByRole("button", { name: "打开面板" }).click();
+        await manual.page.locator("#chisabot-panel-sheet").waitFor({ timeout: 10_000 });
+        const manualDelta = (await manual.page.evaluate(() => history.length)) - manualBefore;
+        assert(manualDelta <= 1, `${label}: manual drawer open pushes at most one marker (${manualDelta})`);
+        assert.equal(historyAfterJump - historyBefore, manualDelta, `${label}: jump adds the same history as opening the drawer by hand`);
+
+        // 抽屉开着（停在「面板」）时跳转：切到计算机 / 活动，history 不变。
+        const openBefore = await manual.page.evaluate(() => history.length);
+        // 抽屉盖着对话，用 DOM click 触发聊天里那颗按钮（同一个 onClick → requestActivityJump）。
+        await manual.page.evaluate(() => document.querySelector('[data-jump-activity="cb101-read-call"]')?.click());
+        await manual.page.locator('.computer-mobile-tab[data-tab="activity"][aria-selected="true"]').waitFor({ timeout: 15_000 });
+        assert.equal(await manual.page.evaluate(() => history.length), openBefore, `${label}: jump with the drawer open leaves history alone`);
+        // 再在「画面」上跳一次：只切标签，history 还是不变。
+        await manual.page.locator('.computer-mobile-tab[data-tab="screen"]').click();
+        // 抽屉盖着对话，用 DOM click 触发聊天里那颗按钮（同一个 onClick → requestActivityJump）。
+        await manual.page.evaluate(() => document.querySelector('[data-jump-activity="cb101-read-call"]')?.click());
+        await manual.page.locator('.computer-mobile-tab[data-tab="activity"][aria-selected="true"]').waitFor({ timeout: 15_000 });
+        assert.equal(await manual.page.evaluate(() => history.length), openBefore, `${label}: jump on 画面 leaves history alone`);
+        await manual.context.close();
+
+        // 一次返回：跳转打开的和手动打开的落到同一个状态（#315 合入后两者都是「抽屉关上、还在对话里」）。
+        seed("history");
+        const manualBack = await open(mode, size, { watch: false });
+        await manualBack.page.getByRole("button", { name: "打开面板" }).click();
+        await manualBack.page.locator("#chisabot-panel-sheet").waitFor({ timeout: 10_000 });
+        await manualBack.page.goBack();
+        await manualBack.page.waitForTimeout(800);
+        assert.deepEqual(jumpBack, await drawerState(manualBack.page), `${label}: one back after jump == one back after manual open`);
+        await manualBack.context.close();
+      }
 
       // 窄屏「画面 | 活动」：默认画面；在画面时来了新活动 → 活动标签亮未读点；切过去清掉；切换不加 history。
       let tabErrors = [];
@@ -201,8 +244,6 @@ try {
       }
 
       const errors = [...pageErrors, ...liveRun.pageErrors, ...jumpRun.pageErrors, ...tabErrors];
-      void historyBefore;
-      void historyAfterJump;
       results.push({ label, overflow: offenders.length + liveOffenders.length, offenders: [...offenders, ...liveOffenders], pageErrors: errors.length, errors, scrollJumpPx: jump, pass: true });
       assert.equal(offenders.length + liveOffenders.length, 0, `${label}: overflow ${JSON.stringify([...offenders, ...liveOffenders])}`);
       assert.equal(errors.length, 0, `${label}: page errors ${errors.join(" | ")}`);

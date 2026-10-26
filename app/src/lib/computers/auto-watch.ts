@@ -1,6 +1,8 @@
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { JUMP_TO_ACTIVITY } from "@/components/computer/activity-jump";
 import { onComputerActivity } from "@/lib/copilot/computer-activity";
+import { showPanels } from "@/lib/panels/rail-open";
 
 /**
  * 右栏「面板 | 计算机」的自动切换（DESIGN.md §23）。
@@ -36,8 +38,9 @@ export function useComputerAutoWatch(
   /** 下一次 watching 变成 true 是我们自己设的。 */
   const opening = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const latest = useRef({ watching, setWatching });
-  latest.current = { watching, setWatching };
+  const navigate = useNavigate();
+  const latest = useRef({ watching, setWatching, navigate });
+  latest.current = { watching, setWatching, navigate };
 
   // 打开 / 关闭的来源：我们设的是自动，其余都是用户手动。
   const previous = useRef(watching);
@@ -77,9 +80,7 @@ export function useComputerAutoWatch(
       }, RETURN_AFTER_MS);
     });
     // CB-101：聊天里点「在活动里看」= 用户手动打开计算机（不是自动打开，之后不会自动关掉）。
-    const onJump = () => {
-      if (!latest.current.watching) latest.current.setWatching(true);
-    };
+    const onJump = () => openForActivityJump(latest.current);
     window.addEventListener(JUMP_TO_ACTIVITY, onJump);
     return () => {
       window.removeEventListener(JUMP_TO_ACTIVITY, onJump);
@@ -88,4 +89,28 @@ export function useComputerAutoWatch(
       clearTimeout(timer.current);
     };
   }, [agentId]);
+}
+
+/**
+ * 「在活动里看」怎么把计算机亮出来（CB-101）：**不多压 history**。
+ *
+ * - 右栏 / 抽屉用 {@link showPanels} 打开：和人点「打开面板」走同一个入口（窄窗口 = `setPanelSheetOpen(true)`）。
+ *   返回栈（#315 的 overlay-back）挂在这个入口上，所以跳转压的 marker 和手动打开完全一样，只有一个，
+ *   按一次返回就关掉抽屉。#315 重做时如果换了打开抽屉的入口，这里跟着换。
+ * - 切到「计算机」标签用 replace 改地址里的 `watch`：抽屉已经开着时，切标签不写 history。
+ * - 已经在「计算机」上：什么都不做，移动端由 ComputerPanel 切到「活动」（也不走路由）。
+ */
+export function openForActivityJump(current: {
+  watching: boolean;
+  navigate: ReturnType<typeof useNavigate>;
+}): void {
+  showPanels();
+  if (current.watching) return;
+  void current.navigate({
+    search: ((previous: Record<string, unknown>) => ({
+      ...previous,
+      watch: true,
+    })) as never,
+    replace: true,
+  });
 }
