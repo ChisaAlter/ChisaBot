@@ -32,8 +32,13 @@ function dismiss(id: number) {
 
 function push(kind: ToastKind, text: string, duration = kind === "error" ? 5200 : 2600, action?: ToastAction) {
   const id = nextId++;
-  // Same sentence twice in a row is one toast, not a stack of identical ones.
-  items = [...items.filter((item) => item.text !== text), { id, kind, text, action }].slice(-4);
+  // Same sentence twice in a row is one toast, not a stack of identical ones. 带按钮的提示（撤销等）
+  // 每条各自对应一次操作，不参与文案去重，也不会被挤掉——否则还在倒计时的删除就没法撤销了。
+  const kept = action ? items : items.filter((item) => item.action || item.text !== text);
+  const next = [...kept, { id, kind, text, action }];
+  const plain = next.filter((item) => !item.action);
+  const dropPlain = new Set(plain.slice(0, Math.max(0, plain.length - 4)).map((item) => item.id));
+  items = next.filter((item) => !dropPlain.has(item.id));
   emit();
   window.setTimeout(() => dismiss(id), duration);
   return id;

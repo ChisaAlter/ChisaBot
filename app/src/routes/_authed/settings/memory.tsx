@@ -1,7 +1,7 @@
 import { IconBook, IconPlus, IconSparkles, IconWorld } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { MEMORY_KIND_LABELS, MEMORY_KINDS, type MemoryKind, type MemoryNoteView } from "../../../../../shared/memory-notes";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import {
@@ -12,6 +12,7 @@ import {
   MemoryBots,
   NoteDialog,
   NoteRow,
+  pendingMemoryDeletes,
   SearchBox,
   visibleNotes,
 } from "@/components/memory/memory-notes";
@@ -40,7 +41,7 @@ function MemoryPage() {
   const bots = useQuery(agentListQueryOptions());
   const [filter, setFilter] = useState<MemoryKind | "all">("all");
   const [query, setQuery] = useState("");
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
+  const hidden = useSyncExternalStore(pendingMemoryDeletes.subscribe, pendingMemoryDeletes.snapshot, pendingMemoryDeletes.snapshot);
   const [expanded, setExpanded] = useState<ReadonlySet<MemoryKind>>(new Set());
   const [dialog, setDialog] = useState<{
     open: boolean;
@@ -57,7 +58,6 @@ function MemoryPage() {
   const shown = notes.filter((note) => (filter === "all" || note.kind === filter) && matches(note, query));
   const disabledBots = useMemo(() => new Set((list.data?.bots ?? []).filter((bot) => !bot.enabled).map((bot) => bot.agentId)), [list.data]);
   const refresh = () => queryClient.invalidateQueries({ queryKey: memoryNoteKeys.all });
-  const hide = (ids: string[] | null) => setHidden(ids ? new Set(ids) : new Set());
   const groups = MEMORY_KINDS.filter((kind) => filter === "all" || kind === filter)
     .map((kind) => ({ kind, notes: shown.filter((note) => note.kind === kind) }))
     .filter((group) => group.notes.length);
@@ -194,7 +194,7 @@ function MemoryPage() {
                 <span>{`找到 ${shown.length} 条和「${query.trim()}」有关的记忆`}</span>
                 <Button
                   onClick={async () => {
-                    if (await confirmBulkDelete(shown.length, query.trim())) await deleteWithUndo(shown, refresh, hide);
+                    if (await confirmBulkDelete(shown.length, query.trim())) deleteWithUndo(shown, refresh);
                   }}
                   size="sm"
                   variant="outline"
@@ -216,7 +216,7 @@ function MemoryPage() {
                           key={note.id}
                           note={note}
                           onDelete={async () => {
-                            if (await confirmNoteDelete(note)) void deleteWithUndo([note], refresh, hide);
+                            if (await confirmNoteDelete(note)) deleteWithUndo([note], refresh);
                           }}
                           onEdit={() => setDialog({ open: true, note })}
                         />
