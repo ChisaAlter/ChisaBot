@@ -177,6 +177,7 @@ function MemoryPage() {
                 {kindOptions.map((kind) => {
                   const count = kind === "all" ? notes.length : (counts.get(kind) ?? 0);
                   return (
+                    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
                     <button aria-checked={filter === kind} className="sg-segmented-item" key={kind} onClick={() => setFilter(kind)} role="radio" tabIndex={filterKeys.itemTabIndex(kind)} type="button">
                       <T>{kind === "all" ? "全部" : MEMORY_KIND_LABELS[kind]}</T>
                       <span className="mem-count"><T>{count}</T></span>

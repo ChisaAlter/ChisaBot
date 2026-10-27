@@ -202,11 +202,6 @@ function VaultPage() {
 function SecretDialog({ open, secret, onOpenChange }: { open: boolean; secret: VaultSecretView | null; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({ name: "", label: "", domains: "", value: "" });
-  useEffect(() => {
-    if (!open) return;
-    setForm(secret ? { name: secret.name, label: secret.label, domains: secret.domains.join(", "), value: "" } : { name: "", label: "", domains: "", value: "" });
-    save.reset();
-  }, [open, secret]);
   const domains = form.domains
     .split(/[\s,，、]+/)
     .map((d) => d.trim().toLowerCase())
@@ -222,6 +217,12 @@ function SecretDialog({ open, secret, onOpenChange }: { open: boolean; secret: V
     },
     { errorToast: (error) => error.message },
   );
+  const resetSave = save.reset;
+  useEffect(() => {
+    if (!open) return;
+    setForm(secret ? { name: secret.name, label: secret.label, domains: secret.domains.join(", "), value: "" } : { name: "", label: "", domains: "", value: "" });
+    resetSave();
+  }, [open, secret, resetSave]);
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-lg">

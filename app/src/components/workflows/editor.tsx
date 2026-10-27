@@ -96,6 +96,7 @@ export function SimpleSelect({
 
 function Field({ label, hint, children, className }: { label: string; hint?: string; children: React.ReactNode; className?: string }) {
   return (
+    // biome-ignore lint/a11y/noLabelWithoutControl: label 包着调用方传入的控件（children）
     <label className={cn("wf-field", className)}>
       <span className="wf-label">{label}</span>
       {children}
@@ -179,6 +180,7 @@ function ToolRuleSeg({ group, current, onPick, disabled }: { group: WorkflowTool
   return (
     <div className="wf-seg" {...keys.groupProps} ref={keys.groupRef} role="radiogroup" aria-label={TOOL_GROUP_INFO[group].label}>
       {RULE_VALUES.map((option) => (
+        // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
         <button
           aria-checked={current === option}
           className={cn("wf-seg-item", current === option && "is-on", option === "deny" && "is-deny", option === "allow" && "is-allow")}
@@ -230,6 +232,7 @@ export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowD
           <Field className="wf-span-2" label="图标">
             <div className="wf-icons" {...iconKeys.groupProps} ref={iconKeys.groupRef} role="radiogroup" aria-label="图标">
               {ICONS.map((icon) => (
+                // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
                 <button
                   aria-checked={def.icon === icon}
                   className={cn("wf-icon-pick", def.icon === icon && "is-on")}
@@ -355,6 +358,7 @@ export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowD
         <CardBody className="wf-list">
           {def.inputs.length === 0 ? <p className="wf-muted">{"没有参数：运行时直接开始。"}</p> : null}
           {def.inputs.map((input, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
             <div className="wf-item" key={`${input.key}-${index}`}>
               <div className="wf-item-h">
                 <span className="wf-item-no">{index + 1}</span>
@@ -430,6 +434,7 @@ export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowD
               count={def.steps.length}
               def={def}
               index={index}
+              // biome-ignore lint/suspicious/noArrayIndexKey: 步骤顺序就是身份：key 里带了 step.id，下标只用来区分重复的 id
               key={`${step.id}-${index}`}
               onChange={(patch) => setStep(index, patch)}
               onDuplicate={() => {
@@ -473,6 +478,7 @@ export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowD
         <CardBody className="wf-list">
           {(def.skills ?? []).length === 0 ? <p className="wf-muted">{"没有内置技能。"}</p> : null}
           {(def.skills ?? []).map((skill, index, list) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
             <div className="wf-item" key={`${skill.slug}-${index}`}>
               <div className="wf-item-h">
                 <code className="wf-key">{"/"}</code>
@@ -588,7 +594,8 @@ function StepEditor({
         <Textarea className="min-h-28 text-[13px]" disabled={readOnly} maxLength={8000} onChange={(e) => onChange({ prompt: e.target.value })} placeholder="这一步要做什么、输出什么" value={step.prompt} />
       </Field>
       {!readOnly && refs.length ? (
-        <div className="wf-refs" aria-label="插入引用">
+        // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
+        <div className="wf-refs" aria-label="插入引用" role="group">
           <IconBraces className="size-3.5 opacity-60" />
           {refs.map((ref) => (
             <button className="wf-ref" key={ref.token} onClick={() => onChange({ prompt: `${step.prompt}${step.prompt && !step.prompt.endsWith(" ") ? " " : ""}${ref.token}` })} title={ref.token} type="button">

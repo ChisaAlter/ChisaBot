@@ -229,6 +229,7 @@ export function useCcSessionStream(sessionId: string, initial: SessionDetail | u
     }
   }, [initial, sessionId]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在「有没有初始数据」变化时重建事件流；initial 对象本身变了不重连
   useEffect(() => {
     if (!initial) return;
     let source: EventSource | null = null;

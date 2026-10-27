@@ -446,6 +446,7 @@ export function ChannelChat({
   }
   /** 打开时那次读存储读到了：接入之后不用为「最后一句是机器人说的」再读一遍。 */
   const mountReadOk = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在挂载时读一次；cached 是 useState 初始化后不再变的常量，earlyRead 是 ref
   useEffect(() => {
     const read = earlyRead.current;
     if (!read) return;

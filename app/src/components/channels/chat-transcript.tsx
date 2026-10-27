@@ -339,6 +339,7 @@ function Thinking() {
  */
 function PauseDots({ watch }: { watch: string }) {
   const [shown, setShown] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     setShown(false);
     const timer = window.setTimeout(() => setShown(true), 900);
@@ -746,6 +747,7 @@ function SettleAtEnd({
   /** §93.3：一轮结束后收掉底下留的空（由下面的 effect 填上；没挂上时什么都不做）。 */
   const releaseRef = useRef<(() => boolean) | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 滚动位置状态机：状态放在 ref 里，只在 hydrating / 最新用户消息等输入变化时重跑；ref 与 setter 不用列
   useLayoutEffect(() => {
     const s = state.current;
     s.hydrating = hydrating;
@@ -908,14 +910,15 @@ function SettleAtEnd({
   useLayoutEffect(() => () => finalWrite.current?.(), []);
 
   // 回来时在底部、底下有留白：第一帧之前就把留白放回去（§88.3）。没在恢复、也没在回答：不放（§93.3）。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, on open.
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!memo?.atBottom || memo.spacer <= 0 || !element) return;
     if (!hydrating && !busy) return;
     setSlack(Math.min(memo.spacer, Math.max(0, element.clientHeight - 96)));
-    // biome-ignore lint/correctness/useExhaustiveDependencies: once, on open.
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 挂载时建立观察器；里面读的都是 ref，不随渲染变化
   useEffect(() => {
     const element = viewport.current;
     const content = element?.querySelector<HTMLElement>(
@@ -1407,7 +1410,6 @@ function SettleAtEnd({
       element.removeEventListener("pointerdown", onPointer);
       element.removeEventListener("scroll", onScroll);
     };
-    // biome-ignore lint/correctness/useExhaustiveDependencies: slack / state are refs.
   }, [scrollToEnd, scrollToMessage, viewport, scrollKey, reduceMotion]);
 
   return null;
@@ -2047,6 +2049,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
           {isUser ? (
             editable && messageId ? (
               <div className="chat-msg-actions" data-align="end">
+                {/* biome-ignore lint/a11y/useValidAriaRole: role 是组件自己的 prop（消息作者），不是 ARIA role */}
                 <QuoteReplyAction messageId={messageId} role="user" text={said} />
                 <EditAction onEdit={() => setEditing(true)} />
               </div>
@@ -2054,6 +2057,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
           ) : !text.trim() ? null : tone === "lead" ? (
             canRegenerate ? (
               <div className="chat-msg-actions">
+                {/* biome-ignore lint/a11y/useValidAriaRole: role 是组件自己的 prop（消息作者），不是 ARIA role */}
                 <QuoteReplyAction messageId={messageId} role="assistant" text={text} />
                 <RegenerateAction />
               </div>
@@ -2126,6 +2130,7 @@ function CopyMessage({
           ))}
         </span>
       </button>
+      {/* biome-ignore lint/a11y/useValidAriaRole: role 是组件自己的 prop（消息作者），不是 ARIA role */}
       <QuoteReplyAction messageId={messageId} role="assistant" text={text} />
       {extra}
     </div>

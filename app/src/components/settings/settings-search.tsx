@@ -23,6 +23,7 @@ export function useSettingsSearch(viewer: SettingsViewer) {
   const navigate = useNavigate();
   const sidebar = useOptionalSidebar();
   const hits = useMemo(() => searchSettings(query, viewer), [query, viewer]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => setActive(0), [query]);
 
   useEffect(() => {
@@ -63,6 +64,7 @@ export type SettingsSearch = ReturnType<typeof useSettingsSearch>;
 export function SettingsSearchBox({ search }: { search: SettingsSearch }) {
   const { query, setQuery, hits, active, setActive, inputRef, go } = search;
   return (
+    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
     <div className="settings-search" role="search">
       <IconSearch aria-hidden className="settings-search-icon" />
       <input
@@ -153,6 +155,7 @@ export function SettingsSearchResults({ search }: { search: SettingsSearch }) {
 export function SettingsFind() {
   const hash = useRouterState({ select: (state) => state.location.hash });
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     if (!hash) return;
     const raw = decodeURIComponent(hash.replace(/^#/, ""));

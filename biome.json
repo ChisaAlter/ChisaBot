@@ -19,7 +19,24 @@
     "indentStyle": "space"
   },
   "linter": {
-    "enabled": true
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "a11y": {
+        "noLabelWithoutControl": {
+          "level": "error",
+          "options": {
+            "inputComponents": [
+              "Input",
+              "Textarea",
+              "Select",
+              "Switch",
+              "Checkbox"
+            ]
+          }
+        }
+      }
+    }
   },
   "css": {
     "parser": {

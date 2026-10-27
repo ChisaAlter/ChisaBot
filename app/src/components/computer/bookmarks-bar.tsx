@@ -418,6 +418,7 @@ function BookmarkManager({ botId, onClose }: { botId: string; onClose: () => voi
               <form className="bm-edit" onSubmit={(event) => void submitEdit(event)}>
                 <input
                   aria-label={"名称"}
+                  // biome-ignore lint/a11y/noAutofocus: 刚打开的就地输入框，用户的下一步就是输入
                   autoFocus
                   className="bm-input"
                   maxLength={80}

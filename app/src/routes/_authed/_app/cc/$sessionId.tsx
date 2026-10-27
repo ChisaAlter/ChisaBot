@@ -105,6 +105,7 @@ function CcSession({ sessionId, detail }: { sessionId: string; detail: SessionDe
 
   // 一轮结束：刷新右栏和左栏。
   const lastDone = stream.messages.filter((m) => m.role === "assistant" && m.status !== "running").length;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     void queryClient.invalidateQueries({ queryKey: ["claude-code", "diff", sessionId] });
     void queryClient.invalidateQueries({ queryKey: ["claude-code", "files", sessionId] });
@@ -423,6 +424,7 @@ function Composer({
     },
     { errorToast: (e) => e.message },
   );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useLayoutEffect(() => {
     const el = area.current;
     if (!el) return;

@@ -110,10 +110,12 @@ export function CcNewWorkspaceDialog({ open, onOpenChange }: { open: boolean; on
         </DialogHeader>
         <DialogBody className="mt-4 overflow-y-auto">
           <div aria-label="来源" className="sg-segmented cc-src-seg" {...srcKeys.groupProps} ref={srcKeys.groupRef} role="radiogroup">
+            {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
             <button aria-checked={src === "github"} className="sg-segmented-item" data-testid="cc-src-github" disabled={busy} onClick={() => setSrc("github")} role="radio" tabIndex={srcKeys.itemTabIndex("github")} type="button">
               <IconBrandGithub className="size-4" />
               {"GitHub"}
             </button>
+            {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
             <button
               aria-checked={src === "local"}
               className="sg-segmented-item"

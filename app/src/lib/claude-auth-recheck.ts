@@ -106,10 +106,10 @@ export function useClaudeAuthRecheck(): { checking: boolean } {
   const checkedAt = d?.claude.checkedAt ?? null;
 
   // 打开页面、节点上下线、登录状态 / 检查时间变化时评估一次（15 秒轮询数据不变时不会重复触发）。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: !!d / online / loggedIn / checkedAt 是刻意选的触发条件，15 秒轮询数据不变时不重复触发
   useEffect(() => {
     if (!d) return;
     maybeRecheckClaudeAuth(queryClient);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryClient, !!d, online, loggedIn, checkedAt]);
 
   // 窗口重新获得焦点 / 切回标签页。

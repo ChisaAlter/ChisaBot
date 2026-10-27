@@ -111,6 +111,7 @@ export function ConfirmCardView({
           {details.length ? (
             <dl className="cf-details">
               {details.map((detail, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
                 <div className="cf-row" key={`${detail.label}-${index}`}>
                   <dt>{detail.label}</dt>
                   {detail.diff ? (

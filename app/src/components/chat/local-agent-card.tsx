@@ -79,6 +79,7 @@ function useNow(active: boolean) {
 function OutputLines({ lines }: { lines: LocalAgentLine[] }) {
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useLayoutEffect(() => {
     const el = box.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -95,6 +96,7 @@ function OutputLines({ lines }: { lines: LocalAgentLine[] }) {
     >
       {lines.length ? (
         lines.map((line, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
           <div className={cn("la-line", `is-${line.kind}`)} key={`${line.at}-${index}`}>
             {line.kind === "tool" ? <span className="la-line-mark">{"›"}</span> : null}
             {line.text}
@@ -161,6 +163,7 @@ function ApprovalBar({ task }: { task: LocalAgentTaskView }) {
   const deny = useAsyncAction(() => decideDeviceApproval(task.approvalId!, "deny"), { errorToast: (error) => error.message });
   if (!task.approvalId) return null;
   return (
+    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
     <div className="la-approval" data-testid="local-agent-approval" role="group">
       <IconShieldCheck className="size-4 flex-none" />
       <span className="la-approval-text">{task.approvalSummary || "需要你批准"}</span>

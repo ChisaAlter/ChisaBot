@@ -38,7 +38,7 @@ export function useBrandName() {
 
 export function BrandWordmark({ accent, rest }: { accent: string; rest: string }) {
   return (
-    <span className="brand-mark" aria-label={`${accent}${rest}`}>
+    <span className="brand-mark" aria-label={`${accent}${rest}`} role="img">
       {accent ? (
         <span aria-hidden className="brand-mark-accent">
           {accent}

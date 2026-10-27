@@ -299,11 +299,12 @@ function RenameDialog({ page, onOpenChange }: { page: PageView | null; onOpenCha
     },
     { errorToast: (error) => error.message },
   );
+  const resetSave = save.reset;
   useEffect(() => {
     if (!page) return;
     setForm({ title: page.title, description: page.description ?? "" });
-    save.reset();
-  }, [page]);
+    resetSave();
+  }, [page, resetSave]);
   return (
     <Dialog onOpenChange={onOpenChange} open={Boolean(page)}>
       <DialogContent className="im-dialog max-w-lg">

@@ -72,6 +72,7 @@ function RouteComponent() {
                   { on: false, label: "浅色", Icon: IconSun },
                   { on: true, label: "深色", Icon: IconMoon },
                 ].map(({ on, label, Icon }) => (
+                  // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
                   <button
                     aria-checked={dark === on}
                     className="sg-segmented-item"

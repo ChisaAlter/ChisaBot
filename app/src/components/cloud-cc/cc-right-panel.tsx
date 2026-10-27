@@ -58,6 +58,7 @@ function SubSwitch<T extends string>({ value, options, onChange, label }: { valu
   return (
     <div aria-label={label} className="cc-subseg" {...keys.groupProps} ref={keys.groupRef} role="radiogroup">
       {options.map((o) => (
+        // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
         <button aria-checked={value === o.id} data-testid={`cc-sub-${o.id}`} key={o.id} onClick={() => onChange(o.id)} role="radio" tabIndex={keys.itemTabIndex(o.id)} type="button">
           {o.label}
         </button>
@@ -252,9 +253,11 @@ export function CcRightContent({
   return (
     <div className="cc-rp-body">
       <div aria-label="右栏内容" className="sg-segmented cc-rp-seg" {...tabKeys.groupProps} ref={tabKeys.groupRef} role="radiogroup">
+        {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
         <button aria-checked={tab === "changes"} className="sg-segmented-item" data-testid="cc-tab-changes" onClick={() => onTab("changes")} role="radio" tabIndex={tabKeys.itemTabIndex("changes")} type="button">
           <T>{"改动"}</T>
         </button>
+        {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
         <button aria-checked={tab === "files"} className="sg-segmented-item" data-testid="cc-tab-files" onClick={() => onTab("files")} role="radio" tabIndex={tabKeys.itemTabIndex("files")} type="button">
           <T>{"文件"}</T>
         </button>

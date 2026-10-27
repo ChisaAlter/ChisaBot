@@ -214,6 +214,7 @@ function PrefRow({ pref, onSaved }: { pref: ConfirmPrefView; onSaved: () => Prom
           title={pref.label}
         />
       </div>
+      {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
       <div aria-label={`${pref.label}：先问我还是直接做`} className="ap-seg" role="group">
         {(["ask", "auto"] as const).map((value) => (
           <button

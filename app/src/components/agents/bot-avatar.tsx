@@ -38,6 +38,7 @@ export const BotAvatar = memo(function BotAvatar({
   const roster = useQuery({ ...agentListQueryOptions(), enabled: name === undefined && Boolean(agentId) && shown.kind !== "pattern" });
   const label = name ?? roster.data?.find((agent) => agent.id === agentId)?.name ?? "";
   return (
+    // biome-ignore lint/a11y/useAriaPropsSupportedByRole: role 是动态表达式，静态分析看不出；运行时一定带有支持 aria-label 的 role
     <span
       aria-hidden={decorative || undefined}
       aria-label={decorative ? undefined : label || undefined}

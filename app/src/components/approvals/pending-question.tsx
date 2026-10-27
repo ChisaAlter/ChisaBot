@@ -132,6 +132,7 @@ export function PendingQuestion({
       </div>
       {question.why ? <p className="chat-question-s">{question.why}</p> : null}
       {options.length > 0 ? (
+        // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
         <div className="chat-question-opts" role="group" aria-label="快捷选项">
           {options.map((opt) => (
             <button

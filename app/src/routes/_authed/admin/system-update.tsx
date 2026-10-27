@@ -698,6 +698,7 @@ function JobCard({
 function JobLog({ lines }: { lines: string[] }) {
   const [node, setNode] = useState<HTMLPreElement | null>(null);
   const last = lines[lines.length - 1];
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     if (!node) return;
     const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
@@ -706,6 +707,7 @@ function JobLog({ lines }: { lines: string[] }) {
   return (
     <pre
       aria-label={"更新日志"}
+      role="log"
       aria-live="polite"
       className="sysupd-log"
       onScroll={(event) => {

@@ -38,6 +38,7 @@ function Segmented<T extends string>({ value, onChange, options, label, testId }
   return (
     <div aria-label={label} className="sg-segmented media-seg" data-testid={testId} {...keys.groupProps} ref={keys.groupRef} role="radiogroup">
       {options.map((option) => (
+        // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
         <button aria-checked={value === option.value} className="sg-segmented-item" key={option.value} onClick={() => onChange(option.value)} role="radio" tabIndex={keys.itemTabIndex(option.value)} type="button">
           <T>{option.label}</T>
         </button>
@@ -129,6 +130,7 @@ export function ImageDefaultCard({ current }: { current: ImageSettingsView }) {
   const [enabled, setEnabled] = useState(current.enabled);
   const [form, setForm] = useState<ImageForm>({ provider: current.provider, baseUrl: current.baseUrl, model: current.model, editModel: current.editModel, apiKey: "" });
   const [probe, setProbe] = useState<Probe>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => setProbe(null), [form.provider, form.baseUrl, form.model, form.apiKey]);
   const valid = validUrl(form.baseUrl) && form.model.trim() !== "";
   const save = useAsyncAction(
@@ -200,6 +202,7 @@ export function ImagePersonalCard({ current, defaults }: { current: PersonalImag
     apiKey: "",
   });
   const [probe, setProbe] = useState<Probe>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => setProbe(null), [form.provider, form.baseUrl, form.model, form.apiKey]);
   const hasKey = form.apiKey.trim() !== "" || current.keySource === "saved";
   const valid = mode === "default" || (validUrl(form.baseUrl) && form.model.trim() !== "" && hasKey);
@@ -290,6 +293,7 @@ const VISION_EXPLAIN = "选了识图模型后，聊天里上传的图片会先�
 
 function useVisionActions(scope: "default" | "personal", mode: string, form: VisionForm, hasKey: boolean, onSave: () => Promise<void>) {
   const [probe, setProbe] = useState<Probe>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => setProbe(null), [form.baseUrl, form.model, form.apiKey]);
   const fieldsOk = validUrl(form.baseUrl) && form.model.trim() !== "" && hasKey;
   const save = useAsyncAction(onSave, { errorToast: (error) => error.message });

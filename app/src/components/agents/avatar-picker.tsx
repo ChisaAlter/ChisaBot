@@ -239,6 +239,7 @@ function AvatarDialogBody({
               ["monogram", "首字"],
             ] as const
           ).map(([id, label]) => (
+            // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
             <button
               aria-checked={tab === id}
               className="sg-segmented-item"
@@ -291,6 +292,7 @@ function AvatarDialogBody({
               {tab === "emoji" ? (
                 <div aria-label={"表情"} className="bot-ava-emojis" {...emojiKeys.groupProps} ref={emojiKeys.groupRef} role="radiogroup">
                   {AVATAR_EMOJIS.map((item) => (
+                    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
                     <button
                       aria-checked={emoji === item}
                       aria-label={item}
@@ -313,6 +315,7 @@ function AvatarDialogBody({
               )}
               <div aria-label={"底色"} className="bot-ava-colors" {...colorKeys.groupProps} ref={colorKeys.groupRef} role="radiogroup">
                 {AVATAR_COLORS.map((item) => (
+                  // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
                   <button
                     aria-checked={color === item}
                     aria-label={COLOR_LABEL[item]}
@@ -478,6 +481,7 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
         onWheel={(event) => zoomTo(zoom * Math.exp(-event.deltaY * 0.0015))}
         role="application"
         style={{ width: RING + PAD * 2, height: RING + PAD * 2 }}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: role=application 的取景环要拿键盘焦点才能响应方向键
         tabIndex={0}
       >
         <img

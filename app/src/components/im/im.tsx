@@ -385,14 +385,7 @@ export function ConnectionDialog({
   const [testResult, setTestResult] = useState<ImTestResult | null>(null);
   const [saved, setSaved] = useState<ImConnectionView | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    setPlatform(connection?.platform ?? initialPlatform ?? null);
-    setTestResult(null);
-    test.reset();
-    setSaved(null);
-    setStepsOpen(!connection);
-  }, [open, connection, initialPlatform]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 机器人列表晚到由下面那个 effect 补默认机器人；这里不依赖 roster，免得列表刷新时覆盖用户正在填的表单
   useEffect(() => {
     if (!open || !info) return;
     setForm(initialForm(info, connection, roster.find((bot) => bot.pinned)?.id ?? roster[0]?.id));
@@ -438,6 +431,15 @@ export function ConnectionDialog({
     },
     { errorToast: false },
   );
+  const resetTest = test.reset;
+  useEffect(() => {
+    if (!open) return;
+    setPlatform(connection?.platform ?? initialPlatform ?? null);
+    setTestResult(null);
+    resetTest();
+    setSaved(null);
+    setStepsOpen(!connection);
+  }, [open, connection, initialPlatform, resetTest]);
 
   const visible = (field: ImField) => !field.showIf || (form?.config[field.showIf.key] ?? "") === field.showIf.equals;
   const reverse = saved ?? (connection?.reversePath ? connection : null);
@@ -618,6 +620,7 @@ export function LogsDialog({ connection, open, onOpenChange }: { connection: ImC
           ) : logs.data.length ? (
             <ol className="im-logs">
               {logs.data.map((entry, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
                 <li className={cn("im-log", `is-${entry.level}`)} key={`${entry.at}-${index}`}>
                   <time dateTime={entry.at}>{new Date(entry.at).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
                   <span>{entry.text}</span>

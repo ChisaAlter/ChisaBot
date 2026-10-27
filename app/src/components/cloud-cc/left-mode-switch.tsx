@@ -88,6 +88,7 @@ export function LeftModeSwitch({ mode }: { mode: LeftMode }) {
       onKeyDown={onKeyDown}
       role="radiogroup"
     >
+      {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
       <button
         aria-checked={mode === "bots"}
         className="sg-segmented-item"
@@ -102,6 +103,7 @@ export function LeftModeSwitch({ mode }: { mode: LeftMode }) {
       >
         <T>{"机器人"}</T>
       </button>
+      {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
       <button
         aria-checked={mode === "cc"}
         className="sg-segmented-item"

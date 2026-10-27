@@ -52,7 +52,6 @@ function ToolGroup({ tools, running }: { tools: ToolPart[]; running: boolean }) 
     return (
       <div className="cc-tools">
         {tools.map((t, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: 工具行按顺序追加，不重排
           <ToolLine key={t.id ?? i} tool={t} />
         ))}
       </div>
@@ -68,7 +67,6 @@ function ToolGroup({ tools, running }: { tools: ToolPart[]; running: boolean }) 
       {open ? (
         <div className="cc-tools-list">
           {tools.map((t, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: 同上
             <ToolLine key={t.id ?? i} tool={t} />
           ))}
         </div>

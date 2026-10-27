@@ -61,6 +61,7 @@ export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
   const desktop = useDesktopWindow();
   const drawerLabel = scope === "app" ? "机器人列表" : scope === "settings" ? "设置分区" : "管理导航";
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上
     <header
       className="glass-topbar"
       data-scope={scope}
@@ -122,6 +123,7 @@ export function WindowControls({
 }) {
   const compactLabel = compact ? "恢复窗口" : "小窗模式";
   return (
+    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
     <div aria-label={"窗口"} className="win-ctrls" data-count={canCompact(bridge) ? 4 : 3} role="group">
       {canCompact(bridge) ? (
         <button

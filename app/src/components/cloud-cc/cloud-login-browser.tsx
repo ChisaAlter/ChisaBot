@@ -166,7 +166,6 @@ export function CloudLoginBrowser({ onDone, onCancel, phone }: { onDone: (claude
       </div>
       <div className="cc-rb-screen" style={login ? { aspectRatio: `${login.width} / ${login.height}` } : undefined}>
         {frame ? (
-          // biome-ignore lint/a11y/noNoninteractiveElementInteractions: 远程浏览器画面，点击 / 键盘都转发过去
           <img
             alt="云端浏览器画面"
             className={cn("cc-rb-img", focused && "is-focused")}

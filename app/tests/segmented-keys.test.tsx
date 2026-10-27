@@ -16,6 +16,7 @@ function Harness({ initial }: { initial: string }) {
   return (
     <div aria-label="测试" role="radiogroup" {...keys.groupProps} ref={keys.groupRef}>
       {VALUES.map((item) => (
+        // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
         <button
           aria-checked={value === item}
           key={item}

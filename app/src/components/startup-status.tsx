@@ -35,6 +35,7 @@ function Bar({ w, h = 12 }: { w: string; h?: number }) {
 export function AppSkeleton({ failed = false }: { failed?: boolean }) {
   const slow = useSlow(SLOW_HINT_MS);
   return (
+    // biome-ignore lint/a11y/useAriaPropsSupportedByRole: role 是动态表达式，静态分析看不出；运行时一定带有支持 aria-label 的 role
     <div aria-busy={!failed} aria-label="正在加载 ChisaBot" className={failed ? "sky-skel is-failed" : "sky-skel"} role={failed ? "alert" : "status"}>
       <div className="sky-skel-top">
         <span className="sky-skel-dot sky-skel-block" />

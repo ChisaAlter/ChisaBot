@@ -261,6 +261,7 @@ export function PageSkeleton({ rows = 3, tall = false }: { rows?: number; tall?:
       role="status"
     >
       {Array.from({ length: rows }, (_, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
         <div className="page-skeleton-row" key={index}>
           {tall ? null : <span className="sky-skel-glass page-skeleton-dot" />}
           <span className="flex min-w-0 flex-1 flex-col gap-2">

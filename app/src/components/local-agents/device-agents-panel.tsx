@@ -155,6 +155,7 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
           {AGENT_PROFILES.map((profile) => {
             const Icon = PROFILE_ICON[profile];
             return (
+              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
               <button
                 aria-checked={activeProfile === profile}
                 className={cn("la-profile-opt", activeProfile === profile && "is-active", profile === "full" && "is-full", fullOn && profile !== "full" && storedProfile === profile && "is-standby")}

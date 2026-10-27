@@ -231,6 +231,7 @@ function WorkerCardBody({ compact, threadId, worker }: { compact: boolean; threa
           <div className="worker-plan-collapse" data-open={planOpen || undefined}>
             <ol className="worker-plan" data-testid="worker-plan">
               {worker.plan.map((step, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
                 <li className={cn("worker-plan-step", `is-${step.status}`)} key={`${index}-${step.text}`}>
                   <span className="worker-plan-mark" aria-hidden>
                     {step.status === "done" ? <IconCheck className="size-3" stroke={2.75} /> : step.status === "blocked" ? "!" : null}

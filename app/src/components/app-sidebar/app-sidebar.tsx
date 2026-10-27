@@ -371,6 +371,7 @@ function BotRow({
     </>
   );
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上
     <div
       className={cn(
         "glass-bot-row",
@@ -1063,6 +1064,7 @@ function MiniBot({
   );
   const linkClass = cn("glass-mini-bot", (selected || chat) && "is-on");
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上
     <div
       className={cn(
         "glass-mini-slot",
@@ -1184,6 +1186,7 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
       : null;
   return (
     <>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上 */}
       <div
         className={cn("glass-mini-slot is-on", menuOpen && "menu-open")}
         data-hidden-chat-bot=""
