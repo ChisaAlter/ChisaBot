@@ -93,6 +93,8 @@ function summarize(operation, args) {
  * @param {object} [options.clientInfo]
  * @param {(url: string) => Promise<object|undefined>} [options.getAgent]  走系统代理时给 ws 的 Agent（proxy.js）
  * @param {number} [options.silenceMs]  多久收不到服务器任何消息就判定连接已死、重连（服务器每 25 秒 ping 一次）
+ * @param {number} [options.backoffBaseMs]  重连退避起点，默认 1 秒（上限 30 倍）
+ * @param {number} [options.invalidTokenRetryMs]  401 但服务器没说「已撤销」（body 没有 revoked:true）时，多久再试一次（默认 60 秒）
  */
 function createNodeAgent(options) {
   const events = new EventEmitter();
@@ -113,6 +115,8 @@ function createNodeAgent(options) {
   let lastError = "";
   let watchdog = null;
   const silenceMs = options.silenceMs ?? 70_000;
+  const invalidTokenRetryMs = options.invalidTokenRetryMs ?? 60_000;
+  const backoffBaseMs = options.backoffBaseMs ?? 1000; // 退避起点（测试里调小）；上限是它的 30 倍
   const running = new Map(); // call id -> AbortController
   const approvalPrompts = new Map(); // approval id -> { cancel }
 
@@ -149,13 +153,22 @@ function createNodeAgent(options) {
   }
 
   function scheduleReconnect() {
-    if (stopped || state === "revoked") return;
+    if (stopped) return;
     clearTimeout(reconnectTimer);
-    const base = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));
+    const base = Math.min(30 * backoffBaseMs, backoffBaseMs * 2 ** Math.min(attempt, 5));
     const delay = Math.round(base * (0.7 + Math.random() * 0.6));
     attempt++;
     events.emit("reconnect", { delay, attempt });
     reconnectTimer = setTimeout(() => void connect(), delay);
+    if (typeof reconnectTimer.unref === "function" && options.unrefTimers) reconnectTimer.unref();
+  }
+
+  /** 401 但没有明确撤销（令牌未知、设备行被删、服务器那边临时认证异常）：保持「revoked」状态，隔很久再试一次（CB-113）。 */
+  function scheduleInvalidTokenRetry() {
+    if (stopped) return;
+    clearTimeout(reconnectTimer);
+    events.emit("reconnect", { delay: invalidTokenRetryMs, attempt, invalidToken: true });
+    reconnectTimer = setTimeout(() => void connect(), invalidTokenRetryMs);
     if (typeof reconnectTimer.unref === "function" && options.unrefTimers) reconnectTimer.unref();
   }
 
@@ -369,24 +382,44 @@ function createNodeAgent(options) {
       armWatchdog(ws);
       onMessage(data);
     });
+    // 握手被 HTTP 拒绝（401/502/503…）：有这个监听时 ws 既不报 error 也不触发 close（CB-113），
+    // 所以重连只能在这里排，不能指望 close。
     ws.on("unexpected-response", (_req, res) => {
       let body = "";
-      res.on("data", (c) => (body += c));
-      res.on("end", () => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        if (socket !== ws) return; // 已被 stop()/reconnectNow() 丢弃
+        socket = null;
+        clearTimeout(watchdog);
+        if (stopped) return;
         if (res.statusCode === 401) {
           let revoked = false;
           try {
-            revoked = !!JSON.parse(body).revoked;
+            revoked = JSON.parse(body).revoked === true;
           } catch {}
-          stopped = true;
-          setState("revoked", revoked ? "设备已被撤销" : "设备令牌无效");
-          events.emit("revoked");
+          if (revoked) {
+            // 服务器明确说这台设备被撤销（server/src/devices/routes.ts requireDevice）：停下。
+            stopped = true;
+            setState("revoked", "设备已被撤销");
+            events.emit("revoked");
+          } else {
+            // 令牌不认识但没说撤销：可能是临时问题，隔 invalidTokenRetryMs 再试，不发 revoked 事件（无界面节点收到会退出）。
+            lastError = "设备令牌无效";
+            setState("revoked", lastError);
+            scheduleInvalidTokenRetry();
+          }
         } else {
-          // 不在这里排重连：ws 随后会触发 close，由 close 统一排（以前这里和 close 各排一次）。
           lastError = `服务器返回 ${res.statusCode}`;
           setState("offline", lastError);
+          scheduleReconnect();
         }
-      });
+      };
+      res.on("data", (c) => (body += c));
+      res.on("end", settle);
+      res.on("error", settle);
+      res.on("aborted", settle);
     });
     ws.on("close", (code) => {
       if (socket === ws) socket = null;
@@ -427,7 +460,7 @@ function createNodeAgent(options) {
      * 已在线就什么都不做；否则丢掉退避等待，马上再连一次。
      */
     reconnectNow() {
-      if (stopped || state === "revoked") return false;
+      if (stopped) return false;
       if (state === "online" && socket && socket.readyState === 1) return false;
       clearTimeout(reconnectTimer);
       attempt = 0;
