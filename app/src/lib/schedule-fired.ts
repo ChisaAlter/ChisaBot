@@ -47,9 +47,22 @@ export function firedHeadline(
   startedAt: string | null | undefined,
   now: Date = new Date(),
 ): string {
+  const { name, time } = firedHeadlineParts(headline, startedAt, now);
+  return `${name}${time}`;
+}
+
+/** CB-105b：单条行也拆成「名字 + 动作」（可省略）和「（时间）」（始终完整可见）两段，同折叠行。 */
+export function firedHeadlineParts(
+  headline: string,
+  startedAt: string | null | undefined,
+  now: Date = new Date(),
+): { name: string; time: string } {
   const { title, verb } = splitFiredHeadline(headline);
-  const base = verb ? `定时任务「${title}」${verb}` : title;
-  return startedAt ? `${base}（${firedTimeLabel(startedAt, now)}）` : base;
+  const name = verb ? `定时任务「${title}」${verb}` : title;
+  return {
+    name,
+    time: startedAt ? `（${firedTimeLabel(startedAt, now)}）` : "",
+  };
 }
 
 /** 折叠行：「「T」到点 16 次，10/16–10/18」。 */
@@ -62,13 +75,22 @@ export function firedGroupParts(
   const name = `「${title}」`;
   const head = `到点 ${count} 次`;
   if (!times.length) return { name, tail: head };
-  const sorted = [...times].sort();
-  const day = (at: string) => {
-    const p = partsIn(new Date(at), SCHEDULE_DEFAULT_TZ);
-    return `${p.month}/${p.day}`;
-  };
-  const first = day(sorted[0] ?? "");
-  const last = day(sorted[sorted.length - 1] ?? "");
+  const sorted = [...times].sort(
+    (a, b) => new Date(a).getTime() - new Date(b).getTime(),
+  );
+  const firstParts = partsIn(new Date(sorted[0] ?? ""), SCHEDULE_DEFAULT_TZ);
+  const lastParts = partsIn(
+    new Date(sorted[sorted.length - 1] ?? ""),
+    SCHEDULE_DEFAULT_TZ,
+  );
+  // CB-105b：跨年时两头都带年份（2025/12/30–2026/01/02），不然 12/30–1/2 看不出先后。
+  const crossYear = firstParts.year !== lastParts.year;
+  const day = (p: typeof firstParts) =>
+    crossYear
+      ? `${p.year}/${pad(p.month)}/${pad(p.day)}`
+      : `${p.month}/${p.day}`;
+  const first = day(firstParts);
+  const last = day(lastParts);
   return {
     name,
     tail: `${head}，${first === last ? first : `${first}–${last}`}`,
