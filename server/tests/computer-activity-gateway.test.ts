@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { statusText } from "../../shared/computer-activity-labels";
 import {
   classifyError,
   withActivityScope,
@@ -10,7 +11,6 @@ import type {
   FinishInput,
 } from "../src/computer/activity-store";
 import { CaptureBusyError, HumanHasControlError } from "../src/computer/client";
-import { statusText } from "../../shared/computer-activity-labels";
 import type { ComputerGateway } from "../src/computer/gateway";
 
 function fakeStore() {

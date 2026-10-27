@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import type { AppVariables, AuthenticatedActor } from "../src/auth/guards";
 import type { ComputerGateway } from "../src/computer/gateway";
-import type { PolicyStore } from "../src/computer/policy-store";
 import { CaptureBusyError, ComputerUnavailableError } from "../src/computer/gateway";
+import type { PolicyStore } from "../src/computer/policy-store";
 import { createComputerRoutes } from "../src/computer/routes";
 
 describe("computer routes", () => {

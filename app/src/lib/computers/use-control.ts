@@ -50,10 +50,34 @@ const stores = new Map<string, ControlStore>();
 export const controlStores = stores;
 
 /** One authoritative poll and mutation gate per visible Bot, shared by chat, sidebar and modal. */
-export function createControlStore(computerId: string): ControlStore {
+/** 测试用：可注入假时钟。 */
+export type ControlClock = {
+  now: () => number;
+  setTimeout: (fn: () => void, ms: number) => unknown;
+  clearTimeout: (handle: unknown) => void;
+  setInterval: (fn: () => void, ms: number) => unknown;
+  clearInterval: (handle: unknown) => void;
+};
+const realClock: ControlClock = {
+  now: () => Date.now(),
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  setInterval: (fn, ms) => setInterval(fn, ms),
+  clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
+};
+export function createControlStore(
+  computerId: string,
+  clock: ControlClock = realClock,
+): ControlStore {
   let snapshot = EMPTY;
   let version = 0;
-  let timer: ReturnType<typeof setInterval> | undefined;
+  let timer: unknown;
+  /** CB-103 r4：退避重试直接按 retryAt 排定时器，不等每秒那一拍（以前每次晚一拍：2→3→5→6s）。 */
+  let retryTimer: unknown;
+  const clearRetry = () => {
+    if (retryTimer !== undefined) clock.clearTimeout(retryTimer);
+    retryTimer = undefined;
+  };
   let reading: AbortController | undefined;
   const listeners = new Set<() => void>();
   /** 在屏幕上的订阅者。全都藏着（留着的聊天 / 右栏，DESIGN.md §98.3）时不轮询。 */
@@ -77,7 +101,13 @@ export function createControlStore(computerId: string): ControlStore {
     if (abort.signal.aborted || mine !== version || snapshot.busy) return;
     if (read.kind === "unreachable") {
       failures++;
-      retryAt = Date.now() + controlRetryDelay(failures);
+      const delay = controlRetryDelay(failures);
+      retryAt = clock.now() + delay;
+      clearRetry();
+      retryTimer = clock.setTimeout(() => {
+        retryTimer = undefined;
+        if (active > 0 && !snapshot.busy && !reading) void refresh();
+      }, delay);
       publish({
         ...snapshot,
         control: null,
@@ -88,6 +118,7 @@ export function createControlStore(computerId: string): ControlStore {
     }
     failures = 0;
     retryAt = 0;
+    clearRetry();
     const control = read.kind === "error" ? null : read.control;
     const stale =
       snapshot.problem?.startsWith("正在重连") ||
@@ -182,6 +213,7 @@ export function createControlStore(computerId: string): ControlStore {
     if (!failures && snapshot.state !== "unreachable") return;
     failures = 0;
     retryAt = 0;
+    clearRetry();
     if (active > 0 && !snapshot.busy && !reading) void refresh();
   };
   const store: ControlStore = {
@@ -198,8 +230,10 @@ export function createControlStore(computerId: string): ControlStore {
       }
       if (timer === undefined) {
         if (!snapshot.busy && active > 0) void refresh();
-        timer = setInterval(() => {
-          if (active > 0 && !snapshot.busy && !reading && Date.now() >= retryAt)
+        timer = clock.setInterval(() => {
+          // 退避期间由 retryTimer 负责，这一拍不读。
+          if (failures > 0 && retryTimer !== undefined) return;
+          if (active > 0 && !snapshot.busy && !reading && clock.now() >= retryAt)
             void refresh();
         }, 1000);
       }
@@ -207,8 +241,9 @@ export function createControlStore(computerId: string): ControlStore {
         if (onScreen) active--;
         listeners.delete(listener);
         if (listeners.size) return;
-        clearInterval(timer);
+        clock.clearInterval(timer);
         timer = undefined;
+        clearRetry();
         reading?.abort();
         version++;
         disposeWhenUnused();

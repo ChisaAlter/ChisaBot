@@ -7,8 +7,8 @@ import { SCREEN_USER_CONTROL_ZH } from "@/lib/computers/screen";
 import { screenshotPollBlocked } from "@/lib/computers/screenshot-poll";
 import {
   controlRetryDelay,
-  createControlStore,
   controlStores,
+  createControlStore,
   wakeControl,
 } from "@/lib/computers/use-control";
 
@@ -192,6 +192,8 @@ function fakeClock() {
   const realNow = Date.now;
   const realSetInterval = globalThis.setInterval;
   const realClearInterval = globalThis.clearInterval;
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
   let now = 1_000_000;
   const timers = new Map<
     number,
@@ -206,6 +208,14 @@ function fakeClock() {
   globalThis.clearInterval = ((handle: number) => {
     timers.delete(handle);
   }) as unknown as typeof clearInterval;
+  // r4：退避重试按 retryAt 排 setTimeout（every 0 = 只跑一次）。
+  globalThis.setTimeout = ((fn: () => void, ms = 0) => {
+    timers.set(++id, { fn, every: 0, next: now + ms });
+    return id;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((handle: number) => {
+    timers.delete(handle);
+  }) as unknown as typeof clearTimeout;
   const flush = async () => {
     for (let i = 0; i < 20; i++) await Promise.resolve();
   };
@@ -219,9 +229,10 @@ function fakeClock() {
         if (!due.length) break;
         const first = Math.min(...due.map((t) => t.next));
         now = first;
-        for (const t of [...timers.values()])
-          if (t.next === first) {
-            t.next += t.every;
+        for (const [key, t] of [...timers])
+          if (t.next === first && timers.has(key)) {
+            if (t.every) t.next += t.every;
+            else timers.delete(key);
             t.fn();
           }
         await flush();
@@ -233,6 +244,8 @@ function fakeClock() {
       Date.now = realNow;
       globalThis.setInterval = realSetInterval;
       globalThis.clearInterval = realClearInterval;
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
     },
   };
 }
