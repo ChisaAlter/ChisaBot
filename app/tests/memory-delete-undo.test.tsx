@@ -17,14 +17,16 @@ import {
 } from "@testing-library/react";
 import {
   confirmNoteDelete,
+  deleteErrorText,
   deleteWithUndo,
   MEMORY_GROUP_LIMIT,
   MEMORY_UNDO_MS,
   pendingMemoryDeletes,
+  undoToastText,
   visibleNotes,
 } from "@/components/memory/memory-notes";
 import { ConfirmHost } from "@/components/ui/confirm";
-import { Toaster } from "@/components/ui/toast";
+import { Toaster, toast } from "@/components/ui/toast";
 import type { MemoryNoteView } from "../../shared/memory-notes";
 
 /**
@@ -104,7 +106,7 @@ test("确认后只隐藏、立刻给「撤销」；8 秒前不发删除请求，
     ).toBe(true);
     await act(async () => {});
     expect(view.getByRole("button", { name: "撤销" })).toBeTruthy();
-    expect(view.getByText("已删除 1 条记忆")).toBeTruthy();
+    expect(view.getByText("已删除记忆「饮品偏好」")).toBeTruthy();
     jest.advanceTimersByTime(MEMORY_UNDO_MS - 1);
     await flush();
     expect(forgets()).toHaveLength(0);
@@ -227,4 +229,102 @@ test("一组只先画前 N 条，展开或搜索时全画", () => {
   expect(visibleNotes(many, false)).toHaveLength(MEMORY_GROUP_LIMIT);
   expect(visibleNotes(many, true)).toHaveLength(MEMORY_GROUP_LIMIT + 7);
   expect(visibleNotes(many.slice(0, 3), false)).toHaveLength(3);
+});
+
+test("QA #326：连删两条（文案相同也一样），两条「撤销」都在，各自撤销后都不发删除", async () => {
+  jest.useFakeTimers();
+  try {
+    const view = render(<Toaster />);
+    await act(async () => {});
+    // 前面用例留下的提示（模块级）不算。
+    const before = view.queryAllByRole("button", { name: "撤销" }).length;
+    const beforeText = view.queryAllByText("已删除 1 条记忆").length;
+    deleteWithUndo([note({ id: "mem_x", subject: null, content: "" })], async () => {});
+    await act(async () => {});
+    jest.advanceTimersByTime(2000);
+    deleteWithUndo([note({ id: "mem_y", subject: null, content: "" })], async () => {});
+    await act(async () => {});
+    const buttons = view.getAllByRole("button", { name: "撤销" }).slice(before);
+    expect(buttons).toHaveLength(2);
+    expect(view.getAllByText("已删除 1 条记忆")).toHaveLength(beforeText + 2);
+    await act(async () => {
+      fireEvent.click(buttons[0] as HTMLElement);
+    });
+    expect(pendingMemoryDeletes.snapshot().has("mem_x")).toBe(false);
+    expect(pendingMemoryDeletes.snapshot().has("mem_y")).toBe(true);
+    await act(async () => {
+      fireEvent.click(view.getAllByRole("button", { name: "撤销" }).at(-1) as HTMLElement);
+    });
+    expect(pendingMemoryDeletes.snapshot().size).toBe(0);
+    jest.advanceTimersByTime(MEMORY_UNDO_MS * 2);
+    await flush();
+    expect(forgets()).toHaveLength(0);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("连删六条：撤销提示一条不丢", async () => {
+  jest.useFakeTimers();
+  try {
+    const view = render(<Toaster />);
+    await act(async () => {});
+    const before = view.queryAllByRole("button", { name: "撤销" }).length;
+    for (let i = 0; i < 6; i++) deleteWithUndo([note({ id: `mem_${i}` })], async () => {});
+    toast.info("普通提示");
+    await act(async () => {});
+    expect(view.getAllByRole("button", { name: "撤销" })).toHaveLength(before + 6);
+    jest.advanceTimersByTime(MEMORY_UNDO_MS * 2);
+    await flush();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("普通提示仍按文案去重", async () => {
+  jest.useFakeTimers();
+  try {
+    const view = render(<Toaster />);
+    await act(async () => {
+      toast.success("已保存");
+      toast.success("已保存");
+    });
+    expect(view.getAllByText("已保存")).toHaveLength(1);
+    jest.advanceTimersByTime(10000);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("撤销文案带标题、长的截断；断网失败给中文", () => {
+  expect(undoToastText([note({ subject: "饮品偏好" })])).toBe("已删除记忆「饮品偏好」");
+  expect(undoToastText([note({ subject: "一二三四五六七八九十一二三四五六七八" })])).toBe(
+    "已删除记忆「一二三四五六七八九十一二三四五六…」",
+  );
+  expect(undoToastText([note(), note()])).toBe("已删除 2 条记忆");
+  expect(deleteErrorText(new TypeError("Failed to fetch"))).toBe("网络连不上，这条记忆没删");
+  expect(deleteErrorText(new Error("boom"))).toBe("boom");
+});
+
+test("8 秒后断网删除失败：提示中文，不露 Failed to fetch", async () => {
+  globalThis.fetch = Object.assign(
+    async () => {
+      throw new TypeError("Failed to fetch");
+    },
+    { preconnect: originalFetch.preconnect },
+  ) as typeof fetch;
+  jest.useFakeTimers();
+  try {
+    const view = render(<Toaster />);
+    deleteWithUndo([note({ id: "mem_off" })], async () => {});
+    jest.advanceTimersByTime(MEMORY_UNDO_MS);
+    await act(async () => {
+      await flush();
+    });
+    expect(view.getByText("网络连不上，这条记忆没删")).toBeTruthy();
+    expect(view.queryByText("Failed to fetch")).toBeNull();
+    expect(pendingMemoryDeletes.snapshot().has("mem_off")).toBe(false);
+  } finally {
+    jest.useRealTimers();
+  }
 });

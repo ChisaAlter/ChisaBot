@@ -359,6 +359,22 @@ function emitPending() {
   for (const listener of pendingListeners) listener();
 }
 
+/** 删除失败的提示文案：断网（fetch 抛 TypeError，如 Failed to fetch）给中文，不露英文原文。 */
+export function deleteErrorText(error: unknown) {
+  if (error instanceof TypeError || (typeof navigator !== "undefined" && navigator.onLine === false))
+    return "网络连不上，这条记忆没删";
+  return error instanceof Error && error.message ? error.message : "删除失败";
+}
+
+/** 撤销提示文案：带上记忆标题（主题，没有就用正文），太长截断。 */
+export function undoToastText(notes: MemoryNoteView[]) {
+  if (notes.length !== 1) return `已删除 ${notes.length} 条记忆`;
+  const raw = (notes[0]?.subject || notes[0]?.content || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "已删除 1 条记忆";
+  const title = [...raw].length > 16 ? `${[...raw].slice(0, 16).join("")}…` : raw;
+  return `已删除记忆「${title}」`;
+}
+
 /** 界面上要隐藏的记忆 id（待删除 + 正在删）。配合 useSyncExternalStore。 */
 export const pendingMemoryDeletes = {
   subscribe(listener: () => void) {
@@ -377,7 +393,7 @@ async function commitDelete(key: number) {
     // 删除失败：放开隐藏，记录回到列表，并报错。
     pendingDeletes.delete(key);
     emitPending();
-    toast.error(error instanceof Error ? error.message : "删除失败");
+    toast.error(deleteErrorText(error));
     return;
   }
   // 列表刷新完再放开隐藏，免得已删的那条闪回来。
@@ -412,7 +428,7 @@ export function deleteWithUndo(notes: MemoryNoteView[], refresh: () => Promise<u
   pendingDeletes.set(key, { ids, timer, refresh });
   emitPending();
   toast.undo(
-    notes.length === 1 ? "已删除 1 条记忆" : `已删除 ${notes.length} 条记忆`,
+    undoToastText(notes),
     () => {
       const entry = pendingDeletes.get(key);
       // 已经开始真删了（计时刚到）就来不及了；否则取消，原记录原样还在。
