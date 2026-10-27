@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, render } from "@testing-library/react";
 import { ActiveBotProvider, bindAgentBot, botForAgent, useActiveBot, useActiveBotHolder, withRunBot } from "@/lib/copilot/active-bot";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * 工具调用打到「这次调用所属对话的机器人」（DESIGN.md §101）。
@@ -9,7 +10,10 @@ import { ActiveBotProvider, bindAgentBot, botForAgent, useActiveBot, useActiveBo
  */
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 test("a tool call routes to its own conversation's bot, not the one on screen", () => {
   let holder: { current: string } | null = null;

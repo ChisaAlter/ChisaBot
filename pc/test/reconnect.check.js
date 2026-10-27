@@ -166,3 +166,20 @@ test("falls back to DIRECT when the proxy is down", async (t) => {
   agent.start();
   await until(() => agent.state === "online");
 });
+
+test("stop() during the handshake does not raise an async error (no error listener)", async (t) => {
+  const s = server();
+  t.after(() => s.wss.close());
+  await new Promise((r) => (s.wss.address() ? r() : s.wss.once("listening", r)));
+  const agent = createNodeAgent({ serverUrl: `http://127.0.0.1:${s.port()}`, getToken: () => "cbd_r", ops, WebSocket, unrefTimers: false });
+  const errors = [];
+  const onUncaught = (e) => errors.push(e);
+  process.on("uncaughtException", onUncaught);
+  t.after(() => process.off("uncaughtException", onUncaught));
+  agent.start();
+  await new Promise((r) => setImmediate(r));
+  agent.stop();
+  await new Promise((r) => setTimeout(r, 200));
+  assert.deepEqual(errors.map((e) => e.message), []);
+  assert.equal(agent.state, "stopped");
+});

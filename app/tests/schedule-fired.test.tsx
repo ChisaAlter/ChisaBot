@@ -12,6 +12,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { settleReactWork } from "./settle-react-work";
 
 const router = await import("@tanstack/react-router");
 mock.module("@tanstack/react-router", () => ({
@@ -39,7 +40,10 @@ const {
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const NOW = new Date("2026-10-27T06:00:00Z"); // 北京 10-27 14:00
 const OLD = "定时任务「和 Claude 聊电车」到点了（今天 07:00）。";

@@ -33,6 +33,7 @@ import { type ChannelSummary, channelKeys } from "@/lib/channels/queries";
 import { setSidebarSearch } from "@/lib/sidebar-search";
 import { userPreferencesQueryOptions } from "@/lib/settings/message-list";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * The conversation list's pagination, on the left column, as it is drawn today.
@@ -188,7 +189,8 @@ afterEach(() => {
   clients.length = 0;
   expect(ScrollObserver.active.size).toBe(0);
 });
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   globalThis.fetch = originalFetch;
   globalThis.WebSocket = originalWebSocket;
   globalThis.IntersectionObserver = originalObserver;

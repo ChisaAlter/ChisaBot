@@ -10,12 +10,16 @@ import {
 } from "@tanstack/react-router";
 import { cleanup, render } from "@testing-library/react";
 import { NotFoundRoute } from "@/components/not-found";
+import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register());
 
 afterEach(() => cleanup());
 
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 /**
  * 2026-10-20 审查：打错的地址（`/settings/models`）以前被 `Navigate` 回 `/`，而 `/` 按「上次停在哪」

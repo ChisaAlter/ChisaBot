@@ -3,6 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { ComputerView } from "@/components/computer/computer-view";
 import { LiveScreen } from "@/components/computer/live-screen";
+import { settleReactWork } from "./settle-react-work";
 
 class SocketDouble {
   static readonly OPEN = 1;
@@ -115,7 +116,8 @@ afterEach(() => {
   setVisibility("visible");
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   globalThis.WebSocket = originalWebSocket;
   globalThis.fetch = originalFetch;
   if (originalIntersectionObserver) {

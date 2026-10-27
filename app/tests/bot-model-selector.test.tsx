@@ -5,10 +5,14 @@ import { act, cleanup, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import type { AgentModelState, ModelCatalog } from "../../shared/model-selection";
+import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register({ url: "https://chisabot.test/" }));
 afterEach(async () => { await act(async () => cleanup()); });
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const originalFetch = globalThis.fetch;
 const clients: QueryClient[] = [];

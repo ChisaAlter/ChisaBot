@@ -4,6 +4,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { ComputerControlButton } from "@/components/computer/computer-controls";
 import { HandoffResumeNotice } from "@/components/computer/handoff-resume-notice";
 import { controlStores } from "@/lib/computers/use-control";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * CB-103 r2：HandoffResumeNotice 以前每秒自己 readControl，绕开了退避。现在聊天提示、按钮都订阅
@@ -16,7 +17,10 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   controlStores.clear();
 });
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  await GlobalRegistrator.unregister();
+});
 
 function server(status: number) {
   const reads: number[] = [];
