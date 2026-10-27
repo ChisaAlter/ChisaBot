@@ -265,7 +265,6 @@ describe.skipIf(!url)("CB-097c: global MCP auto-grant store (PostgreSQL)", () =>
       );
       ALTER TABLE mcp_tools ADD COLUMN IF NOT EXISTS version text;
       ALTER TABLE mcp_tools ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
-      DROP TABLE IF EXISTS plugin_grants;
       CREATE TABLE IF NOT EXISTS plugin_grants (
         kind text NOT NULL,
         ref text NOT NULL,
@@ -323,6 +322,8 @@ describe.skipIf(!url)("CB-097c: global MCP auto-grant store (PostgreSQL)", () =>
     await database.insert(mcpServers).values({
       id: serverId,
       title: "全员共享测试 MCP",
+      vendor: "test",
+      provenance: "custom",
       url: "https://mcp.example.com/sse",
       authScheme: "none",
     });
