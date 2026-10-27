@@ -39,7 +39,7 @@ const {
 } = require("electron");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { createConfig } = require("./config");
-const { createNodeAgent } = require("./agent/core");
+const { createNodeAgent, invalidTokenHint, INVALID_TOKEN_DETAIL } = require("./agent/core");
 const { parseProxyList, describeProxy, createProxyAgent, createAgentFetch } = require("./agent/proxy");
 const { createOps } = require("./agent/ops");
 const { attachAgentRuntime } = require("./agent-runtime/attach");
@@ -432,7 +432,7 @@ function statusText() {
     case "connecting":
       return "正在连接…";
     case "revoked":
-      return agentDetail === "设备令牌无效" ? "设备令牌无效，请重新登记这台电脑" : "已被撤销，请重新登记这台电脑";
+      return agentDetail === INVALID_TOKEN_DETAIL ? invalidTokenHint(agent?.invalidTokenRetryMs) : "已被撤销，请重新登记这台电脑";
     default: {
       // 把真实原因写出来（以前一律「离线（自动重连中）」，看不出是被拦、超时还是代理问题）。
       const why = agent?.lastError || agentDetail;

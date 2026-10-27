@@ -161,3 +161,36 @@ test("stop() during the backoff after a 503 cancels the retry", async (t) => {
   assert.equal(g.upgrades(), 1);
   assert.equal(agent.state, "stopped");
 });
+
+// CB-P3：令牌无效时的后台重试是静默的——不切「connecting」（托盘不闪「正在连接…」），失败保持原提示，成功照常上线。
+test("invalid-token background retry: no 'connecting' state, hint kept after a failed retry, online after success", async (t) => {
+  const g = await gateway(() => ({ status: 401, body: { error: "设备令牌无效，请重新登录。" } }), 3);
+  t.after(() => g.close());
+  const { agent, states, revoked } = agentFor(g.port, { invalidTokenRetryMs: 80 });
+  t.after(() => agent.stop());
+  agent.start();
+  await until(() => agent.state === "revoked");
+  const firstRevoked = states.length;
+  assert.deepEqual(states.map((e) => e.state), ["connecting", "revoked"]);
+  // 两次静默重试都失败：状态、提示都不变，也不再发 state 事件
+  await until(() => g.upgrades() === 3);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(states.length, firstRevoked);
+  assert.equal(agent.state, "revoked");
+  assert.equal(agent.lastError, "设备令牌无效");
+  // 第 3 次重试成功：直接上线，中间没有 connecting
+  await until(() => agent.state === "online", 3000);
+  assert.deepEqual(states.map((e) => e.state), ["connecting", "revoked", "online"]);
+  assert.equal(revoked.length, 0);
+});
+
+test("invalid-token hint states the retry interval derived from invalidTokenRetryMs", () => {
+  const { invalidTokenHint, INVALID_TOKEN_DETAIL } = require("../src/agent/core");
+  assert.equal(INVALID_TOKEN_DETAIL, "设备令牌无效");
+  assert.equal(invalidTokenHint(60_000), "设备令牌无效，请重新登记这台电脑（每 60 秒自动重试）");
+  assert.equal(invalidTokenHint(), "设备令牌无效，请重新登记这台电脑（每 60 秒自动重试）");
+  assert.equal(invalidTokenHint(90_000), "设备令牌无效，请重新登记这台电脑（每 90 秒自动重试）");
+  const agent = createNodeAgent({ serverUrl: "http://127.0.0.1:1", getToken: () => "", ops, WebSocket });
+  assert.equal(agent.invalidTokenRetryMs, 60_000);
+  assert.equal(createNodeAgent({ serverUrl: "http://127.0.0.1:1", getToken: () => "", ops, WebSocket, invalidTokenRetryMs: 5000 }).invalidTokenRetryMs, 5000);
+});
