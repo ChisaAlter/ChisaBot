@@ -630,9 +630,29 @@ export function ComputerView({
       {/* 右栏小画面上面不放标签栏：标签只在放大的浏览器里出现（用户 2026-10-16「外面不需要标签」，DESIGN §96）。 */}
       <figure ref={previewRef} className="overflow-hidden rounded-2xl border">
         {/* Inline preview remains in transcript; click opens a readable full-size view. */}
-        <button
-          type="button"
+        {/*
+         * DF-30：外框是 div role=button，不是 <button>。截图失败时里面有「重试」<button>，
+         * button 套 button 是非法 HTML，React 报 hydration 错误。键盘行为按原生按钮补齐：
+         * Enter 按下即触发，Space 按下阻止滚动、松开触发；从内部按钮冒上来的按键不算。
+         */}
+        {/* biome-ignore lint/a11y/useSemanticElements: DF-30 外框里有「重试」<button>，不能再用 <button>。 */}
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => setExpanded(true)}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key === "Enter") {
+              event.preventDefault();
+              setExpanded(true);
+            } else if (event.key === " ") {
+              event.preventDefault();
+            }
+          }}
+          onKeyUp={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key === " ") setExpanded(true);
+          }}
           /*
            * Opens whether or not there is a picture in it. It used to be disabled without one, and
            * the wheel is down there: a blank browser, a screen that had not arrived yet, or a
@@ -680,7 +700,7 @@ export function ComputerView({
               settled={settled}
             />
           )}
-        </button>
+        </div>
 
         {/* The request reason appears above the always-available ownership controls. */}
         {!driving && !settled && control?.requested ? (
