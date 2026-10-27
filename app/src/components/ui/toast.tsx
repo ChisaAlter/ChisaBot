@@ -40,8 +40,21 @@ function push(kind: ToastKind, text: string, duration = kind === "error" ? 5200 
   const dropPlain = new Set(plain.slice(0, Math.max(0, plain.length - 4)).map((item) => item.id));
   items = next.filter((item) => !dropPlain.has(item.id));
   emit();
-  window.setTimeout(() => dismiss(id), duration);
+  // duration 为 Infinity：不自动消失，由调用方 dismiss（合并的「全部撤销」提示，CB-111）。
+  if (Number.isFinite(duration)) window.setTimeout(() => dismiss(id), duration);
   return id;
+}
+
+/** 改一条还在的提示的文案（合并提示里的条数变化，CB-111）。 */
+function update(id: number, text: string) {
+  if (!items.some((item) => item.id === id)) return;
+  items = items.map((item) => (item.id === id ? { ...item, text } : item));
+  emit();
+}
+
+/** 这条提示还在屏幕上（没关、没在退场）。 */
+function isOpen(id: number) {
+  return items.some((item) => item.id === id && !item.leaving);
 }
 
 export const toast = {
@@ -76,6 +89,8 @@ export const toast = {
     return id;
   },
   dismiss,
+  update,
+  isOpen,
 };
 
 const subscribe = (listener: () => void) => {

@@ -2590,6 +2590,20 @@ button.chat-bottom-pill:hover {
   pointer-events: none;
   width: min(420px, calc(100vw - 32px));
 }
+/* 手机上（CB-111）：避开底部手势条/刘海（safe-area），右边让出一列，不盖住记忆行末的「⋯」。 */
+.glass-toaster {
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
+@media (max-width: 640px) {
+  .glass-toaster {
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    right: calc(60px + env(safe-area-inset-right, 0px));
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    transform: none;
+    width: auto;
+    align-items: stretch;
+  }
+}
 .glass-toast {
   pointer-events: auto;
   display: flex;

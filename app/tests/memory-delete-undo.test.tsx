@@ -282,9 +282,12 @@ test("连删六条：撤销提示一条不丢", async () => {
       deleteWithUndo([note({ id: `mem_${i}` })], async () => {});
     toast.info("普通提示");
     await act(async () => {});
+    // CB-111：同时最多 3 条单独的「撤销」，其余并进「已删除 N 条记忆 · 全部撤销」，仍一条不丢。
     expect(view.getAllByRole("button", { name: "撤销" })).toHaveLength(
-      before + 6,
+      before + 3,
     );
+    expect(view.getByRole("button", { name: "全部撤销" })).toBeTruthy();
+    expect(pendingMemoryDeletes.snapshot().size).toBe(6);
     jest.advanceTimersByTime(MEMORY_UNDO_MS * 2);
     await flush();
   } finally {

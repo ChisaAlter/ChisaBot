@@ -95,6 +95,7 @@ jobs:
           bun test --preload ./tests/preload.ts tests/sidebar-search-nav.test.ts tests/channel-pagination.test.tsx tests/channel-search.test.ts tests/focus-message.test.ts tests/scroll-within.test.ts tests/sidebar-shortcut-layouts.test.tsx
           # CB-106：从 app/ 跑时 bun 不读根目录 bunfig.toml，显式带上 app 的 preload（DOM 下先求值 Base UI）。
           bun test --preload ./tests/preload.ts tests/memory-delete-undo.test.tsx
+          bun test --preload ./tests/preload.ts tests/memory-undo-toast-limit.test.tsx
           # DF-30：电脑卡片外框不再 button 套「重试」button。
           bun test --preload ./tests/preload.ts tests/computer-frame-nested-button.test.tsx
       - name: Install actual computer service dependencies

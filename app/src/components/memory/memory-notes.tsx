@@ -392,6 +392,7 @@ async function commitDelete(key: number) {
   } catch (error) {
     // 删除失败：放开隐藏，记录回到列表，并报错。
     pendingDeletes.delete(key);
+    forgetToast(key);
     emitPending();
     toast.error(deleteErrorText(error));
     return;
@@ -399,13 +400,16 @@ async function commitDelete(key: number) {
   // 列表刷新完再放开隐藏，免得已删的那条闪回来。
   await entry.refresh().catch(() => undefined);
   pendingDeletes.delete(key);
+  forgetToast(key);
   emitPending();
 }
 
-function flushOnPageHide() {
+/** 关页时把待删的立刻发出去（导出给测试：测试里的 window 换过，事件监听挂在别的对象上）。 */
+export function flushOnPageHide() {
   for (const [key, entry] of pendingDeletes) {
     clearTimeout(entry.timer);
     pendingDeletes.delete(key);
+    forgetToast(key);
     void fetch("/api/memory-notes/forget", {
       method: "POST",
       credentials: "include",
@@ -414,6 +418,7 @@ function flushOnPageHide() {
       body: JSON.stringify({ ids: entry.ids }),
     }).catch(() => undefined);
   }
+  emitPending();
 }
 if (typeof window !== "undefined") window.addEventListener("pagehide", flushOnPageHide);
 
@@ -427,19 +432,68 @@ export function deleteWithUndo(notes: MemoryNoteView[], refresh: () => Promise<u
   const timer = setTimeout(() => void commitDelete(key), MEMORY_UNDO_MS);
   pendingDeletes.set(key, { ids, timer, refresh });
   emitPending();
-  toast.undo(
-    undoToastText(notes),
-    () => {
-      const entry = pendingDeletes.get(key);
-      // 已经开始真删了（计时刚到）就来不及了；否则取消，原记录原样还在。
-      if (!entry) return;
-      clearTimeout(entry.timer);
-      pendingDeletes.delete(key);
-      emitPending();
-    },
-    MEMORY_UNDO_MS,
-  );
+  // 同时最多 MEMORY_UNDO_TOAST_LIMIT 条单独的「撤销」；再多的并进一条「已删除 N 条记忆 · 全部撤销」（CB-111）。
+  for (const [toastKey, toastId] of singleToasts) if (!toast.isOpen(toastId)) singleToasts.delete(toastKey);
+  if (singleToasts.size >= MEMORY_UNDO_TOAST_LIMIT) {
+    mergedKeys.add(key);
+    syncMergedToast();
+    return key;
+  }
+  const toastId = toast.undo(undoToastText(notes), () => cancelPending(key), MEMORY_UNDO_MS);
+  singleToasts.set(key, toastId);
   return key;
+}
+
+/** 同时最多几条单独的撤销提示（CB-111）。 */
+export const MEMORY_UNDO_TOAST_LIMIT = 3;
+/** 待删 key → 它单独的撤销提示 id。 */
+const singleToasts = new Map<number, number>();
+/** 超出上限、并进合并提示的待删 key。 */
+const mergedKeys = new Set<number>();
+let mergedToastId = 0;
+
+/** 取消一次待删除。已经开始真删了（计时刚到）就来不及了；否则原记录原样还在。 */
+function cancelPending(key: number) {
+  const entry = pendingDeletes.get(key);
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  pendingDeletes.delete(key);
+  forgetToast(key);
+  emitPending();
+}
+
+/** 待删除结束（撤销/真删/失败/关页）后，把它从提示里拿掉。 */
+function forgetToast(key: number) {
+  singleToasts.delete(key);
+  if (mergedKeys.delete(key)) syncMergedToast();
+}
+
+/** 合并提示：数的是合并进来的记忆条数；「全部撤销」只撤合并进来的，单独显示的各自撤销。 */
+function syncMergedToast() {
+  const count = [...mergedKeys].reduce((sum, key) => sum + (pendingDeletes.get(key)?.ids.length ?? 0), 0);
+  if (!mergedKeys.size || !count) {
+    mergedKeys.clear();
+    if (mergedToastId) toast.dismiss(mergedToastId);
+    mergedToastId = 0;
+    return;
+  }
+  const text = `已删除 ${count} 条记忆`;
+  if (mergedToastId && toast.isOpen(mergedToastId)) {
+    toast.update(mergedToastId, text);
+    return;
+  }
+  // 不自动消失：最后一条合并的待删除结束时才收起，保证每条在 8 秒内都还能撤销。
+  let id = 0;
+  id = toast.action(
+    text,
+    "全部撤销",
+    () => {
+      if (mergedToastId === id) mergedToastId = 0;
+      for (const key of [...mergedKeys]) cancelPending(key);
+    },
+    Number.POSITIVE_INFINITY,
+  );
+  mergedToastId = id;
 }
 
 /** 删一条也先确认（和技能页一致，CB-106）；确认后仍有 8 秒撤销。 */
