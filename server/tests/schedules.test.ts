@@ -4,6 +4,7 @@ import { describeCronZh, describeSchedule, formatWhen, isSilentScheduleReply, pa
 import { createDatabase } from "../src/db/client";
 import { createSchedules, resolveWhen, ScheduleError, zonedToUtc } from "../src/schedules/service";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
+import { holdScheduleSweepLock } from "./support/schedule-sweep-lock";
 
 /** 定时任务 / 提醒（DESIGN.md §55）：时间解析、比较交换不重复触发、一次性 / 周期 / 错过 / 暂停 / 跳过 / 立即运行 / IM 推送。 */
 const NOW = new Date("2026-10-14T13:42:00Z"); // 北京时间 2026-10-14 21:42 周三
@@ -72,6 +73,9 @@ describe.skipIf(!url)("schedules (database)", () => {
   const database = url ? createDatabase(url, TEST_POOL) : (null as never);
   const sql = url ? database.$client : (null as never);
   const owner = `schedtest-${randomUUID().slice(0, 8)}`;
+  // CB-112：对话 id 都带上本次运行的 owner 前缀，并行进程之间不会撞主键。
+  const tid = (name: string) => `${owner}-${name}`;
+  let releaseSweepLock: (() => Promise<void>) | null = null;
   const turns: { threadId: string; content: string; initiator?: string }[] = [];
   const pushes: { threadId: string; text: string }[] = [];
   let busy = new Set<string>();
@@ -100,31 +104,33 @@ describe.skipIf(!url)("schedules (database)", () => {
   const due = (id: string, ago = "1 minute") => sql.unsafe(`UPDATE chisabot_schedules SET next_run_at = date_trunc('minute', now() - interval '${ago}') WHERE id = $1`, [id]);
 
   beforeAll(async () => {
+    releaseSweepLock = await holdScheduleSweepLock(url!);
     await a.ensure();
     // fire() 先确认原对话还在（threadFor）；库里有 openbot_local_threads 时，假的对话 id 会被当成「对话已不在」。
-    for (const id of ["t-web-1", "t-web-2", "t-busy"]) {
+    for (const id of [tid("t-web-1"), tid("t-web-2"), tid("t-busy")]) {
       await sql.unsafe(
-        "INSERT INTO openbot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, 'bot1') ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO openbot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, 'bot1')",
         [id, owner],
       ).catch(() => {}); // 没有这张表时 threadFor 本来就放行
     }
-  });
+  }, 120_000); // 等别的进程放锁
   afterAll(async () => {
     await sql.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [owner]).catch(() => {});
     await sql.unsafe("DELETE FROM chisabot_schedule_runs WHERE owner_user_id = $1", [owner]);
     await sql.unsafe("DELETE FROM chisabot_schedules WHERE owner_user_id = $1", [owner]);
+    await releaseSweepLock?.();
   });
 
   test("a due one-off fires exactly once across two sweepers and ends", async () => {
     turns.length = 0;
-    const s = await a.create({ owner, agentId: "bot1", threadId: "t-web-1", title: "喝水", instruction: "提醒用户：喝水", when: { repeat: "once", in_minutes: 5 } });
+    const s = await a.create({ owner, agentId: "bot1", threadId: tid("t-web-1"), title: "喝水", instruction: "提醒用户：喝水", when: { repeat: "once", in_minutes: 5 } });
     expect(s.status).toBe("active");
     await due(s.id);
     const [ra, rb] = await Promise.all([a.sweep(), b.sweep()]);
     expect([...ra.fired, ...rb.fired].filter((id) => id === s.id)).toHaveLength(1);
     await settle();
     expect(turns.filter((t) => t.content.includes(s.id))).toHaveLength(1);
-    expect(turns[0]!.threadId).toBe("t-web-1");
+    expect(turns[0]!.threadId).toBe(tid("t-web-1"));
     expect(turns[0]!.initiator).toBe(`schedule:${s.id}`);
     expect(turns[0]!.content.startsWith(`⟦chisabot:schedule:${s.id}:`)).toBe(true);
     const after = await a.get(owner, s.id);
@@ -143,7 +149,7 @@ describe.skipIf(!url)("schedules (database)", () => {
   });
 
   test("a recurring task advances to its next occurrence", async () => {
-    const s = await a.create({ owner, agentId: "bot1", threadId: "t-web-1", title: "日报", instruction: "总结今天", when: { repeat: "daily", at: "09:00" } });
+    const s = await a.create({ owner, agentId: "bot1", threadId: tid("t-web-1"), title: "日报", instruction: "总结今天", when: { repeat: "daily", at: "09:00" } });
     await due(s.id);
     const r = await a.sweep();
     expect(r.fired).toContain(s.id);
@@ -155,7 +161,7 @@ describe.skipIf(!url)("schedules (database)", () => {
   });
 
   test("a recurring task late by more than 30 minutes is skipped, not replayed", async () => {
-    const s = await a.create({ owner, agentId: "bot1", threadId: "t-web-1", title: "迟到", instruction: "x", when: { repeat: "hourly" } });
+    const s = await a.create({ owner, agentId: "bot1", threadId: tid("t-web-1"), title: "迟到", instruction: "x", when: { repeat: "hourly" } });
     await due(s.id, "2 hours");
     const r = await a.sweep();
     expect(r.skipped).toContain(s.id);
@@ -165,7 +171,7 @@ describe.skipIf(!url)("schedules (database)", () => {
   });
 
   test("a one-off missed by more than 6 hours is recorded as missed", async () => {
-    const s = await a.create({ owner, agentId: "bot1", threadId: "t-web-1", title: "错过", instruction: "x", when: { repeat: "once", in_minutes: 5 } });
+    const s = await a.create({ owner, agentId: "bot1", threadId: tid("t-web-1"), title: "错过", instruction: "x", when: { repeat: "once", in_minutes: 5 } });
     await due(s.id, "7 hours");
     await a.sweep();
     const after = await a.get(owner, s.id);
@@ -176,7 +182,7 @@ describe.skipIf(!url)("schedules (database)", () => {
 
   test("pause, resume, skip next, run now, delete", async () => {
     turns.length = 0;
-    const s = await a.create({ owner, agentId: "bot1", threadId: "t-web-2", title: "周报", instruction: "写周报", when: { repeat: "weekly", days: [5], at: "17:00" } });
+    const s = await a.create({ owner, agentId: "bot1", threadId: tid("t-web-2"), title: "周报", instruction: "写周报", when: { repeat: "weekly", days: [5], at: "17:00" } });
     const paused = await a.update(owner, s.id, { paused: true });
     expect(paused.status).toBe("paused");
     await due(s.id);
@@ -199,28 +205,28 @@ describe.skipIf(!url)("schedules (database)", () => {
 
   test("IM-origin tasks push the reply back to the IM chat", async () => {
     pushes.length = 0;
-    const s = await a.create({ owner, agentId: "bot1", threadId: "im-abc-123", imConnectionId: "im_abc", title: "IM 提醒", instruction: "提醒用户：开会", when: { repeat: "once", in_minutes: 5 } });
+    const s = await a.create({ owner, agentId: "bot1", threadId: tid("im-abc-123"), imConnectionId: "im_abc", title: "IM 提醒", instruction: "提醒用户：开会", when: { repeat: "once", in_minutes: 5 } });
     await due(s.id);
     await a.sweep();
     await settle();
-    expect(pushes).toEqual([{ threadId: "im-abc-123", text: "⏰ 该喝水了" }]);
+    expect(pushes).toEqual([{ threadId: tid("im-abc-123"), text: "⏰ 该喝水了" }]);
     expect(turns.some((t) => t.content.includes(s.id) && t.initiator === "im:im_abc")).toBe(true);
   });
 
   test("busy web conversation: queued into that turn's inbox", async () => {
-    busy = new Set(["t-busy"]);
-    const s = await a.create({ owner, agentId: "bot1", threadId: "t-busy", title: "插队", instruction: "x", when: { repeat: "once", in_minutes: 5 } });
+    busy = new Set([tid("t-busy")]);
+    const s = await a.create({ owner, agentId: "bot1", threadId: tid("t-busy"), title: "插队", instruction: "x", when: { repeat: "once", in_minutes: 5 } });
     await due(s.id);
     await a.sweep();
     await settle();
-    expect(enqueued).toContain("t-busy");
+    expect(enqueued).toContain(tid("t-busy"));
     expect((await a.get(owner, s.id)).lastStatus).toBe("queued");
     busy = new Set();
   });
 
   test("deleted bot cancels its task instead of firing", async () => {
     deletedBots = new Set(["bot-gone"]);
-    const s = await a.create({ owner, agentId: "bot-gone", threadId: "t-x", title: "孤儿", instruction: "x", when: { repeat: "daily", at: "10:00" } });
+    const s = await a.create({ owner, agentId: "bot-gone", threadId: tid("t-x"), title: "孤儿", instruction: "x", when: { repeat: "daily", at: "10:00" } });
     await due(s.id);
     await a.sweep();
     await settle();
@@ -230,7 +236,7 @@ describe.skipIf(!url)("schedules (database)", () => {
   });
 
   test("bot tools: create returns a confirmation; refusals are readable", async () => {
-    const tools = a.tools({ owner, agentId: "bot1", threadId: "t-web-3" });
+    const tools = a.tools({ owner, agentId: "bot1", threadId: tid("t-web-3") });
     const create = tools.find((t) => t.name === "schedule_create")!;
     expect(create.guidance).toMatch(/现在是北京时间/);
     const out = JSON.parse(await create.execute({ title: "打电话", instruction: "提醒用户：给妈妈打电话", repeat: "once", in_minutes: 60 }));
@@ -256,7 +262,7 @@ describe.skipIf(!url)("schedules (database)", () => {
     const s = await failing.create({
       owner,
       agentId: "bot1",
-      threadId: "t-fail-streak",
+      threadId: tid("t-fail-streak"),
       title: "普通日报",
       instruction: "总结今天",
       when: { repeat: "hourly" },
@@ -289,7 +295,7 @@ describe.skipIf(!url)("schedules (database)", () => {
     const s = await a.create({
       owner,
       agentId: "bot1",
-      threadId: "t-stuck",
+      threadId: tid("t-stuck"),
       title: "卡住回收",
       instruction: "x",
       when: { repeat: "hourly" },
