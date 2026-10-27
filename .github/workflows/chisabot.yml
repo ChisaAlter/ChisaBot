@@ -96,6 +96,9 @@ jobs:
           # CB-106：app/bunfig.toml 已自动加载 ./tests/preload.ts（DOM 下先求值 Base UI），无需再显式 --preload（CB-110）。
           bun test tests/memory-delete-undo.test.tsx
           bun test tests/memory-undo-toast-limit.test.tsx
+          # CB-111 P3：两个文件同进程、两种顺序都要过（模块级提示状态不串）。
+          bun test ../app/tests/memory-delete-undo.test.tsx ../app/tests/memory-undo-toast-limit.test.tsx
+          bun test ../app/tests/memory-undo-toast-limit.test.tsx ../app/tests/memory-delete-undo.test.tsx
           # DF-30：电脑卡片外框不再 button 套「重试」button。
           bun test tests/computer-frame-nested-button.test.tsx
       - name: Install actual computer service dependencies

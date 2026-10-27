@@ -15,8 +15,9 @@ import {
   MEMORY_UNDO_MS,
   MEMORY_UNDO_TOAST_LIMIT,
   pendingMemoryDeletes,
+  resetMemoryUndoForTest,
 } from "@/components/memory/memory-notes";
-import { Toaster } from "@/components/ui/toast";
+import { resetToastsForTest, Toaster } from "@/components/ui/toast";
 import type { MemoryNoteView } from "../../shared/memory-notes";
 import { settleReactWork } from "./settle-react-work";
 
@@ -37,6 +38,9 @@ afterAll(async () => {
   await GlobalRegistrator.unregister();
 });
 beforeEach(() => {
+  // 模块级的待删除/提示状态可能是上一个测试文件留下的（同进程跑多文件），先清掉。
+  resetMemoryUndoForTest();
+  resetToastsForTest();
   forgets = [];
   originalFetch = globalThis.fetch;
   globalThis.fetch = Object.assign(
@@ -206,4 +210,33 @@ test("关页（pagehide）时合并的也用 keepalive 发出去，一条不丢"
   jest.advanceTimersByTime(300);
   await settle();
   expect(view.queryByRole("button", { name: "全部撤销" })).toBeNull();
+});
+
+test("QA #331：「全部撤销」过程中不会新建合并提示（不闪「已删除 1 条记忆」）", async () => {
+  const view = render(<Toaster />);
+  for (let i = 1; i <= 6; i++) deleteWithUndo([note(i)], async () => {});
+  await settle();
+  expect(view.getByText("已删除 3 条记忆")).toBeTruthy();
+  // 记录点击后出现过的所有提示文案（每次 DOM 变化都看一眼）。
+  const seen = new Set<string>();
+  const observer = new MutationObserver(() => {
+    for (const el of view.queryAllByRole("status"))
+      seen.add(el.textContent ?? "");
+  });
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
+  await act(async () => {
+    fireEvent.click(view.getByRole("button", { name: "全部撤销" }));
+  });
+  await settle();
+  jest.advanceTimersByTime(300);
+  await settle();
+  observer.disconnect();
+  expect([...seen].some((t) => /已删除 [12] 条记忆/.test(t))).toBe(false);
+  expect(view.queryByRole("button", { name: "全部撤销" })).toBeNull();
+  expect(view.getAllByRole("button", { name: "撤销" })).toHaveLength(3);
+  expect(pendingMemoryDeletes.snapshot().size).toBe(3);
 });

@@ -22,11 +22,12 @@ import {
   MEMORY_GROUP_LIMIT,
   MEMORY_UNDO_MS,
   pendingMemoryDeletes,
+  resetMemoryUndoForTest,
   undoToastText,
   visibleNotes,
 } from "@/components/memory/memory-notes";
 import { ConfirmHost } from "@/components/ui/confirm";
-import { Toaster, toast } from "@/components/ui/toast";
+import { resetToastsForTest, Toaster, toast } from "@/components/ui/toast";
 import type { MemoryNoteView } from "../../shared/memory-notes";
 import { settleReactWork } from "./settle-react-work";
 
@@ -47,6 +48,9 @@ afterAll(async () => {
   await GlobalRegistrator.unregister();
 });
 beforeEach(() => {
+  // 模块级的待删除/提示状态可能是上一个测试文件留下的（同进程跑多文件），先清掉。
+  resetMemoryUndoForTest();
+  resetToastsForTest();
   calls = [];
   originalFetch = globalThis.fetch;
   globalThis.fetch = Object.assign(
