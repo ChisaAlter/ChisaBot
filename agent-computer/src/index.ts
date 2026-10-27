@@ -1,3 +1,4 @@
+import "../../shared/env-compat";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serve } from "bun";
@@ -248,7 +249,8 @@ function actionLeaseMs(pathname: string): number {
  */
 function botIdOf(request: Request, fallback?: string | null): string {
   return (
-    request.headers.get("x-openbot-bot-id")?.trim() ||
+    request.headers.get("x-chisabot-bot-id")?.trim() ||
+    request.headers.get("x-openbot-bot-id")?.trim() || // pre-0.1.75 name
     fallback?.trim() ||
     DEFAULT_BOT_ID
   );
@@ -282,7 +284,7 @@ function botIdOf(request: Request, fallback?: string | null): string {
  * act on: chown the directory, or set `computers.podSecurityContext: null`.
  */
 async function assertWritable(label: string, directory: string) {
-  const probe = join(directory, `.openbot-write-probe-${process.pid}`);
+  const probe = join(directory, `.chisabot-write-probe-${process.pid}`);
   try {
     await mkdir(directory, { recursive: true });
     await writeFile(probe, "");
@@ -983,7 +985,7 @@ serve<StreamData>({
       if (url.pathname === "/stream") {
         /*
          * The socket carries the Bot in the query because it cannot do it in a header. Every other call here names
-         * its Bot in `x-openbot-bot-id`, but a websocket client sends no custom headers on the upgrade,
+         * its Bot in `x-chisabot-bot-id`, but a websocket client sends no custom headers on the upgrade,
          * so the stream, and only the stream, also accepts the Bot as a query parameter. The header
          * still wins where there is one.
          */
@@ -1014,9 +1016,11 @@ serve<StreamData>({
       // Who has the wheel. Polled by the surface alongside the screen, so the person sees the Bot ask
       // for help without having to reload anything.
       if (url.pathname === "/control" && request.method === "GET") {
-        return json(
-          session.control.get(url.searchParams.get("requestId") ?? undefined),
-        );
+        return json({
+          ...session.control.get(url.searchParams.get("requestId") ?? undefined),
+          // CB-103：右栏 / 大屏是否正在直播，网关据此回 state=live。
+          live: session.viewer.casting(),
+        });
       }
 
       // The Bot asking for help. It does not take control: it says it is stuck and why, and a person
@@ -1469,11 +1473,19 @@ serve<StreamData>({
           });
         } catch (error) {
           if (error instanceof CaptureBusyError) {
+            /*
+             * CB-103：用户接管时右栏在直播，卡片截图让路是预期内的，不是故障。标上 userControl /
+             * reason=user_control，网关据此回 409（不是 503），网页端也就不当服务器错误。
+             */
+            const userControl = session.control.get().holder === "human";
             return json(
               {
                 error: error.message,
                 captureBusy: true,
                 liveCast: error.liveCast,
+                ...(userControl
+                  ? { userControl: true, reason: "user_control" }
+                  : {}),
               },
               // 503 is the busy code the web UI already maps to「电脑正忙…」(DOG-05).
               503,

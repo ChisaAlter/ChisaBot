@@ -5,7 +5,7 @@ import { createBotLifecycleRoutes } from "../src/agents/lifecycle-routes";
 import { createWakeUpRunner, type WakeUpPayload } from "../src/agents/wake-up";
 import type { AuditEventInput } from "../src/audit";
 
-const ACTOR = { id: "u1", email: "person@openbot.test", role: "user" } as const;
+const ACTOR = { id: "u1", email: "person@chisabot.test", role: "user" } as const;
 
 function app() {
   const rows: AuditEventInput[] = [];

@@ -161,9 +161,9 @@ test("接线：聊天路由自己不画东西，外壳只有一个，设置 / �
   }
   const shell = src("components/layout/authed-shell.tsx");
   expect(shell).toContain("<KeepAliveStage");
-  // 右栏在设置里藏起来，不卸载；data-mode 不随设置变（否则回聊天时主区淡入重播）。
+  // 右栏在设置里藏起来，不卸载。左栏没有模式切换了（CB-099），外壳不再带 mode。
   expect(shell).toContain("rightHidden=");
-  expect(shell).toContain("mode={switched ? mode : undefined}");
+  expect(shell).not.toContain("mode=");
   // 藏着的聊天不改地址、不标已读、不登记左栏「⋯」。
   const page = src("components/channels/channel-page.tsx");
   expect(page).toContain("if (!visibleRef.current) return;");
@@ -249,7 +249,10 @@ test("接线：藏着的东西不轮询（§98.3）", () => {
   expect(src("components/panels/live-panels.tsx")).toContain("if (!onScreen) return false;");
   for (const f of ["lib/copilot/gallery-tools.tsx", "lib/copilot/sandboxed-tools.tsx"]) expect(src(f)).toContain("useBotOnScreen(declared)");
   expect(src("components/channels/channel-page.tsx")).toContain("useMarkBotHidden(agentId, !visible)");
-  expect(src("components/computer/handoff-resume-notice.tsx")).toContain("if (!ready || !onScreen) return;");
+  // CB-103 r2：提示不再自己轮询，改订阅共用的控制权 store；store 只在有看得见的订阅者时轮询。
+  expect(src("components/computer/handoff-resume-notice.tsx")).toContain("useComputerControl(botId, ready)");
+  expect(src("components/computer/handoff-resume-notice.tsx")).not.toContain("readControl(");
+  expect(src("lib/computers/use-control.ts")).toContain("const onScreen = useKeptVisible();");
   expect(src("lib/copilot/thread-activity.ts")).toContain("if (onScreen) kickRef.current();");
   expect(src("lib/copilot/thread-activity.ts")).toContain("onScreenRef.current ? SYNC_INTERVAL_MS : HIDDEN_SYNC_INTERVAL_MS");
   // 手机抽屉在导航开始前收起（不是新左栏挂上之后的 effect 里），否则透明抽屉盖住页面。

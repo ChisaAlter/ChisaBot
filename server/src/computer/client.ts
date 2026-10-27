@@ -20,6 +20,8 @@ export class CaptureBusyError extends ComputerUnavailableError {
   constructor(
     reason: string,
     readonly liveCast = false,
+    /** CB-103：让路是因为用户正接管着这台电脑（预期内），路由回 409 + reason=user_control。 */
+    readonly userControl = false,
   ) {
     super(reason);
     this.name = "CaptureBusyError";
@@ -233,9 +235,9 @@ export function createComputerTransport(
         ...init,
         headers: {
           ...(init?.headers as Record<string, string> | undefined),
-          "x-openbot-bot-id": botId,
+          "x-chisabot-bot-id": botId, "x-openbot-bot-id": botId,
           ...(options.token
-            ? { "x-openbot-computer-token": options.token }
+            ? { "x-chisabot-computer-token": options.token , "x-openbot-computer-token": options.token }
             : {}),
         },
         signal: caller
@@ -439,7 +441,11 @@ function throwMappedError(
   }
   // LiveScreen casting or another HTTP capture in flight — clear busy, not an outage.
   if (body?.captureBusy === true) {
-    throw new CaptureBusyError(detail, body.liveCast === true);
+    throw new CaptureBusyError(
+      detail,
+      body.liveCast === true,
+      body.userControl === true || body.reason === "user_control",
+    );
   }
   throw new ComputerUnavailableError(detail);
 }

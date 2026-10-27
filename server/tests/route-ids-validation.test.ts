@@ -11,7 +11,7 @@ const requireUser: MiddlewareHandler<{ Variables: AppVariables }> = async (
 ) => {
   context.set("actor", {
     id: "user-1",
-    email: "user@openbot.test",
+    email: "user@chisabot.test",
     role: "admin",
   });
   await next();
@@ -44,10 +44,10 @@ describe("agent ids", () => {
   }
 
   test.each([
-    ["GET", "http://openbot.test/%20%20%20", "GET"],
-    ["duplicate", "http://openbot.test/%20%20%20/duplicate", "POST"],
-    ["delete", "http://openbot.test/%20%20%20", "DELETE"],
-    ["handoff", "http://openbot.test/%20%20%20/handoff", "GET"],
+    ["GET", "http://chisabot.test/%20%20%20", "GET"],
+    ["duplicate", "http://chisabot.test/%20%20%20/duplicate", "POST"],
+    ["delete", "http://chisabot.test/%20%20%20", "DELETE"],
+    ["handoff", "http://chisabot.test/%20%20%20/handoff", "GET"],
   ])("refuses a whitespace id on %s with 400", async (_n, url, method) => {
     const calls: unknown[] = [];
     const response = await app(calls).request(url, { method });
@@ -74,7 +74,7 @@ describe("channel ids", () => {
   test("refuses a whitespace id on POST /:channelId/activity", async () => {
     const calls: unknown[] = [];
     const response = await app(calls).request(
-      "http://openbot.test/%20%20/activity",
+      "http://chisabot.test/%20%20/activity",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -95,7 +95,7 @@ describe("channel ids", () => {
   test("refuses a whitespace id on POST /:channelId/busy", async () => {
     const calls: unknown[] = [];
     const response = await app(calls).request(
-      "http://openbot.test/%20%20/busy",
+      "http://chisabot.test/%20%20/busy",
       {
         method: "POST",
         headers: { "content-type": "application/json" },

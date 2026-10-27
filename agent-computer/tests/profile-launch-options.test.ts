@@ -36,7 +36,7 @@ describe.skipIf(
       const { createProfiles } = await import(
         `../src/profiles?launch-options=${backend}`
       );
-      const root = await mkdtemp(join(tmpdir(), "openbot-launch-options-"));
+      const root = await mkdtemp(join(tmpdir(), "chisabot-launch-options-"));
       const profiles = createProfiles(root);
       try {
         await expect(profiles.page("bot-one")).rejects.toThrow(

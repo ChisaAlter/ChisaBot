@@ -17,7 +17,7 @@ import type { ComponentStore } from "../src/components/store";
 
 const ADMIN = {
   id: "u1",
-  email: "admin@openbot.test",
+  email: "admin@chisabot.test",
   role: "admin",
 } as const;
 

@@ -4,7 +4,7 @@
 
 ## 选择运行方式
 
-ChisaBot 的网页登录、API 和数据库可以部署在自己的服务器。使用 `OPENBOT_RUNTIME_MODE=local`，会话保存在自己的 PostgreSQL 中，无需登录 CopilotKit 或创建 Intelligence 项目。
+ChisaBot 的网页登录、API 和数据库可以部署在自己的服务器。使用 `CHISABOT_RUNTIME_MODE=local`，会话保存在自己的 PostgreSQL 中，无需登录 CopilotKit 或创建 Intelligence 项目。
 
 模型可以使用自己的兼容服务，也可以连接第三方 API。需要统一多个供应商与模型时，先部署 Magpie，再让 ChisaBot 连接它。详见 [能力边界](chisabot.md)。
 
@@ -19,9 +19,9 @@ ChisaBot 的网页登录、API 和数据库可以部署在自己的服务器。�
 核心运行设置示例：
 
 ```dotenv
-OPENBOT_RUNTIME_MODE=local
+CHISABOT_RUNTIME_MODE=local
 TENANT_PACKAGE_DIR=../examples/zh-CN
-OPENBOT_SELF_HOST_BANNER=false
+CHISABOT_SELF_HOST_BANNER=false
 COPILOTKIT_TELEMETRY_DISABLED=true
 DO_NOT_TRACK=1
 ```

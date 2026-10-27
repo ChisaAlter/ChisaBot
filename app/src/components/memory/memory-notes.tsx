@@ -328,26 +328,183 @@ export function MemoryBots({ disabled }: { disabled: ReadonlySet<string> }) {
   );
 }
 
-/** 删掉（可撤销：撤销 = 原样重建）。 */
-export async function deleteWithUndo(notes: MemoryNoteView[], refresh: () => Promise<unknown>, hide: (ids: string[] | null) => void) {
-  const ids = notes.map((note) => note.id);
-  hide(ids);
+/**
+ * 一组最多先画这么多行（CB-106）。列表一次拿全（本地搜索要用全文），但 3000 条每行一个下拉菜单
+ * 全挂上去，首屏要好几秒、删一条也要整页重渲染；先画前 N 条，其余点「显示其余」再画。
+ * 搜索框里有词时不截断：那是在找东西，命中的都要看得到（命中通常很少）。
+ */
+export const MEMORY_GROUP_LIMIT = 50;
+
+export function visibleNotes<T>(notes: readonly T[], expanded: boolean, limit = MEMORY_GROUP_LIMIT): readonly T[] {
+  return expanded || notes.length <= limit ? notes : notes.slice(0, limit);
+}
+
+/** 撤销窗口（毫秒）：和「撤销」提示一样长，过了才真正删库（CB-106）。 */
+export const MEMORY_UNDO_MS = 8000;
+
+/**
+ * 待删除的记忆（CB-106 延迟删除）。确认后只在界面上隐藏，撤销窗口结束才发删除请求；
+ * 撤销 = 取消这次待删除，库里的原记录一直没动（id、created_at、agent_id 原样）。
+ *
+ * 放在模块级而不是页面 state 里：离开设置页（组件卸载）不取消、也不提前删，计时照走，8 秒到了照删；
+ * 回到页面时仍然隐藏着。关标签页/刷新（pagehide）时窗口没法再撤销，立刻用 keepalive 请求把待删的发出去。
+ */
+type PendingDelete = { ids: string[]; timer: ReturnType<typeof setTimeout>; refresh: () => Promise<unknown> };
+const pendingDeletes = new Map<number, PendingDelete>();
+let pendingSeq = 0;
+let pendingHidden: ReadonlySet<string> = new Set();
+const pendingListeners = new Set<() => void>();
+
+function emitPending() {
+  pendingHidden = new Set([...pendingDeletes.values()].flatMap((entry) => entry.ids));
+  for (const listener of pendingListeners) listener();
+}
+
+/** 删除失败的提示文案：断网（fetch 抛 TypeError，如 Failed to fetch）给中文，不露英文原文。 */
+export function deleteErrorText(error: unknown) {
+  if (error instanceof TypeError || (typeof navigator !== "undefined" && navigator.onLine === false))
+    return "网络连不上，这条记忆没删";
+  return error instanceof Error && error.message ? error.message : "删除失败";
+}
+
+/** 撤销提示文案：带上记忆标题（主题，没有就用正文），太长截断。 */
+export function undoToastText(notes: MemoryNoteView[]) {
+  if (notes.length !== 1) return `已删除 ${notes.length} 条记忆`;
+  const raw = (notes[0]?.subject || notes[0]?.content || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "已删除 1 条记忆";
+  const title = [...raw].length > 16 ? `${[...raw].slice(0, 16).join("")}…` : raw;
+  return `已删除记忆「${title}」`;
+}
+
+/** 界面上要隐藏的记忆 id（待删除 + 正在删）。配合 useSyncExternalStore。 */
+export const pendingMemoryDeletes = {
+  subscribe(listener: () => void) {
+    pendingListeners.add(listener);
+    return () => void pendingListeners.delete(listener);
+  },
+  snapshot: () => pendingHidden,
+};
+
+async function commitDelete(key: number) {
+  const entry = pendingDeletes.get(key);
+  if (!entry) return;
   try {
-    await deleteMemoryNotes(ids);
+    await deleteMemoryNotes(entry.ids);
   } catch (error) {
-    hide(null);
-    toast.error(error instanceof Error ? error.message : "删除失败");
+    // 删除失败：放开隐藏，记录回到列表，并报错。
+    pendingDeletes.delete(key);
+    forgetToast(key);
+    emitPending();
+    toast.error(deleteErrorText(error));
     return;
   }
-  await refresh();
-  hide(null);
-  toast.undo(notes.length === 1 ? "已删除 1 条记忆" : `已删除 ${notes.length} 条记忆`, async () => {
-    try {
-      for (const note of notes) await createMemoryNote({ kind: note.kind, subject: note.subject, content: note.content, context: note.context });
-      await refresh();
-    } catch {
-      toast.error("恢复失败");
-    }
+  // 列表刷新完再放开隐藏，免得已删的那条闪回来。
+  await entry.refresh().catch(() => undefined);
+  pendingDeletes.delete(key);
+  forgetToast(key);
+  emitPending();
+}
+
+/** 关页时把待删的立刻发出去（导出给测试：测试里的 window 换过，事件监听挂在别的对象上）。 */
+export function flushOnPageHide() {
+  for (const [key, entry] of pendingDeletes) {
+    clearTimeout(entry.timer);
+    pendingDeletes.delete(key);
+    forgetToast(key);
+    void fetch("/api/memory-notes/forget", {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids: entry.ids }),
+    }).catch(() => undefined);
+  }
+  emitPending();
+}
+if (typeof window !== "undefined") window.addEventListener("pagehide", flushOnPageHide);
+
+/**
+ * 删掉（可撤销）。立刻隐藏并弹「撤销」，{@link MEMORY_UNDO_MS} 后才真删；连删几次各自独立计时、各自撤销。
+ * 返回这次待删除的 key（测试用）。
+ */
+export function deleteWithUndo(notes: MemoryNoteView[], refresh: () => Promise<unknown>) {
+  const ids = notes.map((note) => note.id);
+  const key = ++pendingSeq;
+  const timer = setTimeout(() => void commitDelete(key), MEMORY_UNDO_MS);
+  pendingDeletes.set(key, { ids, timer, refresh });
+  emitPending();
+  // 同时最多 MEMORY_UNDO_TOAST_LIMIT 条单独的「撤销」；再多的并进一条「已删除 N 条记忆 · 全部撤销」（CB-111）。
+  for (const [toastKey, toastId] of singleToasts) if (!toast.isOpen(toastId)) singleToasts.delete(toastKey);
+  if (singleToasts.size >= MEMORY_UNDO_TOAST_LIMIT) {
+    mergedKeys.add(key);
+    syncMergedToast();
+    return key;
+  }
+  const toastId = toast.undo(undoToastText(notes), () => cancelPending(key), MEMORY_UNDO_MS);
+  singleToasts.set(key, toastId);
+  return key;
+}
+
+/** 同时最多几条单独的撤销提示（CB-111）。 */
+export const MEMORY_UNDO_TOAST_LIMIT = 3;
+/** 待删 key → 它单独的撤销提示 id。 */
+const singleToasts = new Map<number, number>();
+/** 超出上限、并进合并提示的待删 key。 */
+const mergedKeys = new Set<number>();
+let mergedToastId = 0;
+
+/** 取消一次待删除。已经开始真删了（计时刚到）就来不及了；否则原记录原样还在。 */
+function cancelPending(key: number) {
+  const entry = pendingDeletes.get(key);
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  pendingDeletes.delete(key);
+  forgetToast(key);
+  emitPending();
+}
+
+/** 待删除结束（撤销/真删/失败/关页）后，把它从提示里拿掉。 */
+function forgetToast(key: number) {
+  singleToasts.delete(key);
+  if (mergedKeys.delete(key)) syncMergedToast();
+}
+
+/** 合并提示：数的是合并进来的记忆条数；「全部撤销」只撤合并进来的，单独显示的各自撤销。 */
+function syncMergedToast() {
+  const count = [...mergedKeys].reduce((sum, key) => sum + (pendingDeletes.get(key)?.ids.length ?? 0), 0);
+  if (!mergedKeys.size || !count) {
+    mergedKeys.clear();
+    if (mergedToastId) toast.dismiss(mergedToastId);
+    mergedToastId = 0;
+    return;
+  }
+  const text = `已删除 ${count} 条记忆`;
+  if (mergedToastId && toast.isOpen(mergedToastId)) {
+    toast.update(mergedToastId, text);
+    return;
+  }
+  // 不自动消失：最后一条合并的待删除结束时才收起，保证每条在 8 秒内都还能撤销。
+  let id = 0;
+  id = toast.action(
+    text,
+    "全部撤销",
+    () => {
+      if (mergedToastId === id) mergedToastId = 0;
+      for (const key of [...mergedKeys]) cancelPending(key);
+    },
+    Number.POSITIVE_INFINITY,
+  );
+  mergedToastId = id;
+}
+
+/** 删一条也先确认（和技能页一致，CB-106）；确认后仍有 8 秒撤销。 */
+export async function confirmNoteDelete(note: MemoryNoteView) {
+  const title = note.subject ?? note.content.split("\n")[0] ?? "";
+  return confirmDialog({
+    title: `删除记忆「${title.length > 40 ? `${title.slice(0, 40)}…` : title}」？`,
+    description: "所有机器人都不会再记得这条内容。删除后 8 秒内可以撤销。",
+    confirmLabel: "删除",
+    destructive: true,
   });
 }
 

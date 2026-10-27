@@ -655,7 +655,7 @@ function upstreamAddress(upstream: Egress): { host: string; port: number } {
 
 function refuse(socket: Socket, reason: string) {
   socket.end(
-    `HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nx-openbot-egress: refused\r\ncontent-length: ${Buffer.byteLength(reason)}\r\n\r\n${reason}`,
+    `HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nx-chisabot-egress: refused\r\ncontent-length: ${Buffer.byteLength(reason)}\r\n\r\n${reason}`,
   );
 }
 
@@ -781,7 +781,7 @@ export async function startEgressFilter(
       response
         .writeHead(403, {
           "content-type": "text/plain",
-          "x-openbot-egress": "refused",
+          "x-chisabot-egress": "refused",
         })
         .end(decision.reason);
       return;

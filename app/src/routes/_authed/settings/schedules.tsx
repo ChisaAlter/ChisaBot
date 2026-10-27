@@ -4,6 +4,7 @@ import {
   IconDots,
   IconExternalLink,
   IconMessageReply,
+  IconPencil,
   IconPlayerPlay,
   IconPlayerSkipForward,
   IconTrash,
@@ -18,6 +19,7 @@ import {
   PageShell,
   PageSkeleton,
 } from "@/components/layout/page-shell";
+import { ScheduleEditDialog } from "@/components/schedules/edit-dialog";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -42,6 +44,7 @@ import { toast } from "@/components/ui/toast";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { useOpenThread } from "@/lib/channels/open-thread";
 import { agoText } from "@/lib/im";
+import { scheduleZone } from "@/lib/schedule-edit";
 import {
   deleteSchedule,
   patchSchedule,
@@ -49,6 +52,7 @@ import {
   runScheduleNow,
   scheduleKeys,
   schedulesQueryOptions,
+  shownNextRun,
   skipScheduleNext,
 } from "@/lib/schedules";
 import { cn } from "@/lib/utils";
@@ -78,6 +82,7 @@ function SchedulesPage() {
   );
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [detail, setDetail] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const [purging, setPurging] = useState(false);
   const items = (list.data ?? []).filter((s) => !hidden.has(s.id));
   // 可见 + 隐藏机器人都算「还在」：只把真删除的标成孤儿（0.1.40），避免隐藏机器人任务被误清。
@@ -96,6 +101,7 @@ function SchedulesPage() {
     orphanAll,
   } = partitionScheduleList(items, knownBotIds);
   const shown = items.find((s) => s.id === detail) ?? null;
+  const editingSchedule = items.find((s) => s.id === editing) ?? null;
   // 进设置页自动扫一次真孤儿（服务端 DELETE）；不 resume 任何 paused。
   useEffect(() => {
     if (!botsReady || !list.isSuccess) return;
@@ -156,6 +162,7 @@ function SchedulesPage() {
           botName={botName.get(s.agentId) ?? "已删除的机器人"}
           key={s.id}
           onHide={(id) => setHidden((h) => new Set([...h, id]))}
+          onEdit={() => setEditing(s.id)}
           onOpen={() => setDetail(s.id)}
           schedule={s}
         />
@@ -166,8 +173,16 @@ function SchedulesPage() {
     <>
       <ScheduleDialog
         botName={shown ? (botName.get(shown.agentId) ?? "已删除的机器人") : ""}
+        onEdit={(id) => {
+          setDetail(null);
+          setEditing(id);
+        }}
         onOpenChange={(open) => !open && setDetail(null)}
         schedule={shown}
+      />
+      <ScheduleEditDialog
+        onOpenChange={(open) => !open && setEditing(null)}
+        schedule={editingSchedule}
       />
       <PageShell
         action={
@@ -323,11 +338,13 @@ function ScheduleRow({
   schedule: s,
   botName,
   onOpen,
+  onEdit,
   onHide,
 }: {
   schedule: ScheduleView;
   botName: string;
   onOpen: () => void;
+  onEdit: () => void;
   onHide: (id: string) => void;
 }) {
   const queryClient = useQueryClient();
@@ -400,7 +417,12 @@ function ScheduleRow({
       className={cn("im-row sch-row", ended && "is-ended")}
       data-testid="schedule-row"
     >
-      <button className="im-row-main" onClick={onOpen} type="button">
+      <button
+        aria-label={`查看「${s.title}」的详情`}
+        className="im-row-main"
+        onClick={onOpen}
+        type="button"
+      >
         <ListRow
           icon={
             <span
@@ -416,6 +438,9 @@ function ScheduleRow({
             <>
               <span className="device-row-meta">
                 <span className="sch-when">{s.schedule}</span>
+                <span className="device-cap-chip sch-tz" data-testid="schedule-tz">
+                  {scheduleZone(s)}
+                </span>
                 <span className="device-cap-chip">
                   <T>{botName}</T>
                 </span>
@@ -427,8 +452,8 @@ function ScheduleRow({
                 ) : null}
               </span>
               <span className="sch-line">
-                {s.status === "active" && s.nextRunAt ? (
-                  <span className="sch-next">{`下次 ${formatWhen(s.nextRunAt, s.timezone)}`}</span>
+                {shownNextRun(s) ? (
+                  <span className="sch-next">{`下次 ${formatWhen(shownNextRun(s) ?? "", s.timezone)} ${scheduleZone(s)}`}</span>
                 ) : null}
                 <span
                   className={cn(
@@ -498,6 +523,12 @@ function ScheduleRow({
                 <span className="min-w-0 flex-1">{"立即运行"}</span>
               </DropdownMenuItem>
             ) : null}
+            {!ended ? (
+              <DropdownMenuItem className="glass-mi" onClick={onEdit}>
+                <IconPencil className="size-[18px] shrink-0 opacity-80" />
+                <span className="min-w-0 flex-1">{"编辑"}</span>
+              </DropdownMenuItem>
+            ) : null}
             {s.status === "active" ? (
               <DropdownMenuItem
                 className="glass-mi"
@@ -536,12 +567,15 @@ function ScheduleRow({
 function ScheduleDialog({
   schedule: s,
   botName,
+  onEdit,
   onOpenChange,
 }: {
   schedule: ScheduleView | null;
   botName: string;
+  onEdit: (id: string) => void;
   onOpenChange: (open: boolean) => void;
 }) {
+  const ended = s?.status === "done" || s?.status === "cancelled";
   return (
     <Dialog onOpenChange={onOpenChange} open={Boolean(s)}>
       <DialogContent className="im-dialog max-w-lg">
@@ -549,18 +583,31 @@ function ScheduleDialog({
           <>
             <DialogHeader>
               <DialogTitle>{s.title}</DialogTitle>
-              <DialogDescription>{`${s.schedule} · ${botName}${s.source === "im" ? " · 来自 IM" : ""}`}</DialogDescription>
+              <DialogDescription>{`${s.schedule} · ${scheduleZone(s)} · ${botName}${s.source === "im" ? " · 来自 IM" : ""}`}</DialogDescription>
             </DialogHeader>
             <DialogBody className="im-form mt-2">
+              {!ended ? (
+                <div>
+                  <Button
+                    data-testid="schedule-detail-edit"
+                    onClick={() => onEdit(s.id)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <IconPencil />
+                    {"编辑"}
+                  </Button>
+                </div>
+              ) : null}
               <div className="sch-detail">
                 <div className="sch-detail-l">{"到点时做什么"}</div>
                 <div className="sch-detail-v">{s.instruction}</div>
               </div>
-              {s.status === "active" && s.nextRunAt ? (
+              {shownNextRun(s) ? (
                 <div className="sch-detail">
                   <div className="sch-detail-l">{"下次运行"}</div>
                   <div className="sch-detail-v">
-                    {formatWhen(s.nextRunAt, s.timezone)}
+                    {`${formatWhen(shownNextRun(s) ?? "", s.timezone)} ${scheduleZone(s)}`}
                   </div>
                 </div>
               ) : null}

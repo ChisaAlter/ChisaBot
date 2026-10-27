@@ -18,7 +18,7 @@ ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、
   不在其中：它记在 localStorage 里（`lib/chat/ui-memory.ts`，DESIGN.md §88），刷新回来还在。这里不扫整页的
   输入框：卡片表单、面板、搜索框里的字不是聊天草稿。
 - 缓存：应用对 `index.html` 一律 `Cache-Control: no-cache`、带哈希的 `/assets/*` 永久缓存（直连 3001 时生效）。
-  经公网网关（`/opt/openbot-zh/public/nginx.conf`）时入口页和接口仍是 `no-store`（`security-headers.conf`），入口页不会是旧的；
+  经公网网关（`/opt/chisabot-zh/public/nginx.conf`）时入口页和接口仍是 `no-store`（`security-headers.conf`），入口页不会是旧的；
   **带哈希的 `/assets/*` 单独一段 `location ^~ /assets/`**：仍要登录（`auth_request`），成功响应
   `Cache-Control: private, max-age=31536000, immutable`（浏览器长期缓存，`CDN-Cache-Control: no-store` 让 Cloudflare 不缓存），
   非 200 是 `no-store`。以前所有资源都是 `no-store`，每次打开都要重新下载约 1 MB（gzip 后）的脚本。没有 service worker。
@@ -128,7 +128,7 @@ GitHub Release（通用版）。配置了仓库变量 `CHISABOT_SERVER_URL` / `C
 - 认证就是文件系统权限：`spool/requests` 归 uid 1002（镜像里的 API 用户）、700；`spool/state` 归 root、只读挂载。
   公网网关先认证会话，`/api/admin/system-update` 再要求管理员。
 - 同时只有一个任务：`/opt/chisabot-updater/update.lock`（flock，更新和回滚共用）；切换 compose 时再拿
-  `/opt/openbot-zh/.deploy.lock`（和手动发布脚本同一把锁）。
+  `/opt/chisabot-zh/.deploy.lock`（和手动发布脚本同一把锁）。
 - **更新来源**：本机裸仓库 `/opt/chisabot-updater/mirror.git`，每 30 分钟和点「检查更新」时从
   `https://github.com/<GITHUB_REPO>.git` 拉 `GITHUB_BRANCH`（`config.env`）。仓库公开（ChisaAlter/ChisaBot 是公开的），**匿名拉取，
   不需要令牌**；「上次检查」显示拉取时间，拉取失败时显示原因。
@@ -163,7 +163,7 @@ GitHub Release（通用版）。配置了仓库变量 `CHISABOT_SERVER_URL` / `C
   5. 构建镜像：`FROM` 底座（`base.env` 的 `BASE_IMAGE`；最早是压平的 `flat-20261011b`），只覆盖 `app/dist`、`server/{src,drizzle,scripts}`、`shared`、
      `examples/zh-CN`、`agent-computer/src`（服务器直接 import 它的 `egress.ts`）、`build-info.json`，层数固定，不会碰到 127 层上限；标签 `auto-<UTC 时间>-<提交>`，标签
      `chisabot.commit` 记录提交；
-  6. 切换：写回滚脚本 `/opt/openbot-zh/rollback-to-<旧标签>.sh`，`compose.yaml.before-<新标签>`，改镜像行，`docker compose up --wait`；
+  6. 切换：写回滚脚本 `/opt/chisabot-zh/rollback-to-<旧标签>.sh`，`compose.yaml.before-<新标签>`，改镜像行，`docker compose up --wait`；
   7. 健康检查（`health.sh`）：容器 healthy、20 秒内没有重启、本机 `/health` 200、`PUBLIC_HEALTH_URL`（公网登录页）200（为空或示例域名时跳过）、
      `/api/version` 的构建号是新的；最后做一次模型往返自检（`POST /api/admin/smoke`，见 `docs/admin-smoke.md`，不写任何对话），
      结果只记进日志、不影响通过与否；**不通过就自动执行回滚脚本**，任务记为「已自动回滚」；
@@ -200,7 +200,7 @@ sh deploy/install-updater.sh --check         # 只检查：打印会做什么，
   `PUBLIC_HEALTH_URL` 是空的或还是示例域名 `chisabot.example.com`、而 `deploy/.env` 里有真实域名时改成真实的（原文件备份 `config.env.bak-*`）。
   有更新正在进行时拒绝运行。
 - **容器没挂更新目录**（老 compose / 老容器）：`COMPOSE_DIR` 就是这个 `deploy/` 时，把 `.env` 的 `CHISABOT_IMAGE` 设成**正在运行的镜像**，
-  用它重建一次容器（`up --no-build`，断开十几秒）；`COMPOSE_DIR` 是别的目录（手写 compose，例如 `/opt/openbot-zh`）时只打印要加的几行。
+  用它重建一次容器（`up --no-build`，断开十几秒）；`COMPOSE_DIR` 是别的目录（手写 compose，例如 `/opt/chisabot-zh`）时只打印要加的几行。
 - 前置条件不满足（不是 root、没有 systemd、没有 Python）时给出明确的一句话并退出（非 0）；`start.sh` 里只是提示，照常启动。
 
 仓库的 `deploy/compose.yaml` 自带：
@@ -264,5 +264,33 @@ cd /opt/chisabot-src && git pull && sudo sh deploy/install-updater.sh
 
 依赖或底座变了（指纹不符）：不用再手动构建，点「一键完整更新」（或 `request.sh update --full`）。
 
-回滚完整更新：和快速更新一样，「回滚到上一版」或 `/opt/openbot-zh/rollback-to-<旧标签>.sh`（只换镜像，数据库不回退）；
+回滚完整更新：和快速更新一样，「回滚到上一版」或 `/opt/chisabot-zh/rollback-to-<旧标签>.sh`（只换镜像，数据库不回退）；
 `base.env` 指向新底座不影响回滚。要连底座一起退回：`mv base.env base.env.off` 并把 `base-deps.sha256` 改回旧值。
+
+### compose 默认网络与 Hermes 桥接（CB-100）
+
+`deploy/compose.yaml` 把默认网络固定为 `${CHISABOT_NETWORK_NAME:-openbot-zh_default}`，子网 `${CHISABOT_NETWORK_SUBNET:-172.19.0.0/16}`，网关 `${CHISABOT_NETWORK_GATEWAY:-172.19.0.1}`（和卷一样沿用改名前的名字）。宿主机上的 Hermes 桥接从容器里经这个网关访问，所以下面四处必须一致：
+
+| 位置 | 值 |
+| --- | --- |
+| compose 默认网络网关 | `172.19.0.1`（子网 `172.19.0.0/16`） |
+| `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST` | `172.19.0.1` |
+| `.env` 的 `CHISABOT_HERMES_URL` / `AGENT_ENDPOINT_ALLOWED_HOSTS` | `http://172.19.0.1:4100/ag-ui` / `172.19.0.1:4100` |
+| ufw | `allow from 172.19.0.0/16 to any port 4100` |
+
+改网络名或子网时四处要一起改。更新程序发现正在运行的容器不在 compose 声明的默认网络上（名字或子网不一致）时，会自动用 `--force-recreate`。部署后自检（`post-deploy-smoke.sh` → `hermes-reach.sh`）会从应用容器里按 `CHISABOT_HERMES_URL` 真的连一次 Hermes（任意 HTTP 状态都算连得上），`/api/admin/smoke` 也会报告 `hermes=ok|unreachable|skipped`；连不上就让部署失败并走自动回滚。Hermes 运行时由这次发布激活时，这一步放在激活之后做。
+
+**几项补充（CB-100b）：**
+
+- **内核是 hermes 却没配 URL 算失败。** 选 Hermes 内核的标记是 `.env` 里的 `CHISABOT_AGENT_KERNEL=hermes`（`compose-image.sh` 的 `hermes_release_enabled` 认它）；服务器本身只看 `CHISABOT_HERMES_URL`。两者不一致时，`hermes-reach.sh` 报 `hermes=unreachable` 并让部署失败，`/api/admin/smoke` 也报 `hermes=unreachable`（HTTP 502），不再报 `skipped`。只有内核不是 hermes 且没配 URL 时才是 `skipped`。
+- **连接超时。** 应用连智能体运行时（Hermes、远程 AG-UI / Mastra）时，从发请求到收到第一个事件最多等 `CHISABOT_AGENT_CONNECT_TIMEOUT_MS`（默认 `20000`，`0` 关闭）。对端接受连接却不回、或 SYN 被防火墙丢掉时，这一轮在这个时间后以「智能体运行时无法连接（ETIMEDOUT …）」结束，不会一直「思考中」。流开始后不再计时。
+- **网络漂移检查不再依赖 python3。** 依次用 python3 / python / jq / bun / node 解析 `docker compose config --format json`；主机上一个都没有时 stderr 报 `::error::`，并保守地按漂移处理（`--force-recreate`）。
+
+**回滚到 CB-100 之前的 compose 会让 Hermes 再次连不上。** CB-100 之前的 `compose.yaml` 没有固定默认网络：compose 会建一个名字/子网由 Docker 自动分配的网络（通常不是 `172.19.0.0/16`），容器出口网关就不再是 `172.19.0.1`，而 `ACP_BRIDGE_HOST`、`CHISABOT_HERMES_URL`、ufw 规则都还指向 `172.19.0.1`，于是每一轮都是「智能体运行时无法连接」。
+
+- env 模式（仓库自带 `deploy/compose.yaml`）的 `rollback.sh` 只改 `.env` 的 `CHISABOT_IMAGE`，compose 文件不变，镜像回滚不受影响。只有手动 `git checkout` 旧版本的 `deploy/`、或 compose 模式恢复了 `<compose>.before-<标签>` 这种 CB-100 之前的文件时才会出问题。
+- 处理办法（任选其一）：
+  1. **推荐**：只回滚镜像，保留新的 compose 文件（`.env` 里改 `CHISABOT_IMAGE` 后 `docker compose up -d`）。
+  2. 必须用旧 compose 时，把 CB-100 的 `networks.default` 那一段（`name: openbot-zh_default`，`ipam.config` 子网 `172.19.0.0/16`、网关 `172.19.0.1`）原样补进旧文件，然后 `docker compose up -d --force-recreate`。
+  3. 都不行时，按 `docker network inspect <实际网络>` 查出的新网关，同时改 `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST`、`.env` 的 `CHISABOT_HERMES_URL` / `AGENT_ENDPOINT_ALLOWED_HOSTS`、ufw 规则，再 `systemctl restart hermes-acp-bridge` 并重建应用容器。
+- 无论哪种，最后都跑一次 `deploy/updater/hermes-reach.sh`（或 `/api/admin/smoke`）确认 `hermes=ok`。

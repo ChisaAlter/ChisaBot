@@ -5,23 +5,23 @@ describe("desktop runtime metadata", () => {
   test("leaves ordinary server deployments untagged", () => {
     expect(desktopTelemetryProperties({})).toEqual({});
     expect(
-      desktopTelemetryProperties({ OPENBOT_DISTRIBUTION: "server" }),
+      desktopTelemetryProperties({ CHISABOT_DISTRIBUTION: "server" }),
     ).toEqual({});
   });
 
   test("carries only the shell's bounded metadata", () => {
     expect(
       desktopTelemetryProperties({
-        OPENBOT_DISTRIBUTION: "desktop",
-        OPENBOT_VERSION: "0.0.9",
-        OPENBOT_PLATFORM: "macos",
-        OPENBOT_ARCH: "aarch64",
-        OPENBOT_OS_VERSION: "15.6.1",
-        OPENBOT_ENGINE: "podman",
+        CHISABOT_DISTRIBUTION: "desktop",
+        CHISABOT_VERSION: "0.0.9",
+        CHISABOT_PLATFORM: "macos",
+        CHISABOT_ARCH: "aarch64",
+        CHISABOT_OS_VERSION: "15.6.1",
+        CHISABOT_ENGINE: "podman",
         OPENAI_API_KEY: "synthetic-secret",
         CPK_TELEMETRY_ID: "identity-belongs-in-the-transport",
         HOME: "/Users/private-name",
-        OPENBOT_BASE_URL: "https://private.example",
+        CHISABOT_BASE_URL: "https://private.example",
       }),
     ).toEqual({
       openbot_distribution: "desktop",
@@ -44,12 +44,12 @@ describe("desktop runtime metadata", () => {
   ])("rejects arbitrary text in every metadata field: %s", (value) => {
     expect(
       desktopTelemetryProperties({
-        OPENBOT_DISTRIBUTION: "desktop",
-        OPENBOT_VERSION: value,
-        OPENBOT_OS_VERSION: value,
-        OPENBOT_PLATFORM: value,
-        OPENBOT_ARCH: value,
-        OPENBOT_ENGINE: value,
+        CHISABOT_DISTRIBUTION: "desktop",
+        CHISABOT_VERSION: value,
+        CHISABOT_OS_VERSION: value,
+        CHISABOT_PLATFORM: value,
+        CHISABOT_ARCH: value,
+        CHISABOT_ENGINE: value,
       }),
     ).toEqual({ openbot_distribution: "desktop" });
   });

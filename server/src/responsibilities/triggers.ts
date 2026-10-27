@@ -42,7 +42,7 @@ export const triggerKinds = [
 ] as const;
 export type TriggerKind = (typeof triggerKinds)[number];
 
-/** Kinds whose secret OpenBot generates; the others' secret is pasted from the vendor. */
+/** Kinds whose secret ChisaBot generates; the others' secret is pasted from the vendor. */
 const GENERATED_SECRET: ReadonlySet<TriggerKind> = new Set([
   "webhook",
   "github",
@@ -461,7 +461,7 @@ export function createTriggerStore(
         );
       return rows.map(record);
     },
-    /** Returns the secret once when OpenBot generated it; vendor secrets are pasted in `input.secret`. */
+    /** Returns the secret once when ChisaBot generated it; vendor secrets are pasted in `input.secret`. */
     async create(
       ownerUserId: string,
       responsibilityId: string,

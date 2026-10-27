@@ -32,11 +32,29 @@ function dismiss(id: number) {
 
 function push(kind: ToastKind, text: string, duration = kind === "error" ? 5200 : 2600, action?: ToastAction) {
   const id = nextId++;
-  // Same sentence twice in a row is one toast, not a stack of identical ones.
-  items = [...items.filter((item) => item.text !== text), { id, kind, text, action }].slice(-4);
+  // Same sentence twice in a row is one toast, not a stack of identical ones. 带按钮的提示（撤销等）
+  // 每条各自对应一次操作，不参与文案去重，也不会被挤掉——否则还在倒计时的删除就没法撤销了。
+  const kept = action ? items : items.filter((item) => item.action || item.text !== text);
+  const next = [...kept, { id, kind, text, action }];
+  const plain = next.filter((item) => !item.action);
+  const dropPlain = new Set(plain.slice(0, Math.max(0, plain.length - 4)).map((item) => item.id));
+  items = next.filter((item) => !dropPlain.has(item.id));
   emit();
-  window.setTimeout(() => dismiss(id), duration);
+  // duration 为 Infinity：不自动消失，由调用方 dismiss（合并的「全部撤销」提示，CB-111）。
+  if (Number.isFinite(duration)) window.setTimeout(() => dismiss(id), duration);
   return id;
+}
+
+/** 改一条还在的提示的文案（合并提示里的条数变化，CB-111）。 */
+function update(id: number, text: string) {
+  if (!items.some((item) => item.id === id)) return;
+  items = items.map((item) => (item.id === id ? { ...item, text } : item));
+  emit();
+}
+
+/** 这条提示还在屏幕上（没关、没在退场）。 */
+function isOpen(id: number) {
+  return items.some((item) => item.id === id && !item.leaving);
 }
 
 export const toast = {
@@ -71,6 +89,8 @@ export const toast = {
     return id;
   },
   dismiss,
+  update,
+  isOpen,
 };
 
 const subscribe = (listener: () => void) => {

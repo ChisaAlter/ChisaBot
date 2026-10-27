@@ -16,7 +16,7 @@ import { z } from "zod";
  * 「界面实际能画什么」不会漂移。
  *
  * 取代原来的 A2UI（@copilotkit/a2ui-renderer basicCatalog）。开关仍是 DeploymentConfig.generativeUi
- * （OPENBOT_GENERATIVE_UI），关掉时既不给工具，也不注册渲染器。
+ * （CHISABOT_GENERATIVE_UI），关掉时既不给工具，也不注册渲染器。
  */
 
 export const RENDER_UI_TOOL = "render_ui";

@@ -61,7 +61,7 @@ function routesFor(baseUrl: string) {
   });
   const actor: AuthenticatedActor = {
     id: "user-1",
-    email: "member@openbot.test",
+    email: "member@chisabot.test",
     role: "user",
   };
   const asActor: MiddlewareHandler<{ Variables: AppVariables }> = async (
@@ -84,7 +84,7 @@ function routesFor(baseUrl: string) {
 
 async function navigate(baseUrl: string) {
   const { app } = routesFor(baseUrl);
-  const response = await app.request("http://openbot.test/bot-1/navigate", {
+  const response = await app.request("http://chisabot.test/bot-1/navigate", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ url: "https://example.com/" }),
@@ -97,7 +97,7 @@ async function navigate(baseUrl: string) {
 
 async function click(baseUrl: string) {
   const { app, rows } = routesFor(baseUrl);
-  const response = await app.request("http://openbot.test/bot-1/click", {
+  const response = await app.request("http://chisabot.test/bot-1/click", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ref: "e1", snapshotId: 1 }),

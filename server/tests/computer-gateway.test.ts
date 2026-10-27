@@ -845,8 +845,8 @@ describe("the computer gateway", () => {
     expect(screenshotReq).toBeDefined();
     expect(screenshotReq?.url).toBe("http://agent-computer:4100/screenshot");
     expect(screenshotReq?.init?.headers).toMatchObject({
-      "x-openbot-bot-id": "bot-1",
-      "x-openbot-computer-token": "computer-secret",
+      "x-chisabot-bot-id": "bot-1",
+      "x-chisabot-computer-token": "computer-secret",
     });
   });
 
@@ -874,8 +874,8 @@ describe("the computer gateway", () => {
     const request = requests.find(({ url }) => url.includes("/files/download"));
     expect(request?.init?.method).toBe("GET");
     expect(request?.init?.headers).toMatchObject({
-      "x-openbot-bot-id": "bot-1",
-      "x-openbot-computer-token": "computer-secret",
+      "x-chisabot-bot-id": "bot-1",
+      "x-chisabot-computer-token": "computer-secret",
     });
     expect(new URL(request?.url ?? "").searchParams.get("path")).toBe(
       "reports/Q3 file.pdf",
@@ -1247,7 +1247,7 @@ describe("resolving a computer's address", () => {
 /**
  * The snapshot a ref resolves against is shared between servers, not held in one process.
  *
- * OpenBot runs several server processes behind a load balancer, and the process that answers a
+ * ChisaBot runs several server processes behind a load balancer, and the process that answers a
  * snapshot is rarely the one that answers the click that uses its refs. If the mapping from ref to
  * element lives in a `Map`, it is missing on every replica but the one that snapshotted: the policy
  * decides with no element in front of it, and the deny rule the deployment is relying on does not

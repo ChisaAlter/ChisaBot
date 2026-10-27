@@ -9,11 +9,9 @@
 | 数据库协议错误或查询长期无响应 | 旧 Bun 1.3.x 预览曾在事务 EOF 后连接错位；未证实生产发生 | CB-087 为 SQL 查询/池等待加期限，协议错误或超时后取消旧操作并回收故障池，新请求自动使用新池。失败或未确认的写入不会重放，先核对实际状态再决定是否人工重试；检查服务日志与数据库连接情况 |
 | 所有发送返回 409 | 部署 / 重启时留下孤儿线程锁 | 新版本启动时会释放孤儿锁；部署一律走 `deploy-serial.sh`（会等线程锁清零） |
 | 机器人不回答、自检失败 | 默认模型额度用完 / 上游故障 | 换默认模型、配备用模型（[model-config.md](model-config.md)） |
-| 网页一直显示「正在更新」 | 应用容器没起来（502 / 503 / 504） | `request.sh status`、`docker logs openbot-zh`；更新失败会自动回滚，手动回滚见 [deploy.md](deploy.md) §3 |
+| 网页一直显示「正在更新」 | 应用容器没起来（502 / 503 / 504） | `request.sh status`、`docker logs chisabot-zh`；更新失败会自动回滚，手动回滚见 [deploy.md](deploy.md) §3 |
 | 登录后马上又回到登录页 | `publicOrigin` / `TRUSTED_ORIGINS` / 端口不一致，或两个入口用了不同 hostname | 核对 [gateway.md](gateway.md)，Origin 必须完全一致 |
 | 多账号下身份被拒 | 签名身份密钥三处不一致 | [gateway.md](gateway.md) §4 |
-| 电脑文件夹同步失败（ECONNREFUSED） | 节点重启后边车留在旧网络命名空间 | 装看门狗（[cloud-node.md](cloud-node.md) §4） |
-| 改了节点程序但云端工作区行为没变 | 节点只在启动时下载程序 | `docker restart chisabot-cloudnode` |
 | 部署时间突然变长、内存吃紧 | 底座镜像不存在或依赖变了 → 完整构建 | 预期内；内存不够就调 `FULL_BUILD_MEMORY` / `FULL_BUILD_PARALLELISM`，或加 swap |
 | 回滚脚本报镜像不存在 | 镜像已被 `KEEP_IMAGES` 或手工清理删除 | 走 revert PR 或 `request.sh update --full` |
 | PC 客户端不自动更新 | 装的是内部旧版本线（如 0.2.x），不会降级 | 手动卸载重装 0.1.x（数据保留） |
@@ -75,7 +73,7 @@
 更新器切换后健康检查 / `post-deploy-smoke.sh` 红灯时：
 
 1. **看任务**：`sh /opt/chisabot-updater/request.sh status` — `status` / `step` / 最后几行 log；`audit.log` 与 `jobs/<id>/`。
-2. **看容器**：`docker ps -a --filter name=openbot-zh`；`docker logs --tail 80 openbot-zh`。常见：迁移失败、`bind message supplies`、镜像拉错。
+2. **看容器**：`docker ps -a --filter name=chisabot-zh`；`docker logs --tail 80 chisabot-zh`。常见：迁移失败、`bind message supplies`、镜像拉错。
 3. **确认回滚**：健康失败应自动跑 `rollback-to-*.sh`。再查 `/api/version` 是否已回到上一 `buildId`；容器 `RestartCount` 是否在涨。
 4. **烟雾细节**：在宿主机 `bash /opt/chisabot-updater/post-deploy-smoke.sh <buildId>`；缺 Local-Caller 时先核对 compose `.env` 的 `CHISABOT_GATEWAY_SECRET`。
 5. **聚合面**：`curl -s -H "X-ChisaBot-Local-Caller: …" 127.0.0.1:3001/api/admin/health` — 看 `checks.database` / `magpie` / `computer` 哪项 `ok:false`。

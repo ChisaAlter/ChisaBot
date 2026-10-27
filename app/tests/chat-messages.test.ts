@@ -940,7 +940,7 @@ describe("toVisibleChatItems", () => {
  * WHAT THESE CASES DO AND DO NOT PROVE, STATED UP FRONT SO NOBODY READS THEM AS MORE THAN THEY ARE.
  * They pin the RULE this projection applies to a part, and the rule is now right. They do NOT show
  * that a real sent message is drawn correctly, because no real sent message reaches here carrying a
- * `mimeType` at all: OpenBot does not use the SDK's own send path but `toAttachmentPart` in
+ * `mimeType` at all: ChisaBot does not use the SDK's own send path but `toAttachmentPart` in
  * `channel-chat.tsx`, which rebuilds the source as `{ type: "url", value }` and discards the
  * `mimeType` `onUpload` returned. Every part below that carries one is therefore a shape this app
  * cannot currently produce — deliberately so, because the reader has to be correct BEFORE the one

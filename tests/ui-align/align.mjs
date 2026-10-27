@@ -13,7 +13,7 @@ const browser = await chromium.launch({ headless: true, executablePath: `/ms-pla
 const errors = [];
 async function context(theme, viewport, extra = {}) {
   const ctx = await browser.newContext({ viewport, locale: "zh-CN", timezoneId: "Asia/Shanghai", ignoreHTTPSErrors: true, ...extra });
-  await ctx.addInitScript((t) => { try { localStorage.setItem("openbot-theme", t); } catch {} }, theme);
+  await ctx.addInitScript((t) => { try { localStorage.setItem("chisabot-theme", t); } catch {} }, theme);
   if (process.env.TOK) await ctx.addCookies([{ name: "__Host-openbot_session", value: process.env.TOK, url: base, secure: true, httpOnly: true, sameSite: "Lax" }]);
   return ctx;
 }
@@ -38,10 +38,10 @@ const TAG = process.env.TAG || "a"; const OUT = process.env.OUT || `/out/align-$
 const MEASURE = fs.readFileSync(process.env.MEASURE || path.join(path.dirname(new URL(import.meta.url).pathname), "measure.js"), "utf8");
 const ONLY = process.env.ONLY ? process.env.ONLY.split(",") : null;
 const ROUTES = (process.env.ROUTES || [
-  "/", "/bots", "/approvals", "/settings", "/settings/approvals", "/settings/cloud-workspace", "/settings/connected-accounts",
+  "/", "/bots", "/approvals", "/settings", "/settings/approvals", "/settings/connected-accounts",
   "/settings/devices", "/settings/im", "/settings/media", "/settings/memory", "/settings/pages", "/settings/passwords", "/settings/schedules",
   "/settings/skills", "/settings/vault", "/admin", "/admin/models", "/admin/images", "/admin/devices", "/admin/computers", "/admin/audit",
-  "/admin/system-update", "/admin/skills", "/admin/credentials", "/admin/magpie", "/admin/learning", "/admin/people", "/cc", "/onboarding",
+  "/admin/system-update", "/admin/skills", "/admin/credentials", "/admin/magpie", "/admin/learning", "/admin/people", "/onboarding",
     "/this-page-does-not-exist",
 ].join(",")).split(",").concat(process.env.EXTRA_ROUTES ? process.env.EXTRA_ROUTES.split(",") : []);
 const results = { tag: TAG, font: process.env.NOTO === "1" ? "Noto Sans CJK SC" : "WenQuanYi Zen Hei", pages: [] };

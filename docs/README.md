@@ -33,12 +33,12 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 
 ## 架构
 
-- [ChisaBot 架构](architecture.md)：服务器 agent、公网网关、更新器、PC 节点、Android、云端浏览器、云端工作区，以及每个功能的代码位置、
+- [ChisaBot 架构](architecture.md)：服务器 agent、公网网关、更新器、PC 节点、Android、云端浏览器，以及每个功能的代码位置、
   数据表和 DESIGN 章节、常用运行时开关。
 - [数据模型](data-model.md)：全部 `chisabot_*` 表、本地对话表、仍在用的上游表、网关 SQLite、浏览器本地存储。
 - [流式回复：从模型到屏幕](streaming.md)
 - [分支与能力边界](chisabot.md)：本地模式、第三方推理、数据兼容和客户端状态。
-- [OpenBot 原始架构](openbot-architecture.md)（上游参考；其中很多部分已瘦身掉，见 [slimming.md](slimming.md)）
+- [ChisaBot 原始架构](chisabot-architecture.md)（上游参考；其中很多部分已瘦身掉，见 [slimming.md](slimming.md)）
 
 ## 功能文档（按范围）
 
@@ -52,7 +52,6 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 | 模型 | [模型配置与切换](models.md) · [Magpie 深度集成](magpie.md) | §15、§59–§61 |
 | 面板 / 计算机 | [浏览器多标签与收藏夹](browser-tabs.md) · [侧栏与弹出面板一致性](sidebar-panel-parity.md) · [面板的直连数据源与看板布局](live-panel-sources.md) | §23、§29、§39、§43、§77、§79、§95、§96、§109 |
 | 设备 / PC / 手机 | [PC 节点与扫码绑定](pc-node.md) · [本地 agent 与权限档位](local-agents.md) · [Android 原生版](android-native.md) · [手机网页版与 PWA](pwa.md) | §16、§33、§36、§40、§45、§62、§66、§80、§86、§91 |
-| 云端 Claude Code | [云端 Claude Code](cloud-claude-code.md) | §73、§84、§85、§87 |
 | 记忆 · 技能 · 保险箱 | [长期记忆](memory.md) · [技能](skills.md) · [密钥保险箱](vault.md) | §50–§52 |
 | GitHub · 页面 · 定时 | [GitHub 账号连接](github.md) · [页面](pages.md) · [定时任务与提醒](schedules.md) | §53–§55 |
 | IM | [IM 接入](im.md) | §49 |
@@ -73,7 +72,6 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 | [目录布局与凭据存放](ops/layout.md) | 宿主机目录、各类密钥应放在哪里与权限 |
 | [部署、回滚与上线检查](ops/deploy.md) | 合并后怎么上线、更新器怎么工作、怎么回滚、上线后检查什么 |
 | [网关与登录服务](ops/gateway.md) | nginx 规则、登录服务、多账号开关、签名身份密钥、证书 |
-| [云端工作区节点](ops/cloud-node.md) | 节点部署与安全边界、防火墙、同步边车看门狗、可选出口路由 |
 | [客户端发布（运维）](ops/client-release.md) | 更新源目录、APK 签名、发版上传与临时文件安全删除 |
 | [模型配置运维](ops/model-config.md) | 默认 / 备用模型、生图识图、额度用完怎么办 |
 | [预览与测试环境](ops/preview.md) | 预览容器、出网封锁、生产测试守则与只读检查 |
@@ -106,7 +104,7 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 - [上游容器参考](deployment.md)、[上游发布参考](releasing.md)、[Windows 签名](windows-signing.md)：继承的镜像、发布和签名流程（ChisaBot 的发版看 [release.md](release.md)）。
 - 已在瘦身中删除：Tauri 桌面端 `desktop/`、Expo `mobile/`、Helm chart `charts/`、自动学习、`worker/`（见 [slimming.md](slimming.md)）。
 
-默认中文租户包见 [examples/zh-CN](../examples/zh-CN/README.md)。内部 `OPENBOT_*` 环境变量、包名、协议及数据目录保留兼容，展示品牌为 ChisaBot。
+默认中文租户包见 [examples/zh-CN](../examples/zh-CN/README.md)。内部 `CHISABOT_*` 环境变量、包名、协议及数据目录保留兼容，展示品牌为 ChisaBot。
 
 文档只保存可复用说明与脱敏示例。真实主机、登录密码、模型密钥、客户数据、对话和私人部署资料不写入文档或仓库；
 具体部署的私有运维资料由维护者保存在仓库之外。

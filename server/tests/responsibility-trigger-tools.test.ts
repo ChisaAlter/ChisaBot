@@ -33,7 +33,7 @@ function install() {
     updatedAt: new Date(),
   };
   useTriggerTools({
-    publicUrl: "https://openbot.example.test",
+    publicUrl: "https://chisabot.example.test",
     emailDomain: null,
     responsibilities: {
       async get(owner, id) {
@@ -80,7 +80,7 @@ test("create_trigger is attributed to the connection and never echoes the key", 
   expect(result.text).not.toContain("whsec_");
   expect(result.text).not.toContain("pasted-in-chat");
   expect(result.text).toContain(
-    `https://openbot.example.test/api/events/triggers/${TRIGGER_ID}`,
+    `https://chisabot.example.test/api/events/triggers/${TRIGGER_ID}`,
   );
   expect(result.text).toContain("Responsibilities page");
   expect(calls.find((call) => call[0] === "create")).toEqual([

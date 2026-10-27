@@ -27,7 +27,7 @@ import {
 } from "../approvals/types";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
 
-export const PRIVATE_SHARE_TOOL_REF = "openbot/share_private_information";
+export const PRIVATE_SHARE_TOOL_REF = "chisabot/share_private_information";
 export const PRIVATE_SHARE_EFFECT = "share_private";
 const ONCE_WINDOW_MS = 30 * 60_000;
 

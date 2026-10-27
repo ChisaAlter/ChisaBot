@@ -12,7 +12,7 @@ import { testAgentConnection } from "../src/agents/connection-test";
  * test that matters is one where an implementation we did not write answers.
  *
  * `@copilotkit/aimock` is ours, which is the point: it is the org's deterministic backend for
- * exactly this, it tracks the protocol as the protocol moves, and using it here means OpenBot finds
+ * exactly this, it tracks the protocol as the protocol moves, and using it here means ChisaBot finds
  * out about a drift in the same week as everything else that depends on it rather than in a
  * customer's integration.
  *
@@ -205,7 +205,7 @@ describe("registering an agent that answers badly", () => {
 
   test("a tool call in the stream is reported, because that is what a governed Bot does", async () => {
     /*
-     * The event that matters most for this product. A remote Bot yields a tool call and OpenBot
+     * The event that matters most for this product. A remote Bot yields a tool call and ChisaBot
      * decides it, so an endpoint that emits one is exactly the shape the gateway is built for, and
      * somebody registering it should see that it did.
      */

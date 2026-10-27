@@ -17,7 +17,7 @@ import type { AppVariables } from "../src/auth/guards";
  * first question asked in an incident and the trail could not answer it.
  */
 
-const ACTOR = { id: "u1", email: "admin@openbot.test", role: "admin" } as const;
+const ACTOR = { id: "u1", email: "admin@chisabot.test", role: "admin" } as const;
 
 function app(overrides: Record<string, unknown> = {}) {
   const rows: AuditEventInput[] = [];

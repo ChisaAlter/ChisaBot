@@ -21,7 +21,7 @@ ChisaBot 是 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) 的**�
    像本地 OpenClaw / Hermes 一样能干活，同时有权限控制、沙箱、agent 选择。
 2. **体验向 Hark 看齐**：输出内容、思考 / 加载的呈现、自定义面板、链接卡、记忆、技能、保险箱、定时任务、页面……尽量接近 Hark。
 3. **尽快做成「相对成熟、可以分享给朋友用」的产品**：先单用户；多用户（朋友账号）已经做好但默认隐藏。
-4. **持续瘦身**：上游 OpenBot 的企业功能（SSO、SCIM、团队、企业闸门……）逐步去掉，「先入口、后代码、最后数据」。
+4. **持续瘦身**：上游 ChisaBot 的企业功能（SSO、SCIM、团队、企业闸门……）逐步去掉，「先入口、后代码、最后数据」。
 
 ## 3. 组成
 
@@ -35,7 +35,7 @@ ChisaBot 是 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) 的**�
         ┌──────── 应用容器：server（Hono + CopilotKit runtime）+ app（React）+ PostgreSQL + 云端浏览器 ──┐
         └───────┬───────────────────────────────┬──────────────────────────────┬───────────────────┘
                 ▼                               ▼                              ▼
-        模型网关（Magpie，可选）      宿主机更新器 chisabot-updater       云端工作区节点（Claude Code，可选）
+        模型网关（Magpie，可选）      宿主机更新器 chisabot-updater
 ```
 
 | 组件 | 代码 | 做什么 | 怎么更新 |
@@ -43,12 +43,11 @@ ChisaBot 是 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) 的**�
 | **Web 应用** | `app/`（React + TanStack Router + CopilotKit） | 聊天、设置、管理的唯一界面；PC 和 Android 的「更多设置」也加载它 | 随服务器部署，网页提示「有新版本，点此刷新」 |
 | **服务器** | `server/`（Hono + CopilotKit runtime） | 跑每个机器人的回合、工具、定时任务、面板刷新、IM 连接；ChisaBot 自己的表开机自建 | 一键更新 / `deploy-serial.sh` |
 | **云端浏览器** | `agent-computer/`（Chromium on Xvfb） | 机器人的浏览器 + `/workspace` 工作区；多标签、收藏夹、可接管 | 随服务器镜像 |
-| **PC 客户端** | `pc/`（Electron, Windows） | 一个窗口加载服务器网页 + 一个**设备节点**（主动 WSS 连服务器）；小窗模式、托盘、电脑文件夹同步、本地 agent | electron-updater，外壳指纹变了要「重新安装」 |
+| **PC 客户端** | `pc/`（Electron, Windows） | 一个窗口加载服务器网页 + 一个**设备节点**（主动 WSS 连服务器）；小窗模式、托盘、本地 agent | electron-updater，外壳指纹变了要「重新安装」 |
 | **无界面节点** | `pc/src/headless.js` → `chisabot-node` | Linux / macOS 服务器当设备（一行命令安装，systemd / launchd） | 节点自动下载新版 |
 | **Android** | `android/`（Kotlin + Jetpack Compose，0.1.13 起原生） | 登录（扫码 / 账号密码）、机器人列表、聊天、面板、确认卡、附件；其余设置用应用内网页 | `latest.json` 更新源，versionCode 只增 |
 | **公网网关** | `deploy/public/`（nginx + `auth/server.ts`） | TLS、登录（Argon2id + 会话）、签名身份、公开页面 `/p/`、设备 / OneBot 例外路由 | **手工部署**，不随一键更新 |
 | **更新器** | `deploy/updater/`（python3, systemd） | 拉 main → 快速更新或完整构建 → 备份 → 切换 → 健康检查 → 失败自动回滚 | 每次成功更新后自升级 |
-| **云端工作区节点** | `deploy/cloud-node/` | 云端 Claude Code（非 root、只读根、无 docker.sock）+ 同步边车（Mutagen） | 手工部署 |
 | **模型网关** | Magpie（外部项目） | 多模型接入、目录、密钥；ChisaBot 也可直接接 OpenAI / Anthropic 兼容接口 | 独立 compose |
 
 详细结构见 [architecture.md](architecture.md)，全部功能见 [features.md](features.md)，数据表见 [data-model.md](data-model.md)。

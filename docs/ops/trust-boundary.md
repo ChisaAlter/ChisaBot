@@ -1,6 +1,6 @@
 # 网关 / 节点信任边界（PRD-P1-05 · 网络隔离）
 
-[← 运维手册总览](README.md) · 相关：[gateway.md](gateway.md)、[hosts.md](hosts.md)、[cloud-node.md](cloud-node.md)、[pc-node.md](../pc-node.md)、[friend-deploy.md](../friend-deploy.md)、[production-checklist.md](../production-checklist.md)
+[← 运维手册总览](README.md) · 相关：[gateway.md](gateway.md)、[hosts.md](hosts.md)、[pc-node.md](../pc-node.md)、[friend-deploy.md](../friend-deploy.md)、[production-checklist.md](../production-checklist.md)
 
 一页图：谁可以直连谁、身份头从哪来、哪些口绝不能对公网开放、Local-Caller 绑在哪、CI 怎么红线。
 
@@ -15,12 +15,10 @@ flowchart TB
   end
 
   subgraph Host["宿主机 <PROD_HOST>（默认端口）"]
-    GW["openbot-public-gateway<br/>nginx · host 网络<br/>:8443 / :2053 TLS"]
-    Auth["openbot-web-auth<br/>127.0.0.1:3002<br/>会话 SQLite"]
-    App["openbot-zh<br/>127.0.0.1:3001<br/>应用 + 网页"]
+    GW["chisabot-public-gateway<br/>nginx · host 网络<br/>:8443 / :2053 TLS"]
+    Auth["chisabot-web-auth<br/>127.0.0.1:3002<br/>会话 SQLite"]
+    App["chisabot-zh<br/>127.0.0.1:3001<br/>应用 + 网页"]
     Magpie["Magpie<br/>127.0.0.1:3425 / 3430"]
-    Node["chisabot-cloudnode<br/>桥接网 · 无宿主机端口发布"]
-    Sync["cloudnode-sync 边车<br/>节点 netns 内 :2222"]
     Updater["chisabot-updater<br/>systemd · root<br/>只认 check/update/rollback"]
     Smoke["post-deploy-smoke / curl<br/>仅 127.0.0.1 + Local-Caller"]
   end
@@ -35,8 +33,6 @@ flowchart TB
   GW -->|:2053 仅 admin| Magpie
   App -->|模型 API / 管理反代| Magpie
   Magpie -.->|DOCKER-USER DROP :3001| App
-  App -->|COMPUTER_TOKEN<br/>checkComputerAddress| Node
-  Node --> Sync
   App -.->|请求文件| Updater
   Updater -->|换镜像 / 回滚| App
   Smoke -->|X-ChisaBot-Local-Caller| App
@@ -89,7 +85,6 @@ Local-Caller 只给**宿主机 → `127.0.0.1:3001`** 的刮数 / 烟雾 / 更�
 | `3001` 应用 | **仅** `127.0.0.1` | `deploy/compose.yaml`；`start.sh` / `friend-up.sh` 拒 `0.0.0.0` 与裸 `端口:端口` |
 | `3002` 登录 | **仅** `127.0.0.1`（Bun `hostname`） | `deploy/public/auth/server.ts`；compose `network_mode: host` |
 | `3425` / `3430` Magpie | **仅** `127.0.0.1` | `deploy/magpie.compose.yaml`；同上脚本检查 |
-| 节点 / sync | 不发布到宿主机 | `deploy/cloud-node/compose.yaml` |
 
 好友包 `TRUSTED_ORIGINS`：**仅** `http://localhost…` / `http://127.0.0.1…`；禁止 https 公网与局域网 Origin（公网 Origin 在网关层）。
 

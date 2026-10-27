@@ -110,7 +110,7 @@ function useChatRunning() {
 
 export function useLivePanels(botId: string | undefined) {
   const running = useChatRunning();
-  // 右栏藏着（设置 / 管理 / Claude Code，DESIGN.md §98.3）时不轮询；回来时窗口聚焦 / 下一拍照常。
+  // 右栏藏着（设置 / 管理，DESIGN.md §98.3）时不轮询；回来时窗口聚焦 / 下一拍照常。
   const onScreen = useKeptVisible();
   const queryClient = useQueryClient();
   // 一轮刚结束：再看一次（面板可能在最后一步才填好）。

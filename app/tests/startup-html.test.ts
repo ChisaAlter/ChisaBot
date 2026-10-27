@@ -37,7 +37,7 @@ function startup(
   window.document.write(
     html.replace(/<script type="module"[^>]*><\/script>/g, ""),
   );
-  const script = window.document.querySelector("#openbot-startup-script");
+  const script = window.document.querySelector("#chisabot-startup-script");
   const timers: (() => void)[] = [];
   if (script)
     new Function("window", "document", "setTimeout", script.textContent ?? "")(
@@ -73,7 +73,7 @@ function entryScript(document: Window["document"], source: string) {
 
 function stageEvent(window: Window, detail: string) {
   // Happy DOM accepts string detail at runtime, but its declaration permits only objects.
-  const event = new window.CustomEvent("openbot-boot-stage");
+  const event = new window.CustomEvent("chisabot-boot-stage");
   Object.defineProperty(event, "detail", { value: detail });
   return event;
 }
@@ -99,7 +99,7 @@ test("a failed application script offers a safe manual reload", () => {
   expect(document.querySelector("[role=alert]")?.textContent).toContain(
     "无法加载",
   );
-  const retry = document.querySelector<HTMLButtonElement>("#openbot-reload");
+  const retry = document.querySelector<HTMLButtonElement>("#chisabot-reload");
   expect(retry?.hidden).toBe(false);
   retry?.click();
   expect(reloads).toBe(1);
@@ -117,13 +117,13 @@ test("a stalled bundle remains visible and offers retry instead of automatic nav
     document.querySelector("[role=status]")?.getAttribute("aria-label"),
   ).toContain("正在加载");
   expect(
-    document.querySelector<HTMLElement>("#openbot-startup-note")?.hidden,
+    document.querySelector<HTMLElement>("#chisabot-startup-note")?.hidden,
   ).toBe(false);
-  expect(document.querySelector("#openbot-startup-title")?.textContent).toBe(
+  expect(document.querySelector("#chisabot-startup-title")?.textContent).toBe(
     "加载时间较长，请检查网络连接",
   );
   expect(
-    document.querySelector<HTMLButtonElement>("#openbot-reload")?.hidden,
+    document.querySelector<HTMLButtonElement>("#chisabot-reload")?.hidden,
   ).toBe(false);
   expect(window.location.pathname).toBe("/admin/models");
 });
@@ -136,14 +136,14 @@ test("the bootstrap guard leaves a successfully mounted application alone", () =
     new window.ErrorEvent("error", { message: "later request error" }),
   );
   expect(document.getElementById("root")?.textContent).toBe("已打开模型设置");
-  expect(document.querySelector("#openbot-reload")).toBeNull();
+  expect(document.querySelector("#chisabot-reload")).toBeNull();
 });
 
 test("the startup deadline preserves the first script failure instead of replacing it with a timeout", () => {
   const { window, document, timers, reports } = startup();
   window.dispatchEvent(applicationError(window));
   for (const callback of timers) callback();
-  expect(document.querySelector("#openbot-startup-title")?.textContent).toBe(
+  expect(document.querySelector("#chisabot-startup-title")?.textContent).toBe(
     "无法加载 ChisaBot，请检查网络连接",
   );
   expect(reports.map((report) => report.event)).toEqual(["shell", "error"]);
@@ -223,7 +223,7 @@ test("unsupported or failed diagnostic transport never interrupts startup recove
     window.dispatchEvent(applicationError(window));
     for (const callback of timers) callback();
     await Promise.resolve();
-    expect(document.querySelector("#openbot-startup-title")?.textContent).toBe(
+    expect(document.querySelector("#chisabot-startup-title")?.textContent).toBe(
       "无法加载 ChisaBot，请检查网络连接",
     );
     expect(window.location.pathname).toBe("/admin/models");
@@ -248,12 +248,12 @@ test("third-party scripts and their runtime errors cannot mark the application a
   /*
    * 第三方脚本的失败连「坏」都算不上：骨架原地不动，`role` 没变成 `alert`，提示条也没露出来。
    */
-  expect(document.querySelector("#openbot-startup-title")?.textContent).toBe(
+  expect(document.querySelector("#chisabot-startup-title")?.textContent).toBe(
     "加载时间比平时长一些…",
   );
   expect(document.querySelector("[role=alert]")).toBeNull();
   expect(
-    document.querySelector<HTMLElement>("#openbot-startup-note")?.hidden,
+    document.querySelector<HTMLElement>("#chisabot-startup-note")?.hidden,
   ).toBe(true);
   expect(reports.map((report) => report.event)).toEqual(["shell"]);
 });

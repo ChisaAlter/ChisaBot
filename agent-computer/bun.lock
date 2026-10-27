@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@openbot/agent-computer",
+      "name": "@chisabot/agent-computer",
       "dependencies": {
         "playwright": "1.62.1",
         "spiffe": "^0.5.1",

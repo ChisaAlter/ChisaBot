@@ -17,6 +17,7 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
+import { Link } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
 import {
   cloneElement,
@@ -49,6 +50,8 @@ import { ScheduleFiredRow } from "@/components/chat/schedule-row";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { knownWorkSeconds, WorkRow } from "@/components/chat/work-card";
 import { WorkerResultRow } from "@/components/chat/worker-card";
+import { JUMP_TO_TOOL_CALL } from "@/components/computer/activity-jump";
+import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import {
   FileCard,
   HiddenMarkdownImage,
@@ -83,7 +86,9 @@ import {
 } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import { isMessageHeld } from "@/lib/channels/focus-message";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
+import { collapseScheduleRuns } from "@/lib/schedule-fired";
 import { readFiring } from "@/lib/channels/routine-firing";
 import { nextBlankHeight } from "@/lib/chat/blank-release";
 import { friendlyError, UNANSWERED_TURN_REASON } from "@/lib/chat/friendly-error";
@@ -926,7 +931,9 @@ function SettleAtEnd({
     );
     if (!element || !content) return;
     const s = state.current;
-    const active = () => !s.released && performance.now() < s.until;
+    // CB-106 r2：定位到 ?message= 那条后（data-message-hold），打开时的落点 / 贴底都让路，直到人滚动或发消息。
+    const held = () => isMessageHeld(element);
+    const active = () => !s.released && performance.now() < s.until && !held();
     let frame = 0;
     /** 回到上次那一条；找到了返回 true。 */
     const toRemembered = () => {
@@ -1035,6 +1042,7 @@ function SettleAtEnd({
      * 下一帧的 rAF 里，中间那一帧会先画「最后一条掉到折线下面」。只在本来就在底部、不在恢复 / 对齐某一轮时动手。
      */
     const stickToBottom = () => {
+      if (held()) return;
       const max = element.scrollHeight - element.clientHeight;
       if (element.scrollTop >= max - 1) return;
       element.style.scrollBehavior = "auto";
@@ -1722,19 +1730,25 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
   const [active, setActive] = useState<MemoryPillItem | null>(null);
   const [undoneIds, setUndoneIds] = useState<Record<string, boolean>>({});
   const [undoBusy, setUndoBusy] = useState(false);
+  const [undoError, setUndoError] = useState<string | null>(null);
 
   if (items.length === 0) return null;
 
   const handleUndo = async (item: MemoryPillItem) => {
     setUndoBusy(true);
+    setUndoError(null);
     try {
       if (item.noteId && item.noteId.startsWith("mem_")) {
-        await fetch(`/api/memory-notes/${encodeURIComponent(item.noteId)}`, {
+        const response = await fetch(`/api/memory-notes/${encodeURIComponent(item.noteId)}`, {
           method: "DELETE",
           credentials: "include",
         });
+        // 删除失败（网络、权限、已被删）不能显示「已撤销」，否则用户以为记忆没了，其实还在。
+        if (!response.ok && response.status !== 404) throw new Error(`撤销失败（${response.status}）`);
       }
       setUndoneIds((prev) => ({ ...prev, [item.id]: true }));
+    } catch (error) {
+      setUndoError(error instanceof Error ? error.message : "撤销失败");
     } finally {
       setUndoBusy(false);
     }
@@ -1766,7 +1780,15 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
         })}
       </div>
 
-      <Dialog onOpenChange={(open) => !open && setActive(null)} open={active !== null}>
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setActive(null);
+            setUndoError(null);
+          }
+        }}
+        open={active !== null}
+      >
         {active ? (
           <DialogContent className="max-w-md" data-testid="memory-pill-dialog">
             <div className="flex items-center gap-2 pb-2">
@@ -1783,20 +1805,24 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                     {`对象：${active.subject}`}
                   </span>
                 ) : null}
-                {active.noteId ? (
-                  <span className="font-mono text-[11px] opacity-70">{active.noteId}</span>
-                ) : null}
+
               </div>
               <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5 leading-relaxed text-foreground">
                 {active.summary}
               </div>
               <div className="flex items-center justify-between pt-2">
-                <a
+                {/*
+                 * 用路由内跳转，并先关掉弹窗（CB-106）。原来是 <a href>：在打开的模态弹窗里整页重载，
+                 * 整个应用（对话、CopilotKit 连接、几千条记忆）从头再来一遍，s2 里这一下把标签页拖崩过。
+                 */}
+                <Link
                   className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                  href="/settings/memory"
+                  data-testid="memory-manage-link"
+                  onClick={() => setActive(null)}
+                  to="/settings/memory"
                 >
                   {"管理全部长期记忆 →"}
-                </a>
+                </Link>
                 {undoneIds[active.id] ? (
                   <span className="text-xs font-medium text-emerald-400" data-testid="memory-undone-status">
                     {"✓ 已从长期记忆中撤销"}
@@ -1814,6 +1840,11 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                   </button>
                 )}
               </div>
+              {undoError ? (
+                <p className="text-xs text-destructive" data-testid="memory-undo-error" role="alert">
+                  {undoError}
+                </p>
+              ) : null}
             </div>
           </DialogContent>
         ) : null}
@@ -3055,7 +3086,7 @@ export function ChatTranscript({
    * cost was markdown parsing and chart SVGs, and those are skipped by the memoised children below,
    * which is where the 25x came from. This runs per render and is not worth guarding.
    */
-  const items = groupBrowserSteps(toVisibleChatItems(messages));
+  const items = groupBrowserSteps(toVisibleChatItems(collapseScheduleRuns(messages)));
   /*
    * 「最后一轮还在跑」只从列表真的变了算起（§68.4）。按下发送的那一刻 busy 先变 true，人发的那条要再过
    * 几十毫秒才进列表；这几十毫秒里如果把「最后一轮」（上一轮，早就答完了）当成正在跑，它的结果气泡会变回
@@ -3293,6 +3324,35 @@ export function ChatTranscript({
    * 不会一发出就剩一整屏空白。滚动容器把「上一句露 48px」加在 scrollMargin 上，所以这里减掉它。
    * 只影响「新的一轮对齐」这一条路：恢复位置（§88.3）自己带着 scrollMargin，不受影响。
    */
+  // CB-101：活动记录里点「在对话里看这一步」，滚到发起那次工具调用的消息并闪一下。
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  useEffect(() => {
+    const onJump = (event: Event) => {
+      const toolCallId = (event as CustomEvent<{ toolCallId?: string }>).detail
+        ?.toolCallId;
+      if (!toolCallId) return;
+      const owner = messagesRef.current.find(
+        (message) =>
+          (message as { toolCallId?: string }).toolCallId === toolCallId ||
+          ((message as { toolCalls?: { id?: string }[] }).toolCalls ?? []).some(
+            (call) => call.id === toolCallId,
+          ),
+      );
+      const row = owner
+        ? viewportRef.current?.querySelector<HTMLElement>(
+            `[data-message-id="${CSS.escape(owner.id)}"]`,
+          )
+        : null;
+      if (!row) return;
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      row.classList.add("is-activity-jump");
+      setTimeout(() => row.classList.remove("is-activity-jump"), 1600);
+    };
+    window.addEventListener(JUMP_TO_TOOL_CALL, onJump);
+    return () => window.removeEventListener(JUMP_TO_TOOL_CALL, onJump);
+  }, []);
+
   const [paneHeight, setPaneHeight] = useState(0);
   useEffect(() => {
     const element = viewportRef.current;
@@ -3542,6 +3602,10 @@ export function ChatTranscript({
           delay={delays.delayFor(item.id, index, items.length)}
           name={item.toolCall.function.name}
           result={item.result}
+          toolCallId={item.toolCall.id}
+        />
+        <ActivityJumpButton
+          name={item.toolCall.function.name}
           toolCallId={item.toolCall.id}
         />
         {/* 确认卡片（DESIGN.md §58）：画在这个工具调用下面；设备改文件时带 diff（§62）。 */}

@@ -9,7 +9,7 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const errors = [];
 const exe = process.env.CHROME || (fs.existsSync("/ms-playwright") ? (() => { const d = fs.readdirSync("/ms-playwright").find((x) => x.startsWith("chromium-") && !x.includes("headless")); return `/ms-playwright/${d}/chrome-linux64/chrome`; })() : undefined);
 const browser = await chromium.launch({ headless: true, executablePath: exe, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
-const context = (theme, viewport) => browser.newContext({ viewport, locale: "zh-CN", timezoneId: "Asia/Shanghai" }).then(async (c) => { await c.addInitScript((t) => { try { localStorage.setItem("openbot-theme", t); } catch {} }, theme); return c; });
+const context = (theme, viewport) => browser.newContext({ viewport, locale: "zh-CN", timezoneId: "Asia/Shanghai" }).then(async (c) => { await c.addInitScript((t) => { try { localStorage.setItem("chisabot-theme", t); } catch {} }, theme); return c; });
 async function newPage(c, tag) {
   const p = await c.newPage();
   p.on("pageerror", (e) => errors.push(`${tag} pageerror ${String(e).slice(0, 300)}`));

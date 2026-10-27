@@ -59,7 +59,7 @@ export function observeApprovalAgent(agent: Agent) {
       reset({ ...input, runId: event.runId, threadId: event.threadId });
     },
     onCustomEvent: ({ event }) => {
-      if (event.name !== "openbot.backend-owned-tools") return;
+      if (event.name !== "chisabot.backend-owned-tools") return;
       const run = backendRuns.get(agent);
       const value: unknown = event.value;
       if (!run || !value || typeof value !== "object" || !("names" in value) || !Array.isArray(value.names)) return;
@@ -78,6 +78,23 @@ export function observeApprovalAgent(agent: Agent) {
     subscription.unsubscribe();
     inputs.delete(agent);
     backendRuns.delete(agent);
+  };
+}
+
+/** CB-101：计算机活动记录用的归属（哪段对话、哪一轮、哪次工具调用）。拿不到就是 undefined，不抛。 */
+export function frontendCallMeta(
+  context: HandlerContext,
+): { threadId?: string; runId?: string; toolCallId?: string } | undefined {
+  const agent = context.agent;
+  const input = agent ? inputs.get(agent) : undefined;
+  const toolCallId = context.toolCall?.id;
+  if (!toolCallId && !agent) return undefined;
+  return {
+    ...(toolCallId ? { toolCallId } : {}),
+    ...(agent?.threadId ? { threadId: agent.threadId } : {}),
+    ...(input && agent && input.threadId === agent.threadId
+      ? { runId: input.runId }
+      : {}),
   };
 }
 

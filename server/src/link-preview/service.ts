@@ -248,9 +248,9 @@ export async function createLinkPreviews(
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-openbot-bot-id": "link-preview",
+          "x-chisabot-bot-id": "link-preview", "x-openbot-bot-id": "link-preview",
           ...(options.computer.token
-            ? { "x-openbot-computer-token": options.computer.token }
+            ? { "x-chisabot-computer-token": options.computer.token , "x-openbot-computer-token": options.computer.token }
             : {}),
         },
         body: JSON.stringify({ url }),

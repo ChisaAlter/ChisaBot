@@ -1,6 +1,6 @@
 # ChisaBot 自托管部署
 
-此目录是可自行配置的 Linux 部署模板。使用 `OPENBOT_RUNTIME_MODE=local` 后，会话运行、聊天记录和个人记忆保存在自己的 PostgreSQL 中，无需 CopilotKit Intelligence 项目密钥。模型推理由接入的模型服务处理，支持自托管模型、兼容 API 和自部署 Magpie。
+此目录是可自行配置的 Linux 部署模板。使用 `CHISABOT_RUNTIME_MODE=local` 后，会话运行、聊天记录和个人记忆保存在自己的 PostgreSQL 中，无需 CopilotKit Intelligence 项目密钥。模型推理由接入的模型服务处理，支持自托管模型、兼容 API 和自部署 Magpie。
 
 需要 Bun 1.3.14、Docker Engine、Docker Compose v2。主应用使用上游公开基础镜像，并将本分支源码及构建后的中文界面覆盖进去；不是已发布的 ChisaBot 公共镜像。
 
@@ -63,7 +63,7 @@ API 端口 `3425`、管理端口 `3430` 只绑定 loopback。ChisaBot 容器通�
 
 ## 数据与兼容性
 
-Compose 项目仍使用 `openbot-zh`，容器为 `openbot-zh`，数据卷为该项目的 `database`、`workspace`、`profiles`，环境变量及内部协议继续使用上游名称。这样已有部署不会因展示名称变化而切换数据库卷。首次安装可以沿用这些名字。
+Compose 项目仍使用 `chisabot-zh`，容器为 `chisabot-zh`，数据卷为该项目的 `database`、`workspace`、`profiles`，环境变量及内部协议继续使用上游名称。这样已有部署不会因展示名称变化而切换数据库卷。首次安装可以沿用这些名字。
 
 `KEY_ENCRYPTION_KEY` 加密持久化的模型密钥，必须随数据库备份保存；更新已有安装时不可重置它。`.env`、Magpie 私密配置、网页登录配置、会话数据库、证书与备份不能提交 Git。
 
@@ -90,7 +90,7 @@ Compose 项目仍使用 `openbot-zh`，容器为 `openbot-zh`，数据卷为该�
 node scripts/check-zh-localization.cjs
 TENANT_PACKAGE_DIR=../examples/zh-CN bun run --cwd app typecheck
 bun run --cwd server typecheck
-docker compose --env-file deploy/.env -p openbot-zh -f deploy/compose.yaml config --quiet
+docker compose --env-file deploy/.env -p chisabot-zh -f deploy/compose.yaml config --quiet
 ```
 
 构建、类型检查及指定功能测试的通过结果不能代替全量测试；当前分支保留上游测试，其中部分 UI 文案断言及全局 SDK mock 仍待适配中文分支，详见 [维护指南](../docs/operations.md)。

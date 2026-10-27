@@ -48,7 +48,7 @@ test("an always-allow for a group does not cover people added to it later", asyn
   // The owner answers "always allow": the ledger keeps a rule for the scope that was asked about.
   rules.push({
     botId: "bot",
-    toolRef: "openbot/share_private_information",
+    toolRef: "chisabot/share_private_information",
     effect: "share_private",
     scope: opened[0]?.scope,
     revokedAt: null,

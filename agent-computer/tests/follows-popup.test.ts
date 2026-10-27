@@ -9,9 +9,9 @@ import { afterAll, describe, expect, test } from "bun:test";
  * than at the top of the file for the same reason.
  *
  *   cd agent-computer && bunx playwright install chromium
- *   OPENBOT_COMPUTER_BROWSER=1 bun test tests/follows-popup.test.ts
+ *   CHISABOT_COMPUTER_BROWSER=1 bun test tests/follows-popup.test.ts
  */
-const asked = process.env.OPENBOT_COMPUTER_BROWSER === "1";
+const asked = process.env.CHISABOT_COMPUTER_BROWSER === "1";
 const LAUNCH_TIMEOUT_MS = 120_000;
 
 const html = (title: string, body: string) =>
@@ -49,7 +49,7 @@ describe.skipIf(!asked)("the page a Bot is on", () => {
     "follows a window the site opens, and comes back when it closes",
     async () => {
       const { createProfiles } = await import("../src/profiles");
-      const root = await mkdtemp(join(tmpdir(), "openbot-profiles-"));
+      const root = await mkdtemp(join(tmpdir(), "chisabot-profiles-"));
       const profiles = createProfiles(root, () => {});
       const bot = "popup-test";
       const url = async () => (await profiles.page(bot)).url();

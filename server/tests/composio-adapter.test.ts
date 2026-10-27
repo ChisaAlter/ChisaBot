@@ -140,7 +140,7 @@ const WHOLE_LISTING = 1000;
 const PAGES_BEFORE_REFUSING = 200;
 
 /** The page this deployment sends somebody back to once the consent screen is done with them. */
-const RETURN_URL = "https://openbot.test/settings/connected-accounts/x";
+const RETURN_URL = "https://chisabot.test/settings/connected-accounts/x";
 
 /**
  * What Composio answers a withdrawal it actually performed, returned by every double that performs
@@ -182,11 +182,11 @@ const CREATED = { id: "ac_created" };
  * — instead of being an array whose index quietly carries the answer.
  */
 const BY_HAND = { id: "ac_by_hand", name: "Linear", status: "ENABLED" };
-const OURS = { id: "ac_ours", name: "Linear (OpenBot)", status: "ENABLED" };
+const OURS = { id: "ac_ours", name: "Linear (ChisaBot)", status: "ENABLED" };
 /** The spare from a lost enable race: two administrators both found nothing and both created. */
 const OURS_SPARE = {
   id: "ac_ours_spare",
-  name: "Linear (OpenBot)",
+  name: "Linear (ChisaBot)",
   status: "ENABLED",
 };
 
@@ -201,12 +201,12 @@ const OURS_SPARE = {
  *
  * ITS OWN CONSTANT RATHER THAN {@link OURS}, because the suffix is the whole of what the adapter
  * reads and the rest of the name is the app an administrator typed. A gmail withdrawal answered
- * with a config called "Linear (OpenBot)" would pass, and would leave the one fixture in this file
+ * with a config called "Linear (ChisaBot)" would pass, and would leave the one fixture in this file
  * that names the app it is about naming the wrong one.
  */
 const OUR_GMAIL = {
   id: "ac_gmail_ours",
-  name: "Gmail (OpenBot)",
+  name: "Gmail (ChisaBot)",
   status: "ENABLED",
 };
 
@@ -882,7 +882,7 @@ describe("beginning one person's connection", () => {
               items: [
                 {
                   id: "ac_this_deployments",
-                  name: "Linear (OpenBot)",
+                  name: "Linear (ChisaBot)",
                   status: "ENABLED",
                 },
               ],
@@ -902,7 +902,7 @@ describe("beginning one person's connection", () => {
       userId: "user_1",
       toolkit: "linear",
       returnUrl:
-        "https://openbot.test/settings/connected-accounts/composio-linear",
+        "https://chisabot.test/settings/connected-accounts/composio-linear",
     });
 
     // The config this deployment already holds for the app — and no `authConfigs.create`, which
@@ -917,7 +917,7 @@ describe("beginning one person's connection", () => {
         "ac_this_deployments",
         {
           callbackUrl:
-            "https://openbot.test/settings/connected-accounts/composio-linear",
+            "https://chisabot.test/settings/connected-accounts/composio-linear",
         },
       ],
     ]);
@@ -951,7 +951,7 @@ describe("beginning one person's connection", () => {
       userId: "user_1",
       toolkit: "linear",
       returnUrl:
-        "https://openbot.test/settings/connected-accounts/composio-linear",
+        "https://chisabot.test/settings/connected-accounts/composio-linear",
     });
 
     const refusal = await failureOf(refused);
@@ -1010,7 +1010,7 @@ describe("telling this deployment's auth configs from anybody else's", () => {
     await broker.authorize({
       userId: "user_1",
       toolkit: "linear",
-      returnUrl: "https://openbot.test/settings/connected-accounts/x",
+      returnUrl: "https://chisabot.test/settings/connected-accounts/x",
     });
 
     // A connection is a lasting attachment to whatever config it was made against: scopes, tool
@@ -1020,7 +1020,7 @@ describe("telling this deployment's auth configs from anybody else's", () => {
       [
         "user_1",
         "ac_ours",
-        { callbackUrl: "https://openbot.test/settings/connected-accounts/x" },
+        { callbackUrl: "https://chisabot.test/settings/connected-accounts/x" },
       ],
     ]);
   });
@@ -1044,7 +1044,7 @@ describe("telling this deployment's auth configs from anybody else's", () => {
     const refused = broker.authorize({
       userId: "user_1",
       toolkit: "linear",
-      returnUrl: "https://openbot.test/settings/connected-accounts/x",
+      returnUrl: "https://chisabot.test/settings/connected-accounts/x",
     });
 
     const refusal = await failureOf(refused);
@@ -1147,7 +1147,7 @@ describe("telling this deployment's auth configs from anybody else's", () => {
     // The count of what is standing and the marker that would claim it, which together are the
     // whole remedy: an operator can look at one config and see which of the two readings it is.
     expect(refusal.message).toMatch(/Composio holds 1 for linear/);
-    expect(refusal.message).toMatch(/\(OpenBot\)/);
+    expect(refusal.message).toMatch(/\(ChisaBot\)/);
     /*
      * AND NOTHING WAS DELETED, which is the half this refusal is not allowed to trade away. The
      * row carries no marker, so deleting it is as likely to destroy an operator's own dashboard
@@ -1191,7 +1191,7 @@ describe("telling this deployment's auth configs from anybody else's", () => {
     expect(refusal.message).not.toMatch(A_CRASH);
     // The renamed-config reading, which is the one this refusal already carried.
     expect(refusal.message).toMatch(/Composio holds 1 for linear/);
-    expect(refusal.message).toMatch(/\(OpenBot\)/);
+    expect(refusal.message).toMatch(/\(ChisaBot\)/);
     // And the row that was never sorted, whose remedy is the same dashboard and whose existence is
     // what stops the sentence promising a removal that would go through.
     expect(refusal.message).toMatch(/no id or no name/);
@@ -1506,7 +1506,7 @@ describe("telling this deployment's auth configs from anybody else's", () => {
           // A listing that omitted them would find nothing and create the split it exists to stop.
           list: async () => ({
             items: [
-              { id: "ac_ours", name: "Linear (OpenBot)", status: "DISABLED" },
+              { id: "ac_ours", name: "Linear (ChisaBot)", status: "DISABLED" },
             ],
           }),
           create: async (...call: unknown[]) => {
@@ -1532,7 +1532,7 @@ describe("telling this deployment's auth configs from anybody else's", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_ours", name: "Linear (OpenBot)", status: "DISABLED" },
+              { id: "ac_ours", name: "Linear (ChisaBot)", status: "DISABLED" },
             ],
           }),
         },
@@ -1548,7 +1548,7 @@ describe("telling this deployment's auth configs from anybody else's", () => {
     const refused = broker.authorize({
       userId: "user_1",
       toolkit: "linear",
-      returnUrl: "https://openbot.test/settings/connected-accounts/x",
+      returnUrl: "https://chisabot.test/settings/connected-accounts/x",
     });
 
     // Sending somebody to consent against a disabled config spends their consent and attaches
@@ -1580,8 +1580,8 @@ describe("telling this deployment's auth configs from anybody else's", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_a", name: "Linear (OpenBot)", status: "DISABLED" },
-              { id: "ac_b", name: "Linear (OpenBot)", status: "PENDING" },
+              { id: "ac_a", name: "Linear (ChisaBot)", status: "DISABLED" },
+              { id: "ac_b", name: "Linear (ChisaBot)", status: "PENDING" },
             ],
           }),
         },
@@ -1638,7 +1638,7 @@ describe("telling this deployment's auth configs from anybody else's", () => {
     expect(created).toEqual([
       [
         "linear",
-        { type: "use_composio_managed_auth", name: "Linear (OpenBot)" },
+        { type: "use_composio_managed_auth", name: "Linear (ChisaBot)" },
       ],
     ]);
   });
@@ -1691,7 +1691,7 @@ describe("the config each kind of app is enabled with", () => {
         {
           type: "use_custom_auth",
           authScheme: "DCR_OAUTH",
-          name: "Linear MCP (OpenBot)",
+          name: "Linear MCP (ChisaBot)",
           credentials: {},
         },
       ],
@@ -1730,7 +1730,7 @@ describe("the config each kind of app is enabled with", () => {
         {
           type: "use_custom_auth",
           authScheme: "API_KEY",
-          name: "Perplexity (OpenBot)",
+          name: "Perplexity (ChisaBot)",
           credentials: {},
         },
       ],
@@ -2421,7 +2421,7 @@ describe("withdrawing one person's grants", () => {
     // The count standing and the marker that would have claimed it, which is the same pair
     // `deleteAuthConfig` hands an operator for the same state and the same one act in a dashboard.
     expect(refusal.message).toMatch(/Composio holds 1 for gmail/);
-    expect(refusal.message).toMatch(/\(OpenBot\)/);
+    expect(refusal.message).toMatch(/\(ChisaBot\)/);
   });
 
   /**
@@ -2594,7 +2594,7 @@ describe("withdrawing one person's grants", () => {
    * `unreadable` counts the rest — so both are ordinary facts about one listing and both can be
    * true at once. Written as consecutive throws the second is reachable only when the first is
    * false, so a person whose app holds one renamed config beside one unreadable row is told that
-   * "renaming it to end with (OpenBot) lets disconnecting again withdraw them" — which is not true
+   * "renaming it to end with (ChisaBot) lets disconnecting again withdraw them" — which is not true
    * while a row nothing could scope the account listing to is still sitting there. The method's own
    * partial-withdrawal sentence appends that fact as its own clause; the refusal ahead of it did
    * not.
@@ -2629,7 +2629,7 @@ describe("withdrawing one person's grants", () => {
     expect(failure.message).not.toMatch(A_CRASH);
     // The renamed-config reading, which this refusal already carried.
     expect(failure.message).toMatch(/Composio holds 1 for gmail/);
-    expect(failure.message).toMatch(/\(OpenBot\)/);
+    expect(failure.message).toMatch(/\(ChisaBot\)/);
     // And the row that was never sorted, which is what makes the rename alone insufficient.
     expect(failure.message).toMatch(/cannot read/);
     // Nothing was withdrawn either way — the listing was never scoped, so no delete was composed.
@@ -2656,7 +2656,7 @@ describe("refusals a route can tell from an outage", () => {
       .authorize({
         userId: "user_1",
         toolkit: "linear",
-        returnUrl: "https://openbot.test/settings/connected-accounts/x",
+        returnUrl: "https://chisabot.test/settings/connected-accounts/x",
       })
       .catch((raised: unknown) => raised);
 
@@ -2672,7 +2672,7 @@ describe("refusals a route can tell from an outage", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_ours", name: "Linear (OpenBot)", status: "ENABLED" },
+              { id: "ac_ours", name: "Linear (ChisaBot)", status: "ENABLED" },
             ],
           }),
         },
@@ -2687,7 +2687,7 @@ describe("refusals a route can tell from an outage", () => {
       .authorize({
         userId: "user_1",
         toolkit: "linear",
-        returnUrl: "https://openbot.test/settings/connected-accounts/x",
+        returnUrl: "https://chisabot.test/settings/connected-accounts/x",
       })
       .catch((raised: unknown) => raised);
 
@@ -3438,7 +3438,7 @@ describe("each vendor condition reaches the reader as its own remedy", () => {
               error: {
                 error: {
                   message:
-                    "The auth config linear (OpenBot) has no redirect URI registered.",
+                    "The auth config linear (ChisaBot) has no redirect URI registered.",
                 },
               },
             },
@@ -3449,7 +3449,7 @@ describe("each vendor condition reaches the reader as its own remedy", () => {
 
     expect(brokerSentence(failure)).toBeNull();
     expect(vendorSentence(failure)).toBe(
-      "The auth config linear (OpenBot) has no redirect URI registered.",
+      "The auth config linear (ChisaBot) has no redirect URI registered.",
     );
   });
 });
@@ -3704,7 +3704,7 @@ describe("a vendor listing that is not the shape it is declared to be", () => {
         {
           shape: "a row whose id is null",
           answer: {
-            items: [{ id: null, name: "Linear (OpenBot)", status: "ENABLED" }],
+            items: [{ id: null, name: "Linear (ChisaBot)", status: "ENABLED" }],
           },
         },
       ],
@@ -4724,7 +4724,7 @@ describe("what a malformed field of a row actually costs", () => {
       fakeVendor({
         authConfigs: {
           list: async () => ({
-            items: [{ id: "   ", name: "Linear (OpenBot)", status: "ENABLED" }],
+            items: [{ id: "   ", name: "Linear (ChisaBot)", status: "ENABLED" }],
           }),
         },
       }),
@@ -4929,7 +4929,7 @@ describe("what a malformed field of a row actually costs", () => {
       fakeVendor({
         authConfigs: {
           list: async () => ({
-            items: [{ name: "Linear (OpenBot)", status: "ENABLED" }],
+            items: [{ name: "Linear (ChisaBot)", status: "ENABLED" }],
           }),
           delete: async (...call: unknown[]) => {
             deleted.push(call);
@@ -4978,7 +4978,7 @@ describe("what a malformed field of a row actually costs", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { name: "Linear (OpenBot)", status: "ENABLED" },
+              { name: "Linear (ChisaBot)", status: "ENABLED" },
               { id: "ac_b", status: "ENABLED" },
             ],
           }),
@@ -5011,8 +5011,8 @@ describe("what a malformed field of a row actually costs", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_a", name: "Linear (OpenBot)", status: "PENDING" },
-              { id: "ac_b", name: "Linear (OpenBot)", status: "SUSPENDED" },
+              { id: "ac_a", name: "Linear (ChisaBot)", status: "PENDING" },
+              { id: "ac_b", name: "Linear (ChisaBot)", status: "SUSPENDED" },
             ],
           }),
         },
@@ -5062,7 +5062,7 @@ describe("what a malformed field of a row actually costs", () => {
           list: async () => ({
             items: WORDS.map((status, index) => ({
               id: `ac_${index}`,
-              name: "Linear (OpenBot)",
+              name: "Linear (ChisaBot)",
               status,
             })),
           }),
@@ -5106,7 +5106,7 @@ describe("what a malformed field of a row actually costs", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_a", name: "Linear (OpenBot)", status: "DISABLED" },
+              { id: "ac_a", name: "Linear (ChisaBot)", status: "DISABLED" },
               { id: "ac_b", status: "ENABLED" },
             ],
           }),
@@ -5140,7 +5140,7 @@ describe("what a malformed field of a row actually costs", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_a", name: "Linear (OpenBot)", status: "DISABLED" },
+              { id: "ac_a", name: "Linear (ChisaBot)", status: "DISABLED" },
               { id: "ac_b", status: "ENABLED" },
             ],
           }),
@@ -5182,7 +5182,7 @@ describe("what a malformed field of a row actually costs", () => {
       fakeVendor({
         authConfigs: {
           list: async () => ({
-            items: [{ id: "ac_a", name: "Linear (OpenBot)", status: WIRE }],
+            items: [{ id: "ac_a", name: "Linear (ChisaBot)", status: WIRE }],
           }),
         },
       }),
@@ -5213,8 +5213,8 @@ describe("what a malformed field of a row actually costs", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_a", name: "Linear (OpenBot)", status: "ENABLED" },
-              { id: "ac_B", name: "Linear (OpenBot)", status: "ENABLED" },
+              { id: "ac_a", name: "Linear (ChisaBot)", status: "ENABLED" },
+              { id: "ac_B", name: "Linear (ChisaBot)", status: "ENABLED" },
             ],
           }),
         },
@@ -5326,7 +5326,7 @@ describe("what a malformed field of a row actually costs", () => {
         fakeVendor({
           authConfigs: {
             list: async () => ({
-              items: [{ id: "ac_ours", name: "Linear (OpenBot)", status }],
+              items: [{ id: "ac_ours", name: "Linear (ChisaBot)", status }],
             }),
           },
           connectedAccounts: {
@@ -5409,7 +5409,7 @@ describe("a field Composio padded with whitespace", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: " ac_ours ", name: "Linear (OpenBot)", status: "ENABLED" },
+              { id: " ac_ours ", name: "Linear (ChisaBot)", status: "ENABLED" },
             ],
           }),
           delete: async (...call: unknown[]) => {
@@ -5591,7 +5591,7 @@ describe("a field Composio padded with whitespace", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_ours", name: "Linear (OpenBot)", status: " ENABLED " },
+              { id: "ac_ours", name: "Linear (ChisaBot)", status: " ENABLED " },
             ],
           }),
         },
@@ -5627,7 +5627,7 @@ describe("a field Composio padded with whitespace", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_ours", name: "Linear (OpenBot)", status: " ENABLED " },
+              { id: "ac_ours", name: "Linear (ChisaBot)", status: " ENABLED " },
             ],
           }),
         },
@@ -5664,7 +5664,7 @@ describe("a field Composio padded with whitespace", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_ours", name: "Linear (OpenBot)", status: " DISABLED " },
+              { id: "ac_ours", name: "Linear (ChisaBot)", status: " DISABLED " },
             ],
           }),
         },
@@ -7811,7 +7811,7 @@ describe("connecting one person with the secret they typed", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_ours", name: "Linear (OpenBot)", status: "DISABLED" },
+              { id: "ac_ours", name: "Linear (ChisaBot)", status: "DISABLED" },
             ],
           }),
         },
@@ -7859,8 +7859,8 @@ describe("connecting one person with the secret they typed", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_a", name: "Linear (OpenBot)", status: "DISABLED" },
-              { id: "ac_b", name: "Linear (OpenBot)", status: "PENDING" },
+              { id: "ac_a", name: "Linear (ChisaBot)", status: "DISABLED" },
+              { id: "ac_b", name: "Linear (ChisaBot)", status: "PENDING" },
             ],
           }),
         },

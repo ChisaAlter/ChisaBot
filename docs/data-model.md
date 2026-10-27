@@ -1,6 +1,6 @@
 # 数据模型
 
-ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `openbot`）；登录网关另有一个 SQLite（账号、邀请、会话）。截至 main `0e23321`。
+ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `chisabot`）；登录网关另有一个 SQLite（账号、邀请、会话）。截至 main `0e23321`。
 
 ## 1. 两种建表方式
 
@@ -54,7 +54,9 @@ ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `openbot`）�
 
 设备本身在上游表 `devices`（迁移 0054；开机加列 `full_access_until`）和 `device_audit_events`；`device_bot_access` 已不用（设备属于账号）。
 
-### 云端 Claude Code
+### 云端 Claude Code（已删除，CB-099，2026-10-26）
+
+功能代码已删除，下面这些表**没有 drop**（`CREATE TABLE IF NOT EXISTS` 也不会再执行），留着旧数据，以后可以手工清理。
 
 | 表 | 用途 | 代码 | DESIGN |
 |---|---|---|---|
@@ -118,7 +120,7 @@ ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `openbot`）�
 | `audit_events` | 活动记录 |
 | `saved_logins` · `credentials` | 账号连接里保存的网站登录、模型密钥 |
 | `computer_snapshot` · `computer_page_frame` | 云端浏览器快照 |
-| `attachments` | 上游附件（定时清理 `openbot-zh-attachments.timer`） |
+| `attachments` | 上游附件（定时清理 `chisabot-zh-attachments.timer`） |
 
 瘦身后**不再读写但保留**的上游表：`routines` / `routine_runs` / `routine_sweeps`、`responsibilities*`、`learning_*`、`scim_*`、`sso_providers`、
 `team_bot_*`、`group_*`、`delivery_*`、`push_devices`、`demonstrations`、`personal_memories`、`proactive_*`、`model_usage`、`voice_sessions`、

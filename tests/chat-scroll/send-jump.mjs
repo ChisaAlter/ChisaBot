@@ -24,7 +24,7 @@ const ctx = await browser.newContext({
 });
 await ctx.addInitScript(({ bot, thread }) => {
   try {
-    localStorage.setItem("openbot-theme", "light");
+    localStorage.setItem("chisabot-theme", "light");
   } catch {}
   const w = window;
   w.__samples = [];

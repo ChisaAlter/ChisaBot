@@ -21,6 +21,7 @@
  * Bun global cache path during tests. These tests do not exercise Vertex, so the provider is stubbed
  * at the same preload boundary and fails loudly if a server test tries to use it.
  */
+import "../../shared/env-compat";
 
 import { mock } from "bun:test";
 import "eventsource";

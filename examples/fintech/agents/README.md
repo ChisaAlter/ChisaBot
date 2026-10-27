@@ -16,4 +16,4 @@ and what to say when it cannot find something. A one-line description gets you a
 answers vaguely.
 
 More of them, outside this repository and not inherited by your clone:
-[awesome-openbot-agents](https://github.com/jerelvelarde/awesome-openbot-agents).
+[awesome-chisabot-agents](https://github.com/jerelvelarde/awesome-chisabot-agents).

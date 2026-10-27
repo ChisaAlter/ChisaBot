@@ -1,6 +1,6 @@
 # Development
 
-> **ChisaBot 分支：** 先阅读 [快速开始](getting-started.md)。使用 `OPENBOT_RUNTIME_MODE=local` 时，无需下述 Intelligence 登录、项目密钥或学习容器配置；数据库、加密密钥和登录保护仍需按自己的环境配置。以下为保留的上游开发参考。
+> **ChisaBot 分支：** 先阅读 [快速开始](getting-started.md)。使用 `CHISABOT_RUNTIME_MODE=local` 时，无需下述 Intelligence 登录、项目密钥或学习容器配置；数据库、加密密钥和登录保护仍需按自己的环境配置。以下为保留的上游开发参考。
 
 ## Setup
 
@@ -12,7 +12,7 @@ cp .env.example .env
 bun install
 ```
 
-ChisaBot 默认 `OPENBOT_RUNTIME_MODE=local`，不需要 CopilotKit Intelligence；上游的 Intelligence / 自动学习开通脚本（`scripts/setup-learning.ts`）已在瘦身 P6-3 删除。填好 `.env` 里的模型（Magpie / OpenAI 兼容）即可。
+ChisaBot 默认 `CHISABOT_RUNTIME_MODE=local`，不需要 CopilotKit Intelligence；上游的 Intelligence / 自动学习开通脚本（`scripts/setup-learning.ts`）已在瘦身 P6-3 删除。填好 `.env` 里的模型（Magpie / OpenAI 兼容）即可。
 
 ## Running services
 
@@ -86,7 +86,7 @@ bun run build
 
 Integration tests expect a PostgreSQL database with pgvector. Point `TEST_DATABASE_URL` at a dedicated database such as `postgres://openbot:openbot@localhost:5432/openbot_test` before running them.
 
-They refuse to use the application `openbot` database. `DATABASE_URL` is still the application setting, and the database client removes it from the process environment after opening a connection to preserve the Windows Bun connection fix, so tests use `TEST_DATABASE_URL` as their immutable fixture address. Running them against a deployment you are using puts test Bots in its audit trail and its activity reports, so create a separate database and migrate that before running the integration suite.
+They refuse to use the application `chisabot` database. `DATABASE_URL` is still the application setting, and the database client removes it from the process environment after opening a connection to preserve the Windows Bun connection fix, so tests use `TEST_DATABASE_URL` as their immutable fixture address. Running them against a deployment you are using puts test Bots in its audit trail and its activity reports, so create a separate database and migrate that before running the integration suite.
 
 CI uses `bun run test:ci` to verify the expected test count in addition to normal tests.
 
@@ -94,13 +94,13 @@ CI uses `bun run test:ci` to verify the expected test count in addition to norma
 
 ```sh
 # 先用 deploy/start.sh 起一个部署
-export OPENBOT_SMOKE_COOKIE='better-auth.session_token=...'
+export CHISABOT_SMOKE_COOKIE='better-auth.session_token=...'
 bun run test:smoke
 ```
 
 It drives one journey over HTTP against the running stack, so it covers the joins the rest of the
 suite cannot reach: server to supervisor to computer, the gateway deciding before the browser acts,
-and the audit row landing. Point it elsewhere with `OPENBOT_API_URL`. Without a deployment it is
+and the audit row landing. Point it elsewhere with `CHISABOT_API_URL`. Without a deployment it is
 skipped by `bun run test` and says what to start when asked for by name.
 
 The session is not optional and not a convenience. Every route the journey proves is behind
@@ -123,7 +123,7 @@ while the browser is still starting, a second connection taking the screen from 
 refusing input from the socket that owns it, and a browser closing by request or by the idle sweep.
 Those need `agent-computer/src/index.ts`, which imports Playwright at module scope, and `playwright`
 is declared only in `agent-computer/package.json`, which `bun install` at the root does not reach. So
-without `OPENBOT_LIVE_SCREEN=1` the files skip before importing anything, which is what keeps
+without `CHISABOT_LIVE_SCREEN=1` the files skip before importing anything, which is what keeps
 `bun run test` and CI working where that dependency was never installed.
 
 ## Contribution checklist
@@ -131,5 +131,5 @@ without `OPENBOT_LIVE_SCREEN=1` the files skip before importing anything, which 
 - Keep changes focused.
 - Keep credentials, service-account JSON, customer data, and transcripts out of source control.
 - Put sensitive behavior on the server, not only in the browser.
-- Update [configuration](configuration.md), [architecture](openbot-architecture.md), or the root [README](../README.md) when behavior changes.
+- Update [configuration](configuration.md), [architecture](chisabot-architecture.md), or the root [README](../README.md) when behavior changes.
 - Run the quality checks above and include the results in the pull request.

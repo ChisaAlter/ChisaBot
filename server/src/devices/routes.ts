@@ -29,8 +29,6 @@ const NODE_PLATFORMS = new Set(["linux", "darwin", "win32", "freebsd", "openbsd"
  */
 
 type Variables = AppVariables & { device: DeviceRecord };
-type SyncTunnelSocket = { send: (data: Uint8Array) => void; close: (code?: number, reason?: string) => void };
-type SyncTunnelHandlers = { onMessage: (data: unknown) => void; onClose: () => void };
 
 const failures = new Map<string, { count: number; until: number }>();
 const FAIL_LIMIT = 20;
@@ -124,16 +122,6 @@ export function createDeviceRoutes(options: {
   pairing?: PairingStore;
   /** 网页构建目录：服务器节点程序 node-agent/chisabot-node.cjs 在里面。 */
   appDistDir?: string;
-  /** 这台设备不许开完全访问时给出原因（云端工作区节点，docs/cloud-claude-code.md）。 */
-  refuseFullAccess?: (device: DeviceRecord) => string | null;
-  /** 电脑文件夹同步（server/src/cloud-cc/sync.ts）：/agent/sync/* 接口、/agent/sync-tunnel 隧道、撤销时收回。 */
-  sync?: {
-    mountAgent: (routes: { route: (path: string, sub: never) => unknown }, requireDevice: MiddlewareHandler) => void;
-    attachPc: (device: DeviceRecord, ticket: string, socket: SyncTunnelSocket) => SyncTunnelHandlers | null;
-    attachNode: (device: DeviceRecord, tunnelId: string, socket: SyncTunnelSocket) => SyncTunnelHandlers | null;
-    onDeviceRevoked: (deviceId: string) => Promise<unknown>;
-    closeDeviceTunnels: (deviceId: string) => number;
-  } | null;
   /**
    * 配了网关密钥时：/agent/state 也要求 X-ChisaBot-Local-Caller（与 resolveGatewayRequest 同一把钥匙）。
    * 未配 = 保持旧行为（仅拦带 X-Forwarded-For 的公网探测）。
@@ -207,36 +195,6 @@ export function createDeviceRoutes(options: {
     }),
   );
 
-  // ---- 电脑文件夹同步（P4，docs/cloud-claude-code.md §5.4） ----
-  const sync = options.sync ?? null;
-  if (sync) {
-    sync.mountAgent(routes as unknown as { route: (path: string, sub: never) => unknown }, requireDevice as unknown as MiddlewareHandler);
-    // 电脑：?ticket=（一次性隧道票）；云端节点：?tunnel=（服务器刚让它开的那条）。两边都要设备令牌。
-    routes.get(
-      "/agent/sync-tunnel",
-      requireDevice,
-      upgradeWebSocket((context) => {
-        const device = context.get("device") as DeviceRecord;
-        const ticket = context.req.query("ticket") ?? "";
-        const tunnel = context.req.query("tunnel") ?? "";
-        let handlers: SyncTunnelHandlers | null = null;
-        return {
-          onOpen: (_event, ws) => {
-            const socket: SyncTunnelSocket = {
-              send: (data) => ws.send(data as unknown as ArrayBuffer),
-              close: (code, reason) => ws.close(code, reason),
-            };
-            handlers = ticket ? sync.attachPc(device, ticket, socket) : tunnel ? sync.attachNode(device, tunnel, socket) : null;
-            if (!handlers) ws.close(4403, "refused");
-          },
-          onMessage: (event) => handlers?.onMessage(event.data),
-          onClose: () => handlers?.onClose(),
-          onError: () => handlers?.onClose(),
-        };
-      }),
-    );
-  }
-
   routes.get("/agent/self", requireDevice, (context) =>
     context.json({ device: hub.view(context.get("device")) }),
   );
@@ -246,7 +204,6 @@ export function createDeviceRoutes(options: {
     const device = context.get("device");
     const mobile = isMobilePlatform(device.platform);
     await store.revoke(device.id);
-    await options.sync?.onDeviceRevoked(device.id).catch(() => 0);
     await store.audit({
       deviceId: device.id,
       ownerUserId: device.ownerUserId,
@@ -564,8 +521,6 @@ export function createDeviceRoutes(options: {
     if (patch.fullAccessUntil) {
       if (before.ownerUserId !== actor.id) return context.json({ error: "完全访问只能由设备的主人自己打开。" }, 403);
       if (isMobilePlatform(before.platform)) return context.json({ error: "手机不是可操作的设备。" }, 400);
-      const refused = options.refuseFullAccess?.(before);
-      if (refused) return context.json({ error: refused }, 400);
       if (before.paused && patch.paused !== false) return context.json({ error: "这台设备在紧急停止中，先解除紧急停止。" }, 409);
     }
     const after = await store.update(before.id, patch);
@@ -604,7 +559,6 @@ export function createDeviceRoutes(options: {
     });
     await mainAudit(actor.id, after.id, "device_updated", change);
     if (after.paused) hub.cancelAllFor(after.id, "已在网页上紧急停止。");
-    if (after.paused) options.sync?.closeDeviceTunnels(after.id);
     await hub.pushConfig(after.id);
     return context.json({ device: hub.view(after) });
   });
@@ -614,7 +568,6 @@ export function createDeviceRoutes(options: {
     if (!device) return context.json({ error: "没有这台设备。" }, 404);
     const actor = context.var.actor;
     await store.revoke(device.id);
-    await options.sync?.onDeviceRevoked(device.id).catch(() => 0);
     await store.audit({
       deviceId: device.id,
       ownerUserId: device.ownerUserId,
@@ -637,7 +590,6 @@ export function createDeviceRoutes(options: {
     const device = await owned(context, context.req.param("id"));
     if (!device) return context.json({ error: "没有这台设备。" }, 404);
     hub.kick(device.id);
-    await options.sync?.onDeviceRevoked(device.id).catch(() => 0);
     await store.remove(device.id);
     await mainAudit(context.var.actor.id, device.id, "device_deleted", device.name);
     return context.json({ ok: true });

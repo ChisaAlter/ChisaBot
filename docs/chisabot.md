@@ -16,9 +16,9 @@ ChisaBot 是 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) 的中�
 | Magpie | 可自部署；统一管理模型服务、账户和调用密钥 |
 | CopilotKit Intelligence | 可选；本地运行模式不需要项目或托管服务 |
 
-设置 `OPENBOT_RUNTIME_MODE=local` 后，服务端使用本地会话实现，不要求 `INTELLIGENCE_API_KEY`、`INTELLIGENCE_API_URL` 或 `INTELLIGENCE_GATEWAY_WS_URL`。本地模式不提供依赖 Intelligence 的自动学习及云端管理功能。
+设置 `CHISABOT_RUNTIME_MODE=local` 后，服务端使用本地会话实现，不要求 `INTELLIGENCE_API_KEY`、`INTELLIGENCE_API_URL` 或 `INTELLIGENCE_GATEWAY_WS_URL`。本地模式不提供依赖 Intelligence 的自动学习及云端管理功能。
 
-`OPENBOT_RUNTIME_MODE=intelligence` 保留上游运行方式，需要配置 Intelligence 项目连接。不要把上游文档中的要求当作本地模式的要求。
+`CHISABOT_RUNTIME_MODE=intelligence` 保留上游运行方式，需要配置 Intelligence 项目连接。不要把上游文档中的要求当作本地模式的要求。
 
 如果模型通过第三方 API 推理，对话请求会发送到所选模型服务。要将推理也留在自己控制的设备上，可接入 Ollama 等提供 OpenAI 兼容接口的自托管服务，并按需要关闭外部连接器、遥测与依赖联网的界面能力。模型本身的权重许可和硬件要求由所选模型决定。
 
@@ -26,17 +26,17 @@ ChisaBot 是 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) 的中�
 
 `examples/zh-CN/` 包含中文品牌、BOT、频道与技能配置。`deploy/` 提供登录服务与认证网关模板，由网关验证登录后访问应用内部服务；登录会话、模型密钥和数据库保留在部署环境中。
 
-`OPENBOT_SINGLE_USER=true` 仅适用于本地开发或由认证网关保护的内部服务。完整步骤见 [部署说明](../deploy/README.zh-CN.md)。
+`CHISABOT_SINGLE_USER=true` 仅适用于本地开发或由认证网关保护的内部服务。完整步骤见 [部署说明](../deploy/README.zh-CN.md)。
 
 ## 改名与数据兼容
 
 以下内部名称继续保留，避免改名影响已有数据或接口：
 
-- `OPENBOT_*` 环境变量、`@openbot/*` 内部包名及协议标识。
+- `CHISABOT_*` 环境变量、`@chisabot/*` 内部包名及协议标识。
 - 现有租户 ID、数据库、Docker 服务、存储卷与本地数据目录。
 - 桌面 Tauri 标识、二进制名称、移动应用标识与深层链接协议。
 
-这些内部名称与 ChisaBot 展示品牌分别维护。中文租户包的 `tenant.id` 保留为 `openbot`，`product_name` 为 `ChisaBot`。
+这些内部名称与 ChisaBot 展示品牌分别维护。中文租户包的 `tenant.id` 保留为 `chisabot`，`product_name` 为 `ChisaBot`。
 
 ## 客户端与上游资料
 

@@ -10,16 +10,20 @@ import {
 } from "@tanstack/react-router";
 import { cleanup, render } from "@testing-library/react";
 import { NotFoundRoute } from "@/components/not-found";
+import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register());
 
 afterEach(() => cleanup());
 
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 /**
  * 2026-10-20 审查：打错的地址（`/settings/models`）以前被 `Navigate` 回 `/`，而 `/` 按「上次停在哪」
- * 跳到 Claude Code——人只会看到应用突然换了页面。现在给真正的 404，地址栏不动。
+ * 跳到别的页签——人只会看到应用突然换了页面。现在给真正的 404，地址栏不动。
  */
 test("认不出的地址画 404，并写清是哪个地址", async () => {
   const rootRoute = createRootRoute({

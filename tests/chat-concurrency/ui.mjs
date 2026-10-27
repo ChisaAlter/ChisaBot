@@ -20,7 +20,7 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 23), ...a);
 const vp = MOBILE ? { width: 390, height: 844 } : { width: 1280, height: 820 };
 const ctx = await browser.newContext({ viewport: vp, deviceScaleFactor: 2, locale: "zh-CN", timezoneId: "Asia/Shanghai", ...(MOBILE ? { isMobile: true, hasTouch: true } : {}) });
 await ctx.addInitScript((dark) => {
-  try { localStorage.setItem("openbot-theme", dark ? "dark" : "light"); } catch {}
+  try { localStorage.setItem("chisabot-theme", dark ? "dark" : "light"); } catch {}
 }, DARK);
 const page = await ctx.newPage();
 const errors = [];

@@ -41,7 +41,12 @@ step swap "切换到 $PREV"
     cp -p "$BEFORE" "$COMPOSE_FILE"
     grep -q "image: $PREV\$" "$COMPOSE_FILE" || exit 1
   fi
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never --wait --wait-timeout 180 "$SERVICE"
+  RECREATE=()
+  if DRIFT=$(compose_network_drift); then
+    echo "网络配置变了（$DRIFT）：使用 --force-recreate"
+    RECREATE=(--force-recreate)
+  fi
+  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 180 "$SERVICE"
 ) || fail "切换失败（compose 已改回上一版，请检查容器）"
 
 step health "健康检查"

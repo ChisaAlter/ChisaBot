@@ -27,7 +27,7 @@ const target = () => `initiator-test-${crypto.randomUUID()}`;
  */
 async function pageFor(search = "") {
   const { events } = await reader.list(
-    auditQueryFromUrl(new URL(`https://openbot.test/audit${search}`)),
+    auditQueryFromUrl(new URL(`https://chisabot.test/audit${search}`)),
   );
   return events;
 }

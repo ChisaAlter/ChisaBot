@@ -42,7 +42,7 @@ function harness(overrides: Partial<ApprovedActionDependencies> = {}) {
       return { text: "sent", isError: false };
     },
     answer: (result: { text: string }) => result.text,
-    privateShareToolRef: "openbot/private_share",
+    privateShareToolRef: "chisabot/private_share",
     refusalMarker: "REFUSED:",
     personInitiator: PERSON,
     coordinationCall: async (input: unknown) => {

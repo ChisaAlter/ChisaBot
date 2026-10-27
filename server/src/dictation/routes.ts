@@ -20,7 +20,7 @@ export function createDictationRoutes(
     "/transcriptions",
     async (context, next) => {
       // A cross-origin HTML form cannot set this header; this route grants no CORS access.
-      if (context.req.header("x-openbot-dictation") !== "1") {
+      if ((context.req.header("x-chisabot-dictation") ?? context.req.header("x-openbot-dictation")) !== "1") {
         return context.json({ error: "Invalid dictation request." }, 403);
       }
       if (!provider)

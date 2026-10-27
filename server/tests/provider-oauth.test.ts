@@ -55,7 +55,7 @@ async function fixture(
   current: ModelOAuthRecord,
   handler: (request: Request) => Response | Promise<Response>,
 ) {
-  const root = await mkdtemp(join(tmpdir(), "openbot-model-oauth-"));
+  const root = await mkdtemp(join(tmpdir(), "chisabot-model-oauth-"));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   const file = join(root, "model-oauth.json");
   await writeFile(file, JSON.stringify(current), { mode: 0o600 });
@@ -331,7 +331,7 @@ test("missing or malformed credential files fail closed without exposing their c
 
 async function authenticationFailure(app: Hono) {
   const response = await app.request("/api/desktop/connection-failure", {
-    headers: { "x-openbot-desktop-host-token": "test-host-token" },
+    headers: { "x-chisabot-desktop-host-token": "test-host-token" },
   });
   return response.json();
 }

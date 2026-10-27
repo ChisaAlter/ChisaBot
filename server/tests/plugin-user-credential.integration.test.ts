@@ -244,8 +244,8 @@ beforeAll(async () => {
     .onConflictDoNothing();
 
   for (const [id, email] of [
-    [askerId, `${askerId}@openbot.test`],
-    [otherId, `${otherId}@openbot.test`],
+    [askerId, `${askerId}@chisabot.test`],
+    [otherId, `${otherId}@chisabot.test`],
   ]) {
     await database
       .insert(users)

@@ -39,7 +39,7 @@ def main():
             os.makedirs(os.path.join(home, d))
         with io.open(os.path.join(home, "config.env"), "w", encoding="utf-8") as f:
             f.write("# 中文注释：python3 在 C locale 下也要能读\nCOMPOSE_DIR=%s\nCOMPOSE_FILE=compose.yaml\n"
-                    "CONTAINER=openbot-zh\nIMAGE_REPO=local/chisabot\nPUBLIC_HEALTH_URL=\n" % compose_dir)
+                    "CONTAINER=chisabot-zh\nIMAGE_REPO=local/chisabot\nPUBLIC_HEALTH_URL=\n" % compose_dir)
         m = load(home)
 
         # clean(): str / bytes / control characters / non-text

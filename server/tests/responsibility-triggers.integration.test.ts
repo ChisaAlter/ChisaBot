@@ -79,7 +79,7 @@ async function goal() {
 }
 const post = (id: string, body: string, headers: Record<string, string>) =>
   routes.fetch(
-    new Request(`https://openbot.test/${id}`, {
+    new Request(`https://chisabot.test/${id}`, {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
       body,

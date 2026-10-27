@@ -23,7 +23,7 @@ import { RELEVANT, score } from "./search";
  * 旧镜像只是看不到这张表）。chisabot_memory_bots：哪个机器人被关掉了记忆（没有行 = 开着）。
  *
  * 删除就是真删（不留副本）：用户说「忘掉 X」，机器人先 memory_search 找出每一条相关的，再 memory_forget 一次删掉。
- * 上游 OpenBot 的 personal_memories（一条一事实、只回给写它的机器人）在 ChisaBot 里不再给机器人用。
+ * 上游 ChisaBot 的 personal_memories（一条一事实、只回给写它的机器人）在 ChisaBot 里不再给机器人用。
  */
 const ID = /^mem_[a-f0-9]{8,40}$/;
 const AGENT_ID = /^[A-Za-z0-9_.:-]{1,200}$/;

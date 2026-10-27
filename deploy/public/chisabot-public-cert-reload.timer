@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily ChisaBot gateway certificate reload
+
+[Timer]
+OnCalendar=*-*-* 04:17:00
+AccuracySec=1m
+Persistent=true
+Unit=chisabot-public-cert-reload.service
+
+[Install]
+WantedBy=timers.target

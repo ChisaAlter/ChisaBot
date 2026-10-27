@@ -93,7 +93,17 @@ function summarize(operation, args) {
  * @param {object} [options.clientInfo]
  * @param {(url: string) => Promise<object|undefined>} [options.getAgent]  走系统代理时给 ws 的 Agent（proxy.js）
  * @param {number} [options.silenceMs]  多久收不到服务器任何消息就判定连接已死、重连（服务器每 25 秒 ping 一次）
+ * @param {number} [options.backoffBaseMs]  重连退避起点，默认 1 秒（上限 30 倍）
+ * @param {number} [options.invalidTokenRetryMs]  401 但服务器没说「已撤销」（body 没有 revoked:true）时，多久再试一次（默认 60 秒）
  */
+const INVALID_TOKEN_DETAIL = "设备令牌无效";
+
+/** 令牌无效（401 但没说撤销）时托盘 / 设备页的提示，写明会每隔多久自动重试。 */
+function invalidTokenHint(retryMs = 60_000) {
+  const seconds = Math.max(1, Math.round(retryMs / 1000));
+  return `设备令牌无效，请重新登记这台电脑（每 ${seconds} 秒自动重试）`;
+}
+
 function createNodeAgent(options) {
   const events = new EventEmitter();
   const WebSocketImpl = options.WebSocket || require("ws");
@@ -113,6 +123,8 @@ function createNodeAgent(options) {
   let lastError = "";
   let watchdog = null;
   const silenceMs = options.silenceMs ?? 70_000;
+  const invalidTokenRetryMs = options.invalidTokenRetryMs ?? 60_000;
+  const backoffBaseMs = options.backoffBaseMs ?? 1000; // 退避起点（测试里调小）；上限是它的 30 倍
   const running = new Map(); // call id -> AbortController
   const approvalPrompts = new Map(); // approval id -> { cancel }
 
@@ -149,13 +161,23 @@ function createNodeAgent(options) {
   }
 
   function scheduleReconnect() {
-    if (stopped || state === "revoked") return;
+    if (stopped) return;
     clearTimeout(reconnectTimer);
-    const base = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));
+    const base = Math.min(30 * backoffBaseMs, backoffBaseMs * 2 ** Math.min(attempt, 5));
     const delay = Math.round(base * (0.7 + Math.random() * 0.6));
     attempt++;
     events.emit("reconnect", { delay, attempt });
     reconnectTimer = setTimeout(() => void connect(), delay);
+    if (typeof reconnectTimer.unref === "function" && options.unrefTimers) reconnectTimer.unref();
+  }
+
+  /** 401 但没有明确撤销（令牌未知、设备行被删、服务器那边临时认证异常）：保持「revoked」状态，隔很久再试一次（CB-113）。 */
+  function scheduleInvalidTokenRetry() {
+    if (stopped) return;
+    clearTimeout(reconnectTimer);
+    events.emit("reconnect", { delay: invalidTokenRetryMs, attempt, invalidToken: true });
+    // 后台静默重试：不切到「connecting」，托盘不闪「正在连接…」；失败保持原提示，成功照常上线。
+    reconnectTimer = setTimeout(() => void connect({ quiet: true }), invalidTokenRetryMs);
     if (typeof reconnectTimer.unref === "function" && options.unrefTimers) reconnectTimer.unref();
   }
 
@@ -330,7 +352,7 @@ function createNodeAgent(options) {
   }
 
   let connecting = false;
-  async function connect() {
+  async function connect({ quiet = false } = {}) {
     if (stopped || connecting || socket) return;
     const token = options.getToken();
     if (!token) {
@@ -338,7 +360,7 @@ function createNodeAgent(options) {
       return;
     }
     connecting = true;
-    setState("connecting");
+    if (!quiet) setState("connecting");
     const origin = new URL(options.serverUrl).origin;
     const url = wsUrlFor(options.serverUrl);
     let ws;
@@ -369,24 +391,45 @@ function createNodeAgent(options) {
       armWatchdog(ws);
       onMessage(data);
     });
+    // 握手被 HTTP 拒绝（401/502/503…）：有这个监听时 ws 既不报 error 也不触发 close（CB-113），
+    // 所以重连只能在这里排，不能指望 close。
     ws.on("unexpected-response", (_req, res) => {
       let body = "";
-      res.on("data", (c) => (body += c));
-      res.on("end", () => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        if (socket !== ws) return; // 已被 stop()/reconnectNow() 丢弃
+        socket = null;
+        clearTimeout(watchdog);
+        if (stopped) return;
         if (res.statusCode === 401) {
           let revoked = false;
           try {
-            revoked = !!JSON.parse(body).revoked;
+            revoked = JSON.parse(body).revoked === true;
           } catch {}
-          stopped = true;
-          setState("revoked", revoked ? "设备已被撤销" : "设备令牌无效");
-          events.emit("revoked");
+          if (revoked) {
+            // 服务器明确说这台设备被撤销（server/src/devices/routes.ts requireDevice）：停下。
+            stopped = true;
+            setState("revoked", "设备已被撤销");
+            events.emit("revoked");
+          } else {
+            // 令牌不认识但没说撤销：可能是临时问题，隔 invalidTokenRetryMs 再试，不发 revoked 事件（无界面节点收到会退出）。
+            lastError = INVALID_TOKEN_DETAIL;
+            // 静默重试又失败：状态和提示原样不动，不再发 state 事件。
+            if (!(quiet && state === "revoked")) setState("revoked", lastError);
+            scheduleInvalidTokenRetry();
+          }
         } else {
-          // 不在这里排重连：ws 随后会触发 close，由 close 统一排（以前这里和 close 各排一次）。
           lastError = `服务器返回 ${res.statusCode}`;
           setState("offline", lastError);
+          scheduleReconnect();
         }
-      });
+      };
+      res.on("data", (c) => (body += c));
+      res.on("end", settle);
+      res.on("error", settle);
+      res.on("aborted", settle);
     });
     ws.on("close", (code) => {
       if (socket === ws) socket = null;
@@ -402,12 +445,14 @@ function createNodeAgent(options) {
         events.emit("revoked");
         return;
       }
-      if (state !== "revoked" && !stopped) {
+      if ((state !== "revoked" || quiet) && !stopped) {
         setState("offline", code === 4000 ? "在别处重新连接" : lastError || (code === 1006 ? "连接中断" : `连接关闭（${code}）`));
         scheduleReconnect();
       }
     });
     ws.on("error", (error) => {
+      // stop()/reconnectNow() 主动丢弃的连接（可能还在握手中，ws 会报「closed before the connection was established」）不再上报。
+      if (socket !== ws) return;
       lastError = error && error.message ? error.message : String(error);
       events.emit("error", error);
     });
@@ -425,7 +470,7 @@ function createNodeAgent(options) {
      * 已在线就什么都不做；否则丢掉退避等待，马上再连一次。
      */
     reconnectNow() {
-      if (stopped || state === "revoked") return false;
+      if (stopped) return false;
       if (state === "online" && socket && socket.readyState === 1) return false;
       clearTimeout(reconnectTimer);
       attempt = 0;
@@ -446,8 +491,10 @@ function createNodeAgent(options) {
       stopped = true;
       clearTimeout(reconnectTimer);
       clearTimeout(watchdog);
-      if (socket) socket.close(1000, "bye");
+      const ws = socket;
       socket = null;
+      // 握手中的连接 close() 会中止握手并异步报错；先置空 socket，error 监听据此忽略。
+      if (ws) ws.close(1000, "bye");
       setState("stopped");
     },
     /** 改本机设置并同步到服务器（能力、文件夹、名称、紧急停止）。 */
@@ -472,6 +519,10 @@ function createNodeAgent(options) {
     reportLocal(action, outcome, summary) {
       send({ type: "local_audit", action, outcome, summary });
     },
+    /** 令牌无效（未明确撤销）时的自动重试间隔，界面提示用。 */
+    get invalidTokenRetryMs() {
+      return invalidTokenRetryMs;
+    },
     get state() {
       return state;
     },
@@ -485,4 +536,4 @@ function createNodeAgent(options) {
   };
 }
 
-module.exports = { createNodeAgent, wsUrlFor, OPERATION_CAPABILITY, capabilityFor, summarize };
+module.exports = { createNodeAgent, invalidTokenHint, INVALID_TOKEN_DETAIL, wsUrlFor, OPERATION_CAPABILITY, capabilityFor, summarize };

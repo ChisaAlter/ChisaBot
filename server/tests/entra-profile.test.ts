@@ -9,7 +9,7 @@ import { mapEntraProfile } from "../src/auth";
  * external user's token is minted by their own tenant. `common`, the default tenant here, is
  * multi-tenant.
  *
- * It matters more here than in most products because every authorization decision OpenBot makes
+ * It matters more here than in most products because every authorization decision ChisaBot makes
  * about a person is keyed on their address, so an absent one is not cosmetic: they would sign in,
  * match no administrator, and land as a plain user with nothing explaining why.
  */

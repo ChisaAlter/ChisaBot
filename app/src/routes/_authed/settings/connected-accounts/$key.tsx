@@ -412,7 +412,7 @@ function RouteComponent() {
                 </DropdownMenu>
               ) : (
                 /*
-                 * The arrow says this leaves OpenBot. It does: the next thing on screen is the
+                 * The arrow says this leaves ChisaBot. It does: the next thing on screen is the
                  * vendor's own consent page, and a control that navigates away should look like one.
                  */
                 <Button

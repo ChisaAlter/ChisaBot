@@ -9,7 +9,7 @@
 set -u
 WANT=${1:?commit prefix}; WHO=${2:-hark-worker}
 U=${CHISABOT_UPDATER_DIR:-/opt/chisabot-updater}
-APP=${CHISABOT_APP_CONTAINER:-openbot-zh}
+APP=${CHISABOT_APP_CONTAINER:-chisabot-zh}
 exec 9>/run/cb-deploy.lock
 flock -w 2400 9 || { echo "DEPLOY-LOCK TIMEOUT"; exit 3; }
 echo "[$(date -u +%T)] lock held by $WHO for $WANT"
@@ -32,7 +32,7 @@ docker ps --format '{{.Image}}' --filter name=^$APP\$ | grep -q "$(echo $HEAD | 
 SYNC_NGINX=${CHISABOT_SYNC_NGINX:-check}
 REPO_OPS=${CHISABOT_REPO_OPS:-}
 if [ -z "$REPO_OPS" ]; then
-  for cand in /opt/chisabot-ops /opt/openbot-zh/../ChisaBot/repo /opt/chisabot-src; do
+  for cand in /opt/chisabot-ops /opt/chisabot-zh/../ChisaBot/repo /opt/chisabot-src; do
     if [ -f "$cand/scripts/ops/sync-nginx.sh" ]; then REPO_OPS=$cand; break; fi
   done
 fi

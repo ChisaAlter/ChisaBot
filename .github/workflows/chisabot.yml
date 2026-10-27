@@ -65,11 +65,15 @@ jobs:
           server/tests/model-settings-routes.test.ts
           server/tests/model-settings.test.ts
           server/tests/computer-tool-outcome.test.ts
+          server/tests/agent-runtime-connection-refused.test.ts
+          server/tests/agent-runtime-connect-timeout.test.ts
+          server/tests/compose-network-drift.test.ts
+          server/tests/admin-smoke.test.ts
       # The chat regression set every ChisaBot PR runs on the server (the older model-chooser DOM tests
       # need a live API and never ran here while typecheck was failing; see docs/slimming.md P3).
       - name: Chat UI checks
         working-directory: app
-        run: bun test tests/no-group-has.test.ts tests/stopped-turn.test.ts tests/bot-message-list.test.tsx tests/link-cards.test.tsx tests/rich-previews-extract.test.ts tests/ui-align.test.ts tests/connection-drop.test.ts tests/fold-narration.test.ts tests/chat-unify.test.ts tests/turn-unfinished.test.tsx tests/workspace-links.test.ts
+        run: bun test tests/no-group-has.test.ts tests/stopped-turn.test.ts tests/bot-message-list.test.tsx tests/link-cards.test.tsx tests/rich-previews-extract.test.ts tests/ui-align.test.ts tests/connection-drop.test.ts tests/fold-narration.test.ts tests/chat-unify.test.ts tests/turn-unfinished.test.tsx tests/workspace-links.test.ts tests/agent-runtime-unreachable.test.ts
       - name: Request, message identity and persistent queue checks
         working-directory: app
         env:
@@ -81,17 +85,40 @@ jobs:
           bun test tests/tail-first-paint.test.ts
           bun test tests/message-scroll-reduced-motion.test.tsx
           bun test tests/thread-inbox-paused.test.tsx tests/thread-inbox-concurrency.test.tsx tests/conversation-sync.test.ts
+          bun test tests/schedule-fired.test.tsx
+          bun test tests/schedule-edit.test.tsx
+          bun test tests/schedule-runs-query.test.ts
+          bun test tests/stop-queue.test.tsx
+          bun test tests/computer-activity-log.test.tsx tests/computer-activity.test.ts
+          bun test tests/computer-control-status.test.ts tests/browser-presence.test.ts
+          bun test tests/control-poll-single-source.test.tsx tests/control-backoff-timing.test.ts
+          bun test tests/sidebar-search-nav.test.ts tests/channel-pagination.test.tsx tests/channel-search.test.ts tests/focus-message.test.ts tests/scroll-within.test.ts tests/sidebar-shortcut-layouts.test.tsx
+          # CB-106：app/bunfig.toml 已自动加载 ./tests/preload.ts（DOM 下先求值 Base UI），无需再显式 --preload（CB-110）。
+          bun test tests/memory-delete-undo.test.tsx
+          bun test tests/memory-undo-toast-limit.test.tsx
+          # DF-30：电脑卡片外框不再 button 套「重试」button。
+          bun test tests/computer-frame-nested-button.test.tsx
       - name: Install actual computer service dependencies
         working-directory: agent-computer
         run: bun install --frozen-lockfile
       - name: Durable inbox and database recovery checks
         env:
           TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/openbot_test
-          OPENBOT_COMPUTER_STOP_HTTP: "1"
+          CHISABOT_COMPUTER_STOP_HTTP: "1"
         run: |
           bun test server/tests/database-deadline.integration.test.ts server/tests/database-recovery.test.ts
           bun test server/tests/local-conversations-inbox.integration.test.ts server/tests/thread-inbox-paused.integration.test.ts server/tests/thread-inbox.test.ts
+          bun test server/tests/stop-queue.integration.test.ts
           bun test server/tests/computer-stop.test.ts
+          bun test server/tests/agent-runtime-unreachable.integration.test.ts
+          bun test server/tests/schedules-paused-next.integration.test.ts
+          bun test server/tests/schedules-runs-param.test.ts
+          bun test server/tests/schedules.test.ts
+          bun test server/tests/channel-search-hit-meta.test.ts
+          bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
+      # CB-103：GET /control 一律 200 + state，截图让路回 409 user_control，接管中的拒绝记进活动记录。
+      - name: Computer control state checks (CB-103)
+        run: bun test server/tests/computer-routes.test.ts server/tests/computer-client.test.ts
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
         run: bun install --frozen-lockfile && bun test tests/native-select.test.ts tests/aria-snapshot.test.ts
@@ -107,8 +134,10 @@ jobs:
         run: bun test shared/schedules.test.ts shared/activity-labels.test.ts
       - name: Login gateway checks
         run: bun test deploy/public/auth/server.test.ts deploy/public/auth/startup-report.test.ts
-      - name: Claude upstream proxy share-link parser
-        run: bun test shared/proxy-links.test.ts
+      - name: Updater shell script checks (CB-100b)
+        run: |
+          for f in deploy/updater/*.sh; do bash -n "$f"; done
+          bash deploy/updater/test-shell.sh
       # Private host info guard. The deny list lives in the repository variable
       # PRIVATE_HOST_DENY (Settings → Secrets and variables → Actions → Variables),
       # deliberately NOT in this file: a guard that spelled out the address would
@@ -130,3 +159,24 @@ jobs:
             exit 1
           fi
           echo "OK: no private host identifiers in tracked files."
+
+  # PC 客户端（pc/）的 node 测试；和 release.yml 的 pc-test 同一套（CB-113：以前只有发版时才跑）。
+  pc-test:
+    name: PC client tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: pc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm ci --no-audit --no-fund
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - run: npm test

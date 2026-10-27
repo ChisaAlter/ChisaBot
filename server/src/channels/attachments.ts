@@ -1118,7 +1118,7 @@ export function createChannelAttachmentRoutes(
      * has to say what becomes of those. It used to say they are "cleared within a day", which this
      * server is in no position to promise: `attachments.culler.olderThanHours` is the operator's to
      * set, and `attachments.culler.enabled: false` is a documented way to keep every staged row for
-     * ever (charts/openbot/README.md). A deployment that has done either is one where this sentence
+     * ever (charts/chisabot/README.md). A deployment that has done either is one where this sentence
      * was simply a lie, told to the one person who could not act on it. What is true whatever the
      * chart says is that those rows are the deployment's to clear and not this person's, and that is
      * what it says now.

@@ -19,6 +19,7 @@ import type { ComponentType, ReactNode } from "react";
 import { type AgentProfile, agentKeys } from "@/lib/agents/queries";
 import { computerKeys } from "@/lib/computers/queries";
 import { Route as BoundariesRoute } from "@/routes/_authed/admin/boundaries";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * The Enter that confirms a character an input method is composing is not an Enter.
@@ -45,7 +46,10 @@ GlobalRegistrator.register();
 const { AgentDialog } = await import("@/components/agents/agent-dialog");
 const { CreateAgentDialog } = await import("@/components/agents/create-agent-dialog");
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const originalFetch = global.fetch;
 

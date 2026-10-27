@@ -61,7 +61,7 @@ describe("compose host bind", () => {
   test("extractComposePortLines finds short publishes", () => {
     const yaml = `
 services:
-  openbot:
+  chisabot:
     ports:
       - "127.0.0.1:3001:3001"
     environment:

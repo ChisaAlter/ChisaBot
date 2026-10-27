@@ -1,5 +1,5 @@
 {
-  "name": "@openbot/agent-computer",
+  "name": "@chisabot/agent-computer",
   "description": "ChisaBot BOT 电脑工具服务",
   "license": "MIT",
   "private": true,

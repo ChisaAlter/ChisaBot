@@ -6,14 +6,16 @@ import {
   browserPresenceFootLabel,
   browserPresenceKind,
 } from "@/lib/computers/browser-presence";
-import { supplySecret } from "@/lib/computers/control";
+import { CONTROL_UNREACHABLE_ZH, supplySecret } from "@/lib/computers/control";
 import {
   readPageFrame,
   readScreenshot,
+  SCREEN_USER_CONTROL_ZH,
   type Screenshot,
 } from "@/lib/computers/screen";
 import {
   applyScreenshotPollResult,
+  screenshotPollBlocked,
   nextScreenshotPollDelay,
 } from "@/lib/computers/screenshot-poll";
 import { useComputerControl } from "@/lib/computers/use-control";
@@ -126,6 +128,7 @@ function NothingToSee({
   page,
   onRetry,
   castingElsewhere = false,
+  takenOver = false,
 }: {
   problem: string | null;
   blankBrowser: boolean;
@@ -142,6 +145,8 @@ function NothingToSee({
    * outage, which is what made a working computer look broken (2026-10-22).
    */
   castingElsewhere?: boolean;
+  /** CB-103：让路是因为有人接管着；文案换成「接管中」。 */
+  takenOver?: boolean;
 }) {
   return (
     <span className="computer-idle absolute inset-0 flex flex-col items-center justify-center gap-1 p-4 text-center text-muted-foreground text-sm">
@@ -177,9 +182,13 @@ function NothingToSee({
       ) : castingElsewhere ? (
         <>
           <IconDeviceDesktop className="computer-idle-ic" />
-          <span className="computer-idle-t">{"大屏正在直播"}</span>
+          <span className="computer-idle-t">
+            {takenOver ? "接管中" : "大屏正在直播"}
+          </span>
           <span className="computer-idle-s">
-            {"同一块屏幕正在大屏里实时显示；关掉大屏后，这里会自动接回画面。"}
+            {takenOver
+              ? SCREEN_USER_CONTROL_ZH
+              : "同一块屏幕正在大屏里实时显示；关掉大屏后，这里会自动接回画面。"}
           </span>
         </>
       ) : problem ? (
@@ -257,6 +266,8 @@ type Props = {
   toolCallId?: string;
   /** 右栏「计算机」：画面上面显示一条标签（DESIGN §95）。对话里的小卡片不显示。 */
   browserChrome?: boolean;
+  /** CB-101：预览因为大屏直播让路时告诉外面，右栏状态行据此说清楚。 */
+  onLiveCastChange?: (casting: boolean) => void;
 };
 
 export function ComputerView({
@@ -271,11 +282,15 @@ export function ComputerView({
   finished,
   toolCallId,
   browserChrome = false,
+  onLiveCastChange,
 }: Props) {
   const [shot, setShot] = useState<Screenshot | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   /** The card's screenshot is yielding to a live cast (this window's big screen or another window's). */
   const [castingElsewhere, setCastingElsewhere] = useState(false);
+  useEffect(() => {
+    onLiveCastChange?.(castingElsewhere);
+  }, [castingElsewhere, onLiveCastChange]);
   const [expanded, setExpanded] = useState(false);
   const [streamProblem, setStreamProblem] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
@@ -311,6 +326,7 @@ export function ComputerView({
   const settled = !active && (finished || Boolean(knownPage));
   const {
     control,
+    state: controlState,
     busy: changingControl,
     change: changeControl,
     refresh: refreshControl,
@@ -414,7 +430,32 @@ export function ComputerView({
      * 大屏展开时 LiveScreen 走 websocket 出图。HTTP /screenshot 再轮询会跟流抢电脑，
      * 控制台 503 刷屏，而画布仍像健康直播（狗粮 0.1.39 → 0.1.40）。收起后再拉卡片帧。
      */
-    if (expanded) return;
+    const blocked = screenshotPollBlocked({
+      expanded,
+      driving,
+      controlState,
+      controlEnabled: !settled,
+    });
+    if (blocked === "expanded") return;
+    // CB-103：先拿到接管状态再取图；还没读到就等下一次状态变化（effect 会重跑）。
+    if (blocked === "pending") return;
+    if (blocked === "unreachable") {
+      setShot(null);
+      setCastingElsewhere(false);
+      setProblem(CONTROL_UNREACHABLE_ZH);
+      return;
+    }
+    /*
+     * CB-103：有人接管着（不管是这张卡的大屏还是右栏 / 别的窗口），画面都在直播里。这时再拉 HTTP
+     * 截图只会被让路拒绝，控制台多一条红字。直接显示「直播中」占位，交还后 driving 变回 false，
+     * 这个 effect 重新跑，卡片自己接回截图。
+     */
+    if (blocked === "user_control") {
+      setShot(null);
+      setProblem(null);
+      setCastingElsewhere(true);
+      return;
+    }
     const mine = ++generation.current;
     let timer: ReturnType<typeof setTimeout>;
     // Consecutive identical frames observed during post-action settling.
@@ -439,7 +480,8 @@ export function ComputerView({
       try {
         const result = await readScreenshot(computerId);
         if (generation.current !== mine) return;
-        liveCastBusy = result.liveCast === true;
+        // 接管中的让路（409 user_control）也按直播处理：慢速探、不报警告。
+        liveCastBusy = result.liveCast === true || result.userControl === true;
 
         const next = applyScreenshotPollResult(result);
         if (!next.shot) {
@@ -493,7 +535,7 @@ export function ComputerView({
       generation.current++;
       clearTimeout(timer);
     };
-  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey, expanded]);
+  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey, expanded, driving, controlState]);
 
   /*
    * 交还之后收起大屏。交还就是「我弄完了」，留着一个只读的大屏还要再点一次关闭，
@@ -628,9 +670,29 @@ export function ComputerView({
       {/* 右栏小画面上面不放标签栏：标签只在放大的浏览器里出现（用户 2026-10-16「外面不需要标签」，DESIGN §96）。 */}
       <figure ref={previewRef} className="overflow-hidden rounded-2xl border">
         {/* Inline preview remains in transcript; click opens a readable full-size view. */}
-        <button
-          type="button"
+        {/*
+         * DF-30：外框是 div role=button，不是 <button>。截图失败时里面有「重试」<button>，
+         * button 套 button 是非法 HTML，React 报 hydration 错误。键盘行为按原生按钮补齐：
+         * Enter 按下即触发，Space 按下阻止滚动、松开触发；从内部按钮冒上来的按键不算。
+         */}
+        {/* biome-ignore lint/a11y/useSemanticElements: DF-30 外框里有「重试」<button>，不能再用 <button>。 */}
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => setExpanded(true)}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key === "Enter") {
+              event.preventDefault();
+              setExpanded(true);
+            } else if (event.key === " ") {
+              event.preventDefault();
+            }
+          }}
+          onKeyUp={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key === " ") setExpanded(true);
+          }}
           /*
            * Opens whether or not there is a picture in it. It used to be disabled without one, and
            * the wheel is down there: a blank browser, a screen that had not arrived yet, or a
@@ -665,6 +727,7 @@ export function ComputerView({
             <NothingToSee
               blankBrowser={blankBrowser}
               castingElsewhere={castingElsewhere}
+              takenOver={driving}
               onRetry={
                 settled || !problem || castingElsewhere
                   ? undefined
@@ -678,7 +741,7 @@ export function ComputerView({
               settled={settled}
             />
           )}
-        </button>
+        </div>
 
         {/* The request reason appears above the always-available ownership controls. */}
         {!driving && !settled && control?.requested ? (
@@ -733,13 +796,13 @@ export function ComputerView({
               await refreshControl?.();
             }}
           >
-            <label className="block" htmlFor="openbot-secret">
+            <label className="block" htmlFor="chisabot-secret">
               <span className="font-medium">{"助手需要"}</span>
               <span>{control.secretWanted}</span>
             </label>
             <div className="mt-1.5 flex gap-2">
               <input
-                id="openbot-secret"
+                id="chisabot-secret"
                 type="password"
                 value={secret}
                 onChange={(event) => setSecret(event.target.value)}

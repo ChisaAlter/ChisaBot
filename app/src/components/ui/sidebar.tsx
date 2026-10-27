@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -24,7 +25,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { IconLayoutSidebar } from "@tabler/icons-react";
+import { IconLayoutSidebar, IconX } from "@tabler/icons-react";
+import { useBackDismiss } from "@/lib/overlay-back";
 
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "18rem";
@@ -171,6 +173,12 @@ function SidebarProvider({
   );
 }
 
+/** 组字中的按键：Chromium 标 isComposing，WebKit 发 keyCode 229。 */
+export function isImeEscape(event: Event | undefined): boolean {
+  const key = event as KeyboardEvent | undefined;
+  return Boolean(key && (key.isComposing || key.keyCode === 229));
+}
+
 function Sidebar({
   side = "left",
   variant = "sidebar",
@@ -185,6 +193,10 @@ function Sidebar({
   collapsible?: "offcanvas" | "icon" | "none";
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  // 返回键 / 浏览器返回先关抽屉（CB-098，lib/overlay-back.ts）。
+  useBackDismiss(isMobile && openMobile && collapsible !== "none", () =>
+    setOpenMobile(false),
+  );
 
   if (collapsible === "none") {
     return (
@@ -203,16 +215,30 @@ function Sidebar({
 
   if (isMobile) {
     return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
+      <Sheet
+        open={openMobile}
+        onOpenChange={(next, details) => {
+          // CB-106 r2：输入法组字时的 Esc 是取消候选词，不关抽屉（360 宽左栏是抽屉）。
+          if (!next && details?.reason === "escape-key" && isImeEscape(details.event)) {
+            details.cancel?.();
+            return;
+          }
+          setOpenMobile(next);
+        }}
+        {...props}
+      >
         <SheetContent
           dir={dir}
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+          // 宽度只在这里定（CB-098）：Sheet 基础样式的 `w-3/4` 会盖掉 `w-(--sidebar-width)`，
+          // 内容却按 18rem 排，PC 竖屏右边被裁。变量本身改成「不超过视口减 48px」，里面一律跟着容器走。
+          className="sidebar-mobile-sheet w-(--sidebar-width)! max-w-none! min-w-0 bg-sidebar p-0 text-sidebar-foreground"
+          showCloseButton={false}
           style={
             {
-              "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
+              "--sidebar-width": `min(${SIDEBAR_WIDTH_MOBILE}, calc(100vw - 48px))`,
             } as React.CSSProperties
           }
           side={side}
@@ -221,7 +247,19 @@ function Sidebar({
             <SheetTitle>{"侧边栏"}</SheetTitle>
             <SheetDescription>{"显示移动侧边栏。"}</SheetDescription>
           </SheetHeader>
-          <div className="flex h-full w-full flex-col">{children}</div>
+          <div className="sidebar-mobile-head">
+            <SheetClose
+              aria-label={"关闭侧栏"}
+              className="sidebar-mobile-close"
+              data-testid="sidebar-drawer-close"
+              title={"关闭侧栏"}
+            >
+              <IconX aria-hidden className="size-[18px]" />
+            </SheetClose>
+          </div>
+          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col *:min-w-0 *:max-w-full">
+            {children}
+          </div>
         </SheetContent>
       </Sheet>
     );

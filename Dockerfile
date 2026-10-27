@@ -1,4 +1,4 @@
-# OpenBot, whole, in one container.
+# ChisaBot, whole, in one container.
 #
 # WHAT THIS IS FOR. Everything a laptop runs, minus the database, in one image on one port. Deploy it
 # anywhere that runs a container and you get what `scripts/start.sh` gives you locally: the app, the
@@ -333,7 +333,7 @@ RUN printf '{"version":"%s","commit":"%s","buildId":"%s","builtAt":"%s","image":
 LABEL org.opencontainers.image.title="ChisaBot" \
       org.opencontainers.image.revision="${CHISABOT_COMMIT}" \
       org.opencontainers.image.version="${CHISABOT_VERSION}" \
-      openbot.locale="zh-CN" \
+      chisabot.locale="zh-CN" \
       chisabot.commit="${CHISABOT_COMMIT}" \
       chisabot.build="${CHISABOT_BUILD}" \
       chisabot.full-build="1"

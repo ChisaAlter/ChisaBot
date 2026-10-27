@@ -53,7 +53,7 @@ export function useAttentionNotifications(bots: BotAttention[] | undefined) {
       try {
         new Notification(`${bot.name} 需要你处理`, {
           body: attentionSummary(bot),
-          tag: `openbot-attention-${bot.agentId}`,
+          tag: `chisabot-attention-${bot.agentId}`,
         });
       } catch {
         // A browser that refuses the constructor still has the badge.

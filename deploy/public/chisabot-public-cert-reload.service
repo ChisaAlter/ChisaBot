@@ -1,0 +1,10 @@
+[Unit]
+Description=Reload ChisaBot gateway after existing certificate renewal
+Requires=docker.service
+After=docker.service
+ConditionPathExists=/opt/chisabot-zh/public/reload-cert.sh
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/chisabot-zh/public
+ExecStart=/bin/sh /opt/chisabot-zh/public/reload-cert.sh

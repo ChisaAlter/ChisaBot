@@ -20,7 +20,7 @@ Android 客户端（`android/`）是 Kotlin + Jetpack Compose（Material3）原�
 
 - 图片（Coil）走 `Api.imageClient`：同一份 Cookie、跟随跳转；消息 / 头像里的相对路径 `/api/…` 用 `absUrl()` 补成当前服务器地址。
 - 启动图标沿用品牌头像（mipmap 名字不变，桌面图标缓存键稳定）；自适应图标多一层 `monochrome`（头像剪影，`mipmap-xxxhdpi/ic_launcher_monochrome.png`），Android 13+ 打开「主题图标」时可以跟着壁纸变色。
-- 网页兜底页跟随系统深浅色：页面开始 / 加载完把网页的 `localStorage.openbot-theme` 和 `html.dark` 对齐到原生。
+- 网页兜底页跟随系统深浅色：页面开始 / 加载完把网页的 `localStorage.chisabot-theme` 和 `html.dark` 对齐到原生。
 
 ## 用到的服务器接口（都是已有的）
 
@@ -45,4 +45,3 @@ Android 客户端（`android/`）是 Kotlin + Jetpack Compose（Material3）原�
 1. **核心原生（0.1.13）**：登录、机器人列表、聊天、富卡片、面板只读；其余网页兜底。
 2. **第二轮（0.1.14，DESIGN §86）**：确认卡片 + 上游审批（§58）、附件（照片 / 拍照 / 文件，§56）、停止、重新生成 / 编辑重发（§67）、服务器行（§68.2）、原生设置基础（外观、账号 / 服务器、设备只读）。还没有：回答期间插话（§38 收件箱）、别处正在回答时接上事件流（现在每 1.5 秒读历史）、render_ui 表单组件、聊天文件卡（`⟦chisabot:files⟧`）。
 3. 原生设置其余部分（主机器人、模型、审批偏好）、通知、离线缓存、桌面小组件。
-4. Claude Code 标签页原生化；管理后台继续用网页。

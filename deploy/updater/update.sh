@@ -160,16 +160,20 @@ else
   step backup "备份数据库与 compose"
   BK="$U/backups/$(date -u +%Y%m%dT%H%M%SZ)-$JOB"
   mkdir -p "$BK"
-  docker exec "$CONTAINER" sh -c 'pg_dump -Fc "$(cat /run/s6/container_environment/DATABASE_URL)"' > "$BK/openbot.dump" \
+  docker exec "$CONTAINER" sh -c 'pg_dump -Fc "$(cat /run/s6/container_environment/DATABASE_URL)"' > "$BK/chisabot.dump" \
     || fail "pg_dump 失败"
-  [ -s "$BK/openbot.dump" ] || fail "数据库备份是空的"
+  [ -s "$BK/chisabot.dump" ] || fail "数据库备份是空的"
   cp -p "$COMPOSE_DIR/$COMPOSE_FILE" "$BK/compose.yaml"
   for v in profiles workspace; do
-    tar czf "$BK/$v-volume.tgz" -C "/var/lib/docker/volumes/${PROJECT}_$v" _data 2>/dev/null || echo "（卷 $v 未备份）"
+    # The volume behind /$v in the running container, whatever the compose project calls it (the
+    # physical names stayed `openbot-zh_*` when the project became `chisabot-zh`).
+    VSRC=$(docker inspect -f "{{range .Mounts}}{{if eq .Destination \"/$v\"}}{{.Source}}{{end}}{{end}}" "$CONTAINER" 2>/dev/null)
+    [ -n "$VSRC" ] || VSRC="/var/lib/docker/volumes/${PROJECT}_$v/_data"
+    tar czf "$BK/$v-volume.tgz" -C "$(dirname "$VSRC")" "$(basename "$VSRC")" 2>/dev/null || echo "（卷 $v 未备份）"
   done
   echo "$CUR_IMAGE" > "$BK/image.txt"
   echo "::backup:: $BK"
-  echo "数据库备份 $(stat -c %s "$BK/openbot.dump") 字节 → $BK"
+  echo "数据库备份 $(stat -c %s "$BK/chisabot.dump") 字节 → $BK"
 fi
 
 rm -rf "$B" && mkdir -p "$B/src" || fail "无法准备构建目录"
@@ -374,17 +378,40 @@ if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then HERMES_PENDING_FILE="$COMPOSE_DI
     set_image "$NEW_IMAGE" || { restore; echo "compose 里没有找到镜像行"; exit 1; }
   fi
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" config --quiet || { restore; exit 1; }
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never --wait --wait-timeout 240 "$SERVICE"
+  # CB-100：默认网络（名字 / 子网）和正在运行的容器不一致时强制重建，否则 up 会失败或把容器留在旧网络上。
+  RECREATE=()
+  if DRIFT=$(compose_network_drift); then
+    echo "网络配置变了（$DRIFT）：使用 --force-recreate"
+    RECREATE=(--force-recreate)
+  fi
+  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 240 "$SERVICE"
 )
 SWAP=$?
+
+# 激活后的桥接可能要几秒才开始监听：最多等 HERMES_REACH_WAIT 秒（默认 30），每 3 秒连一次。
+hermes_reachable_after_activation() {
+  local waited=0 limit=${HERMES_REACH_WAIT:-30}
+  while :; do
+    bash "$U/hermes-reach.sh" && return 0
+    [ "$waited" -ge "$limit" ] && return 1
+    sleep 3; waited=$((waited + 3))
+  done
+}
 
 # ---------- health ----------
 step health "健康检查"
 OK=0
-if [ "$SWAP" = 0 ] && bash "$U/health.sh" "$NEW_IMAGE" "$TAG"; then
+# CB-100：Hermes 运行时由这次发布激活时，桥接要等镜像健康后才（重新）启动，所以健康检查里的 Hermes 连通性
+# 只记录，激活之后再从应用容器里连一次；连不上和激活失败一样走下面的回滚。
+DEFER_HERMES=0
+[ "${HERMES_RELEASE_ENABLED:-0}" = 1 ] && DEFER_HERMES=1
+if [ "$SWAP" = 0 ] && CHISABOT_SMOKE_DEFER_HERMES=$DEFER_HERMES bash "$U/health.sh" "$NEW_IMAGE" "$TAG"; then
   # Initialize/restart the matching host adapter only after the new image passed its own health.
   # Installer readiness failure returns to the existing image+runtime rollback below.
-  if activate_hermes_release; then OK=1
+  if activate_hermes_release; then
+    if [ "$DEFER_HERMES" != 1 ] || [ ! -f "$U/hermes-reach.sh" ]; then OK=1
+    elif hermes_reachable_after_activation; then OK=1
+    else echo "::error:: 应用容器在 Hermes 激活后仍连不上 CHISABOT_HERMES_URL（hermes=unreachable）"; fi
   else echo "::error:: Hermes 运行时激活或就绪检查失败"; fi
 fi
 if [ "$OK" != 1 ]; then

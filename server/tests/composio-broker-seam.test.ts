@@ -38,14 +38,14 @@ describe("brokerSentence", () => {
  * The return address, which is the one value on this seam a type cannot settle.
  *
  * `authorize`'s `returnUrl` is documented as required and spelled `string`, and `""`, `"   "` and
- * `openbot.example.com/settings/...` all satisfy that: they reach Composio as a callback nobody
+ * `chisabot.example.com/settings/...` all satisfy that: they reach Composio as a callback nobody
  * returns through, and the person who finds out is the one who has just granted a third party
- * access to their mailbox. The route assembles the address at run time from `OPENBOT_APP_URL`, an
+ * access to their mailbox. The route assembles the address at run time from `CHISABOT_APP_URL`, an
  * unvalidated environment string, so `string` really is the strongest promise it can make and the
  * check belongs here rather than in the type.
  *
  * Each refusal is asserted by the half of its sentence that only it says. Both name
- * `OPENBOT_APP_URL`, because both are fixed there, so a test that asked only for the setting would
+ * `CHISABOT_APP_URL`, because both are fixed there, so a test that asked only for the setting would
  * pass just as well if the two branches collapsed into one — and they are two different mistakes:
  * an address nobody built, and a configured one that cannot work.
  */
@@ -58,7 +58,7 @@ describe("brokerReturnUrl", () => {
 
   test("refuses an address no browser could come back through", () => {
     for (const unusable of [
-      "openbot.example.com/settings/connected-accounts/x",
+      "chisabot.example.com/settings/connected-accounts/x",
       "localhost:3001/settings/connected-accounts/x",
       "/settings/connected-accounts/x",
       "javascript:alert(1)",
@@ -71,13 +71,13 @@ describe("brokerReturnUrl", () => {
    * THE ADDRESS HANDED IN WAS BUILT ON THE HOST THE REFUSAL QUOTES ON PURPOSE, which left this
    * assertion verifying one segment of it.
    *
-   * The sentence names `openbot.example.com` in its own example of the fix — "https://
-   * openbot.example.com rather than openbot.example.com" — and the value this test passed was
-   * `openbot.example.com/settings/...`. So `not.toContain` could only ever have been answered by
+   * The sentence names `chisabot.example.com` in its own example of the fix — "https://
+   * chisabot.example.com rather than chisabot.example.com" — and the value this test passed was
+   * `chisabot.example.com/settings/...`. So `not.toContain` could only ever have been answered by
    * the path: a refusal that echoed the host back would have matched the message's own example and
    * looked, to this test, exactly like one that had not.
    *
-   * The host is the half that carries the most. `OPENBOT_APP_URL` is an environment string and an
+   * The host is the half that carries the most. `CHISABOT_APP_URL` is an environment string and an
    * environment string carries whatever was put in it: a customer's name in a tenant subdomain, an
    * internal hostname that says how this deployment is reached, a preview host with a token in it.
    * This refusal goes to whoever asked — it is a `BrokerRefusalError`, which is a promise
@@ -87,7 +87,7 @@ describe("brokerReturnUrl", () => {
    */
   test("says which setting fixes it, and never quotes the address", () => {
     const address =
-      "openbot-tenant-42.internal.corp/settings/connected-accounts/9f3c";
+      "chisabot-tenant-42.internal.corp/settings/connected-accounts/9f3c";
 
     let thrown: unknown;
     try {
@@ -97,16 +97,16 @@ describe("brokerReturnUrl", () => {
     }
 
     const sentence = brokerSentence(thrown);
-    expect(sentence).toContain("OPENBOT_APP_URL");
+    expect(sentence).toContain("CHISABOT_APP_URL");
     expect(sentence).not.toContain(address);
-    expect(sentence).not.toContain("openbot-tenant-42.internal.corp");
+    expect(sentence).not.toContain("chisabot-tenant-42.internal.corp");
     expect(sentence).not.toContain("/settings/connected-accounts/9f3c");
   });
 
   test("hands back the address a configured deployment built", () => {
     expect(
-      brokerReturnUrl("https://openbot.test/settings/connected-accounts/x"),
-    ).toBe("https://openbot.test/settings/connected-accounts/x");
+      brokerReturnUrl("https://chisabot.test/settings/connected-accounts/x"),
+    ).toBe("https://chisabot.test/settings/connected-accounts/x");
     expect(brokerReturnUrl("http://localhost:3001/admin/plugins/x")).toBe(
       "http://localhost:3001/admin/plugins/x",
     );
@@ -116,7 +116,7 @@ describe("brokerReturnUrl", () => {
    * The address handed back is the one that was checked, which is the whole of what the check is
    * worth.
    *
-   * A guard that reads one value and returns another has approved nothing. `OPENBOT_APP_URL` is an
+   * A guard that reads one value and returns another has approved nothing. `CHISABOT_APP_URL` is an
    * environment string, and an environment string carries whatever was pasted into it: a leading
    * space from a copied address, a trailing newline from a file read line by line, a tab or a
    * carriage return from a variable assembled by a shell. Every one of those is invisible where it
@@ -129,15 +129,15 @@ describe("brokerReturnUrl", () => {
    * trimmed would pass the first half of this table and strand somebody on the second.
    */
   test("hands back the address it checked rather than the padding around it", () => {
-    const intended = "https://openbot.test/settings/connected-accounts/x";
+    const intended = "https://chisabot.test/settings/connected-accounts/x";
 
     for (const disguised of [
-      " https://openbot.test/settings/connected-accounts/x",
-      "https://openbot.test/settings/connected-accounts/x\n",
-      "\thttps://openbot.test/settings/connected-accounts/x ",
-      "https://openbot\n.test/settings/connected-accounts/x",
-      "https://openbot.test/settings/\tconnected-accounts/x",
-      "https://openbot.test/settings\r/connected-accounts/x",
+      " https://chisabot.test/settings/connected-accounts/x",
+      "https://chisabot.test/settings/connected-accounts/x\n",
+      "\thttps://chisabot.test/settings/connected-accounts/x ",
+      "https://chisabot\n.test/settings/connected-accounts/x",
+      "https://chisabot.test/settings/\tconnected-accounts/x",
+      "https://chisabot.test/settings\r/connected-accounts/x",
     ]) {
       expect(brokerReturnUrl(disguised)).toBe(intended);
     }

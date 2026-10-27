@@ -15,7 +15,7 @@
   <a href="https://github.com/ChisaAlter/ChisaBot/releases">下载客户端</a>
 </p>
 
-ChisaBot 基于 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) 的开源代码开发，保留 AG-UI、多 BOT、工具权限和审计能力，加入中文界面、独立的网页登录、本地会话持久化，以及 Magpie 模型目录与 BOT 模型选择。本分支可通过 `OPENBOT_RUNTIME_MODE=local` 将会话保存在自己的 PostgreSQL 中，无需 CopilotKit Intelligence 项目。模型由管理员接入，可以是自托管模型、兼容 API 或自部署的 [Magpie](https://github.com/yetone/magpie) 网关。使用第三方模型时，推理仍由所选模型服务处理。
+ChisaBot 基于 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) 的开源代码开发，保留 AG-UI、多 BOT、工具权限和审计能力，加入中文界面、独立的网页登录、本地会话持久化，以及 Magpie 模型目录与 BOT 模型选择。本分支可通过 `CHISABOT_RUNTIME_MODE=local` 将会话保存在自己的 PostgreSQL 中，无需 CopilotKit Intelligence 项目。模型由管理员接入，可以是自托管模型、兼容 API 或自部署的 [Magpie](https://github.com/yetone/magpie) 网关。使用第三方模型时，推理仍由所选模型服务处理。
 
 ## 截图
 
@@ -89,9 +89,9 @@ bun run typecheck
 
 项目维护：[路线图（看板）](docs/ROADMAP.md) · [Backlog](docs/BACKLOG.md) · [架构](docs/architecture.md) · [架构决策 ADR](docs/adr/README.md) · [参与开发](CONTRIBUTING.md) · [文档目录](docs/README.md)。
 
-本分支保留上游 `OPENBOT_*` 环境变量、内部包名、协议标识和数据目录，兼容已有部署和数据。产品展示名称为 **ChisaBot**。
+本分支保留上游 `CHISABOT_*` 环境变量、内部包名、协议标识和数据目录，兼容已有部署和数据。产品展示名称为 **ChisaBot**。
 
-`OPENBOT_SINGLE_USER=true` 只用于本地开发或由认证网关保护的内部服务；对外入口必须配置登录保护。详细能力边界与源码位置见 [分支说明](docs/chisabot.md)。
+`CHISABOT_SINGLE_USER=true` 只用于本地开发或由认证网关保护的内部服务；对外入口必须配置登录保护。详细能力边界与源码位置见 [分支说明](docs/chisabot.md)。
 
 ## 给 AI 的部署引导
 
@@ -104,9 +104,9 @@ bun run typecheck
 
 | 组件 | 监听 | 说明 |
 | --- | --- | --- |
-| ChisaBot 应用（容器 `openbot-zh`，Compose 项目 `openbot-zh`） | `127.0.0.1:3001` | 只绑 loopback，单管理员后端，**绝不直接对外** |
-| 登录服务（容器 `openbot-web-auth`，host 网络） | `127.0.0.1:3002` | Argon2id 密码 + 会话，网关 `auth_request` 调它 |
-| 公网网关（容器 `openbot-public-gateway`，nginx，host 网络） | `CHISABOT_HTTPS_PORT`（默认 8443）TLS | ChisaBot 入口 `https://<域名>:<端口>`（端口为 443 时就是 `https://<域名>`） |
+| ChisaBot 应用（容器 `chisabot-zh`，Compose 项目 `chisabot-zh`） | `127.0.0.1:3001` | 只绑 loopback，单管理员后端，**绝不直接对外** |
+| 登录服务（容器 `chisabot-web-auth`，host 网络） | `127.0.0.1:3002` | Argon2id 密码 + 会话，网关 `auth_request` 调它 |
+| 公网网关（容器 `chisabot-public-gateway`，nginx，host 网络） | `CHISABOT_HTTPS_PORT`（默认 8443）TLS | ChisaBot 入口 `https://<域名>:<端口>`（端口为 443 时就是 `https://<域名>`） |
 | 同一网关的 Magpie 管理入口 | `CHISABOT_MAGPIE_PORT`（默认 2053）TLS | 备用入口；日常用「管理后台 → 模型平台 Magpie」（同源 `/magpie-admin/`） |
 | Magpie 模型网关（Compose 项目 `magpie`，可选） | `127.0.0.1:3425`（API）、`127.0.0.1:3430`（管理） | 应用经 Docker 网络 `http://magpie:3425/v1` 访问 |
 | 宿主机更新服务 `chisabot-updater`（systemd，python3） | 无端口 | 读 `/opt/chisabot-updater/spool/requests` 请求文件 |
@@ -156,7 +156,7 @@ bun -e 'let t=await Bun.file("deploy/.env").text();for(const n of ["KEY_ENCRYPTI
 | 变量 | 必填 | 作用 |
 | --- | --- | --- |
 | `KEY_ENCRYPTION_KEY` | 是 | 加密数据库里的模型密钥；**必须与数据库备份一起保存，已有安装绝不能重置** |
-| `OPENBOT_RUNTIME_MODE` | 是（`local`） | 会话存自己的 PostgreSQL，不需要 CopilotKit Intelligence |
+| `CHISABOT_RUNTIME_MODE` | 是（`local`） | 会话存自己的 PostgreSQL，不需要 CopilotKit Intelligence |
 | `BOT_PROVIDER`、`BOT_MODEL`、`OPENAI_API_KEY` / `OPENAI_BASE_URL`、`ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` | 首次启动用 | 首个模型连接；之后在「管理后台 → 模型设置」改并测试 |
 | `CHISABOT_IMAGE` | 否 | 镜像名，默认 `local/chisabot:latest` |
 | `MAGPIE_NETWORK` | 否 | 与 Magpie 共用的 Docker 网络，默认 `openbot_magpie` |
@@ -165,7 +165,7 @@ bun -e 'let t=await Bun.file("deploy/.env").text();for(const n of ["KEY_ENCRYPTI
 | `SL_ENABLED`、`COPILOTKIT_TELEMETRY_DISABLED`、`DO_NOT_TRACK` | 否 | 关闭上游遥测 |
 | `DEPLOYMENT_ID`、`VITE_MAGPIE_MANAGEMENT_URL` | 否 | 部署标识；后者已不用于导航 |
 
-Compose 里固定写好的：`EMBEDDED_POSTGRES=on`（数据库在容器内，卷 `database`）、`OPENBOT_SINGLE_USER=true`（**只因为前面有登录网关才安全**）、`TENANT_PACKAGE_DIR=../examples/zh-CN`、在线更新的两个挂载和 `CHISABOT_UPDATER_DIR`（见第 7 步）。`CHISABOT_SOURCE_DIR`（仓库路径）由 `start.sh` 自动写进 `.env`。
+Compose 里固定写好的：`EMBEDDED_POSTGRES=on`（数据库在容器内，卷 `database`）、`CHISABOT_SINGLE_USER=true`（**只因为前面有登录网关才安全**）、`TENANT_PACKAGE_DIR=../examples/zh-CN`、在线更新的两个挂载和 `CHISABOT_UPDATER_DIR`（见第 7 步）。`CHISABOT_SOURCE_DIR`（仓库路径）由 `start.sh` 自动写进 `.env`。
 其他私密文件：`deploy/private/magpie.env`（`MAGPIE_WEB_KEY`）、`deploy/public/auth/config.json`、`deploy/public/magpie-private.conf`。都被 Git 忽略，不要提交。
 
 ### 4. 构建并启动应用
@@ -173,7 +173,7 @@ Compose 里固定写好的：`EMBEDDED_POSTGRES=on`（数据库在容器内，�
 ```sh
 cd /opt/chisabot-src
 TENANT_PACKAGE_DIR=../examples/zh-CN bun run --cwd app build     # start.sh 要求 app/dist 已存在
-sudo sh deploy/start.sh                                           # 装在线更新服务（第 7 步）、建 Magpie 网络，build + up --wait openbot
+sudo sh deploy/start.sh                                           # 装在线更新服务（第 7 步）、建 Magpie 网络，build + up --wait chisabot
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3001/health   # 期望 200
 curl -s http://127.0.0.1:3001/api/version                               # {version, commit, buildId, builtAt}
 ```
@@ -200,8 +200,8 @@ sh render-nginx.sh                     # 由模板 nginx.conf 生成 nginx.gener
 sed -i 's#^CHISABOT_NGINX_CONF=.*#CHISABOT_NGINX_CONF=./nginx.generated.conf#' ../.env
 umask 077; printf 'proxy_set_header Cookie "";\n' > magpie-private.conf   # 未启用 Magpie 时；启用后按文档生成
 # ……按文档生成 auth/config.json（publicOrigin 必须与 https://<域名>:<端口> 完全一致；443 端口不写 :443）……
-docker compose --env-file ../.env -p openbot-public -f compose.yaml run --rm --no-deps gateway nginx -t
-docker compose --env-file ../.env -p openbot-public -f compose.yaml up -d --wait
+docker compose --env-file ../.env -p chisabot-public -f compose.yaml run --rm --no-deps gateway nginx -t
+docker compose --env-file ../.env -p chisabot-public -f compose.yaml up -d --wait
 curl -s -o /dev/null -w '%{http_code}\n' https://<域名>:<端口>/login      # 期望 200
 ```
 
@@ -235,7 +235,7 @@ systemctl is-active chisabot-updater     # active
 sh deploy/install-updater.sh --check     # 只检查：已是最新 / 会做什么（不改任何东西）
 ```
 
-不是 root / 没有 systemd 时 `start.sh` 只提示、照常启动，系统更新页会显示安装命令。自己写的 compose（不是仓库的 `deploy/compose.yaml`）要手动给 `openbot` 服务加：
+不是 root / 没有 systemd 时 `start.sh` 只提示、照常启动，系统更新页会显示安装命令。自己写的 compose（不是仓库的 `deploy/compose.yaml`）要手动给 `chisabot` 服务加：
 
 ```yaml
     volumes:
@@ -306,11 +306,11 @@ curl -sL https://<更新源>/ChisaBot-Android-<版本>.apk | sha256sum          
 ### 9. 回滚
 
 - 网页：管理后台 → 系统更新 →「回滚到上一版」（只换镜像，数据库不回退）。
-- 宿主机：每次切换都会留下 `/opt/openbot-zh/rollback-to-<旧标签>.sh` 和 `compose.yaml.before-<新标签>`：
+- 宿主机：每次切换都会留下 `/opt/chisabot-zh/rollback-to-<旧标签>.sh` 和 `compose.yaml.before-<新标签>`：
 
 ```sh
-ls -t /opt/openbot-zh/rollback-to-*.sh | head -3
-sh /opt/openbot-zh/rollback-to-<旧标签>.sh
+ls -t /opt/chisabot-zh/rollback-to-*.sh | head -3
+sh /opt/chisabot-zh/rollback-to-<旧标签>.sh
 ```
 
 - 数据：一键更新前的 `pg_dump`、compose、profiles / workspace 卷在 `/opt/chisabot-updater/backups/<时间>-<任务>/`（保留 5 份）。
@@ -319,11 +319,11 @@ sh /opt/openbot-zh/rollback-to-<旧标签>.sh
 ### 10. 健康检查清单
 
 ```sh
-docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'openbot|magpie'   # 都是 healthy
+docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'chisabot|magpie'   # 都是 healthy
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3001/health               # 200
 curl -s http://127.0.0.1:3001/api/version                                           # buildId = 当前镜像标签
 curl -s -o /dev/null -w '%{http_code}\n' https://<域名>:<端口>/login                 # 200
-docker exec openbot-public-gateway nginx -t
+docker exec chisabot-public-gateway nginx -t
 systemctl is-active chisabot-updater
 git --git-dir=/opt/chisabot-updater/mirror.git log --oneline -1 main               # 系统更新页能看到的最新提交
 sh /opt/chisabot-updater/smoke.sh                                                    # "ok":true,"persisted":false
@@ -333,7 +333,7 @@ sh /opt/chisabot-updater/smoke.sh                                               
 
 ### 11. 常见坑
 
-- **把 3001 直接暴露到公网**：后端是 `OPENBOT_SINGLE_USER=true`，谁能访问谁就是管理员。只能经 HTTPS 网关。
+- **把 3001 直接暴露到公网**：后端是 `CHISABOT_SINGLE_USER=true`，谁能访问谁就是管理员。只能经 HTTPS 网关。
 - **重置了 `KEY_ENCRYPTION_KEY`**：已保存的模型密钥全部解不开。随数据库备份一起保存。
 - **网关还在用模板 `nginx.conf`**（里面是 `chisabot.example.com`），或 `auth/config.json` 的 `publicOrigin` 与实际入口（含端口）不一致：登录后跨站校验失败、Cookie 不共享。改了域名或端口就重跑 `render-nginx.sh`。
 - **忘了先构建前端**：`start.sh` 直接报 `Build the frontend first`。

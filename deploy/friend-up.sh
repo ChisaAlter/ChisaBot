@@ -49,7 +49,7 @@ for origin in $origins; do
   [ -n "$origin" ] || continue
   case "$origin" in
     https://*)
-      die "OPENBOT_SINGLE_USER 下 TRUSTED_ORIGINS 不能含 https；公网请走 deploy/public 网关：$origin"
+      die "CHISABOT_SINGLE_USER 下 TRUSTED_ORIGINS 不能含 https；公网请走 deploy/public 网关：$origin"
       ;;
     http://localhost|http://localhost:*|http://127.0.0.1|http://127.0.0.1:*)
       ;;

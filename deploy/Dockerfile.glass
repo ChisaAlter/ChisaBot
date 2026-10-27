@@ -1,8 +1,8 @@
 # Incremental ChisaBot image: the currently running production image plus this tree's prebuilt
 # frontend (app/dist), server, shared code and zh-CN tenant package. Dependencies are unchanged
 # (same bun.lock as the base), so nothing is reinstalled.
-#   docker build -f deploy/Dockerfile.glass --build-arg BASE_IMAGE=local/openbot-zh:20261010-custom-panels -t local/chisabot:glass .
-ARG BASE_IMAGE=local/openbot-zh:20261010-custom-panels
+#   docker build -f deploy/Dockerfile.glass --build-arg BASE_IMAGE=local/chisabot-zh:20261010-custom-panels -t local/chisabot:glass .
+ARG BASE_IMAGE=local/chisabot-zh:20261010-custom-panels
 FROM ${BASE_IMAGE}
 USER root
 RUN rm -rf /app/app/dist
@@ -16,6 +16,6 @@ COPY --chown=apiuser:apiuser examples/zh-CN /app/examples/zh-CN
 RUN cd /app/server \
     && bun -e 'await import("@copilotkit/runtime/v2"); await import("./src/panels/routes.ts"); console.log("runtime_and_panels_import_ok")'
 ENV TENANT_PACKAGE_DIR=../examples/zh-CN
-LABEL openbot.locale="zh-CN"
+LABEL chisabot.locale="zh-CN"
 LABEL org.opencontainers.image.title="ChisaBot"
 LABEL chisabot.ui="glass"

@@ -5,11 +5,11 @@ import { pickFromRoster } from "../src/copilot";
 describe("which agent on a Mastra server a Bot means", () => {
   test("the name it asks for, when the endpoint serves it", () => {
     expect(
-      pickFromRoster(["research", "openbot"], {
+      pickFromRoster(["research", "chisabot"], {
         id: "bot-7",
-        remoteAgentId: "openbot",
+        remoteAgentId: "chisabot",
       }),
-    ).toBe("openbot");
+    ).toBe("chisabot");
   });
 
   test("its own id, for a server that names the agent after the Bot", () => {
@@ -17,14 +17,14 @@ describe("which agent on a Mastra server a Bot means", () => {
   });
 
   test("the only agent on a single-agent server, when no name was asked for", () => {
-    expect(pickFromRoster(["openbot"], { id: "bot-7" })).toBe("openbot");
+    expect(pickFromRoster(["chisabot"], { id: "bot-7" })).toBe("chisabot");
   });
 
   test("a name that was asked for is never replaced by the only agent present", () => {
     // The must-not case. Falling back here turns a typo into a Bot that runs and answers as
     // somebody else, which is indistinguishable from a bad model at the point somebody notices.
     expect(() =>
-      pickFromRoster(["openbot"], { id: "bot-7", remoteAgentId: "typo" }),
+      pickFromRoster(["chisabot"], { id: "bot-7", remoteAgentId: "typo" }),
     ).toThrow(/serves no agent named "typo"/);
   });
 
@@ -52,7 +52,7 @@ describe("duplicating a Mastra Bot", () => {
           type: "remote_mastra",
           configuration: {
             endpoint: "http://mastra.test",
-            remoteAgentId: "openbot",
+            remoteAgentId: "chisabot",
           },
         },
         undefined,
@@ -61,7 +61,7 @@ describe("duplicating a Mastra Bot", () => {
       type: "remote_mastra",
       configuration: {
         endpoint: "http://mastra.test",
-        remoteAgentId: "openbot",
+        remoteAgentId: "chisabot",
       },
     });
   });

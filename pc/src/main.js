@@ -39,7 +39,7 @@ const {
 } = require("electron");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { createConfig } = require("./config");
-const { createNodeAgent } = require("./agent/core");
+const { createNodeAgent, invalidTokenHint, INVALID_TOKEN_DETAIL } = require("./agent/core");
 const { parseProxyList, describeProxy, createProxyAgent, createAgentFetch } = require("./agent/proxy");
 const { createOps } = require("./agent/ops");
 const { attachAgentRuntime } = require("./agent-runtime/attach");
@@ -51,7 +51,6 @@ const { createCompactController } = require("./compact-window");
 const { computeUpdateBounds } = require("./update-placement");
 const windowChrome = require("./window-chrome");
 const buildConfig = require("./build-config");
-const { createSyncManager } = require("./sync/manager");
 const BUILD = buildConfig.load();
 const pkg = require("../package.json");
 
@@ -433,7 +432,7 @@ function statusText() {
     case "connecting":
       return "正在连接…";
     case "revoked":
-      return agentDetail === "设备令牌无效" ? "设备令牌无效，请重新登记这台电脑" : "已被撤销，请重新登记这台电脑";
+      return agentDetail === INVALID_TOKEN_DETAIL ? invalidTokenHint(agent?.invalidTokenRetryMs) : "已被撤销，请重新登记这台电脑";
     default: {
       // 把真实原因写出来（以前一律「离线（自动重连中）」，看不出是被拦、超时还是代理问题）。
       const why = agent?.lastError || agentDetail;
@@ -596,11 +595,7 @@ function startAgent() {
   // 本地 agent（Claude Code / Codex / 内置循环…，docs/local-agents.md）：和节点共用这条连接。
   const agentRuntime = attachAgentRuntime();
   agent = createNodeAgent({
-    // 电脑文件夹同步的交接消息（sync_begin / sync_end / sync_cancel）先给同步管理，其它交给本地 agent 运行时
-    onExtra: (message) => {
-      if (syncManager && syncManager.onServerMessage(message)) return;
-      agentRuntime.onExtra(message);
-    },
+    onExtra: agentRuntime.onExtra,
     serverUrl: local.serverUrl,
     getToken: () => config.getToken(),
     ops,
@@ -641,128 +636,12 @@ function startAgent() {
   });
   agent.events.on("approval_closed", ({ id }) => closeApproval(id));
   agent.events.on("revoked", () => {
-    void syncManager?.pauseAll("这台电脑已被撤销");
     refreshTray();
     if (Notification.isSupported())
       new Notification({ title: "ChisaBot PC", body: "这台电脑已被撤销，请重新登录。" }).show();
   });
   agent.start();
   refreshTray();
-  void startSync();
-}
-
-// ---------- 电脑文件夹同步（src/sync/，docs/cloud-claude-code.md §4，P4b） ----------
-// Windows 上用随客户端分发的 mutagen.exe（MIT 版自编译）+ ssh 包装器 chisabot-ssh.exe + 系统自带的 OpenSSH。
-// 安装包里的程序在 asar 里，先复制到 userData\sync\bin 再运行（内容变了才复制）。
-let syncManager = null;
-/** 网页里通过「选择文件夹」对话框选过的路径：网页只能对这些路径新建 / 开启同步。 */
-const pickedSyncFolders = new Set();
-
-function syncBinaries() {
-  const srcDir = path.join(__dirname, "sync", "bin");
-  const destDir = path.join(app.getPath("userData"), "sync", "bin");
-  const names = process.platform === "win32" ? ["mutagen.exe", "chisabot-ssh.exe"] : ["mutagen", "chisabot-ssh"];
-  fs.mkdirSync(destDir, { recursive: true });
-  const out = {};
-  for (const name of names) {
-    const src = path.join(srcDir, name);
-    const dest = path.join(destDir, name);
-    if (!fs.existsSync(src)) {
-      out[name] = dest;
-      continue;
-    }
-    const data = fs.readFileSync(src);
-    let same = false;
-    try {
-      same = fs.statSync(dest).size === data.length && fs.readFileSync(dest).equals(data);
-    } catch {}
-    if (!same) {
-      const tmp = `${dest}.tmp`;
-      fs.writeFileSync(tmp, data, { mode: 0o755 });
-      fs.renameSync(tmp, dest);
-    }
-    out[name] = dest;
-  }
-  return out;
-}
-
-function ensureSyncManager() {
-  if (syncManager) return syncManager;
-  const win = process.platform === "win32";
-  const bins = syncBinaries();
-  const dataDir = path.join(app.getPath("userData"), "sync");
-  syncManager = createSyncManager({
-    dataDir,
-    serverUrl: () => config.get().serverUrl,
-    getToken: () => config.getToken(),
-    fetchImpl: netFetch,
-    mutagenPath: win ? bins["mutagen.exe"] : bins.mutagen,
-    sshPath: win ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "OpenSSH", "ssh.exe") : "/usr/bin/ssh",
-    sshShim: win ? bins["chisabot-ssh.exe"] : null,
-    nodeExe: process.execPath,
-    tunnelScript: path.join(__dirname, "sync", "tunnel.js"),
-    deviceLabel: os.hostname(),
-    log: (line) => console.log(`[sync] ${line}`),
-    audit: (entry) => {
-      config.appendAudit({ at: new Date().toISOString(), actor: "本机", ...entry });
-      broadcast("audit");
-    },
-  });
-  syncManager.events.on("change", () => {
-    if (windows.chat && !windows.chat.isDestroyed()) windows.chat.webContents.send("sync:changed");
-  });
-  return syncManager;
-}
-
-async function startSync() {
-  if (!config.get().serverUrl || !config.getToken()) return;
-  try {
-    await ensureSyncManager().start();
-  } catch (error) {
-    console.warn("sync start failed", error);
-  }
-}
-
-function syncPathAllowed(p) {
-  return typeof p === "string" && pickedSyncFolders.has(path.resolve(p));
-}
-
-function registerSyncIpc() {
-  handleWeb("pc:sync-status", async () => (syncManager ? syncManager.status() : { available: false, reason: "同步组件还没启动（先登录）", bindings: [] }));
-  // 选一个文件夹（系统对话框）+ 检查结果（图 2 右的检测结果卡）。empty=true 时是给「开启同步」选空文件夹。
-  handleWeb("pc:sync-pick", async (opts) => {
-    const forEnable = !!(opts && opts.forEnable);
-    const result = await dialog.showOpenDialog(windows.chat, {
-      title: forEnable ? "选择一个空文件夹，云端的工作区会下载到这里" : "选择要上传到云端的文件夹",
-      properties: ["openDirectory", "createDirectory", "dontAddToRecent"],
-    });
-    if (result.canceled || !result.filePaths[0]) return null;
-    const dir = path.resolve(result.filePaths[0]);
-    pickedSyncFolders.add(dir);
-    return await ensureSyncManager().inspect(dir);
-  });
-  handleWeb("pc:sync-create", async (input) => {
-    if (!input || !syncPathAllowed(input.path)) throw new Error("请先用「选择文件夹」选一个文件夹");
-    return await ensureSyncManager().createFromFolder({ dir: path.resolve(input.path), name: String(input.name || "").slice(0, 80), enableSync: input.enableSync !== false });
-  });
-  handleWeb("pc:sync-enable", async (input) => {
-    const m = ensureSyncManager();
-    const known = (await m.status()).bindings.find((b) => b.workspaceId === input?.workspaceId);
-    const dir = input?.path ? (syncPathAllowed(input.path) ? path.resolve(input.path) : null) : known?.path;
-    if (!dir) throw new Error("请先用「选择文件夹」选一个文件夹");
-    return await m.enable({ workspaceId: String(input.workspaceId || ""), dir, name: input.name, source: input.source });
-  });
-  handleWeb("pc:sync-release", async (input) => ensureSyncManager().release(String(input?.workspaceId || "")));
-  handleWeb("pc:sync-forget", async (input) => ensureSyncManager().forget(String(input?.workspaceId || "")));
-  handleWeb("pc:sync-now", async (input) => ensureSyncManager().syncNow(String(input?.workspaceId || "")));
-  handleWeb("pc:sync-resolve", async (input) =>
-    ensureSyncManager().resolve({ workspaceId: String(input?.workspaceId || ""), path: String(input?.path || ""), choice: String(input?.choice || "") }),
-  );
-  handleWeb("pc:sync-open-folder", async (input) => {
-    const known = syncManager ? (await syncManager.status()).bindings.find((b) => b.workspaceId === input?.workspaceId) : null;
-    if (!known) throw new Error("这台电脑上没有这个工作区的文件夹");
-    return (await shell.openPath(known.path)) || "";
-  });
 }
 
 function setPaused(paused) {
@@ -1014,7 +893,6 @@ function installUpdateNow() {
   config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_install", outcome: "succeeded", summary: `${how} ${updater.state.version || ""}` });
   quitting = true;
   agent?.stop();
-  void syncManager?.stop();
   setTimeout(() => updater.install(), 50);
   return true;
 }
@@ -1174,8 +1052,6 @@ async function dropDevice(serverUrl) {
   const token = config.getToken();
   agent?.stop();
   agent = null;
-  await syncManager?.stop().catch(() => {});
-  syncManager = null;
   if (token && serverUrl) await auth.unenroll({ fetchImpl: netFetch, serverUrl, token }).catch(() => false);
   config.setToken(null);
   config.set({ deviceId: "", deviceName: "", localPaused: false });
@@ -1401,7 +1277,6 @@ function registerIpc() {
   });
   handleChatWindow("window:is-compact", () => compactWindows().isCompact(windows.chat));
   handleWeb("pc:set", (patch) => setLocal(patch && typeof patch === "object" ? patch : {}));
-  registerSyncIpc();
   handleWeb("pc:pick-folders", async () => {
     const result = await dialog.showOpenDialog(windows.chat, {
       title: "选择允许机器人访问的文件夹",

@@ -4,7 +4,7 @@ import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
 
 const MANIFEST_VERSION = 1;
-const MANIFEST_NAME = ".openbot-build-cache.json";
+const MANIFEST_NAME = ".chisabot-build-cache.json";
 
 export type BuildCachePaths = {
   rootDir: string;

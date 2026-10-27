@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type * as React from "react";
 import type { PcLocalState } from "@/lib/pc-bridge";
 import { type DeviceView, defaultCapabilities } from "../../shared/devices";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * 设备页顶部的「连接状态」卡（2026-10-13，用户：「我安装了 Windows 端，但是 bot 还是识别不到我的电脑」）。
@@ -27,7 +28,8 @@ afterEach(() => {
   delete (window as { chisabotPC?: unknown }).chisabotPC;
 });
 // 2026-10-20 清基线：这个文件以前注册了就留着，后面的文件撞「already been globally registered」。
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   if (GlobalRegistrator.isRegistered) GlobalRegistrator.unregister();
 });
 

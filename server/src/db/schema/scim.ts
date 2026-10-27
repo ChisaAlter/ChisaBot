@@ -7,7 +7,7 @@
  * like every other table. Field list and flags copied from the plugin's `schema` block in
  * `@better-auth/scim@1.7.1` (`dist/index.mjs`); `returned: false` there has no storage meaning.
  *
- * Owned by the plugin: nothing in OpenBot writes these directly. Deprovisioning is reacted to through
+ * Owned by the plugin: nothing in ChisaBot writes these directly. Deprovisioning is reacted to through
  * the plugin's `identity.reconcileUser` hook in `auth/scim.ts`, never by reading these rows.
  */
 import {

@@ -22,7 +22,7 @@ import {
   type ComposerQuotePayload,
   dispatchComposerQuote,
 } from "@/lib/chat/quote-event";
-import { isBotsChatPath, modeTarget } from "@/lib/left-mode";
+import { botsTarget, isBotsChatPath } from "@/lib/bots-location";
 
 export const CHISABOT_SPOTLIGHT_EVENT = "chisabot-spotlight";
 
@@ -47,7 +47,7 @@ export function sendPromptToChat(
   };
   const hadComposer = Boolean(document.querySelector(".glass-composer"));
   if (!isBotsChatPath(window.location.pathname)) {
-    const target = modeTarget("bots");
+    const target = botsTarget();
     void navigate(target as never);
   }
   if (hadComposer) {
@@ -91,7 +91,7 @@ export function QuickSpotlight() {
         !document.querySelector(".glass-composer") &&
         !isBotsChatPath(window.location.pathname)
       ) {
-        const target = modeTarget("bots");
+        const target = botsTarget();
         void navigate(target as never);
         window.setTimeout(() => {
           window.dispatchEvent(

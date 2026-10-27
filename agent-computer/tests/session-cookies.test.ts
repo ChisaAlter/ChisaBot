@@ -17,9 +17,9 @@ import {
  * because it launches a real Chromium the machine running `bun test` is not required to have:
  *
  *   cd agent-computer && bunx playwright install chromium
- *   OPENBOT_COMPUTER_BROWSER=1 bun test tests/session-cookies.test.ts
+ *   CHISABOT_COMPUTER_BROWSER=1 bun test tests/session-cookies.test.ts
  */
-const asked = process.env.OPENBOT_COMPUTER_BROWSER === "1";
+const asked = process.env.CHISABOT_COMPUTER_BROWSER === "1";
 const LAUNCH_TIMEOUT_MS = 120_000;
 
 const cookie = (overrides: Partial<Cookie>): Cookie => ({
@@ -95,7 +95,7 @@ describe.skipIf(!asked)("a session cookie across a restart", () => {
     "comes back after the browser is stopped and started again, and after shutdown",
     async () => {
       const { createProfiles } = await import("../src/profiles");
-      const root = await mkdtemp(join(tmpdir(), "openbot-profiles-"));
+      const root = await mkdtemp(join(tmpdir(), "chisabot-profiles-"));
       const bot = "session-cookie-test";
       const sent = async (profiles: ReturnType<typeof createProfiles>) => {
         const page = await profiles.page(bot);
@@ -151,7 +151,7 @@ describe.skipIf(!asked)("a session cookie across a restart", () => {
     "a Bot never receives another Bot's session cookie",
     async () => {
       const { createProfiles } = await import("../src/profiles");
-      const root = await mkdtemp(join(tmpdir(), "openbot-profiles-"));
+      const root = await mkdtemp(join(tmpdir(), "chisabot-profiles-"));
       const profiles = createProfiles(root, () => undefined);
       try {
         const one = await profiles.page("bot-one");

@@ -97,9 +97,9 @@
 
 `/api/local-agents`（需登录，只看自己的设备 / 任务）：`GET|PUT /devices/:id`（设置 + 检测结果 + 最近任务）、`POST /devices/:id/detect`、`GET /threads/:threadId/tasks`、`GET /tasks/:id`（完整记录）、`POST /tasks/:id/stop|apply|discard`。审批沿用 `POST /api/devices/approvals/:id`。
 
-## 10. OpenBot 服务器 agent vs Claude Code / Codex（老实说）
+## 10. ChisaBot 服务器 agent vs Claude Code / Codex（老实说）
 
-ChisaBot 的服务器 agent 来自 CopilotKit OpenBot：**AG-UI 协议 + AI SDK 的通用工具循环**，强项是生成式界面（卡片、表单、页面）、审批与审计、定时任务、记忆 / 技能、MCP 和各种连接、IM 渠道、多机器人——它是个「私人助理 + 平台」。它**不是**专门的编程循环：没有针对大仓库的上下文管理（自动摘要、按需检索代码、文件树快照），编辑工具是通用的文件读写 / 补丁，没有专门调过的「改代码 → 跑测试 → 再改」提示词和工具集，也不会像 Claude Code 那样维护待办清单、自动压缩长会话。用户自己配的模型也决定上限。
+ChisaBot 的服务器 agent 来自 CopilotKit ChisaBot：**AG-UI 协议 + AI SDK 的通用工具循环**，强项是生成式界面（卡片、表单、页面）、审批与审计、定时任务、记忆 / 技能、MCP 和各种连接、IM 渠道、多机器人——它是个「私人助理 + 平台」。它**不是**专门的编程循环：没有针对大仓库的上下文管理（自动摘要、按需检索代码、文件树快照），编辑工具是通用的文件读写 / 补丁，没有专门调过的「改代码 → 跑测试 → 再改」提示词和工具集，也不会像 Claude Code 那样维护待办清单、自动压缩长会话。用户自己配的模型也决定上限。
 
 Claude Code 和 Codex CLI 是**专门为写代码调过的 agent**：模型（Claude / GPT-5 系列）和工具、提示词一起优化，长时间在一个仓库里工作很稳，权限模式和沙盒也是为改代码设计的；代价是要装在电脑上、用它们自己的账号和额度，也没有 ChisaBot 的界面、记忆和渠道。
 

@@ -79,7 +79,7 @@ set_env() {
 file_sum() { [ -f "$1" ] && cksum < "$1" || echo missing; }
 
 # ---------- 现状 ----------
-SCRIPTS="compose-image.sh update.sh request.sh rollback.sh health.sh post-deploy-smoke.sh smoke.sh deps-fingerprint.sh rollback.template.sh git-askpass.sh chisabot-updater.py Dockerfile.update install.sh"
+SCRIPTS="compose-image.sh update.sh request.sh rollback.sh health.sh post-deploy-smoke.sh hermes-reach.sh smoke.sh deps-fingerprint.sh rollback.template.sh git-askpass.sh chisabot-updater.py Dockerfile.update install.sh"
 WANT_VERSION=$(sed -n 's/^VERSION = "\([0-9]*\)".*/\1/p' "$SRC/chisabot-updater.py")
 HAVE_VERSION=$(sed -n 's/^VERSION = "\([0-9]*\)".*/\1/p' "$U/chisabot-updater.py" 2>/dev/null || true)
 STALE=""
@@ -104,9 +104,9 @@ fi
 COMPOSE_DIR_CFG=""
 [ -f "$U/config.env" ] && COMPOSE_DIR_CFG=$(sed -n 's/^COMPOSE_DIR=//p' "$U/config.env" | tail -n 1 | tr -d '"')
 CONTAINER=$( [ -f "$U/config.env" ] && sed -n 's/^CONTAINER=//p' "$U/config.env" | tail -n 1 | tr -d '"' || true)
-CONTAINER=${CONTAINER:-openbot-zh}
+CONTAINER=${CONTAINER:-chisabot-zh}
 PROJECT=$( [ -f "$U/config.env" ] && sed -n 's/^PROJECT=//p' "$U/config.env" | tail -n 1 | tr -d '"' || true)
-PROJECT=${PROJECT:-openbot-zh}
+PROJECT=${PROJECT:-chisabot-zh}
 HAS_MOUNT=unknown
 if command -v docker >/dev/null 2>&1 && docker inspect "$CONTAINER" >/dev/null 2>&1; then
   if docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$CONTAINER" | grep -q '^CHISABOT_UPDATER_DIR='; then HAS_MOUNT=yes; else HAS_MOUNT=no; fi
@@ -193,11 +193,11 @@ if [ "$HAS_MOUNT" = no ]; then
       say "容器 $CONTAINER 还没挂更新目录：用当前镜像 $image 重建一次（不重新构建，断开十几秒）"
       (
         cd "$HERE"
-        CHISABOT_IMAGE=$image docker compose -p "$PROJECT" -f compose.yaml up -d --no-build --wait --wait-timeout 180 openbot
+        CHISABOT_IMAGE=$image docker compose -p "$PROJECT" -f compose.yaml up -d --no-build --wait --wait-timeout 180 chisabot
       )
     fi
   else
-    warn "容器 $CONTAINER 没有挂更新目录。在 ${COMPOSE_DIR_CFG:-你的 compose 目录} 的 compose 文件里给 openbot 服务加下面几行，再 docker compose up -d："
+    warn "容器 $CONTAINER 没有挂更新目录。在 ${COMPOSE_DIR_CFG:-你的 compose 目录} 的 compose 文件里给 chisabot 服务加下面几行，再 docker compose up -d："
     warn "    volumes:"
     warn "      - $U/spool/requests:/var/lib/chisabot-updater/requests"
     warn "      - $U/spool/state:/var/lib/chisabot-updater/state:ro"

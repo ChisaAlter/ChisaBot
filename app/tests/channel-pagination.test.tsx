@@ -20,6 +20,7 @@ import {
   fireEvent,
   render,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppSidebar } from "@/components/app-sidebar/app-sidebar";
@@ -32,6 +33,7 @@ import { type ChannelSummary, channelKeys } from "@/lib/channels/queries";
 import { setSidebarSearch } from "@/lib/sidebar-search";
 import { userPreferencesQueryOptions } from "@/lib/settings/message-list";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * The conversation list's pagination, on the left column, as it is drawn today.
@@ -187,7 +189,8 @@ afterEach(() => {
   clients.length = 0;
   expect(ScrollObserver.active.size).toBe(0);
 });
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   globalThis.fetch = originalFetch;
   globalThis.WebSocket = originalWebSocket;
   globalThis.IntersectionObserver = originalObserver;
@@ -400,7 +403,7 @@ test("a search filters what is loaded and the history is opened by hand", async 
   expect(listRequests()).toEqual([]);
 
   const user = userEvent.setup({ document: view.container.ownerDocument });
-  const search = await view.findByRole("textbox", { name: "搜索会话" });
+  const search = await view.findByRole("combobox", { name: "搜索会话" });
   await user.type(search, "Archived");
 
   expect(
@@ -420,6 +423,19 @@ test("a search filters what is loaded and the history is opened by hand", async 
 
   expect(await view.findByText("Archived conversation")).toBeTruthy();
   expect(view.queryByText("没有会话匹配您的搜索")).toBeNull();
+
+  // CB-106 r2：结果是 combobox 控制的 listbox，每条是带 aria-selected 的 option；↓ 之后 activedescendant 指向它。
+  const listbox = view.getByRole("listbox", { name: "搜索结果" });
+  expect(search.getAttribute("aria-controls")).toBe(listbox.id);
+  const options = within(listbox).getAllByRole("option");
+  for (const o of options)
+    expect(o.getAttribute("aria-selected")).toBe("false");
+  const option = options[0] as HTMLElement;
+  fireEvent.keyDown(search, { key: "ArrowDown" });
+  await waitFor(() =>
+    expect(search.getAttribute("aria-activedescendant")).toBe(option.id),
+  );
+  expect(option.getAttribute("aria-selected")).toBe("true");
   expect(listRequests()).toEqual(["/api/channels?cursor=older%2Fpage"]);
 
   /*
@@ -501,4 +517,33 @@ test("the button asks for the next page, once per press, and disappears on the l
   );
   expect(view.queryByRole("button")).toBeNull();
   expect(ScrollObserver.active.size).toBe(0);
+});
+
+test("Esc while composing (IME) stays in the field: the drawer never hears it (CB-106 r2)", async () => {
+  const view = renderSidebar();
+  const search = await view.findByRole("combobox", { name: "搜索会话" });
+  const user = userEvent.setup({ document: view.container.ownerDocument });
+  await user.type(search, "Arch");
+  const heard: string[] = [];
+  const onDoc = (event: KeyboardEvent) => heard.push(event.key);
+  document.addEventListener("keydown", onDoc);
+  try {
+    search.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        isComposing: true,
+      }),
+    );
+    const e229 = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
+    Object.defineProperty(e229, "keyCode", { get: () => 229 });
+    search.dispatchEvent(e229);
+    expect(heard).toEqual([]);
+    expect((search as HTMLInputElement).value).toBe("Arch");
+    // 不在组字：Esc 照旧清空。
+    fireEvent.keyDown(search, { key: "Escape" });
+    await waitFor(() => expect((search as HTMLInputElement).value).toBe(""));
+  } finally {
+    document.removeEventListener("keydown", onDoc);
+  }
 });

@@ -7,7 +7,7 @@ import { testEnvironment } from "./support/environment";
 
 const ADMIN = {
   id: "admin-1",
-  email: "admin@openbot.test",
+  email: "admin@chisabot.test",
   name: "An Administrator",
   image: null,
 };
@@ -72,7 +72,7 @@ describe("POST /api/admin/credentials input", () => {
   ])("refuses %s with 400 and never reaches the vault", async (_n, body) => {
     const { app, calls } = appWith({});
     const response = await app.request(
-      "http://openbot.test/api/admin/credentials",
+      "http://chisabot.test/api/admin/credentials",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -86,7 +86,7 @@ describe("POST /api/admin/credentials input", () => {
   test("trims provider and keyId on the happy path", async () => {
     const { app, calls } = appWith({});
     const response = await app.request(
-      "http://openbot.test/api/admin/credentials",
+      "http://chisabot.test/api/admin/credentials",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -113,7 +113,7 @@ describe("POST /api/admin/credentials/:id refusals", () => {
     metadata: {},
   };
   const post = (app: ReturnType<typeof appWith>["app"], path: string) =>
-    app.request(`http://openbot.test/api/admin/credentials/${path}`, {
+    app.request(`http://chisabot.test/api/admin/credentials/${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(rotation),

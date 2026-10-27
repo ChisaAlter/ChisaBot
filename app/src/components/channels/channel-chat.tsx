@@ -63,6 +63,7 @@ import {
 } from "@/lib/copilot/connection-drop";
 import { ConversationProvider, replyAfterToolCall } from "@/lib/copilot/conversation";
 import { frontendToolProgressAt } from "@/lib/copilot/frontend-tool-activity";
+import { hideHeldSupplements, useStopRequest } from "@/lib/copilot/held-supplements";
 import { afterMs, joinWithin } from "@/lib/copilot/join-thread";
 import {
   contentText,
@@ -83,7 +84,7 @@ import {
   useThreadActivity,
   withStoredTail,
 } from "@/lib/copilot/thread-activity";
-import { queueMessage, queuedFor, restoreQueue } from "@/lib/copilot/thread-inbox";
+import { queueMessage, queuedFor, restoreQueue, useQueuedMessages } from "@/lib/copilot/thread-inbox";
 import {
   HISTORY_RETRY_DELAYS_MS,
   readThreadMessages,
@@ -951,7 +952,7 @@ export function ChannelChat({
    * `agent.isRunning` looks like both and is neither. It reports the run on the wire, and a turn
    * that touches the browser is several runs in a row: the Bot asks for a click, the run ENDS so
    * the browser can answer it, and another run starts carrying the answer. The agent reports itself
-   * idle in every one of those gaps — the truth about the wire and a lie about the turn. OpenBot
+   * idle in every one of those gaps — the truth about the wire and a lie about the turn. ChisaBot
    * registers every computer tool as a frontend tool, so the gaps open on ordinary work rather than
    * on some edge case, and anything keyed on the turn ending fires in the middle of one instead.
    *
@@ -1460,6 +1461,10 @@ export function ChannelChat({
       detail.accept(async () => {
         const item = queuedFor(channel.threadId).find((item) => item.id === detail.id && item.status === "paused");
         if (!item) throw new Error("这条消息已不再暂停，请刷新后查看。");
+        // CB-104: the resent copy replaces a held original the stopped turn had read (server does the same).
+        const target = agentRef.current;
+        if (target.messages.some((message) => message.id === item.id && message.role === "user"))
+          target.setMessages(target.messages.filter((message) => message.id !== item.id) as typeof target.messages);
         try {
           return await sayRef.current(item.text, [], [], undefined, item.id);
         } finally {
@@ -1482,7 +1487,56 @@ export function ChannelChat({
     () => new Set([...serverStops, ...localStops]),
     [serverStops, localStops],
   );
+  // CB-104: follow-ups held by Stop are shown once, as held items, not also as transcript bubbles.
+  const inboxQueue = useQueuedMessages(channel.threadId);
+  const heldIds = useMemo(
+    () => new Set(inboxQueue.filter((item) => item.status === "paused").map((item) => item.id)),
+    [inboxQueue],
+  );
+  // CB-104: 「停止中…」 from the click until the stopped turn has really ended.
+  const [stopping, setStopping] = useState(false);
+  // CB-104: a failed stop request says so at once (「停止失败，重试」) instead of reverting quietly.
+  // CB-104: while 「停止失败，重试」 shows, ask the server whether the turn is still running; once it
+  // is not (finished, stopped or errored on its own), the prompt goes away and Send comes back.
+  const [stopFailedServerRunning, setStopFailedServerRunning] = useState<boolean | undefined>(undefined);
+  const stopRequest = useStopRequest(channel.threadId, undefined, { running: stopFailedServerRunning });
+  useEffect(() => {
+    if (!stopRequest.failed) {
+      setStopFailedServerRunning(undefined);
+      return;
+    }
+    let cancelled = false;
+    const poll = () =>
+      void restoreQueue(channel.threadId).then((state) => {
+        if (!cancelled && state) setStopFailedServerRunning(state.running);
+      });
+    poll();
+    const timer = setInterval(poll, 1_500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [stopRequest.failed, channel.threadId]);
+  const sendStop = () => {
+    void stopRequest.send().then((ok) => {
+      if (!ok) setStopping(false);
+    });
+  };
+  const retryStop = () => {
+    stopRequest.clear();
+    setStopping(true);
+    sendStop();
+    try {
+      copilotkit.stopAgent({ agent });
+    } catch {
+      /* stop best-effort */
+    }
+  };
   const stopTask = () => {
+    setStopping(true);
+    // The server pauses what the stopped turn read or had queued; pick that up promptly.
+    for (const delay of [800, 2_000, 4_500])
+      setTimeout(() => void restoreQueue(channel.threadId), delay);
     // Anchor 「已停止」 on the person-sent user turn that opened this run — skip schedule/worker
     // markers that also wear role=user, otherwise the chip can stick to an earlier completed reply.
     const lastUser =
@@ -1503,7 +1557,7 @@ export function ChannelChat({
     setRunsInFlight(0);
     sendInFlightRef.current = false;
     void setChannelBusy({ channelId: channel.id, busy: false });
-    forceUnlockThread(channel.threadId);
+    sendStop();
     try {
       copilotkit.stopAgent({ agent });
     } catch {
@@ -1705,6 +1759,22 @@ export function ChannelChat({
    *   「停止机器人」、末尾挂一行「思考中」，回放完再收回去；那个「停止」按下去撤掉的是回放本身。
    */
   const agentLive = agent.isRunning || turnsInFlight > 0 || runsInFlight > 0;
+  // CB-104: a new turn never carries the previous turn's 「停止失败，重试」.
+  const agentLiveBefore = useRef(agentLive);
+  useEffect(() => {
+    if (agentLive && !agentLiveBefore.current) stopRequest.clear();
+    agentLiveBefore.current = agentLive;
+  }, [agentLive, stopRequest.clear]);
+  useEffect(() => {
+    if (!stopping) return;
+    if (!agentLive) {
+      setStopping(false);
+      return;
+    }
+    // Never leave the composer stuck on 「停止中…」 if the stream end is missed.
+    const timer = setTimeout(() => setStopping(false), 10_000);
+    return () => clearTimeout(timer);
+  }, [stopping, agentLive]);
   const chatBusy =
     turnsInFlight > 0 ||
     runsInFlight > 0 ||
@@ -1718,6 +1788,11 @@ export function ChannelChat({
   const activeMessages = restoring
     ? (early ?? cached ?? EMPTY_MESSAGES)
     : agent.messages;
+  const heldView = hideHeldSupplements(
+    transcriptMessages(activeMessages, seed),
+    heldIds,
+    stoppedTurns,
+  );
   /*
    * 对话里的选项卡片（CB-090）要知道「这张界面之后用户说了什么」：读一份随渲染更新的引用，函数本身不变，
    * 不会因为新消息让整列卡片的 context 变一次。
@@ -1783,12 +1858,7 @@ export function ChannelChat({
               commands={skillCommands}
               // Readiness is handled by `say`; deletion is the only disabled-chat state.
               disabled={!channel.active}
-              messages={transcriptMessages(
-                restoring
-                  ? (early ?? cached ?? EMPTY_MESSAGES)
-                  : agent.messages,
-                seed,
-              )}
+              messages={heldView.messages}
               transcriptNotice={
                 historyNotice ? (
                   <HistoryNotice
@@ -1926,7 +1996,10 @@ export function ChannelChat({
                * run before closing it; see server/src/channels/stall-guard.ts.
                */
               stopped={runError ?? undefined}
-              stoppedTurns={stoppedTurns}
+              stoppedTurns={heldView.stops}
+              stopping={stopping}
+              stopFailed={stopRequest.failed}
+              onRetryStop={retryStop}
               fallbacks={fallbackTurns}
               lastSentAt={lastSentAt}
               queueToServer={queueToServer}

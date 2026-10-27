@@ -91,7 +91,7 @@ describe("runtime capabilities", () => {
    */
   test("reports generated interfaces as off when the deployment opts out", async () => {
     const disabled = createApp(
-      loadConfig(testEnvironment({ OPENBOT_GENERATIVE_UI: "false" })),
+      loadConfig(testEnvironment({ CHISABOT_GENERATIVE_UI: "false" })),
     );
 
     const response = await disabled.request(
@@ -102,10 +102,10 @@ describe("runtime capabilities", () => {
     expect((await response.json()).generativeUi).toBe(false);
   });
 
-  // A fork running OpenBot for its own people turns the banner off, and the browser has to hear it.
+  // A fork running ChisaBot for its own people turns the banner off, and the browser has to hear it.
   test("reports the self-host banner as off when the deployment opts out", async () => {
     const disabled = createApp(
-      loadConfig(testEnvironment({ OPENBOT_SELF_HOST_BANNER: "false" })),
+      loadConfig(testEnvironment({ CHISABOT_SELF_HOST_BANNER: "false" })),
     );
 
     const response = await disabled.request(
@@ -182,7 +182,7 @@ describe("auth routes", () => {
         },
         api: {
           getSession: async () =>
-            signedIn ? { user: { id: "u1", email: "u1@openbot.test" } } : null,
+            signedIn ? { user: { id: "u1", email: "u1@chisabot.test" } } : null,
         },
       } as never,
       { rolesForUser: async () => roles },
@@ -195,7 +195,7 @@ describe("auth routes", () => {
   test("leaves the rest of the auth routes alone", async () => {
     const { app, reached } = appFor([], false);
 
-    await app.request("http://openbot.test/api/auth/sign-in/social", {
+    await app.request("http://chisabot.test/api/auth/sign-in/social", {
       method: "POST",
     });
 

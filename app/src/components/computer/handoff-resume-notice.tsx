@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useKeptVisible } from "@/lib/kept-visible";
-import { readControl } from "@/lib/computers/control";
+import { useComputerControl } from "@/lib/computers/use-control";
 import {
   forgetHandoff,
   hasActiveHandoff,
@@ -30,61 +29,50 @@ export function HandoffResumeNotice({
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const controller = useRef<AbortController | null>(null);
-  // 聊天被外壳藏着时（DESIGN.md §98.3）不每秒问控制权；回来时马上再查一次。
-  const onScreen = useKeptVisible();
+  // CB-103：不再自己每秒 readControl——和右栏、按钮共用同一个带退避的 store（每个 bot 只有一个轮询源）。
+  // 聊天被外壳藏着时 store 不轮询（DESIGN.md §98.3），回来时它马上补读一次。
+  const { control: state } = useComputerControl(botId, ready);
   useEffect(() => {
-    if (!ready || !onScreen) return;
-    let live = true;
-    let timer: ReturnType<typeof setTimeout>;
-    const check = async () => {
-      let stored = pendingHandoff(botId);
-      const state = await readControl(botId).catch(() => null);
-      if (!stored) {
-        const request = state?.request;
-        if (request?.toolCallId && request.status === "waiting") {
-          const candidate = {
-            requestId: request.id,
-            toolCallId: request.toolCallId,
-          };
-          if (findPendingTool(agent.messages, candidate)) {
-            rememberHandoff(botId, candidate.requestId, candidate.toolCallId);
-            stored = candidate;
-          }
+    if (!ready) return;
+    let stored = pendingHandoff(botId);
+    if (!stored) {
+      const request = state?.request;
+      if (request?.toolCallId && request.status === "waiting") {
+        const candidate = {
+          requestId: request.id,
+          toolCallId: request.toolCallId,
+        };
+        if (findPendingTool(agent.messages, candidate)) {
+          rememberHandoff(botId, candidate.requestId, candidate.toolCallId);
+          stored = candidate;
         }
       }
-      if (!live) return;
-      // FIX-06：控制权已回到机器人或请求已中断时，清掉本地「请点交还」残留，不假装当前还在等。
-      if (
-        stored &&
-        state &&
-        (state.request?.status === "interrupted" ||
-          state.request?.status === "completed" ||
-          state.request?.status === "cancelled" ||
-          state.request?.status === "expired" ||
-          (state.holder === "bot" && !state.requested))
-      ) {
-        forgetHandoff(botId, stored.requestId);
-        stored = null;
-      }
-      if (stored && !findPendingTool(agent.messages, stored)) {
-        const toolCallId = stored.toolCallId;
-        const answered = agent.messages.some(
-          (m) => m.role === "tool" && m.toolCallId === toolCallId,
-        );
-        if (answered) forgetHandoff(botId, stored.requestId);
-        stored = null;
-      }
-      setPending(
-        stored && !hasActiveHandoff(botId, stored.requestId) ? stored : null,
+    }
+    // FIX-06：控制权已回到机器人或请求已中断时，清掉本地「请点交还」残留，不假装当前还在等。
+    if (
+      stored &&
+      state &&
+      (state.request?.status === "interrupted" ||
+        state.request?.status === "completed" ||
+        state.request?.status === "cancelled" ||
+        state.request?.status === "expired" ||
+        (state.holder === "bot" && !state.requested))
+    ) {
+      forgetHandoff(botId, stored.requestId);
+      stored = null;
+    }
+    if (stored && !findPendingTool(agent.messages, stored)) {
+      const toolCallId = stored.toolCallId;
+      const answered = agent.messages.some(
+        (m) => m.role === "tool" && m.toolCallId === toolCallId,
       );
-      timer = setTimeout(() => void check(), 1000);
-    };
-    void check();
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [botId, agent, ready, onScreen]);
+      if (answered) forgetHandoff(botId, stored.requestId);
+      stored = null;
+    }
+    setPending(
+      stored && !hasActiveHandoff(botId, stored.requestId) ? stored : null,
+    );
+  }, [botId, agent, ready, state]);
   // 正在继续的任务只在换了机器人 / 对话或卸载时放弃——藏起来不算。
   // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(

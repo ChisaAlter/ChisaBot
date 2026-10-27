@@ -1,0 +1,8 @@
+[test]
+# The same app preload the repository-root bunfig.toml declares, with the path relative to app/.
+#
+# Bun reads bunfig.toml from the current working directory only, so `bun test tests/…` run from
+# inside app/ never loaded ./tests/preload.ts. Base UI was then first evaluated without a DOM, its
+# layout effect became a no-op, and every Dialog test (e.g. 「删一条先确认：取消不删，确认才删」)
+# rendered an empty <body>. See tests/preload.ts.
+preload = ["./tests/preload.ts"]

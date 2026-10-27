@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
 
 /**
  * ChisaBot Android 原生版（Kotlin + Jetpack Compose）。登录、机器人列表、聊天（流式、干活卡、富卡片）、面板是原生的；
- * 设置 / 管理 / Claude Code 等还没做成原生的页面在应用内的网页页（WebScreen）里打开，同一个会话，不会走到死路。
+ * 设置 / 管理等还没做成原生的页面在应用内的网页页（WebScreen）里打开，同一个会话，不会走到死路。
  * 登录状态沿用 WebView 版（SharedPreferences「chisabot」+ CookieManager），从旧版更新过来不用重新登录。
  */
 class MainActivity : ComponentActivity() {

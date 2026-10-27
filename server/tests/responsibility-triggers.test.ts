@@ -201,7 +201,7 @@ function ingress(resolved: ResolvedTrigger | null) {
   });
   const post = (body: string, headers: Record<string, string>) =>
     routes.fetch(
-      new Request(`https://openbot.test/${TRIGGER_ID}`, {
+      new Request(`https://chisabot.test/${TRIGGER_ID}`, {
         method: "POST",
         headers: { "content-type": "application/json", ...headers },
         body,
@@ -417,7 +417,7 @@ describe("provider ingress", () => {
     const secret = "gh-secret";
     const { events, post } = ingress(
       trigger(
-        parseTriggerConfig({ kind: "github", repository: "openbot/demo" }),
+        parseTriggerConfig({ kind: "github", repository: "chisabot/demo" }),
         { secret },
       ),
     );
@@ -432,7 +432,7 @@ describe("provider ingress", () => {
         "x-github-delivery": `g-${repository}`,
       });
     };
-    expect((await send("openbot/demo")).status).toBe(200);
+    expect((await send("chisabot/demo")).status).toBe(200);
     expect((await send("someone/else")).status).toBe(403);
     expect(events.map((event) => event.type)).toEqual(["issues.opened"]);
   });
@@ -598,7 +598,7 @@ describe("inbound email via SES -> SNS", () => {
   ]);
   const key = readFileSync(join(dir, "key.pem"), "utf8");
   const cert = readFileSync(join(dir, "cert.pem"), "utf8");
-  const TOPIC = "arn:aws:sns:us-east-1:123456789012:openbot-inbound";
+  const TOPIC = "arn:aws:sns:us-east-1:123456789012:chisabot-inbound";
   const CERT_URL =
     "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-fixture.pem";
   function signed(
@@ -643,7 +643,7 @@ describe("inbound email via SES -> SNS", () => {
         commonHeaders: { from: [from], to: ["x"], subject: "Disk full" },
       },
       receipt: {
-        recipients: [`trigger-${TRIGGER_ID}@in.openbot.test`],
+        recipients: [`trigger-${TRIGGER_ID}@in.chisabot.test`],
         spamVerdict: { status: "PASS" },
         virusVerdict: { status: "PASS" },
         dkimVerdict: { status: dkim },
@@ -670,7 +670,7 @@ describe("inbound email via SES -> SNS", () => {
         events.push(event);
         return { eventId: "e", duplicate: false, runIds: ["r"] };
       },
-      config: { domain: "in.openbot.test", topicArns: [TOPIC] },
+      config: { domain: "in.chisabot.test", topicArns: [TOPIC] },
       verify: createSnsVerifier(async (url) => {
         fetched.push(url);
         return cert;
@@ -679,7 +679,7 @@ describe("inbound email via SES -> SNS", () => {
     });
     const post = (message: unknown) =>
       routes.fetch(
-        new Request("https://openbot.test/sns", {
+        new Request("https://chisabot.test/sns", {
           method: "POST",
           body: JSON.stringify(message),
         }),

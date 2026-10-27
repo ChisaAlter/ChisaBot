@@ -7,7 +7,7 @@ import { join } from "node:path";
 const origin = "https://chisabot.example.com:8443";
 const password = "test-password-only-not-a-real-credential";
 let passwordHash: string;
-const directory = mkdtempSync(join(tmpdir(), "openbot-auth-test-"));
+const directory = mkdtempSync(join(tmpdir(), "chisabot-auth-test-"));
 beforeAll(async () => {
   passwordHash = await Bun.password.hash(password, { algorithm: "argon2id", memoryCost: 4096, timeCost: 1 });
 });
@@ -215,8 +215,8 @@ describe("phone device sessions (QR pairing, DESIGN.md §33)", () => {
     expect(unknown.status).toBe(401);
     const cross = await exchange(service, phoneToken, { Origin: "https://evil.example" });
     expect(cross.status).toBe(403); expect(cross.headers.has("Set-Cookie")).toBe(false);
-    for (let i = 0; i < 10; i++) await exchange(service, "cbd_short", { "X-OpenBot-Client": "198.51.100.7" });
-    expect((await exchange(service, phoneToken, { "X-OpenBot-Client": "198.51.100.7" })).status).toBe(429);
+    for (let i = 0; i < 10; i++) await exchange(service, "cbd_short", { "X-ChisaBot-Client": "198.51.100.7" });
+    expect((await exchange(service, phoneToken, { "X-ChisaBot-Client": "198.51.100.7" })).status).toBe(429);
     service.close();
     const revoked = phoneApp({ active: false, sessionStatus: 401, revoked: true });
     const response = await exchange(revoked.service);

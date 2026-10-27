@@ -35,7 +35,7 @@
 | 计算机 · 云端浏览器 | computer、agent-computer | 机器人的浏览器 + 工作区；右栏「计算机」标签 |
 | 接管 · 交还 | takeover / hand back | 用户亲自操作机器人的浏览器，再还给它 |
 | 收藏夹 · 标签 | bookmarks / tabs | 云端浏览器的（§95） |
-| 工作区 | workspace（`/workspace`、`https://workspace.local/`） | 机器人的文件目录；云端 Claude Code 里另指一个项目目录 |
+| 工作区 | workspace（`/workspace`、`https://workspace.local/`） | 机器人的文件目录 |
 | 页面 | page（`/p/<slug>/`） | 机器人做的可分享单页网页 |
 | 记忆 | memory notes | 长期记忆（不是上游 personal memory） |
 | 技能 | skill | 「某类事怎么做」，按需加载 |
@@ -63,18 +63,6 @@
 | 扫码绑定 | QR pairing | 手机扫一次性二维码登录（手机不是设备节点） |
 | 小窗模式 | compact window | PC 手机形状的小窗（Ctrl+Shift+M） |
 | 外壳指纹 · 重新安装 | shell fingerprint（`chisabotShell`） | PC 图标 / 安装器变化时要求完整重装 |
-
-## 云端 Claude Code
-
-| 中文 | 英文 / 代码 | 说明 |
-|---|---|---|
-| 云端工作区（节点） | cloud workspace node（`deploy/cloud-node/`） | 跑 Claude Code 的隔离容器 |
-| 在云端完成登录 | cloud login | 节点里的浏览器登录 Claude，画面嵌在设置页 |
-| Claude 上游代理 | upstream proxy | 只有 Claude 域名走的出口代理；支持节点链接（sing-box） |
-| 合入工作目录 | merge into workspace | 会话分支 `cc/…` 合回工作区 |
-| 电脑上的文件夹 · 电脑同步 | local folder sync（Mutagen） | PC 文件夹和云端工作区双向同步 |
-| 交接 · 租约 | handoff / lease | 同一时间只有一边写；切换时暂停 → 写入 → 交还 |
-| 同步边车 | sync sidecar（`cloudnode-sync`） | 节点网络命名空间里的 sshd + mutagen-agent |
 
 ## 工程与流程
 

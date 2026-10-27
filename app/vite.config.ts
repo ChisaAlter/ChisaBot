@@ -22,13 +22,13 @@ import { skyBootScript } from "./src/lib/sky";
  * own middleware below.
  */
 function announceServerPort(port: number): Plugin {
-  const tag = `<script>window.__OPENBOT_WS_PORT__=${JSON.stringify(String(port))};</script>`;
+  const tag = `<script>window.__CHISABOT_WS_PORT__=${JSON.stringify(String(port))};</script>`;
   const inject = (html: string) =>
-    html.includes("__OPENBOT_WS_PORT__")
+    html.includes("__CHISABOT_WS_PORT__")
       ? html
       : html.replace("</head>", `    ${tag}\n  </head>`);
   return {
-    name: "openbot-announce-server-port",
+    name: "chisabot-announce-server-port",
     transformIndexHtml(html, ctx) {
       return ctx.server ? inject(html) : html;
     },
@@ -150,7 +150,7 @@ function routeComponentSplitPath(id: string): string | undefined {
   return filePath.slice(routesIndex + routesMarker.length);
 }
 
-export function selectOpenBotManualChunk(id: string): string | undefined {
+export function selectChisaBotManualChunk(id: string): string | undefined {
   const routePath = routeComponentSplitPath(id);
   if (!routePath) {
     return undefined;
@@ -171,10 +171,6 @@ export function selectOpenBotManualChunk(id: string): string | undefined {
   if (routePath.startsWith("_authed/settings/")) {
     return "route-settings";
   }
-  // Claude Code 视图挂在 `_app` 下（同一个外壳，DESIGN.md §84），但分包仍然单独一块。
-  if (routePath.startsWith("_authed/_app/cc/")) {
-    return "route-cc";
-  }
   if (
     routePath.startsWith("_authed/_app/") ||
     routePath === "_authed/onboarding.tsx"
@@ -186,7 +182,7 @@ export function selectOpenBotManualChunk(id: string): string | undefined {
 
 export const routeBuildRollupOutputOptions = {
   onlyExplicitManualChunks: true,
-  manualChunks: selectOpenBotManualChunk,
+  manualChunks: selectChisaBotManualChunk,
 };
 
 export const BUNDLE_STUBS = [

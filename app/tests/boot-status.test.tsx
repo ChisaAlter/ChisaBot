@@ -16,7 +16,7 @@ afterAll(() => GlobalRegistrator.unregister());
 test("the boot marker reports an actual React commit without adding page content", () => {
   const stages: unknown[] = [];
   const listener = (event: Event) => stages.push((event as CustomEvent).detail);
-  window.addEventListener("openbot-boot-stage", listener);
+  window.addEventListener("chisabot-boot-stage", listener);
   try {
     reportBootStage("entry-executing");
     const view = render(
@@ -28,7 +28,7 @@ test("the boot marker reports an actual React commit without adding page content
     expect(stages).toEqual(["entry-executing", "react-mounted"]);
     expect(view.container.textContent).toBe("已打开模型设置");
   } finally {
-    window.removeEventListener("openbot-boot-stage", listener);
+    window.removeEventListener("chisabot-boot-stage", listener);
   }
 });
 

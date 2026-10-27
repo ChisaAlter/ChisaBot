@@ -20,7 +20,7 @@ const adminAuth = {
   handler: () => new Response(null, { status: 204 }),
   api: {
     getSession: async () => ({
-      user: { id: "admin", email: "admin@openbot.test" },
+      user: { id: "admin", email: "admin@chisabot.test" },
     }),
   },
 };
@@ -29,7 +29,7 @@ const memberAuth = {
   handler: () => new Response(null, { status: 204 }),
   api: {
     getSession: async () => ({
-      user: { id: "member", email: "member@openbot.test" },
+      user: { id: "member", email: "member@chisabot.test" },
     }),
   },
 };

@@ -1,7 +1,7 @@
 // rt.mjs — 真实可用性验收：一次性机器人，通过网页聊天输入框像用户一样发任务，等回复、截图、记录工具调用。
 // TASKS=a,b,...  PC=1 模拟 PC 客户端（Electron UA + 1280x840）。不碰任何已有机器人 / 对话。
 import fs from "node:fs";
-import { api, base, browser, context, errors, log, newPage, openBot, send, summarize, threadMessages, threadOf, transcript, waitIdle } from "./lib.mjs";
+import { api, base, browser, context, errors, log, newPage, chisaBot, send, summarize, threadMessages, threadOf, transcript, waitIdle } from "./lib.mjs";
 import { guardInit, guardedDeleteBot, trackBot } from "./guard.mjs";
 
 const T = {
@@ -41,7 +41,7 @@ fs.appendFileSync("/out/bots.txt", bot + "\n");
 if (process.env.MODEL) { const m = await call(`/api/agents/${bot}/model`, { method: "PUT", body: JSON.stringify({ model: process.env.MODEL }) }); log("bot model", process.env.MODEL, m.status, m.body.slice(0, 160)); }
 log("bot", bot, "pc", PC);
 try {
-  await openBot(page, bot);
+  await chisaBot(page, bot);
   let tid = null;
   for (const k of TASKS) {
     const t = T[k];

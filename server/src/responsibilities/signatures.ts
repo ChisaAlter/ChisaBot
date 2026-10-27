@@ -134,6 +134,6 @@ export function verifyBearer(secret: string, header: string | undefined) {
   const match = /^Bearer\s+(\S+)$/i.exec(header?.trim() ?? "");
   if (!match?.[1]) return false;
   const digest = (value: string) =>
-    createHmac("sha256", "openbot-bearer").update(value).digest();
+    createHmac("sha256", "chisabot-bearer").update(value).digest();
   return safeEqual(digest(match[1]), digest(secret));
 }

@@ -8,7 +8,7 @@ ChisaBot 仍是同一个个人助理。bot 身份、模型选择、长期指令�
 
 接口 `/api/internal/runtime-tools` 只接受运行能力凭据。调用必须对应已捕获的真实 assistant tool call，名称与参数一致；同一 call id 的重复请求复用同一个 Promise，参数变化被拒绝。HTTP 请求体无法改变 actor/bot/thread/run。审批 continuation 在 capability 加入传输元数据前捕获，不保存该秘密。
 
-Hermes 与宿主发出同一 toolCallId。后端拥有的调用由 `openbot.backend-owned-tools` 标记，网页和 Headless 不得补执行没有回执的调用。网络错误、服务重启或回执未知时中断，避免把不确定的副作用当成可以重做的失败。
+Hermes 与宿主发出同一 toolCallId。后端拥有的调用由 `chisabot.backend-owned-tools` 标记，网页和 Headless 不得补执行没有回执的调用。网络错误、服务重启或回执未知时中断，避免把不确定的副作用当成可以重做的失败。
 
 `delegate_task` 等与 Hermes 原生保留名冲突的工具只在 Python 内部映射为安全名称，宿主接口、事件、历史和 UI 保持原名。原生 terminal、MCP 发现、原生记忆写入及本地技能执行不进入该工具列表；所有实际操作沿用 ChisaBot 的原有执行边界。
 
@@ -40,3 +40,31 @@ Hermes 与宿主发出同一 toolCallId。后端拥有的调用由 `openbot.back
 本地使用 fake ACP、标准库 Hermes stub 和真实 ChisaBot HTTP gateway 检查：身份隔离、schema、确认上下文、原始调用 id、历史/模型/记忆、挂起恢复、取消、重复请求、子进程重启、参数快照与缺失回执。测试不要求本机安装 Hermes。
 
 服务端隔离验证必须另跑：已有 venv `--check`、专用服务用户初始化、真实模型调用实际宿主工具，并检查参数、回执与最终回答。生产发布后再用正式 bot、原有偏好和模型设置验收。
+
+## compose 默认网络与 Hermes 桥接（CB-100）
+
+`deploy/compose.yaml` 把默认网络固定为 `${CHISABOT_NETWORK_NAME:-openbot-zh_default}`，子网 `${CHISABOT_NETWORK_SUBNET:-172.19.0.0/16}`，网关 `${CHISABOT_NETWORK_GATEWAY:-172.19.0.1}`（和卷一样沿用改名前的名字）。宿主机上的 Hermes 桥接从容器里经这个网关访问，所以下面四处必须一致：
+
+| 位置 | 值 |
+| --- | --- |
+| compose 默认网络网关 | `172.19.0.1`（子网 `172.19.0.0/16`） |
+| `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST` | `172.19.0.1` |
+| `.env` 的 `CHISABOT_HERMES_URL` / `AGENT_ENDPOINT_ALLOWED_HOSTS` | `http://172.19.0.1:4100/ag-ui` / `172.19.0.1:4100` |
+| ufw | `allow from 172.19.0.0/16 to any port 4100` |
+
+改网络名或子网时四处要一起改。更新程序发现正在运行的容器不在 compose 声明的默认网络上（名字或子网不一致）时，会自动用 `--force-recreate`。部署后自检（`post-deploy-smoke.sh` → `hermes-reach.sh`）会从应用容器里按 `CHISABOT_HERMES_URL` 真的连一次 Hermes（任意 HTTP 状态都算连得上），`/api/admin/smoke` 也会报告 `hermes=ok|unreachable|skipped`；连不上就让部署失败并走自动回滚。Hermes 运行时由这次发布激活时，这一步放在激活之后做。
+
+**几项补充（CB-100b）：**
+
+- **内核是 hermes 却没配 URL 算失败。** 选 Hermes 内核的标记是 `.env` 里的 `CHISABOT_AGENT_KERNEL=hermes`（`compose-image.sh` 的 `hermes_release_enabled` 认它）；服务器本身只看 `CHISABOT_HERMES_URL`。两者不一致时，`hermes-reach.sh` 报 `hermes=unreachable` 并让部署失败，`/api/admin/smoke` 也报 `hermes=unreachable`（HTTP 502），不再报 `skipped`。只有内核不是 hermes 且没配 URL 时才是 `skipped`。
+- **连接超时。** 应用连智能体运行时（Hermes、远程 AG-UI / Mastra）时，从发请求到收到第一个事件最多等 `CHISABOT_AGENT_CONNECT_TIMEOUT_MS`（默认 `20000`，`0` 关闭）。对端接受连接却不回、或 SYN 被防火墙丢掉时，这一轮在这个时间后以「智能体运行时无法连接（ETIMEDOUT …）」结束，不会一直「思考中」。流开始后不再计时。
+- **网络漂移检查不再依赖 python3。** 依次用 python3 / python / jq / bun / node 解析 `docker compose config --format json`；主机上一个都没有时 stderr 报 `::error::`，并保守地按漂移处理（`--force-recreate`）。
+
+**回滚到 CB-100 之前的 compose 会让 Hermes 再次连不上。** CB-100 之前的 `compose.yaml` 没有固定默认网络：compose 会建一个名字/子网由 Docker 自动分配的网络（通常不是 `172.19.0.0/16`），容器出口网关就不再是 `172.19.0.1`，而 `ACP_BRIDGE_HOST`、`CHISABOT_HERMES_URL`、ufw 规则都还指向 `172.19.0.1`，于是每一轮都是「智能体运行时无法连接」。
+
+- env 模式（仓库自带 `deploy/compose.yaml`）的 `rollback.sh` 只改 `.env` 的 `CHISABOT_IMAGE`，compose 文件不变，镜像回滚不受影响。只有手动 `git checkout` 旧版本的 `deploy/`、或 compose 模式恢复了 `<compose>.before-<标签>` 这种 CB-100 之前的文件时才会出问题。
+- 处理办法（任选其一）：
+  1. **推荐**：只回滚镜像，保留新的 compose 文件（`.env` 里改 `CHISABOT_IMAGE` 后 `docker compose up -d`）。
+  2. 必须用旧 compose 时，把 CB-100 的 `networks.default` 那一段（`name: openbot-zh_default`，`ipam.config` 子网 `172.19.0.0/16`、网关 `172.19.0.1`）原样补进旧文件，然后 `docker compose up -d --force-recreate`。
+  3. 都不行时，按 `docker network inspect <实际网络>` 查出的新网关，同时改 `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST`、`.env` 的 `CHISABOT_HERMES_URL` / `AGENT_ENDPOINT_ALLOWED_HOSTS`、ufw 规则，再 `systemctl restart hermes-acp-bridge` 并重建应用容器。
+- 无论哪种，最后都跑一次 `deploy/updater/hermes-reach.sh`（或 `/api/admin/smoke`）确认 `hermes=ok`。

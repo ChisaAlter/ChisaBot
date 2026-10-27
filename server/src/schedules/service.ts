@@ -50,6 +50,18 @@ const MAX_AHEAD_MS = 366 * 24 * 60 * 60_000;
 const RESULT_LIMIT = 2000;
 const BUSY_RETRY_MS = 10_000;
 const BUSY_RETRIES = 12;
+/** 单个任务详情带的运行记录条数：默认 20，对话里折叠更多条时可以要到 RUNS_MAX（CB-105b）。 */
+const RUNS_DEFAULT = 20;
+const RUNS_MAX = 500;
+
+/** CB-106 P3：`?runs=N` 只认正整数（封顶 RUNS_MAX）；-1、0、2.5、abc、空值一律回到默认 20。 */
+export function parseRunsParam(raw: string | undefined | null): number {
+  if (raw == null || !/^\d+$/.test(raw.trim())) return RUNS_DEFAULT;
+  const n = Number(raw.trim());
+  if (!Number.isSafeInteger(n) || n < 1) return RUNS_DEFAULT;
+  return Math.min(RUNS_MAX, n);
+}
+
 /** Track B：卡在 running >20 分钟 → 标失败并清对话锁（启动 ensure 与扫表周期共用「20 minutes」字面量）。 */
 /** 连续失败这么多次 → 自动暂停（不自动恢复；电车等噪音任务保持人手恢复）。 */
 const FAIL_STREAK_PAUSE = 3;
@@ -443,6 +455,10 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       CREATE INDEX IF NOT EXISTS chisabot_schedule_runs_sched ON chisabot_schedule_runs (schedule_id, started_at DESC);
       CREATE INDEX IF NOT EXISTS chisabot_schedule_runs_owner ON chisabot_schedule_runs (owner_user_id, finished_at DESC);
     `);
+    // CB-105b：CB-105 之前暂停的任务库里还留着 next_run_at；一次性、幂等地清掉（之后暂停时就置空）。
+    await sql.unsafe(
+      "UPDATE chisabot_schedules SET next_run_at = NULL WHERE status = 'paused' AND next_run_at IS NOT NULL",
+    );
     // 进程重启时还在「运行中」的记录：那一轮已经没了。
     await sql.unsafe(
       "UPDATE chisabot_schedule_runs SET status = 'failed', finished_at = now(), result = coalesce(result, '服务器重启，这次运行中断了') WHERE status = 'running' AND started_at < now() - interval '20 minutes'",
@@ -529,11 +545,20 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     );
   }
 
-  async function get(owner: string, id: string): Promise<ScheduleView> {
+  async function get(
+    owner: string,
+    id: string,
+    runLimit = RUNS_DEFAULT,
+  ): Promise<ScheduleView> {
     const row = await need(owner, id);
+    // CB-105b：对话里折叠了 20 条以上的提醒时按条数要，封顶 RUNS_MAX。
+    const limit = Math.min(
+      RUNS_MAX,
+      Math.max(1, Math.floor(runLimit) || RUNS_DEFAULT),
+    );
     const runs = await sql.unsafe<RunRow[]>(
-      "SELECT * FROM chisabot_schedule_runs WHERE schedule_id = $1 ORDER BY started_at DESC LIMIT 20",
-      [row.id],
+      "SELECT * FROM chisabot_schedule_runs WHERE schedule_id = $1 ORDER BY started_at DESC LIMIT $2",
+      [row.id, limit],
     );
     return view(row, runs);
   }
@@ -637,6 +662,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         );
       else next = runAt;
     }
+    // CB-105：暂停 / 结束的任务没有「下次运行」；恢复时上面重新算。
+    if (status !== "active") next = null;
     const rows = await sql.unsafe<Row[]>(
       `UPDATE chisabot_schedules SET title=$3, instruction=$4, timezone=$5, kind=$6, cron=$7, run_at=$8, status=$9, next_run_at=$10, updated_at=now()
        WHERE id=$1 AND owner_user_id=$2 RETURNING *`,
@@ -994,6 +1021,30 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     } as Message;
   }
 
+  /**
+   * CB-105：真正发出前再确认任务还在跑（扫描拿到之后可能刚被暂停）。不是就把这次运行记成 skipped，
+   * 不改任务本身。一次性任务被扫描抢到时已标 done，算作仍在跑。
+   */
+  async function stillLive(row: Row, runId: string): Promise<boolean> {
+    const [current] = await sql.unsafe<{ status: ScheduleStatus }[]>(
+      "SELECT status FROM chisabot_schedules WHERE id = $1",
+      [row.id],
+    );
+    const status = current?.status;
+    if (status === "active" || (row.kind === "once" && status === "done"))
+      return true;
+    await sql
+      .unsafe(
+        "UPDATE chisabot_schedule_runs SET status = 'skipped', result = $2, finished_at = now() WHERE id = $1",
+        [runId, status === "paused" ? "任务已暂停，这次没有发送。" : "任务已结束或删除，这次没有发送。"],
+      )
+      .catch(() => {});
+    console.warn(
+      JSON.stringify({ type: "schedule-fire-skipped-inactive", schedule: row.id, run: runId, status: status ?? "missing" }),
+    );
+    return false;
+  }
+
   const busyError = (error: unknown) =>
     /already running|thread.*lock|locked|正在运行/i.test(
       error instanceof Error ? error.message : String(error),
@@ -1042,6 +1093,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         : { kind: "routine", id: `schedule:${row.id}` };
       let attempt = 0;
       for (;;) {
+        if (!options.manual && !(await stillLive(row, runId))) return;
         // 对话正被一轮占着（网页）：排进收件箱，那一轮下一步就读到（和后台任务交结果一样）。
         if (!im && deps.isThreadActive?.(threadId) && deps.enqueueToThread) {
           await deps.enqueueToThread({
@@ -1576,7 +1628,13 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       });
     });
     app.get("/:id", async (c) =>
-      c.json({ schedule: await get(c.var.actor.id, c.req.param("id")) }),
+      c.json({
+        schedule: await get(
+          c.var.actor.id,
+          c.req.param("id"),
+          parseRunsParam(c.req.query("runs")),
+        ),
+      }),
     );
     app.patch("/:id", async (c) => {
       const body = z

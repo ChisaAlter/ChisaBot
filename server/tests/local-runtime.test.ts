@@ -11,7 +11,7 @@ import { testEnvironment } from "./support/environment";
 function configuration() {
   return loadConfig(
     testEnvironment({
-      OPENBOT_RUNTIME_MODE: "local",
+      CHISABOT_RUNTIME_MODE: "local",
       INTELLIGENCE_API_URL: undefined,
       INTELLIGENCE_GATEWAY_WS_URL: undefined,
       INTELLIGENCE_API_KEY: undefined,
@@ -26,8 +26,8 @@ test("local OSS configuration has durable history and no Intelligence credential
     durableHistory: true,
   });
   expect(() =>
-    loadConfig(testEnvironment({ OPENBOT_RUNTIME_MODE: "other" })),
-  ).toThrow("OPENBOT_RUNTIME_MODE must be intelligence or local");
+    loadConfig(testEnvironment({ CHISABOT_RUNTIME_MODE: "other" })),
+  ).toThrow("CHISABOT_RUNTIME_MODE must be intelligence or local");
 });
 
 test("the public SSE runtime reports disabled telemetry and makes no vendor request", async () => {

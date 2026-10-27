@@ -21,7 +21,7 @@ import type { Page } from "playwright";
 import type { SnapshotElement } from "./aria-snapshot";
 
 /** The attribute a field gets once a secret has been typed into it. */
-export const SECRET_ATTRIBUTE = "data-openbot-secret";
+export const SECRET_ATTRIBUTE = "data-chisabot-secret";
 
 /** What a sensitive value is replaced with. Says a value is there without saying what it is. */
 export const MASKED_VALUE = "[hidden: sensitive field]";

@@ -19,7 +19,7 @@ import { createComputerRoutes } from "../src/computer/routes";
 
 const actor: AuthenticatedActor = {
   id: "user-1",
-  email: "member@openbot.test",
+  email: "member@chisabot.test",
   role: "user",
 };
 
@@ -101,7 +101,7 @@ function navigate(
   // `null` means "send no turn at all". `undefined` would take the default, which is the opposite.
   toolCallId: string | null = "call-1",
 ) {
-  return routes.request("http://openbot.test/bot-9/navigate", {
+  return routes.request("http://chisabot.test/bot-9/navigate", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ url, ...(toolCallId ? { toolCallId } : {}) }),
@@ -153,7 +153,7 @@ describe("the frame a page was opened on", () => {
     await navigate(routes, "https://example.com/story");
 
     const response = await routes.request(
-      "http://openbot.test/bot-9/page-frame/call-1",
+      "http://chisabot.test/bot-9/page-frame/call-1",
     );
 
     expect(await response.json()).toEqual({
@@ -169,7 +169,7 @@ describe("the frame a page was opened on", () => {
     const { routes } = harness();
 
     const response = await routes.request(
-      "http://openbot.test/bot-9/page-frame/call-never",
+      "http://chisabot.test/bot-9/page-frame/call-never",
     );
 
     expect(await response.json()).toEqual({ frame: null });
@@ -301,7 +301,7 @@ describe("the frame a page was opened on", () => {
     );
     expect(
       await (
-        await routes.request("http://openbot.test/bot-9/page-frame/call-1")
+        await routes.request("http://chisabot.test/bot-9/page-frame/call-1")
       ).json(),
     ).toEqual({ frame: null });
   });

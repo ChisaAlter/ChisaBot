@@ -1,5 +1,5 @@
 services:
-  openbot:
+  chisabot:
     image: ${CHISABOT_IMAGE:-local/chisabot:latest}
     build:
       context: ..
@@ -11,7 +11,7 @@ services:
         CHISABOT_BUILD: ${CHISABOT_BUILD:-dev}
         CHISABOT_BUILT_AT: ${CHISABOT_BUILT_AT:-}
         CHISABOT_IMAGE: ${CHISABOT_IMAGE:-local/chisabot:latest}
-    container_name: openbot-zh
+    container_name: chisabot-zh
     restart: unless-stopped
     env_file: .env
     ports:
@@ -25,15 +25,18 @@ services:
       - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/requests:/var/lib/chisabot-updater/requests
       - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/state:/var/lib/chisabot-updater/state:ro
     networks:
-      - default
-      - magpie
+      default:
+        # 改名前的服务 DNS 名：同一网络上按 openbot-zh 找应用的旧配置继续可用（CB-100）。
+        aliases:
+          - openbot-zh
+      magpie: {}
     environment:
       EMBEDDED_POSTGRES: "on"
-      OPENBOT_RUNTIME_MODE: ${OPENBOT_RUNTIME_MODE:-local}
+      CHISABOT_RUNTIME_MODE: ${CHISABOT_RUNTIME_MODE:-${OPENBOT_RUNTIME_MODE:-local}}
       SL_ENABLED: "false"
       COPILOTKIT_TELEMETRY_DISABLED: "true"
       DO_NOT_TRACK: "1"
-      OPENBOT_SINGLE_USER: "true"
+      CHISABOT_SINGLE_USER: "true"
       # .env 优先：允许部署者按需扩展（如内网地址），未设置时回退到安全的 loopback 默认值。
       TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}
       TENANT_PACKAGE_DIR: ../examples/zh-CN
@@ -41,7 +44,7 @@ services:
       BOT_MODEL: ${BOT_MODEL:-your-model-id}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
-      OPENBOT_SELF_HOST_BANNER: "false"
+      CHISABOT_SELF_HOST_BANNER: "false"
       SERVER_INTERNAL_URL: http://127.0.0.1:3001
       # 管理后台 → 模型平台 Magpie（docs/magpie.md）。Web key 文件挂载见该文档；留空则只显示连接信息。
       MAGPIE_ADMIN_URL: ${MAGPIE_ADMIN_URL:-}
@@ -54,12 +57,32 @@ services:
         max-size: 20m
         max-file: "3"
 
+# Physical volume names are pinned to the pre-rename ones (the stack was the `openbot-zh` compose
+# project before 0.1.75): the project is now `chisabot-zh`, and without `name:` compose would create
+# fresh, empty `chisabot-zh_*` volumes next to the live data. Override CHISABOT_VOLUME_PREFIX only on a
+# brand-new server that has never run the old project.
 volumes:
   database:
+    name: ${CHISABOT_VOLUME_PREFIX:-openbot-zh}_database
   workspace:
+    name: ${CHISABOT_VOLUME_PREFIX:-openbot-zh}_workspace
   profiles:
+    name: ${CHISABOT_VOLUME_PREFIX:-openbot-zh}_profiles
 
+# CB-100: the default network is pinned to the pre-rename one, like the volumes above. Without `name:`
+# the 0.1.75 project rename made compose create `chisabot-zh_default` on a random subnet
+# (192.168.112.0/20) and drop `openbot-zh_default`, so the host Hermes bridge on the old gateway
+# 172.19.0.1:4100 (ACP_BRIDGE_HOST, .env CHISABOT_HERMES_URL / AGENT_ENDPOINT_ALLOWED_HOSTS, the ufw
+# rule for 172.19.0.0/16) became unreachable and every turn hung. Not `external: true`: a fresh server
+# must be able to create it. Changing any of these three values means changing the bridge host, .env
+# and ufw together (docs/online-update.md, docs/hermes-runtime.md).
 networks:
+  default:
+    name: ${CHISABOT_NETWORK_NAME:-openbot-zh_default}
+    ipam:
+      config:
+        - subnet: ${CHISABOT_NETWORK_SUBNET:-172.19.0.0/16}
+          gateway: ${CHISABOT_NETWORK_GATEWAY:-172.19.0.1}
   magpie:
     external: true
     name: ${MAGPIE_NETWORK:-openbot_magpie}

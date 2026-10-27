@@ -8,7 +8,7 @@ const expectedTail =
   "SYNTHETIC_EXPECTED_TAIL: preserve the child failure details";
 
 async function createProjectWithFailingTest() {
-  const directory = await mkdtemp(join(tmpdir(), "openbot-test-ci-"));
+  const directory = await mkdtemp(join(tmpdir(), "chisabot-test-ci-"));
   createdDirectories.push(directory);
   await writeFile(
     join(directory, "package.json"),

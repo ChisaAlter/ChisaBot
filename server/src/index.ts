@@ -1,3 +1,4 @@
+import "../../shared/env-compat";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { createPersonalSources } from "./personal-sources/service";
@@ -91,11 +92,16 @@ import {
   recordAuditEvent,
 } from "./audit";
 import { startRetentionSweeps } from "./audit-retention";
+import { withComputerActivity } from "./computer/activity-recorder";
+import {
+  createActivityStore as createComputerActivityStore,
+  installActivityStore,
+} from "./computer/activity-store";
 import { createAuth } from "./auth";
 import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
 import type { AuthService } from "./auth/guards";
 import { createRoleRepository } from "./auth/guards";
-import { type OpenBotRole, setRole } from "./auth/roles";
+import { type ChisaBotRole, setRole } from "./auth/roles";
 import {
   createGatewayRequireUser,
   gatewaySecretFromEnvironment,
@@ -186,7 +192,6 @@ import {
 import { createDeliveryStore } from "./delivery/store";
 import type { DeliveryScope } from "./delivery/types";
 import { createDeviceHub } from "./devices/hub";
-import { readNodeBundle } from "./devices/node-install";
 import { createDeviceRoutes } from "./devices/routes";
 import { createDeviceStore } from "./devices/store";
 import { deviceTools } from "./devices/tools";
@@ -286,7 +291,7 @@ import { createModelCatalogService } from "./model-catalog";
 import { createMagpieService, readMagpieWebKey } from "./magpie";
 import { readRunningBuild } from "./build-info";
 import { createSystemUpdateRoutes, createSystemUpdateService } from "./system-update";
-import { createAdminSmokeRoutes } from "./admin-smoke";
+import { createAdminSmokeRoutes, resolveSmokeHermesProbe } from "./admin-smoke";
 import {
   createDatabasePinger,
   createOpsHealthRoutes,
@@ -309,8 +314,6 @@ import { createUserPreferencesStore } from "./user-preferences";
 import { repeatAfterEach } from "./work/loop";
 import { createWorkerService, type WorkerService } from "./workers/service";
 import { createLocalAgentService, type LocalAgentService } from "./local-agents/service";
-import { createCloudCcService, type CloudCcService } from "./cloud-cc/service";
-import { createCloudSyncService, type CloudSyncService } from "./cloud-cc/sync";
 import { reasonWithoutStatement } from "./db/query-failure";
 import {
   createWorkQueue,
@@ -329,7 +332,7 @@ import {
 async function resolveRequestActor(request: Request): Promise<{
   id: string;
   name: string;
-  role: OpenBotRole;
+  role: ChisaBotRole;
 }> {
   if (config.singleUser) {
     if (gatewaySecret) {
@@ -452,7 +455,7 @@ const roleRepository = createRoleRepository(database);
  * 第一次见到的朋友账号在 users / user_roles 建行；角色以网关为准（管理员在网关里改）。
  */
 const gatewaySecret = config.singleUser ? gatewaySecretFromEnvironment(process.env) : undefined;
-const provisionedGatewayUsers = new Map<string, { role: OpenBotRole; at: number }>();
+const provisionedGatewayUsers = new Map<string, { role: ChisaBotRole; at: number }>();
 async function provisionGatewayUser(actor: AuthenticatedActor): Promise<void> {
   if (actor.id === DEV_ACTOR.id) return;
   const seen = provisionedGatewayUsers.get(actor.id);
@@ -736,22 +739,27 @@ const confirmAwareGate: typeof approvalService.gate = async (candidate) => {
   }
   return approvalService.gate(candidate);
 };
+// CB-101：计算机活动记录。gateway 外包一层，每个动作写一条；每小时清 90 天前的记录。
+installActivityStore(createComputerActivityStore(database, config.databaseUrl));
 const computerGateway = computerProvider
-  ? createComputerGateway({
-      provider: computerProvider,
-      auditStore: bootAuditStore,
-      approvalGate: confirmAwareGate,
-      policy: () => policyStore.get(),
-      // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
-      // when the snapshot was taken by another server. A Map here would be blank on every replica
-      // but the one that snapshotted, and the boundary would decide with no element to look at.
-      snapshots: createSnapshotStore(database),
-      // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
-      // sentence on that button already promised.
-      pageFrames: pageFrameStore,
-      allowPrivateHosts: config.computer?.allowPrivateHosts,
-      token: config.computer?.token,
-    })
+  ? withComputerActivity(
+      createComputerGateway({
+        provider: computerProvider,
+        auditStore: bootAuditStore,
+        approvalGate: confirmAwareGate,
+        policy: () => policyStore.get(),
+        // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
+        // when the snapshot was taken by another server. A Map here would be blank on every replica
+        // but the one that snapshotted, and the boundary would decide with no element to look at.
+        snapshots: createSnapshotStore(database),
+        // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
+        // sentence on that button already promised.
+        pageFrames: pageFrameStore,
+        allowPrivateHosts: config.computer?.allowPrivateHosts,
+        token: config.computer?.token,
+      }),
+      { pageFrames: pageFrameStore },
+    )
   : undefined;
 
 /**
@@ -2244,45 +2252,6 @@ try {
   console.warn("local agents unavailable", error);
   localAgents = undefined;
 }
-/**
- * 云端 Claude Code（server/src/cloud-cc，docs/cloud-claude-code.md，ADR-0014）：云端工作区节点（一台设备）上的 Claude Code
- * 登录、会话、审批。它的设备扩展排在本地 agent 前面：cc_* 消息自己处理，其余交给本地 agent。
- */
-let cloudCc: CloudCcService | undefined;
-try {
-  cloudCc = createCloudCcService({
-    database,
-    hub: deviceHub,
-    deviceStore,
-    next: localAgents?.extension ?? null,
-    github,
-    vault,
-    // 节点程序指纹：判断云端节点跑的是不是现在这一版（§73.1）。
-    nodeBundle: () => readNodeBundle(config.appDistDir),
-    ...(process.env.CHISABOT_GITHUB_GIT_BASE ? { gitBase: process.env.CHISABOT_GITHUB_GIT_BASE } : {}),
-  });
-  await cloudCc.ensure();
-  const interrupted = await cloudCc.recover();
-  if (interrupted) console.log(JSON.stringify({ type: "cloud-cc-turns-interrupted-by-restart", count: interrupted }));
-  deviceHub.setExtension(cloudCc.extension);
-} catch (error) {
-  console.warn("cloud claude code unavailable", error);
-  cloudCc = undefined;
-}
-/** 电脑文件夹同步（server/src/cloud-cc/sync.ts，P4）：绑定、租约、隧道。跟着云端 Claude Code 一起有。 */
-let cloudSync: CloudSyncService | undefined;
-if (cloudCc) {
-  try {
-    const cc = cloudCc;
-    cloudSync = createCloudSyncService({ database, hub: deviceHub, deviceStore, nodeRpc: (id, op, args, ms) => cc.nodeRpc(id, op, args as never, ms), nodeFor: (owner) => cc.nodeFor(owner) });
-    await cloudSync.ensure();
-    await cloudSync.recover();
-    cc.setSyncHooks({ withHandoff: cloudSync.withHandoff, beforeTurn: cloudSync.flushBeforeTurn, forgetWorkspace: cloudSync.forgetWorkspace });
-  } catch (error) {
-    console.warn("cloud folder sync unavailable", error);
-    cloudSync = undefined;
-  }
-}
 /** 群聊（频道）的对话不给委派：交回结果要走频道的记录，这一版只做机器人私聊。 */
 /**
  * 群聊（一个频道里不止一个机器人）的对话：不给委派、定时任务、本地 agent。
@@ -3696,7 +3665,7 @@ const app = createApp(
   database,
   // Positional slot of the removed native host-folder broker (slimming P6-4, upstream desktop app).
   undefined,
-  process.env.OPENBOT_DESKTOP_HOST_TOKEN,
+  process.env.CHISABOT_DESKTOP_HOST_TOKEN,
   async (input) => {
     const proactiveRefusal = await guardProactiveCallback(
       input,
@@ -3773,8 +3742,8 @@ const app = createApp(
   // Absent without a key, which leaves the routes reporting no broker rather than listing apps
   // nobody could connect.
   composio ? { broker: composio.broker } : undefined,
-  process.env.OPENBOT_MODEL_OAUTH_FILE?.trim()
-    ? createProviderOAuthProxy(process.env.OPENBOT_MODEL_OAUTH_FILE.trim())
+  process.env.CHISABOT_MODEL_OAUTH_FILE?.trim()
+    ? createProviderOAuthProxy(process.env.CHISABOT_MODEL_OAUTH_FILE.trim())
     : undefined,
   createUserPreferencesStore(database),
   undefined, // was voice sessions (removed in CB-046 step 2)
@@ -3837,6 +3806,20 @@ const app = createApp(
           requireUser,
           resolveConnection: resolveRuntimeConnection,
           resolveConnectionForAgent: resolveRuntimeConnectionForAgent,
+          // CB-100: the release smoke must reach Hermes, not only the model.
+          ...(() => {
+            const probeHermes = resolveSmokeHermesProbe({
+              agentKernel: process.env.CHISABOT_AGENT_KERNEL,
+              hermesUrl: hermesKernelUrl,
+              probe: probeConfiguredHermes
+                ? async () => {
+                    const probe = await probeConfiguredHermes();
+                    return { reachable: probe.reachable === true, ...(probe.error ? { error: probe.error } : {}) };
+                  }
+                : undefined,
+            });
+            return probeHermes ? { probeHermes } : {};
+          })(),
         }),
       ],
       [
@@ -3857,7 +3840,7 @@ const app = createApp(
                 probeComputer: async () => {
                   try {
                     // list() proves the provider answers. Do NOT invent a fake bot id:
-                    // agent-computer /health with x-openbot-bot-id opens a session and 500s.
+                    // agent-computer /health with x-chisabot-bot-id opens a session and 500s.
                     const list = await computerProvider.list();
                     let reachable = list.length === 0;
                     let error: string | undefined;
@@ -3922,13 +3905,6 @@ const app = createApp(
       ["/p", pages.publicRoutes()],
       ["/api/schedules", schedules.routes(requireUser)],
       ...(localAgents ? [["/api/local-agents", localAgents.routes(requireUser)] satisfies [string, unknown]] : []),
-      ...(cloudCc
-        ? [
-            ["/api/cloud-workspace", cloudCc.workspaceRoutes(requireUser)] satisfies [string, unknown],
-            ["/api/claude-code", cloudCc.codeRoutes(requireUser)] satisfies [string, unknown],
-            ...(cloudSync ? [["/api/claude-code", cloudSync.webRoutes(requireUser)] satisfies [string, unknown]] : []),
-          ]
-        : []),
       ["/api/chat-files", chatFiles.routes(requireUser)],
       ["/api/confirmations", confirmations.routes(requireUser)],
       ["/api/media-models", chatFiles.media.routes(requireUser)],
@@ -3965,8 +3941,6 @@ const app = createApp(
           requireUser,
           auditStore: bootAuditStore,
           toolsFor: (actorId, botId) => deviceToolsFor(actorId, botId),
-          refuseFullAccess: (device) => cloudCc?.refuseFullAccess(device.id) ?? null,
-          sync: cloudSync ?? null,
           ...(config.appDistDir ? { appDistDir: config.appDistDir } : {}),
           ...(gatewaySecret ? { localCallerSecret: gatewaySecret } : {}),
         }),
@@ -4222,7 +4196,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   });
 }
 
-console.info(`OpenBot server listening on http://127.0.0.1:${port}`);
+console.info(`ChisaBot server listening on http://127.0.0.1:${port}`);
 
 void startOpsMetricsStore()
   .then(({ path: metricsPath, loaded }) => {

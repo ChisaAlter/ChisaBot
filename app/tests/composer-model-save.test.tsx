@@ -7,7 +7,7 @@ import { Composer } from "@/components/channels/composer/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
 import { settleReactWork } from "./settle-react-work";
 
-beforeAll(() => GlobalRegistrator.register({ url: "https://openbot.test/" }));
+beforeAll(() => GlobalRegistrator.register({ url: "https://chisabot.test/" }));
 afterEach(cleanup);
 afterAll(async () => {
   await settleReactWork();

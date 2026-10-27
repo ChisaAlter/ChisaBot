@@ -962,7 +962,7 @@ export function BrokeredAccountRow({
                 </Button>
               </>
             ) : (
-              /* The arrow says this leaves OpenBot for the vendor's consent page. It does. */
+              /* The arrow says this leaves ChisaBot for the vendor's consent page. It does. */
               <Button
                 disabled={account.connecting}
                 onClick={() => {

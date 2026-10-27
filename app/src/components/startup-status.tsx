@@ -86,7 +86,13 @@ export function AppSkeleton({ failed = false }: { failed?: boolean }) {
           <span>加载时间比平时长一些…</span>
           <button onClick={() => window.location.reload()} type="button">重新加载</button>
         </div>
-      ) : null}
+      ) : (
+        // CB-100c：骨架本身很淡，首屏慢的时候看起来像白屏。前 10 秒给一句看得见的「正在加载」。
+        <div aria-hidden className="sky-skel-hint is-loading" data-testid="startup-loading-caption">
+          <span className="sky-skel-spinner" />
+          <span>正在加载 ChisaBot…</span>
+        </div>
+      )}
     </div>
   );
 }

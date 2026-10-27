@@ -7,7 +7,7 @@
 
 | 端 | 是什么 | 能做什么 |
 | --- | --- | --- |
-| **服务器** | 现有 ChisaBot（`openbot-zh` 容器，公网 `https://<你的域名>:8443`，前面是 nginx 登录网关） | 机器人运行处；设备登记表、WebSocket 中转、审批、审计都在这里 |
+| **服务器** | 现有 ChisaBot（`chisabot-zh` 容器，公网 `https://<你的域名>:8443`，前面是 nginx 登录网关） | 机器人运行处；设备登记表、WebSocket 中转、审批、审计都在这里 |
 | **PC（Windows）** | `ChisaBot PC` Electron 客户端 | ① 聊天窗口直接载入该服务器的网页；② 节点：执行机器人发来的操作（PowerShell、文件、截图、鼠标键盘、打开网址 / 文件、剪贴板） |
 | **手机** | 现有网页（已适配 390px） | 聊天；在 设置 → 设备 管理所有 PC：开关能力、审批、紧急停止、撤销、看记录 |
 
@@ -127,11 +127,11 @@ PC → 服务器：`hello{clientVersion,platform,osVersion,hostname,arch}`、`re
 4. 撤销 / 删除：网关每 30 秒左右（有请求时）问一次应用 `GET /api/devices/agent/state/:id`，答 `active:false` 就删除这台手机的所有会话，下一次请求 401，App 回到登录页并提示已撤销；续期也会被拒。应用暂时连不上时最多沿用上次结果 10 分钟。App 里「退出登录」会先 `POST /api/devices/agent/unenroll` 作废自己的令牌。
 
 **边界**
-- `state` 只回答直连应用的请求：经过公网 Nginx 的请求都带 `X-Forwarded-For`，一律 404；网关在本机直连 `127.0.0.1:3001`（`OPENBOT_AUTH_APP_URL` 可改，必须是直连）。反向代理必须设置 `X-Forwarded-For`（模板里已设置）。
+- `state` 只回答直连应用的请求：经过公网 Nginx 的请求都带 `X-Forwarded-For`，一律 404；网关在本机直连 `127.0.0.1:3001`（`CHISABOT_AUTH_APP_URL` 可改，必须是直连）。反向代理必须设置 `X-Forwarded-For`（模板里已设置）。
 - 手机设备不是机器人可操作的节点：不进 `device_*` 工具和「用户的电脑」提示（`forOwner` 排除 `android` / `ios`），不能连 `/api/devices/agent/ws`（403），能力保持全关。
 - 绑定码只换得到签发人自己的设备和会话；网关会话和密码登录是同一种（单用户网关部署下就是这个账号）。
 - 只支持本仓库的登录网关部署（`deploy/public/`）。不经网关、用 Better Auth 多用户登录的部署还没有手机会话（App 会提示改用账号密码，`/auth/device-session` 不存在时）。
-- 升级已有部署：更新应用镜像，再把 `deploy/public/auth/server.ts` 复制到网关目录并重启 `openbot-web-auth`（会话库原地加两列，已有登录不受影响）；Nginx 需要有 `/api/devices/agent/` 例外（新模板已带；以前手工加过 PC 节点例外的部署不用改）。
+- 升级已有部署：更新应用镜像，再把 `deploy/public/auth/server.ts` 复制到网关目录并重启 `chisabot-web-auth`（会话库原地加两列，已有登录不受影响）；Nginx 需要有 `/api/devices/agent/` 例外（新模板已带；以前手工加过 PC 节点例外的部署不用改）。
 
 ## 11. 网络：系统代理与重连（0.1.6）
 

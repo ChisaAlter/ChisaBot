@@ -441,7 +441,7 @@ describe("the tool-call route a callback token guards", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-openbot-agent-token": DEPLOYMENT_TOKEN,
+          "x-chisabot-agent-token": DEPLOYMENT_TOKEN,
         },
         body: JSON.stringify({
           name: "mcp__linear__LINEAR_CREATE_ISSUE",
@@ -629,7 +629,7 @@ describe("the tool-call route a callback token guards", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-openbot-agent-token": DEPLOYMENT_TOKEN,
+        "x-chisabot-agent-token": DEPLOYMENT_TOKEN,
       },
       body: JSON.stringify({
         name: "mcp__linear__LINEAR_CREATE_ISSUE",

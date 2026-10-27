@@ -21,7 +21,7 @@
    - 等更新器空闲、没有排队请求，并**等所有对话的线程锁清零**（`openbot_local_threads.lock_expires_at > now()` 为 0，最多 20 分钟），
      不打断正在回答的一轮；
    - `request.sh check` 匿名拉公开仓库的 main 到 `mirror.git`，确认 main 包含你的提交（别人后来又合并的会一起上线）；
-   - `request.sh update` 并等完成，确认 `openbot-zh` 的镜像标签含新提交。
+   - `request.sh update` 并等完成，确认 `chisabot-zh` 的镜像标签含新提交。
    - 环境变量 `CHISABOT_UPDATER_DIR`、`CHISABOT_APP_CONTAINER` 可覆盖默认目录 / 容器名。
 3. 退出码：**0** 已上线 · **3** 等部署锁超时 · **4** 线程锁一直不为 0（有对话在跑）· **5** 提交不在 main · **6** 没切换成功（看 `request.sh status`）· **7** nginx 模板漂移（`sync-nginx --check` 失败；跑 `--apply` 或设 `CHISABOT_SYNC_NGINX=apply`）。
 4. **不要**直接运行 `update.sh`（网页看不到进度、按钮会卡住）或 `request.sh update`（会和别人的部署撞车）。
@@ -63,9 +63,9 @@
 `local/chisabot:auto-<UTC 时间>-<提交前 7 位>`，文件名本身就说明回到哪一次提交。
 
 ```sh
-ls -t /opt/openbot-zh/rollback-to-*.sh | head -3     # 最新的就是「回到上一版」
+ls -t /opt/chisabot-zh/rollback-to-*.sh | head -3     # 最新的就是「回到上一版」
 docker image inspect local/chisabot:auto-<时间>-<提交> >/dev/null && echo 镜像还在
-sh /opt/openbot-zh/rollback-to-auto-<时间>-<提交>.sh
+sh /opt/chisabot-zh/rollback-to-auto-<时间>-<提交>.sh
 ```
 
 - 网页上：设置 → 系统更新 →「回滚到上一版」，效果相同。
@@ -85,19 +85,13 @@ sh /opt/openbot-zh/rollback-to-auto-<时间>-<提交>.sh
 `rollback-<说明>-<日期>.sh`（恢复备份 + `nginx -t` + reload / 重启）。回滚脚本用过一次后在文件名或旁边的说明里标出来，
 避免以后有人把已经过时的状态再放回去——尤其是会放回旧登录页、旧单用户网关这类脚本。
 
-### 3.3 云端节点
-
-节点镜像带构建号（`-b1`、`-b2`…）。回滚到旧镜像：`CLOUDNODE_TAG=<旧标签> docker compose -f compose.yaml up -d`；旧镜像被清理掉时，
-需要用当时的 `Dockerfile` 重建（改 Dockerfile 前留 `Dockerfile.bak-<说明>`）。见 [cloud-node.md](cloud-node.md)。
-
 ## 4. 不随一键更新的部分
 
 | 部分 | 怎么更新 | 详见 |
 |---|---|---|
 | 公网网关 nginx（`deploy/public/nginx.conf`） | **`sync-nginx.sh --apply`**（备份+渲染+`nginx -t`+reload）；`deploy-serial` 默认 `--check` 漂移则失败 | [gateway.md](gateway.md) §2.1 |
-| 登录服务（`deploy/public/auth/server.ts`、`auth-web/`） | 拷文件 → 重启 `openbot-web-auth` | [gateway.md](gateway.md) |
+| 登录服务（`deploy/public/auth/server.ts`、`auth-web/`） | 拷文件 → 重启 `chisabot-web-auth` | [gateway.md](gateway.md) |
 | 更新器自己（`deploy/updater/`） | 每次成功更新后自升级；老部署跑一次 `install-updater.sh` | §2 |
-| 云端工作区节点 / 同步边车 | 手工构建镜像、`compose up -d`；改了 `pc/src/cloud-cc` 的部署后 `docker restart chisabot-cloudnode` | [cloud-node.md](cloud-node.md) |
 | PC / Android 客户端 | 发版流程 | [client-release.md](client-release.md)、[release.md](../release.md) |
 | Magpie 模型网关 | 独立 compose，手动（先备份配置） | [magpie.md](../magpie.md) |
 
@@ -110,7 +104,6 @@ sh /opt/openbot-zh/rollback-to-auto-<时间>-<提交>.sh
    备用模型列表。除镜像 / 版本外应一致。
 5. **只读浏览器检查**（需要时）：临时签发会话 + 拦截所有非 GET 请求（[preview.md](preview.md) §4）。
 6. 改到聊天 / 同步 / 滚动的 PR：在预览里跑 `tests/chat-scroll/regression.sh`（[testing.md](../testing.md) §3）。
-7. 改了 `pc/src/cloud-cc`（节点程序）：`docker restart chisabot-cloudnode`——节点只在容器启动时从应用下载 `chisabot-node.cjs`。
 8. 更新项目看板：ROADMAP「最近完成」、BACKLOG 状态、[CHANGELOG](../CHANGELOG.md)。
 
 ## 6. 并行开发时

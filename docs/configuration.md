@@ -1,8 +1,8 @@
 # Configuration
 
-> **ChisaBot 分支：** 本地模式、模型连接和 BOT 覆盖配置以 [模型配置指南](models.md) 及 [自托管部署](../deploy/README.zh-CN.md) 为准。以下保留上游完整配置参考；`OPENBOT_*` 名称继续兼容，Intelligence 配置只在相应运行模式必需。
+> **ChisaBot 分支：** 本地模式、模型连接和 BOT 覆盖配置以 [模型配置指南](models.md) 及 [自托管部署](../deploy/README.zh-CN.md) 为准。以下保留上游完整配置参考；`CHISABOT_*` 名称继续兼容，Intelligence 配置只在相应运行模式必需。
 
-OpenBot is configured with environment variables and a tenant package. The API server validates both at startup.
+ChisaBot is configured with environment variables and a tenant package. The API server validates both at startup.
 
 ## Environment setup
 
@@ -27,8 +27,8 @@ bash scripts/start.sh
 | `INTELLIGENCE_API_KEY`        | Runtime key for the Intelligence project.                                                             |
 
 `DATABASE_URL` and `KEY_ENCRYPTION_KEY` are required in both runtime modes.
-`OPENBOT_RUNTIME_MODE=local` uses PostgreSQL-backed conversations and does not require the
-three `INTELLIGENCE_` values. `OPENBOT_RUNTIME_MODE=intelligence` requires all three;
+`CHISABOT_RUNTIME_MODE=local` uses PostgreSQL-backed conversations and does not require the
+three `INTELLIGENCE_` values. `CHISABOT_RUNTIME_MODE=intelligence` requires all three;
 they are checked as a set, so a partial set is refused as a misconfiguration.
 
 `COPILOTKIT_LICENSE_TOKEN` is optional: managed Intelligence issues no licence token, and a
@@ -46,7 +46,7 @@ at `agent-langgraph` on a laptop.
 | Variable             | Default                            | Meaning                                                             |
 | -------------------- | ---------------------------------- | ------------------------------------------------------------------- |
 | `PORT`               | `3001`                             | API server port. `SERVER_PORT` names the same port; set either, or both to the same value, or the server refuses to start. |
-| `NODE_ENV`           | unset                              | `production` refuses the example `KEY_ENCRYPTION_KEY`. It does not decide whether sign-in is required; see `OPENBOT_SINGLE_USER`. |
+| `NODE_ENV`           | unset                              | `production` refuses the example `KEY_ENCRYPTION_KEY`. It does not decide whether sign-in is required; see `CHISABOT_SINGLE_USER`. |
 | `TENANT_PACKAGE_DIR` | `../examples/zh-CN`              | Tenant package directory, resolved from `server/`.                  |
 | `DEPLOYMENT_ID`      | the tenant package's id            | Names this deployment inside a shared Intelligence project.          |
 | `OPENAI_API_KEY`     | unset                              | Default model key for built-in agents and both shipped Bots.        |
@@ -64,23 +64,23 @@ at `agent-langgraph` on a laptop.
 | `AGENT_TOOL_TOKEN`   | unset; `start.sh` generates one    | The secret a framework Bot presents when it calls a granted tool back through this server. |
 | `APP_DIST_DIR`       | unset                              | Where the built app is, when this process serves it. Set inside the container image; unset in development, where Vite serves the app. |
 | `AUDIT_RETENTION_DAYS` | unset                            | Whole number of days to keep audit rows; older ones are removed. Unset keeps the trail forever. |
-| `OPENBOT_GENERATIVE_UI` | unset (capability on)               | Set `false` or `0` to stop Bots from answering with generated interfaces. |
-| `OPENBOT_SELF_HOST_BANNER` | unset (banner on)               | Set `false` or `0` to hide the bar offering help self-hosting OpenBot, for everybody. It never shows on a paid Intelligence plan, and each person can also close it for themselves. |
-| `OPENBOT_ACCESSIBILITY_DISABLED` | unset | `true` or `1` stops naming OpenBot on the analytics the runtime already sends. |
+| `CHISABOT_GENERATIVE_UI` | unset (capability on)               | Set `false` or `0` to stop Bots from answering with generated interfaces. |
+| `CHISABOT_SELF_HOST_BANNER` | unset (banner on)               | Set `false` or `0` to hide the bar offering help self-hosting ChisaBot, for everybody. It never shows on a paid Intelligence plan, and each person can also close it for themselves. |
+| `CHISABOT_ACCESSIBILITY_DISABLED` | unset | `true` or `1` stops naming ChisaBot on the analytics the runtime already sends. |
 | `COMPOSIO_API_KEY`   | unset                              | One key for the whole deployment, for the broker that holds people's accounts for a few hundred apps. Unset, there is nothing to connect, nothing to grant and no Composio tool for a Bot to call; what remains is one row that goes nowhere, under **More apps** on the admin Plugins page, naming this variable. See [Composio](plugins/composio.md). |
 
-**`OPENBOT_GENERATIVE_UI`** enables generated interfaces by default: streamed HTML/CSS/JavaScript
+**`CHISABOT_GENERATIVE_UI`** enables generated interfaces by default: streamed HTML/CSS/JavaScript
 in a sandboxed iframe, and A2UI interfaces built from the SDK's declarative components. A2UI buttons
 send their named action and selected values back to the current conversation's Bot.
-Set `OPENBOT_GENERATIVE_UI=false` or `0` to disable both. `true`, `1`, an empty value, or an unset
+Set `CHISABOT_GENERATIVE_UI=false` or `0` to disable both. `true`, `1`, an empty value, or an unset
 value leave the capability on. The server configures both runtime renderers and reports the same
 setting through `/api/capabilities` to the browser.
 
-**`OPENBOT_SELF_HOST_BANNER`** shows a slim bar at the top of the signed-in app offering
-CopilotKit's help self-hosting OpenBot, linking to `https://copilotkit.ai/talk-to-an-engineer` with
+**`CHISABOT_SELF_HOST_BANNER`** shows a slim bar at the top of the signed-in app offering
+CopilotKit's help self-hosting ChisaBot, linking to `https://copilotkit.ai/talk-to-an-engineer` with
 `ref=openbot_app`. Closing it is saved to that person's preferences, so it stays closed on every
 device they sign in from. Set `false` or `0` to hide it for everybody, which suits a fork running
-OpenBot for its own organization. Any other value, or none, leaves it on.
+ChisaBot for its own organization. Any other value, or none, leaves it on.
 
 Left on, it still never shows on a deployment that pays for Intelligence. The server reads the
 deployment's Intelligence entitlement and hides the bar when it is active on a paid plan (`pro`,
@@ -246,14 +246,14 @@ The browser stops recording at two minutes. Uploads are limited to 10 MiB, and p
 time out after 60 seconds. There is at most one active transcription per user and eight per server
 process. These are concurrency limits, not a distributed usage quota; deployments requiring spend
 quotas should also enforce them at their audio gateway. Provider failures never switch to another
-service. OpenBot keeps audio in memory only, retaining a failed recording in the browser for retry
+service. ChisaBot keeps audio in memory only, retaining a failed recording in the browser for retry
 until cancellation or navigation. Your configured provider's retention policy still applies.
 
 ## Authentication
 
 | Variable                     | Meaning                                                                                |
 | ---------------------------- | -------------------------------------------------------------------------------------- |
-| `OPENBOT_SINGLE_USER`        | One fixed administrator and no sign-in. **Required** when no identity provider is configured, or the deployment refuses to start. Refused on a public address. Ignored when a provider is configured. |
+| `CHISABOT_SINGLE_USER`        | One fixed administrator and no sign-in. **Required** when no identity provider is configured, or the deployment refuses to start. Refused on a public address. Ignored when a provider is configured. |
 | `GOOGLE_OAUTH_CLIENT_ID`     | Google OAuth client id.                                                                |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth client secret.                                                            |
 | `MICROSOFT_OAUTH_CLIENT_ID`  | Microsoft Entra ID application id.                                                     |
@@ -266,28 +266,28 @@ until cancellation or navigation. Your configured provider's retention policy st
 | `BETTER_AUTH_URL`            | Public API server base URL, where OAuth callbacks return. Required with any provider.  |
 | `TRUSTED_ORIGINS`            | Comma-separated app origins accepted by the API, plus every host in a registered OIDC provider's discovery document. |
 | `INITIAL_ADMIN_EMAILS`       | Comma-separated administrators. **Required** with any provider.                        |
-| `OPENBOT_PUBLIC_URL`         | Public address of this API. Defaults to `BETTER_AUTH_URL`.                              |
-| `OPENBOT_APP_URL`            | Where the browser app is served. Defaults to the first `TRUSTED_ORIGINS` entry.          |
+| `CHISABOT_PUBLIC_URL`         | Public address of this API. Defaults to `BETTER_AUTH_URL`.                              |
+| `CHISABOT_APP_URL`            | Where the browser app is served. Defaults to the first `TRUSTED_ORIGINS` entry.          |
 | `SIGNIN_ALLOWED_EMAIL_DOMAINS` | Comma-separated email domains admitted at sign-in. Empty means no opinion. Exact, no wildcards. |
 
 **Some variables belong to the desktop app, not to you.** A desktop installation writes these into
-its own deployment's `.env` and owns their values: `OPENBOT_MODEL_OAUTH_FILE`, `CHATGPT_AUTH_FILE`,
+its own deployment's `.env` and owns their values: `CHISABOT_MODEL_OAUTH_FILE`, `CHATGPT_AUTH_FILE`,
 `CLAUDE_CODE_OAUTH_TOKEN`, and the `PICKED_HARNESS_*` names that describe the Bot picked during setup
 (`PICKED_HARNESS_IMAGE`, `PICKED_HARNESS_URL`, `PICKED_HARNESS_PORT` and the rest). The server reads
 `PICKED_HARNESS_IMAGE` and `PICKED_HARNESS_URL` to hand that Bot `MANAGED_AGENT_TOKEN`, and refuses to
 start when they are set without it. When a model provider is connected by OAuth rather than by key, the
-desktop also points `OPENAI_BASE_URL` at OpenBot's own loopback route and sets `OPENAI_API_KEY` to a
+desktop also points `OPENAI_BASE_URL` at ChisaBot's own loopback route and sets `OPENAI_API_KEY` to a
 local proxy credential rather than a provider key, so those two do not mean what the table above says
 in that mode. A server you configure yourself is unaffected by all of this.
 
-**With no provider at all, `OPENBOT_SINGLE_USER=true` is required.** A deployment that configures
+**With no provider at all, `CHISABOT_SINGLE_USER=true` is required.** A deployment that configures
 nothing to sign anybody in and does not say that was deliberate refuses to start, naming what to
 configure, because a public URL where every visitor is an administrator fails silently. `NODE_ENV`
 does not enter into it. `.env.example` ships the line switched on, so a clone runs with no
-configuration at all. `OPENBOT_DEV_NO_AUTH=true`, the flag's former name, is still honoured.
+configuration at all. `CHISABOT_DEV_NO_AUTH=true`, the flag's former name, is still honoured.
 
 **But not on a public address.** The flag says you meant an open deployment; it does not say who can
-reach it. If `OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL` or any `TRUSTED_ORIGINS` entry is an address
+reach it. If `CHISABOT_PUBLIC_URL`, `CHISABOT_APP_URL` or any `TRUSTED_ORIGINS` entry is an address
 the public internet routes to, the deployment refuses to start and names it. Loopback is silent. A
 private address is allowed and warned about once at boot, because a home server, a Tailnet, a VPN
 address and a `.local` name are what this flag is mostly used for, and anybody on that network is
@@ -305,7 +305,7 @@ or `consumers`), because there the address the list is checked against is one th
 writes for itself. A production deployment that names no domains and leaves the tenant multi-tenant
 is warned rather than refused.
 
-`OPENBOT_ORGANIZATION_AUTH_URL`（上游桌面端的「组织登录」）已在瘦身 P6-4 删除；设置了它服务器会拒绝启动。
+`CHISABOT_ORGANIZATION_AUTH_URL`（上游桌面端的「组织登录」）已在瘦身 P6-4 删除；设置了它服务器会拒绝启动。
 
 **Any one provider turns sign-in on**, and several may be configured at once. Each provider's id and
 secret must be set together, Okta additionally needs its issuer, and any of them requires
@@ -334,13 +334,13 @@ added it. The client secret and any SAML signing material are encrypted at rest 
 The redirect URI to register with each provider is `<BETTER_AUTH_URL>/api/auth/callback/<provider>`,
 where `<provider>` is `google`, `microsoft` or `okta`.
 
-`OPENBOT_PUBLIC_URL` and `OPENBOT_APP_URL` matter only for a connector each person connects their own account to, such as Google Drive.
+`CHISABOT_PUBLIC_URL` and `CHISABOT_APP_URL` matter only for a connector each person connects their own account to, such as Google Drive.
 
-`OPENBOT_PUBLIC_URL` builds the redirect URI the vendor sends somebody back to after they consent, which has to match what an administrator registered with that vendor character for character — so it comes from configuration rather than from the incoming request. Most deployments never set it, because `BETTER_AUTH_URL` is already the same public address. With neither, the Plugins page says the deployment cannot complete a consent flow, and no account can be connected.
+`CHISABOT_PUBLIC_URL` builds the redirect URI the vendor sends somebody back to after they consent, which has to match what an administrator registered with that vendor character for character — so it comes from configuration rather than from the incoming request. Most deployments never set it, because `BETTER_AUTH_URL` is already the same public address. With neither, the Plugins page says the deployment cannot complete a consent flow, and no account can be connected.
 
-`OPENBOT_APP_URL` is where the callback sends the person afterwards. It is a separate setting because the app and the API are separate addresses: locally the app is Vite on `3010` and the API is `3001`, so a relative redirect would land on the API, which serves no pages. A deployment serving both from one origin can leave it unset.
+`CHISABOT_APP_URL` is where the callback sends the person afterwards. It is a separate setting because the app and the API are separate addresses: locally the app is Vite on `3010` and the API is `3001`, so a relative redirect would land on the API, which serves no pages. A deployment serving both from one origin can leave it unset.
 
-A [Composio](plugins/composio.md) app needs `OPENBOT_APP_URL` and nothing else of the two: the consent lives at the broker, so no redirect URI of ours is registered anywhere, but the address Composio returns somebody to has to be absolute and this is where it comes from. Connecting a brokered account refuses where it resolves to nothing, rather than sending somebody to a consent screen with no way back.
+A [Composio](plugins/composio.md) app needs `CHISABOT_APP_URL` and nothing else of the two: the consent lives at the broker, so no redirect URI of ours is registered anywhere, but the address Composio returns somebody to has to be absolute and this is where it comes from. Connecting a brokered account refuses where it resolves to nothing, rather than sending somebody to a consent screen with no way back.
 
 ### SCIM provisioning
 
@@ -372,17 +372,17 @@ then is a row nothing will read.
 
 ## Inbound email triggers
 
-An email trigger gets its own address, `trigger-<triggerId>@<OPENBOT_INBOUND_EMAIL_DOMAIN>`. Mail
-reaches OpenBot through Amazon SES receiving: a receipt rule for the whole domain publishes to an
-SNS topic, and that topic has an HTTPS subscription to `<public URL>/api/events/email/sns`. OpenBot
+An email trigger gets its own address, `trigger-<triggerId>@<CHISABOT_INBOUND_EMAIL_DOMAIN>`. Mail
+reaches ChisaBot through Amazon SES receiving: a receipt rule for the whole domain publishes to an
+SNS topic, and that topic has an HTTPS subscription to `<public URL>/api/events/email/sns`. ChisaBot
 checks each SNS message's AWS signature and refuses any topic not listed, because a valid signature
 proves AWS sent the message, not that the topic is yours. It confirms the subscription itself when
 SNS asks.
 
 | Variable                               | Meaning                                                                                       |
 | -------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `OPENBOT_INBOUND_EMAIL_DOMAIN`         | The domain the receipt rule covers, such as `in.example.com`.                                 |
-| `OPENBOT_INBOUND_EMAIL_SNS_TOPIC_ARNS` | Comma-separated ARNs of the SNS topics allowed to deliver mail.                               |
+| `CHISABOT_INBOUND_EMAIL_DOMAIN`         | The domain the receipt rule covers, such as `in.example.com`.                                 |
+| `CHISABOT_INBOUND_EMAIL_SNS_TOPIC_ARNS` | Comma-separated ARNs of the SNS topics allowed to deliver mail.                               |
 
 Both are needed. With either missing, the email route is not mounted, and an email trigger has no
 address: its page and the Bot both say inbound email is not configured on this deployment.
@@ -393,7 +393,7 @@ address: its page and the Bot both say inbound email is not configured on this d
 
 ## OpenTelemetry export
 
-已在瘦身 P6-1 删除（随上游企业控制一起；`OTEL_*` / `OPENBOT_OTEL_EXPORT` 不再读取）。审计记录仍写在 PostgreSQL。
+已在瘦身 P6-1 删除（随上游企业控制一起；`OTEL_*` / `CHISABOT_OTEL_EXPORT` 不再读取）。审计记录仍写在 PostgreSQL。
 
 ## Computer and supervisor
 
@@ -405,7 +405,7 @@ address: its page and the Bot both say inbound email is not configured on this d
 | `COMPUTER_BROWSER_IDLE_MS`           | How long an untouched browser is kept. 30 minutes by default; `0` keeps them resident.    |
 | `COMPUTER_BROWSER_BACKEND`           | `managed` by default (full bundled Chromium); `local-chrome` opts into installed Chrome with dedicated profiles and a loopback API. |
 | `COMPUTER_BROWSER_MODE`              | Managed on Linux defaults to `headed` on a private Xvfb display when `Xvfb` is on PATH (the image installs it), otherwise `headless` (full Chromium's new headless mode). Headless is refused outright by some Cloudflare-protected sites (x.ai, chatgpt.com); set `headless` explicitly only if you accept that. `headed` uses a native window on macOS/Windows. Local Chrome requires `headed`. |
-| `OPENBOT_LOCAL_COMPUTER_DIR`         | Local startup helper's absolute data root. Defaults to the platform's OpenBot user-data directory; contains `profiles/` and `workspace/`. |
+| `CHISABOT_LOCAL_COMPUTER_DIR`         | Local startup helper's absolute data root. Defaults to the platform's ChisaBot user-data directory; contains `profiles/` and `workspace/`. |
 | `AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS` | Local-only private-host browsing when `true`. A deployment running with `NODE_ENV=production` refuses to start while it is set. Cloud metadata addresses are refused either way. |
 | `AGENT_ENDPOINT_ALLOWED_HOSTS`       | Private addresses an agent may be registered at, comma separated; unset (none) by default. Host, optionally with a port. Exact match; no wildcards. Never-allowed addresses cannot be named. |
 | `AGENT_COMPUTER_POLICY`              | JSON action policy: `{"mode":"enforce","deny":[...],"allow":[...]}`.                      |
@@ -415,7 +415,7 @@ address: its page and the Bot both say inbound email is not configured on this d
 `COMPUTER_SANDBOX` is not the cluster sandbox provider. A Kubernetes deployment can instead run each
 computer as a sandboxed pod, selected by `COMPUTER_SANDBOX_NAMESPACE` with `COMPUTER_SANDBOX_IDLE_AFTER`
 and `COMPUTER_SANDBOX_TEMPLATE_FILE` beside it; those are set by the Helm chart, not by Compose, and
-are covered in [charts/openbot/README.md](../charts/openbot/README.md). The similarly named
+are covered in [charts/chisabot/README.md](../charts/chisabot/README.md). The similarly named
 `COMPUTER_SANDBOX` above only toggles Chromium's own process sandbox on a Docker computer.
 
 Changing `COMPUTER_BROWSER_MODE` affects new supervised computers. A computer that already exists is
@@ -424,7 +424,7 @@ all computers while preserving their browser profiles and workspaces, apply the 
 environment and remove only the owned containers (do not remove their volumes):
 
 ```sh
-docker ps -aq --filter "label=openbot.namespace=openbot" | xargs -r docker rm -f
+docker ps -aq --filter "label=chisabot.namespace=chisabot" | xargs -r docker rm -f
 ```
 
 The supervisor recreates each computer with the same named volumes on its next request.
@@ -506,15 +506,15 @@ silently selecting another browser or port. Ctrl-C shuts down its computer proce
 
 The helper ignores inherited `PROFILES_DIR` and `WORKSPACE_DIR`. Its defaults are:
 
-- macOS: `~/Library/Application Support/OpenBot/local-computer`
-- Windows: `%LOCALAPPDATA%\OpenBot\local-computer`
-- Linux: `${XDG_DATA_HOME:-~/.local/share}/openbot/local-computer`
+- macOS: `~/Library/Application Support/ChisaBot/local-computer`
+- Windows: `%LOCALAPPDATA%\ChisaBot\local-computer`
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/chisabot/local-computer`
 
-Set `OPENBOT_LOCAL_COMPUTER_DIR` to an absolute, dedicated app-owned directory to change that root.
+Set `CHISABOT_LOCAL_COMPUTER_DIR` to an absolute, dedicated app-owned directory to change that root.
 Do not point it at your personal Chrome data. Each Bot uses a separate persistent subdirectory under
 `profiles/`; no existing Chrome session is attached, and no TCP debugging endpoint is exposed.
 Native Chrome retains its process sandbox and OS credential store. File tools remain confined to
-the helper's `workspace/`, and shell execution is refused: use OpenBot's separately approved host
+the helper's `workspace/`, and shell execution is refused: use ChisaBot's separately approved host
 access tools for host commands. Native Chrome runs with your OS account's network access; this mode
 is not a container or an OS network sandbox. Keep the API's private-host browsing opt-in off unless
 you intentionally need it for your local deployment.
@@ -588,7 +588,7 @@ symlinks that path to the rootless socket. Rootless Podman on Linux needs
 symlink to the rootful socket, which is not the one running, and the supervisor reports that it
 cannot reach Docker.
 
-`COMPUTER_NAMESPACE` defaults to `openbot` and names the deployment a computer belongs to. It is part
+`COMPUTER_NAMESPACE` defaults to `chisabot` and names the deployment a computer belongs to. It is part
 of every container and volume name the supervisor derives, and the supervisor acts only on computers
 carrying it, so two deployments on one Docker host never adopt each other's.
 
@@ -597,8 +597,8 @@ not remove them: their containers keep running and their profile volumes, which 
 Bots are signed in to, survive. Remove them by the label the supervisor sets:
 
 ```sh
-docker ps -aq --filter "label=openbot.namespace=openbot" | xargs -r docker rm -f
-docker volume ls -q --filter "label=openbot.namespace=openbot" | xargs -r docker volume rm
+docker ps -aq --filter "label=chisabot.namespace=chisabot" | xargs -r docker rm -f
+docker volume ls -q --filter "label=chisabot.namespace=chisabot" | xargs -r docker volume rm
 ```
 
 Proxy credentials may appear in proxy URLs, but the computer strips them before reporting proxy status.
@@ -663,7 +663,7 @@ from the same `.env` does. Threads are listed per Bot and carry nothing else tha
 conversation came from, so the name goes into every thread id a deployment mints and is how its own
 conversations stay tellable from the other's.
 
-Set `OPENBOT_ONE_COMPUTER_EACH=false` when using `start.sh` to run all Bots against one shared computer.
+Set `CHISABOT_ONE_COMPUTER_EACH=false` when using `start.sh` to run all Bots against one shared computer.
 
 ## Tenant package
 
@@ -685,8 +685,8 @@ examples/fintech/
 
 ```yaml
 tenant:
-  id: openbot
-  product_name: OpenBot
+  id: chisabot
+  product_name: ChisaBot
 ```
 
 Optional theme:

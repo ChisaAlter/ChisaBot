@@ -24,7 +24,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   errorComponent: StartupFailure,
   /*
    * 认不出的地址给一个真正的 404（`not-found.tsx`）。不再 `<Navigate replace to="/" />`：`/` 会按
-   * 「上次停在哪」跳到 Claude Code，打错一个地址就变成「应用突然换了页面」的错觉，人也说不出原本想看
+   * 「上次停在哪」跳到别的页签，打错一个地址就变成「应用突然换了页面」的错觉，人也说不出原本想看
    * 的是什么（2026-10-20 审查）。地址栏不改写，刷新 / 后退 / 复制链接都还是那个地址。
    */
   notFoundComponent: NotFoundRoute,

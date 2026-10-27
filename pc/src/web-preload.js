@@ -74,27 +74,6 @@ if (isLocalPage) {
       enroll: () => ipcRenderer.invoke("pc:enroll"),
       reconnect: () => ipcRenderer.invoke("pc:reconnect"),
       logout: () => ipcRenderer.invoke("pc:logout"),
-      // 电脑文件夹同步（P4b，DESIGN.md §73.9）：网页里的「电脑上的文件夹」、同步面板、冲突对话框用。
-      // 路径只能来自 pick() 弹出的系统对话框；主进程再核对一次。
-      sync: {
-        // 2（0.1.15 起）：create 失败会自己撤销；多了 forget（解除已在云端删掉的工作区留下的本机同步记录，DESIGN.md §87）
-        version: 2,
-        status: () => ipcRenderer.invoke("pc:sync-status"),
-        pick: (opts) => ipcRenderer.invoke("pc:sync-pick", { forEnable: !!(opts && opts.forEnable) }),
-        create: (input) => ipcRenderer.invoke("pc:sync-create", { path: String(input?.path || ""), name: String(input?.name || ""), enableSync: input?.enableSync !== false }),
-        enable: (input) =>
-          ipcRenderer.invoke("pc:sync-enable", { workspaceId: String(input?.workspaceId || ""), path: input?.path ? String(input.path) : null, name: String(input?.name || ""), source: String(input?.source || "") }),
-        release: (workspaceId) => ipcRenderer.invoke("pc:sync-release", { workspaceId: String(workspaceId || "") }),
-        forget: (workspaceId) => ipcRenderer.invoke("pc:sync-forget", { workspaceId: String(workspaceId || "") }),
-        syncNow: (workspaceId) => ipcRenderer.invoke("pc:sync-now", { workspaceId: String(workspaceId || "") }),
-        resolve: (input) => ipcRenderer.invoke("pc:sync-resolve", { workspaceId: String(input?.workspaceId || ""), path: String(input?.path || ""), choice: String(input?.choice || "") }),
-        openFolder: (workspaceId) => ipcRenderer.invoke("pc:sync-open-folder", { workspaceId: String(workspaceId || "") }),
-        onChange(callback) {
-          const listener = () => callback();
-          ipcRenderer.on("sync:changed", listener);
-          return () => ipcRenderer.removeListener("sync:changed", listener);
-        },
-      },
       onChange(callback) {
         const listener = () => callback();
         ipcRenderer.on("state:changed", listener);

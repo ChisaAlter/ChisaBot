@@ -18,7 +18,7 @@ import { Route as AuthedSettingsRouteRouteImport } from './routes/_authed/settin
 import { Route as AuthedAppIndexRouteImport } from './routes/_authed/_app/index'
 import { Route as AuthedAppApprovalsRouteImport } from './routes/_authed/_app/approvals'
 import { Route as AuthedAppBotRouteImport } from './routes/_authed/_app/bot'
-import { Route as AuthedAppCcRouteRouteImport } from './routes/_authed/_app/cc/route'
+import { Route as AuthedAppCcRouteImport } from './routes/_authed/_app/cc'
 import { Route as AuthedAppMemoryRouteImport } from './routes/_authed/_app/memory'
 import { Route as AuthedAppReachabilityRouteImport } from './routes/_authed/_app/reachability'
 import { Route as AuthedAppResponsibilitiesRouteImport } from './routes/_authed/_app/responsibilities'
@@ -43,7 +43,6 @@ import { Route as AuthedAdminSkillsRouteImport } from './routes/_authed/admin/sk
 import { Route as AuthedAdminSystemUpdateRouteImport } from './routes/_authed/admin/system-update'
 import { Route as AuthedSettingsIndexRouteImport } from './routes/_authed/settings/index'
 import { Route as AuthedSettingsApprovalsRouteImport } from './routes/_authed/settings/approvals'
-import { Route as AuthedSettingsCloudWorkspaceRouteImport } from './routes/_authed/settings/cloud-workspace'
 import { Route as AuthedSettingsComponentsGalleryRouteImport } from './routes/_authed/settings/components-gallery'
 import { Route as AuthedSettingsImRouteImport } from './routes/_authed/settings/im'
 import { Route as AuthedSettingsMediaRouteImport } from './routes/_authed/settings/media'
@@ -58,8 +57,7 @@ import { Route as AuthedSignInRequestIdRouteImport } from './routes/_authed/sign
 import { Route as AuthedAppAgentsIndexRouteImport } from './routes/_authed/_app/agents/index'
 import { Route as AuthedAppBotsIndexRouteImport } from './routes/_authed/_app/bots.index'
 import { Route as AuthedAppBotsAgentIdRouteImport } from './routes/_authed/_app/bots.$agentId'
-import { Route as AuthedAppCcIndexRouteImport } from './routes/_authed/_app/cc/index'
-import { Route as AuthedAppCcSessionIdRouteImport } from './routes/_authed/_app/cc/$sessionId'
+import { Route as AuthedAppCcSplatRouteImport } from './routes/_authed/_app/cc.$'
 import { Route as AuthedAppChannelChannelIdRouteImport } from './routes/_authed/_app/channel/$channelId'
 import { Route as AuthedAppChannelNewRouteImport } from './routes/_authed/_app/channel/new'
 import { Route as AuthedAppGroupChannelIdRouteImport } from './routes/_authed/_app/group/$channelId'
@@ -124,7 +122,7 @@ const AuthedAppBotRoute = AuthedAppBotRouteImport.update({
   path: '/bot',
   getParentRoute: () => AuthedAppRoute,
 } as any)
-const AuthedAppCcRouteRoute = AuthedAppCcRouteRouteImport.update({
+const AuthedAppCcRoute = AuthedAppCcRouteImport.update({
   id: '/cc',
   path: '/cc',
   getParentRoute: () => AuthedAppRoute,
@@ -251,12 +249,6 @@ const AuthedSettingsApprovalsRoute = AuthedSettingsApprovalsRouteImport.update({
   path: '/approvals',
   getParentRoute: () => AuthedSettingsRouteRoute,
 } as any)
-const AuthedSettingsCloudWorkspaceRoute =
-  AuthedSettingsCloudWorkspaceRouteImport.update({
-    id: '/cloud-workspace',
-    path: '/cloud-workspace',
-    getParentRoute: () => AuthedSettingsRouteRoute,
-  } as any)
 const AuthedSettingsComponentsGalleryRoute =
   AuthedSettingsComponentsGalleryRouteImport.update({
     id: '/components-gallery',
@@ -328,15 +320,10 @@ const AuthedAppBotsAgentIdRoute = AuthedAppBotsAgentIdRouteImport.update({
   path: '/bots/$agentId',
   getParentRoute: () => AuthedAppRoute,
 } as any)
-const AuthedAppCcIndexRoute = AuthedAppCcIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => AuthedAppCcRouteRoute,
-} as any)
-const AuthedAppCcSessionIdRoute = AuthedAppCcSessionIdRouteImport.update({
-  id: '/$sessionId',
-  path: '/$sessionId',
-  getParentRoute: () => AuthedAppCcRouteRoute,
+const AuthedAppCcSplatRoute = AuthedAppCcSplatRouteImport.update({
+  id: '/$',
+  path: '/$',
+  getParentRoute: () => AuthedAppCcRoute,
 } as any)
 const AuthedAppChannelChannelIdRoute =
   AuthedAppChannelChannelIdRouteImport.update({
@@ -458,9 +445,9 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AuthedAdminRouteRouteWithChildren
   '/settings': typeof AuthedSettingsRouteRouteWithChildren
   '/onboarding': typeof AuthedOnboardingRoute
-  '/cc': typeof AuthedAppCcRouteRouteWithChildren
   '/approvals': typeof AuthedAppApprovalsRoute
   '/bot': typeof AuthedAppBotRoute
+  '/cc': typeof AuthedAppCcRouteWithChildren
   '/memory': typeof AuthedAppMemoryRoute
   '/reachability': typeof AuthedAppReachabilityRoute
   '/responsibilities': typeof AuthedAppResponsibilitiesRoute
@@ -483,7 +470,6 @@ export interface FileRoutesByFullPath {
   '/admin/skills': typeof AuthedAdminSkillsRoute
   '/admin/system-update': typeof AuthedAdminSystemUpdateRoute
   '/settings/approvals': typeof AuthedSettingsApprovalsRoute
-  '/settings/cloud-workspace': typeof AuthedSettingsCloudWorkspaceRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/settings/im': typeof AuthedSettingsImRoute
   '/settings/media': typeof AuthedSettingsMediaRoute
@@ -498,7 +484,7 @@ export interface FileRoutesByFullPath {
   '/admin/': typeof AuthedAdminIndexRoute
   '/settings/': typeof AuthedSettingsIndexRoute
   '/bots/$agentId': typeof AuthedAppBotsAgentIdRoute
-  '/cc/$sessionId': typeof AuthedAppCcSessionIdRoute
+  '/cc/$': typeof AuthedAppCcSplatRoute
   '/channel/$channelId': typeof AuthedAppChannelChannelIdRoute
   '/channel/new': typeof AuthedAppChannelNewRoute
   '/group/$channelId': typeof AuthedAppGroupChannelIdRoute
@@ -512,7 +498,6 @@ export interface FileRoutesByFullPath {
   '/settings/devices/$deviceId': typeof AuthedSettingsDevicesDeviceIdRoute
   '/agents/': typeof AuthedAppAgentsIndexRoute
   '/bots/': typeof AuthedAppBotsIndexRoute
-  '/cc/': typeof AuthedAppCcIndexRoute
   '/workflows/': typeof AuthedAppWorkflowsIndexRoute
   '/admin/components/': typeof AuthedAdminComponentsIndexRoute
   '/admin/magpie/': typeof AuthedAdminMagpieIndexRoute
@@ -529,6 +514,7 @@ export interface FileRoutesByTo {
   '/onboarding': typeof AuthedOnboardingRoute
   '/approvals': typeof AuthedAppApprovalsRoute
   '/bot': typeof AuthedAppBotRoute
+  '/cc': typeof AuthedAppCcRouteWithChildren
   '/memory': typeof AuthedAppMemoryRoute
   '/reachability': typeof AuthedAppReachabilityRoute
   '/responsibilities': typeof AuthedAppResponsibilitiesRoute
@@ -551,7 +537,6 @@ export interface FileRoutesByTo {
   '/admin/skills': typeof AuthedAdminSkillsRoute
   '/admin/system-update': typeof AuthedAdminSystemUpdateRoute
   '/settings/approvals': typeof AuthedSettingsApprovalsRoute
-  '/settings/cloud-workspace': typeof AuthedSettingsCloudWorkspaceRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/settings/im': typeof AuthedSettingsImRoute
   '/settings/media': typeof AuthedSettingsMediaRoute
@@ -566,7 +551,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AuthedAdminIndexRoute
   '/settings': typeof AuthedSettingsIndexRoute
   '/bots/$agentId': typeof AuthedAppBotsAgentIdRoute
-  '/cc/$sessionId': typeof AuthedAppCcSessionIdRoute
+  '/cc/$': typeof AuthedAppCcSplatRoute
   '/channel/$channelId': typeof AuthedAppChannelChannelIdRoute
   '/channel/new': typeof AuthedAppChannelNewRoute
   '/group/$channelId': typeof AuthedAppGroupChannelIdRoute
@@ -580,7 +565,6 @@ export interface FileRoutesByTo {
   '/settings/devices/$deviceId': typeof AuthedSettingsDevicesDeviceIdRoute
   '/agents': typeof AuthedAppAgentsIndexRoute
   '/bots': typeof AuthedAppBotsIndexRoute
-  '/cc': typeof AuthedAppCcIndexRoute
   '/workflows': typeof AuthedAppWorkflowsIndexRoute
   '/admin/components': typeof AuthedAdminComponentsIndexRoute
   '/admin/magpie': typeof AuthedAdminMagpieIndexRoute
@@ -599,9 +583,9 @@ export interface FileRoutesById {
   '/_authed/settings': typeof AuthedSettingsRouteRouteWithChildren
   '/_authed/_app': typeof AuthedAppRouteWithChildren
   '/_authed/onboarding': typeof AuthedOnboardingRoute
-  '/_authed/_app/cc': typeof AuthedAppCcRouteRouteWithChildren
   '/_authed/_app/approvals': typeof AuthedAppApprovalsRoute
   '/_authed/_app/bot': typeof AuthedAppBotRoute
+  '/_authed/_app/cc': typeof AuthedAppCcRouteWithChildren
   '/_authed/_app/memory': typeof AuthedAppMemoryRoute
   '/_authed/_app/reachability': typeof AuthedAppReachabilityRoute
   '/_authed/_app/responsibilities': typeof AuthedAppResponsibilitiesRoute
@@ -624,7 +608,6 @@ export interface FileRoutesById {
   '/_authed/admin/skills': typeof AuthedAdminSkillsRoute
   '/_authed/admin/system-update': typeof AuthedAdminSystemUpdateRoute
   '/_authed/settings/approvals': typeof AuthedSettingsApprovalsRoute
-  '/_authed/settings/cloud-workspace': typeof AuthedSettingsCloudWorkspaceRoute
   '/_authed/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/_authed/settings/im': typeof AuthedSettingsImRoute
   '/_authed/settings/media': typeof AuthedSettingsMediaRoute
@@ -640,7 +623,7 @@ export interface FileRoutesById {
   '/_authed/admin/': typeof AuthedAdminIndexRoute
   '/_authed/settings/': typeof AuthedSettingsIndexRoute
   '/_authed/_app/bots/$agentId': typeof AuthedAppBotsAgentIdRoute
-  '/_authed/_app/cc/$sessionId': typeof AuthedAppCcSessionIdRoute
+  '/_authed/_app/cc/$': typeof AuthedAppCcSplatRoute
   '/_authed/_app/channel/$channelId': typeof AuthedAppChannelChannelIdRoute
   '/_authed/_app/channel/new': typeof AuthedAppChannelNewRoute
   '/_authed/_app/group/$channelId': typeof AuthedAppGroupChannelIdRoute
@@ -654,7 +637,6 @@ export interface FileRoutesById {
   '/_authed/settings/devices/$deviceId': typeof AuthedSettingsDevicesDeviceIdRoute
   '/_authed/_app/agents/': typeof AuthedAppAgentsIndexRoute
   '/_authed/_app/bots/': typeof AuthedAppBotsIndexRoute
-  '/_authed/_app/cc/': typeof AuthedAppCcIndexRoute
   '/_authed/_app/workflows/': typeof AuthedAppWorkflowsIndexRoute
   '/_authed/admin/components/': typeof AuthedAdminComponentsIndexRoute
   '/_authed/admin/magpie/': typeof AuthedAdminMagpieIndexRoute
@@ -673,9 +655,9 @@ export interface FileRouteTypes {
     | '/admin'
     | '/settings'
     | '/onboarding'
-    | '/cc'
     | '/approvals'
     | '/bot'
+    | '/cc'
     | '/memory'
     | '/reachability'
     | '/responsibilities'
@@ -698,7 +680,6 @@ export interface FileRouteTypes {
     | '/admin/skills'
     | '/admin/system-update'
     | '/settings/approvals'
-    | '/settings/cloud-workspace'
     | '/settings/components-gallery'
     | '/settings/im'
     | '/settings/media'
@@ -713,7 +694,7 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/settings/'
     | '/bots/$agentId'
-    | '/cc/$sessionId'
+    | '/cc/$'
     | '/channel/$channelId'
     | '/channel/new'
     | '/group/$channelId'
@@ -727,7 +708,6 @@ export interface FileRouteTypes {
     | '/settings/devices/$deviceId'
     | '/agents/'
     | '/bots/'
-    | '/cc/'
     | '/workflows/'
     | '/admin/components/'
     | '/admin/magpie/'
@@ -744,6 +724,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/approvals'
     | '/bot'
+    | '/cc'
     | '/memory'
     | '/reachability'
     | '/responsibilities'
@@ -766,7 +747,6 @@ export interface FileRouteTypes {
     | '/admin/skills'
     | '/admin/system-update'
     | '/settings/approvals'
-    | '/settings/cloud-workspace'
     | '/settings/components-gallery'
     | '/settings/im'
     | '/settings/media'
@@ -781,7 +761,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/settings'
     | '/bots/$agentId'
-    | '/cc/$sessionId'
+    | '/cc/$'
     | '/channel/$channelId'
     | '/channel/new'
     | '/group/$channelId'
@@ -795,7 +775,6 @@ export interface FileRouteTypes {
     | '/settings/devices/$deviceId'
     | '/agents'
     | '/bots'
-    | '/cc'
     | '/workflows'
     | '/admin/components'
     | '/admin/magpie'
@@ -813,9 +792,9 @@ export interface FileRouteTypes {
     | '/_authed/settings'
     | '/_authed/_app'
     | '/_authed/onboarding'
-    | '/_authed/_app/cc'
     | '/_authed/_app/approvals'
     | '/_authed/_app/bot'
+    | '/_authed/_app/cc'
     | '/_authed/_app/memory'
     | '/_authed/_app/reachability'
     | '/_authed/_app/responsibilities'
@@ -838,7 +817,6 @@ export interface FileRouteTypes {
     | '/_authed/admin/skills'
     | '/_authed/admin/system-update'
     | '/_authed/settings/approvals'
-    | '/_authed/settings/cloud-workspace'
     | '/_authed/settings/components-gallery'
     | '/_authed/settings/im'
     | '/_authed/settings/media'
@@ -854,7 +832,7 @@ export interface FileRouteTypes {
     | '/_authed/admin/'
     | '/_authed/settings/'
     | '/_authed/_app/bots/$agentId'
-    | '/_authed/_app/cc/$sessionId'
+    | '/_authed/_app/cc/$'
     | '/_authed/_app/channel/$channelId'
     | '/_authed/_app/channel/new'
     | '/_authed/_app/group/$channelId'
@@ -868,7 +846,6 @@ export interface FileRouteTypes {
     | '/_authed/settings/devices/$deviceId'
     | '/_authed/_app/agents/'
     | '/_authed/_app/bots/'
-    | '/_authed/_app/cc/'
     | '/_authed/_app/workflows/'
     | '/_authed/admin/components/'
     | '/_authed/admin/magpie/'
@@ -954,7 +931,7 @@ declare module '@tanstack/react-router' {
       id: '/_authed/_app/cc'
       path: '/cc'
       fullPath: '/cc'
-      preLoaderRoute: typeof AuthedAppCcRouteRouteImport
+      preLoaderRoute: typeof AuthedAppCcRouteImport
       parentRoute: typeof AuthedAppRoute
     }
     '/_authed/_app/memory': {
@@ -1125,13 +1102,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedSettingsApprovalsRouteImport
       parentRoute: typeof AuthedSettingsRouteRoute
     }
-    '/_authed/settings/cloud-workspace': {
-      id: '/_authed/settings/cloud-workspace'
-      path: '/cloud-workspace'
-      fullPath: '/settings/cloud-workspace'
-      preLoaderRoute: typeof AuthedSettingsCloudWorkspaceRouteImport
-      parentRoute: typeof AuthedSettingsRouteRoute
-    }
     '/_authed/settings/components-gallery': {
       id: '/_authed/settings/components-gallery'
       path: '/components-gallery'
@@ -1230,19 +1200,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAppBotsAgentIdRouteImport
       parentRoute: typeof AuthedAppRoute
     }
-    '/_authed/_app/cc/': {
-      id: '/_authed/_app/cc/'
-      path: '/'
-      fullPath: '/cc/'
-      preLoaderRoute: typeof AuthedAppCcIndexRouteImport
-      parentRoute: typeof AuthedAppCcRouteRoute
-    }
-    '/_authed/_app/cc/$sessionId': {
-      id: '/_authed/_app/cc/$sessionId'
-      path: '/$sessionId'
-      fullPath: '/cc/$sessionId'
-      preLoaderRoute: typeof AuthedAppCcSessionIdRouteImport
-      parentRoute: typeof AuthedAppCcRouteRoute
+    '/_authed/_app/cc/$': {
+      id: '/_authed/_app/cc/$'
+      path: '/$'
+      fullPath: '/cc/$'
+      preLoaderRoute: typeof AuthedAppCcSplatRouteImport
+      parentRoute: typeof AuthedAppCcRoute
     }
     '/_authed/_app/channel/$channelId': {
       id: '/_authed/_app/channel/$channelId'
@@ -1448,7 +1411,6 @@ const AuthedAdminRouteRouteWithChildren =
 
 interface AuthedSettingsRouteRouteChildren {
   AuthedSettingsApprovalsRoute: typeof AuthedSettingsApprovalsRoute
-  AuthedSettingsCloudWorkspaceRoute: typeof AuthedSettingsCloudWorkspaceRoute
   AuthedSettingsComponentsGalleryRoute: typeof AuthedSettingsComponentsGalleryRoute
   AuthedSettingsImRoute: typeof AuthedSettingsImRoute
   AuthedSettingsMediaRoute: typeof AuthedSettingsMediaRoute
@@ -1468,7 +1430,6 @@ interface AuthedSettingsRouteRouteChildren {
 
 const AuthedSettingsRouteRouteChildren: AuthedSettingsRouteRouteChildren = {
   AuthedSettingsApprovalsRoute: AuthedSettingsApprovalsRoute,
-  AuthedSettingsCloudWorkspaceRoute: AuthedSettingsCloudWorkspaceRoute,
   AuthedSettingsComponentsGalleryRoute: AuthedSettingsComponentsGalleryRoute,
   AuthedSettingsImRoute: AuthedSettingsImRoute,
   AuthedSettingsMediaRoute: AuthedSettingsMediaRoute,
@@ -1491,23 +1452,22 @@ const AuthedSettingsRouteRouteChildren: AuthedSettingsRouteRouteChildren = {
 const AuthedSettingsRouteRouteWithChildren =
   AuthedSettingsRouteRoute._addFileChildren(AuthedSettingsRouteRouteChildren)
 
-interface AuthedAppCcRouteRouteChildren {
-  AuthedAppCcSessionIdRoute: typeof AuthedAppCcSessionIdRoute
-  AuthedAppCcIndexRoute: typeof AuthedAppCcIndexRoute
+interface AuthedAppCcRouteChildren {
+  AuthedAppCcSplatRoute: typeof AuthedAppCcSplatRoute
 }
 
-const AuthedAppCcRouteRouteChildren: AuthedAppCcRouteRouteChildren = {
-  AuthedAppCcSessionIdRoute: AuthedAppCcSessionIdRoute,
-  AuthedAppCcIndexRoute: AuthedAppCcIndexRoute,
+const AuthedAppCcRouteChildren: AuthedAppCcRouteChildren = {
+  AuthedAppCcSplatRoute: AuthedAppCcSplatRoute,
 }
 
-const AuthedAppCcRouteRouteWithChildren =
-  AuthedAppCcRouteRoute._addFileChildren(AuthedAppCcRouteRouteChildren)
+const AuthedAppCcRouteWithChildren = AuthedAppCcRoute._addFileChildren(
+  AuthedAppCcRouteChildren,
+)
 
 interface AuthedAppRouteChildren {
-  AuthedAppCcRouteRoute: typeof AuthedAppCcRouteRouteWithChildren
   AuthedAppApprovalsRoute: typeof AuthedAppApprovalsRoute
   AuthedAppBotRoute: typeof AuthedAppBotRoute
+  AuthedAppCcRoute: typeof AuthedAppCcRouteWithChildren
   AuthedAppMemoryRoute: typeof AuthedAppMemoryRoute
   AuthedAppReachabilityRoute: typeof AuthedAppReachabilityRoute
   AuthedAppResponsibilitiesRoute: typeof AuthedAppResponsibilitiesRoute
@@ -1528,9 +1488,9 @@ interface AuthedAppRouteChildren {
 }
 
 const AuthedAppRouteChildren: AuthedAppRouteChildren = {
-  AuthedAppCcRouteRoute: AuthedAppCcRouteRouteWithChildren,
   AuthedAppApprovalsRoute: AuthedAppApprovalsRoute,
   AuthedAppBotRoute: AuthedAppBotRoute,
+  AuthedAppCcRoute: AuthedAppCcRouteWithChildren,
   AuthedAppMemoryRoute: AuthedAppMemoryRoute,
   AuthedAppReachabilityRoute: AuthedAppReachabilityRoute,
   AuthedAppResponsibilitiesRoute: AuthedAppResponsibilitiesRoute,

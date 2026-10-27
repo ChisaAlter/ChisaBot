@@ -135,7 +135,7 @@ describe("accessFor", () => {
 
   test("Routines is in-process, with no credential, and acts as the person", () => {
     // Resolved the way a row is written rather than spelled by hand. The url this used to carry —
-    // `openbot://routines` — is a scheme this codebase does not have anywhere, so the row shape the
+    // `chisabot://routines` — is a scheme this codebase does not have anywhere, so the row shape the
     // test claims to cover was not the one being passed in.
     const routines = resolveServerUrl("routines");
     if (!routines) {

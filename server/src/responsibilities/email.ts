@@ -5,16 +5,16 @@
  * WHY THIS ROUTE. It is the one established inbound-mail path that works identically on AWS and on a
  * self-hosted deployment (SES receiving only needs an AWS account and an MX record, not AWS
  * hosting), needs no mailbox credentials, and is authenticated by AWS's own published signature
- * scheme rather than a secret we would have to distribute. OpenBot has no Gmail/Outlook push
+ * scheme rather than a secret we would have to distribute. ChisaBot has no Gmail/Outlook push
  * connector to watch a mailbox with (the Workspace MCP servers are request/response only).
  *
- * Each email trigger gets its own address, `trigger-<triggerId>@<OPENBOT_INBOUND_EMAIL_DOMAIN>`; the
+ * Each email trigger gets its own address, `trigger-<triggerId>@<CHISABOT_INBOUND_EMAIL_DOMAIN>`; the
  * receipt rule covers the whole domain and routing happens here by the envelope recipients SES
  * reports. SNS messages are verified per AWS's documented procedure
  * (https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html): the signing
  * certificate is fetched only over HTTPS from an `sns.<region>.amazonaws.com` host, the canonical
  * string is rebuilt from the named fields, SignatureVersion 1 is RSA-SHA1 and 2 is RSA-SHA256, and a
- * message from any topic not in OPENBOT_INBOUND_EMAIL_SNS_TOPIC_ARNS is refused (a valid AWS
+ * message from any topic not in CHISABOT_INBOUND_EMAIL_SNS_TOPIC_ARNS is refused (a valid AWS
  * signature proves AWS sent it, not that it is our topic).
  */
 import { createVerify, X509Certificate } from "node:crypto";
@@ -29,8 +29,8 @@ export type InboundEmailConfig = { domain: string; topicArns: string[] };
 export function inboundEmailConfigFromEnv(
   env: Record<string, string | undefined>,
 ): InboundEmailConfig | null {
-  const domain = env.OPENBOT_INBOUND_EMAIL_DOMAIN?.trim().toLowerCase();
-  const topicArns = (env.OPENBOT_INBOUND_EMAIL_SNS_TOPIC_ARNS ?? "")
+  const domain = env.CHISABOT_INBOUND_EMAIL_DOMAIN?.trim().toLowerCase();
+  const topicArns = (env.CHISABOT_INBOUND_EMAIL_SNS_TOPIC_ARNS ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);

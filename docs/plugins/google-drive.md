@@ -42,20 +42,20 @@ credential is otherwise good is most often this API not being enabled on the pro
 Type **Web application**. Under **Authorised redirect URIs**, add this deployment's callback:
 
 ```
-<OPENBOT_PUBLIC_URL>/api/plugins/oauth/callback
+<CHISABOT_PUBLIC_URL>/api/plugins/oauth/callback
 ```
 
 Locally that is `http://localhost:3001/api/plugins/oauth/callback` — port 3001, the API, not 3010,
 the app. The callback lands on the API and redirects back to the app afterwards.
 
-It has to match character for character: scheme, host, port, path, no trailing slash. OpenBot shows
+It has to match character for character: scheme, host, port, path, no trailing slash. ChisaBot shows
 the exact string to paste under the **Connection** section of the plugin page, built from
-`OPENBOT_PUBLIC_URL` rather than from the incoming request — a redirect URI assembled from a request
+`CHISABOT_PUBLIC_URL` rather than from the incoming request — a redirect URI assembled from a request
 header is one an attacker has a say in. Copy it from there rather than typing it.
 
 Keep the client ID and client secret for the next step.
 
-### 4. Enable the connector in OpenBot
+### 4. Enable the connector in ChisaBot
 
 At `/admin/plugins/google-drive`:
 
@@ -65,7 +65,7 @@ At `/admin/plugins/google-drive`:
 3. Press **Refresh tools**, which records the four read tools this connector implements.
 
 That completes setup. No personal account is needed to get this far — the tool list for this
-connector is OpenBot's own code rather than an answer from a remote server, so there is nothing to
+connector is ChisaBot's own code rather than an answer from a remote server, so there is nothing to
 authenticate in order to read it.
 
 To check it actually works, use **Your account** on the same page: it connects *your* Google account
@@ -82,11 +82,11 @@ audit row.
 ## What each person does
 
 At `/settings/connected-accounts`, Google Drive appears once an administrator has enabled it. Open it
-and press **Connect**. That leaves OpenBot for Google's own consent screen — the arrow on the button
+and press **Connect**. That leaves ChisaBot for Google's own consent screen — the arrow on the button
 says so — and returns to the same page, which then reads **Connected** with the scope Google actually
 granted.
 
-Nothing is cached. OpenBot stores the refresh token and mints a short-lived access token for each
+Nothing is cached. ChisaBot stores the refresh token and mints a short-lived access token for each
 call, so revoking access at Google takes effect on the next call rather than whenever a cache
 expires.
 
@@ -99,7 +99,7 @@ that would report access withdrawn when it had not been.
 
 ## Troubleshooting
 
-Every message below is what OpenBot actually shows. They are worth reading literally: the connector
+Every message below is what ChisaBot actually shows. They are worth reading literally: the connector
 distinguishes "the credential was refused" from "the credential was accepted and the request was
 refused", and those have completely different fixes.
 
@@ -119,7 +119,7 @@ still leaves each tool ungranted.
 
 ### `redirect_uri_mismatch` on the consent screen
 
-Google is comparing the `redirect_uri` OpenBot sent against the list on the OAuth client, as exact
+Google is comparing the `redirect_uri` ChisaBot sent against the list on the OAuth client, as exact
 strings. Compare the value shown under **Connection** on the plugin page with what is registered,
 character for character. Common mismatches: `127.0.0.1` against `localhost`, the app's port instead
 of the API's, `https` against `http`, a trailing slash.
@@ -161,7 +161,7 @@ by design, since a fallback would answer with somebody else's access.
 
 ### The connection worked and stopped about an hour later
 
-That is an access token with no refresh token behind it, which OpenBot refuses to store precisely so
+That is an access token with no refresh token behind it, which ChisaBot refuses to store precisely so
 this cannot happen; if you see it, say so, because it means something got past that check. Google
 returns no refresh token when it believes the person already consented, which is why the
 authorization URL sends both `access_type=offline` and `prompt=consent`.
@@ -173,8 +173,8 @@ rather than handed an empty string it would fill in from memory.
 
 ## See also
 
-- [Architecture](../openbot-architecture.md) — where plugins, grants, policy and audit sit.
-- [Configuration](../configuration.md) — `OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL`,
+- [Architecture](../chisabot-architecture.md) — where plugins, grants, policy and audit sit.
+- [Configuration](../configuration.md) — `CHISABOT_PUBLIC_URL`, `CHISABOT_APP_URL`,
   `KEY_ENCRYPTION_KEY`.
 - [Google Drive API](https://developers.google.com/workspace/drive/api/reference/rest/v3) — the REST
   API this connector calls.

@@ -11,7 +11,7 @@ import { z } from "zod";
 /** 确认卡片 + 审批偏好（DESIGN.md §58）：分类、偏好 / 规则、等确认、取消、非网页回合、后来才确认。 */
 describe("classify", () => {
   test("tool categories", () => {
-    expect(categoryOfTool("delete_routine", "openbot-routines/delete_routine")).toBe("delete");
+    expect(categoryOfTool("delete_routine", "chisabot-routines/delete_routine")).toBe("delete");
     expect(categoryOfTool("panel_remove", "live-panels/panel_remove")).toBe("delete");
     expect(categoryOfTool("panel_update", "live-panels/panel_update")).toBeNull();
     expect(categoryOfTool("GMAIL_SEND_EMAIL", "composio/GMAIL_SEND_EMAIL")).toBe("message");
@@ -81,7 +81,7 @@ describe.skipIf(!url)("confirmations service", () => {
   const executed: unknown[] = [];
   const deleteTool: GrantedTool = {
     name: "delete_routine",
-    ref: "openbot-routines/delete_routine",
+    ref: "chisabot-routines/delete_routine",
     description: "x",
     parameters: z.object({ routineId: z.string() }),
     execute: async (args) => {

@@ -6,6 +6,7 @@ import { BookmarksBar, BookmarkStar } from "@/components/computer/bookmarks-bar"
 import { TabStrip } from "@/components/computer/browser-tabs";
 import { findBookmark, sameBookmarkUrl, siteMonogram } from "@/lib/browser-bookmarks";
 import { parseTabsView, setTabsView } from "@/lib/computers/tabs";
+import { settleReactWork } from "./settle-react-work";
 
 /** 浏览器多标签 + 收藏夹（DESIGN.md §95）。 */
 
@@ -59,7 +60,8 @@ afterEach(() => {
   cleanup();
   calls = [];
 });
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   globalThis.fetch = realFetch;
   // 2026-10-20 清基线：注册过就要收回来，否则后面的文件会撞「Happy DOM has already been globally registered」。
   if (GlobalRegistrator.isRegistered) GlobalRegistrator.unregister();

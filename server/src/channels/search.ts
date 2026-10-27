@@ -14,6 +14,13 @@ export type ChannelSearchHit = {
   highlight: { start: number; end: number };
   messageId: string | null;
   role: string | null;
+  /** 这段对话的机器人（CB-106：结果里显示机器人名）。 */
+  agentId: string | null;
+  /**
+   * 对话最近一次更新的时间。消息本身不存时间戳（openbot_local_threads.messages 只有 id/role/content），
+   * 所以这里给的是会话时间，界面上写「最近活动」而不是冒充消息时间。
+   */
+  updatedAt: string | null;
 };
 
 type StoredMessage = {
@@ -27,6 +34,8 @@ type SearchRow = {
   name: string;
   summary: string | null;
   thread_id: string;
+  agent_id: string | null;
+  updated_at: Date | string | null;
   messages: StoredMessage[] | string;
 };
 
@@ -77,7 +86,7 @@ export async function searchChannelMessages(
   const pattern = `%${needle.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
 
   const rows = await database.$client.unsafe<SearchRow[]>(
-    `SELECT c.id AS channel_id, c.name, c.summary, m.thread_id, t.messages
+    `SELECT c.id AS channel_id, c.name, c.summary, m.thread_id, t.agent_id, t.updated_at, t.messages
      FROM channels c
      INNER JOIN channel_memberships cm ON cm.channel_id = c.id AND cm.user_id = $1
      INNER JOIN intelligence_channel_mappings m ON m.channel_id = c.id AND m.user_id = $1
@@ -122,6 +131,8 @@ export async function searchChannelMessages(
         highlight: found.highlight,
         messageId: typeof message.id === "string" ? message.id : null,
         role: typeof message.role === "string" ? message.role : null,
+        agentId: row.agent_id ?? null,
+        updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
       });
       break;
     }

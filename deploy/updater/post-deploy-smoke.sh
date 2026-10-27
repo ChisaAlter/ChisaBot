@@ -82,13 +82,46 @@ if [ "$HCODE" = 200 ] || [ "$HCODE" = 503 ]; then
   ok "/api/admin/health aggregate ok"
 fi
 
-# 5) 可选：模型往返（默认告警；STRICT_MODEL_SMOKE=1 硬失败）
+# 5) CB-100：真的连一次 Hermes（从应用容器里按 CHISABOT_HERMES_URL）。连不上 → 部署失败 → 更新器回滚。
+#    以前的自检只直连模型、绕过 Hermes，所以 v0.1.75 网络被重建、Hermes 连不上时发布照样通过。
+#    CHISABOT_SMOKE_DEFER_HERMES=1：update.sh 在 Hermes 运行时由这次发布激活时传入——桥接要等镜像健康后才
+#    （重新）启动，这时只记录，由 update.sh 在激活之后再连一次并决定是否回滚。
+U_HOME=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
+HERMES_STATE=skipped
+if [ -f "$U_HOME/hermes-reach.sh" ]; then
+  if HOUT=$(bash "$U_HOME/hermes-reach.sh" 2>&1); then
+    echo "$HOUT"
+    case "$HOUT" in hermes=ok*) HERMES_STATE=ok ;; esac
+  else
+    echo "$HOUT"
+    HERMES_STATE=unreachable
+    if [ "${CHISABOT_SMOKE_DEFER_HERMES:-0}" = 1 ]; then
+      echo "post-deploy-smoke note: hermes unreachable before runtime activation; update.sh re-checks after activating"
+    else
+      fail "hermes=unreachable（应用容器连不上 CHISABOT_HERMES_URL）"
+    fi
+  fi
+else
+  echo "post-deploy-smoke warn: hermes-reach.sh 未安装，跳过 Hermes 连通性检查"
+fi
+ok "hermes=$HERMES_STATE"
+
+# 6) 可选：模型往返（默认告警；STRICT_MODEL_SMOKE=1 硬失败）
 if [ "${SKIP_MODEL_SMOKE:-0}" != 1 ]; then
   SCODE=$(curl -s -o /tmp/cb-smoke-model.json -w '%{http_code}' --max-time 60 -X POST \
     -H 'content-type: application/json' "${HDR_CALLER[@]}" -d '{}' \
     "$LOCAL_URL/api/admin/smoke" || echo 000)
   SBODY=$(cat /tmp/cb-smoke-model.json 2>/dev/null || echo "")
   echo "model smoke HTTP $SCODE: $(echo "$SBODY" | head -c 400)"
+  # CB-100：服务器自己也连一次 Hermes（/api/admin/smoke 的 hermes 字段）。这一项不是「仅告警」的模型往返：
+  # Hermes 连不上时每一轮对话都会失败，必须让部署失败。
+  if echo "$SBODY" | grep -q '"hermes":"unreachable"'; then
+    if [ "${CHISABOT_SMOKE_DEFER_HERMES:-0}" = 1 ]; then
+      echo "post-deploy-smoke note: /api/admin/smoke hermes=unreachable (deferred to update.sh)"
+    else
+      fail "/api/admin/smoke 报告 hermes=unreachable"
+    fi
+  fi
   if echo "$SBODY" | grep -q '"ok":true' && echo "$SBODY" | grep -q '"persisted":false'; then
     ok "model smoke"
   else

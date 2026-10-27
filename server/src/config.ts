@@ -220,7 +220,7 @@ export type DeploymentConfig = {
    * configuration rather than from the incoming request: a redirect URI assembled out of a Host
    * header is one an attacker has a say in.
    *
-   * `OPENBOT_PUBLIC_URL` when set, otherwise `BETTER_AUTH_URL`, which is the same public address for
+   * `CHISABOT_PUBLIC_URL` when set, otherwise `BETTER_AUTH_URL`, which is the same public address for
    * every deployment that has real sign-in. Undefined only where neither exists, which is a local
    * deployment running without authentication — and there is nothing to connect there anyway.
    */
@@ -233,7 +233,7 @@ export type DeploymentConfig = {
    * the API and has to send the person back to a page, so a relative redirect would put them on the
    * API's origin, where no page exists.
    *
-   * `OPENBOT_APP_URL` when set, otherwise the first `TRUSTED_ORIGINS` entry, which is already defined
+   * `CHISABOT_APP_URL` when set, otherwise the first `TRUSTED_ORIGINS` entry, which is already defined
    * as where the app is served from. Falls back to the API's own public URL, which is right for a
    * deployment serving both from one origin.
    */
@@ -268,10 +268,10 @@ export type DeploymentConfig = {
    * reaching somewhere other people can get to.
    */
   singleUser: boolean;
-  /** Names OpenBot on the analytics the runtime already sends. Off with OPENBOT_ACCESSIBILITY_DISABLED. */
+  /** Names ChisaBot on the analytics the runtime already sends. Off with CHISABOT_ACCESSIBILITY_DISABLED. */
   accessibility: boolean;
   /**
-   * 生成式界面开关（OPENBOT_GENERATIVE_UI）：Bot 能否用 json-render 画界面。
+   * 生成式界面开关（CHISABOT_GENERATIVE_UI）：Bot 能否用 json-render 画界面。
    *
    * 打开时每个机器人都有 `render_ui` 服务器工具（server/src/generative-ui/render-ui.ts），浏览器
    * 注册它的渲染器（app/src/lib/copilot/render-ui-tool.tsx）；关闭时两边都没有。界面只能由共享
@@ -282,15 +282,15 @@ export type DeploymentConfig = {
    * 早先的 Open Generative UI（`generateSandboxedUi`，Bot 在沙箱 iframe 里自写 HTML/CSS/JS）已停用，
    * 这个开关不再打开它；运行时和浏览器都不再声明该能力。
    *
-   * 默认打开。显式设为 OPENBOT_GENERATIVE_UI=false 或 0 即关闭。
+   * 默认打开。显式设为 CHISABOT_GENERATIVE_UI=false 或 0 即关闭。
    */
   generativeUi: boolean;
   /**
-   * Whether the signed-in app shows the banner offering help self-hosting OpenBot.
+   * Whether the signed-in app shows the banner offering help self-hosting ChisaBot.
    *
    * On by default, because a fresh clone is somebody evaluating the template. A fork that runs
-   * OpenBot for its own organization turns it off with OPENBOT_SELF_HOST_BANNER=false or
-   * OPENBOT_SELF_HOST_BANNER=0, since its people have nothing to self-host. This is the operator's
+   * ChisaBot for its own organization turns it off with CHISABOT_SELF_HOST_BANNER=false or
+   * CHISABOT_SELF_HOST_BANNER=0, since its people have nothing to self-host. This is the operator's
    * switch only; a deployment on a paid Intelligence plan hides the bar too (self-host-banner.ts).
    */
   selfHostBanner: boolean;
@@ -437,7 +437,7 @@ function keyEncryptionKey(environment: Environment): string {
  * the flag cannot answer, which is not "is this production" but "can anybody else reach it".
  *
  * NOT `NODE_ENV`. It looks like the signal and is not one here: `Dockerfile` sets
- * `NODE_ENV=production` for every container and `openbot.commonEnv` sets it for every chart
+ * `NODE_ENV=production` for every container and `chisabot.commonEnv` sets it for every chart
  * install, including the local trial the chart's own `validation.yaml` offers. Gating on it would
  * refuse a mode the chart advertises and would fail the image-boot job in CI, which runs exactly
  * this combination on purpose.
@@ -460,15 +460,15 @@ function singleUserAllowed(
   if (!singleUserEnabled(environment, hasProvider)) return false;
 
   const reachable = [
-    optional(environment, "OPENBOT_PUBLIC_URL"),
-    optional(environment, "OPENBOT_APP_URL"),
+    optional(environment, "CHISABOT_PUBLIC_URL"),
+    optional(environment, "CHISABOT_APP_URL"),
     ...commaSeparated(environment, "TRUSTED_ORIGINS"),
   ].filter((value): value is string => value !== undefined);
 
   const published = reachable.filter((value) => reachOf(value) === "public");
   if (published.length > 0) {
     throw new Error(
-      `OPENBOT_SINGLE_USER admits every request as one administrator with no sign-in, so it cannot be combined with an address the public internet reaches: ${published.join(", ")}. Configure GOOGLE_OAUTH_*, MICROSOFT_OAUTH_* or OKTA_OAUTH_* with BETTER_AUTH_SECRET and BETTER_AUTH_URL, or serve it somewhere only you reach.`,
+      `CHISABOT_SINGLE_USER admits every request as one administrator with no sign-in, so it cannot be combined with an address the public internet reaches: ${published.join(", ")}. Configure GOOGLE_OAUTH_*, MICROSOFT_OAUTH_* or OKTA_OAUTH_* with BETTER_AUTH_SECRET and BETTER_AUTH_URL, or serve it somewhere only you reach.`,
     );
   }
 
@@ -480,7 +480,7 @@ function singleUserAllowed(
   const shared = reachable.filter((value) => reachOf(value) === "private");
   if (shared.length > 0) {
     console.warn(
-      `OPENBOT_SINGLE_USER admits every request as one administrator with no sign-in, and this deployment answers on an address beyond this machine: ${shared.join(", ")}. Anybody on that network is that administrator. Configure a sign-in provider before anybody else is on it.`,
+      `CHISABOT_SINGLE_USER admits every request as one administrator with no sign-in, and this deployment answers on an address beyond this machine: ${shared.join(", ")}. Anybody on that network is that administrator. Configure a sign-in provider before anybody else is on it.`,
     );
   }
 
@@ -488,7 +488,7 @@ function singleUserAllowed(
 }
 
 /**
- * How far an address reaches, which is the question `OPENBOT_SINGLE_USER` actually turns on.
+ * How far an address reaches, which is the question `CHISABOT_SINGLE_USER` actually turns on.
  *
  * Not two answers but three, because the middle one is most of the deployments this flag exists
  * for. "No sign-in, one administrator" is a thing people run on a home server at `192.168.1.10`,
@@ -772,7 +772,7 @@ function authConfig(
   /*
    * A list this deployment cannot enforce is worse than no list.
    *
-   * `common` is multi-tenant, and OpenBot never sets `requireEmailVerification` or reads
+   * `common` is multi-tenant, and ChisaBot never sets `requireEmailVerification` or reads
    * `users.emailVerified`, so the address a rule is applied to is one the signing-in tenant's own
    * administrator wrote. Anybody may create a tenant. So an allowlist under `common` refuses the
    * honest and admits the rest, while reading on the Boundaries page as though it were a control.
@@ -817,8 +817,8 @@ function authConfig(
     allowedEmailDomains,
     useSecureCookies: decideSecureCookies({
       authBaseUrl: baseUrl,
-      publicUrl: optional(environment, "OPENBOT_PUBLIC_URL"),
-      appUrl: optional(environment, "OPENBOT_APP_URL"),
+      publicUrl: optional(environment, "CHISABOT_PUBLIC_URL"),
+      appUrl: optional(environment, "CHISABOT_APP_URL"),
       force: optional(environment, "CHISABOT_SECURE_COOKIES"),
     }),
     ...(google ? { google } : {}),
@@ -874,10 +874,10 @@ function oktaAuth(
 
 /** Local mode owns its storage; the default Intelligence mode retains its existing contract. */
 function runtimeCapabilities(environment: Environment): RuntimeCapabilities {
-  const mode = optional(environment, "OPENBOT_RUNTIME_MODE") ?? "intelligence";
+  const mode = optional(environment, "CHISABOT_RUNTIME_MODE") ?? "intelligence";
   if (mode === "local") return { mode: "local", durableHistory: true };
   if (mode !== "intelligence") {
-    throw new Error("OPENBOT_RUNTIME_MODE must be intelligence or local.");
+    throw new Error("CHISABOT_RUNTIME_MODE must be intelligence or local.");
   }
   const settings = {
     apiUrl: url(environment, "INTELLIGENCE_API_URL"),
@@ -1068,7 +1068,7 @@ function computerConfig(environment: Environment): ComputerConfig | undefined {
       ),
       templateFile:
         optional(environment, "COMPUTER_SANDBOX_TEMPLATE_FILE") ??
-        "/etc/openbot/sandbox-template.json",
+        "/etc/chisabot/sandbox-template.json",
       allowPrivateHosts,
       ...(computerToken ? { token: computerToken } : {}),
       ...(policy ? { policy } : {}),
@@ -1128,7 +1128,7 @@ function actionPolicy(environment: Environment): ActionPolicy | undefined {
  * Zero is a legitimate value and means off. It is not the same as a malformed one.
  */
 function accessibilityEnabled(environment: Environment): boolean {
-  const off = optional(environment, "OPENBOT_ACCESSIBILITY_DISABLED");
+  const off = optional(environment, "CHISABOT_ACCESSIBILITY_DISABLED");
   return off !== "true" && off !== "1";
 }
 
@@ -1140,13 +1140,13 @@ function accessibilityEnabled(environment: Environment): boolean {
  * 渲染器），两边必须一致。见 DeploymentConfig.generativeUi。
  */
 function generativeUiEnabled(environment: Environment): boolean {
-  const value = optional(environment, "OPENBOT_GENERATIVE_UI");
+  const value = optional(environment, "CHISABOT_GENERATIVE_UI");
   return value !== "false" && value !== "0";
 }
 
 /** Same rule as generated interfaces: on unless explicitly "false" or "0". */
 function selfHostBannerEnabled(environment: Environment): boolean {
-  const value = optional(environment, "OPENBOT_SELF_HOST_BANNER");
+  const value = optional(environment, "CHISABOT_SELF_HOST_BANNER");
   return value !== "false" && value !== "0";
 }
 
@@ -1228,11 +1228,11 @@ export function loadConfig(
 ): DeploymentConfig {
   const google = oauthClient(environment, "GOOGLE");
   const auth = authConfig(environment, google);
-  // Organization sign-in (an external OpenBot authority for the upstream desktop app) was removed in
+  // Organization sign-in (an external ChisaBot authority for the upstream desktop app) was removed in
   // slimming P6-4. Refuse to start rather than silently fall back to the single-user actor.
-  if (optional(environment, "OPENBOT_ORGANIZATION_AUTH_URL")) {
+  if (optional(environment, "CHISABOT_ORGANIZATION_AUTH_URL")) {
     throw new Error(
-      "OPENBOT_ORGANIZATION_AUTH_URL is no longer supported (organization sign-in was removed); unset it.",
+      "CHISABOT_ORGANIZATION_AUTH_URL is no longer supported (organization sign-in was removed); unset it.",
     );
   }
   const managedAgent = managedAgentConfig(environment);
@@ -1258,12 +1258,12 @@ export function loadConfig(
     deploymentId: optional(environment, "DEPLOYMENT_ID"),
     composioApiKey: optional(environment, "COMPOSIO_API_KEY"),
     publicUrl: (
-      optional(environment, "OPENBOT_PUBLIC_URL") ?? auth?.baseUrl
+      optional(environment, "CHISABOT_PUBLIC_URL") ?? auth?.baseUrl
     )?.replace(/\/+$/, ""),
     appUrl: (
-      optional(environment, "OPENBOT_APP_URL") ??
+      optional(environment, "CHISABOT_APP_URL") ??
       commaSeparated(environment, "TRUSTED_ORIGINS")[0] ??
-      optional(environment, "OPENBOT_PUBLIC_URL") ??
+      optional(environment, "CHISABOT_PUBLIC_URL") ??
       auth?.baseUrl
     )?.replace(/\/+$/, ""),
     tenantPackageDirectory:

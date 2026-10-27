@@ -1,7 +1,7 @@
 /**
  * What a Bot id is allowed to be, before it becomes a path.
  *
- * The id arrives as the `x-openbot-bot-id` header, or as the `bot` query parameter on the stream, and
+ * The id arrives as the `x-chisabot-bot-id` header, or as the `bot` query parameter on the stream, and
  * the API server forwards whatever segment a caller put in the URL. It then becomes the directory a
  * Chromium profile lives in, which `reset` deletes with `rm -rf`, as root. So this is the same class
  * of input `workspace.ts` already treats as hostile, and it needs the same answer: an id that is not

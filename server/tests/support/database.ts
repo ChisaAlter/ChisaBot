@@ -2,7 +2,7 @@
  * The database integration suite must never fall back to the developer's application database.
  * `createDatabase` deliberately removes `process.env.DATABASE_URL` after opening a connection so Bun
  * cannot ignore the explicit connection parts on Windows. That means a later test that reads
- * `process.env.DATABASE_URL ?? localhost/openbot` can silently fall into the live development DB.
+ * `process.env.DATABASE_URL ?? localhost/chisabot` can silently fall into the live development DB.
  * Resolve one explicit test URL before opening a test pool and make the unsafe shape impossible.
  */
 let cachedTestDatabaseUrl: string | undefined;
@@ -39,9 +39,9 @@ export function testDatabaseUrlFrom(
   if (!database) {
     throw new Error("TEST_DATABASE_URL must name a database.");
   }
-  if (database === "openbot") {
+  if (database === "openbot" || database === "chisabot") {
     throw new Error(
-      "TEST_DATABASE_URL must not point at the live openbot database. Use a dedicated database such as openbot_test.",
+      "TEST_DATABASE_URL must not point at the live chisabot database. Use a dedicated database such as openbot_test.",
     );
   }
   return raw;

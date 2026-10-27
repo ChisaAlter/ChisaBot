@@ -4,12 +4,12 @@
 
 ## 1. 主机
 
-一台 Linux 服务器就能跑完整的 ChisaBot（应用、数据库、网关、更新器、云端工作区节点）。
+一台 Linux 服务器就能跑完整的 ChisaBot（应用、数据库、网关、更新器）。
 
 | 项 | 建议 | 说明 |
 |---|---|---|
 | 系统 | 带 systemd 的 64 位 Linux（例如 Ubuntu 24.04） | 更新器、证书重载、看门狗都是 systemd 单元 |
-| CPU / 内存 | 4 核 / 8 GB 起；跑云端工作区节点和完整构建建议 6 核 / 16 GB 以上 | 完整构建默认限 6 GB（`FULL_BUILD_MEMORY`），4 GB 机器设 `3g` 并加 swap |
+| CPU / 内存 | 4 核 / 8 GB 起；完整构建建议 6 核 / 16 GB 以上 | 完整构建默认限 6 GB（`FULL_BUILD_MEMORY`），4 GB 机器设 `3g` 并加 swap |
 | 磁盘 | 100 GB 起，建议 200 GB 以上 | 镜像（每个约 5–6 GB）、构建缓存、5 份更新备份、数据库卷；见 [cleanup.md](cleanup.md) |
 | 软件 | Docker Engine、Docker Compose v2、docker buildx、git、python3、Bun 1.3.14（构建用） | 版本见 [自托管部署](../../deploy/README.zh-CN.md) |
 | 时区 | 建议主机用 UTC | 镜像标签、备份目录、日志都用 UTC 时间，排查时换算成本地时间 |
@@ -50,18 +50,14 @@ HTTPS 端口，套 CDN 时方便；不套 CDN 时用 443 也可以。
 | `127.0.0.1:3001` | 应用（单管理员后端，**绝不能直接对外开放**） |
 | `127.0.0.1:3002` | 登录服务（host 网络） |
 | `127.0.0.1:3425` / `3430` | Magpie API / 管理端口 |
-| `127.0.0.1:2222`（节点网络命名空间内） | 云端工作区同步边车的 sshd，不发布到主机 |
-| `127.0.0.1:<代理端口>` | 可选的主机级出口代理（例如 sing-box 混合代理），见 [cloud-node.md](cloud-node.md) §5 |
 | `127.0.0.1:31xx–32xx`（示例段） | 预览容器，用完即拆，见 [preview.md](preview.md) |
 
 检查：`ss -ltnp` 里除了 22 / 8443 / 2053（以及你自己的其他站点）外，不应有监听 `0.0.0.0` 或 `[::]` 的 ChisaBot 端口；
-`docker port chisabot-cloudnode` 和 `docker port chisabot-cloudnode-sync` 都应为空。
 
 ## 4. 防火墙
 
 - 主机入站只放行 SSH 和网关端口（以及你其他站点需要的端口）。
 - Docker 发布的端口会绕过 `ufw` 之类的前端规则，所以 compose 里一律写成 `127.0.0.1:<端口>:<端口>`。
-- 云端工作区节点独占一个网桥，`firewall.sh` 在 `DOCKER-USER` 链里丢弃它发往私有网段 / 主机 / 元数据地址的流量（[cloud-node.md](cloud-node.md) §3）。
 
 ## 5. 同机运行其他服务
 

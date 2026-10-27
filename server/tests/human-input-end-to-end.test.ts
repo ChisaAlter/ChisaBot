@@ -40,7 +40,7 @@ function serveComputer() {
     fetch: async (request) => {
       received.push({
         path: new URL(request.url).pathname,
-        token: request.headers.get("x-openbot-computer-token"),
+        token: request.headers.get("x-chisabot-computer-token"),
         body: await request.json().catch(() => null),
       });
       return Response.json({ ok: true });
@@ -74,7 +74,7 @@ function appFor(baseUrl: string) {
   });
   const actor: AuthenticatedActor = {
     id: "user-1",
-    email: "member@openbot.test",
+    email: "member@chisabot.test",
     role: "user",
   };
   const asActor: MiddlewareHandler<{ Variables: AppVariables }> = async (
@@ -99,7 +99,7 @@ async function drive(kind: string, body: unknown) {
   const { received, baseUrl } = serveComputer();
   const { app, rows } = appFor(baseUrl);
   const response = await app.request(
-    `http://openbot.test/bot-1/human/${kind}`,
+    `http://chisabot.test/bot-1/human/${kind}`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },

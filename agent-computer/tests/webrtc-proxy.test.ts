@@ -16,9 +16,9 @@ import { startEgressFilter, stopEgressFilter } from "../src/egress";
  * Asked for by name, like `follows-popup.test.ts`: it launches a real Chromium.
  *
  *   cd agent-computer && bunx playwright install chromium
- *   OPENBOT_COMPUTER_BROWSER=1 bun test tests/webrtc-proxy.test.ts
+ *   CHISABOT_COMPUTER_BROWSER=1 bun test tests/webrtc-proxy.test.ts
  */
-const asked = process.env.OPENBOT_COMPUTER_BROWSER === "1";
+const asked = process.env.CHISABOT_COMPUTER_BROWSER === "1";
 const lan = Object.values(networkInterfaces())
   .flat()
   .find(
@@ -43,7 +43,7 @@ describe.skipIf(!asked || !lan)("WebRTC from a Bot's browser", () => {
     });
     await startEgressFilter({ env: {} });
     const { createProfiles } = await import("../src/profiles");
-    const root = await mkdtemp(join(tmpdir(), "openbot-webrtc-"));
+    const root = await mkdtemp(join(tmpdir(), "chisabot-webrtc-"));
     const profiles = createProfiles(root, () => {});
     const bot = "webrtc-test";
     try {

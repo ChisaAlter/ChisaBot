@@ -78,21 +78,10 @@ export function VaultSection({ embedded = false }: { embedded?: boolean }) {
               className="im-row-main"
               onClick={() =>
                 secret.managedBy
-                  ? void navigate({
-                      to:
-                        secret.managedBy === "claude-proxy"
-                          ? "/settings/cloud-workspace"
-                          : "/settings/connected-accounts",
-                    })
+                  ? void navigate({ to: "/settings/connected-accounts" })
                   : setDialog({ open: true, secret })
               }
-              title={
-                secret.managedBy === "claude-proxy"
-                  ? "在 云端工作区 → Claude 上游代理 里管理"
-                  : secret.managedBy
-                    ? "在 账号连接 → GitHub 里管理"
-                    : undefined
-              }
+              title={secret.managedBy ? "在 账号连接 → GitHub 里管理" : undefined}
               type="button"
             >
               <ListRow
@@ -111,7 +100,7 @@ export function VaultSection({ embedded = false }: { embedded?: boolean }) {
                         </span>
                       ) : null}
                     </span>
-                    <span className="mem-by">{`${secret.managedBy === "claude-proxy" ? "由 云端工作区 → Claude 上游代理 管理 · " : secret.managedBy ? "由 账号连接 → GitHub 管理 · " : ""}可用于 ${secret.domains.join("、")} · ${secret.lastUsedAt ? `${agoText(secret.lastUsedAt)}用过` : "还没用过"}`}</span>
+                    <span className="mem-by">{`${secret.managedBy ? "由 账号连接 → GitHub 管理 · " : ""}可用于 ${secret.domains.join("、")} · ${secret.lastUsedAt ? `${agoText(secret.lastUsedAt)}用过` : "还没用过"}`}</span>
                   </>
                 }
                 title={secret.label}
