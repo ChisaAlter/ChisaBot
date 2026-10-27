@@ -41,7 +41,7 @@ export async function importChisaSkill(input: {
   markdown?: string;
   slug?: string;
   shared?: boolean;
-}): Promise<{ skill?: ChisaSkill | null; skills?: ChisaSkill[]; installedCount: number }> {
+}): Promise<{ skill?: ChisaSkill | null; skills?: ChisaSkill[]; installedCount: number; skippedCount?: number }> {
   const response = await client("/api/chisa-skills/import", {
     method: "POST",
     body: input,
@@ -51,6 +51,7 @@ export async function importChisaSkill(input: {
     skill?: ChisaSkill | null;
     skills?: ChisaSkill[];
     installedCount: number;
+    skippedCount?: number;
   };
 }
 

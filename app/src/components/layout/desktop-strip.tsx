@@ -10,6 +10,7 @@ export function DesktopStrip() {
   const desktop = useDesktopWindow();
   if (!desktop) return null;
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上
     <div
       className="desk-strip"
       onDoubleClick={(event) => {

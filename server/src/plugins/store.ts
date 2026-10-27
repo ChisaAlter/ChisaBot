@@ -1198,6 +1198,13 @@ export function createPluginStore(options: PluginStoreOptions) {
   const broker = options.broker;
 
   let globalGrantsEnsured = false;
+  // The switch is read on every run of every Bot, so it is memoised for a few seconds (and dropped
+  // the moment an administrator flips it here). If the read fails, the last answer is kept for a
+  // while instead of making every shared tool vanish mid-conversation over a database blip.
+  const AUTO_GRANT_TTL_MS = 5_000;
+  const AUTO_GRANT_STALE_MS = 5 * 60_000;
+  let autoGrantCache: { at: number; servers: Set<string> } | null = null;
+  let autoGrantFailureLoggedAt = 0;
   async function ensureGlobalGrantsTable() {
     if (globalGrantsEnsured) return;
     await database.$client.unsafe(`
@@ -1210,12 +1217,31 @@ export function createPluginStore(options: PluginStoreOptions) {
     `);
     globalGrantsEnsured = true;
   }
+  /** Never throws: an unreadable switch means "no server is shared with everyone", logged at most every 30s. */
   async function globalAutoGrantServers(): Promise<Set<string>> {
-    await ensureGlobalGrantsTable();
-    const rows = await database.$client.unsafe<{ server_id: string }[]>(
-      "SELECT server_id FROM chisabot_mcp_global_grants WHERE enabled = true",
-    );
-    return new Set(rows.map((r) => r.server_id));
+    const cached = autoGrantCache;
+    const now = Date.now();
+    if (cached && now - cached.at < AUTO_GRANT_TTL_MS) return cached.servers;
+    try {
+      await ensureGlobalGrantsTable();
+      const rows = await database.$client.unsafe<{ server_id: string }[]>(
+        "SELECT server_id FROM chisabot_mcp_global_grants WHERE enabled = true",
+      );
+      autoGrantCache = { at: now, servers: new Set(rows.map((r) => r.server_id)) };
+      return autoGrantCache.servers;
+    } catch (error) {
+      if (now - autoGrantFailureLoggedAt > 30_000) {
+        autoGrantFailureLoggedAt = now;
+        console.error(
+          JSON.stringify({
+            type: "mcp-auto-grant-unreadable",
+            error: error instanceof Error ? error.name : "unknown",
+            serving: cached && now - cached.at < AUTO_GRANT_STALE_MS ? "last-known" : "none",
+          }),
+        );
+      }
+      return cached && now - cached.at < AUTO_GRANT_STALE_MS ? cached.servers : new Set<string>();
+    }
   }
 
   /*
@@ -4024,7 +4050,7 @@ export function createPluginStore(options: PluginStoreOptions) {
         .orderBy(asc(mcpServers.title));
       if (rows.length === 0) return [];
 
-      const autoGranted = await globalAutoGrantServers().catch(() => new Set<string>());
+      const autoGranted = await globalAutoGrantServers();
 
       const tools = await database
         .select()
@@ -4337,6 +4363,12 @@ export function createPluginStore(options: PluginStoreOptions) {
        */
       tools?: string[];
       by: string;
+      /**
+       * Move the skill to `ownerUserId` even though it already exists. Off by default: a re-save
+       * keeps whoever owns the skill. Only a route that has checked the caller may hand a skill
+       * to the deployment (or take a shared one back) sets this.
+       */
+      claimOwner?: boolean;
     }): Promise<void> {
       /*
        * Checked before anything is written, so a save is all-or-nothing from the caller's side: a
@@ -4374,12 +4406,14 @@ export function createPluginStore(options: PluginStoreOptions) {
         })
         // Editing keeps the owner it already had. Whose a skill is, is not something a re-save
         // should quietly change, and the route has already checked this person may edit it.
+        // The one exception is `claimOwner`, set when an administrator shares or unshares it.
         .onConflictDoUpdate({
           target: skills.slug,
           set: {
             title: input.title,
             summary: input.summary,
             instructions: input.instructions,
+            ...(input.claimOwner ? { ownerUserId: input.ownerUserId } : {}),
             updatedAt: new Date(),
           },
         });
@@ -4529,7 +4563,7 @@ export function createPluginStore(options: PluginStoreOptions) {
           .select()
           .from(pluginGrants)
           .where(eq(pluginGrants.agentId, agentId)),
-        globalAutoGrantServers().catch(() => new Set<string>()),
+        globalAutoGrantServers(),
       ]);
       if (held.length === 0 && autoServers.size === 0) return { tools: [], skills: [] };
 
@@ -4540,6 +4574,20 @@ export function createPluginStore(options: PluginStoreOptions) {
         .filter((row) => row.kind === "skill")
         .map((row) => row.ref);
 
+      /*
+       * Narrowed in the query to the servers this Bot is actually granted something from, the same way
+       * `knownToolRefs` does it and for the same reason: a deployment aiming at a thousand tools should
+       * not read all of them to offer a handful. This is the run-time path, so it ran on every run of
+       * every Bot, selected every row in `mcp_tools`, and then discarded almost all of them here — and
+       * it sits underneath tool selection, so its cost is paid before the narrowing that was added to
+       * make large catalogues work.
+       *
+       * The exact ref is still matched below rather than in the query. Narrowing by server is a
+       * predicate the composite primary key can use; naming every (server, tool) pair would be exact
+       * and is not worth a clause per grant, because a server's own tool list is the bound on what
+       * comes back. Servers shared with everyone (`autoServers`) join the narrowing set so their
+       * tools are read too.
+       */
       const grantedServers = [
         ...new Set([
           ...toolRefs.map((ref) => ref.split("/")[0] ?? ""),
@@ -6843,6 +6891,22 @@ export function createPluginStore(options: PluginStoreOptions) {
       enabled: boolean,
       by: string,
     ): Promise<void> {
+      if (enabled) {
+        /*
+         * Not for a server that answers on one token the deployment holds. Granted to everyone, that
+         * would put every member's Bots on the administrator's credential, which is a decision a
+         * per-Bot grant makes one Bot at a time and this switch would make for all of them at once.
+         * Servers that reach a person's own account (their OAuth grant, their broker connection) or
+         * need no credential at all are what this switch is for.
+         */
+        const { row, access } = await requireServer(serverId);
+        if (access.credential === "deployment-token" && row.credentialId) {
+          throw new PluginRefusedError(
+            `${row.title} answers on a credential this deployment holds for everyone, so it cannot be switched on for every Bot at once. Grant it to the Bots that need it instead.`,
+            null,
+          );
+        }
+      }
       await ensureGlobalGrantsTable();
       await database.$client.unsafe(
         `INSERT INTO chisabot_mcp_global_grants (server_id, enabled, updated_at)
@@ -6850,6 +6914,7 @@ export function createPluginStore(options: PluginStoreOptions) {
          ON CONFLICT (server_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
         [serverId, enabled],
       );
+      autoGrantCache = null;
       if (auditStore) {
         await recordAuditEvent(auditStore, {
           eventType: "configuration.changed",
@@ -6890,7 +6955,7 @@ export function createPluginStore(options: PluginStoreOptions) {
       if (!row) {
         if (kind === "mcp") {
           const serverId = ref.split("/")[0] ?? "";
-          const autoServers = await globalAutoGrantServers().catch(() => new Set<string>());
+          const autoServers = await globalAutoGrantServers();
           if (serverId && autoServers.has(serverId)) {
             return { allowed: true };
           }

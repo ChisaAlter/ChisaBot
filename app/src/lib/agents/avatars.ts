@@ -1,15 +1,19 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import {
   AVATAR_COLORS,
+  AVATAR_SHAPES,
   AVATAR_SIZE,
   type AvatarColor,
+  type AvatarShape,
   type BotAvatar,
   MAX_AVATAR_BYTES,
+  SHAPE_COLORS,
+  type ShapeColor,
 } from "../../../../shared/bot-avatars";
 import { client } from "@/lib/client";
 
-export type { AvatarColor, BotAvatar };
-export { AVATAR_COLORS };
+export type { AvatarColor, AvatarShape, BotAvatar, ShapeColor };
+export { AVATAR_COLORS, AVATAR_SHAPES, SHAPE_COLORS };
 
 /**
  * 机器人头像（DESIGN.md §81）。一次读回你能看到的所有机器人的头像（`/api/bot-avatars`），左栏、聊天、资料页、
@@ -34,6 +38,7 @@ export type AvatarDraft =
   | { kind: "default" }
   | { kind: "emoji"; emoji: string; color: AvatarColor }
   | { kind: "monogram"; color: AvatarColor }
+  | { kind: "shape"; shape: AvatarShape; color: ShapeColor }
   | { kind: "image"; blob: Blob; previewUrl: string };
 
 /** 把表单里的头像改动写到服务器；keep 什么都不做。 */

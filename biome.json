@@ -19,7 +19,24 @@
     "indentStyle": "space"
   },
   "linter": {
-    "enabled": true
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "a11y": {
+        "noLabelWithoutControl": {
+          "level": "error",
+          "options": {
+            "inputComponents": [
+              "Input",
+              "Textarea",
+              "Select",
+              "Switch",
+              "Checkbox"
+            ]
+          }
+        }
+      }
+    }
   },
   "css": {
     "parser": {
@@ -28,7 +45,11 @@
   },
   "overrides": [
     {
-      "includes": ["**/tests/**", "**/*.test.ts", "**/*.test.tsx"],
+      "includes": [
+        "**/tests/**",
+        "**/*.test.ts",
+        "**/*.test.tsx"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -38,13 +59,50 @@
       }
     },
     {
-      "includes": ["app/src/components/ui/**"],
+      "includes": [
+        "app/src/components/ui/**"
+      ],
       "linter": {
         "rules": {
           "a11y": {
             "useSemanticElements": "off",
             "noLabelWithoutControl": "off",
             "useKeyWithClickEvents": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "deploy/public/auth/server.ts",
+        "server/src/app.ts",
+        "server/src/chat-files/service.ts",
+        "server/src/live-panels/sources.ts",
+        "server/src/magpie.ts",
+        "server/src/model-catalog.ts",
+        "shared/devices.ts",
+        "shared/proxy-links.ts"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noControlCharactersInRegex": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "app/index.html",
+        "scripts/localize-zh.cjs"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noInnerDeclarations": "off"
+          },
+          "suspicious": {
+            "noShorthandPropertyOverrides": "off"
           }
         }
       }

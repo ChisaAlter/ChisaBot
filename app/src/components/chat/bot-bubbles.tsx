@@ -713,7 +713,6 @@ export function DocCard({
   return (
     <>
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: 卡片内含显式 button 供键盘聚焦打开弹窗 */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: 点击整张 summary-card 任意区域打开阅读弹窗 */}
       <section
         aria-label={title ? `文档：${title}` : "文档"}
         className="chat-draft-card chat-doc-card"

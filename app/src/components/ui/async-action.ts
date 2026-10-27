@@ -55,17 +55,17 @@ export function useFeedbackMachine() {
   const [state, setState] = useState<AsyncState>("idle");
   const startedAt = useRef(0);
   const timer = useRef<number | undefined>(undefined);
-  const clear = () => {
+  const clear = useCallback(() => {
     if (timer.current !== undefined) window.clearTimeout(timer.current);
     timer.current = undefined;
-  };
-  useEffect(() => clear, []);
+  }, []);
+  useEffect(() => clear, [clear]);
 
   const begin = useCallback(() => {
     clear();
     startedAt.current = performance.now();
     setState("pending");
-  }, []);
+  }, [clear]);
 
   const settle = useCallback((ok: boolean) => {
     clear();
@@ -77,12 +77,12 @@ export function useFeedbackMachine() {
         ok ? SUCCESS_HOLD_MS : ERROR_HOLD_MS,
       );
     }, wait);
-  }, []);
+  }, [clear]);
 
   const reset = useCallback(() => {
     clear();
     setState("idle");
-  }, []);
+  }, [clear]);
 
   return { state, begin, settle, reset };
 }
@@ -98,6 +98,7 @@ export function useMutationFeedback(mutation: MutationLike, when = true): AsyncS
   const machine = useFeedbackMachine();
   const watching = useRef(false);
   const { begin, settle, reset } = machine;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     if (mutation.status === "pending") {
       if (when) {

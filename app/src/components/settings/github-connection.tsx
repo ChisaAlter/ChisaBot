@@ -165,11 +165,6 @@ export function GithubConnectionSection() {
 function GithubTokenDialog({ open, replacing, onOpenChange }: { open: boolean; replacing: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
   const [token, setToken] = useState("");
-  useEffect(() => {
-    if (!open) return;
-    setToken("");
-    save.reset();
-  }, [open]);
   const save = useAsyncAction(
     async () => {
       const next = await connectGithub(token.trim());
@@ -180,6 +175,12 @@ function GithubTokenDialog({ open, replacing, onOpenChange }: { open: boolean; r
     },
     { errorToast: (error) => error.message },
   );
+  const resetSave = save.reset;
+  useEffect(() => {
+    if (!open) return;
+    setToken("");
+    resetSave();
+  }, [open, resetSave]);
   const valid = token.trim().length >= 20 && !/\s/.test(token.trim());
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>

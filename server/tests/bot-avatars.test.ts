@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
-import { isAvatarEmoji, monogramOf, sniffAvatarMime } from "../../shared/bot-avatars";
+import { isAvatarEmoji, isAvatarShape, isShapeColor, monogramOf, sniffAvatarMime } from "../../shared/bot-avatars";
 import type { AgentActor, AgentProfile } from "../src/agents/profile-types";
-import { createBotAvatars } from "../src/bot-avatars/service";
+import { avatarView, createBotAvatars } from "../src/bot-avatars/service";
 import { createDatabase } from "../src/db/client";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
@@ -18,6 +18,15 @@ describe("avatar helpers", () => {
     expect(sniffAvatarMime(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
     expect(sniffAvatarMime(new TextEncoder().encode("RIFF\0\0\0\0WEBPVP8 "))).toBe("image/webp");
     expect(sniffAvatarMime(new TextEncoder().encode("<svg onload=alert(1)>"))).toBeNull();
+  });
+  test("a stored shape avatar comes back as shape + colour, and a row with an unknown shape or colour is dropped, not trusted", () => {
+    const row = { agent_id: "a1", kind: "shape" as const, emoji: null, color: "violet", shape: "tile", mime: null, version: "v1" };
+    expect(avatarView(row)).toEqual({ kind: "shape", shape: "tile", color: "violet" });
+    expect(avatarView({ ...row, shape: "<script>" })).toBeNull();
+    expect(avatarView({ ...row, shape: null })).toBeNull();
+    // 圆形头像的底色（sky 等）不是形象的颜色，不能串着用。
+    expect(avatarView({ ...row, color: "sky" })).toBeNull();
+    expect(isAvatarShape("tile") && isShapeColor("violet")).toBe(true);
   });
   test("monogram is the first character", () => {
     expect(monogramOf(" 英语老师")).toBe("英");

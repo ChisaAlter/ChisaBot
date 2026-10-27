@@ -306,3 +306,37 @@ describe("what a person may do over HTTP", () => {
     expect(slugs).not.toContain(bobSkill);
   });
 });
+
+describe("handing a skill to the deployment, and taking it back", () => {
+  const moving = `moving-${suite}`;
+  const save = (ownerUserId: string | null, claimOwner?: boolean, instructions = "Do the thing.") =>
+    store.installSkill({
+      slug: moving,
+      title: moving,
+      summary: "",
+      instructions,
+      ownerUserId,
+      ...(claimOwner === undefined ? {} : { claimOwner }),
+      by: "an administrator",
+    });
+
+  afterAll(async () => {
+    await database.delete(skills).where(inArray(skills.slug, [moving]));
+  });
+
+  test("a plain re-save keeps the owner, which is what stops anyone editing their way into someone else's skill", async () => {
+    await save(alice);
+    await save(null, undefined, "Edited.");
+    expect(await store.skillOwner(moving)).toBe(alice);
+  });
+
+  test("claimOwner moves it to the deployment and back", async () => {
+    await save(null, true);
+    expect(await store.skillOwner(moving)).toBeNull();
+    expect((await store.listSkills({ id: bob, isAdmin: false })).map((skill) => skill.slug)).toContain(moving);
+
+    await save(alice, true);
+    expect(await store.skillOwner(moving)).toBe(alice);
+    expect((await store.listSkills({ id: bob, isAdmin: false })).map((skill) => skill.slug)).not.toContain(moving);
+  });
+});

@@ -896,22 +896,29 @@ function RouteComponent() {
           }
           title={"工具"}
         >
-          <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3.5 py-2.5">
-            <div className="min-w-0">
-              <div className="font-medium text-sm">{"全员默认开启（所有用户与机器人自动可用）"}</div>
-              <div className="text-muted-foreground text-xs">
-                {"开启后，无需逐个机器人手动勾选，本实例所有用户的机器人都可直接使用此 MCP 服务器的全部工具。"}
-              </div>
-            </div>
-            <Switch
-              checked={Boolean(server.autoGrantAll)}
-              disabled={setAutoGrantAll.isPending}
-              onCheckedChange={(checked) => {
-                setError(null);
-                setAutoGrantAll.mutate({ serverId: server.id, enabled: Boolean(checked) });
-              }}
-            />
-          </div>
+          <PageRows className="mb-3">
+            <Item size="sm">
+              <ItemContent>
+                <ItemTitle>{"全员默认开启"}</ItemTitle>
+                <ItemDescription>
+                  {server.autoGrantAll
+                    ? "所有成员的机器人都可直接使用此服务器的全部工具，包括以后新增的工具。关闭后立即收回。"
+                    : "没有逐个授予的机器人不能使用它。打开后所有成员的机器人自动获得全部工具（仅限按人授权或无需凭据的服务器）。"}
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <Switch
+                  aria-label={`全员默认开启 ${title}`}
+                  checked={Boolean(server.autoGrantAll)}
+                  disabled={setAutoGrantAll.isPending}
+                  onCheckedChange={(checked) => {
+                    setError(null);
+                    setAutoGrantAll.mutate({ serverId: server.id, enabled: Boolean(checked) });
+                  }}
+                />
+              </ItemActions>
+            </Item>
+          </PageRows>
           {server.tools.length === 0 ? (
             <PageEmpty>
               {server.lastError ?? "未列出工具。刷新以再次询问供应商。"}

@@ -74,6 +74,7 @@ export function HandoffResumeNotice({
     );
   }, [botId, agent, ready, state]);
   // 正在继续的任务只在换了机器人 / 对话或卸载时放弃——藏起来不算。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(
     () => () => {
       controller.current?.abort("detached");

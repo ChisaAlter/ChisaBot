@@ -445,6 +445,7 @@ export function DiffBlock({ diff }: { diff: string }) {
             line.startsWith("-") && !line.startsWith("---") && "is-del",
             line.startsWith("@@") && "is-hunk",
           )}
+          // biome-ignore lint/suspicious/noArrayIndexKey: diff 文本按行渲染：只读、不重排、行没有稳定 id
           key={index}
         >
           {`${line}\n`}
@@ -703,6 +704,7 @@ function PolicySegmented({
   return (
     <div aria-label={label} className="sg-segmented device-seg" {...keys.groupProps} ref={keys.groupRef} role="radiogroup">
       {POLICIES.map((policy) => (
+        // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
         <button
           aria-checked={value === policy.value}
           className={cn("sg-segmented-item", `is-${policy.value}`)}

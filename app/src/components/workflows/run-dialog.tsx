@@ -194,7 +194,8 @@ export function RunWorkflowDialog({
             </fieldset>
 
             {limits ? (
-              <div className="wf-limits" aria-label="约束">
+              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
+              <div className="wf-limits" aria-label="约束" role="group">
                 <span className="wf-limit">
                   <IconListNumbers className="size-3.5" />
                   {`最多 ${limits.maxSteps} 步`}

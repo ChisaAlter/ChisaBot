@@ -295,5 +295,5 @@
     if (!s) { s = document.createElement("style"); s.id = "__align_style"; document.head.appendChild(s); }
     s.textContent = "[data-align-flag]{outline:2px solid #ef4444 !important;outline-offset:1px !important}[data-align-flag=INK]{outline-color:#f59e0b !important}[data-align-flag=GAP]{outline-color:#a855f7 !important}";
   };
-  window.__alignClear = function () { document.querySelectorAll("[data-align-flag]").forEach((e) => e.removeAttribute("data-align-flag")); };
+  window.__alignClear = function () { document.querySelectorAll("[data-align-flag]").forEach((e) => { e.removeAttribute("data-align-flag"); }); };
 })();

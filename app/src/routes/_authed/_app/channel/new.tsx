@@ -188,6 +188,7 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
           {chosen.title ? <p className="chat-intro-sub">{chosen.title}</p> : null}
           {fresh ? <p className="chat-intro-topic">{"新话题 · 之前的对话不会发给它"}</p> : null}
           {/* 新朋友不知道能问什么（成熟度扫查 F2）：几句不带副作用的开场，点了直接发。 */}
+          {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
           <div className="chat-intro-tries" role="group" aria-label="试试这样问">
             {INTRO_TRIES.map((text) => (
               <button

@@ -102,6 +102,7 @@ export function splitMetricValue(value: string): { num: string; unit: string } {
  */
 function FitLine({ className, children }: { className?: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -167,10 +168,17 @@ function CompactRows({
   const rest = after.slice(0, 3);
   const extra = after.slice(3);
   return (
+    // biome-ignore lint/a11y/useSemanticElements: 模型生成的表格用 div 渲染，用 ARIA 表格角色保住语义
     <div className="jr-rows" role="table" style={{ "--jr-rest": String(rest.length) } as CSSProperties}>
+      {/* biome-ignore lint/a11y/useFocusableInteractive: 表格行 / 列头角色只表达语义，不是交互控件 */}
+      {/* biome-ignore lint/a11y/useSemanticElements: 模型生成的表格用 div 渲染，用 ARIA 表格角色保住语义 */}
       <div className="jr-rows-h" role="row">
+        {/* biome-ignore lint/a11y/useFocusableInteractive: 表格行 / 列头角色只表达语义，不是交互控件 */}
+        {/* biome-ignore lint/a11y/useSemanticElements: 模型生成的表格用 div 渲染，用 ARIA 表格角色保住语义 */}
         <span role="columnheader">{secondIsText ? `${first.label} · ${second.label}` : first.label}</span>
         {rest.map((column) => (
+          // biome-ignore lint/a11y/useFocusableInteractive: 表格行 / 列头角色只表达语义，不是交互控件
+          // biome-ignore lint/a11y/useSemanticElements: 模型生成的表格用 div 渲染，用 ARIA 表格角色保住语义
           <span key={column.key} role="columnheader">
             {column.label}
           </span>
@@ -178,7 +186,10 @@ function CompactRows({
       </div>
       {rows.map((row, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: rows carry no identity of their own.
+        // biome-ignore lint/a11y/useSemanticElements: 模型生成的表格用 div 渲染，用 ARIA 表格角色保住语义
+        // biome-ignore lint/a11y/useFocusableInteractive: 表格行 / 列头角色只表达语义，不是交互控件
         <div className="jr-rows-r" key={index} role="row">
+          {/* biome-ignore lint/a11y/useSemanticElements: 模型生成的表格用 div 渲染，用 ARIA 表格角色保住语义 */}
           <span className="jr-rows-p" role="cell">
             <span className="jr-rows-t">{shortDate(text(row?.[first.key]))}</span>
             {(() => {
@@ -190,6 +201,7 @@ function CompactRows({
             })()}
           </span>
           {rest.map((column) => (
+            // biome-ignore lint/a11y/useSemanticElements: 模型生成的表格用 div 渲染，用 ARIA 表格角色保住语义
             <span className="jr-rows-v" key={column.key} role="cell" title={`${column.label} ${text(row?.[column.key])}`}>
               <span className="jr-rows-x">{compactValue(text(row?.[column.key]))}</span>
             </span>

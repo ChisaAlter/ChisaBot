@@ -61,7 +61,7 @@ function SkillsPage() {
       queryClient.invalidateQueries({ queryKey: ["plugins"] }),
     ]);
   };
-  const useSkillInChat = (skill: { slug: string; title: string }) => {
+  const openSkillInChat = (skill: { slug: string; title: string }) => {
     sendPromptToChat(navigate, `/${skill.slug} 请按「${skill.title}」技能帮我执行`);
   };
   async function installFromHub(hubSlug: string, title?: string, asShared = false) {
@@ -69,11 +69,16 @@ function SkillsPage() {
     try {
       const res = await importChisaSkill({ hubSlug, ...(asShared ? { shared: true } : {}) });
       await refresh();
-      toast.success(
-        hubSlug === "all"
-          ? `已一键安装 ${res.installedCount} 个${asShared ? "全局共享" : "精选"}技能`
-          : `已安装${asShared ? "全局共享" : ""}技能「${title ?? hubSlug}」`,
-      );
+      const skipped = res.skippedCount ?? 0;
+      if (res.installedCount === 0 && skipped > 0) {
+        toast.error("没有安装：同名技能已被他人或共享技能占用，请先在列表里处理。");
+      } else {
+        toast.success(
+          hubSlug === "all"
+            ? `已一键安装 ${res.installedCount} 个${asShared ? "全局共享" : "精选"}技能${skipped ? `，另有 ${skipped} 个因重名未处理` : ""}`
+            : `已安装${asShared ? "全局共享" : ""}技能「${title ?? hubSlug}」`,
+        );
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "安装失败");
     } finally {
@@ -126,7 +131,7 @@ function SkillsPage() {
       <div className="flex shrink-0 items-center gap-1.5">
         <Button
           data-testid={`skill-use-${skill.slug}`}
-          onClick={() => useSkillInChat(skill)}
+          onClick={() => openSkillInChat(skill)}
           size="sm"
           title={`去对话里调用 /${skill.slug}`}
           variant="ghost"
@@ -217,7 +222,7 @@ function SkillsPage() {
                   <>
                     <Button
                       data-testid={`skill-hub-use-${item.slug}`}
-                      onClick={() => useSkillInChat(item)}
+                      onClick={() => openSkillInChat(item)}
                       size="sm"
                       variant="outline"
                     >
@@ -337,14 +342,6 @@ function SkillImportDialog({
   const [slug, setSlug] = useState("");
   const [shared, setShared] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    setUrl("");
-    setMarkdown("");
-    setSlug("");
-    setShared(false);
-    importAction.reset();
-  }, [open]);
 
   const importAction = useAsyncAction(
     async () => {
@@ -360,6 +357,15 @@ function SkillImportDialog({
     },
     { errorToast: (err) => err.message },
   );
+  const resetImportAction = importAction.reset;
+  useEffect(() => {
+    if (!open) return;
+    setUrl("");
+    setMarkdown("");
+    setSlug("");
+    setShared(false);
+    resetImportAction();
+  }, [open, resetImportAction]);
 
   const valid = Boolean(url.trim() || markdown.trim());
 
@@ -492,15 +498,6 @@ function SkillDialog({
   const queryClient = useQueryClient();
   const readOnly = Boolean(skill && !skill.mine && !isAdmin);
   const [form, setForm] = useState({ slug: "", title: "", summary: "", instructions: "", shared: false });
-  useEffect(() => {
-    if (!open) return;
-    setForm(
-      skill
-        ? { slug: skill.slug, title: skill.title, summary: skill.summary, instructions: skill.instructions, shared: !skill.mine }
-        : { slug: "", title: "", summary: "", instructions: "", shared: false },
-    );
-    save.reset();
-  }, [open, skill]);
   const save = useAsyncAction(
     async () => {
       await saveChisaSkill(form.slug, {
@@ -515,6 +512,16 @@ function SkillDialog({
     },
     { errorToast: (error) => error.message },
   );
+  const resetSave = save.reset;
+  useEffect(() => {
+    if (!open) return;
+    setForm(
+      skill
+        ? { slug: skill.slug, title: skill.title, summary: skill.summary, instructions: skill.instructions, shared: !skill.mine }
+        : { slug: "", title: "", summary: "", instructions: "", shared: false },
+    );
+    resetSave();
+  }, [open, skill, resetSave]);
   const slugOk = SLUG.test(form.slug);
   const valid = slugOk && form.title.trim() && form.instructions.trim();
   return (

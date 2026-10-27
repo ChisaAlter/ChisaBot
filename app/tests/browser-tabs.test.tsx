@@ -177,7 +177,7 @@ describe("TabStrip", () => {
     const tabs = ui.getAllByRole("tab") as HTMLElement[];
     // roving tabindex：只有选中那个在 Tab 顺序里，内部的主按钮不再单独占一个停靠点。
     expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1]);
-    expect((tabs[0]?.querySelector("button") as HTMLButtonElement).tabIndex).toBe(-1);
+    expect(tabs[0]?.querySelector("button")?.tabIndex).toBe(-1);
 
     await act(async () => {
       fireEvent.keyDown(tabs[0] as HTMLElement, { key: "ArrowRight" });

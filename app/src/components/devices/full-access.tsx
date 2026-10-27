@@ -121,6 +121,7 @@ export function FullAccessCard({ device }: { device: DeviceView }) {
             <>
               <div aria-label="完全访问时长" className="sg-segmented" {...durationKeys.groupProps} ref={durationKeys.groupRef} role="radiogroup">
                 {DURATIONS.map((item) => (
+                  // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
                   <button
                     aria-checked={duration === item.value}
                     className="sg-segmented-item"
@@ -222,6 +223,7 @@ function EditRow({ entry }: { entry: DeviceAuditEntry }) {
                 line.startsWith("-") && !line.startsWith("---") && "is-del",
                 line.startsWith("@@") && "is-hunk",
               )}
+              // biome-ignore lint/suspicious/noArrayIndexKey: diff 文本按行渲染：只读、不重排、行没有稳定 id
               key={index}
             >
               {`${line}\n`}

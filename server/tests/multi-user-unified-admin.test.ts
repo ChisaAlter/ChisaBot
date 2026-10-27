@@ -4,8 +4,9 @@ import { Hono, type MiddlewareHandler } from "hono";
 import type { AppVariables } from "../src/auth/guards";
 import { createDatabase } from "../src/db/client";
 import { mcpServers, mcpTools } from "../src/db/schema";
+import { createMemoryNotes } from "../src/memory-notes/service";
 import { createPluginStore, type PluginStore } from "../src/plugins/store";
-import { createChisaSkills } from "../src/skills-chisa/tools";
+import { createChisaSkills, resolveSkillOwner } from "../src/skills-chisa/tools";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
 function makeInMemorySkillStore(): PluginStore {
@@ -20,13 +21,16 @@ function makeInMemorySkillStore(): PluginStore {
       const row = map.get(slug);
       return row ? row.ownerUserId : undefined;
     },
-    async installSkill(input: { slug: string; title: string; summary: string; instructions: string; ownerUserId: string | null }) {
+    // Mirrors the real store: a re-save keeps the owner the skill already has unless the route
+    // asks for `claimOwner`. A fake that always overwrote the owner hid exactly that bug.
+    async installSkill(input: { slug: string; title: string; summary: string; instructions: string; ownerUserId: string | null; claimOwner?: boolean }) {
+      const existing = map.get(input.slug);
       map.set(input.slug, {
         slug: input.slug,
         title: input.title,
         summary: input.summary,
         instructions: input.instructions,
-        ownerUserId: input.ownerUserId,
+        ownerUserId: existing && !input.claimOwner ? existing.ownerUserId : input.ownerUserId,
       });
     },
     async uninstallSkill(slug: string) {
@@ -131,6 +135,91 @@ describe("CB-097b: global shared skills via /api/chisa-skills routes", () => {
       headers: { "X-Test-User": "admin1" },
     });
     expect(adminDelete.status).toBe(204);
+  });
+});
+
+describe("resolveSkillOwner", () => {
+  const base = { userId: "u1", isAdmin: false };
+  test("a new skill belongs to its author; only an admin can make it shared", () => {
+    expect(resolveSkillOwner({ ...base, existing: undefined })).toEqual({ ok: true, owner: "u1", claim: false });
+    expect(resolveSkillOwner({ ...base, existing: undefined, shared: true })).toEqual({ ok: true, owner: "u1", claim: false });
+    expect(resolveSkillOwner({ ...base, isAdmin: true, existing: undefined, shared: true })).toEqual({ ok: true, owner: null, claim: false });
+  });
+  test("editing keeps the owner unless an admin says otherwise", () => {
+    expect(resolveSkillOwner({ ...base, existing: "u1" })).toEqual({ ok: true, owner: "u1", claim: false });
+    expect(resolveSkillOwner({ ...base, isAdmin: true, existing: null })).toEqual({ ok: true, owner: null, claim: false });
+    expect(resolveSkillOwner({ ...base, isAdmin: true, existing: "u1", shared: true })).toEqual({ ok: true, owner: null, claim: true });
+    expect(resolveSkillOwner({ ...base, isAdmin: true, existing: null, shared: false })).toEqual({ ok: true, owner: "u1", claim: true });
+  });
+  test("nobody writes someone else's skill, and a member cannot touch a shared one", () => {
+    expect(resolveSkillOwner({ ...base, existing: "u2" })).toEqual({ ok: false });
+    expect(resolveSkillOwner({ ...base, isAdmin: true, existing: "u2", shared: true })).toEqual({ ok: false });
+    expect(resolveSkillOwner({ ...base, existing: null })).toEqual({ ok: false });
+  });
+});
+
+describe("CB-097b: sharing and unsharing an existing skill actually changes who sees it", () => {
+  function build() {
+    const store = makeInMemorySkillStore();
+    const chisa = createChisaSkills({ store, actorFor: async (id) => ({ id, isAdmin: id === "u_admin1" }) });
+    const actors: Record<string, { id: string; role: "admin" | "user" }> = {
+      admin1: { id: "u_admin1", role: "admin" },
+      member1: { id: "u_member1", role: "user" },
+    };
+    const app = new Hono<{ Variables: AppVariables }>();
+    const requireUser: MiddlewareHandler<{ Variables: AppVariables }> = async (c, next) => {
+      const who = c.req.header("X-Test-User") || "admin1";
+      const actor = actors[who]!;
+      c.set("actor", { kind: "user", id: actor.id, email: `${who}@test.local`, name: who, role: actor.role });
+      await next();
+    };
+    app.route("/api/chisa-skills", chisa.routes(requireUser));
+    const call = (who: string, method: string, path: string, body?: unknown) =>
+      app.request(`/api/chisa-skills${path}`, {
+        method,
+        headers: { "Content-Type": "application/json", "X-Test-User": who },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    const slugsFor = async (who: string) =>
+      ((await (await call(who, "GET", "")).json()) as { skills: { slug: string }[] }).skills.map((s) => s.slug);
+    return { call, slugsFor };
+  }
+
+  test("an admin's personal skill becomes visible to members when shared on edit, and private again when unshared", async () => {
+    const { call, slugsFor } = build();
+    const body = { title: "My flow", summary: "", instructions: "step" };
+    expect((await call("admin1", "PUT", "/my-flow", body)).status).toBe(200);
+    expect(await slugsFor("member1")).toEqual([]);
+
+    expect((await call("admin1", "PUT", "/my-flow", { ...body, shared: true })).status).toBe(200);
+    expect(await slugsFor("member1")).toEqual(["my-flow"]);
+
+    expect((await call("admin1", "PUT", "/my-flow", { ...body, shared: false })).status).toBe(200);
+    expect(await slugsFor("member1")).toEqual([]);
+  });
+
+  test("sharing every hub skill takes over the admin's own copies and reports how many were installed", async () => {
+    const { call, slugsFor } = build();
+    await call("admin1", "PUT", "/code-review", { title: "mine", summary: "", instructions: "x" });
+    const res = await call("admin1", "POST", "/import", { hubSlug: "all", shared: true });
+    const out = (await res.json()) as { installedCount: number; skippedCount: number };
+    expect(out.skippedCount).toBe(0);
+    expect(await slugsFor("member1")).toContain("code-review");
+    expect(out.installedCount).toBeGreaterThan(1);
+  });
+
+  test("a member's own copy of a hub skill is skipped, not silently counted, when it clashes with a shared one", async () => {
+    const { call } = build();
+    await call("admin1", "POST", "/import", { hubSlug: "code-review", shared: true });
+    const res = await call("member1", "POST", "/import", { hubSlug: "code-review" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ installedCount: 0, skippedCount: 1 });
+  });
+
+  test("a member cannot ask for shared", async () => {
+    const { call } = build();
+    expect((await call("member1", "PUT", "/x1", { title: "t", summary: "", instructions: "i", shared: true })).status).toBe(403);
+    expect((await call("member1", "POST", "/import", { markdown: "# T\nbody", shared: true })).status).toBe(403);
   });
 });
 

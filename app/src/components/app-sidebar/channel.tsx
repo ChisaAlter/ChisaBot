@@ -140,6 +140,7 @@ export const Channel = memo(function Channel({
               lastMessageAt={lastMessageAt}
               emphasis={emphasis}
               busy={busy}
+              selected={isOpen}
               unread={unread}
               pinned={pinned}
               revealing={revealed.typing}

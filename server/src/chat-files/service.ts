@@ -179,7 +179,7 @@ export function createChatFiles(
   async function defaultDownload(url: string): Promise<Buffer> {
     // CR-P0-01：不许再用 assertPublicUrl + redirect:follow（公网 302 → 元数据会跟过去）。
     // guardedFetch 钉死 DNS、逐跳重验，超大截断。
-    let response;
+    let response: Awaited<ReturnType<typeof guardedFetch>>;
     try {
       response = await guardedFetch(url, { maxBytes: MAX_CHAT_FILE_BYTES + 1, timeoutMs: 60_000 });
     } catch (error) {

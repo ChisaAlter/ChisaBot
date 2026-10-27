@@ -11,6 +11,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Card, ErrorCard, ListRow } from "@/components/ui/skyglass";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import {
   accountKeys,
@@ -122,6 +123,15 @@ function AccountsPage() {
       toast.error(error instanceof Error ? error.message : "删除失败");
     }
   }
+  async function changeInvites(enabled: boolean) {
+    try {
+      await setInvitesEnabled(enabled);
+      await refresh();
+      toast.success(enabled ? "已允许添加新成员" : "已关闭添加新成员，已有成员照常使用");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "操作失败");
+    }
+  }
   async function revoke(invite: GatewayInvite) {
     try {
       await revokeInvite(invite.id);
@@ -140,7 +150,6 @@ function AccountsPage() {
   return (
     <>
       <CreateAccountDialog
-        invitesEnabled={invitesEnabled}
         onCreated={(account) => {
           void refresh();
           setCreateOpen(false);
@@ -150,7 +159,6 @@ function AccountsPage() {
         open={createOpen}
       />
       <InviteDialog
-        invitesEnabled={invitesEnabled}
         onCreated={(invite) => {
           void refresh();
           setInviteOpen(false);
@@ -173,11 +181,11 @@ function AccountsPage() {
         action={
           data?.available ? (
             <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={() => setCreateOpen(true)} size="sm" variant="outline">
+              <Button disabled={!invitesEnabled} onClick={() => setCreateOpen(true)} size="sm" title={invitesEnabled ? undefined : "先在下方打开「允许添加新成员」"} variant="outline">
                 <IconUserPlus />
                 {"新建账号"}
               </Button>
-              <Button onClick={() => setInviteOpen(true)} size="sm">
+              <Button disabled={!invitesEnabled} onClick={() => setInviteOpen(true)} size="sm" title={invitesEnabled ? undefined : "先在下方打开「允许添加新成员」"}>
                 <IconPlus />
                 {"邀请成员"}
               </Button>
@@ -203,6 +211,24 @@ function AccountsPage() {
           <PageEmpty>{data?.reason ?? "不可用"}</PageEmpty>
         ) : (
           <>
+            <PageSection title="新成员">
+              <Card className="mem-card">
+                <div className="im-row">
+                  <div className="im-row-main">
+                    <ListRow
+                      icon={
+                        <span className="mem-ico">
+                          <IconUserPlus className="size-5" />
+                        </span>
+                      }
+                      sub={<span className="mem-by">{invitesEnabled ? "已开启：可以新建账号和发邀请链接。不用时建议关掉。" : "已关闭（默认）：不能新建账号，也不能发邀请链接，已有成员照常使用。"}</span>}
+                      title="允许添加新成员"
+                    />
+                  </div>
+                  <Switch aria-label="允许添加新成员" checked={invitesEnabled} onCheckedChange={(value) => void changeInvites(!!value)} />
+                </div>
+              </Card>
+            </PageSection>
             <PageSection title={`账号 · ${accounts.length}`}>
               <Card className="mem-card">
                 {accounts.map((account) => (
@@ -302,12 +328,10 @@ function AccountsPage() {
 function CreateAccountDialog({
   open,
   onOpenChange,
-  invitesEnabled,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  invitesEnabled: boolean;
   onCreated: (account: GatewayAccount) => void;
 }) {
   const [username, setUsername] = useState("");
@@ -316,7 +340,6 @@ function CreateAccountDialog({
   const [role, setRole] = useState<"user" | "admin">("user");
   const create = useAsyncAction(
     async () => {
-      if (!invitesEnabled) await setInvitesEnabled(true);
       const account = await createAccount({
         username: username.trim(),
         displayName: displayName.trim() || undefined,
@@ -499,12 +522,10 @@ function PasswordDialog({
 function InviteDialog({
   open,
   onOpenChange,
-  invitesEnabled,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  invitesEnabled: boolean;
   onCreated: (invite: { url: string; expiresAt: number; role?: "admin" | "user" }) => void;
 }) {
   const [note, setNote] = useState("");
@@ -512,7 +533,6 @@ function InviteDialog({
   const [role, setRole] = useState<"user" | "admin">("user");
   const create = useAsyncAction(
     async () => {
-      if (!invitesEnabled) await setInvitesEnabled(true);
       const invite = await createInvite({ note: note.trim() || undefined, hours, role });
       window.setTimeout(() => onCreated(invite), 400);
     },

@@ -64,6 +64,7 @@ export function BotThreadHistoryDialog({
           <DialogTitle>{"历史对话"}</DialogTitle>
           <DialogDescription>{"点一条打开，接着聊。旧对话都会保留。"}</DialogDescription>
         </DialogHeader>
+        {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
         <div className="bot-history-list" role="list">
           {list.isPending ? (
             [0, 1, 2].map((i) => <div aria-hidden className="bot-history-skel" key={i} />)
@@ -80,6 +81,8 @@ export function BotThreadHistoryDialog({
             threads.map((thread) => {
               const current = thread.threadId === currentThreadId;
               return (
+                // biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: 按钮在 role 列表里充当列表项，是有意的
+                // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
                 <button
                   aria-current={current ? "true" : undefined}
                   className={cn("bot-history-row", current && "is-current")}

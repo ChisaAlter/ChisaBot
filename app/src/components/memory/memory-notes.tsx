@@ -166,21 +166,6 @@ export function NoteDialog({
 }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Form>({ kind: "preference", subject: "", content: "", context: "", shared: false });
-  useEffect(() => {
-    if (!open) return;
-    setForm(
-      note
-        ? { kind: note.kind, subject: note.subject ?? "", content: note.content, context: note.context ?? "", shared: Boolean(note.shared) }
-        : {
-            kind: preset?.kind ?? "preference",
-            subject: preset?.subject ?? "",
-            content: "",
-            context: preset?.context ?? "",
-            shared: Boolean(preset?.shared),
-          },
-    );
-    save.reset();
-  }, [open, note, preset]);
   const needsSubject = SUBJECT_KINDS.includes(form.kind);
   const save = useAsyncAction(
     async () => {
@@ -198,6 +183,22 @@ export function NoteDialog({
     },
     { errorToast: (error) => error.message },
   );
+  const resetSave = save.reset;
+  useEffect(() => {
+    if (!open) return;
+    setForm(
+      note
+        ? { kind: note.kind, subject: note.subject ?? "", content: note.content, context: note.context ?? "", shared: Boolean(note.shared) }
+        : {
+            kind: preset?.kind ?? "preference",
+            subject: preset?.subject ?? "",
+            content: "",
+            context: preset?.context ?? "",
+            shared: Boolean(preset?.shared),
+          },
+    );
+    resetSave();
+  }, [open, note, preset, resetSave]);
   const valid = form.content.trim().length > 0 && (!needsSubject || form.subject.trim().length > 0);
   const isKnowledgePreset = Boolean(!note && preset?.subject?.startsWith("[知识库]"));
   return (

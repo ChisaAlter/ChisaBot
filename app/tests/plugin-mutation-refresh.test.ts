@@ -172,6 +172,16 @@ const REFUSALS: {
     },
   },
   {
+    // The route stores the switch and then files the audit row; a failing audit insert answers 500
+    // with the new state already in place, so the screen must refetch either way.
+    name: "switching a server on or off for every Bot",
+    route: "PUT /api/plugins/servers/:id/auto-grant",
+    status: 500,
+    message: "That server's access could not be changed.",
+    factory: setServerAutoGrantAllMutationOptions,
+    variables: { serverId: "linear", enabled: true },
+  },
+  {
     name: "adding a curated server",
     route: "POST /api/plugins/servers",
     status: 409,
@@ -284,14 +294,6 @@ const REFUSALS: {
     message: "gmail would not answer with the key it is holding.",
     factory: recheckBrokeredConnectionMutationOptions,
     variables: "gmail",
-  },
-  {
-    name: "turning on auto-grant for every Bot",
-    route: "PUT /api/plugins/servers/:id/auto-grant",
-    status: 500,
-    message: "That did not work.",
-    factory: setServerAutoGrantAllMutationOptions,
-    variables: { serverId: "gmail", enabled: true },
   },
 ];
 
@@ -536,7 +538,7 @@ const ENCODED_REQUESTS: {
     variables: HOSTILE_ID,
   },
   {
-    name: "turning on auto-grant for every Bot",
+    name: "switching a server on or off for every Bot",
     url: `/api/plugins/servers/${ENCODED_ID}/auto-grant`,
     build: setServerAutoGrantAllMutationOptions,
     variables: { serverId: HOSTILE_ID, enabled: true },

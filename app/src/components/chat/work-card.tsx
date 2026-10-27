@@ -164,6 +164,7 @@ export function WorkRow({
                 step.kind === "note" ? "chat-work-note" : live && index === steps.length - 1 ? "is-current" : undefined
               }
               data-kind={step.kind}
+              // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
               key={`${index}:${step.text}`}
             >
               {step.text}

@@ -18,15 +18,37 @@ export type AvatarMime = (typeof AVATAR_MIMES)[number];
 export const AVATAR_COLORS = ["sky", "ocean", "mint", "lime", "amber", "coral", "rose", "violet", "slate"] as const;
 export type AvatarColor = (typeof AVATAR_COLORS)[number];
 
+/**
+ * shape：一个有表情的小形象（形状 + 颜色，眼睛固定在形状里）。形状不是圆的，所以显示时不裁成圆；
+ * 被选中、机器人在跑、做完一轮时会变表情（只在前端画，库里只存形状和颜色的键名）。
+ * 旧客户端不认识这个类型时退回默认花纹，不会崩。
+ */
+export const AVATAR_SHAPES = [
+  "round", "cloud", "tile", "sparkle", "bloom", "bean", "scallop",
+  "drop", "pill", "tri", "hex", "burst", "gem", "fruit",
+] as const;
+export type AvatarShape = (typeof AVATAR_SHAPES)[number];
+
+/** 形象的底色（和上面圆形头像的 AVATAR_COLORS 是两套；颜色值只在前端）。 */
+export const SHAPE_COLORS = ["ink", "brown", "red", "orange", "amber", "green", "teal", "blue", "violet", "pink", "gray"] as const;
+export type ShapeColor = (typeof SHAPE_COLORS)[number];
+
+export const isAvatarShape = (value: unknown): value is AvatarShape =>
+  typeof value === "string" && (AVATAR_SHAPES as readonly string[]).includes(value);
+export const isShapeColor = (value: unknown): value is ShapeColor =>
+  typeof value === "string" && (SHAPE_COLORS as readonly string[]).includes(value);
+
 export type BotAvatar =
   | { kind: "image"; url: string; version: string }
   | { kind: "emoji"; emoji: string; color: AvatarColor }
-  | { kind: "monogram"; color: AvatarColor };
+  | { kind: "monogram"; color: AvatarColor }
+  | { kind: "shape"; shape: AvatarShape; color: ShapeColor };
 
 /** PUT /api/bot-avatars/<id> 的 JSON（图片走 PUT …/image，原始字节）。 */
 export type BotAvatarPreset =
   | { kind: "emoji"; emoji: string; color: AvatarColor }
-  | { kind: "monogram"; color: AvatarColor };
+  | { kind: "monogram"; color: AvatarColor }
+  | { kind: "shape"; shape: AvatarShape; color: ShapeColor };
 
 export const isAvatarColor = (value: unknown): value is AvatarColor =>
   typeof value === "string" && (AVATAR_COLORS as readonly string[]).includes(value);

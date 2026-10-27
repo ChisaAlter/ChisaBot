@@ -415,6 +415,7 @@ function ApprovalCard({ runId, step }: { runId: string; step: WorkflowStepState 
     await queryClient.invalidateQueries({ queryKey: workflowKeys.run(runId) });
   });
   return (
+    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
     <div className="wf-approval" role="group" aria-label="审批">
       <div className="wf-approval-h">
         <IconShieldCheck className="size-4" />

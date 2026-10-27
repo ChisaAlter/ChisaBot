@@ -154,6 +154,7 @@ export function QuickSpotlight() {
   };
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: 遮罩点击关闭；键盘走 Esc（window 级 keydown 已处理）
     <div
       aria-label="快捷指令与随手问浮窗"
       aria-modal="true"

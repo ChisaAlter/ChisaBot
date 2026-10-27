@@ -67,6 +67,7 @@ function BotPermissionRow({ bot }: { bot: AgentProfile }) {
           {BOT_PERMISSION_MODES.map((option) => {
             const Icon = ICON[option];
             return (
+              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
               <button
                 aria-checked={state.data ? mode === option : false}
                 className={cn("sg-segmented-item", `is-${option}`)}

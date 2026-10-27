@@ -79,6 +79,9 @@ function clockIn(timeZone: string, at = new Date()): string {
   }
 }
 
+/** 一个人最多能看到多少条别人共享的公共知识库（防止全员共享把提示词撑爆）。 */
+const SHARED_VISIBLE = 200;
+
 export type NoteInput = { kind: MemoryKind; subject?: string | null; content: string; context?: string | null; shared?: boolean };
 
 export function createMemoryNotes(database: Database, options: { timeZone?: string } = {}) {
@@ -110,15 +113,32 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
     `);
   }
 
-  const all = (owner: string) =>
-    sql.unsafe<Row[]>(
-      "SELECT * FROM chisabot_memory_notes WHERE owner_user_id = $1 OR shared = true ORDER BY shared DESC, updated_at DESC LIMIT $2",
-      [owner, MEMORY_LIMITS.perUser],
-    );
+  /**
+   * 一个人看得到的记忆：自己的（最多 perUser 条）加上管理员共享的公共知识库（最多 SHARED_VISIBLE 条）。
+   * 两部分各自查、各自限量：公共知识库再多，也不会把成员自己较旧的笔记挤出窗口。公共知识库排在前面。
+   */
+  const all = async (owner: string) => {
+    const [own, shared] = await Promise.all([
+      sql.unsafe<Row[]>(
+        "SELECT * FROM chisabot_memory_notes WHERE owner_user_id = $1 ORDER BY updated_at DESC LIMIT $2",
+        [owner, MEMORY_LIMITS.perUser],
+      ),
+      sql.unsafe<Row[]>(
+        "SELECT * FROM chisabot_memory_notes WHERE shared = true AND owner_user_id <> $1 ORDER BY updated_at DESC LIMIT $2",
+        [owner, SHARED_VISIBLE],
+      ),
+    ]);
+    const mine = [...own];
+    return [...mine.filter((r) => r.shared), ...shared, ...mine.filter((r) => !r.shared)];
+  };
+  /** 按 id 直接查（走主键），不先把整个窗口读出来。管理员还能改动别人共享出来的那几条。 */
   const byId = async (owner: string, id: string, isAdmin = false) => {
     if (!ID.test(id)) return null;
-    const rows = await all(owner);
-    return rows.find((r) => r.id === id && (r.owner_user_id === owner || (isAdmin && r.shared))) ?? null;
+    const [row] = await sql.unsafe<Row[]>(
+      "SELECT * FROM chisabot_memory_notes WHERE id = $1 AND (owner_user_id = $2 OR ($3::boolean AND shared = true))",
+      [id, owner, isAdmin],
+    );
+    return row ?? null;
   };
 
   async function search(owner: string, query: string, kind?: MemoryKind, limit = 30) {

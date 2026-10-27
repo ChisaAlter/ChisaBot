@@ -69,6 +69,7 @@ export function KeepAliveStage<T>({
   const box = useRef<HTMLDivElement>(null);
   const size = useRef<{ width: number; height: number } | null>(null);
   const hasKept = kept !== null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useLayoutEffect(() => {
     const el = box.current;
     if (!el || !visible) return;
@@ -85,6 +86,7 @@ export function KeepAliveStage<T>({
 
   // 看得见时记着每个滚动容器最后的位置；藏起来后 KEPT_SCROLL_HOLD_MS 内被挪了就还原（§98.5）。
   const tops = useRef(new WeakMap<Element, number>());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     const el = box.current;
     if (!el || !visible) return;
@@ -95,6 +97,7 @@ export function KeepAliveStage<T>({
     el.addEventListener("scroll", remember, { capture: true, passive: true });
     return () => el.removeEventListener("scroll", remember, { capture: true });
   }, [visible, hasKept]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useLayoutEffect(() => {
     const el = box.current;
     if (!el || visible) return;

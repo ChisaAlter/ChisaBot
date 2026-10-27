@@ -700,7 +700,7 @@ if (import.meta.main) {
     if (key.startsWith("OPENBOT_") && value !== undefined && process.env[`CHISABOT_${key.slice(8)}`] === undefined) process.env[`CHISABOT_${key.slice(8)}`] = value;
   }
   const stored = await Bun.file(process.env.CHISABOT_AUTH_CONFIG || "/auth/config.json").json();
-  const app = createAuthApp({ invites: true, ...stored, databasePath: process.env.CHISABOT_AUTH_DB || "/auth-data/sessions.sqlite", ...(process.env.CHISABOT_AUTH_APP_URL ? { appUrl: process.env.CHISABOT_AUTH_APP_URL } : {}) });
+  const app = createAuthApp({ ...stored, databasePath: process.env.CHISABOT_AUTH_DB || "/auth-data/sessions.sqlite", ...(process.env.CHISABOT_AUTH_APP_URL ? { appUrl: process.env.CHISABOT_AUTH_APP_URL } : {}) });
   const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.CHISABOT_AUTH_PORT || 3002), maxRequestBodySize: 4096, fetch: app.fetch });
   console.log("ChisaBot web authentication listening on loopback");
   const stop = () => { server.stop(true); app.close(); process.exit(0); };

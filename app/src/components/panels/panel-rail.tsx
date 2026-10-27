@@ -556,6 +556,7 @@ function RailSwitch({
   // 键盘约定走共用的 `useSegmentedKeys`（2026-10-20）：以前这里手写了一份，方向键换了项但焦点留在原处。
   const keys = useSegmentedKeys<RailTab>({ value: tab, values: ["panels", "computer"], onChange });
   const item = (value: RailTab, label: string, icon: React.ReactNode) => (
+    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
     <button
       aria-checked={tab === value}
       className="sg-segmented-item rail-tabs-item"
