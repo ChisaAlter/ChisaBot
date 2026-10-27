@@ -97,6 +97,8 @@ jobs:
           bun test tests/memory-delete-undo.test.tsx
           # DF-30：电脑卡片外框不再 button 套「重试」button。
           bun test tests/computer-frame-nested-button.test.tsx
+          # DF-13：service worker 导航失败区分离线 / 服务器慢（超时、502/503）并自动重试。
+          bun test tests/sw-navigation.test.ts
       - name: Install actual computer service dependencies
         working-directory: agent-computer
         run: bun install --frozen-lockfile
