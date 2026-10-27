@@ -381,3 +381,61 @@ test("hidden tab gives up leadership; the visible one takes over", async () => {
   hiddenOff();
   second.off();
 });
+
+for (const withLocks of [true, false]) {
+  const mode = withLocks ? "web locks" : "heartbeat";
+  test(`${mode}: first visible subscriber reads right away, without waiting for the election`, async () => {
+    const c = fakeClock();
+    const b = fakeBrowser();
+    const s = server(c);
+    const first = tab(b, c, "acct-a", "bot-first", withLocks);
+    await c.flush();
+    expect(s.reads.length).toBe(1);
+    expect(s.reads[0]).toBe(c.now());
+    first.off();
+  });
+
+  test(`${mode}: a healthy leader keeps followers quiet after their one start-up read`, async () => {
+    const c = fakeClock();
+    const b = fakeBrowser();
+    const s = server(c, 502);
+    const first = tab(b, c, "acct-a", "bot-quiet", withLocks);
+    await c.advance(500);
+    const second = tab(b, c, "acct-a", "bot-quiet", withLocks);
+    await c.advance(500);
+    const start = s.reads.length;
+    // 主标签退避中（1/2/4s 没有新结果）也每秒告诉跟随标签它还活着：跟随标签不自己读。
+    await c.advance(12_000);
+    expect(second.leader()).toBe(false);
+    expect(s.reads.length - start).toBeLessThanOrEqual(4);
+    first.off();
+    second.off();
+  });
+}
+
+test("web locks: a throttled leader (results stop arriving) → the visible follower reads itself within ~4s", async () => {
+  // 同一段时间里：主标签正常时读几次 vs 主标签结果发不出来时读几次；多出来的就是跟随标签自己读的。
+  const run = async (freeze: boolean) => {
+    const c = fakeClock();
+    const b = fakeBrowser();
+    const s = server(c);
+    const first = tab(b, c, "acct-a", "bot-throttled");
+    await c.advance(500);
+    const second = tab(b, c, "acct-a", "bot-throttled");
+    await c.advance(2000);
+    expect(first.leader()).toBe(true);
+    // 主标签在后台被节流：还拿着锁，但结果不再发出来。
+    if (freeze) b.freezeLast(0);
+    const before = s.reads.length;
+    await c.advance(4000);
+    const n = s.reads.length - before;
+    expect(second.leader()).toBe(false);
+    expect(second.store.getSnapshot().state).toBe("none");
+    first.off();
+    second.off();
+    return n;
+  };
+  const healthy = await run(false);
+  const throttled = await run(true);
+  expect(throttled).toBeGreaterThan(healthy);
+});

@@ -16,6 +16,7 @@ import {
   type ControlTabs,
   type ControlTabsEnv,
   type ControlTabsHandlers,
+  CONTROL_LEADER_TIMEOUT_MS,
   controlTabsScope,
   createControlTabs,
 } from "./control-tabs";
@@ -87,6 +88,9 @@ export function createControlStore(
   let tabs: ControlTabs | undefined;
   /** 只有主标签轮询；没有协调器时自己就是主。 */
   let leading = !makeTabs;
+  /** CB-107 r3：最近一次收到主标签结果的时间；太久没收到（没主 / 主在后台被节流）就自己读。 */
+  let lastSnapAt = Number.NEGATIVE_INFINITY;
+  let watchdog: unknown;
   let version = 0;
   let timer: unknown;
   /** CB-103 r4：退避重试直接按 retryAt 排定时器，不等每秒那一拍（以前每次晚一拍：2→3→5→6s）。 */
@@ -255,11 +259,32 @@ export function createControlStore(
     if (timer !== undefined) return;
     if (!snapshot.busy && active > 0) void refresh();
     timer = clock.setInterval(() => {
-      // 退避期间由 retryTimer 负责，这一拍不读。
-      if (failures > 0 && retryTimer !== undefined) return;
+      // 退避期间由 retryTimer 负责，这一拍不读；但告诉跟随标签主还活着（结果不旧）。
+      if (failures > 0 && retryTimer !== undefined) {
+        share();
+        return;
+      }
       if (active > 0 && !snapshot.busy && !reading && clock.now() >= retryAt)
         void refresh();
     }, 1000);
+  };
+  /** 跟随标签：没拿到主的结果，或结果超过 3 秒没更新，就自己读一次（选主照常进行）。 */
+  const followerStale = () =>
+    !leading &&
+    active > 0 &&
+    !snapshot.busy &&
+    !reading &&
+    clock.now() >= retryAt &&
+    clock.now() - lastSnapAt >= CONTROL_LEADER_TIMEOUT_MS;
+  const startWatchdog = () => {
+    if (watchdog !== undefined || !tabs) return;
+    watchdog = clock.setInterval(() => {
+      if (followerStale()) void refresh();
+    }, 1000);
+  };
+  const stopWatchdog = () => {
+    if (watchdog !== undefined) clock.clearInterval(watchdog);
+    watchdog = undefined;
   };
   const stopPolling = () => {
     if (timer !== undefined) clock.clearInterval(timer);
@@ -270,6 +295,13 @@ export function createControlStore(
   };
   const onTabMessage = (msg: ControlTabMessage) => {
     if (msg.k === "snap") {
+      lastSnapAt = clock.now();
+      // 主标签的结果说了算：本标签自己读失败留下的退避作废，免得跟着另起一套退避。
+      if (!leading && (failures || retryTimer !== undefined)) {
+        failures = 0;
+        retryAt = 0;
+        clearRetry();
+      }
       // 跟随标签：直接用主标签的结果，不自己读；本标签的 busy 不被覆盖。
       if (snapshot.busy) return;
       const snap = msg.snap as Partial<Snapshot>;
@@ -309,6 +341,7 @@ export function createControlStore(
       tabs?.close();
       tabs = undefined;
       leading = !makeTabs;
+      stopWatchdog();
       stopPolling();
     },
     subscribe: (listener: () => void, onScreen = true) => {
@@ -322,12 +355,21 @@ export function createControlStore(
       }
       if (leading) startPolling();
       // CB-107：有看得见的订阅者才去争主；跟随标签先问主标签要一份最新结果。
-      if (tabs && active > 0) tabs.start();
+      if (tabs && active > 0) {
+        tabs.start();
+        // 启动 / 重新可见时还没有主的结果：先立刻读一次，不等选主（心跳模式要 300ms）。
+        if (onScreen && active === 1 && followerStale()) void refresh();
+        startWatchdog();
+      }
       return () => {
         if (onScreen) active--;
         listeners.delete(listener);
-        if (tabs && active <= 0) tabs.stop();
+        if (tabs && active <= 0) {
+          tabs.stop();
+          stopWatchdog();
+        }
         if (listeners.size) return;
+        stopWatchdog();
         stopPolling();
         tabs?.close();
         tabs = undefined;
