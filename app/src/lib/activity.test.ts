@@ -1,10 +1,18 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { stashDraftFiles, takeDraftFiles } from "@/lib/chat/ui-memory";
 import { refreshWouldInterrupt, setBusy, setPendingAttachments } from "./activity";
 
 // The full app tree preloads a DOM (app/tests/preload.ts); this subset may not, so register one here.
-if (typeof document === "undefined") GlobalRegistrator.register();
+// Register a DOM only for this file and take it down again afterwards: happy-dom's global Request
+// drops forbidden headers such as Origin, so leaving it registered broke every later file in the
+// same `bun test` process that builds a Request by hand (deploy/public/auth/accounts.test.ts got
+// 403 on every login because its Origin header vanished).
+const registeredHere = typeof document === "undefined";
+if (registeredHere) GlobalRegistrator.register();
+afterAll(async () => {
+  if (registeredHere) await GlobalRegistrator.unregister();
+});
 
 afterEach(() => {
   document.body.innerHTML = "";

@@ -338,14 +338,6 @@ function CreateAccountDialog({
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"user" | "admin">("user");
-  useEffect(() => {
-    if (!open) return;
-    setUsername("");
-    setDisplayName("");
-    setPassword("");
-    setRole("user");
-    create.reset();
-  }, [open]);
   const create = useAsyncAction(
     async () => {
       const account = await createAccount({
@@ -358,6 +350,15 @@ function CreateAccountDialog({
     },
     { errorToast: (error) => error.message },
   );
+  const resetCreate = create.reset;
+  useEffect(() => {
+    if (!open) return;
+    setUsername("");
+    setDisplayName("");
+    setPassword("");
+    setRole("user");
+    resetCreate();
+  }, [open, resetCreate]);
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-lg">
@@ -458,11 +459,6 @@ function PasswordDialog({
   onSaved: (account: GatewayAccount) => void;
 }) {
   const [password, setPassword] = useState("");
-  useEffect(() => {
-    if (!account) return;
-    setPassword("");
-    save.reset();
-  }, [account]);
   const save = useAsyncAction(
     async () => {
       if (!account) return;
@@ -471,6 +467,12 @@ function PasswordDialog({
     },
     { errorToast: (error) => error.message },
   );
+  const resetSave = save.reset;
+  useEffect(() => {
+    if (!account) return;
+    setPassword("");
+    resetSave();
+  }, [account, resetSave]);
   return (
     <Dialog onOpenChange={onOpenChange} open={!!account}>
       <DialogContent className="im-dialog max-w-md">
@@ -529,13 +531,6 @@ function InviteDialog({
   const [note, setNote] = useState("");
   const [hours, setHours] = useState(72);
   const [role, setRole] = useState<"user" | "admin">("user");
-  useEffect(() => {
-    if (!open) return;
-    setNote("");
-    setHours(72);
-    setRole("user");
-    create.reset();
-  }, [open]);
   const create = useAsyncAction(
     async () => {
       const invite = await createInvite({ note: note.trim() || undefined, hours, role });
@@ -543,6 +538,14 @@ function InviteDialog({
     },
     { errorToast: (error) => error.message },
   );
+  const resetCreate = create.reset;
+  useEffect(() => {
+    if (!open) return;
+    setNote("");
+    setHours(72);
+    setRole("user");
+    resetCreate();
+  }, [open, resetCreate]);
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-lg">

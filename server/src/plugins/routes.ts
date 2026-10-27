@@ -308,6 +308,27 @@ export function createPluginRoutes(
   });
 
   /** Add a curated server. The URL comes from the catalogue, never from the request. */
+  routes.put("/servers/:id/auto-grant", requireUser, async (context) => {
+    const forbidden = requireAdmin(context);
+    if (forbidden) return forbidden;
+    const serverId = context.req.param("id");
+    if (!(await store.serverExists(serverId))) {
+      return context.json({ error: "Unknown MCP server." }, 404);
+    }
+    const body = (await context.req.json().catch(() => null)) as {
+      enabled?: unknown;
+    } | null;
+    if (typeof body?.enabled !== "boolean") {
+      return context.json({ error: "enabled must be a boolean." }, 400);
+    }
+    await store.setServerAutoGrantAll(
+      serverId,
+      body.enabled,
+      actorEmail(context),
+    );
+    return context.json({ serverId, autoGrantAll: body.enabled });
+  });
+
   routes.post("/servers", requireUser, async (context) => {
     const forbidden = requireAdmin(context);
     if (forbidden) return forbidden;

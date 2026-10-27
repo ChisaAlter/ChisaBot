@@ -35,7 +35,10 @@ function req(path: string, init: { method?: string; body?: unknown; cookie?: str
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
   if (method !== "GET" && init.origin !== null) headers.Origin = init.origin || origin;
   if (init.cookie) headers.Cookie = init.cookie;
-  return new Request(origin + path, { method, headers, ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }) });
+  const request = new Request(origin + path, { method, headers, ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }) });
+  // Hermetic guard: a DOM shim (happy-dom) left registered by another file replaces the global Request and silently drops Origin, which turns every login here into a 403.
+  if (headers.Origin && request.headers.get("Origin") !== headers.Origin) throw new Error("global Request dropped the Origin header; a DOM shim from another test file is still registered");
+  return request;
 }
 const cookieOf = (response: Response) => response.headers.get("Set-Cookie")!.split(";")[0]!;
 async function adminCookie(service: ReturnType<typeof app>) {
