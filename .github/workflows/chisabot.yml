@@ -95,6 +95,7 @@ jobs:
           bun test tests/sidebar-search-nav.test.ts tests/channel-pagination.test.tsx tests/channel-search.test.ts tests/focus-message.test.ts tests/scroll-within.test.ts tests/sidebar-shortcut-layouts.test.tsx
           # CB-106：app/bunfig.toml 已自动加载 ./tests/preload.ts（DOM 下先求值 Base UI），无需再显式 --preload（CB-110）。
           bun test tests/memory-delete-undo.test.tsx
+          bun test tests/memory-undo-toast-limit.test.tsx
           # DF-30：电脑卡片外框不再 button 套「重试」button。
           bun test tests/computer-frame-nested-button.test.tsx
       - name: Install actual computer service dependencies
