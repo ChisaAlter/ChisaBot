@@ -27,6 +27,8 @@ export type MemoryNoteView = {
   subject: string | null;
   content: string;
   context: string | null;
+  /** 是否为管理员统一配置的公共知识库条目（全员与所有机器人共享）。 */
+  shared?: boolean;
   /** 谁写的：「你」或机器人名字（服务器存 agent id，列表接口换成名字）。 */
   author: "you" | "bot";
   agentId: string | null;

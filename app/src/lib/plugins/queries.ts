@@ -78,6 +78,8 @@ export type PluginServer = {
    * Null is not an older brokered row. It is a row that is not brokered at all.
    */
   authScheme: string | null;
+  /** Whether all bots across the deployment automatically hold this server's tools (CB-097c). */
+  autoGrantAll?: boolean;
   tools: PluginTool[];
   /** Empty for a healthy connector. See {@link WithdrawnGrant}. */
   withdrawn: WithdrawnGrant[];

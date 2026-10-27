@@ -53,7 +53,8 @@ export function recoveringSql(makeClient: () => SQL, timeoutMs = DATABASE_TIMEOU
   const closedError = () => Object.assign(new Error("Database client is closed."), { code: "DATABASE_CLOSED" });
   const generation = () => {
     if (closed) throw closedError();
-    return current ??= { client: makeClient(), pending: new Set() };
+    current ??= { client: makeClient(), pending: new Set() };
+    return current;
   };
   const trackClose = (client: SQL, seconds: number) => {
     // Bun 1.3.14 tests `if (timeout)`: timeout:0 means graceful, and hangs on a silent socket.

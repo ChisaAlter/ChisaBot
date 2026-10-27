@@ -23,7 +23,7 @@ describe.skipIf(!url)("vault", () => {
   const seen: { url: string; headers: Record<string, string>; body?: string }[] = [];
   const fakeFetch = (async (input: URL | string, init?: RequestInit) => {
     const headers: Record<string, string> = {};
-    new Headers(init?.headers).forEach((v, k) => (headers[k] = v));
+    new Headers(init?.headers).forEach((v, k) => { headers[k] = v; });
     seen.push({ url: String(input), headers, ...(typeof init?.body === "string" ? { body: init.body } : {}) });
     return new Response(JSON.stringify({ echo: headers.authorization ?? "" }), { status: 200, headers: { "content-type": "application/json" } });
   }) as typeof fetch;

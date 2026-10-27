@@ -23,6 +23,7 @@ import {
   removeSkillMutationOptions,
   saveSkillMutationOptions,
   setPluginGrantMutationOptions,
+  setServerAutoGrantAllMutationOptions,
 } from "../src/lib/plugins/mutations";
 import { pluginKeys } from "../src/lib/plugins/queries";
 
@@ -169,6 +170,16 @@ const REFUSALS: {
       kind: "mcp" as const,
       ref: "linear/create_issue",
     },
+  },
+  {
+    // The route stores the switch and then files the audit row; a failing audit insert answers 500
+    // with the new state already in place, so the screen must refetch either way.
+    name: "switching a server on or off for every Bot",
+    route: "PUT /api/plugins/servers/:id/auto-grant",
+    status: 500,
+    message: "That server's access could not be changed.",
+    factory: setServerAutoGrantAllMutationOptions,
+    variables: { serverId: "linear", enabled: true },
   },
   {
     name: "adding a curated server",
@@ -525,6 +536,12 @@ const ENCODED_REQUESTS: {
     url: `/api/plugins/servers/${ENCODED_ID}/connection/recheck`,
     build: recheckBrokeredConnectionMutationOptions,
     variables: HOSTILE_ID,
+  },
+  {
+    name: "switching a server on or off for every Bot",
+    url: `/api/plugins/servers/${ENCODED_ID}/auto-grant`,
+    build: setServerAutoGrantAllMutationOptions,
+    variables: { serverId: HOSTILE_ID, enabled: true },
   },
   {
     name: "removing a skill",

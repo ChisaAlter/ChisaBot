@@ -25,7 +25,7 @@ export function SettingsSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const { data: user } = useQuery(currentUserQueryOptions());
   const { data: capabilities } = useQuery(deploymentCapabilitiesQueryOptions());
   const viewer: SettingsViewer = useMemo(
-    () => ({ admin: user?.role === "admin", extras: capabilities?.extras ?? [], accountsUi: capabilities?.accountsUi === true }),
+    () => ({ admin: user?.role === "admin", extras: capabilities?.extras ?? [], accountsUi: capabilities?.accountsUi !== false }),
     [user?.role, capabilities?.extras, capabilities?.accountsUi],
   );
   const groups: RailGroup[] = useMemo(

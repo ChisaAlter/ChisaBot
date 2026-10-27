@@ -241,7 +241,7 @@ export function createVault(database: Database, options: { encryptionKey: string
 
     // 默认走 guardedFetch（DNS 钉死、不跟重定向）；测试注入 fetch 时仍用强 assert + 手动 redirect。
     if (!options.fetch) {
-      let guarded;
+      let guarded: Awaited<ReturnType<typeof guardedFetch>>;
       try {
         guarded = await guardedFetch(filledUrl, {
           method,

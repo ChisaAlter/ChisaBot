@@ -124,7 +124,6 @@ export function createAuthApp(config: AuthConfig) {
   if (!config.username || !config.passwordHash.startsWith("$argon2id$") || new URL(config.publicOrigin).protocol !== "https:") throw new Error("Invalid authentication configuration");
   if (config.identitySecret !== undefined && (typeof config.identitySecret !== "string" || config.identitySecret.length < 32)) throw new Error("identitySecret must be at least 32 characters");
   const multi = typeof config.identitySecret === "string";
-  const invitesOpen = config.invites === true;
   const invitesClosed = () => json({ ok: false, error: "邀请新朋友目前已关闭。", invitesEnabled: false }, 403);
   const adminUserId = config.adminUserId || "dev-local-user";
   const now = config.now || Date.now;
@@ -141,7 +140,14 @@ export function createAuthApp(config: AuthConfig) {
     expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL
   ); CREATE TABLE IF NOT EXISTS attempts (
     client_key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL
+  ); CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY, value TEXT NOT NULL
   ); CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);`);
+  function isInvitesOpen(): boolean {
+    const row = db.query("SELECT value FROM settings WHERE key = 'invites_enabled'").get() as { value: string } | null;
+    if (row) return row.value === "1";
+    return config.invites === true;
+  }
   // 手机扫码绑定的会话：记下设备 id 和最后一次确认时间；多账号：会话属于哪个账号（NULL = config.json 的管理员）。
   const columns = new Set((db.query("PRAGMA table_info(sessions)").all() as { name: string }[]).map((column) => column.name));
   if (!columns.has("device_id")) db.exec("ALTER TABLE sessions ADD COLUMN device_id TEXT");
@@ -359,14 +365,14 @@ export function createAuthApp(config: AuthConfig) {
     return json({ ok: true, device: { id: deviceId, name: typeof body?.device?.name === "string" ? body.device.name : null } }, 200, { "Set-Cookie": cookieHeader(token, LONG_LIFETIME) });
   }
 
-  // ---- 账号管理（仅管理员，DESIGN.md 账号一节）----
+  // ---- 账号管理（仅管理员，DESIGN.md 账号一节 / CB-096 多用户与管理员体系）----
   const accountView = (row: AccountRow) => ({ id: row.id, username: row.username, displayName: row.display_name, role: row.role, disabled: !!row.disabled, builtin: false, createdAt: row.created_at, lastLoginAt: row.last_login_at });
   function inviteUrl(token: string) { return `${config.publicOrigin}/login?invite=${token}`; }
-  function newInvite(kind: "invite" | "reset", hours: number, note: string | null, accountId: string | null): { id: string; url: string; expiresAt: number } {
+  function newInvite(kind: "invite" | "reset", hours: number, note: string | null, accountId: string | null, role: "admin" | "user" = "user"): { id: string; url: string; expiresAt: number; role: "admin" | "user" } {
     const token = "cbi_" + randomBytes(32).toString("base64url");
     const expiresAt = now() + hours * 3600_000;
-    db.query("INSERT INTO invites (token_hash, kind, account_id, role, note, created_at, expires_at) VALUES (?, ?, ?, 'user', ?, ?, ?)").run(digest(token), kind, accountId, note, now(), expiresAt);
-    return { id: digest(token).slice(0, 16), url: inviteUrl(token), expiresAt };
+    db.query("INSERT INTO invites (token_hash, kind, account_id, role, note, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(digest(token), kind, accountId, role, note, now(), expiresAt);
+    return { id: digest(token).slice(0, 16), url: inviteUrl(token), expiresAt, role };
   }
   function usernameProblem(username: string, exceptId: string | null = null): string | null {
     if (!USERNAME.test(username)) return "账号名 2–32 个字符，只能用中英文、数字和 _ . -。";
@@ -389,24 +395,35 @@ export function createAuthApp(config: AuthConfig) {
     const method = request.method;
     if (method !== "GET" && request.headers.get("Origin") !== config.publicOrigin) return json({ ok: false, error: "请求来源无效，请刷新页面重试。" }, 403);
     const rest = path.slice("/auth/admin/".length).split("/");
+    if (rest[0] === "invites-enabled" && rest.length === 1 && (method === "PUT" || method === "POST")) {
+      const body = await readJson(request);
+      if (body instanceof Response) return body;
+      if (typeof body.enabled !== "boolean") return json({ ok: false, error: "enabled 必须是 true / false。" }, 400);
+      db.query("INSERT INTO settings (key, value) VALUES ('invites_enabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(body.enabled ? "1" : "0");
+      return json({ ok: true, invitesEnabled: isInvitesOpen() });
+    }
     if (rest[0] === "accounts" && rest.length === 1) {
       if (method === "GET") {
         clean(true);
         const rows = db.query("SELECT * FROM accounts ORDER BY created_at").all() as AccountRow[];
-        const invites = (db.query("SELECT token_hash, kind, account_id, note, created_at, expires_at FROM invites WHERE used_at IS NULL AND expires_at > ? ORDER BY created_at DESC").all(now()) as { token_hash: string; kind: string; account_id: string | null; note: string | null; created_at: number; expires_at: number }[])
-          .map((row) => ({ id: row.token_hash.slice(0, 16), kind: row.kind, accountId: row.account_id, note: row.note, createdAt: row.created_at, expiresAt: row.expires_at }));
+        const invites = (db.query("SELECT token_hash, kind, account_id, role, note, created_at, expires_at FROM invites WHERE used_at IS NULL AND expires_at > ? ORDER BY created_at DESC").all(now()) as { token_hash: string; kind: "invite" | "reset"; account_id: string | null; role: "admin" | "user"; note: string | null; created_at: number; expires_at: number }[])
+          .map((row) => ({ id: row.token_hash.slice(0, 16), kind: row.kind, accountId: row.account_id, role: row.role === "admin" ? "admin" : "user", note: row.note, createdAt: row.created_at, expiresAt: row.expires_at }));
         return json({
           ok: true,
           me: principal.id,
-          invitesEnabled: invitesOpen,
+          invitesEnabled: isInvitesOpen(),
           accounts: [{ id: adminUserId, username: config.username, displayName: config.username, role: "admin", disabled: false, builtin: true, createdAt: null, lastLoginAt: null }, ...rows.map(accountView)],
           invites,
         });
       }
       if (method === "POST") {
-        if (!invitesOpen) return invitesClosed();
+        if (!isInvitesOpen()) return invitesClosed();
         const body = await readJson(request);
         if (body instanceof Response) return body;
+        if (body.role !== undefined && body.role !== "admin" && body.role !== "user") {
+          return json({ ok: false, error: "role 必须是 admin 或 user。" }, 400);
+        }
+        const role: "admin" | "user" = body.role === "admin" ? "admin" : "user";
         const username = typeof body.username === "string" ? body.username.trim() : "";
         const problem = usernameProblem(username) || passwordProblem(body.password);
         if (problem) return json({ ok: false, error: problem }, 400);
@@ -415,20 +432,24 @@ export function createAuthApp(config: AuthConfig) {
         let hash: string;
         try { hash = await hashPassword(body.password as string); } finally { inFlight--; }
         const id = "u_" + randomBytes(9).toString("base64url");
-        db.query("INSERT INTO accounts (id, username, username_key, display_name, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'user', ?, ?)").run(id, username, username.toLowerCase(), cleanName(body.displayName, username), hash, now(), now());
+        db.query("INSERT INTO accounts (id, username, username_key, display_name, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(id, username, username.toLowerCase(), cleanName(body.displayName, username), hash, role, now(), now());
         return json({ ok: true, account: accountView(account(id)!) }, 201);
       }
       return json({ ok: false, error: "请求方法不支持。" }, 405);
     }
     if (rest[0] === "invites" && rest.length === 1 && method === "POST") {
-      if (!invitesOpen) return invitesClosed();
+      if (!isInvitesOpen()) return invitesClosed();
       const body = await readJson(request);
       if (body instanceof Response) return body;
+      if (body.role !== undefined && body.role !== "admin" && body.role !== "user") {
+        return json({ ok: false, error: "role 必须是 admin 或 user。" }, 400);
+      }
+      const role: "admin" | "user" = body.role === "admin" ? "admin" : "user";
       const hours = typeof body.hours === "number" && Number.isFinite(body.hours) ? Math.min(168, Math.max(1, Math.round(body.hours))) : 72;
       const note = typeof body.note === "string" && body.note.trim() ? cleanName(body.note, "") : null;
       const pending = (db.query("SELECT count(*) AS n FROM invites WHERE used_at IS NULL AND expires_at > ?").get(now()) as { n: number }).n;
       if (pending >= 20) return json({ ok: false, error: "未使用的邀请太多了，先撤销一些。" }, 429);
-      return json({ ok: true, invite: newInvite("invite", hours, note, null) }, 201);
+      return json({ ok: true, invite: newInvite("invite", hours, note, null, role) }, 201);
     }
     if (rest[0] === "invites" && rest.length === 2 && method === "DELETE") {
       const id = rest[1] || "";
@@ -449,6 +470,20 @@ export function createAuthApp(config: AuthConfig) {
           db.query("UPDATE accounts SET disabled = ?, updated_at = ? WHERE id = ?").run(body.disabled ? 1 : 0, now(), id);
           if (body.disabled) db.query("DELETE FROM sessions WHERE user_id = ?").run(id);
         }
+        if (body.role !== undefined) {
+          if (body.role !== "admin" && body.role !== "user") return json({ ok: false, error: "role 必须是 admin 或 user。" }, 400);
+          db.query("UPDATE accounts SET role = ?, updated_at = ? WHERE id = ?").run(body.role, now(), id);
+        }
+        if (body.password !== undefined) {
+          const problem = passwordProblem(body.password);
+          if (problem) return json({ ok: false, error: problem }, 400);
+          if (inFlight >= 2) return json({ ok: false, error: "服务器忙，请稍后再试。" }, 429, { "Retry-After": "2" });
+          inFlight++;
+          let hash: string;
+          try { hash = await hashPassword(body.password as string); } finally { inFlight--; }
+          db.query("UPDATE accounts SET password_hash = ?, updated_at = ? WHERE id = ?").run(hash, now(), id);
+          db.query("DELETE FROM sessions WHERE user_id = ?").run(id);
+        }
         if (body.displayName !== undefined) db.query("UPDATE accounts SET display_name = ?, updated_at = ? WHERE id = ?").run(cleanName(body.displayName, row.username), now(), id);
         return json({ ok: true, account: accountView(account(id)!) });
       }
@@ -462,19 +497,19 @@ export function createAuthApp(config: AuthConfig) {
       }
       if (rest.length === 3 && rest[2] === "reset" && method === "POST") {
         db.query("DELETE FROM invites WHERE account_id = ? AND used_at IS NULL").run(id);
-        return json({ ok: true, invite: newInvite("reset", 24, null, id) }, 201);
+        return json({ ok: true, invite: newInvite("reset", 24, null, id, row.role) }, 201);
       }
     }
     return json({ ok: false, error: "页面不存在。" }, 404);
   }
 
   // ---- 邀请 / 重置密码链接（公开，凭链接里的一次性令牌）----
-  type InviteRow = { token_hash: string; kind: "invite" | "reset"; account_id: string | null; expires_at: number; used_at: number | null };
+  type InviteRow = { token_hash: string; kind: "invite" | "reset"; account_id: string | null; role: "admin" | "user"; expires_at: number; used_at: number | null };
   function findInvite(token: unknown): InviteRow | null {
     if (typeof token !== "string" || !INVITE_TOKEN.test(token)) return null;
-    const row = db.query("SELECT token_hash, kind, account_id, expires_at, used_at FROM invites WHERE token_hash = ?").get(digest(token)) as InviteRow | null;
+    const row = db.query("SELECT token_hash, kind, account_id, role, expires_at, used_at FROM invites WHERE token_hash = ?").get(digest(token)) as InviteRow | null;
     if (!row || row.used_at !== null || row.expires_at <= now()) return null;
-    if (row.kind === "invite" && !invitesOpen) return null;
+    if (row.kind === "invite" && !isInvitesOpen()) return null;
     if (row.kind === "reset") {
       const target = row.account_id ? account(row.account_id) : null;
       if (!target || target.disabled) return null;
@@ -495,7 +530,7 @@ export function createAuthApp(config: AuthConfig) {
         return json({ ok: false, error: "邀请链接无效或已过期，请向管理员要一个新的。" }, 404);
       }
       const target = row.kind === "reset" && row.account_id ? account(row.account_id) : null;
-      return json({ ok: true, kind: row.kind, expiresAt: row.expires_at, ...(target ? { username: target.username, displayName: target.display_name } : {}) });
+      return json({ ok: true, kind: row.kind, role: row.role === "admin" ? "admin" : "user", expiresAt: row.expires_at, ...(target ? { username: target.username, displayName: target.display_name } : {}) });
     }
     if (request.method !== "POST") return json({ ok: false, error: "请求方法不支持。" }, 405, { Allow: "GET, POST" });
     if (request.headers.get("Origin") !== config.publicOrigin) return json({ ok: false, error: "请求来源无效，请刷新页面重试。" }, 403);
@@ -530,7 +565,8 @@ export function createAuthApp(config: AuthConfig) {
           return;
         }
         accountId = "u_" + randomBytes(9).toString("base64url");
-        db.query("INSERT INTO accounts (id, username, username_key, display_name, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'user', ?, ?)").run(accountId, username, username.toLowerCase(), cleanName(body.displayName, username), hash, now(), now());
+        const assignedRole: "admin" | "user" = row.role === "admin" ? "admin" : "user";
+        db.query("INSERT INTO accounts (id, username, username_key, display_name, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(accountId, username, username.toLowerCase(), cleanName(body.displayName, username), hash, assignedRole, now(), now());
       } else {
         accountId = row.account_id;
         db.query("UPDATE accounts SET password_hash = ?, updated_at = ? WHERE id = ?").run(hash, now(), accountId);

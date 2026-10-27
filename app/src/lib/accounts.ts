@@ -19,6 +19,7 @@ export type GatewayInvite = {
   id: string;
   kind: "invite" | "reset";
   accountId: string | null;
+  role?: "admin" | "user";
   note: string | null;
   createdAt: number;
   expiresAt: number;
@@ -60,14 +61,26 @@ export function accountsQueryOptions() {
   });
 }
 
-export async function createInvite(input: { note?: string; hours?: number }) {
-  return (await call<{ invite: { id: string; url: string; expiresAt: number } }>("/auth/admin/invites", { method: "POST", body: JSON.stringify(input) })).invite;
+export async function setInvitesEnabled(enabled: boolean) {
+  return (await call<{ invitesEnabled: boolean }>("/auth/admin/invites-enabled", { method: "PUT", body: JSON.stringify({ enabled }) })).invitesEnabled;
+}
+export async function createInvite(input: { note?: string; hours?: number; role?: "admin" | "user" }) {
+  return (await call<{ invite: { id: string; url: string; expiresAt: number; role?: "admin" | "user" } }>("/auth/admin/invites", { method: "POST", body: JSON.stringify(input) })).invite;
+}
+export async function createAccount(input: { username: string; displayName?: string; password: string; role?: "admin" | "user" }) {
+  return (await call<{ account: GatewayAccount }>("/auth/admin/accounts", { method: "POST", body: JSON.stringify(input) })).account;
 }
 export async function revokeInvite(id: string) {
   await call(`/auth/admin/invites/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 export async function setAccountDisabled(id: string, disabled: boolean) {
   await call(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ disabled }) });
+}
+export async function setAccountRole(id: string, role: "admin" | "user") {
+  return (await call<{ account: GatewayAccount }>(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ role }) })).account;
+}
+export async function setAccountPassword(id: string, password: string) {
+  return (await call<{ account: GatewayAccount }>(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ password }) })).account;
 }
 export async function resetAccount(id: string) {
   return (await call<{ invite: { id: string; url: string; expiresAt: number } }>(`/auth/admin/accounts/${encodeURIComponent(id)}/reset`, { method: "POST", body: "{}" })).invite;

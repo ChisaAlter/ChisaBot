@@ -324,4 +324,52 @@ describe("admin-only entries and phone sessions", () => {
     service.close();
     rmSync(dir, { recursive: true, force: true });
   });
+
+  test("CB-096: admin can toggle invites-enabled at runtime, create/invite admins, and update role/password", async () => {
+    const service = app({ invites: false });
+    const admin = await adminCookie(service);
+    // 初始 invites=false 时 invitesEnabled=false，管理员在线开启后立即生效。
+    expect((await (await service.fetch(req("/auth/admin/accounts", { cookie: admin }))).json()).invitesEnabled).toBe(false);
+    const toggled = await service.fetch(req("/auth/admin/invites-enabled", { method: "PUT", body: { enabled: true }, cookie: admin }));
+    expect(toggled.status).toBe(200);
+    expect(await toggled.json()).toMatchObject({ invitesEnabled: true });
+
+    // 直接创建一位管理员账号 co_admin。
+    const created = await service.fetch(
+      req("/auth/admin/accounts", {
+        body: { username: "co_admin", password: "co-admin-password", displayName: "副管理员", role: "admin" },
+        cookie: admin,
+      }),
+    );
+    expect(created.status).toBe(201);
+    const createdBody = await created.json();
+    expect(createdBody.account.role).toBe("admin");
+
+    // 副管理员登录并拥有管理员身份与权限。
+    const coLogin = await service.fetch(req("/auth/login", { body: { username: "co_admin", password: "co-admin-password" } }));
+    expect(coLogin.status).toBe(200);
+    const coCookie = cookieOf(coLogin);
+    const coSession = await (await service.fetch(req("/auth/session", { cookie: coCookie }))).json();
+    expect(coSession.role).toBe("admin");
+    expect((await service.fetch(req("/_internal/check", { cookie: coCookie, headers: { "X-ChisaBot-Require-Role": "admin" } }))).status).toBe(200);
+
+    // 邀请一位普通成员，再通过 PATCH 升级为管理员并直接修改密码。
+    const { cookie: memberCookie } = await friend(service, coCookie, "member1", "old-password-123");
+    const list = await (await service.fetch(req("/auth/admin/accounts", { cookie: coCookie }))).json();
+    const member = list.accounts.find((a: { username: string }) => a.username === "member1");
+    expect(member.role).toBe("user");
+
+    const patchRole = await service.fetch(req(`/auth/admin/accounts/${member.id}`, { method: "PATCH", body: { role: "admin" }, cookie: admin }));
+    expect(patchRole.status).toBe(200);
+    expect((await patchRole.json()).account.role).toBe("admin");
+    expect((await (await service.fetch(req("/auth/session", { cookie: memberCookie }))).json()).role).toBe("admin");
+
+    // 直接修改密码会使旧会话立即失效，新密码可登录。
+    const patchPass = await service.fetch(req(`/auth/admin/accounts/${member.id}`, { method: "PATCH", body: { password: "new-password-456" }, cookie: admin }));
+    expect(patchPass.status).toBe(200);
+    expect((await (await service.fetch(req("/auth/session", { cookie: memberCookie }))).json()).authenticated).toBe(false);
+    expect((await service.fetch(req("/auth/login", { body: { username: "member1", password: "new-password-456" } }))).status).toBe(200);
+
+    service.close();
+  });
 });

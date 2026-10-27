@@ -12,6 +12,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Card, ErrorCard, ListRow, Toolbar } from "@/components/ui/skyglass";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import {
@@ -60,15 +61,24 @@ function SkillsPage() {
       queryClient.invalidateQueries({ queryKey: ["plugins"] }),
     ]);
   };
-  const useSkillInChat = (skill: { slug: string; title: string }) => {
+  const openSkillInChat = (skill: { slug: string; title: string }) => {
     sendPromptToChat(navigate, `/${skill.slug} 请按「${skill.title}」技能帮我执行`);
   };
-  async function installFromHub(hubSlug: string, title?: string) {
+  async function installFromHub(hubSlug: string, title?: string, asShared = false) {
     setInstallingSlug(hubSlug);
     try {
-      const res = await importChisaSkill({ hubSlug });
+      const res = await importChisaSkill({ hubSlug, ...(asShared ? { shared: true } : {}) });
       await refresh();
-      toast.success(hubSlug === "all" ? `已一键安装 ${res.installedCount} 个精选技能` : `已安装技能「${title ?? hubSlug}」`);
+      const skipped = res.skippedCount ?? 0;
+      if (res.installedCount === 0 && skipped > 0) {
+        toast.error("没有安装：同名技能已被他人或共享技能占用，请先在列表里处理。");
+      } else {
+        toast.success(
+          hubSlug === "all"
+            ? `已一键安装 ${res.installedCount} 个${asShared ? "全局共享" : "精选"}技能${skipped ? `，另有 ${skipped} 个因重名未处理` : ""}`
+            : `已安装${asShared ? "全局共享" : ""}技能「${title ?? hubSlug}」`,
+        );
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "安装失败");
     } finally {
@@ -90,7 +100,7 @@ function SkillsPage() {
     }
     toast.undo(`已删除技能「${skill.title}」`, async () => {
       try {
-        await saveChisaSkill(skill.slug, { title: skill.title, summary: skill.summary, instructions: skill.instructions, create: true });
+        await saveChisaSkill(skill.slug, { title: skill.title, summary: skill.summary, instructions: skill.instructions, create: true, shared: !skill.mine });
         await refresh();
       } catch {
         toast.error("恢复失败");
@@ -111,7 +121,7 @@ function SkillsPage() {
               {skill.summary ? <span className="mem-body">{skill.summary}</span> : null}
               <span className="device-row-meta">
                 <span className="skill-slug">{`/${skill.slug}`}</span>
-                {skill.mine ? null : <span className="device-cap-chip"><T>{"共享 · 只读"}</T></span>}
+                {skill.mine ? null : <span className="device-cap-chip"><T>{isAdmin ? "全局共享 · 管理员可改" : "共享 · 只读"}</T></span>}
               </span>
             </>
           }
@@ -121,7 +131,7 @@ function SkillsPage() {
       <div className="flex shrink-0 items-center gap-1.5">
         <Button
           data-testid={`skill-use-${skill.slug}`}
-          onClick={() => useSkillInChat(skill)}
+          onClick={() => openSkillInChat(skill)}
           size="sm"
           title={`去对话里调用 /${skill.slug}`}
           variant="ghost"
@@ -129,7 +139,7 @@ function SkillsPage() {
           <IconMessageCircle className="size-3.5" />
           {"去对话使用"}
         </Button>
-        {skill.mine ? (
+        {skill.mine || isAdmin ? (
           <DropdownMenu>
             <DropdownMenuTrigger render={<button aria-label={`「${skill.title}」的更多操作`} className="device-row-more" title={"更多操作"} type="button" />}>
               <IconDots className="size-4" />
@@ -154,18 +164,32 @@ function SkillsPage() {
   const hubSection = hub.data?.length ? (
     <PageSection
       action={
-        <Button
-          data-testid="skill-hub-install-all-btn"
-          disabled={installingSlug === "all"}
-          onClick={() => void installFromHub("all")}
-          size="sm"
-          variant="outline"
-        >
-          <IconSparkles className="size-3.5" />
-          {installingSlug === "all" ? "安装中…" : "一键安装全部精选"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {isAdmin ? (
+            <Button
+              data-testid="skill-hub-install-all-shared-btn"
+              disabled={installingSlug === "all"}
+              onClick={() => void installFromHub("all", undefined, true)}
+              size="sm"
+              variant="outline"
+            >
+              <IconUsers className="size-3.5" />
+              {installingSlug === "all" ? "安装中…" : "全员共享安装全部"}
+            </Button>
+          ) : null}
+          <Button
+            data-testid="skill-hub-install-all-btn"
+            disabled={installingSlug === "all"}
+            onClick={() => void installFromHub("all", undefined, false)}
+            size="sm"
+            variant="outline"
+          >
+            <IconSparkles className="size-3.5" />
+            {installingSlug === "all" ? "安装中…" : "一键安装全部精选"}
+          </Button>
+        </div>
       }
-      description="开箱即用的个人助理核心技能包（早安管家、收件箱分拣、多源深度调研、PR 审查、服务器巡检、周报蒸馏等）。安装后随时可在聊天中输入 /名字 调用，也可自由编辑。"
+      description="开箱即用的个人助理核心技能包（早安管家、收件箱分拣、多源深度调研、PR 审查、服务器巡检、周报蒸馏等）。安装后随时可在聊天中输入 /名字 调用，管理员还可直接设为全员共享。"
       title={`✨ 精选技能库（一键安装） · ${hub.data.length}`}
     >
       <Card className="mem-card" data-testid="skill-hub-card">
@@ -198,7 +222,7 @@ function SkillsPage() {
                   <>
                     <Button
                       data-testid={`skill-hub-use-${item.slug}`}
-                      onClick={() => useSkillInChat(item)}
+                      onClick={() => openSkillInChat(item)}
                       size="sm"
                       variant="outline"
                     >
@@ -236,8 +260,8 @@ function SkillsPage() {
 
   return (
     <>
-      <SkillDialog onOpenChange={(open) => setDialog((current) => ({ ...current, open }))} open={dialog.open} skill={dialog.skill} />
-      <SkillImportDialog onImported={refresh} onOpenChange={setImportOpen} open={importOpen} />
+      <SkillDialog isAdmin={isAdmin} onOpenChange={(open) => setDialog((current) => ({ ...current, open }))} open={dialog.open} skill={dialog.skill} />
+      <SkillImportDialog isAdmin={isAdmin} onImported={refresh} onOpenChange={setImportOpen} open={importOpen} />
       <PageShell
         action={
           /* 技能管理并入这里（DESIGN.md §57 导航收敛）：管理员从这里进入部署共享技能。 */
@@ -304,22 +328,26 @@ function SkillsPage() {
 
 function SkillImportDialog({
   open,
+  isAdmin = false,
   onOpenChange,
   onImported,
 }: {
   open: boolean;
+  isAdmin?: boolean;
   onOpenChange: (open: boolean) => void;
   onImported: () => Promise<void>;
 }) {
   const [url, setUrl] = useState("");
   const [markdown, setMarkdown] = useState("");
   const [slug, setSlug] = useState("");
+  const [shared, setShared] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setUrl("");
     setMarkdown("");
     setSlug("");
+    setShared(false);
     importAction.reset();
   }, [open]);
 
@@ -329,9 +357,10 @@ function SkillImportDialog({
         url: url.trim() || undefined,
         markdown: markdown.trim() || undefined,
         slug: slug.trim() || undefined,
+        ...(isAdmin ? { shared } : {}),
       });
       await onImported();
-      toast.success(`已导入技能「${res.skill?.title ?? (slug || "新技能")}」`);
+      toast.success(`已导入${shared ? "全局共享" : ""}技能「${res.skill?.title ?? (slug || "新技能")}」`);
       onOpenChange(false);
     },
     { errorToast: (err) => err.message },
@@ -397,6 +426,15 @@ function SkillImportDialog({
                 value={slug}
               />
             </label>
+            {isAdmin ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="font-medium text-sm">{"设为全局共享技能（全员可用）"}</div>
+                  <div className="text-muted-foreground text-xs">{"开启后，实例中所有用户的机器人都可加载此技能，成员也能直接用 /名字 调用。"}</div>
+                </div>
+                <Switch checked={shared} onCheckedChange={(checked) => setShared(Boolean(checked))} />
+              </div>
+            ) : null}
           </DialogBody>
           <DialogFooter className="mt-3 sm:justify-between">
             <Button
@@ -445,18 +483,38 @@ function SkillImportDialog({
   );
 }
 
-function SkillDialog({ open, skill, onOpenChange }: { open: boolean; skill: ChisaSkill | null; onOpenChange: (open: boolean) => void }) {
+function SkillDialog({
+  open,
+  skill,
+  isAdmin = false,
+  onOpenChange,
+}: {
+  open: boolean;
+  skill: ChisaSkill | null;
+  isAdmin?: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const queryClient = useQueryClient();
-  const readOnly = Boolean(skill && !skill.mine);
-  const [form, setForm] = useState({ slug: "", title: "", summary: "", instructions: "" });
+  const readOnly = Boolean(skill && !skill.mine && !isAdmin);
+  const [form, setForm] = useState({ slug: "", title: "", summary: "", instructions: "", shared: false });
   useEffect(() => {
     if (!open) return;
-    setForm(skill ? { slug: skill.slug, title: skill.title, summary: skill.summary, instructions: skill.instructions } : { slug: "", title: "", summary: "", instructions: "" });
+    setForm(
+      skill
+        ? { slug: skill.slug, title: skill.title, summary: skill.summary, instructions: skill.instructions, shared: !skill.mine }
+        : { slug: "", title: "", summary: "", instructions: "", shared: false },
+    );
     save.reset();
   }, [open, skill]);
   const save = useAsyncAction(
     async () => {
-      await saveChisaSkill(form.slug, { title: form.title, summary: form.summary, instructions: form.instructions, create: !skill });
+      await saveChisaSkill(form.slug, {
+        title: form.title,
+        summary: form.summary,
+        instructions: form.instructions,
+        create: !skill,
+        ...(isAdmin ? { shared: form.shared } : {}),
+      });
       await queryClient.invalidateQueries({ queryKey: chisaSkillKeys.all });
       window.setTimeout(() => onOpenChange(false), 600);
     },
@@ -526,6 +584,15 @@ function SkillDialog({ open, skill, onOpenChange }: { open: boolean; skill: Chis
                 value={form.instructions}
               />
             </label>
+            {isAdmin ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="font-medium text-sm">{"设为全局共享技能（全员可用）"}</div>
+                  <div className="text-muted-foreground text-xs">{"开启后，实例中所有用户的机器人都可加载此技能，成员也能直接用 /名字 调用。"}</div>
+                </div>
+                <Switch checked={form.shared} onCheckedChange={(checked) => setForm({ ...form, shared: Boolean(checked) })} />
+              </div>
+            ) : null}
           </DialogBody>
           <DialogFooter className="mt-4">
             <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">

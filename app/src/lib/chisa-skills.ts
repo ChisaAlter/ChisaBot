@@ -40,7 +40,8 @@ export async function importChisaSkill(input: {
   url?: string;
   markdown?: string;
   slug?: string;
-}): Promise<{ skill?: ChisaSkill | null; skills?: ChisaSkill[]; installedCount: number }> {
+  shared?: boolean;
+}): Promise<{ skill?: ChisaSkill | null; skills?: ChisaSkill[]; installedCount: number; skippedCount?: number }> {
   const response = await client("/api/chisa-skills/import", {
     method: "POST",
     body: input,
@@ -50,10 +51,14 @@ export async function importChisaSkill(input: {
     skill?: ChisaSkill | null;
     skills?: ChisaSkill[];
     installedCount: number;
+    skippedCount?: number;
   };
 }
 
-export function saveChisaSkill(slug: string, input: { title: string; summary: string; instructions: string; create?: boolean }): Promise<ChisaSkill> {
+export function saveChisaSkill(
+  slug: string,
+  input: { title: string; summary: string; instructions: string; create?: boolean; shared?: boolean },
+): Promise<ChisaSkill> {
   return client(`/api/chisa-skills/${encodeURIComponent(slug)}`, "skill", { method: "PUT", body: input, fallback: "保存失败，请重试" });
 }
 

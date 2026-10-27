@@ -104,8 +104,9 @@ function summaryFor(
   if (auth === "user-oauth" && !youConnected) return "未连接";
   if (server.tools.length === 0) return "尚无工具";
 
-  const bots = new Set(server.tools.flatMap((tool) => tool.grantedTo)).size;
   const tools = `${server.tools.length} 个工具`;
+  if (server.autoGrantAll) return `${tools} · 全员机器人默认可用`;
+  const bots = new Set(server.tools.flatMap((tool) => tool.grantedTo)).size;
   if (bots === 0) return `${tools} · 暂无机器人`;
   return `${tools} · ${bots} 个机器人`;
 }

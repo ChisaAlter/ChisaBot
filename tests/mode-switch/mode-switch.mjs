@@ -23,7 +23,11 @@ const browser = await chromium.launch({ headless: true, executablePath: exe, arg
 const SAMPLER = () => {
   window.__frames = [];
   window.__sampling = false;
-  const id = (el) => (el ? (el.__cbid ||= Math.random().toString(36).slice(2, 8)) : null);
+  const id = (el) => {
+    if (!el) return null;
+    if (!el.__cbid) el.__cbid = Math.random().toString(36).slice(2, 8);
+    return el.__cbid;
+  };
   const tick = () => {
     if (window.__sampling) {
       const main = document.querySelector(".glass-main");
@@ -85,7 +89,11 @@ for (const view of VIEWS) {
     for (let i = 0; i < CYCLES * 2; i++) {
       const to = i % 2 === 0 ? "cc" : "bots";
       const before = await page.evaluate(() => {
-        const id = (el) => (el ? (el.__cbid ||= Math.random().toString(36).slice(2, 8)) : null);
+        const id = (el) => {
+    if (!el) return null;
+    if (!el.__cbid) el.__cbid = Math.random().toString(36).slice(2, 8);
+    return el.__cbid;
+  };
         window.__frames = [];
         window.__sampling = true;
         return { shell: id(document.querySelector(".glass-shell")), top: id(document.querySelector(".glass-topbar")), side: id(document.querySelector('[data-slot="sidebar-container"]')) };

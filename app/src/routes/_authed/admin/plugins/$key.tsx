@@ -51,6 +51,7 @@ import {
   refreshPluginServerMutationOptions,
   registerOAuthClientMutationOptions,
   removePluginServerMutationOptions,
+  setServerAutoGrantAllMutationOptions,
 } from "@/lib/plugins/mutations";
 import {
   type CatalogueItem,
@@ -252,6 +253,10 @@ function RouteComponent() {
   });
   const remove = useMutation({
     ...removePluginServerMutationOptions(queryClient),
+    ...report,
+  });
+  const setAutoGrantAll = useMutation({
+    ...setServerAutoGrantAllMutationOptions(queryClient),
     ...report,
   });
   const connectSelf = useMutation({
@@ -891,6 +896,29 @@ function RouteComponent() {
           }
           title={"工具"}
         >
+          <PageRows className="mb-3">
+            <Item size="sm">
+              <ItemContent>
+                <ItemTitle>{"全员默认开启"}</ItemTitle>
+                <ItemDescription>
+                  {server.autoGrantAll
+                    ? "所有成员的机器人都可直接使用此服务器的全部工具，包括以后新增的工具。关闭后立即收回。"
+                    : "没有逐个授予的机器人不能使用它。打开后所有成员的机器人自动获得全部工具（仅限按人授权或无需凭据的服务器）。"}
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <Switch
+                  aria-label={`全员默认开启 ${title}`}
+                  checked={Boolean(server.autoGrantAll)}
+                  disabled={setAutoGrantAll.isPending}
+                  onCheckedChange={(checked) => {
+                    setError(null);
+                    setAutoGrantAll.mutate({ serverId: server.id, enabled: Boolean(checked) });
+                  }}
+                />
+              </ItemActions>
+            </Item>
+          </PageRows>
           {server.tools.length === 0 ? (
             <PageEmpty>
               {server.lastError ?? "未列出工具。刷新以再次询问供应商。"}

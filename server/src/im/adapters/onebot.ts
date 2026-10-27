@@ -23,18 +23,18 @@ export function parseCqString(message: string): Segment[] {
   const re = /\[CQ:([a-zA-Z_]+)((?:,[^\]]*)?)\]/g;
   let last = 0;
   let match: RegExpExecArray | null;
-  const unescape = (text: string) => text.replace(/&#91;/g, "[").replace(/&#93;/g, "]").replace(/&#44;/g, ",").replace(/&amp;/g, "&");
-  while ((match = re.exec(message))) {
-    if (match.index > last) out.push({ type: "text", data: { text: unescape(message.slice(last, match.index)) } });
+  const unescapeCq = (text: string) => text.replace(/&#91;/g, "[").replace(/&#93;/g, "]").replace(/&#44;/g, ",").replace(/&amp;/g, "&");
+  for (match = re.exec(message); match; match = re.exec(message)) {
+    if (match.index > last) out.push({ type: "text", data: { text: unescapeCq(message.slice(last, match.index)) } });
     const data: Record<string, unknown> = {};
     for (const pair of (match[2] ?? "").split(",").filter(Boolean)) {
       const eq = pair.indexOf("=");
-      if (eq > 0) data[pair.slice(0, eq)] = unescape(pair.slice(eq + 1));
+      if (eq > 0) data[pair.slice(0, eq)] = unescapeCq(pair.slice(eq + 1));
     }
     out.push({ type: match[1]!, data });
     last = re.lastIndex;
   }
-  if (last < message.length) out.push({ type: "text", data: { text: unescape(message.slice(last)) } });
+  if (last < message.length) out.push({ type: "text", data: { text: unescapeCq(message.slice(last)) } });
   return out;
 }
 

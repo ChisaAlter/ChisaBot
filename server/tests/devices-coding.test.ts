@@ -188,7 +188,7 @@ describe("coding tools", () => {
       botId: "bot1",
       actorId: "u1",
       devices: [device],
-      workspace: { read: async () => ({ bytes: Buffer.alloc(7_000_000, 1), name: "big" }), write: async (p, b) => ((written[p] = b), true) },
+      workspace: { read: async () => ({ bytes: Buffer.alloc(7_000_000, 1), name: "big" }), write: async (p, b) => { written[p] = b; return true; } },
     });
     const tool = (name: string) => {
       const found = tools.find((t) => t.name === name);

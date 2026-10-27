@@ -45,8 +45,8 @@ describe("runtime capabilities", () => {
       // Default-on. The browser reads this to decide whether to offer the tool that generates an
       // interface, so it has to be here and not only in the runtime.
       generativeUi: true,
-      // 设置 → 管理 →「账号」入口：默认隐藏（CHISABOT_ACCOUNTS_UI）。
-      accountsUi: false,
+      // 设置 → 管理 →「账号」入口：默认开启（CB-096 多用户与管理员体系；CHISABOT_ACCOUNTS_UI=0 可关）。
+      accountsUi: true,
       // 功能精简（DESIGN.md §74）：默认隐藏的功能里重新打开的，默认没有。
       extras: [],
       // Default-on: a fresh clone is somebody evaluating the template.

@@ -461,25 +461,29 @@ export function ComputerView({
           setShot(next.shot);
           setProblem(null);
         }
+      } catch (error) {
+        // 已被新一轮取代的探测，出错也与它无关了；当前这轮照常抛出。
+        if (generation.current === mine) throw error;
       } finally {
-        if (generation.current !== mine) return;
-        // 不变式：**只要还显示着「暂时看不到屏幕」，就必须继续重试**。底栏文案承诺「稍后会自动重试」，
-        // 而停下来等用户点「重试」的话，大屏关掉、电脑恢复之后卡片都不会自己回来（线上卡死状态）。
-        // 所以「慢」是允许的，「停」不是：liveCast 固定 10s 探一次，连续失败按退避上限 30s 探。
-        const recovering = liveCastBusy || failStreak > 0;
-        if (shouldContinue() || recovering) {
-          /*
-           * 刚收起大屏时直播刚停，第一次探测会撞上「大屏正在直播」的 503；下一次如果还按 10 秒的
-           * liveCast 间隔走，右栏要空着「暂时看不到屏幕」十秒才回来（2026-10-22 实测约 12 秒）。
-           * 头两次改用 1.2 秒，让卡片在收起大屏后一两秒内接回截图；仍然失败才退回 10 秒探测。
-           */
-          const quick = liveCastBusy && failStreak <= 2;
-          timer = setTimeout(
-            tick,
-            quick
-              ? 1200
-              : nextScreenshotPollDelay(failStreak, intervalMs, { liveCast: liveCastBusy }),
-          );
+        if (generation.current === mine) {
+          // 不变式：**只要还显示着「暂时看不到屏幕」，就必须继续重试**。底栏文案承诺「稍后会自动重试」，
+          // 而停下来等用户点「重试」的话，大屏关掉、电脑恢复之后卡片都不会自己回来（线上卡死状态）。
+          // 所以「慢」是允许的，「停」不是：liveCast 固定 10s 探一次，连续失败按退避上限 30s 探。
+          const recovering = liveCastBusy || failStreak > 0;
+          if (shouldContinue() || recovering) {
+            /*
+             * 刚收起大屏时直播刚停，第一次探测会撞上「大屏正在直播」的 503；下一次如果还按 10 秒的
+             * liveCast 间隔走，右栏要空着「暂时看不到屏幕」十秒才回来（2026-10-22 实测约 12 秒）。
+             * 头两次改用 1.2 秒，让卡片在收起大屏后一两秒内接回截图；仍然失败才退回 10 秒探测。
+             */
+            const quick = liveCastBusy && failStreak <= 2;
+            timer = setTimeout(
+              tick,
+              quick
+                ? 1200
+                : nextScreenshotPollDelay(failStreak, intervalMs, { liveCast: liveCastBusy }),
+            );
+          }
         }
       }
     };

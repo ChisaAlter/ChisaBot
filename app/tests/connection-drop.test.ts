@@ -60,7 +60,9 @@ test("the lost-connection sentence does not blame the model", () => {
 
 const fakeClock = () => {
   let t = 0;
-  return { now: () => t, sleep: async (ms: number) => void (t += ms) };
+  return { now: () => t, sleep: async (ms: number) => {
+    t += ms;
+  } };
 };
 
 test("server still running → continuing, without reading the stored turn", async () => {
@@ -193,7 +195,9 @@ test("raceSendWatchdog: run finishes first → done", async () => {
 
 test("raceSendWatchdog: timeout wins when run never settles", async () => {
   let t = 0;
-  const afterMs = async (ms: number) => void (t += ms);
+  const afterMs = async (ms: number) => {
+    t += ms;
+  };
   const run = new Promise<void>(() => {});
   const outcome = await raceSendWatchdog(run, { afterMs, timeoutMs: 12_000 });
   expect(outcome).toBe("timeout");
@@ -268,7 +272,9 @@ test("reply hang sentence says the message was sent, not that it failed to leave
 
 test("raceSendWatchdog: second (reply) bound still times out a hung run", async () => {
   let t = 0;
-  const afterMs = async (ms: number) => void (t += ms);
+  const afterMs = async (ms: number) => {
+    t += ms;
+  };
   const run = new Promise<void>(() => {});
   const outcome = await raceSendWatchdog(run, {
     afterMs,

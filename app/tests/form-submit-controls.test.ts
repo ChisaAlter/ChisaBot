@@ -20,6 +20,8 @@ const SUBMITTED_ELSEWHERE = new Set([
   // 地址栏只有一个网址输入框：回车走 HTML 的隐式提交（正好一个字段的那种），工具条上的按钮是
   // 前进 / 后退 / 刷新这样的导航动作（type="button"），不是提交。
   "src/components/computer/live-screen.tsx",
+  // Alt+Space 随手问浮窗：只有一个输入框，回车走 HTML 的隐式提交；唯一的按钮是关闭（type="button"）。
+  "src/components/chat/quick-spotlight.tsx",
 ]);
 
 /** `Bun.Glob` 在 Windows 上给的是 `src\components\…`；上面那张表写的是 `/`。 */
