@@ -112,6 +112,7 @@ jobs:
           bun test server/tests/agent-runtime-unreachable.integration.test.ts
           bun test server/tests/schedules-paused-next.integration.test.ts
           bun test server/tests/schedules-runs-param.test.ts
+          bun test server/tests/schedules.test.ts
           bun test server/tests/channel-search-hit-meta.test.ts
           bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
       # CB-103：GET /control 一律 200 + state，截图让路回 409 user_control，接管中的拒绝记进活动记录。

@@ -101,8 +101,16 @@ describe.skipIf(!url)("schedules (database)", () => {
 
   beforeAll(async () => {
     await a.ensure();
+    // fire() 先确认原对话还在（threadFor）；库里有 openbot_local_threads 时，假的对话 id 会被当成「对话已不在」。
+    for (const id of ["t-web-1", "t-web-2", "t-busy"]) {
+      await sql.unsafe(
+        "INSERT INTO openbot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, 'bot1') ON CONFLICT (id) DO NOTHING",
+        [id, owner],
+      ).catch(() => {}); // 没有这张表时 threadFor 本来就放行
+    }
   });
   afterAll(async () => {
+    await sql.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [owner]).catch(() => {});
     await sql.unsafe("DELETE FROM chisabot_schedule_runs WHERE owner_user_id = $1", [owner]);
     await sql.unsafe("DELETE FROM chisabot_schedules WHERE owner_user_id = $1", [owner]);
   });
