@@ -408,6 +408,8 @@ function createNodeAgent(options) {
       }
     });
     ws.on("error", (error) => {
+      // stop()/reconnectNow() 主动丢弃的连接（可能还在握手中，ws 会报「closed before the connection was established」）不再上报。
+      if (socket !== ws) return;
       lastError = error && error.message ? error.message : String(error);
       events.emit("error", error);
     });
@@ -446,8 +448,10 @@ function createNodeAgent(options) {
       stopped = true;
       clearTimeout(reconnectTimer);
       clearTimeout(watchdog);
-      if (socket) socket.close(1000, "bye");
+      const ws = socket;
       socket = null;
+      // 握手中的连接 close() 会中止握手并异步报错；先置空 socket，error 监听据此忽略。
+      if (ws) ws.close(1000, "bye");
       setState("stopped");
     },
     /** 改本机设置并同步到服务器（能力、文件夹、名称、紧急停止）。 */
