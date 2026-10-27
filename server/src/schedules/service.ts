@@ -54,6 +54,14 @@ const BUSY_RETRIES = 12;
 const RUNS_DEFAULT = 20;
 const RUNS_MAX = 500;
 
+/** CB-106 P3：`?runs=N` 只认正整数（封顶 RUNS_MAX）；-1、0、2.5、abc、空值一律回到默认 20。 */
+export function parseRunsParam(raw: string | undefined | null): number {
+  if (raw == null || !/^\d+$/.test(raw.trim())) return RUNS_DEFAULT;
+  const n = Number(raw.trim());
+  if (!Number.isSafeInteger(n) || n < 1) return RUNS_DEFAULT;
+  return Math.min(RUNS_MAX, n);
+}
+
 /** Track B：卡在 running >20 分钟 → 标失败并清对话锁（启动 ensure 与扫表周期共用「20 minutes」字面量）。 */
 /** 连续失败这么多次 → 自动暂停（不自动恢复；电车等噪音任务保持人手恢复）。 */
 const FAIL_STREAK_PAUSE = 3;
@@ -1624,7 +1632,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         schedule: await get(
           c.var.actor.id,
           c.req.param("id"),
-          Number(c.req.query("runs") ?? RUNS_DEFAULT),
+          parseRunsParam(c.req.query("runs")),
         ),
       }),
     );
