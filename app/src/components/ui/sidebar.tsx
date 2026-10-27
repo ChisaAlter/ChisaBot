@@ -173,6 +173,12 @@ function SidebarProvider({
   );
 }
 
+/** 组字中的按键：Chromium 标 isComposing，WebKit 发 keyCode 229。 */
+export function isImeEscape(event: Event | undefined): boolean {
+  const key = event as KeyboardEvent | undefined;
+  return Boolean(key && (key.isComposing || key.keyCode === 229));
+}
+
 function Sidebar({
   side = "left",
   variant = "sidebar",
@@ -209,7 +215,18 @@ function Sidebar({
 
   if (isMobile) {
     return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
+      <Sheet
+        open={openMobile}
+        onOpenChange={(next, details) => {
+          // CB-106 r2：输入法组字时的 Esc 是取消候选词，不关抽屉（360 宽左栏是抽屉）。
+          if (!next && details?.reason === "escape-key" && isImeEscape(details.event)) {
+            details.cancel?.();
+            return;
+          }
+          setOpenMobile(next);
+        }}
+        {...props}
+      >
         <SheetContent
           dir={dir}
           data-sidebar="sidebar"
