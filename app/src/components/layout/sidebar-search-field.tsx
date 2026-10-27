@@ -50,7 +50,11 @@ export function SidebarSearchField() {
         className="side-search-input"
         onChange={(event) => setSidebarSearch(event.target.value)}
         onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+          if (event.nativeEvent.isComposing || event.keyCode === 229) {
+            // CB-106 r2：组字时的 Esc 是输入法在取消候选词，不是要关抽屉（360 宽左栏是抽屉）。
+            if (event.key === "Escape") event.stopPropagation();
+            return;
+          }
           if (search && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
             event.preventDefault();
             setActiveId(moveSearchActive(event.key === "ArrowDown" ? 1 : -1));

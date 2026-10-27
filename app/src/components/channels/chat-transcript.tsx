@@ -85,6 +85,7 @@ import {
 } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import { isMessageHeld } from "@/lib/channels/focus-message";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { collapseScheduleRuns } from "@/lib/schedule-fired";
 import { readFiring } from "@/lib/channels/routine-firing";
@@ -926,7 +927,9 @@ function SettleAtEnd({
     );
     if (!element || !content) return;
     const s = state.current;
-    const active = () => !s.released && performance.now() < s.until;
+    // CB-106 r2：定位到 ?message= 那条后（data-message-hold），打开时的落点 / 贴底都让路，直到人滚动或发消息。
+    const held = () => isMessageHeld(element);
+    const active = () => !s.released && performance.now() < s.until && !held();
     let frame = 0;
     /** 回到上次那一条；找到了返回 true。 */
     const toRemembered = () => {
@@ -1035,6 +1038,7 @@ function SettleAtEnd({
      * 下一帧的 rAF 里，中间那一帧会先画「最后一条掉到折线下面」。只在本来就在底部、不在恢复 / 对齐某一轮时动手。
      */
     const stickToBottom = () => {
+      if (held()) return;
       const max = element.scrollHeight - element.clientHeight;
       if (element.scrollTop >= max - 1) return;
       element.style.scrollBehavior = "auto";

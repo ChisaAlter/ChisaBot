@@ -3,8 +3,9 @@
  * Enter 打开高亮的那条，Esc 关闭（输入框自己处理）。
  *
  * 结果行由好几种组件画（标题命中的会话行、正文命中行），所以不在每个组件里各记一份状态，
- * 而是按 DOM 顺序取结果容器里的链接：画出来是什么顺序，方向键就按什么顺序走。
- * 高亮写成 `data-search-active` + `aria-selected`，输入框用 `aria-activedescendant` 指向它，读屏能念出来。
+ * 而是按 DOM 顺序取结果容器（role=listbox）里的 role=option：画出来是什么顺序，方向键就按什么顺序走。
+ * 每个 option 一直带 `aria-selected`（高亮的那条是 true，其余 false），输入框（combobox）用
+ * `aria-controls` 指向 listbox、`aria-activedescendant` 指向高亮的 option，读屏能念出来。
  */
 import { scrollIntoViewWithin } from "@/lib/scroll-within";
 
@@ -27,7 +28,14 @@ export function searchResultItems(
 ): HTMLElement[] {
   const container = root?.querySelector?.(`#${SEARCH_RESULTS_ID}`);
   if (!container) return [];
-  return Array.from(container.querySelectorAll<HTMLElement>("a[href]"));
+  return Array.from(container.querySelectorAll<HTMLElement>('[role="option"]'));
+}
+
+/** option 里真正能打开的那个链接（option 本身是链接时就是它自己）。 */
+function linkOf(option: HTMLElement): HTMLElement | null {
+  return option.matches("a[href]")
+    ? option
+    : option.querySelector<HTMLElement>("a[href]");
 }
 
 let idSeq = 0;
@@ -48,7 +56,7 @@ export function setSearchActive(
       scrollIntoViewWithin(item, { block: "nearest", behavior: "auto" });
     } else {
       item.removeAttribute(SEARCH_ACTIVE_ATTR);
-      item.removeAttribute("aria-selected");
+      item.setAttribute("aria-selected", "false");
     }
   });
   return activeId;
@@ -76,11 +84,59 @@ export function openSearchActive(root?: ParentNode | null): boolean {
   const at = activeSearchIndex(items);
   const target =
     at >= 0 ? items[at] : items.length === 1 ? items[0] : undefined;
-  if (!target) return false;
-  target.click();
+  const link = target ? linkOf(target) : null;
+  if (!link) return false;
+  link.click();
   return true;
 }
 
 export function clearSearchActive(root?: ParentNode | null) {
   setSearchActive(searchResultItems(root), -1);
+}
+
+/** 「最近活动 8分钟前」：结果行的时间字段（CB-106 r2，说清楚是会话最近活动，不是那条消息的时间）。 */
+export function searchHitWhen(
+  relative: string | undefined,
+): string | undefined {
+  return relative ? `最近活动 ${relative}` : undefined;
+}
+
+/** 摘要里的 markdown 图片（含被截断、没收尾的）。 */
+const MD_IMAGE = /!\[[^\]\n]*\](?:\([^)\s]*\)?)?|!\[[^\]\n]*$/g;
+export const SNIPPET_IMAGE_ZH = "[图片]";
+
+/**
+ * 摘要里的 `![alt](url)` 显示成「[图片]」，高亮区间跟着平移（落在图片语法里的那一头收到「[图片]」的边上）。
+ */
+export function cleanSearchSnippet(
+  snippet: string,
+  highlight?: { start: number; end: number },
+): { snippet: string; highlight?: { start: number; end: number } } {
+  const cuts: { from: number; to: number }[] = [];
+  for (const m of snippet.matchAll(MD_IMAGE))
+    cuts.push({ from: m.index ?? 0, to: (m.index ?? 0) + m[0].length });
+  if (!cuts.length) return { snippet, highlight };
+  let out = "";
+  let at = 0;
+  for (const cut of cuts) {
+    out += snippet.slice(at, cut.from) + SNIPPET_IMAGE_ZH;
+    at = cut.to;
+  }
+  out += snippet.slice(at);
+  const map = (pos: number, end: boolean) => {
+    let shift = 0;
+    for (const cut of cuts) {
+      if (pos <= cut.from) break;
+      if (pos < cut.to)
+        return cut.from + shift + (end ? SNIPPET_IMAGE_ZH.length : 0);
+      shift += SNIPPET_IMAGE_ZH.length - (cut.to - cut.from);
+    }
+    return pos + shift;
+  };
+  return {
+    snippet: out,
+    highlight: highlight
+      ? { start: map(highlight.start, false), end: map(highlight.end, true) }
+      : undefined,
+  };
 }
