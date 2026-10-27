@@ -249,7 +249,10 @@ test("接线：藏着的东西不轮询（§98.3）", () => {
   expect(src("components/panels/live-panels.tsx")).toContain("if (!onScreen) return false;");
   for (const f of ["lib/copilot/gallery-tools.tsx", "lib/copilot/sandboxed-tools.tsx"]) expect(src(f)).toContain("useBotOnScreen(declared)");
   expect(src("components/channels/channel-page.tsx")).toContain("useMarkBotHidden(agentId, !visible)");
-  expect(src("components/computer/handoff-resume-notice.tsx")).toContain("if (!ready || !onScreen) return;");
+  // CB-103 r2：提示不再自己轮询，改订阅共用的控制权 store；store 只在有看得见的订阅者时轮询。
+  expect(src("components/computer/handoff-resume-notice.tsx")).toContain("useComputerControl(botId, ready)");
+  expect(src("components/computer/handoff-resume-notice.tsx")).not.toContain("readControl(");
+  expect(src("lib/computers/use-control.ts")).toContain("const onScreen = useKeptVisible();");
   expect(src("lib/copilot/thread-activity.ts")).toContain("if (onScreen) kickRef.current();");
   expect(src("lib/copilot/thread-activity.ts")).toContain("onScreenRef.current ? SYNC_INTERVAL_MS : HIDDEN_SYNC_INTERVAL_MS");
   // 手机抽屉在导航开始前收起（不是新左栏挂上之后的 effect 里），否则透明抽屉盖住页面。

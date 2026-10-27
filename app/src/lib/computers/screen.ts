@@ -28,6 +28,10 @@ export const SCREEN_BUSY_ZH = "电脑正忙或还没就绪，屏幕暂时拿不�
 export const SCREEN_LIVE_CAST_ZH =
   "大屏正在直播，卡片截图先让给直播；关掉大屏后会自动回来。";
 
+/** CB-103：用户正接管着这台电脑，画面在直播里；卡片不再另外截图，这是预期内的状态。 */
+export const SCREEN_USER_CONTROL_ZH =
+  "电脑由你控制中，暂停预览；活动记录照常更新";
+
 /** 页面绘制超时（422 / pageTimeout），不是电脑挂了。 */
 export const SCREEN_PAGE_TIMEOUT_ZH =
   "页面还在忙，屏幕暂时拿不到。稍后再试。";
@@ -36,6 +40,8 @@ export type ScreenshotErrorFlags = {
   captureBusy?: boolean;
   liveCast?: boolean;
   pageTimeout?: boolean;
+  /** CB-103：409 + reason=user_control，用户接管中。 */
+  userControl?: boolean;
 };
 
 /**
@@ -50,6 +56,7 @@ export function screenshotErrorMessage(
 ): string {
   const raw = serverError?.trim();
   if (raw && /[\u4e00-\u9fff]/.test(raw)) return raw;
+  if (flags.userControl) return SCREEN_USER_CONTROL_ZH;
   if (flags.liveCast) return SCREEN_LIVE_CAST_ZH;
   if (flags.captureBusy) return SCREEN_BUSY_ZH;
   if (flags.pageTimeout || status === 422) return SCREEN_PAGE_TIMEOUT_ZH;
@@ -77,6 +84,7 @@ export async function readScreenshot(
   captureBusy?: boolean;
   liveCast?: boolean;
   pageTimeout?: boolean;
+  userControl?: boolean;
 }> {
   try {
     const response = await tryClient(`/api/computers/${computerId}/screenshot`);
@@ -86,11 +94,15 @@ export async function readScreenshot(
         captureBusy?: boolean;
         liveCast?: boolean;
         pageTimeout?: boolean;
+        userControl?: boolean;
+        reason?: string;
       } | null;
       const flags: ScreenshotErrorFlags = {
         captureBusy: body?.captureBusy === true,
         liveCast: body?.liveCast === true,
         pageTimeout: body?.pageTimeout === true,
+        userControl:
+          body?.userControl === true || body?.reason === "user_control",
       };
       return {
         status: response.status,

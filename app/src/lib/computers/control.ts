@@ -14,6 +14,16 @@ import { tryClient } from "@/lib/client";
 export type { ComputerControlState as ControlState } from "../../../../shared/computer-control";
 import type { ComputerControlState as ControlState } from "../../../../shared/computer-control";
 
+const okListeners = new Set<(computerId: string) => void>();
+/** 同一个 bot 的别的控制请求成功了：说明连得上，轮询不必再退避。 */
+export function onControlRequestOk(listener: (computerId: string) => void) {
+  okListeners.add(listener);
+  return () => okListeners.delete(listener);
+}
+function noteOk(computerId: string) {
+  for (const listener of okListeners) listener(computerId);
+}
+
 async function callControl(
   computerId: string,
   path: string,
@@ -25,6 +35,7 @@ async function callControl(
     { ...(body === undefined ? {} : { method: "POST", body }), signal },
   );
   if (!response.ok) return null;
+  noteOk(computerId);
   const value: unknown = await response.json().catch(() => null);
   if (!value || typeof value !== "object" || !("holder" in value)) return null;
   if (value.holder !== "bot" && value.holder !== "human") return null;
@@ -42,6 +53,64 @@ export function readControl(
     undefined,
     signal,
   );
+}
+
+/** CB-103：GET /control 的状态。`unreachable` 也包括网关自己给的 502 / 503 / 504 和断网。 */
+export type ComputerControlKind =
+  | "none"
+  | "live"
+  | "user_control"
+  | "unreachable";
+
+export type ControlRead =
+  | { kind: Exclude<ComputerControlKind, "unreachable">; control: ControlState }
+  | { kind: "unreachable"; reason: string }
+  /** 服务器回了别的错误（403 / 404 …）：按「无」处理，不提示重连、不暂停输入。 */
+  | { kind: "error" };
+
+/** 连不上电脑时给人看的话。 */
+export const CONTROL_UNREACHABLE_ZH = "暂时连不上电脑";
+
+const GATEWAY_STATUSES = new Set([502, 503, 504]);
+
+/**
+ * 读「谁在掌舵」并带上三态（无 / 直播 / 用户接管）或「连不上」。从不抛错、从不打 console.error：
+ * 部署重启那几秒 nginx 自己回 502，那是一种状态，不是要报警的错误。
+ */
+export async function readControlStatus(
+  computerId: string,
+  signal?: AbortSignal,
+): Promise<ControlRead> {
+  let response: Response;
+  try {
+    response = await tryClient(
+      `/api/computers/${encodeURIComponent(computerId)}/control`,
+      { signal },
+    );
+  } catch {
+    return { kind: "unreachable", reason: "network" };
+  }
+  if (GATEWAY_STATUSES.has(response.status))
+    return { kind: "unreachable", reason: `gateway_${response.status}` };
+  if (!response.ok) return { kind: "error" };
+  const value = (await response.json().catch(() => null)) as
+    | (Partial<ControlState> & { state?: string; reason?: string })
+    | null;
+  if (!value || typeof value !== "object") return { kind: "error" };
+  if (value.state === "unreachable")
+    return { kind: "unreachable", reason: value.reason ?? "unknown" };
+  if (value.holder !== "bot" && value.holder !== "human")
+    return { kind: "error" };
+  const control = value as ControlState;
+  const kind =
+    value.state === "live" ||
+    value.state === "user_control" ||
+    value.state === "none"
+      ? value.state
+      : control.holder === "human"
+        ? "user_control"
+        : "none";
+  return { kind, control };
 }
 
 export async function takeControl(computerId: string, requestId?: string) {
