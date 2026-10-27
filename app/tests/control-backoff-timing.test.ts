@@ -16,7 +16,10 @@ afterEach(() => {
 function fakeClock() {
   let now = 1_000_000;
   let seq = 0;
-  const timers = new Map<number, { at: number; fn: () => void; every?: number }>();
+  const timers = new Map<
+    number,
+    { at: number; fn: () => void; every?: number }
+  >();
   const clock: ControlClock = {
     now: () => now,
     setTimeout: (fn, ms) => {
