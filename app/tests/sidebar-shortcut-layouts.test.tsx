@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, render } from "@testing-library/react";
 import { SidebarProvider, useSidebar } from "@/components/ui/sidebar";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * The sidebar shortcut on a keyboard layout that does not write Latin letters.
@@ -20,7 +21,8 @@ afterEach(() => {
   cleanup();
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   GlobalRegistrator.unregister();
 });
 

@@ -13,6 +13,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BotProfilePage } from "@/components/bot-profile/profile";
 import { type AgentProfile, agentKeys } from "@/lib/agents/queries";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * 机器人资料页（DESIGN.md §47）：页头三个主操作；资料 / 运行两张卡；没有任务就没有任务分区；
@@ -21,7 +22,10 @@ import { type AgentProfile, agentKeys } from "@/lib/agents/queries";
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const AGENT: AgentProfile = {
   id: "bot-1",

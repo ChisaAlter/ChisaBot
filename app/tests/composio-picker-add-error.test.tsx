@@ -20,6 +20,7 @@ import { cleanup, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route as ComposioRoute } from "@/routes/_authed/admin/plugins/composio";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * WHAT A FAILED ADD SAYS WHEN A SECOND ADD IS PRESSED BEFORE THE FIRST ONE ANSWERS.
@@ -51,7 +52,10 @@ import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const originalFetch = global.fetch;
 afterEach(() => {

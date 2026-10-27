@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * 新建机器人（DESIGN.md §46.2 / §81）：一步完成；和编辑同一张表——头像 · 名称 · 职责 · 它做什么，文字从空白开始、
@@ -17,7 +18,10 @@ import type { ReactNode } from "react";
 GlobalRegistrator.register();
 const { CreateAgentDialog } = await import("@/components/agents/create-agent-dialog");
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const originalFetch = global.fetch;
 let writes: { request: string; body: Record<string, unknown> }[] = [];

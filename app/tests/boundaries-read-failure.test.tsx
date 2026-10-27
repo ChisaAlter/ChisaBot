@@ -17,6 +17,7 @@ import {
 import { cleanup, render } from "@testing-library/react";
 import type { ComponentType } from "react";
 import { Route as BoundariesRoute } from "@/routes/_authed/admin/boundaries";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * Boundaries is drawn from one read, `GET /api/computers/policy`. When that read fails the page
@@ -26,7 +27,10 @@ import { Route as BoundariesRoute } from "@/routes/_authed/admin/boundaries";
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const originalFetch = global.fetch;
 let policyResponse: () => Response;

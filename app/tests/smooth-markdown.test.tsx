@@ -2,13 +2,15 @@ import { afterAll, afterEach, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, render } from "@testing-library/react";
 import { useSmoothText } from "@/lib/chat/use-smooth-text";
+import { settleReactWork } from "./settle-react-work";
 
 if (typeof document === "undefined") GlobalRegistrator.register();
 
 afterEach(() => cleanup());
 
 // 2026-10-20 清基线：注册过就要收回来，否则后面的文件会撞「already been globally registered」。
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   if (GlobalRegistrator.isRegistered) GlobalRegistrator.unregister();
 });
 

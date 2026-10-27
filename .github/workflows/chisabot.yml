@@ -92,12 +92,12 @@ jobs:
           bun test tests/computer-activity-log.test.tsx tests/computer-activity.test.ts
           bun test tests/computer-control-status.test.ts tests/browser-presence.test.ts
           bun test tests/control-poll-single-source.test.tsx tests/control-backoff-timing.test.ts
-          bun test --preload ./tests/preload.ts tests/sidebar-search-nav.test.ts tests/channel-pagination.test.tsx tests/channel-search.test.ts tests/focus-message.test.ts tests/scroll-within.test.ts tests/sidebar-shortcut-layouts.test.tsx
-          # CB-106：从 app/ 跑时 bun 不读根目录 bunfig.toml，显式带上 app 的 preload（DOM 下先求值 Base UI）。
-          bun test --preload ./tests/preload.ts tests/memory-delete-undo.test.tsx
-          bun test --preload ./tests/preload.ts tests/memory-undo-toast-limit.test.tsx
+          bun test tests/sidebar-search-nav.test.ts tests/channel-pagination.test.tsx tests/channel-search.test.ts tests/focus-message.test.ts tests/scroll-within.test.ts tests/sidebar-shortcut-layouts.test.tsx
+          # CB-106：app/bunfig.toml 已自动加载 ./tests/preload.ts（DOM 下先求值 Base UI），无需再显式 --preload（CB-110）。
+          bun test tests/memory-delete-undo.test.tsx
+          bun test tests/memory-undo-toast-limit.test.tsx
           # DF-30：电脑卡片外框不再 button 套「重试」button。
-          bun test --preload ./tests/preload.ts tests/computer-frame-nested-button.test.tsx
+          bun test tests/computer-frame-nested-button.test.tsx
       - name: Install actual computer service dependencies
         working-directory: agent-computer
         run: bun install --frozen-lockfile
@@ -113,6 +113,7 @@ jobs:
           bun test server/tests/agent-runtime-unreachable.integration.test.ts
           bun test server/tests/schedules-paused-next.integration.test.ts
           bun test server/tests/schedules-runs-param.test.ts
+          bun test server/tests/schedules.test.ts
           bun test server/tests/channel-search-hit-meta.test.ts
           bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
       # CB-103：GET /control 一律 200 + state，截图让路回 409 user_control，接管中的拒绝记进活动记录。

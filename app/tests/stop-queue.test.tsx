@@ -22,6 +22,7 @@ import {
   takeQueued,
   useReadMark,
 } from "../src/lib/copilot/thread-inbox";
+import { settleReactWork } from "./settle-react-work";
 
 // CB-104: Stop and queued follow-ups.
 const originalFetch = globalThis.fetch;
@@ -35,7 +36,8 @@ beforeAll(() => {
   );
 });
 afterEach(cleanup);
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   globalThis.fetch = originalFetch;
   GlobalRegistrator.unregister();
 });

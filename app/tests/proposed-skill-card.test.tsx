@@ -4,6 +4,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProposedSkillCard } from "@/components/skills/proposed-skill";
 import { skillCardAnswer } from "@/lib/skills/proposal";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * The card a Bot's draft skill stops on, and the answers it can give.
@@ -23,7 +24,10 @@ import { skillCardAnswer } from "@/lib/skills/proposal";
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 /** A draft that passes the fields, so each test varies only the thing it is about. */
 const DRAFT = {

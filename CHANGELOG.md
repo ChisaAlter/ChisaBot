@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.87 — 2026-10-27
+
+这一版只修测试与 CI 稳定性（`CB-109`、`CB-110`），并让 PC 客户端在主动断开时不再上报多余的连接错误。PC 客户端与服务端同步更新至 0.1.87（Android `versionCode` 284）。
+
+### 定时任务测试补回 CI（`CB-109`，#329）
+
+- `server/tests/schedules.test.ts` 的 3 条过时用例已修正（测试前先登记所用对话），并加入 CI。
+
+### 偶发测试错误修复（`CB-110`，#328）
+
+- 前端测试收尾时先排空 React 调度，不再偶发 `window is not defined`。
+- **PC 客户端**：停止或立即重连时丢弃的连接（可能仍在握手）不再上报「closed before the connection was established」错误；`reconnect.check.js` 补充对应用例。
+
 ## 0.1.86 — 2026-10-27
 
 这一版让电脑控制状态更清楚、连接异常时不再刷错误（`CB-103`）。PC 客户端与服务端同步更新至 0.1.86（Android `versionCode` 283）。

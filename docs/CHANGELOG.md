@@ -1,3 +1,7 @@
+## 0.1.87
+
+- 定时任务测试修正并加入 CI（`CB-109`）；测试收尾排空 React 调度修偶发 window is not defined，PC 客户端主动断开的握手中连接不再报错（`CB-110`）（versionCode 284）
+
 ## 0.1.86
 
 - 电脑控制三态（none / live / user_control），接管时暂停预览不再报 503；`/control` 恒 200 并带退避，连不上时不刷控制台错误；每个机器人单一轮询源（`CB-103`）（versionCode 283）

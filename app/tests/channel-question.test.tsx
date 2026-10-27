@@ -15,6 +15,7 @@ import {
   PendingQuestion,
 } from "@/components/approvals/pending-question";
 import { dismissPersonQuestion } from "@/lib/approvals";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * 「1 个问题」点进对话之后必须有事可做。
@@ -28,6 +29,7 @@ import { dismissPersonQuestion } from "@/lib/approvals";
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
 afterAll(async () => {
+  await settleReactWork();
   // React's scheduler still has a task queued from the last render; let it land while the DOM exists,
   // or it throws `window is not defined` between tests.
   await new Promise((resolve) => setTimeout(resolve, 50));

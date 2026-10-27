@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render } from "@testing-library/react";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * The handler the SDK keeps for a computer change.
@@ -33,7 +34,10 @@ const { observeApprovalAgent } = await import("@/lib/copilot/approval-context");
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const direct: unknown[] = [];
 function Tools() {

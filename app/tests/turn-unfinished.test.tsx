@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bu
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render } from "@testing-library/react";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * 回合不能静默结束（DESIGN.md §100，2026-10-17 用户截图：星灵在 Hark 注册页选生日，「做了 3 步」后什么都没有）。
@@ -30,7 +31,10 @@ const { unfinishedTurnReason, isAbortFailure } = await import("@/lib/copilot/sto
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 function Tools() {
   useFrontendTool({

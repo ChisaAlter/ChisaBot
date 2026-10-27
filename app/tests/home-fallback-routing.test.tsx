@@ -22,6 +22,7 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { pickLandingBot } from "@/lib/agents/landing";
 import { type AgentProfile, agentKeys } from "@/lib/agents/queries";
 import { Route as ChannelNewRoute } from "@/routes/_authed/_app/channel/new";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * 第一条消息发给哪个机器人，以及发起失败时不替人做决定。
@@ -46,7 +47,10 @@ beforeAll(() => GlobalRegistrator.register());
 
 afterEach(() => cleanup());
 
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const originalFetch = global.fetch;
 

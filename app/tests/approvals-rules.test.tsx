@@ -17,6 +17,7 @@ import {
   groupBrowserSteps,
 } from "@/components/channels/browser-activity";
 import { toVisibleChatItems } from "@/components/channels/chat-messages";
+import { settleReactWork } from "./settle-react-work";
 
 // 待处理页里有 <Link>（去审批偏好），测试里没有路由：换成普通 <a>。
 const realRouter = await import("@tanstack/react-router");
@@ -28,7 +29,10 @@ const { PendingInbox } = await import("@/components/approvals/inbox");
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const originalFetch = global.fetch;
 const role: "user" | "admin" = "user";

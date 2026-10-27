@@ -9,6 +9,7 @@ import {
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { useEffect, useRef, useState } from "react";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * CB-098 QA 第三轮：窄屏在右栏抽屉里切到「计算机」（地址带上 watch=true）后连续返回，
@@ -19,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
  */
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
 afterAll(async () => {
+  await settleReactWork();
   await GlobalRegistrator.unregister();
 });
 afterEach(cleanup);
