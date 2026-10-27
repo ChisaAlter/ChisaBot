@@ -239,10 +239,16 @@ test("QA #326：连删两条（文案相同也一样），两条「撤销」都�
     // 前面用例留下的提示（模块级）不算。
     const before = view.queryAllByRole("button", { name: "撤销" }).length;
     const beforeText = view.queryAllByText("已删除 1 条记忆").length;
-    deleteWithUndo([note({ id: "mem_x", subject: null, content: "" })], async () => {});
+    deleteWithUndo(
+      [note({ id: "mem_x", subject: null, content: "" })],
+      async () => {},
+    );
     await act(async () => {});
     jest.advanceTimersByTime(2000);
-    deleteWithUndo([note({ id: "mem_y", subject: null, content: "" })], async () => {});
+    deleteWithUndo(
+      [note({ id: "mem_y", subject: null, content: "" })],
+      async () => {},
+    );
     await act(async () => {});
     const buttons = view.getAllByRole("button", { name: "撤销" }).slice(before);
     expect(buttons).toHaveLength(2);
@@ -253,7 +259,9 @@ test("QA #326：连删两条（文案相同也一样），两条「撤销」都�
     expect(pendingMemoryDeletes.snapshot().has("mem_x")).toBe(false);
     expect(pendingMemoryDeletes.snapshot().has("mem_y")).toBe(true);
     await act(async () => {
-      fireEvent.click(view.getAllByRole("button", { name: "撤销" }).at(-1) as HTMLElement);
+      fireEvent.click(
+        view.getAllByRole("button", { name: "撤销" }).at(-1) as HTMLElement,
+      );
     });
     expect(pendingMemoryDeletes.snapshot().size).toBe(0);
     jest.advanceTimersByTime(MEMORY_UNDO_MS * 2);
@@ -270,10 +278,13 @@ test("连删六条：撤销提示一条不丢", async () => {
     const view = render(<Toaster />);
     await act(async () => {});
     const before = view.queryAllByRole("button", { name: "撤销" }).length;
-    for (let i = 0; i < 6; i++) deleteWithUndo([note({ id: `mem_${i}` })], async () => {});
+    for (let i = 0; i < 6; i++)
+      deleteWithUndo([note({ id: `mem_${i}` })], async () => {});
     toast.info("普通提示");
     await act(async () => {});
-    expect(view.getAllByRole("button", { name: "撤销" })).toHaveLength(before + 6);
+    expect(view.getAllByRole("button", { name: "撤销" })).toHaveLength(
+      before + 6,
+    );
     jest.advanceTimersByTime(MEMORY_UNDO_MS * 2);
     await flush();
   } finally {
@@ -297,12 +308,16 @@ test("普通提示仍按文案去重", async () => {
 });
 
 test("撤销文案带标题、长的截断；断网失败给中文", () => {
-  expect(undoToastText([note({ subject: "饮品偏好" })])).toBe("已删除记忆「饮品偏好」");
-  expect(undoToastText([note({ subject: "一二三四五六七八九十一二三四五六七八" })])).toBe(
-    "已删除记忆「一二三四五六七八九十一二三四五六…」",
+  expect(undoToastText([note({ subject: "饮品偏好" })])).toBe(
+    "已删除记忆「饮品偏好」",
   );
+  expect(
+    undoToastText([note({ subject: "一二三四五六七八九十一二三四五六七八" })]),
+  ).toBe("已删除记忆「一二三四五六七八九十一二三四五六…」");
   expect(undoToastText([note(), note()])).toBe("已删除 2 条记忆");
-  expect(deleteErrorText(new TypeError("Failed to fetch"))).toBe("网络连不上，这条记忆没删");
+  expect(deleteErrorText(new TypeError("Failed to fetch"))).toBe(
+    "网络连不上，这条记忆没删",
+  );
   expect(deleteErrorText(new Error("boom"))).toBe("boom");
 });
 
