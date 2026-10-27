@@ -13,6 +13,9 @@ export type ChannelSearchHit = {
   highlight: { start: number; end: number };
   messageId: string | null;
   role: string | null;
+  /** 旧服务器没有这两个字段（CB-106 新增）。 */
+  agentId?: string | null;
+  updatedAt?: string | null;
 };
 
 export const channelSearchKeys = {

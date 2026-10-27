@@ -2,9 +2,7 @@ import { IconAlarm, IconChevronDown } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import type { ScheduleView } from "../../../../shared/schedules";
 import { parseScheduleMessage } from "../../../../shared/schedules";
-import { client } from "@/lib/client";
 import {
   firedGroupParts,
   firedHeadline,
@@ -12,7 +10,7 @@ import {
   scheduleGroupOf,
   splitFiredHeadline,
 } from "@/lib/schedule-fired";
-import { scheduleKeys } from "@/lib/schedules";
+import { scheduleRunsQueryOptions } from "@/lib/schedules";
 import { cn } from "@/lib/utils";
 
 /** 运行记录默认只带最近 20 条；折叠了更多条时按条数要（CB-105b），服务端封顶 RUNS_MAX。 */
@@ -24,21 +22,7 @@ function useRunTimes(
   count = 1,
 ): ReadonlyMap<string, string> {
   const runs = Math.max(RUNS_DEFAULT, count);
-  const { data } = useQuery({
-    queryKey: [...scheduleKeys.all, scheduleId, "runs", runs],
-    queryFn: ({ signal }): Promise<ScheduleView> =>
-      client(
-        `/api/schedules/${encodeURIComponent(scheduleId)}${runs > RUNS_DEFAULT ? `?runs=${runs}` : ""}`,
-        "schedule",
-        {
-          fallback: "",
-          signal,
-        },
-      ),
-    enabled: Boolean(scheduleId),
-    staleTime: 60_000,
-    retry: false,
-  });
+  const { data } = useQuery(scheduleRunsQueryOptions(scheduleId, runs));
   const times = new Map<string, string>();
   for (const run of data?.recentRuns ?? [])
     times.set(run.id, run.scheduledFor ?? run.startedAt);

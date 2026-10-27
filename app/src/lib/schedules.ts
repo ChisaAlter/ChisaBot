@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { ScheduleEvent, ScheduleView } from "../../../shared/schedules";
 import { client } from "@/lib/client";
+import type { ScheduleEditPatch } from "@/lib/schedule-edit";
 
 /** 定时任务 / 提醒（DESIGN.md §55，docs/schedules.md）。 */
 export const scheduleKeys = { all: ["schedules"] as const };
@@ -20,7 +21,23 @@ export function schedulesQueryOptions() {
   });
 }
 
-export function patchSchedule(id: string, body: { paused?: boolean; title?: string; instruction?: string }): Promise<ScheduleView> {
+/** 单个任务详情 + 运行记录（对话里到点行用）。CB-106 P3：超过 60s 的数据在挂载 / 窗口回到前台时重拉（全局默认关了 focus 重拉）。 */
+export const SCHEDULE_RUNS_STALE_MS = 60_000;
+export function scheduleRunsQueryOptions(scheduleId: string, runs: number, runsDefault = 20) {
+  return queryOptions({
+    queryKey: [...scheduleKeys.all, scheduleId, "runs", runs] as const,
+    queryFn: ({ signal }): Promise<ScheduleView> =>
+      client(`/api/schedules/${encodeURIComponent(scheduleId)}${runs > runsDefault ? `?runs=${runs}` : ""}`, "schedule", { fallback: "", signal }),
+    enabled: Boolean(scheduleId),
+    staleTime: SCHEDULE_RUNS_STALE_MS,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    retry: false,
+  });
+}
+
+export function patchSchedule(id: string, body: { paused?: boolean; title?: string; instruction?: string; when?: ScheduleEditPatch["when"] }): Promise<ScheduleView> {
   return client(`/api/schedules/${encodeURIComponent(id)}`, "schedule", { method: "PATCH", body, fallback: "保存失败，请重试" });
 }
 
