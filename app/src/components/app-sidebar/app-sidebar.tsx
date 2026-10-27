@@ -362,7 +362,7 @@ function BotRow({
   const content = (
     <>
       <span className="glass-bot-ava">
-        <ChannelAvatar participantIds={[bot.id]} size={28} />
+        <ChannelAvatar participantIds={[bot.id]} selected={selected} size={28} working={latest?.busy ?? false} />
         {main ? (
           <span aria-hidden className="glass-bot-star">
             <IconStarFilled className="size-2.5" />
@@ -655,7 +655,7 @@ function HiddenBotRow({
     <div className={cn("glass-bot-row is-on", menuOpen && "menu-open")}>
       <span className="glass-bot-link">
         <span className="glass-bot-ava">
-          <ChannelAvatar participantIds={[bot.id]} size={28} />
+          <ChannelAvatar participantIds={[bot.id]} selected size={28} />
         </span>
         <span className="glass-bot-text">
           <span className="glass-item-t">{bot.name}</span>
@@ -1092,7 +1092,7 @@ function MiniBot({
       : null;
   const inner = (
     <>
-      <ChannelAvatar participantIds={[bot.id]} size={36} />
+      <ChannelAvatar participantIds={[bot.id]} selected={selected} size={36} working={latest?.busy ?? false} />
       {main ? (
         <span aria-hidden className="glass-bot-star">
           <IconStarFilled className="size-2.5" />
@@ -1245,7 +1245,7 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
             className="glass-mini-bot is-on"
             role="img"
           >
-            <ChannelAvatar participantIds={[bot.id]} size={36} />
+            <ChannelAvatar participantIds={[bot.id]} selected size={36} />
           </span>
         </RailTip>
         {computer ? (
