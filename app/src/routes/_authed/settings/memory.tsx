@@ -6,12 +6,14 @@ import { MEMORY_KIND_LABELS, MEMORY_KINDS, type MemoryKind, type MemoryNoteView 
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import {
   confirmBulkDelete,
+  confirmNoteDelete,
   deleteWithUndo,
   matches,
   MemoryBots,
   NoteDialog,
   NoteRow,
   SearchBox,
+  visibleNotes,
 } from "@/components/memory/memory-notes";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
@@ -39,6 +41,7 @@ function MemoryPage() {
   const [filter, setFilter] = useState<MemoryKind | "all">("all");
   const [query, setQuery] = useState("");
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
+  const [expanded, setExpanded] = useState<ReadonlySet<MemoryKind>>(new Set());
   const [dialog, setDialog] = useState<{
     open: boolean;
     note: MemoryNoteView | null;
@@ -201,22 +204,38 @@ function MemoryPage() {
               </div>
             ) : null}
             {groups.length ? (
-              groups.map((group) => (
-                <PageSection key={group.kind} title={`${MEMORY_KIND_LABELS[group.kind]} · ${group.notes.length}`}>
-                  <Card className="mem-card">
-                    {group.notes.map((note) => (
-                      <NoteRow
-                        botName={note.agentId ? (botName.get(note.agentId) ?? null) : null}
-                        isAdmin={isAdmin}
-                        key={note.id}
-                        note={note}
-                        onDelete={() => void deleteWithUndo([note], refresh, hide)}
-                        onEdit={() => setDialog({ open: true, note })}
-                      />
-                    ))}
-                  </Card>
-                </PageSection>
-              ))
+              groups.map((group) => {
+                const visible = visibleNotes(group.notes, expanded.has(group.kind) || query.trim() !== "");
+                return (
+                  <PageSection key={group.kind} title={`${MEMORY_KIND_LABELS[group.kind]} · ${group.notes.length}`}>
+                    <Card className="mem-card">
+                      {visible.map((note) => (
+                        <NoteRow
+                          botName={note.agentId ? (botName.get(note.agentId) ?? null) : null}
+                          isAdmin={isAdmin}
+                          key={note.id}
+                          note={note}
+                          onDelete={async () => {
+                            if (await confirmNoteDelete(note)) void deleteWithUndo([note], refresh, hide);
+                          }}
+                          onEdit={() => setDialog({ open: true, note })}
+                        />
+                      ))}
+                    </Card>
+                    {visible.length < group.notes.length ? (
+                      <Button
+                        className="mt-2"
+                        data-testid={`memory-show-more-${group.kind}`}
+                        onClick={() => setExpanded((current) => new Set(current).add(group.kind))}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        {`显示其余 ${group.notes.length - visible.length} 条`}
+                      </Button>
+                    ) : null}
+                  </PageSection>
+                );
+              })
             ) : (
               <PageEmpty>
                 {notes.length
