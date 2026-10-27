@@ -124,7 +124,7 @@ test("外框保持可访问：role=button、可聚焦、aria-label 不变", asyn
 
 test("点「重试」只重拉截图，不会同时打开全尺寸", async () => {
   const paths: string[] = [];
-  const { view, retry } = await renderWithRetry(paths);
+  const { retry } = await renderWithRetry(paths);
   const before = paths.filter((p) => p.endsWith("/screenshot")).length;
   await act(async () => {
     fireEvent.click(retry);
@@ -151,7 +151,7 @@ for (const key of ["Enter", " "]) {
 }
 
 test("焦点在「重试」上按 Enter 不会冒泡打开全尺寸", async () => {
-  const { view, retry } = await renderWithRetry([]);
+  const { retry } = await renderWithRetry([]);
   await act(async () => {
     fireEvent.keyDown(retry, { key: "Enter" });
     fireEvent.keyUp(retry, { key: " " });

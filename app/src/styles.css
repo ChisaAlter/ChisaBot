@@ -4533,7 +4533,7 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 .rail-card .rail-head-btn.is-compact .rail-head-btn-t { display: none; }
 
 /* 计算机画面：空闲 / 看不到时是浅色的「空闲」卡，不是一块黑。 */
-.computer-frame { background: linear-gradient(160deg, rgba(224, 240, 255, 0.9), rgba(246, 250, 255, 0.95)); }
+.computer-frame { text-align: center; background: linear-gradient(160deg, rgba(224, 240, 255, 0.9), rgba(246, 250, 255, 0.95)); }
 .dark .computer-frame { background: linear-gradient(160deg, rgba(56, 78, 110, 0.55), rgba(30, 41, 59, 0.6)); }
 .computer-idle { gap: 6px; }
 .computer-idle-ic { width: 28px; height: 28px; color: var(--accent-blue, #3b82f6); opacity: 0.8; }
