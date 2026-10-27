@@ -28,6 +28,7 @@ import {
 import { ConfirmHost } from "@/components/ui/confirm";
 import { Toaster, toast } from "@/components/ui/toast";
 import type { MemoryNoteView } from "../../shared/memory-notes";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * CB-106：设置 → 记忆的删除。删一条先确认（和技能页一致），确认后只隐藏并立刻给 8 秒「撤销」，
@@ -42,6 +43,7 @@ beforeAll(() => {
   GlobalRegistrator.register({ url: "http://localhost:3710/settings/memory" });
 });
 afterAll(async () => {
+  await settleReactWork();
   await GlobalRegistrator.unregister();
 });
 beforeEach(() => {

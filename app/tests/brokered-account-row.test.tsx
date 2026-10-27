@@ -28,6 +28,7 @@ import type { PluginServer, PluginsPage } from "@/lib/plugins/queries";
 import { Route as AdminAppRoute } from "@/routes/_authed/admin/plugins/$key";
 import { Route as ConnectedAccountRoute } from "@/routes/_authed/settings/connected-accounts/$key";
 import { BROKERED_PROBE_OUTCOMES } from "../../server/src/plugins/store";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * The brokered account row, on both screens that draw it.
@@ -63,7 +64,10 @@ import { BROKERED_PROBE_OUTCOMES } from "../../server/src/plugins/store";
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const APP_KEY = "gmail";
 

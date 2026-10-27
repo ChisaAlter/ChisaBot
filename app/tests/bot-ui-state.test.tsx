@@ -7,6 +7,7 @@ import { botUi, flushUiMemory, resetUiMemory, setBotUi, threadUi } from "@/lib/c
 import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
 import { setPanelRailOpen, showRailFor } from "@/lib/panels/rail-open";
 import { turnAnswered } from "@/components/channels/channel-chat";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * 每个机器人记住「面板 | 计算机」、右栏展开 / 宽度（DESIGN.md §88.2），以及聊天滚动「不往回跳」的接线（§88.1）。
@@ -14,6 +15,7 @@ import { turnAnswered } from "@/components/channels/channel-chat";
  */
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
 afterAll(async () => {
+  await settleReactWork();
   await GlobalRegistrator.unregister();
 });
 afterEach(cleanup);

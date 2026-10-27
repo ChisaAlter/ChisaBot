@@ -11,6 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ScheduleView } from "../../shared/schedules";
+import { settleReactWork } from "./settle-react-work";
 
 /** CB-106 §2：编辑定时任务（名字、时间、内容）走 PATCH，只发改了的字段；时区显示出来。 */
 const calls: { id: string; body: unknown }[] = [];
@@ -20,7 +21,10 @@ const { editFormOf, editPatchOf, scheduleZone, switchRepeat } = await import(
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const base = {
   id: "sch_x",

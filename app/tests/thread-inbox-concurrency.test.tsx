@@ -9,6 +9,7 @@ import { Observable, of } from "rxjs";
 import { z } from "zod/v4";
 import { queueMessage, queuedFor, takeQueued } from "../src/lib/copilot/thread-inbox";
 import { useThreadInbox } from "../src/lib/copilot/use-thread-inbox";
+import { settleReactWork } from "./settle-react-work";
 
 const originalFetch = globalThis.fetch;
 const NativeResponse = globalThis.Response;
@@ -31,7 +32,8 @@ afterEach(() => {
   for (const client of clients.splice(0)) client.clear();
   takeQueued(threadId);
 });
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   globalThis.fetch = originalFetch;
   GlobalRegistrator.unregister();
 });

@@ -23,6 +23,7 @@ import {
   toNumber,
   trendOfText,
 } from "@/lib/copilot/json-render/rich-utils";
+import { settleReactWork } from "./settle-react-work";
 
 /** 富组件（DESIGN.md §29）：纯函数 + 用真实注册表把每个新组件画一遍。 */
 
@@ -111,7 +112,10 @@ describe("rich components render", () => {
     } as unknown as typeof ResizeObserver;
   });
   afterEach(() => cleanup());
-  afterAll(() => GlobalRegistrator.unregister());
+  afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
   async function draw(spec: Record<string, unknown>) {
     const { jsonRenderRegistry } = await import("@/lib/copilot/json-render/registry");

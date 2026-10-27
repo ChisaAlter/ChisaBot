@@ -9,6 +9,7 @@ import {
   isDocxFile,
 } from "@/components/rich-previews/docx-preview";
 import { FileCard } from "@/components/rich-previews/rich-previews";
+import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => {
   if (!GlobalRegistrator.isRegistered) {
@@ -21,6 +22,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
+  await settleReactWork();
   if (GlobalRegistrator.isRegistered) {
     await GlobalRegistrator.unregister();
   }

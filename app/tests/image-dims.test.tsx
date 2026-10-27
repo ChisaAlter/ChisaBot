@@ -5,6 +5,7 @@ import { cleanup, render } from "@testing-library/react";
 import { toVisibleChatItems } from "@/components/channels/chat-messages";
 import { ImagePile, rememberedImageSize } from "@/components/rich-previews/rich-previews";
 import { readImageDims } from "@/lib/image-dims";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * 图片宽高（DESIGN.md §83.2）：服务器把宽高写进消息 part 的 metadata / 工具结果的文件清单 / 链接预览，
@@ -16,6 +17,7 @@ beforeAll(() => {
 });
 afterEach(() => cleanup());
 afterAll(async () => {
+  await settleReactWork();
   await GlobalRegistrator.unregister();
 });
 

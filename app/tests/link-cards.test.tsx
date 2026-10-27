@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { MessageRichPreviews, RichBotStreamdown } from "@/components/rich-previews/rich-previews";
+import { settleReactWork } from "./settle-react-work";
 
 /** 链接卡（DESIGN.md §48）：卡片内容、兜底卡、骨架；正文里出卡的行被拿掉。 */
 
@@ -45,7 +46,8 @@ describe("链接卡", () => {
     responses = {};
     requested = [];
   });
-  afterAll(() => {
+  afterAll(async () => {
+  await settleReactWork();
     globalThis.fetch = realFetch;
     GlobalRegistrator.unregister();
   });
