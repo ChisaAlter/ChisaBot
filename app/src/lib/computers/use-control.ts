@@ -10,6 +10,15 @@ import {
   releaseControl,
   takeControl,
 } from "./control";
+import {
+  browserControlTabsEnv,
+  type ControlTabMessage,
+  type ControlTabs,
+  type ControlTabsEnv,
+  type ControlTabsHandlers,
+  controlTabsScope,
+  createControlTabs,
+} from "./control-tabs";
 
 type Action = "take" | "release" | "cancel";
 type Snapshot = {
@@ -44,6 +53,8 @@ type ControlStore = {
   subscribe: (listener: () => void, active?: boolean) => () => void;
   /** 有理由相信电脑又连得上了（窗口回焦、online、同一 bot 的别的请求成功）：清掉退避，马上再读。 */
   wake: () => void;
+  /** CB-107：放下主标签身份、关掉频道（切账号 / 退出 / 关页面）。 */
+  dispose: () => void;
 };
 const stores = new Map<string, ControlStore>();
 /** 测试用：和 useComputerControl 同一张表。 */
@@ -65,11 +76,17 @@ const realClock: ControlClock = {
   setInterval: (fn, ms) => setInterval(fn, ms),
   clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
 };
+/** CB-107：给 store 接上多标签协调；不给就是每个标签自己轮询。 */
+export type ControlTabsFactory = (handlers: ControlTabsHandlers) => ControlTabs;
 export function createControlStore(
   computerId: string,
   clock: ControlClock = realClock,
+  makeTabs?: ControlTabsFactory,
 ): ControlStore {
   let snapshot = EMPTY;
+  let tabs: ControlTabs | undefined;
+  /** 只有主标签轮询；没有协调器时自己就是主。 */
+  let leading = !makeTabs;
   let version = 0;
   let timer: unknown;
   /** CB-103 r4：退避重试直接按 retryAt 排定时器，不等每秒那一拍（以前每次晚一拍：2→3→5→6s）。 */
@@ -85,6 +102,16 @@ export function createControlStore(
   const publish = (next: Snapshot) => {
     snapshot = next;
     for (const listener of listeners) listener();
+  };
+  /** 主标签读到的结果（含退避 / 恢复 / 连不上）原样发给其他标签。 */
+  const share = (withProblem = true) => {
+    if (!tabs) return;
+    tabs.post({
+      k: "snap",
+      snap: withProblem
+        ? { control: snapshot.control, state: snapshot.state, problem: snapshot.problem }
+        : { control: snapshot.control, state: snapshot.state },
+    });
   };
   /** CB-103：连续连不上的次数和下一次能读的时间（退避）。 */
   let failures = 0;
@@ -114,6 +141,7 @@ export function createControlStore(
         state: "unreachable",
         problem: CONTROL_UNREACHABLE_ZH,
       });
+      share();
       return;
     }
     failures = 0;
@@ -130,12 +158,13 @@ export function createControlStore(
       state: read.kind === "error" ? "none" : read.kind,
       problem: stale ? null : snapshot.problem,
     });
+    share();
   };
   // Keep the same store through Strict Mode resubscriptions and pending mutations.
   const disposeWhenUnused = () =>
     queueMicrotask(() => {
-      if (!listeners.size && !snapshot.busy && stores.get(computerId) === store)
-        stores.delete(computerId);
+      if (!listeners.size && !snapshot.busy)
+        for (const [key, value] of stores) if (value === store) stores.delete(key);
     });
   const change = async (action: Action): Promise<boolean> => {
     if (snapshot.busy || snapshot.control?.transitioning) return false;
@@ -166,6 +195,7 @@ export function createControlStore(
         });
         return false;
       } finally {
+        share(false);
         disposeWhenUnused();
       }
     }
@@ -206,55 +236,144 @@ export function createControlStore(
       });
       return false;
     } finally {
+      share(false);
       disposeWhenUnused();
     }
   };
   const wake = () => {
+    if (!leading) {
+      tabs?.post({ k: "wake" });
+      return;
+    }
     if (!failures && snapshot.state !== "unreachable") return;
     failures = 0;
     retryAt = 0;
     clearRetry();
     if (active > 0 && !snapshot.busy && !reading) void refresh();
   };
+  const startPolling = () => {
+    if (timer !== undefined) return;
+    if (!snapshot.busy && active > 0) void refresh();
+    timer = clock.setInterval(() => {
+      // 退避期间由 retryTimer 负责，这一拍不读。
+      if (failures > 0 && retryTimer !== undefined) return;
+      if (active > 0 && !snapshot.busy && !reading && clock.now() >= retryAt)
+        void refresh();
+    }, 1000);
+  };
+  const stopPolling = () => {
+    if (timer !== undefined) clock.clearInterval(timer);
+    timer = undefined;
+    clearRetry();
+    reading?.abort();
+    version++;
+  };
+  const onTabMessage = (msg: ControlTabMessage) => {
+    if (msg.k === "snap") {
+      // 跟随标签：直接用主标签的结果，不自己读；本标签的 busy 不被覆盖。
+      if (snapshot.busy) return;
+      const snap = msg.snap as Partial<Snapshot>;
+      publish({
+        ...snapshot,
+        control: (snap.control ?? null) as ControlState | null,
+        state: (snap.state ?? null) as ComputerControlKind | null,
+        problem: "problem" in snap ? (snap.problem ?? null) : snapshot.problem,
+      });
+      return;
+    }
+    if (!leading) return;
+    if (msg.k === "hello") share();
+    else if (msg.k === "wake") wake();
+    else if (msg.k === "refresh" && !snapshot.busy && !reading) void refresh();
+  };
+  const ensureTabs = () => {
+    if (tabs || !makeTabs) return;
+    tabs = makeTabs({
+      onLeader: (next) => {
+        leading = next;
+        if (next) startPolling();
+        else stopPolling();
+      },
+      onMessage: onTabMessage,
+    });
+  };
   const store: ControlStore = {
     getSnapshot: () => snapshot,
-    refresh,
+    refresh: async () => {
+      if (leading) return refresh();
+      tabs?.post({ k: "refresh" });
+    },
     change,
     wake,
+    dispose: () => {
+      tabs?.close();
+      tabs = undefined;
+      leading = !makeTabs;
+      stopPolling();
+    },
     subscribe: (listener: () => void, onScreen = true) => {
       listeners.add(listener);
+      ensureTabs();
       if (onScreen) {
         active++;
         // 第一个看得见的订阅者（含藏着之后回来的）：马上补读一次，不等下一拍。
-        if (active === 1 && timer !== undefined && !snapshot.busy && !reading) void refresh();
+        if (leading && active === 1 && timer !== undefined && !snapshot.busy && !reading)
+          void refresh();
       }
-      if (timer === undefined) {
-        if (!snapshot.busy && active > 0) void refresh();
-        timer = clock.setInterval(() => {
-          // 退避期间由 retryTimer 负责，这一拍不读。
-          if (failures > 0 && retryTimer !== undefined) return;
-          if (active > 0 && !snapshot.busy && !reading && clock.now() >= retryAt)
-            void refresh();
-        }, 1000);
-      }
+      if (leading) startPolling();
+      // CB-107：有看得见的订阅者才去争主；跟随标签先问主标签要一份最新结果。
+      if (tabs && active > 0) tabs.start();
       return () => {
         if (onScreen) active--;
         listeners.delete(listener);
+        if (tabs && active <= 0) tabs.stop();
         if (listeners.size) return;
-        clock.clearInterval(timer);
-        timer = undefined;
-        clearRetry();
-        reading?.abort();
-        version++;
+        stopPolling();
+        tabs?.close();
+        tabs = undefined;
+        leading = !makeTabs;
         disposeWhenUnused();
       };
     },
   };
   return store;
 }
+/** CB-107：当前登录账号；锁名、频道名、store 都按它隔离。 */
+let controlAccount: string | null = null;
+let tabsEnv: ((clock: ControlClock) => ControlTabsEnv) | null = browserControlTabsEnv;
+/** 测试用：换掉浏览器环境（假锁 / 假频道），传 null 等于不支持（每个标签自己轮询）。 */
+export function setControlTabsEnv(env: ((clock: ControlClock) => ControlTabsEnv) | null) {
+  tabsEnv = env;
+}
+/** 登录后 / 切账号 / 退出时调用：换账号就把上一个账号的 store 和频道全关掉。 */
+export function setControlAccount(account: string | null) {
+  if (account === controlAccount) return;
+  controlAccount = account;
+  for (const store of stores.values()) store.dispose();
+  stores.clear();
+}
+export function getControlAccount() {
+  return controlAccount;
+}
+function storeKey(computerId: string) {
+  // 没登录信息（本机开发、测试）时键就是 computerId，和以前一样。
+  return controlAccount ? `${controlAccount}:${computerId}` : computerId;
+}
+function makeStore(computerId: string) {
+  const env = tabsEnv?.(realClock);
+  const scope = controlTabsScope(controlAccount, computerId);
+  return createControlStore(
+    computerId,
+    realClock,
+    env ? (handlers) => createControlTabs(scope, handlers, env) : undefined,
+  );
+}
 /** 窗口回焦 / 重新联网 / 同一 bot 别的请求成功：叫醒对应的 store。 */
 export function wakeControl(computerId?: string) {
-  if (computerId) stores.get(computerId)?.wake();
+  if (computerId) {
+    for (const [key, store] of stores)
+      if (key === computerId || key.endsWith(`:${computerId}`)) store.wake();
+  }
   else for (const store of stores.values()) store.wake();
 }
 let wakeListening = false;
@@ -263,16 +382,21 @@ function listenForWake() {
   wakeListening = true;
   window.addEventListener("focus", () => wakeControl());
   window.addEventListener("online", () => wakeControl());
+  // CB-107：关页面时主动放下主标签身份，心跳模式下别的标签不用等 3 秒。
+  window.addEventListener("pagehide", () => {
+    for (const store of stores.values()) store.dispose();
+  });
 }
 onControlRequestOk((computerId) => wakeControl(computerId));
 const noSubscription = () => () => undefined;
 const emptySnapshot = () => EMPTY;
 export function useComputerControl(computerId: string, enabled = true) {
-  let store = enabled ? stores.get(computerId) : undefined;
+  const key = storeKey(computerId);
+  let store = enabled ? stores.get(key) : undefined;
   if (enabled && !store) {
     listenForWake();
-    store = createControlStore(computerId);
-    stores.set(computerId, store);
+    store = makeStore(computerId);
+    stores.set(key, store);
   }
   const onScreen = useKeptVisible();
   const subscribe = useCallback(
