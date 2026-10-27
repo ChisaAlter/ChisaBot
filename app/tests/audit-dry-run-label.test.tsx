@@ -11,12 +11,16 @@ import { cleanup, render, within } from "@testing-library/react";
 import { agentKeys } from "@/lib/agents/queries";
 import { auditKeys } from "@/lib/audit/queries";
 import { Route as AuditRoute } from "@/routes/_authed/admin/audit";
+import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register());
 
 afterEach(() => cleanup());
 
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const DRY_RUN_LINE = "试运行：只记录，没有拦";
 

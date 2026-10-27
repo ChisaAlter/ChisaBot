@@ -4,9 +4,11 @@ import { cleanup, render } from "@testing-library/react";
 import { TabFavicon, TabStrip } from "@/components/computer/browser-tabs";
 import { availableScreenHeight } from "@/components/computer/takeover-fit";
 import { DARK_INK_LUMINANCE, hexLuminance, isDarkInkPixels } from "@/lib/favicon-tone";
+import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register());
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   cleanup();
   GlobalRegistrator.unregister();
 });

@@ -14,6 +14,7 @@ import {
   normalizeConnectedAccountsTab,
 } from "@/routes/_authed/settings/connected-accounts";
 import { VAULT_SECURITY_NOTE } from "@/routes/_authed/settings/vault";
+import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => {
   if (!GlobalRegistrator.isRegistered) {
@@ -26,6 +27,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
+  await settleReactWork();
   if (GlobalRegistrator.isRegistered) {
     await GlobalRegistrator.unregister();
   }

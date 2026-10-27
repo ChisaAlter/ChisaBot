@@ -6,6 +6,7 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { of, type Observable } from "rxjs";
 import { applyInboxState, inboxState, queueMessage, queuedFor, restoreQueue, sendPausedMessage, takeQueued, withdrawMessage, type InboxState } from "../src/lib/copilot/thread-inbox";
 import { useThreadInbox } from "../src/lib/copilot/use-thread-inbox";
+import { settleReactWork } from "./settle-react-work";
 
 const originalFetch = globalThis.fetch;
 const NativeResponse = globalThis.Response;
@@ -17,7 +18,11 @@ beforeAll(() => {
   globalThis.fetch = Object.assign((...args: Parameters<typeof fetch>) => impl(...args), { preconnect: originalFetch.preconnect });
 });
 afterEach(cleanup);
-afterAll(() => { globalThis.fetch = originalFetch; GlobalRegistrator.unregister(); });
+afterAll(async () => {
+  await settleReactWork();
+  globalThis.fetch = originalFetch;
+  GlobalRegistrator.unregister();
+});
 class Empty extends AbstractAgent {
   run(input: RunAgentInput) {
     return of({ type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId }, { type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId }) as Observable<BaseEvent>;

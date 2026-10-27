@@ -18,6 +18,7 @@ import userEvent from "@testing-library/user-event";
 import type { AgentProfileStore } from "../../server/src/agents/profile-store";
 import type { AgentProfile } from "../../server/src/agents/profile-types";
 import { createAgentRoutes } from "../../server/src/agents/routes";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * Editing a coworker that runs on this deployment's own Bot.
@@ -43,7 +44,10 @@ import { createAgentRoutes } from "../../server/src/agents/routes";
 GlobalRegistrator.register();
 const { AgentDialog } = await import("@/components/agents/agent-dialog");
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {

@@ -20,6 +20,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { type AgentProfile, agentKeys } from "@/lib/agents/queries";
 import { Route as BotsRoute } from "@/routes/_authed/_app/bots.index";
 import { Route as HomeRoute } from "@/routes/_authed/_app/index";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * What the two person-facing entry screens say when the roster cannot be read.
@@ -47,7 +48,10 @@ import { Route as HomeRoute } from "@/routes/_authed/_app/index";
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 const originalFetch = global.fetch;
 

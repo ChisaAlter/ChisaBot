@@ -13,6 +13,7 @@ import {
   openOverlayCount,
   useBackDismiss,
 } from "@/lib/overlay-back";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * 「返回先关抽屉」（CB-098）：打开的抽屉按栈登记，`window.__chisabotBack()` 关最上面那个。
@@ -20,6 +21,7 @@ import {
  */
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
 afterAll(async () => {
+  await settleReactWork();
   await GlobalRegistrator.unregister();
 });
 afterEach(cleanup);

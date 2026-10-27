@@ -11,6 +11,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { ComputerView } from "@/components/computer/computer-view";
+import { settleReactWork } from "./settle-react-work";
 
 let originalFetch: typeof fetch;
 let originalError: typeof console.error;
@@ -68,7 +69,8 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   console.error = originalError;
   globalThis.fetch = originalFetch;
   GlobalRegistrator.unregister();

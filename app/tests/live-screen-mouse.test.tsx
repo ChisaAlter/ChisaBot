@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { LiveScreen } from "@/components/computer/live-screen";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * What a person's click turns into while they hold the wheel.
@@ -53,7 +54,8 @@ afterEach(() => {
   SocketDouble.latest = undefined;
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await settleReactWork();
   globalThis.WebSocket = originalWebSocket;
   GlobalRegistrator.unregister();
 });

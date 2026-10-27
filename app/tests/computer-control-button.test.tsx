@@ -13,6 +13,7 @@ import {
   ComputerChatControls,
   ComputerControlButton,
 } from "@/components/computer/computer-controls";
+import { settleReactWork } from "./settle-react-work";
 
 const originalFetch = globalThis.fetch;
 beforeAll(() => GlobalRegistrator.register());
@@ -20,7 +21,10 @@ afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
 });
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
 function server(initial: "bot" | "human" = "bot") {
   let state: ControlState = {

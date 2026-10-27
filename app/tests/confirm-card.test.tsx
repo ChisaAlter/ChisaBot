@@ -2,12 +2,16 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { ConfirmCardView, ConfirmResumeRow, isConfirmResume } from "@/components/chat/confirm-card";
+import { settleReactWork } from "./settle-react-work";
 
 /** 确认卡片（DESIGN.md §58）：等确认时有细节和按钮；决定后收成一行、按钮不可达；付款没有「以后直接做」。 */
 describe("确认卡片", () => {
   beforeAll(() => GlobalRegistrator.register());
   afterEach(() => cleanup());
-  afterAll(() => GlobalRegistrator.unregister());
+  afterAll(async () => {
+  await settleReactWork();
+  GlobalRegistrator.unregister();
+});
 
   test("等确认：标题、对象、细节、确认 / 取消、以后这类直接做", async () => {
     let approved = 0;
