@@ -6,6 +6,8 @@ import {
   botAvatarImageUrl,
   isAvatarColor,
   isAvatarEmoji,
+  isAvatarShape,
+  isShapeColor,
   MAX_AVATAR_BYTES,
   sniffAvatarMime,
 } from "../../../shared/bot-avatars";
@@ -30,9 +32,10 @@ import type { Database } from "../db/client";
  */
 type Row = {
   agent_id: string;
-  kind: "image" | "emoji" | "monogram";
+  kind: "image" | "emoji" | "monogram" | "shape";
   emoji: string | null;
   color: string | null;
+  shape?: string | null;
   mime: string | null;
   version: string;
 };
@@ -55,6 +58,7 @@ const AGENT_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 
 export function avatarView(row: Row): BotAvatar | null {
   if (row.kind === "image") return { kind: "image", url: botAvatarImageUrl(row.agent_id, row.version), version: row.version };
+  if (row.kind === "shape") return isAvatarShape(row.shape) && isShapeColor(row.color) ? { kind: "shape", shape: row.shape, color: row.color } : null;
   if (!isAvatarColor(row.color)) return null;
   if (row.kind === "emoji") return row.emoji && isAvatarEmoji(row.emoji) ? { kind: "emoji", emoji: row.emoji, color: row.color } : null;
   return { kind: "monogram", color: row.color };
@@ -70,6 +74,7 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
         kind text NOT NULL,
         emoji text,
         color text,
+        shape text,
         image bytea,
         mime text,
         size_bytes integer,
@@ -77,6 +82,7 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
         updated_by text,
         updated_at timestamptz NOT NULL DEFAULT now()
       );
+      ALTER TABLE chisabot_bot_avatars ADD COLUMN IF NOT EXISTS shape text;
     `);
   }
 
@@ -98,7 +104,7 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
     if (ids.length === 0) return {};
     const rows = await sql.unsafe<Row[]>(
       // bun:sql 不认 JS 数组参数：用逗号串传（机器人 id 里没有逗号，见 AGENT_ID）。
-      "SELECT agent_id, kind, emoji, color, mime, version FROM chisabot_bot_avatars WHERE agent_id = ANY(string_to_array($1::text, ','))",
+      "SELECT agent_id, kind, emoji, color, shape, mime, version FROM chisabot_bot_avatars WHERE agent_id = ANY(string_to_array($1::text, ','))",
       [ids.filter((id) => AGENT_ID.test(id)).join(",")],
     );
     const out: Record<string, BotAvatar> = {};
@@ -111,7 +117,7 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
 
   async function read(agentId: string): Promise<BotAvatar | null> {
     const rows = await sql.unsafe<Row[]>(
-      "SELECT agent_id, kind, emoji, color, mime, version FROM chisabot_bot_avatars WHERE agent_id = $1",
+      "SELECT agent_id, kind, emoji, color, shape, mime, version FROM chisabot_bot_avatars WHERE agent_id = $1",
       [agentId],
     );
     return rows[0] ? avatarView(rows[0]) : null;
@@ -119,22 +125,28 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
 
   async function setPreset(actor: AgentActor, agentId: string, input: unknown): Promise<BotAvatar> {
     await manageable(actor, agentId);
-    const body = (input ?? {}) as { kind?: unknown; emoji?: unknown; color?: unknown };
-    if (!isAvatarColor(body.color)) throw new BotAvatarError("请选一种底色。");
-    if (body.kind === "emoji") {
-      if (!isAvatarEmoji(body.emoji)) throw new BotAvatarError("请选一个表情。");
-    } else if (body.kind !== "monogram") {
-      throw new BotAvatarError("不支持这种头像。");
+    const body = (input ?? {}) as { kind?: unknown; emoji?: unknown; color?: unknown; shape?: unknown };
+    if (body.kind === "shape") {
+      if (!isAvatarShape(body.shape)) throw new BotAvatarError("请选一个形状。");
+      if (!isShapeColor(body.color)) throw new BotAvatarError("请选一种颜色。");
+    } else {
+      if (!isAvatarColor(body.color)) throw new BotAvatarError("请选一种底色。");
+      if (body.kind === "emoji") {
+        if (!isAvatarEmoji(body.emoji)) throw new BotAvatarError("请选一个表情。");
+      } else if (body.kind !== "monogram") {
+        throw new BotAvatarError("不支持这种头像。");
+      }
     }
     const kind = body.kind;
     const emoji = kind === "emoji" ? (body.emoji as string) : null;
-    const version = createHash("sha256").update(`${kind}:${emoji ?? ""}:${body.color}`).digest("hex").slice(0, 12);
+    const shape = kind === "shape" ? (body.shape as string) : null;
+    const version = createHash("sha256").update(`${kind}:${emoji ?? ""}:${shape ?? ""}:${body.color}`).digest("hex").slice(0, 12);
     await sql.unsafe(
-      `INSERT INTO chisabot_bot_avatars (agent_id, kind, emoji, color, image, mime, size_bytes, version, updated_by, updated_at)
-       VALUES ($1, $2, $3, $4, NULL, NULL, NULL, $5, $6, now())
-       ON CONFLICT (agent_id) DO UPDATE SET kind = $2, emoji = $3, color = $4, image = NULL, mime = NULL, size_bytes = NULL,
+      `INSERT INTO chisabot_bot_avatars (agent_id, kind, emoji, color, shape, image, mime, size_bytes, version, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $7, NULL, NULL, NULL, $5, $6, now())
+       ON CONFLICT (agent_id) DO UPDATE SET kind = $2, emoji = $3, color = $4, shape = $7, image = NULL, mime = NULL, size_bytes = NULL,
          version = $5, updated_by = $6, updated_at = now()`,
-      [agentId, kind, emoji, body.color, version, actor.id],
+      [agentId, kind, emoji, body.color, version, actor.id, shape],
     );
     return (await read(agentId))!;
   }
@@ -149,7 +161,7 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
     await sql.unsafe(
       `INSERT INTO chisabot_bot_avatars (agent_id, kind, emoji, color, image, mime, size_bytes, version, updated_by, updated_at)
        VALUES ($1, 'image', NULL, NULL, $2, $3, $4, $5, $6, now())
-       ON CONFLICT (agent_id) DO UPDATE SET kind = 'image', emoji = NULL, color = NULL, image = $2, mime = $3, size_bytes = $4,
+       ON CONFLICT (agent_id) DO UPDATE SET kind = 'image', emoji = NULL, color = NULL, shape = NULL, image = $2, mime = $3, size_bytes = $4,
          version = $5, updated_by = $6, updated_at = now()`,
       [agentId, Buffer.from(bytes), mime, bytes.length, version, actor.id],
     );

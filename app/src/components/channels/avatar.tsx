@@ -17,16 +17,19 @@ export const ChannelAvatar = memo(function ChannelAvatar({
   participantIds,
   size = 32,
   typing = false,
+  selected = false,
 }: {
   participantIds: string[];
   size?: number;
   typing?: boolean;
+  /** 这一行正是当前打开的对话：形象头像会做出「被选中」的表情。 */
+  selected?: boolean;
 }) {
   const channelSize = participantIds?.length;
 
   const avatar =
     channelSize === 1 ? (
-      <BotAvatar agentId={participantIds[0]} decorative size={size} />
+      <BotAvatar agentId={participantIds[0]} decorative selected={selected} size={size} working={typing} />
     ) : (
       <div className="flex flex-row items-center size-full">
         {participantIds.slice(0, 3).map((c, i, shown) => (
@@ -39,7 +42,7 @@ export const ChannelAvatar = memo(function ChannelAvatar({
               transform: `translateX(${i * -75}%)`,
             }}
           >
-            <BotAvatar agentId={c} decorative size={size / (shown.length / 2)} />
+            <BotAvatar agentId={c} decorative selected={selected} size={size / (shown.length / 2)} working={typing} />
           </div>
         ))}
       </div>

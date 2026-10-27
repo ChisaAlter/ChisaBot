@@ -7806,6 +7806,37 @@ a.cc-pill { text-decoration: none; }
 .bot-ava-c-violet { background: linear-gradient(140deg, #b896ff, #6a4fd6); }
 .bot-ava-c-slate { background: linear-gradient(140deg, #95a2b8, #4b586e); }
 
+/* 形象头像（shape）：不是圆的，所以不裁剪；表情由 data-mood 决定（DESIGN.md §81）。待机没有任何动画。 */
+.bot-ava[data-avatar="shape"] { overflow: visible; border-radius: 0; background: none; }
+.sa { display: block; width: 100%; height: 100%; overflow: visible; }
+.sa-body { transform-box: view-box; transform-origin: 50px 58px; }
+.sa-open, .sa-happy { transform-box: fill-box; transform-origin: center; transition: opacity 0.16s, transform 0.22s var(--ease-out, ease-out); }
+.sa-happy { opacity: 0; }
+.sa[data-mood="selected"] .sa-open { transform: scale(1.12, 1.2); }
+.sa[data-mood="done"] .sa-open { opacity: 0; }
+.sa[data-mood="done"] .sa-happy { opacity: 1; }
+.sa[data-mood="selected"] .sa-body { animation: sa-pop 0.42s cubic-bezier(0.3, 1.5, 0.5, 1); }
+.sa[data-mood="working"] .sa-body { animation: sa-breathe 1.6s ease-in-out infinite; }
+.sa[data-mood="working"] .sa-eyes { animation: sa-look 2.4s ease-in-out infinite; }
+.sa[data-mood="working"] .sa-open { animation: sa-blink 3.2s infinite; }
+.sa[data-mood="done"] .sa-body { animation: sa-hop 0.9s ease-out 2; }
+html.dark .sa[data-color="ink"] { --sa-fill: #3b3b46; }
+@keyframes sa-pop { 0% { transform: scale(0.86); } 55% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@keyframes sa-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06, 1.04); } }
+@keyframes sa-look { 0%, 12% { transform: translateX(-3.5px); } 50% { transform: translateX(3.5px); } 88%, 100% { transform: translateX(-3.5px); } }
+@keyframes sa-blink { 0%, 92%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.12); } }
+@keyframes sa-hop { 0%, 85%, 100% { transform: translateY(0); } 22% { transform: translateY(-9px) scale(0.97, 1.05); } 45% { transform: translateY(0) scale(1.05, 0.94); } 66% { transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .sa, .sa * { animation: none !important; transition: none !important; } }
+.bot-ava-shapes { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px 6px; justify-items: center; width: 100%; }
+.bot-ava-shape { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 12px; transition: background var(--dur-1), transform var(--dur-1) var(--ease-out); }
+.bot-ava-shape:hover { background: var(--hover-bg, rgba(127, 127, 127, 0.12)); transform: scale(1.06); }
+.bot-ava-shape[aria-checked="true"] { box-shadow: 0 0 0 2px var(--popover), 0 0 0 4px var(--accent-blue); }
+.bot-ava-shape:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--popover), 0 0 0 4px var(--focus-line); }
+.bot-ava-colors.is-shape { gap: 7px; }
+.bot-ava-moods { display: flex; gap: 6px; }
+.bot-ava-mood { padding: 3px 10px; border-radius: 999px; font-size: 12px; color: var(--ink-3); background: rgba(127, 127, 127, 0.12); }
+.bot-ava-mood[aria-pressed="true"] { color: var(--ink-1, inherit); background: var(--accent-blue-soft); }
+
 .bot-form { display: flex; flex-direction: column; gap: 12px; min-height: 0; flex: 1; }
 .bot-form.is-card { padding: 20px; }
 .bot-form-fields { display: grid; gap: 6px; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 2px 4px; }

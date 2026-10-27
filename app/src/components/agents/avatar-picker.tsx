@@ -2,6 +2,7 @@ import { IconCamera, IconMinus, IconPhotoUp, IconPlus } from "@tabler/icons-reac
 import { useEffect, useRef, useState } from "react";
 import { monogramOf } from "../../../../shared/bot-avatars";
 import { BotAvatar } from "@/components/agents/bot-avatar";
+import { ShapeAvatar } from "@/components/agents/shape-avatar";
 import { Button } from "@/components/ui/button";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import {
@@ -17,11 +18,16 @@ import {
   ACCEPTED_AVATAR_TYPES,
   AVATAR_COLORS,
   AVATAR_EMOJIS,
+  AVATAR_SHAPES,
   type AvatarColor,
   type AvatarDraft,
+  type AvatarShape,
   loadAvatarSource,
   renderAvatar,
+  SHAPE_COLORS,
+  type ShapeColor,
 } from "@/lib/agents/avatars";
+import { SHAPE_COLOR_HEX, SHAPE_COLOR_LABEL, SHAPE_LABEL } from "@/lib/agents/avatar-shapes";
 import { cn } from "@/lib/utils";
 
 const COLOR_LABEL: Record<AvatarColor, string> = {
@@ -83,7 +89,7 @@ export function AvatarField({
         <Button disabled={disabled} onClick={() => setOpen(true)} size="sm" type="button" variant="outline">
           {"更换头像"}
         </Button>
-        <span className="bot-ava-field-hint">{"上传图片，或选一个表情 / 首字"}</span>
+        <span className="bot-ava-field-hint">{"选一个形象，或上传图片 / 选表情 / 首字"}</span>
       </div>
       <AvatarDialog
         agentId={agentId}
@@ -103,7 +109,7 @@ export function AvatarField({
   );
 }
 
-type Tab = "upload" | "emoji" | "monogram";
+type Tab = "shape" | "upload" | "emoji" | "monogram";
 
 function AvatarDialog({
   open,
@@ -130,11 +136,17 @@ function AvatarDialog({
   );
 }
 
-/** 打开时停在当前头像那一类；新建时自动给的首字不算「选过」，直接到上传（最常用的那条路）。 */
+/** 打开时停在当前头像那一类；新建时自动给的首字不算「选过」，直接到「形象」（有表情会动的那种）。 */
 function initialTab(draft: AvatarDraft, autoPicked: boolean): Tab {
   if (draft.kind === "emoji") return "emoji";
   if (draft.kind === "monogram" && !autoPicked) return "monogram";
+  if (draft.kind === "shape" || (draft.kind === "monogram" && autoPicked)) return "shape";
   return "upload";
+}
+
+/** 停在「形象」页就得有一个确定的选择，不然预览里是圆团而按「完成」什么也没发生。 */
+function initialChoice(draft: AvatarDraft, tab: Tab): AvatarDraft {
+  return tab === "shape" && draft.kind !== "shape" ? { kind: "shape", shape: "round", color: "violet" } : draft;
 }
 
 function AvatarDialogBody({
@@ -157,11 +169,13 @@ function AvatarDialogBody({
   onCancel: () => void;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab(draft, autoPicked));
-  const [choice, setChoice] = useState<AvatarDraft>(draft);
+  const [choice, setChoice] = useState<AvatarDraft>(() => initialChoice(draft, initialTab(draft, autoPicked)));
   const [color, setColor] = useState<AvatarColor>(
     draft.kind === "emoji" || draft.kind === "monogram" ? draft.color : "sky",
   );
   const [emoji, setEmoji] = useState<string>(draft.kind === "emoji" ? draft.emoji : "🤖");
+  const [shape, setShape] = useState<AvatarShape>(draft.kind === "shape" ? draft.shape : "round");
+  const [shapeColor, setShapeColor] = useState<ShapeColor>(draft.kind === "shape" ? draft.color : "violet");
   const [source, setSource] = useState<{ image: HTMLImageElement; url: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -177,9 +191,10 @@ function AvatarDialogBody({
     setError(null);
     if (next === "emoji") setChoice({ kind: "emoji", emoji, color });
     if (next === "monogram") setChoice({ kind: "monogram", color });
+    if (next === "shape") setChoice({ kind: "shape", shape, color: shapeColor });
   };
   // 三处分段选择（来源 / 表情 / 底色）都走共用的键盘约定（2026-10-20）：roving tabindex + 方向键。
-  const tabKeys = useSegmentedKeys<Tab>({ value: tab, values: ["upload", "emoji", "monogram"], onChange: pick });
+  const tabKeys = useSegmentedKeys<Tab>({ value: tab, values: ["shape", "upload", "emoji", "monogram"], onChange: pick });
   const emojiKeys = useSegmentedKeys<string>({
     value: emoji,
     values: AVATAR_EMOJIS,
@@ -228,12 +243,13 @@ function AvatarDialogBody({
     <>
       <DialogHeader>
         <DialogTitle>{"头像"}</DialogTitle>
-        <DialogDescription>{"所有地方都显示成圆形。"}</DialogDescription>
+        <DialogDescription>{"图片、表情、首字显示成圆形；形象保持自己的形状。"}</DialogDescription>
       </DialogHeader>
       <DialogBody>
         <div aria-label={"头像来源"} className="sg-segmented bot-ava-seg" {...tabKeys.groupProps} ref={tabKeys.groupRef} role="radiogroup">
           {(
             [
+              ["shape", "形象"],
               ["upload", "上传图片"],
               ["emoji", "表情"],
               ["monogram", "首字"],
@@ -256,7 +272,17 @@ function AvatarDialogBody({
         </div>
 
         <div className="bot-ava-stage">
-          {tab === "upload" ? (
+          {tab === "shape" ? (
+            <ShapePicker
+              color={shapeColor}
+              onChange={(nextShape, nextColor) => {
+                setShape(nextShape);
+                setShapeColor(nextColor);
+                setChoice({ kind: "shape", shape: nextShape, color: nextColor });
+              }}
+              shape={shape}
+            />
+          ) : tab === "upload" ? (
             source ? (
               <AvatarCropper handleRef={cropRef} image={source.image} key={source.url} />
             ) : (
@@ -511,6 +537,79 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
         <button aria-label={"放大"} className="bot-ava-zoom-btn" onClick={() => zoomTo(zoom + 0.25)} type="button">
           <IconPlus className="size-4" />
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** 「形象」页：预览（可以试三种表情）+ 14 个形状 + 11 种颜色。 */
+function ShapePicker({ shape, color, onChange }: { shape: AvatarShape; color: ShapeColor; onChange: (shape: AvatarShape, color: ShapeColor) => void }) {
+  const [selected, setSelected] = useState(false);
+  const [working, setWorking] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const shapeKeys = useSegmentedKeys<AvatarShape>({ value: shape, values: AVATAR_SHAPES, onChange: (next) => onChange(next, color) });
+  const colorKeys = useSegmentedKeys<ShapeColor>({ value: color, values: SHAPE_COLORS, onChange: (next) => onChange(shape, next) });
+  // 「做完」：先跑一下再停，头像会自己露出做完的表情。
+  const finish = () => {
+    window.clearTimeout(timer.current);
+    setWorking(true);
+    timer.current = window.setTimeout(() => setWorking(false), 1200);
+  };
+  return (
+    <div className="bot-ava-preset">
+      <span className="bot-ava" data-avatar="shape" style={{ width: 96, height: 96 }}>
+        <ShapeAvatar color={color} selected={selected} shape={shape} size={96} working={working} />
+      </span>
+      <div className="bot-ava-moods">
+        <button aria-pressed={selected} className="bot-ava-mood" data-testid="ava-mood-selected" onClick={() => setSelected((value) => !value)} type="button">
+          {"选中"}
+        </button>
+        <button aria-pressed={working} className="bot-ava-mood" data-testid="ava-mood-working" onClick={() => { window.clearTimeout(timer.current); setWorking((value) => !value); }} type="button">
+          {"工作中"}
+        </button>
+        <button className="bot-ava-mood" data-testid="ava-mood-done" onClick={finish} type="button">
+          {"做完了"}
+        </button>
+      </div>
+      <div aria-label={"形状"} className="bot-ava-shapes" {...shapeKeys.groupProps} ref={shapeKeys.groupRef} role="radiogroup">
+        {AVATAR_SHAPES.map((item) => (
+          // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
+          <button
+            aria-checked={shape === item}
+            aria-label={SHAPE_LABEL[item]}
+            className="bot-ava-shape"
+            data-testid={`ava-shape-${item}`}
+            key={item}
+            onClick={() => onChange(item, color)}
+            role="radio"
+            tabIndex={shapeKeys.itemTabIndex(item)}
+            title={SHAPE_LABEL[item]}
+            type="button"
+          >
+            <span className="bot-ava" data-avatar="shape" style={{ width: 38, height: 38 }}>
+              <ShapeAvatar color={color} shape={item} size={38} />
+            </span>
+          </button>
+        ))}
+      </div>
+      <div aria-label={"颜色"} className="bot-ava-colors is-shape" {...colorKeys.groupProps} ref={colorKeys.groupRef} role="radiogroup">
+        {SHAPE_COLORS.map((item) => (
+          // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
+          <button
+            aria-checked={color === item}
+            aria-label={SHAPE_COLOR_LABEL[item]}
+            className="bot-ava-swatch"
+            data-testid={`ava-shape-color-${item}`}
+            key={item}
+            onClick={() => onChange(shape, item)}
+            role="radio"
+            style={{ background: SHAPE_COLOR_HEX[item] }}
+            tabIndex={colorKeys.itemTabIndex(item)}
+            title={SHAPE_COLOR_LABEL[item]}
+            type="button"
+          />
+        ))}
       </div>
     </div>
   );

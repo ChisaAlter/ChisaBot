@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import Avatar from "boring-avatars";
 import { memo, useState } from "react";
-import { monogramOf } from "../../../../shared/bot-avatars";
+import { type AvatarShape, monogramOf, type ShapeColor } from "../../../../shared/bot-avatars";
 import { type AvatarDraft, type BotAvatar as BotAvatarValue, botAvatarsQueryOptions } from "@/lib/agents/avatars";
+import { ShapeAvatar } from "@/components/agents/shape-avatar";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +20,8 @@ export const BotAvatar = memo(function BotAvatar({
   draft,
   className,
   decorative = false,
+  selected = false,
+  working = false,
 }: {
   agentId?: string;
   /** 不给就从机器人列表（已在缓存里）里找；只有首字头像要用。 */
@@ -31,6 +34,9 @@ export const BotAvatar = memo(function BotAvatar({
   className?: string;
   /** 旁边已经写了名字时不再朗读一遍。 */
   decorative?: boolean;
+  /** 形象头像的表情：被选中 / 机器人在跑。其他种类的头像不受影响（跑的时候由调用处自己加标记）。 */
+  selected?: boolean;
+  working?: boolean;
 }) {
   const avatars = useQuery({ ...botAvatarsQueryOptions(), enabled: Boolean(agentId) });
   const saved = agentId ? avatars.data?.[agentId] : undefined;
@@ -47,7 +53,7 @@ export const BotAvatar = memo(function BotAvatar({
       role={decorative ? undefined : "img"}
       style={{ width: size, height: size, fontSize: Math.max(10, Math.round(size * 0.46)) }}
     >
-      <AvatarFace name={label} seed={seed ?? agentId ?? label} shown={shown} size={size} />
+      <AvatarFace name={label} seed={seed ?? agentId ?? label} selected={selected} shown={shown} size={size} working={working} />
     </span>
   );
 });
@@ -56,7 +62,8 @@ type ShownAvatar =
   | { kind: "pattern" }
   | { kind: "image"; url: string }
   | { kind: "emoji"; emoji: string; color: string }
-  | { kind: "monogram"; color: string };
+  | { kind: "monogram"; color: string }
+  | { kind: "shape"; shape: AvatarShape; color: ShapeColor };
 
 function resolve(draft: AvatarDraft | undefined, saved: BotAvatarValue | undefined): ShownAvatar {
   if (draft && draft.kind !== "keep") {
@@ -68,8 +75,23 @@ function resolve(draft: AvatarDraft | undefined, saved: BotAvatarValue | undefin
   return saved;
 }
 
-function AvatarFace({ shown, name, seed, size }: { shown: ShownAvatar; name: string; seed: string; size: number }) {
+function AvatarFace({
+  shown,
+  name,
+  seed,
+  size,
+  selected,
+  working,
+}: {
+  shown: ShownAvatar;
+  name: string;
+  seed: string;
+  size: number;
+  selected: boolean;
+  working: boolean;
+}) {
   const [broken, setBroken] = useState<string | null>(null);
+  if (shown.kind === "shape") return <ShapeAvatar color={shown.color} selected={selected} shape={shown.shape} size={size} working={working} />;
   if (shown.kind === "image" && broken !== shown.url)
     return (
       <img
