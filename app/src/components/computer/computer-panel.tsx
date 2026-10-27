@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { markComputerEngaged } from "@/lib/computers/auto-watch";
+import { useComputerControl } from "@/lib/computers/use-control";
 import { useComputerStatus } from "@/lib/computers/use-status";
 import { lastComputerStatusFor } from "@/lib/copilot/computer-activity";
 import { JUMP_TO_ACTIVITY, pendingActivityJump } from "./activity-jump";
@@ -12,6 +13,11 @@ import { ComputerView } from "./computer-view";
  * `variant="rail"`：放在右栏「计算机」标签里（DESIGN.md §23），没有自己的外边距，标题交给标签。
  * 在这里点过、按过键，就算用户接手了：机器人停手后不再自动切回「面板」。
  */
+/** CB-103：「画面正在大屏直播」只在真在直播、且不是你接管着的时候说（?watch=true 打开也一样）。 */
+export function showCastingNotice(casting: boolean, state: string | null): boolean {
+  return casting && state !== "user_control";
+}
+
 export function ComputerViewPanel({
   agentId,
   name,
@@ -25,7 +31,9 @@ export function ComputerViewPanel({
   const liveStatus = useComputerStatus(agentId);
   const status = liveStatus ?? lastComputerStatusFor(agentId);
   // CB-101：预览给大屏直播让路时，状态行直接说明，免得以为电脑坏了。
-  const [casting, setCasting] = useState(false);
+  const [castingRaw, setCasting] = useState(false);
+  // CB-103：接管中（含 ?watch=true 打开）不说「画面正在大屏直播」——此刻是你在控制。
+  const casting = showCastingNotice(castingRaw, useComputerControl(agentId).state);
   /*
    * CB-101：窄屏（< 768px）「画面 | 活动」分段切换。只是组件里的状态，不碰路由和 history（#315 那类返回栈问题）。
    * 默认「画面」；停在「画面」时来了新活动，「活动」上亮未读点，切过去清掉。宽屏两块都显示，标签由 CSS 藏起来。

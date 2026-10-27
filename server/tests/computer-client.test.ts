@@ -631,6 +631,32 @@ describe("screenshot captureBusy / pageTimeout from agent-computer", () => {
     ).rejects.toMatchObject({ name: "CaptureBusyError", liveCast: false });
   });
 
+  test("CB-103: captureBusy + userControl → CaptureBusyError.userControl, still unavailable", async () => {
+    const pending = answering(503, {
+      error: "Live screen is streaming; HTTP screenshot paused so they do not fight.",
+      captureBusy: true,
+      liveCast: true,
+      userControl: true,
+      reason: "user_control",
+    }).screenshot();
+    await pending.catch((error: CaptureBusyError) => {
+      expect(error).toBeInstanceOf(CaptureBusyError);
+      expect(error).toBeInstanceOf(ComputerUnavailableError);
+      expect(error.userControl).toBe(true);
+    });
+    await expect(pending).rejects.toBeInstanceOf(CaptureBusyError);
+  });
+
+  test("CB-103: captureBusy without userControl keeps userControl false", async () => {
+    await expect(
+      answering(503, {
+        error: "Live screen is streaming.",
+        captureBusy: true,
+        liveCast: true,
+      }).screenshot(),
+    ).rejects.toMatchObject({ userControl: false, liveCast: true });
+  });
+
   test("422 + pageTimeout → PageTimeoutError", async () => {
     await expect(
       answering(422, {

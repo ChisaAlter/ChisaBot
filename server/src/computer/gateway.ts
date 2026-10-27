@@ -237,7 +237,11 @@ export interface ComputerGateway {
     actor: ActionActor,
     input: { path: string; base64: string },
   ): Promise<{ path: string; bytes: number }>;
-  control(botId: string, requestId?: string): Promise<ControlState>;
+  control(
+    botId: string,
+    requestId?: string,
+    signal?: AbortSignal,
+  ): Promise<ControlState & { live?: boolean }>;
   requestHelp(
     botId: string,
     actor: ActionActor,
@@ -884,10 +888,15 @@ export function createComputerGateway(
       return state;
     },
 
-    control(botId: string, requestId?: string): Promise<ControlState> {
-      return get<ControlState>(
+    control(
+      botId: string,
+      requestId?: string,
+      signal?: AbortSignal,
+    ): Promise<ControlState & { live?: boolean }> {
+      return get<ControlState & { live?: boolean }>(
         botId,
         `/control${requestId ? `?requestId=${encodeURIComponent(requestId)}` : ""}`,
+        signal,
       );
     },
 
