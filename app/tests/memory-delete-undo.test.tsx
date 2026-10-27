@@ -4,6 +4,7 @@ import {
   beforeAll,
   beforeEach,
   expect,
+  jest,
   test,
 } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
@@ -18,6 +19,8 @@ import {
   confirmNoteDelete,
   deleteWithUndo,
   MEMORY_GROUP_LIMIT,
+  MEMORY_UNDO_MS,
+  pendingMemoryDeletes,
   visibleNotes,
 } from "@/components/memory/memory-notes";
 import { ConfirmHost } from "@/components/ui/confirm";
@@ -25,8 +28,8 @@ import { Toaster } from "@/components/ui/toast";
 import type { MemoryNoteView } from "../../shared/memory-notes";
 
 /**
- * CB-106：设置 → 记忆的删除。删一条先确认（和技能页一致），删完立刻给 8 秒「撤销」，
- * 不等列表重新拉完；撤销按原样重建（含公共知识库标记）。一组只先画前 N 条。
+ * CB-106：设置 → 记忆的删除。删一条先确认（和技能页一致），确认后只隐藏并立刻给 8 秒「撤销」，
+ * 8 秒窗口过了才真正删库；撤销只是取消待删除，原记录原样保留。一组只先画前 N 条。
  */
 
 type Call = { url: string; method: string; body: unknown };
@@ -85,73 +88,115 @@ const note = (over: Partial<MemoryNoteView> = {}): MemoryNoteView =>
     ...over,
   }) as MemoryNoteView;
 
-test("删除后「撤销」立刻出现，不等列表刷新", async () => {
-  const view = render(<Toaster />);
-  const hidden: (string[] | null)[] = [];
-  // 列表刷新永远不回来（模拟几千条记忆时的慢刷新）。
-  const refresh = () => new Promise<unknown>(() => {});
-  void deleteWithUndo([note()], refresh, (ids) => hidden.push(ids));
-  await waitFor(() =>
-    expect(view.getByRole("button", { name: "撤销" })).toBeTruthy(),
-  );
-  expect(view.getByText("已删除 1 条记忆")).toBeTruthy();
-  expect(hidden).toEqual([["mem_aaaaaaaaaaaaaaaaaaaa"]]);
-  expect(calls.filter((c) => c.url.includes("/forget"))).toHaveLength(1);
-});
+const forgets = () => calls.filter((c) => c.url.includes("/forget"));
+const flush = async () => {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+};
 
-test("撤销按原样重建，公共知识库标记不丢", async () => {
-  const view = render(<Toaster />);
-  let refreshed = 0;
-  await deleteWithUndo(
-    [note({ shared: true, subject: "[知识库] 规范" })],
-    async () => void refreshed++,
-    () => {},
-  );
-  await act(async () => {
-    fireEvent.click(view.getByRole("button", { name: "撤销" }));
-  });
-  await waitFor(() =>
+test("确认后只隐藏、立刻给「撤销」；8 秒前不发删除请求，8 秒整才删", async () => {
+  jest.useFakeTimers();
+  try {
+    const view = render(<Toaster />);
+    let refreshed = 0;
+    deleteWithUndo([note()], async () => void refreshed++);
     expect(
-      calls.some((c) => c.method === "POST" && !c.url.includes("/forget")),
-    ).toBe(true),
-  );
-  const create = calls.find(
-    (c) => c.method === "POST" && !c.url.includes("/forget"),
-  );
-  expect(create?.body).toMatchObject({
-    kind: "preference",
-    subject: "[知识库] 规范",
-    content: "用户喜欢喝冰美式，不加糖。",
-    shared: true,
-  });
-  await waitFor(() => expect(refreshed).toBe(2));
+      pendingMemoryDeletes.snapshot().has("mem_aaaaaaaaaaaaaaaaaaaa"),
+    ).toBe(true);
+    await act(async () => {});
+    expect(view.getByRole("button", { name: "撤销" })).toBeTruthy();
+    expect(view.getByText("已删除 1 条记忆")).toBeTruthy();
+    jest.advanceTimersByTime(MEMORY_UNDO_MS - 1);
+    await flush();
+    expect(forgets()).toHaveLength(0);
+    jest.advanceTimersByTime(1);
+    await flush();
+    expect(forgets()).toHaveLength(1);
+    expect(forgets()[0]?.body).toEqual({ ids: ["mem_aaaaaaaaaaaaaaaaaaaa"] });
+    expect(refreshed).toBe(1);
+    expect(pendingMemoryDeletes.snapshot().size).toBe(0);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
-test("删除失败：放开隐藏、报错、不给撤销", async () => {
+test("8 秒内撤销：不发删除请求、不重建，原记录原样（id / created_at / agent_id 不变）", async () => {
+  jest.useFakeTimers();
+  try {
+    const original = note({
+      id: "mem_keep",
+      agentId: "agent_x",
+      createdAt: "2026-01-02T03:04:05.000Z",
+    });
+    const snapshot = structuredClone(original);
+    const view = render(<Toaster />);
+    deleteWithUndo([original], async () => {});
+    await act(async () => {});
+    jest.advanceTimersByTime(MEMORY_UNDO_MS - 1000);
+    await act(async () => {
+      fireEvent.click(
+        view.getAllByRole("button", { name: "撤销" }).at(-1) as HTMLElement,
+      );
+    });
+    expect(pendingMemoryDeletes.snapshot().has("mem_keep")).toBe(false);
+    jest.advanceTimersByTime(MEMORY_UNDO_MS * 2);
+    await flush();
+    expect(forgets()).toHaveLength(0);
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    expect(original).toEqual(snapshot);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("连删两次：各自计时、各自撤销", async () => {
+  jest.useFakeTimers();
+  try {
+    deleteWithUndo([note({ id: "mem_a" })], async () => {});
+    jest.advanceTimersByTime(3000);
+    deleteWithUndo([note({ id: "mem_b" })], async () => {});
+    expect([...pendingMemoryDeletes.snapshot()].sort()).toEqual([
+      "mem_a",
+      "mem_b",
+    ]);
+    jest.advanceTimersByTime(MEMORY_UNDO_MS - 3000);
+    await flush();
+    expect(forgets().map((c) => c.body)).toEqual([{ ids: ["mem_a"] }]);
+    jest.advanceTimersByTime(3000);
+    await flush();
+    expect(forgets().map((c) => c.body)).toEqual([
+      { ids: ["mem_a"] },
+      { ids: ["mem_b"] },
+    ]);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("8 秒后删除失败：放开隐藏、报错", async () => {
   globalThis.fetch = Object.assign(
     async () => Response.json({ error: "boom" }, { status: 500 }),
     {
       preconnect: originalFetch.preconnect,
     },
   ) as typeof fetch;
-  const view = render(<Toaster />);
-  // 前面用例的提示（8 秒）还在模块级的提示栈里，所以比较数量而不是断言为 0。
-  const before = view.queryAllByRole("button", { name: "撤销" }).length;
-  const hidden: (string[] | null)[] = [];
-  let refreshed = 0;
-  await deleteWithUndo(
-    [note()],
-    async () => void refreshed++,
-    (ids) => hidden.push(ids),
-  );
-  expect(hidden).toEqual([["mem_aaaaaaaaaaaaaaaaaaaa"], null]);
-  expect(refreshed).toBe(0);
-  await waitFor(() =>
+  jest.useFakeTimers();
+  try {
+    const view = render(<Toaster />);
+    let refreshed = 0;
+    deleteWithUndo([note({ id: "mem_fail" })], async () => void refreshed++);
+    expect(pendingMemoryDeletes.snapshot().has("mem_fail")).toBe(true);
+    jest.advanceTimersByTime(MEMORY_UNDO_MS);
+    await act(async () => {
+      await flush();
+    });
+    expect(pendingMemoryDeletes.snapshot().has("mem_fail")).toBe(false);
+    expect(refreshed).toBe(0);
     expect(
       view.container.querySelector('.glass-toast[data-kind="error"]'),
-    ).toBeTruthy(),
-  );
-  expect(view.queryAllByRole("button", { name: "撤销" }).length).toBe(before);
+    ).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test("删一条先确认：取消不删，确认才删", async () => {

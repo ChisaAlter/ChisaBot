@@ -338,39 +338,92 @@ export function visibleNotes<T>(notes: readonly T[], expanded: boolean, limit = 
   return expanded || notes.length <= limit ? notes : notes.slice(0, limit);
 }
 
+/** 撤销窗口（毫秒）：和「撤销」提示一样长，过了才真正删库（CB-106）。 */
+export const MEMORY_UNDO_MS = 8000;
+
 /**
- * 删掉（可撤销：撤销 = 原样重建）。
- * 「撤销」提示在删除请求成功后立刻弹出，不等列表重新拉完（CB-106：记忆多时重新拉取要好几秒，
- * 提示晚到，8 秒窗口被白白吃掉）。列表在后台刷新，刷新完再放开本地隐藏。
+ * 待删除的记忆（CB-106 延迟删除）。确认后只在界面上隐藏，撤销窗口结束才发删除请求；
+ * 撤销 = 取消这次待删除，库里的原记录一直没动（id、created_at、agent_id 原样）。
+ *
+ * 放在模块级而不是页面 state 里：离开设置页（组件卸载）不取消、也不提前删，计时照走，8 秒到了照删；
+ * 回到页面时仍然隐藏着。关标签页/刷新（pagehide）时窗口没法再撤销，立刻用 keepalive 请求把待删的发出去。
  */
-export async function deleteWithUndo(notes: MemoryNoteView[], refresh: () => Promise<unknown>, hide: (ids: string[] | null) => void) {
-  const ids = notes.map((note) => note.id);
-  hide(ids);
+type PendingDelete = { ids: string[]; timer: ReturnType<typeof setTimeout>; refresh: () => Promise<unknown> };
+const pendingDeletes = new Map<number, PendingDelete>();
+let pendingSeq = 0;
+let pendingHidden: ReadonlySet<string> = new Set();
+const pendingListeners = new Set<() => void>();
+
+function emitPending() {
+  pendingHidden = new Set([...pendingDeletes.values()].flatMap((entry) => entry.ids));
+  for (const listener of pendingListeners) listener();
+}
+
+/** 界面上要隐藏的记忆 id（待删除 + 正在删）。配合 useSyncExternalStore。 */
+export const pendingMemoryDeletes = {
+  subscribe(listener: () => void) {
+    pendingListeners.add(listener);
+    return () => void pendingListeners.delete(listener);
+  },
+  snapshot: () => pendingHidden,
+};
+
+async function commitDelete(key: number) {
+  const entry = pendingDeletes.get(key);
+  if (!entry) return;
   try {
-    await deleteMemoryNotes(ids);
+    await deleteMemoryNotes(entry.ids);
   } catch (error) {
-    hide(null);
+    // 删除失败：放开隐藏，记录回到列表，并报错。
+    pendingDeletes.delete(key);
+    emitPending();
     toast.error(error instanceof Error ? error.message : "删除失败");
     return;
   }
-  toast.undo(notes.length === 1 ? "已删除 1 条记忆" : `已删除 ${notes.length} 条记忆`, async () => {
-    try {
-      for (const note of notes) {
-        await createMemoryNote({
-          kind: note.kind,
-          subject: note.subject,
-          content: note.content,
-          context: note.context,
-          ...(note.shared ? { shared: true } : {}),
-        });
-      }
-      await refresh();
-    } catch {
-      toast.error("恢复失败");
-    }
-  });
-  await refresh().catch(() => undefined);
-  hide(null);
+  // 列表刷新完再放开隐藏，免得已删的那条闪回来。
+  await entry.refresh().catch(() => undefined);
+  pendingDeletes.delete(key);
+  emitPending();
+}
+
+function flushOnPageHide() {
+  for (const [key, entry] of pendingDeletes) {
+    clearTimeout(entry.timer);
+    pendingDeletes.delete(key);
+    void fetch("/api/memory-notes/forget", {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids: entry.ids }),
+    }).catch(() => undefined);
+  }
+}
+if (typeof window !== "undefined") window.addEventListener("pagehide", flushOnPageHide);
+
+/**
+ * 删掉（可撤销）。立刻隐藏并弹「撤销」，{@link MEMORY_UNDO_MS} 后才真删；连删几次各自独立计时、各自撤销。
+ * 返回这次待删除的 key（测试用）。
+ */
+export function deleteWithUndo(notes: MemoryNoteView[], refresh: () => Promise<unknown>) {
+  const ids = notes.map((note) => note.id);
+  const key = ++pendingSeq;
+  const timer = setTimeout(() => void commitDelete(key), MEMORY_UNDO_MS);
+  pendingDeletes.set(key, { ids, timer, refresh });
+  emitPending();
+  toast.undo(
+    notes.length === 1 ? "已删除 1 条记忆" : `已删除 ${notes.length} 条记忆`,
+    () => {
+      const entry = pendingDeletes.get(key);
+      // 已经开始真删了（计时刚到）就来不及了；否则取消，原记录原样还在。
+      if (!entry) return;
+      clearTimeout(entry.timer);
+      pendingDeletes.delete(key);
+      emitPending();
+    },
+    MEMORY_UNDO_MS,
+  );
+  return key;
 }
 
 /** 删一条也先确认（和技能页一致，CB-106）；确认后仍有 8 秒撤销。 */
