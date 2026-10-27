@@ -96,6 +96,7 @@ jobs:
           bun test tests/sidebar-search-nav.test.ts tests/channel-pagination.test.tsx tests/channel-search.test.ts tests/focus-message.test.ts tests/scroll-within.test.ts tests/sidebar-shortcut-layouts.test.tsx
           # CB-106：app/bunfig.toml 已自动加载 ./tests/preload.ts（DOM 下先求值 Base UI），无需再显式 --preload（CB-110）。
           bun test tests/memory-delete-undo.test.tsx
+          bun test tests/memory-undo-toast-limit.test.tsx
           # DF-30：电脑卡片外框不再 button 套「重试」button。
           bun test tests/computer-frame-nested-button.test.tsx
       - name: Install actual computer service dependencies
@@ -159,3 +160,24 @@ jobs:
             exit 1
           fi
           echo "OK: no private host identifiers in tracked files."
+
+  # PC 客户端（pc/）的 node 测试；和 release.yml 的 pc-test 同一套（CB-113：以前只有发版时才跑）。
+  pc-test:
+    name: PC client tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: pc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm ci --no-audit --no-fund
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - run: npm test
