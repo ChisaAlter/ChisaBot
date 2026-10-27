@@ -87,6 +87,7 @@ jobs:
           bun test tests/thread-inbox-paused.test.tsx tests/thread-inbox-concurrency.test.tsx tests/conversation-sync.test.ts
           bun test tests/schedule-fired.test.tsx
           bun test tests/schedule-edit.test.tsx
+          bun test tests/schedule-runs-query.test.ts
           bun test tests/stop-queue.test.tsx
           bun test tests/computer-activity-log.test.tsx tests/computer-activity.test.ts
           # CB-106：从 app/ 跑时 bun 不读根目录 bunfig.toml，显式带上 app 的 preload（DOM 下先求值 Base UI）。
@@ -105,6 +106,7 @@ jobs:
           bun test server/tests/computer-stop.test.ts
           bun test server/tests/agent-runtime-unreachable.integration.test.ts
           bun test server/tests/schedules-paused-next.integration.test.ts
+          bun test server/tests/schedules-runs-param.test.ts
           bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
