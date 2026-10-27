@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createDatabase } from "../src/db/client";
 import { createSchedules } from "../src/schedules/service";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
+import { holdScheduleSweepLock } from "./support/schedule-sweep-lock";
 
 /**
  * CB-105：暂停的任务没有「下次运行」。生产上「和 Claude 聊电车」暂停后库里仍留着 next_run_at，
@@ -34,9 +35,11 @@ describe.skipIf(!url)("paused schedules have no next run", () => {
       )
     )[0]!;
 
+  let releaseSweepLock: (() => Promise<void>) | null = null;
   beforeAll(async () => {
+    releaseSweepLock = await holdScheduleSweepLock(url!);
     await s.ensure();
-  });
+  }, 120_000); // 等别的进程放锁
   afterAll(async () => {
     await sql.unsafe(
       "DELETE FROM chisabot_schedule_runs WHERE owner_user_id = $1",
@@ -51,13 +54,14 @@ describe.skipIf(!url)("paused schedules have no next run", () => {
         owner,
       ])
       .catch(() => {});
+    await releaseSweepLock?.();
   });
 
   test("pause clears next_run_at; resume recomputes it", async () => {
     const task = await s.create({
       owner,
       agentId: "bot1",
-      threadId: "t-cb105-1",
+      threadId: `${owner}-t-cb105-1`,
       title: "和 Claude 聊电车",
       instruction: "聊电车",
       when: { repeat: "cron", cron: "0 */3 * * *" },
@@ -121,7 +125,7 @@ describe.skipIf(!url)("paused schedules have no next run", () => {
     const paused = await s.create({
       owner,
       agentId: "bot1",
-      threadId: "t-cb105b-1",
+      threadId: `${owner}-t-cb105b-1`,
       title: "旧的暂停任务",
       instruction: "x",
       when: { repeat: "hourly" },
@@ -129,7 +133,7 @@ describe.skipIf(!url)("paused schedules have no next run", () => {
     const active = await s.create({
       owner,
       agentId: "bot1",
-      threadId: "t-cb105b-2",
+      threadId: `${owner}-t-cb105b-2`,
       title: "在跑的任务",
       instruction: "x",
       when: { repeat: "hourly" },
@@ -153,7 +157,7 @@ describe.skipIf(!url)("paused schedules have no next run", () => {
     const task = await s.create({
       owner,
       agentId: "bot1",
-      threadId: "t-cb105b-3",
+      threadId: `${owner}-t-cb105b-3`,
       title: "很多次",
       instruction: "x",
       when: { repeat: "hourly" },
