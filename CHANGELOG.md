@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 修复
+
+- 根 `package.json` 补声明 `@json-render/core` / `@json-render/react`（0.21.0，与 app/server 及 lockfile 一致）。`shared/json-render` 不属于任何 workspace，在 Bun 默认的隔离 linker 下只能从根 `node_modules` 解析依赖；此前根未声明，导致干净安装后 server/app 的 typecheck 与 build 报 `Cannot find module '@json-render/core'`，只能靠 `--linker hoisted` 绕过。`bun.lock` 仅根 workspace 增加两条依赖声明，无任何包版本变化。
+
 ## 0.1.100 — 2026-10-28
 
 这一版将「设置 → 通用 → 外观 → 自定义图片壁纸」底部的网络链接输入框（`https://...`）替换为**本地图片点击与拖拽上传横幅（`.appearance-upload-dropzone`）**，并在壁纸网格中直接提供**「上传本地壁纸」卡片**，支持点击选择或直接将电脑中的图片（PNG / JPG / WebP / GIF / AVIF）拖拽到上传区即可自动压缩保存并应用。全仓工作区子包、PC 客户端、服务端与 Android 客户端同步更新至 0.1.100（Android `versionCode` 297）。

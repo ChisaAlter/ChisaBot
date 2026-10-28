@@ -5,6 +5,8 @@
     "": {
       "name": "chisabot",
       "dependencies": {
+        "@json-render/core": "0.21.0",
+        "@json-render/react": "0.21.0",
         "css-tree": "3.2.1",
         "parse5": "8.0.1",
         "playwright-core": "1.62.1",

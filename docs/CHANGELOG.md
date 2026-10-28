@@ -1,3 +1,7 @@
+## Unreleased
+
+- 修复干净安装（默认隔离 linker）下 `shared/json-render` 解析不到 `@json-render/*`、typecheck/build 失败的问题：根 `package.json` 补声明这两个依赖。
+
 ## 0.1.100
 
 - 将自定义壁纸设置中的网络 URL 输入框替换为本地图片点击/拖拽上传区域与壁纸网格内直达上传卡片，全端同步升级至 `0.1.100`（`versionCode` 297）
