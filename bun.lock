@@ -17,12 +17,12 @@
         "@types/css-tree": "^3.2.0",
         "roughjs": "^4.6.6",
         "typescript": "^5.9.3",
-        "yaml": "^2.9.0",
+        "yaml": "^2.9.1",
       },
     },
     "app": {
       "name": "app",
-      "version": "0.0.0",
+      "version": "0.1.93",
       "dependencies": {
         "@ag-ui/core": "1.0.1",
         "@base-ui/react": "^1.6.0",
@@ -72,7 +72,7 @@
     },
     "server": {
       "name": "server",
-      "version": "0.0.0",
+      "version": "0.1.93",
       "dependencies": {
         "@ag-ui/client": "1.0.1",
         "@ag-ui/core": "1.0.1",
@@ -96,7 +96,7 @@
         "postgres": "^3.4.9",
         "rxjs": "7.8.1",
         "twilio": "5.13.0",
-        "yaml": "^2.9.0",
+        "yaml": "^2.9.1",
         "zod": "^4.4.3",
       },
       "devDependencies": {
@@ -2309,7 +2309,7 @@
 
     "yallist": ["yallist@3.1.1", "https://registry.npmmirror.com/yallist/-/yallist-3.1.1.tgz", {}, "sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g=="],
 
-    "yaml": ["yaml@2.9.0", "https://registry.npmmirror.com/yaml/-/yaml-2.9.0.tgz", { "bin": { "yaml": "bin.mjs" } }, "sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA=="],
+    "yaml": ["yaml@2.9.1", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw=="],
 
     "yauzl": ["yauzl@2.10.0", "https://registry.npmmirror.com/yauzl/-/yauzl-2.10.0.tgz", { "dependencies": { "buffer-crc32": "~0.2.3", "fd-slicer": "~1.1.0" } }, "sha512-p4a9I6X6nu6IhoGmBqAcbJy1mlC4j27vEPZX9F4L4/vZT3Lyq1VkFHw/V/PUcB9Buo+DG3iHkT0x3Qya58zc3g=="],
 
