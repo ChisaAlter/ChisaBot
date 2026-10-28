@@ -116,3 +116,52 @@ export function mergeServerMessages(
     return { next: null, version, cursor };
   return { next, version, cursor };
 }
+
+/**
+ * 存储读（`readThreadMessages`、对话顺序核对）的增量基准：服务器上次原样发来的行（未解析）和它的
+ * version / cursor。和上面的 ThreadSync 不同，这里的基准是「服务器那份」的本地副本，与 agent 里的消息无关。
+ */
+export type StoredSync = {
+  version: string;
+  cursor: string;
+  rows: readonly unknown[];
+};
+
+export type StoredAnswer = {
+  /** 服务器当前的整份原始行（没变时就是基准里那同一个数组）。 */
+  rows: readonly unknown[];
+  unchanged: boolean;
+  version: string | null;
+  cursor: string | null;
+};
+
+/** 把服务器对 since/cursor 的回答并回整份原始行；回答用不上（格式不对、基准对不上）时返回 null。 */
+export function applyStoredAnswer(
+  base: StoredSync | null,
+  body: unknown,
+): StoredAnswer | null {
+  if (!body || typeof body !== "object") return null;
+  const answer = body as {
+    messages?: unknown;
+    unchanged?: unknown;
+    version?: unknown;
+    cursor?: unknown;
+    start?: unknown;
+  };
+  const version = typeof answer.version === "string" ? answer.version : null;
+  const cursor = typeof answer.cursor === "string" ? answer.cursor : null;
+  if (answer.unchanged === true)
+    return base && version && cursor
+      ? { rows: base.rows, unchanged: true, version, cursor }
+      : null;
+  if (!Array.isArray(answer.messages)) return null;
+  const start = answer.start === undefined ? 0 : answer.start;
+  if (typeof start !== "number" || !Number.isInteger(start) || start < 0)
+    return null;
+  if (start > 0 && (!base || start > base.rows.length)) return null;
+  const rows =
+    start > 0 && base
+      ? base.rows.slice(0, start).concat(answer.messages)
+      : answer.messages;
+  return { rows, unchanged: false, version, cursor };
+}

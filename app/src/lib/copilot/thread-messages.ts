@@ -1,6 +1,7 @@
 import type { Message } from "@ag-ui/core";
 import { MessageSchema } from "@ag-ui/core/schemas";
 import { tryClient } from "@/lib/client";
+import { applyStoredAnswer, type StoredSync } from "./thread-sync";
 
 /**
  * The messages a thread already holds, for restoring a conversation somebody comes back to.
@@ -185,6 +186,67 @@ function argumentsOf(args: unknown): string {
   }
 }
 
+/*
+ * 增量读存储（配合服务器 `…/messages?since=&cursor=`，见 server/src/thread-messages-delta.ts）。
+ *
+ * 每条对话在内存里记下服务器上次发来的原始行和它的 version / cursor（最多几条对话），下次读时带上：
+ * 没变，服务器只回 `unchanged`，这里直接复用上次的结果（同一个数组，调用方的合并原样返回、不 setMessages）；
+ * 只变了尾部，就只传尾部。调用方拿到的仍是整份，所以编辑 / 删除（服务器对不上前缀会回整份）、读失败、
+ * 旧服务器（不回 version）的行为都和以前一样；回答对不上基准时丢掉基准、再整份读一次。
+ */
+const storedSyncs = new Map<string, StoredSync>();
+const STORED_SYNC_LIMIT = 8;
+const parsedRows = new WeakMap<readonly unknown[], StoredThread>();
+
+/** 测试用：清掉所有对话的增量基准。 */
+export function resetStoredSyncs(): void {
+  storedSyncs.clear();
+}
+
+/**
+ * 读一条对话存储里的原始行（整份，未解析）。`request` 由调用方给：恢复历史走 `tryClient`，
+ * 顺序核对沿用它原来的 `fetch`（401 等处理不变）。非 2xx 返回 null；网络 / JSON 错误照常抛出。
+ */
+export async function readStoredRows(
+  threadId: string,
+  agentId: string | undefined,
+  request: (path: string) => Promise<Response>,
+): Promise<readonly unknown[] | null> {
+  const key = `${agentId ?? ""}\n${threadId}`;
+  let base = storedSyncs.get(key) ?? null;
+  for (;;) {
+    const params = new URLSearchParams();
+    if (agentId !== undefined) params.set("agentId", agentId);
+    params.set("since", base?.version ?? "");
+    if (base) params.set("cursor", base.cursor);
+    const response = await request(
+      `/api/copilotkit/threads/${encodeURIComponent(threadId)}/messages?${params}`,
+    );
+    if (!response.ok) {
+      storedSyncs.delete(key);
+      return null;
+    }
+    const answer = applyStoredAnswer(base, await response.json());
+    storedSyncs.delete(key);
+    if (!answer) {
+      if (!base) return null;
+      base = null;
+      continue;
+    }
+    if (answer.version && answer.cursor) {
+      storedSyncs.set(key, {
+        version: answer.version,
+        cursor: answer.cursor,
+        rows: answer.rows,
+      });
+      if (storedSyncs.size > STORED_SYNC_LIMIT) {
+        const oldest = storedSyncs.keys().next().value;
+        if (oldest !== undefined) storedSyncs.delete(oldest);
+      }
+    }
+    return answer.rows;
+  }
+}
 export async function readThreadMessages(
   threadId: string,
   agentId: string,
@@ -196,17 +258,16 @@ export async function readThreadMessages(
 
   try {
     const read = async () => {
-      const response = await tryClient(
-        `/api/copilotkit/threads/${encodeURIComponent(threadId)}/messages?agentId=${encodeURIComponent(agentId)}`,
-        { signal: controller.signal },
+      const rows = await readStoredRows(threadId, agentId, (path) =>
+        tryClient(path, { signal: controller.signal }),
       );
-      if (!response.ok) return UNAVAILABLE_THREAD;
-      const body: unknown = await response.json();
-      const stored =
-        typeof body === "object" && body !== null && "messages" in body
-          ? body.messages
-          : null;
-      return Array.isArray(stored) ? readableTurns(stored) : UNAVAILABLE_THREAD;
+      if (!rows) return UNAVAILABLE_THREAD;
+      // 服务器回 unchanged 时 rows 是上次那同一个数组：直接给上次的结果（同一批消息对象）。
+      const known = parsedRows.get(rows);
+      if (known) return known;
+      const parsed = readableTurns(rows);
+      parsedRows.set(rows, parsed);
+      return parsed;
     };
 
     const deadline = new Promise<StoredThread>((resolve) => {
