@@ -1,3 +1,7 @@
+## Unreleased
+
+- 安装版 `app/serve.ts` 转发 `/api` 时去掉已失效的 `Content-Encoding` / `Content-Length` 和逐跳头，修复 gzip 响应导致 `/api/me` 加载失败（`ERR_CONTENT_DECODING_FAILED`）；多值 `Set-Cookie` 照常保留
+
 ## 0.1.103
 
 - 聊天 SVG / Mermaid 卡片改用 DOMPurify 清洗、SVG 卡片改为 `<img>` 渲染，修复存储型 XSS（审查 S1，#362）；主应用加 CSP Report-Only。只升级服务器版本号（根、`app`、`server` 为 `0.1.103`），PC / Android 外壳未变。

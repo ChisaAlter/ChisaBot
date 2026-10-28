@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### 修复：安装版 `/api` 代理不再转发失效的 `Content-Encoding`
+
+- **`app/serve.ts`**：Bun 的 `fetch` 已自动解压上游 gzip 响应，但代理原样转发了 `Content-Encoding: gzip` 和压缩时的 `Content-Length`，浏览器再解压一次就报 `ERR_CONTENT_DECODING_FAILED`，安装版 PC 客户端 `/api/me` 加载失败。现在转发前删掉 `content-encoding`、`content-length` 及逐跳头（`transfer-encoding`、`connection` 及其列出的头、`keep-alive` 等），其他头照常转发，多个 `Set-Cookie` 逐条保留。
+- 新增测试：gzip 上游经代理后客户端可正常解析 JSON、不带 gzip 编码头、多值 `Set-Cookie` 保留。
+
 ## 0.1.103 — 2026-10-29
 
 这一版修复聊天 SVG 卡片的存储型 XSS（审查 S1，#362）：SVG 卡片和 Mermaid 卡片改用 DOMPurify（SVG profile）清洗，SVG 卡片改成 `<img>` 渲染，`/onerror`、`onbegin` 等写法不再能执行脚本；主应用同时加上 CSP（Report-Only，先只上报不拦截，便于观察后再收紧）。只改服务器 + 网页，没有表结构变化；PC / Android 客户端外壳未变，版本号仍为 0.1.100。

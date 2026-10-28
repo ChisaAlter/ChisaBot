@@ -8,6 +8,7 @@ import {
   fileFor,
   isApiCall,
   isClientRoute,
+  proxiedResponseHeaders,
   upstreamWebSocketHeaders,
   withSecurityHeaders,
 } from "../serve";
@@ -525,6 +526,84 @@ describe("api proxy", () => {
     } finally {
       upstream.server.stop(true);
       await proxy.stop();
+    }
+  });
+});
+
+describe("API 响应经代理转发（Content-Encoding）", () => {
+  test("去掉已失效的编码、长度和逐跳头，保留其他头和多个 Set-Cookie", () => {
+    const upstream = new Headers({
+      "Content-Encoding": "gzip",
+      "Content-Length": "123",
+      "Transfer-Encoding": "chunked",
+      Connection: "keep-alive, x-hop",
+      "Keep-Alive": "timeout=5",
+      "X-Hop": "1",
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    });
+    upstream.append("Set-Cookie", "a=1; Path=/; HttpOnly");
+    upstream.append("Set-Cookie", "b=2; Path=/");
+    const headers = proxiedResponseHeaders(upstream);
+    for (const name of [
+      "content-encoding",
+      "content-length",
+      "transfer-encoding",
+      "connection",
+      "keep-alive",
+      "x-hop",
+    ]) {
+      expect(headers.has(name)).toBe(false);
+    }
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(headers.get("cache-control")).toBe("no-store");
+    expect(headers.getSetCookie()).toEqual(["a=1; Path=/; HttpOnly", "b=2; Path=/"]);
+  });
+
+  test("上游返回 gzip 时，经 serve.ts 后客户端能解析 JSON，且不带 gzip 编码头", async () => {
+    const payload = { user: { id: "u1", name: "测试用户" }, items: Array.from({ length: 50 }, (_, i) => i) };
+    const compressed = Bun.gzipSync(new TextEncoder().encode(JSON.stringify(payload)));
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        const headers = new Headers({
+          "Content-Type": "application/json",
+          "Content-Encoding": "gzip",
+          "Content-Length": String(compressed.byteLength),
+        });
+        headers.append("Set-Cookie", "openbot_session=s1; Path=/; HttpOnly");
+        headers.append("Set-Cookie", "openbot_csrf=c1; Path=/");
+        return new Response(compressed, { headers });
+      },
+    });
+    if (upstream.port === undefined) {
+      upstream.stop(true);
+      throw new Error("The test upstream did not bind a TCP port");
+    }
+    const proxy = await startProxy(upstream.port);
+    try {
+      const response = await fetch(`http://127.0.0.1:${proxy.port}/api/me`, {
+        headers: { "Accept-Encoding": "gzip" },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-encoding")).toBeNull();
+      expect(response.headers.getSetCookie()).toEqual([
+        "openbot_session=s1; Path=/; HttpOnly",
+        "openbot_csrf=c1; Path=/",
+      ]);
+      expect(await response.json()).toEqual(payload);
+
+      // 不让客户端自动解压，直接看线上的字节：必须就是明文 JSON。
+      const raw = await fetch(`http://127.0.0.1:${proxy.port}/api/me`, {
+        headers: { "Accept-Encoding": "gzip" },
+        decompress: false,
+      } as RequestInit);
+      expect(raw.headers.get("content-encoding")).toBeNull();
+      expect(JSON.parse(await raw.text())).toEqual(payload);
+    } finally {
+      await proxy.stop();
+      upstream.stop(true);
     }
   });
 });
