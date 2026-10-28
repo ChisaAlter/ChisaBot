@@ -17,13 +17,22 @@ import { settleReactWork } from "./settle-react-work";
 const router = await import("@tanstack/react-router");
 mock.module("@tanstack/react-router", () => ({
   ...router,
+  // 所有 props（aria-label、to/href、className…）原样透传给 <a>：mock 是进程级的，漏给别的文件时也不丢可访问名称。
   Link: ({
     children,
-    className,
+    to,
+    href,
+    ...rest
   }: {
     children?: ReactNode;
-    className?: string;
-  }) => <span className={className}>{children}</span>,
+    to?: string;
+    href?: string;
+    [key: string]: unknown;
+  }) => (
+    <a {...rest} href={href ?? to}>
+      {children}
+    </a>
+  ),
 }));
 
 /**

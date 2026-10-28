@@ -44,6 +44,8 @@ const ISOLATED = [
    * 跟别的文件一起跑时永远拿到「没开」，断言的是检查项而不是代码（2026-10-22 起单列）。
    */
   "app/tests/message-scroll-reduced-motion.test.tsx",
+  // 把 @tanstack/react-router 的 Link 换成替身（进程级）；共享进程里会漏给 agent-roster-error 等用真 Link 断言 aria-label 的文件。
+  "app/tests/schedule-fired.test.tsx",
 ];
 
 const files = [...new Glob("app/tests/**/*.test.{ts,tsx}").scanSync(".")]
