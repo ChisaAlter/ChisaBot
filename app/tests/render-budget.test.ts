@@ -6,7 +6,7 @@ import path from "node:path";
  * 渲染预算的静态检查（styles.css 末尾「渲染预算」一节）。
  *
  * 同屏可见的毛玻璃层数要看页面上实际挂了哪些元素，这里不跑浏览器，拆成样式表上能检查的几条：
- *   1. 任何 blur() 都不超过 30px；大面板令牌 16–24px，弹层 12px；
+ *   1. 任何 blur() 都不超过 30px；Hark 玻璃令牌 --glass-blur 20px、--glass-pop-blur 12px，饱和度 160–180%；
  *   2. 会模糊的规则只有下面列出的这些：左栏、右栏、输入框、顶栏、弹层 / 抽屉 / 对话框（外观设置页自己的预览除外）；
  *   3. 气泡、按钮、胶囊、对话里的卡片、设置页卡片不模糊（旧的 !important 玻璃层靠本地 --lg-blur: none 关掉）；
  *   4. 无限循环的动画只动 transform / opacity；滚动区不再挂渐隐遮罩。
@@ -47,20 +47,39 @@ test("no blur radius above 30px anywhere in the stylesheet", () => {
     expect(Number(m[1])).toBeLessThanOrEqual(30);
 });
 
-test("panel glass is 16–24px and popover glass is 12px", () => {
-  const panel = [
-    ...source.matchAll(/--glass-blur:\s*[^;]*blur\((\d+)px\)/g),
-  ].map((m) => Number(m[1]));
-  const pop = [
-    ...source.matchAll(/--glass-pop-filter:\s*[^;]*blur\((\d+)px\)/g),
-  ].map((m) => Number(m[1]));
+test("Hark glass tokens: panel 20px, popover 12px, saturate 160–180%", () => {
+  const radius = (name: string) =>
+    [...source.matchAll(new RegExp(`${name}:\\s*(\\d+)px;`, "g"))].map((m) =>
+      Number(m[1]),
+    );
+  const panel = radius("--glass-blur");
+  const pop = radius("--glass-pop-blur");
   expect(panel.length).toBeGreaterThan(0);
   expect(pop.length).toBeGreaterThan(0);
-  for (const v of panel) {
-    expect(v).toBeGreaterThanOrEqual(16);
-    expect(v).toBeLessThanOrEqual(24);
-  }
+  for (const v of panel) expect(v).toBe(20);
   for (const v of pop) expect(v).toBe(12);
+  const saturate = [...source.matchAll(/--glass-saturate:\s*(\d+)%;/g)].map(
+    (m) => Number(m[1]),
+  );
+  expect(saturate.length).toBeGreaterThan(0);
+  for (const v of saturate) {
+    expect(v).toBeGreaterThanOrEqual(160);
+    expect(v).toBeLessThanOrEqual(180);
+  }
+  // 滤镜只由令牌拼出来，不再写死半径。
+  expect(source).toMatch(
+    /--glass-filter:\s*saturate\(var\(--glass-saturate\)\) blur\(var\(--glass-blur\)\);/,
+  );
+  expect(source).toMatch(
+    /--glass-pop-filter:\s*saturate\(var\(--glass-saturate\)\) blur\(var\(--glass-pop-blur\)\);/,
+  );
+  // 旧名字的滤镜写法不再出现：backdrop-filter 只读 --glass-filter / --glass-pop-filter。
+  expect(source).not.toMatch(/backdrop-filter:\s*var\(--glass-blur\b/);
+});
+
+test("Hark text tiers: secondary .5, tertiary .3", () => {
+  expect(source).toMatch(/--text-secondary-alpha:\s*0\.5;/);
+  expect(source).toMatch(/--text-tertiary-alpha:\s*0\.3;/);
 });
 
 test("only the rails, the composer, the top bar and popups blur", () => {
@@ -101,6 +120,9 @@ test("only the rails, the composer, the top bar and popups blur", () => {
     '.glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"], .jr-card',
     '.glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubble-content"]',
     ".page-rows, .sg-card, .page-section > form, .page :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(.border-dashed):not(.page-rows)",
+    // Hark 唯一玻璃材质（第 1 步只定义，组件在第 2–4 步换上）。
+    ".glass",
+    ".glass.is-pop",
   ]);
 });
 
@@ -129,10 +151,10 @@ test("bubbles, buttons, pills and in-chat or settings cards switch the old glass
 
 test("performance mode and reduced transparency turn every glass token off", () => {
   expect(source).toMatch(
-    /html\[data-perf="on"\] \{\s*--glass-blur: none;\s*--glass-pop-filter: none;/,
+    /html\[data-perf="on"\] \{\s*--glass-filter: none;\s*--glass-pop-filter: none;/,
   );
   expect(source).toMatch(
-    /@media \(prefers-reduced-transparency: reduce\) \{\s*html:root \{\s*--glass-blur: none;/,
+    /@media \(prefers-reduced-transparency: reduce\) \{\s*html:root \{\s*--glass-filter: none;/,
   );
 });
 
