@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import {
+  sanitizedMermaidSvg,
   sanitizeSvgMarkup,
   svgMarkupToDataUrl,
 } from "../src/components/chat/bot-bubbles";
@@ -188,5 +189,54 @@ describe("sanitizeSvgMarkup（审查 S1：SVG 卡片 XSS）", () => {
     expect(url.startsWith("data:image/svg+xml;charset=utf-8,")).toBe(true);
     expect(decodeURIComponent(url.slice(url.indexOf(",") + 1))).toBe(svg);
     expect(url).not.toMatch(/[<>"#\s]/);
+  });
+});
+
+describe("Mermaid 卡片内联前同样清洗", () => {
+  const code = [
+    "flowchart TD",
+    '  A[<img src=x onerror=alert(1)>] --> B["><script>alert(2)</script>]',
+    "  B --> C[正常节点 currentColor]",
+  ].join("\n");
+
+  test('节点标签里的 <img onerror> 和 "><script> 插入页面后没有可执行内容，标签文字仍在', () => {
+    const svg = sanitizedMermaidSvg(code, win);
+    const doc = expectInert(svg);
+    // 标签按文字显示：<text> 里能读到原话，但没有变成元素。
+    const texts = [...doc.documentElement.querySelectorAll("text")].map(
+      (el) => el.textContent ?? "",
+    );
+    expect(texts.some((t) => t.includes("<img src=x onerror=alert(1)>"))).toBe(
+      true,
+    );
+    expect(texts.some((t) => t.includes("正常节点 currentColor"))).toBe(true);
+    // 箭头 marker 和主题变量保留，内联后颜色照常跟随主题。
+    expect(doc.documentElement.querySelector("marker#cb-arrow")).not.toBeNull();
+    expect(svg as string).toContain("var(--cb-mermaid-text");
+
+    // 真正插进页面（和 dangerouslySetInnerHTML 一样走 innerHTML）后再查一遍。
+    const host = dom.window.document.createElement("div");
+    host.innerHTML = svg as string;
+    expect(
+      host.querySelectorAll("script, img, foreignObject, iframe").length,
+    ).toBe(0);
+    for (const el of host.querySelectorAll("*")) {
+      for (const attr of el.attributes) {
+        expect(attr.name.toLowerCase().startsWith("on")).toBe(false);
+      }
+    }
+    expect(host.querySelector("svg")).not.toBeNull();
+  });
+
+  test("currentColor 不被清洗掉", () => {
+    const out = sanitize(
+      '<svg viewBox="0 0 4 4"><path d="M0 0h4" stroke="currentColor" fill="currentColor"/></svg>',
+    );
+    expectInert(out);
+    expect(out as string).toContain('stroke="currentColor"');
+  });
+
+  test("没有 DOM 时 Mermaid 也不画，不原样放行", () => {
+    expect(sanitizedMermaidSvg(code, undefined)).toBeNull();
   });
 });

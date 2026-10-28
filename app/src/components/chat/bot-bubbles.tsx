@@ -931,6 +931,22 @@ export function sanitizeSvgMarkup(
   return svg;
 }
 
+/**
+ * Mermaid 卡片：本地 mermaid-lite 渲染出的 SVG 再过一遍同一个 purifier 才内联插入。
+ * mermaid-lite 用 `<text>` 放标签（没有 foreignObject / htmlLabels），标签文字经过转义；
+ * 这一遍是兜底，渲染器将来出漏洞也不会把节点标签里的 `<img onerror>`、`<script>` 带进页面。
+ * 继续内联（不走 <img>），所以 `currentColor` / CSS 变量照常跟随主题。
+ */
+export function sanitizedMermaidSvg(
+  code: string,
+  win: SvgWindow | undefined = typeof window === "undefined"
+    ? undefined
+    : window,
+): string | null {
+  const raw = renderMermaidToSvg(code);
+  return raw ? sanitizeSvgMarkup(raw, win) : null;
+}
+
 /** 净化后的 SVG 转成 `<img>` 能用的 data URL（图片上下文：不跑脚本、不发请求、样式隔离）。 */
 export function svgMarkupToDataUrl(svg: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -952,7 +968,7 @@ export function ArtifactCard({
 
   const renderedSvg = useMemo(() => {
     if (artifact.lang === "mermaid") {
-      return renderMermaidToSvg(artifact.code);
+      return sanitizedMermaidSvg(artifact.code) ?? "";
     }
     return "";
   }, [artifact.lang, artifact.code]);
@@ -1013,7 +1029,7 @@ export function ArtifactCard({
               ? "chat-artifact-svg chat-artifact-svg-modal"
               : "chat-artifact-svg"
           }
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: 受控 Mermaid 矢量预览（本地渲染器输出；用户 SVG 走上面的 <img>）
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: Mermaid 矢量预览：本地渲染器输出且已过 DOMPurify（sanitizedMermaidSvg）；用户 SVG 走上面的 <img>
           dangerouslySetInnerHTML={{ __html: renderedSvg }}
           data-testid="artifact-svg-preview"
         />
