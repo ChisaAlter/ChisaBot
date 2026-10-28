@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from "react";
-import { readStoredPreference, writeStoredPreference } from "./preference-storage";
+import {
+  readStoredPreference,
+  writeStoredPreference,
+} from "./preference-storage";
 
 /**
  * 性能模式：一个开关，开了以后
@@ -16,7 +19,8 @@ let perfMode: boolean | null = null;
 const listeners = new Set<() => void>();
 
 function readPerfMode(): boolean {
-  if (perfMode === null) perfMode = readStoredPreference(PERF_MODE_STORAGE_KEY) === "on";
+  if (perfMode === null)
+    perfMode = readStoredPreference(PERF_MODE_STORAGE_KEY) === "on";
   return perfMode;
 }
 
@@ -53,14 +57,20 @@ export function setPerfMode(on: boolean) {
  * 规则，只能靠更高优先级或 !important。
  */
 export function installHiddenAnimationPause() {
-  if (typeof document === "undefined" || typeof document.getAnimations !== "function") return;
+  if (
+    typeof document === "undefined" ||
+    typeof document.getAnimations !== "function"
+  )
+    return;
   let paused: Animation[] = [];
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       paused = document
         .getAnimations()
         .filter(
-          (a) => a.playState === "running" && a.effect?.getTiming().iterations === Number.POSITIVE_INFINITY,
+          (a) =>
+            a.playState === "running" &&
+            a.effect?.getTiming().iterations === Number.POSITIVE_INFINITY,
         );
       for (const a of paused) a.pause();
     } else {

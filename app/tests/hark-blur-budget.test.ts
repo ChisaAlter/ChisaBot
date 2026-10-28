@@ -12,7 +12,10 @@ import path from "node:path";
  *   3. 常驻的模糊层只有 Hark 层列出的几种：左栏、右栏、输入框（顶栏胶囊是 is-flat，不模糊）。
  * 加上「当前打开的弹层」最多一层，同屏合计 ≤ 6 层。实际页面的数目由 Playwright 审计记在 perf.md。
  */
-const css = readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8");
+const css = readFileSync(
+  path.join(import.meta.dir, "../src/styles.css"),
+  "utf8",
+);
 
 interface Rule {
   selector: string;
@@ -31,17 +34,25 @@ function rules(source: string): Rule[] {
 }
 
 const all = rules(css);
-const blurring = all.filter((r) => /(^|[;\s])backdrop-filter:\s*(?!\s|none)[^;]+/.test(r.body));
+const blurring = all.filter((r) =>
+  /(^|[;\s])backdrop-filter:\s*(?!\s|none)[^;]+/.test(r.body),
+);
 
 test("no blur radius above 30px anywhere in the stylesheet", () => {
-  const radii = [...css.matchAll(/blur\((\d+(?:\.\d+)?)px\)/g)].map((m) => Number(m[1]));
+  const radii = [...css.matchAll(/blur\((\d+(?:\.\d+)?)px\)/g)].map((m) =>
+    Number(m[1]),
+  );
   expect(radii.length).toBeGreaterThan(0);
   expect(Math.max(...radii)).toBeLessThanOrEqual(30);
 });
 
 test("glass tokens stay inside the budget", () => {
-  const blur = [...css.matchAll(/--glass-blur:\s*(\d+)px/g)].map((m) => Number(m[1]));
-  const pop = [...css.matchAll(/--glass-pop-blur:\s*(\d+)px/g)].map((m) => Number(m[1]));
+  const blur = [...css.matchAll(/--glass-blur:\s*(\d+)px/g)].map((m) =>
+    Number(m[1]),
+  );
+  const pop = [...css.matchAll(/--glass-pop-blur:\s*(\d+)px/g)].map((m) =>
+    Number(m[1]),
+  );
   expect(blur.length).toBeGreaterThan(0);
   for (const v of blur) {
     expect(v).toBeGreaterThanOrEqual(16);
@@ -53,7 +64,9 @@ test("glass tokens stay inside the budget", () => {
 test("bubbles, buttons, pills and small cards never carry a backdrop-filter", () => {
   const small =
     /bubble-content|\.glass-(pill|chip|seg|search|newchat|icon-btn|mini-new)\b|\.hk-(search|circle|home|avatar-btn)\b|\.jr-card\b|\.sg-card\b|\.queued-bubble|\.worker-card|\.rp-link|\.rail-tab\b|\.chat-doc-card\b/;
-  const offenders = blurring.filter((r) => small.test(r.selector)).map((r) => r.selector);
+  const offenders = blurring
+    .filter((r) => small.test(r.selector))
+    .map((r) => r.selector);
   expect(offenders).toEqual([]);
 });
 
@@ -62,7 +75,11 @@ test("the Hark layer blurs only the rails, the composer and popovers", () => {
   expect(start).toBeGreaterThan(0);
   const hark = rules(css.slice(start));
   const selectors = hark
-    .filter((r) => /(^|[;\s])backdrop-filter:\s*(?!\s|none)[^;]+/.test(r.body) || /--lg-blur:\s*(?!\s|none)/.test(r.body))
+    .filter(
+      (r) =>
+        /(^|[;\s])backdrop-filter:\s*(?!\s|none)[^;]+/.test(r.body) ||
+        /--lg-blur:\s*(?!\s|none)/.test(r.body),
+    )
     .map((r) => r.selector.replace(/\s+/g, " "));
   expect(selectors).toEqual([
     ".glass-shell .hk-rail.glass::before, .glass-shell .hk-panel.glass::before",
@@ -71,6 +88,8 @@ test("the Hark layer blurs only the rails, the composer and popovers", () => {
 });
 
 test("a blurred rail never nests another blurred rail (mobile drawer)", () => {
-  expect(css).toMatch(/\[data-mobile="true"\] \.hk-rail\.glass::before \{ content: none; \}/);
+  expect(css).toMatch(
+    /\[data-mobile="true"\] \.hk-rail\.glass::before \{ content: none; \}/,
+  );
   expect(css).toMatch(/\.glass\.is-flat \{\s*backdrop-filter: none;/);
 });
