@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.103 — 2026-10-29
+## Unreleased
 
-这一版只做渲染性能，不改布局和配色：性能审计实测，主界面卡顿主要来自三处——同屏 14 层毛玻璃（全文档 91 个元素带 `backdrop-filter`，气泡、按钮、胶囊、滚动区里的卡片都在模糊）、WebGL 天空在空闲时也按满帧满分辨率重画（还开着 `preserveDrawingBuffer`）、以及 `background-position` / `box-shadow` 驱动的无限循环动画。这里把毛玻璃收到预算内、让天空默认只画一张快照、无限动画只动 `transform` / `opacity`，并加上性能模式的状态开关。外观设置页、壁纸上传和 `wallpaper_core.html` 都没有动。
+这组改动只做渲染性能，不改布局和配色：性能审计实测，主界面卡顿主要来自三处——同屏 14 层毛玻璃（全文档 91 个元素带 `backdrop-filter`，气泡、按钮、胶囊、滚动区里的卡片都在模糊）、WebGL 天空在空闲时也按满帧满分辨率重画（还开着 `preserveDrawingBuffer`）、以及 `background-position` / `box-shadow` 驱动的无限循环动画。这里把毛玻璃收到预算内、让天空默认只画一张快照、无限动画只动 `transform` / `opacity`，并加上性能模式的状态开关。外观设置页、壁纸上传和 `wallpaper_core.html` 都没有动。
 
 ### 渲染预算
 
