@@ -1,6 +1,7 @@
 ## Unreleased
 
 - 修复干净安装（默认隔离 linker）下 `shared/json-render` 解析不到 `@json-render/*`、typecheck/build 失败的问题：根 `package.json` 补声明这两个依赖；app 补声明测试与 vite.config 直接用到的 `@ag-ui/client`、`rxjs`、`esbuild`（版本均与 lockfile 一致）。
+- 出口过滤代理按 Bot 独立鉴权：HMAC 派生的每 Bot 代理密钥，空密码 / 错误密码 / 冒充一律拒绝，无凭据连接改走不含任何 Bot 放行名单的独立兜底策略并记节流日志；硬拒绝新增 `0.0.0.0/8`、`100.64.0.0/10`；服务器发往电脑的命令带上 botId
 
 ## 0.1.103
 

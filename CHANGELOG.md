@@ -8,6 +8,15 @@
 - `app/package.json` 的 devDependencies 补声明 `@ag-ui/client`（1.0.1）、`rxjs`（7.8.1）、`esbuild`（0.28.2），版本均与 lockfile 中已解析的一致。app 的测试直接引用前两者，`vite.config.ts` 构建时动态 `import("esbuild")` 打包 pc headless 脚本；隔离 linker 下它们原本解析不到，导致 app typecheck 失败，esbuild 那一步也会被 try/catch 静默跳过。
 - `bun.lock` 只在 workspace 声明区增加上述条目，没有新增或变更任何包解析结果。
 
+### 安全：出口过滤代理按 Bot 独立鉴权（审计 H1 / L1）
+
+- **每个 Bot 独立的代理密钥（`agent-computer/src/egress.ts`）**：代理凭据改为 HMAC-SHA256(进程内随机主密钥, botId)，浏览器与 shell 都只拿本 Bot 的派生密钥；校验为定长摘要 + `timingSafeEqual`。
+- **拒绝伪造凭据**：带了 botId 但密码为空、错误、或用 A 的密钥冒充 B，一律 403，不再降级。
+- **无凭据连接走独立兜底**：不按任何 Bot 判定、不读任何 Bot 放行名单、不用 Bot 的上游代理，只放行默认软件源；本机任一 Bot 为 `allowlist_only` / `deny_all` 时拒绝；记节流日志 `EGRESS_ANONYMOUS`（只记来源与目标）。
+- **硬拒绝网段**新增 `0.0.0.0/8` 与 `100.64.0.0/10`。
+- **命令补传 botId**：服务器 `runCommand` 在 `/exec` body 中带 `botId`；电脑 `/exec` 缺省时回退到 `x-chisabot-bot-id` 请求头。
+- 无需新增环境变量；电脑进程重启后旧代理凭据失效。
+
 ## 0.1.103 — 2026-10-29
 
 这一版修复聊天 SVG 卡片的存储型 XSS（审查 S1，#362）：SVG 卡片和 Mermaid 卡片改用 DOMPurify（SVG profile）清洗，SVG 卡片改成 `<img>` 渲染，`/onerror`、`onbegin` 等写法不再能执行脚本；主应用同时加上 CSP（Report-Only，先只上报不拦截，便于观察后再收紧）。只改服务器 + 网页，没有表结构变化；PC / Android 客户端外壳未变，版本号仍为 0.1.100。

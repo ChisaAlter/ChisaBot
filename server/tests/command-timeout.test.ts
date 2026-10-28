@@ -104,17 +104,22 @@ describe("computer_run_command (unattended / approvals path)", () => {
     await expect(run({ command: "python3 slow.py", timeoutSec: 300 })).resolves.toMatchObject({ ok: true });
     await run({ command: "sleep 1", timeoutMs: 240_000 });
     await run({ command: "pwd" });
+    // The gateway names the Bot itself (never the model), so the command's traffic is that Bot's.
     expect(received.map((r) => r.body)).toEqual([
-      { command: "python3 slow.py", timeoutMs: 300_000 },
-      { command: "sleep 1", timeoutMs: 240_000 },
-      { command: "pwd" },
+      { command: "python3 slow.py", timeoutMs: 300_000, botId: "bot" },
+      { command: "sleep 1", timeoutMs: 240_000, botId: "bot" },
+      { command: "pwd", botId: "bot" },
     ]);
   });
 
   test("an over-long timeout runs at 600 s and says so", async () => {
     const { received, run } = harness();
     const result = await run({ command: "make", timeoutSec: 3600 });
-    expect(received[0]?.body).toEqual({ command: "make", timeoutMs: 600_000 });
+    expect(received[0]?.body).toEqual({
+      command: "make",
+      timeoutMs: 600_000,
+      botId: "bot",
+    });
     expect(String(result.timeoutAdjusted)).toContain("600 seconds");
   });
 
