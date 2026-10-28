@@ -46,6 +46,7 @@ import {
 import {
   formatBytes,
   formatDuration,
+  formatTurnPrompt,
   statusText,
   stepObject,
   stepVerb,
@@ -68,6 +69,8 @@ const KIND_ICONS: Record<string, typeof IconTerminal2> = {
   type: IconKeyboard,
   key: IconKeyboard,
   scroll: IconHandFinger,
+  help: IconHandFinger,
+  secret: IconKeyboard,
   screenshot: IconPhoto,
   run_command: IconTerminal2,
   read_file: IconFile,
@@ -282,9 +285,13 @@ function StepRow({
           <span className="activity-verb">{stepVerb(step)}</span>
           {object ? (
             code ? (
-              <code className="activity-object is-code">{object}</code>
+              <code className="activity-object is-code" title={object}>
+                {object}
+              </code>
             ) : (
-              <span className="activity-object">{object}</span>
+              <span className="activity-object" title={object}>
+                {object}
+              </span>
             )
           ) : null}
         </span>
@@ -395,10 +402,11 @@ function TurnGroup({
   fresh: ReadonlySet<string>;
 }) {
   const human = turn.actorKind === "human";
+  const cleanedPrompt = human ? null : formatTurnPrompt(turn.prompt);
   const title = human
     ? "你自己的操作"
-    : turn.prompt
-      ? turn.prompt
+    : cleanedPrompt
+      ? cleanedPrompt.title
       : turn.runId
         ? "机器人的操作"
         : "未归属的操作";
@@ -416,7 +424,9 @@ function TurnGroup({
           <IconMessage aria-hidden className="size-3.5 shrink-0" />
         )}
         <span className="activity-turn-title" title={title}>
-          {human || !turn.prompt ? title : `「${title}」`}
+          {human || !cleanedPrompt || cleanedPrompt.isSystem
+            ? title
+            : `「${title}」`}
         </span>
         {status ? <span className="activity-turn-status">{status}</span> : null}
       </header>

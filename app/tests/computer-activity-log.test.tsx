@@ -4,8 +4,11 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { batchCommands, groupActivity } from "@/lib/computers/activity-groups";
 import type { ActivityStep } from "@/lib/computers/use-computer-activity";
 import {
+  formatTurnPrompt,
   refusalText,
+  shortUrl,
   statusText,
+  stepObject,
   stepVerb,
 } from "../../shared/computer-activity-labels";
 import { settleReactWork } from "./settle-react-work";
@@ -106,6 +109,69 @@ test("labels speak to people", () => {
       subject: "",
     }),
   ).toBe("正在打开");
+  expect(
+    stepVerb({
+      actorKind: "human",
+      kind: "help",
+      status: "ok",
+      subject: "我来接管浏览器。",
+    }),
+  ).toBe("接管了浏览器");
+  expect(
+    stepObject({
+      actorKind: "human",
+      kind: "help",
+      status: "ok",
+      subject: "我来接管浏览器。",
+    }),
+  ).toBe("");
+  expect(
+    shortUrl(
+      "https://stockanalysis.com/etf/gld/history/?__cf_chl_rt_tk=ND5dZ0qLV3V7ZAKllRCTEeBGlWtV",
+    ),
+  ).toBe("stockanalysis.com/etf/gld/history");
+  expect(
+    formatTurnPrompt(
+      "【后台刷新面板，不是用户在聊天】面板「黄金 ETF」（id: p1）需要刷新数据。\n\n刷新说明：取最新数据",
+    ),
+  ).toEqual({
+    title: "刷新面板「黄金 ETF」",
+    isSystem: true,
+  });
+});
+
+test("repeated human takeover steps in the same human group are deduplicated", () => {
+  const turns = groupActivity([
+    step({
+      id: "h3",
+      actorKind: "human",
+      kind: "help",
+      subject: "我来接管浏览器。",
+      runId: null,
+      toolCallId: null,
+    }),
+    step({
+      id: "h2",
+      actorKind: "human",
+      kind: "tabs",
+      subject: "",
+      detail: { action: "new" },
+      runId: null,
+      toolCallId: null,
+    }),
+    step({
+      id: "h1",
+      actorKind: "human",
+      kind: "help",
+      subject: "我来接管浏览器。",
+      runId: null,
+      toolCallId: null,
+    }),
+  ]);
+  expect(turns.length).toBe(1);
+  expect(
+    turns[0]?.items.map((item) => (item.type === "step" ? item.step.id : "")),
+  ).toEqual(["h1", "h2"]);
 });
 
 test("renders merged commands, the refused state and the human label", async () => {

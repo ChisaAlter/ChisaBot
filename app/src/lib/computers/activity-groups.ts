@@ -86,7 +86,19 @@ export function groupActivity(
   }
   return chunks.map((chunk) => {
     const newest = chunk[0] as ActivityStep;
-    const oldestFirst = [...chunk].reverse();
+    const rawOldestFirst = [...chunk].reverse();
+    // 同一组「你自己的操作」里多次点「接管控制」只留第一次，避免刷屏重复的「接管了浏览器」。
+    let seenHumanTakeover = false;
+    const oldestFirst =
+      newest.actorKind === "human"
+        ? rawOldestFirst.filter((step) => {
+            if (step.kind === "help") {
+              if (seenHumanTakeover) return false;
+              seenHumanTakeover = true;
+            }
+            return true;
+          })
+        : rawOldestFirst;
     return {
       key: `${groupKey(newest)}:${chunk.at(-1)?.id}`,
       actorKind: newest.actorKind,

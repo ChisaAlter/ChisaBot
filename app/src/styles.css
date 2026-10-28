@@ -8844,16 +8844,17 @@ html[data-desktop] [data-slot="sidebar"][data-mobile="true"] { top: 40px; height
 .activity-step.is-fresh { animation: activity-fade-in 420ms ease-out both; background: color-mix(in srgb, #0ea5e9 14%, transparent); }
 @keyframes activity-fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .activity-step.is-fresh { animation: none; } }
-.activity-step-head { display: flex; align-items: flex-start; gap: 8px; width: 100%; min-width: 0; padding: 7px 6px; text-align: left; font-size: 14px; line-height: 1.5; color: var(--ink-1, var(--foreground)); background: none; border: 0; border-radius: 8px; cursor: pointer; }
+.activity-step-head { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 6px; text-align: left; font-size: 13.5px; line-height: 1.45; color: var(--ink-1, var(--foreground)); background: none; border: 0; border-radius: 8px; cursor: pointer; }
 .activity-step-head:disabled { cursor: default; }
 .activity-step-head:not(:disabled):hover { background: var(--glass-1, rgba(0,0,0,.04)); }
-.activity-step-icon { flex: none; width: 16px; height: 16px; margin-top: 3px; color: var(--ink-2, var(--muted-foreground)); }
-.activity-step-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; min-width: 0; flex: 1; }
+.activity-step-icon { flex: none; width: 15px; height: 15px; color: var(--ink-2, var(--muted-foreground)); }
+.activity-step-main { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; flex: 1; overflow: hidden; }
 .activity-you { flex: none; padding: 0 6px; border-radius: 4px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, #8b5cf6 16%, transparent); color: #6d28d9; }
 .dark .activity-you { color: #c4b5fd; }
-.activity-verb { flex: none; font-weight: 500; }
-.activity-object { min-width: 0; overflow-wrap: anywhere; color: var(--ink-1, var(--foreground)); }
-.activity-object.is-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.activity-turn[data-actor="human"] .activity-you { display: none; }
+.activity-verb { flex: none; font-weight: 500; white-space: nowrap; }
+.activity-object { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--ink-2, var(--muted-foreground)); }
+.activity-object.is-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
 .activity-step-meta { display: flex; flex: none; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--ink-2, var(--muted-foreground)); font-variant-numeric: tabular-nums; }
 .activity-badge { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
 .activity-badge.is-running { color: #0369a1; background: color-mix(in srgb, #0ea5e9 14%, transparent); }
