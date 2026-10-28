@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### 安全：出口过滤代理按 Bot 独立鉴权（审计 H1 / L1）
+
+- **每个 Bot 独立的代理密钥（`agent-computer/src/egress.ts`）**：代理凭据改为 HMAC-SHA256(进程内随机主密钥, botId)，浏览器与 shell 都只拿本 Bot 的派生密钥；校验为定长摘要 + `timingSafeEqual`。
+- **拒绝伪造凭据**：带了 botId 但密码为空、错误、或用 A 的密钥冒充 B，一律 403，不再降级。
+- **无凭据连接走独立兜底**：不按任何 Bot 判定、不读任何 Bot 放行名单、不用 Bot 的上游代理，只放行默认软件源；本机任一 Bot 为 `allowlist_only` / `deny_all` 时拒绝；记节流日志 `EGRESS_ANONYMOUS`（只记来源与目标）。
+- **硬拒绝网段**新增 `0.0.0.0/8` 与 `100.64.0.0/10`。
+- **命令补传 botId**：服务器 `runCommand` 在 `/exec` body 中带 `botId`；电脑 `/exec` 缺省时回退到 `x-chisabot-bot-id` 请求头。
+- 无需新增环境变量；电脑进程重启后旧代理凭据失效。
+
 ## 0.1.100 — 2026-10-28
 
 这一版将「设置 → 通用 → 外观 → 自定义图片壁纸」底部的网络链接输入框（`https://...`）替换为**本地图片点击与拖拽上传横幅（`.appearance-upload-dropzone`）**，并在壁纸网格中直接提供**「上传本地壁纸」卡片**，支持点击选择或直接将电脑中的图片（PNG / JPG / WebP / GIF / AVIF）拖拽到上传区即可自动压缩保存并应用。全仓工作区子包、PC 客户端、服务端与 Android 客户端同步更新至 0.1.100（Android `versionCode` 297）。
