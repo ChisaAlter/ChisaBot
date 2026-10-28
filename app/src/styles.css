@@ -10050,3 +10050,24 @@ html.dark {
   border: 0;
   box-shadow: var(--card-hairline);
 }
+
+/* —— 性能模式（html[data-perf="on"]，lib/perf-mode.ts）和系统「减少透明度」：所有玻璃换成不透明实色，不模糊。 —— */
+html[data-perf="on"] :is(.glass, .glass.is-pop) {
+  background: var(--glass-bg-solid);
+  backdrop-filter: none;
+}
+html[data-perf="on"] .glass-shell :is(.hk-rail, .hk-panel).glass::before {
+  background: var(--glass-bg-solid);
+  backdrop-filter: none;
+  animation: none;
+}
+html[data-perf="on"] .glass-composer.glass {
+  --lg-surface-strong: var(--glass-bg-solid);
+  --lg-blur: none;
+}
+@media (prefers-reduced-transparency: reduce) {
+  html .glass-composer.glass {
+    --lg-surface-strong: var(--glass-bg-solid);
+    --lg-blur: none;
+  }
+}
