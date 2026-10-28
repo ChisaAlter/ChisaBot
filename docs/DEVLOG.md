@@ -21,6 +21,23 @@
 
 原有的 `appearance-preferences.test.ts` 4 个用例照常通过。
 
+### 追加（返修）：刷新时不再先闪天空
+
+问题：localStorage 里只有占位标记时，启动先按“没有壁纸”渲染，等 IndexedDB 读回才补上壁纸，中间会先把天空挂出来闪一下。
+
+做法：
+- `appearance.ts` 增加“壁纸读取中”状态：启动时读到占位标记且 `wallpaperId === "custom"` 就进入（`isWallpaperLoading()` / `useWallpaperLoading()`）。IndexedDB 读回成功时，先填上壁纸再结束读取中，两步合成一次通知，中间不会出现“没壁纸、也不在读取中”的状态。读取失败、没有记录或超过 `WALLPAPER_LOAD_TIMEOUT_MS = 1500` 就结束读取中，退回天空。
+- 超时后 IndexedDB 才读回的，照样补上壁纸，只是晚一点，不会丢。读取中用户改选了别的壁纸，就立即结束读取中，迟到的结果不覆盖用户的选择（只在仍是自定义壁纸且没有地址时才填）。
+- `sky-background.tsx`：读取中只渲染一个 `#sky-root[data-wallpaper-loading]`，内联 `background: var(--sky-2)`。不挂 `#skyph`、WebGL 画布和光斑，也不加载天空引擎（`resolveSkyMode` 把读取中当作有壁纸，`html[data-sky-off]`）。`--sky-2` 就是 body 自己的 `background-color`，会跟随深浅色、时段和主题色。这一处用内联样式实现，`styles.css` 没改。
+- 没改的：JS 加载前 `index.html` 的启动壳本身就画着天空渐变，这次不动。
+
+测试：新增 `app/tests/wallpaper-loading.test.tsx`（6 个用例），渲染真实的 `<ThemeProvider><SkyBackground/></ThemeProvider>`，fetch 打桩成 404。用 MutationObserver 检查每一次 DOM 变化，用 subscribeAppearance 检查每一次状态变化：只要“挂着天空却没有壁纸盖住”出现过一次，就判失败。
+- 读回成功：读取中只有纯色，读回后直接显示壁纸，天空一次都没露出来；
+- 读取失败、没有记录：退回天空；
+- 永远不返回：200ms 时仍是纯色，约 1.5s 后退回天空；
+- 边界：超时后才读回照样补上；读取中改选别的壁纸立即结束，迟到的结果不覆盖。
+把 `sky-background.tsx` 换回改动前的版本，这 4 个主用例全部失败。
+
 ## 2026-10-29 修复干净安装：补声明 @json-render/* 等缺失依赖（分支 fix/json-render-deps）
 
 ### 动机

@@ -7,6 +7,7 @@ import {
   resolveEffectiveHarkScene,
   setHarkSkyScene,
   useAppearance,
+  useWallpaperLoading,
 } from "@/lib/appearance";
 import { usePerfMode } from "@/lib/perf-mode";
 import { createSkyWindow } from "@/lib/sky-window";
@@ -390,9 +391,11 @@ export function SkyBackground() {
 
   const perf = usePerfMode();
   const wallpaperCss = resolveActiveWallpaperCss(appearance);
+  const wallpaperLoading = useWallpaperLoading();
   const skyMode = resolveSkyMode({
     perf,
-    wallpaper: wallpaperCss !== null,
+    // 壁纸还在从 IndexedDB 读回时也不启动天空：读回来就是壁纸，先启动只会闪一下。
+    wallpaper: wallpaperCss !== null || wallpaperLoading,
     live: appearance.harkScene === "live",
   });
 
@@ -498,6 +501,18 @@ export function SkyBackground() {
     syncHarkSkyScene(targetScene);
     wakeSky(SKY_SNAPSHOT_MS);
   }, [targetScene]);
+
+  // 壁纸读取中：连静态天空占位也不画，只铺主题纯色（body 的底色 --sky-2）；读回后直接换成壁纸。
+  if (wallpaperLoading && !wallpaperCss) {
+    return (
+      <div
+        aria-hidden="true"
+        data-wallpaper-loading=""
+        id="sky-root"
+        style={{ background: "var(--sky-2)" }}
+      />
+    );
+  }
 
   return (
     <div aria-hidden="true" id="sky-root">

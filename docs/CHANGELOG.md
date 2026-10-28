@@ -1,6 +1,6 @@
 ## Unreleased
 
-- 壁纸与外观收尾（审查第 6 项 + 性能报告第 7 项）：天空引擎不再请求 `ipapi.co`（不把用户 IP 发给第三方），GPS 失败时改用浏览器时区估计位置；壁纸上传限类型（PNG / JPG / WebP / GIF / AVIF）和大小（原图 ≤ 20 MB、压缩后 ≤ 约 6 MB），超限或保存失败时用现有 toast 明确提示，不再假装“已应用”；壁纸图片改存 IndexedDB，localStorage 只留占位标记，旧数据自动迁移并清掉；外观滑块拖动时 localStorage 写入防抖（停手约 200ms 或页面隐藏时写），预览仍实时；修掉 `appearance-preferences.tsx` 的 6 个 Biome a11y 错误；自定义壁纸 URL 写进 CSS 时转义 `\`、`"` 并去掉换行。不改样式和外观。
+- 壁纸与外观收尾（审查第 6 项 + 性能报告第 7 项）：天空引擎不再请求 `ipapi.co`（不把用户 IP 发给第三方），GPS 失败时改用浏览器时区估计位置；壁纸上传限类型（PNG / JPG / WebP / GIF / AVIF）和大小（原图 ≤ 20 MB、压缩后 ≤ 约 6 MB），超限或保存失败时用现有 toast 明确提示，不再假装“已应用”；壁纸图片改存 IndexedDB，localStorage 只留占位标记，旧数据自动迁移并清掉；外观滑块拖动时 localStorage 写入防抖（停手约 200ms 或页面隐藏时写），预览仍实时；修掉 `appearance-preferences.tsx` 的 6 个 Biome a11y 错误；自定义壁纸 URL 写进 CSS 时转义 `\`、`"` 并去掉换行；刷新时选的是自定义壁纸、localStorage 里只有占位标记的话，先只铺主题纯色、不挂天空，IndexedDB 读回就直接显示壁纸，读取失败、没有记录或超过约 1.5 秒才退回天空，不再先闪一下天空。不改样式和外观。
 
 ## 0.1.104
 

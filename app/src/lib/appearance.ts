@@ -575,6 +575,16 @@ let pendingWallpaperLoad: "hydrate" | "migrate" | null = null;
 let persistedWallpaperDataUrl: string | null = null;
 let persistencePromise: Promise<void> = Promise.resolve();
 
+/**
+ * 刷新后「壁纸读取中」：localStorage 里只有占位标记、选的又是自定义壁纸时为 true。
+ * 这段时间不挂天空，只铺主题纯色；IndexedDB 读回成功直接显示壁纸，读取失败、没有记录或超过
+ * {@link WALLPAPER_LOAD_TIMEOUT_MS} 才退回天空。否则会先闪一下天空，再换成壁纸。
+ */
+let wallpaperLoading = false;
+/** 每次重新读取外观加 1：旧的读取结果晚到了也不会改动新的状态。 */
+let wallpaperLoadGeneration = 0;
+export const WALLPAPER_LOAD_TIMEOUT_MS = 1500;
+
 /** 拖动时会连续触发的滑块键：界面立即生效，localStorage 写入合并到停手 ~200ms 后。 */
 export const SLIDER_WRITE_DELAY_MS = 200;
 const pendingSliderWrites = new Map<string, string>();
@@ -603,16 +613,39 @@ if (typeof window !== "undefined") {
   window.addEventListener("pagehide", flushAppearanceWrites);
 }
 
-async function loadStoredWallpaper(mode: "hydrate" | "migrate") {
-  const backend = getWallpaperBackend();
-  if (mode === "hydrate") {
-    const dataUrl = await backend.get().catch(() => null);
-    const state = currentState;
-    if (!dataUrl || !state || state.wallpaperId !== "custom" || state.customWallpaperUrl) return;
+/** 读取结束：有图就换上壁纸，并在同一次通知里结束「读取中」，中间不会出现天空。 */
+function finishWallpaperLoading(generation: number, dataUrl: string | null) {
+  if (generation !== wallpaperLoadGeneration) return;
+  const state = currentState;
+  const apply =
+    Boolean(dataUrl) && state?.wallpaperId === "custom" && !state.customWallpaperUrl;
+  if (!apply && !wallpaperLoading) return;
+  wallpaperLoading = false;
+  if (apply && state && dataUrl) {
     persistedWallpaperDataUrl = dataUrl;
     currentState = { ...state, customWallpaperUrl: dataUrl };
-    applyAppearanceToDocument(currentState);
-    emitChange();
+  }
+  if (currentState) applyAppearanceToDocument(currentState);
+  emitChange();
+}
+
+async function loadStoredWallpaper(mode: "hydrate" | "migrate", generation: number) {
+  const backend = getWallpaperBackend();
+  if (mode === "hydrate") {
+    const read = backend.get().catch(() => null);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), WALLPAPER_LOAD_TIMEOUT_MS);
+    });
+    const first = await Promise.race([read, timeout]);
+    clearTimeout(timer);
+    if (first === "timeout") {
+      // 超时先退回天空；IndexedDB 之后读回来了照样换上壁纸，用户选的壁纸不丢。
+      finishWallpaperLoading(generation, null);
+      void read.then((late) => finishWallpaperLoading(generation, late));
+      return;
+    }
+    finishWallpaperLoading(generation, first);
     return;
   }
   const legacy = currentState?.customWallpaperUrl ?? "";
@@ -634,7 +667,9 @@ function ensureState(): AppearanceState {
     currentState = readInitialAppearance();
     const mode = pendingWallpaperLoad;
     pendingWallpaperLoad = null;
-    if (mode) persistencePromise = loadStoredWallpaper(mode);
+    wallpaperLoadGeneration += 1;
+    wallpaperLoading = mode === "hydrate" && currentState.wallpaperId === "custom";
+    if (mode) persistencePromise = loadStoredWallpaper(mode, wallpaperLoadGeneration);
   }
   return currentState;
 }
@@ -703,6 +738,16 @@ export function subscribeAppearance(listener: () => void): () => void {
 
 export function useAppearance(): AppearanceState {
   return useSyncExternalStore(subscribeAppearance, getAppearanceState, getAppearanceState);
+}
+
+/** 自定义壁纸是否还在从 IndexedDB 读回（见 {@link WALLPAPER_LOAD_TIMEOUT_MS}）。 */
+export function isWallpaperLoading(): boolean {
+  ensureState();
+  return wallpaperLoading;
+}
+
+export function useWallpaperLoading(): boolean {
+  return useSyncExternalStore(subscribeAppearance, isWallpaperLoading, isWallpaperLoading);
 }
 
 export function applyAppearanceToDocument(state: AppearanceState = ensureState()) {
@@ -777,6 +822,10 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
   }
   if (prev.customWallpaperUrl !== next.customWallpaperUrl) {
     persistCustomWallpaperUrl(next.customWallpaperUrl);
+  }
+  // 读取中用户自己换了壁纸（或不再用自定义壁纸）：不用再等 IndexedDB。
+  if (wallpaperLoading && (next.wallpaperId !== "custom" || next.customWallpaperUrl)) {
+    wallpaperLoading = false;
   }
 
   applyAppearanceToDocument(next);
