@@ -18,6 +18,7 @@ import {
   composeHostBindIsLoopback,
   extractComposePortLines,
   nginxClearsLocalCallerForAppProxies,
+  nginxPinsClientIpHeaders,
   isolateScriptCoversSidecarDeny,
 } from "../../shared/trust-boundary";
 
@@ -127,6 +128,18 @@ describe("nginx takes the client IP from Cloudflare only (audit #5)", () => {
   });
 });
 
+describe("nginx pins the client IP headers on every proxy (audit #5)", () => {
+  test("each proxied location clears CF-Connecting-IP and sets X-Real-IP $remote_addr", () => {
+    const result = nginxPinsClientIpHeaders(read("deploy/public/nginx.conf"));
+    expect(result.missingNear).toEqual([]);
+    expect(result.proxies).toBeGreaterThanOrEqual(13);
+    expect(result.ok).toBe(true);
+  });
+  test("a location that forwards the client's CF-Connecting-IP is flagged", () => {
+    const conf = `location / {\n  proxy_pass http://127.0.0.1:3001;\n  proxy_set_header X-Real-IP $remote_addr;\n}\nlocation /a {\n  proxy_pass http://127.0.0.1:3002;\n  proxy_set_header CF-Connecting-IP "";\n  proxy_set_header X-Real-IP $http_x_real_ip;\n}\n`;
+    expect(nginxPinsClientIpHeaders(conf).missingNear).toEqual(["location /", "location /a"]);
+  });
+});
 describe("deploy scripts refuse 0.0.0.0 app bind", () => {
   test("start.sh and friend-up.sh contain bind refusal", () => {
     const start = read("deploy/start.sh");

@@ -166,6 +166,16 @@ function viaGateway(headers: Headers): boolean {
   return Boolean(headers.get("x-forwarded-for") || headers.get("x-real-ip"));
 }
 
+/**
+ * 经网关来的请求的真实客户端 IP（审计 #5），所有按 IP 计数的限速都用它（设备令牌、IM OneBot 反向连接）。
+ * nginx 在每个转发 location 里把 X-Real-IP 和 X-Forwarded-For 都覆盖成 realip 处理后的 `$remote_addr`
+ * （只信 Cloudflare 网段给的 CF-Connecting-IP），并清掉客户端自带的 CF-Connecting-IP；所以这里只读这两个头
+ * （X-Real-IP 优先），**从不**读 CF-Connecting-IP。不经网关的直连 → null。
+ */
+export function gatewayClientIp(headers: Headers): string | null {
+  const ip = headers.get("x-real-ip")?.trim() || headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return ip ? ip.slice(0, 64) : null;
+}
 /** 本机调用方是否出示了与网关密钥匹配的 {@link LOCAL_CALLER_HEADER}（常量时间比较）。 */
 export function localCallerAuthorized(secret: string, headers: Headers): boolean {
   if (!secret) return false;

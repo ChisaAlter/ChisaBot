@@ -35,7 +35,18 @@ for cidr in 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.10
 done
 grep -Eq 'set_real_ip_from[[:space:]]+(0\.0\.0\.0/0|::/0);' "$NGINX" && fail "nginx trusts real_ip from everywhere"
 ok "nginx Local-Caller cleared on $passes app proxies"
-
+# 审计 #5：每个转发 location 都清掉客户端自带的 CF-Connecting-IP，并把 X-Real-IP 设成 realip 处理后的 $remote_addr
+missing=$(awk '
+  function check() { if (loc != "" && pass && !(cf && rip)) print loc }
+  /^[[:space:]]*location[[:space:]]/ { check(); loc = $0; sub(/^[[:space:]]+/, "", loc); sub(/[[:space:]]*\{.*$/, "", loc); pass = 0; cf = 0; rip = 0 }
+  /^[[:space:]]*proxy_pass[[:space:]]/ { pass = 1 }
+  /^[[:space:]]*proxy_set_header[[:space:]]+CF-Connecting-IP[[:space:]]+""[[:space:]]*;/ { cf = 1 }
+  /^[[:space:]]*proxy_set_header[[:space:]]+X-Real-IP[[:space:]]+\$remote_addr[[:space:]]*;/ { rip = 1 }
+  END { check() }
+' "$NGINX")
+[ -z "$missing" ] || fail "nginx proxy locations must clear CF-Connecting-IP and set X-Real-IP \$remote_addr: $missing"
+proxies=$(grep -c '^[[:space:]]*proxy_pass[[:space:]]' "$NGINX" || true)
+ok "nginx clears CF-Connecting-IP and pins X-Real-IP on all $proxies proxies"
 # 3) friend TRUSTED_ORIGINS example is loopback http
 EX=deploy/friend.env.example
 origins=$(sed -n 's/^TRUSTED_ORIGINS=//p' "$EX" | head -1)

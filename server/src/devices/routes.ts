@@ -8,7 +8,7 @@ import {
   type DeviceCapabilities,
 } from "../../../shared/devices";
 import { type AuditStore, recordAuditEvent } from "../audit";
-import { localCallerAuthorized, trustUnsignedLocal } from "../auth/gateway-identity";
+import { gatewayClientIp, localCallerAuthorized, trustUnsignedLocal } from "../auth/gateway-identity";
 import type { AppVariables } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
 import { DeviceRefusedError, type DeviceHub, describeChange } from "./hub";
@@ -34,10 +34,9 @@ const failures = new Map<string, { count: number; until: number }>();
 const FAIL_LIMIT = 20;
 const FAIL_WINDOW_MS = 10 * 60_000;
 
+/** 真实客户端 IP：和 IM 等其他限速同一个取法（gatewayClientIp，nginx 设的 X-Real-IP / X-Forwarded-For）。 */
 function clientIp(request: Request): string | null {
-  const forwarded = request.headers.get("x-forwarded-for");
-  const first = forwarded?.split(",")[0]?.trim();
-  return first ? first.slice(0, 64) : null;
+  return gatewayClientIp(request.headers);
 }
 
 function limited(ip: string | null) {
