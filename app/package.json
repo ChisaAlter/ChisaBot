@@ -2,7 +2,7 @@
   "name": "app",
   "license": "MIT",
   "private": true,
-  "version": "0.1.101",
+  "version": "0.1.102",
   "type": "module",
   "scripts": {
     "build": "bun -e \"const fs=require('fs'),p='node_modules/vite/bin/vite.js';process.exit(Bun.spawnSync([process.execPath,'--bun',fs.existsSync(p)?p:'../'+p,'build'],{stdio:['inherit','inherit','inherit']}).exitCode)\"",

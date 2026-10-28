@@ -103,15 +103,18 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
     expect(getAppearanceState().wallpaperId).toBe("none");
   });
 
-  test("styles.css defines Hark #sky-root, 3 translucent glass modes, dark sky contrast scrim, and applies them to core workspace panels", () => {
+  test("styles.css defines Hark #sky-root, 3 translucent borderless glass modes, light/dark sky contrast veils, and zero -webkit-backdrop-filter minifier traps", () => {
     expect(css).toContain("#sky-root");
+    expect(css).toContain("html:not(.dark) #sky-root::after");
     expect(css).toContain("html.dark #sky-root::after");
     expect(css).toContain('html[data-glass="liquid"]');
     expect(css).toContain('html[data-glass="crystal"]');
     expect(css).toContain('html[data-glass="frosted"]');
     expect(css).toContain("--lg-alpha: 0.16");
-    expect(css).toContain("--lg-rim:");
+    expect(css).toContain("--lg-border: transparent");
+    expect(css).toContain("border: 0 !important");
     expect(css).toContain(".chisabot-wallpaper");
     expect(css).toContain(":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)");
+    expect(css).not.toContain("-webkit-backdrop-filter:");
   });
 });
