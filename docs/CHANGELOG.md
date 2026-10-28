@@ -1,3 +1,7 @@
+## Unreleased
+
+- CI：新增 Biome「只拦新增问题」检查（`scripts/biome-new-issues.ts`，与基线逐文件按规则比诊断数）、完整 `bun run test:app`、pc/ 独立安装 + chisabot-node 打包检查（审查清单第 3 项）。
+
 ## 0.1.103
 
 - 聊天 SVG / Mermaid 卡片改用 DOMPurify 清洗、SVG 卡片改为 `<img>` 渲染，修复存储型 XSS（审查 S1，#362）；主应用加 CSP Report-Only。只升级服务器版本号（根、`app`、`server` 为 `0.1.103`），PC / Android 外壳未变。

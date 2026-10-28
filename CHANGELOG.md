@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+CI 补三道检查（审查清单第 3 项）：Biome 只拦改动文件里新增的诊断（全仓存量不拦，`scripts/biome-new-issues.ts`）；完整跑一遍 `bun run test:app`；pc/ 作为独立 npm 项目单独安装并打出 chisabot-node 无头包、校验 `--version`。不改版本号。
+
 ## 0.1.103 — 2026-10-29
 
 这一版修复聊天 SVG 卡片的存储型 XSS（审查 S1，#362）：SVG 卡片和 Mermaid 卡片改用 DOMPurify（SVG profile）清洗，SVG 卡片改成 `<img>` 渲染，`/onerror`、`onbegin` 等写法不再能执行脚本；主应用同时加上 CSP（Report-Only，先只上报不拦截，便于观察后再收紧）。只改服务器 + 网页，没有表结构变化；PC / Android 客户端外壳未变，版本号仍为 0.1.100。
