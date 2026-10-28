@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+这一版把机器人聊天页同步服务器对话记录改成增量的（性能清单第 5 项）：`GET /api/copilotkit/threads/:id/messages` 新增可选的 `since` / `cursor` 参数，没变化只回 `unchanged`、变了只回尾部，客户端不再每 1.2 秒拉整份记录、把两份完整对话转成字符串比较；不带参数的旧客户端响应不变。干活 / 后台任务 / 本机代理卡片的每秒计时器合并成一个共享时钟（无订阅者时停）。没有表结构变化，没有升版本号。
+
 ## 0.1.103 — 2026-10-29
 
 这一版修复聊天 SVG 卡片的存储型 XSS（审查 S1，#362）：SVG 卡片和 Mermaid 卡片改用 DOMPurify（SVG profile）清洗，SVG 卡片改成 `<img>` 渲染，`/onerror`、`onbegin` 等写法不再能执行脚本；主应用同时加上 CSP（Report-Only，先只上报不拦截，便于观察后再收紧）。只改服务器 + 网页，没有表结构变化；PC / Android 客户端外壳未变，版本号仍为 0.1.100。
