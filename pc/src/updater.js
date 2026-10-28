@@ -9,7 +9,7 @@
  *  - 安装包没有代码签名：build.win.verifyUpdateCodeSignature = false（app-update.yml 里就没有
  *    publisherName，NsisUpdater 不做 Authenticode 校验）；这里再把校验函数设成「通过」，两边一致。
  *    完整性靠 HTTPS + latest.yml 的 sha512。
- *  - 什么时候检查：开着「自动更新」时，启动 30 秒后一次、之后每 4 小时一次；下载在后台进行，下载好了
+ *  - 什么时候检查：开着「自动更新」时，启动 30 秒后一次、之后每 30 分钟一次；下载在后台进行，下载好了
  *    调 onDownloaded（主进程弹本机窗口「新版本已下载，重启以安装」：立即重启 / 稍后）。选「稍后」时，
  *    下次退出 ChisaBot PC 时自动安装（autoInstallOnAppQuit）。
  *  - 关掉「自动更新」只停掉定时检查；网页「本机」标签里的「检查更新」照样可以手动检查和下载。
@@ -26,7 +26,7 @@ const path = require("node:path");
 const childProcess = require("node:child_process");
 
 const FIRST_CHECK_MS = 30 * 1000;
-const INTERVAL_MS = 4 * 60 * 60 * 1000;
+const INTERVAL_MS = 30 * 60 * 1000;
 
 function cleanMessage(error) {
   const text = error && error.message ? String(error.message) : String(error || "未知错误");

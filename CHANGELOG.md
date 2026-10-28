@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.94 — 2026-10-28
+
+这一版修复云端电脑（`agent-computer`）在 Bun v1.3.14 下因 `node:net` Happy Eyeballs 定时器异常导致进程重启（「暂时连不上电脑」），并让 PC 桌面客户端在服务端版本更新或重连时立即触发更新检查。PC 客户端、服务端与 Android 客户端同步更新至 0.1.94（Android `versionCode` 291）。
+
+### 云端电脑出口连接稳定性与 PC 客户端即时更新推送
+
+- **修复云端电脑 `internalConnectMultipleTimeout` 崩溃（`agent-computer`）**：Bun v1.3.14 的 `node:net` 在启用 `autoSelectFamily: true` 且双栈目标连接超时时，内部定时器回调 `internalConnectMultipleTimeout` 会抛出未捕获的 `TypeError: null is not an object (evaluating 'context')` 导致 `agent-computer` 重启、前端计算机面板短暂显示「暂时看不到屏幕 / 暂时连不上电脑」。现改为禁用 `autoSelectFamily`、优先按 IPv4 排序并由 `tunnel()` 按已校验的固定地址列表顺序回退连接。
+- **PC 桌面客户端即时接收更新推送**：
+  - 网页在 PC 客户端内运行时（`PcLinkHint`），当检测到服务端版本（`/api/version`）与本机客户端版本不一致且开启了自动更新时，自动通过 `window.chisabotPC.checkUpdate()` 立即触发客户端后台检查与下载，不再等待数小时轮询。
+  - PC 客户端节点重连成功时自动触发一次更新检查，并将后台定时检查间隔从 4 小时缩短至 30 分钟。
+
 ## 0.1.93 — 2026-10-28
 
 这一版合入多标签页电脑控制选主（`CB-107`）、导航超时/502/503 自动恢复（`DF-13`）、记忆「全部撤销」防闪（`CB-111 P3`），并完成全项目深度安全与架构审查修复。PC 客户端、服务端与 Android 客户端同步更新至 0.1.93（Android `versionCode` 290）。

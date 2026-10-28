@@ -630,6 +630,9 @@ function startAgent() {
   agent.events.on("state", (event) => {
     agentDetail = event && event.detail ? String(event.detail) : event && event.state === "online" ? "" : agentDetail;
     refreshTray();
+    if (event && event.state === "online" && config.get().autoUpdate !== false) {
+      void updater?.check();
+    }
   });
   // 连接失败（断网、DNS、证书）由 core 自己重连；没有监听时 EventEmitter 的 "error" 会让主进程崩溃。
   agent.events.on("error", () => {});
