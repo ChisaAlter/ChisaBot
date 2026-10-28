@@ -11,28 +11,61 @@ import type { Message } from "@ag-ui/core";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { settleReactWork } from "./settle-react-work";
 
 const router = await import("@tanstack/react-router");
+// mock.module 会原地改写模块命名空间，先把真的 Link / useRouter 拿住。
+const RealLink = router.Link as unknown as ComponentType<
+  Record<string, unknown>
+>;
+const realUseRouter = router.useRouter;
+
+/** 和真 Link 一样用 params 填 `to` 里的 `$xxx`；没给的参数原样留着，测试里一眼能看出来。 */
+function fillParams(
+  to: string | undefined,
+  params: unknown,
+): string | undefined {
+  if (!to || !params || typeof params !== "object") return to;
+  const values = params as Record<string, unknown>;
+  return to.replace(/\$([A-Za-z0-9_]+)/g, (whole, key: string) =>
+    key in values ? encodeURIComponent(String(values[key])) : whole,
+  );
+}
+
+/*
+ * mock.module 是进程级的，换不回来：共享进程里排在这份后面的文件拿到的也是这个 Link。
+ * 所以有路由（RouterProvider）时直接交给真 Link，行为和没 mock 一样；只有像本文件这样不挂路由的
+ * 渲染才走替身：所有 props（aria-label、className…）原样透传给 <a>，href 用 params 填好路径参数。
+ */
 mock.module("@tanstack/react-router", () => ({
   ...router,
-  // 所有 props（aria-label、to/href、className…）原样透传给 <a>：mock 是进程级的，漏给别的文件时也不丢可访问名称。
-  Link: ({
-    children,
-    to,
-    href,
-    ...rest
-  }: {
+  Link: (props: {
     children?: ReactNode;
     to?: string;
     href?: string;
+    params?: unknown;
+    search?: unknown;
+    hash?: unknown;
     [key: string]: unknown;
-  }) => (
-    <a {...rest} href={href ?? to}>
-      {children}
-    </a>
-  ),
+  }) => {
+    const inRouter = realUseRouter({ warn: false });
+    if (inRouter) return <RealLink {...props} />;
+    const {
+      children,
+      to,
+      href,
+      params,
+      search: _search,
+      hash: _hash,
+      ...rest
+    } = props;
+    return (
+      <a {...rest} href={href ?? fillParams(to, params)}>
+        {children}
+      </a>
+    );
+  },
 }));
 
 /**
