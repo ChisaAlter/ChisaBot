@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- CI 门禁加固：`scripts/biome-new-issues.ts` 在 Biome 自身出错（退出码非 0 且没有可解析的 JSON，例如 biome.json 写坏）时一律失败；改用 `process.exitCode`、正常返回，确保 `biome-base-*` 临时目录被清理；用法注释与 workflow 实际传的基线一致；新增 `scripts/biome-new-issues.test.ts`。
+- CI 门禁加固：`scripts/biome-new-issues.ts` 在 Biome 自身出错（退出码非 0 且没有可解析的 JSON，例如 biome.json 写坏）时一律失败；改用 `process.exitCode`、正常返回，确保 `biome-base-*` 临时目录被清理；用法注释与 workflow 实际传的基线一致；新增 `scripts/biome-new-issues.test.ts`。修默认 `error` 输出自己调自己（有新增问题或 Biome 出错、又没传回调时——CI 正是这样调用——脚本卡死），找不到 Biome / git 可执行文件改为退出 2。
 
 CI 补三道检查（审查清单第 3 项）：Biome 只拦改动文件里新增的诊断（全仓存量不拦，`scripts/biome-new-issues.ts`）；完整跑一遍 `bun run test:app`；pc/ 作为独立 npm 项目单独安装并打出 chisabot-node 无头包、校验 `--version`。不改版本号。
 ## 0.1.104 — 2026-10-29

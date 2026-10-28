@@ -41,6 +41,20 @@ const CHUNK = 100;
 /** 内部失败（git / Biome 本身出错）：退出 2。 */
 class Failure extends Error {}
 
+/** 可执行文件不存在时 Bun.spawnSync 直接抛错（ENOENT），不是返回退出码；这里转成 Failure（退出 2）。 */
+function spawnOrFail(
+  what: string,
+  options: Parameters<typeof Bun.spawnSync>[0],
+): ReturnType<typeof Bun.spawnSync> {
+  try {
+    return Bun.spawnSync(options);
+  } catch (caught) {
+    throw new Failure(
+      `biome-new-issues: 启动不了 ${what}（${options.cmd[0]}）：${caught instanceof Error ? caught.message : String(caught)}`,
+    );
+  }
+}
+
 export type RunOptions = {
   root: string;
   baseRef: string;
@@ -56,7 +70,7 @@ export type RunOptions = {
 export function run(options: RunOptions): number {
   const { root, baseRef } = options;
   const log = options.log ?? ((line: string) => console.log(line));
-  const error = options.error ?? ((line: string) => error(line));
+  const error = options.error ?? ((line: string) => console.error(line));
   try {
     return gate();
   } catch (caught) {
@@ -68,7 +82,7 @@ export function run(options: RunOptions): number {
   }
 
   function git(args: string[], allowFailure = false): string {
-    const result = Bun.spawnSync({
+    const result = spawnOrFail("git", {
       cmd: ["git", ...args],
       cwd: root,
       stdout: "pipe",
@@ -133,7 +147,7 @@ export function run(options: RunOptions): number {
     function check(cwd: string, files: string[]): Diagnostic[] {
       const diagnostics: Diagnostic[] = [];
       for (let index = 0; index < files.length; index += CHUNK) {
-        const result = Bun.spawnSync({
+        const result = spawnOrFail("Biome", {
           cmd: [
             biome,
             "check",
