@@ -93,6 +93,12 @@ export const toast = {
   isOpen,
 };
 
+/** 清空所有提示（只给测试用：模块级状态，同进程跑多个测试文件时不串）。 */
+export function resetToastsForTest() {
+  items = [];
+  emit();
+}
+
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
   return () => listeners.delete(listener);

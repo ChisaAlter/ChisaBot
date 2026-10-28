@@ -489,12 +489,26 @@ function syncMergedToast() {
     text,
     "全部撤销",
     () => {
+      // 先把合并的 key 全拿出来再逐个撤销：否则每撤一条都会 syncMergedToast，
+      // 而 mergedToastId 已清零，会新建一条「已删除 N 条记忆」又马上收掉（闪烁，CB-111 QA）。
       if (mergedToastId === id) mergedToastId = 0;
-      for (const key of [...mergedKeys]) cancelPending(key);
+      const keys = [...mergedKeys];
+      mergedKeys.clear();
+      for (const key of keys) cancelPending(key);
     },
     Number.POSITIVE_INFINITY,
   );
   mergedToastId = id;
+}
+
+/** 清掉所有待删除和撤销提示的记账（只给测试用：模块级状态，同进程跑多个测试文件时不串）。不发删除请求。 */
+export function resetMemoryUndoForTest() {
+  for (const entry of pendingDeletes.values()) clearTimeout(entry.timer);
+  pendingDeletes.clear();
+  singleToasts.clear();
+  mergedKeys.clear();
+  mergedToastId = 0;
+  emitPending();
 }
 
 /** 删一条也先确认（和技能页一致，CB-106）；确认后仍有 8 秒撤销。 */
