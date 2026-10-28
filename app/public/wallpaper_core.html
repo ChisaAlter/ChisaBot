@@ -2318,14 +2318,14 @@ function localHourLiveSnapshot(){
    resolved against each place's real sun for today.
    ============================================================ */
 const SCENES = [
-  { label: 'Palo Alto \u00B7 Sunny',    name: 'Palo Alto',     lat: 37.44, lon: -122.14, tz: 'America/Los_Angeles', sim: 0,  wind: 6,  aqi: 12, hour: 13.5 },
+  { label: 'Palo Alto \u00B7 Sunny',    name: 'Palo Alto',     lat: 37.44, lon: -122.14, tz: 'America/Los_Angeles', sim: 2,  wind: 10, aqi: 12, hour: 13.5 },
   { label: 'NYC \u00B7 Sunset',         name: 'New York',      lat: 40.71, lon: -74.01,  tz: 'America/New_York',    sim: 2,  wind: 18, hour: 'sunset' },
-  { label: 'Reykjavik \u00B7 Midnight', name: 'Reykjavik',     lat: 64.15, lon: -21.94,  tz: 'Atlantic/Reykjavik',  sim: 0,  wind: 12, hour: 'midnight' },
+  { label: 'Reykjavik \u00B7 Midnight', name: 'Reykjavik',     lat: 64.15, lon: -21.94,  tz: 'Atlantic/Reykjavik',  sim: 1,  wind: 12, hour: 'midnight' },
   { label: 'London \u00B7 Rain',        name: 'London',        lat: 51.51, lon: -0.13,   tz: 'Europe/London',       sim: 63, wind: 20, hour: 'afternoon' },
   { label: 'Berlin \u00B7 Night',       name: 'Berlin',        lat: 52.52, lon: 13.41,   tz: 'Europe/Berlin',       sim: 3,  wind: 10, hour: 'night' },
   { label: 'Tahoe \u00B7 Snow',         name: 'Lake Tahoe',    lat: 39.09, lon: -120.03, tz: 'America/Los_Angeles', sim: 73, wind: 28, hour: 'noon' },
-  { label: 'Phoenix \u00B7 Golden',     name: 'Phoenix',       lat: 33.45, lon: -112.07, tz: 'America/Phoenix',     sim: 0,  wind: 6,  hour: 'golden' },
-  { label: 'Tokyo \u00B7 Clear AM',     name: 'Tokyo',         lat: 35.68, lon: 139.69,  tz: 'Asia/Tokyo',          sim: 0,  wind: 8,  hour: 9 },
+  { label: 'Phoenix \u00B7 Golden',     name: 'Phoenix',       lat: 33.45, lon: -112.07, tz: 'America/Phoenix',     sim: 2,  wind: 10, hour: 'golden' },
+  { label: 'Tokyo \u00B7 Clear AM',     name: 'Tokyo',         lat: 35.68, lon: 139.69,  tz: 'Asia/Tokyo',          sim: 2,  wind: 10, hour: 9 },
   { label: 'Delhi \u00B7 Haze',         name: 'Delhi',         lat: 28.61, lon: 77.21,   tz: 'Asia/Kolkata',        sim: 2,  wind: 5,  aqi: 230, hour: 'dusk' },
   { label: 'SF \u00B7 Foggy',           name: 'San Francisco', lat: 37.77, lon: -122.42, tz: 'America/Los_Angeles', sim: 45, wind: 45, hour: 'afternoon' },
   { label: 'Miami \u00B7 Storm',        name: 'Miami',         lat: 25.76, lon: -80.19,  tz: 'America/New_York',    sim: 95, wind: 38, hour: 'dusk' },
