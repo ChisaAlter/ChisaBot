@@ -1,6 +1,13 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useTheme } from "@/components/theme-provider";
 import {
+  type AppearanceState,
+  computePaletteSky,
+  getAppearanceState,
+  resolveActiveWallpaperCss,
+  subscribeAppearance,
+} from "@/lib/appearance";
+import {
   readStoredPreference,
   writeStoredPreference,
 } from "@/lib/preference-storage";
@@ -50,6 +57,14 @@ export function useSkyState(): SkyState {
   );
 }
 
+export function useAppearanceState(): AppearanceState {
+  return useSyncExternalStore(
+    subscribeAppearance,
+    getAppearanceState,
+    getAppearanceState,
+  );
+}
+
 /** Keeps the sky custom properties in step with the clock, the theme and the preference. */
 /**
  * The sky only fades (1.6s) right after the user changes the sky itself: 「背景随时间变化」 on/off or
@@ -67,13 +82,45 @@ export function easeNextSkyChange(root: HTMLElement = document.documentElement) 
 export function SkyBackground() {
   const { dark } = useTheme();
   const { enabled, preview } = useSkyState();
-  const last = useRef<{ enabled: boolean; preview: number | null } | null>(null);
+  const appearance = useAppearanceState();
+  const { palette, glassStyle, wallpaperId, customWallpaper, wallpaperBlur, wallpaperDim } =
+    appearance;
+  const activeWallpaperCss = resolveActiveWallpaperCss(appearance);
+  const last = useRef<{ enabled: boolean; preview: number | null; palette: string } | null>(null);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (palette === "default") {
+      root.removeAttribute("data-palette");
+    } else {
+      root.setAttribute("data-palette", palette);
+    }
+    root.setAttribute("data-glass", glassStyle);
+    if (activeWallpaperCss) {
+      root.setAttribute("data-wallpaper", "on");
+    } else {
+      root.removeAttribute("data-wallpaper");
+    }
+  }, [palette, glassStyle, activeWallpaperCss]);
 
   useEffect(() => {
     const root = document.documentElement;
     const prev = last.current;
-    last.current = { enabled, preview };
-    if (prev && (prev.enabled !== enabled || prev.preview !== preview)) easeNextSkyChange(root);
+    last.current = { enabled, preview, palette };
+    if (
+      prev &&
+      (prev.enabled !== enabled || prev.preview !== preview || prev.palette !== palette)
+    ) {
+      easeNextSkyChange(root);
+    }
+
+    const paletteSky = computePaletteSky(palette, dark);
+    if (paletteSky) {
+      root.setAttribute("data-sky", "palette");
+      applySky(paletteSky);
+      return;
+    }
+
     if (!enabled) {
       applySky(null);
       root.removeAttribute("data-sky");
@@ -106,7 +153,34 @@ export function SkyBackground() {
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [enabled, preview, dark]);
+  }, [enabled, preview, dark, palette]);
 
-  return null;
+  if (!activeWallpaperCss) {
+    return null;
+  }
+
+  return (
+    <div
+      aria-hidden="true"
+      className="chisabot-wallpaper"
+      data-testid="chisabot-wallpaper"
+       data-wallpaper-id={wallpaperId}
+      data-custom-set={customWallpaper ? "true" : "false"}
+    >
+      <div
+        className="chisabot-wallpaper-img"
+        style={{
+          backgroundImage: activeWallpaperCss,
+          filter: wallpaperBlur > 0 ? `blur(${wallpaperBlur}px)` : undefined,
+          transform: wallpaperBlur > 0 ? "scale(1.06)" : undefined,
+        }}
+      />
+      <div
+        className="chisabot-wallpaper-dim"
+        style={{
+          opacity: Math.max(0, Math.min(0.85, wallpaperDim / 100)),
+        }}
+      />
+    </div>
+  );
 }

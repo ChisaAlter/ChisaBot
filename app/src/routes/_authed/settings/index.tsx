@@ -5,6 +5,7 @@ import {
   PageSection,
   PageShell,
 } from "@/components/layout/page-shell";
+import { AppearancePreferences } from "@/components/settings/appearance-preferences";
 import { SkyPreference } from "@/components/settings/sky-preference";
 import { StandingInstructions } from "@/components/settings/standing-instructions";
 import { useTheme } from "@/components/theme-provider";
@@ -91,6 +92,7 @@ function RouteComponent() {
           </Item>
           <Separator />
           <SkyPreference bare />
+          <AppearancePreferences />
         </PageRows>
       </PageSection>
       <StandingInstructions />
