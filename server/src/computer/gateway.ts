@@ -1287,7 +1287,8 @@ export function createComputerGateway(
           post<RunCommandResult>(
             botId,
             "/exec",
-            input,
+            // Named in the body too, so the command's traffic goes out as this Bot (its own proxy key).
+            { ...input, botId },
             caller,
             COMMAND_BACKSTOP_MS,
           ),

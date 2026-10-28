@@ -1588,10 +1588,17 @@ serve<StreamData>({
         if (!timeout.ok) {
           return json({ error: timeout.error }, 400);
         }
+        // The Bot the command runs for, so its traffic carries that Bot's proxy key. The server names
+        // it in the body and in its x-chisabot-bot-id header on every call; the header is the fallback
+        // for a server that only sends that. Never DEFAULT_BOT_ID: a command nobody named goes out
+        // anonymously (egress.ts `anonymousPolicies`) rather than as some Bot.
         const botId =
           typeof body.botId === "string" && body.botId.trim()
             ? body.botId.trim()
-            : url.searchParams.get("botId")?.trim() || undefined;
+            : url.searchParams.get("botId")?.trim() ||
+              request.headers.get("x-chisabot-bot-id")?.trim() ||
+              request.headers.get("x-openbot-bot-id")?.trim() ||
+              undefined;
         try {
           return json(
             await shell.run({
