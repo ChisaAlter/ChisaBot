@@ -1260,11 +1260,13 @@ html[data-sky-ease] body::before {
   background: var(--glass-user);
   color: var(--glass-ink);
 }
-/* The detail pane that slides over the chat (Bot settings, live screen). */
+/* The detail pane that slides over the chat (Bot settings, live screen).
+ * 不模糊：它的宽度由 motion 逐帧动画，模糊层跟着变尺寸每帧都要重算；而且收起时（宽 0）仍挂在 DOM 里。
+ * 用接近不透明的实色玻璃底，看起来和右栏一致。 */
 .glass-main [data-slot="detail-panel"],
 .glass-main .bg-sidebar.border-l {
-  background: var(--glass);
-  backdrop-filter: var(--glass-filter);
+  background: var(--glass-bg-solid);
+  box-shadow: var(--glass-highlight);
   border-left-color: transparent;
   border-radius: 24px 0 0 24px;
 }
