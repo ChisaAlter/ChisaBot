@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client";
 import { BootCommitMarker, reportBootStage } from "./lib/boot-status";
 import { installPhoneLayout } from "./lib/device";
 import { installHaltProbe } from "./lib/halt";
+import { installPerfMode } from "./lib/perf-mode";
 import { installPwa } from "./lib/pwa";
 import { installPreviewWindowBridge } from "./lib/proto-preview";
 import { installStaleChunkReload } from "./lib/stale-chunk";
@@ -17,6 +18,7 @@ import "./styles.css";
 
 reportBootStage("entry-executing");
 installPhoneLayout();
+installPerfMode();
 installHaltProbe();
 installPwa();
 installPreviewWindowBridge();

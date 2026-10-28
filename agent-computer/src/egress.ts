@@ -13,7 +13,12 @@
  * This module has no Playwright import, so proxy parsing tests can run outside the browser image.
  */
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 import { lookup } from "node:dns/promises";
 import {
   createServer,
@@ -58,7 +63,8 @@ export function egressFor(
     return {
       server: `http://127.0.0.1:${filter.port}`,
       username: botId,
-      password: filter.secret,
+      // This Bot's own key, derived from the filter's master key. It proves this Bot and no other.
+      password: botProxyKey(filter.masterKey, botId),
     };
   }
   return upstreamFor(botId, env);
@@ -355,8 +361,10 @@ export type EgressDecision = { allowed: boolean; reason: string };
  * Addresses no Bot may reach, whatever its policy says, allow_all included.
  *
  * Same private-net floor as navigation (`checkNavigationTarget` / `isPrivateIpv4` /
- * `isPrivateIpv6`): RFC1918, loopback, link-local, and IPv6 unique-local. Plus the cloud
- * metadata endpoints (169.254/16, Alibaba 100.100.100.200, AWS/GCP IPv6 aliases). A chart
+ * `isPrivateIpv6`): RFC1918, loopback, link-local, and IPv6 unique-local; "this network"
+ * (0.0.0.0/8, which Linux connects to loopback) and shared address space (100.64.0.0/10:
+ * carrier-grade NAT, Tailscale and similar overlays, where other machines of this deployment sit).
+ * Plus the cloud metadata endpoints (169.254/16, Alibaba 100.100.100.200, AWS/GCP IPv6 aliases). A chart
  * NetworkPolicy may also cut these out, but it is off by default — this is the guard a
  * default install actually has. It covers the browser and every command that honours the
  * proxy variables. An allowlist cidr cannot override it.
@@ -367,6 +375,10 @@ const ALWAYS_DENIED: readonly [string, number, "ipv4" | "ipv6"][] = [
   ["172.16.0.0", 12, "ipv4"],
   ["192.168.0.0", 16, "ipv4"],
   ["127.0.0.0", 8, "ipv4"],
+  // "This network": 0.0.0.0 reaches the local host on Linux.
+  ["0.0.0.0", 8, "ipv4"],
+  // Shared address space (RFC 6598): CGNAT, Tailscale and other overlay networks.
+  ["100.64.0.0", 10, "ipv4"],
   // Cloud metadata / link-local.
   ["169.254.0.0", 16, "ipv4"],
   ["100.100.100.200", 32, "ipv4"],
@@ -503,7 +515,11 @@ export function needsResolution(policy: EgressPolicy, host: string): boolean {
 
 /* --------------------------------- the filter on the computer --------------------------------- */
 
-type RunningFilter = { port: number; secret: string; server: Server };
+/**
+ * `masterKey` never leaves this process. Every Bot is handed only its own key, derived from it
+ * (see {@link botProxyKey}), so a Bot's credentials say nothing about any other Bot's.
+ */
+type RunningFilter = { port: number; masterKey: Buffer; server: Server };
 let filter: RunningFilter | null = null;
 const policies = new Map<string, EgressPolicy>();
 let policyRequired = true;
@@ -529,32 +545,181 @@ export function egressPolicyFor(botId: string): EgressPolicy | undefined {
 }
 
 /**
- * Which policies judge a connection.
+ * Which policies judge a connection from a Bot that proved who it is (see {@link proxyCallerFrom}).
  *
- * A connection carrying a Bot in its proxy credentials is judged by that Bot's policy. One without
- * (a shell command, whose proxy variable has no credentials in it) is judged by the only policy on
- * this computer when there is one, and otherwise by every policy at once, so the most restrictive
- * wins. Nothing pushed yet refuses: the API server pushes a computer its policy before it acts and
+ * Nothing pushed yet refuses: the API server pushes a computer its policy before it acts and
  * whenever the computer wakes, so a refusal here is only ever the gap before that push.
  * EGRESS_POLICY_REQUIRED=0 lets a computer run with no API server pushing to it at all.
  */
-function policiesFor(botId: string | undefined): EgressPolicy[] | "refuse" {
-  if (botId) {
-    const own = policies.get(botId);
-    if (own) return [own];
-    return policyRequired ? "refuse" : [];
-  }
+function policiesForBot(botId: string): EgressPolicy[] | "refuse" {
+  const own = policies.get(botId);
+  if (own) return [own];
+  return policyRequired ? "refuse" : [];
+}
+
+/**
+ * The fallback for a connection with no proxy credentials at all.
+ *
+ * Such a connection is never any particular Bot: it is not judged by a Bot's policy and never sees a
+ * Bot's allowlist or upstream proxy. It gets this policy, which names no Bot's rules: the
+ * registries in {@link DEFAULT_EGRESS_DESTINATIONS} and nothing else.
+ */
+export const ANONYMOUS_EGRESS_POLICY: EgressPolicy = Object.freeze({
+  mode: "defaults_plus_allowlist",
+  rules: Object.freeze([]) as unknown as EgressRule[],
+}) as EgressPolicy;
+
+const ANONYMOUS_DENY: EgressPolicy = { mode: "deny_all", rules: [] };
+
+/**
+ * The policy an anonymous connection is judged by. One function on purpose, so the fallback can be
+ * changed in one place (to plain refusal, say) without touching the Bot path.
+ *
+ * - Nothing pushed: refused, as for a Bot (or, with EGRESS_POLICY_REQUIRED=0, no policy at all, the
+ *   same as a Bot without one; the private-net floor still applies).
+ * - Otherwise {@link ANONYMOUS_EGRESS_POLICY}, capped by the strictest *mode* pushed to this
+ *   computer: when any Bot here may not reach the default registries (`allowlist_only`,
+ *   `deny_all`), stripping credentials must not get that Bot more than it has, so anonymous is
+ *   refused. Only modes are read, never a Bot's rules, so no Bot's allowlist ever opens anything here.
+ */
+function anonymousPolicies(): EgressPolicy[] | "refuse" {
   if (policies.size === 0) return policyRequired ? "refuse" : [];
-  return [...policies.values()];
+  for (const policy of policies.values()) {
+    if (policy.mode === "allowlist_only" || policy.mode === "deny_all")
+      return [ANONYMOUS_DENY];
+  }
+  return [ANONYMOUS_EGRESS_POLICY];
+}
+
+/* ------------------------------- who is asking (proxy credentials) ------------------------------- */
+
+/**
+ * One Bot's proxy key: HMAC-SHA256 of the Bot id under the filter's master key.
+ *
+ * The master key is random per filter start and stays in this process, so knowing any number of Bots'
+ * keys (each shell command sees its own Bot's, in HTTP(S)_PROXY) does not give another Bot's.
+ */
+export function botProxyKey(masterKey: Buffer, botId: string): string {
+  return createHmac("sha256", masterKey)
+    .update(`chisabot-egress-proxy:v1:${botId}`)
+    .digest("base64url");
+}
+
+/** Who a proxy request is from. `rejected` is never judged by any policy. */
+export type ProxyCaller =
+  | { kind: "bot"; botId: string }
+  | { kind: "anonymous" }
+  | { kind: "rejected"; reason: string };
+
+const REJECTED_CREDENTIALS =
+  "The proxy credentials were not accepted, so nothing may leave through this filter.";
+
+/** Constant-time on equal-length digests, so neither the content nor the length of a guess leaks. */
+function sameSecret(offered: string, expected: string): boolean {
+  const a = createHash("sha256").update(offered).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * Read a request's Proxy-Authorization.
+ *
+ * - No header at all: anonymous (see {@link anonymousPolicies}).
+ * - A Bot id with its own derived key: that Bot.
+ * - Anything else (not Basic, no Bot id, an empty password, a wrong one, or one Bot's key offered
+ *   for another Bot): rejected. Never downgraded to anonymous, so a bad guess gains nothing.
+ */
+export function proxyCallerFrom(
+  header: string | undefined,
+  masterKey: Buffer,
+): ProxyCaller {
+  if (header === undefined || header.trim() === "")
+    return { kind: "anonymous" };
+  if (!/^Basic\s+/i.test(header))
+    return { kind: "rejected", reason: REJECTED_CREDENTIALS };
+  const decoded = Buffer.from(
+    header.replace(/^Basic\s+/i, ""),
+    "base64",
+  ).toString("utf8");
+  const colon = decoded.indexOf(":");
+  if (colon < 1) return { kind: "rejected", reason: REJECTED_CREDENTIALS };
+  const botId = decodeUserinfo(decoded.slice(0, colon)).trim();
+  const offered = decodeUserinfo(decoded.slice(colon + 1));
+  if (!botId || offered.length === 0)
+    return { kind: "rejected", reason: REJECTED_CREDENTIALS };
+  if (!sameSecret(offered, botProxyKey(masterKey, botId)))
+    return { kind: "rejected", reason: REJECTED_CREDENTIALS };
+  return { kind: "bot", botId };
+}
+
+/* ------------------------------ anonymous connections, on the record ------------------------------ */
+
+/** Per window, this many anonymous connections are logged one by one; the rest are counted. */
+export const ANONYMOUS_LOG_LIMIT = 5;
+export const ANONYMOUS_LOG_WINDOW_MS = 60_000;
+
+type EgressLogger = (line: string) => void;
+const defaultLogger: EgressLogger = (line) => console.warn(line);
+let egressLogger: EgressLogger = defaultLogger;
+let anonymousWindow = {
+  start: Number.NEGATIVE_INFINITY,
+  logged: 0,
+  suppressed: 0,
+};
+
+/** For tests: capture the filter's log lines. Null puts console.warn back and resets the throttle. */
+export function setEgressLogger(next: EgressLogger | null) {
+  egressLogger = next ?? defaultLogger;
+  anonymousWindow = {
+    start: Number.NEGATIVE_INFINITY,
+    logged: 0,
+    suppressed: 0,
+  };
+}
+
+/**
+ * Record a connection that came with no proxy credentials, throttled.
+ *
+ * Says where it came from (the local socket) and where it was going, never a credential. The first
+ * {@link ANONYMOUS_LOG_LIMIT} per window are written out; the rest are counted and the count is
+ * written with the first line of the next window. Returns whether a line was written.
+ */
+export function noteAnonymousEgress(
+  source: { via: "CONNECT" | "HTTP"; target: string; from: string },
+  now = Date.now(),
+): boolean {
+  let carried = 0;
+  if (now - anonymousWindow.start >= ANONYMOUS_LOG_WINDOW_MS) {
+    carried = anonymousWindow.suppressed;
+    anonymousWindow = { start: now, logged: 0, suppressed: 0 };
+  }
+  if (anonymousWindow.logged >= ANONYMOUS_LOG_LIMIT) {
+    anonymousWindow.suppressed += 1;
+    return false;
+  }
+  anonymousWindow.logged += 1;
+  egressLogger(
+    JSON.stringify({
+      type: "ops",
+      code: "EGRESS_ANONYMOUS",
+      reason:
+        "A connection reached the egress filter without proxy credentials; judged by the anonymous fallback, not by any Bot's policy.",
+      via: source.via,
+      target: source.target,
+      from: source.from,
+      ...(carried > 0 ? { suppressedSinceLastLine: carried } : {}),
+    }),
+  );
+  return true;
 }
 
 async function decide(
-  botId: string | undefined,
+  caller: { kind: "bot"; botId: string } | { kind: "anonymous" },
   host: string,
   port: number,
-  _direct: boolean,
 ): Promise<EgressDecision & { addresses?: string[] }> {
-  const judging = policiesFor(botId);
+  const judging =
+    caller.kind === "bot" ? policiesForBot(caller.botId) : anonymousPolicies();
   if (judging === "refuse") {
     return {
       allowed: false,
@@ -625,25 +790,6 @@ function pinnedTo(addresses: readonly string[] | undefined) {
       else callback(null, entries[0]?.address, entries[0]?.family);
     },
   };
-}
-
-function botFromProxyAuthorization(
-  header: string | undefined,
-  secret: string,
-): string | undefined {
-  if (!header?.startsWith("Basic ")) return undefined;
-  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-  const colon = decoded.indexOf(":");
-  if (colon < 1) return undefined;
-  const offered = Buffer.from(decoded.slice(colon + 1));
-  const expected = Buffer.from(secret);
-  if (
-    offered.length > 0 &&
-    (offered.length !== expected.length || !timingSafeEqual(offered, expected))
-  ) {
-    return undefined;
-  }
-  return decodeUserinfo(decoded.slice(0, colon));
 }
 
 function basic(username?: string, password?: string): string | undefined {
@@ -761,9 +907,11 @@ export function egressShellEnvironmentForBot(
 ): Record<string, string> {
   if (!shellProxy) return {};
   const trimmed = botId?.trim();
+  // A named Bot's commands carry that Bot's own derived key; without a Bot, no credentials at all
+  // (the anonymous fallback, see `anonymousPolicies`).
   const proxy =
     trimmed && filter
-      ? `http://${encodeURIComponent(trimmed)}:@127.0.0.1:${filter.port}`
+      ? `http://${encodeURIComponent(trimmed)}:${encodeURIComponent(botProxyKey(filter.masterKey, trimmed))}@127.0.0.1:${filter.port}`
       : shellProxy;
   return {
     HTTP_PROXY: proxy,
@@ -801,7 +949,7 @@ export async function startEgressFilter(
       stop: stopEgressFilter,
     };
   }
-  const secret = randomBytes(24).toString("base64url");
+  const masterKey = randomBytes(32);
 
   const server = createServer(async (request, response) => {
     // A plain-HTTP request through a proxy names the absolute URL.
@@ -812,15 +960,35 @@ export async function startEgressFilter(
       response.writeHead(400).end("A proxy request names an absolute URL.");
       return;
     }
-    const botId = botFromProxyAuthorization(
+    const caller = proxyCallerFrom(
       request.headers["proxy-authorization"] as string | undefined,
-      secret,
+      masterKey,
     );
     const port = Number(
       target.port || (target.protocol === "https:" ? 443 : 80),
     );
-    const upstream = upstreamFor(botId ?? "", env);
-    const decision = await decide(botId, target.hostname, port, !upstream);
+    if (caller.kind === "rejected") {
+      response
+        .writeHead(403, {
+          "content-type": "text/plain",
+          "x-chisabot-egress": "refused",
+        })
+        .end(caller.reason);
+      return;
+    }
+    if (caller.kind === "anonymous") {
+      noteAnonymousEgress({
+        via: "HTTP",
+        target: `${target.hostname}:${port}`,
+        from: `${request.socket.remoteAddress ?? "?"}:${request.socket.remotePort ?? "?"}`,
+      });
+    }
+    // Only a proven Bot uses a Bot's upstream; anonymous gets the default one (or none).
+    const upstream = upstreamFor(
+      caller.kind === "bot" ? caller.botId : "",
+      env,
+    );
+    const decision = await decide(caller, target.hostname, port);
     if (!decision.allowed) {
       response
         .writeHead(403, {
@@ -838,17 +1006,31 @@ export async function startEgressFilter(
     async (request: IncomingMessage, client: Socket, head: Buffer) => {
       const [host = "", portText = "443"] = splitHostPort(request.url ?? "");
       const port = Number(portText);
-      const botId = botFromProxyAuthorization(
+      const caller = proxyCallerFrom(
         request.headers["proxy-authorization"] as string | undefined,
-        secret,
+        masterKey,
       );
       client.on("error", () => undefined);
+      if (caller.kind === "rejected") {
+        refuse(client, caller.reason);
+        return;
+      }
       if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
         refuse(client, "A CONNECT names host:port.");
         return;
       }
-      const upstream = upstreamFor(botId ?? "", env);
-      const decision = await decide(botId, host, port, !upstream);
+      if (caller.kind === "anonymous") {
+        noteAnonymousEgress({
+          via: "CONNECT",
+          target: `${host}:${port}`,
+          from: `${client.remoteAddress ?? "?"}:${client.remotePort ?? "?"}`,
+        });
+      }
+      const upstream = upstreamFor(
+        caller.kind === "bot" ? caller.botId : "",
+        env,
+      );
+      const decision = await decide(caller, host, port);
       if (!decision.allowed) {
         refuse(client, decision.reason);
         return;
@@ -880,7 +1062,7 @@ export async function startEgressFilter(
   });
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
-  filter = { port, secret, server };
+  filter = { port, masterKey, server };
 
   const url = `http://127.0.0.1:${port}`;
   if (options.forShell) shellProxy = url;
