@@ -32,6 +32,17 @@ export function clockNow(): number {
   return now;
 }
 
+/**
+ * 测试用：停掉时钟并清空订阅者。共享进程里前面的测试文件可能留下没卸载的卡片（订阅者）
+ * 或在假定时器下开的 interval，这里把模块状态还原成刚加载时的样子。
+ */
+export function resetClockForTests(): void {
+  if (timer !== undefined) clearInterval(timer);
+  timer = undefined;
+  listeners.clear();
+  now = Date.now();
+}
+
 /** 测试用：当前有几个订阅者、时钟是否在走。 */
 export function clockStatus(): { subscribers: number; running: boolean } {
   return { subscribers: listeners.size, running: timer !== undefined };

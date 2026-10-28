@@ -1,11 +1,31 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  jest,
+  test,
+} from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, render } from "@testing-library/react";
-import { clockStatus, useNow } from "../src/lib/use-now";
+import { clockStatus, resetClockForTests, useNow } from "../src/lib/use-now";
 import { settleReactWork } from "./settle-react-work";
 
+/*
+ * 共享进程（bun run test:app）里，前面的文件可能留着假定时器（jest.useFakeTimers）或没卸载的卡片
+ * （仍订阅着模块级时钟）。每个用例前后都切回真定时器、卸载组件、把时钟还原，计数才只算本文件的。
+ */
 beforeAll(() => GlobalRegistrator.register());
-afterEach(cleanup);
+beforeEach(() => {
+  jest.useRealTimers();
+  resetClockForTests();
+});
+afterEach(() => {
+  cleanup();
+  jest.useRealTimers();
+  resetClockForTests();
+});
 afterAll(async () => {
   await settleReactWork();
   GlobalRegistrator.unregister();
