@@ -9,6 +9,7 @@ import {
   isApiCall,
   isClientRoute,
   upstreamWebSocketHeaders,
+  withSecurityHeaders,
 } from "../serve";
 
 async function probeServingPorts(env: {
@@ -635,5 +636,23 @@ describe("upstream websocket handshake", () => {
       upstream.stop(true);
       await proxy.stop();
     }
+  });
+});
+
+describe("安装版页面的安全响应头（审查 S1）", () => {
+  test("页面带 Report-Only 的应用 CSP，其他文件不带", async () => {
+    const page = await withSecurityHeaders("<!doctype html>", 200, {
+      html: true,
+    });
+    const policy =
+      page.headers.get("Content-Security-Policy-Report-Only") ?? "";
+    expect(policy).toContain("default-src 'self'");
+    expect(policy).toContain("object-src 'none'");
+    expect(page.headers.get("Content-Security-Policy")).toBeNull();
+    expect(page.headers.get("X-Content-Type-Options")).toBe("nosniff");
+
+    const asset = await withSecurityHeaders("console.log(1)");
+    expect(asset.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
+    expect(asset.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
   });
 });
