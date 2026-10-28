@@ -55,3 +55,7 @@
 
 `test:app` 在这个分支跑出了 main 两次基线里都没有的三条失败，PR 2 之前要查清是改动引起的还是用例本身不稳定（main 自己两次跑的失败集合就不一样）：
 「a search filters what is loaded and the history is opened by hand」、「Esc while composing (IME) stays in the field」、「a protected page shows loading while the actual authentication guard waits」。
+
+## 下一步
+
+- 桌面端去掉左栏底部的账号卡：右上角头像已经是账号入口（#374），两处重复。去掉后同屏模糊层回到 4 层；原来挂在账号卡上的待处理红点挪到右上角头像上。如果做，就替代上面「账号卡合进左栏底部」那条决定。方案待小爱确认后再做，这里只记下来，暂不实现。
