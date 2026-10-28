@@ -9,6 +9,7 @@
 - **玻璃**：搜索胶囊用唯一材质 `.glass`（读 `--glass-filter`，20px），是顶栏唯一的模糊层，不做过渡和动画；圆钮是 `.glass.is-flat`，不叠模糊。桌面同屏模糊层 4 → 5（再开一个弹层 6），手机仍是 1。
 - **测试**：`channel-pagination.test.tsx` 的搜索历史和组字 Esc 两条用例改为把顶栏的搜索框和左栏一起渲染（电脑上搜索框已不在左栏里）；新增 `hark-token-dark.test.ts`，检查和旧深色层同名的 Hark 令牌在 `html.dark` 里有深色值（DESIGN.md §10.5）。
 - **设计规范**：DESIGN.md 新增 §10.5「Hark 令牌与同名旧令牌」：`html:root` 会压过旧 `.dark`，新增同名令牌必须在 `html.dark` 里给深色值。
+- **开发日志**：`docs/DEVLOG.md` 末尾追加这次的动机、改动和前后截图（`docs/images/hark-topbar/`）。
 - 没有新增 `!important`，没有升版本号；外观设置页、壁纸上传、`wallpaper_core.html`、`bot-bubbles.tsx` 都没有动。
 
 ## 0.1.104 — 2026-10-29
