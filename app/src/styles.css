@@ -10071,3 +10071,8 @@ html[data-perf="on"] .glass-composer.glass {
     --lg-blur: none;
   }
 }
+
+/* 天空停用（设了壁纸或性能模式，sky-background.tsx 写 html[data-sky-off]）：画布不再显示，回到静态渐变。 */
+html[data-sky-off] #sky-root #gl { visibility: hidden; }
+html[data-sky-off] #sky-root #skyph { opacity: 1; }
+html[data-sky-off] body { background: var(--wallpaper); }

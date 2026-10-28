@@ -8,12 +8,21 @@ import {
   setHarkSkyScene,
   useAppearance,
 } from "@/lib/appearance";
+import { usePerfMode } from "@/lib/perf-mode";
 
 /*
  * Hark 原生 WebGL 动态天空与天气引擎宿主（移植自 Hark wallpaper_core.html + Pp 宿主控制器）：
  *  - DOM 挂载 #sky-root > #skyph + <canvas id="gl"> + <canvas id="skyfreeze"> + #glfail；
  *  - 首帧 WebGL drawArrays 完成时在 <html> 标记 data-sky-painted，隐藏 #skyph 占位并让 body 完全透明；
  *  - 根据当前浅色/深色主题、主题配色或用户手动指定的 12 个精选场景驱动 window.hark.applyScene(0..11) / setLive(true)。
+ *
+ * 性能（2026-10-29）：引擎本身（wallpaper_core.html）不改，节流全在宿主这边——
+ *  - 引擎拿到的 requestAnimationFrame 是这里的 skyRaf：只在「允许跑」的窗口里出帧，最多 15fps；
+ *  - 引擎读到的 window.devicePixelRatio 是 min(真实 DPR, 1) × 0.6，画布内部只按 0.6 倍分辨率画，CSS 再拉满；
+ *  - 精选场景（默认 auto）= 天空快照：启动、换场景、改窗口大小时跑约 2.6s，渐变画完就停在最后一帧；
+ *  - 「背景随时间变化」（live）= 动态天空：页面可见、窗口有焦点、且 2.5s 内有操作时才跑；
+ *  - 设了壁纸或开了性能模式：不启动引擎；已经启动的停下并隐藏画布（html[data-sky-off]）；
+ *  - 不再强制 preserveDrawingBuffer：停住的画布保留最后一次上屏的画面，不需要每帧多拷一份缓冲。
  */
 
 const SKY_EASE_MS = 1650;
@@ -163,6 +172,114 @@ function syncHarkSkyScene(target: "live" | number) {
   }
 }
 
+
+/* ---------------------------------------------------------------------------------------------
+ * 天空节流器：引擎所有的 requestAnimationFrame 都经过这里。
+ * ------------------------------------------------------------------------------------------- */
+const SKY_FRAME_MS = 66; // ≤ 15fps
+const SKY_IDLE_MS = 2500; // live：无操作 2.5s 后暂停
+const SKY_SNAPSHOT_MS = 2600; // 快照：一次场景渐变（约 1.6s）加余量
+const SKY_RENDER_SCALE = 0.6;
+
+type SkyMode = "off" | "snapshot" | "live";
+
+const sky = {
+  mode: "snapshot" as SkyMode,
+  wakeUntil: 0,
+  queue: [] as FrameRequestCallback[],
+  pending: false,
+  last: 0,
+  listening: false,
+};
+
+function skyCanRun(now: number): boolean {
+  if (sky.mode === "off" || typeof document === "undefined" || document.hidden) return false;
+  if (sky.mode === "live" && !document.hasFocus()) return false;
+  return now < sky.wakeUntil;
+}
+
+function skyPump() {
+  if (sky.pending || sky.queue.length === 0) return;
+  if (!skyCanRun(performance.now())) return;
+  sky.pending = true;
+  const wait = Math.max(0, sky.last + SKY_FRAME_MS - performance.now() - 4);
+  window.setTimeout(() => {
+    window.requestAnimationFrame((ts) => {
+      sky.pending = false;
+      if (!skyCanRun(performance.now())) return;
+      sky.last = ts;
+      const callbacks = sky.queue;
+      sky.queue = [];
+      for (const cb of callbacks) cb(ts);
+    });
+  }, wait);
+}
+
+/** 给引擎用的 requestAnimationFrame。 */
+function skyRaf(cb: FrameRequestCallback): number {
+  sky.queue.push(cb);
+  skyPump();
+  return 0;
+}
+
+/** 让天空再跑 ms 毫秒（快照：画完这次变化；live：用户有操作）。 */
+function wakeSky(ms: number) {
+  if (sky.mode === "off") return;
+  sky.wakeUntil = Math.max(sky.wakeUntil, performance.now() + ms);
+  skyPump();
+}
+
+function setSkyMode(mode: SkyMode) {
+  if (sky.mode === mode) return;
+  sky.mode = mode;
+  if (mode === "off") {
+    sky.wakeUntil = 0;
+    document.documentElement.setAttribute("data-sky-off", "");
+  } else {
+    document.documentElement.removeAttribute("data-sky-off");
+    wakeSky(SKY_SNAPSHOT_MS);
+  }
+}
+
+function listenForSkyWakeups() {
+  if (sky.listening) return;
+  sky.listening = true;
+  const onInput = () => {
+    if (sky.mode === "live") wakeSky(SKY_IDLE_MS);
+  };
+  for (const ev of ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"]) {
+    window.addEventListener(ev, onInput, { passive: true, capture: true });
+  }
+  // 引擎改画布尺寸会清空画布：快照也要补画一帧。
+  window.addEventListener("resize", () => wakeSky(SKY_SNAPSHOT_MS));
+  window.addEventListener("focus", () => onInput());
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && sky.mode === "live") wakeSky(SKY_IDLE_MS);
+    else skyPump();
+  });
+}
+
+/** 引擎看到的 window：只把 devicePixelRatio 换成降采样后的值，其余原样转给真正的 window。 */
+function createSkyWindow(): Window {
+  return new Proxy(window, {
+    get(target, prop) {
+      if (prop === "devicePixelRatio") {
+        return Math.min(target.devicePixelRatio || 1, 1) * SKY_RENDER_SCALE;
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+    set(target, prop, value) {
+      return Reflect.set(target, prop, value, target);
+    },
+  });
+}
+
+function resolveSkyMode(opts: { perf: boolean; wallpaper: boolean; live: boolean }): SkyMode {
+  if (opts.perf || opts.wallpaper) return "off";
+  return opts.live ? "live" : "snapshot";
+}
+
 export function SkyBackground() {
   const { dark } = useTheme();
   const appearance = useAppearance();
@@ -193,11 +310,23 @@ export function SkyBackground() {
     }
   }, [dark, appearance]);
 
-  // 2. 启动 Hark 原生 WebGL 动态天空引擎（/wallpaper_core.html）
+  const perf = usePerfMode();
+  const wallpaperCss = resolveActiveWallpaperCss(appearance);
+  const skyMode = resolveSkyMode({
+    perf,
+    wallpaper: wallpaperCss !== null,
+    live: appearance.harkScene === "live",
+  });
+
+  // 2. 启动 Hark 原生 WebGL 动态天空引擎（/wallpaper_core.html）；壁纸 / 性能模式下不启动。
   useEffect(() => {
     if (typeof window === "undefined") return;
+    setSkyMode(skyMode);
+    if (skyMode === "off") return;
+    listenForSkyWakeups();
     if (window.hark) {
       syncHarkSkyScene(desiredSceneRef.current);
+      wakeSky(SKY_SNAPSHOT_MS);
       return;
     }
     if (window.__harkBooting) return;
@@ -208,11 +337,7 @@ export function SkyBackground() {
       const origGetContext = glCanvas.getContext.bind(glCanvas);
       let hooked = false;
       glCanvas.getContext = ((contextId: string, options?: unknown) => {
-        const opts =
-          contextId === "webgl" || contextId === "experimental-webgl"
-            ? { ...(typeof options === "object" && options ? options : {}), preserveDrawingBuffer: true }
-            : options;
-        const ctx = origGetContext(contextId as "webgl", opts as WebGLContextAttributes);
+        const ctx = origGetContext(contextId as "webgl", options as WebGLContextAttributes);
         if (ctx && !hooked && (contextId === "webgl" || contextId === "experimental-webgl")) {
           hooked = true;
           const origDrawArrays = ctx.drawArrays.bind(ctx);
@@ -221,7 +346,10 @@ export function SkyBackground() {
             origDrawArrays(mode, first, count);
             if (!painted) {
               painted = true;
-              document.documentElement.setAttribute("data-sky-painted", "");
+              // 第一帧上屏之后再撤占位图（下一帧），不靠 preserveDrawingBuffer。
+              window.requestAnimationFrame(() => {
+                document.documentElement.setAttribute("data-sky-painted", "");
+              });
             }
           };
         }
@@ -247,22 +375,22 @@ export function SkyBackground() {
       .then((html) => {
         const match = /<script>([\s\S]*?)<\/script>/.exec(html);
         if (!match?.[1]) return;
-        const runner = new Function("fetch", "requestAnimationFrame", match[1]);
-        runner(harkFetch, window.requestAnimationFrame.bind(window));
+        const runner = new Function("fetch", "requestAnimationFrame", "window", match[1]);
+        wakeSky(SKY_SNAPSHOT_MS);
+        runner(harkFetch, skyRaf, createSkyWindow());
         syncHarkSkyScene(desiredSceneRef.current);
       })
       .catch(() => {
         window.__harkBooting = false;
       });
-  }, []);
+  }, [skyMode]);
 
   // 3. 当主题亮暗、配色方案或用户指定的 Hark 场景变化时，立即切换 WebGL 天空场景
   const targetScene = resolveEffectiveHarkScene(appearance, dark);
   useEffect(() => {
     syncHarkSkyScene(targetScene);
+    wakeSky(SKY_SNAPSHOT_MS);
   }, [targetScene]);
-
-  const wallpaperCss = resolveActiveWallpaperCss(appearance);
 
   return (
     <div aria-hidden="true" id="sky-root">
