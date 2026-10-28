@@ -1633,15 +1633,12 @@ html[data-sky-ease] body::before {
  * hidden：写好的两行字，点一下「+」/ 模型药丸 / 权限 / 消息区，整块输入框就塌成一行、字被裁掉；再点回来又弹开。
  * 用户说的「输入框特别容易闪」就是这两下。超过组件给的 maxHeight 照旧在框里滚。
  */
-.glass-composer .prompt-area-editor {
-  height: auto !important;
-  overflow-y: auto !important;
-  transition: none !important;
-}
+/* 现在不再让 prompt-area 自己管高度（composer.tsx 不传 autoGrow）：它只给 min-height / max-height / overflow-y，
+ * 高度就是内容高度，不会在失焦后被钉回一行，也没有内联的 height 过渡要压。 */
 .glass-composer [data-placeholder]::before,
 .glass-composer .is-empty::before,
 .glass-composer textarea::placeholder {
-  color: var(--glass-ink-4) !important;
+  color: var(--glass-ink-4);
 }
 .glass-composer-toolbar {
   display: flex;
@@ -1652,28 +1649,28 @@ html[data-sky-ease] body::before {
   padding-top: 2px;
 }
 .glass-composer-icon {
-  width: 32px !important;
-  height: 32px !important;
-  padding: 0 !important;
-  border-radius: 999px !important;
-  color: var(--glass-ink-3) !important;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--glass-ink-3);
   transition: background 0.15s ease, color 0.15s ease;
 }
 .glass-composer-icon:hover:not(:disabled) {
-  background: rgba(22, 24, 29, 0.06) !important;
-  color: var(--glass-ink) !important;
+  background: rgba(22, 24, 29, 0.06);
+  color: var(--glass-ink);
 }
 .dark .glass-composer-icon:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08) !important;
+  background: rgba(255, 255, 255, 0.08);
 }
 .glass-composer-send {
-  width: 34px !important;
-  height: 34px !important;
-  padding: 0 !important;
-  border-radius: 999px !important;
-  border: 0 !important;
-  background: var(--composer-accent, #2f7cf6) !important;
-  color: #fff !important;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  border: 0;
+  background: var(--composer-accent, #2f7cf6);
+  color: #fff;
   box-shadow: 0 4px 12px rgba(47, 124, 246, 0.35);
   transition: transform 0.12s ease, box-shadow 0.15s ease, background 0.15s ease, opacity 0.15s ease;
 }
@@ -1685,18 +1682,18 @@ html[data-sky-ease] body::before {
   transform: scale(0.96);
 }
 .glass-composer-send:disabled {
-  opacity: 1 !important;
-  background: rgba(22, 24, 29, 0.1) !important;
-  color: rgba(22, 24, 29, 0.35) !important;
+  opacity: 1;
+  background: rgba(22, 24, 29, 0.1);
+  color: rgba(22, 24, 29, 0.35);
   box-shadow: none;
 }
 .dark .glass-composer-send:disabled {
-  background: rgba(255, 255, 255, 0.1) !important;
-  color: rgba(255, 255, 255, 0.35) !important;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.35);
 }
 .glass-composer-send[data-testid="composer-stop"] {
-  background: var(--glass-dark) !important;
-  color: var(--glass-dark-ink) !important;
+  background: var(--glass-dark);
+  color: var(--glass-dark-ink);
   box-shadow: 0 4px 12px rgba(22, 24, 29, 0.25);
 }
 
@@ -10020,3 +10017,36 @@ html.dark {
   --lg-shadow: var(--card-hairline);
 }
 .glass-main [data-slot="page-shell"] :is(.sg-card, .page-rows, .page-section > form) { border-radius: var(--r-24); }
+
+/* —— Hark 输入框和气泡（第 4 步）——
+   输入框：底部居中的圆角浮动输入框，左边「+」，右边麦克风 / 发送；是一个模糊层（输入框专用的底色）。
+   旧层里的输入框覆盖规则读 --lg-*：在输入框上把它们指向 Hark 令牌。气泡只换颜色变量，不模糊。 */
+.glass-composer.glass {
+  --lg-surface-strong: var(--glass-input-bg);
+  --lg-blur: var(--glass-filter);
+  --lg-shadow: var(--glass-highlight), var(--glass-shadow);
+  border-radius: var(--r-24);
+  isolation: isolate;
+  font-family: var(--font);
+}
+.glass-composer.glass .glass-composer-icon { color: var(--text-secondary); }
+.glass-composer.glass .glass-composer-icon:hover:not(:disabled) { color: var(--text-primary); background: var(--hover-wash); }
+.glass-composer.glass [data-placeholder]::before,
+.glass-composer.glass .is-empty::before,
+.glass-composer.glass textarea::placeholder { color: var(--text-tertiary); }
+.glass-composer.glass .glass-composer-send:disabled { background: var(--fill-tertiary); color: var(--text-tertiary); }
+.glass-composer.glass .glass-composer-send:active:not(:disabled) { scale: var(--press-scale); transform: none; }
+.glass-composer.glass .glass-composer-send:hover:not(:disabled) { transform: none; }
+
+.glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"] {
+  background: var(--bubble-agent-bg);
+  color: var(--text-primary);
+  border: 0;
+  box-shadow: var(--card-hairline), var(--elev-1);
+}
+.glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubble-content"] {
+  background: var(--bubble-user-bg);
+  color: var(--text-primary);
+  border: 0;
+  box-shadow: var(--card-hairline);
+}

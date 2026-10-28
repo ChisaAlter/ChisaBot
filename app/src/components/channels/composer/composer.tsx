@@ -1796,7 +1796,7 @@ export function Composer({
              * A COLUMN: attachment strip, editor, then the toolbar. The frame's padding lives on the
              * form (see `.glass-composer`) so a scrolled editor never puts text against the edge.
              */
-            "glass-composer flex flex-col",
+            "glass-composer glass flex flex-col",
             className,
           )}
           onSubmit={handleFormSubmit}
@@ -1812,10 +1812,11 @@ export function Composer({
             {/*
              * The editor takes the full width and grows to COMPACT_MAX_HEIGHT_PX before it scrolls;
              * the controls live in their own toolbar row underneath, so they never float mid-text.
+             * No `autoGrow`: PromptArea then only sets min/max-height, so the height is the content's
+             * own and no stylesheet override is needed to stop it collapsing on blur.
              */}
             <PromptArea
               aria-label={"消息"}
-              autoGrow
               className={cn(
                 "glass-composer-editor min-w-0 w-full border-0 bg-transparent p-0 text-sm shadow-none",
                 editorClassName,
@@ -1906,7 +1907,7 @@ export function Composer({
       <form
         aria-busy={isBusy}
         onKeyDown={handleEscapeStop}
-        className="glass-composer glass-composer-hero"
+        className="glass-composer glass glass-composer-hero"
         onSubmit={handleFormSubmit}
       >
         <DictationSurface dictation={dictation} canSend={canSendRecording}>
@@ -1921,7 +1922,6 @@ export function Composer({
             {replyQuoteBar}
             <PromptArea
               aria-label={"消息"}
-              autoGrow
               className={cn(
                 "w-full border-0 bg-transparent p-0 text-sm shadow-none",
                 editorClassName,
