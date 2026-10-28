@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### 修复
+
+- 根 `package.json` 补声明 `@json-render/core` / `@json-render/react`（0.21.0，与 app/server 及 lockfile 一致）。`shared/json-render` 不属于任何 workspace，在 Bun 默认的隔离 linker 下只能从根 `node_modules` 解析依赖；此前根未声明，导致干净安装后 server/app 的 typecheck 与 build 报 `Cannot find module '@json-render/core'`，只能靠 `--linker hoisted` 绕过。
+- `app/package.json` 的 devDependencies 补声明 `@ag-ui/client`（1.0.1）、`rxjs`（7.8.1）、`esbuild`（0.28.2），版本均与 lockfile 中已解析的一致。app 的测试直接引用前两者，`vite.config.ts` 构建时动态 `import("esbuild")` 打包 pc headless 脚本；隔离 linker 下它们原本解析不到，导致 app typecheck 失败，esbuild 那一步也会被 try/catch 静默跳过。
+- `bun.lock` 只在 workspace 声明区增加上述条目，没有新增或变更任何包解析结果。
+
+### 安全：出口过滤代理按 Bot 独立鉴权（审计 H1 / L1）
+
+- **每个 Bot 独立的代理密钥（`agent-computer/src/egress.ts`）**：代理凭据改为 HMAC-SHA256(进程内随机主密钥, botId)，浏览器与 shell 都只拿本 Bot 的派生密钥；校验为定长摘要 + `timingSafeEqual`。
+- **拒绝伪造凭据**：带了 botId 但密码为空、错误、或用 A 的密钥冒充 B，一律 403，不再降级。
+- **无凭据连接走独立兜底**：不按任何 Bot 判定、不读任何 Bot 放行名单、不用 Bot 的上游代理，只放行默认软件源；本机任一 Bot 为 `allowlist_only` / `deny_all` 时拒绝；记节流日志 `EGRESS_ANONYMOUS`（只记来源与目标）。
+- **硬拒绝网段**新增 `0.0.0.0/8` 与 `100.64.0.0/10`。
+- **命令补传 botId**：服务器 `runCommand` 在 `/exec` body 中带 `botId`；电脑 `/exec` 缺省时回退到 `x-chisabot-bot-id` 请求头。
+- 无需新增环境变量；电脑进程重启后旧代理凭据失效。
+
 这组改动只做渲染性能，不改布局和配色：性能审计实测，主界面卡顿主要来自三处——同屏 14 层毛玻璃（全文档 91 个元素带 `backdrop-filter`，气泡、按钮、胶囊、滚动区里的卡片都在模糊）、WebGL 天空在空闲时也按满帧满分辨率重画（还开着 `preserveDrawingBuffer`）、以及 `background-position` / `box-shadow` 驱动的无限循环动画。这里把毛玻璃收到预算内、让天空默认只画一张快照、无限动画只动 `transform` / `opacity`，并加上性能模式的状态开关。外观设置页、壁纸上传和 `wallpaper_core.html` 都没有动。
 
 ### 渲染预算
@@ -17,6 +32,11 @@
 - **性能模式与系统偏好**：新增 `chisabot.perf-mode` 状态（`<html data-perf="on">`），开启后所有毛玻璃关闭、大面板换成接近不透明的底色、天空不启动；系统「减少透明度」走同一套样式。设置入口留到后续 PR。
 - **外观偏好只写改动过的键（`appearance.ts`）**：拖一下滑块不再把 8 个键（包括自定义壁纸的 data URL）全部重写一遍。
 - **测试**：新增 `app/tests/render-budget.test.ts`，静态检查模糊半径、会模糊的选择器白名单、小元素关闭旧玻璃层、无限动画属性与滚动遮罩。
+
+### 修复：安装版 `/api` 代理不再转发失效的 `Content-Encoding`
+
+- **`app/serve.ts`**：Bun 的 `fetch` 已自动解压上游 gzip 响应，但代理原样转发了 `Content-Encoding: gzip` 和压缩时的 `Content-Length`，浏览器再解压一次就报 `ERR_CONTENT_DECODING_FAILED`，安装版 PC 客户端 `/api/me` 加载失败。现在转发前删掉 `content-encoding`、`content-length` 及逐跳头（`transfer-encoding`、`connection` 及其列出的头、`keep-alive` 等），其他头照常转发，多个 `Set-Cookie` 逐条保留。
+- 新增测试：gzip 上游经代理后客户端可正常解析 JSON、不带 gzip 编码头、多值 `Set-Cookie` 保留。
 
 ### Hark 顶栏（Hark 改版第 2 步，见 `docs/rfc/hark-redesign.md`）
 

@@ -65,6 +65,42 @@ export function isClientRoute(pathname: string): boolean {
   return !pathname.startsWith("/assets/") && !pathname.includes(".");
 }
 
+/**
+ * Response headers that must not be passed on from the server's response.
+ *
+ * Bun's `fetch` has already decoded a gzip/br body by the time we hold it, so passing on
+ * `Content-Encoding` makes the browser try to decode plain bytes again
+ * (`ERR_CONTENT_DECODING_FAILED`, `/api/me` fails in the installed PC app), and the upstream
+ * `Content-Length` describes the compressed size, not the body we send. The rest are hop-by-hop
+ * headers (RFC 9110 §7.6.1) that describe the upstream connection, not this one.
+ */
+const STRIPPED_RESPONSE_HEADERS = [
+  "content-encoding",
+  "content-length",
+  "transfer-encoding",
+  "connection",
+  "keep-alive",
+  "proxy-connection",
+  "trailer",
+  "upgrade",
+];
+
+/** The server's response headers as this proxy may pass them on; every Set-Cookie is kept. */
+export function proxiedResponseHeaders(upstream: Headers): Headers {
+  const headers = new Headers();
+  for (const [name, value] of upstream) {
+    if (name === "set-cookie") continue;
+    headers.append(name, value);
+  }
+  for (const cookie of upstream.getSetCookie()) headers.append("set-cookie", cookie);
+  const listed = upstream.get("connection");
+  const extra = listed ? listed.split(",").map((n) => n.trim().toLowerCase()) : [];
+  for (const name of [...STRIPPED_RESPONSE_HEADERS, ...extra]) {
+    if (name) headers.delete(name);
+  }
+  return headers;
+}
+
 /** Whether this is a call for the server rather than the app. */
 export function isApiCall(pathname: string): boolean {
   return pathname === "/api" || pathname.startsWith("/api/");
@@ -271,7 +307,7 @@ if (import.meta.main) {
         // The body is streamed rather than buffered, and redirects are left to the caller so a
         // 302 from the server is not silently followed to a different origin.
         try {
-          return await fetch(target, {
+          const upstream = await fetch(target, {
             method: request.method,
             headers: request.headers,
             body: request.body,
@@ -279,6 +315,11 @@ if (import.meta.main) {
             signal: request.signal,
             // @ts-expect-error duplex is required by fetch for a streamed body and is not yet typed.
             duplex: "half",
+          });
+          return new Response(upstream.body, {
+            status: upstream.status,
+            statusText: upstream.statusText,
+            headers: proxiedResponseHeaders(upstream.headers),
           });
         } catch {
           return Response.json(
