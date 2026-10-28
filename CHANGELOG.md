@@ -8,6 +8,10 @@
 - `app/package.json` 的 devDependencies 补声明 `@ag-ui/client`（1.0.1）、`rxjs`（7.8.1）、`esbuild`（0.28.2），版本均与 lockfile 中已解析的一致。app 的测试直接引用前两者，`vite.config.ts` 构建时动态 `import("esbuild")` 打包 pc headless 脚本；隔离 linker 下它们原本解析不到，导致 app typecheck 失败，esbuild 那一步也会被 try/catch 静默跳过。
 - `bun.lock` 只在 workspace 声明区增加上述条目，没有新增或变更任何包解析结果。
 
+## 0.1.103 — 2026-10-29
+
+这一版修复聊天 SVG 卡片的存储型 XSS（审查 S1，#362）：SVG 卡片和 Mermaid 卡片改用 DOMPurify（SVG profile）清洗，SVG 卡片改成 `<img>` 渲染，`/onerror`、`onbegin` 等写法不再能执行脚本；主应用同时加上 CSP（Report-Only，先只上报不拦截，便于观察后再收紧）。只改服务器 + 网页，没有表结构变化；PC / Android 客户端外壳未变，版本号仍为 0.1.100。
+
 ## 0.1.100 — 2026-10-28
 
 这一版将「设置 → 通用 → 外观 → 自定义图片壁纸」底部的网络链接输入框（`https://...`）替换为**本地图片点击与拖拽上传横幅（`.appearance-upload-dropzone`）**，并在壁纸网格中直接提供**「上传本地壁纸」卡片**，支持点击选择或直接将电脑中的图片（PNG / JPG / WebP / GIF / AVIF）拖拽到上传区即可自动压缩保存并应用。全仓工作区子包、PC 客户端、服务端与 Android 客户端同步更新至 0.1.100（Android `versionCode` 297）。
