@@ -39,7 +39,9 @@ html {
   --glass-user: rgba(120, 132, 150, 0.3);
   --glass-dark: #16181d;
   --glass-dark-ink: #ffffff;
-  --glass-blur: saturate(160%) blur(22px);
+  /* 毛玻璃预算：大面板（左栏、右栏、输入框、顶栏）20px，弹层 12px，永远不超过 30px；其余小元素不模糊。 */
+  --glass-blur: saturate(160%) blur(20px);
+  --glass-pop-filter: saturate(160%) blur(12px);
   --glass-shadow: 0 10px 30px rgba(40, 70, 110, 0.12), 0 1px 2px rgba(40, 70, 110, 0.06);
   --glass-shadow-sm: 0 4px 14px rgba(40, 70, 110, 0.1);
   --glass-shadow-pop: 0 20px 50px rgba(30, 50, 80, 0.22);
@@ -143,7 +145,7 @@ html {
   --r-xs: 6px; --r-sm: 10px; --r-md: 14px; --r-lg: 20px; --r-xl: 24px; --r-pill: 999px;
   /* v4.1：对话气泡四角一致的圆角矩形（用户 / 机器人、亮 / 暗都一样，没有尖角「尾巴」）。 */
   --r-bubble: 16px;
-  --blur-1: 12px; --blur-2: 22px; --blur-3: 36px;
+  --blur-1: 12px; --blur-2: 20px; --blur-3: 24px;
   --dur-1: 150ms; --dur-2: 220ms; --dur-3: 300ms; --dur-collapse: 260ms;
   --ease-out: cubic-bezier(0.22, 0.8, 0.24, 1); --ease-in: cubic-bezier(0.4, 0, 1, 1); --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
   --left-w: 276px; --left-w-slim: 80px; --right-w: 340px;
@@ -433,9 +435,8 @@ html[data-sky-ease] body::before {
 }
 
 @keyframes tool-line-sweep {
-  to {
-    background-position: -150% 0;
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 /* Preserve running-state text without shimmer for reduced-motion users. */
@@ -509,12 +510,14 @@ html[data-sky-ease] body::before {
  * `data-slot`, so nothing here changes behaviour.
  * ========================================================================================== */
 
-/* Frosted popups: menus, sheets, dialogs, selects, popovers. */
+/* Frosted popups: menus, selects and popovers blur 12px; sheets and dialogs are panels (20px). */
 [data-slot="dropdown-menu-content"],
 [data-slot="context-menu-content"],
 [data-slot="select-content"],
 [data-slot="popover-content"],
-[data-slot="combobox-content"],
+[data-slot="combobox-content"] {
+  backdrop-filter: var(--glass-pop-filter);
+}
 [data-slot="dialog-content"],
 [data-slot="sheet-content"] {
   backdrop-filter: var(--glass-blur);
@@ -535,7 +538,6 @@ html[data-sky-ease] body::before {
 [data-slot="sheet-overlay"],
 [data-slot="dialog-overlay"] {
   background: rgba(40, 60, 90, 0.16);
-  backdrop-filter: blur(2px);
 }
 
 /* Settings and admin shells keep their own sidebar; give it the same glass. */
@@ -742,7 +744,6 @@ html[data-sky-ease] body::before {
 }
 .glass-pill {
   background: var(--glass-strong);
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-shadow-sm);
   color: var(--glass-ink);
   transition: transform 0.15s ease, background 0.15s ease;
@@ -755,7 +756,6 @@ html[data-sky-ease] body::before {
 }
 .glass-chip {
   background: var(--glass-dim);
-  backdrop-filter: var(--glass-blur);
   color: var(--glass-ink-2);
 }
 .glass-dark {
@@ -807,7 +807,6 @@ html[data-sky-ease] body::before {
   height: 46px;
   border-radius: 999px;
   background: var(--glass-strong);
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-shadow-sm);
   font-weight: 500;
   font-size: 14px;
@@ -1136,21 +1135,19 @@ html[data-sky-ease] body::before {
   padding: 12px 16px;
   border-radius: var(--r-bubble);
   background: var(--glass-strong);
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-shadow-sm);
 }
 .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubble-content"] {
   padding: 10px 16px;
   border-radius: var(--r-bubble);
   background: var(--glass-user);
-  backdrop-filter: var(--glass-blur);
   color: var(--glass-ink);
 }
 /* The detail pane that slides over the chat (Bot settings, live screen). */
 .glass-main [data-slot="detail-panel"],
 .glass-main .bg-sidebar.border-l {
-  background: var(--glass);
-  backdrop-filter: var(--glass-blur);
+  /* 宽度动画期间不模糊（每帧重算 backdrop-filter 很贵）：底色加厚代替。 */
+  background: var(--glass-strong);
   border-left-color: transparent;
   border-radius: 24px 0 0 24px;
 }
@@ -1189,8 +1186,6 @@ html[data-sky-ease] body::before {
   background: #fff;
 }
 .glass-rail-scroll {
-  -webkit-mask-image: linear-gradient(#000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(#000 calc(100% - 28px), transparent);
   padding-bottom: 24px;
   scrollbar-width: none;
 }
@@ -1211,7 +1206,6 @@ html[data-sky-ease] body::before {
   display: grid;
   place-items: center;
   background: var(--glass-dim);
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-shadow-sm);
   color: var(--glass-ink-2);
   outline: none;
@@ -1287,7 +1281,6 @@ html[data-sky-ease] body::before {
   place-items: center;
   flex: none;
   background: var(--glass-strong);
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-shadow-sm);
   color: var(--glass-ink);
   transition: background 0.15s ease, transform 0.15s ease;
@@ -1718,7 +1711,7 @@ html[data-sky-ease] body::before {
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.85);
   background: rgba(250, 252, 255, 0.95);
-  backdrop-filter: saturate(170%) blur(26px);
+  backdrop-filter: var(--glass-pop-filter);
   box-shadow: var(--glass-shadow-pop);
   color: var(--glass-ink);
   transform-origin: var(--transform-origin);
@@ -1858,8 +1851,8 @@ html[data-sky-ease] body::before {
  * Loading — the same sky and glass skeleton as the static index.html, so boot never flashes white.
  * ========================================================================================== */
 @keyframes sky-shimmer {
-  0% { background-position: 100% 0; }
-  100% { background-position: -100% 0; }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 @keyframes sky-fade-in {
   from { opacity: 0; }
@@ -1924,7 +1917,6 @@ html[data-sky-ease] body::before {
   border-radius: 24px;
   background: var(--glass-dim);
   border: 1px solid rgba(255, 255, 255, 0.35);
-  backdrop-filter: var(--glass-blur);
   padding: 18px;
   display: flex;
   flex-direction: column;
@@ -1963,7 +1955,6 @@ html[data-sky-ease] body::before {
   padding: 8px 8px 8px 16px;
   border-radius: 999px;
   background: var(--glass-strong);
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-shadow);
   color: var(--glass-ink-2);
   font-size: 13px;
@@ -2069,7 +2060,6 @@ html[data-sky-ease] body::before {
   padding: 9px 14px 9px 12px;
   border-radius: 999px;
   background: var(--glass-strong);
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-shadow-sm);
   color: var(--glass-ink-2);
   font-size: 13px;
@@ -2111,7 +2101,6 @@ html[data-sky-ease] body::before {
   border-radius: 20px;
   background: rgba(255, 244, 242, 0.82);
   border: 1px solid rgba(220, 80, 60, 0.18);
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-shadow-sm);
   color: var(--glass-ink);
   animation: p3-rise 0.26s cubic-bezier(0.23, 1, 0.32, 1) both;
@@ -2226,7 +2215,6 @@ button.chat-bottom-pill {
   border-radius: 999px;
   border: 0;
   background: var(--glass-strong);
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-shadow);
   color: var(--glass-ink);
   font-size: 13px;
@@ -2260,7 +2248,6 @@ button.chat-bottom-pill:hover {
   border-radius: 20px !important;
   border: 1px solid rgba(255, 255, 255, 0.5) !important;
   background: var(--glass) !important;
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-shadow-sm);
 }
 .dark .page-rows { border-color: rgba(255, 255, 255, 0.06) !important; }
@@ -2457,7 +2444,6 @@ button.chat-bottom-pill:hover {
   border-radius: 18px;
   background: var(--glass-2, rgba(255, 255, 255, 0.55));
   border: 1px solid var(--line-strong, rgba(120, 140, 170, 0.28));
-  backdrop-filter: blur(12px);
   animation: chat-msg-editor-in 0.18s ease-out both;
 }
 .chat-msg-editor-input { min-height: 3.5rem; max-height: 40vh; resize: none; background: transparent; }
@@ -2479,7 +2465,6 @@ button.chat-bottom-pill:hover {
   place-items: center;
   padding: 24px;
   background: rgba(40, 60, 90, 0.26);
-  backdrop-filter: blur(8px);
   animation: page-loader-fade-in 0.22s ease-out both;
 }
 .dark .page-loader-overlay { background: rgba(4, 10, 20, 0.5); }
@@ -2495,7 +2480,7 @@ button.chat-bottom-pill:hover {
   text-align: center;
   background: var(--glass-strong, rgba(255, 255, 255, 0.86));
   border: 1px solid rgba(255, 255, 255, 0.6);
-  backdrop-filter: var(--glass-blur, blur(18px));
+  backdrop-filter: var(--glass-pop-filter);
   box-shadow: var(--glass-shadow-pop, 0 24px 60px rgba(30, 60, 110, 0.22));
   color: var(--glass-ink, inherit);
   animation: page-loader-pop 0.26s cubic-bezier(0.23, 1, 0.32, 1) both;
@@ -2565,7 +2550,6 @@ button.chat-bottom-pill:hover {
 }
 [data-slot="dialog-overlay"] {
   background: rgba(40, 60, 90, 0.2);
-  backdrop-filter: blur(4px);
   transition: opacity 0.18s ease;
 }
 .dark [data-slot="dialog-overlay"] { background: rgba(4, 10, 20, 0.45); }
@@ -2614,7 +2598,7 @@ button.chat-bottom-pill:hover {
   border-radius: 999px;
   background: var(--glass-strong);
   border: 1px solid rgba(255, 255, 255, 0.55);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-pop-filter);
   box-shadow: var(--glass-shadow-pop);
   color: var(--glass-ink);
   font-size: 14px;
@@ -2843,7 +2827,6 @@ button.chat-bottom-pill:hover {
   border-radius: var(--r-lg) !important;
   border: 1px solid var(--stroke) !important;
   background: var(--glass-1) !important;
-  backdrop-filter: saturate(140%) blur(var(--blur-2));
   box-shadow: var(--shadow-1), var(--inset-hl);
 }
 .ph + .page-rows, .ph + .sg-card { margin-top: 0; }
@@ -2944,7 +2927,7 @@ button.chat-bottom-pill:hover {
   background: var(--glass-3);
   border: 1px solid var(--stroke);
   box-shadow: var(--shadow-2);
-  backdrop-filter: saturate(150%) blur(var(--blur-3));
+  backdrop-filter: var(--glass-pop-filter);
   white-space: nowrap;
   transform: translate(-50%, 140%);
   opacity: 0;
@@ -2954,7 +2937,7 @@ button.chat-bottom-pill:hover {
 .sg-savebar.is-shown { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
 .sg-savebar-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); animation: sg-pulse 1.6s ease-in-out infinite; }
 .sg-savebar-msg { font-size: 14px; font-weight: 500; color: var(--ink-1); }
-@keyframes sg-pulse { 50% { box-shadow: 0 0 0 7px transparent; } }
+@keyframes sg-pulse { 50% { opacity: 0.45; } }
 
 /* ---------- Controls ---------- */
 [data-slot="input"],
@@ -2979,7 +2962,6 @@ button.chat-bottom-pill:hover {
 [data-slot="button"][data-variant="secondary"] {
   background: var(--glass-2);
   border-color: var(--stroke);
-  backdrop-filter: blur(var(--blur-1));
 }
 [data-slot="button"][data-variant="secondary"]:hover { background: var(--glass-3); }
 [data-slot="badge"] { border-radius: var(--r-pill); }
@@ -3026,7 +3008,6 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
   border-radius: var(--r-lg);
   border-color: var(--stroke);
   background: var(--glass-1);
-  backdrop-filter: saturate(140%) blur(var(--blur-2));
   box-shadow: var(--shadow-1), var(--inset-hl);
 }
 .page .border-dashed:not([data-slot="input"]) {
@@ -3058,7 +3039,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 [data-slot="sidebar"][data-mobile="true"] {
   padding: 16px;
   background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: saturate(160%) blur(var(--blur-2));
+  backdrop-filter: var(--glass-blur);
 }
 .dark [data-slot="sidebar"][data-mobile="true"] { background: rgba(18, 28, 44, 0.86); }
 /* Template F: auth card */
@@ -3066,7 +3047,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
   border-radius: var(--r-xl);
   border: 1px solid var(--stroke);
   background: var(--glass-1);
-  backdrop-filter: saturate(150%) blur(var(--blur-2));
+  backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow-2), var(--inset-hl);
 }
 /* 分段控件 */
@@ -3082,7 +3063,6 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
   border-radius: var(--r-lg);
   border: 1px solid var(--stroke);
   background: var(--glass-1);
-  backdrop-filter: saturate(140%) blur(var(--blur-2));
   box-shadow: var(--shadow-1), var(--inset-hl);
 }
 /* 时间预览滑块: sky-blue accent (DESIGN.md §11 滑块), never the ink primary. */
@@ -3254,7 +3234,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 .device-badge.is-accent { color: var(--accent-blue-ink); background: var(--accent-blue-soft); border-color: transparent; }
 .device-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--ink-4); }
 .device-dot.is-ok { background: var(--success); box-shadow: 0 0 0 3px color-mix(in oklch, var(--success) 22%, transparent); animation: device-pulse 2.4s ease-out infinite; }
-@keyframes device-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--success) 45%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
+@keyframes device-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .device-code {
   display: inline-block; max-width: min(420px, 62vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
   padding: 3px 8px; border-radius: 8px; font-family: var(--font-code); font-size: 12px; color: var(--ink-2); background: var(--glass-2); border: 1px solid var(--line);
@@ -3315,7 +3295,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 .pair-footer > button { min-width: 112px; }
 @keyframes pair-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
 @keyframes pair-pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
-@keyframes pair-shimmer { to { background-position: -220% 0; } }
+@keyframes pair-shimmer { 50% { opacity: 0.6; } }
 @media (prefers-reduced-motion: reduce) {
   .pair-qr-svg, .pair-qr-done, .pair-qr-check, .pair-qr-skeleton, .pair-dot { animation: none !important; }
 }
@@ -3394,7 +3374,6 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
   border-radius: var(--r-lg);
   border: 1px solid var(--stroke);
   background: var(--glass-1);
-  backdrop-filter: saturate(140%) blur(var(--blur-2));
   box-shadow: var(--shadow-1), var(--inset-hl);
   overflow: hidden;
   transition: border-color var(--dur-2), box-shadow var(--dur-2);
@@ -3543,7 +3522,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 .jr-skel-title { width: 40%; height: 18px; }
 .jr-skel-line + .jr-skel-line { margin-top: 10px; }
 .jr-skel-line.is-short { width: 65%; }
-@keyframes jr-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes jr-shimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) {
   .jr-el { animation: jr-fade var(--dur-2) ease-out both; }
   .jr-skel-title, .jr-skel-line { animation: none; }
@@ -4161,7 +4140,6 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
   border: 1px solid var(--stroke);
   border-right: 0;
   background: var(--glass-2);
-  backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow-1);
   color: var(--ink-2);
   outline: none;
@@ -4188,7 +4166,7 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
   font: inherit;
   color: var(--glass-ink);
   background: rgba(250, 251, 254, 0.96);
-  backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: var(--glass-blur);
 }
 .dark .rail-sheet[data-slot="sheet-content"] {
   background: rgba(20, 28, 44, 0.96);
@@ -4270,7 +4248,7 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
   border-radius: 999px;
   background: var(--glass-3);
   border: 1px solid var(--stroke, rgba(255, 255, 255, 0.72));
-  backdrop-filter: saturate(160%) blur(36px);
+  backdrop-filter: var(--glass-pop-filter);
   box-shadow: var(--shadow-2), var(--inset-hl, inset 0 1px 0 rgba(255, 255, 255, 0.6));
   color: var(--ink-1);
   animation: update-banner-in var(--dur-3, 300ms) var(--ease-out, ease-out) both;
@@ -4508,7 +4486,7 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 .profile-zoom { display: flex; align-items: center; gap: 10px; width: 200px; font-size: 12px; color: var(--ink-3); }
 .profile-zoom input { flex: 1; accent-color: var(--accent-blue, #3b82f6); }
 .profile-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-2); }
-.profile-setup-overlay { backdrop-filter: blur(14px) saturate(1.1); background: rgba(40, 60, 100, 0.18); }
+.profile-setup-overlay { background: rgba(40, 60, 100, 0.18); }
 
 /* ---------- 右栏「面板 | 计算机」(DESIGN.md §23) ---------- */
 .rail-tabs { position: relative; display: inline-flex; flex: none; width: max-content; padding: 3px; gap: 0; }
@@ -4573,7 +4551,7 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 .computer-screen { background: linear-gradient(160deg, rgba(224, 240, 255, 0.9), rgba(246, 250, 255, 0.95)); }
 .dark .computer-screen { background: linear-gradient(160deg, rgba(56, 78, 110, 0.55), rgba(30, 41, 59, 0.6)); }
 .computer-screen-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; font-size: 13px; color: var(--ink-3); animation: rail-pane-in var(--dur-2) var(--ease-out); }
-.computer-screen-wait.is-dim { background: rgba(255, 255, 255, 0.55); backdrop-filter: blur(2px); color: var(--ink-2); }
+.computer-screen-wait.is-dim { background: rgba(255, 255, 255, 0.55); color: var(--ink-2); }
 .dark .computer-screen-wait.is-dim { background: rgba(15, 23, 42, 0.55); }
 @media (prefers-reduced-motion: reduce) {
   .computer-screen-wait { animation: none; }
@@ -4714,7 +4692,7 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
   border-radius: 16px;
   border: 1px solid var(--stroke);
   background: var(--glass-3);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-pop-filter);
   box-shadow: var(--shadow-2), var(--inset-hl);
   color: var(--ink-1);
   font-size: 13px;
@@ -4883,7 +4861,7 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 .wf-md > :last-child { margin-bottom: 0 !important; }
 .wf-md table { font-size: 13px; }
 .wf-caret { display: inline-block; width: 7px; height: 15px; margin-left: 2px; vertical-align: text-bottom; border-radius: 2px; background: var(--accent-blue); animation: wf-blink 1s steps(2, start) infinite; }
-@keyframes wf-blink { to { visibility: hidden; } }
+@keyframes wf-blink { to { opacity: 0; } }
 .wf-step-thinking { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--ink-3); }
 .wf-dots { display: inline-flex; gap: 3px; }
 .wf-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-blue); animation: wf-bounce 1.2s infinite ease-in-out; }
@@ -4985,12 +4963,12 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 .computer-status-text.is-idle { color: var(--ink-3, var(--muted-foreground)); font-size: 12px; }
 .computer-status-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
 .computer-status[data-pending] .computer-status-dot { background: #0ea5e9; animation: computer-status-pulse 1.2s ease-in-out infinite; }
-@keyframes computer-status-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.45); } 50% { box-shadow: 0 0 0 5px rgba(14, 165, 233, 0); } }
+@keyframes computer-status-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .computer-status[data-pending] .computer-status-dot { animation: none; } }
 .dark .computer-status { background: rgba(255, 255, 255, 0.05); }
 /* 「正在思考…」轻微闪光，告诉用户机器人没卡住。 */
 .reasoning-shimmer { background: linear-gradient(90deg, currentColor 0%, var(--ink-1, #111) 50%, currentColor 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: reasoning-shimmer 1.6s linear infinite; }
-@keyframes reasoning-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes reasoning-shimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 @media (prefers-reduced-motion: reduce) { .reasoning-shimmer { animation: none; -webkit-text-fill-color: currentColor; } }
 /* 聊天里的浏览器动作：一行小条，不再是整张截图（画面在右栏「计算机」）。 */
 .browse-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin: 4px 0; padding: 6px 10px 6px 6px; border-radius: 12px; border: 1px solid var(--line); background: var(--glass-1); font-size: 13px; color: var(--ink-2); cursor: pointer; text-align: left; transition: background 150ms ease, transform 150ms ease; }
@@ -5219,7 +5197,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   position: relative; isolation: isolate; display: flex; flex-direction: column; align-items: stretch; gap: 10px;
   width: min(264px, 100%); min-height: 224px; min-width: 0; padding: 7px 7px 14px; box-sizing: border-box;
   border-radius: 22px; border: 1px solid var(--stroke); background: var(--glass-2);
-  box-shadow: 0 10px 28px rgba(18, 30, 56, 0.12), var(--inset-hl); backdrop-filter: blur(var(--blur-2, 18px)) saturate(1.3);
+  box-shadow: 0 10px 28px rgba(18, 30, 56, 0.12), var(--inset-hl);
   color: var(--ink-1); text-decoration: none !important; cursor: pointer; -webkit-tap-highlight-color: transparent;
   transform: translateY(var(--rp-card-y, 0px)) rotate(var(--rp-card-rot, 0deg));
   transform-origin: 50% 85%;
@@ -5316,7 +5294,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .rp-link-label + .rp-link-domain, .rp-link-label + .rp-link-icon + .rp-link-domain { flex-shrink: 0; max-width: 58%; }
 .rp-link-go {
   position: absolute; top: 14px; right: 14px; width: 24px; height: 24px; padding: 4px; border-radius: 999px;
-  background: rgba(15, 20, 32, 0.55); color: #fff; backdrop-filter: blur(8px);
+  background: rgba(15, 20, 32, 0.55); color: #fff;
   opacity: 0; transform: translate(-2px, 2px); transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out);
 }
 @media (hover: none) { .rp-link-go { opacity: 0.7; transform: none; } }
@@ -5398,7 +5376,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   display: inline-flex; align-items: center; gap: 10px; width: fit-content; max-width: min(360px, 100%); min-width: min(240px, 100%);
   padding: 8px 14px 8px 12px; border-radius: 999px; border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.96); box-shadow: 0 6px 20px rgba(18, 30, 56, 0.1), var(--inset-hl);
-  backdrop-filter: blur(var(--blur-1)); color: #16181d;
+  color: #16181d;
   transition: transform 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
   animation: rp-in var(--dur-2) var(--ease-out) both;
 }
@@ -5437,7 +5415,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 /* 看大图（Hark 风格全屏弹窗：左上白底圆叉关闭、顶部居中文件名、右上白底「↓ 下载」胶囊按钮、两侧白底圆箭头、底部「1 / 2」计数胶囊） */
 .rp-lightbox {
   position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column;
-  background: rgba(10, 12, 18, 0.88); backdrop-filter: blur(18px);
+  background: rgba(10, 12, 18, 0.88);
   animation: rp-fade var(--dur-2) var(--ease-out) both;
 }
 .rp-lightbox[data-closing] { animation: rp-fade-out 150ms var(--ease-in) both; }
@@ -5497,7 +5475,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .rp-lightbox-count {
   display: inline-flex; align-items: center; justify-content: center; padding: 4px 14px;
   border-radius: 999px; background: rgba(20, 24, 34, 0.78); border: 1px solid rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(10px); color: rgba(255, 255, 255, 0.92);
+  color: rgba(255, 255, 255, 0.92);
   font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums;
 }
 .rp-lightbox-dots { display: flex; gap: 6px; }
@@ -5619,7 +5597,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .jr-chart-cursor { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-strong); pointer-events: none; transition: left 80ms linear; }
 .jr-chart-tip {
   position: absolute; top: 2px; z-index: 3; transform: translateX(10px); min-width: 64px; padding: 6px 9px; border-radius: 10px;
-  border: 1px solid var(--stroke); background: var(--glass-3); backdrop-filter: blur(var(--blur-1)); box-shadow: var(--shadow-2);
+  border: 1px solid var(--stroke); background: var(--glass-3); box-shadow: var(--shadow-2);
   font-size: 12px; line-height: 1.45; white-space: nowrap; pointer-events: none; animation: jr-fade var(--dur-1) ease-out;
 }
 .dark .jr-chart-tip { background: rgba(22, 31, 52, 0.92); }
@@ -5761,11 +5739,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 
 /* ── 横向滑动 ── */
 .jr-carousel { position: relative; min-width: 0; }
-.jr-carousel-track { display: grid; grid-auto-flow: column; grid-auto-columns: 78%; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none; padding: 1px; scroll-padding: 1px;
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 14px, #000 calc(100% - 14px), transparent); mask-image: linear-gradient(to right, transparent, #000 14px, #000 calc(100% - 14px), transparent); }
-.jr-carousel.at-start .jr-carousel-track { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent); }
-.jr-carousel.at-end .jr-carousel-track { -webkit-mask-image: linear-gradient(to right, transparent, #000 14px); mask-image: linear-gradient(to right, transparent, #000 14px); }
-.jr-carousel.at-start.at-end .jr-carousel-track { -webkit-mask-image: none; mask-image: none; }
+.jr-carousel-track { display: grid; grid-auto-flow: column; grid-auto-columns: 78%; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none; padding: 1px; scroll-padding: 1px; }
 .jr-carousel-track::-webkit-scrollbar { display: none; }
 .jr-carousel.is-sm .jr-carousel-track { grid-auto-columns: 46%; } .jr-carousel.is-lg .jr-carousel-track { grid-auto-columns: 90%; }
 .jr-carousel-item { min-width: 0; scroll-snap-align: start; display: flex; flex-direction: column; }
@@ -5876,7 +5850,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .live-panel-body { position: relative; }
 .live-panel[data-refreshing] .live-panel-body::after { content: ""; position: absolute; inset: -4px -6px; border-radius: var(--r-md); pointer-events: none; background: linear-gradient(100deg, transparent 30%, color-mix(in oklch, var(--glass-3) 75%, transparent) 50%, transparent 70%); background-size: 260% 100%; animation: jr-sweep 1.5s ease-in-out infinite; }
 .live-panel[data-refreshing] :is(.jr-live, .jr-metric-v, .jr-c-svg, .jr-bars) { opacity: 0.6; transition: opacity var(--dur-2); }
-@keyframes jr-sweep { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+@keyframes jr-sweep { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
 .live-panel[data-stale] .live-panel-body { filter: saturate(0.5); opacity: 0.78; transition: filter var(--dur-2), opacity var(--dur-2); }
 .live-panel-stale { display: inline-flex; align-items: center; gap: 3px; flex: none; height: 20px; padding: 0 7px; border-radius: var(--r-pill); font-size: 12px; font-weight: 500; color: var(--warn); background: var(--warn-soft); }
 
@@ -5979,7 +5953,6 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   display: flex; flex-direction: column; gap: 10px; padding: 12px;
   border-radius: calc(var(--r-xl) - 8px); /* 同心：卡片 24 − 间距 8 */
   background: rgba(255, 255, 255, 0.94); border: 1px solid var(--line-strong); box-shadow: var(--shadow-2);
-  backdrop-filter: blur(var(--blur-2));
   transform-origin: top center;
   animation: rail-lib-in var(--dur-2) var(--ease-out) both;
 }
@@ -6075,7 +6048,6 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   padding: 8px 14px; border-radius: var(--r-bubble); white-space: pre-wrap; overflow-wrap: anywhere;
   font-size: 14px; line-height: 1.6; color: var(--ink-1);
   background: var(--glass-2); border: 1px dashed var(--line-strong); box-shadow: var(--shadow-1);
-  backdrop-filter: blur(var(--blur-1)) saturate(1.2);
 }
 .queued-msg[data-status="failed"] .queued-bubble { border-color: color-mix(in oklch, var(--danger) 45%, transparent); }
 .queued-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 20px; color: var(--ink-3); }
@@ -6096,7 +6068,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .worker-card {
   position: relative; display: flex; flex-direction: column; gap: 6px; width: min(100%, 520px); margin: 8px 0 2px; padding: 10px 12px;
   border-radius: var(--r-md); border: 1px solid var(--stroke); background: var(--glass-1);
-  box-shadow: var(--shadow-1), var(--inset-hl); backdrop-filter: blur(var(--blur-1)) saturate(1.2);
+  box-shadow: var(--shadow-1), var(--inset-hl);
   color: var(--ink-1); font-size: 13px; line-height: 1.5; container-type: inline-size;
   animation: queued-in var(--dur-2) var(--ease-out) both;
   transition: border-color var(--dur-2) var(--ease-out), background-color var(--dur-2) var(--ease-out);
@@ -6173,7 +6145,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 }
 /* 交回来的结果：一行结果卡，点开看全文。 */
 .worker-result-msg { display: flex; justify-content: flex-start; }
-.worker-result { width: min(100%, 560px); border-radius: var(--r-md); border: 1px solid var(--line); background: var(--glass-1); backdrop-filter: blur(var(--blur-1)) saturate(1.2); transition: box-shadow var(--dur-2) var(--ease-out); }
+.worker-result { width: min(100%, 560px); border-radius: var(--r-md); border: 1px solid var(--line); background: var(--glass-1); transition: box-shadow var(--dur-2) var(--ease-out); }
 .worker-result.is-flash { box-shadow: 0 0 0 3px var(--focus); }
 .worker-result-line { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; text-align: left; font-size: 13px; color: var(--ink-2); border-radius: var(--r-md); }
 .worker-result-line:hover { color: var(--ink-1); }
@@ -6391,7 +6363,7 @@ html[data-phone] .glass-topbar { transition: transform var(--dur-2, 200ms) var(-
   border-radius: 22px;
   background: var(--glass-3);
   border: 1px solid var(--stroke, rgba(255, 255, 255, 0.72));
-  backdrop-filter: saturate(160%) blur(36px);
+  backdrop-filter: var(--glass-pop-filter);
   box-shadow: var(--shadow-2), var(--inset-hl, inset 0 1px 0 rgba(255, 255, 255, 0.6));
   color: var(--ink-1);
   animation: install-hint-in var(--dur-3, 300ms) var(--ease-out, ease-out) both;
@@ -7196,7 +7168,6 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .dark .chat-doc-card {
   background: rgba(255, 255, 255, 0.055);
   border-color: rgba(255, 255, 255, 0.09);
-  backdrop-filter: blur(50px);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 .chat-doc-card:hover {
@@ -7218,7 +7189,6 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
   display: flex; align-items: center; gap: 4px; flex: none;
   padding: 2px 4px; border-radius: 999px;
   background: color-mix(in srgb, var(--glass-2) 92%, transparent);
-  backdrop-filter: blur(10px);
   opacity: 0; pointer-events: none;
   transition: opacity 150ms var(--ease-out);
 }
@@ -7452,7 +7422,7 @@ html.dark .sa[data-color="ink"] { --sa-fill: #3b3b46; }
 .bot-ava-field-btn:hover { box-shadow: 0 0 0 3px var(--accent-blue-soft); }
 .bot-ava-field-btn:active { transform: scale(0.97); }
 .bot-ava-field-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-line); }
-.bot-ava-field-cam { position: absolute; right: -2px; bottom: -2px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--popover); border: 1px solid var(--line); color: var(--ink-2); backdrop-filter: blur(8px); }
+.bot-ava-field-cam { position: absolute; right: -2px; bottom: -2px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--popover); border: 1px solid var(--line); color: var(--ink-2); }
 .bot-ava-field-text { display: grid; gap: 6px; justify-items: start; min-width: 0; }
 .bot-ava-field-hint { font-size: 12px; color: var(--ink-4); }
 
@@ -7575,7 +7545,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 
 /* ── 浏览器多标签 + 收藏夹（DESIGN.md §95）──────────────────────────────────────────── */
 .btabs { position: relative; display: flex; align-items: center; gap: 4px; min-width: 0; }
-.btabs-track { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; scroll-behavior: smooth; padding: 2px; mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent); }
+.btabs-track { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; scroll-behavior: smooth; padding: 2px; }
 .btabs-track::-webkit-scrollbar { display: none; }
 .btab { position: relative; flex: 0 1 200px; min-width: 96px; max-width: 220px; height: 32px; display: flex; align-items: center; border-radius: 10px; background: transparent; border: 1px solid transparent; color: var(--ink-2); transition: background var(--dur-1), color var(--dur-1), border-color var(--dur-1), box-shadow var(--dur-1); }
 .btab:hover { background: var(--glass-hover); color: var(--ink-1); }
@@ -7619,7 +7589,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 .bm-drop-wrap { position: relative; }
 .bm-drop { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 9px; font-size: 12.5px; color: var(--ink-2); border: 1px solid var(--line); background: var(--glass-hover); }
 .bm-pop { z-index: 30; animation: rail-pane-in var(--dur-2) var(--ease-out); }
-.bm-menu { position: absolute; left: 0; top: calc(100% + 4px); min-width: 180px; max-width: min(300px, 80vw); max-height: 320px; overflow-y: auto; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, 0.97); border: 1px solid var(--line-strong); box-shadow: 0 12px 32px rgba(22, 36, 62, 0.16); backdrop-filter: blur(18px); }
+.bm-menu { position: absolute; left: 0; top: calc(100% + 4px); min-width: 180px; max-width: min(300px, 80vw); max-height: 320px; overflow-y: auto; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, 0.97); border: 1px solid var(--line-strong); box-shadow: 0 12px 32px rgba(22, 36, 62, 0.16); backdrop-filter: var(--glass-pop-filter); }
 .dark .bm-menu, .dark .bm-manager { background: rgba(20, 28, 44, 0.97); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); }
 .bm-menu-i { width: 100%; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 8px; font-size: 13px; color: var(--ink-1); text-align: left; }
 .bm-menu-i:hover, .bm-menu-i:focus-visible { background: var(--accent-blue-soft); outline: none; }
@@ -7632,7 +7602,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 .bm-star.is-on { color: #f5a623; }
 .bm-star[data-state="done"] { color: #16a34a; }
 /* 管理面板 */
-.bm-manager { position: absolute; right: 0; top: calc(100% + 4px); width: min(460px, 100%); max-height: min(440px, 60vh); display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 16px; background: rgba(255, 255, 255, 0.98); border: 1px solid var(--line-strong); box-shadow: 0 18px 48px rgba(22, 36, 62, 0.2); backdrop-filter: blur(20px); }
+.bm-manager { position: absolute; right: 0; top: calc(100% + 4px); width: min(460px, 100%); max-height: min(440px, 60vh); display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 16px; background: rgba(255, 255, 255, 0.98); border: 1px solid var(--line-strong); box-shadow: 0 18px 48px rgba(22, 36, 62, 0.2); backdrop-filter: var(--glass-pop-filter); }
 .bm-manager-h { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--ink-1); }
 .bm-manager-h > span:first-of-type { flex: none; }
 .bm-manager-n { flex: 1; font-size: 12px; font-weight: 500; color: var(--ink-3); }
@@ -7717,7 +7687,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.85);
   background: rgba(250, 252, 255, 0.96);
-  backdrop-filter: saturate(170%) blur(26px);
+  backdrop-filter: var(--glass-pop-filter);
   box-shadow: var(--glass-shadow-pop);
   color: var(--glass-ink);
   transform-origin: var(--transform-origin);
@@ -8001,7 +7971,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   border-radius: var(--r-md, 14px);
   background: var(--glass-strong);
   box-shadow: var(--glass-shadow-pop);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-pop-filter);
   color: var(--ink-1);
   font-size: 12px;
   line-height: 1.45;
@@ -8179,7 +8149,6 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(15, 20, 32, 0.65);
   color: #fff;
-  backdrop-filter: blur(8px);
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
@@ -8629,7 +8598,6 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   justify-content: center;
   padding: min(14vh, 110px) 16px 24px;
   background: rgba(10, 16, 28, 0.36);
-  backdrop-filter: blur(6px);
   animation: list-enter 140ms var(--ease-out) both;
 }
 .chat-spotlight-panel {
@@ -8638,7 +8606,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   border: 1px solid var(--glass-line);
   background: var(--glass-strong);
   box-shadow: 0 24px 64px rgba(10, 18, 36, 0.34), var(--inset-hl);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-pop-filter);
   overflow: hidden;
 }
 .chat-spotlight-bar {
@@ -9710,4 +9678,50 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
     flex-direction: column;
     align-items: stretch;
   }
+}
+
+/* ==========================================================================================
+ * 渲染预算（2026-10-29，性能审计：毛玻璃层数、天空每帧重画、无限动画是卡顿的主要来源）
+ * - 允许 backdrop-filter 的只有：左栏、右栏、输入框、顶栏（大面板 20px）和弹层（12px），不嵌套，滚动区里不模糊。
+ * - 上面「三档玻璃材质」那层用 !important 给不少小元素加了 backdrop-filter: var(--lg-blur)。
+ *   那层不改、这里也不加 !important：在不该模糊的元素自己身上把 --lg-blur 设成 none，那条规则读到的就是 none。
+ * ======================================================================================== */
+:is(.glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new),
+.glass-main [data-slot="bubble"],
+.jr-card,
+.page-rows,
+.sg-card,
+.page-section > form,
+.page :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(.border-dashed):not(.page-rows) {
+  --lg-blur: none;
+}
+
+/* 性能模式（html[data-perf="on"]，lib/perf-mode.ts）和系统「减少透明度」：不再模糊，大面板换成接近不透明的底色。 */
+html[data-perf="on"] {
+  --glass-blur: none;
+  --glass-pop-filter: none;
+}
+html[data-perf="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer) {
+  --lg-blur: none;
+  --lg-surface: var(--popover);
+  --lg-surface-strong: var(--popover);
+}
+@media (prefers-reduced-transparency: reduce) {
+  html:root {
+    --glass-blur: none;
+    --glass-pop-filter: none;
+  }
+  html:root :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer) {
+    --lg-blur: none;
+    --lg-surface: var(--popover);
+    --lg-surface-strong: var(--popover);
+  }
+}
+
+/* 天空停用（设了壁纸或性能模式，sky-background.tsx 写 html[data-sky-off]）：画布不再显示，露出静态渐变占位。 */
+html[data-sky-off] #sky-root #gl {
+  visibility: hidden;
+}
+html[data-sky-off] #sky-root #skyph {
+  opacity: 1;
 }

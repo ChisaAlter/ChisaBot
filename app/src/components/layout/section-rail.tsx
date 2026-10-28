@@ -90,7 +90,7 @@ export function SectionRail({
       <Sidebar collapsible="icon" variant="floating" {...props}>
         <nav aria-label={ariaLabel} className="glass-mini" id="chisabot-bot-list">
           <div className="glass-card glass-mini-card">
-            <div className="glass-mini-scroll scroll-fade-b">
+            <div className="glass-mini-scroll">
               {groups.map((group, gi) => (
                 <div className="rail-mini-group" key={group.label ?? gi}>
                   {gi > 0 ? <span aria-hidden className="rail-mini-sep" /> : null}
@@ -141,7 +141,7 @@ export function SectionRail({
           {/* DESIGN-v3 §6.1：没有「返回应用」胶囊（顶栏主导航就是回去的路），卡片顶部是区域名。 */}
           <div className="rail-title">{title}</div>
           {header}
-          <div className="glass-side-scroll rail-scroll scroll-fade-b" ref={scrollRef}>
+          <div className="glass-side-scroll rail-scroll" ref={scrollRef}>
             {body ?? groups.map((group, gi) =>
               group.collapsible && !(group.collapsible.desktopOnly && sidebar?.isMobile) ? (
                 <CollapsibleGroup anyHere={anyHere} first={gi === 0} group={group} key={group.label ?? gi} />

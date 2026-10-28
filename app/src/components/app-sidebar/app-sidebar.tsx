@@ -815,7 +815,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               {/* CB-106 r2：读屏的 listbox；每条结果外面包一层 option，和输入框的 combobox 对上。 */}
               <div
                 aria-label={"搜索结果"}
-                className="glass-side-scroll scroll-fade-b"
+                className="glass-side-scroll"
                 id={SEARCH_RESULTS_ID}
                 ref={scrollRoot}
                 role="listbox"
@@ -922,7 +922,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </>
           ) : (
             <>
-              <div className="glass-side-scroll glass-bot-scroll scroll-fade-b">
+              <div className="glass-side-scroll glass-bot-scroll">
                 <HiddenChatBotRow
                   known={new Set(roster.map((bot) => bot.id))}
                 />
@@ -1024,7 +1024,7 @@ function BotMiniRail({
         </button>
       </RailTip>
       <div className="glass-card glass-mini-card">
-        <div className="glass-mini-scroll scroll-fade-b">
+        <div className="glass-mini-scroll">
           <HiddenChatMiniBot known={new Set(bots.map((bot) => bot.id))} />
           {bots.map((bot) => (
             <MiniBot
