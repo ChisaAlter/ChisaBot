@@ -1,14 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
   computePaletteSky,
   getAppearanceState,
+  HARK_SKY_SCENES,
   resetAppearanceDefaults,
   resolveActiveWallpaperCss,
+  resolveEffectiveHarkScene,
   setCustomWallpaperUrl,
   setGlassOpacity,
   setGlassStyle,
+  setHarkSkyScene,
   setThemePalette,
   setWallpaperBlur,
   setWallpaperDim,
@@ -19,7 +22,7 @@ import {
 
 const css = readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8");
 
-describe("appearance palettes, wallpapers & liquid glass", () => {
+describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () => {
   test("provides 8 curated theme palettes and computes sky variables for non-default palettes", () => {
     expect(THEME_PALETTES.length).toBe(8);
     expect(computePaletteSky("default", false)).toBeNull();
@@ -32,6 +35,28 @@ describe("appearance palettes, wallpapers & liquid glass", () => {
       expect(light?.body["--sky-1"]).toBeTruthy();
       expect(dark?.body["--sky-1"]).toBeTruthy();
     }
+  });
+
+  test("provides Hark WebGL wallpaper_core.html and 12 curated sky scenes plus auto and live modes", () => {
+    const wallpaperHtmlPath = path.join(import.meta.dir, "../public/wallpaper_core.html");
+    expect(existsSync(wallpaperHtmlPath)).toBe(true);
+    const wallpaperHtml = readFileSync(wallpaperHtmlPath, "utf8");
+    expect(wallpaperHtml).toContain("window.hark");
+    expect(wallpaperHtml).toContain("const SCENES = [");
+
+    expect(HARK_SKY_SCENES.length).toBe(14);
+    resetAppearanceDefaults();
+    expect(getAppearanceState().harkScene).toBe("auto");
+    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(0);
+    expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe(4);
+
+    setHarkSkyScene("1");
+    expect(getAppearanceState().harkScene).toBe("1");
+    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(1);
+    expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe(1);
+
+    setHarkSkyScene("live");
+    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe("live");
   });
 
   test("resolves built-in and custom wallpaper CSS backgrounds, glass opacity, and resets cleanly", () => {
@@ -72,15 +97,17 @@ describe("appearance palettes, wallpapers & liquid glass", () => {
     expect(getAppearanceState().palette).toBe("default");
     expect(getAppearanceState().glassStyle).toBe("liquid");
     expect(getAppearanceState().glassOpacity).toBe(16);
+    expect(getAppearanceState().harkScene).toBe("auto");
     expect(getAppearanceState().wallpaperId).toBe("none");
   });
 
-  test("styles.css defines translucent liquid glass surface tokens, ambient orbs, and applies them to core workspace panels", () => {
+  test("styles.css defines Hark #sky-root, 50px Gaussian blur glass tokens, and applies them to core workspace panels", () => {
+    expect(css).toContain("#sky-root");
     expect(css).toContain('html[data-glass="liquid"]');
     expect(css).toContain('html[data-glass="crystal"]');
     expect(css).toContain("--lg-alpha: 0.16");
+    expect(css).toContain("--lg-blur: blur(50px)");
     expect(css).toContain(".chisabot-wallpaper");
-    expect(css).toContain(".chisabot-ambient-orbs");
     expect(css).toContain(":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)");
   });
 });

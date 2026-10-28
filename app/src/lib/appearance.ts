@@ -1,16 +1,17 @@
+import { useSyncExternalStore } from "react";
 import {
   readStoredPreference,
   writeStoredPreference,
 } from "@/lib/preference-storage";
-import type { SkyVars } from "@/lib/sky";
 
-export const PALETTE_STORAGE_KEY = "chisabot-palette";
+export const PALETTE_STORAGE_KEY = "chisabot-theme-palette";
 export const WALLPAPER_ID_STORAGE_KEY = "chisabot-wallpaper-id";
-export const WALLPAPER_CUSTOM_STORAGE_KEY = "chisabot-wallpaper-custom";
+export const WALLPAPER_CUSTOM_URL_STORAGE_KEY = "chisabot-wallpaper-custom-url";
 export const WALLPAPER_BLUR_STORAGE_KEY = "chisabot-wallpaper-blur";
 export const WALLPAPER_DIM_STORAGE_KEY = "chisabot-wallpaper-dim";
 export const GLASS_STYLE_STORAGE_KEY = "chisabot-glass-style";
 export const GLASS_OPACITY_STORAGE_KEY = "chisabot-glass-opacity";
+export const HARK_SCENE_STORAGE_KEY = "chisabot-hark-scene";
 
 export type ThemePaletteId =
   | "default"
@@ -24,769 +25,866 @@ export type ThemePaletteId =
 
 export type GlassStyleId = "liquid" | "crystal" | "frosted";
 
-export type WallpaperPresetId =
-  | "none"
-  | "mist"
-  | "fluid"
-  | "aurora"
-  | "ocean"
-  | "sakura"
-  | "sunset"
-  | "cyber"
-  | "custom";
+/**
+ * Hark 原生 WebGL 动态天空与天气引擎（wallpaper_core.html）内置的 12 个精选场景 + 自动跟随模式。
+ * - "auto": 根据当前主题配色与浅色/深色模式自动匹配最佳 Hark 动态天空场景
+ * - "live": 根据当前时间与实时天气（Open-Meteo）动态演算太阳高度、瑞利散射与云层
+ * - "0".."11": 对应 wallpaper_core.html 中 SCENES[0..11] 的 12 个精选地标与气象时刻
+ */
+export type HarkSkySceneId =
+  | "auto"
+  | "live"
+  | "0"
+  | "1"
+  | "2"
+  | "3"
+  | "4"
+  | "5"
+  | "6"
+  | "7"
+  | "8"
+  | "9"
+  | "10"
+  | "11";
 
-export type ThemePaletteDef = {
-  id: ThemePaletteId;
+export type HarkSkySceneMeta = {
+  id: HarkSkySceneId;
+  sceneIndex: number | null;
   name: string;
-  desc: string;
-  swatch: string;
-  accentLight: string;
-  accentDark: string;
-  lightSky?: {
-    sky1: string;
-    sky2: string;
-    sky3: string;
-    sky4: string;
-    cloud: string;
-    glow: string;
-    stars: string;
-    lift: string;
-    muted: string;
-  };
-  darkSky?: {
-    sky1: string;
-    sky2: string;
-    sky3: string;
-    sky4: string;
-    cloud: string;
-    glow: string;
-    stars: string;
-    lift: string;
-    muted: string;
-  };
+  subtitle: string;
+  previewGradient: string;
+  isNight: boolean;
 };
 
-export const THEME_PALETTES: readonly ThemePaletteDef[] = [
+export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
+  {
+    id: "auto",
+    sceneIndex: null,
+    name: "智能跟随主题",
+    subtitle: "随浅色 / 深色与主题色自动切换晴空与夜幕",
+    previewGradient: "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 42%, #6da7ec 76%, #b0d5f7 100%)",
+    isNight: false,
+  },
+  {
+    id: "live",
+    sceneIndex: -1,
+    name: "实时动态天象",
+    subtitle: "按真实太阳轨迹与实时云量动态演进",
+    previewGradient: "linear-gradient(180deg, #164e9f 0%, #3875ca 45%, #79b0ef 80%, #cbe3fa 100%)",
+    isNight: false,
+  },
+  {
+    id: "0",
+    sceneIndex: 0,
+    name: "帕洛阿尔托 · 晴朗",
+    subtitle: "Palo Alto · 午后澄澈蓝天与轻柔积云",
+    previewGradient: "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 40%, #6da7ec 75%, #b0d5f7 100%)",
+    isNight: false,
+  },
+  {
+    id: "1",
+    sceneIndex: 1,
+    name: "纽约 · 日落",
+    subtitle: "New York · 暮色紫罗兰与暖金晚霞",
+    previewGradient: "linear-gradient(180deg, #2d386c 0%, #61578a 38%, #ba6d79 72%, #eb9a68 100%)",
+    isNight: false,
+  },
+  {
+    id: "2",
+    sceneIndex: 2,
+    name: "雷克雅未克 · 午夜",
+    subtitle: "Reykjavik · 北极圈深邃午夜蓝天幕",
+    previewGradient: "linear-gradient(180deg, #070b16 0%, #0e1629 42%, #17233e 76%, #213254 100%)",
+    isNight: true,
+  },
+  {
+    id: "3",
+    sceneIndex: 3,
+    name: "伦敦 · 雨天",
+    subtitle: "London · 温润雨云与柔和蓝灰天光",
+    previewGradient: "linear-gradient(180deg, #3c4f6b 0%, #566d8c 44%, #768ea8 78%, #9cb0c4 100%)",
+    isNight: false,
+  },
+  {
+    id: "4",
+    sceneIndex: 4,
+    name: "柏林 · 夜晚",
+    subtitle: "Berlin · 静谧欧陆夜空与微光云层",
+    previewGradient: "linear-gradient(180deg, #090d18 0%, #10182b 42%, #18233c 76%, #22304e 100%)",
+    isNight: true,
+  },
+  {
+    id: "5",
+    sceneIndex: 5,
+    name: "太浩湖 · 降雪",
+    subtitle: "Lake Tahoe · 高山雪霁与清冽冰晶天光",
+    previewGradient: "linear-gradient(180deg, #4b6cb7 0%, #6d8ec9 42%, #9bb4de 76%, #cfe0f5 100%)",
+    isNight: false,
+  },
+  {
+    id: "6",
+    sceneIndex: 6,
+    name: "凤凰城 · 黄金时刻",
+    subtitle: "Phoenix · 沙漠暖金斜阳与散射光晕",
+    previewGradient: "linear-gradient(180deg, #2b5899 0%, #5c7db0 38%, #b88b7c 72%, #f0b175 100%)",
+    isNight: false,
+  },
+  {
+    id: "7",
+    sceneIndex: 7,
+    name: "东京 · 清晨",
+    subtitle: "Tokyo · 清透晨曦与明快高空卷云",
+    previewGradient: "linear-gradient(180deg, #1a54a6 0%, #3c7ad1 40%, #74aee8 75%, #bce0fb 100%)",
+    isNight: false,
+  },
+  {
+    id: "8",
+    sceneIndex: 8,
+    name: "德里 · 薄雾",
+    subtitle: "Delhi · 柔和暮霭与暖调琥珀天际",
+    previewGradient: "linear-gradient(180deg, #464c6e 0%, #78697d 42%, #b07f78 76%, #d99b72 100%)",
+    isNight: false,
+  },
+  {
+    id: "9",
+    sceneIndex: 9,
+    name: "旧金山 · 浓雾",
+    subtitle: "San Francisco · 海湾流雾与轻柔云海",
+    previewGradient: "linear-gradient(180deg, #4a6588 0%, #6a85a6 42%, #8fa8c2 76%, #b8cce0 100%)",
+    isNight: false,
+  },
+  {
+    id: "10",
+    sceneIndex: 10,
+    name: "迈阿密 · 雷暴",
+    subtitle: "Miami · 热带深邃风暴云与暮色天际",
+    previewGradient: "linear-gradient(180deg, #161d31 0%, #26314d 42%, #3a4769 76%, #536182 100%)",
+    isNight: true,
+  },
+  {
+    id: "11",
+    sceneIndex: 11,
+    name: "檀香山 · 黎明",
+    subtitle: "Honolulu · 太平洋破晓粉金晨曦",
+    previewGradient: "linear-gradient(180deg, #2c4a82 0%, #5d6ca1 38%, #a8829b 72%, #eab093 100%)",
+    isNight: false,
+  },
+] as const;
+
+export type ThemePaletteMeta = {
+  id: ThemePaletteId;
+  name: string;
+  subtitle: string;
+  accentLight: string;
+  accentDark: string;
+  swatchGradient: string;
+  skyHueLight: [number, number, number, number];
+  skySatLight: [number, number, number, number];
+  skyHueDark: [number, number, number, number];
+  skySatDark: [number, number, number, number];
+  /** 默认关联的日间 / 夜间 Hark WebGL 天空场景索引 */
+  harkSceneLight: number;
+  harkSceneDark: number;
+};
+
+export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
   {
     id: "default",
-    name: "晴空蓝",
-    desc: "经典晴空与深邃夜空",
-    swatch: "linear-gradient(135deg, #2f74f0 0%, #84aee0 52%, #12203a 100%)",
-    accentLight: "#2f74f0",
-    accentDark: "#5b95ff",
+    name: "晴空冰蓝",
+    subtitle: "Hark 原生动态天空与半透明毛玻璃",
+    accentLight: "#2f7cf6",
+    accentDark: "#4c8dff",
+    swatchGradient: "linear-gradient(135deg, #1d57a9 0%, #3e7bd1 50%, #6da7ec 100%)",
+    skyHueLight: [214, 212, 208, 204],
+    skySatLight: [71, 62, 68, 82],
+    skyHueDark: [222, 220, 218, 216],
+    skySatDark: [45, 44, 42, 40],
+    harkSceneLight: 0,
+    harkSceneDark: 4,
   },
   {
     id: "aurora",
-    name: "极光紫",
-    desc: "梦幻星云与北极光紫",
-    swatch: "linear-gradient(135deg, #7c3aed 0%, #c084fc 52%, #1e1b4b 100%)",
+    name: "极光幻紫",
+    subtitle: "北极星夜紫罗兰与青蓝极光流彩",
     accentLight: "#7c3aed",
     accentDark: "#a78bfa",
-    lightSky: {
-      sky1: "#7466dc",
-      sky2: "#9f87f5",
-      sky3: "#d4c4fb",
-      sky4: "#f1ebff",
-      cloud: "rgba(245, 236, 255, 0.72)",
-      glow: "rgba(216, 180, 254, 0.58)",
-      stars: "0.15",
-      lift: "0.02",
-      muted: "#5b5475",
-    },
-    darkSky: {
-      sky1: "#181338",
-      sky2: "#261c58",
-      sky3: "#382778",
-      sky4: "#4a3294",
-      cloud: "rgba(192, 132, 252, 0.28)",
-      glow: "rgba(232, 121, 249, 0.34)",
-      stars: "0.85",
-      lift: "0",
-      muted: "#b8b0d4",
-    },
+    swatchGradient: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 52%, #ec4899 100%)",
+    skyHueLight: [258, 266, 276, 245],
+    skySatLight: [64, 58, 52, 48],
+    skyHueDark: [262, 256, 248, 272],
+    skySatDark: [52, 48, 44, 42],
+    harkSceneLight: 11,
+    harkSceneDark: 2,
   },
   {
     id: "emerald",
-    name: "翡翠森",
-    desc: "晨雾松林与碧玉青绿",
-    swatch: "linear-gradient(135deg, #059669 0%, #6ee7b7 52%, #064e3b 100%)",
+    name: "翡翠森境",
+    subtitle: "雨后松林薄雾与通透翡翠玻璃",
     accentLight: "#059669",
     accentDark: "#34d399",
-    lightSky: {
-      sky1: "#3d9982",
-      sky2: "#73c2ad",
-      sky3: "#b6e3d5",
-      sky4: "#e6f7f1",
-      cloud: "rgba(235, 255, 248, 0.72)",
-      glow: "rgba(167, 243, 208, 0.55)",
-      stars: "0",
-      lift: "0",
-      muted: "#4d6860",
-    },
-    darkSky: {
-      sky1: "#0a2621",
-      sky2: "#113d35",
-      sky3: "#195449",
-      sky4: "#226b5d",
-      cloud: "rgba(52, 211, 153, 0.25)",
-      glow: "rgba(110, 231, 183, 0.3)",
-      stars: "0.65",
-      lift: "0",
-      muted: "#a3c9be",
-    },
+    swatchGradient: "linear-gradient(135deg, #059669 0%, #10b981 52%, #2dd4bf 100%)",
+    skyHueLight: [164, 168, 172, 158],
+    skySatLight: [56, 50, 44, 42],
+    skyHueDark: [168, 172, 176, 162],
+    skySatDark: [46, 42, 38, 36],
+    harkSceneLight: 5,
+    harkSceneDark: 4,
   },
   {
     id: "sakura",
-    name: "樱花粉",
-    desc: "春日绯樱与暮色玫瑰",
-    swatch: "linear-gradient(135deg, #db2777 0%, #f9a8d4 52%, #4a153b 100%)",
+    name: "樱花绯粉",
+    subtitle: "春日落樱柔粉与暖调玫瑰天幕",
     accentLight: "#db2777",
     accentDark: "#f472b6",
-    lightSky: {
-      sky1: "#cf7da5",
-      sky2: "#eba4c4",
-      sky3: "#f7cfe1",
-      sky4: "#fdf0f6",
-      cloud: "rgba(255, 244, 250, 0.74)",
-      glow: "rgba(251, 207, 232, 0.62)",
-      stars: "0",
-      lift: "0",
-      muted: "#6e5262",
-    },
-    darkSky: {
-      sky1: "#2a1224",
-      sky2: "#421b38",
-      sky3: "#5c264e",
-      sky4: "#733162",
-      cloud: "rgba(244, 114, 182, 0.26)",
-      glow: "rgba(251, 113, 133, 0.3)",
-      stars: "0.7",
-      lift: "0",
-      muted: "#ccb0c2",
-    },
+    swatchGradient: "linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fda4af 100%)",
+    skyHueLight: [336, 342, 348, 326],
+    skySatLight: [66, 60, 54, 48],
+    skyHueDark: [334, 328, 340, 320],
+    skySatDark: [44, 40, 38, 35],
+    harkSceneLight: 11,
+    harkSceneDark: 1,
   },
   {
     id: "ocean",
-    name: "深海蓝",
-    desc: "琉璃浅滩与深海幽蓝",
-    swatch: "linear-gradient(135deg, #0284c7 0%, #38bdf8 52%, #082f49 100%)",
+    name: "深海蔚蓝",
+    subtitle: "太平洋深潜青蓝与冰晶折射高光",
     accentLight: "#0284c7",
     accentDark: "#38bdf8",
-    lightSky: {
-      sky1: "#3492b5",
-      sky2: "#6ec0dc",
-      sky3: "#b6e3f2",
-      sky4: "#e5f6fc",
-      cloud: "rgba(235, 252, 255, 0.74)",
-      glow: "rgba(165, 243, 252, 0.58)",
-      stars: "0",
-      lift: "0",
-      muted: "#4d6470",
-    },
-    darkSky: {
-      sky1: "#072236",
-      sky2: "#0e3654",
-      sky3: "#164d73",
-      sky4: "#1e6491",
-      cloud: "rgba(34, 211, 238, 0.26)",
-      glow: "rgba(56, 189, 248, 0.32)",
-      stars: "0.75",
-      lift: "0",
-      muted: "#a4c2d6",
-    },
+    swatchGradient: "linear-gradient(135deg, #0369a1 0%, #0ea5e9 50%, #22d3ee 100%)",
+    skyHueLight: [196, 199, 202, 192],
+    skySatLight: [76, 70, 62, 56],
+    skyHueDark: [198, 202, 206, 194],
+    skySatDark: [56, 52, 48, 44],
+    harkSceneLight: 7,
+    harkSceneDark: 2,
   },
   {
     id: "sunset",
-    name: "暮光金",
-    desc: "落日熔金与琥珀暖橙",
-    swatch: "linear-gradient(135deg, #d97706 0%, #fb923c 52%, #431407 100%)",
+    name: "落日琥珀",
+    subtitle: "黄金时刻暖橙晚霞与焦糖流光",
     accentLight: "#d97706",
     accentDark: "#fbbf24",
-    lightSky: {
-      sky1: "#c7785e",
-      sky2: "#e4a278",
-      sky3: "#f5cba3",
-      sky4: "#fceedd",
-      cloud: "rgba(255, 246, 235, 0.7)",
-      glow: "rgba(253, 186, 116, 0.65)",
-      stars: "0",
-      lift: "0.02",
-      muted: "#6b584d",
-    },
-    darkSky: {
-      sky1: "#2b1610",
-      sky2: "#452419",
-      sky3: "#613324",
-      sky4: "#7a422e",
-      cloud: "rgba(251, 146, 60, 0.26)",
-      glow: "rgba(245, 158, 11, 0.32)",
-      stars: "0.65",
-      lift: "0",
-      muted: "#ccb4a6",
-    },
+    swatchGradient: "linear-gradient(135deg, #ea580c 0%, #f59e0b 52%, #fb7185 100%)",
+    skyHueLight: [28, 34, 40, 18],
+    skySatLight: [74, 68, 60, 54],
+    skyHueDark: [26, 22, 32, 16],
+    skySatDark: [46, 42, 38, 34],
+    harkSceneLight: 6,
+    harkSceneDark: 1,
   },
   {
     id: "crimson",
-    name: "绯红星",
-    desc: "丝绒红宝石与暗夜星云",
-    swatch: "linear-gradient(135deg, #e11d48 0%, #fb7185 52%, #3b0718 100%)",
+    name: "绯红曜石",
+    subtitle: "千咲丝带绯红与冷冽银白水晶对比",
     accentLight: "#e11d48",
     accentDark: "#fb7185",
-    lightSky: {
-      sky1: "#b85c77",
-      sky2: "#da8ba2",
-      sky3: "#f0bfd0",
-      sky4: "#faeaf0",
-      cloud: "rgba(255, 240, 245, 0.7)",
-      glow: "rgba(253, 164, 175, 0.58)",
-      stars: "0",
-      lift: "0.02",
-      muted: "#6b5059",
-    },
-    darkSky: {
-      sky1: "#290b17",
-      sky2: "#421226",
-      sky3: "#5e1a36",
-      sky4: "#782245",
-      cloud: "rgba(244, 63, 94, 0.26)",
-      glow: "rgba(251, 113, 133, 0.3)",
-      stars: "0.75",
-      lift: "0",
-      muted: "#ccaab5",
-    },
+    swatchGradient: "linear-gradient(135deg, #be123c 0%, #e11d48 52%, #fb7185 100%)",
+    skyHueLight: [350, 354, 346, 338],
+    skySatLight: [64, 56, 48, 44],
+    skyHueDark: [350, 346, 354, 340],
+    skySatDark: [46, 42, 38, 34],
+    harkSceneLight: 1,
+    harkSceneDark: 10,
   },
   {
     id: "obsidian",
-    name: "曜石黑",
-    desc: "极简银灰与黑曜石质感",
-    swatch: "linear-gradient(135deg, #475569 0%, #94a3b8 52%, #090d16 100%)",
+    name: "曜石极简",
+    subtitle: "纯粹石墨灰阶与高对比液态银镜",
     accentLight: "#334155",
     accentDark: "#94a3b8",
-    lightSky: {
-      sky1: "#8a96a8",
-      sky2: "#b0bac9",
-      sky3: "#d5dce6",
-      sky4: "#eef1f6",
-      cloud: "rgba(255, 255, 255, 0.68)",
-      glow: "rgba(226, 232, 240, 0.5)",
-      stars: "0",
-      lift: "0",
-      muted: "#58606e",
-    },
-    darkSky: {
-      sky1: "#111622",
-      sky2: "#1b2234",
-      sky3: "#263047",
-      sky4: "#323f5c",
-      cloud: "rgba(148, 163, 184, 0.22)",
-      glow: "rgba(203, 213, 225, 0.24)",
-      stars: "0.5",
-      lift: "0",
-      muted: "#a8b3c7",
-    },
+    swatchGradient: "linear-gradient(135deg, #1e293b 0%, #475569 52%, #94a3b8 100%)",
+    skyHueLight: [215, 215, 215, 215],
+    skySatLight: [16, 14, 12, 10],
+    skyHueDark: [220, 220, 220, 220],
+    skySatDark: [14, 12, 10, 10],
+    harkSceneLight: 9,
+    harkSceneDark: 4,
   },
-];
+] as const;
 
-function svgDataUri(svg: string): string {
-  return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg.trim())}")`;
-}
+export type WallpaperPresetId =
+  | "none"
+  | "aurora-mesh"
+  | "cyber-neon"
+  | "mountain-mist"
+  | "ocean-abyss"
+  | "sakura-dream"
+  | "sunset-dunes"
+  | "starlight-cosmos"
+  | "custom";
 
-export type WallpaperPresetDef = {
+export type WallpaperPresetMeta = {
   id: Exclude<WallpaperPresetId, "custom">;
   name: string;
-  desc: string;
-  preview: string;
-  backgroundImage: string;
+  subtitle: string;
+  previewBackground: string;
+  cssImage: string | null;
 };
 
-export const WALLPAPER_PRESETS: readonly WallpaperPresetDef[] = [
+function svgDataUri(svg: string): string {
+  return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg.trim().replace(/\s+/g, " "))}")`;
+}
+
+export const WALLPAPER_PRESETS: readonly WallpaperPresetMeta[] = [
   {
     id: "none",
-    name: "默认天空",
-    desc: "跟随主题配色与液态光晕",
-    preview: "linear-gradient(180deg, #6f9bc7 0%, #9dbddc 48%, #e4ecf3 100%)",
-    backgroundImage: "",
+    name: "Hark 动态天空（默认）",
+    subtitle: "使用 Hark 原生 WebGL 实时大气散射与流云引擎",
+    previewBackground:
+      "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 40%, #6da7ec 76%, #b0d5f7 100%)",
+    cssImage: null,
   },
   {
-    id: "mist",
-    name: "雾蓝光晕",
-    desc: "极简雾蓝渐变与柔光球（液态玻璃推荐）",
-    preview:
-      "radial-gradient(circle at 46% 32%, rgba(255,255,255,0.75) 0%, rgba(165,188,238,0.45) 36%, transparent 68%), linear-gradient(165deg, #4f6398 0%, #7d92c2 52%, #c2cfe8 100%)",
-    backgroundImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+    id: "aurora-mesh",
+    name: "极光流彩星云",
+    subtitle: "柔焦紫青极光丝带与深邃星芒",
+    previewBackground:
+      "radial-gradient(circle at 20% 20%, #8b5cf6 0%, transparent 55%), radial-gradient(circle at 80% 30%, #06b6d4 0%, transparent 55%), radial-gradient(circle at 50% 80%, #ec4899 0%, transparent 60%), linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #090d16 100%)",
+    cssImage: svgDataUri(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
         <defs>
-          <linearGradient id="mbg" x1="0%" y1="0%" x2="85%" y2="100%">
-            <stop offset="0%" stop-color="#43568a"/>
-            <stop offset="46%" stop-color="#6e83b7"/>
-            <stop offset="82%" stop-color="#9fb1d7"/>
-            <stop offset="100%" stop-color="#cad5ec"/>
+          <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#0b1120"/>
+            <stop offset="50%" stop-color="#1e1b4b"/>
+            <stop offset="100%" stop-color="#090d16"/>
           </linearGradient>
-          <radialGradient id="orb1" cx="46%" cy="30%" r="36%">
-            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.78"/>
-            <stop offset="38%" stop-color="#dce7ff" stop-opacity="0.48"/>
-            <stop offset="72%" stop-color="#8da4d8" stop-opacity="0.16"/>
-            <stop offset="100%" stop-color="#586ea3" stop-opacity="0"/>
+          <radialGradient id="g1" cx="22%" cy="24%" r="52%">
+            <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.78"/>
+            <stop offset="55%" stop-color="#6366f1" stop-opacity="0.28"/>
+            <stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>
           </radialGradient>
-          <radialGradient id="orb2" cx="14%" cy="68%" r="38%">
-            <stop offset="0%" stop-color="#c7d8ff" stop-opacity="0.55"/>
-            <stop offset="55%" stop-color="#7c93c9" stop-opacity="0.22"/>
-            <stop offset="100%" stop-color="#43568a" stop-opacity="0"/>
+          <radialGradient id="g2" cx="82%" cy="28%" r="48%">
+            <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.72"/>
+            <stop offset="55%" stop-color="#0ea5e9" stop-opacity="0.25"/>
+            <stop offset="100%" stop-color="#0ea5e9" stop-opacity="0"/>
           </radialGradient>
-          <radialGradient id="orb3" cx="86%" cy="28%" r="34%">
-            <stop offset="0%" stop-color="#e0eaff" stop-opacity="0.58"/>
-            <stop offset="52%" stop-color="#8fa6db" stop-opacity="0.24"/>
-            <stop offset="100%" stop-color="#43568a" stop-opacity="0"/>
+          <radialGradient id="g3" cx="54%" cy="82%" r="55%">
+            <stop offset="0%" stop-color="#ec4899" stop-opacity="0.62"/>
+            <stop offset="55%" stop-color="#a855f7" stop-opacity="0.2"/>
+            <stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
           </radialGradient>
-          <radialGradient id="orb4" cx="82%" cy="82%" r="40%">
-            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.52"/>
-            <stop offset="50%" stop-color="#b8caec" stop-opacity="0.25"/>
-            <stop offset="100%" stop-color="#6e83b7" stop-opacity="0"/>
+          <radialGradient id="g4" cx="18%" cy="78%" r="42%">
+            <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.5"/>
+            <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0"/>
           </radialGradient>
         </defs>
-        <rect width="1920" height="1080" fill="url(#mbg)"/>
-        <rect width="1920" height="1080" fill="url(#orb1)"/>
-        <rect width="1920" height="1080" fill="url(#orb2)"/>
-        <rect width="1920" height="1080" fill="url(#orb3)"/>
-        <rect width="1920" height="1080" fill="url(#orb4)"/>
-        <path d="M-100,720 C360,540 820,860 1320,640 C1620,500 1820,680 2020,580 L2020,1080 L-100,1080 Z" fill="#ffffff" fill-opacity="0.16"/>
+        <rect width="1600" height="1000" fill="url(#bg)"/>
+        <rect width="1600" height="1000" fill="url(#g1)"/>
+        <rect width="1600" height="1000" fill="url(#g2)"/>
+        <rect width="1600" height="1000" fill="url(#g3)"/>
+        <rect width="1600" height="1000" fill="url(#g4)"/>
+        <path d="M-100,620 C320,420 680,780 1120,500 C1360,350 1520,480 1720,390 L1720,1050 L-100,1050 Z" fill="#ffffff" fill-opacity="0.04"/>
+        <path d="M-100,320 C380,540 820,160 1280,420 C1480,530 1600,380 1720,440 L1720,1050 L-100,1050 Z" fill="#38bdf8" fill-opacity="0.06"/>
       </svg>
     `),
   },
   {
-    id: "fluid",
-    name: "流光幻境",
-    desc: "多彩液态丝绸光影，凸显玻璃折射",
-    preview:
-      "radial-gradient(circle at 20% 25%, #38bdf8 0%, transparent 50%), radial-gradient(circle at 80% 30%, #ec4899 0%, transparent 55%), radial-gradient(circle at 50% 80%, #8b5cf6 0%, #1e293b 100%)",
-    backgroundImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+    id: "mountain-mist",
+    name: "远山云海晨雾",
+    subtitle: "层叠水墨青峦与清晨柔光云海",
+    previewBackground:
+      "linear-gradient(180deg, #93c5fd 0%, #e0f2fe 45%, #64748b 78%, #1e293b 100%)",
+    cssImage: svgDataUri(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
         <defs>
-          <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#1e295b"/>
-            <stop offset="48%" stop-color="#312e81"/>
-            <stop offset="100%" stop-color="#1e3a5f"/>
+          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#38bdf8"/>
+            <stop offset="38%" stop-color="#bae6fd"/>
+            <stop offset="68%" stop-color="#f8fafc"/>
+            <stop offset="100%" stop-color="#cbd5e1"/>
           </linearGradient>
-          <radialGradient id="g1" cx="18%" cy="30%" r="52%">
-            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.92"/>
-            <stop offset="50%" stop-color="#6366f1" stop-opacity="0.52"/>
-            <stop offset="100%" stop-color="#1e295b" stop-opacity="0"/>
+          <radialGradient id="sun" cx="72%" cy="26%" r="36%">
+            <stop offset="0%" stop-color="#fef08a" stop-opacity="0.85"/>
+            <stop offset="50%" stop-color="#fde047" stop-opacity="0.28"/>
+            <stop offset="100%" stop-color="#fde047" stop-opacity="0"/>
           </radialGradient>
-          <radialGradient id="g2" cx="82%" cy="28%" r="50%">
-            <stop offset="0%" stop-color="#f472b6" stop-opacity="0.9"/>
-            <stop offset="55%" stop-color="#a855f7" stop-opacity="0.48"/>
-            <stop offset="100%" stop-color="#312e81" stop-opacity="0"/>
-          </radialGradient>
-          <radialGradient id="g3" cx="50%" cy="76%" r="56%">
-            <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.82"/>
-            <stop offset="52%" stop-color="#60a5fa" stop-opacity="0.45"/>
-            <stop offset="100%" stop-color="#1e295b" stop-opacity="0"/>
-          </radialGradient>
-          <linearGradient id="w1" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.55"/>
-            <stop offset="50%" stop-color="#f472b6" stop-opacity="0.65"/>
-            <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.52"/>
-          </linearGradient>
-          <linearGradient id="w2" x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#a855f7" stop-opacity="0.45"/>
-            <stop offset="50%" stop-color="#2dd4bf" stop-opacity="0.55"/>
-            <stop offset="100%" stop-color="#93c5fd" stop-opacity="0.45"/>
-          </linearGradient>
         </defs>
-        <rect width="1920" height="1080" fill="url(#bg)"/>
-        <rect width="1920" height="1080" fill="url(#g1)"/>
-        <rect width="1920" height="1080" fill="url(#g2)"/>
-        <rect width="1920" height="1080" fill="url(#g3)"/>
-        <path d="M-120,680 C340,420 760,920 1240,560 C1560,320 1820,580 2040,440 L2040,1140 L-120,1140 Z" fill="url(#w1)"/>
-        <path d="M-120,360 C280,620 820,140 1320,480 C1640,700 1840,340 2040,520 L2040,1140 L-120,1140 Z" fill="url(#w2)"/>
-        <circle cx="460" cy="300" r="240" fill="#ffffff" fill-opacity="0.22"/>
-        <circle cx="1480" cy="660" r="300" fill="#fbcfe8" fill-opacity="0.2"/>
+        <rect width="1600" height="1000" fill="url(#sky)"/>
+        <rect width="1600" height="1000" fill="url(#sun)"/>
+        <path d="M0,560 L220,430 L460,520 L740,370 L1020,490 L1310,360 L1600,470 L1600,1000 L0,1000 Z" fill="#64748b" fill-opacity="0.35"/>
+        <path d="M0,650 L180,540 L420,610 L690,480 L980,590 L1240,460 L1460,550 L1600,510 L1600,1000 L0,1000 Z" fill="#475569" fill-opacity="0.52"/>
+        <path d="M0,760 L260,640 L520,720 L840,590 L1140,700 L1410,610 L1600,670 L1600,1000 L0,1000 Z" fill="#334155" fill-opacity="0.74"/>
+        <path d="M0,850 L310,770 L640,830 L960,740 L1290,820 L1600,750 L1600,1000 L0,1000 Z" fill="#1e293b" fill-opacity="0.9"/>
       </svg>
     `),
   },
   {
-    id: "aurora",
-    name: "极光星夜",
-    desc: "绚丽极光丝带划过星空远山",
-    preview:
-      "linear-gradient(160deg, #090d1e 0%, #133b5c 38%, #2dd4bf 72%, #a855f7 100%)",
-    backgroundImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+    id: "ocean-abyss",
+    name: "蔚蓝珊瑚海湾",
+    subtitle: "阳光穿透清澈海水的丁达尔波光",
+    previewBackground:
+      "radial-gradient(circle at 50% 0%, #67e8f9 0%, #0284c7 52%, #0c4a6e 100%)",
+    cssImage: svgDataUri(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
         <defs>
-          <linearGradient id="sky" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stop-color="#0f172a"/>
-            <stop offset="50%" stop-color="#1e3a5f"/>
-            <stop offset="100%" stop-color="#2b5876"/>
+          <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#22d3ee"/>
+            <stop offset="35%" stop-color="#0284c7"/>
+            <stop offset="75%" stop-color="#075985"/>
+            <stop offset="100%" stop-color="#082f49"/>
           </linearGradient>
-          <linearGradient id="aur1" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.2"/>
-            <stop offset="28%" stop-color="#34d399" stop-opacity="0.78"/>
-            <stop offset="65%" stop-color="#38bdf8" stop-opacity="0.72"/>
-            <stop offset="100%" stop-color="#a855f7" stop-opacity="0.25"/>
-          </linearGradient>
-          <linearGradient id="aur2" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#a855f7" stop-opacity="0.2"/>
-            <stop offset="40%" stop-color="#e879f9" stop-opacity="0.65"/>
-            <stop offset="75%" stop-color="#2dd4bf" stop-opacity="0.68"/>
-            <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.2"/>
-          </linearGradient>
-        </defs>
-        <rect width="1920" height="1080" fill="url(#sky)"/>
-        <path d="M-100,260 C380,40 860,480 1380,180 C1620,40 1820,260 2020,160 L2020,620 C1680,740 1280,380 820,640 C420,860 120,520 -100,660 Z" fill="url(#aur1)"/>
-        <path d="M-100,440 C420,180 940,620 1460,280 C1720,120 1880,380 2020,280 L2020,760 C1640,860 1160,520 740,760 C360,960 80,680 -100,820 Z" fill="url(#aur2)"/>
-        <circle cx="920" cy="300" r="240" fill="#a7f3d0" fill-opacity="0.22"/>
-        <path d="M0,1080 L0,830 L280,670 L540,810 L880,610 L1220,790 L1540,640 L1920,780 L1920,1080 Z" fill="#172554" fill-opacity="0.65"/>
-        <path d="M0,1080 L0,900 L420,750 L760,890 L1140,720 L1520,880 L1920,760 L1920,1080 Z" fill="#0f172a" fill-opacity="0.78"/>
-      </svg>
-    `),
-  },
-  {
-    id: "ocean",
-    name: "深海琉璃",
-    desc: "蔚蓝水波光斑与晶莹珊瑚海",
-    preview:
-      "linear-gradient(145deg, #082f49 0%, #0284c7 48%, #22d3ee 82%, #a5f3fc 100%)",
-    backgroundImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <linearGradient id="sea" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#0c4a6e"/>
-            <stop offset="48%" stop-color="#0284c7"/>
-            <stop offset="100%" stop-color="#06b6d4"/>
-          </linearGradient>
-          <radialGradient id="sun" cx="55%" cy="24%" r="58%">
-            <stop offset="0%" stop-color="#cffafe" stop-opacity="0.88"/>
-            <stop offset="42%" stop-color="#38bdf8" stop-opacity="0.52"/>
-            <stop offset="100%" stop-color="#0c4a6e" stop-opacity="0"/>
+          <radialGradient id="topGlow" cx="50%" cy="6%" r="58%">
+            <stop offset="0%" stop-color="#cffafe" stop-opacity="0.9"/>
+            <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.35"/>
+            <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
           </radialGradient>
-          <linearGradient id="wave" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#67e8f9" stop-opacity="0.48"/>
-            <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.28"/>
-            <stop offset="100%" stop-color="#a5f3fc" stop-opacity="0.52"/>
-          </linearGradient>
         </defs>
-        <rect width="1920" height="1080" fill="url(#sea)"/>
-        <rect width="1920" height="1080" fill="url(#sun)"/>
-        <path d="M-100,480 C320,340 680,640 1120,460 C1480,310 1720,560 2020,420 L2020,1080 L-100,1080 Z" fill="url(#wave)"/>
-        <path d="M-100,680 C380,520 840,820 1320,640 C1620,520 1800,720 2020,620 L2020,1080 L-100,1080 Z" fill="url(#wave)"/>
-        <circle cx="1140" cy="260" r="260" fill="#ffffff" fill-opacity="0.26"/>
-        <circle cx="380" cy="620" r="320" fill="#67e8f9" fill-opacity="0.22"/>
+        <rect width="1600" height="1000" fill="url(#sea)"/>
+        <rect width="1600" height="1000" fill="url(#topGlow)"/>
+        <polygon points="800,-40 280,1000 480,1000" fill="#ffffff" fill-opacity="0.07"/>
+        <polygon points="800,-40 620,1000 840,1000" fill="#ffffff" fill-opacity="0.09"/>
+        <polygon points="800,-40 980,1000 1240,1000" fill="#ffffff" fill-opacity="0.07"/>
+        <path d="M0,720 Q400,640 800,720 T1600,700 L1600,1000 L0,1000 Z" fill="#0369a1" fill-opacity="0.45"/>
+        <path d="M0,840 Q400,780 800,840 T1600,820 L1600,1000 L0,1000 Z" fill="#082f49" fill-opacity="0.65"/>
       </svg>
     `),
   },
   {
-    id: "sakura",
-    name: "绯樱春晓",
-    desc: "柔粉樱花云海与暖金晨曦",
-    preview:
-      "linear-gradient(145deg, #831843 0%, #db2777 38%, #f472b6 70%, #fde68a 100%)",
-    backgroundImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+    id: "sakura-dream",
+    name: "绯樱暮色天际",
+    subtitle: "柔和暮春粉霞与梦幻流光光斑",
+    previewBackground:
+      "radial-gradient(circle at 25% 25%, #fbcfe8 0%, transparent 50%), radial-gradient(circle at 75% 70%, #f43f5e 0%, transparent 55%), linear-gradient(135deg, #4c1d95 0%, #831843 55%, #be185d 100%)",
+    cssImage: svgDataUri(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
         <defs>
-          <linearGradient id="sk" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#6b215c"/>
-            <stop offset="46%" stop-color="#be185d"/>
-            <stop offset="82%" stop-color="#f472b6"/>
-            <stop offset="100%" stop-color="#fde2e4"/>
+          <linearGradient id="sbg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#3b0764"/>
+            <stop offset="48%" stop-color="#831843"/>
+            <stop offset="100%" stop-color="#fb7185"/>
           </linearGradient>
-          <radialGradient id="glow" cx="72%" cy="28%" r="55%">
-            <stop offset="0%" stop-color="#fef08a" stop-opacity="0.82"/>
-            <stop offset="45%" stop-color="#f9a8d4" stop-opacity="0.55"/>
-            <stop offset="100%" stop-color="#831843" stop-opacity="0"/>
+          <radialGradient id="sp1" cx="25%" cy="30%" r="45%">
+            <stop offset="0%" stop-color="#f9a8d4" stop-opacity="0.72"/>
+            <stop offset="100%" stop-color="#f9a8d4" stop-opacity="0"/>
           </radialGradient>
-          <linearGradient id="cloud" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#fbcfe8" stop-opacity="0.5"/>
-            <stop offset="50%" stop-color="#f472b6" stop-opacity="0.35"/>
-            <stop offset="100%" stop-color="#fef3c7" stop-opacity="0.55"/>
-          </linearGradient>
+          <radialGradient id="sp2" cx="78%" cy="24%" r="42%">
+            <stop offset="0%" stop-color="#c084fc" stop-opacity="0.65"/>
+            <stop offset="100%" stop-color="#c084fc" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="sp3" cx="65%" cy="78%" r="50%">
+            <stop offset="0%" stop-color="#fda4af" stop-opacity="0.68"/>
+            <stop offset="100%" stop-color="#fda4af" stop-opacity="0"/>
+          </radialGradient>
         </defs>
-        <rect width="1920" height="1080" fill="url(#sk)"/>
-        <rect width="1920" height="1080" fill="url(#glow)"/>
-        <path d="M-100,560 C340,380 780,720 1240,500 C1580,340 1780,580 2020,460 L2020,1080 L-100,1080 Z" fill="url(#cloud)"/>
-        <path d="M-100,740 C420,580 880,880 1380,680 C1680,560 1840,760 2020,660 L2020,1080 L-100,1080 Z" fill="url(#cloud)"/>
-        <circle cx="380" cy="340" r="240" fill="#ffffff" fill-opacity="0.25"/>
-        <circle cx="1460" cy="300" r="260" fill="#fef08a" fill-opacity="0.24"/>
+        <rect width="1600" height="1000" fill="url(#sbg)"/>
+        <rect width="1600" height="1000" fill="url(#sp1)"/>
+        <rect width="1600" height="1000" fill="url(#sp2)"/>
+        <rect width="1600" height="1000" fill="url(#sp3)"/>
+        <circle cx="320" cy="240" r="90" fill="#ffffff" fill-opacity="0.1"/>
+        <circle cx="1180" cy="360" r="140" fill="#ffffff" fill-opacity="0.08"/>
+        <circle cx="860" cy="680" r="110" fill="#ffffff" fill-opacity="0.09"/>
       </svg>
     `),
   },
   {
-    id: "sunset",
-    name: "落日旷野",
-    desc: "暮色紫金交织的远山层峦",
-    preview:
-      "linear-gradient(160deg, #31102f 0%, #9a3412 45%, #f59e0b 78%, #fef08a 100%)",
-    backgroundImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+    id: "sunset-dunes",
+    name: "落日余晖沙丘",
+    subtitle: "温暖琥珀金霞与丝绸曲线沙丘",
+    previewBackground:
+      "linear-gradient(160deg, #7c2d12 0%, #ea580c 42%, #f59e0b 75%, #fef08a 100%)",
+    cssImage: svgDataUri(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
         <defs>
-          <linearGradient id="dusk" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stop-color="#3b1d5e"/>
-            <stop offset="38%" stop-color="#9d2b5b"/>
-            <stop offset="72%" stop-color="#f97316"/>
-            <stop offset="100%" stop-color="#fde047"/>
+          <linearGradient id="dsky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#431407"/>
+            <stop offset="36%" stop-color="#9a3412"/>
+            <stop offset="70%" stop-color="#ea580c"/>
+            <stop offset="100%" stop-color="#fbbf24"/>
           </linearGradient>
-          <radialGradient id="sun" cx="50%" cy="54%" r="45%">
+          <radialGradient id="dsun" cx="62%" cy="44%" r="32%">
             <stop offset="0%" stop-color="#fef9c3" stop-opacity="0.92"/>
-            <stop offset="45%" stop-color="#fb923c" stop-opacity="0.58"/>
-            <stop offset="100%" stop-color="#6b2146" stop-opacity="0"/>
+            <stop offset="45%" stop-color="#fb923c" stop-opacity="0.45"/>
+            <stop offset="100%" stop-color="#fb923c" stop-opacity="0"/>
           </radialGradient>
         </defs>
-        <rect width="1920" height="1080" fill="url(#dusk)"/>
-        <rect width="1920" height="1080" fill="url(#sun)"/>
-        <circle cx="960" cy="540" r="210" fill="#ffffff" fill-opacity="0.45"/>
-        <path d="M-80,740 C260,580 580,820 960,670 C1340,520 1640,760 2000,630 L2000,1080 L-80,1080 Z" fill="#581c3c" fill-opacity="0.55"/>
-        <path d="M-80,860 C340,720 740,940 1180,790 C1520,670 1760,860 2000,770 L2000,1080 L-80,1080 Z" fill="#31102f" fill-opacity="0.72"/>
+        <rect width="1600" height="1000" fill="url(#dsky)"/>
+        <rect width="1600" height="1000" fill="url(#dsun)"/>
+        <circle cx="992" cy="440" r="115" fill="#fef08a" fill-opacity="0.72"/>
+        <path d="M0,680 Q420,560 920,700 T1600,640 L1600,1000 L0,1000 Z" fill="#9a3412" fill-opacity="0.68"/>
+        <path d="M0,780 Q560,670 1080,810 T1600,760 L1600,1000 L0,1000 Z" fill="#7c2d12" fill-opacity="0.82"/>
+        <path d="M0,880 Q380,810 860,900 T1600,860 L1600,1000 L0,1000 Z" fill="#431407" fill-opacity="0.92"/>
       </svg>
     `),
   },
   {
-    id: "cyber",
-    name: "霓虹幻夜",
-    desc: "赛博紫青流光与深空星云",
-    preview:
-      "linear-gradient(135deg, #090d16 0%, #3b0764 42%, #d946ef 74%, #06b6d4 100%)",
-    backgroundImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+    id: "cyber-neon",
+    name: "赛博霓虹棱镜",
+    subtitle: "未来感几何光栅与品红青蓝折射",
+    previewBackground:
+      "radial-gradient(circle at 80% 20%, #f43f5e 0%, transparent 48%), radial-gradient(circle at 20% 80%, #06b6d4 0%, transparent 52%), linear-gradient(135deg, #090d16 0%, #1e1b4b 52%, #311042 100%)",
+    cssImage: svgDataUri(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
         <defs>
-          <linearGradient id="cy" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#17153b"/>
-            <stop offset="50%" stop-color="#2e1a5e"/>
-            <stop offset="100%" stop-color="#0f3460"/>
+          <linearGradient id="cbg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#060913"/>
+            <stop offset="50%" stop-color="#17153b"/>
+            <stop offset="100%" stop-color="#2e1035"/>
           </linearGradient>
-          <radialGradient id="n1" cx="22%" cy="34%" r="52%">
-            <stop offset="0%" stop-color="#e879f9" stop-opacity="0.85"/>
-            <stop offset="50%" stop-color="#8b5cf6" stop-opacity="0.45"/>
-            <stop offset="100%" stop-color="#17153b" stop-opacity="0"/>
+          <radialGradient id="cn1" cx="78%" cy="22%" r="48%">
+            <stop offset="0%" stop-color="#f43f5e" stop-opacity="0.7"/>
+            <stop offset="60%" stop-color="#a855f7" stop-opacity="0.24"/>
+            <stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
           </radialGradient>
-          <radialGradient id="n2" cx="78%" cy="62%" r="54%">
-            <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.88"/>
-            <stop offset="50%" stop-color="#3b82f6" stop-opacity="0.45"/>
-            <stop offset="100%" stop-color="#0f3460" stop-opacity="0"/>
+          <radialGradient id="cn2" cx="20%" cy="76%" r="50%">
+            <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.72"/>
+            <stop offset="60%" stop-color="#3b82f6" stop-opacity="0.24"/>
+            <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
           </radialGradient>
         </defs>
-        <rect width="1920" height="1080" fill="url(#cy)"/>
-        <rect width="1920" height="1080" fill="url(#n1)"/>
-        <rect width="1920" height="1080" fill="url(#n2)"/>
-        <path d="M-100,620 C420,280 960,880 1480,420 C1720,220 1880,520 2020,380 L2020,1080 L-100,1080 Z" fill="#e879f9" fill-opacity="0.24"/>
-        <path d="M-100,760 C380,480 920,960 1440,580 C1680,400 1860,680 2020,560 L2020,1080 L-100,1080 Z" fill="#22d3ee" fill-opacity="0.28"/>
+        <rect width="1600" height="1000" fill="url(#cbg)"/>
+        <rect width="1600" height="1000" fill="url(#cn1)"/>
+        <rect width="1600" height="1000" fill="url(#cn2)"/>
+        <g stroke="#ffffff" stroke-opacity="0.07" stroke-width="1.5" fill="none">
+          <circle cx="800" cy="500" r="220"/>
+          <circle cx="800" cy="500" r="380"/>
+          <circle cx="800" cy="500" r="560"/>
+          <line x1="0" y1="500" x2="1600" y2="500"/>
+          <line x1="800" y1="0" x2="800" y2="1000"/>
+        </g>
       </svg>
     `),
   },
-];
+  {
+    id: "starlight-cosmos",
+    name: "深空星河静夜",
+    subtitle: "静谧银河星尘与深邃午夜蓝黑",
+    previewBackground:
+      "radial-gradient(circle at 65% 35%, #3b82f6 0%, transparent 45%), radial-gradient(circle at 30% 65%, #6366f1 0%, transparent 50%), linear-gradient(180deg, #030712 0%, #0f172a 60%, #1e293b 100%)",
+    cssImage: svgDataUri(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <linearGradient id="stbg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#030712"/>
+            <stop offset="55%" stop-color="#0f172a"/>
+            <stop offset="100%" stop-color="#1e293b"/>
+          </linearGradient>
+          <radialGradient id="neb" cx="62%" cy="38%" r="48%">
+            <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.42"/>
+            <stop offset="55%" stop-color="#6366f1" stop-opacity="0.16"/>
+            <stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <rect width="1600" height="1000" fill="url(#stbg)"/>
+        <rect width="1600" height="1000" fill="url(#neb)"/>
+        <g fill="#ffffff">
+          <circle cx="220" cy="180" r="2" fill-opacity="0.8"/>
+          <circle cx="480" cy="120" r="1.5" fill-opacity="0.6"/>
+          <circle cx="760" cy="240" r="2.2" fill-opacity="0.85"/>
+          <circle cx="1080" cy="160" r="1.8" fill-opacity="0.7"/>
+          <circle cx="1390" cy="280" r="2.4" fill-opacity="0.9"/>
+          <circle cx="340" cy="420" r="1.6" fill-opacity="0.55"/>
+          <circle cx="920" cy="460" r="2" fill-opacity="0.75"/>
+          <circle cx="1260" cy="520" r="1.5" fill-opacity="0.6"/>
+          <circle cx="620" cy="680" r="1.8" fill-opacity="0.65"/>
+        </g>
+      </svg>
+    `),
+  },
+] as const;
 
 export type AppearanceState = {
   palette: ThemePaletteId;
   glassStyle: GlassStyleId;
+  /** 玻璃面板不透明度（8 ~ 55，默认 16，即 84% 透光率） */
   glassOpacity: number;
+  /** Hark WebGL 动态天空场景（默认 "auto"） */
+  harkScene: HarkSkySceneId;
   wallpaperId: WallpaperPresetId;
-  customWallpaper: string;
+  customWallpaperUrl: string;
   wallpaperBlur: number;
   wallpaperDim: number;
 };
 
-function parsePalette(raw: string | null): ThemePaletteId {
-  if (raw && THEME_PALETTES.some((p) => p.id === raw)) {
-    return raw as ThemePaletteId;
-  }
-  return "default";
+const VALID_PALETTES = new Set<ThemePaletteId>(
+  THEME_PALETTES.map((p) => p.id),
+);
+const VALID_GLASS_STYLES = new Set<GlassStyleId>([
+  "liquid",
+  "crystal",
+  "frosted",
+]);
+const VALID_HARK_SCENES = new Set<HarkSkySceneId>(
+  HARK_SKY_SCENES.map((s) => s.id),
+);
+const VALID_WALLPAPER_IDS = new Set<WallpaperPresetId>([
+  ...WALLPAPER_PRESETS.map((w) => w.id),
+  "custom",
+]);
+
+function clampNumber(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
 }
 
-function parseGlassStyle(raw: string | null): GlassStyleId {
-  if (raw === "liquid" || raw === "crystal" || raw === "frosted") return raw;
-  return "liquid";
+function readInitialAppearance(): AppearanceState {
+  const rawPalette = readStoredPreference(PALETTE_STORAGE_KEY) as ThemePaletteId | null;
+  const rawGlass = readStoredPreference(GLASS_STYLE_STORAGE_KEY) as GlassStyleId | null;
+  const rawGlassOpacity = Number(readStoredPreference(GLASS_OPACITY_STORAGE_KEY) ?? "16");
+  const rawHarkScene = readStoredPreference(HARK_SCENE_STORAGE_KEY) as HarkSkySceneId | null;
+  const rawWallpaperId = readStoredPreference(WALLPAPER_ID_STORAGE_KEY) as WallpaperPresetId | null;
+  const customWallpaperUrl = readStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY) ?? "";
+  const rawBlur = Number(readStoredPreference(WALLPAPER_BLUR_STORAGE_KEY) ?? "0");
+  const rawDim = Number(readStoredPreference(WALLPAPER_DIM_STORAGE_KEY) ?? "18");
+
+  return {
+    palette: rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default",
+    glassStyle: rawGlass && VALID_GLASS_STYLES.has(rawGlass) ? rawGlass : "liquid",
+    glassOpacity: clampNumber(rawGlassOpacity, 8, 55, 16),
+    harkScene: rawHarkScene && VALID_HARK_SCENES.has(rawHarkScene) ? rawHarkScene : "auto",
+    wallpaperId:
+      rawWallpaperId && VALID_WALLPAPER_IDS.has(rawWallpaperId) ? rawWallpaperId : "none",
+    customWallpaperUrl,
+    wallpaperBlur: clampNumber(rawBlur, 0, 40, 0),
+    wallpaperDim: clampNumber(rawDim, 0, 75, 18),
+  };
 }
 
-function parseWallpaperId(raw: string | null): WallpaperPresetId {
-  if (
-    raw === "none" ||
-    raw === "mist" ||
-    raw === "fluid" ||
-    raw === "aurora" ||
-    raw === "ocean" ||
-    raw === "sakura" ||
-    raw === "sunset" ||
-    raw === "cyber" ||
-    raw === "custom"
-  ) {
-    return raw;
-  }
-  return "none";
-}
-
-function clampNum(raw: string | null, fallback: number, min: number, max: number): number {
-  if (raw === null || raw === "") return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(n)));
-}
-
-let appearanceState: AppearanceState = {
-  palette: parsePalette(readStoredPreference(PALETTE_STORAGE_KEY)),
-  glassStyle: parseGlassStyle(readStoredPreference(GLASS_STYLE_STORAGE_KEY)),
-  glassOpacity: clampNum(readStoredPreference(GLASS_OPACITY_STORAGE_KEY), 16, 5, 80),
-  wallpaperId: parseWallpaperId(readStoredPreference(WALLPAPER_ID_STORAGE_KEY)),
-  customWallpaper: readStoredPreference(WALLPAPER_CUSTOM_STORAGE_KEY) ?? "",
-  wallpaperBlur: clampNum(readStoredPreference(WALLPAPER_BLUR_STORAGE_KEY), 0, 0, 32),
-  wallpaperDim: clampNum(readStoredPreference(WALLPAPER_DIM_STORAGE_KEY), 6, 0, 75),
-};
-
+let currentState: AppearanceState | null = null;
 const listeners = new Set<() => void>();
-function emit() {
-  for (const listener of listeners) listener();
+
+function ensureState(): AppearanceState {
+  if (!currentState) {
+    currentState = readInitialAppearance();
+  }
+  return currentState;
 }
 
-export function subscribeAppearance(listener: () => void) {
+function emitChange() {
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+export function getAppearanceState(): AppearanceState {
+  return ensureState();
+}
+
+export function subscribeAppearance(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
 
-export function getAppearanceState(): AppearanceState {
-  return appearanceState;
+export function useAppearance(): AppearanceState {
+  return useSyncExternalStore(subscribeAppearance, getAppearanceState, getAppearanceState);
+}
+
+export function applyAppearanceToDocument(state: AppearanceState = ensureState()) {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  root.setAttribute("data-palette", state.palette);
+  root.setAttribute("data-glass", state.glassStyle);
+  root.style.setProperty("--lg-alpha", (state.glassOpacity / 100).toFixed(2));
+  const hasWallpaper = resolveActiveWallpaperCss(state) !== null;
+  if (hasWallpaper) {
+    root.setAttribute("data-wallpaper", "on");
+  } else {
+    root.removeAttribute("data-wallpaper");
+  }
+}
+
+export function updateAppearance(patch: Partial<AppearanceState>) {
+  const prev = ensureState();
+  const next: AppearanceState = {
+    palette:
+      patch.palette && VALID_PALETTES.has(patch.palette) ? patch.palette : prev.palette,
+    glassStyle:
+      patch.glassStyle && VALID_GLASS_STYLES.has(patch.glassStyle)
+        ? patch.glassStyle
+        : prev.glassStyle,
+    glassOpacity:
+      patch.glassOpacity !== undefined
+        ? clampNumber(patch.glassOpacity, 8, 55, prev.glassOpacity)
+        : prev.glassOpacity,
+    harkScene:
+      patch.harkScene && VALID_HARK_SCENES.has(patch.harkScene)
+        ? patch.harkScene
+        : prev.harkScene,
+    wallpaperId:
+      patch.wallpaperId && VALID_WALLPAPER_IDS.has(patch.wallpaperId)
+        ? patch.wallpaperId
+        : prev.wallpaperId,
+    customWallpaperUrl:
+      patch.customWallpaperUrl !== undefined
+        ? patch.customWallpaperUrl.trim()
+        : prev.customWallpaperUrl,
+    wallpaperBlur:
+      patch.wallpaperBlur !== undefined
+        ? clampNumber(patch.wallpaperBlur, 0, 40, prev.wallpaperBlur)
+        : prev.wallpaperBlur,
+    wallpaperDim:
+      patch.wallpaperDim !== undefined
+        ? clampNumber(patch.wallpaperDim, 0, 75, prev.wallpaperDim)
+        : prev.wallpaperDim,
+  };
+
+  currentState = next;
+  writeStoredPreference(PALETTE_STORAGE_KEY, next.palette);
+  writeStoredPreference(GLASS_STYLE_STORAGE_KEY, next.glassStyle);
+  writeStoredPreference(GLASS_OPACITY_STORAGE_KEY, String(next.glassOpacity));
+  writeStoredPreference(HARK_SCENE_STORAGE_KEY, next.harkScene);
+  writeStoredPreference(WALLPAPER_ID_STORAGE_KEY, next.wallpaperId);
+  writeStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY, next.customWallpaperUrl);
+  writeStoredPreference(WALLPAPER_BLUR_STORAGE_KEY, String(next.wallpaperBlur));
+  writeStoredPreference(WALLPAPER_DIM_STORAGE_KEY, String(next.wallpaperDim));
+
+  applyAppearanceToDocument(next);
+  emitChange();
 }
 
 export function setThemePalette(palette: ThemePaletteId) {
-  writeStoredPreference(PALETTE_STORAGE_KEY, palette);
-  appearanceState = { ...appearanceState, palette };
-  emit();
+  updateAppearance({ palette });
 }
 
 export function setGlassStyle(glassStyle: GlassStyleId) {
-  writeStoredPreference(GLASS_STYLE_STORAGE_KEY, glassStyle);
-  const nextOpacity =
-    glassStyle === "crystal" ? 10 : glassStyle === "liquid" ? 16 : 52;
-  writeStoredPreference(GLASS_OPACITY_STORAGE_KEY, String(nextOpacity));
-  appearanceState = {
-    ...appearanceState,
-    glassStyle,
-    glassOpacity: nextOpacity,
-  };
-  emit();
+  updateAppearance({ glassStyle });
 }
 
-export function setGlassOpacity(opacity: number) {
-  const clamped = Math.max(5, Math.min(80, Math.round(opacity)));
-  writeStoredPreference(GLASS_OPACITY_STORAGE_KEY, String(clamped));
-  appearanceState = { ...appearanceState, glassOpacity: clamped };
-  emit();
+export function setGlassOpacity(glassOpacity: number) {
+  updateAppearance({ glassOpacity });
+}
+
+export function setHarkSkyScene(harkScene: HarkSkySceneId) {
+  updateAppearance({ harkScene, wallpaperId: "none" });
 }
 
 export function setWallpaperPreset(wallpaperId: WallpaperPresetId) {
-  writeStoredPreference(WALLPAPER_ID_STORAGE_KEY, wallpaperId);
-  appearanceState = { ...appearanceState, wallpaperId };
-  emit();
+  updateAppearance({ wallpaperId });
 }
 
 export function setCustomWallpaperUrl(url: string) {
   const trimmed = url.trim();
-  writeStoredPreference(WALLPAPER_CUSTOM_STORAGE_KEY, trimmed);
-  const nextId: WallpaperPresetId = trimmed ? "custom" : "none";
-  writeStoredPreference(WALLPAPER_ID_STORAGE_KEY, nextId);
-  appearanceState = {
-    ...appearanceState,
-    customWallpaper: trimmed,
-    wallpaperId: nextId,
-  };
-  emit();
+  updateAppearance({
+    customWallpaperUrl: trimmed,
+    wallpaperId: trimmed ? "custom" : "none",
+  });
 }
 
-export function setWallpaperBlur(blur: number) {
-  const clamped = Math.max(0, Math.min(32, Math.round(blur)));
-  writeStoredPreference(WALLPAPER_BLUR_STORAGE_KEY, String(clamped));
-  appearanceState = { ...appearanceState, wallpaperBlur: clamped };
-  emit();
+export function setWallpaperBlur(wallpaperBlur: number) {
+  updateAppearance({ wallpaperBlur });
 }
 
-export function setWallpaperDim(dim: number) {
-  const clamped = Math.max(0, Math.min(75, Math.round(dim)));
-  writeStoredPreference(WALLPAPER_DIM_STORAGE_KEY, String(clamped));
-  appearanceState = { ...appearanceState, wallpaperDim: clamped };
-  emit();
+export function setWallpaperDim(wallpaperDim: number) {
+  updateAppearance({ wallpaperDim });
 }
 
 export function resetAppearanceDefaults() {
-  setThemePalette("default");
-  setGlassStyle("liquid");
-  setGlassOpacity(16);
-  setWallpaperPreset("none");
-  setWallpaperBlur(0);
-  setWallpaperDim(6);
+  updateAppearance({
+    palette: "default",
+    glassStyle: "liquid",
+    glassOpacity: 16,
+    harkScene: "auto",
+    wallpaperId: "none",
+    customWallpaperUrl: "",
+    wallpaperBlur: 0,
+    wallpaperDim: 18,
+  });
 }
 
-/** 根据当前主题配色计算自定义天空变量（非 default 配色时使用）。 */
-export function computePaletteSky(paletteId: ThemePaletteId, dark: boolean): SkyVars | null {
-  const def = THEME_PALETTES.find((p) => p.id === paletteId);
-  if (!def || def.id === "default") return null;
-  const sky = dark ? def.darkSky : def.lightSky;
-  if (!sky) return null;
+/**
+ * 解析当前应当驱动 Hark WebGL 天空（window.hark）的场景：
+ * - 返回 "live" 表示调用 window.hark.setLive(true)
+ * - 返回 0..11 表示调用 window.hark.applyScene(index)
+ */
+export function resolveEffectiveHarkScene(
+  state: AppearanceState,
+  dark: boolean,
+): "live" | number {
+  if (state.harkScene === "live") return "live";
+  if (state.harkScene !== "auto") {
+    const idx = Number(state.harkScene);
+    if (Number.isInteger(idx) && idx >= 0 && idx <= 11) return idx;
+  }
+  const meta = THEME_PALETTES.find((p) => p.id === state.palette) ?? THEME_PALETTES[0];
+  return dark ? meta.harkSceneDark : meta.harkSceneLight;
+}
+
+export function resolveActiveWallpaperCss(state: AppearanceState): string | null {
+  if (state.wallpaperId === "none") return null;
+  if (state.wallpaperId === "custom") {
+    const u = state.customWallpaperUrl.trim();
+    if (!u) return null;
+    if (/^(https?:\/\/|data:image\/|blob:|\/)/i.test(u)) {
+      return `url("${u.replace(/"/g, '\\"')}")`;
+    }
+    return null;
+  }
+  const found = WALLPAPER_PRESETS.find((w) => w.id === state.wallpaperId);
+  return found?.cssImage ?? null;
+}
+
+/**
+ * 根据当前主题色生成与天空融合的渐变变量（作为 WebGL 首帧绘制前的预渲染垫片）
+ */
+export function computePaletteSky(
+  palette: ThemePaletteId,
+  dark: boolean,
+): { body: Record<string, string>; root: Record<string, string> } | null {
+  if (palette === "default") return null;
+  const meta = THEME_PALETTES.find((p) => p.id === palette);
+  if (!meta) return null;
+
+  const hues = dark ? meta.skyHueDark : meta.skyHueLight;
+  const sats = dark ? meta.skySatDark : meta.skySatLight;
+  const lights = dark ? [8, 12, 17, 23] : [38, 52, 68, 84];
+  const stops = [0, 1, 2, 3].map(
+    (i) => `hsl(${hues[i]} ${sats[i]}% ${lights[i]}%)`,
+  );
+
   return {
     body: {
-      "--sky-1": sky.sky1,
-      "--sky-2": sky.sky2,
-      "--sky-3": sky.sky3,
-      "--sky-4": sky.sky4,
-      "--sky-cloud": sky.cloud,
-      "--sky-glow": sky.glow,
-      "--sky-glow-x": "64%",
-      "--sky-glow-y": "24%",
-      "--sky-stars": sky.stars,
+      "--sky-0": stops[0],
+      "--sky-1": stops[1],
+      "--sky-2": stops[2],
+      "--sky-3": stops[3],
+      "--sky-glow": `hsl(${hues[1]} ${Math.min(90, sats[1] + 15)}% ${dark ? 32 : 76}%)`,
+      "--sky-glow-a": dark ? "0.42" : "0.52",
     },
     root: {
-      "--sky-lift": sky.lift,
-      "--sky-muted": sky.muted,
+      "--glass-sky": stops[2],
     },
   };
 }
 
-/** 解析当前激活壁纸的 CSS background-image 值。 */
-export function resolveActiveWallpaperCss(state: AppearanceState): string | null {
-  if (state.wallpaperId === "none") return null;
-  if (state.wallpaperId === "custom") {
-    const raw = state.customWallpaper.trim();
-    if (!raw) return null;
-    const safe = raw.replace(/["\\]/g, "\\$&");
-    return `url("${safe}")`;
-  }
-  const preset = WALLPAPER_PRESETS.find((w) => w.id === state.wallpaperId);
-  return preset?.backgroundImage || null;
-}
-
-/** 将用户上传的本地图片压缩为适合本地持久化的高清 Data URL（最大 1920×1080，WebP/JPEG）。 */
+/**
+ * 将本地上传的图片文件压缩为适配 localStorage 存储的 Data URL（最大边 1920px，WebP/JPEG 质量 0.84）
+ */
 export async function compressUploadedWallpaper(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("读取图片文件失败"));
     reader.onload = () => {
-      const dataUrl = String(reader.result || "");
+      const src = typeof reader.result === "string" ? reader.result : "";
+      if (!src) {
+        reject(new Error("图片内容为空"));
+        return;
+      }
       const img = new Image();
       img.onerror = () => reject(new Error("无法解析该图片格式"));
       img.onload = () => {
-        try {
-          const maxW = 1920;
-          const maxH = 1080;
-          let { width, height } = img;
-          if (width > maxW || height > maxH) {
-            const ratio = Math.min(maxW / width, maxH / height);
-            width = Math.max(1, Math.round(width * ratio));
-            height = Math.max(1, Math.round(height * ratio));
-          }
-          const canvas = document.createElement("canvas");
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) {
-            resolve(dataUrl);
-            return;
-          }
-          ctx.drawImage(img, 0, 0, width, height);
-          let compressed = canvas.toDataURL("image/webp", 0.84);
-          if (!compressed.startsWith("data:image/webp")) {
-            compressed = canvas.toDataURL("image/jpeg", 0.84);
-          }
-          resolve(compressed);
-        } catch {
-          resolve(dataUrl);
+        const maxSide = 1920;
+        let { width, height } = img;
+        if (width > maxSide || height > maxSide) {
+          const ratio = Math.min(maxSide / width, maxSide / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
         }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(src);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const webp = canvas.toDataURL("image/webp", 0.84);
+        if (webp && webp.length < 3_500_000) {
+          resolve(webp);
+          return;
+        }
+        resolve(canvas.toDataURL("image/jpeg", 0.8));
       };
-      img.src = dataUrl;
+      img.src = src;
     };
     reader.readAsDataURL(file);
   });

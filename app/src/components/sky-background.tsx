@@ -1,195 +1,297 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef } from "react";
 import { useTheme } from "@/components/theme-provider";
 import {
-  type AppearanceState,
+  applyAppearanceToDocument,
   computePaletteSky,
-  getAppearanceState,
   resolveActiveWallpaperCss,
-  subscribeAppearance,
+  resolveEffectiveHarkScene,
+  setHarkSkyScene,
+  useAppearance,
 } from "@/lib/appearance";
-import {
-  readStoredPreference,
-  writeStoredPreference,
-} from "@/lib/preference-storage";
-import {
-  applySky,
-  computeSky,
-  currentMinuteOfDay,
-  SKY_STORAGE_KEY,
-} from "@/lib/sky";
 
 /*
- * 「背景随时间变化」 state. `enabled` is a browser preference (like the theme, read by the boot script
- * in index.html before paint); `preview` is the settings slider's temporary hour and is never saved.
+ * Hark 原生 WebGL 动态天空与天气引擎宿主（移植自 Hark wallpaper_core.html + Pp 宿主控制器）：
+ *  - DOM 挂载 #sky-root > #skyph + <canvas id="gl"> + <canvas id="skyfreeze"> + #glfail；
+ *  - 首帧 WebGL drawArrays 完成时在 <html> 标记 data-sky-painted，隐藏 #skyph 占位并让 body 完全透明；
+ *  - 根据当前浅色/深色主题、主题配色或用户手动指定的 12 个精选场景驱动 window.hark.applyScene(0..11) / setLive(true)。
  */
-type SkyState = { enabled: boolean; preview: number | null };
 
-let state: SkyState = {
-  enabled: readStoredPreference(SKY_STORAGE_KEY) !== "off",
-  preview: null,
-};
-const listeners = new Set<() => void>();
-const emit = () => {
-  for (const listener of listeners) listener();
-};
-const subscribe = (listener: () => void) => {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-};
+const SKY_EASE_MS = 1650;
+let easeTimer = 0;
 
-export function setSkyEnabled(enabled: boolean) {
-  writeStoredPreference(SKY_STORAGE_KEY, enabled ? "on" : "off");
-  state = { ...state, enabled };
-  emit();
-}
-
-/** A minute of day to show instead of the clock, or null to follow the clock again. */
-export function setSkyPreview(preview: number | null) {
-  state = { ...state, preview };
-  emit();
-}
-
-export function useSkyState(): SkyState {
-  return useSyncExternalStore(
-    subscribe,
-    () => state,
-    () => state,
-  );
-}
-
-export function useAppearanceState(): AppearanceState {
-  return useSyncExternalStore(
-    subscribeAppearance,
-    getAppearanceState,
-    getAppearanceState,
-  );
-}
-
-/** Keeps the sky custom properties in step with the clock, the theme and the preference. */
 /**
- * The sky only fades (1.6s) right after the user changes the sky itself: 「背景随时间变化」 on/off or
- * the settings slider. A dark/light switch and the minute tick apply in one frame — a fading sky
- * makes every glass pane re-blur for the whole fade (CB-024, DESIGN.md §7.4).
+ * 在根上挂 `data-sky-ease`，1.6s 渐变跑完拿掉（保留供单元测试与主题切换调用）。
  */
-const SKY_EASE_MS = 1700;
-let easeTimer: number | undefined;
-export function easeNextSkyChange(root: HTMLElement = document.documentElement) {
+export function easeNextSkyChange(
+  root: HTMLElement | undefined = typeof document !== "undefined" ? document.documentElement : undefined,
+) {
+  if (!root || typeof window === "undefined") return;
   root.setAttribute("data-sky-ease", "");
   window.clearTimeout(easeTimer);
-  easeTimer = window.setTimeout(() => root.removeAttribute("data-sky-ease"), SKY_EASE_MS);
+  easeTimer = window.setTimeout(() => {
+    root.removeAttribute("data-sky-ease");
+  }, SKY_EASE_MS);
+}
+
+/**
+ * 供「背景随时间变化」开关读取/切换 Hark 实时时钟天空（live）与精选场景（auto）。
+ */
+export function useSkyState(): { enabled: boolean; preview: number | null } {
+  const appearance = useAppearance();
+  return {
+    enabled: appearance.harkScene === "live",
+    preview: null,
+  };
+}
+
+export function setSkyEnabled(enabled: boolean): void {
+  setHarkSkyScene(enabled ? "live" : "auto");
+}
+
+export function setSkyPreview(hour: number | null): void {
+  if (typeof window === "undefined") return;
+  if (hour === null) {
+    window.hark?.setLive?.(true);
+  } else {
+    window.hark?.setHour?.(hour, true);
+  }
+}
+
+interface HarkController {
+  applyScene?: (index: number) => void;
+  setLive?: (on: boolean) => void;
+  setHour?: (hour: number, fade?: boolean) => void;
+  setTimeFlow?: (speed: number) => void;
+}
+
+declare global {
+  interface Window {
+    hark?: HarkController;
+    __harkBooting?: boolean;
+    webkit?: {
+      messageHandlers?: {
+        hark?: {
+          postMessage: (msg: unknown) => void;
+        };
+      };
+    };
+  }
+}
+
+const OFFLINE_FORECAST_JSON = JSON.stringify({
+  utc_offset_seconds: -new Date().getTimezoneOffset() * 60,
+  current: {
+    temperature_2m: 20,
+    weather_code: 1,
+    cloud_cover: 26,
+    is_day: 1,
+    wind_speed_10m: 9,
+    wind_direction_10m: 250,
+    relative_humidity_2m: 48,
+    cloud_cover_low: 14,
+    cloud_cover_mid: 10,
+    cloud_cover_high: 22,
+    wind_gusts_10m: 14,
+  },
+  hourly: {
+    time: [new Date().toISOString()],
+    visibility: [24000],
+    direct_radiation: [580],
+    diffuse_radiation: [120],
+    shortwave_radiation: [700],
+    terrestrial_radiation: [920],
+    snow_depth: [0],
+    cape: [0],
+  },
+});
+
+const OFFLINE_AQ_JSON = JSON.stringify({
+  current: {
+    us_aqi: 24,
+    aerosol_optical_depth: 0.08,
+  },
+});
+
+function createHarkFetch(): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes("gibs.earthdata.nasa.gov")) {
+      return new Response(null, { status: 204 });
+    }
+    if (url.includes("api.open-meteo.com/v1/forecast")) {
+      const ctrl = new AbortController();
+      const timer = window.setTimeout(() => ctrl.abort(), 2800);
+      try {
+        const res = await window.fetch(input, { ...init, signal: ctrl.signal });
+        window.clearTimeout(timer);
+        if (res.ok) return res;
+      } catch {
+        window.clearTimeout(timer);
+      }
+      return new Response(OFFLINE_FORECAST_JSON, {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("air-quality-api.open-meteo.com")) {
+      const ctrl = new AbortController();
+      const timer = window.setTimeout(() => ctrl.abort(), 2800);
+      try {
+        const res = await window.fetch(input, { ...init, signal: ctrl.signal });
+        window.clearTimeout(timer);
+        if (res.ok) return res;
+      } catch {
+        window.clearTimeout(timer);
+      }
+      return new Response(OFFLINE_AQ_JSON, {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return window.fetch(input, init);
+  };
+}
+
+function syncHarkSkyScene(target: "live" | number) {
+  const hark = typeof window !== "undefined" ? window.hark : undefined;
+  if (!hark) return;
+  if (target === "live") {
+    hark.setLive?.(true);
+    hark.setTimeFlow?.(1);
+  } else {
+    hark.applyScene?.(target);
+  }
 }
 
 export function SkyBackground() {
   const { dark } = useTheme();
-  const { enabled, preview } = useSkyState();
-  const appearance = useAppearanceState();
-  const {
-    palette,
-    glassStyle,
-    glassOpacity,
-    wallpaperId,
-    customWallpaper,
-    wallpaperBlur,
-    wallpaperDim,
-  } = appearance;
-  const activeWallpaperCss = resolveActiveWallpaperCss(appearance);
-  const last = useRef<{ enabled: boolean; preview: number | null; palette: string } | null>(null);
+  const appearance = useAppearance();
+  const desiredSceneRef = useRef<"live" | number>(
+    resolveEffectiveHarkScene(appearance, dark),
+  );
+  desiredSceneRef.current = resolveEffectiveHarkScene(appearance, dark);
 
+  // 1. 同步 HTML data-theme、data-palette、data-glass 与 CSS 预渲染垫片变量
   useEffect(() => {
+    applyAppearanceToDocument(appearance);
     const root = document.documentElement;
-    if (palette === "default") {
-      root.removeAttribute("data-palette");
-    } else {
-      root.setAttribute("data-palette", palette);
-    }
-    root.setAttribute("data-glass", glassStyle);
-    root.style.setProperty("--lg-alpha", String(glassOpacity / 100));
-    if (activeWallpaperCss) {
-      root.setAttribute("data-wallpaper", "on");
-    } else {
-      root.removeAttribute("data-wallpaper");
-    }
-  }, [palette, glassStyle, glassOpacity, activeWallpaperCss]);
+    root.setAttribute("data-theme", dark ? "dark" : "light");
 
+    const customSky = computePaletteSky(appearance.palette, dark);
+    if (customSky) {
+      for (const [k, v] of Object.entries(customSky.body)) {
+        document.body.style.setProperty(k, v);
+      }
+      for (const [k, v] of Object.entries(customSky.root)) {
+        root.style.setProperty(k, v);
+      }
+    } else {
+      for (const k of ["--sky-0", "--sky-1", "--sky-2", "--sky-3", "--sky-glow", "--sky-glow-a"]) {
+        document.body.style.removeProperty(k);
+      }
+      root.style.removeProperty("--glass-sky");
+    }
+  }, [dark, appearance]);
+
+  // 2. 启动 Hark 原生 WebGL 动态天空引擎（/wallpaper_core.html）
   useEffect(() => {
-    const root = document.documentElement;
-    const prev = last.current;
-    last.current = { enabled, preview, palette };
-    if (
-      prev &&
-      (prev.enabled !== enabled || prev.preview !== preview || prev.palette !== palette)
-    ) {
-      easeNextSkyChange(root);
-    }
-
-    const paletteSky = computePaletteSky(palette, dark);
-    if (paletteSky) {
-      root.setAttribute("data-sky", "palette");
-      applySky(paletteSky);
+    if (typeof window === "undefined") return;
+    if (window.hark) {
+      syncHarkSkyScene(desiredSceneRef.current);
       return;
     }
+    if (window.__harkBooting) return;
+    window.__harkBooting = true;
 
-    if (!enabled) {
-      applySky(null);
-      root.removeAttribute("data-sky");
-      return;
+    const glCanvas = document.getElementById("gl") as HTMLCanvasElement | null;
+    if (glCanvas) {
+      const origGetContext = glCanvas.getContext.bind(glCanvas);
+      let hooked = false;
+      glCanvas.getContext = ((contextId: string, options?: unknown) => {
+        const opts =
+          contextId === "webgl" || contextId === "experimental-webgl"
+            ? { ...(typeof options === "object" && options ? options : {}), preserveDrawingBuffer: true }
+            : options;
+        const ctx = origGetContext(contextId as "webgl", opts as WebGLContextAttributes);
+        if (ctx && !hooked && (contextId === "webgl" || contextId === "experimental-webgl")) {
+          hooked = true;
+          const origDrawArrays = ctx.drawArrays.bind(ctx);
+          let painted = false;
+          ctx.drawArrays = (mode: number, first: number, count: number) => {
+            origDrawArrays(mode, first, count);
+            if (!painted) {
+              painted = true;
+              document.documentElement.setAttribute("data-sky-painted", "");
+            }
+          };
+        }
+        return ctx;
+      }) as typeof glCanvas.getContext;
     }
-    root.setAttribute("data-sky", "time");
-    const paint = () =>
-      applySky(computeSky(preview ?? currentMinuteOfDay(), dark));
-    paint();
-    if (preview !== null) return;
 
-    // Once a minute, aligned to the minute boundary; catch up at once when the tab comes back.
-    let timer: number | undefined;
-    const schedule = () => {
-      const now = new Date();
-      timer = window.setTimeout(
-        () => {
-          paint();
-          schedule();
+    window.webkit = {
+      messageHandlers: {
+        hark: {
+          postMessage: () => {
+            // Hark 状态回调（lum / day / dot 等由宿主主题与场景统一管理）
+          },
         },
-        60_000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50,
-      );
+      },
     };
-    schedule();
-    const onVisible = () => {
-      if (document.visibilityState === "visible") paint();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [enabled, preview, dark, palette]);
+
+    const harkFetch = createHarkFetch();
+
+    window
+      .fetch("/wallpaper_core.html")
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((html) => {
+        const match = /<script>([\s\S]*?)<\/script>/.exec(html);
+        if (!match?.[1]) return;
+        const runner = new Function("fetch", "requestAnimationFrame", match[1]);
+        runner(harkFetch, window.requestAnimationFrame.bind(window));
+        syncHarkSkyScene(desiredSceneRef.current);
+      })
+      .catch(() => {
+        window.__harkBooting = false;
+      });
+  }, []);
+
+  // 3. 当主题亮暗、配色方案或用户指定的 Hark 场景变化时，立即切换 WebGL 天空场景
+  const targetScene = resolveEffectiveHarkScene(appearance, dark);
+  useEffect(() => {
+    syncHarkSkyScene(targetScene);
+  }, [targetScene]);
+
+  const wallpaperCss = resolveActiveWallpaperCss(appearance);
 
   return (
-    <div
-      aria-hidden="true"
-      className="chisabot-wallpaper"
-      data-custom-set={customWallpaper ? "true" : "false"}
-      data-testid="chisabot-wallpaper"
-      data-wallpaper-id={wallpaperId}
-    >
+    <div aria-hidden="true" id="sky-root">
+      <div id="skyph" />
+      <canvas id="gl" />
+      <canvas id="skyfreeze" />
+      <p id="glfail" />
       <div className="chisabot-ambient-orbs" />
-      {activeWallpaperCss && (
-        <>
+      {wallpaperCss ? (
+        <div className="chisabot-wallpaper" data-testid="chisabot-wallpaper">
           <div
             className="chisabot-wallpaper-img"
             style={{
-              backgroundImage: activeWallpaperCss,
-              filter: wallpaperBlur > 0 ? `blur(${wallpaperBlur}px)` : undefined,
-              transform: wallpaperBlur > 0 ? "scale(1.06)" : undefined,
+              backgroundImage: wallpaperCss,
+              filter:
+                appearance.wallpaperBlur > 0
+                  ? `blur(${appearance.wallpaperBlur}px)`
+                  : undefined,
+              transform: appearance.wallpaperBlur > 0 ? "scale(1.06)" : undefined,
             }}
           />
           <div
             className="chisabot-wallpaper-dim"
             style={{
-              opacity: Math.max(0, Math.min(0.85, wallpaperDim / 100)),
+              opacity: Math.max(0, Math.min(0.85, appearance.wallpaperDim / 100)),
             }}
           />
-        </>
-      )}
+        </div>
+      ) : null}
     </div>
   );
 }
