@@ -51,7 +51,12 @@ function collectInputs(root = ROOT) {
   }
   for (const rel of files) {
     const file = path.join(root, rel);
-    inputs[rel] = fs.existsSync(file) ? sha256(fs.readFileSync(file)) : "missing";
+    if (!fs.existsSync(file)) {
+      inputs[rel] = "missing";
+      continue;
+    }
+    const raw = /\.nsh$/i.test(rel) ? Buffer.from(fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n"), "utf8") : fs.readFileSync(file);
+    inputs[rel] = sha256(raw);
   }
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const build = { ...(pkg.build || {}) };

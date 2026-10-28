@@ -203,7 +203,7 @@ function createAgentFetch(getAgent) {
           const out = new Headers();
           for (let i = 0; i < response.rawHeaders.length; i += 2) out.append(response.rawHeaders[i], response.rawHeaders[i + 1]);
           const status = response.statusCode || 0;
-          const payload = status === 204 || status === 304 || init.method === "HEAD" ? null : Buffer.concat(chunks);
+          const payload = status === 204 || status === 205 || status === 304 || init.method === "HEAD" ? null : Buffer.concat(chunks);
           resolve(new Response(payload, { status: status < 200 ? 502 : status, headers: out }));
         });
         response.on("error", reject);

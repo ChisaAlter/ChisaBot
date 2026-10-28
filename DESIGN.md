@@ -105,6 +105,8 @@
 | [114](#114-右栏面板栏头新建与预设轮换2026-10-25cb-094) | 右栏面板栏头「＋」新建与预设轮换 | 2026-10-25，CB-094 |
 | [115](#115-账号连接页分标签全部连接登录信息密钥2026-10-25cb-095) | 账号连接页分标签（全部 / 连接 / 登录信息 / 密钥） | 2026-10-25，CB-095 |
 | [116](#116-机器人之间的往来锚点卡2026-10-25cb-093) | 机器人之间的往来锚点卡 | 2026-10-25，CB-093 |
+| [117](#117-多用户管理与管理员账户体系2026-10-26cb-096) | 多用户管理与管理员账户体系 | 2026-10-26，CB-096 |
+| [118](#118-知识库skillsmcp-后台统一配置2026-10-26cb-097) | 知识库、Skills、MCP 后台统一配置 | 2026-10-26，CB-097 |
 
 ## 0. 总原则
 
@@ -2462,7 +2464,7 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 
 把原本默认隐藏的 `/admin/accounts` 升级为开箱即用的多用户与多管理员管理台：
 
-- **默认展示与在线开启**：`CHISABOT_ACCOUNTS_UI` 默认开启（除非显式设为 `0` / `false`）；认证网关（`deploy/public/auth/server.ts`）生产启动默认开启多账号与邀请，并在 SQLite 新增 `settings (key, value)` 表与 `PUT /auth/admin/invites-enabled`，管理员可在 `/admin/accounts` 或 `/settings/share` 页面一键在线开启多账号，无需 SSH 改环境变量重启容器。
+- **默认展示与在线开启**：`CHISABOT_ACCOUNTS_UI` 默认开启（除非显式设为 `0` / `false`）；认证网关（`deploy/public/auth/server.ts`）默认关闭邀请（`invites` 默认 `false`），并在 SQLite 新增 `settings (key, value)` 表与 `PUT /auth/admin/invites-enabled`，管理员可在 `/admin/accounts` 或 `/settings/share` 页面一键在线开启邀请与新建成员，无需 SSH 改环境变量重启容器。
 - **双轨创建与多管理员角色**：
   - **直接新建账号**：`POST /auth/admin/accounts` 与前端 `CreateAccountDialog` 支持管理员直接填写登录名、显示名称、初始密码与角色（`普通成员 user` / `管理员 admin`）。
   - **邀请链接选角色**：`POST /auth/admin/invites` 与 `InviteDialog` 支持签发普通成员或管理员邀请链接（`invites.role`）。

@@ -1,6 +1,7 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
+import { BlockedUrlError, type GuardedResponse, guardedFetch } from "../../../shared/net/guarded-fetch";
 import type { AppVariables } from "../auth/guards";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { PluginRefusedError, type PluginStore } from "../plugins/store";
@@ -404,13 +405,22 @@ export function createChisaSkills(options: {
             const rawUrl = normalizeSkillSourceUrl(url);
             if (!/^https?:\/\//i.test(rawUrl)) return `${REFUSAL_MARKER} 请提供 http:// 或 https:// 开头的技能文件链接。`;
             if (!fallbackSlug) {
-              const parts = new URL(rawUrl).pathname.split("/").filter(Boolean);
-              const file = parts.at(-1)?.replace(/\.md$/i, "") ?? "";
-              fallbackSlug = file.toLowerCase() === "skill" ? (parts.at(-2) ?? "imported-skill") : file;
+              try {
+                const parts = new URL(rawUrl).pathname.split("/").filter(Boolean);
+                const file = parts.at(-1)?.replace(/\.md$/i, "") ?? "";
+                fallbackSlug = file.toLowerCase() === "skill" ? (parts.at(-2) ?? "imported-skill") : file;
+              } catch {
+                return `${REFUSAL_MARKER} 技能文件链接格式不正确。`;
+              }
             }
-            const res = await fetchImpl(rawUrl, { signal: AbortSignal.timeout(8_000) });
-            if (!res.ok) return `${REFUSAL_MARKER} 拉取技能文件失败（HTTP ${res.status}）。`;
-            rawText = await res.text();
+            let res: GuardedResponse;
+            try {
+              res = await guardedFetch(rawUrl, { fetchImpl, timeoutMs: 8_000, maxBytes: 256 * 1024 });
+            } catch (err) {
+              return `${REFUSAL_MARKER} 拉取技能文件失败（${err instanceof Error ? err.message : "网络异常"}）。`;
+            }
+            if (res.status < 200 || res.status >= 300) return `${REFUSAL_MARKER} 拉取技能文件失败（HTTP ${res.status}）。`;
+            rawText = res.body.toString("utf8");
           }
           if (!rawText) return `${REFUSAL_MARKER} 请提供 url 或 markdown 内容。`;
           const parsed = parseSkillMarkdown(rawText, fallbackSlug);
@@ -516,9 +526,19 @@ export function createChisaSkills(options: {
           const file = parts.at(-1)?.replace(/\.md$/i, "") ?? "";
           fallbackSlug = file.toLowerCase() === "skill" ? (parts.at(-2) ?? "imported-skill") : file;
         }
-        const res = await fetchImpl(parsedUrl.toString(), { signal: AbortSignal.timeout(8_000) }).catch(() => null);
-        if (!res || !res.ok) return c.json({ error: "无法拉取该链接内容，请检查链接是否公开可访问，或直接粘贴 SKILL.md 文本。" }, 400);
-        rawText = await res.text();
+        let res: GuardedResponse | null = null;
+        try {
+          res = await guardedFetch(parsedUrl.toString(), { fetchImpl, timeoutMs: 8_000, maxBytes: 256 * 1024 });
+        } catch (err) {
+          if (err instanceof BlockedUrlError) {
+            return c.json({ error: `无法拉取该链接内容：${err.message}` }, 400);
+          }
+          res = null;
+        }
+        if (!res || res.status < 200 || res.status >= 300) {
+          return c.json({ error: "无法拉取该链接内容，请检查链接是否公开可访问，或直接粘贴 SKILL.md 文本。" }, 400);
+        }
+        rawText = res.body.toString("utf8");
       }
       if (!rawText) return c.json({ error: "请提供 GitHub SKILL.md 链接或粘贴技能 Markdown 内容。" }, 400);
 

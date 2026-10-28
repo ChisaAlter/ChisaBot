@@ -34,7 +34,7 @@ function git(args, { cwd, env, timeoutMs = 120_000, input } = {}) {
     let err = "";
     let child;
     try {
-      child = spawn("git", args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...env }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      child = spawn("git", ["-c", "core.autocrlf=false", "-c", "core.safecrlf=false", ...args], { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...env }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     } catch (error) {
       resolve({ code: -1, out: "", err: String(error && error.message) });
       return;

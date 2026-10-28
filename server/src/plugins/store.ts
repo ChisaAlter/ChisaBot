@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { checkPublicUrl } from "../../../shared/net/ssrf";
 import { type ApprovalGate, currentApprovalContext } from "../approvals/types";
 import {
   type AuditInitiator,
@@ -902,6 +903,13 @@ export async function exchangeRefreshTokenOverHttp(input: {
   client: OAuthClient;
   refreshToken: string;
 }): Promise<AccessToken> {
+  const verdict = checkPublicUrl(input.tokenUrl);
+  if (!verdict.ok) {
+    throw new TokenRefusedError(
+      `The vendor token URL is not a safe public address (${verdict.reason}).`,
+      null,
+    );
+  }
   const params = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: input.refreshToken,

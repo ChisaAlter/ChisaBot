@@ -123,10 +123,11 @@ test("diff + patch roundtrip", () => {
 });
 
 test("shell sessions keep cwd and env between calls", async () => {
-  const r1 = await ops.run("shell", { command: "cd src && export CB_TEST_VAR=hello", session: "s1" }, ctx);
+  const win = process.platform === "win32";
+  const r1 = await ops.run("shell", { command: win ? "Set-Location src; $env:CB_TEST_VAR='hello'" : "cd src && export CB_TEST_VAR=hello", session: "s1" }, ctx);
   assert.equal(r1.exitCode, 0);
   assert.equal(r1.cwd, path.join(root, "src"));
-  const r2 = await ops.run("shell", { command: 'echo "$CB_TEST_VAR $(pwd)"', session: "s1" }, ctx);
+  const r2 = await ops.run("shell", { command: win ? 'Write-Output "$env:CB_TEST_VAR $((Get-Location).Path)"' : 'echo "$CB_TEST_VAR $(pwd)"', session: "s1" }, ctx);
   assert.equal(r2.stdout.trim(), `hello ${path.join(root, "src")}`);
   const list = await ops.run("shell_session", { action: "list" }, ctx);
   assert.equal(list.sessions[0].name, "s1");

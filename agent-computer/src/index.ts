@@ -1579,6 +1579,7 @@ serve<StreamData>({
         const body = (await request.json().catch(() => null)) as {
           command?: unknown;
           timeoutMs?: unknown;
+          botId?: unknown;
         } | null;
         if (typeof body?.command !== "string" || !body.command.trim()) {
           return json({ error: "A command is required." }, 400);
@@ -1587,6 +1588,10 @@ serve<StreamData>({
         if (!timeout.ok) {
           return json({ error: timeout.error }, 400);
         }
+        const botId =
+          typeof body.botId === "string" && body.botId.trim()
+            ? body.botId.trim()
+            : url.searchParams.get("botId")?.trim() || undefined;
         try {
           return json(
             await shell.run({
@@ -1594,6 +1599,7 @@ serve<StreamData>({
               ...(timeout.timeoutMs !== undefined
                 ? { timeoutMs: timeout.timeoutMs }
                 : {}),
+              ...(botId !== undefined ? { botId } : {}),
               signal: request.signal,
             }),
           );

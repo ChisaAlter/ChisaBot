@@ -2,16 +2,16 @@
   "name": "app",
   "license": "MIT",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.93",
   "type": "module",
   "scripts": {
-    "build": "bun --bun node_modules/vite/bin/vite.js build",
-    "dev": "bun --bun node_modules/vite/bin/vite.js",
+    "build": "bun -e \"const fs=require('fs'),p='node_modules/vite/bin/vite.js';process.exit(Bun.spawnSync([process.execPath,'--bun',fs.existsSync(p)?p:'../'+p,'build'],{stdio:['inherit','inherit','inherit']}).exitCode)\"",
+    "dev": "bun -e \"const fs=require('fs'),p='node_modules/vite/bin/vite.js';process.exit(Bun.spawnSync([process.execPath,'--bun',fs.existsSync(p)?p:'../'+p],{stdio:['inherit','inherit','inherit']}).exitCode)\"",
     "serve": "bun scripts/serve-or-build.ts && bun serve.ts",
     "prebuild": "bun run --cwd .. generate:app-config",
     "predev": "bun run --cwd .. generate:app-config",
     "pretypecheck": "bun run --cwd .. generate:app-config",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "bun x tsc --noEmit"
   },
   "dependencies": {
     "@ag-ui/core": "1.0.1",

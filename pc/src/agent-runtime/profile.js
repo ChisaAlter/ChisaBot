@@ -7,14 +7,21 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-function real(p) {
+function real(p, depth = 0) {
   try {
     return fs.realpathSync.native(p);
   } catch {
+    if (depth < 16) {
+      try {
+        if (fs.lstatSync(p).isSymbolicLink()) {
+          return real(path.resolve(path.dirname(p), fs.readlinkSync(p)), depth + 1);
+        }
+      } catch {}
+    }
     // 还不存在的文件：解析它的父目录。
     const parent = path.dirname(p);
     if (parent === p) return p;
-    return path.join(real(parent), path.basename(p));
+    return path.join(real(parent, depth), path.basename(p));
   }
 }
 

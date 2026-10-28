@@ -570,12 +570,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun readBounded(input: java.io.InputStream, maxBytes: Int, tooLargeMessage: String): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(16 * 1024)
+        var total = 0
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            total += n
+            if (total > maxBytes) throw IllegalStateException(tooLargeMessage)
+            out.write(buf, 0, n)
+        }
+        return out.toByteArray()
+    }
+
     private suspend fun upload(api: Api, bot: Bot, localId: String, uri: Uri) {
         fun update(change: (PendingFile) -> PendingFile) { val i = files.indexOfFirst { it.localId == localId }; if (i >= 0) files[i] = change(files[i]) }
         try {
             val f = files.firstOrNull { it.localId == localId } ?: return
-            val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } } ?: throw IllegalStateException("读不到这个文件")
-            if (f.image && bytes.size > 8 * 1024 * 1024) throw IllegalStateException("图片超过 8 MB")
+            val maxBytes = if (f.image) 8 * 1024 * 1024 else 1024 * 1024
+            val limitMsg = if (f.image) "图片超过 8 MB" else "文本文件超过 1 MB"
+            val bytes = withContext(Dispatchers.IO) {
+                ctx.contentResolver.openInputStream(uri)?.use { readBounded(it, maxBytes, limitMsg) }
+            } ?: throw IllegalStateException("读不到这个文件")
             val (cid, _) = ensureChannel(api, bot)
             val res = api.upload("/api/channels/$cid/attachments", mapOf("uploadGroup" to uploadGroup), f.name, f.mime, bytes)
             val id = res.s("id") ?: throw IllegalStateException("上传失败，请重试")

@@ -548,10 +548,14 @@ describe("the filter proxy", () => {
   });
 
   test("the shell is pointed at the filter, and this process is not", async () => {
-    const { egressShellEnvironment } = await import("../src/egress");
+    const { egressShellEnvironment, egressShellEnvironmentForBot } =
+      await import("../src/egress");
     const before = process.env.HTTP_PROXY;
     const filter = await startEgressFilter({ env: {}, forShell: true });
     expect(egressShellEnvironment().HTTP_PROXY).toBe(filter.url);
+    expect(egressShellEnvironmentForBot("sales").HTTP_PROXY).toBe(
+      `http://sales:@127.0.0.1:${filter.port}`,
+    );
     expect(egressShellEnvironment().NO_PROXY).toContain("127.0.0.1");
     expect(process.env.HTTP_PROXY).toBe(before);
     await stopEgressFilter();

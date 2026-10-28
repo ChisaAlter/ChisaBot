@@ -41,6 +41,7 @@ test("build info: parsed strictly, dev fallback, version payload has no image", 
   expect(info.image).toBe("local/chisabot:glass-20261012a");
   expect(versionPayload(info)).toEqual({ version: "0.1.0", buildId: "glass-20261012a", commit: "a".repeat(40), builtAt: "2026-10-12T01:00:00Z" });
   expect(parseBuildInfo(null, "9.9.9")).toEqual({ version: "9.9.9", buildId: "dev" });
+  expect(parseBuildInfo({ version: "0.0.0", buildId: "glass-1" }, "0.1.92")).toEqual({ version: "0.1.92", buildId: "glass-1" });
   expect(parseBuildInfo({ buildId: "../../etc", commit: "zz" }, "1").buildId).toBe("dev");
 });
 
@@ -166,12 +167,12 @@ test("updater not installed yet / old / misconfigured: overview says so, request
   const old = createSystemUpdateService({ dir: spool({ ...fresh, updaterVersion: "2" }), running, now: () => NOW });
   expect(old.overview()).toMatchObject({ updaterVersion: 2, updaterOutdated: true, warnings: [] });
   const current = createSystemUpdateService({
-    dir: spool({ ...fresh, updaterVersion: "3", warnings: ["health_url_example", "rm -rf /", "buildx_missing"] }),
+    dir: spool({ ...fresh, updaterVersion: "4", warnings: ["health_url_example", "rm -rf /", "buildx_missing"] }),
     sourceDir: "../../etc; rm",
     running,
     now: () => NOW,
   });
   const ok = current.overview();
-  expect(ok).toMatchObject({ updaterVersion: 3, updaterOutdated: false, warnings: ["health_url_example", "buildx_missing"] });
+  expect(ok).toMatchObject({ updaterVersion: 4, updaterOutdated: false, warnings: ["health_url_example", "buildx_missing"] });
   expect(ok.sourceDir).toBeUndefined();
 });

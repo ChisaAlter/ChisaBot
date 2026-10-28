@@ -235,9 +235,9 @@ export function createWorkspace(
             truncated = true;
             return;
           }
-          const full = `${dir}/${item.name}`;
+          const full = join(dir, item.name);
           // Relative to the workspace root, because that is the only form a Bot may name in a request.
-          const shown = full.slice(root.length + 1);
+          const shown = relative(root, full).replace(/\\/g, "/");
           if (item.isDirectory()) {
             entries.push({ path: shown, kind: "folder" });
             await walk(full);

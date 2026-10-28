@@ -120,7 +120,7 @@ describe("invites closed (default since 2026-10-15)", () => {
     expect((await service.fetch(req("/_internal/check", { cookie: made.cookie }))).status).toBe(200);
     expect((await service.fetch(req("/auth/login", { body: { username: "friend8", password: "friend-password-8" } }))).status).toBe(200);
     service.close();
-    rmSync(dir, { recursive: true, force: true });
+    try { rmSync(dir, { recursive: true, force: true }); } catch {}
     expect(token && cookie).toBeTruthy();
   });
 });
@@ -325,7 +325,7 @@ describe("admin-only entries and phone sessions", () => {
     expect(check.status).toBe(200);
     expect(decode(check.headers.get("X-ChisaBot-Identity")!).u).toBe("dev-local-user");
     service.close();
-    rmSync(dir, { recursive: true, force: true });
+    try { rmSync(dir, { recursive: true, force: true }); } catch {}
   });
 
   test("CB-096: admin can toggle invites-enabled at runtime, create/invite admins, and update role/password", async () => {
@@ -372,6 +372,17 @@ describe("admin-only entries and phone sessions", () => {
     expect(patchPass.status).toBe(200);
     expect((await (await service.fetch(req("/auth/session", { cookie: memberCookie }))).json()).authenticated).toBe(false);
     expect((await service.fetch(req("/auth/login", { body: { username: "member1", password: "new-password-456" } }))).status).toBe(200);
+
+    // 单个普通成员反复登录受每账号 20 会话上限约束，绝不会挤掉内置管理员的活跃会话。
+    const memberCookies: string[] = [];
+    for (let i = 0; i < 25; i++) {
+      const res = await service.fetch(req("/auth/login", { body: { username: "member1", password: "new-password-456" } }));
+      expect(res.status).toBe(200);
+      memberCookies.push(cookieOf(res));
+    }
+    expect((await service.fetch(req("/_internal/check", { cookie: admin }))).status).toBe(200);
+    expect((await service.fetch(req("/_internal/check", { cookie: memberCookies[0]! }))).status).toBe(401);
+    expect((await service.fetch(req("/_internal/check", { cookie: memberCookies[24]! }))).status).toBe(200);
 
     service.close();
   });

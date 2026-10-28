@@ -11,7 +11,7 @@ const root = path.join(tmp, "allowed");
 fs.mkdirSync(path.join(root, "sub"), { recursive: true });
 fs.writeFileSync(path.join(root, "a.txt"), "你好 ChisaBot");
 fs.writeFileSync(path.join(tmp, "secret.txt"), "nope");
-fs.symlinkSync(tmp, path.join(root, "escape"));
+fs.symlinkSync(tmp, path.join(root, "escape"), process.platform === "win32" ? "junction" : "dir");
 const ops = createOps({ clientVersion: "test" });
 const ctx = { allowedRoots: [root] };
 
@@ -47,22 +47,24 @@ test("write creates backup on overwrite, append works", async () => {
 });
 
 test("shell: output, exit code, timeout, cap", async () => {
-  const ok = await ops.run("shell", { command: "echo hi; echo err >&2; exit 3" }, {});
+  const win = process.platform === "win32";
+  const ok = await ops.run("shell", { command: win ? "Write-Output hi; [Console]::Error.WriteLine('err'); exit 3" : "echo hi; echo err >&2; exit 3" }, {});
   assert.equal(ok.stdout.trim(), "hi");
   assert.equal(ok.stderr.trim(), "err");
   assert.equal(ok.exitCode, 3);
-  const slow = await ops.run("shell", { command: "sleep 5", timeoutSec: 1 }, {});
+  const slow = await ops.run("shell", { command: win ? "Start-Sleep -Seconds 5" : "sleep 5", timeoutSec: 1 }, {});
   assert.equal(slow.timedOut, true);
   assert.ok(slow.durationMs < 4000);
-  const big = await ops.run("shell", { command: "head -c 200000 /dev/zero | tr '\\0' a" }, {});
+  const big = await ops.run("shell", { command: win ? "'a' * 200000" : "head -c 200000 /dev/zero | tr '\\0' a" }, {});
   assert.equal(big.truncated, true);
   assert.ok(big.stdout.length <= 64 * 1024);
 });
 
 test("shell cancel via signal", async () => {
+  const win = process.platform === "win32";
   const controller = new AbortController();
   setTimeout(() => controller.abort(), 200);
-  const result = await ops.run("shell", { command: "sleep 5" }, { signal: controller.signal });
+  const result = await ops.run("shell", { command: win ? "Start-Sleep -Seconds 5" : "sleep 5" }, { signal: controller.signal });
   assert.equal(result.cancelled, true);
 });
 
@@ -114,9 +116,14 @@ test("open (CB-030): no programs, no args, no executables, files only inside roo
   await assert.rejects(ops.run("open", { target: path.join(tmp, "secret.txt") }, ctx), /允许的文件夹|不在/);
   await assert.rejects(ops.run("open", { target: "missing.pdf" }, ctx), /找不到/);
   fs.writeFileSync(path.join(root, "run-me.txt"), "#!/bin/sh\necho hi\n", { mode: 0o755 });
-  if (process.platform !== "win32") await assert.rejects(ops.run("open", { target: "./run-me.txt" }, ctx), /可执行/);
-  fs.symlinkSync("/bin/sh", path.join(root, "doc.pdf"));
-  await assert.rejects(ops.run("open", { target: "doc.pdf" }, ctx));
+  if (process.platform !== "win32") {
+    await assert.rejects(ops.run("open", { target: "./run-me.txt" }, ctx), /可执行/);
+    fs.symlinkSync("/bin/sh", path.join(root, "doc.pdf"));
+    await assert.rejects(ops.run("open", { target: "doc.pdf" }, ctx));
+  } else {
+    fs.symlinkSync(tmp, path.join(root, "doc.pdf"), "junction");
+    await assert.rejects(ops.run("open", { target: "doc.pdf" }, ctx));
+  }
   const opened = [];
   const hooked = createOps({ clientVersion: "test", hooks: { openPath: async (p) => { opened.push(p); return ""; }, openExternal: async (u) => { opened.push(u); } } });
   assert.equal((await hooked.run("open", { target: "a.txt" }, ctx)).via, "default-app");

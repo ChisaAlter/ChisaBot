@@ -546,7 +546,10 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
       const known = icons.get(href);
       return known ? { favicon: known } : {};
     }
-    if (icons.size > 400) icons.clear();
+    if (icons.size >= 400) {
+      const oldest = icons.keys().next().value;
+      if (oldest !== undefined) icons.delete(oldest);
+    }
     icons.set(href, null);
     void (async () => {
       try {

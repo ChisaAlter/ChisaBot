@@ -351,12 +351,14 @@ export const MEMORY_UNDO_MS = 8000;
  */
 type PendingDelete = { ids: string[]; timer: ReturnType<typeof setTimeout>; refresh: () => Promise<unknown> };
 const pendingDeletes = new Map<number, PendingDelete>();
+const flushedIds = new Set<string>();
+const flushedRefreshes = new Set<() => Promise<unknown>>();
 let pendingSeq = 0;
 let pendingHidden: ReadonlySet<string> = new Set();
 const pendingListeners = new Set<() => void>();
 
 function emitPending() {
-  pendingHidden = new Set([...pendingDeletes.values()].flatMap((entry) => entry.ids));
+  pendingHidden = new Set([...[...pendingDeletes.values()].flatMap((entry) => entry.ids), ...flushedIds]);
   for (const listener of pendingListeners) listener();
 }
 
@@ -411,17 +413,38 @@ export function flushOnPageHide() {
     clearTimeout(entry.timer);
     pendingDeletes.delete(key);
     forgetToast(key);
+    for (const id of entry.ids) flushedIds.add(id);
+    flushedRefreshes.add(entry.refresh);
     void fetch("/api/memory-notes/forget", {
       method: "POST",
       credentials: "include",
       keepalive: true,
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ids: entry.ids }),
-    }).catch(() => undefined);
+    })
+      .then(() => entry.refresh().catch(() => undefined))
+      .catch(() => undefined)
+      .finally(() => {
+        for (const id of entry.ids) flushedIds.delete(id);
+        flushedRefreshes.delete(entry.refresh);
+        emitPending();
+      });
   }
   emitPending();
 }
-if (typeof window !== "undefined") window.addEventListener("pagehide", flushOnPageHide);
+function refreshAfterPageShow() {
+  if (!flushedRefreshes.size && !flushedIds.size) return;
+  const refreshes = [...flushedRefreshes];
+  flushedRefreshes.clear();
+  void Promise.all(refreshes.map((fn) => fn().catch(() => undefined))).finally(() => {
+    flushedIds.clear();
+    emitPending();
+  });
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", flushOnPageHide);
+  window.addEventListener("pageshow", refreshAfterPageShow);
+}
 
 /**
  * 删掉（可撤销）。立刻隐藏并弹「撤销」，{@link MEMORY_UNDO_MS} 后才真删；连删几次各自独立计时、各自撤销。
@@ -505,6 +528,8 @@ function syncMergedToast() {
 export function resetMemoryUndoForTest() {
   for (const entry of pendingDeletes.values()) clearTimeout(entry.timer);
   pendingDeletes.clear();
+  flushedIds.clear();
+  flushedRefreshes.clear();
   singleToasts.clear();
   mergedKeys.clear();
   mergedToastId = 0;

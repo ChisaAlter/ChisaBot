@@ -68,7 +68,7 @@ export async function readJson(response: Response, what: string): Promise<any> {
   try {
     parsed = body ? JSON.parse(body) : {};
   } catch {
-    throw new Error(`${what}：HTTP ${response.status}，返回的不是 JSON：${body.slice(0, 160)}`);
+    throw new Error(`${what}：HTTP ${response.status}，返回的不是 JSON（Upstream returned invalid JSON）`);
   }
   if (!response.ok) throw new Error(`${what}：HTTP ${response.status} ${body.slice(0, 200)}`);
   return parsed;

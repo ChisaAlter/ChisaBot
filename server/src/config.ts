@@ -295,8 +295,8 @@ export type DeploymentConfig = {
    */
   selfHostBanner: boolean;
   /**
-   * 设置 → 管理 →「账号」（朋友账号 / 邀请，CB-040）的入口是否显示。默认关：多用户以后再做（2026-10-15）。
-   * CHISABOT_ACCOUNTS_UI=1（或 true）打开。只管界面入口；网关多账号、签名身份、按人隔离都不受影响。
+   * 设置 → 管理 →「账号」（朋友账号 / 邀请，CB-040）的入口是否显示。默认开（2026-10-21 起默认开启，方便邀请家人朋友）。
+   * CHISABOT_ACCOUNTS_UI=0（或 false）关闭。只管界面入口；网关多账号、签名身份、按人隔离都不受影响。
    */
   accountsUi?: boolean;
   /**

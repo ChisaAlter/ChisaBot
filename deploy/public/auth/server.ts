@@ -283,16 +283,24 @@ export function createAuthApp(config: AuthConfig) {
     }
     db.transaction(() => {
       revoke(request);
+      db.query("DELETE FROM sessions WHERE expires_at <= ?").run(now());
       db.query("INSERT INTO sessions (token_hash, credential_key, expires_at, created_at, device_id, verified_at, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)").run(digest(token), key, now() + lifetime * 1000, now(), deviceId, deviceId ? now() : null, userId);
-      db.query("DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions ORDER BY created_at DESC LIMIT -1 OFFSET 300)").run();
+      if (userId !== null) {
+        db.query("DELETE FROM sessions WHERE user_id = ? AND token_hash IN (SELECT token_hash FROM sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT -1 OFFSET 20)").run(userId, userId);
+      } else {
+        db.query("DELETE FROM sessions WHERE user_id IS NULL AND token_hash IN (SELECT token_hash FROM sessions WHERE user_id IS NULL ORDER BY created_at DESC LIMIT -1 OFFSET 50)").run();
+      }
+      db.query("DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions ORDER BY CASE WHEN user_id IS NULL THEN 1 ELSE 0 END DESC, created_at DESC LIMIT -1 OFFSET 300)").run();
     })();
     return token;
   }
   function tooMany(clientKey: string): Response | null {
     const failures = db.query("SELECT count, expires_at FROM attempts WHERE client_key = ? AND expires_at > ?").get(clientKey, now()) as { count: number; expires_at: number } | null;
     const global = db.query("SELECT count, expires_at FROM attempts WHERE client_key = 'global' AND expires_at > ?").get(now()) as { count: number; expires_at: number } | null;
-    if ((failures?.count || 0) >= 10 || (global?.count || 0) >= 1000 || inFlight >= 2) {
-      const retry = inFlight >= 2 ? 2 : Math.max(1, Math.ceil(((failures?.expires_at || global?.expires_at || now() + WINDOW) - now()) / 1000));
+    const clientFailures = failures?.count || 0;
+    const globalThrottled = (global?.count || 0) >= 1000 && clientFailures >= 1;
+    if (clientFailures >= 10 || globalThrottled || inFlight >= 4) {
+      const retry = inFlight >= 4 ? 2 : Math.max(1, Math.ceil(((failures?.expires_at || global?.expires_at || now() + WINDOW) - now()) / 1000));
       return json({ ok: false, error: "尝试次数过多，请稍后再试。" }, 429, { "Retry-After": String(retry) });
     }
     return null;

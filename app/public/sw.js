@@ -65,15 +65,26 @@ self.addEventListener("fetch", (event) => {
 
 async function navigate(event) {
   let timer;
+  const controller =
+    typeof AbortController !== "undefined" ? new AbortController() : null;
   const timeout = new Promise((resolve) => {
-    timer = setTimeout(() => resolve("timeout"), NAV_TIMEOUT_MS);
+    timer = setTimeout(() => {
+      if (controller) {
+        try {
+          controller.abort();
+        } catch {}
+      }
+      resolve("timeout");
+    }, NAV_TIMEOUT_MS);
   });
   try {
     const response = await Promise.race([
       (async () => {
         const preloaded = await event.preloadResponse;
         if (preloaded) return preloaded;
-        return await fetch(event.request);
+        return controller
+          ? await fetch(event.request, { signal: controller.signal })
+          : await fetch(event.request);
       })(),
       timeout,
     ]);
@@ -144,7 +155,7 @@ function retryMain(env) {
           ? win.AbortSignal.timeout(20000)
           : undefined,
       });
-      if (!env.retryStatuses.includes(res.status)) {
+      if (!env.retryStatuses.includes(res.status) && res.status < 500) {
         stopped = true;
         win.location.reload();
         return;

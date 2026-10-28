@@ -1,4 +1,5 @@
 import "../../shared/env-compat";
+import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -53,11 +54,15 @@ export async function prepareProductionBuild(
   }
 
   console.log("Building app/dist because the build cache is stale or missing");
+  const localVite = join("node_modules", "vite", "bin", "vite.js");
+  const viteBin = existsSync(join(paths.appDir, localVite))
+    ? localVite
+    : join("..", localVite);
   await runCommand(
     [
       process.execPath,
       "--bun",
-      join("node_modules", "vite", "bin", "vite.js"),
+      viteBin,
       "build",
     ],
     paths.appDir,

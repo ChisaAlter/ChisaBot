@@ -42,6 +42,13 @@ export function keepShot(id: string, src: string, url?: string, botId?: string) 
 export function shotFor(id: string | undefined) {
   return id ? load()[id] : undefined;
 }
+export function clearRememberedShots() {
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    // ignore
+  }
+}
 
 /** 把 PNG 缩成宽 ≤960 的 JPEG（约 60–120KB），够看清又不撑爆本机存储。 */
 export async function shrinkPng(base64: string): Promise<string> {

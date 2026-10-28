@@ -839,6 +839,70 @@ ${code}
 </html>`;
 }
 
+const DANGEROUS_SVG_TAGS_BLOCK =
+  /<(script|foreignObject|iframe|object|embed|applet|meta|link)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const DANGEROUS_SVG_TAGS_SINGLE =
+  /<\/?(script|foreignObject|iframe|object|embed|applet|meta|link)\b[^>]*\/?>/gi;
+
+/**
+ * 净化内联 SVG 标记，剥离可执行脚本、危险嵌入节点（foreignObject/iframe/script 等）、
+ * on* 事件处理器与危险协议链接，防止通过 ```svg 围栏注入 XSS。
+ */
+export function sanitizeSvgMarkup(raw: string): string | null {
+  const m = /<svg[\s\S]*<\/svg>/i.exec(raw);
+  if (!m) return null;
+  let svg = m[0];
+  let prev = "";
+  while (svg !== prev) {
+    prev = svg;
+    svg = svg
+      .replace(DANGEROUS_SVG_TAGS_BLOCK, "")
+      .replace(DANGEROUS_SVG_TAGS_SINGLE, "");
+  }
+  svg = svg.replace(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi, (full, css: string) => {
+    if (/(?:javascript\s*:|vbscript\s*:|@import\b|expression\s*\()/i.test(css)) {
+      return "";
+    }
+    return full;
+  });
+  svg = svg.replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+  svg = svg.replace(
+    /\s+((?:xlink:)?href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi,
+    (full, _attr: string, dq?: string, sq?: string, uq?: string) => {
+      const val = (dq ?? sq ?? uq ?? "").replace(/[\s\u0000-\u001f]+/g, "").toLowerCase();
+      if (
+        val.startsWith("javascript:") ||
+        val.startsWith("vbscript:") ||
+        val.startsWith("data:text/html") ||
+        val.startsWith("data:image/svg")
+      ) {
+        return "";
+      }
+      return full;
+    },
+  );
+  svg = svg.replace(/<use\b[^>]*>/gi, (tag) =>
+    tag.replace(
+      /\s+(?:xlink:)?href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi,
+      (attrFull, dq?: string, sq?: string, uq?: string) => {
+        const val = (dq ?? sq ?? uq ?? "").trim();
+        return val.startsWith("#") ? attrFull : "";
+      },
+    ),
+  );
+  svg = svg.replace(
+    /\s+style\s*=\s*(?:"([^"]*)"|'([^']*)')/gi,
+    (full, dq?: string, sq?: string) => {
+      const val = dq ?? sq ?? "";
+      if (/(?:javascript\s*:|vbscript\s*:|@import\b|expression\s*\()/i.test(val)) {
+        return "";
+      }
+      return full;
+    },
+  );
+  return svg;
+}
+
 /**
  * Mermaid / SVG / HTML 微应用内联渲染卡：
  * 支持「预览 / 源码」一键切换、点击放大弹窗交互、以及卡片级「追问」。
@@ -858,8 +922,7 @@ export function ArtifactCard({
       return renderMermaidToSvg(artifact.code);
     }
     if (artifact.lang === "svg") {
-      const m = /<svg[\s\S]*<\/svg>/i.exec(artifact.code);
-      return m ? m[0] : "";
+      return sanitizeSvgMarkup(artifact.code) ?? "";
     }
     return "";
   }, [artifact.lang, artifact.code]);

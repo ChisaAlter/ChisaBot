@@ -13,7 +13,8 @@ ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:
     DATABASE_URL=postgres://openbot@127.0.0.1:5432/openbot \
     NODE_ENV=production \
     PORT=3001 \
-    TENANT_PACKAGE_DIR=../examples/zh-CN
+    TENANT_PACKAGE_DIR=../examples/zh-CN \
+    CHISABOT_PANEL_COMMANDS=1
 USER root
 WORKDIR /app
 EXPOSE 3001

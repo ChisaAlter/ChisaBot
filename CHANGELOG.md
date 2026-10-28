@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.93 — 2026-10-28
+
+这一版合入多标签页电脑控制选主（`CB-107`）、导航超时/502/503 自动恢复（`DF-13`）、记忆「全部撤销」防闪（`CB-111 P3`），并完成全项目深度安全与架构审查修复。PC 客户端、服务端与 Android 客户端同步更新至 0.1.93（Android `versionCode` 290）。
+
+### 多标签页控制选主、PWA 慢响应恢复与记忆撤销优化
+
+- **多标签页只保留一个 `control` 轮询源（`CB-107`，#330）**：通过 Web Locks 选主 + BroadcastChannel 广播（按账号隔离），多开标签页时仅由主标签页轮询电脑控制状态并同步给跟随标签页；主标签页后台节流时可见跟随标签页自动接管读取。
+- **PWA 导航超时 / 502 / 503 自动恢复（`DF-13`，#335）**：Service Worker 区分断网与服务器响应慢（20s 超时或 502/503/504/522），显示「服务器响应慢，正在重试…」卡片并按指数退避探测恢复后自动回到原页面。
+- **记忆「全部撤销」不闪新合并提示（`CB-111 P3`，#336）**：批量撤销合并的待删记忆时先清空合并集合再逐条恢复，避免中途闪出新的「已删除 N 条记忆」提示；补齐测试模块级状态重置与 bfcache 恢复保护。
+
+### 全项目安全加固、跨平台兼容与可靠性修复
+
+- **前后端安全加固**：
+  - 聊天 SVG 代码块预览（`ArtifactCard`）新增 `sanitizeSvgMarkup` 严格剥离 `<script>`、`<foreignObject>`、`on*` 事件与危险协议属性；`.docx` 在线预览渲染后清理危险节点与事件属性；`app/serve.ts` 补齐安全响应头与上游不可达 502 保护。
+  - 技能 URL 导入（`skill_import_url` 与 `/api/skills-chisa/import`）、个人数据源（日历 ICS、通知 Webhook）与 IM 外部地址统一接入 `guardedFetch` / `checkPublicUrl` SSRF 防护；IMAP/SMTP 开启 TLS 证书校验（`rejectUnauthorized: true`）与公网主机校验并过滤 CRLF 注入字符；`guardedFetch` 在跨源重定向时自动剥离敏感请求头并将 `301/302/303` POST 降级为 GET。
+  - 容器镜像 `Dockerfile` 以受控的 `/usr/local/bin/chisabot-apt` 替代裸 `apt-get/dpkg` 免密 sudo，并将 `/app` 属主收紧为 `apiuser:apiuser`；公网认证网关优化单用户会话淘汰上限并优先保留管理员会话。
+- **核心功能与多端跨平台修复**：
+  - 修复每日晨报查询 `chisabot_schedules` 表使用了不存在的 `description` 列导致定时提醒为空的问题；入站 Webhook 增加速率限制与按日合并；备用模型（Fallback）补齐首包超时保护与 `AbortSignal` 监听器清理。
+  - 修复 PC 客户端在 Windows 下 `processList` 因输出超 64KB 被截断导致 `JSON.parse` 崩溃及逐进程查 CPU 过慢的问题；`sandbox.js` 注入 `-c core.autocrlf=false` 防止 Worktree 翻转 CRLF 行尾；`builtin.js` 补齐符号链接真实路径校验与 CRLF 编辑适配；`shell-fingerprint.js` 归一化 `.nsh` 行尾。
+  - `agent-computer` 的 `/exec` 支持按 `botId` 注入独立出口代理凭据，避免多机器人共用容器时策略互相阻断；Android 客户端附件上传改用有界分块读取防止 `SIZE == -1` 时 OOM。
+- **工程化与 CI 完备性**：修复 Windows + Hoisted 模式下 `bun run typecheck`（退出码 66）与 `app build` 脚本兼容性；修复 `check-zh-localization.cjs` 对 10 个核心契约文件的固定校验；补齐 CI 工作流遗漏测试。
+
 ## 0.1.92 — 2026-10-28
 
 这一版修正 0.1.91 的形象头像：真机测试发现默认左栏是「机器人列表」而不是「对话行」，表情没有接进去，选中、在跑、做完时头像都不会变。PC 客户端与服务端同步更新至 0.1.92（Android `versionCode` 289）。

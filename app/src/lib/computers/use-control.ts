@@ -54,6 +54,8 @@ type ControlStore = {
   subscribe: (listener: () => void, active?: boolean) => () => void;
   /** 有理由相信电脑又连得上了（窗口回焦、online、同一 bot 的别的请求成功）：清掉退避，马上再读。 */
   wake: () => void;
+  /** 从 bfcache（pagehide → pageshow）恢复时，若仍有订阅者则重建频道并恢复选主与轮询。 */
+  sync?: () => void;
   /** CB-107：放下主标签身份、关掉频道（切账号 / 退出 / 关页面）。 */
   dispose: () => void;
 };
@@ -245,6 +247,13 @@ export function createControlStore(
     }
   };
   const wake = () => {
+    if (active > 0 && ((makeTabs && !tabs) || (leading && timer === undefined))) {
+      failures = 0;
+      retryAt = 0;
+      clearRetry();
+      sync();
+      return;
+    }
     if (!leading) {
       tabs?.post({ k: "wake" });
       return;
@@ -329,6 +338,17 @@ export function createControlStore(
       onMessage: onTabMessage,
     });
   };
+  const sync = () => {
+    if (!listeners.size) return;
+    const restoredTabs = !tabs && Boolean(makeTabs);
+    ensureTabs();
+    if (leading) startPolling();
+    if (tabs && active > 0) {
+      tabs.start();
+      if (restoredTabs && followerStale()) void refresh();
+      startWatchdog();
+    }
+  };
   const store: ControlStore = {
     getSnapshot: () => snapshot,
     refresh: async () => {
@@ -337,6 +357,7 @@ export function createControlStore(
     },
     change,
     wake,
+    sync,
     dispose: () => {
       tabs?.close();
       tabs = undefined;
@@ -428,6 +449,12 @@ function listenForWake() {
   window.addEventListener("pagehide", () => {
     for (const store of stores.values()) store.dispose();
   });
+  window.addEventListener("pageshow", () => {
+    for (const store of stores.values()) {
+      store.sync?.();
+      store.wake();
+    }
+  });
 }
 onControlRequestOk((computerId) => wakeControl(computerId));
 const noSubscription = () => () => undefined;
@@ -439,6 +466,8 @@ export function useComputerControl(computerId: string, enabled = true) {
     listenForWake();
     store = makeStore(computerId);
     stores.set(key, store);
+  } else if (enabled && store) {
+    store.sync?.();
   }
   const onScreen = useKeptVisible();
   const subscribe = useCallback(
