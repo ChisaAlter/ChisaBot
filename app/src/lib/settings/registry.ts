@@ -88,6 +88,9 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     keywords: ["ty", "tongyong", "general", "preferences", "偏好"],
     items: [
       { id: "theme", title: "主题", description: "浅色或深色外观", find: "主题", keywords: ["深色", "浅色", "暗色", "夜间", "黑色", "dark", "light", "theme", "zt", "外观"] },
+      { id: "palette", title: "主题配色", description: "晴空蓝、极光紫、翡翠森、樱花粉、深海蓝、暮光金等 8 款主题风格", find: "主题配色", keywords: ["配色", "主题色", "极光", "樱花", "翡翠", "深海", "暮光", "曜石", "palette", "color"] },
+      { id: "glass", title: "面板玻璃材质（液态玻璃）", description: "调整左栏、输入框、对话气泡与面板栏的液态玻璃折射通透度", find: "面板玻璃材质", keywords: ["液态玻璃", "毛玻璃", "透明", "高透", "磨砂", "liquid glass", "ytbl"] },
+      { id: "wallpaper", title: "背景壁纸", description: "选择内置流光壁纸或上传自定义图片壁纸", find: "背景壁纸", keywords: ["壁纸", "背景图", "自定义壁纸", "上传图片", "wallpaper", "bz", "bjt"] },
       { id: "sky", title: "背景随时间变化", description: "背景按一天里的时间换颜色", find: "背景随时间变化", keywords: ["天空", "背景", "sky", "颜色", "时间", "tk"] },
       { id: "instructions", title: "常驻指令", description: "每次对话都带上的要求", find: "常驻指令", keywords: ["指令", "系统提示", "prompt", "instructions", "要求", "czzl"] },
       { id: "hotkeys", title: "键盘快捷键", description: "全部快捷键一览", find: "键盘快捷键", keywords: ["快捷键", "热键", "hotkey", "shortcut", "keyboard", "kjj"] },

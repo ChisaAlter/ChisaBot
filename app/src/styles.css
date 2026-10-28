@@ -8892,3 +8892,509 @@ html[data-desktop] [data-slot="sidebar"][data-mobile="true"] { top: 40px; height
 .activity-step.is-activity-jump { animation: activity-jump-flash 1.8s ease-out; }
 @keyframes activity-jump-flash { 0%, 40% { background: color-mix(in srgb, #f59e0b 28%, transparent); box-shadow: inset 3px 0 0 #f59e0b; } 100% { background: transparent; box-shadow: none; } }
 @media (max-width: 767px) { .computer-mobile-activity > .activity-heading { display: none; } }
+
+/* ==========================================================================================
+ * 多款主题配色 · 自定义壁纸 · 液态玻璃（Liquid Glass）面板材质系统
+ * ========================================================================================== */
+
+/* 1. 主题配色令牌覆盖（支持浅色与深色模式） */
+html[data-palette="aurora"] {
+  --accent-blue: #7c3aed;
+  --accent-blue-ink: #6d28d9;
+  --accent-blue-soft: rgba(124, 58, 237, 0.13);
+}
+html.dark[data-palette="aurora"] {
+  --accent-blue: #a78bfa;
+  --accent-blue-ink: #c4b5fd;
+  --accent-blue-soft: rgba(167, 139, 250, 0.18);
+}
+html[data-palette="emerald"] {
+  --accent-blue: #059669;
+  --accent-blue-ink: #047857;
+  --accent-blue-soft: rgba(5, 150, 105, 0.13);
+}
+html.dark[data-palette="emerald"] {
+  --accent-blue: #34d399;
+  --accent-blue-ink: #6ee7b7;
+  --accent-blue-soft: rgba(52, 211, 153, 0.17);
+}
+html[data-palette="sakura"] {
+  --accent-blue: #db2777;
+  --accent-blue-ink: #be185d;
+  --accent-blue-soft: rgba(219, 39, 119, 0.13);
+}
+html.dark[data-palette="sakura"] {
+  --accent-blue: #f472b6;
+  --accent-blue-ink: #f9a8d4;
+  --accent-blue-soft: rgba(244, 114, 182, 0.18);
+}
+html[data-palette="ocean"] {
+  --accent-blue: #0284c7;
+  --accent-blue-ink: #0369a1;
+  --accent-blue-soft: rgba(2, 132, 199, 0.13);
+}
+html.dark[data-palette="ocean"] {
+  --accent-blue: #38bdf8;
+  --accent-blue-ink: #7dd3fc;
+  --accent-blue-soft: rgba(56, 189, 248, 0.18);
+}
+html[data-palette="sunset"] {
+  --accent-blue: #d97706;
+  --accent-blue-ink: #b45309;
+  --accent-blue-soft: rgba(217, 119, 6, 0.14);
+}
+html.dark[data-palette="sunset"] {
+  --accent-blue: #fbbf24;
+  --accent-blue-ink: #fcd34d;
+  --accent-blue-soft: rgba(251, 191, 36, 0.18);
+}
+html[data-palette="crimson"] {
+  --accent-blue: #e11d48;
+  --accent-blue-ink: #be123c;
+  --accent-blue-soft: rgba(225, 29, 72, 0.13);
+}
+html.dark[data-palette="crimson"] {
+  --accent-blue: #fb7185;
+  --accent-blue-ink: #fda4af;
+  --accent-blue-soft: rgba(251, 113, 133, 0.18);
+}
+html[data-palette="obsidian"] {
+  --accent-blue: #334155;
+  --accent-blue-ink: #1e293b;
+  --accent-blue-soft: rgba(51, 65, 85, 0.12);
+}
+html.dark[data-palette="obsidian"] {
+  --accent-blue: #94a3b8;
+  --accent-blue-ink: #cbd5e1;
+  --accent-blue-soft: rgba(148, 163, 184, 0.16);
+}
+
+/* 2. 全局背景壁纸层（位于 body 天空之上、所有玻璃面板之下） */
+.chisabot-wallpaper {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+.chisabot-wallpaper-img {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  transition: filter 0.25s ease, transform 0.25s ease;
+}
+.chisabot-wallpaper-dim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 45%, rgba(6, 10, 22, 0.45) 0%, rgba(4, 8, 18, 0.85) 100%);
+  transition: opacity 0.2s ease;
+}
+html:not(.dark) .chisabot-wallpaper-dim {
+  background: radial-gradient(circle at 50% 45%, rgba(255, 255, 255, 0.25) 0%, rgba(15, 23, 42, 0.45) 100%);
+}
+
+/* 3. 液态玻璃（Liquid Glass）面板光学折射与曲面高光系统
+ *    覆盖图 2 中所有板块：左栏卡片 (.glass-side-card)、左下角账号卡 (.acct-card)、
+ *    底部输入框 (.glass-composer)、对话气泡、右侧面板栏 (.rail-card) 与内部实时卡片、设置卡片 (.page-rows / .sg-card)。 */
+:root,
+html[data-glass="liquid"] {
+  --lg-blur: saturate(195%) contrast(103%) blur(28px);
+  --lg-surface: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.56) 0%,
+    rgba(255, 255, 255, 0.34) 48%,
+    rgba(255, 255, 255, 0.48) 100%
+  );
+  --lg-surface-strong: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.72) 0%,
+    rgba(255, 255, 255, 0.5) 52%,
+    rgba(255, 255, 255, 0.64) 100%
+  );
+  --lg-border: rgba(255, 255, 255, 0.72);
+  --lg-rim:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.88),
+    inset 1px 0 1px 0 rgba(255, 255, 255, 0.52),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 14px 32px -12px rgba(255, 255, 255, 0.36);
+  --lg-shadow:
+    0 16px 40px -8px rgba(18, 36, 72, 0.14),
+    0 4px 12px rgba(18, 36, 72, 0.06);
+}
+
+html.dark,
+html.dark[data-glass="liquid"] {
+  --lg-blur: saturate(200%) contrast(105%) blur(30px);
+  --lg-surface: linear-gradient(
+    135deg,
+    rgba(38, 54, 82, 0.42) 0%,
+    rgba(16, 25, 44, 0.3) 50%,
+    rgba(28, 42, 68, 0.38) 100%
+  );
+  --lg-surface-strong: linear-gradient(
+    135deg,
+    rgba(44, 62, 94, 0.54) 0%,
+    rgba(20, 30, 50, 0.4) 52%,
+    rgba(32, 48, 76, 0.48) 100%
+  );
+  --lg-border: rgba(255, 255, 255, 0.16);
+  --lg-rim:
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.28),
+    inset 1px 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 16px 36px -14px rgba(255, 255, 255, 0.09);
+  --lg-shadow:
+    0 18px 44px -8px rgba(0, 0, 0, 0.42),
+    0 4px 14px rgba(0, 0, 0, 0.24);
+}
+
+/* 晶莹高透模式（crystal）：更高通透度，最大化透出壁纸光影 */
+html[data-glass="crystal"] {
+  --lg-blur: saturate(210%) contrast(104%) blur(22px);
+  --lg-surface: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.38) 0%,
+    rgba(255, 255, 255, 0.2) 50%,
+    rgba(255, 255, 255, 0.32) 100%
+  );
+  --lg-surface-strong: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.52) 0%,
+    rgba(255, 255, 255, 0.32) 52%,
+    rgba(255, 255, 255, 0.44) 100%
+  );
+  --lg-border: rgba(255, 255, 255, 0.8);
+}
+html.dark[data-glass="crystal"] {
+  --lg-blur: saturate(215%) contrast(106%) blur(24px);
+  --lg-surface: linear-gradient(
+    135deg,
+    rgba(42, 60, 92, 0.28) 0%,
+    rgba(14, 22, 38, 0.18) 50%,
+    rgba(28, 42, 68, 0.25) 100%
+  );
+  --lg-surface-strong: linear-gradient(
+    135deg,
+    rgba(48, 68, 102, 0.38) 0%,
+    rgba(18, 28, 46, 0.26) 52%,
+    rgba(32, 48, 76, 0.34) 100%
+  );
+  --lg-border: rgba(255, 255, 255, 0.22);
+  --lg-rim:
+    inset 0 1.2px 1px 0 rgba(255, 255, 255, 0.36),
+    inset 1px 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 18px 38px -12px rgba(255, 255, 255, 0.12);
+}
+
+/* 经典磨砂模式（frosted）：偏稳重的柔光磨砂 */
+html[data-glass="frosted"] {
+  --lg-blur: saturate(150%) blur(26px);
+  --lg-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0.68));
+  --lg-surface-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.84));
+}
+html.dark[data-glass="frosted"] {
+  --lg-blur: saturate(155%) blur(28px);
+  --lg-surface: linear-gradient(180deg, rgba(24, 34, 54, 0.76), rgba(18, 26, 44, 0.72));
+  --lg-surface-strong: linear-gradient(180deg, rgba(30, 42, 64, 0.88), rgba(22, 32, 50, 0.84));
+}
+
+/* 将液态玻璃材质应用到主界面各大核心板块（左栏、左下角账号卡、右栏、收起态左栏、设置行卡片） */
+:is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card) {
+  background: var(--lg-surface) !important;
+  backdrop-filter: var(--lg-blur) !important;
+  border: 1px solid var(--lg-border) !important;
+  box-shadow: var(--lg-shadow), var(--lg-rim) !important;
+}
+
+/* 右栏内部实时卡片（如图 2 中的黄金 ETF 看板卡）：子层液态玻璃折射面 */
+.rail-card .glass-card {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.42) 0%,
+    rgba(255, 255, 255, 0.22) 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.58) !important;
+  box-shadow:
+    0 6px 20px rgba(16, 30, 60, 0.06),
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.65) !important;
+}
+.dark .rail-card .glass-card {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.085) 0%,
+    rgba(255, 255, 255, 0.03) 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.18) !important;
+}
+
+/* 底部聊天输入框（.glass-composer）：告别死板的 0.97 实心底色，升级为高透液态玻璃 */
+.glass-composer,
+.dark .glass-composer {
+  background: var(--lg-surface-strong);
+  backdrop-filter: var(--lg-blur);
+  border: 1px solid var(--lg-border);
+  box-shadow: var(--lg-shadow), var(--lg-rim);
+}
+.glass-composer:focus-within,
+.dark .glass-composer:focus-within {
+  background: var(--lg-surface-strong);
+  border-color: color-mix(in srgb, var(--accent-blue) 42%, var(--lg-border));
+  box-shadow: var(--lg-shadow), var(--lg-rim);
+}
+
+/* 聊天机器人回复气泡：液态玻璃悬浮晶块 */
+.glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"] {
+  background: var(--lg-surface-strong);
+  backdrop-filter: var(--lg-blur);
+  border: 1px solid var(--lg-border);
+  box-shadow: var(--lg-shadow), var(--lg-rim);
+}
+
+/* 设置页与通用卡片：同步液态玻璃边缘高光与通透度 */
+.page-rows,
+.sg-card {
+  background: var(--lg-surface) !important;
+  backdrop-filter: var(--lg-blur);
+  border: 1px solid var(--lg-border) !important;
+  box-shadow: var(--lg-shadow), var(--lg-rim);
+}
+
+/* 左栏当前选中机器人项与搜索框：液态晶体胶囊感 */
+.glass-bot-row.is-on {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-blue) 18%, rgba(255, 255, 255, 0.65)),
+    rgba(255, 255, 255, 0.42)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  box-shadow:
+    0 4px 14px rgba(18, 36, 72, 0.08),
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.8);
+}
+.dark .glass-bot-row.is-on {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-blue) 26%, rgba(255, 255, 255, 0.12)),
+    rgba(255, 255, 255, 0.05)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.24);
+}
+
+/* 4. 设置 → 通用 → 外观：主题配色网格与壁纸选择器样式 */
+.appearance-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 20px;
+}
+.appearance-block-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.appearance-block-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-1);
+}
+.appearance-block-desc {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.appearance-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.appearance-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  gap: 10px;
+}
+.appearance-palette-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line-strong);
+  background: var(--glass-1);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+.appearance-palette-card:hover {
+  transform: translateY(-1px);
+  background: var(--glass-2);
+  border-color: var(--stroke);
+}
+.appearance-palette-card.is-active {
+  background: var(--glass-3);
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 1.5px var(--accent-blue-soft), var(--shadow-1);
+}
+.appearance-palette-swatch {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.45), 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+.appearance-swatch-check {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.68);
+  color: #fff;
+  backdrop-filter: blur(4px);
+}
+.appearance-palette-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.appearance-palette-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-1);
+  line-height: 1.3;
+}
+.appearance-palette-sub {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.appearance-wallpaper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+  gap: 10px;
+}
+.appearance-wallpaper-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--line-strong);
+  background: var(--glass-1);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.appearance-wallpaper-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--stroke);
+  box-shadow: var(--shadow-1);
+}
+.appearance-wallpaper-card.is-active {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px var(--accent-blue-soft), var(--shadow-1);
+}
+.appearance-wallpaper-thumb {
+  position: relative;
+  width: 100%;
+  height: 84px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+/* 缩略图上的微缩液态玻璃示意块 */
+.appearance-wallpaper-glass-demo {
+  position: absolute;
+  inset: 10px 12px;
+  display: grid;
+  grid-template-columns: 28% 1fr;
+  gap: 6px;
+  pointer-events: none;
+}
+.appearance-wallpaper-glass-demo > i {
+  display: block;
+  border-radius: 7px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.12));
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(4px);
+}
+.appearance-wallpaper-meta {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px 10px;
+  min-width: 0;
+}
+.appearance-url-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.appearance-url-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.appearance-url-icon {
+  position: absolute;
+  left: 11px;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+.appearance-url-input {
+  padding-left: 34px !important;
+}
+.appearance-sliders {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--glass-1);
+  border: 1px solid var(--line);
+}
+.appearance-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.appearance-slider-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.appearance-slider-val {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+.appearance-range {
+  width: 100% !important;
+}
+@media (max-width: 640px) {
+  .appearance-url-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
