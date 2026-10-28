@@ -104,7 +104,10 @@ export type Principal = { id: string; username: string; name: string; role: "adm
 
 /** 签名身份（应用 server/src/auth/gateway-identity.ts 里有对应的验签；格式改动要两边一起改）。 */
 export function signIdentity(secret: string, principal: { id: string; name: string; role: "admin" | "user" }, now = Date.now()): string {
-  const payload = Buffer.from(JSON.stringify({ u: principal.id, n: principal.name, r: principal.role, t: now })).toString("base64url");
+  // j = 一次性随机数：应用在有效期内只认一次，截获的头不能重放（审计 #5）。
+  const payload = Buffer.from(
+    JSON.stringify({ u: principal.id, n: principal.name, r: principal.role, t: now, j: randomBytes(16).toString("base64url") }),
+  ).toString("base64url");
   const body = `v1.${payload}`;
   return `${body}.${createHmac("sha256", secret).update(body).digest("base64url")}`;
 }

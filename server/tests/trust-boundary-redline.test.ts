@@ -111,6 +111,22 @@ describe("nginx clears Local-Caller on app proxies", () => {
   });
 });
 
+describe("nginx takes the client IP from Cloudflare only (audit #5)", () => {
+  test("real_ip_header CF-Connecting-IP + every official Cloudflare range, nothing wider", () => {
+    const conf = read("deploy/public/nginx.conf");
+    expect(conf).toMatch(/^\s*real_ip_header CF-Connecting-IP;/m);
+    for (const cidr of ["173.245.48.0/20","103.21.244.0/22","103.22.200.0/22","103.31.4.0/22","141.101.64.0/18","108.162.192.0/18","190.93.240.0/20","188.114.96.0/20","197.234.240.0/22","198.41.128.0/17","162.158.0.0/15","104.16.0.0/13","104.24.0.0/14","172.64.0.0/13","131.0.72.0/22","2400:cb00::/32","2606:4700::/32","2803:f800::/32","2405:b500::/32","2405:8100::/32","2a06:98c0::/29","2c0f:f248::/32"]) {
+      expect(conf).toContain(`set_real_ip_from ${cidr};`);
+    }
+    expect(conf).not.toMatch(/set_real_ip_from\s+(0\.0\.0\.0\/0|::\/0);/);
+    const http = conf.indexOf("http {");
+    const firstServer = conf.indexOf("server {");
+    const realIp = conf.indexOf("real_ip_header");
+    expect(realIp).toBeGreaterThan(http);
+    expect(realIp).toBeLessThan(firstServer);
+  });
+});
+
 describe("deploy scripts refuse 0.0.0.0 app bind", () => {
   test("start.sh and friend-up.sh contain bind refusal", () => {
     const start = read("deploy/start.sh");

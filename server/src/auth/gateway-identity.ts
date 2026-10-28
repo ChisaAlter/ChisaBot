@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { MiddlewareHandler } from "hono";
 import { DEV_ACTOR } from "./dev-actor";
@@ -12,7 +12,9 @@ import type { ChisaBotRole } from "./roles";
  * `/_internal/check` 的响应头里给出 `X-ChisaBot-Identity`，nginx 用 `auth_request_set` 把它原样转给应用。
  * 格式：`v1.<base64url(JSON {u, n, r, t})>.<base64url(HMAC-SHA256(secret, "v1." + payload))>`
  *   u = 用户 id（管理员固定为 dev-local-user，和以前单用户时的数据是同一个人）；n = 显示名；
- *   r = admin | user；t = 签发时间（毫秒）。只在 ±2 分钟内有效（网关每个请求现签）。
+ *   r = admin | user；t = 签发时间（毫秒）；j = 一次性随机数（16 字节，审计 #5）。只在 ±2 分钟内有效（网关每个请求现签）。
+ *   防重放：带 j 的身份头在有效期内只能用一次（{@link GatewayReplayCache}，在 serve 入口每个 HTTP 请求消费一次），
+ *   重放 → 401。不带 j 的旧格式（升级前的网关）照旧放行，网关升级后自然消失。
  *
  * 判定（只在 CHISABOT_SINGLE_USER + 配了密钥时启用）：
  *  - 有身份头且验签通过 → 这个人；
@@ -32,7 +34,7 @@ export const GATEWAY_IDENTITY_HEADER = "x-chisabot-identity";
 export const LOCAL_CALLER_HEADER = "x-chisabot-local-caller";
 const MAX_SKEW_MS = 2 * 60_000;
 
-export type GatewayIdentity = { id: string; name: string; role: ChisaBotRole; issuedAt: number };
+export type GatewayIdentity = { id: string; name: string; role: ChisaBotRole; issuedAt: number; nonce?: string };
 
 const b64 = (value: Buffer | string) => Buffer.from(value).toString("base64url");
 
@@ -46,12 +48,15 @@ export function signGatewayIdentity(
   identity: { id: string; name: string; role: ChisaBotRole },
   now = Date.now(),
 ): string {
-  const payload = b64(JSON.stringify({ u: identity.id, n: identity.name, r: identity.role, t: now }));
+  const payload = b64(
+    JSON.stringify({ u: identity.id, n: identity.name, r: identity.role, t: now, j: randomBytes(16).toString("base64url") }),
+  );
   const body = `v1.${payload}`;
   return `${body}.${b64(mac(secret, body))}`;
 }
 
 const USER_ID = /^[A-Za-z0-9_-]{3,64}$/;
+const NONCE = /^[A-Za-z0-9_-]{16,64}$/;
 
 /** 验签；任何不对（格式、签名、过期、字段）都返回 null。 */
 export function verifyGatewayIdentity(
@@ -78,12 +83,66 @@ export function verifyGatewayIdentity(
     return null;
   }
   if (!parsed || typeof parsed !== "object") return null;
-  const { u, n, r, t } = parsed as Record<string, unknown>;
+  const { u, n, r, t, j } = parsed as Record<string, unknown>;
   if (typeof u !== "string" || !USER_ID.test(u)) return null;
   if (r !== "admin" && r !== "user") return null;
   if (typeof t !== "number" || !Number.isFinite(t) || Math.abs(now - t) > MAX_SKEW_MS) return null;
+  if (j !== undefined && (typeof j !== "string" || !NONCE.test(j))) return null;
   const name = typeof n === "string" && n.trim() ? n.trim().slice(0, 64) : u;
-  return { id: u, name, role: r, issuedAt: t };
+  return { id: u, name, role: r, issuedAt: t, ...(typeof j === "string" ? { nonce: j } : {}) };
+}
+
+/**
+ * 身份头一次性检查（审计 #5）：记住有效期内见过的签名摘要，同一个头第二次出现就拒绝。
+ * 过期时间 = 签发时间 + 允许偏差（之后 verify 本身就拒绝，不必再记）；容量有上限，满了先清过期的，
+ * 仍满则丢最早的（Map 按插入顺序）——宁可极端洪峰下少记几条，也不让缓存把内存吃光或误拒正常用户。
+ */
+export class GatewayReplayCache {
+  private readonly seen = new Map<string, number>();
+  constructor(readonly capacity = 100_000) {}
+
+  get size(): number {
+    return this.seen.size;
+  }
+
+  /** 第一次见到 → true 并记下；有效期内再见 → false。 */
+  consume(header: string, expiresAt: number, now = Date.now()): boolean {
+    const key = createHash("sha256").update(header).digest("base64url");
+    const until = this.seen.get(key);
+    if (until !== undefined && until >= now) return false;
+    if (until !== undefined) this.seen.delete(key);
+    if (this.seen.size >= this.capacity) this.sweep(now);
+    while (this.seen.size >= this.capacity) {
+      const oldest = this.seen.keys().next().value;
+      if (oldest === undefined) break;
+      this.seen.delete(oldest);
+    }
+    this.seen.set(key, expiresAt);
+    return true;
+  }
+
+  /** 清掉已过期的条目。 */
+  sweep(now = Date.now()): void {
+    for (const [key, until] of this.seen) if (until < now) this.seen.delete(key);
+  }
+}
+
+/**
+ * serve 入口调用：这个 HTTP 请求带的身份头是不是重放。只管「验签通过且带 j」的头；
+ * 无效的头交给后面的 resolveGatewayRequest 照旧 401，旧格式（无 j）照旧放行。
+ * 同一个请求在应用内部会被多处 resolve（守卫、CopilotKit 两次、WebSocket），所以消费只在入口做一次。
+ */
+export function isReplayedGatewayIdentity(
+  secret: string,
+  headers: Headers,
+  cache: GatewayReplayCache,
+  now = Date.now(),
+): boolean {
+  const header = headers.get(GATEWAY_IDENTITY_HEADER);
+  if (!header) return false;
+  const identity = verifyGatewayIdentity(secret, header, now);
+  if (!identity?.nonce) return false;
+  return !cache.consume(header, identity.issuedAt + MAX_SKEW_MS, now);
 }
 
 /** 读密钥：CHISABOT_GATEWAY_SECRET 或 CHISABOT_GATEWAY_SECRET_FILE（≥32 字符）；没配 = 不启用。 */
