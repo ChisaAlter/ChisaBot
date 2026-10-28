@@ -17,19 +17,17 @@ export type ThemePaletteId =
   | "default"
   | "aurora"
   | "emerald"
-  | "sakura"
   | "ocean"
   | "sunset"
-  | "crimson"
-  | "obsidian";
+  | "sakura";
 
 export type GlassStyleId = "liquid" | "crystal" | "frosted";
 
 /**
- * Hark 原生 WebGL 动态天空与天气引擎（wallpaper_core.html）内置的 12 个精选场景 + 自动跟随模式。
- * - "auto": 根据当前主题配色与浅色/深色模式自动匹配最佳 Hark 动态天空场景
+ * Hark 原生 WebGL 动态天空与天气引擎（wallpaper_core.html）精选场景 + 自动跟随模式。
+ * - "auto": 根据当前主题配色与浅色/深色模式自动匹配最佳 Hark 动态天空场景（深色模式固定匹配深邃夜幕，保障浅色文字 100% 清晰可见）
  * - "live": 根据当前时间与实时天气（Open-Meteo）动态演算太阳高度、瑞利散射与云层
- * - "0".."11": 对应 wallpaper_core.html 中 SCENES[0..11] 的 12 个精选地标与气象时刻
+ * - "0".."11": 对应 wallpaper_core.html 中 SCENES[0..11] 的地标与气象时刻
  */
 export type HarkSkySceneId =
   | "auto"
@@ -61,7 +59,7 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     id: "auto",
     sceneIndex: null,
     name: "智能跟随主题",
-    subtitle: "随浅色 / 深色与主题色自动切换晴空与夜幕",
+    subtitle: "浅色呈现晴空流云，深色自动切换静谧夜幕",
     previewGradient: "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 42%, #6da7ec 76%, #b0d5f7 100%)",
     isNight: false,
   },
@@ -76,98 +74,34 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
   {
     id: "0",
     sceneIndex: 0,
-    name: "帕洛阿尔托 · 晴朗",
-    subtitle: "Palo Alto · 午后澄澈蓝天与轻柔积云",
+    name: "晴空流云 · 帕洛阿尔托",
+    subtitle: "Palo Alto · 午后澄澈蓝天与立体体积积云",
     previewGradient: "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 40%, #6da7ec 75%, #b0d5f7 100%)",
-    isNight: false,
-  },
-  {
-    id: "1",
-    sceneIndex: 1,
-    name: "纽约 · 日落",
-    subtitle: "New York · 暮色紫罗兰与暖金晚霞",
-    previewGradient: "linear-gradient(180deg, #2d386c 0%, #61578a 38%, #ba6d79 72%, #eb9a68 100%)",
-    isNight: false,
-  },
-  {
-    id: "2",
-    sceneIndex: 2,
-    name: "雷克雅未克 · 午夜",
-    subtitle: "Reykjavik · 北极圈深邃午夜蓝天幕",
-    previewGradient: "linear-gradient(180deg, #070b16 0%, #0e1629 42%, #17233e 76%, #213254 100%)",
-    isNight: true,
-  },
-  {
-    id: "3",
-    sceneIndex: 3,
-    name: "伦敦 · 雨天",
-    subtitle: "London · 温润雨云与柔和蓝灰天光",
-    previewGradient: "linear-gradient(180deg, #3c4f6b 0%, #566d8c 44%, #768ea8 78%, #9cb0c4 100%)",
-    isNight: false,
-  },
-  {
-    id: "4",
-    sceneIndex: 4,
-    name: "柏林 · 夜晚",
-    subtitle: "Berlin · 静谧欧陆夜空与微光云层",
-    previewGradient: "linear-gradient(180deg, #090d18 0%, #10182b 42%, #18233c 76%, #22304e 100%)",
-    isNight: true,
-  },
-  {
-    id: "5",
-    sceneIndex: 5,
-    name: "太浩湖 · 降雪",
-    subtitle: "Lake Tahoe · 高山雪霁与清冽冰晶天光",
-    previewGradient: "linear-gradient(180deg, #4b6cb7 0%, #6d8ec9 42%, #9bb4de 76%, #cfe0f5 100%)",
     isNight: false,
   },
   {
     id: "6",
     sceneIndex: 6,
-    name: "凤凰城 · 黄金时刻",
-    subtitle: "Phoenix · 沙漠暖金斜阳与散射光晕",
+    name: "落日暖金 · 凤凰城",
+    subtitle: "Phoenix · 黄金时刻暖阳散射与流云",
     previewGradient: "linear-gradient(180deg, #2b5899 0%, #5c7db0 38%, #b88b7c 72%, #f0b175 100%)",
     isNight: false,
   },
   {
-    id: "7",
-    sceneIndex: 7,
-    name: "东京 · 清晨",
-    subtitle: "Tokyo · 清透晨曦与明快高空卷云",
-    previewGradient: "linear-gradient(180deg, #1a54a6 0%, #3c7ad1 40%, #74aee8 75%, #bce0fb 100%)",
+    id: "5",
+    sceneIndex: 5,
+    name: "高山雪霁 · 太浩湖",
+    subtitle: "Lake Tahoe · 清冽冰晶天光与层叠云海",
+    previewGradient: "linear-gradient(180deg, #4b6cb7 0%, #6d8ec9 42%, #9bb4de 76%, #cfe0f5 100%)",
     isNight: false,
   },
   {
-    id: "8",
-    sceneIndex: 8,
-    name: "德里 · 薄雾",
-    subtitle: "Delhi · 柔和暮霭与暖调琥珀天际",
-    previewGradient: "linear-gradient(180deg, #464c6e 0%, #78697d 42%, #b07f78 76%, #d99b72 100%)",
-    isNight: false,
-  },
-  {
-    id: "9",
-    sceneIndex: 9,
-    name: "旧金山 · 浓雾",
-    subtitle: "San Francisco · 海湾流雾与轻柔云海",
-    previewGradient: "linear-gradient(180deg, #4a6588 0%, #6a85a6 42%, #8fa8c2 76%, #b8cce0 100%)",
-    isNight: false,
-  },
-  {
-    id: "10",
-    sceneIndex: 10,
-    name: "迈阿密 · 雷暴",
-    subtitle: "Miami · 热带深邃风暴云与暮色天际",
-    previewGradient: "linear-gradient(180deg, #161d31 0%, #26314d 42%, #3a4769 76%, #536182 100%)",
+    id: "4",
+    sceneIndex: 4,
+    name: "静谧星夜 · 柏林",
+    subtitle: "Berlin · 深邃夜空与微光云层",
+    previewGradient: "linear-gradient(180deg, #090d18 0%, #10182b 42%, #18233c 76%, #22304e 100%)",
     isNight: true,
-  },
-  {
-    id: "11",
-    sceneIndex: 11,
-    name: "檀香山 · 黎明",
-    subtitle: "Honolulu · 太平洋破晓粉金晨曦",
-    previewGradient: "linear-gradient(180deg, #2c4a82 0%, #5d6ca1 38%, #a8829b 72%, #eab093 100%)",
-    isNight: false,
   },
 ] as const;
 
@@ -182,7 +116,7 @@ export type ThemePaletteMeta = {
   skySatLight: [number, number, number, number];
   skyHueDark: [number, number, number, number];
   skySatDark: [number, number, number, number];
-  /** 默认关联的日间 / 夜间 Hark WebGL 天空场景索引 */
+  /** 默认关联的日间 / 夜间 Hark WebGL 天空场景索引（深色模式统一采用深邃夜景以保障文字对比度） */
   harkSceneLight: number;
   harkSceneDark: number;
 };
@@ -191,114 +125,86 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
   {
     id: "default",
     name: "晴空冰蓝",
-    subtitle: "Hark 原生动态天空与半透明毛玻璃",
+    subtitle: "澄澈晴空蓝与通透液态玻璃",
     accentLight: "#2f7cf6",
-    accentDark: "#4c8dff",
+    accentDark: "#5b9cff",
     swatchGradient: "linear-gradient(135deg, #1d57a9 0%, #3e7bd1 50%, #6da7ec 100%)",
     skyHueLight: [214, 212, 208, 204],
     skySatLight: [71, 62, 68, 82],
     skyHueDark: [222, 220, 218, 216],
-    skySatDark: [45, 44, 42, 40],
+    skySatDark: [45, 42, 38, 34],
     harkSceneLight: 0,
     harkSceneDark: 4,
   },
   {
     id: "aurora",
     name: "极光幻紫",
-    subtitle: "北极星夜紫罗兰与青蓝极光流彩",
+    subtitle: "星夜紫罗兰与极光流彩",
     accentLight: "#7c3aed",
-    accentDark: "#a78bfa",
+    accentDark: "#b197fc",
     swatchGradient: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 52%, #ec4899 100%)",
     skyHueLight: [258, 266, 276, 245],
     skySatLight: [64, 58, 52, 48],
-    skyHueDark: [262, 256, 248, 272],
-    skySatDark: [52, 48, 44, 42],
+    skyHueDark: [258, 252, 246, 264],
+    skySatDark: [44, 40, 36, 32],
     harkSceneLight: 11,
     harkSceneDark: 2,
   },
   {
     id: "emerald",
     name: "翡翠森境",
-    subtitle: "雨后松林薄雾与通透翡翠玻璃",
+    subtitle: "雨后松林薄雾与通透翡翠",
     accentLight: "#059669",
-    accentDark: "#34d399",
+    accentDark: "#38d9a9",
     swatchGradient: "linear-gradient(135deg, #059669 0%, #10b981 52%, #2dd4bf 100%)",
     skyHueLight: [164, 168, 172, 158],
     skySatLight: [56, 50, 44, 42],
-    skyHueDark: [168, 172, 176, 162],
-    skySatDark: [46, 42, 38, 36],
+    skyHueDark: [172, 176, 180, 168],
+    skySatDark: [38, 34, 30, 28],
     harkSceneLight: 5,
     harkSceneDark: 4,
   },
   {
-    id: "sakura",
-    name: "樱花绯粉",
-    subtitle: "春日落樱柔粉与暖调玫瑰天幕",
-    accentLight: "#db2777",
-    accentDark: "#f472b6",
-    swatchGradient: "linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fda4af 100%)",
-    skyHueLight: [336, 342, 348, 326],
-    skySatLight: [66, 60, 54, 48],
-    skyHueDark: [334, 328, 340, 320],
-    skySatDark: [44, 40, 38, 35],
-    harkSceneLight: 11,
-    harkSceneDark: 1,
-  },
-  {
     id: "ocean",
     name: "深海蔚蓝",
-    subtitle: "太平洋深潜青蓝与冰晶折射高光",
+    subtitle: "太平洋青蓝与冰晶折射高光",
     accentLight: "#0284c7",
-    accentDark: "#38bdf8",
+    accentDark: "#4dabf7",
     swatchGradient: "linear-gradient(135deg, #0369a1 0%, #0ea5e9 50%, #22d3ee 100%)",
     skyHueLight: [196, 199, 202, 192],
     skySatLight: [76, 70, 62, 56],
-    skyHueDark: [198, 202, 206, 194],
-    skySatDark: [56, 52, 48, 44],
+    skyHueDark: [204, 208, 212, 200],
+    skySatDark: [48, 44, 40, 36],
     harkSceneLight: 7,
     harkSceneDark: 2,
   },
   {
     id: "sunset",
     name: "落日琥珀",
-    subtitle: "黄金时刻暖橙晚霞与焦糖流光",
+    subtitle: "黄金时刻暖橙晚霞与流光",
     accentLight: "#d97706",
-    accentDark: "#fbbf24",
+    accentDark: "#ffc048",
     swatchGradient: "linear-gradient(135deg, #ea580c 0%, #f59e0b 52%, #fb7185 100%)",
     skyHueLight: [28, 34, 40, 18],
     skySatLight: [74, 68, 60, 54],
-    skyHueDark: [26, 22, 32, 16],
-    skySatDark: [46, 42, 38, 34],
+    skyHueDark: [224, 220, 216, 228],
+    skySatDark: [36, 32, 28, 26],
     harkSceneLight: 6,
-    harkSceneDark: 1,
-  },
-  {
-    id: "crimson",
-    name: "绯红曜石",
-    subtitle: "千咲丝带绯红与冷冽银白水晶对比",
-    accentLight: "#e11d48",
-    accentDark: "#fb7185",
-    swatchGradient: "linear-gradient(135deg, #be123c 0%, #e11d48 52%, #fb7185 100%)",
-    skyHueLight: [350, 354, 346, 338],
-    skySatLight: [64, 56, 48, 44],
-    skyHueDark: [350, 346, 354, 340],
-    skySatDark: [46, 42, 38, 34],
-    harkSceneLight: 1,
-    harkSceneDark: 10,
-  },
-  {
-    id: "obsidian",
-    name: "曜石极简",
-    subtitle: "纯粹石墨灰阶与高对比液态银镜",
-    accentLight: "#334155",
-    accentDark: "#94a3b8",
-    swatchGradient: "linear-gradient(135deg, #1e293b 0%, #475569 52%, #94a3b8 100%)",
-    skyHueLight: [215, 215, 215, 215],
-    skySatLight: [16, 14, 12, 10],
-    skyHueDark: [220, 220, 220, 220],
-    skySatDark: [14, 12, 10, 10],
-    harkSceneLight: 9,
     harkSceneDark: 4,
+  },
+  {
+    id: "sakura",
+    name: "樱花绯粉",
+    subtitle: "春日落樱柔粉与微醺暮色",
+    accentLight: "#db2777",
+    accentDark: "#f783ac",
+    swatchGradient: "linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fda4af 100%)",
+    skyHueLight: [336, 342, 348, 326],
+    skySatLight: [66, 60, 54, 48],
+    skyHueDark: [248, 242, 236, 254],
+    skySatDark: [36, 32, 28, 26],
+    harkSceneLight: 1,
+    harkSceneDark: 2,
   },
 ] as const;
 
@@ -603,9 +509,22 @@ const VALID_GLASS_STYLES = new Set<GlassStyleId>([
   "crystal",
   "frosted",
 ]);
-const VALID_HARK_SCENES = new Set<HarkSkySceneId>(
-  HARK_SKY_SCENES.map((s) => s.id),
-);
+const VALID_HARK_SCENES = new Set<HarkSkySceneId>([
+  "auto",
+  "live",
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "10",
+  "11",
+]);
 const VALID_WALLPAPER_IDS = new Set<WallpaperPresetId>([
   ...WALLPAPER_PRESETS.map((w) => w.id),
   "custom",
@@ -629,7 +548,7 @@ function readInitialAppearance(): AppearanceState {
   return {
     palette: rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default",
     glassStyle: rawGlass && VALID_GLASS_STYLES.has(rawGlass) ? rawGlass : "liquid",
-    glassOpacity: clampNumber(rawGlassOpacity, 8, 55, 16),
+    glassOpacity: clampNumber(rawGlassOpacity, 5, 55, 16),
     harkScene: rawHarkScene && VALID_HARK_SCENES.has(rawHarkScene) ? rawHarkScene : "auto",
     wallpaperId:
       rawWallpaperId && VALID_WALLPAPER_IDS.has(rawWallpaperId) ? rawWallpaperId : "none",
@@ -693,7 +612,7 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
         : prev.glassStyle,
     glassOpacity:
       patch.glassOpacity !== undefined
-        ? clampNumber(patch.glassOpacity, 8, 55, prev.glassOpacity)
+        ? clampNumber(patch.glassOpacity, 5, 55, prev.glassOpacity)
         : prev.glassOpacity,
     harkScene:
       patch.harkScene && VALID_HARK_SCENES.has(patch.harkScene)
@@ -825,7 +744,7 @@ export function computePaletteSky(
 
   const hues = dark ? meta.skyHueDark : meta.skyHueLight;
   const sats = dark ? meta.skySatDark : meta.skySatLight;
-  const lights = dark ? [8, 12, 17, 23] : [38, 52, 68, 84];
+  const lights = dark ? [6, 9, 13, 17] : [38, 52, 68, 84];
   const stops = [0, 1, 2, 3].map(
     (i) => `hsl(${hues[i]} ${sats[i]}% ${lights[i]}%)`,
   );

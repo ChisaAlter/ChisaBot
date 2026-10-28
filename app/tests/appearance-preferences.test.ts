@@ -23,10 +23,12 @@ import {
 const css = readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8");
 
 describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () => {
-  test("provides 8 curated theme palettes and computes sky variables for non-default palettes", () => {
-    expect(THEME_PALETTES.length).toBe(8);
+  test("provides 6 curated high-contrast theme palettes and computes sky variables for non-default palettes", () => {
+    expect(THEME_PALETTES.length).toBe(6);
     expect(computePaletteSky("default", false)).toBeNull();
     for (const p of THEME_PALETTES) {
+      // Every theme's dark sky scene is a deep night scene (2 or 4) for dark mode legibility
+      expect([2, 4]).toContain(p.harkSceneDark);
       if (p.id === "default") continue;
       const light = computePaletteSky(p.id, false);
       const dark = computePaletteSky(p.id, true);
@@ -37,14 +39,14 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
     }
   });
 
-  test("provides Hark WebGL wallpaper_core.html and 12 curated sky scenes plus auto and live modes", () => {
+  test("provides Hark WebGL wallpaper_core.html and 6 curated sky scene options plus backward-compatible scene resolution", () => {
     const wallpaperHtmlPath = path.join(import.meta.dir, "../public/wallpaper_core.html");
     expect(existsSync(wallpaperHtmlPath)).toBe(true);
     const wallpaperHtml = readFileSync(wallpaperHtmlPath, "utf8");
     expect(wallpaperHtml).toContain("window.hark");
     expect(wallpaperHtml).toContain("const SCENES = [");
 
-    expect(HARK_SKY_SCENES.length).toBe(14);
+    expect(HARK_SKY_SCENES.length).toBe(6);
     resetAppearanceDefaults();
     expect(getAppearanceState().harkScene).toBe("auto");
     expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(0);
@@ -101,12 +103,14 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
     expect(getAppearanceState().wallpaperId).toBe("none");
   });
 
-  test("styles.css defines Hark #sky-root, 50px Gaussian blur glass tokens, and applies them to core workspace panels", () => {
+  test("styles.css defines Hark #sky-root, 3 translucent glass modes, dark sky contrast scrim, and applies them to core workspace panels", () => {
     expect(css).toContain("#sky-root");
+    expect(css).toContain("html.dark #sky-root::after");
     expect(css).toContain('html[data-glass="liquid"]');
     expect(css).toContain('html[data-glass="crystal"]');
+    expect(css).toContain('html[data-glass="frosted"]');
     expect(css).toContain("--lg-alpha: 0.16");
-    expect(css).toContain("--lg-blur: blur(50px)");
+    expect(css).toContain("--lg-rim:");
     expect(css).toContain(".chisabot-wallpaper");
     expect(css).toContain(":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)");
   });

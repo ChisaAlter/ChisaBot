@@ -1,7 +1,6 @@
 import {
   IconCheck,
   IconCloud,
-  IconPhoto,
   IconRefresh,
   IconTrash,
   IconUpload,
@@ -27,13 +26,12 @@ import {
   setWallpaperPreset,
   THEME_PALETTES,
   useAppearance,
-  WALLPAPER_PRESETS,
 } from "@/lib/appearance";
 import { cn } from "@/lib/utils";
 
 const GLASS_STYLE_OPTIONS: readonly { value: GlassStyleId; label: string }[] = [
-  { value: "liquid", label: "Hark 原生玻璃" },
-  { value: "crystal", label: "晶莹高透" },
+  { value: "liquid", label: "液态玻璃" },
+  { value: "crystal", label: "晶莹全透" },
   { value: "frosted", label: "柔光磨砂" },
 ];
 const GLASS_STYLE_VALUES: readonly GlassStyleId[] = [
@@ -92,16 +90,16 @@ export function AppearancePreferences() {
 
   return (
     <>
-      {/* 1. Hark 动态天空场景（WebGL 实时大气散射与流云引擎） */}
-      <div className="appearance-block" data-setting-item="动态天空与气象场景">
+      {/* 1. 主题配色与动态天空场景（收束为精炼的 6 款配色 + 6 款天象） */}
+      <div className="appearance-block" data-setting-item="主题配色">
         <div className="appearance-block-head">
           <div>
             <div className="appearance-block-title">
-              {"Hark 动态天空与气象场景"}
+              {"主题配色与动态天象"}
             </div>
             <div className="appearance-block-desc">
               {
-                "基于 Hark WebGL 大气瑞利散射、体积云与太阳轨迹着色器，透过半透明玻璃面板实时呈现全球地标天色"
+                "精选 6 款高对比主题色与 Hark WebGL 动态天空；深色模式自动保障夜幕高对比度与文字清晰可读"
               }
             </div>
           </div>
@@ -113,7 +111,7 @@ export function AppearancePreferences() {
             <Button
               onClick={() => {
                 resetAppearanceDefaults();
-                toast.success("已恢复 Hark 默认外观");
+                toast.success("已恢复默认外观");
               }}
               size="sm"
               type="button"
@@ -123,6 +121,45 @@ export function AppearancePreferences() {
               {"恢复默认"}
             </Button>
           ) : null}
+        </div>
+
+        <div
+          aria-label="主题配色选择"
+          className="appearance-palette-grid"
+          role="radiogroup"
+        >
+          {THEME_PALETTES.map((item) => {
+            const active = appearance.palette === item.id;
+            return (
+              <button
+                aria-checked={active}
+                className={cn("appearance-palette-card", active && "is-active")}
+                data-testid={`palette-option-${item.id}`}
+                key={item.id}
+                onClick={() => setThemePalette(item.id)}
+                role="radio"
+                type="button"
+              >
+                <span
+                  aria-hidden="true"
+                  className="appearance-palette-swatch"
+                  style={{ background: item.swatchGradient }}
+                >
+                  {active ? (
+                    <span className="appearance-swatch-check">
+                      <IconCheck className="size-3.5 stroke-[2.6]" />
+                    </span>
+                  ) : null}
+                </span>
+                <span className="appearance-palette-info">
+                  <span className="appearance-palette-name">{item.name}</span>
+                  <span className="appearance-palette-sub">
+                    {item.subtitle}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         <div
@@ -173,16 +210,16 @@ export function AppearancePreferences() {
         </div>
       </div>
 
-      {/* 2. 玻璃面板材质与透光率控制 */}
-      <div className="appearance-block" data-setting-item="玻璃面板质感">
+      {/* 2. 面板玻璃材质与透光率控制 */}
+      <div className="appearance-block" data-setting-item="面板玻璃材质">
         <div className="appearance-block-head">
           <div>
             <div className="appearance-block-title">
-              {"Hark 玻璃材质与透光率"}
+              {"面板玻璃材质与透光率"}
             </div>
             <div className="appearance-block-desc">
               {
-                "采用 Hark 原生 50px 高斯光学模糊与图层混合（color-dodge / plus-lighter / soft-light），可自由调节面板半透明透光率"
+                "液态玻璃（立体镜面高光折射）、晶莹全透（超薄水母级透明）、柔光磨砂（细腻雾面柔焦），均可透出底层流云与壁纸"
               }
             </div>
           </div>
@@ -212,7 +249,7 @@ export function AppearancePreferences() {
         <div className="appearance-sliders">
           <label className="appearance-slider-row">
             <span className="appearance-slider-label">
-              <span>{"玻璃面板不透明度（数值越小越通透）"}</span>
+              <span>{"面板雾度（数值越小越通透）"}</span>
               <span className="appearance-slider-val">
                 {`${appearance.glassOpacity}%（透光率 ${100 - appearance.glassOpacity}%）`}
               </span>
@@ -220,8 +257,8 @@ export function AppearancePreferences() {
             <Input
               aria-label="玻璃面板不透明度"
               className="appearance-range"
-              max={55}
-              min={8}
+              max={45}
+              min={5}
               onChange={(e) => setGlassOpacity(Number(e.target.value))}
               step={1}
               type="range"
@@ -231,69 +268,16 @@ export function AppearancePreferences() {
         </div>
       </div>
 
-      {/* 3. 多款主题配色网格 */}
-      <div className="appearance-block" data-setting-item="主题配色">
-        <div className="appearance-block-head">
-          <div>
-            <div className="appearance-block-title">{"主题强调色方案"}</div>
-            <div className="appearance-block-desc">
-              {
-                "切换全局交互强调色；当动态天空处于「智能跟随主题」时，会自动联动对应的地标天象"
-              }
-            </div>
-          </div>
-        </div>
-
-        <div
-          aria-label="主题配色选择"
-          className="appearance-palette-grid"
-          role="radiogroup"
-        >
-          {THEME_PALETTES.map((item) => {
-            const active = appearance.palette === item.id;
-            return (
-              <button
-                aria-checked={active}
-                className={cn("appearance-palette-card", active && "is-active")}
-                data-testid={`palette-option-${item.id}`}
-                key={item.id}
-                onClick={() => setThemePalette(item.id)}
-                role="radio"
-                type="button"
-              >
-                <span
-                  aria-hidden="true"
-                  className="appearance-palette-swatch"
-                  style={{ background: item.swatchGradient }}
-                >
-                  {active ? (
-                    <span className="appearance-swatch-check">
-                      <IconCheck className="size-3.5 stroke-[2.6]" />
-                    </span>
-                  ) : null}
-                </span>
-                <span className="appearance-palette-info">
-                  <span className="appearance-palette-name">{item.name}</span>
-                  <span className="appearance-palette-sub">
-                    {item.subtitle}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 4. 静态艺术壁纸与自定义图片上传 */}
+      {/* 3. 自定义图片壁纸上传 */}
       <div className="appearance-block" data-setting-item="背景壁纸">
         <div className="appearance-block-head">
           <div>
             <div className="appearance-block-title">
-              {"自定义图片壁纸（可选覆盖动态天空）"}
+              {"自定义图片壁纸"}
             </div>
             <div className="appearance-block-desc">
               {
-                "默认使用上方 Hark WebGL 动态天空；也可在此选择静态艺术壁纸或上传本地高清图片"
+                "上传本地图片作为工作台背景，透过半透明玻璃面板呈现专属壁纸景深"
               }
             </div>
           </div>
@@ -305,16 +289,6 @@ export function AppearancePreferences() {
               ref={fileInputRef}
               type="file"
             />
-            <Button
-              disabled={uploading}
-              onClick={() => fileInputRef.current?.click()}
-              size="sm"
-              type="button"
-              variant="secondary"
-            >
-              <IconUpload className="size-3.5" />
-              {uploading ? "正在处理…" : "上传本地图片"}
-            </Button>
             {appearance.wallpaperId !== "none" ? (
               <Button
                 onClick={() => {
@@ -327,7 +301,7 @@ export function AppearancePreferences() {
                 variant="ghost"
               >
                 <IconCloud className="size-3.5" />
-                {"使用动态天空"}
+                {"切回动态天空"}
               </Button>
             ) : null}
           </div>
@@ -418,107 +392,6 @@ export function AppearancePreferences() {
               </Button>
             ) : null}
           </div>
-        </div>
-
-        <div
-          aria-label="预设壁纸选择"
-          className="appearance-wallpaper-grid"
-          role="radiogroup"
-        >
-          {WALLPAPER_PRESETS.map((wp) => {
-            const active = appearance.wallpaperId === wp.id;
-            return (
-              <button
-                aria-checked={active}
-                className={cn(
-                  "appearance-wallpaper-card",
-                  active && "is-active",
-                )}
-                data-testid={`wallpaper-option-${wp.id}`}
-                key={wp.id}
-                onClick={() => setWallpaperPreset(wp.id)}
-                role="radio"
-                type="button"
-              >
-                <div
-                  className="appearance-wallpaper-thumb"
-                  style={{ background: wp.previewBackground }}
-                >
-                  <div className="appearance-wallpaper-glass-demo">
-                    <i />
-                    <i />
-                  </div>
-                  {active ? (
-                    <span className="appearance-swatch-check">
-                      <IconCheck className="size-3.5 stroke-[2.6]" />
-                    </span>
-                  ) : null}
-                </div>
-                <div className="appearance-wallpaper-meta">
-                  <span className="appearance-palette-name">{wp.name}</span>
-                  <span className="appearance-palette-sub">{wp.subtitle}</span>
-                </div>
-              </button>
-            );
-          })}
-
-          {hasCustomWallpaper ? (
-            <button
-              aria-checked={true}
-              className="appearance-wallpaper-card is-active"
-              data-testid="wallpaper-option-custom"
-              onClick={() => fileInputRef.current?.click()}
-              role="radio"
-              type="button"
-            >
-              <div
-                className="appearance-wallpaper-thumb"
-                style={{
-                  backgroundImage: `url("${appearance.customWallpaperUrl}")`,
-                  backgroundPosition: "center",
-                  backgroundSize: "cover",
-                }}
-              >
-                <div className="appearance-wallpaper-glass-demo">
-                  <i />
-                  <i />
-                </div>
-                <span className="appearance-swatch-check">
-                  <IconCheck className="size-3.5 stroke-[2.6]" />
-                </span>
-              </div>
-              <div className="appearance-wallpaper-meta">
-                <span className="appearance-palette-name">
-                  <IconPhoto className="mr-1 inline size-3.5" />
-                  {"本地自定义壁纸"}
-                </span>
-                <span className="appearance-palette-sub">
-                  {"点击可重新上传"}
-                </span>
-              </div>
-            </button>
-          ) : (
-            <button
-              aria-checked={false}
-              className="appearance-wallpaper-card is-upload-card"
-              data-testid="wallpaper-option-upload"
-              onClick={() => fileInputRef.current?.click()}
-              role="radio"
-              type="button"
-            >
-              <div className="appearance-wallpaper-thumb appearance-wallpaper-upload-thumb">
-                <IconUpload className="size-5 opacity-75" />
-              </div>
-              <div className="appearance-wallpaper-meta">
-                <span className="appearance-palette-name">
-                  {"上传本地壁纸"}
-                </span>
-                <span className="appearance-palette-sub">
-                  {"从电脑选择图片"}
-                </span>
-              </div>
-            </button>
-          )}
         </div>
 
         {/* 壁纸模糊度与压暗度微调滑块 */}
