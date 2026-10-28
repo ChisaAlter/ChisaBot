@@ -147,7 +147,7 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     skySatLight: [64, 58, 52, 48],
     skyHueDark: [258, 252, 246, 264],
     skySatDark: [44, 40, 36, 32],
-    harkSceneLight: 11,
+    harkSceneLight: 7,
     harkSceneDark: 2,
   },
   {
@@ -189,7 +189,7 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     skySatLight: [74, 68, 60, 54],
     skyHueDark: [224, 220, 216, 228],
     skySatDark: [36, 32, 28, 26],
-    harkSceneLight: 6,
+    harkSceneLight: 0,
     harkSceneDark: 4,
   },
   {
@@ -203,7 +203,7 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     skySatLight: [66, 60, 54, 48],
     skyHueDark: [248, 242, 236, 254],
     skySatDark: [36, 32, 28, 26],
-    harkSceneLight: 1,
+    harkSceneLight: 7,
     harkSceneDark: 2,
   },
 ] as const;
@@ -744,7 +744,7 @@ export function computePaletteSky(
 
   const hues = dark ? meta.skyHueDark : meta.skyHueLight;
   const sats = dark ? meta.skySatDark : meta.skySatLight;
-  const lights = dark ? [6, 9, 13, 17] : [38, 52, 68, 84];
+  const lights = dark ? [6, 9, 13, 17] : [54, 66, 78, 88];
   const stops = [0, 1, 2, 3].map(
     (i) => `hsl(${hues[i]} ${sats[i]}% ${lights[i]}%)`,
   );
