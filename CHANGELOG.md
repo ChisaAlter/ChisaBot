@@ -4,7 +4,9 @@
 
 ### 修复
 
-- 根 `package.json` 补声明 `@json-render/core` / `@json-render/react`（0.21.0，与 app/server 及 lockfile 一致）。`shared/json-render` 不属于任何 workspace，在 Bun 默认的隔离 linker 下只能从根 `node_modules` 解析依赖；此前根未声明，导致干净安装后 server/app 的 typecheck 与 build 报 `Cannot find module '@json-render/core'`，只能靠 `--linker hoisted` 绕过。`bun.lock` 仅根 workspace 增加两条依赖声明，无任何包版本变化。
+- 根 `package.json` 补声明 `@json-render/core` / `@json-render/react`（0.21.0，与 app/server 及 lockfile 一致）。`shared/json-render` 不属于任何 workspace，在 Bun 默认的隔离 linker 下只能从根 `node_modules` 解析依赖；此前根未声明，导致干净安装后 server/app 的 typecheck 与 build 报 `Cannot find module '@json-render/core'`，只能靠 `--linker hoisted` 绕过。
+- `app/package.json` 的 devDependencies 补声明 `@ag-ui/client`（1.0.1）、`rxjs`（7.8.1）、`esbuild`（0.28.2），版本均与 lockfile 中已解析的一致。app 的测试直接引用前两者，`vite.config.ts` 构建时动态 `import("esbuild")` 打包 pc headless 脚本；隔离 linker 下它们原本解析不到，导致 app typecheck 失败，esbuild 那一步也会被 try/catch 静默跳过。
+- `bun.lock` 只在 workspace 声明区增加上述条目，没有新增或变更任何包解析结果。
 
 ## 0.1.100 — 2026-10-28
 
