@@ -26,7 +26,7 @@ ChisaBot 的网页版可以直接在手机浏览器里用，也可以「安装�
 
 只做两件事，都不会挡住新版本：
 
-1. **页面导航**：永远先走网络（navigation preload），包括登录网关的跳转；只有断网（`navigator.onLine` 为 false）才给一张「网络不可用」卡片；导航 20s 没回、网络层报错但仍在线、或网关回 502/503/504/52x，给「服务器响应慢，正在重试…」卡片，按 1/2/4/8/15/30s（封顶）退避探测同一地址，恢复后自己刷新回原页面（DF-13）。index.html 从不缓存，部署后刷新一次一定拿到新入口。
+1. **页面导航**：永远先走网络（SW 里 fetch 一次；**不开 navigation preload**——开着时 `/api/auth/callback` 这类不拦的导航会被 Chrome 发两次，第二次报 `state_mismatch`，见 sw.js 文件头），包括登录网关的跳转；只有断网（`navigator.onLine` 为 false）才给一张「网络不可用」卡片；导航 20s 没回、网络层报错但仍在线、或网关回 502/503/504/52x，给「服务器响应慢，正在重试…」卡片，按 1/2/4/8/15/30s（封顶）退避探测同一地址，恢复后自己刷新回原页面（DF-13）。index.html 从不缓存，部署后刷新一次一定拿到新入口。
 2. **`/assets/*`**（带内容哈希、内容不变）：命中缓存直接给，没命中走网络，只存 200。缺失的分包服务器回 404，原样转交、不缓存——前端「分包过期自动刷新一次」（`app/src/lib/stale-chunk.ts`）照常工作。
 
 其它请求（`/api`、`/auth`、WebSocket、非 GET、跨域、Range、`/magpie-admin`、`/downloads`）一律不拦。服务器对 `/sw.js` 和清单回 `Cache-Control: no-cache`，注册时 `updateViaCache: "none"`，部署后下一次打开就换上新的 service worker。
