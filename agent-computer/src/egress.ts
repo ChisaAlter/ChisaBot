@@ -592,23 +592,30 @@ async function decide(
   };
 }
 
+function orderedEntries(addresses: readonly string[]) {
+  const entries = addresses.map((address) => ({
+    address,
+    family: (isIP(address) === 6 ? 6 : 4) as 4 | 6,
+  }));
+  // Prefer IPv4 before IPv6 so dual-stack names reach IPv4 first on containers without an IPv6 route.
+  entries.sort((a, b) => a.family - b.family);
+  return entries;
+}
+
 /**
  * Connection options that reach a name through the addresses already checked, and nothing else.
  *
- * Every address the name resolved to passed the deny check, so any of them may be tried. Node's own
- * Happy Eyeballs (`autoSelectFamily`, RFC 8305) then tries them in turn, so an AAAA answer on a
- * computer with no IPv6 route falls back to the A record instead of failing. The `lookup` answers
- * from the checked list without asking DNS, which is what keeps the pin: the name is never resolved
- * a second time. A literal address needs neither.
+ * Every address the name resolved to passed the deny check, so any of them may be tried. The `lookup`
+ * answers from the checked list without asking DNS, which is what keeps the pin: the name is never
+ * resolved a second time. `autoSelectFamily` is kept off because Bun v1.3.14's `node:net` timer
+ * callback (`internalConnectMultipleTimeout`) throws an uncaught `TypeError` when an attempt times
+ * out; `orderedEntries` prefers IPv4 first and `tunnel` tries each checked address in turn.
  */
 function pinnedTo(addresses: readonly string[] | undefined) {
   if (!addresses?.length) return {};
-  const entries = addresses.map((address) => ({
-    address,
-    family: isIP(address) === 6 ? 6 : 4,
-  }));
+  const entries = orderedEntries(addresses);
   return {
-    autoSelectFamily: true,
+    autoSelectFamily: false,
     lookup: (
       _host: string,
       options: { all?: boolean } | number | undefined,
@@ -667,15 +674,40 @@ function tunnel(
   onError: (error: Error) => void,
 ) {
   if (!upstream) {
-    const socket = connect(
-      {
-        host: target.host,
-        port: target.port,
-        ...(pinnedTo(target.addresses) as object),
-      },
-      () => onReady(socket),
-    );
-    socket.once("error", onError);
+    const entries = target.addresses?.length
+      ? orderedEntries(target.addresses)
+      : [
+          {
+            address: target.host,
+            family: (isIP(target.host) === 6 ? 6 : 4) as 4 | 6,
+          },
+        ];
+    let index = 0;
+    const tryNext = (lastError?: Error) => {
+      const entry = entries[index++];
+      if (!entry) {
+        onError(lastError ?? new Error("Connection failed."));
+        return;
+      }
+      const handleAttemptError = (err: Error) => {
+        socket.destroy();
+        tryNext(err);
+      };
+      const socket = connect(
+        {
+          host: entry.address,
+          port: target.port,
+          family: entry.family,
+          autoSelectFamily: false,
+        },
+        () => {
+          socket.off("error", handleAttemptError);
+          onReady(socket);
+        },
+      );
+      socket.once("error", handleAttemptError);
+    };
+    tryNext();
     return;
   }
   const via = upstreamAddress(upstream);

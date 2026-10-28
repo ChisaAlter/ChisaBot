@@ -1,3 +1,7 @@
+## 0.1.94
+
+- 修复云端电脑（`agent-computer`）在 Bun v1.3.14 下因 `node:net` Happy Eyeballs 定时器异常导致的进程重启（「暂时连不上电脑」）；网页检测到服务端新版本或 PC 节点重连时立即触发桌面端在线更新检查（versionCode 291）
+
 ## 0.1.93
 
 - 多标签页电脑控制选主（`CB-107`）、PWA 导航超时/502/503 自动恢复（`DF-13`）、记忆「全部撤销」防闪烁（`CB-111 P3`），以及全项目深度安全加固（SVG/Docx 预览净化、技能/数据源/IM SSRF 与 TLS/CRLF 防护、容器权限收紧）、PC 客户端 Windows 进程列表与 Worktree 行尾修复、多机器人 `/exec` 出口代理隔离与工程化修复（versionCode 290）

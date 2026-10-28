@@ -1,7 +1,9 @@
 import { IconDeviceDesktopDown, IconPlugConnected, IconX } from "@tabler/icons-react";
+import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type PcLocalState, pcBridge, usePcLocal } from "@/lib/pc-bridge";
+import { fetchServedVersion } from "@/lib/version";
 
 /**
  * 「这台电脑没连上」提示（DESIGN.md §45）。只在 ChisaBot PC 客户端里出现（浏览器没有 window.chisabotPC）。
@@ -59,6 +61,28 @@ export function PcLinkHint() {
   const [gone, setGone] = useState(dismissedThisSession);
 
   const online = local?.agentState === "online";
+  const served = useQuery({
+    queryKey: ["app-version"],
+    queryFn: () => fetchServedVersion(),
+    staleTime: 5 * 60_000,
+    enabled: local !== null,
+  });
+  const checkedForVersion = useRef<string | null>(null);
+  useEffect(() => {
+    const serverVersion = served.data?.version?.trim();
+    if (!local || !serverVersion || serverVersion === local.version) return;
+    if (local.autoUpdate === false || local.update?.supported === false) return;
+    if (
+      local.update?.status === "checking" ||
+      local.update?.status === "downloading" ||
+      local.update?.status === "downloaded"
+    ) {
+      return;
+    }
+    if (checkedForVersion.current === serverVersion) return;
+    checkedForVersion.current = serverVersion;
+    void pcBridge()?.checkUpdate?.();
+  }, [local, served.data?.version]);
   useEffect(() => {
     if (!local) return;
     if (online) setOfflineSince(null);
