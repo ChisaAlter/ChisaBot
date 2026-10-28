@@ -224,6 +224,22 @@ function skyRaf(cb: FrameRequestCallback): number {
   return 0;
 }
 
+/**
+ * 窗口尺寸变了：引擎的 resize() 改 canvas.width 会清空画布，没有 preserveDrawingBuffer 时
+ * 等节流器下一拍再画，中间合成的那一帧就是空画布（GPU 实测：改窗口大小时闪一帧灰）。
+ * 所以要在引擎自己的 resize 监听之后、同一个事件里立刻补画一帧。
+ * 时间戳至少比上一帧晚 32ms，躲开引擎 31ms 的最小帧间隔；live 失焦时也补这一帧，
+ * 不然画布会一直空到重新获得焦点。
+ */
+function flushSkyAfterResize() {
+  if (sky.mode === "off" || document.hidden || sky.queue.length === 0) return;
+  const ts = Math.max(performance.now(), sky.last + 32);
+  sky.last = ts;
+  const callbacks = sky.queue;
+  sky.queue = [];
+  for (const cb of callbacks) cb(ts);
+}
+
 /** 让天空再跑 ms 毫秒（快照：画完这次变化；live：用户有操作）。 */
 function wakeSky(ms: number) {
   if (sky.mode === "off") return;
@@ -373,6 +389,8 @@ export function SkyBackground() {
         const runner = new Function("fetch", "requestAnimationFrame", "window", match[1]);
         wakeSky(SKY_SNAPSHOT_MS);
         runner(harkFetch, skyRaf, createSkyWindow(window, SKY_RENDER_SCALE));
+        // 必须注册在引擎自己的 resize 监听之后：先改尺寸，再补画。
+        window.addEventListener("resize", flushSkyAfterResize);
         syncHarkSkyScene(desiredSceneRef.current);
       })
       .catch(() => {
