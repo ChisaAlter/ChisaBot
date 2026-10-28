@@ -98,6 +98,8 @@ export function stepVerb(step: ActivityStepLike): string {
     case "secret":
       return done("请你填写了一项私密信息", "等你填写私密信息");
     case "help":
+      if (human || step.subject === "我来接管浏览器。")
+        return done("接管了浏览器", "接管浏览器");
       return done("请你帮忙", "等你帮忙");
     default:
       return done("执行了操作", "执行操作");
@@ -118,6 +120,10 @@ export function stepObject(step: ActivityStepLike): string {
     case "type":
       if (step.actorKind === "human" || detail.humanText === true) return "";
       return step.subject ? `「${step.subject}」` : "";
+    case "help":
+      if (step.actorKind === "human" || step.subject === "我来接管浏览器。")
+        return "";
+      return step.subject;
     case "list_files":
       return step.subject || "工作区";
     default:
@@ -125,11 +131,22 @@ export function stepObject(step: ActivityStepLike): string {
   }
 }
 
+const NOISY_QUERY_PARAM =
+  /^(__cf_chl_|cf_chl_|utm_|_ga$|_gl$|fbclid$|gclid$|msclkid$|spm$|vd_source$)/i;
+
 export function shortUrl(url: string): string {
   try {
     const parsed = new URL(url);
-    const path = parsed.pathname === "/" ? "" : parsed.pathname;
-    let shown = `${parsed.host}${path}${parsed.search}`;
+    const path = parsed.pathname.replace(/\/+$/, "");
+    const kept = new URLSearchParams();
+    for (const [key, value] of parsed.searchParams.entries()) {
+      if (!NOISY_QUERY_PARAM.test(key)) kept.append(key, value);
+    }
+    const queryStr = kept.toString();
+    const search = queryStr
+      ? `?${queryStr.length > 32 ? `${queryStr.slice(0, 32)}…` : queryStr}`
+      : "";
+    let shown = `${parsed.host}${path}${search}`;
     try {
       // 打码的 •••• 被 URL 编码成 %E2%80%A2…，给人看时还原。
       shown = decodeURI(shown);
@@ -140,6 +157,32 @@ export function shortUrl(url: string): string {
   } catch {
     return url;
   }
+}
+
+/**
+ * 清理轮次提示词：把后台面板刷新、中途插话包装等内部提示语转成简短的人话标题。
+ */
+export function formatTurnPrompt(
+  raw: string | null | undefined,
+): { title: string; isSystem: boolean } | null {
+  const trimmed = raw?.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("【后台刷新面板")) {
+    const match = /面板「([^」]+)」/.exec(trimmed);
+    return {
+      title: match?.[1] ? `刷新面板「${match[1]}」` : "后台刷新面板",
+      isSystem: true,
+    };
+  }
+  const stripped = trimmed
+    .replace(/^（你在处理上一条消息的过程中，[^）]+）\s*\n*/, "")
+    .trim();
+  const firstLine =
+    stripped
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? stripped;
+  return { title: firstLine, isSystem: false };
 }
 
 /** 被拒绝的一步写给人看的状态。 */

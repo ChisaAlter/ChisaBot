@@ -74,31 +74,35 @@ export function ComputerViewPanel({
       onKeyDownCapture={engaged}
       onPointerDownCapture={engaged}
     >
-      {/* 状态行：机器人此刻在做什么（像 Hark 的浏览器卡片），动作结束后停留几秒再淡出。 */}
-      <div
-        aria-live="polite"
-        className="computer-status"
-        data-pending={status?.pending || undefined}
-        data-casting={casting || undefined}
-        data-visible={status || casting ? true : undefined}
-        role="status"
-      >
-        {casting && !status?.pending ? (
-          <>
-            <span aria-hidden className="computer-status-dot is-cast" />
-            <span className="computer-status-text">
-              {"画面正在大屏直播，这里暂停预览；活动记录照常更新"}
-            </span>
-          </>
-        ) : status ? (
-          <>
-            <span aria-hidden className="computer-status-dot" />
-            <span className="computer-status-text">{status.pending ? `${status.label}…` : status.label.replace(/^正在/, "刚刚")}</span>
-          </>
-        ) : (
-          <span className="computer-status-text is-idle">{"机器人用浏览器时，这里会实时显示画面和它在做什么"}</span>
-        )}
-      </div>
+      {/* 状态行：只在机器人有动作，或窄屏切到「活动」标签看不见下方大屏直播占位卡时显示，避免与下方画面卡重复叠两层提示。 */}
+      {status || (casting && tab === "activity") ? (
+        <div
+          aria-live="polite"
+          className="computer-status"
+          data-pending={status?.pending || undefined}
+          data-casting={casting || undefined}
+          data-visible={true}
+          role="status"
+        >
+          {casting && !status?.pending ? (
+            <>
+              <span aria-hidden className="computer-status-dot is-cast" />
+              <span className="computer-status-text">
+                {"画面正在大屏直播，这里暂停预览；活动记录照常更新"}
+              </span>
+            </>
+          ) : status ? (
+            <>
+              <span aria-hidden className="computer-status-dot" />
+              <span className="computer-status-text">
+                {status.pending
+                  ? `${status.label}…`
+                  : status.label.replace(/^正在/, "刚刚")}
+              </span>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       <div
         aria-label={"画面或活动"}
         className="computer-mobile-tabs"
