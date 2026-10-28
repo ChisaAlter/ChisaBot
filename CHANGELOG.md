@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.98 — 2026-10-28
+
+这一版完整复刻 **Hark** 的原生 WebGL 动态天空与天气壁纸引擎（`wallpaper_core.html`）以及 1:1 半透明液态玻璃设计系统：在 `#sky-root`（`<canvas id="gl">`）中实时渲染瑞利大气散射、多层体积流云、太阳轨迹与 12 个全球地标天象场景；首帧绘制完成时自动将 `body` 设为完全透明（`html[data-sky-painted] body { background: transparent }`）；修复 `@tailwindcss/vite`（LightningCSS）在同时声明 `-webkit-backdrop-filter` 与 `backdrop-filter` 时自动剥离无前缀 `backdrop-filter` 导致玻璃失去模糊透视的根本缺陷，全面对齐 Hark 的 `backdrop-filter: blur(50px)` 与 `plus-lighter` / `color-dodge` / `soft-light` 光学图层混合配方。PC 客户端、服务端与 Android 客户端同步更新至 0.1.98（Android `versionCode` 295）。
+
+### Hark 原生 WebGL 动态天空引擎与 1:1 液态玻璃光学复刻
+
+- **Hark 原生 WebGL 动态天空与天气引擎（`app/public/wallpaper_core.html`、`sky-background.tsx`、`appearance.ts`）**：
+  - 完整引入 Hark 的 WebGL 实时大气散射、云层步进（Raymarching）与气象着色器（`wallpaper_core.html`），在 `#sky-root > <canvas id="gl">` 中以 60fps 渲染真实天空与流云。
+  - 首帧 WebGL `gl.drawArrays` 完成时在 `<html>` 标记 `data-sky-painted`，立即隐藏静态垫片并将 `body` 背景置为 `transparent`，使所有玻璃面板直接透视底层 WebGL 实时天空画布。
+  - 在「设置 → 通用 → 外观」中新增 **14 项 Hark 动态天空与气象场景选择**（含智能跟随主题、实时时钟天气，以及巴黎正午、雷克雅未克晴空、夏威夷碧海、特内里费星夜、大峡谷日出、开普敦晨光、悉尼海岸、苏黎世雪山、巴塔哥尼亚、乌斯怀亚、阿塔卡马星空、撒哈拉暖阳 12 个精选场景）。
+- **修复 LightningCSS 剥离 `backdrop-filter` 并 1:1 复刻 Hark 玻璃混合配方（`styles.css`）**：
+  - 移除覆盖层中冗余的 `-webkit-backdrop-filter` 声明（避免 LightningCSS 剥离标准 `backdrop-filter`），保留唯一无前缀 `backdrop-filter: blur(50px)`。
+  - 1:1 采用 Hark 的设计令牌（`--fill-primary`、`--fill-tertiary`、`--stroke-primary`、`--stroke-composer`、`--bubble-user-bg`、`--bubble-agent-bg`、`--composer-bg`、`--thin-bg`、`--cell-bg`、`--regular-bg`）与图层混合模式（浅色模式 `background-blend-mode: plus-lighter, color-dodge, normal`，深色模式 `normal, soft-light`），让左栏卡片、左下角账号卡、对话气泡、底部输入框与右侧面板栏呈现纯正的 Hark 半透明毛玻璃质感。
+
 ## 0.1.97 — 2026-10-28
 
 这一版彻底重构**液态玻璃（Liquid Glass）**面板的半透明光学质感：修复 `.glass-shell` 入场动画 `animation-fill-mode: both` 在 Chromium 中形成独立 Backdrop Root 导致子面板 `backdrop-filter` 无法透视背景壁纸的问题；将深色与浅色模式下的面板材质统一为冰白半透明晶块（默认 16% 不透明度 / 84% 透光率，告别深藏青色实心质感）；新增全局环境柔光球（`.chisabot-ambient-orbs`）、**雾蓝光晕**推荐壁纸以及**「玻璃面板不透明度」**无级滑块（5%–80%），并将左栏搜索框、机器人选中项、用户与机器人聊天气泡、底部输入框胶囊、右栏分段槽与实时卡片全部升级为半透明液态玻璃。PC 客户端、服务端与 Android 客户端同步更新至 0.1.97（Android `versionCode` 294）。

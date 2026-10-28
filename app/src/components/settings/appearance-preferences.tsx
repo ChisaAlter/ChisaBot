@@ -1,89 +1,84 @@
 import {
   IconCheck,
-  IconDroplet,
+  IconCloud,
+  IconLink,
   IconPhoto,
   IconRefresh,
   IconSparkles,
   IconTrash,
   IconUpload,
 } from "@tabler/icons-react";
-import React from "react";
-import { useAppearanceState } from "@/components/sky-background";
+import { type ChangeEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemTitle,
-} from "@/components/ui/item";
 import { useSegmentedKeys } from "@/components/ui/segmented";
-import { Separator } from "@/components/ui/separator";
 import { toast } from "@/components/ui/toast";
 import {
   compressUploadedWallpaper,
   type GlassStyleId,
+  HARK_SKY_SCENES,
+  type HarkSkySceneId,
   resetAppearanceDefaults,
   setCustomWallpaperUrl,
   setGlassOpacity,
   setGlassStyle,
+  setHarkSkyScene,
   setThemePalette,
   setWallpaperBlur,
   setWallpaperDim,
   setWallpaperPreset,
   THEME_PALETTES,
+  useAppearance,
   WALLPAPER_PRESETS,
 } from "@/lib/appearance";
+import { cn } from "@/lib/utils";
 
-const GLASS_OPTIONS: ReadonlyArray<{
-  id: GlassStyleId;
-  label: string;
-}> = [
-  { id: "liquid", label: "液态玻璃" },
-  { id: "crystal", label: "晶莹高透" },
-  { id: "frosted", label: "经典磨砂" },
+const GLASS_STYLE_OPTIONS: readonly { value: GlassStyleId; label: string }[] = [
+  { value: "liquid", label: "Hark 原生玻璃" },
+  { value: "crystal", label: "晶莹高透" },
+  { value: "frosted", label: "柔光磨砂" },
+];
+const GLASS_STYLE_VALUES: readonly GlassStyleId[] = [
+  "liquid",
+  "crystal",
+  "frosted",
 ];
 
 export function AppearancePreferences() {
-  const {
-    palette,
-    glassStyle,
-    glassOpacity,
-    wallpaperId,
-    customWallpaper,
-    wallpaperBlur,
-    wallpaperDim,
-  } = useAppearanceState();
-
-  const [urlInput, setUrlInput] = React.useState(() =>
-    customWallpaper.startsWith("data:") ? "" : customWallpaper,
-  );
-  const [uploading, setUploading] = React.useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
-
+  const appearance = useAppearance();
   const glassKeys = useSegmentedKeys<GlassStyleId>({
-    value: glassStyle,
-    values: ["liquid", "crystal", "frosted"],
+    value: appearance.glassStyle,
+    values: GLASS_STYLE_VALUES,
     onChange: (next) => setGlassStyle(next),
   });
+  const [urlInput, setUrlInput] = useState(
+    appearance.customWallpaperUrl.startsWith("data:")
+      ? ""
+      : appearance.customWallpaperUrl,
+  );
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
+  const isCustomDataUri =
+    appearance.wallpaperId === "custom" &&
+    appearance.customWallpaperUrl.startsWith("data:");
+
+  const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      toast.error("请选择图片格式文件（PNG、JPG、WebP 等）");
+      toast.error("请选择图片格式文件（PNG / JPG / WebP）");
       return;
     }
     setUploading(true);
     try {
-      const compressed = await compressUploadedWallpaper(file);
-      setCustomWallpaperUrl(compressed);
+      const dataUrl = await compressUploadedWallpaper(file);
+      setCustomWallpaperUrl(dataUrl);
       setUrlInput("");
-      toast.success("已应用自定义壁纸");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "图片处理失败");
+      toast.success("已应用自定义背景壁纸");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "上传壁纸失败");
     } finally {
       setUploading(false);
     }
@@ -92,109 +87,43 @@ export function AppearancePreferences() {
   const handleApplyUrl = () => {
     const trimmed = urlInput.trim();
     if (!trimmed) {
-      toast.error("请先输入有效的图片链接");
+      setWallpaperPreset("none");
+      setCustomWallpaperUrl("");
+      return;
+    }
+    if (!/^(https?:\/\/|data:image\/|\/)/i.test(trimmed)) {
+      toast.error("请输入有效的图片地址（以 https:// 或 http:// 开头）");
       return;
     }
     setCustomWallpaperUrl(trimmed);
-    toast.success("已应用壁纸链接");
+    toast.success("已应用网络壁纸链接");
   };
-
-  const hasCustomizations =
-    palette !== "default" ||
-    glassStyle !== "liquid" ||
-    glassOpacity !== 16 ||
-    wallpaperId !== "none" ||
-    wallpaperBlur !== 0 ||
-    wallpaperDim !== 12;
 
   return (
     <>
-      <Separator />
-      {/* 1. 面板玻璃质感：液态玻璃 / 晶莹高透 / 经典磨砂 */}
-      <Item size="sm">
-        <ItemContent>
-          <ItemTitle>{"面板玻璃材质"}</ItemTitle>
-          <ItemDescription>
-            {
-              "调整左栏、底栏输入框、对话气泡与右侧看板的液态玻璃高光折射与通透度。"
-            }
-          </ItemDescription>
-        </ItemContent>
-        <ItemActions>
-          <div
-            aria-label={"面板玻璃材质"}
-            className="sg-segmented"
-            {...glassKeys.groupProps}
-            ref={glassKeys.groupRef}
-            role="radiogroup"
-          >
-            {GLASS_OPTIONS.map((opt) => (
-              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 分段控件，遵循项目 segmented.tsx 规范
-              <button
-                aria-checked={glassStyle === opt.id}
-                className="sg-segmented-item"
-                key={opt.id}
-                onClick={() => setGlassStyle(opt.id)}
-                role="radio"
-                tabIndex={glassKeys.itemTabIndex(opt.id)}
-                type="button"
-              >
-                {opt.id === "liquid" ? (
-                  <IconDroplet className="size-3.5" />
-                ) : (
-                  <IconSparkles className="size-3.5" />
-                )}
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </ItemActions>
-      </Item>
-
-      {glassStyle !== "frosted" && (
-        <Item size="sm">
-          <ItemContent>
-            <ItemTitle>{"玻璃面板不透明度"}</ItemTitle>
-            <ItemDescription>
-              {"数值越低面板越清透（默认 16%，即 84% 透光率）。"}
-            </ItemDescription>
-          </ItemContent>
-          <ItemActions>
-            <div className="flex items-center gap-3">
-              <input
-                aria-label={"玻璃面板不透明度"}
-                className="sky-slider"
-                max={80}
-                min={5}
-                onChange={(e) => setGlassOpacity(Number(e.target.value))}
-                step={1}
-                type="range"
-                value={glassOpacity}
-              />
-              <span className="w-11 text-right text-xs tabular-nums text-[var(--ink-2)]">
-                {`${glassOpacity}%`}
-              </span>
-            </div>
-          </ItemActions>
-        </Item>
-      )}
-
-      <Separator />
-      {/* 2. 多款主题配色选择 */}
-      <div className="appearance-block">
+      {/* 1. Hark 动态天空场景（WebGL 实时大气散射与流云引擎） */}
+      <div className="appearance-block" data-setting-item="动态天空与气象场景">
         <div className="appearance-block-head">
           <div>
-            <div className="appearance-block-title">{"主题配色"}</div>
+            <div className="appearance-block-title">
+              {"Hark 动态天空与气象场景"}
+            </div>
             <div className="appearance-block-desc">
-              {"提供 8 款精选主题色调，自动适配浅色与深色模式及液态玻璃光泽。"}
+              {
+                "基于 Hark WebGL 大气瑞利散射、体积云与太阳轨迹着色器，透过半透明玻璃面板实时呈现全球地标天色"
+              }
             </div>
           </div>
-          {hasCustomizations && (
+          {appearance.harkScene !== "auto" ||
+          appearance.palette !== "default" ||
+          appearance.wallpaperId !== "none" ||
+          appearance.glassStyle !== "liquid" ||
+          appearance.glassOpacity !== 16 ? (
             <Button
               onClick={() => {
                 resetAppearanceDefaults();
                 setUrlInput("");
-                toast.success("已恢复默认外观");
+                toast.success("已恢复 Hark 默认外观");
               }}
               size="sm"
               type="button"
@@ -203,20 +132,140 @@ export function AppearancePreferences() {
               <IconRefresh className="size-3.5" />
               {"恢复默认"}
             </Button>
-          )}
+          ) : null}
         </div>
+
         <div
-          aria-label={"主题配色"}
+          aria-label="Hark 动态天空场景选择"
+          className="appearance-wallpaper-grid"
+          role="radiogroup"
+        >
+          {HARK_SKY_SCENES.map((scene) => {
+            const active =
+              appearance.wallpaperId === "none" &&
+              appearance.harkScene === scene.id;
+            return (
+              <button
+                aria-checked={active}
+                className={cn(
+                  "appearance-wallpaper-card",
+                  active && "is-active",
+                )}
+                data-testid={`hark-scene-${scene.id}`}
+                key={scene.id}
+                onClick={() => setHarkSkyScene(scene.id as HarkSkySceneId)}
+                role="radio"
+                type="button"
+              >
+                <div
+                  className="appearance-wallpaper-thumb"
+                  style={{ background: scene.previewGradient }}
+                >
+                  <div className="appearance-wallpaper-glass-demo">
+                    <i />
+                    <i />
+                  </div>
+                  {active ? (
+                    <span className="appearance-swatch-check">
+                      <IconCheck className="size-3.5 stroke-[2.6]" />
+                    </span>
+                  ) : null}
+                </div>
+                <div className="appearance-wallpaper-meta">
+                  <span className="appearance-palette-name">{scene.name}</span>
+                  <span className="appearance-palette-sub">
+                    {scene.subtitle}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 2. 玻璃面板材质与透光率控制 */}
+      <div className="appearance-block" data-setting-item="玻璃面板质感">
+        <div className="appearance-block-head">
+          <div>
+            <div className="appearance-block-title">
+              {"Hark 玻璃材质与透光率"}
+            </div>
+            <div className="appearance-block-desc">
+              {
+                "采用 Hark 原生 50px 高斯光学模糊与图层混合（color-dodge / plus-lighter / soft-light），可自由调节面板半透明透光率"
+              }
+            </div>
+          </div>
+          <div
+            aria-label="玻璃面板材质"
+            className="sg-segmented"
+            {...glassKeys.groupProps}
+            ref={glassKeys.groupRef}
+            role="radiogroup"
+          >
+            {GLASS_STYLE_OPTIONS.map(({ value, label }) => (
+              <button
+                aria-checked={appearance.glassStyle === value}
+                className="sg-segmented-item"
+                key={value}
+                onClick={() => setGlassStyle(value)}
+                role="radio"
+                tabIndex={glassKeys.itemTabIndex(value)}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="appearance-sliders">
+          <label className="appearance-slider-row">
+            <span className="appearance-slider-label">
+              <span>{"玻璃面板不透明度（数值越小越通透）"}</span>
+              <span className="appearance-slider-val">
+                {`${appearance.glassOpacity}%（透光率 ${100 - appearance.glassOpacity}%）`}
+              </span>
+            </span>
+            <Input
+              aria-label="玻璃面板不透明度"
+              className="appearance-range"
+              max={55}
+              min={8}
+              onChange={(e) => setGlassOpacity(Number(e.target.value))}
+              step={1}
+              type="range"
+              value={appearance.glassOpacity}
+            />
+          </label>
+        </div>
+      </div>
+
+      {/* 3. 多款主题配色网格 */}
+      <div className="appearance-block" data-setting-item="主题配色">
+        <div className="appearance-block-head">
+          <div>
+            <div className="appearance-block-title">{"主题强调色方案"}</div>
+            <div className="appearance-block-desc">
+              {
+                "切换全局交互强调色；当动态天空处于「智能跟随主题」时，会自动联动对应的地标天象"
+              }
+            </div>
+          </div>
+        </div>
+
+        <div
+          aria-label="主题配色选择"
           className="appearance-palette-grid"
           role="radiogroup"
         >
           {THEME_PALETTES.map((item) => {
-            const active = palette === item.id;
+            const active = appearance.palette === item.id;
             return (
-              // biome-ignore lint/a11y/useSemanticElements: 自绘主题色卡单选网格
               <button
                 aria-checked={active}
-                className={`appearance-palette-card${active ? " is-active" : ""}`}
+                className={cn("appearance-palette-card", active && "is-active")}
+                data-testid={`palette-option-${item.id}`}
                 key={item.id}
                 onClick={() => setThemePalette(item.id)}
                 role="radio"
@@ -225,17 +274,19 @@ export function AppearancePreferences() {
                 <span
                   aria-hidden="true"
                   className="appearance-palette-swatch"
-                  style={{ background: item.swatch }}
+                  style={{ background: item.swatchGradient }}
                 >
-                  {active && (
+                  {active ? (
                     <span className="appearance-swatch-check">
-                      <IconCheck className="size-3.5" />
+                      <IconCheck className="size-3.5 stroke-[2.6]" />
                     </span>
-                  )}
+                  ) : null}
                 </span>
                 <span className="appearance-palette-info">
                   <span className="appearance-palette-name">{item.name}</span>
-                  <span className="appearance-palette-sub">{item.desc}</span>
+                  <span className="appearance-palette-sub">
+                    {item.subtitle}
+                  </span>
                 </span>
               </button>
             );
@@ -243,24 +294,24 @@ export function AppearancePreferences() {
         </div>
       </div>
 
-      <Separator />
-      {/* 3. 背景壁纸预设与自定义上传 */}
-      <div className="appearance-block">
+      {/* 4. 静态艺术壁纸与自定义图片上传 */}
+      <div className="appearance-block" data-setting-item="背景壁纸">
         <div className="appearance-block-head">
           <div>
-            <div className="appearance-block-title">{"背景壁纸"}</div>
+            <div className="appearance-block-title">
+              {"自定义图片壁纸（可选覆盖动态天空）"}
+            </div>
             <div className="appearance-block-desc">
               {
-                "选择内置流光壁纸或上传自定义图片，让主界面各板块呈现通透的液态玻璃光影折射。"
+                "默认使用上方 Hark WebGL 动态天空；也可在此选择静态艺术壁纸或上传本地高清图片"
               }
             </div>
           </div>
           <div className="appearance-block-actions">
             <input
-              accept="image/*"
-              aria-label={"选择本地壁纸图片"}
+              accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
               className="hidden"
-               onChange={handleUploadFile}
+              onChange={handleFileUpload}
               ref={fileInputRef}
               type="file"
             />
@@ -269,114 +320,116 @@ export function AppearancePreferences() {
               onClick={() => fileInputRef.current?.click()}
               size="sm"
               type="button"
-              variant="outline"
+              variant="secondary"
             >
               <IconUpload className="size-3.5" />
-              {uploading ? "处理中…" : "上传本地图片"}
+              {uploading ? "正在处理…" : "上传本地图片"}
             </Button>
-            {wallpaperId !== "none" && (
+            {appearance.wallpaperId !== "none" ? (
               <Button
                 onClick={() => {
                   setWallpaperPreset("none");
-                  toast.success("已切换回默认天空背景");
+                  setCustomWallpaperUrl("");
+                  setUrlInput("");
+                  toast.success("已切回 Hark 动态天空");
                 }}
                 size="sm"
                 type="button"
                 variant="ghost"
               >
-                <IconTrash className="size-3.5" />
-                {"清除壁纸"}
+                <IconCloud className="size-3.5" />
+                {"使用动态天空"}
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
 
         <div
-          aria-label={"背景壁纸"}
+          aria-label="预设壁纸选择"
           className="appearance-wallpaper-grid"
           role="radiogroup"
         >
           {WALLPAPER_PRESETS.map((wp) => {
-            const active = wallpaperId === wp.id;
+            const active = appearance.wallpaperId === wp.id;
             return (
-              // biome-ignore lint/a11y/useSemanticElements: 自绘壁纸预设单选网格
               <button
                 aria-checked={active}
-                className={`appearance-wallpaper-card${active ? " is-active" : ""}`}
+                className={cn(
+                  "appearance-wallpaper-card",
+                  active && "is-active",
+                )}
+                data-testid={`wallpaper-option-${wp.id}`}
                 key={wp.id}
                 onClick={() => setWallpaperPreset(wp.id)}
                 role="radio"
                 type="button"
               >
-                <span
-                  aria-hidden="true"
+                <div
                   className="appearance-wallpaper-thumb"
-                  style={{ background: wp.preview }}
+                  style={{ background: wp.previewBackground }}
                 >
-                  <span className="appearance-wallpaper-glass-demo">
+                  <div className="appearance-wallpaper-glass-demo">
                     <i />
                     <i />
-                  </span>
-                  {active && (
+                  </div>
+                  {active ? (
                     <span className="appearance-swatch-check">
-                      <IconCheck className="size-3.5" />
+                      <IconCheck className="size-3.5 stroke-[2.6]" />
                     </span>
-                  )}
-                </span>
-                <span className="appearance-wallpaper-meta">
+                  ) : null}
+                </div>
+                <div className="appearance-wallpaper-meta">
                   <span className="appearance-palette-name">{wp.name}</span>
-                  <span className="appearance-palette-sub">{wp.desc}</span>
-                </span>
+                  <span className="appearance-palette-sub">{wp.subtitle}</span>
+                </div>
               </button>
             );
           })}
 
-          {customWallpaper && (
-            // biome-ignore lint/a11y/useSemanticElements: 自绘自定义壁纸单选卡片
+          {isCustomDataUri ? (
             <button
-              aria-checked={wallpaperId === "custom"}
-              className={`appearance-wallpaper-card${wallpaperId === "custom" ? " is-active" : ""}`}
+              aria-checked={true}
+              className="appearance-wallpaper-card is-active"
+              data-testid="wallpaper-option-custom"
               onClick={() => setWallpaperPreset("custom")}
               role="radio"
               type="button"
             >
-              <span
-                aria-hidden="true"
+              <div
                 className="appearance-wallpaper-thumb"
                 style={{
-                  backgroundImage: `url("${customWallpaper.replace(/["\\]/g, "\\$&")}")`,
+                  backgroundImage: `url("${appearance.customWallpaperUrl}")`,
                   backgroundPosition: "center",
                   backgroundSize: "cover",
                 }}
               >
-                <span className="appearance-wallpaper-glass-demo">
+                <div className="appearance-wallpaper-glass-demo">
                   <i />
                   <i />
+                </div>
+                <span className="appearance-swatch-check">
+                  <IconCheck className="size-3.5 stroke-[2.6]" />
                 </span>
-                {wallpaperId === "custom" && (
-                  <span className="appearance-swatch-check">
-                    <IconCheck className="size-3.5" />
-                  </span>
-                )}
-              </span>
-              <span className="appearance-wallpaper-meta">
-                <span className="appearance-palette-name">{"自定义壁纸"}</span>
+              </div>
+              <div className="appearance-wallpaper-meta">
+                <span className="appearance-palette-name">
+                  <IconPhoto className="mr-1 inline size-3.5" />
+                  {"本地自定义壁纸"}
+                </span>
                 <span className="appearance-palette-sub">
-                  {customWallpaper.startsWith("data:")
-                    ? "本地上传图片"
-                    : "外部图片链接"}
+                  {"已保存至当前设备"}
                 </span>
-              </span>
+              </div>
             </button>
-          )}
+          ) : null}
         </div>
 
-        {/* 图片链接输入行 */}
+        {/* 网络图片 URL 输入栏 */}
         <div className="appearance-url-row">
           <div className="appearance-url-input-wrap">
-            <IconPhoto className="appearance-url-icon size-4" />
+            <IconLink className="appearance-url-icon size-4" />
             <Input
-              aria-label={"自定义壁纸图片链接"}
+              aria-label="自定义壁纸图片链接"
               className="appearance-url-input"
               onChange={(e) => setUrlInput(e.target.value)}
               onKeyDown={(e) => {
@@ -385,59 +438,80 @@ export function AppearancePreferences() {
                   handleApplyUrl();
                 }
               }}
-              placeholder={"粘贴壁纸图片链接（支持 https://…）"}
+              placeholder="输入网络高清壁纸地址（https://...）回车应用"
               value={urlInput}
             />
           </div>
           <Button
-            disabled={!urlInput.trim()}
             onClick={handleApplyUrl}
             size="sm"
             type="button"
             variant="secondary"
           >
+            <IconSparkles className="size-3.5" />
             {"应用链接"}
           </Button>
+          {appearance.wallpaperId === "custom" ? (
+            <Button
+              onClick={() => {
+                setWallpaperPreset("none");
+                setCustomWallpaperUrl("");
+                setUrlInput("");
+              }}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <IconTrash className="size-3.5" />
+              {"移除"}
+            </Button>
+          ) : null}
         </div>
 
-        {/* 壁纸模糊度与暗化遮罩调节 */}
-        {wallpaperId !== "none" && (
+        {/* 壁纸模糊度与压暗度微调滑块 */}
+        {appearance.wallpaperId !== "none" ? (
           <div className="appearance-sliders">
-            <div className="appearance-slider-row">
-              <div className="appearance-slider-label">
-                <span>{"壁纸景深模糊"}</span>
-                <span className="appearance-slider-val">{`${wallpaperBlur} 像素`}</span>
-              </div>
-              <input
-                aria-label={"壁纸景深模糊"}
-                className="sky-slider appearance-range"
-                max={32}
+            <label className="appearance-slider-row">
+              <span className="appearance-slider-label">
+                <span>{"壁纸景深模糊度"}</span>
+                <span className="appearance-slider-val">
+                  {`${appearance.wallpaperBlur} px`}
+                </span>
+              </span>
+              <Input
+                aria-label="壁纸景深模糊度"
+                className="appearance-range"
+                max={40}
                 min={0}
                 onChange={(e) => setWallpaperBlur(Number(e.target.value))}
                 step={1}
                 type="range"
-                value={wallpaperBlur}
+                value={appearance.wallpaperBlur}
               />
-            </div>
-            <div className="appearance-slider-row">
-              <div className="appearance-slider-label">
-                <span>{"背景暗角遮罩"}</span>
-                <span className="appearance-slider-val">{`${wallpaperDim}%`}</span>
-              </div>
-              <input
-                aria-label={"背景暗角遮罩"}
-                className="sky-slider appearance-range"
+            </label>
+            <label className="appearance-slider-row">
+              <span className="appearance-slider-label">
+                <span>{"壁纸氛围压暗度"}</span>
+                <span className="appearance-slider-val">
+                  {`${appearance.wallpaperDim}%`}
+                </span>
+              </span>
+              <Input
+                aria-label="壁纸氛围压暗度"
+                className="appearance-range"
                 max={75}
                 min={0}
                 onChange={(e) => setWallpaperDim(Number(e.target.value))}
                 step={1}
                 type="range"
-                value={wallpaperDim}
+                value={appearance.wallpaperDim}
               />
-            </div>
+            </label>
           </div>
-        )}
+        ) : null}
       </div>
     </>
   );
 }
+
+export { AppearancePreferences as AppearancePreferencesSection };
