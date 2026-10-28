@@ -1,3 +1,7 @@
+## Unreleased
+
+- 性能模式和系统「减少透明度」下全局关掉毛玻璃：一条 `*, *::before, *::after { backdrop-filter: none }`（`app/src/perf-noblur.css`，不用 `!important`），漏网的代码块操作条、遮罩、外观预览一起关掉；原来模糊的面板换成不透明底色 `--glass-bg-opaque`。实测两种模式下桌面、手机可见模糊层都是 0，普通模式与 main 一致。新增 `app/tests/no-backdrop.test.ts` 防止新的模糊绕过；规则见 DESIGN.md §10.3.1。
+
 ## 0.1.104
 
 - 修复干净安装（默认隔离 linker）下 `shared/json-render` 解析不到 `@json-render/*`、typecheck/build 失败的问题：根 `package.json` 补声明这两个依赖；app 补声明测试与 vite.config 直接用到的 `@ag-ui/client`、`rxjs`、`esbuild`（版本均与 lockfile 一致）（#365）。

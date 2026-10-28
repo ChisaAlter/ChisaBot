@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### 性能模式 / 减少透明度：全局不模糊
+
+- **全局规则（新增 `app/src/perf-noblur.css`，`main.tsx` 里紧跟 `styles.css` 引入）**：性能模式（`html[data-perf="on"]`）和系统「减少透明度」下，`*, *::before, *::after` 一律 `backdrop-filter: none`，`--lg-blur` 也设成 `none`。原来漏掉的 streamdown 代码块 / 图表操作条（Tailwind `supports-[backdrop-filter]:backdrop-blur`，8px）、对话框 / 抽屉遮罩、agent-orb 内嵌样式、外观设置的玻璃预览都一起关掉。
+- **不透明底色**：新增 `--glass-bg-opaque`（浅 / 深各一份）；左右栏、输入框、顶栏搜索、弹层 / 菜单 / 对话框、手机抽屉、代码块操作条、外观设置预览都换成它，不留透明无底的块。全屏遮罩只去掉模糊，保留半透明压暗。
+- **不用 `!important`**：选择器前缀 `html:not(#chisabot-no-blur)` 多一个 id 的优先级，压过所有类 / 属性规则；旧玻璃层的 `!important` 靠 `--lg-blur: none` 关掉。
+- **实测（浏览器审计，可见且 computed `backdrop-filter` 不为 none 的元素）**：性能模式和减少透明度下，桌面、手机所有场景都是 0（main 上桌面聊天 1、设置页 14，手机 1、抽屉 2）；普通模式与 main 一致（桌面 5 / 设置页 16，手机 2 / 抽屉 6）。
+- **测试**：新增 `app/tests/no-backdrop.test.ts`：引入顺序、两种开关都覆盖 `*` / `::before` / `::after`、不靠 `!important`、不许内联 `backdropFilter` / Tailwind important 模糊类 / 新的 `backdrop-filter … !important`，`styles.css` 里每条会模糊的规则都有不透明底色或写明原因的豁免。
+- 规则写进 `DESIGN.md` §10.3.1。不改版本号。
+
 ## 0.1.104 — 2026-10-29
 
 这一版合并 5 个 PR：修复干净安装下缺声明的依赖（#365）、出口过滤代理按 Bot 独立鉴权（审计 H1 / L1，#364）、界面渲染性能预算（#363）、安装版 `/api` 代理不再转发失效的 `Content-Encoding`（#367）、Hark 改版第 1 步令牌层（#369）。只升级服务器版本号（根、`app`、`server` 为 `0.1.104`），PC / Android 外壳未变；没有表结构变化。
