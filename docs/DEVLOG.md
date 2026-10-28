@@ -94,6 +94,7 @@
 - 玻璃：只有搜索胶囊用 `.glass`（`--glass-filter`，20px），而且不加过渡；圆钮用 `.glass.is-flat`，不模糊。同屏模糊层：桌面从 4 层变成 5 层（开一个弹层时 6 层），手机仍是 1 层。
 - 测试：`channel-pagination.test.tsx` 把顶栏搜索框和左栏一起渲染，修好了上面那两条测试；新增 `hark-token-dark.test.ts`，检查同名令牌在 `html.dark` 里都有深色值。
 - 设计规范：DESIGN.md 新增 §10.5「Hark 令牌与同名旧令牌」。
+- PC 窗口：客户端支持「小窗模式」时标题按钮有 4 个，原来顶栏右边只按 3 个（`46px * 3 + 12px`）让位，头像压在了小窗按钮上（改前头像不在顶栏，所以看不出来）。现在 4 个按钮时让出 `46px * 4 + 12px`，窄窗口仍走 36px 的规则。`after-pcwin-*` 截图已重拍。
 - 没有新增 `!important`，没有升版本号，禁区（`bot-bubbles.tsx`、`wallpaper_core.html`、壁纸上传、外观设置样式）都没碰。
 
 ### 截图

@@ -10002,6 +10002,12 @@ html[data-desktop] .hk-topbar :is(.hk-home, .hk-circle, .hk-avatar-btn, .hk-sear
   app-region: no-drag;
 }
 
+/* PC 客户端支持「小窗模式」时标题按钮是 4 个（4 × 46px），右边要让出 4 个的宽度，不然头像会压在小窗按钮上。
+   窄窗口（< 768px）另有 36px 的规则，这里不管。 */
+@media (min-width: 768px) {
+  html[data-desktop] .glass-topbar:has(.win-ctrls[data-count="4"]) { padding-right: calc(46px * 4 + 12px); }
+}
+
 /* 手机：左 菜单 ｜ 中 留空 ｜ 右 搜索 + 头像；品牌名不显示。 */
 html[data-phone] .glass-topbar.hk-topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
 html[data-phone] .glass-topbar .hk-topbar-start { width: auto; }
