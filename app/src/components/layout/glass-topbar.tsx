@@ -74,6 +74,9 @@ export function GlassTopBar({
     <header
       className="glass-topbar hk-topbar"
       data-scope={scope}
+      // 左栏收起 / PC 标题按钮个数直接写在顶栏上，CSS 不用挂在整个外壳上的 :has()（流式输出时会触发整页样式重算）。
+      data-sidebar={sidebar && !mobile ? sidebar.state : undefined}
+      data-winctrls={desktop ? (canCompact(desktop.bridge) ? 4 : 3) : undefined}
       // PC 无边框窗口：空白处双击 = 最大化 / 还原（拖动由 -webkit-app-region 交给系统）。
       onDoubleClick={
         desktop
