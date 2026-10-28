@@ -6,6 +6,7 @@ import { ProfileSetupGate } from "../components/layout/profile-dialog";
 import { CopilotProvider } from "../lib/copilot/provider";
 import { AppHotkeys } from "../lib/hotkeys/app-hotkeys";
 import { ScheduleNotifier } from "../components/schedules/notifier";
+import { setControlAccount } from "../lib/computers/use-control";
 
 export const Route = createFileRoute("/_authed")({
   beforeLoad: async ({ context, location }) => {
@@ -15,6 +16,8 @@ export const Route = createFileRoute("/_authed")({
     if (!user) {
       throw redirect({ to: "/sign" });
     }
+    // CB-107：多标签 control 轮询按账号隔离（锁名 / 频道名 / store）。
+    setControlAccount(user.id);
     /*
      * Somebody who has not finished onboarding goes there and nowhere else. Here rather than in
      * `_app`, so admin and settings are behind the same gate; checked against the destination so
