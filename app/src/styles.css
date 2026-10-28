@@ -9943,3 +9943,80 @@ html[data-phone] .glass-topbar .hk-topbar-start { width: auto; }
 
 /* 外壳底图：静态壁纸画在天空容器最底层，动态天空（WebGL）只是叠在上面的一层，关掉或失败时露出静态壁纸。 */
 html:root #sky-root { background: var(--wallpaper); }
+
+/* —— Hark 左栏 / 右栏（第 3 步）：每一侧只有一个模糊层，里面的卡片只用填充色。
+   玻璃画在 ::before 上：容器本身（以及旧层里压在它上面的覆盖规则）不再带模糊；
+   ::before 挂载时先「按住」不模糊（glass-hold），左栏收起 / 展开的宽度动画期间不重算模糊。 —— */
+html:root {
+  --rail-card-fill: rgba(255, 255, 255, 0.36);
+  --card-fill: rgba(255, 255, 255, 0.72);
+  --card-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 0 0 1px var(--stroke-secondary);
+}
+html.dark {
+  --rail-card-fill: rgba(255, 255, 255, 0.04);
+  --card-fill: rgba(29, 29, 31, 0.62);
+  --card-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 0 0 1px var(--stroke-secondary);
+}
+.glass-shell .hk-rail.glass,
+.glass-shell .hk-panel.glass {
+  /* 旧层的 :is(.glass-side-card, …, .rail-card) 覆盖规则读这几个变量：在这里把它们清空，玻璃交给 ::before。 */
+  --lg-surface: transparent;
+  --lg-surface-strong: transparent;
+  --lg-blur: none;
+  --lg-shadow: none;
+  position: relative;
+  isolation: isolate;
+  contain: layout paint;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  border-radius: var(--r-24);
+}
+.glass-shell .hk-rail.glass { padding: 8px; gap: 8px; }
+.glass-shell .hk-rail.glass::before,
+.glass-shell .hk-panel.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-filter);
+  box-shadow: var(--glass-highlight), var(--glass-shadow);
+  animation: glass-hold var(--glass-collapse-ms, 260ms) step-end;
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-shell :is(.hk-rail, .hk-panel).glass::before { background: var(--glass-bg-solid); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass-shell :is(.hk-rail, .hk-panel).glass::before { background: var(--glass-bg-solid); backdrop-filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .glass-shell :is(.hk-rail, .hk-panel).glass::before { animation: none; }
+}
+/* 卡片外阴影不被容器的 paint 裁掉：容器内边距留出的 8px 足够细阴影。 */
+.glass-shell .hk-rail :is(.glass-side-card, .acct-card, .glass-mini-card, .acct-mini-card) {
+  --lg-surface: var(--rail-card-fill);
+  --lg-shadow: none;
+  border-radius: var(--r-16);
+}
+/* 选中项：cell-bg（旧层在深色里用 --accent-fill-paper，这里让它在左栏里也解析成 cell-bg）。 */
+.glass-shell .hk-rail { --accent-fill-paper: var(--cell-bg); }
+.glass-shell .hk-rail :is(.glass-bot-row, .glass-mini-bot, .nav-row) { border-radius: var(--r-12); }
+
+/* 右栏：同一种玻璃，24px 圆角。 */
+.glass-shell .hk-panel.glass { border-radius: var(--r-24); }
+
+/* 手机：左栏在抽屉里、右栏在底部抽屉里，抽屉自己就是那一层玻璃，里面不再叠。 */
+[data-slot="sidebar"][data-mobile="true"] .hk-rail.glass { padding: 0; border-radius: 0; }
+[data-slot="sidebar"][data-mobile="true"] .hk-rail.glass::before { content: none; }
+.rail-sheet.hk-panel.glass::before { content: none; }
+.rail-sheet.hk-panel.glass { --lg-surface: var(--glass-pop-bg); }
+
+/* 设置 / 管理页面里的卡片（PageShell、skyglass）：不模糊，半透明纯色 + 1px 高光，24px 圆角。 */
+.glass-main [data-slot="page-shell"] {
+  --lg-surface: var(--card-fill);
+  --lg-shadow: var(--card-hairline);
+}
+.glass-main [data-slot="page-shell"] :is(.sg-card, .page-rows, .page-section > form) { border-radius: var(--r-24); }

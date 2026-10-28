@@ -69,7 +69,7 @@ const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 380;
 /** 常驻栏两侧的内边距合计：卡片宽度 = 栏宽 − 它（拖动期两格一起写）。 */
 const CARD_INSET = 24;
-const PANEL_CARD_CLASS = "glass-card glass-rail-inner rail-card flex h-full min-h-0 flex-col";
+const PANEL_CARD_CLASS = "glass-card glass-rail-inner rail-card glass hk-panel flex h-full min-h-0 flex-col";
 
 export type PanelPreset = {
   label: string;

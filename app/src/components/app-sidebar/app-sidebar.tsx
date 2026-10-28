@@ -779,7 +779,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
     <RailSidebar collapsible="icon" variant="floating" {...props}>
       <SidebarContent
-        className="glass-side-full gap-3 overflow-hidden"
+        className="glass-side-full glass hk-rail gap-3 overflow-hidden"
         id="chisabot-bot-list"
       >
         <section
@@ -1011,7 +1011,7 @@ function BotMiniRail({
   setMainBot: (id: string | null) => void;
 }) {
   return (
-    <nav aria-label={"机器人"} className="glass-mini" id="chisabot-bot-list">
+    <nav aria-label={"机器人"} className="glass-mini glass hk-rail" id="chisabot-bot-list">
       <MiniSearchButton />
       <RailTip label={"新建机器人"}>
         <button
