@@ -5,6 +5,10 @@ import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
 import { compress } from "hono/compress";
 import { MAX_IMAGE_BYTES } from "../../shared/attachments";
+import {
+  CSP_REPORT_ONLY_HEADER,
+  createAppCspReader,
+} from "../../shared/content-security-policy";
 import type { PanelServices } from "./panels/service";
 import {
   authoriseAgentCall,
@@ -1606,6 +1610,8 @@ export function createApp(
 
   if (config.appDistDir) {
     const root = config.appDistDir;
+    // 应用页面的 CSP（先 Report-Only，见 shared/content-security-policy.ts）；/p/ 等自带 CSP 的路由在上面就已经答完了。
+    const appCsp = createAppCspReader(`${root}/index.html`);
     /*
      * 缓存（docs/online-update.md）：带哈希的 /assets/* 永久缓存；index.html 每次都向服务器确认，
      * 这样部署新版本后，刷新一次就一定拿到新的入口，而不是浏览器里存着的旧 index.html。
@@ -1617,8 +1623,13 @@ export function createApp(
     });
     app.use("/*", async (context, next) => {
       await next();
-      if ((context.res.headers.get("content-type") ?? "").startsWith("text/html"))
+      if (
+        (context.res.headers.get("content-type") ?? "").startsWith("text/html")
+      ) {
         context.res.headers.set("Cache-Control", "no-cache");
+        if (!context.res.headers.has(CSP_REPORT_ONLY_HEADER))
+          context.res.headers.set(CSP_REPORT_ONLY_HEADER, await appCsp());
+      }
       // PWA（DESIGN.md §40）：service worker 和清单每次都向服务器确认，部署后浏览器马上拿到新的 sw.js。
       else if (context.req.path === "/sw.js" || context.req.path === "/manifest.webmanifest")
         context.res.headers.set("Cache-Control", "no-cache");
