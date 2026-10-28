@@ -1,3 +1,7 @@
+## 0.1.99
+
+- 统一同步全仓子包版本号（`app`、`server`、`agent-computer`、`pc`、`android` 全部升级至 `0.1.99`，`versionCode` 296），并修复服务器桌面端更新源安装包文件名与 `latest.json` 同步
+
 ## 0.1.98
 
 - 完整引入 Hark 原生 WebGL 动态天空与天气壁纸引擎（`wallpaper_core.html`，含 12 个全球地标天象与实时时钟天气），并 1:1 复刻 Hark 的 50px 高斯模糊与图层混合半透明液态玻璃设计系统，修复构建器（LightningCSS）剥离 `backdrop-filter` 导致玻璃失去半透明模糊透视的问题（versionCode 295）

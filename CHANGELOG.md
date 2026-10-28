@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.99 — 2026-10-28
+
+这一版统一对齐全仓工作区子包版本号（根 `package.json`、`app/package.json`、`server/package.json`、`agent-computer/package.json`、`pc/package.json`、`android/app/build.gradle.kts` 全部升级至 `0.1.99`，Android `versionCode` 296），并修复服务器 PC 客户端更新源文件名同步（`ChisaBot-PC-0.1.99-x64-setup.exe` 与 `latest.json`），确保桌面端在线更新正常推送安装。
+
 ## 0.1.98 — 2026-10-28
 
 这一版完整复刻 **Hark** 的原生 WebGL 动态天空与天气壁纸引擎（`wallpaper_core.html`）以及 1:1 半透明液态玻璃设计系统：在 `#sky-root`（`<canvas id="gl">`）中实时渲染瑞利大气散射、多层体积流云、太阳轨迹与 12 个全球地标天象场景；首帧绘制完成时自动将 `body` 设为完全透明（`html[data-sky-painted] body { background: transparent }`）；修复 `@tailwindcss/vite`（LightningCSS）在同时声明 `-webkit-backdrop-filter` 与 `backdrop-filter` 时自动剥离无前缀 `backdrop-filter` 导致玻璃失去模糊透视的根本缺陷，全面对齐 Hark 的 `backdrop-filter: blur(50px)` 与 `plus-lighter` / `color-dodge` / `soft-light` 光学图层混合配方。PC 客户端、服务端与 Android 客户端同步更新至 0.1.98（Android `versionCode` 295）。
