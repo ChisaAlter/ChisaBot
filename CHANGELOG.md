@@ -2,13 +2,26 @@
 
 ## Unreleased
 
-### 修复
+### Hark 顶栏（Hark 改版第 2 步，见 `docs/rfc/hark-redesign.md`）
+
+- **顶栏外壳（`glass-topbar.tsx`）**：左上角换成圆形主页按钮（品牌头像，点回主页）+ 品牌名 + 左栏开关；右上角是搜索胶囊和圆形头像（账号菜单，向下弹出）；中间不放分段切换，只有「聊天」一个视图。PC 无边框窗口的 — □ ✕（`.win-ctrls`）仍在最右，新按钮都不参与拖动。
+- **搜索**：电脑上搜索框从左栏卡片顶部移到顶栏右上角（同一个输入框、同一份搜索状态，结果仍画在左栏卡片里，左栏收起时一聚焦就展开）；设置 / 管理里同样的胶囊是按钮，点了回聊天并聚焦搜索。手机上搜索框留在左栏抽屉顶部，顶栏只放菜单、搜索两个圆钮和头像。
+- **玻璃**：搜索胶囊用唯一材质 `.glass`（读 `--glass-filter`，20px），是顶栏唯一的模糊层，不做过渡和动画；圆钮是 `.glass.is-flat`，不叠模糊。桌面同屏模糊层 4 → 5（再开一个弹层 6），手机仍是 1。
+- **测试**：`channel-pagination.test.tsx` 的搜索历史和组字 Esc 两条用例改为把顶栏的搜索框和左栏一起渲染（电脑上搜索框已不在左栏里）；新增 `hark-token-dark.test.ts`，检查和旧深色层同名的 Hark 令牌在 `html.dark` 里有深色值（DESIGN.md §10.5）。
+- **设计规范**：DESIGN.md 新增 §10.5「Hark 令牌与同名旧令牌」：`html:root` 会压过旧 `.dark`，新增同名令牌必须在 `html.dark` 里给深色值。
+- 没有新增 `!important`，没有升版本号；外观设置页、壁纸上传、`wallpaper_core.html`、`bot-bubbles.tsx` 都没有动。
+
+## 0.1.104 — 2026-10-29
+
+这一版合并 5 个 PR：修复干净安装下缺声明的依赖（#365）、出口过滤代理按 Bot 独立鉴权（审计 H1 / L1，#364）、界面渲染性能预算（#363）、安装版 `/api` 代理不再转发失效的 `Content-Encoding`（#367）、Hark 改版第 1 步令牌层（#369）。只升级服务器版本号（根、`app`、`server` 为 `0.1.104`），PC / Android 外壳未变；没有表结构变化。
+
+### 修复（#365）
 
 - 根 `package.json` 补声明 `@json-render/core` / `@json-render/react`（0.21.0，与 app/server 及 lockfile 一致）。`shared/json-render` 不属于任何 workspace，在 Bun 默认的隔离 linker 下只能从根 `node_modules` 解析依赖；此前根未声明，导致干净安装后 server/app 的 typecheck 与 build 报 `Cannot find module '@json-render/core'`，只能靠 `--linker hoisted` 绕过。
 - `app/package.json` 的 devDependencies 补声明 `@ag-ui/client`（1.0.1）、`rxjs`（7.8.1）、`esbuild`（0.28.2），版本均与 lockfile 中已解析的一致。app 的测试直接引用前两者，`vite.config.ts` 构建时动态 `import("esbuild")` 打包 pc headless 脚本；隔离 linker 下它们原本解析不到，导致 app typecheck 失败，esbuild 那一步也会被 try/catch 静默跳过。
 - `bun.lock` 只在 workspace 声明区增加上述条目，没有新增或变更任何包解析结果。
 
-### 安全：出口过滤代理按 Bot 独立鉴权（审计 H1 / L1）
+### 安全：出口过滤代理按 Bot 独立鉴权（审计 H1 / L1，#364）
 
 - **每个 Bot 独立的代理密钥（`agent-computer/src/egress.ts`）**：代理凭据改为 HMAC-SHA256(进程内随机主密钥, botId)，浏览器与 shell 都只拿本 Bot 的派生密钥；校验为定长摘要 + `timingSafeEqual`。
 - **拒绝伪造凭据**：带了 botId 但密码为空、错误、或用 A 的密钥冒充 B，一律 403，不再降级。
@@ -17,9 +30,9 @@
 - **命令补传 botId**：服务器 `runCommand` 在 `/exec` body 中带 `botId`；电脑 `/exec` 缺省时回退到 `x-chisabot-bot-id` 请求头。
 - 无需新增环境变量；电脑进程重启后旧代理凭据失效。
 
-这组改动只做渲染性能，不改布局和配色：性能审计实测，主界面卡顿主要来自三处——同屏 14 层毛玻璃（全文档 91 个元素带 `backdrop-filter`，气泡、按钮、胶囊、滚动区里的卡片都在模糊）、WebGL 天空在空闲时也按满帧满分辨率重画（还开着 `preserveDrawingBuffer`）、以及 `background-position` / `box-shadow` 驱动的无限循环动画。这里把毛玻璃收到预算内、让天空默认只画一张快照、无限动画只动 `transform` / `opacity`，并加上性能模式的状态开关。外观设置页、壁纸上传和 `wallpaper_core.html` 都没有动。
+### 渲染预算（#363）
 
-### 渲染预算
+这组改动只做渲染性能，不改布局和配色：性能审计实测，主界面卡顿主要来自三处——同屏 14 层毛玻璃（全文档 91 个元素带 `backdrop-filter`，气泡、按钮、胶囊、滚动区里的卡片都在模糊）、WebGL 天空在空闲时也按满帧满分辨率重画（还开着 `preserveDrawingBuffer`）、以及 `background-position` / `box-shadow` 驱动的无限循环动画。这里把毛玻璃收到预算内、让天空默认只画一张快照、无限动画只动 `transform` / `opacity`，并加上性能模式的状态开关。外观设置页、壁纸上传和 `wallpaper_core.html` 都没有动。
 
 - **毛玻璃预算（`styles.css`）**：
   - 大面板（左栏、右栏、输入框、顶栏、抽屉 / 对话框）统一 20px，弹层（菜单、选择框、浮层、提示）12px，任何地方都不超过 30px（`--glass-blur`、新增 `--glass-pop-filter`、`--blur-2/3` 改为 20 / 24px）。
@@ -33,21 +46,12 @@
 - **外观偏好只写改动过的键（`appearance.ts`）**：拖一下滑块不再把 8 个键（包括自定义壁纸的 data URL）全部重写一遍。
 - **测试**：新增 `app/tests/render-budget.test.ts`，静态检查模糊半径、会模糊的选择器白名单、小元素关闭旧玻璃层、无限动画属性与滚动遮罩。
 
-### 修复：安装版 `/api` 代理不再转发失效的 `Content-Encoding`
+### 修复：安装版 `/api` 代理不再转发失效的 `Content-Encoding`（#367）
 
 - **`app/serve.ts`**：Bun 的 `fetch` 已自动解压上游 gzip 响应，但代理原样转发了 `Content-Encoding: gzip` 和压缩时的 `Content-Length`，浏览器再解压一次就报 `ERR_CONTENT_DECODING_FAILED`，安装版 PC 客户端 `/api/me` 加载失败。现在转发前删掉 `content-encoding`、`content-length` 及逐跳头（`transfer-encoding`、`connection` 及其列出的头、`keep-alive` 等），其他头照常转发，多个 `Set-Cookie` 逐条保留。
 - 新增测试：gzip 上游经代理后客户端可正常解析 JSON、不带 gzip 编码头、多值 `Set-Cookie` 保留。
 
-### Hark 顶栏（Hark 改版第 2 步，见 `docs/rfc/hark-redesign.md`）
-
-- **顶栏外壳（`glass-topbar.tsx`）**：左上角换成圆形主页按钮（品牌头像，点回主页）+ 品牌名 + 左栏开关；右上角是搜索胶囊和圆形头像（账号菜单，向下弹出）；中间不放分段切换，只有「聊天」一个视图。PC 无边框窗口的 — □ ✕（`.win-ctrls`）仍在最右，新按钮都不参与拖动。
-- **搜索**：电脑上搜索框从左栏卡片顶部移到顶栏右上角（同一个输入框、同一份搜索状态，结果仍画在左栏卡片里，左栏收起时一聚焦就展开）；设置 / 管理里同样的胶囊是按钮，点了回聊天并聚焦搜索。手机上搜索框留在左栏抽屉顶部，顶栏只放菜单、搜索两个圆钮和头像。
-- **玻璃**：搜索胶囊用唯一材质 `.glass`（读 `--glass-filter`，20px），是顶栏唯一的模糊层，不做过渡和动画；圆钮是 `.glass.is-flat`，不叠模糊。桌面同屏模糊层 4 → 5（再开一个弹层 6），手机仍是 1。
-- **测试**：`channel-pagination.test.tsx` 的搜索历史和组字 Esc 两条用例改为把顶栏的搜索框和左栏一起渲染（电脑上搜索框已不在左栏里）；新增 `hark-token-dark.test.ts`，检查和旧深色层同名的 Hark 令牌在 `html.dark` 里有深色值（DESIGN.md §10.5）。
-- **设计规范**：DESIGN.md 新增 §10.5「Hark 令牌与同名旧令牌」：`html:root` 会压过旧 `.dark`，新增同名令牌必须在 `html.dark` 里给深色值。
-- 没有新增 `!important`，没有升版本号；外观设置页、壁纸上传、`wallpaper_core.html`、`bot-bubbles.tsx` 都没有动。
-
-### Hark 令牌（Hark 改版第 1 步，见 `docs/rfc/hark-redesign.md`）
+### Hark 令牌（Hark 改版第 1 步，见 `docs/rfc/hark-redesign.md`，#369）
 
 - **设计令牌（`styles.css` 开头）**：新增 `html:root` / `html.dark` 两套 Hark 令牌——文字基色 `--text` 加两档透明度（次要 `.5`、三级 `.3`，由 `color-mix` 算出 `--text-secondary` / `--text-tertiary`）、底色（`--regular-bg`、`--thin-bg`、`--composer-bg`、`--cell-bg`、气泡底色）、描边、强调色 `--accent-color`、状态色、圆角 `--r-*`、字号 `--fs-*`、行高、阴影 `--elev-*`、动效时长和默认静态壁纸渐变。选择器特异度 (0,1,1)，压过后面各层的同名令牌，不用 `!important`。
 - **字体**：`--font` 改为 Inter Variable 打头（`@fontsource-variable/inter` 早已引入），中文仍回落到系统黑体。
