@@ -83,8 +83,15 @@ export function SkyBackground() {
   const { dark } = useTheme();
   const { enabled, preview } = useSkyState();
   const appearance = useAppearanceState();
-  const { palette, glassStyle, wallpaperId, customWallpaper, wallpaperBlur, wallpaperDim } =
-    appearance;
+  const {
+    palette,
+    glassStyle,
+    glassOpacity,
+    wallpaperId,
+    customWallpaper,
+    wallpaperBlur,
+    wallpaperDim,
+  } = appearance;
   const activeWallpaperCss = resolveActiveWallpaperCss(appearance);
   const last = useRef<{ enabled: boolean; preview: number | null; palette: string } | null>(null);
 
@@ -96,12 +103,13 @@ export function SkyBackground() {
       root.setAttribute("data-palette", palette);
     }
     root.setAttribute("data-glass", glassStyle);
+    root.style.setProperty("--lg-alpha", String(glassOpacity / 100));
     if (activeWallpaperCss) {
       root.setAttribute("data-wallpaper", "on");
     } else {
       root.removeAttribute("data-wallpaper");
     }
-  }, [palette, glassStyle, activeWallpaperCss]);
+  }, [palette, glassStyle, glassOpacity, activeWallpaperCss]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -155,32 +163,33 @@ export function SkyBackground() {
     };
   }, [enabled, preview, dark, palette]);
 
-  if (!activeWallpaperCss) {
-    return null;
-  }
-
   return (
     <div
       aria-hidden="true"
       className="chisabot-wallpaper"
-      data-testid="chisabot-wallpaper"
-       data-wallpaper-id={wallpaperId}
       data-custom-set={customWallpaper ? "true" : "false"}
+      data-testid="chisabot-wallpaper"
+      data-wallpaper-id={wallpaperId}
     >
-      <div
-        className="chisabot-wallpaper-img"
-        style={{
-          backgroundImage: activeWallpaperCss,
-          filter: wallpaperBlur > 0 ? `blur(${wallpaperBlur}px)` : undefined,
-          transform: wallpaperBlur > 0 ? "scale(1.06)" : undefined,
-        }}
-      />
-      <div
-        className="chisabot-wallpaper-dim"
-        style={{
-          opacity: Math.max(0, Math.min(0.85, wallpaperDim / 100)),
-        }}
-      />
+      <div className="chisabot-ambient-orbs" />
+      {activeWallpaperCss && (
+        <>
+          <div
+            className="chisabot-wallpaper-img"
+            style={{
+              backgroundImage: activeWallpaperCss,
+              filter: wallpaperBlur > 0 ? `blur(${wallpaperBlur}px)` : undefined,
+              transform: wallpaperBlur > 0 ? "scale(1.06)" : undefined,
+            }}
+          />
+          <div
+            className="chisabot-wallpaper-dim"
+            style={{
+              opacity: Math.max(0, Math.min(0.85, wallpaperDim / 100)),
+            }}
+          />
+        </>
+      )}
     </div>
   );
 }

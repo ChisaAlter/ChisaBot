@@ -7,6 +7,7 @@ import {
   resetAppearanceDefaults,
   resolveActiveWallpaperCss,
   setCustomWallpaperUrl,
+  setGlassOpacity,
   setGlassStyle,
   setThemePalette,
   setWallpaperBlur,
@@ -33,10 +34,11 @@ describe("appearance palettes, wallpapers & liquid glass", () => {
     }
   });
 
-  test("resolves built-in and custom wallpaper CSS backgrounds and resets cleanly", () => {
+  test("resolves built-in and custom wallpaper CSS backgrounds, glass opacity, and resets cleanly", () => {
     resetAppearanceDefaults();
     expect(getAppearanceState().palette).toBe("default");
     expect(getAppearanceState().glassStyle).toBe("liquid");
+    expect(getAppearanceState().glassOpacity).toBe(16);
     expect(resolveActiveWallpaperCss(getAppearanceState())).toBeNull();
 
     for (const wp of WALLPAPER_PRESETS) {
@@ -57,23 +59,28 @@ describe("appearance palettes, wallpapers & liquid glass", () => {
 
     setThemePalette("sakura");
     setGlassStyle("crystal");
+    setGlassOpacity(10);
     setWallpaperBlur(14);
     setWallpaperDim(28);
     expect(getAppearanceState().palette).toBe("sakura");
     expect(getAppearanceState().glassStyle).toBe("crystal");
+    expect(getAppearanceState().glassOpacity).toBe(10);
     expect(getAppearanceState().wallpaperBlur).toBe(14);
     expect(getAppearanceState().wallpaperDim).toBe(28);
 
     resetAppearanceDefaults();
     expect(getAppearanceState().palette).toBe("default");
     expect(getAppearanceState().glassStyle).toBe("liquid");
+    expect(getAppearanceState().glassOpacity).toBe(16);
     expect(getAppearanceState().wallpaperId).toBe("none");
   });
 
-  test("styles.css defines liquid glass surface tokens and applies them to core workspace panels", () => {
+  test("styles.css defines translucent liquid glass surface tokens, ambient orbs, and applies them to core workspace panels", () => {
     expect(css).toContain('html[data-glass="liquid"]');
     expect(css).toContain('html[data-glass="crystal"]');
+    expect(css).toContain("--lg-alpha: 0.16");
     expect(css).toContain(".chisabot-wallpaper");
+    expect(css).toContain(".chisabot-ambient-orbs");
     expect(css).toContain(":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)");
   });
 });

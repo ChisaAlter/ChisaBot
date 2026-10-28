@@ -26,6 +26,7 @@ import {
   type GlassStyleId,
   resetAppearanceDefaults,
   setCustomWallpaperUrl,
+  setGlassOpacity,
   setGlassStyle,
   setThemePalette,
   setWallpaperBlur,
@@ -48,6 +49,7 @@ export function AppearancePreferences() {
   const {
     palette,
     glassStyle,
+    glassOpacity,
     wallpaperId,
     customWallpaper,
     wallpaperBlur,
@@ -100,6 +102,7 @@ export function AppearancePreferences() {
   const hasCustomizations =
     palette !== "default" ||
     glassStyle !== "liquid" ||
+    glassOpacity !== 16 ||
     wallpaperId !== "none" ||
     wallpaperBlur !== 0 ||
     wallpaperDim !== 12;
@@ -147,6 +150,34 @@ export function AppearancePreferences() {
           </div>
         </ItemActions>
       </Item>
+
+      {glassStyle !== "frosted" && (
+        <Item size="sm">
+          <ItemContent>
+            <ItemTitle>{"玻璃面板不透明度"}</ItemTitle>
+            <ItemDescription>
+              {"数值越低面板越清透（默认 16%，即 84% 透光率）。"}
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <div className="flex items-center gap-3">
+              <input
+                aria-label={"玻璃面板不透明度"}
+                className="sky-slider"
+                max={80}
+                min={5}
+                onChange={(e) => setGlassOpacity(Number(e.target.value))}
+                step={1}
+                type="range"
+                value={glassOpacity}
+              />
+              <span className="w-11 text-right text-xs tabular-nums text-[var(--ink-2)]">
+                {`${glassOpacity}%`}
+              </span>
+            </div>
+          </ItemActions>
+        </Item>
+      )}
 
       <Separator />
       {/* 2. 多款主题配色选择 */}
