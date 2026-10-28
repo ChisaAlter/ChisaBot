@@ -70,6 +70,8 @@ describe("server authorization", () => {
         name: "ChisaBot Member",
         image: "https://example.test/member.png",
         role: "user",
+        // It has a name and a picture, so nothing asks this person to finish their profile.
+        profileNeedsSetup: false,
         // No store was passed, so this deployment tracks no onboarding and the app gates nobody.
         onboarding: null,
       },

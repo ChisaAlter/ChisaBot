@@ -104,6 +104,7 @@
       },
       "devDependencies": {
         "@copilotkit/aimock": "1.43.0",
+        "@copilotkit/core": "1.77.0",
         "drizzle-kit": "^0.31.10",
       },
     },

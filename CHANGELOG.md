@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+修 `bun run test:app` 的测试互相干扰和几个过时的测试（审查清单第 3 项第二部分）：电脑控制在换页面后重新挂上 focus/online 监听；日程测试不再用进程级的 `mock.module` 替换 `@/lib/client`；更新 5 个与现行行为不符的 server 测试。server 补声明测试直接用到的 `@copilotkit/core`；CI 里 chisabot-node 打包失败改为让构建失败。不改版本号。
+
 ## 0.1.103 — 2026-10-29
 
 这一版修复聊天 SVG 卡片的存储型 XSS（审查 S1，#362）：SVG 卡片和 Mermaid 卡片改用 DOMPurify（SVG profile）清洗，SVG 卡片改成 `<img>` 渲染，`/onerror`、`onbegin` 等写法不再能执行脚本；主应用同时加上 CSP（Report-Only，先只上报不拦截，便于观察后再收紧）。只改服务器 + 网页，没有表结构变化；PC / Android 客户端外壳未变，版本号仍为 0.1.100。

@@ -1,3 +1,7 @@
+## Unreleased
+
+- 修 test:app 共享进程里的测试干扰（use-control 的 wake 监听、schedule-runs-query 的 mock.module 泄漏），修 gateway-account-control / startup-resilience 及 5 个 server 测试；server 补 `@copilotkit/core` 开发依赖；CI 下 chisabot-node 打包失败即构建失败。
+
 ## 0.1.103
 
 - 聊天 SVG / Mermaid 卡片改用 DOMPurify 清洗、SVG 卡片改为 `<img>` 渲染，修复存储型 XSS（审查 S1，#362）；主应用加 CSP Report-Only。只升级服务器版本号（根、`app`、`server` 为 `0.1.103`），PC / Android 外壳未变。
