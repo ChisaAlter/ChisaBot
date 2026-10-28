@@ -140,6 +140,10 @@ function createHarkFetch(): (
         : input instanceof URL
           ? input.href
           : input.url;
+    // Privacy: never let the sky engine send the user's IP to a third-party geolocation service.
+    if (url.includes("ipapi.co")) {
+      return new Response(null, { status: 403 });
+    }
     if (url.includes("gibs.earthdata.nasa.gov")) {
       return new Response(null, { status: 204 });
     }

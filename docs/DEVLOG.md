@@ -1,5 +1,26 @@
 # DEVLOG
 
+## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
+
+来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。
+
+1. **隐私**：`wallpaper_core.html` 的 `hark.ipLocate()` 原来会请求 `https://ipapi.co/json/`，把用户 IP 发给第三方。现在改用 `Intl.DateTimeFormat().resolvedOptions().timeZone`，在内置城市表里取第一个同时区的城市，给出粗略位置和正确的本地时间；找不到同时区的城市就沿用原来的“无法确定位置”提示。城市搜索、GPS 定位、手动选城市都不受影响。`sky-background.tsx` 的 fetch 拦截层也兜底拦掉 `ipapi.co`（返回 403）。
+2. **上传**：新增 `validateWallpaperFile`，只放行 `accept` 列出的五种类型，原图不超过 20 MB，超限的文件不会被 FileReader 读进内存。压缩后的 Data URL 超过约 6 MB 时报错，原来 JPEG 兜底分支不查大小。新增 `saveUploadedWallpaper`：先写进 IndexedDB，成功了才应用；写入失败抛出“壁纸保存失败，可能是浏览器存储空间不足”，由现有 toast.error 显示，不再出现“已上传并应用、刷新就没了”。壁纸只保存在本机，没有服务端上传接口，所以没有服务端校验可加。
+3. **lint**：`appearance-preferences.tsx` 现在实测是 6 个 error（审查时记的是 7 个）。三处自绘 ARIA 单选按钮和拖放区（里面嵌了按钮，外层不能是 `<button>`）按仓库惯例加了带理由的 `biome-ignore`。“操作区 div 上只拦冒泡的 onClick”改成在两个按钮自己的 onClick 里 `stopPropagation`。DOM 结构和 class 都不变。该文件 lint 错误从 6 降到 0；剩下的 format 提示 main 上本来就有，这次没有整文件重排。
+4. **滑块**：透明度、模糊度、压暗度三个键改成防抖写入（`SLIDER_WRITE_DELAY_MS = 200`，停手后写一次；`pagehide` 时立即 `flushAppearanceWrites`）。状态、CSS 变量、订阅者仍然每一步同步更新。其它键照旧立即写，并且只写改动过的键。
+5. **存储**：新增 `lib/wallpaper-store.ts`，用 IndexedDB 存储（库 `chisabot-appearance`，表 `wallpaper`，键 `custom`），后端可注入。localStorage 的 `chisabot-wallpaper-custom-url` 只存占位标记 `idb:custom-wallpaper`；普通网址仍按原样存。启动时：
+   - 读到占位标记：先按“没有壁纸”渲染，异步从 IndexedDB 读回后补上。
+   - 读到旧版本的 `data:`：照常显示，随后迁移进 IndexedDB，成功后把 localStorage 里的值换成标记；迁移失败就保留旧数据，壁纸不丢。
+   - 移除壁纸时同时删掉 IndexedDB 里的记录。
+
+测试：`app/tests/wallpaper-privacy-storage.test.ts` 共 15 个用例，覆盖 1–5：
+- 源码里没有 ipapi 请求，ipLocate 改用时区；拦截层兜底；
+- 类型 / 大小校验，超限文件在读入前被拒；压缩后超限报错；保存失败时抛错且状态不变；CSS 转义；
+- 滑块拖动过程中不写 localStorage，停手后写最终值；flush 立即写出；
+- 上传后只有占位标记，刷新后能读回；旧数据迁移和迁移失败的情况；移除时清掉 IndexedDB；直接设置 Data URL 也走 IndexedDB。
+
+原有的 `appearance-preferences.test.ts` 4 个用例照常通过。
+
 ## 2026-10-29 修复干净安装：补声明 @json-render/* 等缺失依赖（分支 fix/json-render-deps）
 
 ### 动机

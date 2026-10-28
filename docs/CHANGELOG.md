@@ -1,3 +1,7 @@
+## Unreleased
+
+- 壁纸与外观收尾（审查第 6 项 + 性能报告第 7 项）：天空引擎不再请求 `ipapi.co`（不把用户 IP 发给第三方），GPS 失败时改用浏览器时区估计位置；壁纸上传限类型（PNG / JPG / WebP / GIF / AVIF）和大小（原图 ≤ 20 MB、压缩后 ≤ 约 6 MB），超限或保存失败时用现有 toast 明确提示，不再假装“已应用”；壁纸图片改存 IndexedDB，localStorage 只留占位标记，旧数据自动迁移并清掉；外观滑块拖动时 localStorage 写入防抖（停手约 200ms 或页面隐藏时写），预览仍实时；修掉 `appearance-preferences.tsx` 的 6 个 Biome a11y 错误；自定义壁纸 URL 写进 CSS 时转义 `\`、`"` 并去掉换行。不改样式和外观。
+
 ## 0.1.104
 
 - 修复干净安装（默认隔离 linker）下 `shared/json-render` 解析不到 `@json-render/*`、typecheck/build 失败的问题：根 `package.json` 补声明这两个依赖；app 补声明测试与 vite.config 直接用到的 `@ag-ui/client`、`rxjs`、`esbuild`（版本均与 lockfile 一致）（#365）。
