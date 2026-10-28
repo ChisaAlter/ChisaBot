@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### 安全：升级有严重 / 高危漏洞的依赖，恢复 dependabot（审查 M4）
+
+- **直接依赖**：`better-auth` / `@better-auth/drizzle-adapter` 1.7.1 → 1.7.14（修复 OAuth state 被当作 Magic Link 登录、OAuth Proxy 冒充登录两个漏洞；同一 1.7.x 补丁线，无数据库表结构变化）；`@modelcontextprotocol/sdk` 1.30.0 → 1.32.2；`zod` 4.4.3 → 4.6.7；`vite` 7.3.6 → 7.3.7。
+- **间接依赖（根 `overrides` 固定到修复版）**：`proxy-addr` 2.0.8、`@modelcontextprotocol/server` 2.3.1、`axios` 1.21.0、`body-parser` 2.4.0、`fast-uri` 3.1.9、`follow-redirects` 1.16.2、`source-map-js` 1.2.2；`undici` 6.x / 7.x 副本升到 6.29.1 / 7.30.1。
+- **agent-computer**：`@grpc/grpc-js` 1.14.4 → 1.14.6（overrides）。**pc**：`undici` 6.29.1 / 7.30.1（仅锁文件）。
+- `bun audit`：2 critical / 39 high → 0 critical / 9 high；剩余需大版本升级，未升，见 docs/DEVLOG.md。
+- 新增 `.github/dependabot.yml`：bun（根、agent-computer）、npm（pc）、github-actions，每周一次，限 PR 数，小版本 / 补丁分组。
+
 ## 0.1.103 — 2026-10-29
 
 这一版修复聊天 SVG 卡片的存储型 XSS（审查 S1，#362）：SVG 卡片和 Mermaid 卡片改用 DOMPurify（SVG profile）清洗，SVG 卡片改成 `<img>` 渲染，`/onerror`、`onbegin` 等写法不再能执行脚本；主应用同时加上 CSP（Report-Only，先只上报不拦截，便于观察后再收紧）。只改服务器 + 网页，没有表结构变化；PC / Android 客户端外壳未变，版本号仍为 0.1.100。

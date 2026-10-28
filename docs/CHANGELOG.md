@@ -1,3 +1,7 @@
+## Unreleased
+
+- 升级严重 / 高危漏洞依赖（better-auth 1.7.14、proxy-addr 2.0.8、MCP SDK 1.32.2、zod 4.6.7、vite 7.3.7、axios、body-parser、fast-uri、follow-redirects、undici 等），`bun audit` 由 2 critical / 39 high 降到 0 / 9；恢复 `.github/dependabot.yml`（每周、分组、限 PR 数）
+
 ## 0.1.103
 
 - 聊天 SVG / Mermaid 卡片改用 DOMPurify 清洗、SVG 卡片改为 `<img>` 渲染，修复存储型 XSS（审查 S1，#362）；主应用加 CSP Report-Only。只升级服务器版本号（根、`app`、`server` 为 `0.1.103`），PC / Android 外壳未变。
