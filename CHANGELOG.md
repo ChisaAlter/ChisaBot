@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.97 — 2026-10-28
+
+这一版彻底重构**液态玻璃（Liquid Glass）**面板的半透明光学质感：修复 `.glass-shell` 入场动画 `animation-fill-mode: both` 在 Chromium 中形成独立 Backdrop Root 导致子面板 `backdrop-filter` 无法透视背景壁纸的问题；将深色与浅色模式下的面板材质统一为冰白半透明晶块（默认 16% 不透明度 / 84% 透光率，告别深藏青色实心质感）；新增全局环境柔光球（`.chisabot-ambient-orbs`）、**雾蓝光晕**推荐壁纸以及**「玻璃面板不透明度」**无级滑块（5%–80%），并将左栏搜索框、机器人选中项、用户与机器人聊天气泡、底部输入框胶囊、右栏分段槽与实时卡片全部升级为半透明液态玻璃。PC 客户端、服务端与 Android 客户端同步更新至 0.1.97（Android `versionCode` 294）。
+
+### 半透明液态玻璃光学重构与不透明度无级调节
+
+- **修复 Chromium `backdrop-filter` 透视阻断（`styles.css`）**：移除液态玻璃与晶莹高透模式下 `.glass-shell` 与 `[data-slot="sidebar-wrapper"]` 的 `animation-fill-mode: both`，避免 Chromium 将外层容器提升为独立 Backdrop Root，让左栏、底栏输入框、气泡和右栏真正实时采样并折射背后的天空、环境光球与壁纸。
+- **冰白半透明晶块材质（`styles.css`、`appearance.ts`）**：
+  - 将浅色与深色模式下的 `--lg-surface` / `--lg-surface-strong` 重构为冰白半透明折射层（`rgba(255, 255, 255, α)`，默认 84% 透光率）配合 `blur(16px) saturate(195%)` 与立体曲面高光边框（`--lg-rim`），彻底消除深色模式下面板比背景更黑、看起来像不透明深色石板的问题。
+  - 将左栏搜索框（`.side-search`）、新建按钮（`.glass-list-add`）、选中机器人胶囊（`.glass-bot-row.is-on`）、用户发送气泡与机器人回复气泡、底部输入框及模型/权限胶囊（`.model-pill` / `.perm-chip`）、右栏顶部分段槽（`.sg-segmented`）与内部看板卡片（`.rail-card .glass-card`）全部同步为半透明液态玻璃。
+- **环境柔光球与「雾蓝光晕」壁纸（`sky-background.tsx`、`appearance.ts`）**：默认渲染跨面板边缘的柔光球层（`.chisabot-ambient-orbs`），即使未配置自定义壁纸也能直观看到面板边缘的半透明光影折射；内置壁纸新增**雾蓝光晕**（液态玻璃推荐）。
+- **玻璃面板不透明度滑块（`appearance-preferences.tsx`）**：在「设置 → 通用 → 面板玻璃材质」下方新增**玻璃面板不透明度（5%–80%）**实时调节滑块，用户可自由定制通透程度。
+
 ## 0.1.96 — 2026-10-28
 
 这一版在「设置 → 通用 → 外观」中新增 8 款精选主题配色、6 款内置流光壁纸与自定义图片壁纸配置（支持本地上传、链接输入、景深模糊与暗角遮罩调节），并将主界面左栏卡片、左下角账号卡、底部聊天输入框、对话气泡、右侧面板栏及内部看板卡片全面升级为具有曲面边缘高光与高饱和色彩折射的**液态玻璃（Liquid Glass）**材质。PC 客户端、服务端与 Android 客户端同步更新至 0.1.96（Android `versionCode` 293）。

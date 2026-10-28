@@ -10,6 +10,7 @@ export const WALLPAPER_CUSTOM_STORAGE_KEY = "chisabot-wallpaper-custom";
 export const WALLPAPER_BLUR_STORAGE_KEY = "chisabot-wallpaper-blur";
 export const WALLPAPER_DIM_STORAGE_KEY = "chisabot-wallpaper-dim";
 export const GLASS_STYLE_STORAGE_KEY = "chisabot-glass-style";
+export const GLASS_OPACITY_STORAGE_KEY = "chisabot-glass-opacity";
 
 export type ThemePaletteId =
   | "default"
@@ -25,6 +26,7 @@ export type GlassStyleId = "liquid" | "crystal" | "frosted";
 
 export type WallpaperPresetId =
   | "none"
+  | "mist"
   | "fluid"
   | "aurora"
   | "ocean"
@@ -92,15 +94,15 @@ export const THEME_PALETTES: readonly ThemePaletteDef[] = [
       muted: "#5b5475",
     },
     darkSky: {
-      sky1: "#0c0920",
-      sky2: "#18123b",
-      sky3: "#281b59",
-      sky4: "#37226e",
-      cloud: "rgba(167, 139, 250, 0.22)",
-      glow: "rgba(217, 70, 239, 0.24)",
+      sky1: "#181338",
+      sky2: "#261c58",
+      sky3: "#382778",
+      sky4: "#4a3294",
+      cloud: "rgba(192, 132, 252, 0.28)",
+      glow: "rgba(232, 121, 249, 0.34)",
       stars: "0.85",
       lift: "0",
-      muted: "#a39bbf",
+      muted: "#b8b0d4",
     },
   },
   {
@@ -122,15 +124,15 @@ export const THEME_PALETTES: readonly ThemePaletteDef[] = [
       muted: "#4d6860",
     },
     darkSky: {
-      sky1: "#061815",
-      sky2: "#0a2823",
-      sky3: "#103b33",
-      sky4: "#164d43",
-      cloud: "rgba(52, 211, 153, 0.18)",
-      glow: "rgba(110, 231, 183, 0.22)",
+      sky1: "#0a2621",
+      sky2: "#113d35",
+      sky3: "#195449",
+      sky4: "#226b5d",
+      cloud: "rgba(52, 211, 153, 0.25)",
+      glow: "rgba(110, 231, 183, 0.3)",
       stars: "0.65",
       lift: "0",
-      muted: "#8fb3a8",
+      muted: "#a3c9be",
     },
   },
   {
@@ -152,15 +154,15 @@ export const THEME_PALETTES: readonly ThemePaletteDef[] = [
       muted: "#6e5262",
     },
     darkSky: {
-      sky1: "#1c0b18",
-      sky2: "#301328",
-      sky3: "#451c39",
-      sky4: "#572448",
-      cloud: "rgba(244, 114, 182, 0.18)",
-      glow: "rgba(251, 113, 133, 0.22)",
+      sky1: "#2a1224",
+      sky2: "#421b38",
+      sky3: "#5c264e",
+      sky4: "#733162",
+      cloud: "rgba(244, 114, 182, 0.26)",
+      glow: "rgba(251, 113, 133, 0.3)",
       stars: "0.7",
       lift: "0",
-      muted: "#b896ab",
+      muted: "#ccb0c2",
     },
   },
   {
@@ -182,15 +184,15 @@ export const THEME_PALETTES: readonly ThemePaletteDef[] = [
       muted: "#4d6470",
     },
     darkSky: {
-      sky1: "#041421",
-      sky2: "#082338",
-      sky3: "#0d3552",
-      sky4: "#124669",
-      cloud: "rgba(34, 211, 238, 0.2)",
-      glow: "rgba(56, 189, 248, 0.24)",
+      sky1: "#072236",
+      sky2: "#0e3654",
+      sky3: "#164d73",
+      sky4: "#1e6491",
+      cloud: "rgba(34, 211, 238, 0.26)",
+      glow: "rgba(56, 189, 248, 0.32)",
       stars: "0.75",
       lift: "0",
-      muted: "#8eaec2",
+      muted: "#a4c2d6",
     },
   },
   {
@@ -212,15 +214,15 @@ export const THEME_PALETTES: readonly ThemePaletteDef[] = [
       muted: "#6b584d",
     },
     darkSky: {
-      sky1: "#1c0f0a",
-      sky2: "#301912",
-      sky3: "#452319",
-      sky4: "#572e20",
-      cloud: "rgba(251, 146, 60, 0.18)",
-      glow: "rgba(245, 158, 11, 0.24)",
+      sky1: "#2b1610",
+      sky2: "#452419",
+      sky3: "#613324",
+      sky4: "#7a422e",
+      cloud: "rgba(251, 146, 60, 0.26)",
+      glow: "rgba(245, 158, 11, 0.32)",
       stars: "0.65",
       lift: "0",
-      muted: "#b89f91",
+      muted: "#ccb4a6",
     },
   },
   {
@@ -242,15 +244,15 @@ export const THEME_PALETTES: readonly ThemePaletteDef[] = [
       muted: "#6b5059",
     },
     darkSky: {
-      sky1: "#1a070f",
-      sky2: "#2c0c1a",
-      sky3: "#401226",
-      sky4: "#521831",
-      cloud: "rgba(244, 63, 94, 0.18)",
-      glow: "rgba(251, 113, 133, 0.22)",
+      sky1: "#290b17",
+      sky2: "#421226",
+      sky3: "#5e1a36",
+      sky4: "#782245",
+      cloud: "rgba(244, 63, 94, 0.26)",
+      glow: "rgba(251, 113, 133, 0.3)",
       stars: "0.75",
       lift: "0",
-      muted: "#b8949f",
+      muted: "#ccaab5",
     },
   },
   {
@@ -272,15 +274,15 @@ export const THEME_PALETTES: readonly ThemePaletteDef[] = [
       muted: "#58606e",
     },
     darkSky: {
-      sky1: "#07090e",
-      sky2: "#0d111a",
-      sky3: "#141926",
-      sky4: "#1b2233",
-      cloud: "rgba(148, 163, 184, 0.12)",
-      glow: "rgba(203, 213, 225, 0.14)",
+      sky1: "#111622",
+      sky2: "#1b2234",
+      sky3: "#263047",
+      sky4: "#323f5c",
+      cloud: "rgba(148, 163, 184, 0.22)",
+      glow: "rgba(203, 213, 225, 0.24)",
       stars: "0.5",
       lift: "0",
-      muted: "#949eb0",
+      muted: "#a8b3c7",
     },
   },
 ];
@@ -301,48 +303,94 @@ export const WALLPAPER_PRESETS: readonly WallpaperPresetDef[] = [
   {
     id: "none",
     name: "默认天空",
-    desc: "跟随主题配色与时间变化",
+    desc: "跟随主题配色与液态光晕",
     preview: "linear-gradient(180deg, #6f9bc7 0%, #9dbddc 48%, #e4ecf3 100%)",
     backgroundImage: "",
+  },
+  {
+    id: "mist",
+    name: "雾蓝光晕",
+    desc: "极简雾蓝渐变与柔光球（液态玻璃推荐）",
+    preview:
+      "radial-gradient(circle at 46% 32%, rgba(255,255,255,0.75) 0%, rgba(165,188,238,0.45) 36%, transparent 68%), linear-gradient(165deg, #4f6398 0%, #7d92c2 52%, #c2cfe8 100%)",
+    backgroundImage: svgDataUri(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <linearGradient id="mbg" x1="0%" y1="0%" x2="85%" y2="100%">
+            <stop offset="0%" stop-color="#43568a"/>
+            <stop offset="46%" stop-color="#6e83b7"/>
+            <stop offset="82%" stop-color="#9fb1d7"/>
+            <stop offset="100%" stop-color="#cad5ec"/>
+          </linearGradient>
+          <radialGradient id="orb1" cx="46%" cy="30%" r="36%">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.78"/>
+            <stop offset="38%" stop-color="#dce7ff" stop-opacity="0.48"/>
+            <stop offset="72%" stop-color="#8da4d8" stop-opacity="0.16"/>
+            <stop offset="100%" stop-color="#586ea3" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="orb2" cx="14%" cy="68%" r="38%">
+            <stop offset="0%" stop-color="#c7d8ff" stop-opacity="0.55"/>
+            <stop offset="55%" stop-color="#7c93c9" stop-opacity="0.22"/>
+            <stop offset="100%" stop-color="#43568a" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="orb3" cx="86%" cy="28%" r="34%">
+            <stop offset="0%" stop-color="#e0eaff" stop-opacity="0.58"/>
+            <stop offset="52%" stop-color="#8fa6db" stop-opacity="0.24"/>
+            <stop offset="100%" stop-color="#43568a" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="orb4" cx="82%" cy="82%" r="40%">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.52"/>
+            <stop offset="50%" stop-color="#b8caec" stop-opacity="0.25"/>
+            <stop offset="100%" stop-color="#6e83b7" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <rect width="1920" height="1080" fill="url(#mbg)"/>
+        <rect width="1920" height="1080" fill="url(#orb1)"/>
+        <rect width="1920" height="1080" fill="url(#orb2)"/>
+        <rect width="1920" height="1080" fill="url(#orb3)"/>
+        <rect width="1920" height="1080" fill="url(#orb4)"/>
+        <path d="M-100,720 C360,540 820,860 1320,640 C1620,500 1820,680 2020,580 L2020,1080 L-100,1080 Z" fill="#ffffff" fill-opacity="0.16"/>
+      </svg>
+    `),
   },
   {
     id: "fluid",
     name: "流光幻境",
     desc: "多彩液态丝绸光影，凸显玻璃折射",
     preview:
-      "radial-gradient(circle at 20% 25%, #38bdf8 0%, transparent 50%), radial-gradient(circle at 80% 30%, #ec4899 0%, transparent 55%), radial-gradient(circle at 50% 80%, #8b5cf6 0%, #0f172a 100%)",
+      "radial-gradient(circle at 20% 25%, #38bdf8 0%, transparent 50%), radial-gradient(circle at 80% 30%, #ec4899 0%, transparent 55%), radial-gradient(circle at 50% 80%, #8b5cf6 0%, #1e293b 100%)",
     backgroundImage: svgDataUri(`
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
         <defs>
           <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#0b132b"/>
-            <stop offset="45%" stop-color="#1e1b4b"/>
-            <stop offset="100%" stop-color="#0f172a"/>
+            <stop offset="0%" stop-color="#1e295b"/>
+            <stop offset="48%" stop-color="#312e81"/>
+            <stop offset="100%" stop-color="#1e3a5f"/>
           </linearGradient>
-          <radialGradient id="g1" cx="22%" cy="28%" r="55%">
-            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.88"/>
-            <stop offset="50%" stop-color="#6366f1" stop-opacity="0.45"/>
-            <stop offset="100%" stop-color="#0f172a" stop-opacity="0"/>
+          <radialGradient id="g1" cx="18%" cy="30%" r="52%">
+            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.92"/>
+            <stop offset="50%" stop-color="#6366f1" stop-opacity="0.52"/>
+            <stop offset="100%" stop-color="#1e295b" stop-opacity="0"/>
           </radialGradient>
-          <radialGradient id="g2" cx="78%" cy="26%" r="52%">
-            <stop offset="0%" stop-color="#f472b6" stop-opacity="0.85"/>
-            <stop offset="55%" stop-color="#a855f7" stop-opacity="0.42"/>
-            <stop offset="100%" stop-color="#1e1b4b" stop-opacity="0"/>
+          <radialGradient id="g2" cx="82%" cy="28%" r="50%">
+            <stop offset="0%" stop-color="#f472b6" stop-opacity="0.9"/>
+            <stop offset="55%" stop-color="#a855f7" stop-opacity="0.48"/>
+            <stop offset="100%" stop-color="#312e81" stop-opacity="0"/>
           </radialGradient>
-          <radialGradient id="g3" cx="54%" cy="82%" r="58%">
-            <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.72"/>
-            <stop offset="52%" stop-color="#3b82f6" stop-opacity="0.38"/>
-            <stop offset="100%" stop-color="#0b132b" stop-opacity="0"/>
+          <radialGradient id="g3" cx="50%" cy="76%" r="56%">
+            <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.82"/>
+            <stop offset="52%" stop-color="#60a5fa" stop-opacity="0.45"/>
+            <stop offset="100%" stop-color="#1e295b" stop-opacity="0"/>
           </radialGradient>
           <linearGradient id="w1" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.48"/>
-            <stop offset="50%" stop-color="#f472b6" stop-opacity="0.58"/>
-            <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.45"/>
+            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.55"/>
+            <stop offset="50%" stop-color="#f472b6" stop-opacity="0.65"/>
+            <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.52"/>
           </linearGradient>
           <linearGradient id="w2" x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#a855f7" stop-opacity="0.38"/>
-            <stop offset="50%" stop-color="#2dd4bf" stop-opacity="0.48"/>
-            <stop offset="100%" stop-color="#60a5fa" stop-opacity="0.35"/>
+            <stop offset="0%" stop-color="#a855f7" stop-opacity="0.45"/>
+            <stop offset="50%" stop-color="#2dd4bf" stop-opacity="0.55"/>
+            <stop offset="100%" stop-color="#93c5fd" stop-opacity="0.45"/>
           </linearGradient>
         </defs>
         <rect width="1920" height="1080" fill="url(#bg)"/>
@@ -351,8 +399,8 @@ export const WALLPAPER_PRESETS: readonly WallpaperPresetDef[] = [
         <rect width="1920" height="1080" fill="url(#g3)"/>
         <path d="M-120,680 C340,420 760,920 1240,560 C1560,320 1820,580 2040,440 L2040,1140 L-120,1140 Z" fill="url(#w1)"/>
         <path d="M-120,360 C280,620 820,140 1320,480 C1640,700 1840,340 2040,520 L2040,1140 L-120,1140 Z" fill="url(#w2)"/>
-        <circle cx="420" cy="320" r="240" fill="#ffffff" fill-opacity="0.08"/>
-        <circle cx="1480" cy="680" r="320" fill="#f472b6" fill-opacity="0.1"/>
+        <circle cx="460" cy="300" r="240" fill="#ffffff" fill-opacity="0.22"/>
+        <circle cx="1480" cy="660" r="300" fill="#fbcfe8" fill-opacity="0.2"/>
       </svg>
     `),
   },
@@ -366,28 +414,29 @@ export const WALLPAPER_PRESETS: readonly WallpaperPresetDef[] = [
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
         <defs>
           <linearGradient id="sky" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stop-color="#050814"/>
-            <stop offset="50%" stop-color="#0f1f3d"/>
-            <stop offset="100%" stop-color="#1b3a5c"/>
+            <stop offset="0%" stop-color="#0f172a"/>
+            <stop offset="50%" stop-color="#1e3a5f"/>
+            <stop offset="100%" stop-color="#2b5876"/>
           </linearGradient>
           <linearGradient id="aur1" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0"/>
-            <stop offset="28%" stop-color="#34d399" stop-opacity="0.68"/>
-            <stop offset="65%" stop-color="#38bdf8" stop-opacity="0.62"/>
-            <stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
+            <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.2"/>
+            <stop offset="28%" stop-color="#34d399" stop-opacity="0.78"/>
+            <stop offset="65%" stop-color="#38bdf8" stop-opacity="0.72"/>
+            <stop offset="100%" stop-color="#a855f7" stop-opacity="0.25"/>
           </linearGradient>
           <linearGradient id="aur2" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#a855f7" stop-opacity="0"/>
-            <stop offset="40%" stop-color="#c084fc" stop-opacity="0.52"/>
-            <stop offset="75%" stop-color="#2dd4bf" stop-opacity="0.55"/>
-            <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+            <stop offset="0%" stop-color="#a855f7" stop-opacity="0.2"/>
+            <stop offset="40%" stop-color="#e879f9" stop-opacity="0.65"/>
+            <stop offset="75%" stop-color="#2dd4bf" stop-opacity="0.68"/>
+            <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.2"/>
           </linearGradient>
         </defs>
         <rect width="1920" height="1080" fill="url(#sky)"/>
         <path d="M-100,260 C380,40 860,480 1380,180 C1620,40 1820,260 2020,160 L2020,620 C1680,740 1280,380 820,640 C420,860 120,520 -100,660 Z" fill="url(#aur1)"/>
         <path d="M-100,440 C420,180 940,620 1460,280 C1720,120 1880,380 2020,280 L2020,760 C1640,860 1160,520 740,760 C360,960 80,680 -100,820 Z" fill="url(#aur2)"/>
-        <path d="M0,1080 L0,830 L280,670 L540,810 L880,610 L1220,790 L1540,640 L1920,780 L1920,1080 Z" fill="#0b1528" fill-opacity="0.88"/>
-        <path d="M0,1080 L0,900 L420,750 L760,890 L1140,720 L1520,880 L1920,760 L1920,1080 Z" fill="#060b16" fill-opacity="0.95"/>
+        <circle cx="920" cy="300" r="240" fill="#a7f3d0" fill-opacity="0.22"/>
+        <path d="M0,1080 L0,830 L280,670 L540,810 L880,610 L1220,790 L1540,640 L1920,780 L1920,1080 Z" fill="#172554" fill-opacity="0.65"/>
+        <path d="M0,1080 L0,900 L420,750 L760,890 L1140,720 L1520,880 L1920,760 L1920,1080 Z" fill="#0f172a" fill-opacity="0.78"/>
       </svg>
     `),
   },
@@ -401,27 +450,27 @@ export const WALLPAPER_PRESETS: readonly WallpaperPresetDef[] = [
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
         <defs>
           <linearGradient id="sea" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#041c2c"/>
-            <stop offset="48%" stop-color="#0369a1"/>
-            <stop offset="100%" stop-color="#0e7490"/>
+            <stop offset="0%" stop-color="#0c4a6e"/>
+            <stop offset="48%" stop-color="#0284c7"/>
+            <stop offset="100%" stop-color="#06b6d4"/>
           </linearGradient>
-          <radialGradient id="sun" cx="65%" cy="18%" r="60%">
-            <stop offset="0%" stop-color="#a5f3fc" stop-opacity="0.85"/>
-            <stop offset="42%" stop-color="#38bdf8" stop-opacity="0.48"/>
-            <stop offset="100%" stop-color="#041c2c" stop-opacity="0"/>
+          <radialGradient id="sun" cx="55%" cy="24%" r="58%">
+            <stop offset="0%" stop-color="#cffafe" stop-opacity="0.88"/>
+            <stop offset="42%" stop-color="#38bdf8" stop-opacity="0.52"/>
+            <stop offset="100%" stop-color="#0c4a6e" stop-opacity="0"/>
           </radialGradient>
           <linearGradient id="wave" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.42"/>
-            <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.22"/>
-            <stop offset="100%" stop-color="#67e8f9" stop-opacity="0.45"/>
+            <stop offset="0%" stop-color="#67e8f9" stop-opacity="0.48"/>
+            <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.28"/>
+            <stop offset="100%" stop-color="#a5f3fc" stop-opacity="0.52"/>
           </linearGradient>
         </defs>
         <rect width="1920" height="1080" fill="url(#sea)"/>
         <rect width="1920" height="1080" fill="url(#sun)"/>
         <path d="M-100,480 C320,340 680,640 1120,460 C1480,310 1720,560 2020,420 L2020,1080 L-100,1080 Z" fill="url(#wave)"/>
         <path d="M-100,680 C380,520 840,820 1320,640 C1620,520 1800,720 2020,620 L2020,1080 L-100,1080 Z" fill="url(#wave)"/>
-        <circle cx="1240" cy="220" r="280" fill="#cffafe" fill-opacity="0.18"/>
-        <circle cx="520" cy="640" r="340" fill="#22d3ee" fill-opacity="0.14"/>
+        <circle cx="1140" cy="260" r="260" fill="#ffffff" fill-opacity="0.26"/>
+        <circle cx="380" cy="620" r="320" fill="#67e8f9" fill-opacity="0.22"/>
       </svg>
     `),
   },
@@ -435,28 +484,28 @@ export const WALLPAPER_PRESETS: readonly WallpaperPresetDef[] = [
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
         <defs>
           <linearGradient id="sk" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#4a153b"/>
-            <stop offset="46%" stop-color="#9d174d"/>
+            <stop offset="0%" stop-color="#6b215c"/>
+            <stop offset="46%" stop-color="#be185d"/>
             <stop offset="82%" stop-color="#f472b6"/>
             <stop offset="100%" stop-color="#fde2e4"/>
           </linearGradient>
-          <radialGradient id="glow" cx="76%" cy="28%" r="55%">
-            <stop offset="0%" stop-color="#fef08a" stop-opacity="0.78"/>
-            <stop offset="45%" stop-color="#f9a8d4" stop-opacity="0.52"/>
+          <radialGradient id="glow" cx="72%" cy="28%" r="55%">
+            <stop offset="0%" stop-color="#fef08a" stop-opacity="0.82"/>
+            <stop offset="45%" stop-color="#f9a8d4" stop-opacity="0.55"/>
             <stop offset="100%" stop-color="#831843" stop-opacity="0"/>
           </radialGradient>
           <linearGradient id="cloud" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#fbcfe8" stop-opacity="0.45"/>
-            <stop offset="50%" stop-color="#f472b6" stop-opacity="0.32"/>
-            <stop offset="100%" stop-color="#fef3c7" stop-opacity="0.5"/>
+            <stop offset="0%" stop-color="#fbcfe8" stop-opacity="0.5"/>
+            <stop offset="50%" stop-color="#f472b6" stop-opacity="0.35"/>
+            <stop offset="100%" stop-color="#fef3c7" stop-opacity="0.55"/>
           </linearGradient>
         </defs>
         <rect width="1920" height="1080" fill="url(#sk)"/>
         <rect width="1920" height="1080" fill="url(#glow)"/>
         <path d="M-100,560 C340,380 780,720 1240,500 C1580,340 1780,580 2020,460 L2020,1080 L-100,1080 Z" fill="url(#cloud)"/>
         <path d="M-100,740 C420,580 880,880 1380,680 C1680,560 1840,760 2020,660 L2020,1080 L-100,1080 Z" fill="url(#cloud)"/>
-        <circle cx="380" cy="340" r="220" fill="#fbcfe8" fill-opacity="0.18"/>
-        <circle cx="1460" cy="300" r="260" fill="#fef08a" fill-opacity="0.18"/>
+        <circle cx="380" cy="340" r="240" fill="#ffffff" fill-opacity="0.25"/>
+        <circle cx="1460" cy="300" r="260" fill="#fef08a" fill-opacity="0.24"/>
       </svg>
     `),
   },
@@ -470,22 +519,22 @@ export const WALLPAPER_PRESETS: readonly WallpaperPresetDef[] = [
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
         <defs>
           <linearGradient id="dusk" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stop-color="#1e1035"/>
-            <stop offset="38%" stop-color="#6b2146"/>
-            <stop offset="72%" stop-color="#ea580c"/>
-            <stop offset="100%" stop-color="#fbbf24"/>
+            <stop offset="0%" stop-color="#3b1d5e"/>
+            <stop offset="38%" stop-color="#9d2b5b"/>
+            <stop offset="72%" stop-color="#f97316"/>
+            <stop offset="100%" stop-color="#fde047"/>
           </linearGradient>
-          <radialGradient id="sun" cx="50%" cy="62%" r="42%">
-            <stop offset="0%" stop-color="#fef08a" stop-opacity="0.92"/>
-            <stop offset="45%" stop-color="#fb923c" stop-opacity="0.55"/>
+          <radialGradient id="sun" cx="50%" cy="54%" r="45%">
+            <stop offset="0%" stop-color="#fef9c3" stop-opacity="0.92"/>
+            <stop offset="45%" stop-color="#fb923c" stop-opacity="0.58"/>
             <stop offset="100%" stop-color="#6b2146" stop-opacity="0"/>
           </radialGradient>
         </defs>
         <rect width="1920" height="1080" fill="url(#dusk)"/>
         <rect width="1920" height="1080" fill="url(#sun)"/>
-        <circle cx="960" cy="640" r="190" fill="#fef9c3" fill-opacity="0.45"/>
-        <path d="M-80,740 C260,580 580,820 960,670 C1340,520 1640,760 2000,630 L2000,1080 L-80,1080 Z" fill="#431426" fill-opacity="0.65"/>
-        <path d="M-80,860 C340,720 740,940 1180,790 C1520,670 1760,860 2000,770 L2000,1080 L-80,1080 Z" fill="#230b18" fill-opacity="0.88"/>
+        <circle cx="960" cy="540" r="210" fill="#ffffff" fill-opacity="0.45"/>
+        <path d="M-80,740 C260,580 580,820 960,670 C1340,520 1640,760 2000,630 L2000,1080 L-80,1080 Z" fill="#581c3c" fill-opacity="0.55"/>
+        <path d="M-80,860 C340,720 740,940 1180,790 C1520,670 1760,860 2000,770 L2000,1080 L-80,1080 Z" fill="#31102f" fill-opacity="0.72"/>
       </svg>
     `),
   },
@@ -499,26 +548,26 @@ export const WALLPAPER_PRESETS: readonly WallpaperPresetDef[] = [
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
         <defs>
           <linearGradient id="cy" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#050711"/>
-            <stop offset="50%" stop-color="#1e0b36"/>
-            <stop offset="100%" stop-color="#081c30"/>
+            <stop offset="0%" stop-color="#17153b"/>
+            <stop offset="50%" stop-color="#2e1a5e"/>
+            <stop offset="100%" stop-color="#0f3460"/>
           </linearGradient>
-          <radialGradient id="n1" cx="25%" cy="35%" r="50%">
-            <stop offset="0%" stop-color="#d946ef" stop-opacity="0.78"/>
-            <stop offset="50%" stop-color="#7c3aed" stop-opacity="0.38"/>
-            <stop offset="100%" stop-color="#050711" stop-opacity="0"/>
+          <radialGradient id="n1" cx="22%" cy="34%" r="52%">
+            <stop offset="0%" stop-color="#e879f9" stop-opacity="0.85"/>
+            <stop offset="50%" stop-color="#8b5cf6" stop-opacity="0.45"/>
+            <stop offset="100%" stop-color="#17153b" stop-opacity="0"/>
           </radialGradient>
-          <radialGradient id="n2" cx="76%" cy="62%" r="52%">
-            <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.82"/>
-            <stop offset="50%" stop-color="#3b82f6" stop-opacity="0.38"/>
-            <stop offset="100%" stop-color="#081c30" stop-opacity="0"/>
+          <radialGradient id="n2" cx="78%" cy="62%" r="54%">
+            <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.88"/>
+            <stop offset="50%" stop-color="#3b82f6" stop-opacity="0.45"/>
+            <stop offset="100%" stop-color="#0f3460" stop-opacity="0"/>
           </radialGradient>
         </defs>
         <rect width="1920" height="1080" fill="url(#cy)"/>
         <rect width="1920" height="1080" fill="url(#n1)"/>
         <rect width="1920" height="1080" fill="url(#n2)"/>
-        <path d="M-100,620 C420,280 960,880 1480,420 C1720,220 1880,520 2020,380 L2020,1080 L-100,1080 Z" fill="#d946ef" fill-opacity="0.18"/>
-        <path d="M-100,760 C380,480 920,960 1440,580 C1680,400 1860,680 2020,560 L2020,1080 L-100,1080 Z" fill="#06b6d4" fill-opacity="0.22"/>
+        <path d="M-100,620 C420,280 960,880 1480,420 C1720,220 1880,520 2020,380 L2020,1080 L-100,1080 Z" fill="#e879f9" fill-opacity="0.24"/>
+        <path d="M-100,760 C380,480 920,960 1440,580 C1680,400 1860,680 2020,560 L2020,1080 L-100,1080 Z" fill="#22d3ee" fill-opacity="0.28"/>
       </svg>
     `),
   },
@@ -527,6 +576,7 @@ export const WALLPAPER_PRESETS: readonly WallpaperPresetDef[] = [
 export type AppearanceState = {
   palette: ThemePaletteId;
   glassStyle: GlassStyleId;
+  glassOpacity: number;
   wallpaperId: WallpaperPresetId;
   customWallpaper: string;
   wallpaperBlur: number;
@@ -548,6 +598,7 @@ function parseGlassStyle(raw: string | null): GlassStyleId {
 function parseWallpaperId(raw: string | null): WallpaperPresetId {
   if (
     raw === "none" ||
+    raw === "mist" ||
     raw === "fluid" ||
     raw === "aurora" ||
     raw === "ocean" ||
@@ -571,10 +622,11 @@ function clampNum(raw: string | null, fallback: number, min: number, max: number
 let appearanceState: AppearanceState = {
   palette: parsePalette(readStoredPreference(PALETTE_STORAGE_KEY)),
   glassStyle: parseGlassStyle(readStoredPreference(GLASS_STYLE_STORAGE_KEY)),
+  glassOpacity: clampNum(readStoredPreference(GLASS_OPACITY_STORAGE_KEY), 16, 5, 80),
   wallpaperId: parseWallpaperId(readStoredPreference(WALLPAPER_ID_STORAGE_KEY)),
   customWallpaper: readStoredPreference(WALLPAPER_CUSTOM_STORAGE_KEY) ?? "",
   wallpaperBlur: clampNum(readStoredPreference(WALLPAPER_BLUR_STORAGE_KEY), 0, 0, 32),
-  wallpaperDim: clampNum(readStoredPreference(WALLPAPER_DIM_STORAGE_KEY), 12, 0, 75),
+  wallpaperDim: clampNum(readStoredPreference(WALLPAPER_DIM_STORAGE_KEY), 6, 0, 75),
 };
 
 const listeners = new Set<() => void>();
@@ -599,7 +651,21 @@ export function setThemePalette(palette: ThemePaletteId) {
 
 export function setGlassStyle(glassStyle: GlassStyleId) {
   writeStoredPreference(GLASS_STYLE_STORAGE_KEY, glassStyle);
-  appearanceState = { ...appearanceState, glassStyle };
+  const nextOpacity =
+    glassStyle === "crystal" ? 10 : glassStyle === "liquid" ? 16 : 52;
+  writeStoredPreference(GLASS_OPACITY_STORAGE_KEY, String(nextOpacity));
+  appearanceState = {
+    ...appearanceState,
+    glassStyle,
+    glassOpacity: nextOpacity,
+  };
+  emit();
+}
+
+export function setGlassOpacity(opacity: number) {
+  const clamped = Math.max(5, Math.min(80, Math.round(opacity)));
+  writeStoredPreference(GLASS_OPACITY_STORAGE_KEY, String(clamped));
+  appearanceState = { ...appearanceState, glassOpacity: clamped };
   emit();
 }
 
@@ -639,9 +705,10 @@ export function setWallpaperDim(dim: number) {
 export function resetAppearanceDefaults() {
   setThemePalette("default");
   setGlassStyle("liquid");
+  setGlassOpacity(16);
   setWallpaperPreset("none");
   setWallpaperBlur(0);
-  setWallpaperDim(12);
+  setWallpaperDim(6);
 }
 
 /** 根据当前主题配色计算自定义天空变量（非 default 配色时使用）。 */

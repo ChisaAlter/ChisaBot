@@ -8969,14 +8969,56 @@ html.dark[data-palette="obsidian"] {
   --accent-blue-soft: rgba(148, 163, 184, 0.16);
 }
 
-/* 2. 全局背景壁纸层（位于 body 天空之上、所有玻璃面板之下） */
+/* 2. 全局背景壁纸层与环境柔光球（位于 body 天空之上、所有玻璃面板之下）
+ *    即使未开启自定义壁纸，环境柔光球（.chisabot-ambient-orbs）也会在左栏、底栏输入框、
+ *    气泡与右栏边缘背后提供柔和的流光冷暖对比，让半透明液态玻璃的折射与透光感一眼可见。 */
 .chisabot-wallpaper {
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: 0;
   pointer-events: none;
   overflow: hidden;
 }
+.glass-shell {
+  position: relative;
+  z-index: 1;
+}
+/* 关键修复：移除 .glass-shell 与 sidebar-wrapper 上的 animation-fill-mode: both，
+ * 避免 Chromium 将 .glass-shell 提升为独立 Backdrop Root 导致内部面板 backdrop-filter 无法采样背景壁纸与环境光球。 */
+html:not([data-glass="frosted"]) .glass-shell,
+html:not([data-glass="frosted"]) [data-slot="sidebar-wrapper"] {
+  animation: none !important;
+}
+
+.chisabot-ambient-orbs {
+  position: absolute;
+  inset: -8%;
+  pointer-events: none;
+  background:
+    radial-gradient(380px 320px at 15% 24%, rgba(255, 255, 255, 0.72) 0%, rgba(120, 185, 255, 0.34) 42%, transparent 72%),
+    radial-gradient(340px 300px at 12% 84%, rgba(165, 140, 255, 0.38) 0%, rgba(255, 255, 255, 0.45) 45%, transparent 72%),
+    radial-gradient(480px 320px at 48% 88%, rgba(255, 255, 255, 0.68) 0%, rgba(110, 195, 255, 0.32) 48%, transparent 74%),
+    radial-gradient(420px 360px at 52% 28%, rgba(255, 255, 255, 0.58) 0%, rgba(160, 210, 255, 0.28) 46%, transparent 72%),
+    radial-gradient(380px 340px at 84% 25%, rgba(255, 255, 255, 0.7) 0%, rgba(135, 175, 255, 0.36) 44%, transparent 72%),
+    radial-gradient(360px 320px at 86% 76%, rgba(130, 215, 245, 0.36) 0%, rgba(255, 255, 255, 0.5) 45%, transparent 72%);
+  filter: blur(18px);
+  opacity: 0.92;
+}
+html.dark .chisabot-ambient-orbs {
+  background:
+    radial-gradient(400px 340px at 15% 24%, rgba(96, 175, 255, 0.42) 0%, rgba(145, 115, 255, 0.24) 44%, transparent 72%),
+    radial-gradient(360px 310px at 12% 84%, rgba(155, 115, 255, 0.38) 0%, rgba(72, 160, 255, 0.2) 46%, transparent 72%),
+    radial-gradient(500px 340px at 48% 88%, rgba(82, 172, 255, 0.38) 0%, rgba(130, 110, 250, 0.22) 48%, transparent 74%),
+    radial-gradient(440px 360px at 52% 28%, rgba(190, 225, 255, 0.22) 0%, rgba(88, 155, 245, 0.16) 46%, transparent 72%),
+    radial-gradient(400px 350px at 84% 25%, rgba(105, 185, 255, 0.4) 0%, rgba(165, 125, 255, 0.24) 44%, transparent 72%),
+    radial-gradient(380px 330px at 86% 76%, rgba(64, 210, 235, 0.34) 0%, rgba(110, 150, 255, 0.2) 46%, transparent 72%);
+  filter: blur(22px);
+  opacity: 0.95;
+}
+html[data-wallpaper="on"] .chisabot-ambient-orbs {
+  opacity: 0.38;
+}
+
 .chisabot-wallpaper-img {
   position: absolute;
   inset: 0;
@@ -8988,105 +9030,108 @@ html.dark[data-palette="obsidian"] {
 .chisabot-wallpaper-dim {
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 45%, rgba(6, 10, 22, 0.45) 0%, rgba(4, 8, 18, 0.85) 100%);
+  background: radial-gradient(circle at 50% 45%, rgba(6, 10, 22, 0.32) 0%, rgba(4, 8, 18, 0.68) 100%);
   transition: opacity 0.2s ease;
 }
 html:not(.dark) .chisabot-wallpaper-dim {
-  background: radial-gradient(circle at 50% 45%, rgba(255, 255, 255, 0.25) 0%, rgba(15, 23, 42, 0.45) 100%);
+  background: radial-gradient(circle at 50% 45%, rgba(255, 255, 255, 0.14) 0%, rgba(15, 23, 42, 0.32) 100%);
 }
 
-/* 3. 液态玻璃（Liquid Glass）面板光学折射与曲面高光系统
- *    覆盖图 2 中所有板块：左栏卡片 (.glass-side-card)、左下角账号卡 (.acct-card)、
- *    底部输入框 (.glass-composer)、对话气泡、右侧面板栏 (.rail-card) 与内部实时卡片、设置卡片 (.page-rows / .sg-card)。 */
+/* 3. 液态玻璃（Liquid Glass）面板光学折射与半透明冰晶高光系统
+ *    核心设计准则：
+ *    - 无论浅色还是深色模式，液态玻璃都采用「冰白半透明晶休（rgba(255, 255, 255, α)）」而非深藏青色泥块；
+ *    - 默认 --lg-alpha 为 0.16（即 84% 透光率），支持用户在「设置 → 通用 → 玻璃面板不透明度」中无级调节；
+ *    - 适度光学模糊（blur 15px~16px + saturate 195%）保留背后光球与壁纸的柔和轮廓，搭配立体曲面高光边框。 */
 :root,
 html[data-glass="liquid"] {
-  --lg-blur: saturate(195%) contrast(103%) blur(28px);
+  --lg-alpha: 0.16;
+  --lg-blur: blur(16px) saturate(190%) brightness(1.04);
   --lg-surface: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.56) 0%,
-    rgba(255, 255, 255, 0.34) 48%,
-    rgba(255, 255, 255, 0.48) 100%
+    rgba(255, 255, 255, clamp(0.08, calc(var(--lg-alpha, 0.16) * 1.45), 0.82)) 0%,
+    rgba(255, 255, 255, clamp(0.04, calc(var(--lg-alpha, 0.16) * 0.72), 0.66)) 48%,
+    rgba(240, 248, 255, clamp(0.06, calc(var(--lg-alpha, 0.16) * 1.12), 0.75)) 100%
   );
   --lg-surface-strong: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.72) 0%,
-    rgba(255, 255, 255, 0.5) 52%,
-    rgba(255, 255, 255, 0.64) 100%
+    rgba(255, 255, 255, clamp(0.11, calc(var(--lg-alpha, 0.16) * 1.72), 0.86)) 0%,
+    rgba(255, 255, 255, clamp(0.06, calc(var(--lg-alpha, 0.16) * 0.92), 0.72)) 52%,
+    rgba(242, 249, 255, clamp(0.09, calc(var(--lg-alpha, 0.16) * 1.32), 0.8)) 100%
   );
-  --lg-border: rgba(255, 255, 255, 0.72);
+  --lg-border: rgba(255, 255, 255, 0.76);
   --lg-rim:
-    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.88),
-    inset 1px 0 1px 0 rgba(255, 255, 255, 0.52),
-    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.28),
-    inset 0 14px 32px -12px rgba(255, 255, 255, 0.36);
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.92),
+    inset 1.2px 0 1px 0 rgba(255, 255, 255, 0.58),
+    inset 0 -1px 1.5px 0 rgba(255, 255, 255, 0.36),
+    inset 0 18px 36px -12px rgba(255, 255, 255, 0.32);
   --lg-shadow:
-    0 16px 40px -8px rgba(18, 36, 72, 0.14),
-    0 4px 12px rgba(18, 36, 72, 0.06);
+    0 14px 36px -8px rgba(18, 40, 82, 0.12),
+    0 4px 12px rgba(18, 40, 82, 0.05);
 }
 
 html.dark,
 html.dark[data-glass="liquid"] {
-  --lg-blur: saturate(200%) contrast(105%) blur(30px);
+  --lg-blur: blur(16px) saturate(200%) brightness(1.12);
   --lg-surface: linear-gradient(
     135deg,
-    rgba(38, 54, 82, 0.42) 0%,
-    rgba(16, 25, 44, 0.3) 50%,
-    rgba(28, 42, 68, 0.38) 100%
+    rgba(255, 255, 255, clamp(0.06, calc(var(--lg-alpha, 0.16) * 0.95), 0.64)) 0%,
+    rgba(210, 230, 255, clamp(0.025, calc(var(--lg-alpha, 0.16) * 0.42), 0.46)) 50%,
+    rgba(235, 245, 255, clamp(0.045, calc(var(--lg-alpha, 0.16) * 0.72), 0.56)) 100%
   );
   --lg-surface-strong: linear-gradient(
     135deg,
-    rgba(44, 62, 94, 0.54) 0%,
-    rgba(20, 30, 50, 0.4) 52%,
-    rgba(32, 48, 76, 0.48) 100%
+    rgba(255, 255, 255, clamp(0.085, calc(var(--lg-alpha, 0.16) * 1.18), 0.7)) 0%,
+    rgba(210, 230, 255, clamp(0.04, calc(var(--lg-alpha, 0.16) * 0.56), 0.52)) 52%,
+    rgba(235, 245, 255, clamp(0.065, calc(var(--lg-alpha, 0.16) * 0.88), 0.62)) 100%
   );
-  --lg-border: rgba(255, 255, 255, 0.16);
+  --lg-border: rgba(255, 255, 255, 0.3);
   --lg-rim:
-    inset 0 1px 1px 0 rgba(255, 255, 255, 0.28),
-    inset 1px 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 16px 36px -14px rgba(255, 255, 255, 0.09);
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.52),
+    inset 1px 0 1px 0 rgba(255, 255, 255, 0.24),
+    inset 0 -1px 1.5px 0 rgba(175, 215, 255, 0.18),
+    inset 0 18px 38px -12px rgba(255, 255, 255, 0.14);
   --lg-shadow:
-    0 18px 44px -8px rgba(0, 0, 0, 0.42),
-    0 4px 14px rgba(0, 0, 0, 0.24);
+    0 18px 42px -8px rgba(2, 6, 18, 0.36),
+    0 4px 14px rgba(2, 6, 18, 0.2);
 }
 
-/* 晶莹高透模式（crystal）：更高通透度，最大化透出壁纸光影 */
+/* 晶莹高透模式（crystal）：极致超透冰晶，最大化透出背后流光与壁纸 */
 html[data-glass="crystal"] {
-  --lg-blur: saturate(210%) contrast(104%) blur(22px);
+  --lg-blur: blur(12px) saturate(210%) brightness(1.06);
   --lg-surface: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.38) 0%,
-    rgba(255, 255, 255, 0.2) 50%,
-    rgba(255, 255, 255, 0.32) 100%
+    rgba(255, 255, 255, clamp(0.05, calc(var(--lg-alpha, 0.16) * 0.9), 0.65)) 0%,
+    rgba(255, 255, 255, clamp(0.02, calc(var(--lg-alpha, 0.16) * 0.4), 0.45)) 50%,
+    rgba(240, 248, 255, clamp(0.04, calc(var(--lg-alpha, 0.16) * 0.68), 0.55)) 100%
   );
   --lg-surface-strong: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.52) 0%,
-    rgba(255, 255, 255, 0.32) 52%,
-    rgba(255, 255, 255, 0.44) 100%
+    rgba(255, 255, 255, clamp(0.08, calc(var(--lg-alpha, 0.16) * 1.15), 0.72)) 0%,
+    rgba(255, 255, 255, clamp(0.035, calc(var(--lg-alpha, 0.16) * 0.55), 0.52)) 52%,
+    rgba(240, 248, 255, clamp(0.06, calc(var(--lg-alpha, 0.16) * 0.85), 0.62)) 100%
   );
-  --lg-border: rgba(255, 255, 255, 0.8);
+  --lg-border: rgba(255, 255, 255, 0.84);
 }
 html.dark[data-glass="crystal"] {
-  --lg-blur: saturate(215%) contrast(106%) blur(24px);
+  --lg-blur: blur(12px) saturate(215%) brightness(1.15);
   --lg-surface: linear-gradient(
     135deg,
-    rgba(42, 60, 92, 0.28) 0%,
-    rgba(14, 22, 38, 0.18) 50%,
-    rgba(28, 42, 68, 0.25) 100%
+    rgba(255, 255, 255, clamp(0.04, calc(var(--lg-alpha, 0.16) * 0.68), 0.5)) 0%,
+    rgba(210, 230, 255, clamp(0.015, calc(var(--lg-alpha, 0.16) * 0.26), 0.34)) 50%,
+    rgba(235, 245, 255, clamp(0.03, calc(var(--lg-alpha, 0.16) * 0.48), 0.42)) 100%
   );
   --lg-surface-strong: linear-gradient(
     135deg,
-    rgba(48, 68, 102, 0.38) 0%,
-    rgba(18, 28, 46, 0.26) 52%,
-    rgba(32, 48, 76, 0.34) 100%
+    rgba(255, 255, 255, clamp(0.06, calc(var(--lg-alpha, 0.16) * 0.88), 0.58)) 0%,
+    rgba(210, 230, 255, clamp(0.025, calc(var(--lg-alpha, 0.16) * 0.38), 0.4)) 52%,
+    rgba(235, 245, 255, clamp(0.045, calc(var(--lg-alpha, 0.16) * 0.62), 0.48)) 100%
   );
-  --lg-border: rgba(255, 255, 255, 0.22);
+  --lg-border: rgba(255, 255, 255, 0.36);
   --lg-rim:
-    inset 0 1.2px 1px 0 rgba(255, 255, 255, 0.36),
-    inset 1px 0 1px 0 rgba(255, 255, 255, 0.16),
-    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.1),
-    inset 0 18px 38px -12px rgba(255, 255, 255, 0.12);
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.62),
+    inset 1.2px 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 1.5px 0 rgba(185, 220, 255, 0.22),
+    inset 0 20px 40px -12px rgba(255, 255, 255, 0.18);
 }
 
 /* 经典磨砂模式（frosted）：偏稳重的柔光磨砂 */
@@ -9101,92 +9146,184 @@ html.dark[data-glass="frosted"] {
   --lg-surface-strong: linear-gradient(180deg, rgba(30, 42, 64, 0.88), rgba(22, 32, 50, 0.84));
 }
 
-/* 将液态玻璃材质应用到主界面各大核心板块（左栏、左下角账号卡、右栏、收起态左栏、设置行卡片） */
+/* 液态玻璃 / 晶莹高透模式下，将 .glass-shell 内部子控件令牌同步为半透明冰晶，消除深色实心块 */
+html:not([data-glass="frosted"]) .glass-shell {
+  --glass-1: rgba(255, 255, 255, 0.22);
+  --glass-2: rgba(255, 255, 255, 0.3);
+  --glass-3: rgba(255, 255, 255, 0.42);
+  --glass-hover: rgba(255, 255, 255, 0.34);
+  --stroke: rgba(255, 255, 255, 0.62);
+}
+html.dark:not([data-glass="frosted"]) .glass-shell {
+  --glass-1: rgba(255, 255, 255, 0.075);
+  --glass-2: rgba(255, 255, 255, 0.115);
+  --glass-3: rgba(255, 255, 255, 0.165);
+  --glass-hover: rgba(255, 255, 255, 0.13);
+  --stroke: rgba(255, 255, 255, 0.24);
+}
+
+/* 将液态玻璃材质应用到主界面各大核心板块（左栏、左下角账号卡、右栏、收起态左栏） */
 :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card) {
   background: var(--lg-surface) !important;
   backdrop-filter: var(--lg-blur) !important;
+  -webkit-backdrop-filter: var(--lg-blur) !important;
   border: 1px solid var(--lg-border) !important;
   box-shadow: var(--lg-shadow), var(--lg-rim) !important;
 }
 
-/* 右栏内部实时卡片（如图 2 中的黄金 ETF 看板卡）：子层液态玻璃折射面 */
+/* 左栏搜索框与新建按钮：半透明冰晶胶囊 */
+html:not([data-glass="frosted"]) :is(.side-search, .glass-list-add) {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.16)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.62) !important;
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.78) !important;
+}
+html.dark:not([data-glass="frosted"]) :is(.side-search, .glass-list-add) {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.045)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.32) !important;
+}
+
+/* 右栏顶部分段切换器（面板 | 计算机）与通用分段槽：半透明液态凹槽 + 悬浮晶块滑块 */
+html:not([data-glass="frosted"]) .sg-segmented {
+  background: rgba(255, 255, 255, 0.2) !important;
+  border: 1px solid rgba(255, 255, 255, 0.52) !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+}
+html.dark:not([data-glass="frosted"]) .sg-segmented {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.22) !important;
+}
+html:not([data-glass="frosted"]) .sg-segmented-item[aria-checked="true"] {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.36)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.78) !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08), inset 0 1px 0.5px rgba(255, 255, 255, 0.9) !important;
+}
+html.dark:not([data-glass="frosted"]) .sg-segmented-item[aria-checked="true"] {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.1)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25), inset 0 1px 0.5px rgba(255, 255, 255, 0.42) !important;
+}
+
+/* 右栏内部实时卡片（如图 2 中的黄金 ETF 看板卡）：子层高透液态玻璃折射面 */
 .rail-card .glass-card {
   background: linear-gradient(
     145deg,
-    rgba(255, 255, 255, 0.42) 0%,
-    rgba(255, 255, 255, 0.22) 100%
+    rgba(255, 255, 255, 0.32) 0%,
+    rgba(255, 255, 255, 0.14) 100%
   ) !important;
-  border: 1px solid rgba(255, 255, 255, 0.58) !important;
+  border: 1px solid rgba(255, 255, 255, 0.64) !important;
   box-shadow:
-    0 6px 20px rgba(16, 30, 60, 0.06),
-    inset 0 1px 0.5px rgba(255, 255, 255, 0.65) !important;
+    0 8px 22px rgba(16, 30, 60, 0.06),
+    inset 0 1.2px 0.5px rgba(255, 255, 255, 0.82) !important;
 }
 .dark .rail-card .glass-card {
   background: linear-gradient(
     145deg,
-    rgba(255, 255, 255, 0.085) 0%,
-    rgba(255, 255, 255, 0.03) 100%
+    rgba(255, 255, 255, 0.13) 0%,
+    rgba(255, 255, 255, 0.045) 100%
   ) !important;
-  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
   box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.22),
-    inset 0 1px 0.5px rgba(255, 255, 255, 0.18) !important;
+    0 8px 24px rgba(0, 0, 0, 0.2),
+    inset 0 1.2px 0.5px rgba(255, 255, 255, 0.36) !important;
 }
 
-/* 底部聊天输入框（.glass-composer）：告别死板的 0.97 实心底色，升级为高透液态玻璃 */
+/* 底部聊天输入框（.glass-composer）及内部模型/权限胶囊：告别实心底色，全面升级为高透液态玻璃 */
 .glass-composer,
 .dark .glass-composer {
-  background: var(--lg-surface-strong);
-  backdrop-filter: var(--lg-blur);
-  border: 1px solid var(--lg-border);
-  box-shadow: var(--lg-shadow), var(--lg-rim);
+  background: var(--lg-surface-strong) !important;
+  backdrop-filter: var(--lg-blur) !important;
+  -webkit-backdrop-filter: var(--lg-blur) !important;
+  border: 1px solid var(--lg-border) !important;
+  box-shadow: var(--lg-shadow), var(--lg-rim) !important;
 }
 .glass-composer:focus-within,
 .dark .glass-composer:focus-within {
-  background: var(--lg-surface-strong);
-  border-color: color-mix(in srgb, var(--accent-blue) 42%, var(--lg-border));
-  box-shadow: var(--lg-shadow), var(--lg-rim);
+  background: var(--lg-surface-strong) !important;
+  border-color: color-mix(in srgb, var(--accent-blue) 48%, var(--lg-border)) !important;
+  box-shadow: var(--lg-shadow), var(--lg-rim) !important;
+}
+html:not([data-glass="frosted"]) :is(.model-pill, .perm-chip) {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0.16)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.62) !important;
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.78) !important;
+}
+html.dark:not([data-glass="frosted"]) :is(.model-pill, .perm-chip) {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.05)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.34) !important;
 }
 
-/* 聊天机器人回复气泡：液态玻璃悬浮晶块 */
+/* 聊天机器人回复气泡 + 用户发送气泡：全部采用半透明液态玻璃晶块 */
 .glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"] {
-  background: var(--lg-surface-strong);
-  backdrop-filter: var(--lg-blur);
-  border: 1px solid var(--lg-border);
-  box-shadow: var(--lg-shadow), var(--lg-rim);
+  background: var(--lg-surface-strong) !important;
+  backdrop-filter: var(--lg-blur) !important;
+  -webkit-backdrop-filter: var(--lg-blur) !important;
+  border: 1px solid var(--lg-border) !important;
+  box-shadow: var(--lg-shadow), var(--lg-rim) !important;
+}
+html:not([data-glass="frosted"]) .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubble-content"] {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-blue) 24%, rgba(255, 255, 255, 0.42)) 0%,
+    color-mix(in srgb, var(--accent-blue) 14%, rgba(255, 255, 255, 0.22)) 100%
+  ) !important;
+  color: var(--ink-1) !important;
+  backdrop-filter: var(--lg-blur) !important;
+  -webkit-backdrop-filter: var(--lg-blur) !important;
+  border: 1px solid rgba(255, 255, 255, 0.68) !important;
+  box-shadow:
+    0 10px 26px -6px rgba(18, 40, 82, 0.12),
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.85) !important;
+}
+html.dark:not([data-glass="frosted"]) .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubble-content"] {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-blue) 32%, rgba(255, 255, 255, 0.18)) 0%,
+    color-mix(in srgb, var(--accent-blue) 18%, rgba(255, 255, 255, 0.08)) 100%
+  ) !important;
+  color: #f8fafc !important;
+  backdrop-filter: var(--lg-blur) !important;
+  -webkit-backdrop-filter: var(--lg-blur) !important;
+  border: 1px solid rgba(255, 255, 255, 0.34) !important;
+  box-shadow:
+    0 12px 28px -6px rgba(0, 0, 0, 0.32),
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.48) !important;
 }
 
 /* 设置页与通用卡片：同步液态玻璃边缘高光与通透度 */
 .page-rows,
 .sg-card {
   background: var(--lg-surface) !important;
-  backdrop-filter: var(--lg-blur);
+  backdrop-filter: var(--lg-blur) !important;
+  -webkit-backdrop-filter: var(--lg-blur) !important;
   border: 1px solid var(--lg-border) !important;
-  box-shadow: var(--lg-shadow), var(--lg-rim);
+  box-shadow: var(--lg-shadow), var(--lg-rim) !important;
 }
 
-/* 左栏当前选中机器人项与搜索框：液态晶体胶囊感 */
+/* 左栏当前选中机器人项：半透明液态晶体胶囊 */
 .glass-bot-row.is-on {
   background: linear-gradient(
     135deg,
-    color-mix(in srgb, var(--accent-blue) 18%, rgba(255, 255, 255, 0.65)),
-    rgba(255, 255, 255, 0.42)
-  );
-  border: 1px solid rgba(255, 255, 255, 0.68);
+    color-mix(in srgb, var(--accent-blue) 16%, rgba(255, 255, 255, 0.46)),
+    rgba(255, 255, 255, 0.22)
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.72) !important;
   box-shadow:
-    0 4px 14px rgba(18, 36, 72, 0.08),
-    inset 0 1px 0.5px rgba(255, 255, 255, 0.8);
+    0 6px 16px rgba(18, 36, 72, 0.07),
+    inset 0 1.2px 0.5px rgba(255, 255, 255, 0.88) !important;
 }
 .dark .glass-bot-row.is-on {
   background: linear-gradient(
     135deg,
-    color-mix(in srgb, var(--accent-blue) 26%, rgba(255, 255, 255, 0.12)),
-    rgba(255, 255, 255, 0.05)
-  );
-  border: 1px solid rgba(255, 255, 255, 0.16);
+    color-mix(in srgb, var(--accent-blue) 24%, rgba(255, 255, 255, 0.16)),
+    rgba(255, 255, 255, 0.06)
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.28) !important;
   box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.24),
-    inset 0 1px 0.5px rgba(255, 255, 255, 0.24);
+    0 6px 18px rgba(0, 0, 0, 0.22),
+    inset 0 1.2px 0.5px rgba(255, 255, 255, 0.42) !important;
 }
 
 /* 4. 设置 → 通用 → 外观：主题配色网格与壁纸选择器样式 */
