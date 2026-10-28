@@ -38,6 +38,15 @@
 - **`app/serve.ts`**：Bun 的 `fetch` 已自动解压上游 gzip 响应，但代理原样转发了 `Content-Encoding: gzip` 和压缩时的 `Content-Length`，浏览器再解压一次就报 `ERR_CONTENT_DECODING_FAILED`，安装版 PC 客户端 `/api/me` 加载失败。现在转发前删掉 `content-encoding`、`content-length` 及逐跳头（`transfer-encoding`、`connection` 及其列出的头、`keep-alive` 等），其他头照常转发，多个 `Set-Cookie` 逐条保留。
 - 新增测试：gzip 上游经代理后客户端可正常解析 JSON、不带 gzip 编码头、多值 `Set-Cookie` 保留。
 
+### Hark 令牌（Hark 改版第 1 步，见 `docs/rfc/hark-redesign.md`）
+
+- **设计令牌（`styles.css` 开头）**：新增 `html:root` / `html.dark` 两套 Hark 令牌——文字基色 `--text` 加两档透明度（次要 `.5`、三级 `.3`，由 `color-mix` 算出 `--text-secondary` / `--text-tertiary`）、底色（`--regular-bg`、`--thin-bg`、`--composer-bg`、`--cell-bg`、气泡底色）、描边、强调色 `--accent-color`、状态色、圆角 `--r-*`、字号 `--fs-*`、行高、阴影 `--elev-*`、动效时长和默认静态壁纸渐变。选择器特异度 (0,1,1)，压过后面各层的同名令牌，不用 `!important`。
+- **字体**：`--font` 改为 Inter Variable 打头（`@fontsource-variable/inter` 早已引入），中文仍回落到系统黑体。
+- **唯一玻璃材质 `.glass`**（文件末尾，含 `.is-pop` 弹层、`.is-flat` 不叠模糊）：这一步只定义，还没有组件使用，第 2–4 步换上。
+- **玻璃令牌拆分**：`--glass-blur` 从完整滤镜改为半径（20px），新增 `--glass-pop-blur`（12px）、`--glass-saturate`（160%），`backdrop-filter` 统一读 `--glass-filter` / `--glass-pop-filter`；数值与渲染预算相同，性能模式和「减少透明度」改为关掉 `--glass-filter`。
+- **测试**：`render-budget.test.ts` 改读新令牌名（面板 20px、弹层 12px、饱和度 160–180%、文字透明度 .5 / .3），会模糊的选择器白名单加上 `.glass` / `.glass.is-pop`。
+- 外观上的变化（拉丁字母和数字换成 Inter、次要文字稍淡）见 `docs/images/hark-tokens/` 的前后截图；布局不变，同屏可见模糊层不变（桌面 4、手机 1）。外观设置页、壁纸上传、`wallpaper_core.html`、`bot-bubbles.tsx` 都没有动，没有升版本号。
+
 ## 0.1.103 — 2026-10-29
 
 这一版修复聊天 SVG 卡片的存储型 XSS（审查 S1，#362）：SVG 卡片和 Mermaid 卡片改用 DOMPurify（SVG profile）清洗，SVG 卡片改成 `<img>` 渲染，`/onerror`、`onbegin` 等写法不再能执行脚本；主应用同时加上 CSP（Report-Only，先只上报不拦截，便于观察后再收紧）。只改服务器 + 网页，没有表结构变化；PC / Android 客户端外壳未变，版本号仍为 0.1.100。

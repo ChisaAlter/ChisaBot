@@ -23,6 +23,127 @@ html {
   font-size: 16px;
 }
 
+/* ==========================================================================================
+ * Hark 设计令牌（Hark 风格重做 · 第 1 步）
+ *
+ * 一处定义、全站读取：文字层级、底色、描边、圆角、字号、阴影、状态色和唯一的一种玻璃材质。
+ * 选择器用 `html:root` / `html.dark`（0,1,1），压过后面各层 `:root` / `.dark`（0,1,0）里的同名令牌，
+ * 不需要提高优先级标记。浅色对应 Hark 的 .theme-light。
+ *
+ * 主题预设（以后加）：基础值放在这里；`html[data-preset="x"]` 和 `html.dark[data-preset="x"]`
+ * 只覆盖 --glass-bg、--text、--accent-color、--accent-soft、--wallpaper 五个令牌，别的全部跟着算。
+ * 默认就是 sky，不设 data-preset。shadcn 已占用 --accent（中性悬停底色），所以强调色叫 --accent-color。
+ * ========================================================================================== */
+html:root {
+  /* 字体：Inter Variable 打头，中文回落到系统黑体。 */
+  --font: "Inter Variable", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* 文字层级：一个基色 + 两个透明度，二级 / 三级由基色算出，预设只换 --text。 */
+  --text: rgb(29, 29, 31);
+  --text-on: rgb(249, 249, 250);
+  --text-secondary-alpha: 0.5;
+  --text-tertiary-alpha: 0.3;
+  --text-primary: var(--text);
+  --text-secondary: color-mix(in srgb, var(--text) calc(var(--text-secondary-alpha) * 100%), transparent);
+  --text-tertiary: color-mix(in srgb, var(--text) calc(var(--text-tertiary-alpha) * 100%), transparent);
+  --text-primary-on: var(--text-on);
+  --fill-primary: var(--text);
+  --fill-secondary: var(--text-secondary);
+  --fill-tertiary: rgba(29, 29, 31, 0.05);
+
+  /* 底色（Hark 浅色） */
+  --regular-bg: rgba(255, 255, 255, 0.668);
+  --thin-bg: rgba(255, 255, 255, 0.55);
+  --composer-bg: rgba(255, 255, 255, 0.55);
+  --cell-bg: rgba(255, 255, 255, 0.6);
+  --bubble-user-bg: rgba(255, 255, 255, 0.3);
+  --bubble-agent-bg: rgba(255, 255, 255, 0.98);
+  --hover-wash: rgba(29, 29, 31, 0.05);
+  --stroke-primary: rgba(29, 29, 31, 0.14);
+  --stroke-secondary: rgba(29, 29, 31, 0.07);
+
+  /* 强调色（预设覆盖） */
+  --accent-color: #2f74f0;
+  --accent-soft: rgba(47, 116, 240, 0.14);
+
+  /* 状态色 */
+  --status-success: #17955c;
+  --status-info: #2f74f0;
+  --status-error: rgba(217, 61, 64, 0.9);
+  --status-warning: rgba(201, 122, 12, 0.9);
+  --status-attention: #ff4d00;
+
+  /* 圆角 / 字号 / 行高 / 字距 / 间距 */
+  --r-4: 4px; --r-8: 8px; --r-12: 12px; --r-16: 16px; --r-20: 20px; --r-24: 24px; --r-full: 9999px;
+  --fs-12: 12px; --fs-13: 13px; --fs-14: 14px; --fs-15: 15px; --fs-20: 20px; --fs-24: 24px; --fs-28: 28px; --fs-48: 48px;
+  --lh-none: 1; --lh-snug: 1.16; --lh-heading: 1.2; --lh-body: 1.32; --lh-relaxed: 1.4;
+  --ls-tight: -0.01em; --ls-tighter: -0.02em;
+  --sp-half: 2px;
+
+  /* 阴影 */
+  --elev-1: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --elev-2: 0 4px 16px rgba(0, 0, 0, 0.15);
+  --elev-3: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-popover: 0 8px 40px #1d1d1f1f;
+
+  /* 动效：按下缩放、三档时长；只写明确的属性，不用 transition: all。 */
+  --press-scale: 0.97;
+  --t-fast: 0.15s; --t-base: 0.2s; --t-slow: 0.3s;
+  --t-ease: ease;
+
+  /* 玻璃（唯一一种材质：macOS 式半透明液态玻璃）。数值按渲染预算（#363）：大面板 20px、弹层 12px，
+   * 饱和度 160%（预算允许 160–180%）。--glass-blur / --glass-pop-blur 只是半径，backdrop-filter 读 --glass-filter / --glass-pop-filter。 */
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-blur: 20px;
+  --glass-pop-blur: 12px;
+  --glass-saturate: 160%;
+  --glass-filter: saturate(var(--glass-saturate)) blur(var(--glass-blur));
+  --glass-pop-filter: saturate(var(--glass-saturate)) blur(var(--glass-pop-blur));
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  --glass-shadow: 0 8px 40px rgba(29, 29, 31, 0.12), 0 0 0 0.5px rgba(29, 29, 31, 0.06);
+  --glass-pop-bg: rgba(255, 255, 255, 0.82);
+  --glass-pop-shadow: 0 12px 48px rgba(29, 29, 31, 0.16);
+  --glass-input-bg: rgba(255, 255, 255, 0.55);
+  --glass-bg-solid: rgba(255, 255, 255, 0.96);
+
+  /* 默认静态壁纸（sky）。动态天空是另一种可选壁纸，不是默认。 */
+  --wallpaper: linear-gradient(180deg, #7fa6dc 0%, #a9c4ea 42%, #dbe6f4 100%);
+}
+
+html.dark {
+  --text: rgb(245, 245, 247);
+  --text-on: rgb(29, 29, 31);
+  --fill-tertiary: rgba(245, 245, 247, 0.05);
+
+  --regular-bg: rgba(29, 29, 31, 0.618);
+  --thin-bg: rgba(29, 29, 31, 0.615);
+  --composer-bg: rgba(29, 29, 31, 0.618);
+  --cell-bg: rgba(255, 255, 255, 0.05);
+  --bubble-user-bg: rgba(29, 29, 31, 0.3);
+  --bubble-agent-bg: rgba(29, 29, 31, 0.7);
+  --hover-wash: rgba(245, 245, 247, 0.05);
+  --stroke-primary: rgba(245, 245, 247, 0.14);
+  --stroke-secondary: rgba(245, 245, 247, 0.07);
+
+  --accent-color: #a1d0ff;
+  --accent-soft: rgba(161, 208, 255, 0.16);
+
+  --status-success: #96f0b0;
+  --status-info: #a1d0ff;
+  --status-error: rgba(255, 100, 100, 0.9);
+  --status-warning: rgba(255, 200, 50, 0.8);
+
+  --glass-bg: rgba(29, 29, 31, 0.52);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 1px rgba(245, 245, 247, 0.1);
+  --glass-shadow: 0 8px 40px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.3);
+  --glass-pop-bg: rgba(29, 29, 31, 0.78);
+  --glass-pop-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+  --glass-input-bg: rgba(29, 29, 31, 0.618);
+  --glass-bg-solid: rgba(29, 29, 31, 0.96);
+
+  --wallpaper: linear-gradient(180deg, #192c56 0%, #3c5077 55%, #5a6484 100%);
+}
+
 :root {
   color-scheme: light;
   /* Blue-sky frosted glass. Surfaces are translucent so the sky shows through; see "Glass" below. */
@@ -39,9 +160,8 @@ html {
   --glass-user: rgba(120, 132, 150, 0.3);
   --glass-dark: #16181d;
   --glass-dark-ink: #ffffff;
-  /* 毛玻璃预算：大面板（左栏、右栏、输入框、顶栏）20px，弹层 12px，永远不超过 30px；其余小元素不模糊。 */
-  --glass-blur: saturate(160%) blur(20px);
-  --glass-pop-filter: saturate(160%) blur(12px);
+  /* 毛玻璃预算：大面板（左栏、右栏、输入框、顶栏）20px，弹层 12px，永远不超过 30px；其余小元素不模糊。
+   * 数值在文件开头的 Hark 令牌里（--glass-blur / --glass-pop-blur 半径，--glass-filter / --glass-pop-filter 滤镜）。 */
   --glass-shadow: 0 10px 30px rgba(40, 70, 110, 0.12), 0 1px 2px rgba(40, 70, 110, 0.06);
   --glass-shadow-sm: 0 4px 14px rgba(40, 70, 110, 0.1);
   --glass-shadow-pop: 0 20px 50px rgba(30, 50, 80, 0.22);
@@ -520,7 +640,7 @@ html[data-sky-ease] body::before {
 }
 [data-slot="dialog-content"],
 [data-slot="sheet-content"] {
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
 }
 [data-slot="dropdown-menu-content"],
 [data-slot="select-content"],
@@ -542,7 +662,7 @@ html[data-sky-ease] body::before {
 
 /* Settings and admin shells keep their own sidebar; give it the same glass. */
 [data-slot="sidebar-inner"] {
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
 }
 
 /* ---------- App shell ---------- */
@@ -574,7 +694,7 @@ html[data-sky-ease] body::before {
 }
 .glass-shell [data-slot="sidebar"][data-mobile="true"] {
   background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
   padding: 16px;
 }
 .dark .glass-shell [data-slot="sidebar"][data-mobile="true"],
@@ -620,7 +740,7 @@ html[data-sky-ease] body::before {
   padding: 4px;
   border-radius: 999px;
   background: var(--glass-dim);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
   box-shadow: var(--glass-shadow-sm);
 }
 .glass-seg-item {
@@ -647,7 +767,7 @@ html[data-sky-ease] body::before {
   padding: 0 14px 0 18px;
   border-radius: 999px;
   background: var(--glass-dim);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
   color: var(--glass-ink-3);
   box-shadow: var(--glass-shadow-sm);
   font-size: 14px;
@@ -739,7 +859,7 @@ html[data-sky-ease] body::before {
 .glass-card {
   border-radius: 24px;
   background: var(--glass);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
   box-shadow: var(--glass-shadow);
 }
 .glass-pill {
@@ -1480,7 +1600,7 @@ html[data-sky-ease] body::before {
   border-radius: 22px;
   border: 1px solid rgba(255, 255, 255, 0.75);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.7));
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
   box-shadow: 0 12px 34px rgba(40, 70, 110, 0.14), 0 1px 2px rgba(40, 70, 110, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
   transition: box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
@@ -3039,7 +3159,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 [data-slot="sidebar"][data-mobile="true"] {
   padding: 16px;
   background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
 }
 .dark [data-slot="sidebar"][data-mobile="true"] { background: rgba(18, 28, 44, 0.86); }
 /* Template F: auth card */
@@ -3047,7 +3167,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
   border-radius: var(--r-xl);
   border: 1px solid var(--stroke);
   background: var(--glass-1);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
   box-shadow: var(--shadow-2), var(--inset-hl);
 }
 /* 分段控件 */
@@ -3926,7 +4046,7 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
   background: var(--glass-3);
   border-color: var(--line-strong);
   box-shadow: var(--shadow-2);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
 }
 .topbar-search[data-open] .glass-search :is(input, kbd, button) { opacity: 1; transition-delay: 60ms; }
 .topbar-search .glass-search:focus-within { box-shadow: var(--shadow-2); }
@@ -4166,7 +4286,7 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
   font: inherit;
   color: var(--glass-ink);
   background: rgba(250, 251, 254, 0.96);
-  backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-filter);
 }
 .dark .rail-sheet[data-slot="sheet-content"] {
   background: rgba(20, 28, 44, 0.96);
@@ -9698,7 +9818,7 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
 
 /* 性能模式（html[data-perf="on"]，lib/perf-mode.ts）和系统「减少透明度」：不再模糊，大面板换成接近不透明的底色。 */
 html[data-perf="on"] {
-  --glass-blur: none;
+  --glass-filter: none;
   --glass-pop-filter: none;
 }
 html[data-perf="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer) {
@@ -9708,7 +9828,7 @@ html[data-perf="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-m
 }
 @media (prefers-reduced-transparency: reduce) {
   html:root {
-    --glass-blur: none;
+    --glass-filter: none;
     --glass-pop-filter: none;
   }
   html:root :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer) {
@@ -9724,4 +9844,40 @@ html[data-sky-off] #sky-root #gl {
 }
 html[data-sky-off] #sky-root #skyph {
   opacity: 1;
+}
+
+/* ==========================================================================================
+ * Hark 唯一玻璃材质 .glass（Hark 风格重做 · 第 1 步）。放在文件最后，同等特异度下压过旧层，不加优先级标记。
+ * 只读文件开头的 Hark 令牌；性能模式 / 减少透明度时 --glass-filter / --glass-pop-filter 为 none。
+ * 这一步还没有组件用它，第 2–4 步换上；玻璃不嵌套，已在模糊容器里的卡片用 .glass.is-flat。
+ * ========================================================================================== */
+/* 唯一的玻璃材质。无描边：边缘靠内高光（顶部更亮的 1px）和柔和投影。 */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-filter);
+  box-shadow: var(--glass-highlight), var(--glass-shadow);
+  border: 0;
+}
+/* 浮层（菜单、弹出框）：更实的底、稍小的模糊、更深的投影。 */
+.glass.is-pop {
+  background: var(--glass-pop-bg);
+  backdrop-filter: var(--glass-pop-filter);
+  box-shadow: var(--glass-highlight), var(--glass-pop-shadow);
+}
+/* 已经在一块模糊容器里的卡片 / 胶囊：只用半透明底色，不再叠模糊（玻璃不嵌套）。 */
+.glass.is-flat {
+  backdrop-filter: none;
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .glass,
+  .glass.is-pop {
+    background: var(--glass-bg-solid);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass.is-pop {
+    background: var(--glass-bg-solid);
+    backdrop-filter: none;
+  }
 }
