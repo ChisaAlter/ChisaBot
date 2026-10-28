@@ -9,6 +9,7 @@ import {
   useAppearance,
 } from "@/lib/appearance";
 import { usePerfMode } from "@/lib/perf-mode";
+import { createSkyWindow } from "@/lib/sky-window";
 
 /*
  * Hark 原生 WebGL 动态天空与天气引擎宿主（移植自 Hark wallpaper_core.html + Pp 宿主控制器）：
@@ -260,22 +261,6 @@ function listenForSkyWakeups() {
   });
 }
 
-/** 引擎看到的 window：只把 devicePixelRatio 换成降采样后的值，其余原样转给真正的 window。 */
-function createSkyWindow(): Window {
-  return new Proxy(window, {
-    get(target, prop) {
-      if (prop === "devicePixelRatio") {
-        return Math.min(target.devicePixelRatio || 1, 1) * SKY_RENDER_SCALE;
-      }
-      const value = Reflect.get(target, prop, target);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-    set(target, prop, value) {
-      return Reflect.set(target, prop, value, target);
-    },
-  });
-}
-
 /** 系统「减少动态效果」：动态天空退回快照（只画一帧就停）。 */
 function prefersReducedMotion(): boolean {
   return (
@@ -387,7 +372,7 @@ export function SkyBackground() {
         if (!match?.[1]) return;
         const runner = new Function("fetch", "requestAnimationFrame", "window", match[1]);
         wakeSky(SKY_SNAPSHOT_MS);
-        runner(harkFetch, skyRaf, createSkyWindow());
+        runner(harkFetch, skyRaf, createSkyWindow(window, SKY_RENDER_SCALE));
         syncHarkSkyScene(desiredSceneRef.current);
       })
       .catch(() => {
