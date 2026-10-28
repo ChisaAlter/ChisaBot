@@ -11,6 +11,7 @@ import {
   IconSparkles,
   IconSun,
 } from "@tabler/icons-react";
+import DOMPurify from "dompurify";
 import { motion, useReducedMotion } from "motion/react";
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
@@ -839,68 +840,100 @@ ${code}
 </html>`;
 }
 
-const DANGEROUS_SVG_TAGS_BLOCK =
-  /<(script|foreignObject|iframe|object|embed|applet|meta|link)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
-const DANGEROUS_SVG_TAGS_SINGLE =
-  /<\/?(script|foreignObject|iframe|object|embed|applet|meta|link)\b[^>]*\/?>/gi;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const XLINK_NS = "http://www.w3.org/1999/xlink";
+/** 卡片内只允许引用文档内的片段（`#id`）。 */
+const SVG_LOCAL_REF = /^#[\w.:-]*$/;
+/** `<image>` / `<feImage>` 额外允许内嵌位图；data:image/svg+xml、外部地址一律不行。 */
+const SVG_EMBEDDED_RASTER =
+  /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]*$/i;
+const SVG_URL_ATTRS = new Set(["href", "xlink:href", "src"]);
 
 /**
- * 净化内联 SVG 标记，剥离可执行脚本、危险嵌入节点（foreignObject/iframe/script 等）、
- * on* 事件处理器与危险协议链接，防止通过 ```svg 围栏注入 XSS。
+ * DOMPurify（SVG profile）的配置。DOMPurify 本身已经不放行 `<script>` / `<foreignObject>` /
+ * `<animate>` / `<set>` 和所有 `on*` 属性；这里再显式列一遍，免得以后放宽 profile 时漏掉。
+ * `<use>` 不在 DOMPurify 的 SVG 白名单里，单独放行，它的 href 由下面的钩子限制成 `#id`。
  */
-export function sanitizeSvgMarkup(raw: string): string | null {
-  const m = /<svg[\s\S]*<\/svg>/i.exec(raw);
-  if (!m) return null;
-  let svg = m[0];
-  let prev = "";
-  while (svg !== prev) {
-    prev = svg;
-    svg = svg
-      .replace(DANGEROUS_SVG_TAGS_BLOCK, "")
-      .replace(DANGEROUS_SVG_TAGS_SINGLE, "");
-  }
-  svg = svg.replace(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi, (full, css: string) => {
-    if (/(?:javascript\s*:|vbscript\s*:|@import\b|expression\s*\()/i.test(css)) {
-      return "";
-    }
-    return full;
+const SVG_PURIFY_CONFIG = {
+  USE_PROFILES: { svg: true, svgFilters: true },
+  ADD_TAGS: ["use"],
+  // animateTransform / animateMotion 的取值。能改 href 的 <animate> / <set> 已经整个禁掉，这几个属性只影响变换和位移。
+  ADD_ATTR: ["from", "to", "by"],
+  FORBID_TAGS: [
+    "script",
+    "foreignObject",
+    "iframe",
+    "object",
+    "embed",
+    "animate",
+    "set",
+    "handler",
+    "listener",
+  ],
+  ALLOW_DATA_ATTR: false,
+  RETURN_DOM_FRAGMENT: true as const,
+};
+
+type SvgPurifier = ReturnType<typeof DOMPurify>;
+type SvgWindow = Window & typeof globalThis;
+let svgPurifier: { win: SvgWindow; purifier: SvgPurifier } | null = null;
+
+/** 每个 window 一个独立实例：钩子只挂在这个实例上，不影响别处（如 docx 预览）对 DOMPurify 的使用。 */
+function getSvgPurifier(win: SvgWindow): SvgPurifier | null {
+  if (svgPurifier?.win === win) return svgPurifier.purifier;
+  const purifier = DOMPurify(win);
+  if (!purifier.isSupported) return null;
+  purifier.addHook("uponSanitizeAttribute", (node, data) => {
+    if (!SVG_URL_ATTRS.has(data.attrName.toLowerCase())) return;
+    const value = data.attrValue.trim();
+    const tag = node.nodeName.toLowerCase();
+    const allowed =
+      SVG_LOCAL_REF.test(value) ||
+      ((tag === "image" || tag === "feimage") &&
+        SVG_EMBEDDED_RASTER.test(value));
+    if (!allowed) data.keepAttr = false;
   });
-  svg = svg.replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
-  svg = svg.replace(
-    /\s+((?:xlink:)?href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi,
-    (full, _attr: string, dq?: string, sq?: string, uq?: string) => {
-      const val = (dq ?? sq ?? uq ?? "").replace(/[\s\u0000-\u001f]+/g, "").toLowerCase();
-      if (
-        val.startsWith("javascript:") ||
-        val.startsWith("vbscript:") ||
-        val.startsWith("data:text/html") ||
-        val.startsWith("data:image/svg")
-      ) {
-        return "";
-      }
-      return full;
-    },
-  );
-  svg = svg.replace(/<use\b[^>]*>/gi, (tag) =>
-    tag.replace(
-      /\s+(?:xlink:)?href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi,
-      (attrFull, dq?: string, sq?: string, uq?: string) => {
-        const val = (dq ?? sq ?? uq ?? "").trim();
-        return val.startsWith("#") ? attrFull : "";
-      },
-    ),
-  );
-  svg = svg.replace(
-    /\s+style\s*=\s*(?:"([^"]*)"|'([^']*)')/gi,
-    (full, dq?: string, sq?: string) => {
-      const val = dq ?? sq ?? "";
-      if (/(?:javascript\s*:|vbscript\s*:|@import\b|expression\s*\()/i.test(val)) {
-        return "";
-      }
-      return full;
-    },
-  );
+  svgPurifier = { win, purifier };
+  return purifier;
+}
+
+/**
+ * 净化 ```svg 围栏里的 SVG（审查 S1）：交给 DOMPurify（SVG + SVG filters profile）按白名单清洗，
+ * 再用 XMLSerializer 输出成合法的独立 SVG 文档。返回值只给 {@link svgMarkupToDataUrl} 当图片用，
+ * 不再插进页面 DOM —— 即便以后白名单有漏洞，图片上下文里的 SVG 也不执行脚本、不加载外部资源、
+ * 样式也漏不到主页面。
+ *
+ * 以前的正则清洗器只认前面带空白的 `on*` 属性，`<image/onerror=…>`、`<animate/onbegin=…>` 能原样通过。
+ * 没有 DOM（DOMPurify 不可用）或清洗后根节点不是 `<svg>` 时返回 null，宁可不画也不放行。
+ * `win` 只给测试传 jsdom 用（happy-dom 的 nodeName 让 DOMPurify 把所有元素都当成未知标签）。
+ */
+export function sanitizeSvgMarkup(
+  raw: string,
+  win: SvgWindow | undefined = typeof window === "undefined"
+    ? undefined
+    : window,
+): string | null {
+  const m = /<svg[\s\S]*<\/svg>/i.exec(raw);
+  if (!m || !win) return null;
+  const purifier = getSvgPurifier(win);
+  if (!purifier) return null;
+  const fragment = purifier.sanitize(m[0], SVG_PURIFY_CONFIG);
+  const root = fragment.firstElementChild;
+  if (!root || root.namespaceURI !== SVG_NS || root.localName !== "svg")
+    return null;
+  let svg = new win.XMLSerializer().serializeToString(root);
+  // 独立的 SVG 图片必须带命名空间声明，否则浏览器按 XML 解析失败、显示成破图。
+  if (!/^<svg\b[^>]*\sxmlns="/.test(svg))
+    svg = svg.replace(/^<svg\b/, `<svg xmlns="${SVG_NS}"`);
+  if (svg.includes("xlink:") && !/^<svg\b[^>]*\sxmlns:xlink="/.test(svg)) {
+    svg = svg.replace(/^<svg\b/, `<svg xmlns:xlink="${XLINK_NS}"`);
+  }
   return svg;
+}
+
+/** 净化后的 SVG 转成 `<img>` 能用的 data URL（图片上下文：不跑脚本、不发请求、样式隔离）。 */
+export function svgMarkupToDataUrl(svg: string): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 /**
@@ -921,10 +954,13 @@ export function ArtifactCard({
     if (artifact.lang === "mermaid") {
       return renderMermaidToSvg(artifact.code);
     }
-    if (artifact.lang === "svg") {
-      return sanitizeSvgMarkup(artifact.code) ?? "";
-    }
     return "";
+  }, [artifact.lang, artifact.code]);
+
+  const svgImageUrl = useMemo(() => {
+    if (artifact.lang !== "svg") return "";
+    const svg = sanitizeSvgMarkup(artifact.code);
+    return svg ? svgMarkupToDataUrl(svg) : "";
   }, [artifact.lang, artifact.code]);
 
   const htmlDoc = useMemo(
@@ -947,11 +983,37 @@ export function ArtifactCard({
         />
       );
     }
+    if (svgImageUrl) {
+      // 用户 / 模型给的 SVG 只当图片显示，不进主页面 DOM（审查 S1）。
+      return (
+        <div
+          className={
+            inModal
+              ? "chat-artifact-svg chat-artifact-svg-modal"
+              : "chat-artifact-svg"
+          }
+          data-testid="artifact-svg-preview"
+        >
+          <img
+            alt={artifact.title}
+            data-testid="artifact-svg-image"
+            decoding="async"
+            draggable={false}
+            src={svgImageUrl}
+            style={{ maxWidth: "100%", height: "auto" }}
+          />
+        </div>
+      );
+    }
     if (renderedSvg) {
       return (
         <div
-          className={inModal ? "chat-artifact-svg chat-artifact-svg-modal" : "chat-artifact-svg"}
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: 受控 Mermaid/SVG 矢量预览
+          className={
+            inModal
+              ? "chat-artifact-svg chat-artifact-svg-modal"
+              : "chat-artifact-svg"
+          }
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: 受控 Mermaid 矢量预览（本地渲染器输出；用户 SVG 走上面的 <img>）
           dangerouslySetInnerHTML={{ __html: renderedSvg }}
           data-testid="artifact-svg-preview"
         />
