@@ -48,7 +48,15 @@ class Api(val origin: String, private val renew: (suspend () -> Boolean)? = null
                 return raw.split(';').mapNotNull { part ->
                     val kv = part.trim()
                     val eq = kv.indexOf('=')
-                    if (eq <= 0) null else Cookie.Builder().name(kv.substring(0, eq)).value(kv.substring(eq + 1)).domain(url.host).path("/").build()
+                    if (eq <= 0) null else Cookie.parse(url, "$kv; Path=/") ?: runCatching {
+                        Cookie.Builder()
+                            .name(kv.substring(0, eq).trim())
+                            .value(kv.substring(eq + 1).trim())
+                            .hostOnlyDomain(url.host)
+                            .path("/")
+                            .apply { if (url.isHttps) secure() }
+                            .build()
+                    }.getOrNull()
                 }
             }
 

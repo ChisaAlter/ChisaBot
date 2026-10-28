@@ -6,7 +6,7 @@ set -euo pipefail
 G="git --git-dir=/opt/chisabot-updater/mirror.git"
 {
   $G ls-tree -r "$1" -- \
-    bun.lock app/package.json server/package.json worker/package.json Dockerfile docker \
+    bun.lock tsconfig.base.json bunfig.toml app/package.json server/package.json Dockerfile docker \
     agent-computer/package.json agent-computer/bun.lock
   echo "package.json (without version):"
   $G show "$1:package.json" | sed '/^  "version": /d'

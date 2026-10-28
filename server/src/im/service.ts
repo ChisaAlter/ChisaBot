@@ -2,6 +2,7 @@ import type { Message } from "@ag-ui/client";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { IM_PLATFORMS, type ImConnectionView, type ImLogEntry, type ImPlatform, type ImStatus, imPlatform } from "../../../shared/im";
+import { checkPublicUrl } from "../../../shared/net/ssrf";
 import type { AppVariables } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
 import { decryptSecret, encryptSecret } from "../credentials";
@@ -461,7 +462,12 @@ export function createImService(options: ImServiceOptions) {
         const trimmed = value.trim().slice(0, 500);
         if (field.type === "select" && field.options && trimmed && !field.options.some((option) => option.value === trimmed))
           throw new InputError(`「${field.label}」的值不对`);
-        if (field.type === "url" && trimmed && !/^(https?|wss?):\/\//.test(trimmed)) throw new InputError(`「${field.label}」要以 http(s):// 或 ws(s):// 开头`);
+        if (field.type === "url" && trimmed) {
+          if (!/^(https?|wss?):\/\//.test(trimmed)) throw new InputError(`「${field.label}」要以 http(s):// 或 ws(s):// 开头`);
+          const httpForm = trimmed.replace(/^ws:/i, "http:").replace(/^wss:/i, "https:");
+          const verdict = checkPublicUrl(httpForm);
+          if (!verdict.ok) throw new InputError(`「${field.label}」不安全：${verdict.reason}`);
+        }
         if (trimmed) config[field.key] = trimmed;
         else delete config[field.key];
       }
@@ -471,7 +477,12 @@ export function createImService(options: ImServiceOptions) {
       const login = qrLogins.get(input.weixinLogin);
       if (!login || login.owner !== owner || !login.result) throw new InputError("微信授权已失效，请重新扫码");
       secrets.token = login.result.token;
-      if (login.result.baseUrl) config.baseUrl = login.result.baseUrl.replace(/\/+$/, "");
+      if (login.result.baseUrl) {
+        const cleanedBase = login.result.baseUrl.replace(/\/+$/, "");
+        const verdict = checkPublicUrl(cleanedBase);
+        if (!verdict.ok) throw new InputError(`微信接口地址不安全：${verdict.reason}`);
+        config.baseUrl = cleanedBase;
+      }
       if (login.result.botId) config.accountId = login.result.botId;
       qrLogins.delete(input.weixinLogin);
     }
@@ -611,6 +622,8 @@ export function createImService(options: ImServiceOptions) {
 
   async function weixinQr(owner: string, baseUrl?: string) {
     const base = (baseUrl && /^https?:\/\//.test(baseUrl) ? baseUrl : WEIXIN_DEFAULT_BASE).replace(/\/+$/, "");
+    const verdict = checkPublicUrl(base);
+    if (!verdict.ok) throw new InputError(`微信接口地址不安全：${verdict.reason}`);
     for (const [key, value] of qrLogins) if (Date.now() - value.createdAt > 15 * 60_000) qrLogins.delete(key);
     const qr = await weixinFetchQr(fetcher, base);
     qrLogins.set(qr.qrcode, { owner, base, createdAt: Date.now() });
@@ -621,9 +634,12 @@ export function createImService(options: ImServiceOptions) {
     const login = qrLogins.get(qrcode);
     if (!login || login.owner !== owner) return { status: "expired" as const };
     if (login.result) return { status: "confirmed" as const, loginKey: qrcode, account: login.result.botId ?? null };
+    const baseVerdict = checkPublicUrl(login.base);
+    if (!baseVerdict.ok) throw new InputError(`微信接口地址不安全：${baseVerdict.reason}`);
     const status = await weixinQrStatus(fetcher, login.base, qrcode);
     if (status.status === "confirmed" && status.token) {
-      login.result = { token: status.token, baseUrl: status.baseUrl, botId: status.botId };
+      const safeBaseUrl = status.baseUrl && checkPublicUrl(status.baseUrl.replace(/\/+$/, "")).ok ? status.baseUrl : undefined;
+      login.result = { token: status.token, baseUrl: safeBaseUrl, botId: status.botId };
       return { status: "confirmed" as const, loginKey: qrcode, account: status.botId ?? null };
     }
     if (status.status === "expired") qrLogins.delete(qrcode);
@@ -671,6 +687,7 @@ export function createImService(options: ImServiceOptions) {
         if (!(await authorizeReverse(c.req.param("id"), token))) {
           const next429 = failure && failure.until > Date.now() ? failure : { count: 0, until: Date.now() + 10 * 60_000 };
           next429.count++;
+          if (reverseFailures.size > 5000) reverseFailures.clear();
           reverseFailures.set(ip, next429);
           return c.json({ error: "token 不对或连接没有启用反向 WebSocket" }, 401);
         }
@@ -747,6 +764,7 @@ export function createImService(options: ImServiceOptions) {
         const body = (await c.req.json().catch(() => ({}))) as { baseUrl?: string };
         return c.json(await weixinQr(c.var.actor.id, body.baseUrl));
       } catch (error) {
+        if (error instanceof InputError) return fail(c, error);
         return c.json({ error: `获取二维码失败：${errorText(error)}` }, 502);
       }
     });

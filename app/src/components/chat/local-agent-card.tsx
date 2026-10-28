@@ -159,9 +159,10 @@ function DiffBlock({ task, threadId }: { task: LocalAgentTaskView; threadId: str
 }
 
 function ApprovalBar({ task }: { task: LocalAgentTaskView }) {
-  const allow = useAsyncAction(() => decideDeviceApproval(task.approvalId!, "approve"), { errorToast: (error) => error.message });
-  const deny = useAsyncAction(() => decideDeviceApproval(task.approvalId!, "deny"), { errorToast: (error) => error.message });
-  if (!task.approvalId) return null;
+  const approvalId = task.approvalId ?? "";
+  const allow = useAsyncAction(() => decideDeviceApproval(approvalId, "approve"), { errorToast: (error) => error.message });
+  const deny = useAsyncAction(() => decideDeviceApproval(approvalId, "deny"), { errorToast: (error) => error.message });
+  if (!approvalId) return null;
   return (
     // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
     <div className="la-approval" data-testid="local-agent-approval" role="group">

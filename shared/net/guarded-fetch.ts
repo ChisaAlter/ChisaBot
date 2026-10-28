@@ -56,6 +56,8 @@ export type GuardedFetchOptions = {
   method?: string;
   /** 与 method 一起用；只在非 GET/HEAD 时发送。 */
   body?: string | Buffer | Uint8Array;
+  /** 可选自定义 fetch 实现（例如测试注入的 mock fetch）；默认走内置 DNS 钉死连接。 */
+  fetchImpl?: typeof fetch;
   /** 测试用：替换 DNS 解析。 */
   resolve?: (
     hostname: string,
@@ -63,6 +65,8 @@ export type GuardedFetchOptions = {
   /** 测试用：替换「这个 IP 能不能连」。 */
   isBlocked?: (address: string) => boolean;
 };
+
+const defaultFetch = globalThis.fetch;
 
 const DEFAULT_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 ChisaBot-LinkPreview/0.1";
@@ -256,6 +260,73 @@ function oneHop(
   });
 }
 
+async function oneHopViaFetch(
+  url: URL,
+  customFetch: typeof fetch,
+  options: GuardedFetchOptions,
+  deadline: number,
+): Promise<Hop> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error("请求超时");
+  const timeoutSignal = AbortSignal.timeout(remaining);
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : timeoutSignal;
+  const method = (options.method ?? "GET").toUpperCase();
+  const res = await customFetch(url.toString(), {
+    method,
+    headers: options.headers,
+    body:
+      options.body !== undefined && method !== "GET" && method !== "HEAD"
+        ? (options.body as BodyInit)
+        : undefined,
+    redirect: "manual",
+    signal,
+  });
+  const headers: Record<string, string> = {};
+  res.headers.forEach((value, key) => {
+    headers[key.toLowerCase()] = value;
+  });
+  const status = res.status;
+  if (status >= 300 && status < 400 && headers.location) {
+    return {
+      status,
+      headers,
+      body: Buffer.alloc(0),
+      truncated: false,
+      location: headers.location,
+    };
+  }
+  const ab = await res.arrayBuffer();
+  const full = Buffer.from(ab);
+  const stopAt = Math.min(
+    options.stopAfterBytes ?? options.maxBytes,
+    options.maxBytes,
+  );
+  const truncated =
+    full.length > options.maxBytes ||
+    (full.length > stopAt && stopAt < options.maxBytes);
+  const body = full.length > stopAt ? full.subarray(0, stopAt) : full;
+  return {
+    status,
+    headers,
+    body,
+    truncated,
+  };
+}
+
+function stripHeadersCaseInsensitive(
+  headers: Record<string, string> | undefined,
+  namesLower: readonly string[],
+) {
+  if (!headers) return;
+  for (const key of Object.keys(headers)) {
+    if (namesLower.includes(key.toLowerCase())) {
+      delete headers[key];
+    }
+  }
+}
+
 /** 只连公网、钉死 IP、逐跳检查重定向。默认 GET；可传 method/body。被拦时抛 {@link BlockedUrlError}。 */
 export async function guardedFetch(
   raw: string,
@@ -264,13 +335,62 @@ export async function guardedFetch(
   const deadline = Date.now() + options.timeoutMs;
   const maxRedirects = options.maxRedirects ?? 4;
   let current = raw;
+  let currentMethod = (options.method ?? "GET").toUpperCase();
+  let currentBody = options.body;
+  const currentHeaders: Record<string, string> | undefined = options.headers
+    ? { ...options.headers }
+    : undefined;
+  const useCustomFetch =
+    options.fetchImpl !== undefined &&
+    options.fetchImpl !== defaultFetch &&
+    !options.resolve &&
+    !options.isBlocked;
+
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
     const verdict = checkPublicUrl(current);
     if (!verdict.ok) denySsrf(verdict.reason);
-    const pinned = await resolvePublic(verdict.url.hostname, options);
-    const result = await oneHop(verdict.url, pinned, options, deadline);
+    const hopOptions: GuardedFetchOptions = {
+      ...options,
+      method: currentMethod,
+      body: currentBody,
+      headers: currentHeaders,
+    };
+    const result = useCustomFetch
+      ? await oneHopViaFetch(
+          verdict.url,
+          options.fetchImpl!,
+          hopOptions,
+          deadline,
+        )
+      : await oneHop(
+          verdict.url,
+          await resolvePublic(verdict.url.hostname, options),
+          hopOptions,
+          deadline,
+        );
     if (result.location) {
-      current = new URL(result.location, verdict.url).toString();
+      const nextUrl = new URL(result.location, verdict.url);
+      if (nextUrl.origin !== verdict.url.origin) {
+        stripHeadersCaseInsensitive(currentHeaders, [
+          "authorization",
+          "cookie",
+          "proxy-authorization",
+        ]);
+      }
+      if (
+        result.status === 303 ||
+        ((result.status === 301 || result.status === 302) &&
+          currentMethod === "POST")
+      ) {
+        currentMethod = "GET";
+        currentBody = undefined;
+        stripHeadersCaseInsensitive(currentHeaders, [
+          "content-type",
+          "content-length",
+          "transfer-encoding",
+        ]);
+      }
+      current = nextUrl.toString();
       continue;
     }
     return {

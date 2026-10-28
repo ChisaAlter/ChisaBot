@@ -59,6 +59,16 @@ export function DocxPreviewBody({ url, knownBytes }: { url: string; knownBytes: 
           useBase64URL: true,
           experimental: false,
         });
+        for (const node of target.querySelectorAll("script, iframe, object, embed, form")) {
+          node.remove();
+        }
+        for (const el of target.querySelectorAll("*")) {
+          for (const attr of [...el.attributes]) {
+            if (attr.name.toLowerCase().startsWith("on")) {
+              el.removeAttribute(attr.name);
+            }
+          }
+        }
         // 文档里的超链接一律新标签页打开，不在弹窗里把整个应用导航走。
         for (const link of target.querySelectorAll<HTMLAnchorElement>("a[href]")) {
           if (/^https?:/i.test(link.getAttribute("href") ?? "")) {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeDirectiveCards, parseStatusCardsFence } from "../src/components/chat/bot-bubbles";
+import { normalizeDirectiveCards, parseStatusCardsFence, sanitizeSvgMarkup } from "../src/components/chat/bot-bubbles";
 import { MAX_BUBBLES, splitBubbles } from "../src/lib/chat/bubbles";
 
 describe("splitBubbles（DESIGN.md §69）", () => {
@@ -177,5 +177,39 @@ describe("splitBubbles（DESIGN.md §69）", () => {
       "你目前还没有连接 Google 日历与邮箱，连接后我就能直接帮你读取今日日程。",
       "[连接 Google](/settings/connected-accounts)",
     ]);
+  });
+
+  test("sanitizeSvgMarkup 剥离 onload/script/foreignObject/javascript: 等恶意载荷并保留合法 SVG 元素", () => {
+    const onloadCase = sanitizeSvgMarkup('<svg onload="alert(1)"><circle r="10"/><path d="M0 0L10 10"/></svg>');
+    expect(onloadCase).not.toBeNull();
+    expect(onloadCase).not.toContain("onload");
+    expect(onloadCase).not.toContain("alert(1)");
+    expect(onloadCase).toContain('<circle r="10"/>');
+    expect(onloadCase).toContain('<path d="M0 0L10 10"/>');
+
+    const scriptCase = sanitizeSvgMarkup("<svg><script>alert(1)</script><circle r=\"5\"/></svg>");
+    expect(scriptCase).not.toBeNull();
+    expect(scriptCase).not.toContain("<script");
+    expect(scriptCase).not.toContain("alert(1)");
+    expect(scriptCase).toContain('<circle r="5"/>');
+
+    const foreignObjectCase = sanitizeSvgMarkup(
+      '<svg><foreignObject><iframe src="javascript:alert(1)"/></foreignObject><path d="M1 1"/></svg>',
+    );
+    expect(foreignObjectCase).not.toBeNull();
+    expect(foreignObjectCase).not.toContain("foreignObject");
+    expect(foreignObjectCase).not.toContain("iframe");
+    expect(foreignObjectCase).not.toContain("javascript:");
+    expect(foreignObjectCase).toContain('<path d="M1 1"/>');
+
+    const hrefUseCase = sanitizeSvgMarkup(
+      '<svg><a xlink:href="javascript:alert(2)"><circle r="3"/></a><use href="https://evil.example/x.svg#a"/><use href="#local"/></svg>',
+    );
+    expect(hrefUseCase).not.toBeNull();
+    expect(hrefUseCase).not.toContain("javascript:");
+    expect(hrefUseCase).not.toContain("https://evil.example");
+    expect(hrefUseCase).toContain('href="#local"');
+
+    expect(sanitizeSvgMarkup("<div>not svg</div>")).toBeNull();
   });
 });

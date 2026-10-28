@@ -27,7 +27,7 @@ function repo() {
   fs.mkdirSync(path.join(dir, "src"));
   fs.writeFileSync(path.join(dir, "src", "a.js"), "module.exports = 1;\n");
   if (hasGit) {
-    const git = (...args) => execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+    const git = (...args) => execFileSync("git", ["-c", "core.autocrlf=false", "-c", "core.safecrlf=false", ...args], { cwd: dir, stdio: "pipe" });
     git("init", "-q");
     git("-c", "user.name=t", "-c", "user.email=t@t", "add", "-A");
     git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init");

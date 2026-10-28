@@ -162,6 +162,14 @@ function SchedulesPage() {
           botName={botName.get(s.agentId) ?? "已删除的机器人"}
           key={s.id}
           onHide={(id) => setHidden((h) => new Set([...h, id]))}
+          onUnhide={(id) =>
+            setHidden((h) => {
+              if (!h.has(id)) return h;
+              const next = new Set(h);
+              next.delete(id);
+              return next;
+            })
+          }
           onEdit={() => setEditing(s.id)}
           onOpen={() => setDetail(s.id)}
           schedule={s}
@@ -340,12 +348,14 @@ function ScheduleRow({
   onOpen,
   onEdit,
   onHide,
+  onUnhide,
 }: {
   schedule: ScheduleView;
   botName: string;
   onOpen: () => void;
   onEdit: () => void;
   onHide: (id: string) => void;
+  onUnhide: (id: string) => void;
 }) {
   const queryClient = useQueryClient();
   const openThread = useOpenThread();
@@ -354,6 +364,9 @@ function ScheduleRow({
   const ended = s.status === "done" || s.status === "cancelled";
   const [on, setOn] = useState(s.status === "active");
   const [toggling, setToggling] = useState(false);
+  useEffect(() => {
+    setOn(s.status === "active");
+  }, [s.status]);
   const run = useAsyncAction(
     async () => {
       await runScheduleNow(s.id);
@@ -403,6 +416,7 @@ function ScheduleRow({
       await refresh();
       toast.success(`已删除「${s.title}」`);
     } catch (error) {
+      onUnhide(s.id);
       toast.error(error instanceof Error ? error.message : "删除失败");
     }
   }

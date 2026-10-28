@@ -514,7 +514,7 @@ function createCodeOps(options = {}) {
     return spawn(file, args, { cwd: cwd || undefined, env: env || process.env, windowsHide: true, detached: platform !== "win32" });
   }
 
-  function runCollect(script, { cwd, env, timeoutMs, signal, elevated, input }) {
+  function runCollect(script, { cwd, env, timeoutMs, signal, elevated, input, noCap }) {
     return new Promise((resolve, reject) => {
       const started = Date.now();
       let child;
@@ -529,11 +529,12 @@ function createCodeOps(options = {}) {
       let outBytes = 0;
       let errBytes = 0;
       let timedOut = false;
+      const maxBuf = noCap ? 8 * 1024 * 1024 : 1024 * 1024;
       const keep = (list, chunk, bytes) => {
         // 只留头 1MB 以内 + 最后的输出（见 capBuffer）
         list.push(chunk);
         let total = bytes + chunk.length;
-        while (total > 1024 * 1024 && list.length > 2) total -= list.splice(1, 1)[0].length;
+        while (total > maxBuf && list.length > 2) total -= list.splice(1, 1)[0].length;
         return total;
       };
       child.stdout.on("data", (c) => (outBytes = keep(out, c, outBytes)));
@@ -548,7 +549,7 @@ function createCodeOps(options = {}) {
       child.on("close", (code) => {
         if (timer) clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
-        const [stdout, t1] = capBuffer(Buffer.concat(out));
+        const [stdout, t1] = noCap ? [Buffer.concat(out).toString("utf8"), false] : capBuffer(Buffer.concat(out));
         const [stderr, t2] = capBuffer(Buffer.concat(err));
         resolve({ exitCode: code, stdout, stderr, truncated: t1 || t2, timedOut, cancelled: !!signal?.aborted, durationMs: Date.now() - started });
       });
@@ -559,7 +560,19 @@ function createCodeOps(options = {}) {
 
   function cleanEnv(env) {
     const out = {};
-    for (const [k, v] of Object.entries(env)) if (!k.startsWith("CB_STATE") && !k.startsWith("CB_CWD")) out[k] = v;
+    const seen = new Map();
+    for (const [k, v] of Object.entries(env)) {
+      if (k.startsWith("CB_STATE") || k.startsWith("CB_CWD")) continue;
+      if (platform === "win32") {
+        const lower = k.toLowerCase();
+        const canonical = lower === "path" ? "Path" : seen.get(lower) || k;
+        if (seen.has(lower) && seen.get(lower) !== canonical) delete out[seen.get(lower)];
+        seen.set(lower, canonical);
+        out[canonical] = v;
+      } else {
+        out[k] = v;
+      }
+    }
     return out;
   }
 
@@ -569,7 +582,7 @@ function createCodeOps(options = {}) {
     let session = sessions.get(name);
     if (!session) {
       if (sessions.size >= 20) throw new OpError("同时最多 20 个 shell 会话；用 device_shell_session close 关掉不用的。");
-      session = { name, cwd: (args.cwd ? await resolveCwd({ cwd: args.cwd }, ctx, true) : null) || ctx.allowedRoots?.[0] || os.homedir(), env: { ...process.env }, createdAt: Date.now(), commands: 0 };
+      session = { name, cwd: (args.cwd ? await resolveCwd({ cwd: args.cwd }, ctx, true) : null) || ctx.allowedRoots?.[0] || os.homedir(), env: cleanEnv(process.env), createdAt: Date.now(), commands: 0 };
       sessions.set(name, session);
     } else if (args.cwd) session.cwd = await resolveCwd({ cwd: args.cwd }, ctx, true);
     const stateFile = P.join(os.tmpdir(), `chisabot-state-${crypto.randomBytes(8).toString("hex")}`);
@@ -577,9 +590,9 @@ function createCodeOps(options = {}) {
     const command = String(args.command);
     const script =
       sh.kind === "powershell"
-        ? `Set-Location -LiteralPath $env:CB_CWD -ErrorAction SilentlyContinue\n. {\n${command}\n}\n$__cbrc = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }\n$__s = (Get-Location).Path + "\`n__CB_ENV__\`n" + ((Get-ChildItem env: | ForEach-Object { $_.Name + '=' + ($_.Value -replace "\`r?\`n", ' ') }) -join "\`n")\n[IO.File]::WriteAllText($env:CB_STATE, $__s)\nexit $__cbrc`
+        ? `Set-Location -LiteralPath $env:CB_CWD -ErrorAction SilentlyContinue\n$global:LASTEXITCODE = $null\n$__cbok = $true\ntry {\n. {\n${command}\n}\n$__cbok = $?\n} finally {\n$__s = (Get-Location).Path + "\`n__CB_ENV__\`n" + ((Get-ChildItem env: | ForEach-Object { $_.Name + '=' + ($_.Value -replace "\`r?\`n", ' ') }) -join "\`n")\n[IO.File]::WriteAllText($env:CB_STATE, $__s)\n}\n$__cbrc = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } elseif ($__cbok) { 0 } else { 1 }\nexit $__cbrc`
         : `cd -- "$CB_CWD" 2>/dev/null\n${command}\n__cb_rc=$?\n{ pwd; echo __CB_ENV__; env; } > "$CB_STATE" 2>/dev/null\nexit $__cb_rc`;
-    const env = { ...session.env, CB_CWD: session.cwd, CB_STATE: stateFile };
+    const env = { ...cleanEnv(session.env), CB_CWD: session.cwd, CB_STATE: stateFile };
     try {
       const result = await run(script, { cwd: session.cwd, env });
       const state = await fsp.readFile(stateFile, "utf8").catch(() => null);
@@ -850,8 +863,11 @@ function createCodeOps(options = {}) {
     let list = [];
     if (platform === "win32") {
       const r = await runCollect(
-        "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,WorkingSetSize,@{n='CPU';e={(Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue).CPU}} | ConvertTo-Json -Compress",
-        { timeoutMs: 30_000 },
+        "$cpu = @{}; Get-Process -ErrorAction SilentlyContinue | ForEach-Object { $cpu[[int]$_.Id] = $_.CPU }; " +
+          "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize," +
+          "@{n='CommandLine';e={if ($_.CommandLine -and $_.CommandLine.Length -gt 300) { $_.CommandLine.Substring(0, 300) } else { $_.CommandLine }}}," +
+          "@{n='CPU';e={$cpu[[int]$_.ProcessId]}} | ConvertTo-Json -Compress",
+        { timeoutMs: 30_000, noCap: true },
       );
       try {
         const rows = JSON.parse(r.stdout || "[]");

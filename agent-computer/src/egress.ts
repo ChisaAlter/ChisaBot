@@ -631,12 +631,12 @@ function botFromProxyAuthorization(
   const offered = Buffer.from(decoded.slice(colon + 1));
   const expected = Buffer.from(secret);
   if (
-    offered.length !== expected.length ||
-    !timingSafeEqual(offered, expected)
+    offered.length > 0 &&
+    (offered.length !== expected.length || !timingSafeEqual(offered, expected))
   ) {
     return undefined;
   }
-  return decoded.slice(0, colon);
+  return decodeUserinfo(decoded.slice(0, colon));
 }
 
 function basic(username?: string, password?: string): string | undefined {
@@ -723,18 +723,30 @@ export type EgressFilterOptions = {
  */
 let shellProxy: string | null = null;
 
-/** The proxy variables a shell command runs with while the filter is up: the filter, and no other. */
-export function egressShellEnvironment(): Record<string, string> {
+/** The proxy variables a shell command runs with while the filter is up, scoped to one Bot when named. */
+export function egressShellEnvironmentForBot(
+  botId?: string,
+): Record<string, string> {
   if (!shellProxy) return {};
+  const trimmed = botId?.trim();
+  const proxy =
+    trimmed && filter
+      ? `http://${encodeURIComponent(trimmed)}:@127.0.0.1:${filter.port}`
+      : shellProxy;
   return {
-    HTTP_PROXY: shellProxy,
-    HTTPS_PROXY: shellProxy,
-    http_proxy: shellProxy,
-    https_proxy: shellProxy,
+    HTTP_PROXY: proxy,
+    HTTPS_PROXY: proxy,
+    http_proxy: proxy,
+    https_proxy: proxy,
     // The computer's own loopback services are not the network.
     NO_PROXY: "127.0.0.1,localhost,::1",
     no_proxy: "127.0.0.1,localhost,::1",
   };
+}
+
+/** The proxy variables a shell command runs with while the filter is up: the filter, and no other. */
+export function egressShellEnvironment(): Record<string, string> {
+  return egressShellEnvironmentForBot();
 }
 
 /**

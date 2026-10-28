@@ -21,7 +21,6 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
       "a11y": {
         "noLabelWithoutControl": {
           "level": "error",
@@ -45,11 +44,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "**/tests/**",
-        "**/*.test.ts",
-        "**/*.test.tsx"
-      ],
+      "includes": ["**/tests/**", "**/*.test.ts", "**/*.test.tsx"],
       "linter": {
         "rules": {
           "style": {
@@ -59,9 +54,7 @@
       }
     },
     {
-      "includes": [
-        "app/src/components/ui/**"
-      ],
+      "includes": ["app/src/components/ui/**"],
       "linter": {
         "rules": {
           "a11y": {
@@ -92,10 +85,7 @@
       }
     },
     {
-      "includes": [
-        "app/index.html",
-        "scripts/localize-zh.cjs"
-      ],
+      "includes": ["app/index.html", "scripts/localize-zh.cjs"],
       "linter": {
         "rules": {
           "correctness": {

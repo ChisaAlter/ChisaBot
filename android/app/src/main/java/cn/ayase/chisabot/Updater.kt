@@ -31,10 +31,14 @@ class Updater(private val activity: Activity) {
 
     private val main = Handler(Looper.getMainLooper())
     private var waitingForPermission: File? = null
+    @Volatile private var downloading = false
+
+    private fun alive(): Boolean = !activity.isFinishing && !activity.isDestroyed
 
     data class Release(val version: String, val code: Int, val url: String, val sha256: String, val notes: String)
 
     fun check(silent: Boolean) {
+        if (downloading) return
         if (BuildConfig.UPDATE_FEED.isBlank()) {
             if (!silent) toast("这个版本没有配置更新源")
             return
@@ -42,7 +46,7 @@ class Updater(private val activity: Activity) {
         thread(name = "update-check") {
             val release = runCatching { fetch() }.getOrNull()
             main.post {
-                if (activity.isFinishing) return@post
+                if (!alive()) return@post
                 when {
                     release == null -> if (!silent) toast("检查更新失败")
                     release.code <= BuildConfig.VERSION_CODE -> if (!silent) toast("已是最新版本 ${BuildConfig.VERSION_NAME}")
@@ -80,6 +84,7 @@ class Updater(private val activity: Activity) {
     }
 
     private fun prompt(r: Release) {
+        if (!alive() || downloading) return
         AlertDialog.Builder(activity)
             .setTitle("ChisaBot ${r.version} 可用")
             .setMessage(buildString {
@@ -92,6 +97,8 @@ class Updater(private val activity: Activity) {
     }
 
     private fun download(r: Release) {
+        if (!alive() || downloading) return
+        downloading = true
         val bar = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
         val label = TextView(activity).apply { text = "正在下载…" }
         val pad = (20 * activity.resources.displayMetrics.density).toInt()
@@ -133,7 +140,12 @@ class Updater(private val activity: Activity) {
                                 val pct = (done * 100 / total).toInt()
                                 if (pct != last) {
                                     last = pct
-                                    main.post { bar.progress = pct; label.text = "正在下载… $pct%" }
+                                    main.post {
+                                        if (alive() && dialog.isShowing) {
+                                            bar.progress = pct
+                                            label.text = "正在下载… $pct%"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -143,7 +155,9 @@ class Updater(private val activity: Activity) {
                 check(hex == r.sha256) { "校验失败（sha256 不一致）" }
             }
             main.post {
-                dialog.dismiss()
+                downloading = false
+                if (alive() && dialog.isShowing) runCatching { dialog.dismiss() }
+                if (!alive()) return@post
                 result.onSuccess { install(out) }.onFailure {
                     out.delete()
                     toast("更新下载失败：${it.message}")
@@ -156,6 +170,7 @@ class Updater(private val activity: Activity) {
         Build.VERSION.SDK_INT < Build.VERSION_CODES.O || activity.packageManager.canRequestPackageInstalls()
 
     private fun install(apk: File) {
+        if (!alive()) return
         if (!canInstall()) {
             waitingForPermission = apk
             AlertDialog.Builder(activity)

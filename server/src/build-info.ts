@@ -17,8 +17,9 @@ const BUILD_ID = /^[A-Za-z0-9._-]{1,80}$/u;
 export function parseBuildInfo(raw: unknown, fallbackVersion: string): RunningBuild {
   const value = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const buildId = typeof value.buildId === "string" && BUILD_ID.test(value.buildId) ? value.buildId : "dev";
+  const parsedVersion = safeText(value.version, 40);
   const out: RunningBuild = {
-    version: safeText(value.version, 40) ?? fallbackVersion,
+    version: parsedVersion && parsedVersion !== "0.0.0" ? parsedVersion : fallbackVersion,
     buildId,
   };
   if (typeof value.commit === "string" && SHA.test(value.commit)) out.commit = value.commit;

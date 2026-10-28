@@ -115,6 +115,35 @@ describe("Bun SQL recovery", () => {
     } finally { await client.close(); }
   });
 
+  test("a Postgres statement_timeout (57014) rejects only that query without retiring the pool or killing concurrent queries", async () => {
+    const queryCanceled = Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" });
+    let poolsCreated = 0;
+    let resolveConcurrent!: (value: unknown[]) => void;
+    const concurrentPromise = new Promise<unknown[]>((resolve) => {
+      resolveConcurrent = resolve;
+    });
+    const client = recoveringSql(() => {
+      poolsCreated++;
+      return {
+        unsafe: (queryText: string) =>
+          queryText.includes("slow") ? Promise.reject(queryCanceled) : concurrentPromise,
+        close: async () => {},
+      } as unknown as SQL;
+    }, 1000);
+    try {
+      const concurrent = observed(client.unsafe("SELECT fast"), 500);
+      const timedOut = await observed(client.unsafe("SELECT slow"), 100);
+      expect(timedOut.status).toBe("rejected");
+      if (timedOut.status === "rejected") expect(timedOut.error).toBe(queryCanceled);
+      resolveConcurrent([{ ok: 1 }]);
+      const fastOutcome = await concurrent;
+      expect(fastOutcome).toEqual({ status: "resolved", value: [{ ok: 1 }] });
+      expect(poolsCreated).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+
   test("a silent single connection fails current and queued work, closes the old socket and recovers", async () => {
     const fake = await fakePostgres((peer) => peer.connection === 1 ? "silence" : "ok");
     const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 80 });

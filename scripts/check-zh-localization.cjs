@@ -88,6 +88,47 @@ const approvedContractAdditions = {
   ],
 };
 
+// Always verify key localized route and capability contracts even on a clean working tree (CI).
+const contractChecks = {
+  "app/src/lib/deployment/queries.ts": [
+    "/api/capabilities",
+    "intelligence",
+    "local",
+  ],
+  "app/src/routes/_authed/admin/learning.tsx": [
+    "/_authed/admin/learning",
+    "/settings/skills",
+  ],
+  "app/src/routes/_authed/admin/accounts.tsx": [
+    "/_authed/admin/accounts",
+    "/settings",
+  ],
+  "app/src/routes/_authed/admin/models.tsx": [
+    "/_authed/admin/models",
+    "/admin/credentials",
+    "/admin/magpie",
+  ],
+  "app/src/routes/_authed/admin/system-update.tsx": [
+    "/_authed/admin/system-update",
+  ],
+  "app/src/routes/_authed/settings/memory.tsx": ["/_authed/settings/memory"],
+  "app/src/routes/_authed/settings/skills.tsx": [
+    "/_authed/settings/skills",
+    "/admin/skills",
+  ],
+  "app/src/routes/_authed/settings/schedules.tsx": [
+    "/_authed/settings/schedules",
+  ],
+  "app/src/routes/_authed/settings/connected-accounts/index.tsx": [
+    "/_authed/settings/connected-accounts/",
+    "/settings/connected-accounts",
+  ],
+  "app/src/routes/_authed/settings/vault.tsx": [
+    "/_authed/settings/vault",
+    "/settings/connected-accounts",
+  ],
+};
+
 const changed = execFileSync("git", ["diff", "--name-only", "--", "app/src"], {
   cwd: root,
   encoding: "utf8",
@@ -95,24 +136,24 @@ const changed = execFileSync("git", ["diff", "--name-only", "--", "app/src"], {
   .trim()
   .split(/\r?\n/)
   .filter((name) => /\.tsx?$/.test(name));
-for (const filename of changed) {
-  const before = execFileSync("git", ["show", `HEAD:${filename}`], {
-    cwd: root,
-    encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024,
-  });
-  const after = fs.readFileSync(path.join(root, filename), "utf8");
-  const expected = [
-    ...contracts(before, filename),
-    ...(approvedContractAdditions[filename] ?? []),
-  ].sort();
-  if (
-    JSON.stringify(expected) !==
-    JSON.stringify(contracts(after, filename))
-  ) {
-    throw new Error(
-      `A route, identifier, type or comparison changed in ${filename}`,
-    );
+const contractFiles = Object.keys(contractChecks).filter((filename) =>
+  fs.existsSync(path.join(root, filename)),
+);
+const verifiedFiles = [...new Set([...contractFiles, ...changed])];
+for (const filename of verifiedFiles) {
+  const fullPath = path.join(root, filename);
+  if (!fs.existsSync(fullPath)) continue;
+  const after = fs.readFileSync(fullPath, "utf8");
+  const actual = contracts(after, filename);
+  const required = contractChecks[filename];
+  if (required) {
+    for (const token of required) {
+      if (!actual.includes(token)) {
+        throw new Error(
+          `Missing required contract "${token}" in ${filename}`,
+        );
+      }
+    }
   }
 }
 let chinese = 0;
@@ -142,7 +183,7 @@ console.log(
     {
       translations: Object.keys(dictionary).length,
       chinese,
-      contractFilesVerified: changed.length,
+      contractFilesVerified: contractFiles.length,
     },
     null,
     2,

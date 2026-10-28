@@ -207,6 +207,10 @@ async function proxyAgentFor(url) {
   const secure = /^(https|wss):/i.test(String(url));
   const key = `${secure ? "s" : "p"}|${answer}`;
   if (!proxyAgents.has(key)) {
+    if (proxyAgents.size >= 50) {
+      const oldest = proxyAgents.keys().next().value;
+      if (oldest !== undefined) proxyAgents.delete(oldest);
+    }
     const list = parseProxyList(answer);
     proxyAgents.set(key, createProxyAgent(list, { secure, onRoute: (proxy) => (proxyRoute = describeProxy(proxy)) }));
   }
@@ -532,9 +536,16 @@ function needsEnroll() {
  * 用户亲自点「重新登记」（托盘 / 网页设备页）时 force，作废无效或被撤销的旧令牌再登记。
  * 连不上服务器时每分钟自动重试；会话过期时提示重新登录，不弹登录窗打断用户。
  */
+let enrollingOpts = null;
 function repairDevice({ force = false, manual = false } = {}) {
-  if (enrolling) return enrolling;
+  if (enrolling) {
+    if ((force && !enrollingOpts?.force) || (manual && !enrollingOpts?.manual)) {
+      return enrolling.then(() => repairDevice({ force, manual }));
+    }
+    return enrolling;
+  }
   clearTimeout(enrollRetryTimer);
+  enrollingOpts = { force, manual };
   enrolling = ensureEnrolled({
     config,
     force,
@@ -565,6 +576,7 @@ function repairDevice({ force = false, manual = false } = {}) {
     })
     .finally(() => {
       enrolling = null;
+      enrollingOpts = null;
     });
   return enrolling;
 }

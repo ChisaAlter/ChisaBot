@@ -14,6 +14,7 @@ import os
 import shutil
 import sys
 import tempfile
+import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -119,6 +120,11 @@ def main():
         print("chisabot-updater self-test OK on python %d.%d" % sys.version_info[:2])
     finally:
         shutil.rmtree(home, ignore_errors=True)
+
+
+class UpdaterTest(unittest.TestCase):
+    def test_updater(self):
+        main()
 
 
 if __name__ == "__main__":

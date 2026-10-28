@@ -106,6 +106,8 @@ jobs:
           bun test tests/computer-frame-nested-button.test.tsx
           # DF-13：service worker 导航失败区分离线 / 服务器慢（超时、502/503）并自动重试。
           bun test tests/sw-navigation.test.ts
+          bun test tests/channel-avatar-mood.test.tsx
+          bun test tests/shape-avatar.test.tsx
       - name: Install actual computer service dependencies
         working-directory: agent-computer
         run: bun install --frozen-lockfile
@@ -124,12 +126,13 @@ jobs:
           bun test server/tests/schedules.test.ts
           bun test server/tests/channel-search-hit-meta.test.ts
           bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
+          bun test server/tests/multi-user-unified-admin.test.ts server/tests/bot-avatars.test.ts
       # CB-103：GET /control 一律 200 + state，截图让路回 409 user_control，接管中的拒绝记进活动记录。
       - name: Computer control state checks (CB-103)
         run: bun test server/tests/computer-routes.test.ts server/tests/computer-client.test.ts
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
-        run: bun install --frozen-lockfile && bun test tests/native-select.test.ts tests/aria-snapshot.test.ts
+        run: bun test tests/native-select.test.ts tests/aria-snapshot.test.ts
       - name: SSRF red-line (PRD-P1-06)
         run: bun test server/tests/ssrf-redline.test.ts server/tests/guarded-fetch-ssrf.test.ts shared/ops-counters.test.ts shared/ops-codes.test.ts
       - name: Trust-boundary network isolation red-line
@@ -141,11 +144,12 @@ jobs:
       - name: Schedule honesty / partition (non-tram re-verify)
         run: bun test shared/schedules.test.ts shared/activity-labels.test.ts
       - name: Login gateway checks
-        run: bun test deploy/public/auth/server.test.ts deploy/public/auth/startup-report.test.ts
+        run: bun test deploy/public/auth/server.test.ts deploy/public/auth/accounts.test.ts deploy/public/auth/startup-report.test.ts
       - name: Updater shell script checks (CB-100b)
         run: |
           for f in deploy/updater/*.sh; do bash -n "$f"; done
           bash deploy/updater/test-shell.sh
+          python3 -m unittest discover -s deploy/updater -p "test_*.py"
       # Private host info guard. The deny list lives in the repository variable
       # PRIVATE_HOST_DENY (Settings → Secrets and variables → Actions → Variables),
       # deliberately NOT in this file: a guard that spelled out the address would

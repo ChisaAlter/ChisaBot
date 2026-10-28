@@ -11,7 +11,7 @@
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { builtinToolGate } = require("./profile");
+const { builtinToolGate, isInside, real } = require("./profile");
 const { wrap } = require("./sandbox");
 
 const OUTPUT_CAP = 30_000;
@@ -71,8 +71,12 @@ function mapIntoCopy(args, ctx) {
   return { ...args, path: path.join(ctx.workdir, path.relative(origin, target)) };
 }
 
-function resolveIn(workdir, p) {
-  return path.resolve(workdir, String(p || "."));
+function resolveIn(workdir, p, ctx) {
+  const resolved = path.resolve(workdir, String(p || "."));
+  if (ctx && ctx.disposable && !isInside(resolved, [workdir])) {
+    throw new Error(`路径不能跳出工作目录：${p}`);
+  }
+  return real(resolved);
 }
 
 function globToRegex(glob) {
@@ -117,7 +121,7 @@ async function search(workdir, args) {
           continue;
         }
         if (text.includes("\u0000")) continue;
-        const lines = text.split("\n");
+        const lines = text.split(/\r?\n/);
         for (let i = 0; i < lines.length && hits.length < 200; i++) if (regex.test(lines[i])) hits.push(`${rel}:${i + 1}: ${lines[i].slice(0, 240)}`);
       }
     }
@@ -182,7 +186,7 @@ async function executeTool(name, args, ctx) {
   const workdir = ctx.workdir;
   switch (name) {
     case "list_files": {
-      const dir = resolveIn(workdir, args.path);
+      const dir = resolveIn(workdir, args.path, ctx);
       const entries = await fsp.readdir(dir, { withFileTypes: true });
       return entries
         .slice(0, 500)
@@ -190,29 +194,34 @@ async function executeTool(name, args, ctx) {
         .join("\n") || "（空目录）";
     }
     case "read_file": {
-      const file = resolveIn(workdir, args.path);
+      const file = resolveIn(workdir, args.path, ctx);
       const text = await fsp.readFile(file, "utf8");
-      const lines = text.split("\n");
+      const lines = text.split(/\r?\n/);
       const offset = Math.max(1, Number(args.offset) || 1);
       const limit = Math.min(2000, Math.max(1, Number(args.limit) || 400));
       const slice = lines.slice(offset - 1, offset - 1 + limit).map((l, i) => `${offset + i}\t${l}`);
       return clip(`${slice.join("\n")}${offset - 1 + limit < lines.length ? `\n…（共 ${lines.length} 行）` : ""}`);
     }
     case "write_file": {
-      const file = resolveIn(workdir, args.path);
+      const file = resolveIn(workdir, args.path, ctx);
       await fsp.mkdir(path.dirname(file), { recursive: true });
       await fsp.writeFile(file, String(args.content ?? ""), "utf8");
       return `已写入 ${path.relative(workdir, file) || file}（${Buffer.byteLength(String(args.content ?? ""))} 字节）`;
     }
     case "edit_file": {
-      const file = resolveIn(workdir, args.path);
+      const file = resolveIn(workdir, args.path, ctx);
       const text = await fsp.readFile(file, "utf8");
-      const oldString = String(args.old_string ?? "");
+      let oldString = String(args.old_string ?? "");
+      let newString = String(args.new_string ?? "");
       if (!oldString) return "old_string 不能为空。";
+      if (text.includes("\r\n") && !text.includes(oldString) && !oldString.includes("\r\n")) {
+        oldString = oldString.replace(/\n/g, "\r\n");
+        newString = newString.replace(/\r?\n/g, "\r\n");
+      }
       const count = text.split(oldString).length - 1;
       if (count === 0) return "没有找到 old_string（要和文件内容逐字一致，包括缩进）。";
       if (count > 1 && !args.replace_all) return `old_string 出现了 ${count} 次，请给更多上下文让它唯一，或用 replace_all。`;
-      const next = args.replace_all ? text.split(oldString).join(String(args.new_string ?? "")) : text.replace(oldString, () => String(args.new_string ?? ""));
+      const next = args.replace_all ? text.split(oldString).join(newString) : text.replace(oldString, () => newString);
       await fsp.writeFile(file, next, "utf8");
       return `已修改 ${path.relative(workdir, file)}（${args.replace_all ? count : 1} 处）`;
     }

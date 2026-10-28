@@ -44,6 +44,7 @@ RUN chmod 755 /etc/s6-overlay/scripts/migrate-wait.sh \
     && printf '%s\n' '/command/with-contenv /etc/s6-overlay/scripts/migrate-wait.sh' \
        > /etc/s6-overlay/s6-rc.d/migrate/up
 ENV TENANT_PACKAGE_DIR=../examples/zh-CN
+ENV CHISABOT_PANEL_COMMANDS=1
 
 # 来源提交（deploy/start.sh 经 compose build args 传入；docs/online-update.md）：GET /api/version 读 build-info.json，
 # 宿主机更新服务读 chisabot.commit 标签判断落后多少个提交。工作区有未提交改动时 CHISABOT_COMMIT 为空、不记。放最后，只多一层小文件。

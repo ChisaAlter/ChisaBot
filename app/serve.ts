@@ -191,6 +191,14 @@ function prepareWebSocketBridge(upstream: BunWebSocket, signal: AbortSignal) {
   return { data, opened, failureStatus: () => (timedOut ? 504 : 502) };
 }
 
+function withSecurityHeaders(body: BodyInit, status = 200): Response {
+  const response = new Response(body, { status });
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  response.headers.set("X-Frame-Options", "SAMEORIGIN");
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  return response;
+}
+
 if (import.meta.main) {
   Bun.serve<WebSocketBridge>({
     port: PORT,
@@ -249,28 +257,33 @@ if (import.meta.main) {
         }
         // The body is streamed rather than buffered, and redirects are left to the caller so a
         // 302 from the server is not silently followed to a different origin.
-        return fetch(target, {
-          method: request.method,
-          headers: request.headers,
-          body: request.body,
-          redirect: "manual",
-          ...(url.pathname === "/api/audio/transcriptions"
-            ? { signal: request.signal }
-            : {}),
-          // @ts-expect-error duplex is required by fetch for a streamed body and is not yet typed.
-          duplex: "half",
-        });
+        try {
+          return await fetch(target, {
+            method: request.method,
+            headers: request.headers,
+            body: request.body,
+            redirect: "manual",
+            signal: request.signal,
+            // @ts-expect-error duplex is required by fetch for a streamed body and is not yet typed.
+            duplex: "half",
+          });
+        } catch {
+          return Response.json(
+            { error: "Upstream server unavailable" },
+            { status: 502 },
+          );
+        }
       }
 
       const wanted = fileFor(url.pathname);
-      if (!wanted) return new Response("not found", { status: 404 });
+      if (!wanted) return withSecurityHeaders("not found", 404);
 
       const found = file(wanted);
-      if (await found.exists()) return new Response(found);
+      if (await found.exists()) return withSecurityHeaders(found);
       if (isClientRoute(url.pathname)) {
-        return new Response(file(join(DIST, "index.html")));
+        return withSecurityHeaders(file(join(DIST, "index.html")));
       }
-      return new Response("not found", { status: 404 });
+      return withSecurityHeaders("not found", 404);
     },
   });
 

@@ -1,6 +1,8 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
+import { clearRememberedShots } from "@/components/computer/screenshot-card";
 import { client } from "@/lib/client";
 import { setControlAccount } from "@/lib/computers/use-control";
+import { resetScheduleFiredState } from "@/lib/schedule-fired";
 import { authKeys } from "./queries";
 
 async function signOut() {
@@ -16,6 +18,8 @@ export function signOutMutationOptions(queryClient: QueryClient) {
     onSuccess: () => {
       // CB-107：退出后关掉这个账号的 control 轮询频道和锁。
       setControlAccount(null);
+      clearRememberedShots();
+      resetScheduleFiredState();
       queryClient.removeQueries({ queryKey: authKeys.all });
     },
   });

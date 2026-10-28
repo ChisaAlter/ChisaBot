@@ -327,5 +327,18 @@ describe("model fallback on quota errors", () => {
       const wrapped = fallbackLanguageModel(primary.model, "c/p", { candidates: async () => [], build: () => null, log: () => {}, firstOutputMs: 20 });
       expect(await wrapped.doGenerate({})).toEqual({ ok: "slow" });
     });
+
+    test("a backup candidate that hangs past the deadline is aborted and falls through to the next candidate", async () => {
+      const hungBackup = fakeModel("b1", () => new Promise(() => {})).model;
+      const goodBackup = fakeModel("b2", async () => ({ ok: "b2" }));
+      const wrapped = fallbackLanguageModel(hangs(), "c/p", {
+        candidates: async () => ["c/b1", "c/b2"],
+        build: (id) => (id === "c/b1" ? hungBackup : goodBackup.model),
+        log: () => {},
+        firstOutputMs: 25,
+      });
+      expect(await wrapped.doGenerate({})).toEqual({ ok: "b2" });
+      expect(coolingDown("c/b1")).toBe(true);
+    });
   });
 });

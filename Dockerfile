@@ -227,8 +227,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN apt-get update && apt-get install -y --no-install-recommends sudo \
   && rm -rf /var/lib/apt/lists/* \
   && printf '%s\n' \
-    'pwuser ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg, /usr/bin/apt-key, /usr/bin/apt-cache' \
-    'Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND"' \
+    '#!/bin/sh' \
+    'set -eu' \
+    'export DEBIAN_FRONTEND=noninteractive' \
+    'cmd="${1:-}"' \
+    'if [ "$cmd" = "update" ]; then' \
+    '  shift' \
+    '  [ "$#" -eq 0 ] || { echo "chisabot-apt: update takes no arguments" >&2; exit 2; }' \
+    '  exec /usr/bin/apt-get update' \
+    'elif [ "$cmd" = "install" ]; then' \
+    '  shift' \
+    '  [ "$#" -ge 1 ] || { echo "chisabot-apt: install requires at least one package name" >&2; exit 2; }' \
+    '  for pkg in "$@"; do' \
+    '    case "$pkg" in' \
+    '      -*|*/*|*.deb) echo "chisabot-apt: invalid package argument: $pkg" >&2; exit 2 ;;' \
+    '    esac' \
+    '    printf "%s\n" "$pkg" | grep -Eq "^[a-zA-Z0-9][a-zA-Z0-9.+:-]*$" || { echo "chisabot-apt: invalid package name: $pkg" >&2; exit 2; }' \
+    '  done' \
+    '  exec /usr/bin/apt-get install -y --no-install-recommends -- "$@"' \
+    'else' \
+    '  echo "Usage: sudo /usr/local/bin/chisabot-apt {update|install <pkg>...}" >&2' \
+    '  exit 2' \
+    'fi' \
+    > /usr/local/bin/chisabot-apt \
+  && chown root:root /usr/local/bin/chisabot-apt \
+  && chmod 0755 /usr/local/bin/chisabot-apt \
+  && sh -n /usr/local/bin/chisabot-apt \
+  && printf '%s\n' \
+    'pwuser ALL=(root) NOPASSWD: /usr/local/bin/chisabot-apt' \
     > /etc/sudoers.d/pwuser \
   && chmod 0440 /etc/sudoers.d/pwuser \
   && visudo -cf /etc/sudoers.d/pwuser
@@ -288,7 +314,8 @@ RUN mkdir -p /usr/local/etc \
 ENV PATH="${PATH}:/workspace/.npm-global/bin"
 
 RUN mkdir -p /workspace /profiles \
-  && chown -R pwuser:pwuser /workspace /profiles /app
+  && chown -R pwuser:pwuser /workspace /profiles \
+  && chown -R apiuser:apiuser /app
 
 # Where the embedded database answers, when there is one. Overridden by whatever you set, so an
 # external database needs no special case: set DATABASE_URL and EMBEDDED_POSTGRES stays off.

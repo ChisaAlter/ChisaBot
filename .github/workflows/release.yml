@@ -221,7 +221,8 @@ jobs:
           dir=app/build/outputs/apk/release
           if [ -f "$dir/app-release.apk" ]; then
             apk="ChisaBot-Android-$VERSION.apk"; cp "$dir/app-release.apk" "out/$apk"
-            "$ANDROID_HOME"/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)/apksigner verify --print-certs "out/$apk" | grep -E "Signer #1 certificate (DN|SHA-256)"
+            SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+            "$SDK_ROOT"/build-tools/$(ls "$SDK_ROOT/build-tools" | sort -V | tail -n 1)/apksigner verify --print-certs "out/$apk" | grep -E "Signer #1 certificate (DN|SHA-256)"
           else
             apk="ChisaBot-Android-$VERSION-unsigned.apk"; cp "$dir/app-release-unsigned.apk" "out/$apk"
           fi

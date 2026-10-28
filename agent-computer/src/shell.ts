@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
 
-import { egressShellEnvironment, splitProxyCredentials } from "./egress";
+import {
+  egressShellEnvironment,
+  egressShellEnvironmentForBot,
+  splitProxyCredentials,
+} from "./egress";
 
 /**
  * Running a command on the Bot's computer.
@@ -254,6 +258,7 @@ export function createShell(
       command: string;
       timeoutMs?: number;
       signal?: AbortSignal;
+      botId?: string;
     }): Promise<ShellResult> {
       const started = Date.now();
       /*
@@ -306,7 +311,9 @@ export function createShell(
         // The egress filter's address last, so a command cannot be pointed around it.
         env: {
           ...environmentForCommand(sourceEnv, workspaceDir),
-          ...egressShellEnvironment(),
+          ...(input.botId
+            ? egressShellEnvironmentForBot(input.botId)
+            : egressShellEnvironment()),
         },
         detached: true,
       });

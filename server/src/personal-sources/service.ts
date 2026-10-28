@@ -6,10 +6,13 @@
  * - 每日晨报：聚合今日日期、实时天气、日程安排、未读邮件、定时提醒与长期记忆要点，输出 ```brief 卡片。
  */
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { isIP } from "node:net";
 import * as tls from "node:tls";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { z } from "zod";
+import { guardedFetch } from "../../../shared/net/guarded-fetch";
+import { checkPublicUrl, isBlockedAddress, isBlockedHostname } from "../../../shared/net/ssrf";
 import type {
   CalendarConnectionView,
   CalendarEventItem,
@@ -188,6 +191,13 @@ function quoteImap(s: string): string {
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+export class WebhookRateLimitError extends Error {
+  constructor(message = "Webhook 请求过于频繁，请稍后再试。") {
+    super(message);
+    this.name = "WebhookRateLimitError";
+  }
+}
+
 export async function fetchImapInboxSummary(input: {
   host: string;
   port: number;
@@ -196,6 +206,9 @@ export async function fetchImapInboxSummary(input: {
   limit?: number;
 }): Promise<EmailSummaryItem[]> {
   const limit = Math.max(1, Math.min(20, input.limit ?? 8));
+  if (/[\r\n\0]/.test(input.host) || /[\r\n\0]/.test(input.user) || /[\r\n\0]/.test(input.pass)) {
+    throw new Error("邮箱配置参数不能包含换行或控制字符。");
+  }
   if (input.host === "demo.imap.local" || input.pass === "demo-inbox") {
     const now = new Date();
     return [
@@ -223,13 +236,18 @@ export async function fetchImapInboxSummary(input: {
     ].slice(0, limit);
   }
 
+  const cleanHost = input.host.trim();
+  if (isBlockedHostname(cleanHost) || (isIP(cleanHost.replace(/^\[|\]$/g, "")) !== 0 && isBlockedAddress(cleanHost))) {
+    throw new Error("不能连接内网或本机 IMAP 服务器地址。");
+  }
+
   return new Promise<EmailSummaryItem[]>((resolve, reject) => {
     const socket = tls.connect(
       {
-        host: input.host,
+        host: cleanHost,
         port: input.port,
-        servername: input.host,
-        rejectUnauthorized: false,
+        servername: cleanHost,
+        rejectUnauthorized: true,
       },
       () => {
         // connected
@@ -566,15 +584,21 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       } catch {
         throw new Error("日历地址格式不正确，请填写 https:// 或 webcal:// 开头的 ICS 地址，或直接粘贴 BEGIN:VCALENDAR 内容。");
       }
+      const verdict = checkPublicUrl(parsedUrl.toString());
+      if (!verdict.ok) {
+        throw new Error(`日历订阅地址不安全：${verdict.reason}`);
+      }
       urlHint = `${parsedUrl.hostname}${parsedUrl.pathname.slice(0, 24)}…`;
-      const res = await fetchImpl(parsedUrl.toString(), {
+      const res = await guardedFetch(parsedUrl.toString(), {
+        fetchImpl,
         headers: { Accept: "text/calendar, text/plain, */*" },
-        signal: AbortSignal.timeout(8_000),
+        timeoutMs: 8_000,
+        maxBytes: 2 * 1024 * 1024,
       });
-      if (!res.ok) {
+      if (res.status < 200 || res.status >= 300) {
         throw new Error(`无法拉取日历订阅（HTTP ${res.status}）。`);
       }
-      icsText = await res.text();
+      icsText = res.body.toString("utf8");
     }
 
     const events = parseIcsEvents(icsText);
@@ -673,9 +697,13 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         events = parseIcsEvents(raw);
       } else {
         const url = raw.replace(/^webcal:\/\//i, "https://");
-        const res = await fetchImpl(url, { signal: AbortSignal.timeout(5_000) });
-        if (res.ok) {
-          events = parseIcsEvents(await res.text());
+        const res = await guardedFetch(url, {
+          fetchImpl,
+          timeoutMs: 5_000,
+          maxBytes: 2 * 1024 * 1024,
+        });
+        if (res.status >= 200 && res.status < 300) {
+          events = parseIcsEvents(res.body.toString("utf8"));
           await sql.unsafe(
             "UPDATE chisabot_personal_sources SET cached_events = $2::jsonb, calendar_event_count = $3, calendar_checked_at = now() WHERE owner_user_id = $1",
             [actorId, JSON.stringify(events.slice(0, 100)), events.length],
@@ -738,8 +766,8 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       listEvents(actorId, 7).catch(() => [] as CalendarEventItem[]),
       listEmails(actorId, 5).catch(() => [] as EmailSummaryItem[]),
       sql
-        .unsafe<{ description: string; cron: string | null; run_at: string | null }[]>(
-          "SELECT description, cron, run_at FROM chisabot_schedules WHERE owner_user_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 4",
+        .unsafe<{ title: string | null; instruction: string | null; cron: string | null; run_at: string | null }[]>(
+          "SELECT title, instruction, cron, run_at FROM chisabot_schedules WHERE owner_user_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 4",
           [actorId],
         )
         .catch(() => []),
@@ -775,7 +803,7 @@ export function createPersonalSources(database: Database, options: PersonalSourc
 
     const reminderLines =
       schedules.length > 0
-        ? schedules.map((s) => `- ${s.description}${s.cron ? `（定时：${s.cron}）` : ""}`)
+        ? schedules.map((s) => `- ${s.title || s.instruction || "未命名提醒"}${s.cron ? `（定时：${s.cron}）` : ""}`)
         : ["- 暂无活跃的定时提醒任务"];
 
     const memoryLines =
@@ -833,7 +861,12 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     }
     const from = row.email_address.trim();
     const to = input.to.trim();
-    if (!to.includes("@")) throw new Error("收件人邮箱地址格式不正确。");
+    if (/[\r\n\0]/.test(from) || /[\r\n\0]/.test(to) || /[\r\n\0]/.test(input.subject)) {
+      throw new Error("邮件头字段不能包含换行或控制字符。");
+    }
+    if (!to.includes("@") || /[<>\s]/.test(to) || /[<>\s]/.test(from)) {
+      throw new Error("收件人邮箱地址格式不正确。");
+    }
     const pass = decryptText(row.imap_pass_enc, options.encryptionKey);
     const smtp = inferSmtpServer(from);
 
@@ -846,13 +879,23 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       return { ok: true, from, to, smtpHost: "demo.smtp.local", simulated: true };
     }
 
+    const fromDomain = from.split("@")[1] ?? "";
+    if (
+      isBlockedHostname(smtp.host) ||
+      (isIP(smtp.host.replace(/^\[|\]$/g, "")) !== 0 && isBlockedAddress(smtp.host)) ||
+      (fromDomain && isBlockedHostname(fromDomain)) ||
+      (row.imap_host && isBlockedHostname(row.imap_host))
+    ) {
+      throw new Error("不能连接内网或本机 SMTP 服务器地址。");
+    }
+
     await new Promise<void>((resolve, reject) => {
       const socket = tls.connect(
         {
           host: smtp.host,
           port: 465,
           servername: smtp.host,
-          rejectUnauthorized: false,
+          rejectUnauthorized: true,
         },
         () => {},
       );
@@ -986,6 +1029,12 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     } catch {
       throw new Error("Webhook 地址格式不正确，请填写 https:// 开头的链接或 demo。");
     }
+    if (!isDemo) {
+      const verdict = checkPublicUrl(normalizedUrl);
+      if (!verdict.ok) {
+        throw new Error(`Webhook 地址不安全：${verdict.reason}`);
+      }
+    }
     const { kind, defaultLabel } = detectWebhookKind(normalizedUrl);
     const label = (input.label?.trim() || defaultLabel).slice(0, 60);
     const hint = isDemo ? "demo.webhook.local" : `${parsedUrl.hostname}${parsedUrl.pathname.slice(0, 18)}…`;
@@ -1049,13 +1098,16 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       payload = { title, message: text, text: fullText, content: fullText, source: "chisabot" };
     }
 
-    const res = await fetchImpl(url, {
+    const res = await guardedFetch(url, {
+      fetchImpl,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(8_000),
+      timeoutMs: 8_000,
+      maxBytes: 64 * 1024,
+      maxRedirects: 0,
     });
-    if (!res.ok) {
+    if (res.status < 200 || res.status >= 300) {
       throw new Error(`推送通知失败（HTTP ${res.status}）`);
     }
     return { ok: true, kind, label };
@@ -1076,35 +1128,69 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     return toStatusView(await getRow(actorId));
   }
 
+  const webhookRateLimits = new Map<string, { count: number; resetAt: number }>();
+
   async function triggerInboundWebhook(
     token: string,
     payload: { title?: string; message?: string; text?: string; source?: string; event?: string },
   ): Promise<{ ok: boolean; summary: string } | null> {
     if (!token || !/^whk_[a-zA-Z0-9_-]{8,64}$/.test(token)) return null;
+    const nowMs = Date.now();
+    if (webhookRateLimits.size > 5000) webhookRateLimits.clear();
+    const bucket = webhookRateLimits.get(token);
+    if (bucket && bucket.resetAt > nowMs) {
+      if (bucket.count >= 30) {
+        throw new WebhookRateLimitError("Webhook 调用过于频繁（每分钟最多 30 次），请稍后再试。");
+      }
+      bucket.count += 1;
+    } else {
+      webhookRateLimits.set(token, { count: 1, resetAt: nowMs + 60_000 });
+    }
+
     const [row] = await sql.unsafe<PersonalSourceRow[]>(
       "SELECT * FROM chisabot_personal_sources WHERE inbound_webhook_token = $1 LIMIT 1",
       [token],
     );
     if (!row) return null;
-    const src = (payload.source || payload.event || "外部 Webhook").slice(0, 40);
-    const title = (payload.title || "").slice(0, 80);
-    const body = (payload.message || payload.text || JSON.stringify(payload)).slice(0, 400);
-    const summary = `[${src}] ${title ? `${title}：` : ""}${body}`.slice(0, 300);
+    const src = (payload.source || payload.event || "外部 Webhook").replace(/[\r\n\0]+/g, " ").slice(0, 40);
+    const title = (payload.title || "").replace(/[\r\n\0]+/g, " ").slice(0, 80);
+    const body = (payload.message || payload.text || JSON.stringify(payload)).replace(/[\r\n\0]+/g, " ").slice(0, 400);
+    const rawSummary = `[${src}] ${title ? `${title}：` : ""}${body}`.slice(0, 300);
+    const summary = rawSummary.replace(/<\/?untrusted_data[^>]*>/gi, "").trim();
 
     await sql.unsafe(
       "UPDATE chisabot_personal_sources SET inbound_last_at = now(), inbound_last_summary = $2, updated_at = now() WHERE owner_user_id = $1",
       [row.owner_user_id, summary],
     );
 
-    // 同步记入用户今日日志（chisabot_memory_notes），让机器人在下一轮对话直接感知该事件
+    // 同步记入用户今日日志（chisabot_memory_notes，按日合并并受单用户 200 条上限约束）
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
-    await sql
-      .unsafe(
-        `INSERT INTO chisabot_memory_notes (id, owner_user_id, kind, subject, content, context)
-         VALUES ($1, $2, 'daily', $3, $4, 'webhook_trigger')`,
-        [`mem_${randomBytes(10).toString("hex")}`, row.owner_user_id, today, `- [Webhook 事件] ${summary}`],
-      )
-      .catch(() => {});
+    const entryLine = `- [Webhook 事件｜外部数据] ${summary}`;
+    await (async () => {
+      const [same] = await sql.unsafe<{ id: string; content: string }[]>(
+        "SELECT id, content FROM chisabot_memory_notes WHERE owner_user_id = $1 AND kind = 'daily' AND lower(subject) = lower($2) AND shared = false LIMIT 1",
+        [row.owner_user_id, today],
+      );
+      if (same) {
+        const merged = `${same.content}\n${entryLine}`.slice(-2000);
+        await sql.unsafe(
+          "UPDATE chisabot_memory_notes SET content = $2, updated_at = now() WHERE id = $1 AND owner_user_id = $3",
+          [same.id, merged, row.owner_user_id],
+        );
+        return;
+      }
+      const [{ n }] = await sql.unsafe<{ n: number }[]>(
+        "SELECT count(*)::int AS n FROM chisabot_memory_notes WHERE owner_user_id = $1",
+        [row.owner_user_id],
+      );
+      if (n < 180) {
+        await sql.unsafe(
+          `INSERT INTO chisabot_memory_notes (id, owner_user_id, kind, subject, content, context)
+           VALUES ($1, $2, 'daily', $3, $4, 'webhook_trigger')`,
+          [`mem_${randomBytes(10).toString("hex")}`, row.owner_user_id, today, entryLine],
+        );
+      }
+    })().catch(() => {});
 
     // 如果用户绑定了随身通知 Webhook，自动转发推送
     if (row.notify_webhook_enc) {
@@ -1419,9 +1505,16 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         source?: string;
         event?: string;
       };
-      const res = await triggerInboundWebhook(token, body);
-      if (!res) return c.json({ error: "Webhook token 无效或已失效。" }, 404);
-      return c.json(res);
+      try {
+        const res = await triggerInboundWebhook(token, body);
+        if (!res) return c.json({ error: "Webhook token 无效或已失效。" }, 404);
+        return c.json(res);
+      } catch (err) {
+        if (err instanceof WebhookRateLimitError) {
+          return c.json({ error: err.message }, 429);
+        }
+        throw err;
+      }
     });
 
     app.use("*", requireUser);

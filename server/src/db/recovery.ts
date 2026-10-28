@@ -97,6 +97,11 @@ export function recoveringSql(makeClient: () => SQL, timeoutMs = DATABASE_TIMEOU
       clock.resume();
       pool.pending.add(operation);
       const fail = (error: unknown) => {
+        // Per-statement slow queries or lock waits cancelled by PostgreSQL (SQLSTATE 57014 / 55P03,
+        // governed by statement_timeout=25s and lock_timeout=5s in client.ts) are not broken sockets:
+        // they fail only the offending operation via `operation.fail(error)` while leaving the pool
+        // generation and all other concurrent pending queries intact. Only transport-level 08xxx /
+        // closed-connection errors or a wedged 30s wall-clock pool stall retire the generation.
         if (brokenConnection(error)) retire(pool, error);
         else operation.fail(error);
       };

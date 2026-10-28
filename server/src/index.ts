@@ -468,6 +468,7 @@ async function provisionGatewayUser(actor: AuthenticatedActor): Promise<void> {
   await setRole(database, actor.id, actor.role);
   // 朋友第一次进来直接到聊天（自己的「助手」），不走上游的英文引导页；名字已在邀请页设好。
   if (inserted.length) await createOnboardingStore(database).complete(actor.id).catch(() => undefined);
+  if (provisionedGatewayUsers.size > 5000) provisionedGatewayUsers.clear();
   provisionedGatewayUsers.set(actor.id, { role: actor.role, at: Date.now() });
 }
 if (gatewaySecret) console.info(JSON.stringify({ type: "gateway-identity", enabled: true }));
@@ -2325,7 +2326,7 @@ const schedules = createSchedules(database, {
       const profile = await agentProfileStore.get(await actorFor(ownerUserId), agentId);
       return Boolean(profile && !profile.deletedAt);
     } catch {
-      return true;
+      return false;
     }
   },
   isSuspension: (error) => error instanceof HeadlessToolSuspension,
@@ -4011,9 +4012,20 @@ serve<SocketData>({
     // 模型回合是流式的（SSE）：免费 / 慢模型首个 token 前常常要想十几秒，带很多工具时更久。Bun 默认
     // 10 秒没有字节就切断连接，用户看到的就是「network error」、回合半途而废（2026-10-13 实测）。
     // 流式接口不设空闲超时，由运行本身的超时 / 停止兜底。
+    const isKnownStreamPath =
+      url.pathname.startsWith("/api/copilotkit/") ||
+      url.pathname.startsWith("/api/channels/") ||
+      url.pathname.startsWith("/api/conversations/") ||
+      url.pathname.startsWith("/api/approvals/");
+    const hasSessionOrToken = Boolean(
+      request.headers.get("cookie") ||
+        request.headers.get("authorization") ||
+        request.headers.get("x-chisabot-gateway-sig"),
+    );
     if (
       url.pathname.startsWith("/api/copilotkit/") ||
-      request.headers.get("accept")?.includes("text/event-stream")
+      ((isKnownStreamPath || hasSessionOrToken) &&
+        request.headers.get("accept")?.includes("text/event-stream"))
     )
       server.timeout(request, 0);
     const streamBotId = streamPathBotId(url.pathname);

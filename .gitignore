@@ -68,3 +68,9 @@ venv/
 /deploy/rollback-to-*.sh
 /deploy/compose.yaml.before-*
 /deploy/compose.yaml.rolledback-*
+
+# TypeScript incremental build info and Android local build artifacts
+*.tsbuildinfo
+android/.gradle/
+android/local.properties
+android/app/build/

@@ -3,14 +3,14 @@
   "description": "ChisaBot API、会话运行和模型管理服务",
   "license": "MIT",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.93",
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "bun x tsc --noEmit",
     "db:generate": "bun --env-file=../.env drizzle-kit generate --config=drizzle.config.ts",
     "db:migrate": "bun --env-file=../.env drizzle-kit migrate --config=drizzle.config.ts",
     "dev": "bun --env-file=../.env --watch src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "bun x tsc --noEmit"
   },
   "dependencies": {
     "@ag-ui/client": "1.0.1",

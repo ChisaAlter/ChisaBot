@@ -111,11 +111,17 @@ const textOf = (message: Readonly<Message>) =>
 
 /** 被折进同一行的那几条（按第一条的 id 记）。ScheduleFiredRow 按自己的 id 来取。 */
 const groups = new Map<string, readonly Readonly<Message>[]>();
+const MAX_GROUPS = 200;
 
 export function scheduleGroupOf(
   messageId: string,
 ): readonly Readonly<Message>[] | undefined {
   return groups.get(messageId);
+}
+
+/** 退出登录或重置会话状态时清理折叠提醒缓存。 */
+export function resetScheduleFiredState() {
+  groups.clear();
 }
 
 /**
@@ -131,8 +137,15 @@ export function collapseScheduleRuns<T extends Readonly<Message>>(
   let leadSchedule: string | null = null;
   let members: T[] = [];
   const flush = () => {
-    if (lead && members.length > 1) groups.set(lead.id, members);
-    else if (lead) groups.delete(lead.id);
+    if (lead && members.length > 1) {
+      groups.delete(lead.id);
+      groups.set(lead.id, members);
+      while (groups.size > MAX_GROUPS) {
+        const oldest = groups.keys().next().value;
+        if (oldest !== undefined) groups.delete(oldest);
+        else break;
+      }
+    } else if (lead) groups.delete(lead.id);
   };
   for (const message of messages) {
     const text = message.role === "user" ? textOf(message) : "";

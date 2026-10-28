@@ -100,9 +100,26 @@ async function withFirstOutputDeadline(
     }, ms);
   });
   deadline.catch(() => {});
+  let streaming = false;
+  const cleanupParent = () => parent?.removeEventListener("abort", forward);
+  const callOptions =
+    options && typeof options === "object" && "abortSignal" in options
+      ? { ...(options as object), abortSignal: controller.signal }
+      : Object.defineProperty({ ...(options as object) }, "abortSignal", {
+          value: controller.signal,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
   try {
-    const result = await Promise.race([call({ ...(options as object), abortSignal: controller.signal }), deadline]);
-    if (property !== "doStream" || !result || typeof result !== "object" || !("stream" in result)) return result;
+    const result = await Promise.race([call(callOptions), deadline]);
+    if (
+      property !== "doStream" ||
+      !result ||
+      typeof result !== "object" ||
+      typeof (result as StreamResult).stream?.getReader !== "function"
+    )
+      return result;
     const streamed = result as StreamResult;
     const reader = streamed.stream.getReader();
     const head: { type?: string }[] = [];
@@ -116,17 +133,31 @@ async function withFirstOutputDeadline(
       head.push(next.value);
       if (next.value?.type !== "stream-start") break;
     }
+    if (!done) streaming = true;
     const stream = new ReadableStream<{ type?: string }>({
       start(out) {
         for (const part of head) out.enqueue(part);
-        if (done) out.close();
+        if (done) {
+          cleanupParent();
+          out.close();
+        }
       },
       async pull(out) {
-        const next = await reader.read();
-        if (next.done) out.close();
-        else out.enqueue(next.value);
+        try {
+          const next = await reader.read();
+          if (next.done) {
+            cleanupParent();
+            out.close();
+          } else {
+            out.enqueue(next.value);
+          }
+        } catch (err) {
+          cleanupParent();
+          throw err;
+        }
       },
       cancel(reason) {
+        cleanupParent();
         return reader.cancel(reason);
       },
     });
@@ -136,6 +167,7 @@ async function withFirstOutputDeadline(
     throw error;
   } finally {
     clearTimeout(timer);
+    if (!streaming) cleanupParent();
   }
 }
 
@@ -274,13 +306,18 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
       const call = other && typeof other[property] === "function" ? (other[property] as Call).bind(other) : null;
       if (!call) continue;
       try {
-        const result = await call(options);
+        const result =
+          deadlineMs > 0
+            ? await withFirstOutputDeadline(call, options, property, deadlineMs)
+            : await call(options);
         log({ type: "model-fallback", event: "used", model: primaryId, fallback: id });
         announce({ from: primaryId, to: id, reason });
         return result;
       } catch (error) {
+        const parentSignal = (options as { abortSignal?: AbortSignal } | null)?.abortSignal;
+        if (parentSignal?.aborted) throw error;
         // 备用模型的任何错误都不该挡住下一个候选（以前 404「model not found」直接抛出，后面的候选和主模型都没机会，§101）。
-        const why = fallbackReason(error);
+        const why = error instanceof FirstOutputTimeout ? "unavailable" : fallbackReason(error);
         cooldown.set(id, now() + (why ? cooldownFor(error, why) : BROKEN_CANDIDATE_MS));
         cooledReason.set(id, why ?? "unavailable");
         log({ type: "model-fallback", event: "candidate-failed", model: primaryId, fallback: id, reason: why ?? "broken", error: errorSnippet(error) });

@@ -15,6 +15,9 @@ BASE="$TMP/base"; mkdir -p "$BASE"
 for c in cat sed grep tr head tail wc dirname mktemp rm sh bash env; do
   ln -s "$(command -v "$c")" "$BASE/$c"
 done
+for dll in /usr/bin/msys-*.dll /usr/bin/lib*.dll; do
+  [ -f "$dll" ] && cp -f "$dll" "$BASE/"
+done
 
 # ---------- 1. hermes-reach.sh：CHISABOT_AGENT_KERNEL 的规范化 ----------
 mkdir -p "$TMP/h/bin" "$TMP/h/compose"
