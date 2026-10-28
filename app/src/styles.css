@@ -9528,26 +9528,75 @@ html.dark :is(.page-rows, .sg-card) {
   padding: 8px 10px 10px;
   min-width: 0;
 }
-.appearance-url-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.appearance-wallpaper-upload-thumb {
+  background: var(--fill-tertiary);
+  color: var(--ink-2);
+  border-bottom: 1px dashed var(--stroke-primary);
 }
-.appearance-url-input-wrap {
-  position: relative;
+.appearance-wallpaper-card.is-upload-card {
+  border-style: dashed;
+}
+.appearance-upload-dropzone {
   display: flex;
   align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1.5px dashed var(--stroke-primary);
+  background: var(--fill-tertiary);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+.appearance-upload-dropzone:hover,
+.appearance-upload-dropzone.is-dragover {
+  border-color: var(--accent-blue);
+  background: var(--hover-wash);
+}
+.appearance-upload-dropzone.has-custom {
+  border-style: solid;
+}
+.appearance-upload-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--glass-2);
+  color: var(--ink-1);
+  border: 1px solid var(--stroke-primary);
+}
+.appearance-upload-preview {
+  width: 64px;
+  height: 44px;
+  border-radius: 10px;
+  flex: none;
+  background-position: center;
+  background-size: cover;
+  border: 1px solid var(--stroke-primary);
+  box-shadow: var(--shadow-1);
+}
+.appearance-upload-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   flex: 1;
   min-width: 0;
 }
-.appearance-url-icon {
-  position: absolute;
-  left: 11px;
-  color: var(--ink-3);
-  pointer-events: none;
+.appearance-upload-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-1);
 }
-.appearance-url-input {
-  padding-left: 34px !important;
+.appearance-upload-sub {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.appearance-upload-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 .appearance-sliders {
   display: grid;
@@ -9578,7 +9627,7 @@ html.dark :is(.page-rows, .sg-card) {
   width: 100% !important;
 }
 @media (max-width: 640px) {
-  .appearance-url-row {
+  .appearance-upload-dropzone {
     flex-direction: column;
     align-items: stretch;
   }

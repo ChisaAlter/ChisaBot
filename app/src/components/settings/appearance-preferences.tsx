@@ -1,14 +1,12 @@
 import {
   IconCheck,
   IconCloud,
-  IconLink,
   IconPhoto,
   IconRefresh,
-  IconSparkles,
   IconTrash,
   IconUpload,
 } from "@tabler/icons-react";
-import { type ChangeEvent, useRef, useState } from "react";
+import { type ChangeEvent, type DragEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSegmentedKeys } from "@/components/ui/segmented";
@@ -51,32 +49,24 @@ export function AppearancePreferences() {
     values: GLASS_STYLE_VALUES,
     onChange: (next) => setGlassStyle(next),
   });
-  const [urlInput, setUrlInput] = useState(
-    appearance.customWallpaperUrl.startsWith("data:")
-      ? ""
-      : appearance.customWallpaperUrl,
-  );
   const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const isCustomDataUri =
+  const hasCustomWallpaper =
     appearance.wallpaperId === "custom" &&
-    appearance.customWallpaperUrl.startsWith("data:");
+    Boolean(appearance.customWallpaperUrl);
 
-  const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
+  const processWallpaperFile = async (file: File) => {
     if (!file.type.startsWith("image/")) {
-      toast.error("请选择图片格式文件（PNG / JPG / WebP）");
+      toast.error("请选择图片格式文件（PNG / JPG / WebP / GIF / AVIF）");
       return;
     }
     setUploading(true);
     try {
       const dataUrl = await compressUploadedWallpaper(file);
       setCustomWallpaperUrl(dataUrl);
-      setUrlInput("");
-      toast.success("已应用自定义背景壁纸");
+      toast.success("已上传并应用自定义背景壁纸");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "上传壁纸失败");
     } finally {
@@ -84,19 +74,20 @@ export function AppearancePreferences() {
     }
   };
 
-  const handleApplyUrl = () => {
-    const trimmed = urlInput.trim();
-    if (!trimmed) {
-      setWallpaperPreset("none");
-      setCustomWallpaperUrl("");
-      return;
-    }
-    if (!/^(https?:\/\/|data:image\/|\/)/i.test(trimmed)) {
-      toast.error("请输入有效的图片地址（以 https:// 或 http:// 开头）");
-      return;
-    }
-    setCustomWallpaperUrl(trimmed);
-    toast.success("已应用网络壁纸链接");
+  const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    await processWallpaperFile(file);
+  };
+
+  const handleDrop = async (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDragOver(false);
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    await processWallpaperFile(file);
   };
 
   return (
@@ -122,7 +113,6 @@ export function AppearancePreferences() {
             <Button
               onClick={() => {
                 resetAppearanceDefaults();
-                setUrlInput("");
                 toast.success("已恢复 Hark 默认外观");
               }}
               size="sm"
@@ -330,7 +320,6 @@ export function AppearancePreferences() {
                 onClick={() => {
                   setWallpaperPreset("none");
                   setCustomWallpaperUrl("");
-                  setUrlInput("");
                   toast.success("已切回 Hark 动态天空");
                 }}
                 size="sm"
@@ -339,6 +328,93 @@ export function AppearancePreferences() {
               >
                 <IconCloud className="size-3.5" />
                 {"使用动态天空"}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
+        {/* 本地图片拖拽 / 点击上传横幅 */}
+        <div
+          className={cn(
+            "appearance-upload-dropzone",
+            dragOver && "is-dragover",
+            hasCustomWallpaper && "has-custom",
+          )}
+          data-testid="wallpaper-upload-dropzone"
+          onClick={() => fileInputRef.current?.click()}
+          onDragEnter={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDrop={handleDrop}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              fileInputRef.current?.click();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+        >
+          {hasCustomWallpaper ? (
+            <div
+              className="appearance-upload-preview"
+              style={{
+                backgroundImage: `url("${appearance.customWallpaperUrl}")`,
+              }}
+            />
+          ) : (
+            <div className="appearance-upload-icon">
+              <IconUpload className="size-4.5" />
+            </div>
+          )}
+          <div className="appearance-upload-copy">
+            <div className="appearance-upload-title">
+              {uploading
+                ? "正在处理并压缩壁纸图片…"
+                : hasCustomWallpaper
+                  ? "已启用本地自定义壁纸（点击或拖拽新图片即可更换）"
+                  : "点击选择本地图片，或直接将壁纸拖拽到此处上传"}
+            </div>
+            <div className="appearance-upload-sub">
+              {"支持 PNG / JPG / WebP / GIF / AVIF，自动高清压缩并保存在当前设备"}
+            </div>
+          </div>
+          <div
+            className="appearance-upload-actions"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Button
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              <IconUpload className="size-3.5" />
+              {hasCustomWallpaper ? "更换图片" : "选择图片上传"}
+            </Button>
+            {hasCustomWallpaper ? (
+              <Button
+                onClick={() => {
+                  setWallpaperPreset("none");
+                  setCustomWallpaperUrl("");
+                  toast.success("已移除自定义壁纸");
+                }}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                <IconTrash className="size-3.5" />
+                {"移除"}
               </Button>
             ) : null}
           </div>
@@ -386,12 +462,12 @@ export function AppearancePreferences() {
             );
           })}
 
-          {isCustomDataUri ? (
+          {hasCustomWallpaper ? (
             <button
               aria-checked={true}
               className="appearance-wallpaper-card is-active"
               data-testid="wallpaper-option-custom"
-              onClick={() => setWallpaperPreset("custom")}
+              onClick={() => fileInputRef.current?.click()}
               role="radio"
               type="button"
             >
@@ -417,55 +493,32 @@ export function AppearancePreferences() {
                   {"本地自定义壁纸"}
                 </span>
                 <span className="appearance-palette-sub">
-                  {"已保存至当前设备"}
+                  {"点击可重新上传"}
                 </span>
               </div>
             </button>
-          ) : null}
-        </div>
-
-        {/* 网络图片 URL 输入栏 */}
-        <div className="appearance-url-row">
-          <div className="appearance-url-input-wrap">
-            <IconLink className="appearance-url-icon size-4" />
-            <Input
-              aria-label="自定义壁纸图片链接"
-              className="appearance-url-input"
-              onChange={(e) => setUrlInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleApplyUrl();
-                }
-              }}
-              placeholder="输入网络高清壁纸地址（https://...）回车应用"
-              value={urlInput}
-            />
-          </div>
-          <Button
-            onClick={handleApplyUrl}
-            size="sm"
-            type="button"
-            variant="secondary"
-          >
-            <IconSparkles className="size-3.5" />
-            {"应用链接"}
-          </Button>
-          {appearance.wallpaperId === "custom" ? (
-            <Button
-              onClick={() => {
-                setWallpaperPreset("none");
-                setCustomWallpaperUrl("");
-                setUrlInput("");
-              }}
-              size="sm"
+          ) : (
+            <button
+              aria-checked={false}
+              className="appearance-wallpaper-card is-upload-card"
+              data-testid="wallpaper-option-upload"
+              onClick={() => fileInputRef.current?.click()}
+              role="radio"
               type="button"
-              variant="ghost"
             >
-              <IconTrash className="size-3.5" />
-              {"移除"}
-            </Button>
-          ) : null}
+              <div className="appearance-wallpaper-thumb appearance-wallpaper-upload-thumb">
+                <IconUpload className="size-5 opacity-75" />
+              </div>
+              <div className="appearance-wallpaper-meta">
+                <span className="appearance-palette-name">
+                  {"上传本地壁纸"}
+                </span>
+                <span className="appearance-palette-sub">
+                  {"从电脑选择图片"}
+                </span>
+              </div>
+            </button>
+          )}
         </div>
 
         {/* 壁纸模糊度与压暗度微调滑块 */}

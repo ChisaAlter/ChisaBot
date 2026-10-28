@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.100 — 2026-10-28
+
+这一版将「设置 → 通用 → 外观 → 自定义图片壁纸」底部的网络链接输入框（`https://...`）替换为**本地图片点击与拖拽上传横幅（`.appearance-upload-dropzone`）**，并在壁纸网格中直接提供**「上传本地壁纸」卡片**，支持点击选择或直接将电脑中的图片（PNG / JPG / WebP / GIF / AVIF）拖拽到上传区即可自动压缩保存并应用。全仓工作区子包、PC 客户端、服务端与 Android 客户端同步更新至 0.1.100（Android `versionCode` 297）。
+
 ## 0.1.99 — 2026-10-28
 
 这一版统一对齐全仓工作区子包版本号（根 `package.json`、`app/package.json`、`server/package.json`、`agent-computer/package.json`、`pc/package.json`、`android/app/build.gradle.kts` 全部升级至 `0.1.99`，Android `versionCode` 296），并修复服务器 PC 客户端更新源文件名同步（`ChisaBot-PC-0.1.99-x64-setup.exe` 与 `latest.json`），确保桌面端在线更新正常推送安装。
