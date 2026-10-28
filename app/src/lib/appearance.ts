@@ -637,14 +637,21 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
   };
 
   currentState = next;
-  writeStoredPreference(PALETTE_STORAGE_KEY, next.palette);
-  writeStoredPreference(GLASS_STYLE_STORAGE_KEY, next.glassStyle);
-  writeStoredPreference(GLASS_OPACITY_STORAGE_KEY, String(next.glassOpacity));
-  writeStoredPreference(HARK_SCENE_STORAGE_KEY, next.harkScene);
-  writeStoredPreference(WALLPAPER_ID_STORAGE_KEY, next.wallpaperId);
-  writeStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY, next.customWallpaperUrl);
-  writeStoredPreference(WALLPAPER_BLUR_STORAGE_KEY, String(next.wallpaperBlur));
-  writeStoredPreference(WALLPAPER_DIM_STORAGE_KEY, String(next.wallpaperDim));
+  // Only the keys that changed are written: one slider tick used to rewrite all eight keys,
+  // including the custom wallpaper's data URL. The keys and their format are unchanged.
+  const writes: Array<[string, string, string]> = [
+    [PALETTE_STORAGE_KEY, prev.palette, next.palette],
+    [GLASS_STYLE_STORAGE_KEY, prev.glassStyle, next.glassStyle],
+    [GLASS_OPACITY_STORAGE_KEY, String(prev.glassOpacity), String(next.glassOpacity)],
+    [HARK_SCENE_STORAGE_KEY, prev.harkScene, next.harkScene],
+    [WALLPAPER_ID_STORAGE_KEY, prev.wallpaperId, next.wallpaperId],
+    [WALLPAPER_CUSTOM_URL_STORAGE_KEY, prev.customWallpaperUrl, next.customWallpaperUrl],
+    [WALLPAPER_BLUR_STORAGE_KEY, String(prev.wallpaperBlur), String(next.wallpaperBlur)],
+    [WALLPAPER_DIM_STORAGE_KEY, String(prev.wallpaperDim), String(next.wallpaperDim)],
+  ];
+  for (const [key, before, after] of writes) {
+    if (before !== after) writeStoredPreference(key, after);
+  }
 
   applyAppearanceToDocument(next);
   emitChange();

@@ -1,6 +1,16 @@
 ## Unreleased
 
 - 修复：开着 Service Worker 时 Chrome 登录最后落到 `/api/auth/error?error=state_mismatch`（会话其实已写入）。sw.js 不再开 navigation preload，激活时显式关掉（`SW_VERSION` 3）；`/api`、`/auth` 下的导航照旧不拦、只由浏览器发一次。未升级版本号。
+  - 一次性过渡窗口：部署后，没刷新过的旧页面直接登录，或者刷新后在新 Service Worker 接管之前就登录，这一次仍由旧的 v2 Service Worker（开着 navigation preload）处理，可能还会出现一次 `state_mismatch`，再登录一次就好。新 SW 接管时间按代码算：页面 `load` 后用 `requestIdleCallback` 注册（超时 5 秒；浏览器不支持时固定 2 秒），再加上下载、安装 sw.js 的时间，`skipWaiting` + `clients.claim` 后立即生效，所以大约是刷新后 5 秒以内。之后不会再出现。
+
+## 0.1.104
+
+- 修复干净安装（默认隔离 linker）下 `shared/json-render` 解析不到 `@json-render/*`、typecheck/build 失败的问题：根 `package.json` 补声明这两个依赖；app 补声明测试与 vite.config 直接用到的 `@ag-ui/client`、`rxjs`、`esbuild`（版本均与 lockfile 一致）（#365）。
+- 出口过滤代理按 Bot 独立鉴权：HMAC 派生的每 Bot 代理密钥，空密码 / 错误密码 / 冒充一律拒绝，无凭据连接改走不含任何 Bot 放行名单的独立兜底策略并记节流日志；硬拒绝新增 `0.0.0.0/8`、`100.64.0.0/10`；服务器发往电脑的命令带上 botId（#364）
+- 渲染性能：毛玻璃收到预算内（大面板 20px、弹层 12px，气泡 / 按钮 / 胶囊 / 滚动区卡片不再模糊，同屏可见层数桌面 14 → 4），WebGL 天空默认只画快照（换场景保留完整的 2.5s 渐变，改窗口大小 / 回到前台 / 切回天空当帧重画、不闪灰）、动态天空限 15fps / 0.6 倍分辨率且空闲即停，无限动画只动 transform / opacity，新增性能模式状态与「减少透明度 / 动态效果」适配，外观偏好只写改动过的键（#363）
+- 安装版 `app/serve.ts` 转发 `/api` 时去掉已失效的 `Content-Encoding` / `Content-Length` 和逐跳头，修复 gzip 响应导致 `/api/me` 加载失败（`ERR_CONTENT_DECODING_FAILED`）；多值 `Set-Cookie` 照常保留（#367）
+- Hark 改版第 1 步（令牌层）：深 / 浅两套 Hark 设计令牌、Inter Variable 字体、唯一玻璃材质 `.glass`（暂未使用）；玻璃令牌拆成半径（面板 20px、弹层 12px、饱和度 160%）+ `--glass-filter` / `--glass-pop-filter`，次要 / 三级文字透明度 .5 / .3。不改布局，不升版本号（#369）。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.104`），PC / Android 外壳未变。
 
 ## 0.1.103
 
