@@ -15,6 +15,10 @@
 
 import { join, normalize, sep } from "node:path";
 import { file, type ServerWebSocket } from "bun";
+import {
+  CSP_REPORT_ONLY_HEADER,
+  createAppCspReader,
+} from "../shared/content-security-policy";
 import { listenPort } from "../shared/listen-port";
 import { DICTATION_HTTP_IDLE_SECONDS } from "../shared/dictation";
 
@@ -191,11 +195,20 @@ function prepareWebSocketBridge(upstream: BunWebSocket, signal: AbortSignal) {
   return { data, opened, failureStatus: () => (timedOut ? 504 : 502) };
 }
 
-function withSecurityHeaders(body: BodyInit, status = 200): Response {
+const appCsp = createAppCspReader(join(DIST, "index.html"));
+
+/** 安全响应头；页面（HTML）另带应用 CSP（先 Report-Only，见 shared/content-security-policy.ts）。 */
+export async function withSecurityHeaders(
+  body: BodyInit,
+  status = 200,
+  options: { html?: boolean } = {},
+): Promise<Response> {
   const response = new Response(body, { status });
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("X-Frame-Options", "SAMEORIGIN");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  if (options.html)
+    response.headers.set(CSP_REPORT_ONLY_HEADER, await appCsp());
   return response;
 }
 
@@ -279,9 +292,14 @@ if (import.meta.main) {
       if (!wanted) return withSecurityHeaders("not found", 404);
 
       const found = file(wanted);
-      if (await found.exists()) return withSecurityHeaders(found);
+      if (await found.exists())
+        return withSecurityHeaders(found, 200, {
+          html: wanted.endsWith(".html"),
+        });
       if (isClientRoute(url.pathname)) {
-        return withSecurityHeaders(file(join(DIST, "index.html")));
+        return withSecurityHeaders(file(join(DIST, "index.html")), 200, {
+          html: true,
+        });
       }
       return withSecurityHeaders("not found", 404);
     },
