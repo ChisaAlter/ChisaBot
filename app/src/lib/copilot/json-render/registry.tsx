@@ -32,7 +32,7 @@ import {
 } from "./rich";
 import { ActionArea, choiceState, useChoiceScope, useLiveValue, useRichActions } from "./rich-context";
 import { Products } from "./products";
-import { safeHttp, safeHttps, splitDotted, trendOfText } from "./rich-utils";
+import { hueOf, initials, safeHttp, safeHttps, splitDotted, trendOfText } from "./rich-utils";
 import { LinkCard } from "@/components/rich-previews/link-card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -230,6 +230,39 @@ class NodeBoundary extends Component<{ type: string; children: ReactNode }, { fa
   }
 }
 
+/**
+ * List 行首的图位（DESIGN.md §29 / §72 / §81 同一套退化）：
+ * - 有图：缩略图；图加载失败 → 标题首字 + 按名字定色的渐变底（同 Avatar / Products），不留空方块。
+ * - 没图、icon 认得出：语义色图标块。
+ * - 没图、icon 认不出或没写：不占位（「认不出的名字不画」，连底色块一起不画）。
+ */
+function ListMark({ image, icon, title, tone }: { image: unknown; icon: unknown; title: unknown; tone: unknown }) {
+  const url = safeHttps(image);
+  const [failed, setFailed] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new address gets a fresh try.
+  useEffect(() => setFailed(false), [url]);
+  const name = typeof title === "string" ? title : "";
+  if (url) {
+    return (
+      <span className="jr-list-thumb">
+        {failed ? (
+          <span aria-hidden className="jr-list-ph" data-testid="jr-list-fallback" style={{ "--jr-hue": String(hueOf(name)) } as CSSProperties}>
+            {initials(name)}
+          </span>
+        ) : (
+          <SafeImg alt="" onFail={() => setFailed(true)} src={url} />
+        )}
+      </span>
+    );
+  }
+  if (!iconFor(icon)) return null;
+  return (
+    <span className={cn("jr-list-ic", toneOf(tone ?? "accent") ?? "jr-tone-accent")}>
+      <RichIcon className="size-4" name={icon} />
+    </span>
+  );
+}
+
 export const { registry: jsonRenderRegistry } = defineRegistry(jsonRenderCatalog, {
   components: {
     Card: ({ props, children }) => (
@@ -378,16 +411,7 @@ export const { registry: jsonRenderRegistry } = defineRegistry(jsonRenderCatalog
               <li className={cn("jr-list-item", toneOf(item.tone))} key={index} style={{ "--jr-i": String(index) } as CSSProperties}>
                 <ActionArea affordance="none" className="jr-list-row" item={item} label={item.title}>
                   {props.ordered ? <span className="jr-list-n">{index + 1}</span> : null}
-                  {safeHttps(item.image) ? (
-                    <span className="jr-list-thumb">
-                      <SafeImg alt="" src={item.image} />
-                    </span>
-                  ) : iconFor(item.icon) ? (
-                    // 认不出的图标名不画底色方块：以前会留一个空的灰色方块（hark 对比 #11 两个备选前面）。
-                    <span className={cn("jr-list-ic", toneOf(item.tone ?? "accent") ?? "jr-tone-accent")}>
-                      <RichIcon className="size-4" name={item.icon} />
-                    </span>
-                  ) : null}
+                  <ListMark icon={item.icon} image={item.image} title={item.title} tone={item.tone} />
                   <div className="min-w-0 flex-1">
                     <div className="jr-list-t">
                       {item.title}

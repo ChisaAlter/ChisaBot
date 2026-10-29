@@ -188,6 +188,52 @@ describe("rich components render", () => {
     expect(icons[0]?.querySelector("svg")).not.toBeNull();
   });
 
+  test("List items never leave an empty icon square (0.1.108 #11)", async () => {
+    const { container } = await draw({
+      root: "l",
+      elements: {
+        l: {
+          type: "List",
+          props: {
+            items: [
+              { title: "华为 FreeBuds 6i", description: "无图，icon 认不出", icon: "headphones-anc" },
+              { title: "Anker Soundcore Q30", description: "无图无 icon" },
+              { title: "能认出的图标", icon: "news" },
+            ],
+          },
+          children: [],
+        },
+      },
+    });
+    const rows = [...container.querySelectorAll(".jr-list-row")];
+    expect(rows).toHaveLength(3);
+    // no image + unknown / missing icon: no placeholder at all (DESIGN.md §29: 认不出的名字不画)
+    expect(rows[0]!.querySelector(".jr-list-ic, .jr-list-thumb")).toBeNull();
+    expect(rows[1]!.querySelector(".jr-list-ic, .jr-list-thumb")).toBeNull();
+    // a known icon still draws its tinted tile, and every drawn tile has an svg in it
+    expect(rows[2]!.querySelector(".jr-list-ic svg")).not.toBeNull();
+    for (const tile of container.querySelectorAll(".jr-list-ic")) expect(tile.childElementCount).toBeGreaterThan(0);
+  });
+
+  test("List item image that fails to load falls back to the initial, like Avatar (0.1.108 #11)", async () => {
+    const { container } = await draw({
+      root: "l",
+      elements: {
+        l: { type: "List", props: { items: [{ title: "Redmi Buds 6 Pro", image: "https://img.test/broken.png", icon: "headphones-anc" }] }, children: [] },
+      },
+    });
+    const img = container.querySelector<HTMLImageElement>(".jr-list-thumb img");
+    expect(img).not.toBeNull();
+    expect(container.querySelector("[data-testid=jr-list-fallback]")).toBeNull();
+    await act(async () => {
+      fireEvent.error(img!);
+    });
+    expect(container.querySelector(".jr-list-thumb img")).toBeNull();
+    const ph = container.querySelector<HTMLElement>(".jr-list-thumb [data-testid=jr-list-fallback]");
+    expect(ph?.textContent).toBe("RB");
+    expect(ph?.style.getPropertyValue("--jr-hue")).not.toBe("");
+  });
+
   test("Products draws a grid of clickable cards with a fixed photo slot (§72)", async () => {
     const { container } = await draw({
       root: "p",

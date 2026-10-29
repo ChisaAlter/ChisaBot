@@ -5917,6 +5917,8 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .jr-list-thumb { flex: none; width: 56px; height: 56px; border-radius: 10px; overflow: hidden; background: var(--glass-3); box-shadow: inset 0 0 0 1px var(--line); }
 .jr-list-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform 300ms var(--ease-out); }
 .jr-list-row.jr-action:hover .jr-list-thumb img { transform: scale(1.05); }
+/* 图加载失败：首字 + 按名字定色的渐变底，和 Avatar / Products 的退化一致，不留空方块。 */
+.jr-list-ph { display: grid; place-items: center; width: 100%; height: 100%; font-size: 20px; font-weight: 600; color: hsl(var(--jr-hue, 210) 45% 32%); background: linear-gradient(135deg, hsl(var(--jr-hue, 210) 70% 94%), hsl(calc(var(--jr-hue, 210) + 30) 70% 88%)); }
 .jr-list-ic { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: var(--tone); background: var(--tone-soft); }
 .jr-list.has-media .jr-list-t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .jr-list.has-media .jr-list-s { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
