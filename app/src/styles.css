@@ -3861,7 +3861,8 @@ html[data-desktop] .glass-brand { cursor: default; }
 .desk-strip .win-ctrls { -webkit-app-region: no-drag; app-region: no-drag; }
 body[data-has-topbar] .desk-strip { display: none; }
 /* Collapsed left column: the collapse control follows the wordmark instead of floating at 276px. */
-.glass-shell:has([data-slot="sidebar"][data-state="collapsed"]) .glass-topbar-start { width: auto; gap: 12px; }
+/* 侧栏自己拨 body[data-has-collapsed-sidebar]（components/ui/sidebar.tsx），不用 .glass-shell:has(…)（§41 ③）。 */
+body[data-has-collapsed-sidebar] .glass-shell .glass-topbar-start { width: auto; gap: 12px; }
 /* Send key is ink (DESIGN.md §11), not blue. */
 .glass-composer .glass-composer-send:not(:disabled):not([data-testid="composer-stop"]) { background: var(--ink-primary) !important; color: var(--on-primary) !important; }
 /* ---------- 新建机器人：搜索框右侧的图标按钮 ---------- */

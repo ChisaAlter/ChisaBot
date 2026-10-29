@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/tooltip";
 import { IconLayoutSidebar, IconX } from "@tabler/icons-react";
 import { useBackDismiss } from "@/lib/overlay-back";
+import { usePresenceFlag } from "@/lib/presence-flag";
 
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "18rem";
@@ -196,6 +197,13 @@ function Sidebar({
   // 返回键 / 浏览器返回先关抽屉（CB-098，lib/overlay-back.ts）。
   useBackDismiss(isMobile && openMobile && collapsible !== "none", () =>
     setOpenMobile(false),
+  );
+  // 桌面侧栏收起时拨 `<body data-has-collapsed-sidebar>`（§41 ③）：以前用
+  // `.glass-shell:has([data-slot="sidebar"][data-state="collapsed"])`，每次侧栏 / 任何 data-slot 元素挂上卸下都要在外壳上重算 :has。
+  usePresenceFlag(
+    "has-collapsed-sidebar",
+    "body",
+    collapsible !== "none" && !isMobile && state === "collapsed",
   );
 
   if (collapsible === "none") {
