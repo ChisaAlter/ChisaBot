@@ -1,6 +1,5 @@
 import { useRenderTool } from "@copilotkit/react-core/v2";
-import type { Spec } from "@json-render/react";
-import { memo, useEffect, useMemo } from "react";
+import { memo, useMemo } from "react";
 import { z } from "zod";
 import {
   inspectRenderUiSpec,
@@ -10,8 +9,8 @@ import {
 } from "../../../../shared/json-render/catalog";
 import { pruneEmptySections } from "../../../../shared/json-render/empty-sections";
 import { ToolLine } from "@/components/channels/tool-line";
-import { lazyPart } from "@/components/ui/lazy-part";
 import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
+import { JsonRenderSurface, RenderUiPlaceholder, useRenderUiIdlePreload } from "./render-ui-preload";
 
 /**
  * 机器人用 `render_ui` 画出的界面（json-render，取代 A2UI）。
@@ -28,11 +27,8 @@ const parameters = z.object({
 });
 
 export function RenderUiTool() {
-  // 聊天区一挂上就开始下载渲染面（json-render-surface），不等第一张卡片出现：打开旧对话时历史里的
-  // render_ui 卡片直接画出来，不先闪一下骨架再换成卡片、把页面顶跳。
-  useEffect(() => {
-    void JsonRenderSurface.preload();
-  }, []);
+  // 渲染面空闲时预载；历史里已有 render_ui 卡片时 ChatTranscript 会更早立即预载（useRenderUiPreload）。
+  useRenderUiIdlePreload();
   useRenderTool({
     name: RENDER_UI_TOOL,
     parameters,
@@ -98,27 +94,3 @@ const RenderUiCall = memo(function RenderUiCall({
 
   return <JsonRenderSurface spec={spec} streaming={streaming} title={title} toolCallId={toolCallId} />;
 });
-
-/** 真正的渲染按需加载（json-render-surface.tsx）；加载那一下先显示同形状的骨架。 */
-const JsonRenderSurface = lazyPart<{ spec: Spec; streaming: boolean; title?: string; toolCallId?: string }>(
-  () => import("./json-render-surface").then((m) => m.JsonRenderSurface),
-  () => <RenderUiPlaceholder />,
-);
-
-/** 与最终卡片同形状的骨架（DESIGN.md §1 层级 ②），第一块内容到达后原地淡入替换。 */
-function RenderUiPlaceholder() {
-  return (
-    <div aria-busy="true" aria-label={"正在生成界面"} className="jr-surface jr-placeholder" role="status">
-      <div className="jr-card">
-        <div className="jr-card-h">
-          <span className="jr-skel-title" />
-        </div>
-        <div className="jr-card-b">
-          <span className="jr-skel-line" />
-          <span className="jr-skel-line is-short" />
-        </div>
-      </div>
-      <span className="jr-placeholder-label">{"正在生成界面…"}</span>
-    </div>
-  );
-}
