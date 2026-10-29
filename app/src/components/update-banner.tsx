@@ -2,8 +2,8 @@ import { IconRefresh, IconSparkles, IconX } from "@tabler/icons-react";
 import { confirmDialog } from "@/components/ui/confirm";
 import { refreshWouldInterrupt } from "@/lib/activity";
 import { usePcLocal } from "@/lib/pc-bridge";
-import { useNewVersion } from "@/lib/version";
 import { presenceRef } from "@/lib/presence-flag";
+import { useNewVersion } from "@/lib/version";
 
 /**
  * 「有新版本，点此刷新」（docs/online-update.md，DESIGN.md §22）。
