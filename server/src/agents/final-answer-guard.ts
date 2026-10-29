@@ -53,8 +53,8 @@ export function finalAnswerFor(failure: Failure): string {
   const why = failure.reason ? `（${failure.reason}）` : "";
   const hint =
     failure.name === "web_fetch"
-      ? "可能是网站暂时连不上。点「重试」再试一次，或者把网页内容直接贴给我。"
-      : "点「重试」再试一次。";
+      ? "可能是网站暂时连不上。再发一次试试，或者把网页内容直接贴给我。"
+      : "再发一次试试。";
   return `抱歉，这一轮没能给出回答：「${step}」这一步失败了${why}。${hint}`;
 }
 

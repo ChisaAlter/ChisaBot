@@ -123,6 +123,8 @@ describe("一个工具步骤失败之后，这一轮仍然有回答", () => {
     expect(answer).not.toBe("");
     expect(answer).toContain("读取网页");
     expect(answer).toContain("请求超时");
+    // 补的是一条普通回答，下面没有「重试」按钮（只有错误卡上有），不能叫人去点它。
+    expect(answer).not.toContain("重试");
   });
 
   test("模型自己解释了失败：不重复补话", async () => {
