@@ -9,7 +9,10 @@ import { RailParked } from "@/components/layout/rail-sidebar";
 import { SidebarSearchField } from "@/components/layout/sidebar-search-field";
 import * as SettingsSidebarModule from "@/components/settings/settings-sidebar";
 import { SidebarProvider } from "@/components/ui/sidebar";
-import { requestSidebarSearchFocus, takeSidebarSearchFocus } from "@/lib/sidebar-search";
+import {
+  requestSidebarSearchFocus,
+  takeSidebarSearchFocus,
+} from "@/lib/sidebar-search";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -17,7 +20,13 @@ import { settleReactWork } from "./settle-react-work";
  * 左栏的内容（`AppSidebar`）换成计数的替身（模块命名空间 spyOn，用完还原），数它挂上 / 卸下 / 画了几次。
  */
 
-beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/", width: 1440, height: 900 }));
+beforeAll(() =>
+  GlobalRegistrator.register({
+    url: "http://localhost/",
+    width: 1440,
+    height: 900,
+  }),
+);
 afterEach(async () => {
   cleanup();
   await settleReactWork();
@@ -42,9 +51,13 @@ function stubSidebars() {
     return <nav data-testid="app-sidebar">{"机器人名单"}</nav>;
   }) as unknown as typeof AppSidebarModule.AppSidebar);
   const settings = spyOn(SettingsSidebarModule, "SettingsSidebar");
-  settings.mockImplementation((() => <nav data-testid="settings-sidebar">{"设置"}</nav>) as unknown as typeof SettingsSidebarModule.SettingsSidebar);
+  settings.mockImplementation((() => (
+    <nav data-testid="settings-sidebar">{"设置"}</nav>
+  )) as unknown as typeof SettingsSidebarModule.SettingsSidebar);
   const admin = spyOn(AdminSidebarModule, "AdminSidebar");
-  admin.mockImplementation((() => <nav data-testid="admin-sidebar">{"管理"}</nav>) as unknown as typeof AdminSidebarModule.AdminSidebar);
+  admin.mockImplementation((() => (
+    <nav data-testid="admin-sidebar">{"管理"}</nav>
+  )) as unknown as typeof AdminSidebarModule.AdminSidebar);
   return {
     counts,
     restore() {
@@ -55,7 +68,8 @@ function stubSidebars() {
   };
 }
 
-const parkedWrapper = (el: HTMLElement) => el.closest("[data-left-rail-parked]");
+const parkedWrapper = (el: HTMLElement) =>
+  el.closest("[data-left-rail-parked]");
 
 test("聊天 → 设置 → 聊天 → 管理 → 聊天：聊天左栏只挂一次、从不卸载，在设置 / 管理里藏着", async () => {
   const { counts, restore } = stubSidebars();
@@ -137,7 +151,9 @@ test("藏着的聊天左栏不拨 has-collapsed-sidebar（管理左栏没有收�
     expect(document.body.hasAttribute("data-has-collapsed-sidebar")).toBe(true);
     view.rerender(shell("admin"));
     await settleReactWork();
-    expect(document.body.hasAttribute("data-has-collapsed-sidebar")).toBe(false);
+    expect(document.body.hasAttribute("data-has-collapsed-sidebar")).toBe(
+      false,
+    );
     view.rerender(shell("app"));
     await settleReactWork();
     expect(document.body.hasAttribute("data-has-collapsed-sidebar")).toBe(true);

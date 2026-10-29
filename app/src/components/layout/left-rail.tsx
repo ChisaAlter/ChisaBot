@@ -11,15 +11,33 @@ import { Sidebar, SidebarRail } from "@/components/ui/sidebar";
  * `hidden`（`display:none`，不占位、不可点、不进无障碍树），`Sidebar` 自己不接返回键、不拨收起开关、手机抽屉不打开；
  * 名单、滚动位置、搜索词都原样留着。`memo`：外壳每换一次地址都重画，藏着的左栏不跟着画。
  */
-export const LeftRail = memo(function LeftRail({ className, parked = false }: { className?: string; parked?: boolean }) {
+export const LeftRail = memo(function LeftRail({
+  className,
+  parked = false,
+}: {
+  className?: string;
+  parked?: boolean;
+}) {
   return (
-    <div className={parked ? "hidden" : "contents"} data-left-rail-parked={parked ? "true" : undefined}>
+    <div
+      className={parked ? "hidden" : "contents"}
+      data-left-rail-parked={parked ? "true" : undefined}
+    >
       <RailParked.Provider value={parked}>
-        <Sidebar className={className} collapsible="icon" parked={parked} variant="floating">
+        <Sidebar
+          className={className}
+          collapsible="icon"
+          parked={parked}
+          variant="floating"
+        >
           <div className="left-rail-shell">
             <InLeftRail.Provider value={true}>
               <div className="left-rail-stack" data-testid="left-rail">
-                <div className="left-rail-pane" data-active="true" data-pane="bots">
+                <div
+                  className="left-rail-pane"
+                  data-active="true"
+                  data-pane="bots"
+                >
                   <AppSidebar />
                 </div>
               </div>

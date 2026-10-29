@@ -15,7 +15,11 @@ import { Profiler } from "react";
 import * as ChannelChatModule from "@/components/channels/channel-chat";
 import { ChannelPage } from "@/components/channels/channel-page";
 import { KeepAliveStage } from "@/components/layout/keep-alive";
-import { type AgentChannel, type ChannelSummary, channelKeys } from "@/lib/channels/queries";
+import {
+  type AgentChannel,
+  type ChannelSummary,
+  channelKeys,
+} from "@/lib/channels/queries";
 import * as KeptVisibleModule from "@/lib/kept-visible";
 import { settleReactWork } from "./settle-react-work";
 
@@ -29,7 +33,13 @@ import { settleReactWork } from "./settle-react-work";
  *   证明 pathname 变化时外壳确实重画了、是 memo 把聊天页挡住的。
  */
 
-beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/", width: 1440, height: 900 }));
+beforeAll(() =>
+  GlobalRegistrator.register({
+    url: "http://localhost/",
+    width: 1440,
+    height: 900,
+  }),
+);
 afterEach(async () => {
   cleanup();
   await settleReactWork();
@@ -73,25 +83,42 @@ function setup() {
 
   // 请求一律挂起：数据不会在中途到达、引起和本测试无关的重画。
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+  globalThis.fetch = (() =>
+    new Promise<Response>(() => {})) as unknown as typeof fetch;
 
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY, gcTime: Number.POSITIVE_INFINITY } },
+    defaultOptions: {
+      queries: {
+        retry: false,
+        staleTime: Number.POSITIVE_INFINITY,
+        gcTime: Number.POSITIVE_INFINITY,
+      },
+    },
   });
   queryClient.setQueryData(channelKeys.detail(CHANNEL), channel);
-  queryClient.setQueryData(channelKeys.list(), { pages: [{ channels: [summary], nextCursor: null }], pageParams: [""] });
+  queryClient.setQueryData(channelKeys.list(), {
+    pages: [{ channels: [summary], nextCursor: null }],
+    pageParams: [""],
+  });
 
   type Addr = { channelId: string };
   function Shell() {
     const pathname = useRouterState({ select: (s) => s.location.pathname });
     const match = /^\/channel\/([^/]+)$/.exec(pathname);
-    const address: Addr | null = match ? { channelId: match[1] as string } : null;
+    const address: Addr | null = match
+      ? { channelId: match[1] as string }
+      : null;
     return (
       <Profiler id="shell" onRender={() => counts.shellCommits++}>
         <KeepAliveStage
           address={address}
           renderKept={(kept, { visible, epoch }) => (
-            <ChannelPage channelId={kept.channelId} epoch={epoch} key={kept.channelId} visible={visible} />
+            <ChannelPage
+              channelId={kept.channelId}
+              epoch={epoch}
+              key={kept.channelId}
+              visible={visible}
+            />
           )}
           same={(a, b) => a.channelId === b.channelId}
         >
@@ -102,10 +129,21 @@ function setup() {
   }
   const rootRoute = createRootRoute({ component: Shell });
   const routeTree = rootRoute.addChildren([
-    createRoute({ getParentRoute: () => rootRoute, path: "/channel/$channelId", component: () => null }),
-    createRoute({ getParentRoute: () => rootRoute, path: "/settings/$section", component: () => <section>{"设置"}</section> }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/channel/$channelId",
+      component: () => null,
+    }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/settings/$section",
+      component: () => <section>{"设置"}</section>,
+    }),
   ]);
-  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [`/channel/${CHANNEL}`] }) });
+  const router = createRouter({
+    routeTree,
+    history: createMemoryHistory({ initialEntries: [`/channel/${CHANNEL}`] }),
+  });
   const go = async (to: string) => {
     await act(async () => {
       await router.history.push(to);

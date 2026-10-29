@@ -79,7 +79,10 @@ test("留着的聊天藏起来再回来：订阅可见性的聊天不重画，�
 
 // #403 审查 c：新挂上的聊天第一次渲染读到的「看不看得见」要是这一次的，不能是上一页留下的「藏着」，
 // 否则提交后它变成「看得见」，`useThreadActivity` 当成「刚回来」马上多问一次变化戳（刚打开的聊天本来就在读对话）。
-for (const how of ["藏够时间卸载后再打开别的聊天", "藏着时直接换到另一段聊天"] as const) {
+for (const how of [
+  "藏够时间卸载后再打开别的聊天",
+  "藏着时直接换到另一段聊天",
+] as const) {
   test(`${how}：新聊天第一次就读到「看得见」，不多问一次变化戳`, async () => {
     const calls: string[] = [];
     const realFetch = globalThis.fetch;
@@ -115,7 +118,8 @@ for (const how of ["藏够时间卸载后再打开别的聊天", "藏着时直�
       await act(async () => {
         await new Promise((r) => setTimeout(r, 80));
       });
-      if (how === "藏够时间卸载后再打开别的聊天") expect(view.queryByTestId("chat")).toBeNull();
+      if (how === "藏够时间卸载后再打开别的聊天")
+        expect(view.queryByTestId("chat")).toBeNull();
       const before = calls.length;
       // 打开另一段聊天。
       view.rerender(stage({ id: "thread_b" }));
@@ -125,7 +129,9 @@ for (const how of ["藏够时间卸载后再打开别的聊天", "藏着时直�
       expect(view.getByTestId("chat").textContent).toBe("thread_b");
       expect(firstRead.thread_b).toBe(true);
       // 刚挂上的聊天按 2 秒的节奏等下一次，不会马上问。
-      expect(calls.slice(before).filter((url) => url.includes("/sync"))).toEqual([]);
+      expect(
+        calls.slice(before).filter((url) => url.includes("/sync")),
+      ).toEqual([]);
       view.unmount();
     } finally {
       globalThis.fetch = realFetch;
