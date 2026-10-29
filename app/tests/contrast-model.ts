@@ -306,7 +306,9 @@ export function wallpaperPixels(): RGBA[] {
 export function wallpaperScrim(scheme: Scheme): RGBA {
   const paint = lastDecl(stylesCss, ".chisabot-wallpaper::after", "background");
   if (paint !== "var(--wallpaper-scrim)")
-    throw new Error(".chisabot-wallpaper::after does not paint --wallpaper-scrim");
+    throw new Error(
+      ".chisabot-wallpaper::after does not paint --wallpaper-scrim",
+    );
   const value = lastDecl(
     stylesCss,
     scheme === "dark" ? 'html.dark, html[data-theme="dark"]' : ":root",
@@ -492,9 +494,17 @@ export const SURFACES: Record<
     rules: [],
   },
   // 左下角账号卡：名字 .acct-name（--ink-1）、邮箱 / 状态 .acct-sub（--ink-3）。
-  "acct-card": { inks: ["--ink-1", "--ink-3"], layers: ["--lg-surface"], rules: [SIDE_RULE] },
+  "acct-card": {
+    inks: ["--ink-1", "--ink-3"],
+    layers: ["--lg-surface"],
+    rules: [SIDE_RULE],
+  },
   // 收起态左栏：导航图标 .rail-mini-item（--ink-2）；字母头像另算（不透明底）。
-  "mini-card": { inks: ["--ink-2", "--ink-3"], layers: ["--lg-surface"], rules: [SIDE_RULE] },
+  "mini-card": {
+    inks: ["--ink-2", "--ink-3"],
+    layers: ["--lg-surface"],
+    rules: [SIDE_RULE],
+  },
   // 右栏面板容器：标题、按钮、空状态。
   "rail-card": {
     inks: ["--ink-1", "--ink-2", "--ink-3"],
@@ -520,7 +530,11 @@ export const SURFACES: Record<
     rules: [BUBBLE_CARD_RULE, BUBBLE_CARD_RULE],
   },
   // 我的气泡：--bubble-user-bg + --text-primary。
-  "bubble-user": { inks: ["--text-primary"], layers: ["--bubble-user-bg"], rules: [] },
+  "bubble-user": {
+    inks: ["--text-primary"],
+    layers: ["--bubble-user-bg"],
+    rules: [],
+  },
   // 输入框：输入的字 --text-primary，占位字 --glass-ink-4（壁纸下提到 --glass-ink-3）。
   composer: {
     inks: ["--text-primary", "--glass-ink-4"],
@@ -549,9 +563,13 @@ export function scrimPainters(): string[] {
 /** 一种文字位置从壁纸到字之间一共有几层薄幕：壁纸那层 + 每层玻璃规则自带的（应当是 0）。 */
 export function scrimLayers(id: SurfaceId): number {
   const own = SURFACES[id].layers.filter(
-    (layer, i) => layer !== "--bubble-user-bg" && !paintsOnly(SURFACES[id].rules[i], layer),
+    (layer, i) =>
+      layer !== "--bubble-user-bg" && !paintsOnly(SURFACES[id].rules[i], layer),
   ).length;
-  return scrimPainters().filter((s) => s === ".chisabot-wallpaper::after").length + own;
+  return (
+    scrimPainters().filter((s) => s === ".chisabot-wallpaper::after").length +
+    own
+  );
 }
 
 /** 壁纸下文字令牌的实际颜色：html[data-wallpaper="on"] 改过的（--ink-4 → --ink-3 等）按改过的算。 */
@@ -578,7 +596,12 @@ export function wallpaperSurfaceBackdrops(
     for (const haze of HAZE_RANGE) {
       let stack = bases;
       for (const layer of layers) {
-        const stops = glassStops(layer as "--lg-surface" | "--lg-surface-strong", style, scheme, haze);
+        const stops = glassStops(
+          layer as "--lg-surface" | "--lg-surface-strong",
+          style,
+          scheme,
+          haze,
+        );
         stack = stack.flatMap((b) => stops.map((stop) => over(stop, b)));
       }
       out.push(...stack);

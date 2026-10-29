@@ -12,11 +12,11 @@ import {
   parseColor,
   range,
   SCHEMES,
-  scrimLayers,
-  scrimPainters,
   type Scheme,
   SURFACES,
   type SurfaceId,
+  scrimLayers,
+  scrimPainters,
   stylesCss,
   surfaceInk,
   wallpaperSurfaceBackdrops,
@@ -135,8 +135,12 @@ describe("wallpapers: one scrim under everything", () => {
         "color",
       ),
     ).toBe("var(--glass-ink-4) !important");
-    expect(lastDecl(stylesCss, 'html[data-wallpaper="on"]', "--glass-ink-4")).toBe("var(--glass-ink-3)");
-    expect(lastDecl(stylesCss, 'html[data-wallpaper="on"]', "--ink-4")).toBe("var(--ink-3)");
+    expect(
+      lastDecl(stylesCss, 'html[data-wallpaper="on"]', "--glass-ink-4"),
+    ).toBe("var(--glass-ink-3)");
+    expect(lastDecl(stylesCss, 'html[data-wallpaper="on"]', "--ink-4")).toBe(
+      "var(--ink-3)",
+    );
   });
 });
 
