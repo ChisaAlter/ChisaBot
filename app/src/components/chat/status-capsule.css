@@ -124,3 +124,15 @@ html[data-perf="on"] .rs-capsule {
 .rs-noanswer .chat-error-retry {
   margin-left: 0;
 }
+/*
+ * 没有回答的那一轮（WorkRow 的 `data-unanswered`）：窄屏也留着「N 步失败」。styles.css 在 ≤560px 把做完的
+ * 干活行的这一格藏了（`.chat-work-card.chat-work-done .chat-work-meta`），这里多一个属性选择器盖过它，不改那条规则。
+ */
+@media (max-width: 560px) {
+  .chat-work-card.chat-work-done[data-unanswered] .chat-work-meta {
+    display: inline;
+  }
+  .chat-work-card.chat-work-done[data-unanswered] .chat-work-meta:empty {
+    display: none;
+  }
+}
