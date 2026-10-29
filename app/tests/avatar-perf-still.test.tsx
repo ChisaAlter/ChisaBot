@@ -164,6 +164,8 @@ describe("performance mode: CSS", () => {
   });
 
   test("it outranks every .sa expression rule that animates or transitions", () => {
+    // 先确认这条规则真的在 styles.css 顶层：没有它时下面的优先级比较只是在比一个常量字符串，旧样式也会过。
+    expect(topLevelRules().some((r) => r.selector === PERF_RULE)).toBe(true);
     const perfSpec = specificity(PERF_RULE);
     expect(perfSpec).toEqual([0, 3, 2]);
     const animated = topLevelRules().filter(
