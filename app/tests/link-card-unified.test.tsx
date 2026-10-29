@@ -10,7 +10,6 @@ import { readFileSync } from "node:fs";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, render } from "@testing-library/react";
 import {
-  LINK_CARD_IMAGE_RATIO,
   LinkCard,
   LinkCardSkeleton,
 } from "@/components/rich-previews/link-card";
@@ -45,7 +44,8 @@ describe("mergeLinkFields：给的字段优先，缺的用预览补", () => {
     expect(merged.image).toBe(ghPreview.image);
     expect(merged.imageFallback).toBeNull();
     expect(merged.site).toBe("GitHub");
-    expect(merged.extra).toBeNull();
+    // 没给 meta：GitHub 发版用版本号当短标签（「GitHub · v0.1.13」）。
+    expect(merged.extra).toBe("v0.1.13");
     expect(merged.imageWidth).toBe(1200);
     expect(merged.imageHeight).toBe(600);
   });
@@ -208,7 +208,9 @@ describe("LinkCard", () => {
     expect(card.querySelector(".lc-media > img")?.getAttribute("src")).toBe(
       ghPreview.image,
     );
-    expect(card.querySelector(".lc-site")?.textContent).toBe("GitHub");
+    expect(card.querySelector(".lc-site")?.textContent).toBe(
+      "GitHub · v0.1.13",
+    );
   });
 
   test("标题、图、站点名都给了：直接出卡，不去问预览", async () => {
@@ -239,7 +241,8 @@ describe("LinkCard", () => {
     expect(
       card.querySelector<HTMLElement>(".lc-media")?.style.aspectRatio,
     ).toBe(skeletonRatio!);
-    expect(skeletonRatio).toBe(LINK_CARD_IMAGE_RATIO);
+    // GitHub 不知道宽高时按 2:1 占位；服务器量的 1200×600 也是 2:1，所以内容到了不跳。
+    expect(skeletonRatio).toMatch(/^2( \/ 1)?$/);
     expect(card.className).toBe(skeleton.className.replace(" lc-skel", ""));
 
     const lone = render(<LinkCardSkeleton />).getByTestId("link-card-skeleton");
@@ -253,9 +256,9 @@ describe("LinkCard", () => {
     );
     expect(css).toContain("width: min(280px, 100%)");
     expect(css).toMatch(
-      /\.lc-card\[data-layout="image"\] \.lc-title \{\s*height: 40px;\s*\}/,
+      /\.lc-card\[data-layout="image"\] \.lc-title \{\s*height: 36px;\s*\}/,
     );
-    expect(css).toMatch(/\.lc-meta \{[^}]*height: 18px;/);
+    expect(css).toMatch(/\.lc-meta \{[^}]*height: 17px;/);
     expect(css).not.toMatch(/backdrop-filter\s*:/);
   });
 });

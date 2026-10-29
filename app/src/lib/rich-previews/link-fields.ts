@@ -4,8 +4,10 @@
  * - 给了的字段优先（json-render Link 里模型写的 title / image / meta，正文链接的 `[标签](网址)`）；
  *   缺的预览图、标题、站点名用预览补上。
  * - 预览图：给的 https 图在前，预览的本站转存图（/api/link-preview/asset/…）在后，前一张加载失败就换后一张。
- * - 底下一行是「站点 · 补充信息」：站点 = 给的站点名 → 预览的 og:site_name → 域名；补充信息 = 给的 meta / 标签。
+ * - 底下一行是「站点 · 补充信息」：站点 = 给的站点名 → 预览的 og:site_name → 域名；补充信息 = 给的 meta / 标签，
+ *   没给时 GitHub 链接用短标签（「GitHub · v0.1.13」，{@link shortLinkLabel}）。
  * - 兜底（标题只剩域名）时站点那一格换成短地址，免得两行都是同一个域名。
+ * - 给的标题只是站点名（「GitHub」「github.com」）时改用预览的 og:title：标题和底下的站点行不重复（{@link isSiteOnlyTitle}）。
  *
  * 纯函数，测试见 app/tests/link-card-unified.test.tsx。
  */
@@ -85,10 +87,77 @@ export function shortLinkUrl(url: string): string {
   }
 }
 
-/** 给的字段够不够画卡、还要不要去问 `/api/link-preview`：标题、图、站点名缺一个就要问。 */
-export function needsLinkPreview(given: GivenLinkFields): boolean {
+/**
+ * 底下灰字的短标签（没给 meta 时用）：GitHub 的发版 → 版本号（v0.1.13），PR / issue → #123，
+ * 仓库首页 → owner/repo。别的站不猜，返回 null。
+ */
+export function shortLinkLabel(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = u.hostname.replace(/^www\./i, "").toLowerCase();
+  if (host !== "github.com") return null;
+  const parts = u.pathname
+    .split("/")
+    .filter(Boolean)
+    .map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    });
+  const [owner, repo, kind, a, b] = parts;
+  if (!owner || !repo) return null;
+  if (kind === "releases" && a === "tag" && b) return b;
+  if ((kind === "pull" || kind === "issues") && a && /^\d+$/.test(a))
+    return `#${a}`;
+  if (kind === undefined) return `${owner}/${repo}`;
+  return null;
+}
+
+function bare(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/^www\./, "")
+    .replace(/[\s._\-·|/]+/g, "");
+}
+
+/**
+ * 标题是不是只写了站点名：和站点名、域名（去掉 www.）、域名主体（github.com → github）之一相同，忽略大小写、空格和标点。
+ * 例：「GitHub」「github.com」「World Coffee Map」（站点名就是它）都算；「Release ChisaBot v0.1.13」不算。
+ */
+export function isSiteOnlyTitle(
+  title: string | null | undefined,
+  site: string | null | undefined,
+  url: string,
+): boolean {
+  const t = bare(text(title));
+  if (!t) return false;
+  const host = linkHost(url).toLowerCase();
+  const labels = host.split(".");
+  const main = labels.length >= 2 ? labels[labels.length - 2] : host;
+  return [text(site), host, main ?? ""].some(
+    (candidate) => candidate !== "" && bare(candidate) === t,
+  );
+}
+
+/**
+ * 给的字段够不够画卡、还要不要去问 `/api/link-preview`：标题、图、站点名缺一个就要问；
+ * 传了地址时，标题只是站点名也要问（换成 og:title）。
+ */
+export function needsLinkPreview(
+  given: GivenLinkFields,
+  url?: string,
+): boolean {
   return (
-    !text(given.title) || !usableImage(given.image) || !text(given.siteName)
+    !text(given.title) ||
+    !usableImage(given.image) ||
+    !text(given.siteName) ||
+    (url !== undefined && isSiteOnlyTitle(given.title, given.siteName, url))
   );
 }
 
@@ -99,7 +168,17 @@ export function mergeLinkFields(
 ): MergedLinkFields {
   const domain = text(preview?.domain) || linkHost(url);
   const degraded = preview?.degraded === true;
-  const title = text(given.title) || text(preview?.title) || domain;
+  const givenTitle = text(given.title);
+  const previewTitle = text(preview?.title);
+  const siteHint = text(given.siteName) || text(preview?.siteName);
+  // 给的标题只是站点名、预览有像样的 og:title：用 og:title（#380 的数据修正）。
+  const title =
+    givenTitle &&
+    previewTitle &&
+    isSiteOnlyTitle(givenTitle, siteHint, url) &&
+    !isSiteOnlyTitle(previewTitle, siteHint, url)
+      ? previewTitle
+      : givenTitle || previewTitle || domain;
   const givenImage = usableImage(given.image);
   const previewImage =
     preview && preview.imageKind !== "none" ? usableImage(preview.image) : null;
@@ -113,7 +192,7 @@ export function mergeLinkFields(
   const width = sized ? Number(preview?.imageWidth) : Number.NaN;
   const height = sized ? Number(preview?.imageHeight) : Number.NaN;
   let site = text(given.siteName) || text(preview?.siteName) || domain;
-  const extraRaw = text(given.meta);
+  const extraRaw = text(given.meta) || shortLinkLabel(url) || "";
   const extra =
     extraRaw && extraRaw.toLowerCase() !== site.toLowerCase() ? extraRaw : null;
   if (title === site && title === domain) site = shortLinkUrl(url);
