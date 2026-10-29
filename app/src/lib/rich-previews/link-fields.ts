@@ -3,11 +3,14 @@
  *
  * - 给了的字段优先（json-render Link 里模型写的 title / image / meta，正文链接的 `[标签](网址)`）；
  *   缺的预览图、标题、站点名用预览补上。
+ * - 例外（小爱审查 #380）：给的标题只是站点名 / 域名（「GitHub」「github.com」），或者整个被 og:title 包含
+ *   （「ChisaBot」⊂「GitHub - ChisaAlter/ChisaBot」），说明它比 og:title 信息少，改用 og:title。
+ *   比较忽略大小写和首尾空白。
  * - 预览图：给的 https 图在前，预览的本站转存图（/api/link-preview/asset/…）在后，前一张加载失败就换后一张。
- * - 底下一行是「站点 · 补充信息」：站点 = 给的站点名 → 预览的 og:site_name → 域名；补充信息 = 给的 meta / 标签，
- *   没给时 GitHub 链接用短标签（「GitHub · v0.1.13」，{@link shortLinkLabel}）。
+ * - 底下一行是「站点 · 补充信息」：站点 = 给的站点名 → 预览的 og:site_name → 域名；
+ *   补充信息 = 给的 meta / 标签 → 给的 description（模型写的一句话）→ GitHub 链接的短标签
+ *   （「GitHub · v0.1.13」，{@link shortLinkLabel}）；和站点名或标题重复的不显示。
  * - 兜底（标题只剩域名）时站点那一格换成短地址，免得两行都是同一个域名。
- * - 给的标题只是站点名（「GitHub」「github.com」）时改用预览的 og:title：标题和底下的站点行不重复（{@link isSiteOnlyTitle}）。
  *
  * 纯函数，测试见 app/tests/link-card-unified.test.tsx。
  */
@@ -52,6 +55,31 @@ export type MergedLinkFields = {
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function same(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * 给的标题是不是比 og:title 信息少：等于站点名、域名（含 / 不含 www.、只取主名如 github），
+ * 或者整个被 og:title 包含。两边都已经 text() 过（压空白、去首尾空白）；比较忽略大小写。
+ */
+export function isWeakLinkTitle(
+  given: string,
+  ogTitle: string,
+  names: readonly string[],
+): boolean {
+  if (!given || !ogTitle || same(given, ogTitle)) return false;
+  const bare = given.replace(/^www\./i, "");
+  if (names.some((name) => name && (same(given, name) || same(bare, name))))
+    return true;
+  return ogTitle.toLowerCase().includes(given.toLowerCase());
+}
+
+function domainNames(domain: string): string[] {
+  const bare = domain.replace(/^www\./i, "");
+  return [domain, bare, bare.split(".")[0] ?? ""];
 }
 
 /** 只认 https 的完整地址和本站的 /api/ 相对地址（转存图）。 */
@@ -169,16 +197,17 @@ export function mergeLinkFields(
   const domain = text(preview?.domain) || linkHost(url);
   const degraded = preview?.degraded === true;
   const givenTitle = text(given.title);
-  const previewTitle = text(preview?.title);
-  const siteHint = text(given.siteName) || text(preview?.siteName);
-  // 给的标题只是站点名、预览有像样的 og:title：用 og:title（#380 的数据修正）。
+  const ogTitle = degraded ? "" : text(preview?.title);
+  const names = [
+    text(given.siteName),
+    text(preview?.siteName),
+    ...domainNames(domain),
+    ...domainNames(linkHost(url)),
+  ];
   const title =
-    givenTitle &&
-    previewTitle &&
-    isSiteOnlyTitle(givenTitle, siteHint, url) &&
-    !isSiteOnlyTitle(previewTitle, siteHint, url)
-      ? previewTitle
-      : givenTitle || previewTitle || domain;
+    (isWeakLinkTitle(givenTitle, ogTitle, names) ? ogTitle : givenTitle) ||
+    text(preview?.title) ||
+    domain;
   const givenImage = usableImage(given.image);
   const previewImage =
     preview && preview.imageKind !== "none" ? usableImage(preview.image) : null;
@@ -192,9 +221,10 @@ export function mergeLinkFields(
   const width = sized ? Number(preview?.imageWidth) : Number.NaN;
   const height = sized ? Number(preview?.imageHeight) : Number.NaN;
   let site = text(given.siteName) || text(preview?.siteName) || domain;
-  const extraRaw = text(given.meta) || shortLinkLabel(url) || "";
   const extra =
-    extraRaw && extraRaw.toLowerCase() !== site.toLowerCase() ? extraRaw : null;
+    [text(given.meta), text(given.description), shortLinkLabel(url) ?? ""].find(
+      (value) => value && !same(value, site) && !same(value, title),
+    ) ?? null;
   if (title === site && title === domain) site = shortLinkUrl(url);
   return {
     title,

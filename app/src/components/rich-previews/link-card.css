@@ -1,7 +1,8 @@
 /*
  * 链接卡（link-card.tsx，2026-10-29，照 Hark）：只有 lc- 开头的类，不改 styles.css。
  * - 深色半透明底、大圆角（18px）、柔和阴影；不用 backdrop-filter，也不用 filter。
- * - 上半部预览图内缩 6px、自带 12px 圆角，比例跟着图片走（组件写 aspect-ratio）；下面两行标题（600）+ 一行灰字。
+ * - 上半部预览图内缩 6px、自带 12px 圆角，比例跟着图片走（组件写 aspect-ratio）；下面最多两行标题（600）+ 一行灰字。
+ *   文字区高度跟着内容走，只有骨架预留两行标题、一行站点（#380）。
  * - 单张卡：宽 min(280px, 100%)，不倾斜。
  * - 一叠（.lc-stack，2–3 张）：所有卡放在同一个网格格子里，位置全靠 transform（槽位变量 --lc-sx / --lc-sy /
  *   --lc-rot / --lc-sc），换主位只改 transform 和层级，不重排。过渡 250ms ease-out；减少动态效果时没有过渡。
@@ -118,10 +119,6 @@ a.lc-card[href]:hover {
   color: rgba(255, 255, 255, 0.95);
   word-break: break-word;
 }
-/* 有图的卡标题固定两行高：骨架和卡片一样高。 */
-.lc-card[data-layout="image"] .lc-title {
-  height: 36px;
-}
 .lc-card[data-layout="compact"] .lc-title {
   -webkit-line-clamp: 1;
   font-size: 14px;
@@ -131,7 +128,6 @@ a.lc-card[href]:hover {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 17px;
   font-size: 12.5px;
   line-height: 17px;
   color: rgba(222, 226, 238, 0.58);
@@ -146,11 +142,16 @@ a.lc-card[href]:hover {
   pointer-events: none;
   cursor: default;
 }
+/* 只有骨架给标题预留两行、站点行预留一行（#380）：真卡的文字区跟着内容走，一行标题下面不空一块。 */
 .lc-skel .lc-title {
+  height: 36px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 8px;
+}
+.lc-skel .lc-meta {
+  height: 17px;
 }
 .lc-skel-bar {
   display: block;
@@ -261,6 +262,8 @@ a.lc-card[href]:hover {
 }
 .lc-stack[data-deck] .lc-card {
   grid-area: 1 / 1;
+  /* 叠在一起时底更实：压在下面那张的字不透上来。 */
+  background-color: rgba(40, 44, 62, 0.96);
   width: var(--lc-w);
   transform-origin: 50% 60%;
   transform: translate(
@@ -269,12 +272,15 @@ a.lc-card[href]:hover {
     )
     rotate(var(--lc-rot, 0deg)) scale(var(--lc-sc, 1));
 }
+.dark .lc-stack[data-deck] .lc-card {
+  background-color: rgba(30, 33, 48, 0.95);
+}
 @container (max-width: 420px) {
   .lc-stack[data-deck] .lc-title {
     font-size: 12.5px;
     line-height: 16px;
   }
-  .lc-stack[data-deck] .lc-card[data-layout="image"] .lc-title {
+  .lc-stack[data-deck] .lc-skel .lc-title {
     height: 32px;
   }
   .lc-stack[data-deck] .lc-meta {

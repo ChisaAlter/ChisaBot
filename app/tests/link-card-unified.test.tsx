@@ -13,13 +13,9 @@ import {
   LinkCard,
   LinkCardSkeleton,
 } from "@/components/rich-previews/link-card";
-import {
-  mergeLinkFields,
-  needsLinkPreview,
-} from "@/lib/rich-previews/link-fields";
 import { settleReactWork } from "./settle-react-work";
 
-/** Hark 式链接卡（2026-10-29）：字段合并优先级、有图 / 无图两种卡、骨架和卡片同尺寸。 */
+/** Hark 式链接卡（2026-10-29）：有图 / 无图两种卡、骨架和卡片图区同尺寸。字段合并见 link-fields.test.ts。 */
 
 const GH = "https://github.com/ChisaAlter/ChisaBot/releases/tag/v0.1.13";
 const ghPreview = {
@@ -36,91 +32,6 @@ const ghPreview = {
   imageWidth: 1200,
   imageHeight: 600,
 };
-
-describe("mergeLinkFields：给的字段优先，缺的用预览补", () => {
-  test("模型什么都没给：标题、图、站点名全来自预览", () => {
-    const merged = mergeLinkFields(GH, {}, ghPreview);
-    expect(merged.title).toBe(ghPreview.title);
-    expect(merged.image).toBe(ghPreview.image);
-    expect(merged.imageFallback).toBeNull();
-    expect(merged.site).toBe("GitHub");
-    // 没给 meta：GitHub 发版用版本号当短标签（「GitHub · v0.1.13」）。
-    expect(merged.extra).toBe("v0.1.13");
-    expect(merged.imageWidth).toBe(1200);
-    expect(merged.imageHeight).toBe(600);
-  });
-
-  test("模型给了标题和补充信息：用模型的；缺的图和站点名用预览的", () => {
-    const merged = mergeLinkFields(
-      GH,
-      { title: "ChisaBot v0.1.13", meta: "v0.1.13" },
-      ghPreview,
-    );
-    expect(merged.title).toBe("ChisaBot v0.1.13");
-    expect(merged.image).toBe(ghPreview.image);
-    expect(merged.site).toBe("GitHub");
-    expect(merged.extra).toBe("v0.1.13");
-  });
-
-  test("模型给了 https 图：先用模型的图，失败再换预览图；宽高只跟预览图走", () => {
-    const merged = mergeLinkFields(
-      GH,
-      { image: "https://cdn.example.com/a.png" },
-      ghPreview,
-    );
-    expect(merged.image).toBe("https://cdn.example.com/a.png");
-    expect(merged.imageFallback).toBe(ghPreview.image);
-    expect(merged.imageWidth).toBeNull();
-  });
-
-  test("模型给的图不是 https：不用，退到预览图", () => {
-    expect(
-      mergeLinkFields(GH, { image: "http://x.example.com/a.png" }, ghPreview)
-        .image,
-    ).toBe(ghPreview.image);
-    expect(
-      mergeLinkFields(GH, { image: "javascript:alert(1)" }, ghPreview).image,
-    ).toBe(ghPreview.image);
-  });
-
-  test("模型给的站点名优先；补充信息和站点名一样时不重复", () => {
-    expect(mergeLinkFields(GH, { siteName: "GH" }, ghPreview).site).toBe("GH");
-    expect(mergeLinkFields(GH, { meta: "github" }, ghPreview).extra).toBeNull();
-  });
-
-  test("没有预览：标题退到域名，站点那一格换成短地址", () => {
-    const merged = mergeLinkFields("https://www.example.com/a/b", {}, null);
-    expect(merged.title).toBe("example.com");
-    expect(merged.site).toBe("example.com/a/b");
-    expect(merged.image).toBeNull();
-  });
-
-  test("预览说没有图（imageKind none）就没有图", () => {
-    expect(
-      mergeLinkFields(GH, {}, { ...ghPreview, imageKind: "none" }).image,
-    ).toBeNull();
-  });
-
-  test("标题、图、站点名都给了才不去问预览", () => {
-    expect(
-      needsLinkPreview({ title: "a", image: "https://a.example.com/x.png" }),
-    ).toBe(true);
-    expect(
-      needsLinkPreview({
-        title: "a",
-        image: "https://a.example.com/x.png",
-        siteName: "A",
-      }),
-    ).toBe(false);
-    expect(
-      needsLinkPreview({
-        title: "a",
-        image: "http://a.example.com/x.png",
-        siteName: "A",
-      }),
-    ).toBe(true);
-  });
-});
 
 const realFetch = globalThis.fetch;
 let responses: Record<string, unknown> = {};
@@ -208,8 +119,22 @@ describe("LinkCard", () => {
     expect(card.querySelector(".lc-media > img")?.getAttribute("src")).toBe(
       ghPreview.image,
     );
+    // 没给 meta：GitHub 发版用版本号当短标签。
     expect(card.querySelector(".lc-site")?.textContent).toBe(
       "GitHub · v0.1.13",
+    );
+  });
+
+  test("json-render 的 Link：模型标题只是站点名，改用 og:title，模型的一句话放进「站点 · 补充信息」", async () => {
+    const url = `${GH}?d=1`;
+    responses[url] = { ...ghPreview, url, finalUrl: url };
+    const view = render(
+      <LinkCard description="新版安卓客户端" title=" github " url={url} />,
+    );
+    const card = await view.findByTestId("link-card");
+    expect(card.querySelector(".lc-title")?.textContent).toBe(ghPreview.title);
+    expect(card.querySelector(".lc-site")?.textContent).toBe(
+      "GitHub · 新版安卓客户端",
     );
   });
 
@@ -228,7 +153,7 @@ describe("LinkCard", () => {
     expect(requested).toEqual([]);
   });
 
-  test("骨架和有图的卡同一个尺寸：同样的布局、同样的图片预留比例、标题固定两行高", async () => {
+  test("骨架和有图的卡图区同一尺寸；文字区只有骨架预留高度，真卡跟着内容走", async () => {
     const url = `${GH}?c=1`;
     responses[url] = { ...ghPreview, url, finalUrl: url };
     const view = render(<LinkCard url={url} />);
@@ -249,16 +174,25 @@ describe("LinkCard", () => {
     expect(lone.querySelector(".lc-title")).not.toBeNull();
     expect(lone.querySelector(".lc-meta")).not.toBeNull();
 
-    // 尺寸写在样式里：卡片定宽、标题两行定高、站点行定高；不用 backdrop-filter。
+    // 尺寸写在样式里：卡片定宽；标题 / 站点行的固定高度只在骨架（.lc-skel）里，
+    // 真卡的标题、站点行不定高，免得一行标题下面空一大块。
     const css = readFileSync(
       new URL("../src/components/rich-previews/link-card.css", import.meta.url),
       "utf8",
     );
+    const rule = (selector: string) => {
+      const at = css.indexOf(`\n${selector} {`);
+      expect(at).toBeGreaterThanOrEqual(0);
+      return css.slice(at, css.indexOf("}", at));
+    };
     expect(css).toContain("width: min(280px, 100%)");
-    expect(css).toMatch(
-      /\.lc-card\[data-layout="image"\] \.lc-title \{\s*height: 36px;\s*\}/,
+    expect(rule(".lc-title")).not.toMatch(/(^|\s)height:/);
+    expect(rule(".lc-meta")).not.toMatch(/(^|\s)height:/);
+    expect(css).not.toMatch(
+      /\.lc-card\[data-layout="image"\] \.lc-title \{[^}]*height:/,
     );
-    expect(css).toMatch(/\.lc-meta \{[^}]*height: 17px;/);
+    expect(rule(".lc-skel .lc-title")).toContain("height: 36px;");
+    expect(rule(".lc-skel .lc-meta")).toContain("height: 17px;");
     expect(css).not.toMatch(/backdrop-filter\s*:/);
   });
 });
