@@ -144,23 +144,23 @@ export function createMediaModels(
    * 频道附件（file_id = 'att:<附件 id>'）的描述跟着附件走：附件被删（撤回、清理、频道或用户删除的级联）
    * 描述（含 OCR 文字）一起删。这张表不归 drizzle 管，外键在这里建。幂等，每次 ensure 都跑；
    * attachments 表还不在（先建了描述表）时什么都不做，等写第一条频道附件描述前再补一次。
-   * - 外键 attachment_id → attachments(id) ON DELETE CASCADE（已经有就跳过）。
+   * - 先清孤儿：attachment_id 指向已不存在附件的行（外键建上之前可能留下）直接删。
    * - 回填：加列之前存的 att: 行 attachment_id 为空，按键解析出附件 id 补上——只补为空的行、只补 attachments 里还在的
    *   （比较走文本，不对任意 file_id 做 uuid 转换）；附件已经没了的旧行直接删掉，它的 OCR 文字本该随附件一起删。
+   * - 最后才加外键 attachment_id → attachments(id) ON DELETE CASCADE（已经有就跳过）。
    */
   async function linkAttachments(force = false): Promise<boolean> {
     if (attachmentsLinked && !force) return true;
     await sql.unsafe(`
       DO $$
       BEGIN
-        IF to_regclass('attachments') IS NOT NULL AND NOT EXISTS (
-          SELECT 1 FROM pg_constraint WHERE conname = 'chisabot_image_descriptions_attachment_fk' AND conrelid = 'chisabot_image_descriptions'::regclass
-        ) THEN
-          ALTER TABLE chisabot_image_descriptions
-            ADD CONSTRAINT chisabot_image_descriptions_attachment_fk
-            FOREIGN KEY (attachment_id) REFERENCES attachments(id) ON DELETE CASCADE;
-        END IF;
         IF to_regclass('attachments') IS NOT NULL THEN
+          -- 顺序要紧：先清掉孤儿行、先回填，最后才加外键；有指向不存在附件的行时 ADD CONSTRAINT 会报 23503，开机失败。
+          EXECUTE $q$
+            DELETE FROM chisabot_image_descriptions d
+             WHERE d.attachment_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.id = d.attachment_id)
+          $q$;
           EXECUTE $q$
             UPDATE chisabot_image_descriptions d SET attachment_id = a.id
               FROM attachments a
@@ -171,6 +171,13 @@ export function createMediaModels(
              WHERE d.attachment_id IS NULL AND d.file_id LIKE 'att:%'
                AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.id::text = lower(substring(d.file_id FROM 5)))
           $q$;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'chisabot_image_descriptions_attachment_fk' AND conrelid = 'chisabot_image_descriptions'::regclass
+          ) THEN
+            ALTER TABLE chisabot_image_descriptions
+              ADD CONSTRAINT chisabot_image_descriptions_attachment_fk
+              FOREIGN KEY (attachment_id) REFERENCES attachments(id) ON DELETE CASCADE;
+          END IF;
         END IF;
       EXCEPTION WHEN duplicate_object THEN NULL;
       END $$;

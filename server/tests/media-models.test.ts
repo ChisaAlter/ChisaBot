@@ -367,6 +367,8 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     await legacy(kept);
     await legacy(gone);
     await legacy("not-a-uuid");
+    const nonAttId = `file-${randomUUID()}`;
+    await database.$client.unsafe("INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text) VALUES ($1, 'legacy', 'm', '会话文件')", [nonAttId]);
     const rowsFor = (id: string) =>
       database.$client.unsafe<{ attachment_id: string | null }[]>("SELECT attachment_id FROM chisabot_image_descriptions WHERE file_id = $1", [`att:${id}`]);
 
@@ -375,8 +377,15 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     expect((await rowsFor(kept)).map((row) => row.attachment_id)).toEqual([kept]);
     expect((await rowsFor(gone)).length).toBe(0);
     expect((await rowsFor("not-a-uuid")).length).toBe(0);
+    // 不是 att: 开头的行（会话文件等）一条不动。
+    const nonAtt = await database.$client.unsafe<{ n: number }[]>(
+      "SELECT count(*)::int AS n FROM chisabot_image_descriptions WHERE file_id = $1",
+      [nonAttId],
+    );
+    expect(nonAtt[0]!.n).toBe(1);
     await database.$client.unsafe("DELETE FROM attachments WHERE id = $1", [kept]);
     expect((await rowsFor(kept)).length).toBe(0);
+    await database.$client.unsafe("DELETE FROM chisabot_image_descriptions WHERE file_id = $1", [nonAttId]);
     await database.$client.unsafe("DELETE FROM channels WHERE id = $1", [channel]);
     await database.$client.unsafe("DELETE FROM users WHERE id = $1", [uploader]);
   });
@@ -399,11 +408,18 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
       await scratch.$client.unsafe("CREATE TABLE attachments (id uuid PRIMARY KEY DEFAULT gen_random_uuid())");
       const id = (await scratch.$client.unsafe<{ id: string }[]>("INSERT INTO attachments DEFAULT VALUES RETURNING id"))[0]!.id;
       await scratch.$client.unsafe("INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text) VALUES ($1, 'k', 'm', 'ocr')", [`att:${id}`]);
+      // 孤儿行：attachment_id 指向不存在的附件（外键建上之前留下的）。直接加外键会报 23503，ensure 不能因此抛错。
+      const orphan = randomUUID();
+      await scratch.$client.unsafe("INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text, attachment_id) VALUES ($1, 'k', 'm', 'ocr', $2)", [`att:${orphan}`, orphan]);
+      await scratch.$client.unsafe("INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text) VALUES ('file-keep', 'k', 'm', '会话文件')");
+      await scratchMedia.ensure();
+      expect(await hasFk()).toBe(true);
+      expect((await scratch.$client.unsafe("SELECT 1 FROM chisabot_image_descriptions WHERE file_id = $1", [`att:${orphan}`])).length).toBe(0);
       expect(await scratchMedia.linkAttachments()).toBe(true);
       expect(await hasFk()).toBe(true);
       await scratchMedia.ensure();
       await scratch.$client.unsafe("DELETE FROM attachments WHERE id = $1", [id]);
-      expect((await scratch.$client.unsafe("SELECT 1 FROM chisabot_image_descriptions")).length).toBe(0);
+      expect((await scratch.$client.unsafe<{ file_id: string }[]>("SELECT file_id FROM chisabot_image_descriptions")).map((r) => r.file_id)).toEqual(["file-keep"]);
     } finally {
       await scratch.$client.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
       await scratch.$client.close();
