@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 手机尺寸左栏抽屉改成 Hark 手机端的一层面板：全高、贴左、宽 `min(85vw, 320px)`、只有右侧圆角，去掉外层半透明白板和里面那张卡片；顶部一行是搜索 + 新建 + 关闭（和顶栏按钮同一条中线，PC 小窗放到窗口按钮 / 拖动条下面），中间列表，账号在同一块面板最下面、上面一条分隔线、下面让开安全区；右侧遮罩改成只压暗不模糊（点它关抽屉）；开关只动 transform、200ms，减少动态效果时不做动画。玻璃只有面板自己的 `.glass` 一层（打开时同屏模糊层 3 → 1），性能模式 / 减少透明度下面板为不透明底色。新增 `app/tests/mobile-drawer.test.tsx`；`render-budget.test.ts` 的模糊名单删掉两条旧抽屉规则。未升级版本号。
+
 - 修复：开着 Service Worker 时 Chrome 登录最后落到 `/api/auth/error?error=state_mismatch`（会话其实已写入）。sw.js 不再开 navigation preload，激活时显式关掉（`SW_VERSION` 3）；`/api`、`/auth` 下的导航照旧不拦、只由浏览器发一次。未升级版本号。
   - 一次性过渡窗口：部署后，没刷新过的旧页面直接登录，或者刷新后在新 Service Worker 接管之前就登录，这一次仍由旧的 v2 Service Worker（开着 navigation preload）处理，可能还会出现一次 `state_mismatch`，再登录一次就好。新 SW 接管时间按代码算：页面 `load` 后用 `requestIdleCallback` 注册（超时 5 秒；浏览器不支持时固定 2 秒），再加上下载、安装 sw.js 的时间，`skipWaiting` + `clients.claim` 后立即生效，所以大约是刷新后 5 秒以内。之后不会再出现。
 

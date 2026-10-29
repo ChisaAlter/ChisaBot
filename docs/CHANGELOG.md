@@ -1,5 +1,7 @@
 ## Unreleased
 
+- 手机尺寸左栏抽屉（Hark 手机端）：一层全高面板，宽 `min(85vw, 320px)`、右侧圆角；顶部搜索 + 新建 + 关闭一行，账号在面板底部（分隔线 + 安全区）；遮罩只压暗、点它关闭；只动 transform 的 200ms 开关动画，减少动态效果时关闭；玻璃只剩面板一层，性能模式 / 减少透明度下不透明。
+
 - 修复：开着 Service Worker 时 Chrome 登录最后落到 `/api/auth/error?error=state_mismatch`（会话其实已写入）。sw.js 不再开 navigation preload，激活时显式关掉（`SW_VERSION` 3）；`/api`、`/auth` 下的导航照旧不拦、只由浏览器发一次。未升级版本号。
   - 一次性过渡窗口：部署后，没刷新过的旧页面直接登录，或者刷新后在新 Service Worker 接管之前就登录，这一次仍由旧的 v2 Service Worker（开着 navigation preload）处理，可能还会出现一次 `state_mismatch`，再登录一次就好。新 SW 接管时间按代码算：页面 `load` 后用 `requestIdleCallback` 注册（超时 5 秒；浏览器不支持时固定 2 秒），再加上下载、安装 sw.js 的时间，`skipWaiting` + `clients.claim` 后立即生效，所以大约是刷新后 5 秒以内。之后不会再出现。
 
