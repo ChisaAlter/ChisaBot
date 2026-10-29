@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { ThreadActivity } from "./bot-thread";
 import { restoreQueue } from "./thread-inbox";
+import { readStoredRows } from "./thread-messages";
 import { workerKeys } from "./workers";
 
 /** 合并式接入时，这台已有的消息 / 工具调用的这些回放事件跳过。 */
@@ -245,11 +246,11 @@ export function useConversationSync(
       if (reconcileTimer) clearTimeout(reconcileTimer);
       reconcileTimer = setTimeout(async () => {
         if (!alive || agent.isRunning || connecting) return;
-        const response = await fetch(`/api/copilotkit/threads/${encodeURIComponent(threadId)}/messages`, { credentials: "include" }).catch(() => null);
-        if (!alive || !response?.ok || agent.isRunning || connecting) return;
-        const body = (await response.json().catch(() => null)) as { messages?: { id: string; role: string }[] } | null;
+        // 增量读（readStoredRows）：每轮结束后的这一次核对不再拉整份，只拉变了的尾部；请求仍是原来的 fetch。
+        const rows = await readStoredRows(threadId, undefined, (path) => fetch(path, { credentials: "include" })).catch(() => null);
+        if (!alive || !rows || agent.isRunning || connecting) return;
         const userIds = (list: readonly { id: string; role: string }[]) => list.filter((message) => message.role === "user").map((message) => message.id);
-        const server = userIds(body?.messages ?? []);
+        const server = userIds(rows as readonly { id: string; role: string }[]);
         const local = userIds(agent.messages as never);
         if (!server.length) return;
         if (userOrderDiffers(local, server)) join("rebuild");
