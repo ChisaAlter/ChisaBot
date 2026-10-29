@@ -64,6 +64,8 @@ const GAZE_K = 160;
 const GAZE_C = 18;
 const SETTLE = 0.002;
 const DONE_HOP_S = 1.3;
+/** 选中之后动多久再慢慢停下。 */
+export const SELECTED_CALM_S = 4;
 
 export type MorphPose = {
   /** 身体（轮廓 + 脸）的位移、旋转（度）。 */
@@ -82,6 +84,8 @@ export type MorphTarget = {
   base: () => ShapeGeometry;
   /** 干活时往哪个形状流过去一点（相邻的形状）。 */
   neighbor?: () => ShapeGeometry;
+  /** 头像的像素大小：越小动作越大。 */
+  size?: () => number;
   /** 把一帧画到 DOM（setAttribute）。 */
   paint: (geometry: ShapeGeometry, pose: MorphPose) => void;
 };
@@ -107,6 +111,8 @@ type Entry = {
   gx: Spring;
   gy: Spring;
   doneAt: number | null;
+  /** 什么时候被选中的（-1 = 下一帧定）；选中满 SELECTED_CALM_S 秒后停下。 */
+  selectedAt: number | null;
   nextBlink: number;
   blinkAt: number | null;
   phase: number;
@@ -161,12 +167,17 @@ export function setMorphSchedulerForTests(
   observer?.disconnect();
   observer = null;
   morphStats.frames = 0;
+  blurred = false;
   morphStats.painted = 0;
 }
 
+/** 窗口失去焦点（切到别的应用）时也停。焦点进了页面里的 iframe 不算（document.hasFocus() 仍是 true）。 */
+let blurred = false;
+
 function hidden() {
   return (
-    typeof document !== "undefined" && document.visibilityState === "hidden"
+    blurred ||
+    (typeof document !== "undefined" && document.visibilityState === "hidden")
   );
 }
 
@@ -176,6 +187,17 @@ function installVisibility() {
   document.addEventListener("visibilitychange", () => {
     if (hidden()) stop();
     else ensureLoop();
+  });
+  window.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (document.hasFocus()) return;
+      blurred = true;
+      stop();
+    }, 0);
+  });
+  window.addEventListener("focus", () => {
+    blurred = false;
+    ensureLoop();
   });
 }
 
@@ -267,7 +289,15 @@ function frame(now: number) {
   for (const entry of active) {
     if (!entry.visible) continue;
     const g = entry.goal;
-    step(entry.sel, num(g.selected), WEIGHT_K, WEIGHT_C, dt);
+    // 选中几秒后慢慢停下（不然选中的那一个一直在动）。
+    if (entry.selectedAt === -1) entry.selectedAt = t;
+    const selGoal =
+      g.selected &&
+      entry.selectedAt !== null &&
+      t - entry.selectedAt < SELECTED_CALM_S
+        ? 1
+        : 0;
+    step(entry.sel, selGoal, WEIGHT_K / 3, WEIGHT_C / 1.7, dt);
     step(entry.think, num(g.thinking), WEIGHT_K, WEIGHT_C, dt);
     step(entry.work, num(g.working), WEIGHT_K, WEIGHT_C, dt);
     step(entry.done, num(g.done), WEIGHT_K, WEIGHT_C, dt);
@@ -279,11 +309,19 @@ function frame(now: number) {
     const done = entry.done.x;
     const ph = entry.phase;
 
-    // 眼睛：选中看你（正前方），在想往上飘，干活左右扫 + 看右下的输出。
-    const glance = Math.tanh(4 * Math.sin((t * Math.PI * 2) / 2.6 + ph));
+    // 头像越小动作越大（DESIGN.md §81）：40px 以上原样，往下放大，到 18px 封顶；眼睛放得最多（小图上最看得出）。
+    const size = entry.target.size?.() ?? 40;
+    const small = Math.max(0, Math.min(1, (40 - size) / 22));
+    const gain = 1 + 1.6 * small;
+    const eyeGain = 1 + 2.6 * small;
+    const wave = (period: number, offset = 0) =>
+      Math.sin((t * Math.PI * 2) / period + ph + offset);
+
+    // 眼睛：选中看你（正前方）；在想慢慢往上、左右飘（琢磨）；干活快速左右扫 + 偏向右下的输出。
+    const glance = Math.tanh(5 * wave(1.6));
     const gazeX =
-      work * (3.2 * glance + 0.8) + think * 1.6 * Math.sin(t * 1.3 + ph);
-    const gazeY = work * 1.4 - think * 2.2;
+      eyeGain * (work * (3.5 * glance + 1) + think * 3.5 * wave(3.8, 1));
+    const gazeY = eyeGain * (work * 1.6 - think * 3);
     step(entry.gx, gazeX, GAZE_K, GAZE_C, dt);
     step(entry.gy, gazeY, GAZE_K, GAZE_C, dt);
 
@@ -307,32 +345,39 @@ function frame(now: number) {
       if (s < DONE_HOP_S) {
         const decay = Math.exp(-s / 0.7);
         const hop = Math.abs(Math.sin((Math.PI * s) / 0.45));
-        hopY = -9 * hop * decay;
-        hopSquash = -0.07 * Math.cos((2 * Math.PI * s) / 0.45) * decay;
+        hopY = -9 * gain * hop * decay;
+        hopSquash = -0.07 * gain * Math.cos((2 * Math.PI * s) / 0.45) * decay;
       } else entry.doneAt = null;
     }
 
     const flow =
-      sel * MORPH_INTENSITY.selected +
-      think * MORPH_INTENSITY.thinking +
-      work * MORPH_INTENSITY.working +
-      done * MORPH_INTENSITY.done;
-    // 选中：慢慢摆 + 轻轻上下；干活：慢慢转、一呼一吸地挤压。
-    const breathe = Math.sin((t * Math.PI * 2) / 1.7 + ph);
+      gain *
+      (sel * MORPH_INTENSITY.selected +
+        think * MORPH_INTENSITY.thinking +
+        work * MORPH_INTENSITY.working +
+        done * MORPH_INTENSITY.done);
+    // 选中：每 1.6 s 轻轻蹦一下（落地压扁）+ 慢摆。
+    const bounce = Math.max(0, wave(1.6)) ** 2;
+    // 在想：慢慢歪头（4.2 s 一个来回）、上下漂。干活：快呼吸（0.9 s）、明显地转。
+    const busy = wave(0.9);
     const squash =
       entry.jelly.x +
       hopSquash +
-      work * 0.03 * breathe +
-      sel * 0.012 * Math.sin((t * Math.PI * 2) / 1.2 + ph);
+      gain *
+        (work * 0.045 * busy +
+          sel * 0.05 * (bounce - 0.3) +
+          think * 0.015 * wave(2.6));
     const rot =
-      sel * 3 * Math.sin((t * Math.PI * 2) / 3.6 + ph) +
-      work * 5 * Math.sin((t * Math.PI * 2) / 2.9 + ph * 2);
+      gain *
+      (sel * 4 * wave(3.6) +
+        think * 9 * wave(4.2, 2) +
+        work * 6 * wave(2.2, 1));
     const ty =
       hopY +
-      sel * -1.2 * Math.abs(Math.sin((t * Math.PI * 2) / 2.4 + ph)) +
-      work * 1.2 * breathe;
+      gain *
+        (sel * -3.5 * bounce + think * 1.8 * wave(3.1) + work * 1.5 * busy);
     const morphTo =
-      work * 0.28 * (0.5 - 0.5 * Math.cos((t * Math.PI * 2) / 3.4 + ph));
+      work * 0.3 * (0.5 - 0.5 * Math.cos((t * Math.PI * 2) / 3.4 + ph));
 
     const base = entry.target.base();
     const geometry = morphGeometry(
@@ -348,11 +393,11 @@ function frame(now: number) {
       ...geometry.face,
       x: geometry.face.x + entry.gx.x,
       y: geometry.face.y + entry.gy.x,
-      scale: geometry.face.scale * (1 + 0.06 * sel),
+      scale: geometry.face.scale * (1 + 0.1 * sel),
     };
 
     const goalsOff =
-      !g.selected &&
+      selGoal === 0 &&
       !g.thinking &&
       !g.working &&
       !g.done &&
@@ -415,6 +460,7 @@ export function attachMorph(target: MorphTarget): MorphHandle {
     gx: spring(),
     gy: spring(),
     doneAt: null,
+    selectedAt: null,
     nextBlink: 0,
     blinkAt: null,
     phase: (seed++ * 2.39996) % (Math.PI * 2),
@@ -425,7 +471,11 @@ export function attachMorph(target: MorphTarget): MorphHandle {
   const wake = () => {
     const g = entry.goal;
     const on =
-      g.selected || g.thinking || g.working || g.done || entry.extra.goal > 0;
+      (g.selected && entry.selectedAt !== null) ||
+      g.thinking ||
+      g.working ||
+      g.done ||
+      entry.extra.goal > 0;
     if (on || entry.active) activate(entry);
     ensureLoop();
   };
@@ -446,6 +496,11 @@ export function attachMorph(target: MorphTarget): MorphHandle {
         entry.jelly.v -= 0.8;
       // 跳的起点在下一帧定（-1 = 待定）。
       if (next.done && !before.done) entry.doneAt = -1;
+      entry.selectedAt = next.selected
+        ? before.selected
+          ? entry.selectedAt
+          : -1
+        : null;
       wake();
     },
     setIntensity(intensity) {

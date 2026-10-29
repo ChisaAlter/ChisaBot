@@ -48,6 +48,7 @@ import {
 import { QueuedMessages } from "@/components/chat/queued-messages";
 import { ScheduleFiredRow } from "@/components/chat/schedule-row";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
+import { BotWorkMark } from "@/components/agents/bot-work-mark";
 import { knownWorkSeconds, WorkRow } from "@/components/chat/work-card";
 import { WorkerResultRow } from "@/components/chat/worker-card";
 import { JUMP_TO_TOOL_CALL } from "@/components/computer/activity-jump";
@@ -145,6 +146,8 @@ import { ToolLine } from "./tool-line";
 
 type ChatTranscriptProps = {
   busy?: boolean;
+  /** 这段对话的机器人：在想 / 在干活那一行用它的形象头像代替三个点（DESIGN.md §81）。 */
+  agentId?: string;
   /** 滚动位置记在哪（DESIGN.md §88）：频道 id。 */
   scrollKey?: string;
   /** Comma-separated `/` command names, used to tell a skill chip from a leading slash. */
@@ -318,7 +321,7 @@ function RestoringTranscript() {
  * It borrows the shimmer a running tool line uses, so "working on it" reads the same whether the
  * work is a tool call or a model that has not spoken yet.
  */
-function Thinking() {
+function Thinking({ agentId }: { agentId?: string }) {
   return (
     <div
       className="chat-thinking"
@@ -327,11 +330,7 @@ function Thinking() {
       // is doing. The text says it, so a screen reader is told the same thing the dots imply.
       role="status"
     >
-      <span aria-hidden="true" className="chat-thinking-dots">
-        <i />
-        <i />
-        <i />
-      </span>
+      <BotWorkMark agentId={agentId} />
       <span className="tool-line-running">{"思考中"}</span>
     </div>
   );
@@ -3060,6 +3059,7 @@ export function unansweredTurn(
 }
 
 export function ChatTranscript({
+  agentId,
   busy = false,
   scrollKey,
   commandNames = "",
@@ -3443,7 +3443,7 @@ export function ChatTranscript({
                 // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
                 // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。
                 liveWorking ? null : (
-                  <Thinking />
+                  <Thinking agentId={agentId} />
                 )
               ) : pausedAfterText !== null ? (
                 <PauseDots watch={pausedAfterText} />
@@ -3557,6 +3557,7 @@ export function ChatTranscript({
     return work ? (
       <WorkRow
         calls={work.calls}
+        agentId={agentId}
         live={work.live}
         notes={work.notes}
         turnKey={work.key}

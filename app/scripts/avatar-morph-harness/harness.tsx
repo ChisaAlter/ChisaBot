@@ -23,11 +23,13 @@ w.__morph = { stats: morphStats, costs };
 
 const scene = new URLSearchParams(location.search).get("scene") ?? "perf";
 
-function Sidebar() {
+function Sidebar({ children }: { children?: React.ReactNode }) {
   const [working, setWorking] = useState(false);
+  const [thinking, setThinking] = useState(false);
   const [selected, setSelected] = useState(false);
   useEffect(() => {
     w.__setWorking = setWorking;
+    w.__setThinking = setThinking;
     w.__setSelected = setSelected;
   }, []);
   return (
@@ -40,6 +42,7 @@ function Sidebar() {
         gap: 6,
       }}
     >
+      {children}
       {Array.from({ length: 24 }, (_, i) => (
         <div
           key={i}
@@ -51,7 +54,7 @@ function Sidebar() {
               selected={selected && i === 0}
               shape={AVATAR_SHAPES[i % AVATAR_SHAPES.length]}
               size={28}
-              thinking={false}
+              thinking={thinking && i >= 3 && i < 6}
               working={working && i < 3}
             />
           </span>
@@ -62,10 +65,39 @@ function Sidebar() {
   );
 }
 
+/** 流式回复：每 30 ms 往对话里加一段字（React 状态 → 重渲染），同时 3 个在想 + 3 个在干活 + 对话里 18px 的在想头像。 */
+function Stream() {
+  const [text, setText] = useState<string[]>([]);
+  useEffect(() => {
+    w.__startStream = () => {
+      let n = 0;
+      const id = setInterval(() => {
+        n++;
+        setText((t) => [...t, `token ${n} 这是流式回复里的一小段字，`]);
+      }, 30);
+      w.__stopStream = () => clearInterval(id);
+    };
+  }, []);
+  return (
+    <Sidebar>
+      <div style={{ height: 160, overflow: "auto", font: "13px system-ui" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span className="bot-ava" style={{ width: 18, height: 18 }}>
+            <ShapeAvatar color="violet" shape="cloud" size={18} thinking />
+          </span>
+          思考中
+        </div>
+        <p>{text.join("")}</p>
+      </div>
+    </Sidebar>
+  );
+}
+
 function States() {
+  const px = Number(new URLSearchParams(location.search).get("size") ?? 120);
   const [round, setRound] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setRound((r) => r + 1), 2600);
+    const id = setInterval(() => setRound((r) => r + 1), 3000);
     return () => clearInterval(id);
   }, []);
   const cells: {
@@ -92,7 +124,13 @@ function States() {
     { label: "做完了 done", mood: "done", shape: "bean", color: "green" },
   ];
   return (
-    <div style={{ display: "flex", gap: 36, padding: 32 }}>
+    <div
+      style={{
+        display: "flex",
+        gap: px < 60 ? 28 : 36,
+        padding: px < 60 ? 16 : 32,
+      }}
+    >
       {cells.map((cell) => (
         <div
           key={cell.label}
@@ -103,19 +141,21 @@ function States() {
             gap: 14,
           }}
         >
-          <span className="bot-ava" style={{ width: 120, height: 120 }}>
+          <span className="bot-ava" style={{ width: px, height: px }}>
             <ShapeAvatar
               color={cell.color}
-              key={cell.mood === "done" ? round : 0}
+              key={cell.mood === "done" || cell.mood === "selected" ? round : 0}
               mood={cell.mood === "idle" ? undefined : cell.mood}
               selected={cell.mood === "selected"}
               shape={cell.shape}
-              size={120}
+              size={px}
               thinking={cell.thinking}
               working={cell.mood === "working"}
             />
           </span>
-          <span style={{ font: "14px system-ui" }}>{cell.label}</span>
+          <span style={{ font: px < 60 ? "11px system-ui" : "14px system-ui" }}>
+            {cell.label}
+          </span>
         </div>
       ))}
     </div>
@@ -123,5 +163,11 @@ function States() {
 }
 
 createRoot(document.getElementById("root") as HTMLElement).render(
-  scene === "states" ? <States /> : <Sidebar />,
+  scene === "states" ? (
+    <States />
+  ) : scene === "stream" ? (
+    <Stream />
+  ) : (
+    <Sidebar />
+  ),
 );

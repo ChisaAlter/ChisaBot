@@ -96,32 +96,68 @@ const report = {
 writeFileSync(join(out, "perf.json"), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));
 
-// 2) 录屏：四种状态各一个大头像。
-const context = await browser.newContext({
-  viewport: { width: 720, height: 230 },
-  recordVideo: { dir: out, size: { width: 720, height: 230 } },
+// 1b) 流式回复时的主线程：每 30 ms 一段字 + 3 在想 + 3 在干活 + 对话里 18px 在想。
+const sp = await browser.newPage({ viewport: { width: 320, height: 1300 } });
+await sp.addInitScript(() => {
+  window.__long = [];
+  new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) window.__long.push(entry.duration);
+  }).observe({ type: "longtask", buffered: true });
 });
-const rec = await context.newPage();
-await rec.goto(`${url}?scene=states`);
-const frames = [];
-const shotStart = Date.now();
-for (let i = 0; i < 80; i++) {
-  frames.push(await rec.screenshot({ type: "png" }));
-  await rec.waitForTimeout(40);
-}
-const shotDelay = Math.round((Date.now() - shotStart) / frames.length);
-await rec.waitForTimeout(500);
-const video = await rec.video()?.path();
-await context.close();
-await browser.close();
-console.log("video", video);
+await sp.goto(`${url}?scene=stream`);
+await sp.waitForTimeout(1500);
+const s0 = await stats(sp);
+await sp.evaluate(() => {
+  window.__long.length = 0;
+  window.__morph.costs.length = 0;
+  window.__setWorking(true);
+  window.__setThinking(true);
+  window.__startStream();
+});
+await sp.waitForTimeout(10000);
+const s1 = await stats(sp);
+const streamLong = await sp.evaluate(() => window.__long.slice());
+await sp.evaluate(() => window.__stopStream());
+await sp.close();
+report.streaming = {
+  seconds: 10,
+  loopFrames: s1.frames - s0.frames,
+  longTasksOver50ms: streamLong.filter((d) => d > 50).length,
+  longTaskMaxMs: Math.max(0, ...streamLong),
+  morphCostAvgMs: +avg(s1.costs).toFixed(3),
+  morphCostP95Ms: +pct(s1.costs, 95).toFixed(3),
+  morphCostMaxMs: +Math.max(0, ...s1.costs).toFixed(3),
+};
+writeFileSync(join(out, "perf.json"), JSON.stringify(report, null, 2));
+console.log(JSON.stringify(report.streaming, null, 2));
 
-// GIF：gifenc + pngjs 装在临时目录（GIFENC / PNGJS 指过去），不进仓库依赖。
-try {
-  const { GIFEncoder, quantize, applyPalette } = await import(
-    pathToFileURL(join(process.env.GIFENC, "dist/gifenc.esm.js")).href
-  );
-  const { PNG } = createRequire(import.meta.url)(process.env.PNGJS);
+// 2) 录屏：四种状态，28px（左栏实际大小，验收用）和 100px。
+const { GIFEncoder, quantize, applyPalette } = await import(
+  pathToFileURL(join(process.env.GIFENC, "dist/gifenc.esm.js")).href
+);
+const { PNG } = createRequire(import.meta.url)(process.env.PNGJS);
+for (const [px, vw, vh, dpr] of [
+  [28, 400, 90, 2],
+  [100, 640, 200, 1],
+]) {
+  const context = await browser.newContext({
+    viewport: { width: vw, height: vh },
+    deviceScaleFactor: dpr,
+    recordVideo: { dir: out, size: { width: vw, height: vh } },
+  });
+  const rec = await context.newPage();
+  await rec.goto(`${url}?scene=states&size=${px}`);
+  await rec.waitForTimeout(300);
+  const frames = [];
+  const shotStart = Date.now();
+  for (let i = 0; i < 110; i++) {
+    frames.push(await rec.screenshot({ type: "png" }));
+    await rec.waitForTimeout(30);
+  }
+  const shotDelay = Math.round((Date.now() - shotStart) / frames.length);
+  const video = await rec.video()?.path();
+  await context.close();
+  console.log("video", px, video);
   const gif = GIFEncoder();
   for (const buf of frames) {
     const png = PNG.sync.read(buf);
@@ -137,8 +173,7 @@ try {
     });
   }
   gif.finish();
-  writeFileSync(join(out, "avatar-morph-states.gif"), gif.bytes());
-  console.log("gif ok", shotDelay);
-} catch (error) {
-  console.log("gif skipped:", error.message);
+  writeFileSync(join(out, `avatar-morph-states-${px}px.gif`), gif.bytes());
+  console.log("gif ok", px, shotDelay);
 }
+await browser.close();

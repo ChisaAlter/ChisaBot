@@ -23,6 +23,7 @@ import { attachmentUrl } from "@/lib/channels/attachments";
 import { newId } from "../../lib/new-id";
 
 export function ConversationView({
+  agentId,
   messages,
   busy = false,
   notice,
@@ -57,6 +58,8 @@ export function ConversationView({
   lastSentAt,
   queueToServer,
 }: {
+  /** 这段对话的机器人（在想那一行画它的形象头像）。 */
+  agentId?: string;
   messages: readonly Message[];
   busy?: boolean;
   /** 换了备用模型的轮次（用户消息 id → 说明），那一轮末尾一行小字（DESIGN.md §61）。 */
@@ -495,6 +498,7 @@ export function ConversationView({
          * conversation to change nothing.
          */}
         <ChatTranscript
+          agentId={agentId}
           busy={busy}
           commandNames={(commands ?? [])
             .map((command) => command.name)

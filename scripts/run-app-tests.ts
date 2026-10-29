@@ -40,6 +40,7 @@ const ISOLATED = [
   "app/tests/shape-avatar.test.tsx",
   "app/tests/avatar-morph.test.tsx",
   "app/tests/avatar-morph-reduced.test.tsx",
+  "app/tests/bot-work-mark.test.tsx",
   /*
    * Motion 在**第一次 import 时**就把 `prefers-reduced-motion` 记下来了（它自己的全局状态），之后再改
    * `matchMedia` 也不认。这份用例在 `beforeAll` 里把 matchMedia 换成「开了减少动效」，所以必须自己一个进程；

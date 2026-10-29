@@ -21,10 +21,19 @@
 **性能（headless Chromium 1228，Jun 的 PC，`app/scripts/avatar-morph-harness/`，左栏样 24 个 28px 头像）**：
 - 全部待机 3 s：循环 0 帧、0 次绘制；停止后 2 s：0 帧。
 - 3 个 working + 1 个选中，10 s：601 帧，长任务 0；帧间隔 平均 16.67 ms / p95 16.7 / 最大 16.8 ms，>20 ms 的帧 0；每帧变形耗时 平均 0.37 ms / p95 0.7 / 最大 2.8 ms。
-- 录屏（选中 / 思考 / 工作中 / 做完了）：`docs/images/avatar-morph-states.gif`、`.webm`；数字在 `docs/images/avatar-morph-perf.json`。
+- 录屏（选中 / 思考 / 工作中 / 做完了）：`docs/images/avatar-morph-states-28px.gif`、`-100px.gif`、`avatar-morph-states.webm`；数字在 `docs/images/avatar-morph-perf.json`。
 
 **测试**：`app/tests/avatar-morph.test.tsx`（待机 0 帧、多个头像共用一个循环、全部回弹后停循环、回弹精确回到原形状、隐藏 / 出视口暂停和恢复、性能模式不变形、每帧不重渲染、做完了会跳、干活会转和看、切换是弹簧不是硬切、activityOf）、`avatar-morph-reduced.test.tsx`（减少动态效果，独立进程）、`avatar-picker-shape.test.tsx` 加单选 / 方向键用例。两个新文件进了 run-app-tests 的隔离名单（motion 首次 import 时记 rAF 和减少动态效果）。
 
+**第三轮（评审 16:17）**：
+- 「做完了」看整轮：`useShapeMood` 改成看 `working || thinking` 从 true 落到 false。一轮中间工具跑完回到在想不再提前跳 ^ ^；只在想、不跑工具的一轮结束也会跳。用例：working → thinking → 空，中间不是 done、最后是 done。
+- 小头像动得更明显：`MorphTarget.size()`，40px 以下按大小放大（到 18px 封顶）：流动 / 转动 / 跳 ×(1+1.6s)，眼睛 ×(1+2.6s)，s=(40−size)/22；28px 时约 ×1.87 / ×2.42。思考和选中的动作不一样了：思考 = 4.2 s 一个来回的慢慢歪头（±9°×增益）+ 眼睛往上、左右慢慢飘 + 上下漂；选中 = 每 1.6 s 轻轻蹦一下（落地压扁）+ 慢摆、眼睛看正前方放大，选中 4 s 后慢慢停下（循环退出）。干活：眼睛更快地左右扫（1.6 s）、0.9 s 快呼吸、±6° 转。窗口失去焦点时停（焦点进 iframe 不算），回来继续。
+- 对话里的「思考中」和在跑的工作卡：`ChannelChat → ConversationView → ChatTranscript` 传 `agentId`，三个点换成 18px 的 `BotAvatar`（`components/agents/bot-work-mark.tsx`），只在机器人用形象头像时；其他头像照旧三个点。顶栏没动。
+- 预览表情加「静止 / 思考」（静止 / 选中 / 思考 / 工作中 / 做完了），换一种预览会重新挂一个头像，切走不会冒出做完了。avatar-picker.tsx 的纯格式化改动撤回，只留功能改动。
+- 没做：「等用户批准的工具不算在干活」——待批准状态不在消息里（在 approval-context / 服务端闸门），要把它接进 activityOf 得动审批那套，改动面不小，留给以后。
+- 新测试：BotAvatar + useBotActivity 集成（切换机器人 / 卸载后清理）、小头像动得更多、思考和选中动作不同、选中会停、失焦暂停、BotWorkMark（形象头像 / 其他头像 / 没 agentId）。
+- 性能（同上环境）：待机 3 s 0 帧 0 次绘制；3 干活 + 1 选中 10 s：599 帧、长任务 0、帧间隔 平均 16.69 / p95 16.8 ms、每帧变形 平均 0.34 / p95 0.6 / 最大 1.5 ms；流式回复（每 30 ms 一段字 + 3 在想 + 3 干活 + 对话里 18px 在想）10 s：>50 ms 长任务 0、每帧变形 平均 0.53 / p95 0.8 / 最大 1.7 ms；停止后 2 s 0 帧。
+- 录屏：`docs/images/avatar-morph-states-28px.gif`（左栏实际大小，验收用，2x 像素）、`avatar-morph-states-100px.gif`、`avatar-morph-states.webm`。
 ## 回复风格对齐 Hark（feat/reply-style-hark）
 
 **动机**：同一组 12 条消息分别发给 Hark 和 ChisaBot（v0.1.105，GPT-6-Luna）对比，ChisaBot 的问题集中在“说话方式”：

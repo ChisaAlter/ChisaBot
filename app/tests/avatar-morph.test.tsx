@@ -361,3 +361,161 @@ describe("activityOf", () => {
     ).toBe("thinking");
   });
 });
+
+describe("round 3 (review 16:17)", () => {
+  const moodOf = (view: ReturnType<typeof render>) =>
+    view.container.querySelector("svg")?.getAttribute("data-mood");
+
+  test("done only when the whole turn ends: working → thinking → null", () => {
+    const view = render(
+      <shapeMod.ShapeAvatar color="blue" shape="round" size={28} working />,
+    );
+    expect(moodOf(view)).toBe("working");
+    // 工具跑完、回到在想：不是做完了。
+    view.rerender(
+      <shapeMod.ShapeAvatar color="blue" shape="round" size={28} thinking />,
+    );
+    expect(moodOf(view)).not.toBe("done");
+    expect(
+      view.container.querySelector("svg")?.getAttribute("data-activity"),
+    ).toBe("thinking");
+    // 整轮结束：做完了。
+    view.rerender(
+      <shapeMod.ShapeAvatar color="blue" shape="round" size={28} />,
+    );
+    expect(moodOf(view)).toBe("done");
+  });
+
+  test("a thinking-only turn also ends in done", () => {
+    const view = render(
+      <shapeMod.ShapeAvatar color="blue" shape="round" size={28} thinking />,
+    );
+    expect(moodOf(view)).not.toBe("done");
+    view.rerender(
+      <shapeMod.ShapeAvatar color="blue" shape="round" size={28} />,
+    );
+    expect(moodOf(view)).toBe("done");
+  });
+
+  function sample(
+    size: number | undefined,
+    state: Partial<import("@/lib/agents/avatar-morph").MorphState>,
+    frames = 300,
+  ) {
+    const { target } = fakeTarget();
+    const out: { x: number; y: number; rot: number; ty: number; r: number }[] =
+      [];
+    const handle = morph.attachMorph({
+      ...target,
+      size: size === undefined ? undefined : () => size,
+      paint: (g, pose) =>
+        out.push({
+          x: g.face.x,
+          y: g.face.y,
+          rot: pose.rot,
+          ty: pose.ty,
+          r: Number(shapePath(g).slice(1).split(" ")[0]),
+        }),
+    });
+    handle.setState({ ...morph.IDLE_STATE, ...state });
+    tick(frames);
+    handle.detach();
+    const range = (k: "x" | "y" | "rot" | "ty" | "r") =>
+      Math.max(...out.map((o) => o[k])) - Math.min(...out.map((o) => o[k]));
+    return { out, range };
+  }
+
+  test("small avatars move more: 28px has bigger flow, rotation and eye travel than 48px", () => {
+    const small = sample(28, { thinking: true });
+    const big = sample(48, { thinking: true });
+    expect(small.range("rot")).toBeGreaterThan(big.range("rot") * 1.5);
+    expect(small.range("x")).toBeGreaterThan(big.range("x") * 2);
+    expect(small.range("r")).toBeGreaterThan(big.range("r") * 1.3);
+  });
+
+  test("thinking and selected differ in motion: thinking tilts and looks up, selected bounces", () => {
+    const think = sample(28, { thinking: true });
+    const sel = sample(28, { selected: true }, 200);
+    const eyeUp = (o: { y: number }[]) =>
+      o.slice(60).reduce((a, b) => a + b.y, 0) / (o.length - 60);
+    expect(eyeUp(think.out)).toBeLessThan(eyeUp(sel.out) - 2);
+    expect(think.range("rot")).toBeGreaterThan(sel.range("rot") * 1.5);
+    expect(Math.min(...sel.out.map((o) => o.ty))).toBeLessThan(-3);
+  });
+
+  test("selected calms down after a few seconds and the loop stops while still selected", () => {
+    const { target } = fakeTarget();
+    const handle = morph.attachMorph(target);
+    handle.setState({ ...morph.IDLE_STATE, selected: true });
+    tick(30);
+    expect(morph.morphLoopRunning()).toBe(true);
+    tick(60 * (morph.SELECTED_CALM_S + 4));
+    expect(morph.morphActiveCount()).toBe(0);
+    expect(morph.morphLoopRunning()).toBe(false);
+    handle.detach();
+  });
+
+  test("pauses on window blur and resumes on focus", async () => {
+    const { target } = fakeTarget();
+    const handle = morph.attachMorph(target);
+    handle.setState({ ...morph.IDLE_STATE, working: true });
+    tick(3);
+    const original = document.hasFocus;
+    document.hasFocus = () => false;
+    window.dispatchEvent(new Event("blur"));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(morph.morphLoopRunning()).toBe(false);
+    const frames = morph.morphStats.frames;
+    tick(10);
+    expect(morph.morphStats.frames).toBe(frames);
+    document.hasFocus = original;
+    window.dispatchEvent(new Event("focus"));
+    expect(morph.morphLoopRunning()).toBe(true);
+    handle.detach();
+  });
+
+  test("BotAvatar follows the published live activity, and cleans up on agent switch and unmount", async () => {
+    const { QueryClient, QueryClientProvider } = await import(
+      "@tanstack/react-query"
+    );
+    const { BotAvatar } = await import("@/components/agents/bot-avatar");
+    const { botAvatarsQueryOptions } = await import("@/lib/agents/avatars");
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { staleTime: Number.POSITIVE_INFINITY, retry: false },
+      },
+    });
+    client.setQueryData(botAvatarsQueryOptions().queryKey, {
+      a1: { kind: "shape", shape: "round", color: "blue" },
+      a2: { kind: "shape", shape: "tile", color: "red" },
+    } as never);
+    const ui = (id: string) => (
+      <QueryClientProvider client={client}>
+        <BotAvatar agentId={id} decorative name="x" size={28} />
+      </QueryClientProvider>
+    );
+    const view = render(ui("a1"));
+    const svg = () => view.container.querySelector("svg");
+    expect(svg()?.getAttribute("data-activity")).toBe("idle");
+    let stop: () => void = () => {};
+    act(() => {
+      stop = activity.publishBotActivity("a1", "working");
+    });
+    expect(svg()?.getAttribute("data-activity")).toBe("working");
+    expect(morph.morphActiveCount()).toBe(1);
+    // 换到别的机器人：不再跟着 a1 的状态。
+    view.rerender(ui("a2"));
+    expect(svg()?.getAttribute("data-activity")).not.toBe("working");
+    expect(svg()?.getAttribute("data-activity")).not.toBe("thinking");
+    act(() => stop());
+    view.rerender(ui("a1"));
+    expect(svg()?.getAttribute("data-mood")).not.toBe("working");
+    act(() => {
+      stop = activity.publishBotActivity("a1", "thinking");
+    });
+    expect(svg()?.getAttribute("data-activity")).toBe("thinking");
+    view.unmount();
+    act(() => stop());
+    expect(morph.morphActiveCount()).toBe(0);
+  });
+});

@@ -106,7 +106,7 @@ describe("avatar dialog · 形象", () => {
   test("the mood buttons are a single-choice radiogroup: picking one unlights the others", async () => {
     const ui = open({ kind: "monogram", color: "sky" }, () => {}, true);
     await waitFor(() => ui.getByTestId("ava-mood-working"));
-    const ids = ["selected", "working", "done"] as const;
+    const ids = ["still", "selected", "thinking", "working", "done"] as const;
     const lit = () =>
       ids.filter(
         (id) =>
@@ -114,7 +114,7 @@ describe("avatar dialog · 形象", () => {
           "true",
       );
     expect(ui.getByRole("radiogroup", { name: "预览表情" })).toBeDefined();
-    expect(lit()).toEqual([]);
+    expect(lit()).toEqual(["still"]);
     fireEvent.click(ui.getByTestId("ava-mood-working"));
     expect(lit()).toEqual(["working"]);
     fireEvent.click(ui.getByTestId("ava-mood-done"));
@@ -131,6 +131,14 @@ describe("avatar dialog · 形象", () => {
     fireEvent.keyDown(ui.getByTestId("ava-mood-selected"), {
       key: "ArrowRight",
     });
-    expect(lit()).toEqual(["working"]);
+    expect(lit()).toEqual(["thinking"]);
+    // 「思考」：在想的变形，但不是「工作中」的表情，也不会在切走时冒出「做完了」。
+    expect(
+      ui.container.ownerDocument
+        .querySelector(".bot-ava-preset svg.sa")
+        ?.getAttribute("data-activity"),
+    ).toBe("thinking");
+    fireEvent.click(ui.getByTestId("ava-mood-still"));
+    expect(preview()).toBe("idle");
   });
 });

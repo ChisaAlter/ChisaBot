@@ -8,16 +8,11 @@ import {
   useState,
 } from "react";
 import {
-  AVATAR_SHAPES,
-  type AvatarShape,
-  type ShapeColor,
-} from "../../../../shared/bot-avatars";
-import {
   attachMorph,
+  morphLevelOf as levelOfState,
   type MorphHandle,
   type MorphLevel,
   type MorphPose,
-  morphLevelOf as levelOfState,
 } from "@/lib/agents/avatar-morph";
 import {
   mixShapes,
@@ -27,6 +22,11 @@ import {
   shapePath,
 } from "@/lib/agents/avatar-shapes";
 import { usePerfMode } from "@/lib/perf-mode";
+import {
+  AVATAR_SHAPES,
+  type AvatarShape,
+  type ShapeColor,
+} from "../../../../shared/bot-avatars";
 
 export type ShapeMood = "idle" | "selected" | "working" | "done";
 
@@ -34,14 +34,16 @@ export type ShapeMood = "idle" | "selected" | "working" | "done";
 export const DONE_MOOD_MS = 2400;
 
 /**
- * 表情只有四种，由两个开关决定：机器人在跑（working）> 刚做完（done，从 working 落下来之后停一会）> 被选中（selected）> 待机。
+ * 表情只有四种，由两个开关决定：机器人在跑（active：在干活或在想）> 刚做完（done，整轮结束——active 从 true 落到 false——之后停一会）> 被选中（selected）> 待机。
+ * 一轮中间工具跑完回到「在想」不算做完（active 一直是 true）；只在想、没跑工具的一轮结束也会露出做完。
  * 待机什么动画都没有（左栏一屏几十个头像，不能都在动）；只有在跑的那几个才有持续动画。
  */
 export function useShapeMood(
   selected: boolean,
-  working: boolean,
+  active: boolean,
   doneMs = DONE_MOOD_MS,
 ): ShapeMood {
+  const working = active;
   const [done, setDone] = useState(false);
   const wasWorking = useRef(working);
   useEffect(() => {
@@ -102,12 +104,14 @@ export const ShapeAvatar = memo(function ShapeAvatar({
   /** 只给预览用（头像编辑框的「选中 / 工作中 / 做完了」）：直接定表情。 */
   mood?: ShapeMood;
 }) {
-  const ownMood = useShapeMood(selected, working);
+  // 「做完了」看整轮（干活或在想）结束，不看工具结束（DESIGN.md §81）。
+  const ownMood = useShapeMood(selected, working || thinking);
   const mood = forcedMood ?? ownMood;
+  const isWorking = forcedMood ? forcedMood === "working" : working;
   const state = {
     selected: mood === "selected" || selected,
-    thinking: thinking && mood !== "working",
-    working: mood === "working",
+    thinking: thinking && !isWorking,
+    working: isWorking,
     done: mood === "done",
   };
   const level = levelOfState(state);
@@ -131,6 +135,8 @@ export const ShapeAvatar = memo(function ShapeAvatar({
     gap: first.current.face.gap / 2,
   }).current;
 
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
   const shapeRef = useRef(shape);
   shapeRef.current = shape;
   const paintRef = useRef((geometry: ShapeGeometry, pose?: MorphPose) => {
@@ -187,6 +193,7 @@ export const ShapeAvatar = memo(function ShapeAvatar({
       element,
       base: () => shown.current,
       neighbor: () => SHAPES[neighborOf(shapeRef.current)],
+      size: () => sizeRef.current,
       paint: (geometry, pose) => paintRef.current(geometry, pose),
     });
     morph.current = handle;

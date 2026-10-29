@@ -9936,3 +9936,13 @@ html[data-sky-off] #sky-root #skyph {
     backdrop-filter: none;
   }
 }
+
+/* 在想 / 在干活那一行：机器人的形象头像代替三个点（DESIGN.md §81）。 */
+.chat-thinking-ava {
+  display: inline-flex;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+}

@@ -1,6 +1,7 @@
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
+import { BotWorkMark } from "@/components/agents/bot-work-mark";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
 import { currentWorkStep, summarizeDoneWork, summarizeWork, type WorkCall, type WorkNote, workTimeline } from "@/lib/chat/work-steps";
@@ -62,8 +63,9 @@ export function WorkRow({
   calls,
   turnKey,
   live,
+  agentId,
   notes,
-}: { calls: readonly WorkCall[]; turnKey: string; live: boolean; /** 收进卡片的过程话（§90）。 */ notes?: readonly WorkNote[] }) {
+}: { calls: readonly WorkCall[]; turnKey: string; live: boolean; /** 有形象头像时在跑的那一行用它代替三个点。 */ agentId?: string; /** 收进卡片的过程话（§90）。 */ notes?: readonly WorkNote[] }) {
   if (live) remember(startedAt, turnKey, Date.now());
   // 点开过的干活卡离开再回来 / 刷新后还开着（按这一轮记，DESIGN.md §88）。
   const [open, setOpenState] = useState(() => workUi(turnKey)?.open === true);
@@ -116,11 +118,7 @@ export function WorkRow({
         type="button"
       >
         {live ? (
-          <span aria-hidden="true" className="chat-thinking-dots">
-            <i />
-            <i />
-            <i />
-          </span>
+          <BotWorkMark agentId={agentId} />
         ) : (
           <span aria-hidden="true" className="chat-work-check">
             <IconCheck className="size-3.5" stroke={2.5} />

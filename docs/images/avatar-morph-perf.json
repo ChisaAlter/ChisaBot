@@ -5,18 +5,27 @@
   },
   "working3Selected1": {
     "seconds": 10,
-    "loopFrames": 601,
+    "loopFrames": 599,
     "longTasks": 0,
     "longTaskMaxMs": 0,
-    "frameGapAvgMs": 16.67,
-    "frameGapP95Ms": 16.7,
-    "frameGapMaxMs": 16.8,
-    "framesOver20ms": 0,
-    "morphCostAvgMs": 0.369,
-    "morphCostP95Ms": 0.7,
-    "morphCostMaxMs": 2.8
+    "frameGapAvgMs": 16.69,
+    "frameGapP95Ms": 16.8,
+    "frameGapMaxMs": 33.3,
+    "framesOver20ms": 1,
+    "morphCostAvgMs": 0.341,
+    "morphCostP95Ms": 0.6,
+    "morphCostMaxMs": 1.5
   },
   "afterStop": {
     "loopFramesInLast2s": 0
+  },
+  "streaming": {
+    "seconds": 10,
+    "loopFrames": 601,
+    "longTasksOver50ms": 0,
+    "longTaskMaxMs": 0,
+    "morphCostAvgMs": 0.533,
+    "morphCostP95Ms": 0.8,
+    "morphCostMaxMs": 1.7
   }
 }
