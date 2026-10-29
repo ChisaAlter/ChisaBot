@@ -1,4 +1,4 @@
-## Unreleased
+## 0.1.111
 
 - 新话题首字延迟：发送即显示「思考中」；新话题 `/run` 前不再串行等列表刷新、接入回放、读历史、面板会话（线上实测 `/run` 发出 ~2.2s → ~0.84s）；个人记忆几段并行读；研究类问题预置 research-public-web 技能（普通对话不加字）；提示词：能直接答的不搜、动手前一句 ≤15 字再调工具；服务器每轮一行 `run-timing` 分段计时。未升级版本号。
 
@@ -10,10 +10,15 @@
 
 - 修复：机器人连发多条消息只显示最后一条——`compactTurns` 以最后一个干活的步骤（`isWorkCall`，不含记忆写入）为界，之后的全部文字都是回答气泡（tone 为 final，带链接卡、复制按钮）；测试 `app/tests/consecutive-replies.test.ts`。
 
+- 流式回复时打字不再乱序、不再残留（#408）：Composer 的 `agents` / `commands` 放进 ref，`triggers` 只建一次、`handleChange` 不再随每个流式块换引用，按键之间不会再被旧值写回（原来 4x 降速下边流式边打字会变成 `bcdefghija`、退格留残字）；测试 `app/tests/composer-stream-typing.test.tsx`。只改前端。
+
+- 修复：空对话第一轮从本机发出后断线不补——`useConversationSync` 记下本机在跑时问到的序号（`seenSeq`），没有 `last` 基线时拿它比；打开后第一次问照旧只记基线（#411）。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.111`），PC / Android 外壳未变。
+
+
 ## 0.1.110
 
 - 修复：断线重连后漏掉的消息不补——`useConversationSync` 隔 15 秒以上才问到变化戳时不再只记基线，序号变了就合并式接上；测试 `app/tests/reconnect-backfill.test.tsx`。
-- 修复：空对话第一轮从本机发出后断线不补——`useConversationSync` 记下本机在跑时问到的序号（`seenSeq`），没有 `last` 基线时拿它比；打开后第一次问照旧只记基线。
 
 - 修复：打开对话时历史读两遍——打开时的接入结束后不再做顺序核对（那边刚读过），本机一轮结束后的核对不变；测试 `app/tests/channel-open-single-read.test.tsx`。
 
