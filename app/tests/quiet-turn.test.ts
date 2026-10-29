@@ -58,8 +58,8 @@ describe("简单回合（§93）", () => {
     expect(compact.noAnswerAfter.get("t2")).toEqual({ last: true });
   });
 
-  test("被停掉的一轮也收（另有「已停止」），只有还在跑的照旧画着", () => {
-    expect(compactTurns([...userTurn(), bot("a2", ANSWER)], false, new Set(["u1"])).work.get("t1")?.quiet).toBe(true);
+  test("被停掉的一轮不收（审查模块 7：收起的一行留着，点开看做过的步骤），还在跑的照旧画着", () => {
+    expect(compactTurns([...userTurn(), bot("a2", ANSWER)], false, new Set(["u1"])).work.get("t1")?.quiet).toBe(false);
     expect(compactTurns(userTurn(), true, new Set()).work.get("t1")?.quiet).toBe(false);
   });
 
@@ -116,11 +116,12 @@ describe("简单回合（§93）", () => {
     expect(isQuietWork({ calls, live: false, hasFinal: true })).toBe(true);
     expect(isQuietWork({ calls, live: false, hasFinal: true, confirmed: new Set(["t2"]) })).toBe(true);
     expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: QUIET_MAX_SECONDS + 1 })).toBe(true);
-    // 还在跑：不收（它是进度）。跑完有回答、或被停掉（另有「已停止」）的收起；没有回答的不收（回复显示①）。
+    // 还在跑：不收（它是进度）。跑完有回答的收起；没有回答的不收（回复显示①）。
+    // 被停掉的也不收（审查模块 7）：那一行留着、收起的，点开看做过哪些步、哪些停掉了。
     expect(isQuietWork({ calls, live: true, hasFinal: true })).toBe(false);
     expect(isQuietWork({ calls, live: false, hasFinal: false })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: false, stopped: true })).toBe(true);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, stopped: true })).toBe(true);
+    expect(isQuietWork({ calls, live: false, hasFinal: false, stopped: true })).toBe(false);
+    expect(isQuietWork({ calls, live: false, hasFinal: true, stopped: true })).toBe(false);
     // hideSummary: false 时是原来的 §93：没回答 / 被停掉 / 确认卡 / 用时都还有效。
     expect(isQuietWork({ calls, live: false, hasFinal: false, hideSummary: false })).toBe(false);
     expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, stopped: true })).toBe(false);

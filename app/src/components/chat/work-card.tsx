@@ -194,7 +194,8 @@ export function WorkRow({
   if (live ? !summary : !done) return null;
   const started = startedAt.get(turnKey) ?? now;
   const seconds = live ? Math.max(0, Math.floor((now - started) / 1000)) : doneSeconds;
-  const steps = open ? workTimeline(calls, notes) : [];
+  // 在跑时没返回的步骤是「进行中」（审查模块 7：以前标成「（失败）」）。
+  const steps = open ? workTimeline(calls, notes, live) : [];
   const text = live ? summary!.current : done!.label;
   // 读屏：按钮名字里先说当前动作 / 做了什么（以前只有「展开步骤」，把动作盖掉了），再说点了会怎样。
   const failedText = !live && done?.failed ? `，${done.failed} 步失败` : "";
@@ -262,9 +263,10 @@ export function WorkRow({
           {steps.map((step, index) => (
             <li
               className={
-                step.kind === "note" ? "chat-work-note" : live && index === steps.length - 1 ? "is-current" : undefined
+                step.kind === "note" ? "chat-work-note" : step.state === "running" ? "is-current" : undefined
               }
               data-kind={step.kind}
+              data-state={step.state}
               // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
               key={`${index}:${step.text}`}
             >

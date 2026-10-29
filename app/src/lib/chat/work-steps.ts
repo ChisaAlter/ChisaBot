@@ -13,7 +13,27 @@ export type WorkCall = {
   id?: string;
   /** 结果是拒绝 / 出错 / 被中断（§93：这一轮就不算「简单回合」）。 */
   failed?: boolean;
+  /**
+   * 用户停掉了这一轮，这一步没有返回（审查模块 7）：标「已停止」，不算失败、不计进「N 步失败」。
+   * compactTurns 只在被停掉的一轮里给没有结果 / 服务器补了「This call produced no result」的调用打这个标。
+   */
+  stopped?: boolean;
 };
+
+/**
+ * 一步现在是什么状态（审查模块 7）。以前 `!done` 一律当失败：在跑时点开干活卡，还没返回的步骤都标「（失败）」。
+ *  - 有结果：看结果做没做成（`failed`）；
+ *  - 没有结果、这一轮被停掉：已停止；
+ *  - 没有结果、这一轮还在跑（`live`）：进行中；
+ *  - 没有结果、这一轮已经结束（出错 / 断线收尾）：没做成，算失败（和以前一样）。
+ */
+export type WorkCallState = "done" | "failed" | "running" | "stopped";
+export function workCallState(call: WorkCall, live = false): WorkCallState {
+  if (call.failed) return "failed";
+  if (call.stopped) return "stopped";
+  if (call.done) return "done";
+  return live ? "running" : "failed";
+}
 
 export type WorkSummary = { count: number; done: number; current: string };
 
@@ -40,9 +60,25 @@ export function currentWorkStep(calls: readonly WorkCall[]): { name: string; lab
   return last && summary ? { name: last.name, label: summary.current } : null;
 }
 
+/**
+ * 同时在跑的几步（审查模块 7）：模型一次发了几个调用（并行搜索、同时读几个网页）时，那一行写「正在搜索 2 项」，
+ * 不再只写最后一个——以前两个搜索并行跑了 40 秒，那一行一直是第二个，看着像卡在一个搜索上。点开是每一步。
+ */
+function parallelLabel(running: readonly WorkCall[]): string | null {
+  if (running.length < 2) return null;
+  const names = new Set(running.map((call) => call.name));
+  if (names.size === 1) {
+    if (names.has("web_search")) return `正在搜索 ${running.length} 项`;
+    if (names.has("web_fetch")) return `正在读取 ${running.length} 个网页`;
+    if (names.has("computer_navigate")) return `正在打开 ${running.length} 个网页`;
+  }
+  return `正在同时做 ${running.length} 件事`;
+}
+
 export function summarizeWork(calls: readonly WorkCall[]): WorkSummary | null {
   if (calls.length === 0) return null;
-  let current = "";
+  const running = calls.filter((call) => !PREP.has(call.name) && workCallState(call, true) === "running");
+  let current = parallelLabel(running) ?? "";
   for (let i = calls.length - 1; i >= 0 && !current; i--) {
     const call = calls[i]!;
     if (PREP.has(call.name)) continue;
@@ -59,8 +95,15 @@ export function summarizeWork(calls: readonly WorkCall[]): WorkSummary | null {
   };
 }
 
-/** 不算「干活」的工具：画卡片、维护清单、读技能说明、机器人往来卡片、向用户递交文件/生成图片（结束后的一行里不数它们，也不因 quietRows 整行折叠）。 */
+/**
+ * 不算「干活」的工具：画卡片、维护清单、读技能说明、机器人往来卡片、向用户递交文件/生成图片、交给后台任务
+ * （结束后的一行里不数它们，也不因 quietRows 整行折叠）。
+ *
+ * `delegate_task`（审查模块 7）：它画的是后台任务卡（WorkerCard），任务常常在这一轮结束后还在跑。以前它算干活，
+ * 又常是这一轮第一个干活的调用（干活卡的锚点），这一轮一结束整行跟着收起，停止按钮、进度、步骤都没了，刷新后也不画。
+ */
 const NOT_WORK = new Set([
+  "delegate_task",
   "render_ui",
   "worker_plan",
   "skill_load",
@@ -76,6 +119,8 @@ export type DoneWork = {
   steps: string[];
   /** 失败 / 未完成的步数（FIX-07 / FIX-12）。 */
   failed?: number;
+  /** 用户停掉时还没返回的步数（审查模块 7）：标「已停止」，不算失败。 */
+  stopped?: number;
   /**
    * 这一行只说得出「做了 N 步」，没有任何有信息量的说法（没有搜索 / 网页次数、没有失败）。
    * 2026-10-20 用户：「把做了几步去掉，隐藏」——这种行整行收起，只留回答。
@@ -95,7 +140,8 @@ export function isWorkCall(name: string): boolean {
 export function summarizeDoneWork(calls: readonly WorkCall[]): DoneWork | null {
   const work = calls.filter((call) => !NOT_WORK.has(call.name));
   if (work.length === 0) return null;
-  const failed = work.filter((call) => call.failed || !call.done).length;
+  const failed = work.filter((call) => workCallState(call) === "failed").length;
+  const stopped = work.filter((call) => workCallState(call) === "stopped").length;
   const label = doneLabel(work);
   return {
     label,
@@ -103,18 +149,28 @@ export function summarizeDoneWork(calls: readonly WorkCall[]): DoneWork | null {
     // 只是「做了 N 步」：除了步数什么也没说，收起来（§93，2026-10-20）。
     ...(label === `做了 ${work.length} 步` ? { generic: true } : {}),
     ...(failed ? { failed } : {}),
+    ...(stopped ? { stopped } : {}),
   };
 }
 
-/** 每一步一句（去掉「正在」，相同的连着只记一次，说不出来的不列）。干活卡点开、收成的一行点开都用它。失败步带「（失败）」。 */
-export function workStepLines(calls: readonly WorkCall[]): string[] {
+/**
+ * 一步的那一句：做完的去掉「正在」；失败的带「（失败）」；停掉时没返回的带「（已停止）」；还在跑的保留「正在…」
+ * （审查模块 7：进行中就是进行中，不标失败）。
+ */
+function stepText(line: string, state: WorkCallState): string {
+  if (state === "running") return line;
+  const past = line.replace(/^正在/, "");
+  return state === "failed" ? `${past}（失败）` : state === "stopped" ? `${past}（已停止）` : past;
+}
+
+/** 每一步一句（相同的连着只记一次，说不出来的不列）。干活卡点开、收成的一行点开都用它。`live`：这一轮还在跑。 */
+export function workStepLines(calls: readonly WorkCall[], live = false): string[] {
   const steps: string[] = [];
   for (const call of calls) {
     if (NOT_WORK.has(call.name)) continue;
     const line = describeWorkerStep(call.name, parseArgs(call.arguments));
     if (!line || line.startsWith("正在使用 ")) continue;
-    const past = line.replace(/^正在/, "");
-    const marked = call.failed || !call.done ? `${past}（失败）` : past;
+    const marked = stepText(line, workCallState(call, live));
     if (steps[steps.length - 1] !== marked) steps.push(marked);
   }
   return steps;
@@ -155,19 +211,22 @@ export function isBlankNote(text: string): boolean {
  * 干活卡点开后的一列（§90）：每一步一句（同 `workStepLines`），过程话按它出现的位置插在步骤之间。
  * 没有过程话时与 `workStepLines` 完全一样。
  */
+export type WorkTimelineLine = {
+  kind: "step" | "note";
+  text: string;
+  /** 这一行对应的工具调用（CB-101：点了跳到活动记录）。 */
+  call?: { id?: string; name: string };
+  /** 步骤的状态（过程话没有）。 */
+  state?: WorkCallState;
+};
+
 export function workTimeline(
   calls: readonly WorkCall[],
   notes: readonly WorkNote[] = [],
-): {
-  kind: "step" | "note";
-  text: string /** 这一行对应的工具调用（CB-101：点了跳到活动记录）。 */;
-  call?: { id?: string; name: string };
-}[] {
-  const lines: {
-    kind: "step" | "note";
-    text: string;
-    call?: { id?: string; name: string };
-  }[] = [];
+  /** 这一轮还在跑：没返回的步骤是「进行中」，不是失败（审查模块 7）。 */
+  live = false,
+): WorkTimelineLine[] {
+  const lines: WorkTimelineLine[] = [];
   const pending = [...notes].sort((a, b) => a.at - b.at);
   const flush = (upTo: number) => {
     while (pending.length && pending[0]!.at <= upTo) {
@@ -181,14 +240,15 @@ export function workTimeline(
     if (NOT_WORK.has(call.name)) return;
     const line = describeWorkerStep(call.name, parseArgs(call.arguments));
     if (!line || line.startsWith("正在使用 ")) return;
-    const past = line.replace(/^正在/, "");
-    const marked = call.failed || !call.done ? `${past}（失败）` : past;
+    const state = workCallState(call, live);
+    const marked = stepText(line, state);
     if (lines.at(-1)?.kind === "step" && lastStep === marked) return;
     lastStep = marked;
     lines.push({
       kind: "step",
       text: marked,
       call: { id: call.id, name: call.name },
+      state,
     });
   });
   flush(Number.POSITIVE_INFINITY);
@@ -201,8 +261,15 @@ function doneLabel(work: readonly WorkCall[]): string {
   let pages = 0;
   let failedPages = 0;
   let failedSearches = 0;
+  let stopped = 0;
   for (const call of work) {
-    const bad = Boolean(call.failed) || !call.done;
+    const state = workCallState(call);
+    // 停掉时没返回的：既不算做成，也不算失败（审查模块 7）。
+    if (state === "stopped") {
+      stopped += 1;
+      continue;
+    }
+    const bad = state === "failed";
     if (call.name === "web_search") {
       if (bad) failedSearches += 1;
       else searches += 1;
@@ -211,8 +278,9 @@ function doneLabel(work: readonly WorkCall[]): string {
       else pages += 1;
     }
   }
+  const stoppedText = stopped ? `${stopped} 步已停止` : "";
   const webOnly =
-    searches + pages + failedSearches + failedPages === work.length &&
+    searches + pages + failedSearches + failedPages + stopped === work.length &&
     work.every((c) => c.name === "web_search" || c.name === "web_fetch" || c.name === "computer_navigate");
   if (webOnly) {
     const parts = [
@@ -221,11 +289,20 @@ function doneLabel(work: readonly WorkCall[]): string {
       failedPages || failedSearches
         ? `${failedPages + failedSearches} 步失败`
         : "",
+      stoppedText,
     ].filter(Boolean);
     return parts.join(" · ") || "未读到网页";
   }
-  const failed = work.filter((c) => c.failed || !c.done).length;
-  return failed ? `做了 ${work.length} 步 · ${failed} 步失败` : `做了 ${work.length} 步`;
+  const failed = work.filter((c) => workCallState(c) === "failed").length;
+  return [`做了 ${work.length} 步`, failed ? `${failed} 步失败` : "", stoppedText].filter(Boolean).join(" · ");
+}
+
+/** web_fetch（server/src/web/tools.ts）结果的头几行：「网址：…」「状态：NNN」。只认 4xx / 5xx。 */
+const HTTP_ERROR_HEAD = /^(?:网址：[^\n]*\n)?状态：[45]\d\d\b/;
+
+/** 这一步被打断、没有返回：没有结果，或者服务器补了「This call produced no result」。 */
+export function workCallInterrupted(result: string | undefined): boolean {
+  return result === undefined || result.includes("This call produced no result");
 }
 
 /**
@@ -245,8 +322,10 @@ export function workCallFailed(result: string | undefined): boolean {
       // 不是 JSON 字符串：按原样看。
     }
   }
-  if (text.startsWith("Refused.") || text.includes("This call produced no result")) return true;
+  if (text.startsWith("Refused.") || workCallInterrupted(text)) return true;
   if (/^(error\b|错误|失败)/i.test(text)) return true;
+  // 读网页拿到 4xx / 5xx（审查模块 7）：web_fetch 的结果开头是「网址：…\n状态：500」，以前只要有结果就算读到了。
+  if (HTTP_ERROR_HEAD.test(text)) return true;
   if (text.startsWith("{")) {
     try {
       const parsed = JSON.parse(text) as Record<string, unknown> | null;
@@ -335,10 +414,11 @@ export function isQuietWork({
   hideSummary?: boolean;
 }): boolean {
   if (live) return false;
-  // 用户要的是「只留回答」：有回答时那行步数一律不画（2026-10-20）；被停掉的另有「已停止」。
+  // 用户要的是「只留回答」：有回答时那行步数一律不画（2026-10-20）。
   // 回复显示①（2026-10-29）：没有看得见的回答（工具失败、后面没有字，或只回了「---」）时不收——
   // 收了这一轮就是一片空白；这一行留着（「N 步失败」），下面再挂「这一轮没有回答」和重试。
-  if (hideSummary) return hasFinal || stopped;
+  // 审查模块 7：被停掉的一轮也不收——那一行留着（收起的，点开看做过哪些步、哪些被停掉），以前停下后只剩「已停止」。
+  if (hideSummary) return hasFinal && !stopped;
   if (stopped || !hasFinal) return false;
   let steps = 0;
   for (const call of calls) {

@@ -17,13 +17,36 @@ function hostOf(url: unknown): string {
   }
 }
 
+/**
+ * 读网页那一步写「主机名 + 短路径」（审查模块 7）：以前只写主机名，同一个站读两个网址（httpbin.org/status/500 和
+ * httpbin.org/delay/10）两步一模一样。只是给人看的一行：不带查询串和 #，路径太长时留开头一段和最后一段。
+ */
+function pageOf(url: unknown): string {
+  const host = hostOf(url);
+  if (typeof url !== "string") return host;
+  let path: string;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "workspace.local") return host;
+    path = decodeURI(parsed.pathname).replace(/\/+$/, "");
+  } catch {
+    return host;
+  }
+  if (!path) return host;
+  const full = `${host}${path}`;
+  if (full.length <= 40) return full;
+  const parts = path.split("/").filter(Boolean);
+  const tail = clip(parts.at(-1) ?? "", 20);
+  return parts.length > 1 ? `${host}/…/${tail}` : `${host}/${tail}`;
+}
+
 /** 把工人的一次工具调用翻成卡片上那一行「当前步骤」。返回 null 的不改那一行。 */
 export function describeWorkerStep(name: string, args: Record<string, unknown>): string | null {
   const text = (value: unknown, limit = 24) => (typeof value === "string" && value.trim() ? clip(value.trim(), limit) : "");
   switch (name) {
     case "worker_plan": return null;
     case "web_search": return text(args.query) ? `正在搜索「${text(args.query)}」` : "正在搜索";
-    case "web_fetch": return `正在读取 ${hostOf(args.url)}`;
+    case "web_fetch": return `正在读取 ${pageOf(args.url)}`;
     case "computer_navigate": return `正在打开 ${hostOf(args.url)}`;
     case "computer_snapshot": return "正在查看页面上的按钮和输入框";
     case "computer_read": return "正在阅读页面";

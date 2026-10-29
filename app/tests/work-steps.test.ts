@@ -11,7 +11,7 @@ describe("summarizeWork（DESIGN.md §70）", () => {
       { name: "web_search", arguments: JSON.stringify({ query: "iPhone 17 Pro 国行价格" }), done: true },
       { name: "web_fetch", arguments: JSON.stringify({ url: "https://www.apple.com.cn/newsroom/" }), done: false },
     ]);
-    expect(s).toEqual({ count: 2, done: 1, current: "正在读取 apple.com.cn" });
+    expect(s).toEqual({ count: 2, done: 1, current: "正在读取 apple.com.cn/newsroom" });
   });
   test("参数还没写完（半截 JSON）不报错", () => {
     expect(summarizeWork([{ name: "web_search", arguments: '{"query":"iph', done: false }])?.current).toBe("正在搜索");
@@ -44,7 +44,7 @@ describe("summarizeDoneWork（DESIGN.md §70.2）", () => {
       call("render_ui"),
     ]);
     expect(done?.label).toBe("搜索 1 次 · 看了 2 个网页");
-    expect(done?.steps).toEqual(["搜索「iPhone 17 Pro 价格」", "读取 apple.com.cn", "读取 news.sina.com.cn"]);
+    expect(done?.steps).toEqual(["搜索「iPhone 17 Pro 价格」", "读取 apple.com.cn/iphone", "读取 news.sina.com.cn/x"]);
   });
   test("有别的工具：做了几步；相同的步骤连着只记一次", () => {
     const done = summarizeDoneWork([call("computer_click"), call("computer_click"), call("web_search", { query: "x" })]);
