@@ -31,6 +31,7 @@ import {
   channelKeys,
 } from "@/lib/channels/queries";
 import { queryClient } from "@/query-client";
+import { installFetchBackedXhr } from "./fetch-backed-xhr";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -123,6 +124,7 @@ function deferred() {
 
 beforeAll(() => {
   GlobalRegistrator.register({ url: "http://localhost/" });
+  installFetchBackedXhr();
   originalFetch = globalThis.fetch;
   globalThis.fetch = Object.assign(
     async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
@@ -281,7 +283,7 @@ async function uploaded(view: RenderResult, names: readonly string[]) {
       expect(view.queryByLabelText(`移除 ${name}`)).not.toBeNull();
     }
     const button = (view.queryByLabelText("发送消息") ??
-      view.queryByLabelText("队列消息")) as HTMLButtonElement | null;
+      view.queryByLabelText("排队发送")) as HTMLButtonElement | null;
     expect(button?.disabled).toBe(false);
   });
 }
@@ -340,7 +342,7 @@ test("a drained turn whose send fails keeps the rows behind the message the tran
     view.getByRole("textbox", { name: "消息" }),
     "Use the attached plan",
   );
-  await user.click(view.getByRole("button", { name: "队列消息" }));
+  await user.click(view.getByRole("button", { name: "排队发送" }));
   await waitFor(() =>
     expect(
       view.container.querySelector("[aria-label^='移除队列消息']"),
@@ -497,7 +499,7 @@ test("the next turn carries a restored message, with its file, ahead of the newe
     view.getByRole("textbox", { name: "消息" }),
     "Use the attached plan",
   );
-  await user.click(view.getByRole("button", { name: "队列消息" }));
+  await user.click(view.getByRole("button", { name: "排队发送" }));
 
   // The turn ends, the queue drains, and the drained send fails.
   firstRun.settle(finished(runs[0] as RunAgentInput));

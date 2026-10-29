@@ -1,9 +1,28 @@
-import { IconFile, IconX } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconFile,
+  IconRefresh,
+  IconX,
+} from "@tabler/icons-react";
 import { motion, useReducedMotion } from "motion/react";
+import { useState } from "react";
+
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { Collapse } from "./collapse";
+import {
+  type UploadProgressStore,
+  uploadKey,
+  useUploadPercent,
+} from "./upload-progress";
 
 /**
  * WHAT IS ON THE COMPOSER, DRAWN AS ITS OWN ROW ACROSS THE TOP.
@@ -36,7 +55,18 @@ export type StagedImage = {
   id: string;
   url: string;
   alt?: string;
+  size?: number;
   loading: boolean;
+};
+
+/**
+ * An upload that did not make it. It keeps its tile — the file is still in hand — with the reason
+ * and a retry, instead of vanishing from the strip and leaving the person to pick it again.
+ */
+export type FailedUpload = {
+  id: string;
+  name: string;
+  reason: string;
 };
 
 export type StagedFile = {
@@ -50,18 +80,31 @@ export type StagedFile = {
    * truncated — warned on the tile, never refused.
    */
   mayTruncate?: boolean;
+  /**
+   * The text itself, for a long paste folded into this card (see `LONG_PASTE_CHARS`). Present only
+   * for those: the card's name becomes a button that opens the whole text.
+   */
+  preview?: string;
 };
 
 export function AttachmentStrip({
+  failed = [],
   files,
   images,
+  onDismissFailed,
   onRemove,
+  onRetry,
+  progress,
 }: {
+  failed?: readonly FailedUpload[];
   files: readonly StagedFile[];
   images: readonly StagedImage[];
+  onDismissFailed?: (id: string) => void;
   onRemove: (id: string) => void;
+  onRetry?: (id: string) => void;
+  progress?: UploadProgressStore;
 }) {
-  const occupied = images.length > 0 || files.length > 0;
+  const occupied = images.length > 0 || files.length > 0 || failed.length > 0;
 
   return (
     /*
@@ -99,11 +142,18 @@ export function AttachmentStrip({
                * A name, not an announcement. `role="status"` would make each of these a live
                * region, and a paste of eight images would interrupt eight times to say so.
                */
-              <Skeleton
-                aria-label={`${image.alt ?? "附件"}，正在上传`}
-                className="size-20 rounded-xl"
-                role="img"
-              />
+              <div className="relative size-20">
+                <Skeleton
+                  aria-label={`${image.alt ?? "附件"}，正在上传`}
+                  className="size-20 rounded-xl"
+                  role="img"
+                />
+                <UploadPercent
+                  className="absolute inset-x-1 bottom-1 truncate rounded bg-background/80 px-1 text-center text-[11px] text-muted-foreground tabular-nums"
+                  progressKey={uploadKey(image.alt, image.size)}
+                  store={progress}
+                />
+              </div>
             ) : (
               <img
                 alt={image.alt ?? "附件"}
@@ -134,11 +184,19 @@ export function AttachmentStrip({
              */}
             <IconFile className="size-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
-              <p className="truncate font-medium text-xs" title={file.name}>
-                {file.name}
-              </p>
+              {file.preview === undefined ? (
+                <p className="truncate font-medium text-xs" title={file.name}>
+                  {file.name}
+                </p>
+              ) : (
+                <PastedTextPreview name={file.name} text={file.preview} />
+              )}
               {file.loading ? (
-                <p className="text-muted-foreground text-xs">{"上传中…"}</p>
+                <UploadPercent
+                  className="text-muted-foreground text-xs tabular-nums"
+                  progressKey={uploadKey(file.name, file.size)}
+                  store={progress}
+                />
               ) : file.size === undefined ? null : (
                 /*
                  * ON THE SIZE LINE, NOT UNDER IT, AND THAT IS A LAYOUT CONSTRAINT RATHER THAN A
@@ -167,6 +225,41 @@ export function AttachmentStrip({
               )}
             </div>
             <RemoveButton name={file.name} onRemove={() => onRemove(file.id)} />
+          </Staged>
+        ))}
+        {failed.map((upload) => (
+          <Staged
+            className="flex h-20 w-40 flex-col justify-between rounded-xl border border-destructive border-dashed bg-destructive/5 p-2"
+            key={upload.id}
+          >
+            <div className="flex items-center gap-1 pr-5">
+              <IconAlertTriangle className="size-4 shrink-0 text-destructive" />
+              <p className="truncate font-medium text-xs" title={upload.name}>
+                {upload.name}
+              </p>
+            </div>
+            <div className="flex min-w-0 items-center justify-between gap-1">
+              <p
+                className="min-w-0 truncate text-destructive text-xs"
+                role="alert"
+                title={upload.reason}
+              >
+                {upload.reason}
+              </p>
+              <button
+                aria-label={`重试上传 ${upload.name}`}
+                className="touch-target relative flex shrink-0 items-center gap-0.5 rounded px-1 text-xs text-foreground hover:bg-muted"
+                onClick={() => onRetry?.(upload.id)}
+                type="button"
+              >
+                <IconRefresh className="size-3" />
+                {"重试"}
+              </button>
+            </div>
+            <RemoveButton
+              name={upload.name}
+              onRemove={() => onDismissFailed?.(upload.id)}
+            />
           </Staged>
         ))}
       </ul>
@@ -226,12 +319,71 @@ function RemoveButton({
   return (
     <button
       aria-label={`移除 ${name}`}
-      className="absolute top-1 right-1 grid size-5 place-items-center rounded-full border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
+      // `touch-target` widens the hit area to 44×44 with a pseudo-element (styles.css) while the
+      // drawn circle stays 20px: a finger could not reliably land on the visible dot.
+      className="touch-target absolute top-1 right-1 grid size-5 place-items-center rounded-full border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
       onClick={onRemove}
       type="button"
     >
       <IconX className="size-3" />
     </button>
+  );
+}
+
+/**
+ * A long paste, folded into a card, opened back up. The name is the button; the dialog shows the
+ * whole text exactly as it will be sent.
+ */
+function PastedTextPreview({ name, text }: { name: string; text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        aria-label={`预览 ${name}`}
+        className="block w-full truncate text-left font-medium text-xs underline-offset-2 hover:underline"
+        onClick={() => setOpen(true)}
+        title={`${name}（点开预览）`}
+        type="button"
+      >
+        {name}
+      </button>
+      <Dialog onOpenChange={setOpen} open={open}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{name}</DialogTitle>
+          </DialogHeader>
+          <DialogBody>
+            <pre
+              className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words text-sm"
+              data-testid="pasted-text-preview"
+            >
+              {text}
+            </pre>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/**
+ * 「上传中 63%」 once the first progress event has arrived, 「上传中…」 before it. Subscribes to the
+ * progress store on its own, so a tick re-renders this line and nothing else.
+ */
+function UploadPercent({
+  className,
+  progressKey,
+  store,
+}: {
+  className: string;
+  progressKey: string;
+  store: UploadProgressStore | undefined;
+}) {
+  const percent = useUploadPercent(store, progressKey);
+  return (
+    <p className={className} data-testid="upload-percent">
+      {percent === undefined ? "上传中…" : `上传中 ${percent}%`}
+    </p>
   );
 }
 

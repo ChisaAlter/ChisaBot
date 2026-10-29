@@ -55,12 +55,18 @@ import { shouldStopOnEscape } from "@/lib/copilot/held-supplements";
 import { newId } from "@/lib/new-id";
 import { cn } from "@/lib/utils";
 import { Button } from "../../ui/button";
-import { AttachmentStrip } from "./attachment-strip";
+import { AttachmentStrip, type FailedUpload } from "./attachment-strip";
 import {
   attachmentsConfigFor,
   FILE_PICKER_ACCEPT,
   stagedRowId,
 } from "./attachments";
+import {
+  createUploadProgressStore,
+  uploadKey,
+  useOverallUploadPercent,
+} from "./upload-progress";
+import { useCoarsePointer } from "@/lib/use-coarse-pointer";
 import { DictationButton, DictationSurface } from "./dictation-controls";
 import { appendDictation } from "./dictation-draft";
 import {
@@ -71,7 +77,12 @@ import {
   enforceSingleAgent,
   toDraft,
 } from "./draft";
-import { screenPickedFiles } from "./picked-files";
+import {
+  LONG_PASTE_CHARS,
+  pastedTextFile,
+  screenPickedFiles,
+} from "./picked-files";
+import { MAX_FILE_BYTES } from "@/lib/channels/attachments";
 import { type RejectedFile, RejectedFiles } from "./rejected-files";
 import { PLACEHOLDER_COMMANDS } from "./sources";
 import { type AgentOption, buildTriggers } from "./triggers";
@@ -487,6 +498,17 @@ export function Composer({
    * what makes this composer the only thing in the app that decides what a paste means.
    */
   const containerRef = useRef<HTMLDivElement>(null);
+  /**
+   * ON A TOUCH SCREEN, ENTER IS A NEWLINE (audit M4-1). A soft keyboard has no Shift, so with Enter
+   * bound to send there was no way to type a second line; Send is the button. The keyboard's Enter
+   * key is labelled to match through `enterkeyhint`, which PromptArea does not forward, so it is
+   * set on the editable element directly.
+   */
+  const coarsePointer = useCoarsePointer();
+  useEffect(() => {
+    const editor = containerRef.current?.querySelector("[contenteditable]");
+    editor?.setAttribute("enterkeyhint", coarsePointer ? "enter" : "send");
+  }, [coarsePointer, compact]);
   /** A send has completed and the caret is owed back, as soon as the editor will take it. */
   const wantsFocus = useRef(false);
   const sendDictatedDraft = useRef(false);
@@ -508,6 +530,12 @@ export function Composer({
   const [rejected, setRejected] = useState<RejectedFile[]>([]);
 
   const dismissRejections = useCallback(() => setRejected([]), []);
+  /** How far each upload has got — outside React state, see `upload-progress.ts`. */
+  const [progressStore] = useState(createUploadProgressStore);
+  /** Uploads that failed on the way to the server, kept as tiles with a retry (audit M4-3). */
+  const [failedUploads, setFailedUploads] = useState<
+    (Omit<FailedUpload, "name"> & { file: File })[]
+  >([]);
 
   /**
    * `newId()` rather than `crypto.randomUUID()`, for the reason `uploadGroup` below sets out at
@@ -520,6 +548,21 @@ export function Composer({
    * would never arrive. Every upload refusal in the app comes through here.
    */
   const recordRejection = useCallback((failure: UploadFailure) => {
+    progressStore.clear(uploadKey(failure.file.name, failure.file.size));
+    /*
+     * A FAILED UPLOAD KEEPS ITS TILE (audit M4-3). The SDK has already taken the placeholder off the
+     * strip, but the `File` is still in hand here, so it goes back on as a failed tile with the
+     * reason and a retry rather than vanishing and leaving the person to find the file again.
+     * Refusals of the file itself (type, size) are still news about a file that will never go, so
+     * they stay in the refusal list.
+     */
+    if (failure.reason === "upload-failed") {
+      setFailedUploads((current) => [
+        ...current,
+        { id: newId(), file: failure.file, reason: failure.message },
+      ]);
+      return;
+    }
     setRejected((current) => [
       ...current,
       {
@@ -598,9 +641,14 @@ export function Composer({
             uploadGroup,
             recordRejection,
             recordUpload,
+            (file, fraction) =>
+              progressStore.set(
+                uploadKey(file.name, file.size),
+                fraction * 100,
+              ),
           )
         : undefined,
-    [channelId, uploadGroup, recordRejection, recordUpload],
+    [channelId, uploadGroup, recordRejection, recordUpload, progressStore],
   );
 
   /**
@@ -639,6 +687,7 @@ export function Composer({
    */
   const {
     attachments,
+    dragOver,
     enabled: attachmentsEnabled,
     fileInputRef,
     processFiles,
@@ -857,6 +906,9 @@ export function Composer({
       // a number that already includes these.
       stagedCount.current += screened.accepted.length;
       staging.current += screened.accepted.length;
+      for (const file of screened.accepted) {
+        progressStore.clear(uploadKey(file.name, file.size));
+      }
       // 离开对话时按文件名 + 大小找回还在输入框上的那几个文件（§88）。
       if (draftKey) pickedFiles.current.push(...screened.accepted);
       try {
@@ -865,7 +917,60 @@ export function Composer({
         staging.current -= screened.accepted.length;
       }
     },
-    [disabled, processFiles, queuedAttachmentCount, draftKey],
+    [disabled, processFiles, queuedAttachmentCount, draftKey, progressStore],
+  );
+
+  /** Put a failed upload back through the same door it came in by — screening, cap and all. */
+  const retryUpload = useCallback(
+    (id: string) => {
+      const failed = failedUploads.find((upload) => upload.id === id);
+      if (!failed) return;
+      setFailedUploads((current) =>
+        current.filter((upload) => upload.id !== id),
+      );
+      void stageFiles([failed.file]);
+    },
+    [failedUploads, stageFiles],
+  );
+  const dismissFailedUpload = useCallback(
+    (id: string) =>
+      setFailedUploads((current) =>
+        current.filter((upload) => upload.id !== id),
+      ),
+    [],
+  );
+  const failedTiles = useMemo(
+    () =>
+      failedUploads.map(({ id, file, reason }) => ({
+        id,
+        name: file.name,
+        reason,
+      })),
+    [failedUploads],
+  );
+
+  /**
+   * LONG PASTES FOLD INTO A CARD (audit M4-11, like Hark). A paste over `LONG_PASTE_CHARS` becomes a
+   * text attachment instead of thousands of characters in the editor: it still goes with the message
+   * (the model reads text attachments), and the card opens to show the whole text. Only when this
+   * composer can attach and the text fits the text-attachment ceiling — otherwise it is pasted
+   * inline as before, rather than refused and lost.
+   */
+  const pastedTexts = useRef(new Map<string, string>());
+  const pasteCount = useRef(0);
+  const handleRawPaste = useCallback(
+    (event: { clipboardData: DataTransfer | null; preventDefault(): void }) => {
+      if (!canAttach) return;
+      const pasted = event.clipboardData?.getData("text/plain") ?? "";
+      if (pasted.length <= LONG_PASTE_CHARS) return;
+      if (new Blob([pasted]).size > MAX_FILE_BYTES) return;
+      event.preventDefault();
+      pasteCount.current += 1;
+      const file = pastedTextFile(pasted, pasteCount.current);
+      pastedTexts.current.set(uploadKey(file.name, file.size), pasted);
+      void stageFiles([file]);
+    },
+    [canAttach, stageFiles],
   );
 
   /**
@@ -1025,6 +1130,20 @@ export function Composer({
   );
 
   /**
+   * The hook's leave handler, minus the leaves that are not leaves. `dragleave` fires every time the
+   * pointer crosses into a CHILD of the drop zone, so the highlight drawn from `dragOver` would
+   * flicker off and back on as a file moved over the editor and the toolbar.
+   */
+  const handleDropZoneLeave = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      const next = event.relatedTarget;
+      if (next instanceof Node && event.currentTarget.contains(next)) return;
+      handleDragLeave(event);
+    },
+    [handleDragLeave],
+  );
+
+  /**
    * THE DROP THIS COMPOSER CANNOT ACCEPT, CAUGHT ANYWAY — BECAUSE "NOT A DROP TARGET" IS NOT THE
    * SAME THING AS "IGNORES DROPS", AND THE DIFFERENCE IS THE WHOLE APP.
    *
@@ -1172,6 +1291,7 @@ export function Composer({
           id: attachment.id,
           url: attachment.source.value,
           alt: attachment.filename,
+          size: attachment.size,
           loading: attachment.status === "uploading",
         })),
     [staged],
@@ -1201,6 +1321,9 @@ export function Composer({
           name: attachment.filename ?? "附件",
           size: attachment.size,
           loading: attachment.status === "uploading",
+          preview: pastedTexts.current.get(
+            uploadKey(attachment.filename, attachment.size),
+          ),
           /*
            * Warned, never refused. The server accepts the whole file and the
            * model reads its first MAX_EXTRACTED_CHARACTERS; mayBeTruncatedForModel
@@ -1619,51 +1742,83 @@ export function Composer({
    * the two it is about to do. "Send" on a button that will not send for another minute is a small
    * lie told to exactly the people who cannot see the queue it lands in.
    */
-  const sendLabel = parking ? "队列消息" : "发送消息";
+  const sendLabel = parking ? "排队发送" : "发送消息";
+  /**
+   * WHY SEND IS GREY WHILE A FILE IS UPLOADING, said next to it (audit M4-2). The button used to go
+   * grey for twenty seconds on a slow link with nothing on screen explaining it.
+   */
+  const uploadingNow = useMemo(
+    () =>
+      draft.attachments
+        .filter((attachment) => attachment.status === "uploading")
+        .map((attachment) => ({
+          key: uploadKey(attachment.filename, attachment.size),
+          size: attachment.size ?? 0,
+        })),
+    [draft.attachments],
+  );
+  const uploadHint =
+    uploadingNow.length > 0 ? (
+      <UploadingHint progress={progressStore} uploading={uploadingNow} />
+    ) : null;
   const actionClassName = "glass-composer-send";
   // CB-104: Esc in a focused composer stops the running turn (a menu that handles Esc prevents it).
   const handleEscapeStop = (event: KeyboardEvent<HTMLFormElement>) => {
     const running = Boolean(onStop) && Boolean(stoppable ?? pending);
-    if (!shouldStopOnEscape({ key: event.key, defaultPrevented: event.defaultPrevented, isComposing: event.nativeEvent.isComposing, keyCode: event.nativeEvent.keyCode, running, stopping })) return;
+    if (
+      !shouldStopOnEscape({
+        key: event.key,
+        defaultPrevented: event.defaultPrevented,
+        isComposing: event.nativeEvent.isComposing,
+        keyCode: event.nativeEvent.keyCode,
+        running,
+        stopping,
+      })
+    )
+      return;
     event.preventDefault();
     onStop?.();
   };
-  const primaryAction = stopFailed && onRetryStop && !parking ? (
-    <StopFailedButton className={actionClassName} onRetry={onRetryStop} />
-  ) : canStop && stopping ? (
-    <Button
-      aria-label={"停止中"}
-      className={cn(actionClassName, "w-auto whitespace-nowrap px-2.5 text-xs")}
-      data-testid="composer-stopping"
-      disabled
-      size="sm"
-      type="button"
-    >
-      停止中…
-    </Button>
-  ) : canStop ? (
-    <Button
-      aria-label={"停止机器人"}
-      className={actionClassName}
-      data-testid="composer-stop"
-      onClick={onStop}
-      size="icon"
-      type="button"
-    >
-      <IconPlayerStopFilled className="size-3" />
-    </Button>
-  ) : (
-    <Button
-      aria-label={sendLabel}
-      className={actionClassName}
-      data-testid="composer-send"
-      disabled={!canSend}
-      size="icon"
-      type="submit"
-    >
-      <IconArrowUp className="size-[18px]" stroke={2.25} />
-    </Button>
-  );
+  const primaryAction =
+    stopFailed && onRetryStop && !parking ? (
+      <StopFailedButton className={actionClassName} onRetry={onRetryStop} />
+    ) : canStop && stopping ? (
+      <Button
+        aria-label={"停止中"}
+        className={cn(
+          actionClassName,
+          "w-auto whitespace-nowrap px-2.5 text-xs",
+        )}
+        data-testid="composer-stopping"
+        disabled
+        size="sm"
+        type="button"
+      >
+        停止中…
+      </Button>
+    ) : canStop ? (
+      <Button
+        aria-label={"停止机器人"}
+        className={actionClassName}
+        data-testid="composer-stop"
+        onClick={onStop}
+        size="icon"
+        type="button"
+      >
+        <IconPlayerStopFilled className="size-3" />
+      </Button>
+    ) : (
+      <Button
+        aria-label={sendLabel}
+        className={actionClassName}
+        data-testid="composer-send"
+        disabled={!canSend}
+        size="icon"
+        type="submit"
+      >
+        <IconArrowUp className="size-[18px]" stroke={2.25} />
+      </Button>
+    );
 
   /**
    * EVERY COMPOSER IS A DROP TARGET. What changes with `canAttach` is what happens to the file,
@@ -1689,7 +1844,7 @@ export function Composer({
    */
   const dropZone = canAttach
     ? {
-        onDragLeave: handleDragLeave,
+        onDragLeave: handleDropZoneLeave,
         onDragOver: handleDragOver,
         onDrop: handleDrop,
       }
@@ -1746,7 +1901,12 @@ export function Composer({
 
   const replyQuoteBar = replyQuote ? (
     <div className="composer-reply-quote" data-testid="composer-reply-quote">
-      <svg aria-hidden="true" className="composer-reply-elbow" fill="none" viewBox="0 0 22 18">
+      <svg
+        aria-hidden="true"
+        className="composer-reply-elbow"
+        fill="none"
+        viewBox="0 0 22 18"
+      >
         <path
           d="M5 17V9.5C5 6.462 7.462 4 10.5 4H20"
           stroke="currentColor"
@@ -1790,6 +1950,7 @@ export function Composer({
         {tooManyStagedNotice}
         <form
           aria-busy={isBusy}
+          data-drag-over={canAttach && dragOver ? "true" : undefined}
           onKeyDown={handleEscapeStop}
           className={cn(
             /*
@@ -1804,9 +1965,13 @@ export function Composer({
           <DictationSurface dictation={dictation} canSend={canSendRecording}>
             {filePicker}
             <AttachmentStrip
+              failed={failedTiles}
               files={files}
               images={images}
+              onDismissFailed={dismissFailedUpload}
               onRemove={discardAttachment}
+              onRetry={retryUpload}
+              progress={progressStore}
             />
             {replyQuoteBar}
             {/*
@@ -1825,7 +1990,9 @@ export function Composer({
               minHeight={COMPACT_MIN_HEIGHT_PX * 2}
               onChange={handleChange}
               onImagePaste={canAttach ? stagePastedImage : undefined}
+              onRawPaste={handleRawPaste}
               onSubmit={submitDraft}
+              submitOnEnter={!coarsePointer}
               placeholder={composing ? "" : "输入消息…"}
               ref={promptAreaRef}
               triggers={triggers}
@@ -1884,6 +2051,7 @@ export function Composer({
                 ) : null}
                 {contextControl}
                 <DictationButton dictation={dictation} disabled={disabled} />
+                {uploadHint}
                 {primaryAction}
               </div>
             </div>
@@ -1905,6 +2073,7 @@ export function Composer({
       {tooManyStagedNotice}
       <form
         aria-busy={isBusy}
+        data-drag-over={canAttach && dragOver ? "true" : undefined}
         onKeyDown={handleEscapeStop}
         className="glass-composer glass-composer-hero"
         onSubmit={handleFormSubmit}
@@ -1914,9 +2083,13 @@ export function Composer({
 
           <div className="grow pb-2">
             <AttachmentStrip
+              failed={failedTiles}
               files={files}
               images={images}
+              onDismissFailed={dismissFailedUpload}
               onRemove={discardAttachment}
+              onRetry={retryUpload}
+              progress={progressStore}
             />
             {replyQuoteBar}
             <PromptArea
@@ -1930,7 +2103,9 @@ export function Composer({
               maxHeight={MAX_HEIGHT_PX}
               onChange={handleChange}
               onImagePaste={canAttach ? stagePastedImage : undefined}
+              onRawPaste={handleRawPaste}
               onSubmit={submitDraft}
+              submitOnEnter={!coarsePointer}
               placeholder={
                 composing ? "" : "有什么想让 BOT 帮你做的？用 @ 指定 BOT"
               }
@@ -1978,6 +2153,7 @@ export function Composer({
 
             <div className="flex shrink-0 items-center gap-1.5">
               <DictationButton dictation={dictation} disabled={disabled} />
+              {uploadHint}
               {primaryAction}
             </div>
           </div>
@@ -2051,7 +2227,13 @@ export function isPromptSegment(value: unknown): value is Segment {
 }
 
 /** CB-104: shown at once when the stop request fails (network, non-2xx, 5xx); pressing it asks again. */
-export function StopFailedButton({ className, onRetry }: { className?: string; onRetry: () => void }) {
+export function StopFailedButton({
+  className,
+  onRetry,
+}: {
+  className?: string;
+  onRetry: () => void;
+}) {
   return (
     <Button
       aria-label={"停止失败，重试"}
@@ -2063,5 +2245,25 @@ export function StopFailedButton({ className, onRetry }: { className?: string; o
     >
       {"停止失败，重试"}
     </Button>
+  );
+}
+
+/** 「上传中 63%」 beside a Send that is grey because of it. Subscribes to progress on its own. */
+function UploadingHint({
+  progress,
+  uploading,
+}: {
+  progress: ReturnType<typeof createUploadProgressStore>;
+  uploading: readonly { key: string; size: number }[];
+}) {
+  const percent = useOverallUploadPercent(progress, uploading);
+  return (
+    <span
+      className="whitespace-nowrap text-muted-foreground text-xs tabular-nums"
+      data-testid="composer-upload-hint"
+      role="status"
+    >
+      {percent === undefined ? "上传中…" : `上传中 ${percent}%`}
+    </span>
   );
 }

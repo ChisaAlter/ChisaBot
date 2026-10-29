@@ -37,7 +37,7 @@ type UploadedAttachment = {
 /**
  * The SDK's `onUpload`, scoped to one channel.
  *
- * `fetch` directly rather than `client()` from `@/lib/client`: `client()` JSON-stringifies its
+ * A raw request (XHR, see `postWithProgress`) rather than `client()` from `@/lib/client`: `client()` JSON-stringifies its
  * body and sets a JSON content type, neither of which can carry a multipart upload.
  *
  * Supplying this is what keeps the bytes out of browser state: with `onUpload` set, the SDK never
@@ -49,6 +49,7 @@ type UploadedAttachment = {
 export function uploadToChannel(
   channelId: string,
   uploadGroup: string,
+  onProgress?: (file: File, fraction: number) => void,
 ): (file: File) => Promise<AttachmentUploadResult> {
   return async (file: File): Promise<AttachmentUploadResult> => {
     const formData = new FormData();
@@ -65,11 +66,13 @@ export function uploadToChannel(
      */
     formData.append("uploadGroup", uploadGroup);
 
-    const response = await fetch(`/api/channels/${channelId}/attachments`, {
-      method: "POST",
-      credentials: "include",
-      body: formData,
-    });
+    // XHR rather than `fetch`: only XHR reports upload progress, and a 2MB picture on a slow link
+    // used to sit as a grey block for twenty seconds with nothing saying how far along it was.
+    const response = await postWithProgress(
+      `/api/channels/${channelId}/attachments`,
+      formData,
+      (fraction) => onProgress?.(file, fraction),
+    );
 
     /*
      * READ ONCE, FOR EITHER OUTCOME, AND NEVER TRUSTED.
@@ -82,10 +85,10 @@ export function uploadToChannel(
      * `/api/attachments/undefined`, Send unlocked, and the message went out carrying a link to no
      * attachment. Both halves of one response are held to the same standard here.
      */
-    const body: unknown = await response.json().catch(() => undefined);
-    // Named after the file rather than left empty, for every way this can go wrong. It is the only
-    // sentence anybody gets: the composer keeps the string verbatim and shows it as the reason.
-    const couldNotUpload = new Error(`无法上传 "${file.name}"。`);
+    const body: unknown = parseJson(response.text);
+    // NOT named after the file: the failed tile and the refusal line both already print the name
+    // beside this sentence, and repeating it read as 「a.png: 无法上传 "a.png"。」.
+    const couldNotUpload = new Error(UPLOAD_FAILED_MESSAGE);
 
     if (!response.ok) {
       // The server phrases refusals in the product's voice — naming the mime type or the limit
@@ -104,6 +107,65 @@ export function uploadToChannel(
       metadata: { attachmentId: body.id, filename: body.name, ...readImageDims(body.width, body.height) },
     };
   };
+}
+
+/** What an upload that failed for no reason the server put into words says. */
+export const UPLOAD_FAILED_MESSAGE = "上传失败，请重试。";
+/** The request never reached the server: the link is down or the browser is offline. */
+export const UPLOAD_OFFLINE_MESSAGE =
+  "网络已断开，没能上传。联网后点「重试」。";
+export const UPLOAD_NETWORK_MESSAGE = "网络出错，没能上传。请点「重试」。";
+
+type UploadResponse = { ok: boolean; status: number; text: string };
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * POST a multipart body, reporting how much of it has gone out.
+ *
+ * A network failure (offline, connection reset) is turned into a sentence here, because the
+ * browser's own — `Failed to fetch`, or nothing at all from XHR — is English, or empty, and is the
+ * only thing the strip would otherwise have to show.
+ */
+function postWithProgress(
+  url: string,
+  body: FormData,
+  onProgress: (fraction: number) => void,
+): Promise<UploadResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress(Math.min(1, event.loaded / event.total));
+      }
+    };
+    xhr.onload = () =>
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        text: typeof xhr.responseText === "string" ? xhr.responseText : "",
+      });
+    const networkFailure = () =>
+      reject(
+        new Error(
+          typeof navigator !== "undefined" && navigator.onLine === false
+            ? UPLOAD_OFFLINE_MESSAGE
+            : UPLOAD_NETWORK_MESSAGE,
+        ),
+      );
+    xhr.onerror = networkFailure;
+    xhr.ontimeout = networkFailure;
+    xhr.onabort = networkFailure;
+    xhr.send(body);
+  });
 }
 
 /**
@@ -235,8 +297,9 @@ export function attachmentsConfigFor(
    * about. Reporting the row and reconciling afterwards needs no such correlation.
    */
   onUploaded: (attachmentId: string) => void,
+  onProgress?: (file: File, fraction: number) => void,
 ): AttachmentsConfig {
-  const upload = uploadToChannel(channelId, uploadGroup);
+  const upload = uploadToChannel(channelId, uploadGroup, onProgress);
   return {
     enabled: true,
     accept: "*/*",

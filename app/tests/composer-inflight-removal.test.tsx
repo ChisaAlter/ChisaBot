@@ -9,6 +9,7 @@ import {
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { Composer } from "@/components/channels/composer/composer";
+import { installFetchBackedXhr } from "./fetch-backed-xhr";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -38,7 +39,10 @@ import { settleReactWork } from "./settle-react-work";
  * `about:blank` and the relative upload URL does not resolve.
  */
 
-beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
+beforeAll(() => {
+  GlobalRegistrator.register({ url: "http://localhost/" });
+  installFetchBackedXhr();
+});
 afterEach(cleanup);
 afterAll(async () => {
   await settleReactWork();
@@ -269,7 +273,7 @@ test("a parked message keeps the rows it is carrying", async () => {
   releaseUploads();
   await waitFor(() =>
     expect(
-      (view.getByLabelText("队列消息") as HTMLButtonElement).disabled,
+      (view.getByLabelText("排队发送") as HTMLButtonElement).disabled,
     ).toBe(false),
   );
 

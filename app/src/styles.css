@@ -1643,6 +1643,45 @@ html[data-sky-ease] body::before {
   min-width: 0;
   padding-top: 2px;
 }
+/* A file is being dragged over a composer that will take it (audit M4-6). Outline, not a ring:
+ * `.glass-composer` owns its box-shadow, and a ring would replace it. */
+.glass-composer[data-drag-over="true"] {
+  outline: 2px dashed var(--composer-accent, #2f7cf6);
+  outline-offset: 2px;
+  background-color: color-mix(in srgb, var(--composer-accent, #2f7cf6) 6%, transparent);
+}
+/*
+ * 44×44 TOUCH TARGETS WITHOUT REDRAWING ANYTHING (audit M4-9). The visible control keeps its size;
+ * an invisible, centred 44px box on top of it is what a finger hits. `.touch-target` is always on
+ * (the attachment ×, the failed tile's retry); the composer toolbar's buttons get the same box
+ * only on a coarse pointer, where a 28–34px button is too small to land on.
+ *
+ * `.touch-target` sets no `position` itself: the × is `absolute`, and an unlayered rule here would
+ * beat the Tailwind utility and knock it out of its corner. Give the element a positioning class.
+ */
+.touch-target::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+}
+@media (pointer: coarse) {
+  .glass-composer-toolbar button {
+    position: relative;
+  }
+  .glass-composer-toolbar button::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
 .glass-composer-icon {
   width: 32px !important;
   height: 32px !important;

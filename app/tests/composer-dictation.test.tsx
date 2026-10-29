@@ -67,12 +67,12 @@ for (const variant of ["compact", "default"] as const) {
             }}
           />,
         );
-        fireEvent.click(view.getByRole("button", { name: "口述消息" }));
+        fireEvent.click(view.getByRole("button", { name: "语音输入" }));
         await waitFor(() =>
           expect(view.getByText("正在监听")).toBeDefined(),
         );
         expect(view.queryByRole("textbox", { name: "消息" })).toBeNull();
-        expect(view.queryByRole("button", { name: "口述消息" })).toBeNull();
+        expect(view.queryByRole("button", { name: "语音输入" })).toBeNull();
         expect(
           view.getByRole("img", { name: "实时音频波形" }),
         ).toBeDefined();
@@ -81,7 +81,7 @@ for (const variant of ["compact", "default"] as const) {
         fireEvent.submit(form);
         expect(sent).toEqual([]);
         if (action === "cancel") {
-          fireEvent.click(view.getByRole("button", { name: "取消听写" }));
+          fireEvent.click(view.getByRole("button", { name: "取消语音输入" }));
           await waitFor(() =>
             expect(
               view.getByRole("textbox", { name: "消息" }).textContent,
@@ -94,7 +94,7 @@ for (const variant of ["compact", "default"] as const) {
         fireEvent.click(
           view.getByRole("button", {
             name:
-              action === "stop" ? "停止并转录" : "转录并发送",
+              action === "stop" ? "停止并转成文字" : "转成文字并发送",
           }),
         );
         await waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));

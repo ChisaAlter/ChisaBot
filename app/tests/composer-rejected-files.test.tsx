@@ -174,7 +174,7 @@ test("the dismiss button hands back every refusal at once, not one line", () => 
     />,
   );
 
-  fireEvent.click(getByLabelText("驳回这些 2 拒绝"));
+  fireEvent.click(getByLabelText("关闭这 2 条提示"));
 
   expect(dismissed).toBe(1);
 });
@@ -189,5 +189,5 @@ test("a single refusal is dismissed in the singular", () => {
     />,
   );
 
-  expect(getByLabelText("驳回此拒绝")).toBeTruthy();
+  expect(getByLabelText("关闭这条提示")).toBeTruthy();
 });

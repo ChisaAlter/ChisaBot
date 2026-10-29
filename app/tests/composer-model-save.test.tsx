@@ -47,7 +47,7 @@ test("saving a model blocks click and Enter sends while retaining the draft", as
 test("saving a model blocks message parking instead of treating it as a busy turn", async () => {
   let queued = 0;
   const view = render(<Composer compact pending sendBlocked initialValue="not queued yet" onQueue={() => { queued += 1; }} />);
-  expect((view.getByLabelText("队列消息") as HTMLButtonElement).disabled).toBe(true);
+  expect((view.getByLabelText("排队发送") as HTMLButtonElement).disabled).toBe(true);
   await act(async () => fireEvent.submit(view.container.querySelector("form")!));
   expect(queued).toBe(0);
   expect(view.container.querySelector("[contenteditable]")?.textContent).toContain("not queued yet");
@@ -67,7 +67,7 @@ test("a parked message waits for the model save and drains when it finishes", as
   await act(async () => {
     fireEvent.paste(editor, { clipboardData: { files: [], items: [], types: ["text/plain"], getData: (type: string) => type === "text/plain" ? "parked correction" : "" } });
   });
-  await act(async () => fireEvent.click(view.getByLabelText("队列消息")));
+  await act(async () => fireEvent.click(view.getByLabelText("排队发送")));
   expect(sent).toBe(0);
   view.rerender(wrap(<ConversationView {...props} pending={false} sendBlocked />));
   await act(async () => {});

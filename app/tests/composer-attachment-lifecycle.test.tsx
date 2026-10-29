@@ -10,12 +10,13 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
   cleanup,
   fireEvent,
-  render,
   type RenderResult,
+  render,
   waitFor,
 } from "@testing-library/react";
 import { Composer } from "@/components/channels/composer/composer";
 import type { ComposerDraft } from "@/components/channels/composer/draft";
+import { installFetchBackedXhr } from "./fetch-backed-xhr";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -35,7 +36,10 @@ import { settleReactWork } from "./settle-react-work";
  * URLs every one of these requests uses do not resolve.
  */
 
-beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
+beforeAll(() => {
+  GlobalRegistrator.register({ url: "http://localhost/" });
+  installFetchBackedXhr();
+});
 afterEach(cleanup);
 afterAll(async () => {
   await settleReactWork();
@@ -345,7 +349,7 @@ test("a refusal is dismissible, and a send clears it", async () => {
 
   // Closable on its own, for somebody who drops a bad file and then thinks better of the whole
   // message rather than sending one.
-  fireEvent.click(getByLabelText("驳回此拒绝"));
+  fireEvent.click(getByLabelText("关闭这条提示"));
   expect(queryByRole("alert")).toBeNull();
 
   // And cleared by a send, which is the other way out.
