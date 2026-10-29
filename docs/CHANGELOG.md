@@ -1,3 +1,7 @@
+## Unreleased
+
+- 天空背景换场景渐变不再停在半路：主线程卡的时候渐变会停在 0.76～0.98 一到四秒才跳完，现在渐变开始后一直醒着画到结束（最多 8 秒），引擎跳过不画的那一拍也续上；天气（open-meteo）响应的 body 读完时再叫醒一次天空，网慢时天气带来的那次渐变也能画出来。只改 `sky-background.tsx`，新增 `lib/sky-fade.ts`，`wallpaper_core.html` 未改。未升级版本号。
+
 ## 0.1.107
 
 - 链接卡照 Hark 改版：正文里单独一行的链接和 json-render 的 `Link` 合并成一个组件（`app/src/components/rich-previews/link-card.tsx`）。有预览图时是固定宽约 280px 的竖卡：上半 og:image 大图（cover，上方两角圆角），下面两行粗体标题和一行浅色「站点 · 补充信息」；没有图时退成同宽的紧凑横卡。半透明底 + 内侧高光边，不用 backdrop-filter；骨架和卡片同尺寸，图片懒加载并预留宽高。json-render 的 `Link` 不再只用模型写的字段：缺的预览图、标题、站点名用 `/api/link-preview` 补全，模型给了的优先，所以 GitHub 等链接现在会显示 og:image。样式在组件自己的 `link-card.css`（只有 `lc-` 开头的新类），styles.css 未改。未升级版本号。
