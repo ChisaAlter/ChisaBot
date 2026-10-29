@@ -1352,10 +1352,31 @@ function SettleAtEnd({
      * 行进来 / 出去（新的一行、开场一句收进卡片、「思考中」换成回答）：React 提交后的微任务里就量一次（§94），
      * 比滚动容器的 ResizeObserver → requestAnimationFrame 早，留白当场吃掉 / 补上，不等下一帧。
      */
-    const mutations = new MutationObserver(() => {
+    /*
+     * 一帧最多当场量一次（审查 01 第 2 条：流式时这里是最大的单项开销，x1 1130ms）。流式一帧里可能有好几次提交
+     * （平滑显字一次、新 chunk 一次、消息状态一次），每次都 offsetHeight 强制布局。这一帧的第一次照旧当场量（§94：
+     * 行进来 / 出去当场吃留白）；同一帧后面的只记一笔，到下一个 rAF 再量一次。中间这段高度变化 ResizeObserver
+     * 在布局之后、绘制之前也会接住（pinNow），画面不会多出一帧跳动。
+     */
+    let mutationFrame = 0;
+    let mutationPending = false;
+    const onMutations = () => {
       if (!active() && !s.restore && content.offsetHeight !== lastHeight)
         pinNow();
       pin();
+    };
+    const mutations = new MutationObserver(() => {
+      if (mutationFrame) {
+        mutationPending = true;
+        return;
+      }
+      mutationFrame = window.requestAnimationFrame(() => {
+        mutationFrame = 0;
+        if (!mutationPending) return;
+        mutationPending = false;
+        onMutations();
+      });
+      onMutations();
     });
     // characterData：回答一个字一个字往外冒时改的是文字节点本身（不是加减节点）——多出一行也要当场吃留白（§94.6，390 实测 20px）。
     mutations.observe(content, {
@@ -1409,6 +1430,7 @@ function SettleAtEnd({
       s.releasing = false;
       finalWrite.current = null;
       window.cancelAnimationFrame(frame);
+      window.cancelAnimationFrame(mutationFrame);
       mutations.disconnect();
       sizes?.disconnect();
       viewportSizes?.disconnect();
