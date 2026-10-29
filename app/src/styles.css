@@ -3859,7 +3859,7 @@ html[data-desktop] .glass-brand { cursor: default; }
   app-region: drag;
 }
 .desk-strip .win-ctrls { -webkit-app-region: no-drag; app-region: no-drag; }
-body:has(.glass-topbar) .desk-strip { display: none; }
+body[data-has-topbar] .desk-strip { display: none; }
 /* Collapsed left column: the collapse control follows the wordmark instead of floating at 276px. */
 .glass-shell:has([data-slot="sidebar"][data-state="collapsed"]) .glass-topbar-start { width: auto; gap: 12px; }
 /* Send key is ink (DESIGN.md §11), not blue. */
@@ -6117,7 +6117,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 
 @media (max-width: 767px) {
   
-  body:not(:has(.glass-composer)) .rail-tab.is-narrow { display: none; }
+  body:not([data-has-composer]) .rail-tab.is-narrow { display: none; }
 }
 
 /* §37 关弹窗不卡（2026-10-13，用户：「bot 的创建面板，取消创建那个操作，还是非常卡顿」）。
@@ -6489,9 +6489,9 @@ html[data-phone] .glass-topbar { transition: transform var(--dur-2, 200ms) var(-
   animation: install-hint-in var(--dur-3, 300ms) var(--ease-out, ease-out) both;
 }
 .install-hint[data-state="closed"] { animation: install-hint-out var(--dur-1, 150ms) var(--ease-in, ease-in) both; pointer-events: none; }
-body:has(.update-banner) .install-hint { display: none; }
+body[data-has-update-banner] .install-hint { display: none; }
 /* FIX-11：接管大屏打开时别挡工具条 / 交还（install-hint 原 z-index 100 > takeover 70）。 */
-body:has(.computer-takeover) .install-hint { display: none; }
+body[data-has-takeover] .install-hint { display: none; }
 /* DOG-03：胶囊在顶栏下方时给正文让出高度，避免盖住「活动记录 / 设置」等标题。 */
 body[data-install-hint="open"] {
   /* 0.1.40：略增高，减少胶囊压住对话首行标题 */
@@ -6575,11 +6575,15 @@ body[data-install-hint="open"] [data-slot="sidebar-container"].glass-sidebar-con
  *    失效集合并成一个，只要有一条是「:has(…) *」，任何 data-* / aria-* 变化都会让整个应用（约 4000 个元素）重算样式，
  *    4× CPU 下每次 130–230ms、一次点击两次。改用 [[祖先]:has(…)_&]:工具类 —— 右边是具体的类，只失效它自己。
  *    app/tests/no-group-has.test.ts 会拦住新写的 group-has-*。
+ *    2026-10-29 设置面板卡顿：`body:has(…)` / `html:has(…)` 也不写。body 是所有元素的祖先，任何一条 body:has 的
+ *    参数（例如 [data-slot=…]）一变就要在 body 上重算 :has，再加上一条「:has(…) .x *」，整棵树（含藏着的聊天）
+ *    每次 DOM 变化都重算。要看「页面上有没有某个元素」，让那个元素挂 `ref={presenceRef("has-…")}`
+ *    （lib/presence-flag.ts），规则写 `body[data-has-…]`。app/tests/no-body-has.test.ts 会拦住。
  * ② 应用外壳本来就不让整页滚动（GlassShell h-svh overflow-hidden）。根元素也设成 overflow:hidden，Base UI 打开
  *    菜单 / 弹窗时就认为「页面已锁定」，不再改 html/body 的内联样式（那会让整页重排、背景重画）。只在鼠标设备上：
  *    手机触摸打开本来就不锁滚动，也不影响下拉刷新。 */
 @media (pointer: fine) {
-  html:has(> body .glass-shell) { overflow: hidden; }
+  html[data-has-shell] { overflow: hidden; }
 }
 
 /* §42.6 历史对话（机器人 ⋯ → 历史对话）：小弹窗里一列对话，点一条切换。行高 52、圆角 12、14/12 字号、4 的倍数间距；
@@ -7620,7 +7624,7 @@ body { --rail-tab-clear: 38px; }
   .rail-tab.is-narrow:hover { width: 26px; }
   .rail-tab.is-narrow svg { width: 14px; height: 14px; }
 }
-body:has(.rail-tab.is-narrow) [data-testid="chat-transcript"] {
+body[data-has-narrow-rail] [data-testid="chat-transcript"] {
   padding-right: max(1rem, calc(var(--rail-tab-clear) - max(0px, (100% - 42rem) / 2)));
 }
 
@@ -7658,7 +7662,7 @@ html[data-no-halt] .t-open { margin-inline-start: -0.5em; }
   margin-inline: auto;
   padding: 0 1rem 1rem;
 }
-body:has(.rail-tab.is-narrow) .chat-composer-box {
+body[data-has-narrow-rail] .chat-composer-box {
   padding-right: max(1rem, calc(var(--rail-tab-clear) - max(0px, (100% - 44rem) / 2)));
 }
 html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 0px)); }
@@ -7929,7 +7933,11 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   .sg-lrow:has(.perm-seg) .sg-lrow-a { width: 100%; padding-left: 52px; }
 }
 /* §98 留着的聊天藏起来时关掉滚动锚定：visibility: hidden 下浏览器会重新挑锚点并把滚动容器挪几十像素，回来时位置就对不上了。 */
-.kept-chat[data-visible="false"], .kept-chat[data-visible="false"] * { overflow-anchor: none; }
+/* 藏着的聊天（§98）：content-visibility:hidden 让浏览器整棵子树跳过样式 / 布局 / 绘制（DOM、滚动位置都留着），
+ * 设置页里别处的 DOM 变化不再连带重算几千个藏着的聊天元素。以前这里是 `.kept-chat[data-visible="false"] *`，
+ * 一次切换要匹配四万多次；滚动锚定只看滚动容器自己的 overflow-anchor，所以只关聊天的滚动容器。 */
+.kept-chat[data-visible="false"] { overflow-anchor: none; content-visibility: hidden; }
+.kept-chat[data-visible="false"] [data-slot="message-scroller-viewport"] { overflow-anchor: none; }
 
 .glass-mini-new:disabled { opacity: 0.45; cursor: default; }
 
@@ -8900,14 +8908,14 @@ html[data-phone] .sidebar-mobile-close { width: 44px; height: 44px; }
 html[data-desktop] [data-slot="sheet-content"],
 html[data-desktop] [data-slot="sheet-content"] *,
 html[data-desktop] [data-slot="sheet-overlay"] { -webkit-app-region: no-drag; app-region: no-drag; }
-html[data-desktop] body:has([data-slot="sheet-overlay"]) :is(.glass-topbar, .glass-topbar *, .desk-strip) {
+html[data-desktop] body[data-has-sheet] :is(.glass-topbar, .glass-topbar *, .desk-strip) {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
 /* 窗口控制提到遮罩之上：抽屉开着时用全局那条 desk-strip 的副本（z-60），只有按钮接收指针，
    其余部分让点击落到遮罩上（点遮罩任何地方都关抽屉）。 */
-html[data-desktop] body:has([data-slot="sheet-overlay"]) .desk-strip { display: flex; pointer-events: none; background: transparent; }
-html[data-desktop] body:has([data-slot="sheet-overlay"]) .desk-strip .win-ctrls { pointer-events: auto; }
+html[data-desktop] body[data-has-sheet] .desk-strip { display: flex; pointer-events: none; background: transparent; }
+html[data-desktop] body[data-has-sheet] .desk-strip .win-ctrls { pointer-events: auto; }
 /* 抽屉让开右上角那排窗口按钮（40px 高）。 */
 html[data-desktop] [data-slot="sidebar"][data-mobile="true"] { top: 40px; height: auto; bottom: 0; }
 @media (max-width: 1279px) {

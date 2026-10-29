@@ -31,7 +31,7 @@ test("dropdown menu items wrap bare label text (§82.6)", () => {
 
 test("folded rows collapse instead of unmounting, and the panel handle never covers the message column (§82.9 / §82.10)", () => {
   expect(css).toMatch(/\[data-slot="message-scroller-item"\]\[data-folded\] \{[^}]*animation: chat-row-fold 220ms/);
-  expect(css).toMatch(/body:has\(\.rail-tab\.is-narrow\) \[data-testid="chat-transcript"\] \{\s*padding-right: max\(1rem, calc\(var\(--rail-tab-clear\)/);
+  expect(css).toMatch(/body\[data-has-narrow-rail\] \[data-testid="chat-transcript"\] \{\s*padding-right: max\(1rem, calc\(var\(--rail-tab-clear\)/);
   const src = readFileSync(path.join(import.meta.dir, "../src/components/channels/chat-transcript.tsx"), "utf8");
   expect(src).toContain("renderFolded(item, index)");
 });
