@@ -29,6 +29,7 @@ import {
   type ExtractedImage,
   extensionOf,
   extractRichContent,
+  extractUserLinks,
   formatBytes,
   type LinkRef,
   splitLinkLines,
@@ -141,14 +142,21 @@ export function rememberedImageSize(src: string) {
 function LinkPreviewCardsInner({
   links,
   pending = false,
+  pendingUrl,
 }: {
   links: readonly LinkRef[];
   /** 流式中最后一行像是一行链接：多放一个骨架占位。 */
   pending?: boolean;
+  /** 骨架那行已经写出来的网址（GitHub 的按 2:1 占位）。 */
+  pendingUrl?: string;
 }) {
   if (links.length === 0 && !pending) return null;
   return (
-    <LinkCardStack items={links.map((link) => ({ url: link.url, meta: link.label }))} pending={pending} />
+    <LinkCardStack
+      items={links.map((link) => ({ url: link.url, meta: link.label }))}
+      pending={pending}
+      pendingUrl={pendingUrl}
+    />
   );
 }
 
@@ -747,9 +755,12 @@ function MessageRichPreviewsInner({
     [media?.images, fromText],
   );
   const imageSet = useMemo(() => new Set(found.images.map((i) => i.src)), [found.images]);
+  // 用户的消息：句子中间的链接也出卡（extractUserLinks）；机器人的只认单独一行的（§48）。
+  const isUser = align === "end";
+  const userLinks = useMemo(() => (isUser ? extractUserLinks(text) : null), [isUser, text]);
   const links = useMemo(
-    () => split.links.filter((l) => !imageSet.has(l.url)),
-    [split.links, imageSet],
+    () => (userLinks ?? split.links).filter((l) => !imageSet.has(l.url)),
+    [userLinks, split.links, imageSet],
   );
   const files = media?.files ?? [];
   if (
@@ -769,7 +780,7 @@ function MessageRichPreviewsInner({
           ))}
         </div>
       ) : null}
-      <LinkPreviewCards links={links} pending={split.pending} />
+      <LinkPreviewCards links={links} pending={split.pending} pendingUrl={split.pendingUrl} />
     </div>
   );
 }

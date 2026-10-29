@@ -147,6 +147,21 @@ export function looksLikePartialLinkLine(line: string): boolean {
   return parseLinkLine(t) !== null;
 }
 
+/**
+ * 半截链接行里已经能确定是一个网址的部分（协议 + 写完的带点主机名 + 「/」，或 `[标签](` 后面同样的开头）。
+ * 只有到了这一步才放骨架：「h」「ht」「https://」这种还可能是一句话的开头，先藏起来但不放骨架，
+ * 免得写成普通文字时骨架闪一下又没了。返回这截网址（用来按站点定骨架的图片比例）。
+ */
+export function confidentLinkStart(line: string): string | null {
+  let t = line.trim().replace(/^(\*\*|__)/, "");
+  const md = /^\[[^\[\]\n]{0,80}\]\((.*)$/.exec(t);
+  if (md) t = md[1]!;
+  t = t.replace(/^</, "");
+  // 主机名后面已经有「/」：主机名写完了，骨架的比例（GitHub 2:1）不会再变。
+  const m = /^https?:\/\/[^\s/<>()]+\.[^\s/<>().]{2,}\/[^\s<>()]*/i.exec(t);
+  return m ? m[0] : null;
+}
+
 export type LinkLines = {
   /** 出卡的链接（按出现顺序、去重、最多 3 个）。 */
   links: LinkRef[];
@@ -154,6 +169,8 @@ export type LinkLines = {
   display: string;
   /** 流式中最后一行看起来是一行链接、还没写完：卡片位置先放一个骨架。 */
   pending: boolean;
+  /** `pending` 时最后一行已经写出来的那截网址。 */
+  pendingUrl?: string;
 };
 
 /**
@@ -172,6 +189,7 @@ export function splitLinkLines(
   const keys = new Set<string>();
   let fence: string | null = null;
   let pending = false;
+  let pendingUrl: string | undefined;
   let removed = false;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]!;
@@ -189,7 +207,11 @@ export function splitLinkLines(
     }
     if (isLast && !final) {
       if (links.length < MAX_LINK_CARDS && looksLikePartialLinkLine(line)) {
-        pending = true;
+        const start = confidentLinkStart(line);
+        if (start) {
+          pending = true;
+          pendingUrl = start;
+        }
         removed = true;
         continue;
       }
@@ -218,7 +240,59 @@ export function splitLinkLines(
         .replace(/\n{3,}/g, "\n\n")
         .replace(/\s+$/, "")
     : text;
-  return { links, display, pending };
+  return pendingUrl ? { links, display, pending, pendingUrl } : { links, display, pending };
+}
+
+const MD_LINK = new RegExp(String.raw`(!?)\[((?:[^\[\]\n]|\[[^\]\n]*\])*)\]${MD_TARGET}`, "g");
+/** Slack 转过来的 `<网址|文字>` / `<网址>`。 */
+const ANGLE_LINK = /<(https?:\/\/[^>\s|]+)(?:\|([^>\n]*))?>/gi;
+// 只认网址里会出现的 ASCII 字符：中文句子里网址后面紧跟的字（「…/x这个」）不算进去。
+const BARE_LINK = /https?:\/\/[\w\-.~:/?#[\]@!$&()*+,;=%]+/gi;
+
+/**
+ * 用户自己发的消息里的链接卡：人很少把链接单独放一行（「帮我看看 https://github.com/… 这个」），
+ * 所以句子中间的也算——Markdown 链接、`<网址>` / Slack 的 `<网址|文字>`、裸网址，按出现顺序去重，最多 3 个。
+ * 代码里的、图片不算。用户的正文原样显示（不拿掉这些链接），卡片画在气泡下面。
+ */
+export function extractUserLinks(text: string): LinkRef[] {
+  if (!text) return [];
+  const found: { at: number; ref: LinkRef }[] = [];
+  let rest = stripCode(text);
+  const blank = (m: string) => " ".repeat(m.length);
+  rest = rest.replace(MD_LINK, (match, bang: string, label: string, target: string, at: number) => {
+    if (!bang) {
+      const url = normalizeLink(target.replace(/^<|>$/g, ""));
+      if (url) {
+        const clean = cleanLabel(label, url);
+        found.push({ at, ref: clean ? { url, label: clean } : { url } });
+      }
+    }
+    return blank(match);
+  });
+  rest = rest.replace(ANGLE_LINK, (match, raw: string, label: string | undefined, at: number) => {
+    const url = normalizeLink(raw);
+    if (url) {
+      const clean = label ? cleanLabel(label, url) : undefined;
+      found.push({ at, ref: clean ? { url, label: clean } : { url } });
+    }
+    return blank(match);
+  });
+  rest.replace(BARE_LINK, (match, at: number) => {
+    const url = normalizeLink(trimUrl(match));
+    if (url) found.push({ at, ref: { url } });
+    return match;
+  });
+  found.sort((a, b) => a.at - b.at);
+  const keys = new Set<string>();
+  const links: LinkRef[] = [];
+  for (const { ref } of found) {
+    const key = ref.url.replace(/#.*$/, "");
+    if (keys.has(key)) continue;
+    keys.add(key);
+    links.push(ref);
+    if (links.length >= MAX_LINK_CARDS) break;
+  }
+  return links;
 }
 
 /** 一条（已经写完的）消息里的链接卡和图片。 */
