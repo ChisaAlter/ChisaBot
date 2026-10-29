@@ -48,7 +48,12 @@ export type LinkPreview = {
   /** `image` 的像素宽高（DESIGN.md §83.2），回答时补上；没有就不带。 */
   imageWidth?: number;
   imageHeight?: number;
+  /** 视频页（YouTube / bilibili）：`image` 是视频封面，前端可以加播放角标。普通网页不带。 */
+  kind?: "video";
 };
+
+/** What the service needs from `guardedFetch`; tests pass a fake so no request leaves the machine. */
+export type PreviewFetch = typeof guardedFetch;
 
 type ComputerTarget = { baseUrl: string; token?: string };
 
@@ -137,10 +142,196 @@ export function sniffImage(bytes: Uint8Array): string | null {
   return null;
 }
 
+/** 日志里的网址只留到路径：查询串可能带着用户的东西（token、搜索词）。 */
+export function redactUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}${u.search ? "?…" : ""}`;
+  } catch {
+    return "(invalid url)";
+  }
+}
+
+/** 图片直链的标题：路径最后一段像文件名（photo.jpg）就用它；只剩个扩展名样的词（/image/png）就叫「图片」。 */
+export function directImageTitle(url: string): string {
+  try {
+    const name = decodeURIComponent(new URL(url).pathname.split("/").pop() ?? "");
+    if (/^.+\.[a-z0-9]{1,8}$/i.test(name)) return name.slice(0, 120);
+  } catch {
+    /* 落到下面 */
+  }
+  return "图片";
+}
+
+const CHALLENGE_TITLE =
+  /安全验证|人机验证|验证码|访问验证|请稍候|异常请求|Just a moment|Attention Required|Access denied|Are you a robot|Verify you are human|captcha/i;
+
+/** 反爬 / 验证页：跳到了 sec.* / captcha 之类的主机，或标题就是「安全验证」，或是知乎的 zse-ck 挑战页。 */
+export function isChallengePage(url: string, finalUrl: string, title: string, html: string): boolean {
+  let from = "";
+  let to = "";
+  let path = "";
+  try {
+    from = new URL(url).hostname;
+    const final = new URL(finalUrl);
+    to = final.hostname;
+    path = final.pathname;
+  } catch {
+    return false;
+  }
+  if (to !== from && /^(sec|captcha|verify|challenge|security)\./i.test(to)) return true;
+  if (/\/(captcha|challenge|verify)(\/|$)/i.test(path) && to !== from) return true;
+  if (CHALLENGE_TITLE.test(title)) return true;
+  if (/<meta[^>]+id=["']zh-zse-ck["']/i.test(html.slice(0, 4096))) return true;
+  return false;
+}
+
+const GITHUB_RESERVED = new Set([
+  "about", "apps", "collections", "customer-stories", "enterprise", "explore", "features",
+  "login", "marketplace", "new", "notifications", "orgs", "organizations", "pricing", "pulls",
+  "issues", "search", "settings", "site", "sponsors", "topics", "trending", "users", "join",
+]);
+
+/**
+ * GitHub 仓库 / release 等页面的兜底预览图：同一仓库的固定地址（opengraph.githubassets.com/1/…，
+ * 内容和带哈希的 og 地址一样，CDN 上常有现成的），再不行用仓库主人的头像。不是仓库页就返回空。
+ */
+export function githubImageFallbacks(pageUrl: string): string[] {
+  let u: URL;
+  try {
+    u = new URL(pageUrl);
+  } catch {
+    return [];
+  }
+  if (u.hostname !== "github.com" && u.hostname !== "www.github.com") return [];
+  const [owner, repo] = u.pathname.split("/").filter(Boolean);
+  if (!owner || !repo || GITHUB_RESERVED.has(owner.toLowerCase())) return [];
+  const safe = /^[A-Za-z0-9_.-]+$/;
+  if (!safe.test(owner) || !safe.test(repo)) return [];
+  return [
+    `https://opengraph.githubassets.com/1/${owner}/${repo.replace(/\.git$/, "")}`,
+    `https://avatars.githubusercontent.com/${owner}?s=400`,
+  ];
+}
+
+type ApiInfo = { title: string; description?: string; image?: string | null };
+type ApiSource = {
+  api: string;
+  siteName: string;
+  kind?: "video";
+  read: (json: unknown) => ApiInfo | null;
+};
+
+const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+const obj = (v: unknown) => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
+const httpsImage = (v: unknown) => {
+  const s = str(v);
+  if (!s) return null;
+  const full = s.startsWith("//") ? `https:${s}` : s.replace(/^http:\/\//, "https://");
+  return /^https:\/\//.test(full) ? full : null;
+};
+
+function youtubeId(u: URL): string | null {
+  const host = u.hostname.replace(/^(www|m|music)\./, "");
+  const id =
+    host === "youtu.be"
+      ? u.pathname.split("/")[1]
+      : host === "youtube.com"
+        ? u.pathname === "/watch"
+          ? u.searchParams.get("v")
+          : /^\/(shorts|live|embed)\/([^/]+)/.exec(u.pathname)?.[2]
+        : null;
+  return id && /^[A-Za-z0-9_-]{6,20}$/.test(id) ? id : null;
+}
+
+/** 这个链接有没有公开接口可用（YouTube / bilibili / 百度百科）。 */
+export function apiSourceFor(url: string): ApiSource | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const yt = youtubeId(u);
+  if (yt) {
+    const watch = `https://www.youtube.com/watch?v=${yt}`;
+    return {
+      api: `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(watch)}`,
+      siteName: "YouTube",
+      kind: "video",
+      read: (json) => {
+        const j = obj(json);
+        const title = str(j.title);
+        if (!title) return null;
+        const author = str(j.author_name);
+        return { title, description: author, image: httpsImage(j.thumbnail_url) };
+      },
+    };
+  }
+  const host = u.hostname.replace(/^(www|m)\./, "");
+  if (host === "bilibili.com") {
+    const m = /^\/video\/(BV[0-9A-Za-z]{10}|av(\d+))/i.exec(u.pathname);
+    if (m) {
+      const query = m[2] ? `aid=${m[2]}` : `bvid=${m[1]}`;
+      return {
+        api: `https://api.bilibili.com/x/web-interface/view?${query}`,
+        siteName: "哔哩哔哩",
+        kind: "video",
+        read: (json) => {
+          const j = obj(json);
+          if (j.code !== 0) return null;
+          const d = obj(j.data);
+          const title = str(d.title);
+          if (!title) return null;
+          const owner = str(obj(d.owner).name);
+          const desc = str(d.desc);
+          return {
+            title,
+            description: [owner && `UP 主：${owner}`, desc && desc !== "-" ? desc : ""].filter(Boolean).join(" · ").slice(0, 300),
+            image: httpsImage(d.pic),
+          };
+        },
+      };
+    }
+  }
+  if (u.hostname === "baike.baidu.com") {
+    const m = /^\/item\/([^/]+)/.exec(u.pathname);
+    if (m?.[1]) {
+      let name: string;
+      try {
+        name = decodeURIComponent(m[1]);
+      } catch {
+        return null;
+      }
+      return {
+        api: `https://baike.baidu.com/api/openapi/BaikeLemmaCardApi?scope=103&format=json&appid=379020&bk_length=300&bk_key=${encodeURIComponent(name)}`,
+        siteName: "百度百科",
+        read: (json) => {
+          const j = obj(json);
+          const title = str(j.title);
+          if (!title) return null;
+          return { title, description: str(j.abstract).slice(0, 300) || str(j.desc), image: httpsImage(j.image) };
+        },
+      };
+    }
+  }
+  return null;
+}
+
 export async function createLinkPreviews(
   database: Database,
-  options: { computer?: ComputerTarget; screenshots?: boolean } = {},
+  options: {
+    computer?: ComputerTarget;
+    screenshots?: boolean;
+    /** Defaults to `guardedFetch` (SSRF-checked). Tests inject a fake; the rules are unchanged. */
+    fetch?: PreviewFetch;
+    /** Structured warnings (image fetch failures). Defaults to one JSON line on stderr. */
+    log?: (event: Record<string, unknown>) => void;
+  } = {},
 ) {
+  const fetchUrl: PreviewFetch = options.fetch ?? guardedFetch;
+  const log =
+    options.log ?? ((event: Record<string, unknown>) => console.warn(JSON.stringify(event)));
   await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_link_previews (
     url_key text PRIMARY KEY, url text NOT NULL, ok boolean NOT NULL, data jsonb NOT NULL,
     fetched_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL
@@ -209,14 +400,18 @@ export async function createLinkPreviews(
     return `/api/link-preview/asset/${id}`;
   }
 
-  /** 下载一张第三方图片存成本站资源；不是图片 / 太大 / 被拦都返回 null。 */
-  async function fetchImage(
+  /**
+   * 下载一张第三方图片存成本站资源。失败时 `asset` 是 null，`reason` 说明为什么（状态码、太大、不是图片、
+   * 被拦、网络错误），`retry` 表示马上再试一次有没有意义：429 / 4xx / 不是图片 / 太大再试也一样。
+   */
+  async function fetchImageResult(
     url: string,
     max: number,
     allowSvg: boolean,
-  ): Promise<string | null> {
+  ): Promise<{ asset: string | null; reason?: string; retry?: boolean }> {
+    let res: Awaited<ReturnType<PreviewFetch>>;
     try {
-      const res = await guardedFetch(url, {
+      res = await fetchUrl(url, {
         maxBytes: max,
         timeoutMs: IMAGE_TIMEOUT,
         headers: {
@@ -224,20 +419,45 @@ export async function createLinkPreviews(
             "image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5",
         },
       });
-      if (
-        res.status < 200 ||
-        res.status >= 300 ||
-        res.truncated ||
-        res.body.length === 0
-      )
-        return null;
-      const mime = sniffImage(res.body);
-      if (!mime || !IMAGE_MIME.test(mime)) return null;
-      if (mime === "image/svg+xml" && !allowSvg) return null;
-      return await storeAsset(res.body, mime);
-    } catch {
-      return null;
+    } catch (error) {
+      if (error instanceof BlockedUrlError) return { asset: null, reason: "blocked" };
+      const message = error instanceof Error ? error.message : String(error);
+      return { asset: null, reason: `error: ${message.slice(0, 120)}`, retry: true };
     }
+    if (res.status < 200 || res.status >= 300) {
+      const after = res.headers["retry-after"];
+      return {
+        asset: null,
+        reason: `status ${res.status}${after ? ` retry-after=${after}` : ""}`,
+        retry: res.status >= 500,
+      };
+    }
+    if (res.truncated) return { asset: null, reason: `too-large (>${max} bytes)` };
+    if (res.body.length === 0) return { asset: null, reason: "empty", retry: true };
+    const mime = sniffImage(res.body);
+    if (!mime || !IMAGE_MIME.test(mime))
+      return { asset: null, reason: `not-image (${res.contentType || "no content-type"})` };
+    if (mime === "image/svg+xml" && !allowSvg) return { asset: null, reason: "svg-not-allowed" };
+    try {
+      return { asset: await storeAsset(res.body, mime) };
+    } catch (error) {
+      return { asset: null, reason: `store-failed: ${error instanceof Error ? error.name : "Error"}` };
+    }
+  }
+
+  /** 预览图（og:image、视频封面、GitHub 兜底图）：失败要留下原因，不然线上只看得到「没图」。 */
+  async function fetchPreviewImage(url: string, role: string): Promise<string | null> {
+    let result = await fetchImageResult(url, IMAGE_MAX, false);
+    // og:image 偶尔第一次很慢（GitHub 的图是现做的）：网络错误 / 5xx 再试一次；429、404 再试也一样。
+    if (!result.asset && result.retry) result = await fetchImageResult(url, IMAGE_MAX, false);
+    if (!result.asset)
+      log({ type: "link-preview-image-failed", role, url: redactUrl(url), reason: result.reason });
+    return result.asset;
+  }
+
+  /** 图标：一次就好，失败不记（每个网页会试好几个地址）。 */
+  async function fetchImage(url: string, max: number, allowSvg: boolean): Promise<string | null> {
+    return (await fetchImageResult(url, max, allowSvg)).asset;
   }
 
   async function screenshot(url: string): Promise<string | null> {
@@ -323,7 +543,7 @@ export async function createLinkPreviews(
   async function build(url: string, key: string): Promise<LinkPreview | null> {
     let page: Awaited<ReturnType<typeof guardedFetch>>;
     try {
-      page = await guardedFetch(url, {
+      page = await fetchUrl(url, {
         maxBytes: HTML_MAX,
         stopAfterBytes: HTML_STOP,
         timeoutMs: PAGE_TIMEOUT,
@@ -338,7 +558,8 @@ export async function createLinkPreviews(
     if (page.status < 200 || page.status >= 400) {
       return degradedPreview(url, key, page.url, `status ${page.status}`);
     }
-    const domain = displayDomain(page.url);
+    // 卡片上的域名是用户发的那个链接的（跳到 sec.douban.com 验证页、GitHub 下载跳到存储域名，都不该换名字）。
+    const domain = displayDomain(url);
     // 网址本身就是一张图：图就是预览。
     const directMime = sniffImage(page.body);
     if (
@@ -349,13 +570,10 @@ export async function createLinkPreviews(
         directMime && directMime !== "image/svg+xml" && !page.truncated
           ? await storeAsset(page.body, directMime)
           : null;
-      const name = decodeURIComponent(
-        new URL(page.url).pathname.split("/").pop() || domain,
-      );
       const preview: LinkPreview = {
         url,
         finalUrl: page.url,
-        title: name,
+        title: directImageTitle(page.url),
         siteName: "",
         domain,
         description: "",
@@ -364,7 +582,7 @@ export async function createLinkPreviews(
         imagePending: false,
         favicon: null,
       };
-      await writeCache(key, url, true, preview).catch(() => {});
+      await writeCache(key, url, true, preview, !image).catch(() => {});
       return preview;
     }
     const isHtml =
@@ -374,18 +592,19 @@ export async function createLinkPreviews(
       // 下载文件、PDF、接口……：兜底卡（标题是文件名），域名用原链接的（GitHub 下载会跳到别的存储域名）。
       return degradedPreview(url, key, page.url, "not-html");
     }
-    const parsed = parsePage(decodeHtml(page.contentType, page.body), page.url);
-    const [image, favicon] = await Promise.all([
-      // og:image 偶尔第一次很慢（例如 GitHub 的图是现做的）：失败就再试一次，再不行才去截图。
-      parsed.image
-        ? fetchImage(parsed.image, IMAGE_MAX, false).then(
-            (asset) =>
-              asset ??
-              (parsed.image
-                ? fetchImage(parsed.image, IMAGE_MAX, false)
-                : null),
-          )
-        : Promise.resolve(null),
+    const html = decodeHtml(page.contentType, page.body);
+    const parsed = parsePage(html, page.url);
+    // 反爬 / 验证页（sec.douban.com、百度安全验证、知乎 zse-ck、Cloudflare「Just a moment」）不是这个链接的内容。
+    if (isChallengePage(url, page.url, parsed.title, html)) {
+      return degradedPreview(url, key, page.url, "challenge");
+    }
+    // 200 但什么都没有（YouTube 给服务器的就是这样）：当兜底卡，30 分钟后再试，不按成功缓存一天。
+    if (!parsed.title && !parsed.description && !parsed.image) {
+      return degradedPreview(url, key, page.url, "empty");
+    }
+    const fallbacks = githubImageFallbacks(page.url);
+    const [ogImage, favicon] = await Promise.all([
+      parsed.image ? fetchPreviewImage(parsed.image, "og") : Promise.resolve(null),
       (async () => {
         for (const icon of parsed.icons) {
           const asset = await fetchImage(icon, ICON_MAX, true);
@@ -394,6 +613,13 @@ export async function createLinkPreviews(
         return null;
       })(),
     ]);
+    let image = ogImage;
+    // GitHub 仓库 / release：og 图（opengraph.githubassets.com，按出口 IP 限流 100 次 / 15 分钟）没取到，
+    // 先试同一仓库的固定地址（CDN 上常有现成的），再用仓库主人的头像。
+    for (const candidate of image ? [] : fallbacks) {
+      image = await fetchPreviewImage(candidate, "github-fallback");
+      if (image) break;
+    }
     const wantShot =
       !image && Boolean(options.computer) && options.screenshots === true;
     const preview: LinkPreview = {
@@ -408,9 +634,53 @@ export async function createLinkPreviews(
       imagePending: wantShot,
       favicon,
     };
-    await writeCache(key, url, true, preview).catch(() => {});
+    // 网页说有图但没取到（或只用了兜底图）：只缓存 30 分钟，过后再试真正的图，不让一次限流挂一整天。
+    const imageMissed = Boolean(parsed.image || fallbacks.length) && !ogImage;
+    await writeCache(key, url, true, preview, imageMissed).catch(() => {});
     if (wantShot) startScreenshot(key, preview);
     void prune().catch(() => {});
+    return preview;
+  }
+
+  /** 读一个 JSON 接口（oEmbed、bilibili、百度百科开放接口），同样走 SSRF 检查；失败返回 null。 */
+  async function fetchJson(url: string): Promise<unknown> {
+    try {
+      const res = await fetchUrl(url, {
+        maxBytes: 256 * 1024,
+        timeoutMs: PAGE_TIMEOUT,
+        headers: { accept: "application/json" },
+      });
+      if (res.status < 200 || res.status >= 300) return null;
+      return JSON.parse(res.body.toString("utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 网页本身拿不到东西的几个站，用它们公开的接口：YouTube oEmbed、bilibili 视频信息、百度百科词条卡。
+   * 接口失败返回 null，照常走网页那条路（最后多半是 30 分钟的兜底卡）。
+   */
+  async function buildFromApi(url: string, key: string): Promise<LinkPreview | null> {
+    const source = apiSourceFor(url);
+    if (!source) return null;
+    const info = source.read(await fetchJson(source.api));
+    if (!info?.title) return null;
+    const image = info.image ? await fetchPreviewImage(info.image, source.kind ?? "api") : null;
+    const preview: LinkPreview = {
+      url,
+      finalUrl: url,
+      title: info.title,
+      siteName: source.siteName,
+      domain: displayDomain(url),
+      description: info.description ?? "",
+      image,
+      imageKind: image ? "og" : "none",
+      imagePending: false,
+      favicon: null,
+      ...(source.kind === "video" ? { kind: "video" as const } : {}),
+    };
+    await writeCache(key, url, true, preview, Boolean(info.image) && !image).catch(() => {});
     return preview;
   }
 
@@ -432,7 +702,9 @@ export async function createLinkPreviews(
     }
     let job = inFlight.get(key);
     if (!job) {
-      job = build(url, key).finally(() => inFlight.delete(key));
+      job = buildFromApi(url, key)
+        .then((preview) => preview ?? build(url, key))
+        .finally(() => inFlight.delete(key));
       inFlight.set(key, job);
     }
     return { preview: await job, cached: false };
