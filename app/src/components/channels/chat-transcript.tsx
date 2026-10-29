@@ -3379,7 +3379,14 @@ export function ChatTranscript({
   useEffect(() => {
     const element = viewportRef.current;
     if (!element) return;
-    const measure = () => setPaneHeight(Math.round(element.getBoundingClientRect().height));
+    /*
+     * 切到设置等页面时聊天被 KeepAlive 藏起来，量到的高度是 0；回来又变回原值。两次都 setState
+     * 会让整段聊天列表白白重渲染一遍（锚点偏移其实没变），所以藏起来时不记 0，保留上次的高度。
+     */
+    const measure = () => {
+      const height = Math.round(element.getBoundingClientRect().height);
+      if (height > 0) setPaneHeight(height);
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
