@@ -223,7 +223,7 @@ export function LinkCardSkeleton({
       style={slotStyle(slot, layer)}
     >
       <span
-        className="lc-media sky-skel-block"
+        className="lc-media lc-skel-block"
         data-ratio={media.source}
         style={{ aspectRatio: String(media.ratio) }}
       />
@@ -233,11 +233,11 @@ export function LinkCardSkeleton({
         ) : (
           <span className="lc-title">
             <span
-              className="lc-skel-bar sky-skel-bar"
+              className="lc-skel-bar"
               style={{ width: "86%" }}
             />
             <span
-              className="lc-skel-bar sky-skel-bar"
+              className="lc-skel-bar"
               style={{ width: "58%" }}
             />
           </span>
@@ -247,7 +247,7 @@ export function LinkCardSkeleton({
         ) : (
           <span className="lc-meta">
             <span
-              className="lc-skel-bar sky-skel-bar"
+              className="lc-skel-bar"
               style={{ width: "42%" }}
             />
           </span>
@@ -464,10 +464,13 @@ function isFocusVisible(el: Element): boolean {
 export function LinkCardStack({
   items,
   pending = false,
+  pendingUrl,
 }: {
   items: readonly LinkStackItem[];
   /** 流式中最后一行像是一行链接：多放一个骨架占位。 */
   pending?: boolean;
+  /** 骨架那行已经写出来的网址：骨架按它的站点定图片比例，和出来的真卡一样大。 */
+  pendingUrl?: string;
 }) {
   // 流式中也照样出最多 3 张真卡；还没满 3 张时才多放一个骨架。
   const shown = items.slice(0, 3);
@@ -570,6 +573,7 @@ export function LinkCardStack({
         {withSkeleton ? (
           <LinkCardSkeleton
             key="pending"
+            url={pendingUrl}
             layer={isStack ? layers[shown.length] : undefined}
             slot={isStack ? slots[shown.length] : undefined}
           />

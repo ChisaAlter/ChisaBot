@@ -148,6 +148,25 @@ a.lc-card[href]:hover {
   display: block;
   height: 11px;
   border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+/*
+ * 骨架只做一点透明度的呼吸（不扫光、不模糊，合成层就能画）；减少动态效果时完全静止。
+ * 图片区沿用 .lc-media 的底色，尺寸和真卡同一套比例。
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .lc-skel .lc-skel-block,
+  .lc-skel .lc-skel-bar {
+    animation: lc-skel-breathe 1.2s ease-in-out infinite alternate;
+  }
+}
+@keyframes lc-skel-breathe {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.55;
+  }
 }
 .lc-go,
 .lc-followup {

@@ -2069,10 +2069,11 @@ const TranscriptMessage = memo(function TranscriptMessage({
               </Bubble>
             </>
           )}
-          {/* 链接卡 / 图片一摞（DESIGN.md §31）；开场一句不带。 */}
-          {tone === "lead" ? null : (
-            <MessageRichPreviews align={align} text={isUser ? said : text} />
-          )}
+          {/*
+            链接卡 / 图片一摞（DESIGN.md §31）。开场一句也要带：正文里出卡的链接行已经拿掉了（useDisplayText），
+            不画卡这行链接就没了；流式时第一段一直是「开场」，以前要等写完才一下子冒出卡片。
+          */}
+          <MessageRichPreviews align={align} text={isUser ? said : text} />
           {!isUser && memories && memories.length > 0 ? (
             <MemoryPills items={memories} />
           ) : null}
