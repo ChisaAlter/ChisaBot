@@ -25,10 +25,10 @@ export function DictationButton({
   if (!dictation.available) return null;
   return (
     <Button
-      aria-label={"口述消息"}
+      aria-label={"语音输入"}
       title={
         dictation.supported
-          ? "口述消息"
+          ? "语音输入"
           : "语音输入需要支持的浏览器和 HTTPS（或 localhost）"
       }
       className="glass-composer-icon shrink-0"
@@ -108,8 +108,8 @@ function RecordingControls({
     >
       <Button
         ref={cancel}
-        aria-label={"取消听写"}
-        title={"取消听写"}
+        aria-label={"取消语音输入"}
+        title={"取消语音输入"}
         size="icon"
         type="button"
         variant="ghost"
@@ -140,7 +140,7 @@ function RecordingControls({
         ) : (
           <div className="flex min-w-0 items-center gap-3">
             <span className="sr-only" role="status">
-              {transcribing ? "正在转录…" : "正在监听"}
+              {transcribing ? "正在识别…" : "正在监听"}
             </span>
             <LiveWaveform
               stream={state.stream}
@@ -174,13 +174,13 @@ function RecordingControls({
               void (state.canRetry ? session.retry() : session.start())
             }
           >
-            {state.canRetry ? "重试" : "再次记录"}
+            {state.canRetry ? "重试" : "重新录音"}
           </Button>
         ) : (
           <div className="flex shrink-0 items-center gap-2">
             <Button
-              aria-label={"停止并转录"}
-              title={"停止并添加到草稿"}
+              aria-label={"停止并转成文字"}
+              title={"停止，把文字放进输入框"}
               disabled={!recording}
               size="icon"
               type="button"
@@ -191,8 +191,8 @@ function RecordingControls({
               <IconPlayerStopFilled className="size-3.5" />
             </Button>
             <Button
-              aria-label={"转录并发送"}
-              title={"转录并发送"}
+              aria-label={"转成文字并发送"}
+              title={"转成文字并发送"}
               disabled={!recording || !canSend}
               size="icon"
               type="button"

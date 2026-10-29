@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   attachmentsConfigFor,
   FILE_PICKER_ACCEPT,
+  UPLOAD_FAILED_MESSAGE,
   uploadToChannel,
 } from "@/components/channels/composer/attachments";
 import { MAX_IMAGE_BYTES } from "@/lib/channels/attachments";
+import { installFetchBackedXhr } from "./fetch-backed-xhr";
 
 /**
  * `uploadToChannel` is the SDK's `onUpload`, called with a raw `File`; `attachmentsConfigFor`
@@ -14,6 +16,8 @@ import { MAX_IMAGE_BYTES } from "@/lib/channels/attachments";
  */
 
 const originalFetch = global.fetch;
+
+beforeEach(installFetchBackedXhr);
 
 afterEach(() => {
   global.fetch = originalFetch;
@@ -98,7 +102,7 @@ describe("uploadToChannel", () => {
 
     await expect(
       uploadToChannel("chan_1", "group_1")(file("receipt.png", "image/png")),
-    ).rejects.toThrow(/receipt\.png/);
+    ).rejects.toThrow(UPLOAD_FAILED_MESSAGE);
     await expect(
       uploadToChannel("chan_1", "group_1")(file("receipt.png", "image/png")),
     ).rejects.not.toThrow(/JSON/);
@@ -110,7 +114,7 @@ describe("uploadToChannel", () => {
 
     await expect(
       uploadToChannel("chan_1", "group_1")(file("receipt.png", "image/png")),
-    ).rejects.toThrow('无法上传 "receipt.png"。');
+    ).rejects.toThrow(UPLOAD_FAILED_MESSAGE);
   });
 
   test("a refusal whose `error` is empty throws the named fallback, not an empty refusal", async () => {
@@ -121,7 +125,7 @@ describe("uploadToChannel", () => {
 
     await expect(
       uploadToChannel("chan_1", "group_1")(file("receipt.png", "image/png")),
-    ).rejects.toThrow('无法上传 "receipt.png"。');
+    ).rejects.toThrow(UPLOAD_FAILED_MESSAGE);
   });
 
   test("a refusal whose `error` is not a string throws the named fallback", async () => {
@@ -130,7 +134,7 @@ describe("uploadToChannel", () => {
 
     await expect(
       uploadToChannel("chan_1", "group_1")(file("receipt.png", "image/png")),
-    ).rejects.toThrow('无法上传 "receipt.png"。');
+    ).rejects.toThrow(UPLOAD_FAILED_MESSAGE);
   });
 
   /**
@@ -151,7 +155,7 @@ describe("uploadToChannel", () => {
 
     const upload = uploadToChannel("chan_1", "group_1");
     await expect(upload(file("receipt.png", "image/png"))).rejects.toThrow(
-      '无法上传 "receipt.png"。',
+      UPLOAD_FAILED_MESSAGE,
     );
     await expect(upload(file("receipt.png", "image/png"))).rejects.not.toThrow(
       /JSON/,
@@ -169,7 +173,7 @@ describe("uploadToChannel", () => {
 
     await expect(
       uploadToChannel("chan_1", "group_1")(file("receipt.png", "image/png")),
-    ).rejects.toThrow('无法上传 "receipt.png"。');
+    ).rejects.toThrow(UPLOAD_FAILED_MESSAGE);
   });
 });
 

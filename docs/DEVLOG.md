@@ -1,5 +1,25 @@
 # DEVLOG
 
+## Unreleased — 输入框与附件（审查模块 4，分支 dev3/composer-audit）
+
+### 动机
+审查报告 `04-composer.md`：手机上回车直接发送、软键盘打不出第二行（M4-1）；慢网上传 20 秒只有灰块、发送键变灰也没说为什么（M4-2）；上传失败文件直接消失、不能重试，断网显示英文「Failed to fetch」，500 时文件名出现两次（M4-3、M4-7）；拖文件过来没有高亮（M4-6）；× 和手机工具栏按钮太小（M4-9）；「队列消息」「驳回此拒绝」「再次记录」等文案和语音功能五种叫法（M4-10）；长粘贴不会折成附件（M4-11，对齐 Hark）。
+
+### 改动
+1. **触屏回车换行**：`useCoarsePointer()`（`pointer: coarse`）为真时给 PromptArea 传 `submitOnEnter={false}`，只有发送按钮能发；编辑区的 `enterkeyhint` 设成 `enter`（鼠标设备是 `send`）。PromptArea 不转发这个属性，所以在 effect 里直接写到 contenteditable 上。
+2. **真实上传进度**：`attachments.ts` 的上传从 `fetch` 换成 XHR（`postWithProgress`），`xhr.upload.onprogress` 写进 `upload-progress.ts` 的外部 store（按附件自己的本地 id 记，只在整数百分比变化时通知）。只有图块上的百分比和发送键旁的「上传中 63%」订阅它，进度跳动不会让整个 Composer 重渲染。
+3. **上传失败保留卡片**：SDK 的 `onUploadFailed` 里 `reason === "upload-failed"` 的，不再进拒绝列表，而是作为失败卡片留在附件栏，带「重试」（同一个 `File` 重新走 `stageFiles`）和 ×。断网（XHR `onerror` 且 `navigator.onLine === false`）显示「网络已断开，没能上传。联网后点「重试」。」，其他网络错误「网络出错，没能上传。请点「重试」。」。500 没有服务端原因时是「上传失败，请重试。」，不再带文件名。
+4. **拖放高亮**：用上 SDK 的 `dragOver`，表单 `data-drag-over="true"` 时画虚线 outline（不用 ring，免得盖掉 `.glass-composer` 自己的阴影）。`dragleave` 移到子元素上时不算离开，避免闪烁。
+5. **44px 触控区**：新增 `.touch-target::after`（以控件为中心、至少 44×44 的透明点击区），用在附件 × 和失败卡片的重试上；`@media (pointer: coarse)` 下工具栏所有按钮同样处理。外观尺寸不变。
+6. **文案**：排队时发送键「排队发送」；拒绝条关闭键「关闭这条提示」/「关闭这 N 条提示」；麦克风出错的按钮「重新录音」；语音功能统一叫「语音输入」（「取消语音输入」「正在识别…」「停止并转成文字」「转成文字并发送」）。拒绝原因不再重复文件名（`picked-files.ts`）。麦克风被拒时「去哪里打开」的提示在 `lib/dictation/recording.ts` / `session.ts` 里，和语音 PR 改的是同几行，放到那个 PR 里做，避免两个 PR 冲突。
+7. **长粘贴折成附件**：纯文本粘贴超过 `LONG_PASTE_CHARS = 2000` 字、且这个输入框能上传附件、且不超过模型能读的 `MAX_EXTRACTED_CHARACTERS`（12 万字）时，`onRawPaste` 拦下，变成「粘贴的文本 N.txt」文本附件，随消息一起发；卡片上的文件名可以点开对话框预览全文。短粘贴照旧进输入框；不能附件时也照旧进输入框，不会丢。超过 12 万字的粘贴不折成卡片，直接提示太长、请分几次粘贴（否则模型只读到前 12 万字）。
+8. **上传中删附件会取消请求**：`postWithProgress` 接 `AbortSignal`，请求体还没发完时 × 掉卡片就 `xhr.abort()`；已经发完（`upload.onprogress` 到 100% 或 `upload.onload`）就让它落地，由对账逻辑把行还回去。每个上传的 AbortController、进度、粘贴预览都按附件的本地 id 记（`upload-identity.ts`：`stageFiles` 交给 SDK 前给每个 `File` 发一个 id；SDK 的占位卡只带文件名和大小，所以只在「占位卡对上哪个上传」这一步按文件名+大小、先进先出匹配）。两个同名同大小的文件一起上传时（SDK 默认一次只传一个，第二个在排队），删排队的第二个不会再取消正在传的第一个，第一个失败也照样显示；被删的排队文件不会再发出请求。删第一个也只取消第一个。上传成功或失败后都清掉对应记录。
+
+### 测试
+- 新增 `app/tests/composer-audit-m4.test.tsx`（13 个用例，在 main 上全部失败）：触屏回车不发送 + enterkeyhint、鼠标回车仍发送；进度回调 0.5→1、上传中显示「上传中 50%」且发送键禁用；500 不带文件名、断网中文提示；失败卡片 + 重试成功；拒绝原因不含文件名；拖放高亮且移到子元素不闪；× 有 touch-target、样式表有 44px 规则；文案；长粘贴变卡片、上传内容是原文、能预览，短粘贴不变。
+- 新增 `app/tests/fetch-backed-xhr.ts`：上传改走 XHR 后，原来打桩 `global.fetch` 的 10 个附件测试文件改为先装这个转发到 `fetch` 的 XHR 替身，测试内容没改。改了文案的旧断言同步更新。
+- 不在范围：Shift+Enter 4× 降速下的重渲染耗时（M4-5，另有人做）、PDF 支持（M4-8）。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。

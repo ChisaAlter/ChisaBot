@@ -15,6 +15,22 @@ import type { RejectedFile } from "./rejected-files";
  * already has in hand into what to keep and what to refuse, and why.
  */
 
+/**
+ * A paste longer than this many characters folds into a text attachment card instead of landing in
+ * the editor (audit M4-11). Two thousand is roughly a page: past it, nobody is going to edit the
+ * text in a 200px box, and the composer stays readable.
+ */
+export const LONG_PASTE_CHARS = 2000;
+
+/** The file a long paste becomes. Numbered so two pastes in one draft are two distinct cards. */
+export function pastedTextFile(text: string, n: number): File {
+  return new File([text], `粘贴的文本 ${n}.txt`, { type: "text/plain" });
+}
+
+/**
+ * Every reason below is written WITHOUT the file name: `RejectedFiles` already prints
+ * 「名字: 原因」, so a reason that named the file again read 「a.svg: 'a.svg' 是 SVG…」 (audit M4-7).
+ */
 export type ScreenedFiles = {
   accepted: File[];
   rejected: RejectedFile[];
@@ -50,8 +66,8 @@ export function screenPickedFiles(
         reject(
           file,
           mediaType === "image/svg+xml"
-            ? `'${file.name}' 是 SVG，可能带脚本，不能上传。`
-            : `'${file.name}' 是不支持的图片格式。`,
+            ? "是 SVG，可能带脚本，不能上传。"
+            : "是不支持的图片格式。",
         ),
       );
       continue;
@@ -75,28 +91,20 @@ export function screenPickedFiles(
     const unnamed = kind === "unsupported" && namesNoFormat(mediaType);
 
     if (kind === "unsupported" && !unnamed) {
-      rejected.push(
-        reject(file, `'${file.name}' 不是这个对话能接受的文件类型。`),
-      );
+      rejected.push(reject(file, "不是这个对话能接受的文件类型。"));
       continue;
     }
 
     if (kind === "image" && file.size > MAX_IMAGE_BYTES) {
       rejected.push(
-        reject(
-          file,
-          `'${file.name}' 图片太大（上限 ${formatBytes(MAX_IMAGE_BYTES)}）。`,
-        ),
+        reject(file, `图片太大（上限 ${formatBytes(MAX_IMAGE_BYTES)}）。`),
       );
       continue;
     }
 
     if (kind === "text" && file.size > MAX_FILE_BYTES) {
       rejected.push(
-        reject(
-          file,
-          `'${file.name}' 文本附件太大（上限 ${formatBytes(MAX_FILE_BYTES)}）。`,
-        ),
+        reject(file, `文本附件太大（上限 ${formatBytes(MAX_FILE_BYTES)}）。`),
       );
       continue;
     }
@@ -106,10 +114,7 @@ export function screenPickedFiles(
     // this branch exists to remove; the server applies the right limit once it has the bytes.
     if (unnamed && file.size > MAX_IMAGE_BYTES) {
       rejected.push(
-        reject(
-          file,
-          `'${file.name}' 超过附件上限 ${formatBytes(MAX_IMAGE_BYTES)}。`,
-        ),
+        reject(file, `超过附件上限 ${formatBytes(MAX_IMAGE_BYTES)}。`),
       );
       continue;
     }
@@ -121,7 +126,7 @@ export function screenPickedFiles(
       rejected.push(
         reject(
           file,
-          `'${file.name}' 没有加上：一条消息最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件。`,
+          `没有加上：一条消息最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件。`,
         ),
       );
       continue;

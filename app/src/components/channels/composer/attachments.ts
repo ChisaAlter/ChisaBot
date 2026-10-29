@@ -37,7 +37,7 @@ type UploadedAttachment = {
 /**
  * The SDK's `onUpload`, scoped to one channel.
  *
- * `fetch` directly rather than `client()` from `@/lib/client`: `client()` JSON-stringifies its
+ * A raw request (XHR, see `postWithProgress`) rather than `client()` from `@/lib/client`: `client()` JSON-stringifies its
  * body and sets a JSON content type, neither of which can carry a multipart upload.
  *
  * Supplying this is what keeps the bytes out of browser state: with `onUpload` set, the SDK never
@@ -49,6 +49,9 @@ type UploadedAttachment = {
 export function uploadToChannel(
   channelId: string,
   uploadGroup: string,
+  onProgress?: (file: File, fraction: number) => void,
+  /** A signal per upload; aborting it cancels the request (a chip removed mid-upload). */
+  signalFor?: (file: File) => AbortSignal | undefined,
 ): (file: File) => Promise<AttachmentUploadResult> {
   return async (file: File): Promise<AttachmentUploadResult> => {
     const formData = new FormData();
@@ -65,11 +68,14 @@ export function uploadToChannel(
      */
     formData.append("uploadGroup", uploadGroup);
 
-    const response = await fetch(`/api/channels/${channelId}/attachments`, {
-      method: "POST",
-      credentials: "include",
-      body: formData,
-    });
+    // XHR rather than `fetch`: only XHR reports upload progress, and a 2MB picture on a slow link
+    // used to sit as a grey block for twenty seconds with nothing saying how far along it was.
+    const response = await postWithProgress(
+      `/api/channels/${channelId}/attachments`,
+      formData,
+      (fraction) => onProgress?.(file, fraction),
+      signalFor?.(file),
+    );
 
     /*
      * READ ONCE, FOR EITHER OUTCOME, AND NEVER TRUSTED.
@@ -82,10 +88,10 @@ export function uploadToChannel(
      * `/api/attachments/undefined`, Send unlocked, and the message went out carrying a link to no
      * attachment. Both halves of one response are held to the same standard here.
      */
-    const body: unknown = await response.json().catch(() => undefined);
-    // Named after the file rather than left empty, for every way this can go wrong. It is the only
-    // sentence anybody gets: the composer keeps the string verbatim and shows it as the reason.
-    const couldNotUpload = new Error(`无法上传 "${file.name}"。`);
+    const body: unknown = parseJson(response.text);
+    // NOT named after the file: the failed tile and the refusal line both already print the name
+    // beside this sentence, and repeating it read as 「a.png: 无法上传 "a.png"。」.
+    const couldNotUpload = new Error(UPLOAD_FAILED_MESSAGE);
 
     if (!response.ok) {
       // The server phrases refusals in the product's voice — naming the mime type or the limit
@@ -101,9 +107,108 @@ export function uploadToChannel(
       type: "url",
       value: attachmentUrl(body.id),
       mimeType: body.mimeType,
-      metadata: { attachmentId: body.id, filename: body.name, ...readImageDims(body.width, body.height) },
+      metadata: {
+        attachmentId: body.id,
+        filename: body.name,
+        ...readImageDims(body.width, body.height),
+      },
     };
   };
+}
+
+/** What an upload that failed for no reason the server put into words says. */
+export const UPLOAD_FAILED_MESSAGE = "上传失败，请重试。";
+/** The request never reached the server: the link is down or the browser is offline. */
+export const UPLOAD_OFFLINE_MESSAGE =
+  "网络已断开，没能上传。联网后点「重试」。";
+export const UPLOAD_NETWORK_MESSAGE = "网络出错，没能上传。请点「重试」。";
+
+/** Said when the upload was cancelled on purpose; the composer drops it rather than showing it. */
+export const UPLOAD_ABORTED_MESSAGE = "已取消上传。";
+
+/** An upload cancelled through its AbortSignal, told apart from a dropped connection. */
+export class UploadAbortedError extends Error {
+  override name = "AbortError";
+  constructor() {
+    super(UPLOAD_ABORTED_MESSAGE);
+  }
+}
+
+type UploadResponse = { ok: boolean; status: number; text: string };
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * POST a multipart body, reporting how much of it has gone out.
+ *
+ * A network failure (offline, connection reset) is turned into a sentence here, because the
+ * browser's own — `Failed to fetch`, or nothing at all from XHR — is English, or empty, and is the
+ * only thing the strip would otherwise have to show.
+ */
+function postWithProgress(
+  url: string,
+  body: FormData,
+  onProgress: (fraction: number) => void,
+  signal?: AbortSignal,
+): Promise<UploadResponse> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new UploadAbortedError());
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.withCredentials = true;
+    /*
+     * ONLY WHILE THE BYTES ARE STILL GOING UP. Once the whole body is out the server may already be
+     * writing the row, and an abort then would leave a row this composer never hears about (the
+     * sweeper's, 24 hours later). So past that point the request is let land, and the composer's
+     * reconciler gives the row back as it always has.
+     */
+    let bodySent = false;
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        if (event.loaded >= event.total) bodySent = true;
+        onProgress(Math.min(1, event.loaded / event.total));
+      }
+    };
+    // The browser's own word that the body is out, for when no final progress event says so.
+    xhr.upload.onload = () => {
+      bodySent = true;
+    };
+    xhr.onload = () =>
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        text: typeof xhr.responseText === "string" ? xhr.responseText : "",
+      });
+    const networkFailure = () =>
+      reject(
+        new Error(
+          typeof navigator !== "undefined" && navigator.onLine === false
+            ? UPLOAD_OFFLINE_MESSAGE
+            : UPLOAD_NETWORK_MESSAGE,
+        ),
+      );
+    xhr.onerror = networkFailure;
+    xhr.ontimeout = networkFailure;
+    xhr.onabort = () =>
+      signal?.aborted ? reject(new UploadAbortedError()) : networkFailure();
+    signal?.addEventListener(
+      "abort",
+      () => {
+        if (!bodySent) xhr.abort();
+      },
+      { once: true },
+    );
+    xhr.send(body);
+  });
 }
 
 /**
@@ -234,9 +339,11 @@ export function attachmentsConfigFor(
    * itself and never tells us which one this call belongs to, so there is no id here to be asked
    * about. Reporting the row and reconciling afterwards needs no such correlation.
    */
-  onUploaded: (attachmentId: string) => void,
+  onUploaded: (attachmentId: string, file: File) => void,
+  onProgress?: (file: File, fraction: number) => void,
+  signalFor?: (file: File) => AbortSignal | undefined,
 ): AttachmentsConfig {
-  const upload = uploadToChannel(channelId, uploadGroup);
+  const upload = uploadToChannel(channelId, uploadGroup, onProgress, signalFor);
   return {
     enabled: true,
     accept: "*/*",
@@ -253,7 +360,7 @@ export function attachmentsConfigFor(
        * down would put `DELETE /api/attachments/undefined` on the wire.
        */
       if (rowId !== undefined) {
-        onUploaded(rowId);
+        onUploaded(rowId, file);
       }
       return uploaded;
     },

@@ -9,6 +9,7 @@ import {
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { Composer } from "@/components/channels/composer/composer";
+import { installFetchBackedXhr } from "./fetch-backed-xhr";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -34,7 +35,10 @@ import { settleReactWork } from "./settle-react-work";
  * resolve.
  */
 
-beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
+beforeAll(() => {
+  GlobalRegistrator.register({ url: "http://localhost/" });
+  installFetchBackedXhr();
+});
 afterEach(cleanup);
 afterAll(async () => {
   await settleReactWork();
