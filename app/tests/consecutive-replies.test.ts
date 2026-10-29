@@ -34,7 +34,7 @@ describe("机器人连发多条消息", () => {
     const compact = compactTurns(items, false, new Set());
     for (const id of ["a1", "a2", "a3"])
       expect(compact.hidden.has(id)).toBe(false);
-    expect(compact.tone.get("a2")).not.toBe("step");
+    expect(compact.tone.get("a2")).toBe("final");
     expect(compact.tone.get("a3")).toBe("final");
   });
 
@@ -49,7 +49,7 @@ describe("机器人连发多条消息", () => {
     const compact = compactTurns(items, false, new Set());
     expect(compact.hidden.has("a1")).toBe(true);
     expect(compact.hidden.has("a2")).toBe(false);
-    expect(compact.tone.get("a2")).not.toBe("step");
+    expect(compact.tone.get("a2")).toBe("final");
     expect(compact.hidden.has("a3")).toBe(false);
     expect(compact.tone.get("a3")).toBe("final");
     expect(compact.work.get("t1")?.notes.map((n) => n.text)).toEqual([
@@ -90,6 +90,7 @@ describe("机器人连发多条消息", () => {
     ];
     const compact = compactTurns(items, false, new Set());
     expect(compact.hidden.has("a2")).toBe(false);
+    expect(compact.tone.get("a2")).toBe("final");
     expect(compact.hidden.has("a3")).toBe(false);
     expect(compact.tone.get("a3")).toBe("final");
     expect(compact.work.get("t1")?.notes).toEqual([]);
@@ -107,6 +108,7 @@ describe("机器人连发多条消息", () => {
     const compact = compactTurns(items, false, new Set());
     expect(compact.hidden.has("a1")).toBe(true);
     expect(compact.hidden.has("a2")).toBe(false);
+    expect(compact.tone.get("a2")).toBe("final");
     expect(compact.hidden.has("a3")).toBe(false);
     expect(compact.tone.get("a3")).toBe("final");
     expect(compact.work.get("t1")?.notes.map((n) => n.text)).toEqual([
@@ -124,6 +126,7 @@ describe("机器人连发多条消息", () => {
     ];
     const compact = compactTurns(items, false, new Set());
     expect(compact.hidden.has("a2")).toBe(false);
+    expect(compact.tone.get("a2")).toBe("final");
     expect(compact.hidden.has("a3")).toBe(false);
     expect(compact.tone.get("a3")).toBe("final");
   });

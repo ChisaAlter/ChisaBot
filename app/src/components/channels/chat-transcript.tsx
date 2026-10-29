@@ -3935,7 +3935,8 @@ export function compactTurns(
       }
     }
     /*
-     * 最后一个干活的步骤之后的全部文字（一直到结果）都是回答，不是过程话：照旧是气泡，不收起、不进卡片。
+     * 最后一个干活的步骤之后的全部文字（一直到结果）都是回答，不是过程话：照旧是气泡，不收起、不进卡片，
+     * 和结果一样画（tone 为 final：带链接卡、复制按钮；重新生成仍只挂在最后一条回答上）。
      * 以前只认最后一条是结果，连发三条中间那条被当过程话藏起来，有干活卡时第一段也进了卡片，只剩最后一条。
      * 记忆写入这类不算干活的工具夹在回答中间，不当分界。干活之前的开场一句规则不变（§93）。
      */
@@ -3944,7 +3945,7 @@ export function compactTurns(
       const lastWorkAt = turn.rest.findLastIndex(doesWork);
       for (const item of texts)
         if (turn.rest.indexOf(item) > lastWorkAt && tone.get(item.id) !== "final") {
-          tone.set(item.id, "lead");
+          tone.set(item.id, "final");
           replies.add(item.id);
         }
     }
