@@ -163,11 +163,28 @@ export function directImageTitle(url: string): string {
   return "图片";
 }
 
-const CHALLENGE_TITLE =
-  /安全验证|人机验证|验证码|访问验证|请稍候|异常请求|Just a moment|Attention Required|Access denied|Are you a robot|Verify you are human|captcha/i;
+/** 整个标题就是验证页的标题（可带「 - 站点名」「 | 站点名」后缀）：单凭标题即可判定。 */
+const CHALLENGE_TITLE_STRONG =
+  /^(?:百度安全验证|安全验证|人机验证|访问验证|验证码|滑动验证|Just a moment\.{0,3}|Attention Required! \| Cloudflare|Verify you are human|Are you a robot\??|Human verification|Security check)(?:\s+[-|–—·]\s+.*)?$/i;
+/** 标题以这些开头（后面是分隔符或结束）时可能是验证页，但还要状态码或页面特征佐证（「请稍候，正在加载」「Access Denied (2023 film)」不算）。 */
+const CHALLENGE_TITLE_WEAK =
+  /^(?:请稍候|请稍后|异常请求|访问被拒绝|Access denied|Forbidden|Please wait|Checking your browser|One more step)(?:[\s.!…]*$|\s+[-|–—·:]\s+)/i;
+const CHALLENGE_STATUS = new Set([403, 429, 503]);
+/** 验证页的页面特征：Cloudflare 挑战表单 / 脚本参数、各家验证码组件。 */
+const CHALLENGE_MARKERS =
+  /cf-chl-|cf_chl_|challenges\.cloudflare\.com|id=["']challenge-form|g-recaptcha|recaptcha\/api\.js|hcaptcha\.com|turnstile|geetest|TencentCaptcha|captcha\.js|nc_1_wrapper/i;
 
-/** 反爬 / 验证页：跳到了 sec.* / captcha 之类的主机，或标题就是「安全验证」，或是知乎的 zse-ck 挑战页。 */
-export function isChallengePage(url: string, finalUrl: string, title: string, html: string): boolean {
+/**
+ * 反爬 / 验证页：跳到了 sec.* / captcha 之类的主机；知乎的 zse-ck 挑战页；整个标题就是验证页标题；
+ * 或标题以「请稍候 / Access denied」之类开头且状态码是 403/429/503 或页面带挑战特征。
+ */
+export function isChallengePage(
+  url: string,
+  finalUrl: string,
+  title: string,
+  html: string,
+  status = 200,
+): boolean {
   let from = "";
   let to = "";
   let path = "";
@@ -181,8 +198,11 @@ export function isChallengePage(url: string, finalUrl: string, title: string, ht
   }
   if (to !== from && /^(sec|captcha|verify|challenge|security)\./i.test(to)) return true;
   if (/\/(captcha|challenge|verify)(\/|$)/i.test(path) && to !== from) return true;
-  if (CHALLENGE_TITLE.test(title)) return true;
-  if (/<meta[^>]+id=["']zh-zse-ck["']/i.test(html.slice(0, 4096))) return true;
+  const head = html.slice(0, 65536);
+  if (/<meta[^>]+id=["']zh-zse-ck["']/i.test(head.slice(0, 4096))) return true;
+  const t = title.trim();
+  if (CHALLENGE_TITLE_STRONG.test(t)) return true;
+  if (CHALLENGE_TITLE_WEAK.test(t)) return CHALLENGE_STATUS.has(status) || CHALLENGE_MARKERS.test(head);
   return false;
 }
 
@@ -595,7 +615,7 @@ export async function createLinkPreviews(
     const html = decodeHtml(page.contentType, page.body);
     const parsed = parsePage(html, page.url);
     // 反爬 / 验证页（sec.douban.com、百度安全验证、知乎 zse-ck、Cloudflare「Just a moment」）不是这个链接的内容。
-    if (isChallengePage(url, page.url, parsed.title, html)) {
+    if (isChallengePage(url, page.url, parsed.title, html, page.status)) {
       return degradedPreview(url, key, page.url, "challenge");
     }
     // 200 但什么都没有（YouTube 给服务器的就是这样）：当兜底卡，30 分钟后再试，不按成功缓存一天。

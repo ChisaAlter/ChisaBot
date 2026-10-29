@@ -233,12 +233,33 @@ export function decodeHtml(contentType: string, bytes: Uint8Array): string {
   }
 }
 
-/** 预览卡上显示的域名：去掉 www.，中文域名（punycode `xn--…`）转回汉字。 */
+/**
+ * 一个 punycode 标签解码后能不能直接显示：只放行单一文字体系，防同形字冒充（`xn--pple-43d` = 西里尔 а + pple）。
+ * - 纯拉丁（可带变音符号，如 café）；
+ * - 汉字 / 假名 / 韩文，可以夹 ASCII 字母数字（中文.中国、日本語、ｗeb 不在此列——全角已被 URL 规范化）。
+ * 其它文字（西里尔、希腊、亚美尼亚……）一律保留 xn-- 形式：整段西里尔的 аррӏе 看起来就是 apple。
+ */
+const LATIN_LABEL = /^[\p{Script=Latin}0-9-]+$/u;
+const CJK_LABEL =
+  /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}ー々〆a-z0-9-]+$/u;
+function safeUnicodeLabel(label: string): boolean {
+  return LATIN_LABEL.test(label) || CJK_LABEL.test(label);
+}
+
+/** 预览卡上显示的域名：去掉 www.；punycode（`xn--…`）标签只在不会被同形字冒充时转回 Unicode，否则保留 ASCII。 */
 export function displayDomain(url: string): string {
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");
-    // `domainToUnicode` returns "" for a host it cannot decode; keep the ASCII form then.
-    return (host.includes("xn--") && domainToUnicode(host)) || host;
+    if (!host.includes("xn--")) return host;
+    return host
+      .split(".")
+      .map((label) => {
+        if (!label.startsWith("xn--")) return label;
+        // `domainToUnicode` returns "" for a host it cannot decode; keep the ASCII form then.
+        const unicode = domainToUnicode(label);
+        return unicode && safeUnicodeLabel(unicode) ? unicode : label;
+      })
+      .join(".");
   } catch {
     return url;
   }

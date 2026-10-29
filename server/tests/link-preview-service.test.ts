@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { domainToASCII } from "node:url";
 import { Hono } from "hono";
 import type { GuardedResponse } from "../../shared/net/guarded-fetch";
 import type { Database } from "../src/db/client";
@@ -389,6 +390,52 @@ describe("降级路径", () => {
       isChallengePage("https://a.example/", "https://a.example/", "Hello", ""),
     ).toBe(false);
   });
+
+  test("isChallengePage：整标题 / 前缀匹配，弱标题要状态码或页面特征佐证", () => {
+    const at = (title: string, html = "", status = 200) =>
+      isChallengePage(
+        "https://a.example/",
+        "https://a.example/",
+        title,
+        html,
+        status,
+      );
+    // 误报：标题里只是含有这些词
+    expect(at("短信验证码接口设计 - 知乎")).toBe(false);
+    expect(at("Access Denied (2023 film)")).toBe(false);
+    expect(at("请稍候，正在加载")).toBe(false);
+    expect(at("Access Denied (2023 film)", "", 403)).toBe(false);
+    expect(at("如何设计人机验证？")).toBe(false);
+    // 真阳性：整个标题就是验证页
+    expect(at("Just a moment...")).toBe(true);
+    expect(at("Attention Required! | Cloudflare")).toBe(true);
+    expect(at("安全验证 - 豆瓣")).toBe(true);
+    // 弱标题 + 状态码 / 页面特征
+    expect(at("Access denied")).toBe(false);
+    expect(at("Access denied", "", 403)).toBe(true);
+    expect(
+      at("请稍候", '<form id="challenge-form" action="/?__cf_chl_f_tk=x">'),
+    ).toBe(true);
+    expect(
+      at(
+        "Please wait | Example",
+        '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js">',
+      ),
+    ).toBe(true);
+  });
+
+  test("页面内容里提到验证码的正常文章照常出卡", async () => {
+    const t = await setup({
+      "https://zhuanlan.example/p/1": html(
+        '<title>短信验证码接口设计 - 知乎</title><meta property="og:description" content="正文">',
+      ),
+    });
+    const { preview } = await t.service.previewFor(
+      "https://zhuanlan.example/p/1",
+    );
+    expect(preview?.degraded).toBeUndefined();
+    expect(preview?.title).toBe("短信验证码接口设计 - 知乎");
+  });
 });
 
 describe("图片直链", () => {
@@ -541,6 +588,30 @@ describe("视频和中文站：公开接口", () => {
 describe("解析：中文域名、命名实体", () => {
   test("punycode 显示成汉字", () => {
     expect(displayDomain("https://xn--fiqs8s.xn--fiqs8s/")).toBe("中国.中国");
+    expect(displayDomain(`https://${domainToASCII("中文.中国")}/`)).toBe(
+      "中文.中国",
+    );
+    expect(displayDomain(`https://${domainToASCII("café.fr")}/`)).toBe(
+      "café.fr",
+    );
+    expect(displayDomain(`https://${domainToASCII("日本語.jp")}/`)).toBe(
+      "日本語.jp",
+    );
+  });
+
+  test("同形字：混合文字或整段西里尔 / 希腊的标签保留 xn--", () => {
+    // аpple.com：西里尔 а + 拉丁 pple
+    expect(displayDomain("https://xn--pple-43d.com/")).toBe("xn--pple-43d.com");
+    // аррӏе.com：整段西里尔，看起来像 apple
+    const allCyrillic = domainToASCII("аррӏе.com");
+    expect(allCyrillic.startsWith("xn--")).toBe(true);
+    expect(displayDomain(`https://${allCyrillic}/`)).toBe(allCyrillic);
+    // 希腊 ο 混拉丁
+    const greek = domainToASCII("gοogle.com");
+    expect(displayDomain(`https://${greek}/`)).toBe(greek);
+    // 一个标签可疑只影响它自己：中文标签照样显示
+    const mixed = domainToASCII("аpple.中国");
+    expect(displayDomain(`https://${mixed}/`)).toBe(`xn--pple-43d.中国`);
     expect(displayDomain("https://www.example.com/")).toBe("example.com");
   });
   test("HTML 命名实体（&rsquo; &ldquo; &eacute; &hellip; …）都能解", () => {
