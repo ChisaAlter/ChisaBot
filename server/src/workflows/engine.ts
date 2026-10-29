@@ -37,6 +37,10 @@ export const MAX_ACTIVE_RUNS_PER_USER = 3;
 /** 交给下一步时，每段前序输出最多带多少字。 */
 const HANDOFF_CHARS = 12_000;
 const PERSIST_EVERY_MS = 1_200;
+/** 正在跑的运行多久刷新一次心跳（updated_at）。 */
+const HEARTBEAT_MS = 30_000;
+/** 心跳超过这么久没刷新，才认为跑它的进程已经不在了（开机恢复时据此判断）。 */
+const RUN_LEASE_MS = 3 * HEARTBEAT_MS;
 
 /** 机器人在工作流里永远拿不到的工具：不能在工作流里再启动工作流。 */
 const ALWAYS_DENIED: ToolRule = { deny: ["run_workflow", "list_workflows"] };
@@ -87,6 +91,9 @@ export type WorkflowEngineDeps = {
   audit?: AuditStore;
   now?: () => Date;
   log?: (line: string) => void;
+  /** 测试用：心跳间隔和租约时长（默认 30 秒 / 90 秒）。 */
+  heartbeatMs?: number;
+  runLeaseMs?: number;
 };
 
 type RawInputs = Record<string, unknown>;
@@ -196,7 +203,10 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
   const now = deps.now ?? (() => new Date());
   const log = deps.log ?? ((line: string) => console.info(line));
   /** 正在这个进程里跑的运行。 */
-  const active = new Map<string, { controller: AbortController; resumedAt: number; baseElapsed: number }>();
+  const active = new Map<string, { controller: AbortController; resumedAt: number; baseElapsed: number; rerun?: boolean }>();
+  const heartbeatMs = deps.heartbeatMs ?? HEARTBEAT_MS;
+  const runLeaseMs = deps.runLeaseMs ?? RUN_LEASE_MS;
+  let recoverTimer: ReturnType<typeof setTimeout> | undefined;
 
   async function audit(run: Pick<StoredRun, "id" | "ownerUserId" | "workflowId" | "workflowName">, eventType: "workflow.run_started" | "workflow.run_finished" | "workflow.approval_decided" | "workflow.constraint_blocked", payload: Record<string, unknown>) {
     if (!deps.audit) return;
@@ -275,17 +285,20 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       bots.set(chosen.id, chosen);
       bindings[role.key] = chosen.id;
     }
-    if ((await store.countActive(input.ownerUserId)) >= MAX_ACTIVE_RUNS_PER_USER)
-      throw new WorkflowRunError(`同时最多运行 ${MAX_ACTIVE_RUNS_PER_USER} 个工作流，等前面的跑完再试。`, 429);
-    const run = await store.createRun({
-      ownerUserId: input.ownerUserId,
-      workflowId: input.workflowId,
-      definition: def,
-      inputs,
-      bindings,
-      source: input.source,
-      state: initialState(def, bindings, bots),
-    });
+    // 计数和插入在同一个事务里（按 owner 加锁），并发启动也不会突破上限。
+    const run = await store.createRunWithinLimit(
+      {
+        ownerUserId: input.ownerUserId,
+        workflowId: input.workflowId,
+        definition: def,
+        inputs,
+        bindings,
+        source: input.source,
+        state: initialState(def, bindings, bots),
+      },
+      MAX_ACTIVE_RUNS_PER_USER,
+    );
+    if (!run) throw new WorkflowRunError(`同时最多运行 ${MAX_ACTIVE_RUNS_PER_USER} 个工作流，等前面的跑完再试。`, 429);
     const limits = effectiveConstraints(def);
     await event(run.id, "run_started", `开始运行（${{ page: "工作流页面", chat: "聊天", routine: "长期任务", api: "接口" }[input.source]}）`, null, {
       bindings,
@@ -297,16 +310,39 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
   }
 
   async function execute(runId: string): Promise<void> {
-    if (active.has(runId)) return;
-    const run = await store.getRun(runId);
-    if (!run || (run.status !== "queued" && run.status !== "running")) return;
+    // 在任何 await 之前同步占位：同一进程里并发的两次 execute 只有一个往下走。
+    const existing = active.get(runId);
+    if (existing) {
+      // 上一段执行还没退出（例如刚停在审批关卡），退出后再试一次，由 claimRun 决定要不要跑。
+      existing.rerun = true;
+      return;
+    }
+    const controller = new AbortController();
+    const slot: { controller: AbortController; resumedAt: number; baseElapsed: number; rerun?: boolean } = {
+      controller,
+      resumedAt: Date.now(),
+      baseElapsed: 0,
+    };
+    active.set(runId, slot);
+    // 跨进程原子占位：queued → running 只有一个能抢到。
+    const run = await store.claimRun(runId).catch((error) => {
+      log(`[workflows] claim failed: ${String(error)}`);
+      return null;
+    });
+    if (!run) {
+      active.delete(runId);
+      if (slot.rerun) void execute(runId);
+      return;
+    }
     const def = run.definition;
     const limits = effectiveConstraints(def);
     const state = run.state;
-    const controller = new AbortController();
-    const resumedAt = Date.now();
-    const slot = { controller, resumedAt, baseElapsed: state.elapsedMs };
-    active.set(runId, slot);
+    slot.resumedAt = Date.now();
+    slot.baseElapsed = state.elapsedMs;
+    const heartbeat = setInterval(() => {
+      void store.touchRun(runId).catch((error) => log(`[workflows] heartbeat failed: ${String(error)}`));
+    }, heartbeatMs);
+    heartbeat.unref?.();
     const elapsed = () => slot.baseElapsed + (Date.now() - slot.resumedAt);
 
     let persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -589,8 +625,10 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       await audit(run, "workflow.run_finished", { status: cancelled ? "cancelled" : "failed", reason: message, tokens: state.tokens, steps: state.stepsRun });
     } finally {
       clearTimeout(deadline);
+      clearInterval(heartbeat);
       if (persistTimer) clearTimeout(persistTimer);
       active.delete(runId);
+      if (slot.rerun) void execute(runId);
     }
   }
 
@@ -608,18 +646,27 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       decidedAt: now().toISOString(),
       ...(input.comment ? { comment: input.comment.slice(0, 500) } : {}),
     };
-    await event(run.id, "approval_decided", `${input.decision === "approve" ? "批准" : "拒绝"}了「${step.name}」${input.comment ? `：${input.comment.slice(0, 200)}` : ""}`, step.id, { by: input.by });
-    await audit(run, "workflow.approval_decided", { step: step.id, decision: input.decision });
-    if (input.decision === "reject") {
+    const rejected = input.decision === "reject";
+    if (rejected) {
       for (const s of run.state.steps) if (s.status === "pending" || s.status === "waiting_approval") s.status = "skipped";
       step.status = "cancelled";
-      await store.saveRun(run.id, { status: "cancelled", state: run.state, error: `「${step.name}」的审批没有通过。`, finishedAt: now() });
+    } else step.status = "pending";
+    // CAS：只有状态还是 waiting_approval 时才写入；并发的两次审批只有一个能过，另一个得到 409。
+    const won = await store.transitionRun(
+      run.id,
+      ["waiting_approval"],
+      rejected
+        ? { status: "cancelled", state: run.state, error: `「${step.name}」的审批没有通过。`, finishedAt: now() }
+        : { status: "queued", state: run.state },
+    );
+    if (!won) throw new WorkflowRunError("这一步已经被处理过了。", 409);
+    await event(run.id, "approval_decided", `${rejected ? "拒绝" : "批准"}了「${step.name}」${input.comment ? `：${input.comment.slice(0, 200)}` : ""}`, step.id, { by: input.by });
+    await audit(run, "workflow.approval_decided", { step: step.id, decision: input.decision });
+    if (rejected) {
       await event(run.id, "run_cancelled", "审批没有通过，运行结束", null);
       await audit(run, "workflow.run_finished", { status: "cancelled", reason: "approval rejected" });
       return;
     }
-    step.status = "pending";
-    await store.saveRun(run.id, { status: "queued", state: run.state });
     void execute(run.id);
   }
 
@@ -647,21 +694,49 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     await store.deleteRun(ownerUserId, runId);
   }
 
-  /** 启动时调用：上个进程里没跑完的运行标成失败（等待审批的不受影响，批准后照常继续）。 */
+  /**
+   * 启动时调用：上个进程里没跑完的运行标成失败（等待审批的不受影响，批准后照常继续）。
+   * 部署重叠时另一个容器可能正在跑某个运行：心跳（updated_at）还新鲜的先不动，过了租约再查一次；
+   * 标失败本身也是条件更新，只有心跳确实过期的才会被标。
+   */
   async function recover() {
+    if (recoverTimer) clearTimeout(recoverTimer);
+    recoverTimer = undefined;
     const runs = await store.interruptedRuns();
+    const staleBefore = new Date(now().getTime() - runLeaseMs);
+    let failed = 0;
+    let deferred = 0;
     for (const run of runs) {
       if (active.has(run.id)) continue;
+      if (run.updatedAt.getTime() >= staleBefore.getTime()) {
+        deferred += 1;
+        continue;
+      }
       for (const s of run.state.steps) {
         if (s.status === "running") {
           s.status = "failed";
           s.error = "服务器重启，这一步被中断了。";
         } else if (s.status === "pending") s.status = "skipped";
       }
-      await store.saveRun(run.id, { status: "failed", state: run.state, error: "服务器重启，运行中断了。可以重新运行。", finishedAt: now() });
+      const marked = await store.failStaleRun(run.id, staleBefore, {
+        state: run.state,
+        error: "服务器重启，运行中断了。可以重新运行。",
+        finishedAt: now(),
+      });
+      if (!marked) continue;
+      failed += 1;
       await event(run.id, "run_failed", "服务器重启，运行中断了", null);
     }
-    if (runs.length) log(`[workflows] marked ${runs.length} interrupted run(s) as failed`);
+    if (failed) log(`[workflows] marked ${failed} interrupted run(s) as failed`);
+    if (deferred) {
+      log(`[workflows] ${deferred} run(s) still have a fresh heartbeat; re-checking after the lease`);
+      recoverTimer = setTimeout(() => {
+        recoverTimer = undefined;
+        void recover().catch((error) => log(`[workflows] recover re-check failed: ${String(error)}`));
+      }, runLeaseMs + 1_000);
+      recoverTimer.unref?.();
+    }
+    return { failed, deferred };
   }
 
   function view(run: StoredRun, events?: RunEvent[]): WorkflowRunView {

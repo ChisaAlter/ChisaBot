@@ -1,5 +1,21 @@
 # DEVLOG
 
+## 工作流审批 / 执行竞态（fix/workflow-race，审查模块 13 S5）
+
+**动机**：审查 `/workspace/audit/13-routines.md` S5 指出 `server/src/workflows/engine.ts` 四处竞态，都会让工作流多跑、误杀或超限：
+- `approve` 先读状态再写，没有条件更新：两次并发批准（双击、两个设备）都能过，各自 `execute`，被审批的步骤跑两遍（重复发消息、重复花 token）。
+- `execute` 的 `active.has` 检查之后才 `await getRun`，再 `active.set`：同一进程两次并发调用都能通过检查；跨容器则完全没有占位。
+- `recover` 开机把所有 queued / running 标失败：部署时新旧容器重叠，新容器会把旧容器正在跑的运行标成「服务器重启，运行中断了」。
+- `start` 先 `countActive` 再 `createRun`（TOCTOU）：并发启动能突破 `MAX_ACTIVE_RUNS_PER_USER=3`。
+
+**改法**（只动 `server/src/workflows/engine.ts`、`store.ts` 和测试；没有新迁移）：
+- `store.transitionRun(id, from, patch)`：`UPDATE … WHERE id = ? AND status IN (from)`，返回是否写成功。`approve` 先改好内存里的步骤状态，再用它把 `waiting_approval` 改成 `queued`（批准）或 `cancelled`（拒绝）；没抢到的返回 409「这一步已经被处理过了」。审批事件和审计在 CAS 成功之后才写，输掉的那次不留记录。
+- `execute`：在第一个 `await` 之前同步 `active.set` 占位；再用 `store.claimRun`（`queued → running` 条件更新）跨进程占位，抢不到就退出。上一段执行还没退出时（刚停在审批关卡、`finally` 还没跑）又被调用，记一个 `rerun`，退出后再试一次，避免批准后卡在 queued。
+- 心跳：运行期间每 30 秒 `store.touchRun` 刷新 `updated_at`（只对 running）；`recover` 只处理 `updated_at` 早于 90 秒（3 个心跳）的运行，并且标失败本身也是条件更新（`failStaleRun` 带 `updated_at < staleBefore`）。心跳新鲜的先不动，过了租约再自动查一次：真是本机上次没跑完的，晚 90 秒标失败；另一个容器还在跑的，心跳一直新鲜，不会被动。
+- `store.createRunWithinLimit(input, max)`：一个事务里 `pg_advisory_xact_lock(hashtext('workflow:runs:<owner>'))`、计数、插入，超限返回 null，`start` 报 429。原来的 `createRun` 去掉（只有引擎在用）。
+- 测试：`server/tests/workflows.test.ts` 加 5 条并发单测（两次并发批准只执行一次、批准和拒绝并发只有一个生效、同一运行并发 execute 只跑一次、并发启动第 4 个 429、recover 不动心跳新鲜的运行）；新增 `server/tests/workflow-race.integration.test.ts` 在真实 PostgreSQL 上验证同样几条（8 个并发启动只建 3 个、CAS、claim、引擎级并发批准、recover）。
+- 没改：schedules 的 classify / service（别的分支在做）；`countActive` 留着（审查和其它读路径还能用）。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
