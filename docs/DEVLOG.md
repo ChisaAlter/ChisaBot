@@ -581,3 +581,15 @@
 
 PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名是 `*-pcwin-*.webp`。
 
+## 2026-10-29 发版 0.1.110
+
+- #375 `perf/global-no-backdrop`（head `83a29e3`）→ `e35a9cb`：性能模式 / 减少透明度下全局关掉毛玻璃，原来模糊的面板换成不透明底色。
+- #374 `feat/hark-topbar`（head `f601ab3`）→ `f05beca`：Hark 顶栏外壳（圆形主页按钮、右上搜索胶囊 + 头像）。
+- #394 `dev3/fix-open-double-history-read`（head `a35cfb7`）→ `875ae8f`：打开对话时只读一次历史。
+- #396 `dev3/fix-reconnect-backfill`（head `710e31a`）→ `a14669d`：断线重连后补齐漏掉的消息。
+
+**流程**：先在临时 worktree 本地按 #375 → #374 → #394 → #396 `--no-ff` 合进 origin/main（PR head 合并前核对未变），`bun install --frozen-lockfile`、`typecheck`、`build` 通过，`test:app` 229 个文件 1759 pass / 0 fail（退出码 0，form-submit-controls 这次没超时）。验证通过后 main 快进到本地验证过的合并提交。
+
+**冲突**：只在 `CHANGELOG.md`、`docs/CHANGELOG.md`、`docs/DEVLOG.md` 冲突，两边都保留，没有重复的已发布条目；没有代码、package.json 或锁文件冲突。
+
+**版本**：根、`app`、`server` 升到 `0.1.110`；PC / Android 不变。不打 tag、不建 Release。

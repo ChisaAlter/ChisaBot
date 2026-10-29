@@ -1,4 +1,4 @@
-## Unreleased
+## 0.1.110
 
 - 修复：断线重连后漏掉的消息不补——`useConversationSync` 隔 15 秒以上才问到变化戳时不再只记基线，序号变了就合并式接上；测试 `app/tests/reconnect-backfill.test.tsx`。
 
@@ -8,6 +8,7 @@
 - `docs/DEVLOG.md` 记录 Hark 顶栏（第 2 步）的动机、改动和前后截图。
 
 - 性能模式和系统「减少透明度」下全局关掉毛玻璃：一条 `*, *::before, *::after { backdrop-filter: none }`（`app/src/perf-noblur.css`，不用 `!important`），漏网的代码块操作条、遮罩、外观预览一起关掉；原来模糊的面板换成不透明底色 `--glass-bg-opaque`。实测两种模式下桌面、手机可见模糊层都是 0，普通模式与 main 一致。新增 `app/tests/no-backdrop.test.ts` 防止新的模糊绕过；规则见 DESIGN.md §10.3.1。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.110`），PC / Android 外壳未变。
 
 ## 0.1.109
 
