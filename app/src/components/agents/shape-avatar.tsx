@@ -90,7 +90,7 @@ function neighborOf(shape: AvatarShape): AvatarShape {
  * 有表情的形象头像（DESIGN.md §81）：形状 + 颜色 + 一对竖条眼睛。换形状时用 motion 的弹簧在两个形状之间逐点变形；
  * 表情用 CSS 动画（styles.css 的 .sa-*），尊重「减少动态效果」。
  * 在想 / 在干活 / 被选中 / 做完了时轮廓像果冻一样持续变形、眼睛会眨会看（lib/agents/avatar-morph.ts，全局一个 rAF，直接改属性），
- * 减少动态效果或性能模式下不变形。
+ * 减少动态效果或性能模式下只留静态形状：不变形、换形状不走弹簧，CSS 表情动画和过渡也全停（styles.css 的 .sa 一节）。
  */
 export const ShapeAvatar = memo(function ShapeAvatar({
   shape,
@@ -182,7 +182,8 @@ export const ShapeAvatar = memo(function ShapeAvatar({
     };
     const target = SHAPES[shape];
     if (shown.current === target) return;
-    if (reduceMotion) {
+    // 减少动态效果 / 性能模式：换形状直接画到位，不起 motion 的弹簧（它也是一个 rAF 循环）。
+    if (still) {
       paint(target);
       return;
     }
@@ -197,7 +198,7 @@ export const ShapeAvatar = memo(function ShapeAvatar({
       controls.stop();
       // 被新的选择打断：停在最后一帧，下一次从这里继续变。
     };
-  }, [shape, reduceMotion]);
+  }, [shape, still]);
 
   // 变形：减少动态效果 / 性能模式下不登记；切过去时画回自己的形状。
   useLayoutEffect(() => {
