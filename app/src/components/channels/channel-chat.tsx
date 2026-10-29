@@ -688,6 +688,11 @@ export function ChannelChat({
     () => sendInFlightRef.current,
     [],
   );
+  // 打开时的接入（上面的 joinWithin）结束前不核对顺序：那边已经读过一次历史，不再整份拉第二遍。
+  const skipReconcileWhileJoining = useCallback(
+    () => !joinGateSettledRef.current,
+    [],
+  );
   useConversationSync(
     channel.threadId,
     agent,
@@ -696,6 +701,7 @@ export function ChannelChat({
     {
       liveTail: true,
       suppressConnect: suppressConnectDuringSend,
+      skipReconcile: skipReconcileWhileJoining,
     },
   );
   useEffect(() => {
