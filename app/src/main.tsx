@@ -17,6 +17,8 @@ import "@copilotkit/react-core/v2/styles.css";
 import "./styles.css";
 // 性能模式 / 减少透明度：全局关掉 backdrop-filter（DESIGN.md §10.3.1）。放在 styles.css 之后。
 import "./perf-noblur.css";
+// 增加对比度 / 强制颜色：文字、边框和焦点环（模块 11 第 7 条）。放在 perf-noblur.css 之后。
+import "./a11y-modes.css";
 
 reportBootStage("entry-executing");
 installPhoneLayout();

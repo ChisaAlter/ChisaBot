@@ -785,7 +785,8 @@ html[data-sky-ease] body::before {
   display: grid;
   place-items: center;
   font-weight: 600;
-  color: #fff;
+  /* 浅粉蓝渐变上的字母：白字只有 1.61:1，换成深色墨（--avatar-ink）。 */
+  color: var(--avatar-ink);
   flex: none;
   line-height: 1;
 }
@@ -1005,7 +1006,7 @@ html[data-sky-ease] body::before {
 }
 .glass-item-s {
   font-size: 12px;
-  color: var(--glass-ink-4);
+  color: var(--side-sub-ink);
   max-width: 40%;
   white-space: nowrap;
   overflow: hidden;
@@ -1024,9 +1025,14 @@ html[data-sky-ease] body::before {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  /* 12px 小字：浅色 / 深色都要在最透的玻璃上 ≥ 4.5:1（--side-sec-main-ink，tests/a11y-contrast.test.ts）。 */
+  color: var(--side-sec-main-ink);
+}
+/* 星标只是装饰（旁边有文字），保留原来的琥珀色。 */
+.glass-sec-main > svg {
   color: #c48a0a;
 }
-.dark .glass-sec-main {
+.dark .glass-sec-main > svg {
   color: #f2c14e;
 }
 .glass-bot-row {
@@ -9051,6 +9057,10 @@ html[data-perf="on"] [data-slot="sidebar"].hk-drawer {
   --glass-ink-3: #334155;
   --glass-ink-4: #475569;
   --muted-foreground: #334155;
+  /* 左栏小字和头像字母（模块 11 第 6 条）：在最透的玻璃（晶莹 5%）+ 各配色天空上都 ≥ 4.5:1。 */
+  --side-sec-main-ink: #553600;
+  --side-sub-ink: #303d50;
+  --avatar-ink: #1e2a4a;
   --text-primary: rgb(15, 23, 42);
   --text-secondary: rgba(15, 23, 42, 0.84);
   --text-tertiary: rgba(15, 23, 42, 0.68);
@@ -9087,6 +9097,9 @@ html[data-perf="on"] [data-slot="sidebar"].hk-drawer {
   --glass-ink-3: #cbd5e1;
   --glass-ink-4: #94a3b8;
   --muted-foreground: #cbd5e1;
+  --side-sec-main-ink: #f2c14e;
+  --side-sub-ink: #b4bfcf;
+  --avatar-ink: #1e2a4a;
   --text-primary: rgb(248, 250, 252);
   --text-secondary: rgba(248, 250, 252, 0.86);
   --text-tertiary: rgba(248, 250, 252, 0.7);

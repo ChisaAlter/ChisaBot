@@ -1,0 +1,143 @@
+/*
+ * 系统辅助功能模式（模块 11 第 7 条）：「增加对比度」（prefers-contrast: more）和强制颜色（forced-colors: active）。
+ *
+ * - 模糊和半透明玻璃在这两种模式下由 perf-noblur.css 关掉（和「减少透明度」同一套规则），这里只管颜色、边框和焦点。
+ * - 选择器前缀 html:not(#chisabot-no-blur)：带一个 id 的优先级，压过 styles.css 里只用类 / 属性的规则，
+ *   不用 !important（和 perf-noblur.css 一样）。页面上没有元素用这个 id。
+ * - 强制颜色下浏览器会把颜色换成系统色、把 box-shadow 去掉。玻璃面板原来只靠投影区分边缘、
+ *   很多焦点环也是 box-shadow，所以这里用 outline + 系统色（CanvasText / Highlight）补上。
+ * - app/tests/a11y-modes.test.ts 守住这些前提。
+ */
+
+/* ---------- 增加对比度 ---------- */
+@media (prefers-contrast: more) {
+  html:not(#chisabot-no-blur) {
+    /* 二级 / 三级文字提到接近正文。 */
+    --text-secondary-alpha: 0.82;
+    --text-tertiary-alpha: 0.7;
+    --ink-3: #1e293b;
+    --ink-4: #334155;
+    --glass-ink-3: #1e293b;
+    --glass-ink-4: #334155;
+    --muted-foreground: #1e293b;
+    --side-sec-main-ink: #3d2700;
+    --side-sub-ink: #1e293b;
+    /* 分隔线、输入框描边和焦点环都要看得见。 */
+    --line: rgba(15, 23, 42, 0.32);
+    --line-strong: rgba(15, 23, 42, 0.5);
+    --border: rgba(15, 23, 42, 0.45);
+    --input: rgba(15, 23, 42, 0.55);
+    --focus: rgba(15, 23, 42, 0.85);
+    --focus-line: #0f172a;
+    --a11y-edge: rgba(15, 23, 42, 0.55);
+  }
+  html.dark:not(#chisabot-no-blur) {
+    --ink-3: #e2e8f0;
+    --ink-4: #cbd5e1;
+    --glass-ink-3: #e2e8f0;
+    --glass-ink-4: #cbd5e1;
+    --muted-foreground: #e2e8f0;
+    --side-sec-main-ink: #ffd98a;
+    --side-sub-ink: #e2e8f0;
+    --line: rgba(248, 250, 252, 0.32);
+    --line-strong: rgba(248, 250, 252, 0.5);
+    --border: rgba(248, 250, 252, 0.45);
+    --input: rgba(248, 250, 252, 0.55);
+    --focus: rgba(248, 250, 252, 0.85);
+    --focus-line: #f8fafc;
+    --a11y-edge: rgba(248, 250, 252, 0.55);
+  }
+  /* 面板（已换成不透明底色）加一圈实线边，不再只靠投影区分。 */
+  html:not(#chisabot-no-blur)
+  :is(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-composer,
+    .glass:not(.is-flat),
+    .sg-card,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"]
+  ) {
+    outline: 1px solid var(--a11y-edge);
+    outline-offset: -1px;
+  }
+  html:not(#chisabot-no-blur) :focus-visible {
+    outline: 2px solid var(--focus-line);
+    outline-offset: 2px;
+  }
+}
+
+/* ---------- 强制颜色（Windows 对比度主题等） ---------- */
+@media (forced-colors: active) {
+  /* 天空、壁纸和流光只是装饰；强制颜色下不画，背景就是系统的 Canvas。 */
+  html:not(#chisabot-no-blur)
+  :is(#sky-root, .chisabot-wallpaper, .chisabot-ambient-orbs) {
+    visibility: hidden;
+  }
+  /* 面板、弹层、卡片：系统前景色的边框（投影在强制颜色下会被去掉）。 */
+  html:not(#chisabot-no-blur)
+  :is(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-composer,
+    .glass:not(.is-flat),
+    .glass-card,
+    .sg-card,
+    .page-rows,
+    .glass-toast,
+    .sg-savebar,
+    .auth-card,
+    .model-popover,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"]
+  ) {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  /* 选中项原来只靠底色和左侧色条，强制颜色下用 Highlight 描边。 */
+  html:not(#chisabot-no-blur)
+  :is(
+    .glass-bot-row.is-on,
+    [aria-current="page"],
+    [aria-selected="true"],
+    [aria-pressed="true"]
+  ) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  html:not(#chisabot-no-blur) .glass-bot-row.is-on::before {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+  /* 字母头像：渐变底在强制颜色下保留、字却变成系统色，可能看不清；换成系统底色加边框。 */
+  html:not(#chisabot-no-blur) .glass-avatar {
+    background: Canvas;
+    color: CanvasText;
+    border: 1px solid CanvasText;
+  }
+  /* 焦点环：很多控件用 box-shadow 画焦点，强制颜色下会消失，统一用 Highlight 的 outline。放在最后，压过上面的描边。 */
+  html:not(#chisabot-no-blur) :focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
