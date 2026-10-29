@@ -507,6 +507,49 @@
 
 **0.1.109 部署**（2026-10-29 16:07 北京时间开始）：部署前确认 Haupt 上 `chisabot-zh` 的容器环境、s6 环境和配置文件里都没有设置 `CHISABOT_REPLY_SOURCES`（代码默认关）；另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.109-20261029T080656Z.dump`（`pg_restore -l` 767 条目）。`deploy-serial.sh 63914d8` 镜像 `local/chisabot:auto-202610290807-63914d8`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.109` / `63914d8`；`request.sh smoke` PASSED，`POST /api/admin/smoke` 模型自检 `ok:true persisted:false`，`health.sh` 通过，公网 `/login` 200，容器 healthy、无重启、日志无错误，sidecar 隔离 ALL GREEN，未回滚；部署后运行中的容器仍未设置 `CHISABOT_REPLY_SOURCES`（关）。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 6790ef7；保留当前（BASE）63914d8、上一版 9e9ca0d、`keep-628d527`。
 
+## 2026-10-29 回复过程照 Hark 改（feat/hark-reply-steps）
+
+- 对照 `/workspace/hark-compare`（REPORT 第「工具过程」「等待态」两行、P0 / P1 两项）和反馈图 `tid/02.png`：Hark 等待时只有一行状态，做完不留痕迹；ChisaBot 原来有「思考中」气泡、做完还留着干活卡、还会冒出只有「---」的步骤。
+- 新增 `StatusCapsule` / `PausedCapsule`（`app/src/components/chat/status-capsule.tsx` + `.css`）：转圈 + 当前动作 + 「N 秒」，不到 1 秒不显示秒数；运行中的 `WorkRow` 画成同一个胶囊（还能点开看步骤），`Thinking` 和停顿占位也换成胶囊，原来的三点气泡、`PauseDots` 删掉。秒数从这一轮开始算（`liveSince`），思考 → 干活不会归零。
+- `WorkRow`：从运行变成完成时自动收起并记住；历史里完成的行一律收起。
+- `isBlankNote`（`lib/chat/work-steps.ts`）：去掉 markdown 后没有字母、数字、emoji 的过程话（「---」「…」）不进步骤列表，`compactTurns` 也把这种助手正文当作隐藏。
+- 规则：只用现有 token；胶囊不用 blur，动画只动 transform / opacity；`prefers-reduced-motion` 关动画，`prefers-reduced-transparency` 和 `html[data-perf="on"]` 用不透明底色（与抽屉同色）；没有 `:has()`、没有 `!important`；styles.css 和禁区文件都没动。
+- 已知：做完的干活行在本页亲眼看着收起时，按 §82.9 仍以 0 高、`aria-hidden` + `inert` 的折叠行留在 DOM 里（重新打开对话时不画）；工具过程默认隐藏后只剩空 div 的工具行由 styles.css 已有规则 `display: none`，不占位。
+
+## 2026-10-29 回复过程审查修正（feat/hark-reply-steps，#404 退回）
+
+- 只有代码块的回复整段消失：`isBlankNote` 以前先过 `plainNote`，它把 ``` 代码块整段去掉，`compactTurns` 就把这段当空段藏了（流式时代码块一闭合就没了）。改成只认整段都是分隔符（`-`、`*`、`_`、`=`、`~`、`.`、`·`、`…`、`。`、破折号、制表线，可以夹空白）；代码块、表格、链接都不算空。
+- 工具失败、后面没有文字时一片空白：`HIDE_FINISHED_WORK_SUMMARY` 让做完的干活行一律收起，`ChatTranscript` 里又写死了 `hasFinal: true`。现在 `compactTurns` 给每轮算 `answered`（结果气泡 / render_ui 卡片 / 留着的气泡），`isQuietWork` 在没有回答时不收（被停掉的照旧收，另有「已停止」）；新增 `noAnswerAfter`，最后一个看得见的行后面挂 `NoAnswerRow`「这一轮没有回答」，最后一轮带重试（用现有的 `onRetryUnanswered`，和重新生成同一条路；错误卡已经在的时候不重复挂）。只回了 `---` 的一轮同样处理。
+- 读屏：干活卡按钮的 `aria-label` 改成「当前动作（，N 步失败），展开 / 收起步骤」；对话末尾一个一直挂着的 `role="status"`（`transcript-live-status`），「思考中」→ 当前步骤在同一个节点里换字，胶囊和干活卡自己不再带 `role="status"`。
+- 焦点：干活行在这一轮结束时跟着收成 inert 的折叠行时，`WorkRow` 在 layout effect 里把焦点移到后面第一条看得见的行（没有就往上找，必要时给 `tabIndex=-1`），不掉到 body；行没收起（没有回答）时焦点留在按钮上。
+- 跳动：停顿时的胶囊（`data-variant="pause"`）上下内边距 1px，高 22px，和以前停顿的占位一样，来新字时不多跳 16px。
+- 秒数：胶囊的开始时间改用 `work-card.tsx` 的 `turnStartedAt(turnKey)`（模块里按这一轮的 key 记），切换频道回来不归零，和干活卡同一个数。
+- 胶囊换成干活卡不再播进场淡入（`.chat-work-card.rs-capsule { animation: none }`）；深色不再写死 `--rs-solid`，用 `--glass-bg-solid`。
+- 测试：`reply-steps.test.tsx` 补了只有代码块、工具失败没有文字、只回 `---`、秒数重挂不归零、`PausedCapsule`、焦点、aria-label、CSS 规则；`quiet-turn.test.ts` 里「没回答也收起」的断言按新规则改了。
+- 已知遗留：收起的行仍作为 0 高折叠行留在 DOM 里，长对话里会累积；`PausedCapsule` 出现 / 消失没有给读屏做防抖。
+
+## 2026-10-29 回复过程第二轮审查修正（feat/hark-reply-steps，#404 复审 7d064048）
+
+- 「这一轮没有回答」以前只认文字和 `render_ui`：以 `image_generate`、`file_share`、`ask_person`、`github_create_issue`（确认卡）这类卡片收尾的一轮会被挂重试，点了会重新生成图片、重新建 issue。现在 `compactTurns` 多一个 `drawsCard` 参数，`ChatTranscript` 传 `toolDrawsCard`：读 CopilotKit 注册的渲染器（新文件 `lib/copilot/tool-renderers.ts`，挑法和 `useRenderToolCall` 一样；不在 Provider 里返回空，不抛错），有渲染器就算卡片，注册时标了 `lineOnly`（计算机工具那些只画一行过程 / 什么都不画的，经 `approval-tools.tsx` 的 `useFrontendTool` 打标）的不算；没有渲染器时只有宿主被拒（`isHostAccessRefusal`，和 `ServerToolLine` 共用）算；确认卡（`useThreadConfirmations`）和行内审批卡（审批收件箱）挂着的工具也算，两份列表都和卡片共用缓存，还没读到时先当有卡片；有渲染器的活动消息也算。
+- 窄屏：`styles.css` 在 ≤ 560px 把做完的干活行的 `.chat-work-meta` 藏了，手机上看不到「N 步失败」。`WorkRow` 多一个 `unanswered`，没有回答的那一行带 `data-unanswered`，`status-capsule.css` 用属性选择器（多一级优先级）在窄屏重新显示；没改 `styles.css`，那条规则也不在 #376 的范围里。
+- 计时：`turnStartedAt` 以前按这一轮的 key 只记一次，同一轮重新跑时接着上一次算。现在 `ChatTranscript`（和 `WorkRow`）在这一页亲眼看着这一轮从「跑着」变成「停了」时 `markTurnRunEnded`，下次 `turnStartedAt` 清掉开始时间、结束时间和记下的用时，从 0 算；切频道回来重挂时还在跑、没经过「停了」，秒数照旧接着算。
+- 测试（`reply-steps.test.tsx`）：图片 / 文件 / 问人 / 等确认 / 宿主提示 / 活动卡收尾都不挂；只画一行过程的渲染器和普通工具失败照常挂；末尾已有错误卡时不重复挂重试（挂载 `ChatTranscript` 对照）；重跑归零、重挂不归零；`data-unanswered` 和窄屏 CSS 规则。合了 main 0.1.109（merge commit）。
+
+## 2026-10-29 回复过程第三轮审查修正（feat/hark-reply-steps，#404 复审 cc398fc0）
+
+- `toolDrawsCard` 以前把不是 `lineOnly` 的渲染器都当画了卡片，但图片 / 文件工具没拿到文件、`schedule_create` 被拒或报错、`render_ui` 的规范画不出东西（或被拒、格式有误只画一行）时渲染器什么都不画，这一轮被算成有回答，屏幕上却空着、也没法重试。现在渲染器模块自己导出判断（`imageToolDrawsCard` / `fileToolDrawsCard` / `scheduleDrawsCard` / `renderUiDrawsCard`，渲染时用同一个函数决定返回不返回 null），按工具名登记到 `tool-renderers.ts` 的 `registerCardCheck`（`useRenderTool` 会把 `render` 再包一层，没法像 `lineOnlyRender` 那样给函数打标）；`toolDrawsCard` 在工具有了结果之后问它，还没结果（骨架）照旧算卡片。`render_ui` 写完后的判断抽成 `renderUiFinal`，组件和判断共用。测试：每种返回 null 的情况都挂「这一轮没有回答」，成功的不挂，原来用 `card = () => null` 加假结果的用例改成真实结果。
+
+## 2026-10-29 回复过程第四轮审查修正（feat/hark-reply-steps，#404 复审 3d65ef4c）
+
+- **必改**：`device_agent_run` 被拒时 `taskIdOf` 返回 null、渲染器画 `<></>`，但没登记判断，这一轮被算成有回答。`local-agent-tool.tsx` 导出 `localAgentDrawsCard`（`taskIdOf(result) !== null`，和渲染器同一个函数）并 `registerCardCheck(["device_agent_run"])`。
+- **应改**：还没有结果时骨架一直算卡片——这一轮结束了、没按停止、工具一直没回，就永远算有回答，骨架也一直转。现在 `compactTurns` 把每一轮的 `live` 传给 `drawsCard(item, live)`，`toolDrawsCard` 新增 `live` 选项：登记过判断的渲染器在 `result === undefined` 时只有这一轮还在跑才算卡片。`compactTurns` 另外返回 `liveTools`（正在跑的那一轮里的调用）；`TranscriptToolCall` 对不在里面、没有结果、登记过判断的调用不再画骨架，换成一句不动的「画图没有完成」「生成界面没有完成」（`UnfinishedTool`），和下面的「这一轮没有回答」+ 重试一致。没登记判断的渲染器（问人这类等用户的、确认卡）照旧，按了停止的一轮也照旧不挂「没有回答」。
+- **可选（都做了）**：
+  - `delegate_task` 被拒时 `workerIdOf` 以前返回 undefined，`WorkerCard` 一直显示「正在交给后台…」的等待卡。现在有结果但没有 workerId 返回 null，渲染器画空（同 `device_agent_run`），并登记 `workerDrawsCard`。
+  - `render_ui` 格式有误那一行：这一轮还在跑时照旧写「格式有误，机器人会修正后重新生成」；这一轮结束了（下面挂着重试）写「界面格式有误，没能显示」（`renderUiFailedDetail`，由 `TranscriptToolCall` 提供的 `ToolTurnEndedContext` 决定）。
+  - `reply-steps.test.tsx` 的 `live ? false : true` 改成 `!live`。
+- 测试都加在 `app/tests/reply-steps.test.tsx`（「复审 #404 第四轮」一组）：被拒 / 拿到 id 的 `device_agent_run` 和 `delegate_task`、结束后没有结果的六种骨架工具（还在跑时照旧算卡片）、`UnfinishedTool` 的文字、没登记判断的渲染器、按了停止的一轮、`render_ui` 两种说法；登记表测试加上两个新判断。原来「工具还没有结果：照旧算卡片」那条改成只在这一轮还在跑时成立。
+- 顺手：`PausedCapsule` 的测试以前要求正好「4 秒」，机器忙时 0.95 秒的等待拖过 1 秒就变成 5 秒（改前的 3d65ef4c 上也会这样失败），改成 4 ≤ 秒数 < 10。
+
 ## 2026-10-29 性能模式 / 减少透明度：全局不模糊（分支 `perf/global-no-backdrop`）
 
 ### 动机

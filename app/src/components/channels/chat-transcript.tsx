@@ -17,6 +17,7 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -48,7 +49,17 @@ import {
 import { QueuedMessages } from "@/components/chat/queued-messages";
 import { ScheduleFiredRow } from "@/components/chat/schedule-row";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
-import { knownWorkSeconds, WorkRow } from "@/components/chat/work-card";
+import {
+  NoAnswerRow,
+  PausedCapsule,
+  StatusCapsule,
+} from "@/components/chat/status-capsule";
+import {
+  knownWorkSeconds,
+  markTurnRunEnded,
+  turnStartedAt,
+  WorkRow,
+} from "@/components/chat/work-card";
 import { WorkerResultRow } from "@/components/chat/worker-card";
 import { JUMP_TO_TOOL_CALL } from "@/components/computer/activity-jump";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
@@ -105,16 +116,29 @@ import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
 import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";
 import {
+  isBlankNote,
   isQuietWork,
   isWorkCall,
   summarizeDoneWork,
+  summarizeWork,
   type WorkCall,
   type WorkNote,
   workCallFailed,
 } from "@/lib/chat/work-steps";
+import { approvalInboxOptions } from "@/lib/approvals";
 import { useThreadConfirmations } from "@/lib/confirmations";
 import { isEditableUserText } from "@/lib/copilot/regenerate";
 import { useReadMark } from "@/lib/copilot/thread-inbox";
+import {
+  type CardChecks,
+  isLineOnlyRender,
+  pickToolRenderer,
+  registeredCardChecks,
+  ToolTurnEndedContext,
+  unfinishedToolText,
+  useActivityRenderers,
+  useToolRenderers,
+} from "@/lib/copilot/tool-renderers";
 import { WORKER_RESULT_MARKER } from "@/lib/copilot/workers";
 import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
@@ -318,52 +342,10 @@ function RestoringTranscript() {
  * It borrows the shimmer a running tool line uses, so "working on it" reads the same whether the
  * work is a tool call or a model that has not spoken yet.
  */
-function Thinking() {
-  return (
-    <div
-      className="chat-thinking"
-      data-testid="transcript-thinking"
-      // `status` rather than `alert`: this is progress, not something that interrupts what somebody
-      // is doing. The text says it, so a screen reader is told the same thing the dots imply.
-      role="status"
-    >
-      <span aria-hidden="true" className="chat-thinking-dots">
-        <i />
-        <i />
-        <i />
-      </span>
-      <span className="tool-line-running">{"思考中"}</span>
-    </div>
-  );
-}
-
-/**
- * 开场一句写完、第一个工具还没出来的那一两秒（DESIGN.md §78.2）：以前屏幕上什么都没有，像是停了。
- * 机器人的最后一段字停住 0.9 秒还没有下文时，在它下面淡入三个跳动的小点（不写字、不占一行药丸）；
- * 有新字或工具一来就收起。回答写完到这一轮真正结束通常不到 0.9 秒，所以不会在答案后面闪一下。
- */
-function PauseDots({ watch }: { watch: string }) {
-  const [shown, setShown] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => {
-    setShown(false);
-    const timer = window.setTimeout(() => setShown(true), 900);
-    return () => window.clearTimeout(timer);
-  }, [watch]);
-  if (!shown) return null;
-  return (
-    <div
-      aria-hidden="true"
-      className="chat-pause-dots"
-      data-testid="transcript-pause-dots"
-    >
-      <span className="chat-thinking-dots">
-        <i />
-        <i />
-        <i />
-      </span>
-    </div>
-  );
+function Thinking({ since }: { since: number }) {
+  // 回复显示①：不再是带三个跳点的「思考中」气泡，而是和干活卡同一个状态胶囊（转圈 + 动作 + 已用秒数）。
+  // 读屏读到的「思考中」在对话末尾那个一直挂着的 role=status 里（transcript-live-status），胶囊自己不带。
+  return <StatusCapsule label={"思考中"} since={since} testId="transcript-thinking" />;
 }
 
 /**
@@ -2776,12 +2758,15 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
   name,
   args,
   result,
+  turnEnded = false,
 }: {
   delay: number;
   toolCallId: string;
   name: string;
   args: string;
   result?: string;
+  /** 这个调用所在的那一轮已经结束（不再 live）。 */
+  turnEnded?: boolean;
 }) {
   const renderToolCall = useRenderToolCall();
   const toolCall = useMemo(
@@ -2819,11 +2804,29 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
          * What was called, shimmering until its result arrives, and then the server's own words
          * drawn the way a Bot's prose is drawn.
          */}
-        {drawn ?? <ServerToolLine name={name} result={result} />}
+        <ToolTurnEndedContext.Provider value={turnEnded}>
+          {turnEnded && result === undefined && registeredCardChecks.has(name) ? (
+            <UnfinishedTool name={name} />
+          ) : (
+            (drawn ?? <ServerToolLine name={name} result={result} />)
+          )}
+        </ToolTurnEndedContext.Provider>
       </ToolRenderBoundary>
     </Arriving>
   );
 });
+
+/**
+ * 这一轮结束了（没按停止），画骨架的工具却一直没有结果（复审 #404 第四轮）：骨架会一直转「正在画图…」，下面又挂着
+ * 「这一轮没有回答」和重试，两边矛盾。换成一句不动的「画图没有完成」；toolDrawsCard 同样不把它算作卡片。
+ */
+export function UnfinishedTool({ name }: { name: string }) {
+  return (
+    <p className="my-1.5 text-muted-foreground text-xs" data-testid="tool-unfinished">
+      {unfinishedToolText(name)}
+    </p>
+  );
+}
 
 /**
  * A tool the runtime executed, drawn for the person watching.
@@ -2831,6 +2834,12 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
  * Named from the reader's side: what was done, against which server, with the server's own words
  * behind a disclosure. The identifier the model was offered never reaches the screen.
  */
+/** 桌面宿主（host_*）工具被拒：没有渲染器时 `ServerToolLine` 不画过程行，画成一句看得见的提示。 */
+export function isHostAccessRefusal(name: string, result?: string): boolean {
+  if (result === undefined || !name.startsWith("host_")) return false;
+  return asText(result).startsWith(REFUSAL_MARKER);
+}
+
 function ServerToolLine({ name, result }: { name: string; result?: string }) {
   const { label, detail } = readToolName(name);
   /*
@@ -2854,7 +2863,7 @@ function ServerToolLine({ name, result }: { name: string; result?: string }) {
    * 桌面宿主（host_*）工具被拒绝，几乎都是因为电脑没连上 / 没授权文件夹。这是用户能处理的事，
    * 所以不当成过程行藏起来，而是一句中文提示，告诉他去哪里处理。
    */
-  if (refused && name.startsWith("host_")) return <HostAccessHint />;
+  if (isHostAccessRefusal(name, result)) return <HostAccessHint />;
   return (
     <ToolLine
       {...(detail ? { detail } : {})}
@@ -3106,6 +3115,11 @@ export function ChatTranscript({
       settled.length === shape.length &&
       settled.last === shape.last
     );
+  // 这一轮从什么时候开始（状态胶囊的「已用秒数」从这里算；「思考中」换成干活卡后接着算，不归零）。
+  // 认不出这一轮的 key 时才用这个（只活在这次挂载里）。
+  const liveSinceRef = useRef<number | null>(null);
+  if (!live) liveSinceRef.current = null;
+  else if (liveSinceRef.current === null) liveSinceRef.current = Date.now();
   /*
    * 刷新后照样认得出「发出去但没人回答」的那一轮（P1，2026-10-20）：重开对话时 RUN_ERROR 早没了，
    * 只剩人那条消息。卡片跟着这一条重建，别让它凭空消失、也没有重试的入口。
@@ -3116,29 +3130,81 @@ export function ChatTranscript({
       ? unansweredTurn(items, busy, stoppedTurns, queued.length)
       : null;
   const tailStop = stopped ?? (unanswered ? UNANSWERED_TURN_REASON : undefined);
+  /*
+   * 确认卡 / 审批卡挂在哪些工具调用上：简单回合（下面）和「这一轮有没有回答」都要用。确认列表和确认卡片用同一份
+   * 缓存（同一个 queryKey），审批收件箱和行内审批卡也是同一份，不多发请求。
+   */
+  const chatConfig = useCopilotChatConfiguration();
+  const chatThreadId = chatConfig?.threadId ?? null;
+  const hasTools = items.some((item) => item.kind === "tool");
+  const confirmations = useThreadConfirmations(
+    hasTools ? chatThreadId : null,
+    false,
+  );
+  const approvals = useQuery({
+    ...approvalInboxOptions(),
+    enabled: hasTools && chatThreadId !== null,
+  });
+  const confirmed = new Set<string>();
+  for (const request of confirmations.data ?? [])
+    if (request.toolCallId) confirmed.add(request.toolCallId);
+  for (const request of approvals.data?.requests ?? [])
+    if (request.status === "pending" && request.action.toolCallId)
+      confirmed.add(request.action.toolCallId);
+  /*
+   * 以卡片收尾的一轮也是回答了（回复显示①复审）：生成的图片、分享的文件、问人、确认卡、宿主提示……后面没有字，
+   * 也不挂「这一轮没有回答」和重试（点了会重新生成图片、重新建 issue）。和真正画卡片用同一份渲染器表
+   * （toolDrawsCard）；确认 / 审批还没读到时先当有卡片，读到再判，免得先闪一下重试。
+   */
+  const toolRenderers = useToolRenderers();
+  const activityRenderers = useActivityRenderers();
+  const asking = confirmations.isLoading || approvals.isLoading;
+  const drawsCard: DrawsCard = (item, turnLive) =>
+    (asking && item.kind === "tool") ||
+    toolDrawsCard(item, {
+      renderers: toolRenderers,
+      activities: activityRenderers,
+      ...(chatConfig?.agentId ? { agentId: chatConfig.agentId } : {}),
+      asked: confirmed,
+      live: turnLive,
+    });
   // 一轮收成「开场一句 → 结果」，与机器人聊天同一规则（compactTurns，2026-10-13 第四轮）。
   const compact = compactTurns(
     items,
     live,
     stoppedTurns ?? EMPTY_STOPS,
     fallbacks,
+    drawsCard,
   );
+  /*
+   * 和干活卡同一个开始时间（按这一轮的 key 记在 work-card 的模块里）：切到别的频道再回来，胶囊重新挂上，
+   * 秒数接着算，不再从 0 开始（以前记在这个组件的 ref 里，卸载就丢）。
+   */
+  const liveSince = live
+    ? compact.liveKey
+      ? turnStartedAt(compact.liveKey)
+      : (liveSinceRef.current ?? Date.now())
+    : 0;
+  /*
+   * 同一轮又跑一次（重试、确认后接着跑……）要从 0 重新计时：这一页亲眼看着上一次跑停下来时记一笔，
+   * 下次再开始跑时 turnStartedAt 就重新记开始时间、清掉上次的用时。只认这次挂载里看到的「跑着 → 停了」，
+   * 所以切到别的频道再回来（重挂时还在跑）秒数接着算，不归零。
+   */
+  const runningKey = live ? compact.liveKey : null;
+  const runningKeyRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const previous = runningKeyRef.current;
+    if (previous !== null && previous !== runningKey) markTurnRunEnded(previous);
+    runningKeyRef.current = runningKey;
+  }, [runningKey]);
   const showToolActivity = useToolActivityVisible();
   /*
    * 简单回合（DESIGN.md §93）：做完了、只读的一两步、有结果——干活卡那一行整行收起，只留结果。结构上的判断在
    * compactTurns（`quiet`）；有确认卡的调用、这一页知道用时超过 15 秒的，照常显示。确认列表和确认卡片用同一份
    * 缓存（同一个 queryKey），不多发请求。打开「调试：显示工具调用」时不收（每一步本来就画着）。
    */
-  const chatConfig = useCopilotChatConfiguration();
   const hasQuiet =
     !showToolActivity && [...compact.work.values()].some((work) => work.quiet);
-  const confirmations = useThreadConfirmations(
-    hasQuiet ? (chatConfig?.threadId ?? null) : null,
-    false,
-  );
-  const confirmed = new Set<string>();
-  for (const request of confirmations.data ?? [])
-    if (request.toolCallId) confirmed.add(request.toolCallId);
   // 没绑到工具调用的确认卡片（§101.9）画在最下面；「用户确认了」那条已经进来的不再画（那一行就是记录）。
   const resumedCards = new Set<string>();
   for (const item of items) {
@@ -3154,7 +3220,8 @@ export function ChatTranscript({
         isQuietWork({
           calls: work.calls,
           live: work.live,
-          hasFinal: true,
+          stopped: work.stopped,
+          hasFinal: work.answered,
           confirmed,
           seconds: knownWorkSeconds(work.key),
           // 除了「做了 N 步」什么也说不出的行：成功做完就整行收起（2026-10-20 用户要求）。
@@ -3219,6 +3286,21 @@ export function ChatTranscript({
     live &&
     !showToolActivity &&
     [...compact.work.values()].some((work) => work.live);
+  /*
+   * 读屏（回复显示①）：一轮里只有这一个 role=status，挂在对话末尾一直不卸载。「思考中」胶囊换成干活卡时
+   * 两个胶囊一个卸载一个新挂，新挂上的 live region 有的读屏不播；这里同一个节点里换字，换成「正在搜索…」照样读出来。
+   * 胶囊、干活卡自己不再带 role=status（不然一句话读两遍）。
+   */
+  const liveWork = live
+    ? [...compact.work.values()].find((work) => work.live)
+    : undefined;
+  const liveStatus = !live
+    ? ""
+    : liveWork
+      ? (summarizeWork(liveWork.calls)?.current ?? "")
+      : waitingOnFirstToken
+        ? "思考中"
+        : "";
   // 机器人说了一句、还在想下一步（还没有干活卡）：§78.2 的小点。
   const pausedAfterText =
     live &&
@@ -3434,6 +3516,13 @@ export function ChatTranscript({
              * 下一帧留白吃掉了再夹回来 = 往回挪一下（§94.6，1280 实测 5–8px）。这一格不参与锚定，锚落在看得见的第一条消息上。
              */}
             <div className="chat-tail contents [&>*]:order-1">
+              <span
+                className="sr-only"
+                data-testid="transcript-live-status"
+                role="status"
+              >
+                {liveStatus}
+              </span>
               {tailStop ? (
                 <Stopped
                   onRetry={stopped ? onRetry : onRetryUnanswered}
@@ -3443,10 +3532,10 @@ export function ChatTranscript({
                 // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
                 // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。
                 liveWorking ? null : (
-                  <Thinking />
+                  <Thinking since={liveSince} />
                 )
               ) : pausedAfterText !== null ? (
-                <PauseDots watch={pausedAfterText} />
+                <PausedCapsule since={liveSince} watch={pausedAfterText} />
               ) : null}
               <LooseConfirmCards
                 resumed={resumedCards}
@@ -3484,6 +3573,10 @@ export function ChatTranscript({
                 const index = tailStart + offset;
                 const stoppedHere = compact.stoppedAfter.has(item.id);
                 const fallback = compact.fallbackAfter.get(item.id);
+                // 「这一轮没有回答」：最后一轮已经有错误卡（带重试）时不再挂一遍。
+                const noAnswer = compact.noAnswerAfter.get(item.id);
+                const noAnswerHere =
+                  noAnswer !== undefined && !(noAnswer.last && tailStop);
                 const hidden = rowHidden(item.id);
                 const row = hidden
                   ? foldedRef.current.has(item.id)
@@ -3494,9 +3587,23 @@ export function ChatTranscript({
                 // 以前连标记一起 return null，刷新后只剩服务器误锚时就像挂在上一轮回答下面。
                 // Keep every keyed row in one flat sibling list. Returning a nested array only
                 // when a marker appears changes the anchor row's React parent and remounts it.
-                if (!stoppedHere && !fallback) return [row];
+                if (!stoppedHere && !fallback && !noAnswerHere) return [row];
                 return [
                   row,
+                  noAnswerHere ? (
+                    <MessageScrollerItem
+                      key={`${item.id}:no-answer`}
+                      messageId={`${item.id}:no-answer`}
+                    >
+                      <NoAnswerRow
+                        onRetry={
+                          noAnswer?.last && !live
+                            ? onRetryUnanswered
+                            : undefined
+                        }
+                      />
+                    </MessageScrollerItem>
+                  ) : null,
                   stoppedHere ? (
                     <MessageScrollerItem
                       key={`${item.id}:stopped`}
@@ -3559,7 +3666,9 @@ export function ChatTranscript({
         calls={work.calls}
         live={work.live}
         notes={work.notes}
+        since={work.live ? liveSince : undefined}
         turnKey={work.key}
+        unanswered={!work.live && !work.stopped && !work.answered}
       />
     ) : null;
   }
@@ -3603,6 +3712,7 @@ export function ChatTranscript({
           name={item.toolCall.function.name}
           result={item.result}
           toolCallId={item.toolCall.id}
+          turnEnded={!compact.liveTools.has(item.id)}
         />
         <ActivityJumpButton
           name={item.toolCall.function.name}
@@ -3826,13 +3936,77 @@ export type WorkEntry = {
   notes: WorkNote[];
   /** 简单回合（只读的一两步、做完了、有结果）：结构上可以整行收起（§93）。 */
   quiet: boolean;
+  /** 这一轮有看得见的回答（结果气泡、卡片、留着的气泡）。没有时那一行不收（回复显示①）。 */
+  answered: boolean;
+  /** 这一轮被用户停掉了。 */
+  stopped: boolean;
 };
+
+export type CardItem = Extract<TranscriptItem, { kind: "tool" | "activity" }>;
+/** `live`：这个调用所在的那一轮还在跑（compactTurns 按轮给）。 */
+export type DrawsCard = (item: CardItem, live: boolean) => boolean;
+const drawsRenderUi: DrawsCard = (item) =>
+  item.kind === "tool" && item.toolCall.function.name === "render_ui";
+
+/**
+ * 一个工具调用画没画用户看得见的卡片（回复显示①复审）：和 `TranscriptToolCall` 画什么同一套判断——
+ * 有渲染器就画渲染器（只画一行过程 / 什么都不画的、注册时标了 `lineOnlyRender` 的不算卡片；工具有了结果以后，
+ * 渲染器登记过判断的（`registerCardCheck`：图片 / 文件工具没拿到文件、定时任务被拒、render_ui 画不出东西时返回 null）
+ * 问它自己，和它决定画不画用同一个函数），
+ * 没有就是 `ServerToolLine`（只有宿主被拒是看得见的提示）；另外有确认卡 / 审批卡挂着（`asked`）的也算。
+ */
+export function toolDrawsCard(
+  tool: CardItem,
+  {
+    renderers,
+    activities = [],
+    agentId,
+    asked,
+    checks = registeredCardChecks,
+    live = true,
+  }: {
+    renderers: Parameters<typeof pickToolRenderer>[0];
+    /** 活动消息的渲染器（`renderActivityMessage` 只有找到渲染器才画）。 */
+    activities?: readonly { activityType: string }[];
+    agentId?: string;
+    asked: ReadonlySet<string>;
+    /** 渲染器登记的「画没画出卡片」判断（按工具名）；默认用渲染器模块登记的那一份。 */
+    checks?: CardChecks;
+    /** 这个调用所在的那一轮还在跑（默认 true）。结束了、结果一直没来时，骨架换成「没有完成」，不算卡片。 */
+    live?: boolean;
+  },
+): boolean {
+  if (tool.kind === "activity")
+    return activities.some(
+      (renderer) =>
+        renderer.activityType === tool.message.activityType ||
+        renderer.activityType === "*",
+    );
+  if (asked.has(tool.toolCall.id)) return true;
+  const name = tool.toolCall.function.name;
+  const renderer = pickToolRenderer(renderers, name, agentId);
+  if (renderer) {
+    if (isLineOnlyRender(renderer.render)) return false;
+    // 失败时会返回 null 的渲染器由它自己的判断说了算。还没有结果：这一轮还在跑时画骨架，算卡片；
+    // 这一轮结束了（没按停止，工具也一直没回）骨架换成「没有完成」（TranscriptToolCall），不算卡片（复审 #404 第四轮）。
+    const check = renderer.name === name ? checks.get(name) : undefined;
+    if (!check) return true;
+    if (tool.result === undefined) return live;
+    return check({ args: tool.toolCall.function.arguments, result: tool.result });
+  }
+  return isHostAccessRefusal(tool.toolCall.function.name, tool.result);
+}
 
 export function compactTurns(
   items: readonly TranscriptItem[],
   busy: boolean,
   stopped: ReadonlySet<string>,
   fallbacks?: ReadonlyMap<string, string>,
+  /**
+   * 这个工具调用在对话里画了看得见的卡片（或正在等确认）：以它收尾的一轮算有回答。ChatTranscript 传
+   * `useToolCardCheck` 的结果（和真正画卡片用同一份渲染器 / 确认 / 宿主提示）；不传时只认 render_ui。
+   */
+  drawsCard: DrawsCard = drawsRenderUi,
 ): {
   tone: Map<string, "lead" | "step" | "final">;
   hidden: Set<string>;
@@ -3849,6 +4023,15 @@ export function compactTurns(
   replyTo: Map<string, ReplyTarget>;
   /** 记忆写入微胶囊提示（Memory Pill）：本轮调用了 memory_save / memory_update / memory_log 时挂在回复气泡下方。 */
   memories: Map<string, MemoryPillItem[]>;
+  /**
+   * 结束了、没被停掉、却一个看得见的回答都没有的轮次（工具失败后没有字、只回了「---」，回复显示①）：
+   * 最后一个看得见的行 → 后面挂「这一轮没有回答」；`last` = 这是最后一轮（只有它带重试）。
+   */
+  noAnswerAfter: Map<string, { last: boolean }>;
+  /** 正在跑的那一轮里的工具调用 id：其余的调用所在的那一轮都已经结束（TranscriptToolCall 据此把卡住的骨架换成「没有完成」）。 */
+  liveTools: Set<string>;
+  /** 正在跑的那一轮的 key（开启它的那条消息 id，同干活卡的 `key`）；不在跑为 null。胶囊的秒数按它记开始时间。 */
+  liveKey: string | null;
 } {
   const tone = new Map<string, "lead" | "step" | "final">();
   const hidden = new Set<string>();
@@ -3857,6 +4040,9 @@ export function compactTurns(
   const work = new Map<string, WorkEntry>();
   const replyTo = new Map<string, ReplyTarget>();
   const memories = new Map<string, MemoryPillItem[]>();
+  const noAnswerAfter = new Map<string, { last: boolean }>();
+  const liveTools = new Set<string>();
+  let liveKey: string | null = null;
   const formatQuoteText = (raw: string): string => {
     const clean = (splitChatOrigin(raw)?.text ?? raw).replace(/\s+/g, " ").trim();
     return clean.length > 64 ? `${clean.slice(0, 63)}…` : clean;
@@ -3885,6 +4071,9 @@ export function compactTurns(
     );
   turns.forEach((turn, index) => {
     const live = busy && index === turns.length - 1;
+    if (live)
+      for (const item of turn.rest)
+        if (item.kind === "tool") liveTools.add(item.id);
     const isStopped =
       !live && turn.users.some((user) => stopped.has(turnOf(user)));
     const callsTool = (item: TranscriptItem) =>
@@ -3893,8 +4082,17 @@ export function compactTurns(
       (item): item is Extract<TranscriptItem, { kind: "text" }> =>
         item.kind === "text" &&
         item.role === "assistant" &&
-        item.text.trim().length > 0,
+        !isBlankNote(item.text),
     );
+    // 回复显示①：只有「---」这类分隔线、一个字都没有的一段不画（以前画成一个空的分隔线气泡，或干活卡里空的一步）。
+    for (const item of turn.rest)
+      if (
+        item.kind === "text" &&
+        item.role === "assistant" &&
+        item.text.trim().length > 0 &&
+        isBlankNote(item.text)
+      )
+        hidden.add(item.id);
     let final: string | null = null;
     texts.forEach((item, i) => {
       const at = turn.rest.indexOf(item);
@@ -3946,6 +4144,8 @@ export function compactTurns(
           hidden.add(item.id);
     const browsers = turn.rest.filter((item) => item.kind === "browser");
     for (const item of browsers.slice(0, -1)) hidden.add(item.id);
+    if (live) liveKey = turn.users[turn.users.length - 1]?.id ?? null;
+    let workAnchor: string | null = null;
     // 干活卡（§75.1）：这一轮全部调用；画在第一个干活的工具那一行（浏览只留最后一组，所以落在浏览上时用最后那一组）。
     {
       const calls: WorkCall[] = [];
@@ -4016,7 +4216,16 @@ export function compactTurns(
           // 只说得出「做了 N 步」的一轮（例如跑了几条命令）：收起这一行，只留回答（2026-10-20 用户要求）。
           genericSummary: summarizeDoneWork(calls)?.generic === true,
         });
-        work.set(anchor, { calls, key, live, notes, quiet });
+        workAnchor = anchor;
+        work.set(anchor, {
+          calls,
+          key,
+          live,
+          notes,
+          quiet,
+          answered: true,
+          stopped: isStopped,
+        });
       }
     }
     // CB-021：同一轮里同一个页面只留一张卡（§54「同一轮同一页面一张卡」）。
@@ -4057,11 +4266,37 @@ export function compactTurns(
         if (quoteText) replyTo.set(replyTargetId, { id: targetUser.id, text: quoteText });
       }
     }
+    /*
+     * 回复显示①（2026-10-29）：这一轮有没有看得见的回答——结果气泡、以卡片收尾（`drawsCard`：自定义渲染器、确认卡、宿主提示、活动卡）、或者留着没收的气泡。
+     * 工具失败后没有字、或只回了「---」时都没有：那一行不收（否则一片空白），最后挂「这一轮没有回答」。
+     */
+    const answered =
+      final !== null ||
+      turn.rest.some(
+        (item) =>
+          !hidden.has(item.id) &&
+          (item.kind === "tool" || item.kind === "activity") &&
+          drawsCard(item, live),
+      ) ||
+      texts.some((item) => !hidden.has(item.id));
+    const entry = workAnchor === null ? undefined : work.get(workAnchor);
+    if (entry) {
+      entry.answered = answered;
+      entry.quiet = isQuietWork({
+        calls: entry.calls,
+        live,
+        stopped: isStopped,
+        hasFinal: answered,
+        genericSummary: summarizeDoneWork(entry.calls)?.generic === true,
+      });
+    }
     const visible = [...turn.users, ...turn.rest].filter(
       (item) => !hidden.has(item.id),
     );
     const last = visible[visible.length - 1]?.id;
     if (isStopped && last) stoppedAfter.add(last);
+    if (!live && !isStopped && !answered && turn.rest.length > 0 && last)
+      noAnswerAfter.set(last, { last: index === turns.length - 1 });
     if (!live && last && fallbacks?.size) {
       const notice = turn.users
         .map((user) => fallbacks.get(turnOf(user)))
@@ -4124,5 +4359,16 @@ export function compactTurns(
       memories.set(memTargetId, turnMemories);
     }
   });
-  return { tone, hidden, stoppedAfter, fallbackAfter, work, replyTo, memories };
+  return {
+    tone,
+    hidden,
+    stoppedAfter,
+    fallbackAfter,
+    work,
+    replyTo,
+    memories,
+    noAnswerAfter,
+    liveTools,
+    liveKey,
+  };
 }

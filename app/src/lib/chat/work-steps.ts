@@ -137,6 +137,20 @@ export function plainNote(text: string): string {
     .trim();
 }
 
+/** 分隔符：横线、星号、下划线、等号、波浪线、句点、中点、省略号、破折号、制表线（可以夹空白）。 */
+const SEPARATOR_ONLY = /^[\s\-*_=~.·•…。—–─━]*$/u;
+
+/**
+ * 没有字的一段（回复显示①，2026-10-29）：模型在两步之间单独写的「---」「***」「…」这类分隔线，整段只有分隔符
+ * （可以夹空白）。干活卡里不当一步，对话里也不画成气泡。
+ *
+ * 只看分隔符，不先去 markdown：以前先过 `plainNote`，它会把 ``` 代码块整段去掉，只有代码块的回复就被当成空段藏起来了
+ * （流式时代码块一闭合，这段就没了）。代码块、表格、链接、标题都不算空。
+ */
+export function isBlankNote(text: string): boolean {
+  return SEPARATOR_ONLY.test(text);
+}
+
 /**
  * 干活卡点开后的一列（§90）：每一步一句（同 `workStepLines`），过程话按它出现的位置插在步骤之间。
  * 没有过程话时与 `workStepLines` 完全一样。
@@ -158,7 +172,7 @@ export function workTimeline(
   const flush = (upTo: number) => {
     while (pending.length && pending[0]!.at <= upTo) {
       const text = plainNote(pending.shift()!.text);
-      if (text && lines.at(-1)?.text !== text) lines.push({ kind: "note", text });
+      if (text && !isBlankNote(text) && lines.at(-1)?.text !== text) lines.push({ kind: "note", text });
     }
   };
   let lastStep: string | undefined;
@@ -321,9 +335,10 @@ export function isQuietWork({
   hideSummary?: boolean;
 }): boolean {
   if (live) return false;
-  // 用户要的是「只留回答」：不跑的时候那行步数一律不画（2026-10-20）——被停掉的、没回答的也一样，
-  // 那几种情况另有「已停止」「这一轮没有做完」的提示，不靠这行字。
-  if (hideSummary) return true;
+  // 用户要的是「只留回答」：有回答时那行步数一律不画（2026-10-20）；被停掉的另有「已停止」。
+  // 回复显示①（2026-10-29）：没有看得见的回答（工具失败、后面没有字，或只回了「---」）时不收——
+  // 收了这一轮就是一片空白；这一行留着（「N 步失败」），下面再挂「这一轮没有回答」和重试。
+  if (hideSummary) return hasFinal || stopped;
   if (stopped || !hasFinal) return false;
   let steps = 0;
   for (const call of calls) {
