@@ -1639,7 +1639,7 @@ html[data-sky-ease] body::before {
 .glass-composer [data-placeholder]::before,
 .glass-composer .is-empty::before,
 .glass-composer textarea::placeholder {
-  color: var(--composer-placeholder-ink, var(--glass-ink-4)) !important;
+  color: var(--glass-ink-4) !important;
 }
 .glass-composer-toolbar {
   display: flex;
@@ -9328,6 +9328,31 @@ html:not(.dark) .chisabot-wallpaper-dim {
   background: radial-gradient(circle at 50% 45%, rgba(244, 248, 255, 0.46) 0%, rgba(228, 238, 252, 0.58) 100%);
 }
 
+/* 壁纸薄幕（#420，DESIGN.md §81.5）：壁纸可以是纯黑 / 纯白 / 任意照片，压暗遮罩又能调到 0，
+ * 光靠天幕薄纱，直接落在壁纸上的字（时间、空状态、步骤行、顶栏、页面正文）最差只有 1.0–3.6:1。
+ * 所以在壁纸和天幕薄纱之间固定垫一层同色薄幕，只此一层：卡片、气泡、输入框、嵌套卡片都不再各自加，
+ * 叠多少层玻璃都只有这一层（tests/a11y-contrast.test.ts 核对）。 */
+:root {
+  --wallpaper-scrim: rgba(244, 248, 255, 0.56);
+}
+html.dark,
+html[data-theme="dark"] {
+  --wallpaper-scrim: rgba(12, 18, 32, 0.55);
+}
+.chisabot-wallpaper::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--wallpaper-scrim);
+}
+/* 有壁纸时最淡的一级字（--ink-4 / --glass-ink-4 / --text-tertiary：耗时、占位字、次要时间）在薄幕上也不够 4.5，提一级。 */
+html[data-wallpaper="on"] {
+  --ink-4: var(--ink-3);
+  --glass-ink-4: var(--glass-ink-3);
+  --text-tertiary: var(--text-secondary);
+}
+
 /* 3. 三档无边框高通透光学玻璃材质（liquid 液态玻璃 / crystal 晶莹全透 / frosted 柔光磨砂）
  * 注意：严禁在此手写 -webkit-backdrop-filter，只写标准 backdrop-filter，否则压缩器会丢弃标准属性导致模糊失效。 */
 /* 3.1 液态玻璃（liquid）：温润通透的凝脂光学玻璃，兼顾流云透光感与极佳的正文对比度 */
@@ -9460,29 +9485,10 @@ html.dark .glass-shell {
 
 /* 主工作台大板块（左栏机器人列表、左下角账号卡、收起态左栏、右栏面板容器）：纯净无边框悬浮毛玻璃 */
 :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card) {
-  /* --side-scrim-layer：只有有壁纸时的左栏卡片会设（见下面 --side-wallpaper-scrim）。 */
-  background: var(--side-scrim-layer, none), var(--lg-surface) !important;
+  background: var(--lg-surface) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
-}
-
-/* 有壁纸（预设或自定义）时，左栏卡片、账号卡、收起态左栏、机器人气泡和输入框在玻璃上再垫一层同色薄幕：
- * 壁纸可能是纯黑 / 纯白，光靠天幕薄纱和低雾度玻璃，小字最差只有 2.6–4.4:1。
- * 薄幕让最差情况回到 ≥ 4.5（tests/a11y-contrast.test.ts）。我的气泡底色够实，不用垫。 */
-:root {
-  --side-wallpaper-scrim: rgba(244, 248, 255, 0.44);
-}
-html.dark {
-  --side-wallpaper-scrim: rgba(12, 18, 32, 0.6);
-}
-html[data-wallpaper="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .glass-composer),
-html[data-wallpaper="on"] .glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"] {
-  --side-scrim-layer: linear-gradient(var(--side-wallpaper-scrim), var(--side-wallpaper-scrim));
-}
-/* 输入框占位字：壁纸下 --glass-ink-4 最差只有 1.9:1，换成 --glass-ink-3。 */
-html[data-wallpaper="on"] .glass-composer {
-  --composer-placeholder-ink: var(--glass-ink-3);
 }
 
 /* 顶栏主导航胶囊与按钮：纯净无边框胶囊 */
@@ -9551,7 +9557,7 @@ html.dark .rail-tabs-thumb {
 .dark .glass-composer,
 .glass-composer:focus-within,
 .dark .glass-composer:focus-within {
-  background: var(--side-scrim-layer, none), var(--lg-surface-strong) !important;
+  background: var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
@@ -9565,7 +9571,7 @@ html.dark .rail-tabs-thumb {
 /* 聊天机器人回复气泡 + 用户发送气泡 + 对话内嵌卡片：无边框通透毛玻璃 */
 .glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"],
 .jr-card {
-  background: var(--side-scrim-layer, none), var(--lg-surface-strong) !important;
+  background: var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;

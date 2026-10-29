@@ -299,36 +299,45 @@ export function wallpaperPixels(): RGBA[] {
   ];
 }
 
-/** 有壁纸时左栏卡片多垫的一层薄幕 --side-wallpaper-scrim。 */
+/**
+ * 壁纸薄幕：.chisabot-wallpaper::after 画 --wallpaper-scrim，夹在压暗遮罩和天幕薄纱之间，
+ * 整个界面只有这一层（卡片、气泡、输入框不再各自垫）。
+ */
 export function wallpaperScrim(scheme: Scheme): RGBA {
+  const paint = lastDecl(stylesCss, ".chisabot-wallpaper::after", "background");
+  if (paint !== "var(--wallpaper-scrim)")
+    throw new Error(".chisabot-wallpaper::after does not paint --wallpaper-scrim");
   const value = lastDecl(
     stylesCss,
-    scheme === "dark" ? "html.dark" : ":root",
-    "--side-wallpaper-scrim",
+    scheme === "dark" ? 'html.dark, html[data-theme="dark"]' : ":root",
+    "--wallpaper-scrim",
   );
-  if (!value) throw new Error(`--side-wallpaper-scrim for ${scheme}`);
+  if (!value) throw new Error(`--wallpaper-scrim for ${scheme}`);
   return parseColor(value);
+}
+
+/** 壁纸 → 压暗遮罩 → 壁纸薄幕 → 天幕薄纱 叠好后的所有不透明底色（直接落在壁纸上的字就在它上面）。 */
+export function wallpaperBases(scheme: Scheme): RGBA[] {
+  const veil = veilStops(scheme);
+  const scrim = wallpaperScrim(scheme);
+  const out: RGBA[] = [];
+  for (const px of wallpaperPixels())
+    for (const dim of wallpaperDimStops(scheme))
+      for (const opacity of WALLPAPER_DIM_RANGE) {
+        const dimmed = over([dim[0], dim[1], dim[2], dim[3] * opacity], px);
+        const scrimmed = over(scrim, dimmed);
+        for (const v of veil) out.push(over(v.color, scrimmed));
+      }
+  return out;
 }
 
 /** 壁纸模式下左栏卡片上文字背后所有可能的不透明底色。 */
 export function wallpaperPanelBackdrops(scheme: Scheme): RGBA[] {
-  const veil = veilStops(scheme);
-  const dims = wallpaperDimStops(scheme);
-  const scrim = wallpaperScrim(scheme);
   const out: RGBA[] = [opaqueSurface(scheme)];
-  for (const px of wallpaperPixels())
-    for (const dim of dims)
-      for (const opacity of WALLPAPER_DIM_RANGE) {
-        const dimmed = over([dim[0], dim[1], dim[2], dim[3] * opacity], px);
-        for (const v of veil) {
-          const base = over(v.color, dimmed);
-          for (const style of GLASS_STYLES)
-            for (const haze of HAZE_RANGE)
-              out.push(
-                over(scrim, over(glassSurface(style, scheme, haze), base)),
-              );
-        }
-      }
+  for (const base of wallpaperBases(scheme))
+    for (const style of GLASS_STYLES)
+      for (const haze of HAZE_RANGE)
+        out.push(over(glassSurface(style, scheme, haze), base));
   return out;
 }
 
@@ -420,19 +429,6 @@ export function glassStops(
   return stops;
 }
 
-/** 壁纸 → 压暗遮罩 → 天幕薄纱 叠好后的所有不透明底色（主区就直接是它）。 */
-export function wallpaperBases(scheme: Scheme): RGBA[] {
-  const veil = veilStops(scheme);
-  const out: RGBA[] = [];
-  for (const px of wallpaperPixels())
-    for (const dim of wallpaperDimStops(scheme))
-      for (const opacity of WALLPAPER_DIM_RANGE) {
-        const dimmed = over([dim[0], dim[1], dim[2], dim[3] * opacity], px);
-        for (const v of veil) out.push(over(v.color, dimmed));
-      }
-  return out;
-}
-
 /** 某个选择器上的半透明底色令牌（如 --bubble-user-bg）。 */
 function fillToken(scheme: Scheme, token: string): RGBA {
   const sel =
@@ -447,103 +443,145 @@ function fillToken(scheme: Scheme, token: string): RGBA {
 }
 
 export type SurfaceId =
+  | "on-wallpaper"
   | "acct-card"
   | "mini-card"
+  | "rail-card"
   | "bubble-assistant"
+  | "jr-card"
+  | "jr-card-in-bubble"
   | "bubble-user"
   | "composer";
 
-/** 每个面板 / 主区元素：文字令牌 + 背后的玻璃。 */
+type Layer = "--lg-surface" | "--lg-surface-strong" | "--bubble-user-bg";
+
+/** 左栏 / 账号卡 / 收起态左栏 / 右栏容器共用的那条玻璃规则（styles.css 里原样的选择器）。 */
+const SIDE_RULE =
+  ":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)";
+/** 机器人气泡和对话内嵌卡片共用的玻璃规则。 */
+const BUBBLE_CARD_RULE =
+  '.glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"], .jr-card';
+const COMPOSER_RULE =
+  ".glass-composer, .dark .glass-composer, .glass-composer:focus-within, .dark .glass-composer:focus-within";
+
+/**
+ * 壁纸上的每种文字位置：文字令牌 + 从壁纸往上叠的玻璃层（layers，从下到上）+ 画这些玻璃的规则
+ * （rules，和 layers 一一对应，按完整选择器精确查 styles.css，不做子串匹配）。
+ */
 export const SURFACES: Record<
   SurfaceId,
-  {
-    inks: string[];
-    glass: "--lg-surface" | "--lg-surface-strong" | "--bubble-user-bg";
-    /** 有壁纸时 html[data-wallpaper="on"] 给它设了 --side-scrim-layer（styles.css 里核对）。 */
-    selector: string;
-  }
+  { inks: string[]; layers: Layer[]; rules: string[] }
 > = {
+  // 直接落在壁纸上的字：消息时间 / 耗时、空聊天的名字和简介、步骤行、记忆提示、顶栏、各页面正文。
+  "on-wallpaper": {
+    inks: [
+      "--ink-1",
+      "--ink-2",
+      "--ink-3",
+      "--ink-4",
+      "--muted-foreground",
+      "--glass-ink",
+      "--glass-ink-2",
+      "--glass-ink-3",
+      "--glass-ink-4",
+      "--text-primary",
+      "--text-secondary",
+      "--text-tertiary",
+    ],
+    layers: [],
+    rules: [],
+  },
   // 左下角账号卡：名字 .acct-name（--ink-1）、邮箱 / 状态 .acct-sub（--ink-3）。
-  "acct-card": {
-    inks: ["--ink-1", "--ink-3"],
-    glass: "--lg-surface",
-    selector: ".acct-card",
-  },
+  "acct-card": { inks: ["--ink-1", "--ink-3"], layers: ["--lg-surface"], rules: [SIDE_RULE] },
   // 收起态左栏：导航图标 .rail-mini-item（--ink-2）；字母头像另算（不透明底）。
-  "mini-card": {
-    inks: ["--ink-2"],
-    glass: "--lg-surface",
-    selector: ".glass-mini-card",
+  "mini-card": { inks: ["--ink-2", "--ink-3"], layers: ["--lg-surface"], rules: [SIDE_RULE] },
+  // 右栏面板容器：标题、按钮、空状态。
+  "rail-card": {
+    inks: ["--ink-1", "--ink-2", "--ink-3"],
+    layers: ["--lg-surface"],
+    rules: [SIDE_RULE],
   },
-  // 机器人气泡：背景 --lg-surface-strong（!important 那条），正文继承 --glass-ink。
+  // 机器人气泡：正文继承 --glass-ink。
   "bubble-assistant": {
-    inks: ["--glass-ink", "--text-primary"],
-    glass: "--lg-surface-strong",
-    selector:
-      '.glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"]',
+    inks: ["--glass-ink", "--text-primary", "--ink-3"],
+    layers: ["--lg-surface-strong"],
+    rules: [BUBBLE_CARD_RULE],
   },
-  // 我的气泡：--bubble-user-bg + --text-primary，不垫薄幕。
-  "bubble-user": {
-    inks: ["--text-primary"],
-    glass: "--bubble-user-bg",
-    selector: "",
+  // 气泡外、直接在对话里的 render_ui 卡片。
+  "jr-card": {
+    inks: ["--ink-1", "--ink-2", "--ink-3", "--text-primary"],
+    layers: ["--lg-surface-strong"],
+    rules: [BUBBLE_CARD_RULE],
   },
-  // 输入框：--lg-surface-strong，输入的字 --text-primary、占位字（壁纸下 --composer-placeholder-ink）。
+  // 气泡里的卡片：气泡玻璃上再叠卡片玻璃，薄幕仍然只有壁纸那一层（审查：不能叠两层）。
+  "jr-card-in-bubble": {
+    inks: ["--ink-1", "--ink-2", "--ink-3", "--text-primary"],
+    layers: ["--lg-surface-strong", "--lg-surface-strong"],
+    rules: [BUBBLE_CARD_RULE, BUBBLE_CARD_RULE],
+  },
+  // 我的气泡：--bubble-user-bg + --text-primary。
+  "bubble-user": { inks: ["--text-primary"], layers: ["--bubble-user-bg"], rules: [] },
+  // 输入框：输入的字 --text-primary，占位字 --glass-ink-4（壁纸下提到 --glass-ink-3）。
   composer: {
-    inks: ["--text-primary", "placeholder"],
-    glass: "--lg-surface-strong",
-    selector: ".glass-composer",
+    inks: ["--text-primary", "--glass-ink-4"],
+    layers: ["--lg-surface-strong"],
+    rules: [COMPOSER_RULE],
   },
 };
 
-const WALLPAPER_SCRIM_SELECTORS = [
-  ...stylesCss.matchAll(/([^{}]+)\{([^{}]*)\}/g),
-]
-  .filter((m) => /--side-scrim-layer\s*:/.test(m[2]))
-  .map((m) => norm(m[1]));
-
-/** 这个元素在有壁纸时是否垫了薄幕（读 styles.css，不写死）。 */
-export function hasWallpaperScrim(id: SurfaceId): boolean {
-  const sel = SURFACES[id].selector;
-  if (!sel) return false;
-  return WALLPAPER_SCRIM_SELECTORS.some(
-    (s) =>
-      s.startsWith('html[data-wallpaper="on"]') &&
-      (s.includes(`${sel},`) || s.includes(`${sel})`) || s.endsWith(norm(sel))),
-  );
+/** 这条规则的 background 是不是只有一层 var(layer)（没有额外的薄幕层）。 */
+export function paintsOnly(rule: string, layer: Layer): boolean {
+  const bg = lastDecl(stylesCss, rule, "background");
+  return bg?.replace(/\s*!important$/, "") === `var(${layer})`;
 }
 
-/** 壁纸下某个元素文字的颜色；placeholder 读 html[data-wallpaper="on"] .glass-composer 的 --composer-placeholder-ink。 */
+/** styles.css 里所有画薄幕的规则（background 里出现 scrim 变量，或给 *-scrim-layer 变量赋值）。 */
+export function scrimPainters(): string[] {
+  return [...stylesCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) =>
+      /(?:^|[;\s])(?:background(?:-image|-color)?\s*:[^;]*var\(--[\w-]*scrim|--[\w-]*scrim-layer\s*:)/.test(
+        m[2],
+      ),
+    )
+    .map((m) => norm(m[1]));
+}
+
+/** 一种文字位置从壁纸到字之间一共有几层薄幕：壁纸那层 + 每层玻璃规则自带的（应当是 0）。 */
+export function scrimLayers(id: SurfaceId): number {
+  const own = SURFACES[id].layers.filter(
+    (layer, i) => layer !== "--bubble-user-bg" && !paintsOnly(SURFACES[id].rules[i], layer),
+  ).length;
+  return scrimPainters().filter((s) => s === ".chisabot-wallpaper::after").length + own;
+}
+
+/** 壁纸下文字令牌的实际颜色：html[data-wallpaper="on"] 改过的（--ink-4 → --ink-3 等）按改过的算。 */
 export function surfaceInk(scheme: Scheme, ink: string): RGBA {
-  if (ink !== "placeholder") return tokenColor(scheme, ink);
-  const v = lastDecl(
-    stylesCss,
-    'html[data-wallpaper="on"] .glass-composer',
-    "--composer-placeholder-ink",
-  );
-  const ref = v?.match(/^var\((--[\w-]+)\)$/)?.[1] ?? "--glass-ink-4";
-  return tokenColor(scheme, ref);
+  const v = lastDecl(stylesCss, 'html[data-wallpaper="on"]', ink);
+  const ref = v?.match(/^var\((--[\w-]+)\)$/)?.[1];
+  return tokenColor(scheme, ref ?? ink);
 }
 
-/** 壁纸下某个面板 / 主区元素文字背后所有可能的不透明底色。 */
+/** 壁纸下某种文字位置背后所有可能的不透明底色。 */
 export function wallpaperSurfaceBackdrops(
   id: SurfaceId,
   scheme: Scheme,
 ): RGBA[] {
-  const spec = SURFACES[id];
-  const scrim = hasWallpaperScrim(id) ? wallpaperScrim(scheme) : null;
-  const out: RGBA[] = [];
-  for (const base of wallpaperBases(scheme)) {
-    if (spec.glass === "--bubble-user-bg") {
-      out.push(over(fillToken(scheme, "--bubble-user-bg"), base));
-      continue;
-    }
-    for (const style of GLASS_STYLES)
-      for (const haze of HAZE_RANGE)
-        for (const stop of glassStops(spec.glass, style, scheme, haze)) {
-          const glass = over(stop, base);
-          out.push(scrim ? over(scrim, glass) : glass);
-        }
+  const { layers } = SURFACES[id];
+  const bases = wallpaperBases(scheme);
+  if (layers.length === 0) return bases;
+  if (layers[0] === "--bubble-user-bg") {
+    const fill = fillToken(scheme, "--bubble-user-bg");
+    return bases.map((b) => over(fill, b));
   }
+  const out: RGBA[] = [];
+  for (const style of GLASS_STYLES)
+    for (const haze of HAZE_RANGE) {
+      let stack = bases;
+      for (const layer of layers) {
+        const stops = glassStops(layer as "--lg-surface" | "--lg-surface-strong", style, scheme, haze);
+        stack = stack.flatMap((b) => stops.map((stop) => over(stop, b)));
+      }
+      out.push(...stack);
+    }
   return out;
 }

@@ -12,6 +12,8 @@ import {
   parseColor,
   range,
   SCHEMES,
+  scrimLayers,
+  scrimPainters,
   type Scheme,
   SURFACES,
   type SurfaceId,
@@ -110,7 +112,35 @@ describe("custom / preset wallpapers: worst case still meets WCAG AA", () => {
       });
 });
 
-describe("wallpapers: account card, collapsed sidebar, chat bubbles and composer meet WCAG AA", () => {
+describe("wallpapers: one scrim under everything", () => {
+  test("only .chisabot-wallpaper::after paints a scrim; no card, bubble or composer adds its own", () => {
+    expect(scrimPainters()).toEqual([".chisabot-wallpaper::after"]);
+  });
+  for (const id of Object.keys(SURFACES) as SurfaceId[])
+    test(`${id}: exactly one scrim layer between the wallpaper and the text`, () => {
+      expect(scrimLayers(id)).toBe(1);
+    });
+  test("a .jr-card nested in a bubble stacks glass on glass, not a second scrim", () => {
+    expect(SURFACES["jr-card-in-bubble"].layers).toEqual([
+      "--lg-surface-strong",
+      "--lg-surface-strong",
+    ]);
+    expect(scrimLayers("jr-card-in-bubble")).toBe(1);
+  });
+  test("composer placeholder is --glass-ink-4, which wallpapers raise to --glass-ink-3", () => {
+    expect(
+      lastDecl(
+        stylesCss,
+        ".glass-composer [data-placeholder]::before, .glass-composer .is-empty::before, .glass-composer textarea::placeholder",
+        "color",
+      ),
+    ).toBe("var(--glass-ink-4) !important");
+    expect(lastDecl(stylesCss, 'html[data-wallpaper="on"]', "--glass-ink-4")).toBe("var(--glass-ink-3)");
+    expect(lastDecl(stylesCss, 'html[data-wallpaper="on"]', "--ink-4")).toBe("var(--ink-3)");
+  });
+});
+
+describe("wallpapers: text on the wallpaper, cards, chat bubbles, nested cards and composer meet WCAG AA", () => {
   for (const scheme of SCHEMES)
     for (const id of Object.keys(SURFACES) as SurfaceId[])
       test(`${id} / ${scheme}`, () => {
