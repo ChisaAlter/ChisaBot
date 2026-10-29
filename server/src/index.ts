@@ -1460,18 +1460,22 @@ const currentDateContext = () => {
   }).format(now);
   return `【当前时间】${zh}（时区：${tz}，ISO：${now.toISOString()}）。回答今天几月几号、星期几、当前时间或计算相对日期（明天、下周等）时直接据此作答，无需调用 computer_run_command 运行 date。`;
 };
-const loadPersonalMemoryForActor = (ownerUserId: string) => async (botId: string) =>
-  [
-    currentDateContext(),
-    await memoryNotes.context(ownerUserId, botId).catch(() => ""),
-    await chisaSkills.catalog(ownerUserId).catch(() => ""),
-    VAULT_GUIDANCE,
-    await github.guidance(ownerUserId).catch(() => ""),
-    await chatFiles.guidance(ownerUserId, botId).catch(() => ""),
-    await confirmations.context(ownerUserId, botId).catch(() => ""),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+// 几段互不相干的读同时发出（原来一段等一段，每轮 /run 前都串着这几次数据库往返）；拼接顺序不变。
+const loadPersonalMemoryForActor =
+  (ownerUserId: string) => async (botId: string, question?: string) =>
+    (
+      await Promise.all([
+        currentDateContext(),
+        memoryNotes.context(ownerUserId, botId).catch(() => ""),
+        chisaSkills.catalog(ownerUserId, question).catch(() => ""),
+        VAULT_GUIDANCE,
+        github.guidance(ownerUserId).catch(() => ""),
+        chatFiles.guidance(ownerUserId, botId).catch(() => ""),
+        confirmations.context(ownerUserId, botId).catch(() => ""),
+      ])
+    )
+      .filter(Boolean)
+      .join("\n\n");
 // Follow-ups a Bot schedules for itself, on the shared work queue. See agents/wake-up.ts.
 const wakeUpStore = createWakeUpStore(database, { auditStore: bootAuditStore });
 /** Team Bots: published Bots, their audiences, and teammates' consent to their own accounts. */

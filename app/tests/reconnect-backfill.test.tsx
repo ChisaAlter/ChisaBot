@@ -68,7 +68,7 @@ function setup() {
     act(() => {
       for (const subscriber of subscribers) subscriber.onRunFinalized?.();
     });
-  return { emit, finishOwnRun, connects };
+  return { emit, finishOwnRun, connects, agent };
 }
 
 test("the first activity after a long gap still backfills what changed meanwhile", async () => {
@@ -100,6 +100,42 @@ test("the poll right after this device's own turn still only rebases", async () 
     now += 2_000;
     await emit("6"); // 之后别处的新动静照旧接上
     expect(connects).toHaveLength(1);
+  } finally {
+    clock.mockRestore();
+    cleanup();
+  }
+});
+
+test("empty conversation, first turn sent here: a long gap right after it still backfills", async () => {
+  let now = 3_000_000;
+  const clock = spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    const { emit, finishOwnRun, connects, agent } = setup();
+    // 新对话：打开时还没有任何变化戳；第一轮从这台发，跑的时候问到的戳都只让它等（没有基线）。
+    agent.isRunning = true;
+    await emit("1");
+    now += 2_000;
+    await emit("2");
+    agent.isRunning = false;
+    await finishOwnRun();
+    now += 60_000; // 紧接着断网一分钟，期间别的设备说了话
+    await emit("9");
+    expect(connects).toHaveLength(1);
+  } finally {
+    clock.mockRestore();
+    cleanup();
+  }
+});
+
+test("opening a conversation: the very first activity is only a baseline", async () => {
+  let now = 4_000_000;
+  const clock = spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    const { emit, connects } = setup();
+    await emit("7");
+    now += 2_000;
+    await emit("7");
+    expect(connects).toHaveLength(0);
   } finally {
     clock.mockRestore();
     cleanup();
