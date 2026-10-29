@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### 性能模式 / 减少透明度：全局不模糊
+
+- **全局规则（新增 `app/src/perf-noblur.css`，`main.tsx` 里紧跟 `styles.css` 引入）**：性能模式（`html[data-perf="on"]`）和系统「减少透明度」下，`*, *::before, *::after` 一律 `backdrop-filter: none`，`--lg-blur` 也设成 `none`。原来漏掉的 streamdown 代码块 / 图表操作条（Tailwind `supports-[backdrop-filter]:backdrop-blur`，8px）、对话框 / 抽屉遮罩、agent-orb 内嵌样式、外观设置的玻璃预览都一起关掉。
+- **不透明底色**：新增 `--glass-bg-opaque`（浅 / 深各一份）；左右栏、输入框、顶栏搜索、弹层 / 菜单 / 对话框、手机抽屉、代码块操作条、外观设置预览都换成它，不留透明无底的块。全屏遮罩只去掉模糊，保留半透明压暗。
+- **不用 `!important`**：选择器前缀 `html:not(#chisabot-no-blur)` 多一个 id 的优先级，压过所有类 / 属性规则；旧玻璃层的 `!important` 靠 `--lg-blur: none` 关掉。
+- **实测（浏览器审计，可见且 computed `backdrop-filter` 不为 none 的元素）**：性能模式和减少透明度下，桌面、手机所有场景都是 0（main 上桌面聊天 1、设置页 14，手机 1、抽屉 2）；普通模式与 main 一致（桌面 5 / 设置页 16，手机 2 / 抽屉 6）。
+- **测试**：新增 `app/tests/no-backdrop.test.ts`：引入顺序、两种开关都覆盖 `*` / `::before` / `::after`、不靠 `!important`、不许内联 `backdropFilter` / Tailwind important 模糊类 / 新的 `backdrop-filter … !important`，`styles.css` 里每条会模糊的规则都有不透明底色或写明原因的豁免。
+- 规则写进 `DESIGN.md` §10.3.1。不改版本号。
+
 ## 0.1.109 — 2026-10-29
 
 这一版合并 3 个 PR：回复来源结构化（数据格式先行，生产环境 `CHISABOT_REPLY_SOURCES` 保持关闭，#391）、web_fetch 重试 + 搜索摘要降级、工具失败后这一轮一定有回答（#392）、壁纸与外观收尾（#376，只改 app）。只升级服务器版本号（根、`app`、`server` 为 `0.1.109`），PC / Android 外壳未变；没有表结构变化。
@@ -63,6 +74,7 @@ CI 补三道检查（审查清单第 3 项）：Biome 只拦改动文件里新�
 
 - 修复：开着 Service Worker 时 Chrome 登录最后落到 `/api/auth/error?error=state_mismatch`（会话其实已写入）。sw.js 不再开 navigation preload，激活时显式关掉（`SW_VERSION` 3）；`/api`、`/auth` 下的导航照旧不拦、只由浏览器发一次。未升级版本号。
   - 一次性过渡窗口：部署后，没刷新过的旧页面直接登录，或者刷新后在新 Service Worker 接管之前就登录，这一次仍由旧的 v2 Service Worker（开着 navigation preload）处理，可能还会出现一次 `state_mismatch`，再登录一次就好。新 SW 接管时间按代码算：页面 `load` 后用 `requestIdleCallback` 注册（超时 5 秒；浏览器不支持时固定 2 秒），再加上下载、安装 sw.js 的时间，`skipWaiting` + `clients.claim` 后立即生效，所以大约是刷新后 5 秒以内。之后不会再出现。
+
 
 ## 0.1.104 — 2026-10-29
 
