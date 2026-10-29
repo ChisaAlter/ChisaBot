@@ -4126,8 +4126,8 @@ export function compactTurns(
           item.kind === "tool" && item.toolCall.function.name === "render_ui",
       ) ||
       texts.some((item) => !hidden.has(item.id));
-    if (workAnchor !== null) {
-      const entry = work.get(workAnchor)!;
+    const entry = workAnchor === null ? undefined : work.get(workAnchor);
+    if (entry) {
       entry.answered = answered;
       entry.quiet = isQuietWork({
         calls: entry.calls,

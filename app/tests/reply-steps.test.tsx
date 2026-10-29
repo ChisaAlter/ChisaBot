@@ -130,7 +130,9 @@ describe("状态胶囊", () => {
     expect(capsule.getAttribute("data-state")).toBe("live");
     expect(capsule.querySelector(".rs-spinner")).not.toBeNull();
     expect(capsule.querySelector("[role=status]")).toBeNull();
-    expect(capsule.querySelector(".rs-capsule-label")?.textContent).toBe("思考中");
+    expect(capsule.querySelector(".rs-capsule-label")?.textContent).toBe(
+      "思考中",
+    );
     const time = capsule.querySelector(".rs-capsule-time")!;
     expect(time.getAttribute("aria-hidden")).toBe("true");
     expect(time.textContent).toBe("5 秒");
@@ -162,7 +164,9 @@ describe("状态胶囊", () => {
     const label = getByTestId("chat-work-card").getAttribute("aria-label")!;
     expect(label).toContain("东京天气");
     expect(label.endsWith("展开步骤")).toBe(true);
-    expect(getByTestId("chat-work-card").querySelector("[role=status]")).toBeNull();
+    expect(
+      getByTestId("chat-work-card").querySelector("[role=status]"),
+    ).toBeNull();
   });
 });
 
@@ -200,7 +204,12 @@ describe("秒数切回来不归零", () => {
     const key = "rs-since-2";
     const since = turnStartedAt(key, Date.now() - 7_000);
     const first = render(
-      <WorkRow calls={[search("东京天气", false)]} live since={since} turnKey={key} />,
+      <WorkRow
+        calls={[search("东京天气", false)]}
+        live
+        since={since}
+        turnKey={key}
+      />,
     );
     expect(first.getByTestId("chat-work-card").textContent).toContain("7 秒");
     first.unmount();
@@ -217,7 +226,10 @@ describe("焦点", () => {
     const key = "rs-focus-1";
     const Row = ({ live, folded }: { live: boolean; folded: boolean }) => (
       <div>
-        <div data-message-id="t1" {...(folded ? { inert: true, "aria-hidden": true } : {})}>
+        <div
+          data-message-id="t1"
+          {...(folded ? { inert: true, "aria-hidden": true } : {})}
+        >
           <WorkRow
             calls={[search("东京天气", live ? false : true)]}
             live={live}
@@ -227,7 +239,9 @@ describe("焦点", () => {
         <div data-message-id="a1">{"东京今天晴。"}</div>
       </div>
     );
-    const { getByTestId, rerender, container } = render(<Row folded={false} live />);
+    const { getByTestId, rerender, container } = render(
+      <Row folded={false} live />,
+    );
     const button = getByTestId("chat-work-card");
     button.focus();
     fireEvent.keyDown(button, { key: "Enter" });
@@ -251,7 +265,11 @@ describe("焦点", () => {
     await act(async () => {
       rerender(
         <div data-message-id="t1">
-          <WorkRow calls={[{ ...search("东京天气"), failed: true }]} live={false} turnKey={key} />
+          <WorkRow
+            calls={[{ ...search("东京天气"), failed: true }]}
+            live={false}
+            turnKey={key}
+          />
         </div>,
       );
     });
@@ -272,7 +290,10 @@ describe("没有看得见的回答", () => {
       toolCall: {
         id,
         type: "function",
-        function: { name: "web_search", arguments: JSON.stringify({ query: "东京天气" }) },
+        function: {
+          name: "web_search",
+          arguments: JSON.stringify({ query: "东京天气" }),
+        },
       },
       result,
     }) as Item;
@@ -291,7 +312,11 @@ describe("没有看得见的回答", () => {
   });
 
   test("工具失败、后面没有文字：干活那一行不收，后面挂「这一轮没有回答」（最后一轮带重试）", () => {
-    const items = [user("u1", "查东京天气"), bot("a0", "我查一下。"), tool("t1", FAIL)];
+    const items = [
+      user("u1", "查东京天气"),
+      bot("a0", "我查一下。"),
+      tool("t1", FAIL),
+    ];
     const compact = compactTurns(items, false, new Set());
     const work = compact.work.get("t1")!;
     expect(work.answered).toBe(false);
@@ -299,12 +324,21 @@ describe("没有看得见的回答", () => {
     expect(compact.noAnswerAfter.get("t1")).toEqual({ last: true });
     // ChatTranscript 渲染时再判一遍的也一样不收。
     expect(
-      isQuietWork({ calls: work.calls, live: false, hasFinal: work.answered, stopped: work.stopped }),
+      isQuietWork({
+        calls: work.calls,
+        live: false,
+        hasFinal: work.answered,
+        stopped: work.stopped,
+      }),
     ).toBe(false);
     // 还在跑时不挂。
     expect(compactTurns(items, true, new Set()).noAnswerAfter.size).toBe(0);
     // 后面又有一轮：这一轮的提示不带重试。
-    const more = compactTurns([...items, user("u2", "算了"), bot("a2", "好的。")], false, new Set());
+    const more = compactTurns(
+      [...items, user("u2", "算了"), bot("a2", "好的。")],
+      false,
+      new Set(),
+    );
     expect(more.noAnswerAfter.get("t1")).toEqual({ last: false });
   });
 
@@ -322,20 +356,32 @@ describe("没有看得见的回答", () => {
   });
 
   test("只回了「---」：同样挂「这一轮没有回答」", () => {
-    const compact = compactTurns([user("u1", "你好"), bot("a1", "---")], false, new Set());
+    const compact = compactTurns(
+      [user("u1", "你好"), bot("a1", "---")],
+      false,
+      new Set(),
+    );
     expect(compact.hidden.has("a1")).toBe(true);
     expect(compact.noAnswerAfter.get("u1")).toEqual({ last: true });
   });
 
   test("有回答、被停掉的一轮不挂", () => {
     const answered = compactTurns(
-      [user("u1", "查"), tool("t1", FAIL), bot("a1", "搜索出错了，换个说法再试试？")],
+      [
+        user("u1", "查"),
+        tool("t1", FAIL),
+        bot("a1", "搜索出错了，换个说法再试试？"),
+      ],
       false,
       new Set(),
     );
     expect(answered.noAnswerAfter.size).toBe(0);
     expect(answered.work.get("t1")?.quiet).toBe(true);
-    const stopped = compactTurns([user("u1", "查"), tool("t1", FAIL)], false, new Set(["u1"]));
+    const stopped = compactTurns(
+      [user("u1", "查"), tool("t1", FAIL)],
+      false,
+      new Set(["u1"]),
+    );
     expect(stopped.noAnswerAfter.size).toBe(0);
   });
 
@@ -344,7 +390,9 @@ describe("没有看得见的回答", () => {
     const { getByTestId, getByRole } = render(
       <NoAnswerRow onRetry={() => (retried += 1)} />,
     );
-    expect(getByTestId("turn-no-answer").textContent).toContain("这一轮没有回答");
+    expect(getByTestId("turn-no-answer").textContent).toContain(
+      "这一轮没有回答",
+    );
     fireEvent.click(getByRole("button", { name: "重试" }));
     expect(retried).toBe(1);
   });
@@ -426,11 +474,13 @@ describe("胶囊样式守规矩", () => {
     expect(css).not.toMatch(/\.dark\s+\.rs-capsule/);
   });
   test("从「思考中」胶囊换成干活卡不再播一次进场", () => {
-    const rule = /\.chat-work-card\.rs-capsule\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    const rule =
+      /\.chat-work-card\.rs-capsule\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(rule).toMatch(/animation\s*:\s*none/);
   });
   test("停顿的胶囊和以前停顿的占位等高（上下各 1px + 20px 行高 = 22px）", () => {
-    const rule = /\.rs-capsule\[data-variant="pause"\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    const rule =
+      /\.rs-capsule\[data-variant="pause"\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(rule).toContain("padding-top: 1px");
     expect(rule).toContain("padding-bottom: 1px");
     expect(css).toMatch(/\.rs-capsule\s*\{[^}]*line-height:\s*20px/);

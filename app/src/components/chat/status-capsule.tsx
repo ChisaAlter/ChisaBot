@@ -90,7 +90,11 @@ export function PausedCapsule({
  * 以前这一轮整段收起，画面上是一片空白；现在干活那一行留着（「N 步失败」），下面是这一句和重试。
  * 重试走现有的「重发没有回答的那一条」（`onRetryUnanswered`，和重新生成同一条路）；只有最后一轮带。
  */
-export function NoAnswerRow({ onRetry }: { onRetry?: (() => void) | undefined }) {
+export function NoAnswerRow({
+  onRetry,
+}: {
+  onRetry?: (() => void) | undefined;
+}) {
   return (
     <div className="rs-noanswer" data-testid="turn-no-answer">
       <span className="rs-noanswer-text">{"这一轮没有回答"}</span>
