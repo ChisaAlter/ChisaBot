@@ -1,5 +1,30 @@
 # DEVLOG
 
+## 性能模式下形象头像只留静态形状（dev3/perf-mode-avatar-still，叠在 #406 上）
+
+**动机**：性能模式（`<html data-perf="on">`）的方向是「流畅优先、真的省活」（性能审计 2026-10-28：动态内容会让上面的玻璃每帧重绘，无限动画是卡顿来源之一）。#406 里 JS 的持续变形在性能模式下已经不登记，但 CSS 的表情动画只在 `prefers-reduced-motion` 时关：性能模式下 `data-morph` 不在，原来让位给变形引擎的 `sa-breathe / sa-look / sa-blink`（以及选中的 `sa-pop`、做完的 `sa-hop`、眼睛的过渡）反而重新跑起来；换形状的 motion 弹簧也只看减少动态效果。无头 Chromium 实测（左栏 24 个头像里 3 个在干活 + 3 个在想 + 1 个选中）：开性能模式后头像上一直有 24 个在跑的 CSS 动画（breathe 6、look 6、blink 12）。
+
+**改法**：
+- `styles.css`（`.sa` 一节，顶层）：`html[data-perf="on"] svg.sa :is(.sa-body, .sa-eyes, .sa-open, .sa-happy) { animation: none; transition: none; }`。不用 `!important`：优先级 (0,3,2) 压过所有 `.sa` 表情规则（最高 (0,3,0)）。减少动态效果原来那条 `@media (prefers-reduced-motion)` 规则不动。
+- `shape-avatar.tsx`：换形状时减少动态效果 **或** 性能模式都直接画到位，不起 motion 的弹簧（它也是一个 rAF 循环）。变形本来就按同一个 `still` 不登记；性能模式中途打开时立刻摘掉（循环停、画回自己的形状），关掉立刻恢复。
+- 表情本身（选中时眼睛放大、做完了的 ^ ^）照常切换，只是没有动画和过渡。
+- `app/scripts/avatar-morph-harness/`：harness 能开关性能模式；新的 `perf-check.mjs`（`bun app/scripts/avatar-morph-harness/run.ts <输出目录> perf`）量开 / 关 / 再关三段的头像动画、变形帧和 rAF 调用。
+
+**证据**（无头 Chromium，box 上，每段 2–3 s；`document.getAnimations()` 里 target 在 `.sa` 里且 `playState === "running"` 的个数）：
+
+| 场景 | 阶段 | 改前：头像动画 / 变形帧 / rAF | 改后：头像动画 / 变形帧 / rAF |
+| --- | --- | --- | --- |
+| 左栏 24 个（3 干活 + 3 在想 + 1 选中） | 性能模式关 | 0 / 120 / 120 | 0 / 120 / 120 |
+| | 性能模式开 | **24** / 0 / 0 | **0 / 0 / 0** |
+| | 开着时再换状态 | **12** / 0 / 0 | **0 / 0 / 0** |
+| | 再关 | 0 / 120 / 120 | 0 / 120 / 120 |
+| 四种状态各一个 120px | 性能模式开 | **8** / 0 / 0 | **0 / 0 / 0** |
+| | 再关 | 0 / 120 / 120 | 0 / 120 / 120 |
+
+关着时 0 个 CSS 动画是因为变形引擎在管（`data-morph="on"` 时 CSS 动画让位），帧都在 rAF 里；开着时改后 CSS 和 JS 都是 0，关掉恢复原样。
+
+**测试**：`app/tests/avatar-perf-still.test.tsx`（独立进程，加进 run-app-tests 的 ISOLATED）：性能模式开着渲染在干活 / 在想 / 选中的头像不登记变形、变形循环一帧不排、换形状直接画到位且不调 requestAnimationFrame；关掉恢复变形和弹簧，再开立刻停；styles.css 里有这条顶层规则（animation / transition 都是 none、没有 `!important`），优先级压过每一条会动的 `.sa` 规则。把 `shape-avatar.tsx` 和 `styles.css` 换回改前，前两个用例失败。
+
 ## 形象头像「活」起来 + 预览表情单选（dev3/feat-avatar-morph）
 
 **动机**：形象头像（DESIGN.md §81）在跑的时候只有 CSS 的呼吸缩放和眨眼，看起来是一张贴图在动，不像「活的」。要像 Grok Bot 的头像那样：果冻一样的轮廓、沿边缘流动的波、挤压拉伸、会眨会看的眼睛，状态之间全是弹簧过渡。另外头像编辑框「形象」页的三个预览按钮「选中 / 工作中 / 做完了」各自是开关，点「做完了」时「工作中」还亮着（Jun 报的 bug）。
