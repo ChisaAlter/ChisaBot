@@ -14,12 +14,23 @@ const LONG_TEXT = 6000;
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
+/*
+ * 「减少动态效果」的查询只建一次（审查 01 第 5 条：原来每次渲染、每一帧都 matchMedia 一次）。
+ * MediaQueryList.matches 本身是实时的，系统设置改了这里立刻跟着变；换了 matchMedia（测试里会换）才重建。
+ */
+let reducedMotion: { query: MediaQueryList; from: typeof window.matchMedia } | null = null;
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  if (reducedMotion?.from !== window.matchMedia) {
+    reducedMotion = { query: window.matchMedia("(prefers-reduced-motion: reduce)"), from: window.matchMedia };
+  }
+  return reducedMotion.query.matches;
+}
+
 function instantMode(): boolean {
   if (typeof document !== "undefined" && document.visibilityState === "hidden") return true;
-  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  }
-  return false;
+  return prefersReducedMotion();
 }
 
 export function useSmoothText(text: string, enabled = true): string {
