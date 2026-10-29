@@ -23,7 +23,7 @@
 - 和 main 的 #392（web_fetch 重试、`WebIo`）有冲突，普通 merge 了 origin/main（没有 rebase）：`searchWeb` 带上超时参数，`WebIo` 加可选的 `outcome`（带「搜索源能不能用」）。
 - 没改的：SSRF 名单（安全边界）、PROVENANCE_GUIDANCE（安全相关提示词，测试按 sha256 钉住）。真正让结果变好的是一个线上能用的搜索源：代码里目前不支持任何搜索 API（没有 Brave / Tavily / SearXNG 之类的配置），需要另行决定是否接入；这次的改动保证搜不到时不拿无关页面当结果、不再连搜。
 
-## Unreleased — 流式回复时打字不再乱序、不再残留（分支 dev2/stream-composer）
+## 流式回复时打字不再乱序、不再残留（分支 dev2/stream-composer，随 0.1.111 发布）
 
 来源：性能审查 01-chat-streaming 第 1 项。4x 降速下边流式输出边打 `abcdefghij`，得到 `bcdefghija`，光标跳回开头；文档卡流式时打字再退格，会留下残字，并跟着下一条消息发出去。
 
@@ -804,3 +804,17 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.111`；PC / Android 不变。不打 tag、不建 Release。
 
 **0.1.111 部署**（2026-10-29 21:48 北京时间开始）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.111-20261029T134745Z.dump`（`pg_restore -l` 767 条目），备份网关 `nginx.conf`（`nginx.conf.bak-pre-v0.1.111-20261029T134745Z`）。`deploy-serial.sh a4fce00` 因为 server 新增依赖 `sharp` 走了完整构建（609 秒），镜像 `local/chisabot:auto-202610291348-a4fce00`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.111` / `a4fce00`；`request.sh smoke` PASSED，`POST /api/admin/smoke` 模型自检 `ok:true persisted:false`，`health.sh` 通过（容器 healthy、无重启、本机 `/health` 200、公网 `/login` 200），sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 63914d8；保留当前（BASE）a4fce00、上一版 249aefa 作回滚。#411 的 base 不是 main，已在 GitHub 上手动关闭并留言。
+
+## 2026-10-29 发版 0.1.112
+
+- #412 `dev3/link-preview`（head `e2b9cde`）→ `d8c8f19`：链接预览服务端（GitHub 预览图回退、视频 / 百科卡片、反爬降级）。
+- #421 `dev3/fix-open-read-and-backfill-dup`（head `5bb67cf`，相对已审的 `a7ccfc3` 只多一行 CHANGELOG）→ `69a96fc`：冷打开只读一次完整历史，重连回填和刷新一致。
+- 不合：#395 `dev2/settings-perf`（head `72326cf`）、#398 `dev2/settings-perf-2`（head `77a7f71`）、#403 `dev2/settings-perf-3`（head `e2bcc03`）三个叠在一起，一起放弃：#395 合到 `e0e79a0` 时 `app/src/components/layout/glass-shell.tsx`、`glass-topbar.tsx` 代码冲突（main 上 `f601ab3` perf(topbar) 和 `5cd6e8c` hark 顶栏改过同一处）。需要作者基于新 main 重新整理。
+
+**流程**：在临时 worktree 从 origin/main（`e0e79a0`）按顺序 `--no-ff` 合并，合并前核对 PR head 未变、都没有改版本号。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 结果见部署记录。
+
+**冲突**：#412 只在 `docs/DEVLOG.md`、#421 只在 `CHANGELOG.md` 冲突（两边都保留）；没有代码、package.json 或锁文件冲突。#421 的 CHANGELOG 条目原本并进了文件下方旧的 `## Unreleased` 段，发版时挪到 0.1.112。去掉 #408 留下的 `## Unreleased` 标题前缀（那段已随 0.1.111 发布）。
+
+**网关**：#412 改了 `deploy/public/nginx.conf`、`cache-no-store.conf`、`security-headers.conf`。线上网关 `chisabot-public-gateway` 的 2053 端口还反代 Magpie（`127.0.0.1:3430`，`ghcr.io/yetone/magpie`），不是只服务 ChisaBot，按规则这次只部署应用、不动网关，仓库模板和线上 nginx 会暂时不一致（需要另行决定）。
+
+**版本**：根、`app`、`server` 升到 `0.1.112`；PC / Android 不变。不打 tag、不建 Release。
