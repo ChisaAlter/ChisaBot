@@ -1,6 +1,7 @@
 import { useRenderTool } from "@copilotkit/react-core/v2";
 import { z } from "zod";
 import { LocalAgentCard } from "@/components/chat/local-agent-card";
+import { type CardCheck, registerCardCheck } from "./tool-renderers";
 
 /**
  * `device_agent_run`（服务器工具，server/src/local-agents/service.ts）在聊天里画成本地 agent 任务卡片
@@ -30,6 +31,9 @@ export function taskIdOf(result: unknown): string | undefined | null {
   // 有结果但没有 taskId = 被拒绝。
   return null;
 }
+
+/** device_agent_run 完成后画不画卡片：拿到 taskId 才画；被拒绝（taskIdOf 返回 null）时渲染器画空，这一轮不算有回答。 */
+export const localAgentDrawsCard: CardCheck = registerCardCheck(["device_agent_run"], ({ result }) => taskIdOf(result) !== null);
 
 export function LocalAgentTool() {
   useRenderTool({

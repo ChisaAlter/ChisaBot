@@ -17,6 +17,7 @@ import {
   ChatTranscript,
   compactTurns,
   toolDrawsCard,
+  UnfinishedTool,
 } from "@/components/channels/chat-transcript";
 import {
   capsuleSeconds,
@@ -40,12 +41,18 @@ import {
   fileToolDrawsCard,
   imageToolDrawsCard,
 } from "@/lib/copilot/chat-file-tools";
-import { renderUiDrawsCard } from "@/lib/copilot/render-ui-tool";
+import { localAgentDrawsCard, taskIdOf } from "@/lib/copilot/local-agent-tool";
+import {
+  renderUiDrawsCard,
+  renderUiFailedDetail,
+} from "@/lib/copilot/render-ui-tool";
 import { scheduleDrawsCard } from "@/lib/copilot/schedule-tool";
 import {
   lineOnlyRender,
   registeredCardChecks,
+  unfinishedToolText,
 } from "@/lib/copilot/tool-renderers";
+import { workerDrawsCard, workerIdOf } from "@/lib/copilot/worker-tool";
 import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
 import { CHAT_FILES_MARKER } from "../../shared/chat-files";
 import { settleReactWork } from "./settle-react-work";
@@ -208,8 +215,10 @@ describe("PausedCapsule", () => {
     expect(capsule).not.toBeNull();
     expect(capsule.getAttribute("data-variant")).toBe("pause");
     expect(capsule.textContent).toContain("思考中");
-    // 秒数从这一轮开始算，不是从停顿开始。
-    expect(capsule.textContent).toContain("4 秒");
+    // 秒数从这一轮开始算，不是从停顿开始（至少 4 秒；机器忙时 0.95 秒的等待会拖长，不卡死成正好 4 秒）。
+    const seconds = Number(/(\d+) 秒/.exec(capsule.textContent ?? "")?.[1]);
+    expect(seconds).toBeGreaterThanOrEqual(4);
+    expect(seconds).toBeLessThan(10);
     await act(async () => {
       rerender(<PausedCapsule since={since} watch="我先看看，东京" />);
     });
@@ -255,7 +264,7 @@ describe("焦点", () => {
           {...(folded ? { inert: true, "aria-hidden": true } : {})}
         >
           <WorkRow
-            calls={[search("东京天气", live ? false : true)]}
+            calls={[search("东京天气", !live)]}
             live={live}
             turnKey={key}
           />
@@ -535,15 +544,18 @@ describe("以卡片收尾的一轮算有回答（复审 #404 第 1 条）", () =
     { name: "schedule_create", render: card },
     { name: "render_ui", render: card },
     { name: "ask_person", render: card },
+    { name: "device_agent_run", render: card },
+    { name: "delegate_task", render: card },
     { name: "computer_click", render: lineOnlyRender(() => null) },
   ];
   const drawsCard =
     (asked: ReadonlySet<string> = new Set()) =>
-    (item: Parameters<typeof toolDrawsCard>[0]) =>
+    (item: Parameters<typeof toolDrawsCard>[0], live: boolean) =>
       toolDrawsCard(item, {
         renderers,
         activities: [{ activityType: "open-generative-ui" }],
         asked,
+        live,
       });
   const OK = JSON.stringify(JSON.stringify({ ok: true }));
   const FAIL = JSON.stringify(JSON.stringify({ error: "失败" }));
@@ -610,6 +622,10 @@ describe("以卡片收尾的一轮算有回答（复审 #404 第 1 条）", () =
     expect(registeredCardChecks.get("file_share")).toBe(fileToolDrawsCard);
     expect(registeredCardChecks.get("schedule_create")).toBe(scheduleDrawsCard);
     expect(registeredCardChecks.get("render_ui")).toBe(renderUiDrawsCard);
+    expect(registeredCardChecks.get("device_agent_run")).toBe(
+      localAgentDrawsCard,
+    );
+    expect(registeredCardChecks.get("delegate_task")).toBe(workerDrawsCard);
   });
 
   const answered: [string, string, string?][] = [
@@ -653,12 +669,17 @@ describe("以卡片收尾的一轮算有回答（复审 #404 第 1 条）", () =
     });
   }
 
-  test("工具还没有结果时渲染器画的是骨架：照旧算卡片", () => {
+  test("工具还没有结果、这一轮还在跑：渲染器画的是骨架，算卡片", () => {
     const items = [user("u1", "来一张"), tool("t1", "image_generate")];
-    expect(
-      compactTurns(items, false, new Set(), undefined, drawsCard())
-        .noAnswerAfter.size,
-    ).toBe(0);
+    const compact = compactTurns(
+      items,
+      true,
+      new Set(),
+      undefined,
+      drawsCard(),
+    );
+    expect(compact.noAnswerAfter.size).toBe(0);
+    expect(compact.liveTools.has("t1")).toBe(true);
   });
 
   test("渲染器的判断和它自己画不画是同一个条件", () => {
@@ -735,6 +756,118 @@ describe("以卡片收尾的一轮算有回答（复审 #404 第 1 条）", () =
       expect(compact.noAnswerAfter.get("t1")).toEqual({ last: true });
       expect(compact.work.get("t1")?.answered).toBe(false);
     }
+  });
+});
+
+describe("复审 #404 第四轮", () => {
+  type Item = Parameters<typeof compactTurns>[0][number];
+  const user = (id: string, text: string): Item =>
+    ({ kind: "text", id, role: "user", text }) as Item;
+  const tool = (id: string, name: string, result?: string): Item =>
+    ({
+      kind: "tool",
+      id,
+      toolCall: { id, type: "function", function: { name, arguments: "{}" } },
+      ...(result === undefined ? {} : { result }),
+    }) as Item;
+  const card = () => "card";
+  const renderers = [
+    "image_generate",
+    "file_share",
+    "schedule_create",
+    "render_ui",
+    "device_agent_run",
+    "delegate_task",
+    "ask_person",
+  ].map((name) => ({ name, render: card }));
+  const drawsCard = (
+    item: Parameters<typeof toolDrawsCard>[0],
+    live: boolean,
+  ) => toolDrawsCard(item, { renderers, asked: new Set(), live });
+  const ending = (name: string, result: string | undefined, busy = false) =>
+    compactTurns(
+      [user("u1", "帮我做"), tool("t1", name, result)],
+      busy,
+      new Set(),
+      undefined,
+      drawsCard,
+    );
+  const TASK = JSON.stringify(
+    JSON.stringify({ taskId: "0f8b6c2e-3c1a-4b7e-9f42-5a6c7d8e9f01" }),
+  );
+  const WORKER = JSON.stringify(
+    JSON.stringify({ workerId: "8d0b6f2e-3c1a-4b7e-9f42-5a6c7d8e9f01" }),
+  );
+  const DENIED = JSON.stringify({ error: "这台电脑不在线" });
+
+  test("device_agent_run 被拒（taskIdOf 返回 null，渲染器画空）：这一轮算没有回答", () => {
+    expect(taskIdOf(DENIED)).toBeNull();
+    expect(localAgentDrawsCard({ args: "{}", result: DENIED })).toBe(false);
+    expect(ending("device_agent_run", DENIED).noAnswerAfter.get("t1")).toEqual({
+      last: true,
+    });
+  });
+  test("device_agent_run 拿到 taskId：画卡片，算有回答", () => {
+    expect(localAgentDrawsCard({ args: "{}", result: TASK })).toBe(true);
+    expect(ending("device_agent_run", TASK).noAnswerAfter.size).toBe(0);
+  });
+
+  test("delegate_task 被拒：workerIdOf 是 null（不再是 undefined、不再一直画等待卡），这一轮算没有回答", () => {
+    expect(workerIdOf(undefined)).toBeUndefined();
+    expect(workerIdOf(DENIED)).toBeNull();
+    expect(workerIdOf(WORKER)).toBe("8d0b6f2e-3c1a-4b7e-9f42-5a6c7d8e9f01");
+    expect(workerDrawsCard({ args: "{}", result: DENIED })).toBe(false);
+    expect(workerDrawsCard({ args: "{}", result: WORKER })).toBe(true);
+    expect(ending("delegate_task", DENIED).noAnswerAfter.get("t1")).toEqual({
+      last: true,
+    });
+    expect(ending("delegate_task", WORKER).noAnswerAfter.size).toBe(0);
+  });
+
+  test("这一轮结束了（没按停止）、画骨架的工具一直没有结果：算没有回答，骨架换成「没有完成」", () => {
+    for (const name of [
+      "image_generate",
+      "file_share",
+      "schedule_create",
+      "render_ui",
+      "device_agent_run",
+      "delegate_task",
+    ]) {
+      const ended = ending(name, undefined);
+      expect(ended.noAnswerAfter.get("t1")).toEqual({ last: true });
+      expect(ended.liveTools.has("t1")).toBe(false);
+      // 还在跑时照旧算卡片（骨架）。
+      const running = ending(name, undefined, true);
+      expect(running.noAnswerAfter.size).toBe(0);
+      expect(running.liveTools.has("t1")).toBe(true);
+    }
+    const { getByTestId } = render(<UnfinishedTool name="image_generate" />);
+    expect(getByTestId("tool-unfinished").textContent).toBe("画图没有完成");
+    expect(unfinishedToolText("render_ui")).toBe("生成界面没有完成");
+    expect(unfinishedToolText("别的工具")).toBe("这一步没有完成");
+  });
+
+  test("没登记判断的渲染器（问人这类等用户的）没有结果时照旧算卡片", () => {
+    expect(ending("ask_person", undefined).noAnswerAfter.size).toBe(0);
+  });
+
+  test("用户按了停止的一轮不挂「这一轮没有回答」", () => {
+    const compact = compactTurns(
+      [user("u1", "帮我做"), tool("t1", "image_generate")],
+      false,
+      new Set(["u1"]),
+      undefined,
+      drawsCard,
+    );
+    expect(compact.noAnswerAfter.size).toBe(0);
+  });
+
+  test("render_ui 格式有误：还在跑时说会重新生成，这一轮结束了（下面挂着重试）不再这么说", () => {
+    expect(renderUiFailedDetail(false)).toBe(
+      "格式有误，机器人会修正后重新生成",
+    );
+    expect(renderUiFailedDetail(true)).toBe("界面格式有误，没能显示");
+    expect(renderUiFailedDetail(true)).not.toContain("重新生成");
   });
 });
 

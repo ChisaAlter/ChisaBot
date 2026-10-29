@@ -134,6 +134,8 @@ import {
   isLineOnlyRender,
   pickToolRenderer,
   registeredCardChecks,
+  ToolTurnEndedContext,
+  unfinishedToolText,
   useActivityRenderers,
   useToolRenderers,
 } from "@/lib/copilot/tool-renderers";
@@ -2756,12 +2758,15 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
   name,
   args,
   result,
+  turnEnded = false,
 }: {
   delay: number;
   toolCallId: string;
   name: string;
   args: string;
   result?: string;
+  /** 这个调用所在的那一轮已经结束（不再 live）。 */
+  turnEnded?: boolean;
 }) {
   const renderToolCall = useRenderToolCall();
   const toolCall = useMemo(
@@ -2799,11 +2804,29 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
          * What was called, shimmering until its result arrives, and then the server's own words
          * drawn the way a Bot's prose is drawn.
          */}
-        {drawn ?? <ServerToolLine name={name} result={result} />}
+        <ToolTurnEndedContext.Provider value={turnEnded}>
+          {turnEnded && result === undefined && registeredCardChecks.has(name) ? (
+            <UnfinishedTool name={name} />
+          ) : (
+            (drawn ?? <ServerToolLine name={name} result={result} />)
+          )}
+        </ToolTurnEndedContext.Provider>
       </ToolRenderBoundary>
     </Arriving>
   );
 });
+
+/**
+ * 这一轮结束了（没按停止），画骨架的工具却一直没有结果（复审 #404 第四轮）：骨架会一直转「正在画图…」，下面又挂着
+ * 「这一轮没有回答」和重试，两边矛盾。换成一句不动的「画图没有完成」；toolDrawsCard 同样不把它算作卡片。
+ */
+export function UnfinishedTool({ name }: { name: string }) {
+  return (
+    <p className="my-1.5 text-muted-foreground text-xs" data-testid="tool-unfinished">
+      {unfinishedToolText(name)}
+    </p>
+  );
+}
 
 /**
  * A tool the runtime executed, drawn for the person watching.
@@ -3136,13 +3159,14 @@ export function ChatTranscript({
   const toolRenderers = useToolRenderers();
   const activityRenderers = useActivityRenderers();
   const asking = confirmations.isLoading || approvals.isLoading;
-  const drawsCard: DrawsCard = (item) =>
+  const drawsCard: DrawsCard = (item, turnLive) =>
     (asking && item.kind === "tool") ||
     toolDrawsCard(item, {
       renderers: toolRenderers,
       activities: activityRenderers,
       ...(chatConfig?.agentId ? { agentId: chatConfig.agentId } : {}),
       asked: confirmed,
+      live: turnLive,
     });
   // 一轮收成「开场一句 → 结果」，与机器人聊天同一规则（compactTurns，2026-10-13 第四轮）。
   const compact = compactTurns(
@@ -3688,6 +3712,7 @@ export function ChatTranscript({
           name={item.toolCall.function.name}
           result={item.result}
           toolCallId={item.toolCall.id}
+          turnEnded={!compact.liveTools.has(item.id)}
         />
         <ActivityJumpButton
           name={item.toolCall.function.name}
@@ -3918,7 +3943,8 @@ export type WorkEntry = {
 };
 
 export type CardItem = Extract<TranscriptItem, { kind: "tool" | "activity" }>;
-export type DrawsCard = (item: CardItem) => boolean;
+/** `live`：这个调用所在的那一轮还在跑（compactTurns 按轮给）。 */
+export type DrawsCard = (item: CardItem, live: boolean) => boolean;
 const drawsRenderUi: DrawsCard = (item) =>
   item.kind === "tool" && item.toolCall.function.name === "render_ui";
 
@@ -3937,6 +3963,7 @@ export function toolDrawsCard(
     agentId,
     asked,
     checks = registeredCardChecks,
+    live = true,
   }: {
     renderers: Parameters<typeof pickToolRenderer>[0];
     /** 活动消息的渲染器（`renderActivityMessage` 只有找到渲染器才画）。 */
@@ -3945,6 +3972,8 @@ export function toolDrawsCard(
     asked: ReadonlySet<string>;
     /** 渲染器登记的「画没画出卡片」判断（按工具名）；默认用渲染器模块登记的那一份。 */
     checks?: CardChecks;
+    /** 这个调用所在的那一轮还在跑（默认 true）。结束了、结果一直没来时，骨架换成「没有完成」，不算卡片。 */
+    live?: boolean;
   },
 ): boolean {
   if (tool.kind === "activity")
@@ -3958,13 +3987,12 @@ export function toolDrawsCard(
   const renderer = pickToolRenderer(renderers, name, agentId);
   if (renderer) {
     if (isLineOnlyRender(renderer.render)) return false;
-    // 还没有结果时渲染器画骨架；有了结果，失败时会返回 null 的渲染器由它自己的判断说了算。
+    // 失败时会返回 null 的渲染器由它自己的判断说了算。还没有结果：这一轮还在跑时画骨架，算卡片；
+    // 这一轮结束了（没按停止，工具也一直没回）骨架换成「没有完成」（TranscriptToolCall），不算卡片（复审 #404 第四轮）。
     const check = renderer.name === name ? checks.get(name) : undefined;
-    return (
-      tool.result === undefined ||
-      !check ||
-      check({ args: tool.toolCall.function.arguments, result: tool.result })
-    );
+    if (!check) return true;
+    if (tool.result === undefined) return live;
+    return check({ args: tool.toolCall.function.arguments, result: tool.result });
   }
   return isHostAccessRefusal(tool.toolCall.function.name, tool.result);
 }
@@ -4000,6 +4028,8 @@ export function compactTurns(
    * 最后一个看得见的行 → 后面挂「这一轮没有回答」；`last` = 这是最后一轮（只有它带重试）。
    */
   noAnswerAfter: Map<string, { last: boolean }>;
+  /** 正在跑的那一轮里的工具调用 id：其余的调用所在的那一轮都已经结束（TranscriptToolCall 据此把卡住的骨架换成「没有完成」）。 */
+  liveTools: Set<string>;
   /** 正在跑的那一轮的 key（开启它的那条消息 id，同干活卡的 `key`）；不在跑为 null。胶囊的秒数按它记开始时间。 */
   liveKey: string | null;
 } {
@@ -4011,6 +4041,7 @@ export function compactTurns(
   const replyTo = new Map<string, ReplyTarget>();
   const memories = new Map<string, MemoryPillItem[]>();
   const noAnswerAfter = new Map<string, { last: boolean }>();
+  const liveTools = new Set<string>();
   let liveKey: string | null = null;
   const formatQuoteText = (raw: string): string => {
     const clean = (splitChatOrigin(raw)?.text ?? raw).replace(/\s+/g, " ").trim();
@@ -4040,6 +4071,9 @@ export function compactTurns(
     );
   turns.forEach((turn, index) => {
     const live = busy && index === turns.length - 1;
+    if (live)
+      for (const item of turn.rest)
+        if (item.kind === "tool") liveTools.add(item.id);
     const isStopped =
       !live && turn.users.some((user) => stopped.has(turnOf(user)));
     const callsTool = (item: TranscriptItem) =>
@@ -4242,7 +4276,7 @@ export function compactTurns(
         (item) =>
           !hidden.has(item.id) &&
           (item.kind === "tool" || item.kind === "activity") &&
-          drawsCard(item),
+          drawsCard(item, live),
       ) ||
       texts.some((item) => !hidden.has(item.id));
     const entry = workAnchor === null ? undefined : work.get(workAnchor);
@@ -4334,6 +4368,7 @@ export function compactTurns(
     replyTo,
     memories,
     noAnswerAfter,
+    liveTools,
     liveKey,
   };
 }
