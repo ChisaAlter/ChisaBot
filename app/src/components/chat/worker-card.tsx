@@ -10,6 +10,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
+import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import {
   ACTIVE_WORKER,
@@ -85,16 +86,6 @@ function stepLine(worker: WorkerView): string {
   if (worker.step && !worker.step.startsWith("正在使用 ")) return worker.step;
   const current = worker.plan.find((step) => step.status === "current") ?? worker.plan.find((step) => step.status === "pending");
   return current?.text || "正在看任务要求";
-}
-
-function useNow(active: boolean) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [active]);
-  return now;
 }
 
 function WorkerCardBody({ compact, threadId, worker }: { compact: boolean; threadId: string; worker: WorkerView }) {
