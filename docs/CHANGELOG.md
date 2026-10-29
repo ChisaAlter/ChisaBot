@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Hark 改版第 2 步（顶栏外壳）：左上圆形主页按钮、右上搜索胶囊 + 头像，中间只留「聊天」一个视图；PC 窗口按钮、手机、深浅色都可用；搜索胶囊用 `.glass`（顶栏唯一模糊层），同屏模糊层桌面 5、手机 1。DESIGN.md §10.5 写明同名 Hark 令牌必须在 `html.dark` 给深色值。不升版本号。
+- `docs/DEVLOG.md` 记录 Hark 顶栏（第 2 步）的动机、改动和前后截图。
+
 - 性能模式和系统「减少透明度」下全局关掉毛玻璃：一条 `*, *::before, *::after { backdrop-filter: none }`（`app/src/perf-noblur.css`，不用 `!important`），漏网的代码块操作条、遮罩、外观预览一起关掉；原来模糊的面板换成不透明底色 `--glass-bg-opaque`。实测两种模式下桌面、手机可见模糊层都是 0，普通模式与 main 一致。新增 `app/tests/no-backdrop.test.ts` 防止新的模糊绕过；规则见 DESIGN.md §10.3.1。
 
 ## 0.1.109

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Hark 顶栏（Hark 改版第 2 步，见 `docs/rfc/hark-redesign.md`）
+
+- **顶栏外壳（`glass-topbar.tsx`）**：左上角换成圆形主页按钮（品牌头像，点回主页）+ 品牌名 + 左栏开关；右上角是搜索胶囊和圆形头像（账号菜单，向下弹出）；中间不放分段切换，只有「聊天」一个视图。PC 无边框窗口的 — □ ✕（`.win-ctrls`）仍在最右，新按钮都不参与拖动。
+- **搜索**：电脑上搜索框从左栏卡片顶部移到顶栏右上角（同一个输入框、同一份搜索状态，结果仍画在左栏卡片里，左栏收起时一聚焦就展开）；设置 / 管理里同样的胶囊是按钮，点了回聊天并聚焦搜索。手机上搜索框留在左栏抽屉顶部，顶栏只放菜单、搜索两个圆钮和头像。
+- **玻璃**：搜索胶囊用唯一材质 `.glass`（读 `--glass-filter`，20px），是顶栏唯一的模糊层，不做过渡和动画；圆钮是 `.glass.is-flat`，不叠模糊。桌面同屏模糊层 4 → 5（再开一个弹层 6），手机仍是 1。
+- **测试**：`channel-pagination.test.tsx` 的搜索历史和组字 Esc 两条用例改为把顶栏的搜索框和左栏一起渲染（电脑上搜索框已不在左栏里）；新增 `hark-token-dark.test.ts`，检查和旧深色层同名的 Hark 令牌在 `html.dark` 里有深色值（DESIGN.md §10.5）。
+- **设计规范**：DESIGN.md 新增 §10.5「Hark 令牌与同名旧令牌」：`html:root` 会压过旧 `.dark`，新增同名令牌必须在 `html.dark` 里给深色值。
+- **开发日志**：`docs/DEVLOG.md` 末尾追加这次的动机、改动和前后截图（`docs/images/hark-topbar/`）。
+- 没有新增 `!important`，没有升版本号；外观设置页、壁纸上传、`wallpaper_core.html`、`bot-bubbles.tsx` 都没有动。
+
 ### 性能模式 / 减少透明度：全局不模糊
 
 - **全局规则（新增 `app/src/perf-noblur.css`，`main.tsx` 里紧跟 `styles.css` 引入）**：性能模式（`html[data-perf="on"]`）和系统「减少透明度」下，`*, *::before, *::after` 一律 `backdrop-filter: none`，`--lg-blur` 也设成 `none`。原来漏掉的 streamdown 代码块 / 图表操作条（Tailwind `supports-[backdrop-filter]:backdrop-blur`，8px）、对话框 / 抽屉遮罩、agent-orb 内嵌样式、外观设置的玻璃预览都一起关掉。

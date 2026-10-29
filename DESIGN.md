@@ -328,6 +328,19 @@
 
 页面切换：中间区先出同形状骨架（约 300ms 内），再以 6px 上移 + 淡入出现内容（`page-in`）。顶栏导航胶囊在路由间滑动。减少动态效果时只保留淡入淡出。
 
+### 10.5 Hark 令牌与同名旧令牌（2026-10-29，Hark 改版）
+
+Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0,1,1），比旧层的 `:root` / `.dark` / `[data-theme="dark"]`（0,1,0）高一级，所以**同名时 Hark 的值总是赢，包括深色模式下**：`html:root` 里的值会压过旧 `.dark` 里的深色值。`--font`、`--glass-shadow`、`--text-secondary`、`--stroke-primary` 等都和旧层同名。
+
+规则：
+
+1. **新增任何和旧层同名的 Hark 令牌，必须同时在 `html.dark` 里给深色值。** 只写在 `html:root` 里，深色模式就会拿到浅色值。
+2. 由别的令牌算出来的值（例如 `--text-secondary: color-mix(in srgb, var(--text) …)`、`--fill-primary: var(--text)`）跟着基色走，只要基色（`--text` 等）在 `html.dark` 里有深色值，就不必重复写。
+3. 不靠 `!important` 解决同名冲突；要覆盖就靠 `html:root` / `html.dark` 的特异度。
+4. 新增 Hark 令牌前先在 `styles.css` 里搜一下同名的 `--名字:`，同名就按第 1 条处理，并在 PR 描述里列出来。
+
+`app/tests/hark-token-dark.test.ts` 检查这条：`html:root` 里和旧深色层同名、又不是由 `var(--…)` 算出来的令牌，`html.dark` 里必须有。
+
 ---
 
 ## 11. 组件

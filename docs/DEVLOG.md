@@ -550,3 +550,34 @@
 ![性能模式 面板 浅色](images/perf-noblur/after-perf-chat-desk-light.webp)
 ![性能模式 面板 深色](images/perf-noblur/after-perf-chat-desk-dark.webp)
 
+## 2026-10-29 Hark 顶栏外壳（Hark 改版第 2 步，分支 `feat/hark-topbar`）
+
+### 动机
+
+- Hark 改版 RFC（`docs/rfc/hark-redesign.md`，在 `feat/hark-redesign` 分支）的第 2 步是换顶栏：左上角放主页入口，右上角放搜索和账号，中间不再放分段切换，主界面只保留「聊天」一个视图。`feat/hark-redesign` 的 28154958 已经做出了效果，但那里和其它改版改动混在一起，而且有两条测试是失败的（搜索历史、组字时按 Esc）。这次只把顶栏单独搬过来，可以单独审查。
+- 第 1 步（#369）把 Hark 令牌放进了 `html:root` / `html.dark`。`--font`、`--glass-shadow`、`--text-secondary`、`--stroke-primary` 和旧的深色层同名，而 `html:root` 的优先级高于旧的 `.dark`，所以只要漏写深色值，深色模式就会被浅色值盖掉。这条规则需要写进设计规范，并用测试守住。
+
+### 改动
+
+- `glass-topbar.tsx`：左上是圆形主页按钮（品牌头像）+ 品牌名 + 左栏开关；右上是搜索胶囊 + 圆形头像（账号菜单向下弹出）；PC 窗口按钮 `.win-ctrls` 仍在最右。
+- `sidebar-search-field.tsx` 新增 `variant="topbar"`，和左栏共用同一份搜索状态，结果仍显示在左栏里。电脑上左栏不再放搜索框，手机抽屉里保留。
+- 玻璃：只有搜索胶囊用 `.glass`（`--glass-filter`，20px），而且不加过渡；圆钮用 `.glass.is-flat`，不模糊。同屏模糊层：桌面从 4 层变成 5 层（开一个弹层时 6 层），手机仍是 1 层。
+- 测试：`channel-pagination.test.tsx` 把顶栏搜索框和左栏一起渲染，修好了上面那两条测试；新增 `hark-token-dark.test.ts`，检查同名令牌在 `html.dark` 里都有深色值。
+- 设计规范：DESIGN.md 新增 §10.5「Hark 令牌与同名旧令牌」。
+- PC 窗口：客户端支持「小窗模式」时标题按钮有 4 个，原来顶栏右边只按 3 个（`46px * 3 + 12px`）让位，头像压在了小窗按钮上（改前头像不在顶栏，所以看不出来）。现在 4 个按钮时让出 `46px * 4 + 12px`，窄窗口仍走 36px 的规则。`after-pcwin-*` 截图已重拍。
+- 不再用挂在大容器上的 `:has()`：左栏收起和标题按钮个数改由 `GlassTopBar` 直接输出 `data-sidebar` / `data-winctrls`，样式写成 `.glass-topbar[data-sidebar="collapsed"]` / `.glass-topbar[data-winctrls="4"]`，免得流式输出时整个外壳反复重算样式；`app/tests/no-container-has.test.ts` 冻结 main 上已有的 9 条大容器 `:has()`，新增一条就失败。
+- 没有新增 `!important`，没有升版本号，禁区（`bot-bubbles.tsx`、`wallpaper_core.html`、壁纸上传、外观设置样式）都没碰。
+
+### 截图
+
+改前是 `main`，改后是本分支。截图用本地静态服务和 mock 的 `/api` 生成，没有连后端。
+
+| | 改前 | 改后 |
+|---|---|---|
+| 桌面 深 | ![](images/hark-topbar/before-desk-dark.webp) | ![](images/hark-topbar/after-desk-dark.webp) |
+| 桌面 浅 | ![](images/hark-topbar/before-desk-light.webp) | ![](images/hark-topbar/after-desk-light.webp) |
+| 手机 深 | ![](images/hark-topbar/before-phone-dark.webp) | ![](images/hark-topbar/after-phone-dark.webp) |
+| 手机 浅 | ![](images/hark-topbar/before-phone-light.webp) | ![](images/hark-topbar/after-phone-light.webp) |
+
+PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名是 `*-pcwin-*.webp`。
+
