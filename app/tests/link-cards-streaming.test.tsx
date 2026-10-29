@@ -22,11 +22,28 @@ import { settleReactWork } from "./settle-react-work";
 
 describe("流式：最后一行的骨架只在确定是网址时放", () => {
   test("主机名写完（后面有 /）才算确定，返回这截网址", () => {
-    expect(confidentLinkStart("https://github.com/Chi")).toBe("https://github.com/Chi");
-    expect(confidentLinkStart("**https://github.com/a")).toBe("https://github.com/a");
-    expect(confidentLinkStart("<https://vite.dev/blog")).toBe("https://vite.dev/blog");
-    expect(confidentLinkStart("[下载 0.1.7](https://github.com/a/b")).toBe("https://github.com/a/b");
-    for (const weak of ["h", "ht", "https", "https://", "https://gi", "https://github.co", "[下载](", "hello"])
+    expect(confidentLinkStart("https://github.com/Chi")).toBe(
+      "https://github.com/Chi",
+    );
+    expect(confidentLinkStart("**https://github.com/a")).toBe(
+      "https://github.com/a",
+    );
+    expect(confidentLinkStart("<https://vite.dev/blog")).toBe(
+      "https://vite.dev/blog",
+    );
+    expect(confidentLinkStart("[下载 0.1.7](https://github.com/a/b")).toBe(
+      "https://github.com/a/b",
+    );
+    for (const weak of [
+      "h",
+      "ht",
+      "https",
+      "https://",
+      "https://gi",
+      "https://github.co",
+      "[下载](",
+      "hello",
+    ])
       expect(confidentLinkStart(weak)).toBeNull();
   });
 
@@ -37,7 +54,9 @@ describe("流式：最后一行的骨架只在确定是网址时放", () => {
       expect(out.pending).toBe(false);
       expect(out.pendingUrl).toBeUndefined();
     }
-    const sure = splitLinkLines("看这个：\nhttps://github.com/ChisaAlter", { final: false });
+    const sure = splitLinkLines("看这个：\nhttps://github.com/ChisaAlter", {
+      final: false,
+    });
     expect(sure).toEqual({
       links: [],
       display: "看这个：",
@@ -77,7 +96,7 @@ describe("渲染", () => {
       new Response(JSON.stringify({ error: "x" }), {
         status: 422,
         headers: { "content-type": "application/json" },
-      })) as typeof fetch;
+      })) as unknown as typeof fetch;
   });
   afterEach(() => cleanup());
   afterAll(async () => {
@@ -90,24 +109,38 @@ describe("渲染", () => {
     const view = render(
       <MessageRichPreviews
         align="end"
-        text={"帮我看看 https://github.com/ChisaAlter/ChisaBot/pull/397 这个 PR"}
+        text={
+          "帮我看看 https://github.com/ChisaAlter/ChisaBot/pull/397 这个 PR"
+        }
       />,
     );
     const card = await view.findByTestId("link-card");
-    expect(card.getAttribute("href")).toBe("https://github.com/ChisaAlter/ChisaBot/pull/397");
-    expect(view.container.querySelector(".rp-stack")?.getAttribute("data-align")).toBe("end");
+    expect(card.getAttribute("href")).toBe(
+      "https://github.com/ChisaAlter/ChisaBot/pull/397",
+    );
+    expect(
+      view.container.querySelector(".rp-stack")?.getAttribute("data-align"),
+    ).toBe("end");
   });
 
   test("机器人消息：句中的链接照旧不出卡", async () => {
     const view = render(
-      <MessageRichPreviews text={"详见 https://github.com/ChisaAlter/ChisaBot/pull/397 这个 PR"} />,
+      <MessageRichPreviews
+        text={"详见 https://github.com/ChisaAlter/ChisaBot/pull/397 这个 PR"}
+      />,
     );
     await new Promise((r) => setTimeout(r, 20));
     expect(view.queryByTestId("link-cards")).toBeNull();
   });
 
   test("流式骨架按写出来的网址定比例：GitHub 2:1；静态底色，不用扫光类", () => {
-    const view = render(<LinkCardStack items={[]} pending pendingUrl="https://github.com/ChisaAlter" />);
+    const view = render(
+      <LinkCardStack
+        items={[]}
+        pending
+        pendingUrl="https://github.com/ChisaAlter"
+      />,
+    );
     const skeleton = view.getByTestId("link-card-skeleton");
     const media = skeleton.querySelector<HTMLElement>(".lc-media")!;
     expect(media.getAttribute("data-ratio")).toBe("github");
@@ -118,14 +151,19 @@ describe("渲染", () => {
   test("卡组的槽位写在 data-stack-slot，不用 data-slot（styles.css 有 :has([data-slot=…]) 规则，改 data-slot 会整页重算样式）", async () => {
     const view = render(
       <LinkCardStack
-        items={[{ url: "https://a.example.com/" }, { url: "https://b.example.com/" }]}
+        items={[
+          { url: "https://a.example.com/" },
+          { url: "https://b.example.com/" },
+        ]}
         pending
         pendingUrl="https://github.com/ChisaAlter"
       />,
     );
     await view.findAllByTestId("link-card");
     const stack = view.getByTestId("link-cards");
-    const slotted = [...stack.querySelectorAll("[data-stack-slot]")].map((el) => el.getAttribute("data-stack-slot"));
+    const slotted = [...stack.querySelectorAll("[data-stack-slot]")].map((el) =>
+      el.getAttribute("data-stack-slot"),
+    );
     expect(slotted.sort()).toEqual(["left", "main", "right"]);
     expect(stack.querySelectorAll("[data-slot]")).toHaveLength(0);
   });
@@ -141,8 +179,12 @@ describe("源码约束", () => {
     "utf8",
   );
   test("骨架只动透明度，只在没有要求减少动态效果时动", () => {
-    const keyframes = css.match(/@keyframes lc-skel-breathe \{[\s\S]*?\n\}/)![0];
-    expect(keyframes.replace(/\s+/g, " ")).not.toMatch(/background|filter|width|height|transform/);
+    const keyframes = css.match(
+      /@keyframes lc-skel-breathe \{[\s\S]*?\n\}/,
+    )![0];
+    expect(keyframes.replace(/\s+/g, " ")).not.toMatch(
+      /background|filter|width|height|transform/,
+    );
     expect(css).toMatch(
       /@media \(prefers-reduced-motion: no-preference\) \{\s*\.lc-skel \.lc-skel-block,\s*\.lc-skel \.lc-skel-bar \{\s*animation: lc-skel-breathe/,
     );
@@ -152,7 +194,11 @@ describe("源码约束", () => {
     expect(css).not.toContain("data-slot");
   });
   test("开场一句（流式中的第一段）也画链接卡", () => {
-    expect(transcript).not.toMatch(/tone === "lead" \? null : \(\s*<MessageRichPreviews/);
-    expect(transcript).toContain("<MessageRichPreviews align={align} text={isUser ? said : text} />");
+    expect(transcript).not.toMatch(
+      /tone === "lead" \? null : \(\s*<MessageRichPreviews/,
+    );
+    expect(transcript).toContain(
+      "<MessageRichPreviews align={align} text={isUser ? said : text} />",
+    );
   });
 });
