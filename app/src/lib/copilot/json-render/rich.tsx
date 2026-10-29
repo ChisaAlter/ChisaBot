@@ -4,7 +4,7 @@ import { normaliseTone } from "../../../../../shared/json-render/catalog";
 import { cn } from "@/lib/utils";
 import { iconFor } from "./icons";
 import { ActionArea, type ItemAction, LiveText, useNow } from "./rich-context";
-import { countdownParts, domainOf, hueOf, initials, itemTime, relativeTick, relativeTime, safeHttp, safeHttps, trendOfText } from "./rich-utils";
+import { countdownParts, hueOf, initials, itemTime, relativeTick, relativeTime, safeHttps, trendOfText } from "./rich-utils";
 
 /**
  * 富组件（DESIGN.md §32）：媒体与身份、结构、实时。图表在 charts.tsx，可点 / 实时的底层在 rich-context.tsx。
@@ -104,50 +104,6 @@ export function Avatar(props: { name: string; src?: string | null; subtitle?: st
         <span className="jr-avatar-n">{props.name}</span>
         {props.subtitle ? <span className="jr-avatar-s">{props.subtitle}</span> : null}
       </span>
-    </ActionArea>
-  );
-}
-
-/** 网站图标：直接取该站自己的 /favicon.ico（不经过第三方图标服务）；取不到就用域名首字母。 */
-export function Favicon({ url }: { url: string }) {
-  const host = domainOf(url);
-  const [failed, setFailed] = useState(false);
-  const origin = (() => {
-    try {
-      return new URL(url).origin;
-    } catch {
-      return "";
-    }
-  })();
-  return (
-    <span className="jr-favicon" style={{ "--jr-hue": String(hueOf(host)) } as CSSProperties}>
-      {origin.startsWith("https://") && !failed ? (
-        <img alt="" decoding="async" loading="lazy" onError={() => setFailed(true)} referrerPolicy="no-referrer" src={`${origin}/favicon.ico`} />
-      ) : (
-        <span aria-hidden>{(host[0] ?? "?").toUpperCase()}</span>
-      )}
-    </span>
-  );
-}
-
-export function LinkCard(props: { url: string; title: string; description?: string | null; image?: string | null; meta?: string | null }) {
-  const href = safeHttp(props.url);
-  const [thumbFailed, setThumbFailed] = useState(false);
-  if (!href) return null;
-  return (
-    <ActionArea className="jr-link jr-el" item={{ href }} label={props.title}>
-      <div className="jr-link-main">
-        <div className="jr-link-site">
-          <Favicon url={href} />
-          <span className="jr-link-domain">{domainOf(href)}</span>
-          {props.meta ? <span className="jr-link-meta">{` · ${props.meta}`}</span> : null}
-        </div>
-        <div className="jr-link-title">{props.title}</div>
-        {props.description ? <div className="jr-link-desc">{props.description}</div> : null}
-      </div>
-      {safeHttps(props.image) && !thumbFailed ? (
-        <SafeImg alt="" className="jr-link-thumb" onFail={() => setThumbFailed(true)} src={props.image} />
-      ) : null}
     </ActionArea>
   );
 }
