@@ -119,6 +119,7 @@ class NativeLogicTest {
 
     @Test fun allTextAfterLastWorkStaysVisible() {
         fun bots(rows: List<Row>) = rows.filterIsInstance<Row.Bot>().map { it.text }
+        fun replyRow(rows: List<Row>, text: String) = rows.filterIsInstance<Row.Bot>().first { it.text == text }
         // 先干活、再连发两条（没有开场一句）：两条都是气泡，最后一条是结果
         val plain = Turns.build(listOf(
             ChatMessage("u", "user", "装一下"),
@@ -128,6 +129,8 @@ class NativeLogicTest {
         ), running = false, error = null)
         assertEquals(listOf("装好了。", "版本是 1.2。"), bots(plain))
         assertEquals(Row.Kind.Result, (plain.last() as Row.Bot).kind)
+        // 补出来的回答和结果一样：Result、带复制按钮（ChatScreen 只给 copyable 的 Result 画复制）
+        assertTrue(replyRow(plain, "装好了。").kind == Row.Kind.Result && replyRow(plain, "装好了。").copyable)
         // 回答中间记了一笔（memory_save）：不当分界；干活前的开场一句照旧在卡片上面
         val mid = Turns.build(listOf(
             ChatMessage("u", "user", "装一下"),
@@ -136,6 +139,8 @@ class NativeLogicTest {
             ChatMessage("a3", "assistant", "版本是 1.2。"),
         ), running = false, error = null)
         assertEquals(listOf("我先检查。", "装好了。", "版本是 1.2。"), bots(mid))
+        assertEquals(Row.Kind.Opening, replyRow(mid, "我先检查。").kind)
+        assertTrue(replyRow(mid, "装好了。").kind == Row.Kind.Result && replyRow(mid, "装好了。").copyable)
         assertEquals(Row.Kind.Result, mid.filterIsInstance<Row.Bot>().last().kind)
         // 回答之后才记一笔（memory_save 在最后）：两条回答都在，最后一段字是结果
         val end = Turns.build(listOf(
@@ -145,7 +150,30 @@ class NativeLogicTest {
             ChatMessage("a3", "assistant", "版本是 1.2。", listOf(ToolCall("m1", "memory_save", "{}", "ok", true))),
         ), running = false, error = null)
         assertEquals(listOf("装好了。", "版本是 1.2。"), bots(end))
+        assertTrue(replyRow(end, "装好了。").kind == Row.Kind.Result && replyRow(end, "装好了。").copyable)
         assertEquals(Row.Kind.Result, end.filterIsInstance<Row.Bot>().last().kind)
+        // 还在跑时照旧：不带复制
+        val running = Turns.build(listOf(
+            ChatMessage("u", "user", "装一下"),
+            ChatMessage("a1", "assistant", "", listOf(ToolCall("t1", "device_run_shell", "{}", "r", true))),
+            ChatMessage("a2", "assistant", "装好了。"),
+        ), running = true, error = null)
+        assertFalse(running.filterIsInstance<Row.Bot>().any { it.copyable })
+    }
+
+    @Test fun notWorkMatchesWeb() {
+        // 同网页 work-steps.ts NOT_WORK：机器人往来、递交文件、生成 / 改图不算干活，也不数进收成的一行
+        for (name in listOf("render_ui", "worker_plan", "skill_load", "skill_list", "message_bot", "file_share", "image_generate", "image_edit")) {
+            assertFalse(name, WorkSteps.isWorkCall(name))
+            assertFalse(name, WorkSteps.splitsReply(name))
+        }
+        // 记忆写入：干活卡里照旧算一步，但不当回答的分界
+        assertTrue(WorkSteps.isWorkCall("memory_save"))
+        assertFalse(WorkSteps.splitsReply("memory_save"))
+        assertTrue(WorkSteps.splitsReply("device_run_shell"))
+        assertNull(WorkSteps.doneLabel(listOf(ToolCall("1", "image_generate"), ToolCall("2", "file_share"), ToolCall("3", "message_bot"))))
+        assertEquals("搜索 1 次", WorkSteps.doneLabel(listOf(ToolCall("1", "web_search"), ToolCall("2", "image_edit"), ToolCall("3", "file_share"))))
+        assertEquals(WorkSteps.lines(listOf(ToolCall("1", "web_search", "{\"query\":\"a\"}"))), WorkSteps.lines(listOf(ToolCall("1", "web_search", "{\"query\":\"a\"}"), ToolCall("2", "image_generate", "{}"), ToolCall("3", "message_bot", "{}"))))
     }
 
     @Test fun turnsThinkingAndPause() {

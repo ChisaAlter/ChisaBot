@@ -1,6 +1,6 @@
 ## 未发布
 
-- 修复（Android）：`Turns.buildTurn` 一轮结束后以最后一个干活的步骤（`WorkSteps.splitsReply`：网页的 `isWorkCall` 再去掉记忆写入）为界，之后的全部文字都是回答气泡；测试 `NativeLogicTest.allTextAfterLastWorkStaysVisible`。
+- 修复（Android）：`Turns.buildTurn` 一轮结束后以最后一个干活的步骤（`WorkSteps.splitsReply`：网页的 `isWorkCall` 再去掉记忆写入）为界，之后的全部文字都是回答气泡（`Kind.Result`、可复制）；`WorkSteps.NOT_WORK` 补齐网页的 message_bot / file_share / image_generate / image_edit；测试 `NativeLogicTest.allTextAfterLastWorkStaysVisible`、`notWorkMatchesWeb`。
 
 ## 0.1.106
 

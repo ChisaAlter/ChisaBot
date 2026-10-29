@@ -119,8 +119,8 @@ object Turns {
                     val streamingNow = live && n == segs.lastIndex
                     when {
                         n == resultIdx -> rows += Row.Bot("t:" + seg.id, seg.text, Row.Kind.Result, streamingNow, !live)
-                        // 结果之前、最后一个干活步骤之后的话（连发几条回答）：照旧是气泡，不收起
-                        n > replyFrom -> rows += Row.Bot("t:" + seg.id, seg.text, Row.Kind.Opening, streamingNow, false)
+                        // 结果之前、最后一个干活步骤之后的话（连发几条回答）：和结果一样是气泡、带复制（同网页 tone final）
+                        n > replyFrom -> rows += Row.Bot("t:" + seg.id, seg.text, Row.Kind.Result, streamingNow, true)
                         !hasWork || n < workIdx -> rows += Row.Bot("t:" + seg.id, seg.text, Row.Kind.Opening, streamingNow, false)
                         live && !workAfter(n) -> rows += Row.Bot("t:" + seg.id, seg.text, Row.Kind.Process, streamingNow, false)
                         else -> Unit // 结束后过程话收起（§75）
