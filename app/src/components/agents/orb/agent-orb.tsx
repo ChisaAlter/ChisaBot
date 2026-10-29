@@ -247,10 +247,9 @@ const AgentOrb: React.FC<AgentOrbProps> = ({
       {/* Bloom tinted by the state's semantic accent. */}
       <motion.div
         animate={{ opacity: stateMotion.glow * GLOW_MAX_OPACITY }}
-        className="absolute rounded-full"
+        className="agent-orb-glow absolute rounded-full"
         style={{
           background: `radial-gradient(circle at 50% 50%, ${glowColor} 0%, transparent 64%)`,
-          filter: `blur(calc(var(--orb-size) * ${GLOW_BLUR_RATIO}))`,
           inset: "-12%",
         }}
         transition={shouldReduceMotion ? { duration: 0 } : SPRING_DEFAULT}
@@ -293,6 +292,11 @@ const AgentOrb: React.FC<AgentOrbProps> = ({
           syntax: "<angle>";
           inherits: false;
           initial-value: 0deg;
+        }
+
+        /* 光晕的模糊写在类上而不是内联 style，性能模式（perf-noblur.css）才能关掉。 */
+        .agent-orb-glow {
+          filter: blur(calc(var(--orb-size) * ${GLOW_BLUR_RATIO}));
         }
 
         .agent-orb {

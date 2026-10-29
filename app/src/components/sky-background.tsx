@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { type CSSProperties, useEffect, useRef } from "react";
 import { useTheme } from "@/components/theme-provider";
 import {
   applyAppearanceToDocument,
@@ -516,15 +516,20 @@ export function SkyBackground() {
         <div className="chisabot-wallpaper" data-testid="chisabot-wallpaper">
           <div
             className="chisabot-wallpaper-img"
-            style={{
-              backgroundImage: wallpaperCss,
-              filter:
-                appearance.wallpaperBlur > 0
-                  ? `blur(${appearance.wallpaperBlur}px)`
-                  : undefined,
-              transform:
-                appearance.wallpaperBlur > 0 ? "scale(1.06)" : undefined,
-            }}
+            data-blur={appearance.wallpaperBlur > 0 ? "" : undefined}
+            style={
+              {
+                backgroundImage: wallpaperCss,
+                // 模糊本身写在 styles.css 的 [data-blur] 上（读这个变量），性能模式 / 减少透明度
+                // 由 perf-noblur.css 关掉并换成半透明遮罩，内联 style 压不过所以不在这里写 filter。
+                "--wallpaper-blur": `${appearance.wallpaperBlur}px`,
+                "--wallpaper-veil": String(
+                  (Math.min(40, appearance.wallpaperBlur) / 40) * 0.55,
+                ),
+                transform:
+                  appearance.wallpaperBlur > 0 ? "scale(1.06)" : undefined,
+              } as CSSProperties
+            }
           />
           <div
             className="chisabot-wallpaper-dim"

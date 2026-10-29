@@ -1,5 +1,36 @@
 # DEVLOG
 
+## 性能模式也关掉普通 filter: blur（dev2/perf-mode-blur，#375 跟进）
+
+**动机**：#375 测试（tester-r375）发现性能模式 / 减少透明度只关了 backdrop-filter，普通 `filter: blur` 还在：链接卡片堆里变暗的卡（`.rp-link` / `.rp-pile-card` / `.lc-card` 的 `[data-dimmed]`，4–5px）和 agent-orb（光晕 `blur(orb-size×0.28)`、`::before` 色团 `blur(4px)`）。
+
+**改动**：
+- `app/src/perf-noblur.css`：两种情况（`html[data-perf="on"]` 和 `prefers-reduced-transparency: reduce`）各加三条，沿用 `:not(#chisabot-no-blur)` 的 id 优先级，不用 `!important`：变暗的卡 `filter: none` + `opacity: 0.36`（原来 0.46 / 0.52，去掉模糊后靠更低透明度区分）；`.agent-orb-glow` `filter: none`；`.agent-orb::before` 只留 `contrast() saturate()`。只加覆盖样式，没动 #397 的链接卡片分组结构。
+- `agent-orb.tsx`：光晕的 blur 原来写在内联 style 里（id 优先级压不过），挪到组件自带 `<style>` 的 `.agent-orb-glow` 类上，数值不变。
+- 新增 `app/tests/perf-noblur-filter.test.ts`：扫 styles.css、link-card.css 和 agent-orb 的 `<style>`，每条 `filter: blur` 规则在两种情况下都要有不含 blur 的覆盖；变暗卡片要有 opacity；组件不许内联写 `filter: blur`（壁纸模糊是用户自己调的，豁免）。在 main 上跑 11 条失败，本分支全过。
+
+**测试**：typecheck ✅、build ✅、test:app ✅（1854 pass / 0 fail）、相关测试（新测试 + no-backdrop + render-budget）27 pass。Biome lint 全仓 1 error / 800 warnings / 143 infos，和 main 相同。
+
+**浏览器（box 上 headless Chrome，沿用 tester-r375 的办法：数可见元素及其 ::before/::after 的 computed filter 里含 blur 的个数，再插入合成的 `.rp-link/.rp-pile-card/.lc-card[data-dimmed]` 看 computed filter）**，8 个页面（/sign、/、/settings、/settings/appearance、/settings/components-gallery、/memory、/bots/、/admin/models）：
+- 修复前、性能模式开：/sign 有 2 个（orb 光晕 blur(15.68px)、orb::before blur(4px)），合成卡片 blur(5px)/blur(4px)/blur(5px)。
+- 修复后、性能模式开：全部页面 0，合成卡片 filter none、opacity 0.36。减少透明度：同样全 0。
+- 修复后、性能模式关（对照）：和修复前一样（/sign 2 个，合成卡片照旧模糊），正常模式不变。
+
+| 修复前（性能模式） | 修复后（性能模式） | 修复后（正常模式） |
+| --- | --- | --- |
+| ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/before-perf-sign.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-perf-sign.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-off-sign.png) |
+
+**壁纸模糊（小爱 #432 决定：也关）**：
+- `sky-background.tsx` 只改那一处内联 `filter: blur`：内联 style 只给 `--wallpaper-blur`（用户的模糊值）和 `--wallpaper-veil`（模糊值 / 40 × 0.55），模糊有值时加 `data-blur`；模糊本身写在 `styles.css` 的 `.chisabot-wallpaper-img[data-blur]` 上，正常模式效果不变。没动天空结构、动画和重画逻辑，用户保存的设置也不改。
+- `perf-noblur.css` 两种情况各加：`.chisabot-wallpaper-img[data-blur]` `filter: none`，加一层 `::after` 半透明实色遮罩（不加新元素），颜色用已有的 `--glass-bg-opaque`（浅 / 深色各一份），透明度随用户模糊值变（20px → 0.275，40px → 0.55）。
+- 测试：去掉 sky-background 的豁免；内联 `filter … blur(` 的检查改成跨行也能抓到（原来壁纸那种三元表达式写法漏掉了），新加一条检查壁纸变量和两种情况下的遮罩。旧代码上这两条都失败。
+- 复测（壁纸模糊 20px，8 个页面）：性能模式开、减少透明度：computed filter 含 blur 的可见元素全部 0，壁纸 filter none、遮罩 opacity 0.275；性能模式关：每页都有壁纸 blur(20px)（/sign 另有 orb 两个），正常模式照旧。修复前性能模式开：每页壁纸 blur(20px)。
+- typecheck ✅、build ✅、test:app ✅（1857 pass / 0 fail），相关测试 30 pass；Biome lint 1 error / 800 warnings / 143 infos，和 main 相同。
+
+| 修复前（性能模式，壁纸模糊 20px） | 修复后（性能模式，同设置） | 修复后（正常模式，同设置） |
+| --- | --- | --- |
+| ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/before-perf-wallpaper.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-perf-wallpaper.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-off-wallpaper.png) |
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
