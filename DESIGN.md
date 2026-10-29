@@ -2483,7 +2483,10 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
   - 新增 `chisabot_mcp_global_grants (server_id text PRIMARY KEY, enabled boolean)` 与 `PUT /api/plugins/servers/:id/auto-grant`。
   - 管理员在 `/admin/plugins/:key` 打开「全员默认开启（所有用户与机器人自动可用）」后，`listForAgent()` 与 `decide()` 自动向实例内所有用户的全部机器人授予该 MCP 服务器的工具权限，无需逐个机器人手动勾选。
 
+## 119. 主题系统重做提案（2026-10-29，待小爱批准）
 
+这是提案，批准前不改代码，下面两份文档里的内容也还不是现行规则。
 
-
-
+- 6 套完整主题（sky / mist / ocean / dusk / aurora / sakura，各有浅色和深色）、玻璃参数和使用位置、backdrop-filter 去留表、设置页卡顿实测、性能模式、token 命名：见 [`docs/design-system.md`](docs/design-system.md)。
+- 桌面去掉账号卡、入口收进右上角头像菜单、PR 拆分：见 [`docs/rfc/hark-redesign.md`](docs/rfc/hark-redesign.md#下一步)。
+- 批准后，按 design-system.md §10 的顺序拆成小 PR。每个 PR 改动哪一节，就在本文件对应的节里更新规则。

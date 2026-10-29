@@ -222,3 +222,34 @@
 **镜像**：当前（BASE_IMAGE）3856d36、上一版回滚目标 `auto-202610282010-ed93b05`、`keep-d6cd2ec`、`keep-628d527`。
 
 **待办**：`deploy/public/auth/server.ts`（网关签身份头时加 `j`）属于登录服务，不随一键更新，这次没有手工部署 `chisabot-web-auth`；在它更新前，网关签的仍是不带 `j` 的旧格式，应用照旧放行，防重放实际上还没生效。另外宿主机 `/opt/chisabot-ops/scripts/ops/sync-nginx.sh` 是旧版（要求 `/_openbot/auth-check` 标记），`--check` 读的是 10-18 生成、未挂载的 `nginx.generated.conf`，没有反映线上真实配置，建议之后把宿主机 ops 脚本同步成 main 版。
+
+## 2026-10-29 主题系统提案 + 账号卡 RFC（文档 PR，待小爱批准）
+
+**内容**：只改文档，不改代码，不升版本。
+
+- 新增 `docs/design-system.md`：
+  - 去掉 6 个色板、3 档玻璃材质和雾度滑块，换成 6 套完整主题（sky / mist / ocean / dusk / aurora / sakura，各有浅色和深色；默认模式下 dusk 和 aurora 是深色）。
+  - 内容包括颜色表、玻璃参数（取自 Hark 的 CSS）、backdrop-filter 去留表、设置页卡顿实测、性能模式、token 命名和存储迁移。
+- `docs/rfc/hark-redesign.md` 从 `feat/hark-redesign` 带过来：
+  - 更新 PR 状态：#363、#369 已合并，#374、#375、#378 已开。
+  - 「下一步」写了桌面去掉账号卡的方案。
+- `DESIGN.md` 末尾加 §119，只放这两份文档的链接。
+
+**backdrop-filter 统计**（main `3856d360`）：
+- `app/src/styles.css` 里出现 76 次（加上组件里的 Tailwind 写法共 80 处），声明 70 条。
+- 删掉三档层和性能模式里的 21 条以后，剩 49 条：35 条会模糊，14 条是 `none`。
+- 提案改完以后只留 4 条会模糊的规则和 5 条 `none`。
+
+**设置页卡顿实测**（Playwright + CDP trace，main 的生产构建，桌面 1440×900，从聊天页打开设置）：
+- 1x CPU，第一次打开：DOM 出现 110–137ms，画面出来 201–238ms，有 2–3 个 54–95ms 的长任务。
+  - 时间主要花在主线程：脚本 64–80ms，样式计算 51–67ms，布局 72–80ms。
+- 4x CPU 降速：1.8–4.6s。
+- 全局关掉模糊：228–240ms，所以卡顿不是模糊造成的。
+- 第二次打开：108–113ms，布局降到 5–6ms，样式计算仍有约 50ms。
+
+**效果图**：
+- 旧主题 1 张，6 套新主题按默认模式和反向模式各 1 张，加一张模糊半径对比，都在 `docs/images/theme-proposal/`。
+- 原始截图和 trace 在 `/workspace/hark-redesign/shots/theme-proposal/`。
+- 原型 CSS 和 SVG 壁纸没有提交。
+
+**依赖**：代码 PR 等 #376（`efa5abe9`）合并后，再从 main 拉分支，顺序见 design-system.md §10。天空小修排在这个 PR 之后。
