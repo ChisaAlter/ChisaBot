@@ -1,5 +1,18 @@
 # DEVLOG
 
+## Unreleased — 消息渲染三个必修：尖括号、Mermaid 解析、手机卡片按钮（分支 dev4/render-must-fix）
+
+来源：审计报告 05（消息渲染）必修 1–3。应修项 4–10 不在这次范围。
+
+1. **尖括号**：Streamdown 把 `Vec<String>` 里的 `<String>` 当未知 HTML 标签，harden 后整段文字消失。`SmoothStreamdown` 现在先过 `escapeUnknownTags`：标签名不是全小写的标准 HTML 元素就把 `<` 转成 `&lt;`。围栏代码块（含列表里缩进的）和行内代码跳过。标准元素原样交给 Streamdown，所以 `<script>`、`onerror` 等清洗规则不变（测试里经真实 Streamdown 验证）。已知局限：全小写且和 HTML 元素同名的泛型参数（如 `Vec<option>`）仍按标签处理。
+2. **mermaid-lite**：原来按行用正则切 `-->`，`A --> B --> C`、`-->|标签|`、`A & B` 都会把剩下的整串当成节点名，subgraph 的 `end` 也变成节点。改成逐字符扫描：节点 id + 形状（`[]` `()` `([])` `[[]]` `[()]` `(())` `{}` `{{}}` `>]` `[//]`）、`&` 组、各种连线（含 `|标签|` 和 `-- 标签 -->` 写法），链式按笛卡尔积展开成边；`;` 分句。subgraph 用分带布局：每个顶层 subgraph 一条带，画成带标题的虚线框；嵌套 subgraph 合并到最外层那条带。分层用最长路径（忽略回边，有环也不会无限加深），层内按父节点平均位置排一遍减少交叉。节点文字按宽度折行（中文按字、英文按词），节点框按折行后的尺寸画；层间距按相邻层连线标签的宽度撑开。另外支持 `stateDiagram(-v2)`。
+   任何一句看不懂、括号 / 引号没配对、subgraph 没 `end` 都返回空串，卡片显示原文代码；只有 `flowchart` / `graph` / `stateDiagram` / `sequenceDiagram` / `pie` 会画，其它类型直接回退。流式中结尾的 ``` 没到时不画，避免半张图。回退时代码按 ```text 交给 Streamdown，因为 ```mermaid 会走 Streamdown 自带的 Mermaid 组件（另一套库，认不出的图是一块空白）。
+3. **手机卡片头**：按钮组原来只在 `:hover` / `:focus-within` 时 `opacity: 1`，触屏上一直是 0 且 `pointer-events: none`，全屏按钮点不到。`@media (hover: none)` 下按钮组改成常显、跟在标题后面换行。全屏弹窗里的图包了一层 `DiagramZoom`：按钮 50%–800% 缩放、Ctrl / ⌘ + 滚轮（原生非 passive 监听），放大后框内滚动，缩放时保持中心。按钮都用设计系统的 `Button`，没有新增 backdrop-filter。
+
+截图（独立 headless Chrome + 临时 profile，桌面 1100×900 和手机 390×844 触屏）：改前手机上卡片头按钮 `opacity: 0; pointer-events: none`，点全屏超时；改后 `opacity: 1; pointer-events: auto`，能打开全屏并放大。
+
+测试：`app/tests/mermaid-lite.test.ts`（28 个）、`app/tests/escape-unknown-tags.test.tsx`（6 个）；原有 `svg-card-sanitize.test.ts`（含 Mermaid 标签注入用例）、`chat-bubbles.test.ts` 照常通过。为了让节点标签里的空格在折行后不丢（`<text>` 的文字内容和原文一致），折行处行尾保留一个空格，量宽度时去掉。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。
