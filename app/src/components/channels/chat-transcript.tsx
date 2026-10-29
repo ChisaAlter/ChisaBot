@@ -142,6 +142,7 @@ import { splitChatOrigin } from "./chat-origin";
 import type { QueuedMessage } from "./composer";
 import { ToolRenderBoundary } from "./tool-boundary";
 import { ToolLine } from "./tool-line";
+import { useRenderUiPreload } from "@/lib/copilot/render-ui-preload";
 
 type ChatTranscriptProps = {
   busy?: boolean;
@@ -3087,6 +3088,8 @@ export function ChatTranscript({
    * which is where the 25x came from. This runs per render and is not worth guarding.
    */
   const items = groupBrowserSteps(toVisibleChatItems(collapseScheduleRuns(messages)));
+  // render_ui 渲染面：历史里已有卡片就立即预载（不等 capabilities），否则空闲时预载。
+  useRenderUiPreload(messages);
   /*
    * 「最后一轮还在跑」只从列表真的变了算起（§68.4）。按下发送的那一刻 busy 先变 true，人发的那条要再过
    * 几十毫秒才进列表；这几十毫秒里如果把「最后一轮」（上一轮，早就答完了）当成正在跑，它的结果气泡会变回

@@ -1,5 +1,11 @@
 # DEVLOG
 
+## Unreleased — render_ui 渲染面空闲预载（分支 dev4/render-ui-idle-preload，基于 #414）
+
+- 问题：#414 里 RenderUiTool 挂载时就调 `JsonRenderSurface.preload()`，每个聊天都多下约 28K gz（即使没有 render_ui）；而 RenderUiTool 要等 capabilities 返回 generativeUi 才挂载，从缓存打开的旧对话仍会先闪骨架。
+- 改法：新 `app/src/lib/copilot/render-ui-preload.tsx`（懒加载的 JsonRenderSurface + 骨架 + `useRenderUiPreload`），ChatTranscript 调用：历史里有 render_ui 工具调用 → 立即 preload；否则 requestIdleCallback（timeout 4s，无此 API 时 setTimeout 1.5s）。RenderUiTool 不再自己预载。
+- 测试：`app/tests/render-ui-preload.test.tsx`（有历史立即、无历史只在 idle、后来出现卡片立即、卸载取消、setTimeout 兜底）。
+
 ## Unreleased — 首屏加载提速（PR A，分支 dev4/perf-first-load-split）
 
 问题：登录后第一次进来卡在「正在加载 ChisaBot…」约 2 秒。审计基线（生产冷缓存）：LCP 6540ms、最长长任务 2193ms、主包 3.0 MB（gzip 约 950 KB）。
