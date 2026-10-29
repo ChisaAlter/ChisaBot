@@ -1,3 +1,7 @@
+## Unreleased
+
+- 回复风格对齐 Hark（提示词 + 服务端）：去掉「导语 → 卡片 → 下一步」固定三段式，默认一个气泡、1–4 句、结论先行；render_ui 画过表格卡后不再附一份 Markdown 表格（提示词 + 工具结果都提醒）；推荐类问题直接给 2–3 个带价格的选项再追问（web_search 工具描述里写明一般搜 1–3 次就收敛）；数学用 Unicode 纯文本，不用 LaTeX（前端不恢复 katex）。安全和不可信内容相关的提示词一字未改，新增测试按 sha256 钉住。未升级版本号。
+
 ## 0.1.107
 
 - 链接卡照 Hark 改版：正文里单独一行的链接和 json-render 的 `Link` 合并成一个组件（`app/src/components/rich-previews/link-card.tsx`）。有预览图时是固定宽约 280px 的竖卡：上半 og:image 大图（cover，上方两角圆角），下面两行粗体标题和一行浅色「站点 · 补充信息」；没有图时退成同宽的紧凑横卡。半透明底 + 内侧高光边，不用 backdrop-filter；骨架和卡片同尺寸，图片懒加载并预留宽高。json-render 的 `Link` 不再只用模型写的字段：缺的预览图、标题、站点名用 `/api/link-preview` 补全，模型给了的优先，所以 GitHub 等链接现在会显示 og:image。样式在组件自己的 `link-card.css`（只有 `lc-` 开头的新类），styles.css 未改。未升级版本号。
