@@ -6,14 +6,6 @@
 - 链接卡数据侧按审查修正：模型写的标题如果只是站点名 / 域名，或被 og:title 包含（如「GitHub」「ChisaBot」），改用 og:title；每个链接给出预览图、站点名和补充信息，底下一行是「站点 · 补充信息」（如「GitHub · v0.1.13」）。标题和站点行不再固定高度（只有骨架预留），一行标题时下面不再空一大块。视觉细节留给前端的叠放卡改版。
 - 链接卡组照 Hark 改版（依赖 #380 的数据修正，已合入本分支）：一条回复里 2–3 个链接在文字气泡下面错落叠成一叠（中间那张抬高在最前，左右两张倾斜约 -4° / 3.5°），单个链接是一张不倾斜的卡，手机上卡变窄、整叠不出屏，统一用 `LinkCardStack` / `LinkCard`。鼠标悬停或键盘聚焦把那张卡挪到主位（只改 transform，`--dur-2` + `--ease-out`，不重排），指针离开后保持最后一张在主位；触屏第一次点只挪到主位、再点才打开，鼠标点击直接打开；减少动态效果时直接切换。GitHub 等宽图按 og:image 原比例完整显示（有 og:image:width/height 用实际比例，否则 GitHub 2:1、其它 1.91:1 占位，不跳动），GitHub 链接底行给短标签（如「GitHub · v0.1.13」）。材质按 docs/design-system.md 改成我们的设计系统：卡片用主题实色 `--glass-bg-solid`（不模糊、亮暗跟随主题，不照搬 Hark 的固定深色），圆角 `--r-lg`、内缩 `--sp-2`、图片同心圆角 12px，文字 `--text` / `--text-secondary`。标题一律纯文本渲染；props 兼容 #391 的来源格式 `{ url, title, site, toolCallId }`（本 PR 未接入）。未改 styles.css，未升级版本号。
 
-### 安全：升级有严重 / 高危漏洞的依赖，恢复 dependabot（审查 M4）
-
-- **直接依赖**：`better-auth` / `@better-auth/drizzle-adapter` 1.7.1 → 1.7.14（修复 OAuth state 被当作 Magic Link 登录、OAuth Proxy 冒充登录两个漏洞；同一 1.7.x 补丁线，无数据库表结构变化）；`@modelcontextprotocol/sdk` 1.30.0 → 1.32.2；`zod` 4.4.3 → 4.6.7；`vite` 7.3.6 → 7.3.7。
-- **间接依赖（根 `overrides` 固定到修复版）**：`proxy-addr` 2.0.8、`@modelcontextprotocol/server` 2.3.1、`axios` 1.21.0、`body-parser` 2.4.0、`fast-uri` 3.1.9、`follow-redirects` 1.16.2、`source-map-js` 1.2.2；`undici` 6.x / 7.x 副本升到 6.29.1 / 7.30.1。
-- **agent-computer**：`@grpc/grpc-js` 1.14.4 → 1.14.6（overrides）。**pc**：`undici` 6.29.1 / 7.30.1（仅锁文件）。
-- `bun audit`：2 critical / 39 high → 0 critical / 9 high；剩余需大版本升级，未升，见 docs/DEVLOG.md。
-- 新增 `.github/dependabot.yml`：bun（根、agent-computer）、npm（pc）、github-actions，每周一次，限 PR 数，小版本 / 补丁分组。
-
 ## 0.1.106 — 2026-10-29
 
 这一版合并 1 个 PR：机器人聊天页对话记录增量同步 + 卡片共享时钟（性能清单第 5 项，#370）。只升级服务器版本号（根、`app`、`server` 为 `0.1.106`），PC / Android 外壳未变；没有表结构变化。

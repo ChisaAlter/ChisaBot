@@ -4,8 +4,6 @@
 - 链接卡数据侧按审查修正：模型写的标题如果只是站点名 / 域名，或被 og:title 包含（如「GitHub」「ChisaBot」），改用 og:title；每个链接给出预览图、站点名和补充信息，底下一行是「站点 · 补充信息」（如「GitHub · v0.1.13」）。标题和站点行不再固定高度（只有骨架预留），一行标题时下面不再空一大块。视觉细节留给前端的叠放卡改版。
 - 链接卡组照 Hark 错落叠放（依赖 #380）：多个链接叠成一叠、悬停 / 聚焦 / 触屏第一次点换到主位（只改 transform，离开后保持最后一张），GitHub 宽图按原比例完整显示、底行「GitHub · v0.1.13」；材质改用设计系统令牌（`--glass-bg-solid`、`--r-lg`、`--sp-2`，不模糊），标题纯文本，props 兼容 #391 来源格式（未接入）
 
-- 升级严重 / 高危漏洞依赖（better-auth 1.7.14、proxy-addr 2.0.8、MCP SDK 1.32.2、zod 4.6.7、vite 7.3.7、axios、body-parser、fast-uri、follow-redirects、undici 等），`bun audit` 由 2 critical / 39 high 降到 0 / 9；恢复 `.github/dependabot.yml`（每周、分组、限 PR 数）
-
 ## 0.1.106
 
 - 对话记录同步改成增量：`…/threads/:id/messages` 支持可选 `since` / `cursor`（没变回 `unchanged`、变了只回尾部，旧客户端不变），界面实际路径（频道聊天页 `readThreadMessages` 的各处读历史、每轮结束后的顺序核对）都带 since/cursor 增量读，600 条对话没变化一次读约 530 KB → 83 B，没变化不 `setMessages`，编辑 / 删除 / 读失败 / 旧服务器照旧整份；三张卡片的每秒计时器合并为共享时钟。（#370）
