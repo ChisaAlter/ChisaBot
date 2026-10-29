@@ -11,7 +11,8 @@ from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from chisabot_protocol import (Gateway, GatewayClient, GatewayError, ProtocolError, RunState,
-                               ToolAliases, ToolSuspended, host_metadata, parse_host_prompt)
+                               ToolAliases, ToolSuspended, TURN_FAILED, failure_category,
+                               failure_message, host_metadata, parse_host_prompt)
 
 
 def payload():
@@ -327,6 +328,124 @@ class RunStateTests(unittest.TestCase):
         run.start("old", "device_list", {}, lambda: None)
         run.close()
         self.assertEqual(json.loads(run.execute("old", "device_list", {}))["error"]["code"], "run_closed")
+
+
+class FailureCategoryTests(unittest.TestCase):
+    def test_hermes_reasons_fold_into_fixed_categories(self):
+        cases = {"rate_limit": "rate_limit", "upstream_rate_limit": "rate_limit", "billing": "quota",
+                 "auth_permanent": "auth", "context_overflow": "context_length", "payload_too_large": "context_length",
+                 "timeout": "timeout", "overloaded": "provider_unavailable", "server_error": "provider_unavailable",
+                 "model_not_found": "model_not_found", "content_policy_blocked": "content_filter",
+                 "incomplete_response": "stream", "format_error": "unknown", None: "unknown"}
+        for reason, category in cases.items():
+            self.assertEqual(failure_category(reason), category, reason)
+
+    def test_exception_chain_status_code_and_names(self):
+        class RateLimitError(Exception):
+            pass
+        RateLimitError.__module__ = "openai._exceptions"
+        class APIStatusError(Exception):
+            def __init__(self, status):
+                super().__init__("opaque")
+                self.status_code = status
+        self.assertEqual(failure_category(error=RateLimitError("x")), "rate_limit")
+        self.assertEqual(failure_category(error=APIStatusError(503)), "provider_unavailable")
+        self.assertEqual(failure_category(error=APIStatusError(413)), "context_length")
+        class APITimeoutError(Exception):
+            pass
+        APITimeoutError.__module__ = "openai._exceptions"
+        self.assertEqual(failure_category(error=APITimeoutError("Request timed out.")), "timeout")
+        try:
+            try:
+                raise APIStatusError(429)
+            except APIStatusError as inner:
+                raise RuntimeError("wrapped") from inner
+        except RuntimeError as outer:
+            self.assertEqual(failure_category(error=outer), "rate_limit")
+        self.assertEqual(failure_category(error=RuntimeError("opaque-capability-secret")), "unknown")
+
+    def test_builtin_and_tool_errors_are_not_model_errors(self):
+        # #416 review: these used to read as "model not found", "invalid key" and "model timeout".
+        self.assertEqual(failure_category(error=FileNotFoundError(2, "No such file or directory", "notes.txt")), "unknown")
+        self.assertEqual(failure_category(error=PermissionError("Permission denied")), "unknown")
+        self.assertEqual(failure_category(error=RuntimeError("tool web_fetch timed out after 30s")), "unknown")
+        self.assertEqual(failure_category(error=TimeoutError("read timed out")), "unknown")
+        class ToolError(Exception):  # a tool's own exception type, not a model SDK's
+            pass
+        self.assertEqual(failure_category(error=ToolError("NotFound: model_not_found timed out")), "unknown")
+        # A built-in wrapper still lets the real model error underneath count.
+        class RateLimitError(Exception):
+            pass
+        RateLimitError.__module__ = "openai._exceptions"
+        try:
+            try:
+                raise RateLimitError("x")
+            except RateLimitError as inner:
+                raise FileNotFoundError("Permission denied timed out") from inner
+        except FileNotFoundError as outer:
+            self.assertEqual(failure_category(error=outer), "rate_limit")
+
+    def test_403_reads_the_body_before_calling_it_auth(self):
+        class PermissionDeniedError(Exception):
+            status_code = 403
+            def __init__(self, message, body=None, code=None):
+                super().__init__(message)
+                self.body = body
+                self.code = code
+        PermissionDeniedError.__module__ = "openai._exceptions"
+        region = PermissionDeniedError("Country, region, or territory not supported",
+                                       body={"error": {"code": "unsupported_country_region_territory"}},
+                                       code="unsupported_country_region_territory")
+        self.assertEqual(failure_category(error=region), "region")
+        self.assertEqual(failure_category(error=PermissionDeniedError("Request blocked by content filter")), "content_filter")
+        self.assertEqual(failure_category(error=PermissionDeniedError("x", body={"error": {"type": "policy_violation"}})),
+                         "content_filter")
+        self.assertEqual(failure_category(error=PermissionDeniedError("Invalid API key provided")), "auth")
+        self.assertEqual(failure_category(error=PermissionDeniedError("Forbidden")), "unknown")
+        self.assertEqual(failure_message("region"), "Hermes model call failed: unsupported_region (HTTP 403)")
+        self.assertEqual(failure_message(failure_category(error=PermissionDeniedError("Forbidden"))), TURN_FAILED)
+
+    def test_classifying_never_raises_on_odd_bodies(self):
+        class BadRequestError(Exception):
+            status_code = 400
+            def __init__(self, body):
+                super().__init__("bad request")
+                self.body = body
+        # Not JSON-serializable: bytes and objects inside a dict.
+        self.assertEqual(failure_category(error=BadRequestError({"raw": b"\xff", "obj": object()})), "unknown")
+        self.assertEqual(failure_category(error=BadRequestError({"error": {"code": "context_length_exceeded"}, "raw": b"x"})),
+                         "context_length")
+        class Hostile(Exception):
+            status_code = 403
+            @property
+            def body(self):
+                raise RuntimeError("boom")
+            def __str__(self):
+                raise RuntimeError("no str either")
+        self.assertEqual(failure_category(error=Hostile()), "unknown")
+        from chisabot_protocol import _error_body
+        class Broken(Exception):
+            code = property(lambda self: (_ for _ in ()).throw(ValueError("x")))
+            def __str__(self):
+                raise RuntimeError("no str")
+        self.assertEqual(_error_body(Broken()), "Broken")
+
+    def test_bytes_body_is_decoded_and_body_is_capped(self):
+        class PermissionDeniedError(Exception):
+            status_code = 403
+            def __init__(self, body):
+                super().__init__("forbidden")
+                self.body = body
+        self.assertEqual(failure_category(error=PermissionDeniedError(b'{"code":"unsupported_country_region_territory"}\xff')),
+                         "region")
+        from chisabot_protocol import _error_body
+        huge = PermissionDeniedError(b"a" * (200 * 1024) + b"unsupported_country")
+        self.assertLessEqual(len(_error_body(huge)), 64 * 1024)
+        self.assertEqual(failure_category(error=huge), "unknown")
+
+    def test_messages_are_fixed_and_unknown_keeps_old_sentence(self):
+        self.assertEqual(failure_message("unknown"), TURN_FAILED)
+        self.assertEqual(failure_message("rate_limit"), "Hermes model call failed: rate_limit (HTTP 429)")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,35 @@
 # DEVLOG
 
+## Unreleased — 回复质量 PR1（分支 fix/reply-quality）
+
+来源：模块 8（AI 回复质量与搜索）审查报告，第 1、3、5 条和顺手的第 7–11 条。第 2、4 条（Hermes 下备用模型 / 输出上限不生效、历史不裁剪）另出方案，第 6 条（卡片表格截断）归前端。
+
+**动机**
+
+1. 时区：`currentDateContext` 用的是服务器进程的时区，线上容器是 UTC；长期记忆写的是「今天是 2026-10-30，Asia/Shanghai」。北京时间 0–8 点，模型手里同时有两个差一天的「今天」。审查那天实测在 18 点，没撞上，但这是确定会发生的。
+2. 出错分类：Hermes 适配器的 `except Exception` 把所有异常都换成同一句英文，网页 `friendly-error.ts` 靠关键词匹配「429 / context length / timeout」，一条也匹配不上。读 Hermes（适配器钉住的提交 40cc1808）源码后还发现：Hermes 自己重试 / 换模型都失败时，多半不抛异常，而是返回 `failed: True`、`failure_reason` 和一段英文 `final_response`，适配器把这段英文当普通回复发给用户。两条路径都改成透传一个固定的分类句子。
+3. 来源：`LINK_CARD_GUIDANCE` 说来源「写在句子里」，`WORK_STYLE_GUIDANCE` 说「最后放一张链接卡或一行来源」。实机 q13 三条新闻各写一遍「来源：TechCrunch」，最后又单独一个气泡，共四遍。
+
+**改动**
+
+- `server/src/agents/current-date.ts`：`USER_TIME_ZONE`（= 定时任务的默认时区 Asia/Shanghai）和 `currentDateContext(now, timeZone)`，写中文日期 + 「北京时间，时区 Asia/Shanghai，UTC+08:00；本地 ISO：…+08:00」。`index.ts` 用它，并让 `createMemoryNotes` 显式用同一个时区。还没有按人设置的时区，以后有了只改这一处。
+- `examples/hermes-agent/chisabot_protocol.py`：`failure_category(reason, error)` 把 Hermes 的 `FailoverReason` 或异常链（`status_code`、类名、`code`）归成 9 类，`failure_message` 给每类一句固定英文，措辞专门对上 `friendly-error.ts` 的规则；认不出的仍是原来那句。`chisabot_acp.py` 在 `except` 和 `failed` 结果两处用它，不再把 Hermes 的英文警告当回复。
+- `shared/bot-prompt.ts`：来源规则合成一条（末尾一次，同站点一次）；卡片收尾写结论；公式加括号；拒绝给替代；`botIdentityGuidance(name, modelId)` 带上当前模型 id；不再用英文标题指 PROVENANCE。`memory-notes/service.ts` 的 MEMORY_GUIDANCE 写明记忆笔记不算要标来源的资料。
+- 没改：`PROVENANCE_GUIDANCE`、`COMPUTER_GUIDANCE`、`UNTRUSTED_GUIDANCE`、`NO_ANSWER_CAME`（#381 用 sha256 钉住，第 11 条「语言统一」只做了不在钉住范围内的部分）；样式；版本号。
+
+**测试**
+
+- `server/tests/reply-quality.test.ts`：跨午夜（UTC 16:00 = 北京 10-30 00:00、15:59、23:00）和记忆 `dayIn` 同一天；别的时区不冒充北京时间；来源规则只剩一种；说话方式段没有英文句子；记忆与出处的优先级；收尾 / 括号 / 拒绝 / 模型名。
+- `examples/hermes-agent/tests/`：失败结果变成分类错误且不发那段英文；异常只留分类不留原文；`FailoverReason` 与状态码映射表（Python 50 个全过）。
+- `app/tests/hermes-error-categories.test.ts`：从 Python 源码读出每个分类句子，逐个过 `friendlyError`，标题都对；两边措辞漂移就会失败。
+
+**返修（#416 审查，2026-10-29）**
+
+- 必修：`_HINTS` 按异常文字匹配，把非模型错误认错了——工具的 `FileNotFoundError` 成了「模型不存在」，`PermissionError("Permission denied")` 成了「密钥无效」，工具自己的「timed out」成了「模型响应超时」。现在 `failure_category` 跳过内置异常（`OSError` 及其子类、`builtins` 里的 `RuntimeError` / `TimeoutError` 等），只认 HTTP 状态码（`status_code` / `status`）和模型 SDK（openai、anthropic、litellm、google、groq、mistralai、cohere 模块里的）异常类型；4xx 的 body / `code` 只在这类错误上看。其他一律走通用句子。内置异常包着的真模型错误（`__cause__`）照样认得出。
+- 应修：403 不再直接算「密钥无效」。先看 body / `code`：地区限制（`unsupported_country_region_territory`、「region … not supported」）→ 新分类 `region`（网页「模型服务商不支持服务器所在地区」，不可重试）；内容拦截（content filter / policy、moderation、policy_violation）→ `content_filter`；明确说 API key / unauthorized → `auth`；分不清（如只有「Forbidden」）→ 通用句子。
+- 测试：`test_protocol.py` 加这三个例子 + 403 各情况；`test_adapter.py` 加工具 `FileNotFoundError` 整轮只出通用句子、不带路径；`app/tests/hermes-error-categories.test.ts` 加 `region`，`friendly-error.ts` 加对应规则。
+- 复审应修：分类函数自己可能抛异常——`_error_body` 里 `json.dumps` 遇到不可序列化的 body（如含 bytes）抛 TypeError，属性 getter 也可能抛别的异常；它在 `chisabot_acp.py` 的 `except` 里调用，一抛就跳过 `run.fail`，这一轮卡住。现在 `json.dumps(default=str)`，逐个属性 try，整体 try 失败退回 `str(error)`、再失败退回类名；bytes body 用 `errors=replace` 解码后再匹配；整段截到 64KB 再跑正则。适配器那层再包一层兜底，分类出错时用通用句子照样 `run.fail`。测试：不可序列化 body、getter / `__str__` 都抛、bytes body、超长 body 截断、分类函数抛异常时整轮仍结束。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。
