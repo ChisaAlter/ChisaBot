@@ -1,5 +1,7 @@
 ## Unreleased
 
+- 安全（审计 #5）：公网 nginx 只信任 Cloudflare 官方网段给的 `CF-Connecting-IP`（`real_ip_header` + `set_real_ip_from`），`limit_req`、日志和 `X-ChisaBot-Client` / `X-Forwarded-For` 改按真实客户端 IP；网关身份头 `X-ChisaBot-Identity` 加一次性随机数 `j`，应用在 ±2 分钟有效期内只认一次，重放返回 401（去重缓存 TTL = 有效期、上限 10 万条）；nginx 每个转发都清掉客户端自带的 `CF-Connecting-IP`、把 `X-Real-IP` 设为真实 IP，IM OneBot 失败限速和设备令牌限速共用同一个取 IP 函数（`gatewayClientIp`），伪造头绕不过限速。未升级版本号。
+
 - CI 门禁加固：`scripts/biome-new-issues.ts` 在 Biome 自身出错（退出码非 0 且没有可解析的 JSON，例如 biome.json 写坏）时一律失败；改用 `process.exitCode`、正常返回，确保 `biome-base-*` 临时目录被清理；用法注释与 workflow 实际传的基线一致；新增 `scripts/biome-new-issues.test.ts`。修默认 `error` 输出自己调自己（有新增问题或 Biome 出错、又没传回调时——CI 正是这样调用——脚本卡死），找不到 Biome / git 可执行文件改为退出 2。
 - CI：新增 Biome「只拦新增问题」检查（`scripts/biome-new-issues.ts`，与基线逐文件按规则比诊断数）、完整 `bun run test:app`、pc/ 独立安装 + chisabot-node 打包检查（审查清单第 3 项）。
 
