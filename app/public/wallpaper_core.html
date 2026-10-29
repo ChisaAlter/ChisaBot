@@ -2768,21 +2768,24 @@ window.hark = {
     applyGeoPosition({ coords: { latitude: lat, longitude: lon } });
     toast('Using your location: ' + state.place);
   },
-  ipLocate: async () => {
-    /* fallback when native GPS errors out: coarse IP geolocation */
-    try {
-      const r = await fetch('https://ipapi.co/json/');
-      const j = await r.json();
-      if (typeof j.latitude !== 'number') throw new Error('no fix');
-      clearScene();
-      state.lat = j.latitude; state.lon = j.longitude;
-      state.place = j.city || nearestCity(j.latitude, j.longitude);
-      state.tz = j.timezone || null;
-      fetchWeather(true);
-      toast('Approximate location (network): ' + state.place);
-    } catch (e) {
+  ipLocate: () => {
+    /* fallback when native GPS errors out. ChisaBot: no third-party IP geolocation
+       (it sent the user's IP to ipapi.co). Use the browser's own time zone instead:
+       the first built-in city in that zone gives a coarse place and the right clock. */
+    let tz = null;
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || null; }
+    catch (e) { tz = null; }
+    const c = tz ? CITIES.find(x => x.tz === tz) : null;
+    if (!c){
       toast('Could not determine your location');
+      return;
     }
+    clearScene();
+    state.lat = c.lat; state.lon = c.lon;
+    state.place = c.name;
+    state.tz = tz;
+    fetchWeather(true);
+    toast('Approximate location (time zone): ' + state.place);
   },
   search: (q, token) => { doSearch(q, token); },
   exportPNG: i => { if (PRESETS[i]) exportPNG(PRESETS[i]); }
