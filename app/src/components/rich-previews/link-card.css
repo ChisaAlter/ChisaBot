@@ -20,6 +20,8 @@
   min-width: 0;
   transform: translateY(var(--lc-lift, 0px));
   transition: transform var(--dur-2, 220ms) var(--ease-out);
+  /* 外层只管位置，不接点击：卡片圆角外那一小块（叠放时会转一点角度）落到下面的元素，不落在一个什么也不做的盒子上。 */
+  pointer-events: none;
 }
 .lc-card {
   font-feature-settings: "calt" 0;
@@ -44,6 +46,7 @@
 }
 .lc-item > .lc-card {
   width: 100%;
+  pointer-events: auto;
 }
 /* 正文 / json-render 里的 a 可能带下划线规则：用更具体的选择器盖掉，不用 !important。 */
 a.lc-card[href],

@@ -150,6 +150,11 @@ describe("审查模块 6", () => {
           expect(body).toMatch(/opacity: 1;/);
       }
       expect(css).not.toMatch(/@media \(hover: hover\) \{/);
+      // 外层 .lc-item 不接点击，只有卡面和（显示出来的）按钮接。
+      expect(rulesFor(".lc-item").join("\n")).toMatch(/pointer-events: none;/);
+      expect(rulesFor(".lc-item > .lc-card").join("\n")).toMatch(
+        /pointer-events: auto;/,
+      );
       expect(mediaBlock("(hover: hover) and (pointer: fine)")).toMatch(
         /\.lc-item:not\(\[data-stack-slot\]\):hover :is\(\.lc-go, \.lc-followup\)/,
       );
