@@ -40,6 +40,33 @@ describe("web tools", () => {
   });
 });
 
+import { NO_SEARCH_HITS, parseBing, queryUnits, relevantHits, unwrapBingUrl } from "../src/web/tools";
+describe("Bing 回退（hark 对比 #3 #8 #11，2026-10-29）", () => {
+  const ck = (real: string) => `https://www.bing.com/ck/a?!&&p=abc&ptn=3&ver=2&hsh=4&u=a1${Buffer.from(real).toString("base64url")}&ntb=1`;
+  test("结果链接还原成真实网址，模型才能注明来源网站", () => {
+    expect(unwrapBingUrl(ck("https://www.edifier.com/cn/w820nb-plus"))).toBe("https://www.edifier.com/cn/w820nb-plus");
+    expect(unwrapBingUrl("https://example.com/a")).toBe("https://example.com/a");
+    expect(unwrapBingUrl("https://www.bing.com/ck/a?u=a1bm90IGEgdXJs")).toBe("https://www.bing.com/ck/a?u=a1bm90IGEgdXJs");
+    const html = `<li class="b_algo"><h2><a href="${ck("https://www.edifier.com/").replace(/&/g, "&amp;")}">漫步者官网</a></h2><p>漫步者 W820NB Plus</p></li>`;
+    expect(parseBing(html)[0]?.url).toBe("https://www.edifier.com/");
+  });
+  test("和问题无关的结果丢掉，相关的留下", () => {
+    const hit = (title: string, snippet = "", url = "https://x.test/") => ({ title, snippet, url });
+    const q = "500元以内 降噪耳机 推荐";
+    expect(queryUnits(q)).toEqual(["元以", "降噪", "噪耳", "耳机"]);
+    expect(queryUnits("500")).toEqual(["500"]);
+    expect(relevantHits(q, [hit("Online CFD Trading | Plus500"), hit("500彩票网 - 彩票开奖"), hit("500元以下推荐哪款降噪蓝牙耳机？")]).map((h) => h.title)).toEqual(["500元以下推荐哪款降噪蓝牙耳机？"]);
+    expect(relevantHits("上海 咖啡店 推荐", [hit("上海市_百度百科", "上海市，简称沪"), hit("上海最值得去的18间精品咖啡馆")]).map((h) => h.title)).toEqual(["上海最值得去的18间精品咖啡馆"]);
+    expect(relevantHits("latest technology news", [hit("latest - LEO Wörterbuch"), hit("Tech News | Today's Latest Technology News")])).toHaveLength(1);
+    expect(relevantHits("site:reuters.com AI", [hit("AI news", "", "https://www.reuters.com/technology/")])).toHaveLength(1);
+  });
+  test("没搜到时不叫模型接着换词连搜", () => {
+    expect(NO_SEARCH_HITS).not.toContain("换个说法再搜一次");
+    expect(NO_SEARCH_HITS).toContain("最多再换一次");
+    expect(NO_SEARCH_HITS).toContain("没有联网核实");
+  });
+});
+
 import { emptyMetrics } from "../src/live-panels/service";
 test("面板 Metric 没有数值会被拦下", () => {
   const ok = JSON.stringify({ root: "c", elements: { c: { type: "Card", props: { title: "BTC" }, children: ["m"] }, m: { type: "Metric", props: { label: "现价", value: "$82,407" }, children: [] } } });
