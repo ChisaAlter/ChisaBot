@@ -85,7 +85,11 @@ import {
   useMessageScroller,
 } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
-import { attachmentUrl } from "@/lib/channels/attachments";
+import {
+  attachmentThumbUrl,
+  attachmentUrl,
+  pickAttachmentThumbWidth,
+} from "@/lib/channels/attachments";
 import { isMessageHeld } from "@/lib/channels/focus-message";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { collapseScheduleRuns } from "@/lib/schedule-fired";
@@ -2283,6 +2287,14 @@ function AttachmentTiles({
   const rest = attachments.filter(
     (attachment) => !pictures.includes(attachment),
   );
+  /*
+   * 一摞 / 单张里画的是缩略图（`?w=` 档位，服务器用 sharp 缩成 WebP），点开看大图仍是原图（`src`）。
+   * 单张最宽 320px、一摞里的卡片 220px（styles.css「图片：单张 / 一摞」），按屏幕像素密度挑够清楚的最小一档。
+   */
+  const thumbWidth = pickAttachmentThumbWidth(
+    pictures.length === 1 ? 320 : 220,
+    typeof window === "undefined" ? 1 : window.devicePixelRatio,
+  );
   return (
     <ul
       className={cn(
@@ -2296,6 +2308,7 @@ function AttachmentTiles({
             align="end"
             images={pictures.map((picture) => ({
               src: picture.url,
+              thumb: attachmentThumbUrl(picture.url, thumbWidth),
               ...(picture.filename
                 ? { name: picture.filename, alt: `附件：${picture.filename}` }
                 : { alt: "附件" }),

@@ -514,7 +514,7 @@ export function ImagePile({
             ref={(img) => {
               if (img?.complete) rememberImageSize(image.src, img);
             }}
-            src={image.src}
+            src={image.thumb ?? image.src}
             style={reservedImageBox(image)}
           />
         </button>
@@ -609,7 +609,7 @@ export function ImagePile({
                 draggable={false}
                 loading="lazy"
                 onError={() => markBroken(image.src)}
-                src={image.src}
+                src={image.thumb ?? image.src}
               />
               {i === visible.length - 1 && extra > 0 ? (
                 <span className="rp-pile-more">+{extra}</span>

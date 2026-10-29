@@ -21,14 +21,18 @@ import {
   intelligenceChannelMappings,
 } from "../db/schema";
 import {
+  ATTACHMENT_THUMB_WIDTHS,
+  type AttachmentThumbWidth,
   classifyAttachment,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_FILE_BYTES,
   MAX_IMAGE_BYTES,
   namesNoFormat,
+  parseAttachmentThumbWidth,
 } from "../../../shared/attachments";
 import type { StoredAttachment } from "./attachment-parts";
 import { sniffMimeType } from "./attachment-mime";
+import { attachmentThumbnailer, type Thumbnailer } from "./attachment-thumbs";
 
 function megabytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(0)}MB`;
@@ -1483,6 +1487,7 @@ async function readOrNull<TRows>(
 export function createAttachmentRoutes(
   database: Database,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
+  thumbnailer: Thumbnailer = attachmentThumbnailer,
 ): Hono<{ Variables: AppVariables }> {
   const routes = new Hono<{ Variables: AppVariables }>();
 
@@ -1531,7 +1536,28 @@ export function createAttachmentRoutes(
      * the body Hono strips, which is what "the probe answers exactly what the fetch would" is
      * supposed to mean.
      */
-    const etag = `"${id}"`;
+    /*
+     * `?w=`：对话里画小图用的缩略图（`attachment-thumbs.ts`）。只认 `ATTACHMENT_THUMB_WIDTHS` 里的几档，
+     * 别的值 400——不是 404，因为错的是参数、不是这个附件，而且这个判断不看任何一行数据，不泄露存在与否。
+     *
+     * 缩略图是同一个附件的另一种表示，所以 ETag 带上档位；回退原图时也用这个 ETag（同一个地址回的东西
+     * 始终是同一种）。权限判断和原图完全一样：下面几条读都还是走 `visibleToActor`。
+     */
+    const widthParam = context.req.query("w");
+    let width: AttachmentThumbWidth | null = null;
+    if (widthParam !== undefined) {
+      width = parseAttachmentThumbWidth(widthParam);
+      if (width === null) {
+        return context.json(
+          {
+            error: `w must be one of ${ATTACHMENT_THUMB_WIDTHS.join(", ")}.`,
+          },
+          400,
+        );
+      }
+    }
+
+    const etag = width === null ? `"${id}"` : `"${id}-w${width}"`;
     if (ifNoneMatchHolds(context.req.header("If-None-Match"), etag)) {
       // One column, and it is the id the WHERE has already fixed: this statement is asked whether a
       // row comes back, never for anything in it. A `select` naming no field at all is not a
@@ -1581,7 +1607,8 @@ export function createAttachmentRoutes(
      * Revalidation is not handled here either, because the branch above already answered it for both
      * methods before this one was reached.
      */
-    if (context.req.method === "HEAD") {
+    // 带 `?w=` 的探测走下面完整的一条：缩略图有多大，不缩一次是不知道的。界面不会这样探测，只求答案一致。
+    if (context.req.method === "HEAD" && width === null) {
       const probed = await readOrNull(
         database
           .select({
@@ -1615,6 +1642,30 @@ export function createAttachmentRoutes(
      * 8,388,608 bytes read per 304 while this column was in every read's select list; the rule that
      * keeps it out is that only the answer carrying a body may ask for it.
      */
+    /*
+     * 缩略图已经在缓存里：照样问一遍「这个人还能不能看」，但不读 `bytes`——省掉的正是从 Postgres 读整张原图。
+     */
+    if (width !== null) {
+      const hit = thumbnailer.cached(id, width);
+      if (hit?.kind === "thumb") {
+        const visible = await readOrNull(
+          database
+            .select({ name: attachments.name, mimeType: attachments.mimeType })
+            .from(attachments)
+            .where(visibleToActor(database, actor.id, id)),
+          actor.id,
+          id,
+        );
+        if (!visible) return couldNotReadAttachment(context);
+        const metadata = visible[0];
+        if (!metadata) return noSuchAttachment(context);
+        return context.body(hit.bytes, 200, {
+          ...attachmentHeaders(metadata, etag),
+          "Content-Type": hit.mimeType,
+        });
+      }
+    }
+
     const rows = await readOrNull(
       database
         .select({
@@ -1669,6 +1720,17 @@ export function createAttachmentRoutes(
       row.bytes.byteOffset,
       row.bytes.byteLength,
     );
+
+    if (width !== null && classifyAttachment(row.mimeType) === "image") {
+      // 从不抛错；缩不了（不是能缩的格式、本来就窄、sharp 不在、解不开……）就是 `original`，往下回原图。
+      const thumb = await thumbnailer.thumbnail(id, width, row.mimeType, bytes);
+      if (thumb.kind === "thumb") {
+        return context.body(thumb.bytes, 200, {
+          ...attachmentHeaders(row, etag),
+          "Content-Type": thumb.mimeType,
+        });
+      }
+    }
 
     return context.body(bytes, 200, attachmentHeaders(row, etag));
   });
