@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.Settings
+import android.widget.Toast
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
@@ -28,15 +30,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import cn.ayase.chisabot.AppViewModel
 import cn.ayase.chisabot.BuildConfig
@@ -60,11 +68,48 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
         fileCallback?.onReceiveValue(uris.toTypedArray()); fileCallback = null
     }
     // 网页要麦克风（语音输入）且系统还没给 RECORD_AUDIO 时，先问系统；拒绝就拒绝网页的请求。
+    // 被拒时要告诉用户：这次拒绝给一句提示；选了「不再询问」（拒绝后系统不再给理由提示）就弹框引导去应用设置。
+    val context = LocalContext.current
     var micRequest by remember { mutableStateOf<PermissionRequest?>(null) }
+    var showMicSettings by remember { mutableStateOf(false) }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val request = micRequest ?: return@rememberLauncherForActivityResult
         micRequest = null
-        if (granted) request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) else request.deny()
+        if (granted) {
+            request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+        } else {
+            request.deny()
+            val activity = context.findActivity()
+            val rationale = activity != null && ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
+            if (isMicPermanentlyDenied(rationale)) showMicSettings = true
+            else Toast.makeText(context, MIC_DENIED_ONCE_MESSAGE, Toast.LENGTH_LONG).show()
+        }
+    }
+    // 页面关闭（离开这一屏、WebView 销毁）时，还在等系统弹框的网页请求直接拒掉，别挂着。
+    DisposableEffect(Unit) {
+        onDispose {
+            micRequest?.let { runCatching { it.deny() } }
+            micRequest = null
+        }
+    }
+    if (showMicSettings) {
+        AlertDialog(
+            onDismissRequest = { showMicSettings = false },
+            title = { Text("需要麦克风权限") },
+            text = { Text(MIC_DENIED_SETTINGS_MESSAGE) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showMicSettings = false
+                    runCatching {
+                        context.startActivity(
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                }) { Text("去设置") }
+            },
+            dismissButton = { TextButton(onClick = { showMicSettings = false }) { Text("取消") } },
+        )
     }
     BackHandler {
         val w = web
@@ -184,6 +229,24 @@ private fun originKey(origin: String?): String? {
     if (scheme != "https" && scheme != "http") return null
     val port = if (uri.port != -1) uri.port else if (scheme == "https") 443 else 80
     return "$scheme://$host:$port"
+}
+
+/** 这次拒绝了麦克风（下次还会问）时的提示，语气同网页侧 MIC_DENIED_*_MESSAGE（#410）。 */
+internal const val MIC_DENIED_ONCE_MESSAGE = "麦克风权限被拒绝了，暂时用不了语音输入。需要时再点一次「重新录音」，在系统弹框里选「允许」。"
+
+/** 选了「不再询问」后系统不会再弹框，只能去应用设置里打开。 */
+internal const val MIC_DENIED_SETTINGS_MESSAGE = "麦克风权限被拒绝了。请到系统设置的「应用 → ChisaBot → 权限」里打开麦克风，再点「重新录音」。"
+
+/**
+ * 刚被拒绝之后：系统还愿意给理由提示（[shouldShowRationale] 为 true）说明只是这次拒绝；
+ * 为 false 说明用户选了「不再询问」（或被策略禁止），系统不会再弹框，要引导去设置。
+ */
+internal fun isMicPermanentlyDenied(shouldShowRationale: Boolean): Boolean = !shouldShowRationale
+
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 /** evaluateJavascript 回来的是 JSON 文本：只有字面量 true 表示网页已经处理了返回键。 */

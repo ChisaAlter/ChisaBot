@@ -14,6 +14,9 @@ import cn.ayase.chisabot.md.Block
 import cn.ayase.chisabot.md.Markdown
 import cn.ayase.chisabot.ui.hideIncompleteTail
 import cn.ayase.chisabot.ui.isBackHandled
+import cn.ayase.chisabot.ui.MIC_DENIED_ONCE_MESSAGE
+import cn.ayase.chisabot.ui.MIC_DENIED_SETTINGS_MESSAGE
+import cn.ayase.chisabot.ui.isMicPermanentlyDenied
 import cn.ayase.chisabot.ui.micResourcesToGrant
 import cn.ayase.chisabot.ui.siteOf
 import kotlinx.serialization.json.Json
@@ -256,5 +259,13 @@ class NativeLogicTest {
         assertNull(micResourcesToGrant("https://chat.example.com/", app, arrayOf()))
         // 自建服务器带端口（如 :8443）时按同一端口比较。
         assertEquals(listOf(audio), micResourcesToGrant("https://10.0.0.5:8443/", "https://10.0.0.5:8443", arrayOf(audio))?.toList())
+    }
+
+    @Test fun micDeniedHint() {
+        // 拒绝后系统不再给理由提示 = 选了「不再询问」，要引导去设置
+        assertTrue(isMicPermanentlyDenied(shouldShowRationale = false))
+        assertFalse(isMicPermanentlyDenied(shouldShowRationale = true))
+        assertTrue(MIC_DENIED_SETTINGS_MESSAGE.contains("系统设置") && MIC_DENIED_SETTINGS_MESSAGE.contains("重新录音"))
+        assertTrue(MIC_DENIED_ONCE_MESSAGE.contains("重新录音"))
     }
 }
