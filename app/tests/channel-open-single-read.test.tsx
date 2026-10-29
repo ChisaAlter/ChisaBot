@@ -37,6 +37,8 @@ const stored: Message[] = [
 
 let originalFetch: typeof fetch;
 let historyReads: string[] = [];
+/** 接入时服务器回放的事件；null = 回放存下的对话、没有在跑的一轮。 */
+let joinEvents: unknown[] | null = null;
 
 function sse(events: unknown[]) {
   return new NativeResponse(
@@ -72,11 +74,13 @@ beforeAll(() => {
           telemetryDisabled: true,
         });
       if (url.pathname.endsWith("/connect"))
-        return sse([
-          { type: "RUN_STARTED", threadId: channel.threadId, runId: "join" },
-          { type: "MESSAGES_SNAPSHOT", messages: stored },
-          { type: "RUN_FINISHED", threadId: channel.threadId, runId: "join" },
-        ]);
+        return sse(
+          joinEvents ?? [
+            { type: "RUN_STARTED", threadId: channel.threadId, runId: "join" },
+            { type: "MESSAGES_SNAPSHOT", messages: stored },
+            { type: "RUN_FINISHED", threadId: channel.threadId, runId: "join" },
+          ],
+        );
       if (/\/threads\/[^/]+\/messages$/.test(url.pathname)) {
         historyReads.push(url.search);
         return NativeResponse.json({
@@ -100,6 +104,7 @@ afterEach(() => {
   cleanup();
   queryClient.clear();
   resetStoredSyncs();
+  joinEvents = null;
 });
 afterAll(async () => {
   await settleReactWork();
@@ -143,4 +148,45 @@ test("opening a chat reads the stored history once", async () => {
   });
   expect(historyReads).toHaveLength(1);
   expect(view.getAllByText("Stored reply")).toHaveLength(1);
+}, 20_000);
+
+test("a run that finishes exactly while the chat is opening still shows its answer", async () => {
+  historyReads = [];
+  // 打开时读到的存储还没有这一轮（读在前）；接入回放的是还在跑的那一轮，回放途中它正好跑完。
+  joinEvents = [
+    { type: "RUN_STARTED", threadId: channel.threadId, runId: "live" },
+    {
+      type: "MESSAGES_SNAPSHOT",
+      messages: [
+        ...stored,
+        { id: "u2", role: "user", content: "Second question" },
+      ],
+    },
+    { type: "TEXT_MESSAGE_START", messageId: "a2", role: "assistant" },
+    {
+      type: "TEXT_MESSAGE_CONTENT",
+      messageId: "a2",
+      delta: "Answer finished ",
+    },
+    { type: "TEXT_MESSAGE_CONTENT", messageId: "a2", delta: "while opening" },
+    { type: "TEXT_MESSAGE_END", messageId: "a2" },
+    { type: "RUN_FINISHED", threadId: channel.threadId, runId: "live" },
+  ];
+  cacheChannel();
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <CopilotKitProvider runtimeUrl="http://localhost/api/copilotkit">
+        <ChannelChat channel={channel} runtimeAgentId="open-once-bot" />
+      </CopilotKitProvider>
+    </QueryClientProvider>,
+  );
+  await view.findByText("Answer finished while opening");
+  await act(async () => {
+    await pause(2000);
+  });
+  // 跑完的那一轮在接入时已经整段回放到了：不靠接入后的再读一遍，也不丢、不重复。
+  expect(view.getAllByText("Answer finished while opening")).toHaveLength(1);
+  expect(view.getAllByText("Second question")).toHaveLength(1);
+  expect(view.getAllByText("Stored reply")).toHaveLength(1);
+  expect(historyReads).toHaveLength(1);
 }, 20_000);
