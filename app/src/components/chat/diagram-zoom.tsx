@@ -1,5 +1,11 @@
 import { IconZoomIn, IconZoomOut } from "@tabler/icons-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 
 const MIN_ZOOM = 0.5;
@@ -33,6 +39,20 @@ export function DiagramZoom({
 }) {
   const [zoom, setZoom] = useState(1);
   const viewport = useRef<HTMLDivElement>(null);
+  const lastZoom = useRef(zoom);
+
+  // 缩放时保持视野中心不动，放大后看到的还是刚才中间那块，而不是左上角。
+  useLayoutEffect(() => {
+    const el = viewport.current;
+    const prev = lastZoom.current;
+    lastZoom.current = zoom;
+    if (!el || prev === zoom) return;
+    const ratio = zoom / prev;
+    const cx = el.scrollLeft + el.clientWidth / 2;
+    const cy = el.scrollTop + el.clientHeight / 2;
+    el.scrollLeft = cx * ratio - el.clientWidth / 2;
+    el.scrollTop = cy * ratio - el.clientHeight / 2;
+  }, [zoom]);
 
   useEffect(() => {
     const el = viewport.current;

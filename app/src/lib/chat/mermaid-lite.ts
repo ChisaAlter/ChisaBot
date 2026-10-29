@@ -576,13 +576,30 @@ function renderGraphSvg(graph: Graph, dir: FlowDir): string {
   for (const n of nodes)
     rankSize[n.rank] = Math.max(rankSize[n.rank] ?? 0, main(n));
   const anyGroups = graph.groups.length > 1;
+  // 相邻两层之间有带标签的连线时，层间距至少要放得下标签（两边各留一点线），免得标签压到节点上。
+  const gapAfter: number[] = Array.from({ length: maxRank + 1 }, () => rankGap);
+  for (const e of graph.edges) {
+    if (!e.label || e.invisible) continue;
+    const a = graph.nodes.get(e.from);
+    const b = graph.nodes.get(e.to);
+    if (!a || !b || Math.abs(a.rank - b.rank) !== 1) continue;
+    const lines = wrapLabel(e.label, EDGE_LABEL_MAX);
+    const pill = horizontal
+      ? Math.max(
+          28,
+          Math.max(...lines.map((l) => textWidth(l.trimEnd()))) * 0.9 + 14,
+        )
+      : lines.length * LINE_H + 6;
+    const r = Math.min(a.rank, b.rank);
+    gapAfter[r] = Math.max(gapAfter[r] ?? rankGap, Math.ceil(pill + 36));
+  }
   const rankStart: number[] = [];
   let cursor = pad + (anyGroups && !horizontal ? titleBand + boxPad : 0);
   for (let r = 0; r <= maxRank; r++) {
     rankStart[r] = cursor;
-    cursor += (rankSize[r] ?? 0) + rankGap;
+    cursor += (rankSize[r] ?? 0) + (r < maxRank ? (gapAfter[r] ?? rankGap) : 0);
   }
-  const mainTotal = cursor - rankGap + pad + (anyGroups ? boxPad : 0);
+  const mainTotal = cursor + pad + (anyGroups ? boxPad : 0);
 
   // 分带：每个顶层 subgraph 一条带，不在 subgraph 里的节点一条带，按首次出现的顺序排。
   const laneIds: number[] = [];
@@ -707,7 +724,7 @@ function renderGraphSvg(graph: Graph, dir: FlowDir): string {
     boxSvg.push(
       `<g class="cb-mermaid-subgraph"><rect x="${x1}" y="${y1}" width="${x2 - x1}" height="${y2 - y1}" rx="10" fill="var(--cb-mermaid-group-bg, rgba(129,140,248,0.06))" stroke="var(--cb-mermaid-border, rgba(255,255,255,0.14))" stroke-width="1" stroke-dasharray="4 3" />` +
         (title
-          ? `<text x="${x1 + 10}" y="${y1 + 17}" fill="var(--cb-mermaid-muted, #cbd5e1)" font-size="12" font-weight="600" font-family="${FONT}">${escXml(title)}</text>`
+          ? `<text x="${x1 + 10}" y="${y1 + 17}" fill="var(--cb-mermaid-group-title, #8b95a7)" font-size="12" font-weight="600" font-family="${FONT}">${escXml(title)}</text>`
           : "") +
         "</g>",
     );

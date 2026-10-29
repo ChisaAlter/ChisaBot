@@ -186,6 +186,22 @@ describe("mermaid-lite 流程图（审计 05 必修 2）", () => {
     );
   });
 
+  test("横向图里长的连线标签不压到节点上", () => {
+    const svg = renderMermaidToSvg(
+      "graph LR\nA[起点] --> B[短]\nB -->|一个也很长的连线标签文字| C[第三步：写回数据库]",
+    );
+    const pill =
+      /<rect x="([-\d.]+)" y="[-\d.]+" width="([\d.]+)" height="[\d.]+" rx="6"/.exec(
+        svg,
+      );
+    expect(pill).not.toBeNull();
+    const px1 = Number(pill?.[1]);
+    const px2 = px1 + Number(pill?.[2]);
+    for (const n of nodes(svg)) {
+      expect(px2 <= n.x || px1 >= n.x + n.w).toBe(true);
+    }
+  });
+
   test("<br> 换行", () => {
     const svg = renderMermaidToSvg("graph TD\nA[第一行<br/>第二行] --> B");
     expect(nodes(svg)[0]!.lines).toEqual(["第一行", "第二行"]);

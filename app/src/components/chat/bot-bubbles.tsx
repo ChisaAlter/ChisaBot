@@ -995,6 +995,15 @@ export function ArtifactCard({
   const badgeLabel =
     artifact.lang === "mermaid" ? "MERMAID" : artifact.lang === "svg" ? "SVG" : "HTML APP";
 
+  // 源码 / 回退显示：Mermaid 按纯文本代码块显示。交给 Streamdown 的 ```mermaid 会走它自带的
+  // Mermaid 渲染（另一套库，认不出的图是一块空白），回退的本意是让人看到原文。
+  const codeMarkdown = useMemo(() => {
+    if (artifact.lang !== "mermaid") return artifact.rawMarkdown;
+    const longest = Math.max(2, ...(artifact.code.match(/`+/g) ?? []).map((m) => m.length));
+    const fence = "`".repeat(longest + 1);
+    return `${fence}text\n${artifact.code}\n${fence}`;
+  }, [artifact.lang, artifact.code, artifact.rawMarkdown]);
+
   const renderPreview = (inModal = false) => {
     if (artifact.lang === "html") {
       return (
@@ -1074,7 +1083,7 @@ export function ArtifactCard({
     }
     return (
       <div className="chat-doc-inner p-3">
-        <SmoothStreamdown components={components as never}>{artifact.rawMarkdown}</SmoothStreamdown>
+        <SmoothStreamdown components={components as never}>{codeMarkdown}</SmoothStreamdown>
       </div>
     );
   };
@@ -1145,7 +1154,7 @@ export function ArtifactCard({
             renderPreview(false)
           ) : (
             <div className="chat-doc-inner p-3">
-              <SmoothStreamdown components={components as never}>{artifact.rawMarkdown}</SmoothStreamdown>
+              <SmoothStreamdown components={components as never}>{codeMarkdown}</SmoothStreamdown>
             </div>
           )}
         </div>
