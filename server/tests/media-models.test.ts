@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { filesFromToolResult } from "../../shared/chat-files";
-import { modelKeyOf } from "../src/chat-files/media-models";
+import { createMediaModels, modelKeyOf } from "../src/chat-files/media-models";
 import { createChatFiles, IMAGE_INPUT_GUIDANCE, sniffImage } from "../src/chat-files/service";
 import { askVisionModel, probeVisionModel, solidPng } from "../src/chat-files/vision-provider";
 import { createDatabase } from "../src/db/client";
@@ -347,6 +347,67 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     expect((await rowsFor(gone)).length).toBe(0);
     await database.$client.unsafe("DELETE FROM users WHERE id = $1", [uploader]);
     mainSees = undefined;
+  });
+
+  test("old att: descriptions get their attachment_id back, so withdrawing still deletes the OCR text (#417)", async () => {
+    // 加 attachment_id 列之前存的行是空的：ensure 按 'att:<id>' 回填（只补为空、只补附件还在的），附件已经没了的旧行删掉。
+    const uploader = `mmlegacy-${randomUUID().slice(0, 8)}`;
+    const channel = `mmlegacych-${randomUUID().slice(0, 8)}`;
+    await database.$client.unsafe("INSERT INTO users (id, email) VALUES ($1, $2)", [uploader, `${uploader}@example.test`]);
+    await database.$client.unsafe("INSERT INTO channels (id, name, description) VALUES ($1, 'm', 'm')", [channel]);
+    const kept = (
+      await database.$client.unsafe<{ id: string }[]>(
+        "INSERT INTO attachments (channel_id, uploaded_by, name, mime_type, size_bytes, bytes) VALUES ($1, $2, 'a.png', 'image/png', $3, $4) RETURNING id",
+        [channel, uploader, PNG.length, PNG],
+      )
+    )[0]!.id;
+    const gone = randomUUID();
+    const legacy = (id: string) =>
+      database.$client.unsafe("INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text) VALUES ($1, 'legacy', 'm', '旧的 OCR 文字')", [`att:${id}`]);
+    await legacy(kept);
+    await legacy(gone);
+    await legacy("not-a-uuid");
+    const rowsFor = (id: string) =>
+      database.$client.unsafe<{ attachment_id: string | null }[]>("SELECT attachment_id FROM chisabot_image_descriptions WHERE file_id = $1", [`att:${id}`]);
+
+    await media.ensure();
+    await media.ensure(); // 幂等
+    expect((await rowsFor(kept)).map((row) => row.attachment_id)).toEqual([kept]);
+    expect((await rowsFor(gone)).length).toBe(0);
+    expect((await rowsFor("not-a-uuid")).length).toBe(0);
+    await database.$client.unsafe("DELETE FROM attachments WHERE id = $1", [kept]);
+    expect((await rowsFor(kept)).length).toBe(0);
+    await database.$client.unsafe("DELETE FROM channels WHERE id = $1", [channel]);
+    await database.$client.unsafe("DELETE FROM users WHERE id = $1", [uploader]);
+  });
+
+  test("the attachment foreign key is added once attachments exists, without a restart (#417)", async () => {
+    // 单连接 + 独立 schema：先建描述表（attachments 还不在），再建 attachments，ensure / 写描述时补上外键。
+    const schema = `mmfk_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const scratch = createDatabase(url!, { max: 1 });
+    try {
+      await scratch.$client.unsafe(`CREATE SCHEMA ${schema}; SET search_path TO ${schema}`);
+      const scratchMedia = createMediaModels(scratch, { encryptionKey: key, fetch: fakeFetch, env: {} });
+      const hasFk = async () =>
+        (
+          await scratch.$client.unsafe<{ ok: boolean }[]>(
+            "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chisabot_image_descriptions_attachment_fk' AND conrelid = 'chisabot_image_descriptions'::regclass) AS ok",
+          )
+        )[0]!.ok;
+      await scratchMedia.ensure();
+      expect(await hasFk()).toBe(false);
+      await scratch.$client.unsafe("CREATE TABLE attachments (id uuid PRIMARY KEY DEFAULT gen_random_uuid())");
+      const id = (await scratch.$client.unsafe<{ id: string }[]>("INSERT INTO attachments DEFAULT VALUES RETURNING id"))[0]!.id;
+      await scratch.$client.unsafe("INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text) VALUES ($1, 'k', 'm', 'ocr')", [`att:${id}`]);
+      expect(await scratchMedia.linkAttachments()).toBe(true);
+      expect(await hasFk()).toBe(true);
+      await scratchMedia.ensure();
+      await scratch.$client.unsafe("DELETE FROM attachments WHERE id = $1", [id]);
+      expect((await scratch.$client.unsafe("SELECT 1 FROM chisabot_image_descriptions")).length).toBe(0);
+    } finally {
+      await scratch.$client.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      await scratch.$client.close();
+    }
   });
 
   test("main model can't see images: follow falls back to admin vision, else a note", async () => {

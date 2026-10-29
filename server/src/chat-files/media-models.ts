@@ -131,23 +131,55 @@ export function createMediaModels(
         created_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (file_id, model_key)
       );
-      -- 频道附件（file_id = 'att:<附件 id>'）的描述跟着附件走：附件被删（撤回、清理、频道或用户删除的级联）
-      -- 描述（含 OCR 文字）一起删。这张表不归 drizzle 管，外键也在这里建；attachments 表不在（只建了
-      -- 这几张表的测试库）就先不建，下次开机再补。
       ALTER TABLE chisabot_image_descriptions ADD COLUMN IF NOT EXISTS attachment_id uuid;
       CREATE INDEX IF NOT EXISTS chisabot_image_descriptions_attachment_idx ON chisabot_image_descriptions (attachment_id) WHERE attachment_id IS NOT NULL;
+    `);
+    await linkAttachments(true);
+  }
+
+  /** attachments 表已在、外键和回填都做过了（进程内记一下，免得每次写缓存都查）。 */
+  let attachmentsLinked = false;
+
+  /**
+   * 频道附件（file_id = 'att:<附件 id>'）的描述跟着附件走：附件被删（撤回、清理、频道或用户删除的级联）
+   * 描述（含 OCR 文字）一起删。这张表不归 drizzle 管，外键在这里建。幂等，每次 ensure 都跑；
+   * attachments 表还不在（先建了描述表）时什么都不做，等写第一条频道附件描述前再补一次。
+   * - 外键 attachment_id → attachments(id) ON DELETE CASCADE（已经有就跳过）。
+   * - 回填：加列之前存的 att: 行 attachment_id 为空，按键解析出附件 id 补上——只补为空的行、只补 attachments 里还在的
+   *   （比较走文本，不对任意 file_id 做 uuid 转换）；附件已经没了的旧行直接删掉，它的 OCR 文字本该随附件一起删。
+   */
+  async function linkAttachments(force = false): Promise<boolean> {
+    if (attachmentsLinked && !force) return true;
+    await sql.unsafe(`
       DO $$
       BEGIN
         IF to_regclass('attachments') IS NOT NULL AND NOT EXISTS (
-          SELECT 1 FROM pg_constraint WHERE conname = 'chisabot_image_descriptions_attachment_fk'
+          SELECT 1 FROM pg_constraint WHERE conname = 'chisabot_image_descriptions_attachment_fk' AND conrelid = 'chisabot_image_descriptions'::regclass
         ) THEN
           ALTER TABLE chisabot_image_descriptions
             ADD CONSTRAINT chisabot_image_descriptions_attachment_fk
             FOREIGN KEY (attachment_id) REFERENCES attachments(id) ON DELETE CASCADE;
         END IF;
+        IF to_regclass('attachments') IS NOT NULL THEN
+          EXECUTE $q$
+            UPDATE chisabot_image_descriptions d SET attachment_id = a.id
+              FROM attachments a
+             WHERE d.attachment_id IS NULL AND d.file_id LIKE 'att:%' AND a.id::text = lower(substring(d.file_id FROM 5))
+          $q$;
+          EXECUTE $q$
+            DELETE FROM chisabot_image_descriptions d
+             WHERE d.attachment_id IS NULL AND d.file_id LIKE 'att:%'
+               AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.id::text = lower(substring(d.file_id FROM 5)))
+          $q$;
+        END IF;
       EXCEPTION WHEN duplicate_object THEN NULL;
       END $$;
     `);
+    const rows = await sql.unsafe<{ linked: boolean }[]>(
+      "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chisabot_image_descriptions_attachment_fk' AND conrelid = 'chisabot_image_descriptions'::regclass) AS linked",
+    );
+    attachmentsLinked = rows[0]?.linked === true;
+    return attachmentsLinked;
   }
 
   // ------------------------------------------------------------------ 管理员的生图默认（§56 原表）
@@ -563,6 +595,8 @@ export function createMediaModels(
       const text = await askVisionModel(config, image, DESCRIBE_PROMPT, { fetch: doFetch });
       const attachmentId = ATTACHMENT_CACHE_ID.exec(fileId)?.[1] ?? null;
       try {
+        // 开机时 attachments 还没建好的话，外键没加上：写频道附件描述前补一次（幂等）。
+        if (attachmentId && !attachmentsLinked) await linkAttachments();
         await sql.unsafe(
           `INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text, attachment_id) VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (file_id, model_key) DO UPDATE SET text = $4, created_at = now()`,
@@ -676,6 +710,7 @@ export function createMediaModels(
 
   return {
     ensure,
+    linkAttachments,
     imageDefaultView,
     imageDefaultConfig,
     saveImageDefault,
