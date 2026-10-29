@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
 
@@ -13,10 +13,25 @@ const gateway = readFileSync(
   "utf8",
 );
 
+const windows: Window[] = [];
+afterEach(async () => {
+  // The gateway starts a 45 s session poll; close each page so its timers do not outlive the test.
+  for (const window of windows.splice(0)) await window.happyDOM.close();
+});
+
+/**
+ * Runs the gateway script against a page holding `body`.
+ *
+ * happy-dom 20+ no longer evaluates scripts by default, and under Bun its VM context never gains an
+ * `eval` even when evaluation is switched on, so `window.eval(script)` threw for every case here.
+ * The script only reaches the page through `window` and `document` (it is an IIFE written for a
+ * browser), so it is run as a function of exactly those two. It is a file from this repository.
+ */
 function mountWith(script: string, body: string) {
   const window = new Window({ url: "https://chisa.example/" });
+  windows.push(window);
   window.document.body.innerHTML = body;
-  window.eval(script);
+  new Function("window", "document", script)(window, window.document);
   return window.document;
 }
 

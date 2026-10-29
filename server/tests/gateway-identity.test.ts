@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import { Hono } from "hono";
 import { signIdentity } from "../../deploy/public/auth/server";
 import {
   createGatewayRequireUser,
+  GatewayReplayCache,
   gatewaySecretFromEnvironment,
+  isReplayedGatewayIdentity,
   LOCAL_CALLER_HEADER,
   localCallerAuthorized,
   resolveGatewayRequest,
@@ -16,13 +19,77 @@ import type { AppVariables, AuthenticatedActor } from "../src/auth/guards";
 // 多账号（CB-040）：登录网关签名的身份头。
 const secret = "unit-test-secret-0123456789abcdef-xyz";
 
+/** 升级前网关的旧格式（没有 j）。 */
+function legacyHeader(now: number): string {
+  const body = `v1.${Buffer.from(JSON.stringify({ u: "u_abcdefghijkl", n: "x", r: "user", t: now })).toString("base64url")}`;
+  return `${body}.${createHmac("sha256", secret).update(body).digest("base64url")}`;
+}
+const withIdentity = (header: string) => new Headers({ "x-chisabot-identity": header, "x-forwarded-for": "203.0.113.9" });
+
+describe("gateway identity replay (audit #5)", () => {
+  const now = 1_700_000_000_000;
+  test("first use passes, the same header again is a replay", () => {
+    const cache = new GatewayReplayCache();
+    const header = signIdentity(secret, { id: "u_abcdefghijkl", name: "x", role: "user" }, now);
+    expect(isReplayedGatewayIdentity(secret, withIdentity(header), cache, now)).toBe(false);
+    expect(isReplayedGatewayIdentity(secret, withIdentity(header), cache, now + 1_000)).toBe(true);
+    // 同一个人的下一个请求是新签的头，照常通过。
+    const next = signIdentity(secret, { id: "u_abcdefghijkl", name: "x", role: "user" }, now);
+    expect(isReplayedGatewayIdentity(secret, withIdentity(next), cache, now + 1_000)).toBe(false);
+  });
+  test("an expired header is refused by verification, not remembered", () => {
+    const cache = new GatewayReplayCache();
+    const header = signIdentity(secret, { id: "u_abcdefghijkl", name: "x", role: "user" }, now);
+    const later = now + 2 * 60_000 + 1;
+    expect(isReplayedGatewayIdentity(secret, withIdentity(header), cache, later)).toBe(false);
+    expect(cache.size).toBe(0);
+    expect(resolveGatewayRequest(secret, withIdentity(header), later).kind).toBe("refuse");
+  });
+  test("legacy headers without a nonce stay accepted (rolling upgrade)", () => {
+    const cache = new GatewayReplayCache();
+    const header = legacyHeader(now);
+    expect(isReplayedGatewayIdentity(secret, withIdentity(header), cache, now)).toBe(false);
+    expect(isReplayedGatewayIdentity(secret, withIdentity(header), cache, now)).toBe(false);
+    expect(resolveGatewayRequest(secret, withIdentity(header), now).kind).toBe("actor");
+  });
+  test("invalid or missing headers are left to resolveGatewayRequest", () => {
+    const cache = new GatewayReplayCache();
+    expect(isReplayedGatewayIdentity(secret, new Headers(), cache, now)).toBe(false);
+    expect(isReplayedGatewayIdentity(secret, withIdentity("garbage"), cache, now)).toBe(false);
+    expect(cache.size).toBe(0);
+  });
+  test("cleanup: expired entries are swept and capacity is capped", () => {
+    const cache = new GatewayReplayCache(3);
+    expect(cache.consume("a", now + 10, now)).toBe(true);
+    expect(cache.consume("b", now + 10, now)).toBe(true);
+    expect(cache.consume("c", now + 1_000, now)).toBe(true);
+    expect(cache.consume("a", now + 10, now + 5)).toBe(false);
+    // 满了：先清过期（a、b），c 还在。
+    expect(cache.consume("d", now + 1_000, now + 20)).toBe(true);
+    expect(cache.size).toBe(2);
+    expect(cache.consume("c", now + 1_000, now + 20)).toBe(false);
+    // 过期后同一个键可再记（verify 早已拒绝过期头，这里只验证不会永远占着）。
+    expect(cache.consume("a", now + 1_000, now + 20)).toBe(true);
+    // 都没过期还满：丢最早的，不超过上限。
+    expect(cache.consume("e", now + 1_000, now + 20)).toBe(true);
+    expect(cache.size).toBe(3);
+    expect(cache.consume("c", now + 1_000, now + 20)).toBe(true);
+    cache.sweep(now + 2_000);
+    expect(cache.size).toBe(0);
+  });
+});
+
 describe("gateway identity signing", () => {
   test("app and gateway implementations agree", () => {
     const now = 1_700_000_000_000;
     const fromGateway = signIdentity(secret, { id: "u_abcdefghijkl", name: "小明", role: "user" }, now);
-    expect(verifyGatewayIdentity(secret, fromGateway, now)).toEqual({ id: "u_abcdefghijkl", name: "小明", role: "user", issuedAt: now });
+    const want = { id: "u_abcdefghijkl", name: "小明", role: "user", issuedAt: now, nonce: expect.any(String) };
+    expect(verifyGatewayIdentity(secret, fromGateway, now)).toEqual(want);
     const fromApp = signGatewayIdentity(secret, { id: "u_abcdefghijkl", name: "小明", role: "user" }, now);
-    expect(fromApp).toBe(fromGateway);
+    expect(verifyGatewayIdentity(secret, fromApp, now)).toEqual(want);
+    // 每次签名都带新的一次性随机数（审计 #5），同一毫秒签两次也不相同。
+    expect(fromApp).not.toBe(fromGateway);
+    expect(signIdentity(secret, { id: "u_abcdefghijkl", name: "小明", role: "user" }, now)).not.toBe(fromGateway);
   });
   test("rejects tampering, wrong secret, expiry, bad fields", () => {
     const now = 1_700_000_000_000;

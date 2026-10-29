@@ -439,10 +439,17 @@ export function wakeControl(computerId?: string) {
   }
   else for (const store of stores.values()) store.wake();
 }
-let wakeListening = false;
+/*
+ * 记住接上监听时的是哪个页面（window.document），而不是一个布尔值：浏览器里页面不会换，两者等价；但测试里
+ * 每个文件都会用 GlobalRegistrator 换一个新的 happy-dom 窗口——它把新窗口的成员拷到同一个 globalThis 上，
+ * 所以 window 本身看起来没变，addEventListener 和 document 却换成了新窗口的。只记布尔值，监听就永远挂在
+ * 第一个文件的旧窗口上，后面的文件派发 focus / online 叫不醒任何 store（test:app 共享进程里
+ * control-poll-single-source 因此失败）。
+ */
+let wakeDocument: Document | undefined;
 function listenForWake() {
-  if (wakeListening || typeof window === "undefined") return;
-  wakeListening = true;
+  if (typeof window === "undefined" || wakeDocument === window.document) return;
+  wakeDocument = window.document;
   window.addEventListener("focus", () => wakeControl());
   window.addEventListener("online", () => wakeControl());
   // CB-107：关页面时主动放下主标签身份，心跳模式下别的标签不用等 3 秒。
