@@ -3,9 +3,6 @@ import type { Streamdown as StreamdownComponent } from "streamdown";
 import { lazyPart } from "@/components/ui/lazy-part";
 import { cjkFriendlyEmphasis } from "@/lib/chat/cjk-emphasis";
 import { workspaceLinks } from "@/lib/chat/workspace-links";
-import { useDeclaredBotId } from "@/lib/copilot/active-bot";
-import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
-import { useSmoothText } from "@/lib/chat/use-smooth-text";
 import { useEffect, useRef, useState } from "react";
 import {
   type BlockParser,
@@ -13,6 +10,9 @@ import {
   loadedFullBlockParser,
   loadFullBlockParser,
 } from "@/lib/chat/incremental-blocks";
+import { useDeclaredBotId } from "@/lib/copilot/active-bot";
+import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
+import { useSmoothText } from "@/lib/chat/use-smooth-text";
 
 type StreamdownProps = ComponentProps<typeof StreamdownComponent>;
 
@@ -36,10 +36,7 @@ const Streamdown = lazyPart<StreamdownProps>(
  * Streamdown 本身就是给流式写的（未闭合的 ** / ``` 先补上），这里只是把喂给它的文字变匀。
  * 历史消息挂载时整段显示；只有挂载之后继续变长的内容才放字。
  */
-export function SmoothStreamdown({
-  children,
-  ...props
-}: Omit<StreamdownProps, "children"> & { children: string }) {
+export function SmoothStreamdown({ children, ...props }: Omit<StreamdownProps, "children"> & { children: string }) {
   const shown = useSmoothText(children ?? "");
   // 工作区文件链接换成这个机器人的下载地址（§101）；在看的就是这个机器人的对话。
   const bot = useDeclaredBotId();
