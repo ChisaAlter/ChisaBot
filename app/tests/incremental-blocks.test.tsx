@@ -181,7 +181,8 @@ test("rendered HTML is identical to the default block parser at every streaming 
     expect(view.getByTestId("b").innerHTML).toBe(view.getByTestId("a").innerHTML);
   }
   expect(view.getByTestId("b").textContent?.length ?? 0).toBeGreaterThan(100);
-});
+  // 每步渲染两份 Streamdown，慢机器上会超过默认的 5 秒。
+}, 30_000);
 /*
  * 固定种子的 fuzz 对比（审查 #415）：随机拼容易改写前面块的片段，按随机长度流进来，每一步都和整段重切对比。
  * CI 里跑 600 篇（约一万步）；本地用 tests/markdown-fuzz.ts 跑过 20 万篇、0 个不一致。

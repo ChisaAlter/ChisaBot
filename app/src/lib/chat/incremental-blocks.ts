@@ -59,7 +59,9 @@ export function createIncrementalBlockParser(full: BlockParser): BlockParser {
     let reuse = stableText.length > 0 && markdown.startsWith(stableText);
     if (reuse && unsafeText(markdown.slice(stableText.length))) reuse = false;
     if (!reuse) reset();
-    const blocks = reuse ? stable.concat(full(markdown.slice(stableText.length))) : full(markdown);
+    const blocks = reuse
+      ? stable.concat(full(markdown.slice(stableText.length)))
+      : full(markdown);
     if (!reuse && unsafeText(markdown)) return blocks;
 
     // 从后往前找最靠后的封口切点（只看 stable 之后新出现的块）。
