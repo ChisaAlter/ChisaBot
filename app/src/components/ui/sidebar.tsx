@@ -74,7 +74,11 @@ function useOptionalSidebar() {
 function useCloseMobileDrawer() {
   const sidebar = useOptionalSidebar();
   return React.useCallback(() => {
-    if (sidebar?.isMobile && sidebar.openMobile) sidebar.setOpenMobile(false);
+    if (!(sidebar?.isMobile && sidebar.openMobile)) return;
+    // 推迟一拍再关：路由的 history.push 在微任务里才落地。同一事件里就关的话，抽屉的
+    // useBackDismiss 清理会看到标记记录还在最上面并 history.back()，把刚点的导航退掉。
+    const { setOpenMobile } = sidebar;
+    window.setTimeout(() => setOpenMobile(false), 0);
   }, [sidebar]);
 }
 

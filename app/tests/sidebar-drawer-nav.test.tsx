@@ -4,6 +4,7 @@ import path from "node:path";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  createBrowserHistory,
   createMemoryHistory,
   createRootRoute,
   createRouter,
@@ -36,7 +37,7 @@ let originalMatchMedia: typeof window.matchMedia;
 const clients: QueryClient[] = [];
 
 beforeAll(() => {
-  GlobalRegistrator.register();
+  GlobalRegistrator.register({ url: "http://localhost/" });
   originalMatchMedia = window.matchMedia;
   window.matchMedia = ((query: string) => ({
     matches: true,
@@ -75,7 +76,7 @@ function State() {
   );
 }
 
-async function renderInDrawer(children: ReactNode) {
+async function renderInDrawer(children: ReactNode, browser = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -90,7 +91,9 @@ async function renderInDrawer(children: ReactNode) {
   });
   const router = createRouter({
     routeTree: rootRoute,
-    history: createMemoryHistory({ initialEntries: ["/"] }),
+    history: browser
+      ? createBrowserHistory()
+      : createMemoryHistory({ initialEntries: ["/"] }),
   });
   const view = render(
     <QueryClientProvider client={queryClient}>
@@ -130,6 +133,49 @@ test("M3-1：点抽屉里的会话行（搜索结果里的本地命中）：进�
     expect(view.getByTestId("drawer").textContent).toBe("closed"),
   );
   expect(router.state.location.pathname).toBe("/channel/c-42");
+});
+
+test("M3-1：手机网页（抽屉压着返回记录）点会话行，导航不会被抽屉的 history.back() 退掉", async () => {
+  // 抽屉打开时 useBackDismiss 压一条标记记录；路由的 push 在微任务里才落地。同一事件里就关抽屉，
+  // 清理时标记还在最上面，history.back() 会把刚点的导航退回去（截图里点了没反应）。
+  document.documentElement.setAttribute("data-phone", "");
+  window.history.replaceState(null, "", "/");
+  try {
+    const { view, router } = await renderInDrawer(
+      <Channel
+        busy={false}
+        channelId="c-77"
+        emphasis="thread"
+        name="助手"
+        participantIds={["bot-a"]}
+        pinned={false}
+        summary="周报"
+        unread={false}
+      />,
+      true,
+    );
+    // 等抽屉把标记记录压进去。
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(
+      (window.history.state as { __cbOverlay?: number } | null)?.__cbOverlay,
+    ).toBeDefined();
+    await act(async () => {
+      fireEvent.click(view.getByRole("link"), { button: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    await waitFor(() =>
+      expect(view.getByTestId("drawer").textContent).toBe("closed"),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(window.location.pathname).toBe("/channel/c-77");
+    expect(router.state.location.pathname).toBe("/channel/c-77");
+  } finally {
+    document.documentElement.removeAttribute("data-phone");
+  }
 });
 
 test("M3-11：机器人菜单的「新话题」做完回调 onDone（抽屉里用它收起抽屉）", async () => {
