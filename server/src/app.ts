@@ -117,6 +117,7 @@ import {
   InstructionsTooLongError,
   type UserInstructionsStore,
 } from "./user-instructions";
+import { threadMessagesDelta } from "./thread-messages-delta";
 import type { UserPreferencesStore } from "./user-preferences";
 import { userPreferencesRoutes } from "./user-preferences-routes";
 
@@ -1020,6 +1021,8 @@ export function createApp(
     // no-transform 让 CDN / 代理不去 gzip 它（gzip 会攒够一块才发，回复就一段一段地蹦）。
     // 自带网关已经关了缓冲；这两个头是给别人自己部署时前面再套一层代理用的（docs/streaming.md）。
     app.use("/api/copilotkit/*", markEventStreamUnbuffered);
+    // 读对话记录带 since/cursor 时只回变化（不带参数的旧客户端原样拿整份）；本地后端和 Intelligence 两条路都过这一层。
+    app.use("/api/copilotkit/*", threadMessagesDelta);
     if (config.runtime.mode === "local") {
       if (!localBackend)
         throw new Error("The local conversation backend is required.");

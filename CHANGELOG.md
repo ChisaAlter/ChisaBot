@@ -10,6 +10,86 @@
 - `bun audit`：2 critical / 39 high → 0 critical / 9 high；剩余需大版本升级，未升，见 docs/DEVLOG.md。
 - 新增 `.github/dependabot.yml`：bun（根、agent-computer）、npm（pc）、github-actions，每周一次，限 PR 数，小版本 / 补丁分组。
 
+## 0.1.106 — 2026-10-29
+
+这一版合并 1 个 PR：机器人聊天页对话记录增量同步 + 卡片共享时钟（性能清单第 5 项，#370）。只升级服务器版本号（根、`app`、`server` 为 `0.1.106`），PC / Android 外壳未变；没有表结构变化。
+
+### 对话记录增量同步 + 卡片共享时钟（#370）
+
+这一版把机器人聊天页同步服务器对话记录改成增量的（性能清单第 5 项）：`GET /api/copilotkit/threads/:id/messages` 新增可选的 `since` / `cursor` 参数，没变化只回 `unchanged`、变了只回尾部，界面实际读对话记录的两条路径——频道聊天页恢复 / 刷新历史（`readThreadMessages`：挂载、重试、Bot 在别处说话后的拉取、发送看门狗、断线补齐、转录缓存）和每轮结束后的对话顺序核对（`useConversationSync`）——都改成带 `since` / `cursor` 增量读：600 条对话没变化时一次读从约 530 KB 降到 83 B、新增一条约 3 KB，没变化时直接复用上次结果、不触发 `setMessages`；编辑 / 删除 / 读失败 / 旧服务器照旧整份。`useThreadInbox` 的服务器轮询也改成增量（界面目前未启用该轮询）。不带参数的旧客户端响应不变。干活 / 后台任务 / 本机代理卡片的每秒计时器合并成一个共享时钟（无订阅者时停），其测试在共享进程里先还原真定时器和时钟。没有表结构变化，没有升版本号。
+
+## 0.1.105 — 2026-10-29
+
+这一版合并 4 个 PR：修 `test:app` 测试互相干扰与过时测试（#368）、CI 补 Biome 新增问题检查 / 完整 `test:app` / pc/ 安装构建（#366）、nginx 只信任 Cloudflare 给的真实 IP + 网关身份头防重放（审计 #5，#372）、Service Worker 关掉 navigation preload 修登录 `state_mismatch`（#373）。只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变；没有表结构变化。#372 改了 `deploy/public/nginx.conf`，网关 nginx 配置随这次部署一起更新。
+
+### 测试隔离（#368）
+
+修 `bun run test:app` 的测试互相干扰和几个过时的测试（审查清单第 3 项第二部分）：电脑控制在换页面后重新挂上 focus/online 监听；日程测试不再用进程级的 `mock.module` 替换 `@/lib/client`；更新 5 个与现行行为不符的 server 测试。server 补声明测试直接用到的 `@copilotkit/core`；CI 里 chisabot-node 打包失败改为让构建失败。schedule-fired 的 `Link` 替身有路由时交给真 `Link`、没有路由才按 params 填路径参数，移出隔离名单；avatar-picker-shape 拆 happy-dom 前先等 React 排队的工作跑完，不再报 Unhandled error，`test:app` 退出码恢复 0。不改版本号。
+
+### CI 门禁（#366）
+
+- CI 门禁加固：`scripts/biome-new-issues.ts` 在 Biome 自身出错（退出码非 0 且没有可解析的 JSON，例如 biome.json 写坏）时一律失败；改用 `process.exitCode`、正常返回，确保 `biome-base-*` 临时目录被清理；用法注释与 workflow 实际传的基线一致；新增 `scripts/biome-new-issues.test.ts`。修默认 `error` 输出自己调自己（有新增问题或 Biome 出错、又没传回调时——CI 正是这样调用——脚本卡死），找不到 Biome / git 可执行文件改为退出 2。
+
+CI 补三道检查（审查清单第 3 项）：Biome 只拦改动文件里新增的诊断（全仓存量不拦，`scripts/biome-new-issues.ts`）；完整跑一遍 `bun run test:app`；pc/ 作为独立 npm 项目单独安装并打出 chisabot-node 无头包、校验 `--version`。不改版本号。
+
+### 安全：nginx 真实 IP + 网关身份头防重放（审计 #5，#372）
+
+- 安全（审计 #5）：公网 nginx 只信任 Cloudflare 官方网段给的 `CF-Connecting-IP`（`real_ip_header` + `set_real_ip_from`），`limit_req`、日志和 `X-ChisaBot-Client` / `X-Forwarded-For` 改按真实客户端 IP；网关身份头 `X-ChisaBot-Identity` 加一次性随机数 `j`，应用在 ±2 分钟有效期内只认一次，重放返回 401（去重缓存 TTL = 有效期、上限 10 万条）；nginx 每个转发都清掉客户端自带的 `CF-Connecting-IP`、把 `X-Real-IP` 设为真实 IP，IM OneBot 失败限速和设备令牌限速共用同一个取 IP 函数（`gatewayClientIp`），伪造头绕不过限速。未升级版本号。
+
+### 修复：登录 state_mismatch（#373）
+
+- 修复：开着 Service Worker 时 Chrome 登录最后落到 `/api/auth/error?error=state_mismatch`（会话其实已写入）。sw.js 不再开 navigation preload，激活时显式关掉（`SW_VERSION` 3）；`/api`、`/auth` 下的导航照旧不拦、只由浏览器发一次。未升级版本号。
+  - 一次性过渡窗口：部署后，没刷新过的旧页面直接登录，或者刷新后在新 Service Worker 接管之前就登录，这一次仍由旧的 v2 Service Worker（开着 navigation preload）处理，可能还会出现一次 `state_mismatch`，再登录一次就好。新 SW 接管时间按代码算：页面 `load` 后用 `requestIdleCallback` 注册（超时 5 秒；浏览器不支持时固定 2 秒），再加上下载、安装 sw.js 的时间，`skipWaiting` + `clients.claim` 后立即生效，所以大约是刷新后 5 秒以内。之后不会再出现。
+
+## 0.1.104 — 2026-10-29
+
+这一版合并 5 个 PR：修复干净安装下缺声明的依赖（#365）、出口过滤代理按 Bot 独立鉴权（审计 H1 / L1，#364）、界面渲染性能预算（#363）、安装版 `/api` 代理不再转发失效的 `Content-Encoding`（#367）、Hark 改版第 1 步令牌层（#369）。只升级服务器版本号（根、`app`、`server` 为 `0.1.104`），PC / Android 外壳未变；没有表结构变化。
+
+### 修复（#365）
+
+- 根 `package.json` 补声明 `@json-render/core` / `@json-render/react`（0.21.0，与 app/server 及 lockfile 一致）。`shared/json-render` 不属于任何 workspace，在 Bun 默认的隔离 linker 下只能从根 `node_modules` 解析依赖；此前根未声明，导致干净安装后 server/app 的 typecheck 与 build 报 `Cannot find module '@json-render/core'`，只能靠 `--linker hoisted` 绕过。
+- `app/package.json` 的 devDependencies 补声明 `@ag-ui/client`（1.0.1）、`rxjs`（7.8.1）、`esbuild`（0.28.2），版本均与 lockfile 中已解析的一致。app 的测试直接引用前两者，`vite.config.ts` 构建时动态 `import("esbuild")` 打包 pc headless 脚本；隔离 linker 下它们原本解析不到，导致 app typecheck 失败，esbuild 那一步也会被 try/catch 静默跳过。
+- `bun.lock` 只在 workspace 声明区增加上述条目，没有新增或变更任何包解析结果。
+
+### 安全：出口过滤代理按 Bot 独立鉴权（审计 H1 / L1，#364）
+
+- **每个 Bot 独立的代理密钥（`agent-computer/src/egress.ts`）**：代理凭据改为 HMAC-SHA256(进程内随机主密钥, botId)，浏览器与 shell 都只拿本 Bot 的派生密钥；校验为定长摘要 + `timingSafeEqual`。
+- **拒绝伪造凭据**：带了 botId 但密码为空、错误、或用 A 的密钥冒充 B，一律 403，不再降级。
+- **无凭据连接走独立兜底**：不按任何 Bot 判定、不读任何 Bot 放行名单、不用 Bot 的上游代理，只放行默认软件源；本机任一 Bot 为 `allowlist_only` / `deny_all` 时拒绝；记节流日志 `EGRESS_ANONYMOUS`（只记来源与目标）。
+- **硬拒绝网段**新增 `0.0.0.0/8` 与 `100.64.0.0/10`。
+- **命令补传 botId**：服务器 `runCommand` 在 `/exec` body 中带 `botId`；电脑 `/exec` 缺省时回退到 `x-chisabot-bot-id` 请求头。
+- 无需新增环境变量；电脑进程重启后旧代理凭据失效。
+
+### 渲染预算（#363）
+
+这组改动只做渲染性能，不改布局和配色：性能审计实测，主界面卡顿主要来自三处——同屏 14 层毛玻璃（全文档 91 个元素带 `backdrop-filter`，气泡、按钮、胶囊、滚动区里的卡片都在模糊）、WebGL 天空在空闲时也按满帧满分辨率重画（还开着 `preserveDrawingBuffer`）、以及 `background-position` / `box-shadow` 驱动的无限循环动画。这里把毛玻璃收到预算内、让天空默认只画一张快照、无限动画只动 `transform` / `opacity`，并加上性能模式的状态开关。外观设置页、壁纸上传和 `wallpaper_core.html` 都没有动。
+
+- **毛玻璃预算（`styles.css`）**：
+  - 大面板（左栏、右栏、输入框、顶栏、抽屉 / 对话框）统一 20px，弹层（菜单、选择框、浮层、提示）12px，任何地方都不超过 30px（`--glass-blur`、新增 `--glass-pop-filter`、`--blur-2/3` 改为 20 / 24px）。
+  - 气泡、按钮、胶囊、对话里的卡片、设置页卡片、右栏里的小卡片、全屏遮罩不再模糊；旧的「三档玻璃材质」`!important` 层不改，也不新增 `!important`，只在这些元素自己身上把 `--lg-blur` 设成 `none`。
+  - 正在做宽度动画的详情面板不再模糊，底色加厚代替。
+  - 滚动区的渐隐遮罩（`scroll-fade-b`、右栏滚动区、横向卡片轨道）去掉。
+  - 主界面同屏可见的模糊层：桌面 14 → 4，手机 10 → 1。
+- **无限循环动画只动 `transform` / `opacity`**：工具行扫光、模型胶囊闪光、骨架闪光、保存提示、设备在线点、推理文字闪光等 10 个关键帧改为透明度呼吸；页面看不见时暂停所有无限动画（`lib/perf-mode.ts`）。
+- **天空（`sky-background.tsx`）**：引擎拿到的 `requestAnimationFrame` 由宿主限到 15fps，画布按 0.6 倍分辨率绘制；默认（精选场景）只在启动、换场景、改窗口大小时醒来，换场景的交叉渐变（引擎 2.5s）画完才停在最后一帧，天气数据晚到时再醒一次把后续渐变画完；改窗口大小、从后台回来、从壁纸 / 性能模式切回天空时当帧立即重画，不会露出被清空的灰底；「背景随时间变化」时也只在页面可见、窗口有焦点且 2.5s 内有操作时才跑；设了壁纸或开了性能模式不启动引擎；不再强制 `preserveDrawingBuffer`；系统「减少动态效果」时退回快照。
+- **性能模式与系统偏好**：新增 `chisabot.perf-mode` 状态（`<html data-perf="on">`），开启后所有毛玻璃关闭、大面板换成接近不透明的底色、天空不启动；系统「减少透明度」走同一套样式。设置入口留到后续 PR。
+- **外观偏好只写改动过的键（`appearance.ts`）**：拖一下滑块不再把 8 个键（包括自定义壁纸的 data URL）全部重写一遍。
+- **测试**：新增 `app/tests/render-budget.test.ts`，静态检查模糊半径、会模糊的选择器白名单、小元素关闭旧玻璃层、无限动画属性与滚动遮罩。
+
+### 修复：安装版 `/api` 代理不再转发失效的 `Content-Encoding`（#367）
+
+- **`app/serve.ts`**：Bun 的 `fetch` 已自动解压上游 gzip 响应，但代理原样转发了 `Content-Encoding: gzip` 和压缩时的 `Content-Length`，浏览器再解压一次就报 `ERR_CONTENT_DECODING_FAILED`，安装版 PC 客户端 `/api/me` 加载失败。现在转发前删掉 `content-encoding`、`content-length` 及逐跳头（`transfer-encoding`、`connection` 及其列出的头、`keep-alive` 等），其他头照常转发，多个 `Set-Cookie` 逐条保留。
+- 新增测试：gzip 上游经代理后客户端可正常解析 JSON、不带 gzip 编码头、多值 `Set-Cookie` 保留。
+
+### Hark 令牌（Hark 改版第 1 步，见 `docs/rfc/hark-redesign.md`，#369）
+
+- **设计令牌（`styles.css` 开头）**：新增 `html:root` / `html.dark` 两套 Hark 令牌——文字基色 `--text` 加两档透明度（次要 `.5`、三级 `.3`，由 `color-mix` 算出 `--text-secondary` / `--text-tertiary`）、底色（`--regular-bg`、`--thin-bg`、`--composer-bg`、`--cell-bg`、气泡底色）、描边、强调色 `--accent-color`、状态色、圆角 `--r-*`、字号 `--fs-*`、行高、阴影 `--elev-*`、动效时长和默认静态壁纸渐变。选择器特异度 (0,1,1)，压过后面各层的同名令牌，不用 `!important`。
+- **字体**：`--font` 改为 Inter Variable 打头（`@fontsource-variable/inter` 早已引入），中文仍回落到系统黑体。
+- **唯一玻璃材质 `.glass`**（文件末尾，含 `.is-pop` 弹层、`.is-flat` 不叠模糊）：这一步只定义，还没有组件使用，第 2–4 步换上。
+- **玻璃令牌拆分**：`--glass-blur` 从完整滤镜改为半径（20px），新增 `--glass-pop-blur`（12px）、`--glass-saturate`（160%），`backdrop-filter` 统一读 `--glass-filter` / `--glass-pop-filter`；数值与渲染预算相同，性能模式和「减少透明度」改为关掉 `--glass-filter`。
+- **测试**：`render-budget.test.ts` 改读新令牌名（面板 20px、弹层 12px、饱和度 160–180%、文字透明度 .5 / .3），会模糊的选择器白名单加上 `.glass` / `.glass.is-pop`。
+- 外观上的变化（拉丁字母和数字换成 Inter、次要文字稍淡）见 `docs/images/hark-tokens/` 的前后截图；布局不变，同屏可见模糊层不变（桌面 4、手机 1）。外观设置页、壁纸上传、`wallpaper_core.html`、`bot-bubbles.tsx` 都没有动，没有升版本号。
+
 ## 0.1.103 — 2026-10-29
 
 这一版修复聊天 SVG 卡片的存储型 XSS（审查 S1，#362）：SVG 卡片和 Mermaid 卡片改用 DOMPurify（SVG profile）清洗，SVG 卡片改成 `<img>` 渲染，`/onerror`、`onbegin` 等写法不再能执行脚本；主应用同时加上 CSP（Report-Only，先只上报不拦截，便于观察后再收紧）。只改服务器 + 网页，没有表结构变化；PC / Android 客户端外壳未变，版本号仍为 0.1.100。

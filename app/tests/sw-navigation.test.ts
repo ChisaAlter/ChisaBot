@@ -37,7 +37,11 @@ function fakeClock() {
   };
 }
 
-function loadSw(opts: { onLine?: boolean; fetch?: () => Promise<Response> }) {
+function loadSw(opts: {
+  onLine?: boolean;
+  fetch?: () => Promise<Response>;
+  registration?: Record<string, unknown>;
+}) {
   const clock = fakeClock();
   const listeners: Record<string, (e: unknown) => void> = {};
   const self = {
@@ -46,7 +50,9 @@ function loadSw(opts: { onLine?: boolean; fetch?: () => Promise<Response> }) {
     },
     location: { origin: "https://bot.example" },
     navigator: { onLine: opts.onLine ?? true },
-    registration: {},
+    registration: opts.registration ?? {},
+    skipWaiting: () => {},
+    clients: { claim: async () => {} },
   };
   const sandbox = {
     self,
@@ -66,6 +72,35 @@ function loadSw(opts: { onLine?: boolean; fetch?: () => Promise<Response> }) {
     `${source}\n;({ retryMain, RETRY_DELAYS_MS, RETRY_STATUSES: [...RETRY_STATUSES] })`,
     sandbox,
   );
+  /** 派发一个导航 fetch 事件；返回 respondWith 拿到的 Promise（没调用就是 undefined）。 */
+  function dispatchNavigate(
+    path: string,
+    preloadResponse: Promise<Response | undefined> = Promise.resolve(undefined),
+  ) {
+    let responded: Promise<Response> | undefined;
+    listeners.fetch?.({
+      request: {
+        method: "GET",
+        url: `https://bot.example${path}`,
+        mode: "navigate",
+        headers: new Headers(),
+      },
+      preloadResponse,
+      respondWith: (p: Promise<Response>) => {
+        responded = p;
+      },
+    });
+    return responded;
+  }
+  async function activate() {
+    let done: Promise<unknown> = Promise.resolve();
+    listeners.activate?.({
+      waitUntil: (p: Promise<unknown>) => {
+        done = p;
+      },
+    });
+    await done;
+  }
   async function navigate(path = "/chat/abc") {
     let responded: Promise<Response> | undefined;
     listeners.fetch?.({
@@ -83,7 +118,7 @@ function loadSw(opts: { onLine?: boolean; fetch?: () => Promise<Response> }) {
     if (!responded) throw new Error("not intercepted");
     return responded;
   }
-  return { ctx, clock, navigate, self };
+  return { ctx, clock, navigate, dispatchNavigate, activate, self };
 }
 
 async function kindOf(res: Response) {
@@ -165,6 +200,77 @@ describe("sw.js 导航失败", () => {
     const got: number[] = [...sw.ctx.RETRY_DELAYS_MS];
     expect(got).toEqual([1000, 2000, 4000, 8000, 15000, 30000]);
     expect(Math.max(...got)).toBeLessThanOrEqual(30_000);
+  });
+});
+
+describe("sw.js 登录回调只发一次（state_mismatch）", () => {
+  for (const path of [
+    "/api/auth/callback/github?code=c&state=s",
+    "/api/auth/sign-in/social",
+    "/api/auth/error?error=x",
+    "/api/anything",
+    "/auth/callback",
+    "/sign-in",
+  ]) {
+    test(`${path}：导航不拦（不 respondWith），浏览器自己发一次`, () => {
+      let fetches = 0;
+      const sw = loadSw({
+        fetch: async () => {
+          fetches++;
+          return new Response("x");
+        },
+      });
+      expect(sw.dispatchNavigate(path)).toBeUndefined();
+      expect(fetches).toBe(0);
+    });
+  }
+
+  test("激活时关掉 navigation preload（旧版本开过，不关的话不拦的导航会被发两次）", async () => {
+    const calls: string[] = [];
+    const sw = loadSw({
+      registration: {
+        navigationPreload: {
+          enable: async () => {
+            calls.push("enable");
+          },
+          disable: async () => {
+            calls.push("disable");
+          },
+        },
+      },
+    });
+    await sw.activate();
+    expect(calls).toEqual(["disable"]);
+  });
+
+  test("普通页面导航照旧拦截，只 fetch 一次", async () => {
+    let fetches = 0;
+    const sw = loadSw({
+      fetch: async () => {
+        fetches++;
+        return new Response("page", { status: 200 });
+      },
+    });
+    const p = sw.dispatchNavigate("/chat/abc");
+    expect(p).toBeDefined();
+    expect((await p!).status).toBe(200);
+    expect(fetches).toBe(1);
+  });
+
+  test("还有 preload 响应时用它，不再发第二次", async () => {
+    let fetches = 0;
+    const sw = loadSw({
+      fetch: async () => {
+        fetches++;
+        return new Response("net");
+      },
+    });
+    const res = await sw.dispatchNavigate(
+      "/chat/abc",
+      Promise.resolve(new Response("preloaded", { status: 200 })),
+    )!;
+    expect(await res.text()).toBe("preloaded");
+    expect(fetches).toBe(0);
   });
 });
 

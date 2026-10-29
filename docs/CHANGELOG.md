@@ -2,6 +2,33 @@
 
 - 升级严重 / 高危漏洞依赖（better-auth 1.7.14、proxy-addr 2.0.8、MCP SDK 1.32.2、zod 4.6.7、vite 7.3.7、axios、body-parser、fast-uri、follow-redirects、undici 等），`bun audit` 由 2 critical / 39 high 降到 0 / 9；恢复 `.github/dependabot.yml`（每周、分组、限 PR 数）
 
+## 0.1.106
+
+- 对话记录同步改成增量：`…/threads/:id/messages` 支持可选 `since` / `cursor`（没变回 `unchanged`、变了只回尾部，旧客户端不变），界面实际路径（频道聊天页 `readThreadMessages` 的各处读历史、每轮结束后的顺序核对）都带 since/cursor 增量读，600 条对话没变化一次读约 530 KB → 83 B，没变化不 `setMessages`，编辑 / 删除 / 读失败 / 旧服务器照旧整份；三张卡片的每秒计时器合并为共享时钟。（#370）
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.106`），PC / Android 外壳未变。
+
+## 0.1.105
+
+- 修复：开着 Service Worker 时 Chrome 登录最后落到 `/api/auth/error?error=state_mismatch`（会话其实已写入）。sw.js 不再开 navigation preload，激活时显式关掉（`SW_VERSION` 3）；`/api`、`/auth` 下的导航照旧不拦、只由浏览器发一次。未升级版本号（#373）。
+  - 一次性过渡窗口：部署后，没刷新过的旧页面直接登录，或者刷新后在新 Service Worker 接管之前就登录，这一次仍由旧的 v2 Service Worker（开着 navigation preload）处理，可能还会出现一次 `state_mismatch`，再登录一次就好。新 SW 接管时间按代码算：页面 `load` 后用 `requestIdleCallback` 注册（超时 5 秒；浏览器不支持时固定 2 秒），再加上下载、安装 sw.js 的时间，`skipWaiting` + `clients.claim` 后立即生效，所以大约是刷新后 5 秒以内。之后不会再出现。
+
+- 安全（审计 #5）：公网 nginx 只信任 Cloudflare 官方网段给的 `CF-Connecting-IP`（`real_ip_header` + `set_real_ip_from`），`limit_req`、日志和 `X-ChisaBot-Client` / `X-Forwarded-For` 改按真实客户端 IP；网关身份头 `X-ChisaBot-Identity` 加一次性随机数 `j`，应用在 ±2 分钟有效期内只认一次，重放返回 401（去重缓存 TTL = 有效期、上限 10 万条）；nginx 每个转发都清掉客户端自带的 `CF-Connecting-IP`、把 `X-Real-IP` 设为真实 IP，IM OneBot 失败限速和设备令牌限速共用同一个取 IP 函数（`gatewayClientIp`），伪造头绕不过限速。未升级版本号（#372）。
+
+- CI 门禁加固：`scripts/biome-new-issues.ts` 在 Biome 自身出错（退出码非 0 且没有可解析的 JSON，例如 biome.json 写坏）时一律失败；改用 `process.exitCode`、正常返回，确保 `biome-base-*` 临时目录被清理；用法注释与 workflow 实际传的基线一致；新增 `scripts/biome-new-issues.test.ts`。修默认 `error` 输出自己调自己（有新增问题或 Biome 出错、又没传回调时——CI 正是这样调用——脚本卡死），找不到 Biome / git 可执行文件改为退出 2（#366）。
+- CI：新增 Biome「只拦新增问题」检查（`scripts/biome-new-issues.ts`，与基线逐文件按规则比诊断数）、完整 `bun run test:app`、pc/ 独立安装 + chisabot-node 打包检查（审查清单第 3 项）（#366）。
+
+- 修 test:app 共享进程里的测试干扰（use-control 的 wake 监听、schedule-runs-query 的 mock.module 泄漏），修 gateway-account-control / startup-resilience 及 5 个 server 测试；server 补 `@copilotkit/core` 开发依赖；CI 下 chisabot-node 打包失败即构建失败；schedule-fired 的 `Link` 替身不再漏给其他文件（有路由时用真 `Link`），移出隔离名单；avatar-picker-shape 拆 DOM 前先 `settleReactWork`，`test:app` 退出码恢复 0（#368）。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变。
+
+## 0.1.104
+
+- 修复干净安装（默认隔离 linker）下 `shared/json-render` 解析不到 `@json-render/*`、typecheck/build 失败的问题：根 `package.json` 补声明这两个依赖；app 补声明测试与 vite.config 直接用到的 `@ag-ui/client`、`rxjs`、`esbuild`（版本均与 lockfile 一致）（#365）。
+- 出口过滤代理按 Bot 独立鉴权：HMAC 派生的每 Bot 代理密钥，空密码 / 错误密码 / 冒充一律拒绝，无凭据连接改走不含任何 Bot 放行名单的独立兜底策略并记节流日志；硬拒绝新增 `0.0.0.0/8`、`100.64.0.0/10`；服务器发往电脑的命令带上 botId（#364）
+- 渲染性能：毛玻璃收到预算内（大面板 20px、弹层 12px，气泡 / 按钮 / 胶囊 / 滚动区卡片不再模糊，同屏可见层数桌面 14 → 4），WebGL 天空默认只画快照（换场景保留完整的 2.5s 渐变，改窗口大小 / 回到前台 / 切回天空当帧重画、不闪灰）、动态天空限 15fps / 0.6 倍分辨率且空闲即停，无限动画只动 transform / opacity，新增性能模式状态与「减少透明度 / 动态效果」适配，外观偏好只写改动过的键（#363）
+- 安装版 `app/serve.ts` 转发 `/api` 时去掉已失效的 `Content-Encoding` / `Content-Length` 和逐跳头，修复 gzip 响应导致 `/api/me` 加载失败（`ERR_CONTENT_DECODING_FAILED`）；多值 `Set-Cookie` 照常保留（#367）
+- Hark 改版第 1 步（令牌层）：深 / 浅两套 Hark 设计令牌、Inter Variable 字体、唯一玻璃材质 `.glass`（暂未使用）；玻璃令牌拆成半径（面板 20px、弹层 12px、饱和度 160%）+ `--glass-filter` / `--glass-pop-filter`，次要 / 三级文字透明度 .5 / .3。不改布局，不升版本号（#369）。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.104`），PC / Android 外壳未变。
+
 ## 0.1.103
 
 - 聊天 SVG / Mermaid 卡片改用 DOMPurify 清洗、SVG 卡片改为 `<img>` 渲染，修复存储型 XSS（审查 S1，#362）；主应用加 CSP Report-Only。只升级服务器版本号（根、`app`、`server` 为 `0.1.103`），PC / Android 外壳未变。
