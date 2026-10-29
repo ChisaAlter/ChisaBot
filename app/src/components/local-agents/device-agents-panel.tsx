@@ -19,6 +19,7 @@ import {
 import { FullAccessCard } from "@/components/devices/full-access";
 import { PageSkeleton } from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
+import { useUnsavedGuard } from "@/components/ui/unsaved-guard";
 import { Button, T } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, ErrorCard, ListRow, SaveBar, SettingRow } from "@/components/ui/skyglass";
@@ -69,6 +70,8 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
     if (base && !draft) setDraft(base);
   }, [base, draft]);
   const dirty = !!draft && !!base && JSON.stringify(draft) !== JSON.stringify(base);
+  /* 保存栏亮着时切左栏、后退先确认，和常驻指令页同一套（审查模块 12 第 3 条）。 */
+  useUnsavedGuard(dirty);
   const save = useAsyncAction(
     async () => {
       if (!draft) return;

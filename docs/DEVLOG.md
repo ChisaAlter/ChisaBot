@@ -812,3 +812,18 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 | 搜「精选技能」 | ![](images/settings-audit/before-search-hub.webp) | ![](images/settings-audit/after-search-hub.webp) |
 
 浏览器后退的确认：`images/settings-audit/after-back-confirm.webp`；打开 /settings/vault 后的左栏：`images/settings-audit/after-vault-active.webp`。
+
+## 2026-10-29 设置页审查模块 12 复审返修（#428）
+
+**动机**：小爱复审 #428 提的 4 条应修。
+
+**改动**
+
+- 保存栏页都接未保存拦截：全仓找 `<SaveBar`，设置里有三处——常驻指令（已接）、设备详情的「权限」（`components/devices/devices.tsx` 的 `DevicePermissions`）和「本机智能体」（`components/local-agents/device-agents-panel.tsx`），后两处补上 `useUnsavedGuard(dirty)`。工作流编辑页也有 SaveBar，但不在设置里，这次没动。
+- 确认框 Esc：去掉 `isConfirmOpen()` 里「关掉后 150ms 内也算开着」。`ConfirmHost` 开着时在 window 捕获阶段监听 keydown，Esc 直接 `preventDefault` + `stopImmediatePropagation` 并关确认框，下面弹窗（Base UI 在 document 上监听）收不到；确认框弹层上的 pointerdown / mousedown / click 也 `stopPropagation`，下面弹窗的「点外面关闭」收不到这次点击。`isConfirmOpen()` 现在就是 `current !== null`。
+- 焦点：`confirmDialog()` 打开时记下当前有焦点的元素（连弹两个时保留最早那个），关闭时通过 Popup 的 `finalFocus` 还回去；元素已不在页面上或被禁用时交回 Base UI 默认行为。
+- 技能名字：`slugFromTitle` 里拉丁字母少于 4 个（`MIN_LATIN_FOR_PLAIN_SLUG`）时也加 FNV 短串后缀，「周报v2」→ `v2-xxxxxx`；4 个及以上照旧（「Weekly Report」→ `weekly-report`）。服务端撞名两条 409 本来就是中文（`server/src/skills-chisa/tools.ts`），未改。
+
+**测试**：新增 `app/tests/settings-audit-12-confirm.test.tsx`（Esc 不传到 document、按钮点击不冒泡、取消后焦点回输入框、焦点目标兜底、「周报v2」slug、服务端中文报错、保存栏页都接了 `useUnsavedGuard`）。
+
+**截图**：外观没有变化（确认框样式、保存栏都没改），没有补新截图。

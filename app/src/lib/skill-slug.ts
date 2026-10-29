@@ -27,6 +27,13 @@ function shortHash(text: string): string {
   return hash.toString(36).padStart(6, "0").slice(0, 6);
 }
 
+/** 名字里至少要有这么多拉丁字母，才直接用、不加后缀。 */
+export const MIN_LATIN_FOR_PLAIN_SLUG = 4;
+
+function latinLetters(text: string): number {
+  return text.replace(/[^a-z]/g, "").length;
+}
+
 /** 从标题生成合法的名字；标题为空时返回空串。 */
 export function slugFromTitle(title: string): string {
   const trimmed = title.trim();
@@ -35,7 +42,9 @@ export function slugFromTitle(title: string): string {
     .replace(/-+$/, "")
     .slice(0, 40)
     .replace(/-+$/, "");
-  if (SKILL_SLUG.test(ascii)) return ascii;
+  // 「周报v2」这类中文夹少量字母的标题只剩「v2」，很容易和别的技能撞名：拉丁字母少于 4 个时也加 hash 后缀。
+  if (SKILL_SLUG.test(ascii) && latinLetters(ascii) >= MIN_LATIN_FOR_PLAIN_SLUG)
+    return ascii;
   const prefix = ascii ? `${ascii.slice(0, 26).replace(/-+$/, "")}-` : "skill-";
   return `${prefix}${shortHash(trimmed)}`;
 }
