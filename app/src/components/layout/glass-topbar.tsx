@@ -10,9 +10,9 @@ import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { canCompact, type DesktopWindowBridge, useDesktopWindow } from "@/lib/desktop-window";
+import { presenceRef } from "@/lib/presence-flag";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
 import { cn } from "@/lib/utils";
-import { presenceRef } from "@/lib/presence-flag";
 
 
 export function initialsOf(name: string | null | undefined, email: string | undefined) {
