@@ -9,9 +9,22 @@
    任何一句看不懂、括号 / 引号没配对、subgraph 没 `end` 都返回空串，卡片显示原文代码；只有 `flowchart` / `graph` / `stateDiagram` / `sequenceDiagram` / `pie` 会画，其它类型直接回退。流式中结尾的 ``` 没到时不画，避免半张图。回退时代码按 ```text 交给 Streamdown，因为 ```mermaid 会走 Streamdown 自带的 Mermaid 组件（另一套库，认不出的图是一块空白）。
 3. **手机卡片头**：按钮组原来只在 `:hover` / `:focus-within` 时 `opacity: 1`，触屏上一直是 0 且 `pointer-events: none`，全屏按钮点不到。`@media (hover: none)` 下按钮组改成常显、跟在标题后面换行。全屏弹窗里的图包了一层 `DiagramZoom`：按钮 50%–800% 缩放、Ctrl / ⌘ + 滚轮（原生非 passive 监听），放大后框内滚动，缩放时保持中心。按钮都用设计系统的 `Button`，没有新增 backdrop-filter。
 
-截图（独立 headless Chrome + 临时 profile，桌面 1100×900 和手机 390×844 触屏）：改前手机上卡片头按钮 `opacity: 0; pointer-events: none`，点全屏超时；改后 `opacity: 1; pointer-events: auto`，能打开全屏并放大。
+截图（独立 headless Chrome + 临时 profile，桌面 1100×900 和手机 390×844 触屏，`docs/images/render-must-fix/`）：
 
-测试：`app/tests/mermaid-lite.test.ts`（28 个）、`app/tests/escape-unknown-tags.test.tsx`（6 个）；原有 `svg-card-sanitize.test.ts`（含 Mermaid 标签注入用例）、`chat-bubbles.test.ts` 照常通过。为了让节点标签里的空格在折行后不丢（`<text>` 的文字内容和原文一致），折行处行尾保留一个空格，量宽度时去掉。
+| 改前 | 改后 |
+| --- | --- |
+| ![改前：泛型文字消失，流程图节点名里混着 `-->`、`\|是\|`，gantt 画成乱图](images/render-must-fix/before-desktop.png) | ![改后：泛型原样显示，连线标签、`&`、subgraph 正确，长标签折行](images/render-must-fix/after-desktop.png) |
+| ![改前手机：卡片头没有按钮](images/render-must-fix/before-mobile-card.png) | ![改后手机：预览 / 源码、追问、复制、全屏常显](images/render-must-fix/after-mobile-card.png) |
+
+改后手机全屏放大到 225%（缩放时保持视野中心）：![](images/render-must-fix/after-mobile-fullscreen-zoomed.png)　认不出的 gantt 和流式中没写完的图显示原文代码：![](images/render-must-fix/after-fallback-code.png)
+
+实测：改前手机上卡片头按钮 `opacity: 0; pointer-events: none`，点全屏超时；改后 `opacity: 1; pointer-events: auto`，能打开全屏并放大。
+
+测试（三项各有回归测试）：
+- 必修 1：`app/tests/escape-unknown-tags.test.tsx`（6 个，经真实 Streamdown 渲染：泛型不丢、代码不动、标准 HTML 照旧、危险 HTML 仍被清洗）。
+- 必修 2：`app/tests/mermaid-lite.test.ts`（29 个：连线标签、链、`&`、分号、各种连线、subgraph 框包住成员、形状、带 `-` / `.` 的 id、长标签折行不溢出、连线标签不压节点、`<br>`、环、1000 节点性能、12 种认不出 / 没写完的图返回空串、状态图、流式未闭合标记）。
+- 必修 3：`app/tests/chat-card-touch.test.tsx`（7 个：`@media (hover: none)` 里按钮组 `opacity: 1` / `pointer-events: auto` / `position: static`，且排在默认隐藏规则之后、之后没有规则再藏起来、没有新增 backdrop-filter；卡片头里有全屏按钮；`DiagramZoom` 的缩放条、画布宽度、缩放范围）。
+原有 `svg-card-sanitize.test.ts`（含 Mermaid 标签注入用例）、`chat-bubbles.test.ts` 照常通过。为了让节点标签里的空格在折行后不丢（`<text>` 的文字内容和原文一致），折行处行尾保留一个空格，量宽度时去掉。
 
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 

@@ -9,7 +9,7 @@
 - 修复：认不出的图（gantt、classDiagram、erDiagram、mindmap 等）、写坏的图，以及流式中还没写完（结尾 ``` 没到）的 Mermaid，卡片里显示原文代码，不再画出错乱的图或半张图。
 - 修复：手机等没有悬停的设备上，卡片头的「预览 / 源码、追问、复制、全屏」按钮一直显示（`@media (hover: none)`），标题放不下时按钮换到下一行，不再点不到全屏。
 - 新增：全屏查看 Mermaid / SVG 图时可以缩放（按钮 50%–800%，或 Ctrl / ⌘ + 滚轮），放大后在框内滚动查看，缩放时保持视野中心（`app/src/components/chat/diagram-zoom.tsx`）。
-- 测试：新增 `app/tests/mermaid-lite.test.ts`（28 个用例：边、标签、链、`&`、subgraph、形状、折行不溢出、回退、状态图等）和 `app/tests/escape-unknown-tags.test.tsx`（6 个用例，经真实 Streamdown 渲染）。
+- 测试：新增 `app/tests/escape-unknown-tags.test.tsx`（6 个，经真实 Streamdown 渲染）、`app/tests/mermaid-lite.test.ts`（29 个：边、标签、链、`&`、subgraph、形状、折行不溢出、标签不压节点、回退、状态图等）、`app/tests/chat-card-touch.test.tsx`（7 个：触屏按钮常显的 CSS 断言、全屏按钮、缩放组件）。前后截图见 `docs/DEVLOG.md`。
 - 应修项 4–10（公式、语法高亮、表格等）这次不做。不改版本号。
 
 ## 0.1.110 — 2026-10-29
