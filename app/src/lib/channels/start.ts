@@ -41,17 +41,19 @@ export function useStartChannel() {
    * 新话题页上加了附件（A1）：先建一段草稿对话，把 `fromKey` 下写了一半的字和这些文件交给它（它的输入框以
    * 频道 id 为草稿键），再替换地址跳过去。那边的输入框挂上时放回字、重新上传文件。没发就离开时删掉
    * （`draft-channel.ts`）。
+   *
+   * `files` 在草稿建好之后才取：建的那一下里又加进来的文件也在里面（调用方一直往同一个队列里追加）。
    */
   const startDraft = async (
     agentId: string,
-    files: readonly File[],
+    files: readonly File[] | (() => readonly File[]),
     options: { fromKey: string; watch?: boolean },
   ) => {
     const channel = await createDraft.mutateAsync([agentId]);
     queryClient.setQueryData(channelKeys.detail(channel.id), channel);
     markDraftChannel(channel.id, options.fromKey);
     moveTextDraft(options.fromKey, channel.id);
-    stashDraftFiles(channel.id, files);
+    stashDraftFiles(channel.id, typeof files === "function" ? files() : files);
     await navigate({
       params: { channelId: channel.id },
       replace: true,

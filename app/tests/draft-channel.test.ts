@@ -122,3 +122,26 @@ test("挪字：目标已经有字时不覆盖，源头总是清掉", () => {
   expect(threadUi("from")?.draft).toBeUndefined();
   expect(threadUi("to")?.draft).toEqual([{ type: "text", text: "二" }]);
 });
+
+test("默认的删除带条件（?draft=1）：服务端仍是空草稿才删，回 409 时这里也不抛出", async () => {
+  const original = globalThis.fetch;
+  const calls: { method: string; path: string }[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ method: init?.method ?? "GET", path: String(input) });
+    return Response.json(
+      { error: "This conversation is not an empty draft, so it was kept." },
+      { status: 409 },
+    );
+  }) as typeof fetch;
+  try {
+    markDraftChannel("ch_f", "new:bot");
+    releaseDraftChannel("ch_f");
+    await tick();
+    expect(calls).toEqual([
+      { method: "DELETE", path: "/api/channels/ch_f?draft=1" },
+    ]);
+    expect(isDraftChannel("ch_f")).toBe(false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

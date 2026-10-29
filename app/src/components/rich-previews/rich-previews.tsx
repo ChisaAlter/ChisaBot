@@ -198,14 +198,21 @@ function rememberImageSize(src: string, img: HTMLImageElement) {
 }
 
 /**
+ * 还不知道宽高（老消息、读不出尺寸的图）时先占的框：固定 240×180，加载完知道了尺寸再换成真比例，
+ * 图片加载前后这一轮的高度不会从 0 跳到几百像素。
+ */
+export const UNKNOWN_IMAGE_BOX: CSSProperties = { width: "240px", aspectRatio: "4 / 3" };
+
+/**
  * 记得尺寸就先把框留好：宽度按样式的上限（宽 318、高 300，见 styles.css「图片：单张」）缩，高度跟着宽高比。
  * `aspect-ratio` 让窄屏上 max-width 把宽度压小时高度一起变小。
+ * 不知道尺寸、也还没加载完：固定占位框（`UNKNOWN_IMAGE_BOX`）；加载完仍读不出尺寸（比如没有固有尺寸的图）就不再限定。
  */
-function reservedImageBox(image: PileImage): CSSProperties | undefined {
+function reservedImageBox(image: PileImage, loaded: boolean): CSSProperties | undefined {
   const given = readImageDims(image.width, image.height);
   if (given) rememberSize(image.src, given);
   const size = given ?? imageSizes.get(image.src);
-  if (!size) return undefined;
+  if (!size) return loaded ? undefined : UNKNOWN_IMAGE_BOX;
   const scale = Math.min(1, 318 / size.width, 300 / size.height);
   return { width: `${Math.round(size.width * scale)}px`, aspectRatio: `${size.width} / ${size.height}` };
 }
@@ -442,6 +449,8 @@ export function ImagePile({
 }) {
   const [open, setOpen] = useState<number | null>(null);
   const [broken, setBroken] = useState<Record<string, boolean>>({});
+  /** 加载完的图：没有宽高的那张换下占位框（尺寸那时记进了 `imageSizes`）。 */
+  const [loaded, setLoaded] = useState<Record<string, boolean>>({});
   const [spread, setSpread] = useState(false);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [step, setStep] = useState(110);
@@ -510,12 +519,15 @@ export function ImagePile({
             decoding="async"
             loading="lazy"
             onError={() => markBroken(image.src)}
-            onLoad={(event) => rememberImageSize(image.src, event.currentTarget)}
+            onLoad={(event) => {
+              rememberImageSize(image.src, event.currentTarget);
+              if (!loaded[image.src]) setLoaded((current) => ({ ...current, [image.src]: true }));
+            }}
             ref={(img) => {
               if (img?.complete) rememberImageSize(image.src, img);
             }}
             src={image.src}
-            style={reservedImageBox(image)}
+            style={reservedImageBox(image, loaded[image.src] === true)}
           />
         </button>
         {open !== null ? (

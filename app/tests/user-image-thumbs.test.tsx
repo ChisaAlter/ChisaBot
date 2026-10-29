@@ -144,6 +144,30 @@ describe("气泡里的样子", () => {
     expect(img.style.aspectRatio.replace(/\s/g, "")).toBe("640/480");
   });
 
+  test("单图没有宽高（老消息）：先占固定大小的框，加载完换成真比例", () => {
+    const id = "66666666-6666-4666-8666-666666666666";
+    const { container } = renderTranscript([
+      userTurn("u-nodims", [
+        {
+          type: "image",
+          source: { type: "url", value: attachmentUrl(id) },
+          metadata: { attachmentId: id, filename: "old.png" },
+        },
+      ]),
+    ]);
+    const img = container.querySelector(
+      ".rp-image-single img",
+    ) as HTMLImageElement;
+    expect(img.style.width).toBe("240px");
+    expect(img.style.aspectRatio.replace(/\s/g, "")).toBe("4/3");
+
+    Object.defineProperty(img, "naturalWidth", { value: 1000 });
+    Object.defineProperty(img, "naturalHeight", { value: 500 });
+    fireEvent.load(img);
+    expect(img.style.width).toBe("318px");
+    expect(img.style.aspectRatio.replace(/\s/g, "")).toBe("1000/500");
+  });
+
   test("多图：画成一摞，每张一个按钮，点开看的是原图", () => {
     const { container, getByRole, getByLabelText } = renderTranscript([
       userTurn("u-2", [

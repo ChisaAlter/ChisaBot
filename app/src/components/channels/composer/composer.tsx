@@ -986,6 +986,12 @@ export function Composer({
   const handOff = useCallback(
     (files: File[]) => {
       if (!handsOff || files.length === 0) return;
+      // 先按 `stageFiles` 同样的规则筛一遍：全被拒（类型不支持、太大、太多）就不建草稿对话，拒收的说法留在这里。
+      const screened = screenPickedFiles(files, { alreadyStaged: 0 });
+      if (screened.rejected.length > 0) {
+        setRejected((current) => [...current, ...screened.rejected]);
+      }
+      if (screened.accepted.length === 0) return;
       // 字先同步记下（平时是渲染后的 effect 写的），调用方接着就要把它挪到新对话的草稿键下。
       if (draftKey) {
         const current = valueRef.current;
@@ -993,7 +999,7 @@ export function Composer({
           draft: isSegmentsEmpty(current) ? undefined : current,
         });
       }
-      onAttachWithoutChannel?.(files);
+      onAttachWithoutChannel?.([...screened.accepted]);
     },
     [handsOff, draftKey, onAttachWithoutChannel],
   );

@@ -148,6 +148,8 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
 
   const start = async (text: string) => {
     const recipient = recipients[0];
+    // 正在建草稿对话（加了附件）：这段字会跟着草稿过去，不另建一段对话。
+    if (attachingRef.current) return;
     if (!recipient || !canSend(recipients, text)) return;
     assertModelSelectionNotSaving(modelQueryClient, recipient.id);
 
@@ -168,23 +170,38 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
 
   /**
    * 选文件、粘贴、拖入（A1）：这里还没有对话可上传，先建一段草稿对话，把字和文件交过去再跳过去。
-   * 同一时间只建一段：建的那一下里再来的文件不另建。
+   *
+   * 和发送互斥：建草稿的请求还没回来时 `attaching` 为真，并进 `pending`（发送键不可用），`start` 也直接
+   * 返回——否则回车会另建一段对话。反过来，第一条消息正在发（`pending`）或已经发出（`sent`）时也不建草稿。
+   * 同一时间只建一段：建的那一下里再来的文件追加到 `queued`，草稿建好后和第一批一起放进同一个暂存，跳过去
+   * 一起放上。
    */
-  const attaching = useRef(false);
+  const [attaching, setAttaching] = useState(false);
+  const attachingRef = useRef(false);
+  const queued = useRef<File[]>([]);
   const attach = async (files: File[]) => {
     const recipient = recipients[0];
-    if (!recipient || attaching.current) return;
-    attaching.current = true;
+    if (!recipient || files.length === 0) return;
+    if (attachingRef.current) {
+      queued.current.push(...files);
+      return;
+    }
+    if (pending || sent) return;
+    attachingRef.current = true;
+    setAttaching(true);
+    queued.current = [...files];
     setError(null);
     try {
-      await startDraft(recipient.id, files, {
+      await startDraft(recipient.id, () => queued.current.splice(0), {
         fromKey: `new:${agent}`,
         watch: isWatching,
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "无法开始会话。");
     } finally {
-      attaching.current = false;
+      queued.current = [];
+      attachingRef.current = false;
+      setAttaching(false);
     }
   };
 
@@ -250,7 +267,7 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
           ) : null
         }
         onSubmit={(draft) => start(draft.text)}
-        pending={pending}
+        pending={pending || attaching}
       />
     </div>
   );

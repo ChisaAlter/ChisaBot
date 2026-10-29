@@ -38,6 +38,11 @@ import { upgradeWebSocket } from "./socket";
 import { searchChannelMessages } from "./search";
 import { oneLine } from "./text";
 import type { ThreadIdentity } from "./thread-identity";
+import {
+  DRAFT_AGENT_CHANNEL_DESCRIPTION,
+  type DraftDeleteOutcome,
+  deleteEmptyDraft,
+} from "./drafts";
 import { reasonWithoutStatement } from "../db/query-failure";
 
 export type AgentChannel = {
@@ -220,6 +225,14 @@ export type ChannelStore = {
    * no-op, so it announces nothing and its route records nothing.
    */
   softDelete(actor: AgentActor, channelId: string): Promise<boolean>;
+  /**
+   * 条件删除（A1 草稿）：只在它仍是空草稿时软删，见 `drafts.ts` 的 `deleteEmptyDraft`。不是成员 →
+   * ChannelNotFoundError。不审计、不通知。可选：测试替身不用实现（路由当作 409）。
+   */
+  deleteEmptyDraft?(
+    actor: AgentActor,
+    channelId: string,
+  ): Promise<DraftDeleteOutcome>;
   recordActivity(
     actor: AgentActor,
     channelId: string,
@@ -256,11 +269,8 @@ export type ChannelStore = {
 };
 
 const PRIVATE_AGENT_CHANNEL_DESCRIPTION = "Private agent channel.";
-/**
- * 草稿对话的标记（不加列、不迁移）：`description` 这一列建好后没有别的地方写它，也不给用户看，
- * 只拿它区分「提前建好、还没说过话」的对话。
- */
-export const DRAFT_AGENT_CHANNEL_DESCRIPTION = "Private agent channel (draft).";
+/** 草稿对话的标记，定义在 `drafts.ts`（清理任务也用），这里照旧导出。 */
+export { DRAFT_AGENT_CHANNEL_DESCRIPTION };
 /**
  * 还没说过话的草稿对话：列表里不出现，`direct` 不挑它。说过一句（`lastMessageAt` 有值）就不再藏。
  */
@@ -810,6 +820,20 @@ export function createChannelStore(
       );
     },
 
+    async deleteEmptyDraft(actor, channelId) {
+      const [member] = await database
+        .select({ channelId: channelMemberships.channelId })
+        .from(channelMemberships)
+        .where(
+          and(
+            eq(channelMemberships.channelId, channelId),
+            eq(channelMemberships.userId, actor.id),
+          ),
+        );
+      if (!member) throw new ChannelNotFoundError(channelId);
+      return await deleteEmptyDraft(database, channelId);
+    },
+
     recordActivity(actor, channelId, activity, source) {
       return database.transaction(
         async (transaction) => {
@@ -1321,6 +1345,26 @@ export function createChannelRoutes(
 
   routes.delete("/:channelId", requireUser, async (context) => {
     const channelId = context.req.param("channelId");
+    /*
+     * `?draft=1`：新话题页提前建的草稿对话，没发就离开时由界面来删（A1）。「是草稿」只记在那个标签页的
+     * sessionStorage 里，复制出来的标签页、或者机器人已经在里面说过话时，界面以为的草稿其实是真对话——
+     * 所以服务端再确认一次：仍是空草稿才删，否则 409、什么都不动。这种删除不写 `channel.deleted` 审计、
+     * 不发通知（它从来没出现在谁的列表里）。
+     */
+    if (context.req.query("draft") === "1") {
+      try {
+        const outcome = store.deleteEmptyDraft
+          ? await store.deleteEmptyDraft(context.var.actor, channelId)
+          : "kept";
+        if (outcome === "deleted") return context.body(null, 204);
+        return context.json(
+          { error: "This conversation is not an empty draft, so it was kept." },
+          409,
+        );
+      } catch (error) {
+        return mapStoreError(context, error);
+      }
+    }
     try {
       const deleted = await store.softDelete(context.var.actor, channelId);
       // A repeat is still 204, but it deleted nothing, and the trail records acts, not attempts.

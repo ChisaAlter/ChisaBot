@@ -116,8 +116,12 @@ export function releaseDraftChannel(
   });
 }
 
+/**
+ * 带条件的删除（`?draft=1`）：「是草稿」只记在这个标签页里，复制出来的标签页、或者机器人已经在里面说过话时，
+ * 这里以为的草稿其实是真对话。服务端再确认一次，仍是空草稿才删，否则回 409、什么都不动（这里不管结果）。
+ */
 function deleteChannel(channelId: string) {
-  return tryClient(`/api/channels/${encodeURIComponent(channelId)}`, {
+  return tryClient(`/api/channels/${encodeURIComponent(channelId)}?draft=1`, {
     method: "DELETE",
   });
 }
