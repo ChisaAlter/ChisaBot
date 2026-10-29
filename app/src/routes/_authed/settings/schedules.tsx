@@ -102,23 +102,7 @@ function SchedulesPage() {
   } = partitionScheduleList(items, knownBotIds);
   const shown = items.find((s) => s.id === detail) ?? null;
   const editingSchedule = items.find((s) => s.id === editing) ?? null;
-  // 进设置页自动扫一次真孤儿（服务端 DELETE）；不 resume 任何 paused。
-  useEffect(() => {
-    if (!botsReady || !list.isSuccess) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const r = await purgeOrphanSchedules();
-        if (cancelled || !r.deleted) return;
-        await queryClient.invalidateQueries({ queryKey: scheduleKeys.all });
-      } catch {
-        // 一键按钮仍可用；自动清失败不弹窗打扰。
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [botsReady, list.isSuccess, queryClient]);
+  // 模块 13 S2：进设置页不再自动 DELETE /api/schedules/orphans；只在用户点「清理」并确认后删。
   const clearOrphans = async () => {
     if (!orphanAll.length || purging) return;
     const ok = await confirmDialog({
@@ -462,6 +446,15 @@ function ScheduleRow({
                   <span className="device-cap-chip">
                     <IconBrandWechat className="size-3" />
                     {"IM"}
+                  </span>
+                ) : null}
+                {s.threadDeleted ? (
+                  <span
+                    className="device-cap-chip sch-thread-gone"
+                    data-testid="schedule-thread-deleted"
+                    title={"原来那段对话已删除，这个任务已自动取消，不会发到别的对话"}
+                  >
+                    {"原对话已删除"}
                   </span>
                 ) : null}
               </span>

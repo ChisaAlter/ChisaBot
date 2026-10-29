@@ -78,7 +78,11 @@ export type TurnRunner = (input: {
   initiator?: AuditInitiator;
   userMessage?: Message;
   forwardedProps?: Record<string, unknown>;
-}) => Promise<{ replyText: string }>;
+}) => Promise<{
+  replyText: string;
+  /** M1：这一轮失败的工具结果（运行器能给就给）。失败只按这个和运行器异常判，不扫正文。 */
+  toolErrors?: string[];
+}>;
 
 const FLOOR_MS = 15 * 60_000;
 const floorCache = new Map<string, boolean>();
@@ -149,6 +153,8 @@ type Row = {
   last_run_at: Date | string | null;
   last_status: ScheduleRunStatus | null;
   last_result: string | null;
+  /** list() 附带：网页例程的原对话已不在。 */
+  thread_deleted?: boolean;
   run_count: number;
   created_at: Date | string;
   updated_at: Date | string;
@@ -407,7 +413,63 @@ export type ScheduleDeps = {
   /** 回合结束后释放对话锁（防定时挂起后输入框一直灰）。 */
   releaseThread?: (threadId: string) => Promise<void>;
   now?: () => Date;
+  /** 测试用：覆盖 BUSY_RETRY_MS。 */
+  retryDelayMs?: number;
 };
+
+/** M2：原对话被删时写在任务上的说明，设置页据此标「原对话已删除」。 */
+export const THREAD_DELETED_RESULT = "原对话已删除，定时任务已自动取消（不会发到别的对话）。";
+
+/**
+ * M2：删话题时取消挂在这些话题上的网页例程（IM 例程不挂本地话题，不动）。
+ * threadIds=null 表示该用户的全部本地话题（清空历史）。出错只记日志，不挡删除。
+ */
+export async function cancelSchedulesForDeletedThreads(
+  sql: Database["$client"],
+  owner: string,
+  threadIds: string[] | null,
+): Promise<number> {
+  const rows = await sql
+    .unsafe<{ id: string }[]>(
+      `UPDATE chisabot_schedules
+          SET status = 'cancelled', next_run_at = NULL, updated_at = now(), last_result = $3
+        WHERE owner_user_id = $1 AND im_connection_id IS NULL
+          AND status IN ('active', 'paused')
+          AND ($2::text IS NULL OR thread_id IN (SELECT jsonb_array_elements_text($2::text::jsonb)))
+        RETURNING id`,
+      [owner, threadIds ? JSON.stringify(threadIds) : null, THREAD_DELETED_RESULT],
+    )
+    .catch((error) => {
+      console.warn(
+        JSON.stringify({
+          type: "schedule-thread-cancel-failed",
+          reason: String(error instanceof Error ? error.message : error).slice(0, 200),
+        }),
+      );
+      return [] as { id: string }[];
+    });
+  if (rows.length)
+    console.info(
+      JSON.stringify({ type: "schedule-thread-deleted-cancelled", count: rows.length }),
+    );
+  return rows.length;
+}
+
+/**
+ * S2：「机器人确认已删」的判定。软删（deleted_at 不空）算；资料行完全不在（硬删级联）时，
+ * 只有这位用户还查得到别的有效机器人才算，防止资料表整体读空 / 迁移中时把全部例程当孤儿。
+ */
+const ORPHAN_SCHEDULE_SQL = `(
+        EXISTS (SELECT 1 FROM agent_profiles p WHERE p.agent_id = s.agent_id AND p.deleted_at IS NOT NULL)
+        OR (
+          NOT EXISTS (SELECT 1 FROM agent_profiles p WHERE p.agent_id = s.agent_id)
+          AND EXISTS (SELECT 1 FROM agent_profiles p2 WHERE p2.owner_user_id = s.owner_user_id AND p2.deleted_at IS NULL)
+        )
+      )
+      AND NOT EXISTS (SELECT 1 FROM agent_profiles p WHERE p.agent_id = s.agent_id AND p.deleted_at IS NULL)`;
+
+/** S2：服务端自动清理只硬删结束了一周以上的孤儿，且至多每小时一次。 */
+const ORPHAN_PURGE_EVERY_MS = 60 * 60_000;
 
 export function createSchedules(database: Database, deps: ScheduleDeps) {
   const sql = database.$client;
@@ -415,6 +477,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
   const running = new Set<string>();
   let timer: ReturnType<typeof setInterval> | null = null;
   let sweeping = false;
+  let lastAutoPurge = 0;
+  const retryDelay = deps.retryDelayMs ?? BUSY_RETRY_MS;
 
   async function ensure() {
     await sql.unsafe(`
@@ -503,6 +567,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       now(),
     ),
     running: running.has(r.id),
+    threadDeleted:
+      !r.im_connection_id &&
+      (r.thread_deleted === true || r.last_result === THREAD_DELETED_RESULT),
     ...(runs ? { recentRuns: runs.map(runView) } : {}),
   });
 
@@ -520,6 +587,21 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     return row;
   }
 
+  /** M2：给网页例程标上「原对话已删除」。查询出错（或还没有本地对话表）就不标，宁可少标也不误标。 */
+  async function markDeletedThreads(owner: string, rows: Row[]) {
+    const web = rows.filter((r) => !r.im_connection_id);
+    if (!web.length) return;
+    const present = await sql
+      .unsafe<{ id: string }[]>(
+        "SELECT id FROM openbot_local_threads WHERE owner_user_id = $1 AND id IN (SELECT jsonb_array_elements_text($2::text::jsonb))",
+        [owner, JSON.stringify([...new Set(web.map((r) => r.thread_id))])],
+      )
+      .catch(() => null);
+    if (!present) return;
+    const ids = new Set(present.map((r) => r.id));
+    for (const r of web) r.thread_deleted = !ids.has(r.thread_id);
+  }
+
   async function list(
     owner: string,
     options: { includeEnded?: boolean; agentId?: string; runs?: number } = {},
@@ -531,6 +613,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
        ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, next_run_at NULLS LAST, created_at DESC LIMIT 200`,
       [owner, options.includeEnded ?? false, options.agentId ?? null],
     );
+    await markDeletedThreads(owner, rows);
     if (!options.runs || !rows.length) return rows.map((r) => view(r));
     const runs = await sql.unsafe<(RunRow & { n: number })[]>(
       `SELECT * FROM (SELECT r.*, row_number() OVER (PARTITION BY schedule_id ORDER BY started_at DESC) AS n
@@ -551,6 +634,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     runLimit = RUNS_DEFAULT,
   ): Promise<ScheduleView> {
     const row = await need(owner, id);
+    await markDeletedThreads(owner, [row]);
     // CB-105b：对话里折叠了 20 条以上的提醒时按条数要，封顶 RUNS_MAX。
     const limit = Math.min(
       RUNS_MAX,
@@ -889,10 +973,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
                '机器人已删除，定时任务已自动取消'
              )
          WHERE s.status IN ('active', 'paused')
-           AND NOT EXISTS (
-             SELECT 1 FROM agent_profiles p
-              WHERE p.agent_id = s.agent_id AND p.deleted_at IS NULL
-           )
+           AND ${ORPHAN_SCHEDULE_SQL}
          RETURNING s.id, s.agent_id`,
       )
       .catch((error) => {
@@ -922,21 +1003,20 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
    * 设置页一键 + 扫周期都会走这里；owner 有值时只清该用户。从不 auto-resume。
    */
   async function purgeOrphanSchedules(owner?: string): Promise<number> {
+    // S2：只有确认机器人已删（agent_profiles 里有这条且 deleted_at 不空，或这位用户还有别的有效机器人
+    // 而这条完全查不到）才算孤儿；资料表读失败整条语句失败，什么都不删。
+    // 自动（owner 为空）只删结束一周以上的；用户在设置页确认后（owner）可删任意状态。
+
     const rows = await sql
       .unsafe<{ id: string; agent_id: string }[]>(
         owner
           ? `DELETE FROM chisabot_schedules s
-             WHERE s.owner_user_id = $1
-               AND NOT EXISTS (
-                 SELECT 1 FROM agent_profiles p
-                  WHERE p.agent_id = s.agent_id AND p.deleted_at IS NULL
-               )
+             WHERE s.owner_user_id = $1 AND ${ORPHAN_SCHEDULE_SQL}
              RETURNING s.id, s.agent_id`
           : `DELETE FROM chisabot_schedules s
-             WHERE NOT EXISTS (
-               SELECT 1 FROM agent_profiles p
-                WHERE p.agent_id = s.agent_id AND p.deleted_at IS NULL
-             )
+             WHERE s.status IN ('done', 'cancelled')
+               AND s.updated_at < now() - interval '7 days'
+               AND ${ORPHAN_SCHEDULE_SQL}
              RETURNING s.id, s.agent_id`,
         owner ? [owner] : [],
       )
@@ -954,8 +1034,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       for (const id of ids) running.delete(id);
       await sql
         .unsafe(
-          `DELETE FROM chisabot_schedule_runs WHERE schedule_id = ANY($1::text[])`,
-          [ids],
+          `DELETE FROM chisabot_schedule_runs WHERE schedule_id IN (SELECT jsonb_array_elements_text($1::text::jsonb))`,
+          [JSON.stringify(ids)],
         )
         .catch(() => undefined);
       console.warn(
@@ -970,7 +1050,44 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     return rows.length;
   }
 
-    /** 原来那段对话还在吗？不在就用这个机器人最近的对话。 */
+  async function removeSilentRunMessages(
+    threadId: string,
+    owner: string,
+    messageId: string,
+  ): Promise<boolean> {
+    const rows = await sql.unsafe<{ id: string }[]>(
+      `UPDATE openbot_local_threads t
+          SET messages = (
+            SELECT coalesce(jsonb_agg(e.m ORDER BY e.i), '[]'::jsonb)
+              FROM jsonb_array_elements(t.messages) WITH ORDINALITY AS e(m, i)
+             WHERE e.i < (
+               SELECT min(x.i) FROM jsonb_array_elements(t.messages) WITH ORDINALITY AS x(m, i)
+                WHERE x.m->>'id' = $3
+             )
+          )
+        WHERE t.id = $1 AND t.owner_user_id = $2
+          AND jsonb_typeof(t.messages) = 'array'
+          AND EXISTS (
+            SELECT 1 FROM jsonb_array_elements(t.messages) AS x(m) WHERE x.m->>'id' = $3
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(t.messages) WITH ORDINALITY AS y(m, i)
+             WHERE y.m->>'role' = 'user'
+               AND y.i > (
+                 SELECT min(x.i) FROM jsonb_array_elements(t.messages) WITH ORDINALITY AS x(m, i)
+                  WHERE x.m->>'id' = $3
+               )
+          )
+        RETURNING t.id`,
+      [threadId, owner, messageId],
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * 原来那段对话还在吗？M2：不在就返回 null——绝不回退到这个机器人「最近的另一个对话」（可能是别人正在聊的话题）。
+   * 查询出错时当作还在（宁可发回原处失败，也不发错地方）。
+   */
   async function threadFor(row: Row): Promise<string | null> {
     if (row.im_connection_id) return row.thread_id;
     const exists = await sql
@@ -979,14 +1096,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         [row.thread_id, row.owner_user_id],
       )
       .catch(() => [1]);
-    if (exists.length) return row.thread_id;
-    const latest = await sql
-      .unsafe<{ thread_id: string }[]>(
-        "SELECT thread_id FROM chisabot_bot_threads WHERE owner_user_id = $1 AND agent_id = $2 ORDER BY updated_at DESC LIMIT 1",
-        [row.owner_user_id, row.agent_id],
-      )
-      .catch(() => []);
-    return latest[0]?.thread_id ?? null;
+    return exists.length ? row.thread_id : null;
   }
 
   function messageFor(
@@ -1057,12 +1167,41 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
   ) {
     running.add(row.id);
     try {
-      if (
-        deps.botAvailable &&
-        !(await deps
-          .botAvailable(row.owner_user_id, row.agent_id)
-          .catch(() => true))
-      ) {
+      // M3：查不到（异常）≠ 已删除。异常按 BUSY_RETRY 重试；重试完还查不到就跳过这一次，任务保持原状。
+      let available = true;
+      if (deps.botAvailable) {
+        let lastError: unknown = null;
+        let known = false;
+        for (let tries = 0; tries <= BUSY_RETRIES; tries++) {
+          try {
+            available = await deps.botAvailable(row.owner_user_id, row.agent_id);
+            known = true;
+            break;
+          } catch (error) {
+            lastError = error;
+            if (tries < BUSY_RETRIES)
+              await new Promise((resolve) => setTimeout(resolve, retryDelay));
+          }
+        }
+        if (!known) {
+          console.warn(
+            JSON.stringify({
+              type: "schedule-bot-check-failed",
+              schedule: row.id,
+              run: runId,
+              reason: String(lastError instanceof Error ? lastError.message : lastError).slice(0, 200),
+            }),
+          );
+          await finishRun(
+            runId,
+            row.id,
+            "skipped",
+            "暂时查不到机器人状态，这次没有运行；任务保持不变，下次照常。",
+          );
+          return;
+        }
+      }
+      if (!available) {
         await sql.unsafe(
           "UPDATE chisabot_schedules SET status='cancelled', next_run_at=NULL, updated_at=now() WHERE id=$1",
           [row.id],
@@ -1077,11 +1216,11 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       }
       const threadId = await threadFor(row);
       if (!threadId) {
-        await finishRun(
-          runId,
-          row.id,
-          "failed",
-          "原来的对话已经不在了，也找不到这个机器人的其他对话。",
+        // M2：原对话已删 → 记一次 skipped（不计入连续失败），取消任务并标「原对话已删除」，不发到别的对话。
+        await finishRun(runId, row.id, "skipped", THREAD_DELETED_RESULT);
+        await sql.unsafe(
+          "UPDATE chisabot_schedules SET status='cancelled', next_run_at=NULL, last_result=$2, updated_at=now() WHERE id=$1 AND status IN ('active','paused','done')",
+          [row.id, THREAD_DELETED_RESULT],
         );
         return;
       }
@@ -1125,34 +1264,28 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           if (silent) {
             text = "巡检完成：暂无需要打扰用户的事项";
             // 静默巡检无事发生：把刚塞进本地对话的触发消息和静默回复收起，不在聊天窗刷屏（「无事不打扰，有事主动开口」）。
-            await sql
-              .unsafe<{ messages: Message[] }[]>(
-                "SELECT messages FROM openbot_local_threads WHERE id = $1 AND owner_user_id = $2",
-                [threadId, row.owner_user_id],
-              )
-              .then(async (rows) => {
-                const msgs = rows[0]?.messages;
-                if (!Array.isArray(msgs)) return;
-                const idx = msgs.findIndex((m) => m?.id === `schedule-${runId}`);
-                if (idx < 0) return;
-                const after = msgs.slice(idx + 1);
-                if (after.some((m) => m?.role === "user")) return;
-                const cleaned = msgs.slice(0, idx);
-                await sql.unsafe(
-                  "UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1 AND owner_user_id = $3",
-                  [threadId, JSON.stringify(cleaned), row.owner_user_id],
-                );
-              })
-              .catch(() => {});
-          } else if (im && deps.pushToIm) {
+            // S6：一条语句里就地删（Postgres 行锁内求值），不再整段读出来改完写回，避免吞掉并发写进来的消息。
+            // 只删触发消息及其后的连续非 user 消息；后面有 user 消息就不动。
+            await removeSilentRunMessages(threadId, row.owner_user_id, `schedule-${runId}`).catch(
+              () => {},
+            );
+          }
+          let runnerError: string | null = null;
+          if (!silent && im && deps.pushToIm) {
             try {
               await deps.pushToIm(threadId, result.replyText?.trim() || text);
             } catch (error) {
-              text += `\n（推送到 IM 失败：${error instanceof Error ? error.message : String(error)}）`;
+              runnerError = error instanceof Error ? error.message : String(error);
+              text += `\n（推送到 IM 失败：${runnerError}）`;
             }
           }
-          // FIX-01：按回复正文归类，别把「弹不出卡 / 等确认 / 隧道失败」标成绿的已完成。
-          const status = silent ? "ok" : classifyScheduleReply(text);
+          // M1：失败只看工具结果 / 运行器错误（及运行器固定前缀），不扫模型正文。
+          const status = silent
+            ? "ok"
+            : classifyScheduleReply(text, {
+                toolErrors: result.toolErrors,
+                runnerError,
+              });
           await finishRun(runId, row.id, status, text);
           if (status !== "ok")
             await deps.releaseThread?.(threadId).catch(() => {});
@@ -1181,7 +1314,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           }
           if (busyError(error) && attempt < BUSY_RETRIES) {
             attempt += 1;
-            await new Promise((resolve) => setTimeout(resolve, BUSY_RETRY_MS));
+            await new Promise((resolve) => setTimeout(resolve, retryDelay));
             continue;
           }
           throw error;
@@ -1321,14 +1454,17 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           ),
         );
         // 硬删结束态孤儿（cancel 只把 live 标 cancelled，按钮会一直显示「清理 N 条」）
-        await purgeOrphanSchedules().catch((error) =>
+        if (Date.now() - lastAutoPurge >= ORPHAN_PURGE_EVERY_MS) {
+          lastAutoPurge = Date.now();
+          await purgeOrphanSchedules().catch((error) =>
           console.warn(
             JSON.stringify({
               type: "schedule-orphan-purge-tick-failed",
               reason: reasonWithoutStatement(error).slice(0, 200),
             }),
           ),
-        );
+          );
+        }
         const report = await sweep();
         if (report.fired.length || report.skipped.length)
           console.info(JSON.stringify({ type: "schedule-sweep", ...report }));

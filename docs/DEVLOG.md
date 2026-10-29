@@ -1,5 +1,22 @@
 # DEVLOG
 
+## 例程数据安全：不误停、不发错地方、不误删（分支 dev2/routines-safety，审查模块 13 必修 M1/M2/M3 + 应修 S2/S6）
+
+**动机**：审查 `/workspace/audit/13-routines.md`。定时任务有三条会伤数据的路径：正常回复被判失败、连 3 次自动暂停（M1）；原话题删了，结果发到这个机器人最近的另一个话题（M2）；读机器人资料时 DB 抖一下就把例程永久取消（M3）。另外进设置页就无确认硬删「孤儿」、服务端每 15 秒全表硬删（S2）；静默巡检收尾时整段读改写 messages JSON，会吞掉并发写入的消息（S6）。
+
+**改法**：
+- M1 `shared/schedules.ts` `classifyScheduleReply(text, signals)`：失败只看运行器信号（`toolErrors`、`runnerError`，比如推送到 IM 失败），或者结果以运行器自己写的固定开头（`运行失败：`、`没有执行：`）开始。不再拿正则扫模型正文。`TurnRunner` 的返回值加了可选的 `toolErrors`。只改分类这一段，`describeCronZh` 这些描述函数没动。
+- M2 `service.ts` `threadFor`：原话题不在就返回 null，不再回退到「最近的对话」。到点时发现原话题不在：这次记 skipped（不算连续失败），任务改成 cancelled，last_result 写「原对话已删除…」。删话题（单个 DELETE，或清空全部）时，用 `cancelSchedulesForDeletedThreads` 取消挂在这些话题上的网页例程（IM 例程不动）。`ScheduleView.threadDeleted` 给设置页用，行内显示「原对话已删除」标签。为什么选取消、不选新建话题：在一个没有上下文的新话题里执行（可能还会对外推送），用户看不到也想不到；取消可以从 last_result 和标签看出来，不会发错地方。
+- M3 `index.ts` 给定时任务的 `botAvailable` 不再吞异常。`fire()` 遇到异常按 BUSY_RETRY 重试（12 次 × 10s）；重试完还查不到就把这次记成 skipped，任务保持原状。只有查询成功、确认机器人已不在或已删，才改成 cancelled。
+- S2 设置页去掉进页自动 `DELETE /api/schedules/orphans`，只剩「清理」按钮加确认框。服务端自动 purge 至多每小时跑一次，而且只删结束（done/cancelled）满 7 天的孤儿。「孤儿」的判定（purge 和 cancel 共用）改成：资料软删；或者资料行不存在，但这位用户还查得到别的有效机器人。资料表读不到（或这位用户一个有效机器人都查不到）时什么都不删、不取消。顺手修了 purge 删运行记录时 `ANY($1::text[])` 在 Bun SQL 下传数组报错、被吞掉的问题。
+- S6 静默巡检收尾改成一条 `UPDATE … jsonb_array_elements WITH ORDINALITY`，在行锁内求值：只截掉触发消息和它后面的部分，后面有 user 消息就不动。不再整段读出来改完写回。
+
+**测试**：
+- `shared/schedules.test.ts`：O11 的 4 句回复误判，外加正文里出现「运行失败：」「没有执行：」的句子都判 ok；runner 信号判 failed。
+- `server/tests/schedules-safety.test.ts`（新，Postgres）：M1 四句正常回复跑 4 次仍是 active、全部 ok；toolErrors 连 3 次才暂停。M2 原话题删除后不发任何回合、任务取消、带标记；删话题只取消挂在上面的。M3 异常重试后照常跑；一直异常时记 skipped、任务保持 active；确认已删才取消。S6 收起触发消息；后面有 user 消息时不动。S2 自动 purge 只删结束满 7 天的；资料读不到时不删；用户确认的 purge 只删确认的孤儿。
+- 探针 `routines-probe.ts` 的 classify 段：4 句都从 `failed` 变成 `ok`。
+- 截图：设置页标签没截。要截就得在 box 上起完整的 server + 登录 + DB，box 正在限流，没做。标签的 DOM 是 `[data-testid=schedule-thread-deleted]`。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。

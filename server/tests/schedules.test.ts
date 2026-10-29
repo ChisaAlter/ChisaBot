@@ -107,7 +107,7 @@ describe.skipIf(!url)("schedules (database)", () => {
     releaseSweepLock = await holdScheduleSweepLock(url!);
     await a.ensure();
     // fire() 先确认原对话还在（threadFor）；库里有 openbot_local_threads 时，假的对话 id 会被当成「对话已不在」。
-    for (const id of [tid("t-web-1"), tid("t-web-2"), tid("t-busy")]) {
+    for (const id of [tid("t-web-1"), tid("t-web-2"), tid("t-busy"), tid("t-fail-streak")]) {
       await sql.unsafe(
         "INSERT INTO openbot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, 'bot1')",
         [id, owner],
