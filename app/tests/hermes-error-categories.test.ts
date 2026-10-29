@@ -27,6 +27,7 @@ const expected: Record<string, string> = {
   provider_unavailable: "模型服务暂时不可用",
   model_not_found: "找不到所选模型",
   content_filter: "请求被模型的内容安全策略拦截",
+  region: "模型服务商不支持服务器所在地区",
   stream: "模型的连接中途断开了",
 };
 
@@ -39,6 +40,13 @@ describe("Hermes 透传的出错分类在网页上各自得到对的提示", () 
     const friendly = friendlyError(messages[category] as string);
     expect(friendly.title).toBe(title);
     expect(friendly.hint).toBeTruthy();
+  });
+
+  test("地区限制不可重试；分不清的 403（如只有 Forbidden）走通用句子，不冒充密钥无效", () => {
+    expect(friendlyError("Hermes host turn execution failed").title).not.toBe(
+      "模型密钥无效或已过期",
+    );
+    expect(friendlyError(messages.region as string).retryable).toBe(false);
   });
 
   test("认不出来的仍是原来那句，落到兜底提示", () => {

@@ -343,6 +343,7 @@ class FailureCategoryTests(unittest.TestCase):
     def test_exception_chain_status_code_and_names(self):
         class RateLimitError(Exception):
             pass
+        RateLimitError.__module__ = "openai._exceptions"
         class APIStatusError(Exception):
             def __init__(self, status):
                 super().__init__("opaque")
@@ -350,7 +351,10 @@ class FailureCategoryTests(unittest.TestCase):
         self.assertEqual(failure_category(error=RateLimitError("x")), "rate_limit")
         self.assertEqual(failure_category(error=APIStatusError(503)), "provider_unavailable")
         self.assertEqual(failure_category(error=APIStatusError(413)), "context_length")
-        self.assertEqual(failure_category(error=TimeoutError("read timed out")), "timeout")
+        class APITimeoutError(Exception):
+            pass
+        APITimeoutError.__module__ = "openai._exceptions"
+        self.assertEqual(failure_category(error=APITimeoutError("Request timed out.")), "timeout")
         try:
             try:
                 raise APIStatusError(429)
@@ -359,6 +363,47 @@ class FailureCategoryTests(unittest.TestCase):
         except RuntimeError as outer:
             self.assertEqual(failure_category(error=outer), "rate_limit")
         self.assertEqual(failure_category(error=RuntimeError("opaque-capability-secret")), "unknown")
+
+    def test_builtin_and_tool_errors_are_not_model_errors(self):
+        # #416 review: these used to read as "model not found", "invalid key" and "model timeout".
+        self.assertEqual(failure_category(error=FileNotFoundError(2, "No such file or directory", "notes.txt")), "unknown")
+        self.assertEqual(failure_category(error=PermissionError("Permission denied")), "unknown")
+        self.assertEqual(failure_category(error=RuntimeError("tool web_fetch timed out after 30s")), "unknown")
+        self.assertEqual(failure_category(error=TimeoutError("read timed out")), "unknown")
+        class ToolError(Exception):  # a tool's own exception type, not a model SDK's
+            pass
+        self.assertEqual(failure_category(error=ToolError("NotFound: model_not_found timed out")), "unknown")
+        # A built-in wrapper still lets the real model error underneath count.
+        class RateLimitError(Exception):
+            pass
+        RateLimitError.__module__ = "openai._exceptions"
+        try:
+            try:
+                raise RateLimitError("x")
+            except RateLimitError as inner:
+                raise FileNotFoundError("Permission denied timed out") from inner
+        except FileNotFoundError as outer:
+            self.assertEqual(failure_category(error=outer), "rate_limit")
+
+    def test_403_reads_the_body_before_calling_it_auth(self):
+        class PermissionDeniedError(Exception):
+            status_code = 403
+            def __init__(self, message, body=None, code=None):
+                super().__init__(message)
+                self.body = body
+                self.code = code
+        PermissionDeniedError.__module__ = "openai._exceptions"
+        region = PermissionDeniedError("Country, region, or territory not supported",
+                                       body={"error": {"code": "unsupported_country_region_territory"}},
+                                       code="unsupported_country_region_territory")
+        self.assertEqual(failure_category(error=region), "region")
+        self.assertEqual(failure_category(error=PermissionDeniedError("Request blocked by content filter")), "content_filter")
+        self.assertEqual(failure_category(error=PermissionDeniedError("x", body={"error": {"type": "policy_violation"}})),
+                         "content_filter")
+        self.assertEqual(failure_category(error=PermissionDeniedError("Invalid API key provided")), "auth")
+        self.assertEqual(failure_category(error=PermissionDeniedError("Forbidden")), "unknown")
+        self.assertEqual(failure_message("region"), "Hermes model call failed: unsupported_region (HTTP 403)")
+        self.assertEqual(failure_message(failure_category(error=PermissionDeniedError("Forbidden"))), TURN_FAILED)
 
     def test_messages_are_fixed_and_unknown_keeps_old_sentence(self):
         self.assertEqual(failure_message("unknown"), TURN_FAILED)

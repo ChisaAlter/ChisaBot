@@ -23,6 +23,12 @@
 - `examples/hermes-agent/tests/`：失败结果变成分类错误且不发那段英文；异常只留分类不留原文；`FailoverReason` 与状态码映射表（Python 50 个全过）。
 - `app/tests/hermes-error-categories.test.ts`：从 Python 源码读出每个分类句子，逐个过 `friendlyError`，标题都对；两边措辞漂移就会失败。
 
+**返修（#416 审查，2026-10-29）**
+
+- 必修：`_HINTS` 按异常文字匹配，把非模型错误认错了——工具的 `FileNotFoundError` 成了「模型不存在」，`PermissionError("Permission denied")` 成了「密钥无效」，工具自己的「timed out」成了「模型响应超时」。现在 `failure_category` 跳过内置异常（`OSError` 及其子类、`builtins` 里的 `RuntimeError` / `TimeoutError` 等），只认 HTTP 状态码（`status_code` / `status`）和模型 SDK（openai、anthropic、litellm、google、groq、mistralai、cohere 模块里的）异常类型；4xx 的 body / `code` 只在这类错误上看。其他一律走通用句子。内置异常包着的真模型错误（`__cause__`）照样认得出。
+- 应修：403 不再直接算「密钥无效」。先看 body / `code`：地区限制（`unsupported_country_region_territory`、「region … not supported」）→ 新分类 `region`（网页「模型服务商不支持服务器所在地区」，不可重试）；内容拦截（content filter / policy、moderation、policy_violation）→ `content_filter`；明确说 API key / unauthorized → `auth`；分不清（如只有「Forbidden」）→ 通用句子。
+- 测试：`test_protocol.py` 加这三个例子 + 403 各情况；`test_adapter.py` 加工具 `FileNotFoundError` 整轮只出通用句子、不带路径；`app/tests/hermes-error-categories.test.ts` 加 `region`，`friendly-error.ts` 加对应规则。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。

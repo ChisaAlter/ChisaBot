@@ -480,6 +480,7 @@ _FAILURE_MESSAGES = {
     "provider_unavailable": "Hermes model call failed: service unavailable (HTTP 503)",
     "model_not_found": "Hermes model call failed: model not found (HTTP 404)",
     "content_filter": "Hermes model call failed: content_filter",
+    "region": "Hermes model call failed: unsupported_region (HTTP 403)",
     "stream": "Hermes model call failed: stream error",
 }
 # Hermes' FailoverReason values (agent/error_classifier.py) folded into the categories above.
@@ -494,38 +495,107 @@ _REASONS = {
     "content_policy_blocked": "content_filter", "provider_policy_blocked": "content_filter",
     "incomplete_response": "stream",
 }
-_STATUS = {401: "auth", 403: "auth", 402: "quota", 404: "model_not_found", 408: "timeout", 413: "context_length",
+# 403 is not always a key problem: providers also answer 403 for a blocked region or a content
+# block. Only the error body can tell them apart; when it can't, the generic sentence is shown.
+_STATUS = {401: "auth", 402: "quota", 404: "model_not_found", 408: "timeout", 413: "context_length",
            429: "rate_limit"}
-_HINTS = (
+_REGION = re.compile(r"unsupported[_ ]?(country|region|location|territory)|(country|region|territory|location)"
+                     r"[^.]{0,40}\bnot (supported|available|allowed)|not available in your (country|region)", re.I)
+_CONTENT = re.compile(r"content[_ ]?(filter|policy|management)|moderation|policy[_ ]?violation|flagged|safety[_ ]?(system|filter)", re.I)
+_KEY = re.compile(r"invalid[_ ]?(api[_ ]?)?key|incorrect api key|api[_ ]?key|unauthori[sz]ed|authentication|invalid[_ ]?token", re.I)
+# What a 4xx body (or an SDK error ``code``) may say when the status alone doesn't name the cause.
+_BODY_HINTS = (
+    ("region", _REGION),
     ("context_length", re.compile(r"context[_ ]?(length|window)|maximum context|too many tokens|prompt is too long", re.I)),
-    ("rate_limit", re.compile(r"rate[_ ]?limit|too many requests", re.I)),
+    ("content_filter", _CONTENT),
     ("quota", re.compile(r"insufficient[_ ]?quota|billing|credit balance", re.I)),
-    ("timeout", re.compile(r"timed?[_ ]?out", re.I)),
-    ("auth", re.compile(r"authentication|unauthori[sz]ed|permission[_ ]?denied|invalid[_ ]?api[_ ]?key", re.I)),
-    ("model_not_found", re.compile(r"notfound|model[_ ]not[_ ]found", re.I)),
-    ("content_filter", re.compile(r"content[_ ]?(filter|policy)", re.I)),
-    ("provider_unavailable", re.compile(r"overloaded|service[_ ]?unavailable|internalserver|bad[_ ]?gateway", re.I)),
+    ("rate_limit", re.compile(r"rate[_ ]?limit", re.I)),
+    ("model_not_found", re.compile(r"model[_ ]not[_ ]found", re.I)),
+    ("auth", re.compile(r"invalid[_ ]?api[_ ]?key", re.I)),
 )
+# Model SDKs whose exception class names are trusted. A class name or text match on anything else
+# (a tool's FileNotFoundError, PermissionError("Permission denied"), "timed out"...) is not a model error.
+_SDK_MODULES = frozenset({"openai", "anthropic", "litellm", "google", "groq", "mistralai", "cohere"})
+_SDK_TYPES = {
+    "RateLimitError": "rate_limit", "AuthenticationError": "auth", "NotFoundError": "model_not_found",
+    "APITimeoutError": "timeout", "InternalServerError": "provider_unavailable",
+    "ServiceUnavailableError": "provider_unavailable", "OverloadedError": "provider_unavailable",
+    "ContextWindowExceededError": "context_length", "ContentPolicyViolationError": "content_filter",
+}
+
+
+def _error_body(error: BaseException) -> str:
+    parts = []
+    for name in ("code", "type", "body", "message"):
+        value = getattr(error, name, None)
+        if isinstance(value, (str, dict, list)):
+            parts.append(json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value)
+    parts.append(str(error))
+    return " ".join(parts)
+
+
+def _from_body(body: str) -> str | None:
+    for category, pattern in _BODY_HINTS:
+        if pattern.search(body):
+            return category
+    return None
+
+
+def _from_403(body: str) -> str:
+    if _REGION.search(body):
+        return "region"
+    if _CONTENT.search(body):
+        return "content_filter"
+    if _KEY.search(body):
+        return "auth"
+    return "unknown"
+
+
+def _is_builtin(error: BaseException) -> bool:
+    return isinstance(error, OSError) or type(error).__module__ == "builtins"
+
+
+def _sdk_type(error: BaseException) -> str | None:
+    if type(error).__module__.split(".", 1)[0] not in _SDK_MODULES:
+        return None
+    for cls in type(error).__mro__:
+        if cls.__name__ in _SDK_TYPES:
+            return _SDK_TYPES[cls.__name__]
+    return None
 
 
 def failure_category(reason: Any = None, error: BaseException | None = None) -> str:
-    """Name what went wrong, from Hermes' classified reason or the exception chain; never its text."""
+    """Name what went wrong, from Hermes' classified reason or the exception chain; never its text.
+
+    Only model-SDK exception types and HTTP statuses count. Built-in exceptions (OSError and its
+    FileNotFoundError / PermissionError / TimeoutError, RuntimeError...) are skipped, so a tool's own
+    failure is never dressed up as "model not found", "invalid key" or "model timeout".
+    """
     if isinstance(reason, str) and reason in _REASONS:
         return _REASONS[reason]
     seen = 0
     while error is not None and seen < 5:
         seen += 1
-        status = getattr(error, "status_code", None) or getattr(error, "status", None)
-        if isinstance(status, int):
-            if status in _STATUS:
-                return _STATUS[status]
-            if 500 <= status < 600:
-                return "provider_unavailable"
-        code = getattr(error, "code", None)
-        clues = " ".join(part for part in (type(error).__name__, code if isinstance(code, str) else "", str(error)) if part)
-        for category, pattern in _HINTS:
-            if pattern.search(clues):
-                return category
+        if not _is_builtin(error):
+            status = getattr(error, "status_code", None)
+            if not isinstance(status, int):
+                status = getattr(error, "status", None)
+            if isinstance(status, int) and not isinstance(status, bool):
+                if status == 403:
+                    return _from_403(_error_body(error))
+                if status in _STATUS:
+                    return _STATUS[status]
+                if 500 <= status < 600:
+                    return "provider_unavailable"
+                if 400 <= status < 500:
+                    return _from_body(_error_body(error)) or "unknown"
+            sdk = _sdk_type(error)
+            if sdk:
+                return sdk
+            if type(error).__module__.split(".", 1)[0] in _SDK_MODULES:
+                found = _from_body(_error_body(error))
+                if found:
+                    return found
         error = error.__cause__ or error.__context__
     return "unknown"
 

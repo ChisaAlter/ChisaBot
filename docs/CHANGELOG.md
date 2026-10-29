@@ -2,6 +2,7 @@
 
 - 修复：当前时间按用户时区（Asia/Shanghai）写并标明时区，和长期记忆同一天；测试 `server/tests/reply-quality.test.ts`。
 - 修复：Hermes 适配器透传模型出错的分类（限流 / 上下文过长 / 超时等），网页出对应提示；测试 `examples/hermes-agent/tests/`、`app/tests/hermes-error-categories.test.ts`。
+- 返修：Hermes 出错分类跳过内置异常（工具的 FileNotFoundError / PermissionError / timed out 不再冒充模型错误），只按 HTTP 状态码 + 模型 SDK 异常类型；403 看 body 分地区限制 / 内容拦截 / 密钥，分不清走通用提示。
 - 提示词：来源只在末尾写一次；卡片收尾写结论；公式加括号；拒绝给替代；写上当前模型；记忆笔记与出处规则写明优先级。
 
 ## 0.1.110

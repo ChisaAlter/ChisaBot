@@ -605,6 +605,16 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(error.exception), "Hermes model call failed: context_length exceeded")
         self.assertNotIn("opaque", str(error.exception))
 
+    async def test_tool_os_error_stays_generic_not_model_not_found(self):
+        state = await self.new()
+        def hook(agent, user, history):
+            raise FileNotFoundError(2, "No such file or directory", "/srv/secret-path.txt")
+        state.agent.run_hook = hook
+        with self.assertRaises(RequestError) as error:
+            await self.prompt(state)
+        self.assertEqual(str(error.exception), "Hermes host turn execution failed")
+        self.assertNotIn("secret-path", str(error.exception))
+
     async def test_default_manager_skips_native_memory_tools_and_discovery(self):
         captured = {}
         class AIAgent(FakeAgent):

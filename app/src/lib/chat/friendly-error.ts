@@ -34,6 +34,13 @@ const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boo
     retryable: false,
   },
   {
+    // #416 返修：403 不一定是密钥问题，服务商也用 403 表示「不向这个国家 / 地区提供服务」。Hermes 适配器看错误 body 认出来后发这句。
+    test: /unsupported[_ ]?(region|country)|region not supported|不支持.*地区|地区限制/i,
+    title: "模型服务商不支持服务器所在地区",
+    hint: "该服务商不向服务器所在的国家或地区提供这个模型。请在下方切换到其他模型，或请管理员换用可用的服务商或线路。",
+    retryable: false,
+  },
+  {
     test: /\b401\b|unauthori[sz]ed|invalid[_ ]?api[_ ]?key|incorrect api key|authentication|api key|密钥无效|鉴权/i,
     title: "模型密钥无效或已过期",
     hint: "请检查管理后台中的模型凭据，或切换到其他模型。",

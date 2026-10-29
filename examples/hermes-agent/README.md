@@ -72,12 +72,19 @@ by this adapter.
 A model call that fails is reported as an ACP `-32603` error with one fixed
 sentence per category (`rate_limit`, `quota`, `auth`, `context_length`,
 `timeout`, `provider_unavailable`, `model_not_found`, `content_filter`,
-`stream`; see `_FAILURE_MESSAGES` in `chisabot_protocol.py`). The category comes
+`region`, `stream`; see `_FAILURE_MESSAGES` in `chisabot_protocol.py`). The category comes
 from Hermes' `failure_reason` when it returns a failed result, or from the
 exception's status code and type; the provider's own text is never forwarded.
 Anything unclassified keeps the old `Hermes host turn execution failed`. The web
 app's `friendly-error.ts` turns each sentence into its Chinese headline and
 next step (`app/tests/hermes-error-categories.test.ts` keeps both sides in step).
+
+Only HTTP statuses and model-SDK exception types count: built-in exceptions
+(`OSError` and its subclasses, `RuntimeError`, `TimeoutError`...) are skipped,
+so a tool's own `FileNotFoundError`, `PermissionError` or "timed out" stays the
+generic sentence. A 403 is read from its body first: a blocked region becomes
+`region`, a content block `content_filter`, an explicit key problem `auth`, and
+anything else the generic sentence.
 
 ## Tools and waiting
 
