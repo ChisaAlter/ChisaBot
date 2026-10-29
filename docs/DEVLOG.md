@@ -345,3 +345,5 @@ better-auth 1.7.2–1.7.14 都是 1.7.x 补丁：没有新表 / 新列，1.7.11 
 **dependabot**：`.github/dependabot.yml` 覆盖 bun（`/`，含 app、server 工作区）、bun（`/agent-computer`）、npm（`/pc`）、github-actions（`/`）；每周一 09:00（Asia/Shanghai），每个生态限 3–5 个 PR，小版本 / 补丁合成一个分组 PR。
 
 **注意**：`bun install` 会把 bun.lock 里 app / server 工作区的 version 行改成 0.1.103，已手动改回与 main 一致的 0.0.0；项目版本号未动。
+
+**0.1.106 部署**（2026-10-29 10:03–10:16 北京时间）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.106-20261029T020328Z.dump`（`pg_restore -l` 767 条目）。`deploy-serial.sh 0ba9676` 镜像 `local/chisabot:auto-202610290203-0ba9676`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.106` / `0ba9676`。`request.sh smoke` PASSED（admin 模型自检 `ok:true persisted:false`），`health.sh` 通过，公网 `/login` 200，容器 healthy、无重启，sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（md5 与部署前备份一致），`nginx -T` 仍有 22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`。镜像清理：更新器已自动删除 `auto-202610282010-ed93b05`，手动删除 `keep-d6cd2ec`；保留当前（BASE）0ba9676、上一版 3856d36、`keep-628d527`。
