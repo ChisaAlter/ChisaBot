@@ -18,8 +18,16 @@ export const SCHEDULE_STARTER = "帮我设一个定时任务：";
 
 /** 空状态的起手句：都是提醒类，留空让用户补内容；只填进输入框，不发送。 */
 export const SCHEDULE_PRESETS = [
-  { id: "tomorrow", label: "明早 9 点提醒我…", prompt: "明天早上 9 点提醒我：" },
-  { id: "workday", label: "每个工作日提醒我…", prompt: "每个工作日 18:00 提醒我：" },
+  {
+    id: "tomorrow",
+    label: "明早 9 点提醒我…",
+    prompt: "明天早上 9 点提醒我：",
+  },
+  {
+    id: "workday",
+    label: "每个工作日提醒我…",
+    prompt: "每个工作日 18:00 提醒我：",
+  },
   { id: "weekly", label: "每周提醒我…", prompt: "每周日晚上 9 点提醒我：" },
 ] as const;
 
@@ -53,7 +61,8 @@ export function ScheduleRuns({ schedule: s }: { schedule: ScheduleView }) {
   const runs = detail.data?.recentRuns ?? s.recentRuns ?? [];
   const loading = detail.isFetching && detail.isPlaceholderData;
   // 拿回来的条数够了要的条数，就可能还有更早的；到服务端保留上限就不再给「更多」。
-  const more = Boolean(detail.data) && runs.length >= limit && limit < RUNS_KEPT;
+  const more =
+    Boolean(detail.data) && runs.length >= limit && limit < RUNS_KEPT;
   const showButton = more || loading;
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
@@ -117,7 +126,11 @@ export function ScheduleRuns({ schedule: s }: { schedule: ScheduleView }) {
       ) : runs.length >= RUNS_KEPT ? (
         <div className="sch-detail-v is-muted mt-2">{`只保留最近 ${RUNS_KEPT} 次运行。`}</div>
       ) : null}
-      <span aria-live="polite" className="sr-only" data-testid="schedule-runs-status">
+      <span
+        aria-live="polite"
+        className="sr-only"
+        data-testid="schedule-runs-status"
+      >
         {limit > RUNS_PAGE && !loading ? `已显示 ${runs.length} 次运行` : ""}
       </span>
     </div>

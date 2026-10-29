@@ -67,7 +67,6 @@ import {
   partitionScheduleList,
   scheduleLastLineZh,
   scheduleLastTone,
-  type ScheduleRunStatus,
   type ScheduleView,
 } from "../../../../../shared/schedules";
 
@@ -83,7 +82,10 @@ function SchedulesPage() {
   const hiddenBots = useQuery(agentListQueryOptions(true));
   const queryClient = useQueryClient();
   const botName = new Map(
-    [...(bots.data ?? []), ...(hiddenBots.data ?? [])].map((bot) => [bot.id, bot.name]),
+    [...(bots.data ?? []), ...(hiddenBots.data ?? [])].map((bot) => [
+      bot.id,
+      bot.name,
+    ]),
   );
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [detail, setDetail] = useState<string | null>(null);
@@ -300,7 +302,6 @@ function SchedulesPage() {
 
 const RUN_BUSY_HINT = "这次还没跑完，跑完才能再运行。";
 
-
 function ScheduleRow({
   schedule: s,
   botName,
@@ -381,10 +382,7 @@ function ScheduleRow({
   }
   const running = s.running || s.lastStatus === "running";
   const runHintId = useId();
-  const last = scheduleLastLineZh(
-    s,
-    s.lastRunAt ? agoText(s.lastRunAt) : null,
-  );
+  const last = scheduleLastLineZh(s, s.lastRunAt ? agoText(s.lastRunAt) : null);
   const lastTone = scheduleLastTone(s);
   return (
     <div
@@ -412,12 +410,18 @@ function ScheduleRow({
             <>
               <span className="device-row-meta">
                 <span className="sch-when">{s.schedule}</span>
-                <span className="device-cap-chip sch-tz" data-testid="schedule-tz">
+                <span
+                  className="device-cap-chip sch-tz"
+                  data-testid="schedule-tz"
+                >
                   {scheduleZone(s)}
                 </span>
                 {s.status === "paused" ? (
                   // 审查模块 13 O8：行内直接写「已暂停」，不用只靠开关和分组标题看。
-                  <span className="device-cap-chip" data-testid="schedule-paused">
+                  <span
+                    className="device-cap-chip"
+                    data-testid="schedule-paused"
+                  >
                     {"已暂停"}
                   </span>
                 ) : null}
@@ -435,12 +439,7 @@ function ScheduleRow({
                 {shownNextRun(s) ? (
                   <span className="sch-next">{`下次 ${formatWhen(shownNextRun(s) ?? "", s.timezone)} ${scheduleZone(s)}`}</span>
                 ) : null}
-                <span
-                  className={cn(
-                    "sch-last",
-                    statusTone(lastTone),
-                  )}
-                >
+                <span className={cn("sch-last", statusTone(lastTone))}>
                   {last}
                 </span>
                 {s.lastResult && !running ? (
@@ -466,7 +465,11 @@ function ScheduleRow({
               data-testid="schedule-run-now"
               // 审查模块 13 O8：这次还没跑完时置灰（服务端也会挡），原因写在下面的说明里。
               disabled={running}
-              feedback={{ pending: "启动中…", success: "已开始", error: "失败" }}
+              feedback={{
+                pending: "启动中…",
+                success: "已开始",
+                error: "失败",
+              }}
               onClick={() => void run.run()}
               size="sm"
               state={run.state}
@@ -616,4 +619,3 @@ function ScheduleDialog({
     </Dialog>
   );
 }
-

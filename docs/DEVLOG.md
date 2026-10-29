@@ -784,3 +784,15 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.111`；PC / Android 不变。不打 tag、不建 Release。
 
 **0.1.111 部署**（2026-10-29 21:48 北京时间开始）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.111-20261029T134745Z.dump`（`pg_restore -l` 767 条目），备份网关 `nginx.conf`（`nginx.conf.bak-pre-v0.1.111-20261029T134745Z`）。`deploy-serial.sh a4fce00` 因为 server 新增依赖 `sharp` 走了完整构建（609 秒），镜像 `local/chisabot:auto-202610291348-a4fce00`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.111` / `a4fce00`；`request.sh smoke` PASSED，`POST /api/admin/smoke` 模型自检 `ok:true persisted:false`，`health.sh` 通过（容器 healthy、无重启、本机 `/health` 200、公网 `/login` 200），sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 63914d8；保留当前（BASE）a4fce00、上一版 249aefa 作回滚。#411 的 base 不是 main，已在 GitHub 上手动关闭并留言。
+
+## 2026-10-29 设置 · 定时任务列表和详情（审查模块 13 第一个 PR：S4 / S7 / O8）
+
+**范围**：只改 `app/src/routes/_authed/settings/schedules.tsx` 的列表和详情，新增 `app/src/components/schedules/schedule-runs.tsx`（运行记录 + 起手句常量 + `statusTone` 搬过来）；`components/schedules/edit-dialog.tsx`、`styles.css` 未动。
+
+- **S4**：「去对话创建定时任务」原来把「每天 08:30 调用 personal_morning_brief…通过 notify_push 推送到我手机」作为引用块塞进输入框；空状态三个模板分别预设晨报推送、personal_check_updates 和 memory_dream。现在按钮和空状态都走 `sendPromptToChat(navigate, text)`（不带 sourceLabel → `chisabot-prefill`，只填不发），文字是中性的「帮我设一个定时任务：」/「明天早上 9 点提醒我：」等，用户补完自己发送；按钮 `title` 写明会做什么，空状态文案改成「点下面的起手句，它会填进对话输入框，补完再发送」。
+- **S7**：详情里的运行记录改用 `scheduleRunsQueryOptions(id, limit)`，打开先显示列表带的 5 条，拉回 20 条；「显示更多」每次 +20，到服务端保留的 50 条为止（`service.ts` 修剪到 50），满 50 条时写「只保留最近 50 次运行」。`placeholderData: keepPreviousData` 让加载时旧记录留在原处；加载中按钮用 `aria-disabled` 而不是 `disabled`（禁用会把焦点丢到 body），没有更多时焦点移到列表（`tabIndex=-1`）；`aria-live` 播报「已显示 N 次运行」。
+- **O8**：暂停的任务在行内 meta 加「已暂停」（`device-cap-chip`，`data-testid=schedule-paused`）；运行中「立即运行」`disabled`，文字变「运行中」，`aria-label`「「X」正在运行」，`aria-describedby` 指向 sr-only 的「这次还没跑完，跑完才能再运行。」，`title` 同文；窄屏隐藏 `.sch-run` 时菜单里的「立即运行」同样禁用并写「运行中，跑完才能再运行」。
+
+**INP**（box，系统 Chrome headless + playwright-core，生产构建的临时页面挂真的路由组件，`/api` 打桩、详情接口延迟 120ms；CDP `Emulation.setCPUThrottlingRate` 4×；Event Timing `durationThreshold:16` 按 interactionId 取最长 duration；7 种交互 × 3 轮 = 21 次：点开详情、点「显示更多」、键盘 Enter「显示更多」、Esc 关详情、暂停开关、打开「更多操作」菜单、Esc 关菜单）：第 1 轮（机器高负载）最大 200ms、中位 72ms；第 2 轮（负载 ~2–4）最大 136ms（点开详情）、中位 72ms。dev 模式（未压缩 React 开发版）首次点开详情 288ms，仅作参考。
+
+**测试**：`app/tests/schedule-runs-more.test.tsx`（起手句不含 notify_push / memory_dream / personal_ / 推送；5 → 20 → 40 → 50 条及请求的 runs 参数；不足 20 条不给「更多」；按钮消失后焦点落在列表）。截图 `docs/images/routines-list/{before,after}-{list,detail,empty}.webp`。未升级版本号。
