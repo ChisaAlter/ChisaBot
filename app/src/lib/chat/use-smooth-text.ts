@@ -8,9 +8,13 @@ import { initialReveal, pending, receive, type RevealState, step } from "./smoot
  *  - 只在有积压时跑 requestAnimationFrame，追平就停，空闲时零开销；
  *  - 标签页在后台、或系统开了「减少动态效果」：立刻整段显示（后台标签页 rAF 本来也不跑，
  *    切回来时不能让人看着它慢慢补）；
- *  - 文字很长时（> LONG_TEXT 字）最多 30 帧/秒重画，Markdown 每帧整段重解析的开销减半。
+ *  - 最多 60 帧/秒重画；文字较长时（> LONG_TEXT 字）最多 30 帧/秒。
+ *    审查 01 第 5 条：高刷屏（120/144/160Hz）上以前每个 rAF 都重画一次 Markdown，60 帧以上肉眼看不出差别，
+ *    只是把主线程吃满；门槛原来是 6000 字，普通长回答（两三千字）一直按满帧率重画。
  */
-const LONG_TEXT = 6000;
+const LONG_TEXT = 2000;
+const MIN_FRAME_MS = 16;
+const LONG_FRAME_MS = 32;
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
@@ -58,7 +62,8 @@ export function useSmoothText(text: string, enabled = true): string {
         return;
       }
       const t = now();
-      if (cur.target.length > LONG_TEXT && t - lastPaint.current < 32) {
+      const gap = cur.target.length > LONG_TEXT ? LONG_FRAME_MS : MIN_FRAME_MS;
+      if (t - lastPaint.current < gap) {
         frame.current = requestAnimationFrame(tick);
         return;
       }
