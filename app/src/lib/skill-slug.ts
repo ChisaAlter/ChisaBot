@@ -31,7 +31,10 @@ function shortHash(text: string): string {
 export function slugFromTitle(title: string): string {
   const trimmed = title.trim();
   if (!trimmed) return "";
-  const ascii = normalizeSlugInput(trimmed).replace(/-+$/, "").slice(0, 40).replace(/-+$/, "");
+  const ascii = normalizeSlugInput(trimmed)
+    .replace(/-+$/, "")
+    .slice(0, 40)
+    .replace(/-+$/, "");
   if (SKILL_SLUG.test(ascii)) return ascii;
   const prefix = ascii ? `${ascii.slice(0, 26).replace(/-+$/, "")}-` : "skill-";
   return `${prefix}${shortHash(trimmed)}`;

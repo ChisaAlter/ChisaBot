@@ -28,6 +28,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { useGuardedOpenChange } from "@/components/ui/unsaved-guard";
+import { formDirty } from "@/lib/unsaved";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, ListRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";

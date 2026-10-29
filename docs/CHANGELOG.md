@@ -1,3 +1,8 @@
+## Unreleased
+
+- 设置页审查模块 12：常驻指令有未保存的更改时，切左栏 / 浏览器后退先确认（`useBlocker`），刷新 / 关标签有 beforeunload 提示；技能、记忆、导入 SKILL.md 弹窗有改动时 Esc / 点遮罩 / ✕ 先确认（全站统一用确认）。设置文案和真实功能对齐：配色说明从 `THEME_PALETTES` 生成，去掉「内置流光壁纸」，精选技能不写死数量，左栏「生图与识图」和页面标题一致，「密钥」不在左栏单列（并在 账号连接 → API 密钥，仍能搜到），常驻指令超长报错改中文。中文标题的技能自动生成合法名字并标「必填」；常驻指令保存中只禁用按钮。测试 `app/tests/settings-audit-12.test.ts`。不升版本号。
+- `docs/DEVLOG.md` 记录设置页审查模块 12 的动机、改动和前后截图（`docs/images/settings-audit/`）。
+
 ## 0.1.110
 
 - 修复：断线重连后漏掉的消息不补——`useConversationSync` 隔 15 秒以上才问到变化戳时不再只记基线，序号变了就合并式接上；测试 `app/tests/reconnect-backfill.test.tsx`。

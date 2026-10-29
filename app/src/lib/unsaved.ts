@@ -6,16 +6,27 @@
  */
 
 /** 弹窗被这些方式关掉时，有改动就先确认。「取消」按钮是用户明说要放弃，不拦。 */
-export const GUARDED_DISMISS_REASONS: ReadonlySet<string> = new Set(["escape-key", "outside-press", "close-press"]);
+export const GUARDED_DISMISS_REASONS: ReadonlySet<string> = new Set([
+  "escape-key",
+  "outside-press",
+  "close-press",
+]);
 
-export function shouldConfirmDismiss(dirty: boolean, reason: string | undefined): boolean {
+export function shouldConfirmDismiss(
+  dirty: boolean,
+  reason: string | undefined,
+): boolean {
   return dirty && reason !== undefined && GUARDED_DISMISS_REASONS.has(reason);
 }
 
 /** 两份表单值浅比较：任何一个字段不一样就算有改动。 */
-export function formDirty<T extends Record<string, unknown>>(initial: T, current: T): boolean {
+export function formDirty<T extends Record<string, unknown>>(
+  initial: T,
+  current: T,
+): boolean {
   const keys = new Set([...Object.keys(initial), ...Object.keys(current)]);
-  for (const key of keys) if (!Object.is(initial[key], current[key])) return true;
+  for (const key of keys)
+    if (!Object.is(initial[key], current[key])) return true;
   return false;
 }
 

@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { THEME_PALETTES } from "../src/lib/appearance";
-import { findEntry, navGroups, SETTINGS_PAGES, visibleGroups } from "../src/lib/settings/registry";
-import { normalizeSlugInput, SKILL_SLUG, slugFromTitle } from "../src/lib/skill-slug";
+import {
+  findEntry,
+  navGroups,
+  SETTINGS_PAGES,
+  visibleGroups,
+} from "../src/lib/settings/registry";
+import {
+  normalizeSlugInput,
+  SKILL_SLUG,
+  slugFromTitle,
+} from "../src/lib/skill-slug";
 import { formDirty, shouldConfirmDismiss } from "../src/lib/unsaved";
 
 /** 审查模块 12：未保存拦截、技能名字、设置文案（DESIGN.md §11 / §97）。 */
@@ -27,7 +36,14 @@ describe("unsaved guard rules", () => {
 
 describe("skill slug", () => {
   test("Chinese titles still give a valid, stable name, never --", () => {
-    for (const title of ["周报", "写周报", "每日 晨报", "🙂", "a", "中文 AI 助手"]) {
+    for (const title of [
+      "周报",
+      "写周报",
+      "每日 晨报",
+      "🙂",
+      "a",
+      "中文 AI 助手",
+    ]) {
       const slug = slugFromTitle(title);
       expect(SKILL_SLUG.test(slug)).toBe(true);
       expect(slug).not.toContain("--");
@@ -54,23 +70,36 @@ describe("settings copy matches the product", () => {
   test("palette count comes from THEME_PALETTES, no stale numbers", () => {
     const palette = findEntry("general.palette")!.item!;
     expect(palette.description).toContain(`${THEME_PALETTES.length} 款`);
-    for (const p of THEME_PALETTES) expect(palette.description).toContain(p.name);
+    for (const p of THEME_PALETTES)
+      expect(palette.description).toContain(p.name);
     expect(palette.description).not.toContain("8 款");
   });
 
   test("no built-in wallpaper promise, no hard-coded curated skill count", () => {
-    expect(findEntry("general.wallpaper")!.item!.description).not.toContain("内置");
-    expect(findEntry("skills.curated-hub")!.item!.description).not.toMatch(/\d+\s*款/);
+    expect(findEntry("general.wallpaper")!.item!.description).not.toContain(
+      "内置",
+    );
+    expect(findEntry("skills.curated-hub")!.item!.description).not.toMatch(
+      /\d+\s*款/,
+    );
   });
 
   test("media page title matches its h1", () => {
-    expect(SETTINGS_PAGES.find((page) => page.id === "media")!.title).toBe("生图与识图");
+    expect(SETTINGS_PAGES.find((page) => page.id === "media")!.title).toBe(
+      "生图与识图",
+    );
   });
 
   test("vault is searchable but not a separate rail item", () => {
-    const rail = navGroups(admin).flatMap((entry) => entry.pages.map((page) => page.id));
+    const rail = navGroups(admin).flatMap((entry) =>
+      entry.pages.map((page) => page.id),
+    );
     expect(rail).not.toContain("vault");
     expect(rail).toContain("connected-accounts");
-    expect(visibleGroups(admin).flatMap((entry) => entry.pages.map((page) => page.id))).toContain("vault");
+    expect(
+      visibleGroups(admin).flatMap((entry) =>
+        entry.pages.map((page) => page.id),
+      ),
+    ).toContain("vault");
   });
 });
