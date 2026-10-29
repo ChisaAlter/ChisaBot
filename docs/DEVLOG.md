@@ -1,5 +1,30 @@
 # DEVLOG
 
+## Unreleased — 首屏加载提速（PR A，分支 dev4/perf-first-load-split）
+
+问题：登录后第一次进来卡在「正在加载 ChisaBot…」约 2 秒。审计基线（生产冷缓存）：LCP 6540ms、最长长任务 2193ms、主包 3.0 MB（gzip 约 950 KB）。
+
+做法（设计见 DESIGN.md §41.5）：
+1. `CHISABOT_BUNDLE_REPORT=1` 的构建报告找出大块和「为什么被带上」：入口一个 3 MB 的块里装着 CopilotKit、Markdown、shiki、lucide、所有外壳。
+2. 固定 vendor 块 + `shell` / `route-shell` 手动块；修掉过程中踩到的块循环（React 必须在叶子块）、CSS 把整块 JS 拖上入口、katex 被 micromark 数学扩展静态带上、web-inspector 被并进 vendor-copilot。
+3. `lazyPart` / `AfterIdle`：外壳各部分、CopilotProvider（只在聊天区挂）、电脑面板、实时面板卡片、render_ui 渲染、Streamdown、转录缓存都按需。
+4. `route-preload` 插件：按路径 modulepreload 首屏块。
+5. 长任务定位（CDP Profiler，200µs 采样）：剩下的 1.1–1.4s 全是天空引擎 `initGL` 编译着色器（真显卡上也一样）。宿主在 Worker 里用并行编译预热着色器，引擎命中缓存；引擎文件未改。
+
+测量方法：Jun 的电脑上，main 和分支分别 `bun run build`，本地 gzip 静态服务器（/api、/auth 用固定假数据），playwright-core 驱动独立 headless Chrome，每轮全新 `%TEMP%\dev4-chrome-*` profile、CDP `Network.setCacheDisabled`、40ms RTT / 20 Mbps；ready = 启动骨架消失且 #root 有内容；LCP 取 PerformanceObserver 最后一个 largest-contentful-paint；长任务取 ready 后再等 4 秒内的 longtask 最大值；首屏 JS = ready 之前开始请求的 .js 资源（gzip 为传输大小，raw 为解压后大小）。
+
+| 页面 | 指标 | main 1 / 2 / 3（中位） | 分支 1 / 2 / 3（中位） |
+|---|---|---|---|
+| /settings | LCP ms | 3912 / 3832 / 3716（3832） | 1408 / 1500 / 1712（1500） |
+| /settings | 最长长任务 ms | 1318 / 1432 / 1412（1412） | 53 / 54 / 67（54） |
+| /settings | 首屏 JS gzip | 1,162,721 ×3 | 520,204 ×3 |
+| / | LCP ms | 4088 / 4860 / 4448（4448） | 2172 / 2308 / 2236（2236） |
+| / | 最长长任务 ms | 1319 / 1667 / 1764（1667） | 73 / 84 / 78（78） |
+| / | 首屏 JS gzip | 1,128,461 ×3 | 1,140,504 / 1,136,460 / 1,136,460（1,136,460） |
+| — | 入口块 raw / gzip | 3,068,525 / 957,529 | 421,343 / 137,944 |
+
+没达到的：聊天首页首屏 JS 没减半（持平）。聊天页本身需要 CopilotKit（vendor-copilot gzip 约 168 KB）和 Markdown（vendor-markdown 约 189 KB——CopilotKit react-core 静态引用它自带的 streamdown 1.6.11），加上入口和 React 已经约 600 KB；再往下要动 CopilotKit 本身，不在这次范围。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。

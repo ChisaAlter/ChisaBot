@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 首屏加载提速（PR A，分支 dev4/perf-first-load-split）
+
+- 登录后首屏不再卡在「正在加载 ChisaBot…」：路由级拆分 + 固定 vendor 块，左栏 / 侧栏 / 右栏 / 频道页 / CopilotProvider / 电脑面板 / 实时面板卡片 / 生成式界面渲染 / Streamdown 按需加载（加载态用现有骨架组件），按路径 modulepreload 首屏块；天空着色器改在 Worker 里预热，引擎启动不再阻塞主线程 1 秒多。本地冷缓存实测（3 轮中位数）：设置页首屏 JS gzip 1.16 MB → 0.52 MB、LCP 3.8 s → 1.5 s；聊天首页 LCP 4.4 s → 2.2 s；最长长任务 1.4–1.7 s → 54–78 ms；入口块 gzip 957 KB → 138 KB。聊天首页首屏 JS 总量持平（CopilotKit + Markdown 是聊天必需）。详见 DESIGN.md §41.5。未升级版本号。
+
 ## 0.1.109 — 2026-10-29
 
 这一版合并 3 个 PR：回复来源结构化（数据格式先行，生产环境 `CHISABOT_REPLY_SOURCES` 保持关闭，#391）、web_fetch 重试 + 搜索摘要降级、工具失败后这一轮一定有回答（#392）、壁纸与外观收尾（#376，只改 app）。只升级服务器版本号（根、`app`、`server` 为 `0.1.109`），PC / Android 外壳未变；没有表结构变化。
