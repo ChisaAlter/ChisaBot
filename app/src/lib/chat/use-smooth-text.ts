@@ -13,7 +13,11 @@ import { initialReveal, pending, receive, type RevealState, step } from "./smoot
  *    只是把主线程吃满；门槛原来是 6000 字，普通长回答（两三千字）一直按满帧率重画。
  */
 const LONG_TEXT = 2000;
-const MIN_FRAME_MS = 16;
+/*
+ * 门槛比 16.7ms 留些余量：60Hz 屏上 rAF 时间戳有抖动，卡在 16 时有的帧算出 15.9ms 被跳过，实际掉成 30 帧；
+ * 12ms 在 60Hz 上每帧都画，在 120Hz（8.3ms）上仍是隔一帧画一次。
+ */
+const MIN_FRAME_MS = 12;
 const LONG_FRAME_MS = 32;
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());

@@ -3,6 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, render } from "@testing-library/react";
 import { parseMarkdownIntoBlocks, Streamdown } from "streamdown";
 import { createIncrementalBlockParser } from "@/lib/chat/incremental-blocks";
+import { randomDoc, rng, streamPrefixes } from "./markdown-fuzz";
 import { settleReactWork } from "./settle-react-work";
 
 if (typeof document === "undefined") GlobalRegistrator.register();
@@ -88,6 +89,17 @@ const CORPUS: string[] = [
   "a\r\nb\r\n\r\nc",
   "",
   "   \n\n  \n",
+  // 审查 #415：后面的行会把前面的块并掉，旧的「除最后两块外都定型」在这些例子上流完了仍然不一致。
+  "说明如下：\n2. 第二步\n- 要点",
+  "段落一行\n接着一行\n2. 不从 1 开始\n\n后文",
+  "段落\n===\n\n另一段\n---\n\n结尾",
+  "第一段\n\n第二段\n---",
+  "[r]: https://example.com/r\n[r]: https://example.com/again\n- - -\nx^2 $",
+  "[ref][r]\n\n[r]: https://a.example\n\n[r]: https://b.example\n\n后文",
+  "- a\n\n- b\n\n2. c\n\n  续行\n\n结尾",
+  "> 引用\n\n> 第二段引用\n\n正文",
+  "<!-- 注释\n\n跨空行\n\n-->\n\n后文",
+  "```\n代码\n\n还在代码里\n\n```\n\n后文",
 ];
 
 function streamCompare(text: string, step = 1) {
@@ -108,17 +120,22 @@ test("streamed in uneven chunks (several characters per frame) also matches", ()
 });
 
 test("the reuse actually happens: a streamed document re-lexes only its tail", () => {
+  // 普通回复没有链接定义和顶格 HTML（有的话保守地整段重切，见 incremental-blocks.ts）；两份拼起来模拟长一点的回答。
+  const typical = DOC.replace("[r]: https://example.com/r\n", "")
+    .replace(/<div>[\s\S]*?<\/div>\n/, "")
+    .replace("~~~\n未闭合的代码块一直到结尾", "");
+  const text = `${typical}\n\n${typical}`;
   let lexed = 0;
   const parse = createIncrementalBlockParser((md) => {
     lexed += md.length;
     return parseMarkdownIntoBlocks(md);
   });
   let naive = 0;
-  for (let i = 0; i <= DOC.length; i++) {
-    parse(DOC.slice(0, i));
+  for (let i = 0; i <= text.length; i++) {
+    parse(text.slice(0, i));
     naive += i;
   }
-  // 整段重切是 O(n²) 个字符；增量的每步只重切最后两块。这份语料块很短，已经少了三倍以上，文字越长差得越多。
+  // 整段重切是 O(n²) 个字符；增量的每步只重切最后一个封口点之后的部分。
   expect(lexed).toBeLessThan(naive / 3);
 });
 
@@ -164,4 +181,23 @@ test("rendered HTML is identical to the default block parser at every streaming 
     expect(view.getByTestId("b").innerHTML).toBe(view.getByTestId("a").innerHTML);
   }
   expect(view.getByTestId("b").textContent?.length ?? 0).toBeGreaterThan(100);
+});
+/*
+ * 固定种子的 fuzz 对比（审查 #415）：随机拼容易改写前面块的片段，按随机长度流进来，每一步都和整段重切对比。
+ * CI 里跑 600 篇（约一万步）；本地用 tests/markdown-fuzz.ts 跑过 20 万篇、0 个不一致。
+ */
+test("fuzz: random documents streamed in random chunks always match a full re-parse (fixed seed)", () => {
+  const random = rng(415);
+  const mismatches: string[] = [];
+  for (let run = 0; run < 600; run++) {
+    const doc = randomDoc(random);
+    const parse = createIncrementalBlockParser();
+    for (const prefix of streamPrefixes(doc, random)) {
+      if (JSON.stringify(parse(prefix)) !== JSON.stringify(parseMarkdownIntoBlocks(prefix))) {
+        mismatches.push(prefix);
+        break;
+      }
+    }
+  }
+  expect(mismatches).toEqual([]);
 });
