@@ -12,18 +12,21 @@
  *      两张卡片都是现拼的、no-store，从不进缓存。旧的 index.html 从不缓存，所以部署后刷新一次一定是新入口。
  *   2. /assets/*（文件名带内容哈希，内容永不改变）：命中缓存直接给，没命中走网络，200 才存。
  *      缺失的分包服务器回 404，这里原样转交、不缓存——前端的「分包过期自动刷新一次」（app/src/lib/stale-chunk.ts，PR #64）照常工作。
- * 其它请求（/api、/auth、WebSocket、非 GET、跨域、Range 请求、/magpie-admin、/downloads…）一律不拦，浏览器照常处理。
+ *   3. 没登录（会话过期）：导航拿到 401 就改成跳 /login?next=原地址；「正在重试」卡片探测时拿到 401 也直接去登录页，
+ *      而不是刷新回同一个地址再等 20 秒（线上 0.1.110：过期会话卡在加载、随后 SW 回 503 卡片）。/login 本身不拦，
+ *      登录页永远由网关直接给，不套 20 秒超时和卡片。
+ * 其它请求（/api、/auth、/login、WebSocket、非 GET、跨域、Range 请求、/magpie-admin、/downloads…）一律不拦，浏览器照常处理。
  *
  * 出问题时的退路：把这个文件换成只调用 self.registration.unregister() 的版本即可；或者在浏览器里
  * localStorage.setItem("chisabot-sw", "off") 后刷新，页面会注销它（app/src/lib/pwa.ts）。
  */
-const SW_VERSION = "3"; // 3：关掉 navigation preload（登录回调被发两次）；2 = DF-13 导航失败区分离线 / 服务器慢
+const SW_VERSION = "4"; // 4：401 → /login?next=，/login 不拦；3：关掉 navigation preload（登录回调被发两次）；2 = DF-13 导航失败区分离线 / 服务器慢
 const ASSET_CACHE = "chisabot-assets-v1";
 const NAV_TIMEOUT_MS = 20_000;
 const RETRY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524]);
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 const MAX_ASSETS = 400;
-const SKIP_NAV = /^\/(api|auth|magpie-admin|downloads|workspace|sign-in)(\/|$)/;
+const SKIP_NAV = /^\/(api|auth|login|magpie-admin|downloads|workspace|sign-in)(\/|$)/;
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -94,6 +97,8 @@ async function navigate(event) {
       timeout,
     ]);
     if (response === "timeout") return failed();
+    // 会话过期：网关对导航本该回 302 /login；万一回的是 401（缺 Sec-Fetch-Mode / Accept 的请求），也送去登录页。
+    if (response.status === 401) return toLogin(event.request.url);
     if (RETRY_STATUSES.has(response.status) && !isOwnCard(response))
       return slow();
     return response;
@@ -102,6 +107,16 @@ async function navigate(event) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** 去登录页，登录完回到原来的地址（网关 login.js 的 safeNext 只认站内路径）。 */
+function loginPath(href) {
+  const url = new URL(href);
+  return `/login?next=${encodeURIComponent(url.pathname + url.search + url.hash)}`;
+}
+
+function toLogin(href) {
+  return Response.redirect(new URL(loginPath(href), self.location.origin).href, 302);
 }
 
 /** 网络层失败：真断网给离线卡片，否则（超时、连接被重置…）当作服务器慢。 */
@@ -160,6 +175,15 @@ function retryMain(env) {
           ? win.AbortSignal.timeout(20000)
           : undefined,
       });
+      // 探测请求不是导航，网关对过期会话回的是 JSON 401 而不是 302：刷新只会再走一遍导航，直接去登录页。
+      if (res.status === 401) {
+        stopped = true;
+        const here = new URL(win.location.href);
+        win.location.replace(
+          `/login?next=${encodeURIComponent(here.pathname + here.search + here.hash)}`,
+        );
+        return;
+      }
       if (!env.retryStatuses.includes(res.status) && res.status < 500) {
         stopped = true;
         win.location.reload();

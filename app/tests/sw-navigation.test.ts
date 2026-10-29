@@ -286,6 +286,7 @@ function fakeWin(
   };
   const probes: string[] = [];
   let reloads = 0;
+  const replaced: string[] = [];
   const win = {
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
@@ -294,6 +295,9 @@ function fakeWin(
       href,
       reload: () => {
         reloads++;
+      },
+      replace: (to: string) => {
+        replaced.push(to);
       },
     },
     document: { getElementById: (id: string) => els[id] ?? null },
@@ -307,7 +311,7 @@ function fakeWin(
       return { status: next };
     },
   };
-  return { win, clock, events, els, probes, reloads: () => reloads };
+  return { win, clock, events, els, probes, replaced, reloads: () => reloads };
 }
 
 describe("重试卡片脚本", () => {
@@ -365,5 +369,50 @@ describe("重试卡片脚本", () => {
     w.events.online?.();
     for (let i = 0; i < 10; i++) await Promise.resolve();
     expect(w.reloads()).toBe(1);
+  });
+});
+
+describe("sw.js 会话过期（401）", () => {
+  test("导航拿到 401：302 到 /login?next=原地址，不是把 401 页面交给浏览器", async () => {
+    const sw = loadSw({
+      fetch: async () =>
+        new Response(JSON.stringify({ ok: false, openbotAuthRequired: true }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    const res = await sw.navigate("/channel/abc?watch=true");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(
+      "https://bot.example/login?next=%2Fchannel%2Fabc%3Fwatch%3Dtrue",
+    );
+  });
+
+  test("网关的 302 → /login 原样交给浏览器（不当成失败）", async () => {
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { location: "/login?next=%2Fchannel%2Fabc" },
+    });
+    const sw = loadSw({ fetch: async () => redirect });
+    const res = await sw.navigate("/channel/abc");
+    expect(res).toBe(redirect);
+  });
+
+  test("/login 导航不拦：登录页由网关直接给，不套 20 秒超时和 503 卡片", () => {
+    const sw = loadSw({});
+    for (const path of ["/login", "/login?next=%2Fsettings", "/login/"])
+      expect(sw.dispatchNavigate(path)).toBeUndefined();
+    // /log、/logins 这种不是登录页的前缀照常拦。
+    expect(sw.dispatchNavigate("/logins")).toBeDefined();
+  });
+
+  test("重试卡片探测到 401：直接去 /login?next=原地址，不刷新回去再等 20 秒", async () => {
+    const { ctx } = loadSw({});
+    const w = fakeWin([401]);
+    ctx.retryMain({ win: w.win, delays: ctx.RETRY_DELAYS_MS, retryStatuses: ctx.RETRY_STATUSES });
+    await w.clock.advance(1000);
+    expect(w.reloads()).toBe(0);
+    expect(w.replaced).toEqual(["/login?next=%2Fchat%2Fabc%3Fx%3D1%23m"]);
+    expect(w.clock.pending()).toEqual([]);
   });
 });

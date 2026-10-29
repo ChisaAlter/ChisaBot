@@ -1,6 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { AuthedShell } from "../components/layout/authed-shell";
 import { QuickSpotlight } from "../components/chat/quick-spotlight";
+import { isGoingToLogin } from "../lib/auth/login-redirect";
 import { currentUserQueryOptions, needsOnboarding } from "../lib/auth/queries";
 import { ProfileSetupGate } from "../components/layout/profile-dialog";
 import { CopilotProvider } from "../lib/copilot/provider";
@@ -14,6 +15,9 @@ export const Route = createFileRoute("/_authed")({
       currentUserQueryOptions(),
     );
     if (!user) {
+      // The gateway's 401: the page is already on its way to /login?next=… — stay on the boot
+      // screen instead of flashing the app's /sign, which the gateway does not serve.
+      if (isGoingToLogin()) await new Promise<never>(() => {});
       throw redirect({ to: "/sign" });
     }
     // CB-107：多标签 control 轮询按账号隔离（锁名 / 频道名 / store）。

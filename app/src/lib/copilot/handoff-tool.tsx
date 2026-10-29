@@ -1,11 +1,13 @@
 import { useRenderTool } from "@copilotkit/react-core/v2";
 import { IconArrowsExchange, IconChevronDown } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { agentListQueryOptions } from "@/lib/agents/queries";
+import { latestChannelFor } from "@/lib/channels/latest";
+import { channelListQueryOptions } from "@/lib/channels/queries";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import { HANDED_OVER } from "@/lib/copilot/markers";
 import { saidItWentAhead } from "@/lib/plugins/tool-result";
@@ -143,6 +145,15 @@ export function BotExchangeCard({
           (b) => !b.hidden && (b.id.toLowerCase() === wanted || b.name.toLowerCase() === wanted),
         )
       : undefined;
+  // 「去「X」的对话」是它正在用的那段对话：左栏已经加载过会话列表，这里只读缓存、不另外请求。
+  // /channel/new 本身总是开新话题，所以有对话时直接链到那个频道。
+  const channels = useInfiniteQuery(
+    { ...channelListQueryOptions(), enabled: false },
+    sharedQueryClient,
+  );
+  const matchedChannelId = matchedBot
+    ? latestChannelFor(matchedBot.id, channels.data)?.id
+    : undefined;
   const targetDeleted = Boolean(wanted && roster && !matchedBot);
 
   const summary = describeHandoffStatus({
@@ -199,13 +210,23 @@ export function BotExchangeCard({
           ) : null}
           <p className="bot-exchange-note">{summary.note}</p>
           {matchedBot ? (
-            <Link
-              className="bot-exchange-link"
-              search={{ agent: matchedBot.id }}
-              to="/channel/new"
-            >
-              {`去「${matchedBot.name}」的对话 →`}
-            </Link>
+            matchedChannelId ? (
+              <Link
+                className="bot-exchange-link"
+                params={{ channelId: matchedChannelId }}
+                to="/channel/$channelId"
+              >
+                {`去「${matchedBot.name}」的对话 →`}
+              </Link>
+            ) : (
+              <Link
+                className="bot-exchange-link"
+                search={{ agent: matchedBot.id }}
+                to="/channel/new"
+              >
+                {`去「${matchedBot.name}」的对话 →`}
+              </Link>
+            )
           ) : null}
         </div>
       ) : null}

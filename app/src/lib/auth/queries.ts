@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import { goToLogin, isGatewayLoginRequired } from "@/lib/auth/login-redirect";
 import { client, tryClient } from "@/lib/client";
 
 /**
@@ -93,7 +94,12 @@ async function currentUser({ signal }: { signal: AbortSignal }): Promise<Authent
       (async () => {
         /* A 401 is the signed-out state, rather than a failed request. */
         const response = await tryClient("/api/me", { signal: request.signal });
-        if (response.status === 401) return null;
+        if (response.status === 401) {
+          // Behind the public gateway its own /login is the sign-in page: go there with the way
+          // back, rather than to the app's /sign (main.tsx installs the same check for every fetch).
+          if (typeof window !== "undefined" && (await isGatewayLoginRequired(response))) goToLogin();
+          return null;
+        }
         if (!response.ok) throw new Error(`无法加载当前用户 (${response.status})`);
         const body = (await response.json()) as { user: AuthenticatedUser };
         return body.user;
