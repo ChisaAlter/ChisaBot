@@ -185,31 +185,81 @@ export function parseBing(html: string): SearchHit[] {
   return hits;
 }
 
-let lastMissLog = 0;
+const lastMissLog = new Map<string, number>();
 /**
- * DuckDuckGo 拿不到结果时在服务器日志里记一行（最多每 10 分钟一行，不带查询内容）。2026-10-29 发现线上
- * 搜索结果全是 Bing 的跳转链接，也就是 DuckDuckGo 一直失败，而之前失败被静默吞掉，没人知道。
+ * DuckDuckGo 拿不到结果时在服务器日志里记一行（同一种情况最多每 10 分钟一行，不带查询内容）。2026-10-29
+ * 发现线上搜索结果全是 Bing 的跳转链接，也就是 DuckDuckGo 一直失败，而之前失败被静默吞掉，没人知道。
  */
-function noteSearchMiss(engine: string, detail: string) {
-  const now = Date.now();
-  if (now - lastMissLog < 600_000) return;
-  lastMissLog = now;
-  console.warn(JSON.stringify({ type: "web-search-engine-miss", engine, detail: detail.replace(/https?:\/\/\S+/g, "<url>").slice(0, 200) }));
+function noteSearchMiss(engine: string, reason: string, detail: string, now = Date.now()) {
+  const key = `${engine}:${reason}`;
+  if (now - (lastMissLog.get(key) ?? Number.NEGATIVE_INFINITY) < 600_000) return;
+  lastMissLog.set(key, now);
+  console.warn(JSON.stringify({ type: "web-search-engine-miss", engine, reason, detail: detail.replace(/https?:\/\/\S+/g, "<url>").slice(0, 200) }));
+}
+
+/**
+ * DuckDuckGo 的反爬页（2026-10-29，在 Haupt 上只读核实）：对生产出口 IP，HTML 端点回 HTTP 202，页面里是
+ * `anomaly` 验证脚本，一条结果也没有。这不是「没搜到」，是被拦了，而且一拦就是一阵子。
+ */
+export function isDuckDuckGoChallenge(page: { status: number; body: string }): boolean {
+  return page.status === 202 || (/anomaly/i.test(page.body) && !/class="result__a"/.test(page.body));
+}
+
+/** 被拦之后多久内不再去敲 DuckDuckGo：每次搜索白等一个来回，还会让拦截持续下去。 */
+export const DDG_COOLDOWN_MS = 10 * 60_000;
+let ddgBlockedUntil = 0;
+
+/** 测试用：清掉冷却和日志节流。 */
+export function resetSearchState() {
+  ddgBlockedUntil = 0;
+  lastMissLog.clear();
+}
+
+/**
+ * 一次搜索的结果，外加「搜索源这次能不能用」。
+ *
+ * `sourceDown`：DuckDuckGo 失败（连不上、被拦、回了验证页），并且 Bing 也没有一条和问题相关的结果。这时
+ * 再换关键词搜也是同样的结果，所以工具直接告诉模型搜索源不可用、别再搜（{@link SEARCH_SOURCE_DOWN}）。
+ * DuckDuckGo 正常回了页面只是没有结果，算真的没搜到，不算源不可用。
+ */
+export type SearchOutcome = { hits: SearchHit[]; sourceDown: boolean };
+
+type PageFetcher = (url: string, signal?: AbortSignal, accept?: string, userAgent?: string) => Promise<{ status: number; body: string }>;
+
+export async function searchWeb(
+  query: string,
+  count = 6,
+  signal?: AbortSignal,
+  deps: { fetchPage?: PageFetcher; now?: () => number } = {},
+): Promise<SearchOutcome> {
+  const fetchPage = deps.fetchPage ?? fetchPublic;
+  const now = deps.now ?? Date.now;
+  let hits: SearchHit[] = [];
+  let ddgDown = true;
+  if (now() >= ddgBlockedUntil) {
+    // DuckDuckGo 对浏览器式 UA 会回「异常流量」验证页（2026-10-13 实测），用最简 UA。
+    const ddg = await fetchPage(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, signal, undefined, "Mozilla/5.0").catch((error: unknown) => {
+      if (!signal?.aborted) noteSearchMiss("duckduckgo", "error", error instanceof Error ? error.message : String(error), now());
+      return null;
+    });
+    if (ddg && isDuckDuckGoChallenge(ddg)) {
+      ddgBlockedUntil = now() + DDG_COOLDOWN_MS;
+      noteSearchMiss("duckduckgo", "challenge", `status ${ddg.status}, anti-bot page; skipping DuckDuckGo for ${DDG_COOLDOWN_MS / 60_000} min`, now());
+    } else if (ddg) {
+      hits = parseDuckDuckGo(ddg.body);
+      ddgDown = ddg.status !== 200 && hits.length === 0;
+      if (hits.length === 0) noteSearchMiss("duckduckgo", "empty", `status ${ddg.status}, no results`, now());
+    }
+  }
+  if (hits.length === 0) {
+    const bing = await fetchPage(`https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=zh-CN`, signal).catch(() => null);
+    hits = bing ? relevantHits(query, parseBing(bing.body)) : [];
+  }
+  return { hits: hits.slice(0, Math.max(1, Math.min(count, 10))), sourceDown: ddgDown && hits.length === 0 };
 }
 
 export async function webSearch(query: string, count = 6, signal?: AbortSignal): Promise<SearchHit[]> {
-  // DuckDuckGo 对浏览器式 UA 会回「异常流量」验证页（2026-10-13 实测），用最简 UA。
-  const ddg = await fetchPublic(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, signal, undefined, "Mozilla/5.0").catch((error: unknown) => {
-    if (!signal?.aborted) noteSearchMiss("duckduckgo", error instanceof Error ? error.message : String(error));
-    return null;
-  });
-  let hits = ddg ? parseDuckDuckGo(ddg.body) : [];
-  if (ddg && hits.length === 0) noteSearchMiss("duckduckgo", `status ${ddg.status}, no results`);
-  if (hits.length === 0) {
-    const bing = await fetchPublic(`https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=zh-CN`, signal).catch(() => null);
-    hits = bing ? relevantHits(query, parseBing(bing.body)) : [];
-  }
-  return hits.slice(0, Math.max(1, Math.min(count, 10)));
+  return (await searchWeb(query, count, signal)).hits;
 }
 
 export async function webFetch(raw: string, signal?: AbortSignal) {
@@ -244,6 +294,22 @@ export const WEB_GUIDANCE =
 export const NO_SEARCH_HITS =
   "没有搜到相关结果（这次搜索没给出可用结果，不代表网上没有）。不要接着换关键词连搜：最多再换一次更短、更具体的关键词；还没有就 web_fetch 一个你确定的官网或权威页面，或者按已知信息回答，并说明没有联网核实。";
 
+/**
+ * 搜索源整个不可用时给模型的话（2026-10-29，hark 对比 #5 #8 #11）。和 {@link NO_SEARCH_HITS} 分开：那是
+ * 「这个说法没搜到」，换一次关键词还有意义；这是「搜什么都一样」，再搜只是让用户多等一轮模型。
+ */
+export const SEARCH_SOURCE_DOWN =
+  "当前搜索源不可用（不是网上没有这类信息，换关键词也一样）。这一轮不要再调用 web_search：需要的话 web_fetch 一个你确定的官网或权威页面；否则按已知信息回答，并说明没有联网核实。";
+
+/** web_search 工具结果的文字：命中的结果包进 untrusted 信封；没有结果时按「源不可用 / 没搜到」分别说。 */
+export function searchResultText(outcome: SearchOutcome): string {
+  if (outcome.hits.length === 0) return outcome.sourceDown ? SEARCH_SOURCE_DOWN : NO_SEARCH_HITS;
+  return markUntrusted(
+    outcome.hits.map((h, i) => `${i + 1}. ${h.title}\n   ${h.url}\n   ${h.snippet}`).join("\n"),
+    "web search results",
+  );
+}
+
 export function webTools(): GrantedTool[] {
   return [
     {
@@ -258,12 +324,7 @@ export function webTools(): GrantedTool[] {
         const parsed = searchParameters.safeParse(args);
         if (!parsed.success) return `${REFUSAL_MARKER} web_search 需要 query。`;
         try {
-          const hits = await webSearch(parsed.data.query, parsed.data.count ?? 6, signal);
-          if (hits.length === 0) return NO_SEARCH_HITS;
-          return markUntrusted(
-            hits.map((h, i) => `${i + 1}. ${h.title}\n   ${h.url}\n   ${h.snippet}`).join("\n"),
-            "web search results",
-          );
+          return searchResultText(await searchWeb(parsed.data.query, parsed.data.count ?? 6, signal));
         } catch (error) {
           if (signal?.aborted || (error instanceof Error && /abort/i.test(error.name + error.message)))
             return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
