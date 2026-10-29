@@ -13,6 +13,7 @@ import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { canCompact, type DesktopWindowBridge, useDesktopWindow } from "@/lib/desktop-window";
+import { presenceRef } from "@/lib/presence-flag";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
 import { requestSidebarSearchFocus } from "@/lib/sidebar-search";
 import { cn } from "@/lib/utils";
@@ -73,6 +74,7 @@ export function GlassTopBar({
     // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上
     <header
       className="glass-topbar hk-topbar"
+      ref={presenceRef("has-topbar")}
       data-scope={scope}
       // 左栏收起 / PC 标题按钮个数直接写在顶栏上，CSS 不用挂在整个外壳上的 :has()（流式输出时会触发整页样式重算）。
       data-sidebar={sidebar && !mobile ? sidebar.state : undefined}

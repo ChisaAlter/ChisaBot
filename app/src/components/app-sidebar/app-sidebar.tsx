@@ -944,8 +944,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 ) : null}
                 <div className="glass-bot-list relative">
                   <PresenceList>
-                    {others.map((bot) => (
-                      <PresenceItem key={bot.id}>
+                    {others.map((bot, index) => (
+                      <PresenceItem key={bot.id} layoutKey={index}>
                         {row(bot, false)}
                       </PresenceItem>
                     ))}

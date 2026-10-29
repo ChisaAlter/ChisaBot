@@ -1,5 +1,6 @@
 import { IconSearch, IconX } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
+import { RailParked } from "@/components/layout/rail-sidebar";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import {
   onSidebarSearchFocusRequest,
@@ -32,7 +33,11 @@ export function SidebarSearchField({ variant = "rail" }: { variant?: "rail" | "t
     clearSearchActive();
     setActiveId(undefined);
   }, [search]);
+  // 左栏藏着（在设置里留着）时不接聚焦请求：设置里按 Ctrl K 是先记下请求再回聊天，等左栏露出来这里才接，
+  // 和以前左栏重新挂上时一样（藏着的输入框聚焦不了，先接了请求就丢了）。
+  const parked = useContext(RailParked);
   useEffect(() => {
+    if (parked) return;
     const focus = () => {
       if (!takeSidebarSearchFocus()) return;
       // 左栏刚展开时输入框还在过渡里，下一帧再聚焦，光标不会落空。
@@ -43,7 +48,7 @@ export function SidebarSearchField({ variant = "rail" }: { variant?: "rail" | "t
     };
     focus();
     return onSidebarSearchFocusRequest(focus);
-  }, []);
+  }, [parked]);
   return (
     <label className={c.root}>
       <IconSearch aria-hidden className={c.ico} />

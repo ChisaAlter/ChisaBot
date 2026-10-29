@@ -1,4 +1,4 @@
-import { KeptVisibleContext } from "@/lib/kept-visible";
+import { createKeptVisibility, KeptVisibilityContext, KeptVisibleContext } from "@/lib/kept-visible";
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /** 藏着的聊天留多久（之后卸载，回来走正常的打开：先画上次的样子，再接入）。 */
@@ -52,6 +52,19 @@ export function KeepAliveStage<T>({
   const shown = address !== null || idle;
   const visible = kept !== null && shown;
 
+  // 不让读的组件重画的那份「看不看得见」（`useKeptVisibility`）：同一个对象，提交后改值、通知订阅者。
+  // 每换一页（`kept` 换了，包括藏够时间卸载后再打开）就换一个、按这次渲染的 `visible` 起值：新挂上的聊天
+  // 第一次渲染就读到对的值。共用一个的话，藏着时卸载、再打开别的聊天，新页面先读到上一页留下的「藏着」，
+  // 提交后才变成「看得见」，`useThreadActivity` 把这当成「刚回来」多问一次（#403 审查 c）。
+  const [store, setStore] = useState(() => ({ for: kept, visibility: createKeptVisibility(visible) }));
+  let current = store;
+  if (store.for !== kept) {
+    current = { for: kept, visibility: createKeptVisibility(visible) };
+    setStore(current);
+  }
+  const visibility = current.visibility;
+  useEffect(() => visibility.set(visible), [visibility, visible]);
+
   const [epoch, setEpoch] = useState(0);
   const [wasVisible, setWasVisible] = useState(visible);
   if (visible !== wasVisible) {
@@ -66,20 +79,32 @@ export function KeepAliveStage<T>({
   }, [visible, kept, ttlMs]);
 
   // 看得见时一直记着尺寸；藏起来那一刻（同一次提交、新页面画出来之前）用记下的尺寸冻住。
+  // 尺寸只从 ResizeObserver 拿（浏览器排完版后给，开始观察时也会先给一次）：以前变回看得见的那次提交里
+  // 当场 getBoundingClientRect，关设置时逼浏览器在提交中途把整段对话排一遍版（4× 降速 60ms+，§41 ④）。
   const box = useRef<HTMLDivElement>(null);
   const size = useRef<{ width: number; height: number } | null>(null);
   const hasKept = kept !== null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useLayoutEffect(() => {
+  useEffect(() => {
     const el = box.current;
     if (!el || !visible) return;
-    const measure = () => {
-      const rect = el.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) size.current = { width: rect.width, height: rect.height };
+    const remember = (width: number, height: number) => {
+      if (width > 0 && height > 0) size.current = { width, height };
     };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
+    if (typeof ResizeObserver === "undefined") {
+      const rect = el.getBoundingClientRect();
+      remember(rect.width, rect.height);
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      const border = entry?.borderBoxSize?.[0];
+      if (border) remember(border.inlineSize, border.blockSize);
+      else {
+        const rect = el.getBoundingClientRect();
+        remember(rect.width, rect.height);
+      }
+    });
     observer.observe(el);
     return () => observer.disconnect();
   }, [visible, hasKept]);
@@ -136,7 +161,9 @@ export function KeepAliveStage<T>({
           ref={box}
           style={keptStyle}
         >
-          <KeptVisibleContext.Provider value={visible}>{renderKept(kept, { visible, epoch })}</KeptVisibleContext.Provider>
+          <KeptVisibleContext.Provider value={visible}>
+            <KeptVisibilityContext.Provider value={visibility}>{renderKept(kept, { visible, epoch })}</KeptVisibilityContext.Provider>
+          </KeptVisibleContext.Provider>
         </div>
       ) : null}
       <div

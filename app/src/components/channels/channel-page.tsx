@@ -5,7 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { AgentProfile } from "@/components/agents/agent-profile";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
@@ -59,8 +59,12 @@ export type ChannelPageProps = {
 /**
  * 一段聊天的整页（聊天列 + 机器人设置窗格 + 历史对话 + 暂停横幅）。由外壳的 `KeepAliveStage` 挂着，
  * 离开聊天时不卸载（DESIGN.md §98）。
+ *
+ * `memo`：外壳（`AuthedShell` → `ChatStage`）跟着地址的 pathname 重画，每换一页（打开 / 关闭设置、切分类）
+ * 都会带着这一整页和下面的聊天列表、输入框重画一遍，而这里的 props 全是原始值、根本没变。关设置时 4× 降速下
+ * 这一遍约 10ms 的渲染 + 提交。只有 `visible` / `epoch` / 地址参数真的变了才重画。
  */
-export function ChannelPage({
+export const ChannelPage = memo(function ChannelPage({
   channelId,
   settings,
   watch,
@@ -218,13 +222,15 @@ export function ChannelPage({
       </DetailPanel>
     </div>
   );
-}
+});
 
 /**
  * A channel with exactly one coworker is its CopilotKit chat. Old multi-Bot group conversations
  * have no page since slimming P4b; they say so instead of redirecting to the removed `/group`.
  */
-function ChannelBody({
+// `memo`：`visible` 变了（从设置回来）`ChannelPage` 要重画，但聊天本身（props 是同一个对话对象和两个布尔）
+// 不用跟着重画——要知道「看不看得见」的地方读 `KeptVisibleContext` / `useKeptVisibility`。
+const ChannelBody = memo(function ChannelBody({
   channel,
   isPending,
   hasError,
@@ -276,4 +282,4 @@ function ChannelBody({
       runtimeAgentId={runtimeAgentId}
     />
   );
-}
+});

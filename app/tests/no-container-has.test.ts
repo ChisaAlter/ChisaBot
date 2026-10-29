@@ -8,17 +8,9 @@ import path from "node:path";
  * 新代码请改用组件直接输出的 data-* 属性（例如顶栏的 data-sidebar / data-winctrls）。
  * 下面的清单是 main 上已有的旧规则，只许减少不许增加；删掉一条旧规则时把它也从清单里去掉。
  */
-const LEGACY = [
-  "body:has(.glass-topbar)",
-  '.glass-shell:has([data-slot="sidebar"][data-state="collapsed"])',
-  '.glass-topbar:has(.win-ctrls[data-count="3"])',
-  "body:not(:has(.glass-composer))",
-  "body:has(.update-banner)",
-  "body:has(.computer-takeover)",
-  "html:has(> body .glass-shell)",
-  "body:has(.rail-tab.is-narrow)",
-  'body:has([data-slot="sheet-overlay"])',
-];
+// #403（设置面板卡顿）把 body / html / .glass-shell 上的那几条换成了 presenceRef 拨的 data-has-* 旗子（DESIGN.md §41 ③），
+// 只剩 PC 3 个标题按钮这一条。
+const LEGACY = ['.glass-topbar:has(.win-ctrls[data-count="3"])'];
 
 const css = readFileSync(
   path.join(import.meta.dir, "../src/styles.css"),
@@ -85,7 +77,9 @@ function containerHasSelectors(): string[] {
 }
 
 test("找得到旧的大容器 :has()，说明检查本身在工作", () => {
-  expect(containerHasSelectors()).toContain("body:has(.glass-topbar)");
+  expect(containerHasSelectors()).toContain(
+    '.glass-topbar:has(.win-ctrls[data-count="3"])',
+  );
 });
 
 test("styles.css 不新增挂在大容器上的 :has()", () => {
