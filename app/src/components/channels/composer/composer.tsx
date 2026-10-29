@@ -23,6 +23,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -342,7 +343,12 @@ const UNACCEPTED_DROP_REASON = {
     "没有附上：还没有对话。先发出这条消息，再往打开的对话里附文件。",
 } as const;
 
-export function Composer({
+/*
+ * memo（审查 01 第 4 条）：流式时 ChannelChat 每个 chunk 都重渲染，以前连带整个输入框（PromptArea 163ms、
+ * ContextMeter 118ms / 次 profile）。上面 ConversationView / ChannelChat 把传进来的元素和回调都做成了稳定的，
+ * 输入框只在它自己的东西变了（pending / stoppable / 草稿相关）时才渲染。
+ */
+export const Composer = memo(function Composer({
   className,
   modelControl,
   leadingControl,
@@ -1843,7 +1849,14 @@ export function Composer({
              */}
             <PromptArea
               aria-label={"消息"}
-              autoGrow
+              /*
+               * 不用 prompt-area 的 autoGrow（4x 降速下 Shift+Enter 换行 190–230ms 的主因，审查 04）。
+               * 它每个字都排一帧：把高度设成 auto、读 scrollHeight（强制整页布局）、再写回像素高度并 setState
+               * 让 PromptArea 再渲染一次；而 styles.css 的 `.glass-composer .prompt-area-editor` 早就用
+               * `height: auto !important` 把那个高度盖掉了（2026-10-22 去掉失焦塌缩和高度动画），量出来的值
+               * 一个像素都没用上。不开 autoGrow 时编辑器靠内容自然长高，min/max-height 与 overflow 一样，画面不变。
+               */
+              autoGrow={false}
               className={cn(
                 "glass-composer-editor min-w-0 w-full border-0 bg-transparent p-0 text-sm shadow-none",
                 editorClassName,
@@ -1949,7 +1962,14 @@ export function Composer({
             {replyQuoteBar}
             <PromptArea
               aria-label={"消息"}
-              autoGrow
+              /*
+               * 不用 prompt-area 的 autoGrow（4x 降速下 Shift+Enter 换行 190–230ms 的主因，审查 04）。
+               * 它每个字都排一帧：把高度设成 auto、读 scrollHeight（强制整页布局）、再写回像素高度并 setState
+               * 让 PromptArea 再渲染一次；而 styles.css 的 `.glass-composer .prompt-area-editor` 早就用
+               * `height: auto !important` 把那个高度盖掉了（2026-10-22 去掉失焦塌缩和高度动画），量出来的值
+               * 一个像素都没用上。不开 autoGrow 时编辑器靠内容自然长高，min/max-height 与 overflow 一样，画面不变。
+               */
+              autoGrow={false}
               className={cn(
                 "w-full border-0 bg-transparent p-0 text-sm shadow-none",
                 editorClassName,
@@ -2013,7 +2033,7 @@ export function Composer({
       </form>
     </div>
   );
-}
+});
 
 /**
  * GIVE BACK THE STAGED ROW A REMOVED CHIP STOOD FOR — THE ONLY CALLER THIS ENDPOINT HAS.
