@@ -66,20 +66,32 @@ export function KeepAliveStage<T>({
   }, [visible, kept, ttlMs]);
 
   // 看得见时一直记着尺寸；藏起来那一刻（同一次提交、新页面画出来之前）用记下的尺寸冻住。
+  // 尺寸只从 ResizeObserver 拿（浏览器排完版后给，开始观察时也会先给一次）：以前变回看得见的那次提交里
+  // 当场 getBoundingClientRect，关设置时逼浏览器在提交中途把整段对话排一遍版（4× 降速 60ms+，§41 ④）。
   const box = useRef<HTMLDivElement>(null);
   const size = useRef<{ width: number; height: number } | null>(null);
   const hasKept = kept !== null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useLayoutEffect(() => {
+  useEffect(() => {
     const el = box.current;
     if (!el || !visible) return;
-    const measure = () => {
-      const rect = el.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) size.current = { width: rect.width, height: rect.height };
+    const remember = (width: number, height: number) => {
+      if (width > 0 && height > 0) size.current = { width, height };
     };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
+    if (typeof ResizeObserver === "undefined") {
+      const rect = el.getBoundingClientRect();
+      remember(rect.width, rect.height);
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      const border = entry?.borderBoxSize?.[0];
+      if (border) remember(border.inlineSize, border.blockSize);
+      else {
+        const rect = el.getBoundingClientRect();
+        remember(rect.width, rect.height);
+      }
+    });
     observer.observe(el);
     return () => observer.disconnect();
   }, [visible, hasKept]);

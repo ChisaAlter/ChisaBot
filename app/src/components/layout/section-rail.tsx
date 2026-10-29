@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
 import { Sidebar, SidebarContent, SidebarRail, useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { scrollIntoViewWithin } from "@/lib/scroll-within";
+import { scrollIntoViewWithinAsync } from "@/lib/scroll-within";
 import { cn } from "@/lib/utils";
 
 /**
@@ -80,9 +80,10 @@ export function SectionRail({
   // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     // 只滚左栏自己（§98.5）：原生 scrollIntoView 会连藏在下面的聊天一起挪。
+    // 不当场读布局（§41 ④）：等浏览器排完版再算，切分类时不再多一次整页强制布局。
     const box = scrollRef.current;
     const row = box?.querySelector<HTMLElement>(".nav-row.is-on");
-    if (box && row) scrollIntoViewWithin(row, { container: box });
+    if (box && row) return scrollIntoViewWithinAsync(row, { container: box });
   }, [pathname]);
 
   if (collapsed) {

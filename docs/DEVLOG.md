@@ -1,5 +1,30 @@
 # DEVLOG
 
+## Unreleased — 设置面板卡顿②：关设置 / 切分类不再在提交中途强制同步布局
+
+### 动机
+
+- 测试剖析（4× 降速）里关闭设置是一个 479ms 的长任务；除了聊天页 React 重渲染，提交阶段还被几处「先改 DOM、再立刻读尺寸」的强制同步布局拖长：`keep-alive.tsx` 的 `useLayoutEffect` 里同步 `getBoundingClientRect`；`section-rail.tsx` 每次切分类在 effect 里读左栏和当前行的矩形；以及（本轮 CPU profile 新发现）侧栏机器人列表的 `PresenceItem`（motion `layout="position"`）每次重渲染都在提交前、提交后各读一次 `document` 滚动位置，4× 下合计约 75ms。
+
+### 改动
+
+- `keep-alive.tsx`：量尺寸改成普通 `useEffect` + `ResizeObserver` 的 `borderBoxSize`（观察回调里拿尺寸，不再在提交阶段同步读矩形；没有 `ResizeObserver` 的环境才退回同步读一次）。
+- `lib/scroll-within.ts` + `section-rail.tsx`：新增 `scrollIntoViewWithinAsync`，用 `IntersectionObserver({ root: 左栏 })` 首次回调给的 `rootBounds` / `boundingClientRect` 算出偏移，再 `scrollBy`；读写分离，不在 effect 里读布局。滚动结果和原来的 `scrollIntoViewWithin` 一样（同一个 `scrollDelta` 算法，单测覆盖）。
+- `components/ui/presence.tsx`：`PresenceItem` 新增 `layoutKey`（即 motion 的 `layoutDependency`），侧栏机器人列表传列表下标——插入 / 删除 / 换序都会改下标，补位动画照旧；只是换页导致的普通重渲染不再触发测量。
+- 测试：`app/tests/scroll-within.test.ts` 加 `scrollDelta` 和异步版本（假 IntersectionObserver）的用例。
+
+### 前后 INP（4× CPU 降速，生产构建，Chrome 1440×900，5 轮取中位数，相对 main）
+
+| 交互 | main | 本改动 | 变化 |
+|---|---|---|---|
+| 打开设置 | 316ms | 240ms | −24% |
+| 切分类（每轮各分类中位数，再取 5 轮中位数） | 250ms | 216ms | −14% |
+| 关闭设置 | 548ms | 464ms | −15% |
+
+- 点击「按下到处理完」（`processingEnd − startTime`，INP 去掉呈现延迟的那部分）：打开 135→127ms，切分类 79→64ms，**关闭 348→201ms（−42%）**。
+- 和 ①（#395，去掉 `body:has()`）合起来：处理时间 打开 59ms / 切分类 58ms / 关闭 197ms。剩下的 INP 主要是呈现延迟（测量机用 SwiftShader 软件渲染，玻璃 / blur 合成很慢，这部分不在本次范围内），以及关闭时聊天页本身的 React 重渲染（约 190ms，下一步）。
+- 测法同 ①：Playwright + CDP `Emulation.setCPUThrottlingRate=4`，`PerformanceObserver('event')`，同一后端和数据，只换前端 dist。
+
 ## Unreleased — 对话记录增量同步 + 卡片共享时钟（性能清单第 5 项）
 
 ### 动机
