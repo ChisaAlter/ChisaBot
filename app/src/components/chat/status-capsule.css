@@ -7,7 +7,8 @@
  * - 大容器上不用 :has()，状态用 data-state。
  */
 .rs-capsule {
-  --rs-solid: rgb(246, 247, 250);
+  /* 减少透明度 / 性能模式下的不透明底：设计系统的 --glass-bg-solid（浅色、深色各自一套），不写死颜色。 */
+  --rs-solid: var(--glass-bg-solid);
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -26,8 +27,13 @@
   line-height: 20px;
   animation: rs-capsule-in var(--dur-2, 220ms) var(--ease-out, ease-out) both;
 }
-.dark .rs-capsule {
-  --rs-solid: rgb(29, 31, 36);
+/*
+ * 说了一句之后的停顿（PausedCapsule）：和以前停顿时的占位一样高（22px = 1px + 20px 行高 + 1px），
+ * 来新字时它让位，下面的字不会比以前多跳 16px。
+ */
+.rs-capsule[data-variant="pause"] {
+  padding-top: 1px;
+  padding-bottom: 1px;
 }
 .rs-spinner {
   flex: none;
@@ -54,8 +60,12 @@
 .rs-capsule-time:empty {
   display: none;
 }
-/* 干活卡跑着的时候也是这个胶囊（是个按钮：点开看每一步）。 */
+/*
+ * 干活卡跑着的时候也是这个胶囊（是个按钮：点开看每一步）。
+ * 从「思考中」胶囊换过来时不再播一次进场淡入：同一个位置、同一个样子，只是字换了。
+ */
 .chat-work-card.rs-capsule {
+  animation: none;
   cursor: pointer;
   text-align: left;
   transition: opacity var(--dur-2, 220ms) var(--ease-out, ease-out);
@@ -97,4 +107,20 @@
 }
 html[data-perf="on"] .rs-capsule {
   background: var(--rs-solid);
+}
+/*
+ * 一轮结束了却没有看得见的回答（NoAnswerRow）：一行淡色字 + 重试（重试按钮沿用错误卡的 .chat-error-retry）。
+ */
+.rs-noanswer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  color: var(--ink-4);
+  font-size: 13px;
+  line-height: 20px;
+}
+/* 错误卡在窄屏下给重试留了 42px 左边距（让开图标）；这里没有图标。 */
+.rs-noanswer .chat-error-retry {
+  margin-left: 0;
 }

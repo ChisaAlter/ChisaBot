@@ -1,6 +1,6 @@
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CapsuleSpinner } from "@/components/chat/status-capsule";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
@@ -37,6 +37,41 @@ function remember(map: Map<string, number>, key: string, value: number) {
   if (map.has(key)) return;
   map.set(key, value);
   if (map.size > 50) map.delete(map.keys().next().value as string);
+}
+
+/**
+ * 这一轮从什么时候开始（第一次问的那一刻；按 `turnKey` 记在模块里）。对话末尾的「思考中」胶囊和干活卡都用它，
+ * 换成干活卡、切到别的频道再回来、卡片重挂，秒数都接着算，不归零（回复显示①，2026-10-29）。
+ */
+export function turnStartedAt(turnKey: string, now = Date.now()): number {
+  remember(startedAt, turnKey, now);
+  return startedAt.get(turnKey) ?? now;
+}
+
+/**
+ * 键盘点开过步骤、这一轮结束时这一行被收起（外层变成 inert / aria-hidden）：焦点不能掉到 body 上。
+ * 移到收起后接着看得见的那一行（通常是回答；没有就往上找），那一行不能聚焦时给它 tabIndex=-1。
+ */
+function moveFocusOffFolded(root: HTMLElement) {
+  const folded = root.closest<HTMLElement>("[inert], [aria-hidden='true']");
+  if (!folded) return;
+  const row = folded.closest<HTMLElement>("[data-message-id]") ?? folded;
+  const usable = (el: Element | null): el is HTMLElement =>
+    el instanceof HTMLElement &&
+    el.hasAttribute("data-message-id") &&
+    !el.hasAttribute("inert") &&
+    el.getAttribute("aria-hidden") !== "true" &&
+    // 只画了一个空壳的行（调试开关关着时的工具调用行）不算。
+    (el.textContent ?? "").trim().length > 0;
+  let target: Element | null = row.nextElementSibling;
+  while (target && !usable(target)) target = target.nextElementSibling;
+  if (!target) {
+    target = row.previousElementSibling;
+    while (target && !usable(target)) target = target.previousElementSibling;
+  }
+  if (!usable(target)) return;
+  if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+  target.focus({ preventScroll: true });
 }
 
 /**
@@ -87,10 +122,16 @@ export function WorkRow({
   const now = useNow(live);
   // 跑着的时候点开过，做完那一刻自动收起（不用用户再点一下）。
   const wasLive = useRef(live);
-  useEffect(() => {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const hadFocus = useRef(false);
+  useLayoutEffect(() => {
     if (wasLive.current && !live) {
       setOpenState(false);
       setWorkUi(turnKey, { open: false });
+      // 焦点在这一行上、这一行跟着这一轮收起了：移到收起后的那一行（不掉到 body）。
+      const root = rootRef.current;
+      if (root && (hadFocus.current || root.contains(document.activeElement)))
+        moveFocusOffFolded(root);
     }
     wasLive.current = live;
   }, [live, turnKey]);
@@ -124,11 +165,20 @@ export function WorkRow({
   const seconds = live ? Math.max(0, Math.floor((now - started) / 1000)) : doneSeconds;
   const steps = open ? workTimeline(calls, notes) : [];
   const text = live ? summary!.current : done!.label;
+  // 读屏：按钮名字里先说当前动作 / 做了什么（以前只有「展开步骤」，把动作盖掉了），再说点了会怎样。
+  const failedText = !live && done?.failed ? `，${done.failed} 步失败` : "";
+  const label = `${text}${failedText}，${open ? "收起步骤" : "展开步骤"}`;
   return (
-    <div className="chat-work" data-state={live ? "live" : "done"}>
+    <div className="chat-work" data-state={live ? "live" : "done"} ref={rootRef}>
       <button
         aria-expanded={open}
-        aria-label={open ? "收起步骤" : "展开步骤"}
+        aria-label={label}
+        onBlur={() => {
+          hadFocus.current = false;
+        }}
+        onFocus={() => {
+          hadFocus.current = true;
+        }}
         className={live ? "rs-capsule chat-work-card" : "chat-thinking chat-work-card chat-work-done"}
         data-state={live ? "live" : "done"}
         data-testid={live ? "chat-work-card" : "chat-work-done"}
@@ -142,7 +192,8 @@ export function WorkRow({
             <IconCheck className="size-3.5" stroke={2.5} />
           </span>
         )}
-        <span className="chat-work-step" role={live ? "status" : undefined}>
+        {/* role=status 不在这里：对话末尾一直挂着的那个（transcript-live-status）读当前动作。 */}
+        <span className="chat-work-step">
           <AnimatePresence initial={false} mode="popLayout">
             <motion.span
               animate={{ opacity: 1, y: 0 }}

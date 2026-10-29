@@ -48,8 +48,16 @@ import {
 import { QueuedMessages } from "@/components/chat/queued-messages";
 import { ScheduleFiredRow } from "@/components/chat/schedule-row";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
-import { PausedCapsule, StatusCapsule } from "@/components/chat/status-capsule";
-import { knownWorkSeconds, WorkRow } from "@/components/chat/work-card";
+import {
+  NoAnswerRow,
+  PausedCapsule,
+  StatusCapsule,
+} from "@/components/chat/status-capsule";
+import {
+  knownWorkSeconds,
+  turnStartedAt,
+  WorkRow,
+} from "@/components/chat/work-card";
 import { WorkerResultRow } from "@/components/chat/worker-card";
 import { JUMP_TO_TOOL_CALL } from "@/components/computer/activity-jump";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
@@ -110,6 +118,7 @@ import {
   isQuietWork,
   isWorkCall,
   summarizeDoneWork,
+  summarizeWork,
   type WorkCall,
   type WorkNote,
   workCallFailed,
@@ -322,7 +331,7 @@ function RestoringTranscript() {
  */
 function Thinking({ since }: { since: number }) {
   // 回复显示①：不再是带三个跳点的「思考中」气泡，而是和干活卡同一个状态胶囊（转圈 + 动作 + 已用秒数）。
-  // role=status 在动作那一段上，读屏读到的还是「思考中」。
+  // 读屏读到的「思考中」在对话末尾那个一直挂着的 role=status 里（transcript-live-status），胶囊自己不带。
   return <StatusCapsule label={"思考中"} since={since} testId="transcript-thinking" />;
 }
 
@@ -3067,10 +3076,10 @@ export function ChatTranscript({
       settled.last === shape.last
     );
   // 这一轮从什么时候开始（状态胶囊的「已用秒数」从这里算；「思考中」换成干活卡后接着算，不归零）。
+  // 认不出这一轮的 key 时才用这个（只活在这次挂载里）。
   const liveSinceRef = useRef<number | null>(null);
   if (!live) liveSinceRef.current = null;
   else if (liveSinceRef.current === null) liveSinceRef.current = Date.now();
-  const liveSince = liveSinceRef.current ?? 0;
   /*
    * 刷新后照样认得出「发出去但没人回答」的那一轮（P1，2026-10-20）：重开对话时 RUN_ERROR 早没了，
    * 只剩人那条消息。卡片跟着这一条重建，别让它凭空消失、也没有重试的入口。
@@ -3088,6 +3097,15 @@ export function ChatTranscript({
     stoppedTurns ?? EMPTY_STOPS,
     fallbacks,
   );
+  /*
+   * 和干活卡同一个开始时间（按这一轮的 key 记在 work-card 的模块里）：切到别的频道再回来，胶囊重新挂上，
+   * 秒数接着算，不再从 0 开始（以前记在这个组件的 ref 里，卸载就丢）。
+   */
+  const liveSince = live
+    ? compact.liveKey
+      ? turnStartedAt(compact.liveKey)
+      : (liveSinceRef.current ?? Date.now())
+    : 0;
   const showToolActivity = useToolActivityVisible();
   /*
    * 简单回合（DESIGN.md §93）：做完了、只读的一两步、有结果——干活卡那一行整行收起，只留结果。结构上的判断在
@@ -3119,7 +3137,8 @@ export function ChatTranscript({
         isQuietWork({
           calls: work.calls,
           live: work.live,
-          hasFinal: true,
+          stopped: work.stopped,
+          hasFinal: work.answered,
           confirmed,
           seconds: knownWorkSeconds(work.key),
           // 除了「做了 N 步」什么也说不出的行：成功做完就整行收起（2026-10-20 用户要求）。
@@ -3184,6 +3203,21 @@ export function ChatTranscript({
     live &&
     !showToolActivity &&
     [...compact.work.values()].some((work) => work.live);
+  /*
+   * 读屏（回复显示①）：一轮里只有这一个 role=status，挂在对话末尾一直不卸载。「思考中」胶囊换成干活卡时
+   * 两个胶囊一个卸载一个新挂，新挂上的 live region 有的读屏不播；这里同一个节点里换字，换成「正在搜索…」照样读出来。
+   * 胶囊、干活卡自己不再带 role=status（不然一句话读两遍）。
+   */
+  const liveWork = live
+    ? [...compact.work.values()].find((work) => work.live)
+    : undefined;
+  const liveStatus = !live
+    ? ""
+    : liveWork
+      ? (summarizeWork(liveWork.calls)?.current ?? "")
+      : waitingOnFirstToken
+        ? "思考中"
+        : "";
   // 机器人说了一句、还在想下一步（还没有干活卡）：§78.2 的小点。
   const pausedAfterText =
     live &&
@@ -3399,6 +3433,13 @@ export function ChatTranscript({
              * 下一帧留白吃掉了再夹回来 = 往回挪一下（§94.6，1280 实测 5–8px）。这一格不参与锚定，锚落在看得见的第一条消息上。
              */}
             <div className="chat-tail contents [&>*]:order-1">
+              <span
+                className="sr-only"
+                data-testid="transcript-live-status"
+                role="status"
+              >
+                {liveStatus}
+              </span>
               {tailStop ? (
                 <Stopped
                   onRetry={stopped ? onRetry : onRetryUnanswered}
@@ -3449,6 +3490,10 @@ export function ChatTranscript({
                 const index = tailStart + offset;
                 const stoppedHere = compact.stoppedAfter.has(item.id);
                 const fallback = compact.fallbackAfter.get(item.id);
+                // 「这一轮没有回答」：最后一轮已经有错误卡（带重试）时不再挂一遍。
+                const noAnswer = compact.noAnswerAfter.get(item.id);
+                const noAnswerHere =
+                  noAnswer !== undefined && !(noAnswer.last && tailStop);
                 const hidden = rowHidden(item.id);
                 const row = hidden
                   ? foldedRef.current.has(item.id)
@@ -3459,9 +3504,23 @@ export function ChatTranscript({
                 // 以前连标记一起 return null，刷新后只剩服务器误锚时就像挂在上一轮回答下面。
                 // Keep every keyed row in one flat sibling list. Returning a nested array only
                 // when a marker appears changes the anchor row's React parent and remounts it.
-                if (!stoppedHere && !fallback) return [row];
+                if (!stoppedHere && !fallback && !noAnswerHere) return [row];
                 return [
                   row,
+                  noAnswerHere ? (
+                    <MessageScrollerItem
+                      key={`${item.id}:no-answer`}
+                      messageId={`${item.id}:no-answer`}
+                    >
+                      <NoAnswerRow
+                        onRetry={
+                          noAnswer?.last && !live
+                            ? onRetryUnanswered
+                            : undefined
+                        }
+                      />
+                    </MessageScrollerItem>
+                  ) : null,
                   stoppedHere ? (
                     <MessageScrollerItem
                       key={`${item.id}:stopped`}
@@ -3792,6 +3851,10 @@ export type WorkEntry = {
   notes: WorkNote[];
   /** 简单回合（只读的一两步、做完了、有结果）：结构上可以整行收起（§93）。 */
   quiet: boolean;
+  /** 这一轮有看得见的回答（结果气泡、卡片、留着的气泡）。没有时那一行不收（回复显示①）。 */
+  answered: boolean;
+  /** 这一轮被用户停掉了。 */
+  stopped: boolean;
 };
 
 export function compactTurns(
@@ -3815,6 +3878,13 @@ export function compactTurns(
   replyTo: Map<string, ReplyTarget>;
   /** 记忆写入微胶囊提示（Memory Pill）：本轮调用了 memory_save / memory_update / memory_log 时挂在回复气泡下方。 */
   memories: Map<string, MemoryPillItem[]>;
+  /**
+   * 结束了、没被停掉、却一个看得见的回答都没有的轮次（工具失败后没有字、只回了「---」，回复显示①）：
+   * 最后一个看得见的行 → 后面挂「这一轮没有回答」；`last` = 这是最后一轮（只有它带重试）。
+   */
+  noAnswerAfter: Map<string, { last: boolean }>;
+  /** 正在跑的那一轮的 key（开启它的那条消息 id，同干活卡的 `key`）；不在跑为 null。胶囊的秒数按它记开始时间。 */
+  liveKey: string | null;
 } {
   const tone = new Map<string, "lead" | "step" | "final">();
   const hidden = new Set<string>();
@@ -3823,6 +3893,8 @@ export function compactTurns(
   const work = new Map<string, WorkEntry>();
   const replyTo = new Map<string, ReplyTarget>();
   const memories = new Map<string, MemoryPillItem[]>();
+  const noAnswerAfter = new Map<string, { last: boolean }>();
+  let liveKey: string | null = null;
   const formatQuoteText = (raw: string): string => {
     const clean = (splitChatOrigin(raw)?.text ?? raw).replace(/\s+/g, " ").trim();
     return clean.length > 64 ? `${clean.slice(0, 63)}…` : clean;
@@ -3921,6 +3993,8 @@ export function compactTurns(
           hidden.add(item.id);
     const browsers = turn.rest.filter((item) => item.kind === "browser");
     for (const item of browsers.slice(0, -1)) hidden.add(item.id);
+    if (live) liveKey = turn.users[turn.users.length - 1]?.id ?? null;
+    let workAnchor: string | null = null;
     // 干活卡（§75.1）：这一轮全部调用；画在第一个干活的工具那一行（浏览只留最后一组，所以落在浏览上时用最后那一组）。
     {
       const calls: WorkCall[] = [];
@@ -3991,7 +4065,16 @@ export function compactTurns(
           // 只说得出「做了 N 步」的一轮（例如跑了几条命令）：收起这一行，只留回答（2026-10-20 用户要求）。
           genericSummary: summarizeDoneWork(calls)?.generic === true,
         });
-        work.set(anchor, { calls, key, live, notes, quiet });
+        workAnchor = anchor;
+        work.set(anchor, {
+          calls,
+          key,
+          live,
+          notes,
+          quiet,
+          answered: true,
+          stopped: isStopped,
+        });
       }
     }
     // CB-021：同一轮里同一个页面只留一张卡（§54「同一轮同一页面一张卡」）。
@@ -4032,11 +4115,35 @@ export function compactTurns(
         if (quoteText) replyTo.set(replyTargetId, { id: targetUser.id, text: quoteText });
       }
     }
+    /*
+     * 回复显示①（2026-10-29）：这一轮有没有看得见的回答——结果气泡、以卡片收尾（render_ui）、或者留着没收的气泡。
+     * 工具失败后没有字、或只回了「---」时都没有：那一行不收（否则一片空白），最后挂「这一轮没有回答」。
+     */
+    const answered =
+      final !== null ||
+      turn.rest.some(
+        (item) =>
+          item.kind === "tool" && item.toolCall.function.name === "render_ui",
+      ) ||
+      texts.some((item) => !hidden.has(item.id));
+    if (workAnchor !== null) {
+      const entry = work.get(workAnchor)!;
+      entry.answered = answered;
+      entry.quiet = isQuietWork({
+        calls: entry.calls,
+        live,
+        stopped: isStopped,
+        hasFinal: answered,
+        genericSummary: summarizeDoneWork(entry.calls)?.generic === true,
+      });
+    }
     const visible = [...turn.users, ...turn.rest].filter(
       (item) => !hidden.has(item.id),
     );
     const last = visible[visible.length - 1]?.id;
     if (isStopped && last) stoppedAfter.add(last);
+    if (!live && !isStopped && !answered && turn.rest.length > 0 && last)
+      noAnswerAfter.set(last, { last: index === turns.length - 1 });
     if (!live && last && fallbacks?.size) {
       const notice = turn.users
         .map((user) => fallbacks.get(turnOf(user)))
@@ -4099,5 +4206,15 @@ export function compactTurns(
       memories.set(memTargetId, turnMemories);
     }
   });
-  return { tone, hidden, stoppedAfter, fallbackAfter, work, replyTo, memories };
+  return {
+    tone,
+    hidden,
+    stoppedAfter,
+    fallbackAfter,
+    work,
+    replyTo,
+    memories,
+    noAnswerAfter,
+    liveKey,
+  };
 }
