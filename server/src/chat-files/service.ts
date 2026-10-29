@@ -90,6 +90,19 @@ export const IMAGE_INPUT_GUIDANCE = {
   none: "",
 } as const;
 
+/** 模型请求里文件部分的数据（字节、base64、data: 地址）→ 字节；外链地址不去拉。 */
+function dataBytes(data: unknown): Buffer | null {
+  if (data instanceof Uint8Array) return Buffer.from(data);
+  const text = data instanceof URL ? data.href : typeof data === "string" ? data : null;
+  if (text === null) return null;
+  if (text.startsWith("data:")) {
+    const comma = text.indexOf(",");
+    return comma > 0 && text.slice(0, comma).endsWith(";base64") ? Buffer.from(text.slice(comma + 1), "base64") : null;
+  }
+  if (/^[a-z]+:\/\//i.test(text)) return null;
+  return Buffer.from(text, "base64");
+}
+
 export function sniffImage(bytes: Uint8Array): string | null {
   if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
@@ -170,7 +183,7 @@ export function createChatFiles(
     /** 网址结果的下载；默认只许公网地址、最大 20MB。测试里换掉。 */
     download?: (url: string) => Promise<Buffer>;
     /** 这个机器人当前的聊天模型能不能看图（模型目录里的 input modalities）；不知道 = undefined。 */
-    mainModelSupportsImages?: (agentId: string) => Promise<boolean | undefined>;
+    mainModelSupportsImages?: (agentId: string, modelId?: string) => Promise<boolean | undefined>;
     isAdmin?: (userId: string) => Promise<boolean>;
     assertPublic?: (url: string) => Promise<unknown>;
   },
@@ -370,9 +383,11 @@ export function createChatFiles(
     owner: string,
     agentId: string,
     image: { cacheId: string; name: string; mimeType: string; bytes: Buffer; head: string; createdAt?: Date | string; inspectSource?: string },
+    /** 这一轮实际用的聊天模型；没给就按这一轮的选择找（media.imageInputFor）。 */
+    modelId?: string,
   ): Promise<StoredAttachment> {
     const { name, bytes, head } = image;
-    const input = await media.imageInputFor(owner, agentId).catch(() => ({ kind: "main" }) as const);
+    const input = await media.imageInputFor(owner, agentId, modelId).catch(() => ({ kind: "main" }) as const);
     if (input.kind === "main") return { mimeType: image.mimeType, name, bytes };
     const note = (text: string): StoredAttachment => ({ mimeType: "text/plain", name, bytes: Buffer.from(text) });
     if (input.kind === "none") {
@@ -397,7 +412,7 @@ export function createChatFiles(
     }
   }
 
-  async function imageForTurn(owner: string, found: FileRow, bytes: Buffer, mimeType: string, where: string): Promise<StoredAttachment> {
+  async function imageForTurn(owner: string, found: FileRow, bytes: Buffer, mimeType: string, where: string, modelId?: string): Promise<StoredAttachment> {
     return imageForModel(owner, found.agent_id, {
       cacheId: found.id,
       name: found.name,
@@ -406,14 +421,14 @@ export function createChatFiles(
       head: `用户上传的图片「${found.name}」（${where}，文件 id：${found.id}）`,
       createdAt: found.created_at,
       inspectSource: "文件 id",
-    });
+    }, modelId);
   }
 
   /**
    * 频道附件（`/api/attachments/<id>`）交给某个机器人的主模型之前过一遍：图片按 {@link imageForModel}，
    * 其他原样。主模型能看图时是原样返回（同一个对象），和改之前一样。
    */
-  async function channelAttachmentForModel(owner: string, agentId: string, attachmentId: string, attachment: StoredAttachment): Promise<StoredAttachment> {
+  async function channelAttachmentForModel(owner: string, agentId: string, attachmentId: string, attachment: StoredAttachment, modelId?: string): Promise<StoredAttachment> {
     const image = sniffImage(attachment.bytes);
     if (!image) return attachment;
     const described = await imageForModel(owner, agentId, {
@@ -422,21 +437,62 @@ export function createChatFiles(
       mimeType: image,
       bytes: attachment.bytes,
       head: `用户在这条消息里附的图片「${attachment.name}」`,
-    });
+    }, modelId);
     return described.mimeType === "text/plain" ? described : attachment;
+  }
+
+  /**
+   * 换到备用模型时（agents/model-fallback.ts）把这一次请求按备用模型改一遍（审查 #417）：备用模型能看图就原样；
+   * 看不了就把请求里用户消息上的图片换成识图模型的描述（没配识图模型就换成一句如实的说明），系统提示里
+   * 「图片直接随消息给你」那句也换成描述版。主模型那一次请求不经过这里。
+   */
+  async function promptForModel(owner: string, agentId: string, modelId: string, callOptions: unknown): Promise<unknown> {
+    const options = callOptions as { prompt?: unknown } | null;
+    if (!options || !Array.isArray(options.prompt)) return callOptions;
+    const prompt = options.prompt as { role?: string; content?: unknown }[];
+    const isImage = (part: unknown): part is { type: "file"; mediaType: string; data: unknown; filename?: string } =>
+      !!part && typeof part === "object" && (part as { type?: unknown }).type === "file" && String((part as { mediaType?: unknown }).mediaType ?? "").startsWith("image/");
+    if (!prompt.some((m) => m.role === "user" && Array.isArray(m.content) && m.content.some(isImage))) return callOptions;
+    const input = await media.imageInputFor(owner, agentId, modelId).catch(() => ({ kind: "main" }) as const);
+    if (input.kind === "main") return callOptions;
+    const short = modelId.split("/").filter(Boolean).pop() || modelId;
+    const textFor = async (part: { mediaType: string; data: unknown; filename?: string }): Promise<string> => {
+      const label = part.filename ? `图片「${part.filename}」` : "一张图片";
+      if (input.kind === "none") return `[用户附了${label}。现在换用的备用模型 ${short} 不能看图片，也没有配置识图模型，你看不到它的内容；如实告诉用户。]`;
+      const bytes = dataBytes(part.data);
+      if (!bytes) return `[用户附了${label}，但没法交给识图模型，你看不到它的内容；如实告诉用户。]`;
+      try {
+        const text = await media.describeTransient({ bytes, mimeType: part.mediaType }, input.config);
+        return `[用户附了${label}。现在换用的备用模型 ${short} 不能看图片，下面是识图模型（${input.label}）的描述，按它回答，描述里没有的不要编。]\n【图片描述】\n${text}`;
+      } catch {
+        console.error(JSON.stringify({ type: "fallback-image-describe-failed" }));
+        return `[用户附了${label}，识图模型没能读它，你看不到它的内容；如实告诉用户。]`;
+      }
+    };
+    const next = await Promise.all(
+      prompt.map(async (message) => {
+        if (message.role === "system" && typeof message.content === "string") {
+          return { ...message, content: message.content.replace(IMAGE_INPUT_GUIDANCE.main, IMAGE_INPUT_GUIDANCE[input.kind]) };
+        }
+        if (message.role !== "user" || !Array.isArray(message.content) || !message.content.some(isImage)) return message;
+        return { ...message, content: await Promise.all(message.content.map(async (part) => (isImage(part) ? { type: "text", text: await textFor(part) } : part))) };
+      }),
+    );
+    return { ...options, prompt: next };
   }
 
   /**
    * 模型读一个聊天文件（attachment-parts 的 `cf:` 引用）：图片给字节；小的文本给文字；
    * 其他（PDF、Office、压缩包…）给一句说明，告诉机器人文件在工作区哪里、可以怎么处理。
    */
-  async function loadForTurn(owner: string, id: string): Promise<StoredAttachment | null> {
+  async function loadForTurn(owner: string, id: string, turn?: { agentId?: string; modelId?: string }): Promise<StoredAttachment | null> {
     const found = await row(owner, id, true);
     if (!found?.bytes) return null;
     const bytes = Buffer.from(found.bytes);
     const where = found.workspace_path ? `已保存在你的工作区 ${found.workspace_path}` : "没能写进你的工作区";
     const image = sniffImage(bytes);
-    if (image) return imageForTurn(owner, found, bytes, image, where);
+    // 这一轮的模型只在文件就是这个机器人的时候才算数；别的机器人的文件按它自己的模型走（和以前一样）。
+    if (image) return imageForTurn(owner, found, bytes, image, where, turn?.agentId === found.agent_id ? turn.modelId : undefined);
     if (TEXT_TYPES.has(found.mime_type) && bytes.length <= 512 * 1024) {
       return { mimeType: "text/plain", name: found.name, bytes: Buffer.concat([Buffer.from(`（${where}）\n\n`), bytes]) };
     }
@@ -711,6 +767,6 @@ export function createChatFiles(
     await media.ensure();
   }
 
-  return { ensure: ensureAll, media, settingsView, saveSettings, testSettings, providerConfig, store, setWorkspacePath, row, list, remove, upload, loadForTurn, channelAttachmentForModel, makeImage, share, tools, guidance, routes };
+  return { ensure: ensureAll, media, settingsView, saveSettings, testSettings, providerConfig, store, setWorkspacePath, row, list, remove, upload, loadForTurn, channelAttachmentForModel, promptForModel, makeImage, share, tools, guidance, routes };
 }
 export type ChatFiles = ReturnType<typeof createChatFiles>;

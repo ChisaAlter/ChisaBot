@@ -61,6 +61,8 @@ describe.skipIf(!url)(
     const owner = `imgturn-${randomUUID().slice(0, 8)}`;
     const bot = `agent_${randomUUID()}`;
     let mainSees: boolean | undefined;
+    /** 每次问「能不能看图」时带的模型 id：应当是这一轮实际用的模型（#417）。 */
+    const askedModels: (string | undefined)[] = [];
     const visionCalls: string[] = [];
     const files = url
       ? createChatFiles(database, {
@@ -76,7 +78,10 @@ describe.skipIf(!url)(
             });
           }) as unknown as typeof fetch,
           ownsBot: async (o, b) => o === owner && b === bot,
-          mainModelSupportsImages: async () => mainSees,
+          mainModelSupportsImages: async (_agentId, modelId) => {
+            askedModels.push(modelId);
+            return mainSees;
+          },
           isAdmin: async () => false,
           assertPublic: async () => {},
         })
@@ -165,9 +170,9 @@ describe.skipIf(!url)(
         undefined,
         undefined,
         undefined,
-        async (id, threadId, agentId) => {
+        async (id, threadId, agentId, modelId) => {
           loadedFor.push(agentId);
-          return loader(id, threadId, agentId);
+          return loader(id, threadId, agentId, modelId);
         },
         undefined,
         undefined,
@@ -221,7 +226,8 @@ describe.skipIf(!url)(
         .map((e) => (e as { toolCallName?: string }).toolCallName);
 
     test("主模型能看图：原图随消息给模型，提示词说直接看图，一次请求就回答，不调 chat_files_recent", async () => {
-      mainSees = undefined;
+      mainSees = true;
+      askedModels.length = 0;
       raw.length = 0;
       const first = await turn([{ id: "m1", role: "user", content: "你好" }]);
       expect(first.at(-1)?.type).toBe(EventType.RUN_FINISHED);
@@ -251,6 +257,8 @@ describe.skipIf(!url)(
       expect(toolCalls(events)).toEqual([]);
       expect(visionCalls).toEqual([]);
       expect(loadedFor.at(-1)).toBe(bot);
+      // 加载附件时问的是这一轮实际用的模型（#417），不是「这个机器人默认的」。
+      expect(askedModels).toContain("gpt-5.5");
     });
 
     test("主模型看不了图：图片换成识图模型的描述，提示词也说是描述", async () => {

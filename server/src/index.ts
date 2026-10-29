@@ -1395,9 +1395,15 @@ const pages = createPages(database, {
 const chatFiles = createChatFiles(database, {
   encryptionKey: config.keyEncryptionKey,
   // 识图模型（DESIGN.md §59）：主模型能不能看图看模型目录（Magpie 的 input modalities），不知道就当能。
-  mainModelSupportsImages: async (agentId) => {
-    const modelId = (await agentModels.resolveModel(agentId).catch(() => null)) ?? (await resolveRuntimeConnection()).model.defaultModel;
-    return (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsImages;
+  // 看这一轮实际用的模型（审查 #417）：调用方给了就用它（备用模型、已经解析好的这一轮模型）；没给就和建机器人
+  // 用同一个解析——同一请求里的快照，含面板 / 个人选的模型和机器人自己的设置，所以提示词和发过去的东西一致。
+  mainModelSupportsImages: async (agentId, modelId) => {
+    const id =
+      modelId ??
+      (await resolveRuntimeConnectionForAgent(agentId)
+        .then((connection) => connection.model.defaultModel)
+        .catch(async () => (await agentModels.resolveModel(agentId).catch(() => null)) ?? (await resolveRuntimeConnection()).model.defaultModel));
+    return (await modelCatalog.list()).models.find((entry) => entry.id === id)?.supportsImages;
   },
   isAdmin: async (userId) => (await actorFor(userId)).role === "admin",
   ownsBot: async (owner, bot) => (await agentProfileStore.get(await actorFor(owner), bot).catch(() => null)) !== null,

@@ -84,8 +84,11 @@ export function createMediaModels(
     encryptionKey: string;
     fetch?: typeof fetch;
     env?: Record<string, string | undefined>;
-    /** 这个机器人当前的聊天模型能不能看图：true / false / 不知道（undefined，当作能）。 */
-    mainModelSupportsImages?: (agentId: string) => Promise<boolean | undefined>;
+    /**
+     * 这个机器人这一轮的聊天模型能不能看图：true / false / 目录里没有（undefined）。modelId 给了就问这个模型
+     * （这一轮实际用的、换到的备用模型）；没给就由接线方按这一轮的选择（个人选的模型、机器人设置、默认）找。
+     */
+    mainModelSupportsImages?: (agentId: string, modelId?: string) => Promise<boolean | undefined>;
     /** 某人是不是管理员（决定能不能填内网地址）。 */
     isAdmin?: (userId: string) => Promise<boolean>;
     /** 测试里换掉公网检查。 */
@@ -128,6 +131,22 @@ export function createMediaModels(
         created_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (file_id, model_key)
       );
+      -- 频道附件（file_id = 'att:<附件 id>'）的描述跟着附件走：附件被删（撤回、清理、频道或用户删除的级联）
+      -- 描述（含 OCR 文字）一起删。这张表不归 drizzle 管，外键也在这里建；attachments 表不在（只建了
+      -- 这几张表的测试库）就先不建，下次开机再补。
+      ALTER TABLE chisabot_image_descriptions ADD COLUMN IF NOT EXISTS attachment_id uuid;
+      CREATE INDEX IF NOT EXISTS chisabot_image_descriptions_attachment_idx ON chisabot_image_descriptions (attachment_id) WHERE attachment_id IS NOT NULL;
+      DO $$
+      BEGIN
+        IF to_regclass('attachments') IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'chisabot_image_descriptions_attachment_fk'
+        ) THEN
+          ALTER TABLE chisabot_image_descriptions
+            ADD CONSTRAINT chisabot_image_descriptions_attachment_fk
+            FOREIGN KEY (attachment_id) REFERENCES attachments(id) ON DELETE CASCADE;
+        END IF;
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$;
     `);
   }
 
@@ -463,7 +482,7 @@ export function createMediaModels(
    * 个人 custom → 个人 follow → 管理员 custom → 跟随主模型；跟随主模型但主模型明确看不了图时，
    * 退回管理员的识图模型（有的话），都没有就是 none。
    */
-  async function visionFor(userId: string, agentId: string): Promise<EffectiveVision> {
+  async function visionFor(userId: string, agentId: string, modelId?: string): Promise<EffectiveVision> {
     const mine = await mediaRow(userId, "vision");
     const admin = await mediaRow("", "vision");
     const model = async (row: MediaRow | null, source: "personal" | "default"): Promise<EffectiveVision | null> => {
@@ -486,7 +505,7 @@ export function createMediaModels(
       const chosen = await model(admin, "default");
       if (chosen) return chosen;
     }
-    const supports = options.mainModelSupportsImages ? await options.mainModelSupportsImages(agentId).catch(() => undefined) : undefined;
+    const supports = await mainSupports(agentId, modelId);
     if (supports !== false) return { kind: "main" };
     if (admin?.mode === "custom") {
       const fallback = await model(admin, "default");
@@ -495,21 +514,32 @@ export function createMediaModels(
     return { kind: "none" };
   }
 
+  function mainSupports(agentId: string, modelId?: string): Promise<boolean | undefined> {
+    return options.mainModelSupportsImages ? options.mainModelSupportsImages(agentId, modelId).catch(() => undefined) : Promise.resolve(undefined);
+  }
+
   /**
-   * 用户附的图片这一轮怎么交给主模型（审查 M9-1）：主模型能看图（目录没说不能 = 能）就给原图，
-   * 哪怕另外配了识图模型——识图模型这时只做 image_inspect 追问用。只有主模型明确看不了图时，
-   * 才按 visionFor 的顺序找识图模型写描述；都没有就是 none。
+   * 用户附的图片这一轮怎么交给主模型（审查 M9-1）。看的是这一轮实际用的模型（modelId；没给就按这一轮的选择找）：
+   * - 目录说能看图：给原图，哪怕另外配了识图模型——识图模型这时只做 image_inspect 追问用；
+   * - 目录说不能：按 visionFor 的顺序找识图模型写描述，都没有就是 none；
+   * - 目录里没有这个模型（undefined）：配了识图模型就用描述（纯文字模型收到图片会整轮报错，描述总能用），
+   *   没配就照旧给原图。
    *
    * 原来 `cf:` 引用按 visionFor 走：管理员配了「单独的识图模型」就只给描述，而频道附件照样给原图，
    * 提示词却对两条路都说「你只拿到了文字描述」——模型于是说「没收到截图」，或者先去找文件。
    */
-  async function imageInputFor(userId: string, agentId: string): Promise<EffectiveVision> {
-    const supports = options.mainModelSupportsImages ? await options.mainModelSupportsImages(agentId).catch(() => undefined) : undefined;
-    if (supports !== false) return { kind: "main" };
-    return visionFor(userId, agentId);
+  async function imageInputFor(userId: string, agentId: string, modelId?: string): Promise<EffectiveVision> {
+    const supports = await mainSupports(agentId, modelId);
+    if (supports === true) return { kind: "main" };
+    if (supports === false) return visionFor(userId, agentId, modelId);
+    const configured = await visionFor(userId, agentId, modelId);
+    return configured.kind === "model" ? configured : { kind: "main" };
   }
 
   // ------------------------------------------------------------------ 描述缓存
+
+  /** 频道附件的缓存 id：'att:<附件 uuid>'，写进 attachment_id 让外键跟着附件删。 */
+  const ATTACHMENT_CACHE_ID = /^att:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
   const inflight = new Map<string, Promise<string>>();
 
@@ -531,14 +561,37 @@ export function createMediaModels(
     if (running) return running;
     const job = (async () => {
       const text = await askVisionModel(config, image, DESCRIBE_PROMPT, { fetch: doFetch });
-      await sql.unsafe(
-        `INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (file_id, model_key) DO UPDATE SET text = $4, created_at = now()`,
-        [fileId, modelKeyOf(config), config.model, text.slice(0, 20_000)],
-      );
+      const attachmentId = ATTACHMENT_CACHE_ID.exec(fileId)?.[1] ?? null;
+      try {
+        await sql.unsafe(
+          `INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text, attachment_id) VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (file_id, model_key) DO UPDATE SET text = $4, created_at = now()`,
+          [fileId, modelKeyOf(config), config.model, text.slice(0, 20_000), attachmentId],
+        );
+      } catch {
+        // 存缓存失败（比如附件刚被删，外键不让写）不影响这一轮用描述。
+        console.error(JSON.stringify({ type: "image-description-cache-write-failed" }));
+      }
       return text;
     })().finally(() => inflight.delete(key));
     inflight.set(key, job);
+    return job;
+  }
+
+  /*
+   * 不进数据库的描述：备用模型看不了图时，把已经在请求里的图片临时换成描述（审查 #417）。请求里只剩字节、
+   * 不知道是哪个附件，存进表就成了删附件也删不掉的 OCR 文字，所以只放进程内存，按内容哈希 + 模型记最近
+   * 64 张（同一轮里多步工具调用每步都会重发同一张图）。
+   */
+  const transient = new Map<string, Promise<string>>();
+  async function describeTransient(image: { bytes: Buffer; mimeType: string }, config: VisionConfig): Promise<string> {
+    const key = `${createHash("sha256").update(image.bytes).digest("hex")}:${modelKeyOf(config)}`;
+    const hit = transient.get(key);
+    if (hit) return hit;
+    const job = askVisionModel(config, image, DESCRIBE_PROMPT, { fetch: doFetch });
+    transient.set(key, job);
+    job.catch(() => transient.delete(key));
+    while (transient.size > 64) transient.delete(transient.keys().next().value as string);
     return job;
   }
 
@@ -635,6 +688,7 @@ export function createMediaModels(
     imageViewFor,
     visionFor,
     imageInputFor,
+    describeTransient,
     describe,
     cachedDescription,
     ask,

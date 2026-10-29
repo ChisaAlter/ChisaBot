@@ -12,23 +12,36 @@ import type { ChatFiles } from "./service";
  * 单独成一个函数是为了让测试走和线上同一条组合（index.ts 只是把数据库读法传进来）。
  */
 export function turnAttachmentLoader(
-  chatFiles: Pick<ChatFiles, "loadForTurn" | "channelAttachmentForModel">,
+  chatFiles: Pick<
+    ChatFiles,
+    "loadForTurn" | "channelAttachmentForModel" | "promptForModel"
+  >,
   loadChannel: (
     actorId: string,
     threadId: string,
     id: string,
   ) => Promise<StoredAttachment | null>,
 ): (actorId: string) => LoadAttachment {
-  return (actorId) => async (id, threadId, agentId) => {
-    if (id.startsWith("cf:"))
-      return chatFiles.loadForTurn(actorId, id.slice(3));
-    const attachment = await loadChannel(actorId, threadId, id);
-    if (!attachment || !agentId) return attachment;
-    return chatFiles.channelAttachmentForModel(
-      actorId,
-      agentId,
-      id,
-      attachment,
-    );
+  return (actorId) => {
+    const load: LoadAttachment = async (id, threadId, agentId, modelId) => {
+      if (id.startsWith("cf:"))
+        return chatFiles.loadForTurn(actorId, id.slice(3), {
+          agentId,
+          modelId,
+        });
+      const attachment = await loadChannel(actorId, threadId, id);
+      if (!attachment || !agentId) return attachment;
+      return chatFiles.channelAttachmentForModel(
+        actorId,
+        agentId,
+        id,
+        attachment,
+        modelId,
+      );
+    };
+    // 换到备用模型时按它重新决定图片怎么给（看不了图就换成描述）。
+    load.promptForModel = (agentId, modelId, callOptions) =>
+      chatFiles.promptForModel(actorId, agentId, modelId, callOptions);
+    return load;
   };
 }
