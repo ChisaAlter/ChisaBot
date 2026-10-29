@@ -1,0 +1,22 @@
+{
+  "idle": {
+    "loopFramesIn3s": 0,
+    "paintsIn3s": 0
+  },
+  "working3Selected1": {
+    "seconds": 10,
+    "loopFrames": 601,
+    "longTasks": 0,
+    "longTaskMaxMs": 0,
+    "frameGapAvgMs": 16.67,
+    "frameGapP95Ms": 16.7,
+    "frameGapMaxMs": 16.8,
+    "framesOver20ms": 0,
+    "morphCostAvgMs": 0.369,
+    "morphCostP95Ms": 0.7,
+    "morphCostMaxMs": 2.8
+  },
+  "afterStop": {
+    "loopFramesInLast2s": 0
+  }
+}

@@ -1,9 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import Avatar from "boring-avatars";
 import { memo, useState } from "react";
-import { type AvatarShape, monogramOf, type ShapeColor } from "../../../../shared/bot-avatars";
-import { type AvatarDraft, type BotAvatar as BotAvatarValue, botAvatarsQueryOptions } from "@/lib/agents/avatars";
+import {
+  type AvatarShape,
+  monogramOf,
+  type ShapeColor,
+} from "../../../../shared/bot-avatars";
+import {
+  type AvatarDraft,
+  type BotAvatar as BotAvatarValue,
+  botAvatarsQueryOptions,
+} from "@/lib/agents/avatars";
 import { ShapeAvatar } from "@/components/agents/shape-avatar";
+import { useBotActivity } from "@/lib/agents/bot-activity";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +30,7 @@ export const BotAvatar = memo(function BotAvatar({
   className,
   decorative = false,
   selected = false,
+  thinking = false,
   working = false,
 }: {
   agentId?: string;
@@ -36,13 +46,26 @@ export const BotAvatar = memo(function BotAvatar({
   decorative?: boolean;
   /** 形象头像的表情：被选中 / 机器人在跑。其他种类的头像不受影响（跑的时候由调用处自己加标记）。 */
   selected?: boolean;
+  /** 在想（这一轮在跑但没有工具在跑）：变形比 working 轻。 */
+  thinking?: boolean;
   working?: boolean;
 }) {
-  const avatars = useQuery({ ...botAvatarsQueryOptions(), enabled: Boolean(agentId) });
+  // 打开着的对话页发布的实时状态（lib/agents/bot-activity.ts）比调用处给的（服务器的 busy）更细，有就用它。
+  const live = useBotActivity(agentId);
+  const isWorking = live ? live === "working" : working;
+  const isThinking = live ? live === "thinking" : thinking;
+  const avatars = useQuery({
+    ...botAvatarsQueryOptions(),
+    enabled: Boolean(agentId),
+  });
   const saved = agentId ? avatars.data?.[agentId] : undefined;
   const shown: ShownAvatar = resolve(draft, saved);
-  const roster = useQuery({ ...agentListQueryOptions(), enabled: name === undefined && Boolean(agentId) && shown.kind !== "pattern" });
-  const label = name ?? roster.data?.find((agent) => agent.id === agentId)?.name ?? "";
+  const roster = useQuery({
+    ...agentListQueryOptions(),
+    enabled: name === undefined && Boolean(agentId) && shown.kind !== "pattern",
+  });
+  const label =
+    name ?? roster.data?.find((agent) => agent.id === agentId)?.name ?? "";
   return (
     // biome-ignore lint/a11y/useAriaPropsSupportedByRole: role 是动态表达式，静态分析看不出；运行时一定带有支持 aria-label 的 role
     <span
@@ -51,9 +74,21 @@ export const BotAvatar = memo(function BotAvatar({
       className={cn("bot-ava", className)}
       data-avatar={shown.kind}
       role={decorative ? undefined : "img"}
-      style={{ width: size, height: size, fontSize: Math.max(10, Math.round(size * 0.46)) }}
+      style={{
+        width: size,
+        height: size,
+        fontSize: Math.max(10, Math.round(size * 0.46)),
+      }}
     >
-      <AvatarFace name={label} seed={seed ?? agentId ?? label} selected={selected} shown={shown} size={size} working={working} />
+      <AvatarFace
+        name={label}
+        seed={seed ?? agentId ?? label}
+        selected={selected}
+        shown={shown}
+        size={size}
+        thinking={isThinking}
+        working={isWorking}
+      />
     </span>
   );
 });
@@ -65,7 +100,10 @@ type ShownAvatar =
   | { kind: "monogram"; color: string }
   | { kind: "shape"; shape: AvatarShape; color: ShapeColor };
 
-function resolve(draft: AvatarDraft | undefined, saved: BotAvatarValue | undefined): ShownAvatar {
+function resolve(
+  draft: AvatarDraft | undefined,
+  saved: BotAvatarValue | undefined,
+): ShownAvatar {
   if (draft && draft.kind !== "keep") {
     if (draft.kind === "default") return { kind: "pattern" };
     if (draft.kind === "image") return { kind: "image", url: draft.previewUrl };
@@ -81,6 +119,7 @@ function AvatarFace({
   seed,
   size,
   selected,
+  thinking,
   working,
 }: {
   shown: ShownAvatar;
@@ -88,10 +127,21 @@ function AvatarFace({
   seed: string;
   size: number;
   selected: boolean;
+  thinking: boolean;
   working: boolean;
 }) {
   const [broken, setBroken] = useState<string | null>(null);
-  if (shown.kind === "shape") return <ShapeAvatar color={shown.color} selected={selected} shape={shown.shape} size={size} working={working} />;
+  if (shown.kind === "shape")
+    return (
+      <ShapeAvatar
+        color={shown.color}
+        selected={selected}
+        shape={shown.shape}
+        size={size}
+        thinking={thinking}
+        working={working}
+      />
+    );
   if (shown.kind === "image" && broken !== shown.url)
     return (
       <img
@@ -106,11 +156,21 @@ function AvatarFace({
       />
     );
   if (shown.kind === "image")
-    return <span className="bot-ava-face bot-ava-c-slate">{monogramOf(name)}</span>;
+    return (
+      <span className="bot-ava-face bot-ava-c-slate">{monogramOf(name)}</span>
+    );
   if (shown.kind === "emoji")
-    return <span className={`bot-ava-face is-emoji bot-ava-c-${shown.color}`}>{shown.emoji}</span>;
+    return (
+      <span className={`bot-ava-face is-emoji bot-ava-c-${shown.color}`}>
+        {shown.emoji}
+      </span>
+    );
   if (shown.kind === "monogram")
-    return <span className={`bot-ava-face bot-ava-c-${shown.color}`}>{monogramOf(name)}</span>;
+    return (
+      <span className={`bot-ava-face bot-ava-c-${shown.color}`}>
+        {monogramOf(name)}
+      </span>
+    );
   // size-full：不让祖先的图标选择器（[&_svg:not([class*='size-'])]:size-4）把它缩小。
   return <Avatar className="size-full" name={seed} size={size} />;
 }

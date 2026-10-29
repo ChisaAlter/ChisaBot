@@ -1,5 +1,30 @@
 # DEVLOG
 
+## 形象头像「活」起来 + 预览表情单选（dev3/feat-avatar-morph）
+
+**动机**：形象头像（DESIGN.md §81）在跑的时候只有 CSS 的呼吸缩放和眨眼，看起来是一张贴图在动，不像「活的」。要像 Grok Bot 的头像那样：果冻一样的轮廓、沿边缘流动的波、挤压拉伸、会眨会看的眼睛，状态之间全是弹簧过渡。另外头像编辑框「形象」页的三个预览按钮「选中 / 工作中 / 做完了」各自是开关，点「做完了」时「工作中」还亮着（Jun 报的 bug）。
+
+**状态从哪来**：
+- 选中：左栏当前对话那一行的 `selected`（原来就有）。
+- 工作中 / 思考中：打开着的对话页最清楚，`channel-chat.tsx` 用 `activityOf(activeMessages, chatBusy)` 算：这一轮在跑且最后一条用户消息之后有发出去还没回结果的工具调用 = working，在跑但没有工具在跑（在想 / 在写）= thinking；发布到 `lib/agents/bot-activity.ts`。`BotAvatar` 按 agentId 读它，所以左栏、资料页、机器人列表等所有用 `BotAvatar` 的地方都跟着动；没打开对话的机器人仍按服务器的 `busy` 当 working。
+- 做完了：从 working 落下来后的 2.4 s（原来的 `useShapeMood`）。
+- 聊天页顶栏和消息旁边：现在的设计（DESIGN v4.1 §W5）聊天列没有顶栏、消息行不画机器人头像，所以没有接入点；以后加上时用 `BotAvatar agentId=…` 就自动有。
+
+**改法**：
+- 新的 `app/src/lib/agents/avatar-morph.ts`：全局一个 rAF 循环。每个在动的头像有 4 个状态权重弹簧（选中 / 思考 / 干活 / 做完）、一个欠阻尼的「果冻」弹簧（状态一变给一下冲量）、两个眼睛弹簧。每帧在 32 个半径上叠 3 道沿边缘走的波（k=2/3/5，周期 2.4–3.8 s，强度：干活 1、思考 0.6、选中 0.3），加 cos2θ 的挤压拉伸；干活时往相邻形状流过去最多 28%、身体 ±5° 慢转、眼睛左右扫并偏向右下（输出方向）；思考时眼睛往上飘；选中时轻轻一弹 + ±3° 慢摆、眼睛看正前方略放大；做完了跳两下（起跳拉长、落地压扁，^ ^ 眼睛沿用 CSS）。随机 2–5 s 眨一次眼。目标全回 0 且所有弹簧落定后画回自己的形状并退出循环。
+- 只用 `setAttribute`（path 的 `d`、身体 g 和脸 g 的 `transform`），React 不重渲染；没有 blur / backdrop-filter。
+- 标签页隐藏时停循环（visibilitychange），滚出视口的头像（共用一个 IntersectionObserver）跳过，全都看不见时循环停。
+- 减少动态效果 / 性能模式：不登记变形（保持原来的 CSS 行为，减少动态效果下 CSS 动画本来就全关）。变形在动时 CSS 的 sa-breathe / sa-look / sa-blink / sa-pop / sa-hop 让位（`.sa[data-morph="on"]`），不会两套叠加。
+- `ShapeAvatar` 新增 `thinking`、`mood`（只给预览强制表情）；`BotAvatar` 新增 `thinking` 并读实时状态。
+- 头像编辑框的预览表情改成 `role="radiogroup"` 单选（`role="radio"` + `aria-checked`，方向键走 ui/segmented.tsx 的约定），选哪个只亮哪个，预览立刻换成那个动画；再点「做完了」重跳一次。
+
+**性能（headless Chromium 1228，Jun 的 PC，`app/scripts/avatar-morph-harness/`，左栏样 24 个 28px 头像）**：
+- 全部待机 3 s：循环 0 帧、0 次绘制；停止后 2 s：0 帧。
+- 3 个 working + 1 个选中，10 s：601 帧，长任务 0；帧间隔 平均 16.67 ms / p95 16.7 / 最大 16.8 ms，>20 ms 的帧 0；每帧变形耗时 平均 0.37 ms / p95 0.7 / 最大 2.8 ms。
+- 录屏（选中 / 思考 / 工作中 / 做完了）：`docs/images/avatar-morph-states.gif`、`.webm`；数字在 `docs/images/avatar-morph-perf.json`。
+
+**测试**：`app/tests/avatar-morph.test.tsx`（待机 0 帧、多个头像共用一个循环、全部回弹后停循环、回弹精确回到原形状、隐藏 / 出视口暂停和恢复、性能模式不变形、每帧不重渲染、做完了会跳、干活会转和看、切换是弹簧不是硬切、activityOf）、`avatar-morph-reduced.test.tsx`（减少动态效果，独立进程）、`avatar-picker-shape.test.tsx` 加单选 / 方向键用例。两个新文件进了 run-app-tests 的隔离名单（motion 首次 import 时记 rAF 和减少动态效果）。
+
 ## 回复风格对齐 Hark（feat/reply-style-hark）
 
 **动机**：同一组 12 条消息分别发给 Hark 和 ChisaBot（v0.1.105，GPT-6-Luna）对比，ChisaBot 的问题集中在“说话方式”：
