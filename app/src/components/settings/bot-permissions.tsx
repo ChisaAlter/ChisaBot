@@ -20,6 +20,7 @@ export function BotPermissionsSection() {
     <PageSection
       description="和聊天输入框左下角的开关是同一个设置。「请求批准」：在电脑上运行命令、改写文件、安装软件前先问你；「完全访问」：这些直接做。"
       id="bot-permissions"
+      settingItem="permissions.bot-permission"
       title="每个机器人的权限"
     >
       <Card className="mem-card">

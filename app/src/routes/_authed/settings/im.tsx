@@ -57,6 +57,7 @@ function ImPage() {
         ) : connections.length ? (
           <PageSection
             description={`共 ${connections.length} 个，${live ? `${live} 个已连接` : "都没有连上"}。点一行编辑；右侧开关停用 / 启用，⋯ 里测试连接、看日志。`}
+            settingItem="im.im-connections"
             title="我的连接"
           >
             <ConnectionList connections={connections} onEdit={(connection) => setDialog({ open: true, connection })} onLogs={setLogsOf} />

@@ -25,12 +25,12 @@ function MediaPersonalPage() {
       ) : (
         <>
           <div className="media-anchor" id="image-model">
-            <PageSection description="机器人画图、改图用的模型。" title="生图模型">
+            <PageSection description="机器人画图、改图用的模型。" settingItem="media.my-image-model" title="生图模型">
               <ImagePersonalCard current={media.data.image} defaults={media.data.defaults} />
             </PageSection>
           </div>
           <div className="media-anchor" id="vision-model">
-            <PageSection description="聊天里上传的图片怎么让机器人看懂。" title="识图模型">
+            <PageSection description="聊天里上传的图片怎么让机器人看懂。" settingItem="media.my-vision-model" title="识图模型">
               <VisionPersonalCard current={media.data.vision} defaults={media.data.defaults} />
             </PageSection>
           </div>

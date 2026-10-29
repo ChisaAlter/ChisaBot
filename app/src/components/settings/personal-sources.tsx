@@ -231,6 +231,7 @@ export function PersonalSourcesSection() {
   return (
     <PageSection
       description="轻量接入你的日历（ICS/WebCal）、邮箱（IMAP 收件箱读取 + SMTP 审批发信）、随身通知推送（飞书/钉钉/Bark Webhook）与外部事件触发器，并支持一键生成每日晨报卡片。"
+      settingItem="connected-accounts.personal-calendar connected-accounts.personal-email connected-accounts.notify-webhook connected-accounts.morning-brief"
       title="日程、收件箱、通知推送与每日晨报"
     >
       <CalendarConnectDialog

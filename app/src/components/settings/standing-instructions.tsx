@@ -74,6 +74,7 @@ export function StandingInstructions() {
       description={
         "对你所有的机器人、所有对话都生效。机器人自己的说明决定它做什么；这里写你希望它们怎么做事，比如语气、写作风格、称呼。"
       }
+      settingItem="general.instructions"
       title={"常驻指令"}
     >
       {stored.isPending ? <PageSkeleton rows={1} tall /> : stored.error ? (

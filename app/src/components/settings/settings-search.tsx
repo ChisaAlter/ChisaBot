@@ -3,6 +3,7 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { scrollIntoViewWithin } from "@/lib/scroll-within";
+import { locateSettingItem, settingTarget } from "@/lib/settings/locate";
 import { findEntry, type SettingsViewer } from "@/lib/settings/registry";
 import { hitHash, type SettingsHit, searchSettings } from "@/lib/settings/search";
 import { cn } from "@/lib/utils";
@@ -149,7 +150,7 @@ export function SettingsSearchResults({ search }: { search: SettingsSearch }) {
 }
 
 /**
- * 搜索跳过去之后：按 `#find=<页.项>` 找到页面上那一块（区块标题 / 设置行标题 / 卡片标题的文字），滚进来、闪一下；
+ * 搜索跳过去之后：按 `#find=<页.项>` 先找 `[data-setting-item]` 稳定锚点，再退回标题文字，滚进来、闪一下；
  * 普通的 `#某个id` 也一样处理。页面的数据是异步来的，所以最多等 4 秒。
  */
 export function SettingsFind() {
@@ -160,20 +161,14 @@ export function SettingsFind() {
     if (!hash) return;
     const raw = decodeURIComponent(hash.replace(/^#/, ""));
     const entry = raw.startsWith("find=") ? findEntry(raw.slice(5)) : null;
+    const itemId = entry?.item ? `${entry.page.id}.${entry.item.id}` : null;
     const text = entry?.item?.find ?? null;
-    if (raw.startsWith("find=") && !text) return;
+    if (raw.startsWith("find=") && !itemId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const started = Date.now();
-    const locate = (): HTMLElement | null => {
-      if (!text) return document.getElementById(raw);
-      const candidates = document.querySelectorAll<HTMLElement>(
-        "main h2, main h3, main [data-slot=item-title], main .sg-srow-t, main label, main legend, [data-slot=page-section] h2",
-      );
-      for (const el of candidates) if (el.textContent?.trim() === text) return el;
-      for (const el of candidates) if (el.textContent?.trim().startsWith(text)) return el;
-      return null;
-    };
+    const locate = (): HTMLElement | null =>
+      itemId ? locateSettingItem(document, itemId, text) : document.getElementById(raw);
     const attempt = () => {
       if (cancelled) return;
       const found = locate();
@@ -181,8 +176,7 @@ export function SettingsFind() {
         if (Date.now() - started < 4000) timer = setTimeout(attempt, 150);
         return;
       }
-      const target =
-        found.closest<HTMLElement>("[data-slot=item], .sg-srow, .sg-card, [data-slot=page-section], section") ?? found;
+      const target = settingTarget(found);
       const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       // 只滚设置页自己的滚动容器（§98.5）：原生 scrollIntoView 会连藏在下面的聊天一起挪。
       scrollIntoViewWithin(target, { block: "center", behavior: reduce ? "auto" : "smooth" });

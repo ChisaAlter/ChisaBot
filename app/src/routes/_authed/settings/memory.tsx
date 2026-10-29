@@ -96,6 +96,7 @@ function MemoryPage() {
         action={
           <div className="flex flex-wrap gap-2">
             <Button
+              data-setting-item="memory.memory-dream"
               data-testid="memory-dream-btn"
               feedback={{ pending: "整理中…", success: "已整理", error: "失败" }}
               onClick={() => void dreamAction.run()}
@@ -129,6 +130,7 @@ function MemoryPage() {
               </Button>
             ) : null}
             <Button
+              data-setting-item="memory.knowledge-base"
               data-testid="memory-add-knowledge-btn"
               onClick={() =>
                 setDialog({
@@ -244,7 +246,7 @@ function MemoryPage() {
                   : "还没有记忆。和机器人聊天时，它会安静地记下值得记住的事；你也可以说「记住…」，或点右上角「添加」。"}
               </PageEmpty>
             )}
-            <PageSection description="关掉的机器人不读也不写共用记忆。" title="哪些机器人用记忆">
+            <PageSection description="关掉的机器人不读也不写共用记忆。" settingItem="memory.memory-bots" title="哪些机器人用记忆">
               <MemoryBots disabled={disabledBots} />
             </PageSection>
           </>

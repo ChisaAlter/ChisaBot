@@ -24,7 +24,7 @@ export function SkyPreference({ bare = false }: { bare?: boolean } = {}) {
 
   return (
     <Wrap>
-      <Item size="sm">
+      <Item data-setting-item="general.sky" size="sm">
         <ItemContent>
           <ItemTitle>{"背景随时间变化"}</ItemTitle>
           <ItemDescription>

@@ -30,6 +30,7 @@ export function SavedLoginsSection() {
   return (
     <PageSection
         description={"登录网站时保存的账号密码。机器人看不到密码，每次使用都需要你确认。"}
+        settingItem="connected-accounts.saved-logins"
         title={"已保存的登录"}
       >
         {logins.isPending ? <PageSkeleton /> : logins.error ? (

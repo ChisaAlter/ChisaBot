@@ -153,13 +153,13 @@ function DevicesPage() {
             ) : null}
           </>
         )}
-        <PageSection title="添加一台手机">
+        <PageSection settingItem="devices.add-phone" title="添加一台手机">
           <AddPhoneCard />
         </PageSection>
-        <PageSection title="添加一台电脑">
+        <PageSection settingItem="devices.add-pc" title="添加一台电脑">
           <AddDeviceCard />
         </PageSection>
-        <PageSection title="添加一台服务器">
+        <PageSection settingItem="devices.add-server" title="添加一台服务器">
           <AddServerCard />
         </PageSection>
       </PageShell>

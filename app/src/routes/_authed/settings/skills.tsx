@@ -190,6 +190,7 @@ function SkillsPage() {
         </div>
       }
       description="开箱即用的个人助理核心技能包（早安管家、收件箱分拣、多源深度调研、PR 审查、服务器巡检、周报蒸馏等）。安装后随时可在聊天中输入 /名字 调用，管理员还可直接设为全员共享。"
+      settingItem="skills.curated-hub"
       title={`✨ 精选技能库（一键安装） · ${hub.data.length}`}
     >
       <Card className="mem-card" data-testid="skill-hub-card">
@@ -272,7 +273,7 @@ function SkillsPage() {
                 {"共享技能管理"}
               </Button>
             ) : null}
-            <Button data-testid="skill-import-btn" onClick={() => setImportOpen(true)} size="sm" variant="outline">
+            <Button data-setting-item="skills.import-skill" data-testid="skill-import-btn" onClick={() => setImportOpen(true)} size="sm" variant="outline">
               <IconDownload />
               {"从 GitHub / SKILL.md 导入"}
             </Button>

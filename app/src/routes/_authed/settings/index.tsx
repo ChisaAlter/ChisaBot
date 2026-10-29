@@ -61,7 +61,7 @@ function RouteComponent() {
     >
       <PageSection title={"外观"}>
         <PageRows>
-          <Item size="sm">
+          <Item data-setting-item="general.theme" size="sm">
             <ItemContent>
               <ItemTitle>{"主题"}</ItemTitle>
               <ItemDescription>{"浅色或深色外观，保存在此浏览器。"}</ItemDescription>
@@ -104,7 +104,7 @@ function RouteComponent() {
       {/* 快捷键只读、不可改，收进一行，点开看全部（2026-10-12 精简）。 */}
       <PageSection description={"在 ChisaBot 任意位置可用。"} title={"快捷键"}>
         <PageRows>
-          <Item size="sm">
+          <Item data-setting-item="general.hotkeys" size="sm">
             <ItemContent>
               <ItemTitle>{"键盘快捷键"}</ItemTitle>
               <ItemDescription>{`共 ${ALL_HOTKEYS.length} 个，不可修改。`}</ItemDescription>

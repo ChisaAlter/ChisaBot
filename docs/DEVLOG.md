@@ -1,5 +1,31 @@
 # DEVLOG
 
+## Unreleased — 设置搜索按稳定锚点定位（分支 dev2/settings-find）
+
+来源：审查模块 12 应修第 2 条。cbtest 能看到的 28 个搜索条目里有 13 个「跳过去但没定位」：SettingsFind 只按标题文字（全等或前缀）找，registry 的 `find` 和页面标题对不上就静默放弃，用户只看到页面顶部。
+
+改动：
+- 新增 `app/src/lib/settings/locate.ts`：`locateSettingItem` 先找 `[data-setting-item~="页.项"]`（registry 的稳定 id），再找 `[data-setting-item~="<find 文字>"]`（外观页三块已有的属性），最后才按标题文字兜底。`settingTarget`：命中锚点就高亮锚点本身，命中文字才往上找所在的行 / 区块。
+- `SettingsFind`（settings-search.tsx）改用上面两个函数，滚动（只滚设置页自己的容器）和 `setting-flash` 高亮不变。
+- `PageSection` 加可选 `settingItem` 属性，渲染成 `data-setting-item`。给每个带 `find` 的条目补了锚点（共 40 个，含管理员页）；一块对应多条时用空格分开（账号连接的日历 / 邮箱 / 通知 / 晨报四条都落到「日程、收件箱、通知推送与每日晨报」）。
+- **registry.ts 一行没改**：id 本来就稳定，find 文字只作兜底，前端改第 4 条文案不会和这里冲突。
+- appearance-preferences.tsx 没动：主题配色 / 面板玻璃材质 / 背景壁纸三块的属性已经在，通过 find 文字锚点命中。
+
+测试：
+- 新增 `app/tests/settings-find-anchors.test.tsx`（45 个用例）：从 registry 推出每个带 find 的条目，断言源码里恰好有一个对应锚点；所有 `页.项` 形式的锚点都能在 registry 里找到；渲染 PageSection / 真实的 AppearancePreferences，断言「晨报」落到「日程、收件箱、通知推送与每日晨报」区块、锚点优先于同名标题、文字兜底仍可用。期望值都从 registry 推导，不写死条目文案。
+- typecheck、build、test:app 全过；Biome 全仓 1082 errors / 800 warnings / 143 infos，与 main 相同，无新增。
+- 实机（box 上独立 headless Chrome、临时 profile、本地生产构建、API 打桩）：打开 `/settings/connected-accounts#find=connected-accounts.morning-brief`（搜索「晨报」回车后就是这个地址）。
+
+| 改前：停在页面顶部 | 改后：滚到「日程、收件箱、通知推送与每日晨报」并高亮 |
+|---|---|
+| ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/settings-find/docs/images/settings-find/before-morning-brief.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/settings-find/docs/images/settings-find/after-morning-brief.png) |
+
+其它抽查（改前都定位不到）：已保存的登录、主题配色、一键整理记忆。
+
+| 已保存的登录 | 主题配色 | 一键整理记忆 |
+|---|---|---|
+| ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/settings-find/docs/images/settings-find/after-saved-logins.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/settings-find/docs/images/settings-find/after-palette.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/settings-find/docs/images/settings-find/after-memory-dream.png) |
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。
