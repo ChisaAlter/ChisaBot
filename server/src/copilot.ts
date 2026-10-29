@@ -607,7 +607,7 @@ export function builtInAgentConfiguration(
                   args,
                   execution?.toolCallId,
                   tools.find((granted) => granted.name === tool.name)?.initiator,
-                  () => withSearchBudget(tool.name, () => tool.execute(args, signal ? { signal } : undefined)),
+                  () => tool.execute(args, signal ? { signal } : undefined),
                 ),
               );
               // 步数快用完时提醒收尾（§101）。
@@ -648,35 +648,6 @@ export function withStepBudgetNote<T>(result: T, turn: object | undefined = curr
   if (typeof result === "string") return `${result}\n\n${note}` as T;
   if (result && typeof result === "object" && !Array.isArray(result) && Object.getPrototypeOf(result) === Object.prototype)
     return { ...(result as Record<string, unknown>), systemNote: note } as T;
-  return result;
-}
-
-/**
- * 一轮里 web_search 的次数上限（2026-10-29，对照 Hark）。
- *
- * 对比测试 #11「帮我找一款 500 元以内的降噪耳机」：搜了 8 次，一个型号都没推荐，最后反问用户要入耳还是头戴。
- * 步数提醒（上面的 withStepBudgetNote）要到第 10 次工具调用才出现，太晚。这里单独数搜索：第
- * SEARCH_SOFT_LIMIT 次起在结果后面提醒收敛；超过 SEARCH_HARD_LIMIT 次不再真的去搜，直接告诉模型用手头的结果作答。
- * 只管 web_search；web_fetch、浏览器等照旧（读一个已知网页本来就是收敛的动作）。
- */
-export const SEARCH_SOFT_LIMIT = 3;
-export const SEARCH_HARD_LIMIT = 5;
-const searchCounts = new WeakMap<object, number>();
-const SEARCH_SOFT_NOTE =
-  "【系统提示】这一轮已经搜了好几次。不要再换关键词重搜：用已经拿到的结果直接回答；推荐类问题给 2–3 个带大致价格的明确选项（价格以官网 / 电商页为准）。";
-const SEARCH_STOP_NOTE = (used: number) =>
-  `【系统提示】这一轮已经搜了 ${used} 次，这次没有再搜。现在停止搜索，用已有结果和你自己的知识直接回答；推荐类问题给 2–3 个带大致价格的明确选项，并注明价格以官网 / 电商页为准。`;
-export async function withSearchBudget<T>(
-  toolName: string,
-  run: () => Promise<T>,
-  turn: object | undefined = currentConfirmTurn(),
-): Promise<T | string> {
-  if (toolName !== "web_search" || !turn) return run();
-  const used = (searchCounts.get(turn) ?? 0) + 1;
-  searchCounts.set(turn, used);
-  if (used > SEARCH_HARD_LIMIT) return SEARCH_STOP_NOTE(used - 1);
-  const result = await run();
-  if (used >= SEARCH_SOFT_LIMIT && typeof result === "string") return `${result}\n\n${SEARCH_SOFT_NOTE}`;
   return result;
 }
 

@@ -6,14 +6,10 @@ import {
   PROVENANCE_GUIDANCE,
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
-import {
-  builtInAgentConfiguration,
-  SEARCH_HARD_LIMIT,
-  SEARCH_SOFT_LIMIT,
-  withSearchBudget,
-} from "../src/copilot";
+import { builtInAgentConfiguration } from "../src/copilot";
 import { executeRenderUi } from "../src/generative-ui/render-ui";
 import { UNTRUSTED_GUIDANCE } from "../src/untrusted-content";
+import { webTools } from "../src/web/tools";
 
 /**
  * 回复风格对齐 Hark（2026-10-29）。改的是「怎么说话」，安全和不可信内容的规则一个字都不许动：
@@ -78,33 +74,10 @@ describe("WORK_STYLE_GUIDANCE (Hark alignment, 2026-10-29)", () => {
   });
 });
 
-describe("withSearchBudget (case #11: 8 searches, no recommendation)", () => {
-  test("nudges from the soft limit and stops searching past the hard limit", async () => {
-    const turn = {};
-    let ran = 0;
-    const search = () =>
-      withSearchBudget("web_search", async () => `hits${++ran}`, turn);
-    const out: string[] = [];
-    for (let i = 0; i < 8; i++) out.push(String(await search()));
-    expect(ran).toBe(SEARCH_HARD_LIMIT);
-    expect(
-      out.slice(0, SEARCH_SOFT_LIMIT - 1).every((r) => !r.includes("系统提示")),
-    ).toBe(true);
-    expect(out[SEARCH_SOFT_LIMIT - 1]).toContain("不要再换关键词重搜");
-    expect(out[SEARCH_HARD_LIMIT]).toContain("这次没有再搜");
-    expect(out[SEARCH_HARD_LIMIT]).toContain("2–3 个");
-  });
-  test("other tools and other runs are not counted", async () => {
-    const turn = {};
-    for (let i = 0; i < 10; i++)
-      expect(
-        await withSearchBudget("web_fetch", async () => "page", turn),
-      ).toBe("page");
-    expect(await withSearchBudget("web_search", async () => "fresh", {})).toBe(
-      "fresh",
-    );
-    expect(
-      await withSearchBudget("web_search", async () => "no-run", undefined),
-    ).toBe("no-run");
+describe("web_search description asks the model to converge (case #11)", () => {
+  test("says 1–3 searches and 2–3 priced options", () => {
+    const search = webTools().find((tool) => tool.name === "web_search");
+    expect(search?.description).toContain("1–3 次");
+    expect(search?.description).toContain("2–3 个带大致价格的选项");
   });
 });
