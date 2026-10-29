@@ -35,6 +35,10 @@ export type PreviewLinkFields = {
   imageHeight?: number;
   finalUrl?: string;
   degraded?: boolean;
+  /** 服务器以后会给视频链接标 `kind: "video"`（开发3 在做）；前端可有可无。 */
+  kind?: string;
+  /** 视频缩略图（同上）；没有 og:image 时当预览图用。 */
+  thumbnail?: string | null;
 };
 
 export type MergedLinkFields = {
@@ -51,6 +55,8 @@ export type MergedLinkFields = {
   favicon: string | null;
   description: string | null;
   degraded: boolean;
+  /** 预览说是视频：图上叠播放角标。 */
+  kind: "video" | null;
 };
 
 function text(value: unknown): string {
@@ -210,7 +216,9 @@ export function mergeLinkFields(
     domain;
   const givenImage = usableImage(given.image);
   const previewImage =
-    preview && preview.imageKind !== "none" ? usableImage(preview.image) : null;
+    (preview && preview.imageKind !== "none"
+      ? usableImage(preview.image)
+      : null) ?? usableImage(preview?.thumbnail);
   const image = givenImage ?? previewImage;
   const imageFallback =
     givenImage && previewImage && previewImage !== givenImage
@@ -238,5 +246,6 @@ export function mergeLinkFields(
     favicon: usableImage(preview?.favicon),
     description: text(given.description) || text(preview?.description) || null,
     degraded,
+    kind: preview?.kind === "video" ? "video" : null,
   };
 }
