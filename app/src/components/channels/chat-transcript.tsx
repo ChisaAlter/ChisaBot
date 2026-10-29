@@ -3927,6 +3927,20 @@ export function compactTurns(
         tone.set(promoted.id, "final");
       }
     }
+    /*
+     * 连发的几条（最后一个工具之后、一直到结果）都是回答，不是过程话：照旧是气泡，不收起、不进卡片。
+     * 以前只认最后一条是结果，连发三条中间那条被当过程话藏起来，有干活卡时开场一句也进了卡片，只剩最后一条。
+     * 开场一句（第一段）的规则不变（§93）。
+     */
+    const replies = new Set<string>();
+    if (final) {
+      const lastToolAt = turn.rest.findLastIndex(callsTool);
+      for (const item of texts.slice(1))
+        if (turn.rest.indexOf(item) > lastToolAt && tone.get(item.id) === "step") {
+          tone.set(item.id, "lead");
+          replies.add(item.id);
+        }
+    }
     const personUsers = personTextsOf(turn.users);
     const prevTurn = index > 0 ? turns[index - 1] : undefined;
     const prevUsers = prevTurn ? personTextsOf(prevTurn.users) : [];
@@ -3990,6 +4004,7 @@ export function compactTurns(
            */ else if (
             item.kind === "text" &&
             (tone.get(item.id) === "step" || tone.get(item.id) === "lead") &&
+            !replies.has(item.id) &&
             !(multiReplyTurn && item.id === texts[0]?.id) &&
             !/^\s*>\s+\S/.test(item.text)
           ) {

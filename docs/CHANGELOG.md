@@ -1,3 +1,7 @@
+## 未发版
+
+- 修复：机器人连发多条消息只显示最后一条——`compactTurns` 把最后一个工具之后、结果之前的几条也当过程话收起；现在这几条照旧是气泡，测试 `app/tests/consecutive-replies.test.ts`。
+
 ## 0.1.106
 
 - 对话记录同步改成增量：`…/threads/:id/messages` 支持可选 `since` / `cursor`（没变回 `unchanged`、变了只回尾部，旧客户端不变），界面实际路径（频道聊天页 `readThreadMessages` 的各处读历史、每轮结束后的顺序核对）都带 since/cursor 增量读，600 条对话没变化一次读约 530 KB → 83 B，没变化不 `setMessages`，编辑 / 删除 / 读失败 / 旧服务器照旧整份；三张卡片的每秒计时器合并为共享时钟。（#370）
