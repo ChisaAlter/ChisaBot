@@ -103,7 +103,7 @@ const CORPUS: string[] = [
 ];
 
 function streamCompare(text: string, step = 1) {
-  const parse = createIncrementalBlockParser();
+  const parse = createIncrementalBlockParser(parseMarkdownIntoBlocks);
   for (let i = 0; i <= text.length; i += step) {
     const prefix = text.slice(0, i);
     expect({ i, blocks: parse(prefix) }).toEqual({ i, blocks: parseMarkdownIntoBlocks(prefix) });
@@ -140,7 +140,7 @@ test("the reuse actually happens: a streamed document re-lexes only its tail", (
 });
 
 test("text that is replaced, shortened or rewritten at the tail falls back to a full parse", () => {
-  const parse = createIncrementalBlockParser();
+  const parse = createIncrementalBlockParser(parseMarkdownIntoBlocks);
   const seq = [
     DOC,
     DOC.slice(0, 300),
@@ -158,7 +158,7 @@ test("text that is replaced, shortened or rewritten at the tail falls back to a 
  */
 test("rendered HTML is identical to the default block parser at every streaming step", async () => {
   const text = CORPUS.slice(1, 8).join("\n\n").concat("\n\n", DOC.slice(0, DOC.indexOf("```python")));
-  const parse = createIncrementalBlockParser();
+  const parse = createIncrementalBlockParser(parseMarkdownIntoBlocks);
   const Pair = ({ md }: { md: string }) => (
     <>
       <div data-testid="a">
@@ -191,7 +191,7 @@ test("fuzz: random documents streamed in random chunks always match a full re-pa
   const mismatches: string[] = [];
   for (let run = 0; run < 600; run++) {
     const doc = randomDoc(random);
-    const parse = createIncrementalBlockParser();
+    const parse = createIncrementalBlockParser(parseMarkdownIntoBlocks);
     for (const prefix of streamPrefixes(doc, random)) {
       if (JSON.stringify(parse(prefix)) !== JSON.stringify(parseMarkdownIntoBlocks(prefix))) {
         mismatches.push(prefix);

@@ -1,11 +1,16 @@
 import { type ComponentProps, useEffect, useRef, useState } from "react";
-import { parseMarkdownIntoBlocks, Streamdown } from "streamdown";
+import { Streamdown } from "streamdown";
 import { cjkFriendlyEmphasis } from "@/lib/chat/cjk-emphasis";
 import { workspaceLinks } from "@/lib/chat/workspace-links";
 import { useDeclaredBotId } from "@/lib/copilot/active-bot";
 import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useSmoothText } from "@/lib/chat/use-smooth-text";
-import { createIncrementalBlockParser } from "@/lib/chat/incremental-blocks";
+import {
+  type BlockParser,
+  createIncrementalBlockParser,
+  loadedFullBlockParser,
+  loadFullBlockParser,
+} from "@/lib/chat/incremental-blocks";
 
 /**
  * Bot 的 Markdown 回复，流式时按帧匀速放字（use-smooth-text.ts），不再一批一批地蹦。
@@ -18,14 +23,14 @@ export function SmoothStreamdown({ children, ...props }: Omit<ComponentProps<typ
   // 工作区文件链接换成这个机器人的下载地址（§101）；在看的就是这个机器人的对话。
   const bot = useDeclaredBotId();
   const origin = typeof window === "undefined" ? "" : window.location.origin;
-  // 每条消息一个分块器：流式时只重切没定型的那段，前面封口的块原样复用（incremental-blocks.ts）。
-  const [parseBlocks] = useState(createIncrementalBlockParser);
   const growing = useGrowing(shown);
+  const parseBlocks = useIncrementalBlocks(growing);
   return (
     <Streamdown
       translations={STREAMDOWN_ZH}
-      // 文字停下来（流式结束）后换回整段解析再切一次：万一增量分块和整段有出入，也在这里纠正回来。
-      parseMarkdownIntoBlocksFn={growing ? parseBlocks : parseMarkdownIntoBlocks}
+      // 只在文字还在变长时用增量分块；停下来（流式结束）后是 undefined，Streamdown 用它默认的整段分块再切一次，
+      // 万一增量分块和整段有出入，也在这里纠正回来。
+      parseMarkdownIntoBlocksFn={parseBlocks}
       {...props}
     >
       {workspaceLinks(cjkFriendlyEmphasis(shown), bot, origin)}
@@ -49,4 +54,29 @@ function useGrowing(text: string): boolean {
     return () => clearTimeout(timer);
   }, [text]);
   return growing;
+}
+
+/**
+ * 每条消息一个增量分块器：流式时只重切没定型的那段，前面封口的块原样复用（incremental-blocks.ts）。
+ * 整段分块函数从懒加载的 streamdown 模块里拿；拿到之前、以及不在流式时返回 undefined（Streamdown 用默认的整段分块）。
+ */
+function useIncrementalBlocks(enabled: boolean): BlockParser | undefined {
+  const [parser, setParser] = useState<BlockParser | null>(() => {
+    const full = loadedFullBlockParser();
+    return full ? createIncrementalBlockParser(full) : null;
+  });
+  useEffect(() => {
+    if (parser || !enabled) return;
+    let alive = true;
+    loadFullBlockParser().then(
+      (full) => {
+        if (alive) setParser(() => createIncrementalBlockParser(full));
+      },
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [parser, enabled]);
+  return enabled && parser ? parser : undefined;
 }

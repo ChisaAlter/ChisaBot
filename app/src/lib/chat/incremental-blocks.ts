@@ -1,5 +1,3 @@
-import { parseMarkdownIntoBlocks } from "streamdown";
-
 /**
  * 流式回复的分块只重切还没定型的那一段（审查 01 第 5 条）。
  *
@@ -18,6 +16,10 @@ import { parseMarkdownIntoBlocks } from "streamdown";
  *    （Streamdown 按未闭合标签合并块，HTML 块也能跨空行）；
  *  - 全文没有脚注（`[^`，Streamdown 整段当一块）和链接定义（`[x]: …`，重复定义会改变分块）。
  * 流式结束后 SmoothStreamdown 会换回整段解析再切一次兜底（smooth-markdown.tsx）。
+ *
+ * 这个文件不静态 import streamdown（#414 把 Streamdown 改成用到才下载，静态 import 会把它拉回主包）：
+ * 整段分块函数由调用方传进来，SmoothStreamdown 经 loadFullBlockParser() 动态 import 拿到，和 Streamdown
+ * 是同一个懒加载模块。
  */
 const DEFINITION = /^ {0,3}\[[^\]\n]*\]:/m;
 const HTML_LINE = /^ {0,3}</m;
@@ -42,7 +44,7 @@ function unsafeText(text: string): boolean {
   return text.includes("[^") || DEFINITION.test(text);
 }
 
-export function createIncrementalBlockParser(full: BlockParser = parseMarkdownIntoBlocks): BlockParser {
+export function createIncrementalBlockParser(full: BlockParser): BlockParser {
   let stable: string[] = [];
   let stableText = "";
   let fences = 0;
@@ -85,4 +87,25 @@ export function createIncrementalBlockParser(full: BlockParser = parseMarkdownIn
     }
     return blocks;
   };
+}
+let loadedFull: BlockParser | null = null;
+let loadingFull: Promise<BlockParser> | null = null;
+
+/** Streamdown 自己的整段分块函数，动态 import（和 Streamdown 组件同一个分包）。 */
+export function loadFullBlockParser(): Promise<BlockParser> {
+  loadingFull ??= import("streamdown")
+    .then((module) => {
+      loadedFull = module.parseMarkdownIntoBlocks;
+      return loadedFull;
+    })
+    .catch((error) => {
+      loadingFull = null;
+      throw error;
+    });
+  return loadingFull;
+}
+
+/** 已经下载好的整段分块函数；还没下载时是 null。 */
+export function loadedFullBlockParser(): BlockParser | null {
+  return loadedFull;
 }
