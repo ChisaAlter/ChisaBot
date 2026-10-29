@@ -20,6 +20,7 @@ import {
   agentListQueryOptions,
   agentQueryOptions,
 } from "@/lib/agents/queries";
+import { reclaimDraftText } from "@/lib/channels/draft-channel";
 import { useStartChannel } from "@/lib/channels/start";
 import { addDraftFiles } from "@/lib/chat/ui-memory";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
@@ -64,6 +65,12 @@ function RouteComponent() {
 }
 
 function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch: boolean }) {
+  /*
+   * 没发就离开的草稿对话（A1）：它藏着的页面要等这一页画完才卸载、回收，字那时才放回 `new:<agent>`，而下面输入框
+   * 只在挂载时读一次草稿。所以挂上这一页时先同步把字挪回来（`reclaimDraftText`），输入框第一帧就有（#399 回归）。
+   * 放在 useState 的初始化里：只在挂载时做一次，比任何子组件的渲染都早。
+   */
+  useState(() => reclaimDraftText(`new:${agent}`));
   const modelQueryClient = useQueryClient();
   const navigate = useNavigate();
   const channels = useInfiniteQuery(channelListQueryOptions());

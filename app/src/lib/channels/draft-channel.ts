@@ -156,6 +156,24 @@ export function moveTextDraft(from: string, to: string): void {
 }
 
 /**
+ * 新话题页挂上的那一刻（`channel/new.tsx`，在它的输入框读草稿之前）：本标签页还没发、字要回到 `returnKey` 的草稿
+ * 对话，先把写了一半的字同步挪过去。
+ *
+ * 回归（#399）：去新话题页时，藏着的草稿对话页要等新话题页画完、`KeepAliveStage` 的 0ms 计时器到了才卸载，卸载收尾
+ * （`holdDraftChannel`）再推迟一拍才 `releaseDraftChannel`。字在那时才挪回 `new:<agent>`，可新话题页的输入框只在
+ * 挂载时读一次草稿、早已读到空值，于是一直空着，要去设置再回来（重新挂载）才出现。这里抢在输入框之前挪；之后的回收
+ * 照旧删对话、丢文件，`moveTextDraft` 那边已经没有字，什么都不覆盖。
+ *
+ * 去新话题页时藏着的草稿对话一律立即回收（`draftKeptTtl`），提前挪字不会挪错；去的是别的机器人的新话题页时
+ * `returnKey` 对不上，不动，回收时照旧回到原来的机器人。重复调用（StrictMode）是空操作。
+ */
+export function reclaimDraftText(returnKey: string): void {
+  for (const [channelId, key] of load()) {
+    if (key === returnKey) moveTextDraft(channelId, returnKey);
+  }
+}
+
+/**
  * 对话页挂上了。返回卸载时调的函数：那时还是草稿（没发过），就删掉。
  *
  * 推迟一拍再判断：StrictMode 的「挂载 → 卸载 → 挂载」中间那次卸载不算离开；输入框自己的卸载收尾
