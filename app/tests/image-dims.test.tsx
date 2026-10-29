@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import type { Message } from "@ag-ui/core";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { toVisibleChatItems } from "@/components/channels/chat-messages";
 import { ImagePile, rememberedImageSize } from "@/components/rich-previews/rich-previews";
 import { readImageDims } from "@/lib/image-dims";
@@ -65,6 +65,44 @@ describe("ImagePile reserves the box from given dims before the image loads", ()
   test("tall image: height cap decides the width", () => {
     const { container } = render(<ImagePile images={[{ src: "/api/chat-files/x-tall", width: 1000, height: 3000 }]} />);
     expect(container.querySelector("img")!.style.width).toBe("100px");
+  });
+  test("a thumbnail's loaded size is remembered under the thumbnail url, never the original's", () => {
+    const src = "/api/attachments/22222222-2222-2222-2222-222222222222";
+    const thumb = `${src}?w=480`;
+    const loaded = (img: HTMLImageElement, width: number, height: number) => {
+      Object.defineProperty(img, "naturalWidth", { configurable: true, value: width });
+      Object.defineProperty(img, "naturalHeight", { configurable: true, value: height });
+      fireEvent.load(img);
+    };
+    const first = render(<ImagePile images={[{ src, thumb }]} />);
+    const img = first.container.querySelector("img")!;
+    expect(img.getAttribute("src")).toBe(thumb);
+    loaded(img, 480, 360);
+    expect(rememberedImageSize(thumb)).toEqual({ width: 480, height: 360 });
+    // 原图地址下什么都没记：别处按原图画（看大图、markdown 图）不会拿到缩略图的尺寸。
+    expect(rememberedImageSize(src)).toBeUndefined();
+    first.unmount();
+
+    // 再画同一张缩略图：按记下的缩略图尺寸留框。
+    const again = render(<ImagePile images={[{ src, thumb }]} />);
+    const reserved = again.container.querySelector("img")!;
+    expect(reserved.style.width).toBe("318px");
+    expect(reserved.style.aspectRatio.replace(/\s/g, "")).toBe("480/360");
+    again.unmount();
+
+    // 不带缩略图画原图：没见过就不留框，加载后记在原图地址下、记的是原图尺寸。
+    const plain = render(<ImagePile images={[{ src }]} />);
+    const original = plain.container.querySelector("img")!;
+    expect(original.getAttribute("style") ?? "").toBe("");
+    loaded(original, 1600, 1200);
+    expect(rememberedImageSize(src)).toEqual({ width: 1600, height: 1200 });
+    expect(rememberedImageSize(thumb)).toEqual({ width: 480, height: 360 });
+  });
+  test("given dims (the original's) stay under the original url", () => {
+    const src = "/api/attachments/33333333-3333-3333-3333-333333333333";
+    render(<ImagePile images={[{ src, thumb: `${src}?w=240`, width: 900, height: 600 }]} />);
+    expect(rememberedImageSize(src)).toEqual({ width: 900, height: 600 });
+    expect(rememberedImageSize(`${src}?w=240`)).toBeUndefined();
   });
   test("no dims and never seen: no reserved style (old behaviour)", () => {
     const { container } = render(<ImagePile images={[{ src: "/api/chat-files/never-seen" }]} />);
