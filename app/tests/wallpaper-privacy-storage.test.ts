@@ -14,10 +14,12 @@ import {
   assertWallpaperDataUrlSize,
   compressUploadedWallpaper,
   flushAppearanceWrites,
+  flushGlassAlpha,
   GLASS_OPACITY_STORAGE_KEY,
   getAppearanceState,
   MAX_WALLPAPER_DATA_URL_CHARS,
   MAX_WALLPAPER_FILE_BYTES,
+  readGlassAlpha,
   reloadAppearanceFromStorage,
   resetAppearanceDefaults,
   resolveActiveWallpaperCss,
@@ -190,9 +192,12 @@ describe("4) 外观滑块：localStorage 写入防抖，预览实时", () => {
       setWallpaperDim(v);
       expect(getAppearanceState().glassOpacity).toBe(v);
       expect(getAppearanceState().wallpaperBlur).toBe(v);
+      // 玻璃雾度写进 #chisabot-glass-alpha 那条规则（合并到下一帧），不写 <html> 行内样式。
+      flushGlassAlpha();
+      expect(readGlassAlpha()).toBe((v / 100).toFixed(2));
       expect(
         document.documentElement.style.getPropertyValue("--lg-alpha"),
-      ).toBe((v / 100).toFixed(2));
+      ).toBe("");
       // 拖动过程中一个滑块键都没写
       for (const k of keys) expect(storage.getItem(k)).toBeNull();
     }

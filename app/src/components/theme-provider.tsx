@@ -38,6 +38,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     });
   }, [dark]);
 
+  // 多标签页同步：别的标签页切了浅色 / 深色，这边跟着切（storage 事件只在别的标签页写入时触发）。
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea && event.storageArea !== window.localStorage) return;
+      if (event.key !== null && event.key !== THEME_STORAGE_KEY) return;
+      setDark(parseStoredDarkTheme(readStoredPreference(THEME_STORAGE_KEY)));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   return (
     <ThemeContext.Provider value={{ dark, setDark }}>
       {children}

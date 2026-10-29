@@ -7494,6 +7494,9 @@ html.dark .sa[data-color="ink"] { --sa-fill: #3b3b46; }
 @keyframes sa-blink { 0%, 92%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.12); } }
 @keyframes sa-hop { 0%, 85%, 100% { transform: translateY(0); } 22% { transform: translateY(-9px) scale(0.97, 1.05); } 45% { transform: translateY(0) scale(1.05, 0.94); } 66% { transform: translateY(-4px); } }
 @media (prefers-reduced-motion: reduce) { .sa, .sa * { animation: none !important; transition: none !important; } }
+/* 性能模式（lib/perf-mode.ts）：表情动画（呼吸、张望、眨眼、蹦跳）也停下，停在静止的表情上；表情切换的淡入淡出保留。 */
+html[data-perf="on"] .sa,
+html[data-perf="on"] .sa * { animation: none !important; }
 .bot-ava-shapes { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px 6px; justify-items: center; width: 100%; }
 .bot-ava-shape { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 12px; transition: background var(--dur-1), transform var(--dur-1) var(--ease-out); }
 .bot-ava-shape:hover { background: var(--hover-bg, rgba(127, 127, 127, 0.12)); transform: scale(1.06); }
@@ -8870,7 +8873,10 @@ html[data-phone] .sidebar-mobile-close { width: 44px; height: 44px; }
 html[data-desktop] [data-slot="sheet-content"],
 html[data-desktop] [data-slot="sheet-content"] *,
 html[data-desktop] [data-slot="sheet-overlay"] { -webkit-app-region: no-drag; app-region: no-drag; }
-html[data-desktop] body:has([data-slot="sheet-overlay"]) :is(.glass-topbar, .glass-topbar *, .desk-strip) {
+/* 不写 `.glass-topbar *`：顶栏里的子元素只会声明 no-drag（见 .glass-topbar :is(a, button…)），顶栏整块 no-drag 已经盖住它们；
+   而 `body:has(…) … *` 会让 Chrome 每插入一个带 data-slot 的元素就把 body 整棵子树标脏重算（4x 降速下一次 ~500ms，
+   外观滑块第一次拖动冒出「恢复默认」按钮时就是这一下）。只列两个类名，失效只落到这两个元素上。 */
+html[data-desktop] body:has([data-slot="sheet-overlay"]) :is(.glass-topbar, .desk-strip) {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
@@ -9317,10 +9323,47 @@ html:not(.dark) .chisabot-wallpaper-dim {
 
 /* 3. 三档无边框高通透光学玻璃材质（liquid 液态玻璃 / crystal 晶莹全透 / frosted 柔光磨砂）
  * 注意：严禁在此手写 -webkit-backdrop-filter，只写标准 backdrop-filter，否则压缩器会丢弃标准属性导致模糊失效。 */
+/*
+ * 性能（2026-10-29，模块 11 审计）：玻璃变量只算在「真正读它的元素」上，不再挂在 <html> 上往下继承。
+ * - 以前 --lg-surface / --lg-surface-strong 写在 :root，里面的 var(--lg-alpha) 在根上就算好了，
+ *   拖一下「玻璃面板不透明度」滑块（改根上的 --lg-alpha）或换一档材质，整页每个元素都要重算样式。
+ * - 现在这几个变量注册成不继承（@property inherits: false），声明挪到读它们的那几类元素上（下面的 :where 名单，
+ *   和后面「三档玻璃」那几条 background / backdrop-filter 规则一一对应）：改动只让这几十个元素重算。
+ * - --lg-alpha 由 lib/appearance.ts 写进一条只命中同一名单的动态规则（#chisabot-glass-alpha），不再写 <html> 的行内样式。
+ * - 全部用 :where()，优先级为 0：抽屉、性能模式、减少透明度、渲染预算里对这些变量的覆盖照旧生效。
+ * 名单要和读这些变量的选择器同步（app/tests/glass-scope.test.ts 会检查）。
+ */
+@property --lg-alpha { syntax: "<number>"; inherits: false; initial-value: 0.16; }
+@property --lg-surface { syntax: "*"; inherits: false; }
+@property --lg-surface-strong { syntax: "*"; inherits: false; }
+@property --lg-blur { syntax: "*"; inherits: false; }
+@property --lg-shadow { syntax: "*"; inherits: false; }
+:root {
+  --lg-border: transparent;
+  --lg-rim: 0 0 0 transparent;
+}
 /* 3.1 液态玻璃（liquid）：温润通透的凝脂光学玻璃，兼顾流云透光感与极佳的正文对比度 */
-:root,
-html[data-glass="liquid"] {
-  --lg-alpha: 0.16;
+:where(html[data-glass="liquid"], html:not([data-glass]))
+  :where(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .glass-composer,
+    [data-slot="bubble-content"],
+    .jr-card,
+    .page-rows,
+    .sg-card,
+    .page-section > form,
+    .page .border
+  ) {
   --lg-blur: blur(20px) saturate(180%);
   --lg-surface: linear-gradient(
     135deg,
@@ -9334,13 +9377,30 @@ html[data-glass="liquid"] {
     rgba(255, 255, 255, clamp(0.36, calc(var(--lg-alpha, 0.16) * 2.5), 0.68)) 54%,
     rgba(255, 255, 255, clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.85), 0.74)) 100%
   );
-  --lg-border: transparent;
-  --lg-rim: 0 0 0 transparent;
   --lg-shadow: var(--card-shadow);
 }
 
-html.dark,
-html.dark[data-glass="liquid"] {
+:where(html.dark[data-glass="liquid"], html.dark:not([data-glass]))
+  :where(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .glass-composer,
+    [data-slot="bubble-content"],
+    .jr-card,
+    .page-rows,
+    .sg-card,
+    .page-section > form,
+    .page .border
+  ) {
   --lg-blur: blur(20px) saturate(180%);
   --lg-surface: linear-gradient(
     135deg,
@@ -9354,13 +9414,31 @@ html.dark[data-glass="liquid"] {
     rgba(11, 17, 30, clamp(0.36, calc(var(--lg-alpha, 0.16) * 2.45), 0.68)) 54%,
     rgba(14, 21, 38, clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.75), 0.74)) 100%
   );
-  --lg-border: transparent;
-  --lg-rim: 0 0 0 transparent;
   --lg-shadow: var(--card-shadow);
 }
 
 /* 3.2 晶莹全透（crystal）：轻薄透明晶片，最大化透出底层 WebGL 天空与流云，同时保证文字清晰可读 */
-html[data-glass="crystal"] {
+:where(html[data-glass="crystal"])
+  :where(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .glass-composer,
+    [data-slot="bubble-content"],
+    .jr-card,
+    .page-rows,
+    .sg-card,
+    .page-section > form,
+    .page .border
+  ) {
   --lg-blur: blur(12px) saturate(170%);
   --lg-surface: linear-gradient(
     135deg,
@@ -9372,11 +9450,29 @@ html[data-glass="crystal"] {
     rgba(255, 255, 255, clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.4), 0.62)) 0%,
     rgba(255, 255, 255, clamp(0.24, calc(var(--lg-alpha, 0.16) * 1.85), 0.52)) 100%
   );
-  --lg-border: transparent;
-  --lg-rim: 0 0 0 transparent;
   --lg-shadow: 0 8px 28px rgba(15, 23, 42, 0.07);
 }
-html.dark[data-glass="crystal"] {
+:where(html.dark[data-glass="crystal"])
+  :where(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .glass-composer,
+    [data-slot="bubble-content"],
+    .jr-card,
+    .page-rows,
+    .sg-card,
+    .page-section > form,
+    .page .border
+  ) {
   --lg-blur: blur(12px) saturate(170%);
   --lg-surface: linear-gradient(
     135deg,
@@ -9388,13 +9484,31 @@ html.dark[data-glass="crystal"] {
     rgba(14, 21, 36, clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.4), 0.62)) 0%,
     rgba(10, 16, 28, clamp(0.24, calc(var(--lg-alpha, 0.16) * 1.85), 0.52)) 100%
   );
-  --lg-border: transparent;
-  --lg-rim: 0 0 0 transparent;
   --lg-shadow: 0 10px 32px rgba(0, 0, 0, 0.34);
 }
 
 /* 3.3 柔光磨砂（frosted）：细腻丝滑半透明亚克力磨砂（28px 柔焦 + 高可读性雾面） */
-html[data-glass="frosted"] {
+:where(html[data-glass="frosted"])
+  :where(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .glass-composer,
+    [data-slot="bubble-content"],
+    .jr-card,
+    .page-rows,
+    .sg-card,
+    .page-section > form,
+    .page .border
+  ) {
   --lg-blur: blur(28px) saturate(185%);
   --lg-surface: linear-gradient(
     180deg,
@@ -9406,11 +9520,29 @@ html[data-glass="frosted"] {
     rgba(255, 255, 255, clamp(0.58, calc(var(--lg-alpha, 0.16) * 3.7), 0.86)) 0%,
     rgba(255, 255, 255, clamp(0.48, calc(var(--lg-alpha, 0.16) * 3.2), 0.78)) 100%
   );
-  --lg-border: transparent;
-  --lg-rim: 0 0 0 transparent;
   --lg-shadow: var(--card-shadow);
 }
-html.dark[data-glass="frosted"] {
+:where(html.dark[data-glass="frosted"])
+  :where(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .glass-composer,
+    [data-slot="bubble-content"],
+    .jr-card,
+    .page-rows,
+    .sg-card,
+    .page-section > form,
+    .page .border
+  ) {
   --lg-blur: blur(28px) saturate(185%);
   --lg-surface: linear-gradient(
     180deg,
@@ -9422,8 +9554,6 @@ html.dark[data-glass="frosted"] {
     rgba(18, 26, 44, clamp(0.56, calc(var(--lg-alpha, 0.16) * 3.6), 0.84)) 0%,
     rgba(12, 18, 34, clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.1), 0.76)) 100%
   );
-  --lg-border: transparent;
-  --lg-rim: 0 0 0 transparent;
   --lg-shadow: var(--card-shadow);
 }
 
@@ -9861,6 +9991,7 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
  * ======================================================================================== */
 :is(.glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new),
 .glass-main [data-slot="bubble"],
+.glass-main [data-slot="bubble"] > [data-slot="bubble-content"],
 .jr-card,
 .page-rows,
 .sg-card,

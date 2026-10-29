@@ -110,7 +110,7 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
     expect(css).toContain('html[data-glass="liquid"]');
     expect(css).toContain('html[data-glass="crystal"]');
     expect(css).toContain('html[data-glass="frosted"]');
-    expect(css).toContain("--lg-alpha: 0.16");
+    expect(css).toMatch(/@property --lg-alpha \{[^}]*inherits: false; initial-value: 0\.16;/);
     expect(css).toContain("--lg-border: transparent");
     expect(css).toContain("border: 0 !important");
     expect(css).toContain(".chisabot-wallpaper");

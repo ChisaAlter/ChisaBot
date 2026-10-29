@@ -3,24 +3,31 @@ import {
   readStoredPreference,
   writeStoredPreference,
 } from "@/lib/preference-storage";
+import {
+  GLASS_STYLE_STORAGE_KEY,
+  PALETTE_STORAGE_KEY,
+  THEME_PALETTES,
+  type ThemePaletteId,
+} from "@/lib/palette";
 import { getWallpaperBackend, WALLPAPER_IDB_MARKER } from "@/lib/wallpaper-store";
 
-export const PALETTE_STORAGE_KEY = "chisabot-theme-palette";
+// 配色表搬到了纯模块 lib/palette.ts（构建时要内联进 index.html 的启动脚本），这里照旧导出。
+export {
+  applyThemeColor,
+  computePaletteSky,
+  GLASS_STYLE_STORAGE_KEY,
+  PALETTE_STORAGE_KEY,
+  paletteThemeColor,
+  THEME_PALETTES,
+  type ThemePaletteId,
+  type ThemePaletteMeta,
+} from "@/lib/palette";
 export const WALLPAPER_ID_STORAGE_KEY = "chisabot-wallpaper-id";
 export const WALLPAPER_CUSTOM_URL_STORAGE_KEY = "chisabot-wallpaper-custom-url";
 export const WALLPAPER_BLUR_STORAGE_KEY = "chisabot-wallpaper-blur";
 export const WALLPAPER_DIM_STORAGE_KEY = "chisabot-wallpaper-dim";
-export const GLASS_STYLE_STORAGE_KEY = "chisabot-glass-style";
 export const GLASS_OPACITY_STORAGE_KEY = "chisabot-glass-opacity";
 export const HARK_SCENE_STORAGE_KEY = "chisabot-hark-scene";
-
-export type ThemePaletteId =
-  | "default"
-  | "aurora"
-  | "emerald"
-  | "ocean"
-  | "sunset"
-  | "sakura";
 
 export type GlassStyleId = "liquid" | "crystal" | "frosted";
 
@@ -103,109 +110,6 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     subtitle: "Berlin · 深邃夜空与微光云层",
     previewGradient: "linear-gradient(180deg, #090d18 0%, #10182b 42%, #18233c 76%, #22304e 100%)",
     isNight: true,
-  },
-] as const;
-
-export type ThemePaletteMeta = {
-  id: ThemePaletteId;
-  name: string;
-  subtitle: string;
-  accentLight: string;
-  accentDark: string;
-  swatchGradient: string;
-  skyHueLight: [number, number, number, number];
-  skySatLight: [number, number, number, number];
-  skyHueDark: [number, number, number, number];
-  skySatDark: [number, number, number, number];
-  /** 默认关联的日间 / 夜间 Hark WebGL 天空场景索引（深色模式统一采用深邃夜景以保障文字对比度） */
-  harkSceneLight: number;
-  harkSceneDark: number;
-};
-
-export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
-  {
-    id: "default",
-    name: "晴空冰蓝",
-    subtitle: "澄澈晴空蓝与通透液态玻璃",
-    accentLight: "#2f7cf6",
-    accentDark: "#5b9cff",
-    swatchGradient: "linear-gradient(135deg, #1d57a9 0%, #3e7bd1 50%, #6da7ec 100%)",
-    skyHueLight: [214, 212, 208, 204],
-    skySatLight: [71, 62, 68, 82],
-    skyHueDark: [222, 220, 218, 216],
-    skySatDark: [45, 42, 38, 34],
-    harkSceneLight: 0,
-    harkSceneDark: 4,
-  },
-  {
-    id: "aurora",
-    name: "极光幻紫",
-    subtitle: "星夜紫罗兰与极光流彩",
-    accentLight: "#7c3aed",
-    accentDark: "#b197fc",
-    swatchGradient: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 52%, #ec4899 100%)",
-    skyHueLight: [258, 266, 276, 245],
-    skySatLight: [64, 58, 52, 48],
-    skyHueDark: [258, 252, 246, 264],
-    skySatDark: [44, 40, 36, 32],
-    harkSceneLight: 7,
-    harkSceneDark: 2,
-  },
-  {
-    id: "emerald",
-    name: "翡翠森境",
-    subtitle: "雨后松林薄雾与通透翡翠",
-    accentLight: "#059669",
-    accentDark: "#38d9a9",
-    swatchGradient: "linear-gradient(135deg, #059669 0%, #10b981 52%, #2dd4bf 100%)",
-    skyHueLight: [164, 168, 172, 158],
-    skySatLight: [56, 50, 44, 42],
-    skyHueDark: [172, 176, 180, 168],
-    skySatDark: [38, 34, 30, 28],
-    harkSceneLight: 5,
-    harkSceneDark: 4,
-  },
-  {
-    id: "ocean",
-    name: "深海蔚蓝",
-    subtitle: "太平洋青蓝与冰晶折射高光",
-    accentLight: "#0284c7",
-    accentDark: "#4dabf7",
-    swatchGradient: "linear-gradient(135deg, #0369a1 0%, #0ea5e9 50%, #22d3ee 100%)",
-    skyHueLight: [196, 199, 202, 192],
-    skySatLight: [76, 70, 62, 56],
-    skyHueDark: [204, 208, 212, 200],
-    skySatDark: [48, 44, 40, 36],
-    harkSceneLight: 7,
-    harkSceneDark: 2,
-  },
-  {
-    id: "sunset",
-    name: "落日琥珀",
-    subtitle: "黄金时刻暖橙晚霞与流光",
-    accentLight: "#d97706",
-    accentDark: "#ffc048",
-    swatchGradient: "linear-gradient(135deg, #ea580c 0%, #f59e0b 52%, #fb7185 100%)",
-    skyHueLight: [28, 34, 40, 18],
-    skySatLight: [74, 68, 60, 54],
-    skyHueDark: [224, 220, 216, 228],
-    skySatDark: [36, 32, 28, 26],
-    harkSceneLight: 0,
-    harkSceneDark: 4,
-  },
-  {
-    id: "sakura",
-    name: "樱花绯粉",
-    subtitle: "春日落樱柔粉与微醺暮色",
-    accentLight: "#db2777",
-    accentDark: "#f783ac",
-    swatchGradient: "linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fda4af 100%)",
-    skyHueLight: [336, 342, 348, 326],
-    skySatLight: [66, 60, 54, 48],
-    skyHueDark: [248, 242, 236, 254],
-    skySatDark: [36, 32, 28, 26],
-    harkSceneLight: 7,
-    harkSceneDark: 2,
   },
 ] as const;
 
@@ -750,18 +654,104 @@ export function useWallpaperLoading(): boolean {
   return useSyncExternalStore(subscribeAppearance, isWallpaperLoading, isWallpaperLoading);
 }
 
+/**
+ * 读 --lg-surface / --lg-blur 这几个玻璃变量的元素（和 styles.css「三档玻璃材质」一节的 :where 名单一致）。
+ * --lg-alpha 只写到这些元素上：拖滑块时只有它们重算样式，不再是整页（见 styles.css 那一节的注释）。
+ */
+export const GLASS_SURFACE_SELECTOR =
+  ':where(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-composer, [data-slot="bubble-content"], .jr-card, .page-rows, .sg-card, .page-section > form, .page .border)';
+export const GLASS_ALPHA_STYLE_ID = "chisabot-glass-alpha";
+
+let glassAlphaApplied: string | null = null;
+let glassAlphaFrame: number | null = null;
+let glassAlphaPending: number | null = null;
+
+function glassAlphaValue(glassOpacity: number): string {
+  return (glassOpacity / 100).toFixed(2);
+}
+
+/**
+ * 把 --lg-alpha 写进 <head> 里一条只命中玻璃元素的规则。已经有这条规则时直接改它的声明（CSSOM），
+ * 浏览器只让匹配它的元素重算；不改 <html> 的行内样式（那样整页都要重算）。
+ */
+function writeGlassAlpha(glassOpacity: number) {
+  if (typeof document === "undefined") return;
+  const value = glassAlphaValue(glassOpacity);
+  const el = document.getElementById(GLASS_ALPHA_STYLE_ID);
+  if (value === glassAlphaApplied && el) return;
+  glassAlphaApplied = value;
+  if (el instanceof HTMLStyleElement) {
+    const rule = el.sheet?.cssRules?.[0] as CSSStyleRule | undefined;
+    if (rule?.style && typeof rule.style.setProperty === "function") {
+      rule.style.setProperty("--lg-alpha", value);
+      return;
+    }
+    el.textContent = `${GLASS_SURFACE_SELECTOR}{--lg-alpha:${value}}`;
+    return;
+  }
+  const style = document.createElement("style");
+  style.id = GLASS_ALPHA_STYLE_ID;
+  style.textContent = `${GLASS_SURFACE_SELECTOR}{--lg-alpha:${value}}`;
+  document.head.appendChild(style);
+}
+
+/** 当前写进页面的 --lg-alpha（测试和调试用）；还没写过时为 null。 */
+export function readGlassAlpha(): string | null {
+  if (typeof document === "undefined") return null;
+  const el = document.getElementById(GLASS_ALPHA_STYLE_ID);
+  if (!(el instanceof HTMLStyleElement)) return null;
+  const rule = el.sheet?.cssRules?.[0] as CSSStyleRule | undefined;
+  const fromRule = rule?.style?.getPropertyValue?.("--lg-alpha")?.trim();
+  if (fromRule) return fromRule;
+  return /--lg-alpha:\s*([\d.]+)/.exec(el.textContent ?? "")?.[1] ?? null;
+}
+
+/** 立即写出还在等下一帧的 --lg-alpha（测试、以及需要同步结果的调用方）。 */
+export function flushGlassAlpha() {
+  if (glassAlphaFrame !== null && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(glassAlphaFrame);
+  }
+  glassAlphaFrame = null;
+  if (glassAlphaPending === null) return;
+  const next = glassAlphaPending;
+  glassAlphaPending = null;
+  writeGlassAlpha(next);
+}
+
+/**
+ * 拖滑块：一帧最多写一次（指针拖动一帧能来好几个 input 事件），写在下一帧开始前。
+ * 状态和滑块数字仍然每一步立即更新，只有写进样式这一步合并。
+ */
+function scheduleGlassAlpha(glassOpacity: number) {
+  glassAlphaPending = glassOpacity;
+  if (glassAlphaFrame !== null) return;
+  if (typeof requestAnimationFrame !== "function") {
+    flushGlassAlpha();
+    return;
+  }
+  glassAlphaFrame = requestAnimationFrame(() => {
+    glassAlphaFrame = null;
+    flushGlassAlpha();
+  });
+}
+
+function setRootAttribute(root: HTMLElement, name: string, value: string | null) {
+  // 值没变就不碰：同值 setAttribute 在有的浏览器里也会触发一次失效检查。
+  if (root.getAttribute(name) === value) return;
+  if (value === null) root.removeAttribute(name);
+  else root.setAttribute(name, value);
+}
+
 export function applyAppearanceToDocument(state: AppearanceState = ensureState()) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.setAttribute("data-palette", state.palette);
-  root.setAttribute("data-glass", state.glassStyle);
-  root.style.setProperty("--lg-alpha", (state.glassOpacity / 100).toFixed(2));
-  const hasWallpaper = resolveActiveWallpaperCss(state) !== null;
-  if (hasWallpaper) {
-    root.setAttribute("data-wallpaper", "on");
-  } else {
-    root.removeAttribute("data-wallpaper");
-  }
+  setRootAttribute(root, "data-palette", state.palette);
+  setRootAttribute(root, "data-glass", state.glassStyle);
+  // 旧版本写在 <html> 行内的 --lg-alpha：清掉（它会让整页跟着重算），改由 #chisabot-glass-alpha 规则承担。
+  if (root.style.getPropertyValue("--lg-alpha")) root.style.removeProperty("--lg-alpha");
+  glassAlphaPending = null;
+  writeGlassAlpha(state.glassOpacity);
+  setRootAttribute(root, "data-wallpaper", resolveActiveWallpaperCss(state) !== null ? "on" : null);
 }
 
 export function updateAppearance(patch: Partial<AppearanceState>) {
@@ -828,8 +818,74 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
     wallpaperLoading = false;
   }
 
+  // 只动了玻璃雾度（拖滑块）：不重写根属性，--lg-alpha 合并到下一帧写。
+  const onlyGlassOpacity =
+    prev.glassOpacity !== next.glassOpacity &&
+    prev.palette === next.palette &&
+    prev.glassStyle === next.glassStyle &&
+    prev.wallpaperId === next.wallpaperId &&
+    prev.customWallpaperUrl === next.customWallpaperUrl;
+  if (onlyGlassOpacity) scheduleGlassAlpha(next.glassOpacity);
+  else applyAppearanceToDocument(next);
+  emitChange();
+}
+
+/** 别的标签页改了这些键：这边跟着改（只改状态和页面，不写回存储）。 */
+const SYNCED_APPEARANCE_KEYS = new Set<string>([
+  PALETTE_STORAGE_KEY,
+  WALLPAPER_ID_STORAGE_KEY,
+  WALLPAPER_CUSTOM_URL_STORAGE_KEY,
+  WALLPAPER_BLUR_STORAGE_KEY,
+  WALLPAPER_DIM_STORAGE_KEY,
+  GLASS_STYLE_STORAGE_KEY,
+  GLASS_OPACITY_STORAGE_KEY,
+  HARK_SCENE_STORAGE_KEY,
+]);
+
+/**
+ * 多标签页同步：处理一次 `storage` 事件。key 为 null 表示另一个标签页清空了存储。
+ * - 自定义壁纸变了（或清空）：整份重读，图片从 IndexedDB 读回；
+ * - 其它键：按存储重读这几项，保留当前的壁纸图片，不触发 IndexedDB；
+ * 这边还没写出的同一个滑块键作废，免得 200ms 后把对方的值盖回去。
+ */
+export function syncAppearanceFromStorage(key: string | null): Promise<void> {
+  if (key !== null && !SYNCED_APPEARANCE_KEYS.has(key)) return Promise.resolve();
+  if (key === null || key === WALLPAPER_CUSTOM_URL_STORAGE_KEY) {
+    pendingSliderWrites.clear();
+    if (sliderWriteTimer !== null) {
+      clearTimeout(sliderWriteTimer);
+      sliderWriteTimer = null;
+    }
+    const done = reloadAppearanceFromStorage();
+    applyAppearanceToDocument(ensureState());
+    emitChange();
+    return done;
+  }
+  pendingSliderWrites.delete(key);
+  const prev = ensureState();
+  const fresh = readInitialAppearance();
+  pendingWallpaperLoad = null;
+  const next: AppearanceState = { ...fresh, customWallpaperUrl: prev.customWallpaperUrl };
+  const changed = (Object.keys(next) as Array<keyof AppearanceState>).some(
+    (k) => next[k] !== prev[k],
+  );
+  if (!changed) return Promise.resolve();
+  currentState = next;
   applyAppearanceToDocument(next);
   emitChange();
+  return Promise.resolve();
+}
+
+let storageSyncInstalled = false;
+
+/** 监听别的标签页改外观（window 的 storage 事件只在「别的」标签页写存储时触发）。 */
+export function installAppearanceStorageSync() {
+  if (storageSyncInstalled || typeof window === "undefined") return;
+  storageSyncInstalled = true;
+  window.addEventListener("storage", (event) => {
+    if (event.storageArea && event.storageArea !== window.localStorage) return;
+    void syncAppearanceFromStorage(event.key);
+  });
 }
 
 export function setThemePalette(palette: ThemePaletteId) {
@@ -912,39 +968,6 @@ export function resolveActiveWallpaperCss(state: AppearanceState): string | null
   }
   const found = WALLPAPER_PRESETS.find((w) => w.id === state.wallpaperId);
   return found?.cssImage ?? null;
-}
-
-/**
- * 根据当前主题色生成与天空融合的渐变变量（作为 WebGL 首帧绘制前的预渲染垫片）
- */
-export function computePaletteSky(
-  palette: ThemePaletteId,
-  dark: boolean,
-): { body: Record<string, string>; root: Record<string, string> } | null {
-  if (palette === "default") return null;
-  const meta = THEME_PALETTES.find((p) => p.id === palette);
-  if (!meta) return null;
-
-  const hues = dark ? meta.skyHueDark : meta.skyHueLight;
-  const sats = dark ? meta.skySatDark : meta.skySatLight;
-  const lights = dark ? [6, 9, 13, 17] : [54, 66, 78, 88];
-  const stops = [0, 1, 2, 3].map(
-    (i) => `hsl(${hues[i]} ${sats[i]}% ${lights[i]}%)`,
-  );
-
-  return {
-    body: {
-      "--sky-0": stops[0],
-      "--sky-1": stops[1],
-      "--sky-2": stops[2],
-      "--sky-3": stops[3],
-      "--sky-glow": `hsl(${hues[1]} ${Math.min(90, sats[1] + 15)}% ${dark ? 32 : 76}%)`,
-      "--sky-glow-a": dark ? "0.42" : "0.52",
-    },
-    root: {
-      "--glass-sky": stops[2],
-    },
-  };
 }
 
 /** 允许上传的壁纸图片类型（与上传控件的 accept 一致）。 */

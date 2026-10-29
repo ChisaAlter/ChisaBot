@@ -5,6 +5,7 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 import { listenPort } from "../shared/listen-port";
+import { paletteBootScript } from "./src/lib/palette";
 import { skyBootScript } from "./src/lib/sky";
 
 /*
@@ -103,7 +104,11 @@ function skyBoot(): Plugin {
   return {
     name: "chisabot-sky-boot",
     transformIndexHtml(html) {
-      return html.replace(marker, () => `<script>${skyBootScript()}</script>`);
+      // 时段天空之后是用户选的配色（覆盖 --sky-1..3）、玻璃材质和地址栏颜色（lib/palette.ts）。
+      return html.replace(
+        marker,
+        () => `<script>${skyBootScript()}</script><script>${paletteBootScript()}</script>`,
+      );
     },
   };
 }
