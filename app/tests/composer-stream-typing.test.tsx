@@ -136,7 +136,9 @@ function setup() {
   const keyRef: { current: { editor: HTMLElement | null; key: Key | null } } = {
     current: { editor: null, key: null },
   };
-  const view = render(<StreamingParent keyRef={keyRef} onSubmit={onSubmit} tick={0} />);
+  const view = render(
+    <StreamingParent keyRef={keyRef} onSubmit={onSubmit} tick={0} />,
+  );
   const editor = editorOf(view.container);
   keyRef.current.editor = editor;
   editor.focus();
@@ -146,7 +148,9 @@ function setup() {
     keyRef.current.key = key;
     tick += 1;
     await act(async () => {
-      view.rerender(<StreamingParent keyRef={keyRef} onSubmit={onSubmit} tick={tick} />);
+      view.rerender(
+        <StreamingParent keyRef={keyRef} onSubmit={onSubmit} tick={tick} />,
+      );
     });
   };
   return { view, editor, sent, chunkThen };
