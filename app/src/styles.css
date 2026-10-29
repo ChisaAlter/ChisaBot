@@ -692,15 +692,6 @@ html[data-sky-ease] body::before {
 .glass-shell [data-slot="sidebar-rail"]::after {
   display: none;
 }
-.glass-shell [data-slot="sidebar"][data-mobile="true"] {
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: var(--glass-filter);
-  padding: 16px;
-}
-.dark .glass-shell [data-slot="sidebar"][data-mobile="true"],
-.dark[data-slot="sidebar"][data-mobile="true"] {
-  background: rgba(18, 28, 44, 0.85);
-}
 
 /* ---------- Top bar ---------- */
 .glass-topbar {
@@ -3155,13 +3146,6 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 .glass-shell [data-slot="sidebar-container"].glass-sidebar-container {
   overflow: visible !important;
 }
-/* Phone drawer (portalled outside .glass-shell): same glass sheet, 16px inset like the desktop column. */
-[data-slot="sidebar"][data-mobile="true"] {
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: var(--glass-filter);
-}
-.dark [data-slot="sidebar"][data-mobile="true"] { background: rgba(18, 28, 44, 0.86); }
 /* Template F: auth card */
 .auth-card {
   border-radius: var(--r-xl);
@@ -6394,13 +6378,7 @@ html[data-phone] .glass-seg-item { min-height: 40px; display: inline-flex; align
 html[data-phone] .side-search-kbd { display: none; }
 html[data-phone] .update-banner { top: calc(64px + var(--safe-t)); }
 
-/* 左栏抽屉、面板抽屉：让开状态栏、底部横条和横屏刘海。 */
-html[data-phone] .glass-shell [data-slot="sidebar"][data-mobile="true"],
-html[data-phone] [data-slot="sidebar"][data-mobile="true"] {
-  padding: calc(12px + var(--safe-t)) 12px calc(12px + var(--safe-b)) calc(12px + var(--safe-l));
-  width: min(300px, calc(100vw - 56px)) !important;
-  max-width: none;
-}
+/* 面板抽屉：让开状态栏、底部横条和横屏刘海（左栏抽屉见「手机尺寸左栏抽屉」一节）。 */
 html[data-phone] .glass-drawer[data-slot="sheet-content"] {
   top: calc(12px + var(--safe-t));
   right: calc(12px + var(--safe-r));
@@ -8872,7 +8850,7 @@ cpk-web-inspector {
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
 }
-/* 左栏抽屉：宽度由 ui/sidebar.tsx 的 --sidebar-width = min(18rem, 100vw - 48px) 决定（手机也一样），
+/* 左栏抽屉：宽度由 ui/sidebar.tsx 的 --sidebar-width = min(85vw, 320px) 决定（手机也一样），
    内容一律跟着容器，不再有东西伸出抽屉框。 */
 html[data-phone] .glass-shell [data-slot="sidebar"][data-mobile="true"],
 html[data-phone] [data-slot="sidebar"][data-mobile="true"] {
@@ -8881,14 +8859,6 @@ html[data-phone] [data-slot="sidebar"][data-mobile="true"] {
 }
 [data-slot="sidebar"][data-mobile="true"] * { min-width: 0; }
 [data-slot="sidebar"][data-mobile="true"] :is(.glass-card, .glass-side-card, .acct-card) { max-width: 100%; box-sizing: border-box; }
-@media (max-width: 767px) {
-  /* biome-ignore lint/style/noDescendingSpecificity: 只在手机宽度下补安全区内边距，故意写在更具体的 html[data-phone] 宽度规则之后；两条改的是不同属性，不会互相覆盖。 */
-  [data-slot="sidebar"][data-mobile="true"] {
-    padding-top: calc(16px + var(--safe-t));
-    padding-bottom: calc(16px + var(--safe-b));
-    padding-left: calc(16px + var(--safe-l));
-  }
-}
 /* 抽屉头：只有一个关闭按钮，靠右。 */
 .sidebar-mobile-head { display: flex; justify-content: flex-end; flex: none; margin: -6px -6px 6px 0; }
 .sidebar-mobile-close {
@@ -8917,8 +8887,91 @@ html[data-desktop] body[data-has-sheet] :is(.glass-topbar, .glass-topbar *, .des
    其余部分让点击落到遮罩上（点遮罩任何地方都关抽屉）。 */
 html[data-desktop] body[data-has-sheet] .desk-strip { display: flex; pointer-events: none; background: transparent; }
 html[data-desktop] body[data-has-sheet] .desk-strip .win-ctrls { pointer-events: auto; }
-/* 抽屉让开右上角那排窗口按钮（40px 高）。 */
-html[data-desktop] [data-slot="sidebar"][data-mobile="true"] { top: 40px; height: auto; bottom: 0; }
+/* 手机尺寸左栏抽屉（Hark 手机端，2026-10-29）：只有一层面板——全高、贴左、宽 min(85vw, 320px)（ui/sidebar.tsx），
+ * 只有右侧圆角；玻璃只有面板自己这一层（.glass，读 --glass-filter），里面的列表卡片、账号卡都是平的。
+ * 顶部一行 = 搜索 + 新建 + 关闭（关闭按钮绝对定位到搜索行右端），和顶栏的按钮同一条中线；
+ * PC 小窗里这一行放到 40px 的窗口按钮 / 拖动条下面。账号卡在同一块面板最下面，上面一条分隔线，下面让开安全区。
+ * 开关只动 transform，200ms；减少动态效果时不做动画。遮罩只压暗、不模糊，点它关抽屉（Base UI Dialog 自带）。 */
+[data-slot="sidebar"].hk-drawer {
+  --hk-drawer-top: calc(var(--safe-t) + (var(--glass-top, 56px) - 44px) / 2);
+  --hk-drawer-close: 36px;
+  --hk-drawer-radius: 20px;
+  --hk-drawer-line: rgba(15, 23, 42, 0.08);
+  --hk-drawer-solid: rgb(246, 247, 250);
+  padding: 0 0 0 var(--safe-l);
+  border-radius: 0 var(--hk-drawer-radius) var(--hk-drawer-radius) 0;
+  overflow: hidden;
+  transition-property: transform;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+.dark [data-slot="sidebar"].hk-drawer {
+  --hk-drawer-line: rgba(255, 255, 255, 0.08);
+  --hk-drawer-solid: rgb(29, 31, 36);
+}
+html[data-phone] [data-slot="sidebar"].hk-drawer { --hk-drawer-close: 44px; }
+/* PC 小窗：顶上 40px 是窗口按钮和拖动条（抽屉开着时浮在遮罩上），第一行从它下面开始。 */
+html[data-desktop] [data-slot="sidebar"].hk-drawer { --hk-drawer-top: 44px; }
+[data-slot="sidebar"].hk-drawer:is([data-starting-style], [data-ending-style]) {
+  opacity: 1;
+  translate: none;
+  transform: translateX(-100%);
+}
+/* 里面不再有第二层：列表卡片、账号卡去掉底色、模糊、投影和圆角（旧三档玻璃层读这几个变量）。 */
+[data-slot="sidebar"].hk-drawer :is(.glass-side-card, .acct-card, .acct-mini-card) {
+  --lg-surface: transparent;
+  --lg-blur: none;
+  --lg-shadow: none;
+  border-radius: 0;
+}
+[data-slot="sidebar"].hk-drawer :is(.left-rail-shell, .glass-side-full) { gap: 0; }
+[data-slot="sidebar"].hk-drawer .glass-side-full { min-width: 0; }
+[data-slot="sidebar"].hk-drawer .glass-side-card { flex: 1 1 auto; padding: var(--hk-drawer-top) 12px 8px; }
+[data-slot="sidebar"].hk-drawer :is(.side-search-row, .rail-title) {
+  min-height: 44px;
+  margin-bottom: 8px;
+  padding-right: calc(var(--hk-drawer-close) + 8px);
+}
+[data-slot="sidebar"].hk-drawer .rail-title { display: flex; align-items: center; padding-top: 0; padding-bottom: 0; }
+[data-slot="sidebar"].hk-drawer .sidebar-mobile-head {
+  position: absolute;
+  z-index: 1;
+  top: var(--hk-drawer-top);
+  right: 12px;
+  height: 44px;
+  margin: 0;
+  align-items: center;
+}
+[data-slot="sidebar"].hk-drawer .sidebar-mobile-close { width: var(--hk-drawer-close); height: var(--hk-drawer-close); }
+/* 账号：同一块面板的最下面，顶上一条 1px 分隔线（旧玻璃层把 border 锁成 0，所以用内投影画线）。 */
+[data-slot="sidebar"].hk-drawer .acct-card {
+  --lg-shadow: inset 0 1px 0 var(--hk-drawer-line);
+  padding: 8px 12px calc(8px + var(--safe-b));
+}
+/* 遮罩：只压暗，不模糊。 */
+[data-slot="sheet-overlay"].hk-drawer-overlay {
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: none;
+  transition-duration: 200ms;
+}
+.dark [data-slot="sheet-overlay"].hk-drawer-overlay { background: rgba(0, 0, 0, 0.5); }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sidebar"].hk-drawer,
+  [data-slot="sheet-overlay"].hk-drawer-overlay {
+    transition: none;
+  }
+}
+/* 性能模式 / 减少透明度：面板换不透明底色（和 #375 perf-noblur.css 的 --glass-bg-opaque 同色）。 */
+html[data-perf="on"] [data-slot="sidebar"].hk-drawer {
+  background: var(--hk-drawer-solid);
+  backdrop-filter: none;
+}
+@media (prefers-reduced-transparency: reduce) {
+  html [data-slot="sidebar"].hk-drawer {
+    background: var(--hk-drawer-solid);
+    backdrop-filter: none;
+  }
+}
 @media (max-width: 1279px) {
   html[data-desktop] .rail-sheet[data-slot="sheet-content"] { top: 48px; }
 }
