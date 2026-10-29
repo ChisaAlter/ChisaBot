@@ -9305,6 +9305,9 @@ html.dark .chisabot-ambient-orbs {
   background-size: cover;
   transition: filter 0.25s ease, transform 0.25s ease;
 }
+.chisabot-wallpaper-img[data-blur] {
+  filter: blur(var(--wallpaper-blur));
+}
 .chisabot-wallpaper-dim {
   position: absolute;
   inset: 0;

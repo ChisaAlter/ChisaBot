@@ -92,6 +92,18 @@ html.dark {
   html:not(#chisabot-no-blur) .appearance-swatch-check {
     background: rgb(15, 23, 42);
   }
+  /* 壁纸模糊（用户在外观里调的 0–40px）：关掉模糊，换一层主题色的半透明实色遮罩，模糊越大遮罩越浓（最多 0.55），
+     保留「背景退后」的观感；用户保存的设置不变。 */
+  html:not(#chisabot-no-blur) .chisabot-wallpaper-img[data-blur] {
+    filter: none;
+  }
+  html:not(#chisabot-no-blur) .chisabot-wallpaper-img[data-blur]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--glass-bg-opaque);
+    opacity: var(--wallpaper-veil, 0);
+  }
 }
 
 /* 性能模式：和上面「减少透明度」同一套规则（放在后面，选择器多一个属性，优先级不比上面低）。 */
@@ -167,4 +179,17 @@ html[data-perf="on"]:not(#chisabot-no-blur) .agent-orb-glow {
 }
 html[data-perf="on"]:not(#chisabot-no-blur) .agent-orb::before {
   filter: contrast(var(--contrast-amount)) saturate(1.4);
+}
+/* 壁纸模糊（用户在外观里调的 0–40px）：关掉模糊，换一层主题色的半透明实色遮罩，模糊越大遮罩越浓（最多 0.55），
+   保留「背景退后」的观感；用户保存的设置不变。 */
+html[data-perf="on"]:not(#chisabot-no-blur) .chisabot-wallpaper-img[data-blur] {
+  filter: none;
+}
+html[data-perf="on"]:not(#chisabot-no-blur)
+  .chisabot-wallpaper-img[data-blur]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--glass-bg-opaque);
+  opacity: var(--wallpaper-veil, 0);
 }

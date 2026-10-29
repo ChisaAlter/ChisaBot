@@ -20,6 +20,17 @@
 | --- | --- | --- |
 | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/before-perf-sign.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-perf-sign.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-off-sign.png) |
 
+**壁纸模糊（小爱 #432 决定：也关）**：
+- `sky-background.tsx` 只改那一处内联 `filter: blur`：内联 style 只给 `--wallpaper-blur`（用户的模糊值）和 `--wallpaper-veil`（模糊值 / 40 × 0.55），模糊有值时加 `data-blur`；模糊本身写在 `styles.css` 的 `.chisabot-wallpaper-img[data-blur]` 上，正常模式效果不变。没动天空结构、动画和重画逻辑，用户保存的设置也不改。
+- `perf-noblur.css` 两种情况各加：`.chisabot-wallpaper-img[data-blur]` `filter: none`，加一层 `::after` 半透明实色遮罩（不加新元素），颜色用已有的 `--glass-bg-opaque`（浅 / 深色各一份），透明度随用户模糊值变（20px → 0.275，40px → 0.55）。
+- 测试：去掉 sky-background 的豁免；内联 `filter … blur(` 的检查改成跨行也能抓到（原来壁纸那种三元表达式写法漏掉了），新加一条检查壁纸变量和两种情况下的遮罩。旧代码上这两条都失败。
+- 复测（壁纸模糊 20px，8 个页面）：性能模式开、减少透明度：computed filter 含 blur 的可见元素全部 0，壁纸 filter none、遮罩 opacity 0.275；性能模式关：每页都有壁纸 blur(20px)（/sign 另有 orb 两个），正常模式照旧。修复前性能模式开：每页壁纸 blur(20px)。
+- typecheck ✅、build ✅、test:app ✅（1857 pass / 0 fail），相关测试 30 pass；Biome lint 1 error / 800 warnings / 143 infos，和 main 相同。
+
+| 修复前（性能模式，壁纸模糊 20px） | 修复后（性能模式，同设置） | 修复后（正常模式，同设置） |
+| --- | --- | --- |
+| ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/before-perf-wallpaper.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-perf-wallpaper.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-off-wallpaper.png) |
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。

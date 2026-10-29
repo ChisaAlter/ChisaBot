@@ -7,7 +7,8 @@ import path from "node:path";
  * 不跑浏览器，守住前提：
  *   1. 样式表里每条带 filter: blur 的规则，perf-noblur.css 的两种情况（data-perf="on" 和
  *      prefers-reduced-transparency）都有覆盖它、且 filter 不含 blur 的规则；
- *   2. 组件里不许用内联 style 写 filter: blur（id 优先级压不过内联样式），壁纸模糊是用户自己调的，豁免。
+ *   2. 组件里不许用内联 style 写 filter: blur（id 优先级压不过内联样式）；壁纸模糊也一样，
+ *      关掉后换成按用户模糊值调浓淡的半透明遮罩（::after，不加新元素）。
  */
 const src = path.join(import.meta.dir, "../src");
 const read = (f: string) => readFileSync(path.join(src, f), "utf8");
@@ -82,6 +83,7 @@ const blurRules = Object.entries(sheets).flatMap(([file, text]) =>
 test("找得到要关的 filter: blur 规则（防止解析失效变成空跑）", () => {
   const names = blurRules.map((r) => r.selector).join(" ");
   for (const k of [
+    ".chisabot-wallpaper-img",
     ".rp-link",
     ".rp-pile-card",
     ".lc-card",
@@ -108,18 +110,20 @@ test("变暗的卡片改用透明度，不是变成没区分的实卡", () => {
   }
 });
 
-test("组件不许用内联 style 写 filter: blur（壁纸豁免）", () => {
+test("组件不许用内联 style 写 filter: blur", () => {
   const offenders: string[] = [];
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const p = path.join(dir, name);
       if (statSync(p).isDirectory()) walk(p);
       else if (p.endsWith(".tsx")) {
-        const text = readFileSync(p, "utf8");
-        if (
-          /\bfilter\s*:\s*[`"'][^`"']*blur\(/.test(text) &&
-          !p.endsWith("sky-background.tsx")
-        ) {
+        // 组件自带的 <style> 是样式表（上面按规则检查过），去掉后剩下的 filter: … blur( 只能是内联 style，
+        // 包括写成三元表达式跨好几行的（原来的壁纸模糊就是这样）。
+        const text = readFileSync(p, "utf8").replace(
+          /<style>\{`[\s\S]*?`\}<\/style>/g,
+          "",
+        );
+        if (/\bfilter\s*:[^,;}]*?blur\(/.test(text)) {
           offenders.push(path.relative(src, p));
         }
       }
@@ -127,4 +131,18 @@ test("组件不许用内联 style 写 filter: blur（壁纸豁免）", () => {
   };
   walk(src);
   expect(offenders).toEqual([]);
+});
+
+test("壁纸模糊：内联 style 只给变量，关模糊后两种情况都有按模糊值调浓淡的遮罩", () => {
+  const sky = read("components/sky-background.tsx");
+  expect(sky).toContain('"--wallpaper-blur"');
+  expect(sky).toContain('"--wallpaper-veil"');
+  expect(sky).not.toMatch(/filter\s*:[^,\n]*blur/);
+  for (const list of [perfRules, reduceRules]) {
+    const veil = list.find((r) =>
+      r.selector.includes(".chisabot-wallpaper-img[data-blur]::after"),
+    );
+    expect(veil?.body).toMatch(/opacity\s*:\s*var\(--wallpaper-veil/);
+    expect(veil?.body).toMatch(/background\s*:\s*var\(--glass-bg-opaque\)/);
+  }
 });
