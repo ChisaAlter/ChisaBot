@@ -3,12 +3,27 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 import { BotChatMenuItems } from "@/components/agents/bot-chat-actions";
 import { Channel } from "@/components/app-sidebar/channel";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Sidebar, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 import { settleReactWork } from "./settle-react-work";
 
@@ -50,7 +65,9 @@ function State() {
   const sidebar = useSidebar();
   return (
     <>
-      <output data-testid="drawer">{sidebar.openMobile ? "open" : "closed"}</output>
+      <output data-testid="drawer">
+        {sidebar.openMobile ? "open" : "closed"}
+      </output>
       <button onClick={() => sidebar.setOpenMobile(true)} type="button">
         {"open drawer"}
       </button>
@@ -59,7 +76,9 @@ function State() {
 }
 
 async function renderInDrawer(children: ReactNode) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   clients.push(queryClient);
   const rootRoute = createRootRoute({
     component: () => (
@@ -107,7 +126,9 @@ test("M3-1：点抽屉里的会话行（搜索结果里的本地命中）：进�
     fireEvent.click(link, { button: 0 });
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  await waitFor(() => expect(view.getByTestId("drawer").textContent).toBe("closed"));
+  await waitFor(() =>
+    expect(view.getByTestId("drawer").textContent).toBe("closed"),
+  );
   expect(router.state.location.pathname).toBe("/channel/c-42");
 });
 
@@ -127,8 +148,13 @@ test("M3-11：机器人菜单的「新话题」做完回调 onDone（抽屉里�
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   expect(done).toBe(1);
-  await waitFor(() => expect(router.state.location.pathname).toBe("/channel/new"));
-  expect(router.state.location.search).toMatchObject({ agent: "bot-a", topic: "new" });
+  await waitFor(() =>
+    expect(router.state.location.pathname).toBe("/channel/new"),
+  );
+  expect(router.state.location.search).toMatchObject({
+    agent: "bot-a",
+    topic: "new",
+  });
 });
 
 test("M3-11 接线：资料 / 历史对话 / 新话题 / 面板 收起抽屉；挂在行里的对话框类菜单项不收", () => {
@@ -139,8 +165,12 @@ test("M3-11 接线：资料 / 历史对话 / 新话题 / 面板 收起抽屉；�
   const start = src.indexOf("function BotMenuContent(");
   const menu = src.slice(start, src.indexOf("\n}\n", start));
   expect(menu).toContain("const closeDrawer = useCloseMobileDrawer();");
-  expect(menu).toContain('<Link onClick={closeDrawer} params={{ agentId: bot.id }} to="/bots/$agentId" />');
-  expect(menu).toContain("<BotChatMenuItems agentId={bot.id} chat={chat} onDone={closeDrawer} />");
+  expect(menu).toContain(
+    '<Link onClick={closeDrawer} params={{ agentId: bot.id }} to="/bots/$agentId" />',
+  );
+  expect(menu).toContain(
+    "<BotChatMenuItems agentId={bot.id} chat={chat} onDone={closeDrawer} />",
+  );
   expect(menu).toMatch(/showPanels\(\);\s*closeDrawer\(\);/);
   // 对话框挂在机器人行里（抽屉里面），收起抽屉会把它们一起卸掉。
   expect(menu).toContain("onClick={onComputer}");

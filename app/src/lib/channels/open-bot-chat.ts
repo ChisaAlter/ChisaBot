@@ -18,7 +18,9 @@ export async function botChatChannelId(
   const options = channelListQueryOptions();
   try {
     const data = await queryClient.ensureInfiniteQueryData(options);
-    const channels: ChannelSummary[] = data.pages.flatMap((page) => page.channels);
+    const channels: ChannelSummary[] = data.pages.flatMap(
+      (page) => page.channels,
+    );
     return latestChannelFor(agentId, channels)?.id;
   } catch {
     return undefined;
@@ -29,7 +31,10 @@ export function useOpenBotChat() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   return useCallback(
-    async (agentId: string, options: { watch?: boolean; replace?: boolean } = {}) => {
+    async (
+      agentId: string,
+      options: { watch?: boolean; replace?: boolean } = {},
+    ) => {
       const channelId = await botChatChannelId(queryClient, agentId);
       const watch = options.watch ? { watch: true as const } : {};
       if (channelId)

@@ -25,7 +25,6 @@ import { runWithPageLoader } from "@/components/ui/page-loader";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, SettingRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
-import { useOpenBotChat } from "@/lib/channels/open-bot-chat";
 import type { AgentProfile } from "@/lib/agents/queries";
 import {
   resetBotMutationOptions,
@@ -40,6 +39,7 @@ import {
   botResetPlanQueryOptions,
   type ResetPlan,
 } from "@/lib/bot-lifecycle/queries";
+import { useOpenBotChat } from "@/lib/channels/open-bot-chat";
 import { agentModelQueryOptions, modelCatalogQueryOptions } from "@/lib/model-selection/queries";
 import { useMainBot } from "@/lib/settings/message-list";
 import { queryClient as sharedQueryClient } from "@/query-client";
@@ -390,10 +390,7 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
     <PageShell
       action={
         <div className="bp-actions">
-          <Button
-            onClick={() => void openBotChat(agent.id)}
-            size="sm"
-          >
+          <Button onClick={() => void openBotChat(agent.id)} size="sm">
             <IconMessage />
             {"开始聊天"}
           </Button>

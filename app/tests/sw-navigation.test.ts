@@ -409,7 +409,11 @@ describe("sw.js 会话过期（401）", () => {
   test("重试卡片探测到 401：直接去 /login?next=原地址，不刷新回去再等 20 秒", async () => {
     const { ctx } = loadSw({});
     const w = fakeWin([401]);
-    ctx.retryMain({ win: w.win, delays: ctx.RETRY_DELAYS_MS, retryStatuses: ctx.RETRY_STATUSES });
+    ctx.retryMain({
+      win: w.win,
+      delays: ctx.RETRY_DELAYS_MS,
+      retryStatuses: ctx.RETRY_STATUSES,
+    });
     await w.clock.advance(1000);
     expect(w.reloads()).toBe(0);
     expect(w.replaced).toEqual(["/login?next=%2Fchat%2Fabc%3Fx%3D1%23m"]);

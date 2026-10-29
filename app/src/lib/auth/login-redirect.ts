@@ -15,7 +15,9 @@ type LoginWindow = Pick<Window, "location" | "fetch">;
 let redirecting = false;
 
 /** 登录页地址，带上当前位置作为 next。 */
-export function loginHref(location: Pick<Location, "pathname" | "search" | "hash">): string {
+export function loginHref(
+  location: Pick<Location, "pathname" | "search" | "hash">,
+): string {
   return `/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`;
 }
 
@@ -33,11 +35,18 @@ export function goToLogin(win: Pick<Window, "location"> = window): void {
 }
 
 /** 这是网关说「请先登录」的 401 吗？只读克隆出来的响应体，原响应不动。 */
-export async function isGatewayLoginRequired(response: Response): Promise<boolean> {
+export async function isGatewayLoginRequired(
+  response: Response,
+): Promise<boolean> {
   if (response.status !== 401) return false;
-  if (!(response.headers.get("content-type") || "").includes("application/json")) return false;
+  if (
+    !(response.headers.get("content-type") || "").includes("application/json")
+  )
+    return false;
   try {
-    const body = (await response.clone().json()) as { openbotAuthRequired?: unknown } | null;
+    const body = (await response.clone().json()) as {
+      openbotAuthRequired?: unknown;
+    } | null;
     return body?.openbotAuthRequired === true;
   } catch {
     return false;
