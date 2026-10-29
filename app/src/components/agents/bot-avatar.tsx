@@ -1,11 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Avatar from "boring-avatars";
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { ShapeAvatar } from "@/components/agents/shape-avatar";
 import {
   type AvatarDraft,
   type BotAvatar as BotAvatarValue,
   botAvatarsQueryOptions,
+  subscribeAvatarSync,
 } from "@/lib/agents/avatars";
 import { useBotActivity } from "@/lib/agents/bot-activity";
 import { agentListQueryOptions } from "@/lib/agents/queries";
@@ -59,11 +60,29 @@ export const BotAvatar = memo(function BotAvatar({
     ...botAvatarsQueryOptions(),
     enabled: Boolean(agentId),
   });
+  const queryClient = useQueryClient();
+  // 别的标签页存了头像就重新拉（审查 10-2）；一页上所有头像共用一个 BroadcastChannel。
+  useEffect(
+    () => (agentId ? subscribeAvatarSync(queryClient) : undefined),
+    [agentId, queryClient],
+  );
   const saved = agentId ? avatars.data?.[agentId] : undefined;
-  const shown: ShownAvatar = resolve(draft, saved);
+  // 审查 10-3：头像表还没回来（冷启动）或拉失败（500）时不能先画默认花纹——有自定义头像的机器人会「闪一下花纹」。
+  // 加载中是中性的空圆；失败退到石板灰首字（和图片 404 的兜底一样）。
+  const unknown: ShownAvatar | null =
+    agentId && !avatars.data && (!draft || draft.kind === "keep")
+      ? avatars.isError
+        ? { kind: "unknown-error" }
+        : { kind: "loading" }
+      : null;
+  const shown: ShownAvatar = unknown ?? resolve(draft, saved);
   const roster = useQuery({
     ...agentListQueryOptions(),
-    enabled: name === undefined && Boolean(agentId) && shown.kind !== "pattern",
+    enabled:
+      name === undefined &&
+      Boolean(agentId) &&
+      shown.kind !== "pattern" &&
+      shown.kind !== "loading",
   });
   const label =
     name ?? roster.data?.find((agent) => agent.id === agentId)?.name ?? "";
@@ -71,6 +90,7 @@ export const BotAvatar = memo(function BotAvatar({
     // biome-ignore lint/a11y/useAriaPropsSupportedByRole: role 是动态表达式，静态分析看不出；运行时一定带有支持 aria-label 的 role
     <span
       aria-hidden={decorative || undefined}
+      aria-busy={shown.kind === "loading" || undefined}
       aria-label={decorative ? undefined : label || undefined}
       className={cn("bot-ava", className)}
       data-avatar={shown.kind}
@@ -97,6 +117,8 @@ export const BotAvatar = memo(function BotAvatar({
 
 type ShownAvatar =
   | { kind: "pattern" }
+  | { kind: "loading" }
+  | { kind: "unknown-error" }
   | { kind: "image"; url: string }
   | { kind: "emoji"; emoji: string; color: string }
   | { kind: "monogram"; color: string }
@@ -160,7 +182,9 @@ function AvatarFace({
         width={size}
       />
     );
-  if (shown.kind === "image")
+  if (shown.kind === "loading")
+    return <span className="bot-ava-face bot-ava-placeholder" />;
+  if (shown.kind === "image" || shown.kind === "unknown-error")
     return (
       <span className="bot-ava-face bot-ava-c-slate">{monogramOf(name)}</span>
     );
