@@ -786,9 +786,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           aria-label={searching ? "搜索结果" : "机器人"}
           className="glass-card glass-side-card min-h-0 flex-1"
         >
-          {/* 搜索和新建共用一行，列表直接接在下面（Ctrl K 聚焦搜索）。 */}
+          {/* 电脑上搜索在顶栏右上角（Hark 风格）；手机上留在抽屉顶部，和新建共用一行（Ctrl K 聚焦搜索）。 */}
           <div className="side-search-row">
-            <SidebarSearchField />
+            {sidebar?.isMobile ? <SidebarSearchField /> : null}
             <Tooltip>
               <TooltipTrigger
                 render={

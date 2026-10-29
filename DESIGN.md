@@ -304,6 +304,17 @@
 - **阴影**：`--shadow-1`（卡片、按钮）· `--shadow-2`（悬停卡片、输入框、菜单）· `--shadow-3`（弹窗）；玻璃表面加 `--inset-hl` 顶部高光。
 - **模糊**：`--blur-1 12px`（小控件）· `--blur-2 22px`（栏、卡片）· `--blur-3 36px`（浮层）。只写不带前缀的 `backdrop-filter`（见 chisabot-design 技能里的压缩器坑）。
 
+### 10.3.1 性能模式与减少透明度：全局不模糊
+
+性能模式（`<html data-perf="on">`，`lib/perf-mode.ts`）和系统「减少透明度」（`prefers-reduced-transparency: reduce`）下，**页面上没有任何元素带 `backdrop-filter`**，原来模糊的面板一律换成不透明的底色。规则写在 `app/src/perf-noblur.css`，在 `main.tsx` 里紧跟 `styles.css` 引入。
+
+- **一条全局规则**：`*, *::before, *::after { backdrop-filter: none; --lg-blur: none }`，Tailwind 的 `backdrop-blur-*`、第三方组件（streamdown 代码块 / 图表的操作条）、组件内嵌的 `<style>`（agent-orb）都被它关掉，不用一个个找。
+- **不用 `!important`**：选择器前缀是 `html:not(#chisabot-no-blur)`（性能模式再加 `[data-perf="on"]`），多出一个 id 的优先级，压过所有只用类和属性的规则。旧「三档玻璃」层的 `backdrop-filter: var(--lg-blur) !important` 不去比 `!important`，而是把 `--lg-blur` 设成 `none`。页面上不能出现 `id="chisabot-no-blur"`。
+- **不透明底色**：`--glass-bg-opaque`（浅 `rgb(246 247 250)`、深 `rgb(29 31 36)`）。左右栏、输入框、顶栏搜索、弹层 / 菜单 / 对话框 / 抽屉、代码块操作条、外观设置里的玻璃预览都用它（旧玻璃层改 `--lg-surface`）；色板上的勾用实心深色。不能出现「没模糊也没底」的透明块。
+- **例外**：全屏遮罩（对话框 / 抽屉后面那层）本来就是半透明压暗，只去掉模糊，不改成不透明；agent-orb 的点阵层、电脑画面上的小标签同理，保留自己的半透明底。
+- **不许绕过**：元素上的内联 `backdropFilter`、Tailwind 的 important 模糊类（`backdrop-blur-sm!`）、新的 `backdrop-filter: … !important` 都压得过全局规则，`app/tests/no-backdrop.test.ts` 不许出现；`styles.css` 里新增会模糊的规则，必须在 `perf-noblur.css` 的不透明名单里有着落，或者在测试的豁免名单里写明原因。
+- 普通模式不受影响：同屏模糊层数和改之前一样（桌面 5、手机 2）。
+
 ### 10.4 动效
 
 | 令牌 | 值 | 用途 |
@@ -316,6 +327,19 @@
 | `--ease-in` | `cubic-bezier(.4,0,1,1)` | 退出 |
 
 页面切换：中间区先出同形状骨架（约 300ms 内），再以 6px 上移 + 淡入出现内容（`page-in`）。顶栏导航胶囊在路由间滑动。减少动态效果时只保留淡入淡出。
+
+### 10.5 Hark 令牌与同名旧令牌（2026-10-29，Hark 改版）
+
+Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0,1,1），比旧层的 `:root` / `.dark` / `[data-theme="dark"]`（0,1,0）高一级，所以**同名时 Hark 的值总是赢，包括深色模式下**：`html:root` 里的值会压过旧 `.dark` 里的深色值。`--font`、`--glass-shadow`、`--text-secondary`、`--stroke-primary` 等都和旧层同名。
+
+规则：
+
+1. **新增任何和旧层同名的 Hark 令牌，必须同时在 `html.dark` 里给深色值。** 只写在 `html:root` 里，深色模式就会拿到浅色值。
+2. 由别的令牌算出来的值（例如 `--text-secondary: color-mix(in srgb, var(--text) …)`、`--fill-primary: var(--text)`）跟着基色走，只要基色（`--text` 等）在 `html.dark` 里有深色值，就不必重复写。
+3. 不靠 `!important` 解决同名冲突；要覆盖就靠 `html:root` / `html.dark` 的特异度。
+4. 新增 Hark 令牌前先在 `styles.css` 里搜一下同名的 `--名字:`，同名就按第 1 条处理，并在 PR 描述里列出来。
+
+`app/tests/hark-token-dark.test.ts` 检查这条：`html:root` 里和旧深色层同名、又不是由 `var(--…)` 算出来的令牌，`html.dark` 里必须有。
 
 ---
 

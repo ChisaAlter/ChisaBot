@@ -2,6 +2,7 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useRef } from "react";
 import { KeptVisibleContext } from "@/lib/kept-visible";
 import { usePresenceFlag } from "@/lib/presence-flag";
+import { AccountMenu } from "@/components/layout/account-menu";
 import { GlassTopBar, type ShellScope } from "@/components/layout/glass-topbar";
 import { PhoneGestures } from "@/components/layout/phone-gestures";
 import { SidebarShell } from "@/components/layout/sidebar-shell";
@@ -38,7 +39,7 @@ export function GlassShell({
   return (
     <TopBarOwnsSidebarToggle.Provider value={true}>
       <SidebarShell className="glass-shell h-svh overflow-hidden" iconWidth="80px" width="276px">
-        <GlassTopBar scope={scope} />
+        <GlassTopBar account={<AccountMenu placement="topbar" />} scope={scope} />
         <SearchHotkey scope={scope} />
         <DrawerCloser />
         <CloseDrawerOnScope scope={scope} />
