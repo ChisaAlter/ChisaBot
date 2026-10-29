@@ -638,3 +638,32 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.110`；PC / Android 不变。不打 tag、不建 Release。
 
 **0.1.110 部署**（2026-10-29 18:06 北京时间开始）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.110-20261029T100654Z.dump`（`pg_restore -l` 767 条目），备份网关 `nginx.conf`（`nginx.conf.bak-pre-v0.1.110-20261029T100654Z`）。`deploy-serial.sh 249aefa` 镜像 `local/chisabot:auto-202610291007-249aefa`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.110` / `249aefa`；`request.sh smoke` PASSED，`POST /api/admin/smoke` 模型自检 `ok:true persisted:false`，`health.sh` 通过（容器 healthy、无重启、本机 `/health` 200、公网 `/login` 200），sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 9e9ca0d；保留当前（BASE）249aefa、上一版 63914d8、`keep-628d527`。
+
+## 2026-10-29 工具步骤显示按审查修正（模块 7，分支 `fix/tool-steps-audit`，依赖 #404）
+
+从 `feat/hark-reply-steps` 的 `3d65ef4c` 拉出，之后用 merge commit 合进了 #404 的 `f118a530`（第四轮返修）和 `origin/main`；PR base 是 `main`。
+
+- **后台任务卡不再跟着收起**：`delegate_task` 归进 `NOT_WORK`（不算干活步骤，不进「做了 N 步」）。以前它常是一轮里第一个干活的调用，也就是干活卡的锚点；一轮结束后锚点所在那一项被 `quietRows` 整项收起，后台任务卡、停止按钮、进度一起没了，刷新后同样不画。现在 `ChatTranscript` 对「锚点自己画卡片」（`toolDrawsCard`）的安静轮只收干活那一行（`quietWorkOnly`），卡片照画。
+- **运行中展开不再标失败**：步骤状态统一由 `workCallState(call, live)` 给出（`done` / `failed` / `running` / `stopped`）；这一轮还在跑时没返回的步骤是 `running`，写「正在…」，`<li data-state="running" class="is-current">`。
+- **停止后**：`compactTurns` 把停止时没返回的调用（结果为空或是「This call produced no result」）记成 `stopped`；这一轮不再算安静轮，收成一行（「做了 N 步 · S 步已停止」），点开每一步，没返回的写「（已停止）」，不计进「N 步失败」。
+- **并行调用**：同时在跑的两个以上干活调用写「正在搜索 N 项」「正在读取 N 个网页」「正在打开 N 个网页」，不同种的写「正在同时做 N 件事」；同时在画的卡片不算。点开是每一步。
+- **网页读取**：`shared/work-step.ts` 的 `pageOf` 给 `web_fetch` 写主机名 + 解码后的路径（不带查询串和锚点，40 字以内整段，过长写 `host/…/最后一段`）。这是 shared 代码，服务端 `server/src/workers/service.ts` 的后台任务步骤文字也跟着变成短路径——只是展示文字，没有逻辑改动。结果开头是 `状态：4xx/5xx`（可带一行 `网址：`）算失败。
+- **后台任务卡无障碍**：收起的计划清单、结果正文加 `inert` + `aria-hidden`；各展开按钮的 `aria-expanded` 按真实状态给，带 `aria-controls`；进度放进一个只给读屏的 `role="status"`（`aria-atomic`）。
+- **调试模式工具输出**：`ToolLine` 的输出改成 `<pre>` 纯文本，超过 4000 字截断并写还剩多少字，`<details>` 打开时才画。
+- 没改 `styles.css`、`main.tsx`、`perf-noblur.css`、`app-sidebar.tsx`、`glass-topbar.tsx`、`wallpaper_core.html`；没加 `!important`、没加大容器 `:has()`、没升版本号。
+- **「N 步失败」不重复**：读网页失败时摘要本身写了「看了 1 个网页 · 1 步失败」，没有回答那一轮后面的小字（#404 加的）又写一遍；`WorkRow` 在摘要已含「步失败」时不再在小字和读屏名字里重复。
+- 测试：`app/tests/tool-steps.test.tsx`（进行中、停止后、`delegate_task` 不被折叠、并行调用、网页短路径和 HTTP 错误、`WorkRow` / `WorkerCardBody` / `ToolLine` 组件测试），`work-steps.test.ts`、`quiet-turn.test.ts` 按新行为更新。
+
+### 截图
+
+改前是 `3d65ef4c`（#404），改后是本分支。用临时页面挂真实的 `ChatTranscript` / `WorkerCard`，`/api` 全部 404，没连后端；临时页面没提交。
+
+| 情况 | 改前 | 改后 |
+|---|---|---|
+| 后台任务（这一轮写完、任务还在跑） | ![](images/tool-steps/before-worker.webp) | ![](images/tool-steps/after-worker.webp) |
+| 运行中展开 | ![](images/tool-steps/before-running.webp) | ![](images/tool-steps/after-running.webp) |
+| 并行调用 | ![](images/tool-steps/before-parallel.webp) | ![](images/tool-steps/after-parallel.webp) |
+| 停止后（展开） | ![](images/tool-steps/before-stopped.webp) | ![](images/tool-steps/after-stopped.webp) |
+| 读网页（短路径、HTTP 500 算失败） | ![](images/tool-steps/before-fetch.webp) | ![](images/tool-steps/after-fetch.webp) |
+
+图片在 `docs/images/tool-steps/`，10 张 webp 共约 50KB，640px 宽、浅色。
