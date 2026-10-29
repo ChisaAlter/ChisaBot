@@ -539,6 +539,17 @@
 
 - `toolDrawsCard` 以前把不是 `lineOnly` 的渲染器都当画了卡片，但图片 / 文件工具没拿到文件、`schedule_create` 被拒或报错、`render_ui` 的规范画不出东西（或被拒、格式有误只画一行）时渲染器什么都不画，这一轮被算成有回答，屏幕上却空着、也没法重试。现在渲染器模块自己导出判断（`imageToolDrawsCard` / `fileToolDrawsCard` / `scheduleDrawsCard` / `renderUiDrawsCard`，渲染时用同一个函数决定返回不返回 null），按工具名登记到 `tool-renderers.ts` 的 `registerCardCheck`（`useRenderTool` 会把 `render` 再包一层，没法像 `lineOnlyRender` 那样给函数打标）；`toolDrawsCard` 在工具有了结果之后问它，还没结果（骨架）照旧算卡片。`render_ui` 写完后的判断抽成 `renderUiFinal`，组件和判断共用。测试：每种返回 null 的情况都挂「这一轮没有回答」，成功的不挂，原来用 `card = () => null` 加假结果的用例改成真实结果。
 
+## 2026-10-29 回复过程第四轮审查修正（feat/hark-reply-steps，#404 复审 3d65ef4c）
+
+- **必改**：`device_agent_run` 被拒时 `taskIdOf` 返回 null、渲染器画 `<></>`，但没登记判断，这一轮被算成有回答。`local-agent-tool.tsx` 导出 `localAgentDrawsCard`（`taskIdOf(result) !== null`，和渲染器同一个函数）并 `registerCardCheck(["device_agent_run"])`。
+- **应改**：还没有结果时骨架一直算卡片——这一轮结束了、没按停止、工具一直没回，就永远算有回答，骨架也一直转。现在 `compactTurns` 把每一轮的 `live` 传给 `drawsCard(item, live)`，`toolDrawsCard` 新增 `live` 选项：登记过判断的渲染器在 `result === undefined` 时只有这一轮还在跑才算卡片。`compactTurns` 另外返回 `liveTools`（正在跑的那一轮里的调用）；`TranscriptToolCall` 对不在里面、没有结果、登记过判断的调用不再画骨架，换成一句不动的「画图没有完成」「生成界面没有完成」（`UnfinishedTool`），和下面的「这一轮没有回答」+ 重试一致。没登记判断的渲染器（问人这类等用户的、确认卡）照旧，按了停止的一轮也照旧不挂「没有回答」。
+- **可选（都做了）**：
+  - `delegate_task` 被拒时 `workerIdOf` 以前返回 undefined，`WorkerCard` 一直显示「正在交给后台…」的等待卡。现在有结果但没有 workerId 返回 null，渲染器画空（同 `device_agent_run`），并登记 `workerDrawsCard`。
+  - `render_ui` 格式有误那一行：这一轮还在跑时照旧写「格式有误，机器人会修正后重新生成」；这一轮结束了（下面挂着重试）写「界面格式有误，没能显示」（`renderUiFailedDetail`，由 `TranscriptToolCall` 提供的 `ToolTurnEndedContext` 决定）。
+  - `reply-steps.test.tsx` 的 `live ? false : true` 改成 `!live`。
+- 测试都加在 `app/tests/reply-steps.test.tsx`（「复审 #404 第四轮」一组）：被拒 / 拿到 id 的 `device_agent_run` 和 `delegate_task`、结束后没有结果的六种骨架工具（还在跑时照旧算卡片）、`UnfinishedTool` 的文字、没登记判断的渲染器、按了停止的一轮、`render_ui` 两种说法；登记表测试加上两个新判断。原来「工具还没有结果：照旧算卡片」那条改成只在这一轮还在跑时成立。
+- 顺手：`PausedCapsule` 的测试以前要求正好「4 秒」，机器忙时 0.95 秒的等待拖过 1 秒就变成 5 秒（改前的 3d65ef4c 上也会这样失败），改成 4 ≤ 秒数 < 10。
+
 ## 2026-10-29 性能模式 / 减少透明度：全局不模糊（分支 `perf/global-no-backdrop`）
 
 ### 动机

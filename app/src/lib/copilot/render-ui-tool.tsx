@@ -1,6 +1,6 @@
 import { useRenderTool } from "@copilotkit/react-core/v2";
 import { createStateStore, JSONUIProvider, Renderer, type Spec } from "@json-render/react";
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useContext, useEffect, useMemo, useRef } from "react";
 import { z } from "zod";
 import {
   inspectRenderUiSpec,
@@ -14,7 +14,7 @@ import { useConversation } from "@/lib/copilot/conversation";
 import { jsonRenderRegistry } from "@/lib/copilot/json-render/registry";
 import { ChoiceProvider, choiceOptionsOf, copyText, openInNewTab, RichUiProvider } from "@/lib/copilot/json-render/rich-context";
 import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
-import { type CardCheck, registerCardCheck } from "./tool-renderers";
+import { type CardCheck, registerCardCheck, ToolTurnEndedContext } from "./tool-renderers";
 
 /**
  * 机器人用 `render_ui` 画出的界面（json-render，取代 A2UI）。
@@ -60,6 +60,14 @@ function specArgument(args: string): string | undefined {
 /** render_ui 完成后画没画出卡片（格式有误的那一行、画不出东西的都不算）。 */
 export const renderUiDrawsCard: CardCheck = registerCardCheck([RENDER_UI_TOOL], ({ args, result }) => renderUiFinal(specArgument(args), result).kind === "card");
 
+/**
+ * 格式有误那一行的说法：这一轮还在跑时机器人几乎总会马上改好再调一次（「会修正后重新生成」）；这一轮已经结束时没有下一次了，
+ * 下面挂着「这一轮没有回答」和重试，不能再说机器人会重新生成（复审 #404 第四轮）。
+ */
+export function renderUiFailedDetail(turnEnded: boolean): string {
+  return turnEnded ? "界面格式有误，没能显示" : "格式有误，机器人会修正后重新生成";
+}
+
 export function RenderUiTool() {
   useRenderTool({
     name: RENDER_UI_TOOL,
@@ -96,6 +104,7 @@ const RenderUiCall = memo(function RenderUiCall({
     [source, streaming],
   );
   const final = useMemo(() => (streaming ? null : renderUiFinal(source, result)), [source, streaming, result]);
+  const turnEnded = useContext(ToolTurnEndedContext);
 
   if (final?.kind === "failed") {
     /*
@@ -103,7 +112,7 @@ const RenderUiCall = memo(function RenderUiCall({
      * 所以这是一次「没成功的尝试」，不是需要用户处理的错误。原始问题收在展开里。
      */
     return (
-      <ToolLine detail={"格式有误，机器人会修正后重新生成"} failed label={"生成界面"}>
+      <ToolLine detail={renderUiFailedDetail(turnEnded)} failed label={"生成界面"}>
         <pre className="whitespace-pre-wrap font-mono">
           {final.issues.length > 0 ? final.issues.join("\n") : (result ?? "")}
         </pre>

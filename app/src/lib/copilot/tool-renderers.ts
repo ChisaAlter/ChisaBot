@@ -1,5 +1,10 @@
 import { CopilotKitContext } from "@copilotkit/react-core/v2/context";
-import { useCallback, useContext, useSyncExternalStore } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useSyncExternalStore,
+} from "react";
 
 /**
  * 对话里一个工具调用画不画「看得见的卡片」（回复显示①复审，2026-10-29）。
@@ -28,7 +33,8 @@ export function lineOnlyRender<T extends object>(render: T): T {
  * 渲染器自己判断「这次画没画出卡片」（复审 #404 第三轮）：有的渲染器在工具失败时返回 null——图片 / 文件工具没拿到文件、
  * 定时任务被拒、render_ui 的规范画不出东西。以它收尾、后面没有字的一轮不能算有回答（屏幕上什么都没有，还没法重试）。
  * 渲染器模块导出判断函数，渲染时用同一个函数决定返回不返回 null，并在模块里按工具名登记到这里；`toolDrawsCard`
- * 在工具有了结果之后问它。还没有结果时渲染器画的是骨架，照旧算卡片。没登记的渲染器（问人、确认卡……）总是画卡片。
+ * 在工具有了结果之后问它。还没有结果时：这一轮还在跑，渲染器画的是骨架，算卡片；这一轮已经结束（没按停止、结果也一直没来），
+ * 骨架换成一句「…没有完成」（`UnfinishedTool`），不算卡片（复审 #404 第四轮）。没登记的渲染器（问人、确认卡……）总是画卡片。
  */
 export type ToolCallOutcome = {
   /** 工具调用的参数（JSON 字符串，和 `toolCall.function.arguments` 一样）。 */
@@ -50,6 +56,27 @@ export function registerCardCheck(
 ): CardCheck {
   for (const name of names) cardChecks.set(name, check);
   return check;
+}
+
+/**
+ * 这个工具调用所在的那一轮已经结束（不再 live）。`TranscriptToolCall` 提供，渲染器按它改说法——比如 render_ui 格式有误时，
+ * 还在跑写「机器人会修正后重新生成」，结束了（下面挂着重试）写「界面格式有误，没能显示」。不在对话里（单测）时为 false。
+ */
+export const ToolTurnEndedContext = createContext(false);
+
+const UNFINISHED: Record<string, string> = {
+  image_generate: "画图",
+  image_edit: "改图",
+  file_share: "分享文件",
+  schedule_create: "设置定时任务",
+  render_ui: "生成界面",
+  delegate_task: "交给后台",
+  device_agent_run: "交给电脑",
+};
+
+/** 这一轮结束了、结果一直没来时，代替骨架的那一句。 */
+export function unfinishedToolText(name: string): string {
+  return `${UNFINISHED[name] ?? "这一步"}没有完成`;
 }
 
 export function isLineOnlyRender(render: unknown): boolean {
