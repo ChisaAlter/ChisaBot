@@ -1,3 +1,7 @@
+## Unreleased
+
+- 修复：打开对话时历史读两遍——打开时的接入结束后不再做顺序核对（那边刚读过），本机一轮结束后的核对不变；测试 `app/tests/channel-open-single-read.test.tsx`。
+
 ## 0.1.106
 
 - 对话记录同步改成增量：`…/threads/:id/messages` 支持可选 `since` / `cursor`（没变回 `unchanged`、变了只回尾部，旧客户端不变），界面实际路径（频道聊天页 `readThreadMessages` 的各处读历史、每轮结束后的顺序核对）都带 since/cursor 增量读，600 条对话没变化一次读约 530 KB → 83 B，没变化不 `setMessages`，编辑 / 删除 / 读失败 / 旧服务器照旧整份；三张卡片的每秒计时器合并为共享时钟。（#370）
