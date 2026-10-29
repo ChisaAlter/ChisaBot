@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { BlockedUrlError, guardedFetch, resolvePublic } from "../../../shared/net/guarded-fetch";
 import { checkPublicUrl } from "../../../shared/net/ssrf";
-import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
+import { currentConfirmTurn, currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
 import { markUntrusted } from "../untrusted-content";
 
@@ -117,7 +117,8 @@ export function unwrapBingUrl(href: string): string {
     const u = url.searchParams.get("u");
     if (!u?.startsWith("a1")) return href;
     const real = Buffer.from(u.slice(2).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
-    return /^https?:\/\/[^\s]+$/i.test(real) ? real : href;
+    // 解出来的地址若指向内网 / 本机，就留着原来的 Bing 链接：不把这种地址当来源交给模型。
+    return /^https?:\/\/[^\s]+$/i.test(real) && checkPublicUrl(real).ok ? real : href;
   } catch {
     return href;
   }
@@ -150,24 +151,50 @@ export function queryUnits(query: string): string[] {
   return words.length ? words : [...units];
 }
 
+/** 查询里按空格分开的完整词（去掉 site: 语法、泛词、年份日期和纯数字），用来判断结果是否相关。 */
+export function queryWords(query: string): string[] {
+  const words = new Set<string>();
+  for (const raw of query.toLowerCase().replace(/\b[a-z]+:\S+/g, " ").split(/\s+/)) {
+    const word = raw.replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "");
+    if (word.length < 2 || GENERIC_UNITS.has(word) || /^[\d.,]+$/.test(word) || /^[\d年月日号./-]+$/.test(word)) continue;
+    words.add(word);
+  }
+  return [...words];
+}
+
+/** 英文 / 数字词按整词匹配（「ai」不算命中「mail」），中文词按包含。 */
+function containsWord(haystack: string, word: string): boolean {
+  if (!/^[a-z0-9]/.test(word) || /\p{Script=Han}/u.test(word)) return haystack.includes(word);
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`).test(haystack);
+}
+
 /**
  * Bing 回退的结果先过一遍相关性（2026-10-29，hark 对比 #3 #8 #11）。
  *
  * 线上 DuckDuckGo 基本拿不到结果，搜索全落到 Bing；而 Bing 对不带 cookie 的抓取经常给出和问题无关的页面
- *（「上海 咖啡店」回成人站，「500 元以内 降噪耳机」回 Plus500 和彩票网，「漫步者 W820NB」回星巴克）。模型
- * 拿着这些什么也用不上，就一遍遍换词重搜，最后只能写「未核实」。所以至少命中查询里两个关键词（查询只有
- * 一个关键词就命中那一个）的结果才留下；全都不相关就如实说没搜到，比把无关页面当结果交给模型强。
+ *（「500 元以内 降噪耳机」回 Plus500 和彩票网，「科技新闻」回 QQ 邮箱登录页）。模型拿着这些什么也用不上，
+ * 就一遍遍换词重搜。
+ *
+ * 规则（小爱审查 #407 后放宽，2026-10-29）：查询里任一按空格分开的完整词出现在结果里就保留；都没出现时用
+ * 关键词（英文按词、中文按相邻两字）兜底，命中一个就保留。最初要求命中两个，对中文太严：「科技新闻 今天」
+ * 会把「IT之家 科技资讯」丢掉。留下的结果按命中多少排序（完整词权重大），同分保持原顺序。
  */
 export function relevantHits(query: string, hits: SearchHit[]): SearchHit[] {
+  const words = queryWords(query);
   const units = queryUnits(query);
-  if (units.length === 0) return hits;
-  const need = Math.min(2, units.length);
-  return hits.filter((hit) => {
-    const haystack = `${hit.title} ${hit.snippet} ${hit.url}`.toLowerCase();
-    let found = 0;
-    for (const unit of units) if (haystack.includes(unit) && ++found >= need) return true;
-    return false;
-  });
+  if (words.length === 0 && units.length === 0) return hits;
+  return hits
+    .map((hit, index) => {
+      const haystack = `${hit.title} ${hit.snippet} ${hit.url}`.toLowerCase();
+      const score =
+        10 * words.filter((word) => containsWord(haystack, word)).length +
+        units.filter((unit) => containsWord(haystack, unit)).length;
+      return { hit, index, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((item) => item.hit);
 }
 
 export function parseBing(html: string): SearchHit[] {
@@ -202,7 +229,8 @@ function noteSearchMiss(engine: string, reason: string, detail: string, now = Da
  * `anomaly` 验证脚本，一条结果也没有。这不是「没搜到」，是被拦了，而且一拦就是一阵子。
  */
 export function isDuckDuckGoChallenge(page: { status: number; body: string }): boolean {
-  return page.status === 202 || (/anomaly/i.test(page.body) && !/class="result__a"/.test(page.body));
+  // 只看 202 不够（小爱审查 #407）：202 也可能是正常页面，要同时有 anomaly 验证脚本、且没有一条结果才算被拦。
+  return /anomaly/i.test(page.body) && !/class="result__a"/.test(page.body);
 }
 
 /** 被拦之后多久内不再去敲 DuckDuckGo：每次搜索白等一个来回，还会让拦截持续下去。 */
@@ -218,9 +246,10 @@ export function resetSearchState() {
 /**
  * 一次搜索的结果，外加「搜索源这次能不能用」。
  *
- * `sourceDown`：DuckDuckGo 失败（连不上、被拦、回了验证页），并且 Bing 也没有一条和问题相关的结果。这时
+ * `sourceDown`：DuckDuckGo 失败（连不上、被拦、回了验证页），并且 Bing 也失败或一条结果都没给。这时
  * 再换关键词搜也是同样的结果，所以工具直接告诉模型搜索源不可用、别再搜（{@link SEARCH_SOURCE_DOWN}）。
- * DuckDuckGo 正常回了页面只是没有结果，算真的没搜到，不算源不可用。
+ * DuckDuckGo 正常回了页面只是没有结果，或者 Bing 给了结果但都和问题无关（被 {@link relevantHits} 滤空），
+ * 算没搜到相关结果（{@link NO_SEARCH_HITS}），不算源不可用。
  */
 export type SearchOutcome = { hits: SearchHit[]; sourceDown: boolean };
 
@@ -252,11 +281,14 @@ export async function searchWeb(
       if (hits.length === 0) noteSearchMiss("duckduckgo", "empty", `status ${ddg.status}, no results`, now());
     }
   }
+  let bingRaw = 0;
   if (hits.length === 0) {
     const bing = await fetchPage(`https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=zh-CN`, signal, undefined, UA, timeoutMs).catch(() => null);
-    hits = bing ? relevantHits(query, parseBing(bing.body)) : [];
+    const raw = bing ? parseBing(bing.body) : [];
+    bingRaw = raw.length;
+    hits = relevantHits(query, raw);
   }
-  return { hits: hits.slice(0, Math.max(1, Math.min(count, 10))), sourceDown: ddgDown && hits.length === 0 };
+  return { hits: hits.slice(0, Math.max(1, Math.min(count, 10))), sourceDown: ddgDown && hits.length === 0 && bingRaw === 0 };
 }
 
 export async function webSearch(query: string, count = 6, signal?: AbortSignal, timeoutMs = 20_000): Promise<SearchHit[]> {
@@ -347,6 +379,31 @@ export function searchResultText(outcome: SearchOutcome): string {
   );
 }
 
+/**
+ * 本轮不再搜索（小爱审查 #407，2026-10-29）：「没搜到最多再换一次词」以前只写在提示词里，模型不照做时
+ * 照样一轮连搜 6–9 次。现在在代码里按轮计数：这一轮已有 {@link SEARCH_TURN_MISS_LIMIT} 次没搜到相关结果，
+ * 或者已经确认搜索源不可用，之后的 web_search 不再联网，直接返回下面的话。
+ */
+export const SEARCH_TURN_MISS_LIMIT = 2;
+export const SEARCH_TURN_STOPPED =
+  "本轮不再搜索：这一轮已经有 2 次没搜到相关结果，再换关键词也只是让用户多等。需要的话 web_fetch 一个你确定的官网或权威页面；否则按已知信息回答，并说明没有联网核实。";
+export const SEARCH_TURN_STOPPED_DOWN =
+  "本轮不再搜索：这一轮已经确认当前搜索源不可用。需要的话 web_fetch 一个你确定的官网或权威页面；否则按已知信息回答，并说明没有联网核实。";
+
+type SearchTurnState = { misses: number; down: boolean };
+/** 按轮记：键是这一轮的取消信号（每轮一个），没有信号时用确认上下文里的这一轮；都没有就不限制。 */
+const searchTurns = new WeakMap<object, SearchTurnState>();
+function searchTurnState(signal?: AbortSignal): SearchTurnState | undefined {
+  const key: object | undefined = signal ?? currentConfirmTurn();
+  if (!key) return undefined;
+  let state = searchTurns.get(key);
+  if (!state) {
+    state = { misses: 0, down: false };
+    searchTurns.set(key, state);
+  }
+  return state;
+}
+
 /** 网络这一层，测试里可以换成模拟的超时 / 搜索结果。`outcome` 带上「搜索源能不能用」，没给就按 `search` 的结果算。 */
 export type WebIo = {
   fetch: typeof webFetch;
@@ -370,7 +427,13 @@ export function webTools(io: WebIo = REAL_IO): GrantedTool[] {
         if (!parsed.success) return `${REFUSAL_MARKER} web_search 需要 query。`;
         try {
           const { query, count = 6 } = parsed.data;
-          return searchResultText(io.outcome ? await io.outcome(query, count, signal) : { hits: await io.search(query, count, signal), sourceDown: false });
+          const turn = searchTurnState(signal);
+          if (turn?.down) return SEARCH_TURN_STOPPED_DOWN;
+          if (turn && turn.misses >= SEARCH_TURN_MISS_LIMIT) return SEARCH_TURN_STOPPED;
+          const outcome = io.outcome ? await io.outcome(query, count, signal) : { hits: await io.search(query, count, signal), sourceDown: false };
+          if (turn && outcome.sourceDown) turn.down = true;
+          else if (turn && outcome.hits.length === 0) turn.misses++;
+          return searchResultText(outcome);
         } catch (error) {
           if (signal?.aborted || (error instanceof Error && /abort/i.test(error.name + error.message)))
             return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
