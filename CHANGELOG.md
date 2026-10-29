@@ -1,19 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### 修复：打开一段对话只读一次历史
-
-- 打开频道聊天时已经和接入同时读了一份存下的对话，接入一结束 `useConversationSync` 又把它当成「本机一轮结束」做顺序核对、整份再读一遍（首次打开 since 为空，等于整份传两次）。现在打开时那次接入结束不再核对；本机自己跑完一轮后的核对照旧。只改前端。
-
-### 安全：升级有严重 / 高危漏洞的依赖，恢复 dependabot（审查 M4）
-
-- **直接依赖**：`better-auth` / `@better-auth/drizzle-adapter` 1.7.1 → 1.7.14（修复 OAuth state 被当作 Magic Link 登录、OAuth Proxy 冒充登录两个漏洞；同一 1.7.x 补丁线，无数据库表结构变化）；`@modelcontextprotocol/sdk` 1.30.0 → 1.32.2；`zod` 4.4.3 → 4.6.7；`vite` 7.3.6 → 7.3.7。
-- **间接依赖（根 `overrides` 固定到修复版）**：`proxy-addr` 2.0.8、`@modelcontextprotocol/server` 2.3.1、`axios` 1.21.0、`body-parser` 2.4.0、`fast-uri` 3.1.9、`follow-redirects` 1.16.2、`source-map-js` 1.2.2；`undici` 6.x / 7.x 副本升到 6.29.1 / 7.30.1。
-- **agent-computer**：`@grpc/grpc-js` 1.14.4 → 1.14.6（overrides）。**pc**：`undici` 6.29.1 / 7.30.1（仅锁文件）。
-- `bun audit`：2 critical / 39 high → 0 critical / 9 high；剩余需大版本升级，未升，见 docs/DEVLOG.md。
-- 新增 `.github/dependabot.yml`：bun（根、agent-computer）、npm（pc）、github-actions，每周一次，限 PR 数，小版本 / 补丁分组。
-
 ## 0.1.106 — 2026-10-29
 
 这一版合并 1 个 PR：机器人聊天页对话记录增量同步 + 卡片共享时钟（性能清单第 5 项，#370）。只升级服务器版本号（根、`app`、`server` 为 `0.1.106`），PC / Android 外壳未变；没有表结构变化。
