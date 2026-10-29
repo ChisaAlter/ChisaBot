@@ -29,7 +29,8 @@ import { IconLayoutSidebar, IconX } from "@tabler/icons-react";
 import { useBackDismiss } from "@/lib/overlay-back";
 
 const SIDEBAR_WIDTH = "16rem";
-const SIDEBAR_WIDTH_MOBILE = "18rem";
+// 手机尺寸抽屉（Hark 手机端）：85% 视口宽，最多 320px。
+const SIDEBAR_WIDTH_MOBILE = "min(85vw, 320px)";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_KEYBOARD_SHORTCUT = "b";
 
@@ -233,12 +234,14 @@ function Sidebar({
           data-slot="sidebar"
           data-mobile="true"
           // 宽度只在这里定（CB-098）：Sheet 基础样式的 `w-3/4` 会盖掉 `w-(--sidebar-width)`，
-          // 内容却按 18rem 排，PC 竖屏右边被裁。变量本身改成「不超过视口减 48px」，里面一律跟着容器走。
-          className="sidebar-mobile-sheet w-(--sidebar-width)! max-w-none! min-w-0 bg-sidebar p-0 text-sidebar-foreground"
+          // 内容却按固定宽度排，PC 竖屏右边被裁。里面一律跟着容器走。
+          // 一层面板（styles.css「手机尺寸左栏抽屉」）：.glass 是唯一的玻璃层，hk-drawer 管布局和开关动画。
+          className="glass hk-drawer sidebar-mobile-sheet w-(--sidebar-width)! max-w-none! min-w-0 bg-sidebar p-0 text-sidebar-foreground"
+          overlayClassName="hk-drawer-overlay"
           showCloseButton={false}
           style={
             {
-              "--sidebar-width": `min(${SIDEBAR_WIDTH_MOBILE}, calc(100vw - 48px))`,
+              "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
             } as React.CSSProperties
           }
           side={side}
