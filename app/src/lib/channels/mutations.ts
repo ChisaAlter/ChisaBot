@@ -27,6 +27,23 @@ export function createChannelMutationOptions(queryClient: QueryClient) {
 }
 
 /**
+ * 新话题页上先加附件时提前建的草稿对话（A1）：服务端在第一条消息记进来之前不把它列出来，所以这里也不刷新
+ * 对话列表——刷新了也看不到它。
+ */
+export function createDraftChannelMutationOptions() {
+  return mutationOptions({
+    mutationFn: async (agentIds: string[]): Promise<AgentChannel> => {
+      const response = await client("/api/channels", {
+        method: "POST",
+        body: { agentIds, draft: true },
+        fallback: "无法启动会话",
+      });
+      return ((await response.json()) as { channel: AgentChannel }).channel;
+    },
+  });
+}
+
+/**
  * Report the last thing said in a channel.
  *
  * The client that ran the agent already has the message before platform replay can return it; the

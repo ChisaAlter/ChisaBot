@@ -66,8 +66,10 @@ describe("ImagePile reserves the box from given dims before the image loads", ()
     const { container } = render(<ImagePile images={[{ src: "/api/chat-files/x-tall", width: 1000, height: 3000 }]} />);
     expect(container.querySelector("img")!.style.width).toBe("100px");
   });
-  test("no dims and never seen: no reserved style (old behaviour)", () => {
+  test("no dims and never seen: a fixed placeholder box until it loads (#399 rework)", () => {
     const { container } = render(<ImagePile images={[{ src: "/api/chat-files/never-seen" }]} />);
-    expect(container.querySelector("img")!.getAttribute("style") ?? "").toBe("");
+    const img = container.querySelector("img")!;
+    expect(img.style.width).toBe("240px");
+    expect(img.style.aspectRatio.replace(/\s/g, "")).toBe("4/3");
   });
 });

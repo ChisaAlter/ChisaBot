@@ -19,6 +19,7 @@ import { createApp } from "../src/app";
 import type { AuditEventInput, AuditStore } from "../src/audit";
 import { DEV_ACTOR } from "../src/auth/dev-actor";
 import type { AppVariables } from "../src/auth/guards";
+import { sweepAbandonedDrafts } from "../src/channels/drafts";
 import {
   type AgentChannel,
   ChannelNotFoundError,
@@ -69,8 +70,12 @@ function fakeStore(
 ): ChannelStore & { calls: StoreCall[] } {
   const calls: StoreCall[] = [];
   const base: ChannelStore = {
-    async create(receivedActor, agentIds) {
-      calls.push(["create", receivedActor, agentIds]);
+    async create(receivedActor, agentIds, options) {
+      calls.push(
+        options === undefined
+          ? ["create", receivedActor, agentIds]
+          : ["create", receivedActor, agentIds, options],
+      );
       return channel({ agentIds });
     },
     async get(receivedActor, id) {
@@ -155,6 +160,21 @@ describe("channel input parser", () => {
         active: false,
       }),
     ).toEqual({ ok: true, value: { agentIds: ["agent-1", "agent-2"] } });
+  });
+
+  test("carries a draft flag only when it is true", () => {
+    expect(parseChannelInput({ agentIds: ["agent-1"], draft: true })).toEqual({
+      ok: true,
+      value: { agentIds: ["agent-1"], draft: true },
+    });
+    expect(parseChannelInput({ agentIds: ["agent-1"], draft: false })).toEqual({
+      ok: true,
+      value: { agentIds: ["agent-1"] },
+    });
+    expect(parseChannelInput({ agentIds: ["agent-1"], draft: "yes" })).toEqual({
+      ok: false,
+      error: "Draft must be a boolean.",
+    });
   });
 });
 
@@ -249,6 +269,21 @@ describe("channel routes", () => {
     expect(store.calls).toEqual([
       ["create", actor, ["agent-1", "agent-2"]],
       ["get", actor, "channel-1"],
+    ]);
+  });
+
+  test("passes a draft create to the store as a draft", async () => {
+    const store = fakeStore();
+
+    const created = await appFor(store).request("http://chisabot.test/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentIds: ["agent-1"], draft: true }),
+    });
+
+    expect(created.status).toBe(201);
+    expect(store.calls).toEqual([
+      ["create", actor, ["agent-1"], { draft: true }],
     ]);
   });
 
@@ -675,6 +710,71 @@ describe("channel delete audit", () => {
   });
 });
 
+describe("DELETE /:channelId?draft=1", () => {
+  test("deletes an empty draft without a trail", async () => {
+    const audited: AuditEventInput[] = [];
+    const store = fakeStore({
+      async deleteEmptyDraft(receivedActor, id) {
+        store.calls.push(["deleteEmptyDraft", receivedActor, id]);
+        return "deleted";
+      },
+    });
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.route(
+      "/",
+      createChannelRoutes(store, requireUser, undefined, {
+        insert: async (event) => void audited.push(event),
+      }),
+    );
+
+    const response = await app.request(
+      "http://chisabot.test/channel-1?draft=1",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(204);
+    // Never the plain delete, and never a `channel.deleted` row.
+    expect(store.calls).toEqual([["deleteEmptyDraft", actor, "channel-1"]]);
+    expect(audited).toEqual([]);
+  });
+
+  test("keeps a conversation that is no longer an empty draft and answers 409", async () => {
+    const store = fakeStore({ deleteEmptyDraft: async () => "kept" });
+    const response = await appFor(store).request(
+      "http://chisabot.test/channel-1?draft=1",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(409);
+    expect(store.calls).toEqual([]);
+  });
+
+  test("a store that cannot tell keeps the conversation", async () => {
+    const store = fakeStore();
+    const response = await appFor(store).request(
+      "http://chisabot.test/channel-1?draft=1",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(409);
+    expect(store.calls).toEqual([]);
+  });
+
+  test("a stranger gets the same 404 as for any channel", async () => {
+    const store = fakeStore({
+      deleteEmptyDraft: async () => {
+        throw new ChannelNotFoundError("channel-1");
+      },
+    });
+    const response = await appFor(store).request(
+      "http://chisabot.test/channel-1?draft=1",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(404);
+  });
+});
+
 describe("channel route composition", () => {
   test("mounts the store behind createApp authentication with the derived actor", async () => {
     const store = fakeStore();
@@ -754,6 +854,7 @@ const persistentStore = createChannelStore(
   database,
   profileStore,
   createThreadIdentity("test-deployment"),
+  { localConversations: true },
 );
 const testPrefix = `channel-store-${randomUUID()}`;
 const createdUserIds: string[] = [];
@@ -1368,6 +1469,275 @@ describe("channel read markers", () => {
       );
     // The membership row outlives the channel, but its marker was never stamped.
     expect(row?.lastReadAt).toBeNull();
+  });
+});
+
+/*
+ * 新话题页上先加附件时提前建的对话（A1）：还没说过话之前，谁的列表里都没有它，`direct` 也不挑它；
+ * 第一条消息记进来之后，它就是一段普通对话。
+ */
+describe("draft channels", () => {
+  test("stay out of the list until something is said in them", async () => {
+    const actor = await createPersistentUser();
+    const agentId = await createPersistentAgent({
+      name: "Draft agent",
+      owner: actor,
+    });
+    const draft = await persistentStore.create(actor, [agentId], {
+      draft: true,
+    });
+    createdChannelIds.push(draft.id);
+    const plain = await persistentStore.create(actor, [agentId]);
+    createdChannelIds.push(plain.id);
+
+    const ids = async () =>
+      (await persistentStore.list(actor)).channels.map((row) => row.id);
+    expect(await ids()).toContain(plain.id);
+    expect(await ids()).not.toContain(draft.id);
+    // Its owner can still open it: the page they were sent to has to load.
+    expect((await persistentStore.get(actor, draft.id))?.id).toBe(draft.id);
+
+    await persistentStore.recordActivity(actor, draft.id, {
+      agentId: null,
+      at: new Date(),
+      text: "第一句话",
+    });
+    expect(await ids()).toContain(draft.id);
+  });
+
+  test("are not the conversation `direct` delivers into", async () => {
+    const actor = await createPersistentUser();
+    const agentId = await createPersistentAgent({
+      name: "Direct draft agent",
+      owner: actor,
+    });
+    const draft = await persistentStore.create(actor, [agentId], {
+      draft: true,
+    });
+    createdChannelIds.push(draft.id);
+
+    const direct = await persistentStore.direct(actor, agentId);
+    createdChannelIds.push(direct.id);
+
+    expect(direct.id).not.toBe(draft.id);
+  });
+
+  /*
+   * 条件删除和 24 小时清理（返修）：只删「草稿标记 + 没有 last_message_at + 线程里没有消息、没跑过一轮」的。
+   * 「是草稿」在界面上只记在一个标签页里，复制标签页、机器人主动说话时界面会以为一段真对话还是草稿。
+   */
+  async function ensureLocalThreadTables() {
+    // 与 local-conversations.ts 的建表语句相同（IF NOT EXISTS）：测试库里可能还没有跑过本地后端。
+    await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_threads (
+    id text PRIMARY KEY, owner_user_id text NOT NULL, agent_id text NOT NULL,
+    name text, archived boolean NOT NULL DEFAULT false,
+    messages jsonb NOT NULL DEFAULT '[]'::jsonb, state jsonb NOT NULL DEFAULT '{}'::jsonb,
+    run_id text, lock_expires_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+  )`);
+    await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_runs (
+    thread_id text NOT NULL REFERENCES openbot_local_threads(id) ON DELETE CASCADE,
+    run_id text NOT NULL, status text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz,
+    PRIMARY KEY (thread_id, run_id)
+  )`);
+  }
+
+  async function draftFor(name: string) {
+    await ensureLocalThreadTables();
+    const actor = await createPersistentUser();
+    const agentId = await createPersistentAgent({ name, owner: actor });
+    const draft = await persistentStore.create(actor, [agentId], {
+      draft: true,
+    });
+    createdChannelIds.push(draft.id);
+    return { actor, agentId, draft };
+  }
+
+  async function writeThread(
+    threadId: string,
+    owner: AgentActor,
+    agentId: string,
+    messages: unknown[],
+  ) {
+    await database.$client.unsafe(
+      "INSERT INTO openbot_local_threads (id, owner_user_id, agent_id, messages) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (id) DO UPDATE SET messages = EXCLUDED.messages",
+      [threadId, owner.id, agentId, JSON.stringify(messages)],
+    );
+  }
+
+  async function dropThread(threadId: string) {
+    await database.$client.unsafe(
+      "DELETE FROM openbot_local_threads WHERE id = $1",
+      [threadId],
+    );
+  }
+
+  async function deletedAt(channelId: string) {
+    const [row] = await database
+      .select({ deletedAt: channels.deletedAt })
+      .from(channels)
+      .where(eq(channels.id, channelId));
+    return row?.deletedAt ?? null;
+  }
+
+  async function ageChannel(channelId: string, hours: number) {
+    await database
+      .update(channels)
+      .set({ createdAt: new Date(Date.now() - hours * 60 * 60_000) })
+      .where(eq(channels.id, channelId));
+  }
+
+  test("a conditional delete removes an empty draft, and repeating it is still fine", async () => {
+    const { actor, draft } = await draftFor("Empty draft agent");
+
+    expect(await persistentStore.deleteEmptyDraft?.(actor, draft.id)).toBe(
+      "deleted",
+    );
+    expect(await deletedAt(draft.id)).not.toBeNull();
+    expect(await persistentStore.deleteEmptyDraft?.(actor, draft.id)).toBe(
+      "deleted",
+    );
+  });
+
+  test("a conditional delete keeps a draft somebody has spoken in", async () => {
+    const { actor, draft } = await draftFor("Spoken draft agent");
+    await persistentStore.recordActivity(actor, draft.id, {
+      agentId: null,
+      at: new Date(),
+      text: "第一句话",
+    });
+
+    expect(await persistentStore.deleteEmptyDraft?.(actor, draft.id)).toBe(
+      "kept",
+    );
+    expect(await deletedAt(draft.id)).toBeNull();
+  });
+
+  test("a conditional delete keeps a draft whose thread has messages but no activity yet", async () => {
+    // 机器人主动说话、或一轮已经写进线程但 activity 还没记：last_message_at 仍为空，线程里却有内容。
+    const { actor, agentId, draft } = await draftFor("Proactive draft agent");
+    await writeThread(draft.threadId, actor, agentId, [
+      { id: "m1", role: "assistant", content: "我先说一句" },
+    ]);
+    try {
+      expect(await persistentStore.deleteEmptyDraft?.(actor, draft.id)).toBe(
+        "kept",
+      );
+      expect(await deletedAt(draft.id)).toBeNull();
+    } finally {
+      await dropThread(draft.threadId);
+    }
+  });
+
+  test("a conditional delete never touches an ordinary conversation", async () => {
+    await ensureLocalThreadTables();
+    const actor = await createPersistentUser();
+    const agentId = await createPersistentAgent({
+      name: "Plain conversation agent",
+      owner: actor,
+    });
+    const plain = await persistentStore.create(actor, [agentId]);
+    createdChannelIds.push(plain.id);
+
+    expect(await persistentStore.deleteEmptyDraft?.(actor, plain.id)).toBe(
+      "kept",
+    );
+    expect(await deletedAt(plain.id)).toBeNull();
+  });
+
+  test("a conditional delete refuses a stranger", async () => {
+    const { draft } = await draftFor("Stranger draft agent");
+    const stranger = await createPersistentUser();
+
+    await expect(
+      persistentStore.deleteEmptyDraft?.(stranger, draft.id),
+    ).rejects.toBeInstanceOf(ChannelNotFoundError);
+    expect(await deletedAt(draft.id)).toBeNull();
+  });
+
+  test("the sweep removes only empty drafts older than a day, and can run again", async () => {
+    const old = await draftFor("Old empty draft agent");
+    await ageChannel(old.draft.id, 25);
+    const fresh = await draftFor("Fresh empty draft agent");
+    await ageChannel(fresh.draft.id, 23);
+    const spoken = await draftFor("Old spoken draft agent");
+    await ageChannel(spoken.draft.id, 25);
+    await persistentStore.recordActivity(spoken.actor, spoken.draft.id, {
+      agentId: null,
+      at: new Date(),
+      text: "说过话了",
+    });
+    const proactive = await draftFor("Old proactive draft agent");
+    await ageChannel(proactive.draft.id, 25);
+    await writeThread(
+      proactive.draft.threadId,
+      proactive.actor,
+      proactive.agentId,
+      [{ id: "m1", role: "assistant", content: "机器人主动发的" }],
+    );
+    const plainActor = await createPersistentUser();
+    const plainAgent = await createPersistentAgent({
+      name: "Old plain agent",
+      owner: plainActor,
+    });
+    const plain = await persistentStore.create(plainActor, [plainAgent]);
+    createdChannelIds.push(plain.id);
+    await ageChannel(plain.id, 25);
+
+    try {
+      const removed = await sweepAbandonedDrafts(database, {
+        localConversations: true,
+      });
+      expect(removed).toBeGreaterThanOrEqual(1);
+      expect(await deletedAt(old.draft.id)).not.toBeNull();
+      expect(await deletedAt(fresh.draft.id)).toBeNull();
+      expect(await deletedAt(spoken.draft.id)).toBeNull();
+      expect(await deletedAt(proactive.draft.id)).toBeNull();
+      expect(await deletedAt(plain.id)).toBeNull();
+
+      // 再跑一遍：已经删过的不再算，别的照样不动。
+      await sweepAbandonedDrafts(database, { localConversations: true });
+      expect(await deletedAt(fresh.draft.id)).toBeNull();
+      expect(await deletedAt(proactive.draft.id)).toBeNull();
+    } finally {
+      await dropThread(proactive.draft.threadId);
+    }
+  });
+});
+
+describe("draft cleanup outside local mode", () => {
+  /*
+   * 二轮复审：是不是本地模式由启动处按 `config.runtime.mode` 直接给，不看表在不在。测试库里有本地对话表，
+   * 但非 local 模式的 store / 清理照样一段都不删。
+   */
+  test("neither the conditional delete nor the sweep touches anything", async () => {
+    const managedStore = createChannelStore(
+      database,
+      profileStore,
+      createThreadIdentity("test-deployment"),
+    );
+    const actor = await createPersistentUser();
+    const agentId = await createPersistentAgent({
+      name: "Managed draft agent",
+      owner: actor,
+    });
+    const draft = await managedStore.create(actor, [agentId], { draft: true });
+    createdChannelIds.push(draft.id);
+    await database
+      .update(channels)
+      .set({ createdAt: new Date(Date.now() - 25 * 60 * 60_000) })
+      .where(eq(channels.id, draft.id));
+
+    expect(await managedStore.deleteEmptyDraft?.(actor, draft.id)).toBe("kept");
+    expect(
+      await sweepAbandonedDrafts(database, { localConversations: false }),
+    ).toBeNull();
+    const [row] = await database
+      .select({ deletedAt: channels.deletedAt })
+      .from(channels)
+      .where(eq(channels.id, draft.id));
+    expect(row?.deletedAt ?? null).toBeNull();
   });
 });
 

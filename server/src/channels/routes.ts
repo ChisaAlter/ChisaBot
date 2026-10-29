@@ -38,6 +38,12 @@ import { upgradeWebSocket } from "./socket";
 import { searchChannelMessages } from "./search";
 import { oneLine } from "./text";
 import type { ThreadIdentity } from "./thread-identity";
+import {
+  DRAFT_AGENT_CHANNEL_DESCRIPTION,
+  type DraftDeleteOutcome,
+  type DraftStorage,
+  deleteEmptyDraft,
+} from "./drafts";
 import { reasonWithoutStatement } from "../db/query-failure";
 
 export type AgentChannel = {
@@ -171,7 +177,16 @@ const ROSTER_ORDER = [
 type ChannelTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 export type ChannelStore = {
-  create(actor: AgentActor, agentIds: string[]): Promise<AgentChannel>;
+  /**
+   * `draft`：新话题页上先加附件时提前建的对话（还没有任何消息）。它不出现在任何人的对话列表里，也不被
+   * `direct` 当成「和这个机器人的那段对话」；第一条消息记进来（`recordActivity` 写了 `lastMessageAt`）就和普通
+   * 对话一样了。见 `isHiddenDraft`。
+   */
+  create(
+    actor: AgentActor,
+    agentIds: string[],
+    options?: { draft?: boolean },
+  ): Promise<AgentChannel>;
   /**
    * The one conversation this person has with this Bot alone, made if they have not had one yet.
    *
@@ -211,6 +226,14 @@ export type ChannelStore = {
    * no-op, so it announces nothing and its route records nothing.
    */
   softDelete(actor: AgentActor, channelId: string): Promise<boolean>;
+  /**
+   * 条件删除（A1 草稿）：只在它仍是空草稿时软删，见 `drafts.ts` 的 `deleteEmptyDraft`。不是成员 →
+   * ChannelNotFoundError。不审计、不通知。可选：测试替身不用实现（路由当作 409）。
+   */
+  deleteEmptyDraft?(
+    actor: AgentActor,
+    channelId: string,
+  ): Promise<DraftDeleteOutcome>;
   recordActivity(
     actor: AgentActor,
     channelId: string,
@@ -247,6 +270,12 @@ export type ChannelStore = {
 };
 
 const PRIVATE_AGENT_CHANNEL_DESCRIPTION = "Private agent channel.";
+/** 草稿对话的标记，定义在 `drafts.ts`（清理任务也用），这里照旧导出。 */
+export { DRAFT_AGENT_CHANNEL_DESCRIPTION };
+/**
+ * 还没说过话的草稿对话：列表里不出现，`direct` 不挑它。说过一句（`lastMessageAt` 有值）就不再藏。
+ */
+const isHiddenDraft = sql`(${channels.description} = ${DRAFT_AGENT_CHANNEL_DESCRIPTION} and ${channels.lastMessageAt} is null)`;
 const MAX_CHANNEL_NAME_CODE_POINTS = 120;
 const MAX_ACTIVITY_GRAPHEMES = 200;
 
@@ -266,6 +295,8 @@ export function createChannelStore(
   database: Database,
   profileStore: AgentProfileStore,
   threadIdentity: ThreadIdentity,
+  /** 草稿对话的条件删除只在消息存在本库时才删（`drafts.ts`）；由启动处按 `config.runtime.mode` 给。 */
+  draftStorage: DraftStorage = { localConversations: false },
 ): ChannelStore {
   /**
    * Making a channel, on a transaction the caller already holds.
@@ -281,6 +312,7 @@ export function createChannelStore(
     actor: AgentActor,
     agentIds: string[],
     existingThreadId?: string,
+    draft = false,
   ): Promise<AgentChannel> => {
     // Validated on this transaction, not through `profileStore.get`: the read has to share
     // the connection this transaction already holds, and has to hold the profile so an agent
@@ -311,7 +343,9 @@ export function createChannelStore(
     await transaction.insert(channels).values({
       id,
       name,
-      description: PRIVATE_AGENT_CHANNEL_DESCRIPTION,
+      description: draft
+        ? DRAFT_AGENT_CHANNEL_DESCRIPTION
+        : PRIVATE_AGENT_CHANNEL_DESCRIPTION,
     });
     await transaction.insert(channelMemberships).values({
       channelId: id,
@@ -330,9 +364,16 @@ export function createChannelStore(
   };
 
   const store: ChannelStore = {
-    create(actor, agentIds) {
+    create(actor, agentIds, options) {
       return database.transaction(
-        async (transaction) => makeChannel(transaction, actor, agentIds),
+        async (transaction) =>
+          makeChannel(
+            transaction,
+            actor,
+            agentIds,
+            undefined,
+            options?.draft === true,
+          ),
         { isolationLevel: "read committed" },
       );
     },
@@ -382,6 +423,7 @@ export function createChannelStore(
             .where(
               and(
                 isNull(channels.deletedAt),
+                sql`not ${isHiddenDraft}`,
                 sql`(select count(*) from ${channelAgents} where ${channelAgents.channelId} = ${channels.id}) = 1`,
               ),
             )
@@ -524,6 +566,8 @@ export function createChannelStore(
         .where(
           and(
             isNull(channels.deletedAt),
+            // 提前建好、还没说过话的草稿对话不进列表（对所有设备都一样，见 `DRAFT_AGENT_CHANNEL_DESCRIPTION`）。
+            sql`not ${isHiddenDraft}`,
             // One row comparison over the whole sort key, which only reads as "everything after the
             // cursor" because every part of that key descends. See ROSTER_ORDER.
             cursor
@@ -779,6 +823,20 @@ export function createChannelStore(
       );
     },
 
+    async deleteEmptyDraft(actor, channelId) {
+      const [member] = await database
+        .select({ channelId: channelMemberships.channelId })
+        .from(channelMemberships)
+        .where(
+          and(
+            eq(channelMemberships.channelId, channelId),
+            eq(channelMemberships.userId, actor.id),
+          ),
+        );
+      if (!member) throw new ChannelNotFoundError(channelId);
+      return await deleteEmptyDraft(database, channelId, draftStorage);
+    },
+
     recordActivity(actor, channelId, activity, source) {
       return database.transaction(
         async (transaction) => {
@@ -967,10 +1025,10 @@ export class ChannelPackageOwnedError extends Error {
 }
 
 type ChannelInputParseResult =
-  | { ok: true; value: { agentIds: string[] } }
+  | { ok: true; value: { agentIds: string[]; draft?: true } }
   | { ok: false; error: string };
 
-type ChannelInputObject = { agentIds?: unknown };
+type ChannelInputObject = { agentIds?: unknown; draft?: unknown };
 
 export function parseChannelInput(input: unknown): ChannelInputParseResult {
   if (!isChannelInputObject(input)) {
@@ -993,7 +1051,17 @@ export function parseChannelInput(input: unknown): ChannelInputParseResult {
     return { ok: false, error: "Agent IDs must be unique." };
   }
 
-  return { ok: true, value: { agentIds: agentIds.sort() } };
+  if (input.draft !== undefined && typeof input.draft !== "boolean") {
+    return { ok: false, error: "Draft must be a boolean." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      agentIds: agentIds.sort(),
+      ...(input.draft === true ? { draft: true as const } : {}),
+    },
+  };
 }
 
 function isChannelInputObject(input: unknown): input is ChannelInputObject {
@@ -1148,10 +1216,11 @@ export function createChannelRoutes(
     if (!parsed.ok) return context.json({ error: parsed.error }, 400);
 
     try {
-      const channel = await store.create(
-        context.var.actor,
-        parsed.value.agentIds,
-      );
+      const channel = parsed.value.draft
+        ? await store.create(context.var.actor, parsed.value.agentIds, {
+            draft: true,
+          })
+        : await store.create(context.var.actor, parsed.value.agentIds);
       return context.json({ channel: channelDto(channel) }, 201);
     } catch (error) {
       return mapStoreError(context, error);
@@ -1279,6 +1348,26 @@ export function createChannelRoutes(
 
   routes.delete("/:channelId", requireUser, async (context) => {
     const channelId = context.req.param("channelId");
+    /*
+     * `?draft=1`：新话题页提前建的草稿对话，没发就离开时由界面来删（A1）。「是草稿」只记在那个标签页的
+     * sessionStorage 里，复制出来的标签页、或者机器人已经在里面说过话时，界面以为的草稿其实是真对话——
+     * 所以服务端再确认一次：仍是空草稿才删，否则 409、什么都不动。这种删除不写 `channel.deleted` 审计、
+     * 不发通知（它从来没出现在谁的列表里）。
+     */
+    if (context.req.query("draft") === "1") {
+      try {
+        const outcome = store.deleteEmptyDraft
+          ? await store.deleteEmptyDraft(context.var.actor, channelId)
+          : "kept";
+        if (outcome === "deleted") return context.body(null, 204);
+        return context.json(
+          { error: "This conversation is not an empty draft, so it was kept." },
+          409,
+        );
+      } catch (error) {
+        return mapStoreError(context, error);
+      }
+    }
     try {
       const deleted = await store.softDelete(context.var.actor, channelId);
       // A repeat is still 204, but it deleted nothing, and the trail records acts, not attempts.

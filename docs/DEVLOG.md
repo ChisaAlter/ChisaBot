@@ -1,5 +1,107 @@
 # DEVLOG
 
+## Unreleased — 新话题页带附件（A1）+ 用户消息图片稳定显示
+
+### 动机
+
+在新话题页上给机器人发图片时，图片发不出去或者显示不出来，用户消息里只剩文字。要做到：新话题和已有对话里，发送中、发送后、刷新后都能看到图片；多张图正常成组；点开能看大图。
+
+### 根因
+
+1. **新话题页不支持附件。** `/channel/new` 还没有对话，附件没有地方上传（上传接口是 `/api/channels/:id/attachments`），所以这个页面的输入框根本没开附件：没有「附加文件」，粘贴 / 拖入的文件被丢掉，只有文字发出去。
+2. **测试脚本选中了隐藏的输入框。** `KeepAliveStage` 会把上一段对话页留着、只是藏起来，所以页面上同时有两个输入框。测试脚本（cb-run.js）按选择器取第一个，拿到的是藏着的那一个，文件塞进了看不见的对话里，看起来就像「图片没发出去」。脚本由小爱自己修，本 PR 不改。
+
+已有对话里，接口返回的图片部分（`readThreadMessages`）和渲染（单图、ImagePile）本身是对的，本 PR 补测试锁住，不改气泡外观。
+
+### 返修（小爱审 2c0051c）的根因
+
+1. **无条件删除会删掉真对话。** 第一版 `channel-page.tsx` 卸载时直接 `DELETE /api/channels/:id`，而「这是草稿」只记在这个标签页的 sessionStorage 里。复制标签页（sessionStorage 跟着复制）后在一边发了消息、另一边离开，或者机器人已经主动在里面说了话，这边仍以为是草稿，于是把一段有内容的对话删了，还写了 `channel.deleted` 审计、发了通知。
+2. **关掉标签页的草稿永远留在库里。** 没有任何东西回收它们，只是看不见。
+3. **发送和建草稿竞态。** `attaching` 是 ref，不进 `pending`：建草稿的 POST 还没回来时回车，`start` 会另建一段普通对话，两段都带着同一份字。
+4. **建草稿期间再进来的文件被丢。** 第二次 `attach` 看到 `attaching` 直接 `return`。
+5. 文件全被拒（类型不支持、太大）时也先建了草稿再跳过去，那边才说不收；草稿页被藏起来（去设置等）时要等留着的页面 10 分钟超时才回收；没有宽高的图片加载前高度为 0，加载后撑开。
+
+### 二轮复审（02f97d07）的根因
+
+1. **藏起来就回收太激进。** 返修把草稿对话的保活时长一律设成 0，于是在草稿页选好图、去设置看一眼再回来，页面已经卸载、草稿已经删了，图没了（字放回了新话题页，但这时用户不在那里）。真正需要立刻回收的只有「去新话题页」这一种：那边要重新开始，留着一段空草稿没有意义。
+2. **回收后用返回键回到它是一张错误卡。** 草稿删了以后浏览器历史里还留着 `/channel/<id>`，返回键回去拿到 404，显示「对话不存在」。`client()` 抛出的错误又不带状态码，页面分不出 404 和别的错误。
+3. **按表探测运行模式不可靠。** `drafts.ts` 用 `to_regclass` 看库里有没有 `openbot_local_threads` / `openbot_local_runs` 来决定能不能删。表在不等于消息存在本库：切过运行模式的库表还在，但新消息在 Intelligence 后端，这时判断「线程是空的」是错的。
+4. **跳转那一下里加的文件会丢。** 草稿建好、`stashDraftFiles` 已经取走队列，到地址真正换过去之间（路由在加载），新话题页的输入框还在，再选的文件进了 `queued` 但没人再取。
+
+### 改动
+
+- **服务端**（`server/src/channels/routes.ts`）：`POST /api/channels` 接受可选的 `draft: true`，建的对话用 `DRAFT_AGENT_CHANNEL_DESCRIPTION` 做 description 标记。`isHiddenDraft`（标记 + `last_message_at is null`）在对话列表和直达对话查询里过滤掉：第一条消息记进来之前，它不出现在任何人、任何设备的列表里；记进来之后就和普通对话一样。没有表结构变化，不需要迁移。
+- **客户端**
+  - `app/src/lib/channels/draft-channel.ts`（新）：记着这个标签页刚建、还没发的草稿对话（sessionStorage，刷新后仍记得）。`holdDraftChannel` 在对话页卸载时（StrictMode 的二次挂载不算）还没发过就 `releaseDraftChannel`：立即 `DELETE`，写了一半的字放回新话题页（`new:<agent>`），文件丢掉。发出第一条后 `settleDraftChannel`，以后就是普通对话。
+  - `composer.tsx`：新增 `onAttachWithoutChannel`。没有对话时，选择 / 粘贴 / 拖入的文件不上传，而是连同当前文字交给它。
+  - `channel/new.tsx` + `start.ts`（`startDraft`）+ `mutations.ts`（`createDraftChannelMutationOptions`）：建草稿对话，`moveTextDraft` 把字挪过去，`stashDraftFiles` 把文件挪过去，`replace` 跳到 `/channel/<id>`（返回键不会回到一个空的新话题页）。不刷新对话列表（反正它不在列表里）。
+  - `channel-chat.tsx`：刚建的草稿对话（`freshDraft`）跳过「恢复中」骨架和首次读历史（它还没有消息），直接显示开场介绍，所以跳转不闪；发送时 settle。`channel-page.tsx` 挂 `holdDraftChannel`。
+- 用户消息图片：沿用已有的 width/height 预留占位（单张 `.rp-image-single`）和 ImagePile 叠放组；点开是原图。本 PR 不做缩放（B1 另开 PR）。
+
+返修：
+
+- **带条件删除**（`server/src/channels/drafts.ts` 新，`routes.ts`）：`DELETE /api/channels/:id?draft=1` 只在这段对话**仍是空草稿**时软删除：description 是草稿标记、`last_message_at` 为空、未删除，并且它的线程（`intelligence_channel_mappings.thread_id` → `openbot_local_threads`）里没有消息、也没有跑过一轮（`openbot_local_runs`）。否则回 409、什么都不动。这种删除不写 `channel.deleted` 审计、不发通知（草稿从没出现在任何列表里）。非成员照旧 404。客户端 `draft-channel.ts` 的删除改成带 `?draft=1`，不管结果。
+- **24 小时清理**（`sweepAbandonedDrafts` + `startDraftSweeps`，在 `server/src/index.ts` 和 `startRetentionSweeps` 一起启动、一起停）：启动 60 秒后跑一次，之后每小时一次，每批最多 500 段，只删同时满足上面全部条件且 `created_at` 早于 24 小时前的。条件写在一条 `UPDATE … WHERE` 里，可以重复执行（删过的不再满足 `deleted_at is null`）。
+- **保守处理**：消息不存在本库（只用 Intelligence 后端的部署）时无法确认线程是空的，条件删除和定时清理都**一律不删**（条件删除回 409）。这类部署的草稿只是看不见，不会被回收。二轮复审后改为直接由启动处传 `config.runtime.mode === "local"`（`DraftStorage.localConversations`），不再探测表在不在。
+- **发送与建草稿互斥**（`channel/new.tsx`）：`attaching` 改成 state，并进输入框的 `pending`（发送键不可用），`start` 在建草稿时直接返回；反过来第一条消息正在发或已发出时不建草稿。
+- **建草稿期间的文件追加**：再进来的文件追加到同一个队列，`startDraft` 在草稿建好之后才取文件（`files` 可以是函数），一起放进 `stashDraftFiles`，跳过去后一起放上。
+- **先筛再建**（`composer.tsx` `handOff`）：交出文件之前按 `stageFiles` 同样的规则（`screenPickedFiles`）筛，拒收的说法留在新话题页；一个都不收就不建草稿。
+- **藏起来就回收**：`KeepAliveStage` 的 `ttlMs` 可以按留着的那页定，`authed-shell.tsx` 对草稿对话给 0：藏起来立即卸载，走原来的卸载收尾（字放回新话题页、带条件删除）。普通对话照旧留 10 分钟。
+
+二轮复审：
+
+- **只有去新话题页才立即回收**（`draft-channel.ts` `draftKeptTtl`，`authed-shell.tsx`）：时长按「是不是草稿 + 当前地址」定，只有草稿对话且当前地址是 `/channel/new` 时给 0；去设置等别的页面照常留 10 分钟，回来图和上传都在。回调按 `pathname` 记忆（`useCallback`），留着的计时器不会每次渲染重来；先去设置、再从设置去新话题页时那一刻回收。
+- **回收过的草稿 404 时静默跳走**：`client.ts` 新增 `ClientError`（带 HTTP 状态码），`client()` 失败时抛它。`releaseDraftChannel` 回收时把「这段属于哪个机器人」记进 sessionStorage（`chisabot-released-drafts:v1`，最多 50 条）。`channel-page.tsx` 读对话失败时用 `releasedDraftRedirect` 判断：是 404 且是本标签页回收过的，就 `replace` 跳到 `/channel/new?agent=…&topic=new`，跳之前按「加载中」显示、不闪错误卡；别的 404 和别的错误照旧。
+- **运行模式直接传**（`drafts.ts`、`routes.ts`、`index.ts`）：去掉 `localThreadsPresent` 的表探测，`deleteEmptyDraft` / `sweepAbandonedDrafts` / `startDraftSweeps` / `createChannelStore` 都收 `{ localConversations }`，由 `index.ts` 按 `config.runtime.mode === "local"` 给；不给就当不是本地（不删）。
+- **跳转那一下里加的文件追加过去**（`ui-memory.ts` `addDraftFiles` / `listenDraftFiles`，`composer.tsx`，`new.tsx`，`start.ts`）：`startDraft` 返回草稿对话的 id；跳转完成后把 `queued` 里剩下的交给 `addDraftFiles`：那段对话的输入框已经挂着就直接走 `stageFiles` 上传，还没挂着就并进暂存，挂上时一起取。
+- **依赖重装**：dev-user-image 里所有工作区的 `node_modules` 删掉后 `bun install --frozen-lockfile` 重装；之前的 44 个 zod 类型错误来自脏的 `node_modules`，重装后 typecheck 0 错误，`bun.lock` 没变。
+- **没有宽高的图片先占固定框**（`rich-previews.tsx` `reservedImageBox`）：240px 宽、4:3 的占位框，加载完知道了尺寸换成真比例；加载完仍读不出尺寸就不再限定。有宽高的图片不变。
+
+### 测试
+
+- `server/tests/channel-routes.test.ts`：`draft` 参数解析与透传；草稿对话在有消息之前不进列表、有消息后出现；不作为直达（direct）投递的对话（真实 Postgres）。
+- `app/tests/draft-channel.test.ts`：离开即删、字放回、文件清掉；发过不删；StrictMode 不算离开；普通对话不删；删除失败不抛；刷新后仍记得。
+- `app/tests/composer-attach-without-channel.test.tsx`：没有对话时选择 / 拖入 / 粘贴都交出文件和文字。
+- `app/tests/channel-new-attach.test.tsx`：新话题页选文件 → 建草稿对话 → 替换跳转，文字和附件都在、开始上传。
+- `app/tests/user-image-thumbs.test.tsx`：接口返回的图片部分带 width/height；单图占位尺寸；多图叠放顺序；5 张显示 4 张 + 「+1」；点开大图是原图。
+- `app/tests/open-at-latest.test.ts`：跟着 `freshDraft` 条件更新正则。
+- 返修：
+  - `server/tests/channel-routes.test.ts`：`?draft=1` 删除 → 204，不调普通删除、不写审计；不是空草稿 → 409；store 不支持 → 409；非成员 → 404。真实 Postgres：空草稿被条件删除（重复删也是 deleted）；说过话的（`last_message_at`）、线程里已有消息但还没记 activity 的（机器人主动说话）、普通对话都不删；非成员拒绝；清理只删超过 24 小时的空草稿，23 小时的、说过话的、线程有消息的、普通对话都不动，再跑一次结果不变。
+  - `app/tests/channel-new-attach.test.tsx`：建草稿的请求挂着时发送键不可用、回车不另建对话；建草稿期间第二次选的文件和第一批一起放上、只建一段；文件全被拒时不建草稿。
+  - `app/tests/draft-channel.test.ts`：默认删除请求是 `DELETE /api/channels/:id?draft=1`，回 409 也不抛。
+  - `app/tests/draft-channel-hidden.test.tsx`（新）：草稿对话藏起来立即卸载并回收；普通对话照旧留着；外壳接线。
+  - `app/tests/user-image-thumbs.test.tsx`、`app/tests/image-dims.test.tsx`：没有宽高的图片先是 240px、4:3 的占位框，加载完换成真比例（`image-dims` 里原来锁「没有样式」的那条跟着改）。
+- 二轮复审：
+  - `app/tests/draft-channel-hidden.test.tsx`：去新话题页立即卸载并回收、记下机器人；草稿页去设置再回来图还在、没回收；先去设置再去新话题页时才回收；时长规则；外壳接线。
+  - `app/tests/draft-channel.test.ts`：回收时记下机器人（sessionStorage），发过的不记；回收过的 404 → 机器人 id，别的 404 / 500 / 断网 → null；对话详情读失败带状态码（`ClientError` 404）；对话页 replace 跳转接线；`addDraftFiles` 挂着时交给输入框、没挂着时并进暂存。
+  - `app/tests/channel-new-attach.test.tsx`：草稿建好、跳转还在加载时再选的文件，跳过去后追加到输入框并上传（去掉 `addDraftFiles` 这条测试会失败）。
+  - `server/tests/channel-routes.test.ts`：真实 Postgres 的条件删除和清理改为显式传 `{ localConversations: true }`；新增「非本地模式」：不传时条件删除回 kept、清理返回 null，空草稿不被删。
+
+### 截图
+
+`docs/images/user-image-thumbs/`，桌面 1024×640、手机 473×1024，返修时精简为 10 张：桌面是新话题上传中、发送后、刷新后，已有对话多图、大图，没发就离开回到新话题页（字放回来了）；手机是新话题上传中、发送后，已有对话多图，没发就离开。第一版各 16 张的完整场景在 2c0051c 的历史里。用的是组件级 harness（真实的 ChannelNewRoute / ConversationView / Composer / ChatTranscript + mock 接口），不是整个应用外壳。
+
+### 局限
+
+- 草稿对话只在去新话题页时立即回收；去别处藏着超过 10 分钟也会回收。之后在本标签页回到它（返回键、刷新）会静默跳到那个机器人的新话题页，字已经放回那里；在别的标签页或设备打开它的链接仍是「对话不存在」。
+- 关掉标签页再也不回来：草稿对话最多留 24 小时（加上最多 1 小时的清理间隔），然后由定时清理软删除。只用 Intelligence 后端（库里没有本地线程表）的部署不清理，也不接受条件删除。
+- 刷新草稿对话页后，还没发的文件不保留（文件只在内存里），文字保留。
+- 第一条消息的活动记录如果写入失败，这段对话要等回复记进来才出现在列表里。
+- 多张图是现有的叠放组，不是网格；草稿对话页不显示「试试这样问」建议。
+
+### 回归返修（`45b1ef7f` → 本次）
+
+**现象**（回归，真 Chrome 5/5）：草稿对话里写了一半的字，没发就去新话题页，字不会立刻回到新话题页的输入框；4 秒后仍空，去设置再回来才出现。和截图 desktop-21 不符——那张是组件 harness 拍的，没有经过外壳的 `KeepAliveStage`。
+
+**根因**：顺序问题，不是计时太慢。去 `/channel/new` 的那次提交里，新话题页（路由层）和它的输入框先挂上，输入框 `useState` 初始化时读一次 `new:<agent>` 的草稿——此时是空的（建草稿时字已挪进草稿对话的键）。藏着的草稿对话页要等 `KeepAliveStage` 的 0ms 计时器才卸载，`holdDraftChannel` 的收尾再推迟一拍才 `releaseDraftChannel`，那时才把字挪回 `new:<agent>`。输入框之后不再读草稿存储，所以一直空着；去设置再回来重新挂载才读到。测试同学怀疑的方向（setTimeout 里挪字时输入框已读过空值）是对的。
+
+**改法**：
+- `draft-channel.ts` 新增 `reclaimDraftText(returnKey)`：把本标签页还没发、字要回到这个键的草稿对话里的字同步挪过去（`moveTextDraft`）。
+- `channel/new.tsx` 的 `BotChat` 第一个 hook 用 `useState` 的初始化调 `reclaimDraftText("new:<agent>")`：挂载时做一次，比输入框的初始化早，第一帧就有字。之后的回收照旧删对话、丢文件，那边已经没有字，什么都不覆盖。
+- 去新话题页时藏着的草稿对话一律立即回收（`draftKeptTtl`），提前挪不会挪错；去的是别的机器人的新话题页时键对不上，不动，回收时照旧回到原来的机器人。没有改输入框，也没有改 `styles.css`。
+
+**测试**：新增 `app/tests/draft-leave-new-topic.test.tsx`，按外壳的结构搭（`KeepAliveStage` + `draftKeptTtl` + 挂 `holdDraftChannel` 的草稿页 + 真正的 `/channel/new` 路由和 Composer），用 MutationObserver 记新话题页输入框第一次出现时的字和那一刻有没有回收：要求第一次出现就有字、且那时还没回收，回收后只有一份；另一条是去别的机器人的新话题页时字不挪过去、回收后回到原来的机器人。修复前第一条失败（第一次出现时是空的，之后也一直空），修复后通过。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。

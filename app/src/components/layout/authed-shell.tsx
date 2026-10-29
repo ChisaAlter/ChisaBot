@@ -1,5 +1,5 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
-import { KeepAliveStage } from "@/components/layout/keep-alive";
+import { KEPT_TTL_MS, KeepAliveStage } from "@/components/layout/keep-alive";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
 import { LeftRail } from "@/components/layout/left-rail";
@@ -7,7 +7,9 @@ import { SelfHostBanner } from "@/components/layout/self-host-banner";
 import { PanelRail } from "@/components/panels/panel-rail";
 import { SettingsSidebar } from "@/components/settings/settings-sidebar";
 import { CHANNEL_ROUTE_ID, ChannelPage } from "@/components/channels/channel-page";
+import { useCallback } from "react";
 import { useLanding } from "@/lib/agents/landing";
+import { draftKeptTtl } from "@/lib/channels/draft-channel";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
 
 /**
@@ -82,10 +84,17 @@ function ChatStage({ pathname }: { pathname: string }) {
   const landing = useLanding();
   const landingChannel =
     landing.state === "ready" && landing.target.to === "/channel/$channelId" ? landing.target.params.channelId : null;
+  // 还没发过的草稿对话（A1）：只有去新话题页时藏起来就卸载（随即回收，`draft-channel.ts`）；去设置等别的页面照常留
+  // 10 分钟，回来图和上传都在。
+  const keptTtl = useCallback(
+    (kept: ChatAddress) => draftKeptTtl(kept.channelId, pathname, KEPT_TTL_MS),
+    [pathname],
+  );
   return (
     <KeepAliveStage
       address={address}
       idleVisible={(kept) => pathname === "/" && (landing.state === "loading" || landingChannel === kept.channelId)}
+      ttlMs={keptTtl}
       renderKept={(kept, { visible, epoch }) => (
         <ChannelPage
           channelId={kept.channelId}
