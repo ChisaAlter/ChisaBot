@@ -132,6 +132,28 @@ export function nginxClearsLocalCallerForAppProxies(nginxConf: string): {
   return { ok: missingNear.length === 0, missingNear };
 }
 
+/**
+ * Audit #5: every proxied location must drop the client's own CF-Connecting-IP (nginx forwards
+ * client headers by default, and a direct non-Cloudflare caller can put anything there) and pin
+ * X-Real-IP to the realip-processed $remote_addr, which is what the app reads (gatewayClientIp).
+ */
+export function nginxPinsClientIpHeaders(nginxConf: string): {
+  ok: boolean;
+  proxies: number;
+  missingNear: string[];
+} {
+  const missingNear: string[] = [];
+  let proxies = 0;
+  for (const block of nginxConf.split(/(?=location\s)/)) {
+    if (!/^\s*location\s/.test(block) || !/^\s*proxy_pass\s/m.test(block)) continue;
+    proxies++;
+    const clears = /^\s*proxy_set_header\s+CF-Connecting-IP\s+""\s*;/m.test(block);
+    const pins = /^\s*proxy_set_header\s+X-Real-IP\s+\$remote_addr\s*;/m.test(block);
+    if (!clears || !pins)
+      missingNear.push(/^\s*location[^\n{]+/.exec(block)?.[0]?.trim() ?? "unknown location");
+  }
+  return { ok: proxies > 0 && missingNear.length === 0, proxies, missingNear };
+}
 /** iptables DOCKER-USER comment for Magpie/sidecar -> app:3001 DROP (PRD-P0-02 / v0.1.39). */
 export const SIDECAR_ISOLATE_COMMENT = "chisabot-sidecar-iso";
 

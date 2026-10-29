@@ -109,16 +109,21 @@ describe("what a Bot is, on the trail", () => {
     expect(rows[0]?.payload.visibility).toBe("private");
   });
 
-  test("opening one to the whole deployment says so", async () => {
+  test("asking to open one to the whole deployment is recorded as what was stored: private", async () => {
+    // Every Bot is private since 2026-10-14 (DESIGN.md, "所有的机器人都是私有"): the route still
+    // accepts an old client's `visibility: "public"` without an error, and stores private anyway.
+    // The trail records what was stored, not what was asked for; a row saying "public" here would
+    // claim a Bot was opened to the deployment when it never was.
     const { rows, hono } = app();
 
-    await hono.request("http://t/api/agents/bot-1", {
+    const response = await hono.request("http://t/api/agents/bot-1", {
       ...json({ visibility: "public" }),
       method: "PATCH",
     });
 
+    expect(response.status).toBe(200);
     expect(rows[0]?.eventType).toBe("bot.updated");
-    expect(rows[0]?.payload.visibility).toBe("public");
+    expect(rows[0]?.payload.visibility).toBe("private");
   });
 
   test("an edit that leaves it private says that too", async () => {

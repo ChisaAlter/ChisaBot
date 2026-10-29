@@ -104,6 +104,8 @@ import { createRoleRepository } from "./auth/guards";
 import { type ChisaBotRole, setRole } from "./auth/roles";
 import {
   createGatewayRequireUser,
+  GatewayReplayCache,
+  isReplayedGatewayIdentity,
   gatewaySecretFromEnvironment,
   resolveGatewayRequest,
 } from "./auth/gateway-identity";
@@ -3993,9 +3995,15 @@ const isProxiedStream = (data: SocketData): data is StreamData =>
 const asChannelSocket = (ws: { data: SocketData }) =>
   ws as unknown as ChannelSocket;
 
+// 审计 #5：网关身份头一次性（每个进来的 HTTP 请求在这里消费一次）。
+const gatewayReplayCache = new GatewayReplayCache();
+
 serve<SocketData>({
   port,
   async fetch(request, server) {
+    if (gatewaySecret && isReplayedGatewayIdentity(gatewaySecret, request.headers, gatewayReplayCache)) {
+      return Response.json({ ok: false, error: "请先登录。", openbotAuthRequired: true }, { status: 401 });
+    }
     const url = new URL(request.url);
     if (url.pathname === "/api/audio/transcriptions") {
       server.timeout(request, DICTATION_HTTP_IDLE_SECONDS);

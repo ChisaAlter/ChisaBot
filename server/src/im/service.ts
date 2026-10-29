@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { IM_PLATFORMS, type ImConnectionView, type ImLogEntry, type ImPlatform, type ImStatus, imPlatform } from "../../../shared/im";
 import { checkPublicUrl } from "../../../shared/net/ssrf";
+import { gatewayClientIp } from "../auth/gateway-identity";
 import type { AppVariables } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
 import { decryptSecret, encryptSecret } from "../credentials";
@@ -679,7 +680,8 @@ export function createImService(options: ImServiceOptions) {
     app.get(
       "/onebot/:id",
       async (c, next) => {
-        const ip = c.req.header("cf-connecting-ip") ?? c.req.header("x-real-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "?";
+        // 计数键 = 网关给的真实 IP（审计 #5）；不读客户端可伪造的 CF-Connecting-IP，和设备令牌限速同一个取法。
+        const ip = gatewayClientIp(c.req.raw.headers) ?? "?";
         const failure = reverseFailures.get(ip);
         if (failure && failure.count >= 20 && failure.until > Date.now()) return c.json({ error: "失败次数过多" }, 429);
         const header = c.req.header("authorization") ?? "";

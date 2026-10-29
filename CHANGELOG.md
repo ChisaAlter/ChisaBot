@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.1.107 — 2026-10-29
+
+这一版合并 2 个 PR：手机尺寸左栏抽屉改成 Hark 手机端的一层面板（#378）、链接卡照 Hark 改版 + 数据侧修正（GitHub 等站点的预览图、标题，#380）。只升级服务器版本号（根、`app`、`server` 为 `0.1.107`），PC / Android 外壳未变；没有表结构变化。
+
+- 链接卡照 Hark 改版：正文里单独一行的链接和 json-render 的 `Link` 合并成一个组件（`app/src/components/rich-previews/link-card.tsx`）。有预览图时是固定宽约 280px 的竖卡：上半 og:image 大图（cover，上方两角圆角），下面两行粗体标题和一行浅色「站点 · 补充信息」；没有图时退成同宽的紧凑横卡。半透明底 + 内侧高光边，不用 backdrop-filter；骨架和卡片同尺寸，图片懒加载并预留宽高。json-render 的 `Link` 不再只用模型写的字段：缺的预览图、标题、站点名用 `/api/link-preview` 补全，模型给了的优先，所以 GitHub 等链接现在会显示 og:image。样式在组件自己的 `link-card.css`（只有 `lc-` 开头的新类），styles.css 未改。未升级版本号。
+- 链接卡数据侧按审查修正：模型写的标题如果只是站点名 / 域名，或被 og:title 包含（如「GitHub」「ChisaBot」），改用 og:title；每个链接给出预览图、站点名和补充信息，底下一行是「站点 · 补充信息」（如「GitHub · v0.1.13」）。标题和站点行不再固定高度（只有骨架预留），一行标题时下面不再空一大块。视觉细节留给前端的叠放卡改版。
+
+- 手机尺寸左栏抽屉改成 Hark 手机端的一层面板：全高、贴左、宽 `min(85vw, 320px)`、只有右侧圆角，去掉外层半透明白板和里面那张卡片；顶部一行是搜索 + 新建 + 关闭（和顶栏按钮同一条中线，PC 小窗放到窗口按钮 / 拖动条下面），中间列表，账号在同一块面板最下面、上面一条分隔线、下面让开安全区；右侧遮罩改成只压暗不模糊（点它关抽屉）；开关只动 transform、200ms，减少动态效果时不做动画。玻璃只有面板自己的 `.glass` 一层（打开时同屏模糊层 3 → 1），性能模式 / 减少透明度下面板为不透明底色。新增 `app/tests/mobile-drawer.test.tsx`；`render-budget.test.ts` 的模糊名单删掉两条旧抽屉规则。未升级版本号。
+
+## 0.1.106 — 2026-10-29
+
+这一版合并 1 个 PR：机器人聊天页对话记录增量同步 + 卡片共享时钟（性能清单第 5 项，#370）。只升级服务器版本号（根、`app`、`server` 为 `0.1.106`），PC / Android 外壳未变；没有表结构变化。
+
+### 对话记录增量同步 + 卡片共享时钟（#370）
+
+这一版把机器人聊天页同步服务器对话记录改成增量的（性能清单第 5 项）：`GET /api/copilotkit/threads/:id/messages` 新增可选的 `since` / `cursor` 参数，没变化只回 `unchanged`、变了只回尾部，界面实际读对话记录的两条路径——频道聊天页恢复 / 刷新历史（`readThreadMessages`：挂载、重试、Bot 在别处说话后的拉取、发送看门狗、断线补齐、转录缓存）和每轮结束后的对话顺序核对（`useConversationSync`）——都改成带 `since` / `cursor` 增量读：600 条对话没变化时一次读从约 530 KB 降到 83 B、新增一条约 3 KB，没变化时直接复用上次结果、不触发 `setMessages`；编辑 / 删除 / 读失败 / 旧服务器照旧整份。`useThreadInbox` 的服务器轮询也改成增量（界面目前未启用该轮询）。不带参数的旧客户端响应不变。干活 / 后台任务 / 本机代理卡片的每秒计时器合并成一个共享时钟（无订阅者时停），其测试在共享进程里先还原真定时器和时钟。没有表结构变化，没有升版本号。
+
+## 0.1.105 — 2026-10-29
+
+这一版合并 4 个 PR：修 `test:app` 测试互相干扰与过时测试（#368）、CI 补 Biome 新增问题检查 / 完整 `test:app` / pc/ 安装构建（#366）、nginx 只信任 Cloudflare 给的真实 IP + 网关身份头防重放（审计 #5，#372）、Service Worker 关掉 navigation preload 修登录 `state_mismatch`（#373）。只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变；没有表结构变化。#372 改了 `deploy/public/nginx.conf`，网关 nginx 配置随这次部署一起更新。
+
+### 测试隔离（#368）
+
+修 `bun run test:app` 的测试互相干扰和几个过时的测试（审查清单第 3 项第二部分）：电脑控制在换页面后重新挂上 focus/online 监听；日程测试不再用进程级的 `mock.module` 替换 `@/lib/client`；更新 5 个与现行行为不符的 server 测试。server 补声明测试直接用到的 `@copilotkit/core`；CI 里 chisabot-node 打包失败改为让构建失败。schedule-fired 的 `Link` 替身有路由时交给真 `Link`、没有路由才按 params 填路径参数，移出隔离名单；avatar-picker-shape 拆 happy-dom 前先等 React 排队的工作跑完，不再报 Unhandled error，`test:app` 退出码恢复 0。不改版本号。
+
+### CI 门禁（#366）
+
+- CI 门禁加固：`scripts/biome-new-issues.ts` 在 Biome 自身出错（退出码非 0 且没有可解析的 JSON，例如 biome.json 写坏）时一律失败；改用 `process.exitCode`、正常返回，确保 `biome-base-*` 临时目录被清理；用法注释与 workflow 实际传的基线一致；新增 `scripts/biome-new-issues.test.ts`。修默认 `error` 输出自己调自己（有新增问题或 Biome 出错、又没传回调时——CI 正是这样调用——脚本卡死），找不到 Biome / git 可执行文件改为退出 2。
+
+CI 补三道检查（审查清单第 3 项）：Biome 只拦改动文件里新增的诊断（全仓存量不拦，`scripts/biome-new-issues.ts`）；完整跑一遍 `bun run test:app`；pc/ 作为独立 npm 项目单独安装并打出 chisabot-node 无头包、校验 `--version`。不改版本号。
+
+### 安全：nginx 真实 IP + 网关身份头防重放（审计 #5，#372）
+
+- 安全（审计 #5）：公网 nginx 只信任 Cloudflare 官方网段给的 `CF-Connecting-IP`（`real_ip_header` + `set_real_ip_from`），`limit_req`、日志和 `X-ChisaBot-Client` / `X-Forwarded-For` 改按真实客户端 IP；网关身份头 `X-ChisaBot-Identity` 加一次性随机数 `j`，应用在 ±2 分钟有效期内只认一次，重放返回 401（去重缓存 TTL = 有效期、上限 10 万条）；nginx 每个转发都清掉客户端自带的 `CF-Connecting-IP`、把 `X-Real-IP` 设为真实 IP，IM OneBot 失败限速和设备令牌限速共用同一个取 IP 函数（`gatewayClientIp`），伪造头绕不过限速。未升级版本号。
+
+### 修复：登录 state_mismatch（#373）
+
+- 修复：开着 Service Worker 时 Chrome 登录最后落到 `/api/auth/error?error=state_mismatch`（会话其实已写入）。sw.js 不再开 navigation preload，激活时显式关掉（`SW_VERSION` 3）；`/api`、`/auth` 下的导航照旧不拦、只由浏览器发一次。未升级版本号。
+  - 一次性过渡窗口：部署后，没刷新过的旧页面直接登录，或者刷新后在新 Service Worker 接管之前就登录，这一次仍由旧的 v2 Service Worker（开着 navigation preload）处理，可能还会出现一次 `state_mismatch`，再登录一次就好。新 SW 接管时间按代码算：页面 `load` 后用 `requestIdleCallback` 注册（超时 5 秒；浏览器不支持时固定 2 秒），再加上下载、安装 sw.js 的时间，`skipWaiting` + `clients.claim` 后立即生效，所以大约是刷新后 5 秒以内。之后不会再出现。
+
 ## 0.1.104 — 2026-10-29
 
 这一版合并 5 个 PR：修复干净安装下缺声明的依赖（#365）、出口过滤代理按 Bot 独立鉴权（审计 H1 / L1，#364）、界面渲染性能预算（#363）、安装版 `/api` 代理不再转发失效的 `Content-Encoding`（#367）、Hark 改版第 1 步令牌层（#369）。只升级服务器版本号（根、`app`、`server` 为 `0.1.104`），PC / Android 外壳未变；没有表结构变化。
