@@ -178,6 +178,10 @@ function postWithProgress(
         onProgress(Math.min(1, event.loaded / event.total));
       }
     };
+    // The browser's own word that the body is out, for when no final progress event says so.
+    xhr.upload.onload = () => {
+      bodySent = true;
+    };
     xhr.onload = () =>
       resolve({
         ok: xhr.status >= 200 && xhr.status < 300,
@@ -335,7 +339,7 @@ export function attachmentsConfigFor(
    * itself and never tells us which one this call belongs to, so there is no id here to be asked
    * about. Reporting the row and reconciling afterwards needs no such correlation.
    */
-  onUploaded: (attachmentId: string) => void,
+  onUploaded: (attachmentId: string, file: File) => void,
   onProgress?: (file: File, fraction: number) => void,
   signalFor?: (file: File) => AbortSignal | undefined,
 ): AttachmentsConfig {
@@ -356,7 +360,7 @@ export function attachmentsConfigFor(
        * down would put `DELETE /api/attachments/undefined` on the wire.
        */
       if (rowId !== undefined) {
-        onUploaded(rowId);
+        onUploaded(rowId, file);
       }
       return uploaded;
     },

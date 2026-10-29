@@ -8,9 +8,8 @@ import { useSyncExternalStore } from "react";
  * cost the composer can least afford. Only the two small readers — a tile's percentage and the
  * "上传中 63%" hint next to Send — subscribe, and they are told only when a whole percent changes.
  *
- * Keyed by file name + size, because the SDK mints the placeholder id itself and never tells
- * `onUpload` which placeholder a call belongs to; the placeholder does carry the file's name and
- * size, so both sides can compute the same key.
+ * Keyed by the attachment's local id (`upload-identity.ts`); `uploadKey` (file name + size) is only
+ * the fallback for a card that was never matched to an upload.
  */
 export type UploadProgressStore = {
   set(key: string, percent: number): void;

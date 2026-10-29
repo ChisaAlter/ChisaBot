@@ -17,8 +17,12 @@ export class FetchBackedXhr {
   status = 0;
   responseText = "";
   withCredentials = false;
-  upload: { onprogress: ((event: ProgressLike) => void) | null } = {
+  upload: {
+    onprogress: ((event: ProgressLike) => void) | null;
+    onload: (() => void) | null;
+  } = {
     onprogress: null,
+    onload: null,
   };
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
@@ -56,6 +60,7 @@ export class FetchBackedXhr {
           loaded: total,
           total,
         });
+        this.upload.onload?.();
         this.status = response.status;
         this.responseText = await response.text().catch(() => "");
         if (!this.isAborted) this.onload?.();

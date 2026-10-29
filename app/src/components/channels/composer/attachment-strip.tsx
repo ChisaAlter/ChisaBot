@@ -57,6 +57,8 @@ export type StagedImage = {
   alt?: string;
   size?: number;
   loading: boolean;
+  /** The key its upload's progress is recorded under (the attachment's local id). */
+  progressKey?: string;
 };
 
 /**
@@ -80,6 +82,8 @@ export type StagedFile = {
    * truncated — warned on the tile, never refused.
    */
   mayTruncate?: boolean;
+  /** The key its upload's progress is recorded under (the attachment's local id). */
+  progressKey?: string;
   /**
    * The text itself, for a long paste folded into this card (see `LONG_PASTE_CHARS`). Present only
    * for those: the card's name becomes a button that opens the whole text.
@@ -150,7 +154,7 @@ export function AttachmentStrip({
                 />
                 <UploadPercent
                   className="absolute inset-x-1 bottom-1 truncate rounded bg-background/80 px-1 text-center text-[11px] text-muted-foreground tabular-nums"
-                  progressKey={uploadKey(image.alt, image.size)}
+                  progressKey={image.progressKey ?? uploadKey(image.alt, image.size)}
                   store={progress}
                 />
               </div>
@@ -194,7 +198,7 @@ export function AttachmentStrip({
               {file.loading ? (
                 <UploadPercent
                   className="text-muted-foreground text-xs tabular-nums"
-                  progressKey={uploadKey(file.name, file.size)}
+                  progressKey={file.progressKey ?? uploadKey(file.name, file.size)}
                   store={progress}
                 />
               ) : file.size === undefined ? null : (

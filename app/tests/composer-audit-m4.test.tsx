@@ -31,8 +31,8 @@ import {
   Composer,
   pasteTooLongReason,
 } from "@/components/channels/composer/composer";
-import { MAX_EXTRACTED_CHARACTERS } from "@/lib/channels/attachments";
 import { screenPickedFiles } from "@/components/channels/composer/picked-files";
+import { MAX_EXTRACTED_CHARACTERS } from "@/lib/channels/attachments";
 import { FetchBackedXhr, installFetchBackedXhr } from "./fetch-backed-xhr";
 import { settleReactWork } from "./settle-react-work";
 
@@ -50,7 +50,7 @@ const originalFetch = global.fetch;
 let originalMatchMedia: typeof window.matchMedia;
 let uploads: { name: string; text?: string }[];
 /** What the next upload answers: a status, or `"offline"` for a connection that never opens. */
-let answers: (number | "offline" | "hang")[];
+let answers: (number | "offline" | "hang" | Promise<number>)[];
 
 beforeEach(() => {
   uploads = [];
@@ -60,7 +60,7 @@ beforeEach(() => {
   global.fetch = (async (_path: string, init: RequestInit) => {
     const file = (init.body as FormData).get("file") as File;
     uploads.push({ name: file.name, text: await file.text() });
-    const answer = answers.shift() ?? 201;
+    const answer = await (answers.shift() ?? 201);
     if (answer === "offline") throw new TypeError("Failed to fetch");
     if (answer === "hang") return new Promise<Response>(() => {});
     if (answer !== 201) {
@@ -451,6 +451,73 @@ test("M4-2: removing a chip mid-upload aborts its request and leaves no failed t
   await settleReactWork();
   expect(view.queryByLabelText("移除 notes.txt")).toBeNull();
   expect(view.queryByLabelText("重试上传 notes.txt")).toBeNull();
+});
+
+/** Two files with the same name and size: the case a name + size key could not tell apart. */
+function pickTwins(container: HTMLElement) {
+  pick(container, [
+    new File(["hello"], "notes.txt", { type: "text/plain" }),
+    new File(["world"], "notes.txt", { type: "text/plain" }),
+  ]);
+}
+
+function gate(): [Promise<number>, (status: number) => void] {
+  let open: (status: number) => void = () => {};
+  const promise = new Promise<number>((resolve) => {
+    open = resolve;
+  });
+  return [promise, open];
+}
+
+test("M4-2: same name and size: removing the queued second file cancels only it, and the first's failure still shows", async () => {
+  const [first, failFirst] = gate();
+  answers = [first];
+  const before = FetchBackedXhr.aborted;
+  const view = render(<Composer channelId="c1" compact onSubmit={() => {}} />);
+  pickTwins(view.container);
+  const chips = await waitFor(() => {
+    const found = view.getAllByLabelText("移除 notes.txt");
+    expect(found.length).toBe(2);
+    return found;
+  });
+  await waitFor(() => expect(uploads.length).toBe(1));
+  await act(async () => {
+    fireEvent.click(chips[1] as HTMLElement);
+  });
+  // The first upload was not the one cancelled: it fails on its own and says so, with a retry.
+  await act(async () => {
+    failFirst(500);
+  });
+  await waitFor(() =>
+    expect(view.queryByLabelText("重试上传 notes.txt")).not.toBeNull(),
+  );
+  expect(view.getByText(UPLOAD_FAILED_MESSAGE)).toBeTruthy();
+  expect(FetchBackedXhr.aborted).toBe(before);
+  await settleReactWork();
+  // And the removed one never went up at all.
+  expect(uploads.map((u) => u.text)).toEqual(["hello"]);
+});
+
+test("M4-2: same name and size: removing the first mid-upload cancels only the first, and the second's failure still shows", async () => {
+  answers = ["hang", 500];
+  const before = FetchBackedXhr.aborted;
+  const view = render(<Composer channelId="c1" compact onSubmit={() => {}} />);
+  pickTwins(view.container);
+  const chips = await waitFor(() => {
+    const found = view.getAllByLabelText("移除 notes.txt");
+    expect(found.length).toBe(2);
+    return found;
+  });
+  await waitFor(() => expect(uploads.length).toBe(1));
+  await act(async () => {
+    fireEvent.click(chips[0] as HTMLElement);
+  });
+  await waitFor(() => expect(FetchBackedXhr.aborted).toBe(before + 1));
+  await waitFor(() =>
+    expect(view.queryByLabelText("重试上传 notes.txt")).not.toBeNull(),
+  );
+  expect(uploads.map((u) => u.text)).toEqual(["hello", "world"]);
+  expect(FetchBackedXhr.aborted).toBe(before + 1);
 });
 
 void FetchBackedXhr;

@@ -63,9 +63,9 @@ import {
 } from "./attachments";
 import {
   createUploadProgressStore,
-  uploadKey,
   useOverallUploadPercent,
 } from "./upload-progress";
+import { createUploadIdentity } from "./upload-identity";
 import { useCoarsePointer } from "@/lib/use-coarse-pointer";
 import { DictationButton, DictationSurface } from "./dictation-controls";
 import { appendDictation } from "./dictation-draft";
@@ -539,14 +539,22 @@ export function Composer({
   /** How far each upload has got — outside React state, see `upload-progress.ts`. */
   const [progressStore] = useState(createUploadProgressStore);
   /**
-   * Each in-flight upload's AbortController, keyed like the progress store, so taking a chip off
-   * mid-upload cancels its request instead of letting a megabyte finish going up for nothing.
+   * Which upload is which: every per-upload record below is keyed by the attachment's own local id,
+   * not its file name + size — see `upload-identity.ts`.
+   */
+  const [uploadIdentity] = useState(() => createUploadIdentity(newId));
+  /**
+   * Each in-flight upload's AbortController, keyed by local id like the progress store, so taking a
+   * chip off mid-upload cancels ITS request (and only its) instead of letting a megabyte finish
+   * going up for nothing. An entry leaves when its upload lands, fails or is cancelled.
    */
   const uploadAborts = useRef(new Map<string, AbortController>());
   /** Uploads cancelled on purpose: their rejection is the person's own doing, not news. */
   const abortedUploads = useRef(new Set<string>());
   /** The full text of each long paste that became a card, for its preview; see `handleRawPaste`. */
   const pastedTexts = useRef(new Map<string, string>());
+  /** A pasted-text file's text until `stageFiles` gives it a local id to be filed under. */
+  const pastedSources = useRef(new WeakMap<File, string>());
   /** Uploads that failed on the way to the server, kept as tiles with a retry (audit M4-3). */
   const [failedUploads, setFailedUploads] = useState<
     (Omit<FailedUpload, "name"> & { file: File })[]
@@ -563,9 +571,11 @@ export function Composer({
    * would never arrive. Every upload refusal in the app comes through here.
    */
   const recordRejection = useCallback((failure: UploadFailure) => {
-    const failedKey = uploadKey(failure.file.name, failure.file.size);
+    const failedKey = uploadIdentity.keyOfFile(failure.file);
+    uploadIdentity.forget(failure.file);
     progressStore.clear(failedKey);
     uploadAborts.current.delete(failedKey);
+    pastedTexts.current.delete(failedKey);
     if (abortedUploads.current.delete(failedKey)) return;
     /*
      * A FAILED UPLOAD KEEPS ITS TILE (audit M4-3). The SDK has already taken the placeholder off the
@@ -629,9 +639,17 @@ export function Composer({
    */
   const uploadedRows = useRef<Set<string>>(new Set());
 
-  const recordUpload = useCallback((attachmentId: string) => {
-    uploadedRows.current.add(attachmentId);
-  }, []);
+  const recordUpload = useCallback(
+    (attachmentId: string, file: File) => {
+      uploadedRows.current.add(attachmentId);
+      // Landed: nothing left to cancel or to count up.
+      const key = uploadIdentity.keyOfFile(file);
+      uploadAborts.current.delete(key);
+      abortedUploads.current.delete(key);
+      progressStore.clear(key);
+    },
+    [uploadIdentity, progressStore],
+  );
 
   /**
    * These rows belong to a message now, not to this composer, so it must stop offering to delete
@@ -648,11 +666,9 @@ export function Composer({
       if (rowId !== undefined) {
         uploadedRows.current.delete(rowId);
       }
-      pastedTexts.current.delete(
-        uploadKey(attachment.filename, attachment.size),
-      );
+      pastedTexts.current.delete(uploadIdentity.keyOf(attachment));
     }
-  }, []);
+  }, [uploadIdentity]);
 
   const attachmentsConfig = useMemo(
     () =>
@@ -663,20 +679,25 @@ export function Composer({
             recordRejection,
             recordUpload,
             (file, fraction) =>
-              progressStore.set(
-                uploadKey(file.name, file.size),
-                fraction * 100,
-              ),
+              progressStore.set(uploadIdentity.keyOfFile(file), fraction * 100),
             (file) => {
-              const key = uploadKey(file.name, file.size);
+              const key = uploadIdentity.keyOfFile(file);
               const controller = new AbortController();
-              uploadAborts.current.set(key, controller);
-              abortedUploads.current.delete(key);
+              // Its chip was taken off while it still waited in the SDK's queue: never send it.
+              if (abortedUploads.current.has(key)) controller.abort();
+              else uploadAborts.current.set(key, controller);
               return controller.signal;
             },
           )
         : undefined,
-    [channelId, uploadGroup, recordRejection, recordUpload, progressStore],
+    [
+      channelId,
+      uploadGroup,
+      recordRejection,
+      recordUpload,
+      progressStore,
+      uploadIdentity,
+    ],
   );
 
   /**
@@ -723,6 +744,8 @@ export function Composer({
     handleDragLeave,
     removeAttachment,
   } = useAttachments({ config: attachmentsConfig });
+  // Every render, before anything reads a card's key: match new placeholders to their uploads.
+  uploadIdentity.bind(attachments);
 
   /**
    * THERE IS A CHANNEL TO UPLOAD TO **AND** THIS CONVERSATION CAN STILL TAKE A MESSAGE.
@@ -802,19 +825,20 @@ export function Composer({
     (id: string) => {
       const attachment = attachments.find((each) => each.id === id);
       if (attachment) {
-        const key = uploadKey(attachment.filename, attachment.size);
+        const key = uploadIdentity.keyOf(attachment);
         pastedTexts.current.delete(key);
         // Still going up: cancel the request too, so the bytes stop and no row is left behind.
-        const controller = uploadAborts.current.get(key);
-        if (attachment.status === "uploading" && controller) {
+        // Still waiting its turn (the SDK uploads one at a time): mark it, so it is never sent.
+        if (attachment.status === "uploading") {
+          const controller = uploadAborts.current.get(key);
           uploadAborts.current.delete(key);
           abortedUploads.current.add(key);
-          controller.abort();
+          controller?.abort();
         }
       }
       removeAttachment(id);
     },
-    [attachments, removeAttachment],
+    [attachments, removeAttachment, uploadIdentity],
   );
 
   /**
@@ -948,18 +972,24 @@ export function Composer({
       // a number that already includes these.
       stagedCount.current += screened.accepted.length;
       staging.current += screened.accepted.length;
-      for (const file of screened.accepted) {
-        progressStore.clear(uploadKey(file.name, file.size));
-      }
+      // Each file gets its own local id here, before the SDK draws its placeholder (see
+      // `upload-identity.ts`); a long paste's preview text is filed under that id.
+      const outgoing = screened.accepted.map((file) => {
+        const sent = withMediaTypeOnly(file);
+        const id = uploadIdentity.assign(sent);
+        const pasted = pastedSources.current.get(file);
+        if (pasted !== undefined) pastedTexts.current.set(id, pasted);
+        return sent;
+      });
       // 离开对话时按文件名 + 大小找回还在输入框上的那几个文件（§88）。
       if (draftKey) pickedFiles.current.push(...screened.accepted);
       try {
-        await processFiles(screened.accepted.map(withMediaTypeOnly));
+        await processFiles(outgoing);
       } finally {
         staging.current -= screened.accepted.length;
       }
     },
-    [disabled, processFiles, queuedAttachmentCount, draftKey, progressStore],
+    [disabled, processFiles, queuedAttachmentCount, draftKey, uploadIdentity],
   );
 
   /** Put a failed upload back through the same door it came in by — screening, cap and all. */
@@ -997,9 +1027,13 @@ export function Composer({
   /**
    * LONG PASTES FOLD INTO A CARD (audit M4-11, like Hark). A paste over `LONG_PASTE_CHARS` becomes a
    * text attachment instead of thousands of characters in the editor: it still goes with the message
-   * (the model reads text attachments), and the card opens to show the whole text. Only when this
-   * composer can attach and the text fits the text-attachment ceiling — otherwise it is pasted
-   * inline as before, rather than refused and lost.
+   * (the model reads text attachments), and the card opens to show the whole text.
+   *
+   * Three outcomes, by length:
+   * - up to `LONG_PASTE_CHARS`, or when this composer cannot attach: typed into the box as usual;
+   * - up to `MAX_EXTRACTED_CHARACTERS` (all of it is what the model reads): a card;
+   * - longer: refused out loud with the length, never turned into a card the model would read only
+   *   part of. (A paste that fits the character limit but not `MAX_FILE_BYTES` stays inline.)
    */
   const pasteCount = useRef(0);
   const handleRawPaste = useCallback(
@@ -1028,7 +1062,7 @@ export function Composer({
       event.preventDefault();
       pasteCount.current += 1;
       const file = pastedTextFile(pasted, pasteCount.current);
-      pastedTexts.current.set(uploadKey(file.name, file.size), pasted);
+      pastedSources.current.set(file, pasted);
       void stageFiles([file]);
     },
     [canAttach, stageFiles],
@@ -1354,8 +1388,9 @@ export function Composer({
           alt: attachment.filename,
           size: attachment.size,
           loading: attachment.status === "uploading",
+          progressKey: uploadIdentity.keyOf(attachment),
         })),
-    [staged],
+    [staged, uploadIdentity],
   );
 
   /**
@@ -1382,9 +1417,8 @@ export function Composer({
           name: attachment.filename ?? "附件",
           size: attachment.size,
           loading: attachment.status === "uploading",
-          preview: pastedTexts.current.get(
-            uploadKey(attachment.filename, attachment.size),
-          ),
+          preview: pastedTexts.current.get(uploadIdentity.keyOf(attachment)),
+          progressKey: uploadIdentity.keyOf(attachment),
           /*
            * Warned, never refused. The server accepts the whole file and the
            * model reads its first MAX_EXTRACTED_CHARACTERS; mayBeTruncatedForModel
@@ -1406,7 +1440,7 @@ export function Composer({
             attachment.size !== undefined &&
             mayBeTruncatedForModel(attachment.size),
         })),
-    [staged],
+    [staged, uploadIdentity],
   );
 
   const isBusy = pending || isSubmitting;
@@ -1813,10 +1847,10 @@ export function Composer({
       draft.attachments
         .filter((attachment) => attachment.status === "uploading")
         .map((attachment) => ({
-          key: uploadKey(attachment.filename, attachment.size),
+          key: uploadIdentity.keyOf(attachment),
           size: attachment.size ?? 0,
         })),
-    [draft.attachments],
+    [draft.attachments, uploadIdentity],
   );
   const uploadHint =
     uploadingNow.length > 0 ? (
