@@ -3,7 +3,8 @@
  * - 固定宽约 280px；有图时上半部预览图（40:21 预留，上方两个角圆角），下面两行粗体标题 + 一行浅色「站点 · 补充信息」。
  * - 没有图：同宽的紧凑横卡。
  * - 半透明底 + 内侧高光边（inset box-shadow），不用 backdrop-filter。
- * - 骨架（.lc-skel）和有图的卡同一套尺寸：媒体框按比例预留、标题固定两行高，内容到了不跳。
+ * - 骨架（.lc-skel）和有图的卡图区同一尺寸（同一个预留比例），图到了不跳；
+ *   文字区高度跟着内容走（一行标题就一行高），只有骨架给标题预留两行、站点行预留一行。
  */
 .lc-card {
   --lc-radius: 20px;
@@ -127,10 +128,6 @@ a.lc-card[href]:hover {
   color: var(--ink-1);
   word-break: break-word;
 }
-/* 有图的卡标题固定两行高：骨架和卡片一样高。 */
-.lc-card[data-layout="image"] .lc-title {
-  height: 40px;
-}
 .lc-card[data-layout="compact"] .lc-title {
   -webkit-line-clamp: 1;
   font-size: 14.5px;
@@ -140,7 +137,6 @@ a.lc-card[href]:hover {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 18px;
   font-size: 13px;
   line-height: 18px;
   color: var(--ink-3);
@@ -168,10 +164,14 @@ a.lc-card[href]:hover {
   cursor: default;
 }
 .lc-skel .lc-title {
+  height: 40px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 8px;
+}
+.lc-skel .lc-meta {
+  height: 18px;
 }
 .lc-skel-bar {
   display: block;
