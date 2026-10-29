@@ -86,7 +86,13 @@ export function escapeUnknownTags(markdown: string): string {
     const m = FENCE_RE.exec(line);
     if (fence) {
       out.push(line);
-      if (m && m[1]![0] === fence[0] && m[1]!.length >= fence.length && line.trim() === m[1]) fence = null;
+      if (
+        m &&
+        m[1]![0] === fence[0] &&
+        m[1]!.length >= fence.length &&
+        line.trim() === m[1]
+      )
+        fence = null;
       continue;
     }
     if (m) {
