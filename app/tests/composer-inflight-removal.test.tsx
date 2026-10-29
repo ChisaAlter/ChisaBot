@@ -9,7 +9,7 @@ import {
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { Composer } from "@/components/channels/composer/composer";
-import { installFetchBackedXhr } from "./fetch-backed-xhr";
+import { FetchBackedXhr, installFetchBackedXhr } from "./fetch-backed-xhr";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -53,6 +53,7 @@ const originalFetch = global.fetch;
 
 afterEach(() => {
   global.fetch = originalFetch;
+  FetchBackedXhr.bodySentBeforeAnswer = false;
 });
 
 /** Every `DELETE` this composer sent, by path. */
@@ -70,6 +71,10 @@ function releaseUploads() {
 }
 
 beforeEach(() => {
+  // The bytes are all out and the server is still answering: too late to abort the request (see
+  // `postWithProgress`), so the row lands and the reconciler is what gives it back. A removal
+  // while the bytes are still going up aborts instead; composer-audit-m4.test.tsx covers that.
+  FetchBackedXhr.bodySentBeforeAnswer = true;
   deletes = [];
   held = [];
   global.fetch = (async (path: string, init: RequestInit) => {

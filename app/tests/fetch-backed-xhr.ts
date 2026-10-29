@@ -24,6 +24,11 @@ export class FetchBackedXhr {
   onerror: (() => void) | null = null;
   ontimeout: (() => void) | null = null;
   onabort: (() => void) | null = null;
+  /** How many requests were aborted, across every instance. */
+  static aborted = 0;
+  /** Report the whole body as sent before the server answers (a slow server, not a slow link). */
+  static bodySentBeforeAnswer = false;
+  private isAborted = false;
   private method = "GET";
   private url = "";
 
@@ -36,7 +41,11 @@ export class FetchBackedXhr {
     const total = 100;
     void (async () => {
       try {
-        this.upload.onprogress?.({ lengthComputable: true, loaded: 50, total });
+        this.upload.onprogress?.({
+          lengthComputable: true,
+          loaded: FetchBackedXhr.bodySentBeforeAnswer ? total : 50,
+          total,
+        });
         const response = await globalThis.fetch(this.url, {
           method: this.method,
           credentials: this.withCredentials ? "include" : "same-origin",
@@ -49,14 +58,16 @@ export class FetchBackedXhr {
         });
         this.status = response.status;
         this.responseText = await response.text().catch(() => "");
-        this.onload?.();
+        if (!this.isAborted) this.onload?.();
       } catch {
-        this.onerror?.();
+        if (!this.isAborted) this.onerror?.();
       }
     })();
   }
 
   abort() {
+    this.isAborted = true;
+    FetchBackedXhr.aborted += 1;
     this.onabort?.();
   }
 }

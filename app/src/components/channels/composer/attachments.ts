@@ -50,6 +50,8 @@ export function uploadToChannel(
   channelId: string,
   uploadGroup: string,
   onProgress?: (file: File, fraction: number) => void,
+  /** A signal per upload; aborting it cancels the request (a chip removed mid-upload). */
+  signalFor?: (file: File) => AbortSignal | undefined,
 ): (file: File) => Promise<AttachmentUploadResult> {
   return async (file: File): Promise<AttachmentUploadResult> => {
     const formData = new FormData();
@@ -72,6 +74,7 @@ export function uploadToChannel(
       `/api/channels/${channelId}/attachments`,
       formData,
       (fraction) => onProgress?.(file, fraction),
+      signalFor?.(file),
     );
 
     /*
@@ -104,7 +107,11 @@ export function uploadToChannel(
       type: "url",
       value: attachmentUrl(body.id),
       mimeType: body.mimeType,
-      metadata: { attachmentId: body.id, filename: body.name, ...readImageDims(body.width, body.height) },
+      metadata: {
+        attachmentId: body.id,
+        filename: body.name,
+        ...readImageDims(body.width, body.height),
+      },
     };
   };
 }
@@ -115,6 +122,17 @@ export const UPLOAD_FAILED_MESSAGE = "上传失败，请重试。";
 export const UPLOAD_OFFLINE_MESSAGE =
   "网络已断开，没能上传。联网后点「重试」。";
 export const UPLOAD_NETWORK_MESSAGE = "网络出错，没能上传。请点「重试」。";
+
+/** Said when the upload was cancelled on purpose; the composer drops it rather than showing it. */
+export const UPLOAD_ABORTED_MESSAGE = "已取消上传。";
+
+/** An upload cancelled through its AbortSignal, told apart from a dropped connection. */
+export class UploadAbortedError extends Error {
+  override name = "AbortError";
+  constructor() {
+    super(UPLOAD_ABORTED_MESSAGE);
+  }
+}
 
 type UploadResponse = { ok: boolean; status: number; text: string };
 
@@ -137,13 +155,26 @@ function postWithProgress(
   url: string,
   body: FormData,
   onProgress: (fraction: number) => void,
+  signal?: AbortSignal,
 ): Promise<UploadResponse> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new UploadAbortedError());
+      return;
+    }
     const xhr = new XMLHttpRequest();
     xhr.open("POST", url);
     xhr.withCredentials = true;
+    /*
+     * ONLY WHILE THE BYTES ARE STILL GOING UP. Once the whole body is out the server may already be
+     * writing the row, and an abort then would leave a row this composer never hears about (the
+     * sweeper's, 24 hours later). So past that point the request is let land, and the composer's
+     * reconciler gives the row back as it always has.
+     */
+    let bodySent = false;
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) {
+        if (event.loaded >= event.total) bodySent = true;
         onProgress(Math.min(1, event.loaded / event.total));
       }
     };
@@ -163,7 +194,15 @@ function postWithProgress(
       );
     xhr.onerror = networkFailure;
     xhr.ontimeout = networkFailure;
-    xhr.onabort = networkFailure;
+    xhr.onabort = () =>
+      signal?.aborted ? reject(new UploadAbortedError()) : networkFailure();
+    signal?.addEventListener(
+      "abort",
+      () => {
+        if (!bodySent) xhr.abort();
+      },
+      { once: true },
+    );
     xhr.send(body);
   });
 }
@@ -298,8 +337,9 @@ export function attachmentsConfigFor(
    */
   onUploaded: (attachmentId: string) => void,
   onProgress?: (file: File, fraction: number) => void,
+  signalFor?: (file: File) => AbortSignal | undefined,
 ): AttachmentsConfig {
-  const upload = uploadToChannel(channelId, uploadGroup, onProgress);
+  const upload = uploadToChannel(channelId, uploadGroup, onProgress, signalFor);
   return {
     enabled: true,
     accept: "*/*",

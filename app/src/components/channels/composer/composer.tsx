@@ -82,7 +82,10 @@ import {
   pastedTextFile,
   screenPickedFiles,
 } from "./picked-files";
-import { MAX_FILE_BYTES } from "@/lib/channels/attachments";
+import {
+  MAX_EXTRACTED_CHARACTERS,
+  MAX_FILE_BYTES,
+} from "@/lib/channels/attachments";
 import { type RejectedFile, RejectedFiles } from "./rejected-files";
 import { PLACEHOLDER_COMMANDS } from "./sources";
 import { type AgentOption, buildTriggers } from "./triggers";
@@ -318,8 +321,7 @@ function tooManyStagedReason(count: number): string {
  * would send somebody hunting for a rule they never hit.
  */
 const DROPPED_REASON: Record<DroppedAttachmentCause, string> = {
-  "merged-over-cap":
-    `合并排队消息时去掉了：一条消息最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件。`,
+  "merged-over-cap": `合并排队消息时去掉了：一条消息最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件。`,
   "queued-message-removed": "随排队消息一起去掉了。",
 };
 
@@ -405,7 +407,9 @@ export function Composer({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitInFlight = useRef(false);
   const promptAreaRef = useRef<PromptAreaHandle>(null);
-  const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(null);
+  const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(
+    null,
+  );
   useEffect(() => {
     const onQuote = (event: Event) => {
       const detail = (event as CustomEvent<ComposerQuotePayload>).detail;
@@ -426,7 +430,8 @@ export function Composer({
         promptAreaRef.current?.focus();
         promptAreaRef.current?.setCursorToEnd();
       };
-      if (typeof requestAnimationFrame === "function") requestAnimationFrame(placeCaret);
+      if (typeof requestAnimationFrame === "function")
+        requestAnimationFrame(placeCaret);
       else setTimeout(placeCaret, 0);
     };
     window.addEventListener(CHISABOT_QUOTE_EVENT, onQuote);
@@ -455,7 +460,8 @@ export function Composer({
         promptAreaRef.current?.focus();
         promptAreaRef.current?.setCursorToEnd();
       };
-      if (typeof requestAnimationFrame === "function") requestAnimationFrame(placeCaret);
+      if (typeof requestAnimationFrame === "function")
+        requestAnimationFrame(placeCaret);
       else setTimeout(placeCaret, 0);
     };
     window.addEventListener("chisabot-prefill", onPrefill);
@@ -532,6 +538,15 @@ export function Composer({
   const dismissRejections = useCallback(() => setRejected([]), []);
   /** How far each upload has got — outside React state, see `upload-progress.ts`. */
   const [progressStore] = useState(createUploadProgressStore);
+  /**
+   * Each in-flight upload's AbortController, keyed like the progress store, so taking a chip off
+   * mid-upload cancels its request instead of letting a megabyte finish going up for nothing.
+   */
+  const uploadAborts = useRef(new Map<string, AbortController>());
+  /** Uploads cancelled on purpose: their rejection is the person's own doing, not news. */
+  const abortedUploads = useRef(new Set<string>());
+  /** The full text of each long paste that became a card, for its preview; see `handleRawPaste`. */
+  const pastedTexts = useRef(new Map<string, string>());
   /** Uploads that failed on the way to the server, kept as tiles with a retry (audit M4-3). */
   const [failedUploads, setFailedUploads] = useState<
     (Omit<FailedUpload, "name"> & { file: File })[]
@@ -548,7 +563,10 @@ export function Composer({
    * would never arrive. Every upload refusal in the app comes through here.
    */
   const recordRejection = useCallback((failure: UploadFailure) => {
-    progressStore.clear(uploadKey(failure.file.name, failure.file.size));
+    const failedKey = uploadKey(failure.file.name, failure.file.size);
+    progressStore.clear(failedKey);
+    uploadAborts.current.delete(failedKey);
+    if (abortedUploads.current.delete(failedKey)) return;
     /*
      * A FAILED UPLOAD KEEPS ITS TILE (audit M4-3). The SDK has already taken the placeholder off the
      * strip, but the `File` is still in hand here, so it goes back on as a failed tile with the
@@ -630,6 +648,9 @@ export function Composer({
       if (rowId !== undefined) {
         uploadedRows.current.delete(rowId);
       }
+      pastedTexts.current.delete(
+        uploadKey(attachment.filename, attachment.size),
+      );
     }
   }, []);
 
@@ -646,6 +667,13 @@ export function Composer({
                 uploadKey(file.name, file.size),
                 fraction * 100,
               ),
+            (file) => {
+              const key = uploadKey(file.name, file.size);
+              const controller = new AbortController();
+              uploadAborts.current.set(key, controller);
+              abortedUploads.current.delete(key);
+              return controller.signal;
+            },
           )
         : undefined,
     [channelId, uploadGroup, recordRejection, recordUpload, progressStore],
@@ -771,8 +799,22 @@ export function Composer({
   const discardAttachment = useCallback(
     // Unconditional: the person asked for the chip to be gone, and nothing here is allowed to make
     // that wait on a round trip.
-    (id: string) => removeAttachment(id),
-    [removeAttachment],
+    (id: string) => {
+      const attachment = attachments.find((each) => each.id === id);
+      if (attachment) {
+        const key = uploadKey(attachment.filename, attachment.size);
+        pastedTexts.current.delete(key);
+        // Still going up: cancel the request too, so the bytes stop and no row is left behind.
+        const controller = uploadAborts.current.get(key);
+        if (attachment.status === "uploading" && controller) {
+          uploadAborts.current.delete(key);
+          abortedUploads.current.add(key);
+          controller.abort();
+        }
+      }
+      removeAttachment(id);
+    },
+    [attachments, removeAttachment],
   );
 
   /**
@@ -921,10 +963,13 @@ export function Composer({
   );
 
   /** Put a failed upload back through the same door it came in by — screening, cap and all. */
+  /** Tiles already retried: a double click must not put the same file up twice. */
+  const retried = useRef(new Set<string>());
   const retryUpload = useCallback(
     (id: string) => {
       const failed = failedUploads.find((upload) => upload.id === id);
-      if (!failed) return;
+      if (!failed || retried.current.has(id)) return;
+      retried.current.add(id);
       setFailedUploads((current) =>
         current.filter((upload) => upload.id !== id),
       );
@@ -956,13 +1001,29 @@ export function Composer({
    * composer can attach and the text fits the text-attachment ceiling — otherwise it is pasted
    * inline as before, rather than refused and lost.
    */
-  const pastedTexts = useRef(new Map<string, string>());
   const pasteCount = useRef(0);
   const handleRawPaste = useCallback(
     (event: { clipboardData: DataTransfer | null; preventDefault(): void }) => {
       if (!canAttach) return;
       const pasted = event.clipboardData?.getData("text/plain") ?? "";
       if (pasted.length <= LONG_PASTE_CHARS) return;
+      /*
+       * THE MODEL READS AT MOST MAX_EXTRACTED_CHARACTERS OF A TEXT ATTACHMENT, so a card made from a
+       * longer paste would go out looking whole and arrive cut. Refused out loud instead, with the
+       * length, so nobody sends a document believing all of it was read.
+       */
+      if (pasted.length > MAX_EXTRACTED_CHARACTERS) {
+        event.preventDefault();
+        setRejected((current) => [
+          ...current,
+          {
+            id: newId(),
+            name: PASTED_TEXT_NAME,
+            reason: pasteTooLongReason(pasted.length),
+          },
+        ]);
+        return;
+      }
       if (new Blob([pasted]).size > MAX_FILE_BYTES) return;
       event.preventDefault();
       pasteCount.current += 1;
@@ -2266,4 +2327,12 @@ function UploadingHint({
       {percent === undefined ? "上传中…" : `上传中 ${percent}%`}
     </span>
   );
+}
+
+/** What a refused paste is called in the refusal list. */
+export const PASTED_TEXT_NAME = "粘贴的文字";
+
+/** Why a paste longer than the model can read was not added. */
+export function pasteTooLongReason(length: number): string {
+  return `共 ${length.toLocaleString("en-US")} 字，超过 ${MAX_EXTRACTED_CHARACTERS.toLocaleString("en-US")} 字的部分模型读不到，所以没有粘贴。请分几次粘贴。`;
 }

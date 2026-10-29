@@ -24,9 +24,14 @@ import {
 import {
   UPLOAD_FAILED_MESSAGE,
   UPLOAD_OFFLINE_MESSAGE,
+  UploadAbortedError,
   uploadToChannel,
 } from "@/components/channels/composer/attachments";
-import { Composer } from "@/components/channels/composer/composer";
+import {
+  Composer,
+  pasteTooLongReason,
+} from "@/components/channels/composer/composer";
+import { MAX_EXTRACTED_CHARACTERS } from "@/lib/channels/attachments";
 import { screenPickedFiles } from "@/components/channels/composer/picked-files";
 import { FetchBackedXhr, installFetchBackedXhr } from "./fetch-backed-xhr";
 import { settleReactWork } from "./settle-react-work";
@@ -351,6 +356,101 @@ test("M4-11: a short paste is still typed into the box", async () => {
     });
   });
   expect(uploads).toEqual([]);
+});
+
+function pasteText(editor: HTMLElement, value: string) {
+  editor.focus();
+  const caret = document.createRange();
+  caret.selectNodeContents(editor);
+  caret.collapse(true);
+  window.getSelection()?.removeAllRanges();
+  window.getSelection()?.addRange(caret);
+  fireEvent.paste(editor, {
+    clipboardData: {
+      files: [],
+      items: [],
+      types: ["text/plain"],
+      getData: (type: string) => (type === "text/plain" ? value : ""),
+    },
+  });
+}
+
+test("M4-11: a paste the model could only read part of is refused out loud, not turned into a card", async () => {
+  const tooLong = "a".repeat(MAX_EXTRACTED_CHARACTERS + 1);
+  const view = render(<Composer channelId="c1" compact onSubmit={() => {}} />);
+  const editor = editorOf(view.container);
+  await act(async () => {
+    pasteText(editor, tooLong);
+  });
+  await waitFor(() =>
+    expect(
+      view.getByText(pasteTooLongReason(tooLong.length), { exact: false }),
+    ).toBeTruthy(),
+  );
+  expect(uploads).toEqual([]);
+  expect(editor.textContent).toBe("");
+});
+
+test("M4-11: a paste exactly at the model's limit still becomes a card", async () => {
+  const atLimit = "b".repeat(MAX_EXTRACTED_CHARACTERS);
+  const view = render(<Composer channelId="c1" compact onSubmit={() => {}} />);
+  await act(async () => {
+    pasteText(editorOf(view.container), atLimit);
+  });
+  await waitFor(() => expect(uploads.length).toBe(1));
+  expect(uploads[0]?.text?.length).toBe(MAX_EXTRACTED_CHARACTERS);
+});
+
+test("M4-2: aborting the signal cancels the upload request", async () => {
+  answers = ["hang"];
+  const controller = new AbortController();
+  const before = FetchBackedXhr.aborted;
+  const pending = uploadToChannel(
+    "chan",
+    "group",
+    undefined,
+    () => controller.signal,
+  )(new File(["x"], "a.txt", { type: "text/plain" }));
+  controller.abort();
+  await expect(pending).rejects.toBeInstanceOf(UploadAbortedError);
+  expect(FetchBackedXhr.aborted).toBe(before + 1);
+});
+
+test("M4-2: once every byte is out, aborting the signal no longer cancels (the row may already exist)", async () => {
+  FetchBackedXhr.bodySentBeforeAnswer = true;
+  try {
+    const controller = new AbortController();
+    const before = FetchBackedXhr.aborted;
+    const pending = uploadToChannel(
+      "chan",
+      "group",
+      undefined,
+      () => controller.signal,
+    )(new File(["x"], "a.txt", { type: "text/plain" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({ type: "url" });
+    expect(FetchBackedXhr.aborted).toBe(before);
+  } finally {
+    FetchBackedXhr.bodySentBeforeAnswer = false;
+  }
+});
+
+test("M4-2: removing a chip mid-upload aborts its request and leaves no failed tile", async () => {
+  answers = ["hang"];
+  const before = FetchBackedXhr.aborted;
+  const view = render(<Composer channelId="c1" compact onSubmit={() => {}} />);
+  pick(view.container, [
+    new File(["hello"], "notes.txt", { type: "text/plain" }),
+  ]);
+  const remove = await waitFor(() => view.getByLabelText("移除 notes.txt"));
+  await act(async () => {
+    fireEvent.click(remove);
+  });
+  await waitFor(() => expect(FetchBackedXhr.aborted).toBe(before + 1));
+  await settleReactWork();
+  expect(view.queryByLabelText("移除 notes.txt")).toBeNull();
+  expect(view.queryByLabelText("重试上传 notes.txt")).toBeNull();
 });
 
 void FetchBackedXhr;
