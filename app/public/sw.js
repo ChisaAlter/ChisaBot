@@ -2,7 +2,10 @@
  * ChisaBot service worker（DESIGN.md §40，docs/pwa.md）。
  *
  * 只做两件事，而且都不会挡住新版本：
- *   1. 页面导航（index.html）：永远先走网络（navigation preload），拿到什么就给什么——包括登录网关的跳转。
+ *   1. 页面导航（index.html）：永远先走网络（SW 里 fetch 一次），拿到什么就给什么——包括登录网关的跳转。
+ *      **不开 navigation preload**：preload 是浏览器对「每个」导航都先发的请求，包括下面不拦的 /api/auth/callback；
+ *      不调 respondWith 时 Chrome 会丢掉 preload 的响应、再走一遍网络，于是 OAuth 回调发了两次——
+ *      第一次已经写好会话并消费掉 state，第二次就落到 /api/auth/error?error=state_mismatch。
  *      只有网络真的断了（navigator.onLine 为 false）才给一张「网络不可用」的离线卡片。
  *      服务器慢（导航 20s 没回）、部署重启、网关 502/503/504/52x：给「服务器响应慢，正在重试…」卡片，
  *      卡片自己按 1/2/4/8/15/30s 退避去探测同一个地址，一恢复就原地刷新回到原页面（DF-13）。
@@ -14,7 +17,7 @@
  * 出问题时的退路：把这个文件换成只调用 self.registration.unregister() 的版本即可；或者在浏览器里
  * localStorage.setItem("chisabot-sw", "off") 后刷新，页面会注销它（app/src/lib/pwa.ts）。
  */
-const SW_VERSION = "2"; // DF-13：导航失败区分离线 / 服务器慢
+const SW_VERSION = "3"; // 3：关掉 navigation preload（登录回调被发两次）；2 = DF-13 导航失败区分离线 / 服务器慢
 const ASSET_CACHE = "chisabot-assets-v1";
 const NAV_TIMEOUT_MS = 20_000;
 const RETRY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524]);
@@ -31,9 +34,10 @@ self.addEventListener("activate", (event) => {
     (async () => {
       const keys = await caches.keys();
       await Promise.all(keys.filter((key) => key.startsWith("chisabot-") && key !== ASSET_CACHE).map((key) => caches.delete(key)));
+      // 旧版本（SW_VERSION 2）开过 preload，开关存在 registration 上、换 sw.js 也不会自己关，这里显式关掉。
       if (self.registration.navigationPreload) {
         try {
-          await self.registration.navigationPreload.enable();
+          await self.registration.navigationPreload.disable();
         } catch {}
       }
       await self.clients.claim();
@@ -80,6 +84,7 @@ async function navigate(event) {
   try {
     const response = await Promise.race([
       (async () => {
+        // preload 已关；激活前那一刻若还有 preload 响应就用它，绝不再发第二次。
         const preloaded = await event.preloadResponse;
         if (preloaded) return preloaded;
         return controller
