@@ -4,7 +4,14 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CapsuleSpinner } from "@/components/chat/status-capsule";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
-import { currentWorkStep, summarizeDoneWork, summarizeWork, type WorkCall, type WorkNote, workTimeline } from "@/lib/chat/work-steps";
+import {
+  currentWorkStep,
+  summarizeDoneWork,
+  summarizeWork,
+  type WorkCall,
+  type WorkNote,
+  workTimeline,
+} from "@/lib/chat/work-steps";
 import { useNow } from "@/lib/use-now";
 
 /** 干活卡把当前这一步广播出去，右栏正在搭建的面板写「正在搜索「…」」（DESIGN.md §77.1）。 */
@@ -17,7 +24,9 @@ export function lastWorkStep(): WorkStepDetail {
 }
 function announceStep(detail: WorkStepDetail) {
   lastStep = detail;
-  window.dispatchEvent(new CustomEvent<WorkStepDetail>(WORK_STEP_EVENT, { detail }));
+  window.dispatchEvent(
+    new CustomEvent<WorkStepDetail>(WORK_STEP_EVENT, { detail }),
+  );
 }
 
 /**
@@ -68,7 +77,8 @@ function restartTurnClock(turnKey: string) {
 export function markTurnRunEnded(turnKey: string): void {
   if (!startedAt.has(turnKey)) return;
   endedRuns.add(turnKey);
-  if (endedRuns.size > 50) endedRuns.delete(endedRuns.values().next().value as string);
+  if (endedRuns.size > 50)
+    endedRuns.delete(endedRuns.values().next().value as string);
 }
 
 /**
@@ -105,7 +115,9 @@ export function workSeconds(turnKey: string): number | null {
   const start = startedAt.get(turnKey);
   if (start === undefined) return null;
   remember(finishedAt, turnKey, Date.now());
-  const seconds = Math.round(((finishedAt.get(turnKey) ?? Date.now()) - start) / 1000);
+  const seconds = Math.round(
+    ((finishedAt.get(turnKey) ?? Date.now()) - start) / 1000,
+  );
   return seconds >= 2 ? seconds : null;
 }
 
@@ -141,7 +153,9 @@ export function WorkRow({
   if (live) remember(startedAt, turnKey, since ?? Date.now());
   // 点开过的干活卡离开再回来 / 刷新后还开着（按这一轮记，DESIGN.md §88）。
   // 回复显示①：做完的一轮一律收起（工具过程做完就不再摊开），只有还在跑的一轮记得点开过。
-  const [open, setOpenState] = useState(() => live && workUi(turnKey)?.open === true);
+  const [open, setOpenState] = useState(
+    () => live && workUi(turnKey)?.open === true,
+  );
   const setOpen = (update: (value: boolean) => boolean) =>
     setOpenState((value) => {
       const next = update(value);
@@ -193,15 +207,24 @@ export function WorkRow({
   const done = live ? null : summarizeDoneWork(calls);
   if (live ? !summary : !done) return null;
   const started = startedAt.get(turnKey) ?? now;
-  const seconds = live ? Math.max(0, Math.floor((now - started) / 1000)) : doneSeconds;
+  const seconds = live
+    ? Math.max(0, Math.floor((now - started) / 1000))
+    : doneSeconds;
   // 在跑时没返回的步骤是「进行中」（审查模块 7：以前标成「（失败）」）。
   const steps = open ? workTimeline(calls, notes, live) : [];
   const text = live ? summary!.current : done!.label;
   // 读屏：按钮名字里先说当前动作 / 做了什么（以前只有「展开步骤」，把动作盖掉了），再说点了会怎样。
-  const failedText = !live && done?.failed ? `，${done.failed} 步失败` : "";
+  // 网页类的摘要自己已经写了「N 步失败」（审查模块 7：4xx/5xx 算失败），后面不再重复一遍。
+  const metaFailed =
+    !live && done?.failed && !done.label.includes("步失败") ? done.failed : 0;
+  const failedText = metaFailed ? `，${metaFailed} 步失败` : "";
   const label = `${text}${failedText}，${open ? "收起步骤" : "展开步骤"}`;
   return (
-    <div className="chat-work" data-state={live ? "live" : "done"} ref={rootRef}>
+    <div
+      className="chat-work"
+      data-state={live ? "live" : "done"}
+      ref={rootRef}
+    >
       <button
         aria-expanded={open}
         aria-label={label}
@@ -211,7 +234,11 @@ export function WorkRow({
         onFocus={() => {
           hadFocus.current = true;
         }}
-        className={live ? "rs-capsule chat-work-card" : "chat-thinking chat-work-card chat-work-done"}
+        className={
+          live
+            ? "rs-capsule chat-work-card"
+            : "chat-thinking chat-work-card chat-work-done"
+        }
         data-state={live ? "live" : "done"}
         data-testid={live ? "chat-work-card" : "chat-work-done"}
         data-unanswered={!live && unanswered ? "" : undefined}
@@ -235,18 +262,24 @@ export function WorkRow({
               exit={{ opacity: 0, y: reduce ? 0 : -8 }}
               initial={{ opacity: 0, y: reduce ? 0 : 8 }}
               key={text}
-              transition={{ duration: reduce ? 0 : 0.2, ease: [0.23, 1, 0.32, 1] }}
+              transition={{
+                duration: reduce ? 0 : 0.2,
+                ease: [0.23, 1, 0.32, 1],
+              }}
             >
               {text}
             </motion.span>
           </AnimatePresence>
         </span>
-        <span aria-hidden={live || undefined} className={live ? "chat-work-meta rs-capsule-time" : "chat-work-meta"}>
+        <span
+          aria-hidden={live || undefined}
+          className={live ? "chat-work-meta rs-capsule-time" : "chat-work-meta"}
+        >
           {/*
            * 跑着的时候只报时间，不再报「第 N 步」；做完的那一行整行不画（用户：全部不显示步数，只留回答）。
            */}
-          {!live && done?.failed ? `${done.failed} 步失败` : ""}
-          {!live && done?.failed && seconds !== null && seconds >= 2 ? " · " : ""}
+          {metaFailed ? `${metaFailed} 步失败` : ""}
+          {metaFailed && seconds !== null && seconds >= 2 ? " · " : ""}
           {live
             ? seconds !== null && seconds >= 1
               ? `${seconds} 秒`
@@ -255,7 +288,11 @@ export function WorkRow({
               ? `${seconds} 秒`
               : ""}
         </span>
-        <IconChevronDown aria-hidden="true" className="chat-work-chevron size-3.5" data-open={open || undefined} />
+        <IconChevronDown
+          aria-hidden="true"
+          className="chat-work-chevron size-3.5"
+          data-open={open || undefined}
+        />
       </button>
       {open ? (
         <ol className="chat-work-steps" data-testid="chat-work-steps">
@@ -263,7 +300,11 @@ export function WorkRow({
           {steps.map((step, index) => (
             <li
               className={
-                step.kind === "note" ? "chat-work-note" : step.state === "running" ? "is-current" : undefined
+                step.kind === "note"
+                  ? "chat-work-note"
+                  : step.state === "running"
+                    ? "is-current"
+                    : undefined
               }
               data-kind={step.kind}
               data-state={step.state}

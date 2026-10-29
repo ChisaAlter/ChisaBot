@@ -354,6 +354,23 @@ describe("读网页（应改 5）", () => {
       workCallFailed("网址：https://a.cn/x\n状态：200\n正文：状态：500"),
     ).toBe(false);
   });
+  test("WorkRow：读网页失败时「N 步失败」只写一遍", () => {
+    const view = render(
+      <WorkRow
+        calls={[
+          // 4xx / 5xx 的结果在 compactTurns 里已经打成 failed。
+          fetchPage("https://httpbin.org/status/500", true, { failed: true }),
+          fetchPage("https://httpbin.org/html"),
+        ]}
+        live={false}
+        turnKey="ts-fetch-failed"
+        unanswered
+      />,
+    );
+    const row = view.getByTestId("chat-work-done");
+    expect(row.textContent?.match(/步失败/g)?.length).toBe(1);
+    expect(row.getAttribute("aria-label")?.match(/步失败/g)?.length).toBe(1);
+  });
 });
 
 const worker = (extra: Partial<WorkerView> = {}): WorkerView => ({
