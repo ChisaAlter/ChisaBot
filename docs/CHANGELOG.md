@@ -1,8 +1,9 @@
-## Unreleased
+## 0.1.109
 
-- 壁纸与外观收尾（审查第 6 项 + 性能报告第 7 项）：天空引擎不再请求 `ipapi.co`（不把用户 IP 发给第三方），GPS 失败时改用浏览器时区估计位置；壁纸上传限类型（PNG / JPG / WebP / GIF / AVIF）和大小（原图 ≤ 20 MB、压缩后 ≤ 约 6 MB），超限或保存失败时用现有 toast 明确提示，不再假装“已应用”；壁纸图片改存 IndexedDB，localStorage 只留占位标记，旧数据自动迁移并清掉；外观滑块拖动时 localStorage 写入防抖（停手约 200ms 或页面隐藏时写），预览仍实时；修掉 `appearance-preferences.tsx` 的 6 个 Biome a11y 错误；自定义壁纸 URL 写进 CSS 时转义 `\`、`"` 并去掉换行；刷新时选的是自定义壁纸、localStorage 里只有占位标记的话，先只铺主题纯色、不挂天空，IndexedDB 读回就直接显示壁纸，读取失败、没有记录或超过约 1.5 秒才退回天空，不再先闪一下天空。不改样式和外观。
-
-- 回复来源结构化（数据格式先行）：新增 `shared/reply-sources.ts`，来源 = 这一轮里成功的 `web_fetch`（网址、标题、站点、toolCallId），挂在这一轮最后一条有文字的助手消息上；不新增存储和事件，实时和历史都从同一批消息算出。部署开关 `CHISABOT_REPLY_SOURCES`（默认关，/api/capabilities 带 `replySources`）打开后，网页聊天的 Bot 不再在正文写「来源：」行。前端卡片另做；开关关着时行为不变，旧客户端不受影响。未升级版本号。
+- 壁纸与外观收尾（审查第 6 项 + 性能报告第 7 项）：天空引擎不再请求 `ipapi.co`（不把用户 IP 发给第三方），GPS 失败时改用浏览器时区估计位置；壁纸上传限类型（PNG / JPG / WebP / GIF / AVIF）和大小（原图 ≤ 20 MB、压缩后 ≤ 约 6 MB），超限或保存失败时用现有 toast 明确提示，不再假装“已应用”；壁纸图片改存 IndexedDB，localStorage 只留占位标记，旧数据自动迁移并清掉；外观滑块拖动时 localStorage 写入防抖（停手约 200ms 或页面隐藏时写），预览仍实时；修掉 `appearance-preferences.tsx` 的 6 个 Biome a11y 错误；自定义壁纸 URL 写进 CSS 时转义 `\`、`"` 并去掉换行；刷新时选的是自定义壁纸、localStorage 里只有占位标记的话，先只铺主题纯色、不挂天空，IndexedDB 读回就直接显示壁纸，读取失败、没有记录或超过约 1.5 秒才退回天空，不再先闪一下天空。不改样式和外观。（#376）
+- 回复来源结构化（数据格式先行）：新增 `shared/reply-sources.ts`，来源 = 这一轮里成功的 `web_fetch`（网址、标题、站点、toolCallId），挂在这一轮最后一条有文字的助手消息上；不新增存储和事件，实时和历史都从同一批消息算出。部署开关 `CHISABOT_REPLY_SOURCES`（默认关，/api/capabilities 带 `replySources`）打开后，网页聊天的 Bot 不再在正文写「来源：」行。前端卡片另做；开关关着时行为不变，旧客户端不受影响。未升级版本号。（#391）
+- web_fetch 超时 / 连接中断时重试并降级到搜索摘要，报错不再被说成「用户已停止这一轮」；工具失败后模型没再说话时补一段回答，这一轮一定有回复（Hark A4）（#392）
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.109`），PC / Android 外壳未变。
 
 ## 0.1.108
 
