@@ -187,7 +187,7 @@ describe("1) 玻璃变量只算在读它的元素上（不再整页重算）", (
 
   test("渲染预算里给气泡关模糊的规则直接写在气泡内容上（不继承之后写在外层不再生效）", () => {
     expect(css).toContain(
-      '.glass-main [data-slot="bubble"] > [data-slot="bubble-content"],\n.jr-card,',
+      '.glass-main :where([data-slot="bubble"] > [data-slot="bubble-content"]),\n.jr-card,',
     );
   });
 
@@ -424,6 +424,51 @@ describe("4) 减少动态效果：天空当帧停", () => {
   test("stopSkyMotionNow 把天空的唤醒窗口清零（不再画完剩下的 2.6s）", () => {
     sky.stopSkyMotionNow();
     expect(sky.readSkyThrottle().wakeUntil).toBe(0);
+  });
+});
+
+describe("1b) 换配色：天空换场景等点击先上屏", () => {
+  test("切配色时不在点击的任务里同步 applyScene（引擎会当场画一帧），下一帧之后才换", async () => {
+    const calls: number[] = [];
+    const w = window as unknown as {
+      hark?: { applyScene?: (i: number) => void };
+      fetch: typeof window.fetch;
+    };
+    const originalFetch = w.fetch;
+    w.fetch = (async () =>
+      new Response(null, { status: 404 })) as unknown as typeof window.fetch;
+    w.hark = { applyScene: (i) => calls.push(i) };
+    try {
+      render(
+        <theme.ThemeProvider>
+          <sky.SkyBackground />
+        </theme.ThemeProvider>,
+      );
+      await act(async () => {
+        await nextFrame();
+        await new Promise((r) => setTimeout(r, 5));
+      });
+      const scene = () =>
+        appearance.resolveEffectiveHarkScene(
+          appearance.getAppearanceState(),
+          document.documentElement.classList.contains("dark"),
+        );
+      const before = calls.length;
+      act(() => {
+        appearance.setThemePalette("sakura");
+      });
+      // 同步提交（含 effect）结束时还没换场景。
+      expect(calls.length).toBe(before);
+      await act(async () => {
+        await nextFrame();
+        await new Promise((r) => setTimeout(r, 5));
+      });
+      expect(calls.at(-1)).toBe(scene() as number);
+      expect(calls.length).toBe(before + 1);
+    } finally {
+      delete w.hark;
+      w.fetch = originalFetch;
+    }
   });
 });
 

@@ -556,11 +556,23 @@ export function SkyBackground() {
     if (reducedMotion) stopSkyMotionNow();
   }, [reducedMotion]);
 
-  // 5. 当主题亮暗、配色方案或用户指定的 Hark 场景变化时，立即切换 WebGL 天空场景
+  // 5. 当主题亮暗、配色方案或用户指定的 Hark 场景变化时，切换 WebGL 天空场景（点击先上屏，见下）。
+  //    换场景时引擎会当场画一帧（applyScene → tick），4× 降速下这一帧要一两百毫秒。点配色是离散输入，
+  //    React 会在同一个任务里同步跑完这条 effect，这一帧就算进了点击的 INP。所以等这次点击先上屏，再换场景。
   const targetScene = resolveEffectiveHarkScene(appearance, dark);
   useEffect(() => {
-    syncHarkSkyScene(targetScene);
-    wakeSky(SKY_SNAPSHOT_MS);
+    let raf = 0;
+    let timer = 0;
+    raf = window.requestAnimationFrame(() => {
+      timer = window.setTimeout(() => {
+        syncHarkSkyScene(targetScene);
+        wakeSky(SKY_SNAPSHOT_MS);
+      }, 0);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
   }, [targetScene]);
 
   // 壁纸读取中：连静态天空占位也不画，只铺主题纯色（body 的底色 --sky-2）；读回后直接换成壁纸。

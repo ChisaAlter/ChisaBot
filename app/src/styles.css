@@ -9990,7 +9990,7 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
  * ======================================================================================== */
 :is(.glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new),
 .glass-main [data-slot="bubble"],
-.glass-main [data-slot="bubble"] > [data-slot="bubble-content"],
+.glass-main :where([data-slot="bubble"] > [data-slot="bubble-content"]),
 .jr-card,
 .page-rows,
 .sg-card,
