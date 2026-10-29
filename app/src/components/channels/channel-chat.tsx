@@ -781,13 +781,15 @@ export function ChannelChat({
    * the platform's read of the thread can be a beat behind it.
    */
   useEffect(() => {
-    const authoredActivity = (): ChannelActivitySignature | null => {
-      const cache = queryClient.getQueryData<{
-        pages: { channels: ChannelSummary[] }[];
-      }>(channelKeys.list());
-      const summary = cache?.pages
-        .flatMap((page) => page.channels)
+    const rosterRow = (): ChannelSummary | undefined =>
+      queryClient
+        .getQueryData<{
+          pages: { channels: ChannelSummary[] }[];
+        }>(channelKeys.list())
+        ?.pages.flatMap((page) => page.channels)
         .find((row) => row.id === channel.id);
+    const authoredActivity = (): ChannelActivitySignature | null => {
+      const summary = rosterRow();
       // Only a Bot's turn is news here; a person's own line arrives through the run that sent it.
       if (
         !summary ||
@@ -806,6 +808,8 @@ export function ChannelChat({
 
     const initialActivity = authoredActivity();
     let lastSeen = initialActivity;
+    // 挂上时左栏列表里有没有这条对话（哪怕最后一句还是空的）；没有就是冷打开、列表还没到。
+    let rosterKnown = rosterRow() !== undefined;
     let cancelled = false;
 
     const pull = () => {
@@ -846,30 +850,42 @@ export function ChannelChat({
       })();
     };
 
+    /*
+     * 打开时左栏说的那一句：等打开时那次读存储（和接入）结束再看。读到了这一句就不再读（DESIGN.md §83，
+     * 不再连读三遍）；存储落后（还没有这一句）时照旧重试，等它写进来。
+     */
+    const settleInitial = (initial: ChannelActivitySignature) => {
+      void (async () => {
+        await joinGatePromise;
+        if (
+          !cancelled &&
+          !sameActivity(selfReportedBotActivity.current, initial) &&
+          !(
+            mountReadOk.current &&
+            saysActivity(agentRef.current.messages, initial.text)
+          )
+        ) {
+          pull();
+        }
+      })();
+    };
     const unsubscribe = queryClient.getQueryCache().subscribe(() => {
+      const arrived = !rosterKnown && rosterRow() !== undefined;
+      if (arrived) rosterKnown = true;
       const activity = authoredActivity();
       if (activity && !sameActivity(activity, lastSeen)) {
         lastSeen = activity;
         if (sameActivity(selfReportedBotActivity.current, activity)) return;
-        pull();
+        /*
+         * 冷打开（刷新 / 直接打开链接）时左栏列表常常比对话详情晚到：聊天已经挂上，列表才第一次出现。
+         * 这不是「别处新说了一句」，是打开时本该看到的那一句——按上面打开时的规则处理，不马上 pull()。
+         * 以前这里会和打开时那次读存储同时发出，since 都为空，整份历史读两遍（0.1.110 验收）。
+         */
+        if (arrived) settleInitial(activity);
+        else pull();
       }
     });
-    void (async () => {
-      await joinGatePromise;
-      if (
-        !cancelled &&
-        initialActivity &&
-        !sameActivity(selfReportedBotActivity.current, initialActivity) &&
-        // 打开时读存储已经读到了左栏说的那一句（DESIGN.md §83）：不再连读三遍。存储落后（还没有这一句）
-        // 时照旧重试，等它写进来。之后的新动静照旧由上面的订阅拉。
-        !(
-          mountReadOk.current &&
-          saysActivity(agentRef.current.messages, initialActivity.text)
-        )
-      ) {
-        pull();
-      }
-    })();
+    if (initialActivity) settleInitial(initialActivity);
     return () => {
       cancelled = true;
       unsubscribe();
