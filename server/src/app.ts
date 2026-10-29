@@ -441,6 +441,8 @@ export function createApp(
        * both halves, so off means off.
        */
       generativeUi: config.generativeUi,
+      // 结构化回复来源（shared/reply-sources.ts）；旧客户端不认这个字段，照旧显示正文。
+      replySources: config.replySources === true,
       // 设置 → 管理 →「账号」入口（CB-040）；默认隐藏，CHISABOT_ACCOUNTS_UI=1 打开。
       accountsUi: config.accountsUi === true,
       // 功能精简（DESIGN.md §74）：默认隐藏的功能里，这台部署用 CHISABOT_EXTRAS 重新打开的。
