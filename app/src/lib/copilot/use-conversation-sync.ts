@@ -218,7 +218,10 @@ export function useConversationSync(
     let knownRevision: string | null = null;
     let rebuildPending = false;
     let lastOwnFinishAt = 0;
-    /** 上一次问到变化戳的时间：隔得太久说明中间断过线 / 藏过（平时前台 2 秒、藏着 10 秒一次）。 */
+    /**
+     * 上一次问到变化戳的时间。前台每 2 秒问一次（被外壳收起的聊天 10 秒一次）；页面切到后台时完全不问，
+     * 回到前台 / 网络恢复时才马上问。所以隔得太久，说明中间断过线或在后台待过。
+     */
     let lastActivityAt = 0;
     /**
      * mode "merge"（平时）：不清空列表，只把新的接上——见下面的 onEvent。
