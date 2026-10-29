@@ -195,10 +195,16 @@ export function useConversationSync(
      *（CopilotKit `runAgent` 会先 `detachActiveRun`，超大回放时主线程卡住，/run 迟迟发不出）。
      */
     suppressConnect?: () => boolean;
+    /**
+     * 这次 run 结束不是本机的一轮、不必核对顺序：打开时的那次接入由调用方自己发起，它已经和接入同时读过
+     * 一份存下的对话，接入一结束再核对一遍只是把整份历史再拉一次。
+     */
+    skipReconcile?: () => boolean;
   } = {},
 ) {
   const liveTail = options.liveTail === true;
   const suppressConnect = options.suppressConnect;
+  const skipReconcile = options.skipReconcile;
   const queryClient = useQueryClient();
   useEffect(() => {
     if (!threadId) return;
@@ -285,7 +291,7 @@ export function useConversationSync(
       onRunFinalized: () => {
         rebase = true;
         lastOwnFinishAt = Date.now();
-        if (!connecting) reconcile();
+        if (!connecting && !skipReconcile?.()) reconcile();
       },
       onRunFailed: () => {
         rebase = true;

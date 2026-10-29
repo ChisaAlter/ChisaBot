@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### 修复：打开一段对话只读一次历史
+
+- 打开频道聊天时已经和接入同时读了一份存下的对话，接入一结束 `useConversationSync` 又把它当成「本机一轮结束」做顺序核对、整份再读一遍（首次打开 since 为空，等于整份传两次）。现在打开时那次接入结束不再核对；本机自己跑完一轮后的核对照旧。只改前端。
+
 ### 安全：升级有严重 / 高危漏洞的依赖，恢复 dependabot（审查 M4）
 
 - **直接依赖**：`better-auth` / `@better-auth/drizzle-adapter` 1.7.1 → 1.7.14（修复 OAuth state 被当作 Magic Link 登录、OAuth Proxy 冒充登录两个漏洞；同一 1.7.x 补丁线，无数据库表结构变化）；`@modelcontextprotocol/sdk` 1.30.0 → 1.32.2；`zod` 4.4.3 → 4.6.7；`vite` 7.3.6 → 7.3.7。
