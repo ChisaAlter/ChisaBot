@@ -14,6 +14,34 @@ export interface Recording {
 
 const BROWSER_SPEECH_MIME = "application/x-chisabot-speech";
 
+/** Where to turn the microphone back on, since the browser will not ask a second time by itself. */
+export const MIC_DENIED_MESSAGE =
+  "麦克风权限被拒绝了。点地址栏左边的锁形图标，把「麦克风」改成「允许」后点「重新录音」；手机上请到系统设置里允许浏览器使用麦克风。";
+/** Browser speech recognition runs on the vendor's servers, so it needs the network as much as upload does. */
+export const DICTATION_OFFLINE_MESSAGE = "没有网络连接，语音输入用不了。联网后点「重新录音」。";
+export const DICTATION_UPLOAD_OFFLINE_MESSAGE = "没有网络连接，没能把录音传上去。联网后点「重试」。";
+export const DICTATION_UPLOAD_NETWORK_MESSAGE = "网络出错，没能把录音传上去。请点「重试」。";
+export const DICTATION_NO_SPEECH_MESSAGE = "未检测到语音。请重新录音。";
+
+/**
+ * A dictation failure that says whether trying again can reuse what was captured. `rerecord` is
+ * true when the capture itself is the problem (nothing was heard, or browser recognition produced
+ * an empty transcript that cannot be recognised again), so "try again" has to open the microphone.
+ */
+export class DictationError extends Error {
+  constructor(
+    message: string,
+    readonly rerecord: boolean,
+  ) {
+    super(message);
+    this.name = "DictationError";
+  }
+}
+
+function isOffline(): boolean {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
 type BrowserSpeechRecognition = {
   lang: string;
   continuous: boolean;
@@ -89,7 +117,15 @@ export async function startSpeechRecognitionRecording(
     if (cancelled) return;
     if (event.error === "no-speech") return;
     releaseStream();
-    onError(new Error(event.error === "not-allowed" ? "浏览器未授予麦克风权限。" : "语音速记中断，请重试。"));
+    onError(
+      new Error(
+        event.error === "not-allowed" || event.error === "service-not-allowed"
+          ? MIC_DENIED_MESSAGE
+          : event.error === "network" || isOffline()
+            ? DICTATION_OFFLINE_MESSAGE
+            : "语音输入中断了，请重新录音。",
+      ),
+    );
   };
 
   recognition.onend = () => {
@@ -139,7 +175,7 @@ export async function startRecording(
   onError: (error: Error) => void,
 ): Promise<Recording> {
   if (!recordingSupported())
-    throw new Error("口述需要支持的浏览器和HTTPS（或localhost）。");
+    throw new Error("语音输入需要支持的浏览器和 HTTPS（或 localhost）。");
   const mimeType = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find(
     (type) => MediaRecorder.isTypeSupported(type),
   );
@@ -222,18 +258,23 @@ export async function transcribeRecording(
   if (audio.type.startsWith(BROWSER_SPEECH_MIME)) {
     const text = (await audio.text()).trim();
     if (!text) {
-      throw new Error("未检测到语音。请尝试再次录音。");
+      // Recognition gives up silently when the network drops, so an empty result while offline
+      // is a missing connection, not a quiet speaker. Either way the transcript is gone: re-record.
+      throw new DictationError(isOffline() ? DICTATION_OFFLINE_MESSAGE : DICTATION_NO_SPEECH_MESSAGE, true);
     }
     return text;
   }
   const type = dictationMediaType(audio.type);
   const extension = dictationExtension(type);
   if (!extension || !audio.size || audio.size > MAX_DICTATION_BYTES) {
-    throw new Error("录音为空或不支持。请重新录音。");
+    throw new DictationError("录音为空或不支持。请重新录音。", true);
   }
+  if (isOffline()) throw new DictationError(DICTATION_UPLOAD_OFFLINE_MESSAGE, false);
   const body = new FormData();
   body.set("file", audio, `recording.${extension}`);
-  const response = await fetch("/api/audio/transcriptions", {
+  let response: Response;
+  try {
+    response = await fetch("/api/audio/transcriptions", {
     method: "POST",
     credentials: "include",
     headers: { "x-chisabot-dictation": "1" },
@@ -242,7 +283,12 @@ export async function transcribeRecording(
       signal,
       AbortSignal.timeout(DICTATION_TIMEOUT_MS + 5_000),
     ]),
-  });
+    });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    // The recording is still held, so the same audio can be uploaded again.
+    throw new DictationError(isOffline() ? DICTATION_UPLOAD_OFFLINE_MESSAGE : DICTATION_UPLOAD_NETWORK_MESSAGE, false);
+  }
   const result: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(
@@ -251,7 +297,7 @@ export async function transcribeRecording(
         "error" in result &&
         typeof result.error === "string"
         ? result.error
-        : "转录失败。请重试。",
+        : "识别失败。请重试。",
     );
   }
   if (
@@ -261,7 +307,7 @@ export async function transcribeRecording(
     typeof result.text !== "string" ||
     !result.text.trim()
   ) {
-    throw new Error("未检测到语音。请尝试再次录音。");
+    throw new DictationError(DICTATION_NO_SPEECH_MESSAGE, true);
   }
   return result.text.trim();
 }
