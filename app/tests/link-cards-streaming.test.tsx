@@ -114,6 +114,21 @@ describe("渲染", () => {
     expect(media.style.aspectRatio).toMatch(/^2( \/ 1)?$/);
     expect(skeleton.innerHTML).not.toContain("sky-skel");
   });
+
+  test("卡组的槽位写在 data-stack-slot，不用 data-slot（styles.css 有 :has([data-slot=…]) 规则，改 data-slot 会整页重算样式）", async () => {
+    const view = render(
+      <LinkCardStack
+        items={[{ url: "https://a.example.com/" }, { url: "https://b.example.com/" }]}
+        pending
+        pendingUrl="https://github.com/ChisaAlter"
+      />,
+    );
+    await view.findAllByTestId("link-card");
+    const stack = view.getByTestId("link-cards");
+    const slotted = [...stack.querySelectorAll("[data-stack-slot]")].map((el) => el.getAttribute("data-stack-slot"));
+    expect(slotted.sort()).toEqual(["left", "main", "right"]);
+    expect(stack.querySelectorAll("[data-slot]")).toHaveLength(0);
+  });
 });
 
 describe("源码约束", () => {
@@ -132,6 +147,9 @@ describe("源码约束", () => {
       /@media \(prefers-reduced-motion: no-preference\) \{\s*\.lc-skel \.lc-skel-block,\s*\.lc-skel \.lc-skel-bar \{\s*animation: lc-skel-breathe/,
     );
     expect(css).not.toMatch(/linear-gradient\([^)]*90deg/);
+  });
+  test("卡组样式不认 data-slot", () => {
+    expect(css).not.toContain("data-slot");
   });
   test("开场一句（流式中的第一段）也画链接卡", () => {
     expect(transcript).not.toMatch(/tone === "lead" \? null : \(\s*<MessageRichPreviews/);
