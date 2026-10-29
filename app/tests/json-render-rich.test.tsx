@@ -172,6 +172,22 @@ describe("rich components render", () => {
     expect(container.querySelector(".jr-list-go")).not.toBeNull();
   });
 
+  test("unknown icon names leave no empty tinted square (hark #11)", async () => {
+    const { container } = await draw({
+      root: "c",
+      elements: {
+        c: { type: "Card", props: { title: "500 元内降噪耳机", icon: "no-such-icon" }, children: ["a", "b"] },
+        a: { type: "List", props: { items: [{ title: "华为 FreeBuds 6i", icon: "no-such-icon" }] }, children: [] },
+        b: { type: "List", props: { items: [{ title: "Anker Soundcore Q30", icon: "info" }] }, children: [] },
+      },
+    });
+    expect(container.querySelector(".jr-card-ic")).toBeNull();
+    expect(container.querySelector(".jr-card-h.has-icon")).toBeNull();
+    const icons = container.querySelectorAll(".jr-list-ic");
+    expect(icons).toHaveLength(1);
+    expect(icons[0]?.querySelector("svg")).not.toBeNull();
+  });
+
   test("Products draws a grid of clickable cards with a fixed photo slot (§72)", async () => {
     const { container } = await draw({
       root: "p",

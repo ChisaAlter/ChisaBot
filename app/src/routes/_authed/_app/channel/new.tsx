@@ -219,6 +219,8 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
           Boolean(loadError) || waitingForUrlAgent || recipients.length === 0
         }
         messages={sent ? [sent] : []}
+        // 按下发送这一帧就画「思考中」：建对话、跳转都还没完成，但人要马上看到发出去了。
+        busy={sent !== null}
         notice={
           loadError || error ? (
             <p className="pb-2 text-sm text-destructive" role="alert">

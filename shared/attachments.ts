@@ -284,3 +284,52 @@ export type AttachmentPart = {
 export function attachmentUrl(attachmentId: string): string {
   return `/api/attachments/${attachmentId}`;
 }
+
+/**
+ * 缩略图的宽度档位（像素）。`GET /api/attachments/:id?w=` 只认这几个值，别的宽度一律 400：
+ * 档位少，服务器的缩略图缓存最多只有「图片数 × 档位数」种，别人也没法拿任意宽度逼它一张张重算。
+ *
+ * 按界面实际画多宽来定：一摞里的卡片 220px、单张最宽 320px（`styles.css`「图片：单张 / 一摞」），
+ * 1x / 2x / 3x 屏分别落在 240 / 480 / 960。看大图仍然拉原图。
+ */
+export const ATTACHMENT_THUMB_WIDTHS = [240, 480, 960] as const;
+
+export type AttachmentThumbWidth = (typeof ATTACHMENT_THUMB_WIDTHS)[number];
+
+/** `?w=` 的值是不是一个档位（只认十进制正整数的原样写法，`480.0`、`0480` 都不算）。 */
+export function parseAttachmentThumbWidth(
+  value: string,
+): AttachmentThumbWidth | null {
+  return (
+    ATTACHMENT_THUMB_WIDTHS.find((width) => String(width) === value) ?? null
+  );
+}
+
+/** 某个档位的缩略图地址。 */
+export function attachmentThumbUrl(
+  url: string,
+  width: AttachmentThumbWidth,
+): string {
+  return `${url}${url.includes("?") ? "&" : "?"}w=${width}`;
+}
+
+/**
+ * 一张图要画 `cssWidth` 个 CSS 像素宽时该拉哪一档：够清楚（宽度 × 屏幕像素密度）的最小一档，
+ * 都不够就用最大一档。原图比档位还窄时服务器直接回原图，所以选大了也不会放大。
+ *
+ * 不用 `srcset`：服务器在原图更窄时回的是原图，`960w` 之类的描述就不准了，浏览器会按它算出错误的固有尺寸。
+ */
+export function pickAttachmentThumbWidth(
+  cssWidth: number,
+  devicePixelRatio = 1,
+): AttachmentThumbWidth {
+  const ratio =
+    Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
+      ? devicePixelRatio
+      : 1;
+  const needed = cssWidth * ratio;
+  return (
+    ATTACHMENT_THUMB_WIDTHS.find((width) => width >= needed) ??
+    ATTACHMENT_THUMB_WIDTHS[ATTACHMENT_THUMB_WIDTHS.length - 1]
+  );
+}

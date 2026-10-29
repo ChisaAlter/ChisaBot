@@ -112,11 +112,11 @@ afterAll(async () => {
   GlobalRegistrator.unregister();
 });
 
-function cacheChannel() {
+function cacheChannel(lastMessage: string | null = null) {
   const summary: ChannelSummary = {
     ...channel,
     summary: null,
-    lastMessage: null,
+    lastMessage,
     lastMessageAgentId: "open-once-bot",
     lastMessageAt: channel.lastMessageAt,
     createdAt: "2026-10-29T00:00:00.000Z",
@@ -189,4 +189,90 @@ test("a run that finishes exactly while the chat is opening still shows its answ
   expect(view.getAllByText("Second question")).toHaveLength(1);
   expect(view.getAllByText("Stored reply")).toHaveLength(1);
   expect(historyReads).toHaveLength(1);
+}, 20_000);
+
+/*
+ * 0.1.110 线上冷打开仍是两次整份读（since 都为空 = 两次同时发出）：左栏列表（channelKeys.list）在聊天挂上
+ * 之后才到，订阅里把「列表第一次出现」当成别处新说了一句，马上 pull()，和打开时那次 earlyRead 并发。
+ * 下面两种都只许读一次：列表已在缓存（带真实的 lastMessage），和列表在挂上之后才到。
+ */
+function renderChat() {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <CopilotKitProvider runtimeUrl="http://localhost/api/copilotkit">
+        <ChannelChat channel={channel} runtimeAgentId="open-once-bot" />
+      </CopilotKitProvider>
+    </QueryClientProvider>,
+  );
+}
+
+test("cold open with the roster already cached (real last line) reads history once", async () => {
+  historyReads = [];
+  cacheChannel("Stored reply");
+  const view = renderChat();
+  await view.findByText("Stored reply");
+  await act(async () => {
+    await pause(2500);
+  });
+  expect(historyReads).toHaveLength(1);
+  expect(view.getAllByText("Stored reply")).toHaveLength(1);
+}, 20_000);
+
+test("cold open where the roster arrives after the chat mounted reads history once", async () => {
+  historyReads = [];
+  const view = renderChat();
+  // 列表比对话详情晚到：聊天已经挂上、打开时那次读还没回来。
+  cacheChannel("Stored reply");
+  await view.findByText("Stored reply");
+  await act(async () => {
+    await pause(2500);
+  });
+  expect(historyReads).toHaveLength(1);
+  expect(view.getAllByText("Stored reply")).toHaveLength(1);
+}, 20_000);
+
+test("cold open where the roster arrives after the join settled reads history once", async () => {
+  historyReads = [];
+  const view = renderChat();
+  await view.findByText("Stored reply");
+  await act(async () => {
+    await pause(300);
+  });
+  cacheChannel("Stored reply");
+  await act(async () => {
+    await pause(2500);
+  });
+  expect(historyReads).toHaveLength(1);
+}, 20_000);
+
+test("a new bot line in the roster after open still pulls history", async () => {
+  historyReads = [];
+  cacheChannel("Stored reply");
+  const view = renderChat();
+  await view.findByText("Stored reply");
+  await act(async () => {
+    await pause(300);
+  });
+  const reads = historyReads.length;
+  const cache = queryClient.getQueryData<ChannelCache>(channelKeys.list());
+  const row = cache!.pages[0]!.channels[0]!;
+  queryClient.setQueryData<ChannelCache>(channelKeys.list(), {
+    ...cache!,
+    pages: [
+      {
+        ...cache!.pages[0]!,
+        channels: [
+          {
+            ...row,
+            lastMessage: "Relayed answer",
+            lastMessageAt: "2026-10-29T00:05:00.000Z",
+          },
+        ],
+      },
+    ],
+  });
+  await act(async () => {
+    await pause(500);
+  });
+  expect(historyReads.length).toBeGreaterThan(reads);
 }, 20_000);

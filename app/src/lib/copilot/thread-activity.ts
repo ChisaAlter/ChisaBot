@@ -103,10 +103,14 @@ export function useThreadActivity(agentId: string, threadId: string | undefined)
   return { onActivity, kick };
 }
 
-type Row = { id: string; role: string; content?: unknown };
+type Row = { id: string; role: string; content?: unknown; toolCalls?: readonly { id: string }[] };
 /**
- * 回答结束后重读到的对话里，最后一条用户消息之后、这台也有的那几条（回答 / 思考），这台手里的正文比服务器
- * 存的短（被截断的半截）就把正文换成服务器的。只换正文、只会变长；别的消息和字段不动；没变化返回原数组。
+ * 回答结束后重读到的对话里，最后一条用户消息之后、这台也有的那几条（回答 / 思考），按服务器存的补齐：
+ *  - 正文：这台手里的比服务器存的短（被截断的半截）就换成服务器的。只会变长。
+ *  - 工具调用：服务器那条带的调用比这台多（断线正好落在「开场一句写完、工具调用还没开始」之间，
+ *    这台的开场一句没有 toolCalls），而且这台已有的都在里面，就换成服务器的。不换的话这一轮没有干活卡可收，
+ *    开场一句作为气泡露在结果上面，刷新后却没有（0.1.110 验收「重连后 5 条、刷新后 4 条」的一种）。
+ * 别的消息和字段不动；没变化返回原数组。
  */
 export function withStoredTail<T extends Row>(local: readonly T[], stored: readonly T[]): T[] {
   const lastUser = local.map((message) => message.role).lastIndexOf("user");
@@ -116,10 +120,23 @@ export function withStoredTail<T extends Row>(local: readonly T[], stored: reado
     if (at <= lastUser) return message;
     const saved = byId.get(message.id);
     if (!saved || saved.role !== message.role) return message;
-    if (typeof saved.content !== "string" || typeof message.content !== "string") return message;
-    if (saved.content.length <= message.content.length || !saved.content.startsWith(message.content.slice(0, 40))) return message;
-    changed = true;
-    return { ...message, content: saved.content };
+    let next = message;
+    if (
+      typeof saved.content === "string" &&
+      typeof message.content === "string" &&
+      saved.content.length > message.content.length &&
+      saved.content.startsWith(message.content.slice(0, 40))
+    )
+      next = { ...next, content: saved.content };
+    const savedCalls = saved.toolCalls ?? [];
+    const localCalls = message.toolCalls ?? [];
+    if (
+      savedCalls.length > localCalls.length &&
+      localCalls.every((call) => savedCalls.some((stored) => stored.id === call.id))
+    )
+      next = { ...next, toolCalls: savedCalls };
+    if (next !== message) changed = true;
+    return next;
   });
   return changed ? result : (local as T[]);
 }
