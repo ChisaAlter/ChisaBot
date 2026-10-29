@@ -263,8 +263,14 @@ export function setModelFallbackList(list: () => Promise<string[]>): void {
   fallbackConfigured = list;
 }
 /** 聊天回合用的模型：额度用完（429 等）时自动换同平台的其它模型重发（DESIGN.md §60）。 */
-export function fallbackConnectionModel(model: RuntimeModel, apiKey: string | null) {
+export function fallbackConnectionModel(
+  model: RuntimeModel,
+  apiKey: string | null,
+  /** How a request is rewritten for the model a fallback switches to (see `LoadAttachment.promptForModel`). */
+  adapt?: (modelId: string, callOptions: unknown) => Promise<unknown>,
+) {
   return fallbackLanguageModel(connectionLanguageModel(model, apiKey), model.defaultModel, {
+    ...(adapt ? { adapt } : {}),
     candidates: fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured()),
     build: (id) => connectionLanguageModel({ ...model, defaultModel: id }, apiKey),
   });
@@ -512,6 +518,8 @@ export function builtInAgentConfiguration(
    */
   standingInstructions?: string | null,
   planModel?: PlanModel,
+  /** Rewrites a request for the model a fallback switches to (images it cannot see → descriptions). */
+  adaptForFallback?: (modelId: string, callOptions: unknown) => Promise<unknown>,
 ): BuiltInAgentConfiguration {
   if (!apiKey && !planModel && model.useApiKey !== false) {
     return {
@@ -535,7 +543,7 @@ export function builtInAgentConfiguration(
       ? planModel
       : model.baseUrl || model.useApiKey === false
         ? // 每一步的用量记到当前运行的计量器（输入框的「上下文」读数，context-usage.ts）。
-          steerLanguageModel(meterLanguageModel(fallbackConnectionModel(model, apiKey)))
+          steerLanguageModel(meterLanguageModel(fallbackConnectionModel(model, apiKey, adaptForFallback)))
         : `${model.provider}/${model.defaultModel}`,
     /*
      * The package's role, then the person's own standing instructions, then what this Bot actually
@@ -775,7 +783,15 @@ export async function buildAgents(
           handoff,
           instructions ?? null,
           initiator,
-          loadAttachment,
+          // 同一个加载器给每个机器人绑上自己的 id 和这一轮实际用的模型：图片给原图还是给描述看这个模型（§59）。
+          loadAttachment &&
+            Object.assign(
+              (id: string, threadId: string) =>
+                loadAttachment(id, threadId, agent.id, selectedModel.defaultModel),
+              loadAttachment.promptForModel
+                ? { promptForModel: loadAttachment.promptForModel }
+                : {},
+            ),
           markAttachmentsSent,
         );
         if (loadPersonalMemory)
@@ -816,10 +832,32 @@ export type LoadInstructions = () => Promise<string | null>;
  * other is the line where the thread id has to be named. A caller that omits it does not compile.
  * Mirrors {@link SignRun}, which takes the thread for the same class of reason.
  */
-export type LoadAttachment = (
+export type LoadAttachment = ((
   id: string,
   threadId: string,
-) => Promise<StoredAttachment | null>;
+  /**
+   * Which Bot the turn is for, when the caller knows. Images are handed over differently depending
+   * on whether THAT Bot's model can see pictures (DESIGN.md §59): the original when it can, a
+   * vision model's description when it cannot. Bound per agent in `resolveRuntimeAgents`.
+   */
+  agentId?: string,
+  /**
+   * The model this turn actually runs on (the person's or the Bot's choice, already resolved), so the
+   * decision above is made for that model rather than for whatever the catalog default is.
+   */
+  modelId?: string,
+) => Promise<StoredAttachment | null>) & {
+  /**
+   * Rewrites one model request for a different model, when a fallback switches to it mid-turn
+   * (agents/model-fallback.ts): images the new model cannot see become a vision model's description.
+   * Absent means a fallback resends the request unchanged, which is what happened before.
+   */
+  promptForModel?: (
+    agentId: string,
+    modelId: string,
+    callOptions: unknown,
+  ) => Promise<unknown>;
+};
 
 /**
  * Records that these attachments went out in a message somebody sent.
@@ -1226,6 +1264,11 @@ async function buildAgent(
    * the message is known. The guidance it is given is generated from the tools passed here, which is
    * what keeps a narrowed run from being told it holds something it was not offered.
    */
+  const promptForModel = loadAttachment?.promptForModel;
+  const promptForFallback = promptForModel
+    ? (modelId: string, callOptions: unknown) =>
+        promptForModel(agent.id, modelId, callOptions)
+    : undefined;
   const withTools = (
     tools: GrantedTool[],
     input?: RunAgentInput,
@@ -1249,6 +1292,7 @@ async function buildAgent(
               signal,
             )
           : undefined,
+        promptForFallback,
       ),
       loadAttachment,
       markAttachmentsSent,

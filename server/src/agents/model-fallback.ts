@@ -52,6 +52,11 @@ export type FallbackDeps = {
    * （stream-start 不算），doGenerate 算到整个结果。只在有备用模型可换时生效。默认 {@link FIRST_OUTPUT_MS}。
    */
   firstOutputMs?: number;
+  /**
+   * 换到候选模型之前，把这次请求按候选模型改一遍（审查 #417：备用模型看不了图时，图片换成识图模型的描述）。
+   * 改失败就用原请求。主模型那一次不经过这里。
+   */
+  adapt?: (modelId: string, options: unknown) => Promise<unknown>;
 };
 
 /**
@@ -305,11 +310,12 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
       const other = deps.build(id) as Model | null;
       const call = other && typeof other[property] === "function" ? (other[property] as Call).bind(other) : null;
       if (!call) continue;
+      const sent = deps.adapt ? await deps.adapt(id, options).catch(() => options) : options;
       try {
         const result =
           deadlineMs > 0
-            ? await withFirstOutputDeadline(call, options, property, deadlineMs)
-            : await call(options);
+            ? await withFirstOutputDeadline(call, sent, property, deadlineMs)
+            : await call(sent);
         log({ type: "model-fallback", event: "used", model: primaryId, fallback: id });
         announce({ from: primaryId, to: id, reason });
         return result;

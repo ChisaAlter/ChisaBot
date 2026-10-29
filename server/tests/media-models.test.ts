@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { filesFromToolResult } from "../../shared/chat-files";
 import { modelKeyOf } from "../src/chat-files/media-models";
-import { createChatFiles, sniffImage } from "../src/chat-files/service";
+import { createChatFiles, IMAGE_INPUT_GUIDANCE, sniffImage } from "../src/chat-files/service";
 import { askVisionModel, probeVisionModel, solidPng } from "../src/chat-files/vision-provider";
 import { createDatabase } from "../src/db/client";
 import { imageInputOf } from "../src/model-catalog";
@@ -54,6 +54,9 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
   const bobBot = `agent_${randomUUID()}`;
   const calls: { url: string; body: Record<string, unknown>; auth: string | null }[] = [];
   let mainSees: boolean | undefined;
+  /** 按模型 id 回答能不能看图（这一轮实际用的模型 / 备用模型）；不在表里就看 mainSees。 */
+  const perModel: Record<string, boolean | undefined> = {};
+  const askedModels: (string | undefined)[] = [];
   const fakeFetch = (async (u: string, init?: RequestInit) => {
     const target = String(u);
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
@@ -72,7 +75,10 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
         fetch: fakeFetch,
         env: { MINIMAX_API_KEY: "sk-env-minimax-9999" },
         ownsBot: async (o, b) => (o === alice && b === bot) || (o === bob && b === bobBot),
-        mainModelSupportsImages: async () => mainSees,
+        mainModelSupportsImages: async (_agentId, modelId) => {
+          askedModels.push(modelId);
+          return modelId !== undefined && modelId in perModel ? perModel[modelId] : mainSees;
+        },
         isAdmin: async (id) => id === admin,
         assertPublic: async (u) => {
           if (/internal|127\.0\.0\.1|localhost/.test(u)) throw new Error("不是公网地址");
@@ -144,6 +150,21 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     await expect(media.saveVisionDefault(admin, { mode: "custom", baseUrl: "https://vl.example.com/v1", model: "vl-admin" })).rejects.toThrow("密钥");
     const saved = await media.saveVisionDefault(admin, { mode: "custom", baseUrl: "https://vl.example.com/v1", model: "vl-admin", apiKey: "sk-admin-vision-7777" });
     expect(saved).toMatchObject({ mode: "custom", ready: true, keyHint: "7777" });
+    mainSees = true;
+    // 审查 M9-1：主模型能看图时，配了识图模型也给原图，提示词说图片直接随消息给它（不要先找文件）。
+    calls.length = 0;
+    expect((await files.loadForTurn(alice, up.id))?.mimeType).toBe("image/png");
+    expect(calls.length).toBe(0);
+    const seeing = await files.guidance(alice, bot);
+    expect(seeing).toContain("直接随这条消息给你");
+    expect(seeing).toContain("不要先调 chat_files_recent");
+    expect(seeing).not.toContain("转成文字描述");
+    const inspectWhenSeeing = (await files.tools(alice, bot)).find((t) => t.name === "image_inspect");
+    expect(inspectWhenSeeing?.description).toContain("不需要这个工具");
+    expect(inspectWhenSeeing?.description).not.toContain("只拿到了文字描述");
+
+    // 主模型看不了图：才换成识图模型的描述（缓存一次）。
+    mainSees = false;
     calls.length = 0;
     const first = await files.loadForTurn(alice, up.id);
     expect(first?.mimeType).toBe("text/plain");
@@ -154,7 +175,8 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     expect(again?.bytes.toString()).toContain("蓝鲸42");
     expect(calls.filter((c) => c.url.endsWith("/chat/completions")).length).toBe(1);
     expect(await names(alice, bot)).toContain("image_inspect");
-    expect(await files.guidance(alice, bot)).toContain("image_inspect");
+    expect(await files.guidance(alice, bot)).toContain("转成文字描述");
+    expect((await files.tools(alice, bot)).find((t) => t.name === "image_inspect")?.description).toContain("只拿到了文字描述");
 
     // image_inspect 问具体问题（不缓存）
     calls.length = 0;
@@ -163,8 +185,10 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     expect(String((calls[0]!.body.messages as { content: { text?: string }[] }[])[0]!.content[0]!.text)).toContain("暗号是什么");
 
     // alice 个人「跟随主模型」：原图
+    mainSees = undefined;
     await media.savePersonalVision(alice, { mode: "follow" });
     expect((await files.loadForTurn(alice, up.id))?.mimeType).toBe("image/png");
+    mainSees = false;
     // alice 个人 custom：她的模型（缓存按模型分开）
     await expect(media.savePersonalVision(alice, { mode: "custom", baseUrl: "http://127.0.0.1:9/v1", model: "x", apiKey: "sk-alice-vis-0002" })).rejects.toThrow("公网");
     const mine = await media.savePersonalVision(alice, { mode: "custom", baseUrl: "https://alice-vl.example.com/v1", model: "vl-alice", apiKey: "sk-alice-vis-0002" });
@@ -175,6 +199,10 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     expect(personal?.bytes.toString()).toContain("vl-alice");
     expect(calls[0]!.url).toBe("https://alice-vl.example.com/v1/chat/completions");
     expect(calls[0]!.auth).toBe("Bearer sk-alice-vis-0002");
+    // alice 自己的识图模型也只在主模型看不了图时写描述；能看图就是原图。
+    mainSees = true;
+    expect((await files.loadForTurn(alice, up.id))?.mimeType).toBe("image/png");
+    mainSees = false;
     const keys = await database.$client.unsafe<{ model_key: string }[]>("SELECT model_key FROM chisabot_image_descriptions WHERE file_id = $1 ORDER BY model", [up.id]);
     expect(keys.map((k) => k.model_key).sort()).toEqual(
       [modelKeyOf({ baseUrl: "https://vl.example.com/v1", model: "vl-admin" }), modelKeyOf({ baseUrl: "https://alice-vl.example.com/v1", model: "vl-alice" })].sort(),
@@ -182,6 +210,143 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     // 删文件连描述一起删
     await files.remove(alice, up.id);
     expect((await database.$client.unsafe("SELECT 1 FROM chisabot_image_descriptions WHERE file_id = $1", [up.id])).length).toBe(0);
+    mainSees = undefined;
+  });
+
+  test("channel attachments (/api/attachments/<id>): original image when the main model sees, description only when it can't", async () => {
+    // 网页 / 频道聊天的附件走这条路（审查 M9-1）：原来不管主模型能不能看图都给原图，提示词却说是描述。
+    await media.savePersonalVision(alice, { mode: "default" });
+    const attachment = { mimeType: "image/png", name: "截图.png", bytes: PNG };
+    const text = { mimeType: "text/plain", name: "a.txt", bytes: Buffer.from("hi") };
+    mainSees = true;
+    calls.length = 0;
+    expect(await files.channelAttachmentForModel(alice, bot, "att-1", attachment)).toBe(attachment);
+    expect(await files.channelAttachmentForModel(alice, bot, "att-1", text)).toBe(text);
+    expect(calls.length).toBe(0);
+
+    mainSees = false;
+    const described = await files.channelAttachmentForModel(alice, bot, "att-1", attachment);
+    expect(described.mimeType).toBe("text/plain");
+    expect(described.bytes.toString()).toContain("截图.png");
+    expect(described.bytes.toString()).toContain("蓝鲸42");
+    expect(described.bytes.toString()).toContain("当前聊天模型不能看图片");
+    // 频道附件不在聊天文件表里，image_inspect 认不出它，不叫模型拿它去问。
+    expect(described.bytes.toString()).not.toContain("image_inspect");
+    await files.channelAttachmentForModel(alice, bot, "att-1", attachment);
+    expect(calls.filter((c) => c.url.endsWith("/chat/completions")).length).toBe(1);
+    const cached = await database.$client.unsafe<{ file_id: string }[]>("SELECT file_id FROM chisabot_image_descriptions WHERE file_id = 'att:att-1'");
+    expect(cached.length).toBe(1);
+    await database.$client.unsafe("DELETE FROM chisabot_image_descriptions WHERE file_id = 'att:att-1'");
+    expect(await files.channelAttachmentForModel(alice, bot, "att-1", text)).toBe(text);
+    mainSees = undefined;
+  });
+
+  test("model not in the catalog: description when a vision model is configured, original image when none is (#417)", async () => {
+    // 这时管理员配着 vl-admin，alice 用默认。
+    await media.savePersonalVision(alice, { mode: "default" });
+    const attachment = { mimeType: "image/png", name: "未知.png", bytes: PNG };
+    mainSees = undefined;
+    const described = await files.channelAttachmentForModel(alice, bot, "att-unknown", attachment);
+    expect(described.mimeType).toBe("text/plain");
+    expect(described.bytes.toString()).toContain("蓝鲸42");
+    expect(await files.guidance(alice, bot)).toContain("转成文字描述");
+    // 没配识图模型：照旧给原图（描述也没有可用的）。
+    await media.saveVisionDefault(admin, { mode: "follow" });
+    expect(await files.channelAttachmentForModel(alice, bot, "att-unknown", attachment)).toBe(attachment);
+    expect(await files.guidance(alice, bot)).toContain("直接随这条消息给你");
+    await media.saveVisionDefault(admin, { mode: "custom", baseUrl: "https://vl.example.com/v1", model: "vl-admin" });
+    await database.$client.unsafe("DELETE FROM chisabot_image_descriptions WHERE file_id = 'att:att-unknown'");
+  });
+
+  test("the model actually used this turn decides, including a fallback model (#417)", async () => {
+    await media.savePersonalVision(alice, { mode: "default" });
+    mainSees = true;
+    perModel["clinepass/text-only"] = false;
+    perModel["clinepass/sees"] = true;
+    const attachment = { mimeType: "image/png", name: "这轮.png", bytes: PNG };
+    // 这一轮用的是纯文字模型（个人 / 机器人选的）：描述；用能看图的：原图。
+    askedModels.length = 0;
+    expect((await files.channelAttachmentForModel(alice, bot, "att-turn", attachment, "clinepass/text-only")).mimeType).toBe("text/plain");
+    expect(askedModels).toContain("clinepass/text-only");
+    expect(await files.channelAttachmentForModel(alice, bot, "att-turn", attachment, "clinepass/sees")).toBe(attachment);
+    const up = await files.upload(alice, bot, { name: "这轮.png", bytes: PNG });
+    expect((await files.loadForTurn(alice, up.id, { agentId: bot, modelId: "clinepass/text-only" }))?.mimeType).toBe("text/plain");
+    // 别的机器人的文件不按这一轮的模型改。
+    expect((await files.loadForTurn(alice, up.id, { agentId: bobBot, modelId: "clinepass/text-only" }))?.mimeType).toBe("image/png");
+
+    // 中途换到备用模型：那一次请求里的图片换成描述，系统提示那句也换成描述版；能看图的备用模型原样。
+    const request = {
+      prompt: [
+        { role: "system", content: `你是助手。${IMAGE_INPUT_GUIDANCE.main}` },
+        { role: "user", content: [{ type: "text", text: "图里写了什么" }, { type: "file", mediaType: "image/png", data: new Uint8Array(PNG), filename: "这轮.png" }] },
+      ],
+      maxOutputTokens: 100,
+    };
+    calls.length = 0;
+    const rewritten = (await files.promptForModel(alice, bot, "clinepass/text-only", request)) as typeof request;
+    expect(rewritten.maxOutputTokens).toBe(100);
+    expect(rewritten.prompt[0]!.content).toContain("转成文字描述");
+    expect(rewritten.prompt[0]!.content).not.toContain("直接随这条消息给你");
+    const parts = rewritten.prompt[1]!.content as { type: string; text?: string }[];
+    expect(parts.map((part) => part.type)).toEqual(["text", "text"]);
+    expect(parts[1]!.text).toContain("text-only");
+    expect(parts[1]!.text).toContain("蓝鲸42");
+    // 同一张图第二步再发：内存里记着，不再调识图模型；也不写进描述表（删附件就删不掉的 OCR 文字）。
+    await files.promptForModel(alice, bot, "clinepass/text-only", request);
+    expect(calls.filter((c) => c.url.endsWith("/chat/completions")).length).toBe(1);
+    expect(await files.promptForModel(alice, bot, "clinepass/sees", request)).toBe(request);
+    // base64 / data: 地址的图片也认得。
+    const base64 = { prompt: [{ role: "user", content: [{ type: "file", mediaType: "image/png", data: `data:image/png;base64,${PNG.toString("base64")}` }] }] };
+    const fromDataUrl = (await files.promptForModel(alice, bot, "clinepass/text-only", base64)) as typeof base64;
+    expect(JSON.stringify(fromDataUrl.prompt[0]!.content)).toContain("蓝鲸42");
+    // 没配识图模型：换成一句如实的说明，不把图发给看不了图的模型。
+    await media.saveVisionDefault(admin, { mode: "follow" });
+    const noted = (await files.promptForModel(alice, bot, "clinepass/text-only", request)) as typeof request;
+    expect(JSON.stringify(noted.prompt[1]!.content)).toContain("没有配置识图模型");
+    expect(JSON.stringify(noted.prompt[1]!.content)).not.toContain("image/png");
+    await media.saveVisionDefault(admin, { mode: "custom", baseUrl: "https://vl.example.com/v1", model: "vl-admin" });
+    await files.remove(alice, up.id);
+    await database.$client.unsafe("DELETE FROM chisabot_image_descriptions WHERE file_id = 'att:att-turn'");
+  });
+
+  test("a channel attachment's description goes when the attachment goes (#417)", async () => {
+    // 外键 attachment_id → attachments(id) ON DELETE CASCADE：撤回、清理、频道 / 用户删除的级联都带走描述（含 OCR 文字）。
+    const uploader = `mmuploader-${randomUUID().slice(0, 8)}`;
+    const channel = `mmchannel-${randomUUID().slice(0, 8)}`;
+    await database.$client.unsafe("INSERT INTO users (id, email) VALUES ($1, $2)", [uploader, `${uploader}@example.test`]);
+    await database.$client.unsafe("INSERT INTO channels (id, name, description) VALUES ($1, 'm', 'm')", [channel]);
+    const insert = async () =>
+      (
+        await database.$client.unsafe<{ id: string }[]>(
+          "INSERT INTO attachments (channel_id, uploaded_by, name, mime_type, size_bytes, bytes) VALUES ($1, $2, 'a.png', 'image/png', $3, $4) RETURNING id",
+          [channel, uploader, PNG.length, PNG],
+        )
+      )[0]!.id;
+    const rowsFor = (id: string) =>
+      database.$client.unsafe<{ attachment_id: string | null }[]>("SELECT attachment_id FROM chisabot_image_descriptions WHERE file_id = $1", [`att:${id}`]);
+    mainSees = false;
+    await media.savePersonalVision(alice, { mode: "default" });
+    const attachment = { mimeType: "image/png", name: "a.png", bytes: PNG };
+
+    const withdrawn = await insert();
+    await files.channelAttachmentForModel(alice, bot, withdrawn, attachment);
+    expect((await rowsFor(withdrawn)).map((row) => row.attachment_id)).toEqual([withdrawn]);
+    await database.$client.unsafe("DELETE FROM attachments WHERE id = $1", [withdrawn]);
+    expect((await rowsFor(withdrawn)).length).toBe(0);
+
+    const inChannel = await insert();
+    await files.channelAttachmentForModel(alice, bot, inChannel, attachment);
+    expect((await rowsFor(inChannel)).length).toBe(1);
+    await database.$client.unsafe("DELETE FROM channels WHERE id = $1", [channel]);
+    expect((await rowsFor(inChannel)).length).toBe(0);
+
+    // 附件已经没了（描述写到一半被删）：外键不让存缓存，这一轮照样拿到描述。
+    const gone = randomUUID();
+    const late = await files.channelAttachmentForModel(alice, bot, gone, attachment);
+    expect(late.bytes.toString()).toContain("蓝鲸42");
+    expect((await rowsFor(gone)).length).toBe(0);
+    await database.$client.unsafe("DELETE FROM users WHERE id = $1", [uploader]);
+    mainSees = undefined;
   });
 
   test("main model can't see images: follow falls back to admin vision, else a note", async () => {
@@ -203,10 +368,12 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     const old = await files.upload(bob, bobBot, { name: "old.png", bytes: PNG });
     await database.$client.unsafe("UPDATE chisabot_chat_files SET created_at = now() - interval '2 days' WHERE id = $1", [old.id]);
     await media.savePersonalVision(bob, { mode: "default" });
+    mainSees = false;
     calls.length = 0;
     const note = await files.loadForTurn(bob, old.id);
     expect(note?.bytes.toString()).toContain("image_inspect");
     expect(calls.length).toBe(0);
+    mainSees = undefined;
 
     const app = new Hono();
     let actor = { id: bob, email: "b@x", role: "member" as string };

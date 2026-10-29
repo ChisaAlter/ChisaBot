@@ -21,4 +21,6 @@ export {
   mediaTypeOf,
   namesNoFormat,
   shouldClaimPaste,
+  unreadablePhotoFormat,
+  unsupportedImageReason,
 } from "../../../../shared/attachments";

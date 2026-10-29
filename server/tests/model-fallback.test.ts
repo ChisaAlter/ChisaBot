@@ -84,6 +84,46 @@ describe("model fallback on quota errors", () => {
     expect(primary.calls.length).toBe(2);
   });
 
+  test("a fallback model gets the request rewritten for it (images it cannot see → descriptions); the primary never does", async () => {
+    // 审查 #417：备用模型看不了图时，那一次请求里的图片要换成描述，不能原样发过去。
+    const primary = fakeModel("p", async () => {
+      throw DAILY;
+    });
+    const backup = fakeModel("b", async () => ({ stream: "ok-from-b" }));
+    const adapted: string[] = [];
+    const wrapped = fallbackLanguageModel(primary.model, "clinepass/p", {
+      candidates: async () => ["clinepass/b"],
+      build: (id) => (id === "clinepass/b" ? backup.model : null),
+      log: () => {},
+      firstOutputMs: 0,
+      adapt: async (id, options) => {
+        adapted.push(id);
+        return { ...(options as object), described: true };
+      },
+    });
+    expect(await wrapped.doStream({ prompt: "image" })).toEqual({ stream: "ok-from-b" });
+    expect(primary.calls).toEqual([{ prompt: "image" }]);
+    expect(backup.calls).toEqual([{ prompt: "image", described: true }]);
+    expect(adapted).toEqual(["clinepass/b"]);
+
+    // 改写失败不挡住回答：照原请求发。
+    resetModelCooldowns();
+    const failing = fakeModel("b2", async () => ({ stream: "ok-from-b2" }));
+    const wrapped2 = fallbackLanguageModel(fakeModel("p", async () => {
+      throw DAILY;
+    }).model, "clinepass/p", {
+      candidates: async () => ["clinepass/b2"],
+      build: () => failing.model,
+      log: () => {},
+      firstOutputMs: 0,
+      adapt: async () => {
+        throw new Error("vision down");
+      },
+    });
+    expect(await wrapped2.doStream({ prompt: "image" })).toEqual({ stream: "ok-from-b2" });
+    expect(failing.calls).toEqual([{ prompt: "image" }]);
+  });
+
   test("non-quota errors are thrown unchanged and do not fall back", async () => {
     const boom = apiError(400, "bad request");
     const primary = fakeModel("p", async () => {
