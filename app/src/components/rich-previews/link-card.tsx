@@ -1,6 +1,7 @@
 import {
   IconArrowUpRight,
   IconMessageReply,
+  IconPlayerPlayFilled,
   IconWorld,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
@@ -20,7 +21,11 @@ import {
   needsLinkPreview,
 } from "@/lib/rich-previews/link-fields";
 import { cn } from "@/lib/utils";
-import { previewClient, previewQuery } from "./link-preview-query";
+import {
+  previewClient,
+  previewQuery,
+  rememberedPreview,
+} from "./link-preview-query";
 import "./link-card.css";
 
 /**
@@ -33,6 +38,8 @@ import "./link-card.css";
  * - 一条回复里多个链接：{@link LinkCardStack} 叠成错落的一叠（{@link linkStackSlots}）。
  * - 字段：给的优先，缺的用 `/api/link-preview` 补（{@link mergeLinkFields}）。
  * - 样式在 ./link-card.css，类名都以 lc- 开头。
+ * - 结构（审查模块 6）：外层 `.lc-item` 负责位置（叠放的槽位、悬停抬起、层级），里面是 `<a class="lc-card">`，
+ *   「追问」按钮是 `<a>` 的兄弟元素，不嵌在链接里（不嵌套交互元素；触屏上也不会被链接区接住点击）。
  */
 
 export type LinkStackSlot = "main" | "left" | "right";
@@ -76,6 +83,11 @@ export const LINK_CARD_FALLBACK_RATIO = 1.91;
 /** GitHub 的 og:image 是 1200×600。 */
 export const LINK_CARD_GITHUB_RATIO = 2;
 const MIN_RATIO = 4 / 3;
+/**
+ * 比这个窄的图（CSS 像素，= 单张卡的宽）算小图：放大会糊、cover 还会裁掉一块，所以按原始尺寸整张放在框里居中，
+ * 不放大、不裁（审查模块 6：172×178 的直链图被放大成 287×294 再裁掉）。
+ */
+export const LINK_CARD_SMALL_IMAGE = 280;
 const MAX_RATIO = 2.4;
 
 export type LinkMediaRatio = {
@@ -186,14 +198,20 @@ type ImageAttempt = {
   src: string | null;
   broken: boolean;
   square: boolean;
+  /** 加载出来才知道的原图宽度比卡窄（服务器没给宽高时）。 */
+  small: boolean;
 };
 
 function freshAttempt(image: string | null): ImageAttempt {
-  return { key: image, src: image, broken: false, square: false };
+  return { key: image, src: image, broken: false, square: false, small: false };
 }
 
 function isSquarish(img: HTMLImageElement): boolean {
   return img.naturalHeight > 0 && img.naturalWidth / img.naturalHeight < 1.25;
+}
+
+function isSmallImage(width: number | null | undefined): boolean {
+  return Boolean(width && width > 0 && width < LINK_CARD_SMALL_IMAGE);
 }
 
 /** 取预览时的占位：和有图的卡同一个尺寸（同一个图片比例）。给了标题就先把标题写上。 */
@@ -216,7 +234,7 @@ export function LinkCardSkeleton({
   return (
     <div
       aria-hidden
-      className={cn("lc-card lc-skel", className)}
+      className={cn("lc-item lc-card lc-skel", className)}
       data-layout="image"
       data-stack-slot={slot}
       data-testid="link-card-skeleton"
@@ -232,24 +250,15 @@ export function LinkCardSkeleton({
           <span className="lc-title">{title}</span>
         ) : (
           <span className="lc-title">
-            <span
-              className="lc-skel-bar"
-              style={{ width: "86%" }}
-            />
-            <span
-              className="lc-skel-bar"
-              style={{ width: "58%" }}
-            />
+            <span className="lc-skel-bar" style={{ width: "86%" }} />
+            <span className="lc-skel-bar" style={{ width: "58%" }} />
           </span>
         )}
         {site ? (
           <span className="lc-meta">{site}</span>
         ) : (
           <span className="lc-meta">
-            <span
-              className="lc-skel-bar"
-              style={{ width: "42%" }}
-            />
+            <span className="lc-skel-bar" style={{ width: "42%" }} />
           </span>
         )}
       </span>
@@ -277,7 +286,12 @@ export function LinkCard({
   const href = safeHref(url);
   const needs = Boolean(href) && needsLinkPreview(given, href ?? undefined);
   const query = useQuery(
-    { ...previewQuery(href ?? ""), enabled: needs },
+    {
+      ...previewQuery(href ?? ""),
+      enabled: needs,
+      // 刷新页面后：这个标签页里取到过的预览先同步拿出来画成真卡，不先放骨架再换（骨架和真卡高度不同会跳，CLS）。
+      ...(needs && href ? rememberedPreview(href) : {}),
+    },
     previewClient,
   );
   const fields = mergeLinkFields(href ?? url, given, query.data);
@@ -311,6 +325,9 @@ export function LinkCard({
   const line = fields.extra ? `${fields.site} · ${fields.extra}` : fields.site;
   const media = linkMediaRatio(fields.imageWidth, fields.imageHeight, href);
   const square = media.square || img.square;
+  // 小图（比卡窄）：按原始尺寸整张放进框里居中，不放大、不裁。
+  const small = isSmallImage(fields.imageWidth) || img.small;
+  const video = fields.kind === "video";
   const size =
     fields.imageWidth && fields.imageHeight
       ? { width: fields.imageWidth, height: fields.imageHeight }
@@ -322,6 +339,7 @@ export function LinkCard({
           alt=""
           decoding="async"
           height={28}
+          loading="lazy"
           onError={() => setIconBroken(true)}
           referrerPolicy="no-referrer"
           src={favicon}
@@ -334,70 +352,91 @@ export function LinkCard({
   );
 
   return (
-    <a
-      aria-label={`${fields.title}（${line}），在新窗口打开`}
-      className={cn("lc-card", className)}
-      data-degraded={
-        fields.degraded || (needs && query.isError) ? "" : undefined
-      }
+    <div
+      className={cn("lc-item", className)}
       data-index={stackIndex}
-      data-tool-call={toolCallId ?? undefined}
       data-layout={layout}
       data-primary={slot === "main" ? "" : undefined}
       data-stack-slot={slot}
-      data-testid="link-card"
-      href={href}
-      onClick={(event) => {
-        event.stopPropagation();
-        onStackClick?.(event);
-      }}
-      onFocus={onStackFocus}
-      rel="noopener noreferrer"
       style={slotStyle(slot, layer)}
-      target="_blank"
-      title={
-        fields.description
-          ? `${fields.title}\n${fields.description}`
-          : (query.data?.finalUrl ?? href)
-      }
     >
-      {hasImage ? (
-        <span
-          className="lc-media"
-          data-ratio={media.source}
-          data-square={square ? "" : undefined}
-          style={{ aspectRatio: String(media.ratio) }}
-        >
-          <img
-            alt=""
-            decoding="async"
-            draggable={false}
-            height={size.height}
-            loading="lazy"
-            onError={() => {
-              if (fields.imageFallback && img.src !== fields.imageFallback)
-                setAttempt({ ...img, src: fields.imageFallback });
-              else setAttempt({ ...img, broken: true });
-            }}
-            onLoad={(event) => {
-              const sq = isSquarish(event.currentTarget);
-              if (sq !== img.square) setAttempt({ ...img, square: sq });
-            }}
-            referrerPolicy="no-referrer"
-            src={img.src ?? undefined}
-            width={size.width}
-          />
+      <a
+        aria-label={`${fields.title}（${line}），在新窗口打开`}
+        className="lc-card"
+        data-degraded={
+          fields.degraded || (needs && query.isError) ? "" : undefined
+        }
+        data-kind={video ? "video" : undefined}
+        data-tool-call={toolCallId ?? undefined}
+        data-layout={layout}
+        data-testid="link-card"
+        href={href}
+        onClick={(event) => {
+          event.stopPropagation();
+          onStackClick?.(event);
+        }}
+        onFocus={onStackFocus}
+        rel="noopener noreferrer"
+        target="_blank"
+        title={
+          fields.description
+            ? `${fields.title}\n${fields.description}`
+            : (query.data?.finalUrl ?? href)
+        }
+      >
+        {hasImage ? (
+          <span
+            className="lc-media"
+            data-ratio={media.source}
+            data-fit={square || small ? "contain" : undefined}
+            data-square={square ? "" : undefined}
+            style={{ aspectRatio: String(media.ratio) }}
+          >
+            <img
+              alt=""
+              decoding="async"
+              draggable={false}
+              height={size.height}
+              loading="lazy"
+              onError={() => {
+                if (fields.imageFallback && img.src !== fields.imageFallback)
+                  setAttempt({ ...img, src: fields.imageFallback });
+                else setAttempt({ ...img, broken: true });
+              }}
+              onLoad={(event) => {
+                const sq = isSquarish(event.currentTarget);
+                const sm = isSmallImage(event.currentTarget.naturalWidth);
+                if (sq !== img.square || sm !== img.small)
+                  setAttempt({ ...img, square: sq, small: sm });
+              }}
+              referrerPolicy="no-referrer"
+              src={img.src ?? undefined}
+              width={size.width}
+            />
+            {video ? (
+              // 视频：图上叠一个播放角标（不模糊、不接事件，点它就是点卡片）。
+              <span
+                aria-hidden
+                className="lc-play"
+                data-testid="link-card-play"
+              >
+                <IconPlayerPlayFilled />
+              </span>
+            ) : null}
+          </span>
+        ) : (
+          badge
+        )}
+        <span className="lc-body">
+          <span className="lc-title">{fields.title}</span>
+          <span className="lc-meta">
+            <span className="lc-site">{line}</span>
+          </span>
         </span>
-      ) : (
-        badge
-      )}
-      <span className="lc-body">
-        <span className="lc-title">{fields.title}</span>
-        <span className="lc-meta">
-          <span className="lc-site">{line}</span>
-        </span>
-      </span>
+        <IconArrowUpRight aria-hidden className="lc-go" />
+      </a>
       {followup ? (
+        // 「追问」是链接的兄弟元素，不嵌在 <a> 里（读屏不会读成链接的一部分；看不见的时候也接不住点击，见 CSS）。
         <button
           aria-label={`追问 ${fields.title}`}
           className="lc-followup"
@@ -417,8 +456,7 @@ export function LinkCard({
           <span>{"追问"}</span>
         </button>
       ) : null}
-      <IconArrowUpRight aria-hidden className="lc-go" />
-    </a>
+    </div>
   );
 }
 
@@ -435,7 +473,7 @@ export const LINK_STACK_MOVE_MS = 250;
 function cardIndexOf(target: EventTarget | null): number | null {
   const el =
     target instanceof Element
-      ? target.closest<HTMLElement>(".lc-card[data-index]")
+      ? target.closest<HTMLElement>(".lc-item[data-index]")
       : null;
   if (!el) return null;
   const n = Number(el.dataset.index);

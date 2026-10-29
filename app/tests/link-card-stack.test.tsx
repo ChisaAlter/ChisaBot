@@ -222,23 +222,25 @@ describe("LinkCardStack 交互", () => {
     );
     return view.getAllByTestId("link-card");
   };
+  // 槽位、主位、层级在卡外层的 .lc-item 上（「追问」按钮和 <a> 是兄弟，见 link-card.tsx）。
+  const item = (c: HTMLElement) => c.closest<HTMLElement>(".lc-item")!;
   const slots = (cards: HTMLElement[]) =>
-    cards.map((c) => c.getAttribute("data-stack-slot"));
+    cards.map((c) => item(c).getAttribute("data-stack-slot"));
 
   test("三张：默认中间那张在主位；一张时不进叠放", async () => {
     const view = render(<LinkCardStack items={three()} />);
     const cards = await view.findAllByTestId("link-card");
     expect(slots(cards)).toEqual(["left", "main", "right"]);
-    expect(cards[1]!.hasAttribute("data-primary")).toBe(true);
+    expect(item(cards[1]!).hasAttribute("data-primary")).toBe(true);
     // 主位那张层级最高。
-    const z = cards.map((c) => Number(c.style.zIndex));
+    const z = cards.map((c) => Number(item(c).style.zIndex));
     expect(z[1]).toBeGreaterThan(Math.max(z[0]!, z[2]!));
     cleanup();
     const one = render(
       <LinkCardStack items={[{ url: `https://one${seq}.example.com/` }]} />,
     );
     const card = await one.findByTestId("link-card");
-    expect(card.hasAttribute("data-stack-slot")).toBe(false);
+    expect(item(card).hasAttribute("data-stack-slot")).toBe(false);
     expect(one.getByTestId("link-cards").hasAttribute("data-deck")).toBe(false);
   });
 
@@ -279,7 +281,7 @@ describe("LinkCardStack 交互", () => {
     fireEvent.pointerLeave(view.getByTestId("link-cards"), {
       pointerType: "mouse",
     });
-    expect(cards[2]!.hasAttribute("data-primary")).toBe(true);
+    expect(item(cards[2]!).hasAttribute("data-primary")).toBe(true);
   });
 
   test("流式进卡：用户没选过时按张数重算默认主位；选过之后再进卡不动", async () => {
@@ -346,7 +348,7 @@ describe("LinkCardStack 交互", () => {
       "utf8",
     );
     const showRule = css.match(
-      /([^{}]+)\{\s*opacity: 1;\s*transform: none;\s*\}/,
+      /([^{}]+)\{\s*opacity: 1;\s*transform: none;\s*pointer-events: auto;\s*\}/,
     )!;
     expect(showRule[1]!.split(",").map((s) => s.trim())).toContain(
       ".lc-followup:focus-visible",
@@ -358,7 +360,7 @@ describe("LinkCardStack 交互", () => {
     const view = render(<LinkCardStack items={three()} />);
     const cards = await view.findAllByTestId("link-card");
     const buttons = cards.map(
-      (c) => c.querySelector<HTMLElement>(".lc-followup")!,
+      (c) => item(c).querySelector<HTMLElement>(".lc-followup")!,
     );
     expect(buttons.map((b) => b.matches(hide))).toEqual([true, false, true]);
     // 换到主位后它的按钮就不再被藏。
@@ -369,8 +371,8 @@ describe("LinkCardStack 交互", () => {
     const one = render(
       <LinkCardStack items={[{ url: `https://f${seq}.example.com/` }]} />,
     );
-    const btn = (
-      await one.findByTestId("link-card")
+    const btn = item(
+      await one.findByTestId("link-card"),
     ).querySelector<HTMLElement>(".lc-followup")!;
     expect(btn.matches(hide)).toBe(false);
   });
@@ -463,14 +465,15 @@ describe("样式约束", () => {
   });
   test("卡片只过渡 transform（--dur-2 + --ease-out，不长于换位锁定时间），减少动态效果时没有过渡", () => {
     const transitions = [
-      ...css.matchAll(/\.lc-card \{[^}]*transition:\s*([^;]+);/g),
+      // 位置（悬停抬起、叠放槽位）在外层 .lc-item 上，过渡也在它身上。
+      ...css.matchAll(/\.lc-item \{[^}]*transition:\s*([^;]+);/g),
     ].map((m) => m[1]);
     expect(transitions[0]).toBe(
       "transform var(--dur-2, 220ms) var(--ease-out)",
     );
     expect(LINK_STACK_MOVE_MS).toBeGreaterThanOrEqual(220);
     expect(css).toMatch(
-      /prefers-reduced-motion: reduce\)\s*\{\s*\.lc-card,[^}]*transition: none;/,
+      /prefers-reduced-motion: reduce\)\s*\{\s*\.lc-item,[^}]*transition: none;/,
     );
   });
   test("材质、圆角、间距用设计系统令牌（不是 Hark 的固定深色）", () => {
@@ -487,7 +490,7 @@ describe("样式约束", () => {
   });
   test("叠放的卡全靠 transform 定位（同一个网格格子），槽位用变量", () => {
     expect(css).toMatch(
-      /\.lc-stack\[data-deck\] \.lc-card \{[^}]*grid-area: 1 \/ 1;[^}]*transform: translate\(/,
+      /\.lc-stack\[data-deck\] \.lc-item \{[^}]*grid-area: 1 \/ 1;[^}]*transform: translate\(/,
     );
     expect(css).toContain(
       "--lc-w: min(208px, calc((100cqw - 16px) / (1 + 0.72 * var(--lc-sides))))",

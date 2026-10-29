@@ -9,8 +9,20 @@
  * - 单张卡：宽 min(280px, 100%)，不倾斜。
  * - 一叠（.lc-stack，2–3 张）：所有卡放在同一个网格格子里，位置全靠 transform（槽位变量 --lc-sx / --lc-sy /
  *   --lc-rot / --lc-sc），换主位只改 transform 和层级，不重排。过渡 --dur-2（220ms）+ --ease-out；减少动态效果时没有过渡。
+ * - 结构：外层 .lc-item 管位置（槽位 transform、悬停抬起、层级、「追问」的定位），里面 <a class="lc-card"> 是卡面，
+ *   「追问」<button> 是 <a> 的兄弟，不嵌在链接里。
+ * - URL / 编号里不要 Inter 的上下文字形替换：calt 会把「411x7」画成「411×7」。
  */
+.lc-item {
+  position: relative;
+  flex: none;
+  width: min(280px, 100%);
+  min-width: 0;
+  transform: translateY(var(--lc-lift, 0px));
+  transition: transform var(--dur-2, 220ms) var(--ease-out);
+}
 .lc-card {
+  font-feature-settings: "calt" 0;
   --lc-radius: var(--r-lg, 20px);
   --lc-inset: var(--sp-2, 8px);
   position: relative;
@@ -29,8 +41,9 @@
   color: var(--text);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transform: translateY(var(--lc-lift, 0px));
-  transition: transform var(--dur-2, 220ms) var(--ease-out);
+}
+.lc-item > .lc-card {
+  width: 100%;
 }
 /* 正文 / json-render 里的 a 可能带下划线规则：用更具体的选择器盖掉，不用 !important。 */
 a.lc-card[href],
@@ -55,16 +68,51 @@ a.lc-card[href]:hover {
   background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 .lc-media > img {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-/* 接近方形的图（logo）整张放进框里。 */
-.lc-media[data-square] > img {
+/*
+ * 接近方形的图（logo）和比卡窄的小图：整张放进框里居中，不裁也不放大——最大就是原始尺寸，
+ * 四周露出 .lc-media 的主题色衬底（和大图按真实比例、不裁切是同一条规则）。
+ * 宽高 auto + max-* 100%：图片的 width / height 属性只用来占比例，不会把小图撑大。
+ */
+.lc-media[data-fit="contain"] > img {
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
   object-fit: contain;
+}
+.lc-media[data-square] > img {
   padding: 14px;
   box-sizing: border-box;
+}
+/* 视频：图正中一个播放角标。不模糊、不接事件（点它就是点卡片）。 */
+.lc-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: var(--r-pill, 999px);
+  background: rgba(15, 20, 32, 0.62);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22);
+  color: #fff;
+  pointer-events: none;
+}
+.lc-play > svg {
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
 }
 .lc-badge {
   display: grid;
@@ -174,6 +222,8 @@ a.lc-card[href]:hover {
   top: 12px;
   z-index: 3;
   opacity: 0;
+  /* 看不见的时候点不到：绝不让一个透明按钮接住本该打开链接的那一下。 */
+  pointer-events: none;
   transform: translateY(2px);
   transition:
     opacity 180ms var(--ease-out),
@@ -209,7 +259,7 @@ a.lc-card[href]:hover {
   top: 50%;
   margin-top: -12px;
 }
-.lc-card[data-layout="compact"] .lc-followup {
+.lc-item[data-layout="compact"] > .lc-followup {
   top: auto;
   bottom: 6px;
   left: auto;
@@ -223,32 +273,41 @@ a.lc-card[href]:hover {
   outline: 2px solid var(--focus-line);
   outline-offset: 2px;
 }
-.lc-card:focus-visible :is(.lc-go, .lc-followup),
-.lc-card[data-primary] :is(.lc-go, .lc-followup),
+.lc-card:focus-visible .lc-go,
+.lc-card:focus-visible + .lc-followup,
+.lc-item[data-primary] :is(.lc-go, .lc-followup),
 .lc-followup:focus-visible {
   opacity: 1;
   transform: none;
+  pointer-events: auto;
 }
-/* 叠放时不在主位的卡：按钮藏起来、点不到也 Tab 不到（触屏平板上不会点到看不见的按钮）。 */
-.lc-stack[data-deck] .lc-card:not([data-primary]) :is(.lc-go, .lc-followup) {
+/* 叠放时不在主位的卡：按钮藏起来、点不到也 Tab 不到。 */
+.lc-stack[data-deck] .lc-item:not([data-primary]) :is(.lc-go, .lc-followup) {
   visibility: hidden;
   pointer-events: none;
 }
-@media (hover: hover) {
-  .lc-card:not([data-stack-slot]):hover :is(.lc-go, .lc-followup) {
+/* 只有真鼠标才靠悬停显示；带触屏的设备（含触屏笔记本）悬停不算数，见下一段。 */
+@media (hover: hover) and (pointer: fine) {
+  .lc-item:not([data-stack-slot]):hover :is(.lc-go, .lc-followup) {
     opacity: 1;
     transform: none;
+    pointer-events: auto;
   }
 }
-@media (hover: none) {
+/*
+ * 触屏：「追问」明确显示出来（单张卡一直显示；一叠里主位那张由上面的 [data-primary] 显示；窄容器里一叠的去掉，见下），
+ * 不靠悬停。触屏上点一下会先触发悬停再命中测试，靠悬停显示的按钮会在同一下里冒出来接住点击（审查模块 6 第 3 条）。
+ * ↗ 只是图标（不接事件），常显 0.7。
+ */
+@media (hover: none), (any-pointer: coarse) {
   .lc-go {
     opacity: 0.7;
     transform: none;
   }
-  /* 触屏没有悬停：单张卡的「追问」一直显示，不留一个看不见却点得到的按钮。 */
-  .lc-card:not([data-stack-slot]) .lc-followup {
+  .lc-item:not([data-stack-slot]) > .lc-followup {
     opacity: 1;
     transform: none;
+    pointer-events: auto;
   }
 }
 
@@ -283,12 +342,14 @@ a.lc-card[href]:hover {
   margin-left: auto;
 }
 .lc-stack[data-deck] .lc-card {
-  grid-area: 1 / 1;
   /* 叠在一起时把同一个实色令牌再叠一层（.96 → 约 .998），压在下面那张的字不透上来；不另写颜色。 */
   background-image: linear-gradient(
     var(--glass-bg-solid),
     var(--glass-bg-solid)
   );
+}
+.lc-stack[data-deck] .lc-item {
+  grid-area: 1 / 1;
   width: var(--lc-w);
   transform-origin: 50% 60%;
   transform: translate(
@@ -313,12 +374,12 @@ a.lc-card[href]:hover {
   }
 }
 @media (prefers-reduced-motion: no-preference) and (hover: hover) {
-  .lc-card:not([data-stack-slot]):hover {
+  .lc-item:not([data-stack-slot]):hover {
     --lc-lift: calc(-1 * var(--rise-sm, 4px));
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lc-card,
+  .lc-item,
   .lc-go,
   .lc-followup {
     transition: none;

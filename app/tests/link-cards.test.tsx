@@ -164,18 +164,19 @@ describe("链接卡", () => {
     expect(cards.length).toBe(2);
     const deck = view.getByTestId("link-cards");
     expect(deck.hasAttribute("data-deck")).toBe(true);
-    expect(cards.map((c) => c.getAttribute("data-stack-slot"))).toEqual([
+    const items = cards.map((c) => c.closest<HTMLElement>(".lc-item")!);
+    expect(items.map((c) => c.getAttribute("data-stack-slot"))).toEqual([
       "main",
       "right",
     ]);
     fireEvent.pointerMove(cards[1]!, { pointerType: "mouse" });
-    expect(cards[1]!.hasAttribute("data-primary")).toBe(true);
-    expect(cards[0]!.getAttribute("data-stack-slot")).toBe("right");
-    expect(Number(cards[1]!.style.zIndex)).toBeGreaterThan(
-      Number(cards[0]!.style.zIndex),
+    expect(items[1]!.hasAttribute("data-primary")).toBe(true);
+    expect(items[0]!.getAttribute("data-stack-slot")).toBe("right");
+    expect(Number(items[1]!.style.zIndex)).toBeGreaterThan(
+      Number(items[0]!.style.zIndex),
     );
     fireEvent.pointerLeave(deck, { pointerType: "mouse" });
     fireEvent.mouseLeave(cards[1]!);
-    expect(cards[1]!.hasAttribute("data-primary")).toBe(true);
+    expect(items[1]!.hasAttribute("data-primary")).toBe(true);
   });
 });

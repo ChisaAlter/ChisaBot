@@ -168,7 +168,10 @@ describe("LinkCard", () => {
     ).toBe(skeletonRatio!);
     // GitHub 不知道宽高时按 2:1 占位；服务器量的 1200×600 也是 2:1，所以内容到了不跳。
     expect(skeletonRatio).toMatch(/^2( \/ 1)?$/);
-    expect(card.className).toBe(skeleton.className.replace(" lc-skel", ""));
+    // 骨架一个元素同时是 .lc-item 和 .lc-card（没有「追问」按钮）；真卡是 .lc-item > a.lc-card + 按钮。
+    expect(skeleton.className).toBe("lc-item lc-card lc-skel");
+    expect(card.className).toBe("lc-card");
+    expect(card.parentElement!.className).toBe("lc-item");
 
     const lone = render(<LinkCardSkeleton />).getByTestId("link-card-skeleton");
     expect(lone.querySelector(".lc-title")).not.toBeNull();
