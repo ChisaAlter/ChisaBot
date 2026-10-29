@@ -70,7 +70,7 @@ function protectedPage() {
   );
 }
 
-function fakeFetch(read: () => Promise<Response>) {
+function fakeFetch(read: (input: unknown) => Promise<Response>) {
   globalThis.fetch = Object.assign(read, {
     preconnect: originalFetch.preconnect,
   });
@@ -78,12 +78,19 @@ function fakeFetch(read: () => Promise<Response>) {
 
 test("a protected page shows loading while the actual authentication guard waits", async () => {
   let resolveUser!: (response: Response) => void;
-  fakeFetch(
-    () =>
-      new Promise((resolve) => {
-        resolveUser = resolve;
-      }),
-  );
+  /*
+   * Only the user lookup is held. The root also asks for other things on its own (the wallpaper
+   * engine's /wallpaper_core.html since v0.1.102); handing those the same pending promise overwrote
+   * `resolveUser`, so resolving it released the wallpaper request and the guard waited forever.
+   */
+  fakeFetch((input) => {
+    const url = String((input as { url?: string })?.url ?? input);
+    if (!url.endsWith("/api/me"))
+      return Promise.resolve(new Response(null, { status: 404 }));
+    return new Promise((resolve) => {
+      resolveUser = resolve;
+    });
+  });
   const view = protectedPage();
   try {
     // 「正在加载」现在挂在 role=status 的 aria-label 上（里面画的是骨架，没有可见文字）。

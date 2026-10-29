@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+修 `bun run test:app` 的测试互相干扰和几个过时的测试（审查清单第 3 项第二部分）：电脑控制在换页面后重新挂上 focus/online 监听；日程测试不再用进程级的 `mock.module` 替换 `@/lib/client`；更新 5 个与现行行为不符的 server 测试。server 补声明测试直接用到的 `@copilotkit/core`；CI 里 chisabot-node 打包失败改为让构建失败。schedule-fired 的 `Link` 替身有路由时交给真 `Link`、没有路由才按 params 填路径参数，移出隔离名单；avatar-picker-shape 拆 happy-dom 前先等 React 排队的工作跑完，不再报 Unhandled error，`test:app` 退出码恢复 0。不改版本号。
+
 ## 0.1.104 — 2026-10-29
 
 这一版合并 5 个 PR：修复干净安装下缺声明的依赖（#365）、出口过滤代理按 Bot 独立鉴权（审计 H1 / L1，#364）、界面渲染性能预算（#363）、安装版 `/api` 代理不再转发失效的 `Content-Encoding`（#367）、Hark 改版第 1 步令牌层（#369）。只升级服务器版本号（根、`app`、`server` 为 `0.1.104`），PC / Android 外壳未变；没有表结构变化。
