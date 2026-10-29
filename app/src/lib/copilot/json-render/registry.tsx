@@ -32,7 +32,8 @@ import {
 } from "./rich";
 import { ActionArea, choiceState, useChoiceScope, useLiveValue, useRichActions } from "./rich-context";
 import { Products } from "./products";
-import { hueOf, initials, safeHttp, safeHttps, splitDotted, trendOfText } from "./rich-utils";
+import { emptyMarkProps, InitialMark } from "./initial-mark";
+import { hueOf, safeHttp, safeHttps, splitDotted, trendOfText } from "./rich-utils";
 import { LinkCard } from "@/components/rich-previews/link-card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -245,8 +246,8 @@ function ListMark({ image, icon, title, tone }: { image: unknown; icon: unknown;
     return (
       <span className="jr-list-thumb">
         {failed ? (
-          <span aria-hidden className="jr-list-ph" data-testid="jr-list-fallback" style={{ "--jr-hue": String(hueOf(name)) } as CSSProperties}>
-            {initials(name)}
+          <span aria-hidden className="jr-list-ph" data-testid="jr-list-fallback" {...emptyMarkProps(name)} style={{ "--jr-hue": String(hueOf(name)) } as CSSProperties}>
+            <InitialMark kind="item" name={name} />
           </span>
         ) : (
           <SafeImg alt="" onFail={() => setFailed(true)} src={url} />

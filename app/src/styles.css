@@ -7441,6 +7441,9 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .jr-product-a.jr-action:hover .jr-product-img { transform: scale(1.04); }
 .jr-product-ph { display: grid; place-items: center; width: 100%; height: 100%; font-size: 28px; font-weight: 600; color: hsl(var(--jr-hue, 210) 45% 40%); background: linear-gradient(135deg, hsl(var(--jr-hue, 210) 70% 94%), hsl(calc(var(--jr-hue, 210) + 30) 70% 88%)); }
 .jr-product-ph.is-loading { animation: jr-ph-pulse 1.2s ease-in-out infinite; }
+/* 名字为空或全是符号（initials 返回空）：中性底色 + 通用图标，不出「?」（DESIGN.md §29 / §72 / §81 同一套退化）。 */
+:is(.jr-list-ph, .jr-product-ph, .jr-avatar-face)[data-empty] { color: var(--ink-3); background: var(--glass-3); }
+.jr-ph-glyph { width: 50%; height: 50%; max-width: 28px; max-height: 28px; }
 @keyframes jr-ph-pulse { 50% { opacity: 0.6; } }
 .jr-product-badge { position: absolute; top: 8px; left: 8px; padding: 2px 8px; border-radius: var(--r-pill); font-size: 11.5px; font-weight: 600; color: #fff; background: var(--accent-blue); }
 .jr-product-body { display: flex; flex-direction: column; gap: 2px; padding: 9px 11px 11px; min-width: 0; }

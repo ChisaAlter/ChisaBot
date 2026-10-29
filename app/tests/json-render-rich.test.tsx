@@ -102,6 +102,40 @@ describe("rich-utils", () => {
   });
 });
 
+describe("initials (Avatar / List / Products 共用)", () => {
+  test("normal Latin and CJK names", () => {
+    expect(initials("程天宇")).toBe("程");
+    expect(initials("김철수")).toBe("김");
+    expect(initials("さくら")).toBe("さ");
+    expect(initials("vercel next")).toBe("VN");
+    expect(initials("John")).toBe("J");
+    expect(initials("Redmi Buds 6 Pro")).toBe("RB");
+    expect(initials("owner/repo")).toBe("OR");
+    expect(initials("ñandú")).toBe("Ñ");
+    expect(initials("Apple 苹果")).toBe("A");
+  });
+
+  test("never returns half a surrogate pair; skips leading emoji, punctuation and symbols", () => {
+    expect(initials("🎧 降噪耳机")).toBe("降");
+    expect(initials("【推荐】小米")).toBe("推");
+    expect(initials("👨‍👩‍👧 Family")).toBe("F");
+    expect(initials("«Le Monde»")).toBe("LM");
+    expect(initials("★ Star")).toBe("S");
+    // 组合附加符号跟着字母走（e + U+0301）。
+    expect(initials("e\u0301cole x")).toBe("E\u0301X");
+    for (const name of ["🎧 降噪耳机", "😀😀", "🇨🇳 China", "𠀋字"]) {
+      const out = initials(name);
+      expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out)).toBe(false);
+      expect(out).not.toContain("\uFFFD");
+    }
+    expect(initials("𠀋字")).toBe("𠀋");
+  });
+
+  test("empty or all-symbol names give an empty string, never 「?」", () => {
+    for (const name of ["", "   ", "🎧", "【】", "!!!", "★☆", "— · —"]) expect(initials(name)).toBe("");
+  });
+});
+
 describe("rich components render", () => {
   beforeAll(() => {
     GlobalRegistrator.register();
@@ -232,6 +266,33 @@ describe("rich components render", () => {
     const ph = container.querySelector<HTMLElement>(".jr-list-thumb [data-testid=jr-list-fallback]");
     expect(ph?.textContent).toBe("RB");
     expect(ph?.style.getPropertyValue("--jr-hue")).not.toBe("");
+  });
+
+  test("empty / all-symbol names fall back to a neutral glyph in Avatar and List, not 「?」", async () => {
+    const { container } = await draw({
+      root: "r",
+      elements: {
+        r: { type: "Stack", props: {}, children: ["a1", "a2", "a3", "l"] },
+        a1: { type: "Avatar", props: { name: "🎧 降噪耳机" }, children: [] },
+        a2: { type: "Avatar", props: { name: "" }, children: [] },
+        a3: { type: "Avatar", props: { name: "Ada Lovelace" }, children: [] },
+        l: { type: "List", props: { items: [{ title: "🎧", image: "https://img.test/broken.png" }] }, children: [] },
+      },
+    });
+    const faces = [...container.querySelectorAll<HTMLElement>(".jr-avatar-face")];
+    expect(faces.map((f) => f.textContent)).toEqual(["降", "", "AL"]);
+    expect(faces[0]?.hasAttribute("data-empty")).toBe(false);
+    expect(faces[1]?.hasAttribute("data-empty")).toBe(true);
+    expect(faces[1]?.querySelector("[data-testid=jr-ph-glyph]")).not.toBeNull();
+    expect(container.textContent).not.toContain("?");
+    expect(container.textContent).not.toContain("\uFFFD");
+    const img = container.querySelector<HTMLImageElement>(".jr-list-thumb img");
+    await act(async () => {
+      fireEvent.error(img!);
+    });
+    const ph = container.querySelector<HTMLElement>("[data-testid=jr-list-fallback]");
+    expect(ph?.hasAttribute("data-empty")).toBe(true);
+    expect(ph?.querySelector("[data-testid=jr-ph-glyph]")).not.toBeNull();
   });
 
   test("Products draws a grid of clickable cards with a fixed photo slot (§72)", async () => {
