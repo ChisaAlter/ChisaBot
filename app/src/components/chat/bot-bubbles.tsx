@@ -705,10 +705,23 @@ export function DocCard({
    * 只在「这段文字变了」时量一次，宽度变化不再重算（DESIGN.md §106）。
    * layout effect：量完再画，打开对话时不会先展开一次、再当着人面收起。
    */
+  /*
+   * 流式时这段文字每个字都在变，每次都读 scrollHeight 就是每个字一次强制布局（审查 01 第 3 条）。
+   * 已经量出「够高」之后文字只是在后面接着长（新文字以旧文字开头），高度只会更高，不用再量；
+   * 文字被换掉（不是接着长）或还没到折叠高度时照旧量。
+   */
+  const measured = useRef<{ text: string; tall: boolean } | null>(null);
   useLayoutEffect(() => {
     const el = body.current;
     if (!el) return;
-    setTall(text.trim().length > 0 && el.scrollHeight > DOC_COLLAPSED_PX + 20);
+    const last = measured.current;
+    if (last?.tall && text.length >= last.text.length && text.startsWith(last.text)) {
+      measured.current = { text, tall: true };
+      return;
+    }
+    const next = text.trim().length > 0 && el.scrollHeight > DOC_COLLAPSED_PX + 20;
+    measured.current = { text, tall: next };
+    setTall(next);
   }, [text]);
   const heading = title || "文档";
   return (

@@ -23,6 +23,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -342,7 +343,12 @@ const UNACCEPTED_DROP_REASON = {
     "没有附上：还没有对话。先发出这条消息，再往打开的对话里附文件。",
 } as const;
 
-export function Composer({
+/*
+ * memo（审查 01 第 4 条）：流式时 ChannelChat 每个 chunk 都重渲染，以前连带整个输入框（PromptArea 163ms、
+ * ContextMeter 118ms / 次 profile）。上面 ConversationView / ChannelChat 把传进来的元素和回调都做成了稳定的，
+ * 输入框只在它自己的东西变了（pending / stoppable / 草稿相关）时才渲染。
+ */
+export const Composer = memo(function Composer({
   className,
   modelControl,
   leadingControl,
@@ -1226,9 +1232,36 @@ export function Composer({
   );
 
   const isBusy = pending || isSubmitting;
+  /*
+   * STABLE EDITOR INPUTS (audit 01-chat-streaming #1).
+   *
+   * `prompt-area` re-runs its value-sync effect whenever `value`, `onChange` or anything its DOM
+   * renderer closes over (`triggers`) changes identity, and that effect rewrites the editor's DOM
+   * whenever the `value` it CLOSED OVER differs from the last thing the editor emitted. During a
+   * stream every chunk re-rendered this component with a fresh `agents` array (the chat page builds
+   * it inline), hence fresh `triggers` and a fresh `onChange`, so every chunk's commit left that
+   * effect pending with the value of that moment. A keystroke arriving before the effect ran (a
+   * busy main thread makes that the common case) made React flush it first: the stale value was
+   * written back over the key just typed, the caret was clamped, and the next keys landed in the
+   * wrong place — `abcdefghij` came out as `bcdefghija`, and backspaced characters reappeared and
+   * went out with the next message.
+   *
+   * So the editor gets inputs whose identity never changes: the triggers are built once and read
+   * the latest roster at search time, and `handleChange` (below) reads the latest commands from a
+   * ref. Then the effect runs only when `value` itself changes, which is always in step with what
+   * the editor emitted. app/tests/composer-stream-typing.test.tsx pins this down.
+   */
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
+  const commandsRef = useRef(commands);
+  commandsRef.current = commands;
   const triggers = useMemo(
-    () => buildTriggers({ agents, commands }),
-    [agents, commands],
+    () =>
+      buildTriggers({
+        agents: () => agentsRef.current,
+        commands: () => commandsRef.current,
+      }),
+    [],
   );
   const draft = useMemo(() => toDraft(value, staged), [staged, value]);
   useEffect(
@@ -1269,7 +1302,7 @@ export function Composer({
       }
       const { segments, actions } = applyCommandChips(
         enforceSingleAgent(next),
-        commands,
+        commandsRef.current,
       );
       setValue(segments);
       // Run after the commit so an action that navigates or opens a panel is not fighting the
@@ -1278,7 +1311,8 @@ export function Composer({
         action();
       }
     },
-    [commands],
+    // Deliberately empty: see "STABLE EDITOR INPUTS" above.
+    [],
   );
 
   /**
@@ -1293,13 +1327,13 @@ export function Composer({
     if (!next) return;
     const { segments, actions } = applyCommandChips(
       enforceSingleAgent(next),
-      commands,
+      commandsRef.current,
     );
     setValue(segments);
     for (const action of actions) {
       action();
     }
-  }, [commands]);
+  }, []);
 
   /**
    * COMPOSITION IS TRACKED ON THE DOM, NOT THROUGH REACT STATE, for the reason `composingRef`
@@ -1815,7 +1849,14 @@ export function Composer({
              */}
             <PromptArea
               aria-label={"消息"}
-              autoGrow
+              /*
+               * 不用 prompt-area 的 autoGrow（4x 降速下 Shift+Enter 换行 190–230ms 的主因，审查 04）。
+               * 它每个字都排一帧：把高度设成 auto、读 scrollHeight（强制整页布局）、再写回像素高度并 setState
+               * 让 PromptArea 再渲染一次；而 styles.css 的 `.glass-composer .prompt-area-editor` 早就用
+               * `height: auto !important` 把那个高度盖掉了（2026-10-22 去掉失焦塌缩和高度动画），量出来的值
+               * 一个像素都没用上。不开 autoGrow 时编辑器靠内容自然长高，min/max-height 与 overflow 一样，画面不变。
+               */
+              autoGrow={false}
               className={cn(
                 "glass-composer-editor min-w-0 w-full border-0 bg-transparent p-0 text-sm shadow-none",
                 editorClassName,
@@ -1921,7 +1962,14 @@ export function Composer({
             {replyQuoteBar}
             <PromptArea
               aria-label={"消息"}
-              autoGrow
+              /*
+               * 不用 prompt-area 的 autoGrow（4x 降速下 Shift+Enter 换行 190–230ms 的主因，审查 04）。
+               * 它每个字都排一帧：把高度设成 auto、读 scrollHeight（强制整页布局）、再写回像素高度并 setState
+               * 让 PromptArea 再渲染一次；而 styles.css 的 `.glass-composer .prompt-area-editor` 早就用
+               * `height: auto !important` 把那个高度盖掉了（2026-10-22 去掉失焦塌缩和高度动画），量出来的值
+               * 一个像素都没用上。不开 autoGrow 时编辑器靠内容自然长高，min/max-height 与 overflow 一样，画面不变。
+               */
+              autoGrow={false}
               className={cn(
                 "w-full border-0 bg-transparent p-0 text-sm shadow-none",
                 editorClassName,
@@ -1985,7 +2033,7 @@ export function Composer({
       </form>
     </div>
   );
-}
+});
 
 /**
  * GIVE BACK THE STAGED ROW A REMOVED CHIP STOOD FOR — THE ONLY CALLER THIS ENDPOINT HAS.

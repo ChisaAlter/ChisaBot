@@ -1,5 +1,98 @@
 # DEVLOG
 
+## Unreleased — 流式输出与输入框空闲时的卡顿（分支 dev2/stream-perf，叠在 dev2/stream-composer / #408 上）
+
+来源：性能审查 01-chat-streaming 第 2–6 项，加上审查 04 的一项：4x 降速下输入框空闲（没有流式输出）时，Shift+Enter 换行要 190–230ms，其中有一个 182ms 的长任务。主题、玻璃、模糊、天空相关的样式都没动。
+
+### 根因
+
+- **空闲时打字、换行慢（审查 04）**：起初怀疑是输入框自动长高。实际量下来，prompt-area 的 autoGrow 每次按键都会在 rAF 里读一次 `scrollHeight` 再 setState，但 `.glass-composer .prompt-area-editor { height:auto !important }` 早就把它算出的高度盖掉了，这部分是白干的活，可关掉它数字没变。trace 里真正的大头是 **UpdateLayoutTree：每次按键都整页重算约 900–1050 个元素的样式，4x 下约 100ms**，入口是编辑器放光标（`removeAllRanges`）。罪魁是 `styles.css` 里唯一一条「`:has(…)` 后面跟 `*`」的规则：`html[data-desktop] body:has([data-slot="sheet-overlay"]) :is(.glass-topbar, .glass-topbar *, .desk-strip)`。Chromium 会把它并进 `:has` 的失效集合，编辑器每改一次 DOM 都要让整页重算样式。§41 记录过同一个坑，`no-group-has.test.ts` 防的是 Tailwind 写法，手写 CSS 没有防住。CSSOM 实验（1x，4 次换行）：每次最多重算的元素数 1047 → 82，样式总耗时 136–145ms → 41ms。
+- **第 2 项 SettleAtEnd**：MutationObserver（`characterData + subtree`）每次提交都读 `offsetHeight`，强制同步布局。流式时一帧里会有几次提交，每次都量一遍。
+- **第 3 项 DocCard**：useLayoutEffect 依赖 `[text]`，每个 token 都读一次 `scrollHeight`；卡片已经折叠（够高了）以后，结论不会再变。
+- **第 4 项**：ChannelChat 每个 chunk 都重渲染，每次都新建 `modelControl` / `leadingControl` / `contextControl` 元素和 `agents` 数组，ConversationView 每次都给 Composer 和 ChatTranscript 传新的内联回调，Composer 本身也没有 memo，所以整个输入框（PromptArea、ContextMeter、模型选择）每个 chunk 都跟着渲染一遍。
+- **第 5 项平滑显字**：每次渲染、每个 tick 都调一次 `matchMedia`；Streamdown 每帧对整段文字跑 marked Lexer 切块；只有超过 6000 字才降到 30fps，高刷屏上每个 rAF 都重画一次 Markdown。
+- **第 6 项点击 INP**：几乎都花在 presentation 上（处理函数 1–8ms），和上面那条 `:has` 规则是同一个原因：点发送、菜单弹出、切到新话题都会改 DOM，于是整页重算样式。
+
+### 改动
+
+- `styles.css`：去掉 `.glass-topbar *`，改成 `:is(.glass-topbar, .desk-strip)`。`app-region` 不继承，顶栏里只有 `.glass-topbar` 自己是 drag，可交互的子元素本来就是 no-drag，所以行为不变。
+- `no-group-has.test.ts`：新增检查，styles.css 里任何选择器只要在 `:has(…)` 之后出现 `*` 就失败。用旧规则验证过，确实能拦下。
+- `composer.tsx`：两个 PromptArea 都改成 `autoGrow={false}`（高度一直由样式决定）；`Composer` 用 `memo` 包起来。
+- `conversation-view.tsx`：`onSubmit` / `onQueue` / `onStop` / `onRetryStop` / `onRemoveQueued` / `retry` 经「最新值」ref 转成稳定函数；`commandNames` 和 `queuedAttachmentCount` 用 `useMemo`。原来传 `undefined` 的地方仍然传 `undefined`。
+- `channel-chat.tsx`：三个控件元素和 `agents` 用 `useMemo`，依赖分别是 `runtimeAgentId` / `channel.active` / `chatBusy` / `threadId` / `agentProfiles` / `channel.agentIds`。
+- `chat-transcript.tsx`（SettleAtEnd）：每帧只有第一次 MutationObserver 回调当场测量（保留 §94「当场吃留白」）；同一帧后面的回调只记一笔，到下一个 rAF 再量一次。中间的高度变化 ResizeObserver 在绘制前也会接住。
+- `bot-bubbles.tsx`（DocCard）：已经够高、新文字只是在旧文字后面接着长时，跳过 `scrollHeight` 测量；其他情况照旧测量。
+- `use-smooth-text.ts`：`matchMedia` 查询只建一次（`MediaQueryList.matches` 是实时值；测试里换了 `matchMedia` 会重建）；最多 60fps 重画，超过 2000 字最多 30fps（原来是超过 6000 字才降帧）。
+- 新增 `lib/chat/incremental-blocks.ts`，并通过 `smooth-markdown.tsx` 的 `parseMarkdownIntoBlocksFn` 接入：流式时前面已经稳定的块直接复用，只重新切最后两个非空块之后的部分。有脚注（`[^`）或者新文字不是旧文字的延续时，退回整段解析。
+
+### 测试
+
+- `tests/incremental-blocks.test.tsx`（5 个用例）：对一组语料逐字和整段 `parseMarkdownIntoBlocks` 比对，步长 1/3/7/40。语料覆盖标题、列表、代码围栏、表格、引用、setext 标题、缩进代码、HTML div/details、`$$` 数学、引用式链接、未闭合的 `~~~`、脚注、CRLF、空输入。另外比对两个 Streamdown（默认切块和增量切块）在 `isAnimating` 流式各步的 innerHTML，全部一致。另有断言：流式一份文档时，重新切块的字符总量不到逐帧整段重切的 1/3。
+- `no-group-has.test.ts` 新增一条检查（见上）。
+- 自测：`bun run typecheck` 通过；vite build 通过；`bun run test:app` 1802 pass / 0 fail；Biome 在 main 和本分支都是 1 error / 800 warnings / 143 infos，没有新增问题；没有改动数据库，DB 测试不适用。
+
+### 实测（Jun 的电脑，本地 server + app + mock 模型，独立 headless 系统 Chrome，临时 user-data-dir，GPU 开：ANGLE / RTX 3060 Laptop D3D11）
+
+main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式：总时长（processing / presentation），单位 ms。
+
+输入框空闲，4x，5 轮（审查 04 的方法：打一句英文、6 次「字 + Shift+Enter」）：
+
+| | 打字 INP 最大 / 中位 | 换行 INP 最大 / 中位 | 最长长任务 |
+| --- | --- | --- | --- |
+| main | 136 (2/134) / 120 | 176 (1/159) / 144 | 154 |
+| 修后 | 80 (8/72) / 64 | 96 (0/96) / 88 | 65 |
+
+流式（x1：3 条文档卡长回复；x1L：10 条普通回复；x4：4x 降速、1 条文档卡）：
+
+| 场景 | | 长任务数 | TBT | 最长长任务 | 发送 INP | 流式中打字 INP | 打字正确 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| x1 | main | 1 | 19 | 69 | 80 (1/77) | 40 (25/15) | 3/3 |
+| x1 | 修后 | 1 | 2 | 52 | 72 (1/70) | 24 (9/15) | 3/3 |
+| x1L | main | 1 | 7 | 57 | 72 (1/70) | 40 (31/9) | 10/10 |
+| x1L | 修后 | 1 | 9 | 59 | 72 (1/69) | 24 (12/12) | 10/10 |
+| x4 | main | 60 | 1655 | 427 | 304 (7/286) | 176 (153/20) | 1/6 |
+| x4 | 修后 | 27 | 786 | 378 | 200 (8/183) | 120 (1/96) | 6/6 |
+
+点击（1x，x1 里测）：新话题 176 → 88，机器人菜单 136 → 72；x1L 里新话题 152 → 120。4x（单独脚本，3 轮最大 / 中位）：菜单 456/336 → 368/248，新话题 688/616 → 496/480，发送 216/136 → 208/120。
+
+### 还没解决的
+
+- 4x 流式时仍有长任务（最长 378ms，TBT 786）。profile 里剩下的主要是：Streamdown 每帧重渲染最后一块，走 remark/rehype（含 rehype-raw 的 parse5）；React 协调；SettleAtEnd 测量时摊到的布局（约占主线程 9%，这部分布局浏览器本来也要做）。1x 下仍有一个 52–59ms 的长任务，出现在回复开始时。
+- 新话题和菜单在 4x 下 INP 仍是几百毫秒。新话题是整页挂载（一次重算 428 个元素的样式，约 128ms；shadcn message-scroller 强制布局约 73ms）。菜单的开销在 base-ui 菜单弹出时的定位和 rAF 里的工作（floating-ui / InternalBackdrop）。这两块要单独处理。
+- 还剩几条 `body:has(...)` 后代规则（rail-tab 窄屏、install-hint 等），换行时仍会让约 80 个元素重算样式；全部去掉能再省一些，但会改布局逻辑，这次没动。
+## Unreleased — 流式回复时打字不再乱序、不再残留（分支 dev2/stream-composer）
+
+来源：性能审查 01-chat-streaming 第 1 项。4x 降速下边流式输出边打 `abcdefghij`，得到 `bcdefghija`，光标跳回开头；文档卡流式时打字再退格，会留下残字，并跟着下一条消息发出去。
+
+### 根因
+
+- 流式回复每到一块，`ChannelChat` 重渲染一次，传给 Composer 的 `agents={toAgentOptions(...)}` 是内联新数组（`agents = []` 默认值也是每次新数组）。
+- 于是 `triggers`（`useMemo([agents, commands])`）和 `handleChange`（`useCallback([commands])`）每块都换新引用。这两个都是 prompt-area@0.6.8 值同步 effect 的依赖：`useEffect(() => { if (!composing && value !== lastEmitted) renderSegmentsToDOM(value) }, [value, renderSegmentsToDOM, …, onChange])`。
+- 每块提交后都留下一个待执行的 passive effect，里面捕获的是旧 `value`。按键恰好落在“提交之后、effect 执行之前”时，按键的同步 setState 会先把这个 effect 冲掉：用旧值重写 DOM，光标被夹回旧长度；下一次渲染再把文字写回来时光标位置已经错了，后面的字就插错位置。退格同理，被删掉的字被旧值写回来，成为残留。
+
+### 改动
+
+- `composer.tsx`：`agents` / `commands` 放进 ref，`triggers` 只建一次（`buildTriggers({ agents: () => agentsRef.current, commands: () => commandsRef.current })`），`handleChange` / `flushPendingChange` 读 `commandsRef.current`、依赖为空。流式块不再让值同步 effect 重跑，按键之间不会再插进旧值。
+- `triggers.ts`：`agentTrigger` / `slashCommandTrigger` / `buildTriggers` 接受数组或取值函数（`OptionSource`），在 `onSearch` 时才读，@ 提及和 / 命令列表始终是最新的。
+- prompt-area 不打补丁、不升级：0.7.0 是破坏性版本（新增 `cn` peer 依赖、要求 Node 20+），0.7.1 只有性能改动，都没修这个竞态；问题出在我们每块都换依赖，从 Composer 这边修掉即可。
+
+### 测试
+
+- 新增 `app/tests/composer-stream-typing.test.tsx`：父组件每“块”重渲染一次 Composer（内联 agents / commands 新数组），在 useLayoutEffect 里（提交之后、passive effect 之前）送一个按键。
+  - 打 `abcdefghij`：main 上得到 `bcdefghija`，修后完全一致；
+  - 打 `测试输入abc` → 退格到空 → 打 `继续` → 发送：main 上编辑器里是 `试输入abc测`，修后只发出 `继续`。
+  - 两个用例在 main 上都失败，修后都通过。
+
+### 实测（Jun 电脑，本地 server + app + mock 模型，独立 headless Chrome，GPU 开：ANGLE / RTX 3060 Laptop D3D11）
+
+4x 降速，文档卡流式时连打 6 轮 `abcdefghij` 再退格 10 次：
+
+| | 打字正确 | 典型错误 |
+| --- | --- | --- |
+| main | 1/6 | `bcdefghija`、`abcdefgijh`，退格后残留 1 个字 |
+| 修后 | 6/6 | 无 |
+
+这一项只修正确性，不改性能；流式时的长任务和 INP 在 dev2/stream-perf 里处理。
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。

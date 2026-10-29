@@ -8870,7 +8870,14 @@ html[data-phone] .sidebar-mobile-close { width: 44px; height: 44px; }
 html[data-desktop] [data-slot="sheet-content"],
 html[data-desktop] [data-slot="sheet-content"] *,
 html[data-desktop] [data-slot="sheet-overlay"] { -webkit-app-region: no-drag; app-region: no-drag; }
-html[data-desktop] body:has([data-slot="sheet-overlay"]) :is(.glass-topbar, .glass-topbar *, .desk-strip) {
+/*
+ * 不写「.glass-topbar *」（2026-10-29，审查 04：4x 下 Shift+Enter 换行 190–230ms）。这是全文件唯一一条
+ * 「:has(…) 后面跟 *」的规则，按 §41 的教训，Chromium 会把它并进 :has 的失效集合：输入框里每打一个字、
+ * 每换一行（编辑器重写自己的 DOM），整页约 1000 个元素都要重算样式，4x 下每次 90–110ms。
+ * 顶栏里只有 .glass-topbar 自己是 drag，子元素要么没写 app-region（不单独成区），要么本来就是 no-drag，
+ * 所以把顶栏本身设成 no-drag 就已经整块不当拖动区，「*」那一半一直是多余的。
+ */
+html[data-desktop] body:has([data-slot="sheet-overlay"]) :is(.glass-topbar, .desk-strip) {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }

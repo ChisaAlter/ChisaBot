@@ -298,10 +298,9 @@ test("a full-size composer stages an image pasted alongside text", async () => {
   );
 
   const chart = new File(["png"], "chart.png", { type: "image/png" });
-  // `act` around the paste, which no other test in this file needs: this branch is the only one
-  // that draws PromptArea with `autoGrow`, and the measurement that follows a paste settles in a
-  // task of its own. Unwrapped, that update lands outside React's test scope and is reported as a
-  // warning that has nothing to do with what is being asserted.
+  // `act` around the paste. It was added for PromptArea's `autoGrow` measurement, which settled in
+  // a task of its own; both composers now pass `autoGrow={false}` (the stylesheet sizes the editor,
+  // see composer.tsx), so it is only a guard against any late update landing outside React's scope.
   await act(async () => {
     pasteInto(container, clipboard({ files: [chart], text: "Q3 revenue" }));
   });
@@ -403,8 +402,7 @@ test("a disabled composer claims no paste and stages nothing", async () => {
  * that call goes nowhere and the paste has already been `preventDefault`-ed — no text, no file, no
  * refusal.
  *
- * No `act` wrapper here, unlike the full-size case: that one is only needed for `autoGrow`'s
- * measurement, which the compact branch does not use.
+ * No `act` wrapper here, unlike the full-size case (see the note there).
  */
 test("a compact composer stages an image pasted alongside text", async () => {
   const view = render(

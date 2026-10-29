@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -471,7 +472,47 @@ export function ConversationView({
    * that carries all of it, through the same gates as a typed send.
    */
   const composerBoxRef = useRef<HTMLDivElement | null>(null);
-  const retry = () => {
+  /*
+   * 交给 Composer（memo）和 ChatTranscript 的回调要稳定（审查 01 第 4 条）：以前这里每次渲染都新建箭头函数，
+   * 流式时每个 chunk 都让整个输入框跟着重渲染。经一个「最新值」引用转一下，函数本身不变，调到的永远是这次渲染的。
+   */
+  const latest = useRef({ onStop, onRetryStop, onRetryTurn, onBeforeRetry, queueToServer, submit, apply });
+  latest.current = { onStop, onRetryStop, onRetryTurn, onBeforeRetry, queueToServer, submit, apply };
+  const stopNow = useCallback(() => latest.current.onStop?.(), []);
+  const retryStopNow = useCallback(() => latest.current.onRetryStop?.(), []);
+  const submitNow = useCallback(
+    (draft: ComposerDraft) => latest.current.submit(draft, false),
+    [],
+  );
+  const queueDraft = useCallback((draft: ComposerDraft) => {
+    const { queueToServer, submit } = latest.current;
+    const plain =
+      queueToServer !== undefined &&
+      draft.attachments.length === 0 &&
+      draft.commandIds.length === 0 &&
+      draft.text.trim().length > 0 &&
+      queuedRef.current.length === 0;
+    if (!plain) {
+      submit(draft, true);
+      return;
+    }
+    void queueToServer(draft.text.trim()).then((outcome) => {
+      if (outcome === "send") latest.current.submit(draft, true);
+    });
+  }, []);
+  const removeQueued = useCallback((id: string) => {
+    latest.current.apply({ id, type: "remove" });
+  }, []);
+  const commandNames = useMemo(
+    () => (commands ?? []).map((command) => command.name).join(","),
+    [commands],
+  );
+  const queuedAttachmentCount = useMemo(
+    () => queued.reduce((total, message) => total + message.attachments.length, 0),
+    [queued],
+  );
+  const retry = useCallback(() => {
+    const { onRetryTurn, onBeforeRetry } = latest.current;
     if (onRetryTurn?.()) return;
     const box = composerBoxRef.current;
     const send = box?.querySelector<HTMLButtonElement>('form button[type="submit"]');
@@ -481,7 +522,7 @@ export function ConversationView({
       return;
     }
     box?.querySelector<HTMLElement>('[contenteditable="true"], textarea')?.focus();
-  };
+  }, []);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -496,13 +537,9 @@ export function ConversationView({
          */}
         <ChatTranscript
           busy={busy}
-          commandNames={(commands ?? [])
-            .map((command) => command.name)
-            .join(",")}
+          commandNames={commandNames}
           messages={messages}
-          onRemoveQueued={(id) => {
-            apply({ id, type: "remove" });
-          }}
+          onRemoveQueued={removeQueued}
           queued={queued}
           restoring={restoring}
           hydrating={hydrating}
@@ -532,27 +569,9 @@ export function ConversationView({
           compact
           disabled={disabled}
           droppedAttachments={droppedAttachments}
-          onQueue={
-            queueWhileBusy
-              ? (draft) => {
-                  const plain =
-                    queueToServer !== undefined &&
-                    draft.attachments.length === 0 &&
-                    draft.commandIds.length === 0 &&
-                    draft.text.trim().length > 0 &&
-                    queuedRef.current.length === 0;
-                  if (!plain) {
-                    submit(draft, true);
-                    return;
-                  }
-                  void queueToServer(draft.text.trim()).then((outcome) => {
-                    if (outcome === "send") submit(draft, true);
-                  });
-                }
-              : undefined
-          }
-          onStop={onStop}
-          onSubmit={(draft) => submit(draft, false)}
+          onQueue={queueWhileBusy ? queueDraft : undefined}
+          onStop={onStop ? stopNow : undefined}
+          onSubmit={submitNow}
           /*
            * `inFlight` rather than the `pending` this was given. A drained turn is started from the
            * effect above rather than from the composer, so the composer's own send tracking knows
@@ -581,10 +600,7 @@ export function ConversationView({
            * drawing from, and the ref exists for the callbacks that cannot wait a render. They
            * agree here anyway — `apply` writes both on the same line.
            */
-          queuedAttachmentCount={queued.reduce(
-            (total, message) => total + message.attachments.length,
-            0,
-          )}
+          queuedAttachmentCount={queuedAttachmentCount}
           /*
            * The caller's answer, not `inFlight`. `running` is true from the instant `start` is
            * entered, which is before `onSubmit` has done anything at all, so a Stop drawn from
@@ -594,7 +610,7 @@ export function ConversationView({
           stoppable={stoppable ?? pending}
           stopping={stopping}
           stopFailed={stopFailed}
-          onRetryStop={onRetryStop}
+          onRetryStop={onRetryStop ? retryStopNow : undefined}
         />
       </div>
     </div>
