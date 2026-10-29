@@ -3828,6 +3828,9 @@ export type WorkEntry = {
   quiet: boolean;
 };
 
+/** 记忆写入（Memory Pill）：挂在回复气泡下面，不算干活，不把一段回答切成「过程话 + 结果」。 */
+const MEMORY_WRITES = new Set(["memory_save", "memory_update", "memory_log"]);
+
 export function compactTurns(
   items: readonly TranscriptItem[],
   busy: boolean,
@@ -3887,8 +3890,12 @@ export function compactTurns(
     const live = busy && index === turns.length - 1;
     const isStopped =
       !live && turn.users.some((user) => stopped.has(turnOf(user)));
-    const callsTool = (item: TranscriptItem) =>
-      item.kind === "tool" || item.kind === "browser";
+    // 真的在干活的一步（同干活卡 isWorkCall，再去掉记忆写入）：回答和过程话以最后一个这样的步骤为界。
+    const doesWork = (item: TranscriptItem) =>
+      item.kind === "browser" ||
+      (item.kind === "tool" &&
+        isWorkCall(item.toolCall.function.name) &&
+        !MEMORY_WRITES.has(item.toolCall.function.name));
     const texts = turn.rest.filter(
       (item): item is Extract<TranscriptItem, { kind: "text" }> =>
         item.kind === "text" &&
@@ -3898,7 +3905,7 @@ export function compactTurns(
     let final: string | null = null;
     texts.forEach((item, i) => {
       const at = turn.rest.indexOf(item);
-      const toolAfter = turn.rest.slice(at + 1).some(callsTool);
+      const toolAfter = turn.rest.slice(at + 1).some(doesWork);
       if (i === texts.length - 1 && !live && !isStopped && !toolAfter) {
         final = item.id;
         tone.set(item.id, "final");
@@ -3928,15 +3935,15 @@ export function compactTurns(
       }
     }
     /*
-     * 连发的几条（最后一个工具之后、一直到结果）都是回答，不是过程话：照旧是气泡，不收起、不进卡片。
-     * 以前只认最后一条是结果，连发三条中间那条被当过程话藏起来，有干活卡时开场一句也进了卡片，只剩最后一条。
-     * 开场一句（第一段）的规则不变（§93）。
+     * 最后一个干活的步骤之后的全部文字（一直到结果）都是回答，不是过程话：照旧是气泡，不收起、不进卡片。
+     * 以前只认最后一条是结果，连发三条中间那条被当过程话藏起来，有干活卡时第一段也进了卡片，只剩最后一条。
+     * 记忆写入这类不算干活的工具夹在回答中间，不当分界。干活之前的开场一句规则不变（§93）。
      */
     const replies = new Set<string>();
     if (final) {
-      const lastToolAt = turn.rest.findLastIndex(callsTool);
-      for (const item of texts.slice(1))
-        if (turn.rest.indexOf(item) > lastToolAt && tone.get(item.id) === "step") {
+      const lastWorkAt = turn.rest.findLastIndex(doesWork);
+      for (const item of texts)
+        if (turn.rest.indexOf(item) > lastWorkAt && tone.get(item.id) !== "final") {
           tone.set(item.id, "lead");
           replies.add(item.id);
         }
@@ -4008,14 +4015,7 @@ export function compactTurns(
             !(multiReplyTurn && item.id === texts[0]?.id) &&
             !/^\s*>\s+\S/.test(item.text)
           ) {
-            const workAfter = turn.rest
-              .slice(at + 1)
-              .some(
-                (next) =>
-                  next.kind === "browser" ||
-                  (next.kind === "tool" &&
-                    isWorkCall(next.toolCall.function.name)),
-              );
+            const workAfter = turn.rest.slice(at + 1).some(doesWork);
             if (!live || workAfter) {
               hidden.add(item.id);
               notes.push({ at: seen, text: item.text });
@@ -4088,13 +4088,7 @@ export function compactTurns(
     for (const item of turn.rest) {
       if (item.kind !== "tool") continue;
       const fnName = item.toolCall.function.name;
-      if (
-        fnName !== "memory_save" &&
-        fnName !== "memory_update" &&
-        fnName !== "memory_log"
-      ) {
-        continue;
-      }
+      if (!MEMORY_WRITES.has(fnName)) continue;
       if (item.result !== undefined && workCallFailed(item.result)) continue;
       let parsedArgs: Record<string, unknown> = {};
       try {

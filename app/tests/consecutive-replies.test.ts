@@ -80,4 +80,51 @@ describe("机器人连发多条消息", () => {
     expect(compact.hidden.has("a1")).toBe(false);
     expect(compact.hidden.has("a2")).toBe(false);
   });
+
+  test("先干活、再连发两条（没有开场一句）：两条都露着，都不进卡片", () => {
+    const items = [
+      user("u1", "装一下"),
+      call("t1", "device_run_shell"),
+      bot("a2", "装好了，版本 v22。"),
+      bot("a3", "另外 npm 也升到了 10。"),
+    ];
+    const compact = compactTurns(items, false, new Set());
+    expect(compact.hidden.has("a2")).toBe(false);
+    expect(compact.hidden.has("a3")).toBe(false);
+    expect(compact.tone.get("a3")).toBe("final");
+    expect(compact.work.get("t1")?.notes).toEqual([]);
+  });
+
+  test("回答中间记了一笔（memory_save）：记忆不算干活，前后两段都是回答", () => {
+    const items = [
+      user("u1", "装一下"),
+      bot("a1", "我先检查。"),
+      call("t1", "device_run_shell"),
+      bot("a2", "装好了，版本 v22。"),
+      call("m1", "memory_save"),
+      bot("a3", "我记下了你用 Node 22。"),
+    ];
+    const compact = compactTurns(items, false, new Set());
+    expect(compact.hidden.has("a1")).toBe(true);
+    expect(compact.hidden.has("a2")).toBe(false);
+    expect(compact.hidden.has("a3")).toBe(false);
+    expect(compact.tone.get("a3")).toBe("final");
+    expect(compact.work.get("t1")?.notes.map((n) => n.text)).toEqual([
+      "我先检查。",
+    ]);
+  });
+
+  test("回答之后才记一笔（memory_save 在最后）：回答照旧露着，是结果", () => {
+    const items = [
+      user("u1", "装一下"),
+      call("t1", "device_run_shell"),
+      bot("a2", "装好了。"),
+      bot("a3", "版本 v22。"),
+      call("m1", "memory_save"),
+    ];
+    const compact = compactTurns(items, false, new Set());
+    expect(compact.hidden.has("a2")).toBe(false);
+    expect(compact.hidden.has("a3")).toBe(false);
+    expect(compact.tone.get("a3")).toBe("final");
+  });
 });

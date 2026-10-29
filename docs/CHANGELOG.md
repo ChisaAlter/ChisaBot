@@ -1,6 +1,6 @@
 ## 未发版
 
-- 修复：机器人连发多条消息只显示最后一条——`compactTurns` 把最后一个工具之后、结果之前的几条也当过程话收起；现在这几条照旧是气泡，测试 `app/tests/consecutive-replies.test.ts`。
+- 修复：机器人连发多条消息只显示最后一条——`compactTurns` 以最后一个干活的步骤（`isWorkCall`，不含记忆写入）为界，之后的全部文字都是回答气泡；测试 `app/tests/consecutive-replies.test.ts`。
 
 ## 0.1.106
 
