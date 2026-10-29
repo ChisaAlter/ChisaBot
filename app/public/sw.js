@@ -119,7 +119,7 @@ async function navigate(event) {
 
 /** 网关说「请先登录」的 401？与 app/src/lib/auth/login-redirect.ts 的 isGatewayLoginRequired 一致，只读克隆。 */
 async function isGatewayLoginRequired(response) {
-  if (!response || response.status !== 401) return false;
+  if (response?.status !== 401) return false;
   if (
     !(response.headers.get("content-type") || "").includes("application/json")
   )
