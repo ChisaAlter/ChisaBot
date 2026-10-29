@@ -5,7 +5,8 @@ import {
   RENDER_UI_TOOL,
   renderUiPrompt,
 } from "../../../shared/json-render/catalog";
-import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
+import { REPLY_SOURCES_GUIDANCE } from "../../../shared/reply-sources";
+import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 
 /**
  * `render_ui`：机器人用 json-render 规范在对话里画界面（取代 A2UI）。
@@ -18,12 +19,18 @@ import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
  * 只在 DeploymentConfig.generativeUi 打开时提供（见 index.ts loadToolsForActor）。
  */
 export const renderUiParameters = z.object({
-  title: z.string().max(120).optional().describe("界面的简短标题（可选，仅用于无障碍说明）"),
+  title: z
+    .string()
+    .max(120)
+    .optional()
+    .describe("界面的简短标题（可选，仅用于无障碍说明）"),
   spec: z
     .string()
     .min(1)
     .max(200_000)
-    .describe("json-render SpecStream：JSONL，每行一个 RFC 6902 JSON Patch，按说明里的格式构建界面"),
+    .describe(
+      "json-render SpecStream：JSONL，每行一个 RFC 6902 JSON Patch，按说明里的格式构建界面",
+    ),
 });
 
 let cachedDescription: string | null = null;
@@ -53,9 +60,13 @@ export function executeRenderUi(args: unknown): string {
     : shown;
 }
 
-export function renderUiTools(): GrantedTool[] {
+/** `replySources`：网页聊天且部署打开了结构化来源，随这个工具把来源规则带进提示词（只有网页才有 render_ui）。 */
+export function renderUiTools(
+  options: { replySources?: boolean } = {},
+): GrantedTool[] {
   return [
     {
+      ...(options.replySources ? { guidance: REPLY_SOURCES_GUIDANCE } : {}),
       name: RENDER_UI_TOOL,
       ref: `generative-ui/${RENDER_UI_TOOL}`,
       description: description(),

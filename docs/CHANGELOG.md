@@ -1,3 +1,7 @@
+## Unreleased
+
+- 回复来源结构化（数据格式先行）：新增 `shared/reply-sources.ts`，来源 = 这一轮里成功的 `web_fetch`（网址、标题、站点、toolCallId），挂在这一轮最后一条有文字的助手消息上；不新增存储和事件，实时和历史都从同一批消息算出。部署开关 `CHISABOT_REPLY_SOURCES`（默认关，/api/capabilities 带 `replySources`）打开后，网页聊天的 Bot 不再在正文写「来源：」行。前端卡片另做；开关关着时行为不变，旧客户端不受影响。未升级版本号。
+
 ## 0.1.105
 
 - 修复：开着 Service Worker 时 Chrome 登录最后落到 `/api/auth/error?error=state_mismatch`（会话其实已写入）。sw.js 不再开 navigation preload，激活时显式关掉（`SW_VERSION` 3）；`/api`、`/auth` 下的导航照旧不拦、只由浏览器发一次。未升级版本号（#373）。
