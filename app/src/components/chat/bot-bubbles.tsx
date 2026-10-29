@@ -14,6 +14,7 @@ import {
 import DOMPurify from "dompurify";
 import { motion, useReducedMotion } from "motion/react";
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { DiagramZoom, svgNaturalWidth } from "@/components/chat/diagram-zoom";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { useDisplayText } from "@/components/rich-previews/rich-previews";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
@@ -341,9 +342,11 @@ type ParsedArtifactFence = {
   title: string;
   code: string;
   rawMarkdown: string;
+  /** 结尾的 ``` 已经到了。流式还没写完的 Mermaid 先按代码显示，不画半张图。 */
+  closed: boolean;
 };
 
-function parseArtifactFence(rawText: string): ParsedArtifactFence | null {
+export function parseArtifactFence(rawText: string): ParsedArtifactFence | null {
   const lines = rawText.replace(/\r\n?/g, "\n").split("\n");
   let heading: string | undefined;
   let fenceStart = -1;
@@ -372,10 +375,13 @@ function parseArtifactFence(rawText: string): ParsedArtifactFence | null {
   if (lang !== "mermaid" && lang !== "svg" && lang !== "html") return null;
 
   const bodyLines = lines.slice(fenceStart + 1);
+  while (bodyLines.length > 0 && (bodyLines[bodyLines.length - 1] ?? "").trim() === "") bodyLines.pop();
+  let closed = false;
   if (bodyLines.length > 0) {
     const last = (bodyLines[bodyLines.length - 1] ?? "").trim();
     if (last.length >= marker.length && last.replace(/[`~]/g, "") === "") {
       bodyLines.pop();
+      closed = true;
     }
   }
 
@@ -405,6 +411,7 @@ function parseArtifactFence(rawText: string): ParsedArtifactFence | null {
     title: title || defaultTitle,
     code,
     rawMarkdown: rawText,
+    closed,
   };
 }
 
@@ -967,11 +974,12 @@ export function ArtifactCard({
   const [open, setOpen] = useState(false);
 
   const renderedSvg = useMemo(() => {
-    if (artifact.lang === "mermaid") {
+    // 没闭合（还在流式）或 mermaid-lite 认不出 / 解析不了：返回空串，下面回退成代码块。
+    if (artifact.lang === "mermaid" && artifact.closed) {
       return sanitizedMermaidSvg(artifact.code) ?? "";
     }
     return "";
-  }, [artifact.lang, artifact.code]);
+  }, [artifact.lang, artifact.code, artifact.closed]);
 
   const svgImageUrl = useMemo(() => {
     if (artifact.lang !== "svg") return "";
@@ -987,6 +995,15 @@ export function ArtifactCard({
   const badgeLabel =
     artifact.lang === "mermaid" ? "MERMAID" : artifact.lang === "svg" ? "SVG" : "HTML APP";
 
+  // 源码 / 回退显示：Mermaid 按纯文本代码块显示。交给 Streamdown 的 ```mermaid 会走它自带的
+  // Mermaid 渲染（另一套库，认不出的图是一块空白），回退的本意是让人看到原文。
+  const codeMarkdown = useMemo(() => {
+    if (artifact.lang !== "mermaid") return artifact.rawMarkdown;
+    const longest = Math.max(2, ...(artifact.code.match(/`+/g) ?? []).map((m) => m.length));
+    const fence = "`".repeat(longest + 1);
+    return `${fence}text\n${artifact.code}\n${fence}`;
+  }, [artifact.lang, artifact.code, artifact.rawMarkdown]);
+
   const renderPreview = (inModal = false) => {
     if (artifact.lang === "html") {
       return (
@@ -997,6 +1014,22 @@ export function ArtifactCard({
           srcDoc={htmlDoc}
           title={artifact.title}
         />
+      );
+    }
+    if (svgImageUrl && inModal) {
+      return (
+        <DiagramZoom naturalWidth={svgNaturalWidth(artifact.code)}>
+          <div className="chat-artifact-svg chat-artifact-svg-modal" data-testid="artifact-svg-preview">
+            <img
+              alt={artifact.title}
+              data-testid="artifact-svg-image"
+              decoding="async"
+              draggable={false}
+              src={svgImageUrl}
+              style={{ width: "100%", height: "auto" }}
+            />
+          </div>
+        </DiagramZoom>
       );
     }
     if (svgImageUrl) {
@@ -1021,6 +1054,18 @@ export function ArtifactCard({
         </div>
       );
     }
+    if (renderedSvg && inModal) {
+      // 弹窗里去掉 SVG 自带的 max-width，宽度交给缩放容器。
+      return (
+        <DiagramZoom naturalWidth={svgNaturalWidth(renderedSvg)}>
+          <div
+            className="chat-artifact-svg chat-artifact-svg-modal"
+            dangerouslySetInnerHTML={{ __html: renderedSvg.replace(/max-width:\s*[\d.]+px;?\s*/, "") }}
+            data-testid="artifact-svg-preview"
+          />
+        </DiagramZoom>
+      );
+    }
     if (renderedSvg) {
       return (
         <div
@@ -1037,7 +1082,7 @@ export function ArtifactCard({
     }
     return (
       <div className="chat-doc-inner p-3">
-        <SmoothStreamdown components={components as never}>{artifact.rawMarkdown}</SmoothStreamdown>
+        <SmoothStreamdown components={components as never}>{codeMarkdown}</SmoothStreamdown>
       </div>
     );
   };
@@ -1108,13 +1153,13 @@ export function ArtifactCard({
             renderPreview(false)
           ) : (
             <div className="chat-doc-inner p-3">
-              <SmoothStreamdown components={components as never}>{artifact.rawMarkdown}</SmoothStreamdown>
+              <SmoothStreamdown components={components as never}>{codeMarkdown}</SmoothStreamdown>
             </div>
           )}
         </div>
       </section>
       <Dialog onOpenChange={setOpen} open={open}>
-        <DialogContent className="chat-doc-dialog">
+        <DialogContent className={artifact.lang === "html" ? "chat-doc-dialog" : "chat-doc-dialog chat-artifact-dialog"}>
           <DialogHeader className="chat-doc-dialog-head">
             <div className="chat-doc-dialog-title-wrap">
               <span className="chat-artifact-badge">{badgeLabel}</span>

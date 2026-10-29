@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### 消息渲染：尖括号、Mermaid、手机卡片按钮（审计 05 必修 1–3）
+
+- 修复：正文里不加反引号的 `Vec<String>`、`Option<T>`、`HashMap<K, V>` 等泛型不再被当成 HTML 标签吞掉。交给 Streamdown 前，把不是标准 HTML 元素（或大小写不规范）的标签转成文字（新增 `app/src/lib/chat/escape-unknown-tags.ts`）；紧跟在字母、数字或下划线后面的开标签一律转成文字，所以和 HTML 同名的 `Vec<option>`、`List<object>`、`Result<a>`、`Vec<i>` 也不再丢字、变链接或让后文变斜体（`a<br>b`、`H<sub>2</sub>O`、`10<sup>3</sup>` 照旧按 HTML 显示）；围栏代码块、4 格缩进的代码块（含列表里的）、行内代码和 `<https://…>` 自动链接不动；`<details>`、`<kbd>` 等标准标签和 `<script>` / `onerror` 照旧由 Streamdown 清洗。
+- 修复：重写 `mermaid-lite` 流程图解析。支持 `-->|标签|`、`-- 标签 -->`、`-. 标签 .->`、`== 标签 ==>`，链式 `A --> B --> C`、`A & B --> C`、分号分句、`subgraph … end`（画成带标题的虚线框）、`---` / `-.->` / `==>` / `<-->` / `--o` / `--x` / `~~~`，以及 `stateDiagram`（起止点、转移标签、复合状态）。以前这些写法会把 `B[读取] --> C[校验]` 整串当成一个节点。长标签按宽度折行，不再超出节点框；带标签的连线会把层间距撑开，标签不压到节点上。
+- 修复：认不出的图（gantt、classDiagram、erDiagram、mindmap 等）、写坏的图，以及流式中还没写完（结尾 ``` 没到）的 Mermaid，卡片里显示原文代码，不再画出错乱的图或半张图。节点超过 500 个的图、解析中出现任何意外异常的图也一样回退成代码。状态图转移的解析改成先找 `-->` 再切分，10 万个空格的长输入从约 3 秒降到毫秒级。
+- 修复：手机等没有悬停的设备上，卡片头的「预览 / 源码、追问、复制、全屏」按钮一直显示（`@media (hover: none)`），标题放不下时按钮换到下一行，不再点不到全屏。
+- 新增：全屏查看 Mermaid / SVG 图时可以缩放（按钮 50%–800%，或 Ctrl / ⌘ + 滚轮），放大后在框内滚动查看，缩放时保持视野中心（`app/src/components/chat/diagram-zoom.tsx`）。
+- 修复：`SmoothStreamdown` 取 `window.location?.origin ?? ""`，测试环境里没有 `location` 的 `window` 也能渲染（全量 `test:app` 里 `chat-card-touch` 曾因此失败）。
+- 测试：新增 `app/tests/escape-unknown-tags.test.tsx`（9 个，经真实 Streamdown 渲染，含同名小写泛型和缩进代码块）、`app/tests/mermaid-lite.test.ts`（30 个：边、标签、链、`&`、subgraph、形状、折行不溢出、标签不压节点、回退、状态图、节点上限、长输入耗时等）、`app/tests/chat-card-touch.test.tsx`（8 个：触屏按钮常显的 CSS 断言、全屏按钮、没有 `location` 的 `window`、缩放组件）。前后截图见 `docs/DEVLOG.md`。
+- 应修项 4–10（公式、语法高亮、表格等）这次不做。不改版本号。
+
 ## 0.1.110 — 2026-10-29
 
 这一版合并 4 个 PR：性能模式 / 减少透明度全局不模糊（#375）、Hark 顶栏外壳（#374）、打开对话只读一次历史（#394）、断线重连后补齐漏掉的消息（#396）。只升级服务器版本号（根、`app`、`server` 为 `0.1.110`），PC / Android 外壳未变；没有表结构变化。
