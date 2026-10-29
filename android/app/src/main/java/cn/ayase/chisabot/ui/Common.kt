@@ -136,12 +136,17 @@ fun monogram(name: String): String {
 }
 
 /**
- * 机器人头像，一律圆形（DESIGN §81）。上传的图 → 圆形图（加载中 / 失败显示首字底）；emoji / monogram → 渐变底；
+ * 机器人头像（DESIGN §81）。形象（shape）→ 不裁圆的形状 + 眼睛（ShapeAvatar.kt）；其余一律圆形。上传的图 → 圆形图（加载中 / 失败显示首字底）；emoji / monogram → 渐变底；
  * 没设头像 → 按 avatarSeed 选一个渐变 + 首字（网页默认是 boring-avatars 图案，原生先用首字，第二阶段对齐）。
  */
 @Composable
 fun BotAvatar(name: String, seed: String, size: Dp = 40.dp, avatar: BotAvatarSpec? = null) {
     val key = seed.ifEmpty { name }
+    // 形象（shape）：不裁圆，直接画形状 + 眼睛；解析时已保证形状和颜色都认识。
+    if (avatar?.kind == "shape" && avatar.shape != null && AvatarShapes.geometry(avatar.shape) != null) {
+        ShapeAvatar(avatar.shape, avatar.color, size)
+        return
+    }
     Box(Modifier.size(size).clip(CircleShape).background(gradientFor(avatar?.color, key)), contentAlignment = Alignment.Center) {
         if (avatar?.kind == "emoji" && !avatar.emoji.isNullOrBlank()) {
             Text(avatar.emoji, fontSize = (size.value * 0.5f).sp)
