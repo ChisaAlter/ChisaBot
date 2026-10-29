@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 回复来源结构化
+
+- 回复来源结构化（数据格式先行）：新增 `shared/reply-sources.ts`，来源 = 这一轮里成功的 `web_fetch`（网址、标题、站点、toolCallId），挂在这一轮最后一条有文字的助手消息上；不新增存储和事件，实时和历史都从同一批消息算出。部署开关 `CHISABOT_REPLY_SOURCES`（默认关，/api/capabilities 带 `replySources`）打开后，网页聊天的 Bot 不再在正文写「来源：」行。前端卡片另做；开关关着时行为不变，旧客户端不受影响。未升级版本号。
+
 ## 0.1.108 — 2026-10-29
 
 这一版合并 1 个 PR：回复风格对齐 Hark（提示词 + 服务端，#381）。只升级服务器版本号（根、`app`、`server` 为 `0.1.108`），PC / Android 外壳未变；没有表结构变化。
