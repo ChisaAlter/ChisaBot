@@ -2842,6 +2842,7 @@ function ServerToolLine({ name, result }: { name: string; result?: string }) {
    * 所以不当成过程行藏起来，而是一句中文提示，告诉他去哪里处理。
    */
   if (isHostAccessRefusal(name, result)) return <HostAccessHint />;
+  // 工具原样的输出交给 ToolLine 用纯文本画、过长截断（审查模块 7：以前当 markdown 画，一万字点开要卡 1.5 秒）。
   return (
     <ToolLine
       {...(detail ? { detail } : {})}
@@ -2849,16 +2850,8 @@ function ServerToolLine({ name, result }: { name: string; result?: string }) {
       refused={refused}
       failed={failed}
       running={result === undefined}
-    >
-      {body ? (
-        <Streamdown
-          components={markdownComponents}
-          translations={STREAMDOWN_ZH}
-        >
-          {forDisplay(body)}
-        </Streamdown>
-      ) : null}
-    </ToolLine>
+      {...(body ? { output: forDisplay(body) } : {})}
+    />
   );
 }
 
