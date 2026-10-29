@@ -7495,8 +7495,7 @@ html.dark .sa[data-color="ink"] { --sa-fill: #3b3b46; }
 @keyframes sa-hop { 0%, 85%, 100% { transform: translateY(0); } 22% { transform: translateY(-9px) scale(0.97, 1.05); } 45% { transform: translateY(0) scale(1.05, 0.94); } 66% { transform: translateY(-4px); } }
 @media (prefers-reduced-motion: reduce) { .sa, .sa * { animation: none !important; transition: none !important; } }
 /* 性能模式（lib/perf-mode.ts）：表情动画（呼吸、张望、眨眼、蹦跳）也停下，停在静止的表情上；表情切换的淡入淡出保留。 */
-html[data-perf="on"] .sa,
-html[data-perf="on"] .sa * { animation: none !important; }
+html[data-perf="on"] .sa[data-mood] :is(.sa-body, .sa-eyes, .sa-open) { animation: none; }
 .bot-ava-shapes { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px 6px; justify-items: center; width: 100%; }
 .bot-ava-shape { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 12px; transition: background var(--dur-1), transform var(--dur-1) var(--ease-out); }
 .bot-ava-shape:hover { background: var(--hover-bg, rgba(127, 127, 127, 0.12)); transform: scale(1.06); }

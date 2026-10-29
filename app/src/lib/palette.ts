@@ -37,7 +37,8 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     subtitle: "澄澈晴空蓝与通透液态玻璃",
     accentLight: "#2f7cf6",
     accentDark: "#5b9cff",
-    swatchGradient: "linear-gradient(135deg, #1d57a9 0%, #3e7bd1 50%, #6da7ec 100%)",
+    swatchGradient:
+      "linear-gradient(135deg, #1d57a9 0%, #3e7bd1 50%, #6da7ec 100%)",
     skyHueLight: [214, 212, 208, 204],
     skySatLight: [71, 62, 68, 82],
     skyHueDark: [222, 220, 218, 216],
@@ -51,7 +52,8 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     subtitle: "星夜紫罗兰与极光流彩",
     accentLight: "#7c3aed",
     accentDark: "#b197fc",
-    swatchGradient: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 52%, #ec4899 100%)",
+    swatchGradient:
+      "linear-gradient(135deg, #6366f1 0%, #8b5cf6 52%, #ec4899 100%)",
     skyHueLight: [258, 266, 276, 245],
     skySatLight: [64, 58, 52, 48],
     skyHueDark: [258, 252, 246, 264],
@@ -65,7 +67,8 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     subtitle: "雨后松林薄雾与通透翡翠",
     accentLight: "#059669",
     accentDark: "#38d9a9",
-    swatchGradient: "linear-gradient(135deg, #059669 0%, #10b981 52%, #2dd4bf 100%)",
+    swatchGradient:
+      "linear-gradient(135deg, #059669 0%, #10b981 52%, #2dd4bf 100%)",
     skyHueLight: [164, 168, 172, 158],
     skySatLight: [56, 50, 44, 42],
     skyHueDark: [172, 176, 180, 168],
@@ -79,7 +82,8 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     subtitle: "太平洋青蓝与冰晶折射高光",
     accentLight: "#0284c7",
     accentDark: "#4dabf7",
-    swatchGradient: "linear-gradient(135deg, #0369a1 0%, #0ea5e9 50%, #22d3ee 100%)",
+    swatchGradient:
+      "linear-gradient(135deg, #0369a1 0%, #0ea5e9 50%, #22d3ee 100%)",
     skyHueLight: [196, 199, 202, 192],
     skySatLight: [76, 70, 62, 56],
     skyHueDark: [204, 208, 212, 200],
@@ -93,7 +97,8 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     subtitle: "黄金时刻暖橙晚霞与流光",
     accentLight: "#d97706",
     accentDark: "#ffc048",
-    swatchGradient: "linear-gradient(135deg, #ea580c 0%, #f59e0b 52%, #fb7185 100%)",
+    swatchGradient:
+      "linear-gradient(135deg, #ea580c 0%, #f59e0b 52%, #fb7185 100%)",
     skyHueLight: [28, 34, 40, 18],
     skySatLight: [74, 68, 60, 54],
     skyHueDark: [224, 220, 216, 228],
@@ -107,7 +112,8 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     subtitle: "春日落樱柔粉与微醺暮色",
     accentLight: "#db2777",
     accentDark: "#f783ac",
-    swatchGradient: "linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fda4af 100%)",
+    swatchGradient:
+      "linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fda4af 100%)",
     skyHueLight: [336, 342, 348, 326],
     skySatLight: [66, 60, 54, 48],
     skyHueDark: [248, 242, 236, 254],
@@ -148,7 +154,10 @@ export function computePaletteSky(
 }
 
 /** 默认配色的地址栏 / 状态栏颜色（和 index.html 启动骨架的天空同色）。 */
-export const DEFAULT_THEME_COLOR = { light: "#9dbddc", dark: "#0c1626" } as const;
+export const DEFAULT_THEME_COLOR = {
+  light: "#9dbddc",
+  dark: "#0c1626",
+} as const;
 
 function hslToHex(h: number, s: number, l: number): string {
   const sat = s / 100;
@@ -168,8 +177,12 @@ function hslToHex(h: number, s: number, l: number): string {
  * 地址栏 / PWA 状态栏颜色（meta[name=theme-color]）：跟随应用自己的浅色 / 深色和配色，而不是系统的配色方案。
  * 取天空最上面那一段：浅色取 --sky-2（和默认的 #9dbddc 同一档），深色取 --sky-1。
  */
-export function paletteThemeColor(palette: ThemePaletteId, dark: boolean): string {
-  const meta = palette === "default" ? null : THEME_PALETTES.find((p) => p.id === palette);
+export function paletteThemeColor(
+  palette: ThemePaletteId,
+  dark: boolean,
+): string {
+  const meta =
+    palette === "default" ? null : THEME_PALETTES.find((p) => p.id === palette);
   if (!meta) return dark ? DEFAULT_THEME_COLOR.dark : DEFAULT_THEME_COLOR.light;
   const i = dark ? 1 : 2;
   const hues = dark ? meta.skyHueDark : meta.skyHueLight;
@@ -181,10 +194,14 @@ export function paletteThemeColor(palette: ThemePaletteId, dark: boolean): strin
 /** 把所有 meta[name=theme-color] 改成同一个颜色（两条按系统配色分的 meta 都改，应用主题优先）。 */
 export function applyThemeColor(
   color: string,
-  doc: Document | undefined = typeof document !== "undefined" ? document : undefined,
+  doc: Document | undefined = typeof document !== "undefined"
+    ? document
+    : undefined,
 ) {
   if (!doc) return;
-  for (const meta of doc.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+  for (const meta of doc.querySelectorAll<HTMLMetaElement>(
+    'meta[name="theme-color"]',
+  )) {
     if (meta.content !== color) meta.content = color;
   }
 }
@@ -202,7 +219,15 @@ const BOOT_GLASS_STYLES = ["liquid", "crystal", "frosted"];
  * 配色表在构建时算好内联（只有 5 套 × 2 个小对象），运行时不用再算。
  */
 export function paletteBootScript(): string {
-  const map: Record<string, { l: Record<string, string>; d: Record<string, string>; tl: string; td: string }> = {};
+  const map: Record<
+    string,
+    {
+      l: Record<string, string>;
+      d: Record<string, string>;
+      tl: string;
+      td: string;
+    }
+  > = {};
   for (const p of THEME_PALETTES) {
     const light = computePaletteSky(p.id, false);
     const dark = computePaletteSky(p.id, true);

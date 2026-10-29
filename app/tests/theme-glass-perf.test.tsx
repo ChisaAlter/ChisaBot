@@ -27,10 +27,17 @@ type Palette = typeof import("../src/lib/palette");
 type Perf = typeof import("../src/lib/perf-mode");
 type Sky = typeof import("../src/components/sky-background");
 type Theme = typeof import("../src/components/theme-provider");
-type PerfPref = typeof import("../src/components/settings/perf-mode-preference");
+type PerfPref =
+  typeof import("../src/components/settings/perf-mode-preference");
 
-const css = readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8");
-const viteConfig = readFileSync(path.join(import.meta.dir, "../vite.config.ts"), "utf8");
+const css = readFileSync(
+  path.join(import.meta.dir, "../src/styles.css"),
+  "utf8",
+);
+const viteConfig = readFileSync(
+  path.join(import.meta.dir, "../vite.config.ts"),
+  "utf8",
+);
 
 let appearance: Appearance;
 let palette: Palette;
@@ -63,7 +70,8 @@ afterEach(() => {
   cleanup();
 });
 
-const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+const nextFrame = () =>
+  new Promise<void>((r) => requestAnimationFrame(() => r()));
 
 /** 按顶层逗号切选择器列表（括号里的逗号不切）。 */
 function splitSelectors(list: string): string[] {
@@ -116,20 +124,30 @@ function lastCompounds(selector: string): string[] {
 }
 
 function surfaceTokens(): string[] {
-  const inner = /^:where\(([\s\S]*)\)$/.exec(appearance.GLASS_SURFACE_SELECTOR)?.[1] ?? "";
+  const inner =
+    /^:where\(([\s\S]*)\)$/.exec(appearance.GLASS_SURFACE_SELECTOR)?.[1] ?? "";
   return splitSelectors(inner);
 }
 
 describe("1) 玻璃变量只算在读它的元素上（不再整页重算）", () => {
   test("--lg-alpha / --lg-surface / --lg-surface-strong / --lg-blur / --lg-shadow 注册成不继承", () => {
-    for (const name of ["--lg-alpha", "--lg-surface", "--lg-surface-strong", "--lg-blur", "--lg-shadow"]) {
-      expect(css).toMatch(new RegExp(`@property ${name} \\{[^}]*inherits: false;`));
+    for (const name of [
+      "--lg-alpha",
+      "--lg-surface",
+      "--lg-surface-strong",
+      "--lg-blur",
+      "--lg-shadow",
+    ]) {
+      expect(css).toMatch(
+        new RegExp(`@property ${name} \\{[^}]*inherits: false;`),
+      );
     }
   });
 
   test("没有任何一条只命中 <html> 的规则声明这些变量", () => {
     for (const [selector, body] of innermostRules(css)) {
-      if (!/--lg-(alpha|surface|surface-strong|blur|shadow)\s*:/.test(body)) continue;
+      if (!/--lg-(alpha|surface|surface-strong|blur|shadow)\s*:/.test(body))
+        continue;
       for (const sel of splitSelectors(selector)) {
         // 只命中根的选择器：:root、html…（后面没有后代组合符）
         expect(/^(:root|html(\S*))$/.test(sel)).toBe(false);
@@ -141,19 +159,23 @@ describe("1) 玻璃变量只算在读它的元素上（不再整页重算）", (
     const tokens = surfaceTokens();
     expect(tokens.length).toBeGreaterThan(10);
     const declaring = innermostRules(css).filter(
-      ([sel, body]) => /^:where\(html/.test(sel) && /--lg-surface\s*:/.test(body),
+      ([sel, body]) =>
+        /^:where\(html/.test(sel) && /--lg-surface\s*:/.test(body),
     );
     expect(declaring.length).toBe(6);
     for (const [sel] of declaring) {
       const list = /\)\s*:where\(([\s\S]*)\)\s*$/.exec(sel)?.[1] ?? "";
-      expect(splitSelectors(list).map((s) => s.replace(/\s+/g, " "))).toEqual(tokens);
+      expect(splitSelectors(list).map((s) => s.replace(/\s+/g, " "))).toEqual(
+        tokens,
+      );
     }
   });
 
   test("每条读玻璃变量的规则，它命中的元素都在名单里（不继承之后，读的元素自己必须有声明）", () => {
     const tokenTails = surfaceTokens().map((t) => lastCompounds(t)[0]);
     for (const [selector, body] of innermostRules(css)) {
-      if (!/var\(--lg-(surface|surface-strong|blur|shadow)\b/.test(body)) continue;
+      if (!/var\(--lg-(surface|surface-strong|blur|shadow)\b/.test(body))
+        continue;
       for (const sel of splitSelectors(selector)) {
         for (const compound of lastCompounds(sel)) {
           const covered = tokenTails.some((tail) => compound.includes(tail));
@@ -164,7 +186,9 @@ describe("1) 玻璃变量只算在读它的元素上（不再整页重算）", (
   });
 
   test("渲染预算里给气泡关模糊的规则直接写在气泡内容上（不继承之后写在外层不再生效）", () => {
-    expect(css).toContain('.glass-main [data-slot="bubble"] > [data-slot="bubble-content"],\n.jr-card,');
+    expect(css).toContain(
+      '.glass-main [data-slot="bubble"] > [data-slot="bubble-content"],\n.jr-card,',
+    );
   });
 
   test("拖滑块不改 <html>：只改 #chisabot-glass-alpha 那条规则，一帧最多写一次", async () => {
@@ -187,7 +211,9 @@ describe("1) 玻璃变量只算在读它的元素上（不再整页重算）", (
     mo.disconnect();
     expect(mutations.filter((m) => m.target === root)).toEqual([]);
     expect(root.style.getPropertyValue("--lg-alpha")).toBe("");
-    expect(document.querySelectorAll(`#${appearance.GLASS_ALPHA_STYLE_ID}`).length).toBe(1);
+    expect(
+      document.querySelectorAll(`#${appearance.GLASS_ALPHA_STYLE_ID}`).length,
+    ).toBe(1);
   });
 
   test("换材质只改 data-glass 一个属性，不写行内样式", async () => {
@@ -214,14 +240,18 @@ describe("2) 地址栏颜色跟随应用主题", () => {
         expect(palette.paletteThemeColor(p.id, dark)).toMatch(/^#[0-9a-f]{6}$/);
       }
     }
-    expect(palette.paletteThemeColor("sakura", false)).not.toBe(palette.paletteThemeColor("aurora", false));
+    expect(palette.paletteThemeColor("sakura", false)).not.toBe(
+      palette.paletteThemeColor("aurora", false),
+    );
   });
 
   test("两条按系统配色分的 meta 都改成应用的颜色", () => {
     document.head.innerHTML =
       '<meta name="theme-color" content="#9dbddc" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0c1626" media="(prefers-color-scheme: dark)">';
     palette.applyThemeColor(palette.paletteThemeColor("sakura", true));
-    const metas = [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];
+    const metas = [
+      ...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'),
+    ];
     expect(metas.map((m) => m.content)).toEqual([
       palette.paletteThemeColor("sakura", true),
       palette.paletteThemeColor("sakura", true),
@@ -232,7 +262,11 @@ describe("2) 地址栏颜色跟随应用主题", () => {
 describe("3) 多标签页同步", () => {
   function fireStorage(key: string | null, newValue: string | null) {
     window.dispatchEvent(
-      new StorageEvent("storage", { key, newValue, storageArea: window.localStorage }),
+      new StorageEvent("storage", {
+        key,
+        newValue,
+        storageArea: window.localStorage,
+      }),
     );
   }
 
@@ -255,10 +289,16 @@ describe("3) 多标签页同步", () => {
       expect(state.palette).toBe("aurora");
       expect(state.glassStyle).toBe("frosted");
       expect(state.glassOpacity).toBe(30);
-      expect(document.documentElement.getAttribute("data-palette")).toBe("aurora");
-      expect(document.documentElement.getAttribute("data-glass")).toBe("frosted");
+      expect(document.documentElement.getAttribute("data-palette")).toBe(
+        "aurora",
+      );
+      expect(document.documentElement.getAttribute("data-glass")).toBe(
+        "frosted",
+      );
       expect(appearance.readGlassAlpha()).toBe("0.30");
-      await new Promise((r) => setTimeout(r, appearance.SLIDER_WRITE_DELAY_MS + 50));
+      await new Promise((r) =>
+        setTimeout(r, appearance.SLIDER_WRITE_DELAY_MS + 50),
+      );
       expect(writes).toEqual([]);
     } finally {
       window.localStorage.setItem = original;
@@ -268,9 +308,15 @@ describe("3) 多标签页同步", () => {
   test("这边还没写出的同一个滑块值作废，不会在 200ms 后把对方的值盖回去", async () => {
     appearance.setGlassOpacity(12);
     window.localStorage.setItem(appearance.GLASS_OPACITY_STORAGE_KEY, "40");
-    await appearance.syncAppearanceFromStorage(appearance.GLASS_OPACITY_STORAGE_KEY);
-    await new Promise((r) => setTimeout(r, appearance.SLIDER_WRITE_DELAY_MS + 50));
-    expect(window.localStorage.getItem(appearance.GLASS_OPACITY_STORAGE_KEY)).toBe("40");
+    await appearance.syncAppearanceFromStorage(
+      appearance.GLASS_OPACITY_STORAGE_KEY,
+    );
+    await new Promise((r) =>
+      setTimeout(r, appearance.SLIDER_WRITE_DELAY_MS + 50),
+    );
+    expect(
+      window.localStorage.getItem(appearance.GLASS_OPACITY_STORAGE_KEY),
+    ).toBe("40");
     expect(appearance.getAppearanceState().glassOpacity).toBe(40);
   });
 
@@ -317,9 +363,30 @@ describe("3) 多标签页同步", () => {
 
 describe("4) 减少动态效果：天空当帧停", () => {
   test("动态天空在减少动态效果下退回快照，性能模式 / 壁纸下关闭", () => {
-    expect(sky.resolveSkyMode({ perf: false, wallpaper: false, live: true, reducedMotion: true })).toBe("snapshot");
-    expect(sky.resolveSkyMode({ perf: false, wallpaper: false, live: true, reducedMotion: false })).toBe("live");
-    expect(sky.resolveSkyMode({ perf: true, wallpaper: false, live: true, reducedMotion: false })).toBe("off");
+    expect(
+      sky.resolveSkyMode({
+        perf: false,
+        wallpaper: false,
+        live: true,
+        reducedMotion: true,
+      }),
+    ).toBe("snapshot");
+    expect(
+      sky.resolveSkyMode({
+        perf: false,
+        wallpaper: false,
+        live: true,
+        reducedMotion: false,
+      }),
+    ).toBe("live");
+    expect(
+      sky.resolveSkyMode({
+        perf: true,
+        wallpaper: false,
+        live: true,
+        reducedMotion: false,
+      }),
+    ).toBe("off");
   });
 
   test("系统设置一变，useReducedMotion 立刻跟着变（不用等重新渲染）", async () => {
@@ -336,7 +403,11 @@ describe("4) 减少动态效果：天空当帧停", () => {
     })) as unknown as typeof window.matchMedia;
     try {
       function Probe() {
-        return <span data-testid="rm">{sky.useReducedMotion() ? "reduce" : "full"}</span>;
+        return (
+          <span data-testid="rm">
+            {sky.useReducedMotion() ? "reduce" : "full"}
+          </span>
+        );
       }
       const view = render(<Probe />);
       expect(view.getByTestId("rm").textContent).toBe("full");
@@ -359,7 +430,8 @@ describe("4) 减少动态效果：天空当帧停", () => {
 describe("5) 启动骨架用用户选的配色", () => {
   function runBoot(stored: Record<string, string>, dark: boolean) {
     window.localStorage.clear();
-    for (const [k, v] of Object.entries(stored)) window.localStorage.setItem(k, v);
+    for (const [k, v] of Object.entries(stored))
+      window.localStorage.setItem(k, v);
     const root = document.documentElement;
     root.removeAttribute("data-palette");
     root.removeAttribute("data-glass");
@@ -375,24 +447,44 @@ describe("5) 启动骨架用用户选的配色", () => {
   });
 
   test("非默认配色：根上写 data-palette，body 写和应用同样的天空颜色，地址栏同色", () => {
-    runBoot({ [palette.PALETTE_STORAGE_KEY]: "sakura", [palette.GLASS_STYLE_STORAGE_KEY]: "crystal" }, true);
+    runBoot(
+      {
+        [palette.PALETTE_STORAGE_KEY]: "sakura",
+        [palette.GLASS_STYLE_STORAGE_KEY]: "crystal",
+      },
+      true,
+    );
     const expected = palette.computePaletteSky("sakura", true)?.body ?? {};
-    expect(document.documentElement.getAttribute("data-palette")).toBe("sakura");
+    expect(document.documentElement.getAttribute("data-palette")).toBe(
+      "sakura",
+    );
     expect(document.documentElement.getAttribute("data-glass")).toBe("crystal");
     for (const [k, v] of Object.entries(expected)) {
       expect(document.body.style.getPropertyValue(k)).toBe(v);
     }
-    for (const m of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
-      expect(m.getAttribute("content")).toBe(palette.paletteThemeColor("sakura", true));
+    for (const m of document.querySelectorAll<HTMLMetaElement>(
+      'meta[name="theme-color"]',
+    )) {
+      expect(m.getAttribute("content")).toBe(
+        palette.paletteThemeColor("sakura", true),
+      );
     }
   });
 
   test("默认配色或存的值不认识：不改天空，只按应用深浅色写地址栏颜色", () => {
-    runBoot({ [palette.PALETTE_STORAGE_KEY]: "nope", [palette.GLASS_STYLE_STORAGE_KEY]: "bogus" }, false);
+    runBoot(
+      {
+        [palette.PALETTE_STORAGE_KEY]: "nope",
+        [palette.GLASS_STYLE_STORAGE_KEY]: "bogus",
+      },
+      false,
+    );
     expect(document.documentElement.hasAttribute("data-palette")).toBe(false);
     expect(document.documentElement.hasAttribute("data-glass")).toBe(false);
     expect(document.body.style.getPropertyValue("--sky-1")).toBe("");
-    for (const m of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    for (const m of document.querySelectorAll<HTMLMetaElement>(
+      'meta[name="theme-color"]',
+    )) {
       expect(m.getAttribute("content")).toBe("#9dbddc");
     }
     document.documentElement.classList.remove("dark");
@@ -411,7 +503,11 @@ describe("8) 性能模式入口", () => {
     expect(perf.getPerfMode()).toBe(true);
     expect(document.documentElement.getAttribute("data-perf")).toBe("on");
     expect(window.localStorage.getItem(perf.PERF_MODE_STORAGE_KEY)).toBe("on");
-    expect(view.getByRole("switch", { name: "性能模式" }).getAttribute("aria-checked")).toBe("true");
+    expect(
+      view
+        .getByRole("switch", { name: "性能模式" })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
     await act(async () => {
       fireEvent.click(view.getByRole("switch", { name: "性能模式" }));
     });
@@ -420,7 +516,7 @@ describe("8) 性能模式入口", () => {
 
   test("性能模式下头像表情动画（呼吸、眨眼……）停下", () => {
     expect(css).toMatch(
-      /html\[data-perf="on"\] \.sa,\s*html\[data-perf="on"\] \.sa \* \{ animation: none !important; \}/,
+      /html\[data-perf="on"\] \.sa\[data-mood\] :is\(\.sa-body, \.sa-eyes, \.sa-open\) \{ animation: none; \}/,
     );
   });
 

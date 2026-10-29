@@ -102,7 +102,8 @@ export function installPerfMode() {
   installHiddenAnimationPause();
   if (typeof window !== "undefined") {
     window.addEventListener("storage", (event) => {
-      if (event.storageArea && event.storageArea !== window.localStorage) return;
+      if (event.storageArea && event.storageArea !== window.localStorage)
+        return;
       syncPerfModeFromStorage(event.key);
     });
   }

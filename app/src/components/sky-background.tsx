@@ -341,7 +341,8 @@ function listenForSkyWakeups() {
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
 function reducedMotionQuery(): MediaQueryList | null {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null;
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
+    return null;
   return window.matchMedia(REDUCED_MOTION_QUERY);
 }
 
@@ -364,7 +365,11 @@ function subscribeReducedMotion(listener: () => void): () => void {
 
 /** 跟着系统设置实时变（以前只在渲染时读一次，开了「减少动态效果」要等下一次重渲染才生效）。 */
 export function useReducedMotion(): boolean {
-  return useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion, () => false);
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    prefersReducedMotion,
+    () => false,
+  );
 }
 
 /**
