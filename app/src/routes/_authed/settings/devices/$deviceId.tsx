@@ -11,16 +11,17 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { isMobilePlatform } from "../../../../../../shared/devices";
 import { DeviceActivityPanel, FullAccessBadge } from "@/components/devices/full-access";
 import { ApprovalsCard, AuditList, DeviceIcon, DevicePermissions, StatusBadge, ThisPcBadge, ThisPcPanel } from "@/components/devices/devices";
+import { DeviceCrumbs, DeviceNotFound, DeviceOfflineNote } from "@/components/devices/device-page-parts";
 import { PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { DeviceAgentsPanel, DeviceProfileBadge } from "@/components/local-agents/device-agents-panel";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
-import { Card, ErrorCard, SettingRow } from "@/components/ui/skyglass";
+import { Card, SettingRow } from "@/components/ui/skyglass";
 import { toast } from "@/components/ui/toast";
 import {
   deleteDevice,
@@ -68,6 +69,7 @@ function DevicePage() {
   const search = Route.useSearch();
   const [tab, setTab] = useState<Tab>(search.tab ?? "permissions");
   const [local, setLocal] = usePcLocal();
+  const offlineNoteId = useId();
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: deviceKeys.all });
@@ -104,17 +106,18 @@ function DevicePage() {
   });
 
   const back = { linkProps: { to: "/settings/devices" as const }, label: "设备" };
+  const crumbs = <DeviceCrumbs />;
   if (device.isPending) {
     return (
-      <PageShell backButton={back} title="设备">
+      <PageShell backButton={back} eyebrow={crumbs} title="设备">
         <PageSkeleton rows={4} tall />
       </PageShell>
     );
   }
   if (device.isError || !device.data) {
     return (
-      <PageShell backButton={back} title="设备">
-        <ErrorCard description={device.error?.message ?? "没有这台设备。"} title="无法读取这台设备" />
+      <PageShell backButton={back} eyebrow={crumbs} title="设备">
+        <DeviceNotFound message={device.error?.message} onRetry={() => void device.refetch()} />
       </PageShell>
     );
   }
@@ -126,9 +129,11 @@ function DevicePage() {
   const activeTab: Tab = mobile
     ? tab === "settings" ? "settings" : "audit"
     : tab === "local" && !isThisPc ? "permissions" : tab;
+  // 离线时测试连接 / 紧急停止 / 开启完全访问都到不了电脑（O8）：禁用并用 aria-describedby 指向说明。
+  const offline = !d.online && !d.revoked;
   const approvals = (list.data?.approvals ?? []).filter((approval) => approval.deviceId === d.id);
   return (
-    <PageShell backButton={back} title={d.name}>
+    <PageShell backButton={back} eyebrow={crumbs} title={d.name}>
       <div className="device-hero">
         <DeviceIcon device={d} size="lg" />
         <div className="min-w-0 flex-1">
@@ -145,10 +150,11 @@ function DevicePage() {
               .filter(Boolean)
               .join(" · ")}
           </p>
+          {offline && !mobile ? <DeviceOfflineNote id={offlineNoteId} /> : null}
         </div>
         {!d.revoked && !mobile ? (
           <div className="device-hero-actions">
-            <Button disabled={!d.online || d.paused} feedback="test" onClick={() => void test.run()} size="sm" state={test.state} variant="outline">
+            <Button aria-describedby={offline ? offlineNoteId : undefined} data-testid="device-test" disabled={offline || d.paused} feedback="test" onClick={() => void test.run()} size="sm" state={test.state} variant="outline">
               <IconPlugConnected />
               {"测试连接"}
             </Button>
@@ -165,6 +171,9 @@ function DevicePage() {
               </Button>
             ) : (
               <Button
+                aria-describedby={offline ? offlineNoteId : undefined}
+                data-testid="device-stop"
+                disabled={offline}
                 feedback={{ pending: "停止中…", success: "已停止", error: "停止失败" }}
                 onClick={() => void toggleStop.run(true)}
                 size="sm"

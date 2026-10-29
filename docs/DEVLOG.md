@@ -1,5 +1,22 @@
 # DEVLOG
 
+## 设备页：审批按钮状态、过期、离线禁用与无障碍（fix/devices-approvals-a11y）
+
+**动机**：模块 14（电脑 / 设备）审计 `audit/14-computer.md`：审批行只有「拒绝」显示处理状态（S4）；倒计时到 0 后仍显示「即将自动拒绝」、按钮还能点（O1）；`useApprovalCountdown` 在本机时钟偏差、`naive<=0` 时退回整段 TTL（O2）；两个输入框没有标签、面包屑点击区只有 19px 高（O5）；错误卡标题 h4 让层级跳级（O6）；设备 404 是死胡同（O7）；离线设备的测试连接 / 紧急停止 / 开启完全访问还能点（O8）。
+
+**改动**：
+- `components/devices/devices.tsx`：`ApprovalRow` 拆成 `approve` / `deny` 两个 `useAsyncAction`，和 `chat/confirm-card.tsx` 同一套（各自 处理中 / 已允许·已拒绝 / 失败，一个在跑另一个禁用，成功后都锁住）；倒计时到 0 显示「已过期」徽标和「已过期，没有执行」，两个按钮禁用。倒计时改成 `approvalDeadline()`：有 `remainingMs` 用它，否则本机剩余时间夹在 [0, TTL]；第一次见到审批时把截止时刻钉在 `performance.now()` 上（按 id 记在模块里），之后刷新 / 重挂只会提前不会延长，到 0 停在 0。网页拿到的 `DeviceApprovalView` 目前没有 `remainingMs`（只发给 PC），服务器侧不在本次范围（开发2 S1/S2）。允许的文件夹、设备名称两个输入加 `aria-label`，文件夹校验错误用 `aria-describedby` 关联。
+- 新 `components/devices/device-page-parts.tsx`：`DeviceCrumbs`（面包屑 min-h-8 = 32px）、`DeviceErrorCard`（sg-errcard 外观，标题 h2）、`DeviceNotFound`（「返回设备列表」+ 重试）、`DeviceOfflineNote`（离线说明）。
+- `components/devices/full-access.tsx`：离线时禁用「开启完全访问…」和时长选择，显示说明并 `aria-describedby`。
+- 路由 `settings/devices/$deviceId.tsx`、`settings/devices/index.tsx`（超出 components/devices，只改引用）：用上面几个部件；离线时「测试连接」「紧急停止」禁用并 `aria-describedby` 指向离线说明（「解除紧急停止」离线仍可点：它只改服务器上的标记，设备重连后生效）。
+- 颜色 / 间距只用现有类和 Tailwind 刻度（仓库里设计规范是根目录 `DESIGN.md`，没有 `docs/design-system.md`）。
+
+**INP**（4× CPU 降速，Playwright + CDP `Emulation.setCPUThrottlingRate`，Event Timing API，组件独立页面各点 5 次）：允许 before 48–64ms → after 48–72ms；拒绝 before 48–64ms → after 40–48ms，均 < 200ms。
+
+**截图**：`docs/images/devices-approvals-a11y/14-{live,expired,notfound,offline}-{before,after}.png`（组件独立页面 + 构建出的 CSS）。
+
+**测试**：`app/tests/device-approvals-a11y.test.tsx`（S4、O1、O2、O6、O7、O8）。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
