@@ -18,15 +18,21 @@ const BROWSER_SPEECH_MIME = "application/x-chisabot-speech";
 /**
  * Where to turn the microphone back on, since nothing will ask a second time by itself. One sentence
  * per place the app runs, because the way back differs: a browser has the lock icon in its address
- * bar, the PC app has no address bar at all (the switch is in the system's privacy settings), and
- * on Android the WebView follows Chrome's site setting first and the app permission second.
+ * bar, and the PC app has no address bar at all (the switch is in Windows' privacy settings, and the
+ * one that blocks a desktop app is 「允许桌面应用访问麦克风」).
+ *
+ * THE ANDROID APP HAS NO WAY BACK YET, so it is not sent looking for one: its WebView does not
+ * implement `onPermissionRequest` and the manifest does not declare `RECORD_AUDIO`, so neither
+ * Chrome's site settings nor the app's permission page can turn the microphone on. It says plainly
+ * that voice input is not supported there yet. When the Android side grants the microphone (a
+ * separate client PR), this becomes real instructions.
  */
 export const MIC_DENIED_MESSAGE =
   "麦克风权限被拒绝了。点地址栏左边的锁形图标，把「麦克风」改成「允许」后点「重新录音」；手机上请到系统设置里允许浏览器使用麦克风。";
 export const MIC_DENIED_PC_MESSAGE =
-  "麦克风权限被拒绝了。请到系统设置的「隐私和安全性 → 麦克风」里允许 ChisaBot 使用麦克风，再点「重新录音」。";
+  "麦克风权限被拒绝了。请到 Windows「设置 → 隐私和安全性 → 麦克风」里打开「允许桌面应用访问麦克风」，再点「重新录音」。";
 export const MIC_DENIED_ANDROID_MESSAGE =
-  "麦克风权限被拒绝了。先到 Chrome 的「设置 → 网站设置 → 麦克风」里允许本站使用麦克风；还不行的话，到系统设置的「应用 → ChisaBot → 权限」里打开麦克风，再点「重新录音」。";
+  "安卓 App 暂时还不支持语音输入。要用语音输入，请在 PC 客户端或浏览器里打开 ChisaBot。";
 
 export type MicPlatform = "browser" | "pc" | "android";
 

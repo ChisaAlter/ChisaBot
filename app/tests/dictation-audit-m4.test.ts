@@ -229,6 +229,7 @@ test("the denied-microphone sentence matches where the app runs", () => {
     expect(micDeniedMessage()).toBe(MIC_DENIED_PC_MESSAGE);
     expect(MIC_DENIED_PC_MESSAGE).not.toContain("地址栏");
     expect(MIC_DENIED_PC_MESSAGE).toContain("隐私");
+    expect(MIC_DENIED_PC_MESSAGE).toContain("允许桌面应用访问麦克风");
 
     g.window = {};
     doc.document = {
@@ -239,10 +240,12 @@ test("the denied-microphone sentence matches where the app runs", () => {
     expect(micPlatform()).toBe("android");
     expect(micDeniedMessage()).toBe(MIC_DENIED_ANDROID_MESSAGE);
     expect(MIC_DENIED_ANDROID_MESSAGE).not.toContain("地址栏");
-    // Chrome's site setting first, the system app permission second.
-    expect(MIC_DENIED_ANDROID_MESSAGE.indexOf("网站设置")).toBeLessThan(
-      MIC_DENIED_ANDROID_MESSAGE.indexOf("应用 → ChisaBot"),
-    );
+    // The WebView cannot get the microphone at all yet (no onPermissionRequest, no RECORD_AUDIO),
+    // so no setting can fix it: say it is not supported and where it does work, not where to click.
+    expect(MIC_DENIED_ANDROID_MESSAGE).toContain("暂时还不支持语音输入");
+    expect(MIC_DENIED_ANDROID_MESSAGE).not.toContain("网站设置");
+    expect(MIC_DENIED_ANDROID_MESSAGE).not.toContain("权限");
+    expect(MIC_DENIED_ANDROID_MESSAGE).not.toContain("重新录音");
   } finally {
     doc.document = realDocument;
     g.window = realWindow;

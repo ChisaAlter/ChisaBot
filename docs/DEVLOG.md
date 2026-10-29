@@ -53,7 +53,10 @@
 2. **断网**：
    - 浏览器识别 `onerror` 是 `network`，或者 `navigator.onLine === false` 时结果为空，都显示「没有网络连接，语音输入用不了。联网后点「重新录音」。」。
    - 服务端识别在离线时不再发请求，直接提示「没有网络连接，没能把录音传上去。联网后点「重试」。」。`fetch` 抛网络错误时显示「网络出错，没能把录音传上去。请点「重试」。」，不再出现英文 `Failed to fetch`。
-3. **麦克风被拒**：`MIC_DENIED_MESSAGE`，告诉用户点地址栏左边的锁形图标，把「麦克风」改成「允许」；手机上到系统设置里允许。浏览器识别的 `not-allowed` / `service-not-allowed` 和 MediaRecorder 的 `NotAllowedError` 共用这一句。
+3. **麦克风被拒**：按运行环境分三句（`micDeniedMessage()`），浏览器识别的 `not-allowed` / `service-not-allowed` 和 MediaRecorder 的 `NotAllowedError` 共用。
+   - 浏览器：点地址栏左边的锁形图标，把「麦克风」改成「允许」；手机上到系统设置里允许浏览器用麦克风。
+   - PC 客户端（没有地址栏）：到 Windows「设置 → 隐私和安全性 → 麦克风」里打开「允许桌面应用访问麦克风」。
+   - 安卓 App：直接说「安卓 App 暂时还不支持语音输入」，请改用 PC 客户端或浏览器。安卓的 WebView 没实现 `onPermissionRequest`，清单里也没有 `RECORD_AUDIO`，Chrome 网站设置和应用权限都打不开麦克风，所以不再让用户去那里找。真正的支持另开安卓小 PR（dev3/android-mic-permission），随下一个客户端版本和 #400 一起发；那个合并后再把这句换成真正的操作说明。
 4. **叫法**：这两个文件里剩下的「口述」「语音速记」「转录」统一成「语音输入」「识别」。按钮文案在输入框 PR（dev3/composer-audit）里改，这个 PR 不碰 `dictation-controls.tsx`，两个 PR 互不冲突。
 
 ### 测试
@@ -65,7 +68,7 @@
   - 离线上传不发请求；
   - `fetch` 网络错误显示中文提示；
   - `onerror: network` 提示没网；
-  - 麦克风被拒的提示包含去哪里打开。
+  - 麦克风被拒的提示按浏览器 / PC / 安卓分开：PC 指到「允许桌面应用访问麦克风」，安卓说暂不支持语音输入。
 - `dictation-session.test.ts` 里麦克风被拒的断言改用 `MIC_DENIED_MESSAGE`。
 
 ## Unreleased — 工具步骤失败后整轮没有回答 / web_fetch 稳定性（Hark 对比 A4）
