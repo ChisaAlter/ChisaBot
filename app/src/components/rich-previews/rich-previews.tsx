@@ -1,5 +1,4 @@
 import {
-  IconArrowUpRight,
   IconDownload,
   IconEye,
   IconFile,
@@ -11,10 +10,8 @@ import {
   IconFileZip,
   IconMessageReply,
   IconPhoto,
-  IconWorld,
 } from "@tabler/icons-react";
 import {
-  QueryClient,
   QueryClientProvider,
   useQueries,
   useQuery,
@@ -44,11 +41,15 @@ import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import { markdownComponents } from "@/lib/markdown";
 import { DocxPreviewBody, isDocxFile } from "./docx-preview";
 import { Lightbox, type LightboxImage } from "./lightbox";
+import { LinkCardStack } from "./link-card";
+import { hostOf, previewClient, previewQuery } from "./link-preview-query";
 
 /**
  * 聊天富预览（2026-10-13；DESIGN.md §31）：
- * - 链接卡（DESIGN.md §48）：单独占一行的链接（最多 3 个）在正文下面变成紧凑玻璃卡——缩略图 / 站点图标、
- *   标题、域名、可选标签（`[下载 0.1.7](网址)`），整张可点、新标签页打开（PC / 安卓客户端交给系统浏览器）。
+ * - 链接卡（DESIGN.md §48；2026-10-29 起和 json-render 的 Link 共用 ./link-card.tsx）：单独占一行的链接（最多 3 个）
+ *   在正文下面变成 Hark 式链接卡——上半 og:image 大图、两行标题、「站点 · 标签」；没有图时是紧凑横卡。
+ *   多个链接叠成错落的一叠（LinkCardStack：主位居中最前，其余放左右倾斜槽位）。
+ *   整张可点、新标签页打开（PC / 安卓客户端交给系统浏览器）。
  *   数据来自 `GET /api/link-preview`（服务器只连公网、图片也由服务器转存，浏览器不直接访问第三方）。
  *   取的时候是同尺寸骨架；取不到就画「图标 + 域名」的兜底卡，照样能点。
  * - 图片：一张就是一张图卡；两张以上叠成一摞（每张轻微倾斜），悬停 / 聚焦 / 第一次轻点时摊开，点哪张
@@ -59,71 +60,13 @@ import { Lightbox, type LightboxImage } from "./lightbox";
  * 之前它如果像一行链接，就先藏起来、卡片位置放骨架——不会拿半截网址去取预览，也不会先闪一行网址。
  */
 
-export type LinkPreviewData = {
-  url: string;
-  finalUrl: string;
-  title: string;
-  siteName: string;
-  domain: string;
-  description: string;
-  image: string | null;
-  imageKind: "og" | "shot" | "direct" | "none";
-  imagePending: boolean;
-  favicon: string | null;
-  /** 网页没取到（被拦 / 超时 / 不是网页）：只有域名和站点图标的兜底卡。 */
-  degraded?: boolean;
-  /** `image` 的像素宽高（DESIGN.md §83.2）；旧服务器 / 读不出时没有。 */
-  imageWidth?: number;
-  imageHeight?: number;
-};
+export type { LinkPreviewData } from "./link-preview-query";
 
-class PreviewMissing extends Error {}
-
-/**
- * 预览自己的查询缓存：不依赖页面上有没有 QueryClientProvider（频道记录、测试、以后别的地方都能直接用），
- * 也不和应用的其它查询混在一起。
- */
-const previewClient = new QueryClient({
-  defaultOptions: { queries: { refetchOnWindowFocus: false } },
-});
-
+/** 预览查询缓存的 Provider（useQueries 等没传 client 的调用用它）。 */
 function WithPreviewClient({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={previewClient}>{children}</QueryClientProvider>
   );
-}
-
-async function fetchPreview(url: string): Promise<LinkPreviewData> {
-  const response = await fetch(
-    `/api/link-preview?url=${encodeURIComponent(url)}`,
-    { credentials: "include" },
-  );
-  if (!response.ok) throw new PreviewMissing(String(response.status));
-  const body = (await response.json().catch(() => null)) as {
-    preview?: LinkPreviewData;
-  } | null;
-  if (!body?.preview || typeof body.preview.title !== "string")
-    throw new PreviewMissing("bad body");
-  return body.preview;
-}
-
-function previewQuery(url: string) {
-  return {
-    queryKey: ["link-preview", url] as const,
-    queryFn: () => fetchPreview(url),
-    staleTime: 10 * 60_000,
-    gcTime: 30 * 60_000,
-    retry: (failures: number, error: unknown) =>
-      !(error instanceof PreviewMissing) && failures < 1,
-    refetchOnWindowFocus: false,
-    // 截图在服务器后台做：先拿到标题，图还在路上时每 2.5 秒问一次，最多约 30 秒。
-    refetchInterval: (query: {
-      state: { data?: LinkPreviewData; dataUpdateCount: number };
-    }) =>
-      query.state.data?.imagePending && query.state.dataUpdateCount < 12
-        ? 2500
-        : false,
-  };
 }
 
 /**
@@ -155,29 +98,9 @@ export function useSettledText(text: string, ms = 900): string {
   return settled;
 }
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
-
 // ---------------------------------------------------------------------------------------------
 // 链接卡
 // ---------------------------------------------------------------------------------------------
-
-/** 兜底卡用的短地址：github.com/ChisaAlter/Chis… */
-function shortUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    const path = decodeURIComponent(u.pathname).replace(/\/$/, "");
-    const text = `${u.hostname.replace(/^www\./, "")}${path}`;
-    return text.length > 48 ? `${text.slice(0, 47)}…` : text;
-  } catch {
-    return url;
-  }
-}
 
 /**
  * 看过的图片多大（按地址记，只在这个页面里）。再画同一张图（切回这段对话、虚拟列表重画）时直接把宽高写在
@@ -215,179 +138,6 @@ export function rememberedImageSize(src: string) {
   return imageSizes.get(src);
 }
 
-function isSquarish(img: HTMLImageElement): boolean {
-  return img.naturalHeight > 0 && img.naturalWidth / img.naturalHeight < 1.25;
-}
-
-const LINK_DECK_ROTATIONS: Record<number, readonly number[]> = {
-  1: [0],
-  2: [-4.5, 4.5],
-  3: [-6, 0.5, 6],
-};
-const LINK_DECK_OFFSET_Y: Record<number, readonly number[]> = {
-  1: [0],
-  2: [0, 12],
-  3: [10, -2, 14],
-};
-
-function linkDeckStyle(index: number, total: number): CSSProperties | undefined {
-  if (total <= 1) return undefined;
-  const rots = LINK_DECK_ROTATIONS[Math.min(total, 3)] ?? LINK_DECK_ROTATIONS[3]!;
-  const ys = LINK_DECK_OFFSET_Y[Math.min(total, 3)] ?? LINK_DECK_OFFSET_Y[3]!;
-  const rot = rots[index % rots.length] ?? 0;
-  const y = ys[index % ys.length] ?? 0;
-  return {
-    "--rp-card-i": index,
-    "--rp-card-rot": `${rot}deg`,
-    "--rp-card-y": `${y}px`,
-    zIndex: index + 1,
-  } as CSSProperties;
-}
-
-function LinkCardSkeleton({
-  index = 0,
-  total = 1,
-}: {
-  index?: number;
-  total?: number;
-}) {
-  return (
-    <div
-      aria-hidden
-      className="rp-link rp-link-skel"
-      data-testid="link-card-skeleton"
-      style={linkDeckStyle(index, total)}
-    >
-      <span className="rp-link-tile sky-skel-block" />
-      <span className="rp-link-body">
-        <span className="rp-skel-bar sky-skel-bar" style={{ width: "82%" }} />
-        <span className="rp-skel-bar sky-skel-bar" style={{ width: "48%" }} />
-      </span>
-    </div>
-  );
-}
-
-function LinkCard({
-  link,
-  index = 0,
-  total = 1,
-  focused = false,
-  dimmed = false,
-  onHoverChange,
-}: {
-  link: LinkRef;
-  index?: number;
-  total?: number;
-  focused?: boolean;
-  dimmed?: boolean;
-  onHoverChange?: (hovered: boolean) => void;
-}) {
-  const { data, isPending, isError } = useQuery(previewQuery(link.url));
-  const [imageBroken, setImageBroken] = useState(false);
-  const [iconBroken, setIconBroken] = useState(false);
-  // 接近方形的 og 图（logo）整张放进缩略图，宽的分享图居中裁（styles.css §48）。
-  const [square, setSquare] = useState(false);
-  if (isPending && !isError) return <LinkCardSkeleton index={index} total={total} />;
-  const domain = data?.domain || hostOf(link.url);
-  const degraded = !data || data.degraded === true;
-  const image =
-    data?.image && data.imageKind !== "none" && !imageBroken ? data.image : null;
-  const favicon = data?.favicon && !iconBroken ? data.favicon : null;
-  const title = data?.title || domain;
-  // 兜底卡标题就是域名时，第二行给短地址，不要两行都是同一个域名。
-  const meta = title === domain ? shortUrl(link.url) : domain;
-  const kind = image ? "image" : favicon ? "icon" : "none";
-  return (
-    <a
-      aria-label={`${link.label ? `${link.label}：` : ""}${title}（${domain}），在新窗口打开`}
-      className="rp-link"
-      data-degraded={degraded ? "" : undefined}
-      data-dimmed={dimmed ? "" : undefined}
-      data-focused={focused ? "" : undefined}
-      data-testid="link-card"
-      href={link.url}
-      onBlur={() => onHoverChange?.(false)}
-      onFocus={() => onHoverChange?.(true)}
-      onMouseEnter={() => onHoverChange?.(true)}
-      onMouseLeave={() => onHoverChange?.(false)}
-      rel="noopener noreferrer"
-      style={linkDeckStyle(index, total)}
-      target="_blank"
-      title={data?.finalUrl || link.url}
-    >
-      <span
-        className="rp-link-tile"
-        data-kind={kind}
-        data-square={kind === "image" && square ? "" : undefined}
-      >
-        {image ? (
-          <img
-            alt=""
-            decoding="async"
-            loading="lazy"
-            onError={() => setImageBroken(true)}
-            onLoad={(event) => setSquare(isSquarish(event.currentTarget))}
-            // 已经在缓存里的图可能在 React 挂上 onLoad 之前就加载完了：挂载时再量一次。
-            ref={(img) => {
-              if (img?.complete && img.naturalWidth > 0) setSquare(isSquarish(img));
-            }}
-            referrerPolicy="no-referrer"
-            src={image}
-          />
-        ) : (
-          <span className="rp-link-stage-badge">
-            {favicon ? (
-              <img
-                alt=""
-                decoding="async"
-                onError={() => setIconBroken(true)}
-                referrerPolicy="no-referrer"
-                src={favicon}
-              />
-            ) : (
-              <IconWorld aria-hidden />
-            )}
-          </span>
-        )}
-      </span>
-      <span className="rp-link-body">
-        <span className="rp-link-title">{title}</span>
-        <span className="rp-link-meta">
-          {link.label ? <span className="rp-link-label">{link.label}</span> : null}
-          {image && favicon ? (
-            <img
-              alt=""
-              className="rp-link-icon"
-              onError={() => setIconBroken(true)}
-              src={favicon}
-            />
-          ) : null}
-          <span className="rp-link-domain">{meta}</span>
-        </span>
-      </span>
-      <button
-        aria-label={`追问 ${title}`}
-        className="rp-link-followup"
-        data-testid="card-followup-btn"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          dispatchComposerQuote({
-            text: `${title} (${link.url})`,
-            source: `链接 · ${meta}`,
-          });
-        }}
-        title={`针对「${title}」继续追问`}
-        type="button"
-      >
-        <IconMessageReply aria-hidden="true" className="size-3.5" />
-        <span>{"追问"}</span>
-      </button>
-      <IconArrowUpRight aria-hidden className="rp-link-go" />
-    </a>
-  );
-}
-
 function LinkPreviewCardsInner({
   links,
   pending = false,
@@ -396,31 +146,9 @@ function LinkPreviewCardsInner({
   /** 流式中最后一行像是一行链接：多放一个骨架占位。 */
   pending?: boolean;
 }) {
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const count = links.length + (pending ? 1 : 0);
-  if (count === 0) return null;
-  const isDeck = count > 1;
+  if (links.length === 0 && !pending) return null;
   return (
-    <div
-      className="rp-links"
-      data-count={count}
-      data-deck={isDeck ? "" : undefined}
-      data-focused={isDeck && hoveredIndex !== null ? "" : undefined}
-      data-testid="link-cards"
-    >
-      {links.map((link, i) => (
-        <LinkCard
-          dimmed={isDeck && hoveredIndex !== null && hoveredIndex !== i}
-          focused={isDeck && hoveredIndex === i}
-          index={i}
-          key={link.url}
-          link={link}
-          onHoverChange={(on) => setHoveredIndex(on ? i : null)}
-          total={count}
-        />
-      ))}
-      {pending ? <LinkCardSkeleton index={links.length} key="pending" total={count} /> : null}
-    </div>
+    <LinkCardStack items={links.map((link) => ({ url: link.url, meta: link.label }))} pending={pending} />
   );
 }
 
