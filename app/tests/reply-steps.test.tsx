@@ -515,12 +515,7 @@ describe("以卡片收尾的一轮算有回答（复审 #404 第 1 条）", () =
   type Item = Parameters<typeof compactTurns>[0][number];
   const user = (id: string, text: string): Item =>
     ({ kind: "text", id, role: "user", text }) as Item;
-  const tool = (
-    id: string,
-    name: string,
-    result?: string,
-    args = "{}",
-  ): Item =>
+  const tool = (id: string, name: string, result?: string, args = "{}"): Item =>
     ({
       kind: "tool",
       id,
@@ -613,9 +608,7 @@ describe("以卡片收尾的一轮算有回答（复审 #404 第 1 条）", () =
     expect(registeredCardChecks.get("image_generate")).toBe(imageToolDrawsCard);
     expect(registeredCardChecks.get("image_edit")).toBe(imageToolDrawsCard);
     expect(registeredCardChecks.get("file_share")).toBe(fileToolDrawsCard);
-    expect(registeredCardChecks.get("schedule_create")).toBe(
-      scheduleDrawsCard,
-    );
+    expect(registeredCardChecks.get("schedule_create")).toBe(scheduleDrawsCard);
     expect(registeredCardChecks.get("render_ui")).toBe(renderUiDrawsCard);
   });
 
