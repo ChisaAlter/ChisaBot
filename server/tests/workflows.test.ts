@@ -6,7 +6,7 @@ import {
   workflowProblems,
   workflowStages,
 } from "../../shared/workflows";
-import { createWorkflowEngine, extractJson, normalizeInputs, renderTemplate } from "../src/workflows/engine";
+import { createWorkflowEngine, extractJson, MAX_ACTIVE_RUNS_PER_USER, normalizeInputs, renderTemplate } from "../src/workflows/engine";
 import { parseWorkflowMarkdown, serializeWorkflowMarkdown, WorkflowFormatError } from "../src/workflows/format";
 import { clearStepPolicy, registerStepPolicy, restrictToolsForWorkflow } from "../src/workflows/policy";
 import { loadPresets } from "../src/workflows/presets";
@@ -137,7 +137,9 @@ function memoryStore() {
     },
     update: async () => null,
     remove: async () => false,
-    createRun: async (input: { ownerUserId: string; workflowId: string; definition: StoredRun["definition"]; inputs: StoredRun["inputs"]; bindings: StoredRun["bindings"]; source: StoredRun["source"]; state: RunState }) => {
+    createRunWithinLimit: async (input: { ownerUserId: string; workflowId: string; definition: StoredRun["definition"]; inputs: StoredRun["inputs"]; bindings: StoredRun["bindings"]; source: StoredRun["source"]; state: RunState }, maxActive: number) => {
+      // 和数据库版一样：计数和插入之间没有 await，等价于同一事务。
+      if ([...runs.values()].filter((r) => r.ownerUserId === input.ownerUserId && (r.status === "queued" || r.status === "running")).length >= maxActive) return null;
       const run: StoredRun = {
         id: `run${++n}`,
         ...input,
@@ -164,6 +166,28 @@ function memoryStore() {
       const run = runs.get(id)!;
       runs.set(id, { ...run, ...structuredClone(patch), updatedAt: new Date() });
     },
+    transitionRun: async (id: string, from: string[], patch: Partial<StoredRun>) => {
+      const run = runs.get(id);
+      if (!run || !from.includes(run.status)) return false;
+      runs.set(id, { ...run, ...structuredClone(patch), updatedAt: new Date() });
+      return true;
+    },
+    claimRun: async (id: string) => {
+      const run = runs.get(id);
+      if (run?.status !== "queued") return null;
+      runs.set(id, { ...run, status: "running", updatedAt: new Date() });
+      return structuredClone(runs.get(id)!);
+    },
+    touchRun: async (id: string) => {
+      const run = runs.get(id);
+      if (run && run.status === "running") runs.set(id, { ...run, updatedAt: new Date() });
+    },
+    failStaleRun: async (id: string, staleBefore: Date, patch: Partial<StoredRun>) => {
+      const run = runs.get(id);
+      if (!run || (run.status !== "queued" && run.status !== "running") || run.updatedAt.getTime() >= staleBefore.getTime()) return false;
+      runs.set(id, { ...run, ...structuredClone(patch), status: "failed", updatedAt: new Date() });
+      return true;
+    },
     deleteRun: async (_o: string, id: string) => runs.delete(id),
     interruptedRuns: async () => [...runs.values()].filter((r) => r.status === "running"),
     addEvent: async (runId: string, kind: string, message: string, stepId?: string | null) => {
@@ -182,7 +206,7 @@ async function settle(runs: Map<string, StoredRun>, id: string, want: string[] =
   throw new Error(`run stuck at ${runs.get(id)!.status}`);
 }
 
-function engineWith(runTurn: TurnRunner) {
+function engineWith(runTurn: TurnRunner, extra: { runLeaseMs?: number; heartbeatMs?: number } = {}) {
   const mem = memoryStore();
   const conversations: string[] = [];
   const deleted: string[] = [];
@@ -200,6 +224,7 @@ function engineWith(runTurn: TurnRunner) {
     botInfo: async (_o, id) => (id.startsWith("bot") ? { id, name: id.toUpperCase() } : null),
     librarySkills: async () => [{ slug: "lib", title: "库技能", instructions: "照库技能做" }],
     log: () => {},
+    ...extra,
   });
   return { engine, ...mem, conversations, deleted };
 }
@@ -339,5 +364,98 @@ describe("engine", () => {
     expect(done.status).toBe("cancelled");
     expect(done.state.steps[0]!.status).toBe("cancelled");
     expect(done.state.steps[1]!.status).toBe("skipped");
+  });
+});
+
+// ── S5：审批 / 执行 / 恢复 / 启动的并发 ──
+describe("engine concurrency (S5)", () => {
+  const gated = workflowDefinitionSchema.parse({
+    ...base,
+    steps: [base.steps[0], { ...base.steps[1], approval: true }],
+  });
+
+  test("two concurrent approvals: only one passes, the gated step runs once", async () => {
+    const calls: string[] = [];
+    const t = engineWith(async (input) => {
+      calls.push(input.instruction.includes("改 ok") ? "two" : "one");
+      return { replyText: "ok" };
+    });
+    const run = await t.engine.start({ ownerUserId: "u", workflowId: "w", definition: gated, inputs: { topic: "t" }, fallbackBotId: "bot1", source: "page" });
+    expect((await settle(t.runs, run.id)).status).toBe("waiting_approval");
+    const results = await Promise.allSettled([
+      t.engine.approve({ ownerUserId: "u", runId: run.id, stepId: "two", decision: "approve", by: "甲" }),
+      t.engine.approve({ ownerUserId: "u", runId: run.id, stepId: "two", decision: "approve", by: "乙" }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const lost = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+    expect((lost.reason as { status: number }).status).toBe(409);
+    expect((await settle(t.runs, run.id, ["succeeded", "failed"])).status).toBe("succeeded");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(calls.filter((c) => c === "two")).toHaveLength(1);
+    expect(t.events.filter((e) => e.runId === run.id && e.kind === "approval_decided")).toHaveLength(1);
+  });
+
+  test("approve racing reject: exactly one decision sticks", async () => {
+    const t = engineWith(async () => ({ replyText: "ok" }));
+    const run = await t.engine.start({ ownerUserId: "u", workflowId: "w", definition: gated, inputs: { topic: "t" }, fallbackBotId: "bot1", source: "page" });
+    await settle(t.runs, run.id);
+    const results = await Promise.allSettled([
+      t.engine.approve({ ownerUserId: "u", runId: run.id, stepId: "two", decision: "approve", by: "甲" }),
+      t.engine.approve({ ownerUserId: "u", runId: run.id, stepId: "two", decision: "reject", by: "乙" }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const final = await settle(t.runs, run.id, ["succeeded", "cancelled", "failed"]);
+    expect(final.status).toBe(results[0]!.status === "fulfilled" ? "succeeded" : "cancelled");
+  });
+
+  test("concurrent execute of the same run only runs it once", async () => {
+    let turns = 0;
+    const t = engineWith(async () => {
+      turns++;
+      await new Promise((r) => setTimeout(r, 10));
+      return { replyText: "ok" };
+    });
+    const run = await t.engine.start({ ownerUserId: "u", workflowId: "w", definition: workflowDefinitionSchema.parse(base), inputs: { topic: "t" }, fallbackBotId: "bot1", source: "page" });
+    await Promise.all([t.engine.execute(run.id), t.engine.execute(run.id), t.engine.execute(run.id)]);
+    expect((await settle(t.runs, run.id, ["succeeded", "failed"])).status).toBe("succeeded");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(turns).toBe(2);
+  });
+
+  test("concurrent starts: the 4th is refused with 429", async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((r) => {
+      release = r;
+    });
+    const t = engineWith(async () => {
+      await hold;
+      return { replyText: "ok" };
+    });
+    const def = workflowDefinitionSchema.parse(base);
+    const results = await Promise.allSettled(
+      Array.from({ length: 4 }, () => t.engine.start({ ownerUserId: "u", workflowId: "w", definition: def, inputs: { topic: "t" }, fallbackBotId: "bot1", source: "page" })),
+    );
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(MAX_ACTIVE_RUNS_PER_USER);
+    const refused = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(refused).toHaveLength(1);
+    expect((refused[0]!.reason as { status: number }).status).toBe(429);
+    release();
+  });
+
+  test("recover leaves a run with a fresh heartbeat alone and fails a stale one", async () => {
+    const t = engineWith(async () => ({ replyText: "ok" }), { runLeaseMs: 60_000 });
+    const def = workflowDefinitionSchema.parse(base);
+    const mk = async () => {
+      const run = (await t.store.createRunWithinLimit({ ownerUserId: "u", workflowId: "w", definition: def, inputs: { topic: "t" }, bindings: { a: "bot1", b: "bot1" }, source: "page", state: { steps: [], tokens: 0, stepsRun: 0, elapsedMs: 0 } }, 10))!;
+      t.runs.set(run.id, { ...t.runs.get(run.id)!, status: "running" });
+      return run.id;
+    };
+    const alive = await mk();
+    const dead = await mk();
+    t.runs.set(dead, { ...t.runs.get(dead)!, updatedAt: new Date(Date.now() - 5 * 60_000) });
+    const result = await t.engine.recover();
+    expect(result).toEqual({ failed: 1, deferred: 1 });
+    expect(t.runs.get(alive)!.status).toBe("running");
+    expect(t.runs.get(dead)!.status).toBe("failed");
   });
 });
