@@ -22,15 +22,12 @@ function rowsOf<T>(result: unknown): T[] {
 }
 
 /**
- * 本地对话后端的表在不在（`local-conversations.ts` 启动时建）。不在就说明消息存在别处（托管的 Intelligence），
- * 这里没法确认「线程里没有消息」，于是什么都不删——宁可留一段谁也看不见的空对话，也不冒删掉真对话的险。
+ * 消息是不是存在本库的本地对话表里（`config.runtime.mode === "local"`，由启动处传进来）。不是（托管的
+ * Intelligence）就没法确认「线程里没有消息」，于是什么都不删——宁可留一段谁也看不见的空对话，也不冒删掉真对话的险。
+ *
+ * 由调用方按运行模式直接给，不去探测表在不在：托管模式下库里也可能留着以前本地模式建的表，表在不等于消息在这里。
  */
-async function localThreadsPresent(database: Database): Promise<boolean> {
-  const result = await database.execute(
-    sql`select to_regclass('openbot_local_threads') is not null and to_regclass('openbot_local_runs') is not null as present`,
-  );
-  return rowsOf<{ present: boolean }>(result)[0]?.present === true;
-}
+export type DraftStorage = { localConversations: boolean };
 
 /**
  * 「仍是空草稿」：四条同时满足才算——
@@ -75,8 +72,9 @@ export type DraftDeleteOutcome =
 export async function deleteEmptyDraft(
   database: Database,
   channelId: string,
+  storage: DraftStorage,
 ): Promise<DraftDeleteOutcome> {
-  if (!(await localThreadsPresent(database))) return "kept";
+  if (!storage.localConversations) return "kept";
   const result = await database.execute(sql`
     update channels c
     set deleted_at = now(), updated_at = now()
@@ -92,13 +90,13 @@ export async function deleteEmptyDraft(
 
 /**
  * 清理 `olderThanMs` 之前建的、仍是空草稿的对话（软删，同上：不审计、不通知）。可以重复执行：已经删过的
- * 不再满足条件。返回这一轮删了几段；本地对话表不在时返回 null（什么都没做）。
+ * 不再满足条件。返回这一轮删了几段；消息不在本地对话表里（非 local 模式）时返回 null（什么都没做）。
  */
 export async function sweepAbandonedDrafts(
   database: Database,
-  options: { olderThanMs?: number; now?: Date } = {},
+  options: DraftStorage & { olderThanMs?: number; now?: Date },
 ): Promise<number | null> {
-  if (!(await localThreadsPresent(database))) return null;
+  if (!options.localConversations) return null;
   const cutoff = new Date(
     (options.now ?? new Date()).getTime() -
       (options.olderThanMs ?? DRAFT_MAX_AGE_MS),
@@ -127,13 +125,15 @@ export type DraftSweeper = { stop(): void };
  */
 export function startDraftSweeps(
   database: Database,
-  options: { intervalMs?: number; firstRunMs?: number } = {},
+  options: DraftStorage & { intervalMs?: number; firstRunMs?: number },
 ): DraftSweeper {
   const intervalMs = options.intervalMs ?? 60 * 60_000;
   const firstRunMs = options.firstRunMs ?? 60_000;
   const timers: ReturnType<typeof setInterval>[] = [];
   const run = () => {
-    void sweepAbandonedDrafts(database)
+    void sweepAbandonedDrafts(database, {
+      localConversations: options.localConversations,
+    })
       .then((removed) => {
         if (!removed) return;
         console.info(JSON.stringify({ type: "draft-channels-swept", removed }));

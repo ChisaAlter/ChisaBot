@@ -854,6 +854,7 @@ const persistentStore = createChannelStore(
   database,
   profileStore,
   createThreadIdentity("test-deployment"),
+  { localConversations: true },
 );
 const testPrefix = `channel-store-${randomUUID()}`;
 const createdUserIds: string[] = [];
@@ -1685,7 +1686,9 @@ describe("draft channels", () => {
     await ageChannel(plain.id, 25);
 
     try {
-      const removed = await sweepAbandonedDrafts(database);
+      const removed = await sweepAbandonedDrafts(database, {
+        localConversations: true,
+      });
       expect(removed).toBeGreaterThanOrEqual(1);
       expect(await deletedAt(old.draft.id)).not.toBeNull();
       expect(await deletedAt(fresh.draft.id)).toBeNull();
@@ -1694,12 +1697,47 @@ describe("draft channels", () => {
       expect(await deletedAt(plain.id)).toBeNull();
 
       // 再跑一遍：已经删过的不再算，别的照样不动。
-      await sweepAbandonedDrafts(database);
+      await sweepAbandonedDrafts(database, { localConversations: true });
       expect(await deletedAt(fresh.draft.id)).toBeNull();
       expect(await deletedAt(proactive.draft.id)).toBeNull();
     } finally {
       await dropThread(proactive.draft.threadId);
     }
+  });
+});
+
+describe("draft cleanup outside local mode", () => {
+  /*
+   * 二轮复审：是不是本地模式由启动处按 `config.runtime.mode` 直接给，不看表在不在。测试库里有本地对话表，
+   * 但非 local 模式的 store / 清理照样一段都不删。
+   */
+  test("neither the conditional delete nor the sweep touches anything", async () => {
+    const managedStore = createChannelStore(
+      database,
+      profileStore,
+      createThreadIdentity("test-deployment"),
+    );
+    const actor = await createPersistentUser();
+    const agentId = await createPersistentAgent({
+      name: "Managed draft agent",
+      owner: actor,
+    });
+    const draft = await managedStore.create(actor, [agentId], { draft: true });
+    createdChannelIds.push(draft.id);
+    await database
+      .update(channels)
+      .set({ createdAt: new Date(Date.now() - 25 * 60 * 60_000) })
+      .where(eq(channels.id, draft.id));
+
+    expect(await managedStore.deleteEmptyDraft?.(actor, draft.id)).toBe("kept");
+    expect(
+      await sweepAbandonedDrafts(database, { localConversations: false }),
+    ).toBeNull();
+    const [row] = await database
+      .select({ deletedAt: channels.deletedAt })
+      .from(channels)
+      .where(eq(channels.id, draft.id));
+    expect(row?.deletedAt ?? null).toBeNull();
   });
 });
 

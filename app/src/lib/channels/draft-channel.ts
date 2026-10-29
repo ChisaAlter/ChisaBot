@@ -1,5 +1,5 @@
 import { setThreadUi, stashDraftFiles, threadUi } from "@/lib/chat/ui-memory";
-import { tryClient } from "@/lib/client";
+import { ClientError, tryClient } from "@/lib/client";
 
 /**
  * 新话题页上先加附件时提前建好的对话（A1）。
@@ -17,9 +17,22 @@ import { tryClient } from "@/lib/client";
  * - 关掉标签页、刷新后再离开：这里不知道了，对话留在服务器上，但仍然不在列表里，用户看不到。
  *
  * 记在 sessionStorage 里（只这一个标签页），刷新以后回到这段草稿、再离开时照样删。
+ *
+ * 什么时候算「离开」（二轮复审）：藏起来的对话页平时留 10 分钟（`KEPT_TTL_MS`）。草稿对话只有去新话题页
+ * （`/channel/new`）时立即卸载回收——那边要接回写了一半的字；去设置等别的页面照常留着，回来图和上传都在
+ * （`draftKeptTtl`）。换到别的对话时这一页本来就换掉了，照旧回收。
+ *
+ * 回收过的也记一笔（同样在 sessionStorage）：它属于哪个机器人。本标签页之后再打开它（后退、旧地址）拿到
+ * 404 时，不显示「找不到这段对话」，静默换成这个机器人的新话题页（`releasedDraftRedirect`）。
  */
 
 const STORAGE_KEY = "chisabot-draft-channels:v1";
+/** 回收过的草稿：channel id → 机器人 id。 */
+const RELEASED_KEY = "chisabot-released-drafts:v1";
+/** 只记最近这么多段，够一个标签页用。 */
+const MAX_RELEASED = 50;
+/** 新话题页的地址：只有去这里时草稿对话藏起来就回收。 */
+const NEW_TOPIC_PATH = "/channel/new";
 
 /** channel id → 字放回到哪个草稿键（新话题页的 `new:<agent>`）。 */
 let drafts: Map<string, string> | null = null;
@@ -62,6 +75,69 @@ export function markDraftChannel(channelId: string, returnKey: string): void {
 
 export function isDraftChannel(channelId: string): boolean {
   return load().has(channelId);
+}
+
+/**
+ * 藏起来的对话页留多久（外壳的 `KeepAliveStage`）：还没发过的草稿对话、而且是去新话题页，就是 0（立即卸载，
+ * 随即回收）；其他情况都是 `keptTtlMs`（10 分钟），去设置再回来图和上传都还在。
+ */
+export function draftKeptTtl(
+  channelId: string,
+  pathname: string,
+  keptTtlMs: number,
+): number {
+  return pathname === NEW_TOPIC_PATH && isDraftChannel(channelId)
+    ? 0
+    : keptTtlMs;
+}
+
+function readReleased(): Record<string, string> {
+  try {
+    const raw = globalThis.sessionStorage?.getItem(RELEASED_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const out: Record<string, string> = {};
+      for (const [id, agent] of Object.entries(parsed)) {
+        if (typeof agent === "string" && agent) out[id] = agent;
+      }
+      return out;
+    }
+  } catch {
+    // 读不出来就当没有：最坏是照旧显示「找不到这段对话」。
+  }
+  return {};
+}
+
+function rememberReleased(channelId: string, agentId: string) {
+  const entries = Object.entries(readReleased()).filter(
+    ([id]) => id !== channelId,
+  );
+  entries.push([channelId, agentId]);
+  try {
+    globalThis.sessionStorage?.setItem(
+      RELEASED_KEY,
+      JSON.stringify(Object.fromEntries(entries.slice(-MAX_RELEASED))),
+    );
+  } catch {
+    // 存不下：之后打开它照旧显示「找不到这段对话」。
+  }
+}
+
+/** 本标签页回收过的这段草稿属于哪个机器人；没回收过就是 undefined。 */
+export function releasedDraftAgent(channelId: string): string | undefined {
+  return readReleased()[channelId];
+}
+
+/**
+ * 打开一段对话失败时：是本标签页回收过的草稿、而且服务器说 404，就返回它的机器人 id（调用方用 replace 跳到
+ * `/channel/new?agent=…&topic=new`）；其他情况（别的 404、别的错误）返回 null，照旧显示错误卡。
+ */
+export function releasedDraftRedirect(
+  channelId: string,
+  error: unknown,
+): string | null {
+  if (!(error instanceof ClientError) || error.status !== 404) return null;
+  return releasedDraftAgent(channelId) ?? null;
 }
 
 /** 第一条消息发出去了：它是一段普通对话了，离开时不删。 */
@@ -109,6 +185,8 @@ export function releaseDraftChannel(
   if (returnKey === undefined) return;
   load().delete(channelId);
   save();
+  if (returnKey.startsWith("new:") && returnKey.length > 4)
+    rememberReleased(channelId, returnKey.slice(4));
   moveTextDraft(channelId, returnKey);
   stashDraftFiles(channelId, []);
   void remove(channelId).catch(() => {
@@ -133,6 +211,7 @@ export function resetDraftChannelsForTest(): void {
   holders.clear();
   try {
     globalThis.sessionStorage?.removeItem(STORAGE_KEY);
+    globalThis.sessionStorage?.removeItem(RELEASED_KEY);
   } catch {
     // 没有 sessionStorage 的环境。
   }

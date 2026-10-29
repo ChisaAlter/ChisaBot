@@ -41,6 +41,7 @@ import type { ThreadIdentity } from "./thread-identity";
 import {
   DRAFT_AGENT_CHANNEL_DESCRIPTION,
   type DraftDeleteOutcome,
+  type DraftStorage,
   deleteEmptyDraft,
 } from "./drafts";
 import { reasonWithoutStatement } from "../db/query-failure";
@@ -294,6 +295,8 @@ export function createChannelStore(
   database: Database,
   profileStore: AgentProfileStore,
   threadIdentity: ThreadIdentity,
+  /** 草稿对话的条件删除只在消息存在本库时才删（`drafts.ts`）；由启动处按 `config.runtime.mode` 给。 */
+  draftStorage: DraftStorage = { localConversations: false },
 ): ChannelStore {
   /**
    * Making a channel, on a transaction the caller already holds.
@@ -831,7 +834,7 @@ export function createChannelStore(
           ),
         );
       if (!member) throw new ChannelNotFoundError(channelId);
-      return await deleteEmptyDraft(database, channelId);
+      return await deleteEmptyDraft(database, channelId, draftStorage);
     },
 
     recordActivity(actor, channelId, activity, source) {

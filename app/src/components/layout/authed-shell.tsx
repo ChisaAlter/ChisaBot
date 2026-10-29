@@ -7,8 +7,9 @@ import { SelfHostBanner } from "@/components/layout/self-host-banner";
 import { PanelRail } from "@/components/panels/panel-rail";
 import { SettingsSidebar } from "@/components/settings/settings-sidebar";
 import { CHANNEL_ROUTE_ID, ChannelPage } from "@/components/channels/channel-page";
+import { useCallback } from "react";
 import { useLanding } from "@/lib/agents/landing";
-import { isDraftChannel } from "@/lib/channels/draft-channel";
+import { draftKeptTtl } from "@/lib/channels/draft-channel";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
 
 /**
@@ -76,10 +77,6 @@ function useChatAddress(): ChatAddress | null {
 const sameAddress = (a: ChatAddress, b: ChatAddress) =>
   a.channelId === b.channelId && a.settings === b.settings && a.watch === b.watch;
 
-function draftKeptTtl(kept: { channelId: string }): number {
-  return isDraftChannel(kept.channelId) ? 0 : KEPT_TTL_MS;
-}
-
 /** 主区：留着的聊天 + 当前路由（`KeepAliveStage`，DESIGN.md §98）。`/` 正在跳到聊天时，留着的聊天照样露着。 */
 function ChatStage({ pathname }: { pathname: string }) {
   const address = useChatAddress();
@@ -87,12 +84,17 @@ function ChatStage({ pathname }: { pathname: string }) {
   const landing = useLanding();
   const landingChannel =
     landing.state === "ready" && landing.target.to === "/channel/$channelId" ? landing.target.params.channelId : null;
+  // 还没发过的草稿对话（A1）：只有去新话题页时藏起来就卸载（随即回收，`draft-channel.ts`）；去设置等别的页面照常留
+  // 10 分钟，回来图和上传都在。
+  const keptTtl = useCallback(
+    (kept: ChatAddress) => draftKeptTtl(kept.channelId, pathname, KEPT_TTL_MS),
+    [pathname],
+  );
   return (
     <KeepAliveStage
       address={address}
       idleVisible={(kept) => pathname === "/" && (landing.state === "loading" || landingChannel === kept.channelId)}
-      // 还没发过的草稿对话（A1）藏起来就卸载（随即回收，`draft-channel.ts`），不占着 10 分钟。
-      ttlMs={draftKeptTtl}
+      ttlMs={keptTtl}
       renderKept={(kept, { visible, epoch }) => (
         <ChannelPage
           channelId={kept.channelId}

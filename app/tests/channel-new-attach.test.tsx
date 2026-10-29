@@ -66,6 +66,8 @@ const DRAFT = {
 
 /** 设了就让建草稿的 POST 等着它（测「请求还没回来」那一段）。 */
 let holdCreate: Promise<void> | null;
+/** 设了就让跳到 `/channel/$channelId` 的那一下等着它（测「草稿建好了、地址还没换过去」那一段）。 */
+let holdNavigate: Promise<void> | null = null;
 
 beforeEach(() => {
   resetUiMemory();
@@ -163,6 +165,9 @@ const channelRoute = createRoute({
   path: "/channel/$channelId",
   getParentRoute: () => appRoute,
   component: DraftChannelPage,
+  loader: async () => {
+    if (holdNavigate) await holdNavigate;
+  },
 });
 const routeTree = rootRoute.addChildren([
   authedRoute.addChildren([
@@ -361,6 +366,42 @@ test("建草稿期间又加的文件不丢：跳过去后和第一批一起放�
     .sort();
   expect(uploaded).toEqual(["first.png", "second.png"]);
   expect(channelCreates()).toHaveLength(1);
+});
+
+test("草稿建好、跳转还没完成时又加的文件：跳过去后追加到那段对话的输入框上", async () => {
+  const navigation = deferred();
+  holdNavigate = navigation.promise;
+  try {
+    const { router, view } = mountNewPage();
+    const input = (await view.findByLabelText("选择文件")) as HTMLInputElement;
+    await pick(input, new File(["png"], "first.png", { type: "image/png" }));
+    // 建草稿的请求回来了，第一批已经交出去，页面还是新话题页（跳转在等）。
+    await waitFor(() => expect(isDraftChannel(DRAFT.id)).toBe(true));
+    expect(router.state.resolvedLocation?.pathname).toBe("/channel/new");
+    expect(view.queryByTestId("channel-page")).toBeNull();
+    await pick(input, new File(["png"], "late.png", { type: "image/png" }));
+    expect(channelCreates()).toHaveLength(1);
+
+    await act(async () => navigation.resolve());
+    await view.findByTestId("channel-page");
+    expect(router.state.location.pathname).toBe(`/channel/${DRAFT.id}`);
+    await waitFor(() => {
+      expect(view.queryByLabelText("移除 first.png")).not.toBeNull();
+      expect(view.queryByLabelText("移除 late.png")).not.toBeNull();
+    });
+    const uploaded = requests
+      .filter(
+        (request) =>
+          request.method === "POST" &&
+          request.path === `/api/channels/${DRAFT.id}/attachments`,
+      )
+      .map((request) => request.body)
+      .sort();
+    expect(uploaded).toEqual(["first.png", "late.png"]);
+    expect(channelCreates()).toHaveLength(1);
+  } finally {
+    holdNavigate = null;
+  }
 });
 
 test("文件全被拒：不建草稿对话，留在新话题页说明原因", async () => {

@@ -44,6 +44,7 @@ import {
   shouldClaimPaste,
 } from "@/lib/channels/attachments";
 import {
+  listenDraftFiles,
   markDraftSent,
   rememberedDraft,
   setThreadUi,
@@ -945,6 +946,11 @@ export function Composer({
     restoredFiles.current = true;
     const files = takeDraftFiles(draftKey);
     if (files.length > 0) void stageFiles(files);
+  }, [draftKey, canAttach, stageFiles]);
+  // 挂着以后别处追加的文件（新话题页跳过来那一下里又加的，`addDraftFiles`）：同样走 `stageFiles`。
+  useEffect(() => {
+    if (!draftKey || !canAttach) return;
+    return listenDraftFiles(draftKey, (files) => void stageFiles(files));
   }, [draftKey, canAttach, stageFiles]);
 
   const stagePastedImage = useCallback(

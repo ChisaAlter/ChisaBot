@@ -21,6 +21,7 @@ import {
   agentQueryOptions,
 } from "@/lib/agents/queries";
 import { useStartChannel } from "@/lib/channels/start";
+import { addDraftFiles } from "@/lib/chat/ui-memory";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { newId } from "../../../../lib/new-id";
 
@@ -174,7 +175,7 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
    * 和发送互斥：建草稿的请求还没回来时 `attaching` 为真，并进 `pending`（发送键不可用），`start` 也直接
    * 返回——否则回车会另建一段对话。反过来，第一条消息正在发（`pending`）或已经发出（`sent`）时也不建草稿。
    * 同一时间只建一段：建的那一下里再来的文件追加到 `queued`，草稿建好后和第一批一起放进同一个暂存，跳过去
-   * 一起放上。
+   * 一起放上。草稿建好、地址还没换过去的那一下里再来的，跳转完成后追加到那段对话的输入框上（`addDraftFiles`）。
    */
   const [attaching, setAttaching] = useState(false);
   const attachingRef = useRef(false);
@@ -192,10 +193,13 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
     queued.current = [...files];
     setError(null);
     try {
-      await startDraft(recipient.id, () => queued.current.splice(0), {
-        fromKey: `new:${agent}`,
-        watch: isWatching,
-      });
+      const channelId = await startDraft(
+        recipient.id,
+        () => queued.current.splice(0),
+        { fromKey: `new:${agent}`, watch: isWatching },
+      );
+      const late = queued.current.splice(0);
+      if (late.length > 0) addDraftFiles(channelId, late);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "无法开始会话。");
     } finally {

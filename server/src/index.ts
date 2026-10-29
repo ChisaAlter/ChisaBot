@@ -429,6 +429,7 @@ const channelStore = createChannelStore(
   database,
   agentProfileStore,
   threadIdentity,
+  { localConversations: config.runtime.mode === "local" },
 );
 const channelEvents = createChannelEventHub();
 // One reset for the profile screen's "重置" and for deleting a Bot, which starts with the same reset.
@@ -714,7 +715,9 @@ const retentionSweeps = startRetentionSweeps(
   pageFrameStore,
 );
 // 新话题页提前建的草稿对话（A1）：24 小时还没说过话的空草稿每小时清一次。见 channels/drafts.ts。
-const draftSweeps = startDraftSweeps(database);
+const draftSweeps = startDraftSweeps(database, {
+  localConversations: config.runtime.mode === "local",
+});
 /**
  * 确认卡片 + 审批偏好（server/src/confirmations，DESIGN.md §58）。云端浏览器：用户在聊天里确认过付款
  * （confirm_action 类别 purchase）之后，这段对话 20 分钟内的浏览器操作不再被上游的付款安全规则交还给人。

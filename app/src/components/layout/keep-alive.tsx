@@ -43,7 +43,7 @@ export function KeepAliveStage<T>({
   idleVisible?: boolean | ((kept: T) => boolean);
   same: (a: T, b: T) => boolean;
   renderKept: (kept: T, state: KeptState) => ReactNode;
-  /** 数字，或按留着的那页定（草稿对话藏起来就不留：`0`）。 */
+  /** 数字，或按留着的那页定（草稿对话去新话题页时不留：`0`）。 */
   ttlMs?: number | ((kept: T) => number);
   children: ReactNode;
 }) {

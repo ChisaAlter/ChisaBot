@@ -21,6 +21,13 @@
 4. **建草稿期间再进来的文件被丢。** 第二次 `attach` 看到 `attaching` 直接 `return`。
 5. 文件全被拒（类型不支持、太大）时也先建了草稿再跳过去，那边才说不收；草稿页被藏起来（去设置等）时要等留着的页面 10 分钟超时才回收；没有宽高的图片加载前高度为 0，加载后撑开。
 
+### 二轮复审（02f97d07）的根因
+
+1. **藏起来就回收太激进。** 返修把草稿对话的保活时长一律设成 0，于是在草稿页选好图、去设置看一眼再回来，页面已经卸载、草稿已经删了，图没了（字放回了新话题页，但这时用户不在那里）。真正需要立刻回收的只有「去新话题页」这一种：那边要重新开始，留着一段空草稿没有意义。
+2. **回收后用返回键回到它是一张错误卡。** 草稿删了以后浏览器历史里还留着 `/channel/<id>`，返回键回去拿到 404，显示「对话不存在」。`client()` 抛出的错误又不带状态码，页面分不出 404 和别的错误。
+3. **按表探测运行模式不可靠。** `drafts.ts` 用 `to_regclass` 看库里有没有 `openbot_local_threads` / `openbot_local_runs` 来决定能不能删。表在不等于消息存在本库：切过运行模式的库表还在，但新消息在 Intelligence 后端，这时判断「线程是空的」是错的。
+4. **跳转那一下里加的文件会丢。** 草稿建好、`stashDraftFiles` 已经取走队列，到地址真正换过去之间（路由在加载），新话题页的输入框还在，再选的文件进了 `queued` 但没人再取。
+
 ### 改动
 
 - **服务端**（`server/src/channels/routes.ts`）：`POST /api/channels` 接受可选的 `draft: true`，建的对话用 `DRAFT_AGENT_CHANNEL_DESCRIPTION` 做 description 标记。`isHiddenDraft`（标记 + `last_message_at is null`）在对话列表和直达对话查询里过滤掉：第一条消息记进来之前，它不出现在任何人、任何设备的列表里；记进来之后就和普通对话一样。没有表结构变化，不需要迁移。
@@ -35,11 +42,19 @@
 
 - **带条件删除**（`server/src/channels/drafts.ts` 新，`routes.ts`）：`DELETE /api/channels/:id?draft=1` 只在这段对话**仍是空草稿**时软删除：description 是草稿标记、`last_message_at` 为空、未删除，并且它的线程（`intelligence_channel_mappings.thread_id` → `openbot_local_threads`）里没有消息、也没有跑过一轮（`openbot_local_runs`）。否则回 409、什么都不动。这种删除不写 `channel.deleted` 审计、不发通知（草稿从没出现在任何列表里）。非成员照旧 404。客户端 `draft-channel.ts` 的删除改成带 `?draft=1`，不管结果。
 - **24 小时清理**（`sweepAbandonedDrafts` + `startDraftSweeps`，在 `server/src/index.ts` 和 `startRetentionSweeps` 一起启动、一起停）：启动 60 秒后跑一次，之后每小时一次，每批最多 500 段，只删同时满足上面全部条件且 `created_at` 早于 24 小时前的。条件写在一条 `UPDATE … WHERE` 里，可以重复执行（删过的不再满足 `deleted_at is null`）。
-- **保守处理**：库里没有本地后端的线程表（`openbot_local_threads` / `openbot_local_runs`，只用 Intelligence 后端的部署）时无法确认线程是空的，条件删除和定时清理都**一律不删**（条件删除回 409）。这类部署的草稿只是看不见，不会被回收。
+- **保守处理**：消息不存在本库（只用 Intelligence 后端的部署）时无法确认线程是空的，条件删除和定时清理都**一律不删**（条件删除回 409）。这类部署的草稿只是看不见，不会被回收。二轮复审后改为直接由启动处传 `config.runtime.mode === "local"`（`DraftStorage.localConversations`），不再探测表在不在。
 - **发送与建草稿互斥**（`channel/new.tsx`）：`attaching` 改成 state，并进输入框的 `pending`（发送键不可用），`start` 在建草稿时直接返回；反过来第一条消息正在发或已发出时不建草稿。
 - **建草稿期间的文件追加**：再进来的文件追加到同一个队列，`startDraft` 在草稿建好之后才取文件（`files` 可以是函数），一起放进 `stashDraftFiles`，跳过去后一起放上。
 - **先筛再建**（`composer.tsx` `handOff`）：交出文件之前按 `stageFiles` 同样的规则（`screenPickedFiles`）筛，拒收的说法留在新话题页；一个都不收就不建草稿。
 - **藏起来就回收**：`KeepAliveStage` 的 `ttlMs` 可以按留着的那页定，`authed-shell.tsx` 对草稿对话给 0：藏起来立即卸载，走原来的卸载收尾（字放回新话题页、带条件删除）。普通对话照旧留 10 分钟。
+
+二轮复审：
+
+- **只有去新话题页才立即回收**（`draft-channel.ts` `draftKeptTtl`，`authed-shell.tsx`）：时长按「是不是草稿 + 当前地址」定，只有草稿对话且当前地址是 `/channel/new` 时给 0；去设置等别的页面照常留 10 分钟，回来图和上传都在。回调按 `pathname` 记忆（`useCallback`），留着的计时器不会每次渲染重来；先去设置、再从设置去新话题页时那一刻回收。
+- **回收过的草稿 404 时静默跳走**：`client.ts` 新增 `ClientError`（带 HTTP 状态码），`client()` 失败时抛它。`releaseDraftChannel` 回收时把「这段属于哪个机器人」记进 sessionStorage（`chisabot-released-drafts:v1`，最多 50 条）。`channel-page.tsx` 读对话失败时用 `releasedDraftRedirect` 判断：是 404 且是本标签页回收过的，就 `replace` 跳到 `/channel/new?agent=…&topic=new`，跳之前按「加载中」显示、不闪错误卡；别的 404 和别的错误照旧。
+- **运行模式直接传**（`drafts.ts`、`routes.ts`、`index.ts`）：去掉 `localThreadsPresent` 的表探测，`deleteEmptyDraft` / `sweepAbandonedDrafts` / `startDraftSweeps` / `createChannelStore` 都收 `{ localConversations }`，由 `index.ts` 按 `config.runtime.mode === "local"` 给；不给就当不是本地（不删）。
+- **跳转那一下里加的文件追加过去**（`ui-memory.ts` `addDraftFiles` / `listenDraftFiles`，`composer.tsx`，`new.tsx`，`start.ts`）：`startDraft` 返回草稿对话的 id；跳转完成后把 `queued` 里剩下的交给 `addDraftFiles`：那段对话的输入框已经挂着就直接走 `stageFiles` 上传，还没挂着就并进暂存，挂上时一起取。
+- **依赖重装**：dev-user-image 里所有工作区的 `node_modules` 删掉后 `bun install --frozen-lockfile` 重装；之前的 44 个 zod 类型错误来自脏的 `node_modules`，重装后 typecheck 0 错误，`bun.lock` 没变。
 - **没有宽高的图片先占固定框**（`rich-previews.tsx` `reservedImageBox`）：240px 宽、4:3 的占位框，加载完知道了尺寸换成真比例；加载完仍读不出尺寸就不再限定。有宽高的图片不变。
 
 ### 测试
@@ -56,6 +71,11 @@
   - `app/tests/draft-channel.test.ts`：默认删除请求是 `DELETE /api/channels/:id?draft=1`，回 409 也不抛。
   - `app/tests/draft-channel-hidden.test.tsx`（新）：草稿对话藏起来立即卸载并回收；普通对话照旧留着；外壳接线。
   - `app/tests/user-image-thumbs.test.tsx`、`app/tests/image-dims.test.tsx`：没有宽高的图片先是 240px、4:3 的占位框，加载完换成真比例（`image-dims` 里原来锁「没有样式」的那条跟着改）。
+- 二轮复审：
+  - `app/tests/draft-channel-hidden.test.tsx`：去新话题页立即卸载并回收、记下机器人；草稿页去设置再回来图还在、没回收；先去设置再去新话题页时才回收；时长规则；外壳接线。
+  - `app/tests/draft-channel.test.ts`：回收时记下机器人（sessionStorage），发过的不记；回收过的 404 → 机器人 id，别的 404 / 500 / 断网 → null；对话详情读失败带状态码（`ClientError` 404）；对话页 replace 跳转接线；`addDraftFiles` 挂着时交给输入框、没挂着时并进暂存。
+  - `app/tests/channel-new-attach.test.tsx`：草稿建好、跳转还在加载时再选的文件，跳过去后追加到输入框并上传（去掉 `addDraftFiles` 这条测试会失败）。
+  - `server/tests/channel-routes.test.ts`：真实 Postgres 的条件删除和清理改为显式传 `{ localConversations: true }`；新增「非本地模式」：不传时条件删除回 kept、清理返回 null，空草稿不被删。
 
 ### 截图
 
@@ -63,7 +83,7 @@
 
 ### 局限
 
-- 草稿对话藏起来（去设置等）即被回收：之后用返回键回到它，看到的是「对话不存在」，字已经放回新话题页。
+- 草稿对话只在去新话题页时立即回收；去别处藏着超过 10 分钟也会回收。之后在本标签页回到它（返回键、刷新）会静默跳到那个机器人的新话题页，字已经放回那里；在别的标签页或设备打开它的链接仍是「对话不存在」。
 - 关掉标签页再也不回来：草稿对话最多留 24 小时（加上最多 1 小时的清理间隔），然后由定时清理软删除。只用 Intelligence 后端（库里没有本地线程表）的部署不清理，也不接受条件删除。
 - 刷新草稿对话页后，还没发的文件不保留（文件只在内存里），文字保留。
 - 第一条消息的活动记录如果写入失败，这段对话要等回复记进来才出现在列表里。

@@ -43,12 +43,13 @@ export function useStartChannel() {
    * （`draft-channel.ts`）。
    *
    * `files` 在草稿建好之后才取：建的那一下里又加进来的文件也在里面（调用方一直往同一个队列里追加）。
+   * 返回草稿对话的 id：跳转那一下里又加的文件由调用方用 `addDraftFiles` 追加过去。
    */
   const startDraft = async (
     agentId: string,
     files: readonly File[] | (() => readonly File[]),
     options: { fromKey: string; watch?: boolean },
-  ) => {
+  ): Promise<string> => {
     const channel = await createDraft.mutateAsync([agentId]);
     queryClient.setQueryData(channelKeys.detail(channel.id), channel);
     markDraftChannel(channel.id, options.fromKey);
@@ -60,6 +61,7 @@ export function useStartChannel() {
       ...(options.watch ? { search: { watch: true } } : {}),
       to: "/channel/$channelId",
     });
+    return channel.id;
   };
 
   return {

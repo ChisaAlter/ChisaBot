@@ -178,6 +178,7 @@ export function resetUiMemory(): void {
   timer = null;
   store = null;
   draftFiles.clear();
+  draftFileListeners.clear();
 }
 
 export function botUi(botId: string | undefined): BotUi | undefined {
@@ -300,6 +301,40 @@ export function takeDraftFiles(threadKey: string | undefined): File[] {
   const files = draftFiles.get(threadKey) ?? [];
   draftFiles.delete(threadKey);
   return files;
+}
+
+/** 正挂着的输入框（按草稿键）：后来追加的文件直接交给它。 */
+const draftFileListeners = new Map<string, (files: File[]) => void>();
+
+/**
+ * 输入框挂着时登记：`addDraftFiles` 追加的文件直接交给它（放到输入框上、开始上传）。返回注销函数。
+ */
+export function listenDraftFiles(
+  threadKey: string,
+  listener: (files: File[]) => void,
+): () => void {
+  draftFileListeners.set(threadKey, listener);
+  return () => {
+    if (draftFileListeners.get(threadKey) === listener)
+      draftFileListeners.delete(threadKey);
+  };
+}
+
+/**
+ * 追加文件（新话题页跳到草稿对话那一下里又加的，A1）：那边的输入框已经挂着就直接交给它，还没挂上就并进暂存，
+ * 挂上时和前面的一起取走。
+ */
+export function addDraftFiles(
+  threadKey: string | undefined,
+  files: readonly File[],
+): void {
+  if (!threadKey || files.length === 0) return;
+  const listener = draftFileListeners.get(threadKey);
+  if (listener) {
+    listener([...files]);
+    return;
+  }
+  stashDraftFiles(threadKey, [...(draftFiles.get(threadKey) ?? []), ...files]);
 }
 
 /**

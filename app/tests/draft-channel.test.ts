@@ -6,6 +6,8 @@ import {
   expect,
   test,
 } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
   holdDraftChannel,
@@ -13,16 +15,22 @@ import {
   markDraftChannel,
   moveTextDraft,
   releaseDraftChannel,
+  releasedDraftAgent,
+  releasedDraftRedirect,
   resetDraftChannelsForTest,
   settleDraftChannel,
 } from "@/lib/channels/draft-channel";
+import { channelQueryOptions } from "@/lib/channels/queries";
 import {
+  addDraftFiles,
+  listenDraftFiles,
   resetUiMemory,
   setThreadUi,
   stashDraftFiles,
   takeDraftFiles,
   threadUi,
 } from "@/lib/chat/ui-memory";
+import { ClientError } from "@/lib/client";
 
 /**
  * 新话题页上加附件时提前建的草稿对话（A1）：发出第一条之前离开就删掉，删之前把写了一半的字放回新话题页；
@@ -144,4 +152,101 @@ test("默认的删除带条件（?draft=1）：服务端仍是空草稿才删，
   } finally {
     globalThis.fetch = original;
   }
+});
+
+/*
+ * 二轮复审：回收过的草稿记下属于哪个机器人；本标签页再打开它拿到 404 时，静默换成那个机器人的新话题页。
+ */
+test("回收时记下它属于哪个机器人（sessionStorage，刷新后还在）", async () => {
+  markDraftChannel("ch_r", "new:bot-a");
+  releaseDraftChannel("ch_r", async () => undefined);
+  expect(releasedDraftAgent("ch_r")).toBe("bot-a");
+  expect(
+    JSON.parse(
+      globalThis.sessionStorage.getItem("chisabot-released-drafts:v1") ?? "{}",
+    ),
+  ).toEqual({ ch_r: "bot-a" });
+  // 发出去过的（不是草稿）不记。
+  markDraftChannel("ch_s", "new:bot-a");
+  settleDraftChannel("ch_s");
+  releaseDraftChannel("ch_s", async () => undefined);
+  expect(releasedDraftAgent("ch_s")).toBeUndefined();
+});
+
+test("回收过的草稿拿到 404：返回机器人 id；别的 404、别的错误：null", () => {
+  markDraftChannel("ch_r", "new:bot-a");
+  releaseDraftChannel("ch_r", async () => undefined);
+
+  expect(
+    releasedDraftRedirect("ch_r", new ClientError("Channel not found.", 404)),
+  ).toBe("bot-a");
+  // 不是本标签页回收的那段：照旧显示错误卡。
+  expect(
+    releasedDraftRedirect(
+      "ch_other",
+      new ClientError("Channel not found.", 404),
+    ),
+  ).toBeNull();
+  // 同一段，但不是 404（服务器出错、断网）：照旧显示错误卡。
+  expect(
+    releasedDraftRedirect("ch_r", new ClientError("boom", 500)),
+  ).toBeNull();
+  expect(releasedDraftRedirect("ch_r", new Error("offline"))).toBeNull();
+});
+
+test("对话详情读失败时带着状态码（404 能和别的错误分开）", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    Response.json(
+      { error: "Channel not found." },
+      { status: 404 },
+    )) as unknown as typeof fetch;
+  try {
+    const options = channelQueryOptions("ch_r");
+    const queryFn = options.queryFn as () => Promise<unknown>;
+    const failure = await queryFn().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ClientError);
+    expect((failure as ClientError).status).toBe(404);
+    expect((failure as ClientError).message).toBe("Channel not found.");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("接线：对话页 404 且是回收过的草稿时用 replace 跳到新话题页", () => {
+  const page = readFileSync(
+    join(import.meta.dir, "../src/components/channels/channel-page.tsx"),
+    "utf8",
+  );
+  expect(page).toContain("releasedDraftRedirect(channelId, channel.error)");
+  expect(page).toContain('to: "/channel/new"');
+  expect(page).toContain('search: { agent: releasedAgent, topic: "new" }');
+  expect(page).toContain("replace: true");
+  // 跳之前不闪错误卡。
+  expect(page).toContain(
+    "isPending={channel.isPending || releasedAgent !== null}",
+  );
+});
+
+test("追加文件：输入框挂着就直接交给它，没挂着就并进暂存", () => {
+  const first = new File(["a"], "a.png", { type: "image/png" });
+  const late = new File(["b"], "b.png", { type: "image/png" });
+  stashDraftFiles("ch_q", [first]);
+  addDraftFiles("ch_q", [late]);
+  expect(takeDraftFiles("ch_q").map((file) => file.name)).toEqual([
+    "a.png",
+    "b.png",
+  ]);
+
+  const got: string[] = [];
+  const stop = listenDraftFiles("ch_q", (files) =>
+    got.push(...files.map((file) => file.name)),
+  );
+  addDraftFiles("ch_q", [late]);
+  expect(got).toEqual(["b.png"]);
+  expect(takeDraftFiles("ch_q")).toEqual([]);
+  stop();
+  addDraftFiles("ch_q", [late]);
+  expect(got).toEqual(["b.png"]);
+  expect(takeDraftFiles("ch_q").map((file) => file.name)).toEqual(["b.png"]);
 });
