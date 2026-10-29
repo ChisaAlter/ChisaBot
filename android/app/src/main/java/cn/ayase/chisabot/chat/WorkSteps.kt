@@ -16,6 +16,17 @@ object WorkSteps {
 
     fun isWorkCall(name: String) = name !in NOT_WORK
 
+    /** 网页 app/src/lib/chat/work-steps.ts 的 NOT_WORK（比上面多 message_bot、file_share、image_generate、image_edit）。 */
+    private val NOT_WORK_WEB = NOT_WORK + setOf("message_bot", "file_share", "image_generate", "image_edit")
+    /** 记忆写入（Memory Pill）：挂在回复下面，不算干活。 */
+    private val MEMORY_WRITES = setOf("memory_save", "memory_update", "memory_log")
+
+    /**
+     * 回答和过程话的分界（同网页 compactTurns 的 doesWork）：真的在干活的一步，
+     * 不含 render_ui 这类和记忆写入。最后一个这样的步骤之后的全部文字都是回答。
+     */
+    fun splitsReply(name: String) = name !in NOT_WORK_WEB && name !in MEMORY_WRITES
+
     private fun clip(text: String, limit: Int) = if (text.length > limit) text.take(limit - 1) + "…" else text
 
     private fun hostOf(url: String?): String {

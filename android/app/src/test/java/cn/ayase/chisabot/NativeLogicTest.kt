@@ -117,6 +117,37 @@ class NativeLogicTest {
         assertTrue(ok.any { it is Row.Bot && it.kind == Row.Kind.Result && it.text == "装好了。" })
     }
 
+    @Test fun allTextAfterLastWorkStaysVisible() {
+        fun bots(rows: List<Row>) = rows.filterIsInstance<Row.Bot>().map { it.text }
+        // 先干活、再连发两条（没有开场一句）：两条都是气泡，最后一条是结果
+        val plain = Turns.build(listOf(
+            ChatMessage("u", "user", "装一下"),
+            ChatMessage("a1", "assistant", "", listOf(ToolCall("t1", "device_run_shell", "{}", "r", true))),
+            ChatMessage("a2", "assistant", "装好了。"),
+            ChatMessage("a3", "assistant", "版本是 1.2。"),
+        ), running = false, error = null)
+        assertEquals(listOf("装好了。", "版本是 1.2。"), bots(plain))
+        assertEquals(Row.Kind.Result, (plain.last() as Row.Bot).kind)
+        // 回答中间记了一笔（memory_save）：不当分界；干活前的开场一句照旧在卡片上面
+        val mid = Turns.build(listOf(
+            ChatMessage("u", "user", "装一下"),
+            ChatMessage("a1", "assistant", "我先检查。", listOf(ToolCall("t1", "device_run_shell", "{}", "r", true))),
+            ChatMessage("a2", "assistant", "装好了。", listOf(ToolCall("m1", "memory_save", "{\"content\":\"装了\"}", "ok", true))),
+            ChatMessage("a3", "assistant", "版本是 1.2。"),
+        ), running = false, error = null)
+        assertEquals(listOf("我先检查。", "装好了。", "版本是 1.2。"), bots(mid))
+        assertEquals(Row.Kind.Result, mid.filterIsInstance<Row.Bot>().last().kind)
+        // 回答之后才记一笔（memory_save 在最后）：两条回答都在，最后一段字是结果
+        val end = Turns.build(listOf(
+            ChatMessage("u", "user", "装一下"),
+            ChatMessage("a1", "assistant", "", listOf(ToolCall("t1", "device_run_shell", "{}", "r", true))),
+            ChatMessage("a2", "assistant", "装好了。"),
+            ChatMessage("a3", "assistant", "版本是 1.2。", listOf(ToolCall("m1", "memory_save", "{}", "ok", true))),
+        ), running = false, error = null)
+        assertEquals(listOf("装好了。", "版本是 1.2。"), bots(end))
+        assertEquals(Row.Kind.Result, end.filterIsInstance<Row.Bot>().last().kind)
+    }
+
     @Test fun turnsThinkingAndPause() {
         val onlyUser = Turns.build(listOf(ChatMessage("u", "user", "hi")), running = true, error = null)
         assertTrue(onlyUser.last() is Row.Thinking)
