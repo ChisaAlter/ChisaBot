@@ -24,6 +24,7 @@ import {
   type ActorAgentResolver,
   CoworkerUnavailableError,
 } from "./agents/agent-resolver";
+import { guaranteeFinalAnswer } from "./agents/final-answer-guard";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
 import { FailFastTransport } from "./agents/pre-stream-failure";
 import { HermesRuntimeAgent, type HermesRuntimeBinding } from "./agents/hermes-runtime";
@@ -1903,7 +1904,7 @@ class BuiltInAgentWithSaneHistory extends BuiltInAgent {
     if (!load)
       return meterRun(() =>
         nativeApprovalRun({ ...input, messages: history }, () =>
-          observeModelConnection(super.run({ ...input, messages: history })),
+          guaranteeFinalAnswer(observeModelConnection(super.run({ ...input, messages: history }))),
         ),
       );
     /*
@@ -1924,7 +1925,7 @@ class BuiltInAgentWithSaneHistory extends BuiltInAgent {
         ).pipe(
           switchMap((messages) =>
             nativeApprovalRun({ ...input, messages }, () =>
-              observeModelConnection(super.run({ ...input, messages })),
+              guaranteeFinalAnswer(observeModelConnection(super.run({ ...input, messages }))),
             ),
           ),
         ),

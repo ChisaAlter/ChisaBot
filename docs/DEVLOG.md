@@ -20,6 +20,98 @@
 
 **截图**：`docs/images/linkstack-fix/`（左改前、右改后）。顶栏一项因 #374 未合并跳过。没有升版本号。
 
+## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
+
+来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。
+
+1. **隐私**：`wallpaper_core.html` 的 `hark.ipLocate()` 原来会请求 `https://ipapi.co/json/`，把用户 IP 发给第三方。现在改用 `Intl.DateTimeFormat().resolvedOptions().timeZone`，在内置城市表里取第一个同时区的城市，给出粗略位置和正确的本地时间；找不到同时区的城市就沿用原来的“无法确定位置”提示。城市搜索、GPS 定位、手动选城市都不受影响。`sky-background.tsx` 的 fetch 拦截层也兜底拦掉 `ipapi.co`（返回 403）。
+2. **上传**：新增 `validateWallpaperFile`，只放行 `accept` 列出的五种类型，原图不超过 20 MB，超限的文件不会被 FileReader 读进内存。压缩后的 Data URL 超过约 6 MB 时报错，原来 JPEG 兜底分支不查大小。新增 `saveUploadedWallpaper`：先写进 IndexedDB，成功了才应用；写入失败抛出“壁纸保存失败，可能是浏览器存储空间不足”，由现有 toast.error 显示，不再出现“已上传并应用、刷新就没了”。壁纸只保存在本机，没有服务端上传接口，所以没有服务端校验可加。
+3. **lint**：`appearance-preferences.tsx` 现在实测是 6 个 error（审查时记的是 7 个）。三处自绘 ARIA 单选按钮和拖放区（里面嵌了按钮，外层不能是 `<button>`）按仓库惯例加了带理由的 `biome-ignore`。“操作区 div 上只拦冒泡的 onClick”改成在两个按钮自己的 onClick 里 `stopPropagation`。DOM 结构和 class 都不变。该文件 lint 错误从 6 降到 0；剩下的 format 提示 main 上本来就有，这次没有整文件重排。
+4. **滑块**：透明度、模糊度、压暗度三个键改成防抖写入（`SLIDER_WRITE_DELAY_MS = 200`，停手后写一次；`pagehide` 时立即 `flushAppearanceWrites`）。状态、CSS 变量、订阅者仍然每一步同步更新。其它键照旧立即写，并且只写改动过的键。
+5. **存储**：新增 `lib/wallpaper-store.ts`，用 IndexedDB 存储（库 `chisabot-appearance`，表 `wallpaper`，键 `custom`），后端可注入。localStorage 的 `chisabot-wallpaper-custom-url` 只存占位标记 `idb:custom-wallpaper`；普通网址仍按原样存。启动时：
+   - 读到占位标记：先按“没有壁纸”渲染，异步从 IndexedDB 读回后补上。
+   - 读到旧版本的 `data:`：照常显示，随后迁移进 IndexedDB，成功后把 localStorage 里的值换成标记；迁移失败就保留旧数据，壁纸不丢。
+   - 移除壁纸时同时删掉 IndexedDB 里的记录。
+
+测试：`app/tests/wallpaper-privacy-storage.test.ts` 共 15 个用例，覆盖 1–5：
+- 源码里没有 ipapi 请求，ipLocate 改用时区；拦截层兜底；
+- 类型 / 大小校验，超限文件在读入前被拒；压缩后超限报错；保存失败时抛错且状态不变；CSS 转义；
+- 滑块拖动过程中不写 localStorage，停手后写最终值；flush 立即写出；
+- 上传后只有占位标记，刷新后能读回；旧数据迁移和迁移失败的情况；移除时清掉 IndexedDB；直接设置 Data URL 也走 IndexedDB。
+
+原有的 `appearance-preferences.test.ts` 4 个用例照常通过。
+
+### 追加（返修）：刷新时不再先闪天空
+
+问题：localStorage 里只有占位标记时，启动先按“没有壁纸”渲染，等 IndexedDB 读回才补上壁纸，中间会先把天空挂出来闪一下。
+
+做法：
+- `appearance.ts` 增加“壁纸读取中”状态：启动时读到占位标记且 `wallpaperId === "custom"` 就进入（`isWallpaperLoading()` / `useWallpaperLoading()`）。IndexedDB 读回成功时，先填上壁纸再结束读取中，两步合成一次通知，中间不会出现“没壁纸、也不在读取中”的状态。读取失败、没有记录或超过 `WALLPAPER_LOAD_TIMEOUT_MS = 1500` 就结束读取中，退回天空。
+- 超时后 IndexedDB 才读回的，照样补上壁纸，只是晚一点，不会丢。读取中用户改选了别的壁纸，就立即结束读取中，迟到的结果不覆盖用户的选择（只在仍是自定义壁纸且没有地址时才填）。
+- `sky-background.tsx`：读取中只渲染一个 `#sky-root[data-wallpaper-loading]`，内联 `background: var(--sky-2)`。不挂 `#skyph`、WebGL 画布和光斑，也不加载天空引擎（`resolveSkyMode` 把读取中当作有壁纸，`html[data-sky-off]`）。`--sky-2` 就是 body 自己的 `background-color`，会跟随深浅色、时段和主题色。这一处用内联样式实现，`styles.css` 没改。
+- 没改的：JS 加载前 `index.html` 的启动壳本身就画着天空渐变，这次不动。
+
+测试：新增 `app/tests/wallpaper-loading.test.tsx`（6 个用例），渲染真实的 `<ThemeProvider><SkyBackground/></ThemeProvider>`，fetch 打桩成 404。用 MutationObserver 检查每一次 DOM 变化，用 subscribeAppearance 检查每一次状态变化：只要“挂着天空却没有壁纸盖住”出现过一次，就判失败。
+- 读回成功：读取中只有纯色，读回后直接显示壁纸，天空一次都没露出来；
+- 读取失败、没有记录：退回天空；
+- 永远不返回：200ms 时仍是纯色，约 1.5s 后退回天空；
+- 边界：超时后才读回照样补上；读取中改选别的壁纸立即结束，迟到的结果不覆盖。
+把 `sky-background.tsx` 换回改动前的版本，这 4 个主用例全部失败。
+
+## Unreleased — 工具步骤失败后整轮没有回答 / web_fetch 稳定性（Hark 对比 A4）
+
+### 动机
+
+- Hark 对比第 12 条「帮我总结这个网页 https://en.wikipedia.org/wiki/Liquid_glass」第一次整轮失败：开场白「我先读一下网页内容。」之后工作卡「1 步失败」（web_fetch），没有任何回答，界面显示「这一轮没有收到回答」；重试才正常。总耗时 21.6 秒，和 web_fetch 原来 20 秒超时吻合。
+- 复现：在 Jun 电脑上直接调 `webFetch(维基)` 连续 3 次都是 `请求超时`（20.0 秒），之后网络好了又能读到——读维基本身就是间歇性失败，而 web_fetch 不重试、不降级。
+- 运行链路（`server/src/copilot.ts` → `BuiltInAgent`）对「工具失败之后模型不再说话」没有任何兜底：只要第二步模型返回空内容，这一轮照样 `RUN_FINISHED`，就是空回复。用 aimock 模拟（web_fetch 返回 `Refused. 读取失败：请求超时`，第二步空内容）在 origin/main 上稳定复现：最后一个工具结果之后没有一个字。
+- 另外，web_fetch 以前把报错里带 `abort` 的错误（连接被对方中途掐断的 `aborted`、超时的 AbortError）一律说成「用户已停止这一轮」，模型会以为是人让它停的。
+
+### 改动
+
+- `server/src/web/tools.ts`（web_fetch）：
+  - 第一次 12 秒超时；超时 / 断线这类临时错误再试一次（8 秒）。
+  - 两次都失败：降级成搜索（维基用条目名，其余用域名 + 路径，每个搜索引擎 8 秒），把结果摘要交给模型，并要求说明是根据摘要整理的；这一步不再算失败。整个工具最坏约 36 秒，在卡死看门狗（60 秒）之内。
+  - 搜索也没有结果：仍返回 `Refused. 读取失败：<原因>`，并让模型直接告诉用户读不到和原因、不要反复读同一网址。
+  - 只有这一轮真的被停了（signal.aborted）才说「用户已停止」。
+  - `webTools(io)` 可注入网络层，方便测试；`webSearch` / `webFetch` 增加可选超时参数，默认不变。
+- `server/src/agents/final-answer-guard.ts` + `copilot.ts`：内置机器人的每次运行套一层 `guaranteeFinalAnswer`。这一轮最后一个工具结果是失败（`Refused.` / `Error:`，不含用户按停止），之后没有任何回答文字就要结束时，在 `RUN_FINISHED` 前补一条说清原因的回答（例：「抱歉，这一轮没能给出回答：「读取网页」这一步失败了（读取失败：请求超时）。可能是网站暂时连不上。再发一次试试，或者把网页内容直接贴给我。」）。这句是一条普通回答，界面上不会出现「重试」按钮（那个按钮只在「这一轮没有收到回答」的错误卡上），所以不写「点重试」。模型自己解释了、成功工具后不说话的后台回合、等审批 / 交给浏览器的工具都不动。
+- 没动链接卡、链接预览和 `WORK_STYLE_GUIDANCE`。
+
+### 测试
+
+- `server/tests/turn-failure-final-answer.test.ts`：aimock 模型 + 失败的 web_fetch，断言最后有回答（origin/main 上失败：`Expected: not ""`）；模型已解释时不重复补话；用户停止时不补话；web_fetch 重试一次成功、两次超时降级为搜索摘要、`aborted` 不再说成用户停止、搜索词生成。
+
+### 线上验证
+
+- 用 cbtest 跑第 12 条 3 次，由测试同学在发版后到线上验证。
+
+## 回复来源结构化（feat/reply-sources-stability）
+
+**动机**：Hark 把来源画成回复下方一组叠起来的链接卡；ChisaBot 让模型在正文最后写「来源：[站点](网址)」（#5、#12 对比），来源和正文混在一起，也没法统一排版。要先把数据格式定下来，前端再画。
+
+**为什么不新增存储 / 事件 / 工具**：会话历史在 Intelligence 网关里，不在我们的库里；而 web_fetch 的调用和结果本来就随消息流式下发、也在历史里。从它们读来源，实时和翻历史一致，旧会话也有来源。让模型调一个「cite_sources」工具也考虑过：模型在工具之后不再说话时，客户端会把这一轮判成「做完…之后没有接着做」（stopped-turn.ts），风险大。
+
+**格式**：见 shared/reply-sources.ts（ReplySource / ReplySources / replySourcesByMessage）。只算 2xx 的 web_fetch，web_search 的结果不算；按网址去重，最多 5 个；只放行 http(s)；标题是不可信文本，只能当纯文字显示。
+
+**开关**：CHISABOT_REPLY_SOURCES 默认关。打开后随 render_ui 工具把一段来源规则带进提示词（只有网页聊天有 render_ui，IM 照旧写来源行），覆盖通用规则里的「来源：」行。前端画好卡片之前不要打开。
+
+**未做**：web_fetch 重试 / 兜底和 #12 首次无回复的根因按分工转给开发3。
+
+## 回复风格对齐 Hark（feat/reply-style-hark）
+
+**动机**：同一组 12 条消息分别发给 Hark 和 ChisaBot（v0.1.105，GPT-6-Luna）对比，ChisaBot 的问题集中在“说话方式”：
+- 回答总是套「短导语 → 卡片 → 下一步建议」三段式，简单问题也被拉长成 3 个气泡；Hark 默认一个气泡、结论先行。原因就是 WORK_STYLE_GUIDANCE 里那条“必须采用三段式”。
+- #5（参数对比表）：render_ui 画了表格卡，后面又用 Markdown 把同一张表写了一遍。
+- #11（500 元以内降噪耳机）：搜了 8 次，一个型号都没给，最后反问“入耳还是头戴”。步数提醒要到第 10 次工具调用才出现，太晚；提示词里也没有“推荐题要收敛”的说法。
+- #9（解方程）：输出 LaTeX（\[ … \]、\boxed），前端早已把 katex 换成空壳，所以原样显示成乱码。前端不恢复 katex（体积），改成让模型用 Unicode。
+
+**改法**：
+- shared/bot-prompt.ts：WORK_STYLE_GUIDANCE 改长度规则（默认 1 个气泡 1–4 句），删三段式那条，换成“长内容才用 doc 卡 / 文件，下一步建议有用才写”；render_ui 那条加“画过表格就不再写 Markdown 表格”；新增“推荐题”和“数学”两条。
+- server/src/generative-ui/render-ui.ts：成功结果里加一句“画了表格就不要再写一份 Markdown 表格”。服务端不去删流式正文里的表格：文字已经流到浏览器，事后删会让界面和历史不一致，不安全。
+- server/src/web/tools.ts：web_search 的工具描述写明一般搜 1–3 次、推荐题拿到候选就停。按分工 PR-A 只改提示词和工具描述，不加服务端搜索次数硬上限（最初版本有 withSearchBudget，已撤掉）。
+- 安全相关（UNTRUSTED_GUIDANCE、PROVENANCE_GUIDANCE、COMPUTER_GUIDANCE、NO_ANSWER_CAME）一字未动；server/tests/reply-style.test.ts 按改动前的 sha256 钉住，并检查内置机器人的提示词里仍有它们。
+
 ## Hark 式链接卡 + GitHub 预览图（feat/hark-linkcard）
 
 **动机**：对比反馈截图（2026-10-29，ChisaBot 与 Hark 各一张），我们的 GitHub 链接卡只有「图标 + 域名 + 标题 + 一行说明」，没有预览图；Hark 是上半 og:image 大图、下面两行标题和「GitHub · v0.1.13」。另外同一个「链接卡」有两份实现：正文链接卡（`rich-previews.tsx` 的 `LinkCard`，会取 `/api/link-preview`）和 json-render 的 `Link`（`rich.tsx` 的 `LinkCard`，只画模型写的字段），长得不一样，修一处另一处不跟着变。
@@ -334,6 +426,48 @@
 
 **版本**：根、`app`、`server` 升到 `0.1.105`；PC / Android 不变（四个 PR 均未改 `pc/`、`android/`）。不打 tag、不发 Release。
 
+## 2026-10-29 — 手机尺寸左栏抽屉改成 Hark 的一层面板
+
+**动机**：0.1.104 的 PC 小窗（420×860）反馈截图里，抽屉是「半透明白色外板 + 里面一张圆角卡片」，两层边缘都看得见；里面的卡片不到底，账号卡单独漂在下面、中间有缝；右侧没有压暗；关闭按钮单独浮在右上角，上面空一大块。目标是 Hark 手机端的样子：一层面板、一排顶栏、底部账号、右侧压暗。
+
+**改动**：
+
+- `ui/sidebar.tsx`：手机抽屉宽度变量改成 `min(85vw, 320px)`；抽屉元素加 `glass hk-drawer`（`.glass` 是唯一的玻璃层），遮罩加 `hk-drawer-overlay`。`ui/sheet.tsx` 的 `SheetContent` 新增可选的 `overlayClassName`，只加在这块抽屉自己的遮罩上。
+- `styles.css`：删掉两条旧的抽屉玻璃规则（各自写了 `rgba(…, 0.72 / 0.86)` 底 + `backdrop-filter` + 16px 内边距）、手机安全区内边距和 PC 下 `top: 40px` 的规则，在原位置（文件中段，不在 #374 追加的文件末尾）新增「手机尺寸左栏抽屉」一节：
+  - 面板全高、贴左、`border-radius: 0 20px 20px 0`、内边距 0；里面的 `.glass-side-card` / `.acct-card` 把旧三档玻璃层读的 `--lg-surface` / `--lg-blur` / `--lg-shadow` 设成透明 / none（不加 `!important`），不再是第二层。
+  - 顶部一行：关闭按钮绝对定位到搜索行右端（搜索行右侧留出按钮宽度），行的中线 = 顶栏按钮的中线（`--safe-t + (--glass-top − 44px) / 2`）；PC 客户端里这一行从 44px 开始，让开 40px 高的窗口按钮 / 拖动条。设置页的 `.rail-title` 同样处理。
+  - 账号卡：同一块面板最下面，用内投影画 1px 分隔线（旧玻璃层把 `border` 锁成 0），底部 `8px + 安全区`。
+  - 遮罩：`rgba(0,0,0,.32)`（深色 `.5`），`backdrop-filter: none`。
+  - 动画：`transition-property: transform`、200ms，开始 / 结束态 `transform: translateX(-100%)`、`opacity: 1`；`prefers-reduced-motion` 下 `transition: none`。
+  - 性能模式 / 减少透明度：面板 `rgb(246,247,250)` / `rgb(29,31,36)`，与 #375 `perf-noblur.css` 的 `--glass-bg-opaque` 同色，`backdrop-filter: none`。
+- 没有新增 `:has()`，没有 `!important`。
+
+**实测**（Chrome，真手机 390×844 触屏 2x、PC 小窗 420×860 带窗口按钮，本地假数据）：
+
+| | 改前 | 改后 |
+|---|---|---|
+| 面板 | 0,0,288×844（PC 0,40,288×820），直角，内边距 12 / 16px | 0,0,320×844（PC 320×860），右侧 20px 圆角，内边距 0 |
+| 模糊层 | 3（抽屉、列表卡、账号卡） | 1（抽屉 `.glass`） |
+| 遮罩 | `rgba(40,60,90,.16)` + `blur(4px)` | `rgba(0,0,0,.32)` / 深色 `.5`，无模糊 |
+| 顶部一行 | 关闭按钮单独一行（y=6 / PC 50），搜索在 y=84 / PC 120 | 搜索 + 新建 + 关闭同一行，手机 y=6（与菜单按钮同一条中线），PC y=44（窗口按钮下面） |
+| 账号 | 浮在卡片下面（12,776,263×56） | 面板底部整宽（0,784,320×60），上方分隔线 |
+| 性能模式 / 减少透明度 | — | 不透明底，0 层模糊 |
+
+点遮罩关闭：手机（减少动态效果）和 PC 小窗都关上了。
+
+截图（`docs/images/mobile-drawer/`）：
+
+| | 改前 | 改后 |
+|---|---|---|
+| 手机 浅色 | ![](images/mobile-drawer/before-phone-light.webp) | ![](images/mobile-drawer/after-phone-light.webp) |
+| 手机 深色 | ![](images/mobile-drawer/before-phone-dark.webp) | ![](images/mobile-drawer/after-phone-dark.webp) |
+| PC 小窗 浅色 | ![](images/mobile-drawer/before-pcsmall-light.webp) | ![](images/mobile-drawer/after-pcsmall-light.webp) |
+| PC 小窗 深色 | ![](images/mobile-drawer/before-pcsmall-dark.webp) | ![](images/mobile-drawer/after-pcsmall-dark.webp) |
+
+**测试**：新增 `app/tests/mobile-drawer.test.tsx`（面板只有一层 `.glass`、遮罩存在、点遮罩关抽屉、抽屉规则不写模糊 / 里面卡片关掉旧玻璃层 / 遮罩不模糊、只动 transform 200ms、减少动态效果无动画、性能模式和减少透明度不透明）；`render-budget.test.ts` 的模糊名单删掉两条已经不模糊的旧抽屉选择器。
+
+**未改**：桌面宽窗口的左栏、#374 改过的顶栏 / 左栏文件、#375 的 perf-noblur.css、版本号。
+
 **部署**（2026-10-29 08:45–08:58 北京时间）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.105-20261029T002243Z.dump`（`pg_restore -l` 767 条目），备份网关 `nginx.conf`（`nginx.conf.bak-pre-v0.1.105-20261029T002243Z`），给 d6cd2ec 打 `local/chisabot:keep-d6cd2ec` 防清理。`deploy-serial.sh 3856d36` 全量构建（依赖有变），镜像 `local/chisabot:auto-202610290045-3856d36`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.105` / `3856d36`。
 
 **网关 nginx（#372）**：deploy-serial 只做 `sync-nginx --check`，不会套用新模板，所以手动把仓库 `deploy/public/nginx.conf` 按线上域名 / 端口渲染（与渲染旧模板得到的线上配置逐字节一致，只多出 #372 的 59 行），写入挂载进 `chisabot-public-gateway` 的 `/opt/chisabot-zh/public/nginx.conf`，容器内 `nginx -t` 通过后 `nginx -s reload`（容器未重建）。`nginx -T` 与渲染结果 md5 一致：22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`、14 个转发都清 `CF-Connecting-IP` 并设 `X-Real-IP`。宿主机 `/opt/chisabot-ops/deploy/public/nginx.conf` 模板同步为 main 版（已备份）。
@@ -377,3 +511,42 @@
 **没碰**：styles.css、wallpaper_core.html、bot-bubbles.tsx 的 SVG 净化、appearance 相关文件；没有 blur、`:has`、`!important`；未升级版本号。截图和录屏在 docs/images/linkstack/（只留 stack.webm 和 5 张关键截图：3 张前后对比、换位序列、触屏点击）。
 
 **评审后修改（#397）**：主位在用户悬停 / 聚焦 / 点过之前按当前张数重算（流式 1 → 3 张时换到中间那张），选过之后不再动；流式中第 3 张照样出来，不满 3 张才放骨架；`key` 带上序号，同一网址出现两次也不撞；「追问」自己 `:focus-visible` 时显示，叠放时不在主位的卡上 `visibility: hidden` + `pointer-events: none`，触屏单卡上一直显示；侧卡错开从 0.62 改成 0.72 卡宽，侧卡露出的标题更完整。
+
+## 2026-10-29 发版 0.1.107
+
+- #378 `fix/mobile-drawer-hark`（head `c25464a` → `274ed1a`）→ `adbe51f`：手机尺寸左栏抽屉改成 Hark 手机端的一层全高面板。
+- #380 `feat/hark-linkcard`（head `8975949` → `8747ef7`）→ `c5dcb0a`：链接卡照 Hark 改版，数据侧修正标题 / 预览图（GitHub 预览图）。
+
+**流程**：先在临时 worktree 里本地试合并（PR 分支各自 merge 最新 main、再 `--no-ff` 合进 main，顺序 #378 → #380），`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app`（222 个文件 1722 pass / 0 fail，退出码 0）全部通过后，才把 PR 分支普通 push、main 快进到本地验证过的合并提交，线上 main 树与验证结果一致。
+
+**冲突**：两个 PR 与 main 都只在 `CHANGELOG.md`、`docs/CHANGELOG.md`、`docs/DEVLOG.md` 冲突，两边都保留；没有代码、package.json 或锁文件冲突。发版时去掉了从旧 PR 分支带回 Unreleased 的 #373 重复条目（它已在 0.1.105 发布）。
+
+**版本**：根、`app`、`server` 升到 `0.1.107`；PC / Android 不变。不打 tag、不发 Release。
+
+**0.1.107 部署**（2026-10-29 12:07 北京时间开始）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.107-20261029T040728Z.dump`（`pg_restore -l` 767 条目）。`deploy-serial.sh 6790ef7` 镜像 `local/chisabot:auto-202610290407-6790ef7`（同时成为 BASE_IMAGE），`request.sh smoke` PASSED（admin 模型自检 `ok:true persisted:false`），`health.sh` 通过，公网 `/login` 200，容器 healthy、无重启、日志无错误，sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 3856d36；保留当前（BASE）6790ef7、上一版 0ba9676、`keep-628d527`。
+
+## 2026-10-29 发版 0.1.108
+
+- #381 `feat/reply-style-hark`（head `bad6187` → `94bab32`）→ `1bd5416`：回复风格对齐 Hark（提示词 + 服务端），去掉固定三段式，默认一个气泡、结论先行。
+
+**流程**：先在临时 worktree 本地试合并（PR 分支 merge 最新 main，再 `--no-ff` 合进 main），`bun install --frozen-lockfile`、`typecheck`、`build` 通过；`test:app` 1722 个用例里只有 `form-submit-controls` 超 5 秒默认超时（扫描全部表单，单独跑 3.6–5.0 秒，在 origin/main 上同样贴着 5 秒线，本 PR 未改 app 代码），单独以 60 秒超时重跑通过，按既有的计时抖动处理。验证通过后 PR 分支普通 push、main 快进到本地验证过的合并提交。
+
+**冲突**：只在 `CHANGELOG.md`、`docs/CHANGELOG.md`、`docs/DEVLOG.md` 冲突，两边都保留，没有重复的已发布条目；没有代码、package.json 或锁文件冲突。
+
+**版本**：根、`app`、`server` 升到 `0.1.108`；PC / Android 不变。不打 tag、不发 Release。
+
+**0.1.108 部署**（2026-10-29 14:51 北京时间开始）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.108-20261029T065111Z.dump`（`pg_restore -l` 767 条目）。`deploy-serial.sh 9e9ca0d` 镜像 `local/chisabot:auto-202610290651-9e9ca0d`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.108` / `9e9ca0d`；`request.sh smoke` PASSED（admin 模型自检 `ok:true persisted:false`），`health.sh` 通过，公网 `/login` 200，容器 healthy、无重启、日志无错误，sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 0ba9676；保留当前（BASE）9e9ca0d、上一版 6790ef7、`keep-628d527`。
+
+## 2026-10-29 发版 0.1.109
+
+- #391 `feat/reply-sources-stability`（head `2a6a2ab` → `f9926e6`）→ `5319bc0`：回复来源结构化（数据格式先行），生产环境 `CHISABOT_REPLY_SOURCES` 保持关闭。
+- #392 `fix/turn-failure-web-fetch`（head `a6fbe90` → `2b57e1a`）→ `d27cce0`：web_fetch 重试 + 搜索摘要降级，工具失败后这一轮一定有回答（Hark A4）。
+- #376 `fix/wallpaper-privacy-upload`（head `efa5abe` → `434b323`）→ `3ae5e59`：壁纸与外观收尾（IndexedDB，只改 app）。
+
+**流程**：先在临时 worktree 本地试合并（每个 PR 分支先 merge 当时的 main，再按 #391 → #392 → #376 `--no-ff` 合进 main），`bun install --frozen-lockfile`、`typecheck`、`build` 通过；`test:app` 224 个文件 1743 个用例里只有 `form-submit-controls` 超 5 秒默认超时（已知的计时抖动），单独重跑 1.9 秒通过。验证通过后 PR 分支普通 push、main 快进到本地验证过的合并提交。
+
+**冲突**：只在 `CHANGELOG.md`、`docs/CHANGELOG.md`、`docs/DEVLOG.md` 冲突，两边都保留，没有重复的已发布条目；没有代码、package.json 或锁文件冲突。#392 没写 CHANGELOG 条目，发版时补上。
+
+**版本**：根、`app`、`server` 升到 `0.1.109`；PC / Android 不变。不打 tag、不发 Release。
+
+**0.1.109 部署**（2026-10-29 16:07 北京时间开始）：部署前确认 Haupt 上 `chisabot-zh` 的容器环境、s6 环境和配置文件里都没有设置 `CHISABOT_REPLY_SOURCES`（代码默认关）；另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.109-20261029T080656Z.dump`（`pg_restore -l` 767 条目）。`deploy-serial.sh 63914d8` 镜像 `local/chisabot:auto-202610290807-63914d8`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.109` / `63914d8`；`request.sh smoke` PASSED，`POST /api/admin/smoke` 模型自检 `ok:true persisted:false`，`health.sh` 通过，公网 `/login` 200，容器 healthy、无重启、日志无错误，sidecar 隔离 ALL GREEN，未回滚；部署后运行中的容器仍未设置 `CHISABOT_REPLY_SOURCES`（关）。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 6790ef7；保留当前（BASE）63914d8、上一版 9e9ca0d、`keep-628d527`。

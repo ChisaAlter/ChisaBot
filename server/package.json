@@ -3,7 +3,7 @@
   "description": "ChisaBot API、会话运行和模型管理服务",
   "license": "MIT",
   "private": true,
-  "version": "0.1.106",
+  "version": "0.1.109",
   "type": "module",
   "scripts": {
     "build": "bun x tsc --noEmit",
