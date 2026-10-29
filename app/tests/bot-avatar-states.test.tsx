@@ -56,10 +56,26 @@ afterEach(() => {
   global.fetch = originalFetch;
 });
 
+// 每个用例的 QueryClient 用完就 clear()：不然查询缓存的 gcTime 定时器会让进程迟迟不退出。
+const clients: QueryClient[] = [];
+afterEach(() => {
+  for (const client of clients.splice(0)) client.clear();
+});
+// happy-dom 的 getAnimations 让 Base UI 关窗收尾拖好几秒；测试里关掉对话框动画（Base UI 自带的开关）。
+const g = globalThis as { BASE_UI_ANIMATIONS_DISABLED?: boolean };
+const hadAnimationsDisabled = g.BASE_UI_ANIMATIONS_DISABLED;
+beforeAll(() => {
+  g.BASE_UI_ANIMATIONS_DISABLED = true;
+});
+afterAll(() => {
+  g.BASE_UI_ANIMATIONS_DISABLED = hadAnimationsDisabled;
+});
+
 function draw(ui: ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  clients.push(client);
   return render(
     <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
   );
@@ -166,10 +182,10 @@ describe("avatar dialog", () => {
     const view = openPicker();
     fireEvent.click(await view.findByTestId("ava-tab-monogram"));
     fireEvent.click(view.getByTestId("ava-done"));
-    // happy-dom 里对话框的关窗收尾要等好几秒才走完，放宽这一条的超时。
-    await waitFor(
-      () => expect(document.activeElement).toBe(view.getByTestId("ava-open")),
-      { timeout: 15_000 },
-    );
-  }, 20_000);
+    // 不用 waitFor：它在这里要轮好几秒才看到焦点。焦点在下一帧就回来了，自己等几帧再看。
+    const trigger = view.getByTestId("ava-open");
+    for (let i = 0; i < 20 && document.activeElement !== trigger; i++)
+      await act(() => new Promise((resolve) => setTimeout(resolve, 25)));
+    expect(document.activeElement).toBe(trigger);
+  });
 });

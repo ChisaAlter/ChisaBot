@@ -161,8 +161,6 @@ describe("loadAvatarSource", () => {
       "image/webp",
       "image/gif",
       "image/bmp",
-      "image/avif",
-      "image/heic",
     ]) {
       const loaded = await avatars.loadAvatarSource(
         new File([new Uint8Array(10)], "a", { type }),
@@ -175,6 +173,9 @@ describe("loadAvatarSource", () => {
     for (const [name, type] of [
       ["v.svg", "image/svg+xml"],
       ["doc.pdf", "application/pdf"],
+      // 不是每个浏览器都能解码（Chrome 解不了 HEIC），提示里也不写。
+      ["photo.heic", "image/heic"],
+      ["photo.avif", "image/avif"],
     ] as const) {
       await expect(
         avatars.loadAvatarSource(new File(["x"], name, { type })),
@@ -280,10 +281,10 @@ describe("saveAvatarDraft + sync", () => {
     }
   });
 
-  test("the avatar table refetches on window focus even inside staleTime (10-2)", () => {
-    expect(avatars.botAvatarsQueryOptions().refetchOnWindowFocus).toBe(
-      "always",
-    );
+  test("window focus refetches the avatar table only once it is stale (10-2)", () => {
+    const options = avatars.botAvatarsQueryOptions();
+    expect(options.refetchOnWindowFocus).toBe(true);
+    expect(options.staleTime).toBe(5 * 60_000);
   });
 
   test("avatar table: 404 means everyone has the default; 500 is an error (10-3)", async () => {

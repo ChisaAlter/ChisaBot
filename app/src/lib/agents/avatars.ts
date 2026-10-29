@@ -34,9 +34,10 @@ export function botAvatarsQueryOptions() {
       return body.avatars ?? {};
     },
     staleTime: 5 * 60_000,
-    // 别的标签页 / 设备换了头像：切回这个窗口时再对一次（审查 10-2）。全局默认是关的，这里单独开。
-    refetchOnWindowFocus: "always",
-    // 不自动重试：切回窗口时会再拉（refetchOnWindowFocus）。
+    // 别的设备换了头像：切回这个窗口时，超过 staleTime 才重拉（审查 10-2；全局默认是关的，这里单独开）。
+    // 同一浏览器的别的标签页不用等，靠下面的 BroadcastChannel 马上失效。
+    refetchOnWindowFocus: true,
+    // 不自动重试：过期后切回窗口时会再拉。
     retry: false,
   });
 }
@@ -132,10 +133,10 @@ export const AVATAR_EMOJIS = [
   "🎨", "🎵", "🍳", "☕", "✈️", "🏃", "🩺", "❤️",
 ] as const;
 
-export const ACCEPTED_AVATAR_TYPES = "image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif";
+export const ACCEPTED_AVATAR_TYPES = "image/png,image/jpeg,image/webp,image/gif,image/bmp";
 export const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
 /** 给用户看的格式说明，和上面 accept、下面 loadAvatarSource 的放行范围一致（审查 10-6）。 */
-export const ACCEPTED_AVATAR_HINT = "PNG / JPEG / WebP / GIF / BMP / AVIF / HEIC，最大 15 MB";
+export const ACCEPTED_AVATAR_HINT = "PNG / JPEG / WebP / GIF / BMP，最大 15 MB";
 /** 小于这个边长的图存成 256×256 会发糊，给一句提示（审查 10-9），不拦。 */
 export const SMALL_AVATAR_SOURCE = 128;
 
@@ -185,7 +186,7 @@ export async function renderAvatar(
 export async function loadAvatarSource(file: File): Promise<{ image: HTMLImageElement; url: string }> {
   // 只收 ACCEPTED_AVATAR_TYPES 里的格式（审查 10-6：以前 image/* 全放行，SVG 也进得来，和提示对不上）。
   const accepted = ACCEPTED_AVATAR_TYPES.split(",");
-  const typeOk = file.type ? accepted.includes(file.type) : /\.(png|jpe?g|webp|gif|bmp|avif|heic|heif)$/i.test(file.name);
+  const typeOk = file.type ? accepted.includes(file.type) : /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name);
   if (!typeOk) throw new Error(`请选一张图片（${ACCEPTED_AVATAR_HINT}）。`);
   if (file.size > MAX_SOURCE_BYTES) throw new Error("图片超过 15 MB，请换一张小一点的。");
   const url = URL.createObjectURL(file);
