@@ -104,7 +104,12 @@ function KeptDraftPage({ id }: { id: string }) {
   );
   return (
     <div data-testid="draft-page">
-      <Composer channelId={id} compact draftKey={id} onSubmit={async () => {}} />
+      <Composer
+        channelId={id}
+        compact
+        draftKey={id}
+        onSubmit={async () => {}}
+      />
     </div>
   );
 }
