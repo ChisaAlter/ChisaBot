@@ -11,7 +11,7 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { sendPromptToChat } from "@/components/chat/quick-spotlight";
 import {
   PageEmpty,
@@ -20,6 +20,12 @@ import {
   PageSkeleton,
 } from "@/components/layout/page-shell";
 import { ScheduleEditDialog } from "@/components/schedules/edit-dialog";
+import {
+  SCHEDULE_PRESETS,
+  SCHEDULE_STARTER,
+  ScheduleRuns,
+  statusTone,
+} from "@/components/schedules/schedule-runs";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -59,7 +65,6 @@ import { cn } from "@/lib/utils";
 import {
   formatWhen,
   partitionScheduleList,
-  RUN_STATUS_ZH,
   scheduleLastLineZh,
   scheduleLastTone,
   type ScheduleRunStatus,
@@ -196,14 +201,10 @@ function SchedulesPage() {
         action={
           <Button
             data-testid="schedules-go-chat-btn"
-            onClick={() =>
-              sendPromptToChat(
-                navigate,
-                "请帮我创建一个定时任务：每天早上 08:30 调用 personal_morning_brief 生成今日晨报并通过 notify_push 推送到我手机",
-                "创建定时任务",
-              )
-            }
+            // 审查模块 13 S4：只把中性的起手句填进对话输入框，不发送，也不预设推送 / 整理记忆这类动作。
+            onClick={() => sendPromptToChat(navigate, SCHEDULE_STARTER)}
             size="sm"
+            title="打开对话，把「帮我设一个定时任务：」填进输入框，补完再发送"
             variant="outline"
           >
             <IconMessageReply className="size-3.5" />
@@ -272,55 +273,22 @@ function SchedulesPage() {
             <div className="flex flex-col items-center gap-3">
               <span>
                 {
-                  "还没有定时任务。在对话里对机器人说「明早 9 点提醒我给妈妈打电话」或点击下方模板一键创建："
+                  "还没有定时任务。在对话里对机器人说「明早 9 点提醒我给妈妈打电话」就会建一个。也可以点下面的起手句，它会填进对话输入框，补完再发送："
                 }
               </span>
               <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button
-                  data-testid="schedule-preset-brief"
-                  onClick={() =>
-                    sendPromptToChat(
-                      navigate,
-                      "请帮我设置定时任务：每天早上 08:30 自动生成今日晨报（personal_morning_brief）并推送通知给我",
-                      "定时任务模板",
-                    )
-                  }
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  {"☀️ 每天 08:30 生成今日晨报"}
-                </Button>
-                <Button
-                  data-testid="schedule-preset-mail"
-                  onClick={() =>
-                    sendPromptToChat(
-                      navigate,
-                      "请帮我设置定时任务：每个工作日 18:00 巡检今日重要未读邮件与待办（personal_check_updates）并汇总给我",
-                      "定时任务模板",
-                    )
-                  }
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  {"📬 工作日 18:00 汇总邮件与待办"}
-                </Button>
-                <Button
-                  data-testid="schedule-preset-dream"
-                  onClick={() =>
-                    sendPromptToChat(
-                      navigate,
-                      "请帮我设置定时任务：每周日晚上 21:00 运行 memory_dream 整理我本周的记忆碎片并生成周报",
-                      "定时任务模板",
-                    )
-                  }
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  {"🧠 每周日 21:00 整理记忆与周报"}
-                </Button>
+                {SCHEDULE_PRESETS.map((preset) => (
+                  <Button
+                    data-testid={`schedule-preset-${preset.id}`}
+                    key={preset.id}
+                    onClick={() => sendPromptToChat(navigate, preset.prompt)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
               </div>
             </div>
           </PageEmpty>
@@ -330,17 +298,8 @@ function SchedulesPage() {
   );
 }
 
-function statusTone(status: ScheduleRunStatus | null) {
-  return status === "ok" || status === "queued"
-    ? "is-ok"
-    : status === "failed"
-      ? "is-bad"
-      : status === "waiting"
-        ? "is-wait"
-        : status === "running"
-          ? "is-run"
-          : "is-muted";
-}
+const RUN_BUSY_HINT = "这次还没跑完，跑完才能再运行。";
+
 
 function ScheduleRow({
   schedule: s,
@@ -421,6 +380,7 @@ function ScheduleRow({
     }
   }
   const running = s.running || s.lastStatus === "running";
+  const runHintId = useId();
   const last = scheduleLastLineZh(
     s,
     s.lastRunAt ? agoText(s.lastRunAt) : null,
@@ -455,6 +415,12 @@ function ScheduleRow({
                 <span className="device-cap-chip sch-tz" data-testid="schedule-tz">
                   {scheduleZone(s)}
                 </span>
+                {s.status === "paused" ? (
+                  // 审查模块 13 O8：行内直接写「已暂停」，不用只靠开关和分组标题看。
+                  <span className="device-cap-chip" data-testid="schedule-paused">
+                    {"已暂停"}
+                  </span>
+                ) : null}
                 <span className="device-cap-chip">
                   <T>{botName}</T>
                 </span>
@@ -490,18 +456,32 @@ function ScheduleRow({
       </button>
       <div className="sch-actions">
         {!ended && !(s.status === "paused" && s.lastStatus === "waiting") ? (
-          <Button
-            aria-label={`立即运行「${s.title}」`}
-            className="sch-run"
-            feedback={{ pending: "启动中…", success: "已开始", error: "失败" }}
-            onClick={() => void run.run()}
-            size="sm"
-            state={run.state}
-            variant="outline"
-          >
-            <IconPlayerPlay />
-            {"立即运行"}
-          </Button>
+          <>
+            <Button
+              aria-describedby={running ? runHintId : undefined}
+              aria-label={
+                running ? `「${s.title}」正在运行` : `立即运行「${s.title}」`
+              }
+              className="sch-run"
+              data-testid="schedule-run-now"
+              // 审查模块 13 O8：这次还没跑完时置灰（服务端也会挡），原因写在下面的说明里。
+              disabled={running}
+              feedback={{ pending: "启动中…", success: "已开始", error: "失败" }}
+              onClick={() => void run.run()}
+              size="sm"
+              state={run.state}
+              title={running ? RUN_BUSY_HINT : undefined}
+              variant="outline"
+            >
+              <IconPlayerPlay />
+              {running ? "运行中" : "立即运行"}
+            </Button>
+            {running ? (
+              <span className="sr-only" id={runHintId}>
+                {RUN_BUSY_HINT}
+              </span>
+            ) : null}
+          </>
         ) : null}
         {!ended ? (
           <Switch
@@ -531,10 +511,13 @@ function ScheduleRow({
             {!ended ? (
               <DropdownMenuItem
                 className="glass-mi"
+                disabled={running}
                 onClick={() => void run.run()}
               >
                 <IconPlayerPlay className="size-[18px] shrink-0 opacity-80" />
-                <span className="min-w-0 flex-1">{"立即运行"}</span>
+                <span className="min-w-0 flex-1">
+                  {running ? "运行中，跑完才能再运行" : "立即运行"}
+                </span>
               </DropdownMenuItem>
             ) : null}
             {!ended ? (
@@ -625,26 +608,7 @@ function ScheduleDialog({
                   </div>
                 </div>
               ) : null}
-              <div className="sch-detail">
-                <div className="sch-detail-l">{`最近运行${s.recentRuns?.length ? ` · ${s.recentRuns.length}` : ""}`}</div>
-                {s.recentRuns?.length ? (
-                  <ul className="sch-runs">
-                    {s.recentRuns.map((r) => (
-                      <li className="sch-run-item" key={r.id}>
-                        <span className={cn("sch-last", statusTone(r.status))}>
-                          {RUN_STATUS_ZH[r.status]}
-                        </span>
-                        <span className="sch-run-at">{`${formatWhen(r.startedAt, s.timezone)}${r.manual ? " · 手动" : ""}`}</span>
-                        {r.result ? (
-                          <span className="sch-run-result">{r.result}</span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="sch-detail-v is-muted">{"还没运行过。"}</div>
-                )}
-              </div>
+              <ScheduleRuns schedule={s} />
             </DialogBody>
           </>
         ) : null}
@@ -652,3 +616,4 @@ function ScheduleDialog({
     </Dialog>
   );
 }
+
