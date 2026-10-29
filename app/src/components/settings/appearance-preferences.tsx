@@ -16,6 +16,7 @@ import {
   HARK_SKY_SCENES,
   type HarkSkySceneId,
   resetAppearanceDefaults,
+  saveUploadedWallpaper,
   setCustomWallpaperUrl,
   setGlassOpacity,
   setGlassStyle,
@@ -26,6 +27,7 @@ import {
   setWallpaperPreset,
   THEME_PALETTES,
   useAppearance,
+  validateWallpaperFile,
 } from "@/lib/appearance";
 import { cn } from "@/lib/utils";
 
@@ -56,14 +58,17 @@ export function AppearancePreferences() {
     Boolean(appearance.customWallpaperUrl);
 
   const processWallpaperFile = async (file: File) => {
-    if (!file.type.startsWith("image/")) {
-      toast.error("请选择图片格式文件（PNG / JPG / WebP / GIF / AVIF）");
+    // 先校验类型和大小，超限的文件不读进内存
+    const invalid = validateWallpaperFile(file);
+    if (invalid) {
+      toast.error(invalid);
       return;
     }
     setUploading(true);
     try {
       const dataUrl = await compressUploadedWallpaper(file);
-      setCustomWallpaperUrl(dataUrl);
+      // 存进 IndexedDB 成功后才应用；保存失败会抛错，走下面的错误提示
+      await saveUploadedWallpaper(dataUrl);
       toast.success("已上传并应用自定义背景壁纸");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "上传壁纸失败");
@@ -131,6 +136,7 @@ export function AppearancePreferences() {
           {THEME_PALETTES.map((item) => {
             const active = appearance.palette === item.id;
             return (
+              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片，样式依赖 button 结构，原生 radio 换不了
               <button
                 aria-checked={active}
                 className={cn("appearance-palette-card", active && "is-active")}
@@ -172,6 +178,7 @@ export function AppearancePreferences() {
               appearance.wallpaperId === "none" &&
               appearance.harkScene === scene.id;
             return (
+              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片，样式依赖 button 结构，原生 radio 换不了
               <button
                 aria-checked={active}
                 className={cn(
@@ -231,6 +238,7 @@ export function AppearancePreferences() {
             role="radiogroup"
           >
             {GLASS_STYLE_OPTIONS.map(({ value, label }) => (
+              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
               <button
                 aria-checked={appearance.glassStyle === value}
                 className="sg-segmented-item"
@@ -308,6 +316,7 @@ export function AppearancePreferences() {
         </div>
 
         {/* 本地图片拖拽 / 点击上传横幅 */}
+        {/* biome-ignore lint/a11y/useSemanticElements: 拖放区里还嵌着按钮，外层不能是 <button>（按钮不能嵌套） */}
         <div
           className={cn(
             "appearance-upload-dropzone",
@@ -359,16 +368,17 @@ export function AppearancePreferences() {
                   : "点击选择本地图片，或直接将壁纸拖拽到此处上传"}
             </div>
             <div className="appearance-upload-sub">
-              {"支持 PNG / JPG / WebP / GIF / AVIF，自动高清压缩并保存在当前设备"}
+              {"支持 PNG / JPG / WebP / GIF / AVIF（不超过 20 MB），自动高清压缩并保存在当前设备"}
             </div>
           </div>
-          <div
-            className="appearance-upload-actions"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="appearance-upload-actions">
             <Button
               disabled={uploading}
-              onClick={() => fileInputRef.current?.click()}
+              onClick={(e) => {
+                // 别冒泡到拖放区，否则会再打开一次文件选择
+                e.stopPropagation();
+                fileInputRef.current?.click();
+              }}
               size="sm"
               type="button"
               variant="secondary"
@@ -378,7 +388,8 @@ export function AppearancePreferences() {
             </Button>
             {hasCustomWallpaper ? (
               <Button
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   setWallpaperPreset("none");
                   setCustomWallpaperUrl("");
                   toast.success("已移除自定义壁纸");

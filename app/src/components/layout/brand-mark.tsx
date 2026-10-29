@@ -69,8 +69,8 @@ export function BrandAvatar({ size = 28 }: { size?: number }) {
   );
 }
 
-/** 顶栏里的品牌名，点一下就能改。 */
-export function BrandMark() {
+/** 顶栏里的品牌名，点一下就能改。`avatar={false}`：头像已经在旁边的圆形主页按钮里。 */
+export function BrandMark({ avatar = true }: { avatar?: boolean } = {}) {
   const { accent, rest } = useBrandName();
   const [open, setOpen] = useState(false);
   return (
@@ -86,7 +86,7 @@ export function BrandMark() {
             />
           }
         >
-          <BrandAvatar />
+          {avatar ? <BrandAvatar /> : null}
           <BrandWordmark accent={accent} rest={rest} />
         </TooltipTrigger>
         <TooltipContent>{"点击修改名称"}</TooltipContent>

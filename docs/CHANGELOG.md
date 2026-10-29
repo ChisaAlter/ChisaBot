@@ -1,6 +1,26 @@
 ## Unreleased
 
 - 新话题页支持选择 / 粘贴 / 拖入附件：先建一段不进列表的草稿对话（`POST /api/channels` `draft: true`），把文字和文件带过去再跳转；没发就离开（去新话题页时立即，去设置等别处留 10 分钟）时带条件删除（`?draft=1`，服务端确认仍是空草稿才删，否则 409，不写审计不发通知），字放回新话题页；本标签页回收过的草稿再打开 404 时静默跳回那个机器人的新话题页；服务端每小时清理超过 24 小时的空草稿（非 `local` 运行模式不删）。建草稿期间不能发送、建草稿和跳转期间再加的文件一起带过去、全被拒不建草稿；没有宽高的图片先占固定框。用户消息里的图片按已有尺寸稳定占位，多图走叠放组，点开看原图。没有表结构变化，未升级版本号。
+- 回归返修：没发就离开草稿对话去新话题页时，写了一半的字在新话题页输入框第一次渲染时就在（新话题页挂载时同步 `reclaimDraftText`，不再等草稿页卸载回收后才放回）；测试 `app/tests/draft-leave-new-topic.test.tsx`。
+
+## 0.1.110
+
+- 修复：断线重连后漏掉的消息不补——`useConversationSync` 隔 15 秒以上才问到变化戳时不再只记基线，序号变了就合并式接上；测试 `app/tests/reconnect-backfill.test.tsx`。
+
+- 修复：打开对话时历史读两遍——打开时的接入结束后不再做顺序核对（那边刚读过），本机一轮结束后的核对不变；测试 `app/tests/channel-open-single-read.test.tsx`。
+
+- Hark 改版第 2 步（顶栏外壳）：左上圆形主页按钮、右上搜索胶囊 + 头像，中间只留「聊天」一个视图；PC 窗口按钮、手机、深浅色都可用；搜索胶囊用 `.glass`（顶栏唯一模糊层），同屏模糊层桌面 5、手机 1。DESIGN.md §10.5 写明同名 Hark 令牌必须在 `html.dark` 给深色值。不升版本号。
+- `docs/DEVLOG.md` 记录 Hark 顶栏（第 2 步）的动机、改动和前后截图。
+
+- 性能模式和系统「减少透明度」下全局关掉毛玻璃：一条 `*, *::before, *::after { backdrop-filter: none }`（`app/src/perf-noblur.css`，不用 `!important`），漏网的代码块操作条、遮罩、外观预览一起关掉；原来模糊的面板换成不透明底色 `--glass-bg-opaque`。实测两种模式下桌面、手机可见模糊层都是 0，普通模式与 main 一致。新增 `app/tests/no-backdrop.test.ts` 防止新的模糊绕过；规则见 DESIGN.md §10.3.1。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.110`），PC / Android 外壳未变。
+
+## 0.1.109
+
+- 壁纸与外观收尾（审查第 6 项 + 性能报告第 7 项）：天空引擎不再请求 `ipapi.co`（不把用户 IP 发给第三方），GPS 失败时改用浏览器时区估计位置；壁纸上传限类型（PNG / JPG / WebP / GIF / AVIF）和大小（原图 ≤ 20 MB、压缩后 ≤ 约 6 MB），超限或保存失败时用现有 toast 明确提示，不再假装“已应用”；壁纸图片改存 IndexedDB，localStorage 只留占位标记，旧数据自动迁移并清掉；外观滑块拖动时 localStorage 写入防抖（停手约 200ms 或页面隐藏时写），预览仍实时；修掉 `appearance-preferences.tsx` 的 6 个 Biome a11y 错误；自定义壁纸 URL 写进 CSS 时转义 `\`、`"` 并去掉换行；刷新时选的是自定义壁纸、localStorage 里只有占位标记的话，先只铺主题纯色、不挂天空，IndexedDB 读回就直接显示壁纸，读取失败、没有记录或超过约 1.5 秒才退回天空，不再先闪一下天空。不改样式和外观。（#376）
+- 回复来源结构化（数据格式先行）：新增 `shared/reply-sources.ts`，来源 = 这一轮里成功的 `web_fetch`（网址、标题、站点、toolCallId），挂在这一轮最后一条有文字的助手消息上；不新增存储和事件，实时和历史都从同一批消息算出。部署开关 `CHISABOT_REPLY_SOURCES`（默认关，/api/capabilities 带 `replySources`）打开后，网页聊天的 Bot 不再在正文写「来源：」行。前端卡片另做；开关关着时行为不变，旧客户端不受影响。未升级版本号。（#391）
+- web_fetch 超时 / 连接中断时重试并降级到搜索摘要，报错不再被说成「用户已停止这一轮」；工具失败后模型没再说话时补一段回答，这一轮一定有回复（Hark A4）（#392）
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.109`），PC / Android 外壳未变。
 
 ## 0.1.108
 
@@ -14,6 +34,7 @@
 
 - 手机尺寸左栏抽屉（Hark 手机端）：一层全高面板，宽 `min(85vw, 320px)`、右侧圆角；顶部搜索 + 新建 + 关闭一行，账号在面板底部（分隔线 + 安全区）；遮罩只压暗、点它关闭；只动 transform 的 200ms 开关动画，减少动态效果时关闭；玻璃只剩面板一层，性能模式 / 减少透明度下不透明。
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.107`），PC / Android 外壳未变。
+
 
 ## 0.1.106
 
@@ -32,6 +53,7 @@
 
 - 修 test:app 共享进程里的测试干扰（use-control 的 wake 监听、schedule-runs-query 的 mock.module 泄漏），修 gateway-account-control / startup-resilience 及 5 个 server 测试；server 补 `@copilotkit/core` 开发依赖；CI 下 chisabot-node 打包失败即构建失败；schedule-fired 的 `Link` 替身不再漏给其他文件（有路由时用真 `Link`），移出隔离名单；avatar-picker-shape 拆 DOM 前先 `settleReactWork`，`test:app` 退出码恢复 0（#368）。
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变。
+
 
 ## 0.1.104
 

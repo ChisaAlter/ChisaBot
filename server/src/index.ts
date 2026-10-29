@@ -1515,7 +1515,7 @@ const loadToolsForActor =
     })),
     ...(imDevices ? await deviceToolsFor(actorId, botId, initiator) : []),
     // 生成式界面（json-render，取代 A2UI）：与 /api/capabilities 的 generativeUi 同一个开关。
-    ...(config.generativeUi && !imConnection ? renderUiTools() : []),
+    ...(config.generativeUi && !imConnection ? renderUiTools({ replySources: config.replySources === true }) : []),
     // 内置联网（web_search / web_fetch）：先搜、再读，浏览器留给需要点击 / 登录 / 给人看的时候。
     ...webTools(),
     // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。

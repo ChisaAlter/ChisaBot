@@ -53,8 +53,11 @@ function preloadAccountDialogs() {
 export function AccountMenu({
   compact = false,
   anchorRef,
+  placement = "rail",
 }: {
   compact?: boolean;
+  /** 「topbar」：顶栏右上角的圆形头像（Hark 风格），菜单向下弹出、右边对齐。 */
+  placement?: "rail" | "topbar";
   /** 展开时菜单贴着这张账号卡：左右边与卡片齐平、同宽（DESIGN.md §34.2）。 */
   anchorRef?: RefObject<HTMLElement | null>;
 }) {
@@ -113,12 +116,20 @@ export function AccountMenu({
   const sub = version;
   const icon = "size-[18px] shrink-0";
 
-  const trigger = compact ? (
+  const topbar = placement === "topbar";
+  const trigger = topbar ? (
+    <button aria-label={"账号与设置"} className="hk-avatar-btn glass is-flat" type="button" />
+  ) : compact ? (
     <button aria-label={"账号与设置"} className="acct-mini" type="button" />
   ) : (
     <button aria-label={"账号与设置"} className="acct-row" type="button" />
   );
-  const triggerBody = compact ? (
+  const triggerBody = topbar ? (
+    <>
+      <GlassAvatar ring={false} size={32} />
+      {pending > 0 ? <span aria-hidden className="glass-avatar-dot" /> : null}
+    </>
+  ) : compact ? (
     <>
       <GlassAvatar ring={false} size={36} />
       {pending > 0 ? <span aria-hidden className="glass-avatar-dot" /> : null}
@@ -146,10 +157,10 @@ export function AccountMenu({
       }}
       open={open}
     >
-      {compact ? (
+      {compact || topbar ? (
         <Tooltip>
           <TooltipTrigger render={<DropdownMenuTrigger render={trigger} />}>{triggerBody}</TooltipTrigger>
-          <TooltipContent side="right" sideOffset={10}>
+          <TooltipContent side={topbar ? "bottom" : "right"} sideOffset={topbar ? 8 : 10}>
             {name || "账号"}
           </TooltipContent>
         </Tooltip>
@@ -157,11 +168,11 @@ export function AccountMenu({
         <DropdownMenuTrigger render={trigger}>{triggerBody}</DropdownMenuTrigger>
       )}
       <DropdownMenuContent
-        align={compact ? "end" : "start"}
-        anchor={compact ? undefined : anchorRef}
-        className={cn("glass-pop acct-pop", compact ? "w-[264px]" : "is-flush")}
-        side={compact ? "right" : "top"}
-        sideOffset={compact ? 12 : 8}
+        align={compact || topbar ? "end" : "start"}
+        anchor={compact || topbar ? undefined : anchorRef}
+        className={cn("glass-pop acct-pop", compact || topbar ? "w-[264px]" : "is-flush")}
+        side={topbar ? "bottom" : compact ? "right" : "top"}
+        sideOffset={topbar ? 8 : compact ? 12 : 8}
       >
         <DropdownMenuGroup>
           <DropdownMenuLabel className="acct-pop-head">

@@ -25,6 +25,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { AppSidebar } from "@/components/app-sidebar/app-sidebar";
 import { ChannelPagination } from "@/components/app-sidebar/channel-pagination";
+import { SidebarSearchField } from "@/components/layout/sidebar-search-field";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { agentKeys } from "@/lib/agents/queries";
@@ -256,6 +257,8 @@ function renderSidebar() {
     component: () => (
       <ThemeProvider>
         <SidebarProvider>
+          {/* Hark 顶栏（第 2 步）：电脑上搜索框在顶栏右上角，结果仍画在左栏卡片里，两边共用一份搜索状态。 */}
+          <SidebarSearchField variant="topbar" />
           <AppSidebar />
         </SidebarProvider>
       </ThemeProvider>

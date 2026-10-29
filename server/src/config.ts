@@ -286,6 +286,12 @@ export type DeploymentConfig = {
    */
   generativeUi: boolean;
   /**
+   * 结构化回复来源（CHISABOT_REPLY_SOURCES，默认关）：打开后网页聊天里的 Bot 不再在正文写「来源：」行，
+   * 由界面按 shared/reply-sources.ts 从这一轮的 web_fetch 里读出来源画成卡片。前端画好卡片之前别打开，
+   * 否则来源就看不到了。/api/capabilities 的 replySources 与它一致。
+   */
+  replySources?: boolean;
+  /**
    * Whether the signed-in app shows the banner offering help self-hosting ChisaBot.
    *
    * On by default, because a fresh clone is somebody evaluating the template. A fork that runs
@@ -1277,6 +1283,7 @@ export function loadConfig(
       singleUserAllowed(environment, configuredAuthProviders(auth).length > 0),
     accessibility: accessibilityEnabled(environment),
     generativeUi: generativeUiEnabled(environment),
+    replySources: ["1", "true"].includes((optional(environment, "CHISABOT_REPLY_SOURCES") ?? "").toLowerCase()),
     selfHostBanner: selfHostBannerEnabled(environment),
     accountsUi: !["0", "false"].includes((optional(environment, "CHISABOT_ACCOUNTS_UI") ?? "").toLowerCase()),
     extras: parseChisabotExtras(optional(environment, "CHISABOT_EXTRAS")),
