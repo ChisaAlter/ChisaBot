@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { act, cleanup, render } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { act, cleanup, render } from "@testing-library/react";
 import { memo } from "react";
 import { ChannelPage } from "@/components/channels/channel-page";
 import { KeepAliveStage } from "@/components/layout/keep-alive";

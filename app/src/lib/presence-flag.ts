@@ -61,7 +61,11 @@ export function presenceRef(
  * 组件挂着时开着（给没法直接挂 ref 的外壳用，比如 `GlassShell` 的 `SidebarShell`）。
  * `on` 为 false 时不开（按组件自己的状态拨，比如侧栏收起时才开 `has-collapsed-sidebar`）。
  */
-export function usePresenceFlag(name: string, target: Target = "body", on = true): void {
+export function usePresenceFlag(
+  name: string,
+  target: Target = "body",
+  on = true,
+): void {
   useLayoutEffect(() => {
     if (!on) return;
     add(name, target);

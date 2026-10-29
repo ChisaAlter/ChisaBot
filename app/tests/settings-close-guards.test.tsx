@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { cleanup, render } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { cleanup, render } from "@testing-library/react";
 import { Sidebar, SidebarProvider } from "@/components/ui/sidebar";
 import { settleReactWork } from "./settle-react-work";
 
