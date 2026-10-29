@@ -188,15 +188,21 @@ function Sidebar({
   className,
   children,
   dir,
+  parked = false,
   ...props
 }: React.ComponentProps<"div"> & {
   side?: "left" | "right";
   variant?: "sidebar" | "floating" | "inset";
   collapsible?: "offcanvas" | "icon" | "none";
+  /**
+   * 挂着但这会儿不是当前的左栏（聊天左栏在设置 / 管理里留着不卸载，`LeftRail`）：不接返回键、不拨
+   * `has-collapsed-sidebar`、手机抽屉不跟着 `openMobile` 打开——这些都归当前那个左栏。外面那层负责把它藏起来。
+   */
+  parked?: boolean;
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
   // 返回键 / 浏览器返回先关抽屉（CB-098，lib/overlay-back.ts）。
-  useBackDismiss(isMobile && openMobile && collapsible !== "none", () =>
+  useBackDismiss(!parked && isMobile && openMobile && collapsible !== "none", () =>
     setOpenMobile(false),
   );
   // 桌面侧栏收起时拨 `<body data-has-collapsed-sidebar>`（§41 ③）：以前用
@@ -204,7 +210,7 @@ function Sidebar({
   usePresenceFlag(
     "has-collapsed-sidebar",
     "body",
-    collapsible !== "none" && !isMobile && state === "collapsed",
+    !parked && collapsible !== "none" && !isMobile && state === "collapsed",
   );
 
   if (collapsible === "none") {
@@ -225,8 +231,9 @@ function Sidebar({
   if (isMobile) {
     return (
       <Sheet
-        open={openMobile}
+        open={openMobile && !parked}
         onOpenChange={(next, details) => {
+          if (parked) return;
           // CB-106 r2：输入法组字时的 Esc 是取消候选词，不关抽屉（360 宽左栏是抽屉）。
           if (!next && details?.reason === "escape-key" && isImeEscape(details.event)) {
             details.cancel?.();

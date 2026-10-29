@@ -9,7 +9,7 @@ import { settleReactWork } from "./settle-react-work";
 /**
  * 关设置 / 换页不再做的多余事（2026-10-29 设置面板卡顿 PR3，DESIGN.md §41 ③）：
  * - 侧栏收起时由侧栏自己拨 `<body data-has-collapsed-sidebar>`，不用 `.glass-shell:has([data-slot=sidebar][data-state=collapsed])`；
- * - 侧栏里带 `layout` 的 motion 行都带 `layoutDependency`，普通重渲染不量位置。
+ * - 侧栏里开着 `layout` 的 motion 行都带 `layoutDependency`，普通重渲染不量位置（会话行的 layout 关着，不用）。
  */
 
 beforeAll(() =>
@@ -79,9 +79,9 @@ test("侧栏带 layout 的 motion 行都给了 layoutDependency", () => {
   );
   const sidebar = src("components/app-sidebar/app-sidebar.tsx");
   expect(sidebar).toContain("<PresenceItem key={bot.id} layoutKey={index}>");
-  // 会话行（ChannelRow）：同样只在位置变了时量。
-  expect(sidebar).toMatch(
-    /layout=\{animateOrder && !shouldReduceMotion \? "position" : false\}\s*layoutDependency=\{orderKey\}/,
-  );
-  expect(sidebar).toContain("orderKey={index}");
+  // 会话行（ChannelRow）：唯一的调用点传 animateOrder={false}，motion 的 layout 是关着的，不量位置，
+  // 也就不需要 layoutDependency（#403 审查：之前加的 orderKey 实际不起作用，删掉了）。
+  expect(sidebar).toContain("animateOrder={false}");
+  expect(sidebar).not.toContain("animateOrder={true}");
+  expect(sidebar).not.toContain("layoutDependency={orderKey}");
 });

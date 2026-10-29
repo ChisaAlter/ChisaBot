@@ -53,7 +53,16 @@ export function KeepAliveStage<T>({
   const visible = kept !== null && shown;
 
   // 不让读的组件重画的那份「看不看得见」（`useKeptVisibility`）：同一个对象，提交后改值、通知订阅者。
-  const [visibility] = useState(() => createKeptVisibility(visible));
+  // 每换一页（`kept` 换了，包括藏够时间卸载后再打开）就换一个、按这次渲染的 `visible` 起值：新挂上的聊天
+  // 第一次渲染就读到对的值。共用一个的话，藏着时卸载、再打开别的聊天，新页面先读到上一页留下的「藏着」，
+  // 提交后才变成「看得见」，`useThreadActivity` 把这当成「刚回来」多问一次（#403 审查 c）。
+  const [store, setStore] = useState(() => ({ for: kept, visibility: createKeptVisibility(visible) }));
+  let current = store;
+  if (store.for !== kept) {
+    current = { for: kept, visibility: createKeptVisibility(visible) };
+    setStore(current);
+  }
+  const visibility = current.visibility;
   useEffect(() => visibility.set(visible), [visibility, visible]);
 
   const [epoch, setEpoch] = useState(0);

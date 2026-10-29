@@ -199,16 +199,10 @@ export function isUnread(
 function ChannelRow({
   channel,
   animateOrder,
-  orderKey,
   emphasis,
 }: {
   channel: ChannelSummary;
   animateOrder: boolean;
-  /**
-   * 这一行在列表里的位置（下标）。补位动画只在它变了时量位置（motion 的 `layoutDependency`）：不给的话
-   * 开着 `layout` 时每次重渲染（换页、关设置）都在提交前后各读一次布局（§41 ③，2026-10-29 设置面板卡顿）。
-   */
-  orderKey: number;
   emphasis: MessageListEmphasis;
 }) {
   const shouldReduceMotion = useReducedMotion();
@@ -229,7 +223,6 @@ function ChannelRow({
       }}
       exit={{ opacity: 0 }}
       layout={animateOrder && !shouldReduceMotion ? "position" : false}
-      layoutDependency={orderKey}
       transition={{ duration: ENTRANCE_SECONDS, ease: EASE_OUT }}
     >
       <Channel
@@ -861,7 +854,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       </div>
                     ) : null}
                     <AnimatePresence initial={false}>
-                      {visibleChannels.map((channel, index) => {
+                      {visibleChannels.map((channel) => {
                         const hit = contentHits.find(
                           (h) => h.channelId === channel.id,
                         );
@@ -897,7 +890,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             <ChannelRow
                               animateOrder={false}
                               channel={channel}
-                              orderKey={index}
                               emphasis={emphasis}
                             />
                           </div>

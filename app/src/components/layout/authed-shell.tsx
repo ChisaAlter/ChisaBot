@@ -1,7 +1,9 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
+import { memo } from "react";
 import { KeepAliveStage } from "@/components/layout/keep-alive";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
+import type { ShellScope } from "@/components/layout/glass-topbar";
 import { LeftRail } from "@/components/layout/left-rail";
 import { SelfHostBanner } from "@/components/layout/self-host-banner";
 import { PanelRail } from "@/components/panels/panel-rail";
@@ -29,14 +31,7 @@ export function AuthedShell() {
 function ShellFrame({ pathname }: { pathname: string }) {
   useChannelEvents();
   const scope = scopeOfPath(pathname);
-  const sidebar =
-    scope === "settings" ? (
-      <SettingsSidebar className="glass-sidebar-container" />
-    ) : scope === "admin" ? (
-      <AdminSidebar className="glass-sidebar-container" />
-    ) : (
-      <LeftRail className="glass-sidebar-container" />
-    );
+  const sidebar = <ShellSidebar scope={scope} />;
   return (
     <GlassShell
       banner={scope === "app" ? <SelfHostBanner /> : undefined}
@@ -50,6 +45,24 @@ function ShellFrame({ pathname }: { pathname: string }) {
     </GlassShell>
   );
 }
+
+/**
+ * 左栏：聊天左栏（`LeftRail`）一直挂着，在设置 / 管理里只是藏起来（`parked`），旁边换上设置 / 管理的左栏（#403）。
+ * 以前按 scope 三选一，关设置 = 聊天左栏重新挂上、重画整份名单、重新拉列表。两个孩子的位置固定，换 scope 不会让
+ * 聊天左栏换位置重挂；`memo`：设置里切分类（只有 pathname 变）时整块不重画。
+ */
+export const ShellSidebar = memo(function ShellSidebar({ scope }: { scope: ShellScope }) {
+  return (
+    <>
+      <LeftRail className="glass-sidebar-container" parked={scope !== "app"} />
+      {scope === "settings" ? (
+        <SettingsSidebar className="glass-sidebar-container" />
+      ) : scope === "admin" ? (
+        <AdminSidebar className="glass-sidebar-container" />
+      ) : null}
+    </>
+  );
+});
 
 type ChatAddress = { channelId: string; settings?: boolean; watch?: boolean };
 
