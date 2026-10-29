@@ -17,6 +17,7 @@ import { MessageFind } from "@/components/channels/message-find";
 import { DetailPanel } from "@/components/layout/detail-panel";
 import { Button } from "@/components/ui/button";
 import { ErrorCard } from "@/components/ui/skyglass";
+import { holdDraftChannel } from "@/lib/channels/draft-channel";
 import { normalizeMessageSearchParam } from "@/lib/channels/focus-message";
 import { markChannelReadMutationOptions } from "@/lib/channels/mutations";
 import { useOpenThread } from "@/lib/channels/open-thread";
@@ -91,6 +92,9 @@ export function ChannelPage({
     if (id && threadUi(channelId)?.agent !== id)
       setThreadUi(channelId, { agent: id });
   }, [channelId, channel.data]);
+
+  // 新话题页上加附件时建的草稿对话（A1）：没发就离开（这一页卸载）时删掉，见 `draft-channel.ts`。
+  useEffect(() => holdDraftChannel(channelId), [channelId]);
 
   // 藏着时，全局的组件授权轮询不再为这个机器人跑（DESIGN.md §98.3）。
   useMarkBotHidden(agentId, !visible);

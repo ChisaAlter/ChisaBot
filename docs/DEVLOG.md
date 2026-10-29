@@ -1,5 +1,49 @@
 # DEVLOG
 
+## Unreleased — 新话题页带附件（A1）+ 用户消息图片稳定显示
+
+### 动机
+
+在新话题页上给机器人发图片时，图片发不出去或者显示不出来，用户消息里只剩文字。要做到：新话题和已有对话里，发送中、发送后、刷新后都能看到图片；多张图正常成组；点开能看大图。
+
+### 根因
+
+1. **新话题页不支持附件。** `/channel/new` 还没有对话，附件没有地方上传（上传接口是 `/api/channels/:id/attachments`），所以这个页面的输入框根本没开附件：没有「附加文件」，粘贴 / 拖入的文件被丢掉，只有文字发出去。
+2. **测试脚本选中了隐藏的输入框。** `KeepAliveStage` 会把上一段对话页留着、只是藏起来，所以页面上同时有两个输入框。测试脚本（cb-run.js）按选择器取第一个，拿到的是藏着的那一个，文件塞进了看不见的对话里，看起来就像「图片没发出去」。脚本由小爱自己修，本 PR 不改。
+
+已有对话里，接口返回的图片部分（`readThreadMessages`）和渲染（单图、ImagePile）本身是对的，本 PR 补测试锁住，不改气泡外观。
+
+### 改动
+
+- **服务端**（`server/src/channels/routes.ts`）：`POST /api/channels` 接受可选的 `draft: true`，建的对话用 `DRAFT_AGENT_CHANNEL_DESCRIPTION` 做 description 标记。`isHiddenDraft`（标记 + `last_message_at is null`）在对话列表和直达对话查询里过滤掉：第一条消息记进来之前，它不出现在任何人、任何设备的列表里；记进来之后就和普通对话一样。没有表结构变化，不需要迁移。
+- **客户端**
+  - `app/src/lib/channels/draft-channel.ts`（新）：记着这个标签页刚建、还没发的草稿对话（sessionStorage，刷新后仍记得）。`holdDraftChannel` 在对话页卸载时（StrictMode 的二次挂载不算）还没发过就 `releaseDraftChannel`：立即 `DELETE`，写了一半的字放回新话题页（`new:<agent>`），文件丢掉。发出第一条后 `settleDraftChannel`，以后就是普通对话。
+  - `composer.tsx`：新增 `onAttachWithoutChannel`。没有对话时，选择 / 粘贴 / 拖入的文件不上传，而是连同当前文字交给它。
+  - `channel/new.tsx` + `start.ts`（`startDraft`）+ `mutations.ts`（`createDraftChannelMutationOptions`）：建草稿对话，`moveTextDraft` 把字挪过去，`stashDraftFiles` 把文件挪过去，`replace` 跳到 `/channel/<id>`（返回键不会回到一个空的新话题页）。不刷新对话列表（反正它不在列表里）。
+  - `channel-chat.tsx`：刚建的草稿对话（`freshDraft`）跳过「恢复中」骨架和首次读历史（它还没有消息），直接显示开场介绍，所以跳转不闪；发送时 settle。`channel-page.tsx` 挂 `holdDraftChannel`。
+- 用户消息图片：沿用已有的 width/height 预留占位（单张 `.rp-image-single`）和 ImagePile 叠放组；点开是原图。本 PR 不做缩放（B1 另开 PR）。
+
+### 测试
+
+- `server/tests/channel-routes.test.ts`：`draft` 参数解析与透传；草稿对话在有消息之前不进列表、有消息后出现；不作为直达（direct）投递的对话（真实 Postgres）。
+- `app/tests/draft-channel.test.ts`：离开即删、字放回、文件清掉；发过不删；StrictMode 不算离开；普通对话不删；删除失败不抛；刷新后仍记得。
+- `app/tests/composer-attach-without-channel.test.tsx`：没有对话时选择 / 拖入 / 粘贴都交出文件和文字。
+- `app/tests/channel-new-attach.test.tsx`：新话题页选文件 → 建草稿对话 → 替换跳转，文字和附件都在、开始上传。
+- `app/tests/user-image-thumbs.test.tsx`：接口返回的图片部分带 width/height；单图占位尺寸；多图叠放顺序；5 张显示 4 张 + 「+1」；点开大图是原图。
+- `app/tests/open-at-latest.test.ts`：跟着 `freshDraft` 条件更新正则。
+
+### 截图
+
+`docs/images/user-image-thumbs/`，桌面 1024×640、手机 473×1024，各 16 张：新话题（输入、上传中、已附加、发送中、发送后、刷新后、多图、大图）、已有对话（历史单图、上传中、发送中、发送后、刷新后、多图、大图）、没发就离开回到新话题页（字放回来了）。用的是组件级 harness（真实的 ChannelNewRoute / ConversationView / Composer / ChatTranscript + mock 接口），不是整个应用外壳。
+
+### 局限
+
+- 从草稿对话去非对话页面（包括回到新话题页）时，`KeepAliveStage` 只是把它藏起来，要换到别的对话或者留着的页面 10 分钟超时卸载时才删；这段时间它仍然不在任何列表里，返回键回去时文字和附件都还在。
+- 关掉标签页再也不回来：草稿对话留在服务器上不删，但没有消息，永远不进列表，用户看不到。
+- 刷新草稿对话页后，还没发的文件不保留（文件只在内存里），文字保留。
+- 第一条消息的活动记录如果写入失败，这段对话要等回复记进来才出现在列表里。
+- 多张图是现有的叠放组，不是网格；草稿对话页不显示「试试这样问」建议。
+
 ## Unreleased — 对话记录增量同步 + 卡片共享时钟（性能清单第 5 项）
 
 ### 动机

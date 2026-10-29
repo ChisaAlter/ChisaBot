@@ -1,7 +1,7 @@
 import type { Message } from "@ag-ui/core";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { restampOverlayMarker } from "@/lib/overlay-back";
 import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
@@ -66,7 +66,7 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
   const modelQueryClient = useQueryClient();
   const navigate = useNavigate();
   const channels = useInfiniteQuery(channelListQueryOptions());
-  const { startChosen, pending } = useStartChannel();
+  const { startChosen, startDraft, pending } = useStartChannel();
   const { data: profiles, isError: rosterError } = useQuery(
     agentListQueryOptions(),
   );
@@ -166,6 +166,28 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
     }
   };
 
+  /**
+   * 选文件、粘贴、拖入（A1）：这里还没有对话可上传，先建一段草稿对话，把字和文件交过去再跳过去。
+   * 同一时间只建一段：建的那一下里再来的文件不另建。
+   */
+  const attaching = useRef(false);
+  const attach = async (files: File[]) => {
+    const recipient = recipients[0];
+    if (!recipient || attaching.current) return;
+    attaching.current = true;
+    setError(null);
+    try {
+      await startDraft(recipient.id, files, {
+        fromKey: `new:${agent}`,
+        watch: isWatching,
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "无法开始会话。");
+    } finally {
+      attaching.current = false;
+    }
+  };
+
   if ((profiles === undefined && !rosterError) || channels.isPending || existing) return null;
 
   return (
@@ -213,6 +235,7 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
         autoFocus
         // 还没开对话前写的字也按机器人记着（DESIGN.md §88）。
         draftKey={`new:${agent}`}
+        onAttachWithoutChannel={(files) => void attach(files)}
         // Commands must be loaded before the first channel message is sent.
         commands={skillCommands}
         disabled={

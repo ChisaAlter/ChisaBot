@@ -69,8 +69,12 @@ function fakeStore(
 ): ChannelStore & { calls: StoreCall[] } {
   const calls: StoreCall[] = [];
   const base: ChannelStore = {
-    async create(receivedActor, agentIds) {
-      calls.push(["create", receivedActor, agentIds]);
+    async create(receivedActor, agentIds, options) {
+      calls.push(
+        options === undefined
+          ? ["create", receivedActor, agentIds]
+          : ["create", receivedActor, agentIds, options],
+      );
       return channel({ agentIds });
     },
     async get(receivedActor, id) {
@@ -155,6 +159,19 @@ describe("channel input parser", () => {
         active: false,
       }),
     ).toEqual({ ok: true, value: { agentIds: ["agent-1", "agent-2"] } });
+  });
+
+  test("carries a draft flag only when it is true", () => {
+    expect(parseChannelInput({ agentIds: ["agent-1"], draft: true })).toEqual({
+      ok: true,
+      value: { agentIds: ["agent-1"], draft: true },
+    });
+    expect(
+      parseChannelInput({ agentIds: ["agent-1"], draft: false }),
+    ).toEqual({ ok: true, value: { agentIds: ["agent-1"] } });
+    expect(parseChannelInput({ agentIds: ["agent-1"], draft: "yes" })).toEqual(
+      { ok: false, error: "Draft must be a boolean." },
+    );
   });
 });
 
@@ -249,6 +266,21 @@ describe("channel routes", () => {
     expect(store.calls).toEqual([
       ["create", actor, ["agent-1", "agent-2"]],
       ["get", actor, "channel-1"],
+    ]);
+  });
+
+  test("passes a draft create to the store as a draft", async () => {
+    const store = fakeStore();
+
+    const created = await appFor(store).request("http://chisabot.test/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentIds: ["agent-1"], draft: true }),
+    });
+
+    expect(created.status).toBe(201);
+    expect(store.calls).toEqual([
+      ["create", actor, ["agent-1"], { draft: true }],
     ]);
   });
 
@@ -1368,6 +1400,57 @@ describe("channel read markers", () => {
       );
     // The membership row outlives the channel, but its marker was never stamped.
     expect(row?.lastReadAt).toBeNull();
+  });
+});
+
+/*
+ * 新话题页上先加附件时提前建的对话（A1）：还没说过话之前，谁的列表里都没有它，`direct` 也不挑它；
+ * 第一条消息记进来之后，它就是一段普通对话。
+ */
+describe("draft channels", () => {
+  test("stay out of the list until something is said in them", async () => {
+    const actor = await createPersistentUser();
+    const agentId = await createPersistentAgent({
+      name: "Draft agent",
+      owner: actor,
+    });
+    const draft = await persistentStore.create(actor, [agentId], {
+      draft: true,
+    });
+    createdChannelIds.push(draft.id);
+    const plain = await persistentStore.create(actor, [agentId]);
+    createdChannelIds.push(plain.id);
+
+    const ids = async () =>
+      (await persistentStore.list(actor)).channels.map((row) => row.id);
+    expect(await ids()).toContain(plain.id);
+    expect(await ids()).not.toContain(draft.id);
+    // Its owner can still open it: the page they were sent to has to load.
+    expect((await persistentStore.get(actor, draft.id))?.id).toBe(draft.id);
+
+    await persistentStore.recordActivity(actor, draft.id, {
+      agentId: null,
+      at: new Date(),
+      text: "第一句话",
+    });
+    expect(await ids()).toContain(draft.id);
+  });
+
+  test("are not the conversation `direct` delivers into", async () => {
+    const actor = await createPersistentUser();
+    const agentId = await createPersistentAgent({
+      name: "Direct draft agent",
+      owner: actor,
+    });
+    const draft = await persistentStore.create(actor, [agentId], {
+      draft: true,
+    });
+    createdChannelIds.push(draft.id);
+
+    const direct = await persistentStore.direct(actor, agentId);
+    createdChannelIds.push(direct.id);
+
+    expect(direct.id).not.toBe(draft.id);
   });
 });
 

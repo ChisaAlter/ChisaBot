@@ -31,6 +31,7 @@ export function ConversationView({
   commands,
   channelId,
   draftKey,
+  onAttachWithoutChannel,
   scrollKey,
   modelControl,
   leadingControl,
@@ -85,6 +86,8 @@ export function ConversationView({
   channelId?: string;
   /** 草稿记在哪（DESIGN.md §88），交给 Composer。 */
   draftKey?: string;
+  /** 新话题页（A1）：还没有对话时收到的文件交给调用方（它建好对话再跳过去）。见 Composer 同名属性。 */
+  onAttachWithoutChannel?: (files: File[]) => void;
   /** 滚动位置记在哪（DESIGN.md §88），交给 ChatTranscript。 */
   scrollKey?: string;
   modelControl?: ReactNode;
@@ -527,6 +530,7 @@ export function ConversationView({
           autoFocus={autoFocus}
           {...(channelId ? { channelId } : {})}
           {...(draftKey ? { draftKey } : {})}
+          {...(onAttachWithoutChannel ? { onAttachWithoutChannel } : {})}
           {...(commands ? { commands } : {})}
           className="w-full mt-auto"
           compact

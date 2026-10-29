@@ -171,7 +171,16 @@ const ROSTER_ORDER = [
 type ChannelTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 export type ChannelStore = {
-  create(actor: AgentActor, agentIds: string[]): Promise<AgentChannel>;
+  /**
+   * `draft`：新话题页上先加附件时提前建的对话（还没有任何消息）。它不出现在任何人的对话列表里，也不被
+   * `direct` 当成「和这个机器人的那段对话」；第一条消息记进来（`recordActivity` 写了 `lastMessageAt`）就和普通
+   * 对话一样了。见 `isHiddenDraft`。
+   */
+  create(
+    actor: AgentActor,
+    agentIds: string[],
+    options?: { draft?: boolean },
+  ): Promise<AgentChannel>;
   /**
    * The one conversation this person has with this Bot alone, made if they have not had one yet.
    *
@@ -247,6 +256,15 @@ export type ChannelStore = {
 };
 
 const PRIVATE_AGENT_CHANNEL_DESCRIPTION = "Private agent channel.";
+/**
+ * 草稿对话的标记（不加列、不迁移）：`description` 这一列建好后没有别的地方写它，也不给用户看，
+ * 只拿它区分「提前建好、还没说过话」的对话。
+ */
+export const DRAFT_AGENT_CHANNEL_DESCRIPTION = "Private agent channel (draft).";
+/**
+ * 还没说过话的草稿对话：列表里不出现，`direct` 不挑它。说过一句（`lastMessageAt` 有值）就不再藏。
+ */
+const isHiddenDraft = sql`(${channels.description} = ${DRAFT_AGENT_CHANNEL_DESCRIPTION} and ${channels.lastMessageAt} is null)`;
 const MAX_CHANNEL_NAME_CODE_POINTS = 120;
 const MAX_ACTIVITY_GRAPHEMES = 200;
 
@@ -281,6 +299,7 @@ export function createChannelStore(
     actor: AgentActor,
     agentIds: string[],
     existingThreadId?: string,
+    draft = false,
   ): Promise<AgentChannel> => {
     // Validated on this transaction, not through `profileStore.get`: the read has to share
     // the connection this transaction already holds, and has to hold the profile so an agent
@@ -311,7 +330,9 @@ export function createChannelStore(
     await transaction.insert(channels).values({
       id,
       name,
-      description: PRIVATE_AGENT_CHANNEL_DESCRIPTION,
+      description: draft
+        ? DRAFT_AGENT_CHANNEL_DESCRIPTION
+        : PRIVATE_AGENT_CHANNEL_DESCRIPTION,
     });
     await transaction.insert(channelMemberships).values({
       channelId: id,
@@ -330,9 +351,16 @@ export function createChannelStore(
   };
 
   const store: ChannelStore = {
-    create(actor, agentIds) {
+    create(actor, agentIds, options) {
       return database.transaction(
-        async (transaction) => makeChannel(transaction, actor, agentIds),
+        async (transaction) =>
+          makeChannel(
+            transaction,
+            actor,
+            agentIds,
+            undefined,
+            options?.draft === true,
+          ),
         { isolationLevel: "read committed" },
       );
     },
@@ -382,6 +410,7 @@ export function createChannelStore(
             .where(
               and(
                 isNull(channels.deletedAt),
+                sql`not ${isHiddenDraft}`,
                 sql`(select count(*) from ${channelAgents} where ${channelAgents.channelId} = ${channels.id}) = 1`,
               ),
             )
@@ -524,6 +553,8 @@ export function createChannelStore(
         .where(
           and(
             isNull(channels.deletedAt),
+            // 提前建好、还没说过话的草稿对话不进列表（对所有设备都一样，见 `DRAFT_AGENT_CHANNEL_DESCRIPTION`）。
+            sql`not ${isHiddenDraft}`,
             // One row comparison over the whole sort key, which only reads as "everything after the
             // cursor" because every part of that key descends. See ROSTER_ORDER.
             cursor
@@ -967,10 +998,10 @@ export class ChannelPackageOwnedError extends Error {
 }
 
 type ChannelInputParseResult =
-  | { ok: true; value: { agentIds: string[] } }
+  | { ok: true; value: { agentIds: string[]; draft?: true } }
   | { ok: false; error: string };
 
-type ChannelInputObject = { agentIds?: unknown };
+type ChannelInputObject = { agentIds?: unknown; draft?: unknown };
 
 export function parseChannelInput(input: unknown): ChannelInputParseResult {
   if (!isChannelInputObject(input)) {
@@ -993,7 +1024,17 @@ export function parseChannelInput(input: unknown): ChannelInputParseResult {
     return { ok: false, error: "Agent IDs must be unique." };
   }
 
-  return { ok: true, value: { agentIds: agentIds.sort() } };
+  if (input.draft !== undefined && typeof input.draft !== "boolean") {
+    return { ok: false, error: "Draft must be a boolean." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      agentIds: agentIds.sort(),
+      ...(input.draft === true ? { draft: true as const } : {}),
+    },
+  };
 }
 
 function isChannelInputObject(input: unknown): input is ChannelInputObject {
@@ -1148,10 +1189,11 @@ export function createChannelRoutes(
     if (!parsed.ok) return context.json({ error: parsed.error }, 400);
 
     try {
-      const channel = await store.create(
-        context.var.actor,
-        parsed.value.agentIds,
-      );
+      const channel = parsed.value.draft
+        ? await store.create(context.var.actor, parsed.value.agentIds, {
+            draft: true,
+          })
+        : await store.create(context.var.actor, parsed.value.agentIds);
       return context.json({ channel: channelDto(channel) }, 201);
     } catch (error) {
       return mapStoreError(context, error);

@@ -15,6 +15,7 @@ import { attachmentModality } from "@/components/channels/chat-messages";
 import { isPersonSentMessage } from "@/components/channels/chat-transcript";
 import { toAgentOptions } from "@/components/channels/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
+import { ChannelAvatar } from "@/components/channels/avatar";
 import {
   seedMessage,
   takeFirstMessage,
@@ -32,6 +33,10 @@ import {
 } from "@/lib/approvals";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import {
+  isDraftChannel,
+  settleDraftChannel,
+} from "@/lib/channels/draft-channel";
 import {
   recordChannelActivityMutationOptions,
   setChannelBusy,
@@ -406,6 +411,9 @@ export function ChannelChat({
   modelMissingRef.current = modelMissing;
   // Mentions are scoped to the channel's permitted agents.
   const { data: agentProfiles } = useQuery(agentListQueryOptions());
+  const draftProfile = agentProfiles?.find(
+    (profile) => profile.id === channel.agentIds[0],
+  );
   const channelAgentId = `channel:${channel.id}`;
   const { agent, isReady } = useAgent({
     agentId: channelAgentId,
@@ -434,14 +442,19 @@ export function ChannelChat({
    * （那会让滚动容器把每一段当成「刚发的一轮」对齐到顶上，停在半截历史）。先画这台设备上次看到的样子
    * （`transcript-cache`），没有就等存储读到——存储读和接入同时开始，谁也不等谁——再没有就是骨架。
    */
+  /**
+   * 新话题页上加附件时刚建的草稿对话（A1，`draft-channel.ts`）：它是空的，不用等历史——和带着第一条消息
+   * 过来的一样，第一帧就是能写的空对话（不画骨架，跳过来时不闪）。
+   */
+  const [freshDraft] = useState(() => isDraftChannel(channel.id));
   const [cached] = useState(() =>
-    seed === null ? cachedTranscript(channel.threadId) : null,
+    seed === null && !freshDraft ? cachedTranscript(channel.threadId) : null,
   );
   const [early, setEarly] = useState<readonly Message[] | null>(null);
   const earlyRead = useRef<Promise<StoredThread> | null | undefined>(undefined);
   if (earlyRead.current === undefined) {
     earlyRead.current =
-      seed === null
+      seed === null && !freshDraft
         ? readThreadMessages(channel.threadId, runtimeAgentId)
         : null;
   }
@@ -521,7 +534,7 @@ export function ChannelChat({
    * an empty transcript is also a real answer; false for one started from the compose screen, which
    * already has the message that started it.
    */
-  const [restoring, setRestoring] = useState(seed === null);
+  const [restoring, setRestoring] = useState(seed === null && !freshDraft);
   /**
    * How many stored turns this app could not read.
    *
@@ -1095,6 +1108,8 @@ export function ChannelChat({
       );
       throw new Error("已停止发送。");
     }
+    // 草稿对话（A1）说了第一句：从这里起它是一段普通对话，离开时不删；服务端记下这条后它进列表。
+    settleDraftChannel(channel.id);
     report(trimmed || describeAttachments(attachments), null);
 
     // Providers reject later turns if prior tool calls have no result; repair before sending.
@@ -1822,6 +1837,19 @@ export function ChannelChat({
       <ConversationProvider ask={askFromComponent} replyAfter={replyAfter}>
         <MessageActionsContext.Provider value={messageActions}>
           <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
+            {freshDraft && heldView.messages.length === 0 && draftProfile ? (
+              /*
+               * 草稿对话还没说话：接着画新话题页那块机器人名片（同一套 `.chat-intro`），跳过来时画面不变。
+               * 不再播入场动画——它已经在新话题页上播过了。
+               */
+              <div className="chat-intro" style={{ animation: "none" }}>
+                <ChannelAvatar participantIds={[draftProfile.id]} size={48} />
+                <p className="chat-intro-name">{draftProfile.name}</p>
+                {draftProfile.title ? (
+                  <p className="chat-intro-sub">{draftProfile.title}</p>
+                ) : null}
+              </div>
+            ) : null}
             <ConversationView
               modelControl={
                 <BotModelSelector
