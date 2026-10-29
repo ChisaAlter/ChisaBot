@@ -1811,6 +1811,34 @@ export function ChannelChat({
     () => ({ canAct: canResend, regenerate, edit: editAndResend }),
     [canResend, regenerate, editAndResend],
   );
+  /*
+   * 输入框那一排的控件和机器人列表：做成稳定的（审查 01 第 4 条）。这个组件在流式时每个 chunk 都重渲染，
+   * 以前每次都新建这几个元素 / 数组，memo 过的 Composer 也挡不住，ContextMeter、模型选择跟着每帧重算。
+   */
+  const modelControl = useMemo(
+    () => (
+      <BotModelSelector agentId={runtimeAgentId} compact disabled={!channel.active} />
+    ),
+    [runtimeAgentId, channel.active],
+  );
+  const leadingControl = useMemo(
+    () => <PermissionChip agentId={runtimeAgentId} disabled={!channel.active} />,
+    [runtimeAgentId, channel.active],
+  );
+  const contextControl = useMemo(
+    () => (
+      <ContextMeter
+        agentId={runtimeAgentId}
+        running={chatBusy}
+        threadId={channel.threadId}
+      />
+    ),
+    [runtimeAgentId, chatBusy, channel.threadId],
+  );
+  const composerAgents = useMemo(
+    () => toAgentOptions(agentProfiles, channel.agentIds),
+    [agentProfiles, channel.agentIds],
+  );
 
   return (
     // Activity renderers resolve their agent through this SDK context. It must match useAgent's
@@ -1823,28 +1851,11 @@ export function ChannelChat({
         <MessageActionsContext.Provider value={messageActions}>
           <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
             <ConversationView
-              modelControl={
-                <BotModelSelector
-                  agentId={runtimeAgentId}
-                  compact
-                  disabled={!channel.active}
-                />
-              }
-              leadingControl={
-                <PermissionChip
-                  agentId={runtimeAgentId}
-                  disabled={!channel.active}
-                />
-              }
-              contextControl={
-                <ContextMeter
-                  agentId={runtimeAgentId}
-                  running={chatBusy}
-                  threadId={channel.threadId}
-                />
-              }
+              modelControl={modelControl}
+              leadingControl={leadingControl}
+              contextControl={contextControl}
               sendBlocked={modelSaving}
-              agents={toAgentOptions(agentProfiles, channel.agentIds)}
+              agents={composerAgents}
               channelId={channel.id}
               draftKey={channel.id}
               scrollKey={channel.id}
