@@ -1,5 +1,7 @@
 ## Unreleased
 
+- 修复：断线重连后漏掉的消息不补——`useConversationSync` 隔 15 秒以上才问到变化戳时不再只记基线，序号变了就合并式接上；测试 `app/tests/reconnect-backfill.test.tsx`。
+
 - 修复：打开对话时历史读两遍——打开时的接入结束后不再做顺序核对（那边刚读过），本机一轮结束后的核对不变；测试 `app/tests/channel-open-single-read.test.tsx`。
 
 - Hark 改版第 2 步（顶栏外壳）：左上圆形主页按钮、右上搜索胶囊 + 头像，中间只留「聊天」一个视图；PC 窗口按钮、手机、深浅色都可用；搜索胶囊用 `.glass`（顶栏唯一模糊层），同屏模糊层桌面 5、手机 1。DESIGN.md §10.5 写明同名 Hark 令牌必须在 `html.dark` 给深色值。不升版本号。
