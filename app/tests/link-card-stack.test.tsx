@@ -8,7 +8,7 @@ import {
 } from "bun:test";
 import { readFileSync } from "node:fs";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import {
   defaultLinkStackPrimary,
   LINK_CARD_FALLBACK_RATIO,
@@ -215,6 +215,13 @@ describe("LinkCardStack 交互", () => {
     seq++;
     return [1, 2, 3].map((n) => ({ url: `https://s${seq}-${n}.example.com/` }));
   };
+  /** 等到出了 n 张真卡（新进来的那张先是骨架，预览取到才换成卡）。 */
+  const cardsN = async (view: ReturnType<typeof render>, n: number) => {
+    await waitFor(() =>
+      expect(view.queryAllByTestId("link-card")).toHaveLength(n),
+    );
+    return view.getAllByTestId("link-card");
+  };
   const slots = (cards: HTMLElement[]) =>
     cards.map((c) => c.getAttribute("data-slot"));
 
@@ -273,6 +280,99 @@ describe("LinkCardStack 交互", () => {
       pointerType: "mouse",
     });
     expect(cards[2]!.hasAttribute("data-primary")).toBe(true);
+  });
+
+  test("流式进卡：用户没选过时按张数重算默认主位；选过之后再进卡不动", async () => {
+    const [a, b, c] = three();
+    const view = render(<LinkCardStack items={[a!]} />);
+    await view.findByTestId("link-card");
+    view.rerender(<LinkCardStack items={[a!, b!, c!]} />);
+    let cards = await cardsN(view, 3);
+    expect(slots(cards)).toEqual(["left", "main", "right"]);
+    cleanup();
+    const [d, e, f] = three();
+    const chosen = render(<LinkCardStack items={[d!, e!]} />);
+    cards = await chosen.findAllByTestId("link-card");
+    expect(slots(cards)).toEqual(["main", "right"]);
+    // 鼠标移到（本来就在主位的）第一张上：算用户选过了。
+    fireEvent.pointerMove(cards[0]!, { pointerType: "mouse" });
+    chosen.rerender(<LinkCardStack items={[d!, e!, f!]} />);
+    cards = await cardsN(chosen, 3);
+    expect(cards).toHaveLength(3);
+    expect(slots(cards)).toEqual(["main", "left", "right"]);
+  });
+
+  test("流式中第 3 张也照样进来；不满 3 张时才多一个骨架", async () => {
+    const [a, b, c] = three();
+    const two = render(<LinkCardStack items={[a!, b!]} pending />);
+    await cardsN(two, 2);
+    expect(two.queryAllByTestId("link-card-skeleton")).toHaveLength(1);
+    two.rerender(<LinkCardStack items={[a!, b!, c!]} pending />);
+    await cardsN(two, 3);
+    expect(two.queryAllByTestId("link-card-skeleton")).toHaveLength(0);
+    expect(two.getByTestId("link-cards").getAttribute("data-count")).toBe("3");
+  });
+
+  test("同一个网址出现两次：两张都出，key 不撞", async () => {
+    seq++;
+    const url = `https://dup${seq}.example.com/`;
+    const errors: unknown[][] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const view = render(
+        <LinkCardStack
+          items={[
+            { url, title: "甲" },
+            { url, title: "乙" },
+          ]}
+        />,
+      );
+      const cards = await view.findAllByTestId("link-card");
+      expect(
+        cards.map((c) => c.querySelector(".lc-title")!.textContent),
+      ).toEqual(["甲", "乙"]);
+    } finally {
+      console.error = realError;
+    }
+    expect(errors.some((args) => String(args[0]).includes("same key"))).toBe(
+      false,
+    );
+  });
+
+  test("「追问」：自己 Tab 聚焦时显示；叠放时不在主位的卡上藏起来、点不到", async () => {
+    const css = readFileSync(
+      new URL("../src/components/rich-previews/link-card.css", import.meta.url),
+      "utf8",
+    );
+    const showRule = css.match(
+      /([^{}]+)\{\s*opacity: 1;\s*transform: none;\s*\}/,
+    )!;
+    expect(showRule[1]!.split(",").map((s) => s.trim())).toContain(
+      ".lc-followup:focus-visible",
+    );
+    const hideRule = css.match(
+      /([^{}/]+)\{\s*visibility: hidden;\s*pointer-events: none;\s*\}/,
+    )!;
+    const hide = hideRule[1]!.trim();
+    const view = render(<LinkCardStack items={three()} />);
+    const cards = await view.findAllByTestId("link-card");
+    const buttons = cards.map(
+      (c) => c.querySelector<HTMLElement>(".lc-followup")!,
+    );
+    expect(buttons.map((b) => b.matches(hide))).toEqual([true, false, true]);
+    // 换到主位后它的按钮就不再被藏。
+    fireEvent.pointerDown(cards[0]!, { pointerType: "touch" });
+    clickOpens(view.container, cards[0]!);
+    expect(buttons.map((b) => b.matches(hide))).toEqual([false, true, true]);
+    cleanup();
+    const one = render(
+      <LinkCardStack items={[{ url: `https://f${seq}.example.com/` }]} />,
+    );
+    const btn = (
+      await one.findByTestId("link-card")
+    ).querySelector<HTMLElement>(".lc-followup")!;
+    expect(btn.matches(hide)).toBe(false);
   });
 
   test("触屏的移动不换主位", async () => {
@@ -390,7 +490,7 @@ describe("样式约束", () => {
       /\.lc-stack\[data-deck\] \.lc-card \{[^}]*grid-area: 1 \/ 1;[^}]*transform: translate\(/,
     );
     expect(css).toContain(
-      "--lc-w: min(208px, calc((100cqw - 16px) / (1 + 0.62 * var(--lc-sides))))",
+      "--lc-w: min(208px, calc((100cqw - 16px) / (1 + 0.72 * var(--lc-sides))))",
     );
   });
 });

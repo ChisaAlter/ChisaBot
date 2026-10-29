@@ -36,12 +36,7 @@ import {
 import { readImageDims } from "@/lib/image-dims";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { CopyButton } from "@/components/ui/copy-button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import { markdownComponents } from "@/lib/markdown";
 import { DocxPreviewBody, isDocxFile } from "./docx-preview";
@@ -79,26 +74,12 @@ function WithPreviewClient({ children }: { children: ReactNode }) {
  * 有图片地址先用图片地址（服务器下载、认成图片后存起来），否则用网页的 og:image；都没有返回 null。
  * 走同一个 `/api/link-preview`（只连公网、按人限速、缓存 24 小时），浏览器不直接去第三方拉图。
  */
-export function usePreviewImage(
-  image: string | null,
-  page: string | null,
-): { src: string | null; loading: boolean } {
-  const first = useQuery(
-    { ...previewQuery(image ?? ""), enabled: Boolean(image) },
-    previewClient,
-  );
-  const needPage =
-    Boolean(page) &&
-    (!image || first.isError || (first.isSuccess && !first.data?.image));
-  const second = useQuery(
-    { ...previewQuery(page ?? ""), enabled: needPage },
-    previewClient,
-  );
-  const src =
-    (first.data?.image ?? null) ||
-    (needPage ? (second.data?.image ?? null) : null);
-  const loading =
-    (Boolean(image) && first.isLoading) || (needPage && second.isLoading);
+export function usePreviewImage(image: string | null, page: string | null): { src: string | null; loading: boolean } {
+  const first = useQuery({ ...previewQuery(image ?? ""), enabled: Boolean(image) }, previewClient);
+  const needPage = Boolean(page) && (!image || first.isError || (first.isSuccess && !first.data?.image));
+  const second = useQuery({ ...previewQuery(page ?? ""), enabled: needPage }, previewClient);
+  const src = (first.data?.image ?? null) || (needPage ? (second.data?.image ?? null) : null);
+  const loading = (Boolean(image) && first.isLoading) || (needPage && second.isLoading);
   return { src, loading };
 }
 
@@ -130,8 +111,7 @@ const IMAGE_SIZE_LIMIT = 500;
 
 function rememberSize(src: string, size: { width: number; height: number }) {
   if (imageSizes.has(src)) return;
-  if (imageSizes.size >= IMAGE_SIZE_LIMIT)
-    imageSizes.delete(imageSizes.keys().next().value!);
+  if (imageSizes.size >= IMAGE_SIZE_LIMIT) imageSizes.delete(imageSizes.keys().next().value!);
   imageSizes.set(src, size);
 }
 
@@ -150,10 +130,7 @@ function reservedImageBox(image: PileImage): CSSProperties | undefined {
   const size = given ?? imageSizes.get(image.src);
   if (!size) return undefined;
   const scale = Math.min(1, 318 / size.width, 300 / size.height);
-  return {
-    width: `${Math.round(size.width * scale)}px`,
-    aspectRatio: `${size.width} / ${size.height}`,
-  };
+  return { width: `${Math.round(size.width * scale)}px`, aspectRatio: `${size.width} / ${size.height}` };
 }
 
 /** 测试用：记住的尺寸。 */
@@ -171,10 +148,7 @@ function LinkPreviewCardsInner({
 }) {
   if (links.length === 0 && !pending) return null;
   return (
-    <LinkCardStack
-      items={links.map((link) => ({ url: link.url, meta: link.label }))}
-      pending={pending}
-    />
+    <LinkCardStack items={links.map((link) => ({ url: link.url, meta: link.label }))} pending={pending} />
   );
 }
 
@@ -264,9 +238,7 @@ export function ImagePile({
             decoding="async"
             loading="lazy"
             onError={() => markBroken(image.src)}
-            onLoad={(event) =>
-              rememberImageSize(image.src, event.currentTarget)
-            }
+            onLoad={(event) => rememberImageSize(image.src, event.currentTarget)}
             ref={(img) => {
               if (img?.complete) rememberImageSize(image.src, img);
             }}
@@ -299,9 +271,7 @@ export function ImagePile({
         data-focused={hoveredIndex !== null ? "" : undefined}
         data-spread={spread || undefined}
         onBlur={(event) => {
-          if (
-            !event.currentTarget.contains(event.relatedTarget as Node | null)
-          ) {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
             setSpread(false);
             setHoveredIndex(null);
           }
@@ -403,14 +373,7 @@ function useResolvedImages(images: readonly ExtractedImage[]): PileImage[] {
     const result = results[external.indexOf(image)];
     const data = result?.data;
     if (!data?.image || data.imageKind !== "direct") return [];
-    return [
-      {
-        src: data.image,
-        alt: image.alt,
-        name: data.title,
-        ...readImageDims(data.imageWidth, data.imageHeight),
-      },
-    ];
+    return [{ src: data.image, alt: image.alt, name: data.title, ...readImageDims(data.imageWidth, data.imageHeight) }];
   });
 }
 
@@ -538,17 +501,12 @@ function FileCardInner({
   ).toLowerCase();
   const bytes = useRemoteSize(url, size, probeSize);
   const Icon = fileIcon(ext);
-  const meta = [
-    ext ? ext.toUpperCase() : "文件",
-    formatBytes(bytes),
-    metaSuffix,
-  ]
+  const meta = [ext ? ext.toUpperCase() : "文件", formatBytes(bytes), metaSuffix]
     .filter(Boolean)
     .join(" · ");
   // 本站文件才预览（DESIGN.md §56、§111）：位图出缩略图、点开看大图；PDF / .docx 出「预览」；文本/Markdown 点开弹窗阅读。
   const sameOrigin = url.startsWith("/") && !url.startsWith("//");
-  const isImage =
-    sameOrigin && /^image\/(png|jpeg|gif|webp)$/.test(mimeType ?? "");
+  const isImage = sameOrigin && /^image\/(png|jpeg|gif|webp)$/.test(mimeType ?? "");
   const isPdf = sameOrigin && (mimeType === "application/pdf" || ext === "pdf");
   const isDocx = sameOrigin && isDocxFile(ext, mimeType);
   const isTextDoc =
@@ -559,11 +517,8 @@ function FileCardInner({
     (READABLE_TEXT_EXTS.has(ext) ||
       Boolean(mimeType?.startsWith("text/")) ||
       mimeType === "application/json");
-  const isMarkdownDoc =
-    ext === "md" || ext === "markdown" || mimeType === "text/markdown";
-  const downloadHref = url.startsWith("/api/chat-files/")
-    ? `${url}?download=1`
-    : url;
+  const isMarkdownDoc = ext === "md" || ext === "markdown" || mimeType === "text/markdown";
+  const downloadHref = url.startsWith("/api/chat-files/") ? `${url}?download=1` : url;
   const [viewing, setViewing] = useState(false);
   const [thumbBroken, setThumbBroken] = useState(false);
   const textQuery = useQuery(
@@ -580,8 +535,7 @@ function FileCardInner({
     },
     previewClient,
   );
-  const canPreviewModal =
-    (isImage && !thumbBroken) || isPdf || isDocx || isTextDoc;
+  const canPreviewModal = (isImage && !thumbBroken) || isPdf || isDocx || isTextDoc;
   return (
     <div
       className="rp-file"
@@ -598,19 +552,8 @@ function FileCardInner({
       }
     >
       {isImage && !thumbBroken ? (
-        <button
-          aria-label={`查看 ${label}`}
-          className="rp-file-thumb"
-          onClick={() => setViewing(true)}
-          type="button"
-        >
-          <img
-            alt=""
-            decoding="async"
-            loading="lazy"
-            onError={() => setThumbBroken(true)}
-            src={url}
-          />
+        <button aria-label={`查看 ${label}`} className="rp-file-thumb" onClick={() => setViewing(true)} type="button">
+          <img alt="" decoding="async" loading="lazy" onError={() => setThumbBroken(true)} src={url} />
         </button>
       ) : (
         <span aria-hidden className="rp-file-icon" data-ext={ext || undefined}>
@@ -671,11 +614,7 @@ function FileCardInner({
         <IconDownload className="size-4" />
       </a>
       {viewing && isImage ? (
-        <Lightbox
-          images={[{ src: url, name: label, alt: label }]}
-          onClose={() => setViewing(false)}
-          startIndex={0}
-        />
+        <Lightbox images={[{ src: url, name: label, alt: label }]} onClose={() => setViewing(false)} startIndex={0} />
       ) : null}
       {isPdf ? (
         <Dialog onOpenChange={setViewing} open={viewing}>
@@ -683,9 +622,7 @@ function FileCardInner({
             <DialogHeader>
               <DialogTitle className="truncate">{label}</DialogTitle>
             </DialogHeader>
-            {viewing ? (
-              <iframe className="rp-pdf-frame" src={url} title={label} />
-            ) : null}
+            {viewing ? <iframe className="rp-pdf-frame" src={url} title={label} /> : null}
           </DialogContent>
         </Dialog>
       ) : null}
@@ -694,10 +631,7 @@ function FileCardInner({
           <DialogContent className="rp-docx-dialog">
             <DialogHeader className="chat-doc-dialog-head">
               <div className="chat-doc-dialog-title-wrap">
-                <Icon
-                  aria-hidden="true"
-                  className="size-4 shrink-0 text-muted-foreground"
-                />
+                <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
                 <DialogTitle className="truncate">{label}</DialogTitle>
               </div>
               <div className="chat-doc-dialog-actions mr-7">
@@ -737,20 +671,12 @@ function FileCardInner({
           <DialogContent className="chat-doc-dialog">
             <DialogHeader className="chat-doc-dialog-head">
               <div className="chat-doc-dialog-title-wrap">
-                <Icon
-                  aria-hidden="true"
-                  className="size-4 shrink-0 text-muted-foreground"
-                />
+                <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
                 <DialogTitle className="truncate">{label}</DialogTitle>
               </div>
               <div className="chat-doc-dialog-actions mr-7">
                 {typeof textQuery.data === "string" ? (
-                  <CopyButton
-                    className="chat-draft-copy"
-                    size="sm"
-                    value={textQuery.data}
-                    variant="ghost"
-                  >
+                  <CopyButton className="chat-draft-copy" size="sm" value={textQuery.data} variant="ghost">
                     {"复制"}
                   </CopyButton>
                 ) : null}
@@ -767,13 +693,9 @@ function FileCardInner({
             </DialogHeader>
             <div className="chat-doc-dialog-body">
               {textQuery.isPending ? (
-                <p className="text-sm text-muted-foreground">
-                  {"正在加载文档内容…"}
-                </p>
+                <p className="text-sm text-muted-foreground">{"正在加载文档内容…"}</p>
               ) : textQuery.isError ? (
-                <p className="text-sm text-muted-foreground">
-                  {"无法预览该文件，请点击右上角下载查看。"}
-                </p>
+                <p className="text-sm text-muted-foreground">{"无法预览该文件，请点击右上角下载查看。"}</p>
               ) : isMarkdownDoc ? (
                 <div className="chat-doc-inner">
                   <SmoothStreamdown components={markdownComponents as never}>
@@ -824,10 +746,7 @@ function MessageRichPreviewsInner({
     () => [...(media?.images ?? []), ...fromText],
     [media?.images, fromText],
   );
-  const imageSet = useMemo(
-    () => new Set(found.images.map((i) => i.src)),
-    [found.images],
-  );
+  const imageSet = useMemo(() => new Set(found.images.map((i) => i.src)), [found.images]);
   const links = useMemo(
     () => split.links.filter((l) => !imageSet.has(l.url)),
     [split.links, imageSet],
@@ -905,9 +824,7 @@ export function RichBotStreamdown({
 }) {
   const display = useDisplayText(text);
   return (
-    <SmoothStreamdown components={components as never}>
-      {display}
-    </SmoothStreamdown>
+    <SmoothStreamdown components={components as never}>{display}</SmoothStreamdown>
   );
 }
 

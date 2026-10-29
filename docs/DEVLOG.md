@@ -336,7 +336,7 @@
 
 ## 2026-10-29 链接卡组照 Hark 错落叠放（feat/hark-linkstack，依赖 #380）
 
-**做了什么**：`LinkCardStack` 把一条回复里最多 3 个链接放进同一个网格格子，位置全靠 transform（槽位写成 `--lc-sx / --lc-sy / --lc-rot / --lc-sc` 变量），主位居中抬高、左右两张倾斜约 -4° / 3.5°、缩到 0.94。卡宽 `min(208px, (100cqw − 16px) / (1 + 0.62 × 侧边张数))`，所以 390 宽的手机上整叠也不出屏。单个链接是不倾斜的单卡（宽 min(280px, 100%)）。
+**做了什么**：`LinkCardStack` 把一条回复里最多 3 个链接放进同一个网格格子，位置全靠 transform（槽位写成 `--lc-sx / --lc-sy / --lc-rot / --lc-sc` 变量），主位居中抬高、左右两张倾斜约 -4° / 3.5°、缩到 0.94。卡宽 `min(208px, (100cqw − 16px) / (1 + 0.72 × 侧边张数))`，左右两张各错开 0.72 卡宽，所以 390 宽的手机上整叠也不出屏。单个链接是不倾斜的单卡（宽 min(280px, 100%)）。
 
 **交互**：鼠标移到哪张、键盘 `:focus-visible` 到哪张，那张就挪到主位；换位后锁 250ms（不短于 220ms 的过渡），挪完时指针下面换成的那张要等指针离开再进来才换，免得静止的指针下卡片来回跳。指针离开整叠后**保持最后一张在主位**，不复位（复位会让刚看的那张又被盖住，读起来更乱）。触屏第一次点只挪到主位（preventDefault），点主位的卡才打开；鼠标点击直接打开。`prefers-reduced-motion: reduce` 时没有过渡。
 
@@ -354,4 +354,6 @@
 
 **和 #391 的来源格式对齐**：`LinkSourceFields = { url, title?, site?, toolCallId? }`，`LinkCard` 和 `LinkStackItem` 都直接接受（`site` 映射到 siteName，`toolCallId` 写进 `data-tool-call`），以后来源卡组可以 `<LinkCardStack items={replySources.sources} />`。本 PR 没有接入 `capabilities.replySources`。
 
-**没碰**：styles.css、wallpaper_core.html、bot-bubbles.tsx 的 SVG 净化、appearance 相关文件；没有 blur、`:has`、`!important`；未升级版本号。截图和动图在 docs/images/linkstack/。
+**没碰**：styles.css、wallpaper_core.html、bot-bubbles.tsx 的 SVG 净化、appearance 相关文件；没有 blur、`:has`、`!important`；未升级版本号。截图和录屏在 docs/images/linkstack/（只留 stack.webm 和 5 张关键截图：3 张前后对比、换位序列、触屏点击）。
+
+**评审后修改（#397）**：主位在用户悬停 / 聚焦 / 点过之前按当前张数重算（流式 1 → 3 张时换到中间那张），选过之后不再动；流式中第 3 张照样出来，不满 3 张才放骨架；`key` 带上序号，同一网址出现两次也不撞；「追问」自己 `:focus-visible` 时显示，叠放时不在主位的卡上 `visibility: hidden` + `pointer-events: none`，触屏单卡上一直显示；侧卡错开从 0.62 改成 0.72 卡宽，侧卡露出的标题更完整。

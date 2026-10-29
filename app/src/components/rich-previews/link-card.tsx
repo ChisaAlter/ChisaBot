@@ -469,21 +469,29 @@ export function LinkCardStack({
   /** 流式中最后一行像是一行链接：多放一个骨架占位。 */
   pending?: boolean;
 }) {
-  const shown = items.slice(0, pending ? 2 : 3);
-  const total = shown.length + (pending ? 1 : 0);
-  const [primary, setPrimary] = useState(() => defaultLinkStackPrimary(total));
+  // 流式中也照样出最多 3 张真卡；还没满 3 张时才多放一个骨架。
+  const shown = items.slice(0, 3);
+  const withSkeleton = pending && shown.length < 3;
+  const total = shown.length + (withSkeleton ? 1 : 0);
+  // 用户悬停 / 聚焦 / 点过之前不记主位：卡片流式进来时跟着张数重算默认（1 → 3 张时换到中间那张）；
+  // 选过之后保持用户选的那张，再进来卡也不动。
+  const [chosen, setChosen] = useState<number | null>(null);
   const lockUntil = useRef(0);
   // 换完主位后指针下的那张卡：指针离开它之前不算「移到这张卡上」。
   const ignore = useRef<number | "next" | null>(null);
   const pointerType = useRef<string>("mouse");
   if (total === 0) return null;
-  const main = Math.min(primary, total - 1);
+  const main = Math.min(chosen ?? defaultLinkStackPrimary(total), total - 1);
   const slots = linkStackSlots(total, main);
   const isStack = total > 1;
 
   const promote = (index: number) => {
-    if (index === main) return;
-    setPrimary(index);
+    if (index === main) {
+      // 移到 / 聚焦的就是主位那张：也算用户选过了，之后再进来卡不换主位。
+      if (chosen === null) setChosen(index);
+      return;
+    }
+    setChosen(index);
     lockUntil.current = performance.now() + LINK_STACK_MOVE_MS;
     ignore.current = "next";
   };
@@ -529,7 +537,8 @@ export function LinkCardStack({
       <div className="lc-stack-track">
         {shown.map((item, i) => (
           <LinkCard
-            key={item.url}
+            // 同一个网址可能出现两次（来源列表不一定去重），带上序号免得 key 撞。
+            key={`${i}:${item.url}`}
             layer={isStack ? layers[i] : undefined}
             meta={item.meta}
             site={item.site}
@@ -558,7 +567,7 @@ export function LinkCardStack({
             url={item.url}
           />
         ))}
-        {pending ? (
+        {withSkeleton ? (
           <LinkCardSkeleton
             key="pending"
             layer={isStack ? layers[shown.length] : undefined}

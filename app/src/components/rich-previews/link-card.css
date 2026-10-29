@@ -205,9 +205,15 @@ a.lc-card[href]:hover {
   outline-offset: 2px;
 }
 .lc-card:focus-visible :is(.lc-go, .lc-followup),
-.lc-card[data-primary] :is(.lc-go, .lc-followup) {
+.lc-card[data-primary] :is(.lc-go, .lc-followup),
+.lc-followup:focus-visible {
   opacity: 1;
   transform: none;
+}
+/* 叠放时不在主位的卡：按钮藏起来、点不到也 Tab 不到（触屏平板上不会点到看不见的按钮）。 */
+.lc-stack[data-deck] .lc-card:not([data-primary]) :is(.lc-go, .lc-followup) {
+  visibility: hidden;
+  pointer-events: none;
 }
 @media (hover: hover) {
   .lc-card:not([data-slot]):hover :is(.lc-go, .lc-followup) {
@@ -220,11 +226,16 @@ a.lc-card[href]:hover {
     opacity: 0.7;
     transform: none;
   }
+  /* 触屏没有悬停：单张卡的「追问」一直显示，不留一个看不见却点得到的按钮。 */
+  .lc-card:not([data-slot]) .lc-followup {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /*
- * 一叠卡。卡宽 --lc-w：桌面 208px；窄的时候（手机）按容器宽缩，保证整叠（卡宽 + 两侧各 0.62 卡宽）不出屏。
- * 槽位：主位居中不倾斜；左槽 / 右槽向两边错开 0.62 卡宽、往下 0.24 / 0.30 卡宽、倾斜 -4° / 3.5°、缩到 0.94。
+ * 一叠卡。卡宽 --lc-w：桌面 208px；窄的时候（手机）按容器宽缩，保证整叠（卡宽 + 两侧各 0.72 卡宽）不出屏。
+ * 槽位：主位居中不倾斜；左槽 / 右槽向两边错开 0.72 卡宽、往下 0.24 / 0.30 卡宽、倾斜 -4° / 3.5°、缩到 0.94。
  */
 .lc-stack {
   container-type: inline-size;
@@ -233,8 +244,8 @@ a.lc-card[href]:hover {
 }
 .lc-stack[data-deck] {
   --lc-sides: calc(var(--lc-left, 1) + var(--lc-right, 1));
-  --lc-w: min(208px, calc((100cqw - 16px) / (1 + 0.62 * var(--lc-sides))));
-  --lc-step: calc(var(--lc-w) * 0.62);
+  --lc-w: min(208px, calc((100cqw - 16px) / (1 + 0.72 * var(--lc-sides))));
+  --lc-step: calc(var(--lc-w) * 0.72);
 }
 .lc-stack-track {
   display: flex;
