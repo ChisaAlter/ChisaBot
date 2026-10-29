@@ -16,12 +16,12 @@
     "fingerprint": "node scripts/shell-fingerprint.js --write"
   },
   "dependencies": {
-    "electron-updater": "6.8.9",
+    "electron-updater": "6.8.11",
     "ws": "8.22.0"
   },
   "devDependencies": {
     "electron": "44.9.1",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.18.0"
   },
   "build": {
     "appId": "cn.ayase.chisabot.pc",
