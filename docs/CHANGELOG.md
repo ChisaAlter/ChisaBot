@@ -1,6 +1,7 @@
 ## Unreleased
 
 - 修复：断线重连后漏掉的消息不补——`useConversationSync` 隔 15 秒以上才问到变化戳时不再只记基线，序号变了就合并式接上；测试 `app/tests/reconnect-backfill.test.tsx`。
+- 修复：空对话第一轮从本机发出后断线不补——`useConversationSync` 记下本机在跑时问到的序号（`seenSeq`），没有 `last` 基线时拿它比；打开后第一次问照旧只记基线。
 
 ## 0.1.106
 

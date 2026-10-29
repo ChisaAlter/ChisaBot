@@ -224,6 +224,11 @@ export function useConversationSync(
      */
     let lastActivityAt = 0;
     /**
+     * 最近一次问到的序号，本机在跑时问到的也算。新的空对话第一轮从这台发：跑的时候问到的戳只让它等，
+     * `last` 一直是空的；结束后紧接着断线，回来那一次也要能和它比、补齐（没有它就只能当基线吞掉）。
+     */
+    let seenSeq: string | null = null;
+    /**
      * mode "merge"（平时）：不清空列表，只把新的接上——见下面的 onEvent。
      * mode "rebuild"（顺序和服务器不一致时）：照 SDK 原样，先清空再按服务器回放重建。
      */
@@ -304,6 +309,8 @@ export function useConversationSync(
       if (!alive || activity.threadId !== threadId) return;
       const quietFor = Date.now() - lastActivityAt;
       lastActivityAt = Date.now();
+      const seenBefore = seenSeq;
+      seenSeq = activity.seq;
       if (revisionNeedsRebuild(knownRevision, activity.revision, ownRevisions.get(threadId))) rebuildPending = true;
       if (activity.revision !== undefined) knownRevision = activity.revision;
       if (rebuildPending && !agent.isRunning && !connecting) {
@@ -327,7 +334,8 @@ export function useConversationSync(
         // 本机刚跑完一轮（3 秒内）收到的在途 running=true 是本机那一轮的尾声，不重接回放（否则会清空刚流完的回答）。
         if (activity.running && Date.now() - lastOwnFinishAt > 3000) join("merge", true);
         // 断线 / 很久没问到之后的第一次：这段时间别处写进来的不能当基线吞掉，序号变了就合并式接上补齐。
-        else if (previous && quietFor > MISSED_ACTIVITY_MS && activity.seq !== previous.seq) join();
+        // 没有基线（空对话的第一轮在这台跑完）时拿跑的时候问到的序号比；打开后第一次问（什么都没见过）照旧只记基线。
+        else if (quietFor > MISSED_ACTIVITY_MS && (previous?.seq ?? seenBefore) !== null && activity.seq !== (previous?.seq ?? seenBefore)) join();
         return;
       }
       if (activity.workers !== previous.workers)
