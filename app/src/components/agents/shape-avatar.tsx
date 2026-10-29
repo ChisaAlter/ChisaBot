@@ -42,6 +42,8 @@ export function useShapeMood(
   selected: boolean,
   active: boolean,
   doneMs = DONE_MOOD_MS,
+  /** 这一轮是被停止或出错结束的：不跳「做完了」，直接回到静止。 */
+  interrupted = false,
 ): ShapeMood {
   const working = active;
   const [done, setDone] = useState(false);
@@ -52,14 +54,18 @@ export function useShapeMood(
       setDone(false);
       return;
     }
-    if (!wasWorking.current) return;
+    if (!wasWorking.current || interrupted) {
+      wasWorking.current = false;
+      setDone(false);
+      return;
+    }
     wasWorking.current = false;
     setDone(true);
     const timer = window.setTimeout(() => setDone(false), doneMs);
     return () => window.clearTimeout(timer);
-  }, [working, doneMs]);
+  }, [working, doneMs, interrupted]);
   if (working) return "working";
-  if (done) return "done";
+  if (done && !interrupted) return "done";
   return selected ? "selected" : "idle";
 }
 
@@ -93,6 +99,7 @@ export const ShapeAvatar = memo(function ShapeAvatar({
   selected = false,
   thinking = false,
   working = false,
+  interrupted = false,
   mood: forcedMood,
 }: {
   shape: AvatarShape;
@@ -101,11 +108,18 @@ export const ShapeAvatar = memo(function ShapeAvatar({
   selected?: boolean;
   thinking?: boolean;
   working?: boolean;
+  /** 这一轮被停止 / 出错结束：不跳「做完了」。 */
+  interrupted?: boolean;
   /** 只给预览用（头像编辑框的「选中 / 工作中 / 做完了」）：直接定表情。 */
   mood?: ShapeMood;
 }) {
   // 「做完了」看整轮（干活或在想）结束，不看工具结束（DESIGN.md §81）。
-  const ownMood = useShapeMood(selected, working || thinking);
+  const ownMood = useShapeMood(
+    selected,
+    working || thinking,
+    DONE_MOOD_MS,
+    interrupted,
+  );
   const mood = forcedMood ?? ownMood;
   const isWorking = forcedMood ? forcedMood === "working" : working;
   const state = {

@@ -519,3 +519,104 @@ describe("round 3 (review 16:17)", () => {
     expect(morph.morphActiveCount()).toBe(0);
   });
 });
+
+describe("stop / error: no done hop", () => {
+  const moodOf = (view: ReturnType<typeof render>) =>
+    view.container.querySelector("svg")?.getAttribute("data-mood");
+
+  test("activityOf: a turn that ended by stop or error is interrupted, a normal end is null", () => {
+    const user = { id: "u", role: "user", content: "hi" } as const;
+    expect(activity.activityOf([user], false)).toBeNull();
+    expect(activity.activityOf([user], false, true)).toBe("interrupted");
+    // 还在跑时 interrupted 不算（停止请求发出前）。
+    expect(activity.activityOf([user], true, true)).toBe("thinking");
+  });
+
+  async function liveAvatar(id: string) {
+    const { QueryClient, QueryClientProvider } = await import(
+      "@tanstack/react-query"
+    );
+    const { BotAvatar } = await import("@/components/agents/bot-avatar");
+    const { botAvatarsQueryOptions } = await import("@/lib/agents/avatars");
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { staleTime: Number.POSITIVE_INFINITY, retry: false },
+      },
+    });
+    client.setQueryData(botAvatarsQueryOptions().queryKey, {
+      [id]: { kind: "shape", shape: "round", color: "blue" },
+    } as never);
+    return render(
+      <QueryClientProvider client={client}>
+        <BotAvatar agentId={id} decorative name="x" size={28} />
+      </QueryClientProvider>,
+    );
+  }
+
+  test("normal finish → done", async () => {
+    const view = await liveAvatar("n1");
+    let stop: () => void = () => {};
+    act(() => {
+      stop = activity.publishBotActivity("n1", "working");
+    });
+    act(() => {
+      stop();
+      stop = activity.publishBotActivity("n1", "thinking");
+    });
+    expect(moodOf(view)).not.toBe("done");
+    act(() => {
+      stop();
+      stop = activity.publishBotActivity("n1", null);
+    });
+    expect(moodOf(view)).toBe("done");
+    view.unmount();
+  });
+
+  test("stopped → no done, straight back to still", async () => {
+    const view = await liveAvatar("s1");
+    let stop: () => void = () => {};
+    act(() => {
+      stop = activity.publishBotActivity("s1", "thinking");
+    });
+    act(() => {
+      stop();
+      stop = activity.publishBotActivity("s1", "interrupted");
+    });
+    expect(moodOf(view)).toBe("idle");
+    expect(
+      view.container.querySelector("svg")?.getAttribute("data-activity"),
+    ).toBe("idle");
+    // 停止结束后（stopping 放下）也不补跳。
+    act(() => {
+      stop();
+      stop = activity.publishBotActivity("s1", null);
+    });
+    expect(moodOf(view)).toBe("idle");
+    tick(400);
+    expect(morph.morphActiveCount()).toBe(0);
+    view.unmount();
+  });
+
+  test("error → no done", () => {
+    const view = render(
+      <shapeMod.ShapeAvatar color="blue" shape="round" size={28} working />,
+    );
+    view.rerender(
+      <shapeMod.ShapeAvatar color="blue" interrupted shape="round" size={28} />,
+    );
+    expect(moodOf(view)).not.toBe("done");
+    expect(moodOf(view)).toBe("idle");
+    // 出错时 busy 先落、runError 晚一拍到：已经开始的跳也立刻收掉。
+    const late = render(
+      <shapeMod.ShapeAvatar color="blue" shape="round" size={28} thinking />,
+    );
+    late.rerender(
+      <shapeMod.ShapeAvatar color="blue" shape="round" size={28} />,
+    );
+    expect(moodOf(late)).toBe("done");
+    late.rerender(
+      <shapeMod.ShapeAvatar color="blue" interrupted shape="round" size={28} />,
+    );
+    expect(moodOf(late)).toBe("idle");
+  });
+});

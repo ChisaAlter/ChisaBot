@@ -1,20 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import Avatar from "boring-avatars";
 import { memo, useState } from "react";
-import {
-  type AvatarShape,
-  monogramOf,
-  type ShapeColor,
-} from "../../../../shared/bot-avatars";
+import { ShapeAvatar } from "@/components/agents/shape-avatar";
 import {
   type AvatarDraft,
   type BotAvatar as BotAvatarValue,
   botAvatarsQueryOptions,
 } from "@/lib/agents/avatars";
-import { ShapeAvatar } from "@/components/agents/shape-avatar";
 import { useBotActivity } from "@/lib/agents/bot-activity";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { cn } from "@/lib/utils";
+import {
+  type AvatarShape,
+  monogramOf,
+  type ShapeColor,
+} from "../../../../shared/bot-avatars";
 
 /**
  * 机器人头像，到处都是这一个（DESIGN.md §81）：左栏、聊天页、资料页、机器人列表、新建 / 编辑表单。
@@ -54,6 +54,7 @@ export const BotAvatar = memo(function BotAvatar({
   const live = useBotActivity(agentId);
   const isWorking = live ? live === "working" : working;
   const isThinking = live ? live === "thinking" : thinking;
+  const interrupted = live === "interrupted";
   const avatars = useQuery({
     ...botAvatarsQueryOptions(),
     enabled: Boolean(agentId),
@@ -86,6 +87,7 @@ export const BotAvatar = memo(function BotAvatar({
         selected={selected}
         shown={shown}
         size={size}
+        interrupted={interrupted}
         thinking={isThinking}
         working={isWorking}
       />
@@ -121,6 +123,7 @@ function AvatarFace({
   selected,
   thinking,
   working,
+  interrupted,
 }: {
   shown: ShownAvatar;
   name: string;
@@ -129,12 +132,14 @@ function AvatarFace({
   selected: boolean;
   thinking: boolean;
   working: boolean;
+  interrupted: boolean;
 }) {
   const [broken, setBroken] = useState<string | null>(null);
   if (shown.kind === "shape")
     return (
       <ShapeAvatar
         color={shown.color}
+        interrupted={interrupted}
         selected={selected}
         shape={shown.shape}
         size={size}

@@ -1808,7 +1808,12 @@ export function ChannelChat({
     syncComputerMessages(runtimeAgentId, activeMessages, chatBusy);
   }, [runtimeAgentId, activeMessages, chatBusy]);
   // 头像变形（DESIGN.md §81）：在跑工具 = working，在跑但没有工具 = thinking；左栏那一行和资料页读这个。
-  const liveActivity = activityOf(activeMessages, chatBusy);
+  const liveActivity = activityOf(
+    activeMessages,
+    chatBusy,
+    // 手动停止或出错结束的一轮不跳「做完了」（DESIGN.md §81）。
+    stopping || runError !== null,
+  );
   useEffect(() => publishBotActivity(runtimeAgentId, liveActivity), [runtimeAgentId, liveActivity]);
   const canResend = !agentLive && channel.active && !restoring && !modelSaving;
   const messageActions = useMemo(

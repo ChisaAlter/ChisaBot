@@ -7,7 +7,8 @@ import { useSyncExternalStore } from "react";
  * - `thinking`：这一轮在跑，但没有在跑的工具（在想 / 在写回答）。
  * 对话页发布，左栏那一行、资料页读；没有打开对话的机器人由左栏按服务器的 busy 当作 working。
  */
-export type BotActivity = "thinking" | "working";
+/** `interrupted`：这一轮刚被停止或出错结束（头像不跳「做完了」，直接静止）。 */
+export type BotActivity = "thinking" | "working" | "interrupted";
 
 const current = new Map<string, BotActivity>();
 const listeners = new Set<() => void>();
@@ -49,8 +50,10 @@ export function useBotActivity(
 export function activityOf(
   messages: readonly Message[],
   busy: boolean,
+  /** 这一轮是被停止（停止中）或出错（runError）结束的。 */
+  interrupted = false,
 ): BotActivity | null {
-  if (!busy) return null;
+  if (!busy) return interrupted ? "interrupted" : null;
   const answered = new Set<string>();
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
