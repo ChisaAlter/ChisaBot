@@ -1,5 +1,25 @@
 # DEVLOG
 
+## 链接卡组：流式骨架、悬停长任务、用户消息链接卡、审查模块 6（fix/linkstack-streaming，依赖 #397）
+
+**悬停长任务的原因**：在 Ayase 的真 Chrome 上用带侧栏 / 顶栏外壳的测试页（150 条填充消息）录 trace，悬停换主位时每次都有一次约 3581 个元素的整页 `UpdateLayoutTree`（占长任务约 95%）。卡片换主位时改的是 `data-slot` 属性；styles.css 里有 `.glass-shell:has([data-slot=…])`（3864 行、8903–8910 行）这类规则，Chromium 的 `:has()` 失效集合按属性名建，任何元素的 `data-slot` 变了都会让 `.glass-shell` 整棵子树重算样式。按规定不动 styles.css，把卡组用的属性改名为 `data-stack-slot`（CSS 和测试同步改）。
+
+**实测（Ayase 真 Chrome，21 次悬停）**：
+- CPU 1×：改前最长任务 53 ms；改后没有超过 50 ms 的任务，样式重算不超过 10 ms、不超过 42 个元素。
+- CPU 4× 降速：改前 21 次里 6 个长帧，单个任务 160–479 ms；改后单个主线程任务 39–51 ms（4 轮里只有一次 51 ms），样式重算不超过 36 ms。
+
+**用户消息链接卡**：用户气泡里的链接抽出来交给同一个 `LinkCardStack`，放在气泡下面、靠右对齐（和用户气泡同侧）；气泡里的原文照旧保留。
+
+**审查模块 6**：
+1. 「追问」按钮原来嵌在 `<a>` 里，触屏上透明但能点，点卡片左上角会变成引用。现在卡片结构是外层 `.lc-item`（位置、槽位 transform、悬停抬起）里放 `<a class="lc-card">` 和同级的 `<button class="lc-followup">`，不再嵌套交互元素。外层 `.lc-item` 不接点击（`pointer-events: none`），只有卡面和按钮接。选「触屏上明确显示」：单张卡和宽容器里一叠的主位卡常显；窄容器（≤420px，手机）的一叠里直接去掉；隐藏的按钮一律 `pointer-events: none`。悬停显示只在 `(hover: hover) and (pointer: fine)` 下生效，因为触屏点一下会先触发悬停再做命中测试，靠悬停显示的按钮会在同一下里冒出来接住点击。注意 Windows 上带触控设备的电脑 Chrome 也报 `any-pointer: coarse`（Ayase 就是），这类电脑上按钮也常显。手机尺寸 + 触屏模拟复测：一叠里第一下点击把卡移到主位（不打开），第二下才打开。
+2. 小图（宽 < 280px，如 172×178、240×126）用 `object-fit: contain`、不超过原始尺寸、居中放在主题色衬底上，不再放大裁切。
+3. 刷新跳动：预览结果存 sessionStorage（`chisabot.link-previews.v1`，6 小时、最多 80 条），刷新后用作 `initialData`，卡片直接按最终高度出现。测试页 CLS：改前每次访问 0.0007；改后首访 0.0007、三次刷新都是 0。
+4. favicon：`loading="lazy" decoding="async"`，宽高 28。
+5. 卡片和用户气泡关掉 Inter 的 `calt`，「411x7」不再画成「411×7」。
+6. 预览可选 `kind: "video"` 和 `thumbnail`（服务端由另一个 PR 加，这里没改服务端）：是 video 时图上叠一个播放角标，不用 blur，`pointer-events: none`。
+
+**截图**：`docs/images/linkstack-fix/`（左改前、右改后）。顶栏一项因 #374 未合并跳过。没有升版本号。
+
 ## Hark 式链接卡 + GitHub 预览图（feat/hark-linkcard）
 
 **动机**：对比反馈截图（2026-10-29，ChisaBot 与 Hark 各一张），我们的 GitHub 链接卡只有「图标 + 域名 + 标题 + 一行说明」，没有预览图；Hark 是上半 og:image 大图、下面两行标题和「GitHub · v0.1.13」。另外同一个「链接卡」有两份实现：正文链接卡（`rich-previews.tsx` 的 `LinkCard`，会取 `/api/link-preview`）和 json-render 的 `Link`（`rich.tsx` 的 `LinkCard`，只画模型写的字段），长得不一样，修一处另一处不跟着变。
