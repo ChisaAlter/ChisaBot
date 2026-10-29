@@ -29,6 +29,7 @@ import { TabStrip } from "./browser-tabs";
 import { LiveScreen, type LiveScreenController } from "./live-screen";
 import { useElementVisible, usePageVisible } from "./preview-visibility";
 import { useTakeoverFit } from "./takeover-fit";
+import { presenceRef } from "@/lib/presence-flag";
 
 /** Explicit blank-browser URLs use placeholder artwork; missing URL fields are treated as real pages. */
 function isBlankBrowser(shot: Screenshot): boolean {
@@ -851,6 +852,7 @@ export function ComputerView({
               aria-label={"助手的屏幕"}
               // 高于抽屉（窄窗口时右栏是 z-50 的抽屉），接管的大屏永远在最上层、可以点。
               className="computer-takeover fixed inset-0 z-[110] flex items-center justify-center"
+              ref={presenceRef("has-takeover")}
             >
               {/*
                 Backdrop closes only while read-only; during driving, Escape remains the exit. A

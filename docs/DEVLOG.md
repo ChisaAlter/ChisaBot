@@ -1,5 +1,32 @@
 # DEVLOG
 
+## Unreleased — 设置面板卡顿①：去掉 body:has() / html:has()，藏着的聊天跳过样式计算
+
+### 动机
+
+- 测试剖析（main 9b264c73，4× CPU 降速）：打开设置 INP ≈ 304ms、关闭 ≈ 664ms、切分类也慢。主因之一是 `styles.css` 里报告点名的 7 处 `body:has(...)` / `html:has(...)`（3862 `.desk-strip`、6492/6494 `.install-hint`、6582 `html:has(> body .glass-shell)`、7623/7661 窄屏把手、8903 桌面端 Sheet；连同同类的 `body:not(:has(.glass-composer)) .rail-tab.is-narrow` 共 10 条规则）。Chromium 把所有 `:has()` 的失效集合并在一起，「`:has(…) X *`」这类规则会让 `body` 下任意 `data-slot` 元素增删都判成「后代可能全失效」，整棵树（包括 keep-alive 留着、看不见的聊天页）每次都重算样式，4× 下每次 50–110ms。
+- 另外藏着的聊天页还挂着 `.kept-chat[data-visible="false"] *`（通配符，单次重算匹配约 4.2 万次）。
+
+### 改动
+
+- 新增 `app/src/lib/presence-flag.ts`：`presenceRef(name, target)` 返回稳定的 ref 回调，元素挂上时给 `<body>`（或 `<html>`）加 `data-{name}`，卸下时去掉（引用计数，多处同时挂着不会提前去掉）；`usePresenceFlag` 是 hook 版。
+- 元素自己拨开关：Sheet 遮罩 `has-sheet`、顶栏 `has-topbar`、更新横幅 `has-update-banner`、接管中的电脑 `has-takeover`、窄屏面板把手 `has-narrow-rail`、输入框 `has-composer`、`glass-shell` → `<html data-has-shell>`。`glass-shell.tsx` / `glass-topbar.tsx` 只加了这一个 ref / hook，没动任何主题或玻璃样式。
+- `styles.css`：上述 10 条改成 `body[data-has-…]` / `html[data-has-shell]` 选择器，声明内容一字未改；`.kept-chat[data-visible="false"] *` 换成 `.kept-chat[data-visible="false"] { content-visibility: hidden; overflow-anchor: none }` + 只对滚动容器设 `overflow-anchor: none`（原来通配符要防的就是它）。
+- 测试：`app/tests/no-body-has.test.ts`（styles.css 不得再出现 body/html `:has()`，藏着的聊天不得用通配符）、`app/tests/presence-flag.test.tsx`（引用计数、ref 稳定、html 开关）；`ui-align*.test` 跟着换选择器；`DESIGN.md` §82.10 文字同步。
+
+### 前后 INP（4× CPU 降速，生产构建，Chrome 1440×900，5 轮取中位数）
+
+| 交互 | main（6d91044） | 本改动 | 变化 |
+|---|---|---|---|
+| 打开设置 | 316ms | 184ms | −42% |
+| 切分类（每轮各分类 INP 的中位数，再取 5 轮中位数） | 250ms | 200ms | −20% |
+| 关闭设置（返回聊天） | 548ms | 464ms | −15% |
+| （参考）展开侧栏 | 224ms | 144ms | −36% |
+
+- 补充：点击事件「从按下到处理完」（INP 去掉呈现延迟的那部分，`processingEnd − startTime`，同样 5 轮中位数）：打开设置 135→74ms，切分类 79→73ms，关闭设置 348→270ms。
+- 测法：Playwright + CDP `Emulation.setCPUThrottlingRate=4`，`PerformanceObserver('event', durationThreshold 16)` 取每次点击的交互时长；同一后端、同一数据（两个机器人、长对话），只换前端 dist。
+- 还没到验收线（打开 <120 / 关闭 <150 / 切分类 <100）。关闭剩下的大头是聊天页 React 重渲染和 keep-alive / section-rail 的强制同步布局，在下一个 PR（`dev2/settings-perf-2`）里处理。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。

@@ -1,6 +1,7 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useRef } from "react";
 import { KeptVisibleContext } from "@/lib/kept-visible";
+import { usePresenceFlag } from "@/lib/presence-flag";
 import { GlassTopBar, type ShellScope } from "@/components/layout/glass-topbar";
 import { PhoneGestures } from "@/components/layout/phone-gestures";
 import { SidebarShell } from "@/components/layout/sidebar-shell";
@@ -32,6 +33,8 @@ export function GlassShell({
   banner?: ReactNode;
   children: ReactNode;
 }) {
+  // 鼠标设备上根元素 overflow:hidden（styles.css §41 ②）；以前是 `html:has(> body .glass-shell)`。
+  usePresenceFlag("has-shell", "html");
   return (
     <TopBarOwnsSidebarToggle.Provider value={true}>
       <SidebarShell className="glass-shell h-svh overflow-hidden" iconWidth="80px" width="276px">
