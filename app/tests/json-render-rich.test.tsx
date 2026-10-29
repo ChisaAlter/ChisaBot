@@ -156,7 +156,7 @@ describe("rich components render", () => {
       },
     });
     const { container } = view;
-    for (const selector of [".jr-hero", ".jr-metric.is-tinted", ".jr-spark", ".jr-chart svg", ".jr-bars .jr-bar", ".jr-ring-arc", ".jr-gauge-arc", ".jr-heat-cell.is-l4", ".jr-tl-item", ".jr-kv-row", ".jr-countdown-u", ".jr-dot.is-pulse", ".jr-delta", ".jr-avatar-face", ".jr-link .jr-favicon", ".jr-sep-l"]) {
+    for (const selector of [".jr-hero", ".jr-metric.is-tinted", ".jr-spark", ".jr-chart svg", ".jr-bars .jr-bar", ".jr-ring-arc", ".jr-gauge-arc", ".jr-heat-cell.is-l4", ".jr-tl-item", ".jr-kv-row", ".jr-countdown-u", ".jr-dot.is-pulse", ".jr-delta", ".jr-avatar-face", ".lc-card", ".jr-sep-l"]) {
       expect(container.querySelector(selector)).not.toBeNull();
     }
     expect(container.textContent).toContain("多云");
