@@ -43,6 +43,15 @@ object AvatarShapes {
         "violet" to 0xFF9B59F5, "pink" to 0xFFFF3D9A, "gray" to 0xFF8E8E93,
     )
 
+    /** 深色模式下的覆盖（和网页 styles.css 的 `html.dark .sa[data-color=…] { --sa-fill }` 一致）；没列出的颜色深浅一样。 */
+    val DARK_COLORS: Map<String, Long> = mapOf("ink" to 0xFF3B3B46)
+
+    /** 跟随主题的底色；不认识的颜色按 ink。 */
+    fun fill(color: String?, dark: Boolean): Long {
+        val key = if (isColor(color)) color!! else "ink"
+        return (if (dark) DARK_COLORS[key] else null) ?: COLORS.getValue(key)
+    }
+
     fun isShape(value: String?) = value != null && value in SHAPES
     fun isColor(value: String?) = value != null && value in COLORS
 
@@ -156,7 +165,7 @@ object AvatarShapes {
 @Composable
 fun ShapeAvatar(shape: String, color: String?, size: Dp) {
     val geometry = remember(shape) { AvatarShapes.geometry(shape) } ?: return
-    val fill = Color(AvatarShapes.COLORS[color] ?: AvatarShapes.COLORS.getValue("ink"))
+    val fill = Color(AvatarShapes.fill(color, LocalSky.current.dark))
     val path = remember(shape) {
         val (start, segments) = AvatarShapes.outline(geometry)
         Path().apply {
