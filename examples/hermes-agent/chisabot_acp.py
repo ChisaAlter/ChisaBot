@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from chisabot_protocol import (GatewayClient, HostPrompt, ProtocolError, RunState, ToolAliases,
-                               active_run, failure_category, failure_message, host_metadata,
+                               TURN_FAILED, active_run, failure_category, failure_message, host_metadata,
                                parse_host_prompt, redact, tool_error)
 
 
@@ -425,7 +425,11 @@ def build_agent_class():
                     raise
                 except Exception as error:
                     # Only a fixed category sentence leaves the process, never the provider's text.
-                    message = failure_message(failure_category(error=error))
+                    try:
+                        message = failure_message(failure_category(error=error))
+                    except Exception:
+                        # Classifying must never keep run.fail from running, or the run hangs.
+                        message = TURN_FAILED
                     run.fail(message)
                     raise acp.RequestError(-32603, message) from None
                 finally:

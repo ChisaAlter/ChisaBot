@@ -615,6 +615,24 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(error.exception), "Hermes host turn execution failed")
         self.assertNotIn("secret-path", str(error.exception))
 
+    async def test_run_still_fails_when_classifying_raises(self):
+        import chisabot_acp
+        state = await self.new()
+        def hook(agent, user, history):
+            raise ValueError("opaque")
+        state.agent.run_hook = hook
+        original = chisabot_acp.failure_category
+        def explode(*args, **kwargs):
+            raise TypeError("classifier bug")
+        chisabot_acp.failure_category = explode
+        try:
+            with self.assertRaises(RequestError) as error:
+                await self.prompt(state)
+        finally:
+            chisabot_acp.failure_category = original
+        self.assertEqual(str(error.exception), "Hermes host turn execution failed")
+        self.assertFalse(state.is_running)
+
     async def test_default_manager_skips_native_memory_tools_and_discovery(self):
         captured = {}
         class AIAgent(FakeAgent):

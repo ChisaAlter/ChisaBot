@@ -28,6 +28,7 @@
 - 必修：`_HINTS` 按异常文字匹配，把非模型错误认错了——工具的 `FileNotFoundError` 成了「模型不存在」，`PermissionError("Permission denied")` 成了「密钥无效」，工具自己的「timed out」成了「模型响应超时」。现在 `failure_category` 跳过内置异常（`OSError` 及其子类、`builtins` 里的 `RuntimeError` / `TimeoutError` 等），只认 HTTP 状态码（`status_code` / `status`）和模型 SDK（openai、anthropic、litellm、google、groq、mistralai、cohere 模块里的）异常类型；4xx 的 body / `code` 只在这类错误上看。其他一律走通用句子。内置异常包着的真模型错误（`__cause__`）照样认得出。
 - 应修：403 不再直接算「密钥无效」。先看 body / `code`：地区限制（`unsupported_country_region_territory`、「region … not supported」）→ 新分类 `region`（网页「模型服务商不支持服务器所在地区」，不可重试）；内容拦截（content filter / policy、moderation、policy_violation）→ `content_filter`；明确说 API key / unauthorized → `auth`；分不清（如只有「Forbidden」）→ 通用句子。
 - 测试：`test_protocol.py` 加这三个例子 + 403 各情况；`test_adapter.py` 加工具 `FileNotFoundError` 整轮只出通用句子、不带路径；`app/tests/hermes-error-categories.test.ts` 加 `region`，`friendly-error.ts` 加对应规则。
+- 复审应修：分类函数自己可能抛异常——`_error_body` 里 `json.dumps` 遇到不可序列化的 body（如含 bytes）抛 TypeError，属性 getter 也可能抛别的异常；它在 `chisabot_acp.py` 的 `except` 里调用，一抛就跳过 `run.fail`，这一轮卡住。现在 `json.dumps(default=str)`，逐个属性 try，整体 try 失败退回 `str(error)`、再失败退回类名；bytes body 用 `errors=replace` 解码后再匹配；整段截到 64KB 再跑正则。适配器那层再包一层兜底，分类出错时用通用句子照样 `run.fail`。测试：不可序列化 body、getter / `__str__` 都抛、bytes body、超长 body 截断、分类函数抛异常时整轮仍结束。
 
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 

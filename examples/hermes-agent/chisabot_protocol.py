@@ -524,14 +524,38 @@ _SDK_TYPES = {
 }
 
 
+_BODY_LIMIT = 64 * 1024
+
+
+def _body_text(value: Any) -> str | None:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value[:_BODY_LIMIT]).decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return None
+
+
 def _error_body(error: BaseException) -> str:
-    parts = []
-    for name in ("code", "type", "body", "message"):
-        value = getattr(error, name, None)
-        if isinstance(value, (str, dict, list)):
-            parts.append(json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value)
-    parts.append(str(error))
-    return " ".join(parts)
+    """The error's code / type / body / message as one string (at most 64 KB), never raising."""
+    try:
+        parts = []
+        for name in ("code", "type", "body", "message"):
+            try:
+                value = getattr(error, name, None)
+            except Exception:
+                continue
+            text = _body_text(value)
+            if text:
+                parts.append(text[:_BODY_LIMIT])
+        parts.append(str(error))
+        return " ".join(parts)[:_BODY_LIMIT]
+    except Exception:
+        try:
+            return str(error)[:_BODY_LIMIT]
+        except Exception:
+            return type(error).__name__
 
 
 def _from_body(body: str) -> str | None:
