@@ -474,6 +474,11 @@ export function ChannelChat({
   /** Cleared by the send-on-mount effect without restarting it. */
   const seedRef = useRef(seed);
   seedRef.current = seed;
+  /**
+   * 第一句话还在路上：从第一帧起就算「在回答」，「思考中」跟着发送立刻出来。不然第一帧不忙，
+   * 记录里把带着这句话的列表当成「已经答完」的样子，要等 `say` 把消息放进 agent、列表变了才画（§68.4）。
+   */
+  const [seedSending, setSeedSending] = useState(seed !== null);
 
   /** Promise gate for ordering the first message after the thread join when possible. */
   const joinGateSettledRef = useRef(false);
@@ -561,11 +566,27 @@ export function ChannelChat({
     if (isReady) openReadyGate.current();
   }, [isReady]);
 
+  /**
+   * 从新建页带着第一句话进来的对话（`seed`）：线程刚由 POST /api/channels 建好，服务器上什么都没有，
+   * 接入回放和读历史都只会拿回空的，却要排在第一条消息前面（实测约 0.8 秒）。这一次挂载就跳过，直接放行。
+   * 只管挂载后的第一次；之后 agent 换了等原因重跑这段，照常接入、读存储。
+   */
+  const freshThread = useRef(seed !== null);
+
   // Join the gateway socket, restore durable history, then release the first-message gate.
   useEffect(() => {
     if (!isReady) return;
     let current = true;
     const version = ++historyReadVersion.current;
+    if (freshThread.current) {
+      freshThread.current = false;
+      setRestoring(false);
+      setJoined(true);
+      openJoinGate.current();
+      return () => {
+        current = false;
+      };
+    }
 
     void (async () => {
       try {
@@ -1011,6 +1032,20 @@ export function ChannelChat({
       throw new Error(
         "这个模型已下线（不在模型列表里），这一条没有发出去。点输入框右下角的模型名换一个再发。",
       );
+    // An open custom-panel authoring session for this Bot rides along, so the server hands the Bot
+    // its draft tools for that session (see server/src/index.ts handoffForActor). Asked for now, in
+    // parallel with the waits below, instead of after them: it is one more round trip that used to
+    // sit in front of every `/run`.
+    const panelAuthoringRead = panelAuthoringForwardedProps(
+      runtimeAgentId,
+      trimmed,
+      () =>
+        void modelQueryClient.invalidateQueries({
+          queryKey: panelKeys.session(runtimeAgentId),
+        }),
+    );
+    // Awaited below; a rejection before that point must not surface as unhandled.
+    panelAuthoringRead.catch(() => undefined);
     // Wait briefly for the runtime agent instance before adding the message.
     if (!isReadyRef.current) {
       await Promise.race([
@@ -1075,18 +1110,9 @@ export function ChannelChat({
       role: "user",
     } as Message);
 
-    // An open custom-panel authoring session for this Bot rides along, so the server hands the Bot
-    // its draft tools for that session (see server/src/index.ts handoffForActor).
-    let panelAuthoring: Awaited<ReturnType<typeof panelAuthoringForwardedProps>>;
+    let panelAuthoring: Awaited<typeof panelAuthoringRead>;
     try {
-      panelAuthoring = await panelAuthoringForwardedProps(
-        runtimeAgentId,
-        trimmed,
-        () =>
-          void modelQueryClient.invalidateQueries({
-            queryKey: panelKeys.session(runtimeAgentId),
-          }),
-      );
+      panelAuthoring = await panelAuthoringRead;
     } catch (error) {
       target.setMessages(
         target.messages.filter((message) => existingMessageIds.has(message.id)),
@@ -1729,7 +1755,8 @@ export function ChannelChat({
     // away. The transcript keeps the seeded message and the notice under it says what happened.
     void sayRef
       .current(typeof pending.content === "string" ? pending.content : "")
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setSeedSending(false));
 
     // Keep `seed` in state; transcriptMessages gives it up once the agent holds a user turn.
   }, []);
@@ -1782,6 +1809,7 @@ export function ChannelChat({
     return () => clearTimeout(timer);
   }, [stopping, agentLive]);
   const chatBusy =
+    seedSending ||
     turnsInFlight > 0 ||
     runsInFlight > 0 ||
     (agent.isRunning && !joining);

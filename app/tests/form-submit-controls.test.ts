@@ -73,6 +73,12 @@ test("every form with an onSubmit has a control that submits it", async () => {
     const file = normalize(scanned);
     if (SUBMITTED_ELSEWHERE.has(file)) continue;
     const text = await Bun.file(`${import.meta.dir}/../${scanned}`).text();
+    /*
+     * 只解析写了 onSubmit 的文件：要查的就是带 onSubmit 的 <form>，表单的提交控件（含 form="id"）也只在同一个
+     * 文件里找，所以没出现这个词的文件不可能报出问题。src 下约 270 个 .tsx（约 2.5 MB）里只有约 30 个有它；
+     * 以前每个都用 TypeScript 完整解析再整树遍历，单跑约 1.3–5 秒，贴着 5 秒超时。
+     */
+    if (!text.includes("onSubmit")) continue;
     const source = ts.createSourceFile(
       file,
       text,

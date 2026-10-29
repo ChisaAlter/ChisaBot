@@ -19,7 +19,7 @@ import {
 } from "@/components/channels/chat-transcript";
 import { toVisibleChatItems } from "@/components/channels/chat-messages";
 import type { QueuedMessage } from "@/components/channels/composer";
-import { attachmentUrl } from "@/lib/channels/attachments";
+import { attachmentThumbUrl, attachmentUrl } from "@/lib/channels/attachments";
 import { frameFiring } from "../../shared/routine-firing";
 import { settleReactWork } from "./settle-react-work";
 
@@ -193,14 +193,15 @@ function anchoredRows(container: HTMLElement): (string | null)[] {
   ).map((row) => row.getAttribute("data-message-id"));
 }
 
-test("an image attachment renders as an img carrying the attachment url", () => {
+test("an image attachment renders as an img carrying the attachment url (its thumbnail tier)", () => {
   const url = attachmentUrl("att-image");
   const { getByRole } = renderTranscript([
     userMessage([imagePart(url, "shot.png")]),
   ]);
 
+  // 对话里画的是缩略图：单张 320px，测试环境 1x 屏 → 480 档。看大图仍是原图（见下面看大图的用例）。
   const img = getByRole("img", { name: /附件/ });
-  expect(img.getAttribute("src")).toBe(url);
+  expect(img.getAttribute("src")).toBe(attachmentThumbUrl(url, 480));
 });
 
 /*
@@ -335,6 +336,25 @@ test("two files sent together are drawn as one row, not two", () => {
   expect(lists).toHaveLength(1);
   expect(lists[0].querySelectorAll("li")).toHaveLength(1);
   expect(lists[0].querySelectorAll(".rp-pile .rp-pile-card")).toHaveLength(2);
+});
+
+test("a pile draws thumbnails of the pile-card tier, and opening a card still loads the original", () => {
+  const first = attachmentUrl("att-one");
+  const second = attachmentUrl("att-two");
+  const { container, getByLabelText, getByRole } = renderTranscript([
+    userMessage([imagePart(first, "one.png"), imagePart(second, "two.png")]),
+  ]);
+
+  // 一摞里的卡片 220px，测试环境 1x 屏 → 240 档。
+  const cards = [...container.querySelectorAll(".rp-pile-card img")];
+  expect(cards.map((img) => img.getAttribute("src"))).toEqual([
+    attachmentThumbUrl(first, 240),
+    attachmentThumbUrl(second, 240),
+  ]);
+
+  fireEvent.click(getByLabelText("查看第 2 张图片（共 2 张）"));
+  const opened = getByRole("dialog").querySelector("img.rp-lightbox-img");
+  expect(opened?.getAttribute("src")).toBe(second);
 });
 
 test("a picture tile opens the whole picture from a button rather than a link", () => {
@@ -757,7 +777,9 @@ test("a file parked with a message is still on screen", () => {
   });
 
   const image = container.querySelector("img");
-  expect(image?.getAttribute("src")).toBe(attachmentUrl("att-image"));
+  expect(image?.getAttribute("src")).toBe(
+    attachmentThumbUrl(attachmentUrl("att-image"), 480),
+  );
   // Still parked, and still takeable back: the row is drawn with the message, not instead of it.
   expect(getByText("this one instead")).toBeTruthy();
   expect(getByText("排队")).toBeTruthy();
@@ -775,7 +797,7 @@ test("a parked message that is only a file draws the file, not an empty bubble",
   });
 
   expect(container.querySelector("img")?.getAttribute("src")).toBe(
-    attachmentUrl("att-image"),
+    attachmentThumbUrl(attachmentUrl("att-image"), 480),
   );
   expect(container.querySelector('[data-slot="bubble"]')).toBeNull();
 });
@@ -934,7 +956,7 @@ test("a parked picture the browser mislabelled is drawn as a picture", () => {
   });
 
   expect(container.querySelector("img")?.getAttribute("src")).toBe(
-    attachmentUrl("att-shot"),
+    attachmentThumbUrl(attachmentUrl("att-shot"), 480),
   );
   // Not the file card: that meta line is the file's own type, which no picture tile carries.
   expect(queryByText("PNG")).toBeNull();
@@ -987,7 +1009,7 @@ test("a parked file with no server type falls back to the declared one", () => {
   });
 
   expect(container.querySelector("img")?.getAttribute("src")).toBe(
-    attachmentUrl("att-shot"),
+    attachmentThumbUrl(attachmentUrl("att-shot"), 480),
   );
 });
 
