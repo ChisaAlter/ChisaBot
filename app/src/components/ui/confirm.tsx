@@ -36,7 +36,16 @@ export function confirmDialog(options: ConfirmOptions): Promise<boolean> {
   });
 }
 
+/** 确认框正开着（别的弹窗据此忽略同一次点击 / Esc）。 */
+export function isConfirmOpen(): boolean {
+  // 刚关掉的那一下也算：同一次 Esc 可能先关确认框、再传到下面的弹窗。
+  return current !== null || Date.now() - settledAt < 150;
+}
+
+let settledAt = 0;
+
 function settle(ok: boolean) {
+  settledAt = Date.now();
   const pending = current;
   current = null;
   emit();

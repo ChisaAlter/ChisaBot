@@ -784,3 +784,31 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.111`；PC / Android 不变。不打 tag、不建 Release。
 
 **0.1.111 部署**（2026-10-29 21:48 北京时间开始）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.111-20261029T134745Z.dump`（`pg_restore -l` 767 条目），备份网关 `nginx.conf`（`nginx.conf.bak-pre-v0.1.111-20261029T134745Z`）。`deploy-serial.sh a4fce00` 因为 server 新增依赖 `sharp` 走了完整构建（609 秒），镜像 `local/chisabot:auto-202610291348-a4fce00`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.111` / `a4fce00`；`request.sh smoke` PASSED，`POST /api/admin/smoke` 模型自检 `ok:true persisted:false`，`health.sh` 通过（容器 healthy、无重启、本机 `/health` 200、公网 `/login` 200），sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 63914d8；保留当前（BASE）a4fce00、上一版 249aefa 作回滚。#411 的 base 不是 main，已在 GitHub 上手动关闭并留言。
+
+## 2026-10-29 设置页审查模块 12（第 3–6 条）
+
+**动机**：审查报告（模块 12）发现设置里所有表单离开时都不提示未保存，常驻指令、技能方法说明这类长文本一切页就丢；搜索说明和左栏文案和真实功能对不上（「8 款」配色实际 6 款、没有的内置流光壁纸、写死的精选技能数量、左栏和标题名字不同、「密钥」一项永远亮不起来）；中文标题的技能名字会变成 `--`；常驻指令保存时整个输入框被禁用。方向对齐 Hark 的设置体验：改了就有未保存栏（DESIGN.md §11），离开前问一声，文案只写真有的东西。
+
+**改动**
+
+- 未保存拦截（第 3 条）：`useUnsavedGuard(dirty)`（`app/src/components/ui/unsaved-guard.tsx`）用 TanStack Router 的 `useBlocker`，`shouldBlockFn` 弹 `confirmDialog`（「有未保存的更改，确定离开？」继续编辑 / 离开），`enableBeforeUnload` 管刷新和关标签。常驻指令在 SaveBar 显示、且不在保存中时挂上。弹窗用 `useGuardedOpenChange(dirty, onOpenChange)`：Base UI 的关闭原因是 `escape-key` / `outside-press` / `close-press` 且有改动时先确认（「放弃这次的改动？」），「取消」按钮不拦。确认框开着时忽略下面弹窗收到的同一次点击 / Esc（`isConfirmOpen()`），实测「继续编辑」后弹窗和内容都还在。全站只用确认，不存 sessionStorage 草稿。接在技能新建 / 编辑、导入 SKILL.md、记忆添加 / 编辑（`NoteDialog`）上；dirty 是表单和打开时快照逐字段比较（`formDirty`）。
+- 文案（第 4 条）：`registry.ts` 只改文案，不动任何 `find` 字段（开发2 在改）。配色说明由 `THEME_PALETTES` 的名字和长度生成；壁纸说明改成「上传自定义图片作为背景壁纸」；精选技能去掉「8 款」；左栏「我的生图与识图」→「生图与识图」。「密钥」选了改动小的一种：页面加 `nav: false`，左栏不单列（新 `navGroups()`），搜索照常能搜到并跳到 账号连接 → API 密钥 标签，这时左栏亮「账号连接」，和所在位置一致；没有去改 SectionRail 的高亮逻辑。`server/src/user-instructions.ts` 超长报错改为「常驻指令最多 4000 个字。」。
+- 技能名字（第 5 条）：`app/src/lib/skill-slug.ts`。没手动改过名字时跟着标题自动生成：留下标题里的字母数字，不够 2 个字符就用标题的 FNV 短串（`skill-xxxxxx`，同一标题结果稳定）；手打时合并连续连字符、去掉开头的连字符。标签改为「必填，小写字母、数字、连字符；按标题自动生成」。
+- 常驻指令保存中（第 6 条）：去掉 textarea 的 `disabled`，只禁按钮；保存成功时只有内容没再改过才换成服务器返回值。
+- 没碰 settings-search.tsx、memory.tsx 的整理按钮、appearance-preferences.tsx、wallpaper_core.html、bot-bubbles.tsx、壁纸上传、styles.css；没有新 CSS、动画和 token。
+
+**测试**：新增 `app/tests/settings-audit-12.test.ts`（拦截规则、`formDirty`、slug 生成、文案不写死、「密钥」不在左栏但能搜到）。
+
+**截图**：本地构建 main 和本分支，mock `/api`，1280×800。
+
+| | 改前 | 改后 |
+|---|---|---|
+| 常驻指令未保存，点左栏「技能」 | ![](images/settings-audit/before-leave-instructions.webp) | ![](images/settings-audit/after-leave-instructions.webp) |
+| 新建技能写了一半按 Esc | ![](images/settings-audit/before-skill-esc.webp) | ![](images/settings-audit/after-skill-esc.webp) |
+| 中文标题的名字 | ![](images/settings-audit/before-skill-slug.webp) | ![](images/settings-audit/after-skill-slug.webp) |
+| 左栏 | ![](images/settings-audit/before-sidebar.webp) | ![](images/settings-audit/after-sidebar.webp) |
+| 搜「配色」 | ![](images/settings-audit/before-search-palette.webp) | ![](images/settings-audit/after-search-palette.webp) |
+| 搜「壁纸」 | ![](images/settings-audit/before-search-wallpaper.webp) | ![](images/settings-audit/after-search-wallpaper.webp) |
+| 搜「精选技能」 | ![](images/settings-audit/before-search-hub.webp) | ![](images/settings-audit/after-search-hub.webp) |
+
+浏览器后退的确认：`images/settings-audit/after-back-confirm.webp`；打开 /settings/vault 后的左栏：`images/settings-audit/after-vault-active.webp`。

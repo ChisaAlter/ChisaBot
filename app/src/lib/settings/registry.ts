@@ -21,6 +21,7 @@ import {
   IconWorldWww,
 } from "@tabler/icons-react";
 import type * as React from "react";
+import { THEME_PALETTES } from "@/lib/appearance";
 
 /**
  * 设置的唯一登记表（DESIGN.md §97）：左栏导航和设置搜索都从这里来，加一页 / 一项只改这里。
@@ -67,6 +68,8 @@ export type SettingsPage = {
   exact?: boolean;
   /** 只有管理员看得到。 */
   admin?: boolean;
+  /** false = 左栏不单列（还能搜到）。用于已经并进别的页的旧入口，比如「密钥」并进了「账号连接」的标签。 */
+  nav?: false;
   /** 默认隐藏，部署的 CHISABOT_EXTRAS 里有这个名字才出现（DESIGN.md §74）。 */
   extra?: string;
   /** 默认隐藏，部署打开多用户界面（CHISABOT_ACCOUNTS_UI=1）才出现。 */
@@ -88,9 +91,9 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     keywords: ["ty", "tongyong", "general", "preferences", "偏好"],
     items: [
       { id: "theme", title: "主题", description: "浅色或深色外观", find: "主题", keywords: ["深色", "浅色", "暗色", "夜间", "黑色", "dark", "light", "theme", "zt", "外观"] },
-      { id: "palette", title: "主题配色", description: "晴空蓝、极光紫、翡翠森、樱花粉、深海蓝、暮光金等 8 款主题风格", find: "主题配色", keywords: ["配色", "主题色", "极光", "樱花", "翡翠", "深海", "暮光", "曜石", "palette", "color"] },
+      { id: "palette", title: "主题配色", description: `${THEME_PALETTES.map((palette) => palette.name).join("、")}，共 ${THEME_PALETTES.length} 款主题配色`, find: "主题配色", keywords: ["配色", "主题色", "极光", "樱花", "翡翠", "深海", "暮光", "曜石", "palette", "color"] },
       { id: "glass", title: "面板玻璃材质（液态玻璃）", description: "调整左栏、输入框、对话气泡与面板栏的液态玻璃折射通透度", find: "面板玻璃材质", keywords: ["液态玻璃", "毛玻璃", "透明", "高透", "磨砂", "liquid glass", "ytbl"] },
-      { id: "wallpaper", title: "背景壁纸", description: "选择内置流光壁纸或上传自定义图片壁纸", find: "背景壁纸", keywords: ["壁纸", "背景图", "自定义壁纸", "上传图片", "wallpaper", "bz", "bjt"] },
+      { id: "wallpaper", title: "背景壁纸", description: "上传自定义图片作为背景壁纸", find: "背景壁纸", keywords: ["壁纸", "背景图", "自定义壁纸", "上传图片", "wallpaper", "bz", "bjt"] },
       { id: "sky", title: "背景随时间变化", description: "背景按一天里的时间换颜色", find: "背景随时间变化", keywords: ["天空", "背景", "sky", "颜色", "时间", "tk"] },
       { id: "instructions", title: "常驻指令", description: "每次对话都带上的要求", find: "常驻指令", keywords: ["指令", "系统提示", "prompt", "instructions", "要求", "czzl"] },
       { id: "hotkeys", title: "键盘快捷键", description: "全部快捷键一览", find: "键盘快捷键", keywords: ["快捷键", "热键", "hotkey", "shortcut", "keyboard", "kjj"] },
@@ -136,7 +139,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     to: "/settings/skills",
     keywords: ["jn", "jineng", "skill", "skills", "做法", "方法", "共享技能", "全局共享技能"],
     items: [
-      { id: "curated-hub", title: "精选个人助理技能库", description: "一键安装每日晨报、收件箱管家、知识库归档等 8 款精选技能（支持全员共享安装）", find: "精选个人助理技能库", keywords: ["精选技能", "精选", "模板", "一键安装", "hub", "全员共享"] },
+      { id: "curated-hub", title: "精选个人助理技能库", description: "一键安装每日晨报、收件箱管家、知识库归档等精选技能（支持全员共享安装）", find: "精选个人助理技能库", keywords: ["精选技能", "精选", "模板", "一键安装", "hub", "全员共享"] },
       { id: "import-skill", title: "导入 SKILL.md 技能", description: "通过 GitHub URL 或粘贴 Markdown 批量导入技能", find: "技能", keywords: ["skill.md", "导入", "github", "markdown"] },
     ],
   },
@@ -227,6 +230,8 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     sub: "API 密钥和令牌，机器人用但看不到",
     icon: IconLock,
     to: "/settings/vault",
+    /* /settings/vault 直接跳到 账号连接 → API 密钥 标签，左栏只亮「账号连接」，单列一项永远亮不起来（审查模块 12 第 4 条）。 */
+    nav: false,
     keywords: ["my", "miyao", "保险箱", "api key", "token", "令牌", "secret", "vault", "密码"],
     items: [],
   },
@@ -289,7 +294,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
   {
     id: "media",
     group: "models",
-    title: "我的生图与识图",
+    title: "生图与识图",
     sub: "自己的画图、看图模型（可选）",
     icon: IconPhoto,
     to: "/settings/media",
@@ -372,6 +377,13 @@ export function visiblePages(viewer: SettingsViewer): SettingsPage[] {
 export function visibleGroups(viewer: SettingsViewer): { group: SettingsGroup; pages: SettingsPage[] }[] {
   const pages = visiblePages(viewer);
   return SETTINGS_GROUPS.map((group) => ({ group, pages: pages.filter((page) => page.group === group.id) })).filter((entry) => entry.pages.length > 0);
+}
+
+/** 左栏用的分组：可见的页里去掉 `nav: false` 的，一项不剩的组不显示。 */
+export function navGroups(viewer: SettingsViewer): { group: SettingsGroup; pages: SettingsPage[] }[] {
+  return visibleGroups(viewer)
+    .map(({ group, pages }) => ({ group, pages: pages.filter((page) => page.nav !== false) }))
+    .filter((entry) => entry.pages.length > 0);
 }
 
 export function groupLabel(id: SettingsGroupId): string | null {
