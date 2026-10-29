@@ -2327,13 +2327,10 @@ const schedules = createSchedules(database, {
     if (!localBackend) return;
     await localBackend.control.stop({ threadId }).catch(() => undefined);
   },
+  // 模块 13 M3：读资料出错要抛出去（定时任务按 BUSY_RETRY 重试），只有确实查到不在 / 已删才返回 false。
   botAvailable: async (ownerUserId, agentId) => {
-    try {
-      const profile = await agentProfileStore.get(await actorFor(ownerUserId), agentId);
-      return Boolean(profile && !profile.deletedAt);
-    } catch {
-      return false;
-    }
+    const profile = await agentProfileStore.get(await actorFor(ownerUserId), agentId);
+    return Boolean(profile && !profile.deletedAt);
   },
   isSuspension: (error) => error instanceof HeadlessToolSuspension,
   isPaused: (error) => error instanceof BotPausedError,

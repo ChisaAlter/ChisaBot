@@ -1,3 +1,4 @@
+import { cancelSchedulesForDeletedThreads } from "./schedules/service";
 import {
   type AbstractAgent,
   type BaseEvent,
@@ -1939,6 +1940,7 @@ export async function createLocalConversations(
             [actorId],
           );
         });
+        await cancelSchedulesForDeletedThreads(database.$client, actorId, null);
         return Response.json({ success: true });
       }
       const [encodedId, operation] = suffix.split("/");
@@ -2179,6 +2181,8 @@ export async function createLocalConversations(
           );
         await database.$client.unsafe("DELETE FROM chisabot_thread_inbox_control WHERE thread_id = $1", [threadId]);
         await database.$client.unsafe("DELETE FROM chisabot_thread_inbox WHERE thread_id = $1", [threadId]);
+        // 模块 13 M2：挂在这段对话上的例程一起取消，不再到点发到别的对话。
+        await cancelSchedulesForDeletedThreads(database.$client, actorId, [threadId]);
         return new Response(null, { status: 204 });
       }
       if (

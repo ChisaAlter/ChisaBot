@@ -20,10 +20,30 @@ describe("classifyScheduleReply (FIX-01)", () => {
     ).toBe("skipped");
   });
 
-  test("marks tunnel / hard failures as failed", () => {
-    expect(classifyScheduleReply("浏览器打开失败：ERR_TUNNEL_CONNECTION_FAILED")).toBe("failed");
+  test("hard failures come from runner signals or the runner's own leading prefix", () => {
+    expect(classifyScheduleReply("已检查。", { toolErrors: ["ERR_TUNNEL_CONNECTION_FAILED"] })).toBe("failed");
+    expect(classifyScheduleReply("⏰ 该喝水了", { runnerError: "推送到 IM 失败" })).toBe("failed");
     expect(classifyScheduleReply("运行失败：something exploded")).toBe("failed");
     expect(classifyScheduleReply("没有执行：这台计算机现在由用户接管着。")).toBe("failed");
+    expect(classifyScheduleReply("  运行失败: timeout")).toBe("failed");
+  });
+
+  // 审查模块 13 M1 / O11：正常回复里出现这些字不再判失败（以前连 3 次就自动暂停）。
+  test.each([
+    "提醒你：昨天没能完成的周报今天记得交。",
+    "提醒：明天走海底隧道去机场，早点出门。",
+    "浏览器打开失败的话就用手机看。",
+    "好的，已提醒。错误码 ERR_NAME_NOT_RESOLVED 的意思是域名解析失败。",
+    "浏览器打开失败：ERR_TUNNEL_CONNECTION_FAILED",
+    "如果运行失败：请告诉我。",
+    "上次没有执行：今天补上。",
+  ])("model prose is never scanned for failure: %s", (text) => {
+    expect(classifyScheduleReply(text)).toBe("ok");
+  });
+
+  test("empty tool error list does not fail", () => {
+    expect(classifyScheduleReply("好的", { toolErrors: [], runnerError: null })).toBe("ok");
+    expect(classifyScheduleReply("好的", { toolErrors: ["  "] })).toBe("ok");
   });
 
   test("ordinary success stays ok", () => {
