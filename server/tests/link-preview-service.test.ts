@@ -580,3 +580,53 @@ describe("路由：限速", () => {
     expect(body.preview.title).toBe("Hit");
   });
 });
+
+describe("路由：Cache-Control", () => {
+  test("非 2xx 一律 no-store，成功预览 private, max-age=600", async () => {
+    const script: Script = {
+      "https://ok.example/": html("<title>OK</title>"),
+      "https://gone.example/": { status: 404, body: "nope" },
+    };
+    for (let i = 0; i < 41; i++)
+      script[`https://r${i}.example/`] = html(`<title>R${i}</title>`);
+    const t = await setup(script);
+    const app = new Hono();
+    app.route(
+      "/api/link-preview",
+      t.service.routes(async (c, next) => {
+        if (c.req.header("x-deny")) return c.json({ error: "no" }, 401);
+        c.set("actor", { id: "u1" } as never);
+        await next();
+      }),
+    );
+    const get = (q: string, init?: RequestInit) =>
+      app.request(`/api/link-preview${q}`, init);
+    const cc = (r: Response) => r.headers.get("cache-control");
+    const ok = await get(`?url=${encodeURIComponent("https://ok.example/")}`);
+    expect(ok.status).toBe(200);
+    expect(cc(ok)).toBe("private, max-age=600");
+    const bad = await get("?url=notaurl");
+    expect(bad.status).toBe(422);
+    expect(cc(bad)).toBe("no-store");
+    const gone = await get(
+      `?url=${encodeURIComponent("https://gone.example/")}`,
+    );
+    expect([200, 422]).toContain(gone.status);
+    if (gone.status !== 200) expect(cc(gone)).toBe("no-store");
+    const asset = await get("/asset/nope");
+    expect(asset.status).toBe(404);
+    expect(cc(asset)).toBe("no-store");
+    const denied = await get("?url=x", { headers: { "x-deny": "1" } });
+    expect(denied.status).toBe(401);
+    expect(cc(denied)).toBe("no-store");
+    let limited: Response | undefined;
+    for (let i = 0; i < 41; i++) {
+      const r = await get(
+        `?url=${encodeURIComponent(`https://r${i}.example/`)}`,
+      );
+      if (r.status === 429) limited = r;
+    }
+    expect(limited?.status).toBe(429);
+    expect(limited && cc(limited)).toBe("no-store");
+  });
+});

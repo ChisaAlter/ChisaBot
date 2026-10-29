@@ -732,6 +732,12 @@ export async function createLinkPreviews(
 
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
     const app = new Hono<{ Variables: AppVariables }>();
+    // 非 2xx 一律 no-store（包括登录校验的拒绝）：只有成功的预览才带 private, max-age=600。
+    app.use("*", async (c, next) => {
+      await next();
+      if (c.res.status < 200 || c.res.status >= 300)
+        c.header("cache-control", "no-store");
+    });
     app.use("*", requireUser);
     app.get("/", async (c) => {
       const url = normalizePreviewUrl(c.req.query("url") ?? "");
