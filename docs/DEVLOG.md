@@ -19,6 +19,8 @@
 
 **返修（小爱审查，首字）**：`initials()`（`rich-utils.ts`，Avatar / List 图位 / Products 共用）原来按 UTF-16 下标取字：「🎧 降噪耳机」取出半个 emoji（显示 �），「【推荐】小米」取出「【」，空标题显示「?」。改成按码点（`Array.from`）处理，开头的标点、符号、emoji（`\p{P}` `\p{S}` `\p{Extended_Pictographic}` 等）跳过，只认 `\p{L}` `\p{N}`（组合附加符号跟着前一个字）；中日韩取第一个字，其他取前两个词首字母。现在：「🎧 降噪耳机」→「降」，「【推荐】小米」→「推」，「«Le Monde»」→「LM」。名字为空或全是符号时返回空串，新组件 `InitialMark`（`json-render/initial-mark.tsx`）画中性通用图标（Avatar 用人形 `IconUser`，List / Products 用 `IconPhoto`），容器加 `data-empty`，底色换成中性的 `--glass-3`、图标 `--ink-3`，不再按名字定色，也不出「?」。顶栏账号头像的 `initialsOf` 是另一套，没动。测试：`json-render-rich.test.tsx` 新增 4 个用例（拉丁 / 中日韩正常名字、emoji / 标点 / 代理对、空和全符号、Avatar 与 List 渲染出中性图标）。可选项「有图列表里无图行对齐 56px 图位」没做：要么留透明空位，要么画底框，和本 PR「没图不占位」的方向冲突，留给设计决定。
 
+**返修 2（小爱预审 63f3a9e6）**：大写改成逐字做，一个字一个字：`toLocaleUpperCase` 会把「ß」展开成「SS」（「ß straße」原来得「SSS」），展开的字保留原样，现在得「ßS」。数字开头：保留数字，如果紧跟字母就取这个字母（「1More 耳机」→「1M」、「3M」→「3M」、「7-Eleven」→「7E」），否则取第二个词首字母（「100 Days」→「1D」），第二个词是中日韩时只留数字（「2024 年报」→「2」）。不跳过数字，因为品牌名里数字常常就是名字本身。测试：再加 2 个用例。
+
 **截图**：`docs/images/render-ui-list-fallback/`（before = 0.1.108 线上的 DOM 结构，after = 本分支渲染结果，headless Chrome）。
 
 ![before](images/render-ui-list-fallback/before.png)

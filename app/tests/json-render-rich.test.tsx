@@ -131,6 +131,21 @@ describe("initials (Avatar / List / Products 共用)", () => {
     expect(initials("𠀋字")).toBe("𠀋");
   });
 
+  test("one character per word: ß is not expanded to SS", () => {
+    expect(initials("ß straße")).toBe("ßS");
+    expect(initials("straße ß")).toBe("Sß");
+    expect(initials("ǆemal x")).toBe("ǄX");
+    for (const name of ["ß straße", "ﬁsh ﬂy", "ŉ x"]) expect(Array.from(initials(name)).length).toBeLessThanOrEqual(2);
+  });
+
+  test("a leading digit is kept, followed by the letter right after it", () => {
+    expect(initials("1More 耳机")).toBe("1M");
+    expect(initials("3M")).toBe("3M");
+    expect(initials("7-Eleven")).toBe("7E");
+    expect(initials("100 Days")).toBe("1D");
+    expect(initials("2024 年报")).toBe("2");
+  });
+
   test("empty or all-symbol names give an empty string, never 「?」", () => {
     for (const name of ["", "   ", "🎧", "【】", "!!!", "★☆", "— · —"]) expect(initials(name)).toBe("");
   });

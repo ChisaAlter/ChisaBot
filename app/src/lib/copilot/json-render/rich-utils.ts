@@ -281,11 +281,22 @@ export function initials(name: string): string {
     }
   }
   if (current) words.push(current);
-  const first = firstGrapheme(words[0] ?? "");
-  // 第二个词是中日韩（「Apple 苹果」）时只取第一个字母，不拼出「A苹」。
-  const secondChar = firstGrapheme(words[1] ?? "");
+  const firstWord = words[0] ?? "";
+  const first = firstGrapheme(firstWord);
+  // 第二个字母：第一个词以数字开头且后面紧跟字母（「1More」「3M」）时取这个字母（→「1M」），
+  // 否则取第二个词的首字母；第二个词是中日韩（「Apple 苹果」）时不拼，避免「A苹」。
+  const afterDigit = DIGIT.test(first) ? firstGrapheme(firstWord.slice(first.length)) : "";
+  const secondChar = afterDigit && LETTER.test(afterDigit) ? afterDigit : firstGrapheme(words[1] ?? "");
   const second = secondChar && !CJK_START.test(secondChar) ? secondChar : "";
-  return (first + second).toLocaleUpperCase();
+  return upperOne(first) + upperOne(second);
+}
+
+const DIGIT = /^\p{N}/u;
+const LETTER = /^\p{L}/u;
+/** 逐字大写，且保持一个字一个字：toLocaleUpperCase 会把「ß」展开成「SS」，这种就保留原字。 */
+function upperOne(grapheme: string): string {
+  const upper = grapheme.toLocaleUpperCase();
+  return Array.from(upper).length === Array.from(grapheme).length ? upper : grapheme;
 }
 
 /** 名字 → 稳定的色相（头像底色），同一个名字永远同一个颜色。 */
