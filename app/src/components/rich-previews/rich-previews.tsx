@@ -182,6 +182,10 @@ function shortUrl(url: string): string {
 /**
  * 看过的图片多大（按地址记，只在这个页面里）。再画同一张图（切回这段对话、虚拟列表重画）时直接把宽高写在
  * `<img>` 上，浏览器先留出位置，图片加载完不再把下面的消息往下推（DESIGN.md §83）。
+ *
+ * 键是**实际加载的地址**：画缩略图时是 `?w=` 那个地址，记的是缩略图的天然尺寸；原图地址下只放原图自己的尺寸
+ * （服务器给的宽高，或者真的加载了原图）。以前缩略图的尺寸也记在原图地址下，别处按原图地址画（看大图、正文里的
+ * markdown 图）就拿到了缩略图的尺寸。服务器忙或缩不了时 `?w=` 回的是原图，记下的也就是原图尺寸，同样对。
  */
 const imageSizes = new Map<string, { width: number; height: number }>();
 const IMAGE_SIZE_LIMIT = 500;
@@ -204,7 +208,7 @@ function rememberImageSize(src: string, img: HTMLImageElement) {
 function reservedImageBox(image: PileImage): CSSProperties | undefined {
   const given = readImageDims(image.width, image.height);
   if (given) rememberSize(image.src, given);
-  const size = given ?? imageSizes.get(image.src);
+  const size = given ?? imageSizes.get(image.thumb ?? image.src);
   if (!size) return undefined;
   const scale = Math.min(1, 318 / size.width, 300 / size.height);
   return { width: `${Math.round(size.width * scale)}px`, aspectRatio: `${size.width} / ${size.height}` };
@@ -510,9 +514,9 @@ export function ImagePile({
             decoding="async"
             loading="lazy"
             onError={() => markBroken(image.src)}
-            onLoad={(event) => rememberImageSize(image.src, event.currentTarget)}
+            onLoad={(event) => rememberImageSize(image.thumb ?? image.src, event.currentTarget)}
             ref={(img) => {
-              if (img?.complete) rememberImageSize(image.src, img);
+              if (img?.complete) rememberImageSize(image.thumb ?? image.src, img);
             }}
             src={image.thumb ?? image.src}
             style={reservedImageBox(image)}

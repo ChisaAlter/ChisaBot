@@ -9,6 +9,7 @@ import {
 import {
   createThumbnailer,
   DEFAULT_MAX_CONCURRENT,
+  DEFAULT_MAX_QUEUED,
   loadSharp,
   SHARP_LOAD_FAILED_WARNING,
   type SharpLike,
@@ -204,10 +205,14 @@ describe("createThumbnailer", () => {
   });
 });
 
-/** 一个假的 sharp：`toBuffer` 等测试放行才回来，记着同时有几张在缩。 */
+/**
+ * 一个假的 sharp：`toBuffer` 等测试放行才回来，记着同时有几张在缩。`gates` 放行成功，`fails` 里同一位置的
+ * 函数让它异步失败（reject）。
+ */
 function gatedSharp() {
   const state = { started: [] as number[], active: 0, peak: 0 };
   const gates: Array<() => void> = [];
+  const fails: Array<() => void> = [];
   const load = async (): Promise<SharpLike> =>
     ((input: Uint8Array) => {
       state.started.push(input.byteLength);
@@ -220,16 +225,22 @@ function gatedSharp() {
         timeout: () => chain,
         webp: () => chain,
         toBuffer: () =>
-          new Promise<Uint8Array>((resolve) => {
+          new Promise<Uint8Array>((resolve, reject) => {
             gates.push(() => {
+              fails.shift();
               state.active -= 1;
               resolve(new Uint8Array(10));
+            });
+            fails.push(() => {
+              gates.shift();
+              state.active -= 1;
+              reject(new Error("libvips: VipsJpeg: premature end of input"));
             });
           }),
       };
       return chain;
     }) as unknown as SharpLike;
-  return { state, gates, load };
+  return { state, gates, fails, load };
 }
 
 const flush = async () => {
@@ -305,7 +316,7 @@ describe("concurrency limit", () => {
     expect(calls).toBe(2);
   });
 
-  test("cache hits and non-image originals do not queue behind work in progress", async () => {
+  test("GIFs and other non-resizable originals do not queue behind work in progress", async () => {
     const fake = gatedSharp();
     const thumbs = createThumbnailer({ load: fake.load, maxConcurrent: 1 });
     const busy = thumbs.thumbnail("a", 240, "image/png", new Uint8Array(1001));
@@ -316,6 +327,165 @@ describe("concurrency limit", () => {
     ).toBe("original");
     fake.gates.shift()?.();
     await busy;
+  });
+
+  test("a real cache hit answers at once and never takes a place in the queue", async () => {
+    const fake = gatedSharp();
+    const thumbs = createThumbnailer({
+      load: fake.load,
+      maxConcurrent: 1,
+      maxQueued: 0,
+    });
+    const first = thumbs.thumbnail(
+      "hit",
+      240,
+      "image/png",
+      new Uint8Array(1001),
+    );
+    await flush();
+    fake.gates.shift()?.();
+    const cached = await first;
+    expect(cached.kind).toBe("thumb");
+
+    // 唯一的名额被占着、队列长度为 0：不是命中的话只能回原图。
+    const busy = thumbs.thumbnail(
+      "busy",
+      240,
+      "image/png",
+      new Uint8Array(1002),
+    );
+    await flush();
+    expect(fake.state.active).toBe(1);
+    const again = await thumbs.thumbnail(
+      "hit",
+      240,
+      "image/png",
+      new Uint8Array(1001),
+    );
+    expect(again).toBe(cached);
+    expect(fake.state.started).toEqual([1001, 1002]);
+
+    fake.gates.shift()?.();
+    await busy;
+  });
+
+  test("an asynchronous failure (toBuffer rejects) gives its slot back", async () => {
+    const fake = gatedSharp();
+    const thumbs = createThumbnailer({ load: fake.load, maxConcurrent: 1 });
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const bad = thumbs.thumbnail(
+        "bad",
+        240,
+        "image/png",
+        new Uint8Array(1001),
+      );
+      const next = thumbs.thumbnail(
+        "next",
+        240,
+        "image/png",
+        new Uint8Array(1002),
+      );
+      await flush();
+      expect(fake.state.started).toEqual([1001]);
+
+      fake.fails.shift()?.();
+      expect((await bad).kind).toBe("original");
+      await flush();
+      // 名额交给了排着的那一张，没有卡住。
+      expect(fake.state.started).toEqual([1001, 1002]);
+      expect(fake.state.active).toBe(1);
+      fake.gates.shift()?.();
+      expect((await next).kind).toBe("thumb");
+
+      // 名额回到空闲：再来一张直接开始。
+      const later = thumbs.thumbnail(
+        "later",
+        240,
+        "image/png",
+        new Uint8Array(1003),
+      );
+      await flush();
+      expect(fake.state.started).toEqual([1001, 1002, 1003]);
+      fake.gates.shift()?.();
+      expect((await later).kind).toBe("thumb");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("the same item asked for again while it waits shares one place in the queue", async () => {
+    const fake = gatedSharp();
+    const thumbs = createThumbnailer({
+      load: fake.load,
+      maxConcurrent: 1,
+      maxQueued: 1,
+    });
+    const busy = thumbs.thumbnail("a", 240, "image/png", new Uint8Array(1001));
+    const queued = thumbs.thumbnail(
+      "q",
+      240,
+      "image/png",
+      new Uint8Array(1002),
+    );
+    const twice = thumbs.thumbnail("q", 240, "image/png", new Uint8Array(1002));
+    await flush();
+    // 同一项共用同一个 Promise，只占一个排队位置。
+    expect(twice).toBe(queued);
+
+    fake.gates.shift()?.();
+    await busy;
+    await flush();
+    fake.gates.shift()?.();
+    expect((await queued).kind).toBe("thumb");
+    expect(await twice).toBe(await queued);
+    expect(fake.state.started).toEqual([1001, 1002]);
+  });
+
+  test("past eight waiting, a new request gets the original at once and is not cached", async () => {
+    expect(DEFAULT_MAX_QUEUED).toBe(8);
+    const fake = gatedSharp();
+    const thumbs = createThumbnailer({ load: fake.load });
+    const running = Array.from({ length: DEFAULT_MAX_CONCURRENT }, (_, i) =>
+      thumbs.thumbnail(`run${i}`, 240, "image/png", new Uint8Array(2000 + i)),
+    );
+    const waiting = Array.from({ length: DEFAULT_MAX_QUEUED }, (_, i) =>
+      thumbs.thumbnail(`wait${i}`, 240, "image/png", new Uint8Array(3000 + i)),
+    );
+    await flush();
+    expect(fake.state.started).toHaveLength(DEFAULT_MAX_CONCURRENT);
+
+    // 第九个排队的：不等，直接回原图，没碰 sharp。
+    const overflow = await thumbs.thumbnail(
+      "over",
+      240,
+      "image/png",
+      new Uint8Array(4000),
+    );
+    expect(overflow).toEqual({ kind: "original" });
+    expect(fake.state.started).toHaveLength(DEFAULT_MAX_CONCURRENT);
+    // 只是这一刻忙：不记进缓存，下次再来还会试着缩。
+    expect(thumbs.cached("over", 240)).toBeUndefined();
+
+    // 放掉全部，排着的都缩完。
+    for (let i = 0; i < DEFAULT_MAX_CONCURRENT + DEFAULT_MAX_QUEUED; i++) {
+      await flush();
+      fake.gates.shift()?.();
+    }
+    const results = await Promise.all([...running, ...waiting]);
+    expect(results.every((result) => result.kind === "thumb")).toBe(true);
+    expect(fake.state.peak).toBe(DEFAULT_MAX_CONCURRENT);
+
+    // 空下来以后，同一项能正常缩。
+    const retry = thumbs.thumbnail(
+      "over",
+      240,
+      "image/png",
+      new Uint8Array(4000),
+    );
+    await flush();
+    fake.gates.shift()?.();
+    expect((await retry).kind).toBe("thumb");
   });
 });
 

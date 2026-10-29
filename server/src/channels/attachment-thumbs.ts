@@ -20,6 +20,8 @@ import type { AttachmentThumbWidth } from "../../../shared/attachments";
  * 并发上限：同一进程里同时最多 {@link DEFAULT_MAX_CONCURRENT}（2）张在缩，其余排队（进程内信号量，先来先算）；
  * sharp 自己的线程池设成 1（`sharp.concurrency(1)`）。一张大图解码要几十到上百 MB，打开一段图片很多的对话会一下子
  * 来十几个 `?w=` 请求，不限的话内存和 CPU 一起冲高，拖慢同一进程里的 API。缓存命中和「回原图」的判断不排队。
+ * 排队也有上限：已经有 {@link DEFAULT_MAX_QUEUED}（8）张在等时，再来的直接回原图（不记进缓存，下次再来还会试着缩），
+ * 免得一大批请求在队里越积越多、每个都攥着一份原图字节。同一项已经在算或在排队的，共享那一个 Promise，不另占位置。
  *
  * 回退原图（返回 `{ kind: "original" }`，路由照常回原图）：
  * - 不是 PNG / JPEG / WebP（GIF 可能是动图，缩成一帧会丢动画；文件、文本当然不缩）。
@@ -70,6 +72,8 @@ export const MAX_INPUT_PIXELS = 40_000_000;
 export const RESIZE_TIMEOUT_SECONDS = 10;
 /** 同时最多几张在缩（见文件头「并发上限」）。 */
 export const DEFAULT_MAX_CONCURRENT = 2;
+/** 最多几张排着队等名额；再多的直接回原图（见文件头「并发上限」）。 */
+export const DEFAULT_MAX_QUEUED = 8;
 const WEBP_QUALITY = 80;
 /** 「回原图」标记在缓存里按这么多字节算，免得两千个标记不占预算。 */
 const ORIGINAL_MARKER_BYTES = 64;
@@ -113,13 +117,17 @@ export async function loadSharp(
   }
 }
 
-/** 进程内信号量：同时最多 `limit` 个在跑，其余按到达顺序排队。 */
-function createSemaphore(limit: number) {
+/** 队满时 `run` 回的标记：没跑 `task`，调用方自己决定怎么办（这里是回原图、不进缓存）。 */
+const QUEUE_FULL = Symbol("queue full");
+
+/** 进程内信号量：同时最多 `limit` 个在跑，最多 `maxQueued` 个按到达顺序排队，再多的不排。 */
+function createSemaphore(limit: number, maxQueued: number) {
   let active = 0;
   const waiting: Array<() => void> = [];
   return {
-    async run<T>(task: () => Promise<T>): Promise<T> {
+    async run<T>(task: () => Promise<T>): Promise<T | typeof QUEUE_FULL> {
       if (active < limit) active += 1;
+      else if (waiting.length >= maxQueued) return QUEUE_FULL;
       // 名额由放手的那一个直接交过来（`active` 不变），中间没有空档让后来的插队。
       else await new Promise<void>((resolve) => waiting.push(resolve));
       try {
@@ -140,6 +148,7 @@ export function createThumbnailer(
     maxCacheEntries?: number;
     maxEntryBytes?: number;
     maxConcurrent?: number;
+    maxQueued?: number;
   } = {},
 ): Thumbnailer {
   const load = options.load ?? loadSharp;
@@ -148,6 +157,7 @@ export function createThumbnailer(
   const maxEntryBytes = options.maxEntryBytes ?? DEFAULT_MAX_ENTRY_BYTES;
   const slots = createSemaphore(
     Math.max(1, options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT),
+    Math.max(0, options.maxQueued ?? DEFAULT_MAX_QUEUED),
   );
 
   let sharp: Promise<SharpLike | null> | null = null;
@@ -182,7 +192,7 @@ export function createThumbnailer(
     width: AttachmentThumbWidth,
     mimeType: string,
     original: Uint8Array,
-  ): Promise<ThumbResult> {
+  ): Promise<ThumbResult | typeof QUEUE_FULL> {
     if (!RESIZABLE_MIME.has(mimeType)) return { kind: "original" };
     sharp ??= load();
     const resize = await sharp;
@@ -249,7 +259,9 @@ export function createThumbnailer(
       if (pending) return pending;
       const job = compute(width, mimeType, original)
         .catch((): ThumbResult => ({ kind: "original" }))
-        .then((result) => {
+        .then((result): ThumbResult => {
+          // 队满只是这一刻忙，不是这张图缩不了：回原图，但不记进缓存。
+          if (result === QUEUE_FULL) return { kind: "original" };
           remember(key, result);
           return result;
         })
