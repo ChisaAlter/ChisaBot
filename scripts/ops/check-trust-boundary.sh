@@ -28,8 +28,25 @@ passes=$(grep -c 'proxy_pass http://127.0.0.1:3001;' "$NGINX" || true)
 clears=$(grep -c 'proxy_set_header X-ChisaBot-Local-Caller "";' "$NGINX" || true)
 [ "$passes" -gt 0 ] || fail "nginx has no app proxy_pass"
 [ "$clears" -ge "$passes" ] || fail "nginx Local-Caller clears ($clears) < app proxies ($passes)"
+# 审计 #5：真实客户端 IP 只从 Cloudflare 网段的 CF-Connecting-IP 取
+grep -Eq '^[[:space:]]*real_ip_header[[:space:]]+CF-Connecting-IP;' "$NGINX" || fail "nginx has no real_ip_header CF-Connecting-IP"
+for cidr in 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32; do
+  grep -Fq "set_real_ip_from $cidr;" "$NGINX" || fail "nginx missing set_real_ip_from $cidr"
+done
+grep -Eq 'set_real_ip_from[[:space:]]+(0\.0\.0\.0/0|::/0);' "$NGINX" && fail "nginx trusts real_ip from everywhere"
 ok "nginx Local-Caller cleared on $passes app proxies"
-
+# 审计 #5：每个转发 location 都清掉客户端自带的 CF-Connecting-IP，并把 X-Real-IP 设成 realip 处理后的 $remote_addr
+missing=$(awk '
+  function check() { if (loc != "" && pass && !(cf && rip)) print loc }
+  /^[[:space:]]*location[[:space:]]/ { check(); loc = $0; sub(/^[[:space:]]+/, "", loc); sub(/[[:space:]]*\{.*$/, "", loc); pass = 0; cf = 0; rip = 0 }
+  /^[[:space:]]*proxy_pass[[:space:]]/ { pass = 1 }
+  /^[[:space:]]*proxy_set_header[[:space:]]+CF-Connecting-IP[[:space:]]+""[[:space:]]*;/ { cf = 1 }
+  /^[[:space:]]*proxy_set_header[[:space:]]+X-Real-IP[[:space:]]+\$remote_addr[[:space:]]*;/ { rip = 1 }
+  END { check() }
+' "$NGINX")
+[ -z "$missing" ] || fail "nginx proxy locations must clear CF-Connecting-IP and set X-Real-IP \$remote_addr: $missing"
+proxies=$(grep -c '^[[:space:]]*proxy_pass[[:space:]]' "$NGINX" || true)
+ok "nginx clears CF-Connecting-IP and pins X-Real-IP on all $proxies proxies"
 # 3) friend TRUSTED_ORIGINS example is loopback http
 EX=deploy/friend.env.example
 origins=$(sed -n 's/^TRUSTED_ORIGINS=//p' "$EX" | head -1)

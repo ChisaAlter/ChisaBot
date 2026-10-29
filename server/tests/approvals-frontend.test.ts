@@ -77,5 +77,5 @@ test("the real frontend AG-UI agent supplies canonical call identity, original c
   cleanup();
   expect(() =>
     frontendApprovalSnapshot({ agent, toolCall: message.toolCalls[0] }),
-  ).toThrow("active conversation");
+  ).toThrow("活跃会话");
 });

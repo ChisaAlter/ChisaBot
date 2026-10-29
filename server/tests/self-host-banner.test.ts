@@ -209,11 +209,26 @@ describe("the self-host banner", () => {
 describe("the capabilities endpoint", () => {
   const config = loadConfig(testEnvironment());
 
-  // createApp takes its services positionally, and the banner is the last of them.
+  /*
+   * createApp takes its services positionally. The banner used to be the last of them and is not any
+   * more (localBackend, modelSettings and others came after it), so find its slot by name instead of
+   * assuming a position that the next new parameter silently moves.
+   */
+  const parameters =
+    /^[^(]*\(([^)]*)\)/
+      .exec(createApp.toString())?.[1]
+      ?.split(",")
+      .map((parameter) => parameter.split("=")[0]?.trim()) ?? [];
+  const bannerSlot = parameters.indexOf("selfHostBanner");
+
+  test("finds where createApp takes the banner", () => {
+    expect(bannerSlot).toBeGreaterThan(0);
+  });
+
   function appWith(banner: ReturnType<typeof createSelfHostBanner>) {
-    const args: unknown[] = new Array(createApp.length).fill(undefined);
+    const args: unknown[] = new Array(parameters.length).fill(undefined);
     args[0] = config;
-    args[args.length - 1] = banner;
+    args[bannerSlot] = banner;
     return (createApp as (...input: unknown[]) => ReturnType<typeof createApp>)(
       ...args,
     );

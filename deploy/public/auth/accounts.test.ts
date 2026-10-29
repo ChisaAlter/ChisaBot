@@ -69,7 +69,8 @@ describe("signed identity", () => {
     const [v, payload, mac] = value.split(".");
     expect(v).toBe("v1");
     expect(mac).toBe(createHmac("sha256", secret).update(`v1.${payload}`).digest("base64url"));
-    expect(decode(value)).toEqual({ u: "u_abc", n: "小明", r: "user", t: 1000 });
+    // j = 一次性随机数（审计 #5），应用在有效期内只认一次。
+    expect(decode(value)).toEqual({ u: "u_abc", n: "小明", r: "user", t: 1000, j: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/) });
   });
   test("admin check carries the built-in admin identity (dev-local-user)", async () => {
     const service = app();

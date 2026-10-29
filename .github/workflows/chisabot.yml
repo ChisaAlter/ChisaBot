@@ -172,6 +172,52 @@ jobs:
           fi
           echo "OK: no private host identifiers in tracked files."
 
+  # Biome 只拦本次改动新增的问题：全仓还有上千个存量问题，一次改完风险太大。
+  # scripts/biome-new-issues.ts 把改动文件在基线（PR 的目标分支 / push 前的 main）与当前版本各查一遍，
+  # 按「文件 + 规则」比较诊断数，变多就失败；存量问题不拦，顺手修掉的只会让数变少。
+  biome:
+    name: Biome (new issues only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # 要能读到基线提交的文件内容。
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --linker hoisted
+      - name: No new Biome diagnostics in changed files
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="${PR_BASE:-$PUSH_BEFORE}"
+          # 新建分支的 push / 手动触发没有基线，退回到上一个提交。
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="HEAD^1"
+          fi
+          bun scripts/biome-new-issues.ts "$base"
+
+  # 完整的 app 测试（scripts/run-app-tests.ts：共享进程跑全部文件，名单里的文件各自单独进程跑）。
+  # 上面 web-and-models 里挑出来的那些子集照旧保留，这里是兜住其余文件的全量。
+  app-tests:
+    name: App tests (bun run test:app)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --linker hoisted
+      - run: cp .env.example .env
+      - run: bun run test:app
+
   # PC 客户端（pc/）的 node 测试；和 release.yml 的 pc-test 同一套（CB-113：以前只有发版时才跑）。
   pc-test:
     name: PC client tests
@@ -192,3 +238,40 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - run: npm test
+
+  # PC 客户端（pc/）的安装 + 构建。pc/ 是独立的 npm 项目，不进 workspaces，也不进主构建；
+  # 这里用它自己的 lock 安装，再按 app/vite.config.ts 里 chisabotNodeBundle 的同一组参数把
+  # src/headless.js 打成 chisabot-node.cjs，跑一下 --version 确认包能加载、版本号注入正确。
+  # 带 Electron 的安装包（electron-builder --win）只能在 Windows 上打，仍由 release.yml 负责。
+  pc-build:
+    name: PC client install and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: pc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm ci --no-audit --no-fund
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Build the headless node bundle
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          npx --yes esbuild@0.28.2 src/headless.js --bundle --platform=node --target=node18 --format=cjs \
+            --external:bufferutil --external:utf-8-validate --external:electron \
+            --define:__CHISABOT_NODE_VERSION__="\"$version\"" \
+            --outfile="$RUNNER_TEMP/chisabot-node.cjs"
+          node --check "$RUNNER_TEMP/chisabot-node.cjs"
+          printed="$(node "$RUNNER_TEMP/chisabot-node.cjs" --version)"
+          if [ "$printed" != "$version" ]; then
+            echo "::error::chisabot-node --version printed '$printed', expected '$version'"
+            exit 1
+          fi
+          echo "chisabot-node $printed built."
