@@ -40,7 +40,8 @@
 - `tests/refetch-no-rerender.test.tsx`：真 ChannelChat，偏好 / 机器人 / 频道逐个、再一起 refetch（数据不变），断言 ChatTranscript、Composer 渲染次数不变；用旧的展开写法验证过会失败。
 - `tests/composer-stream-editing.test.tsx`：流式中在中间插字、输入法组字跨 chunk、粘贴、撤销 / 重做、草稿保存与恢复，都和空闲时结果一致。
 - `no-group-has.test.ts` 新增一条检查（见上）。
-- 自测：`bun run typecheck` 通过；vite build 通过；`bun run test:app` 1802 pass / 0 fail；Biome 在 main 和本分支都是 1 error / 800 warnings / 143 infos，没有新增问题；没有改动数据库，DB 测试不适用。
+- 自测（审查修正后，e937b0d8 之后）：app `tsc --noEmit` 通过；`bun run test:app` 1809 pass / 0 fail；CI 的 DB 测试组（临时 Postgres）162 pass / 0 fail；Biome 在 main 和本分支都是 1 error / 800 warnings / 143 infos，没有新增问题。
+- 构建检查（本分支本地试合并 #414 后 `bun run build`）：streamdown 只在 `vendor-markdown`（597KB 未压缩）和 code-block 分包里；入口、`route-settings`、`docx-preview`、`rich-previews` 的静态依赖图里都没有它。
 
 ### 实测（Jun 的电脑，本地 server + app + mock 模型，独立 headless 系统 Chrome，临时 user-data-dir，GPU 开：ANGLE / RTX 3060 Laptop D3D11）
 
