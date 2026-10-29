@@ -6,7 +6,6 @@ import {
 } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { z } from "zod";
 import { AgentProfile } from "@/components/agents/agent-profile";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
 import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-history-lazy";
@@ -17,7 +16,6 @@ import { MessageFind } from "@/components/channels/message-find";
 import { DetailPanel } from "@/components/layout/detail-panel";
 import { Button } from "@/components/ui/button";
 import { ErrorCard } from "@/components/ui/skyglass";
-import { normalizeMessageSearchParam } from "@/lib/channels/focus-message";
 import { markChannelReadMutationOptions } from "@/lib/channels/mutations";
 import { useOpenThread } from "@/lib/channels/open-thread";
 import {
@@ -32,19 +30,6 @@ import { useComputerAutoWatch } from "@/lib/computers/auto-watch";
 import { useMarkBotHidden } from "@/lib/kept-visible";
 import { restampOverlayMarker } from "@/lib/overlay-back";
 
-export const chatSearchSchema = z.object({
-  settings: z.boolean().optional(),
-  /** Opens the Bot's screen in the right column's 计算机 tab. */
-  watch: z.boolean().optional(),
-  /** DOG-04：Ctrl+K 正文命中深链到这条消息（滚入并短暂高亮）。 */
-  message: z
-    .string()
-    .optional()
-    .transform((v) => normalizeMessageSearchParam(v)),
-});
-
-/** 聊天路由的 id（外壳按它认出「地址是一段聊天」）。 */
-export const CHANNEL_ROUTE_ID = "/_authed/_app/channel/$channelId";
 
 export type ChannelPageProps = {
   channelId: string;

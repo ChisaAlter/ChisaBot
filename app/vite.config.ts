@@ -5,6 +5,9 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 import { listenPort } from "../shared/listen-port";
+import { bundleReport } from "./scripts/bundle-report";
+import { chunkGuard } from "./scripts/chunk-graph";
+import { routePreload } from "./scripts/route-preload";
 import { skyBootScript } from "./src/lib/sky";
 
 /*
@@ -150,7 +153,100 @@ function routeComponentSplitPath(id: string): string | undefined {
   return filePath.slice(routesIndex + routesMarker.length);
 }
 
-export function selectChisaBotManualChunk(id: string): string | undefined {
+/*
+ * 两组大依赖各自单独成块（DESIGN.md §41.5）。不分的话 Rollup 会把很多小模块（lib/approvals.ts、ui/skeleton.tsx、
+ * lib/schedule-fired.ts……）和 CopilotKit、Markdown 渲染放进同一个共享块：设置页的左栏只为了一个 20 行的小文件，
+ * 就把 ~270KB gzip 的 CopilotKit 和 ~160KB 的 Markdown 一起下载执行了。分出来以后这两块只在真用到时（聊天、
+ * 带 Markdown 的页面）下载。`onlyExplicitManualChunks` 下只移动名单里的包本身，它们的依赖照常由 Rollup 分。
+ */
+const VENDOR_CHUNKS: Array<[RegExp, string]> = [
+  // React 放一个不依赖任何别的块的叶子块：下面的 vendor 块都要 import React，React 若落进某个共享块，
+  // 块之间就可能成环，按需块先执行时会读到还没初始化的 React（forwardRef of undefined）。
+  [/\/node_modules\/(react|react-dom|scheduler)\//, "vendor-react"],
+  // web-inspector 是 CopilotKit 自己按需 import 的开发者面板（~870KB 未压缩），不能被拉进来。
+  // MCP SDK 只经 CopilotKit 用到，和它同块：分开的话 Rollup 为保执行顺序会让 vendor-mcp 反过来 import vendor-copilot，成环。
+  [/\/node_modules\/(@copilotkit\/(?!web-inspector)|@ag-ui\/|rxjs\/|phoenix\/|zod-to-json-schema\/|@modelcontextprotocol\/)/, "vendor-copilot"],
+  [
+    /\/node_modules\/(streamdown|marked|parse5|entities|unified|bail|trough|is-plain-obj|vfile|vfile-message|devlop|zwitch|ccount|longest-streak|markdown-table|trim-lines|property-information|space-separated-tokens|comma-separated-tokens|hastscript|html-void-elements|html-url-attributes|decode-named-character-reference|character-entities|character-entities-legacy|character-entities-html4|character-reference-invalid|is-alphabetical|is-alphanumerical|is-decimal|is-hexadecimal|stringify-entities|web-namespaces|style-to-js|style-to-object|inline-style-parser|@ungap\/structured-clone|get-east-asian-width|escape-string-regexp|remend|micromark(?!-extension-math)[^/]*|mdast-util-[^/]+|hast-util-[^/]+|unist-util-[^/]+|remark-[^/]+|rehype-(?!katex)[^/]+|estree-util-[^/]+)\//,
+    "vendor-markdown",
+  ],
+  // Markdown 和按需加载的公式块共用的几个小模块（公式的语法部分、vfile-location、extend）也点名进来：不点名时 Rollup
+  // 把它们放进一个单独的共享小块，而这个小块又要从 vendor-markdown 拿东西，两块互相静态 import，成环。
+  // 公式只点名语法文件，不点名 index.js / html.js，这样 mathHtml 和 KaTeX 仍然按需加载。
+  [
+    /\/node_modules\/(vfile-location\/|extend\/|micromark-extension-math\/lib\/(syntax|math-flow|math-text)\.js$)/,
+    "vendor-markdown",
+  ],
+  // 下面几个同理：本身只在少数地方按需用，但体积大，一旦和小模块同块就被拖上首屏。KaTeX 和 micromark-extension-math
+  // 反而不能点名：点名进手工块后 mathHtml 会留下来，把 KaTeX（~78KB gzip）静态带上；main 上它只被 Mermaid 按需引用。
+
+  [/\/node_modules\/(shiki|@shikijs\/(core|engine-javascript|types|vscode-textmate)|oniguruma-to-es|oniguruma-parser|regex|regex-recursion|regex-utilities)\//, "vendor-shiki"],
+  // 代码高亮的 Oniguruma 引擎（内联 wasm，~240KB gzip）单独一块：否则 Rollup 会把 Markdown 用到的几个小包和它同块。
+  [/\/node_modules\/@shikijs\/engine-oniguruma\//, "vendor-shiki-wasm"],
+  [/\/node_modules\/lucide-react\//, "vendor-lucide"],
+];
+
+/*
+ * 外壳块 shell（DESIGN.md §41.5）：AuthedShell 按需加载的左栏 / 设置栏 / 管理栏 / 右侧面板栏，连同它们静态 import
+ * 的全部模块（入口已经有的除外、上面的大依赖除外）放进同一块。不这么做，Rollup 按「被哪些入口用到」切块，这些栏用到的
+ * 小模块会和聊天页的代码混在 skill-commands、avatar、pages 等共享块里，而那些块又静态依赖 CopilotKit / Markdown，
+ * 结果打开设置页也得下载执行它们。
+ */
+const SHELL_ROOTS = [
+  "/src/components/layout/left-rail.tsx",
+  "/src/components/settings/settings-sidebar.tsx",
+  "/src/components/admin/admin-sidebar.tsx",
+  "/src/components/panels/panel-rail.tsx",
+];
+
+type ModuleInfoLookup = (id: string) => { importedIds: readonly string[]; isEntry: boolean } | null;
+type ManualChunkMeta = { getModuleIds: () => IterableIterator<string>; getModuleInfo: ModuleInfoLookup };
+
+function isVendorChunked(id: string): boolean {
+  const normalizedId = normalizedModuleId(id);
+  // streamdown 自己按需 import 的代码块部分不归进来，否则 Markdown 一加载就静态依赖 shiki。
+  // 它的 Mermaid 小包装只是一行 re-export（真正的 mermaid 仍是动态 import），跟着 vendor-markdown 走。
+  if (/\.css($|\?)/.test(normalizedId) || /\/streamdown\/dist\/code-block-/.test(normalizedId)) return false;
+  return VENDOR_CHUNKS.some(([pattern]) => pattern.test(normalizedId));
+}
+
+const shellSets = new WeakMap<ModuleInfoLookup, Set<string>>();
+
+export function shellModuleIds(meta: ManualChunkMeta): Set<string> {
+  const cached = shellSets.get(meta.getModuleInfo);
+  if (cached) return cached;
+  const ids = [...meta.getModuleIds()];
+  const closure = (roots: string[], stop: (id: string) => boolean) => {
+    const seen = new Set<string>();
+    const queue = roots.filter((id) => !stop(id));
+    for (const id of queue) seen.add(id);
+    while (queue.length > 0) {
+      const id = queue.pop() as string;
+      for (const next of meta.getModuleInfo(id)?.importedIds ?? []) {
+        if (seen.has(next) || stop(next)) continue;
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+    return seen;
+  };
+  const entry = closure(
+    ids.filter((id) => meta.getModuleInfo(id)?.isEntry),
+    () => false,
+  );
+  const roots = ids.filter((id) => SHELL_ROOTS.some((root) => normalizedModuleId(id).endsWith(root)));
+  const shell = closure(roots, (id) => entry.has(id) || isVendorChunked(id) || /\.css($|\?)/.test(id));
+  shellSets.set(meta.getModuleInfo, shell);
+  return shell;
+}
+
+export function selectChisaBotManualChunk(id: string, meta?: ManualChunkMeta): string | undefined {
+  const normalizedId = normalizedModuleId(id);
+  // 样式表不跟着走：main.tsx 静态引入了 CopilotKit 的 CSS，把它分进 vendor-copilot 会让入口反过来静态依赖整块 JS。
+  if (isVendorChunked(id)) return VENDOR_CHUNKS.find(([pattern]) => pattern.test(normalizedId))?.[1];
+  // CommonJS 互操作的公共小工具（React 是 CJS，要用它）跟 React 同块，否则 vendor-react 又得依赖别的共享块。
+  if (id.startsWith("\0commonjsHelpers")) return "vendor-react";
+  if (meta && !routeComponentSplitPath(id) && shellModuleIds(meta).has(id)) return "shell";
   const routePath = routeComponentSplitPath(id);
   if (!routePath) {
     return undefined;
@@ -158,12 +254,17 @@ export function selectChisaBotManualChunk(id: string): string | undefined {
   if (routePath === "sign.tsx") {
     return "route-sign";
   }
-  if (
-    routePath === "_authed.tsx" ||
-    routePath === "_authed/_app.tsx" ||
-    routePath.startsWith("_authed/_app/channel/")
-  ) {
+  // 外壳路由（_authed / _app 的组件）单独一块：和聊天路由同块的话，进设置页也要先把聊天页的静态依赖
+  // （CopilotKit、Markdown）一起下完才画得出外壳（DESIGN.md §41.5）。
+  if (routePath === "_authed.tsx" || routePath === "_authed/_app.tsx") {
+    return "route-shell";
+  }
+  if (routePath.startsWith("_authed/_app/channel/")) {
     return "route-chat-core";
+  }
+  // 组件库两页要 CopilotKit（预览里的工具卡片），不和其它管理页同块，免得打开 /admin 也带上它。
+  if (routePath.startsWith("_authed/admin/components/")) {
+    return undefined;
   }
   if (routePath.startsWith("_authed/admin/")) {
     return "route-admin";
@@ -247,6 +348,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
     chisabotNodeBundle(),
+    routePreload(),
+    chunkGuard(),
+    ...(process.env.CHISABOT_BUNDLE_REPORT ? [bundleReport()] : []),
   ],
   resolve: {
     alias: [

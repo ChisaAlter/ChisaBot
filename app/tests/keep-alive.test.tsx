@@ -246,7 +246,7 @@ test("接线：藏着的东西不轮询（§98.3）", () => {
   expect(src("components/layout/glass-shell.tsx")).toContain("<KeptVisibleContext.Provider value={!rightHidden}>");
   expect(src("components/computer/preview-visibility.ts")).toContain("return visible && kept;");
   expect(src("lib/computers/tabs.ts")).toContain("const poll = pollWanted && kept;");
-  expect(src("components/panels/live-panels.tsx")).toContain("if (!onScreen) return false;");
+  expect(src("components/panels/live-panels-query.ts")).toContain("if (!onScreen) return false;");
   for (const f of ["lib/copilot/gallery-tools.tsx", "lib/copilot/sandboxed-tools.tsx"]) expect(src(f)).toContain("useBotOnScreen(declared)");
   expect(src("components/channels/channel-page.tsx")).toContain("useMarkBotHidden(agentId, !visible)");
   // CB-103 r2：提示不再自己轮询，改订阅共用的控制权 store；store 只在有看得见的订阅者时轮询。

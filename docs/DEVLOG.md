@@ -1,5 +1,37 @@
 # DEVLOG
 
+## Unreleased — 首屏加载提速（PR A，分支 dev4/perf-first-load-split）
+
+问题：登录后第一次进来卡在「正在加载 ChisaBot…」约 2 秒。审计基线（生产冷缓存）：LCP 6540ms、最长长任务 2193ms、主包 3.0 MB（gzip 约 950 KB）。
+
+做法（设计见 DESIGN.md §41.5）：
+1. `CHISABOT_BUNDLE_REPORT=1` 的构建报告找出大块和「为什么被带上」：入口一个 3 MB 的块里装着 CopilotKit、Markdown、shiki、lucide、所有外壳。
+2. 固定 vendor 块 + `shell` / `route-shell` 手动块；修掉过程中踩到的块循环（React 必须在叶子块）、CSS 把整块 JS 拖上入口、katex 被 micromark 数学扩展静态带上、web-inspector 被并进 vendor-copilot。
+3. `lazyPart` / `AfterIdle`：外壳各部分、CopilotProvider（只在聊天区挂）、电脑面板、实时面板卡片、render_ui 渲染、Streamdown、转录缓存都按需。
+4. `route-preload` 插件：按路径 modulepreload 首屏块。
+5. 长任务定位（CDP Profiler，200µs 采样）：剩下的 1.1–1.4s 全是天空引擎 `initGL` 编译着色器（真显卡上也一样）。宿主在 Worker 里用并行编译预热着色器，引擎命中缓存；引擎文件未改。
+
+测量方法：Jun 的电脑上，main 和分支分别 `bun run build`，本地 gzip 静态服务器（/api、/auth 用固定假数据），playwright-core 驱动独立 headless Chrome，每轮全新 `%TEMP%\dev4-chrome-*` profile、CDP `Network.setCacheDisabled`、40ms RTT / 20 Mbps；ready = 启动骨架消失且 #root 有内容；LCP 取 PerformanceObserver 最后一个 largest-contentful-paint；长任务取 ready 后再等 4 秒内的 longtask 最大值；首屏 JS = ready 之前开始请求的 .js 资源（gzip 为传输大小，raw 为解压后大小）。
+
+| 页面 | 指标 | main 1 / 2 / 3（中位） | 分支 1 / 2 / 3（中位） |
+|---|---|---|---|
+| /settings | LCP ms | 3912 / 3832 / 3716（3832） | 1408 / 1500 / 1712（1500） |
+| /settings | 最长长任务 ms | 1318 / 1432 / 1412（1412） | 53 / 54 / 67（54） |
+| /settings | 首屏 JS gzip | 1,162,721 ×3 | 520,204 ×3 |
+| / | LCP ms | 4088 / 4860 / 4448（4448） | 2172 / 2308 / 2236（2236） |
+| / | 最长长任务 ms | 1319 / 1667 / 1764（1667） | 73 / 84 / 78（78） |
+| / | 首屏 JS gzip | 1,128,461 ×3 | 1,140,504 / 1,136,460 / 1,136,460（1,136,460） |
+| — | 入口块 raw / gzip | 3,068,525 / 957,529 | 421,343 / 137,944 |
+
+没达到的：聊天首页首屏 JS 没减半（持平）。聊天页本身需要 CopilotKit（vendor-copilot gzip 约 168 KB）和 Markdown（vendor-markdown 约 189 KB——CopilotKit react-core 静态引用它自带的 streamdown 1.6.11），加上入口和 React 已经约 600 KB；再往下要动 CopilotKit 本身，不在这次范围。
+
+审查跟进（#414 有条件通过后追加的提交）：
+- 块循环：`vendor-mcp` 里有一句 Rollup 为执行顺序加的 `import "./vendor-copilot"`，而 copilot 又引用 mcp —— 把 MCP SDK 并进 `vendor-copilot`。`vendor-markdown` 和 streamdown 的 Mermaid 包装块互相引用 —— 实际是 Markdown 和按需公式块共用的几个小模块（`vfile-location`、`extend`、公式语法文件）被放进了共享小块；把它们和包装一起点名进 `vendor-markdown`（公式的 `html.js` 仍不点名，KaTeX 仍按需）。
+- 新增 `app/scripts/chunk-graph.ts`：从产物还原块图，查环（Tarjan）和各组首屏闭包；构建插件 `chunkGuard` 出问题就失败，`app/tests/chunk-graph.test.ts` 有合成图单测，并在有 `app/dist` 时检查真实产物。
+- 管理页首屏：`_authed/admin/components/*` 原来被归进 `route-admin`，它静态引入 CopilotProvider，把 CopilotKit + Markdown 带上了整个管理区首屏。现在这两个路由各自成块，Provider 用 `LazyCopilotProvider`。
+- render_ui：`RenderUiTool`（聊天 Provider 里注册）挂上就 `JsonRenderSurface.preload()`，旧对话的卡片不再先显示骨架。没走 modulepreload（那样会让所有聊天首屏都多下 json-render 的依赖）。
+- 产物（gzip，入口闭包 + 该组预载闭包）：管理 1,030,798 → 506,073；设置 516,706 → 518,270；聊天 1,098,781 → 1,100,544（MCP 并进来后 vendor-copilot 167,483 → 182,102，聊天首屏本来就带这两块，总量持平）。
+- 可选项「未登录时 / 不预取聊天块」没做：客户端没有现成的、内联脚本能读的登录标记，判断不了；要做得先加一个标记，留给后续。
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。

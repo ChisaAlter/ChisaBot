@@ -284,6 +284,94 @@ function drawSkyNow() {
   runSkyFrame(performance.now(), true);
 }
 
+/** 预热最多等多久（毫秒）：显卡驱动特别慢时也别让天空一直停在占位图上。 */
+const SKY_PREWARM_MAX_MS = 8000;
+
+/**
+ * 引擎启动前先在后台线程把它的着色器编一遍（DESIGN.md §41.5）。
+ *
+ * 引擎的 initGL 同步 compileShader / linkProgram 一个 ~34KB 的片元着色器，然后马上读 LINK_STATUS：
+ * Windows 上（ANGLE → D3D11）这一下要等显卡进程编完，实测 RTX 3060 笔记本上主线程卡 1.1–1.4s，
+ * 正好压在登录后第一屏上。引擎本身不改，所以由宿主先在一个 Worker 里（OffscreenCanvas，同样的源码和
+ * 上下文参数）编译、链接；编完再启动引擎，它那次编译命中 Chrome 显卡进程的着色器缓存，几乎不花时间。
+ * 在 Worker 里做，是因为连「建第一个 WebGL 上下文」本身在主线程上也要一百多毫秒。
+ * 没有 Worker / OffscreenCanvas、或者出错、超时，都直接启动引擎，和以前一样。
+ */
+export function prewarmSkyShaders(script: string): Promise<void> {
+  const vert = /const VERT\s*=\s*'([^']*)'/.exec(script)?.[1];
+  const frag = /const FRAG\s*=\s*`([\s\S]*?)`;/.exec(script)?.[1];
+  if (!vert || !frag || typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let worker: Worker | undefined;
+    let url = "";
+    const done = () => {
+      window.clearTimeout(timer);
+      worker?.terminate();
+      if (url) URL.revokeObjectURL(url);
+      resolve();
+    };
+    const timer = window.setTimeout(done, SKY_PREWARM_MAX_MS);
+    try {
+      url = URL.createObjectURL(new Blob([`(${skyPrewarmWorker.toString()})()`], { type: "text/javascript" }));
+      worker = new Worker(url);
+      worker.onmessage = done;
+      worker.onerror = done;
+      worker.postMessage({ vert, frag });
+    } catch {
+      done();
+    }
+  });
+}
+
+/** Worker 里跑的代码（整段转成字符串，不能引用外面的任何东西）。 */
+function skyPrewarmWorker() {
+  const scope = self as unknown as {
+    onmessage: ((event: MessageEvent<{ vert: string; frag: string }>) => void) | null;
+    postMessage: (message: unknown) => void;
+  };
+  scope.onmessage = (event) => {
+    const finish = () => scope.postMessage("done");
+    try {
+      const canvas = new OffscreenCanvas(1, 1);
+      const gl = canvas.getContext("webgl", {
+        antialias: false,
+        alpha: false,
+        powerPreference: "low-power",
+      }) as WebGLRenderingContext | null;
+      // 打开并行编译：编译放到显卡进程的后台线程上，不占它的主线程（不然这 1 秒多页面合成也要排队，首屏照样晚）。
+      const parallel = gl?.getExtension("KHR_parallel_shader_compile");
+      const program = gl?.createProgram();
+      if (!gl || !program) return finish();
+      for (const [type, source] of [
+        [gl.VERTEX_SHADER, event.data.vert],
+        [gl.FRAGMENT_SHADER, event.data.frag],
+      ] as const) {
+        const shader = gl.createShader(type);
+        if (!shader) return finish();
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        gl.attachShader(program, shader);
+      }
+      gl.linkProgram(program);
+      if (!parallel) {
+        // 没有并行编译：在 Worker 里阻塞等结果也不碍事（主线程照常）。
+        gl.getProgramParameter(program, gl.LINK_STATUS);
+        return finish();
+      }
+      const poll = () => {
+        if (gl.isContextLost() || gl.getProgramParameter(program, parallel.COMPLETION_STATUS_KHR)) finish();
+        else setTimeout(poll, 50);
+      };
+      poll();
+    } catch {
+      // 预热失败不影响引擎自己编译。
+      finish();
+    }
+  };
+}
+
 /** 让天空再跑 ms 毫秒（快照：画完这次变化；live：用户有操作）。 */
 function wakeSky(ms: number) {
   if (sky.mode === "off") return;
@@ -469,11 +557,16 @@ export function SkyBackground() {
       .then((html) => {
         const match = /<script>([\s\S]*?)<\/script>/.exec(html);
         if (!match?.[1]) return;
+        const script = match[1];
+        return prewarmSkyShaders(script).then(() => script);
+      })
+      .then((script) => {
+        if (!script) return;
         const runner = new Function(
           "fetch",
           "requestAnimationFrame",
           "window",
-          match[1],
+          script,
         );
         wakeSky(SKY_SNAPSHOT_MS);
         runner(harkFetch, skyRaf, createSkyWindow(window, SKY_RENDER_SCALE));

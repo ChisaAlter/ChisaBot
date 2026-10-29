@@ -1,6 +1,6 @@
 import { useRenderTool } from "@copilotkit/react-core/v2";
-import { createStateStore, JSONUIProvider, Renderer, type Spec } from "@json-render/react";
-import { memo, useEffect, useMemo, useRef } from "react";
+import type { Spec } from "@json-render/react";
+import { memo, useEffect, useMemo } from "react";
 import { z } from "zod";
 import {
   inspectRenderUiSpec,
@@ -10,9 +10,7 @@ import {
 } from "../../../../shared/json-render/catalog";
 import { pruneEmptySections } from "../../../../shared/json-render/empty-sections";
 import { ToolLine } from "@/components/channels/tool-line";
-import { useConversation } from "@/lib/copilot/conversation";
-import { jsonRenderRegistry } from "@/lib/copilot/json-render/registry";
-import { ChoiceProvider, choiceOptionsOf, copyText, openInNewTab, RichUiProvider } from "@/lib/copilot/json-render/rich-context";
+import { lazyPart } from "@/components/ui/lazy-part";
 import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
 
 /**
@@ -30,6 +28,11 @@ const parameters = z.object({
 });
 
 export function RenderUiTool() {
+  // 聊天区一挂上就开始下载渲染面（json-render-surface），不等第一张卡片出现：打开旧对话时历史里的
+  // render_ui 卡片直接画出来，不先闪一下骨架再换成卡片、把页面顶跳。
+  useEffect(() => {
+    void JsonRenderSurface.preload();
+  }, []);
   useRenderTool({
     name: RENDER_UI_TOOL,
     parameters,
@@ -96,6 +99,12 @@ const RenderUiCall = memo(function RenderUiCall({
   return <JsonRenderSurface spec={spec} streaming={streaming} title={title} toolCallId={toolCallId} />;
 });
 
+/** 真正的渲染按需加载（json-render-surface.tsx）；加载那一下先显示同形状的骨架。 */
+const JsonRenderSurface = lazyPart<{ spec: Spec; streaming: boolean; title?: string; toolCallId?: string }>(
+  () => import("./json-render-surface").then((m) => m.JsonRenderSurface),
+  () => <RenderUiPlaceholder />,
+);
+
 /** 与最终卡片同形状的骨架（DESIGN.md §1 层级 ②），第一块内容到达后原地淡入替换。 */
 function RenderUiPlaceholder() {
   return (
@@ -110,109 +119,6 @@ function RenderUiPlaceholder() {
         </div>
       </div>
       <span className="jr-placeholder-label">{"正在生成界面…"}</span>
-    </div>
-  );
-}
-
-/** 把规范里的 /state 顶层键同步进这张界面的状态（只在生成过程中；生成完毕后状态归用户的输入所有）。 */
-function topLevelPointers(state: Record<string, unknown> | undefined) {
-  const updates: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(state ?? {})) {
-    updates[`/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`] = value;
-  }
-  return updates;
-}
-
-function JsonRenderSurface({
-  spec,
-  streaming,
-  title,
-  toolCallId,
-}: {
-  spec: Spec;
-  streaming: boolean;
-  title?: string;
-  toolCallId?: string;
-}) {
-  const conversation = useConversation();
-  const conversationRef = useRef(conversation);
-  conversationRef.current = conversation;
-  // 互斥选项（CB-090）：这张界面里的 choice 按钮，和对话记录里这张界面之后用户说的第一句话。
-  const choiceOptions = useMemo(
-    () => choiceOptionsOf(spec.elements as Record<string, { type?: string; props?: unknown }> | undefined),
-    [spec.elements],
-  );
-  const answered =
-    !streaming && toolCallId && choiceOptions.length > 0 ? (conversation?.replyAfter?.(toolCallId) ?? null) : null;
-
-  // 每张界面一个状态仓库；表单输入写在这里，不会影响别的消息里的界面。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: created once per surface on purpose.
-  const store = useMemo(() => createStateStore({ ...(spec.state ?? {}) }), []);
-  const settled = useRef(!streaming);
-  useEffect(() => {
-    if (settled.current) return;
-    store.update(topLevelPointers(spec.state as Record<string, unknown> | undefined));
-    if (!streaming) settled.current = true;
-  }, [spec.state, streaming, store]);
-
-  const handlers = useMemo(
-    () => ({
-      send_message: (params: Record<string, unknown>) => {
-        const ask = conversationRef.current?.ask;
-        // `text` 是目录里的参数名；个别模型写成 message / content，照样发出去而不是让按钮没反应。
-        const said = [params.text, params.message, params.content].find(
-          (value): value is string => typeof value === "string" && value.trim() !== "",
-        );
-        const base = said?.trim() ?? "";
-        if (!ask || !base) return;
-        const path = typeof params.includeState === "string" ? params.includeState : "";
-        const attached = path ? store.get(path) : undefined;
-        ask(
-          attached === undefined
-            ? base
-            : `${base}\n\n\`\`\`json\n${JSON.stringify(attached, null, 2)}\n\`\`\``,
-        );
-      },
-      open_link: (params: Record<string, unknown>) => {
-        const url = typeof params.url === "string" ? params.url : "";
-        if (!/^https?:\/\//i.test(url)) return;
-        window.open(url, "_blank", "noopener,noreferrer");
-      },
-      copy_text: (params: Record<string, unknown>) => {
-        if (typeof params.text === "string" && params.text) void copyText(params.text);
-      },
-      // 对话里的界面没有「刷新」：只有右栏面板会重新取数。
-      refresh_panel: () => {},
-    }),
-    [store],
-  );
-  // 列表行 / 磁贴上的 ask（替用户发一句话）走同一个对话。
-  const rich = useMemo(
-    () => ({
-      surface: "chat" as const,
-      openLink: openInNewTab,
-      copy: copyText,
-      ask: conversation?.ask ? (text: string) => conversationRef.current?.ask(text) : undefined,
-    }),
-    [conversation?.ask],
-  );
-
-  return (
-    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
-    <div
-      aria-busy={streaming || undefined}
-      aria-label={title || "机器人生成的界面"}
-      className="jr-surface"
-      data-streaming={streaming || undefined}
-      role="region"
-    >
-      <RichUiProvider value={rich}>
-        <ChoiceProvider ask={rich.ask} initial={answered} options={choiceOptions}>
-          <JSONUIProvider handlers={handlers} registry={jsonRenderRegistry} store={store}>
-            <Renderer loading={streaming} registry={jsonRenderRegistry} spec={spec} />
-          </JSONUIProvider>
-        </ChoiceProvider>
-      </RichUiProvider>
     </div>
   );
 }
