@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 链接卡照 Hark 改版：正文里单独一行的链接和 json-render 的 `Link` 合并成一个组件（`app/src/components/rich-previews/link-card.tsx`）。有预览图时是固定宽约 280px 的竖卡：上半 og:image 大图（cover，上方两角圆角），下面两行粗体标题和一行浅色「站点 · 补充信息」；没有图时退成同宽的紧凑横卡。半透明底 + 内侧高光边，不用 backdrop-filter；骨架和卡片同尺寸，图片懒加载并预留宽高。json-render 的 `Link` 不再只用模型写的字段：缺的预览图、标题、站点名用 `/api/link-preview` 补全，模型给了的优先，所以 GitHub 等链接现在会显示 og:image。样式在组件自己的 `link-card.css`（只有 `lc-` 开头的新类），styles.css 未改。未升级版本号。
+
 ## 0.1.105 — 2026-10-29
 
 这一版合并 4 个 PR：修 `test:app` 测试互相干扰与过时测试（#368）、CI 补 Biome 新增问题检查 / 完整 `test:app` / pc/ 安装构建（#366）、nginx 只信任 Cloudflare 给的真实 IP + 网关身份头防重放（审计 #5，#372）、Service Worker 关掉 navigation preload 修登录 `state_mismatch`（#373）。只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变；没有表结构变化。#372 改了 `deploy/public/nginx.conf`，网关 nginx 配置随这次部署一起更新。
