@@ -117,6 +117,7 @@ import {
   InstructionsTooLongError,
   type UserInstructionsStore,
 } from "./user-instructions";
+import { threadMessagesDelta } from "./thread-messages-delta";
 import type { UserPreferencesStore } from "./user-preferences";
 import { userPreferencesRoutes } from "./user-preferences-routes";
 
@@ -440,6 +441,8 @@ export function createApp(
        * both halves, so off means off.
        */
       generativeUi: config.generativeUi,
+      // 结构化回复来源（shared/reply-sources.ts）；旧客户端不认这个字段，照旧显示正文。
+      replySources: config.replySources === true,
       // 设置 → 管理 →「账号」入口（CB-040）；默认隐藏，CHISABOT_ACCOUNTS_UI=1 打开。
       accountsUi: config.accountsUi === true,
       // 功能精简（DESIGN.md §74）：默认隐藏的功能里，这台部署用 CHISABOT_EXTRAS 重新打开的。
@@ -1020,6 +1023,8 @@ export function createApp(
     // no-transform 让 CDN / 代理不去 gzip 它（gzip 会攒够一块才发，回复就一段一段地蹦）。
     // 自带网关已经关了缓冲；这两个头是给别人自己部署时前面再套一层代理用的（docs/streaming.md）。
     app.use("/api/copilotkit/*", markEventStreamUnbuffered);
+    // 读对话记录带 since/cursor 时只回变化（不带参数的旧客户端原样拿整份）；本地后端和 Intelligence 两条路都过这一层。
+    app.use("/api/copilotkit/*", threadMessagesDelta);
     if (config.runtime.mode === "local") {
       if (!localBackend)
         throw new Error("The local conversation backend is required.");

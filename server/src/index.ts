@@ -104,6 +104,8 @@ import { createRoleRepository } from "./auth/guards";
 import { type ChisaBotRole, setRole } from "./auth/roles";
 import {
   createGatewayRequireUser,
+  GatewayReplayCache,
+  isReplayedGatewayIdentity,
   gatewaySecretFromEnvironment,
   resolveGatewayRequest,
 } from "./auth/gateway-identity";
@@ -1507,7 +1509,7 @@ const loadToolsForActor =
     })),
     ...(imDevices ? await deviceToolsFor(actorId, botId, initiator) : []),
     // 生成式界面（json-render，取代 A2UI）：与 /api/capabilities 的 generativeUi 同一个开关。
-    ...(config.generativeUi && !imConnection ? renderUiTools() : []),
+    ...(config.generativeUi && !imConnection ? renderUiTools({ replySources: config.replySources === true }) : []),
     // 内置联网（web_search / web_fetch）：先搜、再读，浏览器留给需要点击 / 登录 / 给人看的时候。
     ...webTools(),
     // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。
@@ -3993,9 +3995,15 @@ const isProxiedStream = (data: SocketData): data is StreamData =>
 const asChannelSocket = (ws: { data: SocketData }) =>
   ws as unknown as ChannelSocket;
 
+// 审计 #5：网关身份头一次性（每个进来的 HTTP 请求在这里消费一次）。
+const gatewayReplayCache = new GatewayReplayCache();
+
 serve<SocketData>({
   port,
   async fetch(request, server) {
+    if (gatewaySecret && isReplayedGatewayIdentity(gatewaySecret, request.headers, gatewayReplayCache)) {
+      return Response.json({ ok: false, error: "请先登录。", openbotAuthRequired: true }, { status: 401 });
+    }
     const url = new URL(request.url);
     if (url.pathname === "/api/audio/transcriptions") {
       server.timeout(request, DICTATION_HTTP_IDLE_SECONDS);

@@ -3,6 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type { AvatarDraft } from "@/lib/agents/avatars";
+import { settleReactWork } from "./settle-react-work";
 
 /** 头像窗的「形象」页（DESIGN.md §81）：新建时默认停在这一页，选形状和颜色，按「完成」写进表单草稿。 */
 let AvatarField: typeof import("@/components/agents/avatar-picker").AvatarField;
@@ -11,6 +12,8 @@ beforeAll(async () => {
   ({ AvatarField } = await import("@/components/agents/avatar-picker"));
 });
 afterAll(async () => {
+  // 先等 React 已排进调度器的被动 effect 跑完再拆 DOM，否则它在 window 被删后才跑（见 settle-react-work.ts）。
+  await settleReactWork();
   await GlobalRegistrator.unregister();
 });
 afterEach(cleanup);

@@ -884,7 +884,7 @@
 - 电脑上第一次以应用打开且窗口比 1200 窄：开到最多 1440×920 并居中（只做一次，之后浏览器记住用户自己的大小）→ 宽屏布局。手机上是竖屏布局。
 - iOS：`apple-mobile-web-app-capable`、状态栏 `black-translucent`（内容铺到状态栏下面，顶栏用安全区让开）、`apple-touch-icon`。
 
-**40.5 Service worker**（`app/public/sw.js`）：导航永远先走网络（navigation preload；登录网关的跳转原样给），断网才给「网络不可用」卡片，**从不缓存 index.html**；`/assets/*` 缓存优先、只存 200，缺失分包的 404 原样转交，PR #64 的「分包过期自动刷新一次」（`lib/stale-chunk.ts`）照常工作。其它请求不拦。`/sw.js` 和清单回 `no-cache`，注册用 `updateViaCache: "none"`。PC / 安卓客户端里不注册（已注册的注销）。退路见 `docs/pwa.md`。
+**40.5 Service worker**（`app/public/sw.js`）：导航永远先走网络（SW 里 fetch 一次，不开 navigation preload，激活时显式关掉——否则不拦的 `/api/auth/callback` 导航会被发两次；登录网关的跳转原样给），断网才给「网络不可用」卡片，**从不缓存 index.html**；`/assets/*` 缓存优先、只存 200，缺失分包的 404 原样转交，PR #64 的「分包过期自动刷新一次」（`lib/stale-chunk.ts`）照常工作。其它请求不拦。`/sw.js` 和清单回 `no-cache`，注册用 `updateViaCache: "none"`。PC / 安卓客户端里不注册（已注册的注销）。退路见 `docs/pwa.md`。
 
 ## 41. 交互跟手：一次点击不重算整页样式，打开菜单不锁整页（2026-10-13，全面性能审计）
 

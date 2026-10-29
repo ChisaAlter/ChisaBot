@@ -196,6 +196,10 @@ export const BUNDLE_STUBS = [
  * （和 PC 客户端同一套 agent 代码 + ws）打成单个 dist/node-agent/chisabot-node.cjs，服务器在
  * /api/devices/agent/node/chisabot-node.cjs 原样提供给安装脚本下载。pc/ 不在服务器镜像里，所以在这里打包。
  * 打包失败只告警、不让网页构建失败（节点下载会 404，网页照常）。
+ *
+ * CI 例外（环境变量 CI 非空）：直接让构建失败。以前默认 isolated linker 下 `ws` 解析不到，打包会静默跳过，
+ * 没人发现；CI 和镜像一样用 hoisted 安装，这里失败就说明线上镜像也会缺这个文件。本机和 Docker 构建不设 CI，
+ * 行为不变。pc/ 自己的依赖另有 CI 的 pc-build job 单独打包校验。
  */
 function chisabotNodeBundle(): Plugin {
   return {
@@ -223,7 +227,9 @@ function chisabotNodeBundle(): Plugin {
         const code = result.outputFiles[0]?.text ?? "";
         this.emitFile({ type: "asset", fileName: "node-agent/chisabot-node.cjs", source: code });
       } catch (error) {
-        this.warn(`chisabot-node bundle skipped: ${error instanceof Error ? error.message : String(error)}`);
+        const message = `chisabot-node bundle skipped: ${error instanceof Error ? error.message : String(error)}`;
+        if (process.env.CI) this.error(message);
+        this.warn(message);
       }
     },
   };

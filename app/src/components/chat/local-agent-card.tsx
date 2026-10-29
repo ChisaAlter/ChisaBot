@@ -31,6 +31,7 @@ import {
   useLocalTaskAction,
   useThreadLocalTasks,
 } from "@/lib/local-agents";
+import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 
 /**
@@ -64,16 +65,6 @@ export function LocalAgentCard({ taskId, pendingTitle }: { taskId?: string; pend
     );
   }
   return <LocalAgentCardBody task={task} threadId={threadId ?? null} />;
-}
-
-function useNow(active: boolean) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [active]);
-  return now;
 }
 
 function OutputLines({ lines }: { lines: LocalAgentLine[] }) {
