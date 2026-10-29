@@ -5,6 +5,22 @@
 - 链接卡照 Hark 改版：正文里单独一行的链接和 json-render 的 `Link` 合并成一个组件（`app/src/components/rich-previews/link-card.tsx`）。有预览图时是固定宽约 280px 的竖卡：上半 og:image 大图（cover，上方两角圆角），下面两行粗体标题和一行浅色「站点 · 补充信息」；没有图时退成同宽的紧凑横卡。半透明底 + 内侧高光边，不用 backdrop-filter；骨架和卡片同尺寸，图片懒加载并预留宽高。json-render 的 `Link` 不再只用模型写的字段：缺的预览图、标题、站点名用 `/api/link-preview` 补全，模型给了的优先，所以 GitHub 等链接现在会显示 og:image。样式在组件自己的 `link-card.css`（只有 `lc-` 开头的新类），styles.css 未改。未升级版本号。
 - 链接卡数据侧按审查修正：模型写的标题如果只是站点名 / 域名，或被 og:title 包含（如「GitHub」「ChisaBot」），改用 og:title；每个链接给出预览图、站点名和补充信息，底下一行是「站点 · 补充信息」（如「GitHub · v0.1.13」）。标题和站点行不再固定高度（只有骨架预留），一行标题时下面不再空一大块。视觉细节留给前端的叠放卡改版。
 
+### 安全：升级有严重 / 高危漏洞的依赖，恢复 dependabot（审查 M4）
+
+- **直接依赖**：`better-auth` / `@better-auth/drizzle-adapter` 1.7.1 → 1.7.14（修复 OAuth state 被当作 Magic Link 登录、OAuth Proxy 冒充登录两个漏洞；同一 1.7.x 补丁线，无数据库表结构变化）；`@modelcontextprotocol/sdk` 1.30.0 → 1.32.2；`zod` 4.4.3 → 4.6.7；`vite` 7.3.6 → 7.3.7。
+- **间接依赖（根 `overrides` 固定到修复版）**：`proxy-addr` 2.0.8、`@modelcontextprotocol/server` 2.3.1、`axios` 1.21.0、`body-parser` 2.4.0、`fast-uri` 3.1.9、`follow-redirects` 1.16.2、`source-map-js` 1.2.2；`undici` 6.x / 7.x 副本升到 6.29.1 / 7.30.1。
+- **agent-computer**：`@grpc/grpc-js` 1.14.4 → 1.14.6（overrides）。**pc**：`undici` 6.29.1 / 7.30.1（仅锁文件）。
+- `bun audit`：2 critical / 39 high → 0 critical / 9 high；剩余需大版本升级，未升，见 docs/DEVLOG.md。
+- 新增 `.github/dependabot.yml`：bun（根、agent-computer）、npm（pc）、github-actions，每周一次，限 PR 数，小版本 / 补丁分组。
+
+## 0.1.106 — 2026-10-29
+
+这一版合并 1 个 PR：机器人聊天页对话记录增量同步 + 卡片共享时钟（性能清单第 5 项，#370）。只升级服务器版本号（根、`app`、`server` 为 `0.1.106`），PC / Android 外壳未变；没有表结构变化。
+
+### 对话记录增量同步 + 卡片共享时钟（#370）
+
+这一版把机器人聊天页同步服务器对话记录改成增量的（性能清单第 5 项）：`GET /api/copilotkit/threads/:id/messages` 新增可选的 `since` / `cursor` 参数，没变化只回 `unchanged`、变了只回尾部，界面实际读对话记录的两条路径——频道聊天页恢复 / 刷新历史（`readThreadMessages`：挂载、重试、Bot 在别处说话后的拉取、发送看门狗、断线补齐、转录缓存）和每轮结束后的对话顺序核对（`useConversationSync`）——都改成带 `since` / `cursor` 增量读：600 条对话没变化时一次读从约 530 KB 降到 83 B、新增一条约 3 KB，没变化时直接复用上次结果、不触发 `setMessages`；编辑 / 删除 / 读失败 / 旧服务器照旧整份。`useThreadInbox` 的服务器轮询也改成增量（界面目前未启用该轮询）。不带参数的旧客户端响应不变。干活 / 后台任务 / 本机代理卡片的每秒计时器合并成一个共享时钟（无订阅者时停），其测试在共享进程里先还原真定时器和时钟。没有表结构变化，没有升版本号。
+
 ## 0.1.105 — 2026-10-29
 
 这一版合并 4 个 PR：修 `test:app` 测试互相干扰与过时测试（#368）、CI 补 Biome 新增问题检查 / 完整 `test:app` / pc/ 安装构建（#366）、nginx 只信任 Cloudflare 给的真实 IP + 网关身份头防重放（审计 #5，#372）、Service Worker 关掉 navigation preload 修登录 `state_mismatch`（#373）。只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变；没有表结构变化。#372 改了 `deploy/public/nginx.conf`，网关 nginx 配置随这次部署一起更新。
