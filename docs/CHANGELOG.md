@@ -1,3 +1,7 @@
+## Unreleased
+
+- 回复风格对齐 Hark（提示词 + 服务端）：去掉「导语 → 卡片 → 下一步」固定三段式，默认一个气泡、1–4 句、结论先行；render_ui 画过表格卡后不再附一份 Markdown 表格（提示词 + 工具结果都提醒）；推荐类问题直接给 2–3 个带价格的选项再追问，一轮里 web_search 第 3 次起提醒收敛、超过 5 次不再真的搜；数学用 Unicode 纯文本，不用 LaTeX（前端不恢复 katex）。安全和不可信内容相关的提示词一字未改，新增测试按 sha256 钉住。未升级版本号。
+
 ## 0.1.105
 
 - 修复：开着 Service Worker 时 Chrome 登录最后落到 `/api/auth/error?error=state_mismatch`（会话其实已写入）。sw.js 不再开 navigation preload，激活时显式关掉（`SW_VERSION` 3）；`/api`、`/auth` 下的导航照旧不拦、只由浏览器发一次。未升级版本号（#373）。

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 回复风格对齐 Hark
+
+- 回复风格对齐 Hark（提示词 + 服务端）：去掉「导语 → 卡片 → 下一步」固定三段式，默认一个气泡、1–4 句、结论先行；render_ui 画过表格卡后不再附一份 Markdown 表格（提示词 + 工具结果都提醒）；推荐类问题直接给 2–3 个带价格的选项再追问，一轮里 web_search 第 3 次起提醒收敛、超过 5 次不再真的搜；数学用 Unicode 纯文本，不用 LaTeX（前端不恢复 katex）。安全和不可信内容相关的提示词一字未改，新增测试按 sha256 钉住。未升级版本号。
+
 ## 0.1.105 — 2026-10-29
 
 这一版合并 4 个 PR：修 `test:app` 测试互相干扰与过时测试（#368）、CI 补 Biome 新增问题检查 / 完整 `test:app` / pc/ 安装构建（#366）、nginx 只信任 Cloudflare 给的真实 IP + 网关身份头防重放（审计 #5，#372）、Service Worker 关掉 navigation preload 修登录 `state_mismatch`（#373）。只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变；没有表结构变化。#372 改了 `deploy/public/nginx.conf`，网关 nginx 配置随这次部署一起更新。
