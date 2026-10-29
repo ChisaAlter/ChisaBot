@@ -13,7 +13,11 @@ import {
   range,
   SCHEMES,
   type Scheme,
+  SURFACES,
+  type SurfaceId,
   stylesCss,
+  surfaceInk,
+  wallpaperSurfaceBackdrops,
 } from "./contrast-model";
 
 /**
@@ -100,6 +104,22 @@ describe("custom / preset wallpapers: worst case still meets WCAG AA", () => {
           if (!(min >= AA))
             throw new Error(
               `${element} wallpaper ${palette}/${scheme}: ${min.toFixed(2)} < ${AA}`,
+            );
+          expect(min).toBeGreaterThanOrEqual(AA);
+        }
+      });
+});
+
+describe("wallpapers: account card, collapsed sidebar, chat bubbles and composer meet WCAG AA", () => {
+  for (const scheme of SCHEMES)
+    for (const id of Object.keys(SURFACES) as SurfaceId[])
+      test(`${id} / ${scheme}`, () => {
+        const backdrops = wallpaperSurfaceBackdrops(id, scheme);
+        for (const ink of SURFACES[id].inks) {
+          const { min } = range(surfaceInk(scheme, ink), backdrops);
+          if (!(min >= AA))
+            throw new Error(
+              `${id} ${ink} wallpaper/${scheme}: ${min.toFixed(2)} < ${AA}`,
             );
           expect(min).toBeGreaterThanOrEqual(AA);
         }

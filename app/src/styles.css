@@ -1639,7 +1639,7 @@ html[data-sky-ease] body::before {
 .glass-composer [data-placeholder]::before,
 .glass-composer .is-empty::before,
 .glass-composer textarea::placeholder {
-  color: var(--glass-ink-4) !important;
+  color: var(--composer-placeholder-ink, var(--glass-ink-4)) !important;
 }
 .glass-composer-toolbar {
   display: flex;
@@ -9467,16 +9467,22 @@ html.dark .glass-shell {
   box-shadow: var(--lg-shadow) !important;
 }
 
-/* 有壁纸（预设或自定义）时，左栏卡片在玻璃上再垫一层同色薄幕：壁纸可能是纯黑 / 纯白，
- * 光靠天幕薄纱和低雾度玻璃，左栏小字最差只有 2.6–2.8:1。薄幕让最差情况回到 ≥ 4.5（tests/a11y-contrast.test.ts）。 */
+/* 有壁纸（预设或自定义）时，左栏卡片、账号卡、收起态左栏、机器人气泡和输入框在玻璃上再垫一层同色薄幕：
+ * 壁纸可能是纯黑 / 纯白，光靠天幕薄纱和低雾度玻璃，小字最差只有 2.6–4.4:1。
+ * 薄幕让最差情况回到 ≥ 4.5（tests/a11y-contrast.test.ts）。我的气泡底色够实，不用垫。 */
 :root {
-  --side-wallpaper-scrim: rgba(244, 248, 255, 0.36);
+  --side-wallpaper-scrim: rgba(244, 248, 255, 0.44);
 }
 html.dark {
   --side-wallpaper-scrim: rgba(12, 18, 32, 0.6);
 }
-html[data-wallpaper="on"] .glass-side-card {
+html[data-wallpaper="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .glass-composer),
+html[data-wallpaper="on"] .glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"] {
   --side-scrim-layer: linear-gradient(var(--side-wallpaper-scrim), var(--side-wallpaper-scrim));
+}
+/* 输入框占位字：壁纸下 --glass-ink-4 最差只有 1.9:1，换成 --glass-ink-3。 */
+html[data-wallpaper="on"] .glass-composer {
+  --composer-placeholder-ink: var(--glass-ink-3);
 }
 
 /* 顶栏主导航胶囊与按钮：纯净无边框胶囊 */
@@ -9545,7 +9551,7 @@ html.dark .rail-tabs-thumb {
 .dark .glass-composer,
 .glass-composer:focus-within,
 .dark .glass-composer:focus-within {
-  background: var(--lg-surface-strong) !important;
+  background: var(--side-scrim-layer, none), var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
@@ -9559,7 +9565,7 @@ html.dark .rail-tabs-thumb {
 /* 聊天机器人回复气泡 + 用户发送气泡 + 对话内嵌卡片：无边框通透毛玻璃 */
 .glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"],
 .jr-card {
-  background: var(--lg-surface-strong) !important;
+  background: var(--side-scrim-layer, none), var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;

@@ -368,3 +368,182 @@ export function range(
 }
 
 export const PALETTE_IDS = THEME_PALETTES.map((p) => p.id);
+
+/* ---------- 壁纸下的其他面板和主区（#420 审查第二轮） ---------- */
+
+const ROOT_BLOCK: Record<Scheme, string> = {
+  light: ':root, [data-theme="light"]',
+  dark: '.dark, [data-theme="dark"]',
+};
+
+/** 文字令牌的最终值：先找深 / 浅色令牌块，没有就退回浅色块；var() 递归展开。 */
+export function tokenColor(scheme: Scheme, token: string): RGBA {
+  const raw =
+    lastDecl(stylesCss, ROOT_BLOCK[scheme], token) ??
+    lastDecl(stylesCss, ROOT_BLOCK.light, token);
+  if (!raw) throw new Error(`${token} missing for ${scheme}`);
+  const ref = raw.match(/^var\((--[\w-]+)(?:,\s*([^)]+))?\)$/);
+  if (ref) return tokenColor(scheme, ref[1]);
+  return parseColor(raw);
+}
+
+const GLASS_SELECTORS: Record<string, string> = {
+  "liquid-light": ':root, html[data-glass="liquid"]',
+  "liquid-dark": 'html.dark, html.dark[data-glass="liquid"]',
+  "crystal-light": 'html[data-glass="crystal"]',
+  "crystal-dark": 'html.dark[data-glass="crystal"]',
+  "frosted-light": 'html[data-glass="frosted"]',
+  "frosted-dark": 'html.dark[data-glass="frosted"]',
+};
+
+/** --lg-surface / --lg-surface-strong 渐变的全部色标（文字可能落在任何位置）。 */
+export function glassStops(
+  token: "--lg-surface" | "--lg-surface-strong",
+  style: (typeof GLASS_STYLES)[number],
+  scheme: Scheme,
+  haze: number,
+): RGBA[] {
+  const value = lastDecl(
+    stylesCss,
+    GLASS_SELECTORS[`${style}-${scheme}`],
+    token,
+  );
+  const stops = [
+    ...(value ?? "").matchAll(
+      /rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*clamp\(\s*([\d.]+),\s*calc\(var\(--lg-alpha,\s*[\d.]+\)\s*\*\s*([\d.]+)\),\s*([\d.]+)\)\)/g,
+    ),
+  ].map((m) => {
+    const [, r, g, b, lo, k, hi] = m.map(Number);
+    return [r, g, b, Math.min(hi, Math.max(lo, haze * k))] as RGBA;
+  });
+  if (stops.length < 2) throw new Error(`${token} for ${style}/${scheme}`);
+  return stops;
+}
+
+/** 壁纸 → 压暗遮罩 → 天幕薄纱 叠好后的所有不透明底色（主区就直接是它）。 */
+export function wallpaperBases(scheme: Scheme): RGBA[] {
+  const veil = veilStops(scheme);
+  const out: RGBA[] = [];
+  for (const px of wallpaperPixels())
+    for (const dim of wallpaperDimStops(scheme))
+      for (const opacity of WALLPAPER_DIM_RANGE) {
+        const dimmed = over([dim[0], dim[1], dim[2], dim[3] * opacity], px);
+        for (const v of veil) out.push(over(v.color, dimmed));
+      }
+  return out;
+}
+
+/** 某个选择器上的半透明底色令牌（如 --bubble-user-bg）。 */
+function fillToken(scheme: Scheme, token: string): RGBA {
+  const sel =
+    scheme === "dark"
+      ? 'html.dark, html[data-theme="dark"]'
+      : 'html:root, html[data-theme="light"]';
+  const raw =
+    lastDecl(stylesCss, sel, token) ??
+    lastDecl(stylesCss, ROOT_BLOCK[scheme], token);
+  if (!raw) throw new Error(`${token} for ${scheme}`);
+  return parseColor(raw);
+}
+
+export type SurfaceId =
+  | "acct-card"
+  | "mini-card"
+  | "bubble-assistant"
+  | "bubble-user"
+  | "composer";
+
+/** 每个面板 / 主区元素：文字令牌 + 背后的玻璃。 */
+export const SURFACES: Record<
+  SurfaceId,
+  {
+    inks: string[];
+    glass: "--lg-surface" | "--lg-surface-strong" | "--bubble-user-bg";
+    /** 有壁纸时 html[data-wallpaper="on"] 给它设了 --side-scrim-layer（styles.css 里核对）。 */
+    selector: string;
+  }
+> = {
+  // 左下角账号卡：名字 .acct-name（--ink-1）、邮箱 / 状态 .acct-sub（--ink-3）。
+  "acct-card": {
+    inks: ["--ink-1", "--ink-3"],
+    glass: "--lg-surface",
+    selector: ".acct-card",
+  },
+  // 收起态左栏：导航图标 .rail-mini-item（--ink-2）；字母头像另算（不透明底）。
+  "mini-card": {
+    inks: ["--ink-2"],
+    glass: "--lg-surface",
+    selector: ".glass-mini-card",
+  },
+  // 机器人气泡：背景 --lg-surface-strong（!important 那条），正文继承 --glass-ink。
+  "bubble-assistant": {
+    inks: ["--glass-ink", "--text-primary"],
+    glass: "--lg-surface-strong",
+    selector:
+      '.glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"]',
+  },
+  // 我的气泡：--bubble-user-bg + --text-primary，不垫薄幕。
+  "bubble-user": {
+    inks: ["--text-primary"],
+    glass: "--bubble-user-bg",
+    selector: "",
+  },
+  // 输入框：--lg-surface-strong，输入的字 --text-primary、占位字（壁纸下 --composer-placeholder-ink）。
+  composer: {
+    inks: ["--text-primary", "placeholder"],
+    glass: "--lg-surface-strong",
+    selector: ".glass-composer",
+  },
+};
+
+const WALLPAPER_SCRIM_SELECTORS = [
+  ...stylesCss.matchAll(/([^{}]+)\{([^{}]*)\}/g),
+]
+  .filter((m) => /--side-scrim-layer\s*:/.test(m[2]))
+  .map((m) => norm(m[1]));
+
+/** 这个元素在有壁纸时是否垫了薄幕（读 styles.css，不写死）。 */
+export function hasWallpaperScrim(id: SurfaceId): boolean {
+  const sel = SURFACES[id].selector;
+  if (!sel) return false;
+  return WALLPAPER_SCRIM_SELECTORS.some(
+    (s) =>
+      s.startsWith('html[data-wallpaper="on"]') &&
+      (s.includes(`${sel},`) || s.includes(`${sel})`) || s.endsWith(norm(sel))),
+  );
+}
+
+/** 壁纸下某个元素文字的颜色；placeholder 读 html[data-wallpaper="on"] .glass-composer 的 --composer-placeholder-ink。 */
+export function surfaceInk(scheme: Scheme, ink: string): RGBA {
+  if (ink !== "placeholder") return tokenColor(scheme, ink);
+  const v = lastDecl(
+    stylesCss,
+    'html[data-wallpaper="on"] .glass-composer',
+    "--composer-placeholder-ink",
+  );
+  const ref = v?.match(/^var\((--[\w-]+)\)$/)?.[1] ?? "--glass-ink-4";
+  return tokenColor(scheme, ref);
+}
+
+/** 壁纸下某个面板 / 主区元素文字背后所有可能的不透明底色。 */
+export function wallpaperSurfaceBackdrops(
+  id: SurfaceId,
+  scheme: Scheme,
+): RGBA[] {
+  const spec = SURFACES[id];
+  const scrim = hasWallpaperScrim(id) ? wallpaperScrim(scheme) : null;
+  const out: RGBA[] = [];
+  for (const base of wallpaperBases(scheme)) {
+    if (spec.glass === "--bubble-user-bg") {
+      out.push(over(fillToken(scheme, "--bubble-user-bg"), base));
+      continue;
+    }
+    for (const style of GLASS_STYLES)
+      for (const haze of HAZE_RANGE)
+        for (const stop of glassStops(spec.glass, style, scheme, haze)) {
+          const glass = over(stop, base);
+          out.push(scrim ? over(scrim, glass) : glass);
+        }
+  }
+  return out;
+}
