@@ -17,10 +17,14 @@ import type { AttachmentThumbWidth } from "../../../shared/attachments";
  *   进程各有一份，不落盘。
  * - 同一项同时有多个请求时只算一次（共享同一个 Promise）。
  *
+ * 并发上限：同一进程里同时最多 {@link DEFAULT_MAX_CONCURRENT}（2）张在缩，其余排队（进程内信号量，先来先算）；
+ * sharp 自己的线程池设成 1（`sharp.concurrency(1)`）。一张大图解码要几十到上百 MB，打开一段图片很多的对话会一下子
+ * 来十几个 `?w=` 请求，不限的话内存和 CPU 一起冲高，拖慢同一进程里的 API。缓存命中和「回原图」的判断不排队。
+ *
  * 回退原图（返回 `{ kind: "original" }`，路由照常回原图）：
  * - 不是 PNG / JPEG / WebP（GIF 可能是动图，缩成一帧会丢动画；文件、文本当然不缩）。
  * - 原图本来就不比这一档宽，或者转出来的 WebP 反而比原图大。
- * - sharp 装不上 / 加载失败（只记一次日志）、图片解不开、像素数超过 {@link MAX_INPUT_PIXELS}、
+ * - sharp 装不上 / 加载失败（第一次要用时记一条 warn，整个进程只记一次，见 {@link loadSharp}）、图片解不开、像素数超过 {@link MAX_INPUT_PIXELS}、
  *   超过 {@link RESIZE_TIMEOUT_SECONDS} 秒没算完。
  * 「回退」也会记进缓存（一个很小的标记），下次同一项直接回原图，不再重算。
  */
@@ -64,26 +68,69 @@ export const DEFAULT_MAX_ENTRY_BYTES = 2 * 1024 * 1024;
 /** 约 4000 万像素（比如 8000×5000）。更大的图解码要的内存太多，直接回原图。 */
 export const MAX_INPUT_PIXELS = 40_000_000;
 export const RESIZE_TIMEOUT_SECONDS = 10;
+/** 同时最多几张在缩（见文件头「并发上限」）。 */
+export const DEFAULT_MAX_CONCURRENT = 2;
 const WEBP_QUALITY = 80;
 /** 「回原图」标记在缓存里按这么多字节算，免得两千个标记不占预算。 */
 const ORIGINAL_MARKER_BYTES = 64;
 
 const RESIZABLE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 
-async function loadSharp(): Promise<SharpLike | null> {
+/** sharp 模块里加载时要设的那两项，测试可以换掉。 */
+export type SharpModule = {
+  default: {
+    cache(enabled: boolean): unknown;
+    concurrency(threads: number): unknown;
+  };
+};
+
+export const SHARP_LOAD_FAILED_WARNING =
+  "[attachments] sharp could not be loaded, so image thumbnails (?w=) are OFF: every image is served at its original size. Check that sharp's native binary for this platform (@img/sharp-<os>-<arch>) is installed.";
+
+/**
+ * 加载 sharp。只在第一次要缩图时调一次（`createThumbnailer` 记住这个 Promise），所以加载失败的 warn 整个进程
+ * 只有一条：以前失败也是静默回原图，从日志看不出缩图其实没在工作。
+ */
+export async function loadSharp(
+  importSharp: () => Promise<SharpModule> = () =>
+    import("sharp") as unknown as Promise<SharpModule>,
+  warn: (message: string, detail: string) => void = console.warn,
+): Promise<SharpLike | null> {
   try {
-    const module = await import("sharp");
+    const module = await importSharp();
     const sharp = module.default;
     // libvips 自己的操作缓存关掉：结果已经由上面的 LRU 管着，再留一份只是多占内存。
     sharp.cache(false);
+    // 一张图只用一个线程：并发已经由下面的信号量限在 2，不让每张再各开一池线程。
+    sharp.concurrency(1);
     return sharp as unknown as SharpLike;
   } catch (error) {
-    console.warn(
-      "sharp could not be loaded; attachment thumbnails fall back to the original image.",
-      error,
+    warn(
+      SHARP_LOAD_FAILED_WARNING,
+      error instanceof Error ? error.message : String(error),
     );
     return null;
   }
+}
+
+/** 进程内信号量：同时最多 `limit` 个在跑，其余按到达顺序排队。 */
+function createSemaphore(limit: number) {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return {
+    async run<T>(task: () => Promise<T>): Promise<T> {
+      if (active < limit) active += 1;
+      // 名额由放手的那一个直接交过来（`active` 不变），中间没有空档让后来的插队。
+      else await new Promise<void>((resolve) => waiting.push(resolve));
+      try {
+        return await task();
+      } finally {
+        const next = waiting.shift();
+        if (next) next();
+        else active -= 1;
+      }
+    },
+  };
 }
 
 export function createThumbnailer(
@@ -92,12 +139,16 @@ export function createThumbnailer(
     maxCacheBytes?: number;
     maxCacheEntries?: number;
     maxEntryBytes?: number;
+    maxConcurrent?: number;
   } = {},
 ): Thumbnailer {
   const load = options.load ?? loadSharp;
   const maxCacheBytes = options.maxCacheBytes ?? DEFAULT_MAX_CACHE_BYTES;
   const maxCacheEntries = options.maxCacheEntries ?? DEFAULT_MAX_CACHE_ENTRIES;
   const maxEntryBytes = options.maxEntryBytes ?? DEFAULT_MAX_ENTRY_BYTES;
+  const slots = createSemaphore(
+    Math.max(1, options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT),
+  );
 
   let sharp: Promise<SharpLike | null> | null = null;
   // Map 记得插入顺序：命中时删了再插，最前面的就是最久没用的。
@@ -136,6 +187,14 @@ export function createThumbnailer(
     sharp ??= load();
     const resize = await sharp;
     if (!resize) return { kind: "original" };
+    return slots.run(() => shrink(resize, width, original));
+  }
+
+  async function shrink(
+    resize: SharpLike,
+    width: AttachmentThumbWidth,
+    original: Uint8Array,
+  ): Promise<ThumbResult> {
     try {
       const image = resize(original, {
         limitInputPixels: MAX_INPUT_PIXELS,

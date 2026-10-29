@@ -8,7 +8,11 @@ import {
 } from "../../shared/attachments";
 import {
   createThumbnailer,
+  DEFAULT_MAX_CONCURRENT,
+  loadSharp,
+  SHARP_LOAD_FAILED_WARNING,
   type SharpLike,
+  type SharpModule,
 } from "../src/channels/attachment-thumbs";
 
 /** 一张带噪点的照片样的图：纯色图压得太好，测不出「比原图小」。 */
@@ -197,5 +201,188 @@ describe("createThumbnailer", () => {
     );
     expect(result.kind).toBe("thumb");
     expect(thumbs.cached("big", 480)).toBeUndefined();
+  });
+});
+
+/** 一个假的 sharp：`toBuffer` 等测试放行才回来，记着同时有几张在缩。 */
+function gatedSharp() {
+  const state = { started: [] as number[], active: 0, peak: 0 };
+  const gates: Array<() => void> = [];
+  const load = async (): Promise<SharpLike> =>
+    ((input: Uint8Array) => {
+      state.started.push(input.byteLength);
+      state.active += 1;
+      state.peak = Math.max(state.peak, state.active);
+      const chain = {
+        metadata: async () => ({ width: 2000, height: 1000, pages: 1 }),
+        rotate: () => chain,
+        resize: () => chain,
+        timeout: () => chain,
+        webp: () => chain,
+        toBuffer: () =>
+          new Promise<Uint8Array>((resolve) => {
+            gates.push(() => {
+              state.active -= 1;
+              resolve(new Uint8Array(10));
+            });
+          }),
+      };
+      return chain;
+    }) as unknown as SharpLike;
+  return { state, gates, load };
+}
+
+const flush = async () => {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+};
+
+describe("concurrency limit", () => {
+  test("at most two thumbnails are computed at once; the third waits its turn", async () => {
+    expect(DEFAULT_MAX_CONCURRENT).toBe(2);
+    const fake = gatedSharp();
+    const thumbs = createThumbnailer({ load: fake.load });
+    const original = (size: number) => new Uint8Array(size);
+
+    const first = thumbs.thumbnail("a", 240, "image/png", original(1001));
+    const second = thumbs.thumbnail("b", 240, "image/png", original(1002));
+    const third = thumbs.thumbnail("c", 240, "image/png", original(1003));
+    await flush();
+
+    // 前两张在缩，第三张还没碰到 sharp。
+    expect(fake.state.started).toEqual([1001, 1002]);
+    expect(fake.state.active).toBe(2);
+    let thirdDone = false;
+    void third.then(() => {
+      thirdDone = true;
+    });
+
+    // 放掉第一张：第三张接上，同时在缩的仍是两张。
+    fake.gates.shift()?.();
+    expect((await first).kind).toBe("thumb");
+    await flush();
+    expect(fake.state.started).toEqual([1001, 1002, 1003]);
+    expect(fake.state.active).toBe(2);
+    expect(thirdDone).toBe(false);
+
+    fake.gates.shift()?.();
+    fake.gates.shift()?.();
+    expect((await second).kind).toBe("thumb");
+    expect((await third).kind).toBe("thumb");
+    expect(fake.state.peak).toBe(2);
+  });
+
+  test("a failed thumbnail gives its slot back", async () => {
+    let calls = 0;
+    const thumbs = createThumbnailer({
+      maxConcurrent: 1,
+      load: async () =>
+        ((input: Uint8Array) => {
+          calls += 1;
+          if (input.byteLength === 1) throw new Error("corrupt");
+          return (sharp as unknown as SharpLike)(input, {
+            limitInputPixels: 1e8,
+            failOn: "error",
+          });
+        }) as unknown as SharpLike,
+    });
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(
+        (await thumbs.thumbnail("bad", 240, "image/png", new Uint8Array(1)))
+          .kind,
+      ).toBe("original");
+    } finally {
+      warn.mockRestore();
+    }
+    const good = await thumbs.thumbnail(
+      "good",
+      240,
+      "image/png",
+      await photo(800, 600),
+    );
+    expect(good.kind).toBe("thumb");
+    expect(calls).toBe(2);
+  });
+
+  test("cache hits and non-image originals do not queue behind work in progress", async () => {
+    const fake = gatedSharp();
+    const thumbs = createThumbnailer({ load: fake.load, maxConcurrent: 1 });
+    const busy = thumbs.thumbnail("a", 240, "image/png", new Uint8Array(1001));
+    await flush();
+    // 唯一的名额被占着，GIF 照样马上回原图。
+    expect(
+      (await thumbs.thumbnail("g", 240, "image/gif", new Uint8Array(5))).kind,
+    ).toBe("original");
+    fake.gates.shift()?.();
+    await busy;
+  });
+});
+
+describe("loading sharp", () => {
+  test("sets one libvips thread and no libvips cache", async () => {
+    const calls: string[] = [];
+    const module: SharpModule = {
+      default: Object.assign(() => ({}), {
+        cache: (enabled: boolean) => calls.push(`cache(${enabled})`),
+        concurrency: (threads: number) => calls.push(`concurrency(${threads})`),
+      }),
+    };
+    expect(await loadSharp(async () => module)).not.toBeNull();
+    expect(calls).toEqual(["cache(false)", "concurrency(1)"]);
+  });
+
+  test("the real module loads on this machine and ends up single-threaded", async () => {
+    expect(await loadSharp()).not.toBeNull();
+    expect(sharp.concurrency()).toBe(1);
+  });
+
+  test("a failed load warns once, clearly, and every image falls back to the original", async () => {
+    const warnings: Array<[string, string]> = [];
+    let imports = 0;
+    const thumbs = createThumbnailer({
+      load: () =>
+        loadSharp(
+          async () => {
+            imports += 1;
+            throw new Error(
+              'Could not load the "sharp" module using the linux-x64 runtime',
+            );
+          },
+          (message, detail) => warnings.push([message, detail]),
+        ),
+    });
+    const original = await photo(800, 600);
+    const results = await Promise.all([
+      thumbs.thumbnail("a", 240, "image/png", original),
+      thumbs.thumbnail("b", 480, "image/png", original),
+    ]);
+    results.push(await thumbs.thumbnail("c", 240, "image/jpeg", original));
+
+    expect(results.map((result) => result.kind)).toEqual([
+      "original",
+      "original",
+      "original",
+    ]);
+    expect(imports).toBe(1);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.[0]).toBe(SHARP_LOAD_FAILED_WARNING);
+    expect(warnings[0]?.[0]).toContain("thumbnails (?w=) are OFF");
+    expect(warnings[0]?.[1]).toContain("linux-x64");
+  });
+
+  test("the default warning goes to console.warn", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(
+        await loadSharp(async () => {
+          throw new Error("missing");
+        }),
+      ).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toBe(SHARP_LOAD_FAILED_WARNING);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
