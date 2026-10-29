@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { tryClient } from "../client";
 import { applyInboxState, inboxState, markRead, queuedFor, restoreQueue, takeQueued } from "./thread-inbox";
+import { mergeServerMessages, syncQuery, type ThreadSync } from "./thread-sync";
 import { ACTIVE_WORKER, type WorkerView, workerKeys } from "./workers";
 
 type RunAgent = (options: { agent: AbstractAgent }) => Promise<unknown>;
@@ -16,6 +17,7 @@ type RunAgent = (options: { agent: AbstractAgent }) => Promise<unknown>;
  * 3. 打开对话时把服务器上还在排队的接回来。
  * 4. 服务器自己起的一轮（后台任务把结果交回来、浏览器没在跑）：这个页面不在那一轮的流里，
  *    所以它在跑的时候每 1.2 秒把服务器存的对话记录同步过来，结果和总结就会出现，不用刷新。
+ *    同步是增量的（thread-sync.ts）：没变就不传、不比、不 setMessages；变了只传、只比尾部。
  */
 export function useThreadInbox(
   threadId: string | null | undefined,
@@ -103,6 +105,7 @@ export function useThreadInbox(
     let alive = true;
     let serverRunning = false;
     let busy = false;
+    let sync: ThreadSync | null = null;
     /** 有任务交回来的那条消息（结果，或用户在卡片上停掉后的「已停止」）还没出现在这边。 */
     const resultMissing = () => {
       const workers = queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ?? [];
@@ -128,14 +131,18 @@ export function useThreadInbox(
     };
     const pull = async () => {
       try {
-        const response = await tryClient(`/api/copilotkit/threads/${encodeURIComponent(threadId)}/messages`);
+        const query = syncQuery(agent.messages, sync);
+        const response = await tryClient(`/api/copilotkit/threads/${encodeURIComponent(threadId)}/messages?${query}`);
         if (!response.ok || !alive || agent.isRunning) return;
-        const body = await response.json() as { messages?: Message[] } | null;
-        const messages = body?.messages;
-        if (!Array.isArray(messages) || !messages.every((message) => message && typeof message.id === "string" && typeof message.role === "string") || !alive || agent.isRunning) return;
-        const current = JSON.stringify(agent.messages.map((message) => [message.id, (message as { content?: unknown }).content]));
-        const next = JSON.stringify(messages.map((message) => [message.id, (message as { content?: unknown }).content]));
-        if (current !== next) agent.setMessages(messages);
+        const body: unknown = await response.json();
+        if (!alive || agent.isRunning) return;
+        const merged = mergeServerMessages(agent.messages, sync, body);
+        if (!merged) {
+          sync = null;
+          return;
+        }
+        if (merged.next) agent.setMessages(merged.next);
+        sync = merged.version && merged.cursor ? { version: merged.version, cursor: merged.cursor, applied: agent.messages.slice() } : null;
       } catch {
         // A timed-out or malformed snapshot cannot erase the readable local conversation.
       }

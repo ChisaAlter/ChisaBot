@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
 import { currentWorkStep, summarizeDoneWork, summarizeWork, type WorkCall, type WorkNote, workTimeline } from "@/lib/chat/work-steps";
+import { useNow } from "@/lib/use-now";
 
 /** 干活卡把当前这一步广播出去，右栏正在搭建的面板写「正在搜索「…」」（DESIGN.md §77.1）。 */
 export const WORK_STEP_EVENT = "chisabot-work-step";
@@ -72,12 +73,7 @@ export function WorkRow({
       setWorkUi(turnKey, { open: next });
       return next;
     });
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!live) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [live]);
+  const now = useNow(live);
   // 结束时记下用时（只记一次）；之后重画都用同一个数。
   // 用时只有亲眼看着它跑的那一页知道：记下来，刷新 / 切回来后「做了 2 步 · 10 秒」的秒数还在（§88）。
   const [doneSeconds, setDoneSeconds] = useState<number | null>(() =>
