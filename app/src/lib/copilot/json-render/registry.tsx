@@ -239,7 +239,6 @@ class NodeBoundary extends Component<{ type: string; children: ReactNode }, { fa
 function ListMark({ image, icon, title, tone }: { image: unknown; icon: unknown; title: unknown; tone: unknown }) {
   const url = safeHttps(image);
   const [failed, setFailed] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new address gets a fresh try.
   useEffect(() => setFailed(false), [url]);
   const name = typeof title === "string" ? title : "";
   if (url) {
