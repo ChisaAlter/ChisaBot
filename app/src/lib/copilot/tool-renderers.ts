@@ -24,6 +24,34 @@ export function lineOnlyRender<T extends object>(render: T): T {
   return render;
 }
 
+/**
+ * 渲染器自己判断「这次画没画出卡片」（复审 #404 第三轮）：有的渲染器在工具失败时返回 null——图片 / 文件工具没拿到文件、
+ * 定时任务被拒、render_ui 的规范画不出东西。以它收尾、后面没有字的一轮不能算有回答（屏幕上什么都没有，还没法重试）。
+ * 渲染器模块导出判断函数，渲染时用同一个函数决定返回不返回 null，并在模块里按工具名登记到这里；`toolDrawsCard`
+ * 在工具有了结果之后问它。还没有结果时渲染器画的是骨架，照旧算卡片。没登记的渲染器（问人、确认卡……）总是画卡片。
+ */
+export type ToolCallOutcome = {
+  /** 工具调用的参数（JSON 字符串，和 `toolCall.function.arguments` 一样）。 */
+  args: string;
+  /** 工具结果（和渲染器拿到的 `result` 一样）。 */
+  result: string;
+};
+export type CardCheck = (call: ToolCallOutcome) => boolean;
+export type CardChecks = ReadonlyMap<string, CardCheck>;
+
+const cardChecks = new Map<string, CardCheck>();
+/** 渲染器模块登记的判断（按工具名）；`toolDrawsCard` 默认读这一份。 */
+export const registeredCardChecks: CardChecks = cardChecks;
+
+/** 登记「这几个工具的渲染器画没画出卡片」的判断。原样返回判断函数，方便模块直接导出。 */
+export function registerCardCheck(
+  names: readonly string[],
+  check: CardCheck,
+): CardCheck {
+  for (const name of names) cardChecks.set(name, check);
+  return check;
+}
+
 export function isLineOnlyRender(render: unknown): boolean {
   return (
     (typeof render === "function" ||

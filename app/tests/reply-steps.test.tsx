@@ -36,8 +36,18 @@ import {
   type WorkCall,
   workTimeline,
 } from "@/lib/chat/work-steps";
-import { lineOnlyRender } from "@/lib/copilot/tool-renderers";
+import {
+  fileToolDrawsCard,
+  imageToolDrawsCard,
+} from "@/lib/copilot/chat-file-tools";
+import { renderUiDrawsCard } from "@/lib/copilot/render-ui-tool";
+import { scheduleDrawsCard } from "@/lib/copilot/schedule-tool";
+import {
+  lineOnlyRender,
+  registeredCardChecks,
+} from "@/lib/copilot/tool-renderers";
 import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
+import { CHAT_FILES_MARKER } from "../../shared/chat-files";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -505,21 +515,30 @@ describe("以卡片收尾的一轮算有回答（复审 #404 第 1 条）", () =
   type Item = Parameters<typeof compactTurns>[0][number];
   const user = (id: string, text: string): Item =>
     ({ kind: "text", id, role: "user", text }) as Item;
-  const tool = (id: string, name: string, result?: string): Item =>
+  const tool = (
+    id: string,
+    name: string,
+    result?: string,
+    args = "{}",
+  ): Item =>
     ({
       kind: "tool",
       id,
       toolCall: {
         id,
         type: "function",
-        function: { name, arguments: "{}" },
+        function: { name, arguments: args },
       },
       ...(result === undefined ? {} : { result }),
     }) as Item;
-  const card = () => null;
+  // 渲染器本身随便画什么；画没画出卡片由渲染器模块登记的判断说了算（registeredCardChecks，和渲染器返回 null 同一个函数）。
+  const card = () => "card";
   const renderers = [
     { name: "image_generate", render: card },
+    { name: "image_edit", render: card },
     { name: "file_share", render: card },
+    { name: "schedule_create", render: card },
+    { name: "render_ui", render: card },
     { name: "ask_person", render: card },
     { name: "computer_click", render: lineOnlyRender(() => null) },
   ];
@@ -533,26 +552,135 @@ describe("以卡片收尾的一轮算有回答（复审 #404 第 1 条）", () =
       });
   const OK = JSON.stringify(JSON.stringify({ ok: true }));
   const FAIL = JSON.stringify(JSON.stringify({ error: "失败" }));
+  const fileView = (name: string, mimeType: string) => ({
+    id: `f-${name}`,
+    url: `/api/chat-files/f-${name}`,
+    name,
+    mimeType,
+    size: 10,
+    kind: "generated",
+  });
+  const withFiles = (...files: ReturnType<typeof fileView>[]) =>
+    `完成\n${CHAT_FILES_MARKER}${JSON.stringify(files)}`;
+  const IMAGE = withFiles(fileView("a.png", "image/png"));
+  const PDF = withFiles(fileView("a.pdf", "application/pdf"));
+  const SCHEDULED = JSON.stringify({
+    ok: true,
+    schedule: {
+      id: "s1",
+      title: "喝水",
+      schedule: "每天 9:00",
+      kind: "cron",
+      nextRunText: "明天 9:00",
+    },
+  });
+  const REJECTED = JSON.stringify({ ok: false, error: "时间已经过了" });
+  const uiArgs = (spec: unknown) =>
+    JSON.stringify({
+      title: "界面",
+      spec: typeof spec === "string" ? spec : JSON.stringify(spec),
+    });
+  const BUTTON_UI = uiArgs({
+    root: "b",
+    elements: {
+      b: {
+        type: "Button",
+        props: { label: "Word", ask: "用 Word" },
+        children: [],
+      },
+    },
+  });
+  const NO_ROOT_UI = uiArgs({
+    root: "missing",
+    elements: {
+      b: {
+        type: "Button",
+        props: { label: "Word", ask: "用 Word" },
+        children: [],
+      },
+    },
+  });
+  const ending = (name: string, result: string, args?: string) =>
+    compactTurns(
+      [user("u1", "来一个"), tool("t1", name, result, args)],
+      false,
+      new Set(),
+      undefined,
+      drawsCard(),
+    );
 
-  for (const [name, result] of [
-    ["image_generate", OK],
-    ["file_share", OK],
+  test("画卡片的渲染器都登记了自己的判断，toolDrawsCard 默认用这一份", () => {
+    expect(registeredCardChecks.get("image_generate")).toBe(imageToolDrawsCard);
+    expect(registeredCardChecks.get("image_edit")).toBe(imageToolDrawsCard);
+    expect(registeredCardChecks.get("file_share")).toBe(fileToolDrawsCard);
+    expect(registeredCardChecks.get("schedule_create")).toBe(
+      scheduleDrawsCard,
+    );
+    expect(registeredCardChecks.get("render_ui")).toBe(renderUiDrawsCard);
+  });
+
+  const answered: [string, string, string?][] = [
+    ["image_generate", IMAGE],
+    ["image_edit", IMAGE],
+    ["file_share", PDF],
+    ["schedule_create", SCHEDULED],
+    ["render_ui", OK, BUTTON_UI],
     ["ask_person", OK],
-  ] as const) {
+  ];
+  for (const [name, result, args] of answered) {
     test(`以 ${name} 的卡片收尾、后面没有字：不挂「这一轮没有回答」和重试`, () => {
-      const items = [user("u1", "来一张"), tool("t1", name, result)];
-      const compact = compactTurns(
-        items,
-        false,
-        new Set(),
-        undefined,
-        drawsCard(),
-      );
+      const compact = ending(name, result, args);
       expect(compact.noAnswerAfter.size).toBe(0);
       const work = compact.work.get("t1");
       if (work) expect(work.answered).toBe(true);
     });
   }
+
+  // 这些情况渲染器返回 null（或只画一行「格式有误」）：屏幕上没有卡片，这一轮算没有回答，要能重试（复审 #404 第三轮）。
+  const unanswered: [string, string, string, string?][] = [
+    ["image_generate 报错", "image_generate", FAIL],
+    ["image_generate 没给图片（只有 PDF）", "image_generate", PDF],
+    ["image_edit 没给文件", "image_edit", "改好了"],
+    ["file_share 报错", "file_share", FAIL],
+    ["file_share 没给文件", "file_share", OK],
+    ["schedule_create 被拒绝", "schedule_create", REJECTED],
+    ["schedule_create 报错", "schedule_create", FAIL],
+    ["render_ui 规范没有根节点", "render_ui", OK, NO_ROOT_UI],
+    ["render_ui 规范不是合法 JSON", "render_ui", OK, uiArgs("{不是 JSON")],
+    ["render_ui 没给规范", "render_ui", OK, "{}"],
+    ["render_ui 被拒绝", "render_ui", `${REFUSAL_MARKER} 不行`, BUTTON_UI],
+  ];
+  for (const [label, name, result, args] of unanswered) {
+    test(`${label}：渲染器什么都不画，仍然挂「这一轮没有回答」`, () => {
+      const compact = ending(name, result, args);
+      expect(compact.noAnswerAfter.get("t1")).toEqual({ last: true });
+      // 图片 / 文件 / 界面不进干活卡；进了的（schedule_create）也要标成没有回答。
+      const work = compact.work.get("t1");
+      if (work) expect(work.answered).toBe(false);
+    });
+  }
+
+  test("工具还没有结果时渲染器画的是骨架：照旧算卡片", () => {
+    const items = [user("u1", "来一张"), tool("t1", "image_generate")];
+    expect(
+      compactTurns(items, false, new Set(), undefined, drawsCard())
+        .noAnswerAfter.size,
+    ).toBe(0);
+  });
+
+  test("渲染器的判断和它自己画不画是同一个条件", () => {
+    expect(imageToolDrawsCard({ args: "{}", result: IMAGE })).toBe(true);
+    expect(imageToolDrawsCard({ args: "{}", result: PDF })).toBe(false);
+    expect(fileToolDrawsCard({ args: "{}", result: PDF })).toBe(true);
+    expect(fileToolDrawsCard({ args: "{}", result: FAIL })).toBe(false);
+    // schedule-tool 的结果有时被再包一层 JSON 字符串。
+    expect(
+      scheduleDrawsCard({ args: "{}", result: JSON.stringify(SCHEDULED) }),
+    ).toBe(true);
+    expect(scheduleDrawsCard({ args: "{}", result: REJECTED })).toBe(false);
+    expect(renderUiDrawsCard({ args: BUTTON_UI, result: OK })).toBe(true);
+    expect(renderUiDrawsCard({ args: NO_ROOT_UI, result: OK })).toBe(false);
+  });
 
   test("等确认的工具（确认卡挂着、还没有结果）算有回答", () => {
     const items = [user("u1", "建个 issue"), tool("t1", "github_create_issue")];

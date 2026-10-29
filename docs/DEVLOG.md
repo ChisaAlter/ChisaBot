@@ -534,3 +534,7 @@
 - 窄屏：`styles.css` 在 ≤ 560px 把做完的干活行的 `.chat-work-meta` 藏了，手机上看不到「N 步失败」。`WorkRow` 多一个 `unanswered`，没有回答的那一行带 `data-unanswered`，`status-capsule.css` 用属性选择器（多一级优先级）在窄屏重新显示；没改 `styles.css`，那条规则也不在 #376 的范围里。
 - 计时：`turnStartedAt` 以前按这一轮的 key 只记一次，同一轮重新跑时接着上一次算。现在 `ChatTranscript`（和 `WorkRow`）在这一页亲眼看着这一轮从「跑着」变成「停了」时 `markTurnRunEnded`，下次 `turnStartedAt` 清掉开始时间、结束时间和记下的用时，从 0 算；切频道回来重挂时还在跑、没经过「停了」，秒数照旧接着算。
 - 测试（`reply-steps.test.tsx`）：图片 / 文件 / 问人 / 等确认 / 宿主提示 / 活动卡收尾都不挂；只画一行过程的渲染器和普通工具失败照常挂；末尾已有错误卡时不重复挂重试（挂载 `ChatTranscript` 对照）；重跑归零、重挂不归零；`data-unanswered` 和窄屏 CSS 规则。合了 main 0.1.109（merge commit）。
+
+## 2026-10-29 回复过程第三轮审查修正（feat/hark-reply-steps，#404 复审 cc398fc0）
+
+- `toolDrawsCard` 以前把不是 `lineOnly` 的渲染器都当画了卡片，但图片 / 文件工具没拿到文件、`schedule_create` 被拒或报错、`render_ui` 的规范画不出东西（或被拒、格式有误只画一行）时渲染器什么都不画，这一轮被算成有回答，屏幕上却空着、也没法重试。现在渲染器模块自己导出判断（`imageToolDrawsCard` / `fileToolDrawsCard` / `scheduleDrawsCard` / `renderUiDrawsCard`，渲染时用同一个函数决定返回不返回 null），按工具名登记到 `tool-renderers.ts` 的 `registerCardCheck`（`useRenderTool` 会把 `render` 再包一层，没法像 `lineOnlyRender` 那样给函数打标）；`toolDrawsCard` 在工具有了结果之后问它，还没结果（骨架）照旧算卡片。`render_ui` 写完后的判断抽成 `renderUiFinal`，组件和判断共用。测试：每种返回 null 的情况都挂「这一轮没有回答」，成功的不挂，原来用 `card = () => null` 加假结果的用例改成真实结果。

@@ -130,8 +130,10 @@ import { useThreadConfirmations } from "@/lib/confirmations";
 import { isEditableUserText } from "@/lib/copilot/regenerate";
 import { useReadMark } from "@/lib/copilot/thread-inbox";
 import {
+  type CardChecks,
   isLineOnlyRender,
   pickToolRenderer,
+  registeredCardChecks,
   useActivityRenderers,
   useToolRenderers,
 } from "@/lib/copilot/tool-renderers";
@@ -3922,7 +3924,9 @@ const drawsRenderUi: DrawsCard = (item) =>
 
 /**
  * 一个工具调用画没画用户看得见的卡片（回复显示①复审）：和 `TranscriptToolCall` 画什么同一套判断——
- * 有渲染器就画渲染器（只画一行过程 / 什么都不画的、注册时标了 `lineOnlyRender` 的不算卡片），
+ * 有渲染器就画渲染器（只画一行过程 / 什么都不画的、注册时标了 `lineOnlyRender` 的不算卡片；工具有了结果以后，
+ * 渲染器登记过判断的（`registerCardCheck`：图片 / 文件工具没拿到文件、定时任务被拒、render_ui 画不出东西时返回 null）
+ * 问它自己，和它决定画不画用同一个函数），
  * 没有就是 `ServerToolLine`（只有宿主被拒是看得见的提示）；另外有确认卡 / 审批卡挂着（`asked`）的也算。
  */
 export function toolDrawsCard(
@@ -3932,12 +3936,15 @@ export function toolDrawsCard(
     activities = [],
     agentId,
     asked,
+    checks = registeredCardChecks,
   }: {
     renderers: Parameters<typeof pickToolRenderer>[0];
     /** 活动消息的渲染器（`renderActivityMessage` 只有找到渲染器才画）。 */
     activities?: readonly { activityType: string }[];
     agentId?: string;
     asked: ReadonlySet<string>;
+    /** 渲染器登记的「画没画出卡片」判断（按工具名）；默认用渲染器模块登记的那一份。 */
+    checks?: CardChecks;
   },
 ): boolean {
   if (tool.kind === "activity")
@@ -3947,8 +3954,18 @@ export function toolDrawsCard(
         renderer.activityType === "*",
     );
   if (asked.has(tool.toolCall.id)) return true;
-  const renderer = pickToolRenderer(renderers, tool.toolCall.function.name, agentId);
-  if (renderer) return !isLineOnlyRender(renderer.render);
+  const name = tool.toolCall.function.name;
+  const renderer = pickToolRenderer(renderers, name, agentId);
+  if (renderer) {
+    if (isLineOnlyRender(renderer.render)) return false;
+    // 还没有结果时渲染器画骨架；有了结果，失败时会返回 null 的渲染器由它自己的判断说了算。
+    const check = renderer.name === name ? checks.get(name) : undefined;
+    return (
+      tool.result === undefined ||
+      !check ||
+      check({ args: tool.toolCall.function.arguments, result: tool.result })
+    );
+  }
   return isHostAccessRefusal(tool.toolCall.function.name, tool.result);
 }
 
