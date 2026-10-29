@@ -62,6 +62,7 @@ import {
   useBackDismiss,
 } from "@/lib/overlay-back";
 import { closeRailSheet } from "@/lib/panels/rail-sheet-close";
+import { presenceRef } from "@/lib/presence-flag";
 
 const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
@@ -319,6 +320,7 @@ export function PanelRail({ className }: { className?: string }) {
               aria-expanded={false}
               aria-label={"打开面板"}
               className="rail-tab is-narrow"
+              ref={presenceRef("has-narrow-rail")}
               onClick={() => openPanelSheet("user")}
               type="button"
             >
