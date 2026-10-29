@@ -1,6 +1,14 @@
-## 未发布
+## Unreleased
 
 - 修复（Android）：`Turns.buildTurn` 一轮结束后以最后一个干活的步骤（`WorkSteps.splitsReply`：网页的 `isWorkCall` 再去掉记忆写入）为界，之后的全部文字都是回答气泡（`Kind.Result`、可复制）；`WorkSteps.NOT_WORK` 补齐网页的 message_bot / file_share / image_generate / image_edit；测试 `NativeLogicTest.allTextAfterLastWorkStaysVisible`、`notWorkMatchesWeb`。
+
+## 0.1.107
+
+- 链接卡照 Hark 改版：正文里单独一行的链接和 json-render 的 `Link` 合并成一个组件（`app/src/components/rich-previews/link-card.tsx`）。有预览图时是固定宽约 280px 的竖卡：上半 og:image 大图（cover，上方两角圆角），下面两行粗体标题和一行浅色「站点 · 补充信息」；没有图时退成同宽的紧凑横卡。半透明底 + 内侧高光边，不用 backdrop-filter；骨架和卡片同尺寸，图片懒加载并预留宽高。json-render 的 `Link` 不再只用模型写的字段：缺的预览图、标题、站点名用 `/api/link-preview` 补全，模型给了的优先，所以 GitHub 等链接现在会显示 og:image。样式在组件自己的 `link-card.css`（只有 `lc-` 开头的新类），styles.css 未改。未升级版本号。
+- 链接卡数据侧按审查修正：模型写的标题如果只是站点名 / 域名，或被 og:title 包含（如「GitHub」「ChisaBot」），改用 og:title；每个链接给出预览图、站点名和补充信息，底下一行是「站点 · 补充信息」（如「GitHub · v0.1.13」）。标题和站点行不再固定高度（只有骨架预留），一行标题时下面不再空一大块。视觉细节留给前端的叠放卡改版。
+
+- 手机尺寸左栏抽屉（Hark 手机端）：一层全高面板，宽 `min(85vw, 320px)`、右侧圆角；顶部搜索 + 新建 + 关闭一行，账号在面板底部（分隔线 + 安全区）；遮罩只压暗、点它关闭；只动 transform 的 200ms 开关动画，减少动态效果时关闭；玻璃只剩面板一层，性能模式 / 减少透明度下不透明。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.107`），PC / Android 外壳未变。
 
 ## 0.1.106
 
