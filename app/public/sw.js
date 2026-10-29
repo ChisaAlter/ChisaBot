@@ -26,7 +26,8 @@ const NAV_TIMEOUT_MS = 20_000;
 const RETRY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524]);
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 const MAX_ASSETS = 400;
-const SKIP_NAV = /^\/(api|auth|login|magpie-admin|downloads|workspace|sign-in)(\/|$)/;
+const SKIP_NAV =
+  /^\/(api|auth|login|magpie-admin|downloads|workspace|sign-in)(\/|$)/;
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -36,7 +37,11 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
-      await Promise.all(keys.filter((key) => key.startsWith("chisabot-") && key !== ASSET_CACHE).map((key) => caches.delete(key)));
+      await Promise.all(
+        keys
+          .filter((key) => key.startsWith("chisabot-") && key !== ASSET_CACHE)
+          .map((key) => caches.delete(key)),
+      );
       // 旧版本（SW_VERSION 2）开过 preload，开关存在 registration 上、换 sw.js 也不会自己关，这里显式关掉。
       if (self.registration.navigationPreload) {
         try {
@@ -97,8 +102,11 @@ async function navigate(event) {
       timeout,
     ]);
     if (response === "timeout") return failed();
-    // 会话过期：网关对导航本该回 302 /login；万一回的是 401（缺 Sec-Fetch-Mode / Accept 的请求），也送去登录页。
-    if (response.status === 401) return toLogin(event.request.url);
+    // 会话过期：网关对导航本该回 302 /login；万一回的是网关的 JSON 401（缺 Sec-Fetch-Mode / Accept 的请求），也送去登录页。
+    // 和前端 isGatewayLoginRequired（lib/auth/login-redirect.ts）同一个判断：只认 `openbotAuthRequired: true`；
+    // 没有网关的部署没有 /login，别的 401 原样交给浏览器。
+    if (await isGatewayLoginRequired(response))
+      return toLogin(event.request.url);
     if (RETRY_STATUSES.has(response.status) && !isOwnCard(response))
       return slow();
     return response;
@@ -109,6 +117,21 @@ async function navigate(event) {
   }
 }
 
+/** 网关说「请先登录」的 401？与 app/src/lib/auth/login-redirect.ts 的 isGatewayLoginRequired 一致，只读克隆。 */
+async function isGatewayLoginRequired(response) {
+  if (!response || response.status !== 401) return false;
+  if (
+    !(response.headers.get("content-type") || "").includes("application/json")
+  )
+    return false;
+  try {
+    const body = await response.clone().json();
+    return body?.openbotAuthRequired === true;
+  } catch {
+    return false;
+  }
+}
+
 /** 去登录页，登录完回到原来的地址（网关 login.js 的 safeNext 只认站内路径）。 */
 function loginPath(href) {
   const url = new URL(href);
@@ -116,7 +139,10 @@ function loginPath(href) {
 }
 
 function toLogin(href) {
-  return Response.redirect(new URL(loginPath(href), self.location.origin).href, 302);
+  return Response.redirect(
+    new URL(loginPath(href), self.location.origin).href,
+    302,
+  );
 }
 
 /** 网络层失败：真断网给离线卡片，否则（超时、连接被重置…）当作服务器慢。 */
@@ -176,7 +202,18 @@ function retryMain(env) {
           : undefined,
       });
       // 探测请求不是导航，网关对过期会话回的是 JSON 401 而不是 302：刷新只会再走一遍导航，直接去登录页。
-      if (res.status === 401) {
+      // 判断同 isGatewayLoginRequired（这里会被 toString 进页面，不能引用外面的函数，只好内联）。
+      let authRequired = false;
+      if (
+        res.status === 401 &&
+        (res.headers?.get?.("content-type") || "").includes("application/json")
+      ) {
+        try {
+          const body = await res.clone().json();
+          authRequired = body?.openbotAuthRequired === true;
+        } catch {}
+      }
+      if (authRequired) {
         stopped = true;
         const here = new URL(win.location.href);
         win.location.replace(
@@ -218,7 +255,12 @@ async function asset(request) {
     // Cache storage unavailable (private mode, quota): fall through to the network.
   }
   const response = await fetch(request);
-  if (cache && response.status === 200 && response.type === "basic" && !response.redirected) {
+  if (
+    cache &&
+    response.status === 200 &&
+    response.type === "basic" &&
+    !response.redirected
+  ) {
     const copy = response.clone();
     cache
       .put(request, copy)

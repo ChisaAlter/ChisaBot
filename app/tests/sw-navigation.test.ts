@@ -275,7 +275,7 @@ describe("sw.js 登录回调只发一次（state_mismatch）", () => {
 });
 
 function fakeWin(
-  responses: Array<number | "throw">,
+  responses: Array<number | "throw" | Response>,
   href = "https://bot.example/chat/abc?x=1#m",
 ) {
   const clock = fakeClock();
@@ -308,6 +308,7 @@ function fakeWin(
       probes.push(url);
       const next = responses.shift() ?? 200;
       if (next === "throw") throw new TypeError("network");
+      if (typeof next !== "number") return next;
       return { status: next };
     },
   };
@@ -408,7 +409,7 @@ describe("sw.js 会话过期（401）", () => {
 
   test("重试卡片探测到 401：直接去 /login?next=原地址，不刷新回去再等 20 秒", async () => {
     const { ctx } = loadSw({});
-    const w = fakeWin([401]);
+    const w = fakeWin([gateway401()]);
     ctx.retryMain({
       win: w.win,
       delays: ctx.RETRY_DELAYS_MS,
@@ -419,4 +420,50 @@ describe("sw.js 会话过期（401）", () => {
     expect(w.replaced).toEqual(["/login?next=%2Fchat%2Fabc%3Fx%3D1%23m"]);
     expect(w.clock.pending()).toEqual([]);
   });
+
+  test("导航拿到不带 openbotAuthRequired 的 401（没有网关的部署）：原样交给浏览器，不跳 /login", async () => {
+    for (const make of [
+      () => new Response("nope", { status: 401 }),
+      () =>
+        new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+    ]) {
+      const original = make();
+      const sw = loadSw({ fetch: async () => original });
+      const res = await sw.navigate("/channel/abc");
+      expect(res).toBe(original);
+      expect(res.status).toBe(401);
+    }
+  });
+
+  test("重试卡片探测到不带 openbotAuthRequired 的 401：照旧刷新，不跳 /login", async () => {
+    const { ctx } = loadSw({});
+    const w = fakeWin([
+      new Response(JSON.stringify({ error: "x" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    ]);
+    ctx.retryMain({
+      win: w.win,
+      delays: ctx.RETRY_DELAYS_MS,
+      retryStatuses: ctx.RETRY_STATUSES,
+    });
+    await w.clock.advance(1000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(w.replaced).toEqual([]);
+    expect(w.reloads()).toBe(1);
+  });
 });
+
+function gateway401() {
+  return new Response(
+    JSON.stringify({ ok: false, openbotAuthRequired: true }),
+    {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    },
+  );
+}
