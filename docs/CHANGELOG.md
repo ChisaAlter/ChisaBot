@@ -1,3 +1,7 @@
+## Unreleased
+
+- 回复过程照 Hark 改：等待时只在机器人一侧显示一行状态胶囊（转圈 + 当前动作 + 秒数，`role="status"`），替代原来的「思考中」三点气泡和停顿时的占位气泡；一轮做完后干活卡自动收起（从历史打开的也默认收起），不再留在对话里；正文里只有「---」、空白或标点的过程话 / 步骤不再画成一项。胶囊用现有设计 token（`--r-pill`、`--glass-strong`、`--glass-shadow-sm`、`--dur-2`），不用模糊，动画只动 transform / opacity；减少动态效果时转圈静止，减少透明度 / 性能模式下为不透明底色。样式在组件自己的 `app/src/components/chat/status-capsule.css`（只有 `rs-` 开头的新类），styles.css 未改。新增 `app/tests/reply-steps.test.tsx`。未升级版本号。
+
 ## 0.1.107
 
 - 链接卡照 Hark 改版：正文里单独一行的链接和 json-render 的 `Link` 合并成一个组件（`app/src/components/rich-previews/link-card.tsx`）。有预览图时是固定宽约 280px 的竖卡：上半 og:image 大图（cover，上方两角圆角），下面两行粗体标题和一行浅色「站点 · 补充信息」；没有图时退成同宽的紧凑横卡。半透明底 + 内侧高光边，不用 backdrop-filter；骨架和卡片同尺寸，图片懒加载并预留宽高。json-render 的 `Link` 不再只用模型写的字段：缺的预览图、标题、站点名用 `/api/link-preview` 补全，模型给了的优先，所以 GitHub 等链接现在会显示 og:image。样式在组件自己的 `link-card.css`（只有 `lc-` 开头的新类），styles.css 未改。未升级版本号。

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 回复过程照 Hark 改：等待时只在机器人一侧显示一行状态胶囊（转圈 + 当前动作 + 秒数，`role="status"`），替代原来的「思考中」三点气泡和停顿时的占位气泡；一轮做完后干活卡自动收起（从历史打开的也默认收起），不再留在对话里；正文里只有「---」、空白或标点的过程话 / 步骤不再画成一项。胶囊用现有设计 token（`--r-pill`、`--glass-strong`、`--glass-shadow-sm`、`--dur-2`），不用模糊，动画只动 transform / opacity；减少动态效果时转圈静止，减少透明度 / 性能模式下为不透明底色。样式在组件自己的 `app/src/components/chat/status-capsule.css`（只有 `rs-` 开头的新类），styles.css 未改。新增 `app/tests/reply-steps.test.tsx`。未升级版本号。
+
 ## 0.1.107 — 2026-10-29
 
 这一版合并 2 个 PR：手机尺寸左栏抽屉改成 Hark 手机端的一层面板（#378）、链接卡照 Hark 改版 + 数据侧修正（GitHub 等站点的预览图、标题，#380）。只升级服务器版本号（根、`app`、`server` 为 `0.1.107`），PC / Android 外壳未变；没有表结构变化。

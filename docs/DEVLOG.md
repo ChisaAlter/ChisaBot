@@ -388,3 +388,12 @@
 **版本**：根、`app`、`server` 升到 `0.1.107`；PC / Android 不变。不打 tag、不发 Release。
 
 **0.1.107 部署**（2026-10-29 12:07 北京时间开始）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.107-20261029T040728Z.dump`（`pg_restore -l` 767 条目）。`deploy-serial.sh 6790ef7` 镜像 `local/chisabot:auto-202610290407-6790ef7`（同时成为 BASE_IMAGE），`request.sh smoke` PASSED（admin 模型自检 `ok:true persisted:false`），`health.sh` 通过，公网 `/login` 200，容器 healthy、无重启、日志无错误，sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 3856d36；保留当前（BASE）6790ef7、上一版 0ba9676、`keep-628d527`。
+
+## 2026-10-29 回复过程照 Hark 改（feat/hark-reply-steps）
+
+- 对照 `/workspace/hark-compare`（REPORT 第「工具过程」「等待态」两行、P0 / P1 两项）和反馈图 `tid/02.png`：Hark 等待时只有一行状态，做完不留痕迹；ChisaBot 原来有「思考中」气泡、做完还留着干活卡、还会冒出只有「---」的步骤。
+- 新增 `StatusCapsule` / `PausedCapsule`（`app/src/components/chat/status-capsule.tsx` + `.css`）：转圈 + 当前动作 + 「N 秒」，不到 1 秒不显示秒数；运行中的 `WorkRow` 画成同一个胶囊（还能点开看步骤），`Thinking` 和停顿占位也换成胶囊，原来的三点气泡、`PauseDots` 删掉。秒数从这一轮开始算（`liveSince`），思考 → 干活不会归零。
+- `WorkRow`：从运行变成完成时自动收起并记住；历史里完成的行一律收起。
+- `isBlankNote`（`lib/chat/work-steps.ts`）：去掉 markdown 后没有字母、数字、emoji 的过程话（「---」「…」）不进步骤列表，`compactTurns` 也把这种助手正文当作隐藏。
+- 规则：只用现有 token；胶囊不用 blur，动画只动 transform / opacity；`prefers-reduced-motion` 关动画，`prefers-reduced-transparency` 和 `html[data-perf="on"]` 用不透明底色（与抽屉同色）；没有 `:has()`、没有 `!important`；styles.css 和禁区文件都没动。
+- 已知：做完的干活行在本页亲眼看着收起时，按 §82.9 仍以 0 高、`aria-hidden` + `inert` 的折叠行留在 DOM 里（重新打开对话时不画）；工具过程默认隐藏后只剩空 div 的工具行由 styles.css 已有规则 `display: none`，不占位。
