@@ -15,7 +15,7 @@
  *   不许出现这两种写法。
  */
 
-/* 不透明的玻璃底色：只在性能模式 / 减少透明度时用。浅色、深色各一份。 */
+/* 不透明的玻璃底色：只在性能模式 / 减少透明度 / 增加对比度 / 强制颜色时用。浅色、深色各一份。 */
 html {
   --glass-bg-opaque: rgb(246, 247, 250);
 }
@@ -23,7 +23,13 @@ html.dark {
   --glass-bg-opaque: rgb(29, 31, 36);
 }
 
-@media (prefers-reduced-transparency: reduce) {
+/*
+ * 同一套规则也用于系统「增加对比度」（prefers-contrast: more）和强制颜色（forced-colors: active，Windows 对比度主题）：
+ * 半透明玻璃和模糊会降低文字对比度，在这两种模式下一律换成不透明底色、关掉模糊（模块 11 第 7 条）。
+ * 边框、焦点环和文字颜色的加强在 a11y-modes.css。
+ */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more),
+  (forced-colors: active) {
   html:not(#chisabot-no-blur) *,
   html:not(#chisabot-no-blur) *::before,
   html:not(#chisabot-no-blur) *::after {

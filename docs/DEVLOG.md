@@ -1,5 +1,39 @@
 # DEVLOG
 
+## Unreleased — 侧栏小字 / 字母头像对比度，强制颜色与增加对比度（分支 dev5/a11y-contrast）
+
+来源：模块 11（主题 / 壁纸 / 玻璃）审计第 6、7 条。没有改 `appearance.ts`、主题色 meta、多标签同步和启动画面（开发4 在修）。
+
+1. **对比度（第 6 条）**：三处小字改用新的颜色 token，浅色、深色各一份，定义在 `styles.css` 的 `:root` / `.dark` 块里：
+   - 侧栏「主机器人」标题 `.glass-sec-main`：`--side-sec-main-ink`，浅色 #c48a0a → #553600，深色保持 #f2c14e。星形图标仍是琥珀色，只有文字加深。
+   - 字母头像 `.glass-avatar`：`--avatar-ink`，白字 → #1e2a4a。粉蓝渐变底色很浅，白字只有 1.6:1。
+   - 侧栏副标题 `.glass-item-s`：`--side-sub-ink`，深色 #94a3b8 → #b4bfcf。浅色 #475569 → #303d50 也一起加深，因为测试要求每种组合在模型最差的情况下也 ≥ 4.5。
+2. **强制颜色 / 增加对比度（第 7 条）**：
+   - `perf-noblur.css` 原来「减少透明度」时关模糊、换不透明底色的那条 `@media`，现在也匹配 `(prefers-contrast: more)` 和 `(forced-colors: active)`。
+   - 新增 `a11y-modes.css`，在 `perf-noblur.css` 之后引入。和 perf-noblur 一样用 `html:not(#chisabot-no-blur)` 抬优先级，不用 `!important`。
+   - 增加对比度：二级 / 三级文字的 alpha 和颜色加深，分隔线、输入框、焦点环加深，面板加 1px 实线边，焦点环改成 2px 实线。
+   - 强制颜色：天空 / 壁纸 / 光斑装饰层不画；面板、卡片、弹层用 `CanvasText` 描边；当前项和选中项用 `Highlight` 描边；字母头像用 `Canvas` / `CanvasText`；`:focus-visible` 用 2px `Highlight` outline。
+
+实测数据：本地服务、单用户模式、headless Chrome 1440×900。对比度是把文字设成透明后，取元素背景像素的中位数，和文字颜色计算；范围是 6 个主题色里的最小到最大。
+
+| 元素 | 方案 | 改动前 | 改动后 |
+|---|---|---|---|
+| 主机器人标题 | 浅色 | 2.02–2.52 | 7.35–9.14 |
+| 主机器人标题 | 深色 | 9.66–10.57 | 9.53–10.49（颜色未变） |
+| 侧栏副标题 | 浅色 | 6.65–7.15 | 9.65–10.36 |
+| 侧栏副标题 | 深色 | 4.02–4.54 | 5.45–6.20 |
+| 字母头像 | 浅色 | 1.62 | 8.73–8.75 |
+| 字母头像 | 深色 | 1.65 | 8.58 |
+
+模糊层数：数的是 computed `backdrop-filter` 不是 none 的可见元素。
+- 强制颜色下，`/settings` 从 17 降到 0，`/bots` 从 4 降到 0；增加对比度下也一样，浅色、深色都是。
+- 普通模式不变，仍是 17 / 4。
+
+测试：
+- `app/tests/a11y-contrast.test.ts`（14 个用例）加模型 `app/tests/contrast-model.ts`。直接解析 `styles.css` / `perf-noblur.css` 里的真实 token，按天空渐变 + 天空遮罩 + 玻璃面板（液态 / 晶莹 / 磨砂 × 不透明度 5–55）+ 悬停 / 选中行底色逐层合成，算出最差对比度。覆盖 6 个主题色 × 浅 / 深，三处都要 ≥ 4.5；增加对比度下的 token 要 ≥ 7。把三个 token 换回旧颜色，这些用例会失败。
+- `app/tests/a11y-modes.test.ts`（5 个用例）：检查两种模式的 CSS 规则和引入顺序。
+- `no-backdrop.test.ts` 跟着新的 `@media` 写法更新。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。
