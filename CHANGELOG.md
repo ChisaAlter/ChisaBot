@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### 安全：PC 更新验签（审查第 7 项 / M7）
+
+方案和 Jun 要做的密钥操作见 `docs/pc-update-signing.md`。**Windows 端到端跑完前不合并**；不改版本号，第一个带验签的版本号合并时定。
+
+- **签名清单（`pc/src/update-signature.js`）**：发布时用 Ed25519 对 `latest.yml` 的规范化消息（version / path / 安装包 sha512 / size / chisabotShell / fullInstall）签名，写进新字段 `chisabotSig: '<keyId>:<base64>'`；安装包本身不改。
+- **客户端（`pc/src/updater.js`）**：内置公钥表 `pc/src/update-keys.json`（主 + 备两把公钥）。下载完先进入「正在校验更新包签名」，验清单签名并重算下载文件的 sha512 / 大小，通过才弹「新版本已下载」、才能安装。缺签名、未知密钥、签名不符、哈希不符、公钥表损坏，一律删掉安装包、提示「更新包签名校验失败，已拒绝安装」、写审计 `update_rejected`、立即和退出时都不安装；没有「只告警不拦截」开关。
+- **electron-updater 6.8.9 核对**：`app-update.yml` 没有 `publisherName` 时，`NsisUpdater.verifySignature` 直接返回通过，**根本不调用** `verifyUpdateCodeSignature`；复用缓存安装包时连这一步都不走。所以验签放在 `update-downloaded` 里自己做。另外 electron-updater 只在派发 `update-downloaded` 的那一刻决定挂不挂退出安装，所以启用验签后退出安装改由 `installOnQuit` 调 `autoUpdater.install(true, false)`。
+- **自建版**：公钥表为空（自建版没配公钥）时保持旧行为（只有 sha512），网页「本机」页提示「此版本未启用更新验签」；可用仓库变量 `CHISABOT_UPDATE_PUBKEYS` 提供自己的公钥。
+- **脚本**：`pc/scripts/sign-update.js`（签名，私钥来自 `PC_UPDATE_SIGNING_KEY` 或 `--key-file`，不打印；`--verify` / `--tamper-check` / `--require-keys` / `--keys-from-env`）、`pc/scripts/gen-update-key.js`（私钥只写到仓库外的文件，不打印）。`shell-fingerprint.js --stamp` 会去掉旧签名，签名永远是最后一步。
+- **CI（`release.yml`）**：新 job `pc-sign` 绑定 Environment `pc-release`（只允许 `v*` 标签、不设审批人），用 Environment secret 自动签名并做验签 + 篡改自检；跑 electron-builder 的 Windows job 拿不到私钥。通用版发布时公钥表为空直接失败；发布必须从标签运行。
+- 不买代码签名证书，Authenticode 第二阶段暂缓。仓库里没有任何真实密钥，测试用现生成的临时钥。
+
 ## 0.1.104 — 2026-10-29
 
 这一版合并 5 个 PR：修复干净安装下缺声明的依赖（#365）、出口过滤代理按 Bot 独立鉴权（审计 H1 / L1，#364）、界面渲染性能预算（#363）、安装版 `/api` 代理不再转发失效的 `Content-Encoding`（#367）、Hark 改版第 1 步令牌层（#369）。只升级服务器版本号（根、`app`、`server` 为 `0.1.104`），PC / Android 外壳未变；没有表结构变化。

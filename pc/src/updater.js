@@ -7,8 +7,15 @@
  *    latest.yml + 安装包 + .blockmap。latest.yml 里有安装包的 sha512，下载完 electron-updater 会校验，
  *    不一致就丢弃，不会安装。
  *  - 安装包没有代码签名：build.win.verifyUpdateCodeSignature = false（app-update.yml 里就没有
- *    publisherName，NsisUpdater 不做 Authenticode 校验）；这里再把校验函数设成「通过」，两边一致。
- *    完整性靠 HTTPS + latest.yml 的 sha512。
+ *    publisherName）。electron-updater 6.8.9 的 NsisUpdater.verifySignature 读不到 publisherName 就直接返回
+ *    null（= 通过），根本不会调 verifyUpdateCodeSignature；这里再把它设成「通过」只是两边一致，不是安全措施。
+ *  - 更新验签（docs/pc-update-signing.md）：客户端内置 Ed25519 公钥表（update-keys.json，经 updateKeys 传入）。
+ *    启用时 electron-updater 的「退出时安装」一直关着，update-downloaded 以后先验 latest.yml 的 chisabotSig
+ *    和下载文件的 sha512（status "verifying"），通过才进入 "downloaded"（弹窗 / 可安装 / 退出时由
+ *    installOnQuit 调 autoUpdater.install 安装）；不通过就删掉下载的安装包、status "error"、不安装。
+ *    electron-updater 用缓存的安装包时（validateDownloadedPath）不会再校验任何东西，但同样派发
+ *    update-downloaded，所以验签放在这里，两条路都经过。公钥表为空（自建版没配公钥）= 不验签，保持旧行为，
+ *    state.signing = false，网页提示。
  *  - 什么时候检查：开着「自动更新」时，启动 30 秒后一次、之后每 30 分钟一次；下载在后台进行，下载好了
  *    调 onDownloaded（主进程弹本机窗口「新版本已下载，重启以安装」：立即重启 / 稍后）。选「稍后」时，
  *    下次退出 ChisaBot PC 时自动安装（autoInstallOnAppQuit）。
@@ -24,6 +31,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const childProcess = require("node:child_process");
+const updateSignature = require("./update-signature");
 
 const FIRST_CHECK_MS = 30 * 1000;
 const INTERVAL_MS = 30 * 60 * 1000;
@@ -56,6 +64,13 @@ function defaultSpawn(cmd, args) {
   return child;
 }
 
+function defaultRemove(file) {
+  if (!file) return;
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {}
+}
+
 function defaultQuit() {
   try {
     require("electron").app.quit();
@@ -71,10 +86,16 @@ function isInstalledBuild({ execPath, productName, exists = fs.existsSync }) {
   return [`Uninstall ${productName}.exe`, `Uninstall ${compact}.exe`].some((name) => exists(path.join(dir, name)));
 }
 
-function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, productName, shellHash = "", getAutoUpdate, onState, onDownloaded, logger, spawn = defaultSpawn, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
+function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, productName, shellHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onDownloaded, onRejected, logger, spawn = defaultSpawn, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
   const supported = Boolean(isPackaged && platform === "win32" && autoUpdater && isInstalledBuild({ execPath, productName }));
+  // updateKeys：update-signature.loadKeys() 的结果。不给（旧调用方 / 测试）= 不验签。
+  const signing = Boolean(updateKeys && updateKeys.enforce);
+  const verify = verifyDownload || ((info, file) => updateSignature.verifyDownloadedUpdate({ info, file, keys: updateKeys.keys }));
   const state = { supported, status: "idle" };
+  if (updateKeys) state.signing = signing;
   let installing = false;
+  let verifySeq = 0;
+  let verifying = Promise.resolve();
   let firstTimer = null;
   let interval = null;
   let checking = null;
@@ -89,13 +110,15 @@ function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, p
 
   if (supported) {
     autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
+    // 验签时退出安装由 installOnQuit 负责：electron-updater 在 update-downloaded 之后才挂退出安装，那时还没验完。
+    autoUpdater.autoInstallOnAppQuit = !signing;
     autoUpdater.allowPrerelease = false;
     autoUpdater.allowDowngrade = false;
     if (logger) autoUpdater.logger = logger;
     // 运行时指定更新源（覆盖打包时的 app-update.yml）；不给就沿用 app-update.yml。
     if (feedUrl) autoUpdater.setFeedURL({ provider: "generic", url: feedUrl });
-    // 安装包不签名：见文件头。只影响 Authenticode；sha512 校验照常。
+    if (updateKeys?.problem) logger?.warn?.(`更新公钥表有问题，所有更新都会被拒绝：${updateKeys.problem}`);
+    // 安装包没有 Authenticode 签名：见文件头（没有 publisherName 时 electron-updater 本来就不调它）。sha512 校验照常。
     try {
       autoUpdater.verifyUpdateCodeSignature = async () => null;
     } catch {}
@@ -105,25 +128,49 @@ function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, p
     );
     autoUpdater.on("update-not-available", () => set({ status: "none", version: undefined, fullInstall: false, checkedAt: now().toISOString() }));
     autoUpdater.on("download-progress", (progress) => {
-      if (state.status === "downloaded") return;
+      if (state.status === "downloaded" || state.status === "verifying") return;
       set({ status: "downloading", percent: Math.max(0, Math.min(100, Number(progress?.percent) || 0)) });
     });
     autoUpdater.on("update-downloaded", (info) => {
       const fullInstall = info ? requiresFullInstall(info, shellHash) : Boolean(state.fullInstall);
       // 重新安装不能交给 electron-updater 的「退出时安装」（它一定带 --updated）；退出时由 installOnQuit 处理。
       if (fullInstall) autoUpdater.autoInstallOnAppQuit = false;
-      set({ status: "downloaded", version: info?.version || state.version, fullInstall, checkedAt: now().toISOString() });
-      onDownloaded?.(state.version);
+      const version = info?.version || state.version;
+      if (!signing) {
+        set({ status: "downloaded", version, fullInstall, checkedAt: now().toISOString() });
+        onDownloaded?.(state.version);
+        return;
+      }
+      const seq = ++verifySeq;
+      const file = info?.downloadedFile;
+      set({ status: "verifying", version, fullInstall });
+      verifying = Promise.resolve()
+        .then(() => verify(info, file))
+        .then(
+          () => {
+            if (seq !== verifySeq) return;
+            set({ status: "downloaded", version, fullInstall, checkedAt: now().toISOString() });
+            onDownloaded?.(version);
+          },
+          (error) => {
+            if (seq !== verifySeq) return;
+            removeFile(file);
+            const reason = error instanceof updateSignature.UpdateSignatureError ? error.message : cleanMessage(error);
+            logger?.warn?.(`更新包签名校验失败（${error?.code || "ERR"}）：${version || ""} ${reason}`);
+            set({ status: "error", error: `更新包签名校验失败，已拒绝安装：${reason}`, fullInstall: false, checkedAt: now().toISOString() });
+            onRejected?.({ version, code: error?.code || "ERR", reason });
+          },
+        );
     });
     autoUpdater.on("error", (error) => {
-      if (state.status === "downloaded") return;
+      if (state.status === "downloaded" || state.status === "verifying") return;
       set({ status: "error", error: cleanMessage(error), checkedAt: now().toISOString() });
     });
   }
 
   async function check() {
     if (!supported) return { ...state };
-    if (state.status === "downloaded" || state.status === "downloading") return { ...state };
+    if (state.status === "downloaded" || state.status === "downloading" || state.status === "verifying") return { ...state };
     if (checking) return checking;
     checking = (async () => {
       set({ status: "checking" });
@@ -165,9 +212,16 @@ function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, p
     const installer = autoUpdater.installerPath;
     if (!installer) {
       logger?.warn?.("重新安装：找不到已下载的安装包，退回普通更新");
-      autoUpdater.autoInstallOnAppQuit = true;
+      if (!signing) {
+        autoUpdater.autoInstallOnAppQuit = true;
+        if (runAfter) autoUpdater.quitAndInstall(true, true);
+        return runAfter;
+      }
+      // 验签时 electron-updater 没挂退出安装（见文件头），退出时也得自己装。
+      installing = true;
       if (runAfter) autoUpdater.quitAndInstall(true, true);
-      return runAfter;
+      else autoUpdater.install(true, false);
+      return true;
     }
     autoUpdater.autoInstallOnAppQuit = false;
     spawn(installer, runAfter ? ["/S", "--force-run"] : ["/S"]);
@@ -182,17 +236,26 @@ function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, p
       if (runFullInstaller({ runAfter: true })) quitApp();
       return true;
     }
+    installing = true;
     autoUpdater.quitAndInstall(true, true);
     return true;
   }
 
-  /** 用户退出程序时：已下载且需要重新安装 → 静默重新安装（不自动打开）。普通更新由 electron-updater 自己处理。 */
+  /**
+   * 用户退出程序时：已下载（验签通过）→ 静默安装（不自动打开）。需要重新安装的走 runFullInstaller；
+   * 普通更新不验签时由 electron-updater 自己的退出安装处理，验签时它没挂，这里调 autoUpdater.install(true, false)
+   * （和 electron-updater 自己退出安装的参数一样）。
+   */
   function installOnQuit() {
-    if (!supported || state.status !== "downloaded" || !state.fullInstall || installing) return false;
-    return runFullInstaller({ runAfter: false });
+    if (!supported || state.status !== "downloaded" || installing) return false;
+    if (state.fullInstall) return runFullInstaller({ runAfter: false });
+    if (!signing) return false;
+    installing = true;
+    autoUpdater.install(true, false);
+    return true;
   }
 
-  return { get state() { return { ...state }; }, supported, feedUrl: feedUrl || "", check, schedule, stop, install, installOnQuit };
+  return { get state() { return { ...state }; }, supported, signing, feedUrl: feedUrl || "", check, schedule, stop, install, installOnQuit, settled: () => verifying };
 }
 
 module.exports = { createUpdater, cleanMessage, isInstalledBuild, requiresFullInstall, FIRST_CHECK_MS, INTERVAL_MS };

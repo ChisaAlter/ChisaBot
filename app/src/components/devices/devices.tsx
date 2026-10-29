@@ -985,6 +985,7 @@ const PC_UPDATE_TEXT: Record<PcUpdateState["status"], string> = {
   checking: "正在检查…",
   available: "发现新版本，准备下载",
   downloading: "正在后台下载",
+  verifying: "正在校验更新包签名",
   downloaded: "已下载，重启后安装",
   none: "已是最新版本",
   error: "检查更新失败",
@@ -1015,6 +1016,7 @@ function PcUpdateRows({ local, onLocal }: { local: PcLocalState; onLocal: (next:
     update.version && update.status !== "none" ? `新版本 ${update.version}` : "",
     status,
     update.status === "error" && update.error ? update.error : "",
+    update.supported && update.signing === false ? "此版本未启用更新验签" : "",
     update.checkedAt ? `上次检查 ${new Date(update.checkedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : "",
   ]
     .filter(Boolean)
@@ -1049,7 +1051,7 @@ function PcUpdateRows({ local, onLocal }: { local: PcLocalState; onLocal: (next:
           </Button>
         ) : (
           <Button
-            disabled={!update.supported || update.status === "checking" || update.status === "downloading"}
+            disabled={!update.supported || update.status === "checking" || update.status === "downloading" || update.status === "verifying"}
             feedback={{ pending: "检查中…", success: "已检查", error: "检查失败" }}
             onClick={() => void check.run()}
             size="sm"

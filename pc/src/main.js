@@ -46,6 +46,7 @@ const { attachAgentRuntime } = require("./agent-runtime/attach");
 const auth = require("./agent/auth");
 const { ensureEnrolled } = require("./agent/enrollment");
 const { createUpdater } = require("./updater");
+const updateSignature = require("./update-signature");
 const shellRefresh = require("./shell-refresh");
 const { createCompactController } = require("./compact-window");
 const { computeUpdateBounds } = require("./update-placement");
@@ -838,6 +839,8 @@ function startUpdater() {
     execPath: process.execPath,
     productName: pkg.productName || "ChisaBot PC",
     shellHash: SHELL_HASH,
+    // 内置更新公钥（docs/pc-update-signing.md）：为空 = 这个构建不验签（自建版没配公钥），保持旧行为。
+    updateKeys: updateSignature.loadKeys(),
     getAutoUpdate: () => config.get().autoUpdate !== false,
     logger: updateLogger(),
     onState: () => {
@@ -848,6 +851,9 @@ function startUpdater() {
       if (Notification.isSupported())
         new Notification({ title: "ChisaBot PC", body: `新版本 ${version || ""} 已下载，重启以安装。` }).show();
       openUpdateWindow();
+    },
+    onRejected: ({ version, code, reason }) => {
+      config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_rejected", outcome: "failed", summary: `新版本 ${version || ""} 签名校验失败，已拒绝安装（${code}）：${reason}`.slice(0, 300) });
     },
   });
   updater.schedule();
@@ -1351,9 +1357,10 @@ app.on("before-quit", () => {
     globalShortcut?.unregisterAll?.();
   } catch {}
   agent?.stop();
-  // 下载好的更新需要重新安装（换了图标 / 组件）而用户选了「稍后」：退出这一刻静默重新安装。
+  // 下载好（并验签通过）的更新而用户选了「稍后」：退出这一刻静默安装。需要重新安装（换了图标 / 组件）的走重新安装；
+  // 普通更新在启用验签时也由这里安装（electron-updater 自己的退出安装没挂，见 updater.js）。
   if (updater?.installOnQuit())
-    config?.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_install", outcome: "succeeded", summary: `退出时重新安装 ${updater.state.version || ""}` });
+    config?.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_install", outcome: "succeeded", summary: `${updater.state.fullInstall ? "退出时重新安装" : "退出时安装"} ${updater.state.version || ""}` });
 });
 
 // ---------- 外壳刷新（src/shell-refresh.js） ----------

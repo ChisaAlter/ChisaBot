@@ -30,9 +30,12 @@ ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、
   （CI 变量 `CHISABOT_UPDATE_FEED`）→ `https://github.com/<owner>/<repo>/releases/latest/download/`（GitHub Releases，仓库须公开）。
   通用版（仓库 Releases 里的）就走最后一项；自建发布把自己的静态 HTTPS 目录写进 `CHISABOT_UPDATE_FEED`。
   `latest.yml` 里有安装包的 sha512，electron-updater 下载完会校验，不一致丢弃。
-- **安装包没有代码签名**：`build.win.verifyUpdateCodeSignature = false`（`app-update.yml` 里就不写 `publisherName`，
-  NsisUpdater 不做 Authenticode 校验），`pc/src/updater.js` 里再把校验函数设成通过。完整性靠 HTTPS + sha512。
-  以后有了证书：去掉这两处，配置 `win.signtoolOptions.publisherName`。
+- **更新验签**（`docs/pc-update-signing.md`）：发布时用 Ed25519 给 `latest.yml` 签名（`chisabotSig`），客户端用内置公钥
+  （`pc/src/update-keys.json`）校验并重算安装包 sha512，不通过就删掉安装包、拒绝安装（「更新包签名校验失败，已拒绝安装」）。
+  公钥表为空的构建（自建版没配 `CHISABOT_UPDATE_PUBKEYS`）不验签，保持只有 sha512 的旧行为，「本机」页提示「此版本未启用更新验签」。
+- **安装包没有代码签名**：`build.win.verifyUpdateCodeSignature = false`（`app-update.yml` 里就不写 `publisherName`）。
+  electron-updater 6.8.9 在没有 `publisherName` 时根本不调用 `verifyUpdateCodeSignature`，`pc/src/updater.js` 里把它设成通过只是两边一致。
+  代码签名（Authenticode）是第二阶段，暂缓；以后有了证书：去掉这两处，配置 `win.signtoolOptions.publisherName`。
 - 行为（`pc/src/updater.js`）：开着「自动更新」（默认开）时启动 30 秒后检查一次、之后每 4 小时一次；发现新版本就在
   后台下载；下载好后弹本机窗口（`src/ui/update.html`，Skyglass 对话框）「新版本已下载，重启以安装」：
   **立即重启**（`quitAndInstall(静默, 装完自动打开)`）/ **稍后**（下次退出时自动安装）。托盘菜单多一项「重启以安装」。

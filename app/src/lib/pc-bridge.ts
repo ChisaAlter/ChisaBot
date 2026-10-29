@@ -37,13 +37,16 @@ export type PcLocalState = {
 export type PcUpdateState = {
   /** 打包后的安装版才能自动更新；开发运行 / 免安装版为 false。 */
   supported: boolean;
-  status: "idle" | "checking" | "available" | "downloading" | "downloaded" | "none" | "error";
+  /** verifying：下载好了，正在校验更新包签名（docs/pc-update-signing.md），通过才变成 downloaded。 */
+  status: "idle" | "checking" | "available" | "downloading" | "verifying" | "downloaded" | "none" | "error";
   /** 发现 / 下载好的新版本号。 */
   version?: string;
   /** 下载进度 0–100。 */
   percent?: number;
   checkedAt?: string;
   error?: string;
+  /** 这个构建是否启用更新验签（内置了更新公钥）。false = 自建版没配公钥，只校验 sha512；旧客户端不报这一项。 */
+  signing?: boolean;
 };
 
 export type PcLocalPatch = Partial<

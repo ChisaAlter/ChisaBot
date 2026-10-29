@@ -1,5 +1,26 @@
 # DEVLOG
 
+## 2026-10-29 PC 更新验签（分支 `fix/pc-update-signing`，审查第 7 项 / M7）
+
+### 动机
+
+- PC 在线更新只有 HTTPS + `latest.yml` 里的 sha512，而 sha512 和安装包放在同一个地方：能防下载损坏，防不了篡改。拿到 GitHub 账号 / token、能推标签或改 workflow、能写自建更新目录、或者发布 job 的某个 action / 依赖被投毒，任何一项都能让所有开着自动更新的客户端在 30 分钟内静默装上任意 exe（NSIS 静默安装，用户权限），等于远程执行代码。
+- 原以为可以借 electron-updater 的 `verifyUpdateCodeSignature` 钩子做校验。对照 6.8.9 源码：`app-update.yml` 里没有 `publisherName`（我们没有证书，`verifyUpdateCodeSignature: false`）时 `NsisUpdater.verifySignature` 直接返回通过，根本不调用这个钩子；复用缓存安装包时连 `verifySignature` 都不走。所以 `updater.js` 里把它换成「通过」从来不是安全措施，验签只能在 `update-downloaded` 里自己做。
+- 不买代码签名证书（决定②）：Ed25519 免费、完全自控，以后能换成离线手签；Authenticode 作为第二阶段暂缓。
+
+### 改动
+
+- 规范化消息 + Ed25519 签名写进 `latest.yml` 的 `chisabotSig`；客户端内置主 + 备公钥（`pc/src/update-keys.json`），下载完验签并重算 sha512，通过才进入 downloaded，失败删包、报错、写审计、不装。公钥表为空 = 自建版没配公钥，保持旧行为并提示；公钥表损坏 = 全部拒绝。没有「只告警不拦截」开关。
+- 实现时发现：electron-updater 只在派发 `update-downloaded` 的那一刻按 `autoInstallOnAppQuit` 决定挂不挂退出安装，之后再改成 true 不会补挂。验签是异步的，所以启用验签后 `autoInstallOnAppQuit` 一直是 false，「稍后 → 退出时安装」由 `installOnQuit` 调公开的 `autoUpdater.install(true, false)`。
+- 签名是独立脚本 `pc/scripts/sign-update.js`（`--verify` / `--tamper-check` / `--require-keys` / `--keys-from-env` / `--key-file`），CI 的新 job `pc-sign` 只调用它；Environment `pc-release` 只允许 `v*` 标签、不设审批人（决定①），跑 electron-builder 的 Windows job 拿不到私钥。签名方和 electron-updater 都用 js-yaml 解析 `latest.yml`，避免两边对值的理解不同。
+- `shell-fingerprint.js --stamp` 去掉旧的 `chisabotSig`，保证签名永远是最后一步。
+- 仓库里只放空公钥表，没有生成或提交任何真实密钥；测试用的都是测试时现生成的临时钥。检查间隔、版本号不改（决定④）。
+
+### 验证
+
+- `pc` 的 `npm test`（新增 `update-signature.check.js`、`update-verify.check.js`：签名 / 验签 / 逐字段篡改 / 换安装包 / 换钥 / 未知钥 / 无公钥 / 公钥表损坏 / CLI / js-yaml 往返 / updater 流程），根目录 typecheck、build，Biome 无新增；zizmor 检查 `release.yml` 无告警。
+- 还没做：Windows 端到端（`docs/pc-update-signing.md` §7.3），做完之前不合并。
+
 ## 2026-10-29 修复干净安装：补声明 @json-render/* 等缺失依赖（分支 fix/json-render-deps）
 
 ### 动机

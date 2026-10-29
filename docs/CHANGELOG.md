@@ -1,3 +1,7 @@
+## Unreleased
+
+- PC 更新验签（审查第 7 项 / M7，**Windows 端到端跑完前不合并**）：发布时用 Ed25519 给 `latest.yml` 签名（`chisabotSig`，覆盖版本、安装包 sha512 / 大小、外壳指纹、是否重新安装），客户端用内置主 + 备公钥校验并重算下载文件的 sha512，不通过一律删掉安装包、拒装、写审计；自建版没配公钥时保持旧行为并在「本机」页提示（可用 `CHISABOT_UPDATE_PUBKEYS` 提供公钥）。CI 新增 `pc-sign` job（Environment `pc-release`，只允许 `v*` 标签、不设审批），新增 `pc/scripts/sign-update.js`（带 `--verify`）和 `gen-update-key.js`。核对 electron-updater 6.8.9：没有 `publisherName` 时 `verifyUpdateCodeSignature` 根本不被调用。不改版本号。详见 `docs/pc-update-signing.md`。
+
 ## 0.1.104
 
 - 修复干净安装（默认隔离 linker）下 `shared/json-render` 解析不到 `@json-render/*`、typecheck/build 失败的问题：根 `package.json` 补声明这两个依赖；app 补声明测试与 vite.config 直接用到的 `@ag-ui/client`、`rxjs`、`esbuild`（版本均与 lockfile 一致）（#365）。
