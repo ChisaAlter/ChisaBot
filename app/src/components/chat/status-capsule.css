@@ -1,0 +1,100 @@
+/*
+ * 回复显示①（status-capsule.tsx / work-card.tsx，2026-10-29，参考 Hark）：等待时只有一行状态胶囊。
+ * 只给 rs- 开头的新类，不改 styles.css 里已有的规则；颜色、圆角、间距都用设计系统的 token。
+ * - 胶囊：--r-pill 圆角，--glass-strong 底 + --glass-shadow-sm，不用 backdrop-filter。
+ * - 高度和做完时的那一行（.chat-thinking 的 9px 上下内边距 + 20px 行高）一样，结束那一刻不跳。
+ * - 动画只用 transform / opacity；prefers-reduced-motion 下不动；减少透明度 / 性能模式下不透明。
+ * - 大容器上不用 :has()，状态用 data-state。
+ */
+.rs-capsule {
+  --rs-solid: rgb(246, 247, 250);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  box-sizing: border-box;
+  max-width: min(100%, 520px);
+  min-width: 0;
+  padding: 9px 14px 9px 12px;
+  border: 0;
+  border-radius: var(--r-pill, 999px);
+  background: var(--glass-strong);
+  box-shadow: var(--glass-shadow-sm);
+  color: var(--glass-ink-2);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  animation: rs-capsule-in var(--dur-2, 220ms) var(--ease-out, ease-out) both;
+}
+.dark .rs-capsule {
+  --rs-solid: rgb(29, 31, 36);
+}
+.rs-spinner {
+  flex: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-pill, 999px);
+  border: 2px solid color-mix(in srgb, var(--accent-blue) 22%, transparent);
+  border-top-color: var(--accent-blue);
+  animation: rs-spin 0.9s linear infinite;
+}
+.rs-capsule-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.rs-capsule-time {
+  flex: none;
+  color: var(--ink-4);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.rs-capsule-time:empty {
+  display: none;
+}
+/* 干活卡跑着的时候也是这个胶囊（是个按钮：点开看每一步）。 */
+.chat-work-card.rs-capsule {
+  cursor: pointer;
+  text-align: left;
+  transition: opacity var(--dur-2, 220ms) var(--ease-out, ease-out);
+}
+.chat-work-card.rs-capsule:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-blue) 55%, transparent);
+  outline-offset: 2px;
+}
+@keyframes rs-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes rs-capsule-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rs-capsule,
+  .chat-work-card.rs-capsule {
+    animation: none;
+    transition: none;
+  }
+  /* 不转：静止的一圈，上面那一段是主题色，仍看得出「在等」。 */
+  .rs-spinner {
+    animation: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .rs-capsule {
+    background: var(--rs-solid);
+  }
+}
+html[data-perf="on"] .rs-capsule {
+  background: var(--rs-solid);
+}

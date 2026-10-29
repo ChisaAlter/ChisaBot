@@ -48,6 +48,7 @@ import {
 import { QueuedMessages } from "@/components/chat/queued-messages";
 import { ScheduleFiredRow } from "@/components/chat/schedule-row";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
+import { PausedCapsule, StatusCapsule } from "@/components/chat/status-capsule";
 import { knownWorkSeconds, WorkRow } from "@/components/chat/work-card";
 import { WorkerResultRow } from "@/components/chat/worker-card";
 import { JUMP_TO_TOOL_CALL } from "@/components/computer/activity-jump";
@@ -105,6 +106,7 @@ import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
 import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";
 import {
+  isBlankNote,
   isQuietWork,
   isWorkCall,
   summarizeDoneWork,
@@ -318,52 +320,10 @@ function RestoringTranscript() {
  * It borrows the shimmer a running tool line uses, so "working on it" reads the same whether the
  * work is a tool call or a model that has not spoken yet.
  */
-function Thinking() {
-  return (
-    <div
-      className="chat-thinking"
-      data-testid="transcript-thinking"
-      // `status` rather than `alert`: this is progress, not something that interrupts what somebody
-      // is doing. The text says it, so a screen reader is told the same thing the dots imply.
-      role="status"
-    >
-      <span aria-hidden="true" className="chat-thinking-dots">
-        <i />
-        <i />
-        <i />
-      </span>
-      <span className="tool-line-running">{"思考中"}</span>
-    </div>
-  );
-}
-
-/**
- * 开场一句写完、第一个工具还没出来的那一两秒（DESIGN.md §78.2）：以前屏幕上什么都没有，像是停了。
- * 机器人的最后一段字停住 0.9 秒还没有下文时，在它下面淡入三个跳动的小点（不写字、不占一行药丸）；
- * 有新字或工具一来就收起。回答写完到这一轮真正结束通常不到 0.9 秒，所以不会在答案后面闪一下。
- */
-function PauseDots({ watch }: { watch: string }) {
-  const [shown, setShown] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => {
-    setShown(false);
-    const timer = window.setTimeout(() => setShown(true), 900);
-    return () => window.clearTimeout(timer);
-  }, [watch]);
-  if (!shown) return null;
-  return (
-    <div
-      aria-hidden="true"
-      className="chat-pause-dots"
-      data-testid="transcript-pause-dots"
-    >
-      <span className="chat-thinking-dots">
-        <i />
-        <i />
-        <i />
-      </span>
-    </div>
-  );
+function Thinking({ since }: { since: number }) {
+  // 回复显示①：不再是带三个跳点的「思考中」气泡，而是和干活卡同一个状态胶囊（转圈 + 动作 + 已用秒数）。
+  // role=status 在动作那一段上，读屏读到的还是「思考中」。
+  return <StatusCapsule label={"思考中"} since={since} testId="transcript-thinking" />;
 }
 
 /**
@@ -3106,6 +3066,11 @@ export function ChatTranscript({
       settled.length === shape.length &&
       settled.last === shape.last
     );
+  // 这一轮从什么时候开始（状态胶囊的「已用秒数」从这里算；「思考中」换成干活卡后接着算，不归零）。
+  const liveSinceRef = useRef<number | null>(null);
+  if (!live) liveSinceRef.current = null;
+  else if (liveSinceRef.current === null) liveSinceRef.current = Date.now();
+  const liveSince = liveSinceRef.current ?? 0;
   /*
    * 刷新后照样认得出「发出去但没人回答」的那一轮（P1，2026-10-20）：重开对话时 RUN_ERROR 早没了，
    * 只剩人那条消息。卡片跟着这一条重建，别让它凭空消失、也没有重试的入口。
@@ -3443,10 +3408,10 @@ export function ChatTranscript({
                 // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
                 // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。
                 liveWorking ? null : (
-                  <Thinking />
+                  <Thinking since={liveSince} />
                 )
               ) : pausedAfterText !== null ? (
-                <PauseDots watch={pausedAfterText} />
+                <PausedCapsule since={liveSince} watch={pausedAfterText} />
               ) : null}
               <LooseConfirmCards
                 resumed={resumedCards}
@@ -3559,6 +3524,7 @@ export function ChatTranscript({
         calls={work.calls}
         live={work.live}
         notes={work.notes}
+        since={work.live ? liveSince : undefined}
         turnKey={work.key}
       />
     ) : null;
@@ -3893,8 +3859,17 @@ export function compactTurns(
       (item): item is Extract<TranscriptItem, { kind: "text" }> =>
         item.kind === "text" &&
         item.role === "assistant" &&
-        item.text.trim().length > 0,
+        !isBlankNote(item.text),
     );
+    // 回复显示①：只有「---」这类分隔线、一个字都没有的一段不画（以前画成一个空的分隔线气泡，或干活卡里空的一步）。
+    for (const item of turn.rest)
+      if (
+        item.kind === "text" &&
+        item.role === "assistant" &&
+        item.text.trim().length > 0 &&
+        isBlankNote(item.text)
+      )
+        hidden.add(item.id);
     let final: string | null = null;
     texts.forEach((item, i) => {
       const at = turn.rest.indexOf(item);

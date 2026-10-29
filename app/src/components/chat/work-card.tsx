@@ -1,6 +1,7 @@
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { CapsuleSpinner } from "@/components/chat/status-capsule";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
 import { currentWorkStep, summarizeDoneWork, summarizeWork, type WorkCall, type WorkNote, workTimeline } from "@/lib/chat/work-steps";
@@ -63,10 +64,20 @@ export function WorkRow({
   turnKey,
   live,
   notes,
-}: { calls: readonly WorkCall[]; turnKey: string; live: boolean; /** 收进卡片的过程话（§90）。 */ notes?: readonly WorkNote[] }) {
-  if (live) remember(startedAt, turnKey, Date.now());
+  since,
+}: {
+  calls: readonly WorkCall[];
+  turnKey: string;
+  live: boolean;
+  /** 收进卡片的过程话（§90）。 */
+  notes?: readonly WorkNote[];
+  /** 这一轮开始的时刻（末尾「思考中」胶囊从这里算秒，换成干活卡后接着算，不归零）。 */
+  since?: number;
+}) {
+  if (live) remember(startedAt, turnKey, since ?? Date.now());
   // 点开过的干活卡离开再回来 / 刷新后还开着（按这一轮记，DESIGN.md §88）。
-  const [open, setOpenState] = useState(() => workUi(turnKey)?.open === true);
+  // 回复显示①：做完的一轮一律收起（工具过程做完就不再摊开），只有还在跑的一轮记得点开过。
+  const [open, setOpenState] = useState(() => live && workUi(turnKey)?.open === true);
   const setOpen = (update: (value: boolean) => boolean) =>
     setOpenState((value) => {
       const next = update(value);
@@ -74,6 +85,15 @@ export function WorkRow({
       return next;
     });
   const now = useNow(live);
+  // 跑着的时候点开过，做完那一刻自动收起（不用用户再点一下）。
+  const wasLive = useRef(live);
+  useEffect(() => {
+    if (wasLive.current && !live) {
+      setOpenState(false);
+      setWorkUi(turnKey, { open: false });
+    }
+    wasLive.current = live;
+  }, [live, turnKey]);
   // 结束时记下用时（只记一次）；之后重画都用同一个数。
   // 用时只有亲眼看着它跑的那一页知道：记下来，刷新 / 切回来后「做了 2 步 · 10 秒」的秒数还在（§88）。
   const [doneSeconds, setDoneSeconds] = useState<number | null>(() =>
@@ -100,8 +120,8 @@ export function WorkRow({
   const summary = live ? summarizeWork(calls) : null;
   const done = live ? null : summarizeDoneWork(calls);
   if (live ? !summary : !done) return null;
-  const since = startedAt.get(turnKey) ?? now;
-  const seconds = live ? Math.max(0, Math.round((now - since) / 1000)) : doneSeconds;
+  const started = startedAt.get(turnKey) ?? now;
+  const seconds = live ? Math.max(0, Math.floor((now - started) / 1000)) : doneSeconds;
   const steps = open ? workTimeline(calls, notes) : [];
   const text = live ? summary!.current : done!.label;
   return (
@@ -109,18 +129,14 @@ export function WorkRow({
       <button
         aria-expanded={open}
         aria-label={open ? "收起步骤" : "展开步骤"}
-        className={live ? "chat-thinking chat-work-card" : "chat-thinking chat-work-card chat-work-done"}
+        className={live ? "rs-capsule chat-work-card" : "chat-thinking chat-work-card chat-work-done"}
         data-state={live ? "live" : "done"}
         data-testid={live ? "chat-work-card" : "chat-work-done"}
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
         {live ? (
-          <span aria-hidden="true" className="chat-thinking-dots">
-            <i />
-            <i />
-            <i />
-          </span>
+          <CapsuleSpinner />
         ) : (
           <span aria-hidden="true" className="chat-work-check">
             <IconCheck className="size-3.5" stroke={2.5} />
@@ -130,7 +146,7 @@ export function WorkRow({
           <AnimatePresence initial={false} mode="popLayout">
             <motion.span
               animate={{ opacity: 1, y: 0 }}
-              className={live ? "tool-line-running chat-work-step-text" : "chat-work-step-text"}
+              className="chat-work-step-text"
               // 换字：旧的往上淡出、新的从下面淡入（§78.3），两行不在同一处叠着，读起来不像两段字。
               exit={{ opacity: 0, y: reduce ? 0 : -8 }}
               initial={{ opacity: 0, y: reduce ? 0 : 8 }}
@@ -141,13 +157,19 @@ export function WorkRow({
             </motion.span>
           </AnimatePresence>
         </span>
-        <span className="chat-work-meta">
+        <span aria-hidden={live || undefined} className={live ? "chat-work-meta rs-capsule-time" : "chat-work-meta"}>
           {/*
            * 跑着的时候只报时间，不再报「第 N 步」；做完的那一行整行不画（用户：全部不显示步数，只留回答）。
            */}
           {!live && done?.failed ? `${done.failed} 步失败` : ""}
           {!live && done?.failed && seconds !== null && seconds >= 2 ? " · " : ""}
-          {seconds !== null && seconds >= 2 ? `${seconds} 秒` : ""}
+          {live
+            ? seconds !== null && seconds >= 1
+              ? `${seconds} 秒`
+              : ""
+            : seconds !== null && seconds >= 2
+              ? `${seconds} 秒`
+              : ""}
         </span>
         <IconChevronDown aria-hidden="true" className="chat-work-chevron size-3.5" data-open={open || undefined} />
       </button>

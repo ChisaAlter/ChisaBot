@@ -138,6 +138,14 @@ export function plainNote(text: string): string {
 }
 
 /**
+ * 没有字的一段（回复显示①，2026-10-29）：模型在两步之间单独写的「---」「***」「…」这类分隔线 / 标点，
+ * 去掉 markdown 记号后一个字（文字、数字、表情）都没有。干活卡里不当一步，对话里也不画成气泡。
+ */
+export function isBlankNote(text: string): boolean {
+  return !/[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(plainNote(text));
+}
+
+/**
  * 干活卡点开后的一列（§90）：每一步一句（同 `workStepLines`），过程话按它出现的位置插在步骤之间。
  * 没有过程话时与 `workStepLines` 完全一样。
  */
@@ -158,7 +166,7 @@ export function workTimeline(
   const flush = (upTo: number) => {
     while (pending.length && pending[0]!.at <= upTo) {
       const text = plainNote(pending.shift()!.text);
-      if (text && lines.at(-1)?.text !== text) lines.push({ kind: "note", text });
+      if (text && !isBlankNote(text) && lines.at(-1)?.text !== text) lines.push({ kind: "note", text });
     }
   };
   let lastStep: string | undefined;
