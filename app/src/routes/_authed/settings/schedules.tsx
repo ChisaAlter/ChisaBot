@@ -311,7 +311,7 @@ function SchedulesPage() {
                   onClick={() =>
                     sendPromptToChat(
                       navigate,
-                      "请帮我设置定时任务：每周日晚上 21:00 运行 memory_dream 整理我本周的记忆碎片并生成周报",
+                      "请帮我设置定时任务：每周日晚上 21:00 生成本周记忆周报，并调用 memory_dream 给我一份整理建议（列出要合并的重复笔记，等我确认后再整理）",
                       "定时任务模板",
                     )
                   }

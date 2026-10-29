@@ -475,6 +475,18 @@ export function createConfirmations(database: Database, options: { auditStore?: 
     return rows.length > 0;
   }
 
+  /** 同一段对话里，这个工具还没用掉、但摘要对不上的确认（确认后内容变了）：作废，返回有没有。 */
+  async function supersedeGrants(owner: string, threadId: string, tool: string, digest: string) {
+    const rows = await sql.unsafe<{ id: string }[]>(
+      `UPDATE chisabot_confirm_requests SET consumed_at = now()
+       WHERE owner_user_id = $1 AND thread_id = $2 AND tool = $3 AND status = 'approved' AND consumed_at IS NULL
+         AND decided_at > now() - $5::int * interval '1 millisecond' AND digest IS DISTINCT FROM $4
+       RETURNING id`,
+      [owner, threadId, tool, digest, GRANT_MS],
+    );
+    return rows.length > 0;
+  }
+
   async function check(input: ConfirmCheck): Promise<ConfirmOutcome> {
     if (input.category === "device") {
       const device = await deviceDecision(input.ownerUserId, input.agentId, input.matchText);
@@ -753,23 +765,41 @@ export function createConfirmations(database: Database, options: { auditStore?: 
           if (currentConfirmTurn()?.stopped() || currentToolAbort()?.aborted) {
             return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
           }
+          // 先算好这一次要做什么（prepareConfirm）：卡片写的、摘要算的、确认后执行的都是同一份。
+          let callArgs = args;
+          let title = titleForTool(tool.name, category);
+          let details = detailsFromArgs(args);
+          if (tool.prepareConfirm) {
+            const plan = await tool.prepareConfirm(args);
+            if ("skip" in plan) return plan.skip;
+            callArgs = plan.args;
+            title = plan.title;
+            details = plan.details;
+          }
+          const digest = digestOf(tool.name, callArgs);
+          const threadId = currentConfirmTurn()?.threadId;
+          // 用户确认过的是旧内容（之后又变了）：那次确认作废，卡片上写清楚为什么又问一遍。
+          if (tool.prepareConfirm && threadId && (await supersedeGrants(context.ownerUserId, threadId, tool.name, digest))) {
+            title = `内容在你确认后有了变化，上次的确认没有执行，请按最新内容重新确认：${title}`;
+            details = [{ label: "说明", value: "你上次确认的那一份已经过期（之后又有改动），没有执行。下面是现在的内容。" }, ...details];
+          }
           const outcome = await check({
             ownerUserId: context.ownerUserId,
             agentId: context.agentId,
             category,
             tool: tool.name,
-            title: titleForTool(tool.name, category),
+            title,
             target: null,
-            details: detailsFromArgs(args),
+            details,
             matchText: [tool.name, flattenForMatch(args)].join(" "),
-            digest: digestOf(tool.name, args),
+            digest,
             initiator: tool.initiator ?? context.initiator,
           });
           if (!outcome.ok) return `${REFUSAL_MARKER} ${outcome.message}`;
           if (currentConfirmTurn()?.stopped() || currentToolAbort()?.aborted) {
             return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
           }
-          return tool.execute(args, ctx);
+          return tool.execute(callArgs, ctx);
         },
       };
     });

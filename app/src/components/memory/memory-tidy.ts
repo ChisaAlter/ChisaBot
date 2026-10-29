@@ -1,7 +1,8 @@
 import {
-  MEMORY_KIND_LABELS,
   MEMORY_LIMITS,
   type MemoryTidyPreview,
+  tidyHasWork,
+  tidyItems,
 } from "../../../../shared/memory-notes";
 import { confirmDialog } from "@/components/ui/confirm";
 import { toast } from "@/components/ui/toast";
@@ -21,24 +22,16 @@ import { MEMORY_UNDO_MS } from "./memory-notes";
 /** 弹窗里最多列几组，其余合成一行「还有 N 组」。 */
 export const TIDY_ITEMS_LIMIT = 12;
 
-/** 确认弹窗的条目：每组一行，写清种类、主题、是哪个机器人记的、几条并成一条。 */
+/** 确认弹窗的条目：每组一行，写清种类、主题、是哪个机器人记的、几条并成一条（文案和审批卡片共用，见 shared）。 */
 export function tidyConfirmItems(
   preview: MemoryTidyPreview,
   botName: (agentId: string) => string | null = () => null,
 ): string[] {
-  const lines = preview.groups.map((group) => {
-    const who = group.agentId ? (botName(group.agentId) ?? "机器人") : "你";
-    const head = `${MEMORY_KIND_LABELS[group.kind]}「${group.title || "（无主题）"}」（${who}记的${group.context ? `，${group.context}` : ""}）`;
-    return group.skipped === "too_long"
-      ? `${head}：${group.count} 条合并后有 ${group.length} 字，超过 ${MEMORY_LIMITS.content} 字，不合并`
-      : `${head}：${group.count} 条合并为 1 条`;
-  });
-  const out = lines.slice(0, TIDY_ITEMS_LIMIT);
-  if (lines.length > TIDY_ITEMS_LIMIT)
-    out.push(`……还有 ${lines.length - TIDY_ITEMS_LIMIT} 组`);
-  if (preview.deduplicatedCount)
-    out.push(`另有 ${preview.deduplicatedCount} 条笔记去掉重复的行`);
-  return out;
+  return tidyItems(
+    preview,
+    (agentId) => (agentId ? (botName(agentId) ?? "机器人") : "你"),
+    TIDY_ITEMS_LIMIT,
+  );
 }
 
 /** 撤销一次整理，并刷新列表。 */
@@ -49,11 +42,14 @@ export async function undoTidy(
   try {
     const result = await undoMemoryTidy(batchId);
     await refresh().catch(() => undefined);
-    toast.success(
-      result.skipped
-        ? `已恢复 ${result.restored} 条；${result.skipped} 条整理后又改过，没有覆盖。`
-        : `已恢复整理前的 ${result.restored} 条记忆。`,
-    );
+    if (!result.restored && !result.skipped)
+      toast.info("这次整理已经撤销过，或者已超过 7 天，没有可以恢复的。");
+    else
+      toast.success(
+        result.skipped
+          ? `已恢复 ${result.restored} 条；${result.skipped} 条整理后又改过，没有覆盖。`
+          : `已恢复整理前的 ${result.restored} 条记忆。`,
+      );
   } catch (error) {
     toast.error(
       error instanceof Error ? error.message : "撤销整理失败，请重试",
@@ -68,7 +64,7 @@ export async function runMemoryTidy(options: {
 }): Promise<boolean> {
   const { preview } = await previewMemoryTidy();
   const merging = preview.groups.filter((group) => !group.skipped);
-  if (!merging.length && !preview.deduplicatedCount) {
+  if (!tidyHasWork(preview)) {
     const skipped = preview.groups.length;
     toast.info(
       skipped
@@ -97,5 +93,21 @@ export async function runMemoryTidy(options: {
       MEMORY_UNDO_MS,
     );
   else toast.info(result.summary);
+  return true;
+}
+
+/** 聊天里的撤销链接（/settings/memory?undoTidy=…）：先确认，再撤销；取消就什么都不做。 */
+export async function undoTidyFromLink(
+  batchId: string,
+  refresh: () => Promise<unknown>,
+): Promise<boolean> {
+  const ok = await confirmDialog({
+    title: "撤销这次整理？",
+    description:
+      "把这次整理合并、改动的笔记放回整理前的样子。整理后你又改过的笔记不会被覆盖。",
+    confirmLabel: "撤销整理",
+  });
+  if (!ok) return false;
+  await undoTidy(batchId, refresh);
   return true;
 }

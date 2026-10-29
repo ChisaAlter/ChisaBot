@@ -1,7 +1,7 @@
 import { IconArrowBackUp, IconBook, IconDots, IconPlus, IconSparkles, IconWorld } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { MEMORY_KIND_LABELS, MEMORY_KINDS, type MemoryKind, type MemoryNoteView } from "../../../../../shared/memory-notes";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import {
@@ -16,7 +16,7 @@ import {
   SearchBox,
   visibleNotes,
 } from "@/components/memory/memory-notes";
-import { runMemoryTidy, undoTidy } from "@/components/memory/memory-tidy";
+import { runMemoryTidy, undoTidy, undoTidyFromLink } from "@/components/memory/memory-tidy";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -27,6 +27,9 @@ import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { memoryNoteKeys, memoryNotesQueryOptions, previewMemoryTidy } from "@/lib/memory-notes";
 
 export const Route = createFileRoute("/_authed/settings/memory")({
+  // ?undoTidy=<batchId>：机器人整理完记忆在聊天里给的撤销链接（shared/memory-notes.ts tidyUndoHref）。
+  validateSearch: (search: Record<string, unknown>): { undoTidy?: string } =>
+    typeof search.undoTidy === "string" && search.undoTidy ? { undoTidy: search.undoTidy } : {},
   component: MemoryPage,
 });
 
@@ -85,6 +88,16 @@ function MemoryPage() {
     queryFn: async () => (await previewMemoryTidy()).last,
     enabled: moreOpen,
     staleTime: 0,
+  });
+  // 从聊天里的撤销链接进来：先问一句再撤销，然后把 ?undoTidy 去掉（刷新页面不会再问）。
+  const { undoTidy: undoLink } = Route.useSearch();
+  const navigate = useNavigate({ from: "/settings/memory" });
+  const handledLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!undoLink || handledLink.current === undoLink) return;
+    handledLink.current = undoLink;
+    void navigate({ search: {}, replace: true });
+    void undoTidyFromLink(undoLink, refresh);
   });
   const tidyAction = useAsyncAction(
     async () => {

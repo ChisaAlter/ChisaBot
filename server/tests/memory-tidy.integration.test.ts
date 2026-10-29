@@ -1,8 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { tidyUndoHref } from "../../shared/memory-notes";
+import {
+  withConfirmToolCall,
+  withConfirmTurn,
+} from "../src/confirmations/context";
+import { createConfirmations } from "../src/confirmations/service";
 import { createDatabase } from "../src/db/client";
 import { createMemoryNotes } from "../src/memory-notes/service";
 import { applyTidy, type TidySql } from "../src/memory-notes/tidy";
+import { type GrantedTool, REFUSAL_MARKER } from "../src/plugins/tools";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
 /**
@@ -240,5 +247,176 @@ suite("memory tidy on a dedicated PostgreSQL database", () => {
     await expect(applyTidy(failing, owner)).rejects.toThrow("injected failure");
     expect(await rows()).toEqual(before);
     expect(await backups()).toBe(0);
+  });
+});
+
+/**
+ * 整理记忆走审批（#430 小爱必改）：定时任务里不直接删也不静默失败——留一张带预览的整理建议卡片；
+ * 点「确认」后按预览 token 执行；确认后记忆变了，旧确认作废、重出一张写明原因的卡片；
+ * 删除审批设为「直接做」照常执行，结果带撤销链接，memory_dream_undo 能撤销。
+ */
+suite("memory_dream through confirmations (real PostgreSQL)", () => {
+  let database: ReturnType<typeof createDatabase>;
+  let notes: ReturnType<typeof createMemoryNotes>;
+  let confirm: ReturnType<typeof createConfirmations>;
+  const owner = `tidycf-${randomUUID().slice(0, 8)}`;
+  const thread = `thread-${randomUUID().slice(0, 8)}`;
+  const resumed: { threadId: string; text: string }[] = [];
+  const sql = () => database.$client;
+  const turn = () => ({
+    threadId: thread,
+    runId: "run-1",
+    stopped: () => false,
+  });
+  const count = async () =>
+    (
+      await sql().unsafe<{ n: number }[]>(
+        "SELECT count(*)::int AS n FROM chisabot_memory_notes WHERE owner_user_id = $1",
+        [owner],
+      )
+    )[0]!.n;
+  const insert = async (subject: string, content: string, minutesAgo: number) =>
+    await sql().unsafe(
+      `INSERT INTO chisabot_memory_notes (id, owner_user_id, kind, subject, content, agent_id, created_at, updated_at)
+       VALUES ($1, $2, 'person', $3, $4, 'bot-a', now() - make_interval(mins => $5), now() - make_interval(mins => $5))`,
+      [
+        `mem_${randomUUID().replace(/-/g, "").slice(0, 20)}`,
+        owner,
+        subject,
+        content,
+        minutesAgo,
+      ],
+    );
+  const reset = async () => {
+    for (const table of [
+      "chisabot_memory_notes",
+      "chisabot_memory_tidy_backups",
+      "chisabot_confirm_requests",
+      "chisabot_confirm_prefs",
+    ])
+      await sql().unsafe(`DELETE FROM ${table} WHERE owner_user_id = $1`, [
+        owner,
+      ]);
+    await insert("小林", "大学室友", 10);
+    await insert("小林", "住在杭州", 9);
+  };
+  const toolsFor = (initiator: { kind: "routine"; id: string }) => {
+    const wrapped = confirm.wrap(notes.tools(owner, "bot-a"), {
+      ownerUserId: owner,
+      agentId: "bot-a",
+      initiator,
+    });
+    const byName = (name: string) =>
+      wrapped.find((tool) => tool.name === name)!;
+    return { dream: byName("memory_dream"), undo: byName("memory_dream_undo") };
+  };
+  const exec = (tool: GrantedTool, args: unknown) =>
+    withConfirmTurn(turn(), () =>
+      withConfirmToolCall(`call-${randomUUID().slice(0, 6)}`, tool.name, () =>
+        tool.execute(args, {} as never),
+      ),
+    );
+  const cards = async (status = "pending") =>
+    (await confirm.list(owner, { threadId: thread })).filter(
+      (card) => card.tool === "memory_dream" && card.status === status,
+    );
+
+  beforeAll(async () => {
+    database = createDatabase(testDatabaseUrl(), TEST_POOL);
+    notes = createMemoryNotes(database);
+    confirm = createConfirmations(database);
+    await notes.ensure();
+    await confirm.ensure();
+    confirm.setResume(async (input) => {
+      resumed.push({ threadId: input.threadId, text: input.text });
+    });
+  });
+  afterAll(async () => {
+    for (const table of [
+      "chisabot_memory_notes",
+      "chisabot_memory_tidy_backups",
+      "chisabot_confirm_requests",
+      "chisabot_confirm_prefs",
+    ])
+      await sql().unsafe(`DELETE FROM ${table} WHERE owner_user_id = $1`, [
+        owner,
+      ]);
+    await database.$client.close();
+  });
+
+  test("定时任务（不在场）→ 留一张带预览的整理建议，不删；点确认 → 按 token 执行，带撤销入口，能撤销", async () => {
+    await reset();
+    const routine = toolsFor({ kind: "routine", id: "schedule:weekly-dream" });
+    const out = await exec(routine.dream, {});
+    expect(out).toContain(REFUSAL_MARKER);
+    expect(out).toContain("确认卡片");
+    expect(await count()).toBe(2); // 没删
+    const [card] = await cards();
+    expect(card!.title).toContain("合并 1 组");
+    expect(card!.details.map((detail) => detail.value)).toContain(
+      "人物「小林」（这个机器人记的）：2 条合并为 1 条",
+    );
+    expect(card!.category).toBe("delete");
+
+    await confirm.decide(owner, card!.id, "approve");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(resumed.at(-1)?.threadId).toBe(thread);
+    // 服务器叫机器人接着做：同样的调用，预览 token 没变 → 用这次确认放行。
+    const resumedRun = toolsFor({ kind: "routine", id: `confirm:${card!.id}` });
+    const done = await exec(resumedRun.dream, {});
+    expect(done).toContain("已整理记忆：合并了 1 条重复笔记");
+    const last = await notes.lastDream(owner);
+    expect(done).toContain(tidyUndoHref(last!.batchId));
+    expect(await count()).toBe(1);
+
+    expect(await exec(resumedRun.undo, {})).toBe("已恢复整理前的 2 条记忆。");
+    expect(await count()).toBe(2);
+    expect(await exec(resumedRun.undo, { batchId: last!.batchId })).toContain(
+      "已经撤销过",
+    );
+  });
+
+  test("确认后记忆又变了：旧确认作废、不执行，重出一张写明原因的卡片", async () => {
+    await reset();
+    const routine = toolsFor({ kind: "routine", id: "schedule:weekly-dream" });
+    await exec(routine.dream, {});
+    const [card] = await cards();
+    await confirm.decide(owner, card!.id, "approve");
+    await insert("小林", "喜欢猫", 1);
+
+    const resumedRun = toolsFor({ kind: "routine", id: `confirm:${card!.id}` });
+    const pending = exec(resumedRun.dream, {});
+    let fresh: Awaited<ReturnType<typeof cards>>[number] | undefined;
+    for (let i = 0; i < 40 && !fresh; i++) {
+      fresh = (await cards()).find((c) => c.id !== card!.id);
+      if (!fresh) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(fresh!.title).toContain("内容在你确认后有了变化");
+    expect(fresh!.details.map((detail) => detail.value)).toContain(
+      "人物「小林」（这个机器人记的）：3 条合并为 1 条",
+    );
+    expect(await count()).toBe(3); // 旧确认没有被拿来删新内容
+    await confirm.decide(owner, fresh!.id, "deny");
+    expect(await pending).toContain(REFUSAL_MARKER);
+    expect(await count()).toBe(3);
+  });
+
+  test("删除审批设为「直接做」：定时任务里照常整理，结果带撤销入口；过期 token、没东西可整理都有明确回复", async () => {
+    await reset();
+    await confirm.setPref(owner, "delete", "auto", null);
+    const routine = toolsFor({ kind: "routine", id: "schedule:weekly-dream" });
+    expect(await exec(routine.dream, { token: "stale-token" })).toContain(
+      "这份整理建议已经过期",
+    );
+    expect(await count()).toBe(2);
+
+    const done = await exec(routine.dream, {});
+    expect(done).toContain("已整理记忆");
+    expect(done).toContain("/settings/memory?undoTidy=");
+    expect(await cards()).toHaveLength(0);
+    expect(await count()).toBe(1);
+    expect(await exec(routine.dream, {})).toContain("记忆已经很整洁");
+    expect(await exec(routine.undo, {})).toBe("已恢复整理前的 2 条记忆。");
+    expect(await count()).toBe(2);
   });
 });

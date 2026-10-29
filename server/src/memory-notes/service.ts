@@ -14,12 +14,26 @@ import {
   type MemoryTidyResult,
   type MemoryTidyUndoResult,
   SUBJECT_KINDS,
+  tidyHasWork,
+  tidyItems,
+  tidyUndoHref,
 } from "../../../shared/memory-notes";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { RELEVANT, score } from "./search";
-import { applyTidy, lastTidy, loadTidyRows, planTidy, previewOf, TIDY_SCHEMA, TidyConflictError, type TidySql, undoTidy } from "./tidy";
+import {
+  applyTidy,
+  lastTidy,
+  loadTidyRows,
+  planTidy,
+  previewOf,
+  summaryOf,
+  TIDY_SCHEMA,
+  TidyConflictError,
+  type TidySql,
+  undoTidy,
+} from "./tidy";
 
 /**
  * 长期记忆（DESIGN.md §50，docs/memory.md）。
@@ -323,7 +337,63 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
     "profile=用户本人的基本情况（称呼、所在城市、职业、生日、过敏/饮食要求等）；preference=偏好（写清在什么情境下成立）；person=用户生活里的一个人；place=一个地方；project=进行中的项目/计划/事项；note=其他；daily=今天发生的事（一般用 memory_log）",
   );
 
+  /** 审批卡片上最多列几组（其余合成一行「还有 N 组」）。 */
+  const DREAM_CARD_GROUPS = 8;
+
   function tools(owner: string, agentId: string): GrantedTool[] {
+    /**
+     * 整理记忆（审计 12-settings 必修 1）：属于「删除」审批。prepareConfirm 先算预览，审批卡片列出要合并的组，
+     * 预览 token 放进执行参数——用户确认的就是那一份；之后记忆变了 token 对不上，不执行并说清楚。
+     * 定时任务（用户不在场）时只留一张待确认的整理建议卡片，不会直接删；删除审批设为「直接做」的照常执行，结果里带撤销入口。
+     */
+    const dreamTool = (): GrantedTool => {
+      const parameters = z.object({ token: z.string().max(64).optional() }).strict();
+      const who = (id: string | null) => (id === null ? "你" : id === agentId ? "这个机器人" : "其他机器人");
+      return {
+        name: "memory_dream",
+        ref: "memory/memory_dream",
+        description:
+          "整理用户的长期记忆：合并同一机器人记下的、同种类同主题（且情境相同）的笔记，去掉日志里的重复行；合并后超过 4000 字的不合并。会删除被并掉的条目，属于「删除」类操作：会先出一张确认卡片列出要合并的组，用户确认后才执行（定时任务里也一样，用户之后在聊天或「待处理」里确认）。不用传参数；token 由系统填。整理后可以用 memory_dream_undo 撤销。只在用户要求整理记忆（或用户设的定时任务要求）时调用。",
+        parameters,
+        async prepareConfirm(args) {
+          const parsed = parameters.safeParse(args ?? {});
+          if (!parsed.success) return { skip: `${REFUSAL_MARKER} memory_dream 参数不对。` };
+          if (!(await botEnabled(owner, agentId))) return { skip: `${REFUSAL_MARKER} 用户在 设置 → 记忆 里关掉了这个机器人的记忆。` };
+          const preview = await previewDream(owner);
+          if (parsed.data.token && parsed.data.token !== preview.token)
+            return {
+              skip: `${REFUSAL_MARKER} 这份整理建议已经过期（之后记忆有了变化），没有执行。不带 token 再调用一次 memory_dream，会按现在的记忆重新生成建议。`,
+            };
+          if (!tidyHasWork(preview)) return { skip: summaryOf(preview) };
+          const merging = preview.groups.filter((group) => !group.skipped).length;
+          return {
+            args: { token: preview.token },
+            title: merging ? `整理记忆：合并 ${merging} 组重复的笔记（被并掉的会删除，可撤销）` : "整理记忆：去掉笔记里重复的行（可撤销）",
+            details: tidyItems(preview, who, DREAM_CARD_GROUPS).map((value, index) => ({
+              label: index < Math.min(preview.groups.length, DREAM_CARD_GROUPS) ? `第 ${index + 1} 组` : "其他",
+              value,
+            })),
+          };
+        },
+        async execute(args) {
+          const parsed = parameters.safeParse(args ?? {});
+          if (!parsed.success) return `${REFUSAL_MARKER} memory_dream 参数不对。`;
+          if (!(await botEnabled(owner, agentId))) return `${REFUSAL_MARKER} 用户在 设置 → 记忆 里关掉了这个机器人的记忆。`;
+          // 没经过 prepareConfirm（没包审批的调用方）也不能不看就删：先算预览、只执行这一份。
+          const token = parsed.data.token ?? (await previewDream(owner)).token;
+          try {
+            const res = await dream(owner, token);
+            if (!res.batchId) return res.summary;
+            return `${res.summary}可以撤销：回复里给用户附上撤销链接 [撤销这次整理](${tidyUndoHref(res.batchId)})，也可以在 设置 → 记忆 →「更多」→「撤销上次整理」；用户在聊天里说撤销时调用 memory_dream_undo。`;
+          } catch (error) {
+            if (error instanceof TidyConflictError)
+              return `${REFUSAL_MARKER} 记忆在确认之后又有了变化，这次没有整理（什么都没删）。告诉用户：要整理的话再调用一次 memory_dream，会按现在的记忆重新给他确认。`;
+            throw error;
+          }
+        },
+      };
+    };
+
     const tool = <T extends z.ZodType>(name: string, description: string, parameters: T, run: (input: z.infer<T>) => Promise<string>): GrantedTool => ({
       name,
       ref: `memory/${name}`,
@@ -401,13 +471,19 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
           return `已写进 ${result.note.subject} 的日志。`;
         },
       ),
+      dreamTool(),
       tool(
-        "memory_dream",
-        "整理用户的长期记忆：合并同一机器人记下的、同种类同主题（且情境相同）的笔记，去掉日志里的重复行；合并后超过 4000 字的不合并。会删除被并掉的条目，属于「删除」类操作，按用户的审批偏好先出确认卡片。只在用户明确要求整理记忆时调用，不要顺手调用。用户可以在 设置 → 记忆 →「更多」→「撤销上次整理」里恢复。",
-        z.object({}).strict(),
-        async () => {
-          const res = await dream(owner);
-          return res.batchId ? `${res.summary}用户可以在 设置 → 记忆 →「更多」→「撤销上次整理」里恢复原样。` : res.summary;
+        "memory_dream_undo",
+        "撤销最近一次整理记忆（memory_dream）：把被并掉 / 改动的笔记放回整理前的样子。用户说「撤销整理」「把记忆恢复回去」时调用；batchId 不填就撤销最近一次。整理后又被改过的笔记不会被覆盖。",
+        z.object({ batchId: z.string().max(64).optional() }).strict(),
+        async ({ batchId }) => {
+          const target = batchId ?? (await lastDream(owner))?.batchId;
+          if (!target) return "没有可以撤销的整理（最近 7 天没有整理过，或者已经撤销了）。";
+          const res = await undoDream(owner, target);
+          if (!res.restored && !res.skipped) return "这次整理已经撤销过，或者已超过 7 天，没有可以恢复的。";
+          return res.skipped
+            ? `已恢复 ${res.restored} 条；${res.skipped} 条整理后又改过，没有覆盖。`
+            : `已恢复整理前的 ${res.restored} 条记忆。`;
         },
       ),
       tool(

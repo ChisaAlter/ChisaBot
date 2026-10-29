@@ -608,16 +608,28 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 3. **可恢复**：新表 `chisabot_memory_tidy_backups`（`batch_id, note_id` 主键，`(owner_user_id, created_at DESC)` 索引）在同一事务里存原文 JSON；每人只保留最近一次、7 天过期。整理后弹 8 秒「撤销」，之后可在「更多」→「撤销上次整理」恢复；撤销时被删的按原 id 放回，被改的只在内容仍等于整理结果时才还原（用户已再编辑的不覆盖，计入 skipped）。
 4. **分组**：键 = `kind + agent_id + context + subject`（无主题时用正文）。
 5. **事务**：锁、清旧备份、写备份、更新、删除都在 `begin` 里完成，中途失败全部回滚。
-6. **审批**：`categoryOfTool` 把 `memory_dream` 归为「删除」（先于 `memory/` 跳过规则）；Hermes 回调路径的记忆工具补上 `confirmations.wrap`；周报技能的说明改为用户明确同意后才调用。注意：定时任务预设里的「每周整理记忆」现在也会走审批，非交互运行时除非删除审批设为自动，否则会被拒绝——这是有意的，后续可以考虑改成只发预览。
-7. **界面**：「整理记忆…」和「撤销上次整理」放进「添加」右侧的「更多」菜单（复用 `DropdownMenu`），没有改 `styles.css`。
+6. **审批**：`categoryOfTool` 把 `memory_dream` 归为「删除」（先于 `memory/` 跳过规则）；Hermes 回调路径的记忆工具补上 `confirmations.wrap`。
+7. **机器人 / 定时任务整理（#430 评审必改）**：不直接删，也不静默失败。
+   - `GrantedTool` 新增可选 `prepareConfirm`（`server/src/plugins/tools.ts`），`confirmations.wrap` 出卡片前先调它：`memory_dream` 在这里算预览，卡片标题写「合并 N 组…（可撤销）」，明细逐组列出（和设置页弹窗共用 `shared/memory-notes.ts` 的 `tidyItems`），预览 `token` 放进执行参数，摘要按它算——用户确认的就是那一份。
+   - 定时任务（用户不在场）：沿用 §101 的延后卡片，聊天和「待处理」里留一张带预览的整理建议，机器人回一句在等确认；用户点「确认」后服务器叫机器人重调，token 没变就用这次确认执行。
+   - 确认后记忆又变了：token 对不上、摘要不同，`wrap` 把那次确认作废（`consumed_at`，不执行），重出一张卡片，标题写「内容在你确认后有了变化，上次的确认没有执行，请按最新内容重新确认」；卡片过期沿用「这张确认卡片已经过期了，操作没有执行。」；显式传入的旧 token、执行时撞上 409 都回明确的文字。
+   - 删除审批设为「直接做」：照常执行，结果里带撤销链接 `/settings/memory?undoTidy=<batchId>`（设置页打开后先问「撤销这次整理？」再撤销），也能在「更多」→「撤销上次整理」或让机器人调新工具 `memory_dream_undo`（不需审批）。已撤销 / 过期的撤销明确提示。
+   - 没有可整理的：不出卡片，直接回「记忆已经很整洁」。
+   - 定时任务模板文案改为「生成周报，并调用 memory_dream 给我一份整理建议（等我确认后再整理）」，周报技能说明同步。
+8. **界面**：「整理记忆…」和「撤销上次整理」放进「添加」右侧的「更多」菜单（复用 `DropdownMenu`），没有改 `styles.css`。
 
 **测试**：
 - `server/tests/memory-tidy.test.ts`（不需要数据库）：计划（合并、超长不合并、不同机器人 / 情境不合并、去重、指纹）；内存版 SQL 替身（事务快照回滚）上的整理 + 撤销往返、第 1–7 次写入分别注入失败都整体回滚、token 冲突、撤销跳过已编辑条目；审批分类。
 - `server/tests/memory-tidy.integration.test.ts`（真库，需要 `TEST_DATABASE_URL`）：备份表索引、超长不合并 + 不同机器人不合并 + 撤销恢复原样、预览后有变化返回冲突、删除步骤注入失败时笔记和备份都回滚。
-- `app/tests/memory-tidy.test.tsx`：确认弹窗条目文案、取消不发请求、确认带 token 并可撤销、没有可合并时不弹确认。
+- `server/tests/memory-tidy.integration.test.ts` 新增「memory_dream through confirmations」（真库）：定时任务 → 留带预览的卡片、不删；点确认 → 按 token 执行、结果带撤销链接、`memory_dream_undo` 撤销、重复撤销有提示；确认后记忆变了 → 旧确认作废、重出写明原因的卡片、不删；删除设为「直接做」→ 直接执行且可撤销，旧 token / 没东西可整理有明确回复。
+- `app/tests/memory-tidy.test.tsx`：确认弹窗条目文案、取消不发请求、确认带 token 并可撤销、没有可合并时不弹确认；聊天撤销链接先确认再撤销、已撤销 / 过期有提示。
 
-**截图**（本地单用户模式 + 临时数据库实拍，`docs/images/memory-tidy/`；拍完后把提示里的「0 条去掉了重复行」这类 0 项改为不显示）：
+**截图**（本地单用户模式 + 临时数据库实拍，`docs/images/memory-tidy/`；整理后的提示已按「0 项不显示」的新文案重拍）：
 
 | 「更多」菜单 | 确认弹窗 | 整理后「撤销」 | 菜单里的「撤销上次整理」 |
 | --- | --- | --- | --- |
 | ![](images/memory-tidy/more-menu.webp) | ![](images/memory-tidy/confirm-dialog.webp) | ![](images/memory-tidy/after-undo-toast.webp) | ![](images/memory-tidy/more-menu-undo.webp) |
+
+| 聊天里的撤销链接（`?undoTidy=`）先确认 | 撤销后的提示 |
+| --- | --- |
+| ![](images/memory-tidy/undo-link-confirm.webp) | ![](images/memory-tidy/undo-link-done.webp) |

@@ -17,6 +17,7 @@ import {
 import {
   runMemoryTidy,
   tidyConfirmItems,
+  undoTidyFromLink,
 } from "@/components/memory/memory-tidy";
 import { ConfirmHost } from "@/components/ui/confirm";
 import { resetToastsForTest, Toaster } from "@/components/ui/toast";
@@ -32,6 +33,7 @@ type Call = { url: string; method: string; body: unknown };
 let calls: Call[] = [];
 let originalFetch: typeof fetch;
 let preview: MemoryTidyPreview;
+let undoResult = { restored: 3, skipped: 0 };
 
 const PREVIEW: MemoryTidyPreview = {
   token: "tok123",
@@ -73,6 +75,7 @@ beforeEach(() => {
   resetToastsForTest();
   calls = [];
   preview = structuredClone(PREVIEW);
+  undoResult = { restored: 3, skipped: 0 };
   originalFetch = globalThis.fetch;
   globalThis.fetch = Object.assign(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -86,8 +89,7 @@ beforeEach(() => {
       const body =
         typeof init?.body === "string" ? JSON.parse(init.body) : null;
       calls.push({ url, method, body });
-      if (url.endsWith("/dream/undo"))
-        return Response.json({ restored: 3, skipped: 0 });
+      if (url.endsWith("/dream/undo")) return Response.json(undoResult);
       if (url.endsWith("/dream") && method === "POST")
         return Response.json({
           ...preview,
@@ -198,5 +200,58 @@ test("没有可合并的：不弹确认、不整理", async () => {
   expect(view.queryByRole("button", { name: "整理" })).toBeNull();
   await waitFor(() =>
     expect(view.getByText(/没有可以合并的记忆/)).toBeTruthy(),
+  );
+});
+
+test("聊天里的撤销链接：先问一句，确认后撤销那一批；取消什么都不发", async () => {
+  const view = render(
+    <>
+      <ConfirmHost />
+      <Toaster />
+    </>,
+  );
+  let done: Promise<boolean> = Promise.resolve(false);
+  await act(async () => {
+    done = undoTidyFromLink("tidy_link1", async () => {});
+  });
+  await waitFor(() => expect(view.getByText("撤销这次整理？")).toBeTruthy());
+  fireEvent.click(view.getByRole("button", { name: "取消" }));
+  expect(await done).toBe(false);
+  expect(posts()).toHaveLength(0);
+
+  await act(async () => {
+    done = undoTidyFromLink("tidy_link1", async () => {});
+  });
+  await waitFor(() =>
+    expect(view.getByRole("button", { name: "撤销整理" })).toBeTruthy(),
+  );
+  fireEvent.click(view.getByRole("button", { name: "撤销整理" }));
+  expect(await done).toBe(true);
+  expect(posts()[0]).toMatchObject({ body: { batchId: "tidy_link1" } });
+  expect(posts()[0]!.url).toEndWith("/api/memory-notes/dream/undo");
+  await waitFor(() =>
+    expect(view.getByText("已恢复整理前的 3 条记忆。")).toBeTruthy(),
+  );
+});
+
+test("撤销链接已用过 / 过期：明确提示，不是静默", async () => {
+  undoResult = { restored: 0, skipped: 0 };
+  const view = render(
+    <>
+      <ConfirmHost />
+      <Toaster />
+    </>,
+  );
+  let done: Promise<boolean> = Promise.resolve(false);
+  await act(async () => {
+    done = undoTidyFromLink("tidy_old", async () => {});
+  });
+  await waitFor(() =>
+    expect(view.getByRole("button", { name: "撤销整理" })).toBeTruthy(),
+  );
+  fireEvent.click(view.getByRole("button", { name: "撤销整理" }));
+  expect(await done).toBe(true);
+  await waitFor(() =>
+    expect(view.getByText(/已经撤销过，或者已超过 7 天/)).toBeTruthy(),
   );
 });
