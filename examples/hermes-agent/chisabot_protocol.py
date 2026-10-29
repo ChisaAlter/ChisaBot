@@ -465,3 +465,70 @@ class RunState:
 
 
 active_run: ContextVar[RunState | None] = ContextVar("chisabot_host_run", default=None)
+
+
+# Model-call failures reach the browser only as one of these fixed sentences. Each one is worded
+# so the web app's friendly-error rules (app/src/lib/chat/friendly-error.ts) pick the matching
+# headline and next step; the provider's own text never leaves this process.
+TURN_FAILED = "Hermes host turn execution failed"
+_FAILURE_MESSAGES = {
+    "rate_limit": "Hermes model call failed: rate_limit (HTTP 429)",
+    "quota": "Hermes model call failed: quota exhausted (HTTP 402)",
+    "auth": "Hermes model call failed: unauthorized (HTTP 401)",
+    "context_length": "Hermes model call failed: context_length exceeded",
+    "timeout": "Hermes model call failed: timeout",
+    "provider_unavailable": "Hermes model call failed: service unavailable (HTTP 503)",
+    "model_not_found": "Hermes model call failed: model not found (HTTP 404)",
+    "content_filter": "Hermes model call failed: content_filter",
+    "stream": "Hermes model call failed: stream error",
+}
+# Hermes' FailoverReason values (agent/error_classifier.py) folded into the categories above.
+_REASONS = {
+    "rate_limit": "rate_limit", "upstream_rate_limit": "rate_limit",
+    "billing": "quota",
+    "auth": "auth", "auth_permanent": "auth", "model_entitlement": "auth",
+    "context_overflow": "context_length", "payload_too_large": "context_length", "long_context_tier": "context_length",
+    "timeout": "timeout",
+    "overloaded": "provider_unavailable", "server_error": "provider_unavailable", "upstream_blocked": "provider_unavailable",
+    "model_not_found": "model_not_found",
+    "content_policy_blocked": "content_filter", "provider_policy_blocked": "content_filter",
+    "incomplete_response": "stream",
+}
+_STATUS = {401: "auth", 403: "auth", 402: "quota", 404: "model_not_found", 408: "timeout", 413: "context_length",
+           429: "rate_limit"}
+_HINTS = (
+    ("context_length", re.compile(r"context[_ ]?(length|window)|maximum context|too many tokens|prompt is too long", re.I)),
+    ("rate_limit", re.compile(r"rate[_ ]?limit|too many requests", re.I)),
+    ("quota", re.compile(r"insufficient[_ ]?quota|billing|credit balance", re.I)),
+    ("timeout", re.compile(r"timed?[_ ]?out", re.I)),
+    ("auth", re.compile(r"authentication|unauthori[sz]ed|permission[_ ]?denied|invalid[_ ]?api[_ ]?key", re.I)),
+    ("model_not_found", re.compile(r"notfound|model[_ ]not[_ ]found", re.I)),
+    ("content_filter", re.compile(r"content[_ ]?(filter|policy)", re.I)),
+    ("provider_unavailable", re.compile(r"overloaded|service[_ ]?unavailable|internalserver|bad[_ ]?gateway", re.I)),
+)
+
+
+def failure_category(reason: Any = None, error: BaseException | None = None) -> str:
+    """Name what went wrong, from Hermes' classified reason or the exception chain; never its text."""
+    if isinstance(reason, str) and reason in _REASONS:
+        return _REASONS[reason]
+    seen = 0
+    while error is not None and seen < 5:
+        seen += 1
+        status = getattr(error, "status_code", None) or getattr(error, "status", None)
+        if isinstance(status, int):
+            if status in _STATUS:
+                return _STATUS[status]
+            if 500 <= status < 600:
+                return "provider_unavailable"
+        code = getattr(error, "code", None)
+        clues = " ".join(part for part in (type(error).__name__, code if isinstance(code, str) else "", str(error)) if part)
+        for category, pattern in _HINTS:
+            if pattern.search(clues):
+                return category
+        error = error.__cause__ or error.__context__
+    return "unknown"
+
+
+def failure_message(category: str) -> str:
+    return _FAILURE_MESSAGES.get(category, TURN_FAILED)

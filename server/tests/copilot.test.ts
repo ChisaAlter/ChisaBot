@@ -303,7 +303,7 @@ describe("registered Copilot agents", () => {
       model: "openai/gpt-5.6-terra",
       // The provenance rule is unconditional, so even a Bot with no tools and no computer carries
       // it. That Bot needs it most: nothing it says was read anywhere.
-      prompt: `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${UNTRUSTED_GUIDANCE}\n\n${WORK_STYLE_GUIDANCE}\n\n${botIdentityGuidance("General Assistant")}`,
+      prompt: `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${UNTRUSTED_GUIDANCE}\n\n${WORK_STYLE_GUIDANCE}\n\n${botIdentityGuidance("General Assistant", "gpt-5.6-terra")}`,
       apiKey: "openai-secret",
     });
   });
@@ -1342,7 +1342,7 @@ describe("a person's standing instructions", () => {
       // Byte for byte what a deployment had before any of this existed, which is what most people
       // on most days get.
       expect(prompt).toBe(
-        `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${UNTRUSTED_GUIDANCE}\n\n${WORK_STYLE_GUIDANCE}\n\n${botIdentityGuidance("General Assistant")}`,
+        `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${UNTRUSTED_GUIDANCE}\n\n${WORK_STYLE_GUIDANCE}\n\n${botIdentityGuidance("General Assistant", "gpt-5.6-terra")}`,
       );
     },
   );

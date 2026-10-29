@@ -11,7 +11,8 @@ from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from chisabot_protocol import (Gateway, GatewayClient, GatewayError, ProtocolError, RunState,
-                               ToolAliases, ToolSuspended, host_metadata, parse_host_prompt)
+                               ToolAliases, ToolSuspended, TURN_FAILED, failure_category,
+                               failure_message, host_metadata, parse_host_prompt)
 
 
 def payload():
@@ -327,6 +328,41 @@ class RunStateTests(unittest.TestCase):
         run.start("old", "device_list", {}, lambda: None)
         run.close()
         self.assertEqual(json.loads(run.execute("old", "device_list", {}))["error"]["code"], "run_closed")
+
+
+class FailureCategoryTests(unittest.TestCase):
+    def test_hermes_reasons_fold_into_fixed_categories(self):
+        cases = {"rate_limit": "rate_limit", "upstream_rate_limit": "rate_limit", "billing": "quota",
+                 "auth_permanent": "auth", "context_overflow": "context_length", "payload_too_large": "context_length",
+                 "timeout": "timeout", "overloaded": "provider_unavailable", "server_error": "provider_unavailable",
+                 "model_not_found": "model_not_found", "content_policy_blocked": "content_filter",
+                 "incomplete_response": "stream", "format_error": "unknown", None: "unknown"}
+        for reason, category in cases.items():
+            self.assertEqual(failure_category(reason), category, reason)
+
+    def test_exception_chain_status_code_and_names(self):
+        class RateLimitError(Exception):
+            pass
+        class APIStatusError(Exception):
+            def __init__(self, status):
+                super().__init__("opaque")
+                self.status_code = status
+        self.assertEqual(failure_category(error=RateLimitError("x")), "rate_limit")
+        self.assertEqual(failure_category(error=APIStatusError(503)), "provider_unavailable")
+        self.assertEqual(failure_category(error=APIStatusError(413)), "context_length")
+        self.assertEqual(failure_category(error=TimeoutError("read timed out")), "timeout")
+        try:
+            try:
+                raise APIStatusError(429)
+            except APIStatusError as inner:
+                raise RuntimeError("wrapped") from inner
+        except RuntimeError as outer:
+            self.assertEqual(failure_category(error=outer), "rate_limit")
+        self.assertEqual(failure_category(error=RuntimeError("opaque-capability-secret")), "unknown")
+
+    def test_messages_are_fixed_and_unknown_keeps_old_sentence(self):
+        self.assertEqual(failure_message("unknown"), TURN_FAILED)
+        self.assertEqual(failure_message("rate_limit"), "Hermes model call failed: rate_limit (HTTP 429)")
 
 
 if __name__ == "__main__":

@@ -69,6 +69,16 @@ the existing Magpie endpoint for the same provider. Unknown/rejected models
 produce an ACP invalid-params error; no silent model fallback is implemented
 by this adapter.
 
+A model call that fails is reported as an ACP `-32603` error with one fixed
+sentence per category (`rate_limit`, `quota`, `auth`, `context_length`,
+`timeout`, `provider_unavailable`, `model_not_found`, `content_filter`,
+`stream`; see `_FAILURE_MESSAGES` in `chisabot_protocol.py`). The category comes
+from Hermes' `failure_reason` when it returns a failed result, or from the
+exception's status code and type; the provider's own text is never forwarded.
+Anything unclassified keeps the old `Hermes host turn execution failed`. The web
+app's `friendly-error.ts` turns each sentence into its Chinese headline and
+next step (`app/tests/hermes-error-categories.test.ts` keeps both sides in step).
+
 ## Tools and waiting
 
 Schemas map from `inputSchema` to Hermes registry `parameters`. Tools are

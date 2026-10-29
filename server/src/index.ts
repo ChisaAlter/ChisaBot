@@ -33,6 +33,7 @@ import {
   readRunAssertion,
 } from "./agents/callback-token";
 import { canUseComputer, computerAccessCheck } from "./agents/computer-access";
+import { currentDateContext, USER_TIME_ZONE } from "./agents/current-date";
 import { createAgentFetch } from "./agents/endpoint";
 import { createHandoffDesk, HANDOFF_KIND } from "./agents/handoff";
 import { createHandoffDelivery } from "./agents/handoff-delivery";
@@ -1350,7 +1351,7 @@ const deviceToolsFor = async (
 // Proactive research may only read; see proactive/restriction.ts. Read from the catalogue per call.
 const proactiveReadOnlyRefs = createReadOnlyClassifier(pluginStore);
 /** 长期记忆（DESIGN.md §50）：每轮开头的记忆用法 + 笔记；上游 personal_memories 不再给机器人。 */
-const memoryNotes = createMemoryNotes(database);
+const memoryNotes = createMemoryNotes(database, { timeZone: USER_TIME_ZONE });
 await memoryNotes.ensure();
 /** 机器人头像（DESIGN.md §81）：上传的图片 / 表情 / 首字；没有 = 花纹头像。 */
 const botAvatars = createBotAvatars(database, agentProfileStore);
@@ -1437,16 +1438,6 @@ const chisaSkills = createChisaSkills({
     return { id: actor.id, isAdmin: actor.role === "admin" };
   },
 });
-const currentDateContext = () => {
-  const now = new Date();
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const zh = new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "full",
-    timeStyle: "short",
-    timeZone: tz,
-  }).format(now);
-  return `【当前时间】${zh}（时区：${tz}，ISO：${now.toISOString()}）。回答今天几月几号、星期几、当前时间或计算相对日期（明天、下周等）时直接据此作答，无需调用 computer_run_command 运行 date。`;
-};
 const loadPersonalMemoryForActor = (ownerUserId: string) => async (botId: string) =>
   [
     currentDateContext(),

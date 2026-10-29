@@ -1,3 +1,9 @@
+## Unreleased
+
+- 修复：当前时间按用户时区（Asia/Shanghai）写并标明时区，和长期记忆同一天；测试 `server/tests/reply-quality.test.ts`。
+- 修复：Hermes 适配器透传模型出错的分类（限流 / 上下文过长 / 超时等），网页出对应提示；测试 `examples/hermes-agent/tests/`、`app/tests/hermes-error-categories.test.ts`。
+- 提示词：来源只在末尾写一次；卡片收尾写结论；公式加括号；拒绝给替代；写上当前模型；记忆笔记与出处规则写明优先级。
+
 ## 0.1.110
 
 - 修复：断线重连后漏掉的消息不补——`useConversationSync` 隔 15 秒以上才问到变化戳时不再只记基线，序号变了就合并式接上；测试 `app/tests/reconnect-backfill.test.tsx`。

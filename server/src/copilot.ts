@@ -567,7 +567,7 @@ export function builtInAgentConfiguration(
       // 行动优先：手里有工具时，先把事做了再回话；不许在调用工具之前说“我没有权限”。
       ...(tools.length > 0 ? [ACTION_GUIDANCE] : []),
       // 机器人的名字（不然它会自称模型名，DESIGN.md §69）。
-      botIdentityGuidance(agent.name),
+      botIdentityGuidance(agent.name, model.defaultModel),
       ...(tools.some((tool) => tool.name === "web_search") ? [WEB_GUIDANCE] : []),
       ...(tools.some((tool) => tool.name === "panel_create") ? [LIVE_PANEL_GUIDANCE] : []),
       ...(grantedToolGuidance(tools, connectedVendors)

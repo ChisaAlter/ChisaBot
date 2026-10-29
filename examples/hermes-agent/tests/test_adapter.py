@@ -579,6 +579,32 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         from chisabot_protocol import active_run
         self.assertIsNone(active_run.get())
 
+    async def test_failed_model_result_becomes_classified_turn_error(self):
+        state = await self.new()
+        def hook(agent, user, history):
+            return {"messages": history, "final_response": "⚠️ provider said opaque-provider-text",
+                    "failed": True, "error": "opaque-provider-text", "failure_reason": "rate_limit"}
+        state.agent.run_hook = hook
+        with self.assertRaises(RequestError) as error:
+            await self.prompt(state)
+        self.assertEqual(error.exception.code, -32603)
+        self.assertEqual(str(error.exception), "Hermes model call failed: rate_limit (HTTP 429)")
+        self.assertFalse(any(e[0] == "acp" and e[2].session_update == "agent_message_chunk" for e in self.events))
+        self.assertFalse(state.is_running)
+
+    async def test_model_exception_keeps_its_category_but_not_its_text(self):
+        state = await self.new()
+        class BadRequestError(Exception):
+            status_code = 400
+            code = "context_length_exceeded"
+        def hook(agent, user, history):
+            raise BadRequestError("opaque-provider-text sk-secret")
+        state.agent.run_hook = hook
+        with self.assertRaises(RequestError) as error:
+            await self.prompt(state)
+        self.assertEqual(str(error.exception), "Hermes model call failed: context_length exceeded")
+        self.assertNotIn("opaque", str(error.exception))
+
     async def test_default_manager_skips_native_memory_tools_and_discovery(self):
         captured = {}
         class AIAgent(FakeAgent):
