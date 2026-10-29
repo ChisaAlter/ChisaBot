@@ -1,0 +1,144 @@
+/*
+ * 性能模式（html[data-perf="on"]，lib/perf-mode.ts）和系统「减少透明度」（prefers-reduced-transparency: reduce）：
+ * 全局关掉 backdrop-filter，原来带模糊的元素换成不透明的底色。DESIGN.md §10.3.1。
+ *
+ * 为什么单独一个文件、为什么是 :not(#chisabot-no-blur)：
+ * - 一条 `*, *::before, *::after { backdrop-filter: none }` 要压过所有写了模糊的地方：styles.css 里的类选择器
+ *   （最多三四个类）、Tailwind 的 backdrop-blur-* 工具类（在 @layer 里，本来就比不分层的样式弱）、第三方组件
+ *   （streamdown 代码块 / 图表的操作条用的是 Tailwind 的 supports-[backdrop-filter]:backdrop-blur）、组件里内嵌的
+ *   <style>（agent-orb 的 ::after）。
+ * - 不用 !important：给 html 加一个永远成立的 :not(#id)，选择器带上一个 id 的优先级，就压过所有只用类和属性的规则，
+ *   顺序也不再要紧。页面上没有元素用这个 id。
+ * - styles.css 里旧的「三档玻璃」层是 `backdrop-filter: var(--lg-blur) !important`。这里不跟它比 !important，
+ *   而是把 --lg-blur 本身设成 none，那条规则读到的就是 none。
+ * - 唯一压不过的是元素自己的 style="backdrop-filter: …"（内联样式）和新的 !important；app/tests/no-backdrop.test.ts
+ *   不许出现这两种写法。
+ */
+
+/* 不透明的玻璃底色：只在性能模式 / 减少透明度时用。浅色、深色各一份。 */
+html {
+  --glass-bg-opaque: rgb(246, 247, 250);
+}
+html.dark {
+  --glass-bg-opaque: rgb(29, 31, 36);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html:not(#chisabot-no-blur) *,
+  html:not(#chisabot-no-blur) *::before,
+  html:not(#chisabot-no-blur) *::after {
+    --lg-blur: none;
+    backdrop-filter: none;
+  }
+  html:not(#chisabot-no-blur)
+    :is(
+      .glass-side-card,
+      .acct-card,
+      .acct-mini-card,
+      .glass-mini-card,
+      .rail-card,
+      .glass-seg,
+      .glass-search,
+      .glass-composer
+    ) {
+    --lg-surface: var(--glass-bg-opaque);
+    --lg-surface-strong: var(--glass-bg-opaque);
+  }
+  html:not(#chisabot-no-blur)
+    :is(
+      .glass:not(.is-flat),
+      .glass-card:not(.rail-card .glass-card),
+      [data-slot="dropdown-menu-content"],
+      [data-slot="context-menu-content"],
+      [data-slot="select-content"],
+      [data-slot="popover-content"],
+      [data-slot="combobox-content"],
+      [data-slot="dialog-content"],
+      [data-slot="sheet-content"],
+      [data-slot="sidebar"][data-mobile="true"],
+      .model-popover,
+      .page-loader-card,
+      .glass-toast,
+      .sg-savebar,
+      .auth-card,
+      .update-banner,
+      .context-popover,
+      .install-hint,
+      .bm-menu,
+      .bm-manager,
+      .perm-popover,
+      .live-panel-src-pop,
+      .chat-spotlight-panel,
+      [data-streamdown$="-block-actions"],
+      .appearance-wallpaper-glass-demo > i,
+      [class*="supports-[backdrop-filter]:bg-"]
+    ) {
+    background: var(--glass-bg-opaque);
+  }
+  /* 外观设置里色板的勾：原来是 0.68 的深色底加模糊，这里给实心深色。 */
+  html:not(#chisabot-no-blur) .appearance-swatch-check {
+    background: rgb(15, 23, 42);
+  }
+}
+
+/* 性能模式：和上面「减少透明度」同一套规则（放在后面，选择器多一个属性，优先级不比上面低）。 */
+html[data-perf="on"]:not(#chisabot-no-blur) *,
+html[data-perf="on"]:not(#chisabot-no-blur) *::before,
+html[data-perf="on"]:not(#chisabot-no-blur) *::after {
+  --lg-blur: none;
+  backdrop-filter: none;
+}
+
+/*
+ * 原来会模糊的元素：底色换成不透明的令牌，不能变成「没有模糊也没有底」的透明块。
+ * 名单和 app/tests/render-budget.test.ts 里「会模糊的规则」一致；嵌在面板里的卡片本来就不模糊，不在名单里。
+ * 旧的三档玻璃层用 !important 写 background: var(--lg-surface)，所以那几类改的是 --lg-surface 变量。
+ */
+html[data-perf="on"]:not(#chisabot-no-blur)
+:is(
+  .glass-side-card,
+  .acct-card,
+  .acct-mini-card,
+  .glass-mini-card,
+  .rail-card,
+  .glass-seg,
+  .glass-search,
+  .glass-composer
+) {
+  --lg-surface: var(--glass-bg-opaque);
+  --lg-surface-strong: var(--glass-bg-opaque);
+}
+html[data-perf="on"]:not(#chisabot-no-blur)
+  :is(
+    .glass:not(.is-flat),
+    .glass-card:not(.rail-card .glass-card),
+    [data-slot="dropdown-menu-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    [data-slot="sidebar"][data-mobile="true"],
+    .model-popover,
+    .page-loader-card,
+    .glass-toast,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .context-popover,
+    .install-hint,
+    .bm-menu,
+    .bm-manager,
+    .perm-popover,
+    .live-panel-src-pop,
+    .chat-spotlight-panel,
+    [data-streamdown$="-block-actions"],
+    .appearance-wallpaper-glass-demo > i,
+    [class*="supports-[backdrop-filter]:bg-"]
+  ) {
+  background: var(--glass-bg-opaque);
+}
+html[data-perf="on"]:not(#chisabot-no-blur) .appearance-swatch-check {
+  background: rgb(15, 23, 42);
+}

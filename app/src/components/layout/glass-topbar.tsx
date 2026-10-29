@@ -2,15 +2,19 @@ import {
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
   IconMenu2,
+  IconSearch,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import type { ReactElement } from "react";
-import { BrandMark } from "@/components/layout/brand-mark";
+import { Link, useNavigate } from "@tanstack/react-router";
+import type { ReactElement, ReactNode } from "react";
+import { BrandAvatar, BrandMark } from "@/components/layout/brand-mark";
+import { SidebarSearchField } from "@/components/layout/sidebar-search-field";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { canCompact, type DesktopWindowBridge, useDesktopWindow } from "@/lib/desktop-window";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
+import { requestSidebarSearchFocus } from "@/lib/sidebar-search";
 import { cn } from "@/lib/utils";
 
 
@@ -47,15 +51,20 @@ export function GlassAvatar({ size = 44, ring = true }: { size?: number; ring?: 
 export type ShellScope = "app" | "settings" | "admin";
 
 /**
- * 顶栏（DESIGN-v4）：只放「应用」和「窗口」的东西。
+ * 顶栏（Hark 风格）：左上角圆形主页按钮 + 左栏开关；右上角搜索胶囊 + 圆形头像（账号菜单）。
  *
- * 左 = 字标 + 左栏开关（宽度与左栏对齐）；右上角 = 只有窗口按钮（— □ ✕）。
- * 中间的分段导航（长期任务 / 技能 / 工作流）已去掉（DESIGN.md §57 导航收敛）：技能、工作流在设置里，
- * 定时任务和待处理在账号菜单里，从设置回聊天走设置左栏底部的「返回聊天」。
- * 搜索在左栏卡片顶部，账号在左栏最底下，机器人菜单在聊天列头部，面板操作在面板卡片里，
- * 页面操作在各页页头——顶栏右侧不再有任何页面或账号控件。
+ * 中间不放分段导航，只有「聊天」一个视图。PC 无边框窗口的 — □ ✕ 仍在最右边，新按钮都不参与拖动。
+ * 搜索胶囊是 .glass（顶栏唯一的模糊层，读 --glass-filter）；圆钮只用半透明底色（.glass.is-flat），不叠模糊。
+ * 手机上搜索框留在左栏抽屉顶部，顶栏只放一个搜索按钮：点它打开抽屉并聚焦搜索。
  */
-export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
+export function GlassTopBar({
+  scope = "app",
+  account,
+}: {
+  scope?: ShellScope;
+  /** 右上角的圆形头像（账号菜单）。由外壳传进来，顶栏不直接依赖账号菜单（它反过来用这里的 GlassAvatar）。 */
+  account?: ReactNode;
+}) {
   const sidebar = useOptionalSidebar();
   const mobile = Boolean(sidebar?.isMobile);
   const desktop = useDesktopWindow();
@@ -63,8 +72,11 @@ export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上
     <header
-      className="glass-topbar"
+      className="glass-topbar hk-topbar"
       data-scope={scope}
+      // 左栏收起 / PC 标题按钮个数直接写在顶栏上，CSS 不用挂在整个外壳上的 :has()（流式输出时会触发整页样式重算）。
+      data-sidebar={sidebar && !mobile ? sidebar.state : undefined}
+      data-winctrls={desktop ? (canCompact(desktop.bridge) ? 4 : 3) : undefined}
       // PC 无边框窗口：空白处双击 = 最大化 / 还原（拖动由 -webkit-app-region 交给系统）。
       onDoubleClick={
         desktop
@@ -75,36 +87,97 @@ export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
           : undefined
       }
     >
-      <div className="glass-topbar-start">
+      <div className="glass-topbar-start hk-topbar-start">
         {mobile ? (
           <button
             aria-label={`打开${drawerLabel}`}
-            className="glass-icon-btn glass-menu-btn"
+            className="hk-circle glass is-flat"
             onClick={() => sidebar?.setOpenMobile(true)}
             type="button"
           >
-            <IconMenu2 className="glass-icon-btn-ico" />
+            <IconMenu2 className="hk-circle-ico" />
           </button>
         ) : (
-          <span className="glass-brand">
-            <BrandMark />
-            {PROTO_PREVIEW ? (
-              <span className="proto-badge" title={"这是独立的原型沙箱，使用线上数据的副本；改动不会影响线上。"}>
-                {"原型预览"}
-              </span>
-            ) : null}
+          <ToggleTip label={"主页"}>
+            <Link aria-label={"主页"} className="hk-home glass is-flat" to="/">
+              <BrandAvatar size={32} />
+            </Link>
+          </ToggleTip>
+        )}
+        {mobile ? null : (
+          <span className="glass-brand hk-brand">
+            <BrandMark avatar={false} />
           </span>
         )}
+        {PROTO_PREVIEW && !mobile ? (
+          <span className="proto-badge" title={"这是独立的原型沙箱，使用线上数据的副本；改动不会影响线上。"}>
+            {"原型预览"}
+          </span>
+        ) : null}
         {sidebar && !mobile ? <RosterToggle scope={scope} /> : null}
       </div>
-      {/* 中间留空（网格占位，保持左右两区位置不变）。 */}
+      {/* 中间留空：只有「聊天」一个视图，不放分段切换。 */}
       <span aria-hidden className="glass-topbar-mid" />
-      {/* 右区故意留空：右上角只属于窗口。 */}
-      <div aria-hidden className="glass-topbar-end" />
+      <div className="glass-topbar-end hk-topbar-end">
+        <TopBarSearch mobile={mobile} scope={scope} />
+        {account}
+      </div>
       {desktop ? <WindowControls bridge={desktop.bridge} compact={desktop.compact} maximized={desktop.maximized} /> : null}
     </header>
   );
 }
+
+/**
+ * 右上角的搜索：
+ * - 电脑上，聊天里就是搜索框本身（结果画在左栏卡片里；左栏收起时一聚焦就展开）。
+ * - 设置 / 管理里结果没有地方画：同样的胶囊是个按钮，点了回聊天再聚焦搜索（和 Ctrl K 一样）。
+ * - 手机上是一个圆形按钮：打开左栏抽屉，聚焦抽屉顶部的搜索框。
+ */
+function TopBarSearch({ scope, mobile }: { scope: ShellScope; mobile: boolean }) {
+  const sidebar = useOptionalSidebar();
+  const navigate = useNavigate();
+  if (mobile) {
+    return (
+      <button
+        aria-label={"搜索会话"}
+        className="hk-circle glass is-flat"
+        onClick={() => {
+          if (scope !== "app") {
+            requestSidebarSearchFocus();
+            void navigate({ to: "/" });
+            return;
+          }
+          sidebar?.setOpenMobile(true);
+          requestSidebarSearchFocus();
+        }}
+        type="button"
+      >
+        <IconSearch className="hk-circle-ico" />
+      </button>
+    );
+  }
+  if (scope !== "app") {
+    return (
+      <button
+        className="hk-search glass"
+        onClick={() => {
+          requestSidebarSearchFocus();
+          void navigate({ to: "/" });
+        }}
+        type="button"
+      >
+        <IconSearch aria-hidden className="hk-search-ico" />
+        <span className="hk-search-placeholder">{"搜索会话"}</span>
+        <kbd aria-hidden className="hk-search-kbd">
+          {SEARCH_KEYS}
+        </kbd>
+      </button>
+    );
+  }
+  return <SidebarSearchField variant="topbar" />;
+}
+
+const SEARCH_KEYS = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent) ? "⌘K" : "Ctrl K";
 
 const COMPACT_KEYS = /Mac/.test(navigator.userAgent) ? "⌘⇧M" : "Ctrl+Shift+M";
 
