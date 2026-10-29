@@ -423,3 +423,15 @@
 - `isBlankNote`（`lib/chat/work-steps.ts`）：去掉 markdown 后没有字母、数字、emoji 的过程话（「---」「…」）不进步骤列表，`compactTurns` 也把这种助手正文当作隐藏。
 - 规则：只用现有 token；胶囊不用 blur，动画只动 transform / opacity；`prefers-reduced-motion` 关动画，`prefers-reduced-transparency` 和 `html[data-perf="on"]` 用不透明底色（与抽屉同色）；没有 `:has()`、没有 `!important`；styles.css 和禁区文件都没动。
 - 已知：做完的干活行在本页亲眼看着收起时，按 §82.9 仍以 0 高、`aria-hidden` + `inert` 的折叠行留在 DOM 里（重新打开对话时不画）；工具过程默认隐藏后只剩空 div 的工具行由 styles.css 已有规则 `display: none`，不占位。
+
+## 2026-10-29 回复过程审查修正（feat/hark-reply-steps，#404 退回）
+
+- 只有代码块的回复整段消失：`isBlankNote` 以前先过 `plainNote`，它把 ``` 代码块整段去掉，`compactTurns` 就把这段当空段藏了（流式时代码块一闭合就没了）。改成只认整段都是分隔符（`-`、`*`、`_`、`=`、`~`、`.`、`·`、`…`、`。`、破折号、制表线，可以夹空白）；代码块、表格、链接都不算空。
+- 工具失败、后面没有文字时一片空白：`HIDE_FINISHED_WORK_SUMMARY` 让做完的干活行一律收起，`ChatTranscript` 里又写死了 `hasFinal: true`。现在 `compactTurns` 给每轮算 `answered`（结果气泡 / render_ui 卡片 / 留着的气泡），`isQuietWork` 在没有回答时不收（被停掉的照旧收，另有「已停止」）；新增 `noAnswerAfter`，最后一个看得见的行后面挂 `NoAnswerRow`「这一轮没有回答」，最后一轮带重试（用现有的 `onRetryUnanswered`，和重新生成同一条路；错误卡已经在的时候不重复挂）。只回了 `---` 的一轮同样处理。
+- 读屏：干活卡按钮的 `aria-label` 改成「当前动作（，N 步失败），展开 / 收起步骤」；对话末尾一个一直挂着的 `role="status"`（`transcript-live-status`），「思考中」→ 当前步骤在同一个节点里换字，胶囊和干活卡自己不再带 `role="status"`。
+- 焦点：干活行在这一轮结束时跟着收成 inert 的折叠行时，`WorkRow` 在 layout effect 里把焦点移到后面第一条看得见的行（没有就往上找，必要时给 `tabIndex=-1`），不掉到 body；行没收起（没有回答）时焦点留在按钮上。
+- 跳动：停顿时的胶囊（`data-variant="pause"`）上下内边距 1px，高 22px，和以前停顿的占位一样，来新字时不多跳 16px。
+- 秒数：胶囊的开始时间改用 `work-card.tsx` 的 `turnStartedAt(turnKey)`（模块里按这一轮的 key 记），切换频道回来不归零，和干活卡同一个数。
+- 胶囊换成干活卡不再播进场淡入（`.chat-work-card.rs-capsule { animation: none }`）；深色不再写死 `--rs-solid`，用 `--glass-bg-solid`。
+- 测试：`reply-steps.test.tsx` 补了只有代码块、工具失败没有文字、只回 `---`、秒数重挂不归零、`PausedCapsule`、焦点、aria-label、CSS 规则；`quiet-turn.test.ts` 里「没回答也收起」的断言按新规则改了。
+- 已知遗留：收起的行仍作为 0 高折叠行留在 DOM 里，长对话里会累积；`PausedCapsule` 出现 / 消失没有给读屏做防抖。
