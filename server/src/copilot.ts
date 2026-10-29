@@ -775,7 +775,10 @@ export async function buildAgents(
           handoff,
           instructions ?? null,
           initiator,
-          loadAttachment,
+          // 同一个加载器给每个机器人绑上自己的 id：图片给原图还是给描述看这个机器人的主模型（§59）。
+          loadAttachment &&
+            ((id: string, threadId: string) =>
+              loadAttachment(id, threadId, agent.id)),
           markAttachmentsSent,
         );
         if (loadPersonalMemory)
@@ -819,6 +822,12 @@ export type LoadInstructions = () => Promise<string | null>;
 export type LoadAttachment = (
   id: string,
   threadId: string,
+  /**
+   * Which Bot the turn is for, when the caller knows. Images are handed over differently depending
+   * on whether THAT Bot's model can see pictures (DESIGN.md §59): the original when it can, a
+   * vision model's description when it cannot. Bound per agent in `resolveRuntimeAgents`.
+   */
+  agentId?: string,
 ) => Promise<StoredAttachment | null>;
 
 /**

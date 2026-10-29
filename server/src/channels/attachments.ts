@@ -26,6 +26,8 @@ import {
   MAX_FILE_BYTES,
   MAX_IMAGE_BYTES,
   namesNoFormat,
+  unreadablePhotoFormat,
+  unsupportedImageReason,
 } from "../../../shared/attachments";
 import type { StoredAttachment } from "./attachment-parts";
 import { sniffMimeType } from "./attachment-mime";
@@ -686,7 +688,7 @@ function withinFilenameLimit(name: string): string {
  * dot in it, and the bytes not being valid UTF-8 is the rest of it.
  */
 function describeType(mimeType: string): string {
-  return namesNoFormat(mimeType) ? "" : ` (${mimeType})`;
+  return namesNoFormat(mimeType) ? "" : `（${mimeType}）`;
 }
 
 /**
@@ -835,18 +837,33 @@ export function createChannelAttachmentRoutes(
     // back: a sentence naming a file by a name the row does not carry would be its own small lie.
     const name = withinFilenameLimit(file.name);
 
-    if (kind === "unsupported-image") {
-      const error =
-        mimeType === "image/svg+xml"
-          ? `'${name}' is an SVG, which can carry scripts and is not accepted.`
-          : `'${name}' is an ${mimeType} image, which this app cannot read.`;
-      return context.json({ error }, 415);
+    /*
+     * 拒绝的原因原样显示在输入框上方，所以用中文，并说下一步怎么办（审查 M9-2）。HEIC / HEIF / AVIF
+     * 照片（iPhone 导出来大多是 HEIC）不在服务器上转码：#401 引进的 sharp 预编译包不带 HEVC 解码，
+     * 要转就得加系统级原生依赖；这里只告诉人转成 JPG / PNG。类型为空、只有扩展名能说明格式的也一样。
+     */
+    // 字节读出来不是能用的图片、而浏览器的类型或扩展名说它是 HEIC 一类：照样按照片拒绝。嗅探不认识
+    // HEIF 容器，很小或截断的 HEIC 字节恰好是合法 UTF-8 时会被当成文本存下来（测试里那段 ftyp 头就是）。
+    const photoClaim =
+      kind !== "image" && kind !== "unsupported-image"
+        ? unreadablePhotoFormat(name, file.type)
+        : null;
+    if (kind === "unsupported-image" || photoClaim) {
+      return context.json(
+        {
+          error: unsupportedImageReason(
+            name,
+            kind === "unsupported-image" ? mimeType : file.type,
+          ),
+        },
+        415,
+      );
     }
 
     if (kind === "unsupported") {
       return context.json(
         {
-          error: `'${name}' is not a file type this app can read${describeType(mimeType)}.`,
+          error: `「${name}」不是这里能读的文件类型${describeType(mimeType)}。可以发 JPG、PNG、GIF、WebP 图片，或者 TXT、Markdown、CSV、JSON 文本文件。`,
         },
         415,
       );
@@ -855,9 +872,9 @@ export function createChannelAttachmentRoutes(
     if (kind === "image" && bytes.byteLength > MAX_IMAGE_BYTES) {
       return context.json(
         {
-          error: `'${name}' is larger than the ${megabytes(
+          error: `「${name}」图片太大（上限 ${megabytes(
             MAX_IMAGE_BYTES,
-          )} limit for images.`,
+          )}）。请压缩或截一部分再发。`,
         },
         413,
       );
@@ -866,9 +883,9 @@ export function createChannelAttachmentRoutes(
     if (kind === "text" && bytes.byteLength > MAX_FILE_BYTES) {
       return context.json(
         {
-          error: `'${name}' is larger than the ${megabytes(
+          error: `「${name}」文件太大（上限 ${megabytes(
             MAX_FILE_BYTES,
-          )} limit for files.`,
+          )}）。请拆成几份或只发需要的部分。`,
         },
         413,
       );

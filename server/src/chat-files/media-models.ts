@@ -495,6 +495,20 @@ export function createMediaModels(
     return { kind: "none" };
   }
 
+  /**
+   * 用户附的图片这一轮怎么交给主模型（审查 M9-1）：主模型能看图（目录没说不能 = 能）就给原图，
+   * 哪怕另外配了识图模型——识图模型这时只做 image_inspect 追问用。只有主模型明确看不了图时，
+   * 才按 visionFor 的顺序找识图模型写描述；都没有就是 none。
+   *
+   * 原来 `cf:` 引用按 visionFor 走：管理员配了「单独的识图模型」就只给描述，而频道附件照样给原图，
+   * 提示词却对两条路都说「你只拿到了文字描述」——模型于是说「没收到截图」，或者先去找文件。
+   */
+  async function imageInputFor(userId: string, agentId: string): Promise<EffectiveVision> {
+    const supports = options.mainModelSupportsImages ? await options.mainModelSupportsImages(agentId).catch(() => undefined) : undefined;
+    if (supports !== false) return { kind: "main" };
+    return visionFor(userId, agentId);
+  }
+
   // ------------------------------------------------------------------ 描述缓存
 
   const inflight = new Map<string, Promise<string>>();
@@ -620,6 +634,7 @@ export function createMediaModels(
     imageFor,
     imageViewFor,
     visionFor,
+    imageInputFor,
     describe,
     cachedDescription,
     ask,

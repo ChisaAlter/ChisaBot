@@ -79,6 +79,17 @@ export function fileView(row: FileRow): ChatFileView {
 }
 
 /** 只认真的位图（SVG 能带脚本，不当图片）。 */
+/**
+ * 每轮系统提示里关于「用户附的图片」的那一句，按 `imageInputFor` 的结果选（审查 M9-1）。
+ * 必须和这一轮实际给模型的东西一致：给原图就说给了原图、直接看图；只给描述才说是描述。
+ * 原来不管实际给什么都说「由识图模型转成文字描述给你」，模型就先去调 chat_files_recent 找图，或者干脆说没收到图。
+ */
+export const IMAGE_INPUT_GUIDANCE = {
+  main: "用户在消息里附的图片会作为图片直接随这条消息给你，你看到的就是原图：直接看图回答，不要先调 chat_files_recent 或其他工具去找图片，也不要说没收到图片。",
+  model: "当前聊天模型不能看图片，用户附的图片由识图模型转成文字描述给你（消息里写着【图片描述】）；描述里没有的细节用 image_inspect 追问，不要编。",
+  none: "",
+} as const;
+
 export function sniffImage(bytes: Uint8Array): string | null {
   if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
@@ -346,47 +357,73 @@ export function createChatFiles(
   }
 
   /**
-   * 图片怎么给主模型（DESIGN.md §59 识图模型）：
-   * - 跟随主模型：原图（和 §56 一样）。
-   * - 有识图模型：先让识图模型写详细描述 + OCR（按文件、模型缓存），把文字给主模型，并告诉它可以用
-   *   image_inspect 追问。识图失败时，主模型能看图就退回原图，否则给一句说明。
+   * 图片怎么给主模型（DESIGN.md §59 识图模型，审查 M9-1 之后）：
+   * - 主模型能看图（目录没说不能 = 能）：原图，不管有没有另配识图模型（识图模型只给 image_inspect 用）。
+   * - 主模型看不了图、有识图模型：识图模型写详细描述 + OCR（按 `cacheId` + 模型缓存），把文字给主模型，
+   *   并告诉它可以用 image_inspect 追问。识图失败就如实说明。
    * - 主模型看不了图又没有识图模型：给一句说明，让机器人请用户去配置。
+   *
+   * 聊天文件（`cf:`）和频道附件（`/api/attachments/<id>`）都走这里，两条路给模型的东西一致。
+   * `inspectSource` 是 image_inspect 认得的写法；频道附件不在聊天文件表里，没有就不提 image_inspect。
    */
-  async function imageForTurn(owner: string, found: FileRow, bytes: Buffer, mimeType: string, where: string): Promise<StoredAttachment> {
-    const vision = await media.visionFor(owner, found.agent_id).catch(() => ({ kind: "main" }) as const);
-    const head = `用户上传的图片「${found.name}」（${where}，文件 id：${found.id}）`;
-    if (vision.kind === "main") return { mimeType: found.mime_type, name: found.name, bytes };
-    if (vision.kind === "none") {
-      return {
-        mimeType: "text/plain",
-        name: found.name,
-        bytes: Buffer.from(`${head}。当前聊天模型不能看图片，也没有配置识图模型，所以你看不到图片内容。请告诉用户：在 设置 → 生图与识图（或管理员在 设置 → 模型 → 识图模型）里配置一个识图模型后再发。`),
-      };
+  async function imageForModel(
+    owner: string,
+    agentId: string,
+    image: { cacheId: string; name: string; mimeType: string; bytes: Buffer; head: string; createdAt?: Date | string; inspectSource?: string },
+  ): Promise<StoredAttachment> {
+    const { name, bytes, head } = image;
+    const input = await media.imageInputFor(owner, agentId).catch(() => ({ kind: "main" }) as const);
+    if (input.kind === "main") return { mimeType: image.mimeType, name, bytes };
+    const note = (text: string): StoredAttachment => ({ mimeType: "text/plain", name, bytes: Buffer.from(text) });
+    if (input.kind === "none") {
+      return note(`${head}。当前聊天模型不能看图片，也没有配置识图模型，所以你看不到图片内容。请告诉用户：在 设置 → 生图与识图（或管理员在 设置 → 模型 → 识图模型）里配置一个识图模型后再发。`);
     }
-    const fresh = Date.now() - new Date(found.created_at).getTime() < media.DESCRIBE_FRESH_MS;
+    const ask = image.inspectSource ? `描述里没有的细节用 image_inspect（source 填 ${image.inspectSource}）去问，` : "描述里没有的细节如实说看不到，";
+    const fresh = image.createdAt === undefined || Date.now() - new Date(image.createdAt).getTime() < media.DESCRIBE_FRESH_MS;
     try {
-      const text = await media.describe(found.id, { bytes, mimeType }, vision.config, { fresh });
+      const text = await media.describe(image.cacheId, { bytes, mimeType: image.mimeType }, input.config, { fresh });
       if (text === null) {
-        return {
-          mimeType: "text/plain",
-          name: found.name,
-          bytes: Buffer.from(`${head}。这是较早的图片，没有现成的描述；需要它的内容时用 image_inspect（source 填文件 id）提问。`),
-        };
+        return note(
+          image.inspectSource
+            ? `${head}。这是较早的图片，没有现成的描述；需要它的内容时用 image_inspect（source 填 ${image.inspectSource}）提问。`
+            : `${head}。这是较早的图片，没有现成的描述，你看不到它的内容；需要时请用户重新发一次。`,
+        );
       }
-      return {
-        mimeType: "text/plain",
-        name: found.name,
-        bytes: Buffer.from(
-          `${head}。你看不到原图，下面是识图模型（${vision.label}）对它的描述，按这个回答；描述里没有的细节用 image_inspect（source 填文件 id）去问，不要编。\n\n【图片描述】\n${text}`,
-        ),
-      };
+      return note(`${head}。当前聊天模型不能看图片，下面是识图模型（${input.label}）对它的描述，按这个回答；${ask}不要编。\n\n【图片描述】\n${text}`);
     } catch (error) {
       const reason = error instanceof Error ? error.message : "未知错误";
       console.error(JSON.stringify({ type: "chat-files-describe-failed", error: error instanceof Error ? error.name : "UnknownError" }));
-      const supports = options.mainModelSupportsImages ? await options.mainModelSupportsImages(found.agent_id).catch(() => undefined) : undefined;
-      if (supports !== false) return { mimeType: found.mime_type, name: found.name, bytes };
-      return { mimeType: "text/plain", name: found.name, bytes: Buffer.from(`${head}。识图模型没能读这张图（${reason.slice(0, 200)}），你看不到图片内容；如实告诉用户。`) };
+      return note(`${head}。识图模型没能读这张图（${reason.slice(0, 200)}），你看不到图片内容；如实告诉用户。`);
     }
+  }
+
+  async function imageForTurn(owner: string, found: FileRow, bytes: Buffer, mimeType: string, where: string): Promise<StoredAttachment> {
+    return imageForModel(owner, found.agent_id, {
+      cacheId: found.id,
+      name: found.name,
+      mimeType,
+      bytes,
+      head: `用户上传的图片「${found.name}」（${where}，文件 id：${found.id}）`,
+      createdAt: found.created_at,
+      inspectSource: "文件 id",
+    });
+  }
+
+  /**
+   * 频道附件（`/api/attachments/<id>`）交给某个机器人的主模型之前过一遍：图片按 {@link imageForModel}，
+   * 其他原样。主模型能看图时是原样返回（同一个对象），和改之前一样。
+   */
+  async function channelAttachmentForModel(owner: string, agentId: string, attachmentId: string, attachment: StoredAttachment): Promise<StoredAttachment> {
+    const image = sniffImage(attachment.bytes);
+    if (!image) return attachment;
+    const described = await imageForModel(owner, agentId, {
+      cacheId: `att:${attachmentId}`,
+      name: attachment.name,
+      mimeType: image,
+      bytes: attachment.bytes,
+      head: `用户在这条消息里附的图片「${attachment.name}」`,
+    });
+    return described.mimeType === "text/plain" ? described : attachment;
   }
 
   /**
@@ -554,10 +591,13 @@ export function createChatFiles(
     }
     const vision = await media.visionFor(owner, agentId).catch(() => null);
     if (vision?.kind === "model") {
+      const input = await media.imageInputFor(owner, agentId).catch(() => null);
       out.push(
         tool(
           "image_inspect",
-          "让识图模型看一张图片并回答一个具体问题（图里某处写了什么、某个数字、某个细节）。上传的图片你只拿到了文字描述；描述里没有的细节用它去问，不要编。",
+          input?.kind === "main"
+            ? "让识图模型看一张图片并回答一个具体问题。用户附在消息里的图片你自己就能看到原图，直接看图回答，不需要这个工具；只有要看工作区里或更早的图片、而它不在当前消息里时才用。"
+            : "让识图模型看一张图片并回答一个具体问题（图里某处写了什么、某个数字、某个细节）。上传的图片你只拿到了文字描述；描述里没有的细节用它去问，不要编。",
           z
             .object({
               question: z.string().min(1).max(1000).describe("要问识图模型的具体问题"),
@@ -591,14 +631,14 @@ export function createChatFiles(
   /** 每轮开头给机器人的用法（不点名具体文件）。 */
   async function guidance(owner?: string, agentId?: string): Promise<string> {
     const images = owner ? await media.imageViewFor(owner).catch(() => null) : await settingsView().catch(() => null);
-    const vision = owner && agentId ? await media.visionFor(owner, agentId).catch(() => null) : null;
+    const input = owner && agentId ? await media.imageInputFor(owner, agentId).catch(() => null) : null;
     return [
       "【文件】用户在聊天里上传的文件会存进你的工作区 uploads/（消息里能看到图片和说明）。",
       options.workspace ? "要把工作区里的文件给用户，用 file_share（聊天里出下载卡片），不要贴路径或 workspace.local 链接；同时在回复正文里直接写出关键结论或内容摘要。" : "",
       images?.ready
         ? "要画图用 image_generate，要改图（包括用户刚上传的）用 image_edit；结果会自动显示，不要再用 Markdown 贴图。"
         : "还没打开图片生成：用户要你画图时，告诉他请管理员在 设置 → 模型 → 生图模型 里打开，或在 设置 → 生图与识图 里填自己的生图模型。",
-      vision?.kind === "model" ? "用户上传的图片由识图模型转成文字描述给你；描述里没有的细节用 image_inspect 追问，不要编。" : "",
+      input ? IMAGE_INPUT_GUIDANCE[input.kind] : "",
     ]
       .filter(Boolean)
       .join("");
@@ -671,6 +711,6 @@ export function createChatFiles(
     await media.ensure();
   }
 
-  return { ensure: ensureAll, media, settingsView, saveSettings, testSettings, providerConfig, store, setWorkspacePath, row, list, remove, upload, loadForTurn, makeImage, share, tools, guidance, routes };
+  return { ensure: ensureAll, media, settingsView, saveSettings, testSettings, providerConfig, store, setWorkspacePath, row, list, remove, upload, loadForTurn, channelAttachmentForModel, makeImage, share, tools, guidance, routes };
 }
 export type ChatFiles = ReturnType<typeof createChatFiles>;

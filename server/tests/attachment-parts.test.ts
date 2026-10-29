@@ -488,7 +488,7 @@ describe("what a stored attachment becomes is decided by its bytes, not by the p
 
     expect(result[0]).toEqual({
       type: "text",
-      text: '[attachment "invoice.pdf" is a application/pdf file, which cannot be put in front of the model]',
+      text: "[附件「invoice.pdf」是 application/pdf 文件，没法交给模型看；如实告诉用户你看不到它的内容]",
     });
   });
 
@@ -721,8 +721,8 @@ describe("a run's inlining budget", () => {
     // The file, so the person knows which one; the limit, so "too big" is a number; and a way out,
     // because this is their own most recent action and the message is still in front of them.
     await expect(failure).rejects.toThrow(/"chart\.png" \(id "asked2"\)/);
-    await expect(failure).rejects.toThrow(/more than the 4 bytes/);
-    await expect(failure).rejects.toThrow(/Send fewer files/);
+    await expect(failure).rejects.toThrow(/上限（4 字节）/);
+    await expect(failure).rejects.toThrow(/少发几个文件/);
   });
 
   test("a refused message is refused, not quietly turned into a note", async () => {

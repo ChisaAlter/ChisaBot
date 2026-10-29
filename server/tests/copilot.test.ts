@@ -2352,9 +2352,9 @@ describe("where an attachment reaches the model, and where it deliberately does 
     // A sentence naming the problem, not a truncated turn: the file, the limit, and something to do
     // about it, because the message is still in front of the person who wrote it.
     expect(error.message).toContain('"five.png"');
-    expect(error.message).toContain("could not be included");
+    expect(error.message).toContain("没能放进这一轮");
     expect(error.message).toContain(String(MAX_INLINED_BYTES_PER_RUN));
-    expect(error.message).toContain("Send fewer files");
+    expect(error.message).toContain("少发几个文件");
 
     // And the part it refused over was never read. A turn about to be refused should not pay for
     // the bytes it cannot afford on the way to saying so.

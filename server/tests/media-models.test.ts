@@ -144,6 +144,20 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     await expect(media.saveVisionDefault(admin, { mode: "custom", baseUrl: "https://vl.example.com/v1", model: "vl-admin" })).rejects.toThrow("密钥");
     const saved = await media.saveVisionDefault(admin, { mode: "custom", baseUrl: "https://vl.example.com/v1", model: "vl-admin", apiKey: "sk-admin-vision-7777" });
     expect(saved).toMatchObject({ mode: "custom", ready: true, keyHint: "7777" });
+    // 审查 M9-1：主模型能看图时，配了识图模型也给原图，提示词说图片直接随消息给它（不要先找文件）。
+    calls.length = 0;
+    expect((await files.loadForTurn(alice, up.id))?.mimeType).toBe("image/png");
+    expect(calls.length).toBe(0);
+    const seeing = await files.guidance(alice, bot);
+    expect(seeing).toContain("直接随这条消息给你");
+    expect(seeing).toContain("不要先调 chat_files_recent");
+    expect(seeing).not.toContain("转成文字描述");
+    const inspectWhenSeeing = (await files.tools(alice, bot)).find((t) => t.name === "image_inspect");
+    expect(inspectWhenSeeing?.description).toContain("不需要这个工具");
+    expect(inspectWhenSeeing?.description).not.toContain("只拿到了文字描述");
+
+    // 主模型看不了图：才换成识图模型的描述（缓存一次）。
+    mainSees = false;
     calls.length = 0;
     const first = await files.loadForTurn(alice, up.id);
     expect(first?.mimeType).toBe("text/plain");
@@ -154,7 +168,8 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     expect(again?.bytes.toString()).toContain("蓝鲸42");
     expect(calls.filter((c) => c.url.endsWith("/chat/completions")).length).toBe(1);
     expect(await names(alice, bot)).toContain("image_inspect");
-    expect(await files.guidance(alice, bot)).toContain("image_inspect");
+    expect(await files.guidance(alice, bot)).toContain("转成文字描述");
+    expect((await files.tools(alice, bot)).find((t) => t.name === "image_inspect")?.description).toContain("只拿到了文字描述");
 
     // image_inspect 问具体问题（不缓存）
     calls.length = 0;
@@ -163,8 +178,10 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     expect(String((calls[0]!.body.messages as { content: { text?: string }[] }[])[0]!.content[0]!.text)).toContain("暗号是什么");
 
     // alice 个人「跟随主模型」：原图
+    mainSees = undefined;
     await media.savePersonalVision(alice, { mode: "follow" });
     expect((await files.loadForTurn(alice, up.id))?.mimeType).toBe("image/png");
+    mainSees = false;
     // alice 个人 custom：她的模型（缓存按模型分开）
     await expect(media.savePersonalVision(alice, { mode: "custom", baseUrl: "http://127.0.0.1:9/v1", model: "x", apiKey: "sk-alice-vis-0002" })).rejects.toThrow("公网");
     const mine = await media.savePersonalVision(alice, { mode: "custom", baseUrl: "https://alice-vl.example.com/v1", model: "vl-alice", apiKey: "sk-alice-vis-0002" });
@@ -175,6 +192,10 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     expect(personal?.bytes.toString()).toContain("vl-alice");
     expect(calls[0]!.url).toBe("https://alice-vl.example.com/v1/chat/completions");
     expect(calls[0]!.auth).toBe("Bearer sk-alice-vis-0002");
+    // alice 自己的识图模型也只在主模型看不了图时写描述；能看图就是原图。
+    mainSees = undefined;
+    expect((await files.loadForTurn(alice, up.id))?.mimeType).toBe("image/png");
+    mainSees = false;
     const keys = await database.$client.unsafe<{ model_key: string }[]>("SELECT model_key FROM chisabot_image_descriptions WHERE file_id = $1 ORDER BY model", [up.id]);
     expect(keys.map((k) => k.model_key).sort()).toEqual(
       [modelKeyOf({ baseUrl: "https://vl.example.com/v1", model: "vl-admin" }), modelKeyOf({ baseUrl: "https://alice-vl.example.com/v1", model: "vl-alice" })].sort(),
@@ -182,6 +203,35 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     // 删文件连描述一起删
     await files.remove(alice, up.id);
     expect((await database.$client.unsafe("SELECT 1 FROM chisabot_image_descriptions WHERE file_id = $1", [up.id])).length).toBe(0);
+    mainSees = undefined;
+  });
+
+  test("channel attachments (/api/attachments/<id>): original image when the main model sees, description only when it can't", async () => {
+    // 网页 / 频道聊天的附件走这条路（审查 M9-1）：原来不管主模型能不能看图都给原图，提示词却说是描述。
+    await media.savePersonalVision(alice, { mode: "default" });
+    const attachment = { mimeType: "image/png", name: "截图.png", bytes: PNG };
+    const text = { mimeType: "text/plain", name: "a.txt", bytes: Buffer.from("hi") };
+    mainSees = undefined;
+    calls.length = 0;
+    expect(await files.channelAttachmentForModel(alice, bot, "att-1", attachment)).toBe(attachment);
+    expect(await files.channelAttachmentForModel(alice, bot, "att-1", text)).toBe(text);
+    expect(calls.length).toBe(0);
+
+    mainSees = false;
+    const described = await files.channelAttachmentForModel(alice, bot, "att-1", attachment);
+    expect(described.mimeType).toBe("text/plain");
+    expect(described.bytes.toString()).toContain("截图.png");
+    expect(described.bytes.toString()).toContain("蓝鲸42");
+    expect(described.bytes.toString()).toContain("当前聊天模型不能看图片");
+    // 频道附件不在聊天文件表里，image_inspect 认不出它，不叫模型拿它去问。
+    expect(described.bytes.toString()).not.toContain("image_inspect");
+    await files.channelAttachmentForModel(alice, bot, "att-1", attachment);
+    expect(calls.filter((c) => c.url.endsWith("/chat/completions")).length).toBe(1);
+    const cached = await database.$client.unsafe<{ file_id: string }[]>("SELECT file_id FROM chisabot_image_descriptions WHERE file_id = 'att:att-1'");
+    expect(cached.length).toBe(1);
+    await database.$client.unsafe("DELETE FROM chisabot_image_descriptions WHERE file_id = 'att:att-1'");
+    expect(await files.channelAttachmentForModel(alice, bot, "att-1", text)).toBe(text);
+    mainSees = undefined;
   });
 
   test("main model can't see images: follow falls back to admin vision, else a note", async () => {
@@ -203,10 +253,12 @@ describe.skipIf(!url)("media models: defaults, personal overrides, vision descri
     const old = await files.upload(bob, bobBot, { name: "old.png", bytes: PNG });
     await database.$client.unsafe("UPDATE chisabot_chat_files SET created_at = now() - interval '2 days' WHERE id = $1", [old.id]);
     await media.savePersonalVision(bob, { mode: "default" });
+    mainSees = false;
     calls.length = 0;
     const note = await files.loadForTurn(bob, old.id);
     expect(note?.bytes.toString()).toContain("image_inspect");
     expect(calls.length).toBe(0);
+    mainSees = undefined;
 
     const app = new Hono();
     let actor = { id: bob, email: "b@x", role: "member" as string };

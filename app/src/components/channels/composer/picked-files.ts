@@ -5,6 +5,8 @@ import {
   MAX_IMAGE_BYTES,
   mediaTypeOf,
   namesNoFormat,
+  unreadablePhotoFormat,
+  unsupportedImageReason,
 } from "@/lib/channels/attachments";
 import { newId } from "@/lib/new-id";
 import type { RejectedFile } from "./rejected-files";
@@ -45,15 +47,16 @@ export function screenPickedFiles(
     const mediaType = mediaTypeOf(file.type);
     const kind = classifyAttachment(file.type);
 
-    if (kind === "unsupported-image") {
-      rejected.push(
-        reject(
-          file,
-          mediaType === "image/svg+xml"
-            ? `'${file.name}' 是 SVG，可能带脚本，不能上传。`
-            : `'${file.name}' 是不支持的图片格式。`,
-        ),
-      );
+    /*
+     * HEIC / HEIF / AVIF 照片按扩展名也认（审查 M9-2）：Windows 上的 Chrome 给 .heic 的类型是空字符串，
+     * 下面「浏览器什么都没说就交给服务器看」那条路会放它过去，等上传完才收到服务器的 415。
+     * 扩展名已经说清了格式，就在这里用同一句话拒绝，并告诉人转成 JPG / PNG。
+     */
+    if (
+      kind === "unsupported-image" ||
+      (kind === "unsupported" && unreadablePhotoFormat(file.name, file.type))
+    ) {
+      rejected.push(reject(file, unsupportedImageReason(file.name, mediaType)));
       continue;
     }
 

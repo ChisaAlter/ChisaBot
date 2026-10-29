@@ -215,6 +215,7 @@ import { createPages } from "./pages/service";
 import { createSchedules } from "./schedules/service";
 import { createChannelUploadMirror } from "./chat-files/channel-mirror";
 import { createChatFiles } from "./chat-files/service";
+import { turnAttachmentLoader } from "./chat-files/turn-attachments";
 import { createConfirmations } from "./confirmations/service";
 import { createSignInNotifier, createSignInResumer } from "./passwords/resume";
 import { createSignInService } from "./passwords/service";
@@ -1614,12 +1615,9 @@ const loadInstructionsForActor = (actorId: string) => () =>
  * A PURE READ. `attachedAt` is written by the send rather than by anything here; see
  * `markAttachmentsSentForActor` below.
  */
-const loadAttachmentForActor =
-  (actorId: string) => (id: string, threadId: string) =>
-    // 机器人私聊里上传的文件（`cf:` 引用，DESIGN.md §56）只按人取：私聊不是频道，没有成员表可查。
-    id.startsWith("cf:")
-      ? chatFiles.loadForTurn(actorId, id.slice(3))
-      : loadAttachmentForTurn(database, { actorId, threadId }, id);
+const loadAttachmentForActor = turnAttachmentLoader(chatFiles, (actorId, threadId, id) =>
+  loadAttachmentForTurn(database, { actorId, threadId }, id),
+);
 
 /**
  * That the files on a message went out in it, recorded when a turn turns out to be a send.
