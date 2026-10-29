@@ -75,6 +75,57 @@ export function useFallbackTurns(threadId: string | null | undefined): Map<strin
   return turns;
 }
 
+/** 「已压缩前文」那一行：说明 + 可展开的摘要（只裁剪时没有摘要）。 */
+export type CompactionNote = { notice: string; summary: string | null };
+
+/** 服务器 `/compactions` 的回答 → 用户消息 id → 说明（纯函数便于测试）。 */
+export function readCompactionTurns(body: unknown): Map<string, CompactionNote> {
+  const next = new Map<string, CompactionNote>();
+  const turns = (body as { turns?: unknown } | null)?.turns;
+  if (!Array.isArray(turns)) return next;
+  for (const turn of turns as { userMessageId?: unknown; notice?: unknown; summary?: unknown }[]) {
+    if (typeof turn?.userMessageId !== "string" || typeof turn.notice !== "string" || !turn.notice) continue;
+    next.set(turn.userMessageId, { notice: turn.notice, summary: typeof turn.summary === "string" && turn.summary ? turn.summary : null });
+  }
+  return next;
+}
+
+/**
+ * Hermes 内核下发给模型时压缩过前文的轮次（agents/history-budget.ts）：用户消息 id → 「已压缩前文」一行。
+ * 同 useFallbackTurns：打开时读一次，每轮结束后 1.5 秒再读。
+ */
+export function useCompactionTurns(threadId: string | null | undefined): Map<string, CompactionNote> {
+  const [turns, setTurns] = useState<Map<string, CompactionNote>>(() => new Map());
+  useEffect(() => {
+    setTurns((previous) => (previous.size === 0 ? previous : new Map()));
+    if (!threadId) return;
+    let alive = true;
+    const load = () =>
+      fetch(`/api/copilotkit/threads/${encodeURIComponent(threadId)}/compactions`, { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : { turns: [] }))
+        .then((body: unknown) => {
+          if (!alive) return;
+          const next = readCompactionTurns(body);
+          setTurns((previous) =>
+            previous.size === next.size && [...next].every(([key, note]) => previous.get(key)?.notice === note.notice && previous.get(key)?.summary === note.summary)
+              ? previous
+              : next,
+          );
+        })
+        .catch(() => {});
+    void load();
+    const onRunning = (event: Event) => {
+      if ((event as CustomEvent<boolean>).detail === false) setTimeout(load, 1500);
+    };
+    window.addEventListener("chisabot-chat-running", onRunning);
+    return () => {
+      alive = false;
+      window.removeEventListener("chisabot-chat-running", onRunning);
+    };
+  }, [threadId]);
+  return turns;
+}
+
 function sameMap(a: Map<string, string>, b: Map<string, string>) {
   if (a.size !== b.size) return false;
   for (const [key, value] of a) if (b.get(key) !== value) return false;

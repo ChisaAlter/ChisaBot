@@ -172,6 +172,9 @@ import {
   normalizeModelBaseUrls,
   runtimeModelForEnvironment,
   setAgentKernel,
+  setHistorySummaries,
+  setModelContextWindowResolver,
+  setPreviousRunUsageResolver,
   setModelOutputLimitResolver,
   setModelFallbackCatalog,
   setModelFallbackList,
@@ -303,6 +306,8 @@ import { flushOpsMetrics, startOpsMetricsStore } from "./ops-metrics-store";
 import { OPS_CODES } from "../../shared/ops-codes";
 import { bumpOps } from "../../shared/ops-counters";
 import { createModelFallbackService, createModelFallbackStore } from "./agents/model-fallback-settings";
+import { createPgHistorySummaryStore, lastMeasuredUsage } from "./agents/history-budget";
+import { createHistorySummaryModelService, createHistorySummaryModelStore } from "./agents/history-summary-settings";
 import { createSelfHostBanner } from "./self-host-banner";
 import { createTeamBots } from "./team-bots/team-bots";
 import {
@@ -1144,6 +1149,14 @@ setModelFallbackCatalog(async () => (await modelCatalog.list()).models.map((entr
 // 设置 → 模型 →「备用模型」（DESIGN.md §61）：管理员排好的顺序优先于环境变量 / 同平台自动挑选。
 const modelFallbacks = createModelFallbackService({ store: createModelFallbackStore(database) });
 setModelFallbackList(() => modelFallbacks.models());
+// Hermes 内核长对话压缩前文（agents/history-budget.ts）：上下文窗口来自模型目录；摘要缓存表运行时自建；
+// 摘要模型在 设置 → 模型 →「摘要模型」，没配置就用这一轮的主模型。
+setModelContextWindowResolver(async (modelId) =>
+  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.contextWindow,
+);
+const historySummaryModel = createHistorySummaryModelService({ store: createHistorySummaryModelStore(database) });
+setHistorySummaries({ store: createPgHistorySummaryStore(database), model: () => historySummaryModel.model() });
+setPreviousRunUsageResolver((threadId) => lastMeasuredUsage(database, threadId));
 /* Hermes replaces the execution loop while every host tool keeps its existing policy and identity. */
 setAgentKernel(
   config.hermesKernel
@@ -3876,6 +3889,7 @@ const app = createApp(
         }),
       ],
       ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
+      ["/api/admin/history-summary-model", historySummaryModel.routes(requireUser)],
       [
         "/api/admin/runtime-kernel",
         createRuntimeKernelRoutes({

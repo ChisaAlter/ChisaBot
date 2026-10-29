@@ -34,7 +34,50 @@ export type HermesRunConfiguration = {
   signRun: (runId: string, threadId: string, previous?: unknown) => string;
   toolsFor: (input: RunAgentInput, signal: AbortSignal) => Promise<readonly GrantedTool[]>;
   prepare: (input: RunAgentInput, tools: readonly GrantedTool[]) => Promise<RunAgentInput>;
+  /**
+   * 这一轮的备用模型（同一个连接，按优先级）和输出上限（模型目录，见 copilot.ts resolveOutputLimit）。
+   * 每一轮都问一次（管理员改了设置下一轮就生效）；没有就只发模型 id，Hermes 用它自己的默认。
+   */
+  modelControls?: (modelId: string) => Promise<HermesModelControls>;
+  /** 宿主要附在 RUN_FINISHED metadata 上的内容（例如这一轮压缩了前文：historyCompaction）。 */
+  finishedMetadata?: (runId: string) => Record<string, unknown> | undefined;
+  /**
+   * 宿主是否已经压缩了这次运行的前文（prepare 之后问）。是的话 model.contextCompression = false，
+   * 适配器在这次运行里关掉 Hermes 自带的上下文压缩，免得二次压缩。
+   */
+  hostCompacted?: (runId: string) => boolean;
+  log?: (line: Record<string, unknown>) => void;
 };
+
+export type HermesModelControls = { fallbacks?: readonly string[]; maxOutputTokens?: number };
+
+/** 发给 Hermes 的备用模型最多几个（同 设置 → 模型 →「备用模型」的上限）。 */
+export const HERMES_MAX_FALLBACKS = 8;
+
+/** 线上传给桥接层的 model 字段：id + 去重后的备用模型 + 输出上限（都可省略）。 */
+export function hermesWireModel(modelId: string, controls: HermesModelControls | undefined, hostCompacted = false) {
+  const fallbacks = [...new Set((controls?.fallbacks ?? []).map((id) => id.trim()))]
+    .filter((id) => id && id !== modelId && id.length <= 200 && ![...id].some((character) => /\s/u.test(character) || character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))
+    .slice(0, HERMES_MAX_FALLBACKS);
+  const limit = controls?.maxOutputTokens;
+  return {
+    id: modelId,
+    ...(fallbacks.length ? { fallbacks } : {}),
+    ...(typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0 && limit <= 1_000_000 ? { maxOutputTokens: limit } : {}),
+    ...(hostCompacted ? { contextCompression: false } : {}),
+  };
+}
+
+/**
+ * Hermes 换了备用模型（适配器回报，桥接层放在 RUN_FINISHED metadata.modelFallback）：只认这一轮发出去的
+ * 主模型 → 发出去的某个备用模型，其余一律丢弃。认下来的同内置路径一样记日志、进对话里那行淡色小字。
+ */
+export function acceptedHermesFallback(value: unknown, wire: { id: string; fallbacks?: readonly string[] }) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const { from, to, reason } = value as Record<string, unknown>;
+  if (from !== wire.id || typeof to !== "string" || !wire.fallbacks?.includes(to)) return null;
+  return { from, to, reason: reason === "quota" ? ("quota" as const) : ("unavailable" as const) };
+}
 
 function asGranted(tool: HeadlessTool): GrantedTool {
   return {
@@ -148,7 +191,11 @@ export class HermesRuntimeAgent extends AbstractAgent {
           if (!surface.hidden && !tools.has(surface.definition.name)) tools.set(surface.definition.name, asGranted(surface));
         }
         const assembled = [...tools.values()];
-        const prepared = await this.configuration.prepare(input, assembled);
+        const [prepared, controls] = await Promise.all([
+          this.configuration.prepare(input, assembled),
+          this.configuration.modelControls?.(this.configuration.modelId).catch(() => undefined),
+        ]);
+        const wireModel = hermesWireModel(this.configuration.modelId, controls, this.configuration.hostCompacted?.(input.runId) === true);
         controller.signal.throwIfAborted();
         // A client cannot grant a tool by supplying its schema. Only host-bound executors are offered.
         prepared.tools = assembled.map((tool) => ({ name: tool.name, description: tool.description, parameters: z.toJSONSchema(tool.parameters, { io: "input" }) }));
@@ -174,7 +221,7 @@ export class HermesRuntimeAgent extends AbstractAgent {
             chisabotHermes: {
               version: 1,
               scope: { actorId: scope.actorId, botId: scope.botId, threadId: input.threadId, runId: input.runId },
-              model: { id: this.configuration.modelId },
+              model: wireModel,
               toolGateway: { url: this.configuration.binding.toolGatewayUrl, capability: runTools.capability },
             },
           },
@@ -182,7 +229,7 @@ export class HermesRuntimeAgent extends AbstractAgent {
         // Headless middleware observes the ownership marker after RUN_STARTED and never
         // compensates a missing receipt by executing a Hermes-owned call itself.
         subscription = new CaptureHermesRun(runTools, assembled.map((tool) => tool.name)).run(wire, new SeededTransport(remote, wire)).subscribe({
-          next: (event) => subscriber.next(event),
+          next: (event) => subscriber.next(event.type === EventType.RUN_FINISHED ? this.finished(event as RunFinishedEvent, input.runId, wireModel) : event),
           error: (error) => subscriber.error(error),
           complete: () => subscriber.complete(),
         });
@@ -203,6 +250,24 @@ export class HermesRuntimeAgent extends AbstractAgent {
         if (this.active === active) this.active = undefined;
       };
     });
+  }
+
+  /** RUN_FINISHED 的 metadata：核对过的 modelFallback + 宿主自己的（historyCompaction 等）。 */
+  private finished(event: RunFinishedEvent, runId: string, wire: { id: string; fallbacks?: readonly string[] }): BaseEvent {
+    const { modelFallback: reported, ...rest } = ((event as { metadata?: Record<string, unknown> }).metadata ?? {}) as Record<string, unknown>;
+    const metadata: Record<string, unknown> = { ...rest };
+    const fallback = acceptedHermesFallback(reported, wire);
+    if (fallback) {
+      metadata.modelFallback = fallback;
+      (this.configuration.log ?? ((line) => console.log(JSON.stringify(line))))({ type: "model-fallback", event: "used", model: fallback.from, fallback: fallback.to, reason: fallback.reason, kernel: "hermes" });
+    }
+    try {
+      Object.assign(metadata, this.configuration.finishedMetadata?.(runId) ?? {});
+    } catch {
+      // 附加信息失败不影响回答。
+    }
+    const { metadata: _old, ...base } = event as RunFinishedEvent & { metadata?: unknown };
+    return (Object.keys(metadata).length ? { ...base, metadata } : base) as BaseEvent;
   }
 
   clone(): HermesRuntimeAgent {

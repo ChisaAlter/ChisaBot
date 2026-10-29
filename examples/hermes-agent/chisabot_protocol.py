@@ -79,6 +79,12 @@ class HostPrompt:
     model_id: str
     continuation: bool = False
     current_message: dict[str, Any] | None = field(default=None, repr=False)
+    # ChisaBot's configured backup models (same connection) and output cap for this turn.
+    fallbacks: tuple[str, ...] = ()
+    max_output_tokens: int | None = None
+    # False when ChisaBot already compacted this run's history (trimmed / summarized older turns):
+    # Hermes' own context compression stays off for the run so nothing is compressed twice.
+    context_compression: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -200,6 +206,26 @@ def _history(value: Any) -> list[dict[str, Any]]:
     return messages
 
 
+MAX_FALLBACK_MODELS = 8
+MAX_OUTPUT_TOKENS = 1_000_000
+
+
+def _model_fallbacks(value: Any, primary: str) -> tuple[str, ...]:
+    """Ordered backup model ids; the host already applied the admin list / environment rules."""
+    if value is None:
+        return ()
+    if not isinstance(value, list) or len(value) > MAX_FALLBACK_MODELS:
+        raise ProtocolError(f"chisabot.model.fallbacks must be an array of at most {MAX_FALLBACK_MODELS} model ids")
+    models: list[str] = []
+    for raw in value:
+        model = _text(raw, "chisabot.model.fallbacks entry")
+        if len(model) > 200 or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in model):
+            raise ProtocolError("chisabot.model.fallbacks entries must be model ids without whitespace")
+        if model != primary and model not in models:
+            models.append(model)
+    return tuple(models)
+
+
 def parse_host_prompt(value: Any) -> HostPrompt:
     if not isinstance(value, dict):
         raise ProtocolError("_meta.chisabot must be an object")
@@ -255,6 +281,14 @@ def parse_host_prompt(value: Any) -> HostPrompt:
     if not isinstance(raw_model, dict):
         raise ProtocolError("chisabot.model must be an object")
     model_id = _text(raw_model.get("id"), "chisabot.model.id")
+    fallbacks = _model_fallbacks(raw_model.get("fallbacks"), model_id)
+    max_output_tokens = raw_model.get("maxOutputTokens")
+    if max_output_tokens is not None and (type(max_output_tokens) is not int
+                                          or not 0 < max_output_tokens <= MAX_OUTPUT_TOKENS):
+        raise ProtocolError("chisabot.model.maxOutputTokens must be a positive integer")
+    context_compression = raw_model.get("contextCompression")
+    if context_compression is not None and type(context_compression) is not bool:
+        raise ProtocolError("chisabot.model.contextCompression must be a boolean")
     continuation = value.get("continuation", False)
     if type(continuation) is not bool:
         raise ProtocolError("chisabot.continuation must be a boolean")
@@ -266,10 +300,11 @@ def parse_host_prompt(value: Any) -> HostPrompt:
         if current.get("content") is None:
             raise ProtocolError("chisabot.currentMessage must contain user content")
     # Refuse a transport capability accidentally copied into a model-visible field.
-    model_visible = json.dumps([system, history, current, [tool.registry_schema() for tool in tools], model_id], ensure_ascii=False)
+    model_visible = json.dumps([system, history, current, [tool.registry_schema() for tool in tools], model_id, fallbacks], ensure_ascii=False)
     if capability in model_visible:
         raise ProtocolError("The gateway capability must not occur in model-visible content")
-    return HostPrompt(scope, system, history, tuple(tools), Gateway(url.rstrip("/"), capability), model_id, continuation, current)
+    return HostPrompt(scope, system, history, tuple(tools), Gateway(url.rstrip("/"), capability), model_id, continuation, current,
+                      fallbacks, max_output_tokens, context_compression)
 
 
 def redact(value: Any, secret: str) -> Any:
@@ -465,3 +500,22 @@ class RunState:
 
 
 active_run: ContextVar[RunState | None] = ContextVar("chisabot_host_run", default=None)
+
+
+# Hermes FailoverReason values that mean "this model's quota / rate limit is used up". Everything
+# else that makes Hermes switch (overloaded, server_error, timeout, ...) is "temporarily unavailable".
+# These are the two reasons ChisaBot's existing backup-model notice distinguishes.
+_QUOTA_REASONS = frozenset({"billing", "rate_limit", "upstream_rate_limit", "quota", "model_entitlement"})
+
+
+def fallback_reason(reason: Any) -> str:
+    value = str(getattr(reason, "value", reason) or "").strip().lower()
+    return "quota" if value in _QUOTA_REASONS else "unavailable"
+
+
+def fallback_use(primary: str, fallback: Any, reason: Any) -> dict[str, str] | None:
+    """The host-facing record of one Hermes model switch: ids only, never provider text."""
+    target = str(fallback or "").strip()
+    if not target or target == primary or len(target) > 200 or any(c.isspace() for c in target):
+        return None
+    return {"from": primary, "to": target, "reason": fallback_reason(reason)}

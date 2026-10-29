@@ -153,3 +153,20 @@ test("GET /api/admin/runtime-kernel: non-admins are refused", async () => {
   );
   expect(response.status).toBe(403);
 });
+
+test("the adapter's detected model controls are reported only when the bridge has them", async () => {
+  const detected = await probeHermesHealth("http://hermes/ag-ui", {
+    fetch: respond({
+      ...READY,
+      modelControls: { fallback: false, maxOutputTokens: true, extra: "x" },
+    }),
+  });
+  expect(detected.modelControls).toEqual({
+    fallback: false,
+    maxOutputTokens: true,
+  });
+  const older = await probeHermesHealth("http://hermes/ag-ui", {
+    fetch: respond({ ...READY, modelControls: null }),
+  });
+  expect(older).not.toHaveProperty("modelControls");
+});

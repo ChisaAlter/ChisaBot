@@ -115,6 +115,7 @@ import {
 import { useThreadConfirmations } from "@/lib/confirmations";
 import { isEditableUserText } from "@/lib/copilot/regenerate";
 import { useReadMark } from "@/lib/copilot/thread-inbox";
+import type { CompactionNote } from "@/lib/copilot/turn-compaction";
 import { WORKER_RESULT_MARKER } from "@/lib/copilot/workers";
 import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
@@ -188,6 +189,8 @@ type ChatTranscriptProps = {
   topNotice?: React.ReactNode;
   /** 换了备用模型的轮次（开启那一轮的用户消息 id → 一句说明），那一轮末尾一行淡色小字（DESIGN.md §61）。 */
   fallbacks?: ReadonlyMap<string, string>;
+  /** 发给模型时压缩过前文的轮次（Hermes 长对话）：那一轮末尾一行淡色「已压缩前文」，可展开看摘要。 */
+  compactions?: ReadonlyMap<string, CompactionNote>;
 };
 
 /**
@@ -3074,6 +3077,7 @@ export function ChatTranscript({
   onRetryUnanswered,
   topNotice,
   fallbacks,
+  compactions,
   lastSentAt = null,
 }: ChatTranscriptProps) {
   /*
@@ -3122,6 +3126,7 @@ export function ChatTranscript({
     live,
     stoppedTurns ?? EMPTY_STOPS,
     fallbacks,
+    compactions,
   );
   const showToolActivity = useToolActivityVisible();
   /*
@@ -3484,6 +3489,7 @@ export function ChatTranscript({
                 const index = tailStart + offset;
                 const stoppedHere = compact.stoppedAfter.has(item.id);
                 const fallback = compact.fallbackAfter.get(item.id);
+                const compaction = compact.compactionAfter.get(item.id);
                 const hidden = rowHidden(item.id);
                 const row = hidden
                   ? foldedRef.current.has(item.id)
@@ -3494,7 +3500,7 @@ export function ChatTranscript({
                 // 以前连标记一起 return null，刷新后只剩服务器误锚时就像挂在上一轮回答下面。
                 // Keep every keyed row in one flat sibling list. Returning a nested array only
                 // when a marker appears changes the anchor row's React parent and remounts it.
-                if (!stoppedHere && !fallback) return [row];
+                if (!stoppedHere && !fallback && !compaction) return [row];
                 return [
                   row,
                   stoppedHere ? (
@@ -3521,6 +3527,33 @@ export function ChatTranscript({
                       >
                         {fallback}
                       </div>
+                    </MessageScrollerItem>
+                  ) : null,
+                  compaction ? (
+                    <MessageScrollerItem
+                      key={`${item.id}:compaction`}
+                      messageId={`${item.id}:compaction`}
+                    >
+                      {compaction.summary ? (
+                        <details
+                          className="chat-fallback-note"
+                          data-testid="turn-compaction"
+                        >
+                          <summary className="cursor-pointer">
+                            {compaction.notice}
+                          </summary>
+                          <p className="mt-1 whitespace-pre-wrap">
+                            {compaction.summary}
+                          </p>
+                        </details>
+                      ) : (
+                        <div
+                          className="chat-fallback-note"
+                          data-testid="turn-compaction"
+                        >
+                          {compaction.notice}
+                        </div>
+                      )}
                     </MessageScrollerItem>
                   ) : null,
                 ];
@@ -3833,6 +3866,7 @@ export function compactTurns(
   busy: boolean,
   stopped: ReadonlySet<string>,
   fallbacks?: ReadonlyMap<string, string>,
+  compactions?: ReadonlyMap<string, CompactionNote>,
 ): {
   tone: Map<string, "lead" | "step" | "final">;
   hidden: Set<string>;
@@ -3840,6 +3874,8 @@ export function compactTurns(
   stoppedAfter: Set<string>;
   /** 换了备用模型的轮次：最后一个看得见的行 → 说明（§61）。 */
   fallbackAfter: Map<string, string>;
+  /** 压缩过前文的轮次：最后一个看得见的行 → 「已压缩前文」（可展开的摘要）。 */
+  compactionAfter: Map<string, CompactionNote>;
   /**
    * 干活卡（§75.1）：这一轮第一个干活的工具那一行 → 这一轮的全部调用、是否还在跑；key = 这一轮开头那条消息（记用时用）。
    * 还在跑时画实时卡，结束后同一个位置收成「搜索 2 次 · 12 秒 ⌄」。
@@ -3854,6 +3890,7 @@ export function compactTurns(
   const hidden = new Set<string>();
   const stoppedAfter = new Set<string>();
   const fallbackAfter = new Map<string, string>();
+  const compactionAfter = new Map<string, CompactionNote>();
   const work = new Map<string, WorkEntry>();
   const replyTo = new Map<string, ReplyTarget>();
   const memories = new Map<string, MemoryPillItem[]>();
@@ -4068,6 +4105,12 @@ export function compactTurns(
         .find(Boolean);
       if (notice) fallbackAfter.set(last, notice);
     }
+    if (!live && last && compactions?.size) {
+      const note = turn.users
+        .map((user) => compactions.get(turnOf(user)))
+        .find(Boolean);
+      if (note) compactionAfter.set(last, note);
+    }
     // 采集本轮的记忆写入调用（memory_save / memory_update / memory_log），挂在可见的助手回复气泡下方。
     const turnMemories: MemoryPillItem[] = [];
     for (const item of turn.rest) {
@@ -4124,5 +4167,5 @@ export function compactTurns(
       memories.set(memTargetId, turnMemories);
     }
   });
-  return { tone, hidden, stoppedAfter, fallbackAfter, work, replyTo, memories };
+  return { tone, hidden, stoppedAfter, fallbackAfter, compactionAfter, work, replyTo, memories };
 }
