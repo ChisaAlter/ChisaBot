@@ -2,6 +2,9 @@
 
 - CI 门禁加固：`scripts/biome-new-issues.ts` 在 Biome 自身出错（退出码非 0 且没有可解析的 JSON，例如 biome.json 写坏）时一律失败；改用 `process.exitCode`、正常返回，确保 `biome-base-*` 临时目录被清理；用法注释与 workflow 实际传的基线一致；新增 `scripts/biome-new-issues.test.ts`。修默认 `error` 输出自己调自己（有新增问题或 Biome 出错、又没传回调时——CI 正是这样调用——脚本卡死），找不到 Biome / git 可执行文件改为退出 2。
 - CI：新增 Biome「只拦新增问题」检查（`scripts/biome-new-issues.ts`，与基线逐文件按规则比诊断数）、完整 `bun run test:app`、pc/ 独立安装 + chisabot-node 打包检查（审查清单第 3 项）。
+
+- 修 test:app 共享进程里的测试干扰（use-control 的 wake 监听、schedule-runs-query 的 mock.module 泄漏），修 gateway-account-control / startup-resilience 及 5 个 server 测试；server 补 `@copilotkit/core` 开发依赖；CI 下 chisabot-node 打包失败即构建失败；schedule-fired 的 `Link` 替身不再漏给其他文件（有路由时用真 `Link`），移出隔离名单；avatar-picker-shape 拆 DOM 前先 `settleReactWork`，`test:app` 退出码恢复 0。
+
 ## 0.1.104
 
 - 修复干净安装（默认隔离 linker）下 `shared/json-render` 解析不到 `@json-render/*`、typecheck/build 失败的问题：根 `package.json` 补声明这两个依赖；app 补声明测试与 vite.config 直接用到的 `@ag-ui/client`、`rxjs`、`esbuild`（版本均与 lockfile 一致）（#365）。
