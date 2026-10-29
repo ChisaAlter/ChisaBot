@@ -1,10 +1,13 @@
 package cn.ayase.chisabot.ui
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -34,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import cn.ayase.chisabot.AppViewModel
 import cn.ayase.chisabot.BuildConfig
 
@@ -54,6 +58,13 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         fileCallback?.onReceiveValue(uris.toTypedArray()); fileCallback = null
+    }
+    // 网页要麦克风（语音输入）且系统还没给 RECORD_AUDIO 时，先问系统；拒绝就拒绝网页的请求。
+    var micRequest by remember { mutableStateOf<PermissionRequest?>(null) }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val request = micRequest ?: return@rememberLauncherForActivityResult
+        micRequest = null
+        if (granted) request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) else request.deny()
     }
     BackHandler {
         val w = web
@@ -107,6 +118,22 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView, newProgress: Int) { progress = newProgress }
                             override fun onReceivedTitle(view: WebView, t: String?) { if (!t.isNullOrBlank() && !t.startsWith("http")) pageTitle = t }
+                            // 只给本服务器的页面麦克风，别的来源、别的资源（摄像头等）一律拒绝。
+                            override fun onPermissionRequest(request: PermissionRequest) {
+                                val grant = micResourcesToGrant(request.origin?.toString(), origin, request.resources)
+                                if (grant == null) {
+                                    request.deny()
+                                } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                    request.grant(grant)
+                                } else {
+                                    micRequest?.deny()
+                                    micRequest = request
+                                    micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            }
+                            override fun onPermissionRequestCanceled(request: PermissionRequest) {
+                                if (micRequest === request) micRequest = null
+                            }
                             override fun onShowFileChooser(view: WebView, cb: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                                 fileCallback?.onReceiveValue(null)
                                 fileCallback = cb
@@ -136,6 +163,27 @@ private fun syncTheme(view: WebView, theme: String) {
             "var r=document.documentElement;if(r){r.classList.toggle('dark',t==='dark');r.style.colorScheme=t;}}catch(e){}})('$theme')",
         null,
     )
+}
+
+/**
+ * 网页的权限请求里能给的部分：只有本服务器（[appOrigin]，协议 + 主机 + 端口都相同）要麦克风时，
+ * 才给 RESOURCE_AUDIO_CAPTURE；别的来源、或者除了麦克风还要别的（摄像头、受保护媒体等）都返回 null（拒绝）。
+ */
+internal fun micResourcesToGrant(requestOrigin: String?, appOrigin: String, resources: Array<String>): Array<String>? {
+    if (resources.isEmpty() || resources.any { it != PermissionRequest.RESOURCE_AUDIO_CAPTURE }) return null
+    val asked = originKey(requestOrigin) ?: return null
+    if (asked != originKey(appOrigin)) return null
+    return arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+}
+
+/** 「协议://主机:端口」，主机小写、默认端口补齐；解析不了返回 null。 */
+private fun originKey(origin: String?): String? {
+    val uri = runCatching { java.net.URI(origin?.trim().orEmpty()) }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase() ?: return null
+    val host = uri.host?.lowercase() ?: return null
+    if (scheme != "https" && scheme != "http") return null
+    val port = if (uri.port != -1) uri.port else if (scheme == "https") 443 else 80
+    return "$scheme://$host:$port"
 }
 
 /** evaluateJavascript 回来的是 JSON 文本：只有字面量 true 表示网页已经处理了返回键。 */

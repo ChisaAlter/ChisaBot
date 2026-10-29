@@ -14,6 +14,7 @@ import cn.ayase.chisabot.md.Block
 import cn.ayase.chisabot.md.Markdown
 import cn.ayase.chisabot.ui.hideIncompleteTail
 import cn.ayase.chisabot.ui.isBackHandled
+import cn.ayase.chisabot.ui.micResourcesToGrant
 import cn.ayase.chisabot.ui.siteOf
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -232,5 +233,28 @@ class NativeLogicTest {
         assertFalse(isBackHandled("null"))
         assertFalse(isBackHandled(null))
         assertFalse(isBackHandled("\"true\""))
+    }
+
+    @Test
+    fun webMicOnlyForOwnOriginAndOnlyAudio() {
+        val audio = "android.webkit.resource.AUDIO_CAPTURE"
+        val video = "android.webkit.resource.VIDEO_CAPTURE"
+        val app = "https://chat.example.com"
+        // 本服务器要麦克风：给，且只给麦克风。WebView 的 origin 常带结尾斜杠、主机大小写不定、默认端口可写可不写。
+        assertEquals(listOf(audio), micResourcesToGrant("https://chat.example.com/", app, arrayOf(audio))?.toList())
+        assertEquals(listOf(audio), micResourcesToGrant("https://Chat.Example.com:443", app, arrayOf(audio))?.toList())
+        // 别的来源、别的协议 / 端口 / 子域名：拒绝。
+        assertNull(micResourcesToGrant("https://evil.example.com/", app, arrayOf(audio)))
+        assertNull(micResourcesToGrant("http://chat.example.com/", app, arrayOf(audio)))
+        assertNull(micResourcesToGrant("https://chat.example.com:8443/", app, arrayOf(audio)))
+        assertNull(micResourcesToGrant("https://chat.example.com.evil.net/", app, arrayOf(audio)))
+        assertNull(micResourcesToGrant(null, app, arrayOf(audio)))
+        assertNull(micResourcesToGrant("file:///android_asset/x.html", app, arrayOf(audio)))
+        // 本服务器但还要摄像头、或者什么都没要：拒绝。
+        assertNull(micResourcesToGrant("https://chat.example.com/", app, arrayOf(audio, video)))
+        assertNull(micResourcesToGrant("https://chat.example.com/", app, arrayOf(video)))
+        assertNull(micResourcesToGrant("https://chat.example.com/", app, arrayOf()))
+        // 自建服务器带端口（如 :8443）时按同一端口比较。
+        assertEquals(listOf(audio), micResourcesToGrant("https://10.0.0.5:8443/", "https://10.0.0.5:8443", arrayOf(audio))?.toList())
     }
 }
