@@ -595,3 +595,29 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.110`；PC / Android 不变。不打 tag、不建 Release。
 
 **0.1.110 部署**（2026-10-29 18:06 北京时间开始）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.110-20261029T100654Z.dump`（`pg_restore -l` 767 条目），备份网关 `nginx.conf`（`nginx.conf.bak-pre-v0.1.110-20261029T100654Z`）。`deploy-serial.sh 249aefa` 镜像 `local/chisabot:auto-202610291007-249aefa`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.110` / `249aefa`；`request.sh smoke` PASSED，`POST /api/admin/smoke` 模型自检 `ok:true persisted:false`，`health.sh` 通过（容器 healthy、无重启、本机 `/health` 200、公网 `/login` 200），sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 9e9ca0d；保留当前（BASE）249aefa、上一版 63914d8、`keep-628d527`。
+
+## 2026-10-29 一键整理记忆：预览确认、不截断、可撤销（分支 `fix/memory-tidy-safety`）
+
+来源：审计报告 `12-settings.md` 必修 1（「一键整理记忆」）。
+
+**动机**：原来设置页的「整理记忆」按钮和「添加」并排，点一下就直接执行：同主题笔记按 `kind + subject` 合并，合并结果 `slice(0, 4000)` 静默截断，被并掉的条目直接删除、没有任何恢复手段；分组不看 `agent_id` / `context`，不同机器人的笔记会被并到一起；整理过程是多条独立语句，中途出错会留下一半；`memory_dream` 作为 `memory/` 工具跳过审批，周报技能可以不打招呼就调用。
+
+**改动**：
+1. **预览 + 确认**（`server/src/memory-notes/tidy.ts`）：纯函数 `planTidy` 先算出分组和结果，`GET /api/memory-notes/dream` 返回预览和指纹 `token`。前端（`app/src/components/memory/memory-tidy.ts`）用 `confirmDialog` 列出要合并的组（`confirm.tsx` 新增可选 `items`），确认后 `POST` 带回 `token`；事务里加行锁重新计划，指纹不一致返回 409，不做任何修改。
+2. **不截断**：合并后超过 4000 字的整组标为 `too_long`，不合并、不删，只对每条去掉重复行。
+3. **可恢复**：新表 `chisabot_memory_tidy_backups`（`batch_id, note_id` 主键，`(owner_user_id, created_at DESC)` 索引）在同一事务里存原文 JSON；每人只保留最近一次、7 天过期。整理后弹 8 秒「撤销」，之后可在「更多」→「撤销上次整理」恢复；撤销时被删的按原 id 放回，被改的只在内容仍等于整理结果时才还原（用户已再编辑的不覆盖，计入 skipped）。
+4. **分组**：键 = `kind + agent_id + context + subject`（无主题时用正文）。
+5. **事务**：锁、清旧备份、写备份、更新、删除都在 `begin` 里完成，中途失败全部回滚。
+6. **审批**：`categoryOfTool` 把 `memory_dream` 归为「删除」（先于 `memory/` 跳过规则）；Hermes 回调路径的记忆工具补上 `confirmations.wrap`；周报技能的说明改为用户明确同意后才调用。注意：定时任务预设里的「每周整理记忆」现在也会走审批，非交互运行时除非删除审批设为自动，否则会被拒绝——这是有意的，后续可以考虑改成只发预览。
+7. **界面**：「整理记忆…」和「撤销上次整理」放进「添加」右侧的「更多」菜单（复用 `DropdownMenu`），没有改 `styles.css`。
+
+**测试**：
+- `server/tests/memory-tidy.test.ts`（不需要数据库）：计划（合并、超长不合并、不同机器人 / 情境不合并、去重、指纹）；内存版 SQL 替身（事务快照回滚）上的整理 + 撤销往返、第 1–7 次写入分别注入失败都整体回滚、token 冲突、撤销跳过已编辑条目；审批分类。
+- `server/tests/memory-tidy.integration.test.ts`（真库，需要 `TEST_DATABASE_URL`）：备份表索引、超长不合并 + 不同机器人不合并 + 撤销恢复原样、预览后有变化返回冲突、删除步骤注入失败时笔记和备份都回滚。
+- `app/tests/memory-tidy.test.tsx`：确认弹窗条目文案、取消不发请求、确认带 token 并可撤销、没有可合并时不弹确认。
+
+**截图**（本地单用户模式 + 临时数据库实拍，`docs/images/memory-tidy/`；拍完后把提示里的「0 条去掉了重复行」这类 0 项改为不显示）：
+
+| 「更多」菜单 | 确认弹窗 | 整理后「撤销」 | 菜单里的「撤销上次整理」 |
+| --- | --- | --- | --- |
+| ![](images/memory-tidy/more-menu.webp) | ![](images/memory-tidy/confirm-dialog.webp) | ![](images/memory-tidy/after-undo-toast.webp) | ![](images/memory-tidy/more-menu-undo.webp) |

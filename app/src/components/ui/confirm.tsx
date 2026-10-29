@@ -19,6 +19,8 @@ type ConfirmOptions = {
   confirmLabel?: string;
   cancelLabel?: string;
   destructive?: boolean;
+  /** 要列给用户看的条目（比如整理记忆将合并的组），描述下面一行一条，太多时可滚动。 */
+  items?: readonly string[];
 };
 type Pending = ConfirmOptions & { resolve: (ok: boolean) => void };
 
@@ -65,6 +67,13 @@ export function ConfirmHost() {
             <DialogDescription>{pending.description}</DialogDescription>
           ) : null}
         </DialogHeader>
+        {pending?.items?.length ? (
+          <ul className="max-h-56 list-disc space-y-1 overflow-y-auto pl-5 text-sm" data-testid="confirm-items">
+            {pending.items.map((item, index) => (
+              <li key={index}>{item}</li>
+            ))}
+          </ul>
+        ) : null}
         <DialogFooter>
           <Button onClick={() => settle(false)} variant="outline">
             {pending?.cancelLabel ?? "取消"}

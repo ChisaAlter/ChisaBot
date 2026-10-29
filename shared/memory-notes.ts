@@ -45,3 +45,33 @@ export const MEMORY_LIMITS = {
   /** 一个人最多存多少条（超过就拒绝新增，提示去设置里整理）。 */
   perUser: 3000,
 } as const;
+
+/** 整理记忆的一组（DESIGN.md §50，审计 12-settings 必修 1）：同种类、同机器人、同情境、同主题（或正文完全相同）。 */
+export type MemoryTidyGroup = {
+  kind: MemoryKind;
+  /** 主题，没有就是正文第一行（截短）。 */
+  title: string;
+  agentId: string | null;
+  context: string | null;
+  /** 这组有几条（合并后剩 1 条）。 */
+  count: number;
+  ids: string[];
+  /** 合并（并去掉重复行）后的字数。 */
+  length: number;
+  /** too_long：合并后会超过 MEMORY_LIMITS.content，整组不合并。 */
+  skipped: "too_long" | null;
+};
+
+/** 整理前的预览：确认弹窗列出将合并的组；确认时把 token 带回去，库里变了就不做。 */
+export type MemoryTidyPreview = {
+  token: string;
+  groups: MemoryTidyGroup[];
+  mergedCount: number;
+  deduplicatedCount: number;
+  totalRemaining: number;
+};
+
+/** batchId：这次整理的原文备份，撤销用；什么都没改时为 null。 */
+export type MemoryTidyResult = MemoryTidyPreview & { batchId: string | null; summary: string };
+export type MemoryTidyUndoResult = { restored: number; skipped: number };
+export type MemoryTidyLast = { batchId: string; createdAt: string; mergedCount: number; deduplicatedCount: number };

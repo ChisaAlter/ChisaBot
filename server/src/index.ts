@@ -3689,7 +3689,12 @@ const app = createApp(
     }
     const { name, args, botId, actorId, initiator } = input;
     const memory = [
-      ...memoryNotes.tools(actorId, botId),
+      // 整理记忆（memory_dream）算「删除」，这条路径也要先过审批（server/src/confirmations/classify.ts）。
+      ...confirmations.wrap(memoryNotes.tools(actorId, botId), {
+        ownerUserId: actorId,
+        agentId: botId,
+        ...(initiator ? { initiator } : {}),
+      }),
       ...chisaSkills.tools(actorId, botId),
       ...vault.tools(actorId, botId, initiator ?? undefined),
       ...pages.tools(actorId, botId, initiator ?? undefined),

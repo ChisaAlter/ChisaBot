@@ -1,5 +1,13 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { MemoryBotSetting, MemoryKind, MemoryNoteView } from "../../../shared/memory-notes";
+import type {
+  MemoryBotSetting,
+  MemoryKind,
+  MemoryNoteView,
+  MemoryTidyLast,
+  MemoryTidyPreview,
+  MemoryTidyResult,
+  MemoryTidyUndoResult,
+} from "../../../shared/memory-notes";
 import { client } from "@/lib/client";
 
 /** 设置 → 记忆（DESIGN.md §50，docs/memory.md）。 */
@@ -45,17 +53,20 @@ export async function setMemoryBot(agentId: string, enabled: boolean) {
   await client(`/api/memory-notes/bots/${encodeURIComponent(agentId)}`, { method: "PUT", body: { enabled }, fallback: "保存失败，请重试" });
 }
 
-export async function dreamMemoryNotes(): Promise<{
-  mergedCount: number;
-  deduplicatedCount: number;
-  totalRemaining: number;
-  summary: string;
-}> {
-  const response = await client("/api/memory-notes/dream", { method: "POST", body: {}, fallback: "整理记忆失败，请重试" });
-  return (await response.json()) as {
-    mergedCount: number;
-    deduplicatedCount: number;
-    totalRemaining: number;
-    summary: string;
-  };
+/** 整理记忆：先拿预览（将合并的组）和最近一次还能撤销的整理。 */
+export async function previewMemoryTidy(): Promise<{ preview: MemoryTidyPreview; last: MemoryTidyLast | null }> {
+  const response = await client("/api/memory-notes/dream", { fallback: "整理记忆失败，请重试" });
+  return (await response.json()) as { preview: MemoryTidyPreview; last: MemoryTidyLast | null };
+}
+
+/** 确认后按预览的 token 整理；记忆在这期间变了服务器回 409，要重新预览。 */
+export async function applyMemoryTidy(token: string): Promise<MemoryTidyResult> {
+  const response = await client("/api/memory-notes/dream", { method: "POST", body: { token }, fallback: "整理记忆失败，请重试" });
+  return (await response.json()) as MemoryTidyResult;
+}
+
+/** 撤销一次整理：被合并、被删的原文放回去。 */
+export async function undoMemoryTidy(batchId: string): Promise<MemoryTidyUndoResult> {
+  const response = await client("/api/memory-notes/dream/undo", { method: "POST", body: { batchId }, fallback: "撤销整理失败，请重试" });
+  return (await response.json()) as MemoryTidyUndoResult;
 }

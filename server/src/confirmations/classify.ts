@@ -5,7 +5,7 @@ import type { ConfirmCategory, ConfirmDetail, ConfirmMode } from "../../../share
  *
  * - 设备（device_*）不在这里：由设备 hub 在「询问」能力上问（DESIGN.md §45），这里只决定问不问。
  * - ChisaBot 自己的读写工具（记忆、技能、保险箱、联网、面板更新、聊天文件卡 / 画图、确认本身）不拦：它们要么只读，要么
- *   本身就是用户要求的记录类操作，删除也有撤销。
+ *   本身就是用户要求的记录类操作，删除也有撤销。例外：memory_dream（整理记忆）一次合并、删除多条，算「删除」。
  * - 其余工具（内置任务工具、连接器 / MCP 工具）按名字判断：删除类、付款类、发消息类；读类动词开头的不算。
  */
 const SKIP_REF = /^(memory|vault|skills|lifecycle|web|workflows|devices|host-access|confirmations|github|chat-files)\//;
@@ -29,6 +29,8 @@ const NOT_OUTBOUND = new Set([
 
 export function categoryOfTool(name: string, ref?: string): ConfirmCategory | null {
   const id = ref ?? name;
+  // 整理记忆会删掉被并掉的笔记：算「删除」，按偏好先问（审计 12-settings 必修 1：周报技能不能静默触发）。
+  if (name === "memory_dream" && (!ref || ref === "memory/memory_dream")) return "delete";
   if (SKIP_REF.test(id)) return null;
   if (name === "panel_remove") return "delete";
   if (id.startsWith("live-panels/")) return null;
@@ -126,6 +128,7 @@ export function titleForTool(name: string, category: ConfirmCategory): string {
     panel_remove: "删除右栏的一张面板",
     page_delete: "删除一个页面（链接立刻失效，素材一起删）",
     email_send: "通过已连接邮箱发送一封邮件",
+    memory_dream: "整理记忆：合并同主题的重复笔记（被并掉的条目会删除，可在 设置 → 记忆 撤销）",
   };
   if (known[name]) return known[name];
   const verb = { message: "发送", delete: "删除", purchase: "付款 / 下单", device: "电脑操作" }[category];
