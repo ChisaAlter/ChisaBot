@@ -79,6 +79,80 @@ describe("正文里的尖括号（审计 05 必修 1）", () => {
     expect(render("见 <https://example.com>")).toMatch(
       /data-streamdown="link"[^>]*>https:\/\/example\.com</,
     );
-    expect(escapeUnknownTags("a<b 且 c > d")).toBe("a<b 且 c > d");
+    expect(render("见 <mailto:a@b.co>")).toContain("a@b.co");
+    expect(escapeUnknownTags("见 <https://example.com> 和 <a@b.co>")).toBe(
+      "见 <https://example.com> 和 <a@b.co>",
+    );
+    expect(text(render("a<b 且 c > d"))).toContain("a<b 且 c > d");
+  });
+
+  test("和 HTML 元素同名的小写泛型紧跟标识符时也按文字显示", () => {
+    for (const s of [
+      "Vec<option>",
+      "List<object>",
+      "Result<a>",
+      "Vec<i>",
+      "Box<b>",
+      "Map<string, data>",
+    ]) {
+      const html = render(`用 ${s} 存，后面还有字`);
+      expect(text(html)).toContain(`用 ${s} 存，后面还有字`);
+    }
+    // Result<a> 不变成链接吞掉后文；Vec<i> 后面不变成斜体。
+    expect(render("Result<a> 后面的字")).not.toContain(
+      'data-streamdown="link"',
+    );
+    expect(render("Vec<i> 后面的字")).not.toMatch(/<(i|em)[\s>]/);
+    // 前面有空格的真 HTML 照旧是元素，闭合标签也不受影响。
+    expect(render("按 <kbd>Ctrl</kbd> 键")).toContain("<kbd");
+    // 贴着文字写的换行、上下标照旧是 HTML。
+    for (const s of ["a<br>b", "a<br/>b", "H<sub>2</sub>O", "10<sup>3</sup>"])
+      expect(escapeUnknownTags(s)).toBe(s);
+    expect(render("| 列 |\n| --- |\n| 第一行<br>第二行 a<br>b |")).toContain(
+      "<br",
+    );
+    expect(render("H<sub>2</sub>O")).toContain("<sub");
+    expect(escapeUnknownTags("文字<kbd>Ctrl</kbd>")).toBe(
+      "文字<kbd>Ctrl</kbd>",
+    );
+  });
+
+  test("缩进代码块（含列表里的）原样不动", () => {
+    const top =
+      "说明：\n\n    let v: Vec<String> = vec![];\n    Option<T>\n\n后文 Vec<u8>";
+    const out = escapeUnknownTags(top);
+    expect(out).toContain("    let v: Vec<String> = vec![];\n    Option<T>");
+    expect(out).toContain("后文 Vec&lt;u8>");
+    expect(text(render(top))).toContain("let v: Vec<String> = vec![];");
+    expect(render(top)).not.toContain("&amp;lt;");
+
+    const inList =
+      "1. 第一步\n\n       let x: Vec<String> = f();\n\n2. 第二步 Option<T>";
+    const listOut = escapeUnknownTags(inList);
+    expect(listOut).toContain("       let x: Vec<String> = f();");
+    expect(listOut).toContain("第二步 Option&lt;T>");
+    expect(render(inList)).not.toContain("&amp;lt;");
+
+    const bullet = "- 项目\n\n      Map<K, V> m;\n      List<Object> l;";
+    expect(escapeUnknownTags(bullet)).toBe(bullet);
+
+    // 制表符缩进
+    const tab = "看代码：\n\n\tVec<String> v;";
+    expect(escapeUnknownTags(tab)).toBe(tab);
+  });
+
+  test("不是代码块的缩进照常转义", () => {
+    // 段落中间的缩进行是段落续行，不是代码块。
+    expect(escapeUnknownTags("第一行\n    Vec<String> 续行")).toContain(
+      "Vec&lt;String>",
+    );
+    // 列表项下 4 格缩进是同一项的第二段，不是代码。
+    expect(escapeUnknownTags("- 项目\n\n    第二段 Vec<String>")).toContain(
+      "Vec&lt;String>",
+    );
+    // 代码块结束后的普通段落恢复转义。
+    expect(
+      escapeUnknownTags("说明\n\n    code<T>\n\n结尾 Vec<String>"),
+    ).toContain("结尾 Vec&lt;String>");
   });
 });

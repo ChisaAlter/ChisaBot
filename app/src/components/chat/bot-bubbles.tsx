@@ -1060,7 +1060,6 @@ export function ArtifactCard({
         <DiagramZoom naturalWidth={svgNaturalWidth(renderedSvg)}>
           <div
             className="chat-artifact-svg chat-artifact-svg-modal"
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: 同下：本地渲染器输出且已过 DOMPurify（sanitizedMermaidSvg）
             dangerouslySetInnerHTML={{ __html: renderedSvg.replace(/max-width:\s*[\d.]+px;?\s*/, "") }}
             data-testid="artifact-svg-preview"
           />

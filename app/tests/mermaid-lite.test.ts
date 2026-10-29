@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { renderMermaidToSvg, wrapLabel } from "../src/lib/chat/mermaid-lite";
+import {
+  MAX_GRAPH_NODES,
+  renderMermaidToSvg,
+  wrapLabel,
+} from "../src/lib/chat/mermaid-lite";
 
 type Box = { x: number; y: number; w: number; h: number; lines: string[] };
 
@@ -217,13 +221,40 @@ describe("mermaid-lite 流程图（审计 05 必修 2）", () => {
     expect(renderMermaidToSvg("graph TD\nA-->A")).toContain("<path");
   });
 
-  test("1000 个节点也很快", () => {
-    const lines = ["graph TD"];
-    for (let i = 0; i < 999; i++) lines.push(`n${i} --> n${i + 1}`);
+  test(`${MAX_GRAPH_NODES} 个节点也很快，再多就回退成代码`, () => {
+    const chain = (n: number) => {
+      const lines = ["graph TD"];
+      for (let i = 0; i < n - 1; i++) lines.push(`n${i} --> n${i + 1}`);
+      return lines.join("\n");
+    };
     const t0 = performance.now();
-    const svg = renderMermaidToSvg(lines.join("\n"));
-    expect(nodes(svg).length).toBe(1000);
+    const svg = renderMermaidToSvg(chain(MAX_GRAPH_NODES));
+    expect(nodes(svg).length).toBe(MAX_GRAPH_NODES);
     expect(performance.now() - t0).toBeLessThan(1500);
+    const t1 = performance.now();
+    expect(renderMermaidToSvg(chain(MAX_GRAPH_NODES + 1))).toBe("");
+    expect(renderMermaidToSvg(chain(5000))).toBe("");
+    expect(performance.now() - t1).toBeLessThan(1500);
+  });
+
+  test("超长输入不卡（状态转移不是二次复杂度）", () => {
+    const spaces = " ".repeat(100_000);
+    for (const code of [
+      `stateDiagram-v2\nA${spaces}B`,
+      `stateDiagram-v2\nA${spaces}--> B${spaces}: x`,
+      `stateDiagram-v2\n${"A -".repeat(30_000)}`,
+      `graph TD\nA${spaces}B`,
+      `graph TD\nA${spaces}--> B`,
+    ]) {
+      const t0 = performance.now();
+      renderMermaidToSvg(code);
+      expect(performance.now() - t0).toBeLessThan(300);
+    }
+    expect(
+      edgeCount(
+        renderMermaidToSvg(`stateDiagram-v2\nA${spaces}--> B${spaces}: x`),
+      ),
+    ).toBe(1);
   });
 });
 

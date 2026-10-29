@@ -18,7 +18,7 @@ export function SmoothStreamdown({ children, ...props }: Omit<ComponentProps<typ
   // 正文里的 Vec<String>、Option<T> 不是 HTML：先转义成文字，免得被当未知标签丢掉（escape-unknown-tags.ts）。
   // 工作区文件链接换成这个机器人的下载地址（§101）；在看的就是这个机器人的对话。
   const bot = useDeclaredBotId();
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const origin = typeof window === "undefined" ? "" : (window.location?.origin ?? "");
   return (
     <Streamdown translations={STREAMDOWN_ZH} {...props}>
       {workspaceLinks(cjkFriendlyEmphasis(escapeUnknownTags(shown)), bot, origin)}

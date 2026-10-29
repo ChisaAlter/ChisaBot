@@ -4,9 +4,9 @@
 
 来源：审计报告 05（消息渲染）必修 1–3。应修项 4–10 不在这次范围。
 
-1. **尖括号**：Streamdown 把 `Vec<String>` 里的 `<String>` 当未知 HTML 标签，harden 后整段文字消失。`SmoothStreamdown` 现在先过 `escapeUnknownTags`：标签名不是全小写的标准 HTML 元素就把 `<` 转成 `&lt;`。围栏代码块（含列表里缩进的）和行内代码跳过。标准元素原样交给 Streamdown，所以 `<script>`、`onerror` 等清洗规则不变（测试里经真实 Streamdown 验证）。已知局限：全小写且和 HTML 元素同名的泛型参数（如 `Vec<option>`）仍按标签处理。
+1. **尖括号**：Streamdown 把 `Vec<String>` 里的 `<String>` 当未知 HTML 标签，harden 后整段文字消失。`SmoothStreamdown` 现在先过 `escapeUnknownTags`：标签名不是全小写的标准 HTML 元素就把 `<` 转成 `&lt;`。另外，紧跟在标识符字符（`[A-Za-z0-9_]`）后面的开标签一律转义：真 HTML 前面总有空格或标点，而 `Vec<option>`、`List<object>` 不转义会丢字，`Result<a>` 会变成链接吞掉后文，`Vec<i>` 会让后文全斜体。例外是 `br`、`wbr`、`sub`、`sup`：表格里的 `a<br>b`、`H<sub>2</sub>O`、`10<sup>3</sup>` 很常见，也没人拿它们当泛型名。这条规则只管开标签，闭合标签不受影响；`[A-Za-z0-9_]` 不含中文，所以 `按<kbd>Ctrl</kbd>` 这种中文后直接跟的真 HTML 照旧。围栏代码块、缩进代码块（前一行是空行、比所在列表项正文多缩进 4 格；制表符按 4 列算）和行内代码跳过。`<https://…>`、`<a@b.co>` 自动链接不符合标签形式，不受影响。标准元素原样交给 Streamdown，所以 `<script>`、`onerror` 等清洗规则不变（测试里经真实 Streamdown 验证）。
 2. **mermaid-lite**：原来按行用正则切 `-->`，`A --> B --> C`、`-->|标签|`、`A & B` 都会把剩下的整串当成节点名，subgraph 的 `end` 也变成节点。改成逐字符扫描：节点 id + 形状（`[]` `()` `([])` `[[]]` `[()]` `(())` `{}` `{{}}` `>]` `[//]`）、`&` 组、各种连线（含 `|标签|` 和 `-- 标签 -->` 写法），链式按笛卡尔积展开成边；`;` 分句。subgraph 用分带布局：每个顶层 subgraph 一条带，画成带标题的虚线框；嵌套 subgraph 合并到最外层那条带。分层用最长路径（忽略回边，有环也不会无限加深），层内按父节点平均位置排一遍减少交叉。节点文字按宽度折行（中文按字、英文按词），节点框按折行后的尺寸画；层间距按相邻层连线标签的宽度撑开。另外支持 `stateDiagram(-v2)`。
-   任何一句看不懂、括号 / 引号没配对、subgraph 没 `end` 都返回空串，卡片显示原文代码；只有 `flowchart` / `graph` / `stateDiagram` / `sequenceDiagram` / `pie` 会画，其它类型直接回退。流式中结尾的 ``` 没到时不画，避免半张图。回退时代码按 ```text 交给 Streamdown，因为 ```mermaid 会走 Streamdown 自带的 Mermaid 组件（另一套库，认不出的图是一块空白）。
+   任何一句看不懂、括号 / 引号没配对、subgraph 没 `end` 都返回空串，卡片显示原文代码；只有 `flowchart` / `graph` / `stateDiagram` / `sequenceDiagram` / `pie` 会画，其它类型直接回退。流式中结尾的 ``` 没到时不画，避免半张图。超过 `MAX_GRAPH_NODES = 500` 个节点的图，以及解析、布局中抛出的任何异常，也都返回空串回退成代码。状态图的转移原来用 `/^(.+?)\s*-->\s*(.+?)(?:\s*:\s*(.*))?$/` 整句匹配，对“大量空格但没有 `-->`”的输入是二次复杂度（10 万个空格约 2.9 秒）；现在先 `indexOf("-->")` 切出两侧，再按第一个 `:` 切标签，同样的输入在 300 毫秒以内（测试里实际约 10 毫秒）。回退时代码按 ```text 交给 Streamdown，因为 ```mermaid 会走 Streamdown 自带的 Mermaid 组件（另一套库，认不出的图是一块空白）。
 3. **手机卡片头**：按钮组原来只在 `:hover` / `:focus-within` 时 `opacity: 1`，触屏上一直是 0 且 `pointer-events: none`，全屏按钮点不到。`@media (hover: none)` 下按钮组改成常显、跟在标题后面换行。全屏弹窗里的图包了一层 `DiagramZoom`：按钮 50%–800% 缩放、Ctrl / ⌘ + 滚轮（原生非 passive 监听），放大后框内滚动，缩放时保持中心。按钮都用设计系统的 `Button`，没有新增 backdrop-filter。
 
 截图（独立 headless Chrome + 临时 profile，桌面 1100×900 和手机 390×844 触屏，`docs/images/render-must-fix/`）：
@@ -21,9 +21,14 @@
 实测：改前手机上卡片头按钮 `opacity: 0; pointer-events: none`，点全屏超时；改后 `opacity: 1; pointer-events: auto`，能打开全屏并放大。
 
 测试（三项各有回归测试）：
-- 必修 1：`app/tests/escape-unknown-tags.test.tsx`（6 个，经真实 Streamdown 渲染：泛型不丢、代码不动、标准 HTML 照旧、危险 HTML 仍被清洗）。
-- 必修 2：`app/tests/mermaid-lite.test.ts`（29 个：连线标签、链、`&`、分号、各种连线、subgraph 框包住成员、形状、带 `-` / `.` 的 id、长标签折行不溢出、连线标签不压节点、`<br>`、环、1000 节点性能、12 种认不出 / 没写完的图返回空串、状态图、流式未闭合标记）。
-- 必修 3：`app/tests/chat-card-touch.test.tsx`（7 个：`@media (hover: none)` 里按钮组 `opacity: 1` / `pointer-events: auto` / `position: static`，且排在默认隐藏规则之后、之后没有规则再藏起来、没有新增 backdrop-filter；卡片头里有全屏按钮；`DiagramZoom` 的缩放条、画布宽度、缩放范围）。
+- 必修 1：`app/tests/escape-unknown-tags.test.tsx`（9 个，经真实 Streamdown 渲染：泛型不丢、和 HTML 同名的小写泛型不丢字 / 不变链接 / 不变斜体、代码不动、缩进代码块（含列表里的、制表符）不动、段落续行和列表第二段照常转义、自动链接不动、标准 HTML 照旧、危险 HTML 仍被清洗）。把实现换回改前版本，新增的两个用例失败。
+- 必修 2：`app/tests/mermaid-lite.test.ts`（29 个：连线标签、链、`&`、分号、各种连线、subgraph 框包住成员、形状、带 `-` / `.` 的 id、长标签折行不溢出、连线标签不压节点、`<br>`、环、500 节点性能和超过上限回退、10 万空格长输入不卡、12 种认不出 / 没写完的图返回空串、状态图、流式未闭合标记）。
+- 必修 3：`app/tests/chat-card-touch.test.tsx`（8 个：`@media (hover: none)` 里按钮组 `opacity: 1` / `pointer-events: auto` / `position: static`，且排在默认隐藏规则之后、之后没有规则再藏起来、没有新增 backdrop-filter；卡片头里有全屏按钮；别的测试留下没有 `location` 的 `window` 时卡片照样渲染；`DiagramZoom` 的缩放条、画布宽度、缩放范围）。
+返修（小爱审 d7697b34 后）：
+- 全量 `test:app` 里 `chat-card-touch.test.tsx` 失败、单跑通过：前面的测试文件留下一个没有 `location` 的 `window`，`SmoothStreamdown` 读 `window.location.origin` 抛错。改成 `window.location?.origin ?? ""`，并加了对应用例（去掉修复时这个用例失败）。
+- 上面第 1、2 项里的同名小写泛型、缩进代码块、状态转移二次复杂度、节点上限、意外异常回退。
+- Biome：`escape-unknown-tags.ts`、`mermaid-lite.ts` 饼图解析里的非空断言改成 `?? ""` 和显式判断，删掉 `bot-bubbles.tsx` 弹窗分支里没用上的 `biome-ignore`。
+
 原有 `svg-card-sanitize.test.ts`（含 Mermaid 标签注入用例）、`chat-bubbles.test.ts` 照常通过。为了让节点标签里的空格在折行后不丢（`<text>` 的文字内容和原文一致），折行处行尾保留一个空格，量宽度时去掉。
 
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）

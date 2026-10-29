@@ -112,6 +112,24 @@ describe("Mermaid 卡片：全屏按钮和缩放", () => {
     expect(actions).toContain('aria-label="全屏查看"');
   });
 
+  test("全量跑测试时别的用例留下没有 location 的 window，卡片照样能渲染", () => {
+    const g = globalThis as { window?: unknown };
+    const saved = g.window;
+    g.window = {};
+    try {
+      const html = renderToStaticMarkup(
+        <ArtifactCard
+          artifact={artifact as NonNullable<typeof artifact>}
+          components={{}}
+        />,
+      );
+      expect(html).toContain('data-testid="artifact-expand-btn"');
+    } finally {
+      if (saved === undefined) delete g.window;
+      else g.window = saved;
+    }
+  });
+
   test("DiagramZoom：缩放条和可滚动的画布", () => {
     const html = renderToStaticMarkup(
       <DiagramZoom naturalWidth={480}>

@@ -414,14 +414,22 @@ function parseStateDiagram(statements: string[]): Graph {
       b.close();
       continue;
     }
-    m = /^(.+?)\s*-->\s*(.+?)(?:\s*:\s*(.*))?$/.exec(stmt);
-    if (m) {
-      const from = stateNode(m[1] ?? "", false);
-      const to = stateNode(m[2] ?? "", true);
+    // 先用 indexOf 切出 `-->` 两侧再匹配：整句一个 /(.+?)\s*-->/ 在长输入（大量空格、没有 -->）上是二次复杂度。
+    const arrow = stmt.indexOf("-->");
+    if (arrow > 0) {
+      const fromText = stmt.slice(0, arrow).trim();
+      const rest = stmt.slice(arrow + 3).trim();
+      const colon = rest.indexOf(":");
+      const toText = (colon === -1 ? rest : rest.slice(0, colon)).trim();
+      const labelText = colon === -1 ? "" : rest.slice(colon + 1).trim();
+      if (!fromText || !toText)
+        throw new MermaidSyntaxError(`bad state transition: ${stmt}`);
+      const from = stateNode(fromText, false);
+      const to = stateNode(toText, true);
       b.graph.edges.push({
         from,
         to,
-        label: m[3] ? cleanLabel(m[3]) : undefined,
+        label: labelText ? cleanLabel(labelText) : undefined,
         arrowEnd: true,
         arrowStart: false,
       });
@@ -547,7 +555,11 @@ function svgText(x: number, y: number, lines: string[], attrs: string): string {
   return `<text text-anchor="middle" ${attrs} font-family="${FONT}">${spans}</text>`;
 }
 
+/** 节点再多就不在消息里画了（布局和阅读都不划算），回退成代码显示。 */
+export const MAX_GRAPH_NODES = 500;
+
 function renderGraphSvg(graph: Graph, dir: FlowDir): string {
+  if (graph.nodes.size > MAX_GRAPH_NODES) return "";
   const nodes = [...graph.nodes.values()];
   if (nodes.length === 0) return "";
   for (const n of nodes) sizeNode(n);
@@ -956,9 +968,9 @@ function renderPieSvg(lines: string[]): string {
   for (const rawLine of lines) {
     const m = /^"([^"]+)"\s*:\s*([0-9.]+)$/.exec(rawLine.trim());
     if (m) {
-      const val = Number.parseFloat(m[2]!);
+      const val = Number.parseFloat(m[2] ?? "");
       if (Number.isFinite(val) && val > 0)
-        slices.push({ label: m[1]!, value: val });
+        slices.push({ label: m[1] ?? "", value: val });
     }
   }
   if (slices.length === 0) return "";
@@ -1056,8 +1068,8 @@ export function renderMermaidToSvg(code: string): string {
     }
     // gantt、classDiagram、erDiagram、mindmap、journey… 不认识的一律不画。
     return "";
-  } catch (error) {
-    if (error instanceof MermaidSyntaxError) return "";
-    throw error;
+  } catch {
+    // 语法错误以及任何意外异常都回退成代码显示，不让一张图拖垮整条消息。
+    return "";
   }
 }
