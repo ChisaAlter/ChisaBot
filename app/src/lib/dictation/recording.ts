@@ -4,6 +4,7 @@ import {
   dictationMediaType,
   MAX_DICTATION_BYTES,
 } from "../../../../shared/dictation";
+import { isAndroidApp } from "@/lib/device";
 
 export interface Recording {
   /** Shared with the visualizer; the recorder owns this stream's lifetime. */
@@ -14,13 +15,53 @@ export interface Recording {
 
 const BROWSER_SPEECH_MIME = "application/x-chisabot-speech";
 
-/** Where to turn the microphone back on, since the browser will not ask a second time by itself. */
+/**
+ * Where to turn the microphone back on, since nothing will ask a second time by itself. One sentence
+ * per place the app runs, because the way back differs: a browser has the lock icon in its address
+ * bar, the PC app has no address bar at all (the switch is in the system's privacy settings), and
+ * on Android the WebView follows Chrome's site setting first and the app permission second.
+ */
 export const MIC_DENIED_MESSAGE =
   "麦克风权限被拒绝了。点地址栏左边的锁形图标，把「麦克风」改成「允许」后点「重新录音」；手机上请到系统设置里允许浏览器使用麦克风。";
+export const MIC_DENIED_PC_MESSAGE =
+  "麦克风权限被拒绝了。请到系统设置的「隐私和安全性 → 麦克风」里允许 ChisaBot 使用麦克风，再点「重新录音」。";
+export const MIC_DENIED_ANDROID_MESSAGE =
+  "麦克风权限被拒绝了。先到 Chrome 的「设置 → 网站设置 → 麦克风」里允许本站使用麦克风；还不行的话，到系统设置的「应用 → ChisaBot → 权限」里打开麦克风，再点「重新录音」。";
+
+export type MicPlatform = "browser" | "pc" | "android";
+
+/** Which of the three the app is running in, by the same marks `isNativeClient` reads. */
+export function micPlatform(): MicPlatform {
+  if (isAndroidApp()) return "android";
+  if (typeof window !== "undefined") {
+    const w = window as { chisabotWindow?: unknown };
+    if (w.chisabotWindow) return "pc";
+    if (
+      typeof navigator !== "undefined" &&
+      /\bElectron\//.test(navigator.userAgent ?? "")
+    ) {
+      return "pc";
+    }
+  }
+  return "browser";
+}
+
+/** The denied-microphone sentence for where this app is running. */
+export function micDeniedMessage(
+  platform: MicPlatform = micPlatform(),
+): string {
+  if (platform === "pc") return MIC_DENIED_PC_MESSAGE;
+  if (platform === "android") return MIC_DENIED_ANDROID_MESSAGE;
+  return MIC_DENIED_MESSAGE;
+}
+
 /** Browser speech recognition runs on the vendor's servers, so it needs the network as much as upload does. */
-export const DICTATION_OFFLINE_MESSAGE = "没有网络连接，语音输入用不了。联网后点「重新录音」。";
-export const DICTATION_UPLOAD_OFFLINE_MESSAGE = "没有网络连接，没能把录音传上去。联网后点「重试」。";
-export const DICTATION_UPLOAD_NETWORK_MESSAGE = "网络出错，没能把录音传上去。请点「重试」。";
+export const DICTATION_OFFLINE_MESSAGE =
+  "没有网络连接，语音输入用不了。联网后点「重新录音」。";
+export const DICTATION_UPLOAD_OFFLINE_MESSAGE =
+  "没有网络连接，没能把录音传上去。联网后点「重试」。";
+export const DICTATION_UPLOAD_NETWORK_MESSAGE =
+  "网络出错，没能把录音传上去。请点「重试」。";
 export const DICTATION_NO_SPEECH_MESSAGE = "未检测到语音。请重新录音。";
 
 /**
@@ -46,7 +87,11 @@ type BrowserSpeechRecognition = {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
-  onresult: ((event: { results: ArrayLike<{ isFinal?: boolean; 0?: { transcript?: string } }> }) => void) | null;
+  onresult:
+    | ((event: {
+        results: ArrayLike<{ isFinal?: boolean; 0?: { transcript?: string } }>;
+      }) => void)
+    | null;
   onerror: ((event: { error?: string }) => void) | null;
   onend: (() => void) | null;
   start(): void;
@@ -54,7 +99,9 @@ type BrowserSpeechRecognition = {
   abort(): void;
 };
 
-function getSpeechRecognitionCtor(): (new () => BrowserSpeechRecognition) | null {
+function getSpeechRecognitionCtor():
+  | (new () => BrowserSpeechRecognition)
+  | null {
   if (typeof window === "undefined") return null;
   const w = window as unknown as {
     SpeechRecognition?: new () => BrowserSpeechRecognition;
@@ -95,7 +142,8 @@ export async function startSpeechRecognitionRecording(
   };
 
   const recognition = new Ctor();
-  recognition.lang = (typeof navigator !== "undefined" && navigator.language) || "zh-CN";
+  recognition.lang =
+    (typeof navigator !== "undefined" && navigator.language) || "zh-CN";
   recognition.continuous = true;
   recognition.interimResults = true;
 
@@ -120,7 +168,7 @@ export async function startSpeechRecognitionRecording(
     onError(
       new Error(
         event.error === "not-allowed" || event.error === "service-not-allowed"
-          ? MIC_DENIED_MESSAGE
+          ? micDeniedMessage()
           : event.error === "network" || isOffline()
             ? DICTATION_OFFLINE_MESSAGE
             : "语音输入中断了，请重新录音。",
@@ -260,7 +308,10 @@ export async function transcribeRecording(
     if (!text) {
       // Recognition gives up silently when the network drops, so an empty result while offline
       // is a missing connection, not a quiet speaker. Either way the transcript is gone: re-record.
-      throw new DictationError(isOffline() ? DICTATION_OFFLINE_MESSAGE : DICTATION_NO_SPEECH_MESSAGE, true);
+      throw new DictationError(
+        isOffline() ? DICTATION_OFFLINE_MESSAGE : DICTATION_NO_SPEECH_MESSAGE,
+        true,
+      );
     }
     return text;
   }
@@ -269,25 +320,31 @@ export async function transcribeRecording(
   if (!extension || !audio.size || audio.size > MAX_DICTATION_BYTES) {
     throw new DictationError("录音为空或不支持。请重新录音。", true);
   }
-  if (isOffline()) throw new DictationError(DICTATION_UPLOAD_OFFLINE_MESSAGE, false);
+  if (isOffline())
+    throw new DictationError(DICTATION_UPLOAD_OFFLINE_MESSAGE, false);
   const body = new FormData();
   body.set("file", audio, `recording.${extension}`);
   let response: Response;
   try {
     response = await fetch("/api/audio/transcriptions", {
-    method: "POST",
-    credentials: "include",
-    headers: { "x-chisabot-dictation": "1" },
-    body,
-    signal: AbortSignal.any([
-      signal,
-      AbortSignal.timeout(DICTATION_TIMEOUT_MS + 5_000),
-    ]),
+      method: "POST",
+      credentials: "include",
+      headers: { "x-chisabot-dictation": "1" },
+      body,
+      signal: AbortSignal.any([
+        signal,
+        AbortSignal.timeout(DICTATION_TIMEOUT_MS + 5_000),
+      ]),
     });
   } catch (error) {
     if (signal.aborted) throw error;
     // The recording is still held, so the same audio can be uploaded again.
-    throw new DictationError(isOffline() ? DICTATION_UPLOAD_OFFLINE_MESSAGE : DICTATION_UPLOAD_NETWORK_MESSAGE, false);
+    throw new DictationError(
+      isOffline()
+        ? DICTATION_UPLOAD_OFFLINE_MESSAGE
+        : DICTATION_UPLOAD_NETWORK_MESSAGE,
+      false,
+    );
   }
   const result: unknown = await response.json().catch(() => null);
   if (!response.ok) {

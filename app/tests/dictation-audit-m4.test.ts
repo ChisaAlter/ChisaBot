@@ -5,12 +5,19 @@ import {
   DICTATION_UPLOAD_NETWORK_MESSAGE,
   DICTATION_UPLOAD_OFFLINE_MESSAGE,
   DictationError,
+  MIC_DENIED_ANDROID_MESSAGE,
   MIC_DENIED_MESSAGE,
+  MIC_DENIED_PC_MESSAGE,
+  micDeniedMessage,
+  micPlatform,
   type Recording,
   startSpeechRecognitionRecording,
   transcribeRecording,
 } from "@/lib/dictation/recording";
-import { DictationSession } from "@/lib/dictation/session";
+import {
+  DICTATION_TRANSCRIBE_FAILED_MESSAGE,
+  DictationSession,
+} from "@/lib/dictation/session";
 
 /**
  * Audit module 4, dictation: a retry after a failure must capture or upload again rather than
@@ -206,4 +213,58 @@ test("a denied microphone tells the user where to allow it", async () => {
   });
   await session.start();
   expect(session.getSnapshot().error).toBe(MIC_DENIED_MESSAGE);
+});
+
+test("the denied-microphone sentence matches where the app runs", () => {
+  const doc = globalThis as unknown as { document?: unknown };
+  const realDocument = doc.document;
+  try {
+    g.window = {};
+    expect(micPlatform()).toBe("browser");
+    expect(micDeniedMessage()).toBe(MIC_DENIED_MESSAGE);
+
+    // The PC app has no address bar, so it must not be sent looking for one.
+    g.window = { chisabotWindow: {} };
+    expect(micPlatform()).toBe("pc");
+    expect(micDeniedMessage()).toBe(MIC_DENIED_PC_MESSAGE);
+    expect(MIC_DENIED_PC_MESSAGE).not.toContain("地址栏");
+    expect(MIC_DENIED_PC_MESSAGE).toContain("隐私");
+
+    g.window = {};
+    doc.document = {
+      documentElement: {
+        hasAttribute: (name: string) => name === "data-android-app",
+      },
+    };
+    expect(micPlatform()).toBe("android");
+    expect(micDeniedMessage()).toBe(MIC_DENIED_ANDROID_MESSAGE);
+    expect(MIC_DENIED_ANDROID_MESSAGE).not.toContain("地址栏");
+    // Chrome's site setting first, the system app permission second.
+    expect(MIC_DENIED_ANDROID_MESSAGE.indexOf("网站设置")).toBeLessThan(
+      MIC_DENIED_ANDROID_MESSAGE.indexOf("应用 → ChisaBot"),
+    );
+  } finally {
+    doc.document = realDocument;
+    g.window = realWindow;
+  }
+});
+
+test("a transcription that fails without a reason says so in the module's voice and offers 「重试」", async () => {
+  const session = new DictationSession({
+    record: async () => ({
+      finish: async () => new Blob(["a"], { type: "audio/webm" }),
+      cancel() {},
+    }),
+    transcribe: async () => {
+      throw "boom";
+    },
+    onTranscript() {},
+  });
+  await session.start();
+  await session.finish();
+  expect(session.getSnapshot()).toMatchObject({
+    phase: "error",
+    canRetry: true,
+    error: DICTATION_TRANSCRIBE_FAILED_MESSAGE,
+  });
 });

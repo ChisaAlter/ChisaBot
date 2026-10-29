@@ -1,5 +1,5 @@
 import { MAX_DICTATION_SECONDS } from "../../../../shared/dictation";
-import { MIC_DENIED_MESSAGE, type Recording } from "./recording";
+import { micDeniedMessage, type Recording } from "./recording";
 
 export type DictationState = {
   phase: "idle" | "requesting" | "recording" | "transcribing" | "error";
@@ -10,6 +10,10 @@ export type DictationState = {
 };
 
 export type DictationIntent = "draft" | "send";
+
+/** A transcription that failed without saying why; the audio is kept, so 「重试」 sends it again. */
+export const DICTATION_TRANSCRIBE_FAILED_MESSAGE =
+  "没能把录音转成文字。请点「重试」。";
 
 const idle: DictationState = { phase: "idle", seconds: 0, canRetry: false };
 
@@ -88,7 +92,7 @@ export class DictationSession {
         phase: "error",
         error:
           error instanceof Error && error.name === "NotAllowedError"
-            ? MIC_DENIED_MESSAGE
+            ? micDeniedMessage()
             : "没能开始录音，检查一下麦克风再试。",
       });
     }
@@ -154,7 +158,10 @@ export class DictationSession {
     } catch (error) {
       if (generation !== this.generation) return;
       const rerecord =
-        typeof error === "object" && error !== null && "rerecord" in error && error.rerecord === true;
+        typeof error === "object" &&
+        error !== null &&
+        "rerecord" in error &&
+        error.rerecord === true;
       if (rerecord) this.audio = undefined;
       this.update({
         ...this.state,
@@ -163,7 +170,7 @@ export class DictationSession {
         error:
           error instanceof Error
             ? error.message
-            : "转写失败，请重试。",
+            : DICTATION_TRANSCRIBE_FAILED_MESSAGE,
       });
     }
   }
