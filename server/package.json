@@ -17,7 +17,7 @@
     "@ag-ui/core": "1.0.1",
     "@ag-ui/mastra": "1.1.6",
     "@ai-sdk/anthropic": "3.0.111",
-    "@ai-sdk/openai": "3.0.99",
+    "@ai-sdk/openai": "4.0.102",
     "@better-auth/drizzle-adapter": "^1.7.7",
     "@composio/core": "^0.18.1",
     "@copilotkit/runtime": "1.77.0",
