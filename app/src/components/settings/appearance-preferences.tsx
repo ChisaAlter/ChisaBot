@@ -12,6 +12,8 @@ import { useSegmentedKeys } from "@/components/ui/segmented";
 import { toast } from "@/components/ui/toast";
 import {
   compressUploadedWallpaper,
+  GLASS_OPACITY_MAX,
+  GLASS_OPACITY_MIN,
   type GlassStyleId,
   HARK_SKY_SCENES,
   type HarkSkySceneId,
@@ -265,8 +267,8 @@ export function AppearancePreferences() {
             <Input
               aria-label="玻璃面板不透明度"
               className="appearance-range"
-              max={45}
-              min={5}
+              max={GLASS_OPACITY_MAX}
+              min={GLASS_OPACITY_MIN}
               onChange={(e) => setGlassOpacity(Number(e.target.value))}
               step={1}
               type="range"

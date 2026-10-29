@@ -3,6 +3,7 @@ import {
   readStoredPreference,
   writeStoredPreference,
 } from "@/lib/preference-storage";
+import { compressWallpaperImage } from "@/lib/wallpaper-compress";
 import { getWallpaperBackend, WALLPAPER_IDB_MARKER } from "@/lib/wallpaper-store";
 
 export const PALETTE_STORAGE_KEY = "chisabot-theme-palette";
@@ -13,6 +14,18 @@ export const WALLPAPER_DIM_STORAGE_KEY = "chisabot-wallpaper-dim";
 export const GLASS_STYLE_STORAGE_KEY = "chisabot-glass-style";
 export const GLASS_OPACITY_STORAGE_KEY = "chisabot-glass-opacity";
 export const HARK_SCENE_STORAGE_KEY = "chisabot-hark-scene";
+/**
+ * 天空引擎（public/wallpaper_core.html 的 SAVE_KEY）存的地点和天气快照。不归 AppearanceState 管，
+ * 但「恢复默认」要一起清掉（模块 11 第 13 条）。
+ */
+export const HARK_WEATHER_SNAPSHOT_STORAGE_KEY = "hark-wallpaper-v1";
+/** 天空引擎写进 localStorage 的全部键。 */
+export const HARK_ENGINE_STORAGE_KEYS: readonly string[] = [
+  HARK_WEATHER_SNAPSHOT_STORAGE_KEY,
+];
+/** 面板雾度（玻璃不透明度，%）允许的范围：存储、读取和设置页滑块共用。 */
+export const GLASS_OPACITY_MIN = 5;
+export const GLASS_OPACITY_MAX = 55;
 
 export type ThemePaletteId =
   | "default"
@@ -558,7 +571,12 @@ function readInitialAppearance(): AppearanceState {
   return {
     palette: rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default",
     glassStyle: rawGlass && VALID_GLASS_STYLES.has(rawGlass) ? rawGlass : "liquid",
-    glassOpacity: clampNumber(rawGlassOpacity, 5, 55, 16),
+    glassOpacity: clampNumber(
+      rawGlassOpacity,
+      GLASS_OPACITY_MIN,
+      GLASS_OPACITY_MAX,
+      16,
+    ),
     harkScene: rawHarkScene && VALID_HARK_SCENES.has(rawHarkScene) ? rawHarkScene : "auto",
     wallpaperId:
       rawWallpaperId && VALID_WALLPAPER_IDS.has(rawWallpaperId) ? rawWallpaperId : "none",
@@ -775,7 +793,12 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
         : prev.glassStyle,
     glassOpacity:
       patch.glassOpacity !== undefined
-        ? clampNumber(patch.glassOpacity, 5, 55, prev.glassOpacity)
+        ? clampNumber(
+            patch.glassOpacity,
+            GLASS_OPACITY_MIN,
+            GLASS_OPACITY_MAX,
+            prev.glassOpacity,
+          )
         : prev.glassOpacity,
     harkScene:
       patch.harkScene && VALID_HARK_SCENES.has(patch.harkScene)
@@ -879,6 +902,14 @@ export function resetAppearanceDefaults() {
     wallpaperBlur: 0,
     wallpaperDim: 18,
   });
+  // 天空引擎的地点 / 天气快照：下次加载按默认场景重新取，不再沿用之前搜过或定位到的城市。
+  for (const key of HARK_ENGINE_STORAGE_KEYS) {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // 存储不可用（隐私模式等）就跳过。
+    }
+  }
 }
 
 /**
@@ -984,56 +1015,11 @@ export function assertWallpaperDataUrlSize(dataUrl: string): string {
 }
 
 /**
- * 将本地上传的图片文件压缩为 Data URL（最大边 1920px，WebP/JPEG 质量 0.84），保存在 IndexedDB
+ * 将本地上传的图片文件压缩为 Data URL，保存在 IndexedDB。
+ * 最长边 = 屏幕最长边 × DPR（最多 3840），优先在 Worker 里压缩，见 `wallpaper-compress.ts`。
  */
 export async function compressUploadedWallpaper(file: File): Promise<string> {
   const invalid = validateWallpaperFile(file);
   if (invalid) throw new Error(invalid);
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("读取图片文件失败"));
-    reader.onload = () => {
-      const src = typeof reader.result === "string" ? reader.result : "";
-      if (!src) {
-        reject(new Error("图片内容为空"));
-        return;
-      }
-      const img = new Image();
-      img.onerror = () => reject(new Error("无法解析该图片格式"));
-      img.onload = () => {
-        const maxSide = 1920;
-        let { width, height } = img;
-        if (width > maxSide || height > maxSide) {
-          const ratio = Math.min(maxSide / width, maxSide / height);
-          width = Math.round(width * ratio);
-          height = Math.round(height * ratio);
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          try {
-            resolve(assertWallpaperDataUrlSize(src));
-          } catch (error) {
-            reject(error);
-          }
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        const webp = canvas.toDataURL("image/webp", 0.84);
-        if (webp && webp.length < 3_500_000) {
-          resolve(webp);
-          return;
-        }
-        try {
-          resolve(assertWallpaperDataUrlSize(canvas.toDataURL("image/jpeg", 0.8)));
-        } catch (error) {
-          reject(error);
-        }
-      };
-      img.src = src;
-    };
-    reader.readAsDataURL(file);
-  });
+  return assertWallpaperDataUrlSize(await compressWallpaperImage(file));
 }
