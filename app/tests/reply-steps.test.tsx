@@ -8,22 +8,36 @@ import {
 } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Message } from "@ag-ui/core";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { compactTurns } from "@/components/channels/chat-transcript";
+import type { ReactNode } from "react";
+import {
+  ChatTranscript,
+  compactTurns,
+  toolDrawsCard,
+} from "@/components/channels/chat-transcript";
 import {
   capsuleSeconds,
   NoAnswerRow,
   PausedCapsule,
   StatusCapsule,
 } from "@/components/chat/status-capsule";
-import { turnStartedAt, WorkRow } from "@/components/chat/work-card";
+import {
+  markTurnRunEnded,
+  turnStartedAt,
+  WorkRow,
+} from "@/components/chat/work-card";
+import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
 import {
   isBlankNote,
   isQuietWork,
   type WorkCall,
   workTimeline,
 } from "@/lib/chat/work-steps";
+import { lineOnlyRender } from "@/lib/copilot/tool-renderers";
+import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -484,5 +498,276 @@ describe("胶囊样式守规矩", () => {
     expect(rule).toContain("padding-top: 1px");
     expect(rule).toContain("padding-bottom: 1px");
     expect(css).toMatch(/\.rs-capsule\s*\{[^}]*line-height:\s*20px/);
+  });
+});
+
+describe("以卡片收尾的一轮算有回答（复审 #404 第 1 条）", () => {
+  type Item = Parameters<typeof compactTurns>[0][number];
+  const user = (id: string, text: string): Item =>
+    ({ kind: "text", id, role: "user", text }) as Item;
+  const tool = (id: string, name: string, result?: string): Item =>
+    ({
+      kind: "tool",
+      id,
+      toolCall: {
+        id,
+        type: "function",
+        function: { name, arguments: "{}" },
+      },
+      ...(result === undefined ? {} : { result }),
+    }) as Item;
+  const card = () => null;
+  const renderers = [
+    { name: "image_generate", render: card },
+    { name: "file_share", render: card },
+    { name: "ask_person", render: card },
+    { name: "computer_click", render: lineOnlyRender(() => null) },
+  ];
+  const drawsCard =
+    (asked: ReadonlySet<string> = new Set()) =>
+    (item: Parameters<typeof toolDrawsCard>[0]) =>
+      toolDrawsCard(item, {
+        renderers,
+        activities: [{ activityType: "open-generative-ui" }],
+        asked,
+      });
+  const OK = JSON.stringify(JSON.stringify({ ok: true }));
+  const FAIL = JSON.stringify(JSON.stringify({ error: "失败" }));
+
+  for (const [name, result] of [
+    ["image_generate", OK],
+    ["file_share", OK],
+    ["ask_person", OK],
+  ] as const) {
+    test(`以 ${name} 的卡片收尾、后面没有字：不挂「这一轮没有回答」和重试`, () => {
+      const items = [user("u1", "来一张"), tool("t1", name, result)];
+      const compact = compactTurns(
+        items,
+        false,
+        new Set(),
+        undefined,
+        drawsCard(),
+      );
+      expect(compact.noAnswerAfter.size).toBe(0);
+      const work = compact.work.get("t1");
+      if (work) expect(work.answered).toBe(true);
+    });
+  }
+
+  test("等确认的工具（确认卡挂着、还没有结果）算有回答", () => {
+    const items = [user("u1", "建个 issue"), tool("t1", "github_create_issue")];
+    expect(
+      compactTurns(items, false, new Set(), undefined, drawsCard())
+        .noAnswerAfter.size,
+    ).toBe(1);
+    const asked = compactTurns(
+      items,
+      false,
+      new Set(),
+      undefined,
+      drawsCard(new Set(["t1"])),
+    );
+    expect(asked.noAnswerAfter.size).toBe(0);
+    expect(asked.work.get("t1")?.answered).toBe(true);
+  });
+
+  test("宿主被拒的提示（没有渲染器时 ServerToolLine 画的那句）算有回答", () => {
+    const items = [
+      user("u1", "读一下桌面上的文件"),
+      tool("t1", "host_read_file", `${REFUSAL_MARKER} 电脑没连上`),
+    ];
+    expect(
+      compactTurns(items, false, new Set(), undefined, drawsCard())
+        .noAnswerAfter.size,
+    ).toBe(0);
+  });
+
+  test("活动卡（有渲染器的活动消息）算有回答", () => {
+    const items = [
+      user("u1", "画个界面"),
+      {
+        kind: "activity",
+        id: "act1",
+        message: {
+          id: "act1",
+          role: "activity",
+          activityType: "open-generative-ui",
+          content: {},
+        },
+      } as Item,
+    ];
+    expect(
+      compactTurns(items, false, new Set(), undefined, drawsCard())
+        .noAnswerAfter.size,
+    ).toBe(0);
+  });
+
+  test("只画一行过程的渲染器、没有渲染器的普通工具失败：仍然挂「这一轮没有回答」", () => {
+    for (const name of ["computer_click", "web_search"]) {
+      const compact = compactTurns(
+        [user("u1", "点一下"), tool("t1", name, FAIL)],
+        false,
+        new Set(),
+        undefined,
+        drawsCard(),
+      );
+      expect(compact.noAnswerAfter.get("t1")).toEqual({ last: true });
+      expect(compact.work.get("t1")?.answered).toBe(false);
+    }
+  });
+});
+
+describe("末尾已经有错误卡", () => {
+  const wrap = (node: ReactNode) => (
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      {node}
+    </QueryClientProvider>
+  );
+  test("没有看得见的回答、末尾挂着错误卡（带重试）：不再挂一遍「这一轮没有回答」和重试", () => {
+    const messages = [
+      { id: "eu1", role: "user", content: "查东京天气" },
+      // 只回了「---」（这一段不画）：和工具失败后没有字一样，是「这一轮没有回答」。
+      { id: "ea1", role: "assistant", content: "---" },
+    ] as Message[];
+    const { getAllByRole, getByTestId, queryByTestId } = render(
+      wrap(
+        <ChatTranscript
+          messages={messages}
+          onRetry={() => undefined}
+          onRetryUnanswered={() => undefined}
+          scrollKey="rs-error-card"
+          stopped="连接中断"
+        />,
+      ),
+    );
+    expect(getByTestId("transcript-stopped")).not.toBeNull();
+    expect(queryByTestId("turn-no-answer")).toBeNull();
+    expect(getAllByRole("button", { name: /重试/ })).toHaveLength(1);
+    cleanup();
+    // 对照：没有错误卡时，这一轮照常挂「这一轮没有回答」和它自己的重试。
+    const plain = render(
+      wrap(
+        <ChatTranscript
+          messages={messages}
+          onRetryUnanswered={() => undefined}
+          scrollKey="rs-error-card-2"
+        />,
+      ),
+    );
+    expect(plain.queryByTestId("transcript-stopped")).toBeNull();
+    expect(plain.getByTestId("turn-no-answer")).not.toBeNull();
+  });
+});
+
+describe("重新开始跑时重新计时（复审 #404 第 3 条）", () => {
+  test("上一次跑停了，同一轮再跑：开始时间和用时都从头算", () => {
+    const key = "rs-restart-1";
+    expect(turnStartedAt(key, 1_000)).toBe(1_000);
+    setWorkUi(key, { seconds: 45 });
+    markTurnRunEnded(key);
+    expect(turnStartedAt(key, 50_000)).toBe(50_000);
+    expect(workUi(key)?.seconds).toBeUndefined();
+    // 之后同一次跑里再问，还是这次的开始时间。
+    expect(turnStartedAt(key, 60_000)).toBe(50_000);
+  });
+
+  test("干活卡看着这一轮停下，重试后再跑：不会一出来就是「45 秒」", () => {
+    const key = "rs-restart-2";
+    const since = turnStartedAt(key, Date.now() - 45_000);
+    const view = render(
+      <WorkRow
+        calls={[search("东京天气", false)]}
+        live
+        since={since}
+        turnKey={key}
+      />,
+    );
+    expect(view.getByTestId("chat-work-card").textContent).toContain("45 秒");
+    // 跑完（这一页看着停下）。
+    view.rerender(
+      <WorkRow
+        calls={[{ ...search("东京天气"), failed: true }]}
+        live={false}
+        turnKey={key}
+      />,
+    );
+    view.unmount();
+    // 重试：同一轮又开始跑。
+    const again = turnStartedAt(key);
+    const retry = render(
+      <WorkRow
+        calls={[search("东京天气", false)]}
+        live
+        since={again}
+        turnKey={key}
+      />,
+    );
+    const text = retry.getByTestId("chat-work-card").textContent ?? "";
+    expect(text).not.toContain("45 秒");
+    expect(text).not.toMatch(/\d+ 秒/);
+  });
+
+  test("切到别的频道再回来（重挂时还在跑）：不归零", () => {
+    const key = "rs-restart-3";
+    const since = turnStartedAt(key, Date.now() - 12_000);
+    const first = render(
+      <WorkRow
+        calls={[search("东京天气", false)]}
+        live
+        since={since}
+        turnKey={key}
+      />,
+    );
+    first.unmount();
+    const back = render(
+      <WorkRow
+        calls={[search("东京天气", false)]}
+        live
+        since={turnStartedAt(key)}
+        turnKey={key}
+      />,
+    );
+    expect(back.getByTestId("chat-work-card").textContent).toContain("12 秒");
+  });
+});
+
+describe("窄屏也看得到「N 步失败」（复审 #404 第 2 条）", () => {
+  test("没有回答的那一行带 data-unanswered，有回答的不带", () => {
+    const failed = [{ ...search("东京天气"), failed: true }];
+    const bare = render(
+      <WorkRow calls={failed} live={false} turnKey="rs-narrow-1" />,
+    );
+    expect(
+      bare.getByTestId("chat-work-done").hasAttribute("data-unanswered"),
+    ).toBe(false);
+    bare.unmount();
+    const row = render(
+      <WorkRow calls={failed} live={false} turnKey="rs-narrow-2" unanswered />,
+    );
+    expect(
+      row.getByTestId("chat-work-done").hasAttribute("data-unanswered"),
+    ).toBe(true);
+  });
+
+  test("status-capsule.css 在 ≤560px 用属性选择器重新显示这一格，不用 !important、不改 styles.css", () => {
+    const css = readFileSync(
+      join(import.meta.dir, "../src/components/chat/status-capsule.css"),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /@media \(max-width: 560px\) \{\s*\.chat-work-card\.chat-work-done\[data-unanswered\] \.chat-work-meta \{\s*display: inline;/,
+    );
+    expect(css).not.toContain("!important");
+    const app = readFileSync(
+      join(import.meta.dir, "../src/styles.css"),
+      "utf8",
+    );
+    expect(app).toContain(
+      "@media (max-width: 560px) { .chat-work-card.chat-work-done .chat-work-meta { display: none; } }",
+    );
   });
 });

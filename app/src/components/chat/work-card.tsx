@@ -32,6 +32,8 @@ function announceStep(detail: WorkStepDetail) {
  */
 const startedAt = new Map<string, number>();
 const finishedAt = new Map<string, number>();
+/** 这一页亲眼看着停下来的那几轮（`markTurnRunEnded`）：同一轮再开始跑时重新计时。 */
+const endedRuns = new Set<string>();
 
 function remember(map: Map<string, number>, key: string, value: number) {
   if (map.has(key)) return;
@@ -44,8 +46,29 @@ function remember(map: Map<string, number>, key: string, value: number) {
  * 换成干活卡、切到别的频道再回来、卡片重挂，秒数都接着算，不归零（回复显示①，2026-10-29）。
  */
 export function turnStartedAt(turnKey: string, now = Date.now()): number {
+  // 上一次跑已经停了，这是同一轮重新开始跑（重试、重新生成、确认后接着跑）：开始时间和用时都从头算，
+  // 不然一出来就是「45 秒」（复审 #404）。
+  if (endedRuns.has(turnKey)) restartTurnClock(turnKey);
   remember(startedAt, turnKey, now);
   return startedAt.get(turnKey) ?? now;
+}
+
+function restartTurnClock(turnKey: string) {
+  endedRuns.delete(turnKey);
+  startedAt.delete(turnKey);
+  finishedAt.delete(turnKey);
+  if (workUi(turnKey)?.seconds !== undefined)
+    setWorkUi(turnKey, { seconds: undefined });
+}
+
+/**
+ * 这一轮这一次跑停下来了（这一页亲眼看着从「跑着」变成「停了」）。只记一笔，下次 `turnStartedAt` 才重新计时；
+ * 切频道回来重挂时还在跑，不会经过这里，所以秒数接着算。
+ */
+export function markTurnRunEnded(turnKey: string): void {
+  if (!startedAt.has(turnKey)) return;
+  endedRuns.add(turnKey);
+  if (endedRuns.size > 50) endedRuns.delete(endedRuns.values().next().value as string);
 }
 
 /**
@@ -100,10 +123,16 @@ export function WorkRow({
   live,
   notes,
   since,
+  unanswered = false,
 }: {
   calls: readonly WorkCall[];
   turnKey: string;
   live: boolean;
+  /**
+   * 这一轮做完了却没有看得见的回答（回复显示①）：这一行留着写「N 步失败」。窄屏上做完的行不写用时 / 步数
+   * （styles.css），这一行例外，用 `data-unanswered` 在 status-capsule.css 里重新显示。
+   */
+  unanswered?: boolean;
   /** 收进卡片的过程话（§90）。 */
   notes?: readonly WorkNote[];
   /** 这一轮开始的时刻（末尾「思考中」胶囊从这里算秒，换成干活卡后接着算，不归零）。 */
@@ -126,6 +155,8 @@ export function WorkRow({
   const hadFocus = useRef(false);
   useLayoutEffect(() => {
     if (wasLive.current && !live) {
+      // 这一页看着它停下：同一轮再跑时重新计时。
+      markTurnRunEnded(turnKey);
       setOpenState(false);
       setWorkUi(turnKey, { open: false });
       // 焦点在这一行上、这一行跟着这一轮收起了：移到收起后的那一行（不掉到 body）。
@@ -182,6 +213,7 @@ export function WorkRow({
         className={live ? "rs-capsule chat-work-card" : "chat-thinking chat-work-card chat-work-done"}
         data-state={live ? "live" : "done"}
         data-testid={live ? "chat-work-card" : "chat-work-done"}
+        data-unanswered={!live && unanswered ? "" : undefined}
         onClick={() => setOpen((value) => !value)}
         type="button"
       >

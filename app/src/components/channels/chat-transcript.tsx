@@ -17,6 +17,7 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -55,6 +56,7 @@ import {
 } from "@/components/chat/status-capsule";
 import {
   knownWorkSeconds,
+  markTurnRunEnded,
   turnStartedAt,
   WorkRow,
 } from "@/components/chat/work-card";
@@ -123,9 +125,16 @@ import {
   type WorkNote,
   workCallFailed,
 } from "@/lib/chat/work-steps";
+import { approvalInboxOptions } from "@/lib/approvals";
 import { useThreadConfirmations } from "@/lib/confirmations";
 import { isEditableUserText } from "@/lib/copilot/regenerate";
 import { useReadMark } from "@/lib/copilot/thread-inbox";
+import {
+  isLineOnlyRender,
+  pickToolRenderer,
+  useActivityRenderers,
+  useToolRenderers,
+} from "@/lib/copilot/tool-renderers";
 import { WORKER_RESULT_MARKER } from "@/lib/copilot/workers";
 import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
@@ -2800,6 +2809,12 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
  * Named from the reader's side: what was done, against which server, with the server's own words
  * behind a disclosure. The identifier the model was offered never reaches the screen.
  */
+/** 桌面宿主（host_*）工具被拒：没有渲染器时 `ServerToolLine` 不画过程行，画成一句看得见的提示。 */
+export function isHostAccessRefusal(name: string, result?: string): boolean {
+  if (result === undefined || !name.startsWith("host_")) return false;
+  return asText(result).startsWith(REFUSAL_MARKER);
+}
+
 function ServerToolLine({ name, result }: { name: string; result?: string }) {
   const { label, detail } = readToolName(name);
   /*
@@ -2823,7 +2838,7 @@ function ServerToolLine({ name, result }: { name: string; result?: string }) {
    * 桌面宿主（host_*）工具被拒绝，几乎都是因为电脑没连上 / 没授权文件夹。这是用户能处理的事，
    * 所以不当成过程行藏起来，而是一句中文提示，告诉他去哪里处理。
    */
-  if (refused && name.startsWith("host_")) return <HostAccessHint />;
+  if (isHostAccessRefusal(name, result)) return <HostAccessHint />;
   return (
     <ToolLine
       {...(detail ? { detail } : {})}
@@ -3090,12 +3105,50 @@ export function ChatTranscript({
       ? unansweredTurn(items, busy, stoppedTurns, queued.length)
       : null;
   const tailStop = stopped ?? (unanswered ? UNANSWERED_TURN_REASON : undefined);
+  /*
+   * 确认卡 / 审批卡挂在哪些工具调用上：简单回合（下面）和「这一轮有没有回答」都要用。确认列表和确认卡片用同一份
+   * 缓存（同一个 queryKey），审批收件箱和行内审批卡也是同一份，不多发请求。
+   */
+  const chatConfig = useCopilotChatConfiguration();
+  const chatThreadId = chatConfig?.threadId ?? null;
+  const hasTools = items.some((item) => item.kind === "tool");
+  const confirmations = useThreadConfirmations(
+    hasTools ? chatThreadId : null,
+    false,
+  );
+  const approvals = useQuery({
+    ...approvalInboxOptions(),
+    enabled: hasTools && chatThreadId !== null,
+  });
+  const confirmed = new Set<string>();
+  for (const request of confirmations.data ?? [])
+    if (request.toolCallId) confirmed.add(request.toolCallId);
+  for (const request of approvals.data?.requests ?? [])
+    if (request.status === "pending" && request.action.toolCallId)
+      confirmed.add(request.action.toolCallId);
+  /*
+   * 以卡片收尾的一轮也是回答了（回复显示①复审）：生成的图片、分享的文件、问人、确认卡、宿主提示……后面没有字，
+   * 也不挂「这一轮没有回答」和重试（点了会重新生成图片、重新建 issue）。和真正画卡片用同一份渲染器表
+   * （toolDrawsCard）；确认 / 审批还没读到时先当有卡片，读到再判，免得先闪一下重试。
+   */
+  const toolRenderers = useToolRenderers();
+  const activityRenderers = useActivityRenderers();
+  const asking = confirmations.isLoading || approvals.isLoading;
+  const drawsCard: DrawsCard = (item) =>
+    (asking && item.kind === "tool") ||
+    toolDrawsCard(item, {
+      renderers: toolRenderers,
+      activities: activityRenderers,
+      ...(chatConfig?.agentId ? { agentId: chatConfig.agentId } : {}),
+      asked: confirmed,
+    });
   // 一轮收成「开场一句 → 结果」，与机器人聊天同一规则（compactTurns，2026-10-13 第四轮）。
   const compact = compactTurns(
     items,
     live,
     stoppedTurns ?? EMPTY_STOPS,
     fallbacks,
+    drawsCard,
   );
   /*
    * 和干活卡同一个开始时间（按这一轮的 key 记在 work-card 的模块里）：切到别的频道再回来，胶囊重新挂上，
@@ -3106,22 +3159,26 @@ export function ChatTranscript({
       ? turnStartedAt(compact.liveKey)
       : (liveSinceRef.current ?? Date.now())
     : 0;
+  /*
+   * 同一轮又跑一次（重试、确认后接着跑……）要从 0 重新计时：这一页亲眼看着上一次跑停下来时记一笔，
+   * 下次再开始跑时 turnStartedAt 就重新记开始时间、清掉上次的用时。只认这次挂载里看到的「跑着 → 停了」，
+   * 所以切到别的频道再回来（重挂时还在跑）秒数接着算，不归零。
+   */
+  const runningKey = live ? compact.liveKey : null;
+  const runningKeyRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const previous = runningKeyRef.current;
+    if (previous !== null && previous !== runningKey) markTurnRunEnded(previous);
+    runningKeyRef.current = runningKey;
+  }, [runningKey]);
   const showToolActivity = useToolActivityVisible();
   /*
    * 简单回合（DESIGN.md §93）：做完了、只读的一两步、有结果——干活卡那一行整行收起，只留结果。结构上的判断在
    * compactTurns（`quiet`）；有确认卡的调用、这一页知道用时超过 15 秒的，照常显示。确认列表和确认卡片用同一份
    * 缓存（同一个 queryKey），不多发请求。打开「调试：显示工具调用」时不收（每一步本来就画着）。
    */
-  const chatConfig = useCopilotChatConfiguration();
   const hasQuiet =
     !showToolActivity && [...compact.work.values()].some((work) => work.quiet);
-  const confirmations = useThreadConfirmations(
-    hasQuiet ? (chatConfig?.threadId ?? null) : null,
-    false,
-  );
-  const confirmed = new Set<string>();
-  for (const request of confirmations.data ?? [])
-    if (request.toolCallId) confirmed.add(request.toolCallId);
   // 没绑到工具调用的确认卡片（§101.9）画在最下面；「用户确认了」那条已经进来的不再画（那一行就是记录）。
   const resumedCards = new Set<string>();
   for (const item of items) {
@@ -3585,6 +3642,7 @@ export function ChatTranscript({
         notes={work.notes}
         since={work.live ? liveSince : undefined}
         turnKey={work.key}
+        unanswered={!work.live && !work.stopped && !work.answered}
       />
     ) : null;
   }
@@ -3857,11 +3915,53 @@ export type WorkEntry = {
   stopped: boolean;
 };
 
+export type CardItem = Extract<TranscriptItem, { kind: "tool" | "activity" }>;
+export type DrawsCard = (item: CardItem) => boolean;
+const drawsRenderUi: DrawsCard = (item) =>
+  item.kind === "tool" && item.toolCall.function.name === "render_ui";
+
+/**
+ * 一个工具调用画没画用户看得见的卡片（回复显示①复审）：和 `TranscriptToolCall` 画什么同一套判断——
+ * 有渲染器就画渲染器（只画一行过程 / 什么都不画的、注册时标了 `lineOnlyRender` 的不算卡片），
+ * 没有就是 `ServerToolLine`（只有宿主被拒是看得见的提示）；另外有确认卡 / 审批卡挂着（`asked`）的也算。
+ */
+export function toolDrawsCard(
+  tool: CardItem,
+  {
+    renderers,
+    activities = [],
+    agentId,
+    asked,
+  }: {
+    renderers: Parameters<typeof pickToolRenderer>[0];
+    /** 活动消息的渲染器（`renderActivityMessage` 只有找到渲染器才画）。 */
+    activities?: readonly { activityType: string }[];
+    agentId?: string;
+    asked: ReadonlySet<string>;
+  },
+): boolean {
+  if (tool.kind === "activity")
+    return activities.some(
+      (renderer) =>
+        renderer.activityType === tool.message.activityType ||
+        renderer.activityType === "*",
+    );
+  if (asked.has(tool.toolCall.id)) return true;
+  const renderer = pickToolRenderer(renderers, tool.toolCall.function.name, agentId);
+  if (renderer) return !isLineOnlyRender(renderer.render);
+  return isHostAccessRefusal(tool.toolCall.function.name, tool.result);
+}
+
 export function compactTurns(
   items: readonly TranscriptItem[],
   busy: boolean,
   stopped: ReadonlySet<string>,
   fallbacks?: ReadonlyMap<string, string>,
+  /**
+   * 这个工具调用在对话里画了看得见的卡片（或正在等确认）：以它收尾的一轮算有回答。ChatTranscript 传
+   * `useToolCardCheck` 的结果（和真正画卡片用同一份渲染器 / 确认 / 宿主提示）；不传时只认 render_ui。
+   */
+  drawsCard: DrawsCard = drawsRenderUi,
 ): {
   tone: Map<string, "lead" | "step" | "final">;
   hidden: Set<string>;
@@ -4116,14 +4216,16 @@ export function compactTurns(
       }
     }
     /*
-     * 回复显示①（2026-10-29）：这一轮有没有看得见的回答——结果气泡、以卡片收尾（render_ui）、或者留着没收的气泡。
+     * 回复显示①（2026-10-29）：这一轮有没有看得见的回答——结果气泡、以卡片收尾（`drawsCard`：自定义渲染器、确认卡、宿主提示、活动卡）、或者留着没收的气泡。
      * 工具失败后没有字、或只回了「---」时都没有：那一行不收（否则一片空白），最后挂「这一轮没有回答」。
      */
     const answered =
       final !== null ||
       turn.rest.some(
         (item) =>
-          item.kind === "tool" && item.toolCall.function.name === "render_ui",
+          !hidden.has(item.id) &&
+          (item.kind === "tool" || item.kind === "activity") &&
+          drawsCard(item),
       ) ||
       texts.some((item) => !hidden.has(item.id));
     const entry = workAnchor === null ? undefined : work.get(workAnchor);
