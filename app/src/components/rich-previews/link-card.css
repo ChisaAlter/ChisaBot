@@ -112,7 +112,8 @@ a.lc-card[href]:hover {
 }
 .lc-card[data-layout="compact"] .lc-body {
   flex: 1;
-  padding: 0;
+  /* 右边让出 ↗ 的位置（手机上它常显）。 */
+  padding: 0 28px 0 0;
   gap: 2px;
 }
 .lc-title {
