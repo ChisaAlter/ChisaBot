@@ -3101,7 +3101,7 @@ export function ChatTranscript({
    * which is where the 25x came from. This runs per render and is not worth guarding.
    */
   const items = groupBrowserSteps(toVisibleChatItems(collapseScheduleRuns(messages)));
-  // render_ui 渲染面：历史里已有卡片就立即预载（不等 capabilities），否则空闲时预载。
+  // render_ui 渲染面：历史里已有卡片就立即预载（不等 capabilities）；其余情况 RenderUiTool 空闲时预载。
   useRenderUiPreload(messages);
   /*
    * 「最后一轮还在跑」只从列表真的变了算起（§68.4）。按下发送的那一刻 busy 先变 true，人发的那条要再过

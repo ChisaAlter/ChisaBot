@@ -9,7 +9,7 @@
 
 ### render_ui 渲染面改为空闲预载（分支 dev4/render-ui-idle-preload，依赖 #414）
 
-- 生成式界面渲染面（json-render-surface，约 28K gz）不再在聊天区一挂上就下载：对话历史里已有 render_ui 卡片时立即预载（不等 /api/capabilities 返回，从缓存打开的旧对话不再闪骨架），否则等浏览器空闲（requestIdleCallback，setTimeout 兜底）再预载，不和首屏抢带宽。未升级版本号。
+- 生成式界面渲染面（json-render-surface，约 28K gz）不再在聊天区一挂上就下载：对话历史里已有 render_ui 卡片时立即预载（不等 /api/capabilities 返回，从缓存打开的旧对话不再闪骨架），否则（部署开了生成式界面时）等浏览器空闲（requestIdleCallback，setTimeout 兜底）再预载，不和首屏抢带宽。未升级版本号。
 
 ## 0.1.111 — 2026-10-29
 

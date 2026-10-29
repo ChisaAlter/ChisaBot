@@ -3,8 +3,9 @@
 ## Unreleased — render_ui 渲染面空闲预载（分支 dev4/render-ui-idle-preload，基于 #414）
 
 - 问题：#414 里 RenderUiTool 挂载时就调 `JsonRenderSurface.preload()`，每个聊天都多下约 28K gz（即使没有 render_ui）；而 RenderUiTool 要等 capabilities 返回 generativeUi 才挂载，从缓存打开的旧对话仍会先闪骨架。
-- 改法：新 `app/src/lib/copilot/render-ui-preload.tsx`（懒加载的 JsonRenderSurface + 骨架 + `useRenderUiPreload`），ChatTranscript 调用：历史里有 render_ui 工具调用 → 立即 preload；否则 requestIdleCallback（timeout 4s，无此 API 时 setTimeout 1.5s）。RenderUiTool 不再自己预载。
-- 测试：`app/tests/render-ui-preload.test.tsx`（有历史立即、无历史只在 idle、后来出现卡片立即、卸载取消、setTimeout 兜底）。
+- 改法：新 `app/src/lib/copilot/render-ui-preload.tsx`（懒加载的 JsonRenderSurface + 骨架 + 两个 hook）。`useRenderUiPreload(messages)` 挂在 ChatTranscript：历史里有 render_ui 工具调用 → 立即 preload（不等 capabilities）。`useRenderUiIdlePreload()` 挂在 RenderUiTool（只在部署开了 generativeUi 时挂载）：requestIdleCallback（timeout 4s，无此 API 时 setTimeout 1.5s），卸载时取消。RenderUiTool 不再挂载即预载。
+- 测试：`app/tests/render-ui-preload.test.tsx` 8 个（有历史立即、无历史不动、后来出现卡片立即、idle 才预载、卸载取消、setTimeout 兜底、接线检查）。
+- 实测：见 PR 描述（box headless Chrome 4x CPU，mock API，聊天页冷缓存）。
 
 ## Unreleased — 首屏加载提速（PR A，分支 dev4/perf-first-load-split）
 

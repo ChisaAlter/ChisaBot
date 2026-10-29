@@ -10,7 +10,7 @@ import {
 import { pruneEmptySections } from "../../../../shared/json-render/empty-sections";
 import { ToolLine } from "@/components/channels/tool-line";
 import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
-import { JsonRenderSurface, RenderUiPlaceholder } from "./render-ui-preload";
+import { JsonRenderSurface, RenderUiPlaceholder, useRenderUiIdlePreload } from "./render-ui-preload";
 
 /**
  * 机器人用 `render_ui` 画出的界面（json-render，取代 A2UI）。
@@ -27,7 +27,8 @@ const parameters = z.object({
 });
 
 export function RenderUiTool() {
-  // 渲染面何时预载由聊天页决定（useRenderUiPreload）：有 render_ui 历史立即、否则空闲时。
+  // 渲染面空闲时预载；历史里已有 render_ui 卡片时 ChatTranscript 会更早立即预载（useRenderUiPreload）。
+  useRenderUiIdlePreload();
   useRenderTool({
     name: RENDER_UI_TOOL,
     parameters,
