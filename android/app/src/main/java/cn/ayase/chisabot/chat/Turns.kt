@@ -93,12 +93,15 @@ object Turns {
         val calls = segs.filterIsInstance<Seg.Tool>().map { it.call }
         val workIdx = segs.indexOfFirst { it is Seg.Tool && WorkSteps.isWorkCall(it.call.name) }
         val lastToolIdx = segs.indexOfLast { it is Seg.Tool }
+        // 最后一个真的在干活的步骤（不含 render_ui、记忆写入等）：它之后的全部文字都是回答，不是过程话
+        val lastWorkIdx = segs.indexOfLast { it is Seg.Tool && WorkSteps.splitsReply(it.call.name) }
         // 结果：最后一个工具之后的字；以卡片收尾（后面没字）且这一轮结束 → 卡片前最后一段话当结果（§75.3）
         var resultIdx = -1
         if (lastToolIdx < 0) {
             resultIdx = segs.indexOfLast { it is Seg.Text }
         } else {
-            val after = (lastToolIdx + 1 until segs.size).lastOrNull { segs[it] is Seg.Text }
+            // 还在跑时照旧以最后一个工具为界（结果没定）；结束后以最后一个干活步骤为界
+            val after = ((if (live) lastToolIdx else lastWorkIdx) + 1 until segs.size).lastOrNull { segs[it] is Seg.Text }
             if (after != null) resultIdx = after
             else if (!live) {
                 val lastTool = (segs[lastToolIdx] as Seg.Tool).call
@@ -108,13 +111,16 @@ object Turns {
         var workPlaced = false
         val hasWork = workIdx >= 0
         // 后面还有干活的工具：这段话是过程话，还在跑也马上收起（§90），不在卡片下面散成一段
-        fun workAfter(n: Int) = (n + 1 until segs.size).any { val s = segs[it]; s is Seg.Tool && WorkSteps.isWorkCall(s.call.name) }
+        fun workAfter(n: Int) = (n + 1 until segs.size).any { val s = segs[it]; s is Seg.Tool && WorkSteps.splitsReply(s.call.name) }
+        val replyFrom = if (!live && resultIdx > lastWorkIdx) lastWorkIdx else segs.size
         for ((n, seg) in segs.withIndex()) {
             when (seg) {
                 is Seg.Text -> {
                     val streamingNow = live && n == segs.lastIndex
                     when {
                         n == resultIdx -> rows += Row.Bot("t:" + seg.id, seg.text, Row.Kind.Result, streamingNow, !live)
+                        // 结果之前、最后一个干活步骤之后的话（连发几条回答）：和结果一样是气泡、带复制（同网页 tone final）
+                        n > replyFrom -> rows += Row.Bot("t:" + seg.id, seg.text, Row.Kind.Result, streamingNow, true)
                         !hasWork || n < workIdx -> rows += Row.Bot("t:" + seg.id, seg.text, Row.Kind.Opening, streamingNow, false)
                         live && !workAfter(n) -> rows += Row.Bot("t:" + seg.id, seg.text, Row.Kind.Process, streamingNow, false)
                         else -> Unit // 结束后过程话收起（§75）

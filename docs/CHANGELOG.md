@@ -1,3 +1,7 @@
+## Unreleased
+
+- 修复（Android）：`Turns.buildTurn` 一轮结束后以最后一个干活的步骤（`WorkSteps.splitsReply`：网页的 `isWorkCall` 再去掉记忆写入）为界，之后的全部文字都是回答气泡（`Kind.Result`、可复制）；`WorkSteps.NOT_WORK` 补齐网页的 message_bot / file_share / image_generate / image_edit；测试 `NativeLogicTest.allTextAfterLastWorkStaysVisible`、`notWorkMatchesWeb`。
+
 ## 0.1.107
 
 - 链接卡照 Hark 改版：正文里单独一行的链接和 json-render 的 `Link` 合并成一个组件（`app/src/components/rich-previews/link-card.tsx`）。有预览图时是固定宽约 280px 的竖卡：上半 og:image 大图（cover，上方两角圆角），下面两行粗体标题和一行浅色「站点 · 补充信息」；没有图时退成同宽的紧凑横卡。半透明底 + 内侧高光边，不用 backdrop-filter；骨架和卡片同尺寸，图片懒加载并预留宽高。json-render 的 `Link` 不再只用模型写的字段：缺的预览图、标题、站点名用 `/api/link-preview` 补全，模型给了的优先，所以 GitHub 等链接现在会显示 og:image。样式在组件自己的 `link-card.css`（只有 `lc-` 开头的新类），styles.css 未改。未升级版本号。
