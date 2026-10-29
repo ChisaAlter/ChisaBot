@@ -23,11 +23,22 @@
 - `chat-transcript.tsx`（SettleAtEnd）：每帧只有第一次 MutationObserver 回调当场测量（保留 §94「当场吃留白」）；同一帧后面的回调只记一笔，到下一个 rAF 再量一次。中间的高度变化 ResizeObserver 在绘制前也会接住。
 - `bot-bubbles.tsx`（DocCard）：已经够高、新文字只是在旧文字后面接着长时，跳过 `scrollHeight` 测量；其他情况照旧测量。
 - `use-smooth-text.ts`：`matchMedia` 查询只建一次（`MediaQueryList.matches` 是实时值；测试里换了 `matchMedia` 会重建）；最多 60fps 重画，超过 2000 字最多 30fps（原来是超过 6000 字才降帧）。
-- 新增 `lib/chat/incremental-blocks.ts`，并通过 `smooth-markdown.tsx` 的 `parseMarkdownIntoBlocksFn` 接入：流式时前面已经稳定的块直接复用，只重新切最后两个非空块之后的部分。有脚注（`[^`）或者新文字不是旧文字的延续时，退回整段解析。
+- 新增 `lib/chat/incremental-blocks.ts`，并通过 `smooth-markdown.tsx` 的 `parseMarkdownIntoBlocksFn` 接入：流式时前面已经封口的块直接复用，只重切后面没定型的部分。
+  - **审查后修正**：第一版假设「除最后两块外都不会再变」，这是错的：后面的行能把前面的块并回去（段落后接非 1 起始的有序列表、setext 下划线），重复的 `[r]:` 定义会多留一块；fuzz 72000 篇里有 4 篇流完仍不一致，而且不会自己纠正（最小复现 `说明如下：\n2. 第二步\n- 要点`）。现在只在**代码围栏外的空行边界**封口，并且新块的首行不能是可能接续前文的写法（缩进、引用、列表标记、HTML、`[`），围栏和 `$$` 计数要成对；有脚注或链接定义时整段解析不缓存。
+  - **流式结束兜底**：文字 400ms 不再变长后，`parseMarkdownIntoBlocksFn` 传 `undefined`，Streamdown 用自己的整段分块再切一次。
+  - **不把 streamdown 拉回主包（配合 #414）**：`incremental-blocks.ts` 不 import streamdown，整段分块函数由调用方注入；`smooth-markdown.tsx` 和 #414（31401692）写法一致：`Streamdown` 用 `lazyPart` 懒加载（`ui/lazy-part.tsx` 与 #414 同一份文件），下完之前按原样显示文字；增量分块器的整段函数经 `loadFullBlockParser()` 动态 import 同一个 streamdown 模块拿到。文件头部和 #414 逐行一致，#414 先合并后 merge main 不冲突（本地试合并验证过，只有 DEVLOG 需要合并）。
+- `use-smooth-text.ts`：帧间隔门槛 `MIN_FRAME_MS` 16 → 12ms，60Hz 下 rAF 抖动不再隔帧丢画；120Hz 仍是隔帧画。
+- 设置页回到聊天后的重渲染（偏好 / 频道 / 机器人重新拉取、数据没变）：
+  - `lib/settings/message-list.ts` 的 `useUserPreferences` 原来 `...preferences` 展开了整个 query 结果，TanStack Query 的 tracked props 因此订阅了所有字段，每次开始 / 结束拉取都让消费者重渲染；改成只返回 `{ userId, data, settled }`。
+  - `chat-transcript.tsx` 的 paneHeight ResizeObserver、`panel-board.tsx` 的 `measured`：KeepAlive 把聊天藏起来时量到 0，回来再量到真值，各触发一轮重渲染；现在跳过 0。
+  - 本地实测（#403 + 本分支，在设置页停 35s 再回来，React 提交里统计组件数）：修前回到聊天后 ChatTranscript 所在提交 24 个组件、偏好拉回来那次 101 个组件（BrandMark / AppSidebar / SelfHostBanner / ChatStage / PanelRail）；修后拉取开始后只剩 HiddenChatBotRow、PendingQuestion 各 2 个，ChatTranscript 和 Composer 0 次。以 #408（61395218）为基线的对比数字待补。
 
 ### 测试
 
 - `tests/incremental-blocks.test.tsx`（5 个用例）：对一组语料逐字和整段 `parseMarkdownIntoBlocks` 比对，步长 1/3/7/40。语料覆盖标题、列表、代码围栏、表格、引用、setext 标题、缩进代码、HTML div/details、`$$` 数学、引用式链接、未闭合的 `~~~`、脚注、CRLF、空输入。另外比对两个 Streamdown（默认切块和增量切块）在 `isAnimating` 流式各步的 innerHTML，全部一致。另有断言：流式一份文档时，重新切块的字符总量不到逐帧整段重切的 1/3。
+- `tests/incremental-blocks.test.tsx` 语料加入审查给的例子（非 1 起始有序列表接在段落后、setext、重复定义、跨空行的列表 / 引用 / HTML 注释 / 围栏）；新增固定种子 fuzz（seed 415，600 篇，每步比对）。本地另跑 4 × 50000 篇（seed 11–14，共约 307 万步）：0 篇不一致。旧实现同一 fuzz 5000 篇有 24 篇不一致、14 篇流完仍错。
+- `tests/refetch-no-rerender.test.tsx`：真 ChannelChat，偏好 / 机器人 / 频道逐个、再一起 refetch（数据不变），断言 ChatTranscript、Composer 渲染次数不变；用旧的展开写法验证过会失败。
+- `tests/composer-stream-editing.test.tsx`：流式中在中间插字、输入法组字跨 chunk、粘贴、撤销 / 重做、草稿保存与恢复，都和空闲时结果一致。
 - `no-group-has.test.ts` 新增一条检查（见上）。
 - 自测：`bun run typecheck` 通过；vite build 通过；`bun run test:app` 1802 pass / 0 fail；Biome 在 main 和本分支都是 1 error / 800 warnings / 143 infos，没有新增问题；没有改动数据库，DB 测试不适用。
 
