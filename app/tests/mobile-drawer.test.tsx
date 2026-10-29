@@ -13,10 +13,10 @@ import { settleReactWork } from "./settle-react-work";
  * 抽屉里只有面板自己的 .glass 会模糊，里面的列表卡片 / 账号卡把旧玻璃层的变量关掉，遮罩不模糊。
  */
 
-const css = readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8").replace(
-  /\/\*[\s\S]*?\*\//g,
-  "",
-);
+const css = readFileSync(
+  path.join(import.meta.dir, "../src/styles.css"),
+  "utf8",
+).replace(/\/\*[\s\S]*?\*\//g, "");
 
 interface Rule {
   selector: string;
@@ -33,7 +33,8 @@ function rules(text: string): Rule[] {
 }
 
 const all = rules(css);
-const blurs = (r: Rule) => /(^|[;\s])backdrop-filter:\s*(?!\s|none)[^;]+/.test(r.body);
+const blurs = (r: Rule) =>
+  /(^|[;\s])backdrop-filter:\s*(?!\s|none)[^;]+/.test(r.body);
 const DRAWER = /hk-drawer|\[data-mobile="true"\]/;
 
 let originalMatchMedia: typeof window.matchMedia;
@@ -95,8 +96,12 @@ function renderDrawer() {
   return view;
 }
 
-const drawer = () => document.querySelector<HTMLElement>('[data-slot="sidebar"][data-mobile="true"]');
-const overlay = () => document.querySelector<HTMLElement>('[data-slot="sheet-overlay"]');
+const drawer = () =>
+  document.querySelector<HTMLElement>(
+    '[data-slot="sidebar"][data-mobile="true"]',
+  );
+const overlay = () =>
+  document.querySelector<HTMLElement>('[data-slot="sheet-overlay"]');
 
 test("the drawer is one panel: the only .glass layer is the panel itself", () => {
   renderDrawer();
@@ -108,7 +113,9 @@ test("the drawer is one panel: the only .glass layer is the panel itself", () =>
   // 列表、账号、关闭按钮都在同一块面板里。
   expect(panel?.querySelector(".glass-side-card")).not.toBeNull();
   expect(panel?.querySelector(".acct-card")).not.toBeNull();
-  expect(panel?.querySelector('[data-testid="sidebar-drawer-close"]')).not.toBeNull();
+  expect(
+    panel?.querySelector('[data-testid="sidebar-drawer-close"]'),
+  ).not.toBeNull();
 });
 
 test("an overlay dims the page next to the open drawer", () => {
@@ -137,29 +144,44 @@ test("clicking the overlay closes the drawer", async () => {
 
 test("at most one blur layer: no drawer rule blurs, the inner cards and the overlay switch blur off", () => {
   // 抽屉自己的规则一条都不写模糊——唯一的模糊来自面板上的 .glass。
-  expect(all.filter((r) => DRAWER.test(r.selector) && blurs(r)).map((r) => r.selector)).toEqual([]);
+  expect(
+    all
+      .filter((r) => DRAWER.test(r.selector) && blurs(r))
+      .map((r) => r.selector),
+  ).toEqual([]);
   expect(all.some((r) => r.selector === ".glass" && blurs(r))).toBe(true);
   // 里面的卡片关掉旧三档玻璃层（它读 --lg-blur / --lg-surface / --lg-shadow）。
-  const inner = all.find((r) => r.selector.includes(".hk-drawer :is(.glass-side-card, .acct-card"));
+  const inner = all.find((r) =>
+    r.selector.includes(".hk-drawer :is(.glass-side-card, .acct-card"),
+  );
   expect(inner?.body).toMatch(/--lg-blur:\s*none/);
   expect(inner?.body).toMatch(/--lg-surface:\s*transparent/);
   expect(inner?.body).toMatch(/--lg-shadow:\s*none/);
   // 遮罩只压暗。
-  const dim = all.find((r) => r.selector === '[data-slot="sheet-overlay"].hk-drawer-overlay');
+  const dim = all.find(
+    (r) => r.selector === '[data-slot="sheet-overlay"].hk-drawer-overlay',
+  );
   expect(dim?.body).toMatch(/backdrop-filter:\s*none/);
   expect(dim?.body).toMatch(/background:\s*rgba\(0, 0, 0, 0\.\d+\)/);
 });
 
 test("the drawer slides with transform only, 200ms, and not at all under reduced motion", () => {
-  const base = all.find((r) => r.selector === '[data-slot="sidebar"].hk-drawer');
+  const base = all.find(
+    (r) => r.selector === '[data-slot="sidebar"].hk-drawer',
+  );
   expect(base?.body).toMatch(/transition-property:\s*transform;/);
   expect(base?.body).toMatch(/transition-duration:\s*200ms;/);
-  expect(base?.body).toMatch(/border-radius:\s*0 var\(--hk-drawer-radius\) var\(--hk-drawer-radius\) 0;/);
+  expect(base?.body).toMatch(
+    /border-radius:\s*0 var\(--hk-drawer-radius\) var\(--hk-drawer-radius\) 0;/,
+  );
   expect(css).toMatch(
     /@media \(prefers-reduced-motion: reduce\) \{\s*\[data-slot="sidebar"\]\.hk-drawer,\s*\[data-slot="sheet-overlay"\]\.hk-drawer-overlay \{\s*transition: none;/,
   );
   // 性能模式和减少透明度：不透明底、不模糊。
-  const perf = all.find((r) => r.selector === 'html[data-perf="on"] [data-slot="sidebar"].hk-drawer');
+  const perf = all.find(
+    (r) =>
+      r.selector === 'html[data-perf="on"] [data-slot="sidebar"].hk-drawer',
+  );
   expect(perf?.body).toMatch(/background:\s*var\(--hk-drawer-solid\)/);
   expect(perf?.body).toMatch(/backdrop-filter:\s*none/);
   expect(css).toMatch(

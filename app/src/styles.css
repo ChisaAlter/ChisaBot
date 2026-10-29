@@ -6377,12 +6377,7 @@ html[data-phone] .glass-seg-item { min-height: 40px; display: inline-flex; align
 html[data-phone] .side-search-kbd { display: none; }
 html[data-phone] .update-banner { top: calc(64px + var(--safe-t)); }
 
-/* 左栏抽屉、面板抽屉：让开状态栏、底部横条和横屏刘海。 */
-html[data-phone] .glass-shell [data-slot="sidebar"][data-mobile="true"],
-html[data-phone] [data-slot="sidebar"][data-mobile="true"] {
-  width: min(300px, calc(100vw - 56px)) !important;
-  max-width: none;
-}
+/* 面板抽屉：让开状态栏、底部横条和横屏刘海（左栏抽屉见「手机尺寸左栏抽屉」一节）。 */
 html[data-phone] .glass-drawer[data-slot="sheet-content"] {
   top: calc(12px + var(--safe-t));
   right: calc(12px + var(--safe-r));
