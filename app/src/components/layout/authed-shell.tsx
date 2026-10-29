@@ -1,14 +1,47 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
+import { useState } from "react";
 import { KeepAliveStage } from "@/components/layout/keep-alive";
-import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
-import { LeftRail } from "@/components/layout/left-rail";
 import { SelfHostBanner } from "@/components/layout/self-host-banner";
-import { PanelRail } from "@/components/panels/panel-rail";
-import { SettingsSidebar } from "@/components/settings/settings-sidebar";
-import { CHANNEL_ROUTE_ID, ChannelPage } from "@/components/channels/channel-page";
+import { CHANNEL_ROUTE_ID } from "@/components/channels/chat-search";
+import { RouteSkeleton, SidebarSkeleton } from "@/components/startup-status";
+import { lazyPart } from "@/components/ui/lazy-part";
 import { useLanding } from "@/lib/agents/landing";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
+
+/*
+ * 整个聊天（CopilotKit 对话、Markdown、工具卡片……）只在地址是一段聊天、或 `/` 正要跳进聊天时才下载（DESIGN.md §41.5）；
+ * 直接打开设置 / 管理 / 待处理时不进首屏。地址是聊天时 index.html 里的首屏预加载已经提前把它拉下来了。
+ */
+const ChannelPage = lazyPart(
+  () => import("@/components/channels/channel-page").then((m) => m.ChannelPage),
+  <RouteSkeleton />,
+);
+
+/*
+ * CopilotKit 客户端连同全部工具卡片（~500KB gzip）也按需下载（DESIGN.md §41.5）。以前它包着整个 `_authed`，
+ * 直接打开设置 / 管理也要先下载、执行它，首屏卡在「正在加载 ChisaBot…」。用得到它的上下文的只有聊天这一块的主区
+ * （留着的聊天、新聊天、群聊……；管理里的组件预览自己包一层），所以它只包主区，而且第一次进聊天这一块才挂上：
+ * - 挂上的那一刻正好是地址从设置 / 管理换进聊天、主区内容本来就要整个换掉的时候，看不出来；
+ * - 挂上以后再也不摘（`copilot` 只会从 false 变 true），留着的聊天去设置再回来照旧不卸载（§98），
+ *   正在跑的回合、登记过的前端工具一直在，和以前全局一个 Provider 一样只有一个实例。
+ */
+const ChatCopilot = lazyPart(() => import("@/lib/copilot/provider").then((m) => m.CopilotProvider), <RouteSkeleton />);
+
+/* 左栏、右栏只在自己那一块（聊天 / 设置 / 管理）用到时下载；没到之前画同样形状的骨架。 */
+const LeftRail = lazyPart(
+  () => import("@/components/layout/left-rail").then((m) => m.LeftRail),
+  <SidebarSkeleton className="glass-sidebar-container" />,
+);
+const SettingsSidebar = lazyPart(
+  () => import("@/components/settings/settings-sidebar").then((m) => m.SettingsSidebar),
+  <SidebarSkeleton className="glass-sidebar-container" />,
+);
+const AdminSidebar = lazyPart(
+  () => import("@/components/admin/admin-sidebar").then((m) => m.AdminSidebar),
+  <SidebarSkeleton className="glass-sidebar-container" />,
+);
+const PanelRail = lazyPart(() => import("@/components/panels/panel-rail").then((m) => m.PanelRail));
 
 /**
  * 登录之后的那一个外壳（DESIGN.md §98）。
@@ -29,6 +62,14 @@ export function AuthedShell() {
 function ShellFrame({ pathname }: { pathname: string }) {
   useChannelEvents();
   const scope = scopeOfPath(pathname);
+  // 进过一次聊天这一块就一直挂着 CopilotKit（见上面 ChatCopilot）。
+  const [copilot, setCopilot] = useState(scope === "app");
+  if (scope === "app" && !copilot) setCopilot(true);
+  if (copilot) {
+    // 两块一起下载，不排队（index.html 的首屏预加载在地址是聊天时已经提前拉了）。
+    void ChatCopilot.preload();
+    void ChannelPage.preload();
+  }
   const sidebar =
     scope === "settings" ? (
       <SettingsSidebar className="glass-sidebar-container" />
@@ -46,7 +87,13 @@ function ShellFrame({ pathname }: { pathname: string }) {
       scope={scope}
       sidebar={sidebar}
     >
-      <ChatStage pathname={pathname} />
+      {copilot ? (
+        <ChatCopilot>
+          <ChatStage pathname={pathname} />
+        </ChatCopilot>
+      ) : (
+        <ChatStage pathname={pathname} />
+      )}
     </GlassShell>
   );
 }

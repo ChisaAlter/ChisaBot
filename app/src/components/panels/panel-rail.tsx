@@ -1,4 +1,4 @@
-import { LivePanelList, useLivePanels } from "./live-panels";
+import { useLivePanels } from "./live-panels-query";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import {
   IconDeviceDesktop,
@@ -32,7 +32,8 @@ import {
 } from "@/components/ui/sheet";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { useCurrentBotChat } from "@/lib/agents/bot-chat-context";
-import { ComputerViewPanel } from "@/components/computer/computer-panel";
+import { Skeleton } from "@/components/ui/skeleton";
+import { lazyPart } from "@/components/ui/lazy-part";
 import { usePanelBot } from "@/lib/panels/active-bot";
 import { setBotUi } from "@/lib/chat/ui-memory";
 import {
@@ -450,6 +451,13 @@ function PanelRailBody({
   const canComputer = Boolean(chat?.canComputer);
   const tab: RailTab = canComputer && chat?.computerOpen ? "computer" : "panels";
   const liveList = useLivePanels(botId);
+  // 没有面板时不加载卡片渲染（json-render、图表……，按需块）；一旦有过就一直挂着，
+  // 删掉最后一张后「撤销」还要靠 LivePanelList 里的 mutation。
+  const hasLive = (liveList.data?.length ?? 0) > 0;
+  const [liveMounted, setLiveMounted] = useState(hasLive);
+  useEffect(() => {
+    if (hasLive) setLiveMounted(true);
+  }, [hasLive]);
 
   /*
    * 右栏只放实时面板（live_panels，DESIGN.md §29/§43）。上游旧面板系统（沙箱 HTML 面板、面板库、「新建」创作会话、
@@ -501,7 +509,7 @@ function PanelRailBody({
             <RailNote>{rosterPending ? "正在加载机器人…" : "还没有可用的机器人。"}</RailNote>
           ) : (
             <>
-              <LivePanelList botId={botId} drawer={drawer} width={width} />
+              {liveMounted || hasLive ? <LivePanelList botId={botId} drawer={drawer} width={width} /> : null}
               {liveList.isSuccess && (liveList.data?.length ?? 0) === 0 ? (
                 <div className="rail-empty flex flex-col items-center gap-2.5">
                   <p>
@@ -613,6 +621,21 @@ function RailComputerPane({
     </div>
   );
 }
+
+/**
+ * 电脑面板（远程桌面、VNC、预览……）只在打开电脑页时才用到，按需加载，别压在每个页面的首屏外壳里
+ * （DESIGN.md §41.5）。
+ */
+const ComputerViewPanel = lazyPart<{ agentId: string; name?: string; variant?: "pane" | "rail" }>(
+  () => import("@/components/computer/computer-panel").then((m) => m.ComputerViewPanel),
+  <Skeleton className="h-40 w-full" />,
+);
+
+/** 实时面板卡片（json-render 渲染、图表、菜单）同理：数据在 live-panels-query 里先取，卡片按需加载。 */
+const LivePanelList = lazyPart<{ botId: string; width?: number; drawer?: boolean }>(
+  () => import("./live-panels").then((m) => m.LivePanelList),
+  <Skeleton className="h-24 w-full" />,
+);
 
 function RailNote({ children }: { children: React.ReactNode }) {
   return (

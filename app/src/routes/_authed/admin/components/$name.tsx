@@ -62,6 +62,7 @@ import {
   dataFunctionsQueryOptions,
 } from "@/lib/components/queries";
 import { RENDERABLE_NAMES } from "@/lib/copilot/gallery-registry";
+import { CopilotProvider } from "@/lib/copilot/provider";
 import { queryClient } from "@/query-client";
 
 /**
@@ -77,7 +78,12 @@ const BACK = {
 export const Route = createFileRoute("/_authed/admin/components/$name")({
   // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 components 才能进。
   beforeLoad: requireExtra("components"),
-  component: RouteComponent,
+  // 组件预览里的工具卡片要 CopilotKit 上下文；它不再包整个应用，只包聊天主区（DESIGN.md §41.5），这里自己包一层。
+  component: () => (
+    <CopilotProvider>
+      <RouteComponent />
+    </CopilotProvider>
+  ),
 });
 
 function RouteComponent() {
