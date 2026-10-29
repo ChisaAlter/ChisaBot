@@ -1,5 +1,36 @@
 # DEVLOG
 
+## Unreleased — Hermes 备用模型 / 输出上限、长历史压缩（分支 feat/hermes-fallback-history）
+
+动机：模块 8 PR2。Hermes 内核下有几处和内置内核不一致、或会互相打架的地方。
+
+1. **备用模型和输出上限不生效**：管理员配置的备用模型和每个模型的输出上限只在内置内核里用，Hermes 内核每轮只收到模型 ID。主模型额度用完时 Hermes 直接报错，用户只看到失败。现在每轮传 `model:{id,fallbacks,maxOutputTokens}`，adapter 用 Hermes 自带的 `_init_fallback_chain` 按主模型同一个 provider / endpoint 建备用链，并设 `max_tokens`。Hermes 切换后回报 `modelFallback`，服务端核对后复用内置内核同一条日志和「已改用 X」提示。不同 Hermes 版本未必有这些内部接口，adapter 先检测、在 initialize 里如实宣告；设置页只有检测到不支持时才写「不生效」，旧桥（没有这项）不提示，不猜。
+2. **长话题越聊越贵、最后超窗**：Hermes 每轮收到完整历史，长话题里大段旧工具结果（网页、文件内容）占大头，接近窗口时直接失败。现在按模型上下文窗口估算这一轮要发的 token（提示词 + 工具 schema + 历史）：
+   - 估算仍用字符近似，但上一轮有 provider 返回的真实用量时，把上一轮实际发出的内容按同一方案重估，用「真实 / 估算」校准（限 0.8–3 倍）；没有就乘 1.15 的安全系数，估不准时宁可早压缩。
+   - 超过 70%：较早的工具结果换成「已省略，原长 N 字」，超长旧消息只留首 1500 + 尾 500 字，最近 2 轮原样。工具调用 ID 和配对都保留。
+   - 超过 85%：较早的轮次用已经缓存好的摘要代替，最近 4 轮原样；摘要后仍超 70% 再裁剪。
+   - 体验优先：这一轮从不等摘要模型，首字时间不变。没有现成摘要就只裁剪，回复结束（RUN_FINISHED）后在后台生成摘要，下一轮再用；20 秒超时只用于后台，失败只记日志。最初的设计是当轮同步写摘要（最多卡 20 秒），审稿时改掉了，阻塞路径已删除。
+   - 摘要按「话题 + 被摘要的轮次范围」缓存，键是这段消息内容的哈希，较早的消息被编辑、删除或重新生成时哈希变了就不再命中；截断时也按消息 ID 删掉相关缓存。范围变长时先用前缀摘要，后台只增量补新增几轮；连续续写 5 次或摘要超过 600 字就整段重摘，防止越续越走样。
+   - 摘要模型用管理员配置的（新的「摘要模型」设置），未配置用主模型，不写死。
+   - 同一次运行的续跑段复用第一次的方案，桥要求的「同一运行输入只追加」不被打破。
+   - 只改发给 Hermes 的那一份，数据库完整历史、导出、搜索都不变。回复下方一行「已压缩前文」，有摘要可展开（`<details>` + 备用模型提示的现有类）。「开新话题」沿用上下文圆环，不加新 UI。
+3. **不二次压缩**：读了 Hermes 源码，它自带的上下文压缩默认开启（`compression.enabled`，窗口 <512K 时 75% 触发），开跑前、运行中工具结果变多后、上下文溢出时都会压缩，适配器原来没关，所以会和宿主压缩叠加。现在宿主压缩过的运行带 `contextCompression: false`，适配器在这次运行里关掉 `agent.compression_enabled`，其它运行恢复 Hermes 默认。
+
+跨 provider 的备用模型（不同 base_url / key）暂不支持，列为后续工作（见 `docs/rfc/hermes-fallback-history.md`）。
+
+数据库：摘要缓存表 `chisabot_history_summaries` 由服务端首次使用时 `CREATE TABLE IF NOT EXISTS` 创建（带 `thread_id` 索引），每个话题最多留 10 条，不走 drizzle 迁移；DB 相关测试由测试 bot 跑。
+
+Token 对比（`server/tests/history-budget.test.ts`，30 轮长话题夹具，每轮带一段长工具结果；字符估算 × 1.15 安全系数）：
+
+| 情况 | 窗口 | 发给模型的估算 token |
+|---|---|---|
+| 改前 | — | 164,250（字符估算 142,826） |
+| >70% 裁剪 | 200k（约 82%） | 48,736 |
+| >85%，当轮（还没有摘要） | 160k | 48,736（只裁剪，后台写摘要） |
+| >85%，下一轮（31 轮，改前 168,116） | 160k | 33,212（较早 26 轮由摘要代替） |
+
+测试：`server/tests/history-budget.test.ts`（两个阈值、当轮不调用摘要模型 / 后台写好下一轮用、前缀摘要 + 增量续写、5 次 / 600 字整段重摘、编辑失效 / 截断失效、后台失败和超时不影响当轮、真实用量校准与安全系数、同一运行方案稳定、建表与索引、token 对比）、`hermes-runtime.test.ts`（wire model 含压缩开关、回报校验、metadata 合并）、`hermes-health.test.ts`、`history-summary-settings.test.ts`、`examples/acp-agent/bridge.test.ts`（透传、health、非法输入、不支持时 false/false）、Python `examples/hermes-agent/tests`（备用链和 `max_tokens`、mock 429 切换备用、宿主压缩过的运行关掉 Hermes 压缩、下一轮恢复）、`app/tests/chat-unify.test.ts` 和 `hermes-history-notes.test.ts`。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。

@@ -579,6 +579,136 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         from chisabot_protocol import active_run
         self.assertIsNone(active_run.get())
 
+    def model_control_modules(self, chains):
+        class AIAgent:
+            def __init__(self, *, model=None, max_tokens=None, fallback_model=None, ephemeral_system_prompt=None):
+                pass
+
+            def _try_activate_fallback(self, reason=None, reset_at=None):
+                return False
+
+        def init_chain(agent, chain):
+            chains.append(copy.deepcopy(chain))
+            agent._fallback_chain, agent._fallback_index = list(chain), 0
+
+        modules = {"run_agent": ModuleType("run_agent"), "agent.agent_init_fallback": ModuleType("agent.agent_init_fallback")}
+        modules["run_agent"].AIAgent = AIAgent
+        modules["agent.agent_init_fallback"]._init_fallback_chain = init_chain
+        return modules
+
+    async def test_backup_models_and_output_cap_reach_hermes_and_switch_is_reported(self):
+        chains = []
+        with patch.dict(sys.modules, self.model_control_modules(chains)):
+            response = await self.adapter.initialize()
+            self.assertEqual(response.field_meta["chisabotModelControls"], {"fallback": True, "maxOutputTokens": True})
+            state = await self.new()
+            state.agent.max_tokens = 4096
+
+            def switch(agent, reason=None, reset_at=None):
+                if agent._fallback_index >= len(agent._fallback_chain):
+                    return False
+                agent.model = agent._fallback_chain[agent._fallback_index]["model"]
+                agent._fallback_index += 1
+                return True
+            state.agent._try_activate_fallback = lambda reason=None, reset_at=None: switch(state.agent, reason, reset_at)
+
+            def hook(agent, user, history):
+                self.assertEqual(agent.max_tokens, 32000)
+                self.assertTrue(agent._try_activate_fallback(reason=SimpleNamespace(value="rate_limit")))
+                return {"messages": history + [{"role": "user", "content": user}], "final_response": "answer"}
+            state.agent.run_hook = hook
+            raw = payload()
+            raw["model"].update({"fallbacks": ["backup-a", "magpie-model", "backup-b", "backup-a"], "maxOutputTokens": 32000})
+            response = await self.prompt(state, raw)
+            self.assertEqual(chains[-1], [{"provider": "custom", "model": "backup-a", "base_url": "https://magpie.invalid/v1"},
+                                          {"provider": "custom", "model": "backup-b", "base_url": "https://magpie.invalid/v1"}])
+            self.assertEqual(response.stop_reason, "end_turn")
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                             {"from": "magpie-model", "to": "backup-a", "reason": "quota"})
+            # Next turn: no cap from the host restores Hermes' own default; no switch, no metadata.
+            state.agent.run_hook = None
+            raw2 = payload()
+            raw2["scope"]["runId"] = "run-2"
+            response = await self.prompt(state, raw2)
+            self.assertEqual(state.agent.max_tokens, 4096)
+            self.assertEqual(chains[-1], [])
+            self.assertIsNone(response.field_meta)
+
+    async def test_mock_hermes_429_walks_to_the_backup_model_and_the_switch_is_reported(self):
+        chains = []
+        with patch.dict(sys.modules, self.model_control_modules(chains)):
+            await self.adapter.initialize()
+            state = await self.new()
+            calls = []
+
+            class RateLimited(Exception):
+                status_code = 429
+
+            def provider(model):
+                calls.append(model)
+                if model == "magpie-model":
+                    raise RateLimited("Error code: 429 - quota exhausted for magpie-model")
+                return f"answer from {model}"
+
+            def try_activate_fallback(agent, reason=None, reset_at=None):
+                # Hermes' chain walk: the next entry built by _init_fallback_chain becomes the live model.
+                if agent._fallback_index >= len(agent._fallback_chain):
+                    return False
+                agent.model = agent._fallback_chain[agent._fallback_index]["model"]
+                agent._fallback_index += 1
+                return True
+            state.agent._try_activate_fallback = lambda reason=None, reset_at=None: try_activate_fallback(state.agent, reason, reset_at)
+
+            def hermes_turn(agent, user, history):
+                # Mirrors Hermes' turn recovery: a 429 is classified rate_limit (should_fallback), the
+                # agent switches to the next backup and retries the same request.
+                agent.model = "magpie-model"
+                for _ in range(3):
+                    try:
+                        text = provider(agent.model)
+                        break
+                    except RateLimited:
+                        if not agent._try_activate_fallback(reason=SimpleNamespace(value="rate_limit")):
+                            raise
+                return {"messages": history + [{"role": "user", "content": user}, {"role": "assistant", "content": text}],
+                        "final_response": text}
+            state.agent.run_hook = hermes_turn
+            raw = payload()
+            raw["model"]["fallbacks"] = ["backup-a", "backup-b"]
+            response = await self.prompt(state, raw)
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            self.assertEqual(response.stop_reason, "end_turn")
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                             {"from": "magpie-model", "to": "backup-a", "reason": "quota"})
+
+    async def test_hermes_compression_is_off_only_for_runs_the_host_already_compacted(self):
+        state = await self.new()
+        state.agent.compression_enabled = True
+        seen = []
+
+        def hook(agent, user, history):
+            seen.append(agent.compression_enabled)
+            return {"messages": history + [{"role": "user", "content": user}], "final_response": "ok"}
+        state.agent.run_hook = hook
+        raw = payload()
+        raw["model"]["contextCompression"] = False
+        await self.prompt(state, raw)
+        raw2 = payload()
+        raw2["scope"]["runId"] = "run-2"
+        await self.prompt(state, raw2)
+        self.assertEqual(seen, [False, True])
+
+    async def test_unsupported_hermes_advertises_no_model_controls_and_is_left_alone(self):
+        response = await self.adapter.initialize()
+        self.assertEqual(response.field_meta["chisabotModelControls"], {"fallback": False, "maxOutputTokens": False})
+        state = await self.new()
+        raw = payload()
+        raw["model"].update({"fallbacks": ["backup-a"], "maxOutputTokens": 32000})
+        response = await self.prompt(state, raw)
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertFalse(hasattr(state.agent, "_fallback_chain"))
+        self.assertFalse(hasattr(state.agent, "max_tokens"))
+
     async def test_default_manager_skips_native_memory_tools_and_discovery(self):
         captured = {}
         class AIAgent(FakeAgent):

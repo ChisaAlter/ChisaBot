@@ -17,6 +17,7 @@ import { Observable, ReplaySubject, Subject } from "rxjs";
 import { concatMap } from "rxjs/operators";
 import { capConnectMessages } from "../../shared/connect-snapshot";
 import { fallbackNotice } from "./agents/model-fallback";
+import { forgetHistorySummaries } from "./agents/history-budget";
 import { withConfirmTurn, withToolAbort } from "./confirmations/context";
 import {
   estimateTokens,
@@ -661,6 +662,7 @@ const EMPTY_THREAD_READS: Record<string, unknown> = {
   context: { context: null },
   stopped: { userMessageIds: [] },
   fallbacks: { turns: [] },
+  compactions: { turns: [] },
   inbox: { running: false, paused: false, items: [] },
   workers: { workers: [] },
   "sent-at": { userMessageId: null, at: null, now: null },
@@ -1851,6 +1853,60 @@ export async function createLocalConversations(
     return [...turns.values()];
   };
   /**
+   * 「已压缩前文」（Hermes 内核长对话，agents/history-budget.ts）：发给模型时压缩过较早历史的那些轮次
+   * （RUN_FINISHED 的 metadata.historyCompaction），同 fallbackTurns 一样用开启那一轮的用户消息 id 表示。只读。
+   */
+  const compactionTurns = async (
+    threadId: string,
+    messages: readonly Message[],
+  ) => {
+    const rows = await database.$client.unsafe<
+      {
+        compaction: { mode?: unknown; summarizedTurns?: unknown; beforeTokens?: unknown; afterTokens?: unknown; summary?: unknown };
+        started: { input?: { messages?: { id?: string }[] } } | null;
+      }[]
+    >(
+      `SELECT f.event->'metadata'->'historyCompaction' AS compaction,
+              (SELECT s.event FROM openbot_local_events s
+                WHERE s.thread_id = f.thread_id AND s.run_id = f.run_id AND s.event->>'type' = 'RUN_STARTED'
+                ORDER BY s.sequence ASC LIMIT 1) AS started
+       FROM openbot_local_events f
+       WHERE f.thread_id = $1 AND f.event->>'type' = 'RUN_FINISHED' AND f.event->'metadata' ? 'historyCompaction'
+       ORDER BY f.sequence DESC LIMIT 50`,
+      [threadId],
+    );
+    if (!rows.length) return [];
+    const position = new Map(messages.map((message, index) => [message.id, index]));
+    const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : 0);
+    const turns = new Map<string, { userMessageId: string; mode: "trim" | "summary"; summarizedTurns: number; beforeTokens: number; afterTokens: number; summary: string | null; notice: string }>();
+    for (const { compaction, started } of rows) {
+      if (compaction?.mode !== "trim" && compaction?.mode !== "summary") continue;
+      const indexes = (started?.input?.messages ?? [])
+        .map((message) => position.get(String(message.id)))
+        .filter((index): index is number => index !== undefined);
+      if (!indexes.length) continue;
+      for (let at = Math.max(...indexes); at >= 0; at--) {
+        const message = messages[at];
+        if (message?.role !== "user") continue;
+        if (!turns.has(message.id)) {
+          const summarizedTurns = count(compaction.summarizedTurns);
+          const summary = compaction.mode === "summary" && typeof compaction.summary === "string" ? compaction.summary.slice(0, 4000) : null;
+          turns.set(message.id, {
+            userMessageId: message.id,
+            mode: compaction.mode,
+            summarizedTurns,
+            beforeTokens: count(compaction.beforeTokens),
+            afterTokens: count(compaction.afterTokens),
+            summary,
+            notice: summary ? `已压缩前文（较早 ${summarizedTurns} 轮由摘要代替）` : "已压缩前文（较早的工具结果和超长消息已省略）",
+          });
+        }
+        break;
+      }
+    }
+    return [...turns.values()];
+  };
+  /**
    * 最新一条用户消息什么时候发的（DESIGN.md §94：5 分钟内连续发消息不翻页）：它第一次出现在某次运行的
    * RUN_STARTED 输入里的那一刻（存的 RUN_STARTED 只带这次新进来的消息，见 slimReplay 上面的说明，所以很小）。
    * 只看最近 40 次运行；找不到（太旧 / 还没跑过）回 null。同时回服务器的「现在」，浏览器用差值换算，不受两边时钟差影响。只读。
@@ -1996,6 +2052,10 @@ export async function createLocalConversations(
           return Response.json({
             turns: await fallbackTurns(threadId, row.messages),
           });
+        if (operation === "compactions")
+          return Response.json({
+            turns: await compactionTurns(threadId, row.messages),
+          });
         if (operation === "sent-at")
           return Response.json(await lastSentAt(threadId, row.messages));
         if (operation === "events")
@@ -2053,6 +2113,8 @@ export async function createLocalConversations(
           ownerUserId: actorId,
           removedToolCalls: result.removedToolCalls,
         });
+        // 压缩前文的摘要缓存里覆盖了被截掉消息的那些作废（agents/history-budget.ts）。
+        await forgetHistorySummaries(database, threadId, result.removed);
         // A regenerated thread must not retain paused supplements from its removed history.
         await database.$client.unsafe("UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now() WHERE thread_id = $1 AND status IN ('paused', 'stopped')", [threadId]);
         if (workers) {

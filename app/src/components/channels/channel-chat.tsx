@@ -96,6 +96,7 @@ import {
   rememberTranscript,
 } from "@/lib/copilot/transcript-cache";
 import {
+  useCompactionTurns,
   useFallbackTurns,
   useLastSentAt,
   useStoppedTurnIds,
@@ -1667,6 +1668,7 @@ export function ChannelChat({
 
   // 主模型额度用完、这一轮换了备用模型：那一轮末尾一行淡色小字（DESIGN.md §61）。
   const fallbackTurns = useFallbackTurns(channel.threadId);
+  const compactionTurns = useCompactionTurns(channel.threadId);
 
   /*
    * 回答期间发的消息进服务器收件箱（DESIGN.md §38.1；CB-046 从 `/bot` 搬来）：正在跑的那一轮下一步就读到；
@@ -2035,6 +2037,7 @@ export function ChannelChat({
               stopFailed={stopRequest.failed}
               onRetryStop={retryStop}
               fallbacks={fallbackTurns}
+              compactions={compactionTurns}
               lastSentAt={lastSentAt}
               queueToServer={queueToServer}
               /*

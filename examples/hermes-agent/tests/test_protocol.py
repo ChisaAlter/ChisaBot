@@ -11,7 +11,8 @@ from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from chisabot_protocol import (Gateway, GatewayClient, GatewayError, ProtocolError, RunState,
-                               ToolAliases, ToolSuspended, host_metadata, parse_host_prompt)
+                               ToolAliases, ToolSuspended, fallback_reason, fallback_use, host_metadata,
+                               parse_host_prompt)
 
 
 def payload():
@@ -327,6 +328,48 @@ class RunStateTests(unittest.TestCase):
         run.start("old", "device_list", {}, lambda: None)
         run.close()
         self.assertEqual(json.loads(run.execute("old", "device_list", {}))["error"]["code"], "run_closed")
+
+
+class ModelControlTests(unittest.TestCase):
+    def test_backup_models_and_output_cap_are_parsed_and_bounded(self):
+        raw = payload()
+        self.assertEqual((parse_host_prompt(raw).fallbacks, parse_host_prompt(raw).max_output_tokens), ((), None))
+        raw["model"].update({"fallbacks": ["b/one", "magpie-model", "b/two", "b/one"], "maxOutputTokens": 32000})
+        config = parse_host_prompt(raw)
+        self.assertEqual(config.fallbacks, ("b/one", "b/two"))
+        self.assertEqual(config.max_output_tokens, 32000)
+        for bad in ({"fallbacks": "b/one"}, {"fallbacks": ["has space"]}, {"fallbacks": [""]},
+                    {"fallbacks": [f"m{i}" for i in range(9)]}, {"maxOutputTokens": 0},
+                    {"maxOutputTokens": True}, {"maxOutputTokens": 1.5}):
+            broken = payload()
+            broken["model"].update(bad)
+            with self.assertRaises(ProtocolError):
+                parse_host_prompt(broken)
+        leaked = payload()
+        leaked["model"]["fallbacks"] = ["opaque-capability-secret"]
+        with self.assertRaises(ProtocolError):
+            parse_host_prompt(leaked)
+
+    def test_host_compaction_flag_is_a_strict_boolean(self):
+        self.assertIsNone(parse_host_prompt(payload()).context_compression)
+        raw = payload()
+        raw["model"]["contextCompression"] = False
+        self.assertIs(parse_host_prompt(raw).context_compression, False)
+        for bad in ("false", 0, 1):
+            broken = payload()
+            broken["model"]["contextCompression"] = bad
+            with self.assertRaises(ProtocolError):
+                parse_host_prompt(broken)
+
+    def test_hermes_failover_reasons_map_to_the_two_host_notices(self):
+        from types import SimpleNamespace
+        for reason in ("rate_limit", "billing", "upstream_rate_limit", SimpleNamespace(value="rate_limit")):
+            self.assertEqual(fallback_reason(reason), "quota")
+        for reason in ("overloaded", "server_error", "timeout", None):
+            self.assertEqual(fallback_reason(reason), "unavailable")
+        self.assertEqual(fallback_use("main", "backup", "overloaded"), {"from": "main", "to": "backup", "reason": "unavailable"})
+        self.assertIsNone(fallback_use("main", "main", "rate_limit"))
+        self.assertIsNone(fallback_use("main", None, "rate_limit"))
 
 
 if __name__ == "__main__":

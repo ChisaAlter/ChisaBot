@@ -44,6 +44,16 @@ describe("turn marks", () => {
     expect(compact.stoppedAfter.has("a3")).toBe(false);
   });
 
+  test("compression note after the turn's last visible row, with its summary; none while running", () => {
+    const items = [user("u1", "一"), bot("a1", "答一"), user("u2", "二"), bot("a2", "答二")];
+    const note = { notice: "已压缩前文（较早 8 轮由摘要代替）", summary: "- 用户目标：比较方案" };
+    const compact = compactTurns(items, false, new Set(), new Map(), new Map([["u2", note]]));
+    expect(compact.compactionAfter.get("a2")).toEqual(note);
+    expect(compact.compactionAfter.has("a1")).toBe(false);
+    const running = compactTurns(items, true, new Set(), new Map(), new Map([["u2", note]]));
+    expect(running.compactionAfter.size).toBe(0);
+  });
+
   test("no fallback note on the turn still running", () => {
     const items = [user("u1", "一"), bot("a1", "写到一半")];
     const compact = compactTurns(items, true, new Set(), new Map([["u1", "x"]]));

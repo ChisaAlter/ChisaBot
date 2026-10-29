@@ -285,6 +285,44 @@ function promptBlocks(message) {
   });
 }
 
+const MAX_FALLBACK_MODELS = 8;
+const modelId = (value) => typeof value === "string" && value.length > 0 && value.length <= 200
+  && ![...value].some((character) => /\s/u.test(character) || character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
+
+/** The host's model for this turn: id, its ordered backup models (same connection) and output cap. */
+function hostModel(model) {
+  const result = { id: model.id };
+  if (model.fallbacks !== undefined) {
+    if (!Array.isArray(model.fallbacks) || model.fallbacks.length > MAX_FALLBACK_MODELS || !model.fallbacks.every(modelId)) {
+      throw rpcError("Invalid chisabotHermes model fallbacks", "ACP_INVALID_HOST_CONTEXT");
+    }
+    if (model.fallbacks.length) result.fallbacks = [...model.fallbacks];
+  }
+  if (model.maxOutputTokens !== undefined) {
+    if (!Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens <= 0 || model.maxOutputTokens > 1_000_000) {
+      throw rpcError("Invalid chisabotHermes model output limit", "ACP_INVALID_HOST_CONTEXT");
+    }
+    result.maxOutputTokens = model.maxOutputTokens;
+  }
+  if (model.contextCompression !== undefined) {
+    // false = the host already compacted this run's history; the adapter keeps Hermes' own compression off.
+    if (typeof model.contextCompression !== "boolean") throw rpcError("Invalid chisabotHermes model compression flag", "ACP_INVALID_HOST_CONTEXT");
+    result.contextCompression = model.contextCompression;
+  }
+  return result;
+}
+
+/** What the adapter detected in the installed Hermes (initialize `_meta.chisabotModelControls`). */
+function modelControls(value) {
+  return { fallback: isObject(value) && value.fallback === true, maxOutputTokens: isObject(value) && value.maxOutputTokens === true };
+}
+
+/** One Hermes model switch reported by the adapter; anything malformed is dropped, never forwarded. */
+function modelFallback(value) {
+  if (!isObject(value) || !modelId(value.from) || !modelId(value.to) || value.from === value.to) return null;
+  return { from: value.from, to: value.to, reason: value.reason === "quota" ? "quota" : "unavailable" };
+}
+
 function prepareInput(input, options) {
   const host = input?.forwardedProps?.chisabotHermes;
   let context = null;
@@ -309,7 +347,7 @@ function prepareInput(input, options) {
       version: 1,
       scope: Object.fromEntries(["actorId", "botId", "threadId", "runId"].map((key) => [key, host.scope[key]])),
       toolGateway: { url: host.toolGateway.url, capability: host.toolGateway.capability },
-      model: { id: host.model.id },
+      model: hostModel(host.model),
     };
   }
   if (options.requireHostContext && !context) throw rpcError("Trusted chisabotHermes host context is required", "ACP_HOST_CONTEXT_REQUIRED");
@@ -411,7 +449,7 @@ export function createAcpBridge(overrides = {}) {
     if (!generation || generation.client.failed) {
       const previous = generation;
       if (previous) void previous.client.close().finally(() => generations.delete(previous));
-      generation = { id: ++generationSeq, client: new AcpClient(options), init: null, hostTools: false, sessions: new Map(), seeded: new Set() };
+      generation = { id: ++generationSeq, client: new AcpClient(options), init: null, hostTools: false, modelControls: null, sessions: new Map(), seeded: new Set() };
       generations.add(generation);
     }
     return generation;
@@ -427,6 +465,7 @@ export function createAcpBridge(overrides = {}) {
         }, options.initTimeoutMs);
         if (current.client.failed) throw current.client.failure;
         current.hostTools = result?._meta?.chisabotHostTools === 1;
+        current.modelControls = modelControls(result?._meta?.chisabotModelControls);
         current.client.initialized = true;
         current.client.healthy = true;
       })().catch((error) => {
@@ -661,6 +700,8 @@ export function createAcpBridge(overrides = {}) {
         waitingCallId = resultMetadata.callId ?? waitingCallId;
       }
       closeMessages();
+      const fallbackUsed = modelFallback(resultMetadata?.modelFallback);
+      const finishedMetadata = fallbackUsed ? { metadata: { modelFallback: fallbackUsed } } : {};
       const waitingId = waiting?.toolCallId ?? waitingCallId ?? waiting?.requestId ?? `waiting-${prepared.runId}`;
       const unresolved = [...toolCalls.values()].filter((tool) => !tool.result && (!waiting || tool.id !== waitingId));
       if (unresolved.length) throw rpcError(`ACP finished without tool results: ${unresolved.map((tool) => tool.id).join(", ")}`, "ACP_MISSING_TOOL_RESULT");
@@ -673,9 +714,10 @@ export function createAcpBridge(overrides = {}) {
             id: waitingId, toolCallId: waitingId, reason: waiting.reason ?? "waiting", payload: safeWaiting,
             metadata: { openbotWaiting: safeWaiting },
           }] },
+          ...finishedMetadata,
         });
       } else if (result?.stopReason === "end_turn") {
-        complete(entry, { type: "RUN_FINISHED", threadId: prepared.threadId, runId: prepared.runId });
+        complete(entry, { type: "RUN_FINISHED", threadId: prepared.threadId, runId: prepared.runId, ...finishedMetadata });
       } else {
         const reasons = { cancelled: "ACP agent cancelled this turn", refusal: "ACP agent 拒绝了这一轮", max_tokens: "ACP agent reached its token limit", max_turn_requests: "ACP agent reached its request limit" };
         throw rpcError(reasons[result?.stopReason] ?? "ACP agent returned no successful stop reason", result?.stopReason === "cancelled" ? "ACP_CANCELLED" : "ACP_STOP_ERROR");
@@ -776,6 +818,8 @@ export function createAcpBridge(overrides = {}) {
     ok: Boolean(generation?.client.healthy && generation.client.initialized && stateHealthy
       && (!options.requireHostContext || (generation.hostTools && statePath))),
     hostTools: Boolean(generation?.hostTools),
+    // Detected by the adapter in the installed Hermes; null until the adapter has initialised.
+    modelControls: generation?.client.initialized && generation.modelControls ? generation.modelControls : null,
     healthy: Boolean(generation?.client.healthy), initialized: Boolean(generation?.client.initialized),
     generation: generation?.id ?? 0, sessions: generation?.client.failed ? 0 : generation?.sessions.size ?? 0,
     queuedScopes: sessionQueues.size, activeTurns: activeTurns.size,
