@@ -18,7 +18,10 @@ import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 export const OUTPUT_LIMIT = 4000;
 
 /** 截到 OUTPUT_LIMIT 个字，并说明还剩多少没显示。 */
-export function clipToolOutput(output: string, limit = OUTPUT_LIMIT): { text: string; hidden: number } {
+export function clipToolOutput(
+  output: string,
+  limit = OUTPUT_LIMIT,
+): { text: string; hidden: number } {
   const chars = Array.from(output);
   if (chars.length <= limit) return { text: output, hidden: 0 };
   return { text: chars.slice(0, limit).join(""), hidden: chars.length - limit };
@@ -77,7 +80,10 @@ export function ToolLine({
   const clipped = output ? clipToolOutput(output) : null;
 
   return (
-    <details className="tool-line my-1.5 min-w-0" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details
+      className="tool-line my-1.5 min-w-0"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       {/*
        * Native <details> owns expansion because SDK tool renderers can be re-invoked independently
        * of this component's React state.
@@ -99,11 +105,16 @@ export function ToolLine({
         <div className="mt-2 max-h-80 overflow-auto border-l pl-3 text-xs [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_h4]:text-xs [&_h1]:font-medium [&_h2]:font-medium [&_h3]:font-medium">
           {clipped ? (
             <>
-              <pre className="whitespace-pre-wrap break-words font-mono" data-testid="tool-output">
+              <pre
+                className="whitespace-pre-wrap break-words font-mono"
+                data-testid="tool-output"
+              >
                 {clipped.text}
               </pre>
               {clipped.hidden ? (
-                <p className="mt-1 text-muted-foreground">（还有 {clipped.hidden} 字没显示）</p>
+                <p className="mt-1 text-muted-foreground">
+                  （还有 {clipped.hidden} 字没显示）
+                </p>
               ) : null}
             </>
           ) : (

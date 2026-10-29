@@ -30,7 +30,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Streamdown } from "streamdown";
 import { BotBubbles, ReplyQuote, type ReplyTarget } from "@/components/chat/bot-bubbles";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import {
@@ -111,7 +110,6 @@ import {
   takeSendWhileBusy,
   type SentAtReading,
 } from "@/lib/chat/send-scroll";
-import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
 import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";

@@ -77,7 +77,8 @@ function parallelLabel(running: readonly WorkCall[]): string | null {
 
 export function summarizeWork(calls: readonly WorkCall[]): WorkSummary | null {
   if (calls.length === 0) return null;
-  const running = calls.filter((call) => !PREP.has(call.name) && workCallState(call, true) === "running");
+  // 只数干活的调用：同时在画的卡片（render_ui 等）不算「同时在做的事」。
+  const running = calls.filter((call) => isWorkCall(call.name) && workCallState(call, true) === "running");
   let current = parallelLabel(running) ?? "";
   for (let i = calls.length - 1; i >= 0 && !current; i--) {
     const call = calls[i]!;
