@@ -2,6 +2,7 @@ import { IconRefresh, IconSparkles, IconX } from "@tabler/icons-react";
 import { confirmDialog } from "@/components/ui/confirm";
 import { refreshWouldInterrupt } from "@/lib/activity";
 import { usePcLocal } from "@/lib/pc-bridge";
+import { presenceRef } from "@/lib/presence-flag";
 import { useNewVersion } from "@/lib/version";
 
 /**
@@ -49,7 +50,7 @@ export function UpdateBanner({ bundled, pollMs }: { bundled?: string; pollMs?: n
   }
 
   return (
-    <div className="update-banner" data-update-banner role="status" aria-live="polite">
+    <div className="update-banner" data-update-banner ref={presenceRef("has-update-banner")} role="status" aria-live="polite">
       <button className="update-banner-main" onClick={() => void refresh()} type="button">
         <IconSparkles aria-hidden className="update-banner-ic size-4 shrink-0" />
         <span className="update-banner-t">{"有新版本，点此刷新"}</span>
