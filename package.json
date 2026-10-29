@@ -30,20 +30,20 @@
     "test:app": "bun scripts/run-app-tests.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.10",
-    "@copilotkit/aimock": "1.43.0",
-    "@types/bun": "^1.3.3",
+    "@biomejs/biome": "2.6.3",
+    "@copilotkit/aimock": "1.46.0",
+    "@types/bun": "^1.4.4",
     "@types/css-tree": "^3.2.0",
     "roughjs": "^4.6.6",
     "typescript": "^5.9.3",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   },
   "dependencies": {
-    "@json-render/core": "0.21.0",
-    "@json-render/react": "0.21.0",
+    "@json-render/core": "0.21.3",
+    "@json-render/react": "0.21.3",
     "css-tree": "3.2.1",
     "parse5": "8.0.1",
-    "playwright-core": "1.62.1",
+    "playwright-core": "1.64.1",
     "zod": "^4.6.6"
   },
   "overrides": {
