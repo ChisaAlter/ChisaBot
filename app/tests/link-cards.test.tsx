@@ -164,13 +164,13 @@ describe("链接卡", () => {
     expect(cards.length).toBe(2);
     const deck = view.getByTestId("link-cards");
     expect(deck.hasAttribute("data-deck")).toBe(true);
-    expect(cards.map((c) => c.getAttribute("data-slot"))).toEqual([
+    expect(cards.map((c) => c.getAttribute("data-stack-slot"))).toEqual([
       "main",
       "right",
     ]);
     fireEvent.pointerMove(cards[1]!, { pointerType: "mouse" });
     expect(cards[1]!.hasAttribute("data-primary")).toBe(true);
-    expect(cards[0]!.getAttribute("data-slot")).toBe("right");
+    expect(cards[0]!.getAttribute("data-stack-slot")).toBe("right");
     expect(Number(cards[1]!.style.zIndex)).toBeGreaterThan(
       Number(cards[0]!.style.zIndex),
     );

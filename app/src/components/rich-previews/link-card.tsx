@@ -218,7 +218,7 @@ export function LinkCardSkeleton({
       aria-hidden
       className={cn("lc-card lc-skel", className)}
       data-layout="image"
-      data-slot={slot}
+      data-stack-slot={slot}
       data-testid="link-card-skeleton"
       style={slotStyle(slot, layer)}
     >
@@ -344,7 +344,7 @@ export function LinkCard({
       data-tool-call={toolCallId ?? undefined}
       data-layout={layout}
       data-primary={slot === "main" ? "" : undefined}
-      data-slot={slot}
+      data-stack-slot={slot}
       data-testid="link-card"
       href={href}
       onClick={(event) => {

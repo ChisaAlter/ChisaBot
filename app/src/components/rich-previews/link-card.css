@@ -235,7 +235,7 @@ a.lc-card[href]:hover {
   pointer-events: none;
 }
 @media (hover: hover) {
-  .lc-card:not([data-slot]):hover :is(.lc-go, .lc-followup) {
+  .lc-card:not([data-stack-slot]):hover :is(.lc-go, .lc-followup) {
     opacity: 1;
     transform: none;
   }
@@ -246,7 +246,7 @@ a.lc-card[href]:hover {
     transform: none;
   }
   /* 触屏没有悬停：单张卡的「追问」一直显示，不留一个看不见却点得到的按钮。 */
-  .lc-card:not([data-slot]) .lc-followup {
+  .lc-card:not([data-stack-slot]) .lc-followup {
     opacity: 1;
     transform: none;
   }
@@ -313,7 +313,7 @@ a.lc-card[href]:hover {
   }
 }
 @media (prefers-reduced-motion: no-preference) and (hover: hover) {
-  .lc-card:not([data-slot]):hover {
+  .lc-card:not([data-stack-slot]):hover {
     --lc-lift: calc(-1 * var(--rise-sm, 4px));
   }
 }

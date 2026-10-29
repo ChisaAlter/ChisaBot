@@ -223,7 +223,7 @@ describe("LinkCardStack 交互", () => {
     return view.getAllByTestId("link-card");
   };
   const slots = (cards: HTMLElement[]) =>
-    cards.map((c) => c.getAttribute("data-slot"));
+    cards.map((c) => c.getAttribute("data-stack-slot"));
 
   test("三张：默认中间那张在主位；一张时不进叠放", async () => {
     const view = render(<LinkCardStack items={three()} />);
@@ -238,7 +238,7 @@ describe("LinkCardStack 交互", () => {
       <LinkCardStack items={[{ url: `https://one${seq}.example.com/` }]} />,
     );
     const card = await one.findByTestId("link-card");
-    expect(card.hasAttribute("data-slot")).toBe(false);
+    expect(card.hasAttribute("data-stack-slot")).toBe(false);
     expect(one.getByTestId("link-cards").hasAttribute("data-deck")).toBe(false);
   });
 
