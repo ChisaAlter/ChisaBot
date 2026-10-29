@@ -7514,7 +7514,7 @@ html.dark .sa[data-color="ink"] { --sa-fill: #3b3b46; }
 .bot-form-label { font-size: 13px; font-weight: 500; color: var(--ink-2); }
 .bot-form-note { min-height: 18px; font-size: 12px; line-height: 18px; color: var(--ink-4); }
 .bot-form-note.is-error { color: var(--danger); }
-.bot-form-error { margin: 0; font-size: 13px; color: var(--danger); }
+.bot-form-error { margin: 0; font-size: 13px; color: var(--danger); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .bot-form-actions { display: flex; flex: none; justify-content: flex-end; gap: 8px; }
 
 .bot-ava-field { display: flex; align-items: center; gap: 14px; padding: 2px 0 6px; }
@@ -7530,7 +7530,8 @@ html.dark .sa[data-color="ink"] { --sa-fill: #3b3b46; }
 .bot-ava-stage { display: grid; place-items: center; min-height: 330px; }
 .bot-ava-drop-wrap, .bot-ava-preset { display: grid; justify-items: center; gap: 14px; width: 100%; }
 .bot-ava-drop { display: grid; justify-items: center; gap: 4px; width: 100%; padding: 18px 12px; border: 1.5px dashed var(--focus-line); border-radius: 14px; color: var(--ink-2); font-size: 14px; transition: background var(--dur-1), border-color var(--dur-1), color var(--dur-1); }
-.bot-ava-drop:hover { background: var(--accent-blue-soft); border-color: var(--accent-blue); color: var(--accent-blue-ink); }
+.bot-ava-drop:hover, .bot-ava-drop.is-dragging { background: var(--accent-blue-soft); border-color: var(--accent-blue); color: var(--accent-blue-ink); }
+.bot-ava-drop.is-dragging { border-style: solid; }
 .bot-ava-drop:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus); }
 .bot-ava-drop-sub { font-size: 12px; color: var(--ink-4); text-align: center; }
 /* 表情格固定 36 px 高：不随弹窗宽度变高，三个分页的高度一样（1280 下 aspect-ratio 会多出 5 px）。 */
@@ -7556,6 +7557,7 @@ html.dark .sa[data-color="ink"] { --sa-fill: #3b3b46; }
 .bot-ava-zoom-btn:hover { background: var(--accent-blue-soft); }
 .bot-ava-range { flex: 1; accent-color: var(--accent-blue); }
 .bot-ava-error { margin: 0; min-height: 18px; font-size: 13px; line-height: 18px; color: var(--danger); text-align: center; }
+.bot-ava-error.is-notice { color: var(--ink-3); }
 .bot-ava-foot { flex-direction: row; }
 .bot-ava-foot-gap { flex: 1; }
 @media (prefers-reduced-motion: reduce) {
@@ -10080,3 +10082,6 @@ html[data-phone] .glass-topbar .hk-topbar-start { width: auto; }
   align-items: center;
   justify-content: center;
 }
+
+/* 审查 10-3：头像表还没回来时的中性占位（不画默认花纹，免得自定义头像先闪一下花纹）。 */
+.bot-ava-placeholder { background: color-mix(in srgb, currentColor 12%, transparent); }

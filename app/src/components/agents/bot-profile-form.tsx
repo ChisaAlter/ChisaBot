@@ -117,7 +117,8 @@ export function BotProfileForm({
           toast.error(`机器人建好了，但${reason.replace(/。$/, "")}——可以在机器人资料里再换。`);
           return saved.id;
         }
-        throw failure;
+        // 编辑：名称这几格可能已经存上了，只差头像。抛给表单显示，并留着草稿让用户「重试」（审查 10-1）。
+        throw new AvatarSaveError(reason);
       }
       return saved.id;
     },
@@ -135,6 +136,9 @@ export function BotProfileForm({
   const set = (key: keyof Fields, value: string) => setFields((current) => ({ ...current, [key]: value }));
   const ids = editing ? `bp-${agent?.id}` : "create-agent";
   const failure = save.error ? save.error.message : null;
+  const avatarFailed = save.error instanceof AvatarSaveError;
+  const noteId = (key: keyof Fields) => `${ids}-${key}-note`;
+  const statusText = save.isPending ? "保存中…" : save.isError ? "保存失败" : "";
 
   return (
     <form
@@ -177,6 +181,7 @@ export function BotProfileForm({
           <span className="bot-form-label">{"名称"}</span>
           <Input
             aria-invalid={errors.name ? true : undefined}
+            aria-describedby={noteId("name")}
             autoComplete="off"
             autoFocus={autoFocus}
             id={`${ids}-name`}
@@ -185,7 +190,7 @@ export function BotProfileForm({
             ref={firstFieldRef}
             value={fields.name}
           />
-          <FieldNote error={errors.name} />
+          <FieldNote error={errors.name} id={noteId("name")} />
         </label>
         <label className="bot-form-field" htmlFor={`${ids}-title`}>
           <span className="bot-form-label">
@@ -194,6 +199,7 @@ export function BotProfileForm({
           </span>
           <Input
             aria-invalid={errors.title ? true : undefined}
+            aria-describedby={noteId("title")}
             autoComplete="off"
             id={`${ids}-title`}
             onChange={(event) => {
@@ -206,6 +212,7 @@ export function BotProfileForm({
           />
           <FieldNote
             error={errors.title}
+            id={noteId("title")}
             hint={titleAuto ? (suggestion ? "按「它做什么」自动写的，可以改" : "不填就是「私人助手」") : undefined}
           />
         </label>
@@ -216,6 +223,7 @@ export function BotProfileForm({
           </span>
           <Textarea
             aria-invalid={errors.roleDescription ? true : undefined}
+            aria-describedby={noteId("roleDescription")}
             className={variant === "card" ? "min-h-36" : "min-h-28"}
             id={`${ids}-purpose`}
             onChange={(event) => set("roleDescription", event.target.value)}
@@ -223,14 +231,29 @@ export function BotProfileForm({
             rows={variant === "card" ? 6 : 4}
             value={fields.roleDescription}
           />
-          <FieldNote error={errors.roleDescription} />
+          <FieldNote error={errors.roleDescription} id={noteId("roleDescription")} />
         </label>
       </div>
       {failure ? (
-        <p className="bot-form-error" role="alert">
-          {failure}
-        </p>
+        <div className="bot-form-error" data-testid="bot-profile-error" role="alert">
+          <span>{avatarFailed ? `资料已保存，但${failure.replace(/。$/, "")}。` : failure}</span>
+          {avatarFailed ? (
+            <Button
+              data-testid="bot-profile-retry-avatar"
+              onClick={() => submit()}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {"重试保存头像"}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
+      {/* 审查 10-15：按钮里三段状态字只靠样式切换；给读屏一个只念当前状态的 live 区。 */}
+      <span aria-live="polite" className="sr-only" data-testid="bot-profile-status">
+        {statusText}
+      </span>
       <div className={variant === "card" ? "bot-form-actions" : "bot-form-actions is-dialog"}>
         <Button onClick={onCancel} size={variant === "card" ? "sm" : "default"} type="button" variant="outline">
           {"取消"}
@@ -250,10 +273,16 @@ export function BotProfileForm({
 }
 
 /** 字段下面一行：错误（红）或提示（灰）。总占一行高，出错不顶动下面的格子。 */
-function FieldNote({ error, hint }: { error?: string; hint?: string }) {
+function FieldNote({ error, hint, id }: { error?: string; hint?: string; id: string }) {
+  // 审查 10-13：字段用 aria-describedby 指到这里，读屏能念出错误或说明。
   return (
-    <span className={cn("bot-form-note", error && "is-error")} role={error ? "alert" : undefined}>
+    <span className={cn("bot-form-note", error && "is-error")} id={id} role={error ? "alert" : undefined}>
       {error ?? hint ?? "\u00a0"}
     </span>
   );
+}
+
+/** 名称这几格已存上、只有头像没存上：表单据此显示「重试保存头像」。 */
+export class AvatarSaveError extends Error {
+  override name = "AvatarSaveError";
 }

@@ -1,5 +1,34 @@
 # DEVLOG
 
+## 机器人资料和头像审计修复（模块 10，dev2/avatar，叠在 #406 上）
+
+**动机**：审计 10 的问题：编辑资料时头像保存失败，错误一闪就没了（IdentityCard 用名字当 key，改名后整张卡重挂）；头像表在别的标签页或回到窗口时不刷新；加载中和 500 时显示一个随机花纹，看起来像是真的头像；上传框不说支持哪些格式；透明 PNG 被铺成白底；小图没有提示；拖拽没有反馈；关掉编辑框后焦点丢了；还有一些读屏的问题。方向：先和 Hark 一致、顺手，不动主题、毛玻璃和天空。
+
+**改法（按审计条目）**：
+- 1：`profile.tsx` 的 IdentityCard 改用 `key={agent.id}`。编辑时头像失败抛 `AvatarSaveError`，表单留在原处，提示「资料已保存，但头像没能保存。」，旁边有「重试保存头像」（资料已经一致，重试只重存头像）。
+- 2：头像查询 `refetchOnWindowFocus: "always"`（`true` 会被 5 分钟 staleTime 挡住）；保存后通过 BroadcastChannel `chisabot:bot-avatars` 通知其他标签页去 invalidate（`BotAvatar` 引用计数订阅）。
+- 3：头像表加载中显示中性占位（`.bot-ava-placeholder`、`aria-busy`）；500 等错误显示灰色首字，不再用随机花纹。老服务器 404 仍按空表处理。
+- 6：上传框写明「PNG / JPEG / WebP / GIF / BMP，最大 15 MB」，不支持的类型（包括 SVG）报错时也带这句。
+- 8：渲染不再先铺白底；只有回落到 JPEG 时才在下面补白。
+- 9：原图短边小于 128px 时提示「这张图只有 W×H，放大成头像可能会糊；可以换一张更清晰的。」（role=status，不算错误）。
+- 10：拖进来时上传框高亮、实线边框，文字变「松开就用这张」。
+- 11：关掉编辑框后焦点回到「更换头像」（Base UI `finalFocus`，焦点落在 body 时再用 rAF 补一下）。
+- 12：取景框 aria-label 说明怎么拖、怎么用方向键和怎么缩放。
+- 13：表单字段 `aria-describedby` 指向各自的说明。
+- 14：引导页的示例卡改用 `BotAvatar`（和其他地方同一套样子）。
+- 15：保存按钮的状态（保存中 / 已保存 / 失败）通过 sr-only 的 `aria-live` 区域念出来。
+- 16：新测试见下。
+- 没做：4（Android）和 5（nginx）是开发 3 的；7 不在这次的任务里。
+
+**测试**：`app/tests/bot-profile-avatar-failure.test.tsx`（改名 + 头像失败时错误还在、重试只重存头像；换回旧 key 时这条会失败）、`bot-avatars-lib.test.ts`（404 / 500、窗口焦点、跨标签页通知、格式提示、小图提示、透明 PNG 不铺白、JPEG 补白）、`bot-avatar-states.test.tsx`（加载中占位、错误首字、拖拽反馈、焦点返回、aria-label、aria-describedby）。typecheck、build 通过；test:app 1743 个通过 0 个失败，隔离文件全部通过；DB 测试用盒子上的嵌入式 postgres 跑（没用 docker），`bot-avatars.test.ts` 9/9 通过，其余 27 个失败都在和这次无关的服务端测试里（这个分支没改 server / shared）。Biome：lint 7 错 / 800 警告 / 143 提示，format 718 错，和 #406 一样（多出来的 6 个 lint 错是 #406 带来的）；origin/main 是 lint 1 / 800 / 143、format 720。
+
+**评审修正（#418，小爱）**：
+- `bot-avatar-states.test.tsx` 跑完不退出、拖住 test:app：每个用例的 QueryClient 在 afterEach 里 `clear()`（gcTime 定时器），对话框用 Base UI 自带的 `BASE_UI_ANIMATIONS_DISABLED` 关掉动画（happy-dom 里关窗收尾原来要 12 s），焦点用例不再要 20 s 超时。`subscribeAvatarSync` 最后一个退订时关频道，测试里自己开的频道也都关掉。
+- 格式提示改成实际端到端都能用的「PNG / JPEG / WebP / GIF / BMP」：浏览器先解码再转成 WebP / JPEG 上传（服务器只收 PNG / JPEG / WebP）；HEIC 只有 Safari 解得开，AVIF 在老 WebView 上也不一定，所以从 accept 和提示里去掉。
+- `refetchOnWindowFocus` 从 `"always"` 改回 `true`：切回窗口时超过 5 分钟 staleTime 才重拉；同一浏览器别的标签页仍靠 BroadcastChannel 马上失效。
+
+**截图**（headless Chrome，临时 profile，左边是 #406、右边是这个分支）：`docs/images/audit10-1-avatar-fail-{before,after}.png`、`audit10-3-cold-*`、`audit10-3-err500-*`、`audit10-6-10-drop-*`、`audit10-8-transparent-*`。
+
 ## 形象头像「活」起来 + 预览表情单选（dev3/feat-avatar-morph）
 
 **动机**：形象头像（DESIGN.md §81）在跑的时候只有 CSS 的呼吸缩放和眨眼，看起来是一张贴图在动，不像「活的」。要像 Grok Bot 的头像那样：果冻一样的轮廓、沿边缘流动的波、挤压拉伸、会眨会看的眼睛，状态之间全是弹簧过渡。另外头像编辑框「形象」页的三个预览按钮「选中 / 工作中 / 做完了」各自是开关，点「做完了」时「工作中」还亮着（Jun 报的 bug）。

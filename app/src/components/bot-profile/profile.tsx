@@ -433,7 +433,9 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
             agent={agent}
             editing={editing}
             firstFieldRef={firstFieldRef}
-            key={`${agent.name}\u0000${agent.title}\u0000${agent.roleDescription}`}
+            // 审查 10-1：只按机器人 id 换实例。以前按名称/职责/它做什么拼 key，改名保存时 PATCH 一回来表单就被换掉，
+            // 随后头像保存失败的错误落在已卸载的实例上，用户看到的是「保存成功」。
+            key={agent.id}
             setEditing={setEditing}
           />
         </PageSection>
