@@ -14,7 +14,9 @@ import {
   LINK_CARD_FALLBACK_RATIO,
   LINK_CARD_GITHUB_RATIO,
   LINK_STACK_MOVE_MS,
+  LinkCard,
   LinkCardStack,
+  type LinkStackItem,
   linkMediaRatio,
   linkStackSlots,
 } from "@/components/rich-previews/link-card";
@@ -279,6 +281,71 @@ describe("LinkCardStack 交互", () => {
     fireEvent.pointerMove(cards[0]!, { pointerType: "touch" });
     expect(slots(cards)).toEqual(["left", "main", "right"]);
   });
+
+  test("标题一律当纯文本：HTML / markdown 原样显示，不变成标签", async () => {
+    seq++;
+    const title = "<b>粗</b> **星号** <img src=x onerror=alert(1)>";
+    const view = render(
+      <LinkCardStack
+        items={[
+          { url: `https://t${seq}-1.example.com/`, title, site: "Example" },
+          {
+            url: `https://t${seq}-2.example.com/`,
+            title: "[链接](https://evil.example/)",
+          },
+        ]}
+      />,
+    );
+    const cards = await view.findAllByTestId("link-card");
+    const titles = cards.map((c) => c.querySelector(".lc-title")!);
+    expect(titles[0]!.textContent).toBe(title);
+    expect(titles[0]!.querySelector("b, img, strong")).toBeNull();
+    expect(titles[1]!.textContent).toBe("[链接](https://evil.example/)");
+    expect(titles[1]!.querySelector("a")).toBeNull();
+  });
+
+  test("直接吃 #391 的来源格式 { url, title, site, toolCallId }", async () => {
+    seq++;
+    // 和 shared/reply-sources.ts 的 ReplySources.sources[i] 同形（那个 PR 还没合，这里照字段写一份）。
+    type ReplySource = {
+      url: string;
+      title: string;
+      site: string;
+      toolCallId: string;
+    };
+    const sources: ReplySource[] = [
+      {
+        url: `https://r${seq}-1.example.com/a`,
+        title: "第一篇",
+        site: "站点甲",
+        toolCallId: "call_1",
+      },
+      {
+        url: `https://r${seq}-2.example.com/b`,
+        title: "第二篇",
+        site: "站点乙",
+        toolCallId: "call_2",
+      },
+    ];
+    const items: readonly LinkStackItem[] = sources;
+    const view = render(<LinkCardStack items={items} />);
+    const cards = await view.findAllByTestId("link-card");
+    expect(cards.map((c) => c.getAttribute("data-tool-call"))).toEqual([
+      "call_1",
+      "call_2",
+    ]);
+    expect(cards.map((c) => c.querySelector(".lc-title")!.textContent)).toEqual(
+      ["第一篇", "第二篇"],
+    );
+    expect(cards[0]!.querySelector(".lc-meta")!.textContent).toContain(
+      "站点甲",
+    );
+    cleanup();
+    const single = render(<LinkCard {...sources[1]!} />);
+    const card = await single.findByTestId("link-card");
+    expect(card.getAttribute("data-tool-call")).toBe("call_2");
+    expect(card.querySelector(".lc-meta")!.textContent).toContain("站点乙");
+  });
 });
 
 describe("样式约束", () => {
@@ -294,14 +361,29 @@ describe("样式约束", () => {
     expect(code).not.toContain(":has(");
     expect(code).not.toContain("!important");
   });
-  test("卡片只过渡 transform（250ms ease-out），减少动态效果时没有过渡", () => {
+  test("卡片只过渡 transform（--dur-2 + --ease-out，不长于换位锁定时间），减少动态效果时没有过渡", () => {
     const transitions = [
       ...css.matchAll(/\.lc-card \{[^}]*transition:\s*([^;]+);/g),
     ].map((m) => m[1]);
-    expect(transitions[0]).toBe("transform 250ms cubic-bezier(0, 0, 0.2, 1)");
+    expect(transitions[0]).toBe(
+      "transform var(--dur-2, 220ms) var(--ease-out)",
+    );
+    expect(LINK_STACK_MOVE_MS).toBeGreaterThanOrEqual(220);
     expect(css).toMatch(
       /prefers-reduced-motion: reduce\)\s*\{\s*\.lc-card,[^}]*transition: none;/,
     );
+  });
+  test("材质、圆角、间距用设计系统令牌（不是 Hark 的固定深色）", () => {
+    const card = css.match(/\n\.lc-card \{[^}]*\}/)![0];
+    expect(card).toContain("--lc-radius: var(--r-lg, 20px)");
+    expect(card).toContain("--lc-inset: var(--sp-2, 8px)");
+    expect(card).toContain("background: var(--glass-bg-solid)");
+    expect(card).toContain("color: var(--text)");
+    expect(css).toContain(
+      "border-radius: calc(var(--lc-radius) - var(--lc-inset))",
+    );
+    expect(css).toMatch(/\.lc-meta \{[^}]*color: var\(--text-secondary\)/);
+    expect(css).not.toMatch(/\.dark \.lc-/);
   });
   test("叠放的卡全靠 transform 定位（同一个网格格子），槽位用变量", () => {
     expect(css).toMatch(

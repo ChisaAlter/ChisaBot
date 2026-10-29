@@ -378,3 +378,25 @@ better-auth 1.7.2–1.7.14 都是 1.7.x 补丁：没有新表 / 新列，1.7.11 
 **注意**：`bun install` 会把 bun.lock 里 app / server 工作区的 version 行改成 0.1.103，已手动改回与 main 一致的 0.0.0；项目版本号未动。
 
 **0.1.106 部署**（2026-10-29 10:03–10:16 北京时间）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.106-20261029T020328Z.dump`（`pg_restore -l` 767 条目）。`deploy-serial.sh 0ba9676` 镜像 `local/chisabot:auto-202610290203-0ba9676`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.106` / `0ba9676`。`request.sh smoke` PASSED（admin 模型自检 `ok:true persisted:false`），`health.sh` 通过，公网 `/login` 200，容器 healthy、无重启，sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（md5 与部署前备份一致），`nginx -T` 仍有 22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`。镜像清理：更新器已自动删除 `auto-202610282010-ed93b05`，手动删除 `keep-d6cd2ec`；保留当前（BASE）0ba9676、上一版 3856d36、`keep-628d527`。
+
+## 2026-10-29 链接卡组照 Hark 错落叠放（feat/hark-linkstack，依赖 #380）
+
+**做了什么**：`LinkCardStack` 把一条回复里最多 3 个链接放进同一个网格格子，位置全靠 transform（槽位写成 `--lc-sx / --lc-sy / --lc-rot / --lc-sc` 变量），主位居中抬高、左右两张倾斜约 -4° / 3.5°、缩到 0.94。卡宽 `min(208px, (100cqw − 16px) / (1 + 0.62 × 侧边张数))`，所以 390 宽的手机上整叠也不出屏。单个链接是不倾斜的单卡（宽 min(280px, 100%)）。
+
+**交互**：鼠标移到哪张、键盘 `:focus-visible` 到哪张，那张就挪到主位；换位后锁 250ms（不短于 220ms 的过渡），挪完时指针下面换成的那张要等指针离开再进来才换，免得静止的指针下卡片来回跳。指针离开整叠后**保持最后一张在主位**，不复位（复位会让刚看的那张又被盖住，读起来更乱）。触屏第一次点只挪到主位（preventDefault），点主位的卡才打开；鼠标点击直接打开。`prefers-reduced-motion: reduce` 时没有过渡。
+
+**宽图**：`linkMediaRatio` 有 og:image:width/height 就用实际比例（夹在 4:3 和 2.4:1 之间），没有就 GitHub 2:1、其它 1.91:1 占位；骨架用同一个比例，图片到了不跳。GitHub 链接的底行用 `shortLinkLabel` 从地址取短标签（release → 版本号，issue / PR → #号，仓库首页 → owner/repo），和站点名、标题重复的补充信息不显示。
+
+**和 Hark 不同的地方（按 docs/design-system.md 改）**：
+
+- Hark 的卡永远是深色半透明。我们的规范是气泡、卡片不模糊、用主题实色，所以卡片底用 `--glass-bg-solid`（亮色主题白、暗色主题深灰，都是 .96），高光边 `--glass-highlight`、阴影 `--shadow-2`，文字 `--text`，灰字 `--text-secondary`；没有任何 `.dark .lc-*` 的单独配色。
+- 圆角：Hark 约 18px / 图 12px、内缩 6px。我们按 DESIGN.md §10.3 卡片用 `--r-lg`（20），内缩 `--sp-2`（8），图片圆角按同心规则写成 `calc(var(--lc-radius) − var(--lc-inset))` = 12。
+- 间距：文字区、叠放留白都换成 4pt 刻度的 `--sp-*`。
+- 动效：要求约 250ms ease-out，规范里最接近的是 `--dur-2`（220ms，状态切换）+ `--ease-out`，用令牌，不另写一个 250ms。
+- 图片上的 ↗ 和「追问」按钮仍是深色小胶囊：它们压在照片上，跟主题走在浅色照片上会看不清。
+
+**标题纯文本**：标题、站点行都是 React 文本节点，没有 innerHTML / markdown；测试里给 `<b>`、`**…**`、`[…](…)` 标题，确认原样显示、不生成标签。
+
+**和 #391 的来源格式对齐**：`LinkSourceFields = { url, title?, site?, toolCallId? }`，`LinkCard` 和 `LinkStackItem` 都直接接受（`site` 映射到 siteName，`toolCallId` 写进 `data-tool-call`），以后来源卡组可以 `<LinkCardStack items={replySources.sources} />`。本 PR 没有接入 `capabilities.replySources`。
+
+**没碰**：styles.css、wallpaper_core.html、bot-bubbles.tsx 的 SVG 净化、appearance 相关文件；没有 blur、`:has`、`!important`；未升级版本号。截图和动图在 docs/images/linkstack/。

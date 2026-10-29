@@ -37,21 +37,35 @@ import "./link-card.css";
 
 export type LinkStackSlot = "main" | "left" | "right";
 
-export type LinkCardProps = GivenLinkFields & {
+/**
+ * 一个来源 / 链接的数据（和 #391 `shared/reply-sources.ts` 的 `ReplySources.sources[i]` 同形：
+ * `{ url, title, site, toolCallId }`），以后来源卡组可以直接 `<LinkCard {...source} />` /
+ * `<LinkCardStack items={sources} />`，不用转换。标题一律当纯文本渲染（不走 innerHTML / markdown）。
+ */
+export type LinkSourceFields = {
   url: string;
-  /** 在一叠卡里的位置（{@link LinkCardStack} 给）；不给就是单独一张卡。 */
-  slot?: LinkStackSlot;
-  /** 一叠里的序号（层级、测试用）。 */
-  stackIndex?: number;
-  /** 层级（主位的卡在最前）。 */
-  layer?: number;
-  /** 一叠里的卡被点 / 聚焦时交给外层决定要不要挪到主位。 */
-  onStackClick?: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
-  onStackFocus?: (event: ReactFocusEvent<HTMLAnchorElement>) => void;
-  /** 显示「追问」按钮（默认显示）。 */
-  followup?: boolean;
-  className?: string;
+  title?: string | null;
+  /** 站点名（同 `siteName`；来源格式里叫 `site`）。 */
+  site?: string | null;
+  /** 产生这个来源的工具调用（来源卡组用来回指那一步）；卡片上只写进 data-tool-call。 */
+  toolCallId?: string | null;
 };
+
+export type LinkCardProps = GivenLinkFields &
+  LinkSourceFields & {
+    /** 在一叠卡里的位置（{@link LinkCardStack} 给）；不给就是单独一张卡。 */
+    slot?: LinkStackSlot;
+    /** 一叠里的序号（层级、测试用）。 */
+    stackIndex?: number;
+    /** 层级（主位的卡在最前）。 */
+    layer?: number;
+    /** 一叠里的卡被点 / 聚焦时交给外层决定要不要挪到主位。 */
+    onStackClick?: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
+    onStackFocus?: (event: ReactFocusEvent<HTMLAnchorElement>) => void;
+    /** 显示「追问」按钮（默认显示）。 */
+    followup?: boolean;
+    className?: string;
+  };
 
 // ---------------------------------------------------------------------------------------------
 // 图片区宽高比
@@ -252,8 +266,14 @@ export function LinkCard({
   onStackFocus,
   followup = true,
   className,
-  ...given
+  site,
+  toolCallId,
+  ...rest
 }: LinkCardProps) {
+  const given: GivenLinkFields = {
+    ...rest,
+    siteName: rest.siteName ?? site ?? null,
+  };
   const href = safeHref(url);
   const needs = Boolean(href) && needsLinkPreview(given, href ?? undefined);
   const query = useQuery(
@@ -321,6 +341,7 @@ export function LinkCard({
         fields.degraded || (needs && query.isError) ? "" : undefined
       }
       data-index={stackIndex}
+      data-tool-call={toolCallId ?? undefined}
       data-layout={layout}
       data-primary={slot === "main" ? "" : undefined}
       data-slot={slot}
@@ -405,13 +426,10 @@ export function LinkCard({
 // 一叠卡
 // ---------------------------------------------------------------------------------------------
 
-export type LinkStackItem = {
-  url: string;
-  meta?: string | null;
-  title?: string | null;
-};
+/** 一叠里的一项：来源格式（{@link LinkSourceFields}）+ 正文链接的标签（meta）。 */
+export type LinkStackItem = LinkSourceFields & { meta?: string | null };
 
-/** 挪动的动画时长（和 link-card.css 的 transition 一致）。动画期间不再换主位，免得卡片在指针下来回换。 */
+/** 换主位后的锁定时间：不短于 link-card.css 的 transition（--dur-2，220ms）。这段时间里不再换主位，免得卡片在指针下来回换。 */
 export const LINK_STACK_MOVE_MS = 250;
 
 function cardIndexOf(target: EventTarget | null): number | null {
@@ -514,6 +532,8 @@ export function LinkCardStack({
             key={item.url}
             layer={isStack ? layers[i] : undefined}
             meta={item.meta}
+            site={item.site}
+            toolCallId={item.toolCallId}
             onStackClick={
               isStack
                 ? (event) => {
