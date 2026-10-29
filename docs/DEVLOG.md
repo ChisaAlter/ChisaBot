@@ -1,5 +1,51 @@
 # DEVLOG
 
+## Unreleased — 设置面板卡顿③：关设置回聊天不再重渲染整段聊天
+
+依赖：叠在 #395（`dev2/settings-perf`）和 #398（`dev2/settings-perf-2`）上（本地合入了这两个分支），合并顺序 #395 → #398 → 本 PR。
+
+### 动机
+
+- 4× 降速下，关闭设置是最慢的交互（main 上 INP 约 540ms，验收线 150ms）。用 React Profiler（记录 fiber 提交）看 main 上点「关闭设置」这一下：同一次点击里整段聊天页**重渲染了两遍**，每遍约 40 个组件（ChannelBody → ChannelChat → ConversationView → ChatTranscript / Composer…），但聊天页的 props 其实没变，或者只变了 keep-alive 的可见性标志。
+
+### 根因（哪个组件、哪个值）
+
+1. **第 1 次提交：路由 `pathname` 变了。** `AuthedShell` 用 `useRouterState` 读到 pathname 从 `/settings/…` 变回 `/channel/…`，作为 prop 传给 `ShellFrame` → `ChatStage`。`ChatStage` 重渲染时重建了 `idleVisible` / `renderKept` 闭包，`KeepAliveStage` 跟着重渲染，重新生成 `<ChannelPage …>`。`ChannelPage` **没有 memo**，props 完全相同也会整棵重画。
+2. **第 3 次提交：`ChatStage` 的 `useChatAddress` 地址 state 变了。** `KeepAliveStage` 把这一页的 `visible` 从 false 改成 true，`epoch` 变成 1，所以 `ChannelPage` 的 `visible` / `epoch` 变了。`ChannelBody` 也**没有 memo**；`ChannelChat` 里的 `useThreadActivity` 又用 `useContext(KeptVisibleContext)` 读可见性。context 值一变，整段聊天就再重画一遍，其实只是为了让 `useThreadActivity` 知道回到屏幕上了、该补一次 /sync。
+- profiling 构建、4× 降速下，main 这次点击的各次提交合计渲染 948 个组件、约 82ms；改后是 717 个、约 48ms。聊天正文的组件 0 次重渲染，只剩 `ChannelPage` 外壳 1.1ms。
+
+### 改动
+
+- `channel-page.tsx`：`ChannelPage`、`ChannelBody` 包上 `memo`。props 都是字符串 / 数字 / 布尔，没有每次新建的对象或函数，浅比较就够。
+- `layout/kept-visible.ts` + `layout/keep-alive.tsx`：新增可见性订阅源 `KeptVisibilityContext`（`get` / `subscribe`，对象本身始终不变）。`KeepAliveStage` 照旧提供原来的 `KeptVisibleContext`（布尔值，其他地方的用法不变），另外提供这个订阅源，可见性变化时调用 `set`。
+- `copilot/thread-activity.ts`：`useThreadActivity` 改为订阅可见性，在回调里补 /sync 或暂停，不再随 context 值变化重渲染整个聊天。行为不变：隐藏时暂停，回到屏幕立刻补一次 /sync。
+- 侧栏收起：`styles.css` 里的 `.glass-shell:has([data-slot=sidebar][data-state=collapsed]) .glass-topbar-start` 换成 `body[data-has-collapsed-sidebar] .glass-shell .glass-topbar-start`，样式值不变。这个标志由 `ui/sidebar.tsx` 在桌面侧栏收起时自己设置（`usePresenceFlag` 新增 `on` 参数），这样就去掉了一个每次 DOM 变动都要重新匹配的 `:has()`。
+- `app-sidebar.tsx`：会话行 `ChannelRow` 的 motion `layout` 加上 `layoutDependency={orderKey}`（列表下标），只有顺序变了才测量。目前唯一的调用方传的是 `animateOrder={false}`，所以这一处是预防：以后打开动画时不会每次重渲染都测量。
+- #395 / #398 的审查意见：那两个分支还在跑回归，按要求放到本 PR 里处理。
+  - `glass-topbar.tsx`、`update-banner.tsx` 只跑了 organizeImports，没有整份重新排版。
+  - `no-body-has.test` 的正则也拦截 `:root:has(`。
+  - `PresenceItem` 的 `layoutDependency` 加了源码断言。
+- 测试：
+  - `app/tests/kept-chat-no-rerender.test.tsx`：keep-alive 隐藏再显示后，聊天组件的渲染次数仍是 1，并且回来时补了一次 /sync。main 上是 3 次，测试会失败。
+  - `app/tests/settings-close-guards.test.tsx`：侧栏收起标志的开关；CSS 里不再有 `.glass-shell:has(`；PresenceItem / ChannelRow 的 layoutDependency 源码断言。
+
+### 前后 INP（4× CPU 降速，生产构建，Chrome 1440×900，5 轮，每轮先取中位数、再取各轮中位数）
+
+格式：INP / 点击处理（input delay + processing）/ 呈现延迟，单位 ms。
+
+| 交互 | main（218dd6ec） | 仅本 PR 的核心改动（叠在 main 上） | #395 + #398 + 本 PR 核心改动 |
+|---|---|---|---|
+| 打开设置 | 256 / 131 / 125 | 240 / 119 / 120 | 352 / 59 / 300（4 轮） |
+| 关闭设置 | 536 / 337 / 189 | 480 / 285 / 176 | 468 / 179 / 275 |
+| 切分类 | 220 / 70 / 142 | 220 / 60 / 141 | 224 / 63 / 154 |
+
+- 测量时负载：三组交替跑（每轮 main → 单独 → 叠加），时间 10/29 11:59–12:18（UTC+8）。每次跑前记录的 1 分钟 loadavg 为 1.19–15，瞬时 CPU 占用 16–81%。测量机上同时有别的 agent 间歇在跑（另一个桌面 Chrome / Xvfb 常驻占约 1 核），机器不算安静。之后想等安静时段重测，但 box 内存被别的任务占满、一直卡死，没测成。
+- 叠加那一列测的是 #395 + #398 + 本 PR 核心改动（memo 和可见性订阅），不含后来加的侧栏收起标志 / ChannelRow layoutDependency。完整分支只跑了 1 轮带 trace 的：关闭设置 464 / 192 / 272。
+- 结论：关闭设置的点击处理时间 main 337 → 本 PR 单独 285 → 三个 PR 叠加 179ms（−47%），聊天页不再重渲染。打开设置叠加后的 INP 偏高，来自呈现延迟（300ms）。这台机器用 SwiftShader 软件渲染，玻璃 / blur 合成很慢，波动也大；同一组的点击处理时间是降的（131 → 59ms）。
+- 还没到 150ms 的原因：关设置时左栏从 SettingsSidebar 换回 LeftRail，要卸载 / 挂载一遍，挂载时 react-query 会重新拉 channels、bot-lifecycle、agents 等（约 30ms），机器人行和菜单 store 也要重建；另外呈现延迟在这台 SwiftShader 机器上单独就有 180–270ms。左栏常驻 / 不重拉放到下一步，不在本 PR 范围内。
+- 测法同 #395：Playwright + CDP `Emulation.setCPUThrottlingRate=4`，用 `PerformanceObserver('event')` 取最长那次交互；点击处理 = `max(processingEnd) − startTime`，呈现延迟 = `startTime + duration − max(processingEnd)`。后端和数据相同，只换前端 dist。
+- 没改主题切换、天空重绘和玻璃 / blur 的样式值。
+
 ## Unreleased — 设置面板卡顿②：关设置 / 切分类不再在提交中途强制同步布局
 
 ### 动机
