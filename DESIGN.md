@@ -941,12 +941,14 @@
 起因：登录后第一次进来卡在「正在加载 ChisaBot…」约 2 秒（生产冷缓存：LCP 6540ms，最长长任务 2193ms，主包 3.0 MB / gzip 约 950 KB）。
 
 - **路由级拆分 + 手动块**（`app/vite.config.ts`）：
-  - `VENDOR_CHUNKS` 把重的第三方库固定成几块：`vendor-react`（含 `\0commonjsHelpers`，放在叶子块里避免块循环导致的 `forwardRef of undefined`）、`vendor-copilot`（不含 `@copilotkit/web-inspector`，它由 CopilotKit 自己按需加载）、`vendor-markdown`、`vendor-shiki`、`vendor-shiki-wasm`、`vendor-lucide`、`vendor-mcp`。
-  - **故意不分进 vendor 块的**：`katex` 和 `micromark-extension-math`（一旦进手动块，`mathHtml` 会被保留并静态带上 katex）；streamdown 的 `code-block-*` / `mermaid-*`（静态带着 shiki）；所有 `.css`（入口引入 CopilotKit 的 CSS，分进 JS 块会让入口反过来静态依赖整块 JS）。
+  - `VENDOR_CHUNKS` 把重的第三方库固定成几块：`vendor-react`（含 `\0commonjsHelpers`，放在叶子块里避免块循环导致的 `forwardRef of undefined`）、`vendor-copilot`（不含 `@copilotkit/web-inspector`，它由 CopilotKit 自己按需加载）、`vendor-markdown`、`vendor-shiki`、`vendor-shiki-wasm`、`vendor-lucide`。MCP SDK（`@modelcontextprotocol`）并进 `vendor-copilot`：单独成块时 Rollup 为了执行顺序给它加一句 `import "./vendor-copilot"`，两块成环。
+  - **故意不分进 vendor 块的**：`katex` 和 `micromark-extension-math`（一旦进手动块，`mathHtml` 会被保留并静态带上 katex）；streamdown 的 `code-block-*`（静态带着 shiki）；所有 `.css`（入口引入 CopilotKit 的 CSS，分进 JS 块会让入口反过来静态依赖整块 JS）。
+  - **反过来要点名进 `vendor-markdown` 的小模块**：streamdown 的 Mermaid 小包装（一行 re-export）、`vfile-location`、`extend`、公式的语法文件（`micromark-extension-math/lib/{syntax,math-flow,math-text}.js`，不含 `index.js` / `html.js`）。它们 Markdown 和按需的公式块都用，不点名时 Rollup 把它们放进一个共享小块，小块又要从 `vendor-markdown` 拿东西，成环。
+  - `_authed/admin/components/*`（组件库预览）不进 `route-admin`，各自成块；页面里的 CopilotProvider 也是按需加载（`lib/copilot/lazy-provider.tsx`）。否则管理页首屏带上 CopilotKit 和 Markdown（gzip 约 0.5 MB）。
   - `shell` 块：左栏、设置侧栏、管理侧栏、右栏这四个外壳根的静态闭包（去掉入口和 vendor）；`_authed.tsx` / `_authed/_app.tsx` 的路由组件单独成 `route-shell`，不再和聊天共享 `route-chat-core`（否则设置页也会拖上聊天依赖）。
-  - 手动块很容易造成块循环；改 `VENDOR_CHUNKS` 后一定要真机跑一遍（不只是 build 通过），`app/tests/router.test.ts` 钉住了上面这些分组。
+  - 手动块很容易造成块循环；`app/tests/router.test.ts` 钉住了上面这些分组。**构建时 `chunkGuard` 插件（`app/scripts/chunk-graph.ts`）检查真实产物**：块之间有静态 import 环、或设置 / 管理首屏（入口闭包 + 该组 modulepreload 闭包）带上 `vendor-copilot` / `vendor-markdown`，构建直接失败（排查时可设 `CHISABOT_CHUNK_GUARD=warn` 只告警）；`app/tests/chunk-graph.test.ts` 在有 `app/dist` 时再对产物查一遍。改了 `VENDOR_CHUNKS` 仍要真机跑一遍。
 - **按需加载**（`app/src/components/ui/lazy-part.tsx`）：`lazyPart(load, fallback)` 是带 `preload()` 的懒组件，fallback 用现有设计系统组件（`Skeleton`、`SidebarSkeleton`、同形状骨架），不另起样式；`AfterIdle` 把首屏用不到的东西（QuickSpotlight、ScheduleNotifier、ProfileSetupGate）推到空闲时再挂。
-  - CopilotProvider 不再包住整个已登录区，只在第一次进聊天时挂上（之后常驻），管理页的组件预览自己包一层。
+  - CopilotProvider 不再包住整个已登录区，只在第一次进聊天时挂上（之后常驻），管理页的组件预览自己包一层（按需加载）。render_ui 的渲染面在 `RenderUiTool` 挂上时（聊天区一出现）就开始预取，打开旧对话时历史里的卡片直接画出来，不先闪骨架、顶跳页面。
   - 懒加载的：频道页、CopilotProvider、左栏 / 设置侧栏 / 管理侧栏 / 右栏、右栏的电脑面板和实时面板卡片（没有面板时卡片渲染根本不加载，数据在 `live-panels-query.ts`）、对话里 render_ui 的 json-render 渲染（`json-render-surface.tsx`）、Streamdown（加载前先按纯文本显示）、转录缓存的预取。KaTeX、代码高亮、文档预览、图表、工作流编辑器都在各自的按需块里。
 - **按路径预载首屏块**（`app/scripts/route-preload.ts`）：构建时算出聊天 / 设置 / 管理三类首屏一定会用到的块及其静态依赖，往 `index.html` 放一段小内联脚本，按 `location.pathname` 插 `<link rel="modulepreload">`，和入口并行下载，消除「入口执行完才发现要下频道页」的瀑布。内联脚本的 CSP 哈希由 `shared/content-security-policy.ts` 按最终 HTML 自动算。
 - **天空着色器在后台线程预热**（`sky-background.tsx` 的 `prewarmSkyShaders`）：首屏最长的长任务（1.1–1.4s，RTX 3060 / ANGLE D3D11 实测）是天空引擎 `initGL` 同步编译 ~34KB 的片元着色器。引擎文件不改：宿主先在 Worker 里用 OffscreenCanvas + `KHR_parallel_shader_compile` 以同样源码和上下文参数编译链接一遍，编完再启动引擎，引擎那次编译命中 Chrome 显卡进程的着色器缓存（实测 50–75ms）。必须在 Worker 里且打开并行编译：主线程上光建第一个 WebGL 上下文就要一百多毫秒；不开并行编译则显卡进程主线程被占，页面合成跟着晚（LCP 反而晚 1 秒多）。没有 Worker / OffscreenCanvas、出错或 8 秒超时都直接启动引擎，和以前一样；占位图 `#skyph` 照常显示到第一帧。

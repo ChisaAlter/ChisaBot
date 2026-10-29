@@ -11,7 +11,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { componentListQueryOptions } from "@/lib/components/queries";
-import { CopilotProvider } from "@/lib/copilot/provider";
+import { LazyCopilotProvider } from "@/lib/copilot/lazy-provider";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,11 +22,11 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/_authed/admin/components/")({
   // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 components 才能进。
   beforeLoad: requireExtra("components"),
-  // 组件预览里的工具卡片要 CopilotKit 上下文；它不再包整个应用，只包聊天主区（DESIGN.md §41.5），这里自己包一层。
+  // 组件预览里的工具卡片要 CopilotKit 上下文；它不再包整个应用，只包聊天主区（DESIGN.md §41.5），这里自己包一层，按需加载。
   component: () => (
-    <CopilotProvider>
+    <LazyCopilotProvider>
       <RouteComponent />
-    </CopilotProvider>
+    </LazyCopilotProvider>
   ),
 });
 

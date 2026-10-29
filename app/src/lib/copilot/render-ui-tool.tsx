@@ -1,6 +1,6 @@
 import { useRenderTool } from "@copilotkit/react-core/v2";
 import type { Spec } from "@json-render/react";
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo } from "react";
 import { z } from "zod";
 import {
   inspectRenderUiSpec,
@@ -28,6 +28,11 @@ const parameters = z.object({
 });
 
 export function RenderUiTool() {
+  // 聊天区一挂上就开始下载渲染面（json-render-surface），不等第一张卡片出现：打开旧对话时历史里的
+  // render_ui 卡片直接画出来，不先闪一下骨架再换成卡片、把页面顶跳。
+  useEffect(() => {
+    void JsonRenderSurface.preload();
+  }, []);
   useRenderTool({
     name: RENDER_UI_TOOL,
     parameters,

@@ -25,6 +25,14 @@
 
 没达到的：聊天首页首屏 JS 没减半（持平）。聊天页本身需要 CopilotKit（vendor-copilot gzip 约 168 KB）和 Markdown（vendor-markdown 约 189 KB——CopilotKit react-core 静态引用它自带的 streamdown 1.6.11），加上入口和 React 已经约 600 KB；再往下要动 CopilotKit 本身，不在这次范围。
 
+审查跟进（#414 有条件通过后追加的提交）：
+- 块循环：`vendor-mcp` 里有一句 Rollup 为执行顺序加的 `import "./vendor-copilot"`，而 copilot 又引用 mcp —— 把 MCP SDK 并进 `vendor-copilot`。`vendor-markdown` 和 streamdown 的 Mermaid 包装块互相引用 —— 实际是 Markdown 和按需公式块共用的几个小模块（`vfile-location`、`extend`、公式语法文件）被放进了共享小块；把它们和包装一起点名进 `vendor-markdown`（公式的 `html.js` 仍不点名，KaTeX 仍按需）。
+- 新增 `app/scripts/chunk-graph.ts`：从产物还原块图，查环（Tarjan）和各组首屏闭包；构建插件 `chunkGuard` 出问题就失败，`app/tests/chunk-graph.test.ts` 有合成图单测，并在有 `app/dist` 时检查真实产物。
+- 管理页首屏：`_authed/admin/components/*` 原来被归进 `route-admin`，它静态引入 CopilotProvider，把 CopilotKit + Markdown 带上了整个管理区首屏。现在这两个路由各自成块，Provider 用 `LazyCopilotProvider`。
+- render_ui：`RenderUiTool`（聊天 Provider 里注册）挂上就 `JsonRenderSurface.preload()`，旧对话的卡片不再先显示骨架。没走 modulepreload（那样会让所有聊天首屏都多下 json-render 的依赖）。
+- 产物（gzip，入口闭包 + 该组预载闭包）：管理 1,030,798 → 506,073；设置 516,706 → 518,270；聊天 1,098,781 → 1,100,544（MCP 并进来后 vendor-copilot 167,483 → 182,102，聊天首屏本来就带这两块，总量持平）。
+- 可选项「未登录时 / 不预取聊天块」没做：客户端没有现成的、内联脚本能读的登录标记，判断不了；要做得先加一个标记，留给后续。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。

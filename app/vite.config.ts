@@ -6,6 +6,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 import { listenPort } from "../shared/listen-port";
 import { bundleReport } from "./scripts/bundle-report";
+import { chunkGuard } from "./scripts/chunk-graph";
 import { routePreload } from "./scripts/route-preload";
 import { skyBootScript } from "./src/lib/sky";
 
@@ -163,9 +164,17 @@ const VENDOR_CHUNKS: Array<[RegExp, string]> = [
   // 块之间就可能成环，按需块先执行时会读到还没初始化的 React（forwardRef of undefined）。
   [/\/node_modules\/(react|react-dom|scheduler)\//, "vendor-react"],
   // web-inspector 是 CopilotKit 自己按需 import 的开发者面板（~870KB 未压缩），不能被拉进来。
-  [/\/node_modules\/(@copilotkit\/(?!web-inspector)|@ag-ui\/|rxjs\/|phoenix\/|zod-to-json-schema\/)/, "vendor-copilot"],
+  // MCP SDK 只经 CopilotKit 用到，和它同块：分开的话 Rollup 为保执行顺序会让 vendor-mcp 反过来 import vendor-copilot，成环。
+  [/\/node_modules\/(@copilotkit\/(?!web-inspector)|@ag-ui\/|rxjs\/|phoenix\/|zod-to-json-schema\/|@modelcontextprotocol\/)/, "vendor-copilot"],
   [
     /\/node_modules\/(streamdown|marked|parse5|entities|unified|bail|trough|is-plain-obj|vfile|vfile-message|devlop|zwitch|ccount|longest-streak|markdown-table|trim-lines|property-information|space-separated-tokens|comma-separated-tokens|hastscript|html-void-elements|html-url-attributes|decode-named-character-reference|character-entities|character-entities-legacy|character-entities-html4|character-reference-invalid|is-alphabetical|is-alphanumerical|is-decimal|is-hexadecimal|stringify-entities|web-namespaces|style-to-js|style-to-object|inline-style-parser|@ungap\/structured-clone|get-east-asian-width|escape-string-regexp|remend|micromark(?!-extension-math)[^/]*|mdast-util-[^/]+|hast-util-[^/]+|unist-util-[^/]+|remark-[^/]+|rehype-(?!katex)[^/]+|estree-util-[^/]+)\//,
+    "vendor-markdown",
+  ],
+  // Markdown 和按需加载的公式块共用的几个小模块（公式的语法部分、vfile-location、extend）也点名进来：不点名时 Rollup
+  // 把它们放进一个单独的共享小块，而这个小块又要从 vendor-markdown 拿东西，两块互相静态 import，成环。
+  // 公式只点名语法文件，不点名 index.js / html.js，这样 mathHtml 和 KaTeX 仍然按需加载。
+  [
+    /\/node_modules\/(vfile-location\/|extend\/|micromark-extension-math\/lib\/(syntax|math-flow|math-text)\.js$)/,
     "vendor-markdown",
   ],
   // 下面几个同理：本身只在少数地方按需用，但体积大，一旦和小模块同块就被拖上首屏。KaTeX 和 micromark-extension-math
@@ -175,7 +184,6 @@ const VENDOR_CHUNKS: Array<[RegExp, string]> = [
   // 代码高亮的 Oniguruma 引擎（内联 wasm，~240KB gzip）单独一块：否则 Rollup 会把 Markdown 用到的几个小包和它同块。
   [/\/node_modules\/@shikijs\/engine-oniguruma\//, "vendor-shiki-wasm"],
   [/\/node_modules\/lucide-react\//, "vendor-lucide"],
-  [/\/node_modules\/(@modelcontextprotocol)\//, "vendor-mcp"],
 ];
 
 /*
@@ -196,8 +204,9 @@ type ManualChunkMeta = { getModuleIds: () => IterableIterator<string>; getModule
 
 function isVendorChunked(id: string): boolean {
   const normalizedId = normalizedModuleId(id);
-  // streamdown 自己按需 import 的代码块 / Mermaid 部分不归进来，否则 Markdown 一加载就静态依赖 shiki。
-  if (/\.css($|\?)/.test(normalizedId) || /\/streamdown\/dist\/(code-block|mermaid)-/.test(normalizedId)) return false;
+  // streamdown 自己按需 import 的代码块部分不归进来，否则 Markdown 一加载就静态依赖 shiki。
+  // 它的 Mermaid 小包装只是一行 re-export（真正的 mermaid 仍是动态 import），跟着 vendor-markdown 走。
+  if (/\.css($|\?)/.test(normalizedId) || /\/streamdown\/dist\/code-block-/.test(normalizedId)) return false;
   return VENDOR_CHUNKS.some(([pattern]) => pattern.test(normalizedId));
 }
 
@@ -252,6 +261,10 @@ export function selectChisaBotManualChunk(id: string, meta?: ManualChunkMeta): s
   }
   if (routePath.startsWith("_authed/_app/channel/")) {
     return "route-chat-core";
+  }
+  // 组件库两页要 CopilotKit（预览里的工具卡片），不和其它管理页同块，免得打开 /admin 也带上它。
+  if (routePath.startsWith("_authed/admin/components/")) {
+    return undefined;
   }
   if (routePath.startsWith("_authed/admin/")) {
     return "route-admin";
@@ -336,6 +349,7 @@ export default defineConfig({
     tailwindcss(),
     chisabotNodeBundle(),
     routePreload(),
+    chunkGuard(),
     ...(process.env.CHISABOT_BUNDLE_REPORT ? [bundleReport()] : []),
   ],
   resolve: {

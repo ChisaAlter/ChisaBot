@@ -107,7 +107,7 @@ test("does not manually chunk lazy content or dependencies", () => {
       "/repo/node_modules/.bun/@copilotkit+react-core@1.70.1/node_modules/@copilotkit/react-core/dist/styles.css",
     ),
   ).toBeUndefined();
-  // streamdown 的代码块 / mermaid 文件静态带着 shiki，留给 Rollup 按需拆。
+  // streamdown 的代码块文件静态带着 shiki，留给 Rollup 按需拆。
   expect(
     selectChisaBotManualChunk("/repo/node_modules/.bun/streamdown@2.6.0/node_modules/streamdown/dist/code-block-abc.js"),
   ).toBeUndefined();
@@ -128,6 +128,23 @@ test("groups heavy vendors into stable chunks (DESIGN.md §41.5)", () => {
   expect(
     selectChisaBotManualChunk("/repo/node_modules/.bun/streamdown@2.6.0/node_modules/streamdown/dist/index.js"),
   ).toBe("vendor-markdown");
+  // streamdown 的 Mermaid 小包装和 MCP SDK 跟着各自的大块走：单独成块会和它们互相 import 成环。
+  expect(
+    selectChisaBotManualChunk("/repo/node_modules/.bun/streamdown@2.6.0/node_modules/streamdown/dist/mermaid-HWGCJPDP.js"),
+  ).toBe("vendor-markdown");
+  expect(
+    selectChisaBotManualChunk(
+      "/repo/node_modules/.bun/@modelcontextprotocol+sdk@1.20.0/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js",
+    ),
+  ).toBe("vendor-copilot");
+  expect(
+    selectChisaBotManualChunk(
+      "/repo/node_modules/.bun/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/lib/syntax.js",
+    ),
+  ).toBe("vendor-markdown");
+  expect(
+    selectChisaBotManualChunk("/repo/node_modules/.bun/vfile-location@5.0.3/node_modules/vfile-location/lib/index.js"),
+  ).toBe("vendor-markdown");
   expect(
     selectChisaBotManualChunk("/repo/node_modules/.bun/lucide-react@0.5.0/node_modules/lucide-react/dist/esm/icons/x.js"),
   ).toBe("vendor-lucide");
@@ -136,4 +153,14 @@ test("groups heavy vendors into stable chunks (DESIGN.md §41.5)", () => {
 test("keeps the authed layout out of the chat chunk", () => {
   expect(selectChisaBotManualChunk("/repo/app/src/routes/_authed.tsx?tsr-split=component")).toBe("route-shell");
   expect(selectChisaBotManualChunk("/repo/app/src/routes/_authed/_app.tsx?tsr-split=component")).toBe("route-shell");
+});
+
+test("keeps the component gallery (CopilotKit) out of the admin chunk", () => {
+  expect(selectChisaBotManualChunk("/repo/app/src/routes/_authed/admin/index.tsx?tsr-split=component")).toBe("route-admin");
+  expect(
+    selectChisaBotManualChunk("/repo/app/src/routes/_authed/admin/components/index.tsx?tsr-split=component"),
+  ).toBeUndefined();
+  expect(
+    selectChisaBotManualChunk("/repo/app/src/routes/_authed/admin/components/$name.tsx?tsr-split=component"),
+  ).toBeUndefined();
 });
