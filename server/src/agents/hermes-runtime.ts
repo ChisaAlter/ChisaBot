@@ -11,6 +11,7 @@ import {
 import { Observable, type Subscription } from "rxjs";
 import { z } from "zod";
 import type { RunAssertion } from "./callback-token";
+import { logRunTiming, RunTimer } from "./run-timing";
 import { currentRuntimeSurfaceTools } from "./runtime-tool-context";
 import { createRuntimeToolRegistry, type RuntimeToolRun } from "./runtime-tools";
 import type { HeadlessTool } from "../computer/headless-tools";
@@ -115,6 +116,8 @@ export class HermesRuntimeAgent extends AbstractAgent {
       const active = { controller, remote };
       this.active = active;
       const contributed = [...currentRuntimeSurfaceTools()];
+      // 分段计时（run-timing.ts）：只记毫秒数，不记内容。
+      const timer = new RunTimer(input.runId);
       let runTools: RuntimeToolRun | undefined;
       let subscription: Subscription | undefined;
       const cancelled = () => {
@@ -148,6 +151,7 @@ export class HermesRuntimeAgent extends AbstractAgent {
           if (!surface.hidden && !tools.has(surface.definition.name)) tools.set(surface.definition.name, asGranted(surface));
         }
         const assembled = [...tools.values()];
+        timer.mark("assembled");
         const prepared = await this.configuration.prepare(input, assembled);
         controller.signal.throwIfAborted();
         // A client cannot grant a tool by supplying its schema. Only host-bound executors are offered.
@@ -181,19 +185,33 @@ export class HermesRuntimeAgent extends AbstractAgent {
         };
         // Headless middleware observes the ownership marker after RUN_STARTED and never
         // compensates a missing receipt by executing a Hermes-owned call itself.
+        timer.mark("sent");
         subscription = new CaptureHermesRun(runTools, assembled.map((tool) => tool.name)).run(wire, new SeededTransport(remote, wire)).subscribe({
-          next: (event) => subscriber.next(event),
-          error: (error) => subscriber.error(error),
-          complete: () => subscriber.complete(),
+          next: (event) => {
+            timer.observe(event);
+            if (event.type === EventType.RUN_FINISHED) logRunTiming(timer.finish("finished"));
+            else if (event.type === EventType.RUN_ERROR) logRunTiming(timer.finish("error"));
+            subscriber.next(event);
+          },
+          error: (error) => {
+            logRunTiming(timer.finish("error"));
+            subscriber.error(error);
+          },
+          complete: () => {
+            logRunTiming(timer.finish("closed"));
+            subscriber.complete();
+          },
         });
       };
       work().catch((error: unknown) => {
+        logRunTiming(timer.finish(controller.signal.aborted ? "cancelled" : "error"));
         if (!subscriber.closed) {
           subscriber.next({ type: EventType.RUN_ERROR, code: controller.signal.aborted ? "HERMES_RUN_CANCELLED" : "HERMES_HOST_BINDING_ERROR", message: controller.signal.aborted ? "This run was stopped." : error instanceof Error ? error.message : "Hermes host binding failed." });
           subscriber.complete();
         }
       });
       return () => {
+        logRunTiming(timer.finish(controller.signal.aborted ? "cancelled" : "closed"));
         hostAbort?.removeEventListener("abort", stop);
         controller.signal.removeEventListener("abort", cancelled);
         controller.abort();
