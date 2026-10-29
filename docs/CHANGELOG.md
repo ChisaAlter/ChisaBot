@@ -3,6 +3,19 @@
 - 回复过程照 Hark 改：等待时只在机器人一侧显示一行状态胶囊（转圈 + 当前动作 + 秒数），替代原来的「思考中」三点气泡和停顿时的占位气泡；一轮做完后干活卡自动收起（从历史打开的也默认收起），不再留在对话里；正文里只有「---」、空白或标点的过程话 / 步骤不再画成一项。胶囊用现有设计 token（`--r-pill`、`--glass-strong`、`--glass-shadow-sm`、`--dur-2`），不用模糊，动画只动 transform / opacity；减少动态效果时转圈静止，减少透明度 / 性能模式下为不透明底色。样式在组件自己的 `app/src/components/chat/status-capsule.css`（只有 `rs-` 开头的新类），styles.css 未改。新增 `app/tests/reply-steps.test.tsx`。未升级版本号。
 - 回复过程按审查修正：只有代码块的回复不再整段消失（`isBlankNote` 只认整段都是 `---`、`***`、`…` 这类分隔符，可以夹空白）；工具失败后没有文字、或只回了 `---` 的一轮不再是一片空白：干活那一行不收起（「N 步失败」），下面一句「这一轮没有回答」和重试（走现有的重发入口）。读屏：干活卡按钮名字里带上当前动作，对话末尾保留一个一直挂着的 `role="status"`，「思考中」换成干活卡时照样读出；键盘点开步骤后这一轮收起时焦点移到收起后的那一行；停顿时的胶囊和以前的占位等高（22px）；切换频道回来秒数不归零；胶囊换成干活卡不再播一次淡入；深色的不透明底色改用 `--glass-bg-solid` token。未升级版本号。
 - 回复过程第二轮审查修正（#404）：以卡片收尾、后面没有字的一轮（生成图片、分享文件、问人、确认卡 / 审批卡、宿主提示、活动卡）不再被当成「这一轮没有回答」挂重试——判断和真正画卡片用同一份 CopilotKit 渲染器表，只画一行过程的计算机工具注册时标 `lineOnly`；窄屏（≤ 560px）上没有回答的那一行仍显示「N 步失败」（`data-unanswered`，样式在 `status-capsule.css`，没改 `styles.css`）；同一轮重新开始跑（重试、确认后接着跑）时胶囊和干活卡的秒数从 0 算，切换频道回来仍不归零。
+- 回复过程第三轮审查修正（#404）：生成图片 / 分享文件没拿到文件、定时任务被拒或报错、生成界面画不出东西时，渲染器什么都不画，这一轮改为算「没有回答」并给重试；判断由各渲染器自己导出（和它决定画不画用同一个函数）。
+
+## 0.1.110
+
+- 修复：断线重连后漏掉的消息不补——`useConversationSync` 隔 15 秒以上才问到变化戳时不再只记基线，序号变了就合并式接上；测试 `app/tests/reconnect-backfill.test.tsx`。
+
+- 修复：打开对话时历史读两遍——打开时的接入结束后不再做顺序核对（那边刚读过），本机一轮结束后的核对不变；测试 `app/tests/channel-open-single-read.test.tsx`。
+
+- Hark 改版第 2 步（顶栏外壳）：左上圆形主页按钮、右上搜索胶囊 + 头像，中间只留「聊天」一个视图；PC 窗口按钮、手机、深浅色都可用；搜索胶囊用 `.glass`（顶栏唯一模糊层），同屏模糊层桌面 5、手机 1。DESIGN.md §10.5 写明同名 Hark 令牌必须在 `html.dark` 给深色值。不升版本号。
+- `docs/DEVLOG.md` 记录 Hark 顶栏（第 2 步）的动机、改动和前后截图。
+
+- 性能模式和系统「减少透明度」下全局关掉毛玻璃：一条 `*, *::before, *::after { backdrop-filter: none }`（`app/src/perf-noblur.css`，不用 `!important`），漏网的代码块操作条、遮罩、外观预览一起关掉；原来模糊的面板换成不透明底色 `--glass-bg-opaque`。实测两种模式下桌面、手机可见模糊层都是 0，普通模式与 main 一致。新增 `app/tests/no-backdrop.test.ts` 防止新的模糊绕过；规则见 DESIGN.md §10.3.1。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.110`），PC / Android 外壳未变。
 
 ## 0.1.109
 
@@ -24,6 +37,7 @@
 - 手机尺寸左栏抽屉（Hark 手机端）：一层全高面板，宽 `min(85vw, 320px)`、右侧圆角；顶部搜索 + 新建 + 关闭一行，账号在面板底部（分隔线 + 安全区）；遮罩只压暗、点它关闭；只动 transform 的 200ms 开关动画，减少动态效果时关闭；玻璃只剩面板一层，性能模式 / 减少透明度下不透明。
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.107`），PC / Android 外壳未变。
 
+
 ## 0.1.106
 
 - 对话记录同步改成增量：`…/threads/:id/messages` 支持可选 `since` / `cursor`（没变回 `unchanged`、变了只回尾部，旧客户端不变），界面实际路径（频道聊天页 `readThreadMessages` 的各处读历史、每轮结束后的顺序核对）都带 since/cursor 增量读，600 条对话没变化一次读约 530 KB → 83 B，没变化不 `setMessages`，编辑 / 删除 / 读失败 / 旧服务器照旧整份；三张卡片的每秒计时器合并为共享时钟。（#370）
@@ -41,6 +55,7 @@
 
 - 修 test:app 共享进程里的测试干扰（use-control 的 wake 监听、schedule-runs-query 的 mock.module 泄漏），修 gateway-account-control / startup-resilience 及 5 个 server 测试；server 补 `@copilotkit/core` 开发依赖；CI 下 chisabot-node 打包失败即构建失败；schedule-fired 的 `Link` 替身不再漏给其他文件（有路由时用真 `Link`），移出隔离名单；avatar-picker-shape 拆 DOM 前先 `settleReactWork`，`test:app` 退出码恢复 0（#368）。
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变。
+
 
 ## 0.1.104
 
