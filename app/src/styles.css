@@ -9460,10 +9460,23 @@ html.dark .glass-shell {
 
 /* 主工作台大板块（左栏机器人列表、左下角账号卡、收起态左栏、右栏面板容器）：纯净无边框悬浮毛玻璃 */
 :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card) {
-  background: var(--lg-surface) !important;
+  /* --side-scrim-layer：只有有壁纸时的左栏卡片会设（见下面 --side-wallpaper-scrim）。 */
+  background: var(--side-scrim-layer, none), var(--lg-surface) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
+}
+
+/* 有壁纸（预设或自定义）时，左栏卡片在玻璃上再垫一层同色薄幕：壁纸可能是纯黑 / 纯白，
+ * 光靠天幕薄纱和低雾度玻璃，左栏小字最差只有 2.6–2.8:1。薄幕让最差情况回到 ≥ 4.5（tests/a11y-contrast.test.ts）。 */
+:root {
+  --side-wallpaper-scrim: rgba(244, 248, 255, 0.36);
+}
+html.dark {
+  --side-wallpaper-scrim: rgba(12, 18, 32, 0.6);
+}
+html[data-wallpaper="on"] .glass-side-card {
+  --side-scrim-layer: linear-gradient(var(--side-wallpaper-scrim), var(--side-wallpaper-scrim));
 }
 
 /* 顶栏主导航胶囊与按钮：纯净无边框胶囊 */

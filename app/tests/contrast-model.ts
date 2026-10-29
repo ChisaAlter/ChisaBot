@@ -10,6 +10,11 @@
  *     或不透明底色 --glass-bg-opaque（性能模式 / 减少透明度 / 增加对比度）
  *   → 机器人行的悬停 / 选中底色（只对副标题）
  *
+ * 自定义壁纸 / 预设壁纸时，天空换成壁纸图（.chisabot-wallpaper，z-index 1，在薄纱下面）：
+ *   壁纸像素（纯白、纯黑、所有预设 SVG 里出现的色标，按不透明算，偏保守）
+ *   → 压暗遮罩 .chisabot-wallpaper-dim（两个色标 × 不透明度 0 / 0.75，即 wallpaperDim 存储范围 0–75）
+ *   → 天幕薄纱 → 玻璃 → 左栏壁纸薄幕 --side-wallpaper-scrim（或不透明底色）→ 行底色。
+ *
  * 结果是每个元素在每种「配色 × 浅 / 深」下的最小 / 最大对比度。
  */
 import { readFileSync } from "node:fs";
@@ -259,6 +264,74 @@ export function panelBackdrops(
   return out;
 }
 
+/** 壁纸压暗遮罩 .chisabot-wallpaper-dim 的色标。 */
+export function wallpaperDimStops(scheme: Scheme): RGBA[] {
+  const sel =
+    scheme === "dark"
+      ? ".chisabot-wallpaper-dim"
+      : "html:not(.dark) .chisabot-wallpaper-dim";
+  const value = lastDecl(stylesCss, sel, "background") ?? "";
+  const stops = [...value.matchAll(/rgba\([^)]*\)/g)].map((m) =>
+    parseColor(m[0]),
+  );
+  if (stops.length < 2) throw new Error(`wallpaper dim stops for ${scheme}`);
+  return stops;
+}
+
+/** lib/appearance.ts 存储的 wallpaperDim 范围（clampNumber(…, 0, 75, …)），换成遮罩不透明度。 */
+export const WALLPAPER_DIM_RANGE = [0, 0.75] as const;
+
+/** 壁纸可能出现的像素：纯白、纯黑（自定义上传的两个极端）+ 预设 SVG 里的所有色标。 */
+export function wallpaperPixels(): RGBA[] {
+  const src = readFileSync(
+    path.join(import.meta.dir, "../src/lib/appearance.ts"),
+    "utf8",
+  );
+  const presets = new Set(
+    [...src.matchAll(/stop-color="(#[0-9a-f]{6})"/gi)].map((m) =>
+      m[1].toLowerCase(),
+    ),
+  );
+  return [
+    [255, 255, 255, 1],
+    [0, 0, 0, 1],
+    ...[...presets].map((c) => parseColor(c)),
+  ];
+}
+
+/** 有壁纸时左栏卡片多垫的一层薄幕 --side-wallpaper-scrim。 */
+export function wallpaperScrim(scheme: Scheme): RGBA {
+  const value = lastDecl(
+    stylesCss,
+    scheme === "dark" ? "html.dark" : ":root",
+    "--side-wallpaper-scrim",
+  );
+  if (!value) throw new Error(`--side-wallpaper-scrim for ${scheme}`);
+  return parseColor(value);
+}
+
+/** 壁纸模式下左栏卡片上文字背后所有可能的不透明底色。 */
+export function wallpaperPanelBackdrops(scheme: Scheme): RGBA[] {
+  const veil = veilStops(scheme);
+  const dims = wallpaperDimStops(scheme);
+  const scrim = wallpaperScrim(scheme);
+  const out: RGBA[] = [opaqueSurface(scheme)];
+  for (const px of wallpaperPixels())
+    for (const dim of dims)
+      for (const opacity of WALLPAPER_DIM_RANGE) {
+        const dimmed = over([dim[0], dim[1], dim[2], dim[3] * opacity], px);
+        for (const v of veil) {
+          const base = over(v.color, dimmed);
+          for (const style of GLASS_STYLES)
+            for (const haze of HAZE_RANGE)
+              out.push(
+                over(scrim, over(glassSurface(style, scheme, haze), base)),
+              );
+        }
+      }
+  return out;
+}
+
 /** 字母头像的渐变底色（不透明）。 */
 export function avatarStops(): RGBA[] {
   const bg = lastDecl(stylesCss, ".glass-avatar", "background") ?? "";
@@ -274,9 +347,13 @@ export function backdropsFor(
   element: ElementId,
   palette: ThemePaletteId,
   scheme: Scheme,
+  surface: "sky" | "wallpaper" = "sky",
 ): RGBA[] {
   if (element === "avatar") return avatarStops();
-  const panel = panelBackdrops(palette, scheme);
+  const panel =
+    surface === "wallpaper"
+      ? wallpaperPanelBackdrops(scheme)
+      : panelBackdrops(palette, scheme);
   if (element === "sec-main") return panel;
   const rows = rowFills(scheme);
   return [...panel, ...panel.flatMap((b) => rows.map((r) => over(r, b)))];

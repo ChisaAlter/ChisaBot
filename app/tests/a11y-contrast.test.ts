@@ -79,9 +79,27 @@ describe("sidebar small text and letter avatars meet WCAG AA in every palette ×
             ink(element, scheme),
             backdropsFor(element, palette, scheme),
           );
-          if (min < AA)
+          if (!(min >= AA))
             throw new Error(
               `${element} ${palette}/${scheme}: ${min.toFixed(2)} < ${AA}`,
+            );
+          expect(min).toBeGreaterThanOrEqual(AA);
+        }
+      });
+});
+
+describe("custom / preset wallpapers: worst case still meets WCAG AA", () => {
+  for (const scheme of SCHEMES)
+    for (const palette of PALETTE_IDS)
+      test(`wallpaper ${palette} / ${scheme}`, () => {
+        for (const element of Object.keys(TOKENS) as ElementId[]) {
+          const { min } = range(
+            ink(element, scheme),
+            backdropsFor(element, palette, scheme, "wallpaper"),
+          );
+          if (!(min >= AA))
+            throw new Error(
+              `${element} wallpaper ${palette}/${scheme}: ${min.toFixed(2)} < ${AA}`,
             );
           expect(min).toBeGreaterThanOrEqual(AA);
         }
