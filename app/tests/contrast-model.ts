@@ -13,7 +13,8 @@
  * 自定义壁纸 / 预设壁纸时，天空换成壁纸图（.chisabot-wallpaper，z-index 1，在薄纱下面）：
  *   壁纸像素（纯白、纯黑、所有预设 SVG 里出现的色标，按不透明算，偏保守）
  *   → 压暗遮罩 .chisabot-wallpaper-dim（两个色标 × 不透明度 0 / 0.75，即 wallpaperDim 存储范围 0–75）
- *   → 天幕薄纱 → 玻璃 → 左栏壁纸薄幕 --side-wallpaper-scrim（或不透明底色）→ 行底色。
+ *   → 壁纸薄幕 .chisabot-wallpaper::after（--wallpaper-scrim，整个界面只有这一层，卡片 / 气泡 / 输入框不再各自垫）
+ *   → 天幕薄纱 → 每层玻璃（或不透明底色）→ 行底色。
  *
  * 结果是每个元素在每种「配色 × 浅 / 深」下的最小 / 最大对比度。
  */

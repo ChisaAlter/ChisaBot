@@ -9333,11 +9333,11 @@ html:not(.dark) .chisabot-wallpaper-dim {
  * 所以在壁纸和天幕薄纱之间固定垫一层同色薄幕，只此一层：卡片、气泡、输入框、嵌套卡片都不再各自加，
  * 叠多少层玻璃都只有这一层（tests/a11y-contrast.test.ts 核对）。 */
 :root {
-  --wallpaper-scrim: rgba(244, 248, 255, 0.56);
+  --wallpaper-scrim: rgba(244, 248, 255, 0.53);
 }
 html.dark,
 html[data-theme="dark"] {
-  --wallpaper-scrim: rgba(12, 18, 32, 0.55);
+  --wallpaper-scrim: rgba(12, 18, 32, 0.54);
 }
 .chisabot-wallpaper::after {
   content: "";
