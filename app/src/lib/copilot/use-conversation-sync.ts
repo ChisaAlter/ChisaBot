@@ -167,6 +167,9 @@ export function tailReplayPatch<T extends TailMsg>(
   return;
 }
 
+/** 这么久没问到变化戳，就当中间断过线：下一次不只记基线（见 onActivity）。 */
+const MISSED_ACTIVITY_MS = 15_000;
+
 /**
  * 全端同步（DESIGN.md §42）：同一段对话在别的设备上有了动静，把它拉到这台设备。
  *
@@ -215,6 +218,8 @@ export function useConversationSync(
     let knownRevision: string | null = null;
     let rebuildPending = false;
     let lastOwnFinishAt = 0;
+    /** 上一次问到变化戳的时间：隔得太久说明中间断过线 / 藏过（平时前台 2 秒、藏着 10 秒一次）。 */
+    let lastActivityAt = 0;
     /**
      * mode "merge"（平时）：不清空列表，只把新的接上——见下面的 onEvent。
      * mode "rebuild"（顺序和服务器不一致时）：照 SDK 原样，先清空再按服务器回放重建。
@@ -294,6 +299,8 @@ export function useConversationSync(
     });
     const off = onActivity((activity) => {
       if (!alive || activity.threadId !== threadId) return;
+      const quietFor = Date.now() - lastActivityAt;
+      lastActivityAt = Date.now();
       if (revisionNeedsRebuild(knownRevision, activity.revision, ownRevisions.get(threadId))) rebuildPending = true;
       if (activity.revision !== undefined) knownRevision = activity.revision;
       if (rebuildPending && !agent.isRunning && !connecting) {
@@ -316,6 +323,8 @@ export function useConversationSync(
         // 服务器在回答、这台却没在跟（刚回到前台、刚打开时那一轮还没开始）：接上。
         // 本机刚跑完一轮（3 秒内）收到的在途 running=true 是本机那一轮的尾声，不重接回放（否则会清空刚流完的回答）。
         if (activity.running && Date.now() - lastOwnFinishAt > 3000) join("merge", true);
+        // 断线 / 很久没问到之后的第一次：这段时间别处写进来的不能当基线吞掉，序号变了就合并式接上补齐。
+        else if (previous && quietFor > MISSED_ACTIVITY_MS && activity.seq !== previous.seq) join();
         return;
       }
       if (activity.workers !== previous.workers)
