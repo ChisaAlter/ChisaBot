@@ -102,6 +102,55 @@ describe("rich-utils", () => {
   });
 });
 
+describe("initials (Avatar / List / Products 共用)", () => {
+  test("normal Latin and CJK names", () => {
+    expect(initials("程天宇")).toBe("程");
+    expect(initials("김철수")).toBe("김");
+    expect(initials("さくら")).toBe("さ");
+    expect(initials("vercel next")).toBe("VN");
+    expect(initials("John")).toBe("J");
+    expect(initials("Redmi Buds 6 Pro")).toBe("RB");
+    expect(initials("owner/repo")).toBe("OR");
+    expect(initials("ñandú")).toBe("Ñ");
+    expect(initials("Apple 苹果")).toBe("A");
+  });
+
+  test("never returns half a surrogate pair; skips leading emoji, punctuation and symbols", () => {
+    expect(initials("🎧 降噪耳机")).toBe("降");
+    expect(initials("【推荐】小米")).toBe("推");
+    expect(initials("👨‍👩‍👧 Family")).toBe("F");
+    expect(initials("«Le Monde»")).toBe("LM");
+    expect(initials("★ Star")).toBe("S");
+    // 组合附加符号跟着字母走（e + U+0301）。
+    expect(initials("e\u0301cole x")).toBe("E\u0301X");
+    for (const name of ["🎧 降噪耳机", "😀😀", "🇨🇳 China", "𠀋字"]) {
+      const out = initials(name);
+      expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out)).toBe(false);
+      expect(out).not.toContain("\uFFFD");
+    }
+    expect(initials("𠀋字")).toBe("𠀋");
+  });
+
+  test("one character per word: ß is not expanded to SS", () => {
+    expect(initials("ß straße")).toBe("ßS");
+    expect(initials("straße ß")).toBe("Sß");
+    expect(initials("ǆemal x")).toBe("ǄX");
+    for (const name of ["ß straße", "ﬁsh ﬂy", "ŉ x"]) expect(Array.from(initials(name)).length).toBeLessThanOrEqual(2);
+  });
+
+  test("a leading digit is kept, followed by the letter right after it", () => {
+    expect(initials("1More 耳机")).toBe("1M");
+    expect(initials("3M")).toBe("3M");
+    expect(initials("7-Eleven")).toBe("7E");
+    expect(initials("100 Days")).toBe("1D");
+    expect(initials("2024 年报")).toBe("2");
+  });
+
+  test("empty or all-symbol names give an empty string, never 「?」", () => {
+    for (const name of ["", "   ", "🎧", "【】", "!!!", "★☆", "— · —"]) expect(initials(name)).toBe("");
+  });
+});
+
 describe("rich components render", () => {
   beforeAll(() => {
     GlobalRegistrator.register();
@@ -186,6 +235,79 @@ describe("rich components render", () => {
     const icons = container.querySelectorAll(".jr-list-ic");
     expect(icons).toHaveLength(1);
     expect(icons[0]?.querySelector("svg")).not.toBeNull();
+  });
+
+  test("List items never leave an empty icon square (0.1.108 #11)", async () => {
+    const { container } = await draw({
+      root: "l",
+      elements: {
+        l: {
+          type: "List",
+          props: {
+            items: [
+              { title: "华为 FreeBuds 6i", description: "无图，icon 认不出", icon: "headphones-anc" },
+              { title: "Anker Soundcore Q30", description: "无图无 icon" },
+              { title: "能认出的图标", icon: "news" },
+            ],
+          },
+          children: [],
+        },
+      },
+    });
+    const rows = [...container.querySelectorAll(".jr-list-row")];
+    expect(rows).toHaveLength(3);
+    // no image + unknown / missing icon: no placeholder at all (DESIGN.md §29: 认不出的名字不画)
+    expect(rows[0]!.querySelector(".jr-list-ic, .jr-list-thumb")).toBeNull();
+    expect(rows[1]!.querySelector(".jr-list-ic, .jr-list-thumb")).toBeNull();
+    // a known icon still draws its tinted tile, and every drawn tile has an svg in it
+    expect(rows[2]!.querySelector(".jr-list-ic svg")).not.toBeNull();
+    for (const tile of container.querySelectorAll(".jr-list-ic")) expect(tile.childElementCount).toBeGreaterThan(0);
+  });
+
+  test("List item image that fails to load falls back to the initial, like Avatar (0.1.108 #11)", async () => {
+    const { container } = await draw({
+      root: "l",
+      elements: {
+        l: { type: "List", props: { items: [{ title: "Redmi Buds 6 Pro", image: "https://img.test/broken.png", icon: "headphones-anc" }] }, children: [] },
+      },
+    });
+    const img = container.querySelector<HTMLImageElement>(".jr-list-thumb img");
+    expect(img).not.toBeNull();
+    expect(container.querySelector("[data-testid=jr-list-fallback]")).toBeNull();
+    await act(async () => {
+      fireEvent.error(img!);
+    });
+    expect(container.querySelector(".jr-list-thumb img")).toBeNull();
+    const ph = container.querySelector<HTMLElement>(".jr-list-thumb [data-testid=jr-list-fallback]");
+    expect(ph?.textContent).toBe("RB");
+    expect(ph?.style.getPropertyValue("--jr-hue")).not.toBe("");
+  });
+
+  test("empty / all-symbol names fall back to a neutral glyph in Avatar and List, not 「?」", async () => {
+    const { container } = await draw({
+      root: "r",
+      elements: {
+        r: { type: "Stack", props: {}, children: ["a1", "a2", "a3", "l"] },
+        a1: { type: "Avatar", props: { name: "🎧 降噪耳机" }, children: [] },
+        a2: { type: "Avatar", props: { name: "" }, children: [] },
+        a3: { type: "Avatar", props: { name: "Ada Lovelace" }, children: [] },
+        l: { type: "List", props: { items: [{ title: "🎧", image: "https://img.test/broken.png" }] }, children: [] },
+      },
+    });
+    const faces = [...container.querySelectorAll<HTMLElement>(".jr-avatar-face")];
+    expect(faces.map((f) => f.textContent)).toEqual(["降", "", "AL"]);
+    expect(faces[0]?.hasAttribute("data-empty")).toBe(false);
+    expect(faces[1]?.hasAttribute("data-empty")).toBe(true);
+    expect(faces[1]?.querySelector("[data-testid=jr-ph-glyph]")).not.toBeNull();
+    expect(container.textContent).not.toContain("?");
+    expect(container.textContent).not.toContain("\uFFFD");
+    const img = container.querySelector<HTMLImageElement>(".jr-list-thumb img");
+    await act(async () => {
+      fireEvent.error(img!);
+    });
+    const ph = container.querySelector<HTMLElement>("[data-testid=jr-list-fallback]");
+    expect(ph?.hasAttribute("data-empty")).toBe(true);
+    expect(ph?.querySelector("[data-testid=jr-ph-glyph]")).not.toBeNull();
   });
 
   test("Products draws a grid of clickable cards with a fixed photo slot (§72)", async () => {

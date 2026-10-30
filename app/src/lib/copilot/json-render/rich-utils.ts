@@ -252,13 +252,51 @@ export function domainOf(url: string): string {
   }
 }
 
-/** 名字的首字（中文取第一个字，英文取前两个单词首字母）。 */
+const CJK_START = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3005\u3006]/u;
+/** 字母、数字（含组合附加符号）；标点 \p{P}、符号 \p{S}、emoji \p{Extended_Pictographic}、空白都不算。 */
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+const MARK = /\p{M}/u;
+/** 一个词的第一个字（带上跟在后面的组合附加符号，「é」拆成 e + ◌́ 时也完整）。 */
+const firstGrapheme = (word: string) => word.match(/^\P{M}\p{M}*/u)?.[0] ?? "";
+
+/**
+ * 名字的首字（Avatar / List 图位 / Products 共用）：中日韩取第一个字，其他取前两个单词的首字母。
+ * 按码点处理（Array.from），不会切出半个 emoji；开头的标点、符号、emoji 跳过（「🎧 降噪耳机」→「降」，
+ * 「【推荐】小米」→「推」）。名字为空或全是符号时返回空串，调用方画中性占位图标（不画「?」）。
+ */
 export function initials(name: string): string {
-  const clean = name.trim();
-  if (!clean) return "?";
-  if (/^[\u2E80-\u9FFF]/u.test(clean)) return Array.from(clean)[0] ?? "?";
-  const words = clean.split(/[\s\-_/.]+/).filter(Boolean);
-  return ((words[0]?.[0] ?? "") + (words[1]?.[0] ?? "")).toUpperCase() || clean[0]!.toUpperCase();
+  const chars = Array.from(typeof name === "string" ? name : "");
+  const start = chars.findIndex((ch) => WORD_CHAR.test(ch));
+  if (start < 0) return "";
+  const rest = chars.slice(start);
+  if (CJK_START.test(rest[0] ?? "")) return rest[0] ?? "";
+  const words: string[] = [];
+  let current = "";
+  for (const ch of rest) {
+    if (WORD_CHAR.test(ch) || (current && MARK.test(ch))) current += ch;
+    else {
+      // 标点、符号、emoji（及其 ZWJ / 变体选择符）、空白：都当分隔。
+      if (current) words.push(current);
+      current = "";
+    }
+  }
+  if (current) words.push(current);
+  const firstWord = words[0] ?? "";
+  const first = firstGrapheme(firstWord);
+  // 第二个字母：第一个词以数字开头且后面紧跟字母（「1More」「3M」）时取这个字母（→「1M」），
+  // 否则取第二个词的首字母；第二个词是中日韩（「Apple 苹果」）时不拼，避免「A苹」。
+  const afterDigit = DIGIT.test(first) ? firstGrapheme(firstWord.slice(first.length)) : "";
+  const secondChar = afterDigit && LETTER.test(afterDigit) ? afterDigit : firstGrapheme(words[1] ?? "");
+  const second = secondChar && !CJK_START.test(secondChar) ? secondChar : "";
+  return upperOne(first) + upperOne(second);
+}
+
+const DIGIT = /^\p{N}/u;
+const LETTER = /^\p{L}/u;
+/** 逐字大写，且保持一个字一个字：toLocaleUpperCase 会把「ß」展开成「SS」，这种就保留原字。 */
+function upperOne(grapheme: string): string {
+  const upper = grapheme.toLocaleUpperCase();
+  return Array.from(upper).length === Array.from(grapheme).length ? upper : grapheme;
 }
 
 /** 名字 → 稳定的色相（头像底色），同一个名字永远同一个颜色。 */

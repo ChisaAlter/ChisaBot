@@ -4,7 +4,8 @@ import { normaliseTone } from "../../../../../shared/json-render/catalog";
 import { cn } from "@/lib/utils";
 import { iconFor } from "./icons";
 import { ActionArea, type ItemAction, LiveText, useNow } from "./rich-context";
-import { countdownParts, hueOf, initials, itemTime, relativeTick, relativeTime, safeHttps, trendOfText } from "./rich-utils";
+import { emptyMarkProps, InitialMark } from "./initial-mark";
+import { countdownParts, hueOf, itemTime, relativeTick, relativeTime, safeHttps, trendOfText } from "./rich-utils";
 
 /**
  * 富组件（DESIGN.md §32）：媒体与身份、结构、实时。图表在 charts.tsx，可点 / 实时的底层在 rich-context.tsx。
@@ -84,12 +85,13 @@ export function AvatarFace({ name, src, size = "md", shape = "circle", status }:
   return (
     <span
       className={cn("jr-avatar-face", `is-${size}`, shape === "square" && "is-square")}
+      {...(url && !failed ? {} : emptyMarkProps(name))}
       style={{ "--jr-hue": String(hueOf(name)) } as CSSProperties}
     >
       {url && !failed ? (
         <img alt="" decoding="async" loading="lazy" onError={() => setFailed(true)} referrerPolicy="no-referrer" src={url} />
       ) : (
-        <span aria-hidden>{initials(name)}</span>
+        <span aria-hidden><InitialMark kind="person" name={name} /></span>
       )}
       {status ? <i className={cn("jr-avatar-status", toneClass(status))} /> : null}
     </span>

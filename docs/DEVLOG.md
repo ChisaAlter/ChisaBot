@@ -1,5 +1,30 @@
 # DEVLOG
 
+## Unreleased — render_ui 列表行首不再留空灰方块（分支 fix/render-ui-list-icon-fallback）
+
+来源：0.1.108 验收 #11（降噪耳机推荐卡，`hark-compare/chisabot-381/after/compare.md`）：两个备选前面各有一个空白灰色方块，像图标没加载出来。
+
+**原因**：不是图片加载失败。模型给 List 项写了 `icon`，但名字不在 Tabler 子集 `ICON_NAMES` 里（抓取的 DOM 是 `<span class="jr-list-ic jr-tone-accent"></span>`，里面没有 svg，也没有 `<img>`）。`registry.tsx` 的 List 只判断 `item.icon` 是否非空就画了 30×30 的 `.jr-list-ic` 底色块，`RichIcon` 认不出名字返回 `null`，于是留下一个只有 `--tone-soft` 底色的空方块。DESIGN.md §29 本来写的是「认不出的名字不画」。另一个隐患：有 `image` 但加载失败时，`SafeImg` 把 `<img>` 收起，56×56 的 `.jr-list-thumb` 底框还在，同样是空方块。
+
+**和 #407 的关系**：本分支开工后 main 合入了 #407（`2451621b`，「json-render 认不出的图标不画空方块」），已经修掉了上面第一种（认不出的 icon）——这次线上看到的灰方块就是这种，0.1.111 起应该不再出现。本 PR 在它之上补齐剩下的退化，并把三种情况收进一个组件。
+
+**改动**（只动 List 行首，`render-ui-tool.tsx` 没动）：
+- 新增 `ListMark`（`app/src/lib/copilot/json-render/registry.tsx`），替换 List 里原来的内联三元：
+  - 有图：缩略图；`onError` 后换成标题首字 + 按名字定色的渐变底（`initials` / `hueOf`，和 `Avatar`、`Products` 的退化一样），图位不塌，列表对齐不变。以前加载失败留下 56×56 的空 `.jr-list-thumb` 底框。
+  - 没图、icon 认得出：照旧画语义色图标块。
+  - 没图、icon 认不出或没写：不占位（同 #407，DESIGN.md §29「认不出的名字不画」）。
+- `styles.css` 加 `.jr-list-ph`（同 `.jr-product-ph` 的渐变底，字色加深到 32% 亮度，对比度 ≥ 4.5）。
+
+**测试**：`app/tests/json-render-rich.test.tsx` 新增 2 个用例（与 #407 的用例并存）——无图 + 认不出的 icon / 无 icon 时没有任何图位、认得出的 icon 照常有 svg；有图时触发 `error` 后显示首字「RB」。在 0.1.110 的 main（`b975b1cb`）上这 2 个用例都失败，本分支通过。
+
+**返修（小爱审查，首字）**：`initials()`（`rich-utils.ts`，Avatar / List 图位 / Products 共用）原来按 UTF-16 下标取字：「🎧 降噪耳机」取出半个 emoji（显示 �），「【推荐】小米」取出「【」，空标题显示「?」。改成按码点（`Array.from`）处理，开头的标点、符号、emoji（`\p{P}` `\p{S}` `\p{Extended_Pictographic}` 等）跳过，只认 `\p{L}` `\p{N}`（组合附加符号跟着前一个字）；中日韩取第一个字，其他取前两个词首字母。现在：「🎧 降噪耳机」→「降」，「【推荐】小米」→「推」，「«Le Monde»」→「LM」。名字为空或全是符号时返回空串，新组件 `InitialMark`（`json-render/initial-mark.tsx`）画中性通用图标（Avatar 用人形 `IconUser`，List / Products 用 `IconPhoto`），容器加 `data-empty`，底色换成中性的 `--glass-3`、图标 `--ink-3`，不再按名字定色，也不出「?」。顶栏账号头像的 `initialsOf` 是另一套，没动。测试：`json-render-rich.test.tsx` 新增 4 个用例（拉丁 / 中日韩正常名字、emoji / 标点 / 代理对、空和全符号、Avatar 与 List 渲染出中性图标）。可选项「有图列表里无图行对齐 56px 图位」没做：要么留透明空位，要么画底框，和本 PR「没图不占位」的方向冲突，留给设计决定。
+
+**返修 2（小爱预审 63f3a9e6）**：大写改成逐字做，一个字一个字：`toLocaleUpperCase` 会把「ß」展开成「SS」（「ß straße」原来得「SSS」），展开的字保留原样，现在得「ßS」。数字开头：保留数字，如果紧跟字母就取这个字母（「1More 耳机」→「1M」、「3M」→「3M」、「7-Eleven」→「7E」），否则取第二个词首字母（「100 Days」→「1D」），第二个词是中日韩时只留数字（「2024 年报」→「2」）。不跳过数字，因为品牌名里数字常常就是名字本身。测试：再加 2 个用例。
+
+**截图**：`docs/images/render-ui-list-fallback/`（before = 0.1.108 线上的 DOM 结构，after = 本分支渲染结果，headless Chrome）。
+
+![before](images/render-ui-list-fallback/before.png)
+![after](images/render-ui-list-fallback/after.png)
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
