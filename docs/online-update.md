@@ -18,7 +18,8 @@ ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、
   不在其中：它记在 localStorage 里（`lib/chat/ui-memory.ts`，DESIGN.md §88），刷新回来还在。这里不扫整页的
   输入框：卡片表单、面板、搜索框里的字不是聊天草稿。
 - 缓存：应用对 `index.html` 一律 `Cache-Control: no-cache`、带哈希的 `/assets/*` 永久缓存（直连 3001 时生效）。
-  经公网网关（`/opt/chisabot-zh/public/nginx.conf`）时入口页和接口仍是 `no-store`（`security-headers.conf`），入口页不会是旧的；
+  经公网网关（`/opt/chisabot-zh/public/nginx.conf`）时入口页和接口仍是 `no-store`（`cache-no-store.conf`，和 `security-headers.conf` 一起 include），入口页不会是旧的；
+  例外：`location = /api/link-preview` 透传应用的 `Cache-Control`（成功 `private, max-age=600`，错误 `no-store`），上游没给时由 `$preview_cache_control` map 给错误补 `no-store`；
   **带哈希的 `/assets/*` 单独一段 `location ^~ /assets/`**：仍要登录（`auth_request`），成功响应
   `Cache-Control: private, max-age=31536000, immutable`（浏览器长期缓存，`CDN-Cache-Control: no-store` 让 Cloudflare 不缓存），
   非 200 是 `no-store`。以前所有资源都是 `no-store`，每次打开都要重新下载约 1 MB（gzip 后）的脚本。没有 service worker。

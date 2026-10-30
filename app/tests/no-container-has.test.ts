@@ -8,9 +8,13 @@ import path from "node:path";
  * 新代码请改用组件直接输出的 data-* 属性（例如顶栏的 data-sidebar / data-winctrls）。
  * 下面的清单是 main 上已有的旧规则，只许减少不许增加；删掉一条旧规则时把它也从清单里去掉。
  */
+/** 已经删掉、不许再出现的旧规则（左栏收起改用顶栏的 data-sidebar）。 */
+const FORBIDDEN = [
+  '.glass-shell:has([data-slot="sidebar"][data-state="collapsed"])',
+];
+
 const LEGACY = [
   "body:has(.glass-topbar)",
-  '.glass-shell:has([data-slot="sidebar"][data-state="collapsed"])',
   '.glass-topbar:has(.win-ctrls[data-count="3"])',
   "body:not(:has(.glass-composer))",
   "body:has(.update-banner)",
@@ -88,6 +92,20 @@ test("找得到旧的大容器 :has()，说明检查本身在工作", () => {
   expect(containerHasSelectors()).toContain("body:has(.glass-topbar)");
 });
 
+test("已删掉的旧 :has() 不许再出现", () => {
+  const raw = readFileSync(
+    path.join(import.meta.dir, "../src/styles.css"),
+    "utf8",
+  );
+  for (const sel of FORBIDDEN) {
+    expect(raw.includes(sel)).toBe(false);
+    expect(containerHasSelectors()).not.toContain(sel);
+    expect(LEGACY).not.toContain(sel);
+  }
+  // 换一种写法也不行：.glass-shell 上按左栏收起状态的 :has()。
+  expect(css).not.toMatch(/\.glass-shell:has\([^{]*collapsed/);
+});
+
 test("styles.css 不新增挂在大容器上的 :has()", () => {
   // 多出来的是新加的（改用 data 属性）；少了的是旧规则已经删掉（把它从 LEGACY 里去掉）。
   expect(containerHasSelectors()).toEqual([...LEGACY].sort());
@@ -95,7 +113,7 @@ test("styles.css 不新增挂在大容器上的 :has()", () => {
 
 test("顶栏收起左栏 / 4 个标题按钮改用顶栏自己的 data 属性", () => {
   expect(
-    css.includes('.glass-topbar[data-sidebar="collapsed"] .hk-topbar-start'),
+    css.includes('.glass-topbar[data-sidebar="collapsed"] .glass-topbar-start'),
   ).toBe(true);
   expect(
     css.includes('html[data-desktop] .glass-topbar[data-winctrls="4"]'),

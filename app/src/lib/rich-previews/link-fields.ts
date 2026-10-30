@@ -11,6 +11,9 @@
  *   补充信息 = 给的 meta / 标签 → 给的 description（模型写的一句话）；和站点名或标题重复的不显示。
  * - 兜底（标题只剩域名）时站点那一格换成短地址，免得两行都是同一个域名。
  *
+ * - 标题去掉开头的「GitHub - 」（旧缓存里的 GitHub 标题；卡上标题固定两行，前缀太占地方）。
+ * - GitHub 仓库的星标（预览的 `stars`）在没有别的补充信息时当补充信息：「★ 1.2k」。
+ *
  * 纯函数，测试见 app/tests/link-card-unified.test.tsx。
  */
 
@@ -34,12 +37,15 @@ export type PreviewLinkFields = {
   imageHeight?: number;
   finalUrl?: string;
   degraded?: boolean;
+  stars?: number;
 };
 
 export type MergedLinkFields = {
   title: string;
-  /** 先试的预览图；没有就是 null（画紧凑横卡）。 */
+  /** 先试的预览图；没有就是 null（卡片画生成的横幅，仍是竖版大卡）。 */
   image: string | null;
+  /** 预览图是不是 GitHub 仓库主人的头像（方图，画成横幅里的大头像）。 */
+  imageAvatar: boolean;
   /** `image` 加载失败时换这张（给的图失败 → 预览图）；没有就 null。 */
   imageFallback: string | null;
   imageWidth: number | null;
@@ -51,6 +57,20 @@ export type MergedLinkFields = {
   description: string | null;
   degraded: boolean;
 };
+
+/** 卡片标题：去掉开头的「GitHub - 」。 */
+export function cleanLinkTitle(title: string): string {
+  return title.replace(/^GitHub\s*[-–—]\s*/i, "").trim() || title;
+}
+
+/** 星标数的短写法：999、1.2k、12k、1.3m。 */
+export function formatStars(stars: number): string {
+  if (stars < 1000) return String(stars);
+  if (stars < 10_000)
+    return `${(stars / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  if (stars < 1_000_000) return `${Math.round(stars / 1000)}k`;
+  return `${(stars / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+}
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -136,10 +156,11 @@ export function mergeLinkFields(
     ...domainNames(domain),
     ...domainNames(linkHost(url)),
   ];
-  const title =
+  const title = cleanLinkTitle(
     (isWeakLinkTitle(givenTitle, ogTitle, names) ? ogTitle : givenTitle) ||
-    text(preview?.title) ||
-    domain;
+      text(preview?.title) ||
+      domain,
+  );
   const givenImage = usableImage(given.image);
   const previewImage =
     preview && preview.imageKind !== "none" ? usableImage(preview.image) : null;
@@ -153,14 +174,22 @@ export function mergeLinkFields(
   const width = sized ? Number(preview?.imageWidth) : Number.NaN;
   const height = sized ? Number(preview?.imageHeight) : Number.NaN;
   let site = text(given.siteName) || text(preview?.siteName) || domain;
+  const stars =
+    typeof preview?.stars === "number" && preview.stars >= 0
+      ? `★ ${formatStars(preview.stars)}`
+      : "";
   const extra =
-    [text(given.meta), text(given.description)].find(
+    [text(given.meta), text(given.description), stars].find(
       (value) => value && !same(value, site) && !same(value, title),
     ) ?? null;
   if (title === site && title === domain) site = shortLinkUrl(url);
   return {
     title,
     image,
+    imageAvatar:
+      image !== null &&
+      image === previewImage &&
+      preview?.imageKind === "avatar",
     imageFallback,
     imageWidth: width > 0 ? Math.round(width) : null,
     imageHeight: height > 0 ? Math.round(height) : null,

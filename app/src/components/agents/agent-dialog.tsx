@@ -48,6 +48,7 @@ import {
   setAgentHiddenMutationOptions,
   setAgentPinnedMutationOptions,
 } from "@/lib/agents/mutations";
+import { useOpenBotChat } from "@/lib/channels/open-bot-chat";
 import { type AgentProfile, agentQueryOptions } from "@/lib/agents/queries";
 import { agentPluginsQueryOptions } from "@/lib/plugins/queries";
 import { readToolName } from "@/lib/plugins/tool-name";
@@ -218,7 +219,7 @@ function GeneralSection({
   agentId: string;
   profile: AgentProfile;
 }) {
-  const navigate = useNavigate();
+  const openBotChat = useOpenBotChat();
   const [editingIdentity, setEditingIdentity] = useState(false);
   const identityFieldRef = useRef<HTMLInputElement | null>(null);
 
@@ -264,10 +265,7 @@ function GeneralSection({
         <ItemActions>
           <Button
             onClick={() =>
-              void navigate({
-                search: { agent: agentId },
-                to: "/channel/new",
-              })
+              void openBotChat(agentId)
             }
             size="sm"
           >

@@ -1,5 +1,209 @@
 # DEVLOG
 
+## 改窗口大小时暂停 WebGL 天空（dev4/perf-resize-pause，FIX-PLAN P2-3 JS 部分）
+
+**动机**：卡顿分析根因 6：resize 场景主线程 composite 约 7s、CrGpuMain 6.4s，fps 9–12。天空引擎（wallpaper_core.html）每个 resize 事件都改 `canvas.width`（清空画布），宿主再 `drawSkyNow` 当帧补画一整帧 WebGL；拖一次窗口就是几十帧满屏重绘。
+
+**做法**：
+- 新增 `app/src/lib/resize-state.ts`：`initResizeState()`（`main.tsx` 调一次，幂等，返回拆除函数）监听 resize；第一次事件后在 rAF 里给 `<html>` 挂 `data-resizing=""`，最后一次事件后 150ms 拿掉；`isResizing()`、`resizeInProgress()`（从第一次事件就算）、`subscribeResizing()`。和前端约定的接口：CSS 用 `html[data-resizing]` 去掉 backdrop-filter / box-shadow，本 PR 不写 CSS。
+- `sky-background.tsx`：`skyCanRun` 在 `isResizing()` 时返回 false；引擎脚本里裸写的 `addEventListener` 作为 `new Function` 的参数传进去，`resize` 监听收进宿主，由 `onSkyResizeEvent` 调度——拖动中只记一笔，停下时（订阅 resize-state 的结束通知）按最终尺寸调一次引擎 `resize()` 再 `drawSkyNow()`，并 `wakeSky` 把可能被打断的渐变画完。拖动中画布是旧尺寸，`#gl` 是 100%×100%，CSS 拉伸，不露空画布。引擎本身未改。
+- 测试 `app/tests/resize-state.test.ts`（手写假时钟）：属性挂上 / 拿掉的时机、订阅通知、天空循环暂停 / 恢复、拖动中引擎不改尺寸停下后改一次、init 幂等且拆掉后不留监听和计时器；去掉实现后 5 条都失败。
+
+- 小爱复审后补：测试用导出改名 `__skyLoopForTestOnly`；`onSkyResizeEvent` 注释写明依赖 resize-state 的监听先注册；resize-state 逐个 try/catch 调订阅者（抛错只 `console.error`，不挡其他订阅者），加了对应测试。
+
+**验证**：基于 headless harness 的 resize 场景（PC 客户端真机 trace 没录）。4x 降速、不带 trace、各 3 次中位数：fps 13.8 → 48.7，p95 帧 133 → 33ms，长任务 4581 → 163ms，脚本 378 → 154ms；样式 / 布局不变（那部分等前端的 CSS）。SwiftShader 会放大 GPU 部分，真机收益要打折。
+
+## 切会话即时反馈（dev2/jank-chat-switch，FIX-PLAN P1-1 / F0）
+
+**动机**：切会话时左栏高亮和整段对话在同一次提交里渲染，点下去要等 0.3–2s 才有任何变化（4x 降速下 INP 最差 2216ms）。FIX-PLAN F0：高亮先单独提交，对话延后渲染，目标首帧 <16ms。
+
+**改法**：
+- 新文件 `lib/chat/pending-switch.ts`：一个外部小 store 记「正在切过去的机器人」。左栏 `BotRow` / `MiniBot` 普通左键点击时先 `markPendingBot`，只重画左栏那几行（高亮按 `pending ?? 路由` 算，旧会话那一行同时熄灭）；导航排在这一帧画完之后（rAF + setTimeout）。带修饰键 / 中键照常走链接。路由 5s 没跟上自动清掉。
+- `authed-shell.tsx`：`ChatStage` 用 `useDeferredValue` 延后对话地址，整段对话的重新挂载变成可打断的延后渲染；地址对象 memo 化，`ChannelPage` 包 `memo`，高亮那次提交不重画对话。新对话换上后清掉 pending。
+- `keep-alive.tsx` + `styles.css`：延后期间旧的一页加 `data-switching`，opacity 0.6（只动合成层）且 `pointer-events: none`（防止往旧会话里输入），不留白、不放骨架。
+- 测试 `app/tests/chat-switch-feedback.test.tsx`：高亮先到再清、连点三个只停最后一个、修饰键不算、导航排在高亮之后、切换中旧页半透明可见且不 inert。
+
+**验证**：bun 1.3.14。typecheck、build 通过；相关测试 5/5；test:app 1862 pass / 0 fail；server + DB 测试 4643 pass / 28 fail（本 PR 不动 server/，server 代码与 main 逐字相同，失败为 box 环境下 main 已有的同一批）；Biome 改动文件的诊断数与 main 相同，新文件无问题。perf harness（#443）switch 场景 4x 降速、3 次中位数：最差 INP 2216 → 80ms，最差首帧 2172 → 62ms，长任务总计 16793 → 9246ms（表见 PR）。首帧在 4x 降速下 40–53ms，折合原速约 10–13ms。
+- 补充（小爱复核 #448）：切换中旧的一页同时设 `inert`（键盘也进不去），输入框发送前用 `sendTargetsStaleChannel` 核对所属会话与地址栏 / 左栏切换状态，不一致就不发、草稿留着；淡出改为延迟 100ms、opacity 0.8，`prefers-reduced-motion` 下无过渡，快切不再闪；`afterNextPaint` 只留最新一次，排队期间再点别处或按 Enter 会撤掉旧导航并熄掉左栏的「正在切过去」。新增测试：切换中按 Enter 不发送、连排两次只跑最后一次、点别处撤销。
+- 补充（小爱复核 #448 第二轮）：发送拦截只针对切走的那段旧对话的输入框（`markPendingBot` 记下切走时的频道），导航被拦下 / 失败时别的输入框不受影响；输入法选词的 Enter（`isComposing` / keyCode 229）不撤销排队的导航。各补一条测试。
+- 合入 main（11bacde2，含 #445/#446）：左栏机器人行改用 main 的 `useCloseMobileDrawer`；手机抽屉里点机器人照旧走链接、不延后导航（抽屉收起要跟路由 push 同一拍）。
+
+## 电脑端布局回退 #374 的顶栏改动（dev2/pc-layout-fix）
+
+**动机**：#374（5cd6e8c3，Hark 第 2 步顶栏）之后，Jun 的原话：「把右下原本有的搬到左上，又弄一个头像什么意思；搜索会话放在那是什么意思；右侧栏的收起和打开都在右侧栏上，左侧栏为什么单独拿出来了」。电脑上同时有两个头像（顶栏左上的品牌头像 / 右上的账号头像 + 左栏底部账号卡），搜索会话跑到顶栏右上，左栏开关单独放在顶栏。
+
+**改法**：
+- 身份只留左栏底部账号卡：`glass-shell.tsx` 不再给顶栏传 `account`；`glass-topbar.tsx` 去掉左上 BrandAvatar 主页圆钮，只留品牌文字；`account-menu.tsx` 删掉 `placement="topbar"` 分支。
+- 搜索回到左栏：`app-sidebar.tsx` 卡片顶行恢复 `<SidebarSearchField/>`（和 + 新建同一行，#374 之前的样子）；删掉 `TopBarSearch` 和搜索框的 `variant="topbar"`。Ctrl K 仍由外壳处理：左栏收起时先展开再聚焦搜索。手机不变（顶栏 ☰ + 搜索圆钮，抽屉里有搜索框）。
+- 左栏开关挪到左栏上，和右栏「面板」开关对称：新文件 `roster-toggle.tsx`，展开时在卡片右上角（聊天：搜索行最右；设置 / 管理：区域标题右边），收起成 80px 那列时在列顶。手机抽屉不画。顶栏只剩品牌文字和 PC 窗口按钮。
+- styles.css 删掉 `.hk-topbar*`、`.hk-search*`、`.hk-home`、`.hk-avatar-btn`、`.hk-brand` 残留，以及顶栏账号按钮和「收起时开关跟在品牌后面」的旧规则（顺带少一条挂在 `.glass-shell` 上的 `:has()`，`no-container-has` 清单同步去掉）；`.hk-circle` 留给手机顶栏。palette 段没动；`ui/sidebar.tsx` 的宽度动画没动。
+- 测试：`channel-pagination.test.tsx` 不再单独渲染顶栏搜索框；新增 `pc-layout-topbar.test.ts`（顶栏没有头像 / 搜索 / 开关，账号菜单没有顶栏分支，左栏有搜索和开关，没有残留样式）。
+
+**验证**：bun 1.3.14。typecheck、build 通过；test:app 1854 pass / 0 fail；server + DB 测试的失败项是 main 上同一批（本改动只动 app/）；Biome 无新增问题。真 Chrome（headless，本地单用户服务）截了聊天页 / 设置页 × 左栏展开 / 收起 × 浅色 / 深色 × 1024 / 1440 共 16 张，每张可见的用户头像 1 个、品牌头像 0 个，顶栏只有品牌名；左栏收起时按 Ctrl K 会展开并聚焦「搜索会话」。
+
+- 补充（小爱复核）：手机布局保持 #374 时原样——顶栏右上角恢复圆形头像（账号菜单入口，`AccountMenu placement="topbar"` / `.hk-avatar-btn`），只在手机布局（含 PC 小窗 < 768px）里画；电脑顶栏仍然没有头像，身份只在左栏底部账号卡。手机顶栏列宽恢复为 `auto minmax(0,1fr) auto`、右侧按钮间距 8px。`tests/pc-layout-topbar.test.ts` 断言头像只在手机分支里渲染；360px 浅色/深色聊天页截图已补到 PR。
+
+## 卡顿测量工具 perf/（dev4/perf-harness，FIX-PLAN P0）
+
+**动机**：卡顿分析（stage 1 和 FIX-PLAN）的数字都出自 box 上的临时脚本，别人没法复现，PR 之间也没法比。FIX-PLAN 要求每个性能 PR 附 4x 降速下的前后对比表，先把测量脚本整理进仓库。
+
+**做法**：
+- `perf/mock-server.mjs` 托管 `app/dist`（SPA 回退），按 `perf/fixtures/api.json` 回答 `/api/*`：已登录用户、两个频道、`c1` 一个 240 条消息的线程、发送时的 AG-UI SSE 流；`/api/me` 可切成 401 用来测登录页光球；没匹配的一律 404。
+- `perf/jank.mjs`：playwright-core 驱动系统 Chrome，每次运行新建临时 profile 并在结束后删除。页面里用 PerformanceObserver（longtask、event）、rAF 帧记录和 MutationObserver 采数据，CDP `Performance.getMetrics` 取样式 / 布局 / 脚本耗时差值。按 `--runs` 跑多次，`summary.json` 取中位数。`--trace` 另存 trace，并由 `trace-summary.mjs` 算主线程按类别的自身耗时和带 JS 栈的强制样式 / 布局（原来是 Python 脚本，改成 JS 不用另装环境）。
+- `perf/compare.mjs` 打印 markdown 表，单元格是 `前 → 后 (Δ%)`，变化 ≥10% 标 ✅/⚠️。
+- CI `perf.yml`：PR 上构建 head 和 base（`git worktree`），各跑 1 次，表写进 job summary，结果上传 artifact；job 级 `continue-on-error`，不拦 PR（CI 机器噪声大，阻塞门槛放到 P2-4）。zizmor 本地检查无问题。
+
+**验证**：box 上对 main（c99ee37e）构建跑了全部场景（1 次带 trace，3 次不带）。trace 本身有开销，带 trace 那次长任务和脚本耗时约为不带的 1.5–2 倍，所以 README 写明不要混着比。
+
+## 手机抽屉导航后收起、/channel/new 总开新话题、网关 401 直接去登录（dev4/sidebar-m3-1）
+
+**动机**：审计 `/workspace/audit/03-sidebar.md` 的 M3-1 / M3-11 / M3-14；另外两条：`/channel/new` 会落到最近的旧对话而不是新话题；线上 0.1.110 会话过期后卡在加载约 5 分钟，之后 SW 在 20 秒时给出 503「服务器响应慢」卡片。
+
+**根因**：
+- 抽屉：`Channel` 行、搜索结果行、`BotMenuContent` 里的跳转都没有调用关闭抽屉，只有机器人行自己关。会话行的 `<Link>` 上带了 `type="button"`（`<a>` 上无效）。
+- `/channel/new`：路由 loader 用 `latestChannelFor` 找到最近的一对一对话就重定向过去，不管里面有没有消息。
+- 401：网关 `auth_request` 失败时，非导航请求（`/api/me`）拿到 JSON 401（`openbotAuthRequired: true`），导航拿到 302 到 `/login?next=`。应用收到 401 后在页面里转到 `/sign`，但网关不提供 `/sign`（nginx 把它 302 到 `/login`，SPA 内跳转不会经过它），页面就停在加载。网关注入的 `workspace.js` 有 fetch 401 拦截，但它看到应用自己的 `#chisabot-account-control` 就提前退出，所以从没生效。SW 这边：导航超过 20 秒给 503 慢卡片；卡片的重试探测是普通 fetch，拿到 JSON 401（< 500）就当成「好了」刷新页面，刷新后又走同一条路，循环。线上「先卡 5 分钟」的确切时长没有在本地复现，上面是能解释现象的路径，已用假网关验证修复后不再出现。
+
+**改法**：
+- `components/ui/sidebar.tsx` 新增 `useCloseMobileDrawer()`（手机且抽屉打开时关掉）。`channel.tsx` 会话行 `onClick` 关抽屉、去掉 `type="button"`；`app-sidebar.tsx` 搜索结果行、机器人行、`BotMenuContent` 的「机器人资料」「历史对话」「新话题」「面板」做完都关抽屉；打开对话框的菜单项（电脑操作、主机器人、恢复、删除）不关，对话框挂在抽屉里。`BotChatMenuItems` 加可选 `onDone`。
+- `lib/channels/latest.ts` 加 `reusableEmptyChannelFor`：只在最近的一对一对话没有任何消息时复用。`/channel/new` 改用它。原来依赖重定向「接着聊」的入口（资料页、agent-profile、agent-dialog、`/bot`、open-thread 兜底、删除后回主机器人、交接卡片）改用新的 `lib/channels/open-bot-chat.ts`（`botChatChannelId` / `useOpenBotChat`）直接去最近的对话，没有才去 `/channel/new`，行为不变。
+- `lib/auth/login-redirect.ts`：`isGatewayLoginRequired`（401 + `openbotAuthRequired`）、`goToLogin`（`location.replace("/login?next=…")`，只跳一次，已在 `/login` 不跳）、`installLoginRedirect`（包一层同源 fetch，任何接口拿到网关 401 都去登录）。`auth/queries.ts` 的 `/api/me` 401 也走它；`_authed.tsx` 在已经去登录页时不再转 `/sign`。没有网关的部署（普通 401，无 `openbotAuthRequired`）照旧去应用自己的 `/sign`。
+- 审查修复：SW 的导航和重试卡片探测原来一见 401 就跳 `/login`，没网关的部署没有 `/login`。改成和前端 `isGatewayLoginRequired` 同一判断（JSON 响应体 `openbotAuthRequired: true`）；探测脚本会被 toString 进页面，只能内联同一段判断。其它 401：导航原样交给浏览器，探测照旧刷新。四种情况都有测试。截图不进仓库，推送后贴在 PR 描述里。自测：typecheck 0、app build 0、test:app 1825 pass 0 fail；改动文件 Biome 无新增。
+- `public/sw.js`（`SW_VERSION` 4）：导航拿到 401 返回 302 到 `/login?next=`；慢卡片探测拿到 401 直接 `location.replace` 去登录页，不再刷新；`/login` 加进 `SKIP_NAV`。
+- 审查修复 2（登录跳转死循环）：后端在会话有效时也会回 401 + `openbotAuthRequired`（`server/src/index.ts` 身份头重放、`server/auth/gateway-identity.ts` 签名校验失败）。这时 `/login` 的 login.js 查 `/auth/session` 看到已登录，立刻 `replace(next)` 回来，又 401，循环。
+  - `login-redirect.ts`：`goToLogin` 跳之前在 sessionStorage 记 `chisabot:login-redirect-at`；30 秒（`LOGIN_LOOP_WINDOW_MS`）内又要跳就不跳，置 `isLoginLoopDetected()` 并通知订阅者。时间戳在未来、不是数字、sessionStorage 抛错都按「没跳过」处理。`signOutAndReLogin`：POST `/api/auth/sign-out`（失败也继续）、重记时间戳、`replace("/login")`。`loginHref` 在 `/sign` 上不带 `next`。
+  - 新组件 `components/auth/auth-loop-notice.tsx`：「登录状态异常」卡片 + 「退出重新登录」按钮（设计系统 `Button`，沿用 `page-loader-*` 卡片样式，没有新的 backdrop-filter）。挂在 `main.tsx` 路由外面，因为 `_authed` 这时停在启动骨架上（`isGoingToLogin() || isLoginLoopDetected()`）不转 `/sign`。
+  - `sw.js`（`SW_VERSION` 5）：导航分支 `request.referrer` 是同源 `/login` 时，网关 401 原样交给浏览器（真没登录的导航网关自己回 302，这个分支碰到的基本都是「已登录但被拒」）。重试卡片探测和应用共用同一个 sessionStorage 时间戳：30 秒内已经去过 `/login` 又是网关 401，就停下、显示「登录状态异常」和「退出重新登录」按钮，否则记时间戳再去 `/login?next=`。
+  - 测试：`login-redirect.test.ts` 加 9 个（记时间戳、刚回来又 401 不跳并标记、`/api/me` 路径、旧时间戳照跳、未来/非数字、storage 抛错、退出重登两种、`/sign` 不带 next），新文件 `auth-loop-notice.test.tsx` 3 个（happy-dom：无循环不显示；刚回来又 401 时出现卡片且按钮获得焦点；点按钮走退出流程），`sw-navigation.test.ts` 加 5 个（referrer=/login 原样交给浏览器；别的 referrer 照旧 302；卡片 30 秒内停下并能退出重登；旧时间戳照跳并记时间；卡片 HTML 带按钮和参数）。去掉循环判断和 `/sign` 处理后，前两个文件 4 个用例失败；把 sw.js 换回 2ee6efde 后 SW 的 4 个用例失败（第 5 个检查「别的 referrer 照旧 302」，改前改后都应通过）。
+  - 复现（假网关：会话有效、所有 /api 回网关 401、/login 看到已登录就 `replace(next)`）：改前 10 秒内 `/login` 被请求 48 次，改后 1 次，然后停在「登录状态异常」；点「退出重新登录」会 POST `/api/auth/sign-out` 1 次，然后到 `/login`。截图在 box 的 `/workspace/dev4-m31-xfer/shots/loop/`，不进仓库。自测：typecheck 通过，app build 通过，test:app 1893 pass、0 fail。
+  - Biome：`latest.ts` 的格式问题里有一行是本 PR 新加的（`reusableEmptyChannelFor` 里的 `continue`），已修；其余格式问题和 `sidebar.tsx` 的导入排序 / 格式在 base（c99ee37e）上就有，不是本 PR 引入的，没动。
+
+**测试**：`tests/sidebar-drawer-nav.test.tsx`（真实 `Channel` 在手机抽屉里点击后抽屉关闭；`BotChatMenuItems` 调 `onDone`；`BotMenuContent` 接线）、`tests/channel-new-topic.test.ts`（空对话复用、有消息开新、按最近活动挑、群聊不算）、`tests/login-redirect.test.ts`（网关 401 跳 `/login?next=`、只跳一次、`/login` 上不跳、普通 401 不跳、跨域不管）、`tests/sw-navigation.test.ts` 新增 4 个 401 用例。新用例在 base（c99ee37e）上都失败，改后通过。
+
+**截图**（390×844 触屏，独立 headless Chrome 和临时 profile，假网关静态服务器）：
+
+| 场景 | 改前（c99ee37e） | 改后 |
+|---|---|---|
+| 抽屉搜索「论文」后点结果 | 进了 `/channel/c2`，抽屉仍盖在页面上 | 进 `/channel/c2`，抽屉已收起 |
+| 机器人「⋯」→「机器人资料」 | 进了 `/bots/a1`，抽屉仍开着 | 进 `/bots/a1`，抽屉已收起 |
+| 打开 `/channel/new?agent=a1` | 被转到旧对话 `/channel/c1` | 停在 `/channel/new?agent=a1`（新话题） |
+| 页面开着时会话过期（SW 已控制页面） | 8 秒后仍停在 `/settings` | 约 0.2–0.4 秒跳到 `/login?next=%2Fsettings` |
+| 过期后重新打开 `/channel/c1?x=1`（经 SW） | 页面直接显示网关的 JSON 401 | 跳到 `/login?next=%2Fchannel%2Fc1%3Fx%3D1` |
+
+截图首轮还发现一个真问题：触屏点会话后抽屉关了，导航却被抽屉的返回记录清理（`history.back()`）退回去。原因是路由的 push 在微任务里才落地。`useCloseMobileDrawer` 改为推迟一拍再关抽屉（167cfd6f），并补了一个回归测试：手机模式、真实 browser history，不修时失败。上表是修复后的结果。
+
+**自测**：
+- typecheck 通过。app build 通过（改前 / 改后都构建了，SW 版本分别是 3 和 4）。
+- test:app：整批跑仍然只有一个与本 PR 无关的超时失败，`control-poll-single-source.test.tsx`（期望 4 次请求，实际 5 次）。这个文件单独重跑 3/3 通过，在 base 上也通过。上一轮整批跑时失败的是 `overlay-back.test.tsx` 超时（box 负载约 40），单独跑 10/10 通过；这一轮整批里它通过了。
+- 相关测试：sidebar-drawer-nav、overlay-back、channel-new-topic、login-redirect、sw-navigation 共 59 个，全部通过。
+- Biome：585 个错误，和 base 一样，没有新增。
+
+## 联网搜索质量（fix/hark-search-quality）
+
+**动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
+
+**根因（2026-10-29 用 cbtest 在线上抓 run 的 SSE，记下每次 web_search 的查询和结果）**：
+- 线上所有搜索结果都是 `bing.com/ck/a` 跳转链接，也就是 DuckDuckGo 每次都失败、落到了 Bing 回退；失败被 `.catch(() => null)` 静默吞掉。原因（发布部署在 Haupt 上只读核实）：Haupt 的 DNS 和 SSRF 检查都正常，是 DuckDuckGo 的 HTML 端点对 Haupt 出口 IP 回 HTTP 202 反爬页（页面里是 `anomaly` 验证脚本，`result__a` 0 个）；Bing 正常（200，约 0.15 秒）。本 PR 初稿里推测的「DNS 被污染 / fake-IP 被 SSRF 拒绝」不对，以此为准（那是 Ayase 和 box 本机的情况，不是线上的）。
+- Bing 的结果为什么无关（2026-10-29 在 Ayase 用 #8 / #11 的 5 个查询逐项对比）：我们的请求（ChisaBot UA + `setlang=zh-CN`）、Chrome UA、加 `mkt=zh-CN&cc=CN`、`form=QBLH`、先拿首页 cookie 再搜、RSS 端点，相关结果分别是 1/50、1/50、0/50、1/50、0/50、2/50；用真实的 headless Chrome 打开同样的 Bing 搜索页，结果也一样无关（上海市维基百科、Plus500、华为官网首页）。所以不是我们的解析、中文编码或缺参数，是 Bing 对这类匿名请求本身就给这种结果，调参数修不好。Bing 只能当最后的兜底，并且必须过相关性。
+- Bing 给的无关结果举例：「上海 咖啡店 推荐 静安 武康路」回成人视频站，「上海咖啡馆 必去」回哔哩哔哩百度知道，「科技新闻 2026年10月29日」回 QQ 邮箱登录页，「500元以内 降噪耳机」回 Plus500 和彩票网，「漫步者 W820NB Plus」回星巴克。结果不是没传进上下文、也不是被截断，是内容本身没用；模型照 PROVENANCE_GUIDANCE 如实写「未核实」是对的。
+- 搜索次数多：搜不到时返回的话是「没有搜到结果。换个说法再搜一次」，加上结果无关，模型就一遍遍换词重搜；每次搜索本身只要 0.2–0.6 秒，慢在每一步一个模型回合（1.5–9 秒）。
+- 单一来源：几次搜索都没用，模型只能 web_fetch 一个自己知道的网站（#3 是 MIT Technology Review），五条新闻自然都出自它。另外 Bing 的跳转链接让每条结果看起来都来自 bing.com，模型也没法区分来源网站。
+- #11 灰色方块：json-render `List` 只要 `item.icon` 有值就画带底色的 `jr-list-ic` 方块，图标名认不出时 `RichIcon` 返回空，只剩一个空方块；`Card` 标题的图标同理。没有商品卡是因为搜索没给出可用的商品页（价格、图片、链接都没有）。
+
+**改法**：
+- `server/src/web/tools.ts`：认出 DuckDuckGo 的 anomaly 反爬页（`isDuckDuckGoChallenge`），记一行 `web-search-engine-miss`（reason=challenge），之后 10 分钟内不再请求 DuckDuckGo，直接走 Bing，省掉每次白等的一个来回。DuckDuckGo 不可用且 Bing 没有相关结果时，工具结果直接说「当前搜索源不可用」，让模型这一轮别再搜（读确定的网址，或说明没有联网核实）；DuckDuckGo 正常回页面只是没结果，仍按「没搜到」处理。Bing 结果过相关性（`relevantHits`，规则见下面「返修」），全都不相关就当没搜到；只过滤 Bing，DuckDuckGo 的结果原样保留。`unwrapBingUrl` 把 `ck/a` 跳转还原成真实网址。没搜到的提示（`NO_SEARCH_HITS`）改成最多再换一次关键词，之后读确定的网址或说明没有联网核实。web_search 描述加一句「多条新闻 / 推荐尽量来自不同网站，每条注明来源网站」。DuckDuckGo 失败时日志记一行（每 10 分钟最多一行，不含查询和网址）。
+- `app/src/lib/copilot/json-render/registry.tsx`：`List` 和 `Card` 先用 `iconFor` 判断图标名认不认得，认不出就不画图标位。样式未改。
+**返修（小爱审查 aa92289b，2026-10-29）**：
+- 相关性对中文太严：原来要求至少命中两个关键词（中文按相邻两字），「科技新闻 今天」会丢掉「IT之家 科技资讯」（只命中「科技」）。改成：查询里任一按空格分开的完整词（`queryWords`，去掉 site: 语法、泛词、年份日期和纯数字）出现在结果里就保留；都没出现时按关键词兜底，命中一个就保留；英文 / 数字按整词匹配（「AI」不算命中 `mail.qq.com`）；留下的按命中多少排序（完整词权重 10，关键词 1），同分保持原顺序。测试用真实查询：「科技新闻 今天」「漫步者 W820NB 价格」「上海 咖啡店」「小米 手环」，以及 hark 对比 #3 #5 #8 #11 线上真实发出的查询，相关的保留、Plus500 / QQ 邮箱 / LEO 词典 / 维基这类无关页丢掉。代价：「上海 咖啡店」这类查询里只命中「上海」的泛泛页面（如上海市百科）也会留下，只是排在后面。
+- 过滤后为空不再报「搜索源不可用」：`sourceDown` 只在 DuckDuckGo 失败、并且 Bing 也失败或一条结果都没解析出来时为真；Bing 给了结果但全被过滤掉，按「没搜到相关结果」（`NO_SEARCH_HITS`）处理。
+- 「最多再换一次词」以前只在提示词里：现在在 web_search 里按轮计数（键是这一轮的取消信号，每轮一个；没有就用确认上下文里的这一轮），一轮已有 2 次没搜到相关结果后，下一次直接返回「本轮不再搜索」（`SEARCH_TURN_STOPPED`），不联网；某次返回了「搜索源不可用」后，本轮后面的搜索也直接返回「本轮不再搜索」（`SEARCH_TURN_STOPPED_DOWN`）。有结果的搜索不计数。
+- 顺手：`unwrapBingUrl` 解出来的地址若是内网 / 本机（`checkPublicUrl` 不通过），保留原 Bing 链接；`isDuckDuckGoChallenge` 不再把所有 202 当反爬，要页面里有 anomaly 验证脚本且没有 `result__a` 结果才算。
+- 和 main 的 #392（web_fetch 重试、`WebIo`）有冲突，普通 merge 了 origin/main（没有 rebase）：`searchWeb` 带上超时参数，`WebIo` 加可选的 `outcome`（带「搜索源能不能用」）。
+- 没改的：SSRF 名单（安全边界）、PROVENANCE_GUIDANCE（安全相关提示词，测试按 sha256 钉住）。真正让结果变好的是一个线上能用的搜索源：代码里目前不支持任何搜索 API（没有 Brave / Tavily / SearXNG 之类的配置），需要另行决定是否接入；这次的改动保证搜不到时不拿无关页面当结果、不再连搜。
+
+## 流式回复时打字不再乱序、不再残留（分支 dev2/stream-composer，随 0.1.111 发布）
+
+来源：性能审查 01-chat-streaming 第 1 项。4x 降速下边流式输出边打 `abcdefghij`，得到 `bcdefghija`，光标跳回开头；文档卡流式时打字再退格，会留下残字，并跟着下一条消息发出去。
+
+### 根因
+
+- 流式回复每到一块，`ChannelChat` 重渲染一次，传给 Composer 的 `agents={toAgentOptions(...)}` 是内联新数组（`agents = []` 默认值也是每次新数组）。
+- 于是 `triggers`（`useMemo([agents, commands])`）和 `handleChange`（`useCallback([commands])`）每块都换新引用。这两个都是 prompt-area@0.6.8 值同步 effect 的依赖：`useEffect(() => { if (!composing && value !== lastEmitted) renderSegmentsToDOM(value) }, [value, renderSegmentsToDOM, …, onChange])`。
+- 每块提交后都留下一个待执行的 passive effect，里面捕获的是旧 `value`。按键恰好落在“提交之后、effect 执行之前”时，按键的同步 setState 会先把这个 effect 冲掉：用旧值重写 DOM，光标被夹回旧长度；下一次渲染再把文字写回来时光标位置已经错了，后面的字就插错位置。退格同理，被删掉的字被旧值写回来，成为残留。
+
+### 改动
+
+- `composer.tsx`：`agents` / `commands` 放进 ref，`triggers` 只建一次（`buildTriggers({ agents: () => agentsRef.current, commands: () => commandsRef.current })`），`handleChange` / `flushPendingChange` 读 `commandsRef.current`、依赖为空。流式块不再让值同步 effect 重跑，按键之间不会再插进旧值。
+- `triggers.ts`：`agentTrigger` / `slashCommandTrigger` / `buildTriggers` 接受数组或取值函数（`OptionSource`），在 `onSearch` 时才读，@ 提及和 / 命令列表始终是最新的。
+- prompt-area 不打补丁、不升级：0.7.0 是破坏性版本（新增 `cn` peer 依赖、要求 Node 20+），0.7.1 只有性能改动，都没修这个竞态；问题出在我们每块都换依赖，从 Composer 这边修掉即可。
+
+### 测试
+
+- 新增 `app/tests/composer-stream-typing.test.tsx`：父组件每“块”重渲染一次 Composer（内联 agents / commands 新数组），在 useLayoutEffect 里（提交之后、passive effect 之前）送一个按键。
+  - 打 `abcdefghij`：main 上得到 `bcdefghija`，修后完全一致；
+  - 打 `测试输入abc` → 退格到空 → 打 `继续` → 发送：main 上编辑器里是 `试输入abc测`，修后只发出 `继续`。
+  - 两个用例在 main 上都失败，修后都通过。
+
+### 实测（Jun 电脑，本地 server + app + mock 模型，独立 headless Chrome，GPU 开：ANGLE / RTX 3060 Laptop D3D11）
+
+4x 降速，文档卡流式时连打 6 轮 `abcdefghij` 再退格 10 次：
+
+| | 打字正确 | 典型错误 |
+| --- | --- | --- |
+| main | 1/6 | `bcdefghija`、`abcdefgijh`，退格后残留 1 个字 |
+| 修后 | 6/6 | 无 |
+
+这一项只修正确性，不改性能；流式时的长任务和 INP 在 dev2/stream-perf 里处理。
+
+## 新话题首字延迟（perf/first-text）
+
+**动机**：新话题从按发送到第一个字要 5.7–7.2 秒，而且前 1.8 秒画面上什么都没有（`/workspace/ft/PR2-notes.md` 里有线上逐请求时间线）。`/run` 之前串着几次互相等的请求：POST /api/channels 要等频道列表刷新完才算建好（~0.5 秒）→ 跳到新对话后接入回放（~0.45 秒）→ 读历史（~0.35 秒）→ 面板会话（~0.4 秒），最后 `/run` 在 2.2 秒左右才发出。搜索类问题还会先 skill_load research-public-web 一轮（2.5–4.5 秒），模型也常常一声不吭连搜好几次。
+
+**做法**：
+1. 串行改并行（前端）：`createChannelMutationOptions` 的 onSuccess 不再把 invalidate 的 promise 交回去，mutateAsync 建好就返回，列表在后台刷新；带着第一句话（seed）挂载的新对话，线程是刚建的、服务器上什么都没有，挂载后第一次跳过接入回放和读历史，直接放行；`deliver` 一开始就去拿面板会话，和就绪 / 接入两道等待同时进行，出错时仍撤回刚加的消息并抛出。
+2. 发送后立刻有状态（前端）：新建页把 `busy={sent !== null}` 交给 ConversationView；新对话用 `seedSending`（seed 发出去之前一直为真）并进 `chatBusy`。原因：ChatTranscript 只在「忙之后列表变了」才算这一轮在跑，第一帧不忙就会把带着 seed 的列表记成「已答完」。用的是现有的「思考中」，样式一个没改。
+3. 先一句再动手、按需搜索（提示词，`WORK_STYLE_GUIDANCE`）：动手前先写一句 15 字以内的话，紧接着调工具，不复述问题、不列计划；能直接答的（常识、解释、计算、写作、翻译、出主意、闲聊）不调工具，只有取决于最新或具体事实的才搜。没改 web/tools.ts，免得和 #407 冲突。
+4. 研究技能按需预置：`looksLikeResearch` 认出新闻、价格、推荐、对比、天气、汇率之类的问题，只有这时、而且共享技能 research-public-web 对这个人可见，才把它的方法附在技能目录后（约 250 字），省掉一轮 skill_load。普通对话一个字不加；宁可漏判，所以不收「今天」「现在」「比较」这类日常词。个人记忆加载器多收一个参数（这一轮用户最后说的话）。另外，个人记忆、技能目录、GitHub、文件、待确认这几段原来一段等一段，现在用 Promise.all 同时读，拼接顺序不变。
+5. 服务器分段计时：`agents/run-timing.ts`。`/api/copilotkit/*` 进门时用 AsyncLocalStorage 记下时刻，Hermes 每轮结束打一行 `{"type":"run-timing",...}`，字段有 queueMs（进门到 agent.run，含会话守卫、建线程、个人记忆）、memoryMs、assembleMs、prepareMs、remoteStartMs、firstTokenMs、firstToolMs、firstTextMs、totalMs、toolCalls，只有毫秒数和计数，不含内容。
+6. 可插拔搜索 provider 没动。
+
+**测量（页面内 SSE，cbtest，线上 ayase.cn:8443，2026-10-29 17:17–17:44 北京时间，三类各 5 次）**：
+
+| 中位数 | 新话题 前→后 | 已有话题 前→后 | 搜索类 前→后 |
+|---|---|---|---|
+| 「思考中」出现 | 1.80 s → 0.044 s | 0.046 → 0.046 s | 1.78 s → 0.044 s |
+| `/run` 发出 | 2.17 → 0.84 s | 0.37 → 0.40 s | 2.15 → 0.84 s |
+| 第一个字（SSE） | 4.79 → 2.96 s（2.44–4.53） | 3.08 → 3.47 s（模型波动） | 见下 |
+| 第一次工具调用 | — | — | 5.76 → 3.36 s |
+
+- 「后」是用 Playwright 的 route 把线上页面的前端换成这个分支本地构建的 `app/dist`，接口仍然走线上服务器。所以「后」**只包含前端的改动（1、2）**；服务器的改动（3、4、5 和记忆并行读）没部署，不在这组数字里，只有单元测试覆盖。合并部署后可以看 `run-timing` 日志和再跑一次同样的探针。
+- 新话题首字中位数降到 3 秒以下，但单次仍有 4.5 秒的：`/run` 到第一个字这段（中位 2.1–2.6 秒）基本是远端 Hermes 和模型的时间，前端已经没剩多少可省。
+- 搜索类的「第一个字」前后都是几十秒（2.6–122 秒），因为线上提示词下模型在调工具前不说话，第一个字要等全部搜完。这正是第 3 条要改的，但这次测不到。
+- 「前」用的是装着 Service Worker 的旧浏览器配置；「后」为了让 route 生效换了新配置并屏蔽了 Service Worker。只影响打开页面的速度，不影响按发送之后的计时。
+
+**自测**：typecheck 0；app build 0；test:app（见 PR）；server 相关测试 127 pass / 0 fail（新增 first-text-latency、memory-runtime、chisa-skills、hermes-runtime、hermes-context、reply-style、copilot 等）；app 新增 first-text-latency 等 21 pass；Biome 43 → 43，没有新增。
+
+## Unreleased — 链接预览服务端：GitHub 预览图、视频/百科卡片、反爬降级（分支 dev3/link-preview）
+
+来源：审查报告第 6 项（链接卡片）。只改 `server/src/link-preview/`，没有动 SSRF 规则、guardedFetch 和网关配置。
+
+1. **GitHub 无图根因**：页面正常，`og:image` 也拿到了（`opengraph.githubassets.com/<hash>/owner/repo`）。但这个图片地址经常返回 `429 text/html "Too many requests"`（`x-ratelimit-remaining: 0`，`retry-after: 900`）。`sniffImage` 判它不是图片，紧接着的重试也是 429，于是卡片无图，而且被“成功”缓存锁了 24 小时。和 UA、大小、类型都无关。修复：
+   - 图片失败时记录日志 `link-preview-image-failed`，内容包括 role、去掉查询串的 url 和 reason；
+   - 只有网络错误、5xx、空响应才重试；
+   - 先依次尝试 `opengraph.githubassets.com/1/{owner}/{repo}` 和 `avatars.githubusercontent.com/{owner}`；
+   - 有图却没取到时 TTL 改为 30 分钟。
+2. **YouTube / bilibili / 百度百科**：分别走 oEmbed、`x/web-interface/view`、`BaikeLemmaCardApi`。前两者带 `kind: "video"`。API 失败就退回抓网页；退回后图片失败也用短 TTL。知乎没有公开接口，页面和 API 都是 403 加 JS 反爬，只能识别后降级，不绕过。
+3. **反爬页**：sec.* / captcha 主机、“安全验证 / Just a moment”这类标题、知乎 zse-ck 都按失败处理（degraded、30 分钟）。没有标题、描述和图片的空 200 页也一样。卡片显示的域名取原始链接，不取跳转后的地址。
+4. Punycode 显示为 Unicode；HTML4 的 252 个命名实体全部解码；直链图片的标题用文件名（没有文件名时用“图片”），不再显示成扩展名。
+5. **no-store**：根因在网关（`location /` 的 `proxy_hide_header Cache-Control`，再由安全头加 `no-store`），应用自己的头是对的。评审决定在本 PR 里改网关，单独 commit，只改仓库文件：
+   - `Cache-Control: no-store` 从 `security-headers.conf` 拆到 `cache-no-store.conf`，原来 include 安全头的地方都同时 include 它，其他路径的响应头不变；
+   - 新增精确匹配的 `location = /api/link-preview`（照抄 `location /`），透传应用的 `private, max-age=600`；非 2xx 且上游没给 Cache-Control 时，由 `$preview_cache_control` map 补 `no-store`；
+   - 应用端：该路由所有非 2xx 自己设 `no-store`。
+   - 部署：`nginx.conf` 和 `cache-no-store.conf` 必须一起上线，先跑 `nginx -t`。
+6. **同形字与验证页误判（返修）**：punycode 只在标签是纯拉丁或汉字 / 假名 / 韩文时转 Unicode，西里尔、希腊等文字或混合文字保留 `xn--`（`xn--pple-43d.com` 不再显示成 аpple.com）。验证页标题改为整标题匹配；「请稍候 / Access denied」这类只按前缀匹配，并且要有 403/429/503 状态码或挑战页特征佐证，「短信验证码接口设计 - 知乎」「Access Denied (2023 film)」「请稍候，正在加载」不再误判。
+
+测试：`server/tests/link-preview-service.test.ts` 共 26 个用例，覆盖缓存过期、降级、直链图片、图片失败与回退、并发去重、限流（40 次/分钟，缓存命中不计数）、各 API 源。原有的 `link-preview.test.ts` 照常通过。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。
@@ -77,6 +281,74 @@
 **开关**：CHISABOT_REPLY_SOURCES 默认关。打开后随 render_ui 工具把一段来源规则带进提示词（只有网页聊天有 render_ui，IM 照旧写来源行），覆盖通用规则里的「来源：」行。前端画好卡片之前不要打开。
 
 **未做**：web_fetch 重试 / 兜底和 #12 首次无回复的根因按分工转给开发3。
+
+## Unreleased — 附件缩略图 `?w=`（B1）
+
+### 动机
+
+- 对话里用户发的图，单张最宽画 320 CSS 像素、一摞里的卡片 220 像素，`<img>` 却直接指向 `/api/attachments/:id` 的原图。手机照片常见 1–3 MB、4032×3024，打开一个有几张图的对话就要下几 MB、解码几千万像素，手机上尤其慢，滚动也卡。
+- 实测（同一对话：1 张单图 + 一摞 3 张，3 张 4032×3024 级 JPEG + 1 张 1280×800 PNG 截图）：打开时图片附件传输 5.30 MB。
+
+### 根因
+
+- 服务器只有一种表示：附件原样字节。前端没有别的地址可用，只能拿原图画小图（`rich-previews.tsx` 的 `ImagePile` 单张 / 一摞都是 `src={image.src}`）。
+
+### 改动
+
+- `shared/attachments.ts`：档位 `ATTACHMENT_THUMB_WIDTHS = [240, 480, 960]`，`parseAttachmentThumbWidth`（只认原样写法）、`attachmentThumbUrl`、`pickAttachmentThumbWidth(cssWidth, dpr)`（够清楚的最小一档，都不够取最大）。不用 `srcset`：原图更窄时服务器回原图，`w` 描述会不准。
+- `server/src/channels/attachment-thumbs.ts`（新）：`createThumbnailer`，sharp 懒加载（动态 `import("sharp")`，`sharp.cache(false)`）。
+  - 只缩 PNG / JPEG / WebP；GIF 和多帧图（`pages > 1`）不缩（缩成一帧会丢动画）。原图不比这一档宽、转出来的 WebP 反而比原图大，都回原图。
+  - `limitInputPixels` 4000 万、`failOn: "error"`、`rotate()`（按 EXIF 摆正）、`resize({ width, withoutEnlargement })`、10 秒超时、`webp({ quality: 80 })`。
+  - 失败（sharp 装不上、解不开、超时）从不抛错，回原图。
+- **并发上限（复审返修）**：原来没命中缓存的请求各自直接进 sharp，一个对话同时打开十几张大图、或几个人同时刷新，就会有十几个解码同时跑，每个都占几十 MB 内存和 libvips 的多个线程，小机器上会把 CPU 和内存一起打满、拖慢别的请求。现在 `createThumbnailer` 里有一个进程内信号量，同时最多 `DEFAULT_MAX_CONCURRENT = 2` 个缩图在算，多出来的按先来后到排队；加载 sharp 时设 `sharp.concurrency(1)`（每个缩图只用一个 libvips 线程），所以缩图最多占 2 个核。缓存命中、同一项并发去重、非图片 / GIF 回原图这些不进 sharp 的路径不排队；缩图失败 / 超时也会把名额还回去。
+- **sharp 加载失败的日志（复审返修）**：原实现加载失败时已经只 `console.warn` 一次（加载 Promise 被记住），但文案只是笼统一句、没有测试，从日志看不出缩图整体关了。现在 `loadSharp` 导出、可注入，第一次用到缩图时若加载失败打一条固定的 `SHARP_LOAD_FAILED_WARNING`：「sharp could not be loaded, so image thumbnails (?w=) are OFF: every image is served at its original size. Check that sharp's native binary for this platform (@img/sharp-<os>-<arch>) is installed.」后面跟原始错误信息；之后同一进程不再重试、不再打印。
+- **缓存策略和上限**：进程内存 LRU（`Map` 插入顺序），键 = 附件 id + 档位。附件字节写入后不变，所以不需要过期。总上限 64 MiB、最多 2000 项，超出先丢最久没用的；单项 > 2 MiB 不进缓存；「回原图」也记一个很小的标记（按 64 字节计），避免对同一张反复重算。同一项并发请求共享一个 Promise。进程重启即清空，多进程各一份，不落盘（不占磁盘、不用清理任务）。**缓存只存字节、不存权限**。
+- `server/src/channels/attachments.ts`（`GET /api/attachments/:id`）：
+  - `?w=` 不是档位 → 400（不读任何数据，不泄露附件是否存在）。ETag 带档位（`"id-w480"`），304 照旧先答。
+  - 缓存命中：仍用 `visibleToActor` 查一遍可见性（只选 name / mimeType，不读 `bytes`），能看才回缓存里的 WebP。
+  - 没命中：照原来的路径读原图、做完原来的全部检查，图片再交给 thumbnailer；回 WebP 或原图。
+  - 带 `?w=` 的 HEAD 走完整路径（缩略图多大不缩不知道）；不带 `?w=` 的行为一字未变。
+- 前端：`LightboxImage` 加可选 `thumb`；`ImagePile` 的单张和一摞卡片画 `image.thumb ?? image.src`，看大图 / 失败记录仍按 `src`（原图地址）；尺寸记忆见下面「复审返修（二）」，改成按实际加载的地址。`chat-transcript.tsx` 的 `AttachmentTiles` 按单张 320 / 一摞 220 × `devicePixelRatio` 选档位。不动链接卡、不改样式。
+
+### 复审返修（二）
+
+- **排队上限**：信号量的等待队列原来没有上限。一个对话里几十张大图第一次打开、或很多人同时刷新，等待的请求会一直堆着，每个都握着已经读进内存的原图字节和一个挂着的 HTTP 响应，排在最后的要等前面全部算完才有回应，比直接给原图还慢。现在超过 `DEFAULT_MAX_QUEUED = 8` 个在等时，新请求立刻回原图（和改动前的行为一样，不会坏）。这个「回原图」**不进缓存**：它只是一时忙，不代表这张图缩不了，下次请求照常缩。同一项在排队时再来请求仍共享那一个 Promise，不额外占队列位置。
+- **测试标题**：`attachment-thumbs.test.ts` 原来那条「缓存命中不排队」实际只测了 GIF 不排队，标题改成如实描述；另补真正的缓存命中（`maxConcurrent 1`、`maxQueued 0`、名额被占时缓存命中仍立即回）、`toBuffer` 异步 reject 后名额归还、排队中同一项去重、超过 8 个在等时回原图且不缓存（空闲后重试能缩）四条测试。
+- **尺寸记忆的键**：`rich-previews.tsx` 的 `rememberImageSize` 在缩略图 `onLoad` 时记下的是缩略图的自然尺寸（比如 480×360），却存在原图地址名下；同一原图地址在别处（看大图、Markdown 图片）再画时会拿到缩略图尺寸去预留位置。可选两种修法：按实际加载的地址记，或只记宽高比。选了**按实际加载的地址（`image.thumb ?? image.src`）记**：
+  - 只记宽高比会丢掉自然尺寸，`reservedImageBox` 就不知道图本来多大，小图会被放大到上限宽度去预留，反而引入新的跳动；
+  - 服务器对 `?w=` 回原图（窄图、GIF、sharp 不可用、队列满）时，记在缩略图地址下的就是原图的真实尺寸，同样正确，不需要区分；
+  - 原图地址名下只有原图（或调用方给出的 `width` / `height`）的尺寸，不再被缩略图污染。
+  消息里已带的 `width` / `height` 仍记在原图地址下（那是原图的真实尺寸）。
+
+### sharp 在各部署下的可用性
+
+- 依赖 `sharp@^0.34.5` 加在 `server/package.json`；`bun.lock` 里带了全部平台的预编译包（`@img/sharp-win32-x64`、`@img/sharp-linux-x64` / `arm64`、`linuxmusl-*`、`darwin-*` 及对应 `@img/sharp-libvips-*`），按 `os` / `cpu` 只装本机那一份，**不需要编译、不需要系统装 libvips**。
+- Windows：在 Windows 机器（win32-x64，Bun）上 `bun install --frozen-lockfile` 后实际缩放成功。
+- Linux：在 Linux x64（glibc，Bun）上跑通测试，libvips 8.17.3。
+- Docker：`Dockerfile` 是 `ubuntu:24.04`（glibc）+ `bun install --frozen-lockfile --production --linker hoisted`，sharp 是 server 的生产依赖。**已实测**：在一台 Linux x64 机器上用本分支代码本地 `docker buildx build --target runtime`（没推镜像、没用任何生产密钥、没碰 Haupt），镜像里是 Ubuntu 24.04.5，`/app/node_modules/@img/` 下有 `sharp-linux-x64` 和 `sharp-libvips-linux-x64`；在 `/app/server` 里用 bun 1.3.14 和 node 24.18.1 分别 `require('sharp')` 都成功（sharp 0.34.5、libvips 8.17.3，解析到 `/app/node_modules/sharp`），把 1200×900 PNG 缩成 480×360 WebP 也成功。`deploy/Dockerfile.zh` 同样是 `--production --linker hoisted`，没单独构建。本 PR 没改任何部署文件。
+- 万一 sharp 装不上（例如冷门平台、离线装依赖跳过了 optional 包）：服务照常启动，`?w=` 回原图，第一次用到时打一条上面那句明确的警告（只打一次）——功能退回到改动前的样子，不会坏。
+
+### 测试
+
+- `server/tests/attachment-thumbs.test.ts`：档位 / 选档 / 地址；真 sharp 缩到 480×360 WebP；窄图、GIF、文本不缩；sharp 缺失 / 坏数据回原图；缓存命中与并发去重；LRU 淘汰；单项上限；并发上限（同时只有 2 个在算、第 3 个排队直到前一个结束，峰值 2；失败也还名额；GIF 不排队）；加载 sharp 时调 `cache(false)` + `concurrency(1)`，真 sharp 加载后 `sharp.concurrency() === 1`；加载失败时 3 次缩图只 import 一次、只打一次指定文案的警告，结果都是原图。
+- `server/tests/attachment-thumb-route.test.ts`（真 Postgres）：`?w=` 回 WebP + 带档位 ETag；非法档位 400（不读任何行）；非成员带不带 `w` 都是同样的 404；缓存命中不读 `bytes` 但仍查成员；带档位 ETag 的 304；非图片 / 窄图 / sharp 缺失回原文件；带 `w` 的 HEAD 与 GET 一致。
+- `app/tests/image-dims.test.tsx`：缩略图加载后尺寸记在缩略图地址名下、不记在原图地址下，重画时按缩略图地址预留 318px、宽高比 480/360；普通原图仍记在原图地址下；消息给的尺寸仍在原图地址下。
+- `app/tests/transcript-attachments.test.tsx`：单张图画缩略图地址、一摞卡片画 240 档、点开大图仍是原图地址（原有用例改断言为缩略图地址）。
+
+### 截图（`docs/images/attachment-resize/`）
+
+- `bytes-before-after.webp`：打开同一对话的图片传输字节数，之前 5.30 MB → 之后 53.6 KB（桌面 1280×800 @1x，−99.0%）/ 203.6 KB（手机 390×844 @2x，−96.2%）；点开大图仍请求原图（1089.6 KB）。
+- `desktop|mobile-before|after-conversation.webp`：前后外观一致；`desktop|mobile-after-lightbox.webp`：大图是原图。
+- 前端是真实 `ConversationView` / `ChatTranscript`，接口由 Playwright 拦截，`?w=` 用真实 `attachment-thumbs.ts` + sharp 生成。
+
+### 没覆盖到 / 限制
+
+- 缓存在进程内存里，重启后第一次打开要重新缩（一张 4032×3024 JPEG 约百毫秒级）；多实例各缓存一份。
+- 只有用户消息里的附件图（`ImagePile`）用缩略图；composer 里还没发出的预览（本地 blob）、`SentAttachmentTile` 的非站内图、Markdown 里的图片、链接卡都不变。
+- 选档在渲染时按当时的 `devicePixelRatio` 定，之后缩放浏览器不会换档。
+- 截图来自组件级夹具 + mock，不是完整应用壳。Docker 镜像只验证了 sharp 能加载和缩放，没在镜像里起整个服务。
+- 并发上限是每个进程一份；多实例时总并发 = 2 × 实例数。排队没有长度上限（每个排队项只是一个等待中的 Promise，原图字节此时已在内存里）。
+
 
 ## 回复风格对齐 Hark（feat/reply-style-hark）
 
@@ -595,3 +867,102 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.110`；PC / Android 不变。不打 tag、不建 Release。
 
 **0.1.110 部署**（2026-10-29 18:06 北京时间开始）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.110-20261029T100654Z.dump`（`pg_restore -l` 767 条目），备份网关 `nginx.conf`（`nginx.conf.bak-pre-v0.1.110-20261029T100654Z`）。`deploy-serial.sh 249aefa` 镜像 `local/chisabot:auto-202610291007-249aefa`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.110` / `249aefa`；`request.sh smoke` PASSED，`POST /api/admin/smoke` 模型自检 `ok:true persisted:false`，`health.sh` 通过（容器 healthy、无重启、本机 `/health` 200、公网 `/login` 200），sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 9e9ca0d；保留当前（BASE）249aefa、上一版 63914d8、`keep-628d527`。
+
+## 2026-10-29 天空换场景渐变小修（fix/sky-crossfade）
+
+**问题**：天空背景只在「醒着」的窗口里画（快照模式，约 15fps）。主线程有长任务时，引擎某一拍会跳过不画（这一拍画了 0 层），旧代码按「这拍没在渐变」算，醒着的窗口就到期了，渐变停在 0.76～0.98，等下一次唤醒才跳完。另一处：天气数据的响应头到了就算完，body 晚到时引擎改了天空却没人叫醒画面，这次天气渐变一帧都不画。
+
+**改法**：新文件 `app/src/lib/sky-fade.ts`。`noteSkyFrame` 记录渐变开始时间，渐变中（最多 `SKY_FADE_HOLD_MS` = 8 秒）每拍都把醒着的窗口往后延 3 帧，画了 0 层的那拍也延；画回 1 层就清掉。`wakeSkyOnWeather` 包住天气请求，响应到了叫醒一次，body 读完（或读失败）再叫醒一次，返回新的 Response（204/205/304 原样返回）。`sky-background.tsx` 改用这两个函数；`wallpaper_core.html` 没动。测试 `app/tests/sky-fade.test.ts`。
+
+**实测**（Ayase 真 GPU Chrome，分别构建改前/改后的 dist；JANK=1 是每 0.9 秒插一个 120～360ms 的长任务；「停顿」= 渐变中的一帧之后 ≥400ms 没有下一帧）：
+- 卡顿，连续换场景 12 次 × 2 轮：改前有一轮 12 次里 10 次停在半路，共 43 次停顿（例如停在 0.76、0.81、0.93，各停 1～4 秒），帧间隔中位数 1001ms；改后 2 轮 24 次只出现 1 次 402ms（在 0.17，刚过门槛），每次都画到 1，35～38 帧，帧间隔约 62ms。
+- 卡顿，加载后 4～12 秒第一次换场景（12 个时间点）：改前启动渐变停顿 4 次，换场景后停在半路 3 次（0.76 停 3.8 秒、0.91 停 3.2 秒、0.99 停 1.8 秒）；改后都是 0。第 3 轮复测记录完整帧序列：改前停在 0.98 后 3.2 秒没有新帧，改后 12 次都画到 1。
+- 天气 body 晚 3.5 秒（BODYDELAY=3500），连续换场景 12 次：改前每次只画出 38～40 帧（场景渐变），天气那次渐变一帧都没画；改后第 1 轮 77～80 帧（场景和天气两段都画）。点下一次时接着正在进行的渐变走（0.05→0.08、0.39→0.44），不跳。
+- 性能规矩没变：活动时约 16fps，空闲、失焦、隐藏（包括渐变中隐藏）4 秒内都是 0 次绘制。
+- 天气请求失败数是网络噪声（卡顿那组改前 28/128、改后 0；第 3 轮 5/72 对 9/72），和改动无关。
+
+对比图：`docs/images/sky-crossfade/sky-crossfade-before-after.png`。未升级版本号。
+
+## 2026-10-29 发版 0.1.111
+
+- #393 `dev3/fix-multi-message-display`（head `785ee59`）→ `89c14fb`：机器人连发多条消息全部显示。
+- #401 `feat/attachment-resize`（head `9693f9f`）→ `e305830`：附件缩略图（server 新增依赖 `sharp@^0.34.5`，bun.lock 随 PR）。
+- #402 `fix/sky-crossfade`（head `851035e`）→ `67f2683`：天空换场景渐变不再停在半路。
+- #405 `dev3/perf-form-submit-test`（head `7f6b55c`）→ `1190828`：form-submit-controls 测试只解析写了 onSubmit 的文件。
+- #407 `fix/hark-search-quality`（head `424635b`）→ `46e9d4b`：联网搜索质量。
+- #408 `dev2/stream-composer`（head `6139521`）→ `dff0cd3`：流式回复时打字不再乱序、不再残留。
+- #411 `dev3/fix-reconnect-backfill-empty`（head `84a07bf`）→ `c6ea5b1`：空对话第一轮从本机发出后断线重连也补齐（PR 的 base 是 `dev3/fix-reconnect-backfill`，不会自动关闭，发版后手动关闭）。
+- #413 `perf/first-text`（head `05df45c`）→ `718025a`：新话题首字延迟。
+- 不合：#406 `dev3/feat-avatar-morph`（head `644be13`）。`app/src/styles.css` 末尾冲突，要求和测试的合并结果 0681d692 核对，但本地和 GitHub 都找不到这个对象；而且两边原样保留会让 HEAD 一侧末尾的 `@media (max-width: 767px)` 少一个 `}`。#403（含 #395、#398）按要求不进这一版。
+
+**流程**：在临时 worktree 从 origin/main（`b975b1c`）按上面顺序 `--no-ff` 合并，合并前核对 PR head 未变。`bun install --frozen-lockfile`、`typecheck`、`build` 通过，`test:app` 234 个文件：共享进程 1790 pass / 0 fail；独立进程的 message-scroll-reduced-motion 在整跑时 beforeAll 超时（5s），单跑在发版分支和 main 上都通过，算负载导致；第一次整跑（机器上同时有其他构建，CPU 90%+）23 个超时失败，单跑全部通过（build-cache 在 main 和发版分支安静时都 13/13）。验证通过后 main 快进到本地验证过的提交。
+
+**冲突**：只在 `CHANGELOG.md`、`docs/CHANGELOG.md`、`docs/DEVLOG.md` 冲突（两边都保留）；没有代码、package.json 或锁文件冲突。#411 的 CHANGELOG 条目原本自动并进了 0.1.110 段，发版时挪到 0.1.111。
+
+**版本**：根、`app`、`server` 升到 `0.1.111`；PC / Android 不变。不打 tag、不建 Release。
+
+**0.1.111 部署**（2026-10-29 21:48 北京时间开始）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.111-20261029T134745Z.dump`（`pg_restore -l` 767 条目），备份网关 `nginx.conf`（`nginx.conf.bak-pre-v0.1.111-20261029T134745Z`）。`deploy-serial.sh a4fce00` 因为 server 新增依赖 `sharp` 走了完整构建（609 秒），镜像 `local/chisabot:auto-202610291348-a4fce00`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.111` / `a4fce00`；`request.sh smoke` PASSED，`POST /api/admin/smoke` 模型自检 `ok:true persisted:false`，`health.sh` 通过（容器 healthy、无重启、本机 `/health` 200、公网 `/login` 200），sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 63914d8；保留当前（BASE）a4fce00、上一版 249aefa 作回滚。#411 的 base 不是 main，已在 GitHub 上手动关闭并留言。
+
+## 2026-10-29 发版 0.1.112
+
+- #412 `dev3/link-preview`（head `e2b9cde`）→ `d8c8f19`：链接预览服务端（GitHub 预览图回退、视频 / 百科卡片、反爬降级）。
+- #421 `dev3/fix-open-read-and-backfill-dup`（head `5bb67cf`，相对已审的 `a7ccfc3` 只多一行 CHANGELOG）→ `69a96fc`：冷打开只读一次完整历史，重连回填和刷新一致。
+- 不合：#395 `dev2/settings-perf`（head `72326cf`）、#398 `dev2/settings-perf-2`（head `77a7f71`）、#403 `dev2/settings-perf-3`（head `e2bcc03`）三个叠在一起，一起放弃：#395 合到 `e0e79a0` 时 `app/src/components/layout/glass-shell.tsx`、`glass-topbar.tsx` 代码冲突（main 上 `f601ab3` perf(topbar) 和 `5cd6e8c` hark 顶栏改过同一处）。需要作者基于新 main 重新整理。
+
+**流程**：在临时 worktree 从 origin/main（`e0e79a0`）按顺序 `--no-ff` 合并，合并前核对 PR head 未变、都没有改版本号。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 在发版提交 `0c06ef7` 上全过（bun 1.3.14）：test:app 1850 pass / 0 fail（245 个文件）。
+
+**冲突**：#412 只在 `docs/DEVLOG.md`、#421 只在 `CHANGELOG.md` 冲突（两边都保留）；没有代码、package.json 或锁文件冲突。#421 的 CHANGELOG 条目原本并进了文件下方旧的 `## Unreleased` 段，发版时挪到 0.1.112。去掉 #408 留下的 `## Unreleased` 标题前缀（那段已随 0.1.111 发布）。
+
+**网关**：#412 改了 `deploy/public/nginx.conf`、`cache-no-store.conf`、`security-headers.conf`。线上网关 `chisabot-public-gateway` 的 2053 端口还反代 Magpie（`127.0.0.1:3430`，`ghcr.io/yetone/magpie`），不是只服务 ChisaBot，按规则这次只部署应用、不动网关，仓库模板和线上 nginx 会暂时不一致（需要另行决定）。
+
+**版本**：根、`app`、`server` 升到 `0.1.112`；PC / Android 不变。不打 tag、不建 Release。
+
+**0.1.112 部署**：22:41（北京时间）先备份数据库 `pre-release/v0.1.112-20261029T144123Z.dump`（`pg_restore -l` 767 项）和网关 `nginx.conf`、`security-headers.conf`、`magpie-private.conf`，再 `deploy-serial.sh 0c06ef7 jun-grokbot`。依赖有变化走完整构建，22:51 上线 `local/chisabot:auto-202610291441-0c06ef7`（613 秒），回滚镜像 `auto-202610291348-a4fce00`，`isolate-sidecar-app` 全绿。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.112；公网 `/login` 200，安全头齐全；`/devices` 和静态资源匿名 401（要登录），本机 3001 上正常返回；real_ip 22 条 `set_real_ip_from` 加 `real_ip_header CF-Connecting-IP` 没变。网关 nginx 没动（md5 不变，没有 reload），#412 的网关配置还没上线。
+
+## 2026-10-30 发版 0.1.113
+
+- #439 `dev3/github-link-card`（head `6993843`）→ `d0dc438`：GitHub 仓库链接竖版大卡（GitHub API 描述 / 星标 / 头像兜底，429 缓存 5 分钟）。
+- #440 `dev2/pc-layout-fix`（head `ca54721`）→ `6a1e777`：电脑端回退 #374 顶栏（只留左下账号卡、搜索和左栏开关回左栏）。
+- #443 `dev4/perf-harness`（head `671f6ac`）→ `3bb35b5`：卡顿测量工具，只动 `perf/`、根 package.json 的 scripts、`.gitignore`、CI `perf.yml` 和文档，没有运行时代码、没改版本号。
+- 不合：#441、#442（这次不发）。
+
+**流程**：合并前核对三个 PR head 没变、都没改 `pc/`、`android/`、版本号；从 origin/main（`c99ee37`）开临时 worktree，按顺序 `--no-ff` 合并。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 在发版提交 `c9509f4` 上全过（bun 1.3.14）：test:app 1857 pass / 0 fail（247 个文件）。#443 的 `perf/*.mjs` 过了 `node --check`。
+
+**冲突**：#439、#440 没有冲突；#443 只在 `docs/DEVLOG.md` 冲突（两边都保留）。#443 的 CHANGELOG 条目原本在顶部新开的 `## Unreleased`，发版时改成 0.1.113 段。
+
+**版本**：根、`app`、`server` 升到 `0.1.113`；PC / Android 不变。不打 tag、不建 Release。
+
+**0.1.113 部署**：11:16（北京时间）先备份数据库 `pre-release/v0.1.113-20261030T031606Z.dump`（`pg_restore -l` 767 项），再 `deploy-serial.sh c9509f4 jun-grokbot`。依赖有变化（根 package.json scripts），走完整构建，11:26 上线 `local/chisabot:auto-202610300316-c9509f4`（617 秒），回滚镜像 `auto-202610291441-0c06ef7`，`isolate-sidecar-app` 全绿。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.113 / `c9509f4`；公网 `/login` 200。GitHub 大卡：本机带本地调用头请求 `/api/link-preview?url=https://github.com/oven-sh/bun`，返回标题 `oven-sh/bun: …`、描述、`stars` 96463、`imageKind: avatar`（460×460，资源 200 image/png），缓存 5 分钟（og 图被限流，走头像兜底）；`ChisaAlter/ChisaBot` 命中 0.1.112 时的旧缓存（到 15:28 过期），之后才会换成新格式。网关、nginx 没动。
+
+## 2026-10-30 发版 0.1.114
+
+- #442 `dev4/sidebar-m3-1`（head `e74f503`）→ `545a7e3`：网关 401 直接去 `/login?next=`（带 30 秒防死循环）、SW 5、手机抽屉导航后收起、`/channel/new` 总开新话题。
+
+**范围**：只改 `app/`（含 `app/public/sw.js`）和文档；不需要改网关 nginx（它本来就对导航回 302 `/login?next=`、对 `/api` 回 JSON 401 带 `openbotAuthRequired`，`/sign` 302 到 `/login`）、web-auth、`pc/`、`android/`。
+
+**流程**：核对 head 未变；从 origin/main（`27e7c0f`）开临时 worktree `--no-ff` 合并。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 结果见部署记录。
+
+**冲突**：只有 `CHANGELOG.md` 和 `docs/DEVLOG.md`，两边都保留；PR 顶部的 `## Unreleased` 发版时改成 0.1.114 段。
+
+**版本**：根、`app`、`server` 升到 `0.1.114`；PC / Android 不变。不打 tag、不建 Release。
+
+### 0.1.114 部署记录（2026-10-30 12:30 北京时间）
+- 镜像 local/chisabot:auto-202610300420-dc40343，/api/version commit = dc40343e；回滚镜像 auto-202610300316-c9509f4。
+- 测试：test:app 1900 pass / 0 fail / 251 files；typecheck、build 通过。
+- 发版前备份 pre-release/v0.1.114-20261030T042002Z.dump（pg_restore -l 767 条）。
+- smoke ok:true persisted:false；health.sh 通过；公网 /login 200；匿名导航 / → 302 /login?next=%2F；/sign → 302 /login；sw.js SW_VERSION = "5"。
+
+## 2026-10-30 发版 0.1.115
+
+- #449 `dev4/perf-resize-pause`（head `52ead3f`）→ `3db22ee`：改窗口大小时暂停 WebGL 天空，`html[data-resizing]`。
+- #448 `dev2/jank-chat-switch`（head `99c7504`）→ `7434d37`：切会话即时反馈，高亮先到、对话延后渲染。
+
+**范围**：只动 `app/` 和文档；网关 nginx、web-auth、`pc/`、`android/` 不变。
+
+**流程**：核对 head 未变；从 origin/main（`11bacde`）开临时 worktree `--no-ff` 依次合并。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 结果见部署记录。
+
+**冲突**：只有 `docs/DEVLOG.md`，两边都保留；`CHANGELOG.md` 顶部的 `## Unreleased` 发版时改成 0.1.115 段，并补上 #448 的条目。
+
+**版本**：根、`app`、`server` 升到 `0.1.115`；PC / Android 不变。不打 tag、不发 Release。
+
+**0.1.115 部署**：14:05（北京时间）先备份数据库 `pre-release/v0.1.115-20261030T060518Z.dump`（`pg_restore -l` 767 项），再 `deploy-serial.sh e9a65f3 jun-grokbot`，上线 `local/chisabot:auto-202610300605-e9a65f3`，回滚镜像 `auto-202610300420-dc40343`。box 上 bun 1.3.14：install、typecheck、build 通过，test:app 1915 pass / 0 fail。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.115 / `e9a65f3`；公网 `/login` 200，匿名导航 `/` → 302 `/login?next=%2F`；线上包含 `data-resizing`。网关、nginx、web-auth 没动。#451 留到下一版。

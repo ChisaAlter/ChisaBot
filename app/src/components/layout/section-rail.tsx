@@ -3,6 +3,7 @@ import { Link, type LinkOptions, useRouterState } from "@tanstack/react-router";
 import type * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
+import { RosterToggle } from "@/components/layout/roster-toggle";
 import { Sidebar, SidebarContent, SidebarRail, useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { scrollIntoViewWithin } from "@/lib/scroll-within";
@@ -73,6 +74,7 @@ export function SectionRail({
   const sidebar = useOptionalSidebar();
   const collapsed = Boolean(sidebar && !sidebar.isMobile && sidebar.state === "collapsed");
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const scope = pathname === "/admin" || pathname.startsWith("/admin/") ? "admin" : "settings";
   // 只看可折叠的组：当前页在不折叠的组里（设置 →「通用」）时，照样展开 defaultOpen 的那一组。
   const anyHere = groups.some((group) => group.collapsible && inGroup(group, pathname));
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -89,6 +91,7 @@ export function SectionRail({
     return (
       <Sidebar collapsible="icon" variant="floating" {...props}>
         <nav aria-label={ariaLabel} className="glass-mini" id="chisabot-bot-list">
+          <RosterToggle className="glass-mini-toggle" scope={scope} />
           <div className="glass-card glass-mini-card">
             <div className="glass-mini-scroll">
               {groups.map((group, gi) => (
@@ -139,7 +142,10 @@ export function SectionRail({
       <SidebarContent className="glass-side-full gap-3 overflow-hidden" id="chisabot-bot-list">
         <nav aria-label={ariaLabel} className="glass-card glass-side-card min-h-0 flex-1">
           {/* DESIGN-v3 §6.1：没有「返回应用」胶囊（顶栏主导航就是回去的路），卡片顶部是区域名。 */}
-          <div className="rail-title">{title}</div>
+          <div className="rail-title rail-title-row">
+            <span className="rail-title-text">{title}</span>
+            <RosterToggle scope={scope} />
+          </div>
           {header}
           <div className="glass-side-scroll rail-scroll" ref={scrollRef}>
             {body ?? groups.map((group, gi) =>
