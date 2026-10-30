@@ -13,7 +13,7 @@ import {
 } from "@tabler/icons-react";
 import DOMPurify from "dompurify";
 import { motion, useReducedMotion } from "motion/react";
-import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { useDisplayText } from "@/components/rich-previews/rich-previews";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
@@ -683,6 +683,12 @@ export function DraftCard({ text, title }: { text: string; title?: string | unde
 
 /** 文档卡收起时的高度（px）：对齐 Hark summary-card 的约 6–7 行紧凑预览。 */
 export const DOC_COLLAPSED_PX = 168;
+/** `.chat-doc-body` 上下 padding 之和（14 + 12，styles.css）：内容高度 + 它 = 以前量的 scrollHeight。 */
+export const DOC_BODY_PAD_Y = 26;
+/** 内容（`.chat-doc-inner`）高度是否超过收起阈值——与以前 `scrollHeight > DOC_COLLAPSED_PX + 20` 等价。 */
+export function docIsTall(innerHeight: number): boolean {
+  return innerHeight + DOC_BODY_PAD_Y > DOC_COLLAPSED_PX + 20;
+}
 
 /**
  * 文档卡（DESIGN.md §76，Hark 的 summary-card 体验）：
@@ -698,18 +704,38 @@ export function DocCard({
   title?: string | undefined;
   components: Record<string, unknown>;
 }) {
-  const body = useRef<HTMLDivElement>(null);
   const [tall, setTall] = useState(false);
   const [open, setOpen] = useState(false);
+  const inner = useRef<HTMLDivElement>(null);
+  const hasText = text.trim().length > 0;
+  const hasTextRef = useRef(hasText);
+  hasTextRef.current = hasText;
   /*
-   * 只在「这段文字变了」时量一次，宽度变化不再重算（DESIGN.md §106）。
-   * layout effect：量完再画，打开对话时不会先展开一次、再当着人面收起。
+   * 量内容高度交给 ResizeObserver（DESIGN.md §106、FIX-PLAN 4c）：它在布局之后、绘制之前回调，读到的尺寸是
+   * 浏览器已经算好的，不会像以前 useLayoutEffect 每个字读一次 scrollHeight 那样强制同步布局（流式时 474ms）。
+   * 首次 observe 也在第一帧绘制前回调，打开对话时照旧不会「先展开再收起」。只有跨过阈值时 setTall 才真的重渲。
    */
   useLayoutEffect(() => {
-    const el = body.current;
+    const el = inner.current;
     if (!el) return;
-    setTall(text.trim().length > 0 && el.scrollHeight > DOC_COLLAPSED_PX + 20);
-  }, [text]);
+    if (typeof ResizeObserver === "undefined") {
+      // 没有 RO 的环境（测试 / 老内核）：退回挂载时量一次。
+      setTall(hasTextRef.current && docIsTall(el.offsetHeight));
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (!entry) return;
+      const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+      setTall(hasTextRef.current && docIsTall(height));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  // 文字清空（极少）时 RO 可能不回调（高度本来就 0），这里兜底收起状态。
+  useEffect(() => {
+    if (!hasText) setTall(false);
+  }, [hasText]);
   const heading = title || "文档";
   return (
     <>
@@ -740,10 +766,9 @@ export function DocCard({
           <div
             className="chat-doc-body"
             data-collapsed={tall || undefined}
-            ref={body}
             style={{ maxHeight: DOC_COLLAPSED_PX }}
           >
-            <div className="chat-doc-inner">
+            <div className="chat-doc-inner" ref={inner}>
               <SmoothStreamdown components={components as never}>{text}</SmoothStreamdown>
             </div>
           </div>

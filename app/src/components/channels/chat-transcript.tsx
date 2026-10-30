@@ -1353,14 +1353,12 @@ function SettleAtEnd({
       return true;
     };
     /*
-     * 行进来 / 出去（新的一行、开场一句收进卡片、「思考中」换成回答）：React 提交后的微任务里就量一次（§94），
-     * 比滚动容器的 ResizeObserver → requestAnimationFrame 早，留白当场吃掉 / 补上，不等下一帧。
+     * 行进来 / 出去（新的一行、开场一句收进卡片、「思考中」换成回答）：以前在 MutationObserver 的微任务里当场读
+     * content.offsetHeight（§94），流式时每个字一次强制同步布局（4x 降速 731ms，FIX-PLAN 4b）。
+     * 现在高度变化全部交给下面的 ResizeObserver(pinNow)：它在同一帧布局之后、绘制之前回调，留白照样在
+     * 这一帧吃掉 / 补上，屏幕上看不到中间那一跳，但读的是已经算好的布局，不再强制。这里只排 pin（rAF）。
      */
-    const mutations = new MutationObserver(() => {
-      if (!active() && !s.restore && content.offsetHeight !== lastHeight)
-        pinNow();
-      pin();
-    });
+    const mutations = new MutationObserver(pin);
     // characterData：回答一个字一个字往外冒时改的是文字节点本身（不是加减节点）——多出一行也要当场吃留白（§94.6，390 实测 20px）。
     mutations.observe(content, {
       childList: true,

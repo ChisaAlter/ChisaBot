@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  DOC_BODY_PAD_Y,
+  DOC_COLLAPSED_PX,
+  docIsTall,
   normalizeDirectiveCards,
   parseStatusCardsFence,
 } from "../src/components/chat/bot-bubbles";
@@ -180,5 +183,20 @@ describe("splitBubbles（DESIGN.md §69）", () => {
       "你目前还没有连接 Google 日历与邮箱，连接后我就能直接帮你读取今日日程。",
       "[连接 Google](/settings/connected-accounts)",
     ]);
+  });
+});
+
+describe("DocCard 收起阈值（FIX-PLAN 4c：RO 量内容高度，不再读 scrollHeight）", () => {
+  test("内容高度 + padding 与以前的 scrollHeight 阈值等价", () => {
+    const limit = DOC_COLLAPSED_PX + 20 - DOC_BODY_PAD_Y;
+    expect(docIsTall(limit)).toBe(false);
+    expect(docIsTall(limit + 0.5)).toBe(true);
+    expect(docIsTall(0)).toBe(false);
+  });
+  test("组件里不再读 scrollHeight", async () => {
+    const src = await Bun.file(new URL("../src/components/chat/bot-bubbles.tsx", import.meta.url)).text();
+    const doc = src.slice(src.indexOf("export function DocCard"), src.indexOf("const heading = title || \"文档\""));
+    expect(doc).not.toContain("scrollHeight");
+    expect(doc).toContain("new ResizeObserver");
   });
 });
