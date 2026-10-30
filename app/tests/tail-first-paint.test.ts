@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  batchSizeFor,
   initialMountedCount,
   mountStartIndex,
   nextMountedCount,
@@ -41,6 +42,23 @@ describe("tail-first-paint (CB-025)", () => {
     expect(m).toBe(200);
     expect(seen[1]).toBe(TAIL_FIRST_INITIAL + TAIL_FIRST_BATCH);
     expect(seen.at(-2)).toBeGreaterThanOrEqual(200 - TAIL_FIRST_BATCH_MAX);
+  });
+
+  test("no batch exceeds the 80–120 cap, even for very long transcripts", () => {
+    expect(TAIL_FIRST_BATCH_MAX).toBeGreaterThanOrEqual(80);
+    expect(TAIL_FIRST_BATCH_MAX).toBeLessThanOrEqual(120);
+    let m = initialMountedCount(2000);
+    while (m < 2000) {
+      const n = nextMountedCount(m, 2000);
+      expect(n - m).toBeLessThanOrEqual(TAIL_FIRST_BATCH_MAX);
+      m = n;
+    }
+    // 显式传入的批大小也被夹住。
+    expect(nextMountedCount(100, 2000, 500)).toBe(100 + TAIL_FIRST_BATCH_MAX);
+    expect(nextMountedCount(100, 2000, 1)).toBe(100 + TAIL_FIRST_BATCH);
+    expect(batchSizeFor(36)).toBe(TAIL_FIRST_BATCH);
+    expect(batchSizeFor(76)).toBe(76);
+    expect(batchSizeFor(1000)).toBe(TAIL_FIRST_BATCH_MAX);
   });
 
   test("reconcile keeps window on prepend, stays full when already full", () => {

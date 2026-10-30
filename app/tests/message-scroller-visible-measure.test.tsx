@@ -84,3 +84,60 @@ test("scrolling a 400-row transcript measures a handful of rows, not all of them
   // 以前每次滚动 ≥ 2×400 次逐行量（内容高度 + 找第一条可见行）。
   expect(rowRects).toBeLessThan(5 * 40);
 });
+
+function Rows({ from }: { from: number }) {
+  return (
+    <MessageScrollerProvider autoScroll>
+      <MessageScroller>
+        <MessageScrollerViewport>
+          <MessageScrollerContent>
+            {Array.from({ length: 400 - from }, (_, i) => (
+              <MessageScrollerItem
+                key={String(from + i)}
+                messageId={String(from + i)}
+              >
+                {from + i}
+              </MessageScrollerItem>
+            ))}
+          </MessageScrollerContent>
+        </MessageScrollerViewport>
+      </MessageScroller>
+    </MessageScrollerProvider>
+  );
+}
+
+async function prependReads(marked: boolean) {
+  const { container, rerender } = render(<Rows from={300} />);
+  await act(async () => {
+    await settleReactWork();
+  });
+  const viewport = container.querySelector(
+    "[data-slot='message-scroller-viewport']",
+  ) as HTMLElement;
+  let heightReads = 0;
+  Object.defineProperty(viewport, "scrollHeight", {
+    configurable: true,
+    get: () => {
+      heightReads += 1;
+      return 400 * ROW;
+    },
+  });
+  if (marked) viewport.setAttribute("data-tail-backfill", "");
+  rowRects = 0;
+  act(() => {
+    rerender(<Rows from={200} />);
+  });
+  // handleContentChange 跑在 MutationObserver 的微任务里；只看这一拍（rAF 还没到）。
+  await Promise.resolve();
+  await Promise.resolve();
+  const reads = heightReads + rowRects;
+  viewport.removeAttribute("data-tail-backfill");
+  cleanup();
+  return reads;
+}
+
+test("a tail-first backfill prepend does not force layout in handleContentChange", async () => {
+  // 对照：没有标记时，前插要量行（保位）或读 scrollHeight（贴底）——证明这个测试量得到。
+  expect(await prependReads(false)).toBeGreaterThan(0);
+  expect(await prependReads(true)).toBe(0);
+});

@@ -11,6 +11,8 @@
 - `app/src/vendor/shadcn-react-message-scroller`（`@shadcn/react@0.3.0` 的 message-scroller 原样拷进来，`biome.json` 排除；没用 `patchedDependencies`，因为 Dockerfile / Dockerfile.zh / updater 都只拷 manifest 再装依赖，得一起改）：`Se` 从末尾往前找第一个有尺寸的行（列布局里它就是最低的；chat-tail 是 `display:contents`，本来就量出 0）；`Ye` 对带 `data-message-id` 的行二分找第一个 bottom 在视口顶下面的行，碰到 0 尺寸行退回线性。可见集合本来就用 IntersectionObserver。
 - `transcript-data-layer.ts`：`TranscriptDataLayer`（items / prependHistory / scrollToBottom / scrollToMessage）+ `useTailFirstDataLayer`，给 P3-3 virtua 换渲染层。
 
+**复审（最长单任务）**：160 一批时 switch 场景最长单任务比 main 长（736→821 / 787→1051）。trace 看补行那一批：React 渲染之后，同一个任务里还有 message-scroller `handleContentChange`（MutationObserver → scrollToEnd 读 scrollHeight / 前插保位逐行量）和 chat-transcript 贴底 MutationObserver（读 offsetHeight）各一次强制样式 + 布局（约 250–300ms），最后一批还有 hook 自己钉底读 scrollHeight。改法：有原生锚定时，补行提交期间视口挂 `data-tail-backfill`（微任务里摘掉），上面两个观察器看到就不当场量（高度变化交给布局后的 ResizeObserver）；钉底改到下一帧。批上限 160 → 100。试过的：按一帧预算自适应（4x 下一直缩到 40，样式收益掉光）、固定 120 / 80 / 100、预算 200ms 自适应；交替 5 轮的结果在 PR 描述里。结论：补行批次已经不再决定最长单任务；15 次运行里最长单任务全是第一次点到 c1 的那次点击处理（main 中位 714ms，本分支 787ms），这一项本分支仍高，原因未查清。
+
 **测试**：`app/tests/tail-first-scroll-reads.test.tsx`（假视口给 scrollHeight 计数：贴底补完只读 ≤1 次且最终贴底；上滑 + 原生锚定 0 次读、不碰 scrollTop；无原生锚定时前插保持可见行；短对话 0 次读）——换回旧 hook 4 条里 3 条失败（保位那条新旧都过）。`app/tests/message-scroller-visible-measure.test.tsx`（400 行滚 5 次，逐行量 < 200 次；换回原库 2130 次）。`tail-first-paint.test.ts` 跟着改批次断言。
 
 **注意**：`app/package.json` 里的 `@shadcn/react` 依赖暂时留着（不动 lockfile）。升级时看 vendor 目录的 README：上游若已只量可见行就删掉 vendor。

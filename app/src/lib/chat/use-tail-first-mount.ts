@@ -11,6 +11,7 @@ import {
   mountStartIndex,
   nextMountedCount,
   reconcileMountedCount,
+  TAIL_BACKFILL_ATTR,
 } from "@/lib/chat/tail-first-paint";
 
 /** 浏览器原生滚动锚定（Chrome / Edge / Firefox）。Safari 没有，走 JS 兜底。 */
@@ -62,6 +63,7 @@ export function useTailFirstMount(
   /** 只在需要 JS 兜底时才有值：补行前量的 scrollHeight。 */
   const heightBeforeRef = useRef(0);
   const atBottomRef = useRef(true);
+  const pinFrameRef = useRef(0);
   const nativeAnchorRef = useRef<boolean | null>(null);
   const nativeAnchor = () => {
     nativeAnchorRef.current ??= supportsOverflowAnchor();
@@ -109,9 +111,23 @@ export function useTailFirstMount(
     const before = heightBeforeRef.current;
     heightBeforeRef.current = 0;
     if (!el || startIndex >= prevStart) return;
+    if (nativeAnchor()) {
+      // 这次提交的 MutationObserver 回调（微任务，排在 DOM 变动时）先于下面这个微任务跑：
+      // 它们看到标记就不当场量布局（jank P1-2 复审：每批两次强制样式 + 布局）。
+      el.setAttribute(TAIL_BACKFILL_ATTR, "");
+      queueMicrotask(() => el.removeAttribute(TAIL_BACKFILL_ATTR));
+    }
     if (atBottomRef.current) {
-      // 原生锚定在补行时已经让底部那几行不动；补完那一批钉一次底。没有原生锚定就每批钉。
-      if (startIndex === 0 || !nativeAnchor()) el.scrollTop = el.scrollHeight;
+      // 原生锚定在补行时已经让底部那几行不动；补完那一批钉一次底。没有原生锚定就每批当场钉。
+      if (!nativeAnchor()) el.scrollTop = el.scrollHeight;
+      else if (startIndex === 0) {
+        // 放到下一帧：在这次提交里读 scrollHeight 会把最后一批（最大的一批）的样式重算 + 布局
+        // 强制塞进同一个长任务（复审 trace：约 300ms）。下一帧本来就要算样式，读它不多花。
+        cancelAnimationFrame(pinFrameRef.current);
+        pinFrameRef.current = requestAnimationFrame(() => {
+          if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+        });
+      }
       return;
     }
     if (before <= 0) return;
@@ -123,6 +139,8 @@ export function useTailFirstMount(
     measureBeforeGrow();
     setMounted((m) => nextMountedCount(nextMountedCount(m, total), total));
   }, [measureBeforeGrow, total]);
+
+  useEffect(() => () => cancelAnimationFrame(pinFrameRef.current), []);
 
   useEffect(() => {
     const el = viewport.current;

@@ -15,12 +15,34 @@ export const TAIL_FIRST_INITIAL = 36;
 
 /**
  * 每批往前补的最少条数。批次随已挂条数增长（翻倍，封顶 TAIL_FIRST_BATCH_MAX），
- * 400 条从 13 批降到 6 批：每批一次提交、一次样式重算（jank P1-2）。
+ * 400 条从 13 批降到 6 批（上限 100 时 400 条约 6 批）：每批一次提交、一次样式重算（jank P1-2）。
  */
 export const TAIL_FIRST_BATCH = 40;
 
-/** 单批上限：再大一批的 React 提交本身就成了长任务。 */
-export const TAIL_FIRST_BATCH_MAX = 160;
+/**
+ * 单批上限：再大一批的 React 提交本身就成了长任务。160 时 switch 场景最长单任务
+ * 比 main 还长（736→821 / 787→1051ms），降到 100（120 / 80 都试过，见 DEVLOG）。按耗时自适应（一帧预算）在 4x 下会一直缩到 40、
+ * 批数变多，样式收益掉光，所以用固定上限；同时补行那一批不再被强制同步布局（见 TAIL_BACKFILL_ATTR）。
+ */
+export const TAIL_FIRST_BATCH_MAX = 100;
+
+/**
+ * 补行那一次提交期间挂在滚动视口上的属性（只在有原生 overflow-anchor 时）。提交后的微任务里
+ * 跑的 MutationObserver（chat-transcript 的贴底、message-scroller 的 handleContentChange）看到它就
+ * 不当场读布局：位置由原生锚定保住，高度变化交给布局之后的 ResizeObserver。
+ */
+export const TAIL_BACKFILL_ATTR = "data-tail-backfill";
+
+/** `node` 在一次尾屏补行的提交里（视口上挂着 TAIL_BACKFILL_ATTR）。 */
+export function isTailBackfill(node: Element | null | undefined): boolean {
+  return !!node?.closest(`[${TAIL_BACKFILL_ATTR}]`);
+}
+
+/** 批大小：随已挂条数增长，夹在 [BATCH, BATCH_MAX]。 */
+export function batchSizeFor(mounted: number): number {
+  const m = Math.max(0, Math.floor(mounted));
+  return Math.min(TAIL_FIRST_BATCH_MAX, Math.max(TAIL_FIRST_BATCH, m));
+}
 
 export function initialMountedCount(total: number): number {
   const n = Math.max(0, Math.floor(total));
@@ -28,12 +50,15 @@ export function initialMountedCount(total: number): number {
   return Math.min(n, TAIL_FIRST_INITIAL);
 }
 
-export function nextMountedCount(current: number, total: number): number {
+export function nextMountedCount(
+  current: number,
+  total: number,
+  batch: number = batchSizeFor(current),
+): number {
   const n = Math.max(0, Math.floor(total));
   const c = Math.max(0, Math.floor(current));
   if (c >= n) return n;
-  const batch = Math.min(TAIL_FIRST_BATCH_MAX, Math.max(TAIL_FIRST_BATCH, c));
-  return Math.min(n, c + batch);
+  return Math.min(n, c + batchSizeFor(batch));
 }
 
 /** `items.slice(start)` 的起点：始终贴着末尾。 */

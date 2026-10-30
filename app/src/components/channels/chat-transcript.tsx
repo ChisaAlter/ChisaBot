@@ -107,6 +107,7 @@ import {
 import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
+import { isTailBackfill } from "@/lib/chat/tail-first-paint";
 import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";
 import {
   isQuietWork,
@@ -1357,7 +1358,13 @@ function SettleAtEnd({
      * 比滚动容器的 ResizeObserver → requestAnimationFrame 早，留白当场吃掉 / 补上，不等下一帧。
      */
     const mutations = new MutationObserver(() => {
-      if (!active() && !s.restore && content.offsetHeight !== lastHeight)
+      // 尾屏补行那一次提交：不在微任务里强制布局，高度变化交给布局之后的 ResizeObserver（pinNow）。
+      if (
+        !active() &&
+        !s.restore &&
+        !isTailBackfill(content) &&
+        content.offsetHeight !== lastHeight
+      )
         pinNow();
       pin();
     });

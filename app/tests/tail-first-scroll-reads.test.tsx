@@ -149,3 +149,29 @@ test("short transcript mounts everything at once and never measures", async () =
   expect(probe.el?.children.length).toBe(20);
   expect(probe.reads).toBe(0);
 });
+
+test("backfill commits carry the backfill marker for the commit's observers, then drop it", async () => {
+  const run = async (supported: boolean) => {
+    stubAnchor(supported);
+    const total = 400;
+    const probe: Probe = { el: null, reads: 0, top: 0 };
+    const seen: boolean[] = [];
+    render(<Harness total={total} probe={probe} />);
+    const mo = new MutationObserver(() => {
+      seen.push(probe.el?.hasAttribute("data-tail-backfill") ?? false);
+    });
+    if (probe.el) mo.observe(probe.el, { childList: true });
+    await untilFull(probe, total);
+    mo.disconnect();
+    const left = probe.el?.hasAttribute("data-tail-backfill");
+    cleanup();
+    return { seen, left };
+  };
+  const native = await run(true);
+  expect(native.seen.length).toBeGreaterThan(0);
+  expect(native.seen.every(Boolean)).toBe(true);
+  expect(native.left).toBe(false);
+  // Safari 兜底（没有原生锚定）：照旧当场量，不打标记。
+  const fallback = await run(false);
+  expect(fallback.seen.some(Boolean)).toBe(false);
+});
