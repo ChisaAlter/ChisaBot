@@ -20,6 +20,8 @@ const ghPreview = {
   imageHeight: 600,
 };
 const REPO = "https://github.com/ChisaAlter/ChisaBot";
+/** 卡片标题去掉开头的「GitHub - 」（2026-10-30，§48.5）。 */
+const REPO_TITLE = "ChisaAlter/ChisaBot: 自托管的 AI 助手";
 const repoPreview = {
   ...ghPreview,
   title: "GitHub - ChisaAlter/ChisaBot: 自托管的 AI 助手",
@@ -126,18 +128,18 @@ describe("标题选择：模型的标题只是站点名 / 域名，或被 og:tit
           { title },
           { ...repoPreview, siteName: "" },
         ).title,
-      ).toBe(repoPreview.title);
+      ).toBe(REPO_TITLE);
     }
   });
 
   test("被 og:title 包含：「ChisaBot」「chisaalter/chisabot」都换成 og:title", () => {
     expect(
       mergeLinkFields(REPO, { title: "ChisaBot" }, repoPreview).title,
-    ).toBe(repoPreview.title);
+    ).toBe(REPO_TITLE);
     expect(
       mergeLinkFields(REPO, { title: " chisaalter/chisabot " }, repoPreview)
         .title,
-    ).toBe(repoPreview.title);
+    ).toBe(REPO_TITLE);
     expect(
       mergeLinkFields(GH, { title: "ChisaBot v0.1.13" }, ghPreview).title,
     ).toBe(ghPreview.title);
@@ -153,7 +155,7 @@ describe("标题选择：模型的标题只是站点名 / 域名，或被 og:tit
         { title: repoPreview.title.toUpperCase() },
         repoPreview,
       ).title,
-    ).toBe(repoPreview.title.toUpperCase());
+    ).toBe(REPO_TITLE.toUpperCase());
   });
 
   test("没有 og:title 或预览降级时不换（没有更好的可用）", () => {

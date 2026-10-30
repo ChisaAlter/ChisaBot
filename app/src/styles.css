@@ -3844,8 +3844,6 @@ html[data-desktop] .glass-brand { cursor: default; }
 }
 .desk-strip .win-ctrls { -webkit-app-region: no-drag; app-region: no-drag; }
 body:has(.glass-topbar) .desk-strip { display: none; }
-/* Collapsed left column: the collapse control follows the wordmark instead of floating at 276px. */
-.glass-shell:has([data-slot="sidebar"][data-state="collapsed"]) .glass-topbar-start { width: auto; gap: 12px; }
 /* Send key is ink (DESIGN.md §11), not blue. */
 .glass-composer .glass-composer-send:not(:disabled):not([data-testid="composer-stop"]) { background: var(--ink-primary) !important; color: var(--on-primary) !important; }
 /* ---------- 新建机器人：搜索框右侧的图标按钮 ---------- */
@@ -3987,7 +3985,6 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 .glass-topbar-end :is(.topbar-ctx, .topbar-divider) { transition: opacity var(--dur-1) var(--ease-std); }
 .glass-topbar-end:has(.topbar-search[data-open]) :is(.topbar-ctx, .topbar-divider) { opacity: 0; pointer-events: none; }
 .glass-topbar .glass-avatar { width: 32px !important; height: 32px !important; font-size: 12px !important; }
-.glass-topbar-end > button[aria-label="账号与设置"] { margin-left: 4px; }
 .topbar-ctx { display: flex; align-items: center; gap: 4px; }
 .topbar-ctx:empty { display: none; }
 .topbar-divider { width: 1px; height: 18px; margin: 0 6px; background: var(--line-strong); flex: none; }
@@ -9937,39 +9934,8 @@ html[data-sky-off] #sky-root #skyph {
   }
 }
 
-/* —— Hark 顶栏（第 2 步）：左上圆形主页按钮 + 品牌名 + 左栏开关；右上搜索胶囊 + 圆形头像；窗口按钮仍在最右。
-   搜索胶囊是 .glass（读 --glass-filter，20px），是顶栏唯一的模糊层：桌面同屏 左栏 + 账号卡 + 输入框 + 右栏 + 搜索 = 5，
-   再开一个弹层 = 6。圆钮（主页、头像、手机上的菜单 / 搜索）是 .glass.is-flat：只有半透明底色和内高光，不叠模糊。
-   带模糊的搜索胶囊不做任何过渡或动画；只有不模糊的圆钮有按下缩放。 —— */
-.glass-topbar.hk-topbar {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--sp-2, 8px);
-  font-family: var(--font);
-}
-.glass-topbar .hk-topbar-start {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  width: calc(var(--sidebar-width, 276px) - 16px);
-  min-width: 0;
-  padding-left: 0;
-}
-.glass-topbar[data-sidebar="collapsed"] .hk-topbar-start { width: auto; }
-.glass-topbar .hk-topbar-start > .glass-roster-toggle { margin-left: auto; }
-.glass-topbar[data-sidebar="collapsed"] .hk-topbar-start > .glass-roster-toggle { margin-left: 0; }
-.glass-topbar .hk-topbar-end {
-  display: flex;
-  align-items: center;
-  justify-self: end;
-  gap: 8px;
-  min-width: 0;
-}
-.glass-topbar .hk-brand { font-size: var(--fs-15, 15px); color: var(--text-primary); }
-.glass-topbar .hk-brand .brand-mark-btn { padding: 2px 4px; border-radius: var(--r-8, 8px); }
-
-/* 圆形按钮：主页（品牌头像）、手机上的菜单 / 搜索。 */
-.hk-home,
+/* —— 顶栏（#374 回退）：电脑上只有品牌文字 + PC 窗口按钮；身份只在左栏底部的账号卡，搜索会话在左栏卡片顶部，
+   左栏开关在左栏卡片右上角（收起时在 80px 列顶）。手机顶栏不变：左 ☰ ｜ 右 搜索 + 头像，都是不叠模糊的圆钮（.glass.is-flat）。 —— */
 .hk-circle,
 .hk-avatar-btn {
   position: relative;
@@ -9985,77 +9951,33 @@ html[data-sky-off] #sky-root #skyph {
   cursor: pointer;
   transition: scale var(--t-fast, 120ms) var(--t-ease, ease), background-color var(--t-fast, 120ms) var(--t-ease, ease);
 }
-.hk-home .brand-avatar { width: 32px; height: 32px; box-shadow: none; }
 .hk-circle-ico { width: 20px; height: 20px; }
 .hk-avatar-btn .glass-avatar-dot { right: 1px; top: 1px; }
-.hk-home:active,
-.hk-circle:active,
-.hk-avatar-btn:active { scale: var(--press-scale, 0.96); }
-
-/* 搜索胶囊：宽度固定；它带模糊，所以不做尺寸动画，也不加过渡。 */
-.hk-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 260px;
-  height: 40px;
-  padding: 0 8px 0 14px;
-  border-radius: var(--r-full, 999px);
-  color: var(--text-secondary);
-  font-size: var(--fs-14, 14px);
-  cursor: text;
-}
-button.hk-search { cursor: pointer; }
-.hk-search:focus-within { background: var(--glass-input-bg); }
-.hk-search-ico { flex: none; width: 16px; height: 16px; }
-.hk-search-input,
-.hk-search-placeholder {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-  font: inherit;
-  color: var(--text-primary);
-  background: transparent;
-  border: 0;
-  outline: none;
-}
-.hk-search-placeholder,
-.hk-search-input::placeholder { color: var(--text-secondary); }
-.hk-search-clear {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--r-full, 999px);
-  color: var(--text-secondary);
-}
-.hk-search-clear:hover { color: var(--text-primary); background: var(--fill-tertiary); }
-.hk-search-kbd {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: var(--r-6, 6px);
-  font: 500 var(--fs-12, 12px) / 18px var(--font);
-  color: var(--text-tertiary);
-  background: var(--fill-tertiary);
-}
-.hk-search:focus-within .hk-search-kbd { display: none; }
-
-.hk-home:hover,
-.hk-circle:hover,
-.hk-avatar-btn:hover,
-button.hk-search:hover { background: color-mix(in srgb, var(--glass-bg) 92%, var(--text)); }
-.hk-home:focus-visible,
+:is(.hk-circle, .hk-avatar-btn):active { scale: var(--press-scale, 0.96); }
+:is(.hk-circle, .hk-avatar-btn):hover { background: color-mix(in srgb, var(--glass-bg) 92%, var(--text)); }
 .hk-circle:focus-visible,
-.hk-avatar-btn:focus-visible,
-button.hk-search:focus-visible,
-.hk-search:has(.hk-search-input:focus-visible) { box-shadow: var(--glass-highlight), 0 0 0 2px var(--accent-color); }
-
-/* PC 无边框窗口：顶栏空白处可拖动，新按钮不参与拖动。 */
-html[data-desktop] .hk-topbar :is(.hk-home, .hk-circle, .hk-avatar-btn, .hk-search, .hk-search-input, .brand-mark-btn) {
+.hk-avatar-btn:focus-visible { box-shadow: var(--glass-highlight), 0 0 0 2px var(--accent-color); }
+.glass-topbar[data-sidebar="collapsed"] .glass-topbar-start { width: auto; }
+/* 手机布局（含 PC 小窗 < 768px）：左 菜单 ｜ 中 留空 ｜ 右 搜索 + 头像，和 #374 时一样；圆钮不参与窗口拖动。 */
+@media (max-width: 767px) {
+  .glass-topbar[data-scope] { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .glass-topbar[data-scope] .glass-topbar-start { width: auto; }
+  .glass-topbar[data-scope] .glass-topbar-end { gap: 8px; }
+}
+html[data-phone] .glass-topbar[data-scope] { grid-template-columns: auto minmax(0, 1fr) auto; }
+html[data-phone] .glass-topbar[data-scope] .glass-topbar-start { width: auto; }
+html[data-phone] .glass-topbar[data-scope] .glass-topbar-end { gap: 8px; }
+html[data-desktop] .glass-topbar :is(.hk-circle, .hk-avatar-btn, .brand-mark-btn) {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
+
+/* 左栏开关：展开时是卡片顶行最右边的 32px 幽灵按钮；收起时是 80px 列顶的一格，和下面的搜索 / 新建同宽对齐。 */
+.side-search-row .glass-roster-toggle { width: 36px; height: 36px; border-radius: var(--r-md); }
+.rail-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rail-title-row .rail-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-title-row .glass-roster-toggle { margin: -4px -6px -4px 0; }
+.glass-mini > .glass-mini-toggle { align-self: center; width: 40px; height: 40px; border-radius: var(--r-md); }
 
 /* PC 客户端支持「小窗模式」时标题按钮是 4 个（4 × 46px），右边要让出 4 个的宽度，不然头像会压在小窗按钮上。
    窄窗口（< 768px）另有 36px 的规则，这里不管。 */
@@ -10063,10 +9985,3 @@ html[data-desktop] .hk-topbar :is(.hk-home, .hk-circle, .hk-avatar-btn, .hk-sear
   html[data-desktop] .glass-topbar[data-winctrls="4"] { padding-right: calc(46px * 4 + 12px); }
 }
 
-/* 手机：左 菜单 ｜ 中 留空 ｜ 右 搜索 + 头像；品牌名不显示。 */
-html[data-phone] .glass-topbar.hk-topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
-html[data-phone] .glass-topbar .hk-topbar-start { width: auto; }
-@media (max-width: 767px) {
-  .glass-topbar.hk-topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .glass-topbar .hk-topbar-start { width: auto; }
-}

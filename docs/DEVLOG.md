@@ -1,5 +1,32 @@
 # DEVLOG
 
+## 电脑端布局回退 #374 的顶栏改动（dev2/pc-layout-fix）
+
+**动机**：#374（5cd6e8c3，Hark 第 2 步顶栏）之后，Jun 的原话：「把右下原本有的搬到左上，又弄一个头像什么意思；搜索会话放在那是什么意思；右侧栏的收起和打开都在右侧栏上，左侧栏为什么单独拿出来了」。电脑上同时有两个头像（顶栏左上的品牌头像 / 右上的账号头像 + 左栏底部账号卡），搜索会话跑到顶栏右上，左栏开关单独放在顶栏。
+
+**改法**：
+- 身份只留左栏底部账号卡：`glass-shell.tsx` 不再给顶栏传 `account`；`glass-topbar.tsx` 去掉左上 BrandAvatar 主页圆钮，只留品牌文字；`account-menu.tsx` 删掉 `placement="topbar"` 分支。
+- 搜索回到左栏：`app-sidebar.tsx` 卡片顶行恢复 `<SidebarSearchField/>`（和 + 新建同一行，#374 之前的样子）；删掉 `TopBarSearch` 和搜索框的 `variant="topbar"`。Ctrl K 仍由外壳处理：左栏收起时先展开再聚焦搜索。手机不变（顶栏 ☰ + 搜索圆钮，抽屉里有搜索框）。
+- 左栏开关挪到左栏上，和右栏「面板」开关对称：新文件 `roster-toggle.tsx`，展开时在卡片右上角（聊天：搜索行最右；设置 / 管理：区域标题右边），收起成 80px 那列时在列顶。手机抽屉不画。顶栏只剩品牌文字和 PC 窗口按钮。
+- styles.css 删掉 `.hk-topbar*`、`.hk-search*`、`.hk-home`、`.hk-avatar-btn`、`.hk-brand` 残留，以及顶栏账号按钮和「收起时开关跟在品牌后面」的旧规则（顺带少一条挂在 `.glass-shell` 上的 `:has()`，`no-container-has` 清单同步去掉）；`.hk-circle` 留给手机顶栏。palette 段没动；`ui/sidebar.tsx` 的宽度动画没动。
+- 测试：`channel-pagination.test.tsx` 不再单独渲染顶栏搜索框；新增 `pc-layout-topbar.test.ts`（顶栏没有头像 / 搜索 / 开关，账号菜单没有顶栏分支，左栏有搜索和开关，没有残留样式）。
+
+**验证**：bun 1.3.14。typecheck、build 通过；test:app 1854 pass / 0 fail；server + DB 测试的失败项是 main 上同一批（本改动只动 app/）；Biome 无新增问题。真 Chrome（headless，本地单用户服务）截了聊天页 / 设置页 × 左栏展开 / 收起 × 浅色 / 深色 × 1024 / 1440 共 16 张，每张可见的用户头像 1 个、品牌头像 0 个，顶栏只有品牌名；左栏收起时按 Ctrl K 会展开并聚焦「搜索会话」。
+
+- 补充（小爱复核）：手机布局保持 #374 时原样——顶栏右上角恢复圆形头像（账号菜单入口，`AccountMenu placement="topbar"` / `.hk-avatar-btn`），只在手机布局（含 PC 小窗 < 768px）里画；电脑顶栏仍然没有头像，身份只在左栏底部账号卡。手机顶栏列宽恢复为 `auto minmax(0,1fr) auto`、右侧按钮间距 8px。`tests/pc-layout-topbar.test.ts` 断言头像只在手机分支里渲染；360px 浅色/深色聊天页截图已补到 PR。
+
+## 卡顿测量工具 perf/（dev4/perf-harness，FIX-PLAN P0）
+
+**动机**：卡顿分析（stage 1 和 FIX-PLAN）的数字都出自 box 上的临时脚本，别人没法复现，PR 之间也没法比。FIX-PLAN 要求每个性能 PR 附 4x 降速下的前后对比表，先把测量脚本整理进仓库。
+
+**做法**：
+- `perf/mock-server.mjs` 托管 `app/dist`（SPA 回退），按 `perf/fixtures/api.json` 回答 `/api/*`：已登录用户、两个频道、`c1` 一个 240 条消息的线程、发送时的 AG-UI SSE 流；`/api/me` 可切成 401 用来测登录页光球；没匹配的一律 404。
+- `perf/jank.mjs`：playwright-core 驱动系统 Chrome，每次运行新建临时 profile 并在结束后删除。页面里用 PerformanceObserver（longtask、event）、rAF 帧记录和 MutationObserver 采数据，CDP `Performance.getMetrics` 取样式 / 布局 / 脚本耗时差值。按 `--runs` 跑多次，`summary.json` 取中位数。`--trace` 另存 trace，并由 `trace-summary.mjs` 算主线程按类别的自身耗时和带 JS 栈的强制样式 / 布局（原来是 Python 脚本，改成 JS 不用另装环境）。
+- `perf/compare.mjs` 打印 markdown 表，单元格是 `前 → 后 (Δ%)`，变化 ≥10% 标 ✅/⚠️。
+- CI `perf.yml`：PR 上构建 head 和 base（`git worktree`），各跑 1 次，表写进 job summary，结果上传 artifact；job 级 `continue-on-error`，不拦 PR（CI 机器噪声大，阻塞门槛放到 P2-4）。zizmor 本地检查无问题。
+
+**验证**：box 上对 main（c99ee37e）构建跑了全部场景（1 次带 trace，3 次不带）。trace 本身有开销，带 trace 那次长任务和脚本耗时约为不带的 1.5–2 倍，所以 README 写明不要混着比。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
@@ -820,3 +847,18 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.112`；PC / Android 不变。不打 tag、不建 Release。
 
 **0.1.112 部署**：22:41（北京时间）先备份数据库 `pre-release/v0.1.112-20261029T144123Z.dump`（`pg_restore -l` 767 项）和网关 `nginx.conf`、`security-headers.conf`、`magpie-private.conf`，再 `deploy-serial.sh 0c06ef7 jun-grokbot`。依赖有变化走完整构建，22:51 上线 `local/chisabot:auto-202610291441-0c06ef7`（613 秒），回滚镜像 `auto-202610291348-a4fce00`，`isolate-sidecar-app` 全绿。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.112；公网 `/login` 200，安全头齐全；`/devices` 和静态资源匿名 401（要登录），本机 3001 上正常返回；real_ip 22 条 `set_real_ip_from` 加 `real_ip_header CF-Connecting-IP` 没变。网关 nginx 没动（md5 不变，没有 reload），#412 的网关配置还没上线。
+
+## 2026-10-30 发版 0.1.113
+
+- #439 `dev3/github-link-card`（head `6993843`）→ `d0dc438`：GitHub 仓库链接竖版大卡（GitHub API 描述 / 星标 / 头像兜底，429 缓存 5 分钟）。
+- #440 `dev2/pc-layout-fix`（head `ca54721`）→ `6a1e777`：电脑端回退 #374 顶栏（只留左下账号卡、搜索和左栏开关回左栏）。
+- #443 `dev4/perf-harness`（head `671f6ac`）→ `3bb35b5`：卡顿测量工具，只动 `perf/`、根 package.json 的 scripts、`.gitignore`、CI `perf.yml` 和文档，没有运行时代码、没改版本号。
+- 不合：#441、#442（这次不发）。
+
+**流程**：合并前核对三个 PR head 没变、都没改 `pc/`、`android/`、版本号；从 origin/main（`c99ee37`）开临时 worktree，按顺序 `--no-ff` 合并。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 在发版提交 `c9509f4` 上全过（bun 1.3.14）：test:app 1857 pass / 0 fail（247 个文件）。#443 的 `perf/*.mjs` 过了 `node --check`。
+
+**冲突**：#439、#440 没有冲突；#443 只在 `docs/DEVLOG.md` 冲突（两边都保留）。#443 的 CHANGELOG 条目原本在顶部新开的 `## Unreleased`，发版时改成 0.1.113 段。
+
+**版本**：根、`app`、`server` 升到 `0.1.113`；PC / Android 不变。不打 tag、不建 Release。
+
+**0.1.113 部署**：11:16（北京时间）先备份数据库 `pre-release/v0.1.113-20261030T031606Z.dump`（`pg_restore -l` 767 项），再 `deploy-serial.sh c9509f4 jun-grokbot`。依赖有变化（根 package.json scripts），走完整构建，11:26 上线 `local/chisabot:auto-202610300316-c9509f4`（617 秒），回滚镜像 `auto-202610291441-0c06ef7`，`isolate-sidecar-app` 全绿。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.113 / `c9509f4`；公网 `/login` 200。GitHub 大卡：本机带本地调用头请求 `/api/link-preview?url=https://github.com/oven-sh/bun`，返回标题 `oven-sh/bun: …`、描述、`stars` 96463、`imageKind: avatar`（460×460，资源 200 image/png），缓存 5 分钟（og 图被限流，走头像兜底）；`ChisaAlter/ChisaBot` 命中 0.1.112 时的旧缓存（到 15:28 过期），之后才会换成新格式。网关、nginx 没动。

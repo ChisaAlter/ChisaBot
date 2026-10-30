@@ -56,7 +56,7 @@ export function AccountMenu({
   placement = "rail",
 }: {
   compact?: boolean;
-  /** 「topbar」：顶栏右上角的圆形头像（Hark 风格），菜单向下弹出、右边对齐。 */
+  /** 「topbar」：手机顶栏右上角的圆形头像，菜单向下弹出、右边对齐。电脑上不用（身份只在左栏底部账号卡）。 */
   placement?: "rail" | "topbar";
   /** 展开时菜单贴着这张账号卡：左右边与卡片齐平、同宽（DESIGN.md §34.2）。 */
   anchorRef?: RefObject<HTMLElement | null>;

@@ -1,3 +1,13 @@
+## 0.1.113
+
+- GitHub 仓库链接出竖版大卡：服务端查 GitHub API 拿描述、星标、头像，og 图拿不到用头像兜底；429 只缓存 5 分钟（#439）。
+
+- 电脑端顶栏回退：只留左下账号卡，搜索和左栏开关回到左栏；手机不变（#440）。
+
+- 卡顿测量工具 `perf/`（`bun run perf:jank` / `perf:compare`，CI `perf.yml` 只写 job summary 不拦 PR），不改应用代码（#443）。
+
+- 版本号 0.1.113（根、app、server）；只有服务器 / 网页更新。
+
 ## 0.1.112
 
 - 链接预览：GitHub 预览图 429 时回退（`opengraph.githubassets.com/1/…`、作者头像），失败短 TTL；YouTube / bilibili / 百度百科走接口出卡片；反爬 / 验证页降级；Punycode 同形字保留 `xn--`；非 2xx 一律 `no-store`（#412，网关配置改动未上线）。
