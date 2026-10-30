@@ -9,6 +9,8 @@ import { SettingsSidebar } from "@/components/settings/settings-sidebar";
 import { CHANNEL_ROUTE_ID, ChannelPage } from "@/components/channels/channel-page";
 import { useLanding } from "@/lib/agents/landing";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
+import { clearPendingBot } from "@/lib/chat/pending-switch";
+import { memo, useDeferredValue, useEffect, useMemo } from "react";
 
 /**
  * 登录之后的那一个外壳（DESIGN.md §98）。
@@ -67,17 +69,47 @@ function useChatAddress(): ChatAddress | null {
       ]);
     },
   });
-  if (!key) return null;
-  const [channelId, settings, watch] = JSON.parse(key) as [string, boolean, boolean | null];
-  return { channelId, ...(settings ? { settings: true } : {}), ...(watch === null ? {} : { watch }) };
+  // 同一个地址给同一个对象：`useDeferredValue` 按引用比，每次新对象会白跑一遍延后渲染。
+  return useMemo(() => {
+    if (!key) return null;
+    const [channelId, settings, watch] = JSON.parse(key) as [
+      string,
+      boolean,
+      boolean | null,
+    ];
+    return {
+      channelId,
+      ...(settings ? { settings: true } : {}),
+      ...(watch === null ? {} : { watch }),
+    };
+  }, [key]);
 }
 
 const sameAddress = (a: ChatAddress, b: ChatAddress) =>
   a.channelId === b.channelId && a.settings === b.settings && a.watch === b.watch;
 
+/** 地址没换时（延后渲染还没跟上的那一次、左栏高亮那一次）不重画整段对话。 */
+const KeptChannelPage = memo(ChannelPage);
+
 /** 主区：留着的聊天 + 当前路由（`KeepAliveStage`，DESIGN.md §98）。`/` 正在跳到聊天时，留着的聊天照样露着。 */
 function ChatStage({ pathname }: { pathname: string }) {
-  const address = useChatAddress();
+  const routeAddress = useChatAddress();
+  /*
+   * 切会话即时反馈（FIX-PLAN F0 / P1-1）：从一段对话换到另一段时，整段对话的重新挂载放进延后渲染
+   * （`useDeferredValue`，可被打断、不算在点击那一帧里）。这一帧只画左栏高亮，旧对话半透明留着（`data-switching`），
+   * 新对话画好了再一次换上，不留白。从设置等别的页面回到对话不延后（那时没有旧对话可留）。
+   */
+  const deferredAddress = useDeferredValue(routeAddress);
+  const switching =
+    routeAddress !== null &&
+    deferredAddress !== null &&
+    routeAddress.channelId !== deferredAddress.channelId;
+  const address = switching ? deferredAddress : routeAddress;
+  // 地址变了、新对话也换上了（它登记的机器人控件已经到位）才清掉左栏的「正在切过去」，
+  // 不然延后渲染那一段旧对话的机器人会跟着又亮起来。
+  useEffect(() => {
+    if (!switching) clearPendingBot();
+  }, [switching, pathname]);
   // `/` 正在跳的那段（最近的对话）正是留着的这段时才先露着；跳向别的机器人 / 空聊天时不露，免得闪一下别人的对话。
   const landing = useLanding();
   const landingChannel =
@@ -85,9 +117,10 @@ function ChatStage({ pathname }: { pathname: string }) {
   return (
     <KeepAliveStage
       address={address}
+      switching={switching}
       idleVisible={(kept) => pathname === "/" && (landing.state === "loading" || landingChannel === kept.channelId)}
       renderKept={(kept, { visible, epoch }) => (
-        <ChannelPage
+        <KeptChannelPage
           channelId={kept.channelId}
           epoch={epoch}
           /*

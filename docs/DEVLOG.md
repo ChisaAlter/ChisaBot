@@ -13,6 +13,21 @@
 
 **验证**：基于 headless harness 的 resize 场景（PC 客户端真机 trace 没录）。4x 降速、不带 trace、各 3 次中位数：fps 13.8 → 48.7，p95 帧 133 → 33ms，长任务 4581 → 163ms，脚本 378 → 154ms；样式 / 布局不变（那部分等前端的 CSS）。SwiftShader 会放大 GPU 部分，真机收益要打折。
 
+## 切会话即时反馈（dev2/jank-chat-switch，FIX-PLAN P1-1 / F0）
+
+**动机**：切会话时左栏高亮和整段对话在同一次提交里渲染，点下去要等 0.3–2s 才有任何变化（4x 降速下 INP 最差 2216ms）。FIX-PLAN F0：高亮先单独提交，对话延后渲染，目标首帧 <16ms。
+
+**改法**：
+- 新文件 `lib/chat/pending-switch.ts`：一个外部小 store 记「正在切过去的机器人」。左栏 `BotRow` / `MiniBot` 普通左键点击时先 `markPendingBot`，只重画左栏那几行（高亮按 `pending ?? 路由` 算，旧会话那一行同时熄灭）；导航排在这一帧画完之后（rAF + setTimeout）。带修饰键 / 中键照常走链接。路由 5s 没跟上自动清掉。
+- `authed-shell.tsx`：`ChatStage` 用 `useDeferredValue` 延后对话地址，整段对话的重新挂载变成可打断的延后渲染；地址对象 memo 化，`ChannelPage` 包 `memo`，高亮那次提交不重画对话。新对话换上后清掉 pending。
+- `keep-alive.tsx` + `styles.css`：延后期间旧的一页加 `data-switching`，opacity 0.6（只动合成层）且 `pointer-events: none`（防止往旧会话里输入），不留白、不放骨架。
+- 测试 `app/tests/chat-switch-feedback.test.tsx`：高亮先到再清、连点三个只停最后一个、修饰键不算、导航排在高亮之后、切换中旧页半透明可见且不 inert。
+
+**验证**：bun 1.3.14。typecheck、build 通过；相关测试 5/5；test:app 1862 pass / 0 fail；server + DB 测试 4643 pass / 28 fail（本 PR 不动 server/，server 代码与 main 逐字相同，失败为 box 环境下 main 已有的同一批）；Biome 改动文件的诊断数与 main 相同，新文件无问题。perf harness（#443）switch 场景 4x 降速、3 次中位数：最差 INP 2216 → 80ms，最差首帧 2172 → 62ms，长任务总计 16793 → 9246ms（表见 PR）。首帧在 4x 降速下 40–53ms，折合原速约 10–13ms。
+- 补充（小爱复核 #448）：切换中旧的一页同时设 `inert`（键盘也进不去），输入框发送前用 `sendTargetsStaleChannel` 核对所属会话与地址栏 / 左栏切换状态，不一致就不发、草稿留着；淡出改为延迟 100ms、opacity 0.8，`prefers-reduced-motion` 下无过渡，快切不再闪；`afterNextPaint` 只留最新一次，排队期间再点别处或按 Enter 会撤掉旧导航并熄掉左栏的「正在切过去」。新增测试：切换中按 Enter 不发送、连排两次只跑最后一次、点别处撤销。
+- 补充（小爱复核 #448 第二轮）：发送拦截只针对切走的那段旧对话的输入框（`markPendingBot` 记下切走时的频道），导航被拦下 / 失败时别的输入框不受影响；输入法选词的 Enter（`isComposing` / keyCode 229）不撤销排队的导航。各补一条测试。
+- 合入 main（11bacde2，含 #445/#446）：左栏机器人行改用 main 的 `useCloseMobileDrawer`；手机抽屉里点机器人照旧走链接、不延后导航（抽屉收起要跟路由 push 同一拍）。
+
 ## 电脑端布局回退 #374 的顶栏改动（dev2/pc-layout-fix）
 
 **动机**：#374（5cd6e8c3，Hark 第 2 步顶栏）之后，Jun 的原话：「把右下原本有的搬到左上，又弄一个头像什么意思；搜索会话放在那是什么意思；右侧栏的收起和打开都在右侧栏上，左侧栏为什么单独拿出来了」。电脑上同时有两个头像（顶栏左上的品牌头像 / 右上的账号头像 + 左栏底部账号卡），搜索会话跑到顶栏右上，左栏开关单独放在顶栏。
