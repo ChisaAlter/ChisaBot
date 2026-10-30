@@ -1,8 +1,21 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  test,
+} from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { resetToggleTipKeyboardForTest, ToggleTip } from "@/components/layout/glass-topbar";
-import { PANEL_SHEET_HEAD_FOCUSABLE, panelSheetInitialFocus } from "@/components/panels/panel-rail";
+import {
+  resetToggleTipKeyboardForTest,
+  ToggleTip,
+} from "@/components/layout/glass-topbar";
+import {
+  PANEL_SHEET_HEAD_FOCUSABLE,
+  panelSheetInitialFocus,
+} from "@/components/panels/panel-rail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { settleReactWork } from "./settle-react-work";
 
@@ -92,7 +105,9 @@ test("按过 Tab 后挂的是真 Trigger；键盘焦点落上去照常出现，�
   const { button, tip } = renderTip();
   const before = button();
   await act(async () => {
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true }),
+    );
   });
   expect(button().hasAttribute("data-base-ui-tooltip-trigger")).toBe(true);
   // 在 keydown 里同步换好：浏览器这之后才移动焦点，落到的就是真 Trigger。
@@ -110,7 +125,9 @@ test("在输入框里打字不算键盘导航，不会把懒按钮全挂上", as
   const input = document.createElement("textarea");
   document.body.append(input);
   await act(async () => {
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "a", bubbles: true }),
+    );
   });
   expect(button().hasAttribute("data-base-ui-tooltip-trigger")).toBe(false);
   input.remove();
@@ -146,7 +163,9 @@ test("面板抽屉首个焦点：顶栏里第一个可 Tab 的控件；触屏给
     <div class="rail-pane"><button id="inside">卡片</button></div>`;
   document.body.append(sheet);
   expect((panelSheetInitialFocus("mouse") as HTMLElement).id).toBe("r-panels");
-  expect((panelSheetInitialFocus("keyboard") as HTMLElement).id).toBe("r-panels");
+  expect((panelSheetInitialFocus("keyboard") as HTMLElement).id).toBe(
+    "r-panels",
+  );
   expect(panelSheetInitialFocus("touch")).toBe(sheet);
   sheet.querySelector('[role="radiogroup"]')?.remove();
   expect((panelSheetInitialFocus("mouse") as HTMLElement).id).toBe("add");
