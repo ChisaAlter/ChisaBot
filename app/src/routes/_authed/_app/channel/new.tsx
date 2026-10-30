@@ -7,7 +7,7 @@ import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
 import { LandingRedirect } from "@/components/agents/landing-redirect";
 import { channelListQueryOptions } from "@/lib/channels/queries";
-import { latestChannelFor } from "@/lib/channels/latest";
+import { reusableEmptyChannelFor } from "@/lib/channels/latest";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { PermissionChip } from "@/components/chat/permission-chip";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
@@ -75,8 +75,10 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
   // Optimistic seed shown before the first channel record exists.
   const [sent, setSent] = useState<Message | null>(null);
 
-  // This Bot already has a conversation: open it rather than an empty chat beside it.
-  const existing = sent || fresh ? undefined : latestChannelFor(agent, channels.data)?.id;
+  // Always a new topic: a conversation that already has messages is never reopened from here
+  // ("和它聊天" entries resolve the ongoing chat first, `useOpenBotChat`). Only the Bot's most recent
+  // channel, when nothing was said in it yet, is reused rather than leaving an empty one beside it.
+  const existing = sent || fresh ? undefined : reusableEmptyChannelFor(agent, channels.data)?.id;
   useEffect(() => {
     if (existing)
       void navigate({ to: "/channel/$channelId", params: { channelId: existing }, search: watch ? { watch: true } : {}, replace: true });

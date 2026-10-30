@@ -41,6 +41,7 @@ import {
   SidebarContent,
   SidebarGroup,
   SidebarMenu,
+  useCloseMobileDrawer,
   useOptionalSidebar,
 } from "@/components/ui/sidebar";
 import { openTriggerByLabel, snapAnchor } from "@/components/ui/snap-anchor";
@@ -273,10 +274,7 @@ function SearchHitRow({
   const meta = [botName, when].filter(Boolean).join(" · ");
   const title = hit.summary?.trim() || hit.name;
   const message = hit.messageId?.trim() || undefined;
-  const sidebar = useOptionalSidebar();
-  const closeDrawer = () => {
-    if (sidebar?.isMobile && sidebar.openMobile) sidebar.setOpenMobile(false);
-  };
+  const closeDrawer = useCloseMobileDrawer();
   return (
     <Link
       className="flex flex-row py-2 px-2 gap-2 items-center w-full hover:bg-foreground/5 rounded-lg"
@@ -368,13 +366,15 @@ function BotRow({
     (Boolean(chat) && (pendingBot === null || pendingBot === bot.id));
   // 手机抽屉里点机器人：进它的对话并收起抽屉（以前抽屉留着盖在对话上，要再点一下遮罩）。
   const sidebar = useOptionalSidebar();
-  const closeDrawer = () => {
-    if (sidebar?.isMobile && sidebar.openMobile) sidebar.setOpenMobile(false);
-  };
+  const closeDrawer = useCloseMobileDrawer();
   // 切会话即时反馈（FIX-PLAN F0）：高亮先到，对话随后。
+  // 手机抽屉照旧走链接（抽屉收起要跟路由 push 同一拍，见 useCloseMobileDrawer），不延后导航。
   const navigate = useNavigate();
   const openChat = (event: React.MouseEvent) => {
-    closeDrawer();
+    if (sidebar?.isMobile) {
+      closeDrawer();
+      return;
+    }
     if (!latest || selected || !isPlainClick(event)) return;
     event.preventDefault();
     markPendingBot(bot.id);
@@ -555,9 +555,13 @@ function BotMenuContent({
       else await navigate({ to: "/channel/new", search: { agent: bot.id } });
     }
     showPanels();
+    closeDrawer();
   };
   // 窄窗口（左栏是抽屉、几乎占满窗口）右边放不下：改成贴着机器人行下方弹出、右边与卡片齐平，菜单留在窗口里（DESIGN.md §36.3）。
   const drawer = Boolean(useOptionalSidebar()?.isMobile);
+  // M3-11：资料 · 历史对话 · 新话题 · 面板会换页或在聊天页上开窗格，做完收起手机抽屉，否则抽屉盖在上面。
+  // 电脑操作… / 设为主 / 更换主 / 恢复运行 / 删除 的对话框挂在机器人行里（抽屉里面），收起抽屉会把它们一起卸掉，所以不关。
+  const closeDrawer = useCloseMobileDrawer();
   return (
     <DropdownMenuContent
       align={drawer ? "end" : "start"}
@@ -568,12 +572,12 @@ function BotMenuContent({
     >
       <DropdownMenuItem
         className="glass-mi"
-        render={<Link params={{ agentId: bot.id }} to="/bots/$agentId" />}
+        render={<Link onClick={closeDrawer} params={{ agentId: bot.id }} to="/bots/$agentId" />}
       >
         <IconUserCircle className={icon} />
         <span className="min-w-0 flex-1">{"机器人资料"}</span>
       </DropdownMenuItem>
-      <BotChatMenuItems agentId={bot.id} chat={chat} />
+      <BotChatMenuItems agentId={bot.id} chat={chat} onDone={closeDrawer} />
       <DropdownMenuItem className="glass-mi" onClick={() => void openPanels()}>
         <IconLayoutDashboard className={icon} />
         <span className="min-w-0 flex-1">
