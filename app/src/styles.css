@@ -2074,6 +2074,9 @@ html[data-sky-ease] body::before {
 }
 /* CB-100c：首屏加载中的可见说明（没有按钮，左右留白一样）。 */
 .sky-skel-hint.is-loading { padding: 8px 16px; animation-delay: 0.25s; }
+/* 「登录状态异常」卡片（AuthLoopNotice）打开时藏起启动骨架的「正在加载 ChisaBot…」（React 骨架和 index.html 静态骨架各一处），不和卡片叠字。 */
+html[data-auth-loop-open] .sky-skel-hint.is-loading,
+html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
 .sky-skel-spinner {
   width: 14px;
   height: 14px;

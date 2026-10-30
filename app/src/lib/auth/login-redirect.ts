@@ -14,7 +14,11 @@
 type LoginWindow = Pick<Window, "location" | "fetch"> & {
   sessionStorage?: Pick<Storage, "getItem" | "setItem">;
 };
-type RedirectWindow = Pick<LoginWindow, "location" | "sessionStorage">;
+type LoginWindowStorage = Pick<Storage, "getItem" | "setItem"> &
+  Partial<Pick<Storage, "removeItem">>;
+type RedirectWindow = Pick<LoginWindow, "location"> & {
+  sessionStorage?: LoginWindowStorage;
+};
 
 /**
  * 防死循环：后端在会话其实有效时也可能回网关的 401（身份头重放、签名校验失败：secret 不一致或时钟偏差）。
@@ -49,6 +53,18 @@ function lastRedirectAt(win: RedirectWindow): number | null {
 function markRedirect(win: RedirectWindow, now: number): void {
   try {
     storageOf(win)?.setItem(LOGIN_REDIRECT_KEY, String(now));
+  } catch {}
+}
+
+/**
+ * 确认登录正常（/api/me 回 200）后清掉跳转时间戳：30 秒的循环窗口重新算。
+ * 否则「刚登录完、30 秒内会话又真的过期」会被误当成死循环，停在「登录状态异常」而不是直接去 /login。
+ */
+export function clearLoginRedirectMark(
+  win: Pick<RedirectWindow, "sessionStorage"> = window,
+): void {
+  try {
+    storageOf(win as RedirectWindow)?.removeItem?.(LOGIN_REDIRECT_KEY);
   } catch {}
 }
 

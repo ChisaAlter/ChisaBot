@@ -20,6 +20,13 @@ export function AuthLoopNotice() {
     isLoginLoopDetected,
     () => false,
   );
+  // 卡片盖在启动骨架上：挂 html[data-auth-loop-open]，styles.css 据此藏起「正在加载 ChisaBot…」，两段字不叠在一起。
+  useEffect(() => {
+    if (!open) return;
+    const root = document.documentElement;
+    root.setAttribute("data-auth-loop-open", "");
+    return () => root.removeAttribute("data-auth-loop-open");
+  }, [open]);
   if (!open || typeof document === "undefined") return null;
   return createPortal(<AuthLoopCard />, document.body);
 }
