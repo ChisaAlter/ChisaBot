@@ -101,7 +101,7 @@ function loadSw(opts: {
     });
     await done;
   }
-  async function navigate(path = "/chat/abc") {
+  async function navigate(path = "/chat/abc", referrer = "") {
     let responded: Promise<Response> | undefined;
     listeners.fetch?.({
       request: {
@@ -109,6 +109,7 @@ function loadSw(opts: {
         url: `https://bot.example${path}`,
         mode: "navigate",
         headers: new Headers(),
+        referrer,
       },
       preloadResponse: Promise.resolve(undefined),
       respondWith: (p: Promise<Response>) => {
@@ -275,7 +276,7 @@ describe("sw.js 登录回调只发一次（state_mismatch）", () => {
 });
 
 function fakeWin(
-  responses: Array<number | "throw">,
+  responses: Array<number | "throw" | Response>,
   href = "https://bot.example/chat/abc?x=1#m",
 ) {
   const clock = fakeClock();
@@ -286,6 +287,7 @@ function fakeWin(
   };
   const probes: string[] = [];
   let reloads = 0;
+  const replaced: string[] = [];
   const win = {
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
@@ -294,6 +296,9 @@ function fakeWin(
       href,
       reload: () => {
         reloads++;
+      },
+      replace: (to: string) => {
+        replaced.push(to);
       },
     },
     document: { getElementById: (id: string) => els[id] ?? null },
@@ -304,10 +309,11 @@ function fakeWin(
       probes.push(url);
       const next = responses.shift() ?? 200;
       if (next === "throw") throw new TypeError("network");
+      if (typeof next !== "number") return next;
       return { status: next };
     },
   };
-  return { win, clock, events, els, probes, reloads: () => reloads };
+  return { win, clock, events, els, probes, replaced, reloads: () => reloads };
 }
 
 describe("重试卡片脚本", () => {
@@ -365,5 +371,218 @@ describe("重试卡片脚本", () => {
     w.events.online?.();
     for (let i = 0; i < 10; i++) await Promise.resolve();
     expect(w.reloads()).toBe(1);
+  });
+});
+
+describe("sw.js 会话过期（401）", () => {
+  test("导航拿到 401：302 到 /login?next=原地址，不是把 401 页面交给浏览器", async () => {
+    const sw = loadSw({
+      fetch: async () =>
+        new Response(JSON.stringify({ ok: false, openbotAuthRequired: true }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    const res = await sw.navigate("/channel/abc?watch=true");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(
+      "https://bot.example/login?next=%2Fchannel%2Fabc%3Fwatch%3Dtrue",
+    );
+  });
+
+  test("网关的 302 → /login 原样交给浏览器（不当成失败）", async () => {
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { location: "/login?next=%2Fchannel%2Fabc" },
+    });
+    const sw = loadSw({ fetch: async () => redirect });
+    const res = await sw.navigate("/channel/abc");
+    expect(res).toBe(redirect);
+  });
+
+  test("/login 导航不拦：登录页由网关直接给，不套 20 秒超时和 503 卡片", () => {
+    const sw = loadSw({});
+    for (const path of ["/login", "/login?next=%2Fsettings", "/login/"])
+      expect(sw.dispatchNavigate(path)).toBeUndefined();
+    // /log、/logins 这种不是登录页的前缀照常拦。
+    expect(sw.dispatchNavigate("/logins")).toBeDefined();
+  });
+
+  test("重试卡片探测到 401：直接去 /login?next=原地址，不刷新回去再等 20 秒", async () => {
+    const { ctx } = loadSw({});
+    const w = fakeWin([gateway401()]);
+    ctx.retryMain({
+      win: w.win,
+      delays: ctx.RETRY_DELAYS_MS,
+      retryStatuses: ctx.RETRY_STATUSES,
+    });
+    await w.clock.advance(1000);
+    expect(w.reloads()).toBe(0);
+    expect(w.replaced).toEqual(["/login?next=%2Fchat%2Fabc%3Fx%3D1%23m"]);
+    expect(w.clock.pending()).toEqual([]);
+  });
+
+  test("导航拿到不带 openbotAuthRequired 的 401（没有网关的部署）：原样交给浏览器，不跳 /login", async () => {
+    for (const make of [
+      () => new Response("nope", { status: 401 }),
+      () =>
+        new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+    ]) {
+      const original = make();
+      const sw = loadSw({ fetch: async () => original });
+      const res = await sw.navigate("/channel/abc");
+      expect(res).toBe(original);
+      expect(res.status).toBe(401);
+    }
+  });
+
+  test("重试卡片探测到不带 openbotAuthRequired 的 401：照旧刷新，不跳 /login", async () => {
+    const { ctx } = loadSw({});
+    const w = fakeWin([
+      new Response(JSON.stringify({ error: "x" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    ]);
+    ctx.retryMain({
+      win: w.win,
+      delays: ctx.RETRY_DELAYS_MS,
+      retryStatuses: ctx.RETRY_STATUSES,
+    });
+    await w.clock.advance(1000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(w.replaced).toEqual([]);
+    expect(w.reloads()).toBe(1);
+  });
+});
+
+function gateway401() {
+  return new Response(
+    JSON.stringify({ ok: false, openbotAuthRequired: true }),
+    {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    },
+  );
+}
+
+describe("sw.js 登录跳转防死循环（会话有效但后端仍回网关 401）", () => {
+  const make401 = () =>
+    new Response(JSON.stringify({ ok: false, openbotAuthRequired: true }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    });
+
+  test("从 /login 过来的导航还是网关 401：原样交给浏览器，不再 302 回 /login", async () => {
+    for (const referrer of [
+      "https://bot.example/login?next=%2Fchannel%2Fabc",
+      "https://bot.example/login",
+    ]) {
+      const original = make401();
+      const sw = loadSw({ fetch: async () => original });
+      const res = await sw.navigate("/channel/abc", referrer);
+      expect(res).toBe(original);
+      expect(res.status).toBe(401);
+    }
+  });
+
+  test("从别处过来（或别的域名的 /login）：照旧 302 到 /login?next=", async () => {
+    for (const referrer of [
+      "https://bot.example/channel/xyz",
+      "https://elsewhere.example/login",
+      "https://bot.example/logins",
+    ]) {
+      const sw = loadSw({ fetch: async () => make401() });
+      const res = await sw.navigate("/channel/abc", referrer);
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe(
+        "https://bot.example/login?next=%2Fchannel%2Fabc",
+      );
+    }
+  });
+
+  function cardWin(responses: Array<number | Response>, stamp: string | null) {
+    const w = fakeWin(responses);
+    const store = new Map<string, string>();
+    if (stamp !== null) store.set("chisabot:login-redirect-at", stamp);
+    const relogin: {
+      hidden: boolean;
+      disabled: boolean;
+      onclick: null | (() => Promise<void>);
+    } = { hidden: true, disabled: false, onclick: null };
+    const posts: Array<{ url: string; method?: string }> = [];
+    const baseFetch = w.win.fetch;
+    Object.assign(w.win, {
+      sessionStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => store.set(k, v),
+      },
+      fetch: async (url: string, init?: { method?: string }) => {
+        if (init?.method === "POST") {
+          posts.push({ url, method: init.method });
+          return { status: 200 };
+        }
+        return baseFetch(url);
+      },
+    });
+    const ids = w.win.document.getElementById;
+    w.win.document.getElementById = ((id: string) =>
+      id === "relogin" ? relogin : ids(id)) as typeof ids;
+    return { ...w, store, relogin, posts };
+  }
+
+  test("重试卡片：30 秒内已经去过 /login 又探测到网关 401 → 不再跳，显示「登录状态异常」+「退出重新登录」", async () => {
+    const { ctx } = loadSw({});
+    const w = cardWin([make401()], String(1_000_000 - 5_000));
+    ctx.retryMain({
+      win: w.win,
+      delays: ctx.RETRY_DELAYS_MS,
+      retryStatuses: ctx.RETRY_STATUSES,
+      loopKey: "chisabot:login-redirect-at",
+      loopWindowMs: 30_000,
+      now: () => 1_000_000,
+    });
+    await w.clock.advance(1000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(w.replaced).toEqual([]);
+    expect(w.reloads()).toBe(0);
+    expect(w.clock.pending()).toEqual([]);
+    expect(w.els.title?.textContent).toBe("登录状态异常");
+    expect(w.relogin.hidden).toBe(false);
+    await w.relogin.onclick?.();
+    expect(w.posts).toEqual([{ url: "/api/auth/sign-out", method: "POST" }]);
+    expect(w.replaced).toEqual(["/login"]);
+  });
+
+  test("重试卡片：时间戳早于 30 秒 → 照旧去 /login?next=，并记下这次跳转的时间", async () => {
+    const { ctx } = loadSw({});
+    const w = cardWin([make401()], String(1_000_000 - 31_000));
+    ctx.retryMain({
+      win: w.win,
+      delays: ctx.RETRY_DELAYS_MS,
+      retryStatuses: ctx.RETRY_STATUSES,
+      loopKey: "chisabot:login-redirect-at",
+      loopWindowMs: 30_000,
+      now: () => 1_000_000,
+    });
+    await w.clock.advance(1000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(w.replaced).toEqual(["/login?next=%2Fchat%2Fabc%3Fx%3D1%23m"]);
+    expect(w.store.get("chisabot:login-redirect-at")).toBe("1000000");
+    expect(w.relogin.hidden).toBe(true);
+  });
+
+  test("卡片 HTML 带上隐藏的「退出重新登录」按钮和循环保护参数", async () => {
+    const sw = loadSw({ fetch: async () => new Response("", { status: 503 }) });
+    const { html } = await kindOf(await sw.navigate("/chat/abc"));
+    expect(html).toContain(
+      '<button type="button" id="relogin" hidden>退出重新登录</button>',
+    );
+    expect(html).toContain(
+      'loopKey:"chisabot:login-redirect-at",loopWindowMs:30000',
+    );
   });
 });
