@@ -964,3 +964,5 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **冲突**：只有 `docs/DEVLOG.md`，两边都保留；`CHANGELOG.md` 顶部的 `## Unreleased` 发版时改成 0.1.115 段，并补上 #448 的条目。
 
 **版本**：根、`app`、`server` 升到 `0.1.115`；PC / Android 不变。不打 tag、不发 Release。
+
+**0.1.115 部署**：14:05（北京时间）先备份数据库 `pre-release/v0.1.115-20261030T060518Z.dump`（`pg_restore -l` 767 项），再 `deploy-serial.sh e9a65f3 jun-grokbot`，上线 `local/chisabot:auto-202610300605-e9a65f3`，回滚镜像 `auto-202610300420-dc40343`。box 上 bun 1.3.14：install、typecheck、build 通过，test:app 1915 pass / 0 fail。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.115 / `e9a65f3`；公网 `/login` 200，匿名导航 `/` → 302 `/login?next=%2F`；线上包含 `data-resizing`。网关、nginx、web-auth 没动。#451 留到下一版。
