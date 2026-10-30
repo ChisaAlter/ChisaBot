@@ -924,3 +924,27 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 - 发版前备份 pre-release/v0.1.114-20261030T042002Z.dump（pg_restore -l 767 条）。
 - smoke ok:true persisted:false；health.sh 通过；公网 /login 200；匿名导航 / → 302 /login?next=%2F；/sign → 302 /login；sw.js SW_VERSION = "5"。
 
+
+## 2026-10-30 主题配色看得出来（fix/palette-theme）
+
+**动机**：Jun 反馈设置里 6 个主题配色选哪个都看不出变化，选了「樱花绯粉」界面还是蓝的。原因有三：① `styles.css` 的 `html[data-palette=…]` 只覆盖了 `--accent-blue`，只染到开关、导航选中；主按钮用 `--ink-primary`，`--accent-color` / `--accent-soft` 都没覆盖。② 「智能跟随主题」时 Hark WebGL 天空按 `harkSceneLight/Dark` 选固定的蓝天 / 夜空场景，引擎没有色相参数，盖住了 `computePaletteSky` 的主题渐变。③ `--glass-bg` 写死白 / 灰。另外查到第 ④ 个：`--sky-1..3` 用 `@property` 注册成了 `inherits: false`，写在 body 上的主题渐变传不到 `#skyph`，占位天空除了最上面一段其余还是蓝色。
+
+**改动**：
+- `styles.css` 配色块：5 个非 default 配色的亮 / 暗各自覆盖 `--accent-color`、`--accent-soft`、`--accent-blue*`、`--ink-primary` / `--ink-primary-hover` / `--on-primary`（主按钮、shadcn `--primary`）、`--focus` / `--focus-line`（聚焦环）、`--glass-tint`。亮色主按钮用各色的深一档（如樱花 `#9d174d`，白字），暗色用浅一档（如樱花 `#faa2c1`，深字 `#0b1020`）。
+- `styles.css` 末尾新增一节：`--glass-tint` 默认 `transparent`（`:root` 和 `html.dark` 都给）；非 default 时 `--glass-bg` / `--glass-input-bg` 用 `color-mix` 混进约 8% 强调色；大板块底色是 `!important` 写死的，不去抢，改用 `--lg-shadow` 里一层铺满的内阴影叠上 `--glass-tint`（左栏、右栏、账号卡、输入框、卡片）；输入框 `--composer-accent` 跟强调色；偏蓝的柔光薄纱 / 深色压暗层在非 default 时换成中性白 / 黑；`#skyph` 读挂在 `<html>` 上不注册的 `--palette-sky-0..3`。不加模糊、不用 `:has()`、不改布局，没有新动画。
+- `appearance.ts`：新增 `usesPaletteGradientSky(state)`（`harkScene === "auto"` 且 palette 不是 default）；`computePaletteSky` 的 root 变量多给 `--palette-sky-0..3`；深色天空亮度从 6–17% 提到 12–26%，樱花暗色色相改为 300–334（深紫红夜）、亮色底部转暖（粉白黄昏），落日暗色改为暖棕夜、海洋 / 翡翠 / 极光暗色饱和度提高，免得都只剩黑色。
+- `sky-background.tsx`：`resolveSkyMode` 多一个 `paletteGradient`，为真时和壁纸 / 性能模式一样不启动 WebGL（`data-sky-off`，露出 `#skyph`）；切回 default 或手动选场景时照旧启动。
+- 新测试 `app/tests/palette-theme.test.ts`：5 个配色 × 亮 / 暗，`--accent-color`、`--accent-soft`、`--glass-tint`、主按钮颜色都和 default 不同，天空渐变是带主题色相的 hsl 且色相和 default 差 ≥10°；主按钮文字对比度、强调色当文字的对比度都 ≥ 4.5；智能跟随 + 非 default 才走渐变；新增样式无 blur / `:has()`。
+
+**和 Hark 的区别**：Hark 只有固定的 12 个天空场景，配色不影响天空；我们在非 default 配色 + 智能跟随时不跑 WebGL，用主题渐变代替，用户手动选的场景和「背景随时间变化」不受影响。
+
+**截图**：只放在 PR #441 的描述里，不进仓库。
+
+**审查后修改（小爱审 #441，2026-10-30）**：
+- 删掉 `docs/images/palette-fix/` 下 15 张提交进仓库的 PNG（单独一个删除提交），上面的截图说明同步改掉；截图不进任何 ChisaBot 分支。
+- 写死的蓝色改用主题变量：开关选中、页面加载图标、进度条、info toast 图标，`bot-bubbles.tsx` 日程 / 邮件图标的 `text-[#2563eb]`；侧栏机器人选中条、未读小圆点、模型胶囊悬停描边、模型列表高亮、权限菜单聚焦环、设置搜索命中、跳转闪烁、发送键阴影等 `#2f7cf6` / `rgba(47,124,246,…)` 改成 `var(--pal-accent, 原值)` / `color-mix(in srgb, var(--pal-accent, 原值) N%, transparent)`。`--pal-accent`（= `--accent-color`）、`--pal-accent-soft` 只在 `html[data-palette]:not([data-palette="default"])` 下定义，default 和没有属性时走兜底的原值，与 main 完全相同。白字的未读数字徽章、头像配色、变量定义和 `var(…, #xxx)` 兜底值不改。
+- 天空：任何非 default 配色都不启动 WebGL，不管「智能跟随主题」开没开、手动选了哪个场景，`usesPaletteGradientSky` 改为只看 palette；设置页场景选择上方加一行「彩色主题下使用主题天空」（`appearance-preferences.tsx` 只加这一处）。
+- `--glass-tint` 不再用 100vmax 内阴影：大板块规则的 `background` 改成 `var(--pal-tint-layer,) var(--lg-surface…)`；`--pal-tint-layer`（`linear-gradient(var(--glass-tint), var(--glass-tint)),`，带逗号）只在非 default 下定义，default 时这一层不存在。一直叠一层透明渐变会改变面板渐变的光栅化，default 像素对不上，所以不用。`--lg-shadow` 恢复原值。
+- 「模型加载失败 · 重试」：浅色 `#b4412d`→`#9c3020`，深色新增 `#ff9b87`；真 Chrome 取实际胶囊底色量对比度，6 个配色亮 / 暗都 ≥ 5.0（樱花暗色 5.97，原来深红字压深底不到 4.5）。
+- default 像素一致（小爱追加）：真 Chrome 1280×800，main 与本 PR 各截首页（选中行 + 未读圆点）和设置页（含开关），亮 / 暗、default 与无 data-palette 共 8 个画面，每个都至少有一轮 main 对 PR 差 0 像素；其余几处（右上头像按钮、设置页中部）在 main 对 main、PR 对 PR 之间同样出现，是截图本身的抖动。固定时钟、关动画、隐藏 WebGL 画布和头像图片、mock 模型接口。新测试断言 default 兜底值就是 main 的原值。
+- 开关颜色：第 ~3075 行 `[data-slot="switch"][data-checked]{background:var(--accent-blue)}` 在亮色下确实盖过开关规则，但各配色都覆盖了 `--accent-blue`，所以开关照样跟主题色。实测 default 亮 rgb(47,116,240) / 暗 rgb(96,165,250)，与 main 相同；樱花亮 rgb(190,24,93) / 暗 rgb(247,131,172)。

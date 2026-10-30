@@ -146,8 +146,8 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     swatchGradient: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 52%, #ec4899 100%)",
     skyHueLight: [258, 266, 276, 245],
     skySatLight: [64, 58, 52, 48],
-    skyHueDark: [258, 252, 246, 264],
-    skySatDark: [44, 40, 36, 32],
+    skyHueDark: [266, 258, 250, 284],
+    skySatDark: [52, 46, 40, 36],
     harkSceneLight: 7,
     harkSceneDark: 2,
   },
@@ -160,8 +160,8 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     swatchGradient: "linear-gradient(135deg, #059669 0%, #10b981 52%, #2dd4bf 100%)",
     skyHueLight: [164, 168, 172, 158],
     skySatLight: [56, 50, 44, 42],
-    skyHueDark: [172, 176, 180, 168],
-    skySatDark: [38, 34, 30, 28],
+    skyHueDark: [168, 172, 176, 160],
+    skySatDark: [50, 46, 40, 36],
     harkSceneLight: 5,
     harkSceneDark: 4,
   },
@@ -174,8 +174,8 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     swatchGradient: "linear-gradient(135deg, #0369a1 0%, #0ea5e9 50%, #22d3ee 100%)",
     skyHueLight: [196, 199, 202, 192],
     skySatLight: [76, 70, 62, 56],
-    skyHueDark: [204, 208, 212, 200],
-    skySatDark: [48, 44, 40, 36],
+    skyHueDark: [194, 198, 202, 188],
+    skySatDark: [62, 56, 50, 44],
     harkSceneLight: 7,
     harkSceneDark: 2,
   },
@@ -188,8 +188,8 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     swatchGradient: "linear-gradient(135deg, #ea580c 0%, #f59e0b 52%, #fb7185 100%)",
     skyHueLight: [28, 34, 40, 18],
     skySatLight: [74, 68, 60, 54],
-    skyHueDark: [224, 220, 216, 228],
-    skySatDark: [36, 32, 28, 26],
+    skyHueDark: [20, 26, 32, 12],
+    skySatDark: [48, 44, 40, 34],
     harkSceneLight: 0,
     harkSceneDark: 4,
   },
@@ -200,10 +200,10 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     accentLight: "#db2777",
     accentDark: "#f783ac",
     swatchGradient: "linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fda4af 100%)",
-    skyHueLight: [336, 342, 348, 326],
-    skySatLight: [66, 60, 54, 48],
-    skyHueDark: [248, 242, 236, 254],
-    skySatDark: [36, 32, 28, 26],
+    skyHueLight: [332, 340, 350, 22],
+    skySatLight: [62, 60, 58, 74],
+    skyHueDark: [318, 326, 334, 300],
+    skySatDark: [46, 42, 38, 32],
     harkSceneLight: 7,
     harkSceneDark: 2,
   },
@@ -915,7 +915,17 @@ export function resolveActiveWallpaperCss(state: AppearanceState): string | null
 }
 
 /**
- * 根据当前主题色生成与天空融合的渐变变量（作为 WebGL 首帧绘制前的预渲染垫片）
+ * 选了非 default 配色时（不管「智能跟随主题」开没开、手动选了哪个场景），天空一律用 computePaletteSky 的主题渐变，
+ * 不启动 Hark WebGL：引擎只有固定的蓝天 / 夜空场景、没有色相参数，会把主题色盖掉；不跑 WebGL 也更省。
+ * 设置页场景选择处会提示「彩色主题下使用主题天空」。
+ */
+export function usesPaletteGradientSky(state: Pick<AppearanceState, "palette">): boolean {
+  return state.palette !== "default";
+}
+
+/**
+ * 根据当前主题色生成与天空融合的渐变变量：WebGL 首帧前的预渲染垫片；
+ * 非 default 配色时就是最终的天空（见 usesPaletteGradientSky）。
  */
 export function computePaletteSky(
   palette: ThemePaletteId,
@@ -927,7 +937,8 @@ export function computePaletteSky(
 
   const hues = dark ? meta.skyHueDark : meta.skyHueLight;
   const sats = dark ? meta.skySatDark : meta.skySatLight;
-  const lights = dark ? [6, 9, 13, 17] : [54, 66, 78, 88];
+  // 深色稍微提亮一点（12–26%），不然叠上压暗层后几个主题都只剩黑色，看不出色相。
+  const lights = dark ? [12, 16, 21, 26] : [54, 66, 78, 88];
   const stops = [0, 1, 2, 3].map(
     (i) => `hsl(${hues[i]} ${sats[i]}% ${lights[i]}%)`,
   );
@@ -943,6 +954,12 @@ export function computePaletteSky(
     },
     root: {
       "--glass-sky": stops[2],
+      // --sky-1..3 在 styles.css 里用 @property 注册成了不继承（inherits: false），写在 body 上传不到 #skyph；
+      // 主题渐变另起不注册的变量，挂在 <html> 上让 #skyph 读（见 styles.css「主题配色落到大面上」）。
+      "--palette-sky-0": stops[0],
+      "--palette-sky-1": stops[1],
+      "--palette-sky-2": stops[2],
+      "--palette-sky-3": stops[3],
     },
   };
 }

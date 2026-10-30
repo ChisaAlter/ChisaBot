@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 主题配色看得出来了（fix/palette-theme）：设置里 6 个配色以前只改了 `--accent-blue`，开关、导航选中这类小元素才变色，选「樱花绯粉」界面还是蓝的。现在每个配色的亮 / 暗都覆盖 `--accent-color`、`--accent-soft`、主按钮（`--ink-primary` / `--on-primary`）、聚焦（`--focus` / `--focus-line`），新增 `--glass-tint`（强调色 8–10%）叠进左栏、右栏、账号卡和输入框的毛玻璃；只要选了非 default 配色就不启动 Hark WebGL（不管「智能跟随主题」开没开；引擎只有固定蓝天 / 夜空，没有色相参数），天空直接用主题渐变，也更省，设置页场景选择处有提示「彩色主题下使用主题天空」。开关、加载图标、进度条、提示图标、侧栏选中条等写死的蓝色也跟随主题色；「模型加载失败 · 重试」在深色下提亮，对比度 ≥ 4.5。樱花亮色是粉白黄昏、暗色是深紫红夜，其余 4 个各自配好。主按钮文字对比度全部 ≥ 4.5。default（以及没有 data-palette 属性）与 main 像素一致：写死的蓝色改成 `var(--pal-accent, 原值)`，`--pal-accent` / `--pal-tint-layer` 只在非 default 配色下定义；布局不变。
+
 ## 0.1.114 — 2026-10-30
 
 这一版只合并 #442：公网网关下会话过期不再卡在加载（直接去 `/login?next=`，带防死循环），手机抽屉导航后收起，`/channel/new` 总开新话题。Service Worker 升到 5。只有网页更新，网关、登录服务（web-auth）、PC 和 Android 不变。

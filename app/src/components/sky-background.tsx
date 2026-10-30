@@ -7,6 +7,7 @@ import {
   resolveEffectiveHarkScene,
   setHarkSkyScene,
   useAppearance,
+  usesPaletteGradientSky,
   useWallpaperLoading,
 } from "@/lib/appearance";
 import { usePerfMode } from "@/lib/perf-mode";
@@ -33,6 +34,7 @@ import { createSkyWindow } from "@/lib/sky-window";
  *  - 「背景随时间变化」（live）= 动态天空：页面可见、窗口有焦点、且 2.5s 内有操作时才跑；
  *    系统开了「减少动态效果」时退回快照；
  *  - 设了壁纸或开了性能模式：不启动引擎；已经启动的停下并隐藏画布（html[data-sky-off]）；
+ *  - 非 default 配色（不管是否智能跟随）：同样不启动引擎，#skyph 显示 computePaletteSky 的主题渐变（引擎没有色相参数）；
  *  - 不再强制 preserveDrawingBuffer：停住的画布保留最后一次上屏的画面，不需要每帧多拷一份缓冲。
  */
 
@@ -346,8 +348,10 @@ function resolveSkyMode(opts: {
   perf: boolean;
   wallpaper: boolean;
   live: boolean;
+  /** 非 default 配色：用主题渐变（#skyph），不启动 WebGL。 */
+  paletteGradient: boolean;
 }): SkyMode {
-  if (opts.perf || opts.wallpaper) return "off";
+  if (opts.perf || opts.wallpaper || opts.paletteGradient) return "off";
   return opts.live && !prefersReducedMotion() ? "live" : "snapshot";
 }
 
@@ -384,7 +388,15 @@ export function SkyBackground() {
       ]) {
         document.body.style.removeProperty(k);
       }
-      root.style.removeProperty("--glass-sky");
+      for (const k of [
+        "--glass-sky",
+        "--palette-sky-0",
+        "--palette-sky-1",
+        "--palette-sky-2",
+        "--palette-sky-3",
+      ]) {
+        root.style.removeProperty(k);
+      }
     }
   }, [dark, appearance]);
 
@@ -396,6 +408,7 @@ export function SkyBackground() {
     // 壁纸还在从 IndexedDB 读回时也不启动天空：读回来就是壁纸，先启动只会闪一下。
     wallpaper: wallpaperCss !== null || wallpaperLoading,
     live: appearance.harkScene === "live",
+    paletteGradient: usesPaletteGradientSky(appearance),
   });
 
   // 2. 启动 Hark 原生 WebGL 动态天空引擎（/wallpaper_core.html）；壁纸 / 性能模式下不启动。

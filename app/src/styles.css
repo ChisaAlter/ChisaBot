@@ -1044,8 +1044,8 @@ html[data-sky-ease] body::before {
   background: rgba(255, 255, 255, 0.06);
 }
 .glass-bot-row.is-on {
-  background: linear-gradient(90deg, rgba(47, 124, 246, 0.14), rgba(255, 255, 255, 0.7) 70%);
-  box-shadow: var(--glass-shadow-sm), inset 0 0 0 1px rgba(47, 124, 246, 0.18);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 14%, transparent), rgba(255, 255, 255, 0.7) 70%);
+  box-shadow: var(--glass-shadow-sm), inset 0 0 0 1px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 18%, transparent);
   color: var(--glass-ink);
 }
 .dark .glass-bot-row.is-on {
@@ -1060,10 +1060,10 @@ html[data-sky-ease] body::before {
   bottom: 10px;
   width: 3px;
   border-radius: 0 3px 3px 0;
-  background: #2f7cf6;
+  background: var(--pal-accent, #2f7cf6);
 }
 .dark .glass-bot-row.is-on::before {
-  background: #4c8dff;
+  background: var(--pal-accent, #4c8dff);
 }
 .glass-bot-row.is-on .glass-item-t {
   font-weight: 600;
@@ -1145,7 +1145,7 @@ html[data-sky-ease] body::before {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #2f7cf6;
+  background: var(--pal-accent, #2f7cf6);
 }
 .glass-bot-more {
   flex: none;
@@ -1450,7 +1450,7 @@ html[data-sky-ease] body::before {
 }
 .glass-mini-bot.is-on {
   background: rgba(255, 255, 255, 0.75);
-  box-shadow: var(--glass-shadow-sm), inset 0 0 0 1.5px rgba(47, 124, 246, 0.55);
+  box-shadow: var(--glass-shadow-sm), inset 0 0 0 1.5px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 55%, transparent);
 }
 .dark .glass-mini-bot.is-on {
   background: rgba(76, 141, 255, 0.18);
@@ -1464,10 +1464,10 @@ html[data-sky-ease] body::before {
   bottom: 12px;
   width: 3px;
   border-radius: 0 3px 3px 0;
-  background: #2f7cf6;
+  background: var(--pal-accent, #2f7cf6);
 }
 .dark .glass-mini-bot.is-on::before {
-  background: #4c8dff;
+  background: var(--pal-accent, #4c8dff);
 }
 .glass-mini-bot:focus-visible {
   box-shadow: 0 0 0 2px var(--focus);
@@ -1479,7 +1479,7 @@ html[data-sky-ease] body::before {
   width: 9px;
   height: 9px;
   border-radius: 999px;
-  background: #2f7cf6;
+  background: var(--pal-accent, #2f7cf6);
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
 }
 .glass-mini-badge {
@@ -1666,12 +1666,12 @@ html[data-sky-ease] body::before {
   border: 0 !important;
   background: var(--composer-accent, #2f7cf6) !important;
   color: #fff !important;
-  box-shadow: 0 4px 12px rgba(47, 124, 246, 0.35);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 35%, transparent);
   transition: transform 0.12s ease, box-shadow 0.15s ease, background 0.15s ease, opacity 0.15s ease;
 }
 .glass-composer-send:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(47, 124, 246, 0.42);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 42%, transparent);
 }
 .glass-composer-send:active:not(:disabled) {
   transform: scale(0.96);
@@ -1714,7 +1714,7 @@ html[data-sky-ease] body::before {
 .model-pill:hover:not(:disabled),
 .model-pill[data-popup-open] {
   background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(47, 124, 246, 0.25);
+  border-color: color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 25%, transparent);
   color: var(--glass-ink);
 }
 .model-pill:disabled {
@@ -1755,7 +1755,11 @@ html[data-sky-ease] body::before {
 }
 .model-pill-warn {
   border-color: rgba(220, 80, 60, 0.35);
-  color: #b4412d;
+  color: #9c3020;
+}
+/* 「模型加载失败 · 重试」：浅色加深到 #9c3020、深色换成亮珊瑚红，压在各配色的胶囊底上对比度都 ≥ 4.5 */
+.dark .model-pill-warn {
+  color: #ff9b87;
 }
 .model-pill-static {
   cursor: default;
@@ -1896,7 +1900,7 @@ html[data-sky-ease] body::before {
   user-select: none;
 }
 .model-popover-item[data-highlighted] {
-  background: rgba(47, 124, 246, 0.09);
+  background: color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 9%, transparent);
 }
 .dark .model-popover-item[data-highlighted] {
   background: rgba(96, 155, 255, 0.14);
@@ -2430,8 +2434,8 @@ button.chat-bottom-pill:hover {
 .dark [data-slot="select-trigger"]:focus-visible {
   background-color: rgba(255, 255, 255, 0.08);
 }
-[data-slot="switch"][data-checked] { background: #3b82f6; }
-.dark [data-slot="switch"][data-checked] { background: #60a5fa; }
+[data-slot="switch"][data-checked] { background: var(--pal-accent, #3b82f6); }
+.dark [data-slot="switch"][data-checked] { background: var(--pal-accent, #60a5fa); }
 [data-slot="button"][data-loading="true"] { cursor: progress; }
 /* §82：输入框里放不下的占位文字 / 值收成「…」，不在框边被硬切。 */
 [data-slot="input"] { text-overflow: ellipsis; }
@@ -2598,8 +2602,8 @@ button.chat-bottom-pill:hover {
 }
 .dark .page-loader-card { border-color: rgba(255, 255, 255, 0.08); }
 .page-loader-overlay[data-leaving="true"] .page-loader-card { animation: page-loader-pop-out 0.2s ease-in both; }
-.page-loader-glyph { width: 44px; height: 44px; color: #3b82f6; transition: color 0.2s ease-out; }
-.dark .page-loader-glyph { color: #60a5fa; }
+.page-loader-glyph { width: 44px; height: 44px; color: var(--pal-accent, #3b82f6); transition: color 0.2s ease-out; }
+.dark .page-loader-glyph { color: var(--pal-accent, #60a5fa); }
 .page-loader-card[data-btn-state="success"] .page-loader-glyph { color: #16a34a; }
 .dark .page-loader-card[data-btn-state="success"] .page-loader-glyph { color: #4ade80; }
 .page-loader-card[data-btn-state="error"] .page-loader-glyph { color: var(--destructive); }
@@ -2608,10 +2612,10 @@ button.chat-bottom-pill:hover {
 .page-loader-desc { font-size: 13px; color: var(--glass-ink-3, var(--muted-foreground)); line-height: 1.5; }
 .page-loader-progress {
   width: 100%; height: 6px; border-radius: 999px; overflow: hidden;
-  background: rgba(59, 130, 246, 0.14);
+  background: var(--pal-accent-soft, rgba(59, 130, 246, 0.14));
 }
 .page-loader-progress > i {
-  display: block; height: 100%; border-radius: inherit; background: #3b82f6;
+  display: block; height: 100%; border-radius: inherit; background: var(--pal-accent, #3b82f6);
   transition: width 0.3s ease-out;
 }
 .page-loader-steps { display: flex; flex-direction: column; gap: 6px; width: 100%; text-align: left; font-size: 13px; }
@@ -2719,7 +2723,7 @@ button.chat-bottom-pill:hover {
 .glass-toast[data-leaving="true"] { animation: p3-toast-out 0.18s ease-in both; }
 .glass-toast[data-kind="success"] .glass-toast-icon { color: #16a34a; }
 .glass-toast[data-kind="error"] .glass-toast-icon { color: var(--destructive); }
-.glass-toast[data-kind="info"] .glass-toast-icon { color: #3b82f6; }
+.glass-toast[data-kind="info"] .glass-toast-icon { color: var(--pal-accent, #3b82f6); }
 .glass-toast-close {
   display: grid;
   place-items: center;
@@ -6019,7 +6023,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .brand-mark-btn { gap: 8px; }
 .model-popover-item { padding: 8px 10px; }
 .glass-toast-action { flex: none; height: 28px; padding: 0 12px; border-radius: var(--r-pill); font-size: 13px; font-weight: 600; color: var(--accent-blue, #2f74f0); background: var(--accent-blue-soft, rgba(47, 116, 240, 0.12)); transition: background var(--dur-1), color var(--dur-1); }
-.glass-toast-action:hover { background: rgba(47, 116, 240, 0.2); }
+.glass-toast-action:hover { background: color-mix(in srgb, var(--pal-accent, rgb(47, 116, 240)) 20%, transparent); }
 .dark .glass-toast-action { color: #8db4ff; background: rgba(91, 149, 255, 0.16); }
 
 /* §34.5 动效：只动 transform / opacity；列表补位由 PresenceList 做。减少动态效果时去掉位移。 */
@@ -7752,7 +7756,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   color: var(--glass-ink);
 }
 .perm-chip:focus-visible {
-  outline: 2px solid rgba(47, 124, 246, 0.55);
+  outline: 2px solid color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 55%, transparent);
   outline-offset: 1px;
 }
 .perm-chip:disabled { cursor: default; opacity: 0.55; }
@@ -7818,7 +7822,7 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 .perm-option:focus-visible { background: rgba(22, 24, 29, 0.05); outline: none; }
 .dark .perm-option:hover,
 .dark .perm-option:focus-visible { background: rgba(255, 255, 255, 0.07); }
-.perm-option:focus-visible { box-shadow: inset 0 0 0 2px rgba(47, 124, 246, 0.45); }
+.perm-option:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 45%, transparent); }
 .perm-option-icon { width: 18px; height: 18px; margin-top: 1px; flex-shrink: 0; }
 .perm-option-text { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .perm-option-title { font-size: 14px; font-weight: 500; }
@@ -7862,27 +7866,27 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 .settings-search-clear:hover { background: var(--glass-hover); color: var(--ink-1); }
 .settings-search-list { display: flex; flex-direction: column; gap: 2px; }
 .settings-hit { width: 100%; text-align: left; }
-.settings-hit.is-active { background: var(--glass-hover); box-shadow: inset 0 0 0 1px rgba(47, 124, 246, 0.25); }
+.settings-hit.is-active { background: var(--glass-hover); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 25%, transparent); }
 .settings-search-empty { padding: 18px 10px; text-align: center; }
 .settings-search-empty-t { font-size: 14px; font-weight: 500; color: var(--ink-1); }
 .settings-search-empty-s { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--ink-3); }
 /* 搜索跳过去的那一块闪一下。 */
 .setting-flash { animation: setting-flash 2.2s ease-out; border-radius: 14px; }
 @keyframes setting-flash {
-  0%, 30% { box-shadow: 0 0 0 3px rgba(47, 124, 246, 0.45); background-color: rgba(47, 124, 246, 0.08); }
-  100% { box-shadow: 0 0 0 3px rgba(47, 124, 246, 0); background-color: transparent; }
+  0%, 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 45%, transparent); background-color: color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 8%, transparent); }
+  100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 0%, transparent); background-color: transparent; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .setting-flash { animation: none; box-shadow: 0 0 0 3px rgba(47, 124, 246, 0.45); }
+  .setting-flash { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 45%, transparent); }
 }
 /* DOG-04：Ctrl+K 正文命中滚到消息时闪一下（与设置搜索同色、同时长）。 */
 .message-flash { animation: message-flash 2.2s ease-out; border-radius: var(--r-md, 14px); }
 @keyframes message-flash {
-  0%, 30% { box-shadow: 0 0 0 3px rgba(47, 124, 246, 0.45); background-color: rgba(47, 124, 246, 0.08); }
-  100% { box-shadow: 0 0 0 3px rgba(47, 124, 246, 0); background-color: transparent; }
+  0%, 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 45%, transparent); background-color: color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 8%, transparent); }
+  100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 0%, transparent); background-color: transparent; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .message-flash { animation: none; box-shadow: 0 0 0 3px rgba(47, 124, 246, 0.45); }
+  .message-flash { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 45%, transparent); }
 }
 /* CB-106：左栏搜索结果的键盘高亮（↑ / ↓ 移动，Enter 打开）。焦点留在输入框，所以不靠 :focus。 */
 #sidebar-search-results a[data-search-active] { background: color-mix(in srgb, var(--primary, #2f7cf6) 14%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary, #2f7cf6) 55%, transparent); }
@@ -9202,56 +9206,139 @@ html[data-theme="dark"] #sky-root::after {
   );
 }
 
-/* 1. 精选 6 款主题配色令牌覆盖（支持浅色与深色高对比度） */
+/* 1. 精选 6 款主题配色令牌覆盖（支持浅色与深色高对比度）。
+ * 除了旧的 --accent-blue，还要覆盖 --accent-color / --accent-soft（强调色）、--ink-primary（主按钮）、
+ * --focus / --focus-line（聚焦）和 --glass-tint（混进毛玻璃的强调色，约 8%）；default 不写，保持原样。
+ * 主按钮底色与 --on-primary 的对比度都 ≥ 4.5（见 PR 描述里的表）。 */
 html[data-palette="aurora"] {
   --accent-blue: #7c3aed;
   --accent-blue-ink: #6d28d9;
   --accent-blue-soft: rgba(124, 58, 237, 0.14);
+  --accent-color: #7c3aed;
+  --accent-soft: rgba(124, 58, 237, 0.14);
+  --ink-primary: #6d28d9;
+  --ink-primary-hover: #5b21b6;
+  --on-primary: #ffffff;
+  --focus: rgba(124, 58, 237, 0.24);
+  --focus-line: rgba(124, 58, 237, 0.6);
+  --glass-tint: rgba(124, 58, 237, 0.08);
 }
 html.dark[data-palette="aurora"] {
   --accent-blue: #b197fc;
-  --accent-blue-ink: #d0bfff;
+  --accent-blue-ink: #c4b5fd;
   --accent-blue-soft: rgba(177, 151, 252, 0.2);
+  --accent-color: #b197fc;
+  --accent-soft: rgba(177, 151, 252, 0.2);
+  --ink-primary: #c4b5fd;
+  --ink-primary-hover: #ddd6fe;
+  --on-primary: #0b1020;
+  --focus: rgba(177, 151, 252, 0.28);
+  --focus-line: rgba(177, 151, 252, 0.7);
+  --glass-tint: rgba(177, 151, 252, 0.1);
 }
 html[data-palette="emerald"] {
-  --accent-blue: #059669;
-  --accent-blue-ink: #047857;
-  --accent-blue-soft: rgba(5, 150, 105, 0.14);
+  --accent-blue: #047857;
+  --accent-blue-ink: #065f46;
+  --accent-blue-soft: rgba(4, 120, 87, 0.14);
+  --accent-color: #047857;
+  --accent-soft: rgba(4, 120, 87, 0.14);
+  --ink-primary: #065f46;
+  --ink-primary-hover: #064e3b;
+  --on-primary: #ffffff;
+  --focus: rgba(4, 120, 87, 0.24);
+  --focus-line: rgba(4, 120, 87, 0.6);
+  --glass-tint: rgba(4, 120, 87, 0.08);
 }
 html.dark[data-palette="emerald"] {
   --accent-blue: #38d9a9;
   --accent-blue-ink: #63e6be;
   --accent-blue-soft: rgba(56, 217, 169, 0.2);
+  --accent-color: #38d9a9;
+  --accent-soft: rgba(56, 217, 169, 0.2);
+  --ink-primary: #63e6be;
+  --ink-primary-hover: #96f2d7;
+  --on-primary: #0b1020;
+  --focus: rgba(56, 217, 169, 0.28);
+  --focus-line: rgba(56, 217, 169, 0.7);
+  --glass-tint: rgba(56, 217, 169, 0.1);
 }
 html[data-palette="sakura"] {
-  --accent-blue: #db2777;
-  --accent-blue-ink: #be185d;
-  --accent-blue-soft: rgba(219, 39, 119, 0.14);
+  --accent-blue: #be185d;
+  --accent-blue-ink: #9d174d;
+  --accent-blue-soft: rgba(190, 24, 93, 0.14);
+  --accent-color: #be185d;
+  --accent-soft: rgba(190, 24, 93, 0.14);
+  --ink-primary: #9d174d;
+  --ink-primary-hover: #831843;
+  --on-primary: #ffffff;
+  --focus: rgba(190, 24, 93, 0.24);
+  --focus-line: rgba(190, 24, 93, 0.6);
+  --glass-tint: rgba(190, 24, 93, 0.08);
 }
 html.dark[data-palette="sakura"] {
   --accent-blue: #f783ac;
   --accent-blue-ink: #faa2c1;
   --accent-blue-soft: rgba(247, 131, 172, 0.2);
+  --accent-color: #f783ac;
+  --accent-soft: rgba(247, 131, 172, 0.2);
+  --ink-primary: #faa2c1;
+  --ink-primary-hover: #fcc2d7;
+  --on-primary: #0b1020;
+  --focus: rgba(247, 131, 172, 0.28);
+  --focus-line: rgba(247, 131, 172, 0.7);
+  --glass-tint: rgba(247, 131, 172, 0.1);
 }
 html[data-palette="ocean"] {
-  --accent-blue: #0284c7;
-  --accent-blue-ink: #0369a1;
-  --accent-blue-soft: rgba(2, 132, 199, 0.14);
+  --accent-blue: #0369a1;
+  --accent-blue-ink: #075985;
+  --accent-blue-soft: rgba(3, 105, 161, 0.14);
+  --accent-color: #0369a1;
+  --accent-soft: rgba(3, 105, 161, 0.14);
+  --ink-primary: #075985;
+  --ink-primary-hover: #0c4a6e;
+  --on-primary: #ffffff;
+  --focus: rgba(3, 105, 161, 0.24);
+  --focus-line: rgba(3, 105, 161, 0.6);
+  --glass-tint: rgba(3, 105, 161, 0.08);
 }
 html.dark[data-palette="ocean"] {
   --accent-blue: #4dabf7;
   --accent-blue-ink: #74c0fc;
   --accent-blue-soft: rgba(77, 171, 247, 0.2);
+  --accent-color: #4dabf7;
+  --accent-soft: rgba(77, 171, 247, 0.2);
+  --ink-primary: #74c0fc;
+  --ink-primary-hover: #a5d8ff;
+  --on-primary: #0b1020;
+  --focus: rgba(77, 171, 247, 0.28);
+  --focus-line: rgba(77, 171, 247, 0.7);
+  --glass-tint: rgba(77, 171, 247, 0.1);
 }
 html[data-palette="sunset"] {
-  --accent-blue: #d97706;
-  --accent-blue-ink: #b45309;
-  --accent-blue-soft: rgba(217, 119, 6, 0.14);
+  --accent-blue: #b45309;
+  --accent-blue-ink: #92400e;
+  --accent-blue-soft: rgba(180, 83, 9, 0.14);
+  --accent-color: #b45309;
+  --accent-soft: rgba(180, 83, 9, 0.14);
+  --ink-primary: #92400e;
+  --ink-primary-hover: #78350f;
+  --on-primary: #ffffff;
+  --focus: rgba(180, 83, 9, 0.24);
+  --focus-line: rgba(180, 83, 9, 0.6);
+  --glass-tint: rgba(180, 83, 9, 0.08);
 }
 html.dark[data-palette="sunset"] {
   --accent-blue: #ffc048;
   --accent-blue-ink: #ffd37a;
   --accent-blue-soft: rgba(255, 192, 72, 0.2);
+  --accent-color: #ffc048;
+  --accent-soft: rgba(255, 192, 72, 0.2);
+  --ink-primary: #ffd37a;
+  --ink-primary-hover: #ffe3a3;
+  --on-primary: #0b1020;
+  --focus: rgba(255, 192, 72, 0.28);
+  --focus-line: rgba(255, 192, 72, 0.7);
+  --glass-tint: rgba(255, 192, 72, 0.1);
 }
 
 /* 2. 环境流光层、自定义壁纸层与容器层级（彻底消除祖先 animation 导致的 Chromium Backdrop Root 采样阻断） */
@@ -9444,7 +9531,7 @@ html.dark .glass-shell {
 
 /* 主工作台大板块（左栏机器人列表、左下角账号卡、收起态左栏、右栏面板容器）：纯净无边框悬浮毛玻璃 */
 :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card) {
-  background: var(--lg-surface) !important;
+  background: var(--pal-tint-layer,) var(--lg-surface) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
@@ -9516,7 +9603,7 @@ html.dark .rail-tabs-thumb {
 .dark .glass-composer,
 .glass-composer:focus-within,
 .dark .glass-composer:focus-within {
-  background: var(--lg-surface-strong) !important;
+  background: var(--pal-tint-layer,) var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
@@ -9530,7 +9617,7 @@ html.dark .rail-tabs-thumb {
 /* 聊天机器人回复气泡 + 用户发送气泡 + 对话内嵌卡片：无边框通透毛玻璃 */
 .glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"],
 .jr-card {
-  background: var(--lg-surface-strong) !important;
+  background: var(--pal-tint-layer,) var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
@@ -9566,7 +9653,7 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
 .sg-card,
 .page-section > form,
 .page :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(.border-dashed):not(.page-rows) {
-  background: var(--lg-surface) !important;
+  background: var(--pal-tint-layer,) var(--lg-surface) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
@@ -9983,3 +10070,57 @@ html[data-desktop] .glass-topbar :is(.hk-circle, .hk-avatar-btn, .brand-mark-btn
   html[data-desktop] .glass-topbar[data-winctrls="4"] { padding-right: calc(46px * 4 + 12px); }
 }
 
+/* ==========================================================================================
+ * 主题配色落到大面上（fix/palette-theme）：非 default 配色时，把 --glass-tint（强调色约 8–10%）
+ * 叠进左栏 / 右栏 / 账号卡 / 输入框 / 卡片的毛玻璃；聊天输入框发送键用强调色描边阴影；
+ * 天空改用 computePaletteSky 的主题渐变（sky-background.tsx 不启动 WebGL，#skyph 露出来），
+ * 这里把原本偏蓝的柔光薄纱 / 深色压暗层换成中性色，主题色相才不会被盖成蓝色。
+ * 不加模糊、不用 :has()，只改颜色，不动布局。
+ * ========================================================================================== */
+:root,
+html.dark {
+  --glass-tint: transparent;
+}
+html[data-palette]:not([data-palette="default"]) {
+  --glass-bg: color-mix(in srgb, rgba(255, 255, 255, 0.6) 92%, var(--accent-color));
+  --glass-input-bg: color-mix(in srgb, rgba(255, 255, 255, 0.55) 93%, var(--accent-color));
+}
+html.dark[data-palette]:not([data-palette="default"]) {
+  --glass-bg: color-mix(in srgb, rgba(29, 29, 31, 0.52) 90%, var(--accent-color));
+  --glass-input-bg: color-mix(in srgb, rgba(29, 29, 31, 0.52) 91%, var(--accent-color));
+}
+/* 大板块的强调色：非 default 时 --pal-tint-layer 在 --lg-surface 上面叠一层 --glass-tint 纯色（见上方大板块规则），
+ * default 时没有这层；不动 --lg-shadow，不改尺寸、不加模糊、不增加重绘。 */
+/* 写死蓝色的位置（侧栏选中条、未读点、开关、加载图标、进度条、聚焦环、flash 等）写成 var(--pal-accent, 旧值)：
+ * --pal-accent 只在非 default 配色下定义，default 或没有 data-palette 时走回退值，和 main 像素一致。 */
+html[data-palette]:not([data-palette="default"]) {
+  --pal-accent: var(--accent-color);
+  --pal-accent-soft: var(--accent-soft);
+  /* 大板块 background 最上面叠的一层强调色；default 时不定义，规则读到的是空，和 main 完全一样 */
+  --pal-tint-layer: linear-gradient(var(--glass-tint), var(--glass-tint)),;
+}
+html[data-palette]:not([data-palette="default"]) .glass-composer {
+  --composer-accent: var(--accent-color);
+}
+html[data-palette]:not([data-palette="default"]) .glass-composer-send:not(:disabled) {
+  box-shadow: 0 4px 12px var(--accent-soft);
+}
+html[data-palette]:not([data-palette="default"]) .glass-main [data-slot="bubble-content"] a {
+  color: var(--accent-color);
+}
+html[data-palette]:not([data-palette="default"]):not(.dark) #sky-root::after {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.26) 52%, rgba(255, 255, 255, 0.3) 100%);
+}
+html.dark[data-palette]:not([data-palette="default"]) #sky-root::after {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.28) 0%, rgba(0, 0, 0, 0.34) 55%, rgba(0, 0, 0, 0.4) 100%);
+}
+/* 主题渐变天空：#skyph 读挂在 <html> 上的 --palette-sky-*（--sky-1..3 注册成不继承，传不到这里）。 */
+html[data-palette]:not([data-palette="default"]) #sky-root #skyph {
+  background: linear-gradient(
+    to bottom,
+    var(--palette-sky-0, var(--sky-0)) 0%,
+    var(--palette-sky-1, var(--sky-0)) 36%,
+    var(--palette-sky-2, var(--sky-0)) 72%,
+    var(--palette-sky-3, var(--sky-0)) 100%
+  );
+}

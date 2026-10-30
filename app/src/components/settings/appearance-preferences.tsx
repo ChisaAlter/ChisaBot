@@ -168,6 +168,9 @@ export function AppearancePreferences() {
           })}
         </div>
 
+        {appearance.palette !== "default" ? (
+          <p className="appearance-palette-sub" data-testid="palette-sky-hint">彩色主题下使用主题天空</p>
+        ) : null}
         <div
           aria-label="Hark 动态天空场景选择"
           className="appearance-wallpaper-grid"
