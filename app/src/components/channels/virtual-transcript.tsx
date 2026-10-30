@@ -1,3 +1,4 @@
+import { IconChevronDown, IconChevronUp, IconX } from "@tabler/icons-react";
 import {
   type ReactNode,
   type RefObject,
@@ -13,7 +14,6 @@ import {
   Virtualizer,
   type VirtualizerHandle,
 } from "virtua";
-import { IconChevronDown, IconChevronUp, IconX } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useMessageScroller } from "@/components/ui/message-scroller";
@@ -24,8 +24,8 @@ import type {
 } from "@/lib/chat/transcript-data-layer";
 import {
   findTranscriptMatches,
-  REVEAL_MESSAGE_EVENT,
   isPrepend,
+  REVEAL_MESSAGE_EVENT,
   stepMatch,
   TranscriptSizeCache,
   VIRTUAL_BUFFER_PX,
@@ -145,7 +145,7 @@ export function useVirtuaDataLayer<Row extends { id: string }>(
   const indexRef = useRef(new Map<string, number>());
   indexRef.current = useMemo(() => {
     const map = new Map<string, number>();
-    virtualIds.forEach((id, i) => map.set(id, i));
+    for (const [i, id] of virtualIds.entries()) map.set(id, i);
     return map;
   }, [virtualIds]);
   const prependHistory = useCallback(() => {}, []);
@@ -267,8 +267,7 @@ export function TranscriptFindBar<Row extends { id: string }>({
     setCurrent((c) => stepMatch(c, hits.length, delta));
 
   return (
-    <div
-      role="search"
+    <search
       aria-label="在对话中查找"
       className="absolute top-2 right-4 z-20 flex items-center gap-1 rounded-md border border-border bg-background p-1 shadow-sm"
       data-testid="transcript-find"
@@ -325,7 +324,7 @@ export function TranscriptFindBar<Row extends { id: string }>({
       >
         <IconX />
       </Button>
-    </div>
+    </search>
   );
 }
 

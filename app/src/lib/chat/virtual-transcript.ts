@@ -115,7 +115,7 @@ export function findTranscriptMatches<Row extends { id: string }>(
   const hits: string[] = [];
   for (const row of rows) {
     const text = textOf(row);
-    if (text && text.toLocaleLowerCase().includes(q)) hits.push(row.id);
+    if (text?.toLocaleLowerCase().includes(q)) hits.push(row.id);
   }
   return hits;
 }
