@@ -20,7 +20,8 @@ import {
   PageSkeleton,
 } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
-import { Card, ErrorCard } from "@/components/ui/skyglass";
+import { Card } from "@/components/ui/skyglass";
+import { DeviceErrorCard } from "@/components/devices/device-page-parts";
 import { AddServerCard } from "@/components/devices/full-access";
 import { DEVICE_KIND_LABEL, type DeviceKind, deviceKind, deviceListQueryOptions, pcDownloadQueryOptions } from "@/lib/devices";
 import { usePcLocal } from "@/lib/pc-bridge";
@@ -85,7 +86,7 @@ function DevicesPage() {
         {list.isPending ? (
           <PageSkeleton rows={3} />
         ) : list.isError ? (
-          <ErrorCard
+          <DeviceErrorCard
             action={
               <Button
                 className="mt-2"

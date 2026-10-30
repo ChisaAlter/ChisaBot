@@ -26,7 +26,7 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import {
   CAPABILITY_INFO,
   type CapabilityPolicy,
@@ -373,33 +373,69 @@ export function RenameDeviceDialog({
 }
 
 /**
- * 审批剩余时间。expiresAt / createdAt 都是服务器时钟，而这台电脑 / 手机的时钟可能和服务器差几十秒甚至几分钟，
- * 直接拿 expiresAt − Date.now() 会出现一打开就「0 秒」。所以：本机算出的剩余时间落在 (0, 总时长] 内才信它，
- * 否则按「刚收到」处理（剩余 = 总时长），之后用本机的单调时钟倒数。
+ * 审批剩余时间（O2）。expiresAt / createdAt 都是服务器时钟，本机时钟可能差几十秒甚至几分钟。
+ * - 服务器给了 remainingMs（发给 PC 的那份有，网页版以后带上也能直接用）就以它为准；
+ * - 否则用本机算出的剩余时间，夹在 [0, 总时长] 之间：本机慢了最多按总时长算，**已经过期的不再重置成整段 TTL**；
+ * - 第一次见到某个审批时把截止时刻钉在单调时钟 performance.now() 上（按审批 id 记在模块里），
+ *   之后列表 5 秒一刷、组件重挂都只会沿用或提前这个截止时刻，永不延长；到 0 就停在 0。
  */
-function useApprovalCountdown(approval: Pick<DeviceApprovalView, "createdAt" | "expiresAt">) {
-  const [deadline] = useState(() => {
-    const ttl = Math.max(0, Date.parse(approval.expiresAt) - Date.parse(approval.createdAt)) || 120_000;
-    const naive = Date.parse(approval.expiresAt) - Date.now();
-    return performance.now() + (naive > 0 && naive <= ttl ? naive : ttl);
-  });
+const approvalDeadlines = new Map<string, number>();
+
+export function approvalDeadline(
+  approval: Pick<DeviceApprovalView, "id" | "createdAt" | "expiresAt"> & { remainingMs?: number | null },
+  now: number = performance.now(),
+  wallNow: number = Date.now(),
+): number {
+  const ttl = Math.max(0, Date.parse(approval.expiresAt) - Date.parse(approval.createdAt)) || 120_000;
+  const fromServer = typeof approval.remainingMs === "number" && Number.isFinite(approval.remainingMs) ? approval.remainingMs : null;
+  const naive = Date.parse(approval.expiresAt) - wallNow;
+  const remaining = Math.min(ttl, Math.max(0, fromServer ?? (Number.isFinite(naive) ? naive : ttl)));
+  const candidate = now + remaining;
+  const seen = approvalDeadlines.get(approval.id);
+  const deadline = seen === undefined ? candidate : Math.min(seen, candidate);
+  approvalDeadlines.set(approval.id, deadline);
+  if (approvalDeadlines.size > 200) approvalDeadlines.delete(approvalDeadlines.keys().next().value as string);
+  return deadline;
+}
+
+export function useApprovalCountdown(approval: Pick<DeviceApprovalView, "id" | "createdAt" | "expiresAt"> & { remainingMs?: number | null }) {
+  const [deadline] = useState(() => approvalDeadline(approval));
   const [left, setLeft] = useState(() => Math.max(0, deadline - performance.now()));
   useEffect(() => {
-    const timer = setInterval(() => setLeft(Math.max(0, deadline - performance.now())), 1000);
+    if (left <= 0) return;
+    const timer = setInterval(() => {
+      const next = Math.max(0, deadline - performance.now());
+      setLeft(next);
+      if (next <= 0) clearInterval(timer);
+    }, 1000);
     return () => clearInterval(timer);
-  }, [deadline]);
+  }, [deadline, left <= 0]);
   return left;
 }
 
-function ApprovalRow({ approval }: { approval: DeviceApprovalView }) {
+/**
+ * 设备审批行（S4 / O1）：「允许」「拒绝」各有自己的 处理中 / 已处理 / 失败 状态，
+ * 和聊天确认卡（chat/confirm-card.tsx）同一套：两个独立的 useAsyncAction，一个在跑时另一个禁用，
+ * 一个成功后两个都锁住；倒计时到 0 时两个都禁用并显示「已过期」。
+ */
+export function ApprovalRow({ approval }: { approval: DeviceApprovalView }) {
   const queryClient = useQueryClient();
-  const decide = useAsyncAction(async (decision: "approve" | "deny") => {
+  // 成功后一直锁住（按钮自己的「已允许 / 已拒绝」1.5 秒后会回到常态，但这次审批已经处理完了）。
+  const [done, setDone] = useState<"approve" | "deny" | null>(null);
+  const decide = async (decision: "approve" | "deny") => {
     await decideApproval(approval.id, decision);
+    setDone(decision);
     await queryClient.invalidateQueries({ queryKey: deviceKeys.all });
-  });
+  };
+  const approve = useAsyncAction(() => decide("approve"), { errorToast: (error) => `允许失败：${error.message}` });
+  const deny = useAsyncAction(() => decide("deny"), { errorToast: (error) => `拒绝失败：${error.message}` });
   const left = useApprovalCountdown(approval);
+  const busy = approve.state === "pending" || deny.state === "pending";
+  const decided = done !== null;
+  const expired = left <= 0 && !busy && !decided;
+  const metaId = `device-approval-m-${approval.id}`;
   return (
-    <div className="device-approval list-enter">
+    <div className={cn("device-approval list-enter", expired && "opacity-70")} data-testid="device-approval">
       <span className="device-approval-ic">
         <IconShieldCheck className="size-5" />
       </span>
@@ -409,22 +445,44 @@ function ApprovalRow({ approval }: { approval: DeviceApprovalView }) {
         </div>
         <code className="device-approval-s">{approval.summary}</code>
         {approval.diff ? <DiffBlock diff={approval.diff} /> : null}
-        <div className="device-approval-m">
-          {`${left > 0 ? `${Math.ceil(left / 1000)} 秒后自动拒绝` : "即将自动拒绝"} · 也可以在这台电脑的弹窗里处理`}
+        <div className="device-approval-m" data-testid="device-approval-meta" id={metaId}>
+          {expired
+            ? "已过期，没有执行"
+            : decided
+              ? done === "approve"
+                ? "已允许"
+                : "已拒绝"
+              : `${Math.ceil(left / 1000)} 秒后自动拒绝 · 也可以在这台电脑的弹窗里处理`}
         </div>
       </div>
       <div className="device-approval-a">
+        {expired ? (
+          <span className="device-badge is-muted" data-testid="device-approval-expired">
+            <T>{"已过期"}</T>
+          </span>
+        ) : null}
         <Button
-          feedback={{ pending: "处理中…", success: "已处理", error: "失败" }}
-          onClick={() => void decide.run("deny")}
+          aria-describedby={metaId}
+          data-testid="device-approval-deny"
+          disabled={expired || decided || (busy && deny.state !== "pending")}
+          feedback={{ pending: "拒绝中…", success: "已拒绝", error: "拒绝失败" }}
+          onClick={() => void deny.run()}
           size="sm"
-          state={decide.state}
+          state={deny.state}
           variant="outline"
         >
           <IconX />
           {"拒绝"}
         </Button>
-        <Button onClick={() => void decide.run("approve")} disabled={decide.state === "pending"} size="sm">
+        <Button
+          aria-describedby={metaId}
+          data-testid="device-approval-approve"
+          disabled={expired || decided || (busy && approve.state !== "pending")}
+          feedback={{ pending: "允许中…", success: "已允许", error: "允许失败" }}
+          onClick={() => void approve.run()}
+          size="sm"
+          state={approve.state}
+        >
           <IconCheck />
           {"允许"}
         </Button>
@@ -747,6 +805,7 @@ export function DevicePermissions({ device, isThisPc = false }: { device: Device
   const [draft, setDraft] = useState<Draft>(base);
   const [touched, setTouched] = useState(false);
   const [newRoot, setNewRoot] = useState("");
+  const fieldId = useId();
   // 服务器（或 PC 上）改了配置而本页没有未保存的改动时，跟上最新值。
   useEffect(() => {
     if (!touched) setDraft(base);
@@ -857,7 +916,9 @@ export function DevicePermissions({ device, isThisPc = false }: { device: Device
             }}
           >
             <Input
+              aria-describedby={rootProblem ? `${fieldId}-root-error` : undefined}
               aria-invalid={!!rootProblem}
+              aria-label="添加允许的文件夹"
               disabled={locked}
               onChange={(event) => setNewRoot(event.target.value)}
               placeholder={device.platform === "win32" ? "C:\\Users\\你\\Documents" : "/home/你/Documents"}
@@ -881,7 +942,7 @@ export function DevicePermissions({ device, isThisPc = false }: { device: Device
               </Button>
             ) : null}
           </form>
-          {rootProblem ? <div className="device-field-error">{rootProblem}</div> : null}
+          {rootProblem ? <div className="device-field-error" id={`${fieldId}-root-error`}>{rootProblem}</div> : null}
         </Card>
       </section>
 
@@ -908,6 +969,7 @@ export function DevicePermissions({ device, isThisPc = false }: { device: Device
         <Card>
           <SettingRow description="在设备列表、审批弹窗和机器人看到的设备列表里显示的名字。" title="设备名称">
             <Input
+              aria-label="设备名称"
               className="device-name-input"
               disabled={locked}
               maxLength={64}
