@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 /**
  * 打开设置更快（FIX-PLAN P1-6）：菜单非模态、切页不等退出动画、左栏只在当前行看不见时才滚、
@@ -45,7 +45,9 @@ test("account menu is non-modal and navigates without waiting for preload", () =
   const menu = src("components/layout/account-menu.tsx");
   expect(menu).toContain("modal={false}");
   expect(menu).not.toContain(".finally(() => void navigate");
-  expect(menu).toContain("requestAnimationFrame(() => setTimeout(() => void navigate({ to }), 0))");
+  expect(menu).toContain(
+    "requestAnimationFrame(() => setTimeout(() => void navigate({ to }), 0))",
+  );
   expect(menu).toContain('leaving && "is-leaving"');
   expect(src("styles.css")).toMatch(
     /\.acct-pop\.is-leaving[^{]*\{[^}]*animation: none/,
