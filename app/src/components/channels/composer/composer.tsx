@@ -23,6 +23,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -342,7 +343,15 @@ const UNACCEPTED_DROP_REASON = {
     "没有附上：还没有对话。先发出这条消息，再往打开的对话里附文件。",
 } as const;
 
-export function Composer({
+/*
+ * 不随渲染变的按钮内容和默认值放模块级（jank FIX-PLAN §5 / P2-1）：同一个元素 / 数组引用，
+ * Composer 自己重渲（打字、上传）时 Button 和依赖 `agents` 的 memo 不会被白白刷新。
+ */
+const NO_AGENTS: readonly AgentOption[] = [];
+const STOP_ICON = <IconPlayerStopFilled className="size-3" />;
+const SEND_ICON = <IconArrowUp className="size-[18px]" stroke={2.25} />;
+
+function ComposerImpl({
   className,
   modelControl,
   leadingControl,
@@ -351,7 +360,7 @@ export function Composer({
   onAgentChange,
   editorClassName,
   compact = false,
-  agents = [],
+  agents = NO_AGENTS,
   commands = PLACEHOLDER_COMMANDS,
   onSubmit,
   onQueue,
@@ -1678,7 +1687,7 @@ export function Composer({
       size="icon"
       type="button"
     >
-      <IconPlayerStopFilled className="size-3" />
+      {STOP_ICON}
     </Button>
   ) : (
     <Button
@@ -1689,7 +1698,7 @@ export function Composer({
       size="icon"
       type="submit"
     >
-      <IconArrowUp className="size-[18px]" stroke={2.25} />
+      {SEND_ICON}
     </Button>
   );
 
@@ -2093,3 +2102,7 @@ export function StopFailedButton({ className, onRetry }: { className?: string; o
     </Button>
   );
 }
+
+/** 流式时父组件每个 token 都会重渲；props 没变就跳过（jank FIX-PLAN §5 / P2-1）。 */
+ComposerImpl.displayName = "Composer";
+export const Composer = memo(ComposerImpl);

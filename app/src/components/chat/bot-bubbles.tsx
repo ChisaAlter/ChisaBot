@@ -627,8 +627,20 @@ export function ReplyQuote({
   );
 }
 
+/** 文档卡「展开全文 / 阅读全文」的图标：卡片每个 token 重渲，图标元素不变（P2-1）。 */
+const DOC_MORE_TALL_ICON = <IconChevronDown aria-hidden="true" className="size-3.5" />;
+const DOC_MORE_ICON = <IconMaximize aria-hidden="true" className="size-3.5" />;
+
+/** 「追问」按钮的内容：流式时摘要每个 token 都变，图标和字不变，放模块级（P2-1）。 */
+const FOLLOWUP_CONTENT = (
+  <>
+    <IconMessageReply aria-hidden="true" className="size-3.5" />
+    <span>{"追问"}</span>
+  </>
+);
+
 /** 卡片级「追问」按钮：将卡片标题和摘要塞入输入框引用栏。 */
-function CardFollowupButton({
+function CardFollowupButtonImpl({
   title,
   snippet,
   source,
@@ -655,8 +667,7 @@ function CardFollowupButton({
       title={`针对「${title}」继续追问`}
       type="button"
     >
-      <IconMessageReply aria-hidden="true" className="size-3.5" />
-      <span>{"追问"}</span>
+      {FOLLOWUP_CONTENT}
     </button>
   );
 }
@@ -758,11 +769,7 @@ export function DocCard({
             type="button"
           >
             <span>{tall ? "展开全文" : "阅读全文"}</span>
-            {tall ? (
-              <IconChevronDown aria-hidden="true" className="size-3.5" />
-            ) : (
-              <IconMaximize aria-hidden="true" className="size-3.5" />
-            )}
+            {tall ? DOC_MORE_TALL_ICON : DOC_MORE_ICON}
           </button>
         </div>
       </section>
@@ -1415,3 +1422,7 @@ export function StatusCardGroup({
     </div>
   );
 }
+
+/** 流式时父组件每个 token 都会重渲；props 没变就跳过（jank FIX-PLAN §5 / P2-1）。 */
+CardFollowupButtonImpl.displayName = "CardFollowupButton";
+const CardFollowupButton = memo(CardFollowupButtonImpl);

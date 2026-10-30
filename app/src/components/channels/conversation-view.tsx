@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -22,12 +23,15 @@ import {
 import { attachmentUrl } from "@/lib/channels/attachments";
 import { newId } from "../../lib/new-id";
 
+/** 默认值用同一个空数组：每次渲染新建 `[]` 会让 memo 过的 Composer 跟着每个 token 重渲。 */
+const NO_AGENTS: readonly AgentOption[] = [];
+
 export function ConversationView({
   messages,
   busy = false,
   notice,
   transcriptNotice,
-  agents = [],
+  agents = NO_AGENTS,
   commands,
   channelId,
   draftKey,
@@ -483,6 +487,39 @@ export function ConversationView({
     box?.querySelector<HTMLElement>('[contenteditable="true"], textarea')?.focus();
   };
 
+  /*
+   * 输入框的回调走「最新值」引用（jank FIX-PLAN §5 / P2-1）：路由每个 token 都会给这里新的
+   * onStop / onSubmit 闭包，直接往下传会让 memo 过的 Composer 每个 token 重渲一次。它们只在事件里
+   * 被调用，读到的总是最近一次渲染的版本，行为不变。
+   */
+  const latest = useRef({ submit, onStop, onRetryStop, queueToServer });
+  // 提交阶段再写，不在渲染里改 ref（并发渲染可能丢弃这次渲染）；layout effect 先于任何用户事件执行。
+  useLayoutEffect(() => {
+    latest.current = { submit, onStop, onRetryStop, queueToServer };
+  });
+  const submitDraft = useCallback(
+    (draft: ComposerDraft) => latest.current.submit(draft, false),
+    [],
+  );
+  const stopRun = useCallback(() => latest.current.onStop?.(), []);
+  const retryStopRun = useCallback(() => latest.current.onRetryStop?.(), []);
+  const queueDraft = useCallback((draft: ComposerDraft) => {
+    const toServer = latest.current.queueToServer;
+    const plain =
+      toServer !== undefined &&
+      draft.attachments.length === 0 &&
+      draft.commandIds.length === 0 &&
+      draft.text.trim().length > 0 &&
+      queuedRef.current.length === 0;
+    if (!plain) {
+      latest.current.submit(draft, true);
+      return;
+    }
+    void toServer(draft.text.trim()).then((outcome) => {
+      if (outcome === "send") latest.current.submit(draft, true);
+    });
+  }, []);
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <div className="flex flex-1 min-h-0">
@@ -532,27 +569,9 @@ export function ConversationView({
           compact
           disabled={disabled}
           droppedAttachments={droppedAttachments}
-          onQueue={
-            queueWhileBusy
-              ? (draft) => {
-                  const plain =
-                    queueToServer !== undefined &&
-                    draft.attachments.length === 0 &&
-                    draft.commandIds.length === 0 &&
-                    draft.text.trim().length > 0 &&
-                    queuedRef.current.length === 0;
-                  if (!plain) {
-                    submit(draft, true);
-                    return;
-                  }
-                  void queueToServer(draft.text.trim()).then((outcome) => {
-                    if (outcome === "send") submit(draft, true);
-                  });
-                }
-              : undefined
-          }
-          onStop={onStop}
-          onSubmit={(draft) => submit(draft, false)}
+          onQueue={queueWhileBusy ? queueDraft : undefined}
+          onStop={onStop ? stopRun : undefined}
+          onSubmit={submitDraft}
           /*
            * `inFlight` rather than the `pending` this was given. A drained turn is started from the
            * effect above rather than from the composer, so the composer's own send tracking knows
@@ -594,7 +613,7 @@ export function ConversationView({
           stoppable={stoppable ?? pending}
           stopping={stopping}
           stopFailed={stopFailed}
-          onRetryStop={onRetryStop}
+          onRetryStop={onRetryStop ? retryStopRun : undefined}
         />
       </div>
     </div>

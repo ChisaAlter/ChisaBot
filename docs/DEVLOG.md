@@ -924,3 +924,25 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 - 发版前备份 pre-release/v0.1.114-20261030T042002Z.dump（pg_restore -l 767 条）。
 - smoke ok:true persisted:false；health.sh 通过；公网 /login 200；匿名导航 / → 302 /login?next=%2F；/sign → 302 /login；sw.js SW_VERSION = "5"。
 
+
+## 2026-10-30 perf(P2-1)：流式输出时砍掉 props 没变的重渲染
+
+**动机**：卡顿修复计划 P2-1。流式回复每来一个 token，ChannelChat → ConversationView → ChatTranscript 重渲染，顺带把 props 根本没变的整排组件（Composer、ContextMeter、BotModelSelector、PermissionChip、ActivityJumpButton、回到底部按钮、DocCard 的 ChevronDown 等图标）也重渲染一遍。#443 工具 `--react` 统计“parent(shallow-equal)”（props 浅比较相同仍重渲染）在 main 上 3 次为 1368 / 1177 / 1151。
+
+**改动**（不改行为）：
+- `React.memo`：Composer、ContextMeter、BotModelSelector、PermissionChip、ActivityJumpButton、CardFollowupButton、`ui/button` 的 AsyncContent / StatusGlyph。
+- channel-chat：modelControl / leadingControl / contextControl / agentOptions 用 `useMemo`。
+- conversation-view：submitDraft / stopRun / retryStopRun / queueDraft 改成 latest-ref 稳定回调（onStop / onRetryStop 仍只在原来有值时传）。
+- 模块级常量 JSX：回到底部按钮 `BOTTOM_PILL`、跟进按钮内容 `FOLLOWUP_CONTENT`、DocCard 展开图标。
+- 新测试 `app/tests/stream-rerender-budget.test.tsx`：这些组件是 memo；100 次 token 更新 Composer 最多渲染 2 次。
+
+**结果**（`perf:jank --scenario=stream --runs=3`，CPU 4x，中位数，main `c9509f4` → 本 PR）：
+- props 没变的重渲染：1368 / 1177 / 1151 → 36 / 37 / 37（Composer、ContextMeter 每次 72–85 → 2）。
+- 非 react 统计：long-task 290 → 235 ms（−19%），script 2222 → 1883 ms（−15%），worst first frame 88 → 74 ms，fps 53.2 → 53.4，INP 104 → 104。
+- `--react`（profiling 构建）：long-task 1333 → 637 ms（−52%），p95 帧 66.6 → 50 ms。
+
+**自测**：typecheck、build 通过；test:app 238 个文件共享进程 1808 pass / 0 fail，独立进程 10 个文件全过；改动文件 Biome 问题数与 origin/main 相同。
+
+**评审跟进（#451）**：`latest.current` 改在 `useLayoutEffect` 里写（不在渲染期间改 ref）；ConversationView / Composer 的默认 `agents` 改成模块级空数组（以前每次渲染新建 `[]`）；Composer 发送 / 停止按钮的图标提成模块常量。`commands`（`useSkillCommands` 已 memo）、`droppedAttachments`（state）、按钮 aria-label（字符串字面量）本来就稳定。测试里改 memo `.type` 的部分放进 try/finally，新增一条经 ConversationView 的用例（每个 token 新消息数组 + 新 onSubmit / onStop 闭包），故意把 onStop 改成新闭包时它数到 100 次、失败。
+
+**复测**（main `11bacde` ↔ PR 交替 3 轮，每轮 `--runs=5`，非 trace，15 + 15 次中位数）：fps 46.4 → 51.3，p95 帧 50 → 33.4 ms，long-task 441 → 373 ms，script 2209 → 1939 ms，最长单个 long task 101 → 102 ms，style 1287 → 1316 ms（+2%），layout 237 → 271 ms（+14%）。main 自身三轮中位数的波动：最长 long task 100–112，style 1277–1320，layout 230–241。layout 超出噪声，原因：`useSmoothText` 用 rAF 每帧放一段字；PR 让主线程更空，同一段文字分更多帧放出（React 提交里 SmoothStreamdown 15 → 28–41 次、流式行 73 → 85–102 次；layout 次数 168 → 214），每次 layout 反而更便宜（1.34 → 1.26 ms，style 每次 6.97 → 6.29 ms）。要压回去只能给放字限帧（可见的行为变化），这个 PR 没做。
