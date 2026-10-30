@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+
+- 改窗口大小不再卡（FIX-PLAN P2-3 的 JS 部分，dev4/perf-resize-pause）：拖动改窗口大小时 `<html>` 挂 `data-resizing`（下一帧挂上，最后一次 resize 后约 150ms 拿掉，`app/src/lib/resize-state.ts`，应用入口初始化一次）。WebGL 天空在这段时间暂停：节流循环不出帧，引擎也不再每个 resize 事件都改画布尺寸、重画一帧（画布保持旧尺寸由 CSS 拉满），停下后按最终尺寸改一次并当帧补画。`html[data-resizing]` 下去掉毛玻璃和阴影的 CSS 由前端另做。headless 4x 降速 resize 场景：帧率 13.8 → 48.7，长任务 4581ms → 163ms。
 ## 0.1.114 — 2026-10-30
 
 这一版只合并 #442：公网网关下会话过期不再卡在加载（直接去 `/login?next=`，带防死循环），手机抽屉导航后收起，`/channel/new` 总开新话题。Service Worker 升到 5。只有网页更新，网关、登录服务（web-auth）、PC 和 Android 不变。

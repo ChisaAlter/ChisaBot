@@ -1,5 +1,18 @@
 # DEVLOG
 
+## 改窗口大小时暂停 WebGL 天空（dev4/perf-resize-pause，FIX-PLAN P2-3 JS 部分）
+
+**动机**：卡顿分析根因 6：resize 场景主线程 composite 约 7s、CrGpuMain 6.4s，fps 9–12。天空引擎（wallpaper_core.html）每个 resize 事件都改 `canvas.width`（清空画布），宿主再 `drawSkyNow` 当帧补画一整帧 WebGL；拖一次窗口就是几十帧满屏重绘。
+
+**做法**：
+- 新增 `app/src/lib/resize-state.ts`：`initResizeState()`（`main.tsx` 调一次，幂等，返回拆除函数）监听 resize；第一次事件后在 rAF 里给 `<html>` 挂 `data-resizing=""`，最后一次事件后 150ms 拿掉；`isResizing()`、`resizeInProgress()`（从第一次事件就算）、`subscribeResizing()`。和前端约定的接口：CSS 用 `html[data-resizing]` 去掉 backdrop-filter / box-shadow，本 PR 不写 CSS。
+- `sky-background.tsx`：`skyCanRun` 在 `isResizing()` 时返回 false；引擎脚本里裸写的 `addEventListener` 作为 `new Function` 的参数传进去，`resize` 监听收进宿主，由 `onSkyResizeEvent` 调度——拖动中只记一笔，停下时（订阅 resize-state 的结束通知）按最终尺寸调一次引擎 `resize()` 再 `drawSkyNow()`，并 `wakeSky` 把可能被打断的渐变画完。拖动中画布是旧尺寸，`#gl` 是 100%×100%，CSS 拉伸，不露空画布。引擎本身未改。
+- 测试 `app/tests/resize-state.test.ts`（手写假时钟）：属性挂上 / 拿掉的时机、订阅通知、天空循环暂停 / 恢复、拖动中引擎不改尺寸停下后改一次、init 幂等且拆掉后不留监听和计时器；去掉实现后 5 条都失败。
+
+- 小爱复审后补：测试用导出改名 `__skyLoopForTestOnly`；`onSkyResizeEvent` 注释写明依赖 resize-state 的监听先注册；resize-state 逐个 try/catch 调订阅者（抛错只 `console.error`，不挡其他订阅者），加了对应测试。
+
+**验证**：基于 headless harness 的 resize 场景（PC 客户端真机 trace 没录）。4x 降速、不带 trace、各 3 次中位数：fps 13.8 → 48.7，p95 帧 133 → 33ms，长任务 4581 → 163ms，脚本 378 → 154ms；样式 / 布局不变（那部分等前端的 CSS）。SwiftShader 会放大 GPU 部分，真机收益要打折。
+
 ## 电脑端布局回退 #374 的顶栏改动（dev2/pc-layout-fix）
 
 **动机**：#374（5cd6e8c3，Hark 第 2 步顶栏）之后，Jun 的原话：「把右下原本有的搬到左上，又弄一个头像什么意思；搜索会话放在那是什么意思；右侧栏的收起和打开都在右侧栏上，左侧栏为什么单独拿出来了」。电脑上同时有两个头像（顶栏左上的品牌头像 / 右上的账号头像 + 左栏底部账号卡），搜索会话跑到顶栏右上，左栏开关单独放在顶栏。
