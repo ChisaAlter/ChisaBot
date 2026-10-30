@@ -7906,8 +7906,9 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   .sg-lrow:has(.perm-seg) { flex-wrap: wrap; row-gap: 8px; }
   .sg-lrow:has(.perm-seg) .sg-lrow-a { width: 100%; padding-left: 52px; }
 }
-/* §98 留着的聊天藏起来时关掉滚动锚定：visibility: hidden 下浏览器会重新挑锚点并把滚动容器挪几十像素，回来时位置就对不上了。 */
-.kept-chat[data-visible="false"], .kept-chat[data-visible="false"] * { overflow-anchor: none; }
+/* §98 留着的聊天藏起来时关掉滚动锚定：现在藏着的那段带 content-visibility: hidden（keep-alive.tsx 行内样式），里面不做布局、不挑锚点；
+   原来的 `.kept-chat[data-visible=false] *` 通配是每次样式重算的倍增器（卡顿修复 P1-3），只留在容器自己身上。 */
+.kept-chat[data-visible="false"] { overflow-anchor: none; }
 
 .glass-mini-new:disabled { opacity: 0.45; cursor: default; }
 

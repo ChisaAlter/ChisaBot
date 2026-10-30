@@ -75,6 +75,8 @@ function useChatAddress(): ChatAddress | null {
 const sameAddress = (a: ChatAddress, b: ChatAddress) =>
   a.channelId === b.channelId && a.settings === b.settings && a.watch === b.watch;
 
+const chatKey = (a: ChatAddress) => a.channelId;
+
 /** 主区：留着的聊天 + 当前路由（`KeepAliveStage`，DESIGN.md §98）。`/` 正在跳到聊天时，留着的聊天照样露着。 */
 function ChatStage({ pathname }: { pathname: string }) {
   const address = useChatAddress();
@@ -101,6 +103,8 @@ function ChatStage({ pathname }: { pathname: string }) {
           watch={kept.watch}
         />
       )}
+      // 一段对话一段（LRU，§98.6）：同一段里只是 ?settings / ?watch 变了不算换一段。
+      keyOf={chatKey}
       same={sameAddress}
     >
       <Outlet />

@@ -18,6 +18,11 @@ export function useKeptVisible(): boolean {
  * 读不到上面的 context：藏着的聊天把它的机器人登记成「不在屏幕上」，那两处就不再每 5 秒问一次。
  */
 const hiddenBots = new Map<string, number>();
+/*
+ * 同时留着好几段聊天（LRU，§98.6）：同一个机器人可能一段藏着、另一段正看着。看着的那段也登记，
+ * 只要有一段看得见，这个机器人就算在屏幕上。
+ */
+const shownBots = new Map<string, number>();
 const listeners = new Set<() => void>();
 const notify = () => {
   for (const listener of listeners) listener();
@@ -29,26 +34,27 @@ const subscribeHidden = (listener: () => void) => {
   };
 };
 
-/** 聊天藏着时登记它的机器人（卸载或变回可见时撤销）。 */
+/** 聊天藏着时登记它的机器人「藏着」，看得见时登记「看着」（卸载或切换时撤销）。 */
 export function useMarkBotHidden(botId: string | undefined, hidden: boolean): void {
   useEffect(() => {
-    if (!botId || !hidden) return;
-    hiddenBots.set(botId, (hiddenBots.get(botId) ?? 0) + 1);
+    if (!botId) return;
+    const map = hidden ? hiddenBots : shownBots;
+    map.set(botId, (map.get(botId) ?? 0) + 1);
     notify();
     return () => {
-      const left = (hiddenBots.get(botId) ?? 1) - 1;
-      if (left > 0) hiddenBots.set(botId, left);
-      else hiddenBots.delete(botId);
+      const left = (map.get(botId) ?? 1) - 1;
+      if (left > 0) map.set(botId, left);
+      else map.delete(botId);
       notify();
     };
   }, [botId, hidden]);
 }
 
-/** 这个机器人的聊天在屏幕上（没有被藏着的那段登记成不在）。 */
+/** 这个机器人的聊天在屏幕上（没有藏着的段，或者至少有一段正看着）。 */
 export function useBotOnScreen(botId: string | undefined): boolean {
   return useSyncExternalStore(
     subscribeHidden,
-    () => !botId || !hiddenBots.has(botId),
+    () => !botId || !hiddenBots.has(botId) || shownBots.has(botId),
     () => true,
   );
 }
