@@ -942,3 +942,7 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 - `--react`（profiling 构建）：long-task 1333 → 637 ms（−52%），p95 帧 66.6 → 50 ms。
 
 **自测**：typecheck、build 通过；test:app 238 个文件共享进程 1808 pass / 0 fail，独立进程 10 个文件全过；改动文件 Biome 问题数与 origin/main 相同。
+
+**评审跟进（#451）**：`latest.current` 改在 `useLayoutEffect` 里写（不在渲染期间改 ref）；ConversationView / Composer 的默认 `agents` 改成模块级空数组（以前每次渲染新建 `[]`）；Composer 发送 / 停止按钮的图标提成模块常量。`commands`（`useSkillCommands` 已 memo）、`droppedAttachments`（state）、按钮 aria-label（字符串字面量）本来就稳定。测试里改 memo `.type` 的部分放进 try/finally，新增一条经 ConversationView 的用例（每个 token 新消息数组 + 新 onSubmit / onStop 闭包），故意把 onStop 改成新闭包时它数到 100 次、失败。
+
+**复测**（main `11bacde` ↔ PR 交替 3 轮，每轮 `--runs=5`，非 trace，15 + 15 次中位数）：fps 46.4 → 51.3，p95 帧 50 → 33.4 ms，long-task 441 → 373 ms，script 2209 → 1939 ms，最长单个 long task 101 → 102 ms，style 1287 → 1316 ms（+2%），layout 237 → 271 ms（+14%）。main 自身三轮中位数的波动：最长 long task 100–112，style 1277–1320，layout 230–241。layout 超出噪声，原因：`useSmoothText` 用 rAF 每帧放一段字；PR 让主线程更空，同一段文字分更多帧放出（React 提交里 SmoothStreamdown 15 → 28–41 次、流式行 73 → 85–102 次；layout 次数 168 → 214），每次 layout 反而更便宜（1.34 → 1.26 ms，style 每次 6.97 → 6.29 ms）。要压回去只能给放字限帧（可见的行为变化），这个 PR 没做。
