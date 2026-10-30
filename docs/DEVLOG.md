@@ -8,12 +8,12 @@
 - `use-tail-first-mount.ts`：贴底时补行不读布局，`startIndex` 到 0 时读一次 scrollHeight 钉底；上滑时靠 `overflow-anchor`（视口显式 `[overflow-anchor:auto]`，chat-tail 仍是 none，§94.6）；`CSS.supports("overflow-anchor","auto")` 为假时才在补行前量 scrollHeight、补后垫 delta（§35 兜底），贴底也每批钉。补行从每帧 rAF 改成 `requestIdleCallback`（timeout 50ms，没有就 rAF）。导出 `prependHistory()`（滚到顶附近加速补）。
 - `tail-first-paint.ts`：`TAIL_FIRST_BATCH` 28 → 40，批次 = clamp(已挂条数, 40, 160)：200 条 7 批 → 3 批，400 条 13 批 → 6 批。
 - `chat-transcript.tsx`：`useKeepBottomOnPrepend` 改盯 `items[0]`（真正的历史 prepend），不再每补一批触发。
-- `patches/@shadcn%2Freact@0.3.0.patch`（`patchedDependencies`）：`Se` 从末尾往前找第一个有尺寸的行（列布局里它就是最低的；chat-tail 是 `display:contents`，本来就量出 0）；`Ye` 对带 `data-message-id` 的行二分找第一个 bottom 在视口顶下面的行，碰到 0 尺寸行退回线性。可见集合本来就用 IntersectionObserver。
+- `app/src/vendor/shadcn-react-message-scroller`（`@shadcn/react@0.3.0` 的 message-scroller 原样拷进来，`biome.json` 排除；没用 `patchedDependencies`，因为 Dockerfile / Dockerfile.zh / updater 都只拷 manifest 再装依赖，得一起改）：`Se` 从末尾往前找第一个有尺寸的行（列布局里它就是最低的；chat-tail 是 `display:contents`，本来就量出 0）；`Ye` 对带 `data-message-id` 的行二分找第一个 bottom 在视口顶下面的行，碰到 0 尺寸行退回线性。可见集合本来就用 IntersectionObserver。
 - `transcript-data-layer.ts`：`TranscriptDataLayer`（items / prependHistory / scrollToBottom / scrollToMessage）+ `useTailFirstDataLayer`，给 P3-3 virtua 换渲染层。
 
-**测试**：`app/tests/tail-first-scroll-reads.test.tsx`（假视口给 scrollHeight 计数：贴底补完只读 ≤1 次且最终贴底；上滑 + 原生锚定 0 次读、不碰 scrollTop；无原生锚定时前插保持可见行；短对话 0 次读）——换回旧 hook 4 条里 3 条失败（保位那条新旧都过）。`app/tests/message-scroller-visible-measure.test.tsx`（400 行滚 5 次，逐行量 < 200 次；未打补丁的库 2130 次）。`tail-first-paint.test.ts` 跟着改批次断言。
+**测试**：`app/tests/tail-first-scroll-reads.test.tsx`（假视口给 scrollHeight 计数：贴底补完只读 ≤1 次且最终贴底；上滑 + 原生锚定 0 次读、不碰 scrollTop；无原生锚定时前插保持可见行；短对话 0 次读）——换回旧 hook 4 条里 3 条失败（保位那条新旧都过）。`app/tests/message-scroller-visible-measure.test.tsx`（400 行滚 5 次，逐行量 < 200 次；换回原库 2130 次）。`tail-first-paint.test.ts` 跟着改批次断言。
 
-**注意**：补丁只对 `@shadcn/react@0.3.0` 生效，升级这个包要重做或去掉补丁（上游若改成按身份找行就可以删）。
+**注意**：`app/package.json` 里的 `@shadcn/react` 依赖暂时留着（不动 lockfile）。升级时看 vendor 目录的 README：上游若已只量可见行就删掉 vendor。
 
 ## 联网搜索质量（fix/hark-search-quality）
 

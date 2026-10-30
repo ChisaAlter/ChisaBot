@@ -12,7 +12,7 @@ import { settleReactWork } from "./settle-react-work";
 
 /**
  * jank P1-2：滚动 / 内容变化时，message-scroller 只量最后一行（内容高度）和二分找第一条可见行，
- * 不再逐行 getBoundingClientRect（REPORT §切换：550ms）。改动在 patches/@shadcn%2Freact@0.3.0.patch。
+ * 不再逐行 getBoundingClientRect（REPORT §切换：550ms）。改动在 app/src/vendor/shadcn-react-message-scroller（见那里的 README）。
  */
 
 const ROW = 50;
