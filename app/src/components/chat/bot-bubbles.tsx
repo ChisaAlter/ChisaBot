@@ -627,6 +627,10 @@ export function ReplyQuote({
   );
 }
 
+/** 文档卡「展开全文 / 阅读全文」的图标：卡片每个 token 重渲，图标元素不变（P2-1）。 */
+const DOC_MORE_TALL_ICON = <IconChevronDown aria-hidden="true" className="size-3.5" />;
+const DOC_MORE_ICON = <IconMaximize aria-hidden="true" className="size-3.5" />;
+
 /** 「追问」按钮的内容：流式时摘要每个 token 都变，图标和字不变，放模块级（P2-1）。 */
 const FOLLOWUP_CONTENT = (
   <>
@@ -765,11 +769,7 @@ export function DocCard({
             type="button"
           >
             <span>{tall ? "展开全文" : "阅读全文"}</span>
-            {tall ? (
-              <IconChevronDown aria-hidden="true" className="size-3.5" />
-            ) : (
-              <IconMaximize aria-hidden="true" className="size-3.5" />
-            )}
+            {tall ? DOC_MORE_TALL_ICON : DOC_MORE_ICON}
           </button>
         </div>
       </section>
