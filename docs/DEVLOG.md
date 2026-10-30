@@ -862,3 +862,12 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.113`；PC / Android 不变。不打 tag、不建 Release。
 
 **0.1.113 部署**：11:16（北京时间）先备份数据库 `pre-release/v0.1.113-20261030T031606Z.dump`（`pg_restore -l` 767 项），再 `deploy-serial.sh c9509f4 jun-grokbot`。依赖有变化（根 package.json scripts），走完整构建，11:26 上线 `local/chisabot:auto-202610300316-c9509f4`（617 秒），回滚镜像 `auto-202610291441-0c06ef7`，`isolate-sidecar-app` 全绿。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.113 / `c9509f4`；公网 `/login` 200。GitHub 大卡：本机带本地调用头请求 `/api/link-preview?url=https://github.com/oven-sh/bun`，返回标题 `oven-sh/bun: …`、描述、`stars` 96463、`imageKind: avatar`（460×460，资源 200 image/png），缓存 5 分钟（og 图被限流，走头像兜底）；`ChisaAlter/ChisaBot` 命中 0.1.112 时的旧缓存（到 15:28 过期），之后才会换成新格式。网关、nginx 没动。
+
+
+## 2026-10-30 P2-3 改窗口大小时暂停毛玻璃（perf/resize-glass-pause）
+
+**动机**：FIX-PLAN P2-3，拖动窗口改大小时大面积 `backdrop-filter` 和阴影每帧重绘，卡顿明显。
+
+**分工**：开发4 写 JS（`resize-state.ts`：resize 第一帧在 rAF 里给 `<html>` 加 `data-resizing`，最后一次 resize 150ms 后去掉，同时暂停 WebGL 壁纸）；前端只写 CSS，只依赖这个属性。
+
+**改动**：新增 `app/src/resize-pause.css`，在 `main.tsx` 里接在 `perf-noblur.css` 之后引入。大板块改 `--lg-blur` / `--lg-shadow` / `--lg-surface` 变量本身（不跟旧规则比 `!important`），外壳和弹出层直接写 `backdrop-filter: none`、`box-shadow: none`、不透明底色；选择器带 `:not(#chisabot-no-blur)` 提优先级。不用 `:has()`、不用通配、不加模糊和动画。新测试 `app/tests/resize-pause.test.ts`。

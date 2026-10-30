@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 拖动改窗口大小时更顺（P2-3，perf/resize-glass-pause）：`html[data-resizing]` 期间，左栏、账号卡、右栏、输入框、卡片和弹出层去掉 `backdrop-filter` 和大阴影，换成不透明底色；松手 150ms 后恢复。新文件 `app/src/resize-pause.css`，只点名具体类，不用 `:has()`、不用通配、不加 `!important`。`data-resizing` 由开发4 的 `resize-state.ts` 挂上，那部分合进来之前这些规则不生效。
+
 ## 0.1.113 — 2026-10-30
 
 这一版合并 3 个 PR：GitHub 仓库链接出竖版大卡（#439）、电脑端布局回退 #374 的顶栏改动（#440）、卡顿测量工具（#443，只加工具不改应用）。只有服务器 / 网页更新，PC 和 Android 不变。
