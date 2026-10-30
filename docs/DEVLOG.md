@@ -867,8 +867,10 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 - #443 `dev4/perf-harness`（head `671f6ac`）→ `3bb35b5`：卡顿测量工具，只动 `perf/`、根 package.json 的 scripts、`.gitignore`、CI `perf.yml` 和文档，没有运行时代码、没改版本号。
 - 不合：#441、#442（这次不发）。
 
-**流程**：合并前核对三个 PR head 没变、都没改 `pc/`、`android/`、版本号；从 origin/main（`c99ee37`）开临时 worktree，按顺序 `--no-ff` 合并。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 结果见部署记录。
+**流程**：合并前核对三个 PR head 没变、都没改 `pc/`、`android/`、版本号；从 origin/main（`c99ee37`）开临时 worktree，按顺序 `--no-ff` 合并。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 在发版提交 `c9509f4` 上全过（bun 1.3.14）：test:app 1857 pass / 0 fail（247 个文件）。#443 的 `perf/*.mjs` 过了 `node --check`。
 
 **冲突**：#439、#440 没有冲突；#443 只在 `docs/DEVLOG.md` 冲突（两边都保留）。#443 的 CHANGELOG 条目原本在顶部新开的 `## Unreleased`，发版时改成 0.1.113 段。
 
 **版本**：根、`app`、`server` 升到 `0.1.113`；PC / Android 不变。不打 tag、不建 Release。
+
+**0.1.113 部署**：11:16（北京时间）先备份数据库 `pre-release/v0.1.113-20261030T031606Z.dump`（`pg_restore -l` 767 项），再 `deploy-serial.sh c9509f4 jun-grokbot`。依赖有变化（根 package.json scripts），走完整构建，11:26 上线 `local/chisabot:auto-202610300316-c9509f4`（617 秒），回滚镜像 `auto-202610291441-0c06ef7`，`isolate-sidecar-app` 全绿。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.113 / `c9509f4`；公网 `/login` 200。GitHub 大卡：本机带本地调用头请求 `/api/link-preview?url=https://github.com/oven-sh/bun`，返回标题 `oven-sh/bun: …`、描述、`stars` 96463、`imageKind: avatar`（460×460，资源 200 image/png），缓存 5 分钟（og 图被限流，走头像兜底）；`ChisaAlter/ChisaBot` 命中 0.1.112 时的旧缓存（到 15:28 过期），之后才会换成新格式。网关、nginx 没动。
