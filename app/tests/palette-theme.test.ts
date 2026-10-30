@@ -115,23 +115,32 @@ describe("theme palettes visibly change the UI", () => {
     }
   }
 
-  test("smart follow + non-default palette uses the gradient sky instead of WebGL", () => {
+  test("any non-default palette uses the gradient sky instead of WebGL, smart follow on or off", () => {
     expect(computePaletteSky("default", false)).toBeNull();
-    expect(
-      usesPaletteGradientSky({ harkScene: "auto", palette: "default" }),
-    ).toBe(false);
-    expect(
-      usesPaletteGradientSky({ harkScene: "live", palette: "sakura" }),
-    ).toBe(false);
-    expect(usesPaletteGradientSky({ harkScene: "3", palette: "sakura" })).toBe(
-      false,
-    );
+    expect(usesPaletteGradientSky({ palette: "default" })).toBe(false);
     for (const p of THEME_PALETTES) {
       if (p.id === "default") continue;
-      expect(usesPaletteGradientSky({ harkScene: "auto", palette: p.id })).toBe(
-        true,
-      );
+      // 智能跟随（auto）、手动场景、背景随时间变化（live）都不启动 WebGL
+      for (const harkScene of ["auto", "3", "live"] as const) {
+        expect(
+          usesPaletteGradientSky({ harkScene, palette: p.id } as {
+            harkScene: string;
+            palette: typeof p.id;
+          }),
+        ).toBe(true);
+      }
     }
+  });
+
+  test("scene picker tells the user colour themes use the theme sky", () => {
+    const tsx = readFileSync(
+      path.join(
+        import.meta.dir,
+        "../src/components/settings/appearance-preferences.tsx",
+      ),
+      "utf8",
+    );
+    expect(tsx).toContain("彩色主题下使用主题天空");
   });
 
   test("sakura: pink dusk by day, deep purple-red night", () => {
@@ -148,9 +157,14 @@ describe("theme palettes visibly change the UI", () => {
     const tail = css.slice(css.indexOf("*/", from) + 2);
     expect(tail).not.toMatch(/blur\(/);
     expect(tail).not.toContain(":has(");
-    // 大板块（左栏、右栏、输入框）通过 --lg-shadow 的铺满内阴影叠上强调色
-    expect(tail).toContain(
-      "--lg-shadow: inset 0 0 0 100vmax var(--glass-tint), var(--card-shadow);",
+    // 大板块（左栏、右栏、输入框）的强调色是叠在 --lg-surface 上的一层 background，--lg-shadow 保持原值
+    expect(tail).not.toContain("100vmax");
+    expect(tail).not.toMatch(/--lg-shadow\s*:/);
+    expect(css).toContain(
+      "background: linear-gradient(var(--glass-tint), var(--glass-tint)), var(--lg-surface) !important;",
+    );
+    expect(css).toContain(
+      "background: linear-gradient(var(--glass-tint), var(--glass-tint)), var(--lg-surface-strong) !important;",
     );
   });
 });

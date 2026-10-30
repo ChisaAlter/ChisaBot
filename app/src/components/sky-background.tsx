@@ -34,7 +34,7 @@ import { createSkyWindow } from "@/lib/sky-window";
  *  - 「背景随时间变化」（live）= 动态天空：页面可见、窗口有焦点、且 2.5s 内有操作时才跑；
  *    系统开了「减少动态效果」时退回快照；
  *  - 设了壁纸或开了性能模式：不启动引擎；已经启动的停下并隐藏画布（html[data-sky-off]）；
- *  - 「智能跟随主题」+ 非 default 配色：同样不启动引擎，#skyph 显示 computePaletteSky 的主题渐变（引擎没有色相参数）；
+ *  - 非 default 配色（不管是否智能跟随）：同样不启动引擎，#skyph 显示 computePaletteSky 的主题渐变（引擎没有色相参数）；
  *  - 不再强制 preserveDrawingBuffer：停住的画布保留最后一次上屏的画面，不需要每帧多拷一份缓冲。
  */
 
@@ -348,7 +348,7 @@ function resolveSkyMode(opts: {
   perf: boolean;
   wallpaper: boolean;
   live: boolean;
-  /** 智能跟随主题 + 非 default 配色：用主题渐变（#skyph），不启动 WebGL。 */
+  /** 非 default 配色：用主题渐变（#skyph），不启动 WebGL。 */
   paletteGradient: boolean;
 }): SkyMode {
   if (opts.perf || opts.wallpaper || opts.paletteGradient) return "off";

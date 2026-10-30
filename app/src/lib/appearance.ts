@@ -915,18 +915,17 @@ export function resolveActiveWallpaperCss(state: AppearanceState): string | null
 }
 
 /**
- * 「智能跟随主题」（harkScene 为 auto）且选了非 default 配色时，天空直接用 computePaletteSky 的主题渐变，
+ * 选了非 default 配色时（不管「智能跟随主题」开没开、手动选了哪个场景），天空一律用 computePaletteSky 的主题渐变，
  * 不启动 Hark WebGL：引擎只有固定的蓝天 / 夜空场景、没有色相参数，会把主题色盖掉；不跑 WebGL 也更省。
+ * 设置页场景选择处会提示「彩色主题下使用主题天空」。
  */
-export function usesPaletteGradientSky(
-  state: Pick<AppearanceState, "harkScene" | "palette">,
-): boolean {
-  return state.harkScene === "auto" && state.palette !== "default";
+export function usesPaletteGradientSky(state: Pick<AppearanceState, "palette">): boolean {
+  return state.palette !== "default";
 }
 
 /**
  * 根据当前主题色生成与天空融合的渐变变量：WebGL 首帧前的预渲染垫片；
- * 「智能跟随主题」+ 非 default 配色时就是最终的天空（见 usesPaletteGradientSky）。
+ * 非 default 配色时就是最终的天空（见 usesPaletteGradientSky）。
  */
 export function computePaletteSky(
   palette: ThemePaletteId,

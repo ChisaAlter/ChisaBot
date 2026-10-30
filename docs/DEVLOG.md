@@ -836,3 +836,10 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **和 Hark 的区别**：Hark 只有固定的 12 个天空场景，配色不影响天空；我们在非 default 配色 + 智能跟随时不跑 WebGL，用主题渐变代替，用户手动选的场景和「背景随时间变化」不受影响。
 
 **截图**：只放在 PR #441 的描述里，不进仓库。
+
+**审查后修改（小爱审 #441，2026-10-30）**：
+- 删掉 `docs/images/palette-fix/` 下 15 张提交进仓库的 PNG（单独一个删除提交），上面的截图说明同步改掉；以后截图只放 PR 描述，图片放在 secret gist，不进任何 ChisaBot 分支。
+- 写死的蓝色改用主题变量：开关选中、页面加载图标、进度条、info toast 图标，`bot-bubbles.tsx` 日程 / 邮件图标的 `text-[#2563eb]`；侧栏机器人选中条、未读小圆点、模型胶囊悬停描边、模型列表高亮、权限菜单聚焦环、设置搜索命中、跳转闪烁、发送键阴影等 `#2f7cf6` / `rgba(47,124,246,…)` 改成 `var(--accent-color)` / `color-mix`。default 下颜色有细微变化（亮色 `#3b82f6`→`#2f74f0`，暗色 `#60a5fa`→`#a1d0ff`）。白字的未读数字徽章、头像配色、变量定义和 `var(…, #xxx)` 兜底值不改。
+- 天空：任何非 default 配色都不启动 WebGL，不管「智能跟随主题」开没开、手动选了哪个场景，`usesPaletteGradientSky` 改为只看 palette；设置页场景选择上方加一行「彩色主题下使用主题天空」（`appearance-preferences.tsx` 只加这一处）。
+- `--glass-tint` 不再用 100vmax 内阴影：大板块规则的 `background` 改成 `linear-gradient(var(--glass-tint), var(--glass-tint)), var(--lg-surface…)`，最上面一层纯色，default 时是 transparent；`--lg-shadow` 恢复原值。
+- 「模型加载失败 · 重试」：浅色 `#b4412d`→`#9c3020`，深色新增 `#ff9b87`；真 Chrome 取实际胶囊底色量对比度，6 个配色亮 / 暗都 ≥ 5.0（樱花暗色 5.97，原来深红字压深底不到 4.5）。
