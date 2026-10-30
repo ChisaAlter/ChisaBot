@@ -3,7 +3,7 @@
   "description": "ChisaBot API、会话运行和模型管理服务",
   "license": "MIT",
   "private": true,
-  "version": "0.1.106",
+  "version": "0.1.116",
   "type": "module",
   "scripts": {
     "build": "bun x tsc --noEmit",
@@ -15,18 +15,18 @@
   "dependencies": {
     "@ag-ui/client": "1.0.1",
     "@ag-ui/core": "1.0.1",
-    "@ag-ui/mastra": "1.1.6",
+    "@ag-ui/mastra": "2.0.1",
     "@ai-sdk/anthropic": "3.0.111",
     "@ai-sdk/openai": "3.0.99",
-    "@better-auth/drizzle-adapter": "^1.7.7",
+    "@better-auth/drizzle-adapter": "^1.7.1",
     "@composio/core": "^0.18.1",
     "@copilotkit/runtime": "1.77.0",
     "@json-render/core": "0.21.0",
     "@json-render/react": "0.21.0",
     "@mastra/client-js": "^1.43.0",
     "@mastra/core": "^1.64.0",
-    "@modelcontextprotocol/sdk": "^1.32.0",
-    "better-auth": "^1.7.7",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-auth": "^1.7.1",
     "cel-js": "^0.8.2",
     "cron-parser": "^5",
     "drizzle-orm": "^0.45.2",
@@ -34,9 +34,10 @@
     "hono": "^4.10.0",
     "postgres": "^3.4.9",
     "rxjs": "7.8.1",
+    "sharp": "^0.34.5",
     "twilio": "5.13.0",
     "yaml": "^2.9.0",
-    "zod": "^4.6.6"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@copilotkit/aimock": "1.43.0",

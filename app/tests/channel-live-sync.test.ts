@@ -36,3 +36,28 @@ describe("频道聊天接着看正在写的回答（§63）", () => {
     expect(withStoredTail(msgs, msgs)).toBe(msgs);
   });
 });
+
+describe("回答写完后重读：补上断线时没收到的工具调用", () => {
+  const local = [
+    { id: "u1", role: "user", content: "总结这个网页" },
+    { id: "a1", role: "assistant", content: "我去读一下这个页面。" },
+  ];
+  const stored = [
+    { id: "u1", role: "user", content: "总结这个网页" },
+    { id: "a1", role: "assistant", content: "我去读一下这个页面。", toolCalls: [{ id: "t1" }] },
+  ];
+  test("这台的那条没有工具调用、服务器的有：换成服务器的", () => {
+    const out = withStoredTail(local, stored);
+    expect(out).not.toBe(local);
+    expect((out[1] as { toolCalls?: unknown }).toolCalls).toEqual([{ id: "t1" }]);
+    expect(out[1]!.content).toBe("我去读一下这个页面。");
+  });
+  test("这台已有、服务器没有的调用不丢（不是子集就不换）", () => {
+    const mine = [local[0]!, { ...local[1]!, toolCalls: [{ id: "t9" }] }];
+    expect(withStoredTail(mine, stored)).toBe(mine);
+  });
+  test("最后一条用户消息之前的不动", () => {
+    const before = [local[1]!, { id: "u2", role: "user", content: "下一句" }];
+    expect(withStoredTail(before, [stored[1]!, before[1]!])).toBe(before);
+  });
+});

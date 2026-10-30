@@ -31,9 +31,11 @@ describe("打开对话落在最新一条", () => {
     const join = chat.indexOf("await joinWithin({");
     expect(mount).toBeGreaterThan(-1);
     expect(mount).toBeLessThan(join);
+    // 打开时那一句（挂上时已在缓存，或冷打开时列表晚到）都交给 settleInitial：读到了就不再读。
     expect(chat).toMatch(
-      /!\(\s*mountReadOk\.current &&\s*saysActivity\(agentRef\.current\.messages, initialActivity\.text\)\s*\)/,
+      /!\(\s*mountReadOk\.current &&\s*saysActivity\(agentRef\.current\.messages, initial\.text\)\s*\)/,
     );
+    expect(chat).toContain("if (initialActivity) settleInitial(initialActivity);");
   });
 
   test("SettleAtEnd 在滚动容器里，平滑滚动跳过恢复期", () => {

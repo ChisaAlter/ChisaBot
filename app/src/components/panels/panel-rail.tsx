@@ -334,6 +334,7 @@ export function PanelRail({ className }: { className?: string }) {
           <SheetContent
             className={cn(PANEL_CARD_CLASS, "rail-sheet")}
             id="chisabot-panel-sheet"
+            initialFocus={panelSheetInitialFocus}
             showCloseButton={false}
             side="right"
             style={{ width: cardWidth }}
@@ -539,6 +540,24 @@ function PanelRailBody({
       ) : null}
     </>
   );
+}
+
+/** 抽屉顶栏里能拿 Tab 焦点的控件（按 DOM 顺序取第一个）。 */
+export const PANEL_SHEET_HEAD_FOCUSABLE =
+  '.rail-head :is(button:not(:disabled), a[href], [tabindex]):not([tabindex^="-"]):not([hidden])';
+
+/**
+ * 面板抽屉打开时把焦点给谁（P2-2，FIX-PLAN §3 4e）。
+ *
+ * 和 Base UI 默认（`createDefaultInitialFocus`：触屏给抽屉本身，其余给第一个可 Tab 的元素）落点相同，
+ * 但默认实现要把整只抽屉里每个候选元素都 getComputedStyle 一遍判断可见性，抽屉刚挂上时这是一次
+ * 90–300ms 的强制样式重算（4x 降速）。抽屉里第一个可 Tab 的元素永远在顶栏（分段切换 / 新建 / 关闭），
+ * 顶栏始终可见，所以直接按 DOM 顺序取；万一取不到再交回默认逻辑。
+ */
+export function panelSheetInitialFocus(openType: string): HTMLElement | boolean | null {
+  const sheet = document.getElementById("chisabot-panel-sheet");
+  if (openType === "touch") return sheet;
+  return sheet?.querySelector<HTMLElement>(PANEL_SHEET_HEAD_FOCUSABLE) ?? true;
 }
 
 type RailTab = "panels" | "computer";

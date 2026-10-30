@@ -692,15 +692,6 @@ html[data-sky-ease] body::before {
 .glass-shell [data-slot="sidebar-rail"]::after {
   display: none;
 }
-.glass-shell [data-slot="sidebar"][data-mobile="true"] {
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: var(--glass-filter);
-  padding: 16px;
-}
-.dark .glass-shell [data-slot="sidebar"][data-mobile="true"],
-.dark[data-slot="sidebar"][data-mobile="true"] {
-  background: rgba(18, 28, 44, 0.85);
-}
 
 /* ---------- Top bar ---------- */
 .glass-topbar {
@@ -2083,6 +2074,9 @@ html[data-sky-ease] body::before {
 }
 /* CB-100c：首屏加载中的可见说明（没有按钮，左右留白一样）。 */
 .sky-skel-hint.is-loading { padding: 8px 16px; animation-delay: 0.25s; }
+/* 「登录状态异常」卡片（AuthLoopNotice）打开时藏起启动骨架的「正在加载 ChisaBot…」（React 骨架和 index.html 静态骨架各一处），不和卡片叠字。 */
+html[data-auth-loop-open] .sky-skel-hint.is-loading,
+html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
 .sky-skel-spinner {
   width: 14px;
   height: 14px;
@@ -3155,13 +3149,6 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 .glass-shell [data-slot="sidebar-container"].glass-sidebar-container {
   overflow: visible !important;
 }
-/* Phone drawer (portalled outside .glass-shell): same glass sheet, 16px inset like the desktop column. */
-[data-slot="sidebar"][data-mobile="true"] {
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: var(--glass-filter);
-}
-.dark [data-slot="sidebar"][data-mobile="true"] { background: rgba(18, 28, 44, 0.86); }
 /* Template F: auth card */
 .auth-card {
   border-radius: var(--r-xl);
@@ -3860,8 +3847,6 @@ html[data-desktop] .glass-brand { cursor: default; }
 }
 .desk-strip .win-ctrls { -webkit-app-region: no-drag; app-region: no-drag; }
 body:has(.glass-topbar) .desk-strip { display: none; }
-/* Collapsed left column: the collapse control follows the wordmark instead of floating at 276px. */
-.glass-shell:has([data-slot="sidebar"][data-state="collapsed"]) .glass-topbar-start { width: auto; gap: 12px; }
 /* Send key is ink (DESIGN.md §11), not blue. */
 .glass-composer .glass-composer-send:not(:disabled):not([data-testid="composer-stop"]) { background: var(--ink-primary) !important; color: var(--on-primary) !important; }
 /* ---------- 新建机器人：搜索框右侧的图标按钮 ---------- */
@@ -4003,7 +3988,6 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 .glass-topbar-end :is(.topbar-ctx, .topbar-divider) { transition: opacity var(--dur-1) var(--ease-std); }
 .glass-topbar-end:has(.topbar-search[data-open]) :is(.topbar-ctx, .topbar-divider) { opacity: 0; pointer-events: none; }
 .glass-topbar .glass-avatar { width: 32px !important; height: 32px !important; font-size: 12px !important; }
-.glass-topbar-end > button[aria-label="账号与设置"] { margin-left: 4px; }
 .topbar-ctx { display: flex; align-items: center; gap: 4px; }
 .topbar-ctx:empty { display: none; }
 .topbar-divider { width: 1px; height: 18px; margin: 0 6px; background: var(--line-strong); flex: none; }
@@ -6014,6 +5998,8 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .acct-pop .glass-mi:is([data-slot="dropdown-menu-item"]) { min-height: 40px; padding: 0 8px 0 6px; gap: 10px; border-radius: var(--r-md); }
 .acct-pop-head[data-slot="dropdown-menu-label"] { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 8px 0 6px; }
 .acct-pop .glass-sep[data-slot="dropdown-menu-separator"] { margin: 4px 6px; }
+/* 点菜单项切页时不播退出动画（jank P1-6）：Base UI 没有动画可等，当帧就卸载菜单。 */
+.acct-pop.is-leaving[data-slot="dropdown-menu-content"] { animation: none; transition: none; }
 .acct-pop [data-slot="dropdown-menu-group"].py-1 { padding-block: 2px; }
 .acct-name { font-size: 14px; font-weight: 500; line-height: 20px; }
 .acct-sub { font-size: 12px; line-height: 16px; }
@@ -6393,13 +6379,7 @@ html[data-phone] .glass-seg-item { min-height: 40px; display: inline-flex; align
 html[data-phone] .side-search-kbd { display: none; }
 html[data-phone] .update-banner { top: calc(64px + var(--safe-t)); }
 
-/* 左栏抽屉、面板抽屉：让开状态栏、底部横条和横屏刘海。 */
-html[data-phone] .glass-shell [data-slot="sidebar"][data-mobile="true"],
-html[data-phone] [data-slot="sidebar"][data-mobile="true"] {
-  padding: calc(12px + var(--safe-t)) 12px calc(12px + var(--safe-b)) calc(12px + var(--safe-l));
-  width: min(300px, calc(100vw - 56px)) !important;
-  max-width: none;
-}
+/* 面板抽屉：让开状态栏、底部横条和横屏刘海（左栏抽屉见「手机尺寸左栏抽屉」一节）。 */
 html[data-phone] .glass-drawer[data-slot="sheet-content"] {
   top: calc(12px + var(--safe-t));
   right: calc(12px + var(--safe-r));
@@ -7930,6 +7910,9 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 }
 /* §98 留着的聊天藏起来时关掉滚动锚定：visibility: hidden 下浏览器会重新挑锚点并把滚动容器挪几十像素，回来时位置就对不上了。 */
 .kept-chat[data-visible="false"], .kept-chat[data-visible="false"] * { overflow-anchor: none; }
+/* 切会话即时反馈（FIX-PLAN F0）：新对话还在延后渲染时，旧的一页半透明留着（只动 opacity，合成层，不触发布局），且不接收点击 / 输入，免得发到旧会话。 */
+.kept-chat[data-switching="true"] { opacity: 0.8; pointer-events: none; transition: opacity 120ms var(--ease-out, ease-out) 100ms; }
+@media (prefers-reduced-motion: reduce) { .kept-chat[data-switching="true"] { transition: none; } }
 
 .glass-mini-new:disabled { opacity: 0.45; cursor: default; }
 
@@ -8863,7 +8846,7 @@ cpk-web-inspector {
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
 }
-/* 左栏抽屉：宽度由 ui/sidebar.tsx 的 --sidebar-width = min(18rem, 100vw - 48px) 决定（手机也一样），
+/* 左栏抽屉：宽度由 ui/sidebar.tsx 的 --sidebar-width = min(85vw, 320px) 决定（手机也一样），
    内容一律跟着容器，不再有东西伸出抽屉框。 */
 html[data-phone] .glass-shell [data-slot="sidebar"][data-mobile="true"],
 html[data-phone] [data-slot="sidebar"][data-mobile="true"] {
@@ -8872,14 +8855,6 @@ html[data-phone] [data-slot="sidebar"][data-mobile="true"] {
 }
 [data-slot="sidebar"][data-mobile="true"] * { min-width: 0; }
 [data-slot="sidebar"][data-mobile="true"] :is(.glass-card, .glass-side-card, .acct-card) { max-width: 100%; box-sizing: border-box; }
-@media (max-width: 767px) {
-  /* biome-ignore lint/style/noDescendingSpecificity: 只在手机宽度下补安全区内边距，故意写在更具体的 html[data-phone] 宽度规则之后；两条改的是不同属性，不会互相覆盖。 */
-  [data-slot="sidebar"][data-mobile="true"] {
-    padding-top: calc(16px + var(--safe-t));
-    padding-bottom: calc(16px + var(--safe-b));
-    padding-left: calc(16px + var(--safe-l));
-  }
-}
 /* 抽屉头：只有一个关闭按钮，靠右。 */
 .sidebar-mobile-head { display: flex; justify-content: flex-end; flex: none; margin: -6px -6px 6px 0; }
 .sidebar-mobile-close {
@@ -8908,8 +8883,91 @@ html[data-desktop] body:has([data-slot="sheet-overlay"]) :is(.glass-topbar, .gla
    其余部分让点击落到遮罩上（点遮罩任何地方都关抽屉）。 */
 html[data-desktop] body:has([data-slot="sheet-overlay"]) .desk-strip { display: flex; pointer-events: none; background: transparent; }
 html[data-desktop] body:has([data-slot="sheet-overlay"]) .desk-strip .win-ctrls { pointer-events: auto; }
-/* 抽屉让开右上角那排窗口按钮（40px 高）。 */
-html[data-desktop] [data-slot="sidebar"][data-mobile="true"] { top: 40px; height: auto; bottom: 0; }
+/* 手机尺寸左栏抽屉（Hark 手机端，2026-10-29）：只有一层面板——全高、贴左、宽 min(85vw, 320px)（ui/sidebar.tsx），
+ * 只有右侧圆角；玻璃只有面板自己这一层（.glass，读 --glass-filter），里面的列表卡片、账号卡都是平的。
+ * 顶部一行 = 搜索 + 新建 + 关闭（关闭按钮绝对定位到搜索行右端），和顶栏的按钮同一条中线；
+ * PC 小窗里这一行放到 40px 的窗口按钮 / 拖动条下面。账号卡在同一块面板最下面，上面一条分隔线，下面让开安全区。
+ * 开关只动 transform，200ms；减少动态效果时不做动画。遮罩只压暗、不模糊，点它关抽屉（Base UI Dialog 自带）。 */
+[data-slot="sidebar"].hk-drawer {
+  --hk-drawer-top: calc(var(--safe-t) + (var(--glass-top, 56px) - 44px) / 2);
+  --hk-drawer-close: 36px;
+  --hk-drawer-radius: 20px;
+  --hk-drawer-line: rgba(15, 23, 42, 0.08);
+  --hk-drawer-solid: rgb(246, 247, 250);
+  padding: 0 0 0 var(--safe-l);
+  border-radius: 0 var(--hk-drawer-radius) var(--hk-drawer-radius) 0;
+  overflow: hidden;
+  transition-property: transform;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+.dark [data-slot="sidebar"].hk-drawer {
+  --hk-drawer-line: rgba(255, 255, 255, 0.08);
+  --hk-drawer-solid: rgb(29, 31, 36);
+}
+html[data-phone] [data-slot="sidebar"].hk-drawer { --hk-drawer-close: 44px; }
+/* PC 小窗：顶上 40px 是窗口按钮和拖动条（抽屉开着时浮在遮罩上），第一行从它下面开始。 */
+html[data-desktop] [data-slot="sidebar"].hk-drawer { --hk-drawer-top: 44px; }
+[data-slot="sidebar"].hk-drawer:is([data-starting-style], [data-ending-style]) {
+  opacity: 1;
+  translate: none;
+  transform: translateX(-100%);
+}
+/* 里面不再有第二层：列表卡片、账号卡去掉底色、模糊、投影和圆角（旧三档玻璃层读这几个变量）。 */
+[data-slot="sidebar"].hk-drawer :is(.glass-side-card, .acct-card, .acct-mini-card) {
+  --lg-surface: transparent;
+  --lg-blur: none;
+  --lg-shadow: none;
+  border-radius: 0;
+}
+[data-slot="sidebar"].hk-drawer :is(.left-rail-shell, .glass-side-full) { gap: 0; }
+[data-slot="sidebar"].hk-drawer .glass-side-full { min-width: 0; }
+[data-slot="sidebar"].hk-drawer .glass-side-card { flex: 1 1 auto; padding: var(--hk-drawer-top) 12px 8px; }
+[data-slot="sidebar"].hk-drawer :is(.side-search-row, .rail-title) {
+  min-height: 44px;
+  margin-bottom: 8px;
+  padding-right: calc(var(--hk-drawer-close) + 8px);
+}
+[data-slot="sidebar"].hk-drawer .rail-title { display: flex; align-items: center; padding-top: 0; padding-bottom: 0; }
+[data-slot="sidebar"].hk-drawer .sidebar-mobile-head {
+  position: absolute;
+  z-index: 1;
+  top: var(--hk-drawer-top);
+  right: 12px;
+  height: 44px;
+  margin: 0;
+  align-items: center;
+}
+[data-slot="sidebar"].hk-drawer .sidebar-mobile-close { width: var(--hk-drawer-close); height: var(--hk-drawer-close); }
+/* 账号：同一块面板的最下面，顶上一条 1px 分隔线（旧玻璃层把 border 锁成 0，所以用内投影画线）。 */
+[data-slot="sidebar"].hk-drawer .acct-card {
+  --lg-shadow: inset 0 1px 0 var(--hk-drawer-line);
+  padding: 8px 12px calc(8px + var(--safe-b));
+}
+/* 遮罩：只压暗，不模糊。 */
+[data-slot="sheet-overlay"].hk-drawer-overlay {
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: none;
+  transition-duration: 200ms;
+}
+.dark [data-slot="sheet-overlay"].hk-drawer-overlay { background: rgba(0, 0, 0, 0.5); }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sidebar"].hk-drawer,
+  [data-slot="sheet-overlay"].hk-drawer-overlay {
+    transition: none;
+  }
+}
+/* 性能模式 / 减少透明度：面板换不透明底色（和 #375 perf-noblur.css 的 --glass-bg-opaque 同色）。 */
+html[data-perf="on"] [data-slot="sidebar"].hk-drawer {
+  background: var(--hk-drawer-solid);
+  backdrop-filter: none;
+}
+@media (prefers-reduced-transparency: reduce) {
+  html [data-slot="sidebar"].hk-drawer {
+    background: var(--hk-drawer-solid);
+    backdrop-filter: none;
+  }
+}
 @media (max-width: 1279px) {
   html[data-desktop] .rail-sheet[data-slot="sheet-content"] { top: 48px; }
 }
@@ -9881,3 +9939,55 @@ html[data-sky-off] #sky-root #skyph {
     backdrop-filter: none;
   }
 }
+
+/* —— 顶栏（#374 回退）：电脑上只有品牌文字 + PC 窗口按钮；身份只在左栏底部的账号卡，搜索会话在左栏卡片顶部，
+   左栏开关在左栏卡片右上角（收起时在 80px 列顶）。手机顶栏不变：左 ☰ ｜ 右 搜索 + 头像，都是不叠模糊的圆钮（.glass.is-flat）。 —— */
+.hk-circle,
+.hk-avatar-btn {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: var(--r-full, 999px);
+  color: var(--text-primary);
+  outline: none;
+  cursor: pointer;
+  transition: scale var(--t-fast, 120ms) var(--t-ease, ease), background-color var(--t-fast, 120ms) var(--t-ease, ease);
+}
+.hk-circle-ico { width: 20px; height: 20px; }
+.hk-avatar-btn .glass-avatar-dot { right: 1px; top: 1px; }
+:is(.hk-circle, .hk-avatar-btn):active { scale: var(--press-scale, 0.96); }
+:is(.hk-circle, .hk-avatar-btn):hover { background: color-mix(in srgb, var(--glass-bg) 92%, var(--text)); }
+.hk-circle:focus-visible,
+.hk-avatar-btn:focus-visible { box-shadow: var(--glass-highlight), 0 0 0 2px var(--accent-color); }
+.glass-topbar[data-sidebar="collapsed"] .glass-topbar-start { width: auto; }
+/* 手机布局（含 PC 小窗 < 768px）：左 菜单 ｜ 中 留空 ｜ 右 搜索 + 头像，和 #374 时一样；圆钮不参与窗口拖动。 */
+@media (max-width: 767px) {
+  .glass-topbar[data-scope] { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .glass-topbar[data-scope] .glass-topbar-start { width: auto; }
+  .glass-topbar[data-scope] .glass-topbar-end { gap: 8px; }
+}
+html[data-phone] .glass-topbar[data-scope] { grid-template-columns: auto minmax(0, 1fr) auto; }
+html[data-phone] .glass-topbar[data-scope] .glass-topbar-start { width: auto; }
+html[data-phone] .glass-topbar[data-scope] .glass-topbar-end { gap: 8px; }
+html[data-desktop] .glass-topbar :is(.hk-circle, .hk-avatar-btn, .brand-mark-btn) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* 左栏开关：展开时是卡片顶行最右边的 32px 幽灵按钮；收起时是 80px 列顶的一格，和下面的搜索 / 新建同宽对齐。 */
+.side-search-row .glass-roster-toggle { width: 36px; height: 36px; border-radius: var(--r-md); }
+.rail-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rail-title-row .rail-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-title-row .glass-roster-toggle { margin: -4px -6px -4px 0; }
+.glass-mini > .glass-mini-toggle { align-self: center; width: 40px; height: 40px; border-radius: var(--r-md); }
+
+/* PC 客户端支持「小窗模式」时标题按钮是 4 个（4 × 46px），右边要让出 4 个的宽度，不然头像会压在小窗按钮上。
+   窄窗口（< 768px）另有 36px 的规则，这里不管。 */
+@media (min-width: 768px) {
+  html[data-desktop] .glass-topbar[data-winctrls="4"] { padding-right: calc(46px * 4 + 12px); }
+}
+

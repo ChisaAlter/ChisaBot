@@ -1,6 +1,7 @@
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
+import { botChatChannelId } from "./open-bot-chat";
 import { type AgentChannel, channelKeys } from "./queries";
 
 /**
@@ -41,7 +42,10 @@ export function useOpenThread() {
           // 落到下面：这个机器人的聊天。
         }
       }
-      await navigate({ to: "/channel/new", search: { agent: agentId } });
+      // 这个机器人正在用的那段对话；/channel/new 本身总是开新话题。
+      const channelId = await botChatChannelId(queryClient, agentId);
+      if (channelId) await navigate({ to: "/channel/$channelId", params: { channelId } });
+      else await navigate({ to: "/channel/new", search: { agent: agentId } });
     },
     [navigate, queryClient],
   );

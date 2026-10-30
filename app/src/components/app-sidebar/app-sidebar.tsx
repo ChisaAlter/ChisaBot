@@ -25,6 +25,7 @@ import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-histo
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
 import { RailSidebar, RailSidebarEdge } from "@/components/layout/rail-sidebar";
+import { RosterToggle } from "@/components/layout/roster-toggle";
 import { SidebarSearchField } from "@/components/layout/sidebar-search-field";
 import {
   DropdownMenu,
@@ -40,6 +41,7 @@ import {
   SidebarContent,
   SidebarGroup,
   SidebarMenu,
+  useCloseMobileDrawer,
   useOptionalSidebar,
 } from "@/components/ui/sidebar";
 import { openTriggerByLabel, snapAnchor } from "@/components/ui/snap-anchor";
@@ -63,6 +65,12 @@ import {
   useChannelMessageSearch,
 } from "@/lib/channels/search";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
+import {
+  afterNextPaint,
+  isPlainClick,
+  markPendingBot,
+  usePendingBot,
+} from "@/lib/chat/pending-switch";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { usePanelBot } from "@/lib/panels/active-bot";
 import { showPanels } from "@/lib/panels/rail-open";
@@ -266,10 +274,7 @@ function SearchHitRow({
   const meta = [botName, when].filter(Boolean).join(" · ");
   const title = hit.summary?.trim() || hit.name;
   const message = hit.messageId?.trim() || undefined;
-  const sidebar = useOptionalSidebar();
-  const closeDrawer = () => {
-    if (sidebar?.isMobile && sidebar.openMobile) sidebar.setOpenMobile(false);
-  };
+  const closeDrawer = useCloseMobileDrawer();
   return (
     <Link
       className="flex flex-row py-2 px-2 gap-2 items-center w-full hover:bg-foreground/5 rounded-lg"
@@ -354,10 +359,29 @@ function BotRow({
   const paused = attention?.paused ?? false;
   // DESIGN v4.1：当前对话的机器人控件（设置窗格 / 计算机 / 新话题）由聊天页登记，在这一行里操作。
   const chat = useBotChat(bot.id);
+  // 正在切到别的机器人时，旧对话登记的控件不再让这一行亮着（FIX-PLAN F0）。
+  const pendingBot = usePendingBot();
+  const lit =
+    selected ||
+    (Boolean(chat) && (pendingBot === null || pendingBot === bot.id));
   // 手机抽屉里点机器人：进它的对话并收起抽屉（以前抽屉留着盖在对话上，要再点一下遮罩）。
   const sidebar = useOptionalSidebar();
-  const closeDrawer = () => {
-    if (sidebar?.isMobile && sidebar.openMobile) sidebar.setOpenMobile(false);
+  const closeDrawer = useCloseMobileDrawer();
+  // 切会话即时反馈（FIX-PLAN F0）：高亮先到，对话随后。
+  // 手机抽屉照旧走链接（抽屉收起要跟路由 push 同一拍，见 useCloseMobileDrawer），不延后导航。
+  const navigate = useNavigate();
+  const openChat = (event: React.MouseEvent) => {
+    if (sidebar?.isMobile) {
+      closeDrawer();
+      return;
+    }
+    if (!latest || selected || !isPlainClick(event)) return;
+    event.preventDefault();
+    markPendingBot(bot.id);
+    const channelId = latest.id;
+    afterNextPaint(
+      () => void navigate({ to: "/channel/$channelId", params: { channelId } }),
+    );
   };
   const content = (
     <>
@@ -395,11 +419,7 @@ function BotRow({
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上
     <div
-      className={cn(
-        "glass-bot-row",
-        (selected || chat) && "is-on",
-        menuOpen && "menu-open",
-      )}
+      className={cn("glass-bot-row", lit && "is-on", menuOpen && "menu-open")}
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);
@@ -409,7 +429,7 @@ function BotRow({
         <Link
           aria-current={selected ? "page" : undefined}
           className="glass-bot-link"
-          onClick={closeDrawer}
+          onClick={openChat}
           onFocus={() => prefetchBotChat(bot.id, latest)}
           onPointerEnter={() => prefetchBotChat(bot.id, latest)}
           onTouchStart={() => prefetchBotChat(bot.id, latest)}
@@ -423,7 +443,7 @@ function BotRow({
         <Link
           aria-current={selected ? "page" : undefined}
           className="glass-bot-link"
-          onClick={closeDrawer}
+          onClick={openChat}
           search={{ agent: bot.id }}
           title={bot.name}
           to="/channel/new"
@@ -535,9 +555,13 @@ function BotMenuContent({
       else await navigate({ to: "/channel/new", search: { agent: bot.id } });
     }
     showPanels();
+    closeDrawer();
   };
   // 窄窗口（左栏是抽屉、几乎占满窗口）右边放不下：改成贴着机器人行下方弹出、右边与卡片齐平，菜单留在窗口里（DESIGN.md §36.3）。
   const drawer = Boolean(useOptionalSidebar()?.isMobile);
+  // M3-11：资料 · 历史对话 · 新话题 · 面板会换页或在聊天页上开窗格，做完收起手机抽屉，否则抽屉盖在上面。
+  // 电脑操作… / 设为主 / 更换主 / 恢复运行 / 删除 的对话框挂在机器人行里（抽屉里面），收起抽屉会把它们一起卸掉，所以不关。
+  const closeDrawer = useCloseMobileDrawer();
   return (
     <DropdownMenuContent
       align={drawer ? "end" : "start"}
@@ -548,12 +572,12 @@ function BotMenuContent({
     >
       <DropdownMenuItem
         className="glass-mi"
-        render={<Link params={{ agentId: bot.id }} to="/bots/$agentId" />}
+        render={<Link onClick={closeDrawer} params={{ agentId: bot.id }} to="/bots/$agentId" />}
       >
         <IconUserCircle className={icon} />
         <span className="min-w-0 flex-1">{"机器人资料"}</span>
       </DropdownMenuItem>
-      <BotChatMenuItems agentId={bot.id} chat={chat} />
+      <BotChatMenuItems agentId={bot.id} chat={chat} onDone={closeDrawer} />
       <DropdownMenuItem className="glass-mi" onClick={() => void openPanels()}>
         <IconLayoutDashboard className={icon} />
         <span className="min-w-0 flex-1">
@@ -707,7 +731,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const attentionById = new Map(
     (attention.data ?? []).map((a) => [a.agentId, a]),
   );
-  const { botId: selectedBotId } = usePanelBot();
+  const { botId: routeBotId } = usePanelBot();
+  // 正在切过去的机器人先亮（FIX-PLAN F0），路由跟上后清掉，回到按路由算。
+  const pendingBotId = usePendingBot();
+  const selectedBotId = pendingBotId ?? routeBotId;
   const { mainBotId, setMainBot } = useMainBot();
   const mainBot = mainBotId
     ? roster.find((bot) => bot.id === mainBotId)
@@ -719,7 +746,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   usePrefetchBotChats(
     [...(mainBot ? [mainBot.id] : []), ...others.map((bot) => bot.id)],
     channels.data,
-    selectedBotId,
+    routeBotId,
   );
 
   const botNameOf = (id: string | null | undefined) =>
@@ -786,7 +813,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           aria-label={searching ? "搜索结果" : "机器人"}
           className="glass-card glass-side-card min-h-0 flex-1"
         >
-          {/* 搜索和新建共用一行，列表直接接在下面（Ctrl K 聚焦搜索）。 */}
+          {/* 卡片顶部：搜索会话 + 新建，左栏开关在右上角（手机抽屉里没有开关）。Ctrl K 聚焦搜索。 */}
           <div className="side-search-row">
             <SidebarSearchField />
             <Tooltip>
@@ -806,6 +833,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 {"新建机器人"}
               </TooltipContent>
             </Tooltip>
+            <RosterToggle scope="app" />
           </div>
           {searching ? (
             <>
@@ -991,7 +1019,7 @@ function RailTip({
 }
 
 /**
- * The roster collapsed (Ctrl+B / the top-bar toggle): a 64px glass rail of Bot avatars, so Bots stay
+ * The roster collapsed (Ctrl+B / the toggle at the top of the card): a 64px glass rail of Bot avatars, so Bots stay
  * one click away. The selected Bot carries the same blue ring/edge as its full row, the main Bot its
  * star, and unread / waiting states a dot.
  */
@@ -1012,6 +1040,7 @@ function BotMiniRail({
 }) {
   return (
     <nav aria-label={"机器人"} className="glass-mini" id="chisabot-bot-list">
+      <RosterToggle className="glass-mini-toggle" scope="app" />
       <MiniSearchButton />
       <RailTip label={"新建机器人"}>
         <button
@@ -1080,6 +1109,21 @@ function MiniBot({
   }, [menuOpen]);
   const resume = useMutation(setBotPausedMutationOptions(queryClient));
   const chat = useBotChat(bot.id);
+  // 正在切到别的机器人时，旧对话登记的控件不再让这一行亮着（FIX-PLAN F0）。
+  const pendingBot = usePendingBot();
+  const lit =
+    selected ||
+    (Boolean(chat) && (pendingBot === null || pendingBot === bot.id));
+  const navigate = useNavigate();
+  const openChat = (event: React.MouseEvent) => {
+    if (!latest || selected || !isPlainClick(event)) return;
+    event.preventDefault();
+    markPendingBot(bot.id);
+    const channelId = latest.id;
+    afterNextPaint(
+      () => void navigate({ to: "/channel/$channelId", params: { channelId } }),
+    );
+  };
   const waiting = attention ? needsInput(attention) : 0;
   const unread = !selected && attention ? attention.unread > 0 : false;
   const paused = attention?.paused ?? false;
@@ -1105,15 +1149,11 @@ function MiniBot({
       ) : null}
     </>
   );
-  const linkClass = cn("glass-mini-bot", (selected || chat) && "is-on");
+  const linkClass = cn("glass-mini-bot", lit && "is-on");
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上
     <div
-      className={cn(
-        "glass-mini-slot",
-        (selected || chat) && "is-on",
-        menuOpen && "menu-open",
-      )}
+      className={cn("glass-mini-slot", lit && "is-on", menuOpen && "menu-open")}
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);
@@ -1125,6 +1165,7 @@ function MiniBot({
             aria-current={selected ? "page" : undefined}
             aria-label={label}
             className={linkClass}
+            onClick={openChat}
             onFocus={() => prefetchBotChat(bot.id, latest)}
             onPointerEnter={() => prefetchBotChat(bot.id, latest)}
             onTouchStart={() => prefetchBotChat(bot.id, latest)}
@@ -1138,6 +1179,7 @@ function MiniBot({
             aria-current={selected ? "page" : undefined}
             aria-label={label}
             className={linkClass}
+            onClick={openChat}
             search={{ agent: bot.id }}
             to="/channel/new"
           >

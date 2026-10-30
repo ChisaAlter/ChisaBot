@@ -5,7 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { AgentProfile } from "@/components/agents/agent-profile";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
@@ -224,7 +224,7 @@ export function ChannelPage({
  * A channel with exactly one coworker is its CopilotKit chat. Old multi-Bot group conversations
  * have no page since slimming P4b; they say so instead of redirecting to the removed `/group`.
  */
-function ChannelBody({
+const ChannelBody = memo(function ChannelBody({
   channel,
   isPending,
   hasError,
@@ -276,4 +276,4 @@ function ChannelBody({
       runtimeAgentId={runtimeAgentId}
     />
   );
-}
+});
