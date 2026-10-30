@@ -343,6 +343,14 @@ const UNACCEPTED_DROP_REASON = {
     "没有附上：还没有对话。先发出这条消息，再往打开的对话里附文件。",
 } as const;
 
+/*
+ * 不随渲染变的按钮内容和默认值放模块级（jank FIX-PLAN §5 / P2-1）：同一个元素 / 数组引用，
+ * Composer 自己重渲（打字、上传）时 Button 和依赖 `agents` 的 memo 不会被白白刷新。
+ */
+const NO_AGENTS: readonly AgentOption[] = [];
+const STOP_ICON = <IconPlayerStopFilled className="size-3" />;
+const SEND_ICON = <IconArrowUp className="size-[18px]" stroke={2.25} />;
+
 function ComposerImpl({
   className,
   modelControl,
@@ -352,7 +360,7 @@ function ComposerImpl({
   onAgentChange,
   editorClassName,
   compact = false,
-  agents = [],
+  agents = NO_AGENTS,
   commands = PLACEHOLDER_COMMANDS,
   onSubmit,
   onQueue,
@@ -1679,7 +1687,7 @@ function ComposerImpl({
       size="icon"
       type="button"
     >
-      <IconPlayerStopFilled className="size-3" />
+      {STOP_ICON}
     </Button>
   ) : (
     <Button
@@ -1690,7 +1698,7 @@ function ComposerImpl({
       size="icon"
       type="submit"
     >
-      <IconArrowUp className="size-[18px]" stroke={2.25} />
+      {SEND_ICON}
     </Button>
   );
 
