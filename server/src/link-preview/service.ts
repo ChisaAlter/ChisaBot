@@ -741,7 +741,6 @@ export async function createLinkPreviews(
       (res.status === 403 && String(res.headers["x-ratelimit-remaining"] ?? "") === "0");
     if (rateLimited || res.status >= 500 || res.status < 200) return null;
     const found = res.status >= 200 && res.status < 300;
-    if (!found && (res.status < 400 || res.status >= 500)) return null;
     let json: Record<string, unknown> = {};
     if (found) {
       try {

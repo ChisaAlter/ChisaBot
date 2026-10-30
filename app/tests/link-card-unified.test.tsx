@@ -88,7 +88,7 @@ describe("LinkCard", () => {
     expect(card.getAttribute("target")).toBe("_blank");
   });
 
-  test("没有图：仍是竖版大卡，图区是横幅（站点渐变 + 首字 + 域名），标题固定两行", async () => {
+  test("没有图：仍是竖版大卡，图区是横幅（站点渐变 + 首字，不写域名），标题固定两行", async () => {
     const url = "https://plain.example.com/";
     responses[url] = {
       ...ghPreview,
@@ -110,9 +110,9 @@ describe("LinkCard", () => {
     );
     expect(banner).not.toBeNull();
     expect(banner?.style.backgroundImage).toContain("linear-gradient");
-    expect(banner?.querySelector(".lc-banner-label")?.textContent).toBe(
-      "plain.example.com",
-    );
+    // 横幅上不再写域名（标题下面那行已经有），只留图标或首字。
+    expect(banner?.querySelector(".lc-banner-label")).toBeNull();
+    expect(banner?.textContent).not.toContain("plain.example.com");
     // 图标是转存图时画图标；这里图标坏不了（happy-dom 不加载），所以图标块在。
     expect(banner?.querySelector(".lc-banner-mark")).not.toBeNull();
     expect(card.querySelector(".lc-media > img")).toBeNull();

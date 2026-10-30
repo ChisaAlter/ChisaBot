@@ -18,7 +18,7 @@ import "./link-card.css";
  * - 有预览图：固定宽约 280px 的竖卡。上半部 og:image 大图（object-fit: cover，上方两个角圆角，框按 40:21 预留），
  *   下面两行粗体标题，再下面一行浅色「站点 · 补充信息」。
  * - 没有预览图（2026-10-30 起不再收成小横卡）：同一张竖卡，图区画生成的横幅——站点主色渐变（认得的站用品牌色，
- *   其它按域名算一个稳定色相）+ 大号站点图标或首字 + 一行「owner/repo」/ 域名。GitHub 仓库的预览图是主人头像时
+ *   其它按域名算一个稳定色相）+ 大号站点图标或首字（GitHub 再加一行 owner/repo，其它不写域名）。GitHub 仓库的预览图是主人头像时
  *   （imageKind `avatar`）把头像画成横幅里的大圆头像。
  * - 字段：给的优先，缺的用 `/api/link-preview` 补（{@link mergeLinkFields}）。
  * - 取预览时画骨架，骨架和有图的卡尺寸完全一样（同一套类名、同一个预留框），内容到了不跳；
@@ -100,8 +100,8 @@ export function bannerGradient(domain: string): readonly [string, string] {
   return [`hsl(${hue} 62% 54%)`, `hsl(${(hue + 38) % 360} 58% 38%)`];
 }
 
-/** 横幅上那一行字：GitHub 仓库是 owner/repo，其它是域名。 */
-export function bannerLabel(url: string, domain: string): string {
+/** 横幅上那一行字：只有 GitHub 有（owner/repo）；其它站返回 null（域名已经在标题下面那行，不重复）。 */
+export function bannerLabel(url: string): string | null {
   try {
     const u = new URL(url);
     if (/^(www\.)?github\.com$/i.test(u.hostname)) {
@@ -110,9 +110,9 @@ export function bannerLabel(url: string, domain: string): string {
       if (owner) return owner;
     }
   } catch {
-    /* 用域名 */
+    /* 不是网址 */
   }
-  return domain;
+  return null;
 }
 
 function initialOf(label: string): string {
@@ -130,7 +130,7 @@ function LinkBanner({
   onIconError,
 }: {
   domain: string;
-  label: string;
+  label: string | null;
   avatar: string | null;
   favicon: string | null;
   onAvatarError: () => void;
@@ -168,10 +168,10 @@ function LinkBanner({
         </span>
       ) : (
         <span aria-hidden className="lc-banner-mark lc-banner-letter">
-          {initialOf(label)}
+          {initialOf(label ?? domain)}
         </span>
       )}
-      <span className="lc-banner-label">{label}</span>
+      {label ? <span className="lc-banner-label">{label}</span> : null}
     </span>
   );
 }
@@ -358,7 +358,7 @@ export function LinkCard({
             avatar={avatar}
             domain={fields.domain}
             favicon={favicon}
-            label={bannerLabel(href, fields.domain)}
+            label={bannerLabel(href)}
             onAvatarError={() => setAttempt({ ...img, broken: true })}
             onIconError={() => setIconBroken(true)}
           />
