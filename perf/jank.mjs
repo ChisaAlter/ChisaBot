@@ -641,7 +641,7 @@ async function runOnce(runIdx) {
     if (want("settings")) {
       const open = async (tag) => {
         await mark(`avatar-menu-${tag}`, () =>
-          page.locator(".glass-topbar button").last().click(),
+          page.getByRole("button", { name: "账号与设置" }).first().click(),
         );
         await page.waitForTimeout(700);
         await mark(`menu-设置-${tag}`, () =>

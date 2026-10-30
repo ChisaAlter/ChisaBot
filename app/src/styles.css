@@ -2074,6 +2074,9 @@ html[data-sky-ease] body::before {
 }
 /* CB-100c：首屏加载中的可见说明（没有按钮，左右留白一样）。 */
 .sky-skel-hint.is-loading { padding: 8px 16px; animation-delay: 0.25s; }
+/* 「登录状态异常」卡片（AuthLoopNotice）打开时藏起启动骨架的「正在加载 ChisaBot…」（React 骨架和 index.html 静态骨架各一处），不和卡片叠字。 */
+html[data-auth-loop-open] .sky-skel-hint.is-loading,
+html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
 .sky-skel-spinner {
   width: 14px;
   height: 14px;
@@ -5995,6 +5998,8 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .acct-pop .glass-mi:is([data-slot="dropdown-menu-item"]) { min-height: 40px; padding: 0 8px 0 6px; gap: 10px; border-radius: var(--r-md); }
 .acct-pop-head[data-slot="dropdown-menu-label"] { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 8px 0 6px; }
 .acct-pop .glass-sep[data-slot="dropdown-menu-separator"] { margin: 4px 6px; }
+/* 点菜单项切页时不播退出动画（jank P1-6）：Base UI 没有动画可等，当帧就卸载菜单。 */
+.acct-pop.is-leaving[data-slot="dropdown-menu-content"] { animation: none; transition: none; }
 .acct-pop [data-slot="dropdown-menu-group"].py-1 { padding-block: 2px; }
 .acct-name { font-size: 14px; font-weight: 500; line-height: 20px; }
 .acct-sub { font-size: 12px; line-height: 16px; }
