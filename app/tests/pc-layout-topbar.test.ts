@@ -20,13 +20,14 @@ test("顶栏不放头像、账号菜单、搜索框或左栏开关", () => {
   expect(topbar).not.toContain("SidebarSearchField");
   expect(topbar).not.toContain("TopBarSearch");
   expect(topbar).not.toContain("RosterToggle");
-  expect(topbar).not.toMatch(/account\??:/);
-  expect(shell).not.toContain("AccountMenu");
 });
 
-test("账号菜单没有顶栏分支", () => {
-  expect(account).not.toContain("placement");
-  expect(account).not.toContain("hk-avatar-btn");
+test("头像（账号菜单）只在手机顶栏上，电脑顶栏没有", () => {
+  // 外壳把账号菜单交给顶栏，顶栏只在手机布局里画它。
+  expect(shell).toContain('<GlassTopBar account={<AccountMenu placement="topbar" />} scope={scope} />');
+  expect(topbar).toMatch(/\{mobile \? \(\s*<>\s*<MobileSearchButton scope=\{scope\} \/>\s*\{account\}\s*<\/>\s*\) : null\}/);
+  expect(topbar.match(/\{account\}/g)?.length).toBe(1);
+  expect(account).toContain("hk-avatar-btn");
 });
 
 test("电脑上左栏卡片顶部有搜索会话，左栏开关在卡片和 80px 列上", () => {
@@ -39,7 +40,7 @@ test("电脑上左栏卡片顶部有搜索会话，左栏开关在卡片和 80px
 });
 
 test("styles.css 没有顶栏搜索胶囊 / 主页圆钮 / 顶栏头像的残留样式", () => {
-  for (const dead of [".hk-topbar", ".hk-search", ".hk-home", ".hk-avatar-btn", ".hk-brand"]) {
+  for (const dead of [".hk-topbar", ".hk-search", ".hk-home", ".hk-brand"]) {
     expect(css).not.toContain(dead);
   }
 });

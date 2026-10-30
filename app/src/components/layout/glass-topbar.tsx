@@ -1,7 +1,7 @@
 import { IconMenu2, IconSearch } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -49,9 +49,16 @@ export type ShellScope = "app" | "settings" | "admin";
  *
  * 身份只有左栏最底下的账号卡一个位置；搜索会话在左栏卡片顶部；左栏开关在左栏卡片右上角（收起时在 80px 列顶），
  * 和右栏「面板」开关在右栏上对称（#374 回退，DESIGN.md §9.1）。
- * 手机上不变：左 ☰ 打开抽屉 ｜ 右 搜索按钮（打开抽屉并聚焦抽屉顶部的搜索框）。
+ * 手机上不变：左 ☰ 打开抽屉 ｜ 右 搜索按钮（打开抽屉并聚焦抽屉顶部的搜索框）+ 圆形头像（账号菜单）。
  */
-export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
+export function GlassTopBar({
+  scope = "app",
+  account,
+}: {
+  scope?: ShellScope;
+  /** 手机顶栏右上角的圆形头像（账号菜单），由外壳传进来；电脑上不画。 */
+  account?: ReactNode;
+}) {
   const sidebar = useOptionalSidebar();
   const mobile = Boolean(sidebar?.isMobile);
   const desktop = useDesktopWindow();
@@ -96,7 +103,14 @@ export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
         ) : null}
       </div>
       <span aria-hidden className="glass-topbar-mid" />
-      <div className="glass-topbar-end">{mobile ? <MobileSearchButton scope={scope} /> : null}</div>
+      <div className="glass-topbar-end">
+        {mobile ? (
+          <>
+            <MobileSearchButton scope={scope} />
+            {account}
+          </>
+        ) : null}
+      </div>
       {desktop ? <WindowControls bridge={desktop.bridge} compact={desktop.compact} maximized={desktop.maximized} /> : null}
     </header>
   );

@@ -9933,8 +9933,9 @@ html[data-sky-off] #sky-root #skyph {
 }
 
 /* —— 顶栏（#374 回退）：电脑上只有品牌文字 + PC 窗口按钮；身份只在左栏底部的账号卡，搜索会话在左栏卡片顶部，
-   左栏开关在左栏卡片右上角（收起时在 80px 列顶）。手机顶栏不变：左 ☰ ｜ 右 搜索，都是不叠模糊的圆钮（.glass.is-flat）。 —— */
-.hk-circle {
+   左栏开关在左栏卡片右上角（收起时在 80px 列顶）。手机顶栏不变：左 ☰ ｜ 右 搜索 + 头像，都是不叠模糊的圆钮（.glass.is-flat）。 —— */
+.hk-circle,
+.hk-avatar-btn {
   position: relative;
   flex: none;
   display: grid;
@@ -9949,10 +9950,25 @@ html[data-sky-off] #sky-root #skyph {
   transition: scale var(--t-fast, 120ms) var(--t-ease, ease), background-color var(--t-fast, 120ms) var(--t-ease, ease);
 }
 .hk-circle-ico { width: 20px; height: 20px; }
-.hk-circle:active { scale: var(--press-scale, 0.96); }
-.hk-circle:hover { background: color-mix(in srgb, var(--glass-bg) 92%, var(--text)); }
-.hk-circle:focus-visible { box-shadow: var(--glass-highlight), 0 0 0 2px var(--accent-color); }
+.hk-avatar-btn .glass-avatar-dot { right: 1px; top: 1px; }
+:is(.hk-circle, .hk-avatar-btn):active { scale: var(--press-scale, 0.96); }
+:is(.hk-circle, .hk-avatar-btn):hover { background: color-mix(in srgb, var(--glass-bg) 92%, var(--text)); }
+.hk-circle:focus-visible,
+.hk-avatar-btn:focus-visible { box-shadow: var(--glass-highlight), 0 0 0 2px var(--accent-color); }
 .glass-topbar[data-sidebar="collapsed"] .glass-topbar-start { width: auto; }
+/* 手机布局（含 PC 小窗 < 768px）：左 菜单 ｜ 中 留空 ｜ 右 搜索 + 头像，和 #374 时一样；圆钮不参与窗口拖动。 */
+@media (max-width: 767px) {
+  .glass-topbar[data-scope] { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .glass-topbar[data-scope] .glass-topbar-start { width: auto; }
+  .glass-topbar[data-scope] .glass-topbar-end { gap: 8px; }
+}
+html[data-phone] .glass-topbar[data-scope] { grid-template-columns: auto minmax(0, 1fr) auto; }
+html[data-phone] .glass-topbar[data-scope] .glass-topbar-start { width: auto; }
+html[data-phone] .glass-topbar[data-scope] .glass-topbar-end { gap: 8px; }
+html[data-desktop] .glass-topbar :is(.hk-circle, .hk-avatar-btn, .brand-mark-btn) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
 
 /* 左栏开关：展开时是卡片顶行最右边的 32px 幽灵按钮；收起时是 80px 列顶的一格，和下面的搜索 / 新建同宽对齐。 */
 .side-search-row .glass-roster-toggle { width: 36px; height: 36px; border-radius: var(--r-md); }

@@ -13,6 +13,8 @@
 
 **验证**：bun 1.3.14。typecheck、build 通过；test:app 1854 pass / 0 fail；server + DB 测试的失败项是 main 上同一批（本改动只动 app/）；Biome 无新增问题。真 Chrome（headless，本地单用户服务）截了聊天页 / 设置页 × 左栏展开 / 收起 × 浅色 / 深色 × 1024 / 1440 共 16 张，每张可见的用户头像 1 个、品牌头像 0 个，顶栏只有品牌名；左栏收起时按 Ctrl K 会展开并聚焦「搜索会话」。
 
+- 补充（小爱复核）：手机布局保持 #374 时原样——顶栏右上角恢复圆形头像（账号菜单入口，`AccountMenu placement="topbar"` / `.hk-avatar-btn`），只在手机布局（含 PC 小窗 < 768px）里画；电脑顶栏仍然没有头像，身份只在左栏底部账号卡。手机顶栏列宽恢复为 `auto minmax(0,1fr) auto`、右侧按钮间距 8px。`tests/pc-layout-topbar.test.ts` 断言头像只在手机分支里渲染；360px 浅色/深色聊天页截图已补到 PR。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
