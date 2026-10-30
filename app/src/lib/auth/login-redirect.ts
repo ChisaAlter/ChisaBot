@@ -11,10 +11,16 @@
  * 30 秒内又被弹回来（会话有效但后端仍回这种 401）就停下，见下面的循环保护。
  */
 
+import { mdCache } from "@/lib/chat/md-cache";
+
 type LoginWindow = Pick<Window, "location" | "fetch"> & {
   sessionStorage?: Pick<Storage, "getItem" | "setItem">;
 };
-type RedirectWindow = Pick<LoginWindow, "location" | "sessionStorage">;
+type LoginWindowStorage = Pick<Storage, "getItem" | "setItem"> &
+  Partial<Pick<Storage, "removeItem">>;
+type RedirectWindow = Pick<LoginWindow, "location"> & {
+  sessionStorage?: LoginWindowStorage;
+};
 
 /**
  * 防死循环：后端在会话其实有效时也可能回网关的 401（身份头重放、签名校验失败：secret 不一致或时钟偏差）。
@@ -49,6 +55,18 @@ function lastRedirectAt(win: RedirectWindow): number | null {
 function markRedirect(win: RedirectWindow, now: number): void {
   try {
     storageOf(win)?.setItem(LOGIN_REDIRECT_KEY, String(now));
+  } catch {}
+}
+
+/**
+ * 确认登录正常（/api/me 回 200）后清掉跳转时间戳：30 秒的循环窗口重新算。
+ * 否则「刚登录完、30 秒内会话又真的过期」会被误当成死循环，停在「登录状态异常」而不是直接去 /login。
+ */
+export function clearLoginRedirectMark(
+  win: Pick<RedirectWindow, "sessionStorage"> = window,
+): void {
+  try {
+    storageOf(win as RedirectWindow)?.removeItem?.(LOGIN_REDIRECT_KEY);
   } catch {}
 }
 
@@ -115,6 +133,8 @@ export async function signOutAndReLogin(
       credentials: "same-origin",
     });
   } catch {}
+  // 解析缓存里是消息原文；退出失败也照清（反正要去重新登录）。
+  mdCache.clear();
   markRedirect(win, now);
   redirecting = true;
   win.location.replace("/login");

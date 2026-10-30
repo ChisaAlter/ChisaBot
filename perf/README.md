@@ -15,8 +15,11 @@ the build is served by `mock-server.mjs`, which also answers `/api/*` from `fixt
 ## Usage
 
 ```sh
-# 1. build the app (same command as CI)
-bun run generate:app-config && (cd app && bun --bun ../node_modules/vite/bin/vite.js build)
+# 1. build the app. `bun run --cwd app build` finds vite either way: app/node_modules/vite with a
+#    default (isolated) `bun install`, or node_modules/vite at the root with `--linker hoisted` (CI).
+#    The CI workflow calls ../node_modules/vite directly because it installs hoisted; locally that path
+#    usually doesn't exist, so don't copy it from perf.yml.
+bun run generate:app-config && bun run --cwd app build
 # 2. measure
 bun run perf:jank -- --scenario=switch,orb --runs=3 --out=perf/out/head
 # 3. measure the other build (e.g. a main build copied to /tmp/dist-main) and compare

@@ -1,5 +1,6 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { clearRememberedShots } from "@/components/computer/screenshot-card";
+import { mdCache } from "@/lib/chat/md-cache";
 import { client } from "@/lib/client";
 import { setControlAccount } from "@/lib/computers/use-control";
 import { resetScheduleFiredState } from "@/lib/schedule-fired";
@@ -20,6 +21,8 @@ export function signOutMutationOptions(queryClient: QueryClient) {
       setControlAccount(null);
       clearRememberedShots();
       resetScheduleFiredState();
+      // 解析缓存里是消息原文，换账号前清掉。
+      mdCache.clear();
       queryClient.removeQueries({ queryKey: authKeys.all });
     },
   });
