@@ -9,7 +9,13 @@ import {
 import { checkPublicUrl } from "../../../shared/net/ssrf";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
-import { decodeHtml, displayDomain, parsePage } from "./parse";
+import {
+  decodeHtml,
+  displayDomain,
+  githubRepoOf,
+  normalizeGithubTitle,
+  parsePage,
+} from "./parse";
 
 /**
  * 聊天里的链接预览卡（2026-10-13）：`GET /api/link-preview?url=` 取网页的标题、站点、图标、预览图。
@@ -25,6 +31,10 @@ import { decodeHtml, displayDomain, parsePage } from "./parse";
  *   图标取站点根目录的 /favicon.ico，同样经过 SSRF 检查和转存）。被拦的内网地址仍然 422。
  * - 截图（没有 og:image 时）默认关闭：链接卡改成 48px 缩略图后用不上大图（2026-10-14，§48）；
  *   `CHISABOT_LINK_PREVIEW_SHOTS=1` 打开。
+ * - GitHub 仓库首页（2026-10-30，§48.3）：先问 GitHub API `/repos/:o/:r` 拿描述、星标、主人头像；
+ *   og 图（opengraph.githubassets.com，按出口 IP 限流）拿不到就用头像（imageKind `avatar`）；
+ *   私有 / 不存在（4xx）也回能画大卡的数据（标题 owner/repo + 头像）。API 自己被限流时照旧抓网页。
+ *   og 图或 API 回 429 时只缓存 5 分钟。
  * - 两张表启动时 CREATE TABLE IF NOT EXISTS（和 chat-shots 同一做法），写入时顺手清理过期的。
  */
 
@@ -37,7 +47,8 @@ export type LinkPreview = {
   description: string;
   /** 本站地址 /api/link-preview/asset/<id>，没有就 null。 */
   image: string | null;
-  imageKind: "og" | "shot" | "direct" | "none";
+  /** `avatar`：GitHub 仓库主人的头像（og 图拿不到时的兜底，方图，前端画成横幅）。 */
+  imageKind: "og" | "shot" | "direct" | "avatar" | "none";
   imagePending: boolean;
   favicon: string | null;
   /**
@@ -50,6 +61,8 @@ export type LinkPreview = {
   imageHeight?: number;
   /** 视频页（YouTube / bilibili）：`image` 是视频封面，前端可以加播放角标。普通网页不带。 */
   kind?: "video";
+  /** GitHub 仓库的星标数（来自 GitHub API）。 */
+  stars?: number;
 };
 
 /** What the service needs from `guardedFetch`; tests pass a fake so no request leaves the machine. */
@@ -59,6 +72,8 @@ type ComputerTarget = { baseUrl: string; token?: string };
 
 const OK_TTL_HOURS = 24;
 const FAIL_TTL_MINUTES = 30;
+/** 对方限流（429）时的缓存：5 分钟后再试，不让一次限流挂 30 分钟。 */
+const LIMITED_TTL = "5 minutes";
 const ASSET_KEEP_DAYS = 30;
 const HTML_MAX = 1024 * 1024;
 const HTML_STOP = 400 * 1024;
@@ -387,10 +402,14 @@ export async function createLinkPreviews(
     url: string,
     ok: boolean,
     data: unknown,
-    short = false,
+    short: boolean | string = false,
   ) {
     const ttl =
-      ok && !short ? `${OK_TTL_HOURS} hours` : `${FAIL_TTL_MINUTES} minutes`;
+      typeof short === "string"
+        ? short
+        : ok && !short
+          ? `${OK_TTL_HOURS} hours`
+          : `${FAIL_TTL_MINUTES} minutes`;
     await database.$client.unsafe(
       `INSERT INTO chisabot_link_previews (url_key, url, ok, data, fetched_at, expires_at)
        VALUES ($1, $2, $3, $4::jsonb, now(), now() + $5::interval)
@@ -467,12 +486,20 @@ export async function createLinkPreviews(
 
   /** 预览图（og:image、视频封面、GitHub 兜底图）：失败要留下原因，不然线上只看得到「没图」。 */
   async function fetchPreviewImage(url: string, role: string): Promise<string | null> {
+    return (await fetchPreviewImageResult(url, role)).asset;
+  }
+
+  /** 同 fetchPreviewImage，另外告诉调用方是不是被限流（429）。 */
+  async function fetchPreviewImageResult(
+    url: string,
+    role: string,
+  ): Promise<{ asset: string | null; limited: boolean }> {
     let result = await fetchImageResult(url, IMAGE_MAX, false);
     // og:image 偶尔第一次很慢（GitHub 的图是现做的）：网络错误 / 5xx 再试一次；429、404 再试也一样。
     if (!result.asset && result.retry) result = await fetchImageResult(url, IMAGE_MAX, false);
     if (!result.asset)
       log({ type: "link-preview-image-failed", role, url: redactUrl(url), reason: result.reason });
-    return result.asset;
+    return { asset: result.asset, limited: /^status 429\b/.test(result.reason ?? "") };
   }
 
   /** 图标：一次就好，失败不记（每个网页会试好几个地址）。 */
@@ -623,8 +650,14 @@ export async function createLinkPreviews(
       return degradedPreview(url, key, page.url, "empty");
     }
     const fallbacks = githubImageFallbacks(page.url);
+    let limited = false;
     const [ogImage, favicon] = await Promise.all([
-      parsed.image ? fetchPreviewImage(parsed.image, "og") : Promise.resolve(null),
+      parsed.image
+        ? fetchPreviewImageResult(parsed.image, "og").then((r) => {
+            limited ||= r.limited;
+            return r.asset;
+          })
+        : Promise.resolve(null),
       (async () => {
         for (const icon of parsed.icons) {
           const asset = await fetchImage(icon, ICON_MAX, true);
@@ -634,29 +667,35 @@ export async function createLinkPreviews(
       })(),
     ]);
     let image = ogImage;
+    let imageKind: LinkPreview["imageKind"] = image ? "og" : "none";
     // GitHub 仓库 / release：og 图（opengraph.githubassets.com，按出口 IP 限流 100 次 / 15 分钟）没取到，
     // 先试同一仓库的固定地址（CDN 上常有现成的），再用仓库主人的头像。
     for (const candidate of image ? [] : fallbacks) {
-      image = await fetchPreviewImage(candidate, "github-fallback");
-      if (image) break;
+      const r = await fetchPreviewImageResult(candidate, "github-fallback");
+      limited ||= r.limited;
+      image = r.asset;
+      if (image) {
+        imageKind = candidate.startsWith("https://avatars.") ? "avatar" : "og";
+        break;
+      }
     }
     const wantShot =
       !image && Boolean(options.computer) && options.screenshots === true;
     const preview: LinkPreview = {
       url,
       finalUrl: page.url,
-      title: parsed.title || domain,
+      title: normalizeGithubTitle(parsed.title || domain, url, parsed.description),
       siteName: parsed.siteName,
       domain,
       description: parsed.description,
       image,
-      imageKind: image ? "og" : "none",
+      imageKind,
       imagePending: wantShot,
       favicon,
     };
     // 网页说有图但没取到（或只用了兜底图）：只缓存 30 分钟，过后再试真正的图，不让一次限流挂一整天。
     const imageMissed = Boolean(parsed.image || fallbacks.length) && !ogImage;
-    await writeCache(key, url, true, preview, imageMissed).catch(() => {});
+    await writeCache(key, url, true, preview, limited ? LIMITED_TTL : imageMissed).catch(() => {});
     if (wantShot) startScreenshot(key, preview);
     void prune().catch(() => {});
     return preview;
@@ -675,6 +714,88 @@ export async function createLinkPreviews(
     } catch {
       return null;
     }
+  }
+
+  /**
+   * GitHub 仓库首页：先问 `api.github.com/repos/:o/:r`（同样走 SSRF 检查）。
+   * - 200：标题「owner/repo: 描述」、星标、主人头像；预览图先试 og 固定图，拿不到用头像（`avatar`）。
+   * - 404 / 其它 4xx（私有、不存在）：仍回能画大卡的数据（标题 owner/repo、头像），缓存 30 分钟。
+   * - API 自己限流（429，或 403 且剩余额度 0）/ 5xx / 网络错误：返回 null，照旧抓网页。
+   */
+  async function buildGithubRepo(url: string, key: string): Promise<LinkPreview | null> {
+    const repo = githubRepoOf(url);
+    if (!repo) return null;
+    const name = `${repo.owner}/${repo.repo}`;
+    let res: Awaited<ReturnType<PreviewFetch>>;
+    try {
+      res = await fetchUrl(`https://api.github.com/repos/${name}`, {
+        maxBytes: 256 * 1024,
+        timeoutMs: PAGE_TIMEOUT,
+        headers: { accept: "application/vnd.github+json" },
+      });
+    } catch {
+      return null;
+    }
+    const rateLimited =
+      res.status === 429 ||
+      (res.status === 403 && String(res.headers["x-ratelimit-remaining"] ?? "") === "0");
+    if (rateLimited || res.status >= 500 || res.status < 200) return null;
+    const found = res.status >= 200 && res.status < 300;
+    if (!found && (res.status < 400 || res.status >= 500)) return null;
+    let json: Record<string, unknown> = {};
+    if (found) {
+      try {
+        json = obj(JSON.parse(res.body.toString("utf8")));
+      } catch {
+        return null;
+      }
+    }
+    const fullName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(str(json.full_name))
+      ? str(json.full_name)
+      : name;
+    const description = str(json.description).replace(/\s+/g, " ").slice(0, 300);
+    const stars = typeof json.stargazers_count === "number" ? json.stargazers_count : undefined;
+    const avatar =
+      httpsImage(obj(json.owner).avatar_url) ??
+      `https://avatars.githubusercontent.com/${repo.owner}?s=400`;
+    let limited = false;
+    let image: string | null = null;
+    let imageKind: LinkPreview["imageKind"] = "none";
+    if (found && json.private !== true) {
+      const og = await fetchPreviewImageResult(
+        `https://opengraph.githubassets.com/1/${fullName}`,
+        "og",
+      );
+      limited = og.limited;
+      if (og.asset) {
+        image = og.asset;
+        imageKind = "og";
+      }
+    }
+    if (!image) {
+      const av = await fetchPreviewImageResult(avatar, "github-avatar");
+      limited ||= av.limited;
+      if (av.asset) {
+        image = av.asset;
+        imageKind = "avatar";
+      }
+    }
+    const preview: LinkPreview = {
+      url,
+      finalUrl: url,
+      title: normalizeGithubTitle(fullName, `https://github.com/${fullName}`, description),
+      siteName: "GitHub",
+      domain: displayDomain(url),
+      description,
+      image,
+      imageKind,
+      imagePending: false,
+      favicon: null,
+      ...(stars !== undefined ? { stars } : {}),
+    };
+    const ttl = limited ? LIMITED_TTL : !(found && imageKind === "og");
+    await writeCache(key, url, true, preview, ttl).catch(() => {});
+    return preview;
   }
 
   /**
@@ -722,7 +843,8 @@ export async function createLinkPreviews(
     }
     let job = inFlight.get(key);
     if (!job) {
-      job = buildFromApi(url, key)
+      job = buildGithubRepo(url, key)
+        .then((preview) => preview ?? buildFromApi(url, key))
         .then((preview) => preview ?? build(url, key))
         .finally(() => inFlight.delete(key));
       inFlight.set(key, job);

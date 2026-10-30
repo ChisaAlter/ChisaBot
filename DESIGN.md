@@ -1055,6 +1055,15 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 - 用户气泡里的长网址折行（`overflow-wrap: anywhere`），不再冲出气泡（实测时发现的旧问题，顺手修）。
 - 验证：单测 `app/tests/rich-previews-extract.test.ts`（出卡规则、拿掉正文、流式最后一行）、`app/tests/link-cards.test.tsx`（卡片内容 / 标签 / 兜底卡 / 骨架 / 正文拿掉）、`server/tests/link-preview.test.ts`（SSRF、兜底标题）；`tests/chat-scroll/regression.sh` 不许有滚动跳动。
 
+### 48.5 一律竖版大卡、GitHub 仓库卡（2026-10-30）
+Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两行、有追问和打开按钮），不要只剩「GitHub -」的小卡。本节替换 48.2 里「没有图时的紧凑横卡 / 64px 卡」的说法。
+- **不再有紧凑横卡**：`link-card.tsx` 一律 `data-layout="image"`。没有预览图（或图坏了）时图区原地换成横幅 `.lc-banner`（同一个 40:21 框，尺寸不跳）：站点主色渐变（认得的站用品牌色 `BRAND_GRADIENTS`，其它按域名算稳定色相）+ 60px 白底站点图标，没有图标就是首字；下面一行 GitHub 是 `owner/repo`、其它是域名。预览图是 GitHub 仓库主人头像（`imageKind: "avatar"`）时画成横幅里 72px 的圆头像，不拉伸成大图。
+- **标题固定两行高**（`.lc-title` 40px、两行截断），开头的「GitHub - 」去掉（`cleanLinkTitle`，旧缓存也生效）。追问 / ↗ 按钮和有图的卡一样。
+- **服务器**（`service.ts` `buildGithubRepo`）：`github.com/owner/repo` 先问 `api.github.com/repos/:o/:r`（同一个 SSRF 检查的 fetch，规则不变）拿描述、星标（`stars`，卡上补充信息「★ 1.2k」）和主人头像；预览图先试 `opengraph.githubassets.com/1/owner/repo`，拿不到（多是按出口 IP 的 429）用头像。私有 / 不存在（4xx）也回大卡数据（标题 `owner/repo` + 头像）。API 自己被限流（429，或 403 且剩余额度 0）/ 5xx / 网络错误时照旧抓网页，网页那条路的头像兜底同样标 `avatar`。
+- **标题**：`parse.ts` `normalizeGithubTitle`：仓库首页规范成「owner/repo: 描述」（没有描述就 `owner/repo`），其它 GitHub 页只去掉「GitHub - 」。
+- **缓存**：og 图或头像回 429 时只缓存 5 分钟（以前是 30 分钟的无图缓存，一次限流挂半小时）；拿到 og 图 24 小时；其它（只有头像、4xx）30 分钟。
+- 验证：`server/tests/link-preview-service.test.ts`（429 用头像、404 / 私有仍出大卡、标题规范化、5 分钟缓存）、`app/tests/link-card-unified.test.tsx`（无图时 `data-layout=image` 且有横幅、标题两行）。
+
 ## 49. IM 接入：QQ / 微信 / 飞书 / 企业微信 / 钉钉 / Telegram 接到机器人（2026-10-14）
 
 用户原话：「需要增加一个im的功能。可以连接qq，微信，飞书等。可以配置是哪个bot对接」「给用户一个设置，有类似那种给agent提供这种功能的GitHub项目，直接借鉴一下」。参考了 LangBot（Apache-2.0）、飞书 Node SDK（MIT）、OneBot 11；AstrBot（AGPL）/ cc-connect 只参考产品形态，没用代码。来源写在 `shared/im.ts` 文件头、docs/im.md 和 docs/THIRD_PARTY_NOTICES.md。

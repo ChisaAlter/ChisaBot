@@ -88,7 +88,7 @@ describe("LinkCard", () => {
     expect(card.getAttribute("target")).toBe("_blank");
   });
 
-  test("没有图：同宽的紧凑横卡，没有大图框", async () => {
+  test("没有图：仍是竖版大卡，图区是横幅（站点渐变 + 首字 + 域名），标题固定两行", async () => {
     const url = "https://plain.example.com/";
     responses[url] = {
       ...ghPreview,
@@ -102,12 +102,63 @@ describe("LinkCard", () => {
     };
     const view = render(<LinkCard url={url} />);
     const card = await view.findByTestId("link-card");
-    expect(card.getAttribute("data-layout")).toBe("compact");
-    expect(card.querySelector(".lc-media")).toBeNull();
-    expect(card.querySelector(".lc-badge")).not.toBeNull();
+    expect(card.getAttribute("data-layout")).toBe("image");
+    const media = card.querySelector<HTMLElement>(".lc-media");
+    expect(media?.style.aspectRatio).toBe(LINK_CARD_IMAGE_RATIO);
+    const banner = card.querySelector<HTMLElement>(
+      "[data-testid=link-card-banner]",
+    );
+    expect(banner).not.toBeNull();
+    expect(banner?.style.backgroundImage).toContain("linear-gradient");
+    expect(banner?.querySelector(".lc-banner-label")?.textContent).toBe(
+      "plain.example.com",
+    );
+    // 图标是转存图时画图标；这里图标坏不了（happy-dom 不加载），所以图标块在。
+    expect(banner?.querySelector(".lc-banner-mark")).not.toBeNull();
+    expect(card.querySelector(".lc-media > img")).toBeNull();
     expect(card.querySelector(".lc-site")?.textContent).toBe(
       "plain.example.com",
     );
+    // 标题固定两行：CSS 里 .lc-title 两行截断、固定 40px 高（20px 行高 × 2）。
+    const css = readFileSync(
+      new URL("../src/components/rich-previews/link-card.css", import.meta.url),
+      "utf8",
+    );
+    const rule = /\.lc-title \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toContain("-webkit-line-clamp: 2");
+    expect(rule).toContain("height: 40px");
+    expect(rule).toContain("line-height: 20px");
+    expect(css).not.toContain('data-layout="compact"');
+  });
+
+  test("GitHub 仓库：og 图拿不到、预览图是主人头像时画成横幅里的圆头像 + owner/repo，标题去掉「GitHub - 」、星标进补充信息", async () => {
+    const url = "https://github.com/ChisaAlter/ChisaBot";
+    responses[url] = {
+      ...ghPreview,
+      url,
+      finalUrl: url,
+      title: "GitHub - ChisaAlter/ChisaBot: 自托管的 AI 助手",
+      description: "自托管的 AI 助手",
+      imageKind: "avatar",
+      favicon: null,
+      stars: 1234,
+    };
+    const view = render(<LinkCard url={url} />);
+    const card = await view.findByTestId("link-card");
+    expect(card.getAttribute("data-layout")).toBe("image");
+    const banner = card.querySelector("[data-testid=link-card-banner]");
+    expect(
+      banner?.querySelector(".lc-banner-avatar")?.getAttribute("src"),
+    ).toBe(ghPreview.image);
+    expect(banner?.querySelector(".lc-banner-label")?.textContent).toBe(
+      "ChisaAlter/ChisaBot",
+    );
+    expect(card.querySelector(".lc-title")?.textContent).toBe(
+      "ChisaAlter/ChisaBot: 自托管的 AI 助手",
+    );
+    expect(card.querySelector(".lc-site")?.textContent).toBe("GitHub · ★ 1.2k");
+    expect(view.getByTestId("card-followup-btn")).not.toBeNull();
+    expect(card.querySelector(".lc-go")).not.toBeNull();
   });
 
   test("json-render 的 Link：模型写的标题留着，预览图和站点名用预览补上", async () => {
@@ -151,7 +202,7 @@ describe("LinkCard", () => {
     expect(requested).toEqual([]);
   });
 
-  test("骨架和有图的卡图区同一尺寸；文字区只有骨架预留高度，真卡跟着内容走", async () => {
+  test("骨架和有图的卡图区同一尺寸；标题两行高固定（真卡和骨架一样），站点行只有骨架定高", async () => {
     const url = `${GH}?c=1`;
     responses[url] = { ...ghPreview, url, finalUrl: url };
     const view = render(<LinkCard url={url} />);
@@ -171,8 +222,7 @@ describe("LinkCard", () => {
     expect(lone.querySelector(".lc-title")).not.toBeNull();
     expect(lone.querySelector(".lc-meta")).not.toBeNull();
 
-    // 尺寸写在样式里：卡片定宽；标题 / 站点行的固定高度只在骨架（.lc-skel）里，
-    // 真卡的标题、站点行不定高，免得一行标题下面空一大块。
+    // 尺寸写在样式里：卡片定宽；标题固定两行高；站点行的固定高度只在骨架（.lc-skel）里。
     const css = readFileSync(
       new URL("../src/components/rich-previews/link-card.css", import.meta.url),
       "utf8",
@@ -183,7 +233,8 @@ describe("LinkCard", () => {
       return css.slice(at, css.indexOf("}", at));
     };
     expect(css).toContain("width: min(280px, 100%)");
-    expect(rule(".lc-title")).not.toMatch(/(^|\s)height:/);
+    // 标题固定两行高（2026-10-30，§48.5）：真卡和骨架都是 40px，卡片高度不随标题变。
+    expect(rule(".lc-title")).toContain("height: 40px;");
     expect(rule(".lc-meta")).not.toMatch(/(^|\s)height:/);
     expect(css).not.toMatch(
       /\.lc-card\[data-layout="image"\] \.lc-title \{[^}]*height:/,

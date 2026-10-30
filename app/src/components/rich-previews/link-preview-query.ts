@@ -13,7 +13,7 @@ export type LinkPreviewData = {
   domain: string;
   description: string;
   image: string | null;
-  imageKind: "og" | "shot" | "direct" | "none";
+  imageKind: "og" | "shot" | "direct" | "avatar" | "none";
   imagePending: boolean;
   favicon: string | null;
   /** 网页没取到（被拦 / 超时 / 不是网页）：只有域名和站点图标的兜底卡。 */
@@ -21,6 +21,8 @@ export type LinkPreviewData = {
   /** `image` 的像素宽高（DESIGN.md §83.2）；旧服务器 / 读不出时没有。 */
   imageWidth?: number;
   imageHeight?: number;
+  /** GitHub 仓库的星标数。 */
+  stars?: number;
 };
 
 export class PreviewMissing extends Error {}
