@@ -23,6 +23,7 @@ import {
   cloneElement,
   isValidElement,
   memo,
+  type ReactNode,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -108,6 +109,15 @@ import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
 import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";
+import type { TranscriptDataLayer } from "@/lib/chat/transcript-data-layer";
+import { splitVirtualTail } from "@/lib/chat/virtual-transcript";
+import { useVirtualTranscript } from "@/lib/chat/virtual-transcript-flag";
+import {
+  type VirtualCell,
+  VirtualTranscriptControls,
+  VirtualTranscriptRows,
+} from "@/components/channels/virtual-transcript";
+import type { VirtualizerHandle } from "virtua";
 import {
   isQuietWork,
   isWorkCall,
@@ -3269,8 +3279,13 @@ export function ChatTranscript({
    * （原生 overflow-anchor，补完钉一次底；jank P1-2）。keep-bottom 只盯真正的历史 prepend
    * （整段数组的第一条变了）——以前盯「当前挂着的第一行」，每补一批就读一次 scrollHeight。
    */
+  /*
+   * jank P3-3：flag `virtualTranscript` 打开时整段交给 virtua（见 virtual-transcript.tsx），tail-first 不再补行
+   * （传 0 行进去，它什么都不挂、不读布局）。关着时这里和以前一模一样。
+   */
+  const virtual = useVirtualTranscript();
   const { startIndex: tailStart, pending: tailPending } = useTailFirstMount(
-    items.length,
+    virtual ? 0 : items.length,
     scrollKey,
     viewportRef,
     items[0]?.id,
@@ -3353,19 +3368,48 @@ export function ChatTranscript({
             (call) => call.id === toolCallId,
           ),
       );
-      const row = owner
-        ? viewportRef.current?.querySelector<HTMLElement>(
-            `[data-message-id="${CSS.escape(owner.id)}"]`,
-          )
-        : null;
-      if (!row) return;
-      row.scrollIntoView({ block: "center", behavior: "smooth" });
-      row.classList.add("is-activity-jump");
-      setTimeout(() => row.classList.remove("is-activity-jump"), 1600);
+      if (!owner) return;
+      const flash = () => {
+        const row = viewportRef.current?.querySelector<HTMLElement>(
+          `[data-message-id="${CSS.escape(owner.id)}"]`,
+        );
+        if (!row) return false;
+        row.scrollIntoView({ block: "center", behavior: "smooth" });
+        row.classList.add("is-activity-jump");
+        setTimeout(() => row.classList.remove("is-activity-jump"), 1600);
+        return true;
+      };
+      if (flash() || !virtualRef.current) return;
+      // 虚拟化下那一行可能没挂：先经数据层滚过去，挂上后再闪。
+      if (dataLayerRef.current?.scrollToMessage(owner.id, { align: "center" }))
+        requestAnimationFrame(() => requestAnimationFrame(flash));
     };
     window.addEventListener(JUMP_TO_TOOL_CALL, onJump);
     return () => window.removeEventListener(JUMP_TO_TOOL_CALL, onJump);
   }, []);
+
+  /*
+   * jank P3-3 虚拟化：除了末尾常驻的几行（流式中的回答、刚发的那条），其余按「每条消息一格」交给 virtua。
+   * 每格里是这条消息自己那一行加上跟着它的「已停止」/备用说明，和旧路径同一份 rowsFor。
+   */
+  const virtualHandle = useRef<VirtualizerHandle | null>(null);
+  const virtualCells: VirtualCell[] = [];
+  const tailNodes: ReactNode[] = [];
+  if (virtual) {
+    const all: VirtualCell[] = [];
+    items.forEach((item, index) => {
+      const nodes = rowsFor(item, index).filter((node) => node != null);
+      if (nodes.length > 0) all.push({ id: item.id, node: nodes });
+    });
+    const { head } = splitVirtualTail(all.length);
+    for (const cell of all.slice(0, head)) virtualCells.push(cell);
+    for (const cell of all.slice(head))
+      for (const node of cell.node as ReactNode[]) tailNodes.push(node);
+  }
+  // 数据层只能在 MessageScrollerProvider 里面拿（#446），由 VirtualTranscriptControls 填进来。
+  const dataLayerRef = useRef<TranscriptDataLayer<TranscriptItem> | null>(null);
+  const virtualRef = useRef(virtual);
+  virtualRef.current = virtual;
 
   const [paneHeight, setPaneHeight] = useState(0);
   useEffect(() => {
@@ -3497,55 +3541,32 @@ export function ChatTranscript({
               <div className="chat-top-notice">{topNotice}</div>
             ) : null}
             {items.length === 0 && restoring ? <RestoringTranscript /> : null}
-            {(tailStart > 0 ? items.slice(tailStart) : items).flatMap(
-              (item, offset) => {
-                const index = tailStart + offset;
-                const stoppedHere = compact.stoppedAfter.has(item.id);
-                const fallback = compact.fallbackAfter.get(item.id);
-                const hidden = rowHidden(item.id);
-                const row = hidden
-                  ? foldedRef.current.has(item.id)
-                    ? renderFolded(item, index)
-                    : null
-                  : renderRow(item, index);
-                // 「已停止」/备用说明必须跟着 compact 锚点画出来：锚点行若因 quiet/fold 卸掉，
-                // 以前连标记一起 return null，刷新后只剩服务器误锚时就像挂在上一轮回答下面。
-                // Keep every keyed row in one flat sibling list. Returning a nested array only
-                // when a marker appears changes the anchor row's React parent and remounts it.
-                if (!stoppedHere && !fallback) return [row];
-                return [
-                  row,
-                  stoppedHere ? (
-                    <MessageScrollerItem
-                      key={`${item.id}:stopped`}
-                      messageId={`${item.id}:stopped`}
-                    >
-                      <div
-                        className="chat-stopped-mark"
-                        data-testid="turn-stopped"
-                      >
-                        {"◼ 已停止"}
-                      </div>
-                    </MessageScrollerItem>
-                  ) : null,
-                  fallback ? (
-                    <MessageScrollerItem
-                      key={`${item.id}:fallback`}
-                      messageId={`${item.id}:fallback`}
-                    >
-                      <div
-                        className="chat-fallback-note"
-                        data-testid="turn-fallback"
-                      >
-                        {fallback}
-                      </div>
-                    </MessageScrollerItem>
-                  ) : null,
-                ];
-              },
-            )}
+            {virtual ? (
+              <VirtualTranscriptRows
+                cells={virtualCells}
+                handleRef={virtualHandle}
+                layoutKey={topNotice ? 1 : 0}
+                scrollKey={scrollKey ?? ""}
+                viewportRef={viewportRef}
+              />
+            ) : null}
+            {virtual
+              ? tailNodes
+              : (tailStart > 0 ? items.slice(tailStart) : items).flatMap(
+                  (item, offset) => rowsFor(item, tailStart + offset),
+                )}
           </MessageScrollerContent>
         </MessageScrollerViewport>
+        {virtual ? (
+          <VirtualTranscriptControls
+            handleRef={virtualHandle}
+            items={items}
+            layerRef={dataLayerRef}
+            textOf={findTextOf}
+            viewportRef={viewportRef}
+            virtualIds={virtualCells.map((cell) => cell.id)}
+          />
+        ) : null}
         <MessageScrollerButton className="chat-bottom-pill">
           <IconChevronDown className="size-4" />
           <span className="chat-bottom-pill-t">{"回到底部"}</span>
@@ -3567,6 +3588,46 @@ export function ChatTranscript({
       </MessageScroller>
     </MessageScrollerProvider>
   );
+
+  /** 一条消息对应的那几行（它自己 + 跟着它的「已停止」/备用说明）。旧路径和虚拟化共用。 */
+  function rowsFor(item: TranscriptItem, index: number): ReactNode[] {
+    const stoppedHere = compact.stoppedAfter.has(item.id);
+    const fallback = compact.fallbackAfter.get(item.id);
+    const hidden = rowHidden(item.id);
+    const row = hidden
+      ? foldedRef.current.has(item.id)
+        ? renderFolded(item, index)
+        : null
+      : renderRow(item, index);
+    // 「已停止」/备用说明必须跟着 compact 锚点画出来：锚点行若因 quiet/fold 卸掉，
+    // 以前连标记一起 return null，刷新后只剩服务器误锚时就像挂在上一轮回答下面。
+    // Keep every keyed row in one flat sibling list. Returning a nested array only
+    // when a marker appears changes the anchor row's React parent and remounts it.
+    if (!stoppedHere && !fallback) return [row];
+    return [
+      row,
+      stoppedHere ? (
+        <MessageScrollerItem
+          key={`${item.id}:stopped`}
+          messageId={`${item.id}:stopped`}
+        >
+          <div className="chat-stopped-mark" data-testid="turn-stopped">
+            {"◼ 已停止"}
+          </div>
+        </MessageScrollerItem>
+      ) : null,
+      fallback ? (
+        <MessageScrollerItem
+          key={`${item.id}:fallback`}
+          messageId={`${item.id}:fallback`}
+        >
+          <div className="chat-fallback-note" data-testid="turn-fallback">
+            {fallback}
+          </div>
+        </MessageScrollerItem>
+      ) : null,
+    ];
+  }
 
   /** 这一轮的干活卡 / 收成的一行，画在这一轮第一个干活的工具那一行里（DESIGN.md §75.1）。打开「调试：显示工具调用」时不画（每一步本来就画着）。 */
   function workRowFor(id: string) {
@@ -3686,6 +3747,11 @@ export function ChatTranscript({
 }
 
 const EMPTY_STOPS: ReadonlySet<string> = new Set();
+
+/** 应用内搜索（jank P3-3）搜的文字：只搜对话里的正文（人说的、机器人说的）。 */
+export function findTextOf(item: TranscriptItem): string | null {
+  return item.kind === "text" ? item.text : null;
+}
 const EMPTY_ANCHORS: ReadonlySet<string> = new Set();
 
 /** 刚发出去的那条用户消息带对齐标记多久（毫秒）。对齐在它出现的那一刻就做完了，之后留着只会被误用。 */

@@ -1,5 +1,22 @@
 # DEVLOG
 
+## Unreleased — 长对话虚拟化（jank P3-3，分支 perf/virtua-transcript，flag `virtualTranscript`）
+
+**动机**：`/workspace/jank-analysis/REPORT.md` 根因 8：长会话没有虚拟化，15.4k DOM 节点，scroll 场景 38–39fps，每次样式重算成本随元素数线性涨；FIX-PLAN §8 定了 virtua + flag。tail-first（P1-2，#446）是过渡方案，这里在 flag 后面把它整条换掉。Jun 已同意会话内 Ctrl+F 改为应用内搜索（虚拟化后浏览器搜不到没挂的行）。
+
+**改法**：
+- `lib/chat/virtual-transcript-flag.ts`：flag，URL `?virtualTranscript=1/0`（写进 localStorage）> localStorage `chisabot.virtual-transcript` > 构建 `VITE_VIRTUAL_TRANSCRIPT`，默认关。
+- `components/channels/virtual-transcript.tsx`：`VirtualTranscriptRows` 在原来的 `MessageScrollerViewport` 里放一个 virtua `Virtualizer`（`scrollRef` 指向它，`startMargin` 实测），贴底 / §88 / §94 留白 / 回到底部按钮仍由原滚动容器管；每条消息一格（自己那行 + 跟着的「已停止」/备用说明，`pb-6` 代替 gap-6）。末尾 3 行（`VIRTUAL_TAIL_ROWS`）不进虚拟列表，作为滚动内容的直接子元素常驻：流式回答原地更新不重挂，新行仍落在内容末尾（滚动容器按位置找新行的 §88.1 对齐不受影响）。前插历史（旧第一行往后挪）开 `shift`。行高：卸载时把 virtua 快照连同那串 id 存进 `transcriptSizeCache`（按会话 key，LRU 8 个，`release(key)` 立即释放），切回时 id 仍是前缀才复用。
+- 数据层：`useVirtuaDataLayer` 实现 #446 的 `TranscriptDataLayer`（同一接口），`scrollToMessage` 先 id→index 走 `scrollToIndex`，末尾常驻的交给原来的 `scrollToMessage`；`prependHistory` 在虚拟化下不需要扩窗（数据已全给）。`VirtualTranscriptControls` 挂在 Provider 里面（数据层只能在里面拿），flag 关时不渲染。
+- `chat-transcript.tsx`：flag 开时 `useTailFirstMount` 传 0 行（不补行、不读布局），行渲染抽成 `rowsFor` 两条路径共用；flag 关时输出和以前相同。活动记录「在对话里看这一步」、`?message=`（`message-find.tsx` 找不到时发 `chisabot:transcript-reveal`）在虚拟化下先经数据层滚过去再找。
+- Ctrl/⌘+F（只在 flag 开、这段对话可见且不在 `[inert]` 里时拦截）：`TranscriptFindBar`，用现有 `Input` / `Button` 和 Tailwind 工具类，不改 styles.css；命中行高亮复用 `message-flash`，当前行带 `data-find-current`。
+
+**测试**：`app/tests/virtual-transcript.test.ts`（前插判定、末尾拆分、行高缓存前缀复用 / 不串会话 / LRU / release、搜索与上下循环、flag 优先级），`app/tests/virtual-transcript-render.test.tsx`（flag 关走 tail-first；flag 开虚拟列表 + 末尾常驻 + 远处不挂；流式末行不重挂；前插后末尾不重挂、scrollTop 不动；卸载存缓存；Ctrl+F 命中滚动 + 高亮 + Enter 切换 + Esc 关；flag 关不拦截）。像素级「前插 ≤1px」、键盘 PageUp/Down、读屏 `aria-setsize` 留给 Playwright。
+
+**和 P1-3（KeepAlive LRU）合并时**：每个 kept 会话各自一个 `VirtualTranscriptRows`；`useKeptSlot().registerScroll(virtualScrollSlot(handleRef))` 保存 / 恢复滚动；`onEvict(() => transcriptSizeCache.release(slotKey))` 释放行高；`scrollKey` 用 `slotKey`。
+
+**性能**：switch 明显改善；scroll（快速 ±9600px 滚轮）退步，bufferSize 200/450/2400/6000 都不比 900 好，未修复，所以 flag 默认关闭。
+
 ## Unreleased — 切会话不再整篇强制样式重算：tail-first 只在上滑时量（jank P1-2，分支 dev4/perf-tail-first）
 
 **动机**：`/workspace/jank-analysis/REPORT.md` 根因 1：切会话时 `use-tail-first-mount.ts` 的 layout effect 每补一批都读 `el.scrollHeight`，4 次切换 16 次强制 UpdateLayoutTree 共 3.27s（每次 2.6k→9.2k 元素）；`useKeepBottomOnPrepend` 盯「当前挂着的第一行」，每批再读一次、写一次 scrollTop。message-scroller 每次滚动 / 内容变化逐行 `getBoundingClientRect`（内容高度 `Se`、第一条可见行 `Ye`），切换场景 550ms。
