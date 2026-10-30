@@ -55,10 +55,13 @@ test("切换左栏后焦点落在新出现的开关上（收起、展开两个�
   expect(first?.getAttribute("aria-label")).toBe("收起设置分区");
   expect(first?.getAttribute("aria-expanded")).toBe("true");
   act(() => first?.focus());
-  act(() => first?.click());
+  // ToggleTip 懒挂载：键盘焦点（:focus-visible）第一次进来时才挂 Tooltip，按钮会换成新节点并接住焦点。
+  const armed = toggle();
+  expect(document.activeElement).toBe(armed);
+  act(() => armed?.click());
 
   const collapsed = toggle();
-  expect(collapsed).not.toBe(first);
+  expect(collapsed).not.toBe(armed);
   expect(collapsed?.classList.contains("glass-mini-toggle")).toBe(true);
   expect(document.activeElement).toBe(collapsed);
   // 收起列里的展开按钮：能用 Tab 到达，aria 正确。
