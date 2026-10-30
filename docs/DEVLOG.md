@@ -1,5 +1,17 @@
 # DEVLOG
 
+## 卡顿测量工具 perf/（dev4/perf-harness，FIX-PLAN P0）
+
+**动机**：卡顿分析（stage 1 和 FIX-PLAN）的数字都出自 box 上的临时脚本，别人没法复现，PR 之间也没法比。FIX-PLAN 要求每个性能 PR 附 4x 降速下的前后对比表，先把测量脚本整理进仓库。
+
+**做法**：
+- `perf/mock-server.mjs` 托管 `app/dist`（SPA 回退），按 `perf/fixtures/api.json` 回答 `/api/*`：已登录用户、两个频道、`c1` 一个 240 条消息的线程、发送时的 AG-UI SSE 流；`/api/me` 可切成 401 用来测登录页光球；没匹配的一律 404。
+- `perf/jank.mjs`：playwright-core 驱动系统 Chrome，每次运行新建临时 profile 并在结束后删除。页面里用 PerformanceObserver（longtask、event）、rAF 帧记录和 MutationObserver 采数据，CDP `Performance.getMetrics` 取样式 / 布局 / 脚本耗时差值。按 `--runs` 跑多次，`summary.json` 取中位数。`--trace` 另存 trace，并由 `trace-summary.mjs` 算主线程按类别的自身耗时和带 JS 栈的强制样式 / 布局（原来是 Python 脚本，改成 JS 不用另装环境）。
+- `perf/compare.mjs` 打印 markdown 表，单元格是 `前 → 后 (Δ%)`，变化 ≥10% 标 ✅/⚠️。
+- CI `perf.yml`：PR 上构建 head 和 base（`git worktree`），各跑 1 次，表写进 job summary，结果上传 artifact；job 级 `continue-on-error`，不拦 PR（CI 机器噪声大，阻塞门槛放到 P2-4）。zizmor 本地检查无问题。
+
+**验证**：box 上对 main（c99ee37e）构建跑了全部场景（1 次带 trace，3 次不带）。trace 本身有开销，带 trace 那次长任务和脚本耗时约为不带的 1.5–2 倍，所以 README 写明不要混着比。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
