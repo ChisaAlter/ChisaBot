@@ -6,6 +6,7 @@ import {
   reconcileMountedCount,
   stepsToFullMount,
   TAIL_FIRST_BATCH,
+  TAIL_FIRST_BATCH_MAX,
   TAIL_FIRST_INITIAL,
   TAIL_FIRST_THRESHOLD,
 } from "@/lib/chat/tail-first-paint";
@@ -38,7 +39,8 @@ describe("tail-first-paint (CB-025)", () => {
       seen.push(m);
     }
     expect(m).toBe(200);
-    expect(seen.at(-2)).toBeGreaterThanOrEqual(200 - TAIL_FIRST_BATCH);
+    expect(seen[1]).toBe(TAIL_FIRST_INITIAL + TAIL_FIRST_BATCH);
+    expect(seen.at(-2)).toBeGreaterThanOrEqual(200 - TAIL_FIRST_BATCH_MAX);
   });
 
   test("reconcile keeps window on prepend, stays full when already full", () => {
@@ -61,6 +63,9 @@ describe("tail-first-paint (CB-025)", () => {
   test("200-message catch-up stays under a dozen frames", () => {
     expect(stepsToFullMount(200)).toBeLessThanOrEqual(12);
     expect(stepsToFullMount(400)).toBeLessThanOrEqual(20);
+    // P1-2：批次翻倍后提交次数少一个量级（以前 200 条 7 批、400 条 13 批）。
+    expect(stepsToFullMount(200)).toBeLessThanOrEqual(3);
+    expect(stepsToFullMount(400)).toBeLessThanOrEqual(6);
   });
 
   test("micro-bench: window math for 400 items is cheap", () => {

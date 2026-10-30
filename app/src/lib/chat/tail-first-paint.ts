@@ -13,8 +13,14 @@ export const TAIL_FIRST_THRESHOLD = 48;
 /** 首屏至少挂多少条（约两屏，含 peek）。 */
 export const TAIL_FIRST_INITIAL = 36;
 
-/** 每一帧往前补多少条。 */
-export const TAIL_FIRST_BATCH = 28;
+/**
+ * 每批往前补的最少条数。批次随已挂条数增长（翻倍，封顶 TAIL_FIRST_BATCH_MAX），
+ * 400 条从 13 批降到 6 批：每批一次提交、一次样式重算（jank P1-2）。
+ */
+export const TAIL_FIRST_BATCH = 40;
+
+/** 单批上限：再大一批的 React 提交本身就成了长任务。 */
+export const TAIL_FIRST_BATCH_MAX = 160;
 
 export function initialMountedCount(total: number): number {
   const n = Math.max(0, Math.floor(total));
@@ -26,7 +32,8 @@ export function nextMountedCount(current: number, total: number): number {
   const n = Math.max(0, Math.floor(total));
   const c = Math.max(0, Math.floor(current));
   if (c >= n) return n;
-  return Math.min(n, c + TAIL_FIRST_BATCH);
+  const batch = Math.min(TAIL_FIRST_BATCH_MAX, Math.max(TAIL_FIRST_BATCH, c));
+  return Math.min(n, c + batch);
 }
 
 /** `items.slice(start)` 的起点：始终贴着末尾。 */

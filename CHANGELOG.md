@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 切会话 / 长对话补历史不再整篇强制样式重算（jank P1-2，分支 dev4/perf-tail-first）：尾屏优先补行时，人在底部就不再每批读 `scrollHeight`，交给浏览器原生 `overflow-anchor` 保位、补完钉一次底；人已上滑时原生锚定保住眼前那一行，只有不支持 `overflow-anchor` 的浏览器（Safari）才量高度垫回去。补行改在空闲时做（`requestIdleCallback`，最多等 50ms），批次随已挂条数翻倍（40 起、单批封顶 160），400 条从 13 批降到 6 批。`message-scroller`（`@shadcn/react@0.3.0`，`patches/` 里打补丁）算内容高度只量最后一行、找第一条可见行改二分，不再逐行 `getBoundingClientRect`。新增 `app/src/lib/chat/transcript-data-layer.ts`：给后面 virtua 虚拟化用的数据层接口。打开在底部、流式贴底、上滑补行不跳、应用内搜索跳转行为不变。
+
 ## 0.1.112 — 2026-10-29
 
 这一版合并 2 个 PR：链接预览服务端（#412）、冷打开频道只读一次完整历史（#421）。只有服务器 / 网页更新，PC 和 Android 不变。设置面板性能三连（#395 / #398 / #403）合并到当前 main 时 `glass-shell.tsx`、`glass-topbar.tsx` 有代码冲突，这一版没合。

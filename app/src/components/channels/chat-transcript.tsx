@@ -3265,8 +3265,9 @@ export function ChatTranscript({
   const opening = useOpeningWindow(hydrating);
   useSmoothSendScroll(viewportRef, newestUserMessageId, opening);
   /*
-   * CB-025：长对话首屏只挂尾巴再分批往前补。keep-bottom 盯的是「当前挂着的第一行」——
-   * 窗口上沿往前挪时 firstId 变了，人还在底部就立刻钉回底（与历史 prepend 同一条路）。
+   * CB-025：长对话首屏只挂尾巴再分批往前补。补行时的贴底 / 不跳由 useTailFirstMount 自己管
+   * （原生 overflow-anchor，补完钉一次底；jank P1-2）。keep-bottom 只盯真正的历史 prepend
+   * （整段数组的第一条变了）——以前盯「当前挂着的第一行」，每补一批就读一次 scrollHeight。
    */
   const { startIndex: tailStart, pending: tailPending } = useTailFirstMount(
     items.length,
@@ -3274,7 +3275,7 @@ export function ChatTranscript({
     viewportRef,
     items[0]?.id,
   );
-  useKeepBottomOnPrepend(viewportRef, items[tailStart]?.id ?? null, opening);
+  useKeepBottomOnPrepend(viewportRef, items[0]?.id ?? null, opening);
 
   /* One rule for both kinds of row — see `anchorRowIds`, which is where it is written down. */
   /*
@@ -3385,7 +3386,11 @@ export function ChatTranscript({
       scrollPreviousItemPeek={48}
     >
       <MessageScroller>
-        <MessageScrollerViewport ref={viewportRef}>
+        <MessageScrollerViewport
+          ref={viewportRef}
+          // 补历史时靠浏览器原生滚动锚定保位（jank P1-2）；chat-tail 那一格单独关掉（§94.6）。
+          className="[overflow-anchor:auto]"
+        >
           <MessageScrollerContent
             aria-busy={busy}
             data-testid="chat-transcript"

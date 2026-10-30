@@ -1,5 +1,6 @@
 import {
   type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -12,12 +13,38 @@ import {
   reconcileMountedCount,
 } from "@/lib/chat/tail-first-paint";
 
+/** 浏览器原生滚动锚定（Chrome / Edge / Firefox）。Safari 没有，走 JS 兜底。 */
+export function supportsOverflowAnchor(): boolean {
+  return (
+    typeof CSS !== "undefined" &&
+    typeof CSS.supports === "function" &&
+    CSS.supports("overflow-anchor", "auto")
+  );
+}
+
+type Idle = (cb: () => void) => () => void;
+
+/** 空闲时补下一批（最多等 50ms），没有 requestIdleCallback 就退回 rAF。 */
+const scheduleIdle: Idle = (cb) => {
+  if (typeof requestIdleCallback === "function") {
+    const id = requestIdleCallback(cb, { timeout: 50 });
+    return () => cancelIdleCallback(id);
+  }
+  const id = requestAnimationFrame(cb);
+  return () => cancelAnimationFrame(id);
+};
+
 /**
- * 长对话首屏只挂尾巴，随后用 rAF 往前补。`scrollKey` 换频道时重置。
+ * 长对话首屏只挂尾巴，随后在空闲时分批往前补。`scrollKey` 换频道时重置。
  *
- * 人已上滑时补上面的行会撑高滚动区：用 scrollHeight 差把 scrollTop 垫回去（§35）。
- * 滚到顶附近再加速补，避免「上面空着翻不动」。`?message=` 靠 MessageFind 轮询，
- * 全量挂完通常一两百毫秒，落在既有等待窗口内。
+ * 位置怎么保（jank P1-2）：
+ * - 贴底（默认）：补行时**不读** scrollHeight。上面补的行由浏览器的 `overflow-anchor` 补偿，
+ *   滚动容器本身也在 following-bottom 模式；全部补完后读一次 scrollHeight 钉底。
+ *   以前每批都在 layout effect 里读 scrollHeight，每批一次整棵 transcript 强制样式重算（REPORT #1）。
+ * - 人已上滑：原生锚定保持当前看到的行不动（§35）；没有 overflow-anchor 的浏览器才量
+ *   scrollHeight 差把 scrollTop 垫回去。
+ * 滚到顶附近再加速补（`prependHistory`），避免「上面空着翻不动」。`?message=` 靠 MessageFind
+ * 轮询，全量挂完落在既有等待窗口内。
  */
 export function useTailFirstMount(
   total: number,
@@ -25,15 +52,21 @@ export function useTailFirstMount(
   viewport: RefObject<HTMLElement | null>,
   /** Same first row means new rows were appended, rather than older history prepended. */
   firstId?: string,
-): { startIndex: number; pending: boolean } {
+): { startIndex: number; pending: boolean; prependHistory: () => void } {
   const [mounted, setMounted] = useState(() => initialMountedCount(total));
   const totalRef = useRef(total);
   const keyRef = useRef(scrollKey);
   const firstRef = useRef(firstId);
   const appended = firstId !== undefined && firstRef.current === firstId;
   const startRef = useRef(mountStartIndex(total, mounted));
-  const scrollHeightRef = useRef(0);
+  /** 只在需要 JS 兜底时才有值：补行前量的 scrollHeight。 */
+  const heightBeforeRef = useRef(0);
   const atBottomRef = useRef(true);
+  const nativeAnchorRef = useRef<boolean | null>(null);
+  const nativeAnchor = () => {
+    nativeAnchorRef.current ??= supportsOverflowAnchor();
+    return nativeAnchorRef.current;
+  };
 
   useLayoutEffect(() => {
     firstRef.current = firstId;
@@ -42,7 +75,7 @@ export function useTailFirstMount(
       totalRef.current = total;
       const next = initialMountedCount(total);
       startRef.current = mountStartIndex(total, next);
-      scrollHeightRef.current = 0;
+      heightBeforeRef.current = 0;
       atBottomRef.current = true;
       setMounted(next);
       return;
@@ -62,20 +95,34 @@ export function useTailFirstMount(
       : reconcileMountedCount(totalRef.current, total, mounted, appended);
   const startIndex = mountStartIndex(total, renderedMounted);
 
+  /** 在改窗口之前调：只有「上滑 + 没有原生锚定」才量一次高度，其余情况零布局读取。 */
+  const measureBeforeGrow = useCallback(() => {
+    const el = viewport.current;
+    heightBeforeRef.current =
+      el && !atBottomRef.current && !nativeAnchor() ? el.scrollHeight : 0;
+  }, [viewport]);
+
   useLayoutEffect(() => {
     const el = viewport.current;
-    if (!el) return;
     const prevStart = startRef.current;
-    const prevHeight = scrollHeightRef.current;
-    const nextHeight = el.scrollHeight;
     startRef.current = startIndex;
-    scrollHeightRef.current = nextHeight;
-    if (startIndex >= prevStart || prevHeight <= 0) return;
-    const delta = nextHeight - prevHeight;
-    if (delta > 0) {
-      el.scrollTop = atBottomRef.current ? nextHeight : el.scrollTop + delta;
+    const before = heightBeforeRef.current;
+    heightBeforeRef.current = 0;
+    if (!el || startIndex >= prevStart) return;
+    if (atBottomRef.current) {
+      // 原生锚定在补行时已经让底部那几行不动；补完那一批钉一次底。没有原生锚定就每批钉。
+      if (startIndex === 0 || !nativeAnchor()) el.scrollTop = el.scrollHeight;
+      return;
     }
+    if (before <= 0) return;
+    const delta = el.scrollHeight - before;
+    if (delta > 0) el.scrollTop += delta;
   }, [startIndex, viewport]);
+
+  const prependHistory = useCallback(() => {
+    measureBeforeGrow();
+    setMounted((m) => nextMountedCount(nextMountedCount(m, total), total));
+  }, [measureBeforeGrow, total]);
 
   useEffect(() => {
     const el = viewport.current;
@@ -83,22 +130,21 @@ export function useTailFirstMount(
     const onScroll = () => {
       atBottomRef.current =
         el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      if (el.scrollTop < 480) {
-        setMounted((m) => nextMountedCount(nextMountedCount(m, total), total));
-      }
+      if (el.scrollTop < 480) prependHistory();
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
-  }, [viewport, total]);
+  }, [viewport, prependHistory]);
 
   useEffect(() => {
     // scrollKey: restart catch-up when the channel identity changes (same total is common).
     void scrollKey;
     let cancelled = false;
-    let raf = 0;
+    let cancel = () => {};
     const step = () => {
-      raf = requestAnimationFrame(() => {
+      cancel = scheduleIdle(() => {
         if (cancelled) return;
+        measureBeforeGrow();
         setMounted((m) => {
           if (m >= total) return m;
           const n = nextMountedCount(m, total);
@@ -110,12 +156,13 @@ export function useTailFirstMount(
     step();
     return () => {
       cancelled = true;
-      cancelAnimationFrame(raf);
+      cancel();
     };
-  }, [scrollKey, total]);
+  }, [scrollKey, total, measureBeforeGrow]);
 
   return {
     startIndex,
     pending: renderedMounted < total,
+    prependHistory,
   };
 }
