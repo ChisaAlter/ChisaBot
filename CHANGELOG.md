@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 卡顿测量工具（P0，只加工具不改应用）：`perf/` 下的 `bun run perf:jank` 用 headless Chrome（1024×673、DPR 1.25、CPU 4x 降速）打开构建好的网页，`/api` 由自带的模拟服务器回答，不需要真后端；场景有空闲、侧栏、面板、切频道、滚动、流式回复、设置、改窗口大小、登录页光球，输出每个场景的帧率、长任务、样式 / 布局 / 脚本耗时和每次点击的 INP。`bun run perf:compare` 把两次结果打印成前后对比表，之后每个性能 PR 都贴这张表。CI 新增 `perf.yml`，PR 上自动对比 base 和 head，只写进 job summary，不会让 PR 失败。用法见 `perf/README.md`。
+
 ## 0.1.112 — 2026-10-29
 
 这一版合并 2 个 PR：链接预览服务端（#412）、冷打开频道只读一次完整历史（#421）。只有服务器 / 网页更新，PC 和 Android 不变。设置面板性能三连（#395 / #398 / #403）合并到当前 main 时 `glass-shell.tsx`、`glass-topbar.tsx` 有代码冲突，这一版没合。

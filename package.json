@@ -27,7 +27,9 @@
     "composio:smoke": "bun scripts/composio-smoke.ts",
     "mock:knowledge": "bun scripts/mock-knowledge-mcp.ts",
     "pretest:app": "bun run generate:app-config",
-    "test:app": "bun scripts/run-app-tests.ts"
+    "test:app": "bun scripts/run-app-tests.ts",
+    "perf:jank": "node perf/jank.mjs",
+    "perf:compare": "node perf/compare.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
