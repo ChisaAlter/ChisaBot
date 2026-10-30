@@ -1,5 +1,37 @@
 # DEVLOG
 
+## Unreleased — 壁纸压缩移进 Worker、雾度滑块范围、恢复默认清天气快照（分支 dev5/wallpaper-worker）
+
+来源：模块 11（主题 / 玻璃）审查报告第 10、11、13 条。
+
+1. **第 11 条：壁纸压缩移进 Worker**。新增 `lib/wallpaper-compress.ts` 和 `lib/wallpaper-compress.worker.ts`：
+   - Worker 里用 `createImageBitmap` 解码、`OffscreenCanvas` 缩放（`imageSmoothingQuality = "high"`）、`convertToBlob` 编码，`FileReaderSync` 转 Data URL，主线程只收一个字符串。
+   - 目标最长边 = 屏幕最长边 × `devicePixelRatio`，最多 3840；拿不到屏幕尺寸时用 1920；原图更小不放大。以前固定 1920，2× 屏上会被放大发糊，1× 小屏上又白白存了大图。
+   - 编码参数不变：WebP 0.84，Data URL 超过 350 万字符或浏览器不支持 WebP 编码（会悄悄给 PNG）就改 JPEG 0.8；之后仍过 `assertWallpaperDataUrlSize`（约 6 MB）。
+   - 没有 Worker / OffscreenCanvas / createImageBitmap，或 Worker 出错、30 s 没回话，就退回主线程的老路径（同样的目标尺寸和编码参数）。
+   - `appearance.ts` 里 `compressUploadedWallpaper` 只剩校验 + 调用，约 45 行主线程代码挪走。
+2. **第 10 条：雾度滑块范围**。滑块原来是 5–45，存储层夹在 5–55，存过 46–55 的值一打开设置页就被滑块显示成 45，拖一下就被改掉。新增 `GLASS_OPACITY_MIN = 5` / `GLASS_OPACITY_MAX = 55`，存储读取、`updateAppearance` 和滑块共用。
+3. **第 13 条：恢复默认清天空引擎的键**。`resetAppearanceDefaults` 现在还会删掉天空引擎（`wallpaper_core.html` 的 `SAVE_KEY`）存的地点 / 天气快照 `hark-wallpaper-v1`（`HARK_ENGINE_STORAGE_KEYS`），存储不可用时跳过。正在运行的引擎下一次取天气时可能再写一份当前快照，但之前搜过的城市不会再被沿用。
+
+实测（headless Chrome，4000×2500 JPEG 4.57 MB，设置页上传，3 次取中位数）：
+
+| 屏幕 | CPU | 版本 | 最长主线程长任务 | 最长掉帧间隔 | 从选文件到应用 | 输出 |
+|---|---|---|---|---|---|---|
+| 1440×900 @1 | 1× | main | 411 ms | 417 ms | 641 ms | 1920×1200，182 K 字符 |
+| 1440×900 @1 | 1× | 本分支 | 0 | 17 ms | 302 ms | 1440×900，100 K 字符 |
+| 1440×900 @1 | 4× | main | 1267 ms | 1283 ms | 1955 ms | 同上 |
+| 1440×900 @1 | 4× | 本分支 | 144 ms | 150 ms | 622 ms | 同上 |
+| 1440×900 @2 | 1× | main | 364 ms | 367 ms | 530 ms | 1920×1200，182 K 字符 |
+| 1440×900 @2 | 1× | 本分支 | 112 ms | 33 ms | 975 ms | 2880×1800，1.43 M 字符 |
+| 2560×1440 @2 | 4× | main | 1361 ms | 1383 ms | 1965 ms | 1920×1200，182 K 字符 |
+| 2560×1440 @2 | 4× | 本分支 | 221 ms | 333 ms | 1950 ms | 3840×2400，2.44 M 字符 |
+
+本分支剩下的长任务是应用壁纸本身（解码、绘制更大的背景图），不是压缩。高 DPR 下输出更大、总耗时更长，换来的是按屏幕物理分辨率显示。
+
+测试：新增 `app/tests/wallpaper-compress.test.ts`（11 个：目标尺寸、等比缩放、Worker 成功 / 报错 / 崩溃 / 起不来 / 超时回退、能力检测、WebP/JPEG 选择、Worker 入口用替身跑一遍）和 `app/tests/appearance-haze-reset.test.tsx`（6 个：范围常量与夹取、设置页滑块 5–55 并正确显示存储的 50、恢复默认删掉 `hark-wallpaper-v1` 而不动别的键、存储抛错时不崩、引擎只用这一个键）。
+
+和开发 4 的重叠：`appearance.ts` 只动了常量、两处 `clampNumber`、`resetAppearanceDefaults` 末尾和 `compressUploadedWallpaper`；样式重算、主题色、多标签同步、启动屏的代码都没碰。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
