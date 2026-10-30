@@ -1,3 +1,7 @@
+## Unreleased
+
+- 主题配色看得出来了：6 个配色的亮 / 暗都覆盖强调色、强调浅底、主按钮、聚焦色，新增 `--glass-tint` 把强调色叠进左栏 / 右栏 / 输入框毛玻璃；「智能跟随主题」+ 非 default 配色时不启动 WebGL，天空用主题渐变（樱花：粉白黄昏 / 深紫红夜）。主按钮对比度 ≥ 4.5，default 和布局不变（fix/palette-theme）。
+
 ## 0.1.112
 
 - 链接预览：GitHub 预览图 429 时回退（`opengraph.githubassets.com/1/…`、作者头像），失败短 TTL；YouTube / bilibili / 百度百科走接口出卡片；反爬 / 验证页降级；Punycode 同形字保留 `xn--`；非 2xx 一律 `no-store`（#412，网关配置改动未上线）。

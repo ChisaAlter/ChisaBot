@@ -9205,56 +9205,139 @@ html[data-theme="dark"] #sky-root::after {
   );
 }
 
-/* 1. 精选 6 款主题配色令牌覆盖（支持浅色与深色高对比度） */
+/* 1. 精选 6 款主题配色令牌覆盖（支持浅色与深色高对比度）。
+ * 除了旧的 --accent-blue，还要覆盖 --accent-color / --accent-soft（强调色）、--ink-primary（主按钮）、
+ * --focus / --focus-line（聚焦）和 --glass-tint（混进毛玻璃的强调色，约 8%）；default 不写，保持原样。
+ * 主按钮底色与 --on-primary 的对比度都 ≥ 4.5（见 PR 描述里的表）。 */
 html[data-palette="aurora"] {
   --accent-blue: #7c3aed;
   --accent-blue-ink: #6d28d9;
   --accent-blue-soft: rgba(124, 58, 237, 0.14);
+  --accent-color: #7c3aed;
+  --accent-soft: rgba(124, 58, 237, 0.14);
+  --ink-primary: #6d28d9;
+  --ink-primary-hover: #5b21b6;
+  --on-primary: #ffffff;
+  --focus: rgba(124, 58, 237, 0.24);
+  --focus-line: rgba(124, 58, 237, 0.6);
+  --glass-tint: rgba(124, 58, 237, 0.08);
 }
 html.dark[data-palette="aurora"] {
   --accent-blue: #b197fc;
-  --accent-blue-ink: #d0bfff;
+  --accent-blue-ink: #c4b5fd;
   --accent-blue-soft: rgba(177, 151, 252, 0.2);
+  --accent-color: #b197fc;
+  --accent-soft: rgba(177, 151, 252, 0.2);
+  --ink-primary: #c4b5fd;
+  --ink-primary-hover: #ddd6fe;
+  --on-primary: #0b1020;
+  --focus: rgba(177, 151, 252, 0.28);
+  --focus-line: rgba(177, 151, 252, 0.7);
+  --glass-tint: rgba(177, 151, 252, 0.1);
 }
 html[data-palette="emerald"] {
-  --accent-blue: #059669;
-  --accent-blue-ink: #047857;
-  --accent-blue-soft: rgba(5, 150, 105, 0.14);
+  --accent-blue: #047857;
+  --accent-blue-ink: #065f46;
+  --accent-blue-soft: rgba(4, 120, 87, 0.14);
+  --accent-color: #047857;
+  --accent-soft: rgba(4, 120, 87, 0.14);
+  --ink-primary: #065f46;
+  --ink-primary-hover: #064e3b;
+  --on-primary: #ffffff;
+  --focus: rgba(4, 120, 87, 0.24);
+  --focus-line: rgba(4, 120, 87, 0.6);
+  --glass-tint: rgba(4, 120, 87, 0.08);
 }
 html.dark[data-palette="emerald"] {
   --accent-blue: #38d9a9;
   --accent-blue-ink: #63e6be;
   --accent-blue-soft: rgba(56, 217, 169, 0.2);
+  --accent-color: #38d9a9;
+  --accent-soft: rgba(56, 217, 169, 0.2);
+  --ink-primary: #63e6be;
+  --ink-primary-hover: #96f2d7;
+  --on-primary: #0b1020;
+  --focus: rgba(56, 217, 169, 0.28);
+  --focus-line: rgba(56, 217, 169, 0.7);
+  --glass-tint: rgba(56, 217, 169, 0.1);
 }
 html[data-palette="sakura"] {
-  --accent-blue: #db2777;
-  --accent-blue-ink: #be185d;
-  --accent-blue-soft: rgba(219, 39, 119, 0.14);
+  --accent-blue: #be185d;
+  --accent-blue-ink: #9d174d;
+  --accent-blue-soft: rgba(190, 24, 93, 0.14);
+  --accent-color: #be185d;
+  --accent-soft: rgba(190, 24, 93, 0.14);
+  --ink-primary: #9d174d;
+  --ink-primary-hover: #831843;
+  --on-primary: #ffffff;
+  --focus: rgba(190, 24, 93, 0.24);
+  --focus-line: rgba(190, 24, 93, 0.6);
+  --glass-tint: rgba(190, 24, 93, 0.08);
 }
 html.dark[data-palette="sakura"] {
   --accent-blue: #f783ac;
   --accent-blue-ink: #faa2c1;
   --accent-blue-soft: rgba(247, 131, 172, 0.2);
+  --accent-color: #f783ac;
+  --accent-soft: rgba(247, 131, 172, 0.2);
+  --ink-primary: #faa2c1;
+  --ink-primary-hover: #fcc2d7;
+  --on-primary: #0b1020;
+  --focus: rgba(247, 131, 172, 0.28);
+  --focus-line: rgba(247, 131, 172, 0.7);
+  --glass-tint: rgba(247, 131, 172, 0.1);
 }
 html[data-palette="ocean"] {
-  --accent-blue: #0284c7;
-  --accent-blue-ink: #0369a1;
-  --accent-blue-soft: rgba(2, 132, 199, 0.14);
+  --accent-blue: #0369a1;
+  --accent-blue-ink: #075985;
+  --accent-blue-soft: rgba(3, 105, 161, 0.14);
+  --accent-color: #0369a1;
+  --accent-soft: rgba(3, 105, 161, 0.14);
+  --ink-primary: #075985;
+  --ink-primary-hover: #0c4a6e;
+  --on-primary: #ffffff;
+  --focus: rgba(3, 105, 161, 0.24);
+  --focus-line: rgba(3, 105, 161, 0.6);
+  --glass-tint: rgba(3, 105, 161, 0.08);
 }
 html.dark[data-palette="ocean"] {
   --accent-blue: #4dabf7;
   --accent-blue-ink: #74c0fc;
   --accent-blue-soft: rgba(77, 171, 247, 0.2);
+  --accent-color: #4dabf7;
+  --accent-soft: rgba(77, 171, 247, 0.2);
+  --ink-primary: #74c0fc;
+  --ink-primary-hover: #a5d8ff;
+  --on-primary: #0b1020;
+  --focus: rgba(77, 171, 247, 0.28);
+  --focus-line: rgba(77, 171, 247, 0.7);
+  --glass-tint: rgba(77, 171, 247, 0.1);
 }
 html[data-palette="sunset"] {
-  --accent-blue: #d97706;
-  --accent-blue-ink: #b45309;
-  --accent-blue-soft: rgba(217, 119, 6, 0.14);
+  --accent-blue: #b45309;
+  --accent-blue-ink: #92400e;
+  --accent-blue-soft: rgba(180, 83, 9, 0.14);
+  --accent-color: #b45309;
+  --accent-soft: rgba(180, 83, 9, 0.14);
+  --ink-primary: #92400e;
+  --ink-primary-hover: #78350f;
+  --on-primary: #ffffff;
+  --focus: rgba(180, 83, 9, 0.24);
+  --focus-line: rgba(180, 83, 9, 0.6);
+  --glass-tint: rgba(180, 83, 9, 0.08);
 }
 html.dark[data-palette="sunset"] {
   --accent-blue: #ffc048;
   --accent-blue-ink: #ffd37a;
   --accent-blue-soft: rgba(255, 192, 72, 0.2);
+  --accent-color: #ffc048;
+  --accent-soft: rgba(255, 192, 72, 0.2);
+  --ink-primary: #ffd37a;
+  --ink-primary-hover: #ffe3a3;
+  --on-primary: #0b1020;
+  --focus: rgba(255, 192, 72, 0.28);
+  --focus-line: rgba(255, 192, 72, 0.7);
+  --glass-tint: rgba(255, 192, 72, 0.1);
 }
 
 /* 2. 环境流光层、自定义壁纸层与容器层级（彻底消除祖先 animation 导致的 Chromium Backdrop Root 采样阻断） */
@@ -10067,4 +10150,56 @@ html[data-phone] .glass-topbar .hk-topbar-start { width: auto; }
 @media (max-width: 767px) {
   .glass-topbar.hk-topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
   .glass-topbar .hk-topbar-start { width: auto; }
+}
+
+/* ==========================================================================================
+ * 主题配色落到大面上（fix/palette-theme）：非 default 配色时，把 --glass-tint（强调色约 8–10%）
+ * 叠进左栏 / 右栏 / 账号卡 / 输入框 / 卡片的毛玻璃；聊天输入框发送键用强调色描边阴影；
+ * 天空改用 computePaletteSky 的主题渐变（sky-background.tsx 不启动 WebGL，#skyph 露出来），
+ * 这里把原本偏蓝的柔光薄纱 / 深色压暗层换成中性色，主题色相才不会被盖成蓝色。
+ * 不加模糊、不用 :has()，只改颜色，不动布局。
+ * ========================================================================================== */
+:root,
+html.dark {
+  --glass-tint: transparent;
+}
+html[data-palette]:not([data-palette="default"]) {
+  --glass-bg: color-mix(in srgb, rgba(255, 255, 255, 0.6) 92%, var(--accent-color));
+  --glass-input-bg: color-mix(in srgb, rgba(255, 255, 255, 0.55) 93%, var(--accent-color));
+}
+html.dark[data-palette]:not([data-palette="default"]) {
+  --glass-bg: color-mix(in srgb, rgba(29, 29, 31, 0.52) 90%, var(--accent-color));
+  --glass-input-bg: color-mix(in srgb, rgba(29, 29, 31, 0.52) 91%, var(--accent-color));
+}
+/* 大板块的底色写死了 !important，这里不去抢：用 --lg-shadow 里一层铺满的内阴影把强调色叠上去（不改尺寸、不加模糊）。 */
+html[data-palette]:not([data-palette="default"]) {
+  --lg-shadow: inset 0 0 0 100vmax var(--glass-tint), var(--card-shadow);
+}
+html.dark[data-palette]:not([data-palette="default"]) {
+  --lg-shadow: inset 0 0 0 100vmax var(--glass-tint), var(--card-shadow);
+}
+html[data-palette]:not([data-palette="default"]) .glass-composer {
+  --composer-accent: var(--accent-color);
+}
+html[data-palette]:not([data-palette="default"]) .glass-composer-send:not(:disabled) {
+  box-shadow: 0 4px 12px var(--accent-soft);
+}
+html[data-palette]:not([data-palette="default"]) .glass-main [data-slot="bubble-content"] a {
+  color: var(--accent-color);
+}
+html[data-palette]:not([data-palette="default"]):not(.dark) #sky-root::after {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.26) 52%, rgba(255, 255, 255, 0.3) 100%);
+}
+html.dark[data-palette]:not([data-palette="default"]) #sky-root::after {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.28) 0%, rgba(0, 0, 0, 0.34) 55%, rgba(0, 0, 0, 0.4) 100%);
+}
+/* 主题渐变天空：#skyph 读挂在 <html> 上的 --palette-sky-*（--sky-1..3 注册成不继承，传不到这里）。 */
+html[data-palette]:not([data-palette="default"]) #sky-root #skyph {
+  background: linear-gradient(
+    to bottom,
+    var(--palette-sky-0, var(--sky-0)) 0%,
+    var(--palette-sky-1, var(--sky-0)) 36%,
+    var(--palette-sky-2, var(--sky-0)) 72%,
+    var(--palette-sky-3, var(--sky-0)) 100%
+  );
 }

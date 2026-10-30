@@ -820,3 +820,19 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.112`；PC / Android 不变。不打 tag、不建 Release。
 
 **0.1.112 部署**：22:41（北京时间）先备份数据库 `pre-release/v0.1.112-20261029T144123Z.dump`（`pg_restore -l` 767 项）和网关 `nginx.conf`、`security-headers.conf`、`magpie-private.conf`，再 `deploy-serial.sh 0c06ef7 jun-grokbot`。依赖有变化走完整构建，22:51 上线 `local/chisabot:auto-202610291441-0c06ef7`（613 秒），回滚镜像 `auto-202610291348-a4fce00`，`isolate-sidecar-app` 全绿。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.112；公网 `/login` 200，安全头齐全；`/devices` 和静态资源匿名 401（要登录），本机 3001 上正常返回；real_ip 22 条 `set_real_ip_from` 加 `real_ip_header CF-Connecting-IP` 没变。网关 nginx 没动（md5 不变，没有 reload），#412 的网关配置还没上线。
+
+
+## 2026-10-30 主题配色看得出来（fix/palette-theme）
+
+**动机**：Jun 反馈设置里 6 个主题配色选哪个都看不出变化，选了「樱花绯粉」界面还是蓝的。原因有三：① `styles.css` 的 `html[data-palette=…]` 只覆盖了 `--accent-blue`，只染到开关、导航选中；主按钮用 `--ink-primary`，`--accent-color` / `--accent-soft` 都没覆盖。② 「智能跟随主题」时 Hark WebGL 天空按 `harkSceneLight/Dark` 选固定的蓝天 / 夜空场景，引擎没有色相参数，盖住了 `computePaletteSky` 的主题渐变。③ `--glass-bg` 写死白 / 灰。另外查到第 ④ 个：`--sky-1..3` 用 `@property` 注册成了 `inherits: false`，写在 body 上的主题渐变传不到 `#skyph`，占位天空除了最上面一段其余还是蓝色。
+
+**改动**：
+- `styles.css` 配色块：5 个非 default 配色的亮 / 暗各自覆盖 `--accent-color`、`--accent-soft`、`--accent-blue*`、`--ink-primary` / `--ink-primary-hover` / `--on-primary`（主按钮、shadcn `--primary`）、`--focus` / `--focus-line`（聚焦环）、`--glass-tint`。亮色主按钮用各色的深一档（如樱花 `#9d174d`，白字），暗色用浅一档（如樱花 `#faa2c1`，深字 `#0b1020`）。
+- `styles.css` 末尾新增一节：`--glass-tint` 默认 `transparent`（`:root` 和 `html.dark` 都给）；非 default 时 `--glass-bg` / `--glass-input-bg` 用 `color-mix` 混进约 8% 强调色；大板块底色是 `!important` 写死的，不去抢，改用 `--lg-shadow` 里一层铺满的内阴影叠上 `--glass-tint`（左栏、右栏、账号卡、输入框、卡片）；输入框 `--composer-accent` 跟强调色；偏蓝的柔光薄纱 / 深色压暗层在非 default 时换成中性白 / 黑；`#skyph` 读挂在 `<html>` 上不注册的 `--palette-sky-0..3`。不加模糊、不用 `:has()`、不改布局，没有新动画。
+- `appearance.ts`：新增 `usesPaletteGradientSky(state)`（`harkScene === "auto"` 且 palette 不是 default）；`computePaletteSky` 的 root 变量多给 `--palette-sky-0..3`；深色天空亮度从 6–17% 提到 12–26%，樱花暗色色相改为 300–334（深紫红夜）、亮色底部转暖（粉白黄昏），落日暗色改为暖棕夜、海洋 / 翡翠 / 极光暗色饱和度提高，免得都只剩黑色。
+- `sky-background.tsx`：`resolveSkyMode` 多一个 `paletteGradient`，为真时和壁纸 / 性能模式一样不启动 WebGL（`data-sky-off`，露出 `#skyph`）；切回 default 或手动选场景时照旧启动。
+- 新测试 `app/tests/palette-theme.test.ts`：5 个配色 × 亮 / 暗，`--accent-color`、`--accent-soft`、`--glass-tint`、主按钮颜色都和 default 不同，天空渐变是带主题色相的 hsl 且色相和 default 差 ≥10°；主按钮文字对比度、强调色当文字的对比度都 ≥ 4.5；智能跟随 + 非 default 才走渐变；新增样式无 blur / `:has()`。
+
+**和 Hark 的区别**：Hark 只有固定的 12 个天空场景，配色不影响天空；我们在非 default 配色 + 智能跟随时不跑 WebGL，用主题渐变代替，用户手动选的场景和「背景随时间变化」不受影响。
+
+**截图**（真 Chrome，1280×800）：`docs/images/palette-fix/` 下 `before-default-light.png`、`before-sakura-light.png`、`before-sakura-dark.png`（改前），以及 `{default,aurora,emerald,ocean,sunset,sakura}-{light,dark}.png` 12 张（改后）。
