@@ -11,8 +11,8 @@ import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { requestSidebarSearchFocus } from "@/lib/sidebar-search";
 
 /**
- * The one App Shell (DESIGN.md §9.1, DESIGN-v4): top bar (应用 + 导航 + 窗口按钮) + left column
- * (搜索 → 机器人 / 分区 → 账号) + centre + optional right column (面板卡), for chat, settings and admin
+ * The one App Shell (DESIGN.md §9.1, DESIGN-v4): top bar (品牌文字 + 窗口按钮) + left column
+ * (开关 · 搜索 → 机器人 / 分区 → 账号) + centre + optional right column (面板卡), for chat, settings and admin
  * alike. One viewport that never scrolls; panes scroll inside it. The left column is 276px,
  * collapsing to the 80px rail, and shares its open state (Ctrl+B) across all three. Page actions
  * live in each page's own header; nothing is portalled into the top bar any more.

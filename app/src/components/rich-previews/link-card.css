@@ -1,7 +1,8 @@
 /*
  * 链接卡（link-card.tsx，2026-10-29，照 Hark）：只给 lc- 开头的类，不改 styles.css 里已有的规则。
  * - 固定宽约 280px；有图时上半部预览图（40:21 预留，上方两个角圆角），下面两行粗体标题 + 一行浅色「站点 · 补充信息」。
- * - 没有图：同宽的紧凑横卡。
+ * - 没有图：同一张竖卡，图区是生成的横幅（.lc-banner：站点主色渐变 + 大号图标 / 头像 / 首字 + 一行 owner/repo 或域名）。
+ * - 标题固定两行高（不足两行也留两行），卡片高度不随标题变。
  * - 半透明底 + 内侧高光边（inset box-shadow），不用 backdrop-filter。
  * - 骨架（.lc-skel）和有图的卡图区同一尺寸（同一个预留比例），图到了不跳；
  *   文字区高度跟着内容走（一行标题就一行高），只有骨架给标题预留两行、站点行预留一行。
@@ -47,12 +48,6 @@ a.lc-card[href]:hover {
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
     0 0 0 1px rgba(0, 0, 0, 0.18),
     0 10px 28px rgba(0, 0, 0, 0.36);
-}
-.lc-card[data-layout="compact"] {
-  flex-direction: row;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
 }
 .lc-media {
   position: relative;
@@ -104,6 +99,73 @@ a.lc-card[href]:hover {
   width: 24px;
   height: 24px;
 }
+.lc-banner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 16px;
+  box-sizing: border-box;
+  color: #fff;
+  overflow: hidden;
+}
+/* 一层柔光，让纯渐变不那么平。 */
+.lc-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    120% 90% at 20% 0%,
+    rgba(255, 255, 255, 0.22),
+    transparent 60%
+  );
+  pointer-events: none;
+}
+.lc-banner-mark {
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.lc-banner-mark > img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+.lc-banner-letter {
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+}
+.lc-banner-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 999px;
+  object-fit: cover;
+  background: #fff;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.85),
+    0 6px 18px rgba(0, 0, 0, 0.25);
+}
+.lc-banner-label {
+  position: relative;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
 .lc-body {
   display: flex;
   flex-direction: column;
@@ -111,14 +173,9 @@ a.lc-card[href]:hover {
   min-width: 0;
   padding: 10px 14px 12px;
 }
-.lc-card[data-layout="compact"] .lc-body {
-  flex: 1;
-  /* 右边让出 ↗ 的位置（手机上它常显）。 */
-  padding: 0 28px 0 0;
-  gap: 2px;
-}
 .lc-title {
   display: -webkit-box;
+  height: 40px;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
@@ -127,10 +184,6 @@ a.lc-card[href]:hover {
   line-height: 20px;
   color: var(--ink-1);
   word-break: break-word;
-}
-.lc-card[data-layout="compact"] .lc-title {
-  -webkit-line-clamp: 1;
-  font-size: 14.5px;
 }
 .lc-meta {
   display: flex;
@@ -214,16 +267,6 @@ a.lc-card[href]:hover {
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
-}
-.lc-card[data-layout="compact"] .lc-go {
-  top: 50%;
-  margin-top: -12px;
-}
-.lc-card[data-layout="compact"] .lc-followup {
-  top: auto;
-  bottom: 6px;
-  left: auto;
-  right: 40px;
 }
 .lc-followup:hover {
   background: var(--accent-blue);

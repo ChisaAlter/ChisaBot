@@ -1,7 +1,7 @@
 {
   "name": "chisabot",
   "description": "ChisaBot 中文自托管 AI 助手与 Magpie 模型集成",
-  "version": "0.1.112",
+  "version": "0.1.113",
   "license": "MIT",
   "private": true,
   "packageManager": "bun@1.3.14",
@@ -27,7 +27,9 @@
     "composio:smoke": "bun scripts/composio-smoke.ts",
     "mock:knowledge": "bun scripts/mock-knowledge-mcp.ts",
     "pretest:app": "bun run generate:app-config",
-    "test:app": "bun scripts/run-app-tests.ts"
+    "test:app": "bun scripts/run-app-tests.ts",
+    "perf:jank": "node perf/jank.mjs",
+    "perf:compare": "node perf/compare.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",

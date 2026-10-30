@@ -1,6 +1,5 @@
 import { IconSearch, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
-import { useOptionalSidebar } from "@/components/ui/sidebar";
 import {
   onSidebarSearchFocusRequest,
   setSidebarSearch,
@@ -16,13 +15,9 @@ const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
  * 36px 高，宽度跟着卡片，聚焦只加深边框 + 轻阴影，不改变尺寸、不推动任何元素。
  * Ctrl K 由外壳统一处理（展开左栏 → 聚焦这里）。Esc 清空并离开。
  * ↑ / ↓ 在结果里移动高亮、Enter 打开（CB-106，lib/sidebar-search-nav.ts）；焦点一直留在输入框。
- *
- * `variant="topbar"`：Hark 风格顶栏右上角的搜索胶囊（电脑上）。同一个输入框、同一份搜索状态，
- * 结果仍画在左栏卡片里；左栏收起时一聚焦就展开，结果有地方显示。手机上搜索框留在左栏抽屉里。
  */
-export function SidebarSearchField({ variant = "rail" }: { variant?: "rail" | "topbar" } = {}) {
-  const c = variant === "topbar" ? TOPBAR_CLASSES : RAIL_CLASSES;
-  const sidebar = useOptionalSidebar();
+export function SidebarSearchField() {
+  const c = RAIL_CLASSES;
   const search = useSidebarSearch();
   const input = useRef<HTMLInputElement>(null);
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
@@ -55,9 +50,6 @@ export function SidebarSearchField({ variant = "rail" }: { variant?: "rail" | "t
         aria-label={"搜索会话"}
         className={c.input}
         onChange={(event) => setSidebarSearch(event.target.value)}
-        onFocus={() => {
-          if (variant === "topbar" && sidebar && !sidebar.isMobile && !sidebar.open) sidebar.setOpen(true);
-        }}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) {
             // CB-106 r2：组字时的 Esc 是输入法在取消候选词，不是要关抽屉（360 宽左栏是抽屉）。
@@ -107,11 +99,3 @@ const RAIL_CLASSES = {
   kbd: "side-search-kbd",
 };
 
-/** 顶栏胶囊用新类名（hk-*），不吃旧层里压在 side-search 上的覆盖规则。 */
-const TOPBAR_CLASSES = {
-  root: "hk-search glass",
-  ico: "hk-search-ico",
-  input: "hk-search-input",
-  clear: "hk-search-clear",
-  kbd: "hk-search-kbd",
-};
