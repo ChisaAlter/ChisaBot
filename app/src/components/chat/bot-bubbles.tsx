@@ -627,6 +627,14 @@ export function ReplyQuote({
   );
 }
 
+/** 「追问」按钮的内容：流式时摘要每个 token 都变，图标和字不变，放模块级（P2-1）。 */
+const FOLLOWUP_CONTENT = (
+  <>
+    <IconMessageReply aria-hidden="true" className="size-3.5" />
+    <span>{"追问"}</span>
+  </>
+);
+
 /** 卡片级「追问」按钮：将卡片标题和摘要塞入输入框引用栏。 */
 function CardFollowupButtonImpl({
   title,
@@ -655,8 +663,7 @@ function CardFollowupButtonImpl({
       title={`针对「${title}」继续追问`}
       type="button"
     >
-      <IconMessageReply aria-hidden="true" className="size-3.5" />
-      <span>{"追问"}</span>
+      {FOLLOWUP_CONTENT}
     </button>
   );
 }

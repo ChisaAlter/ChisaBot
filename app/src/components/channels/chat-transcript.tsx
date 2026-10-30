@@ -254,6 +254,17 @@ function ReadMark({ messageId }: { messageId: string }) {
 const EMPTY_QUEUE: readonly QueuedMessage[] = [];
 
 /**
+ * 「回到底部」的内容放模块级：这个按钮跟着滚动状态每个 token 重渲，元素不变就不用再往里画一遍
+ * （jank FIX-PLAN §5 / P2-1）。
+ */
+const BOTTOM_PILL_CONTENT = (
+  <>
+    <IconChevronDown className="size-4" />
+    <span className="chat-bottom-pill-t">{"回到底部"}</span>
+  </>
+);
+
+/**
  * Split a person's message into the skill they invoked and the rest of what they typed.
  *
  * ONLY A KNOWN COMMAND COUNTS. "/etc/hosts is broken" is a sentence, not a skill, and drawing a chip
@@ -3542,8 +3553,7 @@ export function ChatTranscript({
           </MessageScrollerContent>
         </MessageScrollerViewport>
         <MessageScrollerButton className="chat-bottom-pill">
-          <IconChevronDown className="size-4" />
-          <span className="chat-bottom-pill-t">{"回到底部"}</span>
+          {BOTTOM_PILL_CONTENT}
         </MessageScrollerButton>
         <ScrollNewestQueuedIntoView
           newest={queued.at(-1)?.id ?? null}
