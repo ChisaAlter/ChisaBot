@@ -12,6 +12,7 @@
 
 **验证**：bun 1.3.14。typecheck、build 通过；相关测试 5/5；test:app 1862 pass / 0 fail；server + DB 测试 4643 pass / 28 fail（本 PR 不动 server/，server 代码与 main 逐字相同，失败为 box 环境下 main 已有的同一批）；Biome 改动文件的诊断数与 main 相同，新文件无问题。perf harness（#443）switch 场景 4x 降速、3 次中位数：最差 INP 2216 → 80ms，最差首帧 2172 → 62ms，长任务总计 16793 → 9246ms（表见 PR）。首帧在 4x 降速下 40–53ms，折合原速约 10–13ms。
 - 补充（小爱复核 #448）：切换中旧的一页同时设 `inert`（键盘也进不去），输入框发送前用 `sendTargetsStaleChannel` 核对所属会话与地址栏 / 左栏切换状态，不一致就不发、草稿留着；淡出改为延迟 100ms、opacity 0.8，`prefers-reduced-motion` 下无过渡，快切不再闪；`afterNextPaint` 只留最新一次，排队期间再点别处或按 Enter 会撤掉旧导航并熄掉左栏的「正在切过去」。新增测试：切换中按 Enter 不发送、连排两次只跑最后一次、点别处撤销。
+- 补充（小爱复核 #448 第二轮）：发送拦截只针对切走的那段旧对话的输入框（`markPendingBot` 记下切走时的频道），导航被拦下 / 失败时别的输入框不受影响；输入法选词的 Enter（`isComposing` / keyCode 229）不撤销排队的导航。各补一条测试。
 
 ## 电脑端布局回退 #374 的顶栏改动（dev2/pc-layout-fix）
 

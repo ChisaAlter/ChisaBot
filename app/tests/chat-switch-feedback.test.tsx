@@ -132,8 +132,14 @@ test("输入框属于旧会话（地址已换 / 左栏正在切）时判定为�
   expect(sendTargetsStaleChannel("c1", "/channel/c2")).toBe(true);
   expect(sendTargetsStaleChannel("c1", "/settings")).toBe(false);
   expect(sendTargetsStaleChannel(undefined, "/channel/c2")).toBe(false);
-  markPendingBot("b2");
+  markPendingBot("b2", "c1");
   expect(sendTargetsStaleChannel("c1", "/channel/c1")).toBe(true);
+  // 别的会话的输入框不受影响（导航被拦下 / 失败时不会全都发不出去）。
+  expect(sendTargetsStaleChannel("c3", "/channel/c3")).toBe(false);
+  // 连点：记的仍是最早切走的那段。
+  markPendingBot("b4", "c2");
+  expect(sendTargetsStaleChannel("c1", "/channel/c1")).toBe(true);
+  expect(sendTargetsStaleChannel("c2", "/channel/c2")).toBe(false);
 });
 
 test("切换中焦点还在旧输入框里按 Enter：什么都不发，草稿留着", async () => {
@@ -163,7 +169,7 @@ test("切换中焦点还在旧输入框里按 Enter：什么都不发，草稿�
   editor.focus();
   editor.textContent = "hello";
   fireEvent.input(editor);
-  act(() => markPendingBot("other-bot"));
+  act(() => markPendingBot("other-bot", "c1"));
   await act(async () => {
     fireEvent.keyDown(editor, { key: "Enter", code: "Enter" });
   });
@@ -177,4 +183,23 @@ test("切换中焦点还在旧输入框里按 Enter：什么都不发，草稿�
     fireEvent.click(view.getByLabelText("发送消息"));
   });
   expect(sent).toEqual(["hello"]);
+});
+
+test("输入法选词的 Enter 不撤销排队的导航，普通 Enter 才撤", async () => {
+  const ran: string[] = [];
+  markPendingBot("b5", "c1");
+  afterNextPaint(() => ran.push("go"));
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", isComposing: true }),
+  );
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", keyCode: 229 }),
+  );
+  expect(getPendingBot()).toBe("b5");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(ran).toEqual(["go"]);
+  afterNextPaint(() => ran.push("again"));
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(ran).toEqual(["go"]);
 });

@@ -8,7 +8,16 @@ import { useSyncExternalStore } from "react";
  * 路由跟上（地址变了）就清掉，之后高亮照常按路由算。
  */
 let pendingBot: string | null = null;
+/** 切走之前的那段对话（地址栏里的频道）；只有它的输入框在切换中要拦发送。 */
+let pendingFrom: string | null = null;
 let clearTimer: ReturnType<typeof setTimeout> | undefined;
+
+function routeChannelOf(pathname: string): string | null {
+  const match = /^\/channel\/([^/?#]+)/.exec(pathname);
+  if (!match) return null;
+  const id = decodeURIComponent(match[1] ?? "");
+  return id === "new" ? null : id;
+}
 const listeners = new Set<() => void>();
 
 /** 地址一直没跟上（导航被拦下、出错）时最多挂多久，免得高亮停在错的那一行。 */
@@ -18,7 +27,14 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
-export function markPendingBot(botId: string) {
+export function markPendingBot(
+  botId: string,
+  fromChannel: string | null = routeChannelOf(
+    typeof location === "undefined" ? "" : location.pathname,
+  ),
+) {
+  // 连点时记的是最早切走的那段（真正还挂着输入框的旧对话）。
+  if (pendingBot === null) pendingFrom = fromChannel;
   if (clearTimer !== undefined) clearTimeout(clearTimer);
   clearTimer = setTimeout(clearPendingBot, PENDING_SWITCH_MAX_MS);
   if (pendingBot === botId) return;
@@ -29,6 +45,7 @@ export function markPendingBot(botId: string) {
 export function clearPendingBot() {
   if (clearTimer !== undefined) clearTimeout(clearTimer);
   clearTimer = undefined;
+  pendingFrom = null;
   if (pendingBot === null) return;
   pendingBot = null;
   emit();
@@ -81,7 +98,11 @@ let queued: { raf?: number; timer?: ReturnType<typeof setTimeout> } | null =
   null;
 
 function onLaterInput(event: Event) {
-  if (event instanceof KeyboardEvent && event.key !== "Enter") return;
+  if (event instanceof KeyboardEvent) {
+    if (event.key !== "Enter") return;
+    // 输入法选词的 Enter 不算（isComposing；部分浏览器只给 keyCode 229）。
+    if (event.isComposing || event.keyCode === 229) return;
+  }
   cancelAfterNextPaint();
   clearPendingBot();
 }
@@ -132,9 +153,8 @@ export function sendTargetsStaleChannel(
   pathname: string = typeof location === "undefined" ? "" : location.pathname,
 ): boolean {
   if (!channelId) return false;
-  if (pendingBot !== null) return true;
-  const match = /^\/channel\/([^/?#]+)/.exec(pathname);
-  if (!match) return false;
-  const routeChannel = decodeURIComponent(match[1] ?? "");
-  return routeChannel !== "new" && routeChannel !== channelId;
+  // 只拦切走的那段旧对话：导航被拦下 / 失败时，别的输入框不该陪着发不出去。
+  if (pendingBot !== null && pendingFrom === channelId) return true;
+  const routeChannel = routeChannelOf(pathname);
+  return routeChannel !== null && routeChannel !== channelId;
 }
