@@ -89,7 +89,6 @@ export function VirtualTranscriptRows({
   // 虚拟列表顶上到滚动内容顶上的距离（上面有 padding / 置顶提示）。只在挂上和上面变了时量。
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [startMargin, setStartMargin] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: layoutKey 就是用来触发重新量的
   useLayoutEffect(() => {
     const box = boxRef.current;
     const viewport = viewportRef.current;
