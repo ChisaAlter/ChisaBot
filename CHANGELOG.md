@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 切会话卡顿修复 P1-3：主区从只留 1 段聊天改成 LRU 留最近 4 段（`KeepAliveStage`）。A→B→A 切回最近看过的对话不再整页重挂、重新解析 markdown，4x 降速下（perf/ harness）A→B→A 切回 INP 384 → 256 ms、切换场景长任务合计 9.7 s → 6.0 s、样式重算 4.3 s → 2.7 s；切回 240 条长对话和流式场景暂时变慢，待 P1-5 / P3-3。藏着的段用 `content-visibility: hidden` + `inert`，外壳重渲不传进去；每段 10 分钟 TTL，藏着的合计元素数超预算时先放掉最久没看的（大会话先走）。流式中切走的回答照常往下写，切回时贴底的追到底。删掉 `.kept-chat[data-visible=false] *` 通配规则。未升级版本号。
+
 ## 0.1.112 — 2026-10-29
 
 这一版合并 2 个 PR：链接预览服务端（#412）、冷打开频道只读一次完整历史（#421）。只有服务器 / 网页更新，PC 和 Android 不变。设置面板性能三连（#395 / #398 / #403）合并到当前 main 时 `glass-shell.tsx`、`glass-topbar.tsx` 有代码冲突，这一版没合。

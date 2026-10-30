@@ -2088,6 +2088,13 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
   2. **离开那一刻钉住滚动位置**（`KeepAliveStage`）：看得见时记着留着的那页里每个滚动容器最后的 `scrollTop`；藏起来后 `KEPT_SCROLL_HOLD_MS`（1.5 s）内，藏着的容器一收到 scroll 就还原成离开前的位置；之后放开（藏着时正在写、贴底的回答照常往下走，§35 / §94）。这一层才是真正修好 −68px 的。
 - 回归：`app/tests/scroll-within.test.ts`（nearest / center、两处不再用原生调用）；`app/tests/keep-alive.test.tsx`「藏起来那一刻浏览器挪了藏着的滚动容器：还原」；`tests/nav-keep/nav.mjs` 逐帧断言「离开期间藏着的聊天不被挪」，`SCROLLALL=1` 打印离开期间所有收到 scroll 的元素。修复后预览 nav e2e（1280 + 390，`STREAM=1 SWITCH=1`）86/86。
 
+### 98.6 留最近 4 段（LRU，2026-10-30，卡顿修复 P1-3）
+- `KeepAliveStage` 留最近看过的 `KEPT_MAX`（4）段，每段一个 `.kept-chat`；同一段由 `keyOf`（聊天是 `channelId`）认。
+- 藏着的段：`content-visibility: hidden` + `inert` + `aria-hidden`，绝对定位、宽高冻住；`memo` 挡外壳重渲；不用 `<Activity>`（会拆 effect，流式 / 交付会断）。
+- 淘汰：每段 TTL 10 分钟；藏着的合计元素数超 `KEPT_NODE_BUDGET` 先放最久没看的。
+- 切回：离开时贴底的滚到底，否则还原；页面可用 `useKeptSlot().registerScroll` 自己接管（虚拟列表）。
+- 同一个机器人一段藏着一段看着时算在屏幕上（`useMarkBotHidden` 两边都登记）。
+
 ## 99. 云端浏览器卡死保护 + 已删除机器人的浏览器（2026-10-17）
 
 起因：生产上一个机器人（定时任务，打开 claude.ai 的对话页）的 `computer_navigate` 从 12:00 起每次都「电脑没有及时响应」（服务器 45 s 放弃，浏览器进程里那次操作却一直没结束、一直占着屏障），用户点「接管」30 秒后报

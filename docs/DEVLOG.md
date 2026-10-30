@@ -1,5 +1,45 @@
 # DEVLOG
 
+## KeepAlive 改 LRU（perf/keepalive-lru，卡顿修复 P1-3）
+
+**动机**：`/workspace/jank-analysis/REPORT.md` 根因 2：`KeepAliveStage` 只留 1 段聊天（`kept` 单值），A→B→A 每次切回都整页重挂，Streamdown 全量重新解析（切换期间 `jt$1` 1672 ms，占 React 时间 44%），再叠加 tail-first 每批补行的强制样式（根因 1）。FIX-PLAN §2 第 1 层：留最近 N=4 段。
+
+**改法**：
+- `app/src/components/layout/keep-alive.tsx`：`kept: T | null` → `entries`（按最近看过排序，最多 `max`=4）。每段一个 `.kept-chat` 容器（`KeptSlotView`），只有最前面那段在地址是聊天（或 `idleVisible`）时看得见。新增 `keyOf`（一段的身份；authed-shell 传 `channelId`，`?settings` / `?watch` 变了只更新那段不重挂）。
+- 藏着的段：`content-visibility: hidden` + `visibility: hidden` + `inert` + `aria-hidden`，绝对定位叠在下面、宽高冻在离开时（不占位，切回不重排）；`memo` 挡住外壳重渲（藏着且值没变就跳过）；轮询、画面照旧靠 `KeptVisibleContext=false` 停。**没用 `<Activity mode="hidden">`**（React 19.2.8 有）：它会拆掉藏着那段的 effect，流式回答的订阅、交付跟着断（§98.3 要求不停），切回还得重新接入、回放。实测只用 `visibility:hidden`（不加 content-visibility）切换场景长任务 12.0 s，比 main 还差——藏着的几段一直参与样式 / 布局，所以 content-visibility 是必须的。
+- 淘汰：每段各自 10 分钟 TTL；藏起来那一刻数一次元素数（`getElementsByTagName("*").length`，不读布局），藏着的合计超过 `KEPT_NODE_BUDGET`（24k）从最久没看的开始放，大会话先走；看得见的那段永远不放。
+- 滚动：看得见时滚动事件里顺便记「贴没贴底」（和读 scrollTop 同一次布局，不多一次强制重算）；切回那一刻（layout effect，绘制前）贴底的滚到底（追上藏着期间流进来的内容），没贴底的还原离开时的位置；§98.5 的 1.5 s 钉住照旧。
+- `app/src/lib/kept-visible.ts`：同一个机器人可能一段藏着、一段看着，`useMarkBotHidden` 看着的也登记，只要有一段看得见就算在屏幕上（否则看着的那段的组件授权轮询会被误停）。
+- `app/src/styles.css`：删掉 `.kept-chat[data-visible="false"] *` 通配（每次样式重算的倍增器），只留容器自身的 `overflow-anchor: none`；藏着的内容不做布局，不再需要。
+- 给 P3-3（virtua 虚拟化）留的接口：`useKeptSlot()` → `{ slotKey, onEvict(cb), registerScroll({ save, restore }) }`。高度缓存可以按 `slotKey` 分桶、在 `onEvict` 里清掉；虚拟列表注册了 `registerScroll` 后，这段的保存 / 还原交给它（`scrollToIndex`），不再按 DOM scrollTop 还原。每个留着的段各自一个 VList。
+
+**测试**：`app/tests/keep-alive.test.tsx` 22 个（新增：A→B→A 同一实例、藏着时 content-visibility / 不占位 / 外壳重渲不重画、第 5 段淘汰最久的、keyOf 同段不重挂、元素预算提前淘汰、按段 TTL、流式中切走切回不丢且贴底追到底、P3-3 接口、同机器人一藏一看算在屏幕上）。
+
+**性能**（开发4 的 harness，#443 `dev4/perf-harness` 671f6ac9 的 `perf/`，未提交进本 PR；`--scenario=switch,scroll,stream --runs=3`，4x CPU、假 /api、不带 --trace；base = main c99ee37e 构建）。`switch` 是 c2→c1→c2→c1→c2（c1 为 240 条长对话），其中 `to-c2-first` / `to-c2-again` 就是 A→B→A 切回：
+
+main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better/worse
+
+| scenario | fps | p95 frame ms | long-task ms | max long task | worst INP | worst first frame | style ms | layout ms | script ms |
+|---|---|---|---|---|---|---|---|---|---|
+| switch | 22.2 → 34.5 (+55%) ✅ | 350 → 16.8 (-95%) ✅ | 9747 → 5997 (-38%) ✅ | 859 → 876 (+2%) | 912 → 912 (0%) | 889 → 884 (-1%) | 4281 → 2669 (-38%) ✅ | 483 → 429 (-11%) ✅ | 4619 → 2695 (-42%) ✅ |
+| scroll | 45.7 → 47 (+3%) | 33.4 → 33.4 (0%) | 204 → 89 (-56%) ✅ | 52 → 66 (+27%) ⚠️ | – | 59 → 88 (+49%) ⚠️ | 471 → 476 (+1%) | 53 → 59 (+11%) ⚠️ | 755 → 755 (0%) |
+| stream | 48.2 → 41 (-15%) ⚠️ | 50 → 66.7 (+33%) ⚠️ | 464 → 1557 (+236%) ⚠️ | 96 → 121 (+26%) ⚠️ | 128 → 152 (+19%) ⚠️ | 94 → 131 (+39%) ⚠️ | 1302 → 2002 (+54%) ⚠️ | 199 → 157 (-21%) ✅ | 2034 → 1751 (-14%) ✅ |
+
+| interaction | INP | input delay | processing | presentation | first frame | dropped (1s) |
+|---|---|---|---|---|---|---|
+| switch / to-c1-first | 912 → 912 (0%) | 12 → 14 (+17%) ⚠️ | 838 → 834 (0%) | 67 → 64 (-4%) | 889 → 884 (-1%) | 49 → 47 (-4%) |
+| switch / to-c2-first | 384 → 256 (-33%) ✅ | 10 → 9 (-10%) ✅ | 331 → 213 (-36%) ✅ | 41 → 29 (-29%) ✅ | 357 → 223 (-38%) ✅ | 24 → 12 (-50%) ✅ |
+| switch / to-c1-again | 576 → 760 (+32%) ⚠️ | 9 → 9 (0%) | 500 → 600 (+20%) ⚠️ | 68 → 117 (+72%) ⚠️ | 543 → 739 (+36%) ⚠️ | 51 → 43 (-16%) ✅ |
+| switch / to-c2-again | 336 → 232 (-31%) ✅ | 8 → 9 (+13%) ⚠️ | 285 → 198 (-31%) ✅ | 42 → 27 (-36%) ✅ | 307 → 206 (-33%) ✅ | 19 → 11 (-42%) ✅ |
+| scroll / wheel | – | – | – | – | 59 → 88 (+49%) ⚠️ | 18 → 12 (-33%) ✅ |
+| stream / send | 128 → 152 (+19%) ⚠️ | 1 → 4 (+300%) ⚠️ | 96 → 118 (+23%) ⚠️ | 31 → 32 (+3%) | 94 → 131 (+39%) ⚠️ | 21 → 31 (+48%) ⚠️ |
+
+**已知**：
+- **切回 240 条长对话那一下 INP 变高**（576 → 760 ms）：main 上是挂载 + 分批补行（后面 3 s 里还有约 2.9 s 长任务），现在是一次性把藏着的整段（约 15k 元素）重做样式和布局，总量少但集中在点击那一帧。P1-1（切会话 `startTransition`）会把它移出 INP，P3-3 虚拟化把元素降到 <3k 后这一下随之变小。
+- **流式场景变差**（长任务 464 → 1557 ms，样式 1302 → 2002 ms）：流式时 240 条那段藏着留在 DOM 里，热路径上的强制样式（4b MutationObserver 读 offsetHeight、4c DocCard 读 scrollHeight，trace 里同样两处）每次更贵，content-visibility 挡不住全部。带 --trace 的单轮对比：强制重算 2163 → 1952 ms、样式自身 841 → 1800 ms、布局 1342 → 176 ms。4b / 4c（P1-5）合入后应基本消失；需要在那之后复测。
+- 试过「单段超过 8k 元素藏起来就放掉」：c2 也超了被放掉，A→B→A 切回 INP 反而 301 → 727 ms，已撤回，不在本 PR 里。
+- `tests/` 下几个 Playwright 脚本按 `data-testid` 取聊天元素，现在可能同时有藏着的段，需要限定 `[data-visible=true]`。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
