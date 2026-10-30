@@ -1,5 +1,4 @@
 import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
-import { memo, useEffect } from "react";
 import { KeepAliveStage } from "@/components/layout/keep-alive";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
@@ -30,11 +29,10 @@ export function AuthedShell() {
 }
 
 /*
- * 藏着的右栏 / 聊天在进出设置时不重画（jank P1-6）：地址变了只是 `visible` 翻一下，
+ * 藏着的右栏在进出设置时不重画（jank P1-6；聊天的 memo 见下面 KeptChannelPage）：地址变了只是 `visible` 翻一下，
  * 其余 props 都没变，memo 让它们整棵跳过。
  */
 const KeptPanelRail = memo(PanelRail);
-const KeptChannelPage = memo(ChannelPage);
 
 /** 空闲时把设置页的代码块先取好（jank P1-6）：设置路由没有 loader，所以只下载 JS，不发 `/api/settings/*`。 */
 function useIdleSettingsPrefetch(scope: string) {
