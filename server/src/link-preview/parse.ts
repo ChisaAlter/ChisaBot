@@ -264,3 +264,83 @@ export function displayDomain(url: string): string {
     return url;
   }
 }
+
+const GITHUB_NOT_OWNER = new Set([
+  "about",
+  "apps",
+  "collections",
+  "customer-stories",
+  "enterprise",
+  "explore",
+  "features",
+  "login",
+  "marketplace",
+  "new",
+  "notifications",
+  "orgs",
+  "organizations",
+  "pricing",
+  "pulls",
+  "issues",
+  "search",
+  "settings",
+  "site",
+  "sponsors",
+  "topics",
+  "trending",
+  "users",
+  "join",
+]);
+
+/** `https://github.com/owner/repo`（可带结尾 / 或 .git）是仓库首页：返回 owner / repo；别的页面返回 null。 */
+export function githubRepoOf(
+  url: string,
+): { owner: string; repo: string } | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.hostname !== "github.com" && u.hostname !== "www.github.com")
+    return null;
+  const parts = u.pathname.split("/").filter(Boolean);
+  if (parts.length !== 2) return null;
+  const [owner, rawRepo] = parts as [string, string];
+  const repo = rawRepo.replace(/\.git$/, "");
+  const safe = /^[A-Za-z0-9_.-]+$/;
+  if (
+    !repo ||
+    !safe.test(owner) ||
+    !safe.test(repo) ||
+    GITHUB_NOT_OWNER.has(owner.toLowerCase())
+  )
+    return null;
+  return { owner, repo };
+}
+
+/**
+ * GitHub 链接卡的标题（DESIGN.md §48.2）：去掉开头的「GitHub - 」；仓库首页规范成「owner/repo: 描述」
+ * （没有描述就是「owner/repo」）。不是 github.com 的标题原样返回。
+ */
+export function normalizeGithubTitle(
+  title: string,
+  url: string,
+  description = "",
+): string {
+  let host = "";
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return title;
+  }
+  if (host !== "github.com") return title;
+  const stripped = title.replace(/^GitHub\s*[-–—]\s*/i, "").trim();
+  const repo = githubRepoOf(url);
+  if (!repo) return stripped || title;
+  const name = `${repo.owner}/${repo.repo}`;
+  const desc = description.replace(/\s+/g, " ").trim();
+  if (stripped.toLowerCase().startsWith(`${name.toLowerCase()}:`))
+    return stripped.slice(0, 200);
+  return (desc ? `${name}: ${desc}` : name).slice(0, 200);
+}

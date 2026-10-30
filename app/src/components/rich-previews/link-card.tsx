@@ -1,12 +1,9 @@
-import {
-  IconArrowUpRight,
-  IconMessageReply,
-  IconWorld,
-} from "@tabler/icons-react";
+import { IconArrowUpRight, IconMessageReply } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, useState } from "react";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import {
+  cleanLinkTitle,
   type GivenLinkFields,
   mergeLinkFields,
   needsLinkPreview,
@@ -20,10 +17,12 @@ import "./link-card.css";
  *
  * - 有预览图：固定宽约 280px 的竖卡。上半部 og:image 大图（object-fit: cover，上方两个角圆角，框按 40:21 预留），
  *   下面两行粗体标题，再下面一行浅色「站点 · 补充信息」。
- * - 没有预览图：同宽的紧凑横卡（左边站点图标，右边标题 + 站点行）。
+ * - 没有预览图（2026-10-30 起不再收成小横卡）：同一张竖卡，图区画生成的横幅——站点主色渐变（认得的站用品牌色，
+ *   其它按域名算一个稳定色相）+ 大号站点图标或首字（GitHub 再加一行 owner/repo，其它不写域名）。GitHub 仓库的预览图是主人头像时
+ *   （imageKind `avatar`）把头像画成横幅里的大圆头像。
  * - 字段：给的优先，缺的用 `/api/link-preview` 补（{@link mergeLinkFields}）。
  * - 取预览时画骨架，骨架和有图的卡尺寸完全一样（同一套类名、同一个预留框），内容到了不跳；
- *   只有「最后确实没有图」时收成紧凑横卡。
+ *   最后没有图时原地换成横幅，尺寸不变。
  * - 半透明底色 + 内侧高光边，不用 backdrop-filter（聊天里卡片多，模糊太贵）。样式在 ./link-card.css，类名都以 lc- 开头。
  */
 
@@ -73,6 +72,108 @@ export function linkDeckStyle(
     // 聚焦的那张置顶（不在 CSS 里用 !important 盖内联层级）。
     zIndex: focused ? 30 : index + 1,
   } as CSSProperties;
+}
+
+/** 认得的站点用品牌色做横幅渐变（DESIGN.md §48.2）。 */
+const BRAND_GRADIENTS: Record<string, readonly [string, string]> = {
+  "github.com": ["#24292f", "#57606a"],
+  "gitlab.com": ["#fc6d26", "#6e49cb"],
+  "youtube.com": ["#ff0033", "#a8001f"],
+  "bilibili.com": ["#fb7299", "#00a1d6"],
+  "zhihu.com": ["#0066ff", "#003fa3"],
+  "x.com": ["#14171a", "#3b4248"],
+  "twitter.com": ["#1d9bf0", "#0b5d94"],
+  "wikipedia.org": ["#5a6270", "#2f343c"],
+  "npmjs.com": ["#cb3837", "#7d1f1e"],
+};
+
+/** 横幅的两个渐变色：品牌色，或按域名算一个稳定的色相。 */
+export function bannerGradient(domain: string): readonly [string, string] {
+  const host = domain.toLowerCase().replace(/^(www|m)\./, "");
+  const brand =
+    BRAND_GRADIENTS[host] ??
+    Object.entries(BRAND_GRADIENTS).find(([d]) => host.endsWith(`.${d}`))?.[1];
+  if (brand) return brand;
+  let hash = 0;
+  for (const ch of host) hash = (hash * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+  const hue = hash % 360;
+  return [`hsl(${hue} 62% 54%)`, `hsl(${(hue + 38) % 360} 58% 38%)`];
+}
+
+/** 横幅上那一行字：只有 GitHub 有（owner/repo）；其它站返回 null（域名已经在标题下面那行，不重复）。 */
+export function bannerLabel(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (/^(www\.)?github\.com$/i.test(u.hostname)) {
+      const [owner, repo] = u.pathname.split("/").filter(Boolean);
+      if (owner && repo) return `${owner}/${repo.replace(/\.git$/, "")}`;
+      if (owner) return owner;
+    }
+  } catch {
+    /* 不是网址 */
+  }
+  return null;
+}
+
+function initialOf(label: string): string {
+  const ch = Array.from(label.replace(/^www\./i, "").trim())[0] ?? "?";
+  return ch.toUpperCase();
+}
+
+/** 没有预览图时图区画的横幅（和预览图同一个 40:21 框，尺寸不变）。 */
+function LinkBanner({
+  domain,
+  label,
+  avatar,
+  favicon,
+  onAvatarError,
+  onIconError,
+}: {
+  domain: string;
+  label: string | null;
+  avatar: string | null;
+  favicon: string | null;
+  onAvatarError: () => void;
+  onIconError: () => void;
+}) {
+  const [from, to] = bannerGradient(domain);
+  return (
+    <span
+      className="lc-banner"
+      data-testid="link-card-banner"
+      style={{ backgroundImage: `linear-gradient(135deg, ${from}, ${to})` }}
+    >
+      {avatar ? (
+        <img
+          alt=""
+          className="lc-banner-avatar"
+          decoding="async"
+          height={72}
+          onError={onAvatarError}
+          referrerPolicy="no-referrer"
+          src={avatar}
+          width={72}
+        />
+      ) : favicon ? (
+        <span className="lc-banner-mark">
+          <img
+            alt=""
+            decoding="async"
+            height={36}
+            onError={onIconError}
+            referrerPolicy="no-referrer"
+            src={favicon}
+            width={36}
+          />
+        </span>
+      ) : (
+        <span aria-hidden className="lc-banner-mark lc-banner-letter">
+          {initialOf(label ?? domain)}
+        </span>
+      )}
+      {label ? <span className="lc-banner-label">{label}</span> : null}
+    </span>
+  );
 }
 
 function safeHref(url: unknown): string | null {
@@ -191,41 +292,27 @@ export function LinkCard({
     );
   }
 
-  const layout = fields.image ? "image" : "compact";
+  // 一律竖版大卡（§48.2）：没有预览图时图区画横幅，不再收成小横卡。
+  const title = cleanLinkTitle(fields.title);
   const favicon = fields.favicon && !iconBroken ? fields.favicon : null;
   const line = fields.extra ? `${fields.site} · ${fields.extra}` : fields.site;
   const size =
     fields.imageWidth && fields.imageHeight
       ? { width: fields.imageWidth, height: fields.imageHeight }
       : DEFAULT_IMAGE;
-  const badge = (
-    <span className="lc-badge">
-      {favicon ? (
-        <img
-          alt=""
-          decoding="async"
-          height={28}
-          onError={() => setIconBroken(true)}
-          referrerPolicy="no-referrer"
-          src={favicon}
-          width={28}
-        />
-      ) : (
-        <IconWorld aria-hidden />
-      )}
-    </span>
-  );
+  const showPhoto = Boolean(img.src) && !img.broken && !fields.imageAvatar;
+  const avatar = fields.imageAvatar && img.src && !img.broken ? img.src : null;
 
   return (
     <a
-      aria-label={`${fields.title}（${line}），在新窗口打开`}
+      aria-label={`${title}（${line}），在新窗口打开`}
       className={cn("lc-card", className)}
       data-degraded={
         fields.degraded || (needs && query.isError) ? "" : undefined
       }
       data-dimmed={deck?.dimmed ? "" : undefined}
       data-focused={deck?.focused ? "" : undefined}
-      data-layout={layout}
+      data-layout="image"
       data-testid="link-card"
       href={href}
       onBlur={() => deck?.onHoverChange?.(false)}
@@ -238,46 +325,49 @@ export function LinkCard({
       target="_blank"
       title={
         fields.description
-          ? `${fields.title}\n${fields.description}`
+          ? `${title}\n${fields.description}`
           : (query.data?.finalUrl ?? href)
       }
     >
-      {layout === "image" ? (
-        <span
-          className="lc-media"
-          data-square={img.square ? "" : undefined}
-          style={{ aspectRatio: LINK_CARD_IMAGE_RATIO }}
-        >
-          {img.src && !img.broken ? (
-            <img
-              alt=""
-              decoding="async"
-              height={size.height}
-              loading="lazy"
-              onError={() => {
-                if (fields.imageFallback && img.src !== fields.imageFallback)
-                  setAttempt({ ...img, src: fields.imageFallback });
-                else setAttempt({ ...img, broken: true });
-              }}
-              onLoad={(event) => {
-                const square = isSquarish(event.currentTarget);
-                if (square !== img.square) setAttempt({ ...img, square });
-              }}
-              referrerPolicy="no-referrer"
-              src={img.src}
-              width={size.width}
-            />
-          ) : (
-            badge
-          )}
-        </span>
-      ) : (
-        badge
-      )}
+      <span
+        className="lc-media"
+        data-square={showPhoto && img.square ? "" : undefined}
+        style={{ aspectRatio: LINK_CARD_IMAGE_RATIO }}
+      >
+        {showPhoto && img.src ? (
+          <img
+            alt=""
+            decoding="async"
+            height={size.height}
+            loading="lazy"
+            onError={() => {
+              if (fields.imageFallback && img.src !== fields.imageFallback)
+                setAttempt({ ...img, src: fields.imageFallback });
+              else setAttempt({ ...img, broken: true });
+            }}
+            onLoad={(event) => {
+              const square = isSquarish(event.currentTarget);
+              if (square !== img.square) setAttempt({ ...img, square });
+            }}
+            referrerPolicy="no-referrer"
+            src={img.src}
+            width={size.width}
+          />
+        ) : (
+          <LinkBanner
+            avatar={avatar}
+            domain={fields.domain}
+            favicon={favicon}
+            label={bannerLabel(href)}
+            onAvatarError={() => setAttempt({ ...img, broken: true })}
+            onIconError={() => setIconBroken(true)}
+          />
+        )}
+      </span>
       <span className="lc-body">
-        <span className="lc-title">{fields.title}</span>
+        <span className="lc-title">{title}</span>
         <span className="lc-meta">
-          {layout === "image" && favicon ? (
+          {favicon ? (
             <img
               alt=""
               className="lc-icon"
@@ -292,18 +382,18 @@ export function LinkCard({
       </span>
       {followup ? (
         <button
-          aria-label={`追问 ${fields.title}`}
+          aria-label={`追问 ${title}`}
           className="lc-followup"
           data-testid="card-followup-btn"
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
             dispatchComposerQuote({
-              text: `${fields.title} (${href})`,
+              text: `${title} (${href})`,
               source: `链接 · ${line}`,
             });
           }}
-          title={`针对「${fields.title}」继续追问`}
+          title={`针对「${title}」继续追问`}
           type="button"
         >
           <IconMessageReply aria-hidden="true" className="size-3.5" />

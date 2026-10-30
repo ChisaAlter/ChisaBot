@@ -3,7 +3,12 @@ import { domainToASCII } from "node:url";
 import { Hono } from "hono";
 import type { GuardedResponse } from "../../shared/net/guarded-fetch";
 import type { Database } from "../src/db/client";
-import { decodeEntities, displayDomain } from "../src/link-preview/parse";
+import {
+  decodeEntities,
+  displayDomain,
+  githubRepoOf,
+  normalizeGithubTitle,
+} from "../src/link-preview/parse";
 import {
   apiSourceFor,
   createLinkPreviews,
@@ -128,6 +133,22 @@ const tooMany = {
 const REPO = "https://github.com/ChisaAlter/ChisaBot";
 const OG =
   "https://opengraph.githubassets.com/8a7b6492/ChisaAlter/ChisaBot?token=SECRET";
+const API = "https://api.github.com/repos/ChisaAlter/ChisaBot";
+const OG_FIXED = "https://opengraph.githubassets.com/1/ChisaAlter/ChisaBot";
+const AVATAR = "https://avatars.githubusercontent.com/u/1?v=4";
+const apiOk = (extra: Record<string, unknown> = {}) => ({
+  contentType: "application/json",
+  body: JSON.stringify({
+    full_name: "ChisaAlter/ChisaBot",
+    description: "自托管的 AI 助手",
+    stargazers_count: 42,
+    private: false,
+    owner: { avatar_url: AVATAR },
+    ...extra,
+  }),
+});
+/** 下面几条测的是「抓网页」那条路：GitHub API 被限流，照旧抓网页。 */
+const apiLimited = { [API]: tooMany };
 const repoPage = html(
   `<title>GitHub - ChisaAlter/ChisaBot</title><meta property="og:title" content="ChisaAlter/ChisaBot"><meta property="og:image" content="${OG}">`,
 );
@@ -145,8 +166,9 @@ async function setup(script: Script) {
 }
 
 describe("GitHub 预览图（必修）", () => {
-  test("og 图 429：记下原因（不带查询串）、不立刻重试、改用仓库固定图，并且只缓存 30 分钟", async () => {
+  test("og 图 429：记下原因（不带查询串）、不立刻重试、改用仓库固定图，并且只缓存 5 分钟", async () => {
     const t = await setup({
+      ...apiLimited,
       [REPO]: repoPage,
       [OG]: tooMany,
       "https://opengraph.githubassets.com/1/ChisaAlter/ChisaBot": png,
@@ -164,11 +186,14 @@ describe("GitHub 预览图（必修）", () => {
       reason: "status 429 retry-after=900",
     });
     expect(String(t.logs[0]?.url)).not.toContain("SECRET");
-    expect(t.ttlOf()).toEqual(["30 minutes"]);
+    expect(t.ttlOf()).toEqual(["5 minutes"]);
+    // 标题去掉「GitHub - 」，规范成 owner/repo（页面没有描述）。
+    expect(preview?.title).toBe("ChisaAlter/ChisaBot");
   });
 
-  test("固定图也被限流：用仓库主人的头像", async () => {
+  test("固定图也被限流：用仓库主人的头像（imageKind avatar），只缓存 5 分钟", async () => {
     const t = await setup({
+      ...apiLimited,
       [REPO]: repoPage,
       [OG]: tooMany,
       "https://opengraph.githubassets.com/1/ChisaAlter/ChisaBot": tooMany,
@@ -176,11 +201,14 @@ describe("GitHub 预览图（必修）", () => {
     });
     const { preview } = await t.service.previewFor(REPO);
     expect(preview?.image).not.toBeNull();
+    expect(preview?.imageKind).toBe("avatar");
     expect(t.logs.map((l) => l.role)).toEqual(["og", "github-fallback"]);
+    expect(t.ttlOf()).toEqual(["5 minutes"]);
   });
 
   test("没有 og:image 的仓库页也能拿到兜底图", async () => {
     const t = await setup({
+      ...apiLimited,
       [REPO]: html("<title>ChisaBot</title>"),
       "https://opengraph.githubassets.com/1/ChisaAlter/ChisaBot": png,
     });
@@ -229,6 +257,117 @@ describe("GitHub 预览图（必修）", () => {
       "not-image (text/html)",
       "too-large (>3145728 bytes)",
     ]);
+  });
+
+  test("仓库首页先问 GitHub API：标题「owner/repo: 描述」、星标、og 固定图，缓存 24 小时，不抓网页", async () => {
+    const t = await setup({ [API]: apiOk(), [OG_FIXED]: png });
+    const { preview } = await t.service.previewFor(REPO);
+    expect(preview).toMatchObject({
+      title: "ChisaAlter/ChisaBot: 自托管的 AI 助手",
+      siteName: "GitHub",
+      description: "自托管的 AI 助手",
+      imageKind: "og",
+      stars: 42,
+    });
+    expect(t.calls).not.toContain(REPO);
+    expect(t.ttlOf()).toEqual(["24 hours"]);
+  });
+
+  test("API 有数据但 og 图 429：用 API 给的主人头像（avatar），只缓存 5 分钟", async () => {
+    const t = await setup({
+      [API]: apiOk(),
+      [OG_FIXED]: tooMany,
+      [AVATAR]: png,
+    });
+    const { preview } = await t.service.previewFor(REPO);
+    expect(preview?.image).toMatch(/^\/api\/link-preview\/asset\//);
+    expect(preview?.imageKind).toBe("avatar");
+    expect(preview?.title).toBe("ChisaAlter/ChisaBot: 自托管的 AI 助手");
+    expect(t.calls.filter((u) => u === OG_FIXED)).toHaveLength(1);
+    expect(t.ttlOf()).toEqual(["5 minutes"]);
+  });
+
+  test("404 / 私有仓库：仍回大卡数据（标题 owner/repo、主人头像），不是兜底卡，缓存 30 分钟", async () => {
+    const missing = "https://github.com/someone/secret-repo";
+    const t = await setup({
+      "https://api.github.com/repos/someone/secret-repo": {
+        status: 404,
+        contentType: "application/json",
+        body: '{"message":"Not Found"}',
+      },
+      "https://avatars.githubusercontent.com/someone?s=400": png,
+    });
+    const { preview } = await t.service.previewFor(missing);
+    expect(preview?.degraded).toBeUndefined();
+    expect(preview?.title).toBe("someone/secret-repo");
+    expect(preview?.siteName).toBe("GitHub");
+    expect(preview?.imageKind).toBe("avatar");
+    expect(preview?.image).not.toBeNull();
+    // 私有仓库不去要 og 图，也不抓网页。
+    expect(t.calls.some((u) => u.includes("opengraph"))).toBe(false);
+    expect(t.calls).not.toContain(missing);
+    expect(t.ttlOf()).toEqual(["30 minutes"]);
+
+    // 头像也拿不到：照样是大卡数据（前端画横幅），imageKind none。
+    const t2 = await setup({
+      "https://api.github.com/repos/someone/secret-repo": {
+        status: 403,
+        body: "{}",
+      },
+    });
+    const p2 = (await t2.service.previewFor(missing)).preview;
+    expect(p2?.title).toBe("someone/secret-repo");
+    expect(p2?.imageKind).toBe("none");
+    expect(p2?.degraded).toBeUndefined();
+  });
+
+  test("API 额度用完（403 + x-ratelimit-remaining: 0）：照旧抓网页", async () => {
+    const t = await setup({
+      [API]: {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "0" },
+        body: "{}",
+      },
+      [REPO]: repoPage,
+      [OG]: png,
+    });
+    const { preview } = await t.service.previewFor(REPO);
+    expect(t.calls).toContain(REPO);
+    expect(preview?.imageKind).toBe("og");
+  });
+
+  test("normalizeGithubTitle / githubRepoOf", () => {
+    expect(
+      normalizeGithubTitle(
+        "GitHub - ChisaAlter/ChisaBot: 自托管的 AI 助手",
+        REPO,
+      ),
+    ).toBe("ChisaAlter/ChisaBot: 自托管的 AI 助手");
+    expect(normalizeGithubTitle("ChisaBot", REPO, " 自托管的\n AI 助手 ")).toBe(
+      "ChisaAlter/ChisaBot: 自托管的 AI 助手",
+    );
+    expect(normalizeGithubTitle("GitHub - ChisaAlter/ChisaBot", REPO)).toBe(
+      "ChisaAlter/ChisaBot",
+    );
+    expect(
+      normalizeGithubTitle(
+        "Release v0.1.13 · ChisaAlter/ChisaBot",
+        `${REPO}/releases/tag/v0.1.13`,
+      ),
+    ).toBe("Release v0.1.13 · ChisaAlter/ChisaBot");
+    expect(normalizeGithubTitle("GitHub - x", "https://example.com/")).toBe(
+      "GitHub - x",
+    );
+    expect(githubRepoOf(`${REPO}/`)).toEqual({
+      owner: "ChisaAlter",
+      repo: "ChisaBot",
+    });
+    expect(githubRepoOf(`${REPO}.git`)).toEqual({
+      owner: "ChisaAlter",
+      repo: "ChisaBot",
+    });
+    expect(githubRepoOf(`${REPO}/issues`)).toBeNull();
+    expect(githubRepoOf("https://github.com/settings/profile")).toBeNull();
   });
 
   test("redactUrl 去掉查询串", () => {
