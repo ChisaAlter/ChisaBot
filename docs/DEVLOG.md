@@ -905,3 +905,15 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.113`；PC / Android 不变。不打 tag、不建 Release。
 
 **0.1.113 部署**：11:16（北京时间）先备份数据库 `pre-release/v0.1.113-20261030T031606Z.dump`（`pg_restore -l` 767 项），再 `deploy-serial.sh c9509f4 jun-grokbot`。依赖有变化（根 package.json scripts），走完整构建，11:26 上线 `local/chisabot:auto-202610300316-c9509f4`（617 秒），回滚镜像 `auto-202610291441-0c06ef7`，`isolate-sidecar-app` 全绿。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.113 / `c9509f4`；公网 `/login` 200。GitHub 大卡：本机带本地调用头请求 `/api/link-preview?url=https://github.com/oven-sh/bun`，返回标题 `oven-sh/bun: …`、描述、`stars` 96463、`imageKind: avatar`（460×460，资源 200 image/png），缓存 5 分钟（og 图被限流，走头像兜底）；`ChisaAlter/ChisaBot` 命中 0.1.112 时的旧缓存（到 15:28 过期），之后才会换成新格式。网关、nginx 没动。
+
+## 2026-10-30 发版 0.1.114
+
+- #442 `dev4/sidebar-m3-1`（head `e74f503`）→ `545a7e3`：网关 401 直接去 `/login?next=`（带 30 秒防死循环）、SW 5、手机抽屉导航后收起、`/channel/new` 总开新话题。
+
+**范围**：只改 `app/`（含 `app/public/sw.js`）和文档；不需要改网关 nginx（它本来就对导航回 302 `/login?next=`、对 `/api` 回 JSON 401 带 `openbotAuthRequired`，`/sign` 302 到 `/login`）、web-auth、`pc/`、`android/`。
+
+**流程**：核对 head 未变；从 origin/main（`27e7c0f`）开临时 worktree `--no-ff` 合并。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 结果见部署记录。
+
+**冲突**：只有 `CHANGELOG.md` 和 `docs/DEVLOG.md`，两边都保留；PR 顶部的 `## Unreleased` 发版时改成 0.1.114 段。
+
+**版本**：根、`app`、`server` 升到 `0.1.114`；PC / Android 不变。不打 tag、不建 Release。
