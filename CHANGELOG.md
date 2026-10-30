@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 登录循环保护小补丁（#442 后续，dev4/login-loop-followup）：`/api/me` 回 200 时清掉 `chisabot:login-redirect-at`，登录成功后 30 秒循环窗口重新算（刚登录完会话又真的过期时直接去 /login，不再误报「登录状态异常」）；「登录状态异常」卡片打开时 `<html data-auth-loop-open>`，藏起启动骨架的「正在加载 ChisaBot…」，不和卡片叠字；`perf/README.md` 的构建命令改成 `bun run --cwd app build`（本地默认安装没有根目录的 `node_modules/vite`）。
+
 ## 0.1.115 — 2026-10-30
 
 这一版合并 #449、#448：改窗口大小时暂停 WebGL 天空；切会话时左栏高亮先到、对话延后渲染。只有网页更新，网关、登录服务（web-auth）、PC 和 Android 不变。

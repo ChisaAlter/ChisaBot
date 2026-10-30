@@ -79,3 +79,41 @@ test("点「退出重新登录」调用退出流程，按钮变成进行中", as
   expect(calls).toBe(1);
   expect(button.textContent).toBe("正在退出…");
 });
+
+test("卡片打开时 <html> 挂 data-auth-loop-open（藏起「正在加载」），关掉后拿掉", async () => {
+  const win = {
+    location: {
+      pathname: "/channel/abc",
+      search: "",
+      hash: "",
+      replace: () => {},
+    },
+    sessionStorage: window.sessionStorage,
+  } as unknown as Window;
+  window.sessionStorage.setItem(LOGIN_REDIRECT_KEY, String(Date.now() - 2_000));
+  const view = render(<AuthLoopNotice />);
+  expect(document.documentElement.hasAttribute("data-auth-loop-open")).toBe(
+    false,
+  );
+  await act(async () => {
+    goToLogin(win);
+  });
+  expect(document.documentElement.hasAttribute("data-auth-loop-open")).toBe(
+    true,
+  );
+  view.unmount();
+  expect(document.documentElement.hasAttribute("data-auth-loop-open")).toBe(
+    false,
+  );
+});
+
+test("styles.css：卡片打开时两处「正在加载 ChisaBot…」都藏起来", () => {
+  const css = require("node:fs").readFileSync(
+    require("node:path").join(import.meta.dir, "../src/styles.css"),
+    "utf8",
+  ) as string;
+  const rule = /html\[data-auth-loop-open\][^{]*\{[^}]*\}/.exec(css)?.[0] ?? "";
+  expect(rule).toContain(".sky-skel-hint.is-loading");
+  expect(rule).toContain("#chisabot-startup-loading");
+  expect(rule).toContain("display: none");
+});

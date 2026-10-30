@@ -1,5 +1,9 @@
 import { queryOptions } from "@tanstack/react-query";
-import { goToLogin, isGatewayLoginRequired } from "@/lib/auth/login-redirect";
+import {
+  clearLoginRedirectMark,
+  goToLogin,
+  isGatewayLoginRequired,
+} from "@/lib/auth/login-redirect";
 import { client, tryClient } from "@/lib/client";
 
 /**
@@ -102,6 +106,8 @@ async function currentUser({ signal }: { signal: AbortSignal }): Promise<Authent
         }
         if (!response.ok) throw new Error(`无法加载当前用户 (${response.status})`);
         const body = (await response.json()) as { user: AuthenticatedUser };
+        // 登录确认有效：重置 /login 循环保护的 30 秒窗口（见 login-redirect.ts）。
+        if (typeof window !== "undefined") clearLoginRedirectMark();
         return body.user;
       })(),
       aborted,

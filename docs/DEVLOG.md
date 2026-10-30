@@ -1,5 +1,20 @@
 # DEVLOG
 
+## 登录循环保护小补丁（dev4/login-loop-followup，#442 后续）
+
+**动机**：#442 审查时留下的三处小问题。
+- 循环保护的时间戳只在跳 /login 时写、从不清：登录成功后 30 秒内会话真的过期（或被踢），会被当成死循环，停在「登录状态异常」而不是直接去 /login。
+- 「登录状态异常」卡片盖在启动骨架上，骨架中间的「正在加载 ChisaBot…」还在，两段字叠在同一块。
+- `perf/README.md` 的构建命令 `../node_modules/vite` 只在 CI 的 hoisted 安装下存在，本地默认安装在 `app/node_modules/vite`（开发3 反馈）。
+
+**改法**：
+- `login-redirect.ts` 新增 `clearLoginRedirectMark()`；`auth/queries.ts` 的 currentUser 在 `/api/me` 200 时调用。
+- `AuthLoopNotice` 打开时给 `<html>` 挂 `data-auth-loop-open`（卸载 / 关闭时拿掉）；`styles.css` 在这个属性下藏起 `.sky-skel-hint.is-loading` 和 index.html 的 `#chisabot-startup-loading`。没加 backdrop-filter。
+- README 改成 `bun run --cwd app build`（app 的 build 脚本两处路径都会找）。CI 的 perf.yml / chisabot.yml 用 hoisted 安装，`../node_modules/vite` 在那里是对的，没改。
+- 测试：新 `login-redirect-clear.test.ts`（200 清时间戳、之后 401 直接去 /login；500 保留）；`auth-loop-notice.test.tsx` 加属性挂上 / 拿掉和 CSS 规则两条。去掉实现后新增的行为测试失败。
+
+**验证**：typecheck、app build、test:app 通过；Biome 改动文件无新增（`auth/queries.ts` 在 main 上就有 1 处格式问题，未动）。headless Chrome 截图（`/workspace/dev4-m31b-xfer/shots/`）：卡片打开时「正在加载」可见元素 0 个，拿掉属性后 1 个（在卡片后面）。
+
 ## 打开设置提速（dev2/jank-settings-open，FIX-PLAN P1-6）
 
 **动机**：点账号卡 →「设置」在 4x 降速下要 0.3s 以上，而且第二次打开反而比第一次慢（main：冷 284ms，热 337ms，两次点击首帧之和）。原因：账号菜单是模态的，开关时为全屏遮罩量整页布局；点菜单项要等退场动画和路由代码块加载完才切页；进设置后藏着的聊天和右栏整棵重渲；section-rail 在打开那一帧同步 scrollIntoViewWithin 强制排版。
