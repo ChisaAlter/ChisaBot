@@ -628,7 +628,7 @@ export function ReplyQuote({
 }
 
 /** 卡片级「追问」按钮：将卡片标题和摘要塞入输入框引用栏。 */
-function CardFollowupButton({
+function CardFollowupButtonImpl({
   title,
   snippet,
   source,
@@ -1415,3 +1415,7 @@ export function StatusCardGroup({
     </div>
   );
 }
+
+/** 流式时父组件每个 token 都会重渲；props 没变就跳过（jank FIX-PLAN §5 / P2-1）。 */
+CardFollowupButtonImpl.displayName = "CardFollowupButton";
+const CardFollowupButton = memo(CardFollowupButtonImpl);

@@ -1,7 +1,7 @@
 import { Popover } from "@base-ui/react/popover";
 import { IconMessagePlus } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ModelCatalogEntry } from "../../../../shared/model-selection";
 import { contextLevel, formatTokens, type ThreadContextReading, useThreadContext } from "@/lib/copilot/thread-context";
@@ -61,7 +61,7 @@ function Ring({ ratio, level, unknown = false }: { ratio: number; level: "ok" | 
  * 数字只有两个来源：服务器记下的实测用量，或服务器按消息文字做的估算（标「约」）。窗口大小只来自模型
  * 目录；目录里没有这个模型的窗口时不画圆环、不写分母，绝不拿一个猜的数字充数。
  */
-export function ContextMeter({
+function ContextMeterImpl({
   agentId,
   threadId,
   running,
@@ -196,3 +196,7 @@ export function ContextMeter({
     </Popover.Root>
   );
 }
+
+/** 流式时父组件每个 token 都会重渲；props 没变就跳过（jank FIX-PLAN §5 / P2-1）。 */
+ContextMeterImpl.displayName = "ContextMeter";
+export const ContextMeter = memo(ContextMeterImpl);

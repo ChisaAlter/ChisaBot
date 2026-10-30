@@ -23,6 +23,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -342,7 +343,7 @@ const UNACCEPTED_DROP_REASON = {
     "没有附上：还没有对话。先发出这条消息，再往打开的对话里附文件。",
 } as const;
 
-export function Composer({
+function ComposerImpl({
   className,
   modelControl,
   leadingControl,
@@ -2093,3 +2094,7 @@ export function StopFailedButton({ className, onRetry }: { className?: string; o
     </Button>
   );
 }
+
+/** 流式时父组件每个 token 都会重渲；props 没变就跳过（jank FIX-PLAN §5 / P2-1）。 */
+ComposerImpl.displayName = "Composer";
+export const Composer = memo(ComposerImpl);
