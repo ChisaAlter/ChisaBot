@@ -67,8 +67,9 @@ describe("链接卡", () => {
     expect(card.textContent).toContain("github.com");
     // 底下一行是「站点 · 补充信息」：正文链接的标签就是补充信息。
     expect(card.querySelector(".lc-site")?.textContent).toBe("github.com · 下载 0.1.7");
-    // 没有 og 图：同宽的紧凑横卡（左边站点图标），不是大图卡。
-    expect(card.getAttribute("data-layout")).toBe("compact");
+    // 没有 og 图：仍是竖版大卡，图区画横幅（2026-10-30，§48.5）。
+    expect(card.getAttribute("data-layout")).toBe("image");
+    expect(card.querySelector("[data-testid=link-card-banner]")).not.toBeNull();
   });
 
   test("取不到预览（422）也出兜底卡：标题是域名、第二行是短地址，照样能点", async () => {
