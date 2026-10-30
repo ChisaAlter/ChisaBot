@@ -25,6 +25,7 @@ import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-histo
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
 import { RailSidebar, RailSidebarEdge } from "@/components/layout/rail-sidebar";
+import { RosterToggle } from "@/components/layout/roster-toggle";
 import { SidebarSearchField } from "@/components/layout/sidebar-search-field";
 import {
   DropdownMenu,
@@ -786,9 +787,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           aria-label={searching ? "搜索结果" : "机器人"}
           className="glass-card glass-side-card min-h-0 flex-1"
         >
-          {/* 电脑上搜索在顶栏右上角（Hark 风格）；手机上留在抽屉顶部，和新建共用一行（Ctrl K 聚焦搜索）。 */}
+          {/* 卡片顶部：搜索会话 + 新建，左栏开关在右上角（手机抽屉里没有开关）。Ctrl K 聚焦搜索。 */}
           <div className="side-search-row">
-            {sidebar?.isMobile ? <SidebarSearchField /> : null}
+            <SidebarSearchField />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -806,6 +807,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 {"新建机器人"}
               </TooltipContent>
             </Tooltip>
+            <RosterToggle scope="app" />
           </div>
           {searching ? (
             <>
@@ -991,7 +993,7 @@ function RailTip({
 }
 
 /**
- * The roster collapsed (Ctrl+B / the top-bar toggle): a 64px glass rail of Bot avatars, so Bots stay
+ * The roster collapsed (Ctrl+B / the toggle at the top of the card): a 64px glass rail of Bot avatars, so Bots stay
  * one click away. The selected Bot carries the same blue ring/edge as its full row, the main Bot its
  * star, and unread / waiting states a dot.
  */
@@ -1012,6 +1014,7 @@ function BotMiniRail({
 }) {
   return (
     <nav aria-label={"机器人"} className="glass-mini" id="chisabot-bot-list">
+      <RosterToggle className="glass-mini-toggle" scope="app" />
       <MiniSearchButton />
       <RailTip label={"新建机器人"}>
         <button

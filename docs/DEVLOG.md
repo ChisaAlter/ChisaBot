@@ -1,5 +1,20 @@
 # DEVLOG
 
+## 电脑端布局回退 #374 的顶栏改动（dev2/pc-layout-fix）
+
+**动机**：#374（5cd6e8c3，Hark 第 2 步顶栏）之后，Jun 的原话：「把右下原本有的搬到左上，又弄一个头像什么意思；搜索会话放在那是什么意思；右侧栏的收起和打开都在右侧栏上，左侧栏为什么单独拿出来了」。电脑上同时有两个头像（顶栏左上的品牌头像 / 右上的账号头像 + 左栏底部账号卡），搜索会话跑到顶栏右上，左栏开关单独放在顶栏。
+
+**改法**：
+- 身份只留左栏底部账号卡：`glass-shell.tsx` 不再给顶栏传 `account`；`glass-topbar.tsx` 去掉左上 BrandAvatar 主页圆钮，只留品牌文字；`account-menu.tsx` 删掉 `placement="topbar"` 分支。
+- 搜索回到左栏：`app-sidebar.tsx` 卡片顶行恢复 `<SidebarSearchField/>`（和 + 新建同一行，#374 之前的样子）；删掉 `TopBarSearch` 和搜索框的 `variant="topbar"`。Ctrl K 仍由外壳处理：左栏收起时先展开再聚焦搜索。手机不变（顶栏 ☰ + 搜索圆钮，抽屉里有搜索框）。
+- 左栏开关挪到左栏上，和右栏「面板」开关对称：新文件 `roster-toggle.tsx`，展开时在卡片右上角（聊天：搜索行最右；设置 / 管理：区域标题右边），收起成 80px 那列时在列顶。手机抽屉不画。顶栏只剩品牌文字和 PC 窗口按钮。
+- styles.css 删掉 `.hk-topbar*`、`.hk-search*`、`.hk-home`、`.hk-avatar-btn`、`.hk-brand` 残留，以及顶栏账号按钮和「收起时开关跟在品牌后面」的旧规则（顺带少一条挂在 `.glass-shell` 上的 `:has()`，`no-container-has` 清单同步去掉）；`.hk-circle` 留给手机顶栏。palette 段没动；`ui/sidebar.tsx` 的宽度动画没动。
+- 测试：`channel-pagination.test.tsx` 不再单独渲染顶栏搜索框；新增 `pc-layout-topbar.test.ts`（顶栏没有头像 / 搜索 / 开关，账号菜单没有顶栏分支，左栏有搜索和开关，没有残留样式）。
+
+**验证**：bun 1.3.14。typecheck、build 通过；test:app 1854 pass / 0 fail；server + DB 测试的失败项是 main 上同一批（本改动只动 app/）；Biome 无新增问题。真 Chrome（headless，本地单用户服务）截了聊天页 / 设置页 × 左栏展开 / 收起 × 浅色 / 深色 × 1024 / 1440 共 16 张，每张可见的用户头像 1 个、品牌头像 0 个，顶栏只有品牌名；左栏收起时按 Ctrl K 会展开并聚焦「搜索会话」。
+
+- 补充（小爱复核）：手机布局保持 #374 时原样——顶栏右上角恢复圆形头像（账号菜单入口，`AccountMenu placement="topbar"` / `.hk-avatar-btn`），只在手机布局（含 PC 小窗 < 768px）里画；电脑顶栏仍然没有头像，身份只在左栏底部账号卡。手机顶栏列宽恢复为 `auto minmax(0,1fr) auto`、右侧按钮间距 8px。`tests/pc-layout-topbar.test.ts` 断言头像只在手机分支里渲染；360px 浅色/深色聊天页截图已补到 PR。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
