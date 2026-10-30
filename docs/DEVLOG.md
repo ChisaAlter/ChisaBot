@@ -15,6 +15,8 @@
 
 **和 P1-3（KeepAlive LRU）合并时**：每个 kept 会话各自一个 `VirtualTranscriptRows`；`useKeptSlot().registerScroll(virtualScrollSlot(handleRef))` 保存 / 恢复滚动；`onEvict(() => transcriptSizeCache.release(slotKey))` 释放行高；`scrollKey` 用 `slotKey`。
 
+**性能**：switch 明显改善；scroll（快速 ±9600px 滚轮）退步，bufferSize 200/450/2400/6000 都不比 900 好，未修复，所以 flag 默认关闭。
+
 ## Unreleased — 切会话不再整篇强制样式重算：tail-first 只在上滑时量（jank P1-2，分支 dev4/perf-tail-first）
 
 **动机**：`/workspace/jank-analysis/REPORT.md` 根因 1：切会话时 `use-tail-first-mount.ts` 的 layout effect 每补一批都读 `el.scrollHeight`，4 次切换 16 次强制 UpdateLayoutTree 共 3.27s（每次 2.6k→9.2k 元素）；`useKeepBottomOnPrepend` 盯「当前挂着的第一行」，每批再读一次、写一次 scrollTop。message-scroller 每次滚动 / 内容变化逐行 `getBoundingClientRect`（内容高度 `Se`、第一条可见行 `Ye`），切换场景 550ms。
