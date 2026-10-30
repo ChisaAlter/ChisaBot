@@ -7906,7 +7906,8 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
 /* §98 留着的聊天藏起来时关掉滚动锚定：visibility: hidden 下浏览器会重新挑锚点并把滚动容器挪几十像素，回来时位置就对不上了。 */
 .kept-chat[data-visible="false"], .kept-chat[data-visible="false"] * { overflow-anchor: none; }
 /* 切会话即时反馈（FIX-PLAN F0）：新对话还在延后渲染时，旧的一页半透明留着（只动 opacity，合成层，不触发布局），且不接收点击 / 输入，免得发到旧会话。 */
-.kept-chat[data-switching="true"] { opacity: 0.6; pointer-events: none; transition: opacity 120ms var(--ease-out, ease-out); }
+.kept-chat[data-switching="true"] { opacity: 0.8; pointer-events: none; transition: opacity 120ms var(--ease-out, ease-out) 100ms; }
+@media (prefers-reduced-motion: reduce) { .kept-chat[data-switching="true"] { transition: none; } }
 
 .glass-mini-new:disabled { opacity: 0.45; cursor: default; }
 

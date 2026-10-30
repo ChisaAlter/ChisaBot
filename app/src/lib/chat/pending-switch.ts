@@ -70,13 +70,53 @@ export function isPlainClick(event: {
 }
 
 /**
- * 点下去先只提交左栏高亮，等这一帧画出来再导航（双 rAF ≈ 下一帧开头之后）。
+ * 点下去先只提交左栏高亮，等这一帧画出来再导航（rAF 后再排一个宏任务 ≈ 下一帧开头之后）。
  * 路由一变，订阅路由的组件（右栏、顶栏等）都要同步重画，跟高亮挤在一帧里就又慢了。
+ *
+ * 只留最新的一次：新请求（或 `cancelAfterNextPaint`）会撤掉还没跑的那次，
+ * 免得「点会话、马上点设置」时排在后面的旧导航又把页面拉回去。
+ * 任何别的导航（设置链接等）走路由时也撤掉，见 `cancelAfterNextPaint` 的调用处。
  */
+let queued: { raf?: number; timer?: ReturnType<typeof setTimeout> } | null =
+  null;
+
+export function cancelAfterNextPaint() {
+  if (!queued) return;
+  if (queued.raf !== undefined && typeof cancelAnimationFrame === "function")
+    cancelAnimationFrame(queued.raf);
+  if (queued.timer !== undefined) clearTimeout(queued.timer);
+  queued = null;
+}
+
 export function afterNextPaint(run: () => void) {
+  cancelAfterNextPaint();
   if (typeof requestAnimationFrame !== "function") {
     run();
     return;
   }
-  requestAnimationFrame(() => setTimeout(run, 0));
+  const job: { raf?: number; timer?: ReturnType<typeof setTimeout> } = {};
+  queued = job;
+  job.raf = requestAnimationFrame(() => {
+    job.raf = undefined;
+    job.timer = setTimeout(() => {
+      if (queued === job) queued = null;
+      run();
+    }, 0);
+  });
+}
+
+/**
+ * 发送前核对：输入框所属的会话不是当前地址栏的会话（正在切走），或左栏正在切到别的机器人，就不发，
+ * 草稿原样留着（FIX-PLAN F0 的风险项：切换中焦点还在旧输入框里按 Enter）。
+ */
+export function sendTargetsStaleChannel(
+  channelId: string | undefined,
+  pathname: string = typeof location === "undefined" ? "" : location.pathname,
+): boolean {
+  if (!channelId) return false;
+  if (pendingBot !== null) return true;
+  const match = /^\/channel\/([^/?#]+)/.exec(pathname);
+  if (!match) return false;
+  const routeChannel = decodeURIComponent(match[1] ?? "");
+  return routeChannel !== "new" && routeChannel !== channelId;
 }

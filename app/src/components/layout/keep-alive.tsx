@@ -136,7 +136,7 @@ export function KeepAliveStage<T>({
           data-testid="kept-page"
           data-switching={visible && switching ? "true" : undefined}
           data-visible={visible ? "true" : "false"}
-          inert={!visible}
+          inert={!visible || switching}
           ref={box}
           style={keptStyle}
         >
