@@ -68,6 +68,21 @@ function useOptionalSidebar() {
 }
 
 /**
+ * 手机抽屉里的导航项点完要收起抽屉（M3-1 / M3-11）：同一个 scope 里换页时 CloseDrawerOnScope 不会关，
+ * 抽屉就盖在新页面上。桌面侧栏或抽屉没开时什么也不做；不在 SidebarProvider 里时也安全。
+ */
+function useCloseMobileDrawer() {
+  const sidebar = useOptionalSidebar();
+  return React.useCallback(() => {
+    if (!(sidebar?.isMobile && sidebar.openMobile)) return;
+    // 推迟一拍再关：路由的 history.push 在微任务里才落地。同一事件里就关的话，抽屉的
+    // useBackDismiss 清理会看到标记记录还在最上面并 history.back()，把刚点的导航退掉。
+    const { setOpenMobile } = sidebar;
+    window.setTimeout(() => setOpenMobile(false), 0);
+  }, [sidebar]);
+}
+
+/**
  * Sidebar state, uncontrolled by default.
  *
  * This vendored file used to write a `sidebar_state` cookie on every toggle, so a server-rendered
@@ -782,6 +797,7 @@ export {
   SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
+  useCloseMobileDrawer,
   useOptionalSidebar,
   useSidebar,
 };

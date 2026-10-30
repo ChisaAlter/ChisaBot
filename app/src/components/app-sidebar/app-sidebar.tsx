@@ -25,6 +25,7 @@ import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-histo
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
 import { RailSidebar, RailSidebarEdge } from "@/components/layout/rail-sidebar";
+import { RosterToggle } from "@/components/layout/roster-toggle";
 import { SidebarSearchField } from "@/components/layout/sidebar-search-field";
 import {
   DropdownMenu,
@@ -40,6 +41,7 @@ import {
   SidebarContent,
   SidebarGroup,
   SidebarMenu,
+  useCloseMobileDrawer,
   useOptionalSidebar,
 } from "@/components/ui/sidebar";
 import { openTriggerByLabel, snapAnchor } from "@/components/ui/snap-anchor";
@@ -266,10 +268,7 @@ function SearchHitRow({
   const meta = [botName, when].filter(Boolean).join(" · ");
   const title = hit.summary?.trim() || hit.name;
   const message = hit.messageId?.trim() || undefined;
-  const sidebar = useOptionalSidebar();
-  const closeDrawer = () => {
-    if (sidebar?.isMobile && sidebar.openMobile) sidebar.setOpenMobile(false);
-  };
+  const closeDrawer = useCloseMobileDrawer();
   return (
     <Link
       className="flex flex-row py-2 px-2 gap-2 items-center w-full hover:bg-foreground/5 rounded-lg"
@@ -355,10 +354,7 @@ function BotRow({
   // DESIGN v4.1：当前对话的机器人控件（设置窗格 / 计算机 / 新话题）由聊天页登记，在这一行里操作。
   const chat = useBotChat(bot.id);
   // 手机抽屉里点机器人：进它的对话并收起抽屉（以前抽屉留着盖在对话上，要再点一下遮罩）。
-  const sidebar = useOptionalSidebar();
-  const closeDrawer = () => {
-    if (sidebar?.isMobile && sidebar.openMobile) sidebar.setOpenMobile(false);
-  };
+  const closeDrawer = useCloseMobileDrawer();
   const content = (
     <>
       <span className="glass-bot-ava">
@@ -535,9 +531,13 @@ function BotMenuContent({
       else await navigate({ to: "/channel/new", search: { agent: bot.id } });
     }
     showPanels();
+    closeDrawer();
   };
   // 窄窗口（左栏是抽屉、几乎占满窗口）右边放不下：改成贴着机器人行下方弹出、右边与卡片齐平，菜单留在窗口里（DESIGN.md §36.3）。
   const drawer = Boolean(useOptionalSidebar()?.isMobile);
+  // M3-11：资料 · 历史对话 · 新话题 · 面板会换页或在聊天页上开窗格，做完收起手机抽屉，否则抽屉盖在上面。
+  // 电脑操作… / 设为主 / 更换主 / 恢复运行 / 删除 的对话框挂在机器人行里（抽屉里面），收起抽屉会把它们一起卸掉，所以不关。
+  const closeDrawer = useCloseMobileDrawer();
   return (
     <DropdownMenuContent
       align={drawer ? "end" : "start"}
@@ -548,12 +548,12 @@ function BotMenuContent({
     >
       <DropdownMenuItem
         className="glass-mi"
-        render={<Link params={{ agentId: bot.id }} to="/bots/$agentId" />}
+        render={<Link onClick={closeDrawer} params={{ agentId: bot.id }} to="/bots/$agentId" />}
       >
         <IconUserCircle className={icon} />
         <span className="min-w-0 flex-1">{"机器人资料"}</span>
       </DropdownMenuItem>
-      <BotChatMenuItems agentId={bot.id} chat={chat} />
+      <BotChatMenuItems agentId={bot.id} chat={chat} onDone={closeDrawer} />
       <DropdownMenuItem className="glass-mi" onClick={() => void openPanels()}>
         <IconLayoutDashboard className={icon} />
         <span className="min-w-0 flex-1">
@@ -786,9 +786,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           aria-label={searching ? "搜索结果" : "机器人"}
           className="glass-card glass-side-card min-h-0 flex-1"
         >
-          {/* 电脑上搜索在顶栏右上角（Hark 风格）；手机上留在抽屉顶部，和新建共用一行（Ctrl K 聚焦搜索）。 */}
+          {/* 卡片顶部：搜索会话 + 新建，左栏开关在右上角（手机抽屉里没有开关）。Ctrl K 聚焦搜索。 */}
           <div className="side-search-row">
-            {sidebar?.isMobile ? <SidebarSearchField /> : null}
+            <SidebarSearchField />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -806,6 +806,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 {"新建机器人"}
               </TooltipContent>
             </Tooltip>
+            <RosterToggle scope="app" />
           </div>
           {searching ? (
             <>
@@ -991,7 +992,7 @@ function RailTip({
 }
 
 /**
- * The roster collapsed (Ctrl+B / the top-bar toggle): a 64px glass rail of Bot avatars, so Bots stay
+ * The roster collapsed (Ctrl+B / the toggle at the top of the card): a 64px glass rail of Bot avatars, so Bots stay
  * one click away. The selected Bot carries the same blue ring/edge as its full row, the main Bot its
  * star, and unread / waiting states a dot.
  */
@@ -1012,6 +1013,7 @@ function BotMiniRail({
 }) {
   return (
     <nav aria-label={"机器人"} className="glass-mini" id="chisabot-bot-list">
+      <RosterToggle className="glass-mini-toggle" scope="app" />
       <MiniSearchButton />
       <RailTip label={"新建机器人"}>
         <button

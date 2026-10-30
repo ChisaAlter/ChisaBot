@@ -1,11 +1,6 @@
-import {
-  IconLayoutSidebarLeftCollapse,
-  IconLayoutSidebarLeftExpand,
-  IconMenu2,
-  IconSearch,
-} from "@tabler/icons-react";
+import { IconMenu2, IconSearch } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import {
   cloneElement,
   type FocusEvent,
@@ -19,8 +14,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { BrandAvatar, BrandMark } from "@/components/layout/brand-mark";
-import { SidebarSearchField } from "@/components/layout/sidebar-search-field";
+import { BrandMark } from "@/components/layout/brand-mark";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
@@ -63,18 +57,18 @@ export function GlassAvatar({ size = 44, ring = true }: { size?: number; ring?: 
 export type ShellScope = "app" | "settings" | "admin";
 
 /**
- * 顶栏（Hark 风格）：左上角圆形主页按钮 + 左栏开关；右上角搜索胶囊 + 圆形头像（账号菜单）。
+ * 顶栏：电脑上只有左上角的品牌文字（ChisaBot）和 PC 无边框窗口的 — □ ✕。
  *
- * 中间不放分段导航，只有「聊天」一个视图。PC 无边框窗口的 — □ ✕ 仍在最右边，新按钮都不参与拖动。
- * 搜索胶囊是 .glass（顶栏唯一的模糊层，读 --glass-filter）；圆钮只用半透明底色（.glass.is-flat），不叠模糊。
- * 手机上搜索框留在左栏抽屉顶部，顶栏只放一个搜索按钮：点它打开抽屉并聚焦搜索。
+ * 身份只有左栏最底下的账号卡一个位置；搜索会话在左栏卡片顶部；左栏开关在左栏卡片右上角（收起时在 80px 列顶），
+ * 和右栏「面板」开关在右栏上对称（#374 回退，DESIGN.md §9.1）。
+ * 手机上不变：左 ☰ 打开抽屉 ｜ 右 搜索按钮（打开抽屉并聚焦抽屉顶部的搜索框）+ 圆形头像（账号菜单）。
  */
 export function GlassTopBar({
   scope = "app",
   account,
 }: {
   scope?: ShellScope;
-  /** 右上角的圆形头像（账号菜单）。由外壳传进来，顶栏不直接依赖账号菜单（它反过来用这里的 GlassAvatar）。 */
+  /** 手机顶栏右上角的圆形头像（账号菜单），由外壳传进来；电脑上不画。 */
   account?: ReactNode;
 }) {
   const sidebar = useOptionalSidebar();
@@ -84,7 +78,7 @@ export function GlassTopBar({
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上
     <header
-      className="glass-topbar hk-topbar"
+      className="glass-topbar"
       data-scope={scope}
       // 左栏收起 / PC 标题按钮个数直接写在顶栏上，CSS 不用挂在整个外壳上的 :has()（流式输出时会触发整页样式重算）。
       data-sidebar={sidebar && !mobile ? sidebar.state : undefined}
@@ -99,7 +93,7 @@ export function GlassTopBar({
           : undefined
       }
     >
-      <div className="glass-topbar-start hk-topbar-start">
+      <div className="glass-topbar-start">
         {mobile ? (
           <button
             aria-label={`打开${drawerLabel}`}
@@ -110,14 +104,7 @@ export function GlassTopBar({
             <IconMenu2 className="hk-circle-ico" />
           </button>
         ) : (
-          <ToggleTip label={"主页"}>
-            <Link aria-label={"主页"} className="hk-home glass is-flat" to="/">
-              <BrandAvatar size={32} />
-            </Link>
-          </ToggleTip>
-        )}
-        {mobile ? null : (
-          <span className="glass-brand hk-brand">
+          <span className="glass-brand">
             <BrandMark avatar={false} />
           </span>
         )}
@@ -126,70 +113,44 @@ export function GlassTopBar({
             {"原型预览"}
           </span>
         ) : null}
-        {sidebar && !mobile ? <RosterToggle scope={scope} /> : null}
       </div>
-      {/* 中间留空：只有「聊天」一个视图，不放分段切换。 */}
       <span aria-hidden className="glass-topbar-mid" />
-      <div className="glass-topbar-end hk-topbar-end">
-        <TopBarSearch mobile={mobile} scope={scope} />
-        {account}
+      <div className="glass-topbar-end">
+        {mobile ? (
+          <>
+            <MobileSearchButton scope={scope} />
+            {account}
+          </>
+        ) : null}
       </div>
       {desktop ? <WindowControls bridge={desktop.bridge} compact={desktop.compact} maximized={desktop.maximized} /> : null}
     </header>
   );
 }
 
-/**
- * 右上角的搜索：
- * - 电脑上，聊天里就是搜索框本身（结果画在左栏卡片里；左栏收起时一聚焦就展开）。
- * - 设置 / 管理里结果没有地方画：同样的胶囊是个按钮，点了回聊天再聚焦搜索（和 Ctrl K 一样）。
- * - 手机上是一个圆形按钮：打开左栏抽屉，聚焦抽屉顶部的搜索框。
- */
-function TopBarSearch({ scope, mobile }: { scope: ShellScope; mobile: boolean }) {
+/** 手机顶栏右边的搜索按钮：打开左栏抽屉，聚焦抽屉顶部的搜索框（设置 / 管理里先回聊天）。 */
+function MobileSearchButton({ scope }: { scope: ShellScope }) {
   const sidebar = useOptionalSidebar();
   const navigate = useNavigate();
-  if (mobile) {
-    return (
-      <button
-        aria-label={"搜索会话"}
-        className="hk-circle glass is-flat"
-        onClick={() => {
-          if (scope !== "app") {
-            requestSidebarSearchFocus();
-            void navigate({ to: "/" });
-            return;
-          }
-          sidebar?.setOpenMobile(true);
-          requestSidebarSearchFocus();
-        }}
-        type="button"
-      >
-        <IconSearch className="hk-circle-ico" />
-      </button>
-    );
-  }
-  if (scope !== "app") {
-    return (
-      <button
-        className="hk-search glass"
-        onClick={() => {
+  return (
+    <button
+      aria-label={"搜索会话"}
+      className="hk-circle glass is-flat"
+      onClick={() => {
+        if (scope !== "app") {
           requestSidebarSearchFocus();
           void navigate({ to: "/" });
-        }}
-        type="button"
-      >
-        <IconSearch aria-hidden className="hk-search-ico" />
-        <span className="hk-search-placeholder">{"搜索会话"}</span>
-        <kbd aria-hidden className="hk-search-kbd">
-          {SEARCH_KEYS}
-        </kbd>
-      </button>
-    );
-  }
-  return <SidebarSearchField variant="topbar" />;
+          return;
+        }
+        sidebar?.setOpenMobile(true);
+        requestSidebarSearchFocus();
+      }}
+      type="button"
+    >
+      <IconSearch className="hk-circle-ico" />
+    </button>
+  );
 }
-
-const SEARCH_KEYS = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent) ? "⌘K" : "Ctrl K";
 
 const COMPACT_KEYS = /Mac/.test(navigator.userAgent) ? "⌘⇧M" : "Ctrl+Shift+M";
 
@@ -266,7 +227,6 @@ export function WindowControls({
   );
 }
 
-const MOD_LABEL = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent) ? "⌘B" : "Ctrl+B";
 /** The roster element the toggle points its `aria-controls` at. */
 export const ROSTER_ID = "chisabot-bot-list";
 export const PANEL_RAIL_ID = "chisabot-panel-rail";
@@ -406,28 +366,4 @@ function LazyTipTrigger({ trigger, onArm }: { trigger: ReactElement; onArm: (ref
       if (matchesFocusVisible(event.currentTarget)) onArm(true);
     },
   });
-}
-
-/** Left roster: collapses to the slim avatar rail (Ctrl+B is the primitive's own shortcut). */
-function RosterToggle({ scope }: { scope: ShellScope }) {
-  const sidebar = useOptionalSidebar();
-  if (!sidebar) return null;
-  const open = sidebar.open;
-  const what = scope === "app" ? "机器人列表" : scope === "settings" ? "设置分区" : "管理导航";
-  const label = open ? `收起${what}` : `展开${what}`;
-  const Icon = open ? IconLayoutSidebarLeftCollapse : IconLayoutSidebarLeftExpand;
-  return (
-    <ToggleTip keys={MOD_LABEL} label={label}>
-      <button
-        aria-controls={ROSTER_ID}
-        aria-expanded={open}
-        aria-label={label}
-        className="glass-ghost-btn glass-roster-toggle"
-        onClick={sidebar.toggleSidebar}
-        type="button"
-      >
-        <Icon className="glass-ghost-btn-ico" key={open ? "open" : "closed"} />
-      </button>
-    </ToggleTip>
-  );
 }
