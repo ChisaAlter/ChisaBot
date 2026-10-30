@@ -304,6 +304,17 @@
 - **阴影**：`--shadow-1`（卡片、按钮）· `--shadow-2`（悬停卡片、输入框、菜单）· `--shadow-3`（弹窗）；玻璃表面加 `--inset-hl` 顶部高光。
 - **模糊**：`--blur-1 12px`（小控件）· `--blur-2 22px`（栏、卡片）· `--blur-3 36px`（浮层）。只写不带前缀的 `backdrop-filter`（见 chisabot-design 技能里的压缩器坑）。
 
+### 10.3.1 性能模式与减少透明度：全局不模糊
+
+性能模式（`<html data-perf="on">`，`lib/perf-mode.ts`）和系统「减少透明度」（`prefers-reduced-transparency: reduce`）下，**页面上没有任何元素带 `backdrop-filter`**，原来模糊的面板一律换成不透明的底色。规则写在 `app/src/perf-noblur.css`，在 `main.tsx` 里紧跟 `styles.css` 引入。
+
+- **一条全局规则**：`*, *::before, *::after { backdrop-filter: none; --lg-blur: none }`，Tailwind 的 `backdrop-blur-*`、第三方组件（streamdown 代码块 / 图表的操作条）、组件内嵌的 `<style>`（agent-orb）都被它关掉，不用一个个找。
+- **不用 `!important`**：选择器前缀是 `html:not(#chisabot-no-blur)`（性能模式再加 `[data-perf="on"]`），多出一个 id 的优先级，压过所有只用类和属性的规则。旧「三档玻璃」层的 `backdrop-filter: var(--lg-blur) !important` 不去比 `!important`，而是把 `--lg-blur` 设成 `none`。页面上不能出现 `id="chisabot-no-blur"`。
+- **不透明底色**：`--glass-bg-opaque`（浅 `rgb(246 247 250)`、深 `rgb(29 31 36)`）。左右栏、输入框、顶栏搜索、弹层 / 菜单 / 对话框 / 抽屉、代码块操作条、外观设置里的玻璃预览都用它（旧玻璃层改 `--lg-surface`）；色板上的勾用实心深色。不能出现「没模糊也没底」的透明块。
+- **例外**：全屏遮罩（对话框 / 抽屉后面那层）本来就是半透明压暗，只去掉模糊，不改成不透明；agent-orb 的点阵层、电脑画面上的小标签同理，保留自己的半透明底。
+- **不许绕过**：元素上的内联 `backdropFilter`、Tailwind 的 important 模糊类（`backdrop-blur-sm!`）、新的 `backdrop-filter: … !important` 都压得过全局规则，`app/tests/no-backdrop.test.ts` 不许出现；`styles.css` 里新增会模糊的规则，必须在 `perf-noblur.css` 的不透明名单里有着落，或者在测试的豁免名单里写明原因。
+- 普通模式不受影响：同屏模糊层数和改之前一样（桌面 5、手机 2）。
+
 ### 10.4 动效
 
 | 令牌 | 值 | 用途 |
@@ -316,6 +327,19 @@
 | `--ease-in` | `cubic-bezier(.4,0,1,1)` | 退出 |
 
 页面切换：中间区先出同形状骨架（约 300ms 内），再以 6px 上移 + 淡入出现内容（`page-in`）。顶栏导航胶囊在路由间滑动。减少动态效果时只保留淡入淡出。
+
+### 10.5 Hark 令牌与同名旧令牌（2026-10-29，Hark 改版）
+
+Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0,1,1），比旧层的 `:root` / `.dark` / `[data-theme="dark"]`（0,1,0）高一级，所以**同名时 Hark 的值总是赢，包括深色模式下**：`html:root` 里的值会压过旧 `.dark` 里的深色值。`--font`、`--glass-shadow`、`--text-secondary`、`--stroke-primary` 等都和旧层同名。
+
+规则：
+
+1. **新增任何和旧层同名的 Hark 令牌，必须同时在 `html.dark` 里给深色值。** 只写在 `html:root` 里，深色模式就会拿到浅色值。
+2. 由别的令牌算出来的值（例如 `--text-secondary: color-mix(in srgb, var(--text) …)`、`--fill-primary: var(--text)`）跟着基色走，只要基色（`--text` 等）在 `html.dark` 里有深色值，就不必重复写。
+3. 不靠 `!important` 解决同名冲突；要覆盖就靠 `html:root` / `html.dark` 的特异度。
+4. 新增 Hark 令牌前先在 `styles.css` 里搜一下同名的 `--名字:`，同名就按第 1 条处理，并在 PR 描述里列出来。
+
+`app/tests/hark-token-dark.test.ts` 检查这条：`html:root` 里和旧深色层同名、又不是由 `var(--…)` 算出来的令牌，`html.dark` 里必须有。
 
 ---
 
@@ -1030,6 +1054,15 @@
 - 系统提示词（`shared/bot-prompt.ts` `LINK_CARD_GUIDANCE`，并进 `WORK_STYLE_GUIDANCE`）：要用户点开或去操作的网页（下载页、注册 / 登录入口、文档首页、刚做好的页面）把链接单独放一行，或一行 `[简短标签](网址)`；一条回复最多 3 张、放在正文后面、不在卡片外再写一遍；来源 / 参考资料 / 顺带提到的网站写在句子里，不做成卡片。render_ui 规则（`shared/json-render/catalog.ts`）加一条：只是要用户点开一到三个网页时不用 render_ui。
 - 用户气泡里的长网址折行（`overflow-wrap: anywhere`），不再冲出气泡（实测时发现的旧问题，顺手修）。
 - 验证：单测 `app/tests/rich-previews-extract.test.ts`（出卡规则、拿掉正文、流式最后一行）、`app/tests/link-cards.test.tsx`（卡片内容 / 标签 / 兜底卡 / 骨架 / 正文拿掉）、`server/tests/link-preview.test.ts`（SSRF、兜底标题）；`tests/chat-scroll/regression.sh` 不许有滚动跳动。
+
+### 48.5 一律竖版大卡、GitHub 仓库卡（2026-10-30）
+Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两行、有追问和打开按钮），不要只剩「GitHub -」的小卡。本节替换 48.2 里「没有图时的紧凑横卡 / 64px 卡」的说法。
+- **不再有紧凑横卡**：`link-card.tsx` 一律 `data-layout="image"`。没有预览图（或图坏了）时图区原地换成横幅 `.lc-banner`（同一个 40:21 框，尺寸不跳）：站点主色渐变（认得的站用品牌色 `BRAND_GRADIENTS`，其它按域名算稳定色相）+ 60px 白底站点图标，没有图标就是首字；GitHub 下面再加一行 `owner/repo`；其它站不写域名（标题下面那行已有）。预览图是 GitHub 仓库主人头像（`imageKind: "avatar"`）时画成横幅里 72px 的圆头像，不拉伸成大图。
+- **标题固定两行高**（`.lc-title` 40px、两行截断），开头的「GitHub - 」去掉（`cleanLinkTitle`，旧缓存也生效）。追问 / ↗ 按钮和有图的卡一样。
+- **服务器**（`service.ts` `buildGithubRepo`）：`github.com/owner/repo` 先问 `api.github.com/repos/:o/:r`（同一个 SSRF 检查的 fetch，规则不变）拿描述、星标（`stars`，卡上补充信息「★ 1.2k」）和主人头像；预览图先试 `opengraph.githubassets.com/1/owner/repo`，拿不到（多是按出口 IP 的 429）用头像。私有 / 不存在（4xx）也回大卡数据（标题 `owner/repo` + 头像）。API 自己被限流（429，或 403 且剩余额度 0）/ 5xx / 网络错误时照旧抓网页，网页那条路的头像兜底同样标 `avatar`。
+- **标题**：`parse.ts` `normalizeGithubTitle`：仓库首页规范成「owner/repo: 描述」（没有描述就 `owner/repo`），其它 GitHub 页只去掉「GitHub - 」。
+- **缓存**：og 图或头像回 429 时只缓存 5 分钟（以前是 30 分钟的无图缓存，一次限流挂半小时）；拿到 og 图 24 小时；其它（只有头像、4xx）30 分钟。
+- 验证：`server/tests/link-preview-service.test.ts`（429 用头像、404 / 私有仍出大卡、标题规范化、5 分钟缓存）、`app/tests/link-card-unified.test.tsx`（无图时 `data-layout=image` 且有横幅、标题两行）。
 
 ## 49. IM 接入：QQ / 微信 / 飞书 / 企业微信 / 钉钉 / Telegram 接到机器人（2026-10-14）
 

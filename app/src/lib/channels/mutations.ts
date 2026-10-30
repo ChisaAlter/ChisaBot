@@ -21,8 +21,11 @@ export function createChannelMutationOptions(queryClient: QueryClient) {
       });
       return ((await response.json()) as { channel: AgentChannel }).channel;
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: channelKeys.all }),
+    // 不返回这个 promise：返回的话 mutateAsync 要等频道列表重新拉完才 resolve，新话题首条消息
+    // 平白多等一次往返（约 0.5 秒）。列表刷新照样在后台进行。
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: channelKeys.all });
+    },
   });
 }
 

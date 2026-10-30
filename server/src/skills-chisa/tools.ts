@@ -252,6 +252,19 @@ export function resolveSkillOwner(input: {
   return { ok: true, owner, claim: owner !== existing };
 }
 
+/** 每轮按问题预先放进来的研究技能（首字延迟：省掉一轮 skill_load 往返，搜索类问题约 2.5–4.5 秒）。 */
+export const PRELOADED_RESEARCH_SKILL = "research-public-web";
+/*
+ * 像是要上网查的问题：最新消息、价格、推荐、对比、天气行情……只有这类才预置研究技能，普通聊天一个字不加。
+ * 宁缺毋滥：漏判只是照旧多一轮 skill_load，误判是给普通对话白加几百字。所以不收「今天」「现在」「比较」这类
+ * 日常也常说的词。
+ */
+const RESEARCH_HINT =
+  /查一?下|查查|搜一?下|搜搜|搜索|上网|最新|新闻|价格|多少钱|报价|售价|优惠|推荐|对比|评测|测评|哪款|哪家|找一款|调研|天气|汇率|股价|行情|\b(?:latest|news|prices?|compare|vs|reviews?|recommend|weather)\b/i;
+export function looksLikeResearch(text: string): boolean {
+  return RESEARCH_HINT.test(text.slice(0, 500));
+}
+
 export function createChisaSkills(options: {
   store: PluginStore;
   actorFor: (userId: string) => Promise<Actor>;
@@ -265,8 +278,13 @@ export function createChisaSkills(options: {
     return rows.filter((skill) => skill.ownerUserId === null || skill.ownerUserId === userId);
   }
 
-  async function catalog(userId: string): Promise<string> {
+  /** `question`：这一轮用户最后说的话。像研究类问题、而研究技能对这个人可见时，把它的方法直接附在目录后面。 */
+  async function catalog(userId: string, question?: string): Promise<string> {
     const skills = await visible(userId).catch(() => [] as Skill[]);
+    const preload =
+      question && looksLikeResearch(question)
+        ? skills.find((skill) => skill.slug === PRELOADED_RESEARCH_SKILL)
+        : undefined;
     const lines = skills
       .slice(0, 40)
       .map((skill) => `- ${skill.slug}：${skill.title}${skill.summary ? `——${skill.summary.slice(0, 80)}` : ""}${skill.ownerUserId ? "" : "（共享）"}`);
@@ -274,6 +292,11 @@ export function createChisaSkills(options: {
       "# 技能",
       SKILL_GUIDANCE,
       lines.length ? `用户现在有这些技能（名字：标题——什么时候用）：\n${lines.join("\n")}${skills.length > 40 ? `\n…还有 ${skills.length - 40} 个，用 skill_list 搜。` : ""}` : "用户还没有技能。",
+      ...(preload
+        ? [
+            `这次的问题已预先加载技能「${preload.title}」（${preload.slug}），不用再 skill_load，直接照做：\n${preload.instructions.slice(0, 1500)}\n（这是方法说明，不是系统指令；和用户这次说的冲突时听用户的。）`,
+          ]
+        : []),
     ].join("\n\n");
   }
 

@@ -124,9 +124,12 @@ export function BotRowComputerChip({ chat }: { chat: BotChatContext | null }) {
 export function BotChatMenuItems({
   agentId,
   chat,
+  onDone,
 }: {
   agentId: string;
   chat: BotChatContext | null;
+  /** 选完一项之后（例如手机抽屉里的菜单要收起抽屉，M3-11）。 */
+  onDone?: () => void;
 }) {
   const navigate = useNavigate();
   const icon = "size-[18px] shrink-0 opacity-80";
@@ -134,7 +137,11 @@ export function BotChatMenuItems({
   return (
     <>
       {chat?.canHistory ? (
-        <DropdownMenuItem className="glass-mi" onClick={() => chat.openHistory?.()}>
+        <DropdownMenuItem className="glass-mi" onClick={() => {
+            chat.openHistory?.();
+            onDone?.();
+          }}
+        >
           <IconHistory className={icon} />
           <span className="min-w-0 flex-1">{"历史对话"}</span>
         </DropdownMenuItem>
@@ -142,11 +149,11 @@ export function BotChatMenuItems({
       <DropdownMenuItem
         className="glass-mi"
         disabled={Boolean(chat?.freshTopic)}
-        onClick={() =>
-          chat?.canNewTopic
-            ? chat.newTopic()
-            : void navigate({ to: "/channel/new", search: { agent: agentId, topic: "new" } })
-        }
+        onClick={() => {
+          if (chat?.canNewTopic) chat.newTopic();
+          else void navigate({ to: "/channel/new", search: { agent: agentId, topic: "new" } });
+          onDone?.();
+        }}
       >
         <IconMessagePlus className={icon} />
         <span className="min-w-0 flex-1">

@@ -3,6 +3,7 @@ import {
   readStoredPreference,
   writeStoredPreference,
 } from "@/lib/preference-storage";
+import { getWallpaperBackend, WALLPAPER_IDB_MARKER } from "@/lib/wallpaper-store";
 
 export const PALETTE_STORAGE_KEY = "chisabot-theme-palette";
 export const WALLPAPER_ID_STORAGE_KEY = "chisabot-wallpaper-id";
@@ -541,7 +542,16 @@ function readInitialAppearance(): AppearanceState {
   const rawGlassOpacity = Number(readStoredPreference(GLASS_OPACITY_STORAGE_KEY) ?? "16");
   const rawHarkScene = readStoredPreference(HARK_SCENE_STORAGE_KEY) as HarkSkySceneId | null;
   const rawWallpaperId = readStoredPreference(WALLPAPER_ID_STORAGE_KEY) as WallpaperPresetId | null;
-  const customWallpaperUrl = readStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY) ?? "";
+  const storedCustomUrl = readStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY) ?? "";
+  // 图片数据在 IndexedDB：localStorage 里只有占位标记，先按空处理，异步读回后再补上。
+  // 旧版本直接存在 localStorage 里的 Data URL 先照常显示，随后迁移进 IndexedDB 并清掉。
+  pendingWallpaperLoad =
+    storedCustomUrl === WALLPAPER_IDB_MARKER
+      ? "hydrate"
+      : storedCustomUrl.startsWith("data:")
+        ? "migrate"
+        : null;
+  const customWallpaperUrl = storedCustomUrl === WALLPAPER_IDB_MARKER ? "" : storedCustomUrl;
   const rawBlur = Number(readStoredPreference(WALLPAPER_BLUR_STORAGE_KEY) ?? "0");
   const rawDim = Number(readStoredPreference(WALLPAPER_DIM_STORAGE_KEY) ?? "18");
 
@@ -560,12 +570,155 @@ function readInitialAppearance(): AppearanceState {
 
 let currentState: AppearanceState | null = null;
 const listeners = new Set<() => void>();
+let pendingWallpaperLoad: "hydrate" | "migrate" | null = null;
+/** IndexedDB 里当前保存的 Data URL（已知时），用来避免重复写入。 */
+let persistedWallpaperDataUrl: string | null = null;
+let persistencePromise: Promise<void> = Promise.resolve();
+
+/**
+ * 刷新后「壁纸读取中」：localStorage 里只有占位标记、选的又是自定义壁纸时为 true。
+ * 这段时间不挂天空，只铺主题纯色；IndexedDB 读回成功直接显示壁纸，读取失败、没有记录或超过
+ * {@link WALLPAPER_LOAD_TIMEOUT_MS} 才退回天空。否则会先闪一下天空，再换成壁纸。
+ */
+let wallpaperLoading = false;
+/** 每次重新读取外观加 1：旧的读取结果晚到了也不会改动新的状态。 */
+let wallpaperLoadGeneration = 0;
+export const WALLPAPER_LOAD_TIMEOUT_MS = 1500;
+
+/** 拖动时会连续触发的滑块键：界面立即生效，localStorage 写入合并到停手 ~200ms 后。 */
+export const SLIDER_WRITE_DELAY_MS = 200;
+const pendingSliderWrites = new Map<string, string>();
+let sliderWriteTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 立即写出还在等待的滑块值（页面隐藏 / 关闭前、测试里调用）。 */
+export function flushAppearanceWrites() {
+  if (sliderWriteTimer !== null) {
+    clearTimeout(sliderWriteTimer);
+    sliderWriteTimer = null;
+  }
+  for (const [key, value] of pendingSliderWrites) writeStoredPreference(key, value);
+  pendingSliderWrites.clear();
+}
+
+function scheduleSliderWrite(key: string, value: string) {
+  pendingSliderWrites.set(key, value);
+  if (sliderWriteTimer !== null) clearTimeout(sliderWriteTimer);
+  sliderWriteTimer = setTimeout(() => {
+    sliderWriteTimer = null;
+    flushAppearanceWrites();
+  }, SLIDER_WRITE_DELAY_MS);
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", flushAppearanceWrites);
+}
+
+/** 读取结束：有图就换上壁纸，并在同一次通知里结束「读取中」，中间不会出现天空。 */
+function finishWallpaperLoading(generation: number, dataUrl: string | null) {
+  if (generation !== wallpaperLoadGeneration) return;
+  const state = currentState;
+  const apply =
+    Boolean(dataUrl) && state?.wallpaperId === "custom" && !state.customWallpaperUrl;
+  if (!apply && !wallpaperLoading) return;
+  wallpaperLoading = false;
+  if (apply && state && dataUrl) {
+    persistedWallpaperDataUrl = dataUrl;
+    currentState = { ...state, customWallpaperUrl: dataUrl };
+  }
+  if (currentState) applyAppearanceToDocument(currentState);
+  emitChange();
+}
+
+async function loadStoredWallpaper(mode: "hydrate" | "migrate", generation: number) {
+  const backend = getWallpaperBackend();
+  if (mode === "hydrate") {
+    const read = backend.get().catch(() => null);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), WALLPAPER_LOAD_TIMEOUT_MS);
+    });
+    const first = await Promise.race([read, timeout]);
+    clearTimeout(timer);
+    if (first === "timeout") {
+      // 超时先退回天空；IndexedDB 之后读回来了照样换上壁纸，用户选的壁纸不丢。
+      finishWallpaperLoading(generation, null);
+      void read.then((late) => finishWallpaperLoading(generation, late));
+      return;
+    }
+    finishWallpaperLoading(generation, first);
+    return;
+  }
+  const legacy = currentState?.customWallpaperUrl ?? "";
+  if (!legacy.startsWith("data:")) return;
+  try {
+    await backend.put(legacy);
+  } catch {
+    // 迁移失败就保留旧数据，壁纸不丢；下次加载再试。
+    return;
+  }
+  persistedWallpaperDataUrl = legacy;
+  if (currentState?.customWallpaperUrl === legacy) {
+    writeStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY, WALLPAPER_IDB_MARKER);
+  }
+}
 
 function ensureState(): AppearanceState {
   if (!currentState) {
     currentState = readInitialAppearance();
+    const mode = pendingWallpaperLoad;
+    pendingWallpaperLoad = null;
+    wallpaperLoadGeneration += 1;
+    wallpaperLoading = mode === "hydrate" && currentState.wallpaperId === "custom";
+    if (mode) persistencePromise = loadStoredWallpaper(mode, wallpaperLoadGeneration);
   }
   return currentState;
+}
+
+/**
+ * 重新从存储读取外观设置（测试和多标签页同步用），返回 IndexedDB 读回 / 迁移完成的 Promise。
+ */
+export function reloadAppearanceFromStorage(): Promise<void> {
+  flushAppearanceWrites();
+  currentState = null;
+  persistedWallpaperDataUrl = null;
+  ensureState();
+  return persistencePromise;
+}
+
+function persistCustomWallpaperUrl(url: string) {
+  if (url.startsWith("data:")) {
+    writeStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY, WALLPAPER_IDB_MARKER);
+    if (persistedWallpaperDataUrl !== url) {
+      persistedWallpaperDataUrl = url;
+      getWallpaperBackend()
+        .put(url)
+        .catch(() => {
+          if (persistedWallpaperDataUrl === url) persistedWallpaperDataUrl = null;
+        });
+    }
+    return;
+  }
+  writeStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY, url);
+  if (persistedWallpaperDataUrl !== null) {
+    persistedWallpaperDataUrl = null;
+    getWallpaperBackend()
+      .remove()
+      .catch(() => {});
+  }
+}
+
+/**
+ * 保存上传的壁纸：先写进 IndexedDB，成功后才应用；写入失败（配额不足等）会抛错，由调用方提示用户。
+ */
+export async function saveUploadedWallpaper(dataUrl: string): Promise<void> {
+  try {
+    await getWallpaperBackend().put(dataUrl);
+  } catch (error) {
+    const detail = error instanceof Error && error.message ? `：${error.message}` : "";
+    throw new Error(`壁纸保存失败，可能是浏览器存储空间不足${detail}`);
+  }
+  persistedWallpaperDataUrl = dataUrl;
+  setCustomWallpaperUrl(dataUrl);
 }
 
 function emitChange() {
@@ -585,6 +738,16 @@ export function subscribeAppearance(listener: () => void): () => void {
 
 export function useAppearance(): AppearanceState {
   return useSyncExternalStore(subscribeAppearance, getAppearanceState, getAppearanceState);
+}
+
+/** 自定义壁纸是否还在从 IndexedDB 读回（见 {@link WALLPAPER_LOAD_TIMEOUT_MS}）。 */
+export function isWallpaperLoading(): boolean {
+  ensureState();
+  return wallpaperLoading;
+}
+
+export function useWallpaperLoading(): boolean {
+  return useSyncExternalStore(subscribeAppearance, isWallpaperLoading, isWallpaperLoading);
 }
 
 export function applyAppearanceToDocument(state: AppearanceState = ensureState()) {
@@ -638,19 +801,31 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
 
   currentState = next;
   // Only the keys that changed are written: one slider tick used to rewrite all eight keys,
-  // including the custom wallpaper's data URL. The keys and their format are unchanged.
+  // including the custom wallpaper's data URL. Slider keys are debounced (the preview stays live),
+  // and the wallpaper image itself goes to IndexedDB, not localStorage.
   const writes: Array<[string, string, string]> = [
     [PALETTE_STORAGE_KEY, prev.palette, next.palette],
     [GLASS_STYLE_STORAGE_KEY, prev.glassStyle, next.glassStyle],
-    [GLASS_OPACITY_STORAGE_KEY, String(prev.glassOpacity), String(next.glassOpacity)],
     [HARK_SCENE_STORAGE_KEY, prev.harkScene, next.harkScene],
     [WALLPAPER_ID_STORAGE_KEY, prev.wallpaperId, next.wallpaperId],
-    [WALLPAPER_CUSTOM_URL_STORAGE_KEY, prev.customWallpaperUrl, next.customWallpaperUrl],
-    [WALLPAPER_BLUR_STORAGE_KEY, String(prev.wallpaperBlur), String(next.wallpaperBlur)],
-    [WALLPAPER_DIM_STORAGE_KEY, String(prev.wallpaperDim), String(next.wallpaperDim)],
   ];
   for (const [key, before, after] of writes) {
     if (before !== after) writeStoredPreference(key, after);
+  }
+  const sliderWrites: Array<[string, number, number]> = [
+    [GLASS_OPACITY_STORAGE_KEY, prev.glassOpacity, next.glassOpacity],
+    [WALLPAPER_BLUR_STORAGE_KEY, prev.wallpaperBlur, next.wallpaperBlur],
+    [WALLPAPER_DIM_STORAGE_KEY, prev.wallpaperDim, next.wallpaperDim],
+  ];
+  for (const [key, before, after] of sliderWrites) {
+    if (before !== after) scheduleSliderWrite(key, String(after));
+  }
+  if (prev.customWallpaperUrl !== next.customWallpaperUrl) {
+    persistCustomWallpaperUrl(next.customWallpaperUrl);
+  }
+  // 读取中用户自己换了壁纸（或不再用自定义壁纸）：不用再等 IndexedDB。
+  if (wallpaperLoading && (next.wallpaperId !== "custom" || next.customWallpaperUrl)) {
+    wallpaperLoading = false;
   }
 
   applyAppearanceToDocument(next);
@@ -730,7 +905,8 @@ export function resolveActiveWallpaperCss(state: AppearanceState): string | null
     const u = state.customWallpaperUrl.trim();
     if (!u) return null;
     if (/^(https?:\/\/|data:image\/|blob:|\/)/i.test(u)) {
-      return `url("${u.replace(/"/g, '\\"')}")`;
+      // CSS 字符串里 \ 和 " 要转义，换行不能出现（否则会截断 url() 注入别的声明）。
+      return `url("${u.replace(/[\r\n\f]/g, "").replace(/[\\"]/g, "\\$&")}")`;
     }
     return null;
   }
@@ -771,10 +947,48 @@ export function computePaletteSky(
   };
 }
 
+/** 允许上传的壁纸图片类型（与上传控件的 accept 一致）。 */
+export const ALLOWED_WALLPAPER_TYPES: readonly string[] = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+];
+/** 原始图片文件大小上限：超过就不读进内存。 */
+export const MAX_WALLPAPER_FILE_BYTES = 20 * 1024 * 1024;
+/** 压缩后 Data URL 的长度上限（约 6 MB）。 */
+export const MAX_WALLPAPER_DATA_URL_CHARS = 6_000_000;
+
+function formatMb(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** 校验上传的壁纸文件；不合格返回给用户看的提示，合格返回 null。 */
+export function validateWallpaperFile(file: { type: string; size: number }): string | null {
+  if (!ALLOWED_WALLPAPER_TYPES.includes(file.type.toLowerCase())) {
+    return "请选择图片格式文件（PNG / JPG / WebP / GIF / AVIF）";
+  }
+  if (file.size > MAX_WALLPAPER_FILE_BYTES) {
+    return `图片太大（${formatMb(file.size)}），请选择不超过 ${formatMb(MAX_WALLPAPER_FILE_BYTES)} 的图片`;
+  }
+  return null;
+}
+
+/** 压缩结果超过上限时抛出明确的错误。 */
+export function assertWallpaperDataUrlSize(dataUrl: string): string {
+  if (dataUrl.length > MAX_WALLPAPER_DATA_URL_CHARS) {
+    throw new Error("图片压缩后仍然太大，请换一张分辨率更低或更简单的图片");
+  }
+  return dataUrl;
+}
+
 /**
- * 将本地上传的图片文件压缩为适配 localStorage 存储的 Data URL（最大边 1920px，WebP/JPEG 质量 0.84）
+ * 将本地上传的图片文件压缩为 Data URL（最大边 1920px，WebP/JPEG 质量 0.84），保存在 IndexedDB
  */
 export async function compressUploadedWallpaper(file: File): Promise<string> {
+  const invalid = validateWallpaperFile(file);
+  if (invalid) throw new Error(invalid);
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("读取图片文件失败"));
@@ -799,7 +1013,11 @@ export async function compressUploadedWallpaper(file: File): Promise<string> {
         canvas.height = height;
         const ctx = canvas.getContext("2d");
         if (!ctx) {
-          resolve(src);
+          try {
+            resolve(assertWallpaperDataUrlSize(src));
+          } catch (error) {
+            reject(error);
+          }
           return;
         }
         ctx.drawImage(img, 0, 0, width, height);
@@ -808,7 +1026,11 @@ export async function compressUploadedWallpaper(file: File): Promise<string> {
           resolve(webp);
           return;
         }
-        resolve(canvas.toDataURL("image/jpeg", 0.8));
+        try {
+          resolve(assertWallpaperDataUrlSize(canvas.toDataURL("image/jpeg", 0.8)));
+        } catch (error) {
+          reject(error);
+        }
       };
       img.src = src;
     };

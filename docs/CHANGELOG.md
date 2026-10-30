@@ -1,6 +1,92 @@
-## Unreleased
+## 0.1.115
 
-- 升级严重 / 高危漏洞依赖（better-auth 1.7.14、proxy-addr 2.0.8、MCP SDK 1.32.2、zod 4.6.7、vite 7.3.7、axios、body-parser、fast-uri、follow-redirects、undici 等），`bun audit` 由 2 critical / 39 high 降到 0 / 9；恢复 `.github/dependabot.yml`（每周、分组、限 PR 数）
+- 改窗口大小时暂停 WebGL 天空，<html> 挂 data-resizing；停下后按最终尺寸重画一次（#449）。
+
+- 切会话即时反馈：左栏高亮先到，对话延后渲染；切换中旧页半透明、不可输入，不会发到旧会话（#448）。
+
+- 版本号 0.1.115（根、app、server）；只有网页更新。
+
+## 0.1.114
+
+- 公网网关下会话过期：收到网关 401（`openbotAuthRequired`）整页去 `/login?next=`，不再停在 `/sign` 加载；30 秒内又碰到就显示「登录状态异常」和「退出重新登录」，不再来回跳（#442）。
+
+- Service Worker 升到 5：导航拿到网关 401 去 `/login?next=`，从 `/login` 回来的 401 原样交给浏览器（#442）。
+
+- 手机抽屉里导航后自动收起；`/channel/new?agent=` 总开新话题，只有最近的对话还没消息时才复用（#442）。
+
+- 版本号 0.1.114（根、app、server）；只有网页更新。
+
+## 0.1.113
+
+- GitHub 仓库链接出竖版大卡：服务端查 GitHub API 拿描述、星标、头像，og 图拿不到用头像兜底；429 只缓存 5 分钟（#439）。
+
+- 电脑端顶栏回退：只留左下账号卡，搜索和左栏开关回到左栏；手机不变（#440）。
+
+- 卡顿测量工具 `perf/`（`bun run perf:jank` / `perf:compare`，CI `perf.yml` 只写 job summary 不拦 PR），不改应用代码（#443）。
+
+- 版本号 0.1.113（根、app、server）；只有服务器 / 网页更新。
+
+## 0.1.112
+
+- 链接预览：GitHub 预览图 429 时回退（`opengraph.githubassets.com/1/…`、作者头像），失败短 TTL；YouTube / bilibili / 百度百科走接口出卡片；反爬 / 验证页降级；Punycode 同形字保留 `xn--`；非 2xx 一律 `no-store`（#412，网关配置改动未上线）。
+
+- 冷打开频道只读一次完整历史；断线重连回填补上漏收的工具调用，和手动刷新一致（#421）。
+
+- 版本号 0.1.112（根、app、server）；只有服务器 / 网页更新。
+
+## 0.1.111
+
+- 新话题首字延迟：发送即显示「思考中」；新话题 `/run` 前不再串行等列表刷新、接入回放、读历史、面板会话（线上实测 `/run` 发出 ~2.2s → ~0.84s）；个人记忆几段并行读；研究类问题预置 research-public-web 技能（普通对话不加字）；提示词：能直接答的不搜、动手前一句 ≤15 字再调工具；服务器每轮一行 `run-timing` 分段计时。未升级版本号。
+
+- 联网搜索质量（hark 对比 #3 #5 #8 #11）：认出 DuckDuckGo 的 202 反爬页并冷却 10 分钟直接走 Bing；搜索源不可用时明确告诉模型别再搜；Bing 回退的结果先过相关性（任一完整词命中即保留，关键词兜底）、跳转链接还原成真实网址（内网地址不还原）；过滤后为空报「没搜到相关结果」而不是「搜索源不可用」；没搜到时不再叫模型连搜，并在代码里限次：一轮 2 次没搜到或搜索源不可用后不再联网搜索；DuckDuckGo 要有 anomaly 标记才算反爬；web_search 描述要求多条结果尽量来自不同网站并注明来源；DuckDuckGo 失败时服务器日志记一行。json-render 的 `List` / `Card` 遇到认不出的图标名不再画空的灰色方块。未升级版本号。
+
+- 天空背景换场景渐变不再停在半路：主线程卡的时候渐变会停在 0.76～0.98 一到四秒才跳完，现在渐变开始后一直醒着画到结束（最多 8 秒），引擎跳过不画的那一拍也续上；天气（open-meteo）响应的 body 读完时再叫醒一次天空，网慢时天气带来的那次渐变也能画出来。只改 `sky-background.tsx`，新增 `lib/sky-fade.ts`，`wallpaper_core.html` 未改。未升级版本号。
+
+- 附件缩略图：`GET /api/attachments/:id?w=240|480|960` 用 sharp 缩成 WebP（进程内存 LRU，64 MiB / 2000 项，单项 ≤ 2 MiB），其他宽度 400，非图片 / GIF / 不必缩 / sharp 不可用时回原图；权限判断同原图。用户消息的单张图和一摞图改拉缩略图，点开大图仍是原图。打开一个含 4 张图的对话，图片传输 5.30 MB → 53.6 KB（桌面）/ 203.6 KB（手机 2x）。缩图同时最多 2 张、其余排队；sharp 加载失败只打一次明确警告；Docker 镜像里已确认 sharp 可用。排队超过 8 个直接回原图（不缓存）；图片尺寸记忆按实际加载的地址记，缩略图尺寸不再记在原图名下。新增依赖 `sharp`，未升级版本号。
+
+- 修复：机器人连发多条消息只显示最后一条——`compactTurns` 以最后一个干活的步骤（`isWorkCall`，不含记忆写入）为界，之后的全部文字都是回答气泡（tone 为 final，带链接卡、复制按钮）；测试 `app/tests/consecutive-replies.test.ts`。
+
+- 流式回复时打字不再乱序、不再残留（#408）：Composer 的 `agents` / `commands` 放进 ref，`triggers` 只建一次、`handleChange` 不再随每个流式块换引用，按键之间不会再被旧值写回（原来 4x 降速下边流式边打字会变成 `bcdefghija`、退格留残字）；测试 `app/tests/composer-stream-typing.test.tsx`。只改前端。
+
+- 修复：空对话第一轮从本机发出后断线不补——`useConversationSync` 记下本机在跑时问到的序号（`seenSeq`），没有 `last` 基线时拿它比；打开后第一次问照旧只记基线（#411）。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.111`），PC / Android 外壳未变。
+
+
+## 0.1.110
+
+- 修复：断线重连后漏掉的消息不补——`useConversationSync` 隔 15 秒以上才问到变化戳时不再只记基线，序号变了就合并式接上；测试 `app/tests/reconnect-backfill.test.tsx`。
+
+- 修复：打开对话时历史读两遍——打开时的接入结束后不再做顺序核对（那边刚读过），本机一轮结束后的核对不变；测试 `app/tests/channel-open-single-read.test.tsx`。
+
+- Hark 改版第 2 步（顶栏外壳）：左上圆形主页按钮、右上搜索胶囊 + 头像，中间只留「聊天」一个视图；PC 窗口按钮、手机、深浅色都可用；搜索胶囊用 `.glass`（顶栏唯一模糊层），同屏模糊层桌面 5、手机 1。DESIGN.md §10.5 写明同名 Hark 令牌必须在 `html.dark` 给深色值。不升版本号。
+- `docs/DEVLOG.md` 记录 Hark 顶栏（第 2 步）的动机、改动和前后截图。
+
+- 性能模式和系统「减少透明度」下全局关掉毛玻璃：一条 `*, *::before, *::after { backdrop-filter: none }`（`app/src/perf-noblur.css`，不用 `!important`），漏网的代码块操作条、遮罩、外观预览一起关掉；原来模糊的面板换成不透明底色 `--glass-bg-opaque`。实测两种模式下桌面、手机可见模糊层都是 0，普通模式与 main 一致。新增 `app/tests/no-backdrop.test.ts` 防止新的模糊绕过；规则见 DESIGN.md §10.3.1。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.110`），PC / Android 外壳未变。
+
+
+## 0.1.109
+
+- 壁纸与外观收尾（审查第 6 项 + 性能报告第 7 项）：天空引擎不再请求 `ipapi.co`（不把用户 IP 发给第三方），GPS 失败时改用浏览器时区估计位置；壁纸上传限类型（PNG / JPG / WebP / GIF / AVIF）和大小（原图 ≤ 20 MB、压缩后 ≤ 约 6 MB），超限或保存失败时用现有 toast 明确提示，不再假装“已应用”；壁纸图片改存 IndexedDB，localStorage 只留占位标记，旧数据自动迁移并清掉；外观滑块拖动时 localStorage 写入防抖（停手约 200ms 或页面隐藏时写），预览仍实时；修掉 `appearance-preferences.tsx` 的 6 个 Biome a11y 错误；自定义壁纸 URL 写进 CSS 时转义 `\`、`"` 并去掉换行；刷新时选的是自定义壁纸、localStorage 里只有占位标记的话，先只铺主题纯色、不挂天空，IndexedDB 读回就直接显示壁纸，读取失败、没有记录或超过约 1.5 秒才退回天空，不再先闪一下天空。不改样式和外观。（#376）
+- 回复来源结构化（数据格式先行）：新增 `shared/reply-sources.ts`，来源 = 这一轮里成功的 `web_fetch`（网址、标题、站点、toolCallId），挂在这一轮最后一条有文字的助手消息上；不新增存储和事件，实时和历史都从同一批消息算出。部署开关 `CHISABOT_REPLY_SOURCES`（默认关，/api/capabilities 带 `replySources`）打开后，网页聊天的 Bot 不再在正文写「来源：」行。前端卡片另做；开关关着时行为不变，旧客户端不受影响。未升级版本号。（#391）
+- web_fetch 超时 / 连接中断时重试并降级到搜索摘要，报错不再被说成「用户已停止这一轮」；工具失败后模型没再说话时补一段回答，这一轮一定有回复（Hark A4）（#392）
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.109`），PC / Android 外壳未变。
+
+
+## 0.1.108
+
+- 回复风格对齐 Hark（提示词 + 服务端）：去掉「导语 → 卡片 → 下一步」固定三段式，默认一个气泡、1–4 句、结论先行；render_ui 画过表格卡后不再附一份 Markdown 表格（提示词 + 工具结果都提醒）；推荐类问题直接给 2–3 个带价格的选项再追问（web_search 工具描述里写明一般搜 1–3 次就收敛）；数学用 Unicode 纯文本，不用 LaTeX（前端不恢复 katex）。安全和不可信内容相关的提示词一字未改，新增测试按 sha256 钉住。未升级版本号。（#381）
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.108`），PC / Android 外壳未变。
+
+
+## 0.1.107
+
+- 链接卡照 Hark 改版：正文里单独一行的链接和 json-render 的 `Link` 合并成一个组件（`app/src/components/rich-previews/link-card.tsx`）。有预览图时是固定宽约 280px 的竖卡：上半 og:image 大图（cover，上方两角圆角），下面两行粗体标题和一行浅色「站点 · 补充信息」；没有图时退成同宽的紧凑横卡。半透明底 + 内侧高光边，不用 backdrop-filter；骨架和卡片同尺寸，图片懒加载并预留宽高。json-render 的 `Link` 不再只用模型写的字段：缺的预览图、标题、站点名用 `/api/link-preview` 补全，模型给了的优先，所以 GitHub 等链接现在会显示 og:image。样式在组件自己的 `link-card.css`（只有 `lc-` 开头的新类），styles.css 未改。未升级版本号。
+- 链接卡数据侧按审查修正：模型写的标题如果只是站点名 / 域名，或被 og:title 包含（如「GitHub」「ChisaBot」），改用 og:title；每个链接给出预览图、站点名和补充信息，底下一行是「站点 · 补充信息」（如「GitHub · v0.1.13」）。标题和站点行不再固定高度（只有骨架预留），一行标题时下面不再空一大块。视觉细节留给前端的叠放卡改版。
+
+- 手机尺寸左栏抽屉（Hark 手机端）：一层全高面板，宽 `min(85vw, 320px)`、右侧圆角；顶部搜索 + 新建 + 关闭一行，账号在面板底部（分隔线 + 安全区）；遮罩只压暗、点它关闭；只动 transform 的 200ms 开关动画，减少动态效果时关闭；玻璃只剩面板一层，性能模式 / 减少透明度下不透明。
+- 只升级服务器版本号（根、`app`、`server` 为 `0.1.107`），PC / Android 外壳未变。
+
 
 ## 0.1.106
 
@@ -19,6 +105,7 @@
 
 - 修 test:app 共享进程里的测试干扰（use-control 的 wake 监听、schedule-runs-query 的 mock.module 泄漏），修 gateway-account-control / startup-resilience 及 5 个 server 测试；server 补 `@copilotkit/core` 开发依赖；CI 下 chisabot-node 打包失败即构建失败；schedule-fired 的 `Link` 替身不再漏给其他文件（有路由时用真 `Link`），移出隔离名单；avatar-picker-shape 拆 DOM 前先 `settleReactWork`，`test:app` 退出码恢复 0（#368）。
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变。
+
 
 ## 0.1.104
 

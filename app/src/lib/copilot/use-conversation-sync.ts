@@ -167,6 +167,9 @@ export function tailReplayPatch<T extends TailMsg>(
   return;
 }
 
+/** 这么久没问到变化戳，就当中间断过线：下一次不只记基线（见 onActivity）。 */
+const MISSED_ACTIVITY_MS = 15_000;
+
 /**
  * 全端同步（DESIGN.md §42）：同一段对话在别的设备上有了动静，把它拉到这台设备。
  *
@@ -195,10 +198,16 @@ export function useConversationSync(
      *（CopilotKit `runAgent` 会先 `detachActiveRun`，超大回放时主线程卡住，/run 迟迟发不出）。
      */
     suppressConnect?: () => boolean;
+    /**
+     * 这次 run 结束不是本机的一轮、不必核对顺序：打开时的那次接入由调用方自己发起，它已经和接入同时读过
+     * 一份存下的对话，接入一结束再核对一遍只是把整份历史再拉一次。
+     */
+    skipReconcile?: () => boolean;
   } = {},
 ) {
   const liveTail = options.liveTail === true;
   const suppressConnect = options.suppressConnect;
+  const skipReconcile = options.skipReconcile;
   const queryClient = useQueryClient();
   useEffect(() => {
     if (!threadId) return;
@@ -215,6 +224,16 @@ export function useConversationSync(
     let knownRevision: string | null = null;
     let rebuildPending = false;
     let lastOwnFinishAt = 0;
+    /**
+     * 上一次问到变化戳的时间。前台每 2 秒问一次（被外壳收起的聊天 10 秒一次）；页面切到后台时完全不问，
+     * 回到前台 / 网络恢复时才马上问。所以隔得太久，说明中间断过线或在后台待过。
+     */
+    let lastActivityAt = 0;
+    /**
+     * 最近一次问到的序号，本机在跑时问到的也算。新的空对话第一轮从这台发：跑的时候问到的戳只让它等，
+     * `last` 一直是空的；结束后紧接着断线，回来那一次也要能和它比、补齐（没有它就只能当基线吞掉）。
+     */
+    let seenSeq: string | null = null;
     /**
      * mode "merge"（平时）：不清空列表，只把新的接上——见下面的 onEvent。
      * mode "rebuild"（顺序和服务器不一致时）：照 SDK 原样，先清空再按服务器回放重建。
@@ -285,7 +304,7 @@ export function useConversationSync(
       onRunFinalized: () => {
         rebase = true;
         lastOwnFinishAt = Date.now();
-        if (!connecting) reconcile();
+        if (!connecting && !skipReconcile?.()) reconcile();
       },
       onRunFailed: () => {
         rebase = true;
@@ -294,6 +313,10 @@ export function useConversationSync(
     });
     const off = onActivity((activity) => {
       if (!alive || activity.threadId !== threadId) return;
+      const quietFor = Date.now() - lastActivityAt;
+      lastActivityAt = Date.now();
+      const seenBefore = seenSeq;
+      seenSeq = activity.seq;
       if (revisionNeedsRebuild(knownRevision, activity.revision, ownRevisions.get(threadId))) rebuildPending = true;
       if (activity.revision !== undefined) knownRevision = activity.revision;
       if (rebuildPending && !agent.isRunning && !connecting) {
@@ -316,6 +339,9 @@ export function useConversationSync(
         // 服务器在回答、这台却没在跟（刚回到前台、刚打开时那一轮还没开始）：接上。
         // 本机刚跑完一轮（3 秒内）收到的在途 running=true 是本机那一轮的尾声，不重接回放（否则会清空刚流完的回答）。
         if (activity.running && Date.now() - lastOwnFinishAt > 3000) join("merge", true);
+        // 断线 / 很久没问到之后的第一次：这段时间别处写进来的不能当基线吞掉，序号变了就合并式接上补齐。
+        // 没有基线（空对话的第一轮在这台跑完）时拿跑的时候问到的序号比；打开后第一次问（什么都没见过）照旧只记基线。
+        else if (quietFor > MISSED_ACTIVITY_MS && (previous?.seq ?? seenBefore) !== null && activity.seq !== (previous?.seq ?? seenBefore)) join();
         return;
       }
       if (activity.workers !== previous.workers)

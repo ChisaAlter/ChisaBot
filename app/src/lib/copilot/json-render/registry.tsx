@@ -10,6 +10,7 @@ import {
 import { Component, type CSSProperties, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { jsonRenderCatalog, normaliseTone } from "../../../../../shared/json-render/catalog";
 import { Chart, Gauge, HeatStrip, Ring, SparkSvg, Sparkline } from "./charts";
+import { iconFor } from "./icons";
 import {
   Accordion,
   Avatar,
@@ -20,7 +21,6 @@ import {
   Hero,
   IconTile,
   KeyValue,
-  LinkCard,
   RelativeTime,
   RichIcon,
   SafeImg,
@@ -33,6 +33,7 @@ import {
 import { ActionArea, choiceState, useChoiceScope, useLiveValue, useRichActions } from "./rich-context";
 import { Products } from "./products";
 import { safeHttp, safeHttps, splitDotted, trendOfText } from "./rich-utils";
+import { LinkCard } from "@/components/rich-previews/link-card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -234,8 +235,8 @@ export const { registry: jsonRenderRegistry } = defineRegistry(jsonRenderCatalog
     Card: ({ props, children }) => (
       <section className={cn("jr-card jr-el", normaliseTone(props.tone) !== "default" && `is-${normaliseTone(props.tone)} ${toneOf(props.tone)}`)}>
         {props.title || props.description ? (
-          <header className={cn("jr-card-h", props.icon && "has-icon")}>
-            {props.icon ? (
+          <header className={cn("jr-card-h", iconFor(props.icon) && "has-icon")}>
+            {iconFor(props.icon) ? (
               <span className={cn("jr-card-ic", toneOf(props.tone ?? "accent") ?? "jr-tone-accent")}>
                 <RichIcon className="size-4" name={props.icon} />
               </span>
@@ -381,7 +382,8 @@ export const { registry: jsonRenderRegistry } = defineRegistry(jsonRenderCatalog
                     <span className="jr-list-thumb">
                       <SafeImg alt="" src={item.image} />
                     </span>
-                  ) : item.icon ? (
+                  ) : iconFor(item.icon) ? (
+                    // 认不出的图标名不画底色方块：以前会留一个空的灰色方块（hark 对比 #11 两个备选前面）。
                     <span className={cn("jr-list-ic", toneOf(item.tone ?? "accent") ?? "jr-tone-accent")}>
                       <RichIcon className="size-4" name={item.icon} />
                     </span>
@@ -653,7 +655,17 @@ export const { registry: jsonRenderRegistry } = defineRegistry(jsonRenderCatalog
     ),
     Hero: ({ props }) => <Hero {...props} />,
     Avatar: ({ props }) => <Avatar {...props} />,
-    Link: ({ props }) => <LinkCard {...props} />,
+    // 和正文链接卡同一个组件（2026-10-29）：模型写了的字段优先，缺的图 / 标题 / 站点名用 /api/link-preview 补。
+    Link: ({ props }) => (
+      <LinkCard
+        className="jr-el"
+        description={props.description}
+        image={props.image}
+        meta={props.meta}
+        title={props.title}
+        url={props.url}
+      />
+    ),
     Icon: ({ props }) => <IconTile label={props.label} name={props.name} size={props.size} tone={props.tone} />,
     Status: ({ props }) => <Status {...props} />,
     Delta: ({ props }) => <DeltaChip invert={props.invert} label={props.label} trend={props.trend} value={props.value} />,
