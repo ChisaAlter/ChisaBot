@@ -74,6 +74,9 @@ export function useTailFirstMount(
     firstRef.current = firstId;
     if (keyRef.current !== scrollKey) {
       keyRef.current = scrollKey;
+      // 换频道：上一个频道还没跑的「补完钉底」作废（补行的 idle 回调由下面 effect 的清理取消）。
+      cancelAnimationFrame(pinFrameRef.current);
+      pinFrameRef.current = 0;
       totalRef.current = total;
       const next = initialMountedCount(total);
       startRef.current = mountStartIndex(total, next);
@@ -124,7 +127,11 @@ export function useTailFirstMount(
         // 放到下一帧：在这次提交里读 scrollHeight 会把最后一批（最大的一批）的样式重算 + 布局
         // 强制塞进同一个长任务（复审 trace：约 300ms）。下一帧本来就要算样式，读它不多花。
         cancelAnimationFrame(pinFrameRef.current);
+        const key = keyRef.current;
         pinFrameRef.current = requestAnimationFrame(() => {
+          pinFrameRef.current = 0;
+          // 换了频道就不钉：否则会把新频道（keep-alive 恢复的上滑位置）拽到底。
+          if (keyRef.current !== key) return;
           if (atBottomRef.current) el.scrollTop = el.scrollHeight;
         });
       }
@@ -164,7 +171,8 @@ export function useTailFirstMount(
         if (cancelled) return;
         measureBeforeGrow();
         setMounted((m) => {
-          if (m >= total) return m;
+          // 已排队的更新在换频道后才执行：不再给新频道多挂、也不再续排旧频道的下一批。
+          if (cancelled || m >= total) return m;
           const n = nextMountedCount(m, total);
           if (n < total) step();
           return n;
@@ -175,6 +183,8 @@ export function useTailFirstMount(
     return () => {
       cancelled = true;
       cancel();
+      cancelAnimationFrame(pinFrameRef.current);
+      pinFrameRef.current = 0;
     };
   }, [scrollKey, total, measureBeforeGrow]);
 

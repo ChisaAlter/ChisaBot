@@ -16,9 +16,10 @@
   列布局里它就是最低的一行；`display: contents` 的 chat-tail 本来就量出 0。
 - `Ye`（视口里第一条可见行）：原来从头线性扫；现在对带 `data-message-id` 的行二分，碰到 0 尺寸行退回线性。
 - `Te`（`handleContentChange`，内容变化时 MutationObserver / layout effect 调）：开头加一个分支——行数变多、没有待跳的 `scrollToMessage`、并且视口上挂着 `data-tail-backfill`（ChisaBot 的尾屏补行在那次
+  - 已知限制：这个分支直接 return，不处理同一次提交里新加的 `scrollAnchor` 行（不会对它们做锚定 / 跳转）。ChisaBot 的补行提交只往前插历史行，不带 scrollAnchor；以后要在补行提交里加锚点行，得先去掉这条捷径。
   提交期间打的标记，只在浏览器有原生 `overflow-anchor` 时打）时，只更新行数 / 第一行，清掉 `prependRestore`，
   排一次 rAF 的状态提交和可见性同步（内容最上面可能有不是消息的固定行，所以不按「旧第一行的位置」判断前插），然后返回：不走 `de()`（前插保位，逐行 getBoundingClientRect）、不走
   `scrollToEnd`（读 scrollHeight）、不走 `Z()`（找锚点行）。位置交给原生锚定。没有标记时行为与上游完全一样。
 
 其余逐字未动。升级 `@shadcn/react` 时：上游若已只量可见行，删掉这个目录、`components/ui/message-scroller.tsx`
-改回 `@shadcn/react/message-scroller`；否则在新版本上重做上面两处。测试：`app/tests/message-scroller-visible-measure.test.tsx`。
+改回 `@shadcn/react/message-scroller`；否则在新版本上重做上面三处。测试：`app/tests/message-scroller-visible-measure.test.tsx`。

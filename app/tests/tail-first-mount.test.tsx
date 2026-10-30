@@ -100,3 +100,63 @@ test("long transcript first paint is bounded, then catches up", async () => {
     container.querySelectorAll("[data-slot='message-scroller-item']").length,
   ).toBeGreaterThanOrEqual(n);
 });
+
+function rows(container: HTMLElement) {
+  return container.querySelectorAll("[data-slot='message-scroller-item']");
+}
+
+test("channel switch cancels the old channel's pending backfill", () => {
+  const g = globalThis as unknown as Record<string, unknown>;
+  const saved = [g.requestIdleCallback, g.cancelIdleCallback];
+  const pending = new Map<number, () => void>();
+  let seq = 0;
+  g.requestIdleCallback = (cb: () => void) => {
+    pending.set(++seq, cb);
+    return seq;
+  };
+  g.cancelIdleCallback = (id: number) => pending.delete(id);
+  try {
+    const a = manyMessages(120);
+    const b = manyMessages(120).map((m) => ({ ...m, id: `b-${m.id}` }));
+    const { container, rerender } = render(
+      wrap(<ChatTranscript messages={a} scrollKey="cancel-a" />),
+    );
+    const oldIds = [...pending.keys()];
+    expect(oldIds.length).toBeGreaterThan(0);
+    rerender(wrap(<ChatTranscript messages={b} scrollKey="cancel-b" />));
+    // 旧频道排着的补行全部被取消。
+    for (const id of oldIds) expect(pending.has(id)).toBe(false);
+    expect(rows(container).length).toBeLessThanOrEqual(TAIL_FIRST_INITIAL + 4);
+  } finally {
+    cleanup();
+    [g.requestIdleCallback, g.cancelIdleCallback] = saved;
+  }
+});
+
+test("switching back to an interrupted channel still mounts all of it, newest last", async () => {
+  const a = manyMessages(150);
+  const b = manyMessages(120).map((m) => ({ ...m, id: `b-${m.id}` }));
+  const { container, rerender } = render(
+    wrap(<ChatTranscript messages={a} scrollKey="back-a" />),
+  );
+  rerender(wrap(<ChatTranscript messages={b} scrollKey="back-b" />));
+  rerender(wrap(<ChatTranscript messages={a} scrollKey="back-a" />));
+  await waitFor(
+    () => {
+      expect(
+        container
+          .querySelector('[data-testid="chat-transcript"]')
+          ?.hasAttribute("data-tail-first-pending"),
+      ).toBe(false);
+    },
+    { timeout: 3000 },
+  );
+  await act(async () => {
+    await settleReactWork();
+  });
+  const all = rows(container);
+  expect(all.length).toBeGreaterThanOrEqual(150);
+  expect(all[0]?.textContent).toContain("line-0 ");
+  expect(all[all.length - 1]?.textContent).toContain("line-149 ");
+  expect(container.textContent).not.toContain("b-m-");
+});

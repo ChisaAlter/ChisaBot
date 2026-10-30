@@ -17,6 +17,8 @@
 
 **注意**：`app/package.json` 里的 `@shadcn/react` 依赖暂时留着（不动 lockfile）。升级时看 vendor 目录的 README：上游若已只量可见行就删掉 vendor。
 
+**复审二（小爱，1b034dcf 条件通过）**：必改——补完钉底的下一帧 rAF 只在卸载时取消，切频道（`scrollKey` 变）时不取消；旧频道最后一批刚提交就切走，会把新频道钉到底、盖掉 keep-alive 恢复的上滑位置。改为切频道分支和补行 effect 清理里都 `cancelAnimationFrame`，rAF 里再核对 `keyRef` 仍是提交时的频道。补行的 idle 回调本来就在切频道时由 effect 清理取消，这次只剩这一帧没取消；另加排队更新的 `cancelled` 守卫。顺带：vendor README「两处」→「三处」，注明 `Te` 捷径不处理同次提交新加的 scrollAnchor 行；chat-transcript 的 MutationObserver 只看 childList / characterData、标记挂在视口不在内容上，不用改。测试：`tail-first-scroll-reads` 加「钉底帧未跑就切频道，新频道 scrollTop 不动」（换回旧 hook 失败）；`tail-first-mount` 加切频道取消旧补行、切回后整段挂全且最后一行在末尾（这两条新旧都过，旧代码已取消 idle）。switch 未追踪交错 5 轮：max long task 中位 main 857（669–1087）、PR 737（上一版 850 / 803），见 PR 表。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。

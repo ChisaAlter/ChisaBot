@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- 切会话 / 长对话补历史不再整篇强制样式重算（jank P1-2，分支 dev4/perf-tail-first）：尾屏优先补行时，人在底部就不再每批读 `scrollHeight`，交给浏览器原生 `overflow-anchor` 保位、补完钉一次底；人已上滑时原生锚定保住眼前那一行，只有不支持 `overflow-anchor` 的浏览器（Safari）才量高度垫回去。补行改在空闲时做（`requestIdleCallback`，最多等 50ms），批次随已挂条数增长（40 起、单批封顶 100）。补行那一次提交里不再当场量布局：视口上临时挂 `data-tail-backfill`，聊天记录的贴底观察器和 message-scroller 的内容变化处理看到它就不读 scrollHeight / 逐行位置，补完最后一批的钉底放到下一帧。`message-scroller`（`@shadcn/react@0.3.0` 拷进 `app/src/vendor/shadcn-react-message-scroller`，只改两处）算内容高度只量最后一行、找第一条可见行改二分，不再逐行 `getBoundingClientRect`。新增 `app/src/lib/chat/transcript-data-layer.ts`：给后面 virtua 虚拟化用的数据层接口。打开在底部、流式贴底、上滑补行不跳、应用内搜索跳转行为不变。
+- 切会话 / 长对话补历史不再整篇强制样式重算（jank P1-2，分支 dev4/perf-tail-first）：尾屏优先补行时，人在底部就不再每批读 `scrollHeight`，交给浏览器原生 `overflow-anchor` 保位、补完钉一次底；人已上滑时原生锚定保住眼前那一行，只有不支持 `overflow-anchor` 的浏览器（Safari）才量高度垫回去。补行改在空闲时做（`requestIdleCallback`，最多等 50ms），批次随已挂条数增长（40 起、单批封顶 100）。补行那一次提交里不再当场量布局：视口上临时挂 `data-tail-backfill`，聊天记录的贴底观察器和 message-scroller 的内容变化处理看到它就不读 scrollHeight / 逐行位置，补完最后一批的钉底放到下一帧；切频道时这一帧作废（以前只在卸载时取消，刚补完就切走会把新频道 keep-alive 恢复的上滑位置拽到底）。`message-scroller`（`@shadcn/react@0.3.0` 拷进 `app/src/vendor/shadcn-react-message-scroller`，只改三处）算内容高度只量最后一行、找第一条可见行改二分，不再逐行 `getBoundingClientRect`。新增 `app/src/lib/chat/transcript-data-layer.ts`：给后面 virtua 虚拟化用的数据层接口。打开在底部、流式贴底、上滑补行不跳、应用内搜索跳转行为不变。
 
 ## 0.1.112 — 2026-10-29
 

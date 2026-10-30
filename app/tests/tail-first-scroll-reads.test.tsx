@@ -44,7 +44,15 @@ function stubAnchor(supported: boolean) {
 
 type Probe = { el: HTMLDivElement | null; reads: number; top: number };
 
-function Harness({ total, probe }: { total: number; probe: Probe }) {
+function Harness({
+  total,
+  probe,
+  channel = "k",
+}: {
+  total: number;
+  probe: Probe;
+  channel?: string;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
   const attach = useCallback(
     (el: HTMLDivElement | null) => {
@@ -72,7 +80,7 @@ function Harness({ total, probe }: { total: number; probe: Probe }) {
     },
     [probe],
   );
-  const { startIndex, pending } = useTailFirstMount(total, "k", ref, "m-0");
+  const { startIndex, pending } = useTailFirstMount(total, channel, ref, "m-0");
   return (
     <div ref={attach} data-pending={pending ? "" : undefined}>
       {Array.from({ length: total - startIndex }, (_, i) => (
@@ -174,4 +182,49 @@ test("backfill commits carry the backfill marker for the commit's observers, the
   // Safari 兜底（没有原生锚定）：照旧当场量，不打标记。
   const fallback = await run(false);
   expect(fallback.seen.some(Boolean)).toBe(false);
+});
+
+test("channel switch before the final bottom-pin frame leaves the new channel's scrollTop alone", async () => {
+  stubAnchor(true);
+  const g = globalThis as unknown as Record<string, unknown>;
+  const saved = [
+    g.requestAnimationFrame,
+    g.cancelAnimationFrame,
+    g.requestIdleCallback,
+    g.cancelIdleCallback,
+  ];
+  const frames = new Map<number, () => void>();
+  let seq = 0;
+  g.requestAnimationFrame = (cb: () => void) => {
+    frames.set(++seq, cb);
+    return seq;
+  };
+  g.cancelAnimationFrame = (id: number) => frames.delete(id);
+  g.requestIdleCallback = (cb: () => void) =>
+    setTimeout(cb, 0) as unknown as number;
+  g.cancelIdleCallback = (id: number) => clearTimeout(id);
+  try {
+    const total = 200;
+    const probe: Probe = { el: null, reads: 0, top: 0 };
+    const { rerender } = render(<Harness total={total} probe={probe} />);
+    await untilFull(probe, total);
+    // 最后一批已提交，钉底那一帧还没跑。
+    expect(frames.size).toBeGreaterThan(0);
+    rerender(<Harness total={total} probe={probe} channel="k2" />);
+    // keep-alive 恢复的新频道上滑位置。
+    probe.top = 123;
+    await act(async () => {
+      for (const cb of [...frames.values()]) cb();
+      frames.clear();
+    });
+    expect(probe.top).toBe(123);
+  } finally {
+    cleanup();
+    [
+      g.requestAnimationFrame,
+      g.cancelAnimationFrame,
+      g.requestIdleCallback,
+      g.cancelIdleCallback,
+    ] = saved;
+  }
 });
