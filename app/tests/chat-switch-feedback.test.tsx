@@ -1,4 +1,8 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+
+const cleanups: (() => void)[] = [];
+const afterTest = (fn: () => void) => cleanups.push(fn);
+
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { Composer } from "@/components/channels/composer/composer";
@@ -22,6 +26,7 @@ import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
 afterEach(async () => {
+  for (const fn of cleanups.splice(0)) fn();
   clearPendingBot();
   cleanup();
   await settleReactWork();
@@ -110,8 +115,14 @@ test("连着排两次导航只跑最后一次；撤销后一次都不跑（点�
   afterNextPaint(() => ran.push("chat-b"));
   await new Promise((resolve) => setTimeout(resolve, 60));
   expect(ran).toEqual(["chat-b"]);
+  markPendingBot("b3");
   afterNextPaint(() => ran.push("chat-c"));
-  cancelAfterNextPaint(); // 例如马上点了设置
+  document.body.click(); // 马上点了别处（例如设置）
+  expect(getPendingBot()).toBe(null);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(ran).toEqual(["chat-b"]);
+  afterNextPaint(() => ran.push("chat-d"));
+  cancelAfterNextPaint();
   await new Promise((resolve) => setTimeout(resolve, 60));
   expect(ran).toEqual(["chat-b"]);
 });
@@ -127,6 +138,15 @@ test("输入框属于旧会话（地址已换 / 左栏正在切）时判定为�
 
 test("切换中焦点还在旧输入框里按 Enter：什么都不发，草稿留着", async () => {
   const sent: string[] = [];
+  // 带 channelId 的输入框会去拉附件等接口；这里不连后端。
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response("[]", {
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+  afterTest(() => {
+    globalThis.fetch = realFetch;
+  });
   const view = render(
     <Composer
       channelId="c1"

@@ -75,10 +75,23 @@ export function isPlainClick(event: {
  *
  * 只留最新的一次：新请求（或 `cancelAfterNextPaint`）会撤掉还没跑的那次，
  * 免得「点会话、马上点设置」时排在后面的旧导航又把页面拉回去。
- * 任何别的导航（设置链接等）走路由时也撤掉，见 `cancelAfterNextPaint` 的调用处。
+ * 排队期间用户又点了别处 / 按了 Enter（例如点设置），也撤掉，并熄掉左栏的「正在切过去」。
  */
 let queued: { raf?: number; timer?: ReturnType<typeof setTimeout> } | null =
   null;
+
+function onLaterInput(event: Event) {
+  if (event instanceof KeyboardEvent && event.key !== "Enter") return;
+  cancelAfterNextPaint();
+  clearPendingBot();
+}
+
+function watchLaterInput(on: boolean) {
+  if (typeof document === "undefined") return;
+  const method = on ? "addEventListener" : "removeEventListener";
+  document[method]("click", onLaterInput, true);
+  document[method]("keydown", onLaterInput, true);
+}
 
 export function cancelAfterNextPaint() {
   if (!queued) return;
@@ -86,6 +99,7 @@ export function cancelAfterNextPaint() {
     cancelAnimationFrame(queued.raf);
   if (queued.timer !== undefined) clearTimeout(queued.timer);
   queued = null;
+  watchLaterInput(false);
 }
 
 export function afterNextPaint(run: () => void) {
@@ -96,10 +110,14 @@ export function afterNextPaint(run: () => void) {
   }
   const job: { raf?: number; timer?: ReturnType<typeof setTimeout> } = {};
   queued = job;
+  // 触发这次的点击已经过了捕获阶段，这里只会接到之后的点击 / Enter。
+  watchLaterInput(true);
   job.raf = requestAnimationFrame(() => {
     job.raf = undefined;
     job.timer = setTimeout(() => {
-      if (queued === job) queued = null;
+      if (queued !== job) return;
+      queued = null;
+      watchLaterInput(false);
       run();
     }, 0);
   });
