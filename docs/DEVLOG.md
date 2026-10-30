@@ -34,11 +34,14 @@ main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better
 | scroll / wheel | – | – | – | – | 59 → 88 (+49%) ⚠️ | 18 → 12 (-33%) ✅ |
 | stream / send | 128 → 152 (+19%) ⚠️ | 1 → 4 (+300%) ⚠️ | 96 → 118 (+23%) ⚠️ | 31 → 32 (+3%) | 94 → 131 (+39%) ⚠️ | 21 → 31 (+48%) ⚠️ |
 
+**状态**：draft。依赖 P1-5（#445）、P1-1、P3-3，合入后用同一 harness 复测，switch、stream、长对话切回都不比 main 差才转正式；P3-3 之后若 LRU 收益不大就关掉。
+
 **已知**：
 - **切回 240 条长对话那一下 INP 变高**（576 → 760 ms）：main 上是挂载 + 分批补行（后面 3 s 里还有约 2.9 s 长任务），现在是一次性把藏着的整段（约 15k 元素）重做样式和布局，总量少但集中在点击那一帧。P1-1（切会话 `startTransition`）会把它移出 INP，P3-3 虚拟化把元素降到 <3k 后这一下随之变小。
 - **流式场景变差**（长任务 464 → 1557 ms，样式 1302 → 2002 ms）：流式时 240 条那段藏着留在 DOM 里，热路径上的强制样式（4b MutationObserver 读 offsetHeight、4c DocCard 读 scrollHeight，trace 里同样两处）每次更贵，content-visibility 挡不住全部。带 --trace 的单轮对比：强制重算 2163 → 1952 ms、样式自身 841 → 1800 ms、布局 1342 → 176 ms。4b / 4c（P1-5）合入后应基本消失；需要在那之后复测。
 - 试过「单段超过 8k 元素藏起来就放掉」：c2 也超了被放掉，A→B→A 切回 INP 反而 301 → 727 ms，已撤回，不在本 PR 里。
-- `tests/` 下几个 Playwright 脚本按 `data-testid` 取聊天元素，现在可能同时有藏着的段，需要限定 `[data-visible=true]`。
+- `tests/` 下 20 个 Playwright 脚本里取聊天区元素的选择器（chat-transcript、`[data-message-id]`、composer-*、queued-*、worker-*、`.glass-composer` 等）前面加了 `[data-testid=kept-page][data-visible=true] `，免得取到藏着的段（`closest` / 已移除节点上的 `matches` 不加）。在假 /api + PR 构建上验过：A→B→A 后不加限定取到 2 个 transcript、243 条消息，加了只剩当前的 1 个、3 条。
+- styles.css 只删了 `.kept-chat[data-visible="false"] *` 这一条（`overflow-anchor:none`），容器自身那条保留。main 和 PR 的 dist 在假 /api、无头 Chrome 1024×673@1.25 下截 c2 → c1 → c2 三个画面，default 主题亮 / 暗各一组，像素 diff 全部 0（背景天空 canvas 两边都先隐藏掉，它随时间动）。
 
 ## 联网搜索质量（fix/hark-search-quality）
 

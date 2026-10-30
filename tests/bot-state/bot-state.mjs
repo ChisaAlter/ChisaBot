@@ -45,7 +45,7 @@ const SAMPLER = () => {
     if (v && v.clientHeight > 0) {
       const vr = v.getBoundingClientRect();
       let top = null;
-      for (const r of v.querySelectorAll("[data-message-id]")) { const b = r.getBoundingClientRect(); if (b.bottom > vr.top + 1) { top = [r.getAttribute("data-message-id"), Math.round(b.top - vr.top)]; break; } }
+      for (const r of v.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-message-id]")) { const b = r.getBoundingClientRect(); if (b.bottom > vr.top + 1) { top = [r.getAttribute("data-message-id"), Math.round(b.top - vr.top)]; break; } }
       window.__frames.push([Math.round(performance.now() - T0), window.__phase, Math.round(v.scrollTop), Math.round(v.scrollHeight - v.scrollTop - v.clientHeight), top, location.pathname]);
     }
     requestAnimationFrame(() => { const c = new MessageChannel(); c.port1.onmessage = sample; c.port2.postMessage(0); });
@@ -106,7 +106,7 @@ for (const width of WIDTHS) {
   const position = () => page.evaluate(() => {
     const v = document.querySelector('[data-slot="message-scroller-viewport"]');
     const vr = v.getBoundingClientRect();
-    for (const r of v.querySelectorAll("[data-message-id]")) { const b = r.getBoundingClientRect(); if (b.bottom > vr.top + 1) return { id: r.getAttribute("data-message-id"), offset: Math.round(b.top - vr.top), gap: Math.round(v.scrollHeight - v.scrollTop - v.clientHeight) }; }
+    for (const r of v.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-message-id]")) { const b = r.getBoundingClientRect(); if (b.bottom > vr.top + 1) return { id: r.getAttribute("data-message-id"), offset: Math.round(b.top - vr.top), gap: Math.round(v.scrollHeight - v.scrollTop - v.clientHeight) }; }
     return null;
   });
   const railTab = () => page.locator(".rail-tabs").first().getAttribute("data-tab").catch(() => null);
@@ -114,7 +114,7 @@ for (const width of WIDTHS) {
   const draftText = async () => ((await editor().textContent().catch(() => "")) ?? "").trim();
   const botLink = (bot) => page.locator(`a.glass-bot-link:has-text("${bot.name}")`).first();
   const openSidebar = async () => { if (!wide && !(await botLink(longBot).isVisible().catch(() => false))) { const t = page.locator('[data-sidebar="trigger"], button[aria-label*="左栏"], button[aria-label*="机器人列表"]').first(); if (await t.isVisible().catch(() => false)) { await t.click(); await page.waitForTimeout(400); } } };
-  const idle = async (max = 90000) => { const t0 = Date.now(); let n = 0; await page.waitForTimeout(1500); while (Date.now() - t0 < max && n < 4) { n = (await page.locator('[data-testid="composer-stop"]').count()) ? 0 : n + 1; await page.waitForTimeout(500); } };
+  const idle = async (max = 90000) => { const t0 = Date.now(); let n = 0; await page.waitForTimeout(1500); while (Date.now() - t0 < max && n < 4) { n = (await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').count()) ? 0 : n + 1; await page.waitForTimeout(500); } };
 
   await page.goto(`${base}/channel/${long.id}`, { waitUntil: "domcontentloaded" });
   await editor().waitFor({ timeout: 60000 });

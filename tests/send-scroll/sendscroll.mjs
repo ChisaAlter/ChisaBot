@@ -32,7 +32,7 @@ const INIT = () => {
       const vr = v.getBoundingClientRect();
       const rows = {};
       let lastBottom = -1e9;
-      for (const r of v.querySelectorAll("[data-message-id]")) {
+      for (const r of v.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-message-id]")) {
         const b = r.getBoundingClientRect();
         if (b.height === 0) continue;
         rows[r.getAttribute("data-message-id")] = [Math.round((b.top - vr.top) * 10) / 10, Math.round(b.height), r.querySelector('[data-slot="message"][data-align="end"]') ? 1 : 0];
@@ -43,7 +43,7 @@ const INIT = () => {
         if (c.hasAttribute("data-chat-slack")) continue;
         const b = c.getBoundingClientRect(); if (b.height > 0) lastBottom = Math.max(lastBottom, b.bottom - vr.top);
       }
-      const sp = v.querySelector("[data-message-scroller-spacer]");
+      const sp = v.querySelector("[data-testid=kept-page][data-visible=true] [data-message-scroller-spacer]");
       const sl = v.querySelector("[data-chat-slack]");
       const comp = document.querySelector('[aria-label="消息"]')?.closest("form, .glass-composer, [data-slot=composer]") || document.querySelector('[aria-label="消息"]');
       window.__frames.push({
@@ -101,7 +101,7 @@ async function run(width) {
   const phase = (p) => page.evaluate((x) => { window.__phase = x; }, p);
   const frames = (p) => page.evaluate((x) => window.__frames.filter((f) => f.ph === x), p);
   const editor = () => page.locator('[aria-label="消息"]').first();
-  const busy = () => page.locator('[data-testid="composer-stop"]').count();
+  const busy = () => page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').count();
   const idle = async (max = 90000) => { const t0 = Date.now(); let n = 0; await page.waitForTimeout(1500); while (Date.now() - t0 < max && n < 4) { n = (await busy()) ? 0 : n + 1; await page.waitForTimeout(500); } };
   const setOff = (ms) => page.evaluate((m) => localStorage.setItem("cbsend-off", String(m)), ms);
   const send = async (text) => { await editor().click(); await editor().fill(text); await page.keyboard.press("Enter"); };

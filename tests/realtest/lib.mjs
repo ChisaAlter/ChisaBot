@@ -27,7 +27,7 @@ export async function newPage(ctx, tag) {
 }
 export const api = (page, path, init) => page.evaluate(async ([p, i]) => { const r = await fetch(p, { ...i, headers: { "content-type": "application/json" } }); return { status: r.status, body: await r.text() }; }, [path, init ?? {}]);
 export const ta = (page) => page.locator('[aria-label="消息"]:visible').first();
-export const busy = (page) => page.locator('[data-testid="composer-stop"]:visible, [data-testid="composer-queue"]:visible').first().isVisible().catch(() => false);
+export const busy = (page) => page.locator('[data-testid=kept-page][data-visible=true] :is([data-testid="composer-stop"]:visible, [data-testid="composer-queue"]:visible)').first().isVisible().catch(() => false);
 export async function chisaBot(page, bot) {
   await page.goto(`${base}/bot?agent=${encodeURIComponent(bot)}`, { waitUntil: "domcontentloaded" }); await page.waitForURL(/\/channel\//, { timeout: 60000 });
   await ta(page).waitFor({ timeout: 60000 }); await page.waitForTimeout(2000);

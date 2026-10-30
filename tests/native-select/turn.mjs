@@ -72,7 +72,7 @@ try {
     const ms = await waitIdle(page, { max: 300000 });
     const t = await transcript(page);
     const out = await readOut();
-    const stopped = await page.locator('[data-testid="transcript-stopped"]').isVisible().catch(() => false);
+    const stopped = await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="transcript-stopped"]').isVisible().catch(() => false);
     ok("B bot selected 2000-07-12 on the page", out === "已选：2000-07-12", `${out} in ${Math.round(ms / 1000)}s`);
     ok("B bot answered with the result", /2000-07-12/.test(t.split("告诉我「已选：」后面显示的是什么。").pop() || ""), (t.split("后面显示的是什么。").pop() || "").slice(-300));
     ok("B no error notice", !stopped);
@@ -91,7 +91,7 @@ try {
     await send(page, "先调用 computer_read 读取当前页面，然后告诉我月份下拉框选的是什么。");
     await waitIdle(page, { max: 180000 });
     await page.unroute("**/api/copilotkit/agent/*/run");
-    const card = page.locator('[data-testid="transcript-stopped"]');
+    const card = page.locator('[data-testid=kept-page][data-visible=true] [data-testid="transcript-stopped"]');
     const visible = await card.isVisible().catch(() => false);
     const text = visible ? await card.innerText() : "";
     const retry = visible ? await card.getByRole("button", { name: "重试" }).isVisible().catch(() => false) : false;
@@ -113,7 +113,7 @@ try {
     await waitIdle(page, { max: 300000 });
     await page.unroute("**/api/approvals/computer/*");
     const t = (await transcript(page)).slice(before);
-    const stopped = await page.locator('[data-testid="transcript-stopped"]').isVisible().catch(() => false);
+    const stopped = await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="transcript-stopped"]').isVisible().catch(() => false);
     const out = await readOut();
     ok("D injected computer failure happened", failed === 1);
     ok("D turn did not end silently (bot kept going or said why)", out === "已选：1999-07-12" || stopped || /1999|没有成功|失败|重新/.test(t), `${out} stopped=${stopped} tail=${t.slice(-240).replace(/\s+/g, " ")}`);

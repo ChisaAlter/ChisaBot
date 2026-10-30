@@ -56,7 +56,7 @@ async function throttle(ctx, page) {
 function watch(page, t0, ms) {
   return page.evaluate(async ([t0, ms]) => {
     const viewport = () => document.querySelector('[data-slot="message-scroller-viewport"]');
-    const rows = () => document.querySelectorAll('[data-testid="chat-transcript"] [data-message-id]').length;
+    const rows = () => document.querySelectorAll('[data-testid=kept-page][data-visible=true] [data-testid="chat-transcript"] [data-message-id]').length;
     const afterPaint = () => new Promise((r) => requestAnimationFrame(() => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(0); }));
     const samples = [];
     const start = performance.now();

@@ -25,7 +25,7 @@ export async function mkBot(page, name, role = "你是测试助手，回答简�
   const id = JSON.parse(r.body).agent.id; fs.appendFileSync("/out/bots.txt", id + "\n"); return id;
 }
 export const ta = (page) => page.locator('[aria-label="消息"]:visible').first();
-export const busy = (page) => page.locator('[data-testid="composer-stop"], [data-testid="composer-queue"]').first().isVisible().catch(() => false);
+export const busy = (page) => page.locator('[data-testid=kept-page][data-visible=true] :is([data-testid="composer-stop"], [data-testid="composer-queue"])').first().isVisible().catch(() => false);
 export async function chisaBot(page, bot) {
   await page.goto(`${base}/bot?agent=${encodeURIComponent(bot)}`, { waitUntil: "domcontentloaded" }); await page.waitForURL(/\/channel\//, { timeout: 60000 });
   await ta(page).waitFor({ timeout: 60000 }); await page.waitForTimeout(1500);

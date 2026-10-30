@@ -233,7 +233,7 @@
     }
     // 干活卡 / 收起的「✓ …」行上下的间距（§75 / §82）：找卡片上方、下方最近的可见块
     const spacing = [];
-    const cards = [...document.querySelectorAll("[data-testid=chat-work-card], [data-testid=chat-work-done]")].filter(visible);
+    const cards = [...document.querySelectorAll("[data-testid=kept-page][data-visible=true] :is([data-testid=chat-work-card], [data-testid=chat-work-done])")].filter(visible);
     const blockSel = ".copilotKitMessage, [data-message-id] *, .chat-bubble, [class*=bubble], .jr-surface, [class*=card], p, li, h1, h2, h3, pre, table, img";
     const minGap = opts.minGap ?? 6;
     for (const card of cards) {

@@ -33,7 +33,7 @@ async function context(theme, viewport) {
 /** 在页面里量：输入框卡片 vs 左右邻居（左栏卡 / 主区边 / 右栏卡 / 窗口边）和「面板」把手，以及消息列的内容边。 */
 const measure = () => {
   const vis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 2 && r.height > 2 && s.visibility !== "hidden" && s.display !== "none" && Number(s.opacity) > 0.05; };
-  const comps = [...document.querySelectorAll(".glass-composer")].filter(vis);
+  const comps = [...document.querySelectorAll("[data-testid=kept-page][data-visible=true] .glass-composer")].filter(vis);
   if (!comps.length) return { none: true };
   const c = comps.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0].getBoundingClientRect();
   const main = document.querySelector(".glass-main")?.getBoundingClientRect();
@@ -45,7 +45,7 @@ const measure = () => {
   for (const e of document.querySelectorAll(".glass-body > :not(main), .cc-right")) { if (!vis(e)) continue; const r = e.getBoundingClientRect(); if (r.left >= c.right - 1 && r.bottom > c.top && r.top < c.bottom && r.width > 20) right = Math.min(right, r.left); }
   const hEl = [...document.querySelectorAll(".rail-tab")].find(vis);
   const h = hEl?.getBoundingClientRect();
-  const tr = document.querySelector('[data-testid="chat-transcript"]');
+  const tr = document.querySelector('[data-testid=kept-page][data-visible=true] [data-testid="chat-transcript"]');
   let col = null;
   if (tr && vis(tr)) { const r = tr.getBoundingClientRect(); const s = getComputedStyle(tr); col = { l: Math.round(r.left + parseFloat(s.paddingLeft)), r: Math.round(r.right - parseFloat(s.paddingRight)) }; }
   const bottomEdge = Math.min(H, main ? main.bottom : H);
@@ -83,7 +83,7 @@ for (const { w, theme } of cases) {
   p.on("pageerror", (e) => errors.push(`${tag} pageerror ${String(e).slice(0, 300)}`));
   if (CH) {
     await p.goto(`${base}${CH}`, { waitUntil: "domcontentloaded" });
-    await p.locator(".glass-composer").first().waitFor({ timeout: 60000 }).catch(() => {});
+    await p.locator("[data-testid=kept-page][data-visible=true] .glass-composer").first().waitFor({ timeout: 60000 }).catch(() => {});
     await p.waitForTimeout(4000);
     await shot(p, tag, "thread");
     // 右栏：宽屏默认是一张右栏卡（量的就是它开着的样子），再收起量一次；窄屏是把手，点开是盖在聊天上的抽屉
@@ -103,7 +103,7 @@ for (const { w, theme } of cases) {
     }
     // 左栏收起成 80px 头像栏（只桌面；Ctrl B）
     if (w >= 768) {
-      await p.goto(`${base}${CH}`, { waitUntil: "domcontentloaded" }); await p.locator(".glass-composer").first().waitFor({ timeout: 30000 }).catch(() => {}); await p.waitForTimeout(2500);
+      await p.goto(`${base}${CH}`, { waitUntil: "domcontentloaded" }); await p.locator("[data-testid=kept-page][data-visible=true] .glass-composer").first().waitFor({ timeout: 30000 }).catch(() => {}); await p.waitForTimeout(2500);
       await p.keyboard.press("Control+b"); await p.waitForTimeout(800);
       await shot(p, tag, "thread-sidebar-collapsed");
       await p.keyboard.press("Control+b"); await p.waitForTimeout(500);
@@ -111,7 +111,7 @@ for (const { w, theme } of cases) {
   }
   if (AGENT) {
     await p.goto(`${base}/channel/new?agent=${encodeURIComponent(AGENT)}&topic=new`, { waitUntil: "domcontentloaded" });
-    await p.locator(".glass-composer").first().waitFor({ timeout: 60000 }).catch(() => {});
+    await p.locator("[data-testid=kept-page][data-visible=true] .glass-composer").first().waitFor({ timeout: 60000 }).catch(() => {});
     await p.waitForTimeout(2500);
     await shot(p, tag, "new-chat");
   }

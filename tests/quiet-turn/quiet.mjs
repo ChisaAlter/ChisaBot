@@ -45,7 +45,7 @@ const call = (p, o) => api(page, p, o);
 await guardInit(call);
 const bots = [];
 const box = () => page.locator('[aria-label="消息"]').first();
-const busy = () => page.locator('[data-testid="composer-stop"]').first().isVisible().catch(() => false);
+const busy = () => page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').first().isVisible().catch(() => false);
 const probe = () => page.evaluate(([LEAD]) => {
   const shown = (e) => { const r = e.getBoundingClientRect(); return e.offsetParent !== null && r.height > 1 && !e.closest("[data-folded]"); };
   const vis = (s) => [...document.querySelectorAll(s)].filter(shown);
@@ -55,14 +55,14 @@ const probe = () => page.evaluate(([LEAD]) => {
   const lastRow = rows.at(-1);
   const composer = document.querySelector('[aria-label="消息"]')?.closest("form, [data-slot=composer], .chat-composer") ?? document.querySelector('[aria-label="消息"]');
   const vpBox = vp?.getBoundingClientRect();
-  const spacer = main?.querySelector("[data-message-scroller-spacer]");
+  const spacer = main?.querySelector("[data-testid=kept-page][data-visible=true] [data-message-scroller-spacer]");
   const slack = main?.querySelector("[data-chat-slack]");
   const imgs = vis(".chat-bubbles ~ * img, [data-message-id] img").filter((i) => i.naturalWidth > 0);
   return {
     text: rows.map((e) => e.innerText).join("\n"),
     leadVisible: rows.some((e) => e.innerText.includes(LEAD)),
-    live: vis("[data-testid=chat-work-card]").length,
-    done: vis("[data-testid=chat-work-done]").length,
+    live: vis("[data-testid=kept-page][data-visible=true] [data-testid=chat-work-card]").length,
+    done: vis("[data-testid=kept-page][data-visible=true] [data-testid=chat-work-done]").length,
     emptyBubbles: vis("[data-cb-bubble]").filter((b) => !b.innerText.trim() && !b.querySelector("img,svg,canvas")).length,
     bubbles: vis("[data-cb-bubble]").map((b) => b.innerText.trim().slice(0, 40)),
     images: imgs.length,
@@ -88,9 +88,9 @@ const startTrace = (prompt) => page.evaluate((prompt) => {
   window.__trace = []; window.__tracing = true;
   const loop = () => {
     const vp = document.querySelector('[data-slot="message-scroller-viewport"]');
-    const rows = [...document.querySelectorAll('[data-message-id]')].filter((e) => !e.closest("[data-folded]") && e.innerText.includes(prompt));
+    const rows = [...document.querySelectorAll('[data-testid=kept-page][data-visible=true] [data-message-id]')].filter((e) => !e.closest("[data-folded]") && e.innerText.includes(prompt));
     const last = rows.at(-1);
-    if (vp && last) window.__trace.push({ t: Math.round(performance.now()), y: Math.round(last.getBoundingClientRect().bottom), st: Math.round(vp.scrollTop), busy: !!document.querySelector('[data-testid="composer-stop"]') });
+    if (vp && last) window.__trace.push({ t: Math.round(performance.now()), y: Math.round(last.getBoundingClientRect().bottom), st: Math.round(vp.scrollTop), busy: !!document.querySelector('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]') });
     if (window.__tracing) requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
@@ -168,9 +168,9 @@ try {
     check(p.done >= 1, `LOUD (4 steps): done card stays (${p.done})`);
     check(reserve(p) === 0, `LOUD: no reserved space below (spacer ${p.spacerH} slack ${p.slackH}, blank ${blank(p)})`);
     check(!p.leadVisible, "LOUD: lead narration folded into the card");
-    const card = page.locator("[data-testid=chat-work-done]").last();
+    const card = page.locator("[data-testid=kept-page][data-visible=true] [data-testid=chat-work-done]").last();
     await card.click(); await page.waitForTimeout(400);
-    const notes = await page.locator(".chat-work-note").allInnerTexts();
+    const notes = await page.locator("[data-testid=kept-page][data-visible=true] .chat-work-note").allInnerTexts();
     check(notes.some((n) => n.includes(LEAD)), `LOUD: lead sentence inside the opened card (${JSON.stringify(notes)})`);
     await page.screenshot({ path: `${OUT}/loud-open.png` });
     await card.click(); await page.waitForTimeout(300);

@@ -76,7 +76,9 @@ const send = async (text) => {
 };
 const transcript = () =>
   page
-    .locator("[data-testid=chat-transcript]")
+    .locator(
+      "[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript]",
+    )
     .innerText()
     .catch(() => "");
 const count = (text, needle) => text.split(needle).length - 1;
@@ -99,13 +101,22 @@ async function stopAndMeasure(how) {
   if (how === "esc") {
     await composer().click();
     await page.keyboard.press("Escape");
-  } else await page.locator('[data-testid="composer-stop"]:visible').click();
+  } else
+    await page
+      .locator(
+        '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]:visible',
+      )
+      .click();
   let feedbackMs = null;
   await until(
     async () => {
       const changed =
-        (await visible('[data-testid="composer-stopping"]')) > 0 ||
-        (await visible('[data-testid="composer-stop"]')) === 0;
+        (await visible(
+          '[data-testid=kept-page][data-visible=true] [data-testid="composer-stopping"]',
+        )) > 0 ||
+        (await visible(
+          '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]',
+        )) === 0;
       if (changed) feedbackMs = Date.now() - t0;
       return changed;
     },
@@ -118,8 +129,12 @@ async function stopAndMeasure(how) {
       const s = await stats();
       const idle =
         !(await inbox()).running &&
-        (await visible('[data-testid="composer-stop"]')) === 0 &&
-        (await visible('[data-testid="composer-stopping"]')) === 0;
+        (await visible(
+          '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]',
+        )) === 0 &&
+        (await visible(
+          '[data-testid=kept-page][data-visible=true] [data-testid="composer-stopping"]',
+        )) === 0;
       if (s.open === 0 && idle) {
         endedMs = Date.now() - t0;
         return true;
@@ -193,7 +208,9 @@ try {
   const channelData = JSON.parse((await api(`/api/channels/${channel}`)).body);
   thread = channelData.channel?.threadId || channelData.threadId;
   await page
-    .locator('[data-testid="composer-stop"]:visible')
+    .locator(
+      '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]:visible',
+    )
     .waitFor({ timeout: 15000 });
   await sleep(1500);
   await send("换个方向：补充一个总结表格。");
@@ -205,7 +222,9 @@ try {
   await sleep(1500);
   await send("补充：用三句话总结番茄工作法。");
   await page
-    .locator('[data-testid="queued-messages"] .queued-msg')
+    .locator(
+      '[data-testid=kept-page][data-visible=true] [data-testid="queued-messages"] .queued-msg',
+    )
     .first()
     .waitFor({ timeout: 5000 });
   await shot("1-queued");
@@ -243,8 +262,9 @@ try {
     count(pageText, "补充：用三句话总结番茄工作法。"),
   );
   check(
-    (await visible('[data-testid="queued-read"]')) === 0 ||
-      !text.includes("换个方向"),
+    (await visible(
+      '[data-testid=kept-page][data-visible=true] [data-testid="queued-read"]',
+    )) === 0 || !text.includes("换个方向"),
     "no 「已读取」 on a follow-up that got no reply",
   );
   const held = (await inbox()).items
@@ -256,7 +276,9 @@ try {
     held.length,
   );
   check(
-    (await visible('[data-testid="queued-send-all"]')) === 1,
+    (await visible(
+      '[data-testid=kept-page][data-visible=true] [data-testid="queued-send-all"]',
+    )) === 1,
     "held items offer 「全部发送」",
   );
 
@@ -276,9 +298,12 @@ try {
     Date.now() - t3,
   );
   const newBubbles = await page
-    .locator('[data-testid="queued-messages"] .queued-msg', {
-      hasText: "新问题：番茄工作法是什么？",
-    })
+    .locator(
+      '[data-testid=kept-page][data-visible=true] [data-testid="queued-messages"] .queued-msg',
+      {
+        hasText: "新问题：番茄工作法是什么？",
+      },
+    )
     .count();
   check(newBubbles === 0, "the new message is not parked as 「已暂停」");
   check(
@@ -287,13 +312,19 @@ try {
     count(text, "新问题：番茄工作法是什么？"),
   );
   check(
-    (await visible('[data-testid="queued-messages"] .queued-msg')) === 2,
+    (await visible(
+      '[data-testid=kept-page][data-visible=true] [data-testid="queued-messages"] .queued-msg',
+    )) === 2,
     "the two pre-stop items still wait",
   );
   await shot("3-new-message");
 
   // 4. 全部发送 sends the held items, each once.
-  await page.locator('[data-testid="queued-send-all"]:visible').click();
+  await page
+    .locator(
+      '[data-testid=kept-page][data-visible=true] [data-testid="queued-send-all"]:visible',
+    )
+    .click();
   await until(
     async () => {
       const t = await transcript();
@@ -306,7 +337,10 @@ try {
     40000,
   ).catch(() => {});
   await until(
-    async () => (await visible('[data-testid="composer-stop"]')) === 0,
+    async () =>
+      (await visible(
+        '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]',
+      )) === 0,
     "idle",
     20000,
   ).catch(() => {});
@@ -318,7 +352,9 @@ try {
     "全部发送 answers every held item",
   );
   check(
-    (await visible('[data-testid="queued-messages"] .queued-msg')) === 0,
+    (await visible(
+      '[data-testid=kept-page][data-visible=true] [data-testid="queued-messages"] .queued-msg',
+    )) === 0,
     "no held items left",
   );
   const saved = await serverMessages();
@@ -347,7 +383,9 @@ try {
   // 5. Esc stops a running turn.
   await send("LONG 再写一篇。");
   await page
-    .locator('[data-testid="composer-stop"]:visible')
+    .locator(
+      '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]:visible',
+    )
     .waitFor({ timeout: 15000 });
   await sleep(1500);
   const esc = await stopAndMeasure("esc");
@@ -369,7 +407,9 @@ try {
   // 6. The stop request fails (unlock → 503): 「停止失败，重试」 shows at once; retry asks again and clears it.
   await send("LONG 第三篇。");
   await page
-    .locator('[data-testid="composer-stop"]:visible')
+    .locator(
+      '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]:visible',
+    )
     .waitFor({ timeout: 15000 });
   await sleep(1500);
   let unlockCalls = 0;
@@ -381,10 +421,17 @@ try {
       : route.continue();
   });
   const t6 = Date.now();
-  await page.locator('[data-testid="composer-stop"]:visible').click();
+  await page
+    .locator(
+      '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]:visible',
+    )
+    .click();
   let failedMs = null;
   await until(
-    async () => (await visible('[data-testid="composer-stop-failed"]')) > 0,
+    async () =>
+      (await visible(
+        '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop-failed"]',
+      )) > 0,
     "stop-failed shown",
     10000,
   )
@@ -402,7 +449,9 @@ try {
   const callsBeforeRetry = unlockCalls;
   failUnlock = false;
   const retried = await page
-    .locator('[data-testid="composer-stop-failed"]:visible')
+    .locator(
+      '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop-failed"]:visible',
+    )
     .click({ timeout: 1000 })
     .then(
       () => true,
@@ -425,8 +474,12 @@ try {
   await until(
     async () =>
       !(await inbox()).running &&
-      (await visible('[data-testid="composer-stop-failed"]')) === 0 &&
-      (await visible('[data-testid="composer-send"]')) > 0,
+      (await visible(
+        '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop-failed"]',
+      )) === 0 &&
+      (await visible(
+        '[data-testid=kept-page][data-visible=true] [data-testid="composer-send"]',
+      )) > 0,
     "turn over, prompt cleared",
     10000,
   )
@@ -441,7 +494,9 @@ try {
   );
   await sleep(500);
   check(
-    (await visible('[data-testid="composer-stop-failed"]')) === 0,
+    (await visible(
+      '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop-failed"]',
+    )) === 0,
     "the prompt does not come back",
   );
   // The next turn starts clean.
@@ -453,7 +508,9 @@ try {
   ).catch(() => {});
   check(
     (await transcript()).includes("收到：新一轮：你好") &&
-      (await visible('[data-testid="composer-stop-failed"]')) === 0,
+      (await visible(
+        '[data-testid=kept-page][data-visible=true] [data-testid="composer-stop-failed"]',
+      )) === 0,
     "a new turn does not carry 「停止失败，重试」",
   );
   await page.unroute("**/api/copilotkit/threads/*/unlock");

@@ -109,8 +109,8 @@ async function chat(page, vtag, bot) {
       await page.waitForTimeout(350);
       const s = await page.evaluate(() => { window.__alignClear?.(); const x = window.__alignMeasure({ minGap: 6 }); return x.spacing.filter((r) => r.card === "chat-work-card"); }).catch(() => []);
       if (s.length) { live.push(...s.map((x) => ({ ...x, turn: i, t: Date.now() - t0 }))); if (!shot && Date.now() - t0 > 2500) { shot = true; await measure(page, `chat-live${i}`, vtag); } }
-      const busy = await page.locator('[data-testid="composer-stop"]').first().isVisible().catch(() => false);
-      if (!busy && Date.now() - t0 > 5000) { await page.waitForTimeout(2500); if (!(await page.locator('[data-testid="composer-stop"]').first().isVisible().catch(() => false))) break; }
+      const busy = await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').first().isVisible().catch(() => false);
+      if (!busy && Date.now() - t0 > 5000) { await page.waitForTimeout(2500); if (!(await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').first().isVisible().catch(() => false))) break; }
     }
   }
   await page.waitForTimeout(1200);
@@ -119,7 +119,7 @@ async function chat(page, vtag, bot) {
   await measure(page, "chat-done", vtag, { liveSamples: live.length, liveMinAbove: worstAbove, liveMinBelow: worstBelow, liveGapFlags: liveGap.length });
   if (liveGap.length) results.pages.at(-1).flags.push({ kind: "GAP", d: "干活卡（进行中）", why: `进行中有 ${liveGap.length} 次采样间距 < 6px（最小 上 ${worstAbove} / 下 ${worstBelow}）` }), (results.pages.at(-1).counts.GAP = (results.pages.at(-1).counts.GAP || 0) + liveGap.length);
   // 展开步骤
-  const done = page.locator("[data-testid=chat-work-done]").last();
+  const done = page.locator("[data-testid=kept-page][data-visible=true] [data-testid=chat-work-done]").last();
   if (await done.count()) { await done.click().catch(() => {}); await page.waitForTimeout(500); await measure(page, "chat-done-open", vtag); await done.click().catch(() => {}); }
   // 复制 → 提示
   const copy = page.locator('button[aria-label="复制"], button[aria-label*="复制"]').last();

@@ -38,12 +38,12 @@ const send = async (text) => { await ta().fill(text); await page.keyboard.press(
 try {
 if (SCENARIO === "steer") {
   await send("WORK 帮我做三步");
-  await page.waitForSelector('[data-testid="composer-stop"]', { timeout: 15000 });
+  await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]', { timeout: 15000 });
   await page.waitForTimeout(1800);
   await ta().fill("只看 2026 年的");
   await page.waitForTimeout(250);
   if (OLD) {
-    check(await page.locator('[data-testid="composer-stop"]').isVisible(), "old: while it answers the button is only 停止");
+    check(await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').isVisible(), "old: while it answers the button is only 停止");
     await shot("typing");
     await page.keyboard.press("Enter");
     await page.waitForTimeout(600);
@@ -51,20 +51,20 @@ if (SCENARIO === "steer") {
     await page.waitForTimeout(9000);
     await shot("end");
   } else {
-    check(await page.locator('[data-testid="composer-queue"]').isVisible(), "typing while it answers turns 停止 into 发送");
+    check(await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-queue"]').isVisible(), "typing while it answers turns 停止 into 发送");
     await shot("typing");
     await page.keyboard.press("Enter");
-    await page.waitForSelector('[data-testid="queued-messages"] .queued-msg', { timeout: 5000 });
+    await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="queued-messages"] .queued-msg', { timeout: 5000 });
     check(true, "queued bubble shows right away");
     check((await ta().inputValue()) === "", "composer cleared");
-    check(await page.locator('[data-testid="composer-stop"]').isVisible(), "empty composer: button is 停止 again");
+    check(await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').isVisible(), "empty composer: button is 停止 again");
     await shot("queued");
-    await page.waitForSelector('[data-testid="queued-read"]', { timeout: 15000 });
-    check((await page.locator('[data-testid="queued-messages"] .queued-msg').count()) === 0, "queued bubble gone once read");
+    await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="queued-read"]', { timeout: 15000 });
+    check((await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="queued-messages"] .queued-msg').count()) === 0, "queued bubble gone once read");
     await shot("read");
-    await page.waitForSelector('[data-testid="composer-send"]', { timeout: 30000 });
+    await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="composer-send"]', { timeout: 30000 });
     await page.waitForTimeout(1200);
-    const transcript = await page.locator("[data-testid=chat-transcript]").innerText();
+    const transcript = await page.locator("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript]").innerText();
     check(transcript.includes("已按补充调整：只看 2026 年的"), "the reply answered the queued message");
     check((transcript.match(/只看 2026 年的/g) || []).length === 2, "the queued message appears once in the transcript (plus once quoted in the reply)");
     await shot("end");
@@ -72,7 +72,7 @@ if (SCENARIO === "steer") {
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForSelector('[aria-label="消息"]', { timeout: 40000 });
     await page.waitForTimeout(2500);
-    const after = await page.locator("[data-testid=chat-transcript]").innerText();
+    const after = await page.locator("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript]").innerText();
     check(after.indexOf("只看 2026 年的") < after.indexOf("已按补充调整"), "after reload the queued message sits before the answer");
     await shot("reloaded");
   }
@@ -80,33 +80,33 @@ if (SCENARIO === "steer") {
 
 if (SCENARIO === "worker") {
   await send("DELEGATE 帮我在后台做个测试任务");
-  const card = page.locator('[data-testid="worker-card"]').first();
+  const card = page.locator('[data-testid=kept-page][data-visible=true] [data-testid="worker-card"]').first();
   await card.waitFor({ timeout: 20000 });
-  await page.waitForSelector('[data-testid="worker-card"][data-status="running"]', { timeout: 20000 });
-  await page.waitForSelector('[data-testid="worker-plan"] .is-current', { timeout: 15000 });
+  await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="worker-card"][data-status="running"]', { timeout: 20000 });
+  await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="worker-plan"] .is-current', { timeout: 15000 });
   check(true, "running card with a plan");
   await page.waitForTimeout(400);
   await card.scrollIntoViewIfNeeded();
   await shot("running");
   // chat stays free while it runs
-  check(await page.locator('[data-testid="composer-send"]').isVisible(), "main conversation is free while the worker runs");
-  await page.locator('[data-testid="worker-steer"]').click();
-  await page.locator(".worker-steer-input").fill("结果里写上日期");
+  check(await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-send"]').isVisible(), "main conversation is free while the worker runs");
+  await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="worker-steer"]').click();
+  await page.locator("[data-testid=kept-page][data-visible=true] .worker-steer-input").fill("结果里写上日期");
   await shot("steer-input");
-  await page.locator(".worker-steer button[type=submit]").click();
+  await page.locator("[data-testid=kept-page][data-visible=true] .worker-steer button[type=submit]").click();
   await page.waitForTimeout(500);
   await shot("steered");
-  await page.waitForSelector('[data-testid="worker-card"][data-status="done"]', { timeout: 40000 });
+  await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="worker-card"][data-status="done"]', { timeout: 40000 });
   await page.waitForTimeout(400);
   check((await card.innerText()).includes("后台结果"), "collapsed one-line result");
-  await page.waitForSelector('[data-testid="worker-result"]', { timeout: 20000 });
-  await page.waitForFunction(() => document.querySelector("[data-testid=chat-transcript]")?.textContent?.includes("后台任务做完了"), null, { timeout: 20000 });
-  const text = await page.locator("[data-testid=chat-transcript]").innerText();
+  await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="worker-result"]', { timeout: 20000 });
+  await page.waitForFunction(() => document.querySelector("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript]")?.textContent?.includes("后台任务做完了"), null, { timeout: 20000 });
+  const text = await page.locator("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript]").innerText();
   check(text.includes("后台任务做完了"), "main bot summarised the result without a reload");
   check(text.includes("日期"), "steer message reached the worker");
   await page.waitForTimeout(800);
   await shot("done");
-  await page.locator('[data-testid="worker-result"] .worker-result-line').click();
+  await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="worker-result"] .worker-result-line').click();
   await page.waitForTimeout(400);
   await shot("result-open");
 }
@@ -115,7 +115,7 @@ if (SCENARIO === "worker") {
   log("ERROR", String(error).slice(0, 300));
   failures++;
   await shot("error").catch(() => {});
-  log("cards", await page.locator('[data-testid="worker-card"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-status") + ":" + e.textContent)).catch(() => ""));
+  log("cards", await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="worker-card"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-status") + ":" + e.textContent)).catch(() => ""));
 }
 check(errors.length === 0, `no page errors ${errors.slice(0, 3).join(" | ")}`);
 log(failures ? `RESULT FAIL (${failures})` : "RESULT PASS");

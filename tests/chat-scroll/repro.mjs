@@ -25,7 +25,7 @@ await ctx.addInitScript((lite) => {
   w.__lt = [];
   try { new PerformanceObserver((l) => { for (const e of l.getEntries()) if (w.__sampling) w.__lt.push(Math.round(e.duration)); }).observe({ type: 'longtask', buffered: false }); } catch {}
   w.__findScroller = () => {
-    const list = document.querySelector("[data-testid=chat-transcript]");
+    const list = document.querySelector("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript]");
     let el = list?.parentElement;
     while (el && el !== document.body) {
       const oy = getComputedStyle(el).overflowY;
@@ -41,7 +41,7 @@ await ctx.addInitScript((lite) => {
       if (found && w.__fixed && !w.__fixed.isConnected) { w.__swaps = (w.__swaps || 0) + 1; w.__fixed = found; }
       const s = w.__fixed;
       if (s) {
-        const msgs = document.querySelectorAll("[data-testid=chat-transcript] [data-cb-turn]");
+        const msgs = document.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript] [data-cb-turn]");
         const last = msgs[msgs.length - 1];
         const r = last?.getBoundingClientRect();
         const sr = s.getBoundingClientRect();
@@ -50,7 +50,7 @@ await ctx.addInitScript((lite) => {
           t: Math.round(performance.now()), top: Math.round(s.scrollTop), h: s.scrollHeight, ch: s.clientHeight,
           gap: Math.round(s.scrollHeight - s.scrollTop - s.clientHeight),
           lastBottom: r ? Math.round(r.bottom - sr.top) : null, lastTop: r ? Math.round(r.top - sr.top) : null, lastText,
-          running: Boolean(document.querySelector('[data-testid="composer-stop"]')), same: found === s, minIdx: w.__lite ? null : (() => { let m = 1e9; const sr2 = s.getBoundingClientRect(); for (const el of s.querySelectorAll('[data-index]')) { const rr = el.getBoundingClientRect(); if (rr.bottom > sr2.top && rr.top < sr2.bottom && rr.height > 0) m = Math.min(m, Number(el.dataset.index)); } return m === 1e9 ? null : m; })(), firstVis: w.__lite ? null : (() => { const sr3 = s.getBoundingClientRect(); const all = [...s.querySelectorAll('[data-message-id]')].filter((e) => !e.parentElement.closest('[data-message-id]')); for (let i = 0; i < all.length; i++) { const e = all[i]; const rr = e.getBoundingClientRect(); if (rr.height > 0 && rr.bottom > sr3.top + 1 && rr.top < sr3.bottom) { const row = e.closest('[data-index]'); return row ? Number(row.dataset.index) : i; } } return null; })(), maxIdx: w.__lite ? null : (() => { let m = -1; for (const el of s.querySelectorAll('[data-index]')) m = Math.max(m, Number(el.dataset.index)); return m; })(), fch: found ? found.clientHeight : null, fcls: found && found !== s ? (found.className || found.tagName).toString().slice(0, 80) : undefined, conn: s.isConnected,
+          running: Boolean(document.querySelector('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]')), same: found === s, minIdx: w.__lite ? null : (() => { let m = 1e9; const sr2 = s.getBoundingClientRect(); for (const el of s.querySelectorAll('[data-index]')) { const rr = el.getBoundingClientRect(); if (rr.bottom > sr2.top && rr.top < sr2.bottom && rr.height > 0) m = Math.min(m, Number(el.dataset.index)); } return m === 1e9 ? null : m; })(), firstVis: w.__lite ? null : (() => { const sr3 = s.getBoundingClientRect(); const all = [...s.querySelectorAll('[data-testid=kept-page][data-visible=true] [data-message-id]')].filter((e) => !e.parentElement.closest('[data-message-id]')); for (let i = 0; i < all.length; i++) { const e = all[i]; const rr = e.getBoundingClientRect(); if (rr.height > 0 && rr.bottom > sr3.top + 1 && rr.top < sr3.bottom) { const row = e.closest('[data-index]'); return row ? Number(row.dataset.index) : i; } } return null; })(), maxIdx: w.__lite ? null : (() => { let m = -1; for (const el of s.querySelectorAll('[data-index]')) m = Math.max(m, Number(el.dataset.index)); return m; })(), fch: found ? found.clientHeight : null, fcls: found && found !== s ? (found.className || found.tagName).toString().slice(0, 80) : undefined, conn: s.isConnected,
         });
       }
     }
@@ -66,7 +66,7 @@ async function open() {
   await page.goto(`${BASE}/bot?agent=${BOT}`, { waitUntil: "domcontentloaded" });
   await page.waitForSelector('[aria-label="消息"]', { timeout: 30000 });
   const tl = Date.now();
-  await page.waitForFunction(() => document.querySelectorAll("[data-testid=chat-transcript] [data-message-id]").length > 0, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript] [data-message-id]").length > 0, null, { timeout: 30000 }).catch(() => {});
   log("LOAD", JSON.stringify({ msToFirstMessages: Date.now() - tl, nodes: await page.evaluate(() => document.querySelectorAll("*").length) }));
   await page.waitForTimeout(5000);
 }
@@ -78,10 +78,10 @@ async function send(text) {
 }
 async function waitIdle(maxMs = 120000) {
   const t0 = Date.now();
-  await page.waitForSelector('[data-testid="composer-stop"]', { timeout: 15000 }).catch(() => {});
+  await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]', { timeout: 15000 }).catch(() => {});
   let idle = 0;
   while (Date.now() - t0 < maxMs && idle < 3) {
-    idle = (await page.locator('[data-testid="composer-stop"]').count()) ? 0 : idle + 1;
+    idle = (await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').count()) ? 0 : idle + 1;
     await page.waitForTimeout(700);
   }
 }
@@ -95,7 +95,7 @@ if (PHASE === "seed") {
     await waitIdle(30000);
     if (i % 5 === 0) log("seeded", i);
   }
-  const count = await page.locator("[data-testid=chat-transcript] [data-message-id]").count();
+  const count = await page.locator("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript] [data-message-id]").count();
   log("rendered message nodes", count);
   await ctx.storageState({ path: "/out/state.json" });
 }
@@ -143,11 +143,11 @@ if (PHASE === "stream") {
   const t0 = Date.now();
   const shots = [];
   let scrolledUp = false;
-  await page.waitForSelector('[data-testid="composer-stop"]', { timeout: 15000 }).catch(() => {});
+  await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]', { timeout: 15000 }).catch(() => {});
   let idle = 0;
   let k = 0;
   while (Date.now() - t0 < 90000 && idle < 4) {
-    idle = (await page.locator('[data-testid="composer-stop"]').count()) ? 0 : idle + 1;
+    idle = (await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').count()) ? 0 : idle + 1;
     if (process.env.SCROLLUP === "1" && !scrolledUp && Date.now() - t0 > 5000) {
       scrolledUp = true;
       const box = await page.evaluate(() => { const r = window.__findScroller().getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
