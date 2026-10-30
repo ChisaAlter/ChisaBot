@@ -38,7 +38,8 @@ export function reusableEmptyChannelFor(
   let best: ChannelSummary | undefined;
   let bestAt = "";
   for (const channel of channels ?? []) {
-    if (channel.agentIds.length !== 1 || channel.agentIds[0] !== botId) continue;
+    if (channel.agentIds.length !== 1 || channel.agentIds[0] !== botId)
+      continue;
     const at = channel.lastMessageAt ?? channel.createdAt ?? "";
     if (!best || at > bestAt) {
       best = channel;

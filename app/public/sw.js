@@ -14,18 +14,23 @@
  *      缺失的分包服务器回 404，这里原样转交、不缓存——前端的「分包过期自动刷新一次」（app/src/lib/stale-chunk.ts，PR #64）照常工作。
  *   3. 没登录（会话过期）：导航拿到 401 就改成跳 /login?next=原地址；「正在重试」卡片探测时拿到 401 也直接去登录页，
  *      而不是刷新回同一个地址再等 20 秒（线上 0.1.110：过期会话卡在加载、随后 SW 回 503 卡片）。/login 本身不拦，
- *      登录页永远由网关直接给，不套 20 秒超时和卡片。
+ *      登录页永远由网关直接给，不套 20 秒超时和卡片。防死循环：从 /login 过来的导航还是 401 就原样交给浏览器；
+ *      卡片 30 秒内已经去过 /login（sessionStorage 时间戳，和应用共用）又 401，就改显示「登录状态异常」+「退出重新登录」。
  * 其它请求（/api、/auth、/login、WebSocket、非 GET、跨域、Range 请求、/magpie-admin、/downloads…）一律不拦，浏览器照常处理。
  *
  * 出问题时的退路：把这个文件换成只调用 self.registration.unregister() 的版本即可；或者在浏览器里
  * localStorage.setItem("chisabot-sw", "off") 后刷新，页面会注销它（app/src/lib/pwa.ts）。
  */
-const SW_VERSION = "4"; // 4：401 → /login?next=，/login 不拦；3：关掉 navigation preload（登录回调被发两次）；2 = DF-13 导航失败区分离线 / 服务器慢
+const SW_VERSION = "5"; // 5：从 /login 回来又 401 不再跳（防死循环）；4：401 → /login?next=，/login 不拦；3：关掉 navigation preload（登录回调被发两次）；2 = DF-13 导航失败区分离线 / 服务器慢
 const ASSET_CACHE = "chisabot-assets-v1";
 const NAV_TIMEOUT_MS = 20_000;
 const RETRY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524]);
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 const MAX_ASSETS = 400;
+// 与 app/src/lib/auth/login-redirect.ts 的 LOGIN_REDIRECT_KEY / LOGIN_LOOP_WINDOW_MS 一致：同一个标签页里
+// 应用和重试卡片共用这个时间戳，任何一方 30 秒内跳过 /login，另一方再碰到网关 401 就停下。
+const LOGIN_REDIRECT_KEY = "chisabot:login-redirect-at";
+const LOGIN_LOOP_WINDOW_MS = 30_000;
 const SKIP_NAV =
   /^\/(api|auth|login|magpie-admin|downloads|workspace|sign-in)(\/|$)/;
 
@@ -105,8 +110,12 @@ async function navigate(event) {
     // 会话过期：网关对导航本该回 302 /login；万一回的是网关的 JSON 401（缺 Sec-Fetch-Mode / Accept 的请求），也送去登录页。
     // 和前端 isGatewayLoginRequired（lib/auth/login-redirect.ts）同一个判断：只认 `openbotAuthRequired: true`；
     // 没有网关的部署没有 /login，别的 401 原样交给浏览器。
-    if (await isGatewayLoginRequired(response))
+    // 刚从 /login 过来（login.js 看到会话有效就 replace(next) 回来）还是这种 401：会话有效但后端不认
+    // （身份头重放、签名校验失败）。再送去 /login 就是死循环，原样交给浏览器。真没登录的导航网关自己回 302。
+    if (await isGatewayLoginRequired(response)) {
+      if (cameFromLogin(event.request)) return response;
       return toLogin(event.request.url);
+    }
     if (RETRY_STATUSES.has(response.status) && !isOwnCard(response))
       return slow();
     return response;
@@ -127,6 +136,19 @@ async function isGatewayLoginRequired(response) {
   try {
     const body = await response.clone().json();
     return body?.openbotAuthRequired === true;
+  } catch {
+    return false;
+  }
+}
+
+/** 这个导航是从网关的 /login 页过来的吗（同源、路径 /login）。 */
+function cameFromLogin(request) {
+  try {
+    const referrer = new URL(request.referrer);
+    return (
+      referrer.origin === self.location.origin &&
+      /^\/login(\/|$)/.test(referrer.pathname)
+    );
   } catch {
     return false;
   }
@@ -164,7 +186,8 @@ function isOwnCard(response) {
 
 /**
  * 「正在重试」卡片里的脚本。原样 toString() 进页面，所以只能用参数，不能引用外面的变量。
- * env: { win, delays, retryStatuses }，测试里注入假的 win（setTimeout/fetch/navigator/location）。
+ * env: { win, delays, retryStatuses, loopKey, loopWindowMs, now? }，测试里注入假的 win（setTimeout/fetch/navigator/location）
+ * 和 now（时钟）。
  */
 function retryMain(env) {
   const win = env.win;
@@ -215,6 +238,41 @@ function retryMain(env) {
       }
       if (authRequired) {
         stopped = true;
+        // 防死循环：同一个标签页 loopWindowMs 内已经去过 /login（应用或卡片记的时间戳）又是这种 401，
+        // 说明会话有效但后端不认；停下来让用户退出重新登录，而不是再跳一次。
+        const now = env.now ? env.now() : Date.now();
+        let last = 0;
+        try {
+          last = Number(win.sessionStorage?.getItem(env.loopKey)) || 0;
+        } catch {}
+        if (last > 0 && now >= last && now - last < env.loopWindowMs) {
+          text("title", "登录状态异常");
+          text(
+            "hint",
+            "你已经登录，但服务器暂时没认出这次登录。退出后重新登录一次，通常就能恢复。",
+          );
+          const button = win.document?.getElementById("relogin");
+          if (button) {
+            button.hidden = false;
+            button.onclick = async () => {
+              button.disabled = true;
+              try {
+                await win.fetch("/api/auth/sign-out", {
+                  method: "POST",
+                  credentials: "same-origin",
+                });
+              } catch {}
+              try {
+                win.sessionStorage?.setItem(env.loopKey, String(Date.now()));
+              } catch {}
+              win.location.replace("/login");
+            };
+          }
+          return;
+        }
+        try {
+          win.sessionStorage?.setItem(env.loopKey, String(now));
+        } catch {}
         const here = new URL(win.location.href);
         win.location.replace(
           `/login?next=${encodeURIComponent(here.pathname + here.search + here.hash)}`,
@@ -279,7 +337,7 @@ async function trim(cache) {
 const CARD_STYLE = `html,body{margin:0;height:100%}body{display:grid;place-items:center;padding:24px;box-sizing:border-box;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;color:#16181d;background:linear-gradient(180deg,#6f9bc7 0%,#9dbddc 38%,#c9dbeb 68%,#e4ecf3 100%)}
 .card{max-width:340px;width:100%;box-sizing:border-box;padding:28px 24px 24px;border-radius:24px;background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.75);box-shadow:0 12px 34px rgba(40,70,110,.14);backdrop-filter:saturate(160%) blur(22px);text-align:center}
 h1{margin:0 0 8px;font-size:20px;line-height:28px;font-weight:600}p{margin:0 0 20px;font-size:14px;line-height:22px;color:#3b3f48}#hint{margin-top:-8px;font-size:13px;color:#5a606b}
-button{height:44px;padding:0 24px;border:0;border-radius:999px;background:#16181d;color:#fff;font:inherit;font-size:15px;cursor:pointer}
+#relogin{margin-right:8px}button{height:44px;padding:0 24px;border:0;border-radius:999px;background:#16181d;color:#fff;font:inherit;font-size:15px;cursor:pointer}
 @media (prefers-color-scheme:dark){body{color:#e8ecf3;background:linear-gradient(180deg,#0c1626,#12203a 38%,#172a46 68%,#1b304d)}.card{background:rgba(30,42,60,.72);border-color:rgba(255,255,255,.08)}p{color:#c7cedb}#hint{color:#aab3c2}button{background:#e8ecf3;color:#10161f}}`;
 
 function card(kind, title, body, script) {
@@ -306,11 +364,11 @@ function offline() {
 }
 
 function slow() {
-  const env = `{win:window,delays:${JSON.stringify(RETRY_DELAYS_MS)},retryStatuses:${JSON.stringify([...RETRY_STATUSES])}}`;
+  const env = `{win:window,delays:${JSON.stringify(RETRY_DELAYS_MS)},retryStatuses:${JSON.stringify([...RETRY_STATUSES])},loopKey:${JSON.stringify(LOGIN_REDIRECT_KEY)},loopWindowMs:${LOGIN_LOOP_WINDOW_MS}}`;
   return card(
     "slow",
     "服务器响应慢",
-    `<h1 id="title">服务器响应慢，正在重试…</h1><p>可能正在更新或者暂时繁忙，恢复后会自动回到这个页面。</p><p id="hint" aria-live="polite"></p>`,
+    `<h1 id="title">服务器响应慢，正在重试…</h1><p>可能正在更新或者暂时繁忙，恢复后会自动回到这个页面。</p><p id="hint" aria-live="polite"></p><button type="button" id="relogin" hidden>退出重新登录</button>`,
     `<script>(${retryMain.toString()})(${env});</script>`,
   );
 }
