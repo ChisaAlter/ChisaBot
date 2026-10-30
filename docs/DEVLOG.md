@@ -952,3 +952,15 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 - 发版前备份 pre-release/v0.1.114-20261030T042002Z.dump（pg_restore -l 767 条）。
 - smoke ok:true persisted:false；health.sh 通过；公网 /login 200；匿名导航 / → 302 /login?next=%2F；/sign → 302 /login；sw.js SW_VERSION = "5"。
 
+## 2026-10-30 发版 0.1.115
+
+- #449 `dev4/perf-resize-pause`（head `52ead3f`）→ `3db22ee`：改窗口大小时暂停 WebGL 天空，`html[data-resizing]`。
+- #448 `dev2/jank-chat-switch`（head `99c7504`）→ `7434d37`：切会话即时反馈，高亮先到、对话延后渲染。
+
+**范围**：只动 `app/` 和文档；网关 nginx、web-auth、`pc/`、`android/` 不变。
+
+**流程**：核对 head 未变；从 origin/main（`11bacde`）开临时 worktree `--no-ff` 依次合并。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 结果见部署记录。
+
+**冲突**：只有 `docs/DEVLOG.md`，两边都保留；`CHANGELOG.md` 顶部的 `## Unreleased` 发版时改成 0.1.115 段，并补上 #448 的条目。
+
+**版本**：根、`app`、`server` 升到 `0.1.115`；PC / Android 不变。不打 tag、不发 Release。
