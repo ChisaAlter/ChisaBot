@@ -1,7 +1,19 @@
 import { IconMenu2, IconSearch } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import type { ReactElement, ReactNode } from "react";
+import {
+  cloneElement,
+  type FocusEvent,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactElement,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { flushSync } from "react-dom";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -219,6 +231,54 @@ export function WindowControls({
 export const ROSTER_ID = "chisabot-bot-list";
 export const PANEL_RAIL_ID = "chisabot-panel-rail";
 
+/**
+ * 只用过鼠标的会话里，ToggleTip 在第一次悬停之前不挂 Base UI Tooltip（P2-2，FIX-PLAN §3 4e）。
+ *
+ * 面板抽屉一打开就一次挂上一批 ToggleTip，每个都带一套 Tooltip store + floating-ui 悬停 / 焦点 hook，
+ * 绝大多数从来没被悬停过。现在先只渲染按钮本身，鼠标第一次进来才换成真 Tooltip，并当场打开——
+ * Provider 的 `delay` 是 0（routes/__root.tsx），和原来「一进来就出」一样；之后的离开、点击关闭、
+ * 再次悬停都交给 Base UI。触屏不开（Base UI 的悬停也是 mouseOnly）。
+ *
+ * 键盘：一旦有过「键盘导航」（Tab、方向键、Enter / 空格 / Esc 按在非输入框上，或带 Ctrl / ⌘ / Alt
+ * 的快捷键；在输入框里打字不算），之后新挂的 ToggleTip 一律直接挂真 Tooltip，已挂着的懒按钮也在这次
+ * keydown 里同步换好（早于浏览器移动焦点），所以 Tab / 程序聚焦落到的是真 Trigger，:focus-visible
+ * 时照常弹出、焦点不会因为换节点丢掉。兜底：懒按钮拿到 :focus-visible 焦点时当场换成真 Tooltip 并打开，
+ * 焦点还给新节点。非 :focus-visible 的焦点本来就不弹（Base UI useFocus 只认 :focus-visible）；
+ * 懒按钮被悬停换节点时如果它正拿着焦点，同样把焦点还回去。
+ */
+let keyboardSeen = false;
+const keyboardListeners = new Set<() => void>();
+const NAV_KEYS = new Set(["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", " ", "Escape", "F6"]);
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+}
+function onFirstKeydown(event: KeyboardEvent) {
+  if (keyboardSeen) return;
+  const modified = event.ctrlKey || event.metaKey || event.altKey;
+  const nav = event.key === "Tab" || (NAV_KEYS.has(event.key) && !isTypingTarget(event.target));
+  if (!modified && !nav) return;
+  keyboardSeen = true;
+  window.removeEventListener("keydown", onFirstKeydown, true);
+  flushSync(() => {
+    for (const arm of keyboardListeners) arm();
+  });
+  keyboardListeners.clear();
+}
+if (typeof window !== "undefined") window.addEventListener("keydown", onFirstKeydown, true);
+
+/** 测试用：回到「还没按过键」的状态。 */
+export function resetToggleTipKeyboardForTest() {
+  keyboardSeen = false;
+  keyboardListeners.clear();
+  if (typeof window !== "undefined") {
+    window.removeEventListener("keydown", onFirstKeydown, true);
+    window.addEventListener("keydown", onFirstKeydown, true);
+  }
+}
+
+type Armed = { open: boolean; refocus: boolean };
+
 export function ToggleTip({
   label,
   keys,
@@ -230,13 +290,80 @@ export function ToggleTip({
   children: ReactElement;
   side?: "bottom" | "left" | "right" | "top";
 }) {
+  const [armed, setArmed] = useState<Armed | null>(() => (keyboardSeen ? { open: false, refocus: false } : null));
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (armed) return;
+    const arm = () => setArmed({ open: false, refocus: false });
+    keyboardListeners.add(arm);
+    return () => {
+      keyboardListeners.delete(arm);
+    };
+  }, [armed]);
+  useLayoutEffect(() => {
+    if (armed?.refocus) triggerRef.current?.focus({ preventScroll: true });
+  }, [armed]);
+  if (!armed) {
+    return (
+      <LazyTipTrigger
+        onArm={(refocus) => flushSync(() => setArmed({ open: true, refocus }))}
+        trigger={children}
+      />
+    );
+  }
   return (
-    <Tooltip>
-      <TooltipTrigger render={children} />
-      <TooltipContent side={side} sideOffset={8}>
+    <Tooltip defaultOpen={armed.open}>
+      <TooltipTrigger ref={triggerRef} render={children} />
+      <TooltipContent disableAnchorTracking side={side} sideOffset={8}>
         {label}
         {keys ? <span className="text-background/60">{keys}</span> : null}
       </TooltipContent>
     </Tooltip>
   );
+}
+
+type TipTriggerProps = {
+  onPointerEnter?: (event: PointerEvent<HTMLElement>) => void;
+  onPointerDown?: (event: PointerEvent<HTMLElement>) => void;
+  onMouseEnter?: (event: MouseEvent<HTMLElement>) => void;
+  onFocus?: (event: FocusEvent<HTMLElement>) => void;
+  "data-slot"?: string;
+};
+
+function matchesFocusVisible(el: Element) {
+  try {
+    return el.matches(":focus-visible");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 还没挂 Tooltip 时的按钮：原样渲染，只多接「鼠标第一次进来」和「第一次 :focus-visible 焦点」。
+ * 用 mouseenter（和 Base UI 悬停 hook 同一个事件，内容在静止的指针下移过来也算），触屏的兼容
+ * mouseenter 按前面 pointer 事件的 pointerType 排除。
+ */
+function LazyTipTrigger({ trigger, onArm }: { trigger: ReactElement; onArm: (refocus: boolean) => void }) {
+  const own = trigger.props as TipTriggerProps;
+  const pointerType = useRef<string | undefined>(undefined);
+  return cloneElement(trigger as ReactElement<TipTriggerProps>, {
+    "data-slot": own["data-slot"] ?? "tooltip-trigger",
+    onPointerEnter: (event: PointerEvent<HTMLElement>) => {
+      own.onPointerEnter?.(event);
+      pointerType.current = event.pointerType;
+    },
+    onPointerDown: (event: PointerEvent<HTMLElement>) => {
+      own.onPointerDown?.(event);
+      pointerType.current = event.pointerType;
+    },
+    onMouseEnter: (event: MouseEvent<HTMLElement>) => {
+      own.onMouseEnter?.(event);
+      if (pointerType.current === "touch") return;
+      onArm(event.currentTarget.ownerDocument.activeElement === event.currentTarget);
+    },
+    onFocus: (event: FocusEvent<HTMLElement>) => {
+      own.onFocus?.(event);
+      if (matchesFocusVisible(event.currentTarget)) onArm(true);
+    },
+  });
 }
