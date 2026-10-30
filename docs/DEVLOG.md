@@ -15,6 +15,20 @@
 
 **验证**：typecheck、app build、test:app 通过；Biome 改动文件无新增（`auth/queries.ts` 在 main 上就有 1 处格式问题，未动）。headless Chrome 截图（`/workspace/dev4-m31b-xfer/shots/`）：卡片打开时「正在加载」可见元素 0 个，拿掉属性后 1 个（在卡片后面）。
 
+## 打开设置提速（dev2/jank-settings-open，FIX-PLAN P1-6）
+
+**动机**：点账号卡 →「设置」在 4x 降速下要 0.3s 以上，而且第二次打开反而比第一次慢（main：冷 284ms，热 337ms，两次点击首帧之和）。原因：账号菜单是模态的，开关时为全屏遮罩量整页布局；点菜单项要等退场动画和路由代码块加载完才切页；进设置后藏着的聊天和右栏整棵重渲；section-rail 在打开那一帧同步 scrollIntoViewWithin 强制排版。
+
+**改法**（头像仍先弹菜单，Jun 的决定）：
+- `account-menu.tsx`：`modal={false}`；点菜单项时加 `is-leaving` 去掉退场动画，收起那一帧画完（rAF + setTimeout 0）就 navigate，不再等 preloadRoute；菜单打开时顺手预取 `/settings`。
+- `authed-shell.tsx`：`PanelRail`、`ChannelPage` 用 memo 包住，进出设置只翻 `visible`，藏着的部分不重渲；外壳空闲（requestIdleCallback，兜底 2s）时预取设置页代码块（设置路由无 loader，不发 API）。
+- `channel-page.tsx`：`ChannelBody` memo。
+- `section-rail.tsx`：滚动选中行挪到 rAF 里，行已在可视区内就不滚（新导出 `rowOutOfView`）。
+- `perf/jank.mjs`：settings 场景改点左下账号卡（#440 之后电脑顶栏没有头像）。
+- 测试 `app/tests/settings-open-fast.test.tsx`（3 条）。
+
+**验证**：bun 1.3.14。typecheck、build 通过；test:app 1918 pass / 0 fail；server + DB 4643 pass / 28 fail，失败项与 main 同一批；Biome 改动文件无新增问题。perf 4x CPU、3 次、不带 trace（base = main 500b810c）：settings-open-cold worst INP 184→168，settings-open-warm 232→112；两次点击首帧之和 冷 266→249ms、热 322→170ms，都在 0.3s 内，第二次打开比第一次快。settings-pages 的 long-task 总量 169→277ms（+64%），各页 INP / 首帧持平，留给后续排查。
+
 ## 改窗口大小时暂停 WebGL 天空（dev4/perf-resize-pause，FIX-PLAN P2-3 JS 部分）
 
 **动机**：卡顿分析根因 6：resize 场景主线程 composite 约 7s、CrGpuMain 6.4s，fps 9–12。天空引擎（wallpaper_core.html）每个 resize 事件都改 `canvas.width`（清空画布），宿主再 `drawSkyNow` 当帧补画一整帧 WebGL；拖一次窗口就是几十帧满屏重绘。

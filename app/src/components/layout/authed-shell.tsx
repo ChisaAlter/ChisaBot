@@ -1,4 +1,4 @@
-import { Outlet, useRouterState } from "@tanstack/react-router";
+import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
 import { KeepAliveStage } from "@/components/layout/keep-alive";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
@@ -28,9 +28,31 @@ export function AuthedShell() {
   return <ShellFrame pathname={pathname} />;
 }
 
+/*
+ * 藏着的右栏在进出设置时不重画（jank P1-6；聊天的 memo 见下面 KeptChannelPage）：地址变了只是 `visible` 翻一下，
+ * 其余 props 都没变，memo 让它们整棵跳过。
+ */
+const KeptPanelRail = memo(PanelRail);
+
+/** 空闲时把设置页的代码块先取好（jank P1-6）：设置路由没有 loader，所以只下载 JS，不发 `/api/settings/*`。 */
+function useIdleSettingsPrefetch(scope: string) {
+  const router = useRouter();
+  useEffect(() => {
+    if (scope !== "app") return;
+    const run = () => void router.preloadRoute({ to: "/settings" }).catch(() => undefined);
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(run, { timeout: 4000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(run, 2000);
+    return () => window.clearTimeout(id);
+  }, [router, scope]);
+}
+
 function ShellFrame({ pathname }: { pathname: string }) {
   useChannelEvents();
   const scope = scopeOfPath(pathname);
+  useIdleSettingsPrefetch(scope);
   const sidebar =
     scope === "settings" ? (
       <SettingsSidebar className="glass-sidebar-container" />
@@ -43,7 +65,7 @@ function ShellFrame({ pathname }: { pathname: string }) {
     <GlassShell
       banner={scope === "app" ? <SelfHostBanner /> : undefined}
       // 右栏面板卡只属于机器人；在设置 / 管理里藏起来而不是卸载，回来不重载。
-      right={<PanelRail />}
+      right={<KeptPanelRail />}
       rightHidden={scope !== "app"}
       scope={scope}
       sidebar={sidebar}
