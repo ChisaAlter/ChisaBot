@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.115 — 2026-10-30
+
+这一版合并 #449、#448：改窗口大小时暂停 WebGL 天空；切会话时左栏高亮先到、对话延后渲染。只有网页更新，网关、登录服务（web-auth）、PC 和 Android 不变。
+
+- 改窗口大小不再卡（FIX-PLAN P2-3 的 JS 部分，dev4/perf-resize-pause）：拖动改窗口大小时 `<html>` 挂 `data-resizing`（下一帧挂上，最后一次 resize 后约 150ms 拿掉，`app/src/lib/resize-state.ts`，应用入口初始化一次）。WebGL 天空在这段时间暂停：节流循环不出帧，引擎也不再每个 resize 事件都改画布尺寸、重画一帧（画布保持旧尺寸由 CSS 拉满），停下后按最终尺寸改一次并当帧补画。`html[data-resizing]` 下去掉毛玻璃和阴影的 CSS 由前端另做。headless 4x 降速 resize 场景：帧率 13.8 → 48.7，长任务 4581ms → 163ms。
+- 切会话即时反馈（FIX-PLAN P1-1，dev2/jank-chat-switch）：左栏点机器人先只重画高亮，导航排在这一帧之后，对话用 `useDeferredValue` 延后渲染；切换中旧的一页半透明且 `inert`，往旧会话发送会被拦下、草稿保留。4x 降速最差 INP 2216 → 80ms。
+
 ## 0.1.114 — 2026-10-30
 
 这一版只合并 #442：公网网关下会话过期不再卡在加载（直接去 `/login?next=`，带防死循环），手机抽屉导航后收起，`/channel/new` 总开新话题。Service Worker 升到 5。只有网页更新，网关、登录服务（web-auth）、PC 和 Android 不变。
@@ -1153,7 +1160,9 @@ afterwards, and does not when only the code moved.
 
 Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
-## Unreleased
+## 0.1.115 — 2026-10-30
+
+这一版合并 #449、#448：改窗口大小时暂停 WebGL 天空；切会话时左栏高亮先到、对话延后渲染。只有网页更新，网关、登录服务（web-auth）、PC 和 Android 不变。
 
 - 修天空背景换场景时渐变偶尔停在半路（主线程卡的时候停在 0.76～0.98 一到四秒，要等下一次唤醒才跳完）：渐变一旦开始就一直醒着画到结束（最多 8 秒），引擎跳过不画的那一拍也续上；天气（open-meteo）响应的 body 读完时再叫醒一次天空，网慢时天气带来的那次渐变也能画出来。改动在 `app/src/components/sky-background.tsx` 和新文件 `app/src/lib/sky-fade.ts`，引擎 `wallpaper_core.html` 未改；空闲、失焦、隐藏时照旧不画。未升级版本号。
 - 修「有新版本，点此刷新」明明输入框是空的也弹「输入框里还有没发送的内容」：那道确认原来扫整页的 `textarea` / contenteditable / `type="text"`，机器人画的卡片表单、面板、搜索框都会被当成聊天草稿；现在只认显式标了 `data-unsent-watch` 的输入（编辑中的消息、还没提交的审批回答），聊天的草稿本来记在 localStorage 里、刷新会恢复，不再拦人。文案也改成说清到底会丢什么。输入框上还挂着的附件（File 只在内存里）现在单独拦一下，确认框写明刷新后要重新选。

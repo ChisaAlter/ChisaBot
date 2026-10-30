@@ -24,7 +24,7 @@
     },
     "app": {
       "name": "app",
-      "version": "0.0.0",
+      "version": "0.1.106",
       "dependencies": {
         "@ag-ui/core": "1.0.1",
         "@base-ui/react": "^1.6.0",
@@ -80,11 +80,11 @@
     },
     "server": {
       "name": "server",
-      "version": "0.0.0",
+      "version": "0.1.106",
       "dependencies": {
         "@ag-ui/client": "1.0.1",
         "@ag-ui/core": "1.0.1",
-        "@ag-ui/mastra": "1.1.6",
+        "@ag-ui/mastra": "2.0.1",
         "@ai-sdk/anthropic": "3.0.111",
         "@ai-sdk/openai": "3.0.99",
         "@better-auth/drizzle-adapter": "^1.7.1",
@@ -129,7 +129,7 @@
 
     "@ag-ui/a2ui-middleware": ["@ag-ui/a2ui-middleware@0.0.10", "https://registry.npmmirror.com/@ag-ui/a2ui-middleware/-/a2ui-middleware-0.0.10.tgz", { "dependencies": { "@ag-ui/a2ui-toolkit": "0.0.4", "clarinet": "^0.12.6" }, "peerDependencies": { "@ag-ui/client": ">=0.0.40", "rxjs": "7.8.1" } }, "sha512-2BQFUQ9vJzUAQSR0dNW/ijhyH8KpiRWISSLTP6mIe6ENyQ2cM1/XLG38/Dcb69olcs36gtZADZzAQWcno5H6fA=="],
 
-    "@ag-ui/a2ui-toolkit": ["@ag-ui/a2ui-toolkit@0.0.4", "https://registry.npmmirror.com/@ag-ui/a2ui-toolkit/-/a2ui-toolkit-0.0.4.tgz", {}, "sha512-9VPmgpCAsFVICk7z23kh+Kp/BwYMxw0D0KGjOiKXhm1MAH+Wid2iC3yKsXso+q7UZZiyhWgeDUSgaAkltyLmGg=="],
+    "@ag-ui/a2ui-toolkit": ["@ag-ui/a2ui-toolkit@0.0.5", "", {}, "sha512-klYOXh+L+X8yM0EdrHJGrKmh7G1bKBvO/Zo4ryl6w5JlkXCrqkCeiSLtwB3UeN2Z1w61y1eMmzWn92q9c4/D8w=="],
 
     "@ag-ui/client": ["@ag-ui/client@1.0.1", "https://registry.npmmirror.com/@ag-ui/client/-/client-1.0.1.tgz", { "dependencies": { "@ag-ui/core": "1.0.1", "@ag-ui/encoder": "1.0.1", "@ag-ui/proto": "1.0.1", "@types/uuid": "^10.0.0", "compare-versions": "^6.1.1", "fast-json-patch": "^3.1.1", "rxjs": "7.8.1", "untruncate-json": "^0.0.1", "uuid": "^11.1.0", "zod": "^3.25.76" } }, "sha512-AxJ1+fnsRrhWBg+dXItoyXNqUhI/tOXk0/TxXrsuvdjtyTx216Hu+3q5DgQnTDbluP95fCW4buoCKQsKpHmmCw=="],
 
@@ -139,7 +139,7 @@
 
     "@ag-ui/langgraph": ["@ag-ui/langgraph@0.0.44", "https://registry.npmmirror.com/@ag-ui/langgraph/-/langgraph-0.0.44.tgz", { "dependencies": { "@ag-ui/a2ui-toolkit": "0.0.4", "@langchain/core": "^1.1.40", "@langchain/langgraph-sdk": "^1.8.8", "langchain": ">=1.2.0", "partial-json": "^0.1.7", "rxjs": "7.8.1" }, "peerDependencies": { "@ag-ui/client": ">=0.0.42", "@ag-ui/core": ">=0.0.42" } }, "sha512-6FthYxO7ZJa1CuvU0/ajP4FmPW1TojJi4y19wUER3iSBibwPbDRHD9ZzGwTu82ZeM+OTeAmzGwlLfYf3zJMPgQ=="],
 
-    "@ag-ui/mastra": ["@ag-ui/mastra@1.1.6", "https://registry.npmmirror.com/@ag-ui/mastra/-/mastra-1.1.6.tgz", { "dependencies": { "@ag-ui/a2ui-toolkit": "0.0.4", "@ai-sdk/ui-utils": "^1.1.19", "fast-json-patch": "^3.1.1", "rxjs": "7.8.1", "zod": "^3.25.76" }, "peerDependencies": { "@ag-ui/client": ">=0.0.58", "@ag-ui/core": ">=0.0.58", "@copilotkit/runtime": "^1.60.1", "@mastra/client-js": ">=1.0.0-0 <2.0.0-0", "@mastra/core": ">=1.29.0 <2.0.0-0" }, "optionalPeers": ["@copilotkit/runtime"] }, "sha512-CxG+QDD1A8Vjc86918R5H979RTglFqbOiZgwm6HwNnoZX3MPl7yyEUPs67egE7rU1lNXX93ib7VpJfqNRZdkaQ=="],
+    "@ag-ui/mastra": ["@ag-ui/mastra@2.0.1", "", { "dependencies": { "@ag-ui/a2ui-toolkit": "0.0.5", "@ai-sdk/ui-utils": "^1.1.19", "fast-json-patch": "^3.1.1", "rxjs": "7.8.1", "zod": "^3.25.76" }, "peerDependencies": { "@ag-ui/client": ">=1.0.0", "@ag-ui/core": ">=1.0.0", "@copilotkit/runtime": "^1.76.0", "@mastra/client-js": ">=1.0.0-0 <2.0.0-0", "@mastra/core": ">=1.29.0 <2.0.0-0" }, "optionalPeers": ["@copilotkit/runtime"] }, "sha512-va0TDVkYHtE2USyg1aCu6udQXVO9sVJMMnxqP1GauacF0y5rpSgrQvrpLuZPeAOu2BgPVyb/xb3jNGh+xD2GoQ=="],
 
     "@ag-ui/mcp-apps-middleware": ["@ag-ui/mcp-apps-middleware@0.1.1", "https://registry.npmmirror.com/@ag-ui/mcp-apps-middleware/-/mcp-apps-middleware-0.1.1.tgz", { "dependencies": { "@modelcontextprotocol/sdk": "^1.15.0" }, "peerDependencies": { "@ag-ui/client": ">=0.0.40", "rxjs": "7.8.1" } }, "sha512-bX02Hly+9oKTsBT+4RG7ntY9HSF1O+ysRHgXbkKY+ZNVYTCrtpiwgzUfQ1MqMPhBLbZUaVBh9uNfLVxU0maaNQ=="],
 
@@ -2443,7 +2443,11 @@
 
     "@a2ui/web_core/zod": ["zod@3.25.76", "https://registry.npmmirror.com/zod/-/zod-3.25.76.tgz", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
+    "@ag-ui/a2ui-middleware/@ag-ui/a2ui-toolkit": ["@ag-ui/a2ui-toolkit@0.0.4", "https://registry.npmmirror.com/@ag-ui/a2ui-toolkit/-/a2ui-toolkit-0.0.4.tgz", {}, "sha512-9VPmgpCAsFVICk7z23kh+Kp/BwYMxw0D0KGjOiKXhm1MAH+Wid2iC3yKsXso+q7UZZiyhWgeDUSgaAkltyLmGg=="],
+
     "@ag-ui/client/zod": ["zod@3.25.76", "https://registry.npmmirror.com/zod/-/zod-3.25.76.tgz", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
+
+    "@ag-ui/langgraph/@ag-ui/a2ui-toolkit": ["@ag-ui/a2ui-toolkit@0.0.4", "https://registry.npmmirror.com/@ag-ui/a2ui-toolkit/-/a2ui-toolkit-0.0.4.tgz", {}, "sha512-9VPmgpCAsFVICk7z23kh+Kp/BwYMxw0D0KGjOiKXhm1MAH+Wid2iC3yKsXso+q7UZZiyhWgeDUSgaAkltyLmGg=="],
 
     "@ag-ui/mastra/zod": ["zod@3.25.76", "https://registry.npmmirror.com/zod/-/zod-3.25.76.tgz", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
