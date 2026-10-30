@@ -254,14 +254,14 @@ function ReadMark({ messageId }: { messageId: string }) {
 const EMPTY_QUEUE: readonly QueuedMessage[] = [];
 
 /**
- * 「回到底部」的内容放模块级：这个按钮跟着滚动状态每个 token 重渲，元素不变就不用再往里画一遍
+ * 「回到底部」整个元素放模块级：transcript 每个 token 重渲，元素不变 React 就跳过它；按钮自己的滚动状态照常更新
  * （jank FIX-PLAN §5 / P2-1）。
  */
-const BOTTOM_PILL_CONTENT = (
-  <>
+const BOTTOM_PILL = (
+  <MessageScrollerButton className="chat-bottom-pill">
     <IconChevronDown className="size-4" />
     <span className="chat-bottom-pill-t">{"回到底部"}</span>
-  </>
+  </MessageScrollerButton>
 );
 
 /**
@@ -3552,9 +3552,7 @@ export function ChatTranscript({
             )}
           </MessageScrollerContent>
         </MessageScrollerViewport>
-        <MessageScrollerButton className="chat-bottom-pill">
-          {BOTTOM_PILL_CONTENT}
-        </MessageScrollerButton>
+        {BOTTOM_PILL}
         <ScrollNewestQueuedIntoView
           newest={queued.at(-1)?.id ?? null}
           viewport={viewportRef}
