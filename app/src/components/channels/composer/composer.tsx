@@ -52,6 +52,7 @@ import {
   wasJustSent,
 } from "@/lib/chat/ui-memory";
 import { shouldStopOnEscape } from "@/lib/copilot/held-supplements";
+import { sendTargetsStaleChannel } from "@/lib/chat/pending-switch";
 import { newId } from "@/lib/new-id";
 import { cn } from "@/lib/utils";
 import { Button } from "../../ui/button";
@@ -1389,7 +1390,9 @@ export function Composer({
         overCap(rawSubmitted) ||
         sendBlocked ||
         disabled ||
-        dictation.session.getSnapshot().phase !== "idle"
+        dictation.session.getSnapshot().phase !== "idle" ||
+        // 正在切会话：这个输入框属于旧会话，不发，草稿留着（FIX-PLAN P1-1）。
+        sendTargetsStaleChannel(channelId)
       ) {
         return;
       }
@@ -1539,6 +1542,7 @@ export function Composer({
       }
     },
     [
+      channelId,
       disabled,
       sendBlocked,
       dictation.session,

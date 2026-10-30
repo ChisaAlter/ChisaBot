@@ -14,6 +14,34 @@
 
 **验证**：bun 1.3.14。typecheck、build 通过；test:app 1903 pass / 0 fail；server + DB 4643 pass / 28 fail，失败项与 main 同一批；Biome 改动文件无新增问题。perf 4x CPU、3 次、不带 trace：settings-open-cold worst INP 200→176，settings-open-warm 240→112；两次点击首帧之和 冷 284→264ms、热 337→170ms，都在 0.3s 内，第二次打开比第一次快。
 
+## 改窗口大小时暂停 WebGL 天空（dev4/perf-resize-pause，FIX-PLAN P2-3 JS 部分）
+
+**动机**：卡顿分析根因 6：resize 场景主线程 composite 约 7s、CrGpuMain 6.4s，fps 9–12。天空引擎（wallpaper_core.html）每个 resize 事件都改 `canvas.width`（清空画布），宿主再 `drawSkyNow` 当帧补画一整帧 WebGL；拖一次窗口就是几十帧满屏重绘。
+
+**做法**：
+- 新增 `app/src/lib/resize-state.ts`：`initResizeState()`（`main.tsx` 调一次，幂等，返回拆除函数）监听 resize；第一次事件后在 rAF 里给 `<html>` 挂 `data-resizing=""`，最后一次事件后 150ms 拿掉；`isResizing()`、`resizeInProgress()`（从第一次事件就算）、`subscribeResizing()`。和前端约定的接口：CSS 用 `html[data-resizing]` 去掉 backdrop-filter / box-shadow，本 PR 不写 CSS。
+- `sky-background.tsx`：`skyCanRun` 在 `isResizing()` 时返回 false；引擎脚本里裸写的 `addEventListener` 作为 `new Function` 的参数传进去，`resize` 监听收进宿主，由 `onSkyResizeEvent` 调度——拖动中只记一笔，停下时（订阅 resize-state 的结束通知）按最终尺寸调一次引擎 `resize()` 再 `drawSkyNow()`，并 `wakeSky` 把可能被打断的渐变画完。拖动中画布是旧尺寸，`#gl` 是 100%×100%，CSS 拉伸，不露空画布。引擎本身未改。
+- 测试 `app/tests/resize-state.test.ts`（手写假时钟）：属性挂上 / 拿掉的时机、订阅通知、天空循环暂停 / 恢复、拖动中引擎不改尺寸停下后改一次、init 幂等且拆掉后不留监听和计时器；去掉实现后 5 条都失败。
+
+- 小爱复审后补：测试用导出改名 `__skyLoopForTestOnly`；`onSkyResizeEvent` 注释写明依赖 resize-state 的监听先注册；resize-state 逐个 try/catch 调订阅者（抛错只 `console.error`，不挡其他订阅者），加了对应测试。
+
+**验证**：基于 headless harness 的 resize 场景（PC 客户端真机 trace 没录）。4x 降速、不带 trace、各 3 次中位数：fps 13.8 → 48.7，p95 帧 133 → 33ms，长任务 4581 → 163ms，脚本 378 → 154ms；样式 / 布局不变（那部分等前端的 CSS）。SwiftShader 会放大 GPU 部分，真机收益要打折。
+
+## 切会话即时反馈（dev2/jank-chat-switch，FIX-PLAN P1-1 / F0）
+
+**动机**：切会话时左栏高亮和整段对话在同一次提交里渲染，点下去要等 0.3–2s 才有任何变化（4x 降速下 INP 最差 2216ms）。FIX-PLAN F0：高亮先单独提交，对话延后渲染，目标首帧 <16ms。
+
+**改法**：
+- 新文件 `lib/chat/pending-switch.ts`：一个外部小 store 记「正在切过去的机器人」。左栏 `BotRow` / `MiniBot` 普通左键点击时先 `markPendingBot`，只重画左栏那几行（高亮按 `pending ?? 路由` 算，旧会话那一行同时熄灭）；导航排在这一帧画完之后（rAF + setTimeout）。带修饰键 / 中键照常走链接。路由 5s 没跟上自动清掉。
+- `authed-shell.tsx`：`ChatStage` 用 `useDeferredValue` 延后对话地址，整段对话的重新挂载变成可打断的延后渲染；地址对象 memo 化，`ChannelPage` 包 `memo`，高亮那次提交不重画对话。新对话换上后清掉 pending。
+- `keep-alive.tsx` + `styles.css`：延后期间旧的一页加 `data-switching`，opacity 0.6（只动合成层）且 `pointer-events: none`（防止往旧会话里输入），不留白、不放骨架。
+- 测试 `app/tests/chat-switch-feedback.test.tsx`：高亮先到再清、连点三个只停最后一个、修饰键不算、导航排在高亮之后、切换中旧页半透明可见且不 inert。
+
+**验证**：bun 1.3.14。typecheck、build 通过；相关测试 5/5；test:app 1862 pass / 0 fail；server + DB 测试 4643 pass / 28 fail（本 PR 不动 server/，server 代码与 main 逐字相同，失败为 box 环境下 main 已有的同一批）；Biome 改动文件的诊断数与 main 相同，新文件无问题。perf harness（#443）switch 场景 4x 降速、3 次中位数：最差 INP 2216 → 80ms，最差首帧 2172 → 62ms，长任务总计 16793 → 9246ms（表见 PR）。首帧在 4x 降速下 40–53ms，折合原速约 10–13ms。
+- 补充（小爱复核 #448）：切换中旧的一页同时设 `inert`（键盘也进不去），输入框发送前用 `sendTargetsStaleChannel` 核对所属会话与地址栏 / 左栏切换状态，不一致就不发、草稿留着；淡出改为延迟 100ms、opacity 0.8，`prefers-reduced-motion` 下无过渡，快切不再闪；`afterNextPaint` 只留最新一次，排队期间再点别处或按 Enter 会撤掉旧导航并熄掉左栏的「正在切过去」。新增测试：切换中按 Enter 不发送、连排两次只跑最后一次、点别处撤销。
+- 补充（小爱复核 #448 第二轮）：发送拦截只针对切走的那段旧对话的输入框（`markPendingBot` 记下切走时的频道），导航被拦下 / 失败时别的输入框不受影响；输入法选词的 Enter（`isComposing` / keyCode 229）不撤销排队的导航。各补一条测试。
+- 合入 main（11bacde2，含 #445/#446）：左栏机器人行改用 main 的 `useCloseMobileDrawer`；手机抽屉里点机器人照旧走链接、不延后导航（抽屉收起要跟路由 push 同一拍）。
+
 ## 电脑端布局回退 #374 的顶栏改动（dev2/pc-layout-fix）
 
 **动机**：#374（5cd6e8c3，Hark 第 2 步顶栏）之后，Jun 的原话：「把右下原本有的搬到左上，又弄一个头像什么意思；搜索会话放在那是什么意思；右侧栏的收起和打开都在右侧栏上，左侧栏为什么单独拿出来了」。电脑上同时有两个头像（顶栏左上的品牌头像 / 右上的账号头像 + 左栏底部账号卡），搜索会话跑到顶栏右上，左栏开关单独放在顶栏。
@@ -938,3 +966,17 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 - 发版前备份 pre-release/v0.1.114-20261030T042002Z.dump（pg_restore -l 767 条）。
 - smoke ok:true persisted:false；health.sh 通过；公网 /login 200；匿名导航 / → 302 /login?next=%2F；/sign → 302 /login；sw.js SW_VERSION = "5"。
 
+## 2026-10-30 发版 0.1.115
+
+- #449 `dev4/perf-resize-pause`（head `52ead3f`）→ `3db22ee`：改窗口大小时暂停 WebGL 天空，`html[data-resizing]`。
+- #448 `dev2/jank-chat-switch`（head `99c7504`）→ `7434d37`：切会话即时反馈，高亮先到、对话延后渲染。
+
+**范围**：只动 `app/` 和文档；网关 nginx、web-auth、`pc/`、`android/` 不变。
+
+**流程**：核对 head 未变；从 origin/main（`11bacde`）开临时 worktree `--no-ff` 依次合并。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 结果见部署记录。
+
+**冲突**：只有 `docs/DEVLOG.md`，两边都保留；`CHANGELOG.md` 顶部的 `## Unreleased` 发版时改成 0.1.115 段，并补上 #448 的条目。
+
+**版本**：根、`app`、`server` 升到 `0.1.115`；PC / Android 不变。不打 tag、不发 Release。
+
+**0.1.115 部署**：14:05（北京时间）先备份数据库 `pre-release/v0.1.115-20261030T060518Z.dump`（`pg_restore -l` 767 项），再 `deploy-serial.sh e9a65f3 jun-grokbot`，上线 `local/chisabot:auto-202610300605-e9a65f3`，回滚镜像 `auto-202610300420-dc40343`。box 上 bun 1.3.14：install、typecheck、build 通过，test:app 1915 pass / 0 fail。冒烟：`request.sh smoke` 通过，模型自检 `ok:true persisted:false`；`health.sh` 通过；`/api/version` 为 0.1.115 / `e9a65f3`；公网 `/login` 200，匿名导航 `/` → 302 `/login?next=%2F`；线上包含 `data-resizing`。网关、nginx、web-auth 没动。#451 留到下一版。
