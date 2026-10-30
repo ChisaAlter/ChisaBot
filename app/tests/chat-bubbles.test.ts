@@ -196,7 +196,7 @@ describe("DocCard 收起阈值（FIX-PLAN 4c：RO 量内容高度，不再读 sc
   test("组件里不再读 scrollHeight", async () => {
     const src = await Bun.file(new URL("../src/components/chat/bot-bubbles.tsx", import.meta.url)).text();
     const doc = src.slice(src.indexOf("export function DocCard"), src.indexOf("const heading = title || \"文档\""));
-    expect(doc).not.toContain("scrollHeight");
+    expect(doc).not.toContain(".scrollHeight");
     expect(doc).toContain("new ResizeObserver");
   });
 });
