@@ -8,7 +8,7 @@ import {
 } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
-let skyLoopForTest: typeof import("@/components/sky-background").skyLoopForTest;
+let __skyLoopForTestOnly: typeof import("@/components/sky-background").__skyLoopForTestOnly;
 let initResizeState: typeof import("@/lib/resize-state").initResizeState;
 let isResizing: typeof import("@/lib/resize-state").isResizing;
 let subscribeResizing: typeof import("@/lib/resize-state").subscribeResizing;
@@ -38,7 +38,7 @@ function captureReal() {
 beforeAll(async () => {
   GlobalRegistrator.register();
   captureReal();
-  ({ skyLoopForTest } = await import("@/components/sky-background"));
+  ({ __skyLoopForTestOnly } = await import("@/components/sky-background"));
   ({ initResizeState, isResizing, subscribeResizing, RESIZE_SETTLE_MS } =
     await import("@/lib/resize-state"));
 });
@@ -152,14 +152,14 @@ test("订阅者在开始 / 结束各收到一次通知", () => {
 });
 
 test("WebGL 天空：改窗口大小期间节流循环暂停，停下后恢复", () => {
-  skyLoopForTest.setMode("snapshot");
-  skyLoopForTest.state.wakeUntil = now + 10_000;
-  expect(skyLoopForTest.canRun(now)).toBe(true);
+  __skyLoopForTestOnly.setMode("snapshot");
+  __skyLoopForTestOnly.state.wakeUntil = now + 10_000;
+  expect(__skyLoopForTestOnly.canRun(now)).toBe(true);
   resize();
   advance(16);
-  expect(skyLoopForTest.canRun(now)).toBe(false);
+  expect(__skyLoopForTestOnly.canRun(now)).toBe(false);
   advance(RESIZE_SETTLE_MS);
-  expect(skyLoopForTest.canRun(now)).toBe(true);
+  expect(__skyLoopForTestOnly.canRun(now)).toBe(true);
 });
 
 test("init 幂等、拆掉后不留监听和计时器", () => {
@@ -180,22 +180,43 @@ test("init 幂等、拆掉后不留监听和计时器", () => {
 });
 
 test("WebGL 天空：拖动中不改画布尺寸，停下后按最终尺寸改一次", () => {
-  skyLoopForTest.setMode("snapshot");
-  skyLoopForTest.listen();
+  __skyLoopForTestOnly.setMode("snapshot");
+  __skyLoopForTestOnly.listen();
   let engineResizes = 0;
-  skyLoopForTest.engineAddEventListener("resize", () => {
+  __skyLoopForTestOnly.engineAddEventListener("resize", () => {
     engineResizes++;
   });
   // 不在拖动中：照常同步改尺寸
-  skyLoopForTest.onResizeEvent(new Event("resize"));
+  __skyLoopForTestOnly.onResizeEvent(new Event("resize"));
   expect(engineResizes).toBe(1);
   advance(1000);
   for (let i = 0; i < 20; i++) {
     resize();
-    skyLoopForTest.onResizeEvent(new Event("resize"));
+    __skyLoopForTestOnly.onResizeEvent(new Event("resize"));
     advance(33);
   }
   expect(engineResizes).toBe(1);
   advance(RESIZE_SETTLE_MS);
   expect(engineResizes).toBe(2);
+});
+
+test("一个订阅者抛错不影响其他订阅者", () => {
+  const seen: boolean[] = [];
+  const origError = console.error;
+  const logged: unknown[] = [];
+  console.error = (...a: unknown[]) => logged.push(a);
+  const offBad = subscribeResizing(() => {
+    throw new Error("boom");
+  });
+  const offGood = subscribeResizing((r) => seen.push(r));
+  try {
+    resize();
+    advance(16 + RESIZE_SETTLE_MS);
+  } finally {
+    console.error = origError;
+    offBad();
+    offGood();
+  }
+  expect(seen).toEqual([true, false]);
+  expect(logged.length).toBe(2);
 });

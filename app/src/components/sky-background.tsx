@@ -241,8 +241,8 @@ function skyCanRun(now: number): boolean {
   return now < sky.wakeUntil || skyFadeHolding(sky, now);
 }
 
-/** 仅供单元测试：节流循环此刻是否允许出帧，以及切换天空模式 / 拿到排队状态。 */
-export const skyLoopForTest = {
+/** 仅供单元测试（应用代码不要用）：节流循环此刻是否允许出帧，以及切换天空模式 / 拿到排队状态。 */
+export const __skyLoopForTestOnly = {
   canRun: (now: number = performance.now()) => skyCanRun(now),
   setMode: (mode: SkyMode) => setSkyMode(mode),
   listen: () => listenForSkyWakeups(),
@@ -363,6 +363,9 @@ function listenForSkyWakeups() {
  */
 const deferredSkyResize = { handlers: [] as EventListener[], pending: false };
 
+// 依赖注册顺序：resize-state 的 resize 监听在应用入口（main.tsx 的 initResizeState）就注册了，
+// 早于这里（天空引擎启动后才注册），所以同一个 resize 事件里 resizeInProgress() 已经是 true
+// （第一次事件也是：settle 计时器已经开始，data-resizing 属性要到下一帧才挂上，所以这里不用 isResizing()）。
 function onSkyResizeEvent(ev: Event) {
   if (resizeInProgress()) {
     deferredSkyResize.pending = true;

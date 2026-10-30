@@ -23,7 +23,14 @@ function setResizing(next: boolean) {
   const root = document.documentElement;
   if (next) root.setAttribute(RESIZING_ATTR, "");
   else root.removeAttribute(RESIZING_ATTR);
-  for (const fn of [...listeners]) fn(next);
+  for (const fn of [...listeners]) {
+    // 一个订阅者抛错不能挡住其他订阅者（比如天空暂停 / 恢复）。
+    try {
+      fn(next);
+    } catch (err) {
+      console.error("resize-state listener failed", err);
+    }
+  }
 }
 
 function onResize() {
