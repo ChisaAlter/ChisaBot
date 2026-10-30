@@ -835,4 +835,4 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 
 **和 Hark 的区别**：Hark 只有固定的 12 个天空场景，配色不影响天空；我们在非 default 配色 + 智能跟随时不跑 WebGL，用主题渐变代替，用户手动选的场景和「背景随时间变化」不受影响。
 
-**截图**（真 Chrome，1280×800）：`docs/images/palette-fix/` 下 `before-default-light.png`、`before-sakura-light.png`、`before-sakura-dark.png`（改前），以及 `{default,aurora,emerald,ocean,sunset,sakura}-{light,dark}.png` 12 张（改后）。
+**截图**：只放在 PR #441 的描述里，不进仓库。
