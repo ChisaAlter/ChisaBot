@@ -3,7 +3,7 @@
   "description": "ChisaBot BOT 电脑工具服务",
   "license": "MIT",
   "private": true,
-  "version": "0.1.100",
+  "version": "0.1.116",
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",

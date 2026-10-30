@@ -2,7 +2,16 @@
 
 ## Unreleased
 
-- 登录循环保护小补丁（#442 后续，dev4/login-loop-followup）：`/api/me` 回 200 时清掉 `chisabot:login-redirect-at`，登录成功后 30 秒循环窗口重新算（刚登录完会话又真的过期时直接去 /login，不再误报「登录状态异常」）；「登录状态异常」卡片打开时 `<html data-auth-loop-open>`，藏起启动骨架的「正在加载 ChisaBot…」，不和卡片叠字；`perf/README.md` 的构建命令改成 `bun run --cwd app build`（本地默认安装没有根目录的 `node_modules/vite`）。
+## 0.1.116 — 2026-10-30
+
+这一版合并 #425、#456、#447、#454、#455 和依赖更新 #382、#390、#385。Android 新增形象头像，PC、Android 与服务端统一升到 0.1.116（Android `versionCode` 298）；PC 外壳不变，不需要重新安装。
+
+- Android 显示形象（shape）头像（#425）：机器人头像按形象（shape）绘制。
+- 登录循环保护小补丁（#456，#442 后续）：`/api/me` 回 200 时清掉循环保护时间戳，登录成功后 30 秒窗口重新算；「登录状态异常」卡片打开时藏起启动骨架的「正在加载 ChisaBot…」；`perf/README.md` 构建命令改为 `bun run --cwd app build`。
+- 聊天 Markdown 块级解析缓存（#447，卡顿修复 P1-4）：流式回复只重新解析变化的块；退出登录时清空缓存；streamdown 锁定 2.6.0。
+- 面板 tooltip 懒挂载（#454，P2-2）：打开抽屉时不再强制读取样式。
+- 打开设置提速（#455，FIX-PLAN P1-6）：账号菜单非模态、点击即切页，空闲时预取设置页，进出设置时藏着的聊天和右栏不重渲。
+- 依赖更新：agent-computer 小版本（#382）、`@ag-ui/mastra` 1.1.6 → 2.0.1（#390）、GitHub Actions 小版本并为 Dependabot 加 7 天冷却（#385）。
 
 ## 0.1.115 — 2026-10-30
 
