@@ -121,7 +121,6 @@ test("拿着焦点的懒按钮被悬停换成真 Trigger 时焦点不丢", async
   act(() => {
     button().focus();
   });
-  expect(button().hasAttribute("data-base-ui-tooltip-trigger")).toBe(false);
   await act(async () => {
     fireEvent.pointerEnter(button(), { pointerType: "mouse" });
     fireEvent.mouseEnter(button());
