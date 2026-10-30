@@ -449,9 +449,9 @@ function HarkActionPill({ label, href }: { label: string; href: string }) {
           />
         </svg>
       ) : isCalendar ? (
-        <IconCalendarEvent aria-hidden="true" className="size-4 shrink-0 text-(--accent-color)" />
+        <IconCalendarEvent aria-hidden="true" className="size-4 shrink-0 text-[var(--pal-accent,#2563eb)]" />
       ) : isMail ? (
-        <IconMail aria-hidden="true" className="size-4 shrink-0 text-(--accent-color)" />
+        <IconMail aria-hidden="true" className="size-4 shrink-0 text-[var(--pal-accent,#2563eb)]" />
       ) : (
         <IconSparkles aria-hidden="true" className="size-4 shrink-0 text-[#14171f]" />
       )}

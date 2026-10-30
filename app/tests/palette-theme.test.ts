@@ -161,10 +161,41 @@ describe("theme palettes visibly change the UI", () => {
     expect(tail).not.toContain("100vmax");
     expect(tail).not.toMatch(/--lg-shadow\s*:/);
     expect(css).toContain(
-      "background: linear-gradient(var(--glass-tint), var(--glass-tint)), var(--lg-surface) !important;",
+      "background: var(--pal-tint-layer,) var(--lg-surface) !important;",
     );
     expect(css).toContain(
-      "background: linear-gradient(var(--glass-tint), var(--glass-tint)), var(--lg-surface-strong) !important;",
+      "background: var(--pal-tint-layer,) var(--lg-surface-strong) !important;",
+    );
+    // 叠色层只在非 default 主题下定义，default 与 main 完全相同
+    expect(css).toContain(
+      "--pal-tint-layer: linear-gradient(var(--glass-tint), var(--glass-tint)),;",
+    );
+  });
+  test("default palette keeps main's hard-coded blues (fallbacks of --pal-accent)", () => {
+    for (const old of [
+      "var(--pal-accent, #4c8dff)",
+      "var(--pal-accent, #2f7cf6)",
+      "var(--pal-accent, #3b82f6)",
+      "var(--pal-accent, #60a5fa)",
+      "var(--pal-accent-soft, rgba(59, 130, 246, 0.14))",
+      "color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 55%, transparent)",
+      "color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 35%, transparent)",
+    ]) {
+      expect(css).toContain(old);
+    }
+    // --pal-accent 只在非 default 配色下定义：default / 没有 data-palette 时走回退值
+    const defs = [
+      ...css
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .matchAll(/([^{}]+)\{[^{}]*--pal-accent:/g),
+    ].map((m) => m[1].trim());
+    expect(defs).toEqual(['html[data-palette]:not([data-palette="default"])']);
+    const bubbles = readFileSync(
+      path.join(import.meta.dir, "../src/components/chat/bot-bubbles.tsx"),
+      "utf8",
+    );
+    expect(bubbles.match(/text-\[var\(--pal-accent,#2563eb\)\]/g)?.length).toBe(
+      2,
     );
   });
 });
