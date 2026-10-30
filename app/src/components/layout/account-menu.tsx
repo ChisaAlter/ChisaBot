@@ -86,14 +86,16 @@ export function AccountMenu({
   });
   const version = served.data?.version ? `v${served.data.version}` : "";
 
-  // 菜单先关、目标路由的代码块加载好再切页，当前屏幕不会闪成占位。
+  /*
+   * 点菜单项去别的页（jank P1-6）：菜单立刻收起、不播退出动画，收起那一帧画出来后马上切页——
+   * 不再等代码块加载完（菜单打开时、外壳空闲时就已经在预取），也不把整页渲染塞进点击那一下。
+   */
+  const [leaving, setLeaving] = useState(false);
   const go = (to: string) => {
+    setLeaving(true);
     setOpen(false);
     if (sidebar?.isMobile) sidebar.setOpenMobile(false);
-    void router
-      .preloadRoute({ to })
-      .catch(() => undefined)
-      .finally(() => void navigate({ to }));
+    requestAnimationFrame(() => setTimeout(() => void navigate({ to }), 0));
   };
 
   const handleSignOut = async () => {
@@ -151,8 +153,14 @@ export function AccountMenu({
   return (
     <>
     <DropdownMenu
+      // 非模态（jank P1-6）：不铺全屏遮罩，打开 / 关闭不为它量整页布局。
+      modal={false}
       onOpenChange={(next) => {
-        if (next) preloadAccountDialogs();
+        if (next) {
+          preloadAccountDialogs();
+          setLeaving(false);
+          void router.preloadRoute({ to: "/settings" }).catch(() => undefined);
+        }
         setOpen(next);
       }}
       open={open}
@@ -170,7 +178,7 @@ export function AccountMenu({
       <DropdownMenuContent
         align={compact || topbar ? "end" : "start"}
         anchor={compact || topbar ? undefined : anchorRef}
-        className={cn("glass-pop acct-pop", compact || topbar ? "w-[264px]" : "is-flush")}
+        className={cn("glass-pop acct-pop", leaving && "is-leaving", compact || topbar ? "w-[264px]" : "is-flush")}
         side={topbar ? "bottom" : compact ? "right" : "top"}
         sideOffset={topbar ? 8 : compact ? 12 : 8}
       >

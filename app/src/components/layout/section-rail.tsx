@@ -82,7 +82,13 @@ export function SectionRail({
     // 只滚左栏自己（§98.5）：原生 scrollIntoView 会连藏在下面的聊天一起挪。
     const box = scrollRef.current;
     const row = box?.querySelector<HTMLElement>(".nav-row.is-on");
-    if (box && row) scrollIntoViewWithin(row, { container: box });
+    if (!box || !row) return;
+    // 放到下一帧再量（jank P1-6）：打开设置的那一帧不为它强制排版；行已在可视区内就不滚。
+    const frame = requestAnimationFrame(() => {
+      if (!rowOutOfView(row, box)) return;
+      scrollIntoViewWithin(row, { container: box });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [pathname]);
 
   if (collapsed) {
@@ -280,4 +286,11 @@ function RailTip({ label, children }: { label: string; children: React.ReactElem
       </TooltipContent>
     </Tooltip>
   );
+}
+
+/** 行是否（部分）在滚动容器的可视区之外。 */
+export function rowOutOfView(row: HTMLElement, box: HTMLElement): boolean {
+  const r = row.getBoundingClientRect();
+  const b = box.getBoundingClientRect();
+  return r.top < b.top || r.bottom > b.bottom;
 }
