@@ -36,6 +36,7 @@ export function KeepAliveStage<T>({
   same,
   renderKept,
   ttlMs = KEPT_TTL_MS,
+  switching = false,
   children,
 }: {
   address: T | null;
@@ -44,6 +45,8 @@ export function KeepAliveStage<T>({
   same: (a: T, b: T) => boolean;
   renderKept: (kept: T, state: KeptState) => ReactNode;
   ttlMs?: number;
+  /** 正在换到另一段对话（新的一页还在延后渲染）：旧的一页半透明留着，不留白（FIX-PLAN F0）。 */
+  switching?: boolean;
   children: ReactNode;
 }) {
   const [kept, setKept] = useState<T | null>(address);
@@ -131,6 +134,7 @@ export function KeepAliveStage<T>({
           aria-hidden={visible ? undefined : true}
           className="kept-chat flex min-h-0 min-w-0 flex-1 flex-col"
           data-testid="kept-page"
+          data-switching={visible && switching ? "true" : undefined}
           data-visible={visible ? "true" : "false"}
           inert={!visible}
           ref={box}
