@@ -29,9 +29,6 @@
     "pretest:app": "bun run generate:app-config",
     "test:app": "bun scripts/run-app-tests.ts"
   },
-  "patchedDependencies": {
-    "@shadcn/react@0.3.0": "patches/@shadcn%2Freact@0.3.0.patch"
-  },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
     "@copilotkit/aimock": "1.43.0",

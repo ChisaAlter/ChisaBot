@@ -115,9 +115,6 @@
       },
     },
   },
-  "patchedDependencies": {
-    "@shadcn/react@0.3.0": "patches/@shadcn%2Freact@0.3.0.patch",
-  },
   "overrides": {
     "lodash-es": "4.18.0",
   },

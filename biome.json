@@ -8,6 +8,7 @@
       "!app/src/lib/generated/application-config.ts",
       "!app/src/routeTree.gen.ts",
       "!app/src/lib/qr/qrcodegen.ts",
+      "!app/src/vendor",
       "!desktop/src-tauri/gen",
       "!**/target",
       "!server/drizzle",

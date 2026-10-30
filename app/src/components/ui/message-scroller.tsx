@@ -4,7 +4,7 @@ import {
   useMessageScroller,
   useMessageScrollerScrollable,
   useMessageScrollerVisibility,
-} from "@shadcn/react/message-scroller";
+} from "@/vendor/shadcn-react-message-scroller/lib";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
