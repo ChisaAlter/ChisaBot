@@ -11,6 +11,11 @@ import {
 } from "@/lib/appearance";
 import { usePerfMode } from "@/lib/perf-mode";
 import {
+  isResizing,
+  resizeInProgress,
+  subscribeResizing,
+} from "@/lib/resize-state";
+import {
   noteSkyFrame,
   SKY_FRAME_MS,
   skyFadeHolding,
@@ -229,10 +234,23 @@ const sky = {
 function skyCanRun(now: number): boolean {
   if (sky.mode === "off" || typeof document === "undefined" || document.hidden)
     return false;
+  // 改窗口大小期间不跑节流循环（html[data-resizing]，见 lib/resize-state.ts）；停下后统一补画。
+  if (isResizing()) return false;
   if (sky.mode === "live" && !document.hasFocus()) return false;
   // 渐变画到一半：期限到了也接着画完（期限只在出帧时续，帧被拖慢超过 3 帧就会错过续命）。
   return now < sky.wakeUntil || skyFadeHolding(sky, now);
 }
+
+/** 仅供单元测试：节流循环此刻是否允许出帧，以及切换天空模式 / 拿到排队状态。 */
+export const skyLoopForTest = {
+  canRun: (now: number = performance.now()) => skyCanRun(now),
+  setMode: (mode: SkyMode) => setSkyMode(mode),
+  listen: () => listenForSkyWakeups(),
+  state: sky,
+  engineAddEventListener: (type: string, fn: EventListener) =>
+    engineAddEventListener(type, fn),
+  onResizeEvent: (ev: Event) => onSkyResizeEvent(ev),
+};
 
 /** 跑一帧引擎。force：不管节流和 31ms 间隔，当帧必须画出来。 */
 function runSkyFrame(realTs: number, force: boolean) {
@@ -325,12 +343,54 @@ function listenForSkyWakeups() {
   // 引擎改画布尺寸会清空画布：快照也要补画（当帧那一下在 drawSkyNow，见引擎启动处）。
   window.addEventListener("resize", () => wakeSky(SKY_SNAPSHOT_MS));
   window.addEventListener("focus", () => onInput());
+  // 改窗口大小结束：按最终尺寸改一次画布、当帧补画，再醒一会儿把可能被打断的渐变画完。
+  subscribeResizing((resizing) => {
+    if (resizing) return;
+    flushDeferredSkyResize();
+    wakeSky(SKY_SNAPSHOT_MS);
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
     drawSkyNow();
     if (sky.mode === "live") wakeSky(SKY_IDLE_MS);
     else skyPump();
   });
+}
+
+/*
+ * 拖动改窗口大小时：引擎的 resize()（改 canvas.width 会清空画布、要重画一帧）只在拖动停下后跑一次。
+ * 拖动中画布保持旧尺寸，CSS 把它拉满窗口（#gl 是 100% × 100%），不会露出空画布。
+ */
+const deferredSkyResize = { handlers: [] as EventListener[], pending: false };
+
+function onSkyResizeEvent(ev: Event) {
+  if (resizeInProgress()) {
+    deferredSkyResize.pending = true;
+    return;
+  }
+  for (const fn of deferredSkyResize.handlers) fn(ev);
+  drawSkyNow();
+}
+
+function flushDeferredSkyResize() {
+  if (!deferredSkyResize.pending) return;
+  deferredSkyResize.pending = false;
+  const ev = new Event("resize");
+  for (const fn of deferredSkyResize.handlers) fn(ev);
+  drawSkyNow();
+}
+
+/** 引擎脚本里裸写的 addEventListener：resize 交给 onSkyResizeEvent 统一调度，其余原样挂到 window。 */
+function engineAddEventListener(
+  type: string,
+  fn: EventListener,
+  opts?: AddEventListenerOptions | boolean,
+) {
+  if (type === "resize" && typeof fn === "function") {
+    deferredSkyResize.handlers.push(fn);
+    return;
+  }
+  window.addEventListener(type, fn, opts);
 }
 
 /** 系统「减少动态效果」：动态天空退回快照（只画一帧就停）。 */
@@ -473,12 +533,18 @@ export function SkyBackground() {
           "fetch",
           "requestAnimationFrame",
           "window",
+          "addEventListener",
           match[1],
         );
         wakeSky(SKY_SNAPSHOT_MS);
-        runner(harkFetch, skyRaf, createSkyWindow(window, SKY_RENDER_SCALE));
-        // 必须注册在引擎自己的 resize 监听之后：先改尺寸，再在同一个事件里补画。
-        window.addEventListener("resize", drawSkyNow);
+        runner(
+          harkFetch,
+          skyRaf,
+          createSkyWindow(window, SKY_RENDER_SCALE),
+          engineAddEventListener,
+        );
+        // 引擎的 resize 监听已经收进 deferredSkyResize：先改尺寸，再在同一个事件里补画；拖动中推迟到停下。
+        window.addEventListener("resize", onSkyResizeEvent);
         syncHarkSkyScene(desiredSceneRef.current);
       })
       .catch(() => {

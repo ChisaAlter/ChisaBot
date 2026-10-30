@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- 拖动改窗口大小时更顺（P2-3，perf/resize-glass-pause）：`html[data-resizing]` 期间，左栏、账号卡、右栏、输入框、卡片和弹出层去掉 `backdrop-filter` 和大阴影，换成不透明底色；松手 150ms 后恢复。新文件 `app/src/resize-pause.css`，只点名具体类，不用 `:has()`、不用通配、不加 `!important`。`data-resizing` 由开发4 的 `resize-state.ts` 挂上，那部分合进来之前这些规则不生效。
+- 改窗口大小不再卡（FIX-PLAN P2-3 的 JS 部分，dev4/perf-resize-pause）：拖动改窗口大小时 `<html>` 挂 `data-resizing`（下一帧挂上，最后一次 resize 后约 150ms 拿掉，`app/src/lib/resize-state.ts`，应用入口初始化一次）。WebGL 天空在这段时间暂停：节流循环不出帧，引擎也不再每个 resize 事件都改画布尺寸、重画一帧（画布保持旧尺寸由 CSS 拉满），停下后按最终尺寸改一次并当帧补画。`html[data-resizing]` 下去掉毛玻璃和阴影的 CSS 由前端另做。headless 4x 降速 resize 场景：帧率 13.8 → 48.7，长任务 4581ms → 163ms。
+- 拖动改窗口大小时更顺（P2-3，perf/resize-glass-pause）：`html[data-resizing]` 期间，左栏、账号卡、右栏、输入框、卡片和弹出层去掉 `backdrop-filter` 和大阴影，换成不透明底色；松手 150ms 后恢复。新文件 `app/src/resize-pause.css`，只点名具体类，不用 `:has()`、不用通配、不加 `!important`。`data-resizing` 由 #449 的 `resize-state.ts` 挂上，本改动叠在 #449 上。
 
 ## 0.1.113 — 2026-10-30
 

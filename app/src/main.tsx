@@ -8,8 +8,9 @@ import { BootCommitMarker, reportBootStage } from "./lib/boot-status";
 import { installPhoneLayout } from "./lib/device";
 import { installHaltProbe } from "./lib/halt";
 import { installPerfMode } from "./lib/perf-mode";
-import { installPwa } from "./lib/pwa";
 import { installPreviewWindowBridge } from "./lib/proto-preview";
+import { installPwa } from "./lib/pwa";
+import { initResizeState } from "./lib/resize-state";
 import { installStaleChunkReload } from "./lib/stale-chunk";
 import { queryClient } from "./query-client";
 import { router } from "./router";
@@ -27,6 +28,7 @@ installHaltProbe();
 installPwa();
 installPreviewWindowBridge();
 installStaleChunkReload();
+initResizeState();
 const rootElement = document.getElementById("root");
 
 if (!rootElement) {
