@@ -12,7 +12,7 @@
 - `perf/jank.mjs`：settings 场景改点左下账号卡（#440 之后电脑顶栏没有头像）。
 - 测试 `app/tests/settings-open-fast.test.tsx`（3 条）。
 
-**验证**：bun 1.3.14。typecheck、build 通过；test:app 1903 pass / 0 fail；server + DB 4643 pass / 28 fail，失败项与 main 同一批；Biome 改动文件无新增问题。perf 4x CPU、3 次、不带 trace：settings-open-cold worst INP 200→176，settings-open-warm 240→112；两次点击首帧之和 冷 284→264ms、热 337→170ms，都在 0.3s 内，第二次打开比第一次快。
+**验证**：bun 1.3.14。typecheck、build 通过；test:app 1918 pass / 0 fail；server + DB 4643 pass / 28 fail，失败项与 main 同一批；Biome 改动文件无新增问题。perf 4x CPU、3 次、不带 trace（base = main 500b810c）：settings-open-cold worst INP 184→168，settings-open-warm 232→112；两次点击首帧之和 冷 266→249ms、热 322→170ms，都在 0.3s 内，第二次打开比第一次快。settings-pages 的 long-task 总量 169→277ms（+64%），各页 INP / 首帧持平，留给后续排查。
 
 ## 改窗口大小时暂停 WebGL 天空（dev4/perf-resize-pause，FIX-PLAN P2-3 JS 部分）
 
