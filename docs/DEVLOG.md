@@ -1,5 +1,19 @@
 # DEVLOG
 
+## 打开设置提速（dev2/jank-settings-open，FIX-PLAN P1-6）
+
+**动机**：点账号卡 →「设置」在 4x 降速下要 0.3s 以上，而且第二次打开反而比第一次慢（main：冷 284ms，热 337ms，两次点击首帧之和）。原因：账号菜单是模态的，开关时为全屏遮罩量整页布局；点菜单项要等退场动画和路由代码块加载完才切页；进设置后藏着的聊天和右栏整棵重渲；section-rail 在打开那一帧同步 scrollIntoViewWithin 强制排版。
+
+**改法**（头像仍先弹菜单，Jun 的决定）：
+- `account-menu.tsx`：`modal={false}`；点菜单项时加 `is-leaving` 去掉退场动画，收起那一帧画完（rAF + setTimeout 0）就 navigate，不再等 preloadRoute；菜单打开时顺手预取 `/settings`。
+- `authed-shell.tsx`：`PanelRail`、`ChannelPage` 用 memo 包住，进出设置只翻 `visible`，藏着的部分不重渲；外壳空闲（requestIdleCallback，兜底 2s）时预取设置页代码块（设置路由无 loader，不发 API）。
+- `channel-page.tsx`：`ChannelBody` memo。
+- `section-rail.tsx`：滚动选中行挪到 rAF 里，行已在可视区内就不滚（新导出 `rowOutOfView`）。
+- `perf/jank.mjs`：settings 场景改点左下账号卡（#440 之后电脑顶栏没有头像）。
+- 测试 `app/tests/settings-open-fast.test.tsx`（3 条）。
+
+**验证**：bun 1.3.14。typecheck、build 通过；test:app 1903 pass / 0 fail；server + DB 4643 pass / 28 fail，失败项与 main 同一批；Biome 改动文件无新增问题。perf 4x CPU、3 次、不带 trace：settings-open-cold worst INP 200→176，settings-open-warm 240→112；两次点击首帧之和 冷 284→264ms、热 337→170ms，都在 0.3s 内，第二次打开比第一次快。
+
 ## 电脑端布局回退 #374 的顶栏改动（dev2/pc-layout-fix）
 
 **动机**：#374（5cd6e8c3，Hark 第 2 步顶栏）之后，Jun 的原话：「把右下原本有的搬到左上，又弄一个头像什么意思；搜索会话放在那是什么意思；右侧栏的收起和打开都在右侧栏上，左侧栏为什么单独拿出来了」。电脑上同时有两个头像（顶栏左上的品牌头像 / 右上的账号头像 + 左栏底部账号卡），搜索会话跑到顶栏右上，左栏开关单独放在顶栏。
