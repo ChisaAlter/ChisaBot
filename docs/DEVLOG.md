@@ -1,5 +1,24 @@
 # DEVLOG
 
+## 头像球空闲不动（dev4/perf-orb-idle）
+
+**动机**：卡顿分析发现，登录页（`/sign`）和新手引导页的 `AgentOrb` 即使没有任何状态变化，也一直跑 `::before` 网格旋转和 `.agent-orb-sheen` 漂移两条无限 CSS 动画，外加 framer-motion 的呼吸缩放。4x 降速下光秃秃一个页面每 8 秒要算 500–650 ms 样式。
+
+**改法**：`ambient = !reducedMotion && (active || state !== "idle")`。不是 ambient 时加 `is-still`，把两条动画设成 `none`，呼吸动作也退回 `scale: 1`。新增可选属性 `active`，给以后需要空闲也转的球用（例如选中的机器人）。这是从 stage 1（0dfb05da）里单独拆出来的光球部分；左栏、面板抽屉、`:has` 那几项不在这个 PR 里。
+
+**测试**：`app/tests/agent-orb-idle.test.tsx` 覆盖 idle 停住、thinking 转起来、`active` 转起来三种情况。
+
+**测量**（`bun run perf:jank -- --scenario=idle,orb --runs=3`，main c99ee37e 对比本分支）：
+
+main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better/worse
+
+| scenario | fps | p95 frame ms | long-task ms | max long task | style ms | layout ms | script ms |
+|---|---|---|---|---|---|---|---|
+| idle | 60.2 → 60 (0%) | 16.8 → 16.8 (0%) | 0 → 0 (0%) | 0 → 0 (0%) | 0 → 0 (0%) | 0 → 0 (0%) | 28 → 47 (+68%) ⚠️ |
+| orb | 58.5 → 60 (+3%) | 16.8 → 16.7 (-1%) | 0 → 0 (0%) | 0 → 0 (0%) | 636 → 11 (-98%) ✅ | 4 → 4 (0%) | 127 → 168 (+32%) ⚠️ |
+
+script ms 的差异是 box 噪声：本分支第 3 次运行里有一个与光球无关的 408 ms 长任务，三次运行分别是 21 / 168 / 407 ms。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
