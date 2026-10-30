@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useCloseMobileDrawer } from "@/components/ui/sidebar";
 import {
   deleteChannelMutationOptions,
   setChannelPinnedMutationOptions,
@@ -60,6 +61,7 @@ export const Channel = memo(function Channel({
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const closeDrawer = useCloseMobileDrawer();
   // Whether this row's channel is the one on screen, as a boolean, so navigating between
   // channels re-renders the two rows whose answer changed rather than the whole roster.
   const isOpen = useParams({
@@ -126,7 +128,8 @@ export const Channel = memo(function Channel({
           <Link
             to="/channel/$channelId"
             params={{ channelId }}
-            type="button"
+            // M3-1：手机抽屉里点会话行（含搜索结果里的本地命中）要收起抽屉，否则抽屉盖在新会话上。
+            onClick={closeDrawer}
             className="flex flex-row py-2 px-2 gap-2 items-center w-full hover:bg-foreground/5 rounded-lg [contain-intrinsic-size:auto_3.25rem] [content-visibility:auto]"
             activeProps={{
               className: "bg-foreground/5",
