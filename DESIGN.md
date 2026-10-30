@@ -793,7 +793,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 - 本次运行里拖动过的小窗位置会记住，下次进小窗回到那里（同一台显示器）。
 - 小窗里自己最大化、全屏或拉宽到 > 640px = 离开小窗，不再「恢复」。
 - 逻辑在 `pc/src/compact-window.js`（纯函数 + 控制器，`pc/test/compact.check.js`）；网页桥 `chisabotWindow.toggleCompact / isCompact / onCompactChange`，`<html data-compact>`。旧 PC 客户端没有这几个方法，网页就不显示按钮。浏览器里不显示。
-- 标题按钮仍属于「窗口」——右上角只放窗口按钮的规则不变。
+- 标题按钮仍属于「窗口」。右上角的规则（小爱 2026-10-29 已定）：**窗口按钮在最右，头像紧挨在它们左边**。头像随去掉账号卡的 PR 上线（见 [`docs/rfc/hark-redesign.md`](docs/rfc/hark-redesign.md#下一步)），在那之前右上角只有窗口按钮。
 
 **36.2 窄的 PC 窗口顶栏（< 768px）**：标题按钮 46 → **36px**（4 个共 144px），右侧等宽占位去掉；主导航改成 **图标 + 当前一项的字**（其余只有图标，文字留给读屏），不再被切成「扌」。宽窗口和浏览器 / 手机网页不变（图标隐藏）。
 
@@ -2516,7 +2516,11 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
   - 新增 `chisabot_mcp_global_grants (server_id text PRIMARY KEY, enabled boolean)` 与 `PUT /api/plugins/servers/:id/auto-grant`。
   - 管理员在 `/admin/plugins/:key` 打开「全员默认开启（所有用户与机器人自动可用）」后，`listForAgent()` 与 `decide()` 自动向实例内所有用户的全部机器人授予该 MCP 服务器的工具权限，无需逐个机器人手动勾选。
 
+## 119. 主题系统重做提案（2026-10-29，待小爱批准）
 
+这是提案，批准前不改代码，下面两份文档里的内容也还不是现行规则。
 
-
-
+- 6 套完整主题（sky / mist / ocean / dusk / aurora / sakura，各有浅色和深色）、玻璃参数和使用位置、backdrop-filter 去留表、设置页卡顿实测、性能模式、token 命名：见 [`docs/design-system.md`](docs/design-system.md)。
+- 桌面去掉账号卡、入口收进右上角头像菜单、PR 拆分：见 [`docs/rfc/hark-redesign.md`](docs/rfc/hark-redesign.md#下一步)。
+- 小爱已定：大面板模糊 24px；手机端红点放在抽屉按钮上；§36.1 右上角改成「窗口按钮在最右，头像紧挨在它们左边」（已改）。
+- 批准后，按 design-system.md §10 的顺序拆成小 PR：① 主题数据和切换，同时删掉旧色板、玻璃材质和雾度滑块；② 削减 backdrop-filter；③ 存储；④ 去掉账号卡。每个 PR 改动哪一节，就在本文件对应的节里更新规则。
