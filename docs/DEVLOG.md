@@ -10,7 +10,7 @@
 - `keep-alive.tsx` + `styles.css`：延后期间旧的一页加 `data-switching`，opacity 0.6（只动合成层）且 `pointer-events: none`（防止往旧会话里输入），不留白、不放骨架。
 - 测试 `app/tests/chat-switch-feedback.test.tsx`：高亮先到再清、连点三个只停最后一个、修饰键不算、导航排在高亮之后、切换中旧页半透明可见且不 inert。
 
-**验证**：bun 1.3.14。typecheck、build 通过；相关测试 11/11；test:app 通过；server + DB 测试 4643 pass / 28 fail，本 PR 不动 server/，失败是环境相关的同一批；Biome 改动文件的诊断数与 main 相同，新文件无问题。perf harness（#443）switch 场景 4x 降速、3 次中位数：最差 INP 2216 → 80ms，最差首帧 2172 → 62ms，长任务总计 16793 → 9246ms（表见 PR）。首帧在 4x 降速下 40–53ms，折合原速约 10–13ms。
+**验证**：bun 1.3.14。typecheck、build 通过；相关测试 5/5；test:app 1862 pass / 0 fail；server + DB 测试 4643 pass / 28 fail（本 PR 不动 server/，server 代码与 main 逐字相同，失败为 box 环境下 main 已有的同一批）；Biome 改动文件的诊断数与 main 相同，新文件无问题。perf harness（#443）switch 场景 4x 降速、3 次中位数：最差 INP 2216 → 80ms，最差首帧 2172 → 62ms，长任务总计 16793 → 9246ms（表见 PR）。首帧在 4x 降速下 40–53ms，折合原速约 10–13ms。
 
 ## 电脑端布局回退 #374 的顶栏改动（dev2/pc-layout-fix）
 
