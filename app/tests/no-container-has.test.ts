@@ -10,7 +10,6 @@ import path from "node:path";
  */
 const LEGACY = [
   "body:has(.glass-topbar)",
-  '.glass-shell:has([data-slot="sidebar"][data-state="collapsed"])',
   '.glass-topbar:has(.win-ctrls[data-count="3"])',
   "body:not(:has(.glass-composer))",
   "body:has(.update-banner)",
@@ -95,7 +94,7 @@ test("styles.css 不新增挂在大容器上的 :has()", () => {
 
 test("顶栏收起左栏 / 4 个标题按钮改用顶栏自己的 data 属性", () => {
   expect(
-    css.includes('.glass-topbar[data-sidebar="collapsed"] .hk-topbar-start'),
+    css.includes('.glass-topbar[data-sidebar="collapsed"] .glass-topbar-start'),
   ).toBe(true);
   expect(
     css.includes('html[data-desktop] .glass-topbar[data-winctrls="4"]'),
