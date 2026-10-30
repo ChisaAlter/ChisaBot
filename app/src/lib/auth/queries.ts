@@ -1,4 +1,9 @@
 import { queryOptions } from "@tanstack/react-query";
+import {
+  clearLoginRedirectMark,
+  goToLogin,
+  isGatewayLoginRequired,
+} from "@/lib/auth/login-redirect";
 import { client, tryClient } from "@/lib/client";
 
 /**
@@ -93,9 +98,16 @@ async function currentUser({ signal }: { signal: AbortSignal }): Promise<Authent
       (async () => {
         /* A 401 is the signed-out state, rather than a failed request. */
         const response = await tryClient("/api/me", { signal: request.signal });
-        if (response.status === 401) return null;
+        if (response.status === 401) {
+          // Behind the public gateway its own /login is the sign-in page: go there with the way
+          // back, rather than to the app's /sign (main.tsx installs the same check for every fetch).
+          if (typeof window !== "undefined" && (await isGatewayLoginRequired(response))) goToLogin();
+          return null;
+        }
         if (!response.ok) throw new Error(`无法加载当前用户 (${response.status})`);
         const body = (await response.json()) as { user: AuthenticatedUser };
+        // 登录确认有效：重置 /login 循环保护的 30 秒窗口（见 login-redirect.ts）。
+        if (typeof window !== "undefined") clearLoginRedirectMark();
         return body.user;
       })(),
       aborted,

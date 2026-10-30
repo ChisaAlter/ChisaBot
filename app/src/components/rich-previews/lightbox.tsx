@@ -31,6 +31,8 @@ export type LightboxImage = {
   /** 像素宽高（服务器给的，DESIGN.md §83.2）：单张图先按比例留框。 */
   width?: number;
   height?: number;
+  /** 对话里画小图用的缩略图地址（`?w=` 档位）；没有就用 `src`。看大图始终用 `src`（原图）。 */
+  thumb?: string;
 };
 
 const MIN_ZOOM = 1;

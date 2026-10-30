@@ -17,6 +17,7 @@ import {
   botResetPlanQueryOptions,
   type ResetPlan,
 } from "@/lib/bot-lifecycle/queries";
+import { useOpenBotChat } from "@/lib/channels/open-bot-chat";
 import { client } from "@/lib/client";
 import { useMainBot } from "@/lib/settings/message-list";
 import { MainBotChoices, mainBotCandidates } from "@/components/agents/main-bot-picker";
@@ -83,6 +84,7 @@ export function DeleteBotDialog({
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const openBotChat = useOpenBotChat();
   const { mainBotId, setMainBot } = useMainBot();
   const showsBot = useShowsBot(bot.id, selectedBotId);
   const isMain = mainBotId === bot.id;
@@ -124,7 +126,7 @@ export function DeleteBotDialog({
     if (showsBot) {
       const fallbackBot = !isMain && mainBotId ? mainBotId : null;
       if (fallbackBot)
-        await navigate({ to: "/channel/new", search: { agent: fallbackBot } });
+        await openBotChat(fallbackBot);
       else {
         // Forget it first: "/" lands on the last-used Bot, which must not be the one just deleted.
         await forgetDeletedBot(queryClient, bot.id);

@@ -29,7 +29,8 @@ import { IconLayoutSidebar, IconX } from "@tabler/icons-react";
 import { useBackDismiss } from "@/lib/overlay-back";
 
 const SIDEBAR_WIDTH = "16rem";
-const SIDEBAR_WIDTH_MOBILE = "18rem";
+// 手机尺寸抽屉（Hark 手机端）：85% 视口宽，最多 320px。
+const SIDEBAR_WIDTH_MOBILE = "min(85vw, 320px)";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_KEYBOARD_SHORTCUT = "b";
 
@@ -64,6 +65,21 @@ function useSidebar() {
  */
 function useOptionalSidebar() {
   return React.useContext(SidebarContext);
+}
+
+/**
+ * 手机抽屉里的导航项点完要收起抽屉（M3-1 / M3-11）：同一个 scope 里换页时 CloseDrawerOnScope 不会关，
+ * 抽屉就盖在新页面上。桌面侧栏或抽屉没开时什么也不做；不在 SidebarProvider 里时也安全。
+ */
+function useCloseMobileDrawer() {
+  const sidebar = useOptionalSidebar();
+  return React.useCallback(() => {
+    if (!(sidebar?.isMobile && sidebar.openMobile)) return;
+    // 推迟一拍再关：路由的 history.push 在微任务里才落地。同一事件里就关的话，抽屉的
+    // useBackDismiss 清理会看到标记记录还在最上面并 history.back()，把刚点的导航退掉。
+    const { setOpenMobile } = sidebar;
+    window.setTimeout(() => setOpenMobile(false), 0);
+  }, [sidebar]);
 }
 
 /**
@@ -233,12 +249,14 @@ function Sidebar({
           data-slot="sidebar"
           data-mobile="true"
           // 宽度只在这里定（CB-098）：Sheet 基础样式的 `w-3/4` 会盖掉 `w-(--sidebar-width)`，
-          // 内容却按 18rem 排，PC 竖屏右边被裁。变量本身改成「不超过视口减 48px」，里面一律跟着容器走。
-          className="sidebar-mobile-sheet w-(--sidebar-width)! max-w-none! min-w-0 bg-sidebar p-0 text-sidebar-foreground"
+          // 内容却按固定宽度排，PC 竖屏右边被裁。里面一律跟着容器走。
+          // 一层面板（styles.css「手机尺寸左栏抽屉」）：.glass 是唯一的玻璃层，hk-drawer 管布局和开关动画。
+          className="glass hk-drawer sidebar-mobile-sheet w-(--sidebar-width)! max-w-none! min-w-0 bg-sidebar p-0 text-sidebar-foreground"
+          overlayClassName="hk-drawer-overlay"
           showCloseButton={false}
           style={
             {
-              "--sidebar-width": `min(${SIDEBAR_WIDTH_MOBILE}, calc(100vw - 48px))`,
+              "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
             } as React.CSSProperties
           }
           side={side}
@@ -779,6 +797,7 @@ export {
   SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
+  useCloseMobileDrawer,
   useOptionalSidebar,
   useSidebar,
 };

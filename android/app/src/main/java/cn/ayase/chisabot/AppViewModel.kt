@@ -42,20 +42,31 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import cn.ayase.chisabot.ui.AvatarShapes
 import okhttp3.Call
 import java.util.UUID
 
 private val Context.store by preferencesDataStore("native")
 private val BOTS_CACHE = stringPreferencesKey("bots")
 
-/** 机器人头像（DESIGN §81，GET /api/bot-avatars）：image = 上传的图（url 相对路径，带 ?v= 版本），emoji / monogram = 渐变底 + 字。null = 默认（按 avatarSeed）。 */
-data class BotAvatarSpec(val kind: String, val url: String? = null, val emoji: String? = null, val color: String? = null)
+/**
+ * 机器人头像（DESIGN §81，GET /api/bot-avatars）：image = 上传的图（url 相对路径，带 ?v= 版本），emoji / monogram = 渐变底 + 字，
+ * shape = 形象（形状 + 形象底色的键名，见 ui/ShapeAvatar.kt）。null = 默认（按 avatarSeed）。
+ */
+data class BotAvatarSpec(val kind: String, val url: String? = null, val emoji: String? = null, val color: String? = null, val shape: String? = null)
 
 data class Bot(val id: String, val name: String, val title: String, val seed: String, val main: Boolean, val avatar: BotAvatarSpec? = null)
 
-private fun parseAvatar(el: kotlinx.serialization.json.JsonElement?): BotAvatarSpec? {
+internal fun parseAvatar(el: kotlinx.serialization.json.JsonElement?): BotAvatarSpec? {
     val o = el as? JsonObject ?: return null
     val kind = o.s("kind") ?: return null
+    if (kind == "shape") {
+        // 形状或颜色是这版不认识的（服务器以后加了新的）：退回默认头像，不乱画。
+        val shape = o.s("shape")
+        val color = o.s("color")
+        if (!AvatarShapes.isShape(shape) || !AvatarShapes.isColor(color)) return null
+        return BotAvatarSpec(kind, color = color, shape = shape)
+    }
     if (kind !in setOf("image", "emoji", "monogram")) return null
     return BotAvatarSpec(kind, o.s("url"), o.s("emoji"), o.s("color"))
 }
@@ -257,7 +268,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 bots = parseBots(agents, mainId).map { b -> b.copy(avatar = parseAvatar(avatars?.get(b.id))) }
                 botsError = null
                 val cache = buildJsonArray { bots.forEach { b -> add(buildJsonObject { put("id", b.id); put("name", b.name); put("title", b.title); put("avatarSeed", b.seed); put("main", b.main)
-                    b.avatar?.let { av -> put("avatar", buildJsonObject { put("kind", av.kind); av.url?.let { put("url", it) }; av.emoji?.let { put("emoji", it) }; av.color?.let { put("color", it) } }) }
+                    b.avatar?.let { av -> put("avatar", buildJsonObject { put("kind", av.kind); av.url?.let { put("url", it) }; av.emoji?.let { put("emoji", it) }; av.color?.let { put("color", it) }; av.shape?.let { put("shape", it) } }) }
                 }) } }
                 ctx.store.edit { it[BOTS_CACHE] = cache.toString() }
             } catch (_: Unauthorized) {

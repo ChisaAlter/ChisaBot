@@ -1,16 +1,26 @@
-import {
-  IconLayoutSidebarLeftCollapse,
-  IconLayoutSidebarLeftExpand,
-  IconMenu2,
-} from "@tabler/icons-react";
+import { IconMenu2, IconSearch } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import type { ReactElement } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  cloneElement,
+  type FocusEvent,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactElement,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { flushSync } from "react-dom";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { canCompact, type DesktopWindowBridge, useDesktopWindow } from "@/lib/desktop-window";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
+import { requestSidebarSearchFocus } from "@/lib/sidebar-search";
 import { cn } from "@/lib/utils";
 
 
@@ -47,15 +57,20 @@ export function GlassAvatar({ size = 44, ring = true }: { size?: number; ring?: 
 export type ShellScope = "app" | "settings" | "admin";
 
 /**
- * 顶栏（DESIGN-v4）：只放「应用」和「窗口」的东西。
+ * 顶栏：电脑上只有左上角的品牌文字（ChisaBot）和 PC 无边框窗口的 — □ ✕。
  *
- * 左 = 字标 + 左栏开关（宽度与左栏对齐）；右上角 = 只有窗口按钮（— □ ✕）。
- * 中间的分段导航（长期任务 / 技能 / 工作流）已去掉（DESIGN.md §57 导航收敛）：技能、工作流在设置里，
- * 定时任务和待处理在账号菜单里，从设置回聊天走设置左栏底部的「返回聊天」。
- * 搜索在左栏卡片顶部，账号在左栏最底下，机器人菜单在聊天列头部，面板操作在面板卡片里，
- * 页面操作在各页页头——顶栏右侧不再有任何页面或账号控件。
+ * 身份只有左栏最底下的账号卡一个位置；搜索会话在左栏卡片顶部；左栏开关在左栏卡片右上角（收起时在 80px 列顶），
+ * 和右栏「面板」开关在右栏上对称（#374 回退，DESIGN.md §9.1）。
+ * 手机上不变：左 ☰ 打开抽屉 ｜ 右 搜索按钮（打开抽屉并聚焦抽屉顶部的搜索框）+ 圆形头像（账号菜单）。
  */
-export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
+export function GlassTopBar({
+  scope = "app",
+  account,
+}: {
+  scope?: ShellScope;
+  /** 手机顶栏右上角的圆形头像（账号菜单），由外壳传进来；电脑上不画。 */
+  account?: ReactNode;
+}) {
   const sidebar = useOptionalSidebar();
   const mobile = Boolean(sidebar?.isMobile);
   const desktop = useDesktopWindow();
@@ -65,6 +80,9 @@ export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
     <header
       className="glass-topbar"
       data-scope={scope}
+      // 左栏收起 / PC 标题按钮个数直接写在顶栏上，CSS 不用挂在整个外壳上的 :has()（流式输出时会触发整页样式重算）。
+      data-sidebar={sidebar && !mobile ? sidebar.state : undefined}
+      data-winctrls={desktop ? (canCompact(desktop.bridge) ? 4 : 3) : undefined}
       // PC 无边框窗口：空白处双击 = 最大化 / 还原（拖动由 -webkit-app-region 交给系统）。
       onDoubleClick={
         desktop
@@ -79,30 +97,58 @@ export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
         {mobile ? (
           <button
             aria-label={`打开${drawerLabel}`}
-            className="glass-icon-btn glass-menu-btn"
+            className="hk-circle glass is-flat"
             onClick={() => sidebar?.setOpenMobile(true)}
             type="button"
           >
-            <IconMenu2 className="glass-icon-btn-ico" />
+            <IconMenu2 className="hk-circle-ico" />
           </button>
         ) : (
           <span className="glass-brand">
-            <BrandMark />
-            {PROTO_PREVIEW ? (
-              <span className="proto-badge" title={"这是独立的原型沙箱，使用线上数据的副本；改动不会影响线上。"}>
-                {"原型预览"}
-              </span>
-            ) : null}
+            <BrandMark avatar={false} />
           </span>
         )}
-        {sidebar && !mobile ? <RosterToggle scope={scope} /> : null}
+        {PROTO_PREVIEW && !mobile ? (
+          <span className="proto-badge" title={"这是独立的原型沙箱，使用线上数据的副本；改动不会影响线上。"}>
+            {"原型预览"}
+          </span>
+        ) : null}
       </div>
-      {/* 中间留空（网格占位，保持左右两区位置不变）。 */}
       <span aria-hidden className="glass-topbar-mid" />
-      {/* 右区故意留空：右上角只属于窗口。 */}
-      <div aria-hidden className="glass-topbar-end" />
+      <div className="glass-topbar-end">
+        {mobile ? (
+          <>
+            <MobileSearchButton scope={scope} />
+            {account}
+          </>
+        ) : null}
+      </div>
       {desktop ? <WindowControls bridge={desktop.bridge} compact={desktop.compact} maximized={desktop.maximized} /> : null}
     </header>
+  );
+}
+
+/** 手机顶栏右边的搜索按钮：打开左栏抽屉，聚焦抽屉顶部的搜索框（设置 / 管理里先回聊天）。 */
+function MobileSearchButton({ scope }: { scope: ShellScope }) {
+  const sidebar = useOptionalSidebar();
+  const navigate = useNavigate();
+  return (
+    <button
+      aria-label={"搜索会话"}
+      className="hk-circle glass is-flat"
+      onClick={() => {
+        if (scope !== "app") {
+          requestSidebarSearchFocus();
+          void navigate({ to: "/" });
+          return;
+        }
+        sidebar?.setOpenMobile(true);
+        requestSidebarSearchFocus();
+      }}
+      type="button"
+    >
+      <IconSearch className="hk-circle-ico" />
+    </button>
   );
 }
 
@@ -181,10 +227,57 @@ export function WindowControls({
   );
 }
 
-const MOD_LABEL = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent) ? "⌘B" : "Ctrl+B";
 /** The roster element the toggle points its `aria-controls` at. */
 export const ROSTER_ID = "chisabot-bot-list";
 export const PANEL_RAIL_ID = "chisabot-panel-rail";
+
+/**
+ * 只用过鼠标的会话里，ToggleTip 在第一次悬停之前不挂 Base UI Tooltip（P2-2，FIX-PLAN §3 4e）。
+ *
+ * 面板抽屉一打开就一次挂上一批 ToggleTip，每个都带一套 Tooltip store + floating-ui 悬停 / 焦点 hook，
+ * 绝大多数从来没被悬停过。现在先只渲染按钮本身，鼠标第一次进来才换成真 Tooltip，并当场打开——
+ * Provider 的 `delay` 是 0（routes/__root.tsx），和原来「一进来就出」一样；之后的离开、点击关闭、
+ * 再次悬停都交给 Base UI。触屏不开（Base UI 的悬停也是 mouseOnly）。
+ *
+ * 键盘：一旦有过「键盘导航」（Tab、方向键、Enter / 空格 / Esc 按在非输入框上，或带 Ctrl / ⌘ / Alt
+ * 的快捷键；在输入框里打字不算），之后新挂的 ToggleTip 一律直接挂真 Tooltip，已挂着的懒按钮也在这次
+ * keydown 里同步换好（早于浏览器移动焦点），所以 Tab / 程序聚焦落到的是真 Trigger，:focus-visible
+ * 时照常弹出、焦点不会因为换节点丢掉。兜底：懒按钮拿到 :focus-visible 焦点时当场换成真 Tooltip 并打开，
+ * 焦点还给新节点。非 :focus-visible 的焦点本来就不弹（Base UI useFocus 只认 :focus-visible）；
+ * 懒按钮被悬停换节点时如果它正拿着焦点，同样把焦点还回去。
+ */
+let keyboardSeen = false;
+const keyboardListeners = new Set<() => void>();
+const NAV_KEYS = new Set(["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", " ", "Escape", "F6"]);
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+}
+function onFirstKeydown(event: KeyboardEvent) {
+  if (keyboardSeen) return;
+  const modified = event.ctrlKey || event.metaKey || event.altKey;
+  const nav = event.key === "Tab" || (NAV_KEYS.has(event.key) && !isTypingTarget(event.target));
+  if (!modified && !nav) return;
+  keyboardSeen = true;
+  window.removeEventListener("keydown", onFirstKeydown, true);
+  flushSync(() => {
+    for (const arm of keyboardListeners) arm();
+  });
+  keyboardListeners.clear();
+}
+if (typeof window !== "undefined") window.addEventListener("keydown", onFirstKeydown, true);
+
+/** 测试用：回到「还没按过键」的状态。 */
+export function resetToggleTipKeyboardForTest() {
+  keyboardSeen = false;
+  keyboardListeners.clear();
+  if (typeof window !== "undefined") {
+    window.removeEventListener("keydown", onFirstKeydown, true);
+    window.addEventListener("keydown", onFirstKeydown, true);
+  }
+}
+
+type Armed = { open: boolean; refocus: boolean };
 
 export function ToggleTip({
   label,
@@ -197,10 +290,31 @@ export function ToggleTip({
   children: ReactElement;
   side?: "bottom" | "left" | "right" | "top";
 }) {
+  const [armed, setArmed] = useState<Armed | null>(() => (keyboardSeen ? { open: false, refocus: false } : null));
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (armed) return;
+    const arm = () => setArmed({ open: false, refocus: false });
+    keyboardListeners.add(arm);
+    return () => {
+      keyboardListeners.delete(arm);
+    };
+  }, [armed]);
+  useLayoutEffect(() => {
+    if (armed?.refocus) triggerRef.current?.focus({ preventScroll: true });
+  }, [armed]);
+  if (!armed) {
+    return (
+      <LazyTipTrigger
+        onArm={(refocus) => flushSync(() => setArmed({ open: true, refocus }))}
+        trigger={children}
+      />
+    );
+  }
   return (
-    <Tooltip>
-      <TooltipTrigger render={children} />
-      <TooltipContent side={side} sideOffset={8}>
+    <Tooltip defaultOpen={armed.open}>
+      <TooltipTrigger ref={triggerRef} render={children} />
+      <TooltipContent disableAnchorTracking side={side} sideOffset={8}>
         {label}
         {keys ? <span className="text-background/60">{keys}</span> : null}
       </TooltipContent>
@@ -208,26 +322,48 @@ export function ToggleTip({
   );
 }
 
-/** Left roster: collapses to the slim avatar rail (Ctrl+B is the primitive's own shortcut). */
-function RosterToggle({ scope }: { scope: ShellScope }) {
-  const sidebar = useOptionalSidebar();
-  if (!sidebar) return null;
-  const open = sidebar.open;
-  const what = scope === "app" ? "机器人列表" : scope === "settings" ? "设置分区" : "管理导航";
-  const label = open ? `收起${what}` : `展开${what}`;
-  const Icon = open ? IconLayoutSidebarLeftCollapse : IconLayoutSidebarLeftExpand;
-  return (
-    <ToggleTip keys={MOD_LABEL} label={label}>
-      <button
-        aria-controls={ROSTER_ID}
-        aria-expanded={open}
-        aria-label={label}
-        className="glass-ghost-btn glass-roster-toggle"
-        onClick={sidebar.toggleSidebar}
-        type="button"
-      >
-        <Icon className="glass-ghost-btn-ico" key={open ? "open" : "closed"} />
-      </button>
-    </ToggleTip>
-  );
+type TipTriggerProps = {
+  onPointerEnter?: (event: PointerEvent<HTMLElement>) => void;
+  onPointerDown?: (event: PointerEvent<HTMLElement>) => void;
+  onMouseEnter?: (event: MouseEvent<HTMLElement>) => void;
+  onFocus?: (event: FocusEvent<HTMLElement>) => void;
+  "data-slot"?: string;
+};
+
+function matchesFocusVisible(el: Element) {
+  try {
+    return el.matches(":focus-visible");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 还没挂 Tooltip 时的按钮：原样渲染，只多接「鼠标第一次进来」和「第一次 :focus-visible 焦点」。
+ * 用 mouseenter（和 Base UI 悬停 hook 同一个事件，内容在静止的指针下移过来也算），触屏的兼容
+ * mouseenter 按前面 pointer 事件的 pointerType 排除。
+ */
+function LazyTipTrigger({ trigger, onArm }: { trigger: ReactElement; onArm: (refocus: boolean) => void }) {
+  const own = trigger.props as TipTriggerProps;
+  const pointerType = useRef<string | undefined>(undefined);
+  return cloneElement(trigger as ReactElement<TipTriggerProps>, {
+    "data-slot": own["data-slot"] ?? "tooltip-trigger",
+    onPointerEnter: (event: PointerEvent<HTMLElement>) => {
+      own.onPointerEnter?.(event);
+      pointerType.current = event.pointerType;
+    },
+    onPointerDown: (event: PointerEvent<HTMLElement>) => {
+      own.onPointerDown?.(event);
+      pointerType.current = event.pointerType;
+    },
+    onMouseEnter: (event: MouseEvent<HTMLElement>) => {
+      own.onMouseEnter?.(event);
+      if (pointerType.current === "touch") return;
+      onArm(event.currentTarget.ownerDocument.activeElement === event.currentTarget);
+    },
+    onFocus: (event: FocusEvent<HTMLElement>) => {
+      own.onFocus?.(event);
+      if (matchesFocusVisible(event.currentTarget)) onArm(true);
+    },
+  });
 }

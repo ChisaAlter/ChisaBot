@@ -65,17 +65,19 @@ describe("链接卡", () => {
     expect(card.getAttribute("rel")).toContain("noopener");
     expect(card.textContent).toContain("Release v0.1.7");
     expect(card.textContent).toContain("github.com");
-    expect(card.querySelector(".rp-link-label")?.textContent).toBe("下载 0.1.7");
-    // 没有 og 图：方块里是站点图标（happy-dom 里图片加载失败会退回地球图标），不是缩略图。
-    expect(card.querySelector(".rp-link-tile")?.getAttribute("data-kind")).not.toBe("image");
+    // 底下一行是「站点 · 补充信息」：正文链接的标签就是补充信息。
+    expect(card.querySelector(".lc-site")?.textContent).toBe("github.com · 下载 0.1.7");
+    // 没有 og 图：仍是竖版大卡，图区画横幅（2026-10-30，§48.5）。
+    expect(card.getAttribute("data-layout")).toBe("image");
+    expect(card.querySelector("[data-testid=link-card-banner]")).not.toBeNull();
   });
 
   test("取不到预览（422）也出兜底卡：标题是域名、第二行是短地址，照样能点", async () => {
     const view = render(<MessageRichPreviews text={"https://blocked.example.com/a/b"} />);
     const card = await view.findByTestId("link-card");
     expect(card.hasAttribute("data-degraded")).toBe(true);
-    expect(card.querySelector(".rp-link-title")?.textContent).toBe("blocked.example.com");
-    expect(card.querySelector(".rp-link-domain")?.textContent).toBe("blocked.example.com/a/b");
+    expect(card.querySelector(".lc-title")?.textContent).toBe("blocked.example.com");
+    expect(card.querySelector(".lc-site")?.textContent).toBe("blocked.example.com/a/b");
     expect(card.getAttribute("href")).toBe("https://blocked.example.com/a/b");
   });
 

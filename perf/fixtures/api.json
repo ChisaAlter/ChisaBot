@@ -1,0 +1,213 @@
+{
+  "^/api/agents$": {
+    "agents": [
+      {
+        "id": "a1",
+        "name": "千束",
+        "title": "助手",
+        "roleDescription": "",
+        "avatarSeed": "千束",
+        "visibility": "private",
+        "endpoint": null,
+        "builtIn": true,
+        "hasAuth": false,
+        "hasCallbackToken": false,
+        "hidden": false,
+        "pinned": false,
+        "systemOwned": false,
+        "canManage": true,
+        "canDelete": true,
+        "mine": true
+      },
+      {
+        "id": "a2",
+        "name": "泷奈",
+        "title": "研究员",
+        "roleDescription": "",
+        "avatarSeed": "泷奈",
+        "visibility": "private",
+        "endpoint": null,
+        "builtIn": true,
+        "hasAuth": false,
+        "hasCallbackToken": false,
+        "hidden": false,
+        "pinned": false,
+        "systemOwned": false,
+        "canManage": true,
+        "canDelete": true,
+        "mine": true
+      },
+      {
+        "id": "a3",
+        "name": "米卡",
+        "title": "设计师",
+        "roleDescription": "",
+        "avatarSeed": "米卡",
+        "visibility": "private",
+        "endpoint": null,
+        "builtIn": true,
+        "hasAuth": false,
+        "hasCallbackToken": false,
+        "hidden": false,
+        "pinned": false,
+        "systemOwned": false,
+        "canManage": true,
+        "canDelete": true,
+        "mine": true
+      }
+    ],
+    "seededDefault": false
+  },
+  "^/api/agents/capabilities$": {
+    "capabilities": {}
+  },
+  "^/api/settings/preferences$": {
+    "preferences": {
+      "mainBotId": "a1"
+    }
+  },
+  "^/api/channels$": {
+    "channels": [
+      {
+        "id": "c1",
+        "name": "周末计划",
+        "agentIds": ["a1"],
+        "threadId": "tc1",
+        "active": true,
+        "lastMessageAt": "2026-10-28T10:00:00.000Z",
+        "summary": "周末计划",
+        "lastMessage": "好的，我来整理一下。",
+        "lastMessageAgentId": "a1",
+        "createdAt": "2026-10-28T10:00:00.000Z",
+        "pinned": false,
+        "lastReadAt": "2026-10-28T10:00:00.000Z"
+      },
+      {
+        "id": "c2",
+        "name": "论文摘要",
+        "agentIds": ["a2"],
+        "threadId": "tc2",
+        "active": true,
+        "lastMessageAt": "2026-10-28T10:00:00.000Z",
+        "summary": "论文摘要",
+        "lastMessage": "这是要点。",
+        "lastMessageAgentId": "a2",
+        "createdAt": "2026-10-28T10:00:00.000Z",
+        "pinned": false,
+        "lastReadAt": "2026-10-28T10:00:00.000Z"
+      }
+    ],
+    "nextCursor": null
+  },
+  "^/api/bots/attention$": {
+    "bots": []
+  },
+  "^/api/approvals$": {
+    "requests": [],
+    "questions": []
+  },
+  "^/api/confirmations/requests$": {
+    "requests": []
+  },
+  "^/api/version$": {
+    "version": "0.1.102"
+  },
+  "^/api/capabilities$": {
+    "generativeUi": true
+  },
+  "^/api/sandboxed/published$": {
+    "published": []
+  },
+  "^/api/schedules/events$": {
+    "events": []
+  },
+  "^/api/copilotkit/info$": {
+    "agents": {},
+    "version": "1"
+  },
+  "^/api/channels/c1$": {
+    "channel": {
+      "id": "c1",
+      "name": "周末计划",
+      "agentIds": ["a1"],
+      "threadId": "tc1",
+      "active": true,
+      "lastMessageAt": "2026-10-28T10:00:00.000Z"
+    }
+  },
+  "^/api/copilotkit/threads/tc1/messages$": {
+    "messages": [
+      {
+        "id": "m1",
+        "role": "user",
+        "content": "这周末想去郊外走走，帮我排个轻松点的行程？"
+      },
+      {
+        "id": "m2",
+        "role": "assistant",
+        "content": "好的！推荐一条半日路线：\n\n1. **上午 9:00** 出发去植物园，人少空气好。\n2. **中午** 在园内的湖边餐厅吃饭。\n3. **下午** 去附近的老街喝杯咖啡再回家。\n\n需要我帮你查一下周末的天气吗？"
+      },
+      {
+        "id": "m3",
+        "role": "user",
+        "content": "好，顺便看看天气。"
+      },
+      {
+        "id": "m4",
+        "role": "assistant",
+        "content": "周六晴，18–24°C，适合出门。记得带件薄外套。"
+      }
+    ]
+  },
+  "^/api/bot-avatars$": {
+    "avatars": {}
+  },
+  "^/api/live-panels$": {
+    "items": []
+  },
+  "^/api/channels/c2$": {
+    "channel": {
+      "id": "c2",
+      "name": "论文摘要",
+      "agentIds": ["a2"],
+      "threadId": "tc2",
+      "active": true,
+      "lastMessageAt": "2026-10-28T10:00:00.000Z"
+    }
+  },
+  "^/api/copilotkit/threads/tc2/messages$": {
+    "messages": [
+      {
+        "id": "n1",
+        "role": "user",
+        "content": "把论文要点做成卡片"
+      },
+      {
+        "id": "n2",
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "id": "call1",
+            "type": "function",
+            "function": {
+              "name": "render_ui",
+              "arguments": "{\"title\": \"\\u8981\\u70b9\", \"spec\": \"{\\\"root\\\": \\\"card\\\", \\\"elements\\\": {\\\"card\\\": {\\\"type\\\": \\\"Card\\\", \\\"props\\\": {\\\"title\\\": \\\"\\\\u8981\\\\u70b9\\\"}, \\\"children\\\": [\\\"t\\\"]}, \\\"t\\\": {\\\"type\\\": \\\"Text\\\", \\\"props\\\": {\\\"text\\\": \\\"\\\\u4e09\\\\u6761\\\\u8981\\\\u70b9\\\"}, \\\"children\\\": []}}}\"}"
+            }
+          }
+        ]
+      },
+      {
+        "id": "n3",
+        "role": "tool",
+        "toolCallId": "call1",
+        "content": "ok"
+      },
+      {
+        "id": "n4",
+        "role": "assistant",
+        "content": "做好了。"
+      }
+    ]
+  }
+}

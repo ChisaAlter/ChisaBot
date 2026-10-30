@@ -11,6 +11,7 @@ export {
   type AttachmentKind,
   type AttachmentPart,
   type AttachmentSource,
+  attachmentThumbUrl,
   attachmentUrl,
   classifyAttachment,
   MAX_ATTACHMENTS_PER_MESSAGE,
@@ -20,5 +21,6 @@ export {
   mayBeTruncatedForModel,
   mediaTypeOf,
   namesNoFormat,
+  pickAttachmentThumbWidth,
   shouldClaimPaste,
 } from "../../../../shared/attachments";

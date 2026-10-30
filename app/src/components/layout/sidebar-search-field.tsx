@@ -17,6 +17,7 @@ const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
  * ↑ / ↓ 在结果里移动高亮、Enter 打开（CB-106，lib/sidebar-search-nav.ts）；焦点一直留在输入框。
  */
 export function SidebarSearchField() {
+  const c = RAIL_CLASSES;
   const search = useSidebarSearch();
   const input = useRef<HTMLInputElement>(null);
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
@@ -39,15 +40,15 @@ export function SidebarSearchField() {
     return onSidebarSearchFocusRequest(focus);
   }, []);
   return (
-    <label className="side-search">
-      <IconSearch aria-hidden className="side-search-ico" />
+    <label className={c.root}>
+      <IconSearch aria-hidden className={c.ico} />
       <input
         aria-activedescendant={search && activeId ? activeId : undefined}
         aria-autocomplete="list"
         aria-controls={search ? SEARCH_RESULTS_ID : undefined}
         aria-expanded={Boolean(search)}
         aria-label={"搜索会话"}
-        className="side-search-input"
+        className={c.input}
         onChange={(event) => setSidebarSearch(event.target.value)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) {
@@ -78,14 +79,23 @@ export function SidebarSearchField() {
         value={search}
       />
       {search ? (
-        <button aria-label={"清除搜索"} className="side-search-clear" onClick={() => setSidebarSearch("")} type="button">
+        <button aria-label={"清除搜索"} className={c.clear} onClick={() => setSidebarSearch("")} type="button">
           <IconX className="size-3.5" />
         </button>
       ) : (
-        <kbd aria-hidden className="side-search-kbd">
+        <kbd aria-hidden className={c.kbd}>
           {MAC ? "⌘K" : "Ctrl K"}
         </kbd>
       )}
     </label>
   );
 }
+
+const RAIL_CLASSES = {
+  root: "side-search",
+  ico: "side-search-ico",
+  input: "side-search-input",
+  clear: "side-search-clear",
+  kbd: "side-search-kbd",
+};
+
