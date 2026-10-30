@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 长对话虚拟化（jank P3-3，分支 perf/virtua-transcript，flag `virtualTranscript`，默认关）：打开后对话除末尾 3 行外交给 `virtua` 的 `Virtualizer`（滚动容器不变），只挂视口附近的行；行高实测并按会话 + 消息 id 缓存，切回复用；前插历史用 `shift` 保位；流式中的回答常驻末尾，贴底跟随、上滑不抢；tail-first 补行整条不走。会话内 Ctrl/⌘+F 改为应用内搜索（只在 flag 打开时拦截）：在数据里搜，滚到命中行并闪一下高亮，Enter / ⇧Enter / ↑↓ 切换，Esc 关闭。打开：地址栏 `?virtualTranscript=1`（会记住，`=0` 关）或 `localStorage.setItem("chisabot.virtual-transcript","on")`；构建时 `VITE_VIRTUAL_TRANSCRIPT=1` 只改默认值。flag 关时行为不变。新依赖 `virtua`（MIT）。
 - 切会话 / 长对话补历史不再整篇强制样式重算（jank P1-2，分支 dev4/perf-tail-first）：尾屏优先补行时，人在底部就不再每批读 `scrollHeight`，交给浏览器原生 `overflow-anchor` 保位、补完钉一次底；人已上滑时原生锚定保住眼前那一行，只有不支持 `overflow-anchor` 的浏览器（Safari）才量高度垫回去。补行改在空闲时做（`requestIdleCallback`，最多等 50ms），批次随已挂条数翻倍（40 起、单批封顶 160），400 条从 13 批降到 6 批。`message-scroller`（`@shadcn/react@0.3.0` 拷进 `app/src/vendor/shadcn-react-message-scroller`，只改两处）算内容高度只量最后一行、找第一条可见行改二分，不再逐行 `getBoundingClientRect`。新增 `app/src/lib/chat/transcript-data-layer.ts`：给后面 virtua 虚拟化用的数据层接口。打开在底部、流式贴底、上滑补行不跳、应用内搜索跳转行为不变。
 
 ## 0.1.112 — 2026-10-29
