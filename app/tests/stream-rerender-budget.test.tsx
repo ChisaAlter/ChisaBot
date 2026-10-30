@@ -101,7 +101,13 @@ test("100 streamed tokens do not re-render a composer whose props did not change
 });
 
 const COMMANDS: readonly CommandOption[] = [
-  { id: "skill", name: "skill", description: "a skill", kind: "prompt", prompt: "do it" },
+  {
+    id: "skill",
+    name: "skill",
+    description: "a skill",
+    kind: "prompt",
+    prompt: "do it",
+  },
 ];
 
 /*
@@ -132,7 +138,9 @@ test("100 streamed tokens through ConversationView leave its composer alone", as
         />
       );
     }
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     render(
       <QueryClientProvider client={client}>
         <Route />
