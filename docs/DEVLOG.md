@@ -242,6 +242,39 @@
 - 边界：超时后才读回照样补上；读取中改选别的壁纸立即结束，迟到的结果不覆盖。
 把 `sky-background.tsx` 换回改动前的版本，这 4 个主用例全部失败。
 
+## Unreleased — 语音输入：重试重新录音 / 断网提示（审查模块 4，分支 dev3/dictation-audit）
+
+### 动机
+审查报告 `04-composer.md`（语音部分）：
+- 浏览器识别返回的是一段文本 Blob，结果为空就报「未检测到语音」。之后点「重试」，`session.retry` 拿来重新「转写」的还是这段空文本，所以一定再失败（`recording.ts:209-215`、`session.ts:121-124`）。
+- 断网时浏览器识别会以空结果结束，用户看到的是「未检测到语音」，而不是没网。`onerror` 的 `network` 被归到「语音速记中断」（`recording.ts:88-93`）。
+- 麦克风被拒时只说「浏览器未授予麦克风权限」，没告诉用户去哪里打开；功能叫法也不统一（口述、听写、速记、转录）。
+
+### 改动
+1. **重试走对路径**：新增 `DictationError(message, rerecord)`。
+   - 「没听到声音」「录音为空」「浏览器识别结果为空」这几种情况 `rerecord = true`：session 丢掉手里的音频，`canRetry = false`，按钮走 `start()` 重新录音。`session.retry()` 在没有可复用的音频时也改成重新录音，不再什么都不做。
+   - 上传断网、网络错误、服务端报错仍然 `canRetry = true`，用同一段录音重新上传。
+2. **断网**：
+   - 浏览器识别 `onerror` 是 `network`，或者 `navigator.onLine === false` 时结果为空，都显示「没有网络连接，语音输入用不了。联网后点「重新录音」。」。
+   - 服务端识别在离线时不再发请求，直接提示「没有网络连接，没能把录音传上去。联网后点「重试」。」。`fetch` 抛网络错误时显示「网络出错，没能把录音传上去。请点「重试」。」，不再出现英文 `Failed to fetch`。
+3. **麦克风被拒**：按运行环境分三句（`micDeniedMessage()`），浏览器识别的 `not-allowed` / `service-not-allowed` 和 MediaRecorder 的 `NotAllowedError` 共用。
+   - 浏览器：点地址栏左边的锁形图标，把「麦克风」改成「允许」；手机上到系统设置里允许浏览器用麦克风。
+   - PC 客户端（没有地址栏）：到 Windows「设置 → 隐私和安全性 → 麦克风」里打开「允许桌面应用访问麦克风」。
+   - 安卓 App：直接说「安卓 App 暂时还不支持语音输入」，请改用 PC 客户端或浏览器。安卓的 WebView 没实现 `onPermissionRequest`，清单里也没有 `RECORD_AUDIO`，Chrome 网站设置和应用权限都打不开麦克风，所以不再让用户去那里找。真正的支持另开安卓小 PR（dev3/android-mic-permission），随下一个客户端版本和 #400 一起发；那个合并后再把这句换成真正的操作说明。
+4. **叫法**：这两个文件里剩下的「口述」「语音速记」「转录」统一成「语音输入」「识别」。按钮文案在输入框 PR（dev3/composer-audit）里改，这个 PR 不碰 `dictation-controls.tsx`，两个 PR 互不冲突。
+
+### 测试
+- 新增 `app/tests/dictation-audit-m4.test.ts`，8 个用例在 main 上全部失败：
+  - 浏览器识别为空后重试会重新录音，并且能录成功；
+  - 服务端没听到声音时重试是重新录音；
+  - 上传断网后重试用同一段音频重新上传；
+  - 离线时空结果提示没网；
+  - 离线上传不发请求；
+  - `fetch` 网络错误显示中文提示；
+  - `onerror: network` 提示没网；
+  - 麦克风被拒的提示按浏览器 / PC / 安卓分开：PC 指到「允许桌面应用访问麦克风」，安卓说暂不支持语音输入。
+- `dictation-session.test.ts` 里麦克风被拒的断言改用 `MIC_DENIED_MESSAGE`。
+
 ## Unreleased — 工具步骤失败后整轮没有回答 / web_fetch 稳定性（Hark 对比 A4）
 
 ### 动机
