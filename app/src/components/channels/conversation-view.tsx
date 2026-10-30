@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -22,12 +23,15 @@ import {
 import { attachmentUrl } from "@/lib/channels/attachments";
 import { newId } from "../../lib/new-id";
 
+/** 默认值用同一个空数组：每次渲染新建 `[]` 会让 memo 过的 Composer 跟着每个 token 重渲。 */
+const NO_AGENTS: readonly AgentOption[] = [];
+
 export function ConversationView({
   messages,
   busy = false,
   notice,
   transcriptNotice,
-  agents = [],
+  agents = NO_AGENTS,
   commands,
   channelId,
   draftKey,
@@ -489,7 +493,10 @@ export function ConversationView({
    * 被调用，读到的总是最近一次渲染的版本，行为不变。
    */
   const latest = useRef({ submit, onStop, onRetryStop, queueToServer });
-  latest.current = { submit, onStop, onRetryStop, queueToServer };
+  // 提交阶段再写，不在渲染里改 ref（并发渲染可能丢弃这次渲染）；layout effect 先于任何用户事件执行。
+  useLayoutEffect(() => {
+    latest.current = { submit, onStop, onRetryStop, queueToServer };
+  });
   const submitDraft = useCallback(
     (draft: ComposerDraft) => latest.current.submit(draft, false),
     [],
