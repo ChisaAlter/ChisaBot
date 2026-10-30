@@ -5,7 +5,6 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
 import { Fragment, useRef, useState } from "react";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
@@ -40,6 +39,7 @@ import {
   botResetPlanQueryOptions,
   type ResetPlan,
 } from "@/lib/bot-lifecycle/queries";
+import { useOpenBotChat } from "@/lib/channels/open-bot-chat";
 import { agentModelQueryOptions, modelCatalogQueryOptions } from "@/lib/model-selection/queries";
 import { useMainBot } from "@/lib/settings/message-list";
 import { queryClient as sharedQueryClient } from "@/query-client";
@@ -367,7 +367,7 @@ function TasksSection({ agentId }: { agentId: string }) {
 
 /** 机器人资料页。 */
 export function BotProfilePage({ agent }: { agent: AgentProfile }) {
-  const navigate = useNavigate();
+  const openBotChat = useOpenBotChat();
   const { mainBotId } = useMainBot();
   const isMain = mainBotId === agent.id;
   const [editing, setEditing] = useState(false);
@@ -390,10 +390,7 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
     <PageShell
       action={
         <div className="bp-actions">
-          <Button
-            onClick={() => void navigate({ search: { agent: agent.id }, to: "/channel/new" })}
-            size="sm"
-          >
+          <Button onClick={() => void openBotChat(agent.id)} size="sm">
             <IconMessage />
             {"开始聊天"}
           </Button>

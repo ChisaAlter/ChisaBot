@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { IconLayoutDashboard, IconTrash } from "@tabler/icons-react";
 import { AgentDialog } from "@/components/agents/agent-dialog";
 import { DeleteBotDialog } from "@/components/agents/delete-bot-dialog";
 import { BotComputerAccess } from "@/components/devices/bot-computer-access";
+import { useOpenBotChat } from "@/lib/channels/open-bot-chat";
 import { showPanels } from "@/lib/panels/rail-open";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -55,7 +55,7 @@ export function AgentProfile({ agentId }: { agentId: string }) {
   /** The full dialog, opened over the chat rather than navigating away from it. */
   const [managing, setManaging] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const navigate = useNavigate();
+  const openBotChat = useOpenBotChat();
   const agent = useQuery(agentQueryOptions(agentId));
 
   if (agent.isPending) {
@@ -106,7 +106,7 @@ export function AgentProfile({ agentId }: { agentId: string }) {
         <Button
           className="w-full text-sm!"
           onClick={() =>
-            void navigate({ search: { agent: agentId }, to: "/channel/new" })
+            void openBotChat(agentId)
           }
         >
           {"去聊天"}

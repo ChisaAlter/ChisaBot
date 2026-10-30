@@ -4,6 +4,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { AuthLoopNotice } from "./components/auth/auth-loop-notice";
+import { installLoginRedirect } from "./lib/auth/login-redirect";
 import { BootCommitMarker, reportBootStage } from "./lib/boot-status";
 import { installPhoneLayout } from "./lib/device";
 import { installHaltProbe } from "./lib/halt";
@@ -26,6 +28,8 @@ installHaltProbe();
 installPwa();
 installPreviewWindowBridge();
 installStaleChunkReload();
+// 会话过期（网关的 401）整页去 /login?next=…，见 lib/auth/login-redirect.ts。
+installLoginRedirect();
 initResizeState();
 const rootElement = document.getElementById("root");
 
@@ -37,6 +41,7 @@ createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BootCommitMarker />
+      <AuthLoopNotice />
       <RouterProvider router={router} context={{ queryClient }} />
     </QueryClientProvider>
   </StrictMode>,
