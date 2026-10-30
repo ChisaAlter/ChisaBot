@@ -16,6 +16,11 @@
  * 流式：正在变长的末块不入缓存（否则每个 token 一条，几秒就把 LRU 冲掉），只查不存；
  * 前面已经定型的块照常入缓存。
  *
+ * 依赖 streamdown 内部细节（package.json 锁死 2.6.0，升级时逐条复核）：
+ * 1. Streamdown 的 Block 内部直接调用处理器实例的 `parse` / `runSync`，我们覆写的是实例方法；
+ * 2. unified 在 freeze 时以处理器为 `this` 调插件，我们读 `proc.attachers` 算插件集签名；
+ * 3. `runSync(tree, file)` 的第二参数是块文本字符串（用作写缓存的键）。
+ *
  * 代码高亮：本应用没有给 Streamdown 配 `plugins.code`，代码块不经过 shiki，没有高亮结果可缓存；
  * 代码块本身的 hast 随块一起缓存。
  */
@@ -26,6 +31,7 @@ const VERSION = "1";
 
 /** 容量上限：条目数和块文本总字数，任一超出就从最久没用的开始淘汰。 */
 export const MD_CACHE_MAX_ENTRIES = 2000;
+// 注意：这个上限只算块原文字数，实际 hast 占的内存约为原文的 10–30 倍（最坏几十 MB）。
 export const MD_CACHE_MAX_CHARS = 600_000;
 
 /** 缓存的是 hast 根节点；这里不依赖 @types/hast，只当不透明对象存取。 */
@@ -121,6 +127,8 @@ function signatureOf(proc: Proc) {
   const own = (proc.attachers ?? []).filter(([fn]) => fn !== streamdownMdCache);
   const parts = own.map(([fn, ...opts]) => {
     let o = "";
+    // 参数里的函数、正则序列化后会丢掉（JSON 里变成缺省或 {}），只靠插件函数编号区分；
+    // 若将来有插件仅凭函数/正则参数区分行为，签名会撞，需要改这里。
     try {
       o = JSON.stringify(opts);
     } catch {

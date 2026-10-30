@@ -11,6 +11,8 @@
  * 30 秒内又被弹回来（会话有效但后端仍回这种 401）就停下，见下面的循环保护。
  */
 
+import { mdCache } from "@/lib/chat/md-cache";
+
 type LoginWindow = Pick<Window, "location" | "fetch"> & {
   sessionStorage?: Pick<Storage, "getItem" | "setItem">;
 };
@@ -115,6 +117,8 @@ export async function signOutAndReLogin(
       credentials: "same-origin",
     });
   } catch {}
+  // 解析缓存里是消息原文；退出失败也照清（反正要去重新登录）。
+  mdCache.clear();
   markRedirect(win, now);
   redirecting = true;
   win.location.replace("/login");
