@@ -30,7 +30,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Streamdown } from "streamdown";
 import { BotBubbles, ReplyQuote, type ReplyTarget } from "@/components/chat/bot-bubbles";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import {
@@ -115,7 +114,6 @@ import {
   takeSendWhileBusy,
   type SentAtReading,
 } from "@/lib/chat/send-scroll";
-import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
 import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";
@@ -128,6 +126,7 @@ import {
   type WorkCall,
   type WorkNote,
   workCallFailed,
+  workCallInterrupted,
 } from "@/lib/chat/work-steps";
 import { approvalInboxOptions } from "@/lib/approvals";
 import { useThreadConfirmations } from "@/lib/confirmations";
@@ -2894,6 +2893,7 @@ function ServerToolLine({ name, result }: { name: string; result?: string }) {
    * 所以不当成过程行藏起来，而是一句中文提示，告诉他去哪里处理。
    */
   if (isHostAccessRefusal(name, result)) return <HostAccessHint />;
+  // 工具原样的输出交给 ToolLine 用纯文本画、过长截断（审查模块 7：以前当 markdown 画，一万字点开要卡 1.5 秒）。
   return (
     <ToolLine
       {...(detail ? { detail } : {})}
@@ -2901,16 +2901,8 @@ function ServerToolLine({ name, result }: { name: string; result?: string }) {
       refused={refused}
       failed={failed}
       running={result === undefined}
-    >
-      {body ? (
-        <Streamdown
-          components={markdownComponents}
-          translations={STREAMDOWN_ZH}
-        >
-          {forDisplay(body)}
-        </Streamdown>
-      ) : null}
-    </ToolLine>
+      {...(body ? { output: forDisplay(body) } : {})}
+    />
   );
 }
 
@@ -3246,6 +3238,25 @@ export function ChatTranscript({
     if (id) resumedCards.add(id);
   }
   const quietRows = new Set<string>();
+  /*
+   * 收起的锚点行自己画着卡片（审查模块 7）：问人、建定时任务、交给后台……这种调用当了这一轮干活卡的锚点时，
+   * 收起的只能是干活那一行，不能把卡片一起收掉（以前后台任务卡就是这样在任务还在跑时消失的，刷新后也不画）。
+   * 用和画卡片同一份判断（toolDrawsCard），确认 / 审批还没读到时不先当卡片：先收、读到了再露出来，不会先画后收。
+   */
+  const quietWorkOnly = new Set<string>();
+  const rowItems = new Map(items.map((item) => [item.id, item] as const));
+  const anchorDrawsCard = (id: string) => {
+    const item = rowItems.get(id);
+    return (
+      (item?.kind === "tool" || item?.kind === "activity") &&
+      toolDrawsCard(item, {
+        renderers: toolRenderers,
+        activities: activityRenderers,
+        ...(chatConfig?.agentId ? { agentId: chatConfig.agentId } : {}),
+        asked: confirmed,
+      })
+    );
+  };
   if (hasQuiet) {
     for (const [anchor, work] of compact.work) {
       if (!work.quiet) continue;
@@ -3261,7 +3272,8 @@ export function ChatTranscript({
           genericSummary: summarizeDoneWork(work.calls)?.generic === true,
         })
       ) {
-        quietRows.add(anchor);
+        if (anchorDrawsCard(anchor)) quietWorkOnly.add(anchor);
+        else quietRows.add(anchor);
       }
     }
   }
@@ -3751,7 +3763,7 @@ export function ChatTranscript({
 
   /** 这一轮的干活卡 / 收成的一行，画在这一轮第一个干活的工具那一行里（DESIGN.md §75.1）。打开「调试：显示工具调用」时不画（每一步本来就画着）。 */
   function workRowFor(id: string) {
-    if (showToolActivity) return null;
+    if (showToolActivity || quietWorkOnly.has(id)) return null;
     const work = compact.work.get(id);
     return work ? (
       <WorkRow
@@ -4287,12 +4299,18 @@ export function compactTurns(
               : [];
         for (const tool of tools) {
           const name = tool.toolCall.function.name;
+          // 被停掉的一轮里没返回的那几步：「已停止」，不算失败（审查模块 7）。
+          const stoppedCall = isStopped && workCallInterrupted(tool.result);
           calls.push({
             name,
             arguments: tool.toolCall.function.arguments,
-            done: tool.result !== undefined,
+            done: tool.result !== undefined && !stoppedCall,
             id: tool.toolCall.id,
-            failed: tool.result !== undefined && workCallFailed(tool.result),
+            failed:
+              !stoppedCall &&
+              tool.result !== undefined &&
+              workCallFailed(tool.result),
+            ...(stoppedCall ? { stopped: true } : {}),
           });
           if (anchor === null && isWorkCall(name)) anchor = item.id;
         }

@@ -1,6 +1,5 @@
 # DEVLOG
 
-<<<<<<< HEAD
 ## 登录循环保护小补丁（dev4/login-loop-followup，#442 后续）
 
 **动机**：#442 审查时留下的三处小问题。
@@ -723,7 +722,6 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 6. 预览可选 `kind: "video"` 和 `thumbnail`（服务端由另一个 PR 加，这里没改服务端）：是 video 时图上叠一个播放角标，不用 blur，`pointer-events: none`。
 
 **截图**：`docs/images/linkstack-fix/`（左改前、右改后）。顶栏一项因 #374 未合并跳过。没有升版本号。
-=======
 ## Unreleased — 新话题页带附件（A1）+ 用户消息图片稳定显示
 
 ### 动机
@@ -825,7 +823,6 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 - 去新话题页时藏着的草稿对话一律立即回收（`draftKeptTtl`），提前挪不会挪错；去的是别的机器人的新话题页时键对不上，不动，回收时照旧回到原来的机器人。没有改输入框，也没有改 `styles.css`。
 
 **测试**：新增 `app/tests/draft-leave-new-topic.test.tsx`，按外壳的结构搭（`KeepAliveStage` + `draftKeptTtl` + 挂 `holdDraftChannel` 的草稿页 + 真正的 `/channel/new` 路由和 Composer），用 MutationObserver 记新话题页输入框第一次出现时的字和那一刻有没有回收：要求第一次出现就有字、且那时还没回收，回收后只有一份；另一条是去别的机器人的新话题页时字不挪过去、回收后回到原来的机器人。修复前第一条失败（第一次出现时是空的，之后也一直空），修复后通过。
->>>>>>> origin/fix/user-message-image-thumbs
 
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
@@ -1934,3 +1931,31 @@ main `c99ee37e` 对本分支（已合 main），同一个排队位里交替各�
 - 设置 › 外观，浅色：`main-settings-appearance-light.webp` → `branch-settings-appearance-light.webp`；深色：`main-settings-appearance-dark.webp` → `branch-settings-appearance-dark.webp`。外观本身没变。
 - 性能模式入口：`main-settings-perf-mode.webp`（没有开关）→ `branch-settings-perf-mode.webp`、打开后 `branch-settings-perf-mode-on.webp`。
 - 启动骨架（存的配色是樱花 / 浅色、极光 / 深色手机）：`main-splash-*.webp` 是默认蓝天，`branch-splash-*.webp` 直接是用户的配色；地址栏颜色 main 两个 meta 固定 `#9dbddc,#0c1626`，本分支 `#e5a9b5` / `#110e20`（跟配色）。
+## 2026-10-29 工具步骤显示按审查修正（模块 7，分支 `fix/tool-steps-audit`，依赖 #404）
+
+从 `feat/hark-reply-steps` 的 `3d65ef4c` 拉出，之后用 merge commit 合进了 #404 的 `f118a530`（第四轮返修）和 `origin/main`；PR base 是 `main`。
+
+- **后台任务卡不再跟着收起**：`delegate_task` 归进 `NOT_WORK`（不算干活步骤，不进「做了 N 步」）。以前它常是一轮里第一个干活的调用，也就是干活卡的锚点；一轮结束后锚点所在那一项被 `quietRows` 整项收起，后台任务卡、停止按钮、进度一起没了，刷新后同样不画。现在 `ChatTranscript` 对「锚点自己画卡片」（`toolDrawsCard`）的安静轮只收干活那一行（`quietWorkOnly`），卡片照画。
+- **运行中展开不再标失败**：步骤状态统一由 `workCallState(call, live)` 给出（`done` / `failed` / `running` / `stopped`）；这一轮还在跑时没返回的步骤是 `running`，写「正在…」，`<li data-state="running" class="is-current">`。
+- **停止后**：`compactTurns` 把停止时没返回的调用（结果为空或是「This call produced no result」）记成 `stopped`；这一轮不再算安静轮，收成一行（「做了 N 步 · S 步已停止」），点开每一步，没返回的写「（已停止）」，不计进「N 步失败」。
+- **并行调用**：同时在跑的两个以上干活调用写「正在搜索 N 项」「正在读取 N 个网页」「正在打开 N 个网页」，不同种的写「正在同时做 N 件事」；同时在画的卡片不算。点开是每一步。
+- **网页读取**：`shared/work-step.ts` 的 `pageOf` 给 `web_fetch` 写主机名 + 解码后的路径（不带查询串和锚点，40 字以内整段，过长写 `host/…/最后一段`）。这是 shared 代码，服务端 `server/src/workers/service.ts` 的后台任务步骤文字也跟着变成短路径——只是展示文字，没有逻辑改动。结果开头是 `状态：4xx/5xx`（可带一行 `网址：`）算失败。
+- **后台任务卡无障碍**：收起的计划清单、结果正文加 `inert` + `aria-hidden`；各展开按钮的 `aria-expanded` 按真实状态给，带 `aria-controls`；进度放进一个只给读屏的 `role="status"`（`aria-atomic`）。
+- **调试模式工具输出**：`ToolLine` 的输出改成 `<pre>` 纯文本，超过 4000 字截断并写还剩多少字，`<details>` 打开时才画。
+- 没改 `styles.css`、`main.tsx`、`perf-noblur.css`、`app-sidebar.tsx`、`glass-topbar.tsx`、`wallpaper_core.html`；没加 `!important`、没加大容器 `:has()`、没升版本号。
+- **「N 步失败」不重复**：读网页失败时摘要本身写了「看了 1 个网页 · 1 步失败」，没有回答那一轮后面的小字（#404 加的）又写一遍；`WorkRow` 在摘要已含「步失败」时不再在小字和读屏名字里重复。
+- 测试：`app/tests/tool-steps.test.tsx`（进行中、停止后、`delegate_task` 不被折叠、并行调用、网页短路径和 HTTP 错误、`WorkRow` / `WorkerCardBody` / `ToolLine` 组件测试），`work-steps.test.ts`、`quiet-turn.test.ts` 按新行为更新。
+
+### 截图
+
+改前是 `3d65ef4c`（#404），改后是本分支。用临时页面挂真实的 `ChatTranscript` / `WorkerCard`，`/api` 全部 404，没连后端；临时页面没提交。
+
+| 情况 | 改前 | 改后 |
+|---|---|---|
+| 后台任务（这一轮写完、任务还在跑） | ![](images/tool-steps/before-worker.webp) | ![](images/tool-steps/after-worker.webp) |
+| 运行中展开 | ![](images/tool-steps/before-running.webp) | ![](images/tool-steps/after-running.webp) |
+| 并行调用 | ![](images/tool-steps/before-parallel.webp) | ![](images/tool-steps/after-parallel.webp) |
+| 停止后（展开） | ![](images/tool-steps/before-stopped.webp) | ![](images/tool-steps/after-stopped.webp) |
+| 读网页（短路径、HTTP 500 算失败） | ![](images/tool-steps/before-fetch.webp) | ![](images/tool-steps/after-fetch.webp) |
+
+图片在 `docs/images/tool-steps/`，10 张 webp 共约 50KB，640px 宽、浅色。
