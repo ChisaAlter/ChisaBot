@@ -77,3 +77,7 @@ android/app/build/
 
 # perf harness output (perf/README.md)
 perf/out/
+
+# PC 更新签名私钥（docs/pc-update-signing.md）：只放仓库外 / GitHub Environment secret，绝不进仓库
+*.pem
+update-signing*

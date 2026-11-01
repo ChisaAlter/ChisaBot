@@ -8,6 +8,9 @@ name: Client release
 # 存在时，再多打一份「自建版」作为工作流产物（pc-custom、android-custom），由发布者放到自己的更新目录。
 # Android 签名：Secrets ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD；
 # 没有配置时产出 -unsigned.apk。
+# PC 更新验签（docs/pc-update-signing.md）：发布时 pc-sign job（Environment pc-release，只允许 v* 标签）用
+# Environment Secret PC_UPDATE_SIGNING_KEY 给 latest.yml 签名；通用版必须内置公钥（pc/src/update-keys.json），
+# 自建版用仓库变量 CHISABOT_UPDATE_PUBKEYS 提供公钥（不配 = 自建版不验签）。发布只能从标签运行。
 on:
   push:
     tags: ["v*"]
@@ -74,6 +77,8 @@ jobs:
           code=$(sed -n 's/^ *versionCode = \([0-9]*\).*/\1/p' android/app/build.gradle.kts)
           if [ "$version" != "$aver" ]; then echo "::error::版本不一致：pc=$version android=$aver"; exit 1; fi
           if [ -n "$tag" ] && [ "$tag" != "v$version" ]; then echo "::error::标签 $tag 与版本 v$version 不一致"; exit 1; fi
+          # 签名 job 的 Environment pc-release 只允许 v* 标签：手动发布要在「Use workflow from」里选这个标签。
+          if [ -n "$tag" ] && { [ "$REF_TYPE" != tag ] || [ "$REF_NAME" != "$tag" ]; }; then echo "::error::发布 $tag 必须从标签 $tag 运行（现在是 $REF_TYPE $REF_NAME）"; exit 1; fi
           flavors='["generic"]'
           if [ -n "$SERVER_URL$PC_FEED$ANDROID_FEED" ]; then flavors='["generic","custom"]'; fi
           { echo "tag=$tag"; echo "version=$version"; echo "version_code=$code"; echo "flavors=$flavors"; } >> "$GITHUB_OUTPUT"
@@ -132,6 +137,22 @@ jobs:
           if [ -n "$feed" ]; then url="${feed%/}/"; else url="https://github.com/$REPO/releases/latest/download/"; fi
           node -e 'const fs=require("fs"),p=JSON.parse(fs.readFileSync("package.json","utf8"));p.build.publish=[{provider:"generic",url:process.argv[1],channel:"latest"}];fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")' "$url"
           cat src/build-config.json; echo "publish.url=$url"
+      - name: Update keys
+        # 客户端内置的更新公钥（src/update-keys.json，打进 asar）。通用版用仓库里的公钥表，发布时必须非空；
+        # 自建版按仓库变量 CHISABOT_UPDATE_PUBKEYS 生成（为空 = 这个自建版不验签，保持旧行为）。
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+          TAG: ${{ needs.config.outputs.tag }}
+          CHISABOT_UPDATE_PUBKEYS: ${{ vars.CHISABOT_UPDATE_PUBKEYS }}
+        run: |
+          if [ "$FLAVOR" = custom ]; then
+            node scripts/sign-update.js --keys-from-env
+          elif [ -n "$TAG" ]; then
+            node scripts/sign-update.js --require-keys
+          else
+            node scripts/sign-update.js --require-keys || echo "::warning::src/update-keys.json 没有公钥：这个构建不验签（只构建不发布）"
+          fi
+          cat src/update-keys.json
       - name: Shell fingerprint
         # 外壳指纹（图标 / 安装脚本 / Electron 版本…）打进 asar；客户端拿它和 latest.yml 的 chisabotShell 比，
         # 不同就走「重新安装」而不是 --updated 覆盖更新（docs/online-update.md §2.1）。
@@ -150,6 +171,65 @@ jobs:
           got=$(node -e 'const c=require("crypto"),fs=require("fs");process.stdout.write(c.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"))' "$exe")
           [ "$want" = "$got" ] || { echo "::error::latest.yml sha512 与安装包不符"; exit 1; }
           ls -la dist
+          cp src/update-keys.json dist/update-keys.json
+      # 这里还没签名：签名在 pc-sign（Environment pc-release），私钥不进跑 electron-builder 的 job。
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pc-${{ matrix.flavor }}-unsigned
+          if-no-files-found: error
+          path: |
+            pc/dist/*-setup.exe
+            pc/dist/*-setup.exe.blockmap
+            pc/dist/*-portable.zip
+            pc/dist/latest.yml
+            pc/dist/update-keys.json
+
+  # 给 latest.yml 签名（docs/pc-update-signing.md）：只在发布时跑；Environment pc-release 只允许 v* 标签、不设审批人，
+  # Secret PC_UPDATE_SIGNING_KEY 只在这个 job 的签名步骤里出现。签完立刻验签 + 篡改自检，再交给 release。
+  pc-sign:
+    needs: [config, pc]
+    if: needs.config.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pc-release
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: ${{ fromJSON(needs.config.outputs.flavors) }}
+    defaults:
+      run:
+        working-directory: pc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      # 只要 js-yaml（和 electron-updater 读 latest.yml 用同一个解析器）；不跑安装脚本。
+      - run: npm ci --ignore-scripts --omit=dev --no-audit --no-fund
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pc-${{ matrix.flavor }}-unsigned
+          path: pc/dist
+      - name: Sign latest.yml
+        id: sign
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+          PC_UPDATE_SIGNING_KEY: ${{ secrets.PC_UPDATE_SIGNING_KEY }}
+        run: |
+          if [ "$FLAVOR" = custom ] && ! node scripts/sign-update.js --require-keys --keys dist/update-keys.json >/dev/null 2>&1; then
+            echo "::warning::自建版没有配置 CHISABOT_UPDATE_PUBKEYS：不签名，这个自建版客户端不验签"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node scripts/sign-update.js dist/latest.yml --keys dist/update-keys.json
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - name: Verify signature + tamper check
+        if: steps.sign.outputs.signed == 'true'
+        run: node scripts/sign-update.js --verify dist/latest.yml --keys dist/update-keys.json --tamper-check
+      - run: cat dist/latest.yml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pc-${{ matrix.flavor }}
@@ -241,7 +321,7 @@ jobs:
           path: android/out/*
 
   release:
-    needs: [config, pc, android]
+    needs: [config, pc-sign, android]
     if: needs.config.outputs.tag != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15

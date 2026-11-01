@@ -101,7 +101,8 @@ function readCommitted(file = OUT) {
 function stampYaml(text, { hash, full = false }) {
   const kept = text
     .split(/\r?\n/)
-    .filter((line) => !/^(chisabotShell|fullInstall):/.test(line))
+    // chisabotSig 签的是旧的字段，盖章以后一定失效：去掉，签名永远是发布的最后一步（scripts/sign-update.js）。
+    .filter((line) => !/^(chisabotShell|fullInstall|chisabotSig):/.test(line))
     .join("\n")
     .replace(/\n+$/, "");
   let out = `${kept}\nchisabotShell: ${hash}\n`;
