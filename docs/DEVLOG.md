@@ -315,6 +315,30 @@ Token 对比（`server/tests/history-budget.test.ts`，30 轮长话题夹具，�
 | >85%，下一轮（31 轮，改前 168,116） | 160k | 33,212（较早 26 轮由摘要代替） |
 
 测试：`server/tests/history-budget.test.ts`（两个阈值、当轮不调用摘要模型 / 后台写好下一轮用、前缀摘要 + 增量续写、5 次 / 600 字整段重摘、编辑失效 / 截断失效、后台失败和超时不影响当轮、真实用量校准与安全系数、同一运行方案稳定、建表与索引、token 对比）、`hermes-runtime.test.ts`（wire model 含压缩开关、回报校验、metadata 合并）、`hermes-health.test.ts`、`history-summary-settings.test.ts`、`examples/acp-agent/bridge.test.ts`（透传、health、非法输入、不支持时 false/false）、Python `examples/hermes-agent/tests`（备用链和 `max_tokens`、mock 429 切换备用、宿主压缩过的运行关掉 Hermes 压缩、下一轮恢复）、`app/tests/chat-unify.test.ts` 和 `hermes-history-notes.test.ts`。
+
+## 去掉滚动 / 流式热路径上的三处强制同步布局（perf/p1-5-forced-layout，FIX-PLAN P1-5 / 根因 4a–4c）
+
+**动机**：卡顿报告（4x CPU 降速）里三处同步读布局：a) `keep-alive.tsx` capture 阶段的 scroll 监听每个事件读 `target.scrollTop`，长会话滚动 79 次 / 313ms；b) `chat-transcript.tsx` MutationObserver 每次变动读 `content.offsetHeight`，流式 731ms；c) `bot-bubbles.tsx` DocCard 的 `useLayoutEffect` 每个字读 `scrollHeight`，流式 474ms。
+
+**改动**：
+- a `KeepAliveStage`：滚动事件里只把容器记进一个 Set，不读位置；藏起来那一刻（同一次提交的 layout effect、绘制前）一次读完写进 `tops`，§98.5 的还原逻辑不变。试过改到 rAF→宏任务里批量读：流式时贴底滚动不停，读的时候布局又脏了，仍强制 60–85ms，所以放弃。
+- b `ChatTranscript`：MutationObserver 只排 `pin()`（rAF），不再读 `offsetHeight`；高度变化全部交给已有的 `ResizeObserver(pinNow)`——它在同一帧布局之后、绘制之前回调，留白照样当帧吃掉 / 补上（§94），读的是已算好的布局。
+- c `DocCard`：用 ResizeObserver 观察 `.chat-doc-inner` 的高度（`docIsTall(h)` = `h + 26 > 168 + 20`，与原 `scrollHeight` 阈值等价）；首次 observe 在第一帧绘制前回调，不会「先展开再收起」；没有 RO 的环境退回挂载时量一次。
+- 测试：keep-alive 新增「滚动事件里 0 次读 scrollTop、藏起来后仍还原到最后位置」；chat-bubbles 新增 `docIsTall` 阈值等价与「DocCard 不再读 .scrollHeight」。
+
+**前后对比**（dev4 harness #443 @671f6ac9，4x 降速，各 3 次取中位数，main c99ee37e → 本 PR；带 trace 与不带 trace 分开）：
+
+| 场景 | 指标 | main | PR |
+|---|---|---|---|
+| stream（trace） | forced 合计 | 1311ms | 198ms（−85%） |
+| stream（trace） | 4b MO 读 offsetHeight | 709–720ms / 39–42 次 | 0 |
+| stream（trace） | 4c DocCard 读 scrollHeight | 285–371ms / 15–19 次 | 0 |
+| stream（无 trace） | long-task ms / 最长 | 338 / 127 | 131 / 74 |
+| scroll（trace） | 4a keep-alive 读 scrollTop | 311–350ms / 78–79 次 | 0 |
+| scroll（trace） | forced 合计 | 324ms | 386ms |
+| scroll（无 trace，两轮） | fps / style ms / script ms | 56.2 / 409 / 581；50.7 / 438 / 674 | 46.4 / 479 / 783；46.8 / 464 / 733 |
+
+scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不读之后，同样 79 次重算改由 `@shadcn/react` message-scroller 自己的 scroll 处理（`TPt → vF → getComputedStyle/getBoundingClientRect` 遍历全部行）付掉，总量不变（差值在噪声范围内，box 同时有其他任务）。要让滚动真正变快得改 message-scroller 的边缘计算（FIX-PLAN §1.2「补充」），不在本 PR 范围。原始数据：box `/workspace/dev5-p15-perf/`。
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。

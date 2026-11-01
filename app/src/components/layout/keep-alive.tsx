@@ -88,14 +88,18 @@ export function KeepAliveStage<T>({
   }, [visible, hasKept]);
 
   // 看得见时记着每个滚动容器最后的位置；藏起来后 KEPT_SCROLL_HOLD_MS 内被挪了就还原（§98.5）。
+  // 滚动事件里只记「哪个容器滚过」，不读 scrollTop——capture 阶段每个滚动事件读一次会强制同步布局
+  // （4x 降速长会话滚动 79 次 / 313ms，FIX-PLAN 4a）。位置只有藏起来那一刻才用得上，就在那一刻一次读完
+  // （延后到 rAF / 宏任务里读也不行：流式时贴底滚动不停，读的时候布局又脏了，实测仍强制 60–85ms）。
   const tops = useRef(new WeakMap<Element, number>());
+  const scrolled = useRef(new Set<Element>());
   // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     const el = box.current;
     if (!el || !visible) return;
     const remember = (event: Event) => {
       const target = event.target;
-      if (target instanceof Element && el.contains(target)) tops.current.set(target, target.scrollTop);
+      if (target instanceof Element && el.contains(target)) scrolled.current.add(target);
     };
     el.addEventListener("scroll", remember, { capture: true, passive: true });
     return () => el.removeEventListener("scroll", remember, { capture: true });
@@ -104,6 +108,9 @@ export function KeepAliveStage<T>({
   useLayoutEffect(() => {
     const el = box.current;
     if (!el || visible) return;
+    // 刚藏起来（同一次提交、绘制之前，位置还没被挪）：看得见时滚过的容器各读一次。
+    for (const target of scrolled.current) if (el.contains(target)) tops.current.set(target, target.scrollTop);
+    scrolled.current.clear();
     const hold = (event: Event) => {
       const target = event.target;
       if (!(target instanceof Element) || !el.contains(target)) return;

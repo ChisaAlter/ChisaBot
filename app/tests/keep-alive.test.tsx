@@ -276,3 +276,33 @@ test("藏起来那一刻浏览器挪了藏着的滚动容器：还原成离开�
   view.rerender(stage(page, { id: "c1" }));
   expect(scroller.scrollTop).toBe(500);
 });
+
+test("滚动事件里不读 scrollTop（不强制同步布局，FIX-PLAN 4a）；藏起来时仍按最后位置还原", async () => {
+  function Scroller() {
+    return <div data-slot="message-scroller-viewport" data-testid="scroller" style={{ overflowY: "auto", height: 100 }}><div style={{ height: 1000 }} /></div>;
+  }
+  const page = () => <Scroller />;
+  const view = render(stage(page, { id: "c1" }));
+  const scroller = view.getByTestId("scroller");
+  let pos = 0;
+  let reads = 0;
+  Object.defineProperty(scroller, "scrollTop", {
+    configurable: true,
+    get: () => {
+      reads++;
+      return pos;
+    },
+    set: (v: number) => {
+      pos = v;
+    },
+  });
+  for (const top of [120, 240, 360]) {
+    pos = top;
+    scroller.dispatchEvent(new Event("scroll"));
+  }
+  expect(reads).toBe(0);
+  view.rerender(stage(page, null, "设置"));
+  pos = 17;
+  scroller.dispatchEvent(new Event("scroll"));
+  expect(pos).toBe(360);
+});
