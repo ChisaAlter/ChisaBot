@@ -2,20 +2,20 @@ import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
 import { KEPT_TTL_MS, KeepAliveStage } from "@/components/layout/keep-alive";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
+import type { ShellScope } from "@/components/layout/glass-topbar";
 import { LeftRail } from "@/components/layout/left-rail";
 import { SelfHostBanner } from "@/components/layout/self-host-banner";
 import { PanelRail } from "@/components/panels/panel-rail";
 import { SettingsSidebar } from "@/components/settings/settings-sidebar";
 import { CHANNEL_ROUTE_ID, ChannelPage } from "@/components/channels/channel-page";
-import { useCallback } from "react";
+import { useCallback, memo, useDeferredValue, useEffect, useMemo } from "react";
 import { useLanding } from "@/lib/agents/landing";
 import { draftKeptTtl } from "@/lib/channels/draft-channel";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
 import { clearPendingBot } from "@/lib/chat/pending-switch";
-import { memo, useDeferredValue, useEffect, useMemo } from "react";
 
 /**
- * 登录之后的那一个外壳（DESIGN.md §98）。
+ * 登录之后的那个外壳（DESIGN.md §98）。
  *
  * 以前聊天（`_app`）、设置、管理各自画一个 `GlassShell`：从设置回聊天 = 整个外壳卸载再装一遍，聊天跟着卸载，
  * 回来时重新接入、回放、读历史，发送键闪成「停止」、气泡重排、右栏重载——用户看到的「切回来总要刷新一次」。
@@ -55,14 +55,7 @@ function ShellFrame({ pathname }: { pathname: string }) {
   useChannelEvents();
   const scope = scopeOfPath(pathname);
   useIdleSettingsPrefetch(scope);
-  const sidebar =
-    scope === "settings" ? (
-      <SettingsSidebar className="glass-sidebar-container" />
-    ) : scope === "admin" ? (
-      <AdminSidebar className="glass-sidebar-container" />
-    ) : (
-      <LeftRail className="glass-sidebar-container" />
-    );
+  const sidebar = <ShellSidebar scope={scope} />;
   return (
     <GlassShell
       banner={scope === "app" ? <SelfHostBanner /> : undefined}
@@ -76,6 +69,24 @@ function ShellFrame({ pathname }: { pathname: string }) {
     </GlassShell>
   );
 }
+
+/**
+ * 左栏：聊天左栏（`LeftRail`）一直挂着，在设置 / 管理里只是藏起来（`parked`），旁边换上设置 / 管理的左栏（#403）。
+ * 以前按 scope 三选一，关设置 = 聊天左栏重新挂上、重画整份名单、重新拉列表。两个孩子的位置固定，换 scope 不会让
+ * 聊天左栏换位置重挂；`memo`：设置里切分类（只有 pathname 变）时整块不重画。
+ */
+export const ShellSidebar = memo(function ShellSidebar({ scope }: { scope: ShellScope }) {
+  return (
+    <>
+      <LeftRail className="glass-sidebar-container" parked={scope !== "app"} />
+      {scope === "settings" ? (
+        <SettingsSidebar className="glass-sidebar-container" />
+      ) : scope === "admin" ? (
+        <AdminSidebar className="glass-sidebar-container" />
+      ) : null}
+    </>
+  );
+});
 
 type ChatAddress = { channelId: string; settings?: boolean; watch?: boolean };
 

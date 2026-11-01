@@ -35,8 +35,10 @@ export function usePanelBot(): {
         | string
         | undefined,
   });
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const isChannel = pathname.startsWith("/channel/") && pathname !== "/channel/new";
+  // 只选出布尔值：在设置里切分类（pathname 变、答案不变）时，留着的左栏 / 右栏不跟着重画（#403）。
+  const isChannel = useRouterState({
+    select: (s) => s.location.pathname.startsWith("/channel/") && s.location.pathname !== "/channel/new",
+  });
   const channel = useQuery({
     ...channelQueryOptions(channelId ?? ""),
     enabled: Boolean(channelId) && isChannel,

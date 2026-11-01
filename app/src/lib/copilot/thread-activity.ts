@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { readSync, SYNC_INTERVAL_MS, type ThreadActivity } from "./bot-thread";
-import { useKeptVisible } from "@/lib/kept-visible";
+import { useKeptVisibility } from "@/lib/kept-visible";
 
 /**
  * 频道聊天（/channel/:id）的「这条对话有没有新动静」（DESIGN.md §64，CB-041 / CB-043）。
@@ -19,9 +19,12 @@ export function useThreadActivity(agentId: string, threadId: string | undefined)
   /**
    * 聊天被外壳藏着（DESIGN.md §98.3）：放慢到 10 秒一次（不停——藏着时别的设备写了什么，藏着的时候就接上，
    * 回来才接会让发送键闪一下「停止」）；回来时马上问一次。
+   *
+   * 订阅 `useKeptVisibility` 而不是读 `useKeptVisible`：这里只在藏 / 露那一刻改节奏，渲染不依赖它；读 context
+   * 的话每次从设置回聊天，整个聊天（列表、输入框）都要跟着重画一遍。
    */
-  const onScreen = useKeptVisible();
-  const onScreenRef = useRef(onScreen);
+  const visibility = useKeptVisibility();
+  const onScreenRef = useRef(visibility.get());
   const pauseRef = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -85,11 +88,16 @@ export function useThreadActivity(agentId: string, threadId: string | undefined)
   }, [agentId, threadId]);
 
   useEffect(() => {
-    if (onScreenRef.current === onScreen) return;
-    onScreenRef.current = onScreen;
-    if (onScreen) kickRef.current();
-    else pauseRef.current();
-  }, [onScreen]);
+    const sync = () => {
+      const onScreen = visibility.get();
+      if (onScreenRef.current === onScreen) return;
+      onScreenRef.current = onScreen;
+      if (onScreen) kickRef.current();
+      else pauseRef.current();
+    };
+    sync();
+    return visibility.subscribe(sync);
+  }, [visibility]);
 
   const onActivity = useCallback((listener: (activity: ThreadActivity) => void) => {
     listenersRef.current.add(listener);

@@ -13,16 +13,9 @@ const FORBIDDEN = [
   '.glass-shell:has([data-slot="sidebar"][data-state="collapsed"])',
 ];
 
-const LEGACY = [
-  "body:has(.glass-topbar)",
-  '.glass-topbar:has(.win-ctrls[data-count="3"])',
-  "body:not(:has(.glass-composer))",
-  "body:has(.update-banner)",
-  "body:has(.computer-takeover)",
-  "html:has(> body .glass-shell)",
-  "body:has(.rail-tab.is-narrow)",
-  'body:has([data-slot="sheet-overlay"])',
-];
+// #403（设置面板卡顿）把 body / html / .glass-shell 上的那几条换成了 presenceRef 拨的 data-has-* 旗子（DESIGN.md §41 ③），
+// 只剩 PC 3 个标题按钮这一条。
+const LEGACY = ['.glass-topbar:has(.win-ctrls[data-count="3"])'];
 
 const css = readFileSync(
   path.join(import.meta.dir, "../src/styles.css"),
@@ -89,7 +82,9 @@ function containerHasSelectors(): string[] {
 }
 
 test("找得到旧的大容器 :has()，说明检查本身在工作", () => {
-  expect(containerHasSelectors()).toContain("body:has(.glass-topbar)");
+  expect(containerHasSelectors()).toContain(
+    '.glass-topbar:has(.win-ctrls[data-count="3"])',
+  );
 });
 
 test("已删掉的旧 :has() 不许再出现", () => {

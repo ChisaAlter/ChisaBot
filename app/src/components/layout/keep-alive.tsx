@@ -1,4 +1,4 @@
-import { KeptVisibleContext } from "@/lib/kept-visible";
+import { createKeptVisibility, KeptVisibilityContext, KeptVisibleContext } from "@/lib/kept-visible";
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /** 藏着的聊天留多久（之后卸载，回来走正常的打开：先画上次的样子，再接入）。 */
@@ -55,6 +55,19 @@ export function KeepAliveStage<T>({
   const idle = kept !== null && (typeof idleVisible === "function" ? idleVisible(kept) : idleVisible);
   const shown = address !== null || idle;
   const visible = kept !== null && shown;
+
+  // 不让读的组件重画的那份「看不看得见」（`useKeptVisibility`）：同一个对象，提交后改值、通知订阅者。
+  // 每换一页（`kept` 换了，包括藏够时间卸载后再打开）就换一个、按这次渲染的 `visible` 起值：新挂上的聊天
+  // 第一次渲染就读到对的值。共用一个的话，藏着时卸载、再打开别的聊天，新页面先读到上一页留下的「藏着」，
+  // 提交后才变成「看得见」，`useThreadActivity` 把这当成「刚回来」多问一次（#403 审查 c）。
+  const [store, setStore] = useState(() => ({ for: kept, visibility: createKeptVisibility(visible) }));
+  let current = store;
+  if (store.for !== kept) {
+    current = { for: kept, visibility: createKeptVisibility(visible) };
+    setStore(current);
+  }
+  const visibility = current.visibility;
+  useEffect(() => visibility.set(visible), [visibility, visible]);
 
   const [epoch, setEpoch] = useState(0);
   const [wasVisible, setWasVisible] = useState(visible);
@@ -160,7 +173,9 @@ export function KeepAliveStage<T>({
           ref={box}
           style={keptStyle}
         >
-          <KeptVisibleContext.Provider value={visible}>{renderKept(kept, { visible, epoch })}</KeptVisibleContext.Provider>
+          <KeptVisibleContext.Provider value={visible}>
+            <KeptVisibilityContext.Provider value={visibility}>{renderKept(kept, { visible, epoch })}</KeptVisibilityContext.Provider>
+          </KeptVisibleContext.Provider>
         </div>
       ) : null}
       <div
