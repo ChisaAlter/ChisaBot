@@ -33,7 +33,7 @@ const INIT = () => {
     let rows = 0, firstId = null, firstTop = null;
     if (v) {
       const vr = v.getBoundingClientRect();
-      for (const r of v.querySelectorAll("[data-message-id]")) {
+      for (const r of v.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-message-id]")) {
         const b = r.getBoundingClientRect();
         if (b.height === 0) continue;
         rows++;
@@ -50,7 +50,7 @@ const INIT = () => {
       railBots: document.querySelectorAll('[data-testid="left-rail"] .glass-bot-row').length,
       panelBusy: [...document.querySelectorAll(".panel-rail [class*=skel], aside [class*=skel]")].filter((e) => e.getClientRects().length).length,
       railTag: rail ? (rail.__navTag ?? "new") : null,
-      ta: document.querySelector('textarea[data-testid="copilot-chat-textarea"]') ? 1 : 0,
+      ta: document.querySelector('[data-testid=kept-page][data-visible=true] textarea[data-testid="copilot-chat-textarea"]') ? 1 : 0,
     });
     requestAnimationFrame(() => { const c = new MessageChannel(); c.port1.onmessage = sample; c.port2.postMessage(0); });
   };

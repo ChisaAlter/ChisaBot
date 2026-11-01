@@ -64,7 +64,7 @@ const call = (p, o) => api(page, p, o);
 await guardInit(call);
 const bots = [];
 const box = () => page.locator('[aria-label="消息"]').first();
-const busy = () => page.locator('[data-testid="composer-stop"]').first().isVisible().catch(() => false);
+const busy = () => page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').first().isVisible().catch(() => false);
 /** 看得见的过程话（淡色一行，不算 0 高收起的）、看得见的机器人文字、干活卡点开后的过程话。 */
 const probe = () => page.evaluate(() => {
   const shown = (e) => { const r = e.getBoundingClientRect(); return e.offsetParent !== null && r.height > 1 && !e.closest("[data-folded]"); };
@@ -74,10 +74,10 @@ const probe = () => page.evaluate(() => {
     steps: vis(".chat-step-line").map((e) => e.innerText.replace(/\s+/g, " ")),
     // 收起的行（data-folded，0 高，§82.9）还在 DOM 里，不算看得见的字
     text: main ? [...main.querySelectorAll("[data-message-id]")].filter((e) => !e.closest("[data-folded]") && !e.hasAttribute("data-folded")).map((e) => e.innerText).join("\n") : "",
-    live: vis("[data-testid=chat-work-card]").length,
-    done: vis("[data-testid=chat-work-done]").length,
-    notes: vis(".chat-work-note").map((e) => e.innerText),
-    error: vis('[data-testid="transcript-stopped"]').map((e) => e.innerText).join(" "),
+    live: vis("[data-testid=kept-page][data-visible=true] [data-testid=chat-work-card]").length,
+    done: vis("[data-testid=kept-page][data-visible=true] [data-testid=chat-work-done]").length,
+    notes: vis("[data-testid=kept-page][data-visible=true] .chat-work-note").map((e) => e.innerText),
+    error: vis('[data-testid=kept-page][data-visible=true] [data-testid="transcript-stopped"]').map((e) => e.innerText).join(" "),
     composer: document.querySelector('[aria-label="消息"]')?.innerText ?? "",
   };
 });
@@ -104,10 +104,10 @@ async function sendAndWatch(prompt, tag, { onTick } = {}) {
   return seen;
 }
 async function openCard() {
-  const done = page.locator("[data-testid=chat-work-done]").last();
+  const done = page.locator("[data-testid=kept-page][data-visible=true] [data-testid=chat-work-done]").last();
   if (!(await done.isVisible().catch(() => false))) return [];
   await done.click(); await page.waitForTimeout(400);
-  const notes = await page.locator(".chat-work-note").allInnerTexts();
+  const notes = await page.locator("[data-testid=kept-page][data-visible=true] .chat-work-note").allInnerTexts();
   await page.screenshot({ path: `${OUT}/card-open-${Date.now() % 100000}.png` });
   await done.click(); await page.waitForTimeout(200);
   return notes;

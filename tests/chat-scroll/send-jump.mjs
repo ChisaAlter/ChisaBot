@@ -30,7 +30,7 @@ await ctx.addInitScript(({ bot, thread }) => {
   w.__samples = [];
   w.__events = [];
   w.__findScroller = () => {
-    const list = document.querySelector("[data-testid=chat-transcript]");
+    const list = document.querySelector("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript]");
     let el = list?.parentElement;
     while (el && el !== document.body) {
       const oy = getComputedStyle(el).overflowY;
@@ -39,7 +39,7 @@ await ctx.addInitScript(({ bot, thread }) => {
     }
     return null;
   };
-  const topLevel = (s) => [...s.querySelectorAll("[data-message-id]")].filter((e) => !e.parentElement.closest("[data-message-id]"));
+  const topLevel = (s) => [...s.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-message-id]")].filter((e) => !e.parentElement.closest("[data-message-id]"));
   let anchorId = null; // message id pinned at send time (the one at the viewport middle)
   let anchorRef = null;
   let lastList = null, lastScroller = null;
@@ -50,7 +50,7 @@ await ctx.addInitScript(({ bot, thread }) => {
     let best = Infinity;
     for (const e of topLevel(s)) { const r = e.getBoundingClientRect(); if (r.height <= 0) continue; const d = r.top <= mid && r.bottom >= mid ? 0 : Math.min(Math.abs(r.top - mid), Math.abs(r.bottom - mid)); if (d < best) { best = d; anchorId = e.dataset.messageId; anchorRef = e; } }
     w.__anchorId = anchorId;
-    lastList = document.querySelector("[data-testid=chat-transcript]"); lastScroller = s;
+    lastList = document.querySelector("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript]"); lastScroller = s;
     const mo = new MutationObserver((recs) => {
       if (!w.__sampling) return;
       let removedMsgs = 0, addedMsgs = 0;
@@ -65,13 +65,13 @@ await ctx.addInitScript(({ bot, thread }) => {
   const tick = () => {
     if (w.__sampling) {
       const s = w.__findScroller();
-      const list = document.querySelector("[data-testid=chat-transcript]");
+      const list = document.querySelector("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript]");
       if (s && lastScroller && s !== lastScroller) w.__events.push({ t: Math.round(performance.now()), kind: "scroller-replaced" });
       if (list && lastList && list !== lastList) w.__events.push({ t: Math.round(performance.now()), kind: "list-replaced" });
       lastScroller = s || lastScroller; lastList = list || lastList;
       if (s) {
         const sr = s.getBoundingClientRect();
-        const a = anchorId ? s.querySelector(`[data-message-id="${CSS.escape(anchorId)}"]`) : null;
+        const a = anchorId ? s.querySelector(`[data-testid=kept-page][data-visible=true] [data-message-id="${CSS.escape(anchorId)}"]`) : null;
         if (a && a !== anchorRef) { w.__events.push({ t: Math.round(performance.now()), kind: "anchor-remounted" }); anchorRef = a; }
         const ar = a?.getBoundingClientRect();
         // first message whose bottom is inside the viewport
@@ -83,7 +83,7 @@ await ctx.addInitScript(({ bot, thread }) => {
           gap: Math.round(s.scrollHeight - s.scrollTop - s.clientHeight),
           aTop: ar ? Math.round(ar.top - sr.top) : null, aScr: ar ? Math.round(ar.top) : null, sTop: Math.round(sr.top), aH: ar ? Math.round(ar.height) : null,
           n: all.length, firstVis, firstVisTop,
-          running: Boolean(document.querySelector('[data-testid="composer-stop"]')),
+          running: Boolean(document.querySelector('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]')),
           // 发送后那 700ms 频道聊天自己开着平滑滚动（chat-transcript.tsx useSmoothSendScroll），把刚发的消息滚到顶。
           smooth: s.style.scrollBehavior === "smooth",
         });
@@ -129,7 +129,7 @@ if (Number(process.env.CPU || 1) > 1) { const cdp = await ctx.newCDPSession(page
 // CHANNEL=<频道 id> 直接打开那个频道（不走 /bot 跳转，用来和没有跳转的旧版本对比）。
 await page.goto(process.env.CHANNEL ? `${BASE}/channel/${process.env.CHANNEL}` : `${BASE}/bot?agent=${BOT}${THREAD ? `&thread=${encodeURIComponent(THREAD)}` : ""}`, { waitUntil: "domcontentloaded" });
 await page.waitForSelector('[aria-label="消息"]', { timeout: 40000 });
-await page.waitForFunction(() => document.querySelectorAll("[data-testid=chat-transcript] [data-message-id]").length > 0, null, { timeout: 40000 }).catch(() => log("no messages rendered"));
+await page.waitForFunction(() => document.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript] [data-message-id]").length > 0, null, { timeout: 40000 }).catch(() => log("no messages rendered"));
 await page.waitForTimeout(Number(process.env.WAIT || 6000));
 const box = await page.evaluate(() => { const r = window.__findScroller().getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
 if (process.env.SCROLLUP) {
@@ -138,7 +138,7 @@ if (process.env.SCROLLUP) {
   for (let i = 0; i < Math.ceil(px / 100); i++) { await page.mouse.wheel(0, -100); await page.waitForTimeout(40); }
   await page.waitForTimeout(1500);
 }
-const s0 = await page.evaluate(() => { const s = window.__findScroller(); return { top: s.scrollTop, h: s.scrollHeight, ch: s.clientHeight, n: document.querySelectorAll("[data-testid=chat-transcript] [data-message-id]").length }; });
+const s0 = await page.evaluate(() => { const s = window.__findScroller(); return { top: s.scrollTop, h: s.scrollHeight, ch: s.clientHeight, n: document.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript] [data-message-id]").length }; });
 log("BEFORE", JSON.stringify(s0));
 await page.screenshot({ path: "/out/0-before.png" });
 await page.evaluate(() => { window.__arm(); window.__sampling = true; });
@@ -157,7 +157,7 @@ async function sendOnce(prompt, tag) {
     await page.screenshot({ path: `/out/${tag}s-${String(ms).padStart(4, "0")}.png` });
   }
   const t0 = Date.now(); let idle = 0;
-  while (Date.now() - t0 < RUNMS && idle < 4) { idle = (await page.locator('[data-testid="composer-stop"]').count()) ? 0 : idle + 1; await page.waitForTimeout(500); }
+  while (Date.now() - t0 < RUNMS && idle < 4) { idle = (await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').count()) ? 0 : idle + 1; await page.waitForTimeout(500); }
   if (process.env.POLLTICK === "1") { pollUntil = Date.now() + Number(process.env.POLLMS || 6000); await page.waitForTimeout(Number(process.env.POLLMS || 6000) + 500); }
   return at;
 }
@@ -166,7 +166,7 @@ const tSend = await sendOnce(PROMPT || "用一句话回答：1+1 等于几？", 
 if (process.env.TWICE === "1") {
   await page.waitForTimeout(2000);
   await page.screenshot({ path: "/out/5-between.png" });
-  log("BETWEEN", JSON.stringify(await page.evaluate(() => ({ notice: Boolean(document.querySelector('[data-testid="transcript-stopped"]')) }))));
+  log("BETWEEN", JSON.stringify(await page.evaluate(() => ({ notice: Boolean(document.querySelector('[data-testid=kept-page][data-visible=true] [data-testid="transcript-stopped"]')) }))));
   await sendOnce(process.env.PROMPT2 || "再用一句话回答：2+2 等于几？", "b-");
 }
 await page.waitForTimeout(1500);

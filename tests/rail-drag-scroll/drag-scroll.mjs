@@ -45,19 +45,19 @@ const page = await context.newPage();
 page.on("pageerror", (error) => console.log("pageerror", String(error).slice(0, 200)));
 
 await page.goto(`${BASE}/channel/${CHANNEL}`, { waitUntil: "domcontentloaded" });
-await page.waitForSelector('[data-testid="chat-transcript"]', { timeout: 30000 });
+await page.waitForSelector('[data-testid=kept-page][data-visible=true] [data-testid="chat-transcript"]', { timeout: 30000 });
 await page.waitForTimeout(2500);
 
 const sample = (label) =>
   page.evaluate((label) => {
-    const content = document.querySelector('[data-testid="chat-transcript"]');
+    const content = document.querySelector('[data-testid=kept-page][data-visible=true] [data-testid="chat-transcript"]');
     let viewport = content?.parentElement;
     while (viewport) {
       if (/(auto|scroll)/.test(getComputedStyle(viewport).overflowY)) break;
       viewport = viewport.parentElement;
     }
     const slack = document.querySelector("[data-chat-slack]");
-    const rows = [...(content?.querySelectorAll("[data-message-id]") ?? [])];
+    const rows = [...(content?.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-message-id]") ?? [])];
     const view = viewport?.getBoundingClientRect();
     const firstVisible = view ? rows.find((row) => row.getBoundingClientRect().bottom > view.top + 1) : null;
     const last = rows.at(-1)?.getBoundingClientRect();
@@ -79,7 +79,7 @@ const sample = (label) =>
 
 const scrollTo = (where) =>
   page.evaluate((where) => {
-    const content = document.querySelector('[data-testid="chat-transcript"]');
+    const content = document.querySelector('[data-testid=kept-page][data-visible=true] [data-testid="chat-transcript"]');
     let viewport = content?.parentElement;
     while (viewport) {
       if (/(auto|scroll)/.test(getComputedStyle(viewport).overflowY)) break;

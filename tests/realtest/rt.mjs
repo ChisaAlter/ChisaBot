@@ -53,7 +53,7 @@ try {
     if (k === "g1") { log("waiting for reminder 150s"); await page.waitForTimeout(150000); }
     const msgs = await threadMessages(page, tid);
     const tr = await transcript(page);
-    const stopped = await page.locator('[data-testid="transcript-stopped"]:visible').count();
+    const stopped = await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="transcript-stopped"]:visible').count();
     await page.screenshot({ path: `/out/${k}.png` });
     await page.screenshot({ path: `/out/${k}-full.png`, fullPage: true }).catch(() => {});
     // 最终回答：最后一条有文字的助手消息在最后一次工具结果之后

@@ -4,7 +4,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ReactNode, useEffect, useState } from "react";
-import { KeepAliveStage, type KeptState } from "@/components/layout/keep-alive";
+import { KeepAliveStage, type KeptState, useKeptSlot } from "@/components/layout/keep-alive";
 import { KeptVisibleContext, useBotOnScreen, useKeptVisible, useMarkBotHidden } from "@/lib/kept-visible";
 import { useComputerControl } from "@/lib/computers/use-control";
 import { settleReactWork } from "./settle-react-work";
@@ -88,12 +88,185 @@ test("离开聊天再回来：同一个实例，不卸载、不重新挂载", as
   expect(log.states.at(-1)).toMatchObject({ id: "c1", visible: true, epoch: 1 });
 });
 
-test("换一段对话：留着的换成新的那段（同一个位置，交给页面自己决定要不要重挂）", () => {
+test("换一段对话：新的那段看得见，原来那段藏着留下（LRU，§98.6）", () => {
   const { log, Page } = counterPage();
   const view = render(stage(Page, { id: "c1" }));
   view.rerender(stage(Page, { id: "c2" }));
-  expect(view.getByTestId("page").textContent).toBe("c2");
+  const visible = view.getAllByTestId("kept-page").filter((el) => el.getAttribute("data-visible") === "true");
+  expect(visible).toHaveLength(1);
+  expect(visible[0].textContent).toBe("c2");
   expect(log.states.at(-1)).toMatchObject({ id: "c2", visible: true });
+  expect(log.unmounts).toBe(0);
+});
+
+function pages(view: ReturnType<typeof render>) {
+  return view.getAllByTestId("page").map((el) => ({ id: el.textContent, instance: el.getAttribute("data-instance") }));
+}
+
+test("A→B→A：切回最近看过的那段是同一个实例（不重挂、不重新解析），epoch 加一", () => {
+  const { log, Page } = counterPage();
+  const view = render(stage(Page, { id: "a" }));
+  const a = pages(view).find((p) => p.id === "a")?.instance;
+  view.rerender(stage(Page, { id: "b" }));
+  view.rerender(stage(Page, null, "设置"));
+  view.rerender(stage(Page, { id: "c" }));
+  view.rerender(stage(Page, { id: "a" }));
+  expect(pages(view).find((p) => p.id === "a")?.instance).toBe(a);
+  expect(log.mounts).toBe(3);
+  expect(log.unmounts).toBe(0);
+  const shown = view.getAllByTestId("kept-page").filter((el) => el.getAttribute("data-visible") === "true");
+  expect(shown.map((el) => el.textContent)).toEqual(["a"]);
+  expect(log.states.filter((s) => s.id === "a").at(-1)).toMatchObject({ visible: true, epoch: 1 });
+});
+
+test("藏着的那段：content-visibility 隐藏、不占位、不可点；外壳重渲时不跟着重画", () => {
+  const { log, Page } = counterPage();
+  const view = render(stage(Page, { id: "a" }));
+  view.rerender(stage(Page, { id: "b" }));
+  const hidden = view.getAllByTestId("kept-page").find((el) => el.textContent === "a") as HTMLElement;
+  expect(hidden.getAttribute("data-visible")).toBe("false");
+  expect(hidden.style.getPropertyValue("content-visibility")).toBe("hidden");
+  expect(hidden.style.position).toBe("absolute");
+  expect(hidden.hasAttribute("inert")).toBe(true);
+  const before = log.states.filter((s) => s.id === "a").length;
+  for (let i = 0; i < 5; i++) view.rerender(stage(Page, { id: "b" }, `x${i}`));
+  expect(log.states.filter((s) => s.id === "a").length).toBe(before);
+});
+
+test("最多留 4 段：第 5 段进来放掉最久没看的那段", () => {
+  const { log, Page } = counterPage();
+  const view = render(stage(Page, { id: "a" }));
+  for (const id of ["b", "c", "d"]) view.rerender(stage(Page, { id }));
+  view.rerender(stage(Page, { id: "a" }));
+  view.rerender(stage(Page, { id: "e" }));
+  expect(pages(view).map((p) => p.id).sort()).toEqual(["a", "c", "d", "e"]);
+  expect(log.unmounts).toBe(1);
+});
+
+test("同一段（keyOf 相同）地址别的部分变了：更新那段，不重挂", () => {
+  type A = { id: string; settings?: boolean };
+  const log: string[] = [];
+  function P({ a }: { a: A }) {
+    useEffect(() => {
+      log.push(`mount ${a.id}`);
+    }, []);
+    return <span data-testid="p">{a.settings ? "s" : "-"}</span>;
+  }
+  const make = (address: A) => (
+    <KeepAliveStage address={address} keyOf={(x) => x.id} renderKept={(k) => <P a={k} />} same={(x, y) => x.id === y.id && x.settings === y.settings}>
+      {null}
+    </KeepAliveStage>
+  );
+  const view = render(make({ id: "a" }));
+  view.rerender(make({ id: "a", settings: true }));
+  expect(view.getAllByTestId("p").map((el) => el.textContent)).toEqual(["s"]);
+  expect(log).toEqual(["mount a"]);
+});
+
+test("元素预算：藏着的合计超了，从最久没看的开始提前放（大会话先走）", () => {
+  function Big({ n }: { n: number }) {
+    return (
+      <div data-testid="page">
+        {Array.from({ length: n }, (_, i) => (
+          <i key={i} />
+        ))}
+      </div>
+    );
+  }
+  const sizes: Record<string, number> = { a: 60, b: 5, c: 5 };
+  const make = (address: Addr | null) => (
+    <KeepAliveStage address={address} nodeBudget={40} renderKept={(k) => <Big n={sizes[k.id]} />} same={same}>
+      {null}
+    </KeepAliveStage>
+  );
+  const view = render(make({ id: "a" }));
+  view.rerender(make({ id: "b" }));
+  view.rerender(make({ id: "c" }));
+  // a（60 个）超预算被放掉；b 小，留着。
+  expect(view.getAllByTestId("kept-page")).toHaveLength(2);
+});
+
+test("每段各自计时：藏够 TTL 的放掉，看得见的不放", async () => {
+  const { log, Page } = counterPage();
+  const view = render(stage(Page, { id: "a" }, undefined, false, 30));
+  view.rerender(stage(Page, { id: "b" }, undefined, false, 30));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+  expect(pages(view).map((p) => p.id)).toEqual(["b"]);
+  expect(log.unmounts).toBe(1);
+});
+
+test("流式中切走再切回：藏着时状态照常更新（流不丢），切回后同一实例、内容已追上；贴底的滚到底", async () => {
+  let push: (s: string) => void = () => {};
+  function Stream({ id }: { id: string }) {
+    const [text, setText] = useState("");
+    useEffect(() => {
+      if (id !== "a") return;
+      push = (s) => setText((t) => t + s);
+    }, [id]);
+    return (
+      <div data-testid={`scroller-${id}`} style={{ overflowY: "auto", height: 100 }}>
+        <p data-testid={`text-${id}`}>{text}</p>
+      </div>
+    );
+  }
+  const make = (address: Addr | null) => (
+    <KeepAliveStage address={address} renderKept={(k) => <Stream id={k.id} />} same={same}>
+      {null}
+    </KeepAliveStage>
+  );
+  const view = render(make({ id: "a" }));
+  const scroller = view.getByTestId("scroller-a");
+  // happy-dom 没有布局：用定义的属性模拟「贴着底」。
+  let height = 1000;
+  Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => height });
+  Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 100 });
+  scroller.scrollTop = 900;
+  scroller.dispatchEvent(new Event("scroll"));
+  await act(async () => push("你好"));
+  view.rerender(make({ id: "b" }));
+  await act(async () => push("，世界"));
+  height = 1400;
+  expect(view.getByTestId("text-a").textContent).toBe("你好，世界");
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+  });
+  view.rerender(make({ id: "a" }));
+  expect(view.getByTestId("scroller-a")).toBe(scroller);
+  expect(view.getByTestId("text-a").textContent).toBe("你好，世界");
+  expect(scroller.scrollTop).toBe(1400);
+});
+
+test("P3-3 接口：useKeptSlot 给出段的 key、被放掉时回调、页面自己接管滚动保存 / 还原", () => {
+  const events: string[] = [];
+  function Probe({ id }: { id: string }) {
+    const slot = useKeptSlot();
+    useEffect(() => {
+      if (!slot) return;
+      events.push(`key ${slot.slotKey}`);
+      const off1 = slot.onEvict(() => events.push(`evict ${id}`));
+      const off2 = slot.registerScroll({ save: () => `pos-${id}`, restore: (s) => events.push(`restore ${String(s)}`) });
+      return () => {
+        off1();
+        off2();
+      };
+    }, [slot, id]);
+    return null;
+  }
+  const make = (address: Addr) => (
+    <KeepAliveStage address={address} keyOf={(a) => a.id} max={2} renderKept={(k) => <Probe id={k.id} />} same={same}>
+      {null}
+    </KeepAliveStage>
+  );
+  const view = render(make({ id: "a" }));
+  view.rerender(make({ id: "b" }));
+  view.rerender(make({ id: "a" }));
+  expect(events).toContain("key a");
+  expect(events).toContain("restore pos-a");
+  view.rerender(make({ id: "c" }));
+  // max=2：b 是最久没看的，被放掉。
+  expect(events).toContain("evict b");
 });
 
 test("`/` 正在跳到聊天时，留着的聊天先露着（不空一下）", () => {
@@ -208,6 +381,23 @@ test("藏着的聊天登记它的机器人：全局的组件授权轮询为它�
   const again = render(<Global />);
   expect(onScreen.at(-1)).toBe(true);
   again.unmount();
+});
+
+test("同一个机器人一段藏着、一段看着（LRU）：算在屏幕上；都藏着才算不在", () => {
+  const onScreen: boolean[] = [];
+  function Global() {
+    onScreen.push(useBotOnScreen("bot_m"));
+    return null;
+  }
+  function Chat({ hidden }: { hidden: boolean }) {
+    useMarkBotHidden("bot_m", hidden);
+    return null;
+  }
+  const view = render(<><Global /><Chat hidden /><Chat hidden={false} /></>);
+  expect(onScreen.at(-1)).toBe(true);
+  view.rerender(<><Global /><Chat hidden /><Chat hidden /></>);
+  expect(onScreen.at(-1)).toBe(false);
+  view.unmount();
 });
 
 test("计算机控制权：只剩藏着的订阅者时不再每秒问，回来马上补读", async () => {

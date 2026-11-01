@@ -42,13 +42,13 @@ try {
   // 用户回来
   await page.goto(chatUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(6000);
-  const approve = page.locator('[data-testid="confirm-approve"]:visible').first();
+  const approve = page.locator('[data-testid=kept-page][data-visible=true] [data-testid="confirm-approve"]:visible').first();
   await approve.waitFor({ timeout: 60000 }).catch(() => {});
   await page.screenshot({ path: "/out/s-card.png" });
   const cardVisible = await approve.isVisible().catch(() => false);
   step(`card visible in chat: ${cardVisible}`);
   res.cardVisible = cardVisible;
-  res.looseStack = await page.locator('[data-testid="loose-confirm-cards"]:visible').count();
+  res.looseStack = await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="loose-confirm-cards"]:visible').count();
   if (cardVisible) {
     await approve.click();
     step("clicked 确认");
@@ -60,7 +60,7 @@ try {
       const txt = JSON.stringify(msgs);
       const after = txt.slice(Math.max(0, txt.indexOf("⟦chisabot:confirm:")));
       if (txt.includes("⟦chisabot:confirm:") && /computer_click/.test(after) && after.includes(MARK)) { done = true; }
-      if (done && !(await page.locator('[data-testid="composer-stop"]:visible').first().isVisible().catch(() => false))) break;
+      if (done && !(await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]:visible').first().isVisible().catch(() => false))) break;
     }
     await waitIdle(page, { max: 180000, approve: false });
     step(`continued after confirm: page result seen=${done}`);

@@ -125,6 +125,7 @@ const sameAddress = (a: ChatAddress, b: ChatAddress) =>
 
 /** 地址没换时（延后渲染还没跟上的那一次、左栏高亮那一次）不重画整段对话。 */
 const KeptChannelPage = memo(ChannelPage);
+const chatKey = (a: ChatAddress) => a.channelId;
 
 /** 主区：留着的聊天 + 当前路由（`KeepAliveStage`，DESIGN.md §98）。`/` 正在跳到聊天时，留着的聊天照样露着。 */
 function ChatStage({ pathname }: { pathname: string }) {
@@ -176,6 +177,8 @@ function ChatStage({ pathname }: { pathname: string }) {
           watch={kept.watch}
         />
       )}
+      // 一段对话一段（LRU，§98.6）：同一段里只是 ?settings / ?watch 变了不算换一段。
+      keyOf={chatKey}
       same={sameAddress}
     >
       <Outlet />

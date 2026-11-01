@@ -21,7 +21,7 @@ const send=async text=>{events.push({at:new Date().toISOString(),send:text});awa
 const until=async(fn,label,timeout=45000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await new Promise(r=>setTimeout(r,200));}throw new Error("Timeout: "+label);};
 const inbox=()=>get(`/api/copilotkit/threads/${thread}/inbox`);
 const messages=async()=>{const r=await get(`/api/copilotkit/threads/${thread}/messages`);return r.messages||r;};
-const idle=async()=>{let quiet=0;await until(async()=>{const s=await inbox();const stopped=await page.locator('[data-testid="composer-stop"]:visible').count();if(!s.running&&!stopped)quiet++;else quiet=0;return quiet>=8;},"whole turn idle",60000);};
+const idle=async()=>{let quiet=0;await until(async()=>{const s=await inbox();const stopped=await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]:visible').count();if(!s.running&&!stopped)quiet++;else quiet=0;return quiet>=8;},"whole turn idle",60000);};
 const shot=async name=>page.screenshot({path:path.join(out,name+".png")});
 try{
  await until(()=>context.request.get(base+"/api/version").then(r=>r.ok(),()=>false),"preview ready");
@@ -49,7 +49,7 @@ try{
  const channel=page.url().split("/channel/")[1].split(/[?#]/)[0];
  const channelData=await get(`/api/channels/${channel}`);thread=channelData.channel?.threadId||channelData.threadId;
  assert(thread,"channel threadId");
- await page.locator('[data-testid="composer-stop"]:visible').waitFor();
+ await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]:visible').waitFor();
  await send("早期补充：只报告结果，不重跑。");
  await until(async()=>{const m=await messages();return m.some(x=>x.role==="assistant"&&x.toolCalls?.some(t=>t.function.name==="computer_run_command"));},"tool emitted");
  await new Promise(r=>setTimeout(r,700));
@@ -67,7 +67,7 @@ try{
  await send("EXEC_RESUME 保留这条补话，停止后由我主动发送再执行。");
  await until(async()=>(await inbox()).items.some(x=>x.status==="queued"&&String(x.message?.content).includes("EXEC_RESUME")),"follow-up queued before Stop");
  events.push({at:new Date().toISOString(),action:"Stop click"});
- await page.locator('[data-testid="composer-stop"]:visible').click();
+ await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]:visible').click();
  await until(async()=>!(await inbox()).running,"Stop clears relay");await shot("stopped");
  await page.reload({waitUntil:"domcontentloaded"});await page.locator('[aria-label="消息"]:visible').waitFor();
  await page.waitForTimeout(2500);
@@ -76,7 +76,7 @@ try{
  await new Promise(r=>setTimeout(r,6500));
  m=await messages();assert.equal(m.flatMap(x=>x.toolCalls||[]).filter(t=>t.function.arguments.includes("resume.log")).length,0,"no execution on reload or second tab");
  await shot("durably-paused");await other.close();results.push({case:"Stop pause survives reload and second tab",pass:true});
- await page.locator(`[data-queued-id="${held.id}"]`).getByRole("button",{name:"发送这条",exact:true}).click();await idle();
+ await page.locator(`[data-testid=kept-page][data-visible=true] [data-queued-id="${held.id}"]`).getByRole("button",{name:"发送这条",exact:true}).click();await idle();
  m=await messages();assert.equal(m.flatMap(x=>x.toolCalls||[]).filter(t=>t.function.arguments.includes("resume.log")).length,1);results.push({case:"explicit single-row resume",pass:true});
  await send("EXEC_READ 只读取两个日志，不要重跑原命令。");await idle();
  m=await messages();
