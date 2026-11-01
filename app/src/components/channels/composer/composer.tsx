@@ -2210,7 +2210,14 @@ function ComposerImpl({
              */}
             <PromptArea
               aria-label={"消息"}
-              autoGrow
+              /*
+               * 不用 prompt-area 的 autoGrow（4x 降速下 Shift+Enter 换行 190–230ms 的主因，审查 04）。
+               * 它每个字都排一帧：把高度设成 auto、读 scrollHeight（强制整页布局）、再写回像素高度并 setState
+               * 让 PromptArea 再渲染一次；而 styles.css 的 `.glass-composer .prompt-area-editor` 早就用
+               * `height: auto !important` 把那个高度盖掉了（2026-10-22 去掉失焦塌缩和高度动画），量出来的值
+               * 一个像素都没用上。不开 autoGrow 时编辑器靠内容自然长高，min/max-height 与 overflow 一样，画面不变。
+               */
+              autoGrow={false}
               className={cn(
                 "glass-composer-editor min-w-0 w-full border-0 bg-transparent p-0 text-sm shadow-none",
                 editorClassName,
@@ -2331,7 +2338,14 @@ function ComposerImpl({
             {replyQuoteBar}
             <PromptArea
               aria-label={"消息"}
-              autoGrow
+              /*
+               * 不用 prompt-area 的 autoGrow（4x 降速下 Shift+Enter 换行 190–230ms 的主因，审查 04）。
+               * 它每个字都排一帧：把高度设成 auto、读 scrollHeight（强制整页布局）、再写回像素高度并 setState
+               * 让 PromptArea 再渲染一次；而 styles.css 的 `.glass-composer .prompt-area-editor` 早就用
+               * `height: auto !important` 把那个高度盖掉了（2026-10-22 去掉失焦塌缩和高度动画），量出来的值
+               * 一个像素都没用上。不开 autoGrow 时编辑器靠内容自然长高，min/max-height 与 overflow 一样，画面不变。
+               */
+              autoGrow={false}
               className={cn(
                 "w-full border-0 bg-transparent p-0 text-sm shadow-none",
                 editorClassName,
@@ -2489,6 +2503,34 @@ export function StopFailedButton({
       {"停止失败，重试"}
     </Button>
   );
+}
+
+/** 「上传中 63%」 beside a Send that is grey because of it. Subscribes to progress on its own. */
+function UploadingHint({
+  progress,
+  uploading,
+}: {
+  progress: ReturnType<typeof createUploadProgressStore>;
+  uploading: readonly { key: string; size: number }[];
+}) {
+  const percent = useOverallUploadPercent(progress, uploading);
+  return (
+    <span
+      className="whitespace-nowrap text-muted-foreground text-xs tabular-nums"
+      data-testid="composer-upload-hint"
+      role="status"
+    >
+      {percent === undefined ? "上传中…" : `上传中 ${percent}%`}
+    </span>
+  );
+}
+
+/** What a refused paste is called in the refusal list. */
+export const PASTED_TEXT_NAME = "粘贴的文字";
+
+/** Why a paste longer than the model can read was not added. */
+export function pasteTooLongReason(length: number): string {
+  return `共 ${length.toLocaleString("en-US")} 字，超过 ${MAX_EXTRACTED_CHARACTERS.toLocaleString("en-US")} 字的部分模型读不到，所以没有粘贴。请分几次粘贴。`;
 }
 
 /** 流式时父组件每个 token 都会重渲；props 没变就跳过（jank FIX-PLAN §5 / P2-1）。 */

@@ -72,7 +72,15 @@ export function screenPickedFiles(
       kind === "unsupported-image" ||
       (kind === "unsupported" && unreadablePhotoFormat(file.name, file.type))
     ) {
-      rejected.push(reject(file, unsupportedImageReason(file.name, mediaType)));
+      rejected.push(
+        reject(
+          file,
+          unsupportedImageReason(file.name, mediaType).replace(
+            `「${file.name}」`,
+            "",
+          ),
+        ),
+      );
       continue;
     }
 

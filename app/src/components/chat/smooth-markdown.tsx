@@ -7,6 +7,7 @@ import {
 } from "streamdown";
 import { cjkFriendlyEmphasis } from "@/lib/chat/cjk-emphasis";
 import { escapeUnknownTags } from "@/lib/chat/escape-unknown-tags";
+import { createIncrementalBlockParser } from "@/lib/chat/incremental-blocks";
 import { type MdTail, MdTailContext, withMdCache } from "@/lib/chat/md-cache";
 import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useSmoothText } from "@/lib/chat/use-smooth-text";
@@ -50,8 +51,12 @@ export function SmoothStreamdown({
   const tail = useRef<MdTail | null>(null);
   if (!tail.current) tail.current = { live: false, count: 0 };
   if (children !== first.current) tail.current.live = true;
+  const incRef = useRef<ReturnType<typeof createIncrementalBlockParser> | null>(null);
+  if (!incRef.current) incRef.current = createIncrementalBlockParser(parseMarkdownIntoBlocks);
   const split = useRef((markdown: string) => {
-    const blocks = parseMarkdownIntoBlocks(markdown);
+    const blocks = tail.current?.live && incRef.current
+      ? incRef.current(markdown)
+      : parseMarkdownIntoBlocks(markdown);
     if (tail.current) tail.current.count = blocks.length;
     return blocks;
   }).current;

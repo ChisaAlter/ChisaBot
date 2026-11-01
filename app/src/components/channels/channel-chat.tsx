@@ -1887,7 +1887,6 @@ export function ChannelChat({
     () => ({ canAct: canResend, regenerate, edit: editAndResend }),
     [canResend, regenerate, editAndResend],
   );
-
   /*
    * 流式时这个组件每个 token 都重渲（它订阅 agent.messages）。输入框那一排控件只认这几个原始值，
    * 元素和数组在这里按值缓存，配合 Composer / ContextMeter 等的 memo，token 不再穿过输入框
@@ -1949,27 +1948,6 @@ export function ChannelChat({
             ) : null}
             <ConversationView
               agentId={runtimeAgentId}
-              modelControl={
-                <BotModelSelector
-                  agentId={runtimeAgentId}
-                  compact
-                  disabled={!channel.active}
-                />
-              }
-              leadingControl={
-                <PermissionChip
-                  agentId={runtimeAgentId}
-                  disabled={!channel.active}
-                />
-              }
-              contextControl={
-                <ContextMeter
-                  agentId={runtimeAgentId}
-                  running={chatBusy}
-                  threadId={channel.threadId}
-                />
-              }
-
               modelControl={modelControl}
               leadingControl={leadingControl}
               contextControl={contextControl}

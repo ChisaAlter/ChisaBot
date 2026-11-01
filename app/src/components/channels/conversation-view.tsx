@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -485,7 +486,67 @@ export function ConversationView({
    * that carries all of it, through the same gates as a typed send.
    */
   const composerBoxRef = useRef<HTMLDivElement | null>(null);
-  const retry = () => {
+  /*
+   * 交给 Composer（memo）和 ChatTranscript 的回调要稳定（审查 01 第 4 条 / jank FIX-PLAN §5 / P2-1）：
+   * 以前这里每次渲染都新建箭头函数，流式时每个 chunk 都让整个输入框跟着重渲染。
+   * 经一个「最新值」引用转一下，函数本身不变，调到的永远是这次渲染的。
+   */
+  const latest = useRef({
+    onStop,
+    onRetryStop,
+    onRetryTurn,
+    onBeforeRetry,
+    queueToServer,
+    submit,
+    apply,
+  });
+  // 提交阶段再写，不在渲染里改 ref（并发渲染可能丢弃这次渲染）；layout effect 先于任何用户事件执行。
+  useLayoutEffect(() => {
+    latest.current = {
+      onStop,
+      onRetryStop,
+      onRetryTurn,
+      onBeforeRetry,
+      queueToServer,
+      submit,
+      apply,
+    };
+  });
+  const submitDraft = useCallback(
+    (draft: ComposerDraft) => latest.current.submit(draft, false),
+    [],
+  );
+  const stopRun = useCallback(() => latest.current.onStop?.(), []);
+  const retryStopRun = useCallback(() => latest.current.onRetryStop?.(), []);
+  const queueDraft = useCallback((draft: ComposerDraft) => {
+    const { queueToServer: toServer, submit: runSubmit } = latest.current;
+    const plain =
+      toServer !== undefined &&
+      draft.attachments.length === 0 &&
+      draft.commandIds.length === 0 &&
+      draft.text.trim().length > 0 &&
+      queuedRef.current.length === 0;
+    if (!plain) {
+      runSubmit(draft, true);
+      return;
+    }
+    void toServer(draft.text.trim()).then((outcome) => {
+      if (outcome === "send") latest.current.submit(draft, true);
+    });
+  }, []);
+  const removeQueued = useCallback((id: string) => {
+    latest.current.apply({ id, type: "remove" });
+  }, []);
+  const commandNames = useMemo(
+    () => (commands ?? []).map((command) => command.name).join(","),
+    [commands],
+  );
+  const queuedAttachmentCount = useMemo(
+    () => queued.reduce((total, message) => total + message.attachments.length, 0),
+    [queued],
+  );
+  const retry = useCallback(() => {
+    const { onRetryTurn, onBeforeRetry } = latest.current;
     if (onRetryTurn?.()) return;
     const box = composerBoxRef.current;
     const send = box?.querySelector<HTMLButtonElement>('form button[type="submit"]');
@@ -495,39 +556,6 @@ export function ConversationView({
       return;
     }
     box?.querySelector<HTMLElement>('[contenteditable="true"], textarea')?.focus();
-  };
-
-  /*
-   * 输入框的回调走「最新值」引用（jank FIX-PLAN §5 / P2-1）：路由每个 token 都会给这里新的
-   * onStop / onSubmit 闭包，直接往下传会让 memo 过的 Composer 每个 token 重渲一次。它们只在事件里
-   * 被调用，读到的总是最近一次渲染的版本，行为不变。
-   */
-  const latest = useRef({ submit, onStop, onRetryStop, queueToServer });
-  // 提交阶段再写，不在渲染里改 ref（并发渲染可能丢弃这次渲染）；layout effect 先于任何用户事件执行。
-  useLayoutEffect(() => {
-    latest.current = { submit, onStop, onRetryStop, queueToServer };
-  });
-  const submitDraft = useCallback(
-    (draft: ComposerDraft) => latest.current.submit(draft, false),
-    [],
-  );
-  const stopRun = useCallback(() => latest.current.onStop?.(), []);
-  const retryStopRun = useCallback(() => latest.current.onRetryStop?.(), []);
-  const queueDraft = useCallback((draft: ComposerDraft) => {
-    const toServer = latest.current.queueToServer;
-    const plain =
-      toServer !== undefined &&
-      draft.attachments.length === 0 &&
-      draft.commandIds.length === 0 &&
-      draft.text.trim().length > 0 &&
-      queuedRef.current.length === 0;
-    if (!plain) {
-      latest.current.submit(draft, true);
-      return;
-    }
-    void toServer(draft.text.trim()).then((outcome) => {
-      if (outcome === "send") latest.current.submit(draft, true);
-    });
   }, []);
 
   return (
@@ -544,13 +572,9 @@ export function ConversationView({
         <ChatTranscript
           agentId={agentId}
           busy={busy}
-          commandNames={(commands ?? [])
-            .map((command) => command.name)
-            .join(",")}
+          commandNames={commandNames}
           messages={messages}
-          onRemoveQueued={(id) => {
-            apply({ id, type: "remove" });
-          }}
+          onRemoveQueued={removeQueued}
           queued={queued}
           restoring={restoring}
           hydrating={hydrating}
@@ -613,10 +637,7 @@ export function ConversationView({
            * drawing from, and the ref exists for the callbacks that cannot wait a render. They
            * agree here anyway — `apply` writes both on the same line.
            */
-          queuedAttachmentCount={queued.reduce(
-            (total, message) => total + message.attachments.length,
-            0,
-          )}
+          queuedAttachmentCount={queuedAttachmentCount}
           /*
            * The caller's answer, not `inFlight`. `running` is true from the instant `start` is
            * entered, which is before `onSubmit` has done anything at all, so a Stop drawn from

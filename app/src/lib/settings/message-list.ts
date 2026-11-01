@@ -28,9 +28,15 @@ export function userPreferencesQueryOptions(userId: string | undefined) {
 export function useUserPreferences() {
   const user = useQuery(currentUserQueryOptions());
   const preferences = useQuery(userPreferencesQueryOptions(user.data?.id));
+  /*
+   * 只读出调用方用得到的三样（data / userId / settled），不要把整个查询结果展开。TanStack Query 只在
+   * 「读过的字段」变了时才让组件重渲染；`...preferences` 会把 isFetching、dataUpdatedAt 等全部读一遍，
+   * 于是每次后台重读（数据没变）都让所有用到偏好的组件渲染两次（开始读、读完）。ChatStage 经 useLanding →
+   * useMainBot 用到它，从设置回聊天约 100ms 后整段聊天跟着重渲染，就是这里（本 PR 的 DEVLOG）。
+   */
   return {
     userId: user.data?.id,
-    ...preferences,
+    data: preferences.data,
     /*
      * 当前用户读失败时，偏好查询根本不会开始（没 userId → enabled: false），isSuccess / isError 都是
      * false。调用方按「偏好已经定下来」来等就永远等不到：首页 landing 会一直 loading，`/` 渲染成空白，

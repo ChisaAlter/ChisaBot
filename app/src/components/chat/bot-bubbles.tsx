@@ -920,7 +920,7 @@ let svgPurifier: { win: SvgWindow; purifier: SvgPurifier } | null = null;
 /** 每个 window 一个独立实例：钩子只挂在这个实例上，不影响别处（如 docx 预览）对 DOMPurify 的使用。 */
 function getSvgPurifier(win: SvgWindow): SvgPurifier | null {
   if (svgPurifier?.win === win) return svgPurifier.purifier;
-  const purifier = DOMPurify(win);
+  const purifier = DOMPurify(win as unknown as Parameters<typeof DOMPurify>[0]);
   if (!purifier.isSupported) return null;
   purifier.addHook("uponSanitizeAttribute", (node, data) => {
     if (!SVG_URL_ATTRS.has(data.attrName.toLowerCase())) return;

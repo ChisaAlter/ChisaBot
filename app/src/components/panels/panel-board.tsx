@@ -161,7 +161,8 @@ export function PanelBoard<T extends { id: string; title: string }>({
     if (!node || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
-      if (rect) setMeasured(Math.round(rect.width));
+      // 被 KeepAlive 藏起来时宽度是 0：不记，回来时就不会因为 0→原值多渲染一遍。
+      if (rect && rect.width > 0) setMeasured(Math.round(rect.width));
     });
     observer.observe(node);
     return () => observer.disconnect();
