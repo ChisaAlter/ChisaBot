@@ -1,5 +1,5 @@
 import { MAX_DICTATION_SECONDS } from "../../../../shared/dictation";
-import type { Recording } from "./recording";
+import { micDeniedMessage, type Recording } from "./recording";
 
 export type DictationState = {
   phase: "idle" | "requesting" | "recording" | "transcribing" | "error";
@@ -10,6 +10,10 @@ export type DictationState = {
 };
 
 export type DictationIntent = "draft" | "send";
+
+/** A transcription that failed without saying why; the audio is kept, so 「重试」 sends it again. */
+export const DICTATION_TRANSCRIBE_FAILED_MESSAGE =
+  "没能把录音转成文字。请点「重试」。";
 
 const idle: DictationState = { phase: "idle", seconds: 0, canRetry: false };
 
@@ -88,7 +92,7 @@ export class DictationSession {
         phase: "error",
         error:
           error instanceof Error && error.name === "NotAllowedError"
-            ? "浏览器没给麦克风权限。允许之后再试一次。"
+            ? micDeniedMessage()
             : "没能开始录音，检查一下麦克风再试。",
       });
     }
@@ -118,8 +122,17 @@ export class DictationSession {
     }
   };
 
+  /**
+   * Try again after an error. With the audio still held (an upload or server failure) it is sent
+   * again; when there is nothing reusable (nothing was heard, or browser recognition came back
+   * empty) the only meaningful retry is a new recording, so the microphone is opened again.
+   */
   retry = async () => {
-    if (this.state.phase !== "error" || !this.audio) return;
+    if (this.state.phase !== "error") return;
+    if (!this.audio || !this.state.canRetry) {
+      await this.start();
+      return;
+    }
     await this.transcribe(this.generation);
   };
 
@@ -144,14 +157,20 @@ export class DictationSession {
       this.deps.onTranscript(transcript, intent);
     } catch (error) {
       if (generation !== this.generation) return;
+      const rerecord =
+        typeof error === "object" &&
+        error !== null &&
+        "rerecord" in error &&
+        error.rerecord === true;
+      if (rerecord) this.audio = undefined;
       this.update({
         ...this.state,
         phase: "error",
-        canRetry: true,
+        canRetry: !rerecord,
         error:
           error instanceof Error
             ? error.message
-            : "转写失败，请重试。",
+            : DICTATION_TRANSCRIBE_FAILED_MESSAGE,
       });
     }
   }

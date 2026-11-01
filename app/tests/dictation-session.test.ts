@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
+import { MIC_DENIED_MESSAGE, type Recording } from "@/lib/dictation/recording";
 import { DictationSession } from "@/lib/dictation/session";
-import type { Recording } from "@/lib/dictation/recording";
 
 const audio = new Blob(["recorded audio"], { type: "audio/webm" });
 
@@ -113,6 +113,7 @@ test("permission errors have an actionable recovery", async () => {
     phase: "error",
     canRetry: false,
     // 2026-10-20：这句跟着产品一起说中文了。
-    error: "浏览器没给麦克风权限。允许之后再试一次。",
+    // 2026-10-29：改成告诉用户去哪里打开麦克风（审查 M4-10）。
+    error: MIC_DENIED_MESSAGE,
   });
 });
