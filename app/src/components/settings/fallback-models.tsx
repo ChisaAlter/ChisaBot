@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, ListRow } from "@/components/ui/skyglass";
 import { modelCatalogQueryOptions } from "@/lib/model-selection/queries";
+import { hermesFallbackUnsupportedNote, runtimeKernelQueryOptions } from "@/lib/runtime-kernel";
 
 /**
  * 设置 → 模型 →「备用模型」（DESIGN.md §61）：主模型额度用完或暂时不可用时，按这个顺序换下一个。
@@ -44,6 +45,9 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
   const queryClient = useQueryClient();
   const saved = useQuery(fallbackModelsQueryOptions());
   const catalog = useQuery(modelCatalogQueryOptions());
+  // 只在适配器明确检测到不支持时才说「不生效」（有依据，不猜）。
+  const kernel = useQuery({ ...runtimeKernelQueryOptions(), refetchInterval: false });
+  const unsupported = hermesFallbackUnsupportedNote(kernel.data);
   const [list, setList] = useState<string[]>([]);
   const [pick, setPick] = useState<string>("");
   useEffect(() => {
@@ -71,6 +75,11 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
 
   return (
     <div className="fb-models" data-testid="fallback-models">
+      {unsupported ? (
+        <p className="mb-3 text-muted-foreground text-sm" data-testid="fallback-hermes-unsupported">
+          {unsupported}
+        </p>
+      ) : null}
       <Card className="fb-list">
         {list.length === 0 ? (
           <p className="fb-empty">{"还没有指定。主模型用不了时，自动挑同一平台的其它模型。"}</p>

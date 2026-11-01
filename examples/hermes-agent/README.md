@@ -66,8 +66,25 @@ never appended to user/system/history text. The validator refuses a capability
 accidentally copied into model-visible content. Model selection goes through
 native `set_session_model(model_id=...)`, whose `keep_endpoint=True` path keeps
 the existing Magpie endpoint for the same provider. Unknown/rejected models
-produce an ACP invalid-params error; no silent model fallback is implemented
-by this adapter.
+produce an ACP invalid-params error.
+
+`model` may also carry `fallbacks` (up to 8 model ids, in order) and
+`maxOutputTokens` (1..1000000). When the installed Hermes exposes
+`AIAgent._fallback_chain` and `agent_init_fallback._init_fallback_chain`, the
+adapter rebuilds the agent's fallback chain from them on every prompt
+(same provider and endpoint as the primary model) and sets `max_tokens`; a
+prompt without them restores the defaults. `initialize` reports what was
+detected in `_meta.chisabotModelControls: {"fallback": bool,
+"maxOutputTokens": bool}`; an unsupported control is ignored, never guessed.
+When Hermes switches to a backup model during a prompt, the prompt response
+carries `_meta.chisabot.modelFallback: {"from", "to", "reason"}` with reason
+`quota` or `unavailable`.
+
+`model.contextCompression: false` means ChisaBot already trimmed or
+summarized this run's history. The adapter then sets
+`agent.compression_enabled = False` for that prompt (Hermes' own context
+compression gates every automatic trigger on it), so nothing is compressed
+twice; any other prompt restores the agent's original value.
 
 ## Tools and waiting
 

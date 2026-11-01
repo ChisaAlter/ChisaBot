@@ -22,6 +22,8 @@ ChisaBot → AG-UI/SSE → bridge.mjs → ACP stdio → ChisaBot Hermes adapter 
 
 排队取消只取消本请求。活动取消/超时先通知 ACP，等结束；超过宽限期则退役整个子进程代，旧事件无法流进下一轮。设备取消使用既有设备 cancel 协议；外部服务已经完成的动作仍须以实际回执为准。
 
+备用模型与输出上限：宿主每轮可在 `model` 里带 `fallbacks`（最多 8 个模型 ID）和 `maxOutputTokens`（1..1000000），桥校验后原样转给 adapter。adapter 在 initialize 的 `_meta.chisabotModelControls` 宣告检测到的能力，桥把它放进 `/health` 的 `modelControls`（未初始化时为 `null`）。adapter 回报的切换（`_meta.chisabot.modelFallback`）经校验后写进 `RUN_FINISHED.metadata.modelFallback`，不合法的直接丢弃。`model.contextCompression: false`（宿主已经压缩过这次运行的前文）校验为布尔后原样转发，adapter 据此在这次运行里关掉 Hermes 自带的上下文压缩。
+
 ## 生产环境变量
 
 | 变量 | 作用 |

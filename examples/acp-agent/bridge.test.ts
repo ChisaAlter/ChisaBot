@@ -286,6 +286,32 @@ describe("ACP AG-UI bridge host contract", () => {
     expect(noState.records()).toHaveLength(0);
   });
 
+  test("backup models and output cap reach the adapter; a Hermes model switch is reported once, validated", async () => {
+    const created = bridge({ noTools: true, modelControls: { fallback: true, maxOutputTokens: true }, modelFallback: { from: "test-model", to: "backup-model", reason: "quota", extra: "dropped" } });
+    expect((await health(created)).modelControls).toBeNull();
+    const input = host();
+    (input.forwardedProps.chisabotHermes as { model: unknown }).model = { id: "test-model", fallbacks: ["backup-model", "other-model"], maxOutputTokens: 32000, contextCompression: false };
+    const result = await post(created, input);
+    expect(prompts(created)[0].params._meta.chisabot.model).toEqual({ id: "test-model", fallbacks: ["backup-model", "other-model"], maxOutputTokens: 32000, contextCompression: false });
+    expect(result.at(-1)).toEqual({ type: "RUN_FINISHED", threadId: "thread-1", runId: "run-1", metadata: { modelFallback: { from: "test-model", to: "backup-model", reason: "quota" } } });
+    expect((await health(created)).modelControls).toEqual({ fallback: true, maxOutputTokens: true });
+    for (const model of [{ id: "m", fallbacks: "backup" }, { id: "m", fallbacks: ["has space"] }, { id: "m", fallbacks: Array.from({ length: 9 }, (_, i) => `m${i}`) }, { id: "m", maxOutputTokens: 0 }, { id: "m", maxOutputTokens: 1.5 }, { id: "m", contextCompression: "off" }]) {
+      const bad = host("x", "bad-run");
+      (bad.forwardedProps.chisabotHermes as { model: unknown }).model = model;
+      expect((await post(created, bad)).at(-1).code).toBe("ACP_INVALID_HOST_CONTEXT");
+    }
+    const leaked = host("x", "leak-run");
+    (leaked.forwardedProps.chisabotHermes as { model: unknown }).model = { id: "test-model", fallbacks: ["private-capability"] };
+    expect((await post(created, leaked)).at(-1).code).toBe("ACP_INVALID_HOST_CONTEXT");
+  });
+
+  test("an adapter that detected no model controls reports them as unsupported, and malformed switches are dropped", async () => {
+    const created = bridge({ noTools: true, modelFallback: { from: "test-model", to: "test-model" } });
+    const result = await post(created, host());
+    expect(result.at(-1)).toEqual({ type: "RUN_FINISHED", threadId: "thread-1", runId: "run-1" });
+    expect((await health(created)).modelControls).toEqual({ fallback: false, maxOutputTokens: false });
+  });
+
   test("transport capabilities cannot enter prompts or gateway URLs", async () => {
     const created = bridge();
     const leaked = host();

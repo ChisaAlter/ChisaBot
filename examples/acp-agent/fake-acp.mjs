@@ -36,7 +36,7 @@ lines.on("line", (line) => {
     setTimeout(() => respond(message.id, {
       protocolVersion: 1,
       agentCapabilities: {},
-      ...(config.hostTools === false ? {} : { _meta: { chisabotHostTools: 1 } }),
+      ...(config.hostTools === false ? {} : { _meta: { chisabotHostTools: 1, ...(config.modelControls ? { chisabotModelControls: config.modelControls } : {}) } }),
     }), config.initializeDelayMs ?? 0);
     return;
   }
@@ -89,7 +89,7 @@ lines.on("line", (line) => {
     if (config.noTools || behavior.noTools) {
       turn.done = true;
       record("prompt_end", { sessionId: turn.sessionId, text });
-      respond(message.id, { stopReason: "end_turn" });
+      respond(message.id, { stopReason: "end_turn", ...(config.modelFallback ? { _meta: { chisabot: { modelFallback: config.modelFallback } } } : {}) });
       if (config.exitAfterPromptMs) setTimeout(() => process.exit(0), config.exitAfterPromptMs);
       return;
     }

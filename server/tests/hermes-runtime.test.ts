@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HttpAgent, type BaseEvent, type RunAgentInput } from "@ag-ui/client";
 import { z } from "zod";
-import { HermesRuntimeAgent, hermesRuntimeTools } from "../src/agents/hermes-runtime";
+import { acceptedHermesFallback, HermesRuntimeAgent, type HermesRunConfiguration, hermesRuntimeTools, hermesWireModel } from "../src/agents/hermes-runtime";
 import { createRuntimeToolsRoutes } from "../src/agents/runtime-tools";
 import { currentApprovalContext } from "../src/approvals/types";
 import { HeadlessToolsMiddleware, type HeadlessTool } from "../src/computer/headless-tools";
@@ -9,7 +9,7 @@ import { currentConfirmToolCall, currentToolAbort, withToolAbort } from "../src/
 import type { GrantedTool } from "../src/plugins/tools";
 
 const encoder = new TextEncoder();
-function fixture(options: { missingResult?: boolean; scopeMismatch?: boolean; tool?: GrantedTool; surfaces?: HeadlessTool[] } = {}) {
+function fixture(options: { missingResult?: boolean; scopeMismatch?: boolean; tool?: GrantedTool; surfaces?: HeadlessTool[]; finished?: Record<string, unknown>; extra?: Partial<HermesRunConfiguration> } = {}) {
   const requests: RunAgentInput[] = [];
   let executions = 0;
   let approval: ReturnType<typeof currentApprovalContext>;
@@ -53,7 +53,7 @@ function fixture(options: { missingResult?: boolean; scopeMismatch?: boolean; to
             send({ type: "TEXT_MESSAGE_START", messageId: "answer", role: "assistant" });
             send({ type: "TEXT_MESSAGE_CONTENT", messageId: "answer", delta: "Found the official documentation." });
             send({ type: "TEXT_MESSAGE_END", messageId: "answer" });
-            send({ type: "RUN_FINISHED", threadId: input.threadId, runId: input.runId });
+            send({ type: "RUN_FINISHED", threadId: input.threadId, runId: input.runId, ...(options.finished ? { metadata: options.finished } : {}) } as BaseEvent);
             controller.close();
           })().catch((error) => controller.error(error));
         },
@@ -70,6 +70,7 @@ function fixture(options: { missingResult?: boolean; scopeMismatch?: boolean; to
     signRun: () => "server-signed-run",
     toolsFor: async () => [definition],
     prepare: async (input) => ({ ...input, messages: [{ id: "system", role: "system", content: "You are 星灵. Updated user memory." }, ...input.messages] }),
+    ...options.extra,
   });
   agent.threadId = "thread";
   agent.messages = [{ id: "user", role: "user", content: "Find how to integrate ima" }];
@@ -157,6 +158,47 @@ describe("Hermes host runtime", () => {
     expect(seen).toHaveLength(count);
     expect(seen.some((event) => event.type === "RUN_FINISHED")).toBe(false);
     expect(streamCancelled || transportSignal?.aborted).toBe(true);
+  });
+
+  test("each turn carries its backup models, output cap and host-compaction flag; a Hermes switch is checked, logged and kept on RUN_FINISHED", async () => {
+    const logs: Record<string, unknown>[] = [];
+    const f = fixture({
+      finished: { modelFallback: { from: "codex/gpt-6-luna", to: "codex/backup", reason: "quota" } },
+      extra: {
+        modelControls: async () => ({ fallbacks: ["codex/backup", "codex/gpt-6-luna", "codex/backup", "bad id", "codex/other"], maxOutputTokens: 32_000 }),
+        finishedMetadata: (runId) => (runId === "run" ? { historyCompaction: { mode: "trim", summarizedTurns: 0, beforeTokens: 900, afterTokens: 500 } } : undefined),
+        hostCompacted: (runId) => runId === "run",
+        log: (line) => logs.push(line),
+      },
+    });
+    const events: BaseEvent[] = [];
+    await f.agent.runAgent({ runId: "run" }, { onEvent: ({ event }) => { events.push(event); } });
+    expect(f.requests[0]?.forwardedProps.chisabotHermes.model).toEqual({
+      id: "codex/gpt-6-luna",
+      fallbacks: ["codex/backup", "codex/other"],
+      maxOutputTokens: 32_000,
+      contextCompression: false,
+    });
+    const finished = events.find((event) => event.type === "RUN_FINISHED") as BaseEvent & { metadata?: Record<string, unknown> };
+    expect(finished.metadata).toEqual({
+      modelFallback: { from: "codex/gpt-6-luna", to: "codex/backup", reason: "quota" },
+      historyCompaction: { mode: "trim", summarizedTurns: 0, beforeTokens: 900, afterTokens: 500 },
+    });
+    expect(logs).toEqual([{ type: "model-fallback", event: "used", model: "codex/gpt-6-luna", fallback: "codex/backup", reason: "quota", kernel: "hermes" }]);
+  });
+
+  test("a switch to a model the host never offered is dropped; no controls means the bare model id", async () => {
+    const logs: Record<string, unknown>[] = [];
+    const f = fixture({ finished: { modelFallback: { from: "codex/gpt-6-luna", to: "attacker/model", reason: "quota" } }, extra: { log: (line) => logs.push(line) } });
+    const events: BaseEvent[] = [];
+    await f.agent.runAgent({ runId: "run" }, { onEvent: ({ event }) => { events.push(event); } });
+    expect(f.requests[0]?.forwardedProps.chisabotHermes.model).toEqual({ id: "codex/gpt-6-luna" });
+    expect(events.find((event) => event.type === "RUN_FINISHED")).not.toHaveProperty("metadata");
+    expect(logs).toEqual([]);
+    expect(hermesWireModel("m", { fallbacks: [], maxOutputTokens: 0 })).toEqual({ id: "m" });
+    expect(hermesWireModel("m", { fallbacks: Array.from({ length: 12 }, (_, i) => `b${i}`) }).fallbacks).toHaveLength(8);
+    expect(acceptedHermesFallback({ from: "m", to: "b", reason: "overloaded" }, { id: "m", fallbacks: ["b"] })).toEqual({ from: "m", to: "b", reason: "unavailable" });
+    expect(acceptedHermesFallback({ from: "x", to: "b" }, { id: "m", fallbacks: ["b"] })).toBeNull();
   });
 
   test("an already aborted host signal never opens the transport", async () => {

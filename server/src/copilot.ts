@@ -27,7 +27,17 @@ import {
 import { guaranteeFinalAnswer } from "./agents/final-answer-guard";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
 import { FailFastTransport } from "./agents/pre-stream-failure";
-import { HermesRuntimeAgent, type HermesRuntimeBinding } from "./agents/hermes-runtime";
+import { HERMES_MAX_FALLBACKS, HermesRuntimeAgent, type HermesRuntimeBinding } from "./agents/hermes-runtime";
+import {
+  compactHistory,
+  HISTORY_SUMMARY_ID,
+  type HistoryCompaction,
+  HistoryPlanMemo,
+  type HistorySummaryStore,
+  type MeasuredUsage,
+  type Summarize,
+  summaryPrompt,
+} from "./agents/history-budget";
 import {
   PLAN_RUN_COMPLETED,
   PlanModel,
@@ -53,7 +63,7 @@ import {
 import type { AgentFetch, StallGuard } from "./channels/stall-guard";
 import { HeadlessToolsMiddleware } from "./computer/headless-tools";
 import type { DeploymentConfig } from "./config";
-import { meterLanguageModel, meterRun } from "./context-usage";
+import { estimateTokens, meterLanguageModel, meterRun } from "./context-usage";
 import { steerLanguageModel } from "./thread-inbox";
 import { observeModelConnection } from "./desktop-connection-failure";
 import { desktopTelemetryProperties } from "./desktop-telemetry";
@@ -297,6 +307,90 @@ export async function resolveOutputLimit(modelId: string): Promise<number | unde
     return undefined;
   }
 }
+/**
+ * 上下文窗口（模型目录的 context_window；index.ts 接上）。Hermes 内核下估算这一轮要发多少 token、
+ * 决定要不要压缩前文（agents/history-budget.ts）。不知道窗口就不压缩。
+ */
+type ContextWindowResolver = (modelId: string) => Promise<number | undefined>;
+let contextWindowFor: ContextWindowResolver = async () => undefined;
+export function setModelContextWindowResolver(resolver: ContextWindowResolver): void {
+  contextWindowFor = resolver;
+}
+export async function resolveContextWindow(modelId: string): Promise<number | undefined> {
+  try {
+    const window = await Promise.race([
+      contextWindowFor(modelId),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
+    ]);
+    return typeof window === "number" && Number.isFinite(window) && window > 0 ? window : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Hermes 长对话压缩前文用的摘要缓存和「摘要模型」（设置 → 模型；index.ts 接上）。
+ * 摘要模型没配置（null）就用这一轮的主模型，不在代码里写死。
+ */
+let historySummaryStore: HistorySummaryStore | undefined;
+let historySummaryModel: () => Promise<string | null> = async () => null;
+export function setHistorySummaries(options: { store?: HistorySummaryStore; model?: () => Promise<string | null> }): void {
+  historySummaryStore = options.store;
+  if (options.model) historySummaryModel = options.model;
+}
+/** 上一轮 provider 返回的真实用量（index.ts 接上 lastMeasuredUsage），用来校准估算；没有就按安全系数。 */
+let previousRunUsage: (threadId: string) => Promise<MeasuredUsage | null> = async () => null;
+export function setPreviousRunUsageResolver(resolver: (threadId: string) => Promise<MeasuredUsage | null>): void {
+  previousRunUsage = resolver;
+}
+async function resolvePreviousRunUsage(threadId: string): Promise<MeasuredUsage | null> {
+  try {
+    return await Promise.race([
+      previousRunUsage(threadId),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000).unref?.()),
+    ]);
+  } catch {
+    return null;
+  }
+}
+const historyPlans = new HistoryPlanMemo();
+/** 回复结束后在后台写摘要的任务（按 runId；RUN_FINISHED 时取出来跑，不等它）。 */
+const historyRefreshes = new Map<string, () => Promise<void>>();
+function rememberRefresh(runId: string, refresh: (() => Promise<void>) | null) {
+  historyRefreshes.delete(runId);
+  if (refresh) historyRefreshes.set(runId, refresh);
+  while (historyRefreshes.size > 200) historyRefreshes.delete(historyRefreshes.keys().next().value as string);
+}
+/** 这次运行的回复结束了：后台写摘要（下一轮用），失败只记日志。 */
+export function runHistoryRefresh(runId: string): void {
+  const refresh = historyRefreshes.get(runId);
+  if (!refresh) return;
+  historyRefreshes.delete(runId);
+  void refresh().catch(() => {});
+}
+/** 每次运行压缩了什么，RUN_FINISHED 时附上（HermesRuntimeAgent finishedMetadata）。 */
+const historyCompactions = new Map<string, HistoryCompaction>();
+function rememberCompaction(runId: string, compaction: HistoryCompaction | null) {
+  historyCompactions.delete(runId);
+  if (compaction) historyCompactions.set(runId, compaction);
+  while (historyCompactions.size > 200) historyCompactions.delete(historyCompactions.keys().next().value as string);
+}
+
+/** 用同一个连接上的摘要模型（没配置就是主模型）写较早对话的摘要。 */
+export function connectionSummarizer(model: RuntimeModel, apiKey: string | null): Summarize {
+  return async ({ previousSummary, messages, signal }) => {
+    const id = (await historySummaryModel().catch(() => null)) || model.defaultModel;
+    const result = await connectionLanguageModel({ ...model, defaultModel: id }, apiKey).doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: summaryPrompt(previousSummary, messages) }] }],
+      // 会先「思考」的模型要留够余量，不然思考用完了正文是空的。
+      maxOutputTokens: 1500,
+      abortSignal: signal,
+    });
+    const summary = result.content.map((part) => (part.type === "text" ? part.text : "")).join("").trim();
+    return { summary, model: id };
+  };
+}
+
 export function outputLimitLanguageModel<T>(model: T, modelId: string): T {
   if (!model || typeof model !== "object" || /^claude-/i.test(modelId)) return model;
   const target = model as unknown as Record<string, unknown>;
@@ -1024,6 +1118,8 @@ async function hermesKernelAgent(options: {
   agent: RegisteredBuiltInAgent;
   kernel: Extract<AgentKernel, { kind: "hermes" }>;
   model: RuntimeModel;
+  /** 只给压缩前文时写摘要用（同一个连接）；Hermes 自己的模型调用不经过这里。 */
+  apiKey?: string | null;
   tools: GrantedTool[];
   signRun?: SignRun;
   standingInstructions: string | null;
@@ -1052,6 +1148,22 @@ async function hermesKernelAgent(options: {
     modelId: options.model.defaultModel,
     binding: kernel.binding,
     signRun: (runId, threadId, previous) => signRun(agent.id, runId, threadId, previous),
+    // 备用模型 / 输出上限与内置路径同源：管理员列表 → CHISABOT_MODEL_FALLBACKS → 同平台自动挑选；模型目录的输出上限。
+    modelControls: async (modelId) => {
+      const [fallbacks, maxOutputTokens] = await Promise.all([
+        fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured())(modelId).catch(() => [] as string[]),
+        resolveOutputLimit(modelId),
+      ]);
+      return { fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS), ...(maxOutputTokens ? { maxOutputTokens } : {}) };
+    },
+    finishedMetadata: (runId) => {
+      // 回复已经结束：这时才在后台写摘要（这一轮只裁剪，首字时间不变）。
+      runHistoryRefresh(runId);
+      const compaction = historyCompactions.get(runId);
+      return compaction ? { historyCompaction: compaction } : undefined;
+    },
+    // 我们已经压缩过前文的运行，Hermes 自带的上下文压缩关掉，免得二次压缩。
+    hostCompacted: (runId) => historyCompactions.has(runId),
     toolsFor: async (input, signal) => {
       const passing = (await options.handoff?.(agent.id, input)) ?? [];
       signal.throwIfAborted();
@@ -1070,11 +1182,45 @@ async function hermesKernelAgent(options: {
         toolCallId: entry.interruptId,
         content: typeof entry.payload === "string" ? entry.payload : JSON.stringify(entry.payload ?? null),
       }));
-      const history = sanitizeSeededHistory([...input.messages.filter((message) => message.id !== `hermes-role:${agent.id}`), ...resumed], answeredByResume);
+      const history = sanitizeSeededHistory([...input.messages.filter((message) => message.id !== `hermes-role:${agent.id}` && message.id !== HISTORY_SUMMARY_ID), ...resumed], answeredByResume);
       const messages = options.loadAttachment
         ? await inlineAttachments(history, options.loadAttachment, input.threadId, options.markAttachmentsSent)
         : history;
-      return { ...input, messages: [{ id: `hermes-role:${agent.id}`, role: "system", content: prompt }, ...messages] };
+      // 长对话：按上下文窗口估算，>70% 裁剪旧工具结果 / 超长旧消息，>85% 用缓存的摘要代替较早轮次（agents/history-budget.ts）。
+      // 这一轮从不等摘要模型：没有现成摘要就只裁剪，回复结束后后台写摘要。只改这一次发出去的副本，数据库里的完整历史不动。
+      let budget: Awaited<ReturnType<typeof compactHistory>> = { summary: null, messages, compaction: null, refresh: null };
+      try {
+        let toolTokens = 0;
+        try {
+          toolTokens = Math.round(JSON.stringify(tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: z.toJSONSchema(tool.parameters, { io: "input" }) }))).length / 4);
+        } catch {
+          toolTokens = 0;
+        }
+        const [contextWindow, previousUsage] = await Promise.all([
+          resolveContextWindow(options.model.defaultModel),
+          historyPlans.get(input.runId) ? null : resolvePreviousRunUsage(input.threadId),
+        ]);
+        budget = await compactHistory({
+          threadId: input.threadId,
+          runId: input.runId,
+          history: messages,
+          overheadTokens: estimateTokens([{ content: prompt }]) + toolTokens,
+          contextWindow,
+          store: historySummaryStore,
+          summarize: connectionSummarizer(options.model, options.apiKey ?? null),
+          memo: historyPlans,
+          previousUsage,
+          log: (line) => console.log(JSON.stringify(line)),
+        });
+      } catch (error) {
+        console.warn(JSON.stringify({ type: "history-budget", event: "failed", error: error instanceof Error ? error.message.slice(0, 200) : "unknown" }));
+      }
+      rememberCompaction(input.runId, budget.compaction);
+      if (budget.refresh) rememberRefresh(input.runId, budget.refresh);
+      return {
+        ...input,
+        messages: [{ id: `hermes-role:${agent.id}`, role: "system", content: prompt }, ...(budget.summary ? [budget.summary] : []), ...budget.messages],
+      };
     },
   });
 }
@@ -1109,6 +1255,7 @@ async function buildAgent(
       agent,
       kernel: agentKernel,
       model,
+      apiKey,
       tools: granted,
       signRun,
       standingInstructions,

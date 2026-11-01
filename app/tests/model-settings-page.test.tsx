@@ -60,12 +60,15 @@ beforeEach(() => {
           : Response.json({ config: stored });
       }
       /*
-       * 同一页下面还有「备用模型」「生图模型」「识图模型」三块，各自发一次读请求。
+       * 同一页下面还有「备用模型」「摘要模型」「生图模型」「识图模型」四块，各自发一次读请求。
        * 不答这几个请求的话，每一块都会渲染自己的 role="alert"，下面那些
        * 「页面上那一条报错」的断言就再也分不清报的是哪一条。
        */
       if (path === "/api/admin/model-fallbacks" && method === "GET") {
         return Response.json({ models: [] });
+      }
+      if (path === "/api/admin/history-summary-model" && method === "GET") {
+        return Response.json({ model: null });
       }
       if (path === "/api/models") {
         return Response.json({ models: [], fetchedAt: 0 });

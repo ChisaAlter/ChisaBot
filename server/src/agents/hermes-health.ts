@@ -21,6 +21,11 @@ export type HermesHealthCheck = {
   persistentState?: boolean;
   generation?: number;
   sessions?: number;
+  /**
+   * 适配器在已安装的 Hermes 里检测到的模型能力（桥接层 initialize 后才有）：备用模型链、输出上限。
+   * 只有检测结果明确为 false 时，设置页才说「这里的设置在 Hermes 内核下不生效」。
+   */
+  modelControls?: { fallback: boolean; maxOutputTokens: boolean };
   error?: string;
 };
 
@@ -104,6 +109,20 @@ export async function probeHermesHealth(
       ...(numberField(fields, "sessions") === undefined
         ? {}
         : { sessions: numberField(fields, "sessions") }),
+      ...(fields.modelControls &&
+      typeof fields.modelControls === "object" &&
+      !Array.isArray(fields.modelControls)
+        ? {
+            modelControls: {
+              fallback:
+                (fields.modelControls as Record<string, unknown>).fallback ===
+                true,
+              maxOutputTokens:
+                (fields.modelControls as Record<string, unknown>)
+                  .maxOutputTokens === true,
+            },
+          }
+        : {}),
       ...(ready ? {} : { error: "Hermes 桥接还没有就绪" }),
     };
   } catch {

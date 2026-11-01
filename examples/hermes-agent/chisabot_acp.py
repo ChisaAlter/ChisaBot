@@ -19,8 +19,76 @@ from types import SimpleNamespace
 from typing import Any
 
 from chisabot_protocol import (GatewayClient, HostPrompt, ProtocolError, RunState, ToolAliases,
-                               active_run, host_metadata, parse_host_prompt, redact,
+                               active_run, fallback_use, host_metadata, parse_host_prompt, redact,
                                tool_error)
+
+logger = logging.getLogger("chisabot_acp")
+
+
+def model_controls() -> dict[str, bool]:
+    """Which per-turn model controls the installed Hermes really has (detected, never assumed).
+
+    fallback: AIAgent accepts ``fallback_model``, has the per-turn ``_try_activate_fallback`` switch and
+    ``agent.agent_init_fallback._init_fallback_chain`` exists. maxOutputTokens: AIAgent accepts
+    ``max_tokens`` (every request reads ``agent.max_tokens``). The host shows "不生效" only from this.
+    """
+    try:
+        from run_agent import AIAgent
+        parameters = inspect.signature(AIAgent.__init__).parameters
+    except Exception:
+        return {"fallback": False, "maxOutputTokens": False}
+    fallback = "fallback_model" in parameters and callable(getattr(AIAgent, "_try_activate_fallback", None))
+    if fallback:
+        try:
+            from agent.agent_init_fallback import _init_fallback_chain
+            fallback = callable(_init_fallback_chain)
+        except Exception:
+            fallback = False
+    return {"fallback": bool(fallback), "maxOutputTokens": "max_tokens" in parameters}
+
+
+def install_fallback_probe(agent: Any) -> None:
+    """Record each successful Hermes model switch for the current turn (ids and reason only)."""
+    if getattr(agent, "_chisabot_fallback_probe", None) is not None:
+        return
+    original = agent._try_activate_fallback
+
+    def probe(*args, **kwargs):
+        switched = original(*args, **kwargs)
+        if switched:
+            uses = getattr(agent, "_chisabot_fallback_uses", None)
+            if isinstance(uses, list):
+                uses.append((getattr(agent, "model", None), kwargs.get("reason", args[0] if args else None)))
+        return switched
+
+    agent._try_activate_fallback = probe
+    agent._chisabot_fallback_probe = probe
+
+
+def apply_model_controls(agent: Any, config: HostPrompt, controls: dict[str, bool]) -> None:
+    """Apply the host's backup models and output cap to this turn. Unsupported controls are skipped."""
+    if hasattr(agent, "compression_enabled"):
+        # Hermes' ``compression.enabled`` gate covers every automatic trigger (preflight, mid-turn,
+        # overflow recovery). Off only for runs the host already compacted; otherwise the agent default.
+        if not hasattr(agent, "_chisabot_default_compression"):
+            agent._chisabot_default_compression = agent.compression_enabled
+        agent.compression_enabled = (False if config.context_compression is False
+                                     else agent._chisabot_default_compression)
+    if controls.get("maxOutputTokens"):
+        if not hasattr(agent, "_chisabot_default_max_tokens"):
+            agent._chisabot_default_max_tokens = getattr(agent, "max_tokens", None)
+        agent.max_tokens = config.max_output_tokens or agent._chisabot_default_max_tokens
+    if controls.get("fallback"):
+        from agent.agent_init_fallback import _init_fallback_chain
+        base_url = getattr(agent, "base_url", None)
+        # Same connection as the primary model: same provider route and endpoint, only the model differs.
+        chain = [{"provider": agent.provider, "model": model, **({"base_url": base_url} if base_url else {})}
+                 for model in config.fallbacks]
+        try:
+            _init_fallback_chain(agent, chain)
+            install_fallback_probe(agent)
+        except Exception:
+            logger.warning("Hermes rejected the host backup model chain; this turn runs without backups")
 
 
 def configure_source(source_dir: str | None = None) -> Path:
@@ -133,10 +201,17 @@ def build_agent_class():
             self._host_runs: dict[str, RunState] = {}
             self._host_aliases: dict[str, ToolAliases] = {}
             self._gateway_factory = gateway_factory
+            self._model_controls: dict[str, bool] | None = None
+
+        def _controls(self) -> dict[str, bool]:
+            if self._model_controls is None:
+                self._model_controls = model_controls()
+            return self._model_controls
 
         async def initialize(self, *args, **kwargs):
             response = await super().initialize(*args, **kwargs)
-            response.field_meta = {**(response.field_meta or {}), "chisabotHostTools": 1}
+            response.field_meta = {**(response.field_meta or {}), "chisabotHostTools": 1,
+                                   "chisabotModelControls": dict(self._controls())}
             capabilities = response.agent_capabilities
             capabilities.field_meta = {**(capabilities.field_meta or {}), "chisabotHostTools": 1}
             # This process is ephemeral; the bridge restores its own canonical history.
@@ -184,6 +259,7 @@ def build_agent_class():
                 self._host_models[session_id] = config.model_id
             agent = state.agent
             restrict(agent)
+            apply_model_controls(agent, config, self._controls())
             for name in self._host_tools.pop(session_id, set()):
                 registry.deregister(name, scope=session_id)
             installed = set()
@@ -361,6 +437,7 @@ def build_agent_class():
                     state.is_running = True
                     state.current_prompt_text = user_text or "[User content]"
                 self._host_runs[session_id] = run
+                state.agent._chisabot_fallback_uses = []
 
                 def execute():
                     try:
@@ -402,8 +479,11 @@ def build_agent_class():
                         state.history = redact(self._host_aliases[session_id].history(history, canonical=True),
                                                config.gateway.capability)
                     waiting = run.response_meta()
+                    switched = next(iter(getattr(state.agent, "_chisabot_fallback_uses", None) or []), None)
+                    used = fallback_use(config.model_id, *switched) if switched else None
+                    meta = {**(waiting or {}), **({"modelFallback": used} if used else {})}
                     if waiting:
-                        return PromptResponse(stop_reason="cancelled", field_meta={"chisabot": waiting})
+                        return PromptResponse(stop_reason="cancelled", field_meta={"chisabot": meta})
                     if state.cancel_event and state.cancel_event.is_set():
                         return PromptResponse(stop_reason="cancelled")
                     final = result.get("final_response")
@@ -411,7 +491,8 @@ def build_agent_class():
                         update = acp.update_agent_message_text(redact(final, config.gateway.capability))
                         update.message_id = state.message_ids.current()
                         await conn.session_update(session_id, update)
-                    return PromptResponse(stop_reason="cancelled" if result.get("interrupted") else "end_turn")
+                    return PromptResponse(stop_reason="cancelled" if result.get("interrupted") else "end_turn",
+                                          **({"field_meta": {"chisabot": meta}} if meta else {}))
                 except asyncio.CancelledError:
                     run.close()
                     request_hard_interrupt(state.agent)
@@ -430,6 +511,7 @@ def build_agent_class():
                         state.current_prompt_text = ""
                         state.interrupted_prompt_text = ""
                     state.agent.ephemeral_system_prompt = None
+                    state.agent._chisabot_fallback_uses = None
                     for attr in ("tool_start_callback", "tool_complete_callback", "tool_progress_callback",
                                  "step_callback", "stream_delta_callback", "reasoning_callback"):
                         setattr(state.agent, attr, None)

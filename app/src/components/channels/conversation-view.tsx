@@ -1,4 +1,5 @@
 import type { SentAtReading } from "@/lib/chat/send-scroll";
+import type { CompactionNote } from "@/lib/copilot/turn-compaction";
 import type { Message } from "@ag-ui/core";
 import type { Attachment } from "@copilotkit/react-core/v2";
 import {
@@ -54,6 +55,7 @@ export function ConversationView({
   onSubmit,
   onStop,
   fallbacks,
+  compactions,
   lastSentAt,
   queueToServer,
 }: {
@@ -61,6 +63,8 @@ export function ConversationView({
   busy?: boolean;
   /** 换了备用模型的轮次（用户消息 id → 说明），那一轮末尾一行小字（DESIGN.md §61）。 */
   fallbacks?: ReadonlyMap<string, string>;
+  /** 发给模型时压缩过前文的轮次（用户消息 id → 「已压缩前文」一行，可展开看摘要）。 */
+  compactions?: ReadonlyMap<string, CompactionNote>;
   /** 最新一条用户消息的服务器发送时刻（本机时钟，DESIGN.md §94）。 */
   lastSentAt?: SentAtReading | null;
   /**
@@ -509,6 +513,7 @@ export function ConversationView({
           {...(scrollKey ? { scrollKey } : {})}
           topNotice={transcriptNotice}
           {...(fallbacks ? { fallbacks } : {})}
+          {...(compactions ? { compactions } : {})}
           {...(lastSentAt ? { lastSentAt } : {})}
           {...(stoppedTurns ? { stoppedTurns } : {})}
           {...(stopped ? { stopped, onRetry: retry } : {})}
