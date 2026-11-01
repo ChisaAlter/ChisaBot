@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatTranscript } from "@/components/channels/chat-transcript";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { useRef } from "react";
+import { TAIL_FIRST_CAP } from "@/lib/chat/tail-first-paint";
 import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";
 import { settleReactWork } from "./settle-react-work";
 
@@ -267,9 +268,10 @@ test("a new channel still starts with its own bounded tail window", async () => 
     view.container.querySelectorAll("[data-message-id]").length,
   ).toBeLessThan(120);
   expect(view.container.textContent).not.toContain("old-");
+  // Catch-up now stops at the cap: the older 24 rows stay unmounted until scrolled to or asked for.
   await waitFor(() =>
     expect(view.container.querySelectorAll("[data-message-id]").length).toBe(
-      120,
+      TAIL_FIRST_CAP,
     ),
   );
 });

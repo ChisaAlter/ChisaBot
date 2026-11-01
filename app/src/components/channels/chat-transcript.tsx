@@ -3268,12 +3268,19 @@ export function ChatTranscript({
    * CB-025：长对话首屏只挂尾巴再分批往前补。keep-bottom 盯的是「当前挂着的第一行」——
    * 窗口上沿往前挪时 firstId 变了，人还在底部就立刻钉回底（与历史 prepend 同一条路）。
    */
-  const { startIndex: tailStart, pending: tailPending } = useTailFirstMount(
-    items.length,
-    scrollKey,
-    viewportRef,
-    items[0]?.id,
-  );
+  // 上次停在中间（有待恢复的锚点）：那一条可能比封顶的窗口还旧，这次打开把历史全挂上。
+  const needsHistory = useMemo(() => {
+    const memo = scrollKey ? threadUi(scrollKey)?.scroll : null;
+    return Boolean(memo && !memo.atBottom && memo.anchor);
+  }, [scrollKey]);
+  const {
+    startIndex: tailStart,
+    pending: tailPending,
+    truncated: tailTruncated,
+    mountAll,
+  } = useTailFirstMount(items.length, scrollKey, viewportRef, items[0]?.id, {
+    uncapped: needsHistory,
+  });
   useKeepBottomOnPrepend(viewportRef, items[tailStart]?.id ?? null, opening);
 
   /* One rule for both kinds of row — see `anchorRowIds`, which is where it is written down. */
@@ -3340,7 +3347,10 @@ export function ChatTranscript({
   // CB-101：活动记录里点「在对话里看这一步」，滚到发起那次工具调用的消息并闪一下。
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+  const mountAllRef = useRef(mountAll);
+  mountAllRef.current = mountAll;
   useEffect(() => {
+    let frame = 0;
     const onJump = (event: Event) => {
       const toolCallId = (event as CustomEvent<{ toolCallId?: string }>).detail
         ?.toolCallId;
@@ -3352,18 +3362,41 @@ export function ChatTranscript({
             (call) => call.id === toolCallId,
           ),
       );
-      const row = owner
-        ? viewportRef.current?.querySelector<HTMLElement>(
-            `[data-message-id="${CSS.escape(owner.id)}"]`,
-          )
-        : null;
-      if (!row) return;
-      row.scrollIntoView({ block: "center", behavior: "smooth" });
-      row.classList.add("is-activity-jump");
-      setTimeout(() => row.classList.remove("is-activity-jump"), 1600);
+      if (!owner) return;
+      const find = () =>
+        viewportRef.current?.querySelector<HTMLElement>(
+          `[data-message-id="${CSS.escape(owner.id)}"]`,
+        ) ?? null;
+      const reveal = (row: HTMLElement) => {
+        row.scrollIntoView({ block: "center", behavior: "smooth" });
+        row.classList.add("is-activity-jump");
+        setTimeout(() => row.classList.remove("is-activity-jump"), 1600);
+      };
+      const row = find();
+      if (row) {
+        reveal(row);
+        return;
+      }
+      // 比挂着的窗口还旧：要求把历史全挂上，每帧看一次，最多等 1.5 秒。
+      mountAllRef.current();
+      const started = performance.now();
+      const wait = () => {
+        const late = find();
+        if (late) {
+          reveal(late);
+          return;
+        }
+        if (performance.now() - started < 1500)
+          frame = requestAnimationFrame(wait);
+      };
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(wait);
     };
     window.addEventListener(JUMP_TO_TOOL_CALL, onJump);
-    return () => window.removeEventListener(JUMP_TO_TOOL_CALL, onJump);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener(JUMP_TO_TOOL_CALL, onJump);
+    };
   }, []);
 
   const [paneHeight, setPaneHeight] = useState(0);
@@ -3390,6 +3423,7 @@ export function ChatTranscript({
             aria-busy={busy}
             data-testid="chat-transcript"
             data-tail-first-pending={tailPending ? "" : undefined}
+            data-tail-first-truncated={tailTruncated ? "" : undefined}
             className="mx-auto w-full max-w-2xl px-4 py-6"
             spacerClassName="order-2"
           >

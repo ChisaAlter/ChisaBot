@@ -10,6 +10,7 @@ import {
   MESSAGE_FIND_WAIT_MS,
   normalizeMessageSearchParam,
 } from "@/lib/channels/focus-message";
+import { MOUNT_ALL_HISTORY_EVENT } from "@/lib/chat/tail-first-paint";
 
 /** 与 channel-page / $channelId 路由 id 一致（此处不 import channel-page，避免环依赖）。 */
 const CHANNEL_ROUTE_ID = "/_authed/_app/channel/$channelId";
@@ -57,6 +58,11 @@ export function MessageFind({
         if (row) release = holdMessageInView(row);
         return;
       }
+      // 长对话只自动挂最近一段（tail-first-paint）：目标可能在没挂的历史里，请它把历史全挂上，
+      // 下一次轮询就找得到。幂等，已经全挂了就什么也不做。
+      root
+        .querySelector('[data-slot="message-scroller-viewport"]')
+        ?.dispatchEvent(new Event(MOUNT_ALL_HISTORY_EVENT));
       // CR-P2-04：首段 4s 内快轮询；超时后只要还露着就慢轮询（快照晚到 / 慢连），
       // 换 ?message= 或再次点同一命中（visible 抖动）会重跑本 effect。
       const elapsed = Date.now() - started;

@@ -3,8 +3,12 @@
  *
  * 不做真正的虚拟列表（§35 不跳版与 message-scroller 按位置找新行），也不再用
  * `content-visibility`（perf/cb-025-cv 实测无收益且引入跳版）。这里只推迟 React 挂载与
- * Markdown 解析：打开时只画尾巴，rAF 分批往前补；`?message=` 深链靠 MessageFind 轮询，
- * 全量挂完通常在一两百毫秒内，落在既有 4s 窗口里。
+ * Markdown 解析：打开时只画尾巴，rAF 分批往前补，补到 TAIL_FIRST_CAP 为止。
+ *
+ * 再往上的历史不自动挂：DOM 随历史线性变大，切频道、改窗口宽度（每跨一个 CSS 断点整页重算
+ * 样式）、滚动都跟着变慢（240 条的对话约 9000 个元素）。人往上滚到顶附近时照旧分批往前挂；
+ * 要跳到某条消息（`?message=`、活动记录里的「在对话里看这一步」）或要恢复上次停在中间的位置时，
+ * 由调用方要求全部挂上（MOUNT_ALL_HISTORY_EVENT / mountAll）。
  */
 
 /** 超过这个条数才启用尾屏优先（短对话全挂更简单）。 */
@@ -16,6 +20,20 @@ export const TAIL_FIRST_INITIAL = 36;
 /** 每一帧往前补多少条。 */
 export const TAIL_FIRST_BATCH = 28;
 
+/** 自动往前补到这么多条为止（超过阈值的长对话）；再往上的历史靠上滚或「全部挂上」。 */
+export const TAIL_FIRST_CAP = 96;
+
+/**
+ * 要求这段对话把全部历史挂上。派发在滚动容器（`[data-slot="message-scroller-viewport"]`）上，
+ * 幂等：已经全挂了就什么也不做。找不到目标行的跳转（MessageFind）发它，再靠自己的轮询找到行。
+ */
+export const MOUNT_ALL_HISTORY_EVENT = "chisabot:mount-all-history";
+
+/** 自动补到多少条：封顶，除非要全部（跳转 / 恢复位置）。 */
+export function catchUpTarget(total: number, full: boolean): number {
+  const n = Math.max(0, Math.floor(total));
+  return full ? n : Math.min(n, TAIL_FIRST_CAP);
+}
 export function initialMountedCount(total: number): number {
   const n = Math.max(0, Math.floor(total));
   if (n <= TAIL_FIRST_THRESHOLD) return n;
