@@ -11,6 +11,7 @@ import {
   normalizeMessageSearchParam,
 } from "@/lib/channels/focus-message";
 import { MOUNT_ALL_HISTORY_EVENT } from "@/lib/chat/tail-first-paint";
+import { REVEAL_MESSAGE_EVENT } from "@/lib/chat/virtual-transcript";
 
 /** 与 channel-page / $channelId 路由 id 一致（此处不 import channel-page，避免环依赖）。 */
 const CHANNEL_ROUTE_ID = "/_authed/_app/channel/$channelId";
@@ -65,6 +66,9 @@ export function MessageFind({
         ?.dispatchEvent(new Event(MOUNT_ALL_HISTORY_EVENT));
       // CR-P2-04：首段 4s 内快轮询；超时后只要还露着就慢轮询（快照晚到 / 慢连），
       // 换 ?message= 或再次点同一命中（visible 抖动）会重跑本 effect。
+      window.dispatchEvent(
+        new CustomEvent(REVEAL_MESSAGE_EVENT, { detail: { messageId } }),
+      );
       const elapsed = Date.now() - started;
       const delay = elapsed < MESSAGE_FIND_WAIT_MS ? 150 : 1000;
       timer = setTimeout(attempt, delay);
