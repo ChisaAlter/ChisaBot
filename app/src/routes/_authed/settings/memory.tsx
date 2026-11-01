@@ -1,7 +1,7 @@
-import { IconBook, IconPlus, IconSparkles, IconWorld } from "@tabler/icons-react";
+import { IconArrowBackUp, IconBook, IconDots, IconPlus, IconSparkles, IconWorld } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { MEMORY_KIND_LABELS, MEMORY_KINDS, type MemoryKind, type MemoryNoteView } from "../../../../../shared/memory-notes";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import {
@@ -16,16 +16,20 @@ import {
   SearchBox,
   visibleNotes,
 } from "@/components/memory/memory-notes";
+import { runMemoryTidy, undoTidy, undoTidyFromLink } from "@/components/memory/memory-tidy";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, ErrorCard, Toolbar } from "@/components/ui/skyglass";
 import { useSegmentedKeys } from "@/components/ui/segmented";
-import { toast } from "@/components/ui/toast";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
-import { dreamMemoryNotes, memoryNoteKeys, memoryNotesQueryOptions } from "@/lib/memory-notes";
+import { memoryNoteKeys, memoryNotesQueryOptions, previewMemoryTidy } from "@/lib/memory-notes";
 
 export const Route = createFileRoute("/_authed/settings/memory")({
+  // ?undoTidy=<batchId>：机器人整理完记忆在聊天里给的撤销链接（shared/memory-notes.ts tidyUndoHref）。
+  validateSearch: (search: Record<string, unknown>): { undoTidy?: string } =>
+    typeof search.undoTidy === "string" && search.undoTidy ? { undoTidy: search.undoTidy } : {},
   component: MemoryPage,
 });
 
@@ -74,11 +78,30 @@ function MemoryPage() {
     onChange: setFilter,
   });
 
-  const dreamAction = useAsyncAction(
+  /*
+   * 整理记忆（审计 12-settings 必修 1 / 可选 7）：收进「更多」菜单，不和「添加」并排；点了先预览、确认，整理后可撤销。
+   * 菜单打开时才查一次「最近一次还能撤销的整理」（机器人在聊天里整理的也能在这里撤销）。
+   */
+  const [moreOpen, setMoreOpen] = useState(false);
+  const lastTidy = useQuery({
+    queryKey: [...memoryNoteKeys.all, "tidy-last"],
+    queryFn: async () => (await previewMemoryTidy()).last,
+    enabled: moreOpen,
+    staleTime: 0,
+  });
+  // 从聊天里的撤销链接进来：先问一句再撤销，然后把 ?undoTidy 去掉（刷新页面不会再问）。
+  const { undoTidy: undoLink } = Route.useSearch();
+  const navigate = useNavigate({ from: "/settings/memory" });
+  const handledLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!undoLink || handledLink.current === undoLink) return;
+    handledLink.current = undoLink;
+    void navigate({ search: {}, replace: true });
+    void undoTidyFromLink(undoLink, refresh);
+  });
+  const tidyAction = useAsyncAction(
     async () => {
-      const res = await dreamMemoryNotes();
-      await refresh();
-      toast.success(res.summary);
+      await runMemoryTidy({ refresh, botName: (id) => botName.get(id) ?? null });
     },
     { errorToast: (err) => err.message },
   );
@@ -95,18 +118,6 @@ function MemoryPage() {
       <PageShell
         action={
           <div className="flex flex-wrap gap-2">
-            <Button
-              data-setting-item="memory.memory-dream"
-              data-testid="memory-dream-btn"
-              feedback={{ pending: "整理中…", success: "已整理", error: "失败" }}
-              onClick={() => void dreamAction.run()}
-              size="sm"
-              state={dreamAction.state}
-              variant="outline"
-            >
-              <IconSparkles />
-              {"一键整理记忆"}
-            </Button>
             {isAdmin ? (
               <Button
                 data-testid="memory-add-shared-knowledge-btn"
@@ -158,6 +169,37 @@ function MemoryPage() {
               <IconPlus />
               {"添加"}
             </Button>
+            <DropdownMenu onOpenChange={setMoreOpen} open={moreOpen}>
+              <DropdownMenuTrigger
+                render={
+                  <Button aria-label={"更多记忆操作"} data-testid="memory-more-btn" size="sm" variant="outline">
+                    <IconDots />
+                    {"更多"}
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem data-setting-item="memory.memory-dream" data-testid="memory-dream-btn" disabled={tidyAction.state === "pending"} onClick={() => void tidyAction.run()}>
+                  <IconSparkles />
+                  {"整理记忆…"}
+                </DropdownMenuItem>
+                {lastTidy.data ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      data-testid="memory-dream-undo-btn"
+                      onClick={() => {
+                        const batchId = lastTidy.data?.batchId;
+                        if (batchId) void undoTidy(batchId, refresh);
+                      }}
+                    >
+                      <IconArrowBackUp />
+                      {"撤销上次整理"}
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         }
         description="机器人记住的关于你的事：你的情况、偏好、身边的人、常去的地方、在做的事、每天的日志与知识库条目（📚 个人知识库 / 🌐 公共知识库）。所有机器人共用这份记忆；管理员配置的公共知识库对全员共享。"

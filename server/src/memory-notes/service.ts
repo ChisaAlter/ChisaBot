@@ -9,12 +9,31 @@ import {
   type MemoryBotSetting,
   type MemoryKind,
   type MemoryNoteView,
+  type MemoryTidyLast,
+  type MemoryTidyPreview,
+  type MemoryTidyResult,
+  type MemoryTidyUndoResult,
   SUBJECT_KINDS,
+  tidyHasWork,
+  tidyItems,
+  tidyUndoHref,
 } from "../../../shared/memory-notes";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { RELEVANT, score } from "./search";
+import {
+  applyTidy,
+  lastTidy,
+  loadTidyRows,
+  planTidy,
+  previewOf,
+  summaryOf,
+  TIDY_SCHEMA,
+  TidyConflictError,
+  type TidySql,
+  undoTidy,
+} from "./tidy";
 
 /**
  * 长期记忆（DESIGN.md §50，docs/memory.md）。
@@ -86,6 +105,8 @@ export type NoteInput = { kind: MemoryKind; subject?: string | null; content: st
 
 export function createMemoryNotes(database: Database, options: { timeZone?: string } = {}) {
   const sql = database.$client;
+  /** 整理记忆只用到 unsafe / begin（./tidy.ts），测试里可换成内存实现。 */
+  const tidySql = sql as unknown as TidySql;
   const timeZone = options.timeZone ?? DEFAULT_TZ;
 
   async function ensure() {
@@ -110,6 +131,7 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
         enabled boolean NOT NULL DEFAULT true,
         PRIMARY KEY (owner_user_id, agent_id)
       );
+      ${TIDY_SCHEMA}
     `);
   }
 
@@ -228,82 +250,21 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
   }
 
   /**
-   * 记忆整理与去重蒸馏（Memory Dream，借鉴 OpenClaw Dreaming & Khoj 记忆治理）：
-   * 1. 对多行条目（daily / project / person / note）自动清理重复行；
-   * 2. 对同类型且主题相同（或无主题但内容高度重合）的冗余条目自动合并删除；
-   * 3. 返回整理统计结果。
+   * 整理记忆（Memory Dream）：合并同种类、同机器人、同情境、同主题的笔记，去掉多行笔记里的重复行。
+   * 先 {@link previewDream} 给用户看（确认弹窗 / 审批卡片），{@link dream} 在一个事务里做并留原文备份，
+   * {@link undoDream} 放回原文。规则见 ./tidy.ts。
    */
-  async function dream(owner: string): Promise<{
-    mergedCount: number;
-    deduplicatedCount: number;
-    totalRemaining: number;
-    summary: string;
-  }> {
-    const rows = (await all(owner)).filter((r) => r.owner_user_id === owner && !r.shared);
-    let mergedCount = 0;
-    let deduplicatedCount = 0;
-    const toDelete: string[] = [];
-
-    // 1. 按 (kind, lower(subject || content)) 合并完全重复或同主题的零散条目
-    const seenGroups = new Map<string, Row>();
-    for (const row of rows) {
-      const normSubj = (row.subject ?? "").trim().toLowerCase();
-      const normContent = row.content.trim().toLowerCase().replace(/\s+/g, " ");
-      const groupKey = normSubj ? `${row.kind}::subj::${normSubj}` : `${row.kind}::body::${normContent}`;
-      const existing = seenGroups.get(groupKey);
-      if (existing) {
-        if (!existing.content.includes(row.content.trim())) {
-          const combined = `${existing.content}\n${row.content.trim()}`.slice(0, MEMORY_LIMITS.content);
-          existing.content = combined;
-          await sql.unsafe(
-            "UPDATE chisabot_memory_notes SET content = $3, updated_at = now() WHERE id = $1 AND owner_user_id = $2",
-            [existing.id, owner, combined],
-          );
-        }
-        toDelete.push(row.id);
-        mergedCount++;
-      } else {
-        seenGroups.set(groupKey, row);
-      }
-    }
-
-    if (toDelete.length > 0) {
-      await remove(owner, toDelete);
-    }
-
-    // 2. 对保留下来的多行笔记做行级去重
-    for (const row of seenGroups.values()) {
-      const lines = row.content
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean);
-      if (lines.length <= 1) continue;
-      const uniqueLines: string[] = [];
-      const seenLine = new Set<string>();
-      for (const l of lines) {
-        // 去掉日志开头的时间戳（如 "- 14:20 xxx"）比对核心正文是否重复
-        const core = l.replace(/^-\s*(\d{1,2}:\d{2}\s+)?/, "").toLowerCase();
-        if (!seenLine.has(core)) {
-          seenLine.add(core);
-          uniqueLines.push(l);
-        }
-      }
-      if (uniqueLines.length < lines.length) {
-        const nextContent = uniqueLines.join("\n").slice(0, MEMORY_LIMITS.content);
-        await sql.unsafe(
-          "UPDATE chisabot_memory_notes SET content = $3, updated_at = now() WHERE id = $1 AND owner_user_id = $2",
-          [row.id, owner, nextContent],
-        );
-        deduplicatedCount++;
-      }
-    }
-
-    const totalRemaining = seenGroups.size;
-    const summary =
-      mergedCount === 0 && deduplicatedCount === 0
-        ? `已完成记忆巡检（共 ${totalRemaining} 条），当前记忆库整洁无冗余。`
-        : `已完成记忆整理：合并了 ${mergedCount} 条重复笔记，精简了 ${deduplicatedCount} 条多行记录，当前共保留 ${totalRemaining} 条核心记忆。`;
-    return { mergedCount, deduplicatedCount, totalRemaining, summary };
+  async function previewDream(owner: string): Promise<MemoryTidyPreview> {
+    return previewOf(planTidy(await loadTidyRows(tidySql, owner)));
+  }
+  async function dream(owner: string, token?: string | null): Promise<MemoryTidyResult> {
+    return await applyTidy(tidySql, owner, { token: token ?? null });
+  }
+  async function undoDream(owner: string, batchId: string): Promise<MemoryTidyUndoResult> {
+    return await undoTidy(tidySql, owner, batchId);
+  }
+  async function lastDream(owner: string): Promise<MemoryTidyLast | null> {
+    return await lastTidy(tidySql, owner);
   }
 
   async function botEnabled(owner: string, agentId: string) {
@@ -376,7 +337,63 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
     "profile=用户本人的基本情况（称呼、所在城市、职业、生日、过敏/饮食要求等）；preference=偏好（写清在什么情境下成立）；person=用户生活里的一个人；place=一个地方；project=进行中的项目/计划/事项；note=其他；daily=今天发生的事（一般用 memory_log）",
   );
 
+  /** 审批卡片上最多列几组（其余合成一行「还有 N 组」）。 */
+  const DREAM_CARD_GROUPS = 8;
+
   function tools(owner: string, agentId: string): GrantedTool[] {
+    /**
+     * 整理记忆（审计 12-settings 必修 1）：属于「删除」审批。prepareConfirm 先算预览，审批卡片列出要合并的组，
+     * 预览 token 放进执行参数——用户确认的就是那一份；之后记忆变了 token 对不上，不执行并说清楚。
+     * 定时任务（用户不在场）时只留一张待确认的整理建议卡片，不会直接删；删除审批设为「直接做」的照常执行，结果里带撤销入口。
+     */
+    const dreamTool = (): GrantedTool => {
+      const parameters = z.object({ token: z.string().max(64).optional() }).strict();
+      const who = (id: string | null) => (id === null ? "你" : id === agentId ? "这个机器人" : "其他机器人");
+      return {
+        name: "memory_dream",
+        ref: "memory/memory_dream",
+        description:
+          "整理用户的长期记忆：合并同一机器人记下的、同种类同主题（且情境相同）的笔记，去掉日志里的重复行；合并后超过 4000 字的不合并。会删除被并掉的条目，属于「删除」类操作：会先出一张确认卡片列出要合并的组，用户确认后才执行（定时任务里也一样，用户之后在聊天或「待处理」里确认）。不用传参数；token 由系统填。整理后可以用 memory_dream_undo 撤销。只在用户要求整理记忆（或用户设的定时任务要求）时调用。",
+        parameters,
+        async prepareConfirm(args) {
+          const parsed = parameters.safeParse(args ?? {});
+          if (!parsed.success) return { skip: `${REFUSAL_MARKER} memory_dream 参数不对。` };
+          if (!(await botEnabled(owner, agentId))) return { skip: `${REFUSAL_MARKER} 用户在 设置 → 记忆 里关掉了这个机器人的记忆。` };
+          const preview = await previewDream(owner);
+          if (parsed.data.token && parsed.data.token !== preview.token)
+            return {
+              skip: `${REFUSAL_MARKER} 这份整理建议已经过期（之后记忆有了变化），没有执行。不带 token 再调用一次 memory_dream，会按现在的记忆重新生成建议。`,
+            };
+          if (!tidyHasWork(preview)) return { skip: summaryOf(preview) };
+          const merging = preview.groups.filter((group) => !group.skipped).length;
+          return {
+            args: { token: preview.token },
+            title: merging ? `整理记忆：合并 ${merging} 组重复的笔记（被并掉的会删除，可撤销）` : "整理记忆：去掉笔记里重复的行（可撤销）",
+            details: tidyItems(preview, who, DREAM_CARD_GROUPS).map((value, index) => ({
+              label: index < Math.min(preview.groups.length, DREAM_CARD_GROUPS) ? `第 ${index + 1} 组` : "其他",
+              value,
+            })),
+          };
+        },
+        async execute(args) {
+          const parsed = parameters.safeParse(args ?? {});
+          if (!parsed.success) return `${REFUSAL_MARKER} memory_dream 参数不对。`;
+          if (!(await botEnabled(owner, agentId))) return `${REFUSAL_MARKER} 用户在 设置 → 记忆 里关掉了这个机器人的记忆。`;
+          // 没经过 prepareConfirm（没包审批的调用方）也不能不看就删：先算预览、只执行这一份。
+          const token = parsed.data.token ?? (await previewDream(owner)).token;
+          try {
+            const res = await dream(owner, token);
+            if (!res.batchId) return res.summary;
+            return `${res.summary}可以撤销：回复里给用户附上撤销链接 [撤销这次整理](${tidyUndoHref(res.batchId)})，也可以在 设置 → 记忆 →「更多」→「撤销上次整理」；用户在聊天里说撤销时调用 memory_dream_undo。`;
+          } catch (error) {
+            if (error instanceof TidyConflictError)
+              return `${REFUSAL_MARKER} 记忆在确认之后又有了变化，这次没有整理（什么都没删）。告诉用户：要整理的话再调用一次 memory_dream，会按现在的记忆重新给他确认。`;
+            throw error;
+          }
+        },
+      };
+    };
+
     const tool = <T extends z.ZodType>(name: string, description: string, parameters: T, run: (input: z.infer<T>) => Promise<string>): GrantedTool => ({
       name,
       ref: `memory/${name}`,
@@ -454,13 +471,19 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
           return `已写进 ${result.note.subject} 的日志。`;
         },
       ),
+      dreamTool(),
       tool(
-        "memory_dream",
-        "一键整理、去重并蒸馏用户的长期记忆库（Memory Dreaming）：自动合并同主题或重复的碎片笔记，清理每日日志里的重复行，保持长期记忆精炼准确。当用户在复盘周报、要求整理记忆或发现记忆冗余时调用。",
-        z.object({}).strict(),
-        async () => {
-          const res = await dream(owner);
-          return res.summary;
+        "memory_dream_undo",
+        "撤销最近一次整理记忆（memory_dream）：把被并掉 / 改动的笔记放回整理前的样子。用户说「撤销整理」「把记忆恢复回去」时调用；batchId 不填就撤销最近一次。整理后又被改过的笔记不会被覆盖。",
+        z.object({ batchId: z.string().max(64).optional() }).strict(),
+        async ({ batchId }) => {
+          const target = batchId ?? (await lastDream(owner))?.batchId;
+          if (!target) return "没有可以撤销的整理（最近 7 天没有整理过，或者已经撤销了）。";
+          const res = await undoDream(owner, target);
+          if (!res.restored && !res.skipped) return "这次整理已经撤销过，或者已超过 7 天，没有可以恢复的。";
+          return res.skipped
+            ? `已恢复 ${res.restored} 条；${res.skipped} 条整理后又改过，没有覆盖。`
+            : `已恢复整理前的 ${res.restored} 条记忆。`;
         },
       ),
       tool(
@@ -511,6 +534,7 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
     app.use("*", requireUser, bodyLimit({ maxSize: 32_768 }));
     app.onError((error, c) => {
       if (error instanceof MemoryNoteError) return c.json({ error: error.message }, 400);
+      if (error instanceof TidyConflictError) return c.json({ error: error.message }, 409);
       if (error instanceof z.ZodError) return c.json({ error: "参数不对。" }, 400);
       console.error(JSON.stringify({ type: "memory-notes-error", error: error.name, route: c.req.path }));
       return c.json({ error: "记忆暂时不可用，请重试。" }, 503);
@@ -533,8 +557,15 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
       const input = noteBody.parse(await c.req.json());
       return c.json(await create(c.var.actor.id, input, null, c.var.actor.role === "admin"), 201);
     });
+    // 整理记忆：先预览（确认弹窗列出将合并的组），确认时带 token 才真做；撤销放回原文（./tidy.ts）。
+    app.get("/dream", async (c) => c.json({ preview: await previewDream(c.var.actor.id), last: await lastDream(c.var.actor.id) }));
     app.post("/dream", async (c) => {
-      return c.json(await dream(c.var.actor.id));
+      const { token } = z.object({ token: z.string().min(1).max(80) }).strict().parse(await c.req.json().catch(() => ({})));
+      return c.json(await dream(c.var.actor.id, token));
+    });
+    app.post("/dream/undo", async (c) => {
+      const { batchId } = z.object({ batchId: z.string().min(1).max(80) }).strict().parse(await c.req.json());
+      return c.json(await undoDream(c.var.actor.id, batchId));
     });
     app.patch("/:id", async (c) => {
       const input = noteBody.partial().parse(await c.req.json());
@@ -558,7 +589,7 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
     return app;
   }
 
-  return { ensure, search, create, update, remove, dream, botEnabled, setBot, botSettings, context, tools, routes };
+  return { ensure, search, create, update, remove, previewDream, dream, undoDream, lastDream, botEnabled, setBot, botSettings, context, tools, routes };
 }
 export type MemoryNotes = ReturnType<typeof createMemoryNotes>;
 

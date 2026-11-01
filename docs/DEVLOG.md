@@ -1571,3 +1571,41 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **评审跟进（#451）**：`latest.current` 改在 `useLayoutEffect` 里写（不在渲染期间改 ref）；ConversationView / Composer 的默认 `agents` 改成模块级空数组（以前每次渲染新建 `[]`）；Composer 发送 / 停止按钮的图标提成模块常量。`commands`（`useSkillCommands` 已 memo）、`droppedAttachments`（state）、按钮 aria-label（字符串字面量）本来就稳定。测试里改 memo `.type` 的部分放进 try/finally，新增一条经 ConversationView 的用例（每个 token 新消息数组 + 新 onSubmit / onStop 闭包），故意把 onStop 改成新闭包时它数到 100 次、失败。
 
 **复测**（main `11bacde` ↔ PR 交替 3 轮，每轮 `--runs=5`，非 trace，15 + 15 次中位数）：fps 46.4 → 51.3，p95 帧 50 → 33.4 ms，long-task 441 → 373 ms，script 2209 → 1939 ms，最长单个 long task 101 → 102 ms，style 1287 → 1316 ms（+2%），layout 237 → 271 ms（+14%）。main 自身三轮中位数的波动：最长 long task 100–112，style 1277–1320，layout 230–241。layout 超出噪声，原因：`useSmoothText` 用 rAF 每帧放一段字；PR 让主线程更空，同一段文字分更多帧放出（React 提交里 SmoothStreamdown 15 → 28–41 次、流式行 73 → 85–102 次；layout 次数 168 → 214），每次 layout 反而更便宜（1.34 → 1.26 ms，style 每次 6.97 → 6.29 ms）。要压回去只能给放字限帧（可见的行为变化），这个 PR 没做。
+
+## 2026-10-29 一键整理记忆：预览确认、不截断、可撤销（分支 `fix/memory-tidy-safety`）
+
+来源：审计报告 `12-settings.md` 必修 1（「一键整理记忆」）。
+
+**动机**：原来设置页的「整理记忆」按钮和「添加」并排，点一下就直接执行：同主题笔记按 `kind + subject` 合并，合并结果 `slice(0, 4000)` 静默截断，被并掉的条目直接删除、没有任何恢复手段；分组不看 `agent_id` / `context`，不同机器人的笔记会被并到一起；整理过程是多条独立语句，中途出错会留下一半；`memory_dream` 作为 `memory/` 工具跳过审批，周报技能可以不打招呼就调用。
+
+**改动**：
+1. **预览 + 确认**（`server/src/memory-notes/tidy.ts`）：纯函数 `planTidy` 先算出分组和结果，`GET /api/memory-notes/dream` 返回预览和指纹 `token`。前端（`app/src/components/memory/memory-tidy.ts`）用 `confirmDialog` 列出要合并的组（`confirm.tsx` 新增可选 `items`），确认后 `POST` 带回 `token`；事务里加行锁重新计划，指纹不一致返回 409，不做任何修改。
+2. **不截断**：合并后超过 4000 字的整组标为 `too_long`，不合并、不删，只对每条去掉重复行。
+3. **可恢复**：新表 `chisabot_memory_tidy_backups`（`batch_id, note_id` 主键，`(owner_user_id, created_at DESC)` 索引）在同一事务里存原文 JSON；每人只保留最近一次、7 天过期。整理后弹 8 秒「撤销」，之后可在「更多」→「撤销上次整理」恢复；撤销时被删的按原 id 放回，被改的只在内容仍等于整理结果时才还原（用户已再编辑的不覆盖，计入 skipped）。
+4. **分组**：键 = `kind + agent_id + context + subject`（无主题时用正文）。
+5. **事务**：锁、清旧备份、写备份、更新、删除都在 `begin` 里完成，中途失败全部回滚。
+6. **审批**：`categoryOfTool` 把 `memory_dream` 归为「删除」（先于 `memory/` 跳过规则）；Hermes 回调路径的记忆工具补上 `confirmations.wrap`。
+7. **机器人 / 定时任务整理（#430 评审必改）**：不直接删，也不静默失败。
+   - `GrantedTool` 新增可选 `prepareConfirm`（`server/src/plugins/tools.ts`），`confirmations.wrap` 出卡片前先调它：`memory_dream` 在这里算预览，卡片标题写「合并 N 组…（可撤销）」，明细逐组列出（和设置页弹窗共用 `shared/memory-notes.ts` 的 `tidyItems`），预览 `token` 放进执行参数，摘要按它算——用户确认的就是那一份。
+   - 定时任务（用户不在场）：沿用 §101 的延后卡片，聊天和「待处理」里留一张带预览的整理建议，机器人回一句在等确认；用户点「确认」后服务器叫机器人重调，token 没变就用这次确认执行。
+   - 确认后记忆又变了：token 对不上、摘要不同，`wrap` 把那次确认作废（`consumed_at`，不执行），重出一张卡片，标题写「内容在你确认后有了变化，上次的确认没有执行，请按最新内容重新确认」；卡片过期沿用「这张确认卡片已经过期了，操作没有执行。」；显式传入的旧 token、执行时撞上 409 都回明确的文字。
+   - 删除审批设为「直接做」：照常执行，结果里带撤销链接 `/settings/memory?undoTidy=<batchId>`（设置页打开后先问「撤销这次整理？」再撤销），也能在「更多」→「撤销上次整理」或让机器人调新工具 `memory_dream_undo`（不需审批）。已撤销 / 过期的撤销明确提示。
+   - 没有可整理的：不出卡片，直接回「记忆已经很整洁」。
+   - 定时任务模板文案改为「生成周报，并调用 memory_dream 给我一份整理建议（等我确认后再整理）」，周报技能说明同步。
+8. **界面**：「整理记忆…」和「撤销上次整理」放进「添加」右侧的「更多」菜单（复用 `DropdownMenu`），没有改 `styles.css`。
+
+**测试**：
+- `server/tests/memory-tidy.test.ts`（不需要数据库）：计划（合并、超长不合并、不同机器人 / 情境不合并、去重、指纹）；内存版 SQL 替身（事务快照回滚）上的整理 + 撤销往返、第 1–7 次写入分别注入失败都整体回滚、token 冲突、撤销跳过已编辑条目；审批分类。
+- `server/tests/memory-tidy.integration.test.ts`（真库，需要 `TEST_DATABASE_URL`）：备份表索引、超长不合并 + 不同机器人不合并 + 撤销恢复原样、预览后有变化返回冲突、删除步骤注入失败时笔记和备份都回滚。
+- `server/tests/memory-tidy.integration.test.ts` 新增「memory_dream through confirmations」（真库）：定时任务 → 留带预览的卡片、不删；点确认 → 按 token 执行、结果带撤销链接、`memory_dream_undo` 撤销、重复撤销有提示；确认后记忆变了 → 旧确认作废、重出写明原因的卡片、不删；删除设为「直接做」→ 直接执行且可撤销，旧 token / 没东西可整理有明确回复。
+- `app/tests/memory-tidy.test.tsx`：确认弹窗条目文案、取消不发请求、确认带 token 并可撤销、没有可合并时不弹确认；聊天撤销链接先确认再撤销、已撤销 / 过期有提示。
+
+**截图**（本地单用户模式 + 临时数据库实拍，`docs/images/memory-tidy/`；整理后的提示已按「0 项不显示」的新文案重拍）：
+
+| 「更多」菜单 | 确认弹窗 | 整理后「撤销」 | 菜单里的「撤销上次整理」 |
+| --- | --- | --- | --- |
+| ![](images/memory-tidy/more-menu.webp) | ![](images/memory-tidy/confirm-dialog.webp) | ![](images/memory-tidy/after-undo-toast.webp) | ![](images/memory-tidy/more-menu-undo.webp) |
+
+| 聊天里的撤销链接（`?undoTidy=`）先确认 | 撤销后的提示 |
+| --- | --- |
+| ![](images/memory-tidy/undo-link-confirm.webp) | ![](images/memory-tidy/undo-link-done.webp) |

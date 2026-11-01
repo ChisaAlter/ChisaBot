@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ConfirmDetail } from "../../../shared/confirmations";
 import { ApprovalRefusedError } from "../approvals/types";
 import type { AuditInitiator } from "../audit";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
@@ -93,6 +94,21 @@ export type GrantedTool = {
    * the Bot tells the person it cannot see their PC while holding the tools for it.
    */
   guidance?: string;
+  /**
+   * 有后果的工具出确认卡片之前，先算好「这一次到底要做什么」（例：整理记忆先算出要合并哪几组）。
+   *
+   * - `skip`：不用问也不用做（没有可整理的、建议已过期……），直接把 text 交给机器人。
+   * - 否则卡片用这里的 title / details，摘要按 `args` 算，确认后执行的也是 `args`（整理记忆把预览 token 放进去，
+   *   确认后用户看过的那一份才会被执行；库里变了摘要就对不上，旧的确认不会被拿来放行新的内容）。
+   *
+   * 只有 confirmations.wrap 读它；没有这个字段的工具照旧按参数出卡片。
+   */
+  prepareConfirm?: (
+    args: unknown,
+  ) => Promise<
+    | { skip: string }
+    | { args: unknown; title: string; details: ConfirmDetail[] }
+  >;
 };
 
 /** The prompt text the offered tools carry ({@link GrantedTool.guidance}), each text once, in tool order. */

@@ -45,3 +45,56 @@ export const MEMORY_LIMITS = {
   /** 一个人最多存多少条（超过就拒绝新增，提示去设置里整理）。 */
   perUser: 3000,
 } as const;
+
+/** 整理记忆的一组（DESIGN.md §50，审计 12-settings 必修 1）：同种类、同机器人、同情境、同主题（或正文完全相同）。 */
+export type MemoryTidyGroup = {
+  kind: MemoryKind;
+  /** 主题，没有就是正文第一行（截短）。 */
+  title: string;
+  agentId: string | null;
+  context: string | null;
+  /** 这组有几条（合并后剩 1 条）。 */
+  count: number;
+  ids: string[];
+  /** 合并（并去掉重复行）后的字数。 */
+  length: number;
+  /** too_long：合并后会超过 MEMORY_LIMITS.content，整组不合并。 */
+  skipped: "too_long" | null;
+};
+
+/** 整理前的预览：确认弹窗列出将合并的组；确认时把 token 带回去，库里变了就不做。 */
+export type MemoryTidyPreview = {
+  token: string;
+  groups: MemoryTidyGroup[];
+  mergedCount: number;
+  deduplicatedCount: number;
+  totalRemaining: number;
+};
+
+/** batchId：这次整理的原文备份，撤销用；什么都没改时为 null。 */
+export type MemoryTidyResult = MemoryTidyPreview & { batchId: string | null; summary: string };
+export type MemoryTidyUndoResult = { restored: number; skipped: number };
+export type MemoryTidyLast = { batchId: string; createdAt: string; mergedCount: number; deduplicatedCount: number };
+
+/** 撤销上次整理的入口（聊天消息里给的链接）：设置 → 记忆，带上这次整理的 batchId。 */
+export const tidyUndoHref = (batchId: string) => `/settings/memory?undoTidy=${encodeURIComponent(batchId)}`;
+
+/** 整理建议里的一组，写清种类、主题、谁记的、几条并一条；太长的写明不合并。确认弹窗和审批卡片共用这份文案。 */
+export function tidyGroupLine(group: MemoryTidyGroup, who: string): string {
+  const head = `${MEMORY_KIND_LABELS[group.kind]}「${group.title || "（无主题）"}」（${who}记的${group.context ? `，${group.context}` : ""}）`;
+  return group.skipped === "too_long"
+    ? `${head}：${group.count} 条合并后有 ${group.length} 字，超过 ${MEMORY_LIMITS.content} 字，不合并`
+    : `${head}：${group.count} 条合并为 1 条`;
+}
+
+/** 整理建议的条目：每组一行，最多 limit 组，其余合成「还有 N 组」，最后一行是只去重行的条数。 */
+export function tidyItems(preview: MemoryTidyPreview, who: (agentId: string | null) => string, limit = 12): string[] {
+  const lines = preview.groups.map((group) => tidyGroupLine(group, who(group.agentId)));
+  const out = lines.slice(0, limit);
+  if (lines.length > limit) out.push(`……还有 ${lines.length - limit} 组`);
+  if (preview.deduplicatedCount) out.push(`另有 ${preview.deduplicatedCount} 条笔记去掉重复的行`);
+  return out;
+}
+
+/** 有没有真要改的（只有「太长不合并」的组不算）。 */
+export const tidyHasWork = (preview: MemoryTidyPreview) => preview.groups.some((group) => !group.skipped) || preview.deduplicatedCount > 0;
