@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { SaveBar } from "@/components/ui/skyglass";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
+import { useUnsavedGuard } from "@/components/ui/unsaved-guard";
 import { saveInstructionsMutationOptions } from "@/lib/settings/mutations";
 import {
   INSTRUCTIONS_LIMIT,
@@ -44,6 +45,8 @@ export function StandingInstructions() {
   const over = text.trim().length > INSTRUCTIONS_LIMIT;
   const unchanged = stored.data !== undefined && text === stored.data;
   const dirty = stored.data !== undefined && !unchanged;
+  /* 有未保存的更改时，切左栏、后退先确认；刷新、关标签走浏览器的 beforeunload（审查模块 12 第 3 条）。 */
+  useUnsavedGuard(dirty && !save.isPending);
   /* Keep the bar up for the ✓ (≈1.5s) after a save, then let it slide away. */
   const [flash, setFlash] = useState(false);
   useEffect(() => {
@@ -56,14 +59,16 @@ export function StandingInstructions() {
   const submit = () => {
     setProblem(null);
     setSaved(false);
-    save.mutate(text, {
+    const sent = text;
+    save.mutate(sent, {
       onError: (thrown: Error) => {
         setProblem(thrown.message);
         toast.error(`保存失败：${thrown.message}`);
       },
       /* The server trims, so the box settles to what was actually stored rather than what was sent. */
       onSuccess: (asStored) => {
-        setDraft(asStored);
+        /* 保存中框还能接着打：只有没再改过时才换成服务器存下的值，免得吞掉刚打的字。 */
+        setDraft((current) => (current === sent ? asStored : current));
         setSaved(true);
       },
     });
@@ -85,7 +90,6 @@ export function StandingInstructions() {
           <Textarea
             aria-label={"常驻指令"}
             className="min-h-40"
-            disabled={save.isPending}
             onChange={(event) => {
               setDraft(event.target.value);
               setSaved(false);

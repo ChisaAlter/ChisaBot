@@ -27,6 +27,8 @@ import { confirmDialog } from "@/components/ui/confirm";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { useGuardedOpenChange } from "@/components/ui/unsaved-guard";
+import { formDirty } from "@/lib/unsaved";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, ListRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
@@ -166,6 +168,7 @@ export function NoteDialog({
 }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Form>({ kind: "preference", subject: "", content: "", context: "", shared: false });
+  const [initial, setInitial] = useState<Form>(form);
   const needsSubject = SUBJECT_KINDS.includes(form.kind);
   const save = useAsyncAction(
     async () => {
@@ -186,23 +189,25 @@ export function NoteDialog({
   const resetSave = save.reset;
   useEffect(() => {
     if (!open) return;
-    setForm(
-      note
-        ? { kind: note.kind, subject: note.subject ?? "", content: note.content, context: note.context ?? "", shared: Boolean(note.shared) }
-        : {
-            kind: preset?.kind ?? "preference",
-            subject: preset?.subject ?? "",
-            content: "",
-            context: preset?.context ?? "",
-            shared: Boolean(preset?.shared),
-          },
-    );
+    const next: Form = note
+      ? { kind: note.kind, subject: note.subject ?? "", content: note.content, context: note.context ?? "", shared: Boolean(note.shared) }
+      : {
+          kind: preset?.kind ?? "preference",
+          subject: preset?.subject ?? "",
+          content: "",
+          context: preset?.context ?? "",
+          shared: Boolean(preset?.shared),
+        };
+    setForm(next);
+    setInitial(next);
     resetSave();
   }, [open, note, preset, resetSave]);
   const valid = form.content.trim().length > 0 && (!needsSubject || form.subject.trim().length > 0);
   const isKnowledgePreset = Boolean(!note && preset?.subject?.startsWith("[知识库]"));
+  /* 写了一半按 Esc / 点外面先确认（审查模块 12 第 3 条）。 */
+  const guardedOpenChange = useGuardedOpenChange(save.state !== "success" && formDirty(initial, form), onOpenChange);
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog onOpenChange={guardedOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-lg" data-testid="memory-note-dialog">
         <DialogHeader>
           <DialogTitle>{note ? "编辑记忆" : isKnowledgePreset ? (form.shared ? "🌐 录入公共知识库" : "📚 录入个人知识库") : "添加记忆"}</DialogTitle>

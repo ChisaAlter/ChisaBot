@@ -1189,3 +1189,46 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **INP**（box，系统 Chrome headless + playwright-core，生产构建的临时页面挂真的路由组件，`/api` 打桩、详情接口延迟 120ms；CDP `Emulation.setCPUThrottlingRate` 4×；Event Timing `durationThreshold:16` 按 interactionId 取最长 duration；7 种交互 × 3 轮 = 21 次：点开详情、点「显示更多」、键盘 Enter「显示更多」、Esc 关详情、暂停开关、打开「更多操作」菜单、Esc 关菜单）：第 1 轮（机器高负载）最大 200ms、中位 72ms；第 2 轮（负载 ~2–4）最大 136ms（点开详情）、中位 72ms。dev 模式（未压缩 React 开发版）首次点开详情 288ms，仅作参考。
 
 **测试**：`app/tests/schedule-runs-more.test.tsx`（起手句不含 notify_push / memory_dream / personal_ / 推送；5 → 20 → 40 → 50 条及请求的 runs 参数；不足 20 条不给「更多」；按钮消失后焦点落在列表）。截图 `docs/images/routines-list/{before,after}-{list,detail,empty}.webp`。未升级版本号。
+
+## 2026-10-29 设置页审查模块 12（第 3–6 条）
+
+**动机**：审查报告（模块 12）发现设置里所有表单离开时都不提示未保存，常驻指令、技能方法说明这类长文本一切页就丢；搜索说明和左栏文案和真实功能对不上（「8 款」配色实际 6 款、没有的内置流光壁纸、写死的精选技能数量、左栏和标题名字不同、「密钥」一项永远亮不起来）；中文标题的技能名字会变成 `--`；常驻指令保存时整个输入框被禁用。方向对齐 Hark 的设置体验：改了就有未保存栏（DESIGN.md §11），离开前问一声，文案只写真有的东西。
+
+**改动**
+
+- 未保存拦截（第 3 条）：`useUnsavedGuard(dirty)`（`app/src/components/ui/unsaved-guard.tsx`）用 TanStack Router 的 `useBlocker`，`shouldBlockFn` 弹 `confirmDialog`（「有未保存的更改，确定离开？」继续编辑 / 离开），`enableBeforeUnload` 管刷新和关标签。常驻指令在 SaveBar 显示、且不在保存中时挂上。弹窗用 `useGuardedOpenChange(dirty, onOpenChange)`：Base UI 的关闭原因是 `escape-key` / `outside-press` / `close-press` 且有改动时先确认（「放弃这次的改动？」），「取消」按钮不拦。确认框开着时忽略下面弹窗收到的同一次点击 / Esc（`isConfirmOpen()`），实测「继续编辑」后弹窗和内容都还在。全站只用确认，不存 sessionStorage 草稿。接在技能新建 / 编辑、导入 SKILL.md、记忆添加 / 编辑（`NoteDialog`）上；dirty 是表单和打开时快照逐字段比较（`formDirty`）。
+- 文案（第 4 条）：`registry.ts` 只改文案，不动任何 `find` 字段（开发2 在改）。配色说明由 `THEME_PALETTES` 的名字和长度生成；壁纸说明改成「上传自定义图片作为背景壁纸」；精选技能去掉「8 款」；左栏「我的生图与识图」→「生图与识图」。「密钥」选了改动小的一种：页面加 `nav: false`，左栏不单列（新 `navGroups()`），搜索照常能搜到并跳到 账号连接 → API 密钥 标签，这时左栏亮「账号连接」，和所在位置一致；没有去改 SectionRail 的高亮逻辑。`server/src/user-instructions.ts` 超长报错改为「常驻指令最多 4000 个字。」。
+- 技能名字（第 5 条）：`app/src/lib/skill-slug.ts`。没手动改过名字时跟着标题自动生成：留下标题里的字母数字，不够 2 个字符就用标题的 FNV 短串（`skill-xxxxxx`，同一标题结果稳定）；手打时合并连续连字符、去掉开头的连字符。标签改为「必填，小写字母、数字、连字符；按标题自动生成」。
+- 常驻指令保存中（第 6 条）：去掉 textarea 的 `disabled`，只禁按钮；保存成功时只有内容没再改过才换成服务器返回值。
+- 没碰 settings-search.tsx、memory.tsx 的整理按钮、appearance-preferences.tsx、wallpaper_core.html、bot-bubbles.tsx、壁纸上传、styles.css；没有新 CSS、动画和 token。
+
+**测试**：新增 `app/tests/settings-audit-12.test.ts`（拦截规则、`formDirty`、slug 生成、文案不写死、「密钥」不在左栏但能搜到）。
+
+**截图**：本地构建 main 和本分支，mock `/api`，1280×800。
+
+| | 改前 | 改后 |
+|---|---|---|
+| 常驻指令未保存，点左栏「技能」 | ![](images/settings-audit/before-leave-instructions.webp) | ![](images/settings-audit/after-leave-instructions.webp) |
+| 新建技能写了一半按 Esc | ![](images/settings-audit/before-skill-esc.webp) | ![](images/settings-audit/after-skill-esc.webp) |
+| 中文标题的名字 | ![](images/settings-audit/before-skill-slug.webp) | ![](images/settings-audit/after-skill-slug.webp) |
+| 左栏 | ![](images/settings-audit/before-sidebar.webp) | ![](images/settings-audit/after-sidebar.webp) |
+| 搜「配色」 | ![](images/settings-audit/before-search-palette.webp) | ![](images/settings-audit/after-search-palette.webp) |
+| 搜「壁纸」 | ![](images/settings-audit/before-search-wallpaper.webp) | ![](images/settings-audit/after-search-wallpaper.webp) |
+| 搜「精选技能」 | ![](images/settings-audit/before-search-hub.webp) | ![](images/settings-audit/after-search-hub.webp) |
+
+浏览器后退的确认：`images/settings-audit/after-back-confirm.webp`；打开 /settings/vault 后的左栏：`images/settings-audit/after-vault-active.webp`。
+
+## 2026-10-29 设置页审查模块 12 复审返修（#428）
+
+**动机**：小爱复审 #428 提的 4 条应修。
+
+**改动**
+
+- 保存栏页都接未保存拦截：全仓找 `<SaveBar`，设置里有三处——常驻指令（已接）、设备详情的「权限」（`components/devices/devices.tsx` 的 `DevicePermissions`）和「本机智能体」（`components/local-agents/device-agents-panel.tsx`），后两处补上 `useUnsavedGuard(dirty)`。工作流编辑页也有 SaveBar，但不在设置里，这次没动。
+- 确认框 Esc：去掉 `isConfirmOpen()` 里「关掉后 150ms 内也算开着」。`ConfirmHost` 开着时在 window 捕获阶段监听 keydown，Esc 直接 `preventDefault` + `stopImmediatePropagation` 并关确认框，下面弹窗（Base UI 在 document 上监听）收不到；确认框弹层上的 pointerdown / mousedown / click 也 `stopPropagation`，下面弹窗的「点外面关闭」收不到这次点击。`isConfirmOpen()` 现在就是 `current !== null`。
+- 焦点：`confirmDialog()` 打开时记下当前有焦点的元素（连弹两个时保留最早那个），关闭时通过 Popup 的 `finalFocus` 还回去；元素已不在页面上或被禁用时交回 Base UI 默认行为。
+- 技能名字：`slugFromTitle` 里拉丁字母少于 4 个（`MIN_LATIN_FOR_PLAIN_SLUG`）时也加 FNV 短串后缀，「周报v2」→ `v2-xxxxxx`；4 个及以上照旧（「Weekly Report」→ `weekly-report`）。服务端撞名两条 409 本来就是中文（`server/src/skills-chisa/tools.ts`），未改。
+
+**测试**：新增 `app/tests/settings-audit-12-confirm.test.tsx`（Esc 不传到 document、按钮点击不冒泡、取消后焦点回输入框、焦点目标兜底、「周报v2」slug、服务端中文报错、保存栏页都接了 `useUnsavedGuard`）。
+
+**截图**：外观没有变化（确认框样式、保存栏都没改），没有补新截图。

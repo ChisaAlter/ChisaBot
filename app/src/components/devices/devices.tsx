@@ -40,6 +40,7 @@ import {
   OPERATION_LABEL,
 } from "../../../../shared/devices";
 import { useAsyncAction } from "@/components/ui/async-action";
+import { useUnsavedGuard } from "@/components/ui/unsaved-guard";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -752,6 +753,8 @@ export function DevicePermissions({ device, isThisPc = false }: { device: Device
     if (!touched) setDraft(base);
   }, [base, touched]);
   const dirty = touched && !sameDraft(draft, base);
+  /* 保存栏亮着时切左栏、后退先确认，和常驻指令页同一套（审查模块 12 第 3 条）。 */
+  useUnsavedGuard(dirty);
   const locked = device.revoked;
 
   const save = useAsyncAction(async () => {

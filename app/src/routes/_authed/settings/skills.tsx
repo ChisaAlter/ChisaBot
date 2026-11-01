@@ -8,6 +8,9 @@ import { SearchBox } from "@/components/memory/memory-notes";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
+import { normalizeSlugInput, SKILL_SLUG, slugFromTitle } from "@/lib/skill-slug";
+import { formDirty } from "@/lib/unsaved";
+import { useGuardedOpenChange } from "@/components/ui/unsaved-guard";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -31,7 +34,7 @@ export const Route = createFileRoute("/_authed/settings/skills")({
   component: SkillsPage,
 });
 
-const SLUG = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
+const SLUG = SKILL_SLUG;
 
 /**
  * 设置 → 技能（DESIGN.md §51）：你存下来的「某类事怎么做」。所有机器人按需加载；聊天框里输入 /名字 也能直接用。
@@ -368,9 +371,12 @@ function SkillImportDialog({
   }, [open, resetImportAction]);
 
   const valid = Boolean(url.trim() || markdown.trim());
+  /* 填了链接或内容还没导入，按 Esc / 点外面先确认（审查模块 12 第 3 条）。 */
+  const dirty = Boolean(url.trim() || markdown.trim() || slug.trim()) && importAction.state !== "success";
+  const guardedOpenChange = useGuardedOpenChange(dirty, onOpenChange);
 
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog onOpenChange={guardedOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-xl" data-testid="skill-import-dialog">
         <DialogHeader>
           <DialogTitle>{"从 GitHub / SKILL.md 导入技能"}</DialogTitle>
@@ -497,7 +503,11 @@ function SkillDialog({
 }) {
   const queryClient = useQueryClient();
   const readOnly = Boolean(skill && !skill.mine && !isAdmin);
-  const [form, setForm] = useState({ slug: "", title: "", summary: "", instructions: "", shared: false });
+  const empty = { slug: "", title: "", summary: "", instructions: "", shared: false };
+  const [form, setForm] = useState(empty);
+  const [initial, setInitial] = useState(empty);
+  /* 名字没手动改过时，跟着标题自动生成（中文标题也能得到合法的名字，审查模块 12 第 5 条）。 */
+  const [slugTouched, setSlugTouched] = useState(false);
   const save = useAsyncAction(
     async () => {
       await saveChisaSkill(form.slug, {
@@ -515,17 +525,20 @@ function SkillDialog({
   const resetSave = save.reset;
   useEffect(() => {
     if (!open) return;
-    setForm(
-      skill
-        ? { slug: skill.slug, title: skill.title, summary: skill.summary, instructions: skill.instructions, shared: !skill.mine }
-        : { slug: "", title: "", summary: "", instructions: "", shared: false },
-    );
+    const next = skill
+      ? { slug: skill.slug, title: skill.title, summary: skill.summary, instructions: skill.instructions, shared: !skill.mine }
+      : { slug: "", title: "", summary: "", instructions: "", shared: false };
+    setForm(next);
+    setInitial(next);
+    setSlugTouched(false);
     resetSave();
   }, [open, skill, resetSave]);
   const slugOk = SLUG.test(form.slug);
   const valid = slugOk && form.title.trim() && form.instructions.trim();
+  const dirty = !readOnly && save.state !== "success" && formDirty(initial, form);
+  const guardedOpenChange = useGuardedOpenChange(dirty, onOpenChange);
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog onOpenChange={guardedOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-2xl">
         <DialogHeader>
           <DialogTitle>{readOnly ? skill!.title : skill ? "编辑技能" : "新建技能"}</DialogTitle>
@@ -545,19 +558,26 @@ function SkillDialog({
                   {"标题"}
                   <span className="im-req">{"必填"}</span>
                 </span>
-                <Input disabled={readOnly} id="skill-title" maxLength={60} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder={"如「写周报」"} value={form.title} />
+                <Input disabled={readOnly} id="skill-title" maxLength={60} onChange={(event) => {
+                    const title = event.target.value;
+                    setForm({ ...form, title, ...(!skill && !slugTouched ? { slug: slugFromTitle(title) } : {}) });
+                  }} placeholder={"如「写周报」"} value={form.title} />
               </label>
               <label className="im-field" htmlFor="skill-slug">
                 <span className="im-field-l">
                   {"名字"}
-                  <span className="im-req">{skill ? "不能改" : "小写字母、数字、连字符"}</span>
+                  <span className="im-req">{skill ? "不能改" : "必填，小写字母、数字、连字符；按标题自动生成"}</span>
                 </span>
                 <Input
                   className="font-mono"
                   disabled={Boolean(skill)}
                   id="skill-slug"
                   maxLength={40}
-                  onChange={(event) => setForm({ ...form, slug: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })}
+                  onChange={(event) => {
+                    const slug = normalizeSlugInput(event.target.value);
+                    setSlugTouched(slug !== "");
+                    setForm({ ...form, slug: slug || slugFromTitle(form.title) });
+                  }}
                   placeholder={"weekly-report"}
                   value={form.slug}
                 />

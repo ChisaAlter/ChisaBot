@@ -50,9 +50,7 @@ export const INSTRUCTIONS_LIMIT = 4000;
  */
 export class InstructionsTooLongError extends Error {
   constructor() {
-    super(
-      `Standing instructions are at most ${INSTRUCTIONS_LIMIT} characters.`,
-    );
+    super(`常驻指令最多 ${INSTRUCTIONS_LIMIT} 个字。`);
     this.name = "InstructionsTooLongError";
   }
 }
