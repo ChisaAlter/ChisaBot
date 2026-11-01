@@ -104,6 +104,7 @@
 | [CB-093](#cb-093) | 机器人之间的往来视图（单聊里 @另一个机器人） | Hark parity | `type: feat` · `area: chat` · `area: agents` · `P1` · `status: done` |
 | [CB-094](#cb-094) | 有面板以后也能从右栏快速新建 | 成熟度 Maturity | `type: feat` · `area: web` · `P2` · `status: done` |
 | [CB-095](#cb-095) | 账号连接页分标签（全部 / 连接 / 登录信息 / 密钥） | 成熟度 Maturity | `type: feat` · `area: settings` · `area: vault` · `P2` · `status: done` |
+| [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住 | 成熟度 Maturity | `type: bug` · `area: web` · `P2` · `status: in-progress` |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
 
@@ -1476,6 +1477,18 @@ P4a #159、P4b #160 已上线（2026-10-16），PC 客户端随 v0.1.11 发布�
 - [x] 服务器按机器人存、按机器人执行（完全访问自动放行设备「询问」的操作；请求批准始终问），审计记录改动；硬限制不放开；PC 客户端不用改
 - [x] 设置 → 机器人 → 权限与审批 里同一个开关
 - [x] 单测（登记表 / 搜索、服务器执行）+ 预览 e2e（搜索、旧地址、两档、假模型下请求批准出卡 / 完全访问直接执行）
+
+## CB-096
+
+**引导页标题和「继续」按钮被天空背景遮住**
+里程碑：成熟度 Maturity · 标签：`type: bug` `area: web` `P2` `status: in-progress`
+
+用户 2026-11-01 截图：`/onboarding` 只看到光球和装饰输入框，看不到「欢迎来到 ChisaBot」和「继续」。固定天空背景 `#sky-root` 是 `position: fixed; z-index: 0`，引导页内容没有建立更高的层叠上下文，标题和按钮被盖在背景下面。
+
+#### 验收标准
+- [x] 引导页标题和「继续」按钮在亮 / 暗、桌面 / 窄屏下可见、可点击
+- [x] 不改变主界面层级；`bun run typecheck` 通过
+- [ ] 前端构建通过（当前 main `99f361d` 的 `chisabot-chunk-guard` 在基线已失败，见 PR 说明）
 
 ## 已完成
 
