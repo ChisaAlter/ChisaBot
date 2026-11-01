@@ -53,7 +53,7 @@ test("chat composer keeps 16px side gutters and clears the panel handle at narro
   const box = css.match(/\n\.chat-composer-box\s*\{([^}]*)\}/)?.[1] ?? "";
   expect(box).toMatch(/max-width:\s*calc\(42rem \+ 2rem\)/);
   expect(box).toMatch(/padding:\s*0 1rem 1rem/);
-  const handle = css.match(/body:has\(\.rail-tab\.is-narrow\) \.chat-composer-box\s*\{([^}]*)\}/)?.[1] ?? "";
+  const handle = css.match(/body\[data-has-narrow-rail\] \.chat-composer-box\s*\{([^}]*)\}/)?.[1] ?? "";
   expect(handle).toContain("var(--rail-tab-clear)");
 });
 

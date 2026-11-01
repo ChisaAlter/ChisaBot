@@ -93,6 +93,7 @@ import { type RejectedFile, RejectedFiles } from "./rejected-files";
 import { PLACEHOLDER_COMMANDS } from "./sources";
 import { type AgentOption, buildTriggers } from "./triggers";
 import { useDictation } from "./use-dictation";
+import { presenceRef } from "@/lib/presence-flag";
 
 /**
  * The SDK's upload failure, derived rather than imported for the reason `attachments.ts` records
@@ -2188,6 +2189,7 @@ function ComposerImpl({
             "glass-composer flex flex-col",
             className,
           )}
+          ref={presenceRef("has-composer")}
           onSubmit={handleFormSubmit}
         >
           <DictationSurface dictation={dictation} canSend={canSendRecording}>
@@ -2310,6 +2312,7 @@ function ComposerImpl({
         data-drag-over={canAttach && dragOver ? "true" : undefined}
         onKeyDown={handleEscapeStop}
         className="glass-composer glass-composer-hero"
+        ref={presenceRef("has-composer")}
         onSubmit={handleFormSubmit}
       >
         <DictationSurface dictation={dictation} canSend={canSendRecording}>
