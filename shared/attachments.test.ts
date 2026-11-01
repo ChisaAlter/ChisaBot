@@ -8,6 +8,8 @@ import {
   mediaTypeOf,
   namesNoFormat,
   shouldClaimPaste,
+  unreadablePhotoFormat,
+  unsupportedImageReason,
 } from "./attachments";
 
 describe("classifyAttachment", () => {
@@ -304,5 +306,35 @@ describe("an unnamed claim is unsupported AND unnamed, which is what defers to t
       expect(classifyAttachment(claim)).toBe("unsupported");
       expect(namesNoFormat(claim)).toBe(false);
     }
+  });
+});
+
+describe("读不了的照片格式（审查 M9-2）", () => {
+  test("HEIC / HEIF / AVIF 按类型认，类型为空时按扩展名认", () => {
+    expect(unreadablePhotoFormat("a.heic", "image/heic")).toBe("HEIC");
+    expect(unreadablePhotoFormat("IMG_1.HEIC", "")).toBe("HEIC");
+    expect(unreadablePhotoFormat("x.heif", "application/octet-stream")).toBe(
+      "HEIF",
+    );
+    expect(unreadablePhotoFormat("x.avif", "")).toBe("AVIF");
+    expect(unreadablePhotoFormat("x.png", "")).toBeNull();
+    // 类型说了别的格式，以类型为准。
+    expect(unreadablePhotoFormat("x.heic", "text/plain")).toBeNull();
+  });
+
+  test("拒绝原因是中文，并说下一步", () => {
+    expect(unsupportedImageReason("a.heic", "image/heic")).toContain(
+      "转成 JPG 或 PNG",
+    );
+    expect(unsupportedImageReason("b.HEIF", "")).toContain("HEIF");
+    expect(
+      unsupportedImageReason("c.svg", "image/svg+xml;charset=utf-8"),
+    ).toContain("SVG");
+    expect(unsupportedImageReason("d.tiff", "image/tiff")).toContain(
+      "（image/tiff）",
+    );
+    expect(unsupportedImageReason("d.tiff", "image/tiff")).toContain(
+      "JPG、PNG、GIF 或 WebP",
+    );
   });
 });

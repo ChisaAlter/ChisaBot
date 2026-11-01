@@ -224,7 +224,8 @@ function tooMuchToInline(
   limit: number,
 ): never {
   throw new Error(
-    `Attachment ${namedForFailure(part, id)} could not be included: this message's attachments come to more than the ${limit} bytes one turn may put in front of the model. Send fewer files, or ask about them across more than one message.`,
+    // 这句会原样显示给发消息的人（审查 M9-3），所以用中文，并给出能照做的下一步。
+    `附件 ${namedForFailure(part, id)} 没能放进这一轮：这条消息的附件加起来超过了一轮能交给模型的上限（${limit >= 1024 * 1024 ? `${Math.round(limit / (1024 * 1024))}MB，` : ""}${limit} 字节）。请少发几个文件或先压缩图片，或者分几条消息问。`,
   );
 }
 
@@ -249,7 +250,7 @@ function unreadableNote(
 ): unknown {
   return {
     type: "text",
-    text: `[attachment "${displayName(part, id)}" is a ${mimeType} file, which cannot be put in front of the model]`,
+    text: `[附件「${displayName(part, id)}」是 ${mimeType} 文件，没法交给模型看；如实告诉用户你看不到它的内容]`,
   };
 }
 

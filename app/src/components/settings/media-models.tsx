@@ -289,7 +289,8 @@ function VisionFields({ form, setForm, idPrefix, keyText, keyEmpty }: { form: Vi
   );
 }
 
-const VISION_EXPLAIN = "选了识图模型后，聊天里上传的图片会先交给它写一份详细描述（含图里的文字），再把描述给聊天模型；同一张图只描述一次。机器人还能用它追问图片细节。";
+// 和服务器 media.imageInputFor 一致：聊天模型能看图时图片原样发给它，识图模型只在它看不了图时写描述，以及给 image_inspect 追问细节用。
+const VISION_EXPLAIN = "识图模型只在聊天模型看不了图时用：先把图片写成详细描述（含图里的文字）再交给聊天模型，同一张图只描述一次。机器人用 image_inspect 追问图片细节时也用它。聊天模型能看图时，图片直接发给聊天模型。";
 
 function useVisionActions(scope: "default" | "personal", mode: string, form: VisionForm, hasKey: boolean, onSave: () => Promise<void>) {
   const [probe, setProbe] = useState<Probe>(null);
@@ -350,7 +351,7 @@ export function VisionPersonalCard({ current, defaults }: { current: PersonalVis
     setForm((f) => ({ ...f, apiKey: "" }));
     await queryClient.invalidateQueries({ queryKey: mediaKeys.all });
   });
-  const defaultText = defaults.vision.ready ? `默认：识图模型 ${defaults.vision.model}` : "默认：跟随主模型（图片直接发给聊天模型）。";
+  const defaultText = defaults.vision.ready ? `默认：识图模型 ${defaults.vision.model}（只在聊天模型看不了图时描述图片，以及回答 image_inspect 追问）` : "默认：跟随主模型（图片直接发给聊天模型）。";
   return (
     <VisionShell
       actions={{ fieldsOk, save, test, valid }}
@@ -358,7 +359,7 @@ export function VisionPersonalCard({ current, defaults }: { current: PersonalVis
       form={form}
       idPrefix="my-vis"
       mode={mode}
-      note={mode === "default" ? defaultText : mode === "follow" ? "图片直接发给你的聊天模型，不用识图模型。" : `${VISION_EXPLAIN}只对你的机器人生效。`}
+      note={mode === "default" ? defaultText : mode === "follow" ? "图片直接发给你的聊天模型，不用识图模型。" : `${VISION_EXPLAIN}这个设置只对你的机器人生效。`}
       options={[
         { value: "default", label: "用默认" },
         { value: "follow", label: "跟随主模型" },

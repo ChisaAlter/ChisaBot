@@ -1357,7 +1357,46 @@ describe("POST /:channelId/attachments", () => {
 
     expect(response.status).toBe(415);
     const { error } = (await response.json()) as { error: string };
-    expect(error).toBe("'archive' is not a file type this app can read.");
+    expect(error).toBe(
+      "「archive」不是这里能读的文件类型。可以发 JPG、PNG、GIF、WebP 图片，或者 TXT、Markdown、CSV、JSON 文本文件。",
+    );
+  });
+
+  /*
+   * 审查 M9-2：iPhone 照片导到电脑上大多是 HEIC。原来服务器回一句英文
+   * 「'08-photo.heic' is an image/heic image, which this app cannot read.」，不说下一步怎么办。
+   */
+  test("a HEIC photo is refused in Chinese, telling the person to convert it to JPG or PNG", async () => {
+    const { app, database: db, channelId } = await harness();
+    // ftyp heic 头：真的 HEIC 文件开头就是这样。类型留空，和 Windows Chrome 一样。
+    const heic = new Uint8Array([
+      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63,
+      0x00, 0x00, 0x00, 0x00, 0x6d, 0x69, 0x66, 0x31, 0x68, 0x65, 0x69, 0x63,
+    ]);
+    for (const name of ["08-photo.heic", "IMG_0001.HEIF", "cover.avif"]) {
+      const response = await upload(app, channelId, new File([heic], name, { type: "" }));
+      expect(response.status).toBe(415);
+      const { error } = (await response.json()) as { error: string };
+      expect(error).toContain(`「${name}」`);
+      expect(error).toContain("JPG 或 PNG");
+      expect(error).not.toMatch(/[a-z]{4,} [a-z]{4,}/);
+    }
+    const rows = await db
+      .select({ id: attachments.id })
+      .from(attachments)
+      .where(eq(attachments.channelId, channelId));
+    expect(rows.length).toBe(0);
+  });
+
+  test("an image over the size limit is refused in Chinese, naming the limit", async () => {
+    const { app, channelId } = await harness();
+    const big = new Uint8Array(MAX_IMAGE_BYTES + 1);
+    big.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const response = await upload(app, channelId, new File([big], "big.png", { type: "image/png" }));
+    expect(response.status).toBe(413);
+    const { error } = (await response.json()) as { error: string };
+    expect(error).toContain("「big.png」图片太大");
+    expect(error).toContain(`${(MAX_IMAGE_BYTES / (1024 * 1024)).toFixed(0)}MB`);
   });
 });
 

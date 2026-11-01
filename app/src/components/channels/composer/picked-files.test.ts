@@ -58,7 +58,7 @@ describe("screenPickedFiles", () => {
     const result = screenPickedFiles([big], { alreadyStaged: 0 });
 
     expect(result.accepted).toEqual([]);
-    expect(result.rejected[0].reason).toMatch(/too large/);
+    expect(result.rejected[0].reason).toMatch(/文本附件太大/);
   });
 
   test("rejects an oversized image", () => {
@@ -66,7 +66,7 @@ describe("screenPickedFiles", () => {
     const result = screenPickedFiles([big], { alreadyStaged: 0 });
 
     expect(result.accepted).toEqual([]);
-    expect(result.rejected[0].reason).toMatch(/too large/);
+    expect(result.rejected[0].reason).toMatch(/图片太大/);
   });
 
   /**
@@ -99,7 +99,7 @@ describe("screenPickedFiles", () => {
     const result = screenPickedFiles([huge], { alreadyStaged: 0 });
 
     expect(result.accepted).toEqual([]);
-    expect(result.rejected[0].reason).toMatch(/too large|larger than/);
+    expect(result.rejected[0].reason).toMatch(/超过附件上限/);
   });
 
   test("a claim that names a format it does not accept is still refused here", () => {
@@ -184,7 +184,7 @@ describe("screenPickedFiles", () => {
 
     expect(result.accepted).toEqual([]);
     expect(result.rejected).toHaveLength(1);
-    expect(result.rejected[0].reason).toMatch(/too large for an image/);
+    expect(result.rejected[0].reason).toMatch(/图片太大/);
     expect(result.rejected[0].reason).not.toMatch(/at most/);
   });
 
@@ -200,5 +200,32 @@ describe("screenPickedFiles", () => {
     expect(result.accepted).toEqual([good1, good2]);
     expect(result.rejected).toHaveLength(1);
     expect(result.rejected[0].name).toBe("bad.svg");
+  });
+  /*
+   * 审查 M9-2：Windows 上的 Chrome 给 .heic 的 `file.type` 是空字符串，原来这里放它过去，
+   * 上传完才收到服务器一句英文 415。扩展名已经说明了格式，就在这里用中文拒绝并说怎么办。
+   */
+  test("rejects a HEIC/HEIF/AVIF photo by extension when the browser gives no type", () => {
+    for (const name of ["IMG_0001.HEIC", "photo.heif", "cover.avif"]) {
+      const result = screenPickedFiles([file(name, "")], { alreadyStaged: 0 });
+      expect(result.accepted).toEqual([]);
+      expect(result.rejected).toHaveLength(1);
+      expect(result.rejected[0].name).toBe(name);
+      expect(result.rejected[0].reason).toContain("JPG 或 PNG");
+    }
+  });
+
+  test("rejects a HEIC photo the browser did name, with the same next step", () => {
+    const result = screenPickedFiles([file("a.heic", "image/heic")], {
+      alreadyStaged: 0,
+    });
+    expect(result.rejected[0].reason).toContain("HEIC");
+    expect(result.rejected[0].reason).toContain("JPG 或 PNG");
+  });
+
+  test("an untyped file with another extension still goes to the server to be sniffed", () => {
+    const notes = file("notes", "");
+    const result = screenPickedFiles([notes], { alreadyStaged: 0 });
+    expect(result.accepted).toEqual([notes]);
   });
 });

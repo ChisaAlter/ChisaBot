@@ -23,4 +23,6 @@ export {
   namesNoFormat,
   pickAttachmentThumbWidth,
   shouldClaimPaste,
+  unreadablePhotoFormat,
+  unsupportedImageReason,
 } from "../../../../shared/attachments";

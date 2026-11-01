@@ -84,8 +84,11 @@ export function createMediaModels(
     encryptionKey: string;
     fetch?: typeof fetch;
     env?: Record<string, string | undefined>;
-    /** 这个机器人当前的聊天模型能不能看图：true / false / 不知道（undefined，当作能）。 */
-    mainModelSupportsImages?: (agentId: string) => Promise<boolean | undefined>;
+    /**
+     * 这个机器人这一轮的聊天模型能不能看图：true / false / 目录里没有（undefined）。modelId 给了就问这个模型
+     * （这一轮实际用的、换到的备用模型）；没给就由接线方按这一轮的选择（个人选的模型、机器人设置、默认）找。
+     */
+    mainModelSupportsImages?: (agentId: string, modelId?: string) => Promise<boolean | undefined>;
     /** 某人是不是管理员（决定能不能填内网地址）。 */
     isAdmin?: (userId: string) => Promise<boolean>;
     /** 测试里换掉公网检查。 */
@@ -128,7 +131,62 @@ export function createMediaModels(
         created_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (file_id, model_key)
       );
+      ALTER TABLE chisabot_image_descriptions ADD COLUMN IF NOT EXISTS attachment_id uuid;
+      CREATE INDEX IF NOT EXISTS chisabot_image_descriptions_attachment_idx ON chisabot_image_descriptions (attachment_id) WHERE attachment_id IS NOT NULL;
     `);
+    await linkAttachments(true);
+  }
+
+  /** attachments 表已在、外键和回填都做过了（进程内记一下，免得每次写缓存都查）。 */
+  let attachmentsLinked = false;
+
+  /**
+   * 频道附件（file_id = 'att:<附件 id>'）的描述跟着附件走：附件被删（撤回、清理、频道或用户删除的级联）
+   * 描述（含 OCR 文字）一起删。这张表不归 drizzle 管，外键在这里建。幂等，每次 ensure 都跑；
+   * attachments 表还不在（先建了描述表）时什么都不做，等写第一条频道附件描述前再补一次。
+   * - 先清孤儿：attachment_id 指向已不存在附件的行（外键建上之前可能留下）直接删。
+   * - 回填：加列之前存的 att: 行 attachment_id 为空，按键解析出附件 id 补上——只补为空的行、只补 attachments 里还在的
+   *   （比较走文本，不对任意 file_id 做 uuid 转换）；附件已经没了的旧行直接删掉，它的 OCR 文字本该随附件一起删。
+   * - 最后才加外键 attachment_id → attachments(id) ON DELETE CASCADE（已经有就跳过）。
+   */
+  async function linkAttachments(force = false): Promise<boolean> {
+    if (attachmentsLinked && !force) return true;
+    await sql.unsafe(`
+      DO $$
+      BEGIN
+        IF to_regclass('attachments') IS NOT NULL THEN
+          -- 顺序要紧：先清掉孤儿行、先回填，最后才加外键；有指向不存在附件的行时 ADD CONSTRAINT 会报 23503，开机失败。
+          EXECUTE $q$
+            DELETE FROM chisabot_image_descriptions d
+             WHERE d.attachment_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.id = d.attachment_id)
+          $q$;
+          EXECUTE $q$
+            UPDATE chisabot_image_descriptions d SET attachment_id = a.id
+              FROM attachments a
+             WHERE d.attachment_id IS NULL AND d.file_id LIKE 'att:%' AND a.id::text = lower(substring(d.file_id FROM 5))
+          $q$;
+          EXECUTE $q$
+            DELETE FROM chisabot_image_descriptions d
+             WHERE d.attachment_id IS NULL AND d.file_id LIKE 'att:%'
+               AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.id::text = lower(substring(d.file_id FROM 5)))
+          $q$;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'chisabot_image_descriptions_attachment_fk' AND conrelid = 'chisabot_image_descriptions'::regclass
+          ) THEN
+            ALTER TABLE chisabot_image_descriptions
+              ADD CONSTRAINT chisabot_image_descriptions_attachment_fk
+              FOREIGN KEY (attachment_id) REFERENCES attachments(id) ON DELETE CASCADE;
+          END IF;
+        END IF;
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
+    const rows = await sql.unsafe<{ linked: boolean }[]>(
+      "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chisabot_image_descriptions_attachment_fk' AND conrelid = 'chisabot_image_descriptions'::regclass) AS linked",
+    );
+    attachmentsLinked = rows[0]?.linked === true;
+    return attachmentsLinked;
   }
 
   // ------------------------------------------------------------------ 管理员的生图默认（§56 原表）
@@ -463,7 +521,7 @@ export function createMediaModels(
    * 个人 custom → 个人 follow → 管理员 custom → 跟随主模型；跟随主模型但主模型明确看不了图时，
    * 退回管理员的识图模型（有的话），都没有就是 none。
    */
-  async function visionFor(userId: string, agentId: string): Promise<EffectiveVision> {
+  async function visionFor(userId: string, agentId: string, modelId?: string): Promise<EffectiveVision> {
     const mine = await mediaRow(userId, "vision");
     const admin = await mediaRow("", "vision");
     const model = async (row: MediaRow | null, source: "personal" | "default"): Promise<EffectiveVision | null> => {
@@ -486,7 +544,7 @@ export function createMediaModels(
       const chosen = await model(admin, "default");
       if (chosen) return chosen;
     }
-    const supports = options.mainModelSupportsImages ? await options.mainModelSupportsImages(agentId).catch(() => undefined) : undefined;
+    const supports = await mainSupports(agentId, modelId);
     if (supports !== false) return { kind: "main" };
     if (admin?.mode === "custom") {
       const fallback = await model(admin, "default");
@@ -495,7 +553,32 @@ export function createMediaModels(
     return { kind: "none" };
   }
 
+  function mainSupports(agentId: string, modelId?: string): Promise<boolean | undefined> {
+    return options.mainModelSupportsImages ? options.mainModelSupportsImages(agentId, modelId).catch(() => undefined) : Promise.resolve(undefined);
+  }
+
+  /**
+   * 用户附的图片这一轮怎么交给主模型（审查 M9-1）。看的是这一轮实际用的模型（modelId；没给就按这一轮的选择找）：
+   * - 目录说能看图：给原图，哪怕另外配了识图模型——识图模型这时只做 image_inspect 追问用；
+   * - 目录说不能：按 visionFor 的顺序找识图模型写描述，都没有就是 none；
+   * - 目录里没有这个模型（undefined）：配了识图模型就用描述（纯文字模型收到图片会整轮报错，描述总能用），
+   *   没配就照旧给原图。
+   *
+   * 原来 `cf:` 引用按 visionFor 走：管理员配了「单独的识图模型」就只给描述，而频道附件照样给原图，
+   * 提示词却对两条路都说「你只拿到了文字描述」——模型于是说「没收到截图」，或者先去找文件。
+   */
+  async function imageInputFor(userId: string, agentId: string, modelId?: string): Promise<EffectiveVision> {
+    const supports = await mainSupports(agentId, modelId);
+    if (supports === true) return { kind: "main" };
+    if (supports === false) return visionFor(userId, agentId, modelId);
+    const configured = await visionFor(userId, agentId, modelId);
+    return configured.kind === "model" ? configured : { kind: "main" };
+  }
+
   // ------------------------------------------------------------------ 描述缓存
+
+  /** 频道附件的缓存 id：'att:<附件 uuid>'，写进 attachment_id 让外键跟着附件删。 */
+  const ATTACHMENT_CACHE_ID = /^att:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
   const inflight = new Map<string, Promise<string>>();
 
@@ -517,14 +600,39 @@ export function createMediaModels(
     if (running) return running;
     const job = (async () => {
       const text = await askVisionModel(config, image, DESCRIBE_PROMPT, { fetch: doFetch });
-      await sql.unsafe(
-        `INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (file_id, model_key) DO UPDATE SET text = $4, created_at = now()`,
-        [fileId, modelKeyOf(config), config.model, text.slice(0, 20_000)],
-      );
+      const attachmentId = ATTACHMENT_CACHE_ID.exec(fileId)?.[1] ?? null;
+      try {
+        // 开机时 attachments 还没建好的话，外键没加上：写频道附件描述前补一次（幂等）。
+        if (attachmentId && !attachmentsLinked) await linkAttachments();
+        await sql.unsafe(
+          `INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text, attachment_id) VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (file_id, model_key) DO UPDATE SET text = $4, created_at = now()`,
+          [fileId, modelKeyOf(config), config.model, text.slice(0, 20_000), attachmentId],
+        );
+      } catch {
+        // 存缓存失败（比如附件刚被删，外键不让写）不影响这一轮用描述。
+        console.error(JSON.stringify({ type: "image-description-cache-write-failed" }));
+      }
       return text;
     })().finally(() => inflight.delete(key));
     inflight.set(key, job);
+    return job;
+  }
+
+  /*
+   * 不进数据库的描述：备用模型看不了图时，把已经在请求里的图片临时换成描述（审查 #417）。请求里只剩字节、
+   * 不知道是哪个附件，存进表就成了删附件也删不掉的 OCR 文字，所以只放进程内存，按内容哈希 + 模型记最近
+   * 64 张（同一轮里多步工具调用每步都会重发同一张图）。
+   */
+  const transient = new Map<string, Promise<string>>();
+  async function describeTransient(image: { bytes: Buffer; mimeType: string }, config: VisionConfig): Promise<string> {
+    const key = `${createHash("sha256").update(image.bytes).digest("hex")}:${modelKeyOf(config)}`;
+    const hit = transient.get(key);
+    if (hit) return hit;
+    const job = askVisionModel(config, image, DESCRIBE_PROMPT, { fetch: doFetch });
+    transient.set(key, job);
+    job.catch(() => transient.delete(key));
+    while (transient.size > 64) transient.delete(transient.keys().next().value as string);
     return job;
   }
 
@@ -609,6 +717,7 @@ export function createMediaModels(
 
   return {
     ensure,
+    linkAttachments,
     imageDefaultView,
     imageDefaultConfig,
     saveImageDefault,
@@ -620,6 +729,8 @@ export function createMediaModels(
     imageFor,
     imageViewFor,
     visionFor,
+    imageInputFor,
+    describeTransient,
     describe,
     cachedDescription,
     ask,

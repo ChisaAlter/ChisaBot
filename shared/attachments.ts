@@ -128,6 +128,55 @@ export const ACCEPTED_TEXT_MIME = [
 ] as const;
 
 /**
+ * 手机相册里常见、这里读不了的照片格式（审查 M9-2）。按媒体类型认，类型为空时按扩展名认：
+ * Windows 上的 Chrome 给 .heic 的 `file.type` 是空字符串，只看类型就会放过去，等服务器 415。
+ */
+const PHOTO_FORMATS: Readonly<Record<string, string>> = {
+  "image/heic": "HEIC",
+  "image/heic-sequence": "HEIC",
+  "image/heif": "HEIF",
+  "image/heif-sequence": "HEIF",
+  "image/avif": "AVIF",
+};
+const PHOTO_EXTENSIONS: Readonly<Record<string, string>> = {
+  heic: "HEIC",
+  heics: "HEIC",
+  heif: "HEIF",
+  heifs: "HEIF",
+  hif: "HEIF",
+  avif: "AVIF",
+};
+
+/** 「HEIC」「HEIF」「AVIF」，或者不是这几种时 null。类型说了别的格式就以类型为准。 */
+export function unreadablePhotoFormat(
+  name: string,
+  mimeType: string,
+): string | null {
+  const mediaType = mediaTypeOf(mimeType);
+  const byType = PHOTO_FORMATS[mediaType];
+  if (byType) return byType;
+  if (mediaType && !namesNoFormat(mediaType)) return null;
+  const extension = /\.([a-z0-9]+)$/i.exec(name.trim())?.[1]?.toLowerCase();
+  return (extension && PHOTO_EXTENSIONS[extension]) ?? null;
+}
+
+/**
+ * 读不了的图片被拒时给人的那句话（前端和服务器同一句）：说清是什么格式、下一步怎么办。
+ * `mimeType` 是判断用的类型（服务器上是嗅探后的），`name` 用来在类型为空时认扩展名。
+ */
+export function unsupportedImageReason(name: string, mimeType: string): string {
+  const mediaType = mediaTypeOf(mimeType);
+  if (mediaType === "image/svg+xml") {
+    return `「${name}」是 SVG，可能带脚本，不能上传。请导出为 PNG 或 JPG 再发。`;
+  }
+  const photo = unreadablePhotoFormat(name, mimeType);
+  if (photo) {
+    return `「${name}」是 ${photo} 格式的照片，这里还读不了。请先转成 JPG 或 PNG 再发（iPhone 可在 设置 → 相机 → 格式 里选「兼容性最佳」，以后拍的就是 JPG）。`;
+  }
+  return `「${name}」是这里读不了的图片格式${mediaType ? `（${mediaType}）` : ""}。请转成 JPG、PNG、GIF 或 WebP 再发。`;
+}
+
+/**
  * THE MEDIA TYPE ON ITS OWN: LOWER CASE, PARAMETERS GONE — AND THE ONLY FORM ANYTHING HERE COMPARES.
  *
  * A `File`'s type is whatever produced it. Bun's constructor appends `;charset=utf-8` to
