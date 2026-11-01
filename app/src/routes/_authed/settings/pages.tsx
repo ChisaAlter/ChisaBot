@@ -15,7 +15,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import type { PageView } from "../../../../../shared/pages";
-import { sendPromptToChat } from "@/components/chat/quick-spotlight";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { PageThumb } from "@/components/pages/page-card";
 import { useAsyncAction } from "@/components/ui/async-action";

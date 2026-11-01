@@ -19,43 +19,15 @@ import { BotBubbles } from "@/components/chat/bot-bubbles";
 import { toast } from "@/components/ui/toast";
 import {
   CHISABOT_QUOTE_EVENT,
+  CHISABOT_SPOTLIGHT_EVENT,
   type ComposerQuotePayload,
   dispatchComposerQuote,
+  openQuickSpotlight,
+  sendPromptToChat,
 } from "@/lib/chat/quote-event";
 import { botsTarget, isBotsChatPath } from "@/lib/bots-location";
 
-export const CHISABOT_SPOTLIGHT_EVENT = "chisabot-spotlight";
-
-export function openQuickSpotlight() {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(CHISABOT_SPOTLIGHT_EVENT));
-}
-
-export function sendPromptToChat(
-  navigate: ReturnType<typeof useNavigate>,
-  text: string,
-  sourceLabel?: string,
-) {
-  const trimmed = text.trim();
-  if (!trimmed || typeof window === "undefined") return;
-  const fire = () => {
-    if (sourceLabel) {
-      dispatchComposerQuote({ text: trimmed, source: sourceLabel });
-    } else {
-      window.dispatchEvent(new CustomEvent("chisabot-prefill", { detail: trimmed }));
-    }
-  };
-  const hadComposer = Boolean(document.querySelector(".glass-composer"));
-  if (!isBotsChatPath(window.location.pathname)) {
-    const target = botsTarget();
-    void navigate(target as never);
-  }
-  if (hadComposer) {
-    fire();
-  } else {
-    window.setTimeout(fire, 120);
-  }
-}
+export { CHISABOT_SPOTLIGHT_EVENT, openQuickSpotlight, sendPromptToChat };
 
 export function QuickSpotlight() {
   const [open, setOpen] = useState(false);

@@ -12,14 +12,17 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   IMAP_PRESETS,
   type PersonalSourcesStatusView,
 } from "../../../../shared/personal-sources";
-import { BotBubbles } from "@/components/chat/bot-bubbles";
-import { sendPromptToChat } from "@/components/chat/quick-spotlight";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
+
+const LazyBotBubbles = lazy(() =>
+  import("@/components/chat/bot-bubbles").then((m) => ({ default: m.BotBubbles })),
+);
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -263,7 +266,11 @@ export function PersonalSourcesSection() {
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="mt-2">
-            {briefMarkdown ? <BotBubbles text={briefMarkdown} /> : null}
+            {briefMarkdown ? (
+              <Suspense fallback={<div className="text-sm text-muted-foreground">{briefMarkdown}</div>}>
+                <LazyBotBubbles text={briefMarkdown} />
+              </Suspense>
+            ) : null}
           </DialogBody>
           <DialogFooter className="mt-4 sm:justify-between">
             <Button

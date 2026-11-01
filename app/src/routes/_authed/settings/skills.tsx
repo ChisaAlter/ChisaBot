@@ -2,7 +2,7 @@ import { IconCheck, IconDownload, IconDots, IconMessageCircle, IconPencil, IconP
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { sendPromptToChat } from "@/components/chat/quick-spotlight";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { SearchBox } from "@/components/memory/memory-notes";
 import { useAsyncAction } from "@/components/ui/async-action";

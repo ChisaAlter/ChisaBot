@@ -10,7 +10,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import * as React from "react";
-import { sendPromptToChat } from "@/components/chat/quick-spotlight";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import {
   PageEmpty,
   PageRows,
