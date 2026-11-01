@@ -5,6 +5,7 @@ import {
   morphStats,
   setMorphSchedulerForTests,
 } from "@/lib/agents/avatar-morph";
+import { applyPerfModeToDocument, setPerfMode } from "@/lib/perf-mode";
 import { AVATAR_SHAPES, SHAPE_COLORS } from "../../../shared/bot-avatars";
 
 /** 头像变形的性能 / 录屏页（scripts/avatar-morph-harness/run.ts 用 Playwright 打开）。不进应用包。 */
@@ -20,6 +21,11 @@ setMorphSchedulerForTests({
 });
 const w = window as unknown as Record<string, unknown>;
 w.__morph = { stats: morphStats, costs };
+// perf-check.mjs 用：开 / 关性能模式（和设置页一样写 <html data-perf>）。
+w.__setPerfMode = (on: boolean) => {
+  setPerfMode(on);
+  applyPerfModeToDocument(on);
+};
 
 const scene = new URLSearchParams(location.search).get("scene") ?? "perf";
 

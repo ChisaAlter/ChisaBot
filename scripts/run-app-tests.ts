@@ -40,6 +40,7 @@ const ISOLATED = [
   "app/tests/shape-avatar.test.tsx",
   "app/tests/avatar-morph.test.tsx",
   "app/tests/avatar-morph-reduced.test.tsx",
+  "app/tests/avatar-perf-still.test.tsx",
   "app/tests/bot-work-mark.test.tsx",
   /*
    * Motion 在**第一次 import 时**就把 `prefers-reduced-motion` 记下来了（它自己的全局状态），之后再改

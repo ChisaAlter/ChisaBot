@@ -314,6 +314,7 @@
 - **例外**：全屏遮罩（对话框 / 抽屉后面那层）本来就是半透明压暗，只去掉模糊，不改成不透明；agent-orb 的点阵层、电脑画面上的小标签同理，保留自己的半透明底。
 - **不许绕过**：元素上的内联 `backdropFilter`、Tailwind 的 important 模糊类（`backdrop-blur-sm!`）、新的 `backdrop-filter: … !important` 都压得过全局规则，`app/tests/no-backdrop.test.ts` 不许出现；`styles.css` 里新增会模糊的规则，必须在 `perf-noblur.css` 的不透明名单里有着落，或者在测试的豁免名单里写明原因。
 - 普通模式不受影响：同屏模糊层数和改之前一样（桌面 5、手机 2）。
+- **形象头像只留静态形状**（2026-10-29）：性能模式和减少动态效果一样，头像的呼吸 / 看 / 眨眼 / 弹 / 跳、表情切换的过渡全停（`html[data-perf="on"] svg.sa :is(.sa-body, .sa-eyes, .sa-open, .sa-happy)`，优先级 (0,3,2) 压过 `.sa` 表情规则，不用 `!important`）；JS 的持续变形（`lib/agents/avatar-morph.ts` 的全局 rAF）不登记，换形状也不走 motion 弹簧，直接画到位。表情本身（选中放大的眼睛、做完了的 ^ ^）照常切换，只是不动。关掉性能模式立刻恢复。
 
 ### 10.4 动效
 
