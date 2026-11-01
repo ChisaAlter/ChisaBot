@@ -90,10 +90,10 @@ describe("ImagePile reserves the box from given dims before the image loads", ()
     expect(reserved.style.aspectRatio.replace(/\s/g, "")).toBe("480/360");
     again.unmount();
 
-    // 不带缩略图画原图：没见过就不留框，加载后记在原图地址下、记的是原图尺寸。
+    // 不带缩略图画原图：没见过就先按固定占位框（#399），加载后记在原图地址下、记的是原图尺寸。
     const plain = render(<ImagePile images={[{ src }]} />);
     const original = plain.container.querySelector("img")!;
-    expect(original.getAttribute("style") ?? "").toBe("");
+    expect(original.style.width).toBe("240px");
     loaded(original, 1600, 1200);
     expect(rememberedImageSize(src)).toEqual({ width: 1600, height: 1200 });
     expect(rememberedImageSize(thumb)).toEqual({ width: 480, height: 360 });
@@ -104,8 +104,10 @@ describe("ImagePile reserves the box from given dims before the image loads", ()
     expect(rememberedImageSize(src)).toEqual({ width: 900, height: 600 });
     expect(rememberedImageSize(`${src}?w=240`)).toBeUndefined();
   });
-  test("no dims and never seen: no reserved style (old behaviour)", () => {
+  test("no dims and never seen: a fixed placeholder box until it loads (#399 rework)", () => {
     const { container } = render(<ImagePile images={[{ src: "/api/chat-files/never-seen" }]} />);
-    expect(container.querySelector("img")!.getAttribute("style") ?? "").toBe("");
+    const img = container.querySelector("img")!;
+    expect(img.style.width).toBe("240px");
+    expect(img.style.aspectRatio.replace(/\s/g, "")).toBe("4/3");
   });
 });

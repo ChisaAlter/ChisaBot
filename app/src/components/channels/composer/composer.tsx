@@ -45,6 +45,7 @@ import {
   shouldClaimPaste,
 } from "@/lib/channels/attachments";
 import {
+  listenDraftFiles,
   markDraftSent,
   rememberedDraft,
   setThreadUi,
@@ -254,6 +255,12 @@ export type ComposerProps = {
    */
   draftKey?: string;
   /**
+   * 还没有对话、但可以马上建一段的页面（新话题页，A1）：没有 `channelId` 时，`+`、粘贴、拖入照样收文件，
+   * 交给这里（调用方先建对话、把字和文件交过去、再跳转）。交出去之前把输入框里的字同步记进 `draftKey`。
+   * 有 `channelId` 时不用它。
+   */
+  onAttachWithoutChannel?: (files: File[]) => void;
+  /**
    * Files a caller's queue left behind, and WHY, reported so they read as a refusal rather than
    * vanishing.
    *
@@ -389,6 +396,7 @@ function ComposerImpl({
   onRetryStop,
   initialValue,
   draftKey,
+  onAttachWithoutChannel,
   droppedAttachments,
   // Nothing parked is the right answer for every caller without a queue, which is most of them.
   queuedAttachmentCount = 0,
@@ -770,6 +778,13 @@ function ComposerImpl({
    * `onImagePaste` is PromptArea's call and not ours, so the choke point has to answer for itself.
    */
   const canAttach = attachmentsEnabled && !disabled;
+  /**
+   * 新话题页（A1）：这里没有对话可上传，但调用方能马上建一段。三个入口照样收文件，原样交出去；筛选、
+   * 上限、拒收的说法都在跳过去之后那个输入框里（它重新放上这些文件时走的就是 `stageFiles`）。
+   */
+  const handsOff =
+    !attachmentsEnabled && !disabled && onAttachWithoutChannel !== undefined;
+  const handOffInputRef = useRef<HTMLInputElement>(null);
 
   /**
    * THE ATTACHMENTS A SEND IN FLIGHT IS ALREADY CARRYING, HIDDEN FOR THE LENGTH OF THE RUN.
@@ -1142,6 +1157,11 @@ function ComposerImpl({
     const files = takeDraftFiles(draftKey);
     if (files.length > 0) void stageFiles(files);
   }, [draftKey, canAttach, stageFiles]);
+  // 挂着以后别处追加的文件（新话题页跳过来那一下里又加的，`addDraftFiles`）：同样走 `stageFiles`。
+  useEffect(() => {
+    if (!draftKey || !canAttach) return;
+    return listenDraftFiles(draftKey, (files) => void stageFiles(files));
+  }, [draftKey, canAttach, stageFiles]);
 
   const stagePastedImage = useCallback(
     (file: File) => {
@@ -1177,6 +1197,57 @@ function ComposerImpl({
    * through `stagePastedImage` below and their text is lost. That is a known defect being kept for
    * now, and it is written out in full on `shouldClaimPaste` in `shared/attachments.ts`.
    */
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const handOff = useCallback(
+    (files: File[]) => {
+      if (!handsOff || files.length === 0) return;
+      // 先按 `stageFiles` 同样的规则筛一遍：全被拒（类型不支持、太大、太多）就不建草稿对话，拒收的说法留在这里。
+      const screened = screenPickedFiles(files, { alreadyStaged: 0 });
+      if (screened.rejected.length > 0) {
+        setRejected((current) => [...current, ...screened.rejected]);
+      }
+      if (screened.accepted.length === 0) return;
+      // 字先同步记下（平时是渲染后的 effect 写的），调用方接着就要把它挪到新对话的草稿键下。
+      if (draftKey) {
+        const current = valueRef.current;
+        setThreadUi(draftKey, {
+          draft: isSegmentsEmpty(current) ? undefined : current,
+        });
+      }
+      onAttachWithoutChannel?.([...screened.accepted]);
+    },
+    [handsOff, draftKey, onAttachWithoutChannel],
+  );
+  const handOffPastedImage = useCallback(
+    (file: File) => handOff([file]),
+    [handOff],
+  );
+
+  useEffect(() => {
+    if (!handsOff) return;
+    const handlePaste = (event: ClipboardEvent) => {
+      const target = event.target as Node | null;
+      if (!target || !containerRef.current?.contains(target)) return;
+      const clipboard = event.clipboardData;
+      if (!clipboard) return;
+      const files = Array.from(clipboard.items)
+        .filter((item) => item.kind === "file")
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => file !== null);
+      const claimed = shouldClaimPaste({
+        kinds: files.map((file) => classifyAttachment(file.type)),
+        plainText: clipboard.getData("text/plain"),
+      });
+      if (!claimed) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handOff(files);
+    };
+    document.addEventListener("paste", handlePaste, true);
+    return () => document.removeEventListener("paste", handlePaste, true);
+  }, [handsOff, handOff]);
+
   useEffect(() => {
     if (!canAttach) {
       return;
@@ -1980,10 +2051,19 @@ function ComposerImpl({
         onDragOver: handleDragOver,
         onDrop: handleDrop,
       }
-    : {
-        onDragOver: refuseDragOver,
-        onDrop: refuseDrop,
-      };
+    : handsOff
+      ? {
+          onDragOver: (event: DragEvent<HTMLDivElement>) =>
+            event.preventDefault(),
+          onDrop: (event: DragEvent<HTMLDivElement>) => {
+            event.preventDefault();
+            handOff(Array.from(event.dataTransfer?.files ?? []));
+          },
+        }
+      : {
+          onDragOver: refuseDragOver,
+          onDrop: refuseDrop,
+        };
 
   /**
    * Rendered only with a channel behind it: without one there is nothing to upload to, and a file
@@ -2010,7 +2090,23 @@ function ComposerImpl({
       ref={fileInputRef}
       type="file"
     />
+  ) : handsOff ? (
+    <input
+      accept={FILE_PICKER_ACCEPT}
+      aria-label={"选择文件"}
+      className="sr-only"
+      multiple
+      onChange={(event) => {
+        const picked = Array.from(event.target.files ?? []);
+        event.target.value = "";
+        handOff(picked);
+      }}
+      ref={handOffInputRef}
+      type="file"
+    />
   ) : null;
+  const openFilePicker = () =>
+    (attachmentsEnabled ? fileInputRef : handOffInputRef).current?.click();
 
   /**
    * WHY SEND IS SHUT WITH A FULL STRIP IN FRONT OF IT — drawn wherever the refusals are, because it
@@ -2121,7 +2217,13 @@ function ComposerImpl({
               maxHeight={COMPACT_MAX_HEIGHT_PX}
               minHeight={COMPACT_MIN_HEIGHT_PX * 2}
               onChange={handleChange}
-              onImagePaste={canAttach ? stagePastedImage : undefined}
+              onImagePaste={
+                canAttach
+                  ? stagePastedImage
+                  : handsOff
+                    ? handOffPastedImage
+                    : undefined
+              }
               onRawPaste={handleRawPaste}
               onSubmit={submitDraft}
               submitOnEnter={!coarsePointer}
@@ -2133,13 +2235,13 @@ function ComposerImpl({
             {/* One toolbar inside the frame: only attach on the left; model pill, context ring and send on the right (DESIGN.md §25). */}
             <div className="glass-composer-toolbar">
               <div className="flex min-w-0 items-center gap-1.5">
-                {attachmentsEnabled ? (
+                {attachmentsEnabled || handsOff ? (
                   <Button
                     aria-label={"附加文件"}
                     className="glass-composer-icon"
                     // Disabled with the conversation, but still labelled: the message is what is gone.
                     disabled={disabled}
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={openFilePicker}
                     size="icon"
                     type="button"
                     variant="ghost"
@@ -2234,7 +2336,13 @@ function ComposerImpl({
               disabled={disabled}
               maxHeight={MAX_HEIGHT_PX}
               onChange={handleChange}
-              onImagePaste={canAttach ? stagePastedImage : undefined}
+              onImagePaste={
+                canAttach
+                  ? stagePastedImage
+                  : handsOff
+                    ? handOffPastedImage
+                    : undefined
+              }
               onRawPaste={handleRawPaste}
               onSubmit={submitDraft}
               submitOnEnter={!coarsePointer}
@@ -2249,12 +2357,12 @@ function ComposerImpl({
 
           <div className="glass-composer-toolbar">
             <div className="flex min-w-0 items-center gap-1.5">
-              {attachmentsEnabled ? (
+              {attachmentsEnabled || handsOff ? (
                 <Button
                   aria-label={"附加文件"}
                   className="glass-composer-icon"
                   disabled={disabled}
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={openFilePicker}
                   size="icon"
                   type="button"
                   variant="ghost"

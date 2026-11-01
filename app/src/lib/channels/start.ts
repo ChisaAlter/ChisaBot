@@ -1,7 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { stashFirstMessage } from "@/components/channels/transcript-messages";
-import { createChannelMutationOptions } from "./mutations";
+import { stashDraftFiles } from "@/lib/chat/ui-memory";
+import { markDraftChannel, moveTextDraft } from "./draft-channel";
+import {
+  createChannelMutationOptions,
+  createDraftChannelMutationOptions,
+} from "./mutations";
 import { channelKeys } from "./queries";
 
 /**
@@ -14,6 +19,7 @@ export function useStartChannel() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const createChannel = useMutation(createChannelMutationOptions(queryClient));
+  const createDraft = useMutation(createDraftChannelMutationOptions());
 
   /**
    * `watch`: the empty chat already had the Bot's 计算机 open in the right column (DESIGN.md §79);
@@ -31,9 +37,37 @@ export function useStartChannel() {
     });
   };
 
+  /**
+   * 新话题页上加了附件（A1）：先建一段草稿对话，把 `fromKey` 下写了一半的字和这些文件交给它（它的输入框以
+   * 频道 id 为草稿键），再替换地址跳过去。那边的输入框挂上时放回字、重新上传文件。没发就离开时删掉
+   * （`draft-channel.ts`）。
+   *
+   * `files` 在草稿建好之后才取：建的那一下里又加进来的文件也在里面（调用方一直往同一个队列里追加）。
+   * 返回草稿对话的 id：跳转那一下里又加的文件由调用方用 `addDraftFiles` 追加过去。
+   */
+  const startDraft = async (
+    agentId: string,
+    files: readonly File[] | (() => readonly File[]),
+    options: { fromKey: string; watch?: boolean },
+  ): Promise<string> => {
+    const channel = await createDraft.mutateAsync([agentId]);
+    queryClient.setQueryData(channelKeys.detail(channel.id), channel);
+    markDraftChannel(channel.id, options.fromKey);
+    moveTextDraft(options.fromKey, channel.id);
+    stashDraftFiles(channel.id, typeof files === "function" ? files() : files);
+    await navigate({
+      params: { channelId: channel.id },
+      replace: true,
+      ...(options.watch ? { search: { watch: true } } : {}),
+      to: "/channel/$channelId",
+    });
+    return channel.id;
+  };
+
   return {
     pending: createChannel.isPending,
     start,
+    startDraft,
     /** Same as `start`. The upstream intent-routing audit row (`POST /api/route`) is gone (slimming P4b). */
     startChosen: start,
   };

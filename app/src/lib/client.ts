@@ -80,6 +80,18 @@ export function tryClient(
 }
 
 /**
+ * What `client` throws when the server says no: the server's sentence, plus the HTTP status for the
+ * few callers that branch on it (a 404 for a conversation this tab removed itself, `draft-channel.ts`).
+ */
+export class ClientError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
  * A request that throws when the server says no, carrying the server's own message.
  *
  * With a `key`, the JSON body is parsed and that key unwrapped, so a caller receives the payload
@@ -115,7 +127,10 @@ export async function client<T>(
       .json()
       .then((body: { error?: string }) => body.error)
       .catch(() => undefined);
-    throw new Error(message ?? options.fallback ?? "该请求失败。");
+    throw new ClientError(
+      message ?? options.fallback ?? "该请求失败。",
+      response.status,
+    );
   }
 
   if (key === undefined) return response;

@@ -25,8 +25,9 @@ describe("打开对话落在最新一条", () => {
 
   test("读存储和接入同时开始，只读一次", () => {
     // 早读同样跨行（`earlyRead.current =` 换行后才是三元），用带空白的三元找它的位置。
+    // 新话题页带附件刚建的草稿对话（`freshDraft`）还没有消息，不读存储。
     const mount = chat.search(
-      /earlyRead\.current\s*=\s*seed === null\s*\?\s*readThreadMessages\(/,
+      /earlyRead\.current\s*=\s*seed === null(?: && !freshDraft)?\s*\?\s*readThreadMessages\(/,
     );
     const join = chat.indexOf("await joinWithin({");
     expect(mount).toBeGreaterThan(-1);

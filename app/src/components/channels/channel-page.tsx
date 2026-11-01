@@ -17,6 +17,10 @@ import { MessageFind } from "@/components/channels/message-find";
 import { DetailPanel } from "@/components/layout/detail-panel";
 import { Button } from "@/components/ui/button";
 import { ErrorCard } from "@/components/ui/skyglass";
+import {
+  holdDraftChannel,
+  releasedDraftRedirect,
+} from "@/lib/channels/draft-channel";
 import { normalizeMessageSearchParam } from "@/lib/channels/focus-message";
 import { markChannelReadMutationOptions } from "@/lib/channels/mutations";
 import { useOpenThread } from "@/lib/channels/open-thread";
@@ -91,6 +95,25 @@ export function ChannelPage({
     if (id && threadUi(channelId)?.agent !== id)
       setThreadUi(channelId, { agent: id });
   }, [channelId, channel.data]);
+
+  // 新话题页上加附件时建的草稿对话（A1）：没发就离开（这一页卸载）时删掉，见 `draft-channel.ts`。
+  useEffect(() => holdDraftChannel(channelId), [channelId]);
+
+  /*
+   * 本标签页回收过的草稿对话（二轮复审）：再打开它（后退、旧地址）拿到 404 时，不显示「找不到这段对话」，
+   * 用 replace 静默换成这个机器人的新话题页。别的 404 照旧显示错误卡。
+   */
+  const releasedAgent = channel.error
+    ? releasedDraftRedirect(channelId, channel.error)
+    : null;
+  useEffect(() => {
+    if (!visible || !releasedAgent) return;
+    void navigate({
+      to: "/channel/new",
+      search: { agent: releasedAgent, topic: "new" },
+      replace: true,
+    });
+  }, [visible, releasedAgent, navigate]);
 
   // 藏着时，全局的组件授权轮询不再为这个机器人跑（DESIGN.md §98.3）。
   useMarkBotHidden(agentId, !visible);
@@ -212,7 +235,7 @@ export function ChannelPage({
         ) : null}
         <ChannelBody
           channel={channel.data}
-          isPending={channel.isPending}
+          isPending={channel.isPending || releasedAgent !== null}
           hasError={Boolean(channel.error)}
         />
       </DetailPanel>

@@ -44,7 +44,8 @@ export function KeepAliveStage<T>({
   idleVisible?: boolean | ((kept: T) => boolean);
   same: (a: T, b: T) => boolean;
   renderKept: (kept: T, state: KeptState) => ReactNode;
-  ttlMs?: number;
+  /** 数字，或按留着的那页定（草稿对话去新话题页时不留：`0`）。 */
+  ttlMs?: number | ((kept: T) => number);
   /** 正在换到另一段对话（新的一页还在延后渲染）：旧的一页半透明留着，不留白（FIX-PLAN F0）。 */
   switching?: boolean;
   children: ReactNode;
@@ -64,7 +65,7 @@ export function KeepAliveStage<T>({
 
   useEffect(() => {
     if (visible || kept === null) return;
-    const timer = window.setTimeout(() => setKept(null), ttlMs);
+    const timer = window.setTimeout(() => setKept(null), typeof ttlMs === "function" ? ttlMs(kept) : ttlMs);
     return () => window.clearTimeout(timer);
   }, [visible, kept, ttlMs]);
 
