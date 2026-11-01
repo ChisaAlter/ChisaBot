@@ -85,6 +85,12 @@ export interface AgentOrbProps {
   size?: string;
   /** Shared AI state driving speed, scale, saturation and reactivity. */
   state?: AIState;
+  /**
+   * Keep the ambient mesh rotating and the sheen drifting even while `idle`
+   * (e.g. the orb of a selected bot). Otherwise an idle orb holds still, so a
+   * page that just shows it costs no frames (卡顿修复，2026-10-30).
+   */
+  active?: boolean;
 }
 
 const AgentOrb: React.FC<AgentOrbProps> = ({
@@ -94,8 +100,11 @@ const AgentOrb: React.FC<AgentOrbProps> = ({
   animationDuration = 20,
   amplitude,
   state = "idle",
+  active = false,
 }) => {
   const shouldReduceMotion = useReducedMotion();
+  /** Ambient loops run only while the bot is busy (any non-idle state) or the orb is marked active. */
+  const ambient = !shouldReduceMotion && (active || state !== "idle");
   const amplitudeValue = useAmplitudeValue(amplitude);
   const stateMotion = getAIStateMotion(state);
 
@@ -206,7 +215,7 @@ const AgentOrb: React.FC<AgentOrbProps> = ({
     if (state === "error") {
       return { scale: 1, x: ERROR_SHAKE_KEYFRAMES };
     }
-    if (stateMotion.motif === "breathe") {
+    if (stateMotion.motif === "breathe" && ambient) {
       return { scale: BREATHE_SCALE, x: 0 };
     }
     return { scale: 1, x: 0 };
@@ -219,7 +228,7 @@ const AgentOrb: React.FC<AgentOrbProps> = ({
     if (state === "error") {
       return { duration: ERROR_SHAKE_DURATION, ease: EASE_IN_OUT };
     }
-    if (stateMotion.motif === "breathe") {
+    if (stateMotion.motif === "breathe" && ambient) {
       return {
         duration: BREATHE_SECONDS,
         ease: EASE_IN_OUT,
@@ -257,7 +266,8 @@ const AgentOrb: React.FC<AgentOrbProps> = ({
       />
 
       <motion.div
-        className="agent-orb"
+        className={cn("agent-orb", !ambient && "is-still")}
+        data-ambient={ambient ? "on" : "off"}
         style={
           {
             "--animation-duration": `${loopDuration}s`,
@@ -420,6 +430,11 @@ const AgentOrb: React.FC<AgentOrbProps> = ({
           to {
             --angle: 360deg;
           }
+        }
+
+        .agent-orb.is-still::before,
+        .agent-orb.is-still > .agent-orb-sheen {
+          animation: none;
         }
 
         @media (prefers-reduced-motion: reduce) {
