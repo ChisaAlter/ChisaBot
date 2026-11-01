@@ -21,8 +21,16 @@ export function PresenceList({ children }: { children: ReactNode }) {
 const ENTER = [0.22, 0.8, 0.24, 1] as const;
 const EXIT = [0.4, 0, 1, 1] as const;
 
-export const PresenceItem = forwardRef<HTMLDivElement, { children: ReactNode; className?: string }>(
-  function PresenceItem({ children, className }, ref) {
+/**
+ * `layoutKey`：只有它变了才量位置做补位动画（motion 的 `layoutDependency`）。不给时 motion 每次重渲染都量——
+ * 在提交前读一次 `document` 的滚动位置、提交后再读一次，两次都会强制同步布局；侧栏机器人列表每次换页都重渲染，
+ * 4× 降速下关设置时这两次布局占 ~75ms。传列表里的下标即可：插入 / 删除 / 换序都会改下标，补位动画照旧。
+ */
+export const PresenceItem = forwardRef<
+  HTMLDivElement,
+  { children: ReactNode; className?: string; layoutKey?: unknown }
+>(
+  function PresenceItem({ children, className, layoutKey }, ref) {
     return (
       <motion.div
         animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: 0.22, ease: ENTER } }}
@@ -30,6 +38,7 @@ export const PresenceItem = forwardRef<HTMLDivElement, { children: ReactNode; cl
         exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.16, ease: EXIT } }}
         initial={{ opacity: 0, y: 6, scale: 1 }}
         layout="position"
+        layoutDependency={layoutKey}
         ref={ref}
         transition={{ layout: { duration: 0.22, ease: ENTER } }}
       >

@@ -6,7 +6,7 @@ import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
 import { RosterToggle } from "@/components/layout/roster-toggle";
 import { Sidebar, SidebarContent, SidebarRail, useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { scrollIntoViewWithin } from "@/lib/scroll-within";
+import { scrollIntoViewWithinAsync } from "@/lib/scroll-within";
 import { cn } from "@/lib/utils";
 
 /**
@@ -82,15 +82,10 @@ export function SectionRail({
   // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     // 只滚左栏自己（§98.5）：原生 scrollIntoView 会连藏在下面的聊天一起挪。
+    // 不当场读布局（§41 ④）：等浏览器排完版再算，切分类时不再多一次整页强制布局。
     const box = scrollRef.current;
     const row = box?.querySelector<HTMLElement>(".nav-row.is-on");
-    if (!box || !row) return;
-    // 放到下一帧再量（jank P1-6）：打开设置的那一帧不为它强制排版；行已在可视区内就不滚。
-    const frame = requestAnimationFrame(() => {
-      if (!rowOutOfView(row, box)) return;
-      scrollIntoViewWithin(row, { container: box });
-    });
-    return () => cancelAnimationFrame(frame);
+    if (box && row) return scrollIntoViewWithinAsync(row, { container: box });
   }, [pathname]);
 
   if (collapsed) {
