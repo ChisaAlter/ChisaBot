@@ -196,9 +196,10 @@ function RouteComponent() {
     // The fade runs only after the completion is saved, so a failed save never fades a page the
     // person still needs — and navigation waits for the fade, so the home screen never pops in
     // over a half-faded wizard.
+    // 天空背景 #sky-root 是 fixed z-0；引导页要建立更高层级，否则标题和“继续”会被盖住。
     <motion.div
       animate={{ opacity: leaving ? 0 : 1 }}
-      className={`min-h-svh overflow-hidden flex flex-col items-center justify-center w-full ${leaving ? "pointer-events-none" : ""}`}
+      className={`relative z-10 min-h-svh overflow-hidden flex flex-col items-center justify-center w-full ${leaving ? "pointer-events-none" : ""}`}
       initial={false}
       onAnimationComplete={() => {
         if (leaving) {
