@@ -51,9 +51,11 @@ describe("简单回合（§93）", () => {
     expect(compact.hidden.has("a1")).toBe(false);
   });
 
-  test("跑完就收：工具后面没有回答（出错 / 中断）也一样，那一轮另有「这一轮没有做完」", () => {
+  test("跑完了但没有看得见的回答（出错 / 中断）：那一行不收，下面挂「这一轮没有回答」（回复显示①，2026-10-29）", () => {
     const compact = compactTurns(userTurn(), false, new Set());
-    expect(compact.work.get("t1")?.quiet).toBe(true);
+    expect(compact.work.get("t1")?.quiet).toBe(false);
+    expect(compact.work.get("t1")?.answered).toBe(false);
+    expect(compact.noAnswerAfter.get("t2")).toEqual({ last: true });
   });
 
   test("被停掉的一轮也收（另有「已停止」），只有还在跑的照旧画着", () => {
@@ -96,8 +98,8 @@ describe("简单回合（§93）", () => {
     ];
     expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(true);
     expect(compactTurns(items, true, new Set()).work.get("t1")?.quiet).toBe(false);
-    // 没回答（中断 / 出错）跑完也收，提示走「这一轮没有做完」。
-    expect(compactTurns(items.slice(0, 5), false, new Set()).work.get("t1")?.quiet).toBe(true);
+    // 没回答（中断 / 出错）：不收，否则这一轮是一片空白（回复显示①，2026-10-29）。
+    expect(compactTurns(items.slice(0, 5), false, new Set()).work.get("t1")?.quiet).toBe(false);
   });
 
   test("准备动作（看技能）不算步骤、也不挡", () => {
@@ -114,9 +116,10 @@ describe("简单回合（§93）", () => {
     expect(isQuietWork({ calls, live: false, hasFinal: true })).toBe(true);
     expect(isQuietWork({ calls, live: false, hasFinal: true, confirmed: new Set(["t2"]) })).toBe(true);
     expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: QUIET_MAX_SECONDS + 1 })).toBe(true);
-    // 还在跑：不收（它是进度）。跑完的，有没有回答、被没被停掉，一律收起。
+    // 还在跑：不收（它是进度）。跑完有回答、或被停掉（另有「已停止」）的收起；没有回答的不收（回复显示①）。
     expect(isQuietWork({ calls, live: true, hasFinal: true })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: false })).toBe(true);
+    expect(isQuietWork({ calls, live: false, hasFinal: false })).toBe(false);
+    expect(isQuietWork({ calls, live: false, hasFinal: false, stopped: true })).toBe(true);
     expect(isQuietWork({ calls, live: false, hasFinal: true, stopped: true })).toBe(true);
     // hideSummary: false 时是原来的 §93：没回答 / 被停掉 / 确认卡 / 用时都还有效。
     expect(isQuietWork({ calls, live: false, hasFinal: false, hideSummary: false })).toBe(false);

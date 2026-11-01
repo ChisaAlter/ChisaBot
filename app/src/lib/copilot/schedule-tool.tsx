@@ -3,6 +3,7 @@ import { IconAlarm } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 import { memo } from "react";
 import { z } from "zod";
+import { type CardCheck, registerCardCheck } from "./tool-renderers";
 
 /**
  * `schedule_create` 的确认卡（DESIGN.md §55）。RENDER ONLY：工具在服务器上执行，这里只把结果画成一张小卡：
@@ -25,6 +26,9 @@ function parse(result: unknown): Created | null {
   const created = value as Created | null;
   return created && typeof created === "object" && created.ok && created.schedule ? created : null;
 }
+
+/** schedule_create 完成后画不画卡片：建成了才画；被拒绝 / 报错时 ScheduleCard 返回 null（同一个 parse）。 */
+export const scheduleDrawsCard: CardCheck = registerCardCheck(["schedule_create"], ({ result }) => parse(result) !== null);
 
 export function ScheduleTool() {
   useRenderTool({

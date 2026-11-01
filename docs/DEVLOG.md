@@ -1,7 +1,6 @@
 # DEVLOG
 
 <<<<<<< HEAD
-<<<<<<< HEAD
 ## 登录循环保护小补丁（dev4/login-loop-followup，#442 后续）
 
 **动机**：#442 审查时留下的三处小问题。
@@ -705,7 +704,6 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 - 应修：403 不再直接算「密钥无效」。先看 body / `code`：地区限制（`unsupported_country_region_territory`、「region … not supported」）→ 新分类 `region`（网页「模型服务商不支持服务器所在地区」，不可重试）；内容拦截（content filter / policy、moderation、policy_violation）→ `content_filter`；明确说 API key / unauthorized → `auth`；分不清（如只有「Forbidden」）→ 通用句子。
 - 测试：`test_protocol.py` 加这三个例子 + 403 各情况；`test_adapter.py` 加工具 `FileNotFoundError` 整轮只出通用句子、不带路径；`app/tests/hermes-error-categories.test.ts` 加 `region`，`friendly-error.ts` 加对应规则。
 - 复审应修：分类函数自己可能抛异常——`_error_body` 里 `json.dumps` 遇到不可序列化的 body（如含 bytes）抛 TypeError，属性 getter 也可能抛别的异常；它在 `chisabot_acp.py` 的 `except` 里调用，一抛就跳过 `run.fail`，这一轮卡住。现在 `json.dumps(default=str)`，逐个属性 try，整体 try 失败退回 `str(error)`、再失败退回类名；bytes body 用 `errors=replace` 解码后再匹配；整段截到 64KB 再跑正则。适配器那层再包一层兜底，分类出错时用通用句子照样 `run.fail`。测试：不可序列化 body、getter / `__str__` 都抛、bytes body、超长 body 截断、分类函数抛异常时整轮仍结束。
-=======
 ## 链接卡组：流式骨架、悬停长任务、用户消息链接卡、审查模块 6（fix/linkstack-streaming，依赖 #397）
 
 **悬停长任务的原因**：在 Ayase 的真 Chrome 上用带侧栏 / 顶栏外壳的测试页（150 条填充消息）录 trace，悬停换主位时每次都有一次约 3581 个元素的整页 `UpdateLayoutTree`（占长任务约 95%）。卡片换主位时改的是 `data-slot` 属性；styles.css 里有 `.glass-shell:has([data-slot=…])`（3864 行、8903–8910 行）这类规则，Chromium 的 `:has()` 失效集合按属性名建，任何元素的 `data-slot` 变了都会让 `.glass-shell` 整棵子树重算样式。按规定不动 styles.css，把卡组用的属性改名为 `data-stack-slot`（CSS 和测试同步改）。
@@ -725,7 +723,6 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 6. 预览可选 `kind: "video"` 和 `thumbnail`（服务端由另一个 PR 加，这里没改服务端）：是 video 时图上叠一个播放角标，不用 blur，`pointer-events: none`。
 
 **截图**：`docs/images/linkstack-fix/`（左改前、右改后）。顶栏一项因 #374 未合并跳过。没有升版本号。
->>>>>>> fix/linkstack-streaming
 =======
 ## Unreleased — 新话题页带附件（A1）+ 用户消息图片稳定显示
 
@@ -1399,7 +1396,6 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 
 **0.1.106 部署**（2026-10-29 10:03–10:16 北京时间）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.106-20261029T020328Z.dump`（`pg_restore -l` 767 条目）。`deploy-serial.sh 0ba9676` 镜像 `local/chisabot:auto-202610290203-0ba9676`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.106` / `0ba9676`。`request.sh smoke` PASSED（admin 模型自检 `ok:true persisted:false`），`health.sh` 通过，公网 `/login` 200，容器 healthy、无重启，sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（md5 与部署前备份一致），`nginx -T` 仍有 22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`。镜像清理：更新器已自动删除 `auto-202610282010-ed93b05`，手动删除 `keep-d6cd2ec`；保留当前（BASE）0ba9676、上一版 3856d36、`keep-628d527`。
 
-<<<<<<< HEAD
 ## 2026-10-29 主题系统提案 + 账号卡 RFC（文档 PR，待小爱批准）
 
 **内容**：只改文档，不改代码，不升版本。
@@ -1440,7 +1436,6 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 - 返修（同日）：效果图按第二版参数重拍，2、3、4 替换，新增 5（三列：0.40 / 只降底色 / 第二版），图片目录约 380KB；透光对比发现压背景会把面板洗白 / 压灰，透光不如只降底色，已在 design-system.md §11 照实写明并请小爱取舍；另加了 tid 参考图的用途（06、04 输入框，08 底部面板，05 空状态和加载）。
 - 第三版（小爱选方案 ③）：基线改回只降底色（浅 0.25 / 深 0.32，不压背景），只给过不了 AA 的预设单独补偿：sky 浅、sakura 深用轻压背景 `contrast(0.8)` + 亮度 1.15 / 0.85；aurora 深再把底色提到 0.36；sky 深、mist 浅、ocean 浅、dusk 浅、dusk 深再给列表项加 0.13–0.25 的淡衬底。12 张壁纸主文字最差 6.32、次文字最差 4.52，都过 AA；侧栏对比图换成基线和第三版并排，2–5 号图按第三版重拍。
 - 第四版（小爱复审第三版后）：补偿顺序反过来，先加局部衬底，压背景和提底色放到最后。12 套面板都回到基线（0.25 / 0.32，不压背景），aurora 深的 0.36 和所有 t2 都去掉；8 套只给文字所在的列表项 / 卡片加主题实色半透明衬底 + 细描边和高光边（0.18–0.45，上限 0.48）。12 张壁纸主文字最差 6.32、次文字最差 4.56，没有一套还需要 t2；5 号图右列和 2–4 号图按第四版重拍。
-=======
 ## 2026-10-29 链接卡组照 Hark 错落叠放（feat/hark-linkstack，依赖 #380）
 
 **做了什么**：`LinkCardStack` 把一条回复里最多 3 个链接放进同一个网格格子，位置全靠 transform（槽位写成 `--lc-sx / --lc-sy / --lc-rot / --lc-sc` 变量），主位居中抬高、左右两张倾斜约 -4° / 3.5°、缩到 0.94。卡宽 `min(208px, (100cqw − 16px) / (1 + 0.72 × 侧边张数))`，左右两张各错开 0.72 卡宽，所以 390 宽的手机上整叠也不出屏。单个链接是不倾斜的单卡（宽 min(280px, 100%)）。
@@ -1464,7 +1459,6 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 **没碰**：styles.css、wallpaper_core.html、bot-bubbles.tsx 的 SVG 净化、appearance 相关文件；没有 blur、`:has`、`!important`；未升级版本号。截图和录屏在 docs/images/linkstack/（只留 stack.webm 和 5 张关键截图：3 张前后对比、换位序列、触屏点击）。
 
 **评审后修改（#397）**：主位在用户悬停 / 聚焦 / 点过之前按当前张数重算（流式 1 → 3 张时换到中间那张），选过之后不再动；流式中第 3 张照样出来，不满 3 张才放骨架；`key` 带上序号，同一网址出现两次也不撞；「追问」自己 `:focus-visible` 时显示，叠放时不在主位的卡上 `visibility: hidden` + `pointer-events: none`，触屏单卡上一直显示；侧卡错开从 0.62 改成 0.72 卡宽，侧卡露出的标题更完整。
->>>>>>> fix/linkstack-streaming
 
 ## 2026-10-29 发版 0.1.107
 
@@ -1504,6 +1498,49 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 **版本**：根、`app`、`server` 升到 `0.1.109`；PC / Android 不变。不打 tag、不发 Release。
 
 **0.1.109 部署**（2026-10-29 16:07 北京时间开始）：部署前确认 Haupt 上 `chisabot-zh` 的容器环境、s6 环境和配置文件里都没有设置 `CHISABOT_REPLY_SOURCES`（代码默认关）；另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.109-20261029T080656Z.dump`（`pg_restore -l` 767 条目）。`deploy-serial.sh 63914d8` 镜像 `local/chisabot:auto-202610290807-63914d8`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.109` / `63914d8`；`request.sh smoke` PASSED，`POST /api/admin/smoke` 模型自检 `ok:true persisted:false`，`health.sh` 通过，公网 `/login` 200，容器 healthy、无重启、日志无错误，sidecar 隔离 ALL GREEN，未回滚；部署后运行中的容器仍未设置 `CHISABOT_REPLY_SOURCES`（关）。网关 nginx 配置未变（22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`）。镜像：更新器已自动删除 6790ef7；保留当前（BASE）63914d8、上一版 9e9ca0d、`keep-628d527`。
+
+## 2026-10-29 回复过程照 Hark 改（feat/hark-reply-steps）
+
+- 对照 `/workspace/hark-compare`（REPORT 第「工具过程」「等待态」两行、P0 / P1 两项）和反馈图 `tid/02.png`：Hark 等待时只有一行状态，做完不留痕迹；ChisaBot 原来有「思考中」气泡、做完还留着干活卡、还会冒出只有「---」的步骤。
+- 新增 `StatusCapsule` / `PausedCapsule`（`app/src/components/chat/status-capsule.tsx` + `.css`）：转圈 + 当前动作 + 「N 秒」，不到 1 秒不显示秒数；运行中的 `WorkRow` 画成同一个胶囊（还能点开看步骤），`Thinking` 和停顿占位也换成胶囊，原来的三点气泡、`PauseDots` 删掉。秒数从这一轮开始算（`liveSince`），思考 → 干活不会归零。
+- `WorkRow`：从运行变成完成时自动收起并记住；历史里完成的行一律收起。
+- `isBlankNote`（`lib/chat/work-steps.ts`）：去掉 markdown 后没有字母、数字、emoji 的过程话（「---」「…」）不进步骤列表，`compactTurns` 也把这种助手正文当作隐藏。
+- 规则：只用现有 token；胶囊不用 blur，动画只动 transform / opacity；`prefers-reduced-motion` 关动画，`prefers-reduced-transparency` 和 `html[data-perf="on"]` 用不透明底色（与抽屉同色）；没有 `:has()`、没有 `!important`；styles.css 和禁区文件都没动。
+- 已知：做完的干活行在本页亲眼看着收起时，按 §82.9 仍以 0 高、`aria-hidden` + `inert` 的折叠行留在 DOM 里（重新打开对话时不画）；工具过程默认隐藏后只剩空 div 的工具行由 styles.css 已有规则 `display: none`，不占位。
+
+## 2026-10-29 回复过程审查修正（feat/hark-reply-steps，#404 退回）
+
+- 只有代码块的回复整段消失：`isBlankNote` 以前先过 `plainNote`，它把 ``` 代码块整段去掉，`compactTurns` 就把这段当空段藏了（流式时代码块一闭合就没了）。改成只认整段都是分隔符（`-`、`*`、`_`、`=`、`~`、`.`、`·`、`…`、`。`、破折号、制表线，可以夹空白）；代码块、表格、链接都不算空。
+- 工具失败、后面没有文字时一片空白：`HIDE_FINISHED_WORK_SUMMARY` 让做完的干活行一律收起，`ChatTranscript` 里又写死了 `hasFinal: true`。现在 `compactTurns` 给每轮算 `answered`（结果气泡 / render_ui 卡片 / 留着的气泡），`isQuietWork` 在没有回答时不收（被停掉的照旧收，另有「已停止」）；新增 `noAnswerAfter`，最后一个看得见的行后面挂 `NoAnswerRow`「这一轮没有回答」，最后一轮带重试（用现有的 `onRetryUnanswered`，和重新生成同一条路；错误卡已经在的时候不重复挂）。只回了 `---` 的一轮同样处理。
+- 读屏：干活卡按钮的 `aria-label` 改成「当前动作（，N 步失败），展开 / 收起步骤」；对话末尾一个一直挂着的 `role="status"`（`transcript-live-status`），「思考中」→ 当前步骤在同一个节点里换字，胶囊和干活卡自己不再带 `role="status"`。
+- 焦点：干活行在这一轮结束时跟着收成 inert 的折叠行时，`WorkRow` 在 layout effect 里把焦点移到后面第一条看得见的行（没有就往上找，必要时给 `tabIndex=-1`），不掉到 body；行没收起（没有回答）时焦点留在按钮上。
+- 跳动：停顿时的胶囊（`data-variant="pause"`）上下内边距 1px，高 22px，和以前停顿的占位一样，来新字时不多跳 16px。
+- 秒数：胶囊的开始时间改用 `work-card.tsx` 的 `turnStartedAt(turnKey)`（模块里按这一轮的 key 记），切换频道回来不归零，和干活卡同一个数。
+- 胶囊换成干活卡不再播进场淡入（`.chat-work-card.rs-capsule { animation: none }`）；深色不再写死 `--rs-solid`，用 `--glass-bg-solid`。
+- 测试：`reply-steps.test.tsx` 补了只有代码块、工具失败没有文字、只回 `---`、秒数重挂不归零、`PausedCapsule`、焦点、aria-label、CSS 规则；`quiet-turn.test.ts` 里「没回答也收起」的断言按新规则改了。
+- 已知遗留：收起的行仍作为 0 高折叠行留在 DOM 里，长对话里会累积；`PausedCapsule` 出现 / 消失没有给读屏做防抖。
+
+## 2026-10-29 回复过程第二轮审查修正（feat/hark-reply-steps，#404 复审 7d064048）
+
+- 「这一轮没有回答」以前只认文字和 `render_ui`：以 `image_generate`、`file_share`、`ask_person`、`github_create_issue`（确认卡）这类卡片收尾的一轮会被挂重试，点了会重新生成图片、重新建 issue。现在 `compactTurns` 多一个 `drawsCard` 参数，`ChatTranscript` 传 `toolDrawsCard`：读 CopilotKit 注册的渲染器（新文件 `lib/copilot/tool-renderers.ts`，挑法和 `useRenderToolCall` 一样；不在 Provider 里返回空，不抛错），有渲染器就算卡片，注册时标了 `lineOnly`（计算机工具那些只画一行过程 / 什么都不画的，经 `approval-tools.tsx` 的 `useFrontendTool` 打标）的不算；没有渲染器时只有宿主被拒（`isHostAccessRefusal`，和 `ServerToolLine` 共用）算；确认卡（`useThreadConfirmations`）和行内审批卡（审批收件箱）挂着的工具也算，两份列表都和卡片共用缓存，还没读到时先当有卡片；有渲染器的活动消息也算。
+- 窄屏：`styles.css` 在 ≤ 560px 把做完的干活行的 `.chat-work-meta` 藏了，手机上看不到「N 步失败」。`WorkRow` 多一个 `unanswered`，没有回答的那一行带 `data-unanswered`，`status-capsule.css` 用属性选择器（多一级优先级）在窄屏重新显示；没改 `styles.css`，那条规则也不在 #376 的范围里。
+- 计时：`turnStartedAt` 以前按这一轮的 key 只记一次，同一轮重新跑时接着上一次算。现在 `ChatTranscript`（和 `WorkRow`）在这一页亲眼看着这一轮从「跑着」变成「停了」时 `markTurnRunEnded`，下次 `turnStartedAt` 清掉开始时间、结束时间和记下的用时，从 0 算；切频道回来重挂时还在跑、没经过「停了」，秒数照旧接着算。
+- 测试（`reply-steps.test.tsx`）：图片 / 文件 / 问人 / 等确认 / 宿主提示 / 活动卡收尾都不挂；只画一行过程的渲染器和普通工具失败照常挂；末尾已有错误卡时不重复挂重试（挂载 `ChatTranscript` 对照）；重跑归零、重挂不归零；`data-unanswered` 和窄屏 CSS 规则。合了 main 0.1.109（merge commit）。
+
+## 2026-10-29 回复过程第三轮审查修正（feat/hark-reply-steps，#404 复审 cc398fc0）
+
+- `toolDrawsCard` 以前把不是 `lineOnly` 的渲染器都当画了卡片，但图片 / 文件工具没拿到文件、`schedule_create` 被拒或报错、`render_ui` 的规范画不出东西（或被拒、格式有误只画一行）时渲染器什么都不画，这一轮被算成有回答，屏幕上却空着、也没法重试。现在渲染器模块自己导出判断（`imageToolDrawsCard` / `fileToolDrawsCard` / `scheduleDrawsCard` / `renderUiDrawsCard`，渲染时用同一个函数决定返回不返回 null），按工具名登记到 `tool-renderers.ts` 的 `registerCardCheck`（`useRenderTool` 会把 `render` 再包一层，没法像 `lineOnlyRender` 那样给函数打标）；`toolDrawsCard` 在工具有了结果之后问它，还没结果（骨架）照旧算卡片。`render_ui` 写完后的判断抽成 `renderUiFinal`，组件和判断共用。测试：每种返回 null 的情况都挂「这一轮没有回答」，成功的不挂，原来用 `card = () => null` 加假结果的用例改成真实结果。
+
+## 2026-10-29 回复过程第四轮审查修正（feat/hark-reply-steps，#404 复审 3d65ef4c）
+
+- **必改**：`device_agent_run` 被拒时 `taskIdOf` 返回 null、渲染器画 `<></>`，但没登记判断，这一轮被算成有回答。`local-agent-tool.tsx` 导出 `localAgentDrawsCard`（`taskIdOf(result) !== null`，和渲染器同一个函数）并 `registerCardCheck(["device_agent_run"])`。
+- **应改**：还没有结果时骨架一直算卡片——这一轮结束了、没按停止、工具一直没回，就永远算有回答，骨架也一直转。现在 `compactTurns` 把每一轮的 `live` 传给 `drawsCard(item, live)`，`toolDrawsCard` 新增 `live` 选项：登记过判断的渲染器在 `result === undefined` 时只有这一轮还在跑才算卡片。`compactTurns` 另外返回 `liveTools`（正在跑的那一轮里的调用）；`TranscriptToolCall` 对不在里面、没有结果、登记过判断的调用不再画骨架，换成一句不动的「画图没有完成」「生成界面没有完成」（`UnfinishedTool`），和下面的「这一轮没有回答」+ 重试一致。没登记判断的渲染器（问人这类等用户的、确认卡）照旧，按了停止的一轮也照旧不挂「没有回答」。
+- **可选（都做了）**：
+  - `delegate_task` 被拒时 `workerIdOf` 以前返回 undefined，`WorkerCard` 一直显示「正在交给后台…」的等待卡。现在有结果但没有 workerId 返回 null，渲染器画空（同 `device_agent_run`），并登记 `workerDrawsCard`。
+  - `render_ui` 格式有误那一行：这一轮还在跑时照旧写「格式有误，机器人会修正后重新生成」；这一轮结束了（下面挂着重试）写「界面格式有误，没能显示」（`renderUiFailedDetail`，由 `TranscriptToolCall` 提供的 `ToolTurnEndedContext` 决定）。
+  - `reply-steps.test.tsx` 的 `live ? false : true` 改成 `!live`。
+- 测试都加在 `app/tests/reply-steps.test.tsx`（「复审 #404 第四轮」一组）：被拒 / 拿到 id 的 `device_agent_run` 和 `delegate_task`、结束后没有结果的六种骨架工具（还在跑时照旧算卡片）、`UnfinishedTool` 的文字、没登记判断的渲染器、按了停止的一轮、`render_ui` 两种说法；登记表测试加上两个新判断。原来「工具还没有结果：照旧算卡片」那条改成只在这一轮还在跑时成立。
+- 顺手：`PausedCapsule` 的测试以前要求正好「4 秒」，机器忙时 0.95 秒的等待拖过 1 秒就变成 5 秒（改前的 3d65ef4c 上也会这样失败），改成 4 ≤ 秒数 < 10。
 
 ## 2026-10-29 性能模式 / 减少透明度：全局不模糊（分支 `perf/global-no-backdrop`）
 

@@ -218,6 +218,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_navigate",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Open a web page on your own computer so the person can watch. Use this when asked to look " +
       "at, visit, open or check a website. Returns the page title and its readable text, so answer " +
@@ -287,6 +289,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_read",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Read the page currently open on your computer, without opening anything. Use this after you " +
       "click something that changes the page, such as submitting a form, to find out what it now says.",
@@ -305,6 +309,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_tabs",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Manage the tabs of your browser (the person sees the same tabs). Every other computer_ tool acts on the " +
       "ACTIVE tab. action=list shows the open tabs (id, title, url, which is active). action=new opens a new tab " +
@@ -362,6 +368,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_bookmarks",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "The person's browser bookmarks (收藏夹), shared by all their bots. action=list returns them (id, title, url). " +
       "action=open opens bookmark `id` in your browser (newTab=true keeps the current page in its own tab). " +
@@ -482,6 +490,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_snapshot",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "List the things on the current page you can act on: fields, buttons, links and checkboxes, " +
       "each with a ref, its label and its current value. Call this BEFORE clicking or typing, and " +
@@ -517,6 +527,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_type",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Enter text into a field on the page. Give the ref of the field from your most recent " +
       "snapshot and the snapshotId it came from. This replaces whatever the field already contains. " +
@@ -577,6 +589,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_click",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Click something on the page: a button, a link, a checkbox or a radio option. Give the ref " +
       "from your most recent snapshot and the snapshotId it came from. To choose in a dropdown " +
@@ -626,6 +640,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_key",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Press a key, such as Enter, Tab or Escape. Give a ref to press it while a particular field " +
       "is focused, or omit the ref to press it on the page.",
@@ -668,6 +684,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_request_secret",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Ask the person for ONE value you must not be told: a password, a one-time code, a card number. " +
       "Focus the field first with computer_click, then call this with the ref of that field and a " +
@@ -728,6 +746,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "report_refusal",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Record that you DECLINED something you were asked to do, because it looked unsafe, was outside " +
       "what you are for, or you judged you should not. Call this whenever you say no to a request, in " +
@@ -766,6 +786,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_request_help",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Ask the person to take control of your computer and do something you cannot: sign in, enter a " +
       "password or a one-time code, or clear a CAPTCHA. Say specifically what you need done. They " +
@@ -795,6 +817,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_list_files",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "List what is in your workspace: every file and folder you have saved, with sizes. Call this " +
       "FIRST when you are asked what files you have, or before reading a file whose exact name you " +
@@ -852,6 +876,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_read_file",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Read a file you saved earlier in your own workspace. Paths are relative to your workspace, " +
       "such as notes.md or reports/august.csv. Your workspace survives between conversations, so use " +
@@ -907,6 +933,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_run_command",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Run a shell command on your own computer. Use this for anything the browser cannot do: " +
       "installing a tool you need, processing a file you saved, running a script. The working " +
@@ -1017,6 +1045,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_write_file",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description:
       "Save a file in your own workspace so you still have it later. Paths are relative to your " +
       "workspace and folders are created as needed. Set append to true to add to the end of an " +
@@ -1094,6 +1124,8 @@ export function ComputerTools() {
   useFrontendTool({
     available,
     name: "computer_scroll",
+    // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
+    lineOnly: true,
     description: "向下滚动页面，或向上滚动负量，以查看长页面的更多内容。",
     parameters: z.object({
       deltaY: z

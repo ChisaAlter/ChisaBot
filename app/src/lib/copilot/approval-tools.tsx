@@ -16,6 +16,7 @@ import {
 } from "./approval-context";
 import { beginFrontendTool } from "./frontend-tool-activity";
 import { markApprovalPause } from "./stopped-turn";
+import { lineOnlyRender } from "./tool-renderers";
 
 type RenderProps = { toolCallId: string; [key: string]: unknown };
 
@@ -81,19 +82,31 @@ export function effectiveStatus(httpStatus: number, payload: unknown): number {
  * authenticated run". Nothing in this handler may depend on render-time state for that reason.
  */
 export function useFrontendTool<T extends Record<string, unknown>>(
-  tool: ReactFrontendTool<T>,
+  {
+    lineOnly,
+    ...tool
+  }: ReactFrontendTool<T> & {
+    /**
+     * 这个工具在对话里只画一行过程（或什么都不画），不是卡片：以它收尾、后面没有字的一轮仍算「没有回答」
+     * （tool-renderers.ts）。等审批时画的审批卡另由审批收件箱认出来。
+     */
+    lineOnly?: boolean;
+  },
 ) {
   const { copilotkit } = useCopilotKit();
   // Stable for the provider's life, so the SDK's once-registered handler may keep it.
   const queryClient = useQueryClient();
   const bot = useActiveBotHolder();
   const render = tool.render;
+  const mark = <R,>(fn: R): R =>
+    lineOnly && fn ? (lineOnlyRender(fn as object) as R) : fn;
   useSDKFrontendTool({
     ...tool,
+    ...(render ? { render: mark(render) } : {}),
     ...(writes.has(tool.name)
       ? {
           // A component, so the approval card can use hooks; the SDK keeps this function forever.
-          render: (props: RenderProps) => {
+          render: mark((props: RenderProps) => {
             const Original = render as
               | ((props: RenderProps) => ReactNode)
               | undefined;
@@ -103,7 +116,7 @@ export function useFrontendTool<T extends Record<string, unknown>>(
                 fallback={Original ? <Original {...props} /> : null}
               />
             );
-          },
+          }),
         }
       : {}),
     handler: tool.handler
