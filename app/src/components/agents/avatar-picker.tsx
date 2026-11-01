@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  ACCEPTED_AVATAR_HINT,
   ACCEPTED_AVATAR_TYPES,
   AVATAR_COLORS,
   AVATAR_EMOJIS,
@@ -25,6 +26,7 @@ import {
   loadAvatarSource,
   renderAvatar,
   SHAPE_COLORS,
+  smallSourceHint,
   type ShapeColor,
 } from "@/lib/agents/avatars";
 import { SHAPE_COLOR_HEX, SHAPE_COLOR_LABEL, SHAPE_LABEL } from "@/lib/agents/avatar-shapes";
@@ -68,6 +70,7 @@ export function AvatarField({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const shownName = name.trim() || "新";
   return (
     <div className="bot-ava-field">
@@ -86,7 +89,15 @@ export function AvatarField({
         </span>
       </button>
       <div className="bot-ava-field-text">
-        <Button disabled={disabled} onClick={() => setOpen(true)} size="sm" type="button" variant="outline">
+        <Button
+          data-testid="ava-open"
+          disabled={disabled}
+          onClick={() => setOpen(true)}
+          ref={triggerRef}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
           {"更换头像"}
         </Button>
         <span className="bot-ava-field-hint">{"选一个形象，或上传图片 / 选表情 / 首字"}</span>
@@ -96,10 +107,15 @@ export function AvatarField({
         allowPattern={allowPattern}
         autoPicked={autoPicked}
         draft={draft}
+        finalFocus={triggerRef}
         name={shownName}
         onDone={(next) => {
           onChange(next);
           setOpen(false);
+          // 受控关窗时 Base UI 有时不走 finalFocus（焦点落到 body）：下一帧兜底放回去。
+          requestAnimationFrame(() => {
+            if (!document.activeElement || document.activeElement === document.body) triggerRef.current?.focus();
+          });
         }}
         onOpenChange={setOpen}
         open={open}
@@ -114,9 +130,12 @@ type Tab = "shape" | "upload" | "emoji" | "monogram";
 function AvatarDialog({
   open,
   onOpenChange,
+  finalFocus,
   ...rest
 }: {
   open: boolean;
+  /** 审查 10-11：不管怎么关（Esc、取消、「完成 / 用这张」），焦点都回到「更换头像」。 */
+  finalFocus: React.RefObject<HTMLButtonElement | null>;
   onOpenChange: (open: boolean) => void;
   agentId?: string;
   name: string;
@@ -128,7 +147,7 @@ function AvatarDialog({
 }) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="bot-ava-dialog sm:max-w-[420px]" overlayClassName="bg-black/25 supports-backdrop-filter:backdrop-blur-sm">
+      <DialogContent className="bot-ava-dialog sm:max-w-[420px]" finalFocus={finalFocus} overlayClassName="bg-black/25 supports-backdrop-filter:backdrop-blur-sm">
         {/* 关窗即丢掉没按「完成」的选择。 */}
         {open ? <AvatarDialogBody {...rest} onCancel={() => onOpenChange(false)} /> : null}
       </DialogContent>
@@ -179,6 +198,10 @@ function AvatarDialogBody({
   const [source, setSource] = useState<{ image: HTMLImageElement; url: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 审查 10-10：拖着文件经过上传区时给反馈。 */
+  const [dragging, setDragging] = useState(false);
+  /** 审查 10-9：图太小时的提示（不拦）。 */
+  const [notice, setNotice] = useState<string | null>(null);
   const cropRef = useRef<CropHandle | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -214,9 +237,12 @@ function AvatarDialogBody({
   const chooseFile = async (file: File | undefined) => {
     if (!file) return;
     setError(null);
+    setNotice(null);
     setTab("upload");
     try {
-      setSource(await loadAvatarSource(file));
+      const loaded = await loadAvatarSource(file);
+      setSource(loaded);
+      setNotice(smallSourceHint(loaded.image.naturalWidth, loaded.image.naturalHeight));
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "这张图片打不开。");
     }
@@ -296,19 +322,33 @@ function AvatarDialogBody({
                   size={96}
                 />
                 <button
-                  className="bot-ava-drop"
+                  className={cn("bot-ava-drop", dragging && "is-dragging")}
+                  data-dragging={dragging || undefined}
                   data-testid="ava-choose-file"
                   onClick={() => fileRef.current?.click()}
-                  onDragOver={(event) => event.preventDefault()}
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    setDragging(true);
+                  }}
+                  onDragLeave={(event) => {
+                    // 移到按钮里面的子元素上也会触发 dragleave：只有真的离开按钮才算。
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "copy";
+                    if (!dragging) setDragging(true);
+                  }}
                   onDrop={(event) => {
                     event.preventDefault();
+                    setDragging(false);
                     void chooseFile(event.dataTransfer.files[0]);
                   }}
                   type="button"
                 >
                   <IconPhotoUp className="size-5" />
                   <span>{"选择一张图片"}</span>
-                  <span className="bot-ava-drop-sub">{"PNG / JPEG / WebP，最大 15 MB；选好后在圆框里拖动、缩放"}</span>
+                  <span className="bot-ava-drop-sub">{dragging ? "松开就用这张" : `${ACCEPTED_AVATAR_HINT}；选好后在圆框里拖动、缩放`}</span>
                 </button>
               </div>
             )
@@ -373,8 +413,12 @@ function AvatarDialogBody({
           tabIndex={-1}
           type="file"
         />
-        <p className={cn("bot-ava-error", !error && "is-empty")} role={error ? "alert" : undefined}>
-          {error ?? "\u00a0"}
+        <p
+          className={cn("bot-ava-error", !error && "is-empty", !error && notice && "is-notice")}
+          data-testid="ava-message"
+          role={error ? "alert" : notice ? "status" : undefined}
+        >
+          {error ?? notice ?? "\u00a0"}
         </p>
       </DialogBody>
       <DialogFooter className="bot-ava-foot">
@@ -459,7 +503,7 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
   return (
     <div className="bot-ava-crop-wrap">
       <div
-        aria-label={"拖动调整位置，滚轮或滑杆缩放"}
+        aria-label={"调整取景：拖动或方向键移动（Shift 加大步长），滚轮、滑杆或 + / − 键缩放"}
         className="bot-ava-crop"
         data-testid="ava-crop"
         onKeyDown={(event) => {
