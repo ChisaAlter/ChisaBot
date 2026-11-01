@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 网页滚动（卡顿修复）：去掉 `ui/sidebar.tsx` 里没人用的 `SidebarMenuAction` / `SidebarMenuBadge` 的 `peer-hover` 写法。它生成 `:hover ~ *`，滚动时鼠标不动、内容在鼠标下移，悬停目标每帧都换，每条消息的整棵子树被反复标成需要重算样式。测试台上（`perf:jank -- --scenario=scroll --cpu=1`，240 条消息的对话）样式失效 5482→747 次（−86%）；帧率上的收益没有测出来。只有服务器 / 网页更新，PC 客户端不用更新，没有数据迁移。新增测试拦住 `peer-hover` / `peer-focus` / `peer-active`。
+
 ## 0.1.116 — 2026-10-30
 
 这一版合并 #425、#456、#447、#454、#455 和依赖更新 #382、#390、#385。Android 新增形象头像，PC、Android 与服务端统一升到 0.1.116（Android `versionCode` 298）；PC 外壳不变，不需要重新安装。
