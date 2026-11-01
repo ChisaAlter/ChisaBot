@@ -1,8 +1,9 @@
 import { type CSSProperties, useState } from "react";
 import { usePreviewImage } from "@/components/rich-previews/rich-previews";
 import { cn } from "@/lib/utils";
+import { emptyMarkProps, InitialMark } from "./initial-mark";
 import { ActionArea } from "./rich-context";
-import { domainOf, hueOf, initials, safeHttp, safeHttps } from "./rich-utils";
+import { domainOf, hueOf, safeHttp, safeHttps } from "./rich-utils";
 
 /**
  * 带图的商品 / 地点网格（DESIGN.md §72，CB-050，Hark 的商品网格）：图 + 名字 + 价格 + 一句卖点 + 角标，整张点开商品页。
@@ -40,9 +41,10 @@ function ProductPhoto({ name, image, url }: { name: string; image: string | null
     <span
       aria-hidden="true"
       className={cn("jr-product-ph", loading && "is-loading")}
+      {...(loading ? {} : emptyMarkProps(name))}
       style={{ "--jr-hue": String(hueOf(name)) } as CSSProperties}
     >
-      {loading ? null : initials(name)}
+      {loading ? null : <InitialMark kind="item" name={name} />}
     </span>
   );
 }
