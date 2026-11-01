@@ -211,7 +211,7 @@ function AccountsPage() {
           <PageEmpty>{data?.reason ?? "不可用"}</PageEmpty>
         ) : (
           <>
-            <PageSection title="新成员">
+            <PageSection settingItem="accounts.create-account" title="新成员">
               <Card className="mem-card">
                 <div className="im-row">
                   <div className="im-row-main">

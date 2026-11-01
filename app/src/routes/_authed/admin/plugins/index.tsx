@@ -164,6 +164,7 @@ function RouteComponent() {
             description={
               "已经添加的插件。点开可以填配置、选择哪些机器人能用。"
             }
+            settingItem="plugins.custom-mcp"
             title={"已连接"}
           >
             {plugins.data?.servers.length === 0 ? (
@@ -325,6 +326,7 @@ function RouteComponent() {
 
           <PageSection
             description={"无需暴露公网 HTTP 端口，直接通过已配对的 PC 客户端在本地电脑上拉起 npx / uvx stdio MCP 工具。"}
+            settingItem="plugins.local-stdio-mcp"
             title={"本地电脑 stdio MCP 桥接"}
           >
             <PageRows>

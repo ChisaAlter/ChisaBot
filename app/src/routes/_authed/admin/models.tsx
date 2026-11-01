@@ -84,7 +84,7 @@ function ModelSettingsPage() {
       )}
       {settings.data ? (
         <div className="media-anchor" id="fallback-models">
-          <PageSection description="主模型额度用完或暂时不可用时，按这个顺序换下一个，对话里会有一行小字说明。" title="备用模型">
+          <PageSection description="主模型额度用完或暂时不可用时，按这个顺序换下一个，对话里会有一行小字说明。" settingItem="models.fallback-models" title="备用模型">
             <FallbackModelsCard mainModel={settings.data.model} />
           </PageSection>
         </div>
@@ -111,12 +111,12 @@ function MediaDefaults() {
   return (
     <>
       <div className="media-anchor" id="image-model">
-        <PageSection action={personal} description="机器人画图、改图（image_generate / image_edit）用的模型，所有人的默认。每张图按模型价格计费。" title="生图模型">
+        <PageSection action={personal} description="机器人画图、改图（image_generate / image_edit）用的模型，所有人的默认。每张图按模型价格计费。" settingItem="models.image-model" title="生图模型">
           <ImageDefaultCard current={media.data.image} />
         </PageSection>
       </div>
       <div className="media-anchor" id="vision-model">
-        <PageSection description="聊天里上传的图片怎么让机器人看懂，所有人的默认。" title="识图模型">
+        <PageSection description="聊天里上传的图片怎么让机器人看懂，所有人的默认。" settingItem="models.vision-model" title="识图模型">
           <VisionDefaultCard current={media.data.vision} />
         </PageSection>
       </div>
@@ -228,7 +228,7 @@ function ModelSettingsForm({ config }: { config: ModelSettingsCurrent }) {
           )}
         </span>
       </div>
-      <PageSection title="聊天模型">
+      <PageSection settingItem="models.chat-model" title="聊天模型">
         <form
           className="mt-5"
           noValidate

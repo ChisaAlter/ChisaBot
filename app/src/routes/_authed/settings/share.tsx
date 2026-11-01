@@ -25,7 +25,7 @@ function ShareWithFriendsPage() {
       description="邀请朋友用你的实例，或让他自己装一份可分享的自托管助手。安全默认：应用只听本机、公网走 HTTPS 网关、单用户不直连公网。"
       title="分享给朋友"
     >
-      <PageSection description="每个账号的机器人、对话、记忆、密钥和设备都是分开的。" title="路径一 · 邀请进你的实例">
+      <PageSection description="每个账号的机器人、对话、记忆、密钥和设备都是分开的。" settingItem="share.share-invite" title="路径一 · 邀请进你的实例">
         <Card className="mem-card">
           <div className="im-row">
             <div className="im-row-main">
@@ -54,6 +54,7 @@ function ShareWithFriendsPage() {
 
       <PageSection
         description="朋友的服务器上跑：loopback 应用 + 可选 HTTPS 网关。详见仓库 docs/friend-deploy.md。"
+        settingItem="share.share-pack"
         title="路径二 · 一键 compose 自托管"
       >
         <Card className="mem-card">

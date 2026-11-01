@@ -364,7 +364,7 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
         <JobCard estimates={data.estimates} job={data.job} pending={data.pending} />
       ) : null}
 
-      <PageSection title="回滚">
+      <PageSection settingItem="system-update.rollback" title="回滚">
         <Card>
           <SettingRow
             description={
@@ -470,6 +470,7 @@ function KernelSection() {
   return (
     <PageSection
       description="部署级设置：所有内置机器人共用同一个执行循环，不在每个机器人上单独切换。"
+      settingItem="system-update.runtime-kernel"
       title="执行内核"
     >
       <Card>
@@ -510,7 +511,7 @@ function SmokeSection() {
     { errorToast: (error) => error.message },
   );
   return (
-    <PageSection title="自检">
+    <PageSection settingItem="system-update.selftest" title="自检">
       <Card>
         <SettingRow
           description={
@@ -725,7 +726,7 @@ function JobLog({ lines }: { lines: string[] }) {
 function DebugSection() {
   const visible = useToolActivityVisible();
   return (
-    <PageSection title="调试">
+    <PageSection settingItem="system-update.debug-tools" title="调试">
       <Card>
         <SettingRow
           description="默认关闭：聊天里只显示结果，不显示机器人调用了哪些工具、浏览了哪些页面。打开后仅对当前浏览器生效，审批与授权卡片始终显示。"

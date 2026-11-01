@@ -96,7 +96,7 @@ function ApprovalPrefsPage() {
         />
       ) : (
         <>
-          <PageSection description="所有机器人共用。单独设过权限的机器人，「操作你的电脑」按它自己的权限来。" title="哪些事先问我">
+          <PageSection description="所有机器人共用。单独设过权限的机器人，「操作你的电脑」按它自己的权限来。" settingItem="permissions.confirm-prefs" title="哪些事先问我">
             <Card className="mem-card">
               {(data.data?.prefs ?? []).map((pref) => (
                 <PrefRow key={pref.category} pref={pref} onSaved={refresh} />
@@ -104,7 +104,7 @@ function ApprovalPrefsPage() {
             </Card>
           </PageSection>
 
-          <PageSection title={rules.length ? `你的规则 · ${rules.length}` : "你的规则"}>
+          <PageSection settingItem="permissions.confirm-rules" title={rules.length ? `你的规则 · ${rules.length}` : "你的规则"}>
             <Card className="mem-card">
               <RuleForm onAdded={refresh} />
               {rules.map((rule) => (
@@ -152,7 +152,7 @@ function ApprovalPrefsPage() {
             </Card>
           </PageSection>
 
-          <PageSection title="最近的确认">
+          <PageSection settingItem="permissions.confirm-recent" title="最近的确认">
             {recent.isPending ? (
               <PageSkeleton rows={2} />
             ) : (recent.data ?? []).length ? (

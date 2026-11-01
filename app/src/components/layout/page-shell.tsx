@@ -177,6 +177,7 @@ export function PageSection({
   description,
   title,
   id,
+  settingItem,
 }: {
   action?: React.ReactNode;
   children?: React.ReactNode;
@@ -185,9 +186,11 @@ export function PageSection({
   title?: string;
   /** 页内锚点（设置搜索跳转、「了解更多」，DESIGN.md §97）。 */
   id?: string;
+  /** 设置搜索的稳定锚点：registry 里的 `页.项` id，多个用空格分开（lib/settings/locate.ts）。 */
+  settingItem?: string;
 }) {
   return (
-    <section className={cn("page-section", className)} data-slot="page-section" id={id}>
+    <section className={cn("page-section", className)} data-setting-item={settingItem} data-slot="page-section" id={id}>
       {title || description || action ? (
         <div className="sh">
           <div className="min-w-0 flex-1">
