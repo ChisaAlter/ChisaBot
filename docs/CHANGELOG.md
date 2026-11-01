@@ -1,6 +1,8 @@
-## Unreleased
+## 0.1.117
 
 - 滚动时不再因 `peer-hover` 反复标脏整段对话（`ui/sidebar.tsx` 里没人用的两处，`no-group-has.test.ts` 加守卫）。未升级版本号。
+
+- 版本号 0.1.117（根、app、server）；只有网页更新。
 
 ## 0.1.116
 
