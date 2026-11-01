@@ -29,6 +29,7 @@ import {
   type ExtractedImage,
   extensionOf,
   extractRichContent,
+  extractUserLinks,
   formatBytes,
   type LinkRef,
   splitLinkLines,
@@ -41,13 +42,14 @@ import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import { markdownComponents } from "@/lib/markdown";
 import { DocxPreviewBody, isDocxFile } from "./docx-preview";
 import { Lightbox, type LightboxImage } from "./lightbox";
-import { LinkCard, LinkCardSkeleton, linkDeckStyle } from "./link-card";
+import { LinkCardStack } from "./link-card";
 import { hostOf, previewClient, previewQuery } from "./link-preview-query";
 
 /**
  * 聊天富预览（2026-10-13；DESIGN.md §31）：
  * - 链接卡（DESIGN.md §48；2026-10-29 起和 json-render 的 Link 共用 ./link-card.tsx）：单独占一行的链接（最多 3 个）
- *   在正文下面变成 Hark 式链接卡——上半 og:image 大图、两行标题、「站点 · 标签」；没有图时是同宽紧凑横卡。
+ *   在正文下面变成 Hark 式链接卡——上半 og:image 大图、两行标题、「站点 · 标签」；没有图时是紧凑横卡。
+ *   多个链接叠成错落的一叠（LinkCardStack：主位居中最前，其余放左右倾斜槽位）。
  *   整张可点、新标签页打开（PC / 安卓客户端交给系统浏览器）。
  *   数据来自 `GET /api/link-preview`（服务器只连公网、图片也由服务器转存，浏览器不直接访问第三方）。
  *   取的时候是同尺寸骨架；取不到就画「图标 + 域名」的兜底卡，照样能点。
@@ -144,41 +146,21 @@ export function rememberedImageSize(src: string) {
 function LinkPreviewCardsInner({
   links,
   pending = false,
+  pendingUrl,
 }: {
   links: readonly LinkRef[];
   /** 流式中最后一行像是一行链接：多放一个骨架占位。 */
   pending?: boolean;
+  /** 骨架那行已经写出来的网址（GitHub 的按 2:1 占位）。 */
+  pendingUrl?: string;
 }) {
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const count = links.length + (pending ? 1 : 0);
-  if (count === 0) return null;
-  const isDeck = count > 1;
+  if (links.length === 0 && !pending) return null;
   return (
-    <div
-      className="rp-links"
-      data-count={count}
-      data-deck={isDeck ? "" : undefined}
-      data-focused={isDeck && hoveredIndex !== null ? "" : undefined}
-      data-testid="link-cards"
-    >
-      {links.map((link, i) => (
-        <LinkCard
-          deck={{
-            index: i,
-            total: count,
-            focused: isDeck && hoveredIndex === i,
-            dimmed: isDeck && hoveredIndex !== null && hoveredIndex !== i,
-            onHoverChange: (on) => setHoveredIndex(on ? i : null),
-          }}
-          key={link.url}
-          meta={link.label}
-          url={link.url}
-        />
-      ))}
-      {pending ? (
-        <LinkCardSkeleton key="pending" style={linkDeckStyle(links.length, count)} />
-      ) : null}
-    </div>
+    <LinkCardStack
+      items={links.map((link) => ({ url: link.url, meta: link.label }))}
+      pending={pending}
+      pendingUrl={pendingUrl}
+    />
   );
 }
 
@@ -777,9 +759,12 @@ function MessageRichPreviewsInner({
     [media?.images, fromText],
   );
   const imageSet = useMemo(() => new Set(found.images.map((i) => i.src)), [found.images]);
+  // 用户的消息：句子中间的链接也出卡（extractUserLinks）；机器人的只认单独一行的（§48）。
+  const isUser = align === "end";
+  const userLinks = useMemo(() => (isUser ? extractUserLinks(text) : null), [isUser, text]);
   const links = useMemo(
-    () => split.links.filter((l) => !imageSet.has(l.url)),
-    [split.links, imageSet],
+    () => (userLinks ?? split.links).filter((l) => !imageSet.has(l.url)),
+    [userLinks, split.links, imageSet],
   );
   const files = media?.files ?? [];
   if (
@@ -799,7 +784,7 @@ function MessageRichPreviewsInner({
           ))}
         </div>
       ) : null}
-      <LinkPreviewCards links={links} pending={split.pending} />
+      <LinkPreviewCards links={links} pending={split.pending} pendingUrl={split.pendingUrl} />
     </div>
   );
 }

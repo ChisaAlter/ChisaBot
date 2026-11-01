@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+<<<<<<< HEAD
 ## 0.1.117 — 2026-11-01
 
 这一版合并 #457：去掉侧栏里没人用的 peer-hover，滚动时少做无谓的样式重算（不改界面）。只有网页更新，网关、登录服务（web-auth）、PC 和 Android 不变。
@@ -159,6 +160,10 @@
 - **测试**：新增 `app/tests/no-backdrop.test.ts`：引入顺序、两种开关都覆盖 `*` / `::before` / `::after`、不靠 `!important`、不许内联 `backdropFilter` / Tailwind important 模糊类 / 新的 `backdrop-filter … !important`，`styles.css` 里每条会模糊的规则都有不透明底色或写明原因的豁免。
 - 规则写进 `DESIGN.md` §10.3.1。不改版本号。
 
+=======
+- 链接卡组照 Hark 改版（依赖 #380 的数据修正，已合入本分支）：一条回复里 2–3 个链接在文字气泡下面错落叠成一叠（中间那张抬高在最前，左右两张倾斜约 -4° / 3.5°），单个链接是一张不倾斜的卡，手机上卡变窄、整叠不出屏，统一用 `LinkCardStack` / `LinkCard`。鼠标悬停或键盘聚焦把那张卡挪到主位（只改 transform，`--dur-2` + `--ease-out`，不重排），指针离开后保持最后一张在主位；触屏第一次点只挪到主位、再点才打开，鼠标点击直接打开；减少动态效果时直接切换。GitHub 等宽图按 og:image 原比例完整显示（有 og:image:width/height 用实际比例，否则 GitHub 2:1、其它 1.91:1 占位，不跳动），GitHub 链接底行给短标签（如「GitHub · v0.1.13」）。材质按 docs/design-system.md 改成我们的设计系统：卡片用主题实色 `--glass-bg-solid`（不模糊、亮暗跟随主题，不照搬 Hark 的固定深色），圆角 `--r-lg`、内缩 `--sp-2`、图片同心圆角 12px，文字 `--text` / `--text-secondary`。标题一律纯文本渲染；props 兼容 #391 的来源格式 `{ url, title, site, toolCallId }`（本 PR 未接入）。未改 styles.css，未升级版本号。
+- 链接卡组修正（依赖 #397）：流式输出时链接卡先出和最终卡同尺寸的骨架占位（不模糊、无闪光，只动 opacity / transform，减少动态效果时静止）；悬停换主位不再触发整页样式重算——原因是 styles.css 里 `.glass-shell:has([data-slot=…])` 一类规则让 Chromium 按属性名 `data-slot` 把整页（约 3581 个元素）重算样式，卡组改用 `data-stack-slot` 避开，styles.css 未改（Ayase 真 Chrome：CPU 1× 下悬停最长任务 53 ms → 没有超过 50 ms 的任务；4× 降速下 160–479 ms → 39–51 ms）；用户消息里的 GitHub 等链接也用 LinkCard 卡组显示，靠右对齐。审查模块 6 前端项：「追问」按钮移到 `<a>` 外面（不再嵌套交互元素），触屏上明确显示（窄容器里的一叠直接去掉），隐藏时一律不接点击；小图（宽 < 280px）不放大、不裁切，居中放在主题色衬底上；预览结果存 sessionStorage（6 小时、最多 80 条），刷新后卡片直接按最终高度出现，重访 CLS 为 0；favicon `loading="lazy" decoding="async"` 并给宽高；URL / 编号关掉 Inter 的上下文字形替换（`calt` 0），「411x7」不再画成「411×7」；预览可选带 `kind: "video"` / `thumbnail` 时图上叠一个播放角标（不模糊、不接事件，服务端未改）。顶栏一项因 #374 未合并跳过。未升级版本号。
+>>>>>>> fix/linkstack-streaming
 
 ## 0.1.109 — 2026-10-29
 

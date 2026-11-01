@@ -1,14 +1,32 @@
 /*
- * 链接卡（link-card.tsx，2026-10-29，照 Hark）：只给 lc- 开头的类，不改 styles.css 里已有的规则。
- * - 固定宽约 280px；有图时上半部预览图（40:21 预留，上方两个角圆角），下面两行粗体标题 + 一行浅色「站点 · 补充信息」。
- * - 没有图：同一张竖卡，图区是生成的横幅（.lc-banner：站点主色渐变 + 大号图标 / 头像 / 首字 + 一行 owner/repo 或域名）。
- * - 标题固定两行高（不足两行也留两行），卡片高度不随标题变。
- * - 半透明底 + 内侧高光边（inset box-shadow），不用 backdrop-filter。
- * - 骨架（.lc-skel）和有图的卡图区同一尺寸（同一个预留比例），图到了不跳；
- *   文字区高度跟着内容走（一行标题就一行高），只有骨架给标题预留两行、站点行预留一行。
+ * 链接卡（link-card.tsx，2026-10-29，版式照 Hark，材质按我们的设计系统）：只给 lc- 开头的类，不改 styles.css。
+ * - 材质：卡片不是玻璃（docs/design-system.md §4：气泡、卡片不模糊），用主题的面板实色 --glass-bg-solid、
+ *   文字 --text / --text-secondary、高光边 --glass-highlight、阴影 --shadow-2；亮 / 暗跟着令牌走，
+ *   不像 Hark 那样永远深色。不用 backdrop-filter，也不用 filter。
+ * - 圆角 --r-lg（20，DESIGN.md §10.3 卡片）；预览图内缩 --sp-2（8），图的圆角按同心圆角 = 20 − 8 = 12。
+ *   比例跟着图片走（组件写 aspect-ratio）；下面固定两行标题（600）+ 一行灰字。
+ *   没有图时同一张竖卡，图区是生成的横幅（.lc-banner）。
+ * - 单张卡：宽 min(280px, 100%)，不倾斜。
+ * - 一叠（.lc-stack，2–3 张）：所有卡放在同一个网格格子里，位置全靠 transform（槽位变量 --lc-sx / --lc-sy /
+ *   --lc-rot / --lc-sc），换主位只改 transform 和层级，不重排。过渡 --dur-2（220ms）+ --ease-out；减少动态效果时没有过渡。
+ * - 结构：外层 .lc-item 管位置（槽位 transform、悬停抬起、层级、「追问」的定位），里面 <a class="lc-card"> 是卡面，
+ *   「追问」<button> 是 <a> 的兄弟，不嵌在链接里。
+ * - URL / 编号里不要 Inter 的上下文字形替换：calt 会把「411x7」画成「411×7」。
  */
+.lc-item {
+  position: relative;
+  flex: none;
+  width: min(280px, 100%);
+  min-width: 0;
+  transform: translateY(var(--lc-lift, 0px));
+  transition: transform var(--dur-2, 220ms) var(--ease-out);
+  /* 外层只管位置，不接点击：卡片圆角外那一小块（叠放时会转一点角度）落到下面的元素，不落在一个什么也不做的盒子上。 */
+  pointer-events: none;
+}
 .lc-card {
-  --lc-radius: 20px;
+  font-feature-settings: "calt" 0;
+  --lc-radius: var(--r-lg, 20px);
+  --lc-inset: var(--sp-2, 8px);
   position: relative;
   isolation: isolate;
   display: flex;
@@ -17,87 +35,88 @@
   width: min(280px, 100%);
   min-width: 0;
   box-sizing: border-box;
+  padding: var(--lc-inset);
   overflow: hidden;
   border-radius: var(--lc-radius);
-  background: rgba(255, 255, 255, 0.62);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    0 0 0 1px rgba(22, 28, 42, 0.06),
-    0 8px 24px rgba(18, 30, 56, 0.1);
-  color: var(--ink-1);
+  background: var(--glass-bg-solid);
+  box-shadow: var(--glass-highlight), var(--shadow-2);
+  color: var(--text);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transform: translateY(var(--lc-y, 0px)) rotate(var(--lc-rot, 0deg));
-  transform-origin: 50% 85%;
-  transition:
-    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 200ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.lc-item > .lc-card {
+  width: 100%;
+  pointer-events: auto;
 }
 /* 正文 / json-render 里的 a 可能带下划线规则：用更具体的选择器盖掉，不用 !important。 */
 a.lc-card[href],
 a.lc-card[href]:hover {
   text-decoration: none;
-}
-.dark .lc-card {
-  background: rgba(30, 36, 50, 0.62);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 0 0 1px rgba(0, 0, 0, 0.18),
-    0 10px 28px rgba(0, 0, 0, 0.36);
+  color: var(--text);
 }
 .lc-media {
   position: relative;
-  display: grid;
-  place-items: center;
+  display: block;
   width: 100%;
   flex: none;
   overflow: hidden;
-  border-radius: var(--lc-radius) var(--lc-radius) 0 0;
-  background: rgba(22, 28, 42, 0.06);
-}
-.dark .lc-media {
-  background: rgba(255, 255, 255, 0.05);
+  /* 同心圆角：卡片圆角 − 内缩。 */
+  border-radius: calc(var(--lc-radius) - var(--lc-inset));
+  background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 .lc-media > img {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.lc-media[data-square] > img {
+/*
+ * 接近方形的图（logo）和比卡窄的小图：整张放进框里居中，不裁也不放大——最大就是原始尺寸，
+ * 四周露出 .lc-media 的主题色衬底（和大图按真实比例、不裁切是同一条规则）。
+ * 宽高 auto + max-* 100%：图片的 width / height 属性只用来占比例，不会把小图撑大。
+ */
+.lc-media[data-fit="contain"] > img {
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
   object-fit: contain;
+}
+.lc-media[data-square] > img {
   padding: 14px;
   box-sizing: border-box;
 }
-.lc-badge {
+/* 视频：图正中一个播放角标。不模糊、不接事件（点它就是点卡片）。 */
+.lc-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   display: grid;
   place-items: center;
-  flex: none;
   width: 44px;
   height: 44px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.86);
-  box-shadow: inset 0 0 0 1px rgba(22, 24, 29, 0.08);
-  color: var(--ink-2);
+  margin: -22px 0 0 -22px;
+  border-radius: var(--r-pill, 999px);
+  background: rgba(15, 20, 32, 0.62);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22);
+  color: #fff;
+  pointer-events: none;
 }
-.dark .lc-badge {
-  background: rgba(255, 255, 255, 0.12);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
-  color: rgba(255, 255, 255, 0.9);
+.lc-play > svg {
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
 }
-.lc-badge > img {
-  width: 28px;
-  height: 28px;
+.lc-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
   object-fit: contain;
-  border-radius: 6px;
-}
-.lc-badge > svg {
-  width: 24px;
-  height: 24px;
 }
 .lc-banner {
   position: absolute;
@@ -169,9 +188,9 @@ a.lc-card[href]:hover {
 .lc-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
-  padding: 10px 14px 12px;
+  padding: var(--sp-2, 8px) var(--sp-1, 4px) var(--sp-1, 4px);
 }
 .lc-title {
   display: -webkit-box;
@@ -179,10 +198,10 @@ a.lc-card[href]:hover {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
-  font-size: 15px;
-  font-weight: 650;
+  font-size: 14px;
+  font-weight: 600;
   line-height: 20px;
-  color: var(--ink-1);
+  color: var(--text);
   word-break: break-word;
 }
 .lc-meta {
@@ -190,9 +209,9 @@ a.lc-card[href]:hover {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--text-secondary);
 }
 .lc-site {
   min-width: 0;
@@ -200,43 +219,53 @@ a.lc-card[href]:hover {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.lc-icon {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-  object-fit: contain;
-}
-.dark .lc-icon {
-  background: rgba(255, 255, 255, 0.9);
-  padding: 1px;
-  box-sizing: border-box;
-}
 .lc-skel {
   pointer-events: none;
   cursor: default;
 }
+/* 只有骨架给标题预留两行、站点行预留一行（#380）：真卡的文字区跟着内容走，一行标题下面不空一块。 */
 .lc-skel .lc-title {
-  height: 40px;
+  height: 36px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 8px;
 }
 .lc-skel .lc-meta {
-  height: 18px;
+  height: 17px;
 }
 .lc-skel-bar {
   display: block;
-  height: 12px;
+  height: 11px;
   border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+/*
+ * 骨架只做一点透明度的呼吸（不扫光、不模糊，合成层就能画）；减少动态效果时完全静止。
+ * 图片区沿用 .lc-media 的底色，尺寸和真卡同一套比例。
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .lc-skel .lc-skel-block,
+  .lc-skel .lc-skel-bar {
+    animation: lc-skel-breathe 1.2s ease-in-out infinite alternate;
+  }
+}
+@keyframes lc-skel-breathe {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.55;
+  }
 }
 .lc-go,
 .lc-followup {
   position: absolute;
-  top: 10px;
+  top: 12px;
   z-index: 3;
   opacity: 0;
+  /* 看不见的时候点不到：绝不让一个透明按钮接住本该打开链接的那一下。 */
+  pointer-events: none;
   transform: translateY(2px);
   transition:
     opacity 180ms var(--ease-out),
@@ -244,25 +273,25 @@ a.lc-card[href]:hover {
     background 150ms;
 }
 .lc-go {
-  right: 10px;
+  right: 12px;
   width: 24px;
   height: 24px;
   padding: 4px;
   box-sizing: border-box;
-  border-radius: 999px;
-  background: rgba(15, 20, 32, 0.55);
+  border-radius: var(--r-pill, 999px);
+  background: rgba(15, 20, 32, 0.6);
   color: #fff;
 }
 .lc-followup {
-  left: 10px;
+  left: 12px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   height: 24px;
   padding: 0 9px;
-  border-radius: 999px;
+  border-radius: var(--r-pill, 999px);
   border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(15, 20, 32, 0.65);
+  background: rgba(15, 20, 32, 0.7);
   color: #fff;
   font-size: 11.5px;
   font-weight: 500;
@@ -276,66 +305,115 @@ a.lc-card[href]:hover {
   outline: 2px solid var(--focus-line);
   outline-offset: 2px;
 }
-.lc-card:focus-visible :is(.lc-go, .lc-followup),
-.lc-card[data-focused] :is(.lc-go, .lc-followup) {
+.lc-card:focus-visible .lc-go,
+.lc-card:focus-visible + .lc-followup,
+.lc-item[data-primary] :is(.lc-go, .lc-followup),
+.lc-followup:focus-visible {
   opacity: 1;
   transform: none;
+  pointer-events: auto;
 }
-@media (hover: hover) {
-  .lc-card:hover :is(.lc-go, .lc-followup) {
+/* 叠放时不在主位的卡：按钮藏起来、点不到也 Tab 不到。 */
+.lc-stack[data-deck] .lc-item:not([data-primary]) :is(.lc-go, .lc-followup) {
+  visibility: hidden;
+  pointer-events: none;
+}
+/* 只有真鼠标才靠悬停显示；带触屏的设备（含触屏笔记本）悬停不算数，见下一段。 */
+@media (hover: hover) and (pointer: fine) {
+  .lc-item:not([data-stack-slot]):hover :is(.lc-go, .lc-followup) {
     opacity: 1;
     transform: none;
+    pointer-events: auto;
   }
 }
-@media (hover: none) {
+/*
+ * 触屏：「追问」明确显示出来（单张卡一直显示；一叠里主位那张由上面的 [data-primary] 显示；窄容器里一叠的去掉，见下），
+ * 不靠悬停。触屏上点一下会先触发悬停再命中测试，靠悬停显示的按钮会在同一下里冒出来接住点击（审查模块 6 第 3 条）。
+ * ↗ 只是图标（不接事件），常显 0.7。
+ */
+@media (hover: none), (any-pointer: coarse) {
   .lc-go {
     opacity: 0.7;
     transform: none;
   }
+  .lc-item:not([data-stack-slot]) > .lc-followup {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
 }
 
-/* 多张卡（正文里连着几行链接）：扇形交叠，悬停 / 聚焦的那张回正置顶，其余退后。 */
-.rp-links[data-deck] > .lc-card {
-  width: min(260px, 100%);
+/*
+ * 一叠卡。卡宽 --lc-w：桌面 208px；窄的时候（手机）按容器宽缩，保证整叠（卡宽 + 两侧各 0.72 卡宽）不出屏。
+ * 槽位：主位居中不倾斜；左槽 / 右槽向两边错开 0.72 卡宽、往下 0.24 / 0.30 卡宽、倾斜 -4° / 3.5°、缩到 0.94。
+ */
+.lc-stack {
+  container-type: inline-size;
+  width: 100%;
+  max-width: 100%;
 }
-.rp-links[data-deck] > .lc-card + .lc-card {
-  margin-left: -44px;
+.lc-stack[data-deck] {
+  --lc-sides: calc(var(--lc-left, 1) + var(--lc-right, 1));
+  --lc-w: min(208px, calc((100cqw - 16px) / (1 + 0.72 * var(--lc-sides))));
+  --lc-step: calc(var(--lc-w) * 0.72);
 }
-.lc-card[data-dimmed] {
-  filter: blur(5px);
-  opacity: 0.46;
-  transform: translateY(calc(var(--lc-y, 0px) + 4px)) scale(0.95)
-    rotate(var(--lc-rot, 0deg));
+.lc-stack-track {
+  display: flex;
 }
-@container (max-width: 380px) {
-  .rp-links[data-deck] > .lc-card + .lc-card {
-    margin-left: 0;
+.lc-stack[data-deck] > .lc-stack-track {
+  display: grid;
+  grid-template-columns: var(--lc-w);
+  align-items: start;
+  width: max-content;
+  padding: var(--sp-3, 12px)
+    calc(var(--lc-step) * var(--lc-right, 1) + var(--sp-2, 8px))
+    calc(var(--lc-w) * 0.3 + var(--sp-4, 16px))
+    calc(var(--lc-step) * var(--lc-left, 1) + var(--sp-2, 8px));
+}
+.rp-stack[data-align="end"] .lc-stack-track {
+  margin-left: auto;
+}
+.lc-stack[data-deck] .lc-card {
+  /* 叠在一起时把同一个实色令牌再叠一层（.96 → 约 .998），压在下面那张的字不透上来；不另写颜色。 */
+  background-image: linear-gradient(
+    var(--glass-bg-solid),
+    var(--glass-bg-solid)
+  );
+}
+.lc-stack[data-deck] .lc-item {
+  grid-area: 1 / 1;
+  width: var(--lc-w);
+  transform-origin: 50% 60%;
+  transform: translate(
+      calc(var(--lc-step) * var(--lc-sx, 0)),
+      calc(var(--lc-w) * var(--lc-sy, 0))
+    )
+    rotate(var(--lc-rot, 0deg)) scale(var(--lc-sc, 1));
+}
+@container (max-width: 420px) {
+  .lc-stack[data-deck] .lc-title {
+    font-size: 12.5px;
+    line-height: 16px;
   }
-  .rp-links[data-deck] > .lc-card {
-    width: 100%;
-    transform: none;
+  .lc-stack[data-deck] .lc-skel .lc-title {
+    height: 32px;
   }
-}
-/* 位移动效（按下、悬停上浮、聚焦回正放大）只在不要求减少动效时出现；层级由组件内联样式给（聚焦那张置顶）。 */
-@media (prefers-reduced-motion: no-preference) {
-  .lc-card:active {
-    transform: translateY(0) scale(0.985);
-    transition-duration: 90ms;
+  .lc-stack[data-deck] .lc-meta {
+    font-size: 11.5px;
   }
-  .lc-card[data-focused] {
-    transform: translateY(-8px) scale(1.04) rotate(0deg);
+  .lc-stack[data-deck] .lc-followup {
+    display: none;
   }
 }
 @media (prefers-reduced-motion: no-preference) and (hover: hover) {
-  .rp-links:not([data-deck]) > .lc-card:hover {
-    transform: translateY(-3px);
+  .lc-item:not([data-stack-slot]):hover {
+    --lc-lift: calc(-1 * var(--rise-sm, 4px));
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lc-card {
-    transition-property: opacity;
-  }
-  .lc-card[data-focused] {
-    transform: none;
+  .lc-item,
+  .lc-go,
+  .lc-followup {
+    transition: none;
   }
 }

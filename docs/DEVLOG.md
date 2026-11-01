@@ -1,5 +1,6 @@
 # DEVLOG
 
+<<<<<<< HEAD
 ## 登录循环保护小补丁（dev4/login-loop-followup，#442 后续）
 
 **动机**：#442 审查时留下的三处小问题。
@@ -703,6 +704,27 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 - 应修：403 不再直接算「密钥无效」。先看 body / `code`：地区限制（`unsupported_country_region_territory`、「region … not supported」）→ 新分类 `region`（网页「模型服务商不支持服务器所在地区」，不可重试）；内容拦截（content filter / policy、moderation、policy_violation）→ `content_filter`；明确说 API key / unauthorized → `auth`；分不清（如只有「Forbidden」）→ 通用句子。
 - 测试：`test_protocol.py` 加这三个例子 + 403 各情况；`test_adapter.py` 加工具 `FileNotFoundError` 整轮只出通用句子、不带路径；`app/tests/hermes-error-categories.test.ts` 加 `region`，`friendly-error.ts` 加对应规则。
 - 复审应修：分类函数自己可能抛异常——`_error_body` 里 `json.dumps` 遇到不可序列化的 body（如含 bytes）抛 TypeError，属性 getter 也可能抛别的异常；它在 `chisabot_acp.py` 的 `except` 里调用，一抛就跳过 `run.fail`，这一轮卡住。现在 `json.dumps(default=str)`，逐个属性 try，整体 try 失败退回 `str(error)`、再失败退回类名；bytes body 用 `errors=replace` 解码后再匹配；整段截到 64KB 再跑正则。适配器那层再包一层兜底，分类出错时用通用句子照样 `run.fail`。测试：不可序列化 body、getter / `__str__` 都抛、bytes body、超长 body 截断、分类函数抛异常时整轮仍结束。
+=======
+## 链接卡组：流式骨架、悬停长任务、用户消息链接卡、审查模块 6（fix/linkstack-streaming，依赖 #397）
+
+**悬停长任务的原因**：在 Ayase 的真 Chrome 上用带侧栏 / 顶栏外壳的测试页（150 条填充消息）录 trace，悬停换主位时每次都有一次约 3581 个元素的整页 `UpdateLayoutTree`（占长任务约 95%）。卡片换主位时改的是 `data-slot` 属性；styles.css 里有 `.glass-shell:has([data-slot=…])`（3864 行、8903–8910 行）这类规则，Chromium 的 `:has()` 失效集合按属性名建，任何元素的 `data-slot` 变了都会让 `.glass-shell` 整棵子树重算样式。按规定不动 styles.css，把卡组用的属性改名为 `data-stack-slot`（CSS 和测试同步改）。
+
+**实测（Ayase 真 Chrome，21 次悬停）**：
+- CPU 1×：改前最长任务 53 ms；改后没有超过 50 ms 的任务，样式重算不超过 10 ms、不超过 42 个元素。
+- CPU 4× 降速：改前 21 次里 6 个长帧，单个任务 160–479 ms；改后单个主线程任务 39–51 ms（4 轮里只有一次 51 ms），样式重算不超过 36 ms。
+
+**用户消息链接卡**：用户气泡里的链接抽出来交给同一个 `LinkCardStack`，放在气泡下面、靠右对齐（和用户气泡同侧）；气泡里的原文照旧保留。
+
+**审查模块 6**：
+1. 「追问」按钮原来嵌在 `<a>` 里，触屏上透明但能点，点卡片左上角会变成引用。现在卡片结构是外层 `.lc-item`（位置、槽位 transform、悬停抬起）里放 `<a class="lc-card">` 和同级的 `<button class="lc-followup">`，不再嵌套交互元素。外层 `.lc-item` 不接点击（`pointer-events: none`），只有卡面和按钮接。选「触屏上明确显示」：单张卡和宽容器里一叠的主位卡常显；窄容器（≤420px，手机）的一叠里直接去掉；隐藏的按钮一律 `pointer-events: none`。悬停显示只在 `(hover: hover) and (pointer: fine)` 下生效，因为触屏点一下会先触发悬停再做命中测试，靠悬停显示的按钮会在同一下里冒出来接住点击。注意 Windows 上带触控设备的电脑 Chrome 也报 `any-pointer: coarse`（Ayase 就是），这类电脑上按钮也常显。手机尺寸 + 触屏模拟复测：一叠里第一下点击把卡移到主位（不打开），第二下才打开。
+2. 小图（宽 < 280px，如 172×178、240×126）用 `object-fit: contain`、不超过原始尺寸、居中放在主题色衬底上，不再放大裁切。
+3. 刷新跳动：预览结果存 sessionStorage（`chisabot.link-previews.v1`，6 小时、最多 80 条），刷新后用作 `initialData`，卡片直接按最终高度出现。测试页 CLS：改前每次访问 0.0007；改后首访 0.0007、三次刷新都是 0。
+4. favicon：`loading="lazy" decoding="async"`，宽高 28。
+5. 卡片和用户气泡关掉 Inter 的 `calt`，「411x7」不再画成「411×7」。
+6. 预览可选 `kind: "video"` 和 `thumbnail`（服务端由另一个 PR 加，这里没改服务端）：是 video 时图上叠一个播放角标，不用 blur，`pointer-events: none`。
+
+**截图**：`docs/images/linkstack-fix/`（左改前、右改后）。顶栏一项因 #374 未合并跳过。没有升版本号。
+>>>>>>> fix/linkstack-streaming
 
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
@@ -1273,6 +1295,7 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 
 **0.1.106 部署**（2026-10-29 10:03–10:16 北京时间）：部署前在 Haupt 另做数据库备份 `/opt/chisabot-backups/pre-release/v0.1.106-20261029T020328Z.dump`（`pg_restore -l` 767 条目）。`deploy-serial.sh 0ba9676` 镜像 `local/chisabot:auto-202610290203-0ba9676`（同时成为 BASE_IMAGE），`/api/version` 为 `0.1.106` / `0ba9676`。`request.sh smoke` PASSED（admin 模型自检 `ok:true persisted:false`），`health.sh` 通过，公网 `/login` 200，容器 healthy、无重启，sidecar 隔离 ALL GREEN，未回滚。网关 nginx 配置未变（md5 与部署前备份一致），`nginx -T` 仍有 22 条 `set_real_ip_from`、`real_ip_header CF-Connecting-IP`。镜像清理：更新器已自动删除 `auto-202610282010-ed93b05`，手动删除 `keep-d6cd2ec`；保留当前（BASE）0ba9676、上一版 3856d36、`keep-628d527`。
 
+<<<<<<< HEAD
 ## 2026-10-29 主题系统提案 + 账号卡 RFC（文档 PR，待小爱批准）
 
 **内容**：只改文档，不改代码，不升版本。
@@ -1313,6 +1336,31 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 - 返修（同日）：效果图按第二版参数重拍，2、3、4 替换，新增 5（三列：0.40 / 只降底色 / 第二版），图片目录约 380KB；透光对比发现压背景会把面板洗白 / 压灰，透光不如只降底色，已在 design-system.md §11 照实写明并请小爱取舍；另加了 tid 参考图的用途（06、04 输入框，08 底部面板，05 空状态和加载）。
 - 第三版（小爱选方案 ③）：基线改回只降底色（浅 0.25 / 深 0.32，不压背景），只给过不了 AA 的预设单独补偿：sky 浅、sakura 深用轻压背景 `contrast(0.8)` + 亮度 1.15 / 0.85；aurora 深再把底色提到 0.36；sky 深、mist 浅、ocean 浅、dusk 浅、dusk 深再给列表项加 0.13–0.25 的淡衬底。12 张壁纸主文字最差 6.32、次文字最差 4.52，都过 AA；侧栏对比图换成基线和第三版并排，2–5 号图按第三版重拍。
 - 第四版（小爱复审第三版后）：补偿顺序反过来，先加局部衬底，压背景和提底色放到最后。12 套面板都回到基线（0.25 / 0.32，不压背景），aurora 深的 0.36 和所有 t2 都去掉；8 套只给文字所在的列表项 / 卡片加主题实色半透明衬底 + 细描边和高光边（0.18–0.45，上限 0.48）。12 张壁纸主文字最差 6.32、次文字最差 4.56，没有一套还需要 t2；5 号图右列和 2–4 号图按第四版重拍。
+=======
+## 2026-10-29 链接卡组照 Hark 错落叠放（feat/hark-linkstack，依赖 #380）
+
+**做了什么**：`LinkCardStack` 把一条回复里最多 3 个链接放进同一个网格格子，位置全靠 transform（槽位写成 `--lc-sx / --lc-sy / --lc-rot / --lc-sc` 变量），主位居中抬高、左右两张倾斜约 -4° / 3.5°、缩到 0.94。卡宽 `min(208px, (100cqw − 16px) / (1 + 0.72 × 侧边张数))`，左右两张各错开 0.72 卡宽，所以 390 宽的手机上整叠也不出屏。单个链接是不倾斜的单卡（宽 min(280px, 100%)）。
+
+**交互**：鼠标移到哪张、键盘 `:focus-visible` 到哪张，那张就挪到主位；换位后锁 250ms（不短于 220ms 的过渡），挪完时指针下面换成的那张要等指针离开再进来才换，免得静止的指针下卡片来回跳。指针离开整叠后**保持最后一张在主位**，不复位（复位会让刚看的那张又被盖住，读起来更乱）。触屏第一次点只挪到主位（preventDefault），点主位的卡才打开；鼠标点击直接打开。`prefers-reduced-motion: reduce` 时没有过渡。
+
+**宽图**：`linkMediaRatio` 有 og:image:width/height 就用实际比例（夹在 4:3 和 2.4:1 之间），没有就 GitHub 2:1、其它 1.91:1 占位；骨架用同一个比例，图片到了不跳。GitHub 链接的底行用 `shortLinkLabel` 从地址取短标签（release → 版本号，issue / PR → #号，仓库首页 → owner/repo），和站点名、标题重复的补充信息不显示。
+
+**和 Hark 不同的地方（按 docs/design-system.md 改）**：
+
+- Hark 的卡永远是深色半透明。我们的规范是气泡、卡片不模糊、用主题实色，所以卡片底用 `--glass-bg-solid`（亮色主题白、暗色主题深灰，都是 .96），高光边 `--glass-highlight`、阴影 `--shadow-2`，文字 `--text`，灰字 `--text-secondary`；没有任何 `.dark .lc-*` 的单独配色。
+- 圆角：Hark 约 18px / 图 12px、内缩 6px。我们按 DESIGN.md §10.3 卡片用 `--r-lg`（20），内缩 `--sp-2`（8），图片圆角按同心规则写成 `calc(var(--lc-radius) − var(--lc-inset))` = 12。
+- 间距：文字区、叠放留白都换成 4pt 刻度的 `--sp-*`。
+- 动效：要求约 250ms ease-out，规范里最接近的是 `--dur-2`（220ms，状态切换）+ `--ease-out`，用令牌，不另写一个 250ms。
+- 图片上的 ↗ 和「追问」按钮仍是深色小胶囊：它们压在照片上，跟主题走在浅色照片上会看不清。
+
+**标题纯文本**：标题、站点行都是 React 文本节点，没有 innerHTML / markdown；测试里给 `<b>`、`**…**`、`[…](…)` 标题，确认原样显示、不生成标签。
+
+**和 #391 的来源格式对齐**：`LinkSourceFields = { url, title?, site?, toolCallId? }`，`LinkCard` 和 `LinkStackItem` 都直接接受（`site` 映射到 siteName，`toolCallId` 写进 `data-tool-call`），以后来源卡组可以 `<LinkCardStack items={replySources.sources} />`。本 PR 没有接入 `capabilities.replySources`。
+
+**没碰**：styles.css、wallpaper_core.html、bot-bubbles.tsx 的 SVG 净化、appearance 相关文件；没有 blur、`:has`、`!important`；未升级版本号。截图和录屏在 docs/images/linkstack/（只留 stack.webm 和 5 张关键截图：3 张前后对比、换位序列、触屏点击）。
+
+**评审后修改（#397）**：主位在用户悬停 / 聚焦 / 点过之前按当前张数重算（流式 1 → 3 张时换到中间那张），选过之后不再动；流式中第 3 张照样出来，不满 3 张才放骨架；`key` 带上序号，同一网址出现两次也不撞；「追问」自己 `:focus-visible` 时显示，叠放时不在主位的卡上 `visibility: hidden` + `pointer-events: none`，触屏单卡上一直显示；侧卡错开从 0.62 改成 0.72 卡宽，侧卡露出的标题更完整。
+>>>>>>> fix/linkstack-streaming
 
 ## 2026-10-29 发版 0.1.107
 

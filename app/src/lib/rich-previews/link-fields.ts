@@ -8,7 +8,8 @@
  *   比较忽略大小写和首尾空白。
  * - 预览图：给的 https 图在前，预览的本站转存图（/api/link-preview/asset/…）在后，前一张加载失败就换后一张。
  * - 底下一行是「站点 · 补充信息」：站点 = 给的站点名 → 预览的 og:site_name → 域名；
- *   补充信息 = 给的 meta / 标签 → 给的 description（模型写的一句话）；和站点名或标题重复的不显示。
+ *   补充信息 = 给的 meta / 标签 → 给的 description（模型写的一句话）→ GitHub 链接的短标签
+ *   （「GitHub · v0.1.13」，{@link shortLinkLabel}）；和站点名或标题重复的不显示。
  * - 兜底（标题只剩域名）时站点那一格换成短地址，免得两行都是同一个域名。
  *
  * - 标题去掉开头的「GitHub - 」（旧缓存里的 GitHub 标题；卡上标题固定两行，前缀太占地方）。
@@ -38,6 +39,10 @@ export type PreviewLinkFields = {
   finalUrl?: string;
   degraded?: boolean;
   stars?: number;
+  /** 服务器以后会给视频链接标 `kind: "video"`（开发3 在做）；前端可有可无。 */
+  kind?: string;
+  /** 视频缩略图（同上）；没有 og:image 时当预览图用。 */
+  thumbnail?: string | null;
 };
 
 export type MergedLinkFields = {
@@ -56,6 +61,8 @@ export type MergedLinkFields = {
   favicon: string | null;
   description: string | null;
   degraded: boolean;
+  /** 预览说是视频：图上叠播放角标。 */
+  kind: "video" | null;
 };
 
 /** 卡片标题：去掉开头的「GitHub - 」。 */
@@ -134,10 +141,77 @@ export function shortLinkUrl(url: string): string {
   }
 }
 
-/** 给的字段够不够画卡、还要不要去问 `/api/link-preview`：标题、图、站点名缺一个就要问。 */
-export function needsLinkPreview(given: GivenLinkFields): boolean {
+/**
+ * 底下灰字的短标签（没给 meta 时用）：GitHub 的发版 → 版本号（v0.1.13），PR / issue → #123，
+ * 仓库首页 → owner/repo。别的站不猜，返回 null。
+ */
+export function shortLinkLabel(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = u.hostname.replace(/^www\./i, "").toLowerCase();
+  if (host !== "github.com") return null;
+  const parts = u.pathname
+    .split("/")
+    .filter(Boolean)
+    .map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    });
+  const [owner, repo, kind, a, b] = parts;
+  if (!owner || !repo) return null;
+  if (kind === "releases" && a === "tag" && b) return b;
+  if ((kind === "pull" || kind === "issues") && a && /^\d+$/.test(a))
+    return `#${a}`;
+  if (kind === undefined) return `${owner}/${repo}`;
+  return null;
+}
+
+function bare(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/^www\./, "")
+    .replace(/[\s._\-·|/]+/g, "");
+}
+
+/**
+ * 标题是不是只写了站点名：和站点名、域名（去掉 www.）、域名主体（github.com → github）之一相同，忽略大小写、空格和标点。
+ * 例：「GitHub」「github.com」「World Coffee Map」（站点名就是它）都算；「Release ChisaBot v0.1.13」不算。
+ */
+export function isSiteOnlyTitle(
+  title: string | null | undefined,
+  site: string | null | undefined,
+  url: string,
+): boolean {
+  const t = bare(text(title));
+  if (!t) return false;
+  const host = linkHost(url).toLowerCase();
+  const labels = host.split(".");
+  const main = labels.length >= 2 ? labels[labels.length - 2] : host;
+  return [text(site), host, main ?? ""].some(
+    (candidate) => candidate !== "" && bare(candidate) === t,
+  );
+}
+
+/**
+ * 给的字段够不够画卡、还要不要去问 `/api/link-preview`：标题、图、站点名缺一个就要问；
+ * 传了地址时，标题只是站点名也要问（换成 og:title）。
+ */
+export function needsLinkPreview(
+  given: GivenLinkFields,
+  url?: string,
+): boolean {
   return (
-    !text(given.title) || !usableImage(given.image) || !text(given.siteName)
+    !text(given.title) ||
+    !usableImage(given.image) ||
+    !text(given.siteName) ||
+    (url !== undefined && isSiteOnlyTitle(given.title, given.siteName, url))
   );
 }
 
@@ -163,7 +237,9 @@ export function mergeLinkFields(
   );
   const givenImage = usableImage(given.image);
   const previewImage =
-    preview && preview.imageKind !== "none" ? usableImage(preview.image) : null;
+    (preview && preview.imageKind !== "none"
+      ? usableImage(preview.image)
+      : null) ?? usableImage(preview?.thumbnail);
   const image = givenImage ?? previewImage;
   const imageFallback =
     givenImage && previewImage && previewImage !== givenImage
@@ -179,9 +255,13 @@ export function mergeLinkFields(
       ? `★ ${formatStars(preview.stars)}`
       : "";
   const extra =
-    [text(given.meta), text(given.description), stars].find(
-      (value) => value && !same(value, site) && !same(value, title),
-    ) ?? null;
+    [
+      text(given.meta),
+      text(given.description),
+      stars,
+      shortLinkLabel(url) ?? "",
+    ].find((value) => value && !same(value, site) && !same(value, title)) ??
+    null;
   if (title === site && title === domain) site = shortLinkUrl(url);
   return {
     title,
@@ -199,5 +279,6 @@ export function mergeLinkFields(
     favicon: usableImage(preview?.favicon),
     description: text(given.description) || text(preview?.description) || null,
     degraded,
+    kind: preview?.kind === "video" ? "video" : null,
   };
 }

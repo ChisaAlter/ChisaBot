@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ## 0.1.117
 
 - 滚动时不再因 `peer-hover` 反复标脏整段对话（`ui/sidebar.tsx` 里没人用的两处，`no-group-has.test.ts` 加守卫）。未升级版本号。
@@ -112,6 +113,12 @@
 - 性能模式和系统「减少透明度」下全局关掉毛玻璃：一条 `*, *::before, *::after { backdrop-filter: none }`（`app/src/perf-noblur.css`，不用 `!important`），漏网的代码块操作条、遮罩、外观预览一起关掉；原来模糊的面板换成不透明底色 `--glass-bg-opaque`。实测两种模式下桌面、手机可见模糊层都是 0，普通模式与 main 一致。新增 `app/tests/no-backdrop.test.ts` 防止新的模糊绕过；规则见 DESIGN.md §10.3.1。
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.110`），PC / Android 外壳未变。
 
+=======
+## Unreleased
+
+- 链接卡组照 Hark 错落叠放（依赖 #380）：多个链接叠成一叠、悬停 / 聚焦 / 触屏第一次点换到主位（只改 transform，离开后保持最后一张），GitHub 宽图按原比例完整显示、底行「GitHub · v0.1.13」；材质改用设计系统令牌（`--glass-bg-solid`、`--r-lg`、`--sp-2`，不模糊），标题纯文本，props 兼容 #391 来源格式（未接入）
+- 链接卡组修正（依赖 #397）：流式输出时同尺寸骨架占位；悬停换主位不再整页重算样式（卡组属性 `data-slot` → `data-stack-slot`，避开 styles.css 的 `:has([data-slot=…])`，styles.css 未改；CPU 1× 最长任务 53 ms → 不超过 50 ms）；用户消息里的链接也显示成卡组（靠右）；「追问」移出 `<a>`、触屏明确显示、隐藏时不接点击；小图不放大不裁切；预览存 sessionStorage，刷新不跳（重访 CLS 0）；favicon 懒加载；URL 关 `calt`；可选 `kind: "video"` 播放角标（服务端未改）。顶栏一项跳过（#374 未合并）。未升级版本号。
+>>>>>>> fix/linkstack-streaming
 
 ## 0.1.109
 

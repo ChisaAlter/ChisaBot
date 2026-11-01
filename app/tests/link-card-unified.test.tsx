@@ -10,7 +10,6 @@ import { readFileSync } from "node:fs";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, render } from "@testing-library/react";
 import {
-  LINK_CARD_IMAGE_RATIO,
   LinkCard,
   LinkCardSkeleton,
 } from "@/components/rich-previews/link-card";
@@ -104,7 +103,7 @@ describe("LinkCard", () => {
     const card = await view.findByTestId("link-card");
     expect(card.getAttribute("data-layout")).toBe("image");
     const media = card.querySelector<HTMLElement>(".lc-media");
-    expect(media?.style.aspectRatio).toBe(LINK_CARD_IMAGE_RATIO);
+    expect(media?.style.aspectRatio).toBe(String(1.91));
     const banner = card.querySelector<HTMLElement>(
       "[data-testid=link-card-banner]",
     );
@@ -171,7 +170,10 @@ describe("LinkCard", () => {
     expect(card.querySelector(".lc-media > img")?.getAttribute("src")).toBe(
       ghPreview.image,
     );
-    expect(card.querySelector(".lc-site")?.textContent).toBe("GitHub");
+    // 没给 meta：GitHub 发版用版本号当短标签。
+    expect(card.querySelector(".lc-site")?.textContent).toBe(
+      "GitHub · v0.1.13",
+    );
   });
 
   test("json-render 的 Link：模型标题只是站点名，改用 og:title，模型的一句话放进「站点 · 补充信息」", async () => {
@@ -215,8 +217,12 @@ describe("LinkCard", () => {
     expect(
       card.querySelector<HTMLElement>(".lc-media")?.style.aspectRatio,
     ).toBe(skeletonRatio!);
-    expect(skeletonRatio).toBe(LINK_CARD_IMAGE_RATIO);
-    expect(card.className).toBe(skeleton.className.replace(" lc-skel", ""));
+    // GitHub 不知道宽高时按 2:1 占位；服务器量的 1200×600 也是 2:1，所以内容到了不跳。
+    expect(skeletonRatio).toMatch(/^2( \/ 1)?$/);
+    // 骨架一个元素同时是 .lc-item 和 .lc-card（没有「追问」按钮）；真卡是 .lc-item > a.lc-card + 按钮。
+    expect(skeleton.className).toBe("lc-item lc-card lc-skel");
+    expect(card.className).toBe("lc-card");
+    expect(card.parentElement!.className).toBe("lc-item");
 
     const lone = render(<LinkCardSkeleton />).getByTestId("link-card-skeleton");
     expect(lone.querySelector(".lc-title")).not.toBeNull();
@@ -239,8 +245,8 @@ describe("LinkCard", () => {
     expect(css).not.toMatch(
       /\.lc-card\[data-layout="image"\] \.lc-title \{[^}]*height:/,
     );
-    expect(rule(".lc-skel .lc-title")).toContain("height: 40px;");
-    expect(rule(".lc-skel .lc-meta")).toContain("height: 18px;");
+    expect(rule(".lc-skel .lc-title")).toContain("height: 36px;");
+    expect(rule(".lc-skel .lc-meta")).toContain("height: 17px;");
     expect(css).not.toMatch(/backdrop-filter\s*:/);
   });
 });

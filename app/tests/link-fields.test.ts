@@ -34,7 +34,8 @@ describe("mergeLinkFields：给的字段优先，缺的用预览补", () => {
     expect(merged.image).toBe(ghPreview.image);
     expect(merged.imageFallback).toBeNull();
     expect(merged.site).toBe("GitHub");
-    expect(merged.extra).toBeNull();
+    // 没给 meta / description：GitHub 发版退到版本号短标签（「GitHub · v0.1.13」）。
+    expect(merged.extra).toBe("v0.1.13");
     expect(merged.imageWidth).toBe(1200);
     expect(merged.imageHeight).toBe(600);
   });
@@ -74,7 +75,10 @@ describe("mergeLinkFields：给的字段优先，缺的用预览补", () => {
 
   test("模型给的站点名优先；补充信息和站点名一样时不重复", () => {
     expect(mergeLinkFields(GH, { siteName: "GH" }, ghPreview).site).toBe("GH");
-    expect(mergeLinkFields(GH, { meta: "github" }, ghPreview).extra).toBeNull();
+    // 给的 meta 和站点名一样：不重复，退到 GitHub 的短标签。
+    expect(mergeLinkFields(GH, { meta: "github" }, ghPreview).extra).toBe(
+      "v0.1.13",
+    );
   });
 
   test("没有预览：标题退到域名，站点那一格换成短地址", () => {
@@ -211,13 +215,26 @@ describe("补充信息那一行：「站点 · 补充信息」", () => {
     ).toBe("主分支");
   });
 
-  test("补充信息和站点名或标题一样就不显示，只剩站点", () => {
-    expect(
-      mergeLinkFields(GH, { meta: " github " }, ghPreview).extra,
-    ).toBeNull();
+  test("补充信息和站点名或标题一样就不显示：GitHub 退到短标签，别的站只剩站点", () => {
+    expect(mergeLinkFields(GH, { meta: " github " }, ghPreview).extra).toBe(
+      "v0.1.13",
+    );
     expect(
       mergeLinkFields(GH, { description: ghPreview.title }, ghPreview).extra,
+    ).toBe("v0.1.13");
+    expect(mergeLinkFields(GH, {}, ghPreview).extra).toBe("v0.1.13");
+    const other = "https://example.com/post/1";
+    const otherPreview = {
+      ...ghPreview,
+      siteName: "Example",
+      domain: "example.com",
+    };
+    expect(
+      mergeLinkFields(other, { meta: " example " }, otherPreview).extra,
     ).toBeNull();
-    expect(mergeLinkFields(GH, {}, ghPreview).extra).toBeNull();
+    expect(
+      mergeLinkFields(other, { description: ghPreview.title }, otherPreview)
+        .extra,
+    ).toBeNull();
   });
 });

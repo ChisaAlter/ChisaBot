@@ -2050,7 +2050,9 @@ const TranscriptMessage = memo(function TranscriptMessage({
                     // emphasis. The chip is the one exception, and it is not reformatting: it is drawing
                     // the thing that was already a chip in the composer as a chip here too, so the
                     // transcript shows a skill was used rather than a slash that was typed.
-                    <span className="whitespace-pre-wrap">
+                    // "Exactly as typed" includes the glyphs: Inter's contextual alternates (calt) would
+                    // draw the "x" in an id like BV1GJ411x7h7 as a multiplication sign.
+                    <span className="whitespace-pre-wrap [font-feature-settings:'calt'_0]">
                       {origin && (
                         <span className="mr-1.5 inline-flex items-center rounded bg-foreground/10 px-1.5 py-0.5 align-middle text-foreground/70 text-xs">
                           {"通过"}
@@ -2084,10 +2086,11 @@ const TranscriptMessage = memo(function TranscriptMessage({
               </Bubble>
             </>
           )}
-          {/* 链接卡 / 图片一摞（DESIGN.md §31）；开场一句不带。 */}
-          {tone === "lead" ? null : (
-            <MessageRichPreviews align={align} text={isUser ? said : text} />
-          )}
+          {/*
+            链接卡 / 图片一摞（DESIGN.md §31）。开场一句也要带：正文里出卡的链接行已经拿掉了（useDisplayText），
+            不画卡这行链接就没了；流式时第一段一直是「开场」，以前要等写完才一下子冒出卡片。
+          */}
+          <MessageRichPreviews align={align} text={isUser ? said : text} />
           {!isUser && memories && memories.length > 0 ? (
             <MemoryPills items={memories} />
           ) : null}
