@@ -84,8 +84,8 @@ export function RejectedFiles({
           <button
             aria-label={
               rejected.length === 1
-                ? "驳回此拒绝"
-                : `驳回这些 ${rejected.length} 拒绝`
+                ? "关闭这条提示"
+                : `关闭这 ${rejected.length} 条提示`
             }
             className="-m-1 shrink-0 rounded p-1 text-destructive/70 transition-colors hover:text-destructive"
             onClick={onDismiss}

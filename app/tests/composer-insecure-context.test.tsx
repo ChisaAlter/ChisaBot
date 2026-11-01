@@ -11,6 +11,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { Composer } from "@/components/channels/composer/composer";
 import { settleReactWork } from "./settle-react-work";
+import { installFetchBackedXhr } from "./fetch-backed-xhr";
 
 /**
  * THE COMPOSER ON A DEPLOYMENT THAT IS NOT A SECURE CONTEXT.
@@ -39,7 +40,10 @@ import { settleReactWork } from "./settle-react-work";
  * upload URL does not resolve.
  */
 
-beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
+beforeAll(() => {
+  GlobalRegistrator.register({ url: "http://localhost/" });
+  installFetchBackedXhr();
+});
 afterEach(cleanup);
 afterAll(async () => {
   await settleReactWork();

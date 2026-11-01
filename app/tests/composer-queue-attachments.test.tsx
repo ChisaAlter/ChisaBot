@@ -27,6 +27,7 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
 } from "@/lib/channels/attachments";
 import { settleReactWork } from "./settle-react-work";
+import { installFetchBackedXhr } from "./fetch-backed-xhr";
 
 function render(ui: ReactElement): RenderResult {
   const client = new QueryClient({
@@ -84,7 +85,10 @@ function render(ui: ReactElement): RenderResult {
  */
 const realUseAttachments = ReactCoreV2.useAttachments;
 
-beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
+beforeAll(() => {
+  GlobalRegistrator.register({ url: "http://localhost/" });
+  installFetchBackedXhr();
+});
 afterEach(cleanup);
 afterAll(async () => {
   await settleReactWork();
@@ -236,7 +240,7 @@ async function uploaded({ queryByLabelText }: RenderResult, name: string) {
   await waitFor(() => {
     expect(queryByLabelText(`移除 ${name}`)).not.toBeNull();
     const button = (queryByLabelText("发送消息") ??
-      queryByLabelText("队列消息")) as HTMLButtonElement | null;
+      queryByLabelText("排队发送")) as HTMLButtonElement | null;
     expect(button?.disabled).toBe(false);
   });
 }
@@ -348,7 +352,7 @@ async function dropAndWait(view: RenderResult, files: File[]) {
   await waitFor(() => expect(chips(view)).toHaveLength(files.length));
   await waitFor(() => {
     const button = (view.queryByLabelText("发送消息") ??
-      view.queryByLabelText("队列消息")) as HTMLButtonElement | null;
+      view.queryByLabelText("排队发送")) as HTMLButtonElement | null;
     expect(button?.disabled).toBe(false);
   });
 }
