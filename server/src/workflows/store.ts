@@ -3,7 +3,7 @@
  * 运行里有别人的输入和产出）。
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { workflowRunEvents, workflowRuns, workflows } from "../db/schema";
 import type {
@@ -132,17 +132,33 @@ export function createWorkflowStore(database: Database) {
       return rows.length > 0;
     },
 
-    async createRun(input: {
-      ownerUserId: string;
-      workflowId: string;
-      definition: WorkflowDefinition;
-      inputs: StoredRun["inputs"];
-      bindings: StoredRun["bindings"];
-      source: RunSource;
-      state: RunState;
-    }): Promise<StoredRun> {
+    /**
+     * 新建运行，但这个人进行中（queued / running）的运行已经有 maxActive 个时不建、返回 null。
+     * 计数和插入在同一个事务里，并按 owner 加事务级 advisory 锁：并发启动也不会突破上限（S5）。
+     */
+    async createRunWithinLimit(
+      input: {
+        ownerUserId: string;
+        workflowId: string;
+        definition: WorkflowDefinition;
+        inputs: StoredRun["inputs"];
+        bindings: StoredRun["bindings"];
+        source: RunSource;
+        state: RunState;
+      },
+      maxActive: number,
+    ): Promise<StoredRun | null> {
       const id = `wfr_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
-      const [row] = await database
+      return database.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`workflow:runs:${input.ownerUserId}`}))`);
+        if (Number.isFinite(maxActive)) {
+          const [count] = await tx
+            .select({ n: sql<number>`count(*)::int` })
+            .from(workflowRuns)
+            .where(and(eq(workflowRuns.ownerUserId, input.ownerUserId), inArray(workflowRuns.status, ["queued", "running"])));
+          if (Number(count?.n ?? 0) >= maxActive) return null;
+        }
+        const [row] = await tx
         .insert(workflowRuns)
         .values({
           id,
@@ -157,7 +173,8 @@ export function createWorkflowStore(database: Database) {
           state: json(input.state),
         })
         .returning();
-      return asRun(row!);
+        return asRun(row!);
+      });
     },
     async getRun(id: string): Promise<StoredRun | null> {
       const [row] = await database.select().from(workflowRuns).where(eq(workflowRuns.id, id));
@@ -202,6 +219,67 @@ export function createWorkflowStore(database: Database) {
           updatedAt: new Date(),
         })
         .where(eq(workflowRuns.id, id));
+    },
+    /**
+     * 条件更新（CAS）：只有当前状态还在 from 里才写入，返回是否写成功。并发的两次审批只有一个能过。
+     */
+    async transitionRun(
+      id: string,
+      from: WorkflowRunStatus[],
+      patch: Pick<StoredRun, "status"> & Partial<Pick<StoredRun, "state" | "output" | "error" | "startedAt" | "finishedAt">>,
+    ): Promise<boolean> {
+      const rows = await database
+        .update(workflowRuns)
+        .set({
+          status: patch.status,
+          ...(patch.state ? { state: json(patch.state) } : {}),
+          ...(patch.output !== undefined ? { output: patch.output } : {}),
+          ...(patch.error !== undefined ? { error: patch.error } : {}),
+          ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
+          ...(patch.finishedAt !== undefined ? { finishedAt: patch.finishedAt } : {}),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(workflowRuns.id, id), inArray(workflowRuns.status, from)))
+        .returning({ id: workflowRuns.id });
+      return rows.length > 0;
+    },
+    /** 原子占位：queued → running，抢到的才执行；返回抢到后的运行，没抢到返回 null。 */
+    async claimRun(id: string): Promise<StoredRun | null> {
+      const [row] = await database
+        .update(workflowRuns)
+        .set({ status: "running", updatedAt: new Date() })
+        .where(and(eq(workflowRuns.id, id), eq(workflowRuns.status, "queued")))
+        .returning();
+      return row ? asRun(row) : null;
+    },
+    /** 心跳：正在跑的运行定期刷新 updated_at，别的容器开机恢复时据此判断它还活着。 */
+    async touchRun(id: string): Promise<void> {
+      await database
+        .update(workflowRuns)
+        .set({ updatedAt: new Date() })
+        .where(and(eq(workflowRuns.id, id), eq(workflowRuns.status, "running")));
+    },
+    /**
+     * 开机恢复：只有心跳早于 staleBefore 的进行中运行才标失败（条件更新），
+     * 部署重叠时另一个容器正在跑、心跳新鲜的运行不受影响。返回是否标了。
+     */
+    async failStaleRun(
+      id: string,
+      staleBefore: Date,
+      patch: Pick<StoredRun, "state" | "error" | "finishedAt">,
+    ): Promise<boolean> {
+      const rows = await database
+        .update(workflowRuns)
+        .set({ status: "failed", state: json(patch.state), error: patch.error, finishedAt: patch.finishedAt, updatedAt: new Date() })
+        .where(
+          and(
+            eq(workflowRuns.id, id),
+            inArray(workflowRuns.status, ["queued", "running"]),
+            lt(workflowRuns.updatedAt, staleBefore),
+          ),
+        )
+        .returning({ id: workflowRuns.id });
+      return rows.length > 0;
     },
     async deleteRun(ownerUserId: string, id: string): Promise<boolean> {
       const rows = await database
