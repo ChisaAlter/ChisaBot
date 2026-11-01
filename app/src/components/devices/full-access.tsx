@@ -7,7 +7,7 @@ import {
   IconTerminal2,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { DeviceAuditEntry, DeviceView } from "../../../../shared/devices";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
@@ -75,7 +75,10 @@ export function FullAccessCard({ device }: { device: DeviceView }) {
     });
     if (ok) void apply.run(duration);
   };
-  const disabled = device.revoked || device.paused;
+  // 离线时服务器没法把完全访问下发到电脑上（O8），和紧急停止一样禁用并说明原因。
+  const offline = !device.online && !device.revoked;
+  const disabled = device.revoked || device.paused || offline;
+  const noteId = useId();
   // 分段选择的键盘约定（2026-10-20）：Tab 停在当前时长，方向键换时长、焦点跟随。
   const durationKeys = useSegmentedKeys<Duration>({
     value: duration,
@@ -137,6 +140,8 @@ export function FullAccessCard({ device }: { device: DeviceView }) {
                 ))}
               </div>
               <Button
+                aria-describedby={(device.paused || offline) && !device.revoked ? noteId : undefined}
+                data-testid="full-access-enable"
                 disabled={disabled}
                 feedback={{ pending: "开启中…", success: "已开启", error: "开启失败" }}
                 onClick={() => void turnOn()}
@@ -150,7 +155,15 @@ export function FullAccessCard({ device }: { device: DeviceView }) {
             </>
           )}
         </div>
-        {device.paused && !on ? <p className="full-access-s full-access-note">{"紧急停止中，先解除紧急停止才能开启。"}</p> : null}
+        {device.paused && !on ? (
+          <p className="full-access-s full-access-note" id={noteId}>
+            {"紧急停止中，先解除紧急停止才能开启。"}
+          </p>
+        ) : offline && !on ? (
+          <p className="full-access-s full-access-note" data-testid="full-access-offline-note" id={noteId}>
+            {"这台设备离线，等它重新连上才能开启完全访问。"}
+          </p>
+        ) : null}
       </Card>
     </section>
   );
