@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
+  catchUpTarget,
   initialMountedCount,
   mountStartIndex,
   nextMountedCount,
   reconcileMountedCount,
   stepsToFullMount,
   TAIL_FIRST_BATCH,
+  TAIL_FIRST_CAP,
   TAIL_FIRST_INITIAL,
   TAIL_FIRST_THRESHOLD,
 } from "@/lib/chat/tail-first-paint";
@@ -63,6 +65,15 @@ describe("tail-first-paint (CB-025)", () => {
     expect(stepsToFullMount(400)).toBeLessThanOrEqual(20);
   });
 
+  test("automatic catch-up is capped unless the whole history is asked for", () => {
+    expect(catchUpTarget(50, false)).toBe(50);
+    expect(catchUpTarget(TAIL_FIRST_CAP, false)).toBe(TAIL_FIRST_CAP);
+    expect(catchUpTarget(400, false)).toBe(TAIL_FIRST_CAP);
+    expect(catchUpTarget(400, true)).toBe(400);
+    expect(catchUpTarget(0, true)).toBe(0);
+    // The cap leaves room above the first paint and is not below it.
+    expect(TAIL_FIRST_CAP).toBeGreaterThan(TAIL_FIRST_INITIAL);
+  });
   test("micro-bench: window math for 400 items is cheap", () => {
     const started = performance.now();
     for (let i = 0; i < 20_000; i++) {
