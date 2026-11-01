@@ -6,7 +6,9 @@ import {
   Streamdown,
 } from "streamdown";
 import { cjkFriendlyEmphasis } from "@/lib/chat/cjk-emphasis";
+import { escapeUnknownTags } from "@/lib/chat/escape-unknown-tags";
 import { type MdTail, MdTailContext, withMdCache } from "@/lib/chat/md-cache";
+import { useDeclaredBotId } from "@/lib/copilot/active-bot";
 import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useSmoothText } from "@/lib/chat/use-smooth-text";
 import { workspaceLinks } from "@/lib/chat/workspace-links";
@@ -40,9 +42,10 @@ export function SmoothStreamdown({
   ...props
 }: Omit<ComponentProps<typeof Streamdown>, "children"> & { children: string }) {
   const shown = useSmoothText(children ?? "");
+  // 正文里的 Vec<String>、Option<T> 不是 HTML：先转义成文字，免得被当未知标签丢掉（escape-unknown-tags.ts）。
   // 工作区文件链接换成这个机器人的下载地址（§101）；在看的就是这个机器人的对话。
   const bot = useDeclaredBotId();
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const origin = typeof window === "undefined" ? "" : (window.location?.origin ?? "");
   // 挂载后内容变过就算「流式中」：此后末块不入缓存。块数在 Streamdown 切块时记下（同一次渲染内先于各块）。
   const first = useRef(children);
   const tail = useRef<MdTail | null>(null);
@@ -61,7 +64,7 @@ export function SmoothStreamdown({
         parseMarkdownIntoBlocksFn={split}
         {...props}
       >
-        {workspaceLinks(cjkFriendlyEmphasis(shown), bot, origin)}
+        {workspaceLinks(cjkFriendlyEmphasis(escapeUnknownTags(shown)), bot, origin)}
       </Streamdown>
     </MdTailContext.Provider>
   );
