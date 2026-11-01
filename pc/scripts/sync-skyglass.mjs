@@ -31,6 +31,7 @@ function block(startMarker, from = 0) {
 const tokenStart = css.indexOf("Skyglass design tokens");
 const root = block(":root {", tokenStart);
 const dark = block(".dark {", root.end);
+const palettes = css.match(/^html(?:\.dark)?\[data-palette="[^"]+"\]\s*\{[^}]+\}/gm) ?? [];
 const properties = css.match(/^@property --sky-[^\n]+$/gm) ?? [];
 const bodyStart = css.indexOf("\nbody {", dark.end);
 const body = block("body {", bodyStart);
@@ -47,6 +48,7 @@ fs.writeFileSync(
     baseDark.text,
     root.text,
     dark.text,
+    ...palettes,
     ...properties,
     body.text,
     darkBody.text,

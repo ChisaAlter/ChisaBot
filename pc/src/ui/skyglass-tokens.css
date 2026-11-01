@@ -1,109 +1,113 @@
 /* 由 pc/scripts/sync-skyglass.mjs 从 app/src/styles.css 生成，请勿手改。 */
 
 :root {
-  color-scheme: light;
-  /* Blue-sky frosted glass. Surfaces are translucent so the sky shows through; see "Glass" below. */
-  --glass-ink: #16181d;
-  --glass-ink-2: #3b3f48;
-  --glass-ink-3: var(--sky-muted, #6b7280);
-  --glass-ink-4: #9aa1ad;
-  /* `--sky-lift` (time-of-day sky, DESIGN.md §7) thickens the light glass when the sky behind it is dark. */
-  --glass: rgba(255, 255, 255, calc(0.55 + var(--sky-lift, 0)));
-  --glass-strong: rgba(255, 255, 255, calc(0.8 + var(--sky-lift, 0) * 0.6));
-  --glass-tile: rgba(255, 255, 255, calc(0.62 + var(--sky-lift, 0)));
-  --glass-dim: rgba(255, 255, 255, calc(0.34 + var(--sky-lift, 0)));
-  --glass-line: rgba(255, 255, 255, 0.6);
-  --glass-user: rgba(120, 132, 150, 0.3);
-  --glass-dark: #16181d;
-  --glass-dark-ink: #ffffff;
-  --glass-blur: saturate(160%) blur(22px);
-  --glass-shadow: 0 10px 30px rgba(40, 70, 110, 0.12), 0 1px 2px rgba(40, 70, 110, 0.06);
-  --glass-shadow-sm: 0 4px 14px rgba(40, 70, 110, 0.1);
-  --glass-shadow-pop: 0 20px 50px rgba(30, 50, 80, 0.22);
-  --background: rgba(255, 255, 255, 0.5);
-  --foreground: #16181d;
-  --card: rgba(255, 255, 255, calc(0.72 + var(--sky-lift, 0)));
-  --card-foreground: #16181d;
-  --popover: rgba(255, 255, 255, 0.86);
-  --popover-foreground: #16181d;
-  --primary: #16181d;
-  --primary-foreground: #ffffff;
-  --secondary: rgba(255, 255, 255, calc(0.62 + var(--sky-lift, 0)));
-  --secondary-foreground: #16181d;
-  --muted: rgba(22, 24, 29, 0.05);
-  --muted-foreground: var(--sky-muted, #5f6673);
-  --accent: rgba(22, 24, 29, 0.05);
-  --accent-foreground: #16181d;
-  --destructive: oklch(0.577 0.245 27.325);
-  --success: oklch(0.6 0.118 184.704);
-  --border: rgba(22, 24, 29, 0.09);
-  --input: rgba(22, 24, 29, 0.11);
-  --ring: rgba(22, 36, 62, 0.22);
-  --chart-1: #93b4d8;
-  --chart-2: #5b8ec4;
-  --chart-3: #3b6fa8;
-  --chart-4: #2a5285;
-  --chart-5: #1c3a63;
-  --radius: 0.75rem;
-  --sidebar: rgba(255, 255, 255, calc(0.4 + var(--sky-lift, 0)));
-  --sidebar-foreground: #16181d;
-  --sidebar-primary: #16181d;
-  --sidebar-primary-foreground: #5f6673;
-  --sidebar-accent: rgba(255, 255, 255, 0.55);
-  --sidebar-accent-foreground: #16181d;
-  --sidebar-border: rgba(255, 255, 255, 0.5);
-  --sidebar-ring: rgba(22, 36, 62, 0.22);
+  /* 字体：Inter Variable 打头，中文回落到系统黑体。 */
+  --font: "Inter Variable", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* 文字层级：一个基色 + 两个透明度，二级 / 三级由基色算出，预设只换 --text。 */
+  --text: rgb(29, 29, 31);
+  --text-on: rgb(249, 249, 250);
+  --text-secondary-alpha: 0.5;
+  --text-tertiary-alpha: 0.3;
+  --text-primary: var(--text);
+  --text-secondary: color-mix(in srgb, var(--text) calc(var(--text-secondary-alpha) * 100%), transparent);
+  --text-tertiary: color-mix(in srgb, var(--text) calc(var(--text-tertiary-alpha) * 100%), transparent);
+  --text-primary-on: var(--text-on);
+  --fill-primary: var(--text);
+  --fill-secondary: var(--text-secondary);
+  --fill-tertiary: rgba(29, 29, 31, 0.05);
+
+  /* 底色（Hark 浅色） */
+  --regular-bg: rgba(255, 255, 255, 0.668);
+  --thin-bg: rgba(255, 255, 255, 0.55);
+  --composer-bg: rgba(255, 255, 255, 0.55);
+  --cell-bg: rgba(255, 255, 255, 0.6);
+  --bubble-user-bg: rgba(255, 255, 255, 0.3);
+  --bubble-agent-bg: rgba(255, 255, 255, 0.98);
+  --hover-wash: rgba(29, 29, 31, 0.05);
+  --stroke-primary: rgba(29, 29, 31, 0.14);
+  --stroke-secondary: rgba(29, 29, 31, 0.07);
+
+  /* 强调色（预设覆盖） */
+  --accent-color: #2f74f0;
+  --accent-soft: rgba(47, 116, 240, 0.14);
+
+  /* 状态色 */
+  --status-success: #17955c;
+  --status-info: #2f74f0;
+  --status-error: rgba(217, 61, 64, 0.9);
+  --status-warning: rgba(201, 122, 12, 0.9);
+  --status-attention: #ff4d00;
+
+  /* 圆角 / 字号 / 行高 / 字距 / 间距 */
+  --r-4: 4px; --r-8: 8px; --r-12: 12px; --r-16: 16px; --r-20: 20px; --r-24: 24px; --r-full: 9999px;
+  --fs-12: 12px; --fs-13: 13px; --fs-14: 14px; --fs-15: 15px; --fs-20: 20px; --fs-24: 24px; --fs-28: 28px; --fs-48: 48px;
+  --lh-none: 1; --lh-snug: 1.16; --lh-heading: 1.2; --lh-body: 1.32; --lh-relaxed: 1.4;
+  --ls-tight: -0.01em; --ls-tighter: -0.02em;
+  --sp-half: 2px;
+
+  /* 阴影 */
+  --elev-1: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --elev-2: 0 4px 16px rgba(0, 0, 0, 0.15);
+  --elev-3: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-popover: 0 8px 40px #1d1d1f1f;
+
+  /* 动效：按下缩放、三档时长；只写明确的属性，不用 transition: all。 */
+  --press-scale: 0.97;
+  --t-fast: 0.15s; --t-base: 0.2s; --t-slow: 0.3s;
+  --t-ease: ease;
+
+  /* 玻璃（唯一一种材质：macOS 式半透明液态玻璃）。数值按渲染预算（#363）：大面板 20px、弹层 12px，
+   * 饱和度 160%（预算允许 160–180%）。--glass-blur / --glass-pop-blur 只是半径，backdrop-filter 读 --glass-filter / --glass-pop-filter。 */
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-blur: 20px;
+  --glass-pop-blur: 12px;
+  --glass-saturate: 160%;
+  --glass-filter: saturate(var(--glass-saturate)) blur(var(--glass-blur));
+  --glass-pop-filter: saturate(var(--glass-saturate)) blur(var(--glass-pop-blur));
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  --glass-shadow: 0 8px 40px rgba(29, 29, 31, 0.12), 0 0 0 0.5px rgba(29, 29, 31, 0.06);
+  --glass-pop-bg: rgba(255, 255, 255, 0.82);
+  --glass-pop-shadow: 0 12px 48px rgba(29, 29, 31, 0.16);
+  --glass-input-bg: rgba(255, 255, 255, 0.55);
+  --glass-bg-solid: rgba(255, 255, 255, 0.96);
+
+  /* 默认静态壁纸（sky）。动态天空是另一种可选壁纸，不是默认。 */
+  --wallpaper: linear-gradient(180deg, #7fa6dc 0%, #a9c4ea 42%, #dbe6f4 100%);
 }
 
 .dark {
-  color-scheme: dark;
-  --glass-ink: #e8ecf3;
-  --glass-ink-2: #c7cedb;
-  --glass-ink-3: #97a1b2;
-  --glass-ink-4: #6f7a8c;
-  --glass: rgba(22, 32, 48, 0.55);
-  --glass-strong: rgba(30, 42, 60, 0.82);
-  --glass-tile: rgba(255, 255, 255, 0.06);
-  --glass-dim: rgba(255, 255, 255, 0.07);
-  --glass-line: rgba(255, 255, 255, 0.08);
-  --glass-user: rgba(120, 150, 200, 0.24);
-  --glass-dark: #e8ecf3;
-  --glass-dark-ink: #10161f;
-  --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.2);
-  --glass-shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.3);
-  --glass-shadow-pop: 0 20px 50px rgba(0, 0, 0, 0.5);
-  --background: rgba(14, 22, 36, 0.5);
-  --foreground: #e8ecf3;
-  --card: rgba(28, 38, 56, 0.75);
-  --card-foreground: #e8ecf3;
-  --popover: rgba(24, 33, 50, 0.92);
-  --popover-foreground: #e8ecf3;
-  --primary: #e8ecf3;
-  --primary-foreground: #10161f;
-  --secondary: rgba(255, 255, 255, 0.08);
-  --secondary-foreground: #e8ecf3;
-  --muted: rgba(255, 255, 255, 0.06);
-  --muted-foreground: #97a1b2;
-  --accent: rgba(255, 255, 255, 0.08);
-  --accent-foreground: #e8ecf3;
-  --destructive: oklch(0.704 0.191 22.216);
-  --success: oklch(0.704 0.14 182.503);
-  --border: rgba(255, 255, 255, 0.1);
-  --input: rgba(255, 255, 255, 0.14);
-  --ring: rgba(235, 241, 255, 0.26);
-  --chart-1: #93b4d8;
-  --chart-2: #5b8ec4;
-  --chart-3: #3b6fa8;
-  --chart-4: #2a5285;
-  --chart-5: #1c3a63;
-  --sidebar: rgba(18, 28, 44, 0.5);
-  --sidebar-foreground: #e8ecf3;
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: #e8ecf3;
-  --sidebar-accent: rgba(255, 255, 255, 0.08);
-  --sidebar-accent-foreground: #e8ecf3;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --sidebar-ring: rgba(235, 241, 255, 0.26);
+  --text: rgb(245, 245, 247);
+  --text-on: rgb(29, 29, 31);
+  --fill-tertiary: rgba(245, 245, 247, 0.05);
+
+  --regular-bg: rgba(29, 29, 31, 0.618);
+  --thin-bg: rgba(29, 29, 31, 0.615);
+  --composer-bg: rgba(29, 29, 31, 0.618);
+  --cell-bg: rgba(255, 255, 255, 0.05);
+  --bubble-user-bg: rgba(29, 29, 31, 0.3);
+  --bubble-agent-bg: rgba(29, 29, 31, 0.7);
+  --hover-wash: rgba(245, 245, 247, 0.05);
+  --stroke-primary: rgba(245, 245, 247, 0.14);
+  --stroke-secondary: rgba(245, 245, 247, 0.07);
+
+  --accent-color: #a1d0ff;
+  --accent-soft: rgba(161, 208, 255, 0.16);
+
+  --status-success: #96f0b0;
+  --status-info: #a1d0ff;
+  --status-error: rgba(255, 100, 100, 0.9);
+  --status-warning: rgba(255, 200, 50, 0.8);
+
+  --glass-bg: rgba(29, 29, 31, 0.52);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 1px rgba(245, 245, 247, 0.1);
+  --glass-shadow: 0 8px 40px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.3);
+  --glass-pop-bg: rgba(29, 29, 31, 0.78);
+  --glass-pop-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+  --glass-input-bg: rgba(29, 29, 31, 0.618);
+  --glass-bg-solid: rgba(29, 29, 31, 0.96);
+
+  --wallpaper: linear-gradient(180deg, #192c56 0%, #3c5077 55%, #5a6484 100%);
 }
 
 :root {
@@ -115,7 +119,7 @@
   --r-xs: 6px; --r-sm: 10px; --r-md: 14px; --r-lg: 20px; --r-xl: 24px; --r-pill: 999px;
   /* v4.1：对话气泡四角一致的圆角矩形（用户 / 机器人、亮 / 暗都一样，没有尖角「尾巴」）。 */
   --r-bubble: 16px;
-  --blur-1: 12px; --blur-2: 22px; --blur-3: 36px;
+  --blur-1: 12px; --blur-2: 20px; --blur-3: 24px;
   --dur-1: 150ms; --dur-2: 220ms; --dur-3: 300ms; --dur-collapse: 260ms;
   --ease-out: cubic-bezier(0.22, 0.8, 0.24, 1); --ease-in: cubic-bezier(0.4, 0, 1, 1); --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
   --left-w: 276px; --left-w-slim: 80px; --right-w: 340px;
@@ -193,6 +197,146 @@
   --sidebar-primary: var(--ink-primary);
 }
 
+html[data-palette="aurora"] {
+  --accent-blue: #7c3aed;
+  --accent-blue-ink: #6d28d9;
+  --accent-blue-soft: rgba(124, 58, 237, 0.14);
+  --accent-color: #7c3aed;
+  --accent-soft: rgba(124, 58, 237, 0.14);
+  --ink-primary: #6d28d9;
+  --ink-primary-hover: #5b21b6;
+  --on-primary: #ffffff;
+  --focus: rgba(124, 58, 237, 0.24);
+  --focus-line: rgba(124, 58, 237, 0.6);
+  --glass-tint: rgba(124, 58, 237, 0.08);
+}
+
+html.dark[data-palette="aurora"] {
+  --accent-blue: #b197fc;
+  --accent-blue-ink: #c4b5fd;
+  --accent-blue-soft: rgba(177, 151, 252, 0.2);
+  --accent-color: #b197fc;
+  --accent-soft: rgba(177, 151, 252, 0.2);
+  --ink-primary: #c4b5fd;
+  --ink-primary-hover: #ddd6fe;
+  --on-primary: #0b1020;
+  --focus: rgba(177, 151, 252, 0.28);
+  --focus-line: rgba(177, 151, 252, 0.7);
+  --glass-tint: rgba(177, 151, 252, 0.1);
+}
+
+html[data-palette="emerald"] {
+  --accent-blue: #047857;
+  --accent-blue-ink: #065f46;
+  --accent-blue-soft: rgba(4, 120, 87, 0.14);
+  --accent-color: #047857;
+  --accent-soft: rgba(4, 120, 87, 0.14);
+  --ink-primary: #065f46;
+  --ink-primary-hover: #064e3b;
+  --on-primary: #ffffff;
+  --focus: rgba(4, 120, 87, 0.24);
+  --focus-line: rgba(4, 120, 87, 0.6);
+  --glass-tint: rgba(4, 120, 87, 0.08);
+}
+
+html.dark[data-palette="emerald"] {
+  --accent-blue: #38d9a9;
+  --accent-blue-ink: #63e6be;
+  --accent-blue-soft: rgba(56, 217, 169, 0.2);
+  --accent-color: #38d9a9;
+  --accent-soft: rgba(56, 217, 169, 0.2);
+  --ink-primary: #63e6be;
+  --ink-primary-hover: #96f2d7;
+  --on-primary: #0b1020;
+  --focus: rgba(56, 217, 169, 0.28);
+  --focus-line: rgba(56, 217, 169, 0.7);
+  --glass-tint: rgba(56, 217, 169, 0.1);
+}
+
+html[data-palette="sakura"] {
+  --accent-blue: #be185d;
+  --accent-blue-ink: #9d174d;
+  --accent-blue-soft: rgba(190, 24, 93, 0.14);
+  --accent-color: #be185d;
+  --accent-soft: rgba(190, 24, 93, 0.14);
+  --ink-primary: #9d174d;
+  --ink-primary-hover: #831843;
+  --on-primary: #ffffff;
+  --focus: rgba(190, 24, 93, 0.24);
+  --focus-line: rgba(190, 24, 93, 0.6);
+  --glass-tint: rgba(190, 24, 93, 0.08);
+}
+
+html.dark[data-palette="sakura"] {
+  --accent-blue: #f783ac;
+  --accent-blue-ink: #faa2c1;
+  --accent-blue-soft: rgba(247, 131, 172, 0.2);
+  --accent-color: #f783ac;
+  --accent-soft: rgba(247, 131, 172, 0.2);
+  --ink-primary: #faa2c1;
+  --ink-primary-hover: #fcc2d7;
+  --on-primary: #0b1020;
+  --focus: rgba(247, 131, 172, 0.28);
+  --focus-line: rgba(247, 131, 172, 0.7);
+  --glass-tint: rgba(247, 131, 172, 0.1);
+}
+
+html[data-palette="ocean"] {
+  --accent-blue: #0369a1;
+  --accent-blue-ink: #075985;
+  --accent-blue-soft: rgba(3, 105, 161, 0.14);
+  --accent-color: #0369a1;
+  --accent-soft: rgba(3, 105, 161, 0.14);
+  --ink-primary: #075985;
+  --ink-primary-hover: #0c4a6e;
+  --on-primary: #ffffff;
+  --focus: rgba(3, 105, 161, 0.24);
+  --focus-line: rgba(3, 105, 161, 0.6);
+  --glass-tint: rgba(3, 105, 161, 0.08);
+}
+
+html.dark[data-palette="ocean"] {
+  --accent-blue: #4dabf7;
+  --accent-blue-ink: #74c0fc;
+  --accent-blue-soft: rgba(77, 171, 247, 0.2);
+  --accent-color: #4dabf7;
+  --accent-soft: rgba(77, 171, 247, 0.2);
+  --ink-primary: #74c0fc;
+  --ink-primary-hover: #a5d8ff;
+  --on-primary: #0b1020;
+  --focus: rgba(77, 171, 247, 0.28);
+  --focus-line: rgba(77, 171, 247, 0.7);
+  --glass-tint: rgba(77, 171, 247, 0.1);
+}
+
+html[data-palette="sunset"] {
+  --accent-blue: #b45309;
+  --accent-blue-ink: #92400e;
+  --accent-blue-soft: rgba(180, 83, 9, 0.14);
+  --accent-color: #b45309;
+  --accent-soft: rgba(180, 83, 9, 0.14);
+  --ink-primary: #92400e;
+  --ink-primary-hover: #78350f;
+  --on-primary: #ffffff;
+  --focus: rgba(180, 83, 9, 0.24);
+  --focus-line: rgba(180, 83, 9, 0.6);
+  --glass-tint: rgba(180, 83, 9, 0.08);
+}
+
+html.dark[data-palette="sunset"] {
+  --accent-blue: #ffc048;
+  --accent-blue-ink: #ffd37a;
+  --accent-blue-soft: rgba(255, 192, 72, 0.2);
+  --accent-color: #ffc048;
+  --accent-soft: rgba(255, 192, 72, 0.2);
+  --ink-primary: #ffd37a;
+  --ink-primary-hover: #ffe3a3;
+  --on-primary: #0b1020;
+  --focus: rgba(255, 192, 72, 0.28);
+  --focus-line: rgba(255, 192, 72, 0.7);
+  --glass-tint: rgba(255, 192, 72, 0.1);
+}
+
 @property --sky-1 { syntax: "<color>"; inherits: false; initial-value: #6f9bc7; }
 
 @property --sky-2 { syntax: "<color>"; inherits: false; initial-value: #9dbddc; }
@@ -223,9 +367,6 @@ body {
     linear-gradient(180deg, var(--sky-1) 0%, var(--sky-2) 38%, var(--sky-3) 68%, var(--sky-4) 100%);
   background-attachment: fixed;
   background-color: var(--sky-2);
-  transition:
-    --sky-1 1.6s ease, --sky-2 1.6s ease, --sky-3 1.6s ease, --sky-4 1.6s ease,
-    --sky-cloud 1.6s ease, --sky-glow 1.6s ease, --sky-glow-x 1.6s ease, --sky-glow-y 1.6s ease;
   color: var(--foreground);
   font-family: var(--font);
   font-size: var(--fs-14);
@@ -248,7 +389,6 @@ body::before {
   z-index: -1;
   pointer-events: none;
   opacity: var(--sky-stars, 0);
-  transition: opacity 1.6s ease;
   background-image:
     radial-gradient(1.4px 1.4px at 37px 53px, #fff 40%, transparent 100%),
     radial-gradient(1px 1px at 151px 97px, #fff 40%, transparent 100%),
