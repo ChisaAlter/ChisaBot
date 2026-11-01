@@ -1,0 +1,31 @@
+{
+  "idle": {
+    "loopFramesIn3s": 0,
+    "paintsIn3s": 0
+  },
+  "working3Selected1": {
+    "seconds": 10,
+    "loopFrames": 599,
+    "longTasks": 0,
+    "longTaskMaxMs": 0,
+    "frameGapAvgMs": 16.69,
+    "frameGapP95Ms": 16.8,
+    "frameGapMaxMs": 33.3,
+    "framesOver20ms": 1,
+    "morphCostAvgMs": 0.341,
+    "morphCostP95Ms": 0.6,
+    "morphCostMaxMs": 1.5
+  },
+  "afterStop": {
+    "loopFramesInLast2s": 0
+  },
+  "streaming": {
+    "seconds": 10,
+    "loopFrames": 601,
+    "longTasksOver50ms": 0,
+    "longTaskMaxMs": 0,
+    "morphCostAvgMs": 0.533,
+    "morphCostP95Ms": 0.8,
+    "morphCostMaxMs": 1.7
+  }
+}

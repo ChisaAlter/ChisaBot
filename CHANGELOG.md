@@ -1214,6 +1214,8 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 - 修天空背景换场景时渐变偶尔停在半路（主线程卡的时候停在 0.76～0.98 一到四秒，要等下一次唤醒才跳完）：渐变一旦开始就一直醒着画到结束（最多 8 秒），引擎跳过不画的那一拍也续上；天气（open-meteo）响应的 body 读完时再叫醒一次天空，网慢时天气带来的那次渐变也能画出来。改动在 `app/src/components/sky-background.tsx` 和新文件 `app/src/lib/sky-fade.ts`，引擎 `wallpaper_core.html` 未改；空闲、失焦、隐藏时照旧不画。未升级版本号。
 
 - 安卓 App 语音输入的麦克风权限（#419，安卓客户端改动，随下一个客户端版本发布，和 #400 一起）：WebView 只对我们自己的 origin、只放行录音（AUDIO_CAPTURE），没有系统权限时先弹系统授权、拒绝就不给；Manifest 声明 `RECORD_AUDIO` / `MODIFY_AUDIO_SETTINGS`（麦克风不是必需硬件）。服务器 / 网页未变。
+
+- 形象头像在想 / 干活 / 被选中 / 做完了时像果冻一样持续变形，眼睛会眨会看，状态切换走弹簧；全局一个 rAF、只动在动且看得见的头像，减少动态效果 / 性能模式下不变形。头像编辑框的预览表情改为单选（修「做完了」时「工作中」还亮着）。
 - 修「有新版本，点此刷新」明明输入框是空的也弹「输入框里还有没发送的内容」：那道确认原来扫整页的 `textarea` / contenteditable / `type="text"`，机器人画的卡片表单、面板、搜索框都会被当成聊天草稿；现在只认显式标了 `data-unsent-watch` 的输入（编辑中的消息、还没提交的审批回答），聊天的草稿本来记在 localStorage 里、刷新会恢复，不再拦人。文案也改成说清到底会丢什么。输入框上还挂着的附件（File 只在内存里）现在单独拦一下，确认框写明刷新后要重新选。
 - 右栏自定义面板（§109，参考 dsh-pad）：面板可以挂最多 3 个直连数据源（https / 本机命令），宿主按秒级取数、值回填 `/live/<id>`，不再为刷新花 token；卡片可以两两并排、拖比例、单卡拖高、折叠，布局按机器人记在本机；⋯ 菜单新增「让 AI 修改…」与「数据来源…」。命令数据源默认关闭且只给管理员（`CHISABOT_PANEL_COMMANDS=1`）。见 [docs/live-panel-sources.md](docs/live-panel-sources.md)。
 

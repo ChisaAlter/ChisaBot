@@ -2,7 +2,7 @@ import { IconCamera, IconMinus, IconPhotoUp, IconPlus } from "@tabler/icons-reac
 import { useEffect, useRef, useState } from "react";
 import { monogramOf } from "../../../../shared/bot-avatars";
 import { BotAvatar } from "@/components/agents/bot-avatar";
-import { ShapeAvatar } from "@/components/agents/shape-avatar";
+import { ShapeAvatar, type ShapeMood } from "@/components/agents/shape-avatar";
 import { Button } from "@/components/ui/button";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import {
@@ -542,35 +542,55 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
   );
 }
 
-/** 「形象」页：预览（可以试三种表情）+ 14 个形状 + 11 种颜色。 */
+const PREVIEW_MOODS = ["still", "selected", "thinking", "working", "done"] as const;
+type PreviewMood = (typeof PREVIEW_MOODS)[number];
+const PREVIEW_MOOD_LABEL: Record<PreviewMood, string> = { still: "静止", selected: "选中", thinking: "思考", working: "工作中", done: "做完了" };
+const PREVIEW_SHAPE_MOOD: Record<PreviewMood, ShapeMood> = { still: "idle", selected: "selected", thinking: "idle", working: "working", done: "done" };
+
+/** 「形象」页：预览（可以试静止 / 选中 / 思考 / 工作中 / 做完了）+ 14 个形状 + 11 种颜色。 */
 function ShapePicker({ shape, color, onChange }: { shape: AvatarShape; color: ShapeColor; onChange: (shape: AvatarShape, color: ShapeColor) => void }) {
-  const [selected, setSelected] = useState(false);
-  const [working, setWorking] = useState(false);
-  const timer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  // 预览的表情：单选（以前三个开关各管各的，点「做完了」时「工作中」还亮着）。
+  const [preview, setPreview] = useState<PreviewMood>("still");
+  // 再点一次「做完了」重新跳一遍。
+  const [replay, setReplay] = useState(0);
+  const pick = (next: PreviewMood) => {
+    if (next === "done") setReplay((value) => value + 1);
+    setPreview(next);
+  };
   const shapeKeys = useSegmentedKeys<AvatarShape>({ value: shape, values: AVATAR_SHAPES, onChange: (next) => onChange(next, color) });
   const colorKeys = useSegmentedKeys<ShapeColor>({ value: color, values: SHAPE_COLORS, onChange: (next) => onChange(shape, next) });
-  // 「做完」：先跑一下再停，头像会自己露出做完的表情。
-  const finish = () => {
-    window.clearTimeout(timer.current);
-    setWorking(true);
-    timer.current = window.setTimeout(() => setWorking(false), 1200);
-  };
+  const moodKeys = useSegmentedKeys<PreviewMood>({ value: preview, values: PREVIEW_MOODS, onChange: pick });
   return (
     <div className="bot-ava-preset">
       <span className="bot-ava" data-avatar="shape" style={{ width: 96, height: 96 }}>
-        <ShapeAvatar color={color} selected={selected} shape={shape} size={96} working={working} />
+        {/* 换一种预览就重新挂一个头像：预览之间切换不该被当成「一轮做完了」。 */}
+        <ShapeAvatar
+          color={color}
+          key={preview === "done" ? `done-${replay}` : preview}
+          mood={PREVIEW_SHAPE_MOOD[preview]}
+          selected={preview === "selected"}
+          shape={shape}
+          size={96}
+          thinking={preview === "thinking"}
+          working={preview === "working"}
+        />
       </span>
-      <div className="bot-ava-moods">
-        <button aria-pressed={selected} className="bot-ava-mood" data-testid="ava-mood-selected" onClick={() => setSelected((value) => !value)} type="button">
-          {"选中"}
-        </button>
-        <button aria-pressed={working} className="bot-ava-mood" data-testid="ava-mood-working" onClick={() => { window.clearTimeout(timer.current); setWorking((value) => !value); }} type="button">
-          {"工作中"}
-        </button>
-        <button className="bot-ava-mood" data-testid="ava-mood-done" onClick={finish} type="button">
-          {"做完了"}
-        </button>
+      <div aria-label={"预览表情"} className="bot-ava-moods" {...moodKeys.groupProps} ref={moodKeys.groupRef} role="radiogroup">
+        {PREVIEW_MOODS.map((item) => (
+          // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
+          <button
+            aria-checked={preview === item}
+            className="bot-ava-mood"
+            data-testid={`ava-mood-${item}`}
+            key={item}
+            onClick={() => pick(item)}
+            role="radio"
+            tabIndex={moodKeys.itemTabIndex(item)}
+            type="button"
+          >
+            {PREVIEW_MOOD_LABEL[item]}
+          </button>
+        ))}
       </div>
       <div aria-label={"形状"} className="bot-ava-shapes" {...shapeKeys.groupProps} ref={shapeKeys.groupRef} role="radiogroup">
         {AVATAR_SHAPES.map((item) => (

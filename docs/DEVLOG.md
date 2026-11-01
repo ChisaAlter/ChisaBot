@@ -533,6 +533,42 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 - 新增 `app/tests/fetch-backed-xhr.ts`：上传改走 XHR 后，原来打桩 `global.fetch` 的 10 个附件测试文件改为先装这个转发到 `fetch` 的 XHR 替身，测试内容没改。改了文案的旧断言同步更新。
 - 不在范围：Shift+Enter 4× 降速下的重渲染耗时（M4-5，另有人做）、PDF 支持（M4-8）。
 
+## 形象头像「活」起来 + 预览表情单选（dev3/feat-avatar-morph）
+
+**动机**：形象头像（DESIGN.md §81）在跑的时候只有 CSS 的呼吸缩放和眨眼，看起来是一张贴图在动，不像「活的」。要像 Grok Bot 的头像那样：果冻一样的轮廓、沿边缘流动的波、挤压拉伸、会眨会看的眼睛，状态之间全是弹簧过渡。另外头像编辑框「形象」页的三个预览按钮「选中 / 工作中 / 做完了」各自是开关，点「做完了」时「工作中」还亮着（Jun 报的 bug）。
+
+**状态从哪来**：
+- 选中：左栏当前对话那一行的 `selected`（原来就有）。
+- 工作中 / 思考中：打开着的对话页最清楚，`channel-chat.tsx` 用 `activityOf(activeMessages, chatBusy)` 算：这一轮在跑且最后一条用户消息之后有发出去还没回结果的工具调用 = working，在跑但没有工具在跑（在想 / 在写）= thinking；发布到 `lib/agents/bot-activity.ts`。`BotAvatar` 按 agentId 读它，所以左栏、资料页、机器人列表等所有用 `BotAvatar` 的地方都跟着动；没打开对话的机器人仍按服务器的 `busy` 当 working。
+- 做完了：从 working 落下来后的 2.4 s（原来的 `useShapeMood`）。
+- 聊天页顶栏和消息旁边：现在的设计（DESIGN v4.1 §W5）聊天列没有顶栏、消息行不画机器人头像，所以没有接入点；以后加上时用 `BotAvatar agentId=…` 就自动有。
+
+**改法**：
+- 新的 `app/src/lib/agents/avatar-morph.ts`：全局一个 rAF 循环。每个在动的头像有 4 个状态权重弹簧（选中 / 思考 / 干活 / 做完）、一个欠阻尼的「果冻」弹簧（状态一变给一下冲量）、两个眼睛弹簧。每帧在 32 个半径上叠 3 道沿边缘走的波（k=2/3/5，周期 2.4–3.8 s，强度：干活 1、思考 0.6、选中 0.3），加 cos2θ 的挤压拉伸；干活时往相邻形状流过去最多 28%、身体 ±5° 慢转、眼睛左右扫并偏向右下（输出方向）；思考时眼睛往上飘；选中时轻轻一弹 + ±3° 慢摆、眼睛看正前方略放大；做完了跳两下（起跳拉长、落地压扁，^ ^ 眼睛沿用 CSS）。随机 2–5 s 眨一次眼。目标全回 0 且所有弹簧落定后画回自己的形状并退出循环。
+- 只用 `setAttribute`（path 的 `d`、身体 g 和脸 g 的 `transform`），React 不重渲染；没有 blur / backdrop-filter。
+- 标签页隐藏时停循环（visibilitychange），滚出视口的头像（共用一个 IntersectionObserver）跳过，全都看不见时循环停。
+- 减少动态效果 / 性能模式：不登记变形（保持原来的 CSS 行为，减少动态效果下 CSS 动画本来就全关）。变形在动时 CSS 的 sa-breathe / sa-look / sa-blink / sa-pop / sa-hop 让位（`.sa[data-morph="on"]`），不会两套叠加。
+- `ShapeAvatar` 新增 `thinking`、`mood`（只给预览强制表情）；`BotAvatar` 新增 `thinking` 并读实时状态。
+- 头像编辑框的预览表情改成 `role="radiogroup"` 单选（`role="radio"` + `aria-checked`，方向键走 ui/segmented.tsx 的约定），选哪个只亮哪个，预览立刻换成那个动画；再点「做完了」重跳一次。
+
+**性能（headless Chromium 1228，Jun 的 PC，`app/scripts/avatar-morph-harness/`，左栏样 24 个 28px 头像）**：
+- 全部待机 3 s：循环 0 帧、0 次绘制；停止后 2 s：0 帧。
+- 3 个 working + 1 个选中，10 s：601 帧，长任务 0；帧间隔 平均 16.67 ms / p95 16.7 / 最大 16.8 ms，>20 ms 的帧 0；每帧变形耗时 平均 0.37 ms / p95 0.7 / 最大 2.8 ms。
+- 录屏（选中 / 思考 / 工作中 / 做完了）：`docs/images/avatar-morph-states-28px.gif`、`-100px.gif`、`avatar-morph-states.webm`；数字在 `docs/images/avatar-morph-perf.json`。
+
+**测试**：`app/tests/avatar-morph.test.tsx`（待机 0 帧、多个头像共用一个循环、全部回弹后停循环、回弹精确回到原形状、隐藏 / 出视口暂停和恢复、性能模式不变形、每帧不重渲染、做完了会跳、干活会转和看、切换是弹簧不是硬切、activityOf）、`avatar-morph-reduced.test.tsx`（减少动态效果，独立进程）、`avatar-picker-shape.test.tsx` 加单选 / 方向键用例。两个新文件进了 run-app-tests 的隔离名单（motion 首次 import 时记 rAF 和减少动态效果）。
+
+**第三轮（评审 16:17）**：
+- 「做完了」看整轮：`useShapeMood` 改成看 `working || thinking` 从 true 落到 false。一轮中间工具跑完回到在想不再提前跳 ^ ^；只在想、不跑工具的一轮结束也会跳。用例：working → thinking → 空，中间不是 done、最后是 done。
+- 小头像动得更明显：`MorphTarget.size()`，40px 以下按大小放大（到 18px 封顶）：流动 / 转动 / 跳 ×(1+1.6s)，眼睛 ×(1+2.6s)，s=(40−size)/22；28px 时约 ×1.87 / ×2.42。思考和选中的动作不一样了：思考 = 4.2 s 一个来回的慢慢歪头（±9°×增益）+ 眼睛往上、左右慢慢飘 + 上下漂；选中 = 每 1.6 s 轻轻蹦一下（落地压扁）+ 慢摆、眼睛看正前方放大，选中 4 s 后慢慢停下（循环退出）。干活：眼睛更快地左右扫（1.6 s）、0.9 s 快呼吸、±6° 转。窗口失去焦点时停（焦点进 iframe 不算），回来继续。
+- 对话里的「思考中」和在跑的工作卡：`ChannelChat → ConversationView → ChatTranscript` 传 `agentId`，三个点换成 18px 的 `BotAvatar`（`components/agents/bot-work-mark.tsx`），只在机器人用形象头像时；其他头像照旧三个点。顶栏没动。
+- 预览表情加「静止 / 思考」（静止 / 选中 / 思考 / 工作中 / 做完了），换一种预览会重新挂一个头像，切走不会冒出做完了。avatar-picker.tsx 的纯格式化改动撤回，只留功能改动。
+- 手动停止或出错结束的一轮不跳「做完了」，直接回到静止：channel-chat 把 `stopping || runError` 交给 `activityOf`，结束时发布 `interrupted`；`useShapeMood` 收到 interrupted 不跳，已经开始的跳也收掉（出错时 busy 可能先落一拍）。
+- 没做：「等用户批准的工具不算在干活」——待批准状态不在消息里（在 approval-context / 服务端闸门），要把它接进 activityOf 得动审批那套，改动面不小，留给以后。
+- 新测试：BotAvatar + useBotActivity 集成（切换机器人 / 卸载后清理）、小头像动得更多、思考和选中动作不同、选中会停、失焦暂停、BotWorkMark（形象头像 / 其他头像 / 没 agentId）。
+- 性能（同上环境）：待机 3 s 0 帧 0 次绘制；3 干活 + 1 选中 10 s：599 帧、长任务 0、帧间隔 平均 16.69 / p95 16.8 ms、每帧变形 平均 0.34 / p95 0.6 / 最大 1.5 ms；流式回复（每 30 ms 一段字 + 3 在想 + 3 干活 + 对话里 18px 在想）10 s：>50 ms 长任务 0、每帧变形 平均 0.53 / p95 0.8 / 最大 1.7 ms；停止后 2 s 0 帧。
+- 录屏：`docs/images/avatar-morph-states-28px.gif`（左栏实际大小，验收用，2x 像素）、`avatar-morph-states-100px.gif`、`avatar-morph-states.webm`。
+
 ## Unreleased — 壁纸隐私、上传上限、IndexedDB 存储、滑块写入防抖（分支 fix/wallpaper-privacy-upload）
 
 来源：审查报告第 6 项（M5 壁纸 / 天空引擎）和性能报告第 7 项（滑块拖动卡顿）。只修功能和安全，`styles.css` 和视觉外观都没改。

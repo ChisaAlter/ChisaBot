@@ -47,6 +47,7 @@ import { observeApprovalAgent } from "@/lib/copilot/approval-context";
 import type { ThreadActivity } from "@/lib/copilot/bot-thread";
 import { readSync } from "@/lib/copilot/bot-thread";
 import { reportChatRunning } from "@/lib/copilot/computer-activity";
+import { activityOf, publishBotActivity } from "@/lib/agents/bot-activity";
 import { syncComputerMessages } from "@/lib/copilot/computer-tools";
 import {
   CONNECTION_LOST_REASON,
@@ -1858,6 +1859,14 @@ export function ChannelChat({
   useEffect(() => {
     syncComputerMessages(runtimeAgentId, activeMessages, chatBusy);
   }, [runtimeAgentId, activeMessages, chatBusy]);
+  // 头像变形（DESIGN.md §81）：在跑工具 = working，在跑但没有工具 = thinking；左栏那一行和资料页读这个。
+  const liveActivity = activityOf(
+    activeMessages,
+    chatBusy,
+    // 手动停止或出错结束的一轮不跳「做完了」（DESIGN.md §81）。
+    stopping || runError !== null,
+  );
+  useEffect(() => publishBotActivity(runtimeAgentId, liveActivity), [runtimeAgentId, liveActivity]);
   const canResend = !agentLive && channel.active && !restoring && !modelSaving;
   const messageActions = useMemo(
     () => ({ canAct: canResend, regenerate, edit: editAndResend }),
@@ -1875,6 +1884,7 @@ export function ChannelChat({
         <MessageActionsContext.Provider value={messageActions}>
           <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
             <ConversationView
+              agentId={runtimeAgentId}
               modelControl={
                 <BotModelSelector
                   agentId={runtimeAgentId}
