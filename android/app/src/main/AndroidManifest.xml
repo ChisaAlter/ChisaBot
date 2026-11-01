@@ -9,6 +9,11 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <!-- 网页兜底页里的语音输入（getUserMedia）：只在网页第一次要麦克风时请求，只给本服务器的页面；
+         MODIFY_AUDIO_SETTINGS 是 WebView 采集音频要的普通权限（不弹窗）。没有麦克风的设备也能安装。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
