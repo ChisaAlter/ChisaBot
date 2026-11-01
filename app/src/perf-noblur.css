@@ -75,9 +75,34 @@ html.dark {
     ) {
     background: var(--glass-bg-opaque);
   }
+  /* 普通 filter: blur 也关：链接卡片堆里没聚焦的卡（styles.css .rp-link / .rp-pile-card、link-card.css .lc-card 的
+     [data-dimmed]）改成只靠更低的透明度区分；agent-orb 的光晕和 ::before 色团去掉模糊，保留对比度/饱和度。 */
+  html:not(#chisabot-no-blur)
+  :is(.rp-link, .rp-pile-card, .lc-card)[data-dimmed] {
+    filter: none;
+    opacity: 0.36;
+  }
+  html:not(#chisabot-no-blur) .agent-orb-glow {
+    filter: none;
+  }
+  html:not(#chisabot-no-blur) .agent-orb::before {
+    filter: contrast(var(--contrast-amount)) saturate(1.4);
+  }
   /* 外观设置里色板的勾：原来是 0.68 的深色底加模糊，这里给实心深色。 */
   html:not(#chisabot-no-blur) .appearance-swatch-check {
     background: rgb(15, 23, 42);
+  }
+  /* 壁纸模糊（用户在外观里调的 0–40px）：关掉模糊，换一层主题色的半透明实色遮罩，模糊越大遮罩越浓（最多 0.55），
+     保留「背景退后」的观感；用户保存的设置不变。 */
+  html:not(#chisabot-no-blur) .chisabot-wallpaper-img[data-blur] {
+    filter: none;
+  }
+  html:not(#chisabot-no-blur) .chisabot-wallpaper-img[data-blur]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--glass-bg-opaque);
+    opacity: var(--wallpaper-veil, 0);
   }
 }
 
@@ -141,4 +166,30 @@ html[data-perf="on"]:not(#chisabot-no-blur)
 }
 html[data-perf="on"]:not(#chisabot-no-blur) .appearance-swatch-check {
   background: rgb(15, 23, 42);
+}
+/* 普通 filter: blur 也关：链接卡片堆里没聚焦的卡（styles.css .rp-link / .rp-pile-card、link-card.css .lc-card 的
+   [data-dimmed]）改成只靠更低的透明度区分；agent-orb 的光晕和 ::before 色团去掉模糊，保留对比度/饱和度。 */
+html[data-perf="on"]:not(#chisabot-no-blur)
+:is(.rp-link, .rp-pile-card, .lc-card)[data-dimmed] {
+  filter: none;
+  opacity: 0.36;
+}
+html[data-perf="on"]:not(#chisabot-no-blur) .agent-orb-glow {
+  filter: none;
+}
+html[data-perf="on"]:not(#chisabot-no-blur) .agent-orb::before {
+  filter: contrast(var(--contrast-amount)) saturate(1.4);
+}
+/* 壁纸模糊（用户在外观里调的 0–40px）：关掉模糊，换一层主题色的半透明实色遮罩，模糊越大遮罩越浓（最多 0.55），
+   保留「背景退后」的观感；用户保存的设置不变。 */
+html[data-perf="on"]:not(#chisabot-no-blur) .chisabot-wallpaper-img[data-blur] {
+  filter: none;
+}
+html[data-perf="on"]:not(#chisabot-no-blur)
+  .chisabot-wallpaper-img[data-blur]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--glass-bg-opaque);
+  opacity: var(--wallpaper-veil, 0);
 }
