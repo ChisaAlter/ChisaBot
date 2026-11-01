@@ -5,13 +5,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { ChatTranscript } from "@/components/channels/chat-transcript";
-import { setThreadUi } from "@/lib/chat/ui-memory";
 import {
   MOUNT_ALL_HISTORY_EVENT,
   TAIL_FIRST_CAP,
   TAIL_FIRST_INITIAL,
   TAIL_FIRST_THRESHOLD,
 } from "@/lib/chat/tail-first-paint";
+import { setThreadUi } from "@/lib/chat/ui-memory";
 import { settleReactWork } from "./settle-react-work";
 
 /**

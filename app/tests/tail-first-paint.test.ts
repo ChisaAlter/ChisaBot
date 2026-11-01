@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  catchUpTarget,
   initialMountedCount,
   mountStartIndex,
   nextMountedCount,
   reconcileMountedCount,
-  catchUpTarget,
   stepsToFullMount,
   TAIL_FIRST_BATCH,
   TAIL_FIRST_CAP,
