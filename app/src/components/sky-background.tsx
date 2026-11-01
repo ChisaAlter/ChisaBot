@@ -14,12 +14,12 @@ import {
   useWallpaperLoading,
 } from "@/lib/appearance";
 import { usePerfMode } from "@/lib/perf-mode";
+import { noteSkyFrame, skyFadeHolding, wakeSkyOnWeather } from "@/lib/sky-fade";
 import {
-  noteSkyFrame,
-  SKY_FRAME_MS,
-  skyFadeHolding,
-  wakeSkyOnWeather,
-} from "@/lib/sky-fade";
+  noteSkyFrameCost,
+  skyFrameDelay,
+  skyInputHolding,
+} from "@/lib/sky-pace";
 import { createSkyWindow } from "@/lib/sky-window";
 
 /*
@@ -227,6 +227,10 @@ const sky = {
   draws: 0,
   /** 这次渐变第一次被看到的时间（null = 没有渐变），见 noteSkyFrame。 */
   fadeSince: null as number | null,
+  /** 最近几帧引擎耗时（慢机拉开帧间隔，见 lib/sky-pace.ts）。 */
+  cost: 0,
+  /** 最近一次按下鼠标 / 触摸 / 按键（之后一小段时间不出帧，见 lib/sky-pace.ts）。 */
+  inputAt: Number.NEGATIVE_INFINITY,
   listening: false,
 };
 
@@ -249,8 +253,12 @@ function runSkyFrame(realTs: number, force: boolean) {
   const callbacks = sky.queue;
   sky.queue = [];
   sky.draws = 0;
+  const started = performance.now();
   for (const cb of callbacks) cb(ts);
-  if (sky.draws > 0) sky.engineLast = ts;
+  if (sky.draws > 0) {
+    sky.engineLast = ts;
+    noteSkyFrameCost(sky, performance.now() - started);
+  }
   // 换场景的渐变还在画：醒着直到画完，别停在半路（停在半路的样子再被下一次唤醒接上，看起来就是一跳）。
   noteSkyFrame(sky, sky.draws, performance.now());
 }
@@ -259,11 +267,17 @@ function skyPump() {
   if (sky.pending || sky.queue.length === 0) return;
   if (!skyCanRun(performance.now())) return;
   sky.pending = true;
-  const wait = Math.max(0, sky.last + SKY_FRAME_MS - performance.now() - 4);
+  const wait = skyFrameDelay(sky, performance.now());
   window.setTimeout(() => {
     window.requestAnimationFrame((ts) => {
       sky.pending = false;
-      if (!skyCanRun(performance.now())) return;
+      const now = performance.now();
+      if (!skyCanRun(now)) return;
+      // 排队之后用户又按了一下：这一帧是那次点击要上屏的帧，天空让开，保护期过了再画。
+      if (skyInputHolding(sky, now)) {
+        skyPump();
+        return;
+      }
       runSkyFrame(ts, false);
     });
   }, wait);
@@ -317,6 +331,13 @@ function listenForSkyWakeups() {
   const onInput = () => {
     if (sky.mode === "live") wakeSky(SKY_IDLE_MS);
   };
+  // 按下 / 按键：接下来这一帧给输入（见 lib/sky-pace.ts）。pointermove、wheel 不算，不然一直动鼠标天空就不画了。
+  const onPress = () => {
+    sky.inputAt = performance.now();
+  };
+  for (const ev of ["pointerdown", "keydown", "touchstart"]) {
+    window.addEventListener(ev, onPress, { passive: true, capture: true });
+  }
   for (const ev of [
     "pointermove",
     "pointerdown",
