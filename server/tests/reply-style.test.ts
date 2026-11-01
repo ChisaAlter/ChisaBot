@@ -75,9 +75,11 @@ describe("WORK_STYLE_GUIDANCE (Hark alignment, 2026-10-29)", () => {
 });
 
 describe("web_search description asks the model to converge (case #11)", () => {
-  test("says 1–3 searches and 2–3 priced options", () => {
+  test("says at most 2 searches per question and 2–3 sourced options", () => {
+    // 0.1.108 验收 #8：上限从「1–3 次」收到「最多 2 次，能并行就并行」。
     const search = webTools().find((tool) => tool.name === "web_search");
-    expect(search?.description).toContain("1–3 次");
-    expect(search?.description).toContain("2–3 个带大致价格的选项");
+    expect(search?.description).toContain("最多搜 2 次");
+    expect(search?.description).toContain("并行");
+    expect(search?.description).toContain("2–3 个选项并附来源网址");
   });
 });

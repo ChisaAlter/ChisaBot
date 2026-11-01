@@ -1,5 +1,25 @@
 # DEVLOG
 
+## Unreleased — 推荐类回答落在搜索结果上（分支 fix/reco-search-grounding，叠在 #416 上）
+
+来源：0.1.108 验收 #8。
+
+**动机**
+
+「上海有什么好的咖啡店」线上搜了 4 次，最后答「基于常见门店印象，未核实」，没有地址、人均、来源和链接卡。原因有两层：① 搜索工具只把标题 + 摘要原样交给模型，摘要里其实常有「地址：…」「人均 ¥25」，没有任何提示让模型用它们；旧提示词还写着「不要因为没查到完美的来源就不推荐」，模型就把「没有完美来源」理解成可以凭印象推荐。② 一轮里搜索次数没有上限，拿到结果仍会换词重搜。搜索源本身返回无关结果、空结果的问题由 #407（相关性过滤、`NO_SEARCH_HITS`、每轮 2 次未命中上限，已在 main）解决，这里不重复实现。
+
+**改动**
+
+- `server/src/web/search-grounding.ts`：`hitFacts` 从标题 / 摘要抽地址、人均、价格（抽不到就空，不猜）；`formatSearchHits` 在每条结果下加一行「地址：… ｜ 人均：¥…」；`SEARCH_GROUNDING_NOTE` 放在 untrusted 信封外，要求推荐用结果里的事实和网址；`takeSearchSlot` 按轮（取消信号 / 确认上下文）计数，`SEARCH_TURN_LIMIT = 2`，超出返回 `SEARCH_TURN_ENOUGH`，不联网。
+- `server/src/web/tools.ts`：web_search 用上面三样；描述从「一般搜 1–3 次」改成「同一个问题最多搜 2 次（能并行就并行），搜到够用就停」。
+- `shared/bot-prompt.ts`：推荐类那条改成「答案要落在搜索结果上」：名字 + 地址或人均 / 价格 + 来源；摘要缺地址时 web_fetch 一条最相关的结果；已有结果不写「凭印象 / 未核实」；一条都没搜到才凭知识推荐并带半句「以大众点评 / 官网为准」。
+- 与 #407 合并时：`execute` 里 `takeSearchSlot` 放在 #407 的 `searchTurnState` 检查之后、真正联网之前；`searchResultText` 的命中分支改用 `formatSearchHits` + `SEARCH_GROUNDING_NOTE`。
+
+**测试**
+
+- `server/tests/reco-search-grounding.test.ts`：模拟「上海咖啡店」搜索结果，工具输出里带结果里的地址、人均和网址，提醒在信封外；并行两次 + 第 3、4 次被挡、只真正联网 2 次、下一轮重新计数；提示词断言。`reply-style.test.ts` 跟着改上限文案。
+- 部署后待验：线上用真实 Bing 问「上海有什么好的咖啡店」，看搜索 ≤ 2 次、回答带地址 / 人均和来源链接。
+
 ## Unreleased — 回复质量 PR1（分支 fix/reply-quality）
 
 来源：模块 8（AI 回复质量与搜索）审查报告，第 1、3、5 条和顺手的第 7–11 条。第 2、4 条（Hermes 下备用模型 / 输出上限不生效、历史不裁剪）另出方案，第 6 条（卡片表格截断）归前端。
