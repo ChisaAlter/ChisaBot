@@ -9,6 +9,7 @@ import path from "node:path";
  * 只守住让那个数字保持 0 的几条前提：
  *   1. perf-noblur.css 在 styles.css 之后引入，*、::before、::after 一律 backdrop-filter: none，
  *      --lg-blur 也是 none，两种情况（data-perf="on" 和 prefers-reduced-transparency）都在；
+ *      后一条 @media 同时覆盖 prefers-contrast: more 和 forced-colors: active（模块 11 第 7 条）；
  *   2. 选择器带 :not(#chisabot-no-blur)，靠 id 优先级压过所有类 / 属性规则，不靠 !important；
  *   3. 能绕过全局规则的写法都不许出现：内联 style 的 backdropFilter、Tailwind 的 important 模糊类、
  *      新的 backdrop-filter …!important（旧玻璃层的 var(--lg-blur) !important 和 none !important 除外）；
@@ -57,7 +58,7 @@ const PERF = 'html[data-perf="on"]:not(#chisabot-no-blur)';
 const RT = "html:not(#chisabot-no-blur)";
 const rtBlock =
   noblur.match(
-    /@media \(prefers-reduced-transparency: reduce\) \{([\s\S]*?\})\s*\}/,
+    /@media \(prefers-reduced-transparency: reduce\),\s*\(prefers-contrast: more\),\s*\(forced-colors: active\) \{([\s\S]*?\})\s*\}/,
   )?.[1] ?? "";
 const perfRules = rules(noblur.replace(rtBlock, "")).filter((r) =>
   r.selector.startsWith(PERF),

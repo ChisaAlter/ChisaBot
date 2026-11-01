@@ -785,7 +785,8 @@ html[data-sky-ease] body::before {
   display: grid;
   place-items: center;
   font-weight: 600;
-  color: #fff;
+  /* 浅粉蓝渐变上的字母：白字只有 1.61:1，换成深色墨（--avatar-ink）。 */
+  color: var(--avatar-ink);
   flex: none;
   line-height: 1;
 }
@@ -1005,7 +1006,7 @@ html[data-sky-ease] body::before {
 }
 .glass-item-s {
   font-size: 12px;
-  color: var(--glass-ink-4);
+  color: var(--side-sub-ink);
   max-width: 40%;
   white-space: nowrap;
   overflow: hidden;
@@ -1024,9 +1025,14 @@ html[data-sky-ease] body::before {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  /* 12px 小字：浅色 / 深色都要在最透的玻璃上 ≥ 4.5:1（--side-sec-main-ink，tests/a11y-contrast.test.ts）。 */
+  color: var(--side-sec-main-ink);
+}
+/* 星标只是装饰（旁边有文字），保留原来的琥珀色。 */
+.glass-sec-main > svg {
   color: #c48a0a;
 }
-.dark .glass-sec-main {
+.dark .glass-sec-main > svg {
   color: #f2c14e;
 }
 .glass-bot-row {
@@ -9061,6 +9067,10 @@ html[data-perf="on"] [data-slot="sidebar"].hk-drawer {
   --glass-ink-3: #334155;
   --glass-ink-4: #475569;
   --muted-foreground: #334155;
+  /* 左栏小字和头像字母（模块 11 第 6 条）：在最透的玻璃（晶莹 5%）+ 各配色天空上都 ≥ 4.5:1。 */
+  --side-sec-main-ink: #553600;
+  --side-sub-ink: #303d50;
+  --avatar-ink: #1e2a4a;
   --text-primary: rgb(15, 23, 42);
   --text-secondary: rgba(15, 23, 42, 0.84);
   --text-tertiary: rgba(15, 23, 42, 0.68);
@@ -9097,6 +9107,9 @@ html[data-perf="on"] [data-slot="sidebar"].hk-drawer {
   --glass-ink-3: #cbd5e1;
   --glass-ink-4: #94a3b8;
   --muted-foreground: #cbd5e1;
+  --side-sec-main-ink: #f2c14e;
+  --side-sub-ink: #b4bfcf;
+  --avatar-ink: #1e2a4a;
   --text-primary: rgb(248, 250, 252);
   --text-secondary: rgba(248, 250, 252, 0.86);
   --text-tertiary: rgba(248, 250, 252, 0.7);
@@ -9326,6 +9339,31 @@ html.dark .chisabot-ambient-orbs {
 }
 html:not(.dark) .chisabot-wallpaper-dim {
   background: radial-gradient(circle at 50% 45%, rgba(244, 248, 255, 0.46) 0%, rgba(228, 238, 252, 0.58) 100%);
+}
+
+/* 壁纸薄幕（#420，DESIGN.md §81.5）：壁纸可以是纯黑 / 纯白 / 任意照片，压暗遮罩又能调到 0，
+ * 光靠天幕薄纱，直接落在壁纸上的字（时间、空状态、步骤行、顶栏、页面正文）最差只有 1.0–3.6:1。
+ * 所以在壁纸和天幕薄纱之间固定垫一层同色薄幕，只此一层：卡片、气泡、输入框、嵌套卡片都不再各自加，
+ * 叠多少层玻璃都只有这一层（tests/a11y-contrast.test.ts 核对）。 */
+:root {
+  --wallpaper-scrim: rgba(244, 248, 255, 0.53);
+}
+html.dark,
+html[data-theme="dark"] {
+  --wallpaper-scrim: rgba(12, 18, 32, 0.54);
+}
+.chisabot-wallpaper::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--wallpaper-scrim);
+}
+/* 有壁纸时最淡的一级字（--ink-4 / --glass-ink-4 / --text-tertiary：耗时、占位字、次要时间）在薄幕上也不够 4.5，提一级。 */
+html[data-wallpaper="on"] {
+  --ink-4: var(--ink-3);
+  --glass-ink-4: var(--glass-ink-3);
+  --text-tertiary: var(--text-secondary);
 }
 
 /* 3. 三档无边框高通透光学玻璃材质（liquid 液态玻璃 / crystal 晶莹全透 / frosted 柔光磨砂）
