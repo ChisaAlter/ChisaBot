@@ -8,7 +8,6 @@ import {
 import { cjkFriendlyEmphasis } from "@/lib/chat/cjk-emphasis";
 import { escapeUnknownTags } from "@/lib/chat/escape-unknown-tags";
 import { type MdTail, MdTailContext, withMdCache } from "@/lib/chat/md-cache";
-import { useDeclaredBotId } from "@/lib/copilot/active-bot";
 import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useSmoothText } from "@/lib/chat/use-smooth-text";
 import { workspaceLinks } from "@/lib/chat/workspace-links";

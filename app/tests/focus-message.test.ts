@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { chatSearchSchema } from "@/components/channels/channel-page";
+import { chatSearchSchema } from "@/components/channels/chat-search";
 import {
   findMessageRow,
   MESSAGE_FLASH_CLASS,

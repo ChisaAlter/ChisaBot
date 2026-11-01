@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { chatSearchSchema } from "@/components/channels/channel-page";
+import { chatSearchSchema } from "@/components/channels/chat-search";
 
 export const Route = createFileRoute("/_authed/_app/channel/$channelId")({
   validateSearch: chatSearchSchema,

@@ -110,6 +110,23 @@ export function RouteSkeleton() {
   );
 }
 
+/** 左栏还在下载时的占位：和 AppSkeleton 左列同样的玻璃卡片（DESIGN.md §41.5）。 */
+export function SidebarSkeleton({ className }: { className?: string }) {
+  return (
+    <div aria-busy="true" aria-label="正在加载" className={className} role="status">
+      <div className="sky-skel-col" style={{ height: "100%" }}>
+        <span className="sky-skel-block" style={{ height: 46, borderRadius: 999 }} />
+        <div className="sky-skel-card" style={{ flex: 1 }}>
+          <Bar w="40%" h={10} />
+          <Bar w="85%" />
+          <Bar w="70%" />
+          <Bar w="78%" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The router's default pending state: inline when a shell is on screen, the full frame otherwise. */
 export function StartupPending() {
   return useContext(ShellContext) ? <RouteSkeleton /> : <AppSkeleton />;
