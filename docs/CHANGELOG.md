@@ -90,6 +90,9 @@
 - 回复风格对齐 Hark（提示词 + 服务端）：去掉「导语 → 卡片 → 下一步」固定三段式，默认一个气泡、1–4 句、结论先行；render_ui 画过表格卡后不再附一份 Markdown 表格（提示词 + 工具结果都提醒）；推荐类问题直接给 2–3 个带价格的选项再追问（web_search 工具描述里写明一般搜 1–3 次就收敛）；数学用 Unicode 纯文本，不用 LaTeX（前端不恢复 katex）。安全和不可信内容相关的提示词一字未改，新增测试按 sha256 钉住。未升级版本号。（#381）
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.108`），PC / Android 外壳未变。
 
+## Unreleased
+
+- 修复（Android）：`Turns.buildTurn` 一轮结束后以最后一个干活的步骤（`WorkSteps.splitsReply`：网页的 `isWorkCall` 再去掉记忆写入）为界，之后的全部文字都是回答气泡（`Kind.Result`、可复制）；`WorkSteps.NOT_WORK` 补齐网页的 message_bot / file_share / image_generate / image_edit；测试 `NativeLogicTest.allTextAfterLastWorkStaysVisible`、`notWorkMatchesWeb`。
 
 ## 0.1.107
 
