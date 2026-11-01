@@ -61,6 +61,8 @@ export type ScheduleView = {
   /** 「每天 09:00」「10月15日 周四 09:00（一次）」 */
   schedule: string;
   running: boolean;
+  /** 模块 13 M2：网页例程的原对话已删除（任务已自动取消，不会发到别的对话）。 */
+  threadDeleted?: boolean;
   recentRuns?: ScheduleRunView[];
 };
 
@@ -151,9 +153,31 @@ export function partitionScheduleList(
 }
 
 
+/**
+ * 运行器 / 工具自己写的固定开头（不是模型的话）。只认开头，正文里出现这些字不算。
+ * - 「运行失败：」：fire() 捕获运行器异常时写的结果。
+ * - 「没有执行：」：工具拒绝（计算机被接管、定时任务里需要人在场）原样回给模型的开头。
+ */
+export const SCHEDULE_RUNNER_FAILURE_PREFIXES = ["运行失败：", "运行失败:", "没有执行：", "没有执行:"] as const;
+
+/** 运行器给的硬信号（M1）：工具报错 / 运行器异常。不看模型正文。 */
+export type ScheduleRunSignals = {
+  /** 这一轮里失败的工具结果（如 ERR_TUNNEL_CONNECTION_FAILED）。 */
+  toolErrors?: readonly string[];
+  /** 运行器自身出错（推送失败、回合异常等）。 */
+  runnerError?: string | null;
+};
+
+/**
+ * 模块 13 M1：失败只按运行器 / 工具的硬信号判，或者结果以运行器固定前缀开头；
+ * 不再用正则扫模型正文（「没能完成的周报」「海底隧道」「浏览器打开失败的话」「ERR_NAME_NOT_RESOLVED 的意思」都是正常回复）。
+ */
 export function classifyScheduleReply(
   text: string,
+  signals: ScheduleRunSignals = {},
 ): Exclude<ScheduleRunStatus, "running" | "queued"> {
+  if (signals.runnerError?.trim()) return "failed";
+  if (signals.toolErrors?.some((e) => e.trim())) return "failed";
   const t = text.trim();
   if (!t) return "ok";
   // 真的弹不出卡（无对话 / 非网页）：跳过这一次。
@@ -165,14 +189,7 @@ export function classifyScheduleReply(
     )
   )
     return "waiting";
-  // 硬失败：隧道、工具拒绝、明确没做成。
-  if (
-    /ERR_TUNNEL|ERR_[A-Z0-9_]+|隧道|运行失败：|没有执行[：:]|无法完成这次|没能完成|浏览器.*(失败|不可用|中断)/.test(
-      t,
-    )
-  ) {
-    return "failed";
-  }
+  if (SCHEDULE_RUNNER_FAILURE_PREFIXES.some((p) => t.startsWith(p))) return "failed";
   return "ok";
 }
 
