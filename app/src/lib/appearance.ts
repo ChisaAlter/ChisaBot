@@ -1,17 +1,35 @@
 import { useSyncExternalStore } from "react";
 import {
+  GLASS_STYLE_STORAGE_KEY,
+  PALETTE_STORAGE_KEY,
+  THEME_PALETTES,
+  type ThemePaletteId,
+} from "@/lib/palette";
+import {
   readStoredPreference,
   writeStoredPreference,
 } from "@/lib/preference-storage";
+import {
+  getWallpaperBackend,
+  WALLPAPER_IDB_MARKER,
+} from "@/lib/wallpaper-store";
 import { compressWallpaperImage } from "@/lib/wallpaper-compress";
-import { getWallpaperBackend, WALLPAPER_IDB_MARKER } from "@/lib/wallpaper-store";
 
-export const PALETTE_STORAGE_KEY = "chisabot-theme-palette";
+// 配色表搬到了纯模块 lib/palette.ts（构建时要内联进 index.html 的启动脚本），这里照旧导出。
+export {
+  applyThemeColor,
+  computePaletteSky,
+  GLASS_STYLE_STORAGE_KEY,
+  PALETTE_STORAGE_KEY,
+  paletteThemeColor,
+  THEME_PALETTES,
+  type ThemePaletteId,
+  type ThemePaletteMeta,
+} from "@/lib/palette";
 export const WALLPAPER_ID_STORAGE_KEY = "chisabot-wallpaper-id";
 export const WALLPAPER_CUSTOM_URL_STORAGE_KEY = "chisabot-wallpaper-custom-url";
 export const WALLPAPER_BLUR_STORAGE_KEY = "chisabot-wallpaper-blur";
 export const WALLPAPER_DIM_STORAGE_KEY = "chisabot-wallpaper-dim";
-export const GLASS_STYLE_STORAGE_KEY = "chisabot-glass-style";
 export const GLASS_OPACITY_STORAGE_KEY = "chisabot-glass-opacity";
 export const HARK_SCENE_STORAGE_KEY = "chisabot-hark-scene";
 /**
@@ -26,14 +44,6 @@ export const HARK_ENGINE_STORAGE_KEYS: readonly string[] = [
 /** 面板雾度（玻璃不透明度，%）允许的范围：存储、读取和设置页滑块共用。 */
 export const GLASS_OPACITY_MIN = 5;
 export const GLASS_OPACITY_MAX = 55;
-
-export type ThemePaletteId =
-  | "default"
-  | "aurora"
-  | "emerald"
-  | "ocean"
-  | "sunset"
-  | "sakura";
 
 export type GlassStyleId = "liquid" | "crystal" | "frosted";
 
@@ -74,7 +84,8 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     sceneIndex: null,
     name: "智能跟随主题",
     subtitle: "浅色呈现晴空流云，深色自动切换静谧夜幕",
-    previewGradient: "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 42%, #6da7ec 76%, #b0d5f7 100%)",
+    previewGradient:
+      "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 42%, #6da7ec 76%, #b0d5f7 100%)",
     isNight: false,
   },
   {
@@ -82,7 +93,8 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     sceneIndex: -1,
     name: "实时动态天象",
     subtitle: "按真实太阳轨迹与实时云量动态演进",
-    previewGradient: "linear-gradient(180deg, #164e9f 0%, #3875ca 45%, #79b0ef 80%, #cbe3fa 100%)",
+    previewGradient:
+      "linear-gradient(180deg, #164e9f 0%, #3875ca 45%, #79b0ef 80%, #cbe3fa 100%)",
     isNight: false,
   },
   {
@@ -90,7 +102,8 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     sceneIndex: 0,
     name: "晴空流云 · 帕洛阿尔托",
     subtitle: "Palo Alto · 午后澄澈蓝天与立体体积积云",
-    previewGradient: "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 40%, #6da7ec 75%, #b0d5f7 100%)",
+    previewGradient:
+      "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 40%, #6da7ec 75%, #b0d5f7 100%)",
     isNight: false,
   },
   {
@@ -98,7 +111,8 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     sceneIndex: 6,
     name: "落日暖金 · 凤凰城",
     subtitle: "Phoenix · 黄金时刻暖阳散射与流云",
-    previewGradient: "linear-gradient(180deg, #2b5899 0%, #5c7db0 38%, #b88b7c 72%, #f0b175 100%)",
+    previewGradient:
+      "linear-gradient(180deg, #2b5899 0%, #5c7db0 38%, #b88b7c 72%, #f0b175 100%)",
     isNight: false,
   },
   {
@@ -106,7 +120,8 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     sceneIndex: 5,
     name: "高山雪霁 · 太浩湖",
     subtitle: "Lake Tahoe · 清冽冰晶天光与层叠云海",
-    previewGradient: "linear-gradient(180deg, #4b6cb7 0%, #6d8ec9 42%, #9bb4de 76%, #cfe0f5 100%)",
+    previewGradient:
+      "linear-gradient(180deg, #4b6cb7 0%, #6d8ec9 42%, #9bb4de 76%, #cfe0f5 100%)",
     isNight: false,
   },
   {
@@ -114,111 +129,9 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     sceneIndex: 4,
     name: "静谧星夜 · 柏林",
     subtitle: "Berlin · 深邃夜空与微光云层",
-    previewGradient: "linear-gradient(180deg, #090d18 0%, #10182b 42%, #18233c 76%, #22304e 100%)",
+    previewGradient:
+      "linear-gradient(180deg, #090d18 0%, #10182b 42%, #18233c 76%, #22304e 100%)",
     isNight: true,
-  },
-] as const;
-
-export type ThemePaletteMeta = {
-  id: ThemePaletteId;
-  name: string;
-  subtitle: string;
-  accentLight: string;
-  accentDark: string;
-  swatchGradient: string;
-  skyHueLight: [number, number, number, number];
-  skySatLight: [number, number, number, number];
-  skyHueDark: [number, number, number, number];
-  skySatDark: [number, number, number, number];
-  /** 默认关联的日间 / 夜间 Hark WebGL 天空场景索引（深色模式统一采用深邃夜景以保障文字对比度） */
-  harkSceneLight: number;
-  harkSceneDark: number;
-};
-
-export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
-  {
-    id: "default",
-    name: "晴空冰蓝",
-    subtitle: "澄澈晴空蓝与通透液态玻璃",
-    accentLight: "#2f7cf6",
-    accentDark: "#5b9cff",
-    swatchGradient: "linear-gradient(135deg, #1d57a9 0%, #3e7bd1 50%, #6da7ec 100%)",
-    skyHueLight: [214, 212, 208, 204],
-    skySatLight: [71, 62, 68, 82],
-    skyHueDark: [222, 220, 218, 216],
-    skySatDark: [45, 42, 38, 34],
-    harkSceneLight: 0,
-    harkSceneDark: 4,
-  },
-  {
-    id: "aurora",
-    name: "极光幻紫",
-    subtitle: "星夜紫罗兰与极光流彩",
-    accentLight: "#7c3aed",
-    accentDark: "#b197fc",
-    swatchGradient: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 52%, #ec4899 100%)",
-    skyHueLight: [258, 266, 276, 245],
-    skySatLight: [64, 58, 52, 48],
-    skyHueDark: [266, 258, 250, 284],
-    skySatDark: [52, 46, 40, 36],
-    harkSceneLight: 7,
-    harkSceneDark: 2,
-  },
-  {
-    id: "emerald",
-    name: "翡翠森境",
-    subtitle: "雨后松林薄雾与通透翡翠",
-    accentLight: "#059669",
-    accentDark: "#38d9a9",
-    swatchGradient: "linear-gradient(135deg, #059669 0%, #10b981 52%, #2dd4bf 100%)",
-    skyHueLight: [164, 168, 172, 158],
-    skySatLight: [56, 50, 44, 42],
-    skyHueDark: [168, 172, 176, 160],
-    skySatDark: [50, 46, 40, 36],
-    harkSceneLight: 5,
-    harkSceneDark: 4,
-  },
-  {
-    id: "ocean",
-    name: "深海蔚蓝",
-    subtitle: "太平洋青蓝与冰晶折射高光",
-    accentLight: "#0284c7",
-    accentDark: "#4dabf7",
-    swatchGradient: "linear-gradient(135deg, #0369a1 0%, #0ea5e9 50%, #22d3ee 100%)",
-    skyHueLight: [196, 199, 202, 192],
-    skySatLight: [76, 70, 62, 56],
-    skyHueDark: [194, 198, 202, 188],
-    skySatDark: [62, 56, 50, 44],
-    harkSceneLight: 7,
-    harkSceneDark: 2,
-  },
-  {
-    id: "sunset",
-    name: "落日琥珀",
-    subtitle: "黄金时刻暖橙晚霞与流光",
-    accentLight: "#d97706",
-    accentDark: "#ffc048",
-    swatchGradient: "linear-gradient(135deg, #ea580c 0%, #f59e0b 52%, #fb7185 100%)",
-    skyHueLight: [28, 34, 40, 18],
-    skySatLight: [74, 68, 60, 54],
-    skyHueDark: [20, 26, 32, 12],
-    skySatDark: [48, 44, 40, 34],
-    harkSceneLight: 0,
-    harkSceneDark: 4,
-  },
-  {
-    id: "sakura",
-    name: "樱花绯粉",
-    subtitle: "春日落樱柔粉与微醺暮色",
-    accentLight: "#db2777",
-    accentDark: "#f783ac",
-    swatchGradient: "linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fda4af 100%)",
-    skyHueLight: [332, 340, 350, 22],
-    skySatLight: [62, 60, 58, 74],
-    skyHueDark: [318, 326, 334, 300],
-    skySatDark: [46, 42, 38, 32],
-    harkSceneLight: 7,
-    harkSceneDark: 2,
   },
 ] as const;
 
@@ -515,9 +428,7 @@ export type AppearanceState = {
   wallpaperDim: number;
 };
 
-const VALID_PALETTES = new Set<ThemePaletteId>(
-  THEME_PALETTES.map((p) => p.id),
-);
+const VALID_PALETTES = new Set<ThemePaletteId>(THEME_PALETTES.map((p) => p.id));
 const VALID_GLASS_STYLES = new Set<GlassStyleId>([
   "liquid",
   "crystal",
@@ -544,18 +455,34 @@ const VALID_WALLPAPER_IDS = new Set<WallpaperPresetId>([
   "custom",
 ]);
 
-function clampNumber(value: number, min: number, max: number, fallback: number): number {
+function clampNumber(
+  value: number,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
   if (!Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
 function readInitialAppearance(): AppearanceState {
-  const rawPalette = readStoredPreference(PALETTE_STORAGE_KEY) as ThemePaletteId | null;
-  const rawGlass = readStoredPreference(GLASS_STYLE_STORAGE_KEY) as GlassStyleId | null;
-  const rawGlassOpacity = Number(readStoredPreference(GLASS_OPACITY_STORAGE_KEY) ?? "16");
-  const rawHarkScene = readStoredPreference(HARK_SCENE_STORAGE_KEY) as HarkSkySceneId | null;
-  const rawWallpaperId = readStoredPreference(WALLPAPER_ID_STORAGE_KEY) as WallpaperPresetId | null;
-  const storedCustomUrl = readStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY) ?? "";
+  const rawPalette = readStoredPreference(
+    PALETTE_STORAGE_KEY,
+  ) as ThemePaletteId | null;
+  const rawGlass = readStoredPreference(
+    GLASS_STYLE_STORAGE_KEY,
+  ) as GlassStyleId | null;
+  const rawGlassOpacity = Number(
+    readStoredPreference(GLASS_OPACITY_STORAGE_KEY) ?? "16",
+  );
+  const rawHarkScene = readStoredPreference(
+    HARK_SCENE_STORAGE_KEY,
+  ) as HarkSkySceneId | null;
+  const rawWallpaperId = readStoredPreference(
+    WALLPAPER_ID_STORAGE_KEY,
+  ) as WallpaperPresetId | null;
+  const storedCustomUrl =
+    readStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY) ?? "";
   // 图片数据在 IndexedDB：localStorage 里只有占位标记，先按空处理，异步读回后再补上。
   // 旧版本直接存在 localStorage 里的 Data URL 先照常显示，随后迁移进 IndexedDB 并清掉。
   pendingWallpaperLoad =
@@ -564,22 +491,34 @@ function readInitialAppearance(): AppearanceState {
       : storedCustomUrl.startsWith("data:")
         ? "migrate"
         : null;
-  const customWallpaperUrl = storedCustomUrl === WALLPAPER_IDB_MARKER ? "" : storedCustomUrl;
-  const rawBlur = Number(readStoredPreference(WALLPAPER_BLUR_STORAGE_KEY) ?? "0");
-  const rawDim = Number(readStoredPreference(WALLPAPER_DIM_STORAGE_KEY) ?? "18");
+  const customWallpaperUrl =
+    storedCustomUrl === WALLPAPER_IDB_MARKER ? "" : storedCustomUrl;
+  const rawBlur = Number(
+    readStoredPreference(WALLPAPER_BLUR_STORAGE_KEY) ?? "0",
+  );
+  const rawDim = Number(
+    readStoredPreference(WALLPAPER_DIM_STORAGE_KEY) ?? "18",
+  );
 
   return {
-    palette: rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default",
-    glassStyle: rawGlass && VALID_GLASS_STYLES.has(rawGlass) ? rawGlass : "liquid",
+    palette:
+      rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default",
+    glassStyle:
+      rawGlass && VALID_GLASS_STYLES.has(rawGlass) ? rawGlass : "liquid",
     glassOpacity: clampNumber(
       rawGlassOpacity,
       GLASS_OPACITY_MIN,
       GLASS_OPACITY_MAX,
       16,
     ),
-    harkScene: rawHarkScene && VALID_HARK_SCENES.has(rawHarkScene) ? rawHarkScene : "auto",
+    harkScene:
+      rawHarkScene && VALID_HARK_SCENES.has(rawHarkScene)
+        ? rawHarkScene
+        : "auto",
     wallpaperId:
-      rawWallpaperId && VALID_WALLPAPER_IDS.has(rawWallpaperId) ? rawWallpaperId : "none",
+      rawWallpaperId && VALID_WALLPAPER_IDS.has(rawWallpaperId)
+        ? rawWallpaperId
+        : "none",
     customWallpaperUrl,
     wallpaperBlur: clampNumber(rawBlur, 0, 40, 0),
     wallpaperDim: clampNumber(rawDim, 0, 75, 18),
@@ -614,7 +553,8 @@ export function flushAppearanceWrites() {
     clearTimeout(sliderWriteTimer);
     sliderWriteTimer = null;
   }
-  for (const [key, value] of pendingSliderWrites) writeStoredPreference(key, value);
+  for (const [key, value] of pendingSliderWrites)
+    writeStoredPreference(key, value);
   pendingSliderWrites.clear();
 }
 
@@ -636,7 +576,9 @@ function finishWallpaperLoading(generation: number, dataUrl: string | null) {
   if (generation !== wallpaperLoadGeneration) return;
   const state = currentState;
   const apply =
-    Boolean(dataUrl) && state?.wallpaperId === "custom" && !state.customWallpaperUrl;
+    Boolean(dataUrl) &&
+    state?.wallpaperId === "custom" &&
+    !state.customWallpaperUrl;
   if (!apply && !wallpaperLoading) return;
   wallpaperLoading = false;
   if (apply && state && dataUrl) {
@@ -647,7 +589,10 @@ function finishWallpaperLoading(generation: number, dataUrl: string | null) {
   emitChange();
 }
 
-async function loadStoredWallpaper(mode: "hydrate" | "migrate", generation: number) {
+async function loadStoredWallpaper(
+  mode: "hydrate" | "migrate",
+  generation: number,
+) {
   const backend = getWallpaperBackend();
   if (mode === "hydrate") {
     const read = backend.get().catch(() => null);
@@ -676,7 +621,10 @@ async function loadStoredWallpaper(mode: "hydrate" | "migrate", generation: numb
   }
   persistedWallpaperDataUrl = legacy;
   if (currentState?.customWallpaperUrl === legacy) {
-    writeStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY, WALLPAPER_IDB_MARKER);
+    writeStoredPreference(
+      WALLPAPER_CUSTOM_URL_STORAGE_KEY,
+      WALLPAPER_IDB_MARKER,
+    );
   }
 }
 
@@ -686,8 +634,10 @@ function ensureState(): AppearanceState {
     const mode = pendingWallpaperLoad;
     pendingWallpaperLoad = null;
     wallpaperLoadGeneration += 1;
-    wallpaperLoading = mode === "hydrate" && currentState.wallpaperId === "custom";
-    if (mode) persistencePromise = loadStoredWallpaper(mode, wallpaperLoadGeneration);
+    wallpaperLoading =
+      mode === "hydrate" && currentState.wallpaperId === "custom";
+    if (mode)
+      persistencePromise = loadStoredWallpaper(mode, wallpaperLoadGeneration);
   }
   return currentState;
 }
@@ -705,13 +655,17 @@ export function reloadAppearanceFromStorage(): Promise<void> {
 
 function persistCustomWallpaperUrl(url: string) {
   if (url.startsWith("data:")) {
-    writeStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY, WALLPAPER_IDB_MARKER);
+    writeStoredPreference(
+      WALLPAPER_CUSTOM_URL_STORAGE_KEY,
+      WALLPAPER_IDB_MARKER,
+    );
     if (persistedWallpaperDataUrl !== url) {
       persistedWallpaperDataUrl = url;
       getWallpaperBackend()
         .put(url)
         .catch(() => {
-          if (persistedWallpaperDataUrl === url) persistedWallpaperDataUrl = null;
+          if (persistedWallpaperDataUrl === url)
+            persistedWallpaperDataUrl = null;
         });
     }
     return;
@@ -732,7 +686,8 @@ export async function saveUploadedWallpaper(dataUrl: string): Promise<void> {
   try {
     await getWallpaperBackend().put(dataUrl);
   } catch (error) {
-    const detail = error instanceof Error && error.message ? `：${error.message}` : "";
+    const detail =
+      error instanceof Error && error.message ? `：${error.message}` : "";
     throw new Error(`壁纸保存失败，可能是浏览器存储空间不足${detail}`);
   }
   persistedWallpaperDataUrl = dataUrl;
@@ -755,7 +710,11 @@ export function subscribeAppearance(listener: () => void): () => void {
 }
 
 export function useAppearance(): AppearanceState {
-  return useSyncExternalStore(subscribeAppearance, getAppearanceState, getAppearanceState);
+  return useSyncExternalStore(
+    subscribeAppearance,
+    getAppearanceState,
+    getAppearanceState,
+  );
 }
 
 /** 自定义壁纸是否还在从 IndexedDB 读回（见 {@link WALLPAPER_LOAD_TIMEOUT_MS}）。 */
@@ -765,28 +724,131 @@ export function isWallpaperLoading(): boolean {
 }
 
 export function useWallpaperLoading(): boolean {
-  return useSyncExternalStore(subscribeAppearance, isWallpaperLoading, isWallpaperLoading);
+  return useSyncExternalStore(
+    subscribeAppearance,
+    isWallpaperLoading,
+    isWallpaperLoading,
+  );
 }
 
-export function applyAppearanceToDocument(state: AppearanceState = ensureState()) {
+/**
+ * 读 --lg-surface / --lg-blur 这几个玻璃变量的元素（和 styles.css「三档玻璃材质」一节的 :where 名单一致）。
+ * --lg-alpha 只写到这些元素上：拖滑块时只有它们重算样式，不再是整页（见 styles.css 那一节的注释）。
+ */
+export const GLASS_SURFACE_SELECTOR =
+  ':where(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-composer, [data-slot="bubble-content"], .jr-card, .page-rows, .sg-card, .page-section > form, .page .border)';
+export const GLASS_ALPHA_STYLE_ID = "chisabot-glass-alpha";
+
+let glassAlphaApplied: string | null = null;
+let glassAlphaFrame: number | null = null;
+let glassAlphaPending: number | null = null;
+
+function glassAlphaValue(glassOpacity: number): string {
+  return (glassOpacity / 100).toFixed(2);
+}
+
+/**
+ * 把 --lg-alpha 写进 <head> 里一条只命中玻璃元素的规则。已经有这条规则时直接改它的声明（CSSOM），
+ * 浏览器只让匹配它的元素重算；不改 <html> 的行内样式（那样整页都要重算）。
+ */
+function writeGlassAlpha(glassOpacity: number) {
+  if (typeof document === "undefined") return;
+  const value = glassAlphaValue(glassOpacity);
+  const el = document.getElementById(GLASS_ALPHA_STYLE_ID);
+  if (value === glassAlphaApplied && el) return;
+  glassAlphaApplied = value;
+  if (el instanceof HTMLStyleElement) {
+    const rule = el.sheet?.cssRules?.[0] as CSSStyleRule | undefined;
+    if (rule?.style && typeof rule.style.setProperty === "function") {
+      rule.style.setProperty("--lg-alpha", value);
+      return;
+    }
+    el.textContent = `${GLASS_SURFACE_SELECTOR}{--lg-alpha:${value}}`;
+    return;
+  }
+  const style = document.createElement("style");
+  style.id = GLASS_ALPHA_STYLE_ID;
+  style.textContent = `${GLASS_SURFACE_SELECTOR}{--lg-alpha:${value}}`;
+  document.head.appendChild(style);
+}
+
+/** 当前写进页面的 --lg-alpha（测试和调试用）；还没写过时为 null。 */
+export function readGlassAlpha(): string | null {
+  if (typeof document === "undefined") return null;
+  const el = document.getElementById(GLASS_ALPHA_STYLE_ID);
+  if (!(el instanceof HTMLStyleElement)) return null;
+  const rule = el.sheet?.cssRules?.[0] as CSSStyleRule | undefined;
+  const fromRule = rule?.style?.getPropertyValue?.("--lg-alpha")?.trim();
+  if (fromRule) return fromRule;
+  return /--lg-alpha:\s*([\d.]+)/.exec(el.textContent ?? "")?.[1] ?? null;
+}
+
+/** 立即写出还在等下一帧的 --lg-alpha（测试、以及需要同步结果的调用方）。 */
+export function flushGlassAlpha() {
+  if (glassAlphaFrame !== null && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(glassAlphaFrame);
+  }
+  glassAlphaFrame = null;
+  if (glassAlphaPending === null) return;
+  const next = glassAlphaPending;
+  glassAlphaPending = null;
+  writeGlassAlpha(next);
+}
+
+/**
+ * 拖滑块：一帧最多写一次（指针拖动一帧能来好几个 input 事件），写在下一帧开始前。
+ * 状态和滑块数字仍然每一步立即更新，只有写进样式这一步合并。
+ */
+function scheduleGlassAlpha(glassOpacity: number) {
+  glassAlphaPending = glassOpacity;
+  if (glassAlphaFrame !== null) return;
+  if (typeof requestAnimationFrame !== "function") {
+    flushGlassAlpha();
+    return;
+  }
+  glassAlphaFrame = requestAnimationFrame(() => {
+    glassAlphaFrame = null;
+    flushGlassAlpha();
+  });
+}
+
+function setRootAttribute(
+  root: HTMLElement,
+  name: string,
+  value: string | null,
+) {
+  // 值没变就不碰：同值 setAttribute 在有的浏览器里也会触发一次失效检查。
+  if (root.getAttribute(name) === value) return;
+  if (value === null) root.removeAttribute(name);
+  else root.setAttribute(name, value);
+}
+
+export function applyAppearanceToDocument(
+  state: AppearanceState = ensureState(),
+) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.setAttribute("data-palette", state.palette);
-  root.setAttribute("data-glass", state.glassStyle);
-  root.style.setProperty("--lg-alpha", (state.glassOpacity / 100).toFixed(2));
-  const hasWallpaper = resolveActiveWallpaperCss(state) !== null;
-  if (hasWallpaper) {
-    root.setAttribute("data-wallpaper", "on");
-  } else {
-    root.removeAttribute("data-wallpaper");
-  }
+  setRootAttribute(root, "data-palette", state.palette);
+  setRootAttribute(root, "data-glass", state.glassStyle);
+  // 旧版本写在 <html> 行内的 --lg-alpha：清掉（它会让整页跟着重算），改由 #chisabot-glass-alpha 规则承担。
+  if (root.style.getPropertyValue("--lg-alpha"))
+    root.style.removeProperty("--lg-alpha");
+  glassAlphaPending = null;
+  writeGlassAlpha(state.glassOpacity);
+  setRootAttribute(
+    root,
+    "data-wallpaper",
+    resolveActiveWallpaperCss(state) !== null ? "on" : null,
+  );
 }
 
 export function updateAppearance(patch: Partial<AppearanceState>) {
   const prev = ensureState();
   const next: AppearanceState = {
     palette:
-      patch.palette && VALID_PALETTES.has(patch.palette) ? patch.palette : prev.palette,
+      patch.palette && VALID_PALETTES.has(patch.palette)
+        ? patch.palette
+        : prev.palette,
     glassStyle:
       patch.glassStyle && VALID_GLASS_STYLES.has(patch.glassStyle)
         ? patch.glassStyle
@@ -847,12 +909,85 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
     persistCustomWallpaperUrl(next.customWallpaperUrl);
   }
   // 读取中用户自己换了壁纸（或不再用自定义壁纸）：不用再等 IndexedDB。
-  if (wallpaperLoading && (next.wallpaperId !== "custom" || next.customWallpaperUrl)) {
+  if (
+    wallpaperLoading &&
+    (next.wallpaperId !== "custom" || next.customWallpaperUrl)
+  ) {
     wallpaperLoading = false;
   }
 
+  // 只动了玻璃雾度（拖滑块）：不重写根属性，--lg-alpha 合并到下一帧写。
+  const onlyGlassOpacity =
+    prev.glassOpacity !== next.glassOpacity &&
+    prev.palette === next.palette &&
+    prev.glassStyle === next.glassStyle &&
+    prev.wallpaperId === next.wallpaperId &&
+    prev.customWallpaperUrl === next.customWallpaperUrl;
+  if (onlyGlassOpacity) scheduleGlassAlpha(next.glassOpacity);
+  else applyAppearanceToDocument(next);
+  emitChange();
+}
+
+/** 别的标签页改了这些键：这边跟着改（只改状态和页面，不写回存储）。 */
+const SYNCED_APPEARANCE_KEYS = new Set<string>([
+  PALETTE_STORAGE_KEY,
+  WALLPAPER_ID_STORAGE_KEY,
+  WALLPAPER_CUSTOM_URL_STORAGE_KEY,
+  WALLPAPER_BLUR_STORAGE_KEY,
+  WALLPAPER_DIM_STORAGE_KEY,
+  GLASS_STYLE_STORAGE_KEY,
+  GLASS_OPACITY_STORAGE_KEY,
+  HARK_SCENE_STORAGE_KEY,
+]);
+
+/**
+ * 多标签页同步：处理一次 `storage` 事件。key 为 null 表示另一个标签页清空了存储。
+ * - 自定义壁纸变了（或清空）：整份重读，图片从 IndexedDB 读回；
+ * - 其它键：按存储重读这几项，保留当前的壁纸图片，不触发 IndexedDB；
+ * 这边还没写出的同一个滑块键作废，免得 200ms 后把对方的值盖回去。
+ */
+export function syncAppearanceFromStorage(key: string | null): Promise<void> {
+  if (key !== null && !SYNCED_APPEARANCE_KEYS.has(key))
+    return Promise.resolve();
+  if (key === null || key === WALLPAPER_CUSTOM_URL_STORAGE_KEY) {
+    pendingSliderWrites.clear();
+    if (sliderWriteTimer !== null) {
+      clearTimeout(sliderWriteTimer);
+      sliderWriteTimer = null;
+    }
+    const done = reloadAppearanceFromStorage();
+    applyAppearanceToDocument(ensureState());
+    emitChange();
+    return done;
+  }
+  pendingSliderWrites.delete(key);
+  const prev = ensureState();
+  const fresh = readInitialAppearance();
+  pendingWallpaperLoad = null;
+  const next: AppearanceState = {
+    ...fresh,
+    customWallpaperUrl: prev.customWallpaperUrl,
+  };
+  const changed = (Object.keys(next) as Array<keyof AppearanceState>).some(
+    (k) => next[k] !== prev[k],
+  );
+  if (!changed) return Promise.resolve();
+  currentState = next;
   applyAppearanceToDocument(next);
   emitChange();
+  return Promise.resolve();
+}
+
+let storageSyncInstalled = false;
+
+/** 监听别的标签页改外观（window 的 storage 事件只在「别的」标签页写存储时触发）。 */
+export function installAppearanceStorageSync() {
+  if (storageSyncInstalled || typeof window === "undefined") return;
+  storageSyncInstalled = true;
+  window.addEventListener("storage", (event) => {
+    if (event.storageArea && event.storageArea !== window.localStorage) return;
+    void syncAppearanceFromStorage(event.key);
+  });
 }
 
 export function setThemePalette(palette: ThemePaletteId) {
@@ -926,11 +1061,14 @@ export function resolveEffectiveHarkScene(
     const idx = Number(state.harkScene);
     if (Number.isInteger(idx) && idx >= 0 && idx <= 11) return idx;
   }
-  const meta = THEME_PALETTES.find((p) => p.id === state.palette) ?? THEME_PALETTES[0];
+  const meta =
+    THEME_PALETTES.find((p) => p.id === state.palette) ?? THEME_PALETTES[0];
   return dark ? meta.harkSceneDark : meta.harkSceneLight;
 }
 
-export function resolveActiveWallpaperCss(state: AppearanceState): string | null {
+export function resolveActiveWallpaperCss(
+  state: AppearanceState,
+): string | null {
   if (state.wallpaperId === "none") return null;
   if (state.wallpaperId === "custom") {
     const u = state.customWallpaperUrl.trim();
@@ -954,47 +1092,6 @@ export function usesPaletteGradientSky(state: Pick<AppearanceState, "palette">):
   return state.palette !== "default";
 }
 
-/**
- * 根据当前主题色生成与天空融合的渐变变量：WebGL 首帧前的预渲染垫片；
- * 非 default 配色时就是最终的天空（见 usesPaletteGradientSky）。
- */
-export function computePaletteSky(
-  palette: ThemePaletteId,
-  dark: boolean,
-): { body: Record<string, string>; root: Record<string, string> } | null {
-  if (palette === "default") return null;
-  const meta = THEME_PALETTES.find((p) => p.id === palette);
-  if (!meta) return null;
-
-  const hues = dark ? meta.skyHueDark : meta.skyHueLight;
-  const sats = dark ? meta.skySatDark : meta.skySatLight;
-  // 深色稍微提亮一点（12–26%），不然叠上压暗层后几个主题都只剩黑色，看不出色相。
-  const lights = dark ? [12, 16, 21, 26] : [54, 66, 78, 88];
-  const stops = [0, 1, 2, 3].map(
-    (i) => `hsl(${hues[i]} ${sats[i]}% ${lights[i]}%)`,
-  );
-
-  return {
-    body: {
-      "--sky-0": stops[0],
-      "--sky-1": stops[1],
-      "--sky-2": stops[2],
-      "--sky-3": stops[3],
-      "--sky-glow": `hsl(${hues[1]} ${Math.min(90, sats[1] + 15)}% ${dark ? 32 : 76}%)`,
-      "--sky-glow-a": dark ? "0.42" : "0.52",
-    },
-    root: {
-      "--glass-sky": stops[2],
-      // --sky-1..3 在 styles.css 里用 @property 注册成了不继承（inherits: false），写在 body 上传不到 #skyph；
-      // 主题渐变另起不注册的变量，挂在 <html> 上让 #skyph 读（见 styles.css「主题配色落到大面上」）。
-      "--palette-sky-0": stops[0],
-      "--palette-sky-1": stops[1],
-      "--palette-sky-2": stops[2],
-      "--palette-sky-3": stops[3],
-    },
-  };
-}
-
 /** 允许上传的壁纸图片类型（与上传控件的 accept 一致）。 */
 export const ALLOWED_WALLPAPER_TYPES: readonly string[] = [
   "image/png",
@@ -1013,7 +1110,10 @@ function formatMb(bytes: number): string {
 }
 
 /** 校验上传的壁纸文件；不合格返回给用户看的提示，合格返回 null。 */
-export function validateWallpaperFile(file: { type: string; size: number }): string | null {
+export function validateWallpaperFile(file: {
+  type: string;
+  size: number;
+}): string | null {
   if (!ALLOWED_WALLPAPER_TYPES.includes(file.type.toLowerCase())) {
     return "请选择图片格式文件（PNG / JPG / WebP / GIF / AVIF）";
   }

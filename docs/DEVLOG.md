@@ -1690,3 +1690,58 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 | 聊天里的撤销链接（`?undoTidy=`）先确认 | 撤销后的提示 |
 | --- | --- |
 | ![](images/memory-tidy/undo-link-confirm.webp) | ![](images/memory-tidy/undo-link-done.webp) |
+
+
+## 2026-10-29 外观设置性能与补齐（模块 11 审计：必修 1 + 应修 2–5、8，分支 `dev4/theme-glass-perf`）
+
+### 动机
+
+审计报告（模块 11，主题 / 壁纸 / 玻璃）：任何外观改动都会让整页重算样式。4 倍 CPU 降速下拖「玻璃面板不透明度」（雾度）滑块 INP 2.6s，切配色 / 材质 0.4–1.7s。
+
+先用 headless Chrome 录了 main 的 trace（4x，键盘拖滑块 20 步）确认原因：每一步都是 `<html>` 的「Inline CSS style declaration was mutated」（`root.style.setProperty('--lg-alpha')`），随后一次 UpdateLayoutTree 覆盖全部约 388 个元素，每次约 450ms。原因是 `--lg-surface` / `--lg-surface-strong` 在 `:root` / `html[data-glass]` 上用 `var(--lg-alpha)` 声明，在根上算出值再继承给所有元素，`--lg-alpha` 一变每个元素的继承值都变。另外配色切换时 SkyBackground 往根上写 `--glass-sky`，没有任何 CSS 读它，纯属整页失效。
+
+### 改动
+
+- **玻璃变量不再挂在根上**（`styles.css`）：`--lg-alpha`、`--lg-surface`、`--lg-surface-strong`、`--lg-blur`、`--lg-shadow` 用 `@property … inherits: false` 注册；三档材质（液态 / 晶莹 / 磨砂，浅 / 深）的声明从 `html[data-glass]` 挪到读它们的玻璃面板上，选择器是 `:where(html[data-glass=…]) :where(<面板名单>)`，优先级为 0，不影响原有覆盖关系。名单和 `appearance.ts` 的 `GLASS_SURFACE_SELECTOR` 一致（测试锁住）。渲染预算里给气泡关模糊的那条加上了 `.glass-main :where([data-slot="bubble"] > [data-slot="bubble-content"])`（用 `:where` 压低优先级，免得 Biome 多一条 noDescendingSpecificity），因为 `--lg-blur` 不继承后写在外层气泡上不再生效。
+- **雾度滑块**（`appearance.ts`）：`--lg-alpha` 写进单独的 `<style id="chisabot-glass-alpha">` 里一条只命中面板名单的规则（CSSOM 改值），根上不再写行内变量；滑块每一步状态立即更新、样式合并到下一帧（rAF）写一次。根上的 `data-palette` / `data-glass` / `data-wallpaper` 只在值变了时才写。
+- **配色**：`SkyBackground` 的配色 effect 依赖收窄到 `[dark, palette]`，去掉没人读的根变量 `--glass-sky`。配色切换仍会改根上的 `--accent-*`（继承变量，确实要整页用到）。
+- **换配色的天空换场景挪到点击上屏之后**（`sky-background.tsx`）：换配色时场景 effect 调 `hark.applyScene`，引擎会在里面当场 `tick()` 画一帧（headless 4x 下一两百毫秒）。点配色是离散输入，React 在同一个任务里同步跑完 passive effect，这一帧就算进了点击的 INP。现在等下一帧（rAF）后再 `setTimeout(0)` 换场景，点击先上屏；渐变照常画完。
+- **天空出帧让着输入**（新文件 `lib/sky-pace.ts`，`sky-background.tsx` 的节流器调用它）：换配色后天空要画 2.5s 的交叉渐变。慢机 / 没有 GPU（软件 WebGL）上一帧引擎一两百毫秒，按 66ms 一拍出帧时主线程被天空帧排满，而且天空帧跑在 rAF 里，和点击要上屏的那一帧在同一个渲染步骤里，点击的 INP 就带上了一整帧天空（4x 下 240–720ms）。现在 ① 一帧超过 40ms 就把两帧间隔拉到 4 倍帧耗时；② 按下鼠标 / 触摸 / 按键后 300ms 内不出天空帧（已经排进 rAF 的那帧也让开、往后排）。pointermove / wheel 不算，动鼠标不会让天空停。渐变按时间照样走完，慢机上只是帧少一些；快机（一帧 <40ms）照旧 15fps。`wallpaper_core.html`、`lib/sky-fade.ts` 没改。
+- **PC 抽屉规则**：`html[data-desktop] body:has([data-slot="sheet-overlay"]) :is(.glass-topbar, .glass-topbar *, .desk-strip)` 去掉 `.glass-topbar *`。trace 里第一次拖滑块冒出「恢复默认」按钮时，这条规则让 Chrome 把 body 整棵子树标脏（4x 下约 500ms）。顶栏里的子元素只声明 no-drag，顶栏整块 no-drag 已覆盖它们，行为不变。
+- **地址栏颜色（应修 2）**：新增纯模块 `lib/palette.ts`（配色表、天空色计算、`paletteThemeColor`、`applyThemeColor`）。`meta[name="theme-color"]` 跟随应用的深浅色和配色（默认配色仍是 `#9dbddc` / `#0c1626`，别的配色取天空顶部颜色）。
+- **多标签页同步（应修 3）**：`installAppearanceStorageSync` 监听 `storage` 事件，配色、材质、雾度、模糊、压暗、壁纸选择从存储读回并应用，不写回；这边还没写出的同一个滑块值作废。`ThemeProvider` 跟随深浅色，`perf-mode.ts` 跟随性能模式。
+- **减少动态效果（应修 4）**：`useReducedMotion` 用 `useSyncExternalStore` 订阅 `prefers-reduced-motion`；打开时动态天空退回快照，并 `stopSkyMotionNow()` 清掉唤醒窗口，当帧停下。
+- **启动骨架用用户配色（应修 5）**：`vite.config.ts` 在 index.html 里紧跟天空启动脚本内联 `paletteBootScript()`：读存储里的配色 / 材质，非默认配色就在 body 上写和应用同样的天空颜色，同时写 `data-palette` / `data-glass` 和地址栏颜色。CSP 会自动给内联脚本算 hash。
+- **性能模式入口（应修 8）**：设置 › 通用 › 外观新增「性能模式」开关（`components/settings/perf-mode-preference.tsx`）；性能模式下头像表情动画（呼吸、张望、眨眼、蹦跳）也停下（不用 `!important`）。
+- 没有新增 `backdrop-filter`，没有改版本号；壁纸压缩、对比度、强制颜色相关代码没动（开发 5 的范围）。
+
+### INP（box 上的 headless Chrome，4x CPU 降速）
+
+main `c99ee37e` 对本分支（已合 main），同一个排队位里交替各跑 3 轮（23:45–23:48 北京时间，box 负载 1 分钟均值 14–31，box 没有 GPU，WebGL 走软件渲染）。设置页，每轮新的临时 Chrome profile，`/api` 和 `/auth` 本地 mock。INP 取该场景所有交互的最大值，样式重算是 CDP `RecalcStyleDuration` 在该场景里的增量。
+
+| 操作（4x CPU） | main INP 1 / 2 / 3 | main 中位 | 本分支 INP 1 / 2 / 3 | 本分支中位 | 样式重算 main → 本分支（ms，3 轮） |
+|---|---|---|---|---|---|
+| 配色 极光 / 樱花 / 默认（点 3 次） | 360 / 248 / 720 | 360 | 88 / 88 / 96 | **88** | 177 / 139 / 296 → 174 / 158 / 147 |
+| 材质 晶莹 / 磨砂 / 液态（点 3 次） | 120 / 144 / 112 | 120 | 72 / 136 / 96 | **96** | 117 / 120 / 105 → 52 / 58 / 81 |
+| 雾度滑块 方向键 20 步 | 96 / 104 / 120 | 104 | 80 / 80 / 88 | **80** | 655 / 614 / 685 → 183 / 190 / 167 |
+| 雾度滑块 鼠标拖 20 步 | 64 / 72 / 72 | 72 | 56 / 48 / 56 | **56** | 475 / 401 / 405 → 237 / 168 / 195 |
+
+- 本分支所有场景 3 轮都 < 200ms。
+- 配色那一行：main 的 INP 主要不是样式重算，而是天空渐变帧挤进点击要上屏的那一帧（见上面「天空出帧让着输入」）。只做到「换场景挪到点击上屏之后」那一步时测过一轮，配色还是 240 / 264 / 296。
+- 雾度滑块 main 在这台机器上 INP 不高（约 100ms），但 20 步样式重算合计约 650ms；本分支约 180ms。审计在 Jun 电脑上测到的 2.6s 是另一台机器，数字不直接可比。
+- 测量脚本在 box `/workspace/dev4theme-perf/measure.mjs`（PR 开后清理）。
+
+### 测试
+
+- 新增 `app/tests/theme-glass-perf.test.tsx`：玻璃变量注册为不继承、没有只命中根的规则声明它们、面板名单和 CSS 一致、读变量的规则都在名单里；换配色时同步提交里不调 `applyScene`、下一帧之后才调；拖滑块时 `<html>` 没有任何属性 / 样式变动、一帧只写一次；换材质只改 `data-glass`；地址栏颜色；storage 同步（配色 / 材质 / 雾度 / 深浅色 / 性能模式，不写回、作废未写出的值）；减少动态效果；启动脚本；性能模式开关和表情动画规则。
+- 新增 `app/tests/sky-pace.test.ts`：快帧照旧 15fps、慢帧拉开间隔、耗时平滑、按下后的保护期和下一帧排期。
+- `appearance-preferences.test.ts`、`wallpaper-privacy-storage.test.ts` 改了两处断言：`--lg-alpha` 不再在根上（只改断言，没动壁纸代码）。
+- 自测（box，已合 main 的 head）：`bun run typecheck` 通过；`app` build 通过；`bun run test:app` 通过；相关单测（theme-glass-perf / sky-pace / wallpaper-loading / render-budget / appearance-preferences / sky-*）全过。Biome：改动文件上 main 5 个 error / 223 个 warning，本分支 4 / 223，不增加。
+
+### 截图
+
+`docs/images/theme-glass/`（webp，main → 本分支）：
+
+- 设置 › 外观，浅色：`main-settings-appearance-light.webp` → `branch-settings-appearance-light.webp`；深色：`main-settings-appearance-dark.webp` → `branch-settings-appearance-dark.webp`。外观本身没变。
+- 性能模式入口：`main-settings-perf-mode.webp`（没有开关）→ `branch-settings-perf-mode.webp`、打开后 `branch-settings-perf-mode-on.webp`。
+- 启动骨架（存的配色是樱花 / 浅色、极光 / 深色手机）：`main-splash-*.webp` 是默认蓝天，`branch-splash-*.webp` 直接是用户的配色；地址栏颜色 main 两个 meta 固定 `#9dbddc,#0c1626`，本分支 `#e5a9b5` / `#110e20`（跟配色）。

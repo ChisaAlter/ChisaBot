@@ -1,8 +1,12 @@
-import { type CSSProperties, useEffect, useRef } from "react";
+import { type CSSProperties, useEffect, useRef, useSyncExternalStore } from "react";
 import { useTheme } from "@/components/theme-provider";
 import {
   applyAppearanceToDocument,
+  applyThemeColor,
   computePaletteSky,
+  getAppearanceState,
+  installAppearanceStorageSync,
+  paletteThemeColor,
   resolveActiveWallpaperCss,
   resolveEffectiveHarkScene,
   setHarkSkyScene,
@@ -11,17 +15,17 @@ import {
   useWallpaperLoading,
 } from "@/lib/appearance";
 import { usePerfMode } from "@/lib/perf-mode";
+import { noteSkyFrame, skyFadeHolding, wakeSkyOnWeather } from "@/lib/sky-fade";
 import {
   isResizing,
   resizeInProgress,
   subscribeResizing,
 } from "@/lib/resize-state";
 import {
-  noteSkyFrame,
-  SKY_FRAME_MS,
-  skyFadeHolding,
-  wakeSkyOnWeather,
-} from "@/lib/sky-fade";
+  noteSkyFrameCost,
+  skyFrameDelay,
+  skyInputHolding,
+} from "@/lib/sky-pace";
 import { createSkyWindow } from "@/lib/sky-window";
 
 /*
@@ -230,6 +234,10 @@ const sky = {
   draws: 0,
   /** 这次渐变第一次被看到的时间（null = 没有渐变），见 noteSkyFrame。 */
   fadeSince: null as number | null,
+  /** 最近几帧引擎耗时（慢机拉开帧间隔，见 lib/sky-pace.ts）。 */
+  cost: 0,
+  /** 最近一次按下鼠标 / 触摸 / 按键（之后一小段时间不出帧，见 lib/sky-pace.ts）。 */
+  inputAt: Number.NEGATIVE_INFINITY,
   listening: false,
 };
 
@@ -265,8 +273,12 @@ function runSkyFrame(realTs: number, force: boolean) {
   const callbacks = sky.queue;
   sky.queue = [];
   sky.draws = 0;
+  const started = performance.now();
   for (const cb of callbacks) cb(ts);
-  if (sky.draws > 0) sky.engineLast = ts;
+  if (sky.draws > 0) {
+    sky.engineLast = ts;
+    noteSkyFrameCost(sky, performance.now() - started);
+  }
   // 换场景的渐变还在画：醒着直到画完，别停在半路（停在半路的样子再被下一次唤醒接上，看起来就是一跳）。
   noteSkyFrame(sky, sky.draws, performance.now());
 }
@@ -275,11 +287,17 @@ function skyPump() {
   if (sky.pending || sky.queue.length === 0) return;
   if (!skyCanRun(performance.now())) return;
   sky.pending = true;
-  const wait = Math.max(0, sky.last + SKY_FRAME_MS - performance.now() - 4);
+  const wait = skyFrameDelay(sky, performance.now());
   window.setTimeout(() => {
     window.requestAnimationFrame((ts) => {
       sky.pending = false;
-      if (!skyCanRun(performance.now())) return;
+      const now = performance.now();
+      if (!skyCanRun(now)) return;
+      // 排队之后用户又按了一下：这一帧是那次点击要上屏的帧，天空让开，保护期过了再画。
+      if (skyInputHolding(sky, now)) {
+        skyPump();
+        return;
+      }
       runSkyFrame(ts, false);
     });
   }, wait);
@@ -333,6 +351,13 @@ function listenForSkyWakeups() {
   const onInput = () => {
     if (sky.mode === "live") wakeSky(SKY_IDLE_MS);
   };
+  // 按下 / 按键：接下来这一帧给输入（见 lib/sky-pace.ts）。pointermove、wheel 不算，不然一直动鼠标天空就不画了。
+  const onPress = () => {
+    sky.inputAt = performance.now();
+  };
+  for (const ev of ["pointerdown", "keydown", "touchstart"]) {
+    window.addEventListener(ev, onPress, { passive: true, capture: true });
+  }
   for (const ev of [
     "pointermove",
     "pointerdown",
@@ -398,24 +423,64 @@ function engineAddEventListener(
   window.addEventListener(type, fn, opts);
 }
 
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function reducedMotionQuery(): MediaQueryList | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
+    return null;
+  return window.matchMedia(REDUCED_MOTION_QUERY);
+}
+
 /** 系统「减少动态效果」：动态天空退回快照（只画一帧就停）。 */
 function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  return reducedMotionQuery()?.matches ?? false;
+}
+
+function subscribeReducedMotion(listener: () => void): () => void {
+  const mq = reducedMotionQuery();
+  if (!mq) return () => {};
+  if (typeof mq.addEventListener === "function") {
+    mq.addEventListener("change", listener);
+    return () => mq.removeEventListener("change", listener);
+  }
+  // 旧版 Safari 只有 addListener。
+  mq.addListener?.(listener);
+  return () => mq.removeListener?.(listener);
+}
+
+/** 跟着系统设置实时变（以前只在渲染时读一次，开了「减少动态效果」要等下一次重渲染才生效）。 */
+export function useReducedMotion(): boolean {
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    prefersReducedMotion,
+    () => false,
   );
 }
 
-function resolveSkyMode(opts: {
+/**
+ * 刚开了「减少动态效果」：天空当帧停住。不再把正在跑的渐变 / 动态天空画完（以前会再跑 2.6s 快照）。
+ * 画布保留最后一次上屏的画面。
+ */
+export function stopSkyMotionNow() {
+  sky.wakeUntil = 0;
+  sky.fadeSince = 0;
+}
+
+/** 测试用：节流器现在的模式和醒到什么时候。 */
+export function readSkyThrottle(): { mode: SkyMode; wakeUntil: number } {
+  return { mode: sky.mode, wakeUntil: sky.wakeUntil };
+}
+
+export function resolveSkyMode(opts: {
   perf: boolean;
   wallpaper: boolean;
   live: boolean;
-  /** 非 default 配色：用主题渐变（#skyph），不启动 WebGL。 */
-  paletteGradient: boolean;
+  paletteGradient?: boolean;
+  reducedMotion?: boolean;
 }): SkyMode {
   if (opts.perf || opts.wallpaper || opts.paletteGradient) return "off";
-  return opts.live && !prefersReducedMotion() ? "live" : "snapshot";
+  const reduced = opts.reducedMotion ?? prefersReducedMotion();
+  return opts.live && !reduced ? "live" : "snapshot";
 }
 
 export function SkyBackground() {
@@ -426,13 +491,23 @@ export function SkyBackground() {
   );
   desiredSceneRef.current = resolveEffectiveHarkScene(appearance, dark);
 
-  // 1. 同步 HTML data-theme、data-palette、data-glass 与 CSS 预渲染垫片变量
+  // 1. 挂载时把外观写到 <html>（之后每次改动由 updateAppearance 自己写，不在这里跟着每一步滑块重跑）。
+  //    同时开始听别的标签页改外观（storage 事件）。
   useEffect(() => {
-    applyAppearanceToDocument(appearance);
-    const root = document.documentElement;
-    root.setAttribute("data-theme", dark ? "dark" : "light");
+    applyAppearanceToDocument(getAppearanceState());
+    installAppearanceStorageSync();
+  }, []);
 
-    const customSky = computePaletteSky(appearance.palette, dark);
+  // 2. 深浅色 / 配色变了：data-theme、天空垫片变量（写在 body 上，--sky-* 注册为不继承）、地址栏颜色。
+  //    只依赖这两个值：以前依赖整个 appearance 对象，拖一下玻璃滑块这里也重跑一遍。
+  const palette = appearance.palette;
+  useEffect(() => {
+    const root = document.documentElement;
+    if (root.getAttribute("data-theme") !== (dark ? "dark" : "light")) {
+      root.setAttribute("data-theme", dark ? "dark" : "light");
+    }
+
+    const customSky = computePaletteSky(palette, dark);
     if (customSky) {
       for (const [k, v] of Object.entries(customSky.body)) {
         document.body.style.setProperty(k, v);
@@ -461,20 +536,25 @@ export function SkyBackground() {
         root.style.removeProperty(k);
       }
     }
-  }, [dark, appearance]);
+    // 旧版本写在 <html> 上、没有任何样式读的 --glass-sky：清掉（换配色时它让整页跟着重算）。
+    root.style.removeProperty("--glass-sky");
+    applyThemeColor(paletteThemeColor(palette, dark));
+  }, [dark, palette]);
 
   const perf = usePerfMode();
   const wallpaperCss = resolveActiveWallpaperCss(appearance);
   const wallpaperLoading = useWallpaperLoading();
+  const reducedMotion = useReducedMotion();
   const skyMode = resolveSkyMode({
     perf,
+    reducedMotion,
     // 壁纸还在从 IndexedDB 读回时也不启动天空：读回来就是壁纸，先启动只会闪一下。
     wallpaper: wallpaperCss !== null || wallpaperLoading,
     live: appearance.harkScene === "live",
     paletteGradient: usesPaletteGradientSky(appearance),
   });
 
-  // 2. 启动 Hark 原生 WebGL 动态天空引擎（/wallpaper_core.html）；壁纸 / 性能模式下不启动。
+  // 3. 启动 Hark 原生 WebGL 动态天空引擎（/wallpaper_core.html）；壁纸 / 性能模式下不启动。
   useEffect(() => {
     if (typeof window === "undefined") return;
     setSkyMode(skyMode);
@@ -568,11 +648,28 @@ export function SkyBackground() {
       });
   }, [skyMode]);
 
-  // 3. 当主题亮暗、配色方案或用户指定的 Hark 场景变化时，立即切换 WebGL 天空场景
+  // 4. 系统开了「减少动态效果」：当帧停住天空（模式切换那条 effect 会退回快照，但快照还会再画 2.6s）。
+  useEffect(() => {
+    if (reducedMotion) stopSkyMotionNow();
+  }, [reducedMotion]);
+
+  // 5. 当主题亮暗、配色方案或用户指定的 Hark 场景变化时，切换 WebGL 天空场景（点击先上屏，见下）。
+  //    换场景时引擎会当场画一帧（applyScene → tick），4× 降速下这一帧要一两百毫秒。点配色是离散输入，
+  //    React 会在同一个任务里同步跑完这条 effect，这一帧就算进了点击的 INP。所以等这次点击先上屏，再换场景。
   const targetScene = resolveEffectiveHarkScene(appearance, dark);
   useEffect(() => {
-    syncHarkSkyScene(targetScene);
-    wakeSky(SKY_SNAPSHOT_MS);
+    let raf = 0;
+    let timer = 0;
+    raf = window.requestAnimationFrame(() => {
+      timer = window.setTimeout(() => {
+        syncHarkSkyScene(targetScene);
+        wakeSky(SKY_SNAPSHOT_MS);
+      }, 0);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
   }, [targetScene]);
 
   // 壁纸读取中：连静态天空占位也不画，只铺主题纯色（body 的底色 --sky-2）；读回后直接换成壁纸。

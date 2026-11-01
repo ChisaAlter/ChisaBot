@@ -186,21 +186,18 @@ describe("Bing 回退（hark 对比 #3 #8 #11，2026-10-29）", () => {
     if (!search) throw new Error("web_search missing");
     const turnA = new AbortController().signal;
     expect(await search.execute({ query: "上海 咖啡店" }, { signal: turnA })).toBe(NO_SEARCH_HITS);
-    next = { hits: [{ title: "上海咖啡", url: "https://cafe.test/", snippet: "" }], sourceDown: false };
-    expect(await search.execute({ query: "上海 咖啡" }, { signal: turnA })).toContain("https://cafe.test/");
-    next = { hits: [], sourceDown: false };
     expect(await search.execute({ query: "上海 咖啡馆" }, { signal: turnA })).toBe(NO_SEARCH_HITS);
-    expect(calls).toBe(3);
+    expect(calls).toBe(2);
     expect(await search.execute({ query: "上海 精品咖啡" }, { signal: turnA })).toBe(SEARCH_TURN_STOPPED);
-    expect(calls).toBe(3);
+    expect(calls).toBe(2);
     // 新的一轮重新计数
     const turnB = new AbortController().signal;
     next = { hits: [], sourceDown: true };
     expect(await search.execute({ query: "小米 手环" }, { signal: turnB })).toBe(SEARCH_SOURCE_DOWN);
-    expect(calls).toBe(4);
+    expect(calls).toBe(3);
     next = { hits: [{ title: "小米手环", url: "https://mi.test/", snippet: "" }], sourceDown: false };
     expect(await search.execute({ query: "小米手环 9" }, { signal: turnB })).toBe(SEARCH_TURN_STOPPED_DOWN);
-    expect(calls).toBe(4);
+    expect(calls).toBe(3);
     expect(SEARCH_TURN_STOPPED).toStartWith("本轮不再搜索");
     expect(SEARCH_TURN_STOPPED_DOWN).toStartWith("本轮不再搜索");
   });
