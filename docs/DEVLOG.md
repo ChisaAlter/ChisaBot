@@ -421,6 +421,25 @@ main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better
 - render_ui：`RenderUiTool`（聊天 Provider 里注册）挂上就 `JsonRenderSurface.preload()`，旧对话的卡片不再先显示骨架。没走 modulepreload（那样会让所有聊天首屏都多下 json-render 的依赖）。
 - 产物（gzip，入口闭包 + 该组预载闭包）：管理 1,030,798 → 506,073；设置 516,706 → 518,270；聊天 1,098,781 → 1,100,544（MCP 并进来后 vendor-copilot 167,483 → 182,102，聊天首屏本来就带这两块，总量持平）。
 - 可选项「未登录时 / 不预取聊天块」没做：客户端没有现成的、内联脚本能读的登录标记，判断不了；要做得先加一个标记，留给后续。
+## Unreleased — 切会话不再整篇强制样式重算：tail-first 只在上滑时量（jank P1-2，分支 dev4/perf-tail-first）
+
+**动机**：`/workspace/jank-analysis/REPORT.md` 根因 1：切会话时 `use-tail-first-mount.ts` 的 layout effect 每补一批都读 `el.scrollHeight`，4 次切换 16 次强制 UpdateLayoutTree 共 3.27s（每次 2.6k→9.2k 元素）；`useKeepBottomOnPrepend` 盯「当前挂着的第一行」，每批再读一次、写一次 scrollTop。message-scroller 每次滚动 / 内容变化逐行 `getBoundingClientRect`（内容高度 `Se`、第一条可见行 `Ye`），切换场景 550ms。
+
+**改法**：
+- `use-tail-first-mount.ts`：贴底时补行不读布局，`startIndex` 到 0 时读一次 scrollHeight 钉底；上滑时靠 `overflow-anchor`（视口显式 `[overflow-anchor:auto]`，chat-tail 仍是 none，§94.6）；`CSS.supports("overflow-anchor","auto")` 为假时才在补行前量 scrollHeight、补后垫 delta（§35 兜底），贴底也每批钉。补行从每帧 rAF 改成 `requestIdleCallback`（timeout 50ms，没有就 rAF）。导出 `prependHistory()`（滚到顶附近加速补）。
+- `tail-first-paint.ts`：`TAIL_FIRST_BATCH` 28 → 40，批次 = clamp(已挂条数, 40, 160)：200 条 7 批 → 3 批，400 条 13 批 → 6 批。
+- `chat-transcript.tsx`：`useKeepBottomOnPrepend` 改盯 `items[0]`（真正的历史 prepend），不再每补一批触发。
+- `app/src/vendor/shadcn-react-message-scroller`（`@shadcn/react@0.3.0` 的 message-scroller 原样拷进来，`biome.json` 排除；没用 `patchedDependencies`，因为 Dockerfile / Dockerfile.zh / updater 都只拷 manifest 再装依赖，得一起改）：`Se` 从末尾往前找第一个有尺寸的行（列布局里它就是最低的；chat-tail 是 `display:contents`，本来就量出 0）；`Ye` 对带 `data-message-id` 的行二分找第一个 bottom 在视口顶下面的行，碰到 0 尺寸行退回线性。可见集合本来就用 IntersectionObserver。
+- `transcript-data-layer.ts`：`TranscriptDataLayer`（items / prependHistory / scrollToBottom / scrollToMessage）+ `useTailFirstDataLayer`，给 P3-3 virtua 换渲染层。
+
+**复审（最长单任务）**：160 一批时 switch 场景最长单任务比 main 长（736→821 / 787→1051）。trace 看补行那一批：React 渲染之后，同一个任务里还有 message-scroller `handleContentChange`（MutationObserver → scrollToEnd 读 scrollHeight / 前插保位逐行量）和 chat-transcript 贴底 MutationObserver（读 offsetHeight）各一次强制样式 + 布局（约 250–300ms），最后一批还有 hook 自己钉底读 scrollHeight。改法：有原生锚定时，补行提交期间视口挂 `data-tail-backfill`（微任务里摘掉），上面两个观察器看到就不当场量（高度变化交给布局后的 ResizeObserver）；钉底改到下一帧。批上限 160 → 100。试过的：按一帧预算自适应（4x 下一直缩到 40，样式收益掉光）、固定 120 / 80 / 100、预算 200ms 自适应；交替 5 轮的结果在 PR 描述里。结论：补行批次已经不再决定最长单任务；15 次运行里最长单任务全是第一次点到 c1 的那次点击处理（main 中位 714ms，本分支 787ms），这一项本分支仍高，原因未查清。
+
+**测试**：`app/tests/tail-first-scroll-reads.test.tsx`（假视口给 scrollHeight 计数：贴底补完只读 ≤1 次且最终贴底；上滑 + 原生锚定 0 次读、不碰 scrollTop；无原生锚定时前插保持可见行；短对话 0 次读）——换回旧 hook 4 条里 3 条失败（保位那条新旧都过）。`app/tests/message-scroller-visible-measure.test.tsx`（400 行滚 5 次，逐行量 < 200 次；换回原库 2130 次）。`tail-first-paint.test.ts` 跟着改批次断言。
+
+**注意**：`app/package.json` 里的 `@shadcn/react` 依赖暂时留着（不动 lockfile）。升级时看 vendor 目录的 README：上游若已只量可见行就删掉 vendor。
+
+**复审二（小爱，1b034dcf 条件通过）**：必改——补完钉底的下一帧 rAF 只在卸载时取消，切频道（`scrollKey` 变）时不取消；旧频道最后一批刚提交就切走，会把新频道钉到底、盖掉 keep-alive 恢复的上滑位置。改为切频道分支和补行 effect 清理里都 `cancelAnimationFrame`，rAF 里再核对 `keyRef` 仍是提交时的频道。补行的 idle 回调本来就在切频道时由 effect 清理取消，这次只剩这一帧没取消；另加排队更新的 `cancelled` 守卫。顺带：vendor README「两处」→「三处」，注明 `Te` 捷径不处理同次提交新加的 scrollAnchor 行；chat-transcript 的 MutationObserver 只看 childList / characterData、标记挂在视口不在内容上，不用改。测试：`tail-first-scroll-reads` 加「钉底帧未跑就切频道，新频道 scrollTop 不动」（换回旧 hook 失败）；`tail-first-mount` 加切频道取消旧补行、切回后整段挂全且最后一行在末尾（这两条新旧都过，旧代码已取消 idle）。switch 未追踪交错 5 轮：max long task 中位 main 857（669–1087）、PR 737（上一版 850 / 803），见 PR 表。
+
 ## 联网搜索质量（fix/hark-search-quality）
 
 **动机**：hark 对比（0.1.108，`/workspace/hark-compare/chisabot-381/after/compare.md`）里搜索类用例都不好：#8 上海咖啡店搜了 4 次只写「未核实」，没有地址、人均和来源；#5 搜 6 次、31.6→39.9 秒；#3 五条新闻全来自同一家网站；#11 只给价格区间、没有来源，两个备选前面是空白灰色方块。
