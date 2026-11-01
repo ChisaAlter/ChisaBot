@@ -1,0 +1,48 @@
+/*
+ * 拖动窗口改大小时暂停大面积毛玻璃（P2-3）。
+ * html[data-resizing] 由 lib/resize-state.ts（开发4）在 resize 时于 rAF 里加上、最后一次 resize 150ms 后去掉。
+ * 这期间去掉大板块的 backdrop-filter 和大阴影，换成不透明底色，文字照样看得清；不加过渡，松手后直接恢复。
+ *
+ * 为什么这样写（同 perf-noblur.css）：
+ * - 选择器加 :not(#chisabot-no-blur) 带上 id 优先级，压过只用类 / 属性的规则，不用 !important。
+ * - styles.css 的旧三档玻璃是 `backdrop-filter: var(--lg-blur) !important`、`box-shadow: var(--lg-shadow) !important`、
+ *   `background: var(--lg-surface…) !important`，这里不跟它比 !important，而是改这几个变量本身。
+ * - 不用 :has()、不用通配，只点名具体的类；不加 blur，不加动画。
+ */
+
+/* 大板块：左栏、账号卡、收起态左栏、右栏、输入框、对话内嵌卡片。 */
+html[data-resizing]:not(#chisabot-no-blur)
+:is(
+  .glass-side-card,
+  .acct-card,
+  .acct-mini-card,
+  .glass-mini-card,
+  .rail-card,
+  .glass-composer,
+  .jr-card
+) {
+  --lg-blur: none;
+  --lg-shadow: none;
+  --lg-surface: var(--glass-bg-opaque);
+  --lg-surface-strong: var(--glass-bg-opaque);
+  transition: none;
+}
+
+/* 玻璃外壳、弹出层、卡片：直接写属性。 */
+html[data-resizing]:not(#chisabot-no-blur)
+:is(
+  .glass:not(.is-flat),
+  .glass-card:not(.rail-card .glass-card),
+  [data-slot="dropdown-menu-content"],
+  [data-slot="popover-content"],
+  [data-slot="select-content"],
+  .model-popover,
+  .context-popover,
+  .perm-popover
+) {
+  background: var(--glass-bg-opaque);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  transition: none;
+}

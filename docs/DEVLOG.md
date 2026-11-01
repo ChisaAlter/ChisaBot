@@ -1539,3 +1539,12 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 - 「模型加载失败 · 重试」：浅色 `#b4412d`→`#9c3020`，深色新增 `#ff9b87`；真 Chrome 取实际胶囊底色量对比度，6 个配色亮 / 暗都 ≥ 5.0（樱花暗色 5.97，原来深红字压深底不到 4.5）。
 - default 像素一致（小爱追加）：真 Chrome 1280×800，main 与本 PR 各截首页（选中行 + 未读圆点）和设置页（含开关），亮 / 暗、default 与无 data-palette 共 8 个画面，每个都至少有一轮 main 对 PR 差 0 像素；其余几处（右上头像按钮、设置页中部）在 main 对 main、PR 对 PR 之间同样出现，是截图本身的抖动。固定时钟、关动画、隐藏 WebGL 画布和头像图片、mock 模型接口。新测试断言 default 兜底值就是 main 的原值。
 - 开关颜色：第 ~3075 行 `[data-slot="switch"][data-checked]{background:var(--accent-blue)}` 在亮色下确实盖过开关规则，但各配色都覆盖了 `--accent-blue`，所以开关照样跟主题色。实测 default 亮 rgb(47,116,240) / 暗 rgb(96,165,250)，与 main 相同；樱花亮 rgb(190,24,93) / 暗 rgb(247,131,172)。
+
+
+## 2026-10-30 P2-3 改窗口大小时暂停毛玻璃（perf/resize-glass-pause）
+
+**动机**：FIX-PLAN P2-3，拖动窗口改大小时大面积 `backdrop-filter` 和阴影每帧重绘，卡顿明显。
+
+**分工**：开发4 写 JS（`resize-state.ts`：resize 第一帧在 rAF 里给 `<html>` 加 `data-resizing`，最后一次 resize 150ms 后去掉，同时暂停 WebGL 壁纸）；前端只写 CSS，只依赖这个属性。
+
+**改动**：新增 `app/src/resize-pause.css`，在 `main.tsx` 里接在 `perf-noblur.css` 之后引入。大板块改 `--lg-blur` / `--lg-shadow` / `--lg-surface` 变量本身（不跟旧规则比 `!important`），外壳和弹出层直接写 `backdrop-filter: none`、`box-shadow: none`、不透明底色；选择器带 `:not(#chisabot-no-blur)` 提优先级。不用 `:has()`、不用通配、不加模糊和动画。新测试 `app/tests/resize-pause.test.ts`。

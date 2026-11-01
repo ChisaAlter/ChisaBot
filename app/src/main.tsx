@@ -23,6 +23,9 @@ import "./perf-noblur.css";
 // 增加对比度 / 强制颜色：文字、边框和焦点环（模块 11 第 7 条）。放在 perf-noblur.css 之后。
 import "./a11y-modes.css";
 
+// 改窗口大小时暂停大面积毛玻璃（html[data-resizing]）。放在 perf-noblur.css 之后，要用它的 --glass-bg-opaque。
+import "./resize-pause.css";
+
 reportBootStage("entry-executing");
 installPhoneLayout();
 installPerfMode();
