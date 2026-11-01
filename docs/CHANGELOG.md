@@ -93,6 +93,13 @@
 
 - 修复「一键整理记忆」（审计 12-settings 必修 1）：先预览、弹窗列出要合并的组再确认（带 token，期间有变化返回 409）；合并后超过 4000 字的整组不合并，不再截断；分组区分机器人和情境；整个整理在一个事务里，原文写入 `chisabot_memory_tidy_backups`，可在 8 秒内或「更多」→「撤销上次整理」恢复；`memory_dream` 归入「删除」审批：卡片逐组列出预览、按 token 执行，每周整理的定时任务改为留一张整理建议卡片等确认（不再直接拒绝），确认后记忆变了会重出卡片说明原因；删除设为「直接做」时照常执行并附撤销链接，新增 `memory_dream_undo`；按钮移入「更多」菜单。不升版本号。
 
+## Unreleased
+
+- 修复：当前时间按用户时区（Asia/Shanghai）写并标明时区，和长期记忆同一天；测试 `server/tests/reply-quality.test.ts`。
+- 修复：Hermes 适配器透传模型出错的分类（限流 / 上下文过长 / 超时等），网页出对应提示；测试 `examples/hermes-agent/tests/`、`app/tests/hermes-error-categories.test.ts`。
+- 返修：Hermes 出错分类跳过内置异常（工具的 FileNotFoundError / PermissionError / timed out 不再冒充模型错误），只按 HTTP 状态码 + 模型 SDK 异常类型；403 看 body 分地区限制 / 内容拦截 / 密钥，分不清走通用提示；分类函数不再抛异常（body 序列化兜底、bytes 解码、截断 64KB），适配器出错时一定 run.fail。
+- 提示词：来源只在末尾写一次；卡片收尾写结论；公式加括号；拒绝给替代；写上当前模型；记忆笔记与出处规则写明优先级。
+
 ## 0.1.110
 
 - 修复：断线重连后漏掉的消息不补——`useConversationSync` 隔 15 秒以上才问到变化戳时不再只记基线，序号变了就合并式接上；测试 `app/tests/reconnect-backfill.test.tsx`。

@@ -4,6 +4,7 @@ import { checkPublicUrl } from "../../../shared/net/ssrf";
 import { currentConfirmTurn, currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
 import { markUntrusted } from "../untrusted-content";
+import { formatSearchHits, SEARCH_GROUNDING_NOTE, SEARCH_TURN_ENOUGH, takeSearchSlot } from "./search-grounding";
 
 /**
  * 内置联网：`web_search` + `web_fetch`（2026-10-13，向 Hark 的体验看齐）。
@@ -418,7 +419,7 @@ export function webTools(io: WebIo = REAL_IO): GrantedTool[] {
       name: "web_search",
       ref: "web/web_search",
       description:
-        "联网搜索（只读，不带用户身份）。返回标题、网址和摘要。查事实、新闻、价格、天气、某个网站的地址，或者查一个外部服务（腾讯 ima、Notion、Gmail……）怎么接入、有没有官方 API / MCP / 开放平台时，先用它；需要细节再用 web_fetch 读其中一个网址。比打开浏览器快得多。一轮里一般搜 1–3 次就够：推荐类问题（买什么、去哪家）拿到几个候选就停，直接给 2–3 个带大致价格的选项，不要反复换关键词重搜。某次没搜到相关结果，最多再换一次关键词。列多条新闻或推荐时，尽量来自不同网站，每条注明来源网站。",
+        "联网搜索（只读，不带用户身份）。返回标题、网址和摘要。查事实、新闻、价格、天气、某个网站的地址，或者查一个外部服务（腾讯 ima、Notion、Gmail……）怎么接入、有没有官方 API / MCP / 开放平台时，先用它；需要细节再用 web_fetch 读其中一个网址。比打开浏览器快得多。同一个问题最多搜 2 次（要换角度就一次并行发两个），搜到够用就停：推荐类问题（买什么、去哪家）直接用结果里的名字、地址或价格给 2–3 个选项并附来源网址，不要反复换关键词重搜。",
       parameters: searchParameters,
       execute: async (args, ctx) => {
         const signal = ctx?.signal ?? currentToolAbort();
@@ -430,10 +431,12 @@ export function webTools(io: WebIo = REAL_IO): GrantedTool[] {
           const turn = searchTurnState(signal);
           if (turn?.down) return SEARCH_TURN_STOPPED_DOWN;
           if (turn && turn.misses >= SEARCH_TURN_MISS_LIMIT) return SEARCH_TURN_STOPPED;
+          if (!takeSearchSlot(signal)) return SEARCH_TURN_ENOUGH;
           const outcome = io.outcome ? await io.outcome(query, count, signal) : { hits: await io.search(query, count, signal), sourceDown: false };
           if (turn && outcome.sourceDown) turn.down = true;
           else if (turn && outcome.hits.length === 0) turn.misses++;
-          return searchResultText(outcome);
+          if (outcome.hits.length === 0) return searchResultText(outcome);
+          return `${markUntrusted(formatSearchHits(outcome.hits), "web search results")}\n${SEARCH_GROUNDING_NOTE}`;
         } catch (error) {
           if (signal?.aborted || (error instanceof Error && /abort/i.test(error.name + error.message)))
             return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;

@@ -19,8 +19,9 @@ from types import SimpleNamespace
 from typing import Any
 
 from chisabot_protocol import (GatewayClient, HostPrompt, ProtocolError, RunState, ToolAliases,
-                               active_run, fallback_use, host_metadata, parse_host_prompt, redact,
-                               tool_error)
+                                 TURN_FAILED, active_run, failure_category, failure_message,
+                                 fallback_use, host_metadata, parse_host_prompt, redact,
+                                 tool_error)
 
 logger = logging.getLogger("chisabot_acp")
 
@@ -486,6 +487,11 @@ def build_agent_class():
                         return PromptResponse(stop_reason="cancelled", field_meta={"chisabot": meta})
                     if state.cancel_event and state.cancel_event.is_set():
                         return PromptResponse(stop_reason="cancelled")
+                    if result.get("failed"):
+                        # Hermes reports an exhausted model call as a result, not an exception, with
+                        # its own English warning as final_response. Surface it as a turn error the
+                        # web app can classify (rate limit, too long, timeout...) instead of a reply.
+                        raise acp.RequestError(-32603, failure_message(failure_category(result.get("failure_reason"))))
                     final = result.get("final_response")
                     if final and conn and (not cbs.streamed or result.get("response_transformed")):
                         update = acp.update_agent_message_text(redact(final, config.gateway.capability))
@@ -499,9 +505,15 @@ def build_agent_class():
                     raise
                 except acp.RequestError:
                     raise
-                except Exception:
-                    run.fail("Hermes host turn execution failed")
-                    raise acp.RequestError(-32603, "Hermes host turn execution failed") from None
+                except Exception as error:
+                    # Only a fixed category sentence leaves the process, never the provider's text.
+                    try:
+                        message = failure_message(failure_category(error=error))
+                    except Exception:
+                        # Classifying must never keep run.fail from running, or the run hangs.
+                        message = TURN_FAILED
+                    run.fail(message)
+                    raise acp.RequestError(-32603, message) from None
                 finally:
                     run.close()
                     self._host_runs.pop(session_id, None)
