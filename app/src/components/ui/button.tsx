@@ -1,6 +1,6 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { cva, type VariantProps } from "class-variance-authority";
-import { Children, type ReactNode } from "react";
+import { Children, memo, type ReactNode } from "react";
 
 import {
   type AsyncState,
@@ -153,7 +153,7 @@ function Button({
  * The inside of an async button, for the rare control that cannot be `Button` (a glass pill with
  * its own look): put `data-btn-state={state}` on the element and this inside it.
  */
-export function AsyncContent({
+function AsyncContentImpl({
   state,
   labels,
   stacked = true,
@@ -292,7 +292,7 @@ const IDLE_MUTATION: MutationLike = { status: "idle", submittedAt: 0 };
  * closes into a full ring and fades while the check (or ✕) draws itself. Colour and motion live in
  * styles.css under `.btn-glyph`, keyed off the button's `data-btn-state`.
  */
-export function StatusGlyph() {
+function StatusGlyphImpl() {
   return (
     <svg
       aria-hidden="true"
@@ -322,3 +322,12 @@ export function StatusGlyph() {
 }
 
 export { Button, buttonVariants };
+
+/*
+ * 两者都是 memo 的（jank FIX-PLAN §5 / P2-1）：按钮的父组件在流式时每个 token 重渲（「回到底部」、
+ * 文档卡的「复制」），文字和图标没变就不再重画里面这一层。
+ */
+AsyncContentImpl.displayName = "AsyncContent";
+export const AsyncContent = memo(AsyncContentImpl);
+StatusGlyphImpl.displayName = "StatusGlyph";
+export const StatusGlyph = memo(StatusGlyphImpl);

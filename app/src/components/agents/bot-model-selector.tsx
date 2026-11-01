@@ -1,6 +1,6 @@
 import { IconRefresh } from "@tabler/icons-react";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { ModelCatalogEntry } from "../../../../shared/model-selection";
 import { Button } from "@/components/ui/button";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList, ComboboxTrigger } from "@/components/ui/combobox";
@@ -16,7 +16,7 @@ const labelOf = (option: ModelOption) => !option.id ? option.label : option.labe
  * Chat and settings both edit this BOT's one saved model; no connection credential reaches here.
  * `compact` is the composer's pill + popover (`ModelPicker`); the full row is for settings screens.
  */
-export function BotModelSelector({ agentId, compact = false, disabled = false, bare = false }: { agentId: string; compact?: boolean; disabled?: boolean; /** 只要选择框（资料页的设置行自己有标题和说明，DESIGN.md §47）。 */ bare?: boolean }) {
+function BotModelSelectorImpl({ agentId, compact = false, disabled = false, bare = false }: { agentId: string; compact?: boolean; disabled?: boolean; /** 只要选择框（资料页的设置行自己有标题和说明，DESIGN.md §47）。 */ bare?: boolean }) {
   if (compact) return <ModelPicker agentId={agentId} disabled={disabled} />;
   return <BotModelSettingsRow agentId={agentId} bare={bare} disabled={disabled} />;
 }
@@ -85,3 +85,7 @@ function BotModelSettingsRow({ agentId, disabled = false, bare = false }: { agen
     </div>
   );
 }
+
+/** 流式时父组件每个 token 都会重渲；props 没变就跳过（jank FIX-PLAN §5 / P2-1）。 */
+BotModelSelectorImpl.displayName = "BotModelSelector";
+export const BotModelSelector = memo(BotModelSelectorImpl);

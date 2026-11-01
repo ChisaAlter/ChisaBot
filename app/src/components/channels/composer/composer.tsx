@@ -23,6 +23,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -356,7 +357,15 @@ const UNACCEPTED_DROP_REASON = {
     "没有附上：还没有对话。先发出这条消息，再往打开的对话里附文件。",
 } as const;
 
-export function Composer({
+/*
+ * 不随渲染变的按钮内容和默认值放模块级（jank FIX-PLAN §5 / P2-1）：同一个元素 / 数组引用，
+ * Composer 自己重渲（打字、上传）时 Button 和依赖 `agents` 的 memo 不会被白白刷新。
+ */
+const NO_AGENTS: readonly AgentOption[] = [];
+const STOP_ICON = <IconPlayerStopFilled className="size-3" />;
+const SEND_ICON = <IconArrowUp className="size-[18px]" stroke={2.25} />;
+
+function ComposerImpl({
   className,
   modelControl,
   leadingControl,
@@ -365,7 +374,7 @@ export function Composer({
   onAgentChange,
   editorClassName,
   compact = false,
-  agents = [],
+  agents = NO_AGENTS,
   commands = PLACEHOLDER_COMMANDS,
   onSubmit,
   onQueue,
@@ -1906,46 +1915,42 @@ export function Composer({
     event.preventDefault();
     onStop?.();
   };
-  const primaryAction =
-    stopFailed && onRetryStop && !parking ? (
-      <StopFailedButton className={actionClassName} onRetry={onRetryStop} />
-    ) : canStop && stopping ? (
-      <Button
-        aria-label={"停止中"}
-        className={cn(
-          actionClassName,
-          "w-auto whitespace-nowrap px-2.5 text-xs",
-        )}
-        data-testid="composer-stopping"
-        disabled
-        size="sm"
-        type="button"
-      >
-        停止中…
-      </Button>
-    ) : canStop ? (
-      <Button
-        aria-label={"停止机器人"}
-        className={actionClassName}
-        data-testid="composer-stop"
-        onClick={onStop}
-        size="icon"
-        type="button"
-      >
-        <IconPlayerStopFilled className="size-3" />
-      </Button>
-    ) : (
-      <Button
-        aria-label={sendLabel}
-        className={actionClassName}
-        data-testid="composer-send"
-        disabled={!canSend}
-        size="icon"
-        type="submit"
-      >
-        <IconArrowUp className="size-[18px]" stroke={2.25} />
-      </Button>
-    );
+  const primaryAction = stopFailed && onRetryStop && !parking ? (
+    <StopFailedButton className={actionClassName} onRetry={onRetryStop} />
+  ) : canStop && stopping ? (
+    <Button
+      aria-label={"停止中"}
+      className={cn(actionClassName, "w-auto whitespace-nowrap px-2.5 text-xs")}
+      data-testid="composer-stopping"
+      disabled
+      size="sm"
+      type="button"
+    >
+      停止中…
+    </Button>
+  ) : canStop ? (
+    <Button
+      aria-label={"停止机器人"}
+      className={actionClassName}
+      data-testid="composer-stop"
+      onClick={onStop}
+      size="icon"
+      type="button"
+    >
+      {STOP_ICON}
+    </Button>
+  ) : (
+    <Button
+      aria-label={sendLabel}
+      className={actionClassName}
+      data-testid="composer-send"
+      disabled={!canSend}
+      size="icon"
+      type="submit"
+    >
+      {SEND_ICON}
+    </Button>
+  );
 
   /**
    * EVERY COMPOSER IS A DROP TARGET. What changes with `canAttach` is what happens to the file,
@@ -2375,30 +2380,6 @@ export function StopFailedButton({
   );
 }
 
-/** 「上传中 63%」 beside a Send that is grey because of it. Subscribes to progress on its own. */
-function UploadingHint({
-  progress,
-  uploading,
-}: {
-  progress: ReturnType<typeof createUploadProgressStore>;
-  uploading: readonly { key: string; size: number }[];
-}) {
-  const percent = useOverallUploadPercent(progress, uploading);
-  return (
-    <span
-      className="whitespace-nowrap text-muted-foreground text-xs tabular-nums"
-      data-testid="composer-upload-hint"
-      role="status"
-    >
-      {percent === undefined ? "上传中…" : `上传中 ${percent}%`}
-    </span>
-  );
-}
-
-/** What a refused paste is called in the refusal list. */
-export const PASTED_TEXT_NAME = "粘贴的文字";
-
-/** Why a paste longer than the model can read was not added. */
-export function pasteTooLongReason(length: number): string {
-  return `共 ${length.toLocaleString("en-US")} 字，超过 ${MAX_EXTRACTED_CHARACTERS.toLocaleString("en-US")} 字的部分模型读不到，所以没有粘贴。请分几次粘贴。`;
-}
+/** 流式时父组件每个 token 都会重渲；props 没变就跳过（jank FIX-PLAN §5 / P2-1）。 */
+ComposerImpl.displayName = "Composer";
+export const Composer = memo(ComposerImpl);

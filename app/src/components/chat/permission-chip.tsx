@@ -2,7 +2,7 @@ import { Popover } from "@base-ui/react/popover";
 import { IconAlertCircle, IconCheck, IconHandStop, IconLoader2 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
 import { BOT_PERMISSION_INFO, BOT_PERMISSION_MODES, type BotPermissionMode } from "../../../../shared/bot-permission";
 import { toast } from "@/components/ui/toast";
 import { agentQueryOptions } from "@/lib/agents/queries";
@@ -16,7 +16,7 @@ const ICON: Record<BotPermissionMode, typeof IconHandStop> = { ask: IconHandStop
  * 点开是一张小卡片「应如何批准 <机器人> 的操作？」，两档单选，切到完全访问先确认一次。手机上收成一个图标。
  * 档位存在服务器（按机器人），服务器执行时照它放行或出确认卡片——这里只是开关。
  */
-export function PermissionChip({ agentId, disabled = false }: { agentId: string; disabled?: boolean }) {
+function PermissionChipImpl({ agentId, disabled = false }: { agentId: string; disabled?: boolean }) {
   const state = useQuery(botPermissionQueryOptions(agentId));
   const agent = useQuery(agentQueryOptions(agentId));
   const botName = agent.data?.name;
@@ -116,3 +116,7 @@ export function PermissionChip({ agentId, disabled = false }: { agentId: string;
     </Popover.Root>
   );
 }
+
+/** 流式时父组件每个 token 都会重渲；props 没变就跳过（jank FIX-PLAN §5 / P2-1）。 */
+PermissionChipImpl.displayName = "PermissionChip";
+export const PermissionChip = memo(PermissionChipImpl);

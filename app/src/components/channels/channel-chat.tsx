@@ -1873,6 +1873,42 @@ export function ChannelChat({
     [canResend, regenerate, editAndResend],
   );
 
+  /*
+   * 流式时这个组件每个 token 都重渲（它订阅 agent.messages）。输入框那一排控件只认这几个原始值，
+   * 元素和数组在这里按值缓存，配合 Composer / ContextMeter 等的 memo，token 不再穿过输入框
+   * （jank FIX-PLAN §5 / P2-1）。
+   */
+  const channelActive = channel.active;
+  const channelThreadId = channel.threadId;
+  const modelControl = useMemo(
+    () => (
+      <BotModelSelector
+        agentId={runtimeAgentId}
+        compact
+        disabled={!channelActive}
+      />
+    ),
+    [runtimeAgentId, channelActive],
+  );
+  const leadingControl = useMemo(
+    () => <PermissionChip agentId={runtimeAgentId} disabled={!channelActive} />,
+    [runtimeAgentId, channelActive],
+  );
+  const contextControl = useMemo(
+    () => (
+      <ContextMeter
+        agentId={runtimeAgentId}
+        running={chatBusy}
+        threadId={channelThreadId}
+      />
+    ),
+    [runtimeAgentId, chatBusy, channelThreadId],
+  );
+  const agentOptions = useMemo(
+    () => toAgentOptions(agentProfiles, channel.agentIds),
+    [agentProfiles, channel.agentIds],
+  );
+
   return (
     // Activity renderers resolve their agent through this SDK context. It must match useAgent's
     // channel instance so an action continues this thread instead of looking for a default agent.
@@ -1905,8 +1941,12 @@ export function ChannelChat({
                   threadId={channel.threadId}
                 />
               }
+
+              modelControl={modelControl}
+              leadingControl={leadingControl}
+              contextControl={contextControl}
               sendBlocked={modelSaving}
-              agents={toAgentOptions(agentProfiles, channel.agentIds)}
+              agents={agentOptions}
               channelId={channel.id}
               draftKey={channel.id}
               scrollKey={channel.id}
