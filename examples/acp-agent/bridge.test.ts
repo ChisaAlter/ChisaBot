@@ -444,6 +444,19 @@ describe("ACP AG-UI bridge host contract", () => {
     expect((await health(created)).generation).toBe(2);
   });
 
+  test("an adapter invalid-params rejection surfaces its details, not just the generic code", async () => {
+    const created = bridge({ noTools: true, rpcError: { code: -32602, message: "Invalid params", data: { details: "The requested host model was rejected or could not be configured" } } });
+    const result = await post(created, host());
+    expect(result.at(-1)).toMatchObject({
+      type: "RUN_ERROR", code: "ACP_RPC_ERROR",
+      message: "Invalid params: The requested host model was rejected or could not be configured",
+    });
+    const plain = bridge({ noTools: true, rpcError: { code: -32603, message: "Hermes model call failed: unauthorized (HTTP 401)" } });
+    expect((await post(plain, host())).at(-1)).toMatchObject({
+      type: "RUN_ERROR", code: "ACP_RPC_ERROR", message: "Hermes model call failed: unauthorized (HTTP 401)",
+    });
+  });
+
   test.each(["cancelled", "refusal", "max_tokens", "max_turn_requests"])("stopReason %s is an error", async (stopReason) => {
     const created = bridge({ stopReason });
     const result = await post(created, host());
