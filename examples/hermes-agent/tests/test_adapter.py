@@ -1464,6 +1464,31 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.prompt(state, raw)
         self.assertEqual(len(calls), 1)  # 本轮已经调过工具：承诺话术不再催。
 
+    async def test_promise_guard_is_future_tense_only(self):
+        # QA1102-13 r1：「我下载好了」「我找到了」是已完成不是承诺；「我马上处理」才是。
+        state = await self.new()
+        calls = []
+        def answering(text):
+            return lambda agent, user, history: (calls.append(user),
+                {"messages": history, "final_response": text})[1]
+        for run_id, text, want_calls in (
+                ("run-1", "我下载好了", 1), ("run-2", "我找到了接入文档", 1),
+                ("run-3", "我马上处理", 2)):
+            calls.clear()
+            state.agent.run_hook = answering(text)
+            raw = payload()
+            raw["scope"]["runId"] = run_id
+            await self.prompt(state, raw)
+            self.assertEqual(len(calls), want_calls, text)
+        # 这一轮宿主没给工具：承诺话术也不催。
+        calls.clear()
+        state.agent.run_hook = answering("我马上处理")
+        raw = payload()
+        raw["scope"]["runId"] = "run-4"
+        raw["tools"] = []
+        await self.prompt(state, raw)
+        self.assertEqual(len(calls), 1)
+
     async def test_fresh_session_first_turn_carries_tools_and_system_prompt(self):
         # 新会话首轮就是一次模型切换：短对话请求里必须有 tools 和系统提示词。
         state = await self.new()

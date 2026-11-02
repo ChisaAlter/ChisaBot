@@ -534,16 +534,24 @@ _ACTION_PROMISE = re.compile(
     r"我先(?:去|来|就|马上|现在|帮你)?(?:查|搜|看|找|试|确认|处理|接入|连接|问|弄|下载|打开)|"
     r"我来(?:查|搜|看|找|确认|处理|接入|连接|搜索|帮你)|"
     r"让我(?:先|来)?(?:查|搜|看|找|搜索|确认|试|问)|"
-    r"我(?:这就|马上|现在|再|帮你|去)?去?(?:查|搜|搜索|看看|确认|找|下载|打开|接入|连接)|"
+    r"我(?:这就|马上|现在|就|再|帮你)?(?:去|帮你)?(?:查|搜|搜索|看看|看|确认|找|处理|试|弄|问|下载|打开|接入|连接)|"
     r"\b(?:i(?:'ll|’ll| will)|let me|i'?m (?:going|gonna)\s*to|i am going to)\b"
     r"[^.!?。！？\n]{0,120}?\b(?:search|look(?:ing)?\s*(?:for|into|up|at)|check|find|fetch|dig|inspect|investigate|open|download|connect|try)\b",
+    re.I,
+)
+"""QA1102-13 r1：已完成 / 过去时的说法——「我下载好了」「我找到了」「I've downloaded it」——
+不是承诺，永不催。出现这些标记就一票否决。"""
+_ACTION_DONE = re.compile(
+    r"了|好了|已经|已完成|完成|找到[了得]?|查到|办妥|搞定|处理好|下好|"
+    r"\b(?:i'?ve|i have|already|done|finished|completed|downloaded|found|checked|searched|handled|got it)\b",
     re.I,
 )
 
 
 def action_promise(text: Any) -> bool:
-    """这段回复是不是「承诺行动」的话术；只匹配明确说要查/做的句子，不误伤普通问答。"""
-    return isinstance(text, str) and bool(_ACTION_PROMISE.search(text))
+    """这段回复是不是「承诺行动」的话术：只有未来时承诺才算——已完成 / 过去时一律不催。"""
+    return (isinstance(text, str) and not _ACTION_DONE.search(text)
+            and bool(_ACTION_PROMISE.search(text)))
 
 
 def redact(value: Any, secret: str) -> Any:

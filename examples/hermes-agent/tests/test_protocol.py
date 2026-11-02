@@ -637,6 +637,17 @@ class NormalizeHistoryTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertFalse(action_promise(text))
 
+    def test_action_promise_future_tense_only(self):
+        # QA1102-13 r1：已完成 / 过去时的说法永不催；未来时承诺才催。
+        from chisabot_protocol import action_promise
+        for text in ("我马上处理", "I'll look into it", "我现在去处理", "我马上帮你查一下"):
+            with self.subTest(text=text):
+                self.assertTrue(action_promise(text))
+        for text in ("我下载好了", "我找到了接入文档", "已经查完了", "I've downloaded it",
+                     "I found it", "done"):
+            with self.subTest(text=text):
+                self.assertFalse(action_promise(text))
+
     def test_tool_output_is_capped_and_orphans_and_missing_results_fixed(self):
         from chisabot_protocol import normalize_history
         out = normalize_history([
