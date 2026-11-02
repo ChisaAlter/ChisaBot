@@ -103,7 +103,7 @@ describe("LinkCard", () => {
     const card = await view.findByTestId("link-card");
     expect(card.getAttribute("data-layout")).toBe("image");
     const media = card.querySelector<HTMLElement>(".lc-media");
-    expect(media?.style.aspectRatio).toBe(String(1.91));
+    expect(media?.style.aspectRatio).toMatch(/^1\.91( \/ 1)?$/);
     const banner = card.querySelector<HTMLElement>(
       "[data-testid=link-card-banner]",
     );

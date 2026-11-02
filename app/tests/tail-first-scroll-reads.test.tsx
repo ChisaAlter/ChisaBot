@@ -80,7 +80,11 @@ function Harness({
     },
     [probe],
   );
-  const { startIndex, pending } = useTailFirstMount(total, channel, ref, "m-0");
+  // 这份用例要数「补全部历史」每一批的布局读取，显式开 uncapped（默认是 96 条封顶，生产里只有恢复
+  // 中间滚动位置才开）。
+  const { startIndex, pending } = useTailFirstMount(total, channel, ref, "m-0", {
+    uncapped: true,
+  });
   return (
     <div ref={attach} data-pending={pending ? "" : undefined}>
       {Array.from({ length: total - startIndex }, (_, i) => (

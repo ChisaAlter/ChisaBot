@@ -65,6 +65,7 @@ import { HeadlessToolsMiddleware } from "./computer/headless-tools";
 import type { DeploymentConfig } from "./config";
 import { estimateTokens, meterLanguageModel, meterRun } from "./context-usage";
 import { steerLanguageModel } from "./thread-inbox";
+import { reasonWithoutStatement } from "./db/query-failure";
 import { observeModelConnection } from "./desktop-connection-failure";
 import { desktopTelemetryProperties } from "./desktop-telemetry";
 import { observeIntelligenceAuthentication } from "./intelligence-client";
@@ -1251,7 +1252,7 @@ async function hermesKernelAgent(options: {
           log: (line) => console.log(JSON.stringify(line)),
         });
       } catch (error) {
-        console.warn(JSON.stringify({ type: "history-budget", event: "failed", error: error instanceof Error ? error.message.slice(0, 200) : "unknown" }));
+        console.warn(JSON.stringify({ type: "history-budget", event: "failed", error: error instanceof Error ? reasonWithoutStatement(error).slice(0, 200) : "unknown" }));
       }
       rememberCompaction(input.runId, budget.compaction);
       if (budget.refresh) rememberRefresh(input.runId, budget.refresh);

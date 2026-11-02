@@ -197,25 +197,48 @@ export function veilStops(scheme: Scheme): Stop[] {
   return stops;
 }
 
+/**
+ * 三档玻璃的材质规则（c74d5567 起）：`--lg-*` 不再挂在根上，而是按「材质 × 深浅」写在
+ * `:where(<html 作用域>) :where(<读变量的元素名单>) { --lg-surface: … }` 里。元素名单会跟着
+ * 样式表变（theme-glass-perf 守它和 GLASS_SURFACE_SELECTOR 一致），这里只认外层那一节 :where。
+ */
+const GLASS_SCOPE: Record<string, RegExp> = {
+  "liquid-light":
+    /^:where\(html\[data-glass="liquid"\], html:not\(\[data-glass\]\)\)/,
+  "liquid-dark":
+    /^:where\(html\.dark\[data-glass="liquid"\], html\.dark:not\(\[data-glass\]\)\)/,
+  "crystal-light": /^:where\(html\[data-glass="crystal"\]\)/,
+  "crystal-dark": /^:where\(html\.dark\[data-glass="crystal"\]\)/,
+  "frosted-light": /^:where\(html\[data-glass="frosted"\]\)/,
+  "frosted-dark": /^:where\(html\.dark\[data-glass="frosted"\]\)/,
+};
+
+/** 某档材质某个 scheme 的材质规则里 token 的值（取最后一条命中的规则）。 */
+const glassDeclCache = new Map<string, string | undefined>();
+function glassDecl(
+  token: "--lg-surface" | "--lg-surface-strong",
+  style: (typeof GLASS_STYLES)[number],
+  scheme: Scheme,
+): string | undefined {
+  const key = `${token}|${style}|${scheme}`;
+  const hit = glassDeclCache.get(key);
+  if (hit !== undefined || glassDeclCache.has(key)) return hit;
+  const scope = GLASS_SCOPE[`${style}-${scheme}`];
+  let value: string | undefined;
+  for (const m of stylesCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (scope.test(norm(m[1]))) value = decl(m[2], token) ?? value;
+  }
+  glassDeclCache.set(key, value);
+  return value;
+}
+
 /** 玻璃材质 --lg-surface 渐变起点在某个雾度下的颜色。 */
 export function glassSurface(
   style: (typeof GLASS_STYLES)[number],
   scheme: Scheme,
   haze: number,
 ): RGBA {
-  const selectors: Record<string, string> = {
-    "liquid-light": ':root, html[data-glass="liquid"]',
-    "liquid-dark": 'html.dark, html.dark[data-glass="liquid"]',
-    "crystal-light": 'html[data-glass="crystal"]',
-    "crystal-dark": 'html.dark[data-glass="crystal"]',
-    "frosted-light": 'html[data-glass="frosted"]',
-    "frosted-dark": 'html.dark[data-glass="frosted"]',
-  };
-  const value = lastDecl(
-    stylesCss,
-    selectors[`${style}-${scheme}`],
-    "--lg-surface",
-  );
+  const value = glassDecl("--lg-surface", style, scheme);
   const first = value?.match(
     /rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*clamp\(\s*([\d.]+),\s*calc\(var\(--lg-alpha,\s*[\d.]+\)\s*\*\s*([\d.]+)\),\s*([\d.]+)\)\)/,
   );
@@ -399,15 +422,6 @@ export function tokenColor(scheme: Scheme, token: string): RGBA {
   return parseColor(raw);
 }
 
-const GLASS_SELECTORS: Record<string, string> = {
-  "liquid-light": ':root, html[data-glass="liquid"]',
-  "liquid-dark": 'html.dark, html.dark[data-glass="liquid"]',
-  "crystal-light": 'html[data-glass="crystal"]',
-  "crystal-dark": 'html.dark[data-glass="crystal"]',
-  "frosted-light": 'html[data-glass="frosted"]',
-  "frosted-dark": 'html.dark[data-glass="frosted"]',
-};
-
 /** --lg-surface / --lg-surface-strong 渐变的全部色标（文字可能落在任何位置）。 */
 export function glassStops(
   token: "--lg-surface" | "--lg-surface-strong",
@@ -415,11 +429,7 @@ export function glassStops(
   scheme: Scheme,
   haze: number,
 ): RGBA[] {
-  const value = lastDecl(
-    stylesCss,
-    GLASS_SELECTORS[`${style}-${scheme}`],
-    token,
-  );
+  const value = glassDecl(token, style, scheme);
   const stops = [
     ...(value ?? "").matchAll(
       /rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*clamp\(\s*([\d.]+),\s*calc\(var\(--lg-alpha,\s*[\d.]+\)\s*\*\s*([\d.]+)\),\s*([\d.]+)\)\)/g,
@@ -544,10 +554,18 @@ export const SURFACES: Record<
   },
 };
 
-/** 这条规则的 background 是不是只有一层 var(layer)（没有额外的薄幕层）。 */
+/**
+ * 这条规则的 background 是不是只有一层 var(layer)（没有额外的薄幕层）。
+ * `var(--pal-tint-layer,)` 不算一层：它是非 default 配色才定义的强调色叠加，默认配色下这条 var 解析为空，
+ * 画的仍然只有那一层玻璃（也不是薄幕，薄幕是 .chisabot-wallpaper::after 那一层 --wallpaper-scrim）。
+ */
 export function paintsOnly(rule: string, layer: Layer): boolean {
   const bg = lastDecl(stylesCss, rule, "background");
-  return bg?.replace(/\s*!important$/, "") === `var(${layer})`;
+  return (
+    bg
+      ?.replace(/\s*!important$/, "")
+      .replace(/^var\(--pal-tint-layer,\)\s*/, "") === `var(${layer})`
+  );
 }
 
 /** styles.css 里所有画薄幕的规则（background 里出现 scrim 变量，或给 *-scrim-layer 变量赋值）。 */

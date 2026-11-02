@@ -30,21 +30,49 @@ import { settleReactWork } from "./settle-react-work";
  */
 
 const real = await import("@tanstack/react-router");
+const RealLink = real.Link as unknown as (
+  props: Record<string, unknown>,
+) => React.ReactNode;
+const realUseRouter = real.useRouter;
+const realUseNavigate = real.useNavigate;
+
+/** 和真 Link 一样用 params 填 `to` 里的 `$xxx`；没给的参数原样留着，测试里一眼能看出来。 */
+function fillParams(to: string | undefined, params: unknown) {
+  if (!to || !params || typeof params !== "object") return to;
+  const values = params as Record<string, unknown>;
+  return to.replace(/\$([A-Za-z0-9_]+)/g, (whole, key: string) =>
+    key in values ? encodeURIComponent(String(values[key])) : whole,
+  );
+}
+
+/*
+ * mock.module 是进程级的，换不回来：共享进程里排在这份后面的文件拿到的也是这个 Link /
+ * useNavigate（schedule-fired.test.tsx 同款写法）。所以有路由（RouterProvider）时直接交给真
+ * 实现，行为和没 mock 一样；只有像本文件这样不挂路由的渲染才走替身：所有 props 原样透传给
+ * <a>，href 用 params 填好路径参数，useNavigate 换成 noop。
+ */
 mock.module("@tanstack/react-router", () => ({
   ...real,
-  Link: ({
-    children,
-    to,
-    ...props
-  }: {
+  Link: (props: {
     children?: React.ReactNode;
     to?: string;
-  }) => (
-    <a href={to} {...(props as object)}>
-      {children}
-    </a>
-  ),
-  useNavigate: () => () => {},
+    href?: string;
+    params?: unknown;
+    [key: string]: unknown;
+  }) => {
+    const inRouter = realUseRouter({ warn: false });
+    if (inRouter) return <RealLink {...props} />;
+    const { children, to, href, params, search: _s, hash: _h, ...rest } = props;
+    return (
+      <a {...rest} href={href ?? fillParams(to, params)}>
+        {children}
+      </a>
+    );
+  },
+  useNavigate: (options?: unknown) => {
+    const inRouter = realUseRouter({ warn: false });
+    return inRouter ? realUseNavigate(options as never) : () => {};
+  },
 }));
 
 let decideImpl: (id: string, decision: string) => Promise<void> =

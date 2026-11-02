@@ -442,8 +442,8 @@ export function projectMagpieGatewayState(raw: unknown): MagpieGatewayUpdate | u
   if (checkedAt) out.checkedAt = checkedAt;
   const error = safeText(raw.error, 300);
   if (error) out.error = error;
-  // 摘要不齐就不宣称有新版：说「不知道」比说错好。
-  if (!out.currentDigest || !out.latestDigest) out.updateAvailable = false;
+  // 摘要不齐就不宣称有新版：说「不知道」比说错好。两边摘要相同就是同一份镜像，宿主机写错了也不能说有新版。
+  if (!out.currentDigest || !out.latestDigest || out.currentDigest === out.latestDigest) out.updateAvailable = false;
   return out;
 }
 

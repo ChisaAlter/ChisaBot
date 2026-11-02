@@ -67,7 +67,7 @@ export function useTailFirstMount(
 } {
   const [mounted, setMounted] = useState(() => initialMountedCount(total));
   const [expanded, setExpanded] = useState(false);
-  const full = expanded || (options?.uncapped ?? true);
+  const full = expanded || options?.uncapped === true;
   const totalRef = useRef(total);
   const keyRef = useRef(scrollKey);
   const firstRef = useRef(firstId);
