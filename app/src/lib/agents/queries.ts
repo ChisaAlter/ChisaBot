@@ -54,6 +54,11 @@ export type AgentProfile = {
    * a roster on `canManage` and an administrator's "mine" fills up with other people's work.
    */
   mine: boolean;
+  /**
+   * Which Bot created this coworker, when one did (the roster's 「由 X 创建」badge resolves the id to
+   * a name). Null when a person made it; absent on a server older than the bot factory.
+   */
+  createdByAgentId?: string | null;
 };
 
 /**

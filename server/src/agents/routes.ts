@@ -1,10 +1,9 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import type { AuditEventType, AuditStore } from "../audit";
+import type { AuditStore } from "../audit";
 import { recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import { testAgentConnection } from "./connection-test";
-import { checkAgentEndpoint } from "./endpoint";
 import { canDeleteAgent, canManageAgent } from "./profile-policy";
 import type { AgentPurge } from "./purge";
 import {
@@ -15,145 +14,16 @@ import {
   ManagedAgentUnavailableError,
   ProtectedAgentError,
 } from "./profile-store";
-import type {
-  AgentActor,
-  AgentProfile,
-  CreateAgentInput,
-} from "./profile-types";
+import type { AgentActor, AgentProfile } from "./profile-types";
+import {
+  createCoworkerService,
+  DEV_ACTOR_EMAIL,
+  parseAgentInput,
+  unsendableHeaderValue,
+} from "./service";
 
-type AgentInputParseResult =
-  | { ok: true; value: CreateAgentInput }
-  | { ok: false; error: string };
-
-type AgentInputObject = {
-  name?: unknown;
-  title?: unknown;
-  roleDescription?: unknown;
-  visibility?: unknown;
-  endpoint?: unknown;
-  auth?: unknown;
-};
-
-/**
- * Parse and validate what a user typed into the agent form.
- *
- * `allowPrivateHosts` is passed in rather than read from configuration here so this stays a pure
- * function: a developer's own agent lives on localhost, and a hosted deployment must refuse exactly
- * that, so the answer depends on the deployment and the test suite needs to exercise both.
- */
-export function parseAgentInput(
-  input: unknown,
-  allowPrivateHosts = false,
-  /** Private addresses this deployment named as acceptable. Empty is the default posture. */
-  allowedHosts: ReadonlySet<string> = new Set(),
-): AgentInputParseResult {
-  if (!isAgentInputObject(input)) {
-    return { ok: false, error: "Agent input must be a JSON object." };
-  }
-
-  const name = boundedText(
-    input.name,
-    80,
-    "Name must be text between 1 and 80 characters.",
-  );
-  if (typeof name !== "string") return name;
-
-  const title = boundedText(
-    input.title,
-    120,
-    "Title must be text between 1 and 120 characters.",
-  );
-  if (typeof title !== "string") return title;
-
-  const roleDescription = boundedText(
-    input.roleDescription,
-    1000,
-    "Role description must be text between 1 and 1000 characters.",
-  );
-  if (typeof roleDescription !== "string") return roleDescription;
-
-  /*
-   * 所有机器人都是私有的（2026-10-14 用户：「所有的机器人都是私有」，DESIGN.md §46）。界面不再提供
-   * 「公开」，这里也不再接受：旧客户端照旧发 visibility 也不报错，但不管发什么都按私有存。
-   */
-  const visibility = "private" as const;
-
-  // The endpoint is optional and checked. Absent means the Bot in the box, which is what most people
-  // want on their first go. Present means this server will POST to an address a person chose, so it
-  // goes through the same target check as navigation before it is allowed anywhere near the database.
-  let endpoint: string | undefined;
-  if (input.endpoint !== undefined && input.endpoint !== "") {
-    const verdict = checkAgentEndpoint(input.endpoint, {
-      allowPrivateHosts,
-      allowedHosts,
-    });
-    if (!verdict.allowed) return { ok: false, error: verdict.reason };
-    endpoint = verdict.url;
-  }
-
-  // The key is optional and write-only. An absent field leaves an existing key alone; sending one
-  // replaces it. There is no way to read one back, here or anywhere.
-  let auth: { header: string; value: string } | undefined;
-  if (input.auth !== undefined && input.auth !== null) {
-    const supplied = input.auth as { header?: unknown; value?: unknown };
-    const value =
-      typeof supplied.value === "string" ? supplied.value.trim() : "";
-    if (value) {
-      const header =
-        typeof supplied.header === "string" && supplied.header.trim()
-          ? supplied.header.trim()
-          : "Authorization";
-      if (!/^[A-Za-z0-9-]+$/.test(header)) {
-        return { ok: false, error: "That is not a valid header name." };
-      }
-      // Refused here rather than discovered on the first run. This value is encrypted and stored,
-      // and then sent as a header on every turn the Bot takes; one that cannot be a header value
-      // throws inside `fetch` every one of those times, long after the form said it was saved.
-      const unsendable = unsendableHeaderValue(value);
-      if (unsendable) {
-        return {
-          ok: false,
-          error: `That key contains ${unsendable}, so it cannot be sent as a header.`,
-        };
-      }
-      auth = { header, value };
-    }
-  }
-
-  return {
-    ok: true,
-    value: { name, title, roleDescription, visibility, endpoint, auth },
-  };
-}
-
-function isAgentInputObject(input: unknown): input is AgentInputObject {
-  return typeof input === "object" && input !== null && !Array.isArray(input);
-}
-
-/**
- * What in this value stops it being a header, or null when nothing does.
- *
- * `new Headers()` refuses a line break, a NUL, and any code point above U+00FF, and it refuses them
- * by throwing a TypeError from inside `fetch` — which is not a decision this deployment gets to
- * take part in. Both surfaces below take a header value from the same box on the same form and
- * neither looked, so the throw arrived somewhere that reads as something else entirely: on the
- * connection test it lands in the catch written for a dead host, and the person is told "this server
- * could not reach that address", which sends them to their tunnel and their firewall over a key
- * they had just pasted with a wrapped line in it. A hyphen a document turned into an en dash does
- * the same thing, and looks like nothing at all in a password box.
- *
- * The description never contains the value. This is asked of a credential on one of the two paths,
- * and one character of a secret in an error message is one character too many.
- */
-function unsendableHeaderValue(value: string): string | null {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code === 0x0a || code === 0x0d) return "a line break";
-    if (code === 0) return "a null character";
-    if (code > 0xff) return "a character that cannot go in a header value";
-  }
-  return null;
-}
+// The input parser moved into the shared service; re-exported so existing importers keep working.
+export { parseAgentInput };
 
 /**
  * Parse and validate the headers a person attaches to a connection test.
@@ -224,14 +94,6 @@ export function parseConnectionHeaders(
   return { ok: true, value: entries.length === 0 ? undefined : headers };
 }
 
-/**
- * The local development actor, which is not a row in `users`.
- *
- * The audit table has a foreign key to that table, so writing this id would fail the constraint and
- * lose the row entirely. Who it was is in the payload either way.
- */
-const DEV_ACTOR_EMAIL = "dev@openbot.local";
-
 export function createAgentRoutes(
   store: AgentProfileStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
@@ -298,6 +160,17 @@ export function createAgentRoutes(
     // A string comparison on purpose: two absent values must not read as "runs on our Bot".
     builtIn:
       typeof agent.endpoint === "string" && agent.endpoint === managedEndpoint,
+  });
+  /*
+   * Create and update are shared with the bot factory (a Bot's `create_bot`/`update_bot` tools go
+   * through the same parse, store call and audit row). The other lifecycle writes stay on their
+   * routes; the shared service's `record` is what the local helper delegates to.
+   */
+  const coworker = createCoworkerService({
+    store,
+    allowPrivateHosts,
+    allowedHosts,
+    ...(auditStore ? { auditStore } : {}),
   });
   const routes = new Hono<{ Variables: AppVariables }>();
 
@@ -468,116 +341,37 @@ export function createAgentRoutes(
    */
   const record = async (
     context: Context<{ Variables: AppVariables }>,
-    eventType: Extract<AuditEventType, `bot.${string}`>,
+    eventType: Parameters<typeof coworker.record>[1],
     agentId: string,
     payload: Record<string, unknown> = {},
   ): Promise<void> => {
-    if (!auditStore) return;
-    const actor = context.var.actor;
-    try {
-      await recordAuditEvent(auditStore, {
-        eventType,
-        targetType: "agent",
-        targetId: agentId,
-        ...(actor?.id && actor.email !== DEV_ACTOR_EMAIL
-          ? { actorUserId: actor.id }
-          : {}),
-        payload: { bot: agentId, actor: actor?.email ?? "unknown", ...payload },
-      });
-    } catch (error) {
-      console.error(
-        JSON.stringify({
-          type: "bot-audit-write-failed",
-          eventType,
-          agentId,
-          error: String(error),
-        }),
-      );
-    }
+    await coworker.record(context.var.actor, eventType, agentId, payload);
   };
 
   routes.post("/", requireUser, async (context) => {
-    // Malformed JSON is a recoverable client-input error and is validated by the same parser.
-    const parsed = parseAgentInput(
-      await context.req.json().catch(() => null),
-      allowPrivateHosts,
-      allowedHosts,
-    );
-    if (!parsed.ok) return context.json({ error: parsed.error }, 400);
-
     try {
-      /*
-       * A coworker with no address runs here, on the text this form already requires.
-       *
-       * "Agent endpoint (optional)" was not optional on the recommended one-container image: with
-       * nothing to bind to, `create` refused with "This deployment has no managed Bot", so a person
-       * could not make a coworker at all on the image the README tells them to deploy. The role
-       * description is what such a coworker runs on — the same field a `built_in` Bot in the tenant
-       * package carries, for the same purpose — and passing it only when no endpoint was given keeps
-       * every other path exactly as it was: give an address and it is a remote Bot, as before.
-       */
-      const agent = await store.create(context.var.actor, {
-        ...parsed.value,
-        ...(parsed.value.endpoint
-          ? {}
-          : { systemPrompt: parsed.value.roleDescription }),
-      });
-      /*
-       * The endpoint, because that is where conversation content will be sent, and whether a key was
-       * attached, because "this Bot authenticates" is a fact and the key itself never is.
-       *
-       * And who may reach it. `visibility` is not a display preference: `accessFilter` admits a
-       * `public` coworker to every signed-in person, and `canRunAgent` is `canAccessAgent`, so public
-       * means everybody in the deployment may act as this Bot and spend the grants it holds. A row
-       * that cannot say which it was cannot reconstruct who could use this coworker at the time.
-       */
-      await record(context, "bot.created", agent.id, {
-        name: parsed.value.name,
-        visibility: parsed.value.visibility,
-        ...(parsed.value.endpoint ? { endpoint: parsed.value.endpoint } : {}),
-        hasKey: Boolean(parsed.value.auth),
-      });
-      return context.json({ agent: dto(context.var.actor, agent) }, 201);
+      const result = await coworker.createCoworker(
+        context.var.actor,
+        // Malformed JSON is a recoverable client-input error and is validated by the same parser.
+        await context.req.json().catch(() => null),
+      );
+      if (!result.ok) return context.json({ error: result.error }, 400);
+      return context.json({ agent: dto(context.var.actor, result.agent) }, 201);
     } catch (error) {
       return mapStoreError(context, error);
     }
   });
 
   routes.patch("/:agentId", requireUser, async (context) => {
-    // Malformed JSON is a recoverable client-input error and is validated by the same parser.
-    const parsed = parseAgentInput(
-      await context.req.json().catch(() => null),
-      allowPrivateHosts,
-      allowedHosts,
-    );
-    if (!parsed.ok) return context.json({ error: parsed.error }, 400);
-
     try {
-      const agent = await store.update(
+      const result = await coworker.updateCoworker(
         context.var.actor,
         context.req.param("agentId"),
-        parsed.value,
+        // Malformed JSON is a recoverable client-input error and is validated by the same parser.
+        await context.req.json().catch(() => null),
       );
-      /*
-       * What changed, not the new values. Repointing the endpoint is the dangerous edit and is worth
-       * naming; a replaced key is worth knowing about and is never worth recording.
-       *
-       * `visibility` is carried the way `name` is — on every row, whether or not this edit moved it —
-       * because it is the second dangerous edit and the route has no before to compare against.
-       * Public admits every signed-in person to this coworker, and `canRunAgent` is `canAccessAgent`,
-       * so it hands them the right to act as it and spend what it was granted. Without the value on
-       * each row, an edit that opened a coworker to the whole deployment is byte-identical to one
-       * that corrected its title, and the trail cannot say when it was opened or by whom. Recorded on
-       * every row rather than only on the row that changed it, so reading the trail forward tells you
-       * what was reachable at any point, which is what an incident asks.
-       */
-      await record(context, "bot.updated", agent.id, {
-        name: parsed.value.name,
-        visibility: parsed.value.visibility,
-        ...(parsed.value.endpoint ? { endpoint: parsed.value.endpoint } : {}),
-        ...(parsed.value.auth ? { keyReplaced: true } : {}),
-      });
-      return context.json({ agent: dto(context.var.actor, agent) });
+      if (!result.ok) return context.json({ error: result.error }, 400);
+      return context.json({ agent: dto(context.var.actor, result.agent) });
     } catch (error) {
       return mapStoreError(context, error);
     }
@@ -779,18 +573,6 @@ export function createAgentRoutes(
   return routes;
 }
 
-function boundedText(
-  value: unknown,
-  maximumLength: number,
-  error: string,
-): string | { ok: false; error: string } {
-  if (typeof value !== "string") return { ok: false, error };
-  const trimmed = value.trim();
-  return trimmed.length > 0 && trimmed.length <= maximumLength
-    ? trimmed
-    : { ok: false, error };
-}
-
 function agentDto(actor: AgentActor, agent: AgentProfile) {
   return {
     id: agent.id,
@@ -816,6 +598,8 @@ function agentDto(actor: AgentActor, agent: AgentProfile) {
     // under yours, and only for administrators, who are the least likely to notice.
     mine: agent.ownerUserId === actor.id,
     assignedToMe: agent.assignedToMe ?? false,
+    // Which Bot made this one, when one did. The roster badges it "由 X 创建"; a person-made Bot is null.
+    createdByAgentId: agent.createdByAgentId,
   };
 }
 

@@ -39,6 +39,12 @@ type DatabaseExecutor = Pick<Database, "select"> | Pick<Transaction, "select">;
 /** Something that can read profiles: the pool, or a caller's open transaction. */
 export type ProfileReadExecutor = DatabaseExecutor;
 
+/**
+ * A profile creation's own transaction, handed to a caller that has work which must commit or roll
+ * back with the creation itself.
+ */
+export type ProfileWriteExecutor = Transaction;
+
 export type AgentProfileStore = {
   list(actor: AgentActor, hidden?: boolean): Promise<AgentProfile[]>;
   get(actor: AgentActor, id: string): Promise<AgentProfile | null>;
@@ -77,7 +83,30 @@ export type AgentProfileStore = {
        * different act with different consequences, and this is the creation path.
        */
       systemPrompt?: string;
+      /**
+       * The Bot that created this one, when the bot factory made it rather than a person.
+       *
+       * Carried through `create` rather than written by a second caller afterwards: the provenance
+       * and the per-user cap check live in the same transaction as the row they describe.
+       */
+      createdByAgentId?: string;
+      /** The creating Bot's own depth plus one, computed by the caller. */
+      createdDepth?: number;
+      /**
+       * A catalog model the new `built_in` coworker should run on, already validated by the caller.
+       * Written as `agents.override.model`; absent means the deployment default.
+       */
+      model?: string;
     },
+    /**
+     * Work that must commit or roll back with the creation: the factory's cap re-check and the
+     * grants a Bot-made coworker is born holding. Runs inside the creation transaction, after the
+     * profile row exists, and is handed the new agent's id. A throw rolls the whole creation back.
+     */
+    within?: (
+      executor: ProfileWriteExecutor,
+      agentId: string,
+    ) => Promise<void>,
   ): Promise<AgentProfile>;
   update(
     actor: AgentActor,
@@ -158,6 +187,8 @@ const joinedProjection = {
   hiddenAt: agentPreferences.hiddenAt,
   pinnedAt: agentPreferences.pinnedAt,
   deletedAt: agentProfiles.deletedAt,
+  createdByAgentId: agentProfiles.createdByAgentId,
+  createdDepth: agentProfiles.createdDepth,
   /* The hash, only so a surface can say whether one exists. It never leaves this module. */
   callbackTokenHash: agentProfiles.callbackTokenHash,
   configuration: agents.configuration,
@@ -212,6 +243,8 @@ function mapProfile(
     pinned: row.pinnedAt !== null,
     assignedToMe: Boolean(row.assignedToMe),
     deletedAt: row.deletedAt,
+    createdByAgentId: row.createdByAgentId,
+    createdDepth: row.createdDepth,
     endpoint: endpointOf(row.configuration),
     // Whether a key is set, never which. The form needs to show "a key is set" so a person does not
     // wipe one by saving an unrelated edit; showing the value would put a secret in a screenshot.
@@ -461,6 +494,7 @@ export function createAgentProfileStore(
     transaction: Transaction,
     actor: AgentActor,
     input: Parameters<AgentProfileStore["create"]>[1],
+    within?: Parameters<AgentProfileStore["create"]>[2],
   ): Promise<AgentProfile> {
     const id = newAgentId();
     const endpoint = input.endpoint
@@ -509,6 +543,12 @@ export function createAgentProfileStore(
         name: input.name,
         type: "built_in",
         configuration: { systemPrompt },
+        /*
+         * A model the caller picked from the catalog goes on `override`, the same place the model
+         * chooser writes it, so package synchronization never touches it. Only this branch: a remote
+         * Bot's model is configured on its own server.
+         */
+        ...(input.model ? { override: { model: input.model } } : {}),
       });
     } else {
       /*
@@ -525,7 +565,19 @@ export function createAgentProfileStore(
       roleDescription: input.roleDescription,
       avatarSeed: id,
       visibility: input.visibility,
+      ...(input.createdByAgentId
+        ? {
+            createdByAgentId: input.createdByAgentId,
+            createdDepth: input.createdDepth ?? 0,
+          }
+        : {}),
     });
+
+    /*
+     * The caller's same-transaction work — cap re-checks, the grants a Bot-made coworker is born
+     * holding — before the profile is read back. A throw here rolls back both rows above.
+     */
+    await within?.(transaction, id);
 
     const profile = await findAccessibleProfile(transaction, actor, id);
     if (!profile) throw new AgentNotFoundError(id);
@@ -565,9 +617,9 @@ export function createAgentProfileStore(
       return findAccessibleProfile(executor, actor, id);
     },
 
-    create(actor, input) {
+    create(actor, input, within) {
       return database.transaction((transaction) =>
-        createWithin(transaction, actor, input),
+        createWithin(transaction, actor, input, within),
       );
     },
 

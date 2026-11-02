@@ -30,6 +30,17 @@ export type AgentProfile = {
    * it. A surface only needs to know whether to offer "generate" or "rotate".
    */
   hasCallbackToken: boolean;
+  /**
+   * Which Bot created this one, or null when a person did.
+   *
+   * Plain text rather than a foreign key, so the fact survives the creating Bot being deleted.
+   */
+  createdByAgentId: string | null;
+  /**
+   * How deep in the creation chain this Bot sits: a person-made Bot is 0, a Bot-made Bot is its
+   * creator's depth plus one. The bot-factory depth cap reads this.
+   */
+  createdDepth: number;
 };
 
 export type CreateAgentInput = Pick<

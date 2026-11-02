@@ -23,6 +23,8 @@ function profile(overrides: Partial<AgentProfile> = {}): AgentProfile {
     systemOwned: false,
     hidden: false,
     deletedAt: null,
+    createdByAgentId: null,
+    createdDepth: 0,
     ...overrides,
   };
 }

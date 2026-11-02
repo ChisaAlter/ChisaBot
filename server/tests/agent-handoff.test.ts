@@ -39,6 +39,8 @@ function profile(over: Partial<AgentProfile> & { id: string }): AgentProfile {
     mine: false,
     ownerUserId: null,
     deletedAt: null,
+    createdByAgentId: null,
+    createdDepth: 0,
     ...over,
   } as AgentProfile;
 }

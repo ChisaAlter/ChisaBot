@@ -44,6 +44,8 @@ function profile(overrides: Partial<AgentProfile> = {}): AgentProfile {
     hidden: false,
     pinned: false,
     deletedAt: null,
+    createdByAgentId: null,
+    createdDepth: 0,
     ...overrides,
   };
 }
@@ -382,6 +384,7 @@ describe("agent lifecycle routes", () => {
           canDelete: true,
           mine: true,
           builtIn: false,
+          createdByAgentId: null,
         },
         {
           id: "agent-2",
@@ -398,6 +401,7 @@ describe("agent lifecycle routes", () => {
           canDelete: false,
           mine: false,
           builtIn: false,
+          createdByAgentId: null,
         },
         {
           id: "system-agent",
@@ -414,6 +418,7 @@ describe("agent lifecycle routes", () => {
           canDelete: false,
           mine: false,
           builtIn: false,
+          createdByAgentId: null,
         },
       ],
     });
