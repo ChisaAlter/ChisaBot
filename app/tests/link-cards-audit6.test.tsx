@@ -95,6 +95,8 @@ describe("审查模块 6", () => {
   });
   afterAll(() => {
     globalThis.fetch = realFetch;
+    // 注册过就要收回来，否则后面的文件会撞「already been globally registered」——下一个文件随运行器顺序而定。
+    GlobalRegistrator.unregister();
   });
 
   describe("1. 「追问」不嵌在链接里，看不见时点不到", () => {

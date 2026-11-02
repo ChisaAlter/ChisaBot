@@ -81,13 +81,15 @@ test("聊天 → 设置 → 聊天 → 管理 → 聊天：聊天左栏只挂一
     );
     const view = render(shell("app"));
     await settleReactWork();
-    const roster = view.getByTestId("app-sidebar");
+    // 左栏是 lazyPart（DESIGN.md §41.5）：settleReactWork 只把 React 的活排干，import() 什么时候落地
+    // 看运行器和批次，所以第一下露面用 findBy 等，不拿骨架当断言失败。
+    const roster = await view.findByTestId("app-sidebar");
     expect(parkedWrapper(roster)).toBeNull();
     expect(counts.mounts).toBe(1);
 
     view.rerender(shell("settings"));
     await settleReactWork();
-    expect(view.getByTestId("settings-sidebar")).toBeTruthy();
+    expect(await view.findByTestId("settings-sidebar")).toBeTruthy();
     // 还是同一个节点，只是外面那层藏起来了（display:none）。
     expect(view.getByTestId("app-sidebar")).toBe(roster);
     expect(parkedWrapper(roster)?.className).toBe("hidden");
@@ -100,7 +102,7 @@ test("聊天 → 设置 → 聊天 → 管理 → 聊天：聊天左栏只挂一
 
     view.rerender(shell("admin"));
     await settleReactWork();
-    expect(view.getByTestId("admin-sidebar")).toBeTruthy();
+    expect(await view.findByTestId("admin-sidebar")).toBeTruthy();
     expect(parkedWrapper(roster)?.className).toBe("hidden");
     view.rerender(shell("app"));
     await settleReactWork();
@@ -122,12 +124,13 @@ test("在设置里切分类（外壳重画、scope 不变）时，藏着的聊�
       bump = () => setN((n) => n + 1);
       return <ShellSidebar scope="settings" />;
     }
-    render(
+    const view = render(
       <SidebarProvider open>
         <Frame />
       </SidebarProvider>,
     );
-    await settleReactWork();
+    // 等藏着的左栏真的挂上再数：import() 晚一拍落地时中途的挂载会把 renders 算进去。
+    await view.findByTestId("app-sidebar");
     const before = counts.renders;
     for (let i = 0; i < 5; i++) {
       await act(async () => bump());
@@ -147,7 +150,8 @@ test("藏着的聊天左栏不拨 has-collapsed-sidebar（管理左栏没有收�
       </SidebarProvider>
     );
     const view = render(shell("app"));
-    await settleReactWork();
+    // 同上：has-collapsed-sidebar 由 LeftRail 里的 Sidebar 拨，先等它挂上。
+    await view.findByTestId("app-sidebar");
     expect(document.body.hasAttribute("data-has-collapsed-sidebar")).toBe(true);
     view.rerender(shell("admin"));
     await settleReactWork();
