@@ -205,6 +205,84 @@ describe("ACP AG-UI bridge host contract", () => {
     expect(sessions(created)).toHaveLength(1);
   });
 
+  test("stored image/document/unknown parts are converted by model capability (QA1102-14)", async () => {
+    const b64 = (text: string) => Buffer.from(text).toString("base64");
+    const imageParts: Record<number, unknown> = {
+      370: { type: "image", source: { type: "data", value: b64("png-bytes"), mimeType: "image/png" }, metadata: { filename: "shot.png" } },
+      372: { type: "image", source: { type: "url", value: "https://images.invalid/pic.jpg" } },
+      374: { type: "image", source: { type: "url", value: "/api/attachments/abc-123" }, metadata: { filename: "old.png", summary: "a chart of sales" } },
+      376: { type: "image", data: b64("binary-image"), mimeType: "image/webp" },
+      378: { type: "image", source: { type: "file", file_id: "att-42" }, metadata: { filename: "scan.jpg" } },
+      482: { type: "binary", mimeType: "image/gif", data: b64("gif-image") },
+      553: { type: "image", image: `data:image/png;base64,${b64("sdk-image")}` },
+    };
+    const messages: Record<string, unknown>[] = [];
+    let pair = 0;
+    for (let index = 0; index < 560; index += 1) {
+      if (imageParts[index]) messages.push({ id: `m${index}`, role: "user", content: [{ type: "text", text: `look ${index}` }, imageParts[index]] });
+      else if (index === 388) messages.push({ id: "m388", role: "user", content: [
+        { type: "text", text: "read this" },
+        { type: "document", source: { type: "data", value: b64("first line\nsecond line"), mimeType: "text/plain" }, metadata: { filename: "notes.txt" } },
+        { type: "document", source: { type: "url", value: "/api/attachments/doc-1" }, metadata: { filename: "spec.pdf", summary: "spec summary text" } },
+        { type: "geo", lat: 1, lng: 2 }, { type: "thinking", thinking: "private" },
+      ] });
+      else if (index < 346) {
+        pair += 1;
+        messages.push({ id: `a${index}`, role: "assistant", content: null, toolCalls: [{ id: `call-${pair}`, type: "function", function: { name: "canonical_echo", arguments: "{}" } }] });
+        index += 1;
+        messages.push({ id: `t${index}`, role: "tool", toolCallId: `call-${pair}`, content: `result ${pair}` });
+      } else if (index === 559) {
+        messages.push({ id: "last", role: "user", content: [{ type: "text", text: "describe this" }, { type: "image", source: { type: "data", value: b64("current-image"), mimeType: "image/png" }, metadata: { filename: "now.png" } }] });
+      } else messages.push({ id: `f${index}`, role: index % 2 ? "assistant" : "user", content: `turn ${index}` });
+    }
+    expect(messages).toHaveLength(560);
+    expect(pair).toBe(173);
+    const input = host("describe this", "run-vision");
+    input.messages = messages;
+    const created = bridge({ noTools: true });
+    await post(created, input);
+    const meta = prompts(created)[0].params._meta.chisabot;
+    const imageUrl = (data: string, mime = "image/png") => ({ type: "image_url", image_url: { url: `data:${mime};base64,${data}` } });
+    expect(meta.history).toHaveLength(559);
+    for (const message of meta.history) {
+      const parts = Array.isArray(message.content) ? message.content : [];
+      for (const part of parts) expect(["text", "image_url", "file"]).toContain(part.type);
+      expect(message.content === null || typeof message.content === "string" || Array.isArray(message.content)).toBe(true);
+    }
+    expect(meta.history[370].content).toEqual([{ type: "text", text: "look 370" }, imageUrl(b64("png-bytes"))]);
+    expect(meta.history[372].content).toEqual([{ type: "text", text: "look 372" }, { type: "image_url", image_url: { url: "https://images.invalid/pic.jpg" } }]);
+    expect(meta.history[374].content).toEqual([{ type: "text", text: "look 374" }, { type: "text", text: '[image "old.png" could not be included]\na chart of sales' }]);
+    expect(meta.history[376].content).toEqual([{ type: "text", text: "look 376" }, imageUrl(b64("binary-image"), "image/webp")]);
+    expect(meta.history[378].content).toEqual([{ type: "text", text: "look 378" }, { type: "text", text: '[image "scan.jpg" could not be included]' }]);
+    expect(meta.history[388].content).toEqual([
+      { type: "text", text: "read this" },
+      { type: "text", text: 'Attached file "notes.txt":\n\nfirst line\nsecond line' },
+      { type: "text", text: '[document "spec.pdf"]\nspec summary text' },
+      { type: "text", text: "[geo]" },
+    ]);
+    expect(meta.history[482].content).toEqual([{ type: "text", text: "look 482" }, imageUrl(b64("gif-image"), "image/gif")]);
+    expect(meta.history[553].content).toEqual([{ type: "text", text: "look 553" }, imageUrl(b64("sdk-image"))]);
+    expect(meta.currentMessage.content).toEqual([{ type: "text", text: "describe this" }, imageUrl(b64("current-image"))]);
+    // All 173 call/result pairs survive normalization with their ids intact.
+    const calls = meta.history.flatMap((m) => (m.tool_calls ?? []).map((c) => c.id));
+    const results = meta.history.filter((m) => m.role === "tool").map((m) => m.tool_call_id);
+    expect(calls).toHaveLength(173);
+    expect(results).toEqual(calls);
+    // A non-vision model gets text placeholders everywhere and no image_url part at all.
+    const blind = host("describe this", "run-blind");
+    blind.messages = structuredClone(messages);
+    blind.forwardedProps.chisabotHermes.model = { id: "test-model", supportsImages: false };
+    const createdBlind = bridge({ noTools: true });
+    await post(createdBlind, blind);
+    const blindMeta = prompts(createdBlind)[0].params._meta.chisabot;
+    const blindParts = blindMeta.history.concat([blindMeta.currentMessage]).flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    expect(blindParts.every((part) => ["text", "file"].includes(part.type))).toBe(true);
+    expect(blindMeta.history[370].content[1]).toEqual({ type: "text", text: '[image "shot.png" — this model cannot view images]' });
+    expect(blindMeta.history[372].content[1]).toEqual({ type: "text", text: "[image — this model cannot view images]" });
+    expect(blindMeta.history[388].content[1].text).toContain('Attached file "notes.txt"');
+    expect(blindMeta.currentMessage.content[1]).toEqual({ type: "text", text: '[image "now.png" — this model cannot view images]' });
+  });
+
   test("tool-result continuation never resends an old user prompt and retains all non-system history", async () => {
     const created = bridge({ noTools: true });
     const input = host("old user");

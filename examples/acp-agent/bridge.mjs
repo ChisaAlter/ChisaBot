@@ -237,20 +237,195 @@ function blockText(content) {
   return "";
 }
 
-/** Keep OpenAI multimodal parts, and translate AG-UI binary image parts without discarding them. */
-function openAIContent(content) {
-  if (!Array.isArray(content)) return content === undefined ? "" : content;
-  return content.map((part) => {
-    if (part?.type === "binary" && String(part.mimeType || "").startsWith("image/")) {
-      const url = part.url || (part.data ? `data:${part.mimeType};base64,${part.data}` : null);
-      if (url) return { type: "image_url", image_url: { url } };
-    }
-    return part;
-  });
+const DOCUMENT_TEXT_MAX_CHARS = 120_000;
+const METADATA_TEXT_KEYS = ["summary", "description", "ocr", "text", "extractedText", "extracted", "transcription", "caption", "alt"];
+const REASONING_PARTS = new Set(["thinking", "reasoning", "redacted_thinking", "reasoning_content"]);
+const TOOL_PARTS = new Set(["tool_use", "tool_call", "function_call"]);
+const BASE64ISH = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** The name a person would recognize for this part, or "" — never an opaque id. */
+function partName(part) {
+  const metadata = isObject(part?.metadata) ? part.metadata : {};
+  for (const value of [metadata.filename, metadata.name, part?.name, part?.filename, part?.title]) {
+    if (nonempty(value)) return String(value).slice(0, 200);
+  }
+  return "";
 }
 
-function openAIMessage(message) {
-  const result = { role: message.role, content: openAIContent(message.content) };
+/** Existing summary/OCR text stored on the part, if any. */
+function partMetadataText(part) {
+  const metadata = isObject(part?.metadata) ? part.metadata : {};
+  for (const key of METADATA_TEXT_KEYS) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 4_000);
+  }
+  return "";
+}
+
+/** Only URLs a provider can actually dereference: inline data URLs and absolute http(s). */
+function mediaUrl(value) {
+  if (typeof value !== "string" || !value) return null;
+  if (/^data:[^;,]+;base64,[\s\S]+$/.test(value)) return value;
+  if (/^https?:\/\/\S+$/.test(value)) return value;
+  return null;
+}
+
+/**
+ * Resolve an image/document part to real bytes or a reachable URL.
+ * Supported source forms: `source:{type:"data"|"base64", value|data|base64, mimeType|media_type}`,
+ * `source:{type:"url", value|url|uri}` (data: or absolute http(s) only — a stored `/api/attachments/<id>`
+ * style reference is server-relative and cannot be fetched from here, so it resolves to null),
+ * `part.url`/`part.uri`, `part.data`+`part.mimeType`, `part.image` (AI SDK image part) and
+ * `part.image_url`/`part.file_url`. File/attachment id references resolve to null: the bridge has
+ * no access to the host's attachment store.
+ */
+function resolveMediaUrl(part, fallbackMime = "application/octet-stream") {
+  const bareBase64 = (value, mime) => (typeof value === "string" && value.length > 64 && BASE64ISH.test(value) && !value.includes(":")
+    ? `data:${mime};base64,${value}` : null);
+  const source = part?.source;
+  if (typeof source === "string") return mediaUrl(source) ?? bareBase64(source, part?.mimeType ?? fallbackMime);
+  if (isObject(source)) {
+    const mime = nonempty(source.mimeType) ? source.mimeType : nonempty(source.media_type) ? source.media_type : fallbackMime;
+    if (source.type === "data" || source.type === "base64" || !nonempty(source.type)) {
+      for (const value of [source.value, source.data, source.base64]) {
+        if (nonempty(value)) return `data:${mime};base64,${value}`;
+      }
+    }
+    if (source.type === "url" || source.type === "data" || source.type === "base64" || !nonempty(source.type)) {
+      for (const value of [source.value, source.url, source.uri]) {
+        const url = mediaUrl(value);
+        if (url) return url;
+      }
+    }
+    // {type:"file"|"attachment"|"document", id/file_id/attachmentId} is a reference we cannot resolve.
+  }
+  for (const value of [part?.url, part?.uri]) {
+    const url = mediaUrl(value);
+    if (url) return url;
+  }
+  if (nonempty(part?.data)) {
+    const mime = nonempty(part.mimeType) ? part.mimeType : fallbackMime;
+    return `data:${mime};base64,${part.data}`;
+  }
+  const image = part?.image;
+  if (typeof image === "string") return mediaUrl(image) ?? bareBase64(image, nonempty(part?.mimeType) ? part.mimeType : fallbackMime);
+  if (isObject(image)) {
+    for (const value of [image.url, image.uri]) {
+      const url = mediaUrl(value);
+      if (url) return url;
+    }
+    for (const value of [image.data, image.value, image.base64]) {
+      const url = bareBase64(value, nonempty(image.mimeType) ? image.mimeType : nonempty(part?.mimeType) ? part.mimeType : fallbackMime);
+      if (url) return url;
+    }
+  }
+  const wrapped = part?.image_url ?? part?.file_url;
+  return mediaUrl(isObject(wrapped) ? wrapped.url : wrapped);
+}
+
+/** Text extracted from an inline document part, when the bytes are present and textual. */
+function documentText(part) {
+  if (typeof part?.text === "string" && part.text.trim()) return part.text;
+  const source = isObject(part?.source) ? part.source : {};
+  const mime = nonempty(source.mimeType) ? source.mimeType : nonempty(part?.mimeType) ? part.mimeType : "";
+  const textual = /^text\//.test(mime) || ["application/json", "application/xml", "application/javascript"].includes(mime);
+  if (!textual) return null;
+  for (const value of [source.value, source.data, part?.data]) {
+    if (!nonempty(value)) continue;
+    try {
+      const text = Buffer.from(String(value), "base64").toString("utf8");
+      if (text.trim()) return text.length > DOCUMENT_TEXT_MAX_CHARS ? `${text.slice(0, DOCUMENT_TEXT_MAX_CHARS)}\n\n[attachment truncated at ${DOCUMENT_TEXT_MAX_CHARS} characters]` : text;
+    } catch {}
+  }
+  return null;
+}
+
+function textPart(text) {
+  return { type: "text", text };
+}
+
+function imagePlaceholder(part, vision) {
+  const name = partName(part);
+  const label = `image${name ? ` "${name}"` : ""}`;
+  const detail = partMetadataText(part);
+  const head = vision ? `[${label} could not be included]` : `[${label} — this model cannot view images]`;
+  return textPart(detail ? `${head}\n${detail}` : head);
+}
+
+function documentPlaceholder(part, capability) {
+  const name = partName(part);
+  const label = `document${name ? ` "${name}"` : ""}`;
+  const detail = partMetadataText(part);
+  const url = resolveMediaUrl(part);
+  if (capability.files && url) {
+    const file = { filename: name || "attachment" };
+    if (url.startsWith("data:")) file.file_data = url;
+    else file.file_url = url;
+    return { type: "file", file };
+  }
+  const extracted = documentText(part);
+  if (extracted) return textPart(`Attached file${name ? ` "${name}"` : ""}:\n\n${extracted}`);
+  return textPart(detail ? `[${label}]\n${detail}` : `[${label}]`);
+}
+
+/**
+ * Convert AG-UI/Anthropic-ish content parts into shapes an OpenAI-compatible endpoint accepts,
+ * by model capability: a vision-capable model gets standard `image_url` parts, a non-vision model
+ * gets a text placeholder with the file name and any stored summary/OCR text; documents are sent
+ * as a `file` part when the model declares file support, otherwise extracted to text; reasoning
+ * blocks drop out; and ANY remaining part type is downgraded to a text placeholder — nothing is
+ * ever passed through raw (production: a stored `{type:"image"}` history part returned HTTP 400
+ * `Invalid input` at `messages.N.content` until the whole request was rebuilt).
+ */
+function openAIContent(content, capability) {
+  if (!Array.isArray(content)) return content === undefined ? "" : content;
+  const parts = [];
+  for (const part of content) {
+    if (typeof part === "string") {
+      if (part.trim()) parts.push(textPart(part));
+      continue;
+    }
+    if (!isObject(part)) continue;
+    const type = String(part.type || "");
+    if (type === "text" || type === "input_text" || type === "output_text") {
+      if (typeof part.text === "string" && part.text.trim()) parts.push(textPart(part.text));
+      continue;
+    }
+    if (REASONING_PARTS.has(type)) continue;
+    if (TOOL_PARTS.has(type)) {
+      parts.push(textPart("[tool call]"));
+      continue;
+    }
+    if (type === "image_url") {
+      const url = mediaUrl(part.image_url?.url);
+      parts.push(url && capability.vision
+        ? { type: "image_url", image_url: { url, ...(typeof part.image_url?.detail === "string" ? { detail: part.image_url.detail } : {}) } }
+        : imagePlaceholder(part, capability.vision));
+      continue;
+    }
+    if (type === "image" || type === "input_image" || (type === "binary" && String(part.mimeType || "").startsWith("image/"))) {
+      const url = resolveMediaUrl(part, "image/png");
+      parts.push(url && capability.vision
+        ? { type: "image_url", image_url: { url } }
+        : imagePlaceholder(part, capability.vision));
+      continue;
+    }
+    if (["document", "file", "input_file", "audio", "input_audio", "video", "binary", "attachment"].includes(type)) {
+      parts.push(documentPlaceholder(part, capability));
+      continue;
+    }
+    parts.push(textPart(`[${type || "content"}]`));
+  }
+  return parts;
+}
+
+/** What this turn's model accepts, from the host-declared catalog capability on context.model. */
+function modelCapability(model) {
+  return { vision: !isObject(model) || model.supportsImages !== false, files: isObject(model) && model.supportsFiles === true };
+}
+
+function openAIMessage(message, capability) {
+  const result = { role: message.role, content: openAIContent(message.content, capability) };
   if (nonempty(message.name)) result.name = message.name;
   if (message.role === "assistant") {
     const calls = message.tool_calls ?? message.toolCalls;
@@ -283,6 +458,11 @@ function promptBlocks(message) {
   if (!Array.isArray(message.content)) return [];
   return message.content.flatMap((part) => {
     if (part?.type === "text" && nonempty(part.text)) return [{ type: "text", text: part.text }];
+    if (part?.type === "file") {
+      const url = part.file?.file_data ?? part.file?.file_url;
+      if (typeof url === "string") return [{ type: "resource_link", uri: url, name: part.file.filename || "user file", mimeType: part.file.mime_type || "application/octet-stream" }];
+      return [];
+    }
     const url = part?.type === "image_url" ? part.image_url?.url : null;
     if (typeof url === "string") {
       const inline = /^data:(image\/[^;,]+);base64,([\s\S]+)$/.exec(url);
@@ -317,6 +497,12 @@ function hostModel(model) {
     // false = the host already compacted this run's history; the adapter keeps Hermes' own compression off.
     if (typeof model.contextCompression !== "boolean") throw rpcError("Invalid chisabotHermes model compression flag", "ACP_INVALID_HOST_CONTEXT");
     result.contextCompression = model.contextCompression;
+  }
+  for (const key of ["supportsImages", "supportsFiles"]) {
+    // Catalog capability flags drive image/document part conversion in openAIContent.
+    if (model[key] === undefined) continue;
+    if (typeof model[key] !== "boolean") throw rpcError("Invalid chisabotHermes model capability flag", "ACP_INVALID_HOST_CONTEXT");
+    result[key] = model[key];
   }
   return result;
 }
@@ -371,7 +557,8 @@ function prepareInput(input, options) {
   const systemPrompt = [typeof input?.system === "string" ? input.system : "", ...systems.map((message) => blockText(message.content))]
     .filter((text) => text.trim()).join("\n\n");
   const messages = rawMessages.filter((message) => ["user", "assistant", "tool"].includes(message?.role));
-  const normalized = messages.map(openAIMessage);
+  const capability = modelCapability(context?.model);
+  const normalized = messages.map((message) => openAIMessage(message, capability));
   const last = normalized.at(-1);
   const continuation = context && last?.role === "tool";
   if (!last || (!continuation && last.role !== "user")) {

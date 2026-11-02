@@ -50,7 +50,13 @@ export type HermesRunConfiguration = {
   log?: (line: Record<string, unknown>) => void;
 };
 
-export type HermesModelControls = { fallbacks?: readonly string[]; maxOutputTokens?: number };
+export type HermesModelControls = {
+  fallbacks?: readonly string[];
+  maxOutputTokens?: number;
+  /** 模型目录对这个模型的判定：能不能看图（supportsImages）/ 收文件（supportsFiles）。桥按它转换图片/文档块（QA1102-14）。 */
+  supportsImages?: boolean;
+  supportsFiles?: boolean;
+};
 
 /** 发给 Hermes 的备用模型最多几个（同 设置 → 模型 →「备用模型」的上限）。 */
 export const HERMES_MAX_FALLBACKS = 8;
@@ -66,6 +72,8 @@ export function hermesWireModel(modelId: string, controls: HermesModelControls |
     ...(fallbacks.length ? { fallbacks } : {}),
     ...(typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0 && limit <= 1_000_000 ? { maxOutputTokens: limit } : {}),
     ...(hostCompacted ? { contextCompression: false } : {}),
+    ...(typeof controls?.supportsImages === "boolean" ? { supportsImages: controls.supportsImages } : {}),
+    ...(typeof controls?.supportsFiles === "boolean" ? { supportsFiles: controls.supportsFiles } : {}),
   };
 }
 

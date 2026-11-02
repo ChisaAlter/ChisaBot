@@ -65,13 +65,27 @@ function providerNameOf(label: unknown): string | undefined {
 }
 /** 目录说这个模型能不能看图：modalities.input / input_modalities / capabilities.vision / supports_vision。 */
 export function imageInputOf(row: Record<string, unknown>): boolean | undefined {
-  const input = object(row.modalities) ? row.modalities.input : row.input_modalities;
+  const modal = object(row.modalities) ? row.modalities.input : Array.isArray(row.modalities) ? row.modalities : undefined;
+  const input = modal ?? row.input_modalities ?? (object(row.architecture) ? row.architecture.input_modalities : undefined);
   if (Array.isArray(input) && input.length) return input.some((m) => typeof m === "string" && /image|vision/i.test(m));
   const caps = object(row.capabilities) ? row.capabilities : undefined;
-  if (caps && typeof caps.vision === "boolean") return caps.vision;
-  if (typeof row.supports_vision === "boolean") return row.supports_vision;
-  if (typeof row.supports_image_input === "boolean") return row.supports_image_input;
+  for (const value of [caps?.vision, caps?.image_input, caps?.image, row.supports_vision, row.supports_image_input, row.supports_images]) {
+    if (typeof value === "boolean") return value;
+  }
+  const features = row.features ?? row.supported_features;
+  if (Array.isArray(features) && features.length) return features.some((m) => typeof m === "string" && /vision|image|multimodal/i.test(m));
   return undefined;
+}
+/**
+ * 网关不声明 modalities 的模型里，实测能看图的（QA1102-14：ClinePass 的
+ * deepseek-v4.1-flash-1017 经 Magpie 路由返回图只能原样上，目录没标就会走文字占位）。
+ * 按完整 id 或最后一个 / 段匹配；目录明说 false 也压不过去——已知结论优先。
+ */
+const KNOWN_VISION_MODELS = new Set(["deepseek-v4.1-flash-1017"]);
+function visionOf(row: Record<string, unknown>): boolean | undefined {
+  const id = typeof row.id === "string" ? row.id : "";
+  if (KNOWN_VISION_MODELS.has(id) || KNOWN_VISION_MODELS.has(id.split("/").pop() ?? "")) return true;
+  return imageInputOf(row);
 }
 /** 目录说这个模型能不能调工具：capabilities.function_calling / tools、supports_function_calling 等。 */
 export function toolInputOf(row: Record<string, unknown>): boolean | undefined {
@@ -120,7 +134,7 @@ function project(body: unknown): ModelCatalogEntry[] {
       row.context_window ?? row.context_length ?? row.max_input_tokens;
     const providerName = providerNameOf(row.magpie_label);
     const maxOutput = row.max_output_tokens ?? row.max_completion_tokens;
-    const supportsImages = imageInputOf(row);
+    const supportsImages = visionOf(row);
     const supportsTools = toolInputOf(row);
     models.push({
       id: row.id,

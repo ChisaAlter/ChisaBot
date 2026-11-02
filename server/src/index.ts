@@ -176,6 +176,7 @@ import {
   setAgentKernel,
   setHistorySummaries,
   setModelContextWindowResolver,
+  setModelVisionResolver,
   setPreviousRunUsageResolver,
   setModelOutputLimitResolver,
   setModelFallbackCatalog,
@@ -1164,6 +1165,10 @@ setModelFallbackList(() => modelFallbacks.models());
 // 摘要模型在 设置 → 模型 →「摘要模型」，没配置就用这一轮的主模型。
 setModelContextWindowResolver(async (modelId) =>
   (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.contextWindow,
+);
+// Hermes 桥按目录的 supportsImages 转换图片/文档块（QA1102-14）：没说就当能看。
+setModelVisionResolver(async (modelId) =>
+  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsImages,
 );
 const historySummaryModel = createHistorySummaryModelService({ store: createHistorySummaryModelStore(database) });
 setHistorySummaries({ store: createPgHistorySummaryStore(database), model: () => historySummaryModel.model() });

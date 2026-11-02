@@ -335,6 +335,27 @@ export async function resolveContextWindow(modelId: string): Promise<number | un
     return undefined;
   }
 }
+/**
+ * 模型目录说这一轮模型能不能看图（DESIGN.md §59 supportsImages；index.ts 接上）。
+ * Hermes 内核下桥按它转换历史/当前消息里的图片与文档块（QA1102-14）：false → 文字占位，
+ * undefined → 目录没说就当能看（和识图回退的判断一致），不下发标记。
+ */
+type VisionResolver = (modelId: string) => Promise<boolean | undefined>;
+let visionFor: VisionResolver = async () => undefined;
+export function setModelVisionResolver(resolver: VisionResolver): void {
+  visionFor = resolver;
+}
+export async function resolveModelVisionSupport(modelId: string): Promise<boolean | undefined> {
+  try {
+    const value = await Promise.race([
+      visionFor(modelId),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
+    ]);
+    return typeof value === "boolean" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Hermes 长对话压缩前文用的摘要缓存和「摘要模型」（设置 → 模型；index.ts 接上）。
@@ -1190,11 +1211,12 @@ async function hermesKernelAgent(options: {
     signRun: (runId, threadId, previous) => signRun(agent.id, runId, threadId, previous),
     // 备用模型 / 输出上限与内置路径同源：管理员列表 → CHISABOT_MODEL_FALLBACKS → 同平台自动挑选；模型目录的输出上限。
     modelControls: async (modelId) => {
-      const [fallbacks, maxOutputTokens] = await Promise.all([
+      const [fallbacks, maxOutputTokens, supportsImages] = await Promise.all([
         fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured())(modelId).catch(() => [] as string[]),
         resolveOutputLimit(modelId),
+        resolveModelVisionSupport(modelId),
       ]);
-      return { fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS), ...(maxOutputTokens ? { maxOutputTokens } : {}) };
+      return { fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS), ...(maxOutputTokens ? { maxOutputTokens } : {}), ...(supportsImages === undefined ? {} : { supportsImages }) };
     },
     finishedMetadata: (runId) => {
       // 回复已经结束：这时才在后台写摘要（这一轮只裁剪，首字时间不变）。
