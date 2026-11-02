@@ -7,7 +7,8 @@ name: Client release
 # 仓库变量 CHISABOT_SERVER_URL / CHISABOT_UPDATE_FEED / CHISABOT_ANDROID_UPDATE_FEED（或手动运行时的同名输入）
 # 存在时，再多打一份「自建版」作为工作流产物（pc-custom、android-custom），由发布者放到自己的更新目录。
 # Android 签名：Secrets ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD；
-# 没有配置时产出 -unsigned.apk。
+# 没有配置时产出 -unsigned.apk（只构建时可以留着；发布时 release job 会拦——未签名 APK 装不上，
+# 要么配 Secrets，要么手动运行时用 signed_apk_url 提供离线签好的通用版）。
 # PC 更新验签（docs/pc-update-signing.md）：发布时 pc-sign job（Environment pc-release，只允许 v* 标签）用
 # Environment Secret PC_UPDATE_SIGNING_KEY 给 latest.yml 签名；通用版必须内置公钥（pc/src/update-keys.json），
 # 自建版用仓库变量 CHISABOT_UPDATE_PUBKEYS 提供公钥（不配 = 自建版不验签）。发布只能从标签运行。
@@ -268,9 +269,12 @@ jobs:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           if [ -n "$KS_B64" ]; then
-            printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
-            echo "签名：仓库 Secrets"
+            printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.ks"
+            echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.ks" >> "$GITHUB_ENV"
+            # JKS 魔数 feedfeed，其它（PKCS12 等 ASN.1）交给 AGP 按类型声明
+            if [ "$(head -c4 "$RUNNER_TEMP/release.ks" | od -An -tx1 | tr -d ' ')" = "feedfeed" ]; then t=JKS; else t=PKCS12; fi
+            echo "ANDROID_KEYSTORE_TYPE=$t" >> "$GITHUB_ENV"
+            echo "签名：仓库 Secrets（$t）"
           else
             echo "::warning::没有配置 ANDROID_KEYSTORE_BASE64，产出未签名 APK"
           fi
@@ -370,6 +374,14 @@ jobs:
           json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
           print(json.dumps(d, ensure_ascii=False))
           PY
+      - name: Signed APK required
+        # 未签名的 APK 装不上：不能让它进 Release、更不能进更新目录（客户端现在会明确报「没有签名」）。
+        # 到这里还有 -unsigned.apk 而没有签名的，说明 Secrets 没配且 signed_apk_url 没给 —— 中止发布。
+        run: |
+          if ls release-assets/*-unsigned.apk >/dev/null 2>&1 && ! ls release-assets/*.apk | grep -vq unsigned; then
+            echo "::error::通用版 APK 未签名：没有 ANDROID_KEYSTORE_* Secrets，也没有提供 signed_apk_url。未签名的 APK 装不上，中止发布。"
+            exit 1
+          fi
       - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}

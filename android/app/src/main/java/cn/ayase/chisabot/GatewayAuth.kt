@@ -19,7 +19,7 @@ import javax.net.ssl.SSLException
  *  - logout：POST /auth/logout；
  *  - 扫码绑定（DESIGN.md §33）：pair = 用一次性绑定码换设备令牌（/api/devices/agent/pair）；
  *    deviceSession = 用设备令牌向登录网关换 30 天会话（/auth/device-session）；unenroll = 手机自己解除绑定。
- * 错误统一成 LoginError(kind, 中文说明)，kind = unreachable | cert | auth | rate | invalid | server | scan | revoked。
+ * 错误统一成 LoginError(kind, 中文说明)，kind = unreachable | cert | auth | rate | invalid | server | scan | revoked | nogw（没有登录网关）。
  */
 object GatewayAuth {
 
@@ -36,13 +36,34 @@ object GatewayAuth {
         } catch (_: Exception) {
             throw LoginError("invalid", "服务器地址格式不对，例如 chisabot.example.com:8443")
         }
-        // 调试包：模拟器连宿主机上的预览（http://10.0.2.2:端口）。正式包一律 https。
-        val localHttp = BuildConfig.ALLOW_LOCAL_HTTP && url.protocol.equals("http", true) && url.host == "10.0.2.2"
-        if (!localHttp && !url.protocol.equals("https", true)) throw LoginError("invalid", "服务器地址必须是 https。")
+        // http 只放行局域网 / 环回地址（内网自建部署走 http 是常态；调试包连模拟器的 10.0.2.2 也在这条规则里）。
+        // 公网 http 一律拒：明文 + 没有证书校验等于裸奔。平台层 cleartext 已放开，真正的闸门在这里。
+        val http = url.protocol.equals("http", true)
+        if (!http && !url.protocol.equals("https", true)) throw LoginError("invalid", "服务器地址必须是 https。")
+        if (http && !privateHost(url.host)) {
+            throw LoginError("invalid", "服务器地址必须是 https；http 只支持局域网地址（192.168.x.x、10.x.x.x、localhost 等）。")
+        }
         if (url.host.isNullOrBlank()) throw LoginError("invalid", "服务器地址格式不对，例如 chisabot.example.com:8443")
         if (url.userInfo != null) throw LoginError("invalid", "服务器地址里不能包含账号密码。")
-        if (localHttp) return "http://" + url.host + (if (url.port == -1) "" else ":" + url.port)
+        if (http) return "http://" + url.host + (if (url.port == -1 || url.port == 80) "" else ":" + url.port)
         return "https://" + url.host + (if (url.port == -1 || url.port == 443) "" else ":" + url.port)
+    }
+
+    /**
+     * 局域网 / 环回地址（http 的放行范围）：localhost 和 *.local（mDNS 只在链路内解析）、
+     * IPv4 私网段 10/8 · 172.16/12 · 192.168/16、环回 127/8、链路本地 169.254/16，IPv6 ::1 / ULA(fc00::/7) / 链路本地 fe80::。
+     * 域名不猜——能解析到公网的域名走 http 没有保护，统一要求 https。
+     */
+    private fun privateHost(host: String?): Boolean {
+        if (host.isNullOrBlank()) return false
+        val h = host.removePrefix("[").removeSuffix("]").lowercase()
+        if (h == "localhost" || h.endsWith(".local")) return true
+        if (h.contains(':')) return h == "::1" || h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")
+        val parts = h.split('.')
+        if (parts.size != 4) return false
+        val n = parts.map { it.toIntOrNull() ?: return false }
+        if (n.any { it !in 0..255 }) return false
+        return n[0] == 10 || n[0] == 127 || (n[0] == 172 && n[1] in 16..31) || (n[0] == 192 && n[1] == 168) || (n[0] == 169 && n[1] == 254)
     }
 
     private fun networkError(e: Throwable): LoginError {
@@ -136,6 +157,7 @@ object GatewayAuth {
         if (reply.status == 404 || reply.status == 405) {
             val body = JSONObject().put("email", username).put("password", password).put("rememberMe", remember).toString()
             reply = request("$origin/api/auth/sign-in/email", "POST", origin, null, body)
+            if (reply.status == 404 || reply.status == 405) throw LoginError("nogw", "这个服务器没有登录网关。")
         }
         when {
             reply.status == 429 -> throw LoginError("rate", "尝试次数过多，请稍后再试。")

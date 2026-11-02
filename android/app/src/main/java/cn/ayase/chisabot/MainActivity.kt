@@ -102,11 +102,13 @@ class MainActivity : ComponentActivity() {
     /** 桌面图标长按「切换服务器」/「退出登录」；系统相机扫到的 chisabot://pair 链接。 */
     private fun handleIntent(intent: Intent?) {
         when (intent?.action) {
-            ACTION_SERVER -> { vm.stack.clear(); vm.stack += Screen.Login }
+            ACTION_SERVER -> vm.switchServer()
             ACTION_LOGOUT -> confirmLogout = true
             Intent.ACTION_VIEW -> intent.data?.toString()?.let { text ->
-                val link = Pairing.parse(text)
-                if (link == null) Toast.makeText(this, "这不是 ChisaBot 的绑定二维码", Toast.LENGTH_SHORT).show() else pairPrompt = link
+                when (val r = Pairing.inspect(text)) {
+                    is Pairing.Result.Ok -> pairPrompt = r.link
+                    is Pairing.Result.Bad -> Toast.makeText(this, r.reason, Toast.LENGTH_LONG).show()
+                }
             }
         }
     }

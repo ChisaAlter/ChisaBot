@@ -9,6 +9,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import okhttp3.Call
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -62,9 +64,26 @@ class Api(val origin: String, private val renew: (suspend () -> Boolean)? = null
 
             override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
                 val cm = CookieManager.getInstance()
-                for (c in cookies) cm.setCookie(url.toString(), c.toString())
+                for (c in cookies) {
+                    // Cookie.toString() 只有 name=value，属性全丢：过期的会话 Cookie 会变成「重启就没」，
+                    // HttpOnly 丢了之后网页兜底页里的 JS 能读到会话。按 Set-Cookie 格式把属性写回去。
+                    val line = buildString {
+                        append(c.name).append('=').append(c.value)
+                        append("; Path=").append(c.path)
+                        if (c.persistent) append("; Expires=").append(httpDate(c.expiresAt))
+                        if (c.secure) append("; Secure")
+                        if (c.httpOnly) append("; HttpOnly")
+                        if (!c.hostOnly) append("; Domain=.").append(c.domain.removePrefix("."))
+                    }
+                    cm.setCookie(url.toString(), line)
+                }
                 cm.flush()
             }
+
+            /** RFC-1123（Set-Cookie Expires 要求的格式）。SimpleDateFormat 不是线程安全的，每次新建。 */
+            private fun httpDate(ms: Long): String =
+                java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US)
+                    .apply { timeZone = java.util.TimeZone.getTimeZone("GMT") }.format(java.util.Date(ms))
         }
 
         val client: OkHttpClient by lazy {
@@ -79,6 +98,8 @@ class Api(val origin: String, private val renew: (suspend () -> Boolean)? = null
         val imageClient: OkHttpClient by lazy { client.newBuilder().followRedirects(true).build() }
         /** 流式回复：读超时关掉（一轮可能几分钟，中间停顿几十秒也正常）。 */
         val streamClient: OkHttpClient by lazy { client.newBuilder().readTimeout(0, TimeUnit.SECONDS).build() }
+        /** 附件上传：文件最大 8 MB，写 / 读超时放宽到 120 秒（每次上传不用再 newBuilder）。 */
+        val uploadClient: OkHttpClient by lazy { client.newBuilder().writeTimeout(120, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build() }
     }
 
     private fun request(path: String, method: String, body: JsonElement?, sse: Boolean = false): Request {
@@ -98,7 +119,7 @@ class Api(val origin: String, private val renew: (suspend () -> Boolean)? = null
     private fun isAuthFail(r: Response) = r.code == 401 || (r.code in 300..399 && (r.header("Location") ?: "").contains("login"))
 
     private fun errorText(code: Int, body: String): String {
-        val msg = runCatching { (json.parseToJsonElement(body) as? JsonObject)?.get("error")?.toString()?.trim('"') }.getOrNull()
+        val msg = runCatching { ((json.parseToJsonElement(body) as? JsonObject)?.get("error") as? JsonPrimitive)?.contentOrNull }.getOrNull()
         return msg?.takeIf { it.isNotBlank() && it != "null" } ?: when {
             code >= 500 -> "服务器暂时不可用（$code），请稍后再试"
             code == 404 -> "找不到（404）"
@@ -131,7 +152,7 @@ class Api(val origin: String, private val renew: (suspend () -> Boolean)? = null
             }.build()
             val req = Request.Builder().url(origin + path).header("Origin", origin)
                 .header("User-Agent", "ChisaBotAndroid/${BuildConfig.VERSION_NAME} native").header("Accept", "application/json").post(body).build()
-            val r = client.newBuilder().writeTimeout(120, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build().newCall(req).execute()
+            val r = uploadClient.newCall(req).execute()
             if (isAuthFail(r)) {
                 r.close()
                 if (attempt == 0 && renew != null && renew.invoke()) continue

@@ -102,10 +102,10 @@ fun LoginScreen(vm: AppViewModel, activity: MainActivity) {
                 error = ""
                 val text = CompletableDeferred<String?>()
                 activity.scan { text.complete(it) }
-                val contents = text.await() ?: return@AsyncButton false
-                val link = Pairing.parse(contents)
-                if (link == null) { error = "这不是 ChisaBot 的绑定二维码。"; return@AsyncButton false }
-                try { vm.pair(link); scope.launch { kotlinx.coroutines.delay(500); vm.enterApp() }; true }
+                val contents = text.await() ?: return@AsyncButton null // 扫码页被划掉 = 取消，不是失败
+                val scanned = Pairing.inspect(contents)
+                if (scanned !is Pairing.Result.Ok) { error = (scanned as Pairing.Result.Bad).reason; return@AsyncButton false }
+                try { vm.pair(scanned.link); scope.launch { kotlinx.coroutines.delay(500); vm.enterApp() }; true }
                 catch (e: Exception) { error = e.message ?: "绑定失败"; false }
             }
             Text(
@@ -137,8 +137,8 @@ fun LoginScreen(vm: AppViewModel, activity: MainActivity) {
                             scope.launch { kotlinx.coroutines.delay(500); vm.enterApp() }
                             true
                         } catch (e: GatewayAuth.LoginError) {
-                            // 自己部署、没有登录网关的服务器（如本机预览）：/auth/login 404 → 只记地址直接进
-                            if (e.kind == "invalid" && (e.message ?: "").contains("登录失败（404")) {
+                            // 自己部署、没有登录网关的服务器（如本机预览）：两个登录端点都 404 → 只记地址直接进
+                            if (e.kind == "nogw") {
                                 runCatching { vm.openWithoutGateway(server) }.onSuccess { scope.launch { vm.enterApp() } }.isSuccess
                             } else { error = e.message ?: "登录失败"; false }
                         } catch (e: Exception) { error = e.message ?: "登录失败"; false }
