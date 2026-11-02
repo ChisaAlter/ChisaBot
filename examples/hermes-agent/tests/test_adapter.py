@@ -6,9 +6,11 @@ import contextvars
 import copy
 import importlib
 import json
+import os
 from pathlib import Path
 import sys
 import threading
+import time
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -680,6 +682,227 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.stop_reason, "end_turn")
             self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
                              {"from": "magpie-model", "to": "backup-a", "reason": "quota"})
+
+    def breaker_turn(self, down):
+        """A fake Hermes turn: call the live model; on failure walk the fallback chain like upstream."""
+        calls = []
+
+        class Unavailable(Exception):
+            status_code = 503
+
+        def provider(model):
+            calls.append(model)
+            if down.get(model):
+                raise Unavailable("Error code: 503 - service unavailable")
+            return f"answer from {model}"
+
+        def walk(agent, reason=None, reset_at=None):
+            # Hermes' chain walk: the next entry built by _init_fallback_chain becomes the live model.
+            if agent._fallback_index >= len(agent._fallback_chain):
+                return False
+            agent.model = agent._fallback_chain[agent._fallback_index]["model"]
+            agent._fallback_index += 1
+            return True
+
+        def hermes_turn(agent, user, history):
+            for _ in range(3):
+                try:
+                    text = provider(agent.model)
+                    break
+                except Unavailable:
+                    if not agent._try_activate_fallback(reason=SimpleNamespace(value="server_error")):
+                        raise
+            return {"messages": history + [{"role": "user", "content": user}, {"role": "assistant", "content": text}],
+                    "final_response": text}
+        return calls, walk, hermes_turn
+
+    async def test_breaker_skips_cooled_primary_until_a_probe_recovers_it(self):
+        # QA1102-06: a dead primary must not cost the full upstream timeout every turn.
+        import chisabot_acp
+        chains = []
+        down = {"magpie-model": True}
+        calls, walk, hermes_turn = self.breaker_turn(down)
+        clock = [1_000.0]
+        original_now = chisabot_acp._now
+        chisabot_acp._now = lambda: clock[0]
+        self.addCleanup(lambda: setattr(chisabot_acp, "_now", original_now))
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        with patch.dict(sys.modules, self.model_control_modules(chains)):
+            await self.adapter.initialize()
+            state = await self.new()
+            agent = state.agent
+            agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(agent, reason, reset_at)
+            agent.run_hook = hermes_turn
+
+            def raw(run_id):
+                data = payload()
+                data["scope"]["runId"] = run_id
+                data["model"]["fallbacks"] = ["backup-a", "backup-b"]
+                return data
+
+            response = await self.prompt(state, raw("run-1"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                             {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+            # Inside the cooldown the primary is never dialed again, and the skip is reported.
+            for run_id in ("run-2", "run-3"):
+                calls.clear()
+                response = await self.prompt(state, raw(run_id))
+                self.assertEqual(calls, ["backup-a"])
+                self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                                 {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+            # Half-open probe after the cooldown: one primary call, still dead → re-open longer.
+            calls.clear()
+            clock[0] += 61
+            response = await self.prompt(state, raw("run-4"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            # The doubled cooldown still gates 61s later.
+            calls.clear()
+            clock[0] += 61
+            response = await self.prompt(state, raw("run-5"))
+            self.assertEqual(calls, ["backup-a"])
+            # The probe after that succeeds → breaker closes → the next turn uses the primary.
+            down["magpie-model"] = False
+            calls.clear()
+            clock[0] += 121
+            response = await self.prompt(state, raw("run-6"))
+            self.assertEqual(calls, ["magpie-model"])
+            self.assertIsNone(response.field_meta)
+            calls.clear()
+            response = await self.prompt(state, raw("run-7"))
+            self.assertEqual(calls, ["magpie-model"])
+            self.assertIsNone(response.field_meta)
+
+    async def test_breaker_is_shared_across_sessions(self):
+        # The adapter process serves every actor/bot: a dead primary is skipped everywhere.
+        import chisabot_acp
+        chains = []
+        down = {"magpie-model": True}
+        calls, walk, hermes_turn = self.breaker_turn(down)
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        with patch.dict(sys.modules, self.model_control_modules(chains)):
+            await self.adapter.initialize()
+            state = await self.new()
+            state.agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(state.agent, reason, reset_at)
+            state.agent.run_hook = hermes_turn
+            raw = payload()
+            raw["model"]["fallbacks"] = ["backup-a"]
+            await self.prompt(state, raw)
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            # A different session (another user/bot) never pays for the primary either.
+            calls.clear()
+            other = await self.new()
+            other.agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(other.agent, reason, reset_at)
+            other.agent.run_hook = hermes_turn
+            raw2 = payload()
+            raw2["model"]["fallbacks"] = ["backup-a"]
+            response = await self.prompt(other, raw2)
+            self.assertEqual(calls, ["backup-a"])
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"]["to"], "backup-a")
+
+    def hanging_turn(self, down, calls):
+        """A fake Hermes turn: dead models hang until the adapter's deadline interrupts them."""
+        def hermes_turn(agent, user, history):
+            calls.append(agent.model)
+            if down.get(agent.model):
+                while not agent.interrupted:
+                    time.sleep(0.005)
+                return {"messages": history, "interrupted": True}
+            text = f"answer from {agent.model}"
+            agent.stream_delta_callback(text)
+            return {"messages": history + [{"role": "user", "content": user}, {"role": "assistant", "content": text}],
+                    "final_response": text}
+        return hermes_turn
+
+    async def test_first_token_timeout_interrupts_and_retries_on_the_backup(self):
+        # QA1102-06: a hung primary is interrupted at the first-token deadline and the turn
+        # retries on a fallback, instead of paying the full upstream call timeout.
+        import chisabot_acp
+        calls = []
+        down = {"magpie-model": True}
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        state.agent.run_hook = self.hanging_turn(down, calls)
+
+        def raw(run_id):
+            data = payload()
+            data["scope"]["runId"] = run_id
+            data["model"]["fallbacks"] = ["backup-a"]
+            return data
+
+        with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.05"}):
+            response = await self.prompt(state, raw("run-1"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            self.assertEqual(response.stop_reason, "end_turn")
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                             {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+            # The timeout opened the primary's breaker: the next turn dials the backup directly.
+            calls.clear()
+            response = await self.prompt(state, raw("run-2"))
+            self.assertEqual(calls, ["backup-a"])
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"]["to"], "backup-a")
+
+    async def test_half_open_probe_is_bounded_by_the_first_token_deadline(self):
+        # After the cooldown the probe dials the primary once; a hung probe is interrupted at
+        # the first-token deadline (not the upstream timeout), re-opens and uses the backup.
+        import chisabot_acp
+        calls = []
+        down = {"magpie-model": True}
+        clock = [1_000.0]
+        original_now = chisabot_acp._now
+        chisabot_acp._now = lambda: clock[0]
+        self.addCleanup(lambda: setattr(chisabot_acp, "_now", original_now))
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        state.agent.run_hook = self.hanging_turn(down, calls)
+
+        def raw(run_id):
+            data = payload()
+            data["scope"]["runId"] = run_id
+            data["model"]["fallbacks"] = ["backup-a"]
+            return data
+
+        with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.05"}):
+            response = await self.prompt(state, raw("run-1"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            # Past the 60s cooldown the half-open probe still pays only the first-token deadline.
+            calls.clear()
+            clock[0] += 61
+            response = await self.prompt(state, raw("run-2"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"]["to"], "backup-a")
+            # Re-opened (doubled cooldown): the next turn skips the primary again.
+            calls.clear()
+            response = await self.prompt(state, raw("run-3"))
+            self.assertEqual(calls, ["backup-a"])
+
+    async def test_mid_stream_error_counts_a_failure_without_cooling_the_model(self):
+        # Output already produced, then the call dies: one consecutive failure is counted but
+        # the breaker does not open -- the error still propagates, no switch this turn.
+        import chisabot_acp
+        calls = []
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+
+        class Unavailable(Exception):
+            status_code = 503
+
+        def hook(agent, user, history):
+            calls.append(agent.model)
+            agent.stream_delta_callback("partial answer")
+            raise Unavailable("Error code: 503 - service unavailable")
+
+        state.agent.run_hook = hook
+        with self.assertRaises(RequestError) as error:
+            await self.prompt(state)
+        self.assertEqual(str(error.exception), "Hermes model call failed: service unavailable (HTTP 503)")
+        entry = chisabot_acp._MODEL_BREAKERS[("custom", "https://magpie.invalid/v1", "magpie-model")]
+        self.assertEqual(entry["failures"], 1)
+        self.assertLessEqual(entry["open_until"], chisabot_acp._now())
+        # No cooldown: the next turn dials the primary again.
+        with self.assertRaises(RequestError):
+            await self.prompt(state)
+        self.assertEqual(calls, ["magpie-model", "magpie-model"])
 
     async def test_hermes_compression_is_off_only_for_runs_the_host_already_compacted(self):
         state = await self.new()
