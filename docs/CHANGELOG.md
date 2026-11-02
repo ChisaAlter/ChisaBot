@@ -1,3 +1,9 @@
+## 0.1.118
+
+- 频道输入框日常收成两头半圆的横条（只有 +、输入区、发送键旁的展开箭头、发送键），箭头切换完整工具栏并记住选择；compact 编辑器行高收紧，光标只比文本高一点。
+- 修复云端电脑「看不到屏幕」：Dockerfile 浏览器版本改从 `agent-computer/package.json` 派生，消除 playwright 与 Chromium 的版本错配。
+- 版本号 0.1.118（根、app、server、pc；Android versionCode 300）。
+
 ## 0.1.117
 
 - 滚动时不再因 `peer-hover` 反复标脏整段对话（`ui/sidebar.tsx` 里没人用的两处，`no-group-has.test.ts` 加守卫）。未升级版本号。
