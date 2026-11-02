@@ -1214,12 +1214,18 @@ describe("多平台扫码绑定与消息来源解析", () => {
         JSON.stringify({
           data: {
             status: "success",
-            bot_info: { botid: "ww_bot_9", secret: "ww_sec_9", userid: "ww_self_id" },
+            bot_info: {
+              botid: "ww_bot_9",
+              secret: "ww_sec_9",
+              userid: "ww_self_id",
+            },
           },
         }),
         { status: 200 },
       )) as unknown as typeof fetch;
-    expect(await pollPlatformQr("wecom_bot", { scode: "sc_9" }, botOnly)).toEqual({
+    expect(
+      await pollPlatformQr("wecom_bot", { scode: "sc_9" }, botOnly),
+    ).toEqual({
       status: "confirmed",
       config: { botId: "ww_bot_9" },
       secrets: { secret: "ww_sec_9" },
@@ -1232,13 +1238,19 @@ describe("多平台扫码绑定与消息来源解析", () => {
         JSON.stringify({
           data: {
             status: "success",
-            bot_info: { botid: "ww_bot_9", secret: "ww_sec_9", userid: "ww_self_id" },
+            bot_info: {
+              botid: "ww_bot_9",
+              secret: "ww_sec_9",
+              userid: "ww_self_id",
+            },
             operator_userid: "ww_operator_1",
           },
         }),
         { status: 200 },
       )) as unknown as typeof fetch;
-    expect(await pollPlatformQr("wecom_bot", { scode: "sc_9" }, withOperator)).toEqual({
+    expect(
+      await pollPlatformQr("wecom_bot", { scode: "sc_9" }, withOperator),
+    ).toEqual({
       status: "confirmed",
       config: { botId: "ww_bot_9" },
       secrets: { secret: "ww_sec_9" },
@@ -1273,7 +1285,9 @@ describe("多平台扫码绑定与消息来源解析", () => {
         }),
         { status: 200 },
       )) as unknown as typeof fetch;
-    expect(await pollPlatformQr("dingtalk", { deviceCode: "dc_1" }, unionOnly)).toEqual({
+    expect(
+      await pollPlatformQr("dingtalk", { deviceCode: "dc_1" }, unionOnly),
+    ).toEqual({
       status: "confirmed",
       config: { clientId: "ding_id" },
       secrets: { clientSecret: "ding_sec" },
@@ -1293,7 +1307,9 @@ describe("多平台扫码绑定与消息来源解析", () => {
         }),
         { status: 200 },
       )) as unknown as typeof fetch;
-    expect(await pollPlatformQr("dingtalk", { deviceCode: "dc_1" }, withStaff)).toEqual({
+    expect(
+      await pollPlatformQr("dingtalk", { deviceCode: "dc_1" }, withStaff),
+    ).toEqual({
       status: "confirmed",
       config: { clientId: "ding_id" },
       secrets: { clientSecret: "ding_sec" },
