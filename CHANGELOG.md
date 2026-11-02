@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-- 引导页：修复固定天空背景遮住「欢迎来到 ChisaBot」标题和「继续」按钮的问题；只改前端，未升级版本号。
+## 0.1.119 — 2026-11-02
+
+这一版合并 #465：五个 IM 平台支持「扫码绑定」一键创建并填入凭据（微信 ClawBot、QQ 官方机器人、企业微信智能机器人、钉钉、飞书 / Lark），IM 通道同时打通双向能力——待确认操作推送 IM、全端「当前对话」同步、审批决定直接在 IM 里回复、模型回复回推 IM 线程。全端同步版本号到 0.1.119（Android versionCode 301）；PC 外壳和 Android 应用本体不变。
+
+- IM 扫码一键绑定（#465）：连接表单里点「扫码绑定」出二维码，用对应平台手机端扫码确认即自动创建 / 绑定机器人并填入凭据，不再手动去开放平台建应用抄密钥。`server/src/im/qr-auth.ts` 实现五个平台的 start/poll 协议：微信 ClawBot 走 ilinkai get_bot_qrcode / get_qrcode_status；QQ 官方走 q.qq.com create_bind_task / poll_bind_result，`bot_encrypt_secret` 用任务创建时生成的密钥做 AES-256-GCM 解密；企业微信走 ai/qc/generate / query_result；钉钉走 oapi app/registration 设备码（source `DING_DWS_CLAW`）；飞书走 accounts.feishu.cn / accounts.larksuite.com 的 PersonalAgent 设备码授权（轮询识别 Lark 租户自动切域名）。`shared/im.ts` 平台元数据加 `qrAuth` / `qrHint`，五个平台的接入步骤改为扫码优先、保留手动填写路径。
+- IM 通道双向打通：待确认操作直接推送到 IM（`confirmations.setOnOpened`，含标题、目标和前两条细节，回复「允许 / 拒绝」即可处理，同时支持 approvals 审批）；`bot-threads` 记录每个用户每个机器人的「当前对话」，网页 / PC / 手机 / IM 打开同一段（`resolveBotConversation`）；机器人回复回推 IM 线程；频道内活动按来源写回 intelligence channel（`recordChannelActivity` / `signalThreadBusy`）；`chat-origin.ts` 识别 IM 来源前缀提取干净正文。
+- 引导页：修复固定天空背景遮住「欢迎来到 ChisaBot」标题和「继续」按钮的问题。
+- 测试接入：`im-adapters`、`im-service.integration`、`confirmations` 三个测试文件接入 chisabot.yml 测试列表，集成测试进有 TEST_DATABASE_URL 的步骤。
 
 ## 0.1.118 — 2026-11-02
 

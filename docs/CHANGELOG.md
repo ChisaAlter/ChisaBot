@@ -1,3 +1,10 @@
+## 0.1.119
+
+- IM 扫码一键绑定（#465）：微信 ClawBot / QQ 官方机器人 / 企业微信智能机器人 / 钉钉 / 飞书（Lark）连接表单内嵌「扫码绑定」，扫码确认自动创建 / 绑定机器人并填入凭据（`server/src/im/qr-auth.ts`；QQ 凭据 AES-256-GCM 解密，飞书识别 Lark 租户自动切域名）。
+- IM 通道双向打通：待确认操作推送 IM 可直接回复处理（含 approvals 审批）、bot-threads 全端「当前对话」同步、模型回复回推 IM 线程、频道活动按来源写回。
+- 引导页：修复固定天空背景遮住标题和「继续」按钮。
+- 版本号 0.1.119（根、app、server、pc；Android versionCode 301）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.118
 
 - pstack 工程纪律移植（#464）：`examples/zh-CN` 租户包新增 41 个策展技能（24 条原则 + 纪律技能 + 改写的 `poteto-mode` 路由与三个 playbook）；新工作流预设 `pstack-adversarial-review`（异模型攻方并行实测 + 主审复核）；`scripts/pstack-port.mjs` 生成器固化上游适配规则，归属进 `docs/THIRD_PARTY_NOTICES.md`。
