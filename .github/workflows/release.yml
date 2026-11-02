@@ -338,8 +338,15 @@ jobs:
           path: android/out/*
 
   release:
-    needs: [config, pc-sign, android]
-    if: needs.config.outputs.tag != ''
+    needs: [config, pc, pc-sign, android]
+    # pc-sign 在 CHISABOT_PC_UPDATE_UNSIGNED=1 时按设计跳过（needs 的 skipped 不算失败，但默认
+    # success() 条件会把本 job 一并跳过），所以显式放行 skipped 并逐条校验真正需要的产物。
+    if: >-
+      always() &&
+      needs.config.outputs.tag != '' &&
+      needs.pc.result == 'success' &&
+      needs.android.result == 'success' &&
+      (needs.pc-sign.result == 'success' || needs.pc-sign.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -351,6 +358,13 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: "*-generic"
+          path: release-assets
+          merge-multiple: true
+      # pc-sign 跳过时没有 pc-* 签名产物，回退拉取 pc job 的未签名产物。
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.pc-sign.result == 'skipped'
+        with:
+          pattern: "pc-*-unsigned"
           path: release-assets
           merge-multiple: true
       - name: Externally signed APK
