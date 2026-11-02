@@ -85,6 +85,10 @@ class HostPrompt:
     # False when ChisaBot already compacted this run's history (trimmed / summarized older turns):
     # Hermes' own context compression stays off for the run so nothing is compressed twice.
     context_compression: bool | None = None
+    # Catalog capability flags for this turn's model (QA1102-14): False strips image blocks to
+    # text, True keeps standard image_url parts, None means the catalog said nothing (= capable).
+    model_images: bool | None = None
+    model_files: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -289,6 +293,12 @@ def parse_host_prompt(value: Any) -> HostPrompt:
     context_compression = raw_model.get("contextCompression")
     if context_compression is not None and type(context_compression) is not bool:
         raise ProtocolError("chisabot.model.contextCompression must be a boolean")
+    model_images = raw_model.get("supportsImages")
+    model_files = raw_model.get("supportsFiles")
+    if model_images is not None and type(model_images) is not bool:
+        raise ProtocolError("chisabot.model.supportsImages must be a boolean")
+    if model_files is not None and type(model_files) is not bool:
+        raise ProtocolError("chisabot.model.supportsFiles must be a boolean")
     continuation = value.get("continuation", False)
     if type(continuation) is not bool:
         raise ProtocolError("chisabot.continuation must be a boolean")
@@ -304,7 +314,7 @@ def parse_host_prompt(value: Any) -> HostPrompt:
     if capability in model_visible:
         raise ProtocolError("The gateway capability must not occur in model-visible content")
     return HostPrompt(scope, system, history, tuple(tools), Gateway(url.rstrip("/"), capability), model_id, continuation, current,
-                      fallbacks, max_output_tokens, context_compression)
+                      fallbacks, max_output_tokens, context_compression, model_images, model_files)
 
 
 """QA1102-14: normalize history before every OpenAI-compatible request.
@@ -373,7 +383,73 @@ def _content_text(message: dict[str, Any]) -> str:
     return ""
 
 
-def normalize_history(messages: Any) -> list[dict[str, Any]]:
+def _normalize_parts(content: list[Any], images: bool | None, files: bool | None) -> list[dict[str, Any]] | None:
+    """数组 content 里属于标准 OpenAI 形状的多模态块保留（image_url 按识图能力、file 按收文件能力），
+    其余按老规则降级成文本占位。没有多模态块存活时返回 None（调用方收成字符串）。"""
+    parts: list[dict[str, Any]] = []
+    saw_media = False
+    for block in content:
+        if isinstance(block, str):
+            if block.strip():
+                parts.append({"type": "text", "text": block})
+            continue
+        if not isinstance(block, dict):
+            continue
+        kind = str(block.get("type") or "")
+        if kind == "image_url":
+            url = block.get("image_url")
+            if images is not False and isinstance(url, dict) and isinstance(url.get("url"), str) and url["url"].strip():
+                kept: dict[str, Any] = {"type": "image_url", "image_url": {"url": url["url"]}}
+                if isinstance(url.get("detail"), str):
+                    kept["image_url"]["detail"] = url["detail"]
+                parts.append(kept)
+                saw_media = True
+            else:
+                parts.append({"type": "text", "text": "[image]"})
+            continue
+        if kind == "file":
+            body = block.get("file")
+            if files is True and isinstance(body, dict) and (body.get("file_data") or body.get("file_url") or body.get("file_id")):
+                parts.append({"type": "file", "file": dict(body)})
+                saw_media = True
+            else:
+                parts.append({"type": "text", "text": "[file]"})
+            continue
+        flat = _flatten_blocks([block])
+        if flat:
+            parts.append({"type": "text", "text": flat})
+    return parts if saw_media else None
+
+
+def normalize_content(content: Any, *, images: bool | None = None, files: bool | None = None) -> Any:
+    """一条消息 content（字符串 / 块数组）→ 兼容端点收的形状；当前用户消息用（QA1102-14）。"""
+    if not isinstance(content, list):
+        return content
+    parts = _normalize_parts(content, images, files)
+    if parts is not None:
+        return parts
+    return _flatten_blocks(content)
+
+
+def _merge_content(a: Any, b: Any) -> Any:
+    """两条连续同 role 消息的 content 合成一条：摊成块拼接，纯文本收成字符串。"""
+    parts: list[Any] = []
+    for value in (a, b):
+        if isinstance(value, str):
+            if value.strip():
+                parts.append({"type": "text", "text": value})
+        elif isinstance(value, list):
+            parts.extend(item for item in value if item is not None)
+        elif value is not None:
+            parts.append({"type": "text", "text": str(value)})
+    if not parts:
+        return None
+    if all(isinstance(part, dict) and part.get("type") == "text" for part in parts):
+        return "\n\n".join(str(part.get("text") or "") for part in parts if str(part.get("text") or "").strip())
+    return parts
+
+
+def normalize_history(messages: Any, *, images: bool | None = None, files: bool | None = None) -> list[dict[str, Any]]:
     """把一段 OpenAI 消息数组改成兼容端点一定收的形状。纯函数，输入不被改动。"""
     if not isinstance(messages, list):
         return []
@@ -393,7 +469,8 @@ def normalize_history(messages: Any) -> list[dict[str, Any]]:
             row["content"] = (text[:_TOOL_OUTPUT_MAX_CHARS] + _TRUNCATED_NOTE
                               if len(text) > _TOOL_OUTPUT_MAX_CHARS else text)
         elif role == "user":
-            row["content"] = _content_text(row) or _EMPTY_CONTENT
+            parts = _normalize_parts(row["content"], images, files) if isinstance(row.get("content"), list) else None
+            row["content"] = parts if parts is not None else (_content_text(row) or _EMPTY_CONTENT)
         else:
             normalized.append(row)
             continue
@@ -411,14 +488,28 @@ def normalize_history(messages: Any) -> list[dict[str, Any]]:
                 result.append({"role": "tool", "tool_call_id": cid, "content": _MISSING_TOOL_RESULT})
         pending.clear()
 
+    def register(row: dict[str, Any]) -> None:
+        for call in row.get("tool_calls") or []:
+            cid = call.get("id")
+            if isinstance(cid, str) and cid:
+                pending[cid] = True
+
     for row in normalized:
         role = row.get("role")
         if role == "assistant":
-            for call in row.get("tool_calls") or []:
-                cid = call.get("id")
-                if isinstance(cid, str) and cid:
-                    pending[cid] = True
-            result.append(row)
+            # 上一个 assistant 的调用还没拿到结果：先在它后面补合成结果再开新 assistant——
+            # 「assistant(c1), assistant(c2), tool(c1)」这种形状端点同样整单拒。
+            flush()
+            previous = result[-1] if result else None
+            if previous is not None and previous.get("role") == "assistant" and not previous.get("tool_calls"):
+                # QA1102-13：连续 assistant 合并成一条（线上历史曾触发 Hermes 修 14 处交替违规）。
+                previous["content"] = _merge_content(previous.get("content"), row.get("content"))
+                if row.get("tool_calls"):
+                    previous["tool_calls"] = list(row["tool_calls"])
+                    register(previous)
+            else:
+                register(row)
+                result.append(row)
         elif role == "tool":
             cid = row.get("tool_call_id")
             if cid in pending and cid not in answered:
@@ -426,9 +517,33 @@ def normalize_history(messages: Any) -> list[dict[str, Any]]:
                 result.append(row)
         else:
             flush()
-            result.append(row)
+            previous = result[-1] if result else None
+            if role == "user" and previous is not None and previous.get("role") == "user":
+                # QA1102-13：连续 user 合并成一条——失败的轮次只存了 user 没存 assistant
+                # 回复，下一条 user 接在上一条后面就是交替违规。
+                previous["content"] = _merge_content(previous.get("content"), row.get("content"))
+            else:
+                result.append(row)
     flush()
     return result
+
+
+"""QA1102-13：回复承诺了「先去查/先做」却一个工具都没调时，适配器多走一步催它现在调。"""
+_ACTION_NUDGE = "你刚才说要先查/先做——现在就调用工具执行，不要只回复文字说明。"
+_ACTION_PROMISE = re.compile(
+    r"我先(?:去|来|就|马上|现在|帮你)?(?:查|搜|看|找|试|确认|处理|接入|连接|问|弄|下载|打开)|"
+    r"我来(?:查|搜|看|找|确认|处理|接入|连接|搜索|帮你)|"
+    r"让我(?:先|来)?(?:查|搜|看|找|搜索|确认|试|问)|"
+    r"我(?:这就|马上|现在|再|帮你|去)?去?(?:查|搜|搜索|看看|确认|找|下载|打开|接入|连接)|"
+    r"\b(?:i(?:'ll|’ll| will)|let me|i'?m (?:going|gonna)\s*to|i am going to)\b"
+    r"[^.!?。！？\n]{0,120}?\b(?:search|look(?:ing)?\s*(?:for|into|up|at)|check|find|fetch|dig|inspect|investigate|open|download|connect|try)\b",
+    re.I,
+)
+
+
+def action_promise(text: Any) -> bool:
+    """这段回复是不是「承诺行动」的话术；只匹配明确说要查/做的句子，不误伤普通问答。"""
+    return isinstance(text, str) and bool(_ACTION_PROMISE.search(text))
 
 
 def redact(value: Any, secret: str) -> Any:

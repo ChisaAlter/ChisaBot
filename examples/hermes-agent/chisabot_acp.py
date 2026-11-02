@@ -21,8 +21,9 @@ from types import SimpleNamespace
 from typing import Any
 
 from chisabot_protocol import (GatewayClient, HostPrompt, ProtocolError, RunState, ToolAliases,
-                                 TURN_FAILED, active_run, failure_category, failure_message,
-                                 fallback_reason, fallback_use, host_metadata, normalize_history,
+                                 TURN_FAILED, _ACTION_NUDGE, action_promise, active_run,
+                                 failure_category, failure_message, fallback_reason, fallback_use,
+                                 host_metadata, normalize_content, normalize_history,
                                  parse_host_prompt, redact, reply_failure_category, tool_error,
                                  turn_failure)
 
@@ -505,6 +506,10 @@ def build_agent_class():
                 break
             if applied is None:
                 raise ProtocolError("The requested host model could not be configured")
+            # QA1102-13：原生换模型路径 _switch_model → _make_agent 会重建 state.agent——
+            # 循环里拿到的可能已经是被丢弃的旧对象。restrict / 工具注册 / 系统提示词 /
+            # 模型控制必须落在切换后的活 agent 上，先重新读一次。
+            agent = state.agent
             agent._chisabot_turn_model = applied
             agent._chisabot_breaker_skip = (applied, skip_reason) if applied != config.model_id else None
             restrict(agent)
@@ -549,10 +554,16 @@ def build_agent_class():
             self._host_tools[session_id] = installed
             self._host_scopes[session_id] = config.scope.session_key
             self._host_aliases[session_id] = aliases
+            # QA1102-13 防御：宿主给了工具但活 agent 上没长出任何可调工具——显式失败，
+            # 别让模型在没有 tools 数组的情况下静默跑完这一轮（4b323956 曾把配置写进被
+            # 换模型重建丢弃的旧 agent，那一轮 tools=[] 还没系统提示词）。
+            if config.tools and not getattr(state.agent, "valid_tool_names", None):
+                raise ProtocolError("The configured host tools never reached the live agent")
             # QA1102-14：发给 OpenAI 兼容端点（DeepSeek 等）的历史先规范化——空 content、
             # 不支持的块、孤儿 tool 消息、没有结果的 tool_calls、超长 tool 输出都会被端点
             # 整单 400 拒掉（messages.N.content）。
-            state.history = aliases.history(normalize_history(config.history))
+            state.history = aliases.history(normalize_history(config.history, images=config.model_images,
+                                                              files=config.model_files))
             state.queued_prompts.clear()
             state.interrupted_prompt_text = ""
             agent.ephemeral_system_prompt = aliases.text(config.system_prompt)
@@ -726,7 +737,9 @@ def build_agent_class():
                     await self._configure(state, config)
                 except ProtocolError as exc:
                     raise invalid(str(exc)) from None
-                user_content = (copy.deepcopy(config.current_message["content"]) if config.current_message is not None
+                user_content = (normalize_content(copy.deepcopy(config.current_message["content"]),
+                                                  images=config.model_images, files=config.model_files)
+                                if config.current_message is not None
                                 else _content_blocks_to_openai_user_content(prompt))
                 user_text = _extract_text(prompt).strip()
                 if config.gateway.capability in str(user_content) or config.gateway.capability in user_text:
@@ -747,11 +760,13 @@ def build_agent_class():
 
                 def execute():
                     attempts = 0
+                    nudged = False
+                    step_text, step_content = user_text, user_content
                     while True:
                         try:
                             try:
-                                result = self._run_agent_turn(state=state, session_id=session_id, user_text=user_text,
-                                                              user_content=user_content, conn=conn, loop=loop,
+                                result = self._run_agent_turn(state=state, session_id=session_id, user_text=step_text,
+                                                              user_content=step_content, conn=conn, loop=loop,
                                                               approval_cb=None, edit_approval_requester=None)
                             except Exception as error:
                                 # QA1102-14：请求本身被主模型拒了（400 / 上下文超长）——清洗 + 激进
@@ -764,6 +779,17 @@ def build_agent_class():
                             if attempts == 0 and run.may_stream() and turn_failure(result) in _RETRY_ONCE_CATEGORIES:
                                 attempts += 1
                                 self._prime_rejected_retry(state, config)
+                                continue
+                            # QA1102-13：这轮一个工具都没调、回复却在承诺「先去查/先做」——
+                            # 催它现在就调，只多走一步，之后无论说什么都收尾。
+                            if (not nudged and config.tools and not run.records and run.may_stream()
+                                    and not run.pending_suspension and not result.get("interrupted")
+                                    and turn_failure(result) is None
+                                    and action_promise(result.get("final_response"))):
+                                nudged = True
+                                step_text = step_content = _ACTION_NUDGE
+                                _breaker_log({"type": "promise-guard", "event": "nudge",
+                                              "kernel": "hermes-adapter"})
                                 continue
                             return result
                         finally:

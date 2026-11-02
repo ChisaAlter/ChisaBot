@@ -1025,7 +1025,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             raise BadRequest("Invalid input")
         state.agent.run_hook = hook
         raw = payload()
-        raw["history"] = [{"role": "user", "content": f"turn {i}"} for i in range(80)]
+        raw["history"] = [row for i in range(80)
+                          for row in ({"role": "user", "content": f"q {i}"},
+                                      {"role": "assistant", "content": f"a {i}"})]
         with self.assertRaises(RequestError) as error:
             await self.prompt(state, raw)
         self.assertEqual(str(error.exception), "Hermes model call failed: invalid_request (HTTP 400)")
@@ -1082,6 +1084,153 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             response = await self.prompt(state, raw2)
             self.assertEqual(calls, ["magpie-model"])
             self.assertIsNone(response.field_meta)
+
+    def replace_agent_on_switch(self):
+        """QA1102-13：原生换模型路径会重建 state.agent（_switch_model → _make_agent），
+        不是只改 model 字段。返回一个替换用的 set_session_model。"""
+        server_mod = self.modules["acp_adapter.server"]
+
+        async def replacing(agent_self, model_id, session_id, **kwargs):
+            agent_self.switches.append(model_id)
+            target = agent_self.session_manager.get_session(session_id)
+            fresh = FakeAgent()  # tools=[] / valid_tool_names=∅ / ephemeral_system_prompt=None
+            fresh.model = model_id
+            target.agent = fresh
+            target.model = model_id
+            return Model()
+
+        return patch.object(server_mod.HermesACPAgent, "set_session_model", replacing)
+
+    async def test_model_switch_rebuilds_agent_and_configure_lands_on_the_live_one(self):
+        # 4b323956 的回归：切换后 restrict / 工具 / 系统提示词写进了被丢弃的旧 agent。
+        state = await self.new()
+        old_agent = state.agent
+        with self.replace_agent_on_switch():
+            response = await self.prompt(state)
+        live = state.agent
+        self.assertIsNot(live, old_agent)
+        self.assertEqual(live.model, "magpie-model")
+        self.assertEqual(live.valid_tool_names, {"device_list"})
+        self.assertEqual([t["function"]["name"] for t in live.tools], ["device_list"])
+        self.assertEqual(live.inputs[0]["system"], "Host identity")
+        self.assertEqual(live.inputs[0]["tools"][0]["function"]["name"], "device_list")
+        self.assertIsNone(live.ephemeral_system_prompt)  # 轮末清掉，configure 每轮重设
+        self.assertFalse(old_agent.inputs)
+        self.assertEqual(response.stop_reason, "end_turn")
+        # 同一 agent 下一轮（不再切换）仍然拿到完整系统提示词与工具——每一轮都在配置。
+        raw = payload()
+        raw["scope"]["runId"] = "run-2"
+        await self.prompt(state, raw)
+        self.assertIs(state.agent, live)
+        self.assertEqual(live.inputs[1]["system"], "Host identity")
+        self.assertEqual(live.inputs[1]["tools"][0]["function"]["name"], "device_list")
+
+    async def test_live_agent_without_host_tools_fails_loud(self):
+        # 防御断言：config.tools 非空而活 agent 上没有任何可调工具 → ProtocolError。
+        state = await self.new()
+        server_mod = self.modules["acp_adapter.server"]
+
+        class DeafAgent(FakeAgent):
+            @property
+            def valid_tool_names(self):
+                return set()
+
+            @valid_tool_names.setter
+            def valid_tool_names(self, value):
+                pass
+
+        async def replacing(agent_self, model_id, session_id, **kwargs):
+            target = agent_self.session_manager.get_session(session_id)
+            fresh = DeafAgent()
+            fresh.model = model_id
+            target.agent = fresh
+            return Model()
+
+        with patch.object(server_mod.HermesACPAgent, "set_session_model", replacing):
+            with self.assertRaises(RequestError) as error:
+                await self.prompt(state)
+        self.assertEqual(error.exception.code, -32602)
+        self.assertFalse(state.agent.inputs)
+        self.assertFalse(any(e[0] == "http" for e in self.events))
+
+    async def test_promise_only_answer_gets_exactly_one_tool_step_nudge(self):
+        # QA1102-13：只承诺「我去查」却一个工具都没调 → 催一步；只催一步。
+        state = await self.new()
+        calls = []
+
+        def hook(agent, user, history):
+            calls.append(user)
+            if len(calls) > 1:
+                agent.tool_start_callback("call-9", "device_list", {"limit": 1})
+                token = self.call_id.set("call-9")
+                try:
+                    result = self.registry.get_entry("device_list").handler({"limit": 1})
+                finally:
+                    self.call_id.reset(token)
+                agent.tool_complete_callback("call-9", "device_list", {"limit": 1}, result)
+                return {"messages": history + [{"role": "user", "content": user},
+                                               {"role": "assistant", "content": "查到了"}], "final_response": "查到了"}
+            return {"messages": history + [{"role": "user", "content": user},
+                                           {"role": "assistant", "content": "我先去查一下再回答你"}],
+                    "final_response": "我先去查一下再回答你"}
+
+        state.agent.run_hook = hook
+        response = await self.prompt(state)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], "Current user")
+        self.assertIn("现在就调用工具", calls[1])
+        self.assertEqual(sum(e[0] == "http" for e in self.events), 1)
+        self.assertEqual(response.stop_reason, "end_turn")
+
+        calls.clear()
+        state.agent.run_hook = lambda agent, user, history: (calls.append(user),
+            {"messages": history, "final_response": "我再去查"})[1]
+        raw = payload()
+        raw["scope"]["runId"] = "run-2"
+        await self.prompt(state, raw)
+        self.assertEqual(len(calls), 2)  # 催过之后无论说什么都收尾，不无限续步。
+
+        calls.clear()
+
+        def with_tool(agent, user, history):
+            calls.append(user)
+            agent.tool_start_callback("call-7", "device_list", {})
+            token = self.call_id.set("call-7")
+            try:
+                result = self.registry.get_entry("device_list").handler({})
+            finally:
+                self.call_id.reset(token)
+            agent.tool_complete_callback("call-7", "device_list", {}, result)
+            return {"messages": history, "final_response": "我先去查一下再回答你"}
+
+        state.agent.run_hook = with_tool
+        raw["scope"]["runId"] = "run-3"
+        await self.prompt(state, raw)
+        self.assertEqual(len(calls), 1)  # 本轮已经调过工具：承诺话术不再催。
+
+    async def test_fresh_session_first_turn_carries_tools_and_system_prompt(self):
+        # 新会话首轮就是一次模型切换：短对话请求里必须有 tools 和系统提示词。
+        state = await self.new()
+        with self.replace_agent_on_switch():
+            await self.prompt(state)
+        inputs = state.agent.inputs[0]
+        self.assertEqual(inputs["system"], "Host identity")
+        self.assertEqual([t["function"]["name"] for t in inputs["tools"]], ["device_list"])
+        self.assertEqual(inputs["history"], payload()["history"])
+        self.assertEqual(state.agent.valid_tool_names, {"device_list"})
+
+    async def test_consecutive_user_rows_merge_into_one(self):
+        # QA1102-13：失败轮次只留下连续 user 行（交替违规），发送时合并。
+        state = await self.new()
+        raw = payload()
+        raw["history"] = [{"role": "user", "content": "one"}, {"role": "user", "content": "two"},
+                          {"role": "assistant", "content": "answer"}, {"role": "user", "content": "three"}]
+        await self.prompt(state, raw)
+        history = state.agent.inputs[0]["history"]
+        self.assertEqual(history[0], {"role": "user", "content": "one\n\ntwo"})
+        self.assertEqual(history[1]["content"], "answer")
+        self.assertEqual(history[2]["content"], "three")
+        self.assertEqual(len(history), 3)
 
 
 if __name__ == "__main__":

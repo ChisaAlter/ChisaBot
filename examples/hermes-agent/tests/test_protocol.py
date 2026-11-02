@@ -541,12 +541,14 @@ class NormalizeHistoryTests(unittest.TestCase):
             {"role": "user", "content": "   "},
         ])
         self.assertEqual(out[0]["content"], "[empty]")
+        # 连续 assistant 合并成一条：空壳 content 与调用并入同一个 assistant 行。
         self.assertEqual(out[1]["content"], "[empty]")
-        self.assertIsNone(out[2]["content"])
-        self.assertEqual(out[3]["content"], "[empty tool result]")
-        self.assertEqual(out[4]["content"], "[empty]")
+        self.assertEqual([c["id"] for c in out[1]["tool_calls"]], ["c1"])
+        self.assertEqual(out[2]["content"], "[empty tool result]")
+        self.assertEqual(out[3]["content"], "[empty]")
+        self.assertEqual([row["role"] for row in out], ["user", "assistant", "tool", "user"])
 
-    def test_array_content_flattens_unsupported_blocks(self):
+    def test_array_content_keeps_image_url_but_flattens_the_rest(self):
         from chisabot_protocol import normalize_history
         out = normalize_history([
             {"role": "user", "content": [{"type": "text", "text": "look"},
@@ -556,8 +558,84 @@ class NormalizeHistoryTests(unittest.TestCase):
                 {"id": "t1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
             {"role": "tool", "tool_call_id": "t1", "content": [{"type": "tool_result", "content": [{"type": "text", "text": "inner"}]}]},
         ])
-        self.assertEqual(out[0]["content"], "look\n[image]\n[tool call]")
+        self.assertEqual(out[0]["content"], [{"type": "text", "text": "look"},
+            {"type": "image_url", "image_url": {"url": "https://x/y.png"}}, {"type": "text", "text": "[tool call]"}])
         self.assertEqual(out[2]["content"], "inner")
+
+    def test_image_url_and_file_blocks_follow_model_capability(self):
+        from chisabot_protocol import normalize_content, normalize_history
+        image = {"type": "image_url", "image_url": {"url": "https://x/y.png"}}
+        raw = [{"role": "user", "content": [{"type": "text", "text": "look"}, image]}]
+        self.assertEqual(normalize_history(raw)[0]["content"][1], image)
+        out = normalize_history(raw, images=False)
+        self.assertEqual(out[0]["content"], "look\n[image]")
+        file = {"type": "file", "file": {"file_data": "data:application/pdf;base64,QUJD", "filename": "a.pdf"}}
+        raw = [{"role": "user", "content": [{"type": "text", "text": "read"}, file]}]
+        self.assertEqual(normalize_history(raw)[0]["content"], "read\n[file]")
+        self.assertEqual(normalize_history(raw, files=True)[0]["content"][1], file)
+        # 当前用户消息同样规则：不识图时图片降级占位，其它形状原样。
+        content = [{"type": "text", "text": "look"}, image]
+        self.assertEqual(normalize_content(content)[1], image)
+        self.assertEqual(normalize_content(content, images=False), "look\n[image]")
+        self.assertEqual(normalize_content("plain"), "plain")
+
+    def test_consecutive_same_role_rows_merge_and_calls_stay_valid(self):
+        from chisabot_protocol import normalize_history
+        out = normalize_history([
+            {"role": "user", "content": "one"},
+            {"role": "user", "content": "two"},
+            {"role": "user", "content": [{"type": "text", "text": "three"},
+                {"type": "image_url", "image_url": {"url": "https://x/y.png"}}]},
+            {"role": "assistant", "content": "a"},
+            {"role": "assistant", "content": "b"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+            {"role": "user", "content": "next"},
+        ])
+        self.assertEqual([row["role"] for row in out], ["user", "assistant", "tool", "user"])
+        self.assertEqual(out[0]["content"], [{"type": "text", "text": "one\n\ntwo"},
+            {"type": "text", "text": "three"}, {"type": "image_url", "image_url": {"url": "https://x/y.png"}}])
+        self.assertEqual(out[1]["content"], "a\n\nb")
+        self.assertEqual([c["id"] for c in out[1]["tool_calls"]], ["c1"])
+        self.assertEqual(out[2]["tool_call_id"], "c1")
+        # assistant(c1), assistant(c2), tool(c1)：前一个调用先补合成结果，迟到的真结果丢掉。
+        out = normalize_history([
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c2", "type": "function", "function": {"name": "y", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "late real result"},
+        ])
+        self.assertEqual([row["role"] for row in out], ["assistant", "tool", "assistant", "tool"])
+        self.assertEqual(out[1]["tool_call_id"], "c1")
+        self.assertIn("no tool result", out[1]["content"])
+        self.assertEqual(out[3]["tool_call_id"], "c2")
+
+    def test_model_capability_flags_parse_as_strict_booleans(self):
+        raw = payload()
+        self.assertIsNone(parse_host_prompt(raw).model_images)
+        self.assertIsNone(parse_host_prompt(raw).model_files)
+        raw["model"].update({"supportsImages": False, "supportsFiles": True})
+        config = parse_host_prompt(raw)
+        self.assertIs(config.model_images, False)
+        self.assertIs(config.model_files, True)
+        for bad in ("yes", 0, 1):
+            broken = payload()
+            broken["model"]["supportsImages"] = bad
+            with self.assertRaises(ProtocolError):
+                parse_host_prompt(broken)
+
+    def test_action_promise_matches_intent_not_plain_answers(self):
+        from chisabot_protocol import action_promise
+        for text in ("我先去查一下再回答你", "我来查一下 ima 的接入文档", "让我搜索一下官方文档",
+                     "我这就去查", "I'll search the docs and get back", "let me check the official site",
+                     "I'm going to look for it"):
+            with self.subTest(text=text):
+                self.assertTrue(action_promise(text))
+        for text in ("这是答案", "ima 是一个知识管理平台", "I checked already: it works", None, 42,
+                     "你可以去查官方文档"):
+            with self.subTest(text=text):
+                self.assertFalse(action_promise(text))
 
     def test_tool_output_is_capped_and_orphans_and_missing_results_fixed(self):
         from chisabot_protocol import normalize_history
