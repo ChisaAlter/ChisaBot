@@ -109,6 +109,15 @@ assumed): `CHISABOT_MODEL_TIMEOUT_S` (default 90),
 `CHISABOT_MODEL_CONNECT_TIMEOUT_S` (default 15),
 `CHISABOT_MODEL_MAX_RETRIES` (default 1).
 
+On top of those knobs the adapter enforces its own first-token deadline
+(`CHISABOT_FIRST_TOKEN_TIMEOUT_S`, default 30, 0 disables; the TS kernel's
+`CHISABOT_MODEL_FIRST_OUTPUT_MS` is honoured when set). Every model attempt —
+the first failing one and each half-open probe alike — is interrupted when no
+real output (text / reasoning / tool delta) arrives in time, counted as a
+breaker failure, and the turn retries on the next healthy fallback. Once real
+output arrives the attempt runs unbounded; a mid-stream error after output
+counts one consecutive failure without opening a cooldown.
+
 `model.contextCompression: false` means ChisaBot already trimmed or
 summarized this run's history. The adapter then sets
 `agent.compression_enabled = False` for that prompt (Hermes' own context
