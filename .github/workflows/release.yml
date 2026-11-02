@@ -145,20 +145,21 @@ jobs:
       - name: Update keys
         # 客户端内置的更新公钥（src/update-keys.json，打进 asar）。通用版用仓库里的公钥表，发布时必须非空；
         # 自建版按仓库变量 CHISABOT_UPDATE_PUBKEYS 生成（为空 = 这个自建版不验签，保持旧行为）。
+        # 例外：CHISABOT_PC_UPDATE_UNSIGNED=1 时 pc-sign 整个跳过、latest.yml 没有 chisabotSig，
+        # 两个 flavor 都写空公钥表——内置了公钥的客户端会永远拒绝没有签名的更新（RV-26）。
         env:
           FLAVOR: ${{ matrix.flavor }}
           TAG: ${{ needs.config.outputs.tag }}
           CHISABOT_UPDATE_PUBKEYS: ${{ vars.CHISABOT_UPDATE_PUBKEYS }}
           PC_UNSIGNED: ${{ vars.CHISABOT_PC_UPDATE_UNSIGNED }}
         run: |
-          if [ "$FLAVOR" = custom ]; then
+          if [ "$PC_UNSIGNED" = "1" ]; then
+            CHISABOT_UPDATE_PUBKEYS="" node scripts/sign-update.js --keys-from-env
+            echo "::warning::CHISABOT_PC_UPDATE_UNSIGNED=1：不签名发布，$FLAVOR 版写空公钥表（客户端不验签，和旧版本一致）"
+          elif [ "$FLAVOR" = custom ]; then
             node scripts/sign-update.js --keys-from-env
           elif [ -n "$TAG" ]; then
-            if [ "$PC_UNSIGNED" = "1" ]; then
-              echo "::warning::CHISABOT_PC_UPDATE_UNSIGNED=1：通用版不验签（空公钥表放行）"
-            else
-              node scripts/sign-update.js --require-keys
-            fi
+            node scripts/sign-update.js --require-keys
           else
             node scripts/sign-update.js --require-keys || echo "::warning::src/update-keys.json 没有公钥：这个构建不验签（只构建不发布）"
           fi

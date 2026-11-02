@@ -268,6 +268,25 @@ describe("release.yml invariants", () => {
     );
   });
 
+  test("Update keys：不签名发布（PC_UNSIGNED=1）时两个 flavor 都写空公钥表（RV-26）", () => {
+    // pc-sign 在 unsigned 开关下整个跳过，latest.yml 没有 chisabotSig——
+    // 自建版如果还按 CHISABOT_UPDATE_PUBKEYS 内置公钥，客户端会永远拒绝更新。
+    // 所以 unsigned 判定必须包在 flavor 分支外面：先命中、强制写空表、有 warning。
+    const updateKeys = (jobs.pc.steps ?? []).find(
+      (s) => s.name === "Update keys",
+    ) as { run?: string } | undefined;
+    const run = String(updateKeys?.run ?? "");
+    const unsignedAt = run.indexOf('PC_UNSIGNED" = "1"');
+    const customAt = run.indexOf('FLAVOR" = custom');
+    expect(unsignedAt).toBeGreaterThanOrEqual(0);
+    expect(customAt).toBeGreaterThanOrEqual(0);
+    expect(unsignedAt).toBeLessThan(customAt);
+    const unsignedBranch = run.slice(unsignedAt, customAt);
+    expect(unsignedBranch).toContain('CHISABOT_UPDATE_PUBKEYS=""');
+    expect(unsignedBranch).toContain("--keys-from-env");
+    expect(unsignedBranch).toContain("::warning::");
+  });
+
   test("flavor 标记随产物走，update-keys.json 不进签名产物", () => {
     const pcJob = JSON.stringify(jobs.pc);
     expect(pcJob).toContain("flavor.txt");
