@@ -80,6 +80,44 @@ When Hermes switches to a backup model during a prompt, the prompt response
 carries `_meta.chisabot.modelFallback: {"from", "to", "reason"}` with reason
 `quota` or `unavailable`.
 
+## Model breaker (QA1102-06)
+
+The adapter rebuilds Hermes' fallback chain on every prompt, so a dead primary
+would otherwise cost the full upstream call timeout on every turn before the
+chain walks to a backup (production: ~113s first-token on every turn while
+`codex/gpt-6-luna` was down). A process-wide breaker now gates this: a model
+that keeps failing (`timeout`, `provider_unavailable`/5xx, `model_not_found`,
+`rate_limit`/`quota`) opens after `CHISABOT_MODEL_BREAKER_THRESHOLD` consecutive
+failures (default 1); while it is open the prompt's model is set directly to the
+first healthy configured fallback — the primary is never dialed — and cooled
+models are also left out of the fallback chain. The state is keyed by
+`(provider, base_url, model)` and shared by every session in the process, so a
+cooled primary is skipped for all actors/bots at once.
+
+After the cooldown one turn probes the primary (half-open; other sessions keep
+skipping while the probe is in flight). A healthy answer closes the breaker and
+later turns use the primary again; another failure re-opens it with an
+exponentially longer cooldown (base `CHISABOT_MODEL_BREAKER_COOLDOWN_S`, default
+60; doubled per re-open, capped at `CHISABOT_MODEL_BREAKER_MAX_COOLDOWN_S`,
+default 600). Every skip/probe/open/close is logged as a JSON
+`{"type":"model-fallback","event":...,"kernel":"hermes-adapter"}` line with the
+reason and remaining cooldown.
+
+The upstream model call's own bounds can be tightened where the installed
+Hermes exposes them (detected in the `AIAgent` signature and attributes, never
+assumed): `CHISABOT_MODEL_TIMEOUT_S` (default 90),
+`CHISABOT_MODEL_CONNECT_TIMEOUT_S` (default 15),
+`CHISABOT_MODEL_MAX_RETRIES` (default 1).
+
+On top of those knobs the adapter enforces its own first-token deadline
+(`CHISABOT_FIRST_TOKEN_TIMEOUT_S`, default 30, 0 disables; the TS kernel's
+`CHISABOT_MODEL_FIRST_OUTPUT_MS` is honoured when set). Every model attempt —
+the first failing one and each half-open probe alike — is interrupted when no
+real output (text / reasoning / tool delta) arrives in time, counted as a
+breaker failure, and the turn retries on the next healthy fallback. Once real
+output arrives the attempt runs unbounded; a mid-stream error after output
+counts one consecutive failure without opening a cooldown.
+
 `model.contextCompression: false` means ChisaBot already trimmed or
 summarized this run's history. The adapter then sets
 `agent.compression_enabled = False` for that prompt (Hermes' own context

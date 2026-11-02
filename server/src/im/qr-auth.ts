@@ -387,12 +387,7 @@ export async function pollPlatformQr(
       const body = (await res.json().catch(() => ({}))) as {
         data?: {
           status?: string;
-          bot_info?: {
-            botid?: string;
-            secret?: string;
-            userid?: string;
-            user_id?: string;
-          };
+          bot_info?: { botid?: string; secret?: string };
           userid?: string;
           user_id?: string;
           operator_userid?: string;
@@ -408,14 +403,13 @@ export async function pollPlatformQr(
         const botId = String(body.data.bot_info.botid).trim();
         const secret = String(body.data.bot_info.secret).trim();
         // 平台回了扫码人自己的 userid 就带上（自动回填主人名单）；没回也不挡绑定。
+        // bot_info 里的 userid 是机器人自己的 id，不是扫码人的，绝不能拿来回填。
         const boundUserId = firstUserId(
           body.data.userid,
           body.data.user_id,
           body.data.operator_userid,
           body.data.user_info?.userid,
           body.data.user_info?.user_id,
-          body.data.bot_info.userid,
-          body.data.bot_info.user_id,
         );
         return {
           status: "confirmed",
@@ -453,17 +447,13 @@ export async function pollPlatformQr(
         client_secret?: string;
         fail_reason?: string;
         staff_id?: string;
-        unionid?: string;
         user_id?: string;
         userId?: string;
         user_info?: {
           staffId?: string;
           staff_id?: string;
-          unionId?: string;
-          unionid?: string;
           userId?: string;
           user_id?: string;
-          openId?: string;
         };
       };
       const st = (body.status || "").toUpperCase();
@@ -471,6 +461,8 @@ export async function pollPlatformQr(
         const clientId = String(body.client_id).trim();
         const clientSecret = String(body.client_secret).trim();
         // 平台回了扫码人的钉钉用户 id 就带上（自动回填主人名单）；没回也不挡绑定。
+        // 消息里认人用的是 senderStaffId（adapters/dingtalk.ts）：只回填同一种类型的 id
+        // （staffId / userid）；unionid、openId 跟它对不上，回填了也是永远匹配不上的假主人。
         const boundUserId = firstUserId(
           body.user_info?.staffId,
           body.user_info?.staff_id,
@@ -479,10 +471,6 @@ export async function pollPlatformQr(
           body.user_info?.user_id,
           body.user_id,
           body.userId,
-          body.user_info?.unionId,
-          body.user_info?.unionid,
-          body.unionid,
-          body.user_info?.openId,
         );
         return {
           status: "confirmed",

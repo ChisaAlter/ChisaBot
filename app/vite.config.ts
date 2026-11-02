@@ -178,8 +178,12 @@ const VENDOR_CHUNKS: Array<[RegExp, string]> = [
   // Markdown 和按需加载的公式块共用的几个小模块（公式的语法部分、vfile-location、extend）也点名进来：不点名时 Rollup
   // 把它们放进一个单独的共享小块，而这个小块又要从 vendor-markdown 拿东西，两块互相静态 import，成环。
   // 公式只点名语法文件，不点名 index.js / html.js，这样 mathHtml 和 KaTeX 仍然按需加载。
+  // micromark-extension-math 的 exports 有 development 条件指向 dev/ 下的同名文件（多了 devlop 断言）；
+  // NODE_ENV 非 production 构建若漏过它们，语法文件会落到名单外的自动块里，和 vendor-markdown 互相
+  // 静态 import 成环。(dev\/)? 让两种解析结果归同一块；index.js / dev/index.js / html.js / dev/lib/html.js
+  // 照旧不点名，mathHtml 和 KaTeX 仍然按需加载。
   [
-    /\/node_modules\/(vfile-location\/|extend\/|micromark-extension-math\/lib\/(syntax|math-flow|math-text)\.js$)/,
+    /\/node_modules\/(vfile-location\/|extend\/|micromark-extension-math\/(dev\/)?lib\/(syntax|math-flow|math-text)\.js$)/,
     "vendor-markdown",
   ],
   // 下面几个同理：本身只在少数地方按需用，但体积大，一旦和小模块同块就被拖上首屏。KaTeX 和 micromark-extension-math
@@ -341,7 +345,7 @@ function chisabotNodeBundle(): Plugin {
   };
 }
 
-export default defineConfig({
+const appViteConfig = {
   envDir: path.resolve(__dirname, ".."),
   plugins: [
     announceServerPort(apiPort.port),
@@ -371,4 +375,19 @@ export default defineConfig({
       output: routeBuildRollupOutputOptions,
     },
   },
+};
+
+export default defineConfig(({ command }) => {
+  /*
+   * vite build 的产物必须是生产构建，与调用方 shell 的 NODE_ENV 无关。NODE_ENV=test/development 时 Vite 把
+   * `development|production` 条件解析成包的 dev 版（micromark-extension-math/dev/…、micromark dev 版额外静态
+   * import debug 这个 CJS 包），不但把断言和调试代码打进产物，还改变了模块图、让块之间成环；连打进代码里的
+   * process.env.NODE_ENV 也会变成 "test"。配置求值早于 Vite 读取 NODE_ENV 决定 isProduction / resolve 条件 /
+   * define，所以在这里钉死仍然生效（也是 Vite 警告里建议的设法）。只钉 build：serve / preview 保持调用方环境，
+   * dev server 还需要 development。
+   */
+  if (command === "build") {
+    process.env.NODE_ENV = "production";
+  }
+  return appViteConfig;
 });

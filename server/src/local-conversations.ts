@@ -1839,7 +1839,7 @@ export async function createLocalConversations(
         const message = messages[at];
         if (message?.role !== "user") continue;
         const reason =
-          fallback.reason === "unavailable" ? "unavailable" : "quota";
+          fallback.reason === "unavailable" ? "unavailable" : fallback.reason === "rejected" ? "rejected" : "quota";
         if (!turns.has(message.id))
           turns.set(message.id, {
             userMessageId: message.id,

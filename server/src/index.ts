@@ -181,6 +181,8 @@ import {
   setAgentKernel,
   setHistorySummaries,
   setModelContextWindowResolver,
+  setModelVisionResolver,
+  setModelFileResolver,
   setPreviousRunUsageResolver,
   setModelOutputLimitResolver,
   setModelFallbackCatalog,
@@ -1158,7 +1160,10 @@ const modelCatalog = createModelCatalogService({
 setModelOutputLimitResolver(async (modelId) =>
   (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.maxOutputTokens,
 );
-setModelFallbackCatalog(async () => (await modelCatalog.list()).models.map((entry) => entry.id));
+// 目录项带 supportsTools 标记（有的话）：自动挑备用模型时跳过明说不能调工具的（QA1102-13）。
+setModelFallbackCatalog(async () =>
+  (await modelCatalog.list()).models.map((entry) => ({ id: entry.id, supportsTools: entry.supportsTools })),
+);
 // 设置 → 模型 →「备用模型」（DESIGN.md §61）：管理员排好的顺序优先于环境变量 / 同平台自动挑选。
 const modelFallbacks = createModelFallbackService({ store: createModelFallbackStore(database) });
 setModelFallbackList(() => modelFallbacks.models());
@@ -1166,6 +1171,14 @@ setModelFallbackList(() => modelFallbacks.models());
 // 摘要模型在 设置 → 模型 →「摘要模型」，没配置就用这一轮的主模型。
 setModelContextWindowResolver(async (modelId) =>
   (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.contextWindow,
+);
+// Hermes 桥按目录的 supportsImages 转换图片/文档块（QA1102-14）：没说就当能看。
+setModelVisionResolver(async (modelId) =>
+  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsImages,
+);
+// 内置内核按目录的 supportsFiles 决定 `file` 文档块是原样发还是换文字占位（QA1102-14 r1）。
+setModelFileResolver(async (modelId) =>
+  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsFiles,
 );
 const historySummaryModel = createHistorySummaryModelService({ store: createHistorySummaryModelStore(database) });
 setHistorySummaries({ store: createPgHistorySummaryStore(database), model: () => historySummaryModel.model() });
@@ -1962,6 +1975,9 @@ const coordination = createCoordinationTools({
     catalog: modelCatalog,
     setModel: (actor, agentId, model) =>
       agentModels.set(actor, agentId, model),
+    // The Approvals page an IM summary links to, on the app's own origin (CHISABOT_APP_URL / first
+    // trusted origin) — never on the API's, where no page exists.
+    approvalsUrl: config.appUrl ? `${config.appUrl}/approvals` : undefined,
   }),
   auditStore: bootAuditStore,
   authoriseRun: (run) =>
@@ -2464,6 +2480,15 @@ imService = createImService({
       };
     }
     return null;
+  },
+  // 审批卡发到 IM 时附上的内容摘要：卡片工具自己把给人看的说明存在 action.target.imSummary 里，
+  // 这里只负责按 id 读回来；没有摘要的卡（比如别的工具）照发原来的提示。
+  approvalSummary: async (ownerUserId, approvalId) => {
+    const record = await approvalService.store.get(ownerUserId, approvalId).catch(() => null);
+    const target = record?.status === "pending" ? record.action.target : null;
+    return target && typeof target === "object" && typeof (target as { imSummary?: unknown }).imSummary === "string"
+      ? (target as { imSummary: string }).imSummary
+      : null;
   },
 });
 await imService.ensure();

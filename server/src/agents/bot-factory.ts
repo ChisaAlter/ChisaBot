@@ -20,6 +20,7 @@ import {
   type ApprovalGate,
   ApprovalRefusedError,
   currentApprovalContext,
+  PREVIEW_VERBATIM,
 } from "../approvals/types";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import type { BotFactoryCaps } from "../config";
@@ -229,6 +230,112 @@ class BotFactoryCapError extends Error {
   override name = "BotFactoryCapError";
 }
 
+/**
+ * Whether a creation failed on contention rather than on anything the caller did.
+ *
+ * The per-person advisory lock serializing one person's creates is waited on under PostgreSQL's
+ * `lock_timeout` (5s, see db/client.ts): enough parallel calls and PostgreSQL cancels the waiters
+ * with SQLSTATE 55P03 (`canceling statement due to lock timeout`), and a serialization retry is
+ * 40001. Bun's driver puts the SQLSTATE on `errno` (`code` is its own ERR_POSTGRES_* name) and the
+ * driver error sits under drizzle's wrapper — the `cause` chain and the two-field check are the
+ * same ones `db/recovery.ts`'s `brokenConnection` walks.
+ */
+function isContentionError(error: unknown): boolean {
+  let current = error as
+    | { code?: unknown; errno?: unknown; cause?: unknown }
+    | undefined;
+  for (let depth = 0; current && depth < 6; depth++) {
+    if (current.code === "55P03" || current.errno === "55P03") return true;
+    if (current.code === "40001" || current.errno === "40001") return true;
+    current = current.cause as typeof current;
+  }
+  return false;
+}
+
+/** How much of the prompt an IM summary quotes before pointing at the web page for the rest. */
+const PROMPT_EXCERPT = 300;
+
+/*
+ * Secret-looking shapes, warned about rather than masked: the card must show the prompt exactly as
+ * it will run (masking would approve one text and execute another), so what the person gets is a
+ * loud `secretWarning` field naming every pattern found. Ordered roughly most- to least-specific.
+ */
+const SECRET_LIKE: readonly { label: string; pattern: RegExp }[] = [
+  { label: "sk-… 样式的密钥", pattern: /\bsk-[A-Za-z0-9_-]{16,}\b/ },
+  {
+    label: "GitHub 令牌（ghp_ / github_pat_）",
+    pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/,
+  },
+  { label: "Slack 令牌（xox…-）", pattern: /\bxox[a-z]-[A-Za-z0-9-]{8,}\b/i },
+  { label: "AWS 访问密钥（AKIA…）", pattern: /\bAKIA[0-9A-Z]{16}\b/ },
+  {
+    label: "Bearer 令牌",
+    pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/i,
+  },
+  { label: "password=/密码=", pattern: /(?:password|passwd|密码)\s*[:=：]/i },
+  {
+    label: "私钥块",
+    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/,
+  },
+  {
+    label: "长十六进制 / Base64 密钥样式串",
+    pattern: /\b[0-9a-fA-F]{32,}\b|\b[A-Za-z0-9+/]{40,}={0,2}\b/,
+  },
+];
+
+/** The labels of every secret-like pattern found in `text`; empty when it reads benign. */
+export function secretLikeIn(text: string): string[] {
+  return SECRET_LIKE.filter((entry) => entry.pattern.test(text)).map(
+    (entry) => entry.label,
+  );
+}
+
+/** The warning a card and an IM summary carry when a prompt smells like it holds a secret. */
+function secretWarningFor(prompt: string): string | undefined {
+  const found = secretLikeIn(prompt);
+  return found.length
+    ? `⚠️ 提示词中检测到疑似敏感信息（${found.join("、")}）。提示词会原样执行、不予遮蔽——请确认这是有意写入的再批准。`
+    : undefined;
+}
+
+/**
+ * A line diff of the stored prompt against the proposed one, in the `-`/`+`/space shape a unified
+ * diff uses, so the card can show exactly what the edit would change. Prompts cap at 1000
+ * characters, so the LCS table stays trivial.
+ */
+export function lineDiff(before: string, after: string): string {
+  const a = before.split("\n");
+  const b = after.split("\n");
+  const table: number[][] = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0),
+  );
+  for (let i = a.length - 1; i >= 0; i--)
+    for (let j = b.length - 1; j >= 0; j--)
+      table[i][j] =
+        a[i] === b[j]
+          ? table[i + 1][j + 1] + 1
+          : Math.max(table[i + 1][j], table[i][j + 1]);
+  const lines: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      lines.push(`  ${a[i]}`);
+      i++;
+      j++;
+    } else if (table[i + 1][j] >= table[i][j + 1]) {
+      lines.push(`- ${a[i]}`);
+      i++;
+    } else {
+      lines.push(`+ ${b[j]}`);
+      j++;
+    }
+  }
+  while (i < a.length) lines.push(`- ${a[i++]}`);
+  while (j < b.length) lines.push(`+ ${b[j++]}`);
+  return lines.join("\n");
+}
+
 export type BotFactory = ReturnType<typeof createBotFactory>;
 
 export function createBotFactory(options: {
@@ -268,6 +375,12 @@ export function createBotFactory(options: {
     agentId: string,
     model: string,
   ) => Promise<unknown>;
+  /**
+   * The web page that shows the full approval content — the link an IM summary ends with, so a
+   * decision made from a chat app can still be checked against everything first. Left out of the
+   * summary when the deployment has no app URL.
+   */
+  approvalsUrl?: string;
 }) {
   const {
     queries,
@@ -281,7 +394,37 @@ export function createBotFactory(options: {
     pause,
     catalog,
     setModel,
+    approvalsUrl,
   } = options;
+
+  /**
+   * The content summary an IM channel can deliver beside「允许 / 拒绝」: name, model, the first
+   * ~300 characters of the prompt the card holds, the secret warning when there is one, and the
+   * link to the page showing all of it. Carried on the approval target as `imSummary` — the IM
+   * layer only has to read it out of the stored request.
+   */
+  function imSummary(input: {
+    verb: string;
+    name: string;
+    title?: string;
+    model: string;
+    prompt: string;
+    warning?: string;
+  }): string {
+    const excerpt =
+      input.prompt.length > PROMPT_EXCERPT
+        ? `${input.prompt.slice(0, PROMPT_EXCERPT)}…`
+        : input.prompt;
+    return [
+      `【审批内容摘要】${input.verb}机器人`,
+      `名字：${input.name}`,
+      ...(input.title ? [`职责：${input.title}`] : []),
+      `模型：${input.model}`,
+      `提示词（${input.prompt.length > PROMPT_EXCERPT ? `前 ${PROMPT_EXCERPT} 字，共 ${input.prompt.length} 字` : "全文"}）：${excerpt}`,
+      ...(input.warning ? [input.warning] : []),
+      ...(approvalsUrl ? [`完整内容：${approvalsUrl}`] : []),
+    ].join("\n");
+  }
 
   /**
    * A cap or ownership refusal: audit it, then hand the model a sentence it can say.
@@ -431,22 +574,39 @@ export function createBotFactory(options: {
       if (!verdict.ok) return { text: verdict.refusal, isError: true };
     }
 
+    /*
+     * The card shows the whole spec: name, duty, the full prompt and the model. `prompt` carries
+     * roleDescription byte-for-byte — it is the text the new Bot will run on, so the preview is
+     * marked `previewVerbatim` rather than masked; a prompt that smells like it holds a secret gets
+     * a loud `secretWarning` instead of a quiet rewrite. `imSummary` is the same content flattened
+     * for chat channels that cannot open the card.
+     */
+    const warning = secretWarningFor(data.roleDescription);
     const held = await gated({
       from,
       toolRef: `bot/${CREATE_BOT_TOOL}`,
       effect: "create",
       scope: data.name,
       args: data,
-      /*
-       * The card shows the whole spec: name, duty, the full prompt (roleDescription is the prompt a
-       * built_in Bot runs on) and the model. `approvalPreview` masks nothing here — none of it is a
-       * secret, and seeing all of it is the point of asking.
-       */
       target: {
         bot: data.name,
         title: data.title,
-        roleDescription: data.roleDescription,
+        prompt: data.roleDescription,
         ...(data.model ? { model: data.model } : {}),
+        ...(warning ? { secretWarning: warning } : {}),
+        imSummary: imSummary({
+          verb: "新建",
+          name: data.name,
+          title: data.title,
+          model: data.model ?? "部署默认",
+          prompt: data.roleDescription,
+          ...(warning ? { warning } : {}),
+        }),
+        [PREVIEW_VERBATIM]: [
+          "prompt",
+          "imSummary",
+          ...(warning ? ["secretWarning"] : []),
+        ],
       },
       refused: "No Bot was created",
     });
@@ -474,6 +634,8 @@ export function createBotFactory(options: {
              * creations racing on separate runs both took the pre-flight count, and without the
              * lock both would pass it and commit. The lock serializes them; the second one reads
              * the first's committed row and fails here instead, rolling its own pair of rows back.
+             * The hook runs before the profile row lands (see `AgentProfileStore.create`), so this
+             * `>=` reads the same count the pre-flight check did — rows already there, not plus one.
              */
             await executor.execute(
               sql`select pg_advisory_xact_lock(hashtextextended(${`chisabot:bot-factory:${from.actorId}`}, 0))`,
@@ -498,6 +660,20 @@ export function createBotFactory(options: {
           reason: "per_user_cap",
           target: data.name,
           message: `No Bot was created: this person already has the most Bot-made Bots this deployment allows (${caps.maxPerUser}).`,
+        });
+      }
+      /*
+       * A burst of creates for the same person still means only one holds the per-person lock; the
+       * others waited past lock_timeout and PostgreSQL cancelled them. That is a "try again", not
+       * a failure — audited like every refusal, so the trail shows the Bot was stopped politely
+       * rather than dying on a raw driver error.
+       */
+      if (isContentionError(error)) {
+        return refuse(from, {
+          reason: "busy",
+          target: data.name,
+          message:
+            "No Bot was created: too many creates for this person are running at once and the database could not fit this one in. Please wait a moment and try again.",
         });
       }
       throw error;
@@ -569,13 +745,52 @@ export function createBotFactory(options: {
       if (!verdict.ok) return { text: verdict.refusal, isError: true };
     }
 
+    /*
+     * Same rule as create: the prompt the card shows is the prompt that will run, byte-for-byte,
+     * so `prompt` (the new text when the edit touches it, the stored one when it does not),
+     * `previousPrompt` and `promptDiff` are all `previewVerbatim`. A secret-looking prompt earns a
+     * `secretWarning`, never a rewrite.
+     */
+    const promptChanging = data.roleDescription !== undefined;
+    const previewPrompt = data.roleDescription ?? target.roleDescription;
+    const warning = secretWarningFor(previewPrompt);
     const held = await gated({
       from,
       toolRef: `bot/${UPDATE_BOT_TOOL}`,
       effect: "update",
       scope: data.id,
       args: data,
-      target: { bot: data.id, name: target.name },
+      target: {
+        bot: data.id,
+        name: data.name ?? target.name,
+        title: data.title ?? target.title,
+        prompt: previewPrompt,
+        ...(promptChanging
+          ? {
+              previousPrompt: target.roleDescription,
+              promptDiff: lineDiff(
+                target.roleDescription,
+                data.roleDescription ?? "",
+              ),
+            }
+          : {}),
+        ...(data.model ? { model: data.model } : {}),
+        ...(warning ? { secretWarning: warning } : {}),
+        imSummary: imSummary({
+          verb: "更新",
+          name: data.name ?? target.name,
+          title: data.title ?? target.title,
+          model: data.model ?? "保持不变",
+          prompt: previewPrompt,
+          ...(warning ? { warning } : {}),
+        }),
+        [PREVIEW_VERBATIM]: [
+          "prompt",
+          "imSummary",
+          ...(promptChanging ? ["previousPrompt", "promptDiff"] : []),
+          ...(warning ? ["secretWarning"] : []),
+        ],
+      },
       refused: "Nothing was changed",
     });
     if (held) return held;

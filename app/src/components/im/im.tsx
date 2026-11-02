@@ -46,7 +46,9 @@ import {
   agoText,
   createImConnection,
   deleteImConnection,
+  type ImConnectionDraft,
   type ImConnectionInput,
+  imConnectionInput,
   type ImQrStartResult,
   type ImTestResult,
   imKeys,
@@ -380,18 +382,7 @@ function PlatformQrLogin({
   );
 }
 
-type FormState = {
-  name: string;
-  agentId: string;
-  config: Record<string, string>;
-  secrets: Record<string, string>;
-  allowUsers: string;
-  ownerUsers: string;
-  allowDevices: boolean;
-  allowPrivate: boolean;
-  qrLogin?: string;
-  qrAccount?: string | null;
-};
+type FormState = ImConnectionDraft & { qrAccount?: string | null };
 
 function initialForm(info: ImPlatformInfo, connection?: ImConnectionView, defaultBot?: string): FormState {
   const config: Record<string, string> = {};
@@ -405,6 +396,7 @@ function initialForm(info: ImPlatformInfo, connection?: ImConnectionView, defaul
     ownerUsers: (connection?.ownerUsers ?? []).join("\n"),
     allowDevices: connection?.allowDevices ?? false,
     allowPrivate: connection?.allowPrivate ?? false,
+    allowPrivateTouched: false,
   };
 }
 
@@ -446,20 +438,7 @@ export function ConnectionDialog({
 
   const input = (): ImConnectionInput | null => {
     if (!form || !platform) return null;
-    const secrets = Object.fromEntries(Object.entries(form.secrets).filter(([, value]) => value.trim()));
-    return {
-      platform,
-      name: form.name,
-      agentId: form.agentId,
-      config: form.config,
-      secrets,
-      allowUsers: form.allowUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
-      ownerUsers: form.ownerUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
-      allowDevices: form.allowDevices,
-      // 只有管理员发的「允许内网地址」服务器才认，非管理员不往请求里放。
-      ...(isAdmin ? { allowPrivate: form.allowPrivate } : {}),
-      ...(form.qrLogin ? { qrLogin: form.qrLogin, ...(platform === "weixin" ? { weixinLogin: form.qrLogin } : {}) } : {}),
-    };
+    return imConnectionInput(form, platform, isAdmin);
   };
 
   const save = useAsyncAction(async () => {
@@ -667,7 +646,7 @@ export function ConnectionDialog({
                         {"打开后，这个连接里管理员配置的协议端地址可以指向本机 / 内网 / Docker 容器（例如 NapCat 就在同一台机器上），云元数据地址照样拦截；用户和模型给的网址永远不放行。协议端在内网又开不了这个开关时，请用反向 WebSocket。"}
                       </div>
                     </div>
-                    <Switch aria-label="允许内网地址" checked={form.allowPrivate} onCheckedChange={(next) => setForm({ ...form, allowPrivate: next })} />
+                    <Switch aria-label="允许内网地址" checked={form.allowPrivate} onCheckedChange={(next) => setForm({ ...form, allowPrivate: next, allowPrivateTouched: true })} />
                   </div>
                 ) : null}
               </details>

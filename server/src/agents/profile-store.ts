@@ -101,7 +101,9 @@ export type AgentProfileStore = {
     /**
      * Work that must commit or roll back with the creation: the factory's cap re-check and the
      * grants a Bot-made coworker is born holding. Runs inside the creation transaction, after the
-     * profile row exists, and is handed the new agent's id. A throw rolls the whole creation back.
+     * `agents` row exists (the grants' foreign key needs it) and before the `agent_profiles` row
+     * does (a per-person recount must not count the row being created), and is handed the new
+     * agent's id. A throw rolls the whole creation back.
      */
     within?: (
       executor: ProfileWriteExecutor,
@@ -558,6 +560,15 @@ export function createAgentProfileStore(
        */
       throw new ManagedAgentUnavailableError();
     }
+    /*
+     * The caller's same-transaction work — cap re-checks, the grants a Bot-made coworker is born
+     * holding — runs between the two rows. The `agents` row must exist for the grants' foreign
+     * key; the profile row must NOT, so a per-person recount under the advisory lock counts only
+     * the coworkers already there — the same predicate the caller's pre-flight check evaluated,
+     * rather than that count plus this row. A throw here rolls the `agents` row back with it.
+     */
+    await within?.(transaction, id);
+
     await transaction.insert(agentProfiles).values({
       agentId: id,
       ownerUserId: actor.id,
@@ -572,12 +583,6 @@ export function createAgentProfileStore(
           }
         : {}),
     });
-
-    /*
-     * The caller's same-transaction work — cap re-checks, the grants a Bot-made coworker is born
-     * holding — before the profile is read back. A throw here rolls back both rows above.
-     */
-    await within?.(transaction, id);
 
     const profile = await findAccessibleProfile(transaction, actor, id);
     if (!profile) throw new AgentNotFoundError(id);

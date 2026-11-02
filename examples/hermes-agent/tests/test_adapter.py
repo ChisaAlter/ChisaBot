@@ -6,9 +6,11 @@ import contextvars
 import copy
 import importlib
 import json
+import os
 from pathlib import Path
 import sys
 import threading
+import time
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -681,6 +683,266 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
                              {"from": "magpie-model", "to": "backup-a", "reason": "quota"})
 
+    def breaker_turn(self, down):
+        """A fake Hermes turn: call the live model; on failure walk the fallback chain like upstream."""
+        calls = []
+
+        class Unavailable(Exception):
+            status_code = 503
+
+        def provider(model):
+            calls.append(model)
+            if down.get(model):
+                raise Unavailable("Error code: 503 - service unavailable")
+            return f"answer from {model}"
+
+        def walk(agent, reason=None, reset_at=None):
+            # Hermes' chain walk: the next entry built by _init_fallback_chain becomes the live model.
+            if agent._fallback_index >= len(agent._fallback_chain):
+                return False
+            agent.model = agent._fallback_chain[agent._fallback_index]["model"]
+            agent._fallback_index += 1
+            return True
+
+        def hermes_turn(agent, user, history):
+            for _ in range(3):
+                try:
+                    text = provider(agent.model)
+                    break
+                except Unavailable:
+                    if not agent._try_activate_fallback(reason=SimpleNamespace(value="server_error")):
+                        raise
+            return {"messages": history + [{"role": "user", "content": user}, {"role": "assistant", "content": text}],
+                    "final_response": text}
+        return calls, walk, hermes_turn
+
+    async def test_breaker_skips_cooled_primary_until_a_probe_recovers_it(self):
+        # QA1102-06: a dead primary must not cost the full upstream timeout every turn.
+        import chisabot_acp
+        chains = []
+        down = {"magpie-model": True}
+        calls, walk, hermes_turn = self.breaker_turn(down)
+        clock = [1_000.0]
+        original_now = chisabot_acp._now
+        chisabot_acp._now = lambda: clock[0]
+        self.addCleanup(lambda: setattr(chisabot_acp, "_now", original_now))
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        with patch.dict(sys.modules, self.model_control_modules(chains)):
+            await self.adapter.initialize()
+            state = await self.new()
+            agent = state.agent
+            agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(agent, reason, reset_at)
+            agent.run_hook = hermes_turn
+
+            def raw(run_id):
+                data = payload()
+                data["scope"]["runId"] = run_id
+                data["model"]["fallbacks"] = ["backup-a", "backup-b"]
+                return data
+
+            response = await self.prompt(state, raw("run-1"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                             {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+            # Inside the cooldown the primary is never dialed again, and the skip is reported.
+            for run_id in ("run-2", "run-3"):
+                calls.clear()
+                response = await self.prompt(state, raw(run_id))
+                self.assertEqual(calls, ["backup-a"])
+                self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                                 {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+            # Half-open probe after the cooldown: one primary call, still dead → re-open longer.
+            calls.clear()
+            clock[0] += 61
+            response = await self.prompt(state, raw("run-4"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            # The doubled cooldown still gates 61s later.
+            calls.clear()
+            clock[0] += 61
+            response = await self.prompt(state, raw("run-5"))
+            self.assertEqual(calls, ["backup-a"])
+            # The probe after that succeeds → breaker closes → the next turn uses the primary.
+            down["magpie-model"] = False
+            calls.clear()
+            clock[0] += 121
+            response = await self.prompt(state, raw("run-6"))
+            self.assertEqual(calls, ["magpie-model"])
+            self.assertIsNone(response.field_meta)
+            calls.clear()
+            response = await self.prompt(state, raw("run-7"))
+            self.assertEqual(calls, ["magpie-model"])
+            self.assertIsNone(response.field_meta)
+
+    async def test_breaker_is_shared_across_sessions(self):
+        # The adapter process serves every actor/bot: a dead primary is skipped everywhere.
+        import chisabot_acp
+        chains = []
+        down = {"magpie-model": True}
+        calls, walk, hermes_turn = self.breaker_turn(down)
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        with patch.dict(sys.modules, self.model_control_modules(chains)):
+            await self.adapter.initialize()
+            state = await self.new()
+            state.agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(state.agent, reason, reset_at)
+            state.agent.run_hook = hermes_turn
+            raw = payload()
+            raw["model"]["fallbacks"] = ["backup-a"]
+            await self.prompt(state, raw)
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            # A different session (another user/bot) never pays for the primary either.
+            calls.clear()
+            other = await self.new()
+            other.agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(other.agent, reason, reset_at)
+            other.agent.run_hook = hermes_turn
+            raw2 = payload()
+            raw2["model"]["fallbacks"] = ["backup-a"]
+            response = await self.prompt(other, raw2)
+            self.assertEqual(calls, ["backup-a"])
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"]["to"], "backup-a")
+
+    def hanging_turn(self, down, calls):
+        """A fake Hermes turn: dead models hang until the adapter's deadline interrupts them."""
+        def hermes_turn(agent, user, history):
+            calls.append(agent.model)
+            if down.get(agent.model):
+                while not agent.interrupted:
+                    time.sleep(0.005)
+                return {"messages": history, "interrupted": True}
+            text = f"answer from {agent.model}"
+            agent.stream_delta_callback(text)
+            return {"messages": history + [{"role": "user", "content": user}, {"role": "assistant", "content": text}],
+                    "final_response": text}
+        return hermes_turn
+
+    async def test_first_token_timeout_interrupts_and_retries_on_the_backup(self):
+        # QA1102-06: a hung primary is interrupted at the first-token deadline and the turn
+        # retries on a fallback, instead of paying the full upstream call timeout.
+        import chisabot_acp
+        calls = []
+        down = {"magpie-model": True}
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        state.agent.run_hook = self.hanging_turn(down, calls)
+
+        def raw(run_id):
+            data = payload()
+            data["scope"]["runId"] = run_id
+            data["model"]["fallbacks"] = ["backup-a"]
+            return data
+
+        with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.05"}):
+            response = await self.prompt(state, raw("run-1"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            self.assertEqual(response.stop_reason, "end_turn")
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                             {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+            # The timeout opened the primary's breaker: the next turn dials the backup directly.
+            calls.clear()
+            response = await self.prompt(state, raw("run-2"))
+            self.assertEqual(calls, ["backup-a"])
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"]["to"], "backup-a")
+
+    async def test_deadline_abandons_a_request_that_ignores_the_interrupt(self):
+        # QA1102-06 r1：上游不理 request_hard_interrupt（阻塞读）时，整轮不能等满挂起时长——
+        # 到点放弃这次请求，让它在后台自己跑完；迟到的结果不得漏进这一轮。
+        import chisabot_acp
+        calls = []
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+
+        def hermes_turn(agent, user, history):
+            calls.append(agent.model)
+            if agent.model == "magpie-model":
+                time.sleep(2.0)  # 阻塞读：agent.interrupted 置位也不醒
+                return {"messages": history, "final_response": "late answer from hung primary"}
+            text = "answer from backup-a"
+            agent.stream_delta_callback(text)
+            return {"messages": history + [{"role": "user", "content": user},
+                                           {"role": "assistant", "content": text}],
+                    "final_response": text}
+
+        state.agent.run_hook = hermes_turn
+        raw = payload()
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.3"}):
+            t0 = time.monotonic()
+            response = await self.prompt(state, raw)
+            elapsed = time.monotonic() - t0
+        # 300ms 的期限 + 余量，绝不能接近 2s 的挂起时长。
+        self.assertLess(elapsed, 0.9)
+        self.assertEqual(calls, ["magpie-model", "backup-a"])
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                         {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+        # 等被放弃的那次在后台跑完：迟到的 final_response 不进历史、不进流出文本。
+        time.sleep(2.2)
+        self.assertNotIn("late answer", json.dumps(state.history, ensure_ascii=False))
+        texts = [e[2].content.text for e in self.events
+                 if e[0] == "acp" and e[2].session_update == "agent_message_chunk"]
+        self.assertFalse(any("late answer" in t for t in texts))
+
+    async def test_half_open_probe_is_bounded_by_the_first_token_deadline(self):
+        # After the cooldown the probe dials the primary once; a hung probe is interrupted at
+        # the first-token deadline (not the upstream timeout), re-opens and uses the backup.
+        import chisabot_acp
+        calls = []
+        down = {"magpie-model": True}
+        clock = [1_000.0]
+        original_now = chisabot_acp._now
+        chisabot_acp._now = lambda: clock[0]
+        self.addCleanup(lambda: setattr(chisabot_acp, "_now", original_now))
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        state.agent.run_hook = self.hanging_turn(down, calls)
+
+        def raw(run_id):
+            data = payload()
+            data["scope"]["runId"] = run_id
+            data["model"]["fallbacks"] = ["backup-a"]
+            return data
+
+        with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.05"}):
+            response = await self.prompt(state, raw("run-1"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            # Past the 60s cooldown the half-open probe still pays only the first-token deadline.
+            calls.clear()
+            clock[0] += 61
+            response = await self.prompt(state, raw("run-2"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"]["to"], "backup-a")
+            # Re-opened (doubled cooldown): the next turn skips the primary again.
+            calls.clear()
+            response = await self.prompt(state, raw("run-3"))
+            self.assertEqual(calls, ["backup-a"])
+
+    async def test_mid_stream_error_counts_a_failure_without_cooling_the_model(self):
+        # Output already produced, then the call dies: one consecutive failure is counted but
+        # the breaker does not open -- the error still propagates, no switch this turn.
+        import chisabot_acp
+        calls = []
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+
+        class Unavailable(Exception):
+            status_code = 503
+
+        def hook(agent, user, history):
+            calls.append(agent.model)
+            agent.stream_delta_callback("partial answer")
+            raise Unavailable("Error code: 503 - service unavailable")
+
+        state.agent.run_hook = hook
+        with self.assertRaises(RequestError) as error:
+            await self.prompt(state)
+        self.assertEqual(str(error.exception), "Hermes model call failed: service unavailable (HTTP 503)")
+        entry = chisabot_acp._MODEL_BREAKERS[("custom", "https://magpie.invalid/v1", "magpie-model")]
+        self.assertEqual(entry["failures"], 1)
+        self.assertLessEqual(entry["open_until"], chisabot_acp._now())
+        # No cooldown: the next turn dials the primary again.
+        with self.assertRaises(RequestError):
+            await self.prompt(state)
+        self.assertEqual(calls, ["magpie-model", "magpie-model"])
+
     async def test_hermes_compression_is_off_only_for_runs_the_host_already_compacted(self):
         state = await self.new()
         state.agent.compression_enabled = True
@@ -892,6 +1154,364 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         module = importlib.import_module("chisabot_acp")
         self.assertTrue(callable(module.configure_source))
         self.assertNotIn("run_agent", sys.modules)
+
+    async def test_400_rejected_retries_once_cleaned_on_primary_and_never_opens_breaker(self):
+        # QA1102-14：请求本身被主模型拒（400 invalid input）——清洗 + 压缩后用主模型重试
+        # 一次，不算模型故障、不进断路器，也不重试第三次。
+        import chisabot_acp
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        calls, sizes = [], []
+        class BadRequest(Exception):
+            status_code = 400
+        def hook(agent, user, history):
+            calls.append(agent.model)
+            sizes.append(len(history))
+            raise BadRequest("Invalid input")
+        state.agent.run_hook = hook
+        raw = payload()
+        raw["history"] = [row for i in range(80)
+                          for row in ({"role": "user", "content": f"q {i}"},
+                                      {"role": "assistant", "content": f"a {i}"})]
+        with self.assertRaises(RequestError) as error:
+            await self.prompt(state, raw)
+        self.assertEqual(str(error.exception), "Hermes model call failed: invalid_request (HTTP 400)")
+        # 主模型恰好两次（原始 + 清洗后一次重试），不是三次，也没换到备用模型。
+        self.assertEqual(calls, ["magpie-model", "magpie-model"])
+        self.assertLess(sizes[1], sizes[0])
+        # 下一轮照样先试主模型——断路器没有开。
+        calls.clear()
+        state.agent.run_hook = lambda agent, user, history: (calls.append(agent.model),
+            {"messages": history, "final_response": "ok"})[1]
+        raw2 = payload()
+        raw2["scope"]["runId"] = "run-2"
+        response = await self.prompt(state, raw2)
+        self.assertEqual(calls, ["magpie-model"])
+        self.assertEqual(response.stop_reason, "end_turn")
+
+    async def test_400_cleanup_retry_under_deadline_succeeds_without_breaker(self):
+        # QA1102-14 + QA1102-06：首字时限包着 execute()——被拒请求的清洗重试是一次新的
+        # 尝试，拿自己的时限窗口而不是吃被拒调用剩下的配额；400 本身永不进断路器。
+        import chisabot_acp
+        calls = []
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+
+        class BadRequest(Exception):
+            status_code = 400
+
+        def hook(agent, user, history):
+            calls.append(agent.model)
+            # 两次主模型调用各自快于时限，但加起来超出一个窗口：没有重新武装的话
+            # 第二次会在时限处被掐断、主模型被误开断路器并换到备用模型。
+            time.sleep(0.06)
+            if len(calls) == 1:
+                raise BadRequest("Invalid input")
+            agent.stream_delta_callback("answer")
+            return {"messages": history + [{"role": "user", "content": user},
+                                           {"role": "assistant", "content": "answer"}],
+                    "final_response": "answer"}
+
+        state.agent.run_hook = hook
+        raw = payload()
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.1"}):
+            response = await self.prompt(state, raw)
+        self.assertEqual(calls, ["magpie-model", "magpie-model"])
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertIsNone(response.field_meta)
+        self.assertNotIn(("custom", "https://magpie.invalid/v1", "magpie-model"),
+                         chisabot_acp._MODEL_BREAKERS)
+        # 下一轮仍先拨主模型——400 没有让断路器打开。
+        calls.clear()
+        state.agent.run_hook = lambda agent, user, history: (calls.append(agent.model),
+            {"messages": history, "final_response": "ok"})[1]
+        raw2 = payload()
+        raw2["scope"]["runId"] = "run-2"
+        response = await self.prompt(state, raw2)
+        self.assertEqual(calls, ["magpie-model"])
+        self.assertIsNone(response.field_meta)
+
+    async def test_rejected_switch_is_reported_but_does_not_cool_the_primary(self):
+        # QA1102-14：Hermes 因 400（context_overflow）换了模型——记录 + 上报原因，
+        # 但不冷却主模型，下一轮主模型照用。
+        import chisabot_acp
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        chains = []
+        with patch.dict(sys.modules, self.model_control_modules(chains)):
+            await self.adapter.initialize()
+            state = await self.new()
+            calls = []
+            def walk(agent, reason=None, reset_at=None):
+                if agent._fallback_index >= len(agent._fallback_chain):
+                    return False
+                agent.model = agent._fallback_chain[agent._fallback_index]["model"]
+                agent._fallback_index += 1
+                return True
+            state.agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(state.agent, reason, reset_at)
+            def hook(agent, user, history):
+                calls.append(agent.model)
+                if agent.model == "magpie-model":
+                    agent._try_activate_fallback(reason=SimpleNamespace(value="context_overflow"))
+                    calls.append(agent.model)
+                return {"messages": history + [{"role": "user", "content": user},
+                                               {"role": "assistant", "content": "ok"}], "final_response": "ok"}
+            state.agent.run_hook = hook
+            raw = payload()
+            raw["model"]["fallbacks"] = ["backup-a"]
+            response = await self.prompt(state, raw)
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                             {"from": "magpie-model", "to": "backup-a", "reason": "rejected"})
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            calls.clear()
+            state.agent.run_hook = lambda agent, user, history: (calls.append(agent.model),
+                {"messages": history, "final_response": "ok"})[1]
+            raw2 = payload()
+            raw2["scope"]["runId"] = "run-2"
+            raw2["model"]["fallbacks"] = ["backup-a"]
+            response = await self.prompt(state, raw2)
+            self.assertEqual(calls, ["magpie-model"])
+            self.assertIsNone(response.field_meta)
+
+    def rebuilding_agent_switch(self):
+        """QA1102-13 r1：和 QA 的 rebuilding fake 一样——换模型像真实 _make_agent 那样
+        重建 state.agent，但保留 run_hook / provider / base_url，让行为脚本继续生效。"""
+        server_mod = self.modules["acp_adapter.server"]
+
+        async def replacing(agent_self, model_id, session_id, **kwargs):
+            agent_self.switches.append(model_id)
+            target = agent_self.session_manager.get_session(session_id)
+            old = target.agent
+            fresh = FakeAgent()  # tools=[] / valid_tool_names=∅ / callbacks=None / system=None
+            fresh.run_hook = old.run_hook
+            fresh.provider, fresh.base_url = old.provider, old.base_url
+            fresh.model = model_id
+            target.agent = fresh
+            target.model = model_id
+            return Model()
+
+        return patch.object(server_mod.HermesACPAgent, "set_session_model", replacing)
+
+    async def test_breaker_skip_turn_rebinds_rebuilt_agent(self):
+        # QA1102-13 r1：断路器跳过主模型那一轮——备用模型那次请求也必须带工具和系统提示词，
+        # 哪怕 set_session_model 把整个 agent 换了一个对象。
+        import chisabot_acp
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        chisabot_acp.breaker_fail(("custom", "https://magpie.invalid/v1", "magpie-model"),
+                                "unavailable", chisabot_acp._now())
+        raw = payload()
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with self.rebuilding_agent_switch():
+            response = await self.prompt(state, raw)
+        live = state.agent
+        self.assertEqual(live.model, "backup-a")
+        self.assertEqual(len(live.inputs), 1)
+        inputs = live.inputs[0]
+        self.assertEqual([t["function"]["name"] for t in inputs["tools"]], ["device_list"])
+        self.assertEqual(inputs["system"], "Host identity")
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                         {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+
+    async def test_first_token_timeout_fallback_rebinds_rebuilt_agent(self):
+        # QA1102-13 r1：首 token 超时后同轮换备用——_retry_turn_model 也要把工具面 /
+        # 系统提示词 / 回调绑到重建后的活 agent 上（旧实现全部写进了被丢弃的旧对象）。
+        import chisabot_acp
+        calls = []
+        down = {"magpie-model": True}
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        state.agent.run_hook = self.hanging_turn(down, calls)
+        raw = payload()
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with self.rebuilding_agent_switch():
+            with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.3"}):
+                response = await self.prompt(state, raw)
+        self.assertEqual(calls, ["magpie-model", "backup-a"])
+        live = state.agent
+        self.assertEqual(live.model, "backup-a")
+        inputs = live.inputs[-1]
+        self.assertEqual([t["function"]["name"] for t in inputs["tools"]], ["device_list"])
+        self.assertEqual(inputs["system"], "Host identity")
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                         {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+        # 流式回调也接回了新 agent：备用那句回答是流出来的，不只靠末尾补发。
+        self.assertTrue(any(e[0] == "acp" and e[2].session_update == "agent_message_chunk"
+                            for e in self.events))
+
+    def replace_agent_on_switch(self):
+        """QA1102-13：原生换模型路径会重建 state.agent（_switch_model → _make_agent），
+        不是只改 model 字段。返回一个替换用的 set_session_model。"""
+        server_mod = self.modules["acp_adapter.server"]
+
+        async def replacing(agent_self, model_id, session_id, **kwargs):
+            agent_self.switches.append(model_id)
+            target = agent_self.session_manager.get_session(session_id)
+            fresh = FakeAgent()  # tools=[] / valid_tool_names=∅ / ephemeral_system_prompt=None
+            fresh.model = model_id
+            target.agent = fresh
+            target.model = model_id
+            return Model()
+
+        return patch.object(server_mod.HermesACPAgent, "set_session_model", replacing)
+
+    async def test_model_switch_rebuilds_agent_and_configure_lands_on_the_live_one(self):
+        # 4b323956 的回归：切换后 restrict / 工具 / 系统提示词写进了被丢弃的旧 agent。
+        state = await self.new()
+        old_agent = state.agent
+        with self.replace_agent_on_switch():
+            response = await self.prompt(state)
+        live = state.agent
+        self.assertIsNot(live, old_agent)
+        self.assertEqual(live.model, "magpie-model")
+        self.assertEqual(live.valid_tool_names, {"device_list"})
+        self.assertEqual([t["function"]["name"] for t in live.tools], ["device_list"])
+        self.assertEqual(live.inputs[0]["system"], "Host identity")
+        self.assertEqual(live.inputs[0]["tools"][0]["function"]["name"], "device_list")
+        self.assertIsNone(live.ephemeral_system_prompt)  # 轮末清掉，configure 每轮重设
+        self.assertFalse(old_agent.inputs)
+        self.assertEqual(response.stop_reason, "end_turn")
+        # 同一 agent 下一轮（不再切换）仍然拿到完整系统提示词与工具——每一轮都在配置。
+        raw = payload()
+        raw["scope"]["runId"] = "run-2"
+        await self.prompt(state, raw)
+        self.assertIs(state.agent, live)
+        self.assertEqual(live.inputs[1]["system"], "Host identity")
+        self.assertEqual(live.inputs[1]["tools"][0]["function"]["name"], "device_list")
+
+    async def test_live_agent_without_host_tools_fails_loud(self):
+        # 防御断言：config.tools 非空而活 agent 上没有任何可调工具 → ProtocolError。
+        state = await self.new()
+        server_mod = self.modules["acp_adapter.server"]
+
+        class DeafAgent(FakeAgent):
+            @property
+            def valid_tool_names(self):
+                return set()
+
+            @valid_tool_names.setter
+            def valid_tool_names(self, value):
+                pass
+
+        async def replacing(agent_self, model_id, session_id, **kwargs):
+            target = agent_self.session_manager.get_session(session_id)
+            fresh = DeafAgent()
+            fresh.model = model_id
+            target.agent = fresh
+            return Model()
+
+        with patch.object(server_mod.HermesACPAgent, "set_session_model", replacing):
+            with self.assertRaises(RequestError) as error:
+                await self.prompt(state)
+        self.assertEqual(error.exception.code, -32602)
+        self.assertFalse(state.agent.inputs)
+        self.assertFalse(any(e[0] == "http" for e in self.events))
+
+    async def test_promise_only_answer_gets_exactly_one_tool_step_nudge(self):
+        # QA1102-13：只承诺「我去查」却一个工具都没调 → 催一步；只催一步。
+        state = await self.new()
+        calls = []
+
+        def hook(agent, user, history):
+            calls.append(user)
+            if len(calls) > 1:
+                agent.tool_start_callback("call-9", "device_list", {"limit": 1})
+                token = self.call_id.set("call-9")
+                try:
+                    result = self.registry.get_entry("device_list").handler({"limit": 1})
+                finally:
+                    self.call_id.reset(token)
+                agent.tool_complete_callback("call-9", "device_list", {"limit": 1}, result)
+                return {"messages": history + [{"role": "user", "content": user},
+                                               {"role": "assistant", "content": "查到了"}], "final_response": "查到了"}
+            return {"messages": history + [{"role": "user", "content": user},
+                                           {"role": "assistant", "content": "我先去查一下再回答你"}],
+                    "final_response": "我先去查一下再回答你"}
+
+        state.agent.run_hook = hook
+        response = await self.prompt(state)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], "Current user")
+        self.assertIn("现在就调用工具", calls[1])
+        self.assertEqual(sum(e[0] == "http" for e in self.events), 1)
+        self.assertEqual(response.stop_reason, "end_turn")
+
+        calls.clear()
+        state.agent.run_hook = lambda agent, user, history: (calls.append(user),
+            {"messages": history, "final_response": "我再去查"})[1]
+        raw = payload()
+        raw["scope"]["runId"] = "run-2"
+        await self.prompt(state, raw)
+        self.assertEqual(len(calls), 2)  # 催过之后无论说什么都收尾，不无限续步。
+
+        calls.clear()
+
+        def with_tool(agent, user, history):
+            calls.append(user)
+            agent.tool_start_callback("call-7", "device_list", {})
+            token = self.call_id.set("call-7")
+            try:
+                result = self.registry.get_entry("device_list").handler({})
+            finally:
+                self.call_id.reset(token)
+            agent.tool_complete_callback("call-7", "device_list", {}, result)
+            return {"messages": history, "final_response": "我先去查一下再回答你"}
+
+        state.agent.run_hook = with_tool
+        raw["scope"]["runId"] = "run-3"
+        await self.prompt(state, raw)
+        self.assertEqual(len(calls), 1)  # 本轮已经调过工具：承诺话术不再催。
+
+    async def test_promise_guard_is_future_tense_only(self):
+        # QA1102-13 r1：「我下载好了」「我找到了」是已完成不是承诺；「我马上处理」才是。
+        state = await self.new()
+        calls = []
+        def answering(text):
+            return lambda agent, user, history: (calls.append(user),
+                {"messages": history, "final_response": text})[1]
+        for run_id, text, want_calls in (
+                ("run-1", "我下载好了", 1), ("run-2", "我找到了接入文档", 1),
+                ("run-3", "我马上处理", 2)):
+            calls.clear()
+            state.agent.run_hook = answering(text)
+            raw = payload()
+            raw["scope"]["runId"] = run_id
+            await self.prompt(state, raw)
+            self.assertEqual(len(calls), want_calls, text)
+        # 这一轮宿主没给工具：承诺话术也不催。
+        calls.clear()
+        state.agent.run_hook = answering("我马上处理")
+        raw = payload()
+        raw["scope"]["runId"] = "run-4"
+        raw["tools"] = []
+        await self.prompt(state, raw)
+        self.assertEqual(len(calls), 1)
+
+    async def test_fresh_session_first_turn_carries_tools_and_system_prompt(self):
+        # 新会话首轮就是一次模型切换：短对话请求里必须有 tools 和系统提示词。
+        state = await self.new()
+        with self.replace_agent_on_switch():
+            await self.prompt(state)
+        inputs = state.agent.inputs[0]
+        self.assertEqual(inputs["system"], "Host identity")
+        self.assertEqual([t["function"]["name"] for t in inputs["tools"]], ["device_list"])
+        self.assertEqual(inputs["history"], payload()["history"])
+        self.assertEqual(state.agent.valid_tool_names, {"device_list"})
+
+    async def test_consecutive_user_rows_merge_into_one(self):
+        # QA1102-13：失败轮次只留下连续 user 行（交替违规），发送时合并。
+        state = await self.new()
+        raw = payload()
+        raw["history"] = [{"role": "user", "content": "one"}, {"role": "user", "content": "two"},
+                          {"role": "assistant", "content": "answer"}, {"role": "user", "content": "three"}]
+        await self.prompt(state, raw)
+        history = state.agent.inputs[0]["history"]
+        self.assertEqual(history[0], {"role": "user", "content": "one\n\ntwo"})
+        self.assertEqual(history[1]["content"], "answer")
+        self.assertEqual(history[2]["content"], "three")
+        self.assertEqual(len(history), 3)
 
 
 if __name__ == "__main__":

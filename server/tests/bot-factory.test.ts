@@ -9,7 +9,7 @@ import { createCoordinationTools } from "../src/agents/handoff-tool";
 import type { AgentProfile } from "../src/agents/profile-types";
 import type { CoworkerResult, CoworkerService } from "../src/agents/service";
 import { createApprovedActionExecutor } from "../src/approvals/execute";
-import { approvalAction } from "../src/approvals/types";
+import { approvalAction, approvalPreview } from "../src/approvals/types";
 import type { AuditEventInput, AuditStore } from "../src/audit";
 
 const FROM: RunAssertion = {
@@ -75,6 +75,7 @@ function harness(
     catalogModels?: string[];
     catalogFails?: boolean;
     createResult?: CoworkerResult;
+    createError?: unknown;
     caps?: { maxDepth: number; maxPerUser: number };
   } = {},
 ) {
@@ -116,6 +117,7 @@ function harness(
   const coworker = {
     async createCoworker(actor, input, options) {
       creates.push({ actor, input, options });
+      if (over.createError) throw over.createError;
       // Run the caller's same-transaction hook the way the real store does: on an executor, with
       // the new id, before answering.
       await options?.within?.(
@@ -195,6 +197,7 @@ function harness(
     setModel: async (_actor, agentId, model) => {
       modelSets.push({ agentId, model });
     },
+    approvalsUrl: "https://app.test/approvals",
   });
 
   return {
@@ -266,12 +269,12 @@ describe("create_bot", () => {
         effect: "create",
         scope: "Helper",
         args: { ...CREATE_ARGS, model: "model-a" },
-        target: {
+        target: expect.objectContaining({
           bot: "Helper",
           title: "A helper",
-          roleDescription: "Helps with chores.",
+          prompt: "Helps with chores.",
           model: "model-a",
-        },
+        }),
       }),
     ]);
     expect(creates).toHaveLength(1);
@@ -352,6 +355,46 @@ describe("create_bot", () => {
       eventType: "bot.factory_refused",
       payload: { reason: "per_user_cap" },
     });
+  });
+
+  test("a lock timeout inside the creation transaction answers busy and is audited", async () => {
+    // drizzle wraps the driver's error: the SQLSTATE sits as `errno` on the cause chain.
+    const lockTimeout = Object.assign(
+      new Error("Failed query: select pg_advisory_xact_lock(...)"),
+      {
+        cause: Object.assign(
+          new Error("canceling statement due to lock timeout"),
+          { code: "ERR_POSTGRES_SERVER_ERROR", errno: "55P03" },
+        ),
+      },
+    );
+    const { factory, audit, creates } = harness({ createError: lockTimeout });
+    const result = await factory.call({
+      name: "create_bot",
+      args: CREATE_ARGS,
+      run: FROM,
+    });
+    expect(result?.isError).toBe(true);
+    expect(result?.text).toContain("try again");
+    expect(result?.text).not.toContain("lock timeout");
+    expect(creates).toHaveLength(1);
+    expect(audit).toEqual([
+      expect.objectContaining({
+        eventType: "bot.factory_refused",
+        payload: expect.objectContaining({
+          bot: FROM.botId,
+          reason: "busy",
+          target: "Helper",
+        }),
+      }),
+    ]);
+  });
+
+  test("a store error that is not contention still throws", async () => {
+    const { factory } = harness({ createError: new Error("disk exploded") });
+    await expect(
+      factory.call({ name: "create_bot", args: CREATE_ARGS, run: FROM }),
+    ).rejects.toThrow("disk exploded");
   });
 
   test.each([
@@ -587,5 +630,169 @@ describe("through the coordination channel", () => {
     const outcome = await execute(action);
     expect(String(outcome)).toContain("Created the Bot");
     expect(creates).toHaveLength(1);
+  });
+});
+
+describe("the approval preview the person decides on", () => {
+  const managed = {
+    id: "kid-1",
+    name: "Helper",
+    title: "A helper",
+    roleDescription: "Old instruction.",
+  };
+
+  test("create: the card's prompt is byte-identical to what gets persisted", async () => {
+    const { factory, gates, creates } = harness();
+    const prompt =
+      "Helps with chores.\nRemember: password=hunter2 and Bearer abc.def.ghi stay here.";
+    await factory.call({
+      name: "create_bot",
+      args: { ...CREATE_ARGS, roleDescription: prompt },
+      run: FROM,
+    });
+    const target = gates[0]?.target as Record<string, unknown>;
+    // What the card displays (after approvalPreview) is the same string the store writes — even
+    // though this prompt trips the secret detector, which warns rather than masking.
+    expect(creates[0]?.input).toMatchObject({ roleDescription: prompt });
+    expect(target.prompt).toBe(prompt);
+    expect(typeof target.secretWarning).toBe("string");
+    expect((approvalPreview(target) as Record<string, unknown>).prompt).toBe(
+      prompt,
+    );
+  });
+
+  test("update: the card shows the new prompt, the old one, and a line diff", async () => {
+    const { factory, gates, updates } = harness({ managed });
+    await factory.call({
+      name: "update_bot",
+      args: {
+        id: "kid-1",
+        roleDescription: "New instruction.\nSecond line.",
+      },
+      run: FROM,
+    });
+    const target = gates[0]?.target as Record<string, unknown>;
+    expect(updates[0]?.input).toMatchObject({
+      roleDescription: "New instruction.\nSecond line.",
+    });
+    expect(target.prompt).toBe("New instruction.\nSecond line.");
+    expect(target.previousPrompt).toBe("Old instruction.");
+    expect(target.promptDiff).toBe(
+      "- Old instruction.\n+ New instruction.\n+ Second line.",
+    );
+    expect((approvalPreview(target) as Record<string, unknown>).prompt).toBe(
+      "New instruction.\nSecond line.",
+    );
+    expect(
+      (approvalPreview(target) as Record<string, unknown>).promptDiff,
+    ).toBe("- Old instruction.\n+ New instruction.\n+ Second line.");
+  });
+
+  test("update: an unchanged prompt is still shown verbatim, with no diff", async () => {
+    const { factory, gates } = harness({ managed });
+    await factory.call({
+      name: "update_bot",
+      args: { id: "kid-1", model: "model-b" },
+      run: FROM,
+    });
+    const target = gates[0]?.target as Record<string, unknown>;
+    expect(target.prompt).toBe("Old instruction.");
+    expect(target.previousPrompt).toBeUndefined();
+    expect(target.promptDiff).toBeUndefined();
+  });
+
+  test("the IM summary carries name, model, the prompt's first ~300 chars and the web link", async () => {
+    const { factory, gates } = harness();
+    const prompt = `Start here. ${"x".repeat(400)}`;
+    await factory.call({
+      name: "create_bot",
+      args: { ...CREATE_ARGS, roleDescription: prompt, model: "model-a" },
+      run: FROM,
+    });
+    const target = gates[0]?.target as Record<string, unknown>;
+    const summary = target.imSummary as string;
+    expect(summary).toContain("Helper");
+    expect(summary).toContain("model-a");
+    expect(summary).toContain(prompt.slice(0, 300));
+    expect(summary).not.toContain(prompt.slice(0, 301));
+    expect(summary).toContain("https://app.test/approvals");
+
+    const { factory: updateFactory, gates: updateGates } = harness({
+      managed,
+    });
+    await updateFactory.call({
+      name: "update_bot",
+      args: { id: "kid-1", roleDescription: "New instruction." },
+      run: FROM,
+    });
+    const updateTarget = updateGates[0]?.target as Record<string, unknown>;
+    const updateSummary = updateTarget.imSummary as string;
+    expect(updateSummary).toContain("Helper");
+    expect(updateSummary).toContain("保持不变");
+    expect(updateSummary).toContain("New instruction.");
+    expect(updateSummary).toContain("https://app.test/approvals");
+  });
+
+  test.each([
+    ["an sk-… key", "Use sk-1234567890abcdefghij as the key."],
+    ["a GitHub token", "Token: ghp_abcdefghijklmnopqrstuvwx."],
+    [
+      "a GitHub PAT",
+      "github_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz0123456789.",
+    ],
+    ["a Slack token", "xoxb-1234567890-abcdefghijkl."],
+    ["an AWS key id", "AKIAIOSFODNN7EXAMPLE is the id."],
+    ["a Bearer token", "Send Bearer abcdefghijklmnop in the header."],
+    ["a password assignment", "password=hunter2"],
+    ["a 密码 assignment", "数据库密码： hunter2"],
+    [
+      "a private key block",
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----",
+    ],
+    ["a long hex key", "key = 0123456789abcdef0123456789abcdef"],
+  ])("warns about %s instead of masking it", async (_label, prompt) => {
+    const { factory, gates } = harness();
+    await factory.call({
+      name: "create_bot",
+      args: { ...CREATE_ARGS, roleDescription: prompt },
+      run: FROM,
+    });
+    const target = gates[0]?.target as Record<string, unknown>;
+    expect(typeof target.secretWarning).toBe("string");
+    expect(target.prompt).toBe(prompt);
+    // The card shows the warning and the untampered prompt; nothing reads "[private value]".
+    const preview = approvalPreview(target) as Record<string, unknown>;
+    expect(preview.prompt).toBe(prompt);
+    expect(preview.secretWarning).toBe(target.secretWarning);
+    const updateHarness = harness({ managed });
+    await updateHarness.factory.call({
+      name: "update_bot",
+      args: { id: "kid-1", roleDescription: prompt },
+      run: FROM,
+    });
+    const updateTarget = updateHarness.gates[0]?.target as Record<
+      string,
+      unknown
+    >;
+    expect(typeof updateTarget.secretWarning).toBe("string");
+    expect(updateTarget.imSummary).toContain("⚠️");
+  });
+
+  test.each([
+    ["a plain instruction", "You help with chores. Be brief and friendly."],
+    [
+      "a longer ordinary prompt",
+      "Answer in Chinese. Summarise what the person asked, then do it. If unsure, ask.",
+    ],
+  ])("does not warn about %s", async (_label, prompt) => {
+    const { factory, gates } = harness();
+    await factory.call({
+      name: "create_bot",
+      args: { ...CREATE_ARGS, roleDescription: prompt },
+      run: FROM,
+    });
+    const target = gates[0]?.target as Record<string, unknown>;
+    expect(target.secretWarning).toBeUndefined();
+    expect(target.imSummary).not.toContain("⚠️");
   });
 });
