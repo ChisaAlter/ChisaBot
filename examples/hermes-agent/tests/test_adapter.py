@@ -1150,6 +1150,49 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["magpie-model"])
         self.assertEqual(response.stop_reason, "end_turn")
 
+    async def test_400_cleanup_retry_under_deadline_succeeds_without_breaker(self):
+        # QA1102-14 + QA1102-06：首字时限包着 execute()——被拒请求的清洗重试是一次新的
+        # 尝试，拿自己的时限窗口而不是吃被拒调用剩下的配额；400 本身永不进断路器。
+        import chisabot_acp
+        calls = []
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+
+        class BadRequest(Exception):
+            status_code = 400
+
+        def hook(agent, user, history):
+            calls.append(agent.model)
+            # 两次主模型调用各自快于时限，但加起来超出一个窗口：没有重新武装的话
+            # 第二次会在时限处被掐断、主模型被误开断路器并换到备用模型。
+            time.sleep(0.06)
+            if len(calls) == 1:
+                raise BadRequest("Invalid input")
+            agent.stream_delta_callback("answer")
+            return {"messages": history + [{"role": "user", "content": user},
+                                           {"role": "assistant", "content": "answer"}],
+                    "final_response": "answer"}
+
+        state.agent.run_hook = hook
+        raw = payload()
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.1"}):
+            response = await self.prompt(state, raw)
+        self.assertEqual(calls, ["magpie-model", "magpie-model"])
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertIsNone(response.field_meta)
+        self.assertNotIn(("custom", "https://magpie.invalid/v1", "magpie-model"),
+                         chisabot_acp._MODEL_BREAKERS)
+        # 下一轮仍先拨主模型——400 没有让断路器打开。
+        calls.clear()
+        state.agent.run_hook = lambda agent, user, history: (calls.append(agent.model),
+            {"messages": history, "final_response": "ok"})[1]
+        raw2 = payload()
+        raw2["scope"]["runId"] = "run-2"
+        response = await self.prompt(state, raw2)
+        self.assertEqual(calls, ["magpie-model"])
+        self.assertIsNone(response.field_meta)
+
     async def test_rejected_switch_is_reported_but_does_not_cool_the_primary(self):
         # QA1102-14：Hermes 因 400（context_overflow）换了模型——记录 + 上报原因，
         # 但不冷却主模型，下一轮主模型照用。
