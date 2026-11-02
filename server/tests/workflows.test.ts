@@ -29,9 +29,9 @@ const base = {
 } as const;
 
 describe("presets", () => {
-  test("all four presets parse and round-trip", () => {
+  test("all presets parse and round-trip", () => {
     const presets = loadPresets();
-    expect(presets.map((p) => p.definition.slug)).toEqual(["research-report", "code-review", "daily-brief", "web-to-panel"]);
+    expect(presets.map((p) => p.definition.slug)).toEqual(["research-report", "code-review", "daily-brief", "web-to-panel", "pstack-adversarial-review"]);
     for (const preset of presets) {
       expect(workflowProblems(preset.definition)).toEqual([]);
       const again = parseWorkflowMarkdown(serializeWorkflowMarkdown(preset.definition));
