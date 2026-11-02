@@ -28,6 +28,9 @@ test("saving a model blocks click and Enter sends while retaining the draft", as
   const props = { initialValue: "keep these words", onSubmit: () => { sent += 1; } };
   const view = render(<Composer compact {...props} sendBlocked modelControl={<span>model picker</span>} />);
   const editor = view.container.querySelector("[contenteditable]") as HTMLElement;
+  // 日常收起态只留「+ · 输入区 · 下箭头 · 发送」；模型控件在展开后的工具栏里。
+  const expand = view.queryByRole("button", { name: "展开输入框选项" });
+  if (expand) fireEvent.click(expand);
   expect(view.getByText("model picker")).toBeTruthy();
   expect((view.getByLabelText("发送消息") as HTMLButtonElement).disabled).toBe(true);
   expect(editor.getAttribute("contenteditable")).toBe("true");

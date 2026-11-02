@@ -67,6 +67,9 @@ for (const variant of ["compact", "default"] as const) {
             }}
           />,
         );
+        // 日常收起的 compact 输入框只有「+ · 输入区 · 下箭头 · 发送」，先展开才有「语音输入」。
+        const expand = view.queryByRole("button", { name: "展开输入框选项" });
+        if (expand) fireEvent.click(expand);
         fireEvent.click(view.getByRole("button", { name: "语音输入" }));
         await waitFor(() =>
           expect(view.getByText("正在监听")).toBeDefined(),

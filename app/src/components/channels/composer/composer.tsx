@@ -5,6 +5,8 @@ import {
 } from "@copilotkit/react-core/v2";
 import {
   IconArrowUp,
+  IconChevronDown,
+  IconChevronUp,
   IconPlayerStopFilled,
   IconPlus,
   IconSparkles,
@@ -154,6 +156,20 @@ const MAX_HEIGHT_PX = 220;
  */
 const COMPACT_MIN_HEIGHT_PX = 19;
 const COMPACT_MAX_HEIGHT_PX = 200;
+/** 收起成横条时编辑器只留一行高（15px 字 × 1.35 行高 ≈ 20px 行盒）。 */
+const PILL_MIN_HEIGHT_PX = 20;
+/**
+ * compact 输入框的「日常收起」是一个全局偏好而不是每段对话的状态：展开过一次，换频道、刷新都
+ * 还是展开的，直到亲手点收起。测试里 happy-dom 也有 localStorage；没有就当收起。
+ */
+const COMPOSER_EXPANDED_KEY = "chisabot.composer-expanded";
+function readComposerExpanded(): boolean {
+  try {
+    return window.localStorage.getItem(COMPOSER_EXPANDED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 export type ComposerProps = {
   className?: string;
@@ -425,6 +441,19 @@ function ComposerImpl({
   }, [draftKey, value]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitInFlight = useRef(false);
+  /**
+   * 日常收起的横条 ⇄ 完整工具栏（只对 compact 分支生效；hero 输入框没有收起态）。
+   * 状态是全局偏好：一次展开对所有 compact 输入框生效、跨刷新保留。
+   */
+  const [expanded, setExpandedState] = useState(readComposerExpanded);
+  const setExpanded = useCallback((next: boolean) => {
+    setExpandedState(next);
+    try {
+      window.localStorage.setItem(COMPOSER_EXPANDED_KEY, next ? "1" : "0");
+    } catch {
+      /* 存储不可用时只影响本次挂载，不挡切换。 */
+    }
+  }, []);
   const promptAreaRef = useRef<PromptAreaHandle>(null);
   const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(
     null,
@@ -2161,19 +2190,148 @@ function ComposerImpl({
   ) : null;
 
   if (compact) {
+    /*
+     * 「+」在收起横条与展开工具栏里是同一颗按钮，抽出来两态共用：有频道就能收文件，没有就只留
+     * 一颗说清原因的灰按钮。
+     */
+    const attachButton =
+      attachmentsEnabled || handsOff ? (
+        <Button
+          aria-label={"附加文件"}
+          className="glass-composer-icon"
+          // Disabled with the conversation, but still labelled: the message is what is gone.
+          disabled={disabled}
+          onClick={openFilePicker}
+          size="icon"
+          type="button"
+          variant="ghost"
+        >
+          <IconPlus className="size-[18px]" />
+        </Button>
+      ) : (
+        <Button
+          aria-label={"更多消息选项不可用"}
+          className="glass-composer-icon disabled:opacity-40"
+          disabled
+          size="icon"
+          type="button"
+          variant="ghost"
+        >
+          <IconPlus className="size-[18px]" />
+        </Button>
+      );
+    /**
+     * 发送键左边那颗切换横条 ⇄ 工具栏的箭头：收起时是下箭头（展开），展开时原位变上箭头（收起）。
+     * 对话死掉也只收发送，不收这颗开关。
+     */
+    const expandToggle = (
+      <Button
+        aria-label={expanded ? "收起输入框选项" : "展开输入框选项"}
+        className="glass-composer-icon shrink-0"
+        data-testid={expanded ? "composer-collapse" : "composer-expand"}
+        onClick={() => setExpanded(!expanded)}
+        size="icon"
+        title={expanded ? "收起输入框选项" : "展开输入框选项"}
+        type="button"
+        variant="ghost"
+      >
+        {expanded ? (
+          <IconChevronUp className="size-[18px]" />
+        ) : (
+          <IconChevronDown className="size-[18px]" />
+        )}
+      </Button>
+    );
+
+    /*
+     * THE WRAPPER EXISTS TO HOLD `containerRef`, AND HOLDING IT IS NOT OPTIONAL. The ref is the
+     * boundary our own `document` paste listener asks about — it claims a paste only when the
+     * event's target is inside this element — so a branch that never lands the ref has paste
+     * dead entirely rather than merely unstyled: every paste into it reads as somebody else's.
+     * The ref is typed for a `div`, which is why it cannot simply go on the form.
+     *
+     * IT IS ALSO A COLUMN NOW, so the refusals can sit ABOVE the composer. Below, they pushed the
+     * box the person is reading down the screen as each one arrived, and on the compact composer
+     * that box is already pinned to the bottom of the pane — so the reasons appeared in the gap
+     * under it, furthest from the drop that caused them.
+     */
+    if (!expanded) {
+      return (
+        <div className="flex flex-col" ref={containerRef} {...dropZone}>
+          <RejectedFiles onDismiss={dismissRejections} rejected={rejected} />
+          {tooManyStagedNotice}
+          <form
+            aria-busy={isBusy}
+            data-drag-over={canAttach && dragOver ? "true" : undefined}
+            onKeyDown={handleEscapeStop}
+            /*
+             * `glass-composer-pill` 把框收成两头半圆的横条（styles.css）：附件列、引用条仍在
+             * 编辑区上方排成一列，只是日常只剩「+ · 输入区 · 下箭头 · 发送」一行。
+             */
+            className={cn(
+              "glass-composer glass-composer-pill flex flex-col",
+              className,
+            )}
+            ref={presenceRef("has-composer")}
+            onSubmit={handleFormSubmit}
+          >
+            <DictationSurface dictation={dictation} canSend={canSendRecording}>
+              {filePicker}
+              <AttachmentStrip
+                failed={failedTiles}
+                files={files}
+                images={images}
+                onDismissFailed={dismissFailedUpload}
+                onRemove={discardAttachment}
+                onRetry={retryUpload}
+                progress={progressStore}
+              />
+              {replyQuoteBar}
+              {/*
+               * 横条里唯一的一行：编辑器 flex-1 把「+」和右边的箭头、发送键顶到两头；内容多了
+               * 照样长高（maxHeight 同展开态），长出圆角胶囊形。
+               */}
+              <div className="glass-composer-bar">
+                {attachButton}
+                <PromptArea
+                  aria-label={"消息"}
+                  /* autoGrow 关闭的原因同展开态（见下方展开的 PromptArea 上的长注）。 */
+                  autoGrow={false}
+                  className={cn(
+                    "glass-composer-editor min-w-0 flex-1 border-0 bg-transparent p-0 text-sm shadow-none",
+                    editorClassName,
+                  )}
+                  disabled={disabled}
+                  maxHeight={COMPACT_MAX_HEIGHT_PX}
+                  minHeight={PILL_MIN_HEIGHT_PX}
+                  onChange={handleChange}
+                  onImagePaste={
+                    canAttach
+                      ? stagePastedImage
+                      : handsOff
+                        ? handOffPastedImage
+                        : undefined
+                  }
+                  onRawPaste={handleRawPaste}
+                  onSubmit={submitDraft}
+                  submitOnEnter={!coarsePointer}
+                  placeholder={composing ? "" : "输入消息…"}
+                  ref={promptAreaRef}
+                  triggers={triggers}
+                  value={value}
+                />
+                {/* 上传中发送键变灰的那句解释（M4-2），收起态一样要有——它不是按钮。 */}
+                {uploadHint}
+                {expandToggle}
+                {primaryAction}
+              </div>
+            </DictationSurface>
+          </form>
+        </div>
+      );
+    }
+
     return (
-      /*
-       * THE WRAPPER EXISTS TO HOLD `containerRef`, AND HOLDING IT IS NOT OPTIONAL. The ref is the
-       * boundary our own `document` paste listener asks about — it claims a paste only when the
-       * event's target is inside this element — so a branch that never lands the ref has paste
-       * dead entirely rather than merely unstyled: every paste into it reads as somebody else's.
-       * The ref is typed for a `div`, which is why it cannot simply go on the form.
-       *
-       * IT IS ALSO A COLUMN NOW, so the refusals can sit ABOVE the composer. Below, they pushed the
-       * box the person is reading down the screen as each one arrived, and on the compact composer
-       * that box is already pinned to the bottom of the pane — so the reasons appeared in the gap
-       * under it, furthest from the drop that caused them.
-       */
       <div className="flex flex-col" ref={containerRef} {...dropZone}>
         <RejectedFiles onDismiss={dismissRejections} rejected={rejected} />
         {tooManyStagedNotice}
@@ -2244,31 +2402,7 @@ function ComposerImpl({
             {/* One toolbar inside the frame: only attach on the left; model pill, context ring and send on the right (DESIGN.md §25). */}
             <div className="glass-composer-toolbar">
               <div className="flex min-w-0 items-center gap-1.5">
-                {attachmentsEnabled || handsOff ? (
-                  <Button
-                    aria-label={"附加文件"}
-                    className="glass-composer-icon"
-                    // Disabled with the conversation, but still labelled: the message is what is gone.
-                    disabled={disabled}
-                    onClick={openFilePicker}
-                    size="icon"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <IconPlus className="size-[18px]" />
-                  </Button>
-                ) : (
-                  <Button
-                    aria-label={"更多消息选项不可用"}
-                    className="glass-composer-icon disabled:opacity-40"
-                    disabled
-                    size="icon"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <IconPlus className="size-[18px]" />
-                  </Button>
-                )}
+                {attachButton}
                 {leadingControl}
                 <Button
                   aria-label={"助理快捷指令与随手问 (Alt+Space)"}
@@ -2295,6 +2429,7 @@ function ComposerImpl({
                 {contextControl}
                 <DictationButton dictation={dictation} disabled={disabled} />
                 {uploadHint}
+                {expandToggle}
                 {primaryAction}
               </div>
             </div>

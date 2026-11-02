@@ -1636,6 +1636,13 @@ html[data-sky-ease] body::before {
   overflow-y: auto !important;
   transition: none !important;
 }
+/*
+ * 光标高度跟着行盒走：1.6 行高时 15px 的字立着 24px 的光标，高出快一半。compact 编辑器收紧到
+ * 1.35（≈20px 行盒），光标只比文本长一些；hero 输入框不动。
+ */
+.glass-composer .glass-composer-editor .prompt-area-editor {
+  line-height: 1.35;
+}
 .glass-composer [data-placeholder]::before,
 .glass-composer .is-empty::before,
 .glass-composer textarea::placeholder {
@@ -1648,6 +1655,18 @@ html[data-sky-ease] body::before {
   gap: 8px;
   min-width: 0;
   padding-top: 2px;
+}
+/* 「日常收起」态：整个框收成两头半圆的横条，只剩「+ · 输入区 · 下箭头 · 发送」一行。 */
+.glass-composer.glass-composer-pill {
+  border-radius: 999px;
+  gap: 4px;
+  padding: 4px 6px 4px 8px;
+}
+.glass-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 /* A file is being dragged over a composer that will take it (audit M4-6). Outline, not a ring:
  * `.glass-composer` owns its box-shadow, and a ring would replace it. */
@@ -1675,10 +1694,12 @@ html[data-sky-ease] body::before {
   transform: translate(-50%, -50%);
 }
 @media (pointer: coarse) {
-  .glass-composer-toolbar button {
+  .glass-composer-toolbar button,
+  .glass-composer-bar button {
     position: relative;
   }
-  .glass-composer-toolbar button::after {
+  .glass-composer-toolbar button::after,
+  .glass-composer-bar button::after {
     content: "";
     position: absolute;
     top: 50%;
