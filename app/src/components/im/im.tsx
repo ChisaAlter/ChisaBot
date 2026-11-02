@@ -41,6 +41,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { agentListQueryOptions } from "@/lib/agents/queries";
+import { currentUserQueryOptions } from "@/lib/auth/queries";
 import {
   agoText,
   createImConnection,
@@ -178,7 +179,15 @@ export function ConnectionRow({ connection, botName, onEdit, onLogs }: { connect
                 )}
                 {connection.allowUsers.length ? <span className="device-cap-chip"><T>{`白名单 ${connection.allowUsers.length} 人`}</T></span> : null}
                 {connection.allowDevices ? <span className="device-cap-chip is-ask"><T>{"可用电脑和设备"}</T></span> : null}
+                {connection.allowPrivate ? <span className="device-cap-chip is-ask"><T>{"允许内网地址"}</T></span> : null}
               </span>
+              {!connection.ownerUsers.length ? (
+                <span className="im-row-warn">
+                  {connection.allowUsers.length
+                    ? "未绑定主人：白名单里的人能聊天，但没人能在 IM 里审批。在平台里给机器人发 /id 拿到你的 id，编辑连接填到「主人」里。"
+                    : "未绑定主人：机器人不会回复任何人。在平台里给机器人发 /id 拿到你的 id，编辑连接填到「主人」里。"}
+                </span>
+              ) : null}
               {connection.enabled && connection.status === "error" && connection.statusDetail ? (
                 <span className="im-row-error">{connection.statusDetail}</span>
               ) : null}
@@ -379,6 +388,7 @@ type FormState = {
   allowUsers: string;
   ownerUsers: string;
   allowDevices: boolean;
+  allowPrivate: boolean;
   qrLogin?: string;
   qrAccount?: string | null;
 };
@@ -394,6 +404,7 @@ function initialForm(info: ImPlatformInfo, connection?: ImConnectionView, defaul
     allowUsers: (connection?.allowUsers ?? []).join("\n"),
     ownerUsers: (connection?.ownerUsers ?? []).join("\n"),
     allowDevices: connection?.allowDevices ?? false,
+    allowPrivate: connection?.allowPrivate ?? false,
   };
 }
 
@@ -411,6 +422,8 @@ export function ConnectionDialog({
 }) {
   const queryClient = useQueryClient();
   const bots = useQuery({ ...agentListQueryOptions(), enabled: open });
+  const me = useQuery(currentUserQueryOptions());
+  const isAdmin = me.data?.role === "admin";
   const roster = useMemo(() => (bots.data ?? []), [bots.data]);
   const [platform, setPlatform] = useState<ImPlatform | null>(connection?.platform ?? initialPlatform ?? null);
   const info = platform ? imPlatform(platform) : undefined;
@@ -441,6 +454,8 @@ export function ConnectionDialog({
       allowUsers: form.allowUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
       ownerUsers: form.ownerUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
       allowDevices: form.allowDevices,
+      // 只有管理员发的「允许内网地址」服务器才认，非管理员不往请求里放。
+      ...(isAdmin ? { allowPrivate: form.allowPrivate } : {}),
       ...(form.qrLogin ? { qrLogin: form.qrLogin, ...(platform === "weixin" ? { weixinLogin: form.qrLogin } : {}) } : {}),
     };
   };
@@ -642,6 +657,17 @@ export function ConnectionDialog({
                   </div>
                   <Switch aria-label="允许使用电脑和设备" checked={form.allowDevices} onCheckedChange={(next) => setForm({ ...form, allowDevices: next })} />
                 </div>
+                {isAdmin ? (
+                  <div className="im-switch-row">
+                    <div className="min-w-0 flex-1">
+                      <div className="im-field-l">{"允许内网地址（仅管理员可改）"}</div>
+                      <div className="im-field-h">
+                        {"打开后，这个连接里管理员配置的协议端地址可以指向本机 / 内网 / Docker 容器（例如 NapCat 就在同一台机器上），云元数据地址照样拦截；用户和模型给的网址永远不放行。协议端在内网又开不了这个开关时，请用反向 WebSocket。"}
+                      </div>
+                    </div>
+                    <Switch aria-label="允许内网地址" checked={form.allowPrivate} onCheckedChange={(next) => setForm({ ...form, allowPrivate: next })} />
+                  </div>
+                ) : null}
               </details>
               <p className="im-field-h">{`群聊：${info.groupNote} 在平台里发 /new 开始新话题，/id 查看自己的 id。`}</p>
               {testResult ? (

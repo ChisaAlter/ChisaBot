@@ -11,7 +11,7 @@ import type { Database } from "../db/client";
 import type { TurnRunner } from "../turns/types";
 import { OneBotAdapter } from "./adapters/onebot";
 import { WEIXIN_DEFAULT_BASE } from "./adapters/weixin";
-import { imGuardedFetch, imGuardedWs } from "./net";
+import { imGuardedFetch, imGuardedFetchPrivate, imGuardedWs } from "./net";
 import { isQrPlatform, pollPlatformQr, type QrPlatform, startPlatformQr } from "./qr-auth";
 import { createAdapter, testAdapter } from "./registry";
 import { errorText, markdownToPlain, splitText } from "./text";
@@ -48,6 +48,7 @@ type Row = {
   allow_users: string[];
   owner_users: string[];
   allow_devices: boolean;
+  allow_private: boolean;
   account: string | null;
   last_message_at: Date | null;
   last_error: string | null;
@@ -121,6 +122,8 @@ export function createImService(options: ImServiceOptions) {
   const wsFactory = options.ws ?? defaultWs;
   const live = new Map<string, Live>();
   const allowDevicesCache = new Map<string, boolean>();
+  /** 名单全空时「怎么绑主人」提示的节流：连接+发件人 → 上次提示时间（内存即可，重启顶多重发一次）。 */
+  const emptyListHintAt = new Map<string, number>();
   const queues = new Map<string, { tail: Promise<void>; size: number }>();
   const logCounts = new Map<string, number>();
   type QrLogin = {
@@ -132,6 +135,7 @@ export function createImService(options: ImServiceOptions) {
       config: Record<string, string>;
       secrets: Record<string, string>;
       account?: string;
+      boundUserId?: string;
     };
   };
   const qrLogins = new Map<string, QrLogin>();
@@ -173,6 +177,7 @@ export function createImService(options: ImServiceOptions) {
       CREATE INDEX IF NOT EXISTS chisabot_im_logs_connection ON chisabot_im_logs (connection_id, id DESC);
       ALTER TABLE chisabot_im_chats ADD COLUMN IF NOT EXISTS last_inbound jsonb;
       ALTER TABLE chisabot_im_connections ADD COLUMN IF NOT EXISTS owner_users jsonb NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE chisabot_im_connections ADD COLUMN IF NOT EXISTS allow_private boolean NOT NULL DEFAULT false;
     `);
   }
 
@@ -238,6 +243,7 @@ export function createImService(options: ImServiceOptions) {
       allowUsers: Array.isArray(row.allow_users) ? row.allow_users : [],
       ownerUsers: Array.isArray(row.owner_users) ? row.owner_users : [],
       allowDevices: row.allow_devices,
+      allowPrivate: row.allow_private === true,
       status,
       statusDetail: !row.enabled ? null : entry ? entry.status.detail ?? null : row.last_error ?? "还没有启动",
       account: entry?.status.account ?? row.account,
@@ -256,11 +262,45 @@ export function createImService(options: ImServiceOptions) {
     await entry.adapter.stop().catch(() => {});
   }
 
+  /**
+   * 「允许内网地址」连接的内网放行只限它自己配置的协议端主机名（RV-01 放宽项）：
+   * 管理员开开关的连接，适配器请求里打到 url 类字段配置的那台主机才走内网放行通道；
+   * 其余主机、以及用户 / 模型给的任何地址，一律仍走默认的纯公网通道。
+   */
+  function scopedChannels(platform: ImPlatform, config: Record<string, string>, allowPrivate: boolean): { fetch: FetchLike; ws: WsFactory } {
+    const hosts = new Set<string>();
+    if (allowPrivate) {
+      for (const field of imPlatform(platform)?.fields ?? []) {
+        const value = field.type === "url" ? config[field.key] : undefined;
+        if (!value) continue;
+        try {
+          hosts.add(new URL(value).hostname.toLowerCase());
+        } catch {}
+      }
+    }
+    const hostOf = (raw: string) => {
+      try {
+        return new URL(raw).hostname.toLowerCase();
+      } catch {
+        return null;
+      }
+    };
+    if (!hosts.size) return { fetch: fetcher, ws: wsFactory };
+    return {
+      fetch: (input, init) => (hosts.has(hostOf(String(input)) ?? "") ? privateFetcher : fetcher)(input, init),
+      ws: (url, wsOptions) => wsFactory(url, { ...wsOptions, allowPrivate: hosts.has(hostOf(url) ?? "") }),
+    };
+  }
+
+  // 内网放行通道：注入替身时沿用替身（测试），否则用放行内网的带防护实现（云元数据仍拦）。
+  const privateFetcher: FetchLike = options.fetch ?? imGuardedFetchPrivate;
+
   async function startRow(row: Row) {
     await stopLive(row.id);
     allowDevicesCache.set(row.id, row.allow_devices);
     if (!row.enabled) return;
     const secrets = await readSecrets(row);
+    const channels = scopedChannels(row.platform, row.config ?? {}, row.allow_private === true);
     const ctx: AdapterContext = {
       connectionId: row.id,
       config: { ...(row.config ?? {}) },
@@ -268,8 +308,8 @@ export function createImService(options: ImServiceOptions) {
       log: (level, text) => log(row.id, level, text),
       setStatus: (status) => setStatus(row.id, status),
       onMessage: (message) => void onInbound(row.id, message).catch((error) => log(row.id, "error", `处理消息失败：${errorText(error)}`)),
-      fetch: fetcher,
-      ws: wsFactory,
+      fetch: channels.fetch,
+      ws: channels.ws,
     };
     const adapter = createAdapter(row.platform, ctx);
     live.set(row.id, { adapter, status: { state: "connecting", account: row.account }, ctx });
@@ -349,6 +389,17 @@ export function createImService(options: ImServiceOptions) {
     const owners = Array.isArray(row.owner_users) ? row.owner_users : [];
     const isOwner = owners.includes(inbound.userId);
     if (!isOwner && !allow.includes(inbound.userId)) {
+      // 名单全空（多半是升级前扫码绑的连接还没填主人）：私聊回一次怎么绑，同一个发件人 10 分钟内只回一次；群里绝不开口。
+      if (!owners.length && !allow.length && inbound.chatType === "private") {
+        const hintKey = `${row.id}|${inbound.userId}`;
+        const last = emptyListHintAt.get(hintKey) ?? 0;
+        if (Date.now() - last > 10 * 60_000) {
+          if (emptyListHintAt.size > 5000) emptyListHintAt.clear();
+          emptyListHintAt.set(hintKey, Date.now());
+          log(row.id, "info", `名单为空，已提示 ${who} 怎么绑定主人`);
+          await reply(row, entry.adapter, inbound, "还没绑定主人：发 /id 拿到你的 id，填到 ChisaBot 连接设置的「主人」里").catch(() => {});
+        }
+      }
       log(row.id, "info", `忽略 ${who} 的消息（不在可用名单里）`);
       return;
     }
@@ -518,6 +569,8 @@ export function createImService(options: ImServiceOptions) {
     allowUsers?: unknown;
     ownerUsers?: unknown;
     allowDevices?: unknown;
+    /** 「允许内网地址」：只有管理员能改（路由按 role 传 admin 进来，非管理员传来的值直接忽略）。 */
+    allowPrivate?: unknown;
     weixinLogin?: unknown;
     qrLogin?: unknown;
   };
@@ -530,6 +583,7 @@ export function createImService(options: ImServiceOptions) {
     current: { config: Record<string, string>; secrets: Record<string, string> },
     owner: string,
     consumeQr = true,
+    allowPrivate = false,
   ) {
     const info = imPlatform(platform)!;
     const config: Record<string, string> = { ...current.config };
@@ -551,7 +605,8 @@ export function createImService(options: ImServiceOptions) {
         if (field.type === "url" && trimmed) {
           if (!/^(https?|wss?):\/\//.test(trimmed)) throw new InputError(`「${field.label}」要以 http(s):// 或 ws(s):// 开头`);
           const httpForm = trimmed.replace(/^ws:/i, "http:").replace(/^wss:/i, "https:");
-          const verdict = checkPublicUrl(httpForm);
+          // 「允许内网地址」开着时管理员配置的协议端可以指向内网（云元数据仍拦）；关着就还是只认公网。
+          const verdict = checkPublicUrl(httpForm, { allowPrivate });
           if (!verdict.ok) throw new InputError(`「${field.label}」不安全：${verdict.reason}`);
         }
         if (trimmed) config[field.key] = trimmed;
@@ -566,6 +621,7 @@ export function createImService(options: ImServiceOptions) {
           ? input.weixinLogin
           : "";
     let account: string | undefined;
+    let boundUserId: string | undefined;
     if (loginKey) {
       const login = qrLogins.get(loginKey);
       if (!login || login.owner !== owner || login.platform !== platform || !login.result) {
@@ -586,10 +642,11 @@ export function createImService(options: ImServiceOptions) {
         if (v) secrets[k] = v;
       }
       account = login.result.account;
+      boundUserId = login.result.boundUserId;
       if (consumeQr) qrLogins.delete(loginKey);
     }
     if (platform === "onebot" && config.mode === "reverse" && !secrets.accessToken) secrets.accessToken = newToken();
-    return { config, secrets, account };
+    return { config, secrets, account, boundUserId };
   }
 
   function missingRequired(platform: ImPlatform, config: Record<string, string>, secrets: Record<string, string>): string | null {
@@ -610,33 +667,43 @@ export function createImService(options: ImServiceOptions) {
       ? [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))].slice(0, 200)
       : undefined;
 
-  async function create(owner: string, input: Input): Promise<ImConnectionView> {
+  /** 扫码绑定时平台回了扫码人自己的用户 id（微信 / QQ 官方 / 飞书）就自动算进主人名单，不用手填。 */
+  const withBoundOwner = (owners: string[], boundUserId: string | undefined) =>
+    boundUserId && !owners.includes(boundUserId) ? [...owners, boundUserId] : owners;
+
+  async function create(owner: string, input: Input, admin = false): Promise<ImConnectionView> {
     const platform = typeof input.platform === "string" ? (input.platform as ImPlatform) : null;
     if (!platform || !imPlatform(platform)) throw new InputError("不支持这个平台");
     const agentId = typeof input.agentId === "string" ? input.agentId.trim() : "";
     if (!agentId || !(await options.botAvailable(owner, agentId))) throw new InputError("请选择一个你的机器人");
     const name = (typeof input.name === "string" && input.name.trim() ? input.name.trim() : imPlatform(platform)!.name).slice(0, 40);
-    const { config, secrets, account } = cleanFields(platform, input, { config: {}, secrets: {} }, owner, true);
+    const allowPrivate = admin && input.allowPrivate === true;
+    const { config, secrets, account, boundUserId } = cleanFields(platform, input, { config: {}, secrets: {} }, owner, true, allowPrivate);
     const enabled = input.enabled !== false;
     const missing = missingRequired(platform, config, secrets);
     if (missing && enabled) throw new InputError(`请填写「${missing}」`);
     const id = newId();
+    const givenOwners = cleanUsers(input.ownerUsers) ?? [];
+    const ownerUsers = withBoundOwner(givenOwners, boundUserId);
     await sql.unsafe(
-      `INSERT INTO chisabot_im_connections (id, owner_user_id, platform, name, agent_id, enabled, config, secrets, allow_users, allow_devices, account, owner_users)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9::text::jsonb, $10, $11, $12::text::jsonb)`,
-      [id, owner, platform, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(cleanUsers(input.allowUsers) ?? []), input.allowDevices === true, account ?? null, JSON.stringify(cleanUsers(input.ownerUsers) ?? [])],
+      `INSERT INTO chisabot_im_connections (id, owner_user_id, platform, name, agent_id, enabled, config, secrets, allow_users, allow_devices, account, owner_users, allow_private)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9::text::jsonb, $10, $11, $12::text::jsonb, $13)`,
+      [id, owner, platform, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(cleanUsers(input.allowUsers) ?? []), input.allowDevices === true, account ?? null, JSON.stringify(ownerUsers), allowPrivate],
     );
     log(id, "info", `创建了连接（${imPlatform(platform)!.name}）`);
+    if (boundUserId && !givenOwners.includes(boundUserId)) log(id, "info", `扫码绑定的平台账号（${boundUserId}）已自动加为主人`);
     const row = (await rowById(id))!;
     await startRow(row);
     return view(row, secrets);
   }
 
-  async function update(owner: string, id: string, input: Input): Promise<ImConnectionView | null> {
+  async function update(owner: string, id: string, input: Input, admin = false): Promise<ImConnectionView | null> {
     const row = await owned(owner, id);
     if (!row) return null;
     const current = { config: row.config ?? {}, secrets: await readSecrets(row) };
-    const { config, secrets, account } = cleanFields(row.platform, input, current, owner, true);
+    // 「允许内网地址」只有管理员能改：非管理员传来的值直接丢掉，沿用库里已存的。
+    const allowPrivate = admin ? (typeof input.allowPrivate === "boolean" ? input.allowPrivate : row.allow_private === true) : row.allow_private === true;
+    const { config, secrets, account, boundUserId } = cleanFields(row.platform, input, current, owner, true, allowPrivate);
     let agentId = row.agent_id;
     if (typeof input.agentId === "string" && input.agentId !== row.agent_id) {
       if (!(await options.botAvailable(owner, input.agentId))) throw new InputError("请选择一个你的机器人");
@@ -649,15 +716,17 @@ export function createImService(options: ImServiceOptions) {
     if (missing && enabled) throw new InputError(`请填写「${missing}」`);
     const name = typeof input.name === "string" && input.name.trim() ? input.name.trim().slice(0, 40) : row.name;
     const allowUsers = cleanUsers(input.allowUsers) ?? row.allow_users;
-    const ownerUsers = cleanUsers(input.ownerUsers) ?? (Array.isArray(row.owner_users) ? row.owner_users : []);
+    const givenOwners = cleanUsers(input.ownerUsers) ?? (Array.isArray(row.owner_users) ? row.owner_users : []);
+    const ownerUsers = withBoundOwner(givenOwners, boundUserId);
     const allowDevices = typeof input.allowDevices === "boolean" ? input.allowDevices : row.allow_devices;
     const nextAccount = account ?? row.account;
     await sql.unsafe(
       `UPDATE chisabot_im_connections SET name = $2, agent_id = $3, enabled = $4, config = $5::text::jsonb, secrets = $6,
-       allow_users = $7::text::jsonb, allow_devices = $8, account = $9, owner_users = $10::text::jsonb, updated_at = now(), last_error = CASE WHEN $4 THEN last_error ELSE NULL END WHERE id = $1`,
-      [id, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(allowUsers), allowDevices, nextAccount, JSON.stringify(ownerUsers)],
+       allow_users = $7::text::jsonb, allow_devices = $8, account = $9, owner_users = $10::text::jsonb, allow_private = $11, updated_at = now(), last_error = CASE WHEN $4 THEN last_error ELSE NULL END WHERE id = $1`,
+      [id, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(allowUsers), allowDevices, nextAccount, JSON.stringify(ownerUsers), allowPrivate],
     );
     allowDevicesCache.set(id, allowDevices);
+    if (boundUserId && !givenOwners.includes(boundUserId)) log(id, "info", `扫码绑定的平台账号（${boundUserId}）已自动加为主人`);
     const changes = [
       enabled !== row.enabled ? (enabled ? "启用" : "停用") : null,
       agentId !== row.agent_id ? "换了机器人" : null,
@@ -666,7 +735,7 @@ export function createImService(options: ImServiceOptions) {
     if (changes.length) log(id, "info", `设置已更新：${changes.join("、")}`);
     const next = (await rowById(id))!;
     // 只改了名字 / 白名单 / 机器人：不用重连。
-    const reconnect = enabled !== row.enabled || JSON.stringify(config) !== JSON.stringify(row.config ?? {}) || JSON.stringify(secrets) !== JSON.stringify(current.secrets) || (enabled && !live.has(id));
+    const reconnect = enabled !== row.enabled || allowPrivate !== (row.allow_private === true) || JSON.stringify(config) !== JSON.stringify(row.config ?? {}) || JSON.stringify(secrets) !== JSON.stringify(current.secrets) || (enabled && !live.has(id));
     if (reconnect) await startRow(next);
     return view(next, secrets);
   }
@@ -696,27 +765,29 @@ export function createImService(options: ImServiceOptions) {
     return rows.map((row) => ({ at: new Date(row.at).toISOString(), level: row.level, text: row.text }));
   }
 
-  function testContext(id: string, config: Record<string, string>, secrets: Record<string, string>): AdapterContext {
-    return { connectionId: id, config, secrets, log: () => {}, setStatus: () => {}, onMessage: () => {}, fetch: fetcher, ws: wsFactory };
+  function testContext(platform: ImPlatform, id: string, config: Record<string, string>, secrets: Record<string, string>, allowPrivate: boolean): AdapterContext {
+    const channels = scopedChannels(platform, config, allowPrivate);
+    return { connectionId: id, config, secrets, log: () => {}, setStatus: () => {}, onMessage: () => {}, fetch: channels.fetch, ws: channels.ws };
   }
 
   async function test(owner: string, id: string) {
     const row = await owned(owner, id);
     if (!row) return null;
     const secrets = await readSecrets(row);
-    const result = await testAdapter(row.platform, testContext(id, row.config ?? {}, secrets), live.get(id)?.adapter);
+    const result = await testAdapter(row.platform, testContext(row.platform, id, row.config ?? {}, secrets, row.allow_private === true), live.get(id)?.adapter);
     log(id, result.ok ? "info" : "warn", `测试连接：${result.detail}`);
     return result;
   }
 
   /** 保存前测试：用表单里的值（编辑时空密钥沿用已保存的；扫码未保存时保留 qrLogin 会话供后续保存使用）。 */
-  async function testDraft(owner: string, input: Input & { id?: unknown }) {
+  async function testDraft(owner: string, input: Input & { id?: unknown }, admin = false) {
     const existing = typeof input.id === "string" ? await owned(owner, input.id) : null;
     const platform = (existing?.platform ?? input.platform) as ImPlatform;
     if (!imPlatform(platform)) throw new InputError("不支持这个平台");
     const current = existing ? { config: existing.config ?? {}, secrets: await readSecrets(existing) } : { config: {}, secrets: {} };
-    const { config, secrets } = cleanFields(platform, input, current, owner, false);
-    return testAdapter(platform, testContext(existing?.id ?? "draft", config, secrets), existing ? live.get(existing.id)?.adapter : undefined);
+    const allowPrivate = admin ? (typeof input.allowPrivate === "boolean" ? input.allowPrivate : existing?.allow_private === true) : existing?.allow_private === true;
+    const { config, secrets } = cleanFields(platform, input, current, owner, false, allowPrivate);
+    return testAdapter(platform, testContext(platform, existing?.id ?? "draft", config, secrets, allowPrivate), existing ? live.get(existing.id)?.adapter : undefined);
   }
 
   // ---- 多平台扫码授权（微信 / QQ 官方 / 企业微信 / 钉钉 / 飞书） ----
@@ -781,6 +852,7 @@ export function createImService(options: ImServiceOptions) {
         config: nextConfig,
         secrets: polled.secrets,
         account: polled.account,
+        ...(polled.boundUserId ? { boundUserId: polled.boundUserId } : {}),
       };
       return {
         status: "confirmed" as const,
@@ -895,21 +967,21 @@ export function createImService(options: ImServiceOptions) {
     });
     authed.post("/connections", async (c) => {
       try {
-        return c.json({ connection: await create(c.var.actor.id, (await c.req.json().catch(() => ({}))) as Input) }, 201);
+        return c.json({ connection: await create(c.var.actor.id, (await c.req.json().catch(() => ({}))) as Input, c.var.actor.role === "admin") }, 201);
       } catch (error) {
         return fail(c, error);
       }
     });
     authed.post("/test", async (c) => {
       try {
-        return c.json(await testDraft(c.var.actor.id, (await c.req.json().catch(() => ({}))) as Input));
+        return c.json(await testDraft(c.var.actor.id, (await c.req.json().catch(() => ({}))) as Input, c.var.actor.role === "admin"));
       } catch (error) {
         return fail(c, error);
       }
     });
     authed.patch("/connections/:id", async (c) => {
       try {
-        const updated = await update(c.var.actor.id, c.req.param("id"), (await c.req.json().catch(() => ({}))) as Input);
+        const updated = await update(c.var.actor.id, c.req.param("id"), (await c.req.json().catch(() => ({}))) as Input, c.var.actor.role === "admin");
         return updated ? c.json({ connection: updated }) : c.json({ error: "没有这个连接" }, 404);
       } catch (error) {
         return fail(c, error);

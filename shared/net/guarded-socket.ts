@@ -8,7 +8,12 @@ import {
   type GuardedFetchOptions,
   resolvePublic,
 } from "./guarded-fetch";
-import { isBlockedHostname } from "./ssrf";
+import {
+  isBlockedAddress,
+  isBlockedAddressAllowPrivate,
+  isBlockedHostname,
+  isBlockedHostnameAllowPrivate,
+} from "./ssrf";
 
 /**
  * 只连公网的 WebSocket 客户端（IM 适配器共用，2026-11-02，RV-01）。
@@ -58,6 +63,11 @@ export type GuardedSocketOptions = {
   resolve?: GuardedFetchOptions["resolve"];
   /** 测试用：替换「这个 IP 能不能连」。 */
   isBlocked?: (address: string) => boolean;
+  /**
+   * 自托管 IM 协议端的内网放行（管理员显式开关）：本机 / RFC1918 / ULA 可以连，
+   * 云元数据等地址仍拦。用户 / 模型给的地址永远不传这个。
+   */
+  allowPrivate?: boolean;
 };
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -74,7 +84,10 @@ const PROTECTED_HEADERS = new Set([
 type WsVerdict = { ok: true; url: URL } | { ok: false; reason: string };
 
 /** 只放行 ws / wss、没有账号密码、主机名不是内网的地址。DNS 之后的检查在连接前做。 */
-export function checkPublicWsUrl(raw: string): WsVerdict {
+export function checkPublicWsUrl(
+  raw: string,
+  opts?: { allowPrivate?: boolean },
+): WsVerdict {
   let url: URL;
   try {
     url = new URL(raw);
@@ -85,8 +98,10 @@ export function checkPublicWsUrl(raw: string): WsVerdict {
     return { ok: false, reason: "只支持 ws / wss 地址" };
   if (url.username || url.password)
     return { ok: false, reason: "地址里不能带账号密码" };
-  if (isBlockedHostname(url.hostname))
-    return { ok: false, reason: "不能访问内网地址" };
+  const blockedHost = opts?.allowPrivate
+    ? isBlockedHostnameAllowPrivate(url.hostname)
+    : isBlockedHostname(url.hostname);
+  if (blockedHost) return { ok: false, reason: "不能访问内网地址" };
   return { ok: true, url };
 }
 
@@ -291,13 +306,17 @@ class PinnedSocket implements GuardedSocketLike {
       };
       for (let hop = 0; hop <= maxRedirects; hop += 1) {
         if (this.readyState !== 0) return;
-        const verdict = checkPublicWsUrl(current);
+        const verdict = checkPublicWsUrl(current, {
+          allowPrivate: this.options.allowPrivate,
+        });
         if (!verdict.ok) denyWs(verdict.reason);
         const pinned = await resolvePublic(verdict.url.hostname, {
           ...(this.options.resolve ? { resolve: this.options.resolve } : {}),
-          ...(this.options.isBlocked
-            ? { isBlocked: this.options.isBlocked }
-            : {}),
+          isBlocked:
+            this.options.isBlocked ??
+            (this.options.allowPrivate
+              ? isBlockedAddressAllowPrivate
+              : isBlockedAddress),
         });
         if (this.readyState !== 0) return;
         const socket = await openStream(verdict.url, pinned);

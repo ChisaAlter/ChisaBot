@@ -5,7 +5,11 @@ import { isIP } from "node:net";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { OPS_CODES } from "../ops-codes";
 import { bumpOps } from "../ops-counters";
-import { checkPublicUrl, isBlockedAddress } from "./ssrf";
+import {
+  checkPublicUrl,
+  isBlockedAddress,
+  isBlockedAddressAllowPrivate,
+} from "./ssrf";
 
 /**
  * 只连公网的 GET（链接预览卡和预览截图共用，2026-10-13）。
@@ -64,6 +68,11 @@ export type GuardedFetchOptions = {
   ) => Promise<{ address: string; family: number }[]>;
   /** 测试用：替换「这个 IP 能不能连」。 */
   isBlocked?: (address: string) => boolean;
+  /**
+   * 自托管 IM 协议端的内网放行（管理员显式开关）：本机 / RFC1918 / ULA 可以连，
+   * 云元数据等地址仍拦（`ssrf.ts` 的 ALLOW_PRIVATE 名单）。用户 / 模型给的网址永远不传这个。
+   */
+  allowPrivate?: boolean;
 };
 
 const defaultFetch = globalThis.fetch;
@@ -345,9 +354,14 @@ export async function guardedFetch(
     options.fetchImpl !== defaultFetch &&
     !options.resolve &&
     !options.isBlocked;
+  const isBlocked =
+    options.isBlocked ??
+    (options.allowPrivate ? isBlockedAddressAllowPrivate : isBlockedAddress);
 
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
-    const verdict = checkPublicUrl(current);
+    const verdict = checkPublicUrl(current, {
+      allowPrivate: options.allowPrivate,
+    });
     if (!verdict.ok) denySsrf(verdict.reason);
     const hopOptions: GuardedFetchOptions = {
       ...options,
@@ -364,7 +378,10 @@ export async function guardedFetch(
         )
       : await oneHop(
           verdict.url,
-          await resolvePublic(verdict.url.hostname, options),
+          await resolvePublic(verdict.url.hostname, {
+            ...options,
+            isBlocked,
+          }),
           hopOptions,
           deadline,
         );
@@ -419,6 +436,7 @@ export function createGuardedFetchLike(defaults: {
   maxRedirects?: number;
   resolve?: GuardedFetchOptions["resolve"];
   isBlocked?: (address: string) => boolean;
+  allowPrivate?: boolean;
 }): (input: string | URL, init?: RequestInit) => Promise<Response> {
   return async (input, init = {}) => {
     const headers: Record<string, string> = {};
@@ -453,6 +471,7 @@ export function createGuardedFetchLike(defaults: {
         maxRedirects: defaults.maxRedirects,
         ...(defaults.resolve ? { resolve: defaults.resolve } : {}),
         ...(defaults.isBlocked ? { isBlocked: defaults.isBlocked } : {}),
+        ...(defaults.allowPrivate ? { allowPrivate: true } : {}),
       });
       const status = res.status >= 200 && res.status <= 599 ? res.status : 502;
       const response = new Response(new Uint8Array(res.body), {

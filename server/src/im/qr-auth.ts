@@ -55,6 +55,8 @@ export type QrPollResult = {
   secrets?: Record<string, string>;
   /** 识别到的账号/机器人标识，用于界面回显。 */
   account?: string;
+  /** 扫码人自己的平台用户 id（平台有返回才有）：绑定时自动加进连接的主人名单。 */
+  boundUserId?: string;
   /** 状态更新后的内部 state（例如飞书自动切换 Lark 域名）。 */
   nextState?: Record<string, string>;
   /** 平台返回的附加错误说明。 */
@@ -306,6 +308,7 @@ export async function pollPlatformQr(
           },
           secrets: { token: res.token },
           account: res.botId || "微信 ClawBot",
+          ...(res.userId ? { boundUserId: res.userId } : {}),
         };
       }
       const norm =
@@ -357,6 +360,9 @@ export async function pollPlatformQr(
           config: { appId },
           secrets: { appSecret },
           account: `AppID ${appId}`,
+          ...(body.data.user_openid
+            ? { boundUserId: String(body.data.user_openid).trim() }
+            : {}),
         };
       }
       return { status: "wait" };
@@ -483,6 +489,9 @@ export async function pollPlatformQr(
           config: { appId, domain },
           secrets: { appSecret },
           account: appId,
+          ...(body.user_info?.open_id
+            ? { boundUserId: String(body.user_info.open_id).trim() }
+            : {}),
           ...(nextState ? { nextState } : {}),
         };
       }

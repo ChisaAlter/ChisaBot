@@ -6780,6 +6780,7 @@ body[data-install-hint="open"] [data-slot="sidebar-container"].glass-sidebar-con
 .im-row-main .sg-lrow:hover { background: transparent; }
 .im-row-switch { margin: 0 8px; }
 .im-row-error { display: block; margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--danger); word-break: break-word; }
+.im-row-warn { display: block; margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--warn); word-break: break-word; }
 .im-bot-chip {
   display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 999px;
   font-size: 12px; color: var(--accent-blue-ink); background: var(--accent-blue-soft);

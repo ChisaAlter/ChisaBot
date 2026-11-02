@@ -189,7 +189,10 @@ describe("RV-02: IM 审批门禁", () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(turns.length).toBe(turnCount);
     expect(approvals).toHaveLength(0);
-    expect(privateReplies(socket, 424242)).toHaveLength(0);
+    // 名单全空：不跑回合、不审批，但私聊回一次怎么绑主人（10 分钟内同一人只回一次）
+    expect(privateReplies(socket, 424242)).toEqual([
+      expect.stringContaining("还没绑定主人"),
+    ]);
     await service.stopAll();
   });
 

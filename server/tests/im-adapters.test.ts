@@ -1196,6 +1196,7 @@ describe("多平台扫码绑定与消息来源解析", () => {
       config: { appId: "cli_fs_1", domain: "feishu" },
       secrets: { appSecret: "sec_fs_1" },
       account: "cli_fs_1",
+      boundUserId: "ou_owner",
     });
   });
 

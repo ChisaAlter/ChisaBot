@@ -200,6 +200,34 @@ describe("IM 接入服务", () => {
     let currentWebThread = `web-thread-${randomUUID().slice(0, 8)}`;
     const resolvedApprovals: Array<{ id: string; decision: "approve" | "deny" }> = [];
 
+    // 模拟回合中触发需要用户确认的操作（如桌面窗口/浏览器操作）。digest 固定：重试同一个操作要对上同一张卡片。
+    const confirmRunTurn: TurnRunner = async (input) => {
+      const check = await withConfirmTurn(
+        { threadId: input.threadId, runId: "run-im", stopped: () => false },
+        () =>
+          withConfirmActor(
+            input.initiator,
+            () =>
+              confirmations.check({
+                ownerUserId: input.ownerUserId,
+                agentId: input.agentId,
+                category: "message",
+                tool: "send_msg",
+                title: "点击桌面窗口",
+                target: "我的电脑",
+                details: [{ label: "坐标", value: "(100, 200)" }],
+                matchText: "点击桌面窗口 我的电脑",
+                digest: "digest-点击桌面窗口",
+                initiator: input.initiator,
+              }),
+          ),
+      );
+      if (!check.ok) {
+        return { replyText: check.message };
+      }
+      return { replyText: "操作已完成" };
+    };
+
     const unifiedService = createImService({
       database,
       encryptionKey: key,
@@ -216,38 +244,27 @@ describe("IM 接入服务", () => {
         resolvedApprovals.push({ id: pending.id, decision });
         return { title: decided.title, target: decided.target };
       },
-      runTurn: async (input) => {
-        // 模拟回合中触发需要用户确认的操作（如桌面窗口/浏览器操作）
-        const check = await withConfirmTurn(
-          { threadId: input.threadId, runId: "run-im", stopped: () => false },
-          () =>
-            withConfirmActor(
-              input.initiator,
-              () =>
-                confirmations.check({
-                  ownerUserId: input.ownerUserId,
-                  agentId: input.agentId,
-                  category: "message",
-                  tool: "send_msg",
-                  title: "点击桌面窗口",
-                  target: "我的电脑",
-                  details: [{ label: "坐标", value: "(100, 200)" }],
-                  matchText: "点击桌面窗口 我的电脑",
-                  digest: `digest-${randomUUID().slice(0, 8)}`,
-                  initiator: input.initiator,
-                }),
-            ),
-        );
-        if (!check.ok) {
-          return { replyText: check.message };
-        }
-        return { replyText: "操作已完成" };
-      },
+      runTurn: confirmRunTurn,
       ws: (url) => {
         const socket = new FakeWs(url);
         sockets.push(socket);
         return socket;
       },
+    });
+
+    // 和生产 index.ts 一样：批准一张「工具已经不等了」的卡片后，重跑同一回合并把回复推回 IM 私聊。
+    // 重试用同一个 digest：check 会消耗掉刚才批准的授权（consumeGrant）直接放行，回合走到「操作已完成」。
+    confirmations.setResume(async ({ ownerUserId, threadId, requestId, text }) => {
+      const result = await confirmRunTurn({
+        ownerUserId,
+        routineId: `confirm:${requestId}`,
+        agentId: "bot-1",
+        threadId,
+        instruction: text,
+        initiator: { kind: "routine", id: `confirm:${requestId}` },
+      });
+      const replyText = result.replyText?.trim();
+      if (replyText) await unifiedService.pushToThread(threadId, replyText, { privateOnly: true });
     });
 
     confirmations.setOnOpened((req) => {
@@ -286,6 +303,10 @@ describe("IM 接入服务", () => {
     await waitFor(() =>
       socket.actions("send_private_msg").some((frame) => frame.params.user_id === 666 && frame.params.message[0].data.text.includes("已批准「点击桌面窗口」")),
     );
+    // 批准后重跑的回合完成了那一步，结果照常推回 IM 私聊
+    await waitFor(() =>
+      socket.actions("send_private_msg").some((frame) => frame.params.user_id === 666 && frame.params.message[0].data.text.includes("操作已完成")),
+    );
     expect(resolvedApprovals).toEqual([{ id: pendingList[0]!.id, decision: "approve" }]);
     expect((await confirmations.list(owner, { threadId: initialWebThread })).filter((r) => r.status === "pending")).toHaveLength(0);
 
@@ -294,6 +315,151 @@ describe("IM 接入服务", () => {
     await waitFor(() => currentWebThread !== initialWebThread);
 
     await unifiedService.stopAll();
+  });
+
+  test("主人和白名单都空：私聊回一次怎么绑主人，10 分钟内不重发，群里不回", async () => {
+    const view = await service.create(owner, {
+      platform: "onebot",
+      name: "空名单",
+      agentId: "bot-1",
+      config: { mode: "forward", url: "ws://napcat-empty.test:3001" },
+    });
+    createdIds.push(view.id);
+    const socket = await waitFor(() => sockets.find((item) => item.url.startsWith("ws://napcat-empty.test")));
+    await waitFor(() => service.statusOf(view.id)?.state === "connected");
+    const turnsBefore = turns.length;
+
+    // 陌生人私聊：回一次引导；再发不重复（10 分钟节流）；/id 不受影响
+    socket.push({ post_type: "message", message_type: "private", self_id: 10001, user_id: 888, message_id: 20, message: "在吗" });
+    await waitFor(() =>
+      socket.actions("send_private_msg").some((frame) => frame.params.user_id === 888 && frame.params.message[0].data.text.includes("还没绑定主人")),
+    );
+    socket.push({ post_type: "message", message_type: "private", self_id: 10001, user_id: 888, message_id: 21, message: "人呢" });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(socket.actions("send_private_msg").filter((frame) => frame.params.user_id === 888 && frame.params.message[0].data.text.includes("还没绑定主人"))).toHaveLength(1);
+    expect(turns.length).toBe(turnsBefore);
+
+    // 群里 @ 机器人也绝不开口
+    socket.push({ post_type: "message", message_type: "group", self_id: 10001, user_id: 888, group_id: 7777, message_id: 22, message: [{ type: "at", data: { qq: "10001" } }, { type: "text", data: { text: " 在吗" } }] });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(socket.actions("send_group_msg")).toHaveLength(0);
+
+    // /id 在名单检查之前，陌生人照样拿得到自己的 id
+    socket.push({ post_type: "message", message_type: "private", self_id: 10001, user_id: 888, message_id: 23, message: "/id" });
+    await waitFor(() => socket.actions("send_private_msg").some((frame) => frame.params.user_id === 888 && frame.params.message[0].data.text.includes("888")));
+  });
+
+  test("扫码绑定：平台回了扫码人 id 就自动加进主人名单", async () => {
+    const wxFetch = (async (input: string) => {
+      const url = String(input);
+      if (url.includes("get_bot_qrcode")) return new Response(JSON.stringify({ qrcode: "wx-qr-1", qrcode_img_content: "https://ilinkai.weixin.qq.com/qr/1" }), { status: 200 });
+      if (url.includes("get_qrcode_status"))
+        return new Response(
+          JSON.stringify({ status: "confirmed", bot_token: "wx-token-1", ilink_user_id: "wx-owner-1", ilink_bot_id: "wx-bot-9", baseurl: "https://ilinkai.weixin.qq.com" }),
+          { status: 200 },
+        );
+      return new Response(JSON.stringify({ errcode: 0, get_updates_buf: "", msgs: [] }), { status: 200 });
+    }) as typeof fetch;
+    const wxService = createImService({
+      database,
+      encryptionKey: key,
+      runTurn,
+      botAvailable: async (user, agentId) => user === owner && agentId === "bot-1",
+      fetch: wxFetch,
+    });
+    const started = await wxService.qrStart(owner, { platform: "weixin" });
+    const polled = await wxService.qrPoll(owner, started.session);
+    expect(polled.status).toBe("confirmed");
+    if (polled.status !== "confirmed") throw new Error("扫码确认失败");
+    const view = await wxService.create(owner, { platform: "weixin", agentId: "bot-1", qrLogin: polled.loginKey });
+    createdIds.push(view.id);
+    expect(view.ownerUsers).toEqual(["wx-owner-1"]);
+    await wxService.stopAll();
+  });
+
+  test("「允许内网地址」：只有管理员能设置；放行只对这个连接自己配置的协议端主机生效", async () => {
+    const wsCalls: { url: string; allowPrivate?: boolean }[] = [];
+    const scoped = createImService({
+      database,
+      encryptionKey: key,
+      runTurn,
+      botAvailable: async (user, agentId) => user === owner && agentId === "bot-1",
+      ws: (url, wsOptions) => {
+        wsCalls.push({ url, allowPrivate: wsOptions?.allowPrivate });
+        const socket = new FakeWs(url);
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    // 非管理员：开关被忽略，私网地址照旧不过校验
+    await expect(
+      scoped.create(owner, { platform: "onebot", agentId: "bot-1", config: { mode: "forward", url: "ws://10.0.0.5:3001" }, allowPrivate: true }),
+    ).rejects.toThrow("不能访问内网地址");
+    const publicView = await scoped.create(owner, {
+      platform: "onebot",
+      agentId: "bot-1",
+      config: { mode: "forward", url: "ws://napcat-public.test:3001" },
+      allowPrivate: true,
+    });
+    createdIds.push(publicView.id);
+    expect(publicView.allowPrivate).toBe(false);
+
+    // 管理员：开关生效，私网地址过校验；适配器连的就是它，ws 收到 allowPrivate:true
+    const privateView = await scoped.create(
+      owner,
+      { platform: "onebot", agentId: "bot-1", config: { mode: "forward", url: "ws://10.0.0.5:3001" }, allowPrivate: true },
+      true,
+    );
+    createdIds.push(privateView.id);
+    expect(privateView.allowPrivate).toBe(true);
+    await waitFor(() => wsCalls.find((call) => call.url === "ws://10.0.0.5:3001"));
+    await waitFor(() => wsCalls.find((call) => call.url === "ws://napcat-public.test:3001"));
+    expect(wsCalls.find((call) => call.url === "ws://10.0.0.5:3001")!.allowPrivate).toBe(true);
+    expect(wsCalls.find((call) => call.url === "ws://napcat-public.test:3001")!.allowPrivate).toBeFalsy();
+
+    // 非管理员改连接：开关值丢不掉也改不了（沿用库里已存的 true）
+    const byUser = await scoped.update(owner, privateView.id, { allowPrivate: false, config: { url: "ws://napcat-public2.test:3001" } });
+    expect(byUser!.allowPrivate).toBe(true);
+
+    // 管理员把开关关掉（同时把地址换成公网才过校验）
+    const byAdmin = await scoped.update(owner, privateView.id, { allowPrivate: false, config: { url: "ws://napcat-public3.test:3001" } }, true);
+    expect(byAdmin!.allowPrivate).toBe(false);
+
+    await scoped.stopAll();
+  });
+
+  test("0061 迁移：私聊过机器人的人被回填成主人", async () => {
+    const id = "im_backfill01";
+    const untouched = "im_backfill02";
+    const nochat = "im_backfill03";
+    await database.$client.unsafe(
+      `INSERT INTO chisabot_im_connections (id, owner_user_id, platform, name, agent_id, enabled, config, owner_users)
+       VALUES ($1, $2, 'onebot', '旧连接', 'bot-1', true, '{}', '[]'),
+              ($3, $2, 'onebot', '已有主人', 'bot-1', true, '{}', '["kept"]'),
+              ($4, $2, 'onebot', '没人聊过', 'bot-1', true, '{}', '[]')`,
+      [id, `backfill-${owner}`, untouched, nochat],
+    );
+    await database.$client.unsafe(
+      `INSERT INTO chisabot_im_chats (connection_id, chat_key, thread_id)
+       VALUES ($1, 'private:qq-777', 't1'), ($1, 'private:qq-888', 't2'), ($1, 'group:12345', 't3')`,
+      [id],
+    );
+    try {
+      const migration = await Bun.file(new URL("../drizzle/0061_im_owner_backfill.sql", import.meta.url)).text();
+      await database.$client.unsafe(migration);
+      const rows = await database.$client.unsafe<{ id: string; owner_users: string[] }[]>(
+        "SELECT id, owner_users FROM chisabot_im_connections WHERE id IN ($1, $2, $3)",
+        [id, untouched, nochat],
+      );
+      const owners = new Map(rows.map((row) => [row.id, row.owner_users]));
+      expect(owners.get(id)!.sort()).toEqual(["qq-777", "qq-888"]);
+      expect(owners.get(untouched)).toEqual(["kept"]);
+      expect(owners.get(nochat)).toEqual([]);
+    } finally {
+      await database.$client.unsafe("DELETE FROM chisabot_im_chats WHERE connection_id = $1", [id]);
+      await database.$client.unsafe("DELETE FROM chisabot_im_connections WHERE id IN ($1, $2, $3)", [id, untouched, nochat]);
+    }
   });
 });
 
