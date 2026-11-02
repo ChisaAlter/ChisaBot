@@ -60,6 +60,13 @@ lines.on("line", (line) => {
   turns.set(turn.sessionId, turn);
   const sequence = ++promptSeq;
   record("prompt", { sessionId: turn.sessionId, text, params });
+  const rpcError = behavior.rpcError ?? config.rpcError;
+  if (rpcError) {
+    turn.done = true;
+    record("prompt_end", { sessionId: turn.sessionId, text });
+    write({ jsonrpc: "2.0", id: message.id, error: rpcError });
+    return;
+  }
   if (behavior.exit || config.exitOnPrompt || (config.exitOnceFile && !existsSync(config.exitOnceFile))) {
     if (config.exitOnceFile) writeFileSync(config.exitOnceFile, "exited");
     setTimeout(() => process.exit(17), 5);

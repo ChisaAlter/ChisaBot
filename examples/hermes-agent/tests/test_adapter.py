@@ -773,7 +773,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         for name, attrs in {
             "run_agent": {"AIAgent": AIAgent},
             "hermes_cli": {"__path__": []},
-            "hermes_cli.config": {"load_config": lambda: {"model": {"default": "magpie-model", "provider": "custom"}}},
+            "hermes_cli.config": {"load_config": lambda: {"model": {"default": "magpie-model", "provider": "custom"}},
+                                  "get_compatible_custom_providers": lambda _cfg=None: []},
             "hermes_cli.runtime_provider": {"resolve_runtime_provider": lambda **_kw: {"provider": "custom", "base_url": "https://magpie.invalid/v1", "api_mode": "chat", "api_key": "provider-key"}},
             "hermes_constants": {"resolve_reasoning_config": lambda *_a: {"effort": "low"}},
         }.items():
@@ -796,6 +797,38 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(agent._persist_disabled)
         self.assertIsNone(agent._session_db)
         self.assertNotIn("hermes_cli.mcp_startup", sys.modules)
+
+    async def test_custom_provider_echo_resolves_named_provider_by_endpoint(self):
+        # _switch_model echoes the resolved provider type "custom" when a session stays on a
+        # named custom provider's endpoint; _make_agent must recover the real name so the
+        # runtime resolver does not reject a bare "custom" request (#host-model-switch).
+        requested = []
+        captured = {}
+        class AIAgent(FakeAgent):
+            def __init__(self, **kwargs):
+                super().__init__()
+                captured.update(kwargs)
+        additions = {}
+        for name, attrs in {
+            "run_agent": {"AIAgent": AIAgent},
+            "hermes_cli": {"__path__": []},
+            "hermes_cli.config": {"load_config": lambda: {"model": {"default": "magpie-model", "provider": "custom"}},
+                                  "get_compatible_custom_providers": lambda _cfg=None: [{"name": "magpie", "base_url": "https://magpie.invalid/v1/"}]},
+            "hermes_cli.runtime_provider": {"resolve_runtime_provider": lambda **kw: requested.append(kw.get("requested")) or
+                                            {"provider": "custom", "base_url": "https://magpie.invalid/v1", "api_key": "k"}},
+            "hermes_constants": {"resolve_reasoning_config": lambda *_a: {}},
+        }.items():
+            module = ModuleType(name)
+            module.__dict__.update(attrs)
+            additions[name] = module
+        with patch.dict(sys.modules, additions):
+            manager = self.cls().session_manager
+            manager._make_agent(session_id="s", cwd="/w", model="clinepass/x",
+                                requested_provider="custom", base_url="https://magpie.invalid/v1")
+            manager._make_agent(session_id="s", cwd="/w", model="clinepass/x",
+                                requested_provider="custom", base_url="https://unknown.invalid/v1")
+        self.assertEqual(requested, ["magpie", "custom"])
+        self.assertEqual(captured["model"], "clinepass/x")
 
     async def test_source_is_pinned_before_bootstrap_and_lazy_installs_disabled(self):
         import os

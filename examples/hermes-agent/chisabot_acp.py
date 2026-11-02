@@ -161,7 +161,7 @@ def build_agent_class():
             # memory and workspace imports. Model switching still uses the native
             # resolver and calls this factory with keep_endpoint's base_url/api_mode.
             from run_agent import AIAgent
-            from hermes_cli.config import load_config
+            from hermes_cli.config import get_compatible_custom_providers, load_config
             from hermes_cli.runtime_provider import resolve_runtime_provider
             from hermes_constants import resolve_reasoning_config
 
@@ -171,7 +171,17 @@ def build_agent_class():
                              else str(model_config or ""))
             provider = model_config.get("provider") if isinstance(model_config, dict) else None
             selected_model = model or default_model
-            route = resolve_runtime_provider(requested=requested_provider or provider, target_model=selected_model or None)
+            wanted = requested_provider or provider
+            if wanted == "custom" and base_url:
+                # _switch_model echoes the resolved provider *type* ("custom") when the session
+                # stays on a named custom provider's endpoint, but the runtime resolver only
+                # accepts real provider names. Recover the name from the carried endpoint.
+                kept = str(base_url).strip().rstrip("/").lower()
+                for entry in get_compatible_custom_providers(config):
+                    if str(entry.get("base_url") or "").strip().rstrip("/").lower() == kept:
+                        wanted = str(entry.get("name") or "").strip() or wanted
+                        break
+            route = resolve_runtime_provider(requested=wanted, target_model=selected_model or None)
             kwargs = dict(model=selected_model, provider=route.get("provider"),
                           api_mode=api_mode or route.get("api_mode"), base_url=base_url or route.get("base_url"),
                           api_key=route.get("api_key"), credential_pool=route.get("credential_pool"),

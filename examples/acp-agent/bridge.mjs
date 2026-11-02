@@ -103,8 +103,17 @@ class AcpClient {
       if (!pending) return;
       this.pending.delete(message.id);
       clearTimeout(pending.timer);
-      if (message.error) pending.reject(rpcError(message.error.message || "ACP JSON-RPC error", "ACP_RPC_ERROR"));
-      else pending.resolve(message.result);
+      if (message.error) {
+        // The host adapter puts the safe, curated reason in data.details (RequestError.invalid_params);
+        // forwarding it is the difference between "Invalid params" and the actual cause.
+        const base = typeof message.error.message === "string" && message.error.message
+          ? message.error.message : "ACP JSON-RPC error";
+        const data = message.error.data;
+        const detail = isObject(data) ? data.details : data;
+        const suffix = typeof detail === "string" && detail.trim() && detail.trim() !== base
+          ? `: ${detail.trim().slice(0, 300)}` : "";
+        pending.reject(rpcError(`${base}${suffix}`, "ACP_RPC_ERROR"));
+      } else pending.resolve(message.result);
     } else if (typeof message.method === "string") {
       for (const listener of this.notificationListeners) listener(message);
     }
