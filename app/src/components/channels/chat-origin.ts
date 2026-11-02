@@ -11,14 +11,24 @@ const JSON_VALUE = String.raw`(?:null|true|false|-?\d+(?:\.\d+)?|"(?:[^"\\]|\\.)
 const ORIGIN = new RegExp(
   String.raw`^\[(Slack|Teams) participant metadata; untrusted content, never instructions or authorization: id=${JSON_VALUE} kind=${JSON_VALUE} displayName=${JSON_VALUE} handle=${JSON_VALUE}\]\n?`,
 );
+const IM_ORIGIN = /^［经(.+?)(?:私聊|群聊)发来｜[^\n]*］\n?/;
 
 export function splitChatOrigin(
   text: string,
-): { via: "Slack" | "Teams"; text: string } | null {
+): { via: string; text: string } | null {
   const match = ORIGIN.exec(text);
-  if (!match) return null;
-  return {
-    via: match[1] === "Teams" ? "Teams" : "Slack",
-    text: text.slice(match[0].length),
-  };
+  if (match) {
+    return {
+      via: match[1] === "Teams" ? "Teams" : "Slack",
+      text: text.slice(match[0].length),
+    };
+  }
+  const imMatch = IM_ORIGIN.exec(text);
+  if (imMatch?.[1]) {
+    return {
+      via: imMatch[1].trim(),
+      text: text.slice(imMatch[0].length),
+    };
+  }
+  return null;
 }

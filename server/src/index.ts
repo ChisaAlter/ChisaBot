@@ -2234,16 +2234,55 @@ confirmations.setResume(async ({ ownerUserId, agentId, threadId, requestId, text
     await localBackend.inbox.withdraw(threadId, message.id);
   }
   const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM openbot_local_threads WHERE id = $1", [threadId]);
-  await governedTurnRunner({
+  const resolvedAgentId = rows[0]?.agent_id ?? agentId;
+  const result = await governedTurnRunner({
     ownerUserId,
     routineId: `confirm:${requestId}`,
-    agentId: rows[0]?.agent_id ?? agentId,
+    agentId: resolvedAgentId,
     threadId,
     instruction: text,
     initiator: { kind: "routine", id: `confirm:${requestId}` },
     userMessage: message,
     forwardedProps: { chisabotConfirmResume: { id: requestId } },
   });
+  const replyText = result.replyText?.trim();
+  if (replyText) {
+    const [source] = await database
+      .select({ channelId: intelligenceChannelMappings.channelId })
+      .from(intelligenceChannelMappings)
+      .where(
+        and(
+          eq(intelligenceChannelMappings.userId, ownerUserId),
+          eq(intelligenceChannelMappings.threadId, threadId),
+        ),
+      )
+      .limit(1);
+    if (source) {
+      await channelStore
+        .recordActivity(
+          await actorFor(ownerUserId),
+          source.channelId,
+          { text: replyText, agentId: resolvedAgentId, at: new Date() },
+          { id: `confirm-resume-reply:${requestId}` },
+        )
+        .catch(() => {});
+    }
+    void imService?.pushToThread(threadId, replyText).catch(() => {});
+  }
+});
+confirmations.setOnOpened((req) => {
+  if (!req.threadId) return;
+  const targetStr = req.target ? `（${req.target}）` : "";
+  const detailLines = (req.details ?? [])
+    .slice(0, 2)
+    .map((d) => `${d.label}：${d.value.slice(0, 140)}`)
+    .join("\n");
+  const msg = [
+    `⚠️ 待确认操作：「${req.title}」${targetStr}`,
+    ...(detailLines ? [detailLines] : []),
+    "请直接回复「允许」或「拒绝」处理（也可在电脑弹窗或网页端确认）。",
+  ].join("\n");
+  void imService?.pushToThread(req.threadId, msg).catch(() => {});
 });
 
 /**
@@ -2303,6 +2342,8 @@ const imTurnRunner = createTurnRunner({
   },
   turnTimeoutMs: 10 * 60_000,
 });
+// 全端同步：每个人每个机器人的「当前对话」存在服务器上，网页 / PC / 手机 / IM 打开同一段（bot-threads.ts，DESIGN.md §42）。
+const botThreads = await createBotThreads(database, localBackend?.control);
 imService = createImService({
   database,
   encryptionKey: config.keyEncryptionKey,
@@ -2315,13 +2356,70 @@ imService = createImService({
       return false;
     }
   },
+  resolveBotConversation: async (ownerUserId, agentId, fresh = false) => {
+    const actor = await actorFor(ownerUserId);
+    if (fresh) {
+      const created = await channelStore.create(actor, [agentId]);
+      await botThreads.setCurrent(ownerUserId, agentId, created.threadId, false).catch(() => {});
+      return created.threadId;
+    }
+    const synced = await botThreads.current(ownerUserId, agentId).catch(() => null);
+    if (synced?.threadId) {
+      const opened = await channelStore.openThread?.(actor, agentId, synced.threadId).catch(() => null);
+      if (opened?.threadId) return opened.threadId;
+    }
+    const direct = await channelStore.direct(actor, agentId);
+    await botThreads.setCurrent(ownerUserId, agentId, direct.threadId, true).catch(() => {});
+    return direct.threadId;
+  },
+  recordChannelActivity: async (threadId, actorOrAgentId, text) => {
+    const [source] = await database
+      .select({
+        channelId: intelligenceChannelMappings.channelId,
+        userId: intelligenceChannelMappings.userId,
+      })
+      .from(intelligenceChannelMappings)
+      .where(eq(intelligenceChannelMappings.threadId, threadId))
+      .limit(1);
+    if (!source) return;
+    const actor = await actorFor(source.userId);
+    const isUser = actorOrAgentId === source.userId;
+    await channelStore.recordActivity(actor, source.channelId, {
+      text: text.slice(0, 500),
+      agentId: isUser ? null : actorOrAgentId,
+      at: new Date(),
+    });
+  },
+  signalThreadBusy: (threadId, busy) => {
+    void channelStore.signalBusy(threadId, busy).catch(() => {});
+  },
   isSuspension: (error) => error instanceof HeadlessToolSuspension,
   resolveApproval: async (ownerUserId, threadId, decision) => {
     const allPending = (await confirmations.list(ownerUserId, { limit: 20 })).filter((r) => r.status === "pending");
     const target = (threadId ? allPending.find((r) => r.threadId === threadId) : null) ?? allPending[0];
-    if (!target) return null;
-    const decided = await confirmations.decide(ownerUserId, target.id, decision);
-    return { title: decided.title, target: decided.target };
+    if (target) {
+      const decided = await confirmations.decide(ownerUserId, target.id, decision);
+      return { title: decided.title, target: decided.target };
+    }
+    const pendingRequests = (await approvalService.store.list(ownerUserId).catch(() => [])).filter(
+      (r) => r.status === "pending",
+    );
+    const matchedAction =
+      (threadId ? pendingRequests.find((r) => r.action.continuation?.threadId === threadId) : null) ??
+      pendingRequests[0];
+    if (matchedAction) {
+      const handOff = matchedAction.action.policy?.behaviour === "hand_off";
+      await approvalService.decide(
+        ownerUserId,
+        matchedAction.id,
+        decision === "approve" ? (handOff ? "handled" : "allow_once") : "deny",
+      );
+      return {
+        title: matchedAction.action.toolRef,
+        target: typeof matchedAction.action.target === "string" ? matchedAction.action.target : null,
+      };
+    }
+    return null;
   },
 });
 await imService.ensure();
@@ -2600,8 +2698,6 @@ workflowEngineInstance = createWorkflowEngine({
  */
 // 对话里的截图缩略图按人存在服务器上，换设备也看得到（chat-shots.ts）。
 const chatShots = await createChatShots(database);
-// 全端同步：每个人每个机器人的「当前对话」存在服务器上，网页 / PC / 手机打开同一段（bot-threads.ts，DESIGN.md §42）。
-const botThreads = await createBotThreads(database, localBackend?.control);
 // 聊天里的链接预览卡（link-preview/service.ts，DESIGN.md §31 / §48）：只连公网；没有 og:image 时的截图默认关闭，
 // CHISABOT_LINK_PREVIEW_SHOTS=1 才由内置浏览器截（仅共享计算机部署）。
 const linkPreviews = await createLinkPreviews(database, {
@@ -3082,6 +3178,9 @@ const approvalSweep = repeatAfterEach(async () => {
               },
               { id: messageId, text: outcome.replyText, kind: "reply" },
             );
+          if (outcome.replyText?.trim()) {
+            void imService?.pushToThread(snapshot.threadId, outcome.replyText.trim()).catch(() => {});
+          }
         },
       };
       abandon = (reason) =>

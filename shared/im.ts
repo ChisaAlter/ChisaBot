@@ -44,6 +44,10 @@ export type ImPlatformInfo = {
   summary: string;
   /** 「官方」= 平台官方开放接口；「非官方」= 第三方协议端（有封号风险）。 */
   official: boolean;
+  /** 支持直接扫码授权绑定（自动创建/绑定机器人并填入凭据）。 */
+  qrAuth?: boolean;
+  /** 扫码绑定说明文案。 */
+  qrHint?: string;
   /** 显示在表单顶部的风险提示（非官方协议才有）。 */
   risk?: string;
   /** 获取凭据的步骤，按顺序。 */
@@ -59,15 +63,15 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
   {
     id: "feishu",
     name: "飞书 / Lark",
-    summary: "飞书开放平台的自建应用机器人，长连接收消息，不需要公网回调地址。",
+    summary: "飞书开放平台的机器人，长连接收消息，支持手机飞书直接扫码一键创建并绑定，不需要公网回调地址。",
     official: true,
+    qrAuth: true,
+    qrHint: "使用手机飞书 / Lark 扫码，一键注册个人助手应用并自动拉取 App ID 与 App Secret。",
     steps: [
-      "打开 open.feishu.cn（国际版 open.larksuite.com）→ 开发者后台 → 创建企业自建应用。",
-      "「添加应用能力」里添加「机器人」。",
-      "「权限管理」开通：im:message（获取与发送单聊、群组消息）、im:message.group_at_msg:readonly（接收群聊中 @ 机器人消息）、im:message.p2p_msg:readonly（读取用户发给机器人的单聊消息）。",
-      "「凭证与基础信息」复制 App ID 和 App Secret，填到下面，先保存这个连接（长连接要先连上，飞书才允许保存订阅方式）。",
-      "回到飞书「事件与回调」→ 订阅方式选「使用长连接接收事件」→ 添加事件「接收消息 im.message.receive_v1」。",
-      "「版本管理与发布」创建版本并发布；在飞书里搜索这个机器人私聊，或把它拉进群里 @ 它。",
+      "推荐：直接点下方「扫码绑定」，用手机飞书扫码确认即可自动创建并填入 App ID 与 App Secret。",
+      "若需手动配置自建应用：打开 open.feishu.cn（国际版 open.larksuite.com）→ 开发者后台 → 创建企业自建应用，添加「机器人」能力。",
+      "「权限管理」开通：im:message、im:message.group_at_msg:readonly、im:message.p2p_msg:readonly。",
+      "「事件与回调」→ 订阅方式选「使用长连接接收事件」→ 添加事件「接收消息 im.message.receive_v1」，发布版本。",
     ],
     fields: [
       { key: "appId", label: "App ID", type: "text", required: true, placeholder: "cli_xxxxxxxxxxxx" },
@@ -89,14 +93,14 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
   {
     id: "qq_official",
     name: "QQ 官方机器人",
-    summary: "QQ 开放平台的官方机器人，WebSocket 网关收消息，支持 QQ 私聊、QQ 群 @ 和频道 @。",
+    summary: "QQ 开放平台的官方机器人，WebSocket 网关收消息，支持手机 QQ 直接扫码绑定，支持 QQ 私聊、QQ 群 @ 和频道 @。",
     official: true,
+    qrAuth: true,
+    qrHint: "使用手机 QQ 扫码，在官方页面选择或创建 QQ 机器人，自动解密并填入 AppID 与 AppSecret。",
     steps: [
-      "打开 q.qq.com（QQ 开放平台）注册开发者，创建一个机器人。",
-      "「开发设置」里复制 AppID 和 AppSecret，填到下面。",
-      "「沙箱配置」把自己的 QQ 号（和要测试的群）加进沙箱；正式上线前只有沙箱里的人能用。",
-      "如果开放平台要求 IP 白名单，把 ChisaBot 服务器的公网 IP 加进去。",
-      "用沙箱里的 QQ 号私聊机器人，或在群里 @ 它。",
+      "推荐：直接点下方「扫码绑定」，用手机 QQ 扫码选择或一键创建机器人，自动填入 AppID 和 AppSecret。",
+      "若手动填写：打开 q.qq.com（QQ 开放平台）→「开发设置」复制 AppID 和 AppSecret 填入下方。",
+      "在 QQ 里私聊机器人，或把它拉进群 / 频道里 @ 它即可直接和绑定的 Bot 对话。",
     ],
     fields: [
       { key: "appId", label: "AppID", type: "text", required: true, placeholder: "102xxxxxx" },
@@ -158,12 +162,13 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
   {
     id: "wecom_bot",
     name: "企业微信智能机器人",
-    summary: "企业微信官方「智能机器人」API 模式，长连接收消息，不需要公网回调地址，回复支持流式和 Markdown。",
+    summary: "企业微信官方「智能机器人」API 模式，长连接收消息，支持企业微信直接扫码创建绑定，不需要公网回调地址。",
     official: true,
+    qrAuth: true,
+    qrHint: "使用企业微信扫码确认，自动创建智能机器人并获取 Bot ID 与 Secret。",
     steps: [
-      "企业微信管理后台（work.weixin.qq.com）→ 应用管理 → 智能机器人 → 创建机器人 → 选「API 模式」。",
-      "连接方式选「长连接」，复制 Bot ID 和 Secret，填到下面。",
-      "设置可见范围（谁能和它聊），保存。",
+      "推荐：直接点下方「扫码绑定」，用手机企业微信扫码确认即可自动获取 Bot ID 和 Secret。",
+      "若手动填写：企业微信管理后台（work.weixin.qq.com）→ 应用管理 → 智能机器人 → 创建机器人 → 选「API 模式」→「长连接」，复制 Bot ID 和 Secret。",
       "在企业微信里找到这个机器人私聊，或把它加进群里 @ 它。",
     ],
     fields: [
@@ -178,10 +183,12 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
     name: "个人微信（微信 ClawBot）",
     summary: "微信官方的个人助手插件（iLink 接口），用自己的微信扫码授权，机器人在微信里以「ClawBot」私聊回复。",
     official: true,
+    qrAuth: true,
+    qrHint: "使用手机微信扫码并在手机上确认，即可绑定微信 ClawBot。",
     risk: "这是微信官方开放给 AI 助手的接口，但仍在灰度：需要较新版本的微信，授权可能过期（过期后重新扫码即可）。目前只支持私聊。",
     steps: [
       "手机微信更新到最新版本。",
-      "点下面「扫码授权」，用要接入的微信扫码并确认。",
+      "点下面「扫码绑定」，用要接入的微信扫码并确认。",
       "授权后在微信里找到 ClawBot（微信助手）给它发消息，就会由你选的机器人回复。",
     ],
     fields: [
@@ -194,12 +201,13 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
   {
     id: "dingtalk",
     name: "钉钉机器人",
-    summary: "钉钉开放平台企业内部应用机器人，Stream 模式收消息，不需要公网回调地址。",
+    summary: "钉钉开放平台企业内部应用机器人，Stream 模式收消息，支持手机钉钉扫码一键创建绑定，不需要公网回调地址。",
     official: true,
+    qrAuth: true,
+    qrHint: "使用手机钉钉扫码确认，自动注册钉钉机器人应用并填入 Client ID 与 Client Secret。",
     steps: [
-      "open-dev.dingtalk.com → 应用开发 → 企业内部应用 → 创建应用，添加「机器人」能力。",
-      "机器人配置里消息接收模式选「Stream 模式」，发布。",
-      "「凭证与基础信息」复制 Client ID（AppKey）和 Client Secret（AppSecret），填到下面。",
+      "推荐：直接点下方「扫码绑定」，用手机钉钉扫码确认即可自动创建机器人并填入凭据。",
+      "若手动填写：open-dev.dingtalk.com → 应用开发 → 企业内部应用 → 创建应用，添加「机器人」能力，消息接收模式选「Stream 模式」并发布，复制 Client ID 和 Client Secret。",
       "在钉钉里私聊机器人，或把它加进群里 @ 它。",
     ],
     fields: [

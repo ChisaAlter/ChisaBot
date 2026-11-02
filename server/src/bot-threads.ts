@@ -59,9 +59,10 @@ export function textOf(content: unknown): string {
   return "";
 }
 
-/** 标题：压成一行，最多 60 个字。 */
+/** 标题：去掉 IM 渠道来源头，压成一行，最多 60 个字。 */
 export function clipTitle(text: string | null | undefined): string {
-  const line = (text ?? "").replace(/\s+/g, " ").trim();
+  const stripped = (text ?? "").replace(/^［经[^\n]+?］\r?\n/, "");
+  const line = stripped.replace(/\s+/g, " ").trim();
   return line.length > 60 ? `${line.slice(0, 60)}…` : line;
 }
 

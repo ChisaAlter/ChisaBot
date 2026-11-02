@@ -189,4 +189,111 @@ describe("IM 接入服务", () => {
     expect(await service.authorizeReverse(view.id, token)).toBe(true);
     await waitFor(() => service.statusOf(view.id)?.state === "waiting");
   });
+
+  test("统一 Bot 会话与 IM 窗口授权闭环：共用网页端会话、推送待确认提示、回复「允许」直接放行", async () => {
+    const { withConfirmActor, withConfirmTurn } = await import("../src/confirmations/context");
+    const { createConfirmations } = await import("../src/confirmations/service");
+    const confirmations = createConfirmations(database);
+    await confirmations.ensure();
+    let currentWebThread = `web-thread-${randomUUID().slice(0, 8)}`;
+    const resolvedApprovals: Array<{ id: string; decision: "approve" | "deny" }> = [];
+
+    const unifiedService = createImService({
+      database,
+      encryptionKey: key,
+      botAvailable: async (user, agentId) => user === owner && agentId === "bot-1",
+      resolveBotConversation: async (_user, _agentId, fresh) => {
+        if (fresh) currentWebThread = `web-thread-${randomUUID().slice(0, 8)}`;
+        return currentWebThread;
+      },
+      resolveApproval: async (user, threadId, decision) => {
+        const allPending = (await confirmations.list(user, { threadId: threadId ?? undefined, limit: 20 })).filter((r) => r.status === "pending");
+        const pending = allPending[0];
+        if (!pending) return null;
+        const decided = await confirmations.decide(user, pending.id, decision);
+        resolvedApprovals.push({ id: pending.id, decision });
+        return { title: decided.title, target: decided.target };
+      },
+      runTurn: async (input) => {
+        // 模拟回合中触发需要用户确认的操作（如桌面窗口/浏览器操作）
+        const check = await withConfirmTurn(
+          { threadId: input.threadId, runId: "run-im", stopped: () => false },
+          () =>
+            withConfirmActor(
+              input.initiator,
+              () =>
+                confirmations.check({
+                  ownerUserId: input.ownerUserId,
+                  agentId: input.agentId,
+                  category: "message",
+                  tool: "send_msg",
+                  title: "点击桌面窗口",
+                  target: "我的电脑",
+                  details: [{ label: "坐标", value: "(100, 200)" }],
+                  matchText: "点击桌面窗口 我的电脑",
+                  digest: `digest-${randomUUID().slice(0, 8)}`,
+                  initiator: input.initiator,
+                }),
+            ),
+        );
+        if (!check.ok) {
+          return { replyText: check.message };
+        }
+        return { replyText: "操作已完成" };
+      },
+      ws: (url) => {
+        const socket = new FakeWs(url);
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    confirmations.setOnOpened((req) => {
+      if (!req.threadId) return;
+      void unifiedService.pushToThread(
+        req.threadId,
+        `⚠️ 待确认操作：「${req.title}」\n请直接回复「允许」或「拒绝」处理。`,
+      );
+    });
+
+    const view = await unifiedService.create(owner, {
+      platform: "onebot",
+      name: "统一会话测试",
+      agentId: "bot-1",
+      config: { mode: "forward", url: "ws://napcat-unified.test:3001" },
+    });
+    createdIds.push(view.id);
+
+    const socket = await waitFor(() => sockets.find((item) => item.url.startsWith("ws://napcat-unified.test:3001")));
+    await waitFor(() => unifiedService.statusOf(view.id)?.state === "connected");
+
+    // 1) 用户在 IM 发消息 -> 绑定到 currentWebThread，且触发待确认卡片并主动推送到 IM
+    const initialWebThread = currentWebThread;
+    socket.push({ post_type: "message", message_type: "private", self_id: 10001, user_id: 666, message_id: 10, message: "帮我点一下窗口" });
+
+    await waitFor(() =>
+      socket.actions("send_private_msg").some((frame) => frame.params.user_id === 666 && frame.params.message[0].data.text.includes("待确认操作：「点击桌面窗口」")),
+    );
+    const pendingList = (await confirmations.list(owner, { threadId: initialWebThread })).filter((r) => r.status === "pending");
+    expect(pendingList).toHaveLength(1);
+    expect(pendingList[0]!.title).toBe("点击桌面窗口");
+
+    // 2) 用户在 IM 直接回复「允许」 -> 拦截并唤醒等待中的确认单，回合直接继续完成
+    socket.push({ post_type: "message", message_type: "private", self_id: 10001, user_id: 666, message_id: 11, message: "允许" });
+    await waitFor(() =>
+      socket.actions("send_private_msg").some((frame) => frame.params.user_id === 666 && frame.params.message[0].data.text.includes("已允许「点击桌面窗口」")),
+    );
+    await waitFor(() =>
+      socket.actions("send_private_msg").some((frame) => frame.params.user_id === 666 && frame.params.message[0].data.text.includes("操作已完成")),
+    );
+    expect(resolvedApprovals).toEqual([{ id: pendingList[0]!.id, decision: "approve" }]);
+    expect((await confirmations.list(owner, { threadId: initialWebThread })).filter((r) => r.status === "pending")).toHaveLength(0);
+
+    // 3) 用户在 IM 发送 /new -> 切换网页端当前会话
+    socket.push({ post_type: "message", message_type: "private", self_id: 10001, user_id: 666, message_id: 12, message: "/new" });
+    await waitFor(() => currentWebThread !== initialWebThread);
+
+    await unifiedService.stopAll();
+  });
 });
+

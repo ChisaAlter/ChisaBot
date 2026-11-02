@@ -59,6 +59,18 @@ describe("classify", () => {
     expect(details.map((d) => d.label)).toEqual(["发给", "命令"]);
     expect(details[1]!.code).toBe(true);
   });
+  test("deviceLinkableInitiator links IM turns for device window popups while keeping background routines non-interactive", async () => {
+    const { deviceLinkableInitiator, interactiveInitiator } = await import("../src/confirmations/service");
+    expect(interactiveInitiator(undefined)).toBe(true);
+    expect(interactiveInitiator({ kind: "person" })).toBe(true);
+    expect(interactiveInitiator({ kind: "routine", id: "confirm:123" })).toBe(true);
+    expect(interactiveInitiator({ kind: "routine", id: "im:conn-1" })).toBe(false);
+    expect(interactiveInitiator({ kind: "routine", id: "schedule:1" })).toBe(false);
+
+    expect(deviceLinkableInitiator({ kind: "person" })).toBe(true);
+    expect(deviceLinkableInitiator({ kind: "routine", id: "im:conn-1" })).toBe(true);
+    expect(deviceLinkableInitiator({ kind: "routine", id: "schedule:1" })).toBe(false);
+  });
 });
 
 const url = process.env.TEST_DATABASE_URL ? testDatabaseUrl() : null;

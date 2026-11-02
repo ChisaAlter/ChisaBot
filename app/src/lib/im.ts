@@ -41,6 +41,8 @@ export type ImConnectionInput = {
   allowDevices?: boolean;
   /** 微信扫码授权成功后服务器给的一次性键（令牌不经过浏览器）。 */
   weixinLogin?: string;
+  /** 统一扫码授权（微信 / QQ 官方 / 企业微信 / 钉钉 / 飞书）成功后服务器给的一次性键。 */
+  qrLogin?: string;
 };
 
 export function createImConnection(input: ImConnectionInput): Promise<ImConnectionView> {
@@ -64,6 +66,42 @@ export async function testImConnection(id: string): Promise<ImTestResult> {
 
 export async function testImDraft(input: ImConnectionInput & { id?: string }): Promise<ImTestResult> {
   const response = await client("/api/im/test", { method: "POST", body: input, fallback: "测试失败，请重试" });
+  return response.json();
+}
+
+export type ImQrStartResult = {
+  session: string;
+  qrcode: string;
+  url: string;
+  qrKind?: "url" | "image";
+};
+
+export async function startImQr(input: {
+  platform: string;
+  baseUrl?: string;
+  domain?: string;
+}): Promise<ImQrStartResult> {
+  const response = await client("/api/im/qr/start", {
+    method: "POST",
+    body: input,
+    fallback: "获取二维码失败",
+  });
+  return response.json();
+}
+
+export type ImQrPollResult = {
+  status: "wait" | "scanned" | "confirmed" | "expired";
+  loginKey?: string;
+  account?: string | null;
+  config?: Record<string, string>;
+  message?: string;
+};
+
+export async function pollImQr(session: string, signal?: AbortSignal): Promise<ImQrPollResult> {
+  const response = await client(`/api/im/qr/status?session=${encodeURIComponent(session)}`, {
+    fallback: "查询扫码状态失败",
+    signal,
+  });
   return response.json();
 }
 
