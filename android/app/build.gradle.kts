@@ -24,8 +24,8 @@ android {
         applicationId = "cn.ayase.chisabot"
         minSdk = 24
         targetSdk = 34
-        versionCode = 301        // 只增不减（已安装的 Android 按它判断更新）；2026-10-12 版本号重置为 0.1.0 时从 206 接着往上
-        versionName = "0.1.119"
+        versionCode = 302        // 只增不减（已安装的 Android 按它判断更新）；2026-10-12 版本号重置为 0.1.0 时从 206 接着往上
+        versionName = "0.1.120"
         buildConfigField("String", "DEFAULT_SERVER", quoted(defaultServer))
         buildConfigField("String", "UPDATE_FEED", quoted(updateFeed))
         // http 只放行局域网 / 环回地址（GatewayAuth.normalize → privateHost）；ALLOW_LOCAL_HTTP 现在只控制登录页

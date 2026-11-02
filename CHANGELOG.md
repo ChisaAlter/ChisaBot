@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.1.120 — 2026-11-02
+
+这一版合并八条 PR：Bot 造 Bot（coworker 数据模型 #470 → 工厂工具与双向授权 #471 → 渲染器 / 徽章 / 授权面板与群聊最小路由 #473）、模型熔断与 400 修复（#466 → #472）、IM P3 后续（#475）、构建分块守卫（#474）、公开发布资产闸门（#468），另加合并后测试断言修复（#476）。全端同步版本号到 0.1.120（Android versionCode 302）；PC 外壳和 Android 应用本体不变。
+
+- Bot 造 Bot（#470 / #471 / #473）：`agent_profiles` 加 provenance 列 `created_by_agent_id` / `created_depth`（迁移 0062，刻意不设外键，创建者删除后出处仍在）；`createCoworker` 集中路由与工厂共用的校验 / 写入 / 审计；`create_bot` / `list_managed_bots` / `update_bot` / `disable_bot` 四个工具带审批（PREVIEW_VERBATIM 让审批卡原文展示完整提示词）、每人与深度上限在 advisory lock 事务内复查；建出的 Bot 自动得双向 `kind="bot"` 授权；前端四个工具渲染卡（锚点卡附「去和『X』聊天」）、机器人列表「由『X』创建」徽章、资料页管理员授权面板（隐藏的 Bot 仍可收回授权）、`/api/groups` 最小路由恢复（无 UI，成员校验仍在服务内）。
+- 模型熔断与修复（#466 / #472）：主模型按 quota / unavailable / rejected 分类熔断，冷却从 `CHISABOT_MODEL_COOLDOWN_MS` 指数退避到 `CHISABOT_MODEL_MAX_COOLDOWN_MS`；首输出期限覆盖整条流头部读取；400 / 413 / 422 按请求拒绝处理不熔断——先做一次历史清洗重试（空内容占位、超长 tool result 截断、按 user 边界整轮裁剪）再回落；多模态按目标模型能力转换图片 / 文档部件；切换模型后 live agent 重绑、工具与系统提示保留、首个 token 等不到就放弃卡死的上游调用不等满超时。
+- IM P3 后续（#475）：`allowPrivate` 只在管理员本次改动时才随表单发送（开 → 关也能收回）；企业微信不再把 `bot_info.userid` 当主人、钉钉只认 staff/userid 字段——宁缺毋错，没认出来就不回填。
+- 构建分块守卫（#474）：`vite build` 钉死 `NODE_ENV=production`，非生产调用方不再触发 `browser` ↔ `vendor-markdown` 分块环；vendor 正则覆盖 `dev/lib/`；CI 加普通 + `NODE_ENV=test` 双构建和 chunk 图校验。
+- 公开发布资产闸门（#468）：公开 Release 回退只取 `pc-generic-unsigned`，同名文件不再混入自建 PC 包；`check-release-assets.mjs` 校验 flavor 标记、资产白名单、`latest.yml` 与安装包路径 / 哈希 / 大小一致及签名在场性。
+- 测试修复（#476）：`approvals-rules` 的 Link mock 补 router 感知（进程级 mock 不再污染共享进程里后面的文件）；`schema.test.ts` 契约补上 0062 的两列一索引；`tool-selection` 断言接受 developer 角色。
+
 ## 0.1.119 — 2026-11-02
 
 这一版合并 #465：五个 IM 平台支持「扫码绑定」一键创建并填入凭据（微信 ClawBot、QQ 官方机器人、企业微信智能机器人、钉钉、飞书 / Lark），IM 通道同时打通双向能力——待确认操作推送 IM、全端「当前对话」同步、审批决定直接在 IM 里回复、模型回复回推 IM 线程。全端同步版本号到 0.1.119（Android versionCode 301）；PC 外壳和 Android 应用本体不变。

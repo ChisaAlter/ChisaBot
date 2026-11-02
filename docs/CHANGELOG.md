@@ -1,3 +1,13 @@
+## 0.1.120
+
+- Bot 造 Bot（#470 / #471 / #473）：`agent_profiles` provenance 列（迁移 0062）+ `createCoworker` 集中服务；create / list / update / disable 四工具带审批与每人、深度上限；双向 `kind="bot"` 授权；前端工具渲染卡、「由『X』创建」徽章、管理员授权面板、`/api/groups` 最小路由恢复。
+- 模型熔断与修复（#466 / #472）：主模型分类熔断 + 指数冷却；400 / 413 / 422 按请求拒绝先清洗重试再回落；多模态按模型能力转换；切换模型后工具与系统提示保留、首 token 限时不等死。
+- IM P3 后续（#475）：`allowPrivate` 仅在改动时发送；企微 / 钉钉主人回填只认安全字段，认不出不回填。
+- 构建守卫（#474）：`vite build` 钉死 `NODE_ENV=production` 修 `browser` ↔ `vendor-markdown` 分块环，CI 加双构建 + chunk 图校验。
+- 发布闸门（#468）：公开 Release 只收 `pc-generic-unsigned`，`check-release-assets.mjs` 校验 flavor / 白名单 / `latest.yml` 一致性 / 签名在场。
+- 测试修复（#476）：Link mock router 感知、schema 契约补 0062 列与索引、tool-selection 断言接受 developer 角色。
+- 版本号 0.1.120（根、app、server、pc；Android versionCode 302）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.119
 
 - IM 扫码一键绑定（#465）：微信 ClawBot / QQ 官方机器人 / 企业微信智能机器人 / 钉钉 / 飞书（Lark）连接表单内嵌「扫码绑定」，扫码确认自动创建 / 绑定机器人并填入凭据（`server/src/im/qr-auth.ts`；QQ 凭据 AES-256-GCM 解密，飞书识别 Lark 租户自动切域名）。
