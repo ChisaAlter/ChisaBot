@@ -29,15 +29,19 @@ import { settleReactWork } from "./settle-react-work";
  * O7 读不到设备时「返回设备列表」、O8 离线设备禁用并说明原因。
  */
 
-const real = await import("@tanstack/react-router");
-const RealLink = real.Link as unknown as (
-  props: Record<string, unknown>,
-) => React.ReactNode;
-const realUseRouter = real.useRouter;
-const realUseNavigate = real.useNavigate;
+const router = await import("@tanstack/react-router");
+// mock.module 会原地改写模块命名空间，先把真的 Link / useRouter / useNavigate 拿住。
+const RealLink = router.Link as unknown as React.ComponentType<
+  Record<string, unknown>
+>;
+const realUseRouter = router.useRouter;
+const realUseNavigate = router.useNavigate;
 
 /** 和真 Link 一样用 params 填 `to` 里的 `$xxx`；没给的参数原样留着，测试里一眼能看出来。 */
-function fillParams(to: string | undefined, params: unknown) {
+function fillParams(
+  to: string | undefined,
+  params: unknown,
+): string | undefined {
   if (!to || !params || typeof params !== "object") return to;
   const values = params as Record<string, unknown>;
   return to.replace(/\$([A-Za-z0-9_]+)/g, (whole, key: string) =>
@@ -46,48 +50,61 @@ function fillParams(to: string | undefined, params: unknown) {
 }
 
 /*
- * mock.module 是进程级的，换不回来：共享进程里排在这份后面的文件拿到的也是这个 Link /
- * useNavigate（schedule-fired.test.tsx 同款写法）。所以有路由（RouterProvider）时直接交给真
- * 实现，行为和没 mock 一样；只有像本文件这样不挂路由的渲染才走替身：所有 props 原样透传给
- * <a>，href 用 params 填好路径参数，useNavigate 换成 noop。
+ * mock.module 是进程级的，换不回来：共享进程里排在后面的文件拿到的也是这个 Link。
+ * 所以有路由（RouterProvider）时直接交给真 Link / 真 useNavigate，行为和没 mock 一样；
+ * 只有像本文件这样不挂路由的渲染才走替身（schedule-fired.test.tsx 同款做法）。
  */
 mock.module("@tanstack/react-router", () => ({
-  ...real,
+  ...router,
   Link: (props: {
     children?: React.ReactNode;
     to?: string;
     href?: string;
     params?: unknown;
+    search?: unknown;
+    hash?: unknown;
     [key: string]: unknown;
   }) => {
-    const inRouter = realUseRouter({ warn: false });
-    if (inRouter) return <RealLink {...props} />;
-    const { children, to, href, params, search: _s, hash: _h, ...rest } = props;
+    if (realUseRouter({ warn: false })) return <RealLink {...props} />;
+    const {
+      children,
+      to,
+      href,
+      params,
+      search: _search,
+      hash: _hash,
+      ...rest
+    } = props;
     return (
-      <a {...rest} href={href ?? fillParams(to, params)}>
+      <a {...(rest as object)} href={href ?? fillParams(to, params)}>
         {children}
       </a>
     );
   },
   useNavigate: (options?: unknown) => {
-    const inRouter = realUseRouter({ warn: false });
-    return inRouter ? realUseNavigate(options as never) : () => {};
+    if (realUseRouter({ warn: false }))
+      return realUseNavigate(options as never);
+    return () => {};
   },
 }));
 
 let decideImpl: (id: string, decision: string) => Promise<void> =
   async () => {};
 const calls: string[] = [];
+/** 只在本文件的用例跑的时候拦截 decideApproval；漏给别的文件时交回真实现。 */
+let interceptApprovals = false;
 const realDevices = await import("@/lib/devices");
 mock.module("@/lib/devices", () => ({
   ...realDevices,
-  decideApproval: (id: string, decision: string) => {
+  decideApproval: (id: string, decision: "approve" | "deny") => {
+    if (!interceptApprovals) return realDevices.decideApproval(id, decision);
     calls.push(decision);
     return decideImpl(id, decision);
   },
 }));
 
 beforeAll(() => {
+  interceptApprovals = true;
   if (!globalThis.document) GlobalRegistrator.register();
 });
 afterEach(() => {
@@ -96,6 +113,7 @@ afterEach(() => {
   decideImpl = async () => {};
 });
 afterAll(async () => {
+  interceptApprovals = false;
   await settleReactWork();
   if (GlobalRegistrator.isRegistered) GlobalRegistrator.unregister();
 });

@@ -23,8 +23,14 @@ export type AgentInput = {
 /** The sentence for every write here, since they all fail the same way to a reader. */
 const FALLBACK = "机器人操作失败，请稍后重试。";
 
-/** Server-derived fields are invalidated instead of patched by hand. */
-function invalidateAgents(queryClient: QueryClient) {
+/**
+ * Server-derived fields are invalidated instead of patched by hand.
+ *
+ * Exported for the bot-factory renderers: a `create_bot`/`update_bot`/`disable_bot` result lands in
+ * a transcript, not in a mutation's onSuccess, and the roster has to refetch for the new Bot and
+ * its「由 X 创建」badge to show up without a reload.
+ */
+export function invalidateAgents(queryClient: QueryClient) {
   return queryClient.invalidateQueries({ queryKey: agentKeys.all });
 }
 

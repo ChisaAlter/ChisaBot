@@ -21,6 +21,7 @@
 import { createHash } from "node:crypto";
 import type { Message } from "@ag-ui/client";
 import { and, asc, desc, eq, isNull, min, sql } from "drizzle-orm";
+import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { HandoffCaps } from "../agents/handoff";
 import type { ApprovalContinuation } from "../approvals/types";
@@ -30,6 +31,7 @@ import {
   PERSON_INITIATOR,
   recordAuditEvent,
 } from "../audit";
+import type { AppVariables } from "../auth/guards";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
 import type { Database } from "../db/client";
 import {
@@ -1262,4 +1264,72 @@ export function createGroupConversations(deps: {
 }
 export type GroupConversations = ReturnType<typeof createGroupConversations>;
 
-// The `/api/groups` HTTP routes were removed in slimming P4b (group chat has no UI any more).
+/*
+ * The minimal `/api/groups` surface, restored for the bot-factory work (design §6): no UI, but the
+ * service's entry points are reachable and tested over HTTP, so a person message can queue a group
+ * turn and a Bot's `@Name` reply can hand the turn to a peer through the same desk grant it uses
+ * anywhere else. Membership is still the roster check inside each method — a non-member gets the
+ * same 404 as a channel that does not exist.
+ */
+export function createGroupRoutes(
+  service: GroupConversations,
+  requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
+) {
+  const routes = new Hono<{ Variables: AppVariables }>();
+  routes.use("*", requireUser);
+  routes.onError((error, context) =>
+    context.json(
+      { error: error.message },
+      error instanceof GroupNotFoundError
+        ? 404
+        : error instanceof GroupRefusedError || error instanceof z.ZodError
+          ? 400
+          : 500,
+    ),
+  );
+  routes.post("/", async (context) =>
+    context.json(
+      {
+        channel: await service.create(
+          context.var.actor.id,
+          await context.req.json(),
+        ),
+      },
+      201,
+    ),
+  );
+  routes.post("/:channelId/members", async (context) =>
+    context.json(
+      await service.addMember(
+        context.var.actor.id,
+        context.req.param("channelId"),
+        await context.req.json(),
+      ),
+      201,
+    ),
+  );
+  routes.delete("/:channelId/members/:userId", async (context) => {
+    await service.removeMember(
+      context.var.actor.id,
+      context.req.param("channelId"),
+      context.req.param("userId"),
+    );
+    return context.body(null, 204);
+  });
+  routes.get("/:channelId", async (context) =>
+    context.json(
+      await service.list(context.var.actor.id, context.req.param("channelId")),
+    ),
+  );
+  routes.post("/:channelId", async (context) =>
+    context.json(
+      await service.send(
+        context.var.actor.id,
+        context.req.param("channelId"),
+        await context.req.json(),
+      ),
+      202,
+    ),
+  );
+  return routes;
+}

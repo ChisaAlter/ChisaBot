@@ -55,6 +55,10 @@ import {
   createChannelAttachmentRoutes,
 } from "./channels/attachments";
 import type { ChannelEventHub } from "./channels/events";
+import {
+  createGroupRoutes,
+  type GroupConversations,
+} from "./channels/group";
 import { type ChannelStore, createChannelRoutes } from "./channels/routes";
 import type { ThreadIdentity } from "./channels/thread-identity";
 import { createThreadRoutes } from "./channels/thread-routes";
@@ -349,6 +353,12 @@ export function createApp(
     };
     /** Pause, reset, Activity and attention for a person's own Bots. See agents/lifecycle.ts. */
     lifecycle?: BotLifecycleServices;
+    /**
+     * The minimal group-conversation surface (`/api/groups`, channels/group.ts): the service methods
+     * the group engine already owns, over HTTP — no UI. Restored for the bot-factory handoff work so
+     * a Bot's `@Name` reply can queue a peer turn through the ordinary desk grant.
+     */
+    groups?: GroupConversations;
   },
   /**
    * Whether to offer help self-hosting, which also hides it from a deployment that pays for
@@ -1302,6 +1312,8 @@ export function createApp(
       "/api/bots",
       createBotLifecycleRoutes(coworker.lifecycle, requireUser),
     );
+  if (coworker?.groups)
+    app.route("/api/groups", createGroupRoutes(coworker.groups, requireUser));
   if (coworker?.approvals)
     app.route(
       "/api/approvals",
