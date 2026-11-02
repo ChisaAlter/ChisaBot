@@ -112,11 +112,10 @@ fullInstall=<true|false>
   - `--keys-from-env`：自建版按 `CHISABOT_UPDATE_PUBKEYS`（逗号或空白分隔的 base64 公钥）写公钥表；变量为空 → 空表 → 这个自建版不验签。
 - `pc/scripts/shell-fingerprint.js --stamp` 会顺手去掉旧的 `chisabotSig`（盖章后签名一定失效）：**签名永远是发布的最后一步**。
 - `.github/workflows/release.yml`：
-  - `config`：发布（有标签）时必须从这个标签运行（`github.ref` 是 `refs/tags/vX`）。手动发布要在「Use workflow from」里选标签——Environment 只允许 `v*` 标签，从分支跑签名 job 会被 GitHub 拒绝，这里提前给出明确报错。
-  - `release-gate`（ubuntu，只在发布时跑，`environment: pc-release`）：读 Environment 变量 `CHISABOT_PC_UPDATE_UNSIGNED`，输出 `pc_sign`。开关放在 Environment 变量里：和签名私钥同一层保护（只允许 `v*` 标签、可配 Required reviewers），仓库级同名变量不再生效。`=1` 时 `pc_sign=false`。
-  - `pc`（windows，跑 electron-builder）：「Update keys」步骤——`pc_sign=false` 时两个 flavor 都写空表（latest.yml 不签名，内置公钥只会让客户端永远拒绝更新）；通用版签名发布 `--require-keys`（公钥表为空直接失败），只构建不发布时只告警；自建版 `--keys-from-env`（仓库变量 `CHISABOT_UPDATE_PUBKEYS`）。产物改名为 `pc-<flavor>-unsigned`，附带 `update-keys.json` 和 `flavor.txt`（flavor 标记，release 上传前校验用）。**这个 job 拿不到签名私钥。**
+  - `config`：发布（有标签）时必须从这个标签运行（`github.ref` 是 `refs/tags/vX`）。手动发布要在「Use workflow from」里选标签——Environment 只允许 `v*` 标签，从分支跑签名 job 会被 GitHub 拒绝，这里提前给出明确报错。读仓库变量 `CHISABOT_PC_UPDATE_UNSIGNED` 输出 `pc_sign`（`=1` → `false`）。
+  - `pc`（windows，跑 electron-builder）：「Update keys」步骤——通用版发布时 `--require-keys`（公钥表为空直接失败，`CHISABOT_PC_UPDATE_UNSIGNED=1` 时告警放行空表），只构建不发布时只告警；自建版 `--keys-from-env`（仓库变量 `CHISABOT_UPDATE_PUBKEYS`）。产物改名为 `pc-<flavor>-unsigned`，附带 `update-keys.json` 和 `flavor.txt`（flavor 标记，release 上传前校验用）。**这个 job 拿不到签名私钥。**
   - `pc-sign`（ubuntu，只在发布时跑，`environment: pc-release`，`pc_sign=true` 才跑）：`npm ci --ignore-scripts --omit=dev`（只为 js-yaml，不跑安装脚本）→ 下载未签名产物 → 用 secret `PC_UPDATE_SIGNING_KEY` 签名 → `--verify --tamper-check` → 上传 `pc-<flavor>`（含 `flavor.txt`）。自建版没配公钥时跳过签名并告警。
-  - `release` 依赖 `release-gate` + `pc-sign`：签名路径只下载 `*-generic`；`pc-sign` 跳过时回退也只下载 `pc-generic-unsigned`——两个 flavor 产物文件名相同，合到同一目录会互相覆盖。上传前跑 `scripts/check-release-assets.mjs`：验 `flavor.txt` 是 generic、latest.yml 的 path/sha512/size/files[] 与安装包一致、没有白名单外文件、签名在场性和 `pc_sign` 一致，并把 `flavor.txt` / `update-keys.json` 剔出上传清单。
+  - `release` 依赖 `pc-sign`：签名路径只下载 `*-generic`；`pc-sign` 跳过时回退也只下载 `pc-generic-unsigned`——两个 flavor 产物文件名相同，合到同一目录会互相覆盖。上传前跑 `scripts/check-release-assets.mjs`：验 `flavor.txt` 是 generic、latest.yml 的 path/sha512/size/files[] 与安装包一致、没有白名单外文件、签名在场性和 `pc_sign` 一致，并把 `flavor.txt` / `update-keys.json` 剔出上传清单。
 - 以后改成离线手签：去掉 `pc-sign` 的 secret，发版时下载 `pc-generic-unsigned`，本机 `node scripts/sign-update.js latest.yml --key-file <私钥>`，再上传 `latest.yml`；脚本不用改。
 
 ### 3.4 Windows 代码签名（第二阶段，暂缓）
@@ -172,8 +171,7 @@ fullInstall=<true|false>
 4. **离线备份**：备用钥 `.pem` 存两份离线（U 盘 + 密码管理器），然后删掉电脑上的备用钥文件；主钥 `.pem` 填进 secret 后也删掉（或同样离线保存一份以便以后本机重签）。
 5. **把两个公钥发给开发者**，写进 `pc/src/update-keys.json`（主 + 备两项）。没有这一步，通用版发布会在「Update keys」步骤失败。
 6. （自建版，可选）要让自建版也验签：仓库变量 `CHISABOT_UPDATE_PUBKEYS` 填公钥（逗号分隔；用同一把主钥签就填同样两个公钥）。不填 = 自建版不验签、照旧更新，网页提示「此版本未启用更新验签」。
-7. （可选）要允许「明确不验签」的发布：同一个 Environment `pc-release` → Environment variables → `CHISABOT_PC_UPDATE_UNSIGNED` = `1`。只放 Environment 变量，不要放仓库级 `vars`——workflow 只在 `release-gate` job（`environment: pc-release`）里读它，仓库级同名变量已经不生效。要更严格可以在 Environment 上勾 Required reviewers：改这个变量就会要走审批。
-8. 以后发版和以前一样推 `v*` 标签，不用点审批。手动重跑发布要在「Use workflow from」里选这个标签。
+7. 以后发版和以前一样推 `v*` 标签，不用点审批。手动重跑发布要在「Use workflow from」里选这个标签。
 
 ## 5. 改动文件
 

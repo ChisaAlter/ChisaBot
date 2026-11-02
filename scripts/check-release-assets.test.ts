@@ -15,13 +15,13 @@ import { join } from "node:path";
 import { parse } from "yaml";
 
 /**
- * scripts/check-release-assets.mjs + release.yml 的回归测试（RV-03 / RV-14 开关迁移 / RV-26）。
+ * scripts/check-release-assets.mjs + release.yml 的回归测试（RV-03 / RV-26）。
  *
  * 前半部分用临时目录模拟 download-artifact 的 merge-multiple：generic 和 custom 产物同名，
  * 谁后写谁覆盖——证明把关脚本在干净 generic、整包被 custom 覆盖、latest.yml 与安装包分属两个
  * flavor 这三种情况下给出正确判定。后半部分直接解析 .github/workflows/release.yml，固定住
- * 工作流上的几个不变量（回退只取 pc-generic-unsigned、开关只由 pc-release Environment 下的
- * release-gate 读、上传前一定先跑把关脚本）。
+ * 工作流上的几个不变量（回退只取 pc-generic-unsigned、不验签开关是仓库级
+ * vars.CHISABOT_PC_UPDATE_UNSIGNED（config 输出 pc_sign）、上传前一定先跑把关脚本）。
  */
 
 const SCRIPT = join(import.meta.dir, "check-release-assets.mjs");
@@ -237,39 +237,34 @@ describe("release.yml invariants", () => {
     expect(checkAt).toBeLessThan(uploadAt);
   });
 
-  test("CHISABOT_PC_UPDATE_UNSIGNED 只在 pc-release Environment 下的 release-gate 里读（RV-14 开关迁移）", () => {
-    expect(jobs["release-gate"].environment).toBe("pc-release");
-    expect(JSON.stringify(jobs["release-gate"])).toContain(
+  test("CHISABOT_PC_UPDATE_UNSIGNED 是仓库级变量，在 config job 里读成 pc_sign", () => {
+    // PC 端不签名由仓库级 vars 决定（origin/main 行为），没有 release-gate / Environment 变量这一层
+    expect(jobs["release-gate"]).toBeUndefined();
+    expect(jobs.config.outputs ?? {}).toHaveProperty("pc_sign");
+    expect(JSON.stringify(jobs.config)).toContain(
       "vars.CHISABOT_PC_UPDATE_UNSIGNED",
     );
-    // 其它 job 不能再读这个开关——仓库级 vars 改动不得影响发布
-    for (const [name, job] of Object.entries(jobs)) {
-      if (name === "release-gate") continue;
-      const serialized = JSON.stringify(job);
-      expect({
-        name,
-        hit: serialized.includes("vars.CHISABOT_PC_UPDATE_UNSIGNED"),
-      }).toEqual({
-        name,
-        hit: false,
-      });
-    }
   });
 
-  test("pc_sign 判定只来自 release-gate，pc / pc-sign / release 都用它的输出", () => {
-    expect(needsOf(jobs.pc)).toContain("release-gate");
-    expect(needsOf(jobs["pc-sign"])).toContain("release-gate");
-    expect(needsOf(jobs.release)).toContain("release-gate");
+  test("pc_sign 判定来自 config 输出，pc-sign / release 都用它", () => {
+    for (const name of ["pc", "pc-sign", "release"])
+      expect(needsOf(jobs[name] ?? {})).not.toContain("release-gate");
     expect(String(jobs["pc-sign"].if)).toContain(
-      "needs.release-gate.outputs.pc_sign == 'true'",
+      "needs.config.outputs.pc_sign == 'true'",
     );
-    expect(jobs.config.outputs ?? {}).not.toHaveProperty("pc_sign");
-    // pc 的 Update keys 步骤拿 release-gate 的输出，而不是直接读 vars
+    // pc 的 Update keys 步骤直接读仓库级 vars
     const updateKeys = (jobs.pc.steps ?? []).find(
       (s) => s.name === "Update keys",
     ) as { env?: Record<string, string> } | undefined;
-    expect(String(updateKeys?.env?.PC_SIGN)).toContain(
-      "needs.release-gate.outputs.pc_sign",
+    expect(String(updateKeys?.env?.PC_UNSIGNED)).toContain(
+      "vars.CHISABOT_PC_UPDATE_UNSIGNED",
+    );
+    // release 的把关步骤拿 config 的 pc_sign 输出决定 --expect-signed / --expect-unsigned
+    const gate = (jobs.release.steps ?? []).find((s) =>
+      String(s.run ?? "").includes("check-release-assets.mjs"),
+    ) as { env?: Record<string, string> } | undefined;
+    expect(String(gate?.env?.PC_SIGN)).toContain(
+      "needs.config.outputs.pc_sign",
     );
   });
 
