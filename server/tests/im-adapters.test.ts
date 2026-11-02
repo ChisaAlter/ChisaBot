@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { createCipheriv } from "node:crypto";
 import { splitChatOrigin } from "../../app/src/components/channels/chat-origin";
-import { DingtalkAdapter } from "../src/im/adapters/dingtalk";
+import {
+  DingtalkAdapter,
+  parseDingtalkMessage,
+} from "../src/im/adapters/dingtalk";
 import { FeishuAdapter, parseFeishuMessage } from "../src/im/adapters/feishu";
 import {
   OneBotAdapter,
@@ -1201,6 +1204,101 @@ describe("多平台扫码绑定与消息来源解析", () => {
       secrets: { appSecret: "sec_fs_1" },
       account: "cli_fs_1",
       boundUserId: "ou_owner",
+    });
+  });
+
+  test("企业微信扫码回填主人：bot_info.userid 是机器人自己的 id，不能当扫码人", async () => {
+    // query_result 只在 bot_info 里带了 userid（机器人的），顶层没有扫码人字段 → 不回填。
+    const botOnly: typeof fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            status: "success",
+            bot_info: { botid: "ww_bot_9", secret: "ww_sec_9", userid: "ww_self_id" },
+          },
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    expect(await pollPlatformQr("wecom_bot", { scode: "sc_9" }, botOnly)).toEqual({
+      status: "confirmed",
+      config: { botId: "ww_bot_9" },
+      secrets: { secret: "ww_sec_9" },
+      account: "ww_bot_9",
+    });
+
+    // 顶层有真正的扫码人字段 → 回填的是它，不是 bot_info 里那个。
+    const withOperator: typeof fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            status: "success",
+            bot_info: { botid: "ww_bot_9", secret: "ww_sec_9", userid: "ww_self_id" },
+            operator_userid: "ww_operator_1",
+          },
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    expect(await pollPlatformQr("wecom_bot", { scode: "sc_9" }, withOperator)).toEqual({
+      status: "confirmed",
+      config: { botId: "ww_bot_9" },
+      secrets: { secret: "ww_sec_9" },
+      account: "ww_bot_9",
+      boundUserId: "ww_operator_1",
+    });
+  });
+
+  test("钉钉扫码回填主人：只回填和 senderStaffId 同类型的 id", async () => {
+    // 消息里认人用的是 senderStaffId（钉钉 userid），senderId 是另一种加密 id。
+    const inbound = parseDingtalkMessage({
+      msgId: "m1",
+      conversationType: "1",
+      senderStaffId: "staff_42",
+      senderId: "encrypted_x",
+      senderNick: "小千",
+      msgtype: "text",
+      text: { content: "hi" },
+    });
+    expect(inbound?.userId).toBe("staff_42");
+
+    // 只回了 unionid / openId（另一种 id 空间，永远匹配不上 senderStaffId）→ 不回填。
+    const unionOnly: typeof fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          errcode: 0,
+          status: "SUCCESS",
+          client_id: "ding_id",
+          client_secret: "ding_sec",
+          unionid: "union_x",
+          user_info: { unionId: "union_y", openId: "open_z" },
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    expect(await pollPlatformQr("dingtalk", { deviceCode: "dc_1" }, unionOnly)).toEqual({
+      status: "confirmed",
+      config: { clientId: "ding_id" },
+      secrets: { clientSecret: "ding_sec" },
+      account: "ding_id",
+    });
+
+    // userid 系字段和 unionid 同时回 → 取 staffId/userid 那个，不回填 unionid。
+    const withStaff: typeof fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          errcode: 0,
+          status: "SUCCESS",
+          client_id: "ding_id",
+          client_secret: "ding_sec",
+          unionid: "union_x",
+          user_info: { userId: "staff_42", unionId: "union_y" },
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    expect(await pollPlatformQr("dingtalk", { deviceCode: "dc_1" }, withStaff)).toEqual({
+      status: "confirmed",
+      config: { clientId: "ding_id" },
+      secrets: { clientSecret: "ding_sec" },
+      account: "ding_id",
+      boundUserId: "staff_42",
     });
   });
 
