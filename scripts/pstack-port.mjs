@@ -12,9 +12,9 @@
  * 只搬「可机械转换」的资产；需要深度改写的（poteto-mode、how、why、swarm、arena、
  * interrogate、各 playbook）不在本表，移植矩阵见 docs/pstack-port.md。
  */
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -22,7 +22,8 @@ const argVal = (name) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const UPSTREAM = argVal("--upstream") ?? join(ROOT, "..", "pstack-upstream", "pstack");
+const UPSTREAM =
+  argVal("--upstream") ?? join(ROOT, "..", "pstack-upstream", "pstack");
 const DRY_RUN = args.includes("--dry-run");
 const TARGET = join(ROOT, "examples", "zh-CN", "skills.yaml");
 const MARK_BEGIN = "# >>> pstack-port";
@@ -30,8 +31,10 @@ const MARK_END = "# <<< pstack-port";
 
 /** slug 上限 40，超长原则名用短 slug；正文与引用里的旧名统一替换。 */
 const RENAMES = {
-  "principle-migrate-callers-then-delete-legacy-apis": "principle-migrate-then-delete",
-  "principle-separate-before-serializing-shared-state": "principle-separate-before-serializing",
+  "principle-migrate-callers-then-delete-legacy-apis":
+    "principle-migrate-then-delete",
+  "principle-separate-before-serializing-shared-state":
+    "principle-separate-before-serializing",
   "principle-test-behavior-not-implementation": "principle-test-behavior",
 };
 
@@ -134,22 +137,31 @@ function adaptBody(body) {
   for (const [oldSlug, newSlug] of Object.entries(RENAMES)) {
     out = out.split(oldSlug).join(newSlug);
   }
-  out = out.replace(/\[([^\]]+)\]\(\.\.\/([a-z0-9-]+)\/SKILL\.md\)/g, "$1（/$2）");
+  out = out.replace(
+    /\[([^\]]+)\]\(\.\.\/([a-z0-9-]+)\/SKILL\.md\)/g,
+    "$1（/$2）",
+  );
   out = out.replace(/\(\.\.\/([a-z0-9-]+)\/SKILL\.md\)/g, "（/$1）");
   out = out.replace(/\(\.\.?\/references\/[a-z0-9-]+\.md\)/g, "");
   out = out.replace(/`references\/[a-z0-9-]+\.md`/g, "内附示例");
-  out += "\n\n---\n来源：Cursor 官方插件 pstack（MIT License），移植版见 docs/pstack-port.md。";
+  out +=
+    "\n\n---\n来源：Cursor 官方插件 pstack（MIT License），移植版见 docs/pstack-port.md。";
   return out.trim();
 }
 
 function yamlBlockScalar(key, value, indent) {
   const pad = " ".repeat(indent);
-  return `${pad}${key}: |-\n${value.split("\n").map((l) => `${pad}  ${l}`).join("\n")}`;
+  return `${pad}${key}: |-\n${value
+    .split("\n")
+    .map((l) => `${pad}  ${l}`)
+    .join("\n")}`;
 }
 
 const skillsDir = join(UPSTREAM, "skills");
 if (!existsSync(skillsDir)) {
-  console.error(`上游目录不存在：${skillsDir}\n先 clone：https://github.com/cursor/plugins`);
+  console.error(
+    `上游目录不存在：${skillsDir}\n先 clone：https://github.com/cursor/plugins`,
+  );
   process.exit(1);
 }
 
@@ -161,28 +173,44 @@ const push = ({ name, description, instructions }) => {
   if (seen.has(slug)) throw new Error(`slug 重复：${slug}`);
   seen.add(slug);
   const title = TITLES[name] ?? name;
-  const summary = description.length > MAX_SUMMARY ? `${description.slice(0, 197)}...` : description;
+  const summary =
+    description.length > MAX_SUMMARY
+      ? `${description.slice(0, 197)}...`
+      : description;
   if (instructions.length > MAX_INSTRUCTIONS)
-    throw new Error(`instructions 超长：${slug} ${instructions.length} > ${MAX_INSTRUCTIONS}`);
+    throw new Error(
+      `instructions 超长：${slug} ${instructions.length} > ${MAX_INSTRUCTIONS}`,
+    );
   if (title.length > MAX_TITLE) throw new Error(`title 超长：${title}`);
   entries.push({ slug, title, summary, instructions });
 };
 
 // 排序：改写件与核心技能在前——技能目录页只展示前 40 条，原则叶靠 poteto-mode 索引按 slug 懒加载，排最后也能用 skill_list 搜到。
 for (const file of ADAPTED) {
-  const { name, description, body } = parseSkill(join(ADAPTED_DIR, `${file}.md`));
-  if (name !== file) throw new Error(`adapted/${file}.md 内 name=${name} 不一致`);
-  push({ name, description, instructions: `${body.trim()}\n\n---\n来源：改写自 Cursor 官方插件 pstack（MIT License），适配说明见 docs/pstack-port.md。` });
+  const { name, description, body } = parseSkill(
+    join(ADAPTED_DIR, `${file}.md`),
+  );
+  if (name !== file)
+    throw new Error(`adapted/${file}.md 内 name=${name} 不一致`);
+  push({
+    name,
+    description,
+    instructions: `${body.trim()}\n\n---\n来源：改写自 Cursor 官方插件 pstack（MIT License），适配说明见 docs/pstack-port.md。`,
+  });
 }
 
 for (const src of PORT.filter((k) => !k.startsWith("principle-"))) {
-  const { name, description, body } = parseSkill(join(skillsDir, src, "SKILL.md"));
+  const { name, description, body } = parseSkill(
+    join(skillsDir, src, "SKILL.md"),
+  );
   if (name !== src) console.warn(`警告：目录 ${src} 内 name=${name}`);
   push({ name, description, instructions: adaptBody(body) });
 }
 
 for (const src of PORT.filter((k) => k.startsWith("principle-"))) {
-  const { name, description, body } = parseSkill(join(skillsDir, src, "SKILL.md"));
+  const { name, description, body } = parseSkill(
+    join(skillsDir, src, "SKILL.md"),
+  );
   if (name !== src) console.warn(`警告：目录 ${src} 内 name=${name}`);
   push({ name, description, instructions: adaptBody(body) });
 }
@@ -215,4 +243,7 @@ if (DRY_RUN) {
   writeFileSync(TARGET, yaml);
   console.log(`已写入 ${TARGET}：${entries.length} 个技能`);
 }
-for (const e of entries) console.log(`  ${e.slug.padEnd(42)} ${String(e.instructions.length).padStart(6)} chars`);
+for (const e of entries)
+  console.log(
+    `  ${e.slug.padEnd(42)} ${String(e.instructions.length).padStart(6)} chars`,
+  );

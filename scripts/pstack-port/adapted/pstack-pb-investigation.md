@@ -1,4 +1,5 @@
 ---
+
 name: pstack-pb-investigation
 description: "调查类任务 playbook：只读，产出带引用的讲解或建议，不改代码。问题排查定位阶段也走这个。"
 ---

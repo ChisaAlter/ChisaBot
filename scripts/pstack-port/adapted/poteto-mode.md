@@ -1,4 +1,5 @@
 ---
+
 name: poteto-mode
 description: "工程模式总入口：把任务路由到对应 playbook，按需加载原则，强制实证交付。任何非琐碎的代码改动、调查、性能或设计工作都从这里进。"
 ---
@@ -15,11 +16,11 @@ description: "工程模式总入口：把任务路由到对应 playbook，按需
 
 把任务匹配到一个 playbook，匹配不到就按「调查」处理：
 
-| 任务 | playbook |
-|---|---|
+| 任务                               | playbook                    |
+| ---------------------------------- | --------------------------- |
 | 解释原理、查证、给建议（不改代码） | **pstack-pb-investigation** |
-| 修 bug | **pstack-pb-bug-fix** |
-| 新功能、结构性新代码 | **pstack-pb-feature** |
+| 修 bug                             | **pstack-pb-bug-fix**       |
+| 新功能、结构性新代码               | **pstack-pb-feature**       |
 
 以下上游 playbook 暂未移植；遇到对应任务时把其精神内联执行：
 - 重构（只改结构不改行为）：先固定行为契约（写特征测试或快照），再小步迁移，每步保持契约绿。
