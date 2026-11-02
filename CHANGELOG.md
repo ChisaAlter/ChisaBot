@@ -6,11 +6,19 @@
 
 ## 0.1.118 — 2026-11-02
 
-这一版合并 #462：修「发消息报 Invalid params」——具名自定义 provider（如 Magpie）的会话切到任何非默认模型后，每轮都在模型调用前被 ACP -32602 拒掉。同时桥接层开始透出适配器给出的真实拒绝原因，同类报错不再只剩一句通用语。只有服务器 / Hermes 运行时更新，PC 和 Android 不变。
+这一版合并 #462：修「发消息报 Invalid params」——具名自定义 provider（如 Magpie）的会话切到任何非默认模型后，每轮都在模型调用前被 ACP -32602 拒掉。同时桥接层开始透出适配器给出的真实拒绝原因，同类报错不再只剩一句通用语。另合并 #464：策展移植 Cursor 官方 pstack 插件的工程纪律体系；#461：模型调用失败的英文运维提示不再当成回复发给用户。全端同步版本号到 0.1.118（Android versionCode 300）；PC 外壳和 Android 应用本体不变。
+
+- pstack 工程纪律移植（#464）：把 Cursor 官方 pstack 插件（MIT，Lauren Tan）的 41 个技能策展进 `examples/zh-CN` 租户包——24 条工程原则叶节点、unslop / technical-writing / tdd / benchmark-checklist 等纪律技能，以及改写过的 `poteto-mode` 工程模式总路由（把非琐碎工程任务导到 investigation / bug-fix / feature 三个 playbook 与 how / why / architect），聊天里 `/poteto-mode` 显式触发或由 BOT 从技能目录自动加载。新工作流预设「pstack-adversarial-review」：主审框定范围后两个异模型攻方并行实测，只有跑出证据的发现才算数，再由主审复核汇总（`pstack-adversarial-review.md`）。`scripts/pstack-port.mjs` 是上游 SKILL.md → skills.yaml 的可重跑生成器，适配规则和手工改写件收在 `scripts/pstack-port/adapted/`，随上游同步重跑即可。MIT 归属见 `docs/THIRD_PARTY_NOTICES.md`，移植矩阵见 `docs/pstack-port.md`。只有服务器与租户包更新。
 
 - 发消息 Invalid params（模型明明可用）：Hermes `_switch_model` 在同 endpoint 换模型时把 `target_provider` 报成解析后的类型名 `custom`，而不是配置里的具名 provider（如 `magpie`）；`_make_agent` 拿裸 `custom` 调 `resolve_runtime_provider` 必抛 AuthError，被适配器包成 -32602。现在 `_make_agent` 用 keep_endpoint 携带的 `base_url` 反查具名 provider 再解析；匹配不到保持原样，错误依旧如实透出（`chisabot_acp.py`）。只有服务器 / Hermes 运行时更新，没有数据迁移。适配器测试新增端点重映射回归。
 
 - 错误详情透传：桥接层原来只转发 `error.message`，把适配器放在 `error.data.details` 里的真实原因（如 "The requested host model was rejected or could not be configured"）整个丢掉，界面只剩 "Invalid params"。现在把 details 拼进 RUN_ERROR（截断 300 字符），同类拒绝界面直接显示真实原因（`bridge.mjs`，`fake-acp.mjs` 加 rpcError 注入，bridge 测试加回归）。只有服务器更新。
+
+- 模型报错更准更简洁（#461）：模型 / provider 调用失败时，Hermes 写给命令行用户的英文提示（"… rejected your API key … Provider said: HTTP 401: …"）不再作为普通回复混进对话——流式片段丢弃，结果只含该文本时按分类抛 -32603，错误卡给准确中文标题；登录被服务商撤销（sign-in was revoked）单独提示「模型登录已失效，请重新登录」（`chisabot_protocol.py`、`chisabot_acp.py`、`friendly-error.ts`）。只有服务器 / Hermes 运行时更新。
+
+- 频道输入框收起成横条（服务器 / 网页更新，PC 和 Android 窗口同步生效）：频道底部的输入框日常收成两头半圆的横条，一行里只有「+」、输入区、发送键左侧的下箭头和发送键；点下箭头展开成完整工具栏，展开后再点上箭头收起，选择记入 localStorage 跨刷新保留。附件列、引用条和「上传中 x%」提示照旧显示在横条上方；compact 编辑器行高从 1.6 收到 1.35，光标只比文本高一点。
+
+- 修复云端电脑「看不到屏幕 / 电脑正忙」：Dockerfile 里装浏览器用的 `PLAYWRIGHT_VERSION` 钉在 1.62.1（chromium-1234），而 agent-computer 的 playwright 已升到 1.64.1（要 chromium-1248），新镜像里浏览器起不来、截图全 502、机器人的浏览器步骤全部失败。改为构建时直接从 `agent-computer/package.json` 读版本，依赖升级自动失效对应层。
 
 ## 0.1.117 — 2026-11-01
 
@@ -1168,7 +1176,6 @@ CI 补三道检查（审查清单第 3 项）：Biome 只拦改动文件里新�
 
 ## 0.1.41 — 2026-10-19
 
-
 ### 生产成熟度 · 截图 503 根因（LiveScreen ↔ HTTP 协调）
 
 - **根因**：LiveScreen CDP screencast 与 HTTP `page.screenshot` 抢同一页面 → 超时/502 → 网关 opaque 503，大屏仍像健康直播。0.1.40 只停了展开时的客户端轮询。
@@ -1215,6 +1222,7 @@ CI 补三道检查（审查清单第 3 项）：Biome 只拦改动文件里新�
 ## 0.1.36 — 2026-10-19
 
 ### 生产成熟度 · P2 诚实 UI / 中文一致 / 日志脱敏余量
+
 - **PRD-P2-01**：活动页状态中文 + 失败显眼；定时 run 卡死超过 20 分钟按失败展示（不再永远 busy）；已删机器人下的 active/paused 定时扫周期自动取消（从不 auto-resume）；Claude Code 零回合空闲会话标「空草稿」
 - **PRD-P2-02**：作曲器附件拒绝/合并/超量文案与 `picked-files` 拒因中文化
 - **PRD-P0-05 余**：更多 console 路径走 `reasonWithoutStatement`；CI `log-scrub-redline.test.ts` 红线
@@ -1222,6 +1230,7 @@ CI 补三道检查（审查清单第 3 项）：Biome 只拦改动文件里新�
 ## 0.1.35 — 2026-10-19
 
 ### 生产成熟度 · 狗粮摩擦（浏览器 E2E follow-ups）
+
 - 「已停止」锚点：服务器 `stoppedTurns` 与 fallback 一样从 RUN_STARTED 输入的**最新**消息往回找用户行（修 Math.min 误挂上一轮）；停止时跳过定时/任务等非人发 user 行；折叠行仍画出停止标记
 - 安装横幅：仅可安装时出现；× 永久关掉；安装取消/超时 14 天 snooze（不再每个会话盖住聊天）
 - 复制 / 重新生成：无障碍树单一 live `aria-label`，叠层文案 `aria-hidden`（不再堆「复制/已复制/复制失败」）
@@ -1230,15 +1239,18 @@ CI 补三道检查（审查清单第 3 项）：Biome 只拦改动文件里新�
 ## 0.1.34 — 2026-10-19
 
 ### 生产成熟度
+
 - nginx 模板与生产同步：`sync-nginx.sh` apply-or-fail；deploy-serial 漂移检测；CI check-repo（#233）
 - 非电车定时复验：fail→pause、stuck reclaim 计入连续失败、paused 永不 auto-resume；`partitionScheduleList`；电车仍暂停
 
 ## 0.1.33
 
 ### Added
+
 - Trust-boundary network isolation: nginx clears Local-Caller; friend-up/start deny-by-default port binds; TRUSTED_ORIGINS loopback-only; CI `trust-boundary-redline`; `scripts/ops/check-trust-boundary.sh`; post-deploy anonymous admin-health 401 check; expanded `docs/ops/trust-boundary.md`.
 
 ### Notes
+
 - Tram schedules stay paused. Multi-user accounts UI stays opt-in. No live CUTBACK_EXECUTE.
 
 ## 0.1.32
@@ -1318,7 +1330,6 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 - 活动记录中文工具名/拒因 + 安装横幅不挡标题（#211，v0.1.20 / DOG-02/03）：审计页 computer_* 映射为打开网页/填写/运行命令等；接管英文拒因译中文；横幅显示时正文让位，安装失败/超时/关闭均永久记住。PC / Android 外壳未变，版本号对齐到 0.1.20（Android vc 226）。
 > **按版本看**：下面这一节从 0.1.7 之后一直累积，实际已经分别随 v0.1.8 … v0.1.19 发布（服务器改动合并即上线）。
 > 每条属于哪个版本、哪个 PR，见 [docs/CHANGELOG.md](docs/CHANGELOG.md)（按发版标签分组）。
-
 - 发消息假成功深挖（#212，v0.1.19 / DOG-01）：connect 改消息快照（不再 ~825KB 事件回放）；12s send watchdog；发送中可停、抑制 sync 重接。v0.1.18 只覆盖隧道 drop，实机 sync 通时仍会静默。PC / Android 外壳未变，版本号对齐到 0.1.19（Android vc 225）。
 - 发消息隧道挂掉不再假成功（#210，v0.1.18 / DOG-01）：sync 一路问不到时约 10 秒内提示「可能没发出去」并恢复草稿；识别 ERR_TUNNEL_*；问到过服务器后仍保留重启长等。
 - UX P1–P3 全量体验（#209，v0.1.17）：接管「交还」可点、重启后控制权可重置；失败浏览不计「看了 N 网页」；设备列文件区分云端工作区与用户电脑；定时进聊天用绝对日期、侧栏相对时间刷新；活动记录中文与换行；安装横幅可永久关掉且接管时隐藏；干活卡标失败步；Claude Code 会话可归档删除；已删除机器人下已结束定时可一键清理。FIX-13/14 由 #208 快失败覆盖。只改服务器 + 网页，没有表结构变化；PC / Android 外壳未变，版本号对齐到 0.1.17（Android vc 223）。
@@ -1519,6 +1530,7 @@ define one. The refusal is still in the result's text and on the tool message, w
 Bot's next turn reads it.
 
 ## OpenBot 0.1.1
+
 - A password given to `curl` as `-uuser:password`, `--user=user:password` or `-u "user:pass word"` is
   now redacted in a Bot's recorded shell command. Only `-u user:password` with a space and no quotes
   was recognised, so the other spellings kept the password in the command that was stored or exported.
@@ -1609,6 +1621,7 @@ now offered these tools only when a call from it would be allowed, so that turn 
 A call that is refused anyway, from a schema offered earlier, is still refused and audited.
 
 ## OpenBot 0.1.0
+
 **Before upgrading.** Six things change for an existing deployment:
 - Automatic Learning is on unless an administrator saved it off. It does nothing until a Learning
   container is assigned; see below.
@@ -2157,6 +2170,7 @@ connected accounts use individual entries with stored app logos, and browser ste
 expandable group instead of filling the conversation with screenshots.
 
 ## OpenBot 0.0.15
+
 ### A model provider's own sign-in can stand in for an API key
 
 `OPENBOT_MODEL_OAUTH_FILE` names a credential file holding a Google or xAI OAuth grant. Set it and
@@ -2230,6 +2244,7 @@ and wrong on Windows, where a drive letter contains one. It now follows the plat
 reachable on every platform now that a port overlay is passed, where before it was macOS only.
 
 ## OpenBot 0.0.14
+
 ### A tool cannot be granted for an app this deployment has not added
 
 Granting a Bot a connector's tool checked only that the person asking was an administrator, so a
@@ -2515,6 +2530,7 @@ Anthropic through Agent Framework's own Anthropic client when that is the provid
 OpenAI or an OpenAI-compatible endpoint as before otherwise.
 
 ## OpenBot 0.0.13
+
 ### Fresh desktop setup installs its runtime before sign-in
 
 Desktop setup installs local software before asking for an AI connection. Fresh Mac Podman
@@ -2747,6 +2763,7 @@ the way the MCP and built-in transports' cuts already do. Anything that fits is 
 note saying the answer was cut reads as before.
 
 ## OpenBot 0.0.12
+
 ### A deployment can broker its Bots into a few hundred apps through Composio
 
 Composio holds a person's connections to a few hundred SaaS apps behind one account. A deployment
@@ -2826,6 +2843,7 @@ the variables it needs, so its own environment carries none of those keys; and t
 sandboxed computer, as the documentation asks for, was never exposed to this.
 
 ## OpenBot 0.0.11
+
 ### The LlamaIndex Bot answers with the model the setup screen chose
 
 The LlamaIndex Bot built an OpenAI client from `BOT_MODEL` and ignored `BOT_PROVIDER`, so it only
@@ -2918,6 +2936,7 @@ decode to `user:password`, is no longer caught by this pattern; the same value u
 `authorization` field is still refused by name.
 
 ## OpenBot 0.0.10
+
 ### The LangGraph Bot says a refused tool call was refused, not that it found nothing
 
 When the deployment would not run a tool call from the LangGraph Bot — a token it no longer accepts,
@@ -3015,6 +3034,7 @@ comes back with its logins and its files. A deployment that sets no token is lef
 computer with no door on it is a choice the environment made rather than a mismatch to act on.
 
 ## OpenBot 0.0.9
+
 ### The People screen keeps a person's last sign-in when their sessions go away
 
 `Last signed in` was `max(sessions.created_at)`, so it disappeared whenever the session rows behind
@@ -3565,6 +3585,7 @@ app itself and answers the upgrade on the same origin, so the sockets stay on th
 host, which is what an ingress terminating TLS on 443 requires and a fixed server port would break.
 
 ## OpenBot 0.0.8
+
 ### A desktop shell that installs OpenBot and then becomes it
 
 One window, on macOS, Windows and Linux. From a machine with nothing on it, one click fetches the
@@ -3787,6 +3808,7 @@ supervisor now states the healthcheck when it creates a computer instead of inhe
 readiness no longer depends on how the image was built. On Docker the behaviour is unchanged.
 
 ## OpenBot 0.0.7
+
 ### The published service images are zstd rather than gzip
 
 An image pull was already a compressed transfer, so this is not compression where there was none; it
@@ -3985,6 +4007,7 @@ surrounding code already does for parts it does not recognise, so the rest of th
 reaches the Bot.
 
 ## OpenBot 0.0.6
+
 ### Setting up needs one Intelligence credential, not two
 
 `COPILOTKIT_LICENSE_TOKEN` is no longer required. Managed Intelligence derives entitlement from the
@@ -3994,7 +4017,7 @@ was still refusing to boot without it. A deployment now needs `INTELLIGENCE_API_
 forwarded to the runtime when set, which is what a self-hosted Intelligence with its own licence
 needs.
 
-The Helm chart failed harder than the docs did: it *required* `secrets.licenseToken`, so a
+The Helm chart failed harder than the docs did: it _required_ `secrets.licenseToken`, so a
 managed-Intelligence install was refused at `helm install` rather than merely misdocumented. That
 value is now optional.
 
@@ -4150,7 +4173,7 @@ channel, or open that dialog.
 ### Routines live on each coworker
 
 The sidebar's global Routines entry is gone; a coworker's routines are a section of its own dialog,
-since a routine is something *it* carries out. The `/routines` page still answers direct links.
+since a routine is something _it_ carries out. The `/routines` page still answers direct links.
 Each routine row now wears its state as chips — the channel it posts to, how the last run went, and
 either the next run, **Paused**, or **Due** when a firing is waiting on the sweep (which used to
 render as "Next 5 hours ago").
@@ -4425,13 +4448,14 @@ read, so a person still sees the last frame until they reopen the screen. That h
 separately in #287.
 
 ## OpenBot 0.0.5
+
 ### One Bot can hand work to another, and reach a person when no Bot will do
 
 A Bot asked something it is not the right Bot for can now put the question to one that is. The
 addressed Bot answers **as itself, in its own conversation**, with its own tools and its own
 knowledge. The asking Bot does not relay text on its behalf, so what you read is the answer that
-Bot actually gave rather than another Bot's summary of it. *(Reversed since: see Unreleased — the
-answer is now relayed back into the conversation that asked.)* The asking conversation records
+Bot actually gave rather than another Bot's summary of it. _(Reversed since: see Unreleased — the
+answer is now relayed back into the conversation that asked.)_ The asking conversation records
 that the question was put and to whom. A Bot that judges no other Bot will do can instead reach
 the person who asked it.
 
@@ -4883,7 +4907,7 @@ bounded and biased to recency, and the reply says how many rows it covered.
 Every browser context carries a neutral all-empty `mcp` object, so a rule naming `mcp.effect`
 evaluates to false instead of throwing. The refusal copy keyed on that object being present rather
 than on its contents, so every live browser refusal took the tool-call branch and read
-":  on  is blocked" — two empty strings where the element and the page belonged. The tests passed,
+": on is blocked" — two empty strings where the element and the page belonged. The tests passed,
 because their contexts omitted the field the gateway always attaches.
 
 The branch now keys on the server and tool being named, which a real tool call always has. A refused
@@ -4957,7 +4981,7 @@ alongside `?token=`: a rule that only catches the spellings somebody thought of 
 while behaving like a gap. The test is on the parameter name rather than on the presence of a query,
 because vendors route and version with parameters and a floor that refused every one of them would
 be one an operator works around instead of with. `https://mcp.example.com/mcp?workspace=acme&version=2`
-is unaffected, and so is an ordinary fragment. A credential written into the *path* is still
+is unaffected, and so is an ordinary fragment. A credential written into the _path_ is still
 accepted: it is indistinguishable from a route, and at least one hosted provider addresses servers
 that way. **A deployment where somebody has put a credential in an address should treat it as
 disclosed and rotate it**, for the same reason as before: the audit row cannot be deleted.
@@ -5282,6 +5306,7 @@ Both now carry the same defaults `start.sh` applies, as `COMPUTER_IMAGE` already
 A value set in `.env` still wins, and a deployment should set one.
 
 ## OpenBot 0.0.4
+
 ### A click citing a ref this deployment cannot resolve is refused
 
 A Bot acts on a page by citing a ref from a snapshot, and the server turns that ref back into the
@@ -5349,6 +5374,7 @@ skill outlives the server it was written against, so a screen that drew only wha
 stating part of the declaration as though it were all of it.
 
 ## OpenBot 0.0.3
+
 ### A Bot is offered the tools its message needs, not every tool it holds
 
 A model chooses the right tool reliably out of about ten and unreliably out of thirty, and it fails
@@ -5379,6 +5405,7 @@ silently stopped being routed and nothing said why. The version segment is now a
 configured URL does not already carry one.
 
 ## OpenBot 0.0.2
+
 ### Upgrading
 
 `AGENT_TOOL_TOKEN` is generated for you on a laptop. `scripts/start.sh` mints one and writes it to
@@ -5461,6 +5488,7 @@ Sessions survive and nobody signs in again.
   a copy of a customer's corpus is not a thing OpenBot does.
 
 ### Added
+
 - **A skill can say which tools it needs.** `POST /api/plugins/skills` takes a `tools` list of
   `serverId/toolName` references, stored against the skill and returned with it. This is the unit
   tool retrieval will select over: a model picks a skill from its summary, and the skill says
@@ -5582,6 +5610,7 @@ Sessions survive and nobody signs in again.
   is unavailable never blocks a sign-in.
 
 ### Fixed
+
 - **A ref could resolve against a page from a computer that no longer existed.** The generation a
   computer stamps on a snapshot is unique only within one run of it, so a replaced container counts
   from one again and a ref the model is still holding matches a row nothing has overwritten. The
@@ -5977,4 +6006,5 @@ Sessions survive and nobody signs in again.
 - The container image runs as an unprivileged user rather than root.
 
 ## OpenBot 0.0.1
+
 First tag.
