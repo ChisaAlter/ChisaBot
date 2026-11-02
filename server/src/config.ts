@@ -153,6 +153,30 @@ export type HandoffCaps = {
   maxPerRun: number;
 };
 
+/**
+ * How far a Bot may go in creating other Bots.
+ *
+ * Independent of {@link HandoffCaps} on purpose: handing work to a Bot and minting one are different
+ * risks, and a deployment that wants one without the other should not have to say so twice.
+ *
+ * The defaults are small for the same reason the handoff ones are: every Bot-made Bot spends the
+ * owner's own model budget, and a chain that can re-mint itself is the recursive version of a
+ * handoff loop.
+ */
+export type BotFactoryCaps = {
+  /**
+   * How deep the creation chain may go. A person-made Bot has depth 0; `1` means Bots may create
+   * Bots but the ones they create may not. `0` switches the capability off.
+   */
+  maxDepth: number;
+  /**
+   * How many live Bot-made coworkers one person may have at once, across every Bot they own.
+   * `0` switches the capability off. Administrators are not exempt — this is a recursion guard,
+   * not a permission.
+   */
+  maxPerUser: number;
+};
+
 export type DeploymentConfig = {
   /** Audio configuration is independent of agent model providers. */
   transcription?: TranscriptionConfig;
@@ -325,6 +349,8 @@ export type DeploymentConfig = {
   computer?: ComputerConfig;
   /** How far one Bot handing work to another may go. */
   handoff: HandoffCaps;
+  /** How far one Bot creating another may go. */
+  botFactory: BotFactoryCaps;
   /**
    * The secret a Bot presents when it calls a tool back through this server.
    *
@@ -348,21 +374,30 @@ type Environment = Record<string, string | undefined>;
  * the default would believe it had set one: the failure has to be at start-up where somebody is
  * looking, not at the first loop.
  */
+function wholeNumber(environment: Environment, name: string, fallback: number): number {
+  const raw = optional(environment, name);
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${name} must be a whole number of zero or more`);
+  }
+  return value;
+}
+
 function handoffCaps(environment: Environment): HandoffCaps {
-  const read = (name: string, fallback: number): number => {
-    const raw = optional(environment, name);
-    if (raw === undefined) return fallback;
-    const value = Number(raw);
-    if (!Number.isInteger(value) || value < 0) {
-      throw new Error(`${name} must be a whole number of zero or more`);
-    }
-    return value;
-  };
   return {
     // Bot-to-Bot hand-off is off by default since slimming P4b (a personal deployment has one
     // assistant per person). BOT_HANDOFF_MAX_DEPTH=1 turns the upstream behaviour back on.
-    maxDepth: read("BOT_HANDOFF_MAX_DEPTH", 0),
-    maxPerRun: read("BOT_HANDOFF_MAX_PER_RUN", 3),
+    maxDepth: wholeNumber(environment, "BOT_HANDOFF_MAX_DEPTH", 0),
+    maxPerRun: wholeNumber(environment, "BOT_HANDOFF_MAX_PER_RUN", 3),
+  };
+}
+
+/** The bot factory's caps: one generation deep and twenty Bot-made coworkers per person by default. */
+function botFactoryCaps(environment: Environment): BotFactoryCaps {
+  return {
+    maxDepth: wholeNumber(environment, "BOT_FACTORY_MAX_DEPTH", 1),
+    maxPerUser: wholeNumber(environment, "BOT_FACTORY_MAX_PER_USER", 20),
   };
 }
 
@@ -1292,6 +1327,7 @@ export function loadConfig(
       : {}),
     computer: computerConfig(environment),
     handoff: handoffCaps(environment),
+    botFactory: botFactoryCaps(environment),
     ...(optional(environment, "AGENT_TOOL_TOKEN")
       ? { agentToolToken: optional(environment, "AGENT_TOOL_TOKEN") as string }
       : {}),

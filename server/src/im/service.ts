@@ -81,6 +81,14 @@ export type ImServiceOptions = {
     threadId: string | null,
     decision: "approve" | "deny",
   ) => Promise<{ title: string; target?: string | null } | null>;
+  /**
+   * 审批卡挂起时随「请回复允许 / 拒绝」一起发给 IM 的内容摘要：按审批 id 读回卡片里给人看的
+   * 那段说明（名字、模型、提示词前几百字、网页链接），没有可发的说明就返回 null。
+   */
+  approvalSummary?: (
+    ownerUserId: string,
+    approvalId: string,
+  ) => Promise<string | null>;
   fetch?: FetchLike;
   ws?: WsFactory;
   /** 测试用：替换「保存协议端地址时预查 DNS」的解析实现（不注入就用真实解析）。 */
@@ -527,10 +535,25 @@ export function createImService(options: ImServiceOptions) {
       if (options.isSuspension?.(error)) {
         // 只有主人在私聊里能批（RV-02）：给别人的提示只说去哪确认，不暗示群里/陌生人能批。
         const owners = Array.isArray(row.owner_users) ? row.owner_users : [];
-        answer =
-          inbound.chatType === "private" && owners.includes(inbound.userId)
-            ? "⚠️ 这一步需要确认后才能继续：请直接回复「允许」或「拒绝」处理（也可打开 ChisaBot 网页端确认）。"
-            : "⚠️ 这一步需要主人确认后才能继续：请主人在私聊里回复「允许」/「拒绝」，或打开 ChisaBot 网页端确认。";
+        const canApprove = inbound.chatType === "private" && owners.includes(inbound.userId);
+        /*
+         * 卡在审批卡上时把卡片里的内容摘要一起发过去：IM 上看不到卡片本身，让人在回复
+         * 「允许 / 拒绝」之前至少看到名字、模型、提示词开头和能看全文的链接。
+         * 摘要只发给能在私聊里批的主人，不给群聊/陌生人泄露卡片内容。
+         */
+        const waiting = (error as { waiting?: { kind?: unknown; approvalId?: unknown } }).waiting;
+        const summary =
+          canApprove &&
+          waiting?.kind === "approval" &&
+          typeof waiting.approvalId === "string" &&
+          options.approvalSummary
+            ? await options.approvalSummary(row.owner_user_id, waiting.approvalId).catch(() => null)
+            : null;
+        answer = canApprove
+          ? summary
+            ? `⚠️ 这一步需要确认后才能继续：\n${summary}\n请直接回复「允许」或「拒绝」处理。`
+            : "⚠️ 这一步需要确认后才能继续：请直接回复「允许」或「拒绝」处理（也可打开 ChisaBot 网页端确认）。"
+          : "⚠️ 这一步需要主人确认后才能继续：请主人在私聊里回复「允许」/「拒绝」，或打开 ChisaBot 网页端确认。";
         log(row.id, "warn", "回合停在需要确认的步骤");
       } else {
         const reason = errorText(error);

@@ -350,24 +350,43 @@ export function approvalAction(candidate: ApprovalCandidate): ApprovalAction {
   };
 }
 
+/**
+ * The sibling key an approval's `args`/`target` uses to declare fields the card must show exactly
+ * as stored: an approved prompt is the very text that runs, so masking it would ask the person to
+ * allow one thing and do another. Naming a key here is a deliberate act by the code building the
+ * preview — nothing reaches it by accident — and the key itself is dropped from the preview.
+ */
+export const PREVIEW_VERBATIM = "previewVerbatim";
+
 export function approvalPreview(args: unknown, depth = 0): unknown {
   if (depth > 4) return "…";
   if (Array.isArray(args))
     return args.slice(0, 20).map((value) => approvalPreview(value, depth + 1));
-  if (args && typeof args === "object")
+  if (args && typeof args === "object") {
+    const declared = (args as Record<string, unknown>)[PREVIEW_VERBATIM];
+    const verbatim = new Set(
+      Array.isArray(declared)
+        ? declared.filter((key): key is string => typeof key === "string")
+        : [],
+    );
     return Object.fromEntries(
       Object.entries(args)
+        .filter(([key]) => key !== PREVIEW_VERBATIM)
         .slice(0, 20)
         .map(([key, value]) => [
           key,
           // Secrets by name. Not `text` or `content`: what is typed, written or sent is exactly
           // what the person is approving, and hiding it let a Bot get "Allow once" on a payload
-          // nobody could see. Secret-looking values inside it are still masked below.
-          /pass|secret|token|authorization|cookie|credential/i.test(key)
-            ? "[private value]"
-            : approvalPreview(value, depth + 1),
+          // nobody could see. Secret-looking values inside it are still masked below — unless the
+          // caller named the key in `previewVerbatim`, where hiding it would falsify the approval.
+          verbatim.has(key)
+            ? value
+            : /pass|secret|token|authorization|cookie|credential/i.test(key)
+              ? "[private value]"
+              : approvalPreview(value, depth + 1),
         ]),
     );
+  }
   if (typeof args === "string")
     return (args.length > 2000 ? `${args.slice(0, 1999)}…` : args)
       .replace(
