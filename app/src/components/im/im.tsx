@@ -41,6 +41,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { agentListQueryOptions } from "@/lib/agents/queries";
+import { type AuthenticatedUser, authKeys } from "@/lib/auth/keys";
 import {
   agoText,
   createImConnection,
@@ -171,9 +172,22 @@ export function ConnectionRow({ connection, botName, onEdit, onLogs }: { connect
                   <IconRobot aria-hidden className="size-3.5" />
                   {botName ?? "机器人已不在"}
                 </span>
+                {connection.ownerUsers.length ? (
+                  <span className="device-cap-chip"><T>{`主人 ${connection.ownerUsers.length} 人`}</T></span>
+                ) : (
+                  <span className="device-cap-chip is-ask"><T>{"未绑定主人"}</T></span>
+                )}
                 {connection.allowUsers.length ? <span className="device-cap-chip"><T>{`白名单 ${connection.allowUsers.length} 人`}</T></span> : null}
                 {connection.allowDevices ? <span className="device-cap-chip is-ask"><T>{"可用电脑和设备"}</T></span> : null}
+                {connection.allowPrivate ? <span className="device-cap-chip is-ask"><T>{"允许内网地址"}</T></span> : null}
               </span>
+              {!connection.ownerUsers.length ? (
+                <span className="im-row-warn">
+                  {connection.allowUsers.length
+                    ? "未绑定主人：白名单里的人能聊天，但没人能在 IM 里审批。在平台里给机器人发 /id 拿到你的 id，编辑连接填到「主人」里。"
+                    : "未绑定主人：机器人不会回复任何人。在平台里给机器人发 /id 拿到你的 id，编辑连接填到「主人」里。"}
+                </span>
+              ) : null}
               {connection.enabled && connection.status === "error" && connection.statusDetail ? (
                 <span className="im-row-error">{connection.statusDetail}</span>
               ) : null}
@@ -372,7 +386,9 @@ type FormState = {
   config: Record<string, string>;
   secrets: Record<string, string>;
   allowUsers: string;
+  ownerUsers: string;
   allowDevices: boolean;
+  allowPrivate: boolean;
   qrLogin?: string;
   qrAccount?: string | null;
 };
@@ -386,7 +402,9 @@ function initialForm(info: ImPlatformInfo, connection?: ImConnectionView, defaul
     config,
     secrets: {},
     allowUsers: (connection?.allowUsers ?? []).join("\n"),
+    ownerUsers: (connection?.ownerUsers ?? []).join("\n"),
     allowDevices: connection?.allowDevices ?? false,
+    allowPrivate: connection?.allowPrivate ?? false,
   };
 }
 
@@ -404,6 +422,10 @@ export function ConnectionDialog({
 }) {
   const queryClient = useQueryClient();
   const bots = useQuery({ ...agentListQueryOptions(), enabled: open });
+  // 只读缓存里已登录的用户（_authed 进门时就查过）：不引入 auth/queries——它带着
+  // login-redirect → md-cache 一整串，曾把设置页块图连出 browser ↔ vendor-markdown 循环（§41.5）。
+  const me = useQuery<AuthenticatedUser | null>({ queryKey: authKeys.currentUser(), enabled: false });
+  const isAdmin = me.data?.role === "admin";
   const roster = useMemo(() => (bots.data ?? []), [bots.data]);
   const [platform, setPlatform] = useState<ImPlatform | null>(connection?.platform ?? initialPlatform ?? null);
   const info = platform ? imPlatform(platform) : undefined;
@@ -432,7 +454,10 @@ export function ConnectionDialog({
       config: form.config,
       secrets,
       allowUsers: form.allowUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
+      ownerUsers: form.ownerUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
       allowDevices: form.allowDevices,
+      // 只有管理员发的「允许内网地址」服务器才认，非管理员不往请求里放。
+      ...(isAdmin ? { allowPrivate: form.allowPrivate } : {}),
       ...(form.qrLogin ? { qrLogin: form.qrLogin, ...(platform === "weixin" ? { weixinLogin: form.qrLogin } : {}) } : {}),
     };
   };
@@ -615,19 +640,36 @@ export function ConnectionDialog({
               ) : null}
               <details className="im-adv">
                 <summary>{"谁能用 · 权限"}</summary>
+                <label className="im-field" htmlFor="im-owner">
+                  <span className="im-field-l">{"主人的平台用户 id（一行一个）"}</span>
+                  <Textarea id="im-owner" onChange={(event) => setForm({ ...form, ownerUsers: event.target.value })} placeholder={"在平台里给机器人发 /id 可以看到自己的 id"} rows={2} value={form.ownerUsers} />
+                  <span className="im-field-h">{"主人本人的平台账号：能聊天，也是唯一能在私聊里回复「允许 / 拒绝」审批待确认操作的人。"}</span>
+                </label>
                 <label className="im-field" htmlFor="im-allow">
-                  <span className="im-field-l">{"白名单（平台用户 id，一行一个；留空 = 所有人）"}</span>
+                  <span className="im-field-l">{"白名单（平台用户 id，一行一个；除主人外还能聊天的人）"}</span>
                   <Textarea id="im-allow" onChange={(event) => setForm({ ...form, allowUsers: event.target.value })} placeholder={"在平台里给机器人发 /id 可以看到自己的 id"} rows={3} value={form.allowUsers} />
+                  <span className="im-field-h">{"白名单里的人可以聊天，但不能在 IM 里审批。主人和白名单都不填 = 机器人不理任何人（不是所有人可用）。"}</span>
                 </label>
                 <div className="im-switch-row">
                   <div className="min-w-0 flex-1">
                     <div className="im-field-l">{"允许使用电脑和设备"}</div>
                     <div className="im-field-h">
-                      {"打开后，在这里和机器人聊天的人也能让它操作云端浏览器和你关联的设备（仍按设备的「询问」规则）。机器人以你的身份运行，请配合白名单使用。"}
+                      {"打开后，在这里和机器人聊天的人也能让它操作云端浏览器和你关联的设备（仍按设备的「询问」规则）。机器人以你的身份运行，请确认名单里都是信得过的人。"}
                     </div>
                   </div>
                   <Switch aria-label="允许使用电脑和设备" checked={form.allowDevices} onCheckedChange={(next) => setForm({ ...form, allowDevices: next })} />
                 </div>
+                {isAdmin ? (
+                  <div className="im-switch-row">
+                    <div className="min-w-0 flex-1">
+                      <div className="im-field-l">{"允许内网地址（仅管理员可改）"}</div>
+                      <div className="im-field-h">
+                        {"打开后，这个连接里管理员配置的协议端地址可以指向本机 / 内网 / Docker 容器（例如 NapCat 就在同一台机器上），云元数据地址照样拦截；用户和模型给的网址永远不放行。协议端在内网又开不了这个开关时，请用反向 WebSocket。"}
+                      </div>
+                    </div>
+                    <Switch aria-label="允许内网地址" checked={form.allowPrivate} onCheckedChange={(next) => setForm({ ...form, allowPrivate: next })} />
+                  </div>
+                ) : null}
               </details>
               <p className="im-field-h">{`群聊：${info.groupNote} 在平台里发 /new 开始新话题，/id 查看自己的 id。`}</p>
               {testResult ? (
