@@ -4,6 +4,14 @@
 
 - 引导页：修复固定天空背景遮住「欢迎来到 ChisaBot」标题和「继续」按钮的问题；只改前端，未升级版本号。
 
+## 0.1.118 — 2026-11-02
+
+这一版合并 #462：修「发消息报 Invalid params」——具名自定义 provider（如 Magpie）的会话切到任何非默认模型后，每轮都在模型调用前被 ACP -32602 拒掉。同时桥接层开始透出适配器给出的真实拒绝原因，同类报错不再只剩一句通用语。只有服务器 / Hermes 运行时更新，PC 和 Android 不变。
+
+- 发消息 Invalid params（模型明明可用）：Hermes `_switch_model` 在同 endpoint 换模型时把 `target_provider` 报成解析后的类型名 `custom`，而不是配置里的具名 provider（如 `magpie`）；`_make_agent` 拿裸 `custom` 调 `resolve_runtime_provider` 必抛 AuthError，被适配器包成 -32602。现在 `_make_agent` 用 keep_endpoint 携带的 `base_url` 反查具名 provider 再解析；匹配不到保持原样，错误依旧如实透出（`chisabot_acp.py`）。只有服务器 / Hermes 运行时更新，没有数据迁移。适配器测试新增端点重映射回归。
+
+- 错误详情透传：桥接层原来只转发 `error.message`，把适配器放在 `error.data.details` 里的真实原因（如 "The requested host model was rejected or could not be configured"）整个丢掉，界面只剩 "Invalid params"。现在把 details 拼进 RUN_ERROR（截断 300 字符），同类拒绝界面直接显示真实原因（`bridge.mjs`，`fake-acp.mjs` 加 rpcError 注入，bridge 测试加回归）。只有服务器更新。
+
 ## 0.1.117 — 2026-11-01
 
 这一版合并 #457：去掉侧栏里没人用的 peer-hover，滚动时少做无谓的样式重算（不改界面）。只有网页更新，网关、登录服务（web-auth）、PC 和 Android 不变。

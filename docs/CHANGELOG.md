@@ -1,3 +1,9 @@
+## 0.1.118
+
+- 发消息 Invalid params（#462）：具名自定义 provider（如 Magpie）会话切到非默认模型后每轮在模型调用前被 ACP -32602 拒——`_make_agent` 现在用 keep_endpoint 携带的 base_url 反查具名 provider 再解析（`chisabot_acp.py`）；桥接层把 `error.data.details` 里的真实拒绝原因拼进 RUN_ERROR（`bridge.mjs`）。
+
+- 版本号 0.1.118（根、app、server、pc）；只有服务器 / Hermes 运行时更新。
+
 ## 0.1.117
 
 - 滚动时不再因 `peer-hover` 反复标脏整段对话（`ui/sidebar.tsx` 里没人用的两处，`no-group-has.test.ts` 加守卫）。未升级版本号。
