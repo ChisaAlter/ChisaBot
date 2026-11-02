@@ -21,9 +21,37 @@ import { settleReactWork } from "./settle-react-work";
 
 // 待处理页里有 <Link>（去审批偏好），测试里没有路由：换成普通 <a>。
 const realRouter = await import("@tanstack/react-router");
+const RealLink = realRouter.Link as unknown as React.ComponentType<
+  Record<string, unknown>
+>;
+const realUseRouter = realRouter.useRouter;
 mock.module("@tanstack/react-router", () => ({
   ...realRouter,
-  Link: ({ children, to }: { children?: React.ReactNode; to?: string }) => <a href={to}>{children}</a>,
+  Link: (props: {
+    children?: React.ReactNode;
+    to?: string;
+    href?: string;
+    params?: unknown;
+    search?: unknown;
+    hash?: unknown;
+    [key: string]: unknown;
+  }) => {
+    if (realUseRouter({ warn: false })) return <RealLink {...props} />;
+    const {
+      children,
+      to,
+      href,
+      params: _params,
+      search: _search,
+      hash: _hash,
+      ...rest
+    } = props;
+    return (
+      <a {...(rest as object)} href={href ?? to}>
+        {children}
+      </a>
+    );
+  },
 }));
 const { PendingInbox } = await import("@/components/approvals/inbox");
 

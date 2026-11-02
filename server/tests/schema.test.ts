@@ -289,6 +289,23 @@ describe("ChisaBot database schema", () => {
         hasDefault: false,
         primary: false,
       },
+      /*
+       * Bot-factory provenance (migration 0062): which Bot created this one — deliberately not a
+       * foreign key so the row survives its creator being deleted — and how deep in the creation
+       * chain it sits. A person's own Bots have neither.
+       */
+      {
+        name: "created_by_agent_id",
+        notNull: false,
+        hasDefault: false,
+        primary: false,
+      },
+      {
+        name: "created_depth",
+        notNull: true,
+        hasDefault: true,
+        primary: false,
+      },
       {
         name: "created_at",
         notNull: true,
@@ -413,6 +430,13 @@ describe("ChisaBot database schema", () => {
       {
         name: "agent_profiles_visibility_deleted_idx",
         columns: ["visibility", "deleted_at"],
+        unique: false,
+        method: "btree",
+      },
+      // "Which Bots did this Bot create" — the managed-bots listing and the per-user cap read it.
+      {
+        name: "agent_profiles_created_by_idx",
+        columns: ["created_by_agent_id"],
         unique: false,
         method: "btree",
       },
