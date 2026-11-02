@@ -2313,7 +2313,7 @@ confirmations.setResume(async ({ ownerUserId, agentId, threadId, requestId, text
         )
         .catch(() => {});
     }
-    void imService?.pushToThread(threadId, replyText).catch(() => {});
+    void imService?.pushToThread(threadId, replyText, { privateOnly: true }).catch(() => {});
   }
 });
 confirmations.setOnOpened((req) => {
@@ -2328,7 +2328,8 @@ confirmations.setOnOpened((req) => {
     ...(detailLines ? [detailLines] : []),
     "请直接回复「允许」或「拒绝」处理（也可在电脑弹窗或网页端确认）。",
   ].join("\n");
-  void imService?.pushToThread(req.threadId, msg).catch(() => {});
+  // RV-02：待确认详情只推私聊，不落进群聊。
+  void imService?.pushToThread(req.threadId, msg, { privateOnly: true }).catch(() => {});
 });
 
 /**
@@ -2441,8 +2442,10 @@ imService = createImService({
   },
   isSuspension: (error) => error instanceof HeadlessToolSuspension,
   resolveApproval: async (ownerUserId, threadId, decision) => {
+    // RV-02：只批属于当前这段 IM 对话的待确认；对不上就不动，绝不兜底最近一条。
+    if (!threadId) return null;
     const allPending = (await confirmations.list(ownerUserId, { limit: 20 })).filter((r) => r.status === "pending");
-    const target = (threadId ? allPending.find((r) => r.threadId === threadId) : null) ?? allPending[0];
+    const target = allPending.find((r) => r.threadId === threadId);
     if (target) {
       const decided = await confirmations.decide(ownerUserId, target.id, decision);
       return { title: decided.title, target: decided.target };
@@ -2450,9 +2453,7 @@ imService = createImService({
     const pendingRequests = (await approvalService.store.list(ownerUserId).catch(() => [])).filter(
       (r) => r.status === "pending",
     );
-    const matchedAction =
-      (threadId ? pendingRequests.find((r) => r.action.continuation?.threadId === threadId) : null) ??
-      pendingRequests[0];
+    const matchedAction = pendingRequests.find((r) => r.action.continuation?.threadId === threadId);
     if (matchedAction) {
       const handOff = matchedAction.action.policy?.behaviour === "hand_off";
       await approvalService.decide(
@@ -3234,7 +3235,7 @@ const approvalSweep = repeatAfterEach(async () => {
               { id: messageId, text: outcome.replyText, kind: "reply" },
             );
           if (outcome.replyText?.trim()) {
-            void imService?.pushToThread(snapshot.threadId, outcome.replyText.trim()).catch(() => {});
+            void imService?.pushToThread(snapshot.threadId, outcome.replyText.trim(), { privateOnly: true }).catch(() => {});
           }
         },
       };
