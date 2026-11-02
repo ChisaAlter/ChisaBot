@@ -315,7 +315,11 @@ jobs:
           if [ -f "$dir/app-release.apk" ]; then
             apk="ChisaBot-Android-$VERSION.apk"; cp "$dir/app-release.apk" "out/$apk"
             SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-            "$SDK_ROOT"/build-tools/$(ls "$SDK_ROOT/build-tools" | sort -V | tail -n 1)/apksigner verify --print-certs "out/$apk" | grep -E "Signer #1 certificate (DN|SHA-256)"
+            bt="$SDK_ROOT/build-tools/$(ls "$SDK_ROOT/build-tools" | sort -V | tail -n 1)"
+            echo "build-tools: $bt"; ls "$SDK_ROOT/build-tools" | tr '\n' ' '; echo
+            "$bt/apksigner" verify --print-certs "out/$apk" > /tmp/sig 2>&1 || { cat /tmp/sig; echo "::error::APK 签名校验失败"; exit 1; }
+            cat /tmp/sig
+            grep -qE "certificate (DN|SHA-256)" /tmp/sig || { echo "::error::apksigner 输出里没有证书信息"; exit 1; }
           else
             apk="ChisaBot-Android-$VERSION-unsigned.apk"; cp "$dir/app-release-unsigned.apk" "out/$apk"
           fi
