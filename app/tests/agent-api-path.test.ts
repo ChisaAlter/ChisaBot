@@ -50,6 +50,8 @@ function boundary(id: string, refusal?: "unauthenticated" | "forbidden") {
     hidden: false,
     pinned: false,
     deletedAt: null,
+    createdByAgentId: null,
+    createdDepth: 0,
     endpoint: null,
     hasAuth: false,
     hasCallbackToken: false,

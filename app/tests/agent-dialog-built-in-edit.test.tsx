@@ -83,6 +83,8 @@ function serve(endpoint: string) {
     hidden: false,
     pinned: false,
     deletedAt: null,
+    createdByAgentId: null,
+    createdDepth: 0,
     endpoint,
     hasAuth: false,
     hasCallbackToken: false,
