@@ -69,6 +69,7 @@ jobs:
           server/tests/agent-runtime-connect-timeout.test.ts
           server/tests/compose-network-drift.test.ts
           server/tests/admin-smoke.test.ts
+          server/tests/im-adapters.test.ts
       # The chat regression set every ChisaBot PR runs on the server (the older model-chooser DOM tests
       # need a live API and never ran here while typecheck was failing; see docs/slimming.md P3).
       - name: Chat UI checks
@@ -127,6 +128,7 @@ jobs:
           bun test server/tests/channel-search-hit-meta.test.ts
           bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
           bun test server/tests/multi-user-unified-admin.test.ts server/tests/bot-avatars.test.ts
+          bun test server/tests/im-service.integration.test.ts server/tests/confirmations.test.ts
       # CB-103：GET /control 一律 200 + state，截图让路回 409 user_control，接管中的拒绝记进活动记录。
       - name: Computer control state checks (CB-103)
         run: bun test server/tests/computer-routes.test.ts server/tests/computer-client.test.ts

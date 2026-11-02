@@ -10,7 +10,8 @@ import { decryptSecret, encryptSecret } from "../credentials";
 import type { Database } from "../db/client";
 import type { TurnRunner } from "../turns/types";
 import { OneBotAdapter } from "./adapters/onebot";
-import { WEIXIN_DEFAULT_BASE, weixinFetchQr, weixinQrStatus } from "./adapters/weixin";
+import { WEIXIN_DEFAULT_BASE } from "./adapters/weixin";
+import { isQrPlatform, pollPlatformQr, type QrPlatform, startPlatformQr } from "./qr-auth";
 import { createAdapter, testAdapter } from "./registry";
 import { errorText, markdownToPlain, splitText } from "./text";
 import type { AdapterContext, FetchLike, ImAdapter, ImAdapterStatus, ImInbound, ImLogLevel, WsFactory, WsLike } from "./types";
@@ -21,9 +22,8 @@ import type { AdapterContext, FetchLike, ImAdapter, ImAdapterStatus, ImInbound, 
  * - 存库：chisabot_im_connections（凭据字段整体 AES-GCM 加密，和部署里其它密钥同一把钥匙）、
  *   chisabot_im_chats（平台会话 → 对话 id；「/new」换一条）、chisabot_im_logs（每个连接最近 300 行）。
  * - 运行：开机把启用的连接都连上（适配器自己断线重连、退避），收到消息 → 群里没 @ 就忽略 → 白名单 →
- *   按 (连接, 会话) 排队，一次跑一轮 → 机器人回合（无头回合，写进 im-… 对话）→ 回复切段发回去。
- * - 机器人在 IM 里以主人的身份运行，但拿不到网页才能显示的工具（render_ui、面板），电脑 / 设备类工具
- *   默认也不给（连接里打开「允许使用电脑和设备」才给），需要网页审批的步骤回一句去网页确认。
+ *   按 (连接, 会话) 排队，一次跑一轮 → 机器人回合（与网页端该机器人的主会话互通）→ 回复切段发回去。
+ * - 机器人在 IM 里以主人的身份运行，支持在 IM 里直接回复「允许 / 拒绝」完成设备与工具授权确认。
  */
 
 export const IM_INITIATOR_PREFIX = "im:";
@@ -56,6 +56,15 @@ export type ImServiceOptions = {
   runTurn: TurnRunner;
   /** 这个机器人是不是这个人能用的（自己的、没删）。 */
   botAvailable: (ownerUserId: string, agentId: string) => Promise<boolean>;
+  /**
+   * 解析或创建该机器人在 WebUI 中的直聊会话 threadId，使 IM 聊天与 WebUI 中该机器人的对话完全互通。
+   * fresh=true 时（用户在 IM 发送 /new）开启一条新的 WebUI 会话并切换当前会话。
+   */
+  resolveBotConversation?: (ownerUserId: string, agentId: string, fresh?: boolean) => Promise<string>;
+  /** 记录会话活动（更新 WebUI 会话列表的最近消息摘要与时间）。 */
+  recordChannelActivity?: (threadId: string, actorUserId: string, text: string) => Promise<void>;
+  /** 广播会话忙碌状态到 WebUI。 */
+  signalThreadBusy?: (threadId: string, busy: boolean) => void;
   /** 回合因为要网页审批而停下（HeadlessToolSuspension）。 */
   isSuspension?: (error: unknown) => boolean;
   /** IM 快捷审批：用户在 IM 里回复「允许 / 批准 / 拒绝」时，直接处理该用户挂起的确认卡片。 */
@@ -109,7 +118,17 @@ export function createImService(options: ImServiceOptions) {
   const allowDevicesCache = new Map<string, boolean>();
   const queues = new Map<string, { tail: Promise<void>; size: number }>();
   const logCounts = new Map<string, number>();
-  type QrLogin = { owner: string; base: string; createdAt: number; result?: { token: string; baseUrl?: string; botId?: string } };
+  type QrLogin = {
+    owner: string;
+    platform: QrPlatform;
+    state: Record<string, string>;
+    createdAt: number;
+    result?: {
+      config: Record<string, string>;
+      secrets: Record<string, string>;
+      account?: string;
+    };
+  };
   const qrLogins = new Map<string, QrLogin>();
 
   async function ensure() {
@@ -269,6 +288,21 @@ export function createImService(options: ImServiceOptions) {
   }
 
   async function threadFor(row: Row, key: string, fresh = false): Promise<string> {
+    if (options.resolveBotConversation) {
+      const threadId = await options.resolveBotConversation(row.owner_user_id, row.agent_id, fresh);
+      await sql.unsafe(
+        `INSERT INTO chisabot_im_chats (connection_id, chat_key, thread_id) VALUES ($1, $2, $3)
+         ON CONFLICT (connection_id, chat_key) DO UPDATE SET thread_id = EXCLUDED.thread_id, updated_at = now()`,
+        [row.id, key, threadId],
+      );
+      if (fresh) {
+        await sql.unsafe(
+          "UPDATE chisabot_im_chats SET thread_id = $2, updated_at = now() WHERE connection_id = $1",
+          [row.id, threadId],
+        );
+      }
+      return threadId;
+    }
     if (!fresh) {
       const found = (await sql.unsafe<{ thread_id: string }[]>("SELECT thread_id FROM chisabot_im_chats WHERE connection_id = $1 AND chat_key = $2", [row.id, key]))[0];
       if (found) return found.thread_id;
@@ -374,11 +408,17 @@ export function createImService(options: ImServiceOptions) {
       return;
     }
     const threadId = await threadFor(row, key);
-    // 定时任务到点要主动推回这个会话（DESIGN.md §55）：记住最近一条消息的回复信息。
+    // 定时任务到点或待确认卡片要主动推回这个会话（DESIGN.md §55）：记住最近一条消息的回复信息。
     await sql
-      .unsafe("UPDATE chisabot_im_chats SET last_inbound = $3::text::jsonb WHERE connection_id = $1 AND chat_key = $2", [row.id, key, JSON.stringify(inbound)])
+      .unsafe(
+        "UPDATE chisabot_im_chats SET last_inbound = $3::text::jsonb, updated_at = now() WHERE connection_id = $1 AND chat_key = $2",
+        [row.id, key, JSON.stringify(inbound)],
+      )
       .catch(() => {});
     const content = frameInbound(platformName, inbound);
+    const rawUserText = inbound.text.trim() || `［${platformName}消息］`;
+    void options.recordChannelActivity?.(threadId, row.owner_user_id, rawUserText).catch(() => {});
+    options.signalThreadBusy?.(threadId, true);
     const started = Date.now();
     void adapter.typing?.(inbound);
     const typingTimer = adapter.typing ? setInterval(() => void adapter.typing?.(inbound), 5000) : null;
@@ -398,10 +438,13 @@ export function createImService(options: ImServiceOptions) {
       );
       answer = result.replyText?.trim() || "（这次没有文字回复）";
       if (result.components?.length) answer += "\n\n（这条回复里还有卡片，打开 ChisaBot 网页能看到。）";
+      if (result.replyText?.trim()) {
+        void options.recordChannelActivity?.(threadId, row.agent_id, result.replyText.trim()).catch(() => {});
+      }
     } catch (error) {
       if (options.isSuspension?.(error)) {
-        answer = "这一步需要你在 ChisaBot 网页上确认后才能继续（打开网页处理待审批，然后再发一次）。";
-        log(row.id, "warn", "回合停在需要网页审批的步骤");
+        answer = "⚠️ 这一步需要确认后才能继续：请直接回复「允许」或「拒绝」处理（也可打开 ChisaBot 网页端确认）。";
+        log(row.id, "warn", "回合停在需要确认的步骤");
       } else {
         const reason = errorText(error);
         log(row.id, "error", `机器人回合失败：${reason}`);
@@ -409,6 +452,7 @@ export function createImService(options: ImServiceOptions) {
       }
     } finally {
       if (typingTimer) clearInterval(typingTimer);
+      options.signalThreadBusy?.(threadId, false);
     }
     try {
       await reply(row, adapter, inbound, answer);
@@ -441,11 +485,18 @@ export function createImService(options: ImServiceOptions) {
     allowUsers?: unknown;
     allowDevices?: unknown;
     weixinLogin?: unknown;
+    qrLogin?: unknown;
   };
 
   class InputError extends Error {}
 
-  function cleanFields(platform: ImPlatform, input: Input, current: { config: Record<string, string>; secrets: Record<string, string> }, owner: string) {
+  function cleanFields(
+    platform: ImPlatform,
+    input: Input,
+    current: { config: Record<string, string>; secrets: Record<string, string> },
+    owner: string,
+    consumeQr = true,
+  ) {
     const info = imPlatform(platform)!;
     const config: Record<string, string> = { ...current.config };
     const secrets: Record<string, string> = { ...current.secrets };
@@ -474,21 +525,37 @@ export function createImService(options: ImServiceOptions) {
       }
       if (!config[field.key] && field.default) config[field.key] = field.default;
     }
-    if (platform === "weixin" && typeof input.weixinLogin === "string" && input.weixinLogin) {
-      const login = qrLogins.get(input.weixinLogin);
-      if (!login || login.owner !== owner || !login.result) throw new InputError("微信授权已失效，请重新扫码");
-      secrets.token = login.result.token;
-      if (login.result.baseUrl) {
-        const cleanedBase = login.result.baseUrl.replace(/\/+$/, "");
-        const verdict = checkPublicUrl(cleanedBase);
-        if (!verdict.ok) throw new InputError(`微信接口地址不安全：${verdict.reason}`);
-        config.baseUrl = cleanedBase;
+    const loginKey =
+      typeof input.qrLogin === "string" && input.qrLogin
+        ? input.qrLogin
+        : typeof input.weixinLogin === "string" && input.weixinLogin
+          ? input.weixinLogin
+          : "";
+    let account: string | undefined;
+    if (loginKey) {
+      const login = qrLogins.get(loginKey);
+      if (!login || login.owner !== owner || login.platform !== platform || !login.result) {
+        const pName = imPlatform(platform)?.name ?? platform;
+        throw new InputError(`${pName}扫码授权已失效，请重新扫码`);
       }
-      if (login.result.botId) config.accountId = login.result.botId;
-      qrLogins.delete(input.weixinLogin);
+      for (const [k, v] of Object.entries(login.result.config)) {
+        if (k === "baseUrl" && v) {
+          const cleanedBase = v.replace(/\/+$/, "");
+          const verdict = checkPublicUrl(cleanedBase);
+          if (!verdict.ok) throw new InputError(`接口地址不安全：${verdict.reason}`);
+          config[k] = cleanedBase;
+        } else if (v) {
+          config[k] = v;
+        }
+      }
+      for (const [k, v] of Object.entries(login.result.secrets)) {
+        if (v) secrets[k] = v;
+      }
+      account = login.result.account;
+      if (consumeQr) qrLogins.delete(loginKey);
     }
     if (platform === "onebot" && config.mode === "reverse" && !secrets.accessToken) secrets.accessToken = newToken();
-    return { config, secrets };
+    return { config, secrets, account };
   }
 
   function missingRequired(platform: ImPlatform, config: Record<string, string>, secrets: Record<string, string>): string | null {
@@ -515,15 +582,15 @@ export function createImService(options: ImServiceOptions) {
     const agentId = typeof input.agentId === "string" ? input.agentId.trim() : "";
     if (!agentId || !(await options.botAvailable(owner, agentId))) throw new InputError("请选择一个你的机器人");
     const name = (typeof input.name === "string" && input.name.trim() ? input.name.trim() : imPlatform(platform)!.name).slice(0, 40);
-    const { config, secrets } = cleanFields(platform, input, { config: {}, secrets: {} }, owner);
+    const { config, secrets, account } = cleanFields(platform, input, { config: {}, secrets: {} }, owner, true);
     const enabled = input.enabled !== false;
     const missing = missingRequired(platform, config, secrets);
     if (missing && enabled) throw new InputError(`请填写「${missing}」`);
     const id = newId();
     await sql.unsafe(
-      `INSERT INTO chisabot_im_connections (id, owner_user_id, platform, name, agent_id, enabled, config, secrets, allow_users, allow_devices)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9::text::jsonb, $10)`,
-      [id, owner, platform, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(cleanUsers(input.allowUsers) ?? []), input.allowDevices === true],
+      `INSERT INTO chisabot_im_connections (id, owner_user_id, platform, name, agent_id, enabled, config, secrets, allow_users, allow_devices, account)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9::text::jsonb, $10, $11)`,
+      [id, owner, platform, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(cleanUsers(input.allowUsers) ?? []), input.allowDevices === true, account ?? null],
     );
     log(id, "info", `创建了连接（${imPlatform(platform)!.name}）`);
     const row = (await rowById(id))!;
@@ -535,11 +602,13 @@ export function createImService(options: ImServiceOptions) {
     const row = await owned(owner, id);
     if (!row) return null;
     const current = { config: row.config ?? {}, secrets: await readSecrets(row) };
-    const { config, secrets } = cleanFields(row.platform, input, current, owner);
+    const { config, secrets, account } = cleanFields(row.platform, input, current, owner, true);
     let agentId = row.agent_id;
     if (typeof input.agentId === "string" && input.agentId !== row.agent_id) {
       if (!(await options.botAvailable(owner, input.agentId))) throw new InputError("请选择一个你的机器人");
       agentId = input.agentId;
+      // 切换绑定的机器人后，清空旧会话映射，下一条消息自动绑定到新机器人的会话。
+      await sql.unsafe("DELETE FROM chisabot_im_chats WHERE connection_id = $1", [id]).catch(() => {});
     }
     const enabled = typeof input.enabled === "boolean" ? input.enabled : row.enabled;
     const missing = missingRequired(row.platform, config, secrets);
@@ -547,10 +616,11 @@ export function createImService(options: ImServiceOptions) {
     const name = typeof input.name === "string" && input.name.trim() ? input.name.trim().slice(0, 40) : row.name;
     const allowUsers = cleanUsers(input.allowUsers) ?? row.allow_users;
     const allowDevices = typeof input.allowDevices === "boolean" ? input.allowDevices : row.allow_devices;
+    const nextAccount = account ?? row.account;
     await sql.unsafe(
       `UPDATE chisabot_im_connections SET name = $2, agent_id = $3, enabled = $4, config = $5::text::jsonb, secrets = $6,
-       allow_users = $7::text::jsonb, allow_devices = $8, updated_at = now(), last_error = CASE WHEN $4 THEN last_error ELSE NULL END WHERE id = $1`,
-      [id, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(allowUsers), allowDevices],
+       allow_users = $7::text::jsonb, allow_devices = $8, account = $9, updated_at = now(), last_error = CASE WHEN $4 THEN last_error ELSE NULL END WHERE id = $1`,
+      [id, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(allowUsers), allowDevices, nextAccount],
     );
     allowDevicesCache.set(id, allowDevices);
     const changes = [
@@ -604,47 +674,106 @@ export function createImService(options: ImServiceOptions) {
     return result;
   }
 
-  /** 保存前测试：用表单里的值（编辑时空密钥沿用已保存的）。 */
+  /** 保存前测试：用表单里的值（编辑时空密钥沿用已保存的；扫码未保存时保留 qrLogin 会话供后续保存使用）。 */
   async function testDraft(owner: string, input: Input & { id?: unknown }) {
     const existing = typeof input.id === "string" ? await owned(owner, input.id) : null;
     const platform = (existing?.platform ?? input.platform) as ImPlatform;
     if (!imPlatform(platform)) throw new InputError("不支持这个平台");
     const current = existing ? { config: existing.config ?? {}, secrets: await readSecrets(existing) } : { config: {}, secrets: {} };
-    const { weixinLogin: _ignored, ...rest } = input;
-    const { config, secrets } = cleanFields(platform, rest, current, owner);
-    if (platform === "weixin" && typeof input.weixinLogin === "string") {
-      const login = qrLogins.get(input.weixinLogin);
-      if (login?.result) secrets.token = login.result.token;
-    }
+    const { config, secrets } = cleanFields(platform, input, current, owner, false);
     return testAdapter(platform, testContext(existing?.id ?? "draft", config, secrets), existing ? live.get(existing.id)?.adapter : undefined);
   }
 
-  // ---- 微信扫码授权 ----
+  // ---- 多平台扫码授权（微信 / QQ 官方 / 企业微信 / 钉钉 / 飞书） ----
+
+  function pruneQrLogins() {
+    for (const [key, value] of qrLogins) {
+      if (Date.now() - value.createdAt > 15 * 60_000) qrLogins.delete(key);
+    }
+  }
+
+  async function qrStart(owner: string, body: { platform?: string; baseUrl?: string; domain?: string }) {
+    const platform = body.platform ?? "weixin";
+    if (!isQrPlatform(platform)) throw new InputError("该平台不支持直接扫码绑定");
+    let baseUrl = body.baseUrl;
+    if (platform === "weixin") {
+      baseUrl = (baseUrl && /^https?:\/\//.test(baseUrl) ? baseUrl : WEIXIN_DEFAULT_BASE).replace(/\/+$/, "");
+      const verdict = checkPublicUrl(baseUrl);
+      if (!verdict.ok) throw new InputError(`微信接口地址不安全：${verdict.reason}`);
+    }
+    pruneQrLogins();
+    const started = await startPlatformQr({ platform, baseUrl, domain: body.domain }, fetcher);
+    const sessionKey = started.qrcode || `qr_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    qrLogins.set(sessionKey, {
+      owner,
+      platform,
+      state: started.state,
+      createdAt: Date.now(),
+    });
+    return {
+      session: sessionKey,
+      qrcode: started.qrcode,
+      url: started.qrUrl,
+      qrKind: started.qrKind,
+    };
+  }
+
+  async function qrPoll(owner: string, sessionKey: string) {
+    const login = qrLogins.get(sessionKey);
+    if (!login || login.owner !== owner) return { status: "expired" as const };
+    if (login.result) {
+      return {
+        status: "confirmed" as const,
+        loginKey: sessionKey,
+        account: login.result.account ?? null,
+        config: login.result.config,
+      };
+    }
+    if (login.platform === "weixin" && login.state.baseUrl) {
+      const baseVerdict = checkPublicUrl(login.state.baseUrl);
+      if (!baseVerdict.ok) throw new InputError(`微信接口地址不安全：${baseVerdict.reason}`);
+    }
+    const polled = await pollPlatformQr(login.platform, login.state, fetcher);
+    if (polled.nextState) {
+      login.state = polled.nextState;
+    }
+    if (polled.status === "confirmed" && polled.secrets) {
+      const nextConfig = { ...(polled.config ?? {}) };
+      if (nextConfig.baseUrl && !checkPublicUrl(nextConfig.baseUrl.replace(/\/+$/, "")).ok) {
+        delete nextConfig.baseUrl;
+      }
+      login.result = {
+        config: nextConfig,
+        secrets: polled.secrets,
+        account: polled.account,
+      };
+      return {
+        status: "confirmed" as const,
+        loginKey: sessionKey,
+        account: polled.account ?? null,
+        config: nextConfig,
+      };
+    }
+    if (polled.status === "expired") {
+      qrLogins.delete(sessionKey);
+      return { status: "expired" as const, ...(polled.message ? { message: polled.message } : {}) };
+    }
+    return {
+      status: polled.status === "scaned" ? ("scanned" as const) : ("wait" as const),
+    };
+  }
 
   async function weixinQr(owner: string, baseUrl?: string) {
-    const base = (baseUrl && /^https?:\/\//.test(baseUrl) ? baseUrl : WEIXIN_DEFAULT_BASE).replace(/\/+$/, "");
-    const verdict = checkPublicUrl(base);
-    if (!verdict.ok) throw new InputError(`微信接口地址不安全：${verdict.reason}`);
-    for (const [key, value] of qrLogins) if (Date.now() - value.createdAt > 15 * 60_000) qrLogins.delete(key);
-    const qr = await weixinFetchQr(fetcher, base);
-    qrLogins.set(qr.qrcode, { owner, base, createdAt: Date.now() });
-    return { qrcode: qr.qrcode, url: qr.url };
+    const res = await qrStart(owner, { platform: "weixin", baseUrl });
+    return { qrcode: res.qrcode, url: res.url };
   }
 
   async function weixinQrPoll(owner: string, qrcode: string) {
-    const login = qrLogins.get(qrcode);
-    if (!login || login.owner !== owner) return { status: "expired" as const };
-    if (login.result) return { status: "confirmed" as const, loginKey: qrcode, account: login.result.botId ?? null };
-    const baseVerdict = checkPublicUrl(login.base);
-    if (!baseVerdict.ok) throw new InputError(`微信接口地址不安全：${baseVerdict.reason}`);
-    const status = await weixinQrStatus(fetcher, login.base, qrcode);
-    if (status.status === "confirmed" && status.token) {
-      const safeBaseUrl = status.baseUrl && checkPublicUrl(status.baseUrl.replace(/\/+$/, "")).ok ? status.baseUrl : undefined;
-      login.result = { token: status.token, baseUrl: safeBaseUrl, botId: status.botId };
-      return { status: "confirmed" as const, loginKey: qrcode, account: status.botId ?? null };
+    const res = await qrPoll(owner, qrcode);
+    if (res.status === "confirmed") {
+      return { status: "confirmed" as const, loginKey: res.loginKey, account: res.account };
     }
-    if (status.status === "expired") qrLogins.delete(qrcode);
-    return { status: status.status === "scaned" ? ("scanned" as const) : status.status === "expired" ? ("expired" as const) : ("wait" as const) };
+    return { status: res.status };
   }
 
   // ---- OneBot 反向连接 ----
@@ -761,6 +890,24 @@ export function createImService(options: ImServiceOptions) {
       const entries = await logs(c.var.actor.id, c.req.param("id"));
       return entries ? c.json({ logs: entries }) : c.json({ error: "没有这个连接" }, 404);
     });
+    authed.post("/qr/start", async (c) => {
+      try {
+        const body = (await c.req.json().catch(() => ({}))) as { platform?: string; baseUrl?: string; domain?: string };
+        return c.json(await qrStart(c.var.actor.id, body));
+      } catch (error) {
+        if (error instanceof InputError) return fail(c, error);
+        return c.json({ error: `获取二维码失败：${errorText(error)}` }, 502);
+      }
+    });
+    authed.get("/qr/status", async (c) => {
+      try {
+        c.header("Cache-Control", "no-store");
+        const session = c.req.query("session") ?? c.req.query("qrcode") ?? "";
+        return c.json(await qrPoll(c.var.actor.id, session));
+      } catch (error) {
+        return c.json({ error: `查询扫码状态失败：${errorText(error)}` }, 502);
+      }
+    });
     authed.post("/weixin/qr", async (c) => {
       try {
         const body = (await c.req.json().catch(() => ({}))) as { baseUrl?: string };
@@ -796,14 +943,21 @@ export function createImService(options: ImServiceOptions) {
     routes,
     attachReverse,
     authorizeReverse,
+    qrStart,
+    qrPoll,
     weixinQr,
     weixinQrPoll,
     /**
-     * 主动把一段文字发到某个 IM 对话（定时任务到点，DESIGN.md §55）：按这个对话最近一条消息的回复信息发。
+     * 主动把一段文字发到某个 IM 对话（定时任务到点或待确认卡片提示，DESIGN.md §55）：按这个对话最近一条消息的回复信息发。
      * 有的平台只许在一段时间内被动回复（QQ 官方机器人 msg_id 5 分钟、企业微信智能机器人按消息流式），过期会失败。
      */
     async pushToThread(threadId: string, text: string) {
-      const chat = (await sql.unsafe<{ connection_id: string; last_inbound: unknown }[]>("SELECT connection_id, last_inbound FROM chisabot_im_chats WHERE thread_id = $1", [threadId]))[0];
+      const chat = (
+        await sql.unsafe<{ connection_id: string; last_inbound: unknown }[]>(
+          "SELECT connection_id, last_inbound FROM chisabot_im_chats WHERE thread_id = $1 AND last_inbound IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
+          [threadId],
+        )
+      )[0];
       if (!chat) throw new Error("找不到这个 IM 对话（可能已经 /new 换了新话题）");
       const entry = live.get(chat.connection_id);
       const row = await rowById(chat.connection_id);
@@ -812,7 +966,7 @@ export function createImService(options: ImServiceOptions) {
       if (typeof inbound === "string") inbound = JSON.parse(inbound) as ImInbound;
       if (!inbound) throw new Error("这个 IM 对话还没有可回复的消息");
       await reply(row, entry.adapter, inbound, text);
-      log(row.id, "info", `定时任务推送（${text.length} 字）`);
+      log(row.id, "info", `主动推送消息（${text.length} 字）`);
     },
     /** IM 回合能不能用电脑 / 设备类工具（连接里的开关）。 */
     allowsDevices: (connectionId: string) => allowDevicesCache.get(connectionId) === true,

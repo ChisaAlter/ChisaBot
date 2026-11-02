@@ -46,20 +46,21 @@ import {
   createImConnection,
   deleteImConnection,
   type ImConnectionInput,
+  type ImQrStartResult,
   type ImTestResult,
   imKeys,
   imLogsQueryOptions,
+  pollImQr,
+  startImQr,
   testImConnection,
   testImDraft,
   updateImConnection,
-  weixinQr,
-  weixinQrStatus,
 } from "@/lib/im";
 import { cn } from "@/lib/utils";
 
 /**
- * 设置 → IM 接入（DESIGN.md §49）。一行一个连接：平台图标 · 名字 · 平台 / 机器人 / 最后消息 · 状态徽标 · 启用开关 · ⋯。
- * 添加 / 编辑在玻璃弹窗里：先选平台（新建时），再填凭据、选机器人；保存前可以「测试连接」。
+ * 设置 → IM 接入（DESIGN.md §49）。一行一个连接：平台图标 · 名字 · 平台 / 机器人 / 最后消息 · 状态徽章 · 启用开关 · ⋯。
+ * 添加 / 编辑在玻璃弹窗里：先选平台（新建时），支持扫码一键绑定或手动填写凭据、选机器人；保存前可以「测试连接」。
  */
 
 const DOCS_URL = "https://github.com/ChisaAlter/ChisaBot/blob/main/docs/im.md";
@@ -104,6 +105,7 @@ export function PlatformGrid({ onPick }: { onPick: (platform: ImPlatform) => voi
             <span className="im-platform-t">
               {platform.name}
               <span className={cn("im-chip", platform.official ? "is-official" : "is-risk")}><T>{platform.official ? "官方" : "非官方"}</T></span>
+              {platform.qrAuth ? <span className="im-chip is-official"><T>扫码绑定</T></span> : null}
             </span>
             <span className="im-platform-s">{platform.summary}</span>
           </span>
@@ -210,7 +212,7 @@ export function ConnectionRow({ connection, botName, onEdit, onLogs }: { connect
             onClick={async () => {
               const ok = await confirmDialog({
                 title: `删除「${connection.name}」？`,
-                description: "会断开这个平台账号，删掉保存的凭据和日志。机器人在这里的聊天记录不会出现在网页上，也一起不再使用。",
+                description: "会断开这个平台账号，删掉保存的凭据和日志。机器人在网页上的对话记录会保留。",
                 confirmLabel: "删除",
                 destructive: true,
               });
@@ -266,33 +268,52 @@ function FieldInput({ field, value, saved, onChange }: { field: ImField; value: 
   );
 }
 
-/** 个人微信：扫码授权（二维码 → 已扫码 → 已授权 ✓）。令牌留在服务器，浏览器只拿一个一次性键。 */
-function WeixinLogin({ baseUrl, done, onDone }: { baseUrl?: string; done: boolean; onDone: (loginKey: string, account: string | null) => void }) {
-  const [qr, setQr] = useState<{ qrcode: string; url: string } | null>(null);
+/** 多平台统一扫码授权（微信 / QQ 机器人 / 企业微信智能机器人 / 钉钉 / 飞书）：令牌留在服务器，浏览器只拿一次性键。 */
+function PlatformQrLogin({
+  platform,
+  hint,
+  baseUrl,
+  domain,
+  done,
+  account,
+  onDone,
+}: {
+  platform: ImPlatform;
+  hint?: string;
+  baseUrl?: string;
+  domain?: string;
+  done: boolean;
+  account?: string | null;
+  onDone: (loginKey: string, account: string | null, config?: Record<string, string>) => void;
+}) {
+  const [qr, setQr] = useState<ImQrStartResult | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "wait" | "scanned" | "expired" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const alive = useRef(true);
+  const runId = useRef(0);
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
+      runId.current += 1;
     };
   }, []);
   const start = async () => {
+    const currentRun = ++runId.current;
     setStatus("loading");
     setError(null);
     try {
-      const next = await weixinQr(baseUrl);
-      if (!alive.current) return;
+      const next = await startImQr({ platform, baseUrl, domain });
+      if (!alive.current || runId.current !== currentRun) return;
       setQr(next);
       setStatus("wait");
-      for (let round = 0; round < 40 && alive.current; round++) {
-        const result = await weixinQrStatus(next.qrcode);
-        if (!alive.current) return;
+      for (let round = 0; round < 60 && alive.current && runId.current === currentRun; round++) {
+        const result = await pollImQr(next.qrcode);
+        if (!alive.current || runId.current !== currentRun) return;
         if (result.status === "confirmed" && result.loginKey) {
           setQr(null);
           setStatus("idle");
-          onDone(result.loginKey, result.account ?? null);
+          onDone(result.loginKey, result.account ?? null, result.config);
           return;
         }
         if (result.status === "expired") {
@@ -301,9 +322,9 @@ function WeixinLogin({ baseUrl, done, onDone }: { baseUrl?: string; done: boolea
         }
         setStatus(result.status === "scanned" ? "scanned" : "wait");
       }
-      setStatus("expired");
+      if (alive.current && runId.current === currentRun) setStatus("expired");
     } catch (err) {
-      if (!alive.current) return;
+      if (!alive.current || runId.current !== currentRun) return;
       setStatus("error");
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -312,7 +333,7 @@ function WeixinLogin({ baseUrl, done, onDone }: { baseUrl?: string; done: boolea
     return (
       <div className="im-wx is-done">
         <IconCheck className="size-5" />
-        <span className="flex-1">{"已授权。保存后开始收消息。"}</span>
+        <span className="flex-1">{account ? `已扫码绑定（${account}）。保存后即可开始对话。` : "已授权。保存后即可开始收发消息。"}</span>
         <Button onClick={() => void start()} size="sm" variant="outline">
           {"重新扫码"}
         </Button>
@@ -322,17 +343,23 @@ function WeixinLogin({ baseUrl, done, onDone }: { baseUrl?: string; done: boolea
     <div className="im-wx">
       {qr ? (
         <div className="im-wx-qr">
-          <PairQr dim={status === "expired"} value={qr.url} />
+          {qr.qrKind === "image" && qr.url.startsWith("data:image/") ? (
+            <img alt="扫码绑定二维码" className={cn("size-44 rounded-lg bg-white p-2", status === "expired" && "opacity-40")} src={qr.url} />
+          ) : (
+            <PairQr dim={status === "expired"} value={qr.url} />
+          )}
           <span className="im-wx-s">
-            {status === "scanned" ? "已扫码，请在手机上确认授权…" : status === "expired" ? "二维码过期了" : "用要接入的微信扫码"}
+            {status === "scanned" ? "已扫码，请在手机上确认授权…" : status === "expired" ? "二维码过期了" : hint ?? "用对应手机客户端扫码绑定"}
           </span>
         </div>
-      ) : null}
+      ) : (
+        <span className="im-field-h">{hint ?? "支持直接扫码一键创建并绑定机器人凭据"}</span>
+      )}
       {error ? <span className="im-row-error">{error}</span> : null}
       {!qr || status === "expired" || status === "error" ? (
-        <Button disabled={status === "loading"} onClick={() => void start()} size="sm">
+        <Button disabled={status === "loading"} onClick={() => void start()} size="sm" type="button">
           {status === "expired" ? <IconRefresh /> : <IconQrcode />}
-          {status === "loading" ? "获取二维码…" : status === "expired" ? "换一个二维码" : "扫码授权"}
+          {status === "loading" ? "获取二维码…" : status === "expired" ? "换一个二维码" : "扫码绑定"}
         </Button>
       ) : null}
     </div>
@@ -346,8 +373,8 @@ type FormState = {
   secrets: Record<string, string>;
   allowUsers: string;
   allowDevices: boolean;
-  weixinLogin?: string;
-  weixinAccount?: string | null;
+  qrLogin?: string;
+  qrAccount?: string | null;
 };
 
 function initialForm(info: ImPlatformInfo, connection?: ImConnectionView, defaultBot?: string): FormState {
@@ -406,7 +433,7 @@ export function ConnectionDialog({
       secrets,
       allowUsers: form.allowUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
       allowDevices: form.allowDevices,
-      ...(form.weixinLogin ? { weixinLogin: form.weixinLogin } : {}),
+      ...(form.qrLogin ? { qrLogin: form.qrLogin, ...(platform === "weixin" ? { weixinLogin: form.qrLogin } : {}) } : {}),
     };
   };
 
@@ -443,6 +470,10 @@ export function ConnectionDialog({
 
   const visible = (field: ImField) => !field.showIf || (form?.config[field.showIf.key] ?? "") === field.showIf.equals;
   const reverse = saved ?? (connection?.reversePath ? connection : null);
+  const visibleFields = info ? info.fields.filter(visible) : [];
+  const primaryFields = info?.qrAuth ? visibleFields.filter((field) => field.type === "select") : visibleFields;
+  const manualFields = info?.qrAuth ? visibleFields.filter((field) => field.type !== "select" && !(platform === "weixin" && field.key === "token")) : [];
+  const hasSavedSecrets = Boolean(connection && Object.values(connection.secrets).some(Boolean));
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -450,7 +481,7 @@ export function ConnectionDialog({
         <DialogHeader>
           <DialogTitle>{connection ? `编辑「${connection.name}」` : info ? `接入${info.name}` : "添加 IM 连接"}</DialogTitle>
           <DialogDescription>
-            {info ? info.summary : "选一个平台。每个连接把一个平台账号交给你的一个机器人来回复。"}
+            {info ? info.summary : "选一个平台。每个连接把一个平台账号交给你的一个机器人来回复，并与网页端共享该机器人的会话。"}
           </DialogDescription>
         </DialogHeader>
         {!info ? (
@@ -497,7 +528,7 @@ export function ConnectionDialog({
                 </label>
                 <label className="im-field" htmlFor="im-bot">
                   <span className="im-field-l">
-                    {"由哪个机器人回复"}
+                    {"绑定机器人（与网页端共享对话）"}
                     <span className="im-req">{"必填"}</span>
                   </span>
                   <Select onValueChange={(next) => setForm({ ...form, agentId: String(next) })} value={form.agentId}>
@@ -515,28 +546,57 @@ export function ConnectionDialog({
                     </SelectContent>
                   </Select>
                 </label>
-                {info.fields.filter(visible).map((field) =>
-                  platform === "weixin" && field.key === "token" ? null : (
-                    <FieldInput
-                      field={field}
-                      key={field.key}
-                      onChange={(value) =>
-                        field.type === "secret"
-                          ? setForm({ ...form, secrets: { ...form.secrets, [field.key]: value } })
-                          : setForm({ ...form, config: { ...form.config, [field.key]: value } })
-                      }
-                      saved={Boolean(connection?.secrets[field.key])}
-                      value={field.type === "secret" ? form.secrets[field.key] ?? "" : form.config[field.key] ?? ""}
-                    />
-                  ),
-                )}
+                {primaryFields.map((field) => (
+                  <FieldInput
+                    field={field}
+                    key={field.key}
+                    onChange={(value) =>
+                      field.type === "secret"
+                        ? setForm({ ...form, secrets: { ...form.secrets, [field.key]: value } })
+                        : setForm({ ...form, config: { ...form.config, [field.key]: value } })
+                    }
+                    saved={Boolean(connection?.secrets[field.key])}
+                    value={field.type === "secret" ? form.secrets[field.key] ?? "" : form.config[field.key] ?? ""}
+                  />
+                ))}
               </div>
-              {platform === "weixin" ? (
-                <WeixinLogin
+              {info.qrAuth && platform ? (
+                <PlatformQrLogin
+                  account={form.qrAccount ?? connection?.account}
                   baseUrl={form.config.baseUrl}
-                  done={Boolean(form.weixinLogin || connection?.secrets.token)}
-                  onDone={(loginKey, account) => setForm({ ...form, weixinLogin: loginKey, weixinAccount: account })}
+                  domain={form.config.domain}
+                  done={Boolean(form.qrLogin || hasSavedSecrets)}
+                  hint={info.qrHint}
+                  onDone={(loginKey, account, nextConfig) =>
+                    setForm({
+                      ...form,
+                      qrLogin: loginKey,
+                      qrAccount: account,
+                      config: nextConfig ? { ...form.config, ...nextConfig } : form.config,
+                    })
+                  }
+                  platform={platform}
                 />
+              ) : null}
+              {manualFields.length > 0 ? (
+                <details className="im-adv">
+                  <summary>{"手动填写凭据（已有应用时可选）"}</summary>
+                  <div className="im-grid">
+                    {manualFields.map((field) => (
+                      <FieldInput
+                        field={{ ...field, required: false }}
+                        key={field.key}
+                        onChange={(value) =>
+                          field.type === "secret"
+                            ? setForm({ ...form, secrets: { ...form.secrets, [field.key]: value } })
+                            : setForm({ ...form, config: { ...form.config, [field.key]: value } })
+                        }
+                        saved={Boolean(connection?.secrets[field.key])}
+                        value={field.type === "secret" ? form.secrets[field.key] ?? "" : form.config[field.key] ?? ""}
+                      />
+                    ))}
+                  </div>
+                </details>
               ) : null}
               {reverse?.reversePath ? (
                 <div className="im-reverse">

@@ -148,10 +148,16 @@ function stable(value: unknown, depth = 0): unknown {
 export const digestOf = (tool: string, args: unknown) =>
   createHash("sha256").update(JSON.stringify([tool, stable(args)])).digest("hex").slice(0, 32);
 
-/** 网页聊天以外的回合（IM、长期任务、面板刷新、后台任务）弹不出卡片；「confirm:」是用户刚在网页上确认后接着做的那一轮。 */
+/** 网页聊天可以实时挂起等待卡片确认；「confirm:」是用户刚确认后接着做的那一轮。 */
 export function interactiveInitiator(initiator: AuditInitiator | undefined) {
   if (!initiator || initiator.kind !== "routine") return true;
   return initiator.id.startsWith("confirm:");
+}
+
+/** 设备「询问」弹窗（device_*）在网页聊天和 IM 对话中都关联到会话卡片并支持直接回复「允许 / 拒绝」。 */
+export function deviceLinkableInitiator(initiator: AuditInitiator | undefined) {
+  if (interactiveInitiator(initiator)) return true;
+  return initiator?.kind === "routine" && initiator.id.startsWith("im:");
 }
 
 export type ConfirmCheck = {
@@ -203,6 +209,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
   const wake = new Map<string, () => void>();
   let resume: ConfirmResume | undefined;
   let deviceDecide: ((approvalId: string, approved: boolean) => boolean) | undefined;
+  let onOpened: ((req: ConfirmRequestView) => void) | undefined;
 
   async function ensure() {
     await sql.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_confirm_prefs (
@@ -507,7 +514,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
          WHERE owner_user_id = $1 AND thread_id = $2 AND tool = $3 AND category = $4 AND status = 'pending' AND NOT (id = ANY(string_to_array($5::text, ',')))`,
         [input.ownerUserId, turn.threadId, input.tool, input.category, [...waiting].join(",")],
       );
-      await insertRequest({
+      const deferredRow = await insertRequest({
         ownerUserId: input.ownerUserId,
         agentId: input.agentId,
         threadId: turn.threadId,
@@ -519,6 +526,9 @@ export function createConfirmations(database: Database, options: { auditStore?: 
         details: input.details ?? [],
         digest: input.digest,
       });
+      try {
+        onOpened?.(requestView(deferredRow));
+      } catch {}
       return { ok: false, message: DEFERRED(CONFIRM_CATEGORY_INFO[input.category].label) };
     }
     const row = await insertRequest({
@@ -533,6 +543,9 @@ export function createConfirmations(database: Database, options: { auditStore?: 
       details: input.details ?? [],
       digest: input.digest,
     });
+    try {
+      onOpened?.(requestView(row));
+    } catch {}
     const status = await waitFor(row.id, turn.stopped);
     if (status === "approved") {
       await sql.unsafe("UPDATE chisabot_confirm_requests SET consumed_at = now() WHERE id = $1", [row.id]);
@@ -644,7 +657,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
       const turn = currentConfirmTurn();
       const call = currentConfirmToolCall();
       if (!turn?.threadId) return; // 网页聊天以外：只有电脑上的弹窗。
-      await insertRequest({
+      const row = await insertRequest({
         ownerUserId: input.ownerUserId,
         agentId: input.botId,
         threadId: turn.threadId,
@@ -660,6 +673,9 @@ export function createConfirmations(database: Database, options: { auditStore?: 
         external: `device:${input.approvalId}`,
         expiresAt: new Date(input.expiresAt),
       });
+      try {
+        onOpened?.(requestView(row));
+      } catch {}
     },
     async closed(approvalId, decision, by) {
       await sql.unsafe(
@@ -754,11 +770,13 @@ export function createConfirmations(database: Database, options: { auditStore?: 
    * 设备工具不包（hub 在「询问」能力上问），ChisaBot 自己的记录类工具不包（classify.ts）。
    */
   function wrap(list: GrantedTool[], context: { ownerUserId: string; agentId: string; initiator?: AuditInitiator }): GrantedTool[] {
-    const interactive = (tool: GrantedTool) => interactiveInitiator(tool.initiator ?? context.initiator);
+    const deviceInteractive = (tool: GrantedTool) => deviceLinkableInitiator(tool.initiator ?? context.initiator);
     return list.map((tool) => {
       const category = categoryOfTool(tool.name, tool.ref);
       if (!category)
-        return tool.name.startsWith("device_") ? { ...tool, execute: (args: unknown, ctx) => withConfirmInteractive(interactive(tool), () => tool.execute(args, ctx)) } : tool;
+        return tool.name.startsWith("device_")
+          ? { ...tool, execute: (args: unknown, ctx) => withConfirmInteractive(deviceInteractive(tool), () => tool.execute(args, ctx)) }
+          : tool;
       return {
         ...tool,
         execute: async (args: unknown, ctx) => {
@@ -905,6 +923,9 @@ export function createConfirmations(database: Database, options: { auditStore?: 
     },
     setDeviceDecider(fn: (approvalId: string, approved: boolean) => boolean) {
       deviceDecide = fn;
+    },
+    setOnOpened(fn: (req: ConfirmRequestView) => void) {
+      onOpened = fn;
     },
   };
 }
