@@ -75,6 +75,7 @@ function harness(
     catalogModels?: string[];
     catalogFails?: boolean;
     createResult?: CoworkerResult;
+    createError?: unknown;
     caps?: { maxDepth: number; maxPerUser: number };
   } = {},
 ) {
@@ -116,6 +117,7 @@ function harness(
   const coworker = {
     async createCoworker(actor, input, options) {
       creates.push({ actor, input, options });
+      if (over.createError) throw over.createError;
       // Run the caller's same-transaction hook the way the real store does: on an executor, with
       // the new id, before answering.
       await options?.within?.(
@@ -353,6 +355,46 @@ describe("create_bot", () => {
       eventType: "bot.factory_refused",
       payload: { reason: "per_user_cap" },
     });
+  });
+
+  test("a lock timeout inside the creation transaction answers busy and is audited", async () => {
+    // drizzle wraps the driver's error: the SQLSTATE sits as `errno` on the cause chain.
+    const lockTimeout = Object.assign(
+      new Error("Failed query: select pg_advisory_xact_lock(...)"),
+      {
+        cause: Object.assign(
+          new Error("canceling statement due to lock timeout"),
+          { code: "ERR_POSTGRES_SERVER_ERROR", errno: "55P03" },
+        ),
+      },
+    );
+    const { factory, audit, creates } = harness({ createError: lockTimeout });
+    const result = await factory.call({
+      name: "create_bot",
+      args: CREATE_ARGS,
+      run: FROM,
+    });
+    expect(result?.isError).toBe(true);
+    expect(result?.text).toContain("try again");
+    expect(result?.text).not.toContain("lock timeout");
+    expect(creates).toHaveLength(1);
+    expect(audit).toEqual([
+      expect.objectContaining({
+        eventType: "bot.factory_refused",
+        payload: expect.objectContaining({
+          bot: FROM.botId,
+          reason: "busy",
+          target: "Helper",
+        }),
+      }),
+    ]);
+  });
+
+  test("a store error that is not contention still throws", async () => {
+    const { factory } = harness({ createError: new Error("disk exploded") });
+    await expect(
+      factory.call({ name: "create_bot", args: CREATE_ARGS, run: FROM }),
+    ).rejects.toThrow("disk exploded");
   });
 
   test.each([

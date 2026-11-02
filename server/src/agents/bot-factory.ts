@@ -230,6 +230,28 @@ class BotFactoryCapError extends Error {
   override name = "BotFactoryCapError";
 }
 
+/**
+ * Whether a creation failed on contention rather than on anything the caller did.
+ *
+ * The per-person advisory lock serializing one person's creates is waited on under PostgreSQL's
+ * `lock_timeout` (5s, see db/client.ts): enough parallel calls and PostgreSQL cancels the waiters
+ * with SQLSTATE 55P03 (`canceling statement due to lock timeout`), and a serialization retry is
+ * 40001. Bun's driver puts the SQLSTATE on `errno` (`code` is its own ERR_POSTGRES_* name) and the
+ * driver error sits under drizzle's wrapper — the `cause` chain and the two-field check are the
+ * same ones `db/recovery.ts`'s `brokenConnection` walks.
+ */
+function isContentionError(error: unknown): boolean {
+  let current = error as
+    | { code?: unknown; errno?: unknown; cause?: unknown }
+    | undefined;
+  for (let depth = 0; current && depth < 6; depth++) {
+    if (current.code === "55P03" || current.errno === "55P03") return true;
+    if (current.code === "40001" || current.errno === "40001") return true;
+    current = current.cause as typeof current;
+  }
+  return false;
+}
+
 /** How much of the prompt an IM summary quotes before pointing at the web page for the rest. */
 const PROMPT_EXCERPT = 300;
 
@@ -612,6 +634,8 @@ export function createBotFactory(options: {
              * creations racing on separate runs both took the pre-flight count, and without the
              * lock both would pass it and commit. The lock serializes them; the second one reads
              * the first's committed row and fails here instead, rolling its own pair of rows back.
+             * The hook runs before the profile row lands (see `AgentProfileStore.create`), so this
+             * `>=` reads the same count the pre-flight check did — rows already there, not plus one.
              */
             await executor.execute(
               sql`select pg_advisory_xact_lock(hashtextextended(${`chisabot:bot-factory:${from.actorId}`}, 0))`,
@@ -636,6 +660,20 @@ export function createBotFactory(options: {
           reason: "per_user_cap",
           target: data.name,
           message: `No Bot was created: this person already has the most Bot-made Bots this deployment allows (${caps.maxPerUser}).`,
+        });
+      }
+      /*
+       * A burst of creates for the same person still means only one holds the per-person lock; the
+       * others waited past lock_timeout and PostgreSQL cancelled them. That is a "try again", not
+       * a failure — audited like every refusal, so the trail shows the Bot was stopped politely
+       * rather than dying on a raw driver error.
+       */
+      if (isContentionError(error)) {
+        return refuse(from, {
+          reason: "busy",
+          target: data.name,
+          message:
+            "No Bot was created: too many creates for this person are running at once and the database could not fit this one in. Please wait a moment and try again.",
         });
       }
       throw error;
