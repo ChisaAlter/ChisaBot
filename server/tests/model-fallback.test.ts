@@ -212,7 +212,7 @@ describe("model fallback on quota errors", () => {
     expect(await fallbackCandidates(catalog, {})("gpt-4o")).toEqual([]);
   });
 
-  test("5xx / overloaded fall back too (cooldown backs off); 400/401/network do not", async () => {
+  test("5xx / overloaded fall back too (cooldown backs off); 401/network do not", async () => {
     expect(fallbackReason(DAILY)).toBe("quota");
     expect(fallbackReason(apiError(503, "service unavailable"))).toBe("unavailable");
     expect(fallbackReason(apiError(529, "overloaded"))).toBe("unavailable");
@@ -382,6 +382,39 @@ describe("model fallback on quota errors", () => {
     expect(await fallbackCandidates(catalog, {}, async () => [])("clinepass/p")).toEqual(["clinepass/a", "clinepass/b"]);
     // 读管理员列表失败也不影响回答。
     expect(await fallbackCandidates(catalog, {}, async () => { throw new Error("db down"); })("clinepass/p")).toEqual(["clinepass/a", "clinepass/b"]);
+  });
+
+
+  test("candidates: catalog entries the directory says cannot call tools are skipped (QA1102-13)", async () => {
+    const catalog = async () => [
+      "clinepass/a",
+      { id: "clinepass/no-tools", supportsTools: false },
+      { id: "clinepass/unknown" },
+      { id: "clinepass/can", supportsTools: true },
+      "clinepass/b",
+    ];
+    // 目录明说不能调工具的跳过；没说的（unknown / 纯字符串）照常用。
+    expect(await fallbackCandidates(catalog, {})("clinepass/p")).toEqual([
+      "clinepass/a",
+      "clinepass/unknown",
+      "clinepass/can",
+    ]);
+  });
+
+  test("a fallback call carries the same tools the primary got (QA1102-13)", async () => {
+    const tools = [{ name: "web_search" }, { name: "connect_service" }];
+    const boom = apiError(503, "service unavailable");
+    const primary = fakeModel("p", async () => {
+      throw boom;
+    });
+    const backup = fakeModel("b", async () => ({ stream: "ok" }));
+    const wrapped = fallbackLanguageModel(primary.model, "c/p", {
+      candidates: async () => ["c/b"],
+      build: () => backup.model,
+      log: () => {},
+    });
+    await wrapped.doStream({ prompt: 1, tools });
+    expect(backup.calls[0]?.tools).toBe(tools);
   });
 
   test("notice text uses the short model name", () => {

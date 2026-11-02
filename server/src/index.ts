@@ -1153,7 +1153,10 @@ const modelCatalog = createModelCatalogService({
 setModelOutputLimitResolver(async (modelId) =>
   (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.maxOutputTokens,
 );
-setModelFallbackCatalog(async () => (await modelCatalog.list()).models.map((entry) => entry.id));
+// 目录项带 supportsTools 标记（有的话）：自动挑备用模型时跳过明说不能调工具的（QA1102-13）。
+setModelFallbackCatalog(async () =>
+  (await modelCatalog.list()).models.map((entry) => ({ id: entry.id, supportsTools: entry.supportsTools })),
+);
 // 设置 → 模型 →「备用模型」（DESIGN.md §61）：管理员排好的顺序优先于环境变量 / 同平台自动挑选。
 const modelFallbacks = createModelFallbackService({ store: createModelFallbackStore(database) });
 setModelFallbackList(() => modelFallbacks.models());

@@ -112,6 +112,8 @@ describe("connect_service", () => {
     expect(tool.ref).toBe("web/connect_service");
     expect(tool.description).toContain("连接");
     expect(tool.description).toContain("接入");
+    // QA1102-13：不认识的服务名也原样传进来查，而不是反问用户。
+    expect(tool.description).toContain("不认识");
   });
 
   test("reports a connector the Bot already holds and can use", async () => {

@@ -263,8 +263,10 @@ export function connectionLanguageModel(
 }
 
 /** 模型目录（index.ts 接上），给额度用完时找候选模型用（agents/model-fallback.ts）。 */
-let fallbackCatalog: () => Promise<string[]> = async () => [];
-export function setModelFallbackCatalog(catalog: () => Promise<string[]>): void {
+let fallbackCatalog: () => Promise<readonly (string | { id: string; supportsTools?: boolean })[]> = async () => [];
+export function setModelFallbackCatalog(
+  catalog: () => Promise<readonly (string | { id: string; supportsTools?: boolean })[]>,
+): void {
   fallbackCatalog = catalog;
 }
 /** 管理员排好的「备用模型」（设置 → 模型，DESIGN.md §61；index.ts 接上）。 */

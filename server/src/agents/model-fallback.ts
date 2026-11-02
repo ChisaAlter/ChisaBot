@@ -416,11 +416,12 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
  * 候选模型，按优先级：
  * 1. 管理员在 设置 → 模型 →「备用模型」里排好的列表（configured，DESIGN.md §61）；
  * 2. 环境变量 CHISABOT_MODEL_FALLBACKS（逗号分隔；off / 0 关闭自动挑选）；
- * 3. 目录里与当前模型同平台前缀的其它模型（最多 3 个）。
+ * 3. 目录里与当前模型同平台前缀的其它模型（最多 3 个；目录明说不能调工具的跳过——备用模型
+ *    要接着主模型手里的工具往下跑，QA1102-13）。
  * 只返回目录里存在的模型的规则只用于第 3 条；管理员列表照填写的顺序，目录暂时读不到也照用。
  */
 export function fallbackCandidates(
-  catalog: () => Promise<string[]>,
+  catalog: () => Promise<readonly (string | { id: string; supportsTools?: boolean })[]>,
   env: Record<string, string | undefined> = process.env,
   configured: () => Promise<string[]> = async () => [],
 ): (primary: string) => Promise<string[]> {
@@ -433,7 +434,11 @@ export function fallbackCandidates(
     const slash = primary.indexOf("/");
     if (slash <= 0) return [];
     const prefix = primary.slice(0, slash + 1);
-    return (await catalog()).filter((id) => id !== primary && id.startsWith(prefix)).slice(0, 3);
+    const entries = (await catalog()).map((row) => (typeof row === "string" ? { id: row } : row));
+    return entries
+      .filter((row) => row.id !== primary && row.id.startsWith(prefix) && row.supportsTools !== false)
+      .slice(0, 3)
+      .map((row) => row.id);
   };
 }
 

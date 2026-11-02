@@ -73,6 +73,17 @@ export function imageInputOf(row: Record<string, unknown>): boolean | undefined 
   if (typeof row.supports_image_input === "boolean") return row.supports_image_input;
   return undefined;
 }
+/** 目录说这个模型能不能调工具：capabilities.function_calling / tools、supports_function_calling 等。 */
+export function toolInputOf(row: Record<string, unknown>): boolean | undefined {
+  const caps = object(row.capabilities) ? row.capabilities : undefined;
+  for (const value of [
+    caps?.function_calling, caps?.tools, caps?.tool_calling,
+    row.supports_function_calling, row.supports_tool_choice, row.supports_tools,
+  ]) {
+    if (typeof value === "boolean") return value;
+  }
+  return undefined;
+}
 function project(body: unknown): ModelCatalogEntry[] {
   if (
     !object(body) ||
@@ -110,6 +121,7 @@ function project(body: unknown): ModelCatalogEntry[] {
     const providerName = providerNameOf(row.magpie_label);
     const maxOutput = row.max_output_tokens ?? row.max_completion_tokens;
     const supportsImages = imageInputOf(row);
+    const supportsTools = toolInputOf(row);
     models.push({
       id: row.id,
       label,
@@ -128,6 +140,7 @@ function project(body: unknown): ModelCatalogEntry[] {
         ? { maxOutputTokens: maxOutput }
         : {}),
       ...(supportsImages === undefined ? {} : { supportsImages }),
+      ...(supportsTools === undefined ? {} : { supportsTools }),
     });
   }
   return models;
