@@ -1010,6 +1010,79 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(callable(module.configure_source))
         self.assertNotIn("run_agent", sys.modules)
 
+    async def test_400_rejected_retries_once_cleaned_on_primary_and_never_opens_breaker(self):
+        # QA1102-14：请求本身被主模型拒（400 invalid input）——清洗 + 压缩后用主模型重试
+        # 一次，不算模型故障、不进断路器，也不重试第三次。
+        import chisabot_acp
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        calls, sizes = [], []
+        class BadRequest(Exception):
+            status_code = 400
+        def hook(agent, user, history):
+            calls.append(agent.model)
+            sizes.append(len(history))
+            raise BadRequest("Invalid input")
+        state.agent.run_hook = hook
+        raw = payload()
+        raw["history"] = [{"role": "user", "content": f"turn {i}"} for i in range(80)]
+        with self.assertRaises(RequestError) as error:
+            await self.prompt(state, raw)
+        self.assertEqual(str(error.exception), "Hermes model call failed: invalid_request (HTTP 400)")
+        # 主模型恰好两次（原始 + 清洗后一次重试），不是三次，也没换到备用模型。
+        self.assertEqual(calls, ["magpie-model", "magpie-model"])
+        self.assertLess(sizes[1], sizes[0])
+        # 下一轮照样先试主模型——断路器没有开。
+        calls.clear()
+        state.agent.run_hook = lambda agent, user, history: (calls.append(agent.model),
+            {"messages": history, "final_response": "ok"})[1]
+        raw2 = payload()
+        raw2["scope"]["runId"] = "run-2"
+        response = await self.prompt(state, raw2)
+        self.assertEqual(calls, ["magpie-model"])
+        self.assertEqual(response.stop_reason, "end_turn")
+
+    async def test_rejected_switch_is_reported_but_does_not_cool_the_primary(self):
+        # QA1102-14：Hermes 因 400（context_overflow）换了模型——记录 + 上报原因，
+        # 但不冷却主模型，下一轮主模型照用。
+        import chisabot_acp
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        chains = []
+        with patch.dict(sys.modules, self.model_control_modules(chains)):
+            await self.adapter.initialize()
+            state = await self.new()
+            calls = []
+            def walk(agent, reason=None, reset_at=None):
+                if agent._fallback_index >= len(agent._fallback_chain):
+                    return False
+                agent.model = agent._fallback_chain[agent._fallback_index]["model"]
+                agent._fallback_index += 1
+                return True
+            state.agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(state.agent, reason, reset_at)
+            def hook(agent, user, history):
+                calls.append(agent.model)
+                if agent.model == "magpie-model":
+                    agent._try_activate_fallback(reason=SimpleNamespace(value="context_overflow"))
+                    calls.append(agent.model)
+                return {"messages": history + [{"role": "user", "content": user},
+                                               {"role": "assistant", "content": "ok"}], "final_response": "ok"}
+            state.agent.run_hook = hook
+            raw = payload()
+            raw["model"]["fallbacks"] = ["backup-a"]
+            response = await self.prompt(state, raw)
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                             {"from": "magpie-model", "to": "backup-a", "reason": "rejected"})
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            calls.clear()
+            state.agent.run_hook = lambda agent, user, history: (calls.append(agent.model),
+                {"messages": history, "final_response": "ok"})[1]
+            raw2 = payload()
+            raw2["scope"]["runId"] = "run-2"
+            raw2["model"]["fallbacks"] = ["backup-a"]
+            response = await self.prompt(state, raw2)
+            self.assertEqual(calls, ["magpie-model"])
+            self.assertIsNone(response.field_meta)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,8 +1,12 @@
 /**
  * Hermes 内核下的长对话预算（模块 8）：发给模型之前，按上下文窗口估算这一轮要发的 token 数。
  *
- * - 超过窗口的 70%：最近 2 轮之前的旧工具结果（>400 字）换成一行说明，超长旧消息（>4000 字）只留头尾；
- * - 超过 85%（且多于 4 轮）：最近 4 轮之前的较早轮次用已经缓存好的摘要代替（一条 system 消息，放在角色设定后面）。
+ * - 超过窗口的 55%：最近 2 轮之前的旧工具结果（>400 字）换成一行说明，超长旧消息（>4000 字）只留头尾；
+ * - 超过 70%（且多于 4 轮）：最近 4 轮之前的较早轮次用已经缓存好的摘要代替（一条 system 消息，放在角色设定后面）。
+ *   阈值定在 55% / 70% 而不是 70% / 85%（QA1102-14）：估算有 ~1.15 的安全系数误差，DeepSeek 这类
+ *   OpenAI 兼容端点对超长 / 畸形历史不是截断而是整单 400，宁可早压一档。
+ * - 目录里读不到这个模型的上下文窗口时按 {@link ASSUMED_CONTEXT_WINDOW} 的假定窗口算（~64k token 触发裁剪）；
+ *   以前不压缩，等于长对话原样发上去被 400 拒掉。
  *   这一轮从不等摘要模型（首字时间不变）：没有现成摘要就只裁剪，回复结束后在后台生成 / 续写摘要（20 秒超时只用在后台），
  *   下一轮再用。摘要由管理员配置的「摘要模型」写，没配置就用主模型；后台失败 / 超时只记日志。
  * - 摘要按「对话 + 覆盖的消息范围」缓存（chisabot_history_summaries，运行时自建表，不需要迁移）：
@@ -21,8 +25,13 @@ import type { Message } from "@ag-ui/client";
 import { estimateTokens, readingFromRunFinished } from "../context-usage";
 import type { Database } from "../db/client";
 
-export const TRIM_RATIO = 0.7;
-export const SUMMARY_RATIO = 0.85;
+export const TRIM_RATIO = 0.55;
+export const SUMMARY_RATIO = 0.7;
+/**
+ * 不知道模型上下文窗口时按这个假定窗口压缩（~64k token 触发裁剪、~81k 触发摘要）：
+ * OpenAI 兼容端点对超长历史直接 400，宁早勿晚（QA1102-14）。
+ */
+export const ASSUMED_CONTEXT_WINDOW = Math.ceil(64_000 / TRIM_RATIO);
 /** 裁剪时原样保留的最近轮数（含这一轮）。 */
 export const TRIM_KEEP_TURNS = 2;
 /** 摘要时原样保留的最近轮数（含这一轮）。 */
@@ -488,15 +497,18 @@ export async function compactHistory(input: {
 }> {
   const { history, overheadTokens } = input;
   const log = input.log ?? (() => {});
-  const window = input.contextWindow;
   const unchanged = {
     summary: null,
     messages: [...history],
     compaction: null,
     refresh: null,
   };
-  if (!window || !Number.isFinite(window) || window <= 0 || !history.length)
-    return unchanged;
+  if (!history.length) return unchanged;
+  // 目录读不到窗口时按假定窗口压缩（64k 触发裁剪），不再整段原样发上去（QA1102-14）。
+  const window =
+    input.contextWindow && Number.isFinite(input.contextWindow) && input.contextWindow > 0
+      ? input.contextWindow
+      : ASSUMED_CONTEXT_WINDOW;
   const ratio = calibrationRatio(history, input.previousUsage, input.memo);
   const factor = ratio ?? UNCALIBRATED_MARGIN;
   const scaled = (tokens: number) => Math.ceil(tokens * factor);

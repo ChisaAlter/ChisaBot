@@ -125,7 +125,7 @@ describe("model fallback on quota errors", () => {
   });
 
   test("non-quota errors are thrown unchanged and do not fall back", async () => {
-    const boom = apiError(400, "bad request");
+    const boom = apiError(401, "invalid api key");
     const primary = fakeModel("p", async () => {
       throw boom;
     });
@@ -217,7 +217,9 @@ describe("model fallback on quota errors", () => {
     expect(fallbackReason(apiError(503, "service unavailable"))).toBe("unavailable");
     expect(fallbackReason(apiError(529, "overloaded"))).toBe("unavailable");
     expect(fallbackReason(apiError(500, "upstream exploded"))).toBe("unavailable");
-    expect(fallbackReason(apiError(400, "invalid tool schema"))).toBe(null);
+    expect(fallbackReason(apiError(400, "invalid tool schema"))).toBe("rejected");
+    expect(fallbackReason(apiError(413, "payload too large"))).toBe("rejected");
+    expect(fallbackReason(apiError(422, "unprocessable entity"))).toBe("rejected");
     expect(fallbackReason(apiError(401, "invalid api key"))).toBe(null);
     expect(fallbackReason(new Error("network down"))).toBe(null);
     let t = 0;
@@ -289,6 +291,64 @@ describe("model fallback on quota errors", () => {
     expect(coolingDown("c/p", t)).toBe(false);
   });
 
+
+  test("QA1102-14: a 400 is rejected — cleaned retry once on the primary, no cooldown, no 3x", async () => {
+    const boom = apiError(400, "Invalid input, param messages.370.content");
+    const primary = fakeModel("p", async () => {
+      throw boom;
+    });
+    const backup = fakeModel("b", async () => ({ stream: "ok-from-b" }));
+    const logs: Record<string, unknown>[] = [];
+    const cleaned: unknown[] = [];
+    const wrapped = fallbackLanguageModel(primary.model, "c/p", {
+      candidates: async () => ["c/b"],
+      build: () => backup.model,
+      log: (line) => logs.push(line),
+      sanitize: (options) => {
+        cleaned.push(options);
+        return { ...(options as object), cleaned: true };
+      },
+    });
+    const seen: FallbackUse[] = [];
+    expect(await withFallbackListener((use) => seen.push(use), () => wrapped.doStream({ prompt: 1 }))).toEqual({ stream: "ok-from-b" });
+    // 主模型恰好两次（原始 + 清洗后一次重试），不是三次；备用模型拿到的是原请求。
+    expect(primary.calls).toEqual([{ prompt: 1 }, { prompt: 1, cleaned: true }]);
+    expect(backup.calls).toEqual([{ prompt: 1 }]);
+    expect(cleaned).toEqual([{ prompt: 1 }]);
+    // 不进冷却：下一轮照样先试主模型。
+    expect(coolingDown("c/p")).toBe(false);
+    expect(seen).toEqual([{ from: "c/p", to: "c/b", reason: "rejected" }]);
+    expect(logs.some((l) => l.event === "primary-rejected")).toBe(true);
+    expect(logs.some((l) => l.event === "skip-primary")).toBe(false);
+    await wrapped.doStream({ prompt: 2 });
+    expect(primary.calls.length).toBe(4);
+    expect(backup.calls.length).toBe(2);
+  });
+
+  test("QA1102-14: a cleaned retry that answers keeps the primary and announces nothing", async () => {
+    let first = true;
+    const primary = fakeModel("p", async () => {
+      if (first) {
+        first = false;
+        throw apiError(400, "context too long");
+      }
+      return { stream: "primary-ok" };
+    });
+    const built: string[] = [];
+    const wrapped = fallbackLanguageModel(primary.model, "c/p", {
+      candidates: async () => ["c/b"],
+      build: (id) => {
+        built.push(id);
+        return null;
+      },
+      log: () => {},
+    });
+    expect(await wrapped.doStream({ prompt: 1 })).toEqual({ stream: "primary-ok" });
+    expect(primary.calls.length).toBe(2);
+    expect(built).toEqual([]);
+    expect(coolingDown("c/p")).toBe(false);
+  });
+
   test("announces the switch to the listener of this run only, with the cooled reason on later turns", async () => {
     const primary = fakeModel("p", async () => {
       throw DAILY;
@@ -327,6 +387,7 @@ describe("model fallback on quota errors", () => {
   test("notice text uses the short model name", () => {
     expect(fallbackNotice({ to: "clinepass/cline-free/step-5-preview", reason: "quota" })).toBe("主模型额度用完，已改用 step-5-preview");
     expect(fallbackNotice({ to: "codex/gpt-5.6-luna", reason: "unavailable" })).toBe("主模型暂时不可用，已改用 gpt-5.6-luna");
+    expect(fallbackNotice({ to: "clinepass/solar-mini4", reason: "rejected" })).toBe("请求被主模型拒绝，已改用 solar-mini4");
   });
 
   // §101.10：主模型一直不回（不报错）时也换备用模型。

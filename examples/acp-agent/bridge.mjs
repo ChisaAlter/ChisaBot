@@ -329,7 +329,7 @@ function modelControls(value) {
 /** One Hermes model switch reported by the adapter; anything malformed is dropped, never forwarded. */
 function modelFallback(value) {
   if (!isObject(value) || !modelId(value.from) || !modelId(value.to) || value.from === value.to) return null;
-  return { from: value.from, to: value.to, reason: value.reason === "quota" ? "quota" : "unavailable" };
+  return { from: value.from, to: value.to, reason: value.reason === "quota" ? "quota" : value.reason === "rejected" ? "rejected" : "unavailable" };
 }
 
 function prepareInput(input, options) {

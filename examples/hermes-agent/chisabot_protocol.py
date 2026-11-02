@@ -307,6 +307,130 @@ def parse_host_prompt(value: Any) -> HostPrompt:
                       fallbacks, max_output_tokens, context_compression)
 
 
+"""QA1102-14: normalize history before every OpenAI-compatible request.
+
+生产事故：一段 ~174k token、154 轮工具调用的历史，DeepSeek（OpenAI 兼容端点）每次请求都
+回 HTTP 400「Invalid input」，param messages.370.content，主模型被判死、每轮都落在备用
+模型上。400 的素材来自历史本身：空 / null content、带不支持块（图片、thinking、
+tool_result）的数组 content、没有结果的 tool_calls、没有对应调用的孤儿 tool 消息、
+单条几百 KB 的 tool 输出。Hermes 把 ``state.history`` 几乎原样发给端点，所以适配器在
+``_configure`` 里先过一遍这个纯函数。
+
+规则：
+- 空 / null / 空白 content：带 tool_calls 的 assistant 保留 None（OpenAI 合法形状，
+  DeepSeek 自己的回包就长这样），其它一律换成占位文本——裸 ``""`` / ``null`` 就是
+  messages.N.content 被判 invalid 的第一种样子；
+- 数组 content：只留文本块，图片 / 文件 / 思考 / tool_use 等换成一句占位，
+  Anthropic 的 tool_result 块取它里面的文本；
+- tool 消息：内容摊平成字符串，超过 ~16k 字符截断并标注——超长 tool 输出是第二种样子；
+- assistant 的 tool_calls 没有对应 tool 结果：补一条合成的 tool 消息（第三种样子；
+  丢弃调用也行，但留下一条「没返回」的结果模型更看得懂）；
+- 孤儿 tool 消息（前面没有匹配的 tool_call，或已应答过）：丢掉。
+"""
+_EMPTY_CONTENT = "[empty]"
+_EMPTY_TOOL_RESULT = "[empty tool result]"
+_MISSING_TOOL_RESULT = "[no tool result: the run ended before this call returned]"
+_TOOL_OUTPUT_MAX_CHARS = 16_000
+_TRUNCATED_NOTE = "...[truncated]"
+
+
+def _flatten_blocks(content: Any) -> str:
+    """数组 content 摊成一段文本：只留文本块，其它块换成占位。"""
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+            continue
+        if not isinstance(block, dict):
+            continue
+        kind = str(block.get("type") or "")
+        if kind in {"text", "input_text", "output_text"} and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+        elif kind == "tool_result":
+            inner = block.get("content")
+            parts.append(inner if isinstance(inner, str) else _flatten_blocks(inner))
+        elif kind in {"image_url", "image", "input_image"}:
+            parts.append("[image]")
+        elif kind in {"file", "input_file", "input_audio", "audio"}:
+            parts.append("[file]")
+        elif kind in {"thinking", "reasoning", "redacted_thinking", "reasoning_content"}:
+            continue
+        elif kind in {"tool_use", "tool_call", "function_call"}:
+            parts.append("[tool call]")
+        else:
+            parts.append(f"[{kind or 'content'}]")
+    return "\n".join(part for part in parts if part)
+
+
+def _content_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content if content.strip() else ""
+    if isinstance(content, list):
+        return _flatten_blocks(content)
+    return ""
+
+
+def normalize_history(messages: Any) -> list[dict[str, Any]]:
+    """把一段 OpenAI 消息数组改成兼容端点一定收的形状。纯函数，输入不被改动。"""
+    if not isinstance(messages, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        row = dict(message)
+        role = row.get("role")
+        if role == "assistant":
+            calls = row.get("tool_calls") if isinstance(row.get("tool_calls"), list) else []
+            row["tool_calls"] = [call for call in calls if isinstance(call, dict)]
+            text = _content_text(row)
+            row["content"] = text if text else (None if row["tool_calls"] else _EMPTY_CONTENT)
+        elif role == "tool":
+            text = _content_text(row) or _EMPTY_TOOL_RESULT
+            row["content"] = (text[:_TOOL_OUTPUT_MAX_CHARS] + _TRUNCATED_NOTE
+                              if len(text) > _TOOL_OUTPUT_MAX_CHARS else text)
+        elif role == "user":
+            row["content"] = _content_text(row) or _EMPTY_CONTENT
+        else:
+            normalized.append(row)
+            continue
+        normalized.append(row)
+    # tool_call / tool 配对：真实结果只在「调用之后、下一条非 tool 消息之前」算数；
+    # 没等到的调用在边界处补一条合成结果，孤儿 tool 消息丢掉。
+    result: list[dict[str, Any]] = []
+    pending: dict[str, bool] = {}
+    answered: set[str] = set()
+
+    def flush() -> None:
+        for cid in list(pending):
+            if cid not in answered:
+                answered.add(cid)
+                result.append({"role": "tool", "tool_call_id": cid, "content": _MISSING_TOOL_RESULT})
+        pending.clear()
+
+    for row in normalized:
+        role = row.get("role")
+        if role == "assistant":
+            for call in row.get("tool_calls") or []:
+                cid = call.get("id")
+                if isinstance(cid, str) and cid:
+                    pending[cid] = True
+            result.append(row)
+        elif role == "tool":
+            cid = row.get("tool_call_id")
+            if cid in pending and cid not in answered:
+                answered.add(cid)
+                result.append(row)
+        else:
+            flush()
+            result.append(row)
+    flush()
+    return result
+
+
 def redact(value: Any, secret: str) -> Any:
     if isinstance(value, str):
         return value.replace(secret, "[REDACTED]") if secret else value
@@ -504,13 +628,19 @@ active_run: ContextVar[RunState | None] = ContextVar("chisabot_host_run", defaul
 
 # Hermes FailoverReason values that mean "this model's quota / rate limit is used up". Everything
 # else that makes Hermes switch (overloaded, server_error, timeout, ...) is "temporarily unavailable".
-# These are the two reasons ChisaBot's existing backup-model notice distinguishes.
 _QUOTA_REASONS = frozenset({"billing", "rate_limit", "upstream_rate_limit", "quota", "model_entitlement"})
+# QA1102-14：还有一类——主模型拒绝了这一次请求本身（400 参数非法 / 上下文超长 / 内容拦截）。
+# 模型没病，所以叫 "rejected"：不该进冷却 / 断路器，提示语也另有一句（「请求被主模型拒绝」）。
+_REJECTED_REASONS = frozenset({"bad_request", "invalid_request", "malformed_request", "context_overflow",
+                               "context_length", "payload_too_large", "long_context_tier",
+                               "content_policy_blocked", "provider_policy_blocked"})
 
 
 def fallback_reason(reason: Any) -> str:
     value = str(getattr(reason, "value", reason) or "").strip().lower()
-    return "quota" if value in _QUOTA_REASONS else "unavailable"
+    if value in _QUOTA_REASONS:
+        return "quota"
+    return "rejected" if value in _REJECTED_REASONS else "unavailable"
 
 
 def fallback_use(primary: str, fallback: Any, reason: Any) -> dict[str, str] | None:
@@ -534,6 +664,7 @@ _FAILURE_MESSAGES = {
     "model_not_found": "Hermes model call failed: model not found (HTTP 404)",
     "content_filter": "Hermes model call failed: content_filter",
     "region": "Hermes model call failed: unsupported_region (HTTP 403)",
+    "invalid_request": "Hermes model call failed: invalid_request (HTTP 400)",
     "stream": "Hermes model call failed: stream error",
 }
 # Hermes' FailoverReason values (agent/error_classifier.py) folded into the categories above.
@@ -546,6 +677,8 @@ _REASONS = {
     "overloaded": "provider_unavailable", "server_error": "provider_unavailable", "upstream_blocked": "provider_unavailable",
     "model_not_found": "model_not_found",
     "content_policy_blocked": "content_filter", "provider_policy_blocked": "content_filter",
+    "bad_request": "invalid_request", "invalid_request": "invalid_request",
+    "malformed_request": "invalid_request",
     "incomplete_response": "stream",
 }
 # 403 is not always a key problem: providers also answer 403 for a blocked region or a content
@@ -664,6 +797,10 @@ def failure_category(reason: Any = None, error: BaseException | None = None) -> 
                     return _STATUS[status]
                 if 500 <= status < 600:
                     return "provider_unavailable"
+                if status in (400, 422):
+                    # QA1102-14：400/422 是「这一次请求本身被拒」（参数非法 / 上下文超长），
+                    # 不是模型坏了——归 invalid_request，绝不进冷却 / 断路器。
+                    return _from_body(_error_body(error)) or "invalid_request"
                 if 400 <= status < 500:
                     return _from_body(_error_body(error)) or "unknown"
             sdk = _sdk_type(error)
@@ -702,6 +839,8 @@ _PROSE_HINTS = (
     ("region", _REGION),
     ("timeout", re.compile(r"timed out|timeout|deadline", re.I)),
     ("provider_unavailable", re.compile(r"can't be reached|could not be reached|unreachable|service unavailable|overloaded", re.I)),
+    # 放最后：前面几条更具体（context 过长、限流…），都认不出才是「请求本身被拒」。
+    ("invalid_request", re.compile(r"invalid[_ ]?(input|request|param)|bad request|malformed", re.I)),
 )
 _HTTP_STATUS = re.compile(r"\bHTTP (\d{3})\b")
 
@@ -722,6 +861,11 @@ def reply_failure_category(text: Any) -> str | None:
             return _from_403(text)
         if status in _STATUS:
             return _STATUS[status]
+        if status in (400, 422):
+            for category, pattern in _PROSE_HINTS:
+                if pattern.search(text):
+                    return category
+            return "invalid_request"
         if status >= 500:
             return "provider_unavailable"
     for category, pattern in _PROSE_HINTS:

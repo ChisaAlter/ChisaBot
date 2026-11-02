@@ -22,8 +22,9 @@ from typing import Any
 
 from chisabot_protocol import (GatewayClient, HostPrompt, ProtocolError, RunState, ToolAliases,
                                  TURN_FAILED, active_run, failure_category, failure_message,
-                                 fallback_reason, fallback_use, host_metadata, parse_host_prompt,
-                                 redact, reply_failure_category, tool_error, turn_failure)
+                                 fallback_reason, fallback_use, host_metadata, normalize_history,
+                                 parse_host_prompt, redact, reply_failure_category, tool_error,
+                                 turn_failure)
 
 logger = logging.getLogger("chisabot_acp")
 
@@ -131,6 +132,30 @@ def breaker_ok(key: tuple[str, str, str]) -> None:
 
 def reset_model_breakers() -> None:
     _MODEL_BREAKERS.clear()
+
+
+"""QA1102-14：主模型拒绝了请求本身（400 invalid input / 上下文超长）时的处理。
+模型没病——是这份历史它不接收，所以：
+1. 这一类的换模型不算模型故障（``fallback_reason`` 归 "rejected"），不进断路器 / 冷却；
+2. 这一轮先「清洗 + 激进压缩」历史，用主模型重试一次；还不行才落到备用模型。
+清洗规则见 chisabot_protocol.normalize_history；这里的「激进」是再按尾部保留限界。"""
+_RETRY_ONCE_CATEGORIES = frozenset({"invalid_request", "context_length"})
+_RETRY_KEEP_MESSAGES = 48
+_RETRY_HISTORY_CHARS = 64_000
+
+
+def _deep_clean_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """重试用的激进历史：先全量规范化，再从尾部保留最近 ~48 条 / ~64k 字符，再规范一次补配对。"""
+    cleaned = normalize_history(list(messages))
+    budget = _RETRY_HISTORY_CHARS
+    kept: list[dict[str, Any]] = []
+    for row in reversed(cleaned):
+        kept.append(row)
+        budget -= len(str(row.get("content") or "")) + 200
+        if budget <= 0 or len(kept) >= _RETRY_KEEP_MESSAGES:
+            break
+    kept.reverse()
+    return normalize_history(kept)
 
 
 """Bounds for the upstream model call itself. Hermes 110s-per-turn came from its own call
@@ -524,7 +549,10 @@ def build_agent_class():
             self._host_tools[session_id] = installed
             self._host_scopes[session_id] = config.scope.session_key
             self._host_aliases[session_id] = aliases
-            state.history = aliases.history(config.history)
+            # QA1102-14：发给 OpenAI 兼容端点（DeepSeek 等）的历史先规范化——空 content、
+            # 不支持的块、孤儿 tool 消息、没有结果的 tool_calls、超长 tool 输出都会被端点
+            # 整单 400 拒掉（messages.N.content）。
+            state.history = aliases.history(normalize_history(config.history))
             state.queued_prompts.clear()
             state.interrupted_prompt_text = ""
             agent.ephemeral_system_prompt = aliases.text(config.system_prompt)
@@ -637,7 +665,11 @@ def build_agent_class():
                 applied = getattr(agent, "_chisabot_turn_model", None) or config.model_id
                 previous = applied
                 for target, reason in uses:
-                    breaker_fail(_breaker_key(agent, previous), fallback_reason(reason), now)
+                    # QA1102-14：「请求被主模型拒绝」（400 / 上下文超长）不是模型故障，
+                    # 不能开断路器——否则每一轮都跳过主模型、全落在小备用模型上。
+                    why = fallback_reason(reason)
+                    if why != "rejected":
+                        breaker_fail(_breaker_key(agent, previous), why, now)
                     if target:
                         previous = str(target)
                 # The live model at turn end is the last one tried (a Hermes without the
@@ -654,6 +686,18 @@ def build_agent_class():
                     breaker_ok(key)
             except Exception:
                 pass
+
+        def _prime_rejected_retry(self, state, config: HostPrompt) -> None:
+            """QA1102-14：回到主模型、清掉这一轮里 Hermes 记的换模型记录、换上激进压缩后的历史。"""
+            agent = state.agent
+            applied = getattr(agent, "_chisabot_turn_model", None) or config.model_id
+            agent.model = applied
+            agent._fallback_index = 0
+            agent._chisabot_fallback_uses = []
+            agent._chisabot_breaker_skip = None
+            state.history = _deep_clean_history(state.history)
+            _breaker_log({"type": "model-fallback", "event": "rejected-retry", "model": applied,
+                          "kernel": "hermes-adapter"})
 
         def _run_agent_turn(self, **kwargs):
             run = active_run.get()
@@ -702,17 +746,33 @@ def build_agent_class():
                 state.agent._chisabot_fallback_uses = []
 
                 def execute():
-                    try:
-                        return self._run_agent_turn(state=state, session_id=session_id, user_text=user_text,
-                                                    user_content=user_content, conn=conn, loop=loop,
-                                                    approval_cb=None, edit_approval_requester=None)
-                    finally:
-                        with run.lock:
-                            open_calls = [(call_id, rec.name) for call_id, rec in run.records.items() if not rec.completed]
-                        for call_id, name in open_calls:
-                            self._complete_tool(run, conn, loop, call_id, name,
-                                                tool_error("tool_interrupted", "The host tool ended without a result"),
-                                                abandoned=True)
+                    attempts = 0
+                    while True:
+                        try:
+                            try:
+                                result = self._run_agent_turn(state=state, session_id=session_id, user_text=user_text,
+                                                              user_content=user_content, conn=conn, loop=loop,
+                                                              approval_cb=None, edit_approval_requester=None)
+                            except Exception as error:
+                                # QA1102-14：请求本身被主模型拒了（400 / 上下文超长）——清洗 + 激进
+                                # 压缩历史后用主模型重试一次；再不行才落到备用 / 报错，且只重试这一次。
+                                if attempts == 0 and run.may_stream() and failure_category(error=error) in _RETRY_ONCE_CATEGORIES:
+                                    attempts += 1
+                                    self._prime_rejected_retry(state, config)
+                                    continue
+                                raise
+                            if attempts == 0 and run.may_stream() and turn_failure(result) in _RETRY_ONCE_CATEGORIES:
+                                attempts += 1
+                                self._prime_rejected_retry(state, config)
+                                continue
+                            return result
+                        finally:
+                            with run.lock:
+                                open_calls = [(call_id, rec.name) for call_id, rec in run.records.items() if not rec.completed]
+                            for call_id, name in open_calls:
+                                self._complete_tool(run, conn, loop, call_id, name,
+                                                    tool_error("tool_interrupted", "The host tool ended without a result"),
+                                                    abandoned=True)
 
                 try:
                     cbs = self._wire_turn_callbacks(state, session_id, conn, loop)

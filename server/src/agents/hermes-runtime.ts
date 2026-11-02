@@ -77,7 +77,11 @@ export function acceptedHermesFallback(value: unknown, wire: { id: string; fallb
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const { from, to, reason } = value as Record<string, unknown>;
   if (from !== wire.id || typeof to !== "string" || !wire.fallbacks?.includes(to)) return null;
-  return { from, to, reason: reason === "quota" ? ("quota" as const) : ("unavailable" as const) };
+  return {
+    from,
+    to,
+    reason: reason === "quota" ? ("quota" as const) : reason === "rejected" ? ("rejected" as const) : ("unavailable" as const),
+  };
 }
 
 function asGranted(tool: HeadlessTool): GrantedTool {

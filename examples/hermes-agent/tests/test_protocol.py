@@ -453,8 +453,8 @@ class FailureCategoryTests(unittest.TestCase):
             def __init__(self, body):
                 super().__init__("bad request")
                 self.body = body
-        # Not JSON-serializable: bytes and objects inside a dict.
-        self.assertEqual(failure_category(error=BadRequestError({"raw": b"\xff", "obj": object()})), "unknown")
+        # Not JSON-serializable: bytes and objects inside a dict. A bare 400 is a rejected request.
+        self.assertEqual(failure_category(error=BadRequestError({"raw": b"\xff", "obj": object()})), "invalid_request")
         self.assertEqual(failure_category(error=BadRequestError({"error": {"code": "context_length_exceeded"}, "raw": b"x"})),
                          "context_length")
         class Hostile(Exception):
@@ -525,3 +525,107 @@ class FailureCategoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NormalizeHistoryTests(unittest.TestCase):
+    """QA1102-14：发给 OpenAI 兼容端点（DeepSeek）的历史先规范化。"""
+
+    def test_empty_and_null_content_get_placeholders_but_tool_call_assistant_keeps_null(self):
+        from chisabot_protocol import normalize_history
+        out = normalize_history([
+            {"role": "user", "content": None},
+            {"role": "assistant", "content": None},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": ""},
+            {"role": "user", "content": "   "},
+        ])
+        self.assertEqual(out[0]["content"], "[empty]")
+        self.assertEqual(out[1]["content"], "[empty]")
+        self.assertIsNone(out[2]["content"])
+        self.assertEqual(out[3]["content"], "[empty tool result]")
+        self.assertEqual(out[4]["content"], "[empty]")
+
+    def test_array_content_flattens_unsupported_blocks(self):
+        from chisabot_protocol import normalize_history
+        out = normalize_history([
+            {"role": "user", "content": [{"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "https://x/y.png"}},
+                {"type": "thinking", "thinking": "hidden"}, {"type": "tool_use", "id": "t1"}]},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "t1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "t1", "content": [{"type": "tool_result", "content": [{"type": "text", "text": "inner"}]}]},
+        ])
+        self.assertEqual(out[0]["content"], "look\n[image]\n[tool call]")
+        self.assertEqual(out[2]["content"], "inner")
+
+    def test_tool_output_is_capped_and_orphans_and_missing_results_fixed(self):
+        from chisabot_protocol import normalize_history
+        out = normalize_history([
+            {"role": "tool", "tool_call_id": "ghost", "content": "orphan"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "a1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                {"id": "a2", "type": "function", "function": {"name": "y", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "a1", "content": "r" * 20_000},
+            {"role": "tool", "tool_call_id": "a1", "content": "duplicate"},
+            {"role": "user", "content": "next"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "b1", "type": "function", "function": {"name": "z", "arguments": "{}"}}]},
+        ])
+        roles = [row["role"] for row in out]
+        # orphan dropped; duplicate answer dropped; a2 and b1 got synthetic results at the boundaries
+        self.assertEqual(roles, ["assistant", "tool", "tool", "user", "assistant", "tool"])
+        self.assertTrue(out[1]["content"].startswith("r" * 100))
+        self.assertLessEqual(len(out[1]["content"]), 16_000 + len("...[truncated]"))
+        self.assertTrue(out[1]["content"].endswith("...[truncated]"))
+        self.assertEqual(out[2]["tool_call_id"], "a2")
+        self.assertIn("no tool result", out[2]["content"])
+        self.assertEqual(out[5]["tool_call_id"], "b1")
+
+    def test_long_agent_history_370_rows_normalizes_completely(self):
+        from chisabot_protocol import normalize_history
+        history = [{"role": "user", "content": "start"}]
+        for index in range(154):
+            history += [
+                {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": f"c{index}", "type": "function", "function": {"name": "dev", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": f"c{index}", "content": "x" * (30_000 if index % 17 == 0 else 20)},
+            ]
+        out = normalize_history(history)
+        self.assertEqual(len(out), 1 + 154 * 2)
+        for row in out:
+            if row["role"] == "assistant" and row.get("tool_calls"):
+                ids = {call["id"] for call in row["tool_calls"]}
+                after = out[out.index(row) + 1:]
+                self.assertEqual({r["tool_call_id"] for r in after if r["role"] == "tool" and r["tool_call_id"] in ids},
+                                 ids)
+            if not (row["role"] == "assistant" and row.get("tool_calls")):
+                self.assertIsNotNone(row["content"])
+        original = copy.deepcopy(history)
+        normalize_history(history)
+        self.assertEqual(history, original)
+
+    def test_rejected_reasons_and_invalid_request_category(self):
+        from types import SimpleNamespace
+        self.assertEqual(fallback_reason("context_overflow"), "rejected")
+        self.assertEqual(fallback_reason("bad_request"), "rejected")
+        self.assertEqual(fallback_reason("payload_too_large"), "rejected")
+        self.assertEqual(fallback_reason(SimpleNamespace(value="invalid_request")), "rejected")
+        self.assertEqual(fallback_use("main", "backup", "context_overflow"),
+                         {"from": "main", "to": "backup", "reason": "rejected"})
+        self.assertEqual(fallback_reason("server_error"), "unavailable")
+        self.assertEqual(failure_message("invalid_request"),
+                         "Hermes model call failed: invalid_request (HTTP 400)")
+
+    def test_400_and_422_errors_classify_as_invalid_request(self):
+        class BadRequest(Exception):
+            def __init__(self, status):
+                super().__init__("opaque")
+                self.status_code = status
+        BadRequest.__module__ = "openai._exceptions"
+        self.assertEqual(failure_category(error=BadRequest(400)), "invalid_request")
+        self.assertEqual(failure_category(error=BadRequest(422)), "invalid_request")
+        self.assertEqual(failure_category("bad_request"), "invalid_request")
+        self.assertEqual(reply_failure_category("Provider said: HTTP 400: Invalid input, param messages.370.content"),
+                         "invalid_request")
+        self.assertEqual(reply_failure_category("Provider said: HTTP 400: prompt is too long"), "context_length")
