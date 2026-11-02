@@ -45,6 +45,7 @@ import { useMainBot } from "@/lib/settings/message-list";
 import { queryClient as sharedQueryClient } from "@/query-client";
 import { ActivityRow } from "./activity";
 import { BotFilesAndPagesSection } from "./files-section";
+import { HandoffPanel } from "./handoff-panel";
 
 /*
  * 机器人资料页（/bots/:id，DESIGN.md §47，2026-10-14 用户：「机器人资料页做的太垃圾了。要简洁高效」）。
@@ -440,6 +441,7 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
       <PageSection title={"运行"}>
         <RunCard agent={agent} />
       </PageSection>
+      <HandoffPanel agentId={agent.id} />
       <TasksSection agentId={agent.id} />
       <BotFilesAndPagesSection agentId={agent.id} />
       <div className="bp-footer">
