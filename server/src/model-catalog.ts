@@ -87,6 +87,19 @@ function visionOf(row: Record<string, unknown>): boolean | undefined {
   if (KNOWN_VISION_MODELS.has(id) || KNOWN_VISION_MODELS.has(id.split("/").pop() ?? "")) return true;
   return imageInputOf(row);
 }
+/** 目录说这个模型能不能收 `file` 文档块：modalities.input / capabilities.file / supports_file_input 等。 */
+export function fileInputOf(row: Record<string, unknown>): boolean | undefined {
+  const modal = object(row.modalities) ? row.modalities.input : Array.isArray(row.modalities) ? row.modalities : undefined;
+  const input = modal ?? row.input_modalities ?? (object(row.architecture) ? row.architecture.input_modalities : undefined);
+  if (Array.isArray(input) && input.length) return input.some((m) => typeof m === "string" && /file|document|pdf/i.test(m));
+  const caps = object(row.capabilities) ? row.capabilities : undefined;
+  for (const value of [caps?.file, caps?.file_input, caps?.document, caps?.pdf, row.supports_files, row.supports_file_input, row.supports_document_input]) {
+    if (typeof value === "boolean") return value;
+  }
+  const features = row.features ?? row.supported_features;
+  if (Array.isArray(features) && features.length) return features.some((m) => typeof m === "string" && /file|document|pdf/i.test(m));
+  return undefined;
+}
 /** 目录说这个模型能不能调工具：capabilities.function_calling / tools、supports_function_calling 等。 */
 export function toolInputOf(row: Record<string, unknown>): boolean | undefined {
   const caps = object(row.capabilities) ? row.capabilities : undefined;
@@ -135,6 +148,7 @@ function project(body: unknown): ModelCatalogEntry[] {
     const providerName = providerNameOf(row.magpie_label);
     const maxOutput = row.max_output_tokens ?? row.max_completion_tokens;
     const supportsImages = visionOf(row);
+    const supportsFiles = fileInputOf(row);
     const supportsTools = toolInputOf(row);
     models.push({
       id: row.id,
@@ -154,6 +168,7 @@ function project(body: unknown): ModelCatalogEntry[] {
         ? { maxOutputTokens: maxOutput }
         : {}),
       ...(supportsImages === undefined ? {} : { supportsImages }),
+      ...(supportsFiles === undefined ? {} : { supportsFiles }),
       ...(supportsTools === undefined ? {} : { supportsTools }),
     });
   }

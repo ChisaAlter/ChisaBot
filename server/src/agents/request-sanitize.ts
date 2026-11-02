@@ -79,14 +79,15 @@ export function sanitizeCallOptionsForRetry(options: unknown): unknown {
   if (sizeOf(normalized) <= RETRY_PROMPT_CHARS)
     return { ...call, prompt: normalized };
   /*
-   * 超预算：system 行全留（角色设定 / 摘要都在里面），其余从尾部往回收，收到一个 user
-   * 边界为止——边界之前整段丢掉，tool_call / tool-result 的配对因此天然完整。
-   * 最后一条 user 也装不下时照留它：总得有东西发给模型。
+   * 超预算：system 行全留（角色设定 / 摘要都在里面），其余找「尾巴还能装进预算的最早
+   * user 边界」——边界之前整段丢掉，tool_call / tool-result 的配对因此天然完整。
+   * 之前从尾部往回找，预算再够也总是只留最后一条，上下文全丢（QA1102-14 r1）。
+   * 连最后的 user 边界都装不下时照留最后一条：总得有东西发给模型。
    */
   const systems = normalized.filter((message) => message.role === "system");
   const rest = normalized.filter((message) => message.role !== "system");
   let cut = Math.max(0, rest.length - 1);
-  for (let index = rest.length - 1; index > 0; index--) {
+  for (let index = 0; index < rest.length; index++) {
     if (
       rest[index]?.role === "user" &&
       sizeOf(rest.slice(index)) <= RETRY_PROMPT_CHARS
@@ -96,4 +97,71 @@ export function sanitizeCallOptionsForRetry(options: unknown): unknown {
     }
   }
   return { ...call, prompt: [...systems, ...rest.slice(cut)] };
+}
+
+/** 单个文档块可读进 prompt 的文字上限（同桥 bridge.mjs 的 DOCUMENT_TEXT_MAX_CHARS）。 */
+const DOCUMENT_TEXT_MAX_CHARS = 120_000;
+
+function filePartToText(part: unknown): unknown {
+  if (!part || typeof part !== "object" || (part as Part).type !== "file")
+    return part;
+  const file = part as Part;
+  const name =
+    typeof file.filename === "string" && file.filename
+      ? file.filename.slice(0, 200)
+      : "";
+  const mime = typeof file.mediaType === "string" ? file.mediaType : "";
+  // 文本类附件把字节解成文字随消息走；二进制（PDF 等）换成如实占位的文字。
+  const textual =
+    /^text\//.test(mime) ||
+    ["application/json", "application/xml", "application/javascript"].includes(
+      mime,
+    );
+  if (textual) {
+    try {
+      const raw =
+        typeof file.data === "string"
+          ? Buffer.from(file.data, "base64").toString("utf8")
+          : file.data instanceof Uint8Array
+            ? Buffer.from(file.data).toString("utf8")
+            : "";
+      if (raw.trim()) {
+        const body =
+          raw.length > DOCUMENT_TEXT_MAX_CHARS
+            ? `${raw.slice(0, DOCUMENT_TEXT_MAX_CHARS)}\n\n[attachment truncated at ${DOCUMENT_TEXT_MAX_CHARS} characters]`
+            : raw;
+        return {
+          type: "text",
+          text: `Attached file${name ? ` "${name}"` : ""}:\n\n${body}`,
+        };
+      }
+    } catch {}
+  }
+  const label = `document${name ? ` "${name}"` : ""}`;
+  return { type: "text", text: `[${label} — this model cannot receive files]` };
+}
+
+/**
+ * QA1102-14 r1：发给不收 `file` 文档块的模型（DeepSeek 这类 OpenAI 兼容端点对
+ * 不认识的 part 类型整单 400）之前，把 prompt 里的 `file` part 换成文字 /
+ * 占位——第一次请求就换，不是等 400 之后才救。没有文档块时原样返回同一对象。
+ */
+export function filePartsToText(options: unknown): unknown {
+  const call = options as { prompt?: unknown } | null;
+  if (!call || !Array.isArray(call.prompt)) return options;
+  const prompt = call.prompt as Row[];
+  let touched = false;
+  const next = prompt.map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    const parts = (message.content as unknown[]).map(filePartToText);
+    if (
+      parts.every(
+        (part, index) => part === (message.content as unknown[])[index],
+      )
+    )
+      return message;
+    touched = true;
+    return { ...message, content: parts };
+  });
+  return touched ? { ...call, prompt: next } : options;
 }

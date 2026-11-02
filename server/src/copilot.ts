@@ -285,6 +285,7 @@ export function fallbackConnectionModel(
     ...(adapt ? { adapt } : {}),
     candidates: fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured()),
     build: (id) => connectionLanguageModel({ ...model, defaultModel: id }, apiKey),
+    supportsFiles: (id) => resolveModelFileSupport(id),
   });
 }
 
@@ -349,6 +350,24 @@ export async function resolveModelVisionSupport(modelId: string): Promise<boolea
   try {
     const value = await Promise.race([
       visionFor(modelId),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
+    ]);
+    return typeof value === "boolean" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 目录说这一轮模型能不能收 `file` 文档块（QA1102-14；index.ts 接上）。没说就当不能收。 */
+type FilesResolver = (modelId: string) => Promise<boolean | undefined>;
+let filesFor: FilesResolver = async () => undefined;
+export function setModelFileResolver(resolver: FilesResolver): void {
+  filesFor = resolver;
+}
+export async function resolveModelFileSupport(modelId: string): Promise<boolean | undefined> {
+  try {
+    const value = await Promise.race([
+      filesFor(modelId),
       new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
     ]);
     return typeof value === "boolean" ? value : undefined;

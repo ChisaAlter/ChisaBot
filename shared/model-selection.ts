@@ -10,6 +10,8 @@ export type ModelCatalogEntry = {
   maxOutputTokens?: number;
   /** 能不能看图（目录里的 input modalities / vision 标记）；目录没说就不写（当作能）。识图模型用（DESIGN.md §59）。 */
   supportsImages?: boolean;
+  /** 能不能收 `file` 文档块（目录里的 file modalities / file 能力标记）；目录没说就不写（当作不能）。QA1102-14。 */
+  supportsFiles?: boolean;
   /** 能不能调工具（目录里的 function_calling / tools 标记）；目录没说就不写（当作能）。备用模型挑选用（QA1102-13）。 */
   supportsTools?: boolean;
 };

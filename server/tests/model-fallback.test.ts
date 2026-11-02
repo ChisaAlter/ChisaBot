@@ -401,6 +401,37 @@ describe("model fallback on quota errors", () => {
     ]);
   });
 
+  test("QA1102-14 r1: first request has no raw file part for a model without file support", async () => {
+    const prompt = [
+      { role: "user", content: [{ type: "text", text: "看这份文件" }, { type: "file", mediaType: "application/pdf", data: "JVBERi0=", filename: "a.pdf" }] },
+    ];
+    const primary = fakeModel("p", async () => ({ stream: "ok-p" }));
+    // 目录没说能收文件（dep 缺失 / false）：第一次请求就把 file part 换成文字。
+    for (const supportsFiles of [undefined, () => false] as const) {
+      const wrapped = fallbackLanguageModel(primary.model, "deepseek-chat", {
+        candidates: async () => [],
+        build: () => null,
+        log: () => {},
+        ...(supportsFiles ? { supportsFiles } : {}),
+      });
+      primary.calls.length = 0;
+      expect(await wrapped.doStream({ prompt })).toEqual({ stream: "ok-p" });
+      const content = (primary.calls[0] as { prompt: { content: { type: string }[] }[] }).prompt[0].content;
+      expect(content.every((p) => p.type !== "file")).toBe(true);
+      expect(content.some((p) => p.type === "text" && String((p as { text?: string }).text).includes("a.pdf"))).toBe(true);
+    }
+    // 目录明说能收文件：file part 原样发出。
+    const wrapped = fallbackLanguageModel(primary.model, "gpt-files", {
+      candidates: async () => [],
+      build: () => null,
+      log: () => {},
+      supportsFiles: () => true,
+    });
+    primary.calls.length = 0;
+    await wrapped.doStream({ prompt });
+    expect((primary.calls[0] as { prompt: { content: { type: string }[] }[] }).prompt[0].content.some((p) => p.type === "file")).toBe(true);
+  });
+
   test("a fallback call carries the same tools the primary got (QA1102-13)", async () => {
     const tools = [{ name: "web_search" }, { name: "connect_service" }];
     const boom = apiError(503, "service unavailable");

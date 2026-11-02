@@ -177,6 +177,7 @@ import {
   setHistorySummaries,
   setModelContextWindowResolver,
   setModelVisionResolver,
+  setModelFileResolver,
   setPreviousRunUsageResolver,
   setModelOutputLimitResolver,
   setModelFallbackCatalog,
@@ -1169,6 +1170,10 @@ setModelContextWindowResolver(async (modelId) =>
 // Hermes 桥按目录的 supportsImages 转换图片/文档块（QA1102-14）：没说就当能看。
 setModelVisionResolver(async (modelId) =>
   (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsImages,
+);
+// 内置内核按目录的 supportsFiles 决定 `file` 文档块是原样发还是换文字占位（QA1102-14 r1）。
+setModelFileResolver(async (modelId) =>
+  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsFiles,
 );
 const historySummaryModel = createHistorySummaryModelService({ store: createHistorySummaryModelStore(database) });
 setHistorySummaries({ store: createPgHistorySummaryStore(database), model: () => historySummaryModel.model() });
