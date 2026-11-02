@@ -681,6 +681,123 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
                              {"from": "magpie-model", "to": "backup-a", "reason": "quota"})
 
+    def breaker_turn(self, down):
+        """A fake Hermes turn: call the live model; on failure walk the fallback chain like upstream."""
+        calls = []
+
+        class Unavailable(Exception):
+            status_code = 503
+
+        def provider(model):
+            calls.append(model)
+            if down.get(model):
+                raise Unavailable("Error code: 503 - service unavailable")
+            return f"answer from {model}"
+
+        def walk(agent, reason=None, reset_at=None):
+            # Hermes' chain walk: the next entry built by _init_fallback_chain becomes the live model.
+            if agent._fallback_index >= len(agent._fallback_chain):
+                return False
+            agent.model = agent._fallback_chain[agent._fallback_index]["model"]
+            agent._fallback_index += 1
+            return True
+
+        def hermes_turn(agent, user, history):
+            for _ in range(3):
+                try:
+                    text = provider(agent.model)
+                    break
+                except Unavailable:
+                    if not agent._try_activate_fallback(reason=SimpleNamespace(value="server_error")):
+                        raise
+            return {"messages": history + [{"role": "user", "content": user}, {"role": "assistant", "content": text}],
+                    "final_response": text}
+        return calls, walk, hermes_turn
+
+    async def test_breaker_skips_cooled_primary_until_a_probe_recovers_it(self):
+        # QA1102-06: a dead primary must not cost the full upstream timeout every turn.
+        import chisabot_acp
+        chains = []
+        down = {"magpie-model": True}
+        calls, walk, hermes_turn = self.breaker_turn(down)
+        clock = [1_000.0]
+        original_now = chisabot_acp._now
+        chisabot_acp._now = lambda: clock[0]
+        self.addCleanup(lambda: setattr(chisabot_acp, "_now", original_now))
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        with patch.dict(sys.modules, self.model_control_modules(chains)):
+            await self.adapter.initialize()
+            state = await self.new()
+            agent = state.agent
+            agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(agent, reason, reset_at)
+            agent.run_hook = hermes_turn
+
+            def raw(run_id):
+                data = payload()
+                data["scope"]["runId"] = run_id
+                data["model"]["fallbacks"] = ["backup-a", "backup-b"]
+                return data
+
+            response = await self.prompt(state, raw("run-1"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                             {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+            # Inside the cooldown the primary is never dialed again, and the skip is reported.
+            for run_id in ("run-2", "run-3"):
+                calls.clear()
+                response = await self.prompt(state, raw(run_id))
+                self.assertEqual(calls, ["backup-a"])
+                self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                                 {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+            # Half-open probe after the cooldown: one primary call, still dead → re-open longer.
+            calls.clear()
+            clock[0] += 61
+            response = await self.prompt(state, raw("run-4"))
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            # The doubled cooldown still gates 61s later.
+            calls.clear()
+            clock[0] += 61
+            response = await self.prompt(state, raw("run-5"))
+            self.assertEqual(calls, ["backup-a"])
+            # The probe after that succeeds → breaker closes → the next turn uses the primary.
+            down["magpie-model"] = False
+            calls.clear()
+            clock[0] += 121
+            response = await self.prompt(state, raw("run-6"))
+            self.assertEqual(calls, ["magpie-model"])
+            self.assertIsNone(response.field_meta)
+            calls.clear()
+            response = await self.prompt(state, raw("run-7"))
+            self.assertEqual(calls, ["magpie-model"])
+            self.assertIsNone(response.field_meta)
+
+    async def test_breaker_is_shared_across_sessions(self):
+        # The adapter process serves every actor/bot: a dead primary is skipped everywhere.
+        import chisabot_acp
+        chains = []
+        down = {"magpie-model": True}
+        calls, walk, hermes_turn = self.breaker_turn(down)
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        with patch.dict(sys.modules, self.model_control_modules(chains)):
+            await self.adapter.initialize()
+            state = await self.new()
+            state.agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(state.agent, reason, reset_at)
+            state.agent.run_hook = hermes_turn
+            raw = payload()
+            raw["model"]["fallbacks"] = ["backup-a"]
+            await self.prompt(state, raw)
+            self.assertEqual(calls, ["magpie-model", "backup-a"])
+            # A different session (another user/bot) never pays for the primary either.
+            calls.clear()
+            other = await self.new()
+            other.agent._try_activate_fallback = lambda reason=None, reset_at=None: walk(other.agent, reason, reset_at)
+            other.agent.run_hook = hermes_turn
+            raw2 = payload()
+            raw2["model"]["fallbacks"] = ["backup-a"]
+            response = await self.prompt(other, raw2)
+            self.assertEqual(calls, ["backup-a"])
+            self.assertEqual(response.field_meta["chisabot"]["modelFallback"]["to"], "backup-a")
+
     async def test_hermes_compression_is_off_only_for_runs_the_host_already_compacted(self):
         state = await self.new()
         state.agent.compression_enabled = True
