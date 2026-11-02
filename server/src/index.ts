@@ -3922,6 +3922,7 @@ const app = createApp(
       bindings: responsibilityBindings,
       triggers: responsibilityTriggers,
     },
+    groups: groupConversations,
     lifecycle: {
       lifecycle: botLifecycle,
       reset: botReset,
