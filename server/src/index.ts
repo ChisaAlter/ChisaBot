@@ -1962,6 +1962,9 @@ const coordination = createCoordinationTools({
     catalog: modelCatalog,
     setModel: (actor, agentId, model) =>
       agentModels.set(actor, agentId, model),
+    // The Approvals page an IM summary links to, on the app's own origin (CHISABOT_APP_URL / first
+    // trusted origin) — never on the API's, where no page exists.
+    approvalsUrl: config.appUrl ? `${config.appUrl}/approvals` : undefined,
   }),
   auditStore: bootAuditStore,
   authoriseRun: (run) =>
@@ -2463,6 +2466,15 @@ imService = createImService({
       };
     }
     return null;
+  },
+  // 审批卡发到 IM 时附上的内容摘要：卡片工具自己把给人看的说明存在 action.target.imSummary 里，
+  // 这里只负责按 id 读回来；没有摘要的卡（比如别的工具）照发原来的提示。
+  approvalSummary: async (ownerUserId, approvalId) => {
+    const record = await approvalService.store.get(ownerUserId, approvalId).catch(() => null);
+    const target = record?.status === "pending" ? record.action.target : null;
+    return target && typeof target === "object" && typeof (target as { imSummary?: unknown }).imSummary === "string"
+      ? (target as { imSummary: string }).imSummary
+      : null;
   },
 });
 await imService.ensure();

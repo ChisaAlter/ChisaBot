@@ -73,6 +73,14 @@ export type ImServiceOptions = {
     threadId: string | null,
     decision: "approve" | "deny",
   ) => Promise<{ title: string; target?: string | null } | null>;
+  /**
+   * 审批卡挂起时随「请回复允许 / 拒绝」一起发给 IM 的内容摘要：按审批 id 读回卡片里给人看的
+   * 那段说明（名字、模型、提示词前几百字、网页链接），没有可发的说明就返回 null。
+   */
+  approvalSummary?: (
+    ownerUserId: string,
+    approvalId: string,
+  ) => Promise<string | null>;
   fetch?: FetchLike;
   ws?: WsFactory;
 };
@@ -443,7 +451,18 @@ export function createImService(options: ImServiceOptions) {
       }
     } catch (error) {
       if (options.isSuspension?.(error)) {
-        answer = "⚠️ 这一步需要确认后才能继续：请直接回复「允许」或「拒绝」处理（也可打开 ChisaBot 网页端确认）。";
+        /*
+         * 卡在审批卡上时把卡片里的内容摘要一起发过去：IM 上看不到卡片本身，让人在回复
+         * 「允许 / 拒绝」之前至少看到名字、模型、提示词开头和能看全文的链接。
+         */
+        const waiting = (error as { waiting?: { kind?: unknown; approvalId?: unknown } }).waiting;
+        const summary =
+          waiting?.kind === "approval" && typeof waiting.approvalId === "string" && options.approvalSummary
+            ? await options.approvalSummary(row.owner_user_id, waiting.approvalId).catch(() => null)
+            : null;
+        answer = summary
+          ? `⚠️ 这一步需要确认后才能继续：\n${summary}\n请直接回复「允许」或「拒绝」处理。`
+          : "⚠️ 这一步需要确认后才能继续：请直接回复「允许」或「拒绝」处理（也可打开 ChisaBot 网页端确认）。";
         log(row.id, "warn", "回合停在需要确认的步骤");
       } else {
         const reason = errorText(error);
