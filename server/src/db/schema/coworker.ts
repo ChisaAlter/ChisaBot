@@ -7,6 +7,7 @@
 import {
   boolean,
   index,
+  integer,
   pgEnum,
   pgTable,
   primaryKey,
@@ -54,6 +55,16 @@ export const agentProfiles = pgTable(
       withTimezone: true,
     }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    /*
+     * Which Bot created this one, when one did. NOT a foreign key: provenance has to survive the
+     * creator being deleted, the same precedent `plugin_grants.ref` sets (plugins.ts).
+     */
+    createdByAgentId: text("created_by_agent_id"),
+    /*
+     * How deep in the creation chain this Bot sits: a person's is 0, and a Bot-made Bot is its
+     * creator's depth plus one. BOT_FACTORY_MAX_DEPTH reads this to stop infinite recursion.
+     */
+    createdDepth: integer("created_depth").notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -62,6 +73,8 @@ export const agentProfiles = pgTable(
       table.visibility,
       table.deletedAt,
     ),
+    // "Which Bots did this Bot create" — the managed-bots listing and the per-user cap both read it.
+    index("agent_profiles_created_by_idx").on(table.createdByAgentId),
   ],
 );
 
