@@ -15,7 +15,10 @@
 #   as they do on a laptop with no supervisor configured. Per-Bot isolation is A6.
 #
 # Chromium comes from Playwright's own installer, but the final image is not Playwright's all-browser
-# image. Keep this version matched to `agent-computer/package.json`: bump both or neither.
+# image. The installed build is the version `agent-computer/package.json` declares — read from that
+# file, not a second number kept beside it, because the manual pair already drifted once: a bump of
+# the package alone shipped an image whose agent-computer asked for a Chromium the layer never had
+# and the computer answered every screenshot with "Executable doesn't exist" until rebuilt.
 
 FROM node:24.18.1-bookworm-slim AS node-toolchain
 FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS bun-toolchain
@@ -23,7 +26,6 @@ FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf100
 FROM ubuntu:24.04 AS base
 
 # The Bun image digest pins the amd64/arm64 release bytes, including if its tag changes.
-ARG PLAYWRIGHT_VERSION=1.62.1
 # Keep Bun and global installs readable by the runtime's unprivileged user.
 ENV BUN_INSTALL=/usr/local
 ENV PATH="/usr/local/bin:${PATH}"
@@ -31,9 +33,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 COPY --from=node-toolchain /usr/local /usr/local
 COPY --from=bun-toolchain /usr/local/bin/bun /usr/local/bin/bun
+# Copied alone and early so a Playwright bump is what invalidates this layer — exactly when the
+# browser download must change too.
+COPY agent-computer/package.json /tmp/agent-computer-package.json
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl unzip xz-utils \
   && ln -s bun /usr/local/bin/bunx \
+  && PLAYWRIGHT_VERSION="$(node -p "require('/tmp/agent-computer-package.json').dependencies.playwright.replace(/^[^0-9]*/, '')")" \
+  && test -n "$PLAYWRIGHT_VERSION" \
   && bunx --bun "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium \
   && rm -rf /root/.cache /tmp/* /var/lib/apt/lists/* \
   # PINNED, BECAUSE THE CHART NAMES THESE NUMBERS. `computers.podSecurityContext` runs a computer
