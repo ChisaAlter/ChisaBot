@@ -112,10 +112,10 @@ fullInstall=<true|false>
   - `--keys-from-env`：自建版按 `CHISABOT_UPDATE_PUBKEYS`（逗号或空白分隔的 base64 公钥）写公钥表；变量为空 → 空表 → 这个自建版不验签。
 - `pc/scripts/shell-fingerprint.js --stamp` 会顺手去掉旧的 `chisabotSig`（盖章后签名一定失效）：**签名永远是发布的最后一步**。
 - `.github/workflows/release.yml`：
-  - `config`：发布（有标签）时必须从这个标签运行（`github.ref` 是 `refs/tags/vX`）。手动发布要在「Use workflow from」里选标签——Environment 只允许 `v*` 标签，从分支跑签名 job 会被 GitHub 拒绝，这里提前给出明确报错。
-  - `pc`（windows，跑 electron-builder）：新增「Update keys」步骤——通用版发布时 `--require-keys`（公钥表为空直接失败），只构建不发布时只告警；自建版 `--keys-from-env`（仓库变量 `CHISABOT_UPDATE_PUBKEYS`）。产物改名为 `pc-<flavor>-unsigned`，附带 `update-keys.json`。**这个 job 拿不到签名私钥。**
-  - 新 job `pc-sign`（ubuntu，只在发布时跑，`environment: pc-release`）：`npm ci --ignore-scripts --omit=dev`（只为 js-yaml，不跑安装脚本）→ 下载未签名产物 → 用 secret `PC_UPDATE_SIGNING_KEY` 签名 → `--verify --tamper-check` → 上传 `pc-<flavor>`。自建版没配公钥时跳过签名并告警。
-  - `release` 改为依赖 `pc-sign`，仍然只下载 `*-generic`。
+  - `config`：发布（有标签）时必须从这个标签运行（`github.ref` 是 `refs/tags/vX`）。手动发布要在「Use workflow from」里选标签——Environment 只允许 `v*` 标签，从分支跑签名 job 会被 GitHub 拒绝，这里提前给出明确报错。读仓库变量 `CHISABOT_PC_UPDATE_UNSIGNED` 输出 `pc_sign`（`=1` → `false`）。
+  - `pc`（windows，跑 electron-builder）：「Update keys」步骤——通用版发布时 `--require-keys`（公钥表为空直接失败，`CHISABOT_PC_UPDATE_UNSIGNED=1` 时告警放行空表），只构建不发布时只告警；自建版 `--keys-from-env`（仓库变量 `CHISABOT_UPDATE_PUBKEYS`）。产物改名为 `pc-<flavor>-unsigned`，附带 `update-keys.json` 和 `flavor.txt`（flavor 标记，release 上传前校验用）。**这个 job 拿不到签名私钥。**
+  - `pc-sign`（ubuntu，只在发布时跑，`environment: pc-release`，`pc_sign=true` 才跑）：`npm ci --ignore-scripts --omit=dev`（只为 js-yaml，不跑安装脚本）→ 下载未签名产物 → 用 secret `PC_UPDATE_SIGNING_KEY` 签名 → `--verify --tamper-check` → 上传 `pc-<flavor>`（含 `flavor.txt`）。自建版没配公钥时跳过签名并告警。
+  - `release` 依赖 `pc-sign`：签名路径只下载 `*-generic`；`pc-sign` 跳过时回退也只下载 `pc-generic-unsigned`——两个 flavor 产物文件名相同，合到同一目录会互相覆盖。上传前跑 `scripts/check-release-assets.mjs`：验 `flavor.txt` 是 generic、latest.yml 的 path/sha512/size/files[] 与安装包一致、没有白名单外文件、签名在场性和 `pc_sign` 一致，并把 `flavor.txt` / `update-keys.json` 剔出上传清单。
 - 以后改成离线手签：去掉 `pc-sign` 的 secret，发版时下载 `pc-generic-unsigned`，本机 `node scripts/sign-update.js latest.yml --key-file <私钥>`，再上传 `latest.yml`；脚本不用改。
 
 ### 3.4 Windows 代码签名（第二阶段，暂缓）
