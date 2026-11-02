@@ -420,13 +420,19 @@ describe("the migration journal", () => {
     const entries = await readJournal();
 
     const wrong: string[] = [];
-    for (const entry of entries) {
+    for (const [position, entry] of entries.entries()) {
       const sql = await readFile(
         new URL(`${entry.tag}.sql`, directory),
         "utf8",
       );
       const after = await readSnapshot(entry.idx);
-      const before = entry.idx === 0 ? {} : await readSnapshot(entry.idx - 1);
+      /*
+       * The snapshot before this one is the previous ENTRY's, not `idx - 1`'s. Journal order is
+       * what `migrate` follows, and a numbering gap — an entry renumbered to leave a slot for a
+       * sibling branch's migration — makes `idx - 1` name a file that does not exist.
+       */
+      const before =
+        position === 0 ? {} : await readSnapshot(entries[position - 1]!.idx);
       wrong.push(
         ...disagreements(sql, before, after).map(
           (problem) => `${entry.tag}: ${problem}`,
