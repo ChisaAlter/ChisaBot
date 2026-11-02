@@ -49,6 +49,44 @@ export type ImConnectionInput = {
   qrLogin?: string;
 };
 
+/** 添加/编辑弹窗里那份表单草稿（im.tsx 的 FormState 在它上面再加一点界面状态）。 */
+export type ImConnectionDraft = {
+  name: string;
+  agentId: string;
+  config: Record<string, string>;
+  secrets: Record<string, string>;
+  allowUsers: string;
+  ownerUsers: string;
+  allowDevices: boolean;
+  allowPrivate: boolean;
+  /** 这次编辑里用户动过「允许内网地址」开关（来回拨也算）；重新打开弹窗时重置。 */
+  allowPrivateTouched: boolean;
+  qrLogin?: string;
+};
+
+/**
+ * 表单草稿 → 保存/测试请求体（纯函数，方便测）。
+ * 「允许内网地址」只有管理员、且这次编辑真的动过开关才放进请求体：每次都把当前值带上，
+ * 服务端「改了协议端地址就必须重新确认开关」那一步会被静默跳过（server/src/im/service.ts
+ * update / testDraft 里的 endpointChanged 检查）。
+ */
+export function imConnectionInput(form: ImConnectionDraft, platform: string, isAdmin: boolean): ImConnectionInput {
+  const secrets = Object.fromEntries(Object.entries(form.secrets).filter(([, value]) => value.trim()));
+  return {
+    platform,
+    name: form.name,
+    agentId: form.agentId,
+    config: form.config,
+    secrets,
+    allowUsers: form.allowUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
+    ownerUsers: form.ownerUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
+    allowDevices: form.allowDevices,
+    // 只有管理员发的「允许内网地址」服务器才认，非管理员不往请求里放。
+    ...(isAdmin && form.allowPrivateTouched ? { allowPrivate: form.allowPrivate } : {}),
+    ...(form.qrLogin ? { qrLogin: form.qrLogin, ...(platform === "weixin" ? { weixinLogin: form.qrLogin } : {}) } : {}),
+  };
+}
+
 export function createImConnection(input: ImConnectionInput): Promise<ImConnectionView> {
   return client("/api/im/connections", "connection", { method: "POST", body: input, fallback: "保存失败，请重试" });
 }
