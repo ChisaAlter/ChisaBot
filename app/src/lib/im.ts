@@ -38,6 +38,8 @@ export type ImConnectionInput = {
   /** 只放这次填了的密钥；不填 = 沿用已保存的。 */
   secrets?: Record<string, string>;
   allowUsers?: string[];
+  /** 主人本人的平台用户 id（私聊审批要靠它认出主人）。 */
+  ownerUsers?: string[];
   allowDevices?: boolean;
   /** 微信扫码授权成功后服务器给的一次性键（令牌不经过浏览器）。 */
   weixinLogin?: string;

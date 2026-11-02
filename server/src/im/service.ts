@@ -11,6 +11,7 @@ import type { Database } from "../db/client";
 import type { TurnRunner } from "../turns/types";
 import { OneBotAdapter } from "./adapters/onebot";
 import { WEIXIN_DEFAULT_BASE } from "./adapters/weixin";
+import { imGuardedFetch, imGuardedWs } from "./net";
 import { isQrPlatform, pollPlatformQr, type QrPlatform, startPlatformQr } from "./qr-auth";
 import { createAdapter, testAdapter } from "./registry";
 import { errorText, markdownToPlain, splitText } from "./text";
@@ -21,9 +22,13 @@ import type { AdapterContext, FetchLike, ImAdapter, ImAdapterStatus, ImInbound, 
  *
  * - 存库：chisabot_im_connections（凭据字段整体 AES-GCM 加密，和部署里其它密钥同一把钥匙）、
  *   chisabot_im_chats（平台会话 → 对话 id；「/new」换一条）、chisabot_im_logs（每个连接最近 300 行）。
- * - 运行：开机把启用的连接都连上（适配器自己断线重连、退避），收到消息 → 群里没 @ 就忽略 → 白名单 →
- *   按 (连接, 会话) 排队，一次跑一轮 → 机器人回合（与网页端该机器人的主会话互通）→ 回复切段发回去。
- * - 机器人在 IM 里以主人的身份运行，支持在 IM 里直接回复「允许 / 拒绝」完成设备与工具授权确认。
+ * - 运行：开机把启用的连接都连上（适配器自己断线重连、退避），收到消息 → 群里没 @ 就忽略 →
+ *   可用名单（主人的平台 id + 白名单；都空 = 谁也不理）→ 按 (连接, 会话) 排队，一次跑一轮 →
+ *   机器人回合（与网页端该机器人的主会话互通）→ 回复切段发回去。
+ * - 机器人在 IM 里以主人的身份运行；「允许 / 拒绝」审批只在私聊里、且发件人是绑定的主人平台 id、
+ *   且待确认正好属于这段对话时才生效——群里、陌生人、别的对话的待确认都不会被批。
+ * - 出站：适配器的 HTTP / WebSocket 统一走带防护的默认实现（shared/net，DNS 解析→全部公网→钉死 IP→
+ *   逐跳检查重定向），测试仍可用 options.fetch / options.ws 注入替身。
  */
 
 export const IM_INITIATOR_PREFIX = "im:";
@@ -41,6 +46,7 @@ type Row = {
   config: Record<string, string>;
   secrets: string | null;
   allow_users: string[];
+  owner_users: string[];
   allow_devices: boolean;
   account: string | null;
   last_message_at: Date | null;
@@ -85,9 +91,7 @@ export function imConnectionOf(initiator: { kind: string; id?: string } | undefi
   return initiator.id.startsWith(IM_INITIATOR_PREFIX) ? initiator.id.slice(IM_INITIATOR_PREFIX.length) : null;
 }
 
-const defaultWs: WsFactory = (url, options) =>
-  // Bun 的 WebSocket 接受第二个参数里的 headers（浏览器没有）。
-  new (WebSocket as unknown as new (url: string, options?: unknown) => WsLike)(url, options);
+const defaultWs: WsFactory = imGuardedWs;
 
 const newId = () => `im_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
 const newToken = () => crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 8);
@@ -112,7 +116,8 @@ export function frameInbound(platformName: string, inbound: ImInbound): string {
 
 export function createImService(options: ImServiceOptions) {
   const sql = options.database.$client;
-  const fetcher: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
+  // RV-01：默认走带防护的出站实现（DNS 解析→全部公网→钉死 IP→逐跳检查），测试用 options.fetch / options.ws 注入替身。
+  const fetcher: FetchLike = options.fetch ?? imGuardedFetch;
   const wsFactory = options.ws ?? defaultWs;
   const live = new Map<string, Live>();
   const allowDevicesCache = new Map<string, boolean>();
@@ -167,6 +172,7 @@ export function createImService(options: ImServiceOptions) {
       );
       CREATE INDEX IF NOT EXISTS chisabot_im_logs_connection ON chisabot_im_logs (connection_id, id DESC);
       ALTER TABLE chisabot_im_chats ADD COLUMN IF NOT EXISTS last_inbound jsonb;
+      ALTER TABLE chisabot_im_connections ADD COLUMN IF NOT EXISTS owner_users jsonb NOT NULL DEFAULT '[]'::jsonb;
     `);
   }
 
@@ -230,6 +236,7 @@ export function createImService(options: ImServiceOptions) {
       config: row.config ?? {},
       secrets: Object.fromEntries(secretKeys.map((key) => [key, Boolean(secrets[key])])),
       allowUsers: Array.isArray(row.allow_users) ? row.allow_users : [],
+      ownerUsers: Array.isArray(row.owner_users) ? row.owner_users : [],
       allowDevices: row.allow_devices,
       status,
       statusDetail: !row.enabled ? null : entry ? entry.status.detail ?? null : row.last_error ?? "还没有启动",
@@ -337,9 +344,12 @@ export function createImService(options: ImServiceOptions) {
       await reply(row, entry.adapter, inbound, `你的用户 id：${inbound.userId}${inbound.chatType === "group" ? `\n这个群的 id：${inbound.chatId}` : ""}`).catch(() => {});
       return;
     }
+    // 谁能用：主人的平台 id + 白名单里的人；两边都空 = 谁也不理（RV-02：以前是「空 = 所有人可用」，任何人都能以主人身份发起回合、审批）。
     const allow = Array.isArray(row.allow_users) ? row.allow_users : [];
-    if (allow.length && !allow.includes(inbound.userId)) {
-      log(row.id, "info", `忽略 ${who} 的消息（不在白名单里）`);
+    const owners = Array.isArray(row.owner_users) ? row.owner_users : [];
+    const isOwner = owners.includes(inbound.userId);
+    if (!isOwner && !allow.includes(inbound.userId)) {
+      log(row.id, "info", `忽略 ${who} 的消息（不在可用名单里）`);
       return;
     }
     await sql.unsafe("UPDATE chisabot_im_connections SET last_message_at = now() WHERE id = $1", [row.id]).catch(() => {});
@@ -355,7 +365,7 @@ export function createImService(options: ImServiceOptions) {
         row,
         entry.adapter,
         inbound,
-        "直接发消息就会由机器人回复。\n/new 开始新话题\n/id 查看自己的用户 id\n允许 / 拒绝 直接审批待确认的操作卡片",
+        "直接发消息就会由机器人回复。\n/new 开始新话题\n/id 查看自己的用户 id\n允许 / 拒绝 审批待确认的操作卡片（只有主人在私聊里发才生效）",
       ).catch(() => {});
       return;
     }
@@ -365,8 +375,24 @@ export function createImService(options: ImServiceOptions) {
         ? ("deny" as const)
         : null;
     if (approvalDecision && options.resolveApproval) {
+      // RV-02：只在私聊、发件人是绑定的主人平台 id、且待确认属于这段对话时才批；不兜底别的对话的待确认。
+      const deny = async (message: string) => {
+        await reply(row, entry.adapter, inbound, message).catch(() => {});
+      };
+      if (inbound.chatType !== "private") {
+        log(row.id, "warn", `${who} 在群聊里尝试审批，已拒绝`);
+        await deny("待确认的操作只能由主人在私聊里回复「允许」/「拒绝」处理。");
+        return;
+      }
+      if (!isOwner) {
+        log(row.id, "warn", `${who} 不是这个连接的主人，审批被忽略`);
+        await deny("只有这个连接的主人可以在 IM 里审批：请主人私聊回复，或到网页端处理。");
+        return;
+      }
       const currentThread = await threadFor(row, key).catch(() => null);
-      const resolved = await options.resolveApproval(row.owner_user_id, currentThread, approvalDecision).catch(() => null);
+      const resolved = currentThread
+        ? await options.resolveApproval(row.owner_user_id, currentThread, approvalDecision).catch(() => null)
+        : null;
       if (resolved) {
         const targetStr = resolved.target ? `（${resolved.target}）` : "";
         const msg =
@@ -377,6 +403,8 @@ export function createImService(options: ImServiceOptions) {
         await reply(row, entry.adapter, inbound, msg).catch(() => {});
         return;
       }
+      await deny("这段对话没有待确认的操作，不会替你处理别的对话里的确认卡片。");
+      return;
     }
     const queueKey = `${row.id}|${key}`;
     const queue = queues.get(queueKey) ?? { tail: Promise.resolve(), size: 0 };
@@ -443,7 +471,12 @@ export function createImService(options: ImServiceOptions) {
       }
     } catch (error) {
       if (options.isSuspension?.(error)) {
-        answer = "⚠️ 这一步需要确认后才能继续：请直接回复「允许」或「拒绝」处理（也可打开 ChisaBot 网页端确认）。";
+        // 只有主人在私聊里能批（RV-02）：给别人的提示只说去哪确认，不暗示群里/陌生人能批。
+        const owners = Array.isArray(row.owner_users) ? row.owner_users : [];
+        answer =
+          inbound.chatType === "private" && owners.includes(inbound.userId)
+            ? "⚠️ 这一步需要确认后才能继续：请直接回复「允许」或「拒绝」处理（也可打开 ChisaBot 网页端确认）。"
+            : "⚠️ 这一步需要主人确认后才能继续：请主人在私聊里回复「允许」/「拒绝」，或打开 ChisaBot 网页端确认。";
         log(row.id, "warn", "回合停在需要确认的步骤");
       } else {
         const reason = errorText(error);
@@ -483,6 +516,7 @@ export function createImService(options: ImServiceOptions) {
     config?: unknown;
     secrets?: unknown;
     allowUsers?: unknown;
+    ownerUsers?: unknown;
     allowDevices?: unknown;
     weixinLogin?: unknown;
     qrLogin?: unknown;
@@ -588,9 +622,9 @@ export function createImService(options: ImServiceOptions) {
     if (missing && enabled) throw new InputError(`请填写「${missing}」`);
     const id = newId();
     await sql.unsafe(
-      `INSERT INTO chisabot_im_connections (id, owner_user_id, platform, name, agent_id, enabled, config, secrets, allow_users, allow_devices, account)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9::text::jsonb, $10, $11)`,
-      [id, owner, platform, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(cleanUsers(input.allowUsers) ?? []), input.allowDevices === true, account ?? null],
+      `INSERT INTO chisabot_im_connections (id, owner_user_id, platform, name, agent_id, enabled, config, secrets, allow_users, allow_devices, account, owner_users)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9::text::jsonb, $10, $11, $12::text::jsonb)`,
+      [id, owner, platform, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(cleanUsers(input.allowUsers) ?? []), input.allowDevices === true, account ?? null, JSON.stringify(cleanUsers(input.ownerUsers) ?? [])],
     );
     log(id, "info", `创建了连接（${imPlatform(platform)!.name}）`);
     const row = (await rowById(id))!;
@@ -615,12 +649,13 @@ export function createImService(options: ImServiceOptions) {
     if (missing && enabled) throw new InputError(`请填写「${missing}」`);
     const name = typeof input.name === "string" && input.name.trim() ? input.name.trim().slice(0, 40) : row.name;
     const allowUsers = cleanUsers(input.allowUsers) ?? row.allow_users;
+    const ownerUsers = cleanUsers(input.ownerUsers) ?? (Array.isArray(row.owner_users) ? row.owner_users : []);
     const allowDevices = typeof input.allowDevices === "boolean" ? input.allowDevices : row.allow_devices;
     const nextAccount = account ?? row.account;
     await sql.unsafe(
       `UPDATE chisabot_im_connections SET name = $2, agent_id = $3, enabled = $4, config = $5::text::jsonb, secrets = $6,
-       allow_users = $7::text::jsonb, allow_devices = $8, account = $9, updated_at = now(), last_error = CASE WHEN $4 THEN last_error ELSE NULL END WHERE id = $1`,
-      [id, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(allowUsers), allowDevices, nextAccount],
+       allow_users = $7::text::jsonb, allow_devices = $8, account = $9, owner_users = $10::text::jsonb, updated_at = now(), last_error = CASE WHEN $4 THEN last_error ELSE NULL END WHERE id = $1`,
+      [id, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(allowUsers), allowDevices, nextAccount, JSON.stringify(ownerUsers)],
     );
     allowDevicesCache.set(id, allowDevices);
     const changes = [
@@ -951,10 +986,10 @@ export function createImService(options: ImServiceOptions) {
      * 主动把一段文字发到某个 IM 对话（定时任务到点或待确认卡片提示，DESIGN.md §55）：按这个对话最近一条消息的回复信息发。
      * 有的平台只许在一段时间内被动回复（QQ 官方机器人 msg_id 5 分钟、企业微信智能机器人按消息流式），过期会失败。
      */
-    async pushToThread(threadId: string, text: string) {
+    async pushToThread(threadId: string, text: string, opts?: { privateOnly?: boolean }) {
       const chat = (
         await sql.unsafe<{ connection_id: string; last_inbound: unknown }[]>(
-          "SELECT connection_id, last_inbound FROM chisabot_im_chats WHERE thread_id = $1 AND last_inbound IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
+          `SELECT connection_id, last_inbound FROM chisabot_im_chats WHERE thread_id = $1 AND last_inbound IS NOT NULL ${opts?.privateOnly ? "AND chat_key LIKE 'private:%'" : ""} ORDER BY updated_at DESC LIMIT 1`,
           [threadId],
         )
       )[0];

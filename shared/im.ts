@@ -251,8 +251,10 @@ export type ImConnectionView = {
   /** 非密钥字段的原值；密钥字段只回 true（已保存）/ false。 */
   config: Record<string, string>;
   secrets: Record<string, boolean>;
-  /** 谁能用：空 = 所有人；否则只有这些平台用户 id。 */
+  /** 除主人外还能用的人（平台用户 id）。主人 id + 白名单都空 = 机器人不理任何人。 */
   allowUsers: string[];
+  /** 主人本人的平台用户 id：只有这些人能用，也只有他们能在私聊里回「允许 / 拒绝」审批。 */
+  ownerUsers: string[];
   /** 允许机器人在 IM 里用电脑 / 设备等高权限工具（默认关）。 */
   allowDevices: boolean;
   status: ImStatus;

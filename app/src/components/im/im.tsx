@@ -171,6 +171,11 @@ export function ConnectionRow({ connection, botName, onEdit, onLogs }: { connect
                   <IconRobot aria-hidden className="size-3.5" />
                   {botName ?? "机器人已不在"}
                 </span>
+                {connection.ownerUsers.length ? (
+                  <span className="device-cap-chip"><T>{`主人 ${connection.ownerUsers.length} 人`}</T></span>
+                ) : (
+                  <span className="device-cap-chip is-ask"><T>{"未绑定主人"}</T></span>
+                )}
                 {connection.allowUsers.length ? <span className="device-cap-chip"><T>{`白名单 ${connection.allowUsers.length} 人`}</T></span> : null}
                 {connection.allowDevices ? <span className="device-cap-chip is-ask"><T>{"可用电脑和设备"}</T></span> : null}
               </span>
@@ -372,6 +377,7 @@ type FormState = {
   config: Record<string, string>;
   secrets: Record<string, string>;
   allowUsers: string;
+  ownerUsers: string;
   allowDevices: boolean;
   qrLogin?: string;
   qrAccount?: string | null;
@@ -386,6 +392,7 @@ function initialForm(info: ImPlatformInfo, connection?: ImConnectionView, defaul
     config,
     secrets: {},
     allowUsers: (connection?.allowUsers ?? []).join("\n"),
+    ownerUsers: (connection?.ownerUsers ?? []).join("\n"),
     allowDevices: connection?.allowDevices ?? false,
   };
 }
@@ -432,6 +439,7 @@ export function ConnectionDialog({
       config: form.config,
       secrets,
       allowUsers: form.allowUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
+      ownerUsers: form.ownerUsers.split(/[\s,，]+/).map((item) => item.trim()).filter(Boolean),
       allowDevices: form.allowDevices,
       ...(form.qrLogin ? { qrLogin: form.qrLogin, ...(platform === "weixin" ? { weixinLogin: form.qrLogin } : {}) } : {}),
     };
@@ -615,15 +623,21 @@ export function ConnectionDialog({
               ) : null}
               <details className="im-adv">
                 <summary>{"谁能用 · 权限"}</summary>
+                <label className="im-field" htmlFor="im-owner">
+                  <span className="im-field-l">{"主人的平台用户 id（一行一个）"}</span>
+                  <Textarea id="im-owner" onChange={(event) => setForm({ ...form, ownerUsers: event.target.value })} placeholder={"在平台里给机器人发 /id 可以看到自己的 id"} rows={2} value={form.ownerUsers} />
+                  <span className="im-field-h">{"主人本人的平台账号：能聊天，也是唯一能在私聊里回复「允许 / 拒绝」审批待确认操作的人。"}</span>
+                </label>
                 <label className="im-field" htmlFor="im-allow">
-                  <span className="im-field-l">{"白名单（平台用户 id，一行一个；留空 = 所有人）"}</span>
+                  <span className="im-field-l">{"白名单（平台用户 id，一行一个；除主人外还能聊天的人）"}</span>
                   <Textarea id="im-allow" onChange={(event) => setForm({ ...form, allowUsers: event.target.value })} placeholder={"在平台里给机器人发 /id 可以看到自己的 id"} rows={3} value={form.allowUsers} />
+                  <span className="im-field-h">{"白名单里的人可以聊天，但不能在 IM 里审批。主人和白名单都不填 = 机器人不理任何人（不是所有人可用）。"}</span>
                 </label>
                 <div className="im-switch-row">
                   <div className="min-w-0 flex-1">
                     <div className="im-field-l">{"允许使用电脑和设备"}</div>
                     <div className="im-field-h">
-                      {"打开后，在这里和机器人聊天的人也能让它操作云端浏览器和你关联的设备（仍按设备的「询问」规则）。机器人以你的身份运行，请配合白名单使用。"}
+                      {"打开后，在这里和机器人聊天的人也能让它操作云端浏览器和你关联的设备（仍按设备的「询问」规则）。机器人以你的身份运行，请确认名单里都是信得过的人。"}
                     </div>
                   </div>
                   <Switch aria-label="允许使用电脑和设备" checked={form.allowDevices} onCheckedChange={(next) => setForm({ ...form, allowDevices: next })} />

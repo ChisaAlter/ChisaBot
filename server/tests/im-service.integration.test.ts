@@ -104,6 +104,8 @@ describe("IM 接入服务", () => {
       agentId: "bot-1",
       config: { mode: "forward", url: "ws://napcat.test:3001" },
       secrets: { accessToken: "secret-token-1" },
+      ownerUsers: ["555"],
+      allowUsers: ["777"],
     });
     createdIds.push(view.id);
     expect(view.secrets).toEqual({ accessToken: true });
@@ -148,7 +150,7 @@ describe("IM 接入服务", () => {
     expect(groupReply.params.message[0]).toEqual({ type: "reply", data: { id: "6" } });
     expect(turns[3]!.threadId).not.toBe(firstThread);
 
-    // 白名单：只有 555 能用；别人发消息不跑回合，但 /id 照样回
+    // 白名单：只有 555 能用（主人名单之外再加 555）；别人发消息不跑回合，但 /id 照样回
     const updated = await service.update(owner, view.id, { allowUsers: ["555"] });
     expect(updated!.allowUsers).toEqual(["555"]);
     socket.push({ post_type: "message", message_type: "private", self_id: 10001, user_id: 888, message_id: 7, message: "我能用吗" });
@@ -160,7 +162,7 @@ describe("IM 接入服务", () => {
     expect(list.find((item) => item.id === view.id)).toMatchObject({ status: "connected", allowUsers: ["555"] });
     expect(list.find((item) => item.id === view.id)!.lastMessageAt).not.toBeNull();
     const logs = await service.logs(owner, view.id);
-    expect(logs!.some((entry) => entry.text.includes("不在白名单"))).toBe(true);
+    expect(logs!.some((entry) => entry.text.includes("不在可用名单"))).toBe(true);
     expect(await service.logs("someone-else", view.id)).toBeNull();
   });
 
@@ -261,6 +263,7 @@ describe("IM 接入服务", () => {
       name: "统一会话测试",
       agentId: "bot-1",
       config: { mode: "forward", url: "ws://napcat-unified.test:3001" },
+      ownerUsers: ["666"],
     });
     createdIds.push(view.id);
 
@@ -278,13 +281,10 @@ describe("IM 接入服务", () => {
     expect(pendingList).toHaveLength(1);
     expect(pendingList[0]!.title).toBe("点击桌面窗口");
 
-    // 2) 用户在 IM 直接回复「允许」 -> 拦截并唤醒等待中的确认单，回合直接继续完成
+    // 2) 用户在 IM 直接回复「允许」 -> 主人本人私聊才能批：拦截并批准等待中的确认单
     socket.push({ post_type: "message", message_type: "private", self_id: 10001, user_id: 666, message_id: 11, message: "允许" });
     await waitFor(() =>
-      socket.actions("send_private_msg").some((frame) => frame.params.user_id === 666 && frame.params.message[0].data.text.includes("已允许「点击桌面窗口」")),
-    );
-    await waitFor(() =>
-      socket.actions("send_private_msg").some((frame) => frame.params.user_id === 666 && frame.params.message[0].data.text.includes("操作已完成")),
+      socket.actions("send_private_msg").some((frame) => frame.params.user_id === 666 && frame.params.message[0].data.text.includes("已批准「点击桌面窗口」")),
     );
     expect(resolvedApprovals).toEqual([{ id: pendingList[0]!.id, decision: "approve" }]);
     expect((await confirmations.list(owner, { threadId: initialWebThread })).filter((r) => r.status === "pending")).toHaveLength(0);

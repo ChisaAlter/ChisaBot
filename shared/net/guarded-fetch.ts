@@ -404,3 +404,71 @@ export async function guardedFetch(
   }
   throw new Error("重定向次数太多");
 }
+
+/**
+ * 把 {@link guardedFetch} 包成标准 fetch 的形状（`(url, init) => Promise<Response>`），给 IM 适配器、
+ * 扫码登录这类「本来就该用 fetch」的调用方换底（RV-01）：DNS 解析 → 全部公网 → 钉死 IP → 逐跳检查
+ * 重定向，和裸 fetch 的行为差异只剩「连不出去的内网地址直接拒」。
+ *
+ * `timeoutMs` 是兜底上限——调用方自己的 `init.signal`（AbortSignal.timeout 之类）决定真实时限；
+ * 因 init.signal 中止时抛 `AbortError`，和长轮询适配器靠 abort 结束一轮等待的用法兼容。
+ */
+export function createGuardedFetchLike(defaults: {
+  timeoutMs: number;
+  maxBytes: number;
+  maxRedirects?: number;
+  resolve?: GuardedFetchOptions["resolve"];
+  isBlocked?: (address: string) => boolean;
+}): (input: string | URL, init?: RequestInit) => Promise<Response> {
+  return async (input, init = {}) => {
+    const headers: Record<string, string> = {};
+    if (init.headers) {
+      new Headers(init.headers).forEach((value, key) => {
+        headers[key] = value;
+      });
+    }
+    let body: string | Buffer | Uint8Array | undefined;
+    const rawBody = init.body as unknown;
+    if (typeof rawBody === "string") body = rawBody;
+    else if (rawBody instanceof URLSearchParams) body = rawBody.toString();
+    else if (rawBody instanceof Uint8Array)
+      body = Buffer.from(
+        rawBody.buffer,
+        rawBody.byteOffset,
+        rawBody.byteLength,
+      );
+    else if (rawBody instanceof ArrayBuffer) body = Buffer.from(rawBody);
+    else if (rawBody instanceof Blob)
+      body = Buffer.from(await rawBody.arrayBuffer());
+    else if (rawBody != null)
+      throw new TypeError("guarded fetch 不支持这种请求体");
+    try {
+      const res = await guardedFetch(String(input), {
+        method: init.method ?? "GET",
+        ...(Object.keys(headers).length ? { headers } : {}),
+        ...(body !== undefined ? { body } : {}),
+        signal: init.signal ?? undefined,
+        timeoutMs: defaults.timeoutMs,
+        maxBytes: defaults.maxBytes,
+        maxRedirects: defaults.maxRedirects,
+        ...(defaults.resolve ? { resolve: defaults.resolve } : {}),
+        ...(defaults.isBlocked ? { isBlocked: defaults.isBlocked } : {}),
+      });
+      const status = res.status >= 200 && res.status <= 599 ? res.status : 502;
+      const response = new Response(new Uint8Array(res.body), {
+        status,
+        headers: res.headers,
+      });
+      Object.defineProperty(response, "url", { value: res.url });
+      return response;
+    } catch (error) {
+      // 调用方主动 abort（长轮询到点收工）：按 fetch 语义抛 AbortError。
+      if (init.signal?.aborted) {
+        const aborted = new Error("The operation was aborted");
+        aborted.name = "AbortError";
+        throw aborted;
+      }
+      throw error;
+    }
+  };
+}
