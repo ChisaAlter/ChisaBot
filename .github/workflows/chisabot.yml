@@ -277,3 +277,24 @@ jobs:
             exit 1
           fi
           echo "chisabot-node $printed built."
+
+  # vite 分块守卫（DESIGN.md §41.5）：调用方的 NODE_ENV（CI、测试脚本常带 NODE_ENV=test）不能改变生产构建的
+  # 模块解析结果，也不能让块之间互相静态 import 成环（development 条件的 dev/ 版文件曾让 browser ↔
+  # vendor-markdown 成环）。普通构建和 NODE_ENV=test 各打一次——chunkGuard 是构建插件，失败即让该步失败；
+  # 最后用 chunk-graph 测试对最后一份 dist 复核一遍（settings/admin 首屏不带 vendor-copilot / vendor-markdown）。
+  chunk-guard:
+    name: App chunk guard build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --linker hoisted
+      - run: bun run generate:app-config
+      - run: cd app && bun --bun ../node_modules/vite/bin/vite.js build
+      - run: cd app && NODE_ENV=test bun --bun ../node_modules/vite/bin/vite.js build
+      - run: cd app && bun test tests/chunk-graph.test.ts

@@ -95,6 +95,17 @@ test("does not manually chunk lazy content or dependencies", () => {
       "/repo/node_modules/.bun/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/lib/html.js",
     ),
   ).toBeUndefined();
+  // development 条件解析出来的 dev 入口 / html.js 同理：点名会让 mathHtml 和 KaTeX 被静态带上首屏。
+  expect(
+    selectChisaBotManualChunk(
+      "/repo/node_modules/.bun/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/dev/index.js",
+    ),
+  ).toBeUndefined();
+  expect(
+    selectChisaBotManualChunk(
+      "/repo/node_modules/.bun/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/dev/lib/html.js",
+    ),
+  ).toBeUndefined();
   // CopilotKit 自己按需 import 的调试面板不跟着 vendor-copilot 上首屏。
   expect(
     selectChisaBotManualChunk(
@@ -142,6 +153,15 @@ test("groups heavy vendors into stable chunks (DESIGN.md §41.5)", () => {
       "/repo/node_modules/.bun/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/lib/syntax.js",
     ),
   ).toBe("vendor-markdown");
+  // NODE_ENV 非 production 时 development 条件解析到 dev/ 下的同名文件，要归同一个块：漏到自动块里
+  // 它会回头 import vendor-markdown（devlop / micromark-util-*），两块互相静态 import 成环。
+  for (const file of ["syntax.js", "math-flow.js", "math-text.js"]) {
+    expect(
+      selectChisaBotManualChunk(
+        `/repo/node_modules/.bun/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/dev/lib/${file}`,
+      ),
+    ).toBe("vendor-markdown");
+  }
   expect(
     selectChisaBotManualChunk("/repo/node_modules/.bun/vfile-location@5.0.3/node_modules/vfile-location/lib/index.js"),
   ).toBe("vendor-markdown");
