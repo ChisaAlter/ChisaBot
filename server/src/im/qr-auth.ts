@@ -67,6 +67,16 @@ const QQ_LITE_BASE = "https://q.qq.com";
 const WECOM_AI_BASE = "https://work.weixin.qq.com";
 const DINGTALK_OAPI_BASE = "https://oapi.dingtalk.com";
 
+/** 各平台扫码确认响应里「扫码人自己的用户 id」的候选字段（各家命名不同，取第一个非空字符串）。 */
+function firstUserId(...candidates: unknown[]): string | undefined {
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value))
+      return String(value);
+  }
+  return undefined;
+}
+
 /**
  * 解密 QQ 官方扫码绑定返回的 `bot_encrypt_secret`。
  * 格式：base64(iv[12] + ciphertext + authTag[16])，密钥为 create_bind_task 时生成的 32 字节随机 key。
@@ -377,7 +387,16 @@ export async function pollPlatformQr(
       const body = (await res.json().catch(() => ({}))) as {
         data?: {
           status?: string;
-          bot_info?: { botid?: string; secret?: string };
+          bot_info?: {
+            botid?: string;
+            secret?: string;
+            userid?: string;
+            user_id?: string;
+          };
+          userid?: string;
+          user_id?: string;
+          operator_userid?: string;
+          user_info?: { userid?: string; user_id?: string };
         };
       };
       const st = body.data?.status;
@@ -388,11 +407,22 @@ export async function pollPlatformQr(
       ) {
         const botId = String(body.data.bot_info.botid).trim();
         const secret = String(body.data.bot_info.secret).trim();
+        // 平台回了扫码人自己的 userid 就带上（自动回填主人名单）；没回也不挡绑定。
+        const boundUserId = firstUserId(
+          body.data.userid,
+          body.data.user_id,
+          body.data.operator_userid,
+          body.data.user_info?.userid,
+          body.data.user_info?.user_id,
+          body.data.bot_info.userid,
+          body.data.bot_info.user_id,
+        );
         return {
           status: "confirmed",
           config: { botId },
           secrets: { secret },
           account: botId,
+          ...(boundUserId ? { boundUserId } : {}),
         };
       }
       if (st === "scaned" || st === "scanned") {
@@ -422,16 +452,44 @@ export async function pollPlatformQr(
         client_id?: string;
         client_secret?: string;
         fail_reason?: string;
+        staff_id?: string;
+        unionid?: string;
+        user_id?: string;
+        userId?: string;
+        user_info?: {
+          staffId?: string;
+          staff_id?: string;
+          unionId?: string;
+          unionid?: string;
+          userId?: string;
+          user_id?: string;
+          openId?: string;
+        };
       };
       const st = (body.status || "").toUpperCase();
       if (st === "SUCCESS" && body.client_id && body.client_secret) {
         const clientId = String(body.client_id).trim();
         const clientSecret = String(body.client_secret).trim();
+        // 平台回了扫码人的钉钉用户 id 就带上（自动回填主人名单）；没回也不挡绑定。
+        const boundUserId = firstUserId(
+          body.user_info?.staffId,
+          body.user_info?.staff_id,
+          body.staff_id,
+          body.user_info?.userId,
+          body.user_info?.user_id,
+          body.user_id,
+          body.userId,
+          body.user_info?.unionId,
+          body.user_info?.unionid,
+          body.unionid,
+          body.user_info?.openId,
+        );
         return {
           status: "confirmed",
           config: { clientId },
           secrets: { clientSecret },
           account: clientId,
+          ...(boundUserId ? { boundUserId } : {}),
         };
       }
       if (st === "SCANNED") {

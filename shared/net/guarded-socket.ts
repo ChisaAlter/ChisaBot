@@ -64,8 +64,9 @@ export type GuardedSocketOptions = {
   /** 测试用：替换「这个 IP 能不能连」。 */
   isBlocked?: (address: string) => boolean;
   /**
-   * 自托管 IM 协议端的内网放行（管理员显式开关）：本机 / RFC1918 / ULA 可以连，
-   * 云元数据等地址仍拦。用户 / 模型给的地址永远不传这个。
+   * 自托管 IM 协议端的内网放行（管理员显式开关）：本机 / RFC1918 可以连，
+   * 云元数据等地址仍拦；只对第一跳生效——握手被重定向后目标一律回到普通政策。
+   * 用户 / 模型给的地址永远不传这个。
    */
   allowPrivate?: boolean;
 };
@@ -306,17 +307,18 @@ class PinnedSocket implements GuardedSocketLike {
       };
       for (let hop = 0; hop <= maxRedirects; hop += 1) {
         if (this.readyState !== 0) return;
+        // 内网放行只抵自己配的那一跳：握手被重定向后，目标回到普通（纯公网）政策重新判——
+        // 否则内网端点 302 一下就能把 WS 带进任意内网地址（审计 #467 r2）。
+        const hopPrivate = this.options.allowPrivate === true && hop === 0;
         const verdict = checkPublicWsUrl(current, {
-          allowPrivate: this.options.allowPrivate,
+          allowPrivate: hopPrivate,
         });
         if (!verdict.ok) denyWs(verdict.reason);
         const pinned = await resolvePublic(verdict.url.hostname, {
           ...(this.options.resolve ? { resolve: this.options.resolve } : {}),
           isBlocked:
             this.options.isBlocked ??
-            (this.options.allowPrivate
-              ? isBlockedAddressAllowPrivate
-              : isBlockedAddress),
+            (hopPrivate ? isBlockedAddressAllowPrivate : isBlockedAddress),
         });
         if (this.readyState !== 0) return;
         const socket = await openStream(verdict.url, pinned);

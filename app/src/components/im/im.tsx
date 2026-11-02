@@ -41,7 +41,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { type AuthenticatedUser, authKeys } from "@/lib/auth/keys";
 import {
   agoText,
   createImConnection,
@@ -422,7 +422,9 @@ export function ConnectionDialog({
 }) {
   const queryClient = useQueryClient();
   const bots = useQuery({ ...agentListQueryOptions(), enabled: open });
-  const me = useQuery(currentUserQueryOptions());
+  // 只读缓存里已登录的用户（_authed 进门时就查过）：不引入 auth/queries——它带着
+  // login-redirect → md-cache 一整串，曾把设置页块图连出 browser ↔ vendor-markdown 循环（§41.5）。
+  const me = useQuery<AuthenticatedUser | null>({ queryKey: authKeys.currentUser(), enabled: false });
   const isAdmin = me.data?.role === "admin";
   const roster = useMemo(() => (bots.data ?? []), [bots.data]);
   const [platform, setPlatform] = useState<ImPlatform | null>(connection?.platform ?? initialPlatform ?? null);

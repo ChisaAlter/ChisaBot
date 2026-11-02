@@ -78,6 +78,10 @@ class FakeWs implements WsLike {
 const sockets: FakeWs[] = [];
 const turns: Parameters<TurnRunner>[0][] = [];
 
+// 保存协议端地址时会预查 DNS：测试机可能是 fake-ip DNS（任何域名都解析成保留段），注入一个
+// 永远「解析到公网」的实现（要验「解析到元数据被拒」的场景在 im-service.integration.test.ts 里）。
+const publicResolve = async () => [{ address: "93.184.216.34", family: 4 }];
+
 async function waitFor<T>(
   check: () => T | undefined | null | false,
   ms = 4000,
@@ -160,6 +164,7 @@ describe("RV-02: IM 审批门禁", () => {
         return { replyText: "ok" };
       },
       botAvailable: async () => true,
+      resolveDns: publicResolve,
       resolveBotConversation: async () => `web-${randomUUID().slice(0, 8)}`,
       resolveApproval: async () => {
         approvals.push(1);
@@ -231,6 +236,7 @@ describe("RV-02: IM 审批门禁", () => {
         return { replyText: check.ok ? "操作完成" : check.message };
       },
       botAvailable: async () => true,
+      resolveDns: publicResolve,
       resolveBotConversation: async (_user, _agent, fresh) => {
         if (fresh) webThread = `web-${randomUUID().slice(0, 8)}`;
         return webThread;
@@ -399,6 +405,7 @@ describe("RV-02: IM 审批门禁", () => {
       encryptionKey: key,
       runTurn: async () => ({ replyText: "ok" }),
       botAvailable: async () => true,
+      resolveDns: publicResolve,
       resolveBotConversation: async () => "shared-thread-1",
       ws: (url) => {
         const socket = new FakeWs(url);
@@ -464,6 +471,7 @@ describe("RV-02: IM 审批门禁", () => {
       encryptionKey: key,
       runTurn: async () => ({ replyText: "" }),
       botAvailable: async () => true,
+      resolveDns: publicResolve,
     });
     await service.ensure();
     const view = await service.create(owner, {

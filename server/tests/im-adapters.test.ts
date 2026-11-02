@@ -1112,6 +1112,7 @@ describe("多平台扫码绑定与消息来源解析", () => {
             data: {
               status: "success",
               bot_info: { botid: "ww_bot_1", secret: "ww_sec_1" },
+              userid: "ww_owner_1",
             },
           }),
           { status: 200 },
@@ -1140,6 +1141,7 @@ describe("多平台扫码绑定与消息来源解析", () => {
             status: "SUCCESS",
             client_id: "ding_id",
             client_secret: "ding_sec",
+            user_info: { staffId: "dt_owner_1" },
           }),
           { status: 200 },
         );
@@ -1180,6 +1182,7 @@ describe("多平台扫码绑定与消息来源解析", () => {
       config: { botId: "ww_bot_1" },
       secrets: { secret: "ww_sec_1" },
       account: "ww_bot_1",
+      boundUserId: "ww_owner_1",
     });
 
     const ding = await startPlatformQr({ platform: "dingtalk" }, mockFetch);
@@ -1188,6 +1191,7 @@ describe("多平台扫码绑定与消息来源解析", () => {
       config: { clientId: "ding_id" },
       secrets: { clientSecret: "ding_sec" },
       account: "ding_id",
+      boundUserId: "dt_owner_1",
     });
 
     const feishu = await startPlatformQr({ platform: "feishu" }, mockFetch);

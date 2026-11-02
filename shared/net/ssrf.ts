@@ -44,8 +44,10 @@ const V6_BLOCKED: readonly [string, number][] = [
 
 /**
  * 自托管 IM 协议端的「放行内网」名单（RV-01 放宽项）：管理员给某个连接显式开了「允许内网地址」后，
- * 那个连接自己配置的协议端可以指向本机 / RFC1918 / ULA。除此之外一切照拦——尤其是云元数据
- * （169.254.0.0/16 整段、阿里 100.64.0.0/10、AWS IPv6 元数据 fd00:ec2::254），就算开关开着也绝不放行。
+ * 那个连接自己配置的协议端可以指向本机 / RFC1918。除此之外一切照拦——尤其是云元数据
+ * （169.254.0.0/16 整段、阿里 100.64.0.0/10、AWS IPv6 元数据 fd00:ec2::254、GCP fd20:ce::254），
+ * 就算开关开着也绝不放行。ULA fc00::/7 也整段拦：云厂商的 IPv6 元数据地址就住在里面，
+ * 放行它等于把开关变成元数据后门；IPv6 内网协议端请走反向 WebSocket。
  */
 const V4_BLOCKED_ALLOW_PRIVATE: readonly [string, number][] = [
   ["0.0.0.0", 8],
@@ -67,6 +69,7 @@ const V6_BLOCKED_ALLOW_PRIVATE: readonly [string, number][] = [
   ["2001::", 32],
   ["2001:db8::", 32],
   ["2002::", 16],
+  ["fc00::", 7], // 唯一本地整段：云厂商 IPv6 元数据住在里面（fd00:ec2::254、fd20:ce::254），不能放
   ["fe80::", 10],
   ["fec0::", 10],
   ["ff00::", 8],
@@ -85,9 +88,8 @@ for (const [address, prefix] of V4_BLOCKED_ALLOW_PRIVATE)
 const v6PrivateList = new BlockList();
 for (const [address, prefix] of V6_BLOCKED_ALLOW_PRIVATE)
   v6PrivateList.addSubnet(address, prefix, "ipv6");
-// ::/96 整段放行了（::1 是回环）：单拦未指定地址和云元数据那个特例。
+// ::/96 整段放行了（::1 是回环）：单拦未指定地址（云元数据特例已由 fc00::/7 兜住）。
 v6PrivateList.addAddress("::", "ipv6");
-v6PrivateList.addAddress("fd00:ec2::254", "ipv6");
 
 /** 把任意写法的 IPv6 展开成 8 组 16 位数字；不是 IPv6 返回 null。 */
 export function expandIpv6(input: string): number[] | null {
@@ -156,8 +158,8 @@ export function isBlockedAddress(input: string): boolean {
 }
 
 /**
- * 「允许内网地址」开关下的 IP 判定：本机 / RFC1918 / ULA 可以连（自托管协议端在同机、局域网、
- * Docker 兄弟容器），云元数据、链路本地、组播、保留段照样拦——开关开着也够不到它们。
+ * 「允许内网地址」开关下的 IP 判定：本机 / RFC1918 / IPv6 回环可以连（自托管协议端在同机、局域网、
+ * Docker 兄弟容器），云元数据（含 ULA 里的 IPv6 元数据）、链路本地、组播、保留段照样拦——开关开着也够不到它们。
  */
 export function isBlockedAddressAllowPrivate(input: string): boolean {
   const address = input.trim().replace(/^\[|\]$/g, "");

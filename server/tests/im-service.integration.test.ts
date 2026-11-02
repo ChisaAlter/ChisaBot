@@ -56,11 +56,16 @@ const runTurn: TurnRunner = async (input) => {
   return { replyText: `**收到**：${String(input.userMessage?.content ?? "").split("\n").pop()}` };
 };
 
+// 保存协议端地址时会预查 DNS：测试机可能是 fake-ip DNS（任何域名都解析成保留段），注入一个
+// 永远「解析到公网」的实现；要验「解析到元数据被拒」的场景自己带 resolver。
+const publicResolve = async () => [{ address: "93.184.216.34", family: 4 }];
+
 const service = createImService({
   database,
   encryptionKey: key,
   runTurn,
   botAvailable: async (user, agentId) => user === owner && agentId === "bot-1",
+  resolveDns: publicResolve,
   ws: (url) => {
     const socket = new FakeWs(url);
     sockets.push(socket);
@@ -245,6 +250,7 @@ describe("IM 接入服务", () => {
         return { title: decided.title, target: decided.target };
       },
       runTurn: confirmRunTurn,
+      resolveDns: publicResolve,
       ws: (url) => {
         const socket = new FakeWs(url);
         sockets.push(socket);
@@ -366,6 +372,7 @@ describe("IM 接入服务", () => {
       runTurn,
       botAvailable: async (user, agentId) => user === owner && agentId === "bot-1",
       fetch: wxFetch,
+      resolveDns: publicResolve,
     });
     const started = await wxService.qrStart(owner, { platform: "weixin" });
     const polled = await wxService.qrPoll(owner, started.session);
@@ -384,6 +391,7 @@ describe("IM 接入服务", () => {
       encryptionKey: key,
       runTurn,
       botAvailable: async (user, agentId) => user === owner && agentId === "bot-1",
+      resolveDns: publicResolve,
       ws: (url, wsOptions) => {
         wsCalls.push({ url, allowPrivate: wsOptions?.allowPrivate });
         const socket = new FakeWs(url);
@@ -418,9 +426,33 @@ describe("IM 接入服务", () => {
     expect(wsCalls.find((call) => call.url === "ws://10.0.0.5:3001")!.allowPrivate).toBe(true);
     expect(wsCalls.find((call) => call.url === "ws://napcat-public.test:3001")!.allowPrivate).toBeFalsy();
 
-    // 非管理员改连接：开关值丢不掉也改不了（沿用库里已存的 true）
-    const byUser = await scoped.update(owner, privateView.id, { allowPrivate: false, config: { url: "ws://napcat-public2.test:3001" } });
+    // 非管理员改连接（不动协议端地址）：开关值丢不掉也改不了（沿用库里已存的 true）
+    const byUser = await scoped.update(owner, privateView.id, { allowPrivate: false, name: "改名而已" });
     expect(byUser!.allowPrivate).toBe(true);
+
+    // 开关开着时改协议端地址 = 要重新确认：管理员没把开关再传一遍，先按「关」算——
+    // 新地址是内网 → 地址校验 400 挡住；是公网 → 静默落库且开关置关。
+    await expect(
+      scoped.update(owner, privateView.id, { config: { url: "ws://10.9.9.9:6379" } }, true),
+    ).rejects.toThrow("不能访问内网地址");
+    const stillPrivate = await scoped.list(owner);
+    expect(stillPrivate.find((item) => item.id === privateView.id)!.allowPrivate).toBe(true);
+    expect(stillPrivate.find((item) => item.id === privateView.id)!.config.url).toBe("ws://10.0.0.5:3001");
+
+    // 管理员重新把开关传一遍 = 确认过这个新地址 → 能改到另一个内网地址
+    const reconfirmed = await scoped.update(
+      owner,
+      privateView.id,
+      { config: { url: "ws://10.9.9.9:6379" }, allowPrivate: true },
+      true,
+    );
+    expect(reconfirmed!.allowPrivate).toBe(true);
+    expect(reconfirmed!.config.url).toBe("ws://10.9.9.9:6379");
+
+    // 改到公网地址但没重传开关：保存成功，开关被重置成关
+    const downgraded = await scoped.update(owner, privateView.id, { config: { url: "ws://napcat-public2.test:3001" } }, true);
+    expect(downgraded!.allowPrivate).toBe(false);
+    expect(downgraded!.config.url).toBe("ws://napcat-public2.test:3001");
 
     // 管理员把开关关掉（同时把地址换成公网才过校验）
     const byAdmin = await scoped.update(owner, privateView.id, { allowPrivate: false, config: { url: "ws://napcat-public3.test:3001" } }, true);
@@ -429,36 +461,88 @@ describe("IM 接入服务", () => {
     await scoped.stopAll();
   });
 
-  test("0061 迁移：私聊过机器人的人被回填成主人", async () => {
+  test("保存时预查 DNS：主机名解析到元数据 / 内网就拒（#467 r2 P3）", async () => {
+    const resolving = createImService({
+      database,
+      encryptionKey: key,
+      runTurn,
+      botAvailable: async (user, agentId) => user === owner && agentId === "bot-1",
+      ws: (url) => {
+        const socket = new FakeWs(url);
+        sockets.push(socket);
+        return socket;
+      },
+      resolveDns: async (hostname) =>
+        hostname === "meta.example"
+          ? [{ address: "169.254.169.254", family: 4 }]
+          : hostname === "ula.example"
+            ? [{ address: "fd20:ce::254", family: 6 }]
+            : [{ address: "93.184.216.34", family: 4 }],
+    });
+
+    // 解析到云元数据的主机名：普通模式拒，开了「允许内网地址」照样拒（169.254.0.0/16 永远拦）。
+    await expect(
+      resolving.create(owner, { platform: "onebot", agentId: "bot-1", config: { mode: "forward", url: "ws://meta.example:3001" } }),
+    ).rejects.toThrow("不能访问内网地址");
+    await expect(
+      resolving.create(owner, { platform: "onebot", agentId: "bot-1", config: { mode: "forward", url: "ws://meta.example:3001" }, allowPrivate: true }, true),
+    ).rejects.toThrow("不能访问内网地址");
+    // ULA / IPv6 元数据：开关开着也拒。
+    await expect(
+      resolving.create(owner, { platform: "onebot", agentId: "bot-1", config: { mode: "forward", url: "ws://ula.example:3001" }, allowPrivate: true }, true),
+    ).rejects.toThrow("不能访问内网地址");
+    // 解析到公网的主机名照常保存。
+    const ok = await resolving.create(owner, { platform: "onebot", agentId: "bot-1", enabled: false, config: { mode: "forward", url: "ws://pub.example:3001" } });
+    createdIds.push(ok.id);
+    expect(ok.config.url).toBe("ws://pub.example:3001");
+    // 「测试连接」草稿也过同一道预查。
+    await expect(
+      resolving.testDraft(owner, { platform: "onebot", config: { mode: "forward", url: "ws://meta.example:3001" } }),
+    ).rejects.toThrow("不能访问内网地址");
+    await resolving.stopAll();
+  });
+
+  test("0061 迁移：私聊过机器人的人被回填成主人；白名单非空时只从白名单里挑（#467 r2）", async () => {
     const id = "im_backfill01";
     const untouched = "im_backfill02";
     const nochat = "im_backfill03";
+    const allow = "im_backfill04";
+    const allowNone = "im_backfill05";
     await database.$client.unsafe(
-      `INSERT INTO chisabot_im_connections (id, owner_user_id, platform, name, agent_id, enabled, config, owner_users)
-       VALUES ($1, $2, 'onebot', '旧连接', 'bot-1', true, '{}', '[]'),
-              ($3, $2, 'onebot', '已有主人', 'bot-1', true, '{}', '["kept"]'),
-              ($4, $2, 'onebot', '没人聊过', 'bot-1', true, '{}', '[]')`,
-      [id, `backfill-${owner}`, untouched, nochat],
+      `INSERT INTO chisabot_im_connections (id, owner_user_id, platform, name, agent_id, enabled, config, allow_users, owner_users)
+       VALUES ($1, $2, 'onebot', '旧连接', 'bot-1', true, '{}', '[]', '[]'),
+              ($3, $2, 'onebot', '已有主人', 'bot-1', true, '{}', '[]', '["kept"]'),
+              ($4, $2, 'onebot', '没人聊过', 'bot-1', true, '{}', '[]', '[]'),
+              ($5, $2, 'onebot', '白名单非空', 'bot-1', true, '{}', '["qq-777"]', '[]'),
+              ($6, $2, 'onebot', '白名单不相交', 'bot-1', true, '{}', '["qq-999"]', '[]')`,
+      [id, `backfill-${owner}`, untouched, nochat, allow, allowNone],
     );
     await database.$client.unsafe(
       `INSERT INTO chisabot_im_chats (connection_id, chat_key, thread_id)
-       VALUES ($1, 'private:qq-777', 't1'), ($1, 'private:qq-888', 't2'), ($1, 'group:12345', 't3')`,
-      [id],
+       VALUES ($1, 'private:qq-777', 't1'), ($1, 'private:qq-888', 't2'), ($1, 'group:12345', 't3'),
+              ($2, 'private:qq-777', 't4'), ($2, 'private:qq-888', 't5'),
+              ($3, 'private:qq-777', 't6')`,
+      [id, allow, allowNone],
     );
     try {
       const migration = await Bun.file(new URL("../drizzle/0061_im_owner_backfill.sql", import.meta.url)).text();
       await database.$client.unsafe(migration);
+      // 幂等：再跑一遍结果不变。
+      await database.$client.unsafe(migration);
       const rows = await database.$client.unsafe<{ id: string; owner_users: string[] }[]>(
-        "SELECT id, owner_users FROM chisabot_im_connections WHERE id IN ($1, $2, $3)",
-        [id, untouched, nochat],
+        "SELECT id, owner_users FROM chisabot_im_connections WHERE id IN ($1, $2, $3, $4, $5)",
+        [id, untouched, nochat, allow, allowNone],
       );
       const owners = new Map(rows.map((row) => [row.id, row.owner_users]));
       expect(owners.get(id)!.sort()).toEqual(["qq-777", "qq-888"]);
       expect(owners.get(untouched)).toEqual(["kept"]);
       expect(owners.get(nochat)).toEqual([]);
+      // 白名单非空 = 主人只能出在白名单里：qq-888 私聊过也不能升级成主人；交集为空就不填。
+      expect(owners.get(allow)).toEqual(["qq-777"]);
+      expect(owners.get(allowNone)).toEqual([]);
     } finally {
-      await database.$client.unsafe("DELETE FROM chisabot_im_chats WHERE connection_id = $1", [id]);
-      await database.$client.unsafe("DELETE FROM chisabot_im_connections WHERE id IN ($1, $2, $3)", [id, untouched, nochat]);
+      await database.$client.unsafe("DELETE FROM chisabot_im_chats WHERE connection_id IN ($1, $2, $3)", [id, allow, allowNone]);
+      await database.$client.unsafe("DELETE FROM chisabot_im_connections WHERE id IN ($1, $2, $3, $4, $5)", [id, untouched, nochat, allow, allowNone]);
     }
   });
 });

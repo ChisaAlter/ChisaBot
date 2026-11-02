@@ -381,15 +381,13 @@ describe("RV-01: IM 默认出站实现就是带防护的那份", () => {
 });
 
 describe("RV-01 放宽项：allowPrivate（管理员给连接开的「允许内网地址」）", () => {
-  test("地址判定：本机 / RFC1918 / ULA 放行，云元数据和保留段照样拦", () => {
+  test("地址判定：本机 / RFC1918 放行，ULA / 云元数据和保留段照样拦", () => {
     for (const allowed of [
       "127.0.0.1",
       "10.0.0.9",
       "172.17.0.2",
       "192.168.1.10",
       "::1",
-      "fd00::8",
-      "fc00::1",
     ])
       expect(isBlockedAddressAllowPrivate(allowed)).toBe(false);
     for (const blocked of [
@@ -397,6 +395,9 @@ describe("RV-01 放宽项：allowPrivate（管理员给连接开的「允许内�
       "169.254.0.1",
       "100.100.100.200", // 阿里云元数据
       "fd00:ec2::254", // AWS IPv6 元数据
+      "fd20:ce::254", // GCP IPv6 元数据
+      "fd00::8", // ULA 整段拦：云厂商 IPv6 元数据就住在这段里
+      "fc00::1",
       "::ffff:169.254.169.254",
       "::169.254.169.254",
       "64:ff9b::a9fe:a9fe", // NAT64 包着的元数据
@@ -470,6 +471,63 @@ describe("RV-01 放宽项：allowPrivate（管理员给连接开的「允许内�
     }
   });
 
+  test("guarded fetch：allowPrivate 只抵第一跳——内网端点 302 到别的内网地址被拒（#467 r2）", async () => {
+    let hits = 0;
+    const { server: target, port: targetPort } = await httpServer(
+      (_req, res) => {
+        hits++;
+        res.writeHead(200);
+        res.end("secret-internal");
+      },
+    );
+    const { server: redirector, port } = await httpServer((_req, res) => {
+      res.writeHead(302, { Location: `http://127.0.0.2:${targetPort}/admin` });
+      res.end();
+    });
+    try {
+      const open = createGuardedFetchLike({
+        timeoutMs: 5000,
+        maxBytes: 1024,
+        allowPrivate: true,
+      });
+      // 第一跳自己配的内网地址可以进；它 302 到的目标回到普通政策重判 → 内网就拒。
+      await expect(open(`http://127.0.0.1:${port}/`)).rejects.toBeInstanceOf(
+        BlockedUrlError,
+      );
+      expect(hits).toBe(0);
+      // 302 到公网地址照样能跟（每一跳各自判，不是一刀切拒所有重定向）。
+      const { server: pub, port: pubPort } = await httpServer((_req, res) => {
+        res.writeHead(200);
+        res.end("public-ok");
+      });
+      const { server: redirector2, port: port2 } = await httpServer(
+        (_req, res) => {
+          res.writeHead(302, {
+            Location: `http://cdn.example:${pubPort}/final`,
+          });
+          res.end();
+        },
+      );
+      try {
+        const openResolved = createGuardedFetchLike({
+          timeoutMs: 5000,
+          maxBytes: 1024,
+          allowPrivate: true,
+          resolve: loopbackResolve,
+          isBlocked: allowLoopback,
+        });
+        const res = await openResolved(`http://127.0.0.1:${port2}/`);
+        expect(await res.text()).toBe("public-ok");
+      } finally {
+        await closeServer(pub);
+        await closeServer(redirector2);
+      }
+    } finally {
+      await closeServer(target);
+      await closeServer(redirector);
+    }
+  });
+
   test("guarded socket：allowPrivate 能连本机 WS，不开就拒", async () => {
     const { server, port } = await wsEchoServer();
     try {
@@ -489,6 +547,43 @@ describe("RV-01 放宽项：allowPrivate（管理员给连接开的「允许内�
       expect(event.code).toBe(1006);
     } finally {
       await closeServer(server);
+    }
+  });
+
+  test("guarded socket：allowPrivate 只抵第一跳——握手被 302 到别的内网地址被拒（#467 r2）", async () => {
+    let hits = 0;
+    const { server: target, port: targetPort } = await wsEchoServer();
+    target.on("connection", () => {
+      hits++;
+    });
+    let hops = 0;
+    const { server: redirector, port } = await httpServer((_req, res) => {
+      hops++;
+      res.writeHead(302, { Location: `ws://127.0.0.2:${targetPort}/x` });
+      res.end();
+    });
+    try {
+      const socket = openGuardedSocket(`ws://127.0.0.1:${port}/`, {
+        allowPrivate: true,
+      });
+      let opened = false;
+      const errors: unknown[] = [];
+      socket.onopen = () => {
+        opened = true;
+      };
+      socket.onerror = (event) => errors.push(event);
+      const closed = await waitSocket(socket);
+      expect(opened).toBe(false);
+      expect(closed.code).toBe(1006);
+      expect(errors).toHaveLength(1);
+      expect((errors[0] as { error: unknown }).error).toBeInstanceOf(
+        BlockedUrlError,
+      );
+      expect(hops).toBe(1); // 第一跳确实按放行规则进了内网端点
+      expect(hits).toBe(0); // 重定向目标按普通政策被拒，一个包都没发
+    } finally {
+      await closeServer(target);
+      await closeServer(redirector);
     }
   });
 });

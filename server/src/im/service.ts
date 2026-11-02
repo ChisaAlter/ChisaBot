@@ -2,7 +2,8 @@ import type { Message } from "@ag-ui/client";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { IM_PLATFORMS, type ImConnectionView, type ImLogEntry, type ImPlatform, type ImStatus, imPlatform } from "../../../shared/im";
-import { checkPublicUrl } from "../../../shared/net/ssrf";
+import { BlockedUrlError, type GuardedFetchOptions, resolvePublic } from "../../../shared/net/guarded-fetch";
+import { checkPublicUrl, isBlockedAddress, isBlockedAddressAllowPrivate } from "../../../shared/net/ssrf";
 import { gatewayClientIp } from "../auth/gateway-identity";
 import type { AppVariables } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
@@ -82,6 +83,8 @@ export type ImServiceOptions = {
   ) => Promise<{ title: string; target?: string | null } | null>;
   fetch?: FetchLike;
   ws?: WsFactory;
+  /** 测试用：替换「保存协议端地址时预查 DNS」的解析实现（不注入就用真实解析）。 */
+  resolveDns?: GuardedFetchOptions["resolve"];
 };
 
 export type ImService = ReturnType<typeof createImService>;
@@ -577,7 +580,24 @@ export function createImService(options: ImServiceOptions) {
 
   class InputError extends Error {}
 
-  function cleanFields(
+  /**
+   * 保存 / 测试 / 绑定时对主机名做一次 DNS 预查：解析结果落在黑名单（含云元数据）上的名字——
+   * 比如 169.254.169.254.nip.io——在保存时就拒掉，不等连的时候才发现。返回拦截原因，放行返回 null。
+   * 解析失败（暂时没网 / 域名还没建好）不拦：真正连接时 guarded-fetch 还会按同样规则再判一遍。
+   */
+  async function blockedByDns(hostname: string, allowPrivate: boolean): Promise<string | null> {
+    try {
+      await resolvePublic(hostname, {
+        ...(options.resolveDns ? { resolve: options.resolveDns } : {}),
+        isBlocked: allowPrivate ? isBlockedAddressAllowPrivate : isBlockedAddress,
+      });
+      return null;
+    } catch (error) {
+      return error instanceof BlockedUrlError ? error.message : null;
+    }
+  }
+
+  async function cleanFields(
     platform: ImPlatform,
     input: Input,
     current: { config: Record<string, string>; secrets: Record<string, string> },
@@ -608,6 +628,8 @@ export function createImService(options: ImServiceOptions) {
           // 「允许内网地址」开着时管理员配置的协议端可以指向内网（云元数据仍拦）；关着就还是只认公网。
           const verdict = checkPublicUrl(httpForm, { allowPrivate });
           if (!verdict.ok) throw new InputError(`「${field.label}」不安全：${verdict.reason}`);
+          const dnsBlock = await blockedByDns(verdict.url.hostname, allowPrivate);
+          if (dnsBlock) throw new InputError(`「${field.label}」不安全：${dnsBlock}`);
         }
         if (trimmed) config[field.key] = trimmed;
         else delete config[field.key];
@@ -633,6 +655,8 @@ export function createImService(options: ImServiceOptions) {
           const cleanedBase = v.replace(/\/+$/, "");
           const verdict = checkPublicUrl(cleanedBase);
           if (!verdict.ok) throw new InputError(`接口地址不安全：${verdict.reason}`);
+          const dnsBlock = await blockedByDns(verdict.url.hostname, false);
+          if (dnsBlock) throw new InputError(`接口地址不安全：${dnsBlock}`);
           config[k] = cleanedBase;
         } else if (v) {
           config[k] = v;
@@ -667,7 +691,15 @@ export function createImService(options: ImServiceOptions) {
       ? [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))].slice(0, 200)
       : undefined;
 
-  /** 扫码绑定时平台回了扫码人自己的用户 id（微信 / QQ 官方 / 飞书）就自动算进主人名单，不用手填。 */
+  /** 这次提交动了 url 类字段（协议端地址）没有：值和库里已存的不一样才算动。 */
+  function endpointChanged(platform: ImPlatform, input: Input, stored: Record<string, string>): boolean {
+    const raw = (input.config && typeof input.config === "object" ? input.config : {}) as Record<string, unknown>;
+    return (imPlatform(platform)?.fields ?? []).some(
+      (field) => field.type === "url" && typeof raw[field.key] === "string" && (raw[field.key] as string).trim().slice(0, 500) !== (stored[field.key] ?? ""),
+    );
+  }
+
+  /** 扫码绑定时平台回了扫码人自己的用户 id（微信 / QQ 官方 / 企业微信 / 钉钉 / 飞书）就自动算进主人名单，不用手填。 */
   const withBoundOwner = (owners: string[], boundUserId: string | undefined) =>
     boundUserId && !owners.includes(boundUserId) ? [...owners, boundUserId] : owners;
 
@@ -678,7 +710,7 @@ export function createImService(options: ImServiceOptions) {
     if (!agentId || !(await options.botAvailable(owner, agentId))) throw new InputError("请选择一个你的机器人");
     const name = (typeof input.name === "string" && input.name.trim() ? input.name.trim() : imPlatform(platform)!.name).slice(0, 40);
     const allowPrivate = admin && input.allowPrivate === true;
-    const { config, secrets, account, boundUserId } = cleanFields(platform, input, { config: {}, secrets: {} }, owner, true, allowPrivate);
+    const { config, secrets, account, boundUserId } = await cleanFields(platform, input, { config: {}, secrets: {} }, owner, true, allowPrivate);
     const enabled = input.enabled !== false;
     const missing = missingRequired(platform, config, secrets);
     if (missing && enabled) throw new InputError(`请填写「${missing}」`);
@@ -702,8 +734,11 @@ export function createImService(options: ImServiceOptions) {
     if (!row) return null;
     const current = { config: row.config ?? {}, secrets: await readSecrets(row) };
     // 「允许内网地址」只有管理员能改：非管理员传来的值直接丢掉，沿用库里已存的。
-    const allowPrivate = admin ? (typeof input.allowPrivate === "boolean" ? input.allowPrivate : row.allow_private === true) : row.allow_private === true;
-    const { config, secrets, account, boundUserId } = cleanFields(row.platform, input, current, owner, true, allowPrivate);
+    let allowPrivate = admin ? (typeof input.allowPrivate === "boolean" ? input.allowPrivate : row.allow_private === true) : row.allow_private === true;
+    // 开关开着又改了协议端地址 = 要重新确认：管理员这次没把开关再传一遍，就先按「关」算——
+    // 新地址是公网则静默落库（开关置关），是内网则被上面的地址校验 400 挡住。
+    if (allowPrivate && endpointChanged(row.platform, input, current.config) && !(admin && input.allowPrivate === true)) allowPrivate = false;
+    const { config, secrets, account, boundUserId } = await cleanFields(row.platform, input, current, owner, true, allowPrivate);
     let agentId = row.agent_id;
     if (typeof input.agentId === "string" && input.agentId !== row.agent_id) {
       if (!(await options.botAvailable(owner, input.agentId))) throw new InputError("请选择一个你的机器人");
@@ -785,8 +820,10 @@ export function createImService(options: ImServiceOptions) {
     const platform = (existing?.platform ?? input.platform) as ImPlatform;
     if (!imPlatform(platform)) throw new InputError("不支持这个平台");
     const current = existing ? { config: existing.config ?? {}, secrets: await readSecrets(existing) } : { config: {}, secrets: {} };
-    const allowPrivate = admin ? (typeof input.allowPrivate === "boolean" ? input.allowPrivate : existing?.allow_private === true) : existing?.allow_private === true;
-    const { config, secrets } = cleanFields(platform, input, current, owner, false, allowPrivate);
+    let allowPrivate = admin ? (typeof input.allowPrivate === "boolean" ? input.allowPrivate : existing?.allow_private === true) : existing?.allow_private === true;
+    // 和 update 同一条规矩：开关开着又改了协议端地址，没重新传开关就按「关」测试。
+    if (existing && allowPrivate && endpointChanged(platform, input, current.config) && !(admin && input.allowPrivate === true)) allowPrivate = false;
+    const { config, secrets } = await cleanFields(platform, input, current, owner, false, allowPrivate);
     return testAdapter(platform, testContext(platform, existing?.id ?? "draft", config, secrets, allowPrivate), existing ? live.get(existing.id)?.adapter : undefined);
   }
 
@@ -806,6 +843,8 @@ export function createImService(options: ImServiceOptions) {
       baseUrl = (baseUrl && /^https?:\/\//.test(baseUrl) ? baseUrl : WEIXIN_DEFAULT_BASE).replace(/\/+$/, "");
       const verdict = checkPublicUrl(baseUrl);
       if (!verdict.ok) throw new InputError(`微信接口地址不安全：${verdict.reason}`);
+      const dnsBlock = await blockedByDns(verdict.url.hostname, false);
+      if (dnsBlock) throw new InputError(`微信接口地址不安全：${dnsBlock}`);
     }
     pruneQrLogins();
     const started = await startPlatformQr({ platform, baseUrl, domain: body.domain }, fetcher);
@@ -838,6 +877,8 @@ export function createImService(options: ImServiceOptions) {
     if (login.platform === "weixin" && login.state.baseUrl) {
       const baseVerdict = checkPublicUrl(login.state.baseUrl);
       if (!baseVerdict.ok) throw new InputError(`微信接口地址不安全：${baseVerdict.reason}`);
+      const dnsBlock = await blockedByDns(baseVerdict.url.hostname, false);
+      if (dnsBlock) throw new InputError(`微信接口地址不安全：${dnsBlock}`);
     }
     const polled = await pollPlatformQr(login.platform, login.state, fetcher);
     if (polled.nextState) {
@@ -845,8 +886,11 @@ export function createImService(options: ImServiceOptions) {
     }
     if (polled.status === "confirmed" && polled.secrets) {
       const nextConfig = { ...(polled.config ?? {}) };
-      if (nextConfig.baseUrl && !checkPublicUrl(nextConfig.baseUrl.replace(/\/+$/, "")).ok) {
-        delete nextConfig.baseUrl;
+      if (nextConfig.baseUrl) {
+        const checked = checkPublicUrl(nextConfig.baseUrl.replace(/\/+$/, ""));
+        if (!checked.ok || (await blockedByDns(checked.url.hostname, false))) {
+          delete nextConfig.baseUrl;
+        }
       }
       login.result = {
         config: nextConfig,

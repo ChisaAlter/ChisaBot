@@ -19,14 +19,23 @@ BEGIN
     RETURN;
   END IF;
   ALTER TABLE chisabot_im_connections ADD COLUMN IF NOT EXISTS owner_users jsonb NOT NULL DEFAULT '[]'::jsonb;
+  -- A non-empty allow_users already says who may chat: backfilling an owner outside it would
+  -- hand chat + approval rights to somebody the operator deliberately left off the list
+  -- (r2 QA: allow ["777"] had owners ["777","888"]). Owners then = senders ∩ allow_users,
+  -- or none when the intersection is empty.
   UPDATE chisabot_im_connections c
   SET owner_users = sub.owners
   FROM (
-    SELECT connection_id, jsonb_agg(DISTINCT substr(chat_key, 9)) AS owners
-    FROM chisabot_im_chats
-    WHERE chat_key LIKE 'private:%'
+    SELECT connection_id, jsonb_agg(sender ORDER BY sender) AS owners
+    FROM (
+      SELECT DISTINCT ch.connection_id, substr(ch.chat_key, 9) AS sender
+      FROM chisabot_im_chats ch
+      JOIN chisabot_im_connections c2 ON c2.id = ch.connection_id
+      WHERE ch.chat_key LIKE 'private:%'
+        AND c2.owner_users = '[]'::jsonb
+        AND (c2.allow_users = '[]'::jsonb OR c2.allow_users ? substr(ch.chat_key, 9))
+    ) senders
     GROUP BY connection_id
   ) sub
-  WHERE c.id = sub.connection_id
-    AND c.owner_users = '[]'::jsonb;
+  WHERE c.id = sub.connection_id;
 END $$;

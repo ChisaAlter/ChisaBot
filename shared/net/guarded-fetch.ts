@@ -69,8 +69,9 @@ export type GuardedFetchOptions = {
   /** 测试用：替换「这个 IP 能不能连」。 */
   isBlocked?: (address: string) => boolean;
   /**
-   * 自托管 IM 协议端的内网放行（管理员显式开关）：本机 / RFC1918 / ULA 可以连，
-   * 云元数据等地址仍拦（`ssrf.ts` 的 ALLOW_PRIVATE 名单）。用户 / 模型给的网址永远不传这个。
+   * 自托管 IM 协议端的内网放行（管理员显式开关）：本机 / RFC1918 可以连，
+   * 云元数据等地址仍拦（`ssrf.ts` 的 ALLOW_PRIVATE 名单）；只对第一跳生效——重定向目标一律回到普通政策。
+   * 用户 / 模型给的网址永远不传这个。
    */
   allowPrivate?: boolean;
 };
@@ -354,15 +355,18 @@ export async function guardedFetch(
     options.fetchImpl !== defaultFetch &&
     !options.resolve &&
     !options.isBlocked;
-  const isBlocked =
-    options.isBlocked ??
-    (options.allowPrivate ? isBlockedAddressAllowPrivate : isBlockedAddress);
 
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
+    // 内网放行只抵自己配的那一跳：一旦重定向，目标回到普通（纯公网）政策重新判——
+    // 否则内网端点 302 一下就能把请求带进任意内网地址（审计 #467 r2）。
+    const hopPrivate = options.allowPrivate === true && hop === 0;
     const verdict = checkPublicUrl(current, {
-      allowPrivate: options.allowPrivate,
+      allowPrivate: hopPrivate,
     });
     if (!verdict.ok) denySsrf(verdict.reason);
+    const isBlocked =
+      options.isBlocked ??
+      (hopPrivate ? isBlockedAddressAllowPrivate : isBlockedAddress);
     const hopOptions: GuardedFetchOptions = {
       ...options,
       method: currentMethod,
