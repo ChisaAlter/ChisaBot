@@ -16,6 +16,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -131,6 +132,17 @@ def breaker_ok(key: tuple[str, str, str]) -> None:
         _breaker_log({"type": "model-fallback", "event": "breaker-closed", "model": key[2], "kernel": "hermes-adapter"})
 
 
+def breaker_count(key: tuple[str, str, str], reason: str, now: float) -> None:
+    """One consecutive failure without opening a cooldown (error mid-stream after output)."""
+    entry = _MODEL_BREAKERS.setdefault(key, {"failures": 0, "opens": 0, "reason": reason,
+                                             "open_until": 0.0, "probing": False})
+    entry["failures"] += 1
+    entry["reason"] = reason
+    entry["probing"] = False
+    _breaker_log({"type": "model-fallback", "event": "stream-error", "model": key[2], "reason": reason,
+                  "consecutiveFailures": entry["failures"], "kernel": "hermes-adapter"})
+
+
 def reset_model_breakers() -> None:
     _MODEL_BREAKERS.clear()
 
@@ -157,6 +169,38 @@ def _deep_clean_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             break
     kept.reverse()
     return normalize_history(kept)
+
+
+"""First-token deadline (QA1102-06): every model attempt -- the first failing one and each
+half-open probe alike -- is bounded by how long it may produce no real output (text /
+reasoning / tool delta). A hung upstream call is interrupted and the turn retries on the
+next healthy fallback instead of paying the full CHISABOT_MODEL_TIMEOUT_S upstream timeout.
+CHISABOT_FIRST_TOKEN_TIMEOUT_S sets the bound (default 30, 0 disables); the TS kernel's
+CHISABOT_MODEL_FIRST_OUTPUT_MS is honoured when set."""
+def _first_token_timeout_s() -> float:
+    value = _env_float("CHISABOT_FIRST_TOKEN_TIMEOUT_S", None)
+    if value is not None:
+        return value
+    ms = _env_float("CHISABOT_MODEL_FIRST_OUTPUT_MS", None)
+    return ms / 1000.0 if ms is not None else 30.0
+
+
+def _wait_first_output(event: threading.Event, deadline: float,
+                       reset: threading.Event | None = None) -> bool:
+    """True when real output arrived before the deadline; polls so a stale wait ends quickly.
+
+    ``reset`` ends the wait early with False: the 400 cleanup retry inside execute() is a
+    fresh attempt that re-arms the deadline instead of spending the rejected call's window.
+    """
+    end = time.monotonic() + deadline
+    while True:
+        if reset is not None and reset.is_set():
+            return False
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            return False
+        if event.wait(min(0.05, remaining)):
+            return True
 
 
 """Bounds for the upstream model call itself. Hermes 110s-per-turn came from its own call
@@ -581,7 +625,7 @@ def build_agent_class():
                 future.cancel()
                 raise RuntimeError("ACP tool update failed") from None
 
-        def _wire_turn_callbacks(self, state, session_id, conn, loop):
+        def _wire_turn_callbacks(self, state, session_id, conn, loop, first_output=None):
             run = active_run.get()
             if run is None:
                 raise RuntimeError("A host run is required")
@@ -594,6 +638,12 @@ def build_agent_class():
             text_cb = make_message_cb(conn, session_id, loop, state.message_ids) if conn else None
             thought_cb = make_thinking_cb(conn, session_id, loop, state.message_ids) if conn else None
 
+            def produced():
+                # Any text/reasoning/tool callback is real model output: it satisfies the
+                # first-token deadline (stream-start / metadata frames never reach here).
+                if first_output is not None:
+                    first_output.set()
+
             def stream(text):
                 if not (run.may_stream() and text_cb):
                     return
@@ -602,15 +652,18 @@ def build_agent_class():
                     # rejected your API key … Provider said: HTTP 401: …"): the
                     # classified turn error carries it, not an assistant bubble.
                     return
+                produced()
                 safe = redact(text, run.config.gateway.capability)
                 cbs.streamed = cbs.streamed or bool(safe)
                 text_cb(safe)
 
             def reasoning(text):
+                produced()
                 if run.may_stream() and thought_cb:
                     thought_cb(redact(text, run.config.gateway.capability))
 
             def start(call_id, name, args):
+                produced()
                 name = aliases.canonical(name)
                 safe_args = redact(copy.deepcopy(args), run.config.gateway.capability)
                 update = ToolCallStart(session_update="tool_call", tool_call_id=call_id,
@@ -663,7 +716,8 @@ def build_agent_class():
             except Exception:
                 run.fail("ACP tool result could not be delivered")
 
-        def _observe_turn(self, state, config: HostPrompt, uses, *, finished: bool, failure: str | None) -> None:
+        def _observe_turn(self, state, config: HostPrompt, uses, *, finished: bool, failure: str | None,
+                          had_output: bool = False) -> None:
             """Feed this turn's model outcome into the breaker (QA1102-06).
 
             Each recorded Hermes switch means the model before it failed: the turn's applied
@@ -689,7 +743,13 @@ def build_agent_class():
                 key = _breaker_key(agent, previous)
                 if failure is not None:
                     if failure in _BREAKER_CATEGORIES:
-                        breaker_fail(key, "quota" if failure in _QUOTA_CATEGORIES else "unavailable", now)
+                        reason = "quota" if failure in _QUOTA_CATEGORIES else "unavailable"
+                        if had_output:
+                            # The model already answered before dying mid-stream: one
+                            # consecutive failure, no cooldown, and the error still propagates.
+                            breaker_count(key, reason, now)
+                        else:
+                            breaker_fail(key, reason, now)
                     elif (entry := _MODEL_BREAKERS.get(key)) is not None:
                         # Any terminal outcome releases the half-open probe for the next turn.
                         entry["probing"] = False
@@ -709,6 +769,94 @@ def build_agent_class():
             state.history = _deep_clean_history(state.history)
             _breaker_log({"type": "model-fallback", "event": "rejected-retry", "model": applied,
                           "kernel": "hermes-adapter"})
+
+        async def _retry_turn_model(self, state, config: HostPrompt, tried: set[str]) -> bool:
+            """Switch the session to the next healthy model after a first-token timeout.
+
+            The just-failed model's breaker is already open, so pick_turn_model orders the
+            configured fallbacks first; models this turn already tried are skipped so a turn
+            with no healthy candidate ends instead of dialling a dead model again.
+            """
+            agent = state.agent
+            for model_id, cooled_reason in pick_turn_model(agent, config):
+                if model_id in tried:
+                    continue
+                try:
+                    response = await super().set_session_model(model_id=model_id, session_id=state.session_id)
+                except Exception:
+                    response = None
+                if response is None:
+                    tried.add(model_id)
+                    if model_id != config.model_id:
+                        breaker_fail(_breaker_key(agent, model_id), "unavailable", _now())
+                    continue
+                self._host_models[state.session_id] = model_id
+                agent._chisabot_turn_model = model_id
+                agent._chisabot_breaker_skip = (model_id, cooled_reason) if model_id != config.model_id else None
+                apply_model_controls(agent, config, self._controls(), model_id)
+                # set_session_model may rebuild the tool surface; re-pin the host's.
+                installed = self._host_tools.get(state.session_id) or set()
+                with session_tool_scope(state.session_id):
+                    agent.tools = registry.get_definitions(installed, quiet=True)
+                agent.valid_tool_names = {t["function"]["name"] for t in agent.tools}
+                return True
+            return False
+
+        async def _bounded_turn(self, state, config: HostPrompt, ctx, execute,
+                                first_output: threading.Event, attempt_reset: threading.Event):
+            """Run one turn; every model attempt is bounded by the first-token deadline.
+
+            An attempt that produces no text/reasoning/tool output within
+            CHISABOT_FIRST_TOKEN_TIMEOUT_S (default 30, 0 disables) is interrupted,
+            counted as a breaker failure, and the turn retries on the next healthy
+            fallback. Once real output arrives the attempt runs unbounded. A request the
+            endpoint rejects (400 / context too long) is retried once on the same model with
+            cleaned history inside ``execute``: the rejection is a response, not a hang, so
+            that retry re-arms its own deadline window and never reaches the breaker.
+            """
+            loop = asyncio.get_running_loop()
+            deadline = _first_token_timeout_s()
+            tried: set[str] = set()
+            while True:
+                applied = str(getattr(state.agent, "_chisabot_turn_model", None) or config.model_id)
+                tried.add(applied)
+                future = loop.run_in_executor(None, ctx.run, execute)
+                if deadline <= 0:
+                    return await future
+                while True:
+                    waiter = asyncio.ensure_future(asyncio.to_thread(_wait_first_output, first_output,
+                                                                     deadline, attempt_reset))
+                    done, _pending = await asyncio.wait({future, waiter},
+                                                        return_when=asyncio.FIRST_COMPLETED)
+                    if future in done:
+                        first_output.set()  # Release the waiter thread promptly.
+                        return future.result()
+                    if waiter.result():
+                        return await future
+                    if attempt_reset.is_set():
+                        # execute() started its one cleanup retry: a fresh attempt on the
+                        # same model gets a fresh deadline window.
+                        attempt_reset.clear()
+                        continue
+                    break
+                # Hung upstream: interrupt the call, count a breaker failure, retry on a fallback.
+                try:
+                    request_hard_interrupt(state.agent)
+                except Exception:
+                    pass
+                try:
+                    await future
+                except Exception:
+                    pass
+                breaker_fail(_breaker_key(state.agent, applied), "unavailable", _now())
+                _breaker_log({"type": "model-fallback", "event": "primary-timeout", "model": applied,
+                              "timeoutSeconds": round(deadline), "kernel": "hermes-adapter"})
+                if not await self._retry_turn_model(state, config, tried):
+                    raise acp.RequestError(-32603, failure_message("timeout"))
+                if state.cancel_event:
+                    state.cancel_event.clear()
+                first_output.clear()
+                attempt_reset.clear()
 
         def _run_agent_turn(self, **kwargs):
             run = active_run.get()
@@ -773,11 +921,14 @@ def build_agent_class():
                                 # 压缩历史后用主模型重试一次；再不行才落到备用 / 报错，且只重试这一次。
                                 if attempts == 0 and run.may_stream() and failure_category(error=error) in _RETRY_ONCE_CATEGORIES:
                                     attempts += 1
+                                    # 拒单是作答不是挂起：重试作为新一次尝试领新的首字窗口。
+                                    attempt_reset.set()
                                     self._prime_rejected_retry(state, config)
                                     continue
                                 raise
                             if attempts == 0 and run.may_stream() and turn_failure(result) in _RETRY_ONCE_CATEGORIES:
                                 attempts += 1
+                                attempt_reset.set()
                                 self._prime_rejected_retry(state, config)
                                 continue
                             # QA1102-13：这轮一个工具都没调、回复却在承诺「先去查/先做」——
@@ -801,9 +952,12 @@ def build_agent_class():
                                                     abandoned=True)
 
                 try:
-                    cbs = self._wire_turn_callbacks(state, session_id, conn, loop)
+                    first_output = threading.Event()
+                    attempt_reset = threading.Event()
+                    cbs = self._wire_turn_callbacks(state, session_id, conn, loop, first_output)
                     ctx = contextvars.copy_context()
-                    result = await loop.run_in_executor(None, ctx.run, execute)
+                    result = await self._bounded_turn(state, config, ctx, execute, first_output,
+                                                      attempt_reset)
                     if run.fatal_error:
                         raise acp.RequestError(-32603, run.fatal_error)
                     if not isinstance(result, dict):
@@ -812,7 +966,7 @@ def build_agent_class():
                     failed_category = turn_failure(result)
                     self._observe_turn(state, config, uses,
                                        finished=failed_category is None and not result.get("interrupted"),
-                                       failure=failed_category)
+                                       failure=failed_category, had_output=first_output.is_set())
                     history = result.get("messages")
                     if isinstance(history, list):
                         history = copy.deepcopy(history)
@@ -863,7 +1017,8 @@ def build_agent_class():
                     try:
                         self._observe_turn(state, config,
                                            list(getattr(state.agent, "_chisabot_fallback_uses", None) or []),
-                                           finished=False, failure=failure_category(error=error))
+                                           finished=False, failure=failure_category(error=error),
+                                           had_output=first_output.is_set())
                     except Exception:
                         pass
                     # Only a fixed category sentence leaves the process, never the provider's text.

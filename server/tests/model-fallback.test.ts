@@ -465,6 +465,88 @@ describe("model fallback on quota errors", () => {
       expect(signal?.aborted).toBe(true);
     });
 
+    test("stream-start + response-metadata then hang still hits the deadline; probe rounds are bounded too", async () => {
+      let signal: AbortSignal | undefined;
+      const primary = {
+        modelId: "p",
+        calls: 0,
+        async doStream(options: { abortSignal?: AbortSignal }) {
+          this.calls++;
+          signal = options.abortSignal;
+          return {
+            stream: new ReadableStream({
+              start(c) {
+                // @ai-sdk/openai 的 Responses 流在 response.created 就发 response-metadata，之后可以一直挂着。
+                c.enqueue({ type: "stream-start" });
+                c.enqueue({ type: "response-metadata", id: "resp-1", modelId: "p" });
+              },
+            }),
+          };
+        },
+      };
+      const backup = fakeModel("b", async () => ({ ok: "b" }));
+      const logs: Record<string, unknown>[] = [];
+      let t = 1_000;
+      const wrapped = fallbackLanguageModel(primary, "c/p", {
+        candidates: async () => ["c/b"],
+        build: () => backup.model,
+        now: () => t,
+        log: (l) => logs.push(l),
+        firstOutputMs: 30,
+      });
+      expect(await wrapped.doStream({})).toEqual({ ok: "b" });
+      expect(primary.calls).toBe(1);
+      expect(signal?.aborted).toBe(true);
+      expect(logs.some((l) => l.event === "primary-timeout")).toBe(true);
+      expect(coolingDown("c/p", t)).toBe(true);
+      // 冷却过后的半开探测同样受首字期限约束：再挂起就再冷却（退避翻倍）。
+      t += 61_000;
+      expect(await wrapped.doStream({})).toEqual({ ok: "b" });
+      expect(primary.calls).toBe(2);
+      expect(logs.filter((l) => l.event === "primary-timeout").at(-1)).toMatchObject({ consecutiveFailures: 2, cooldownSeconds: 120 });
+    });
+
+    test("an error after real output propagates without switching, counts one failure but no cooldown", async () => {
+      let phase: "mid-error" | "request-error" = "mid-error";
+      const primary = {
+        modelId: "p",
+        async doStream() {
+          if (phase === "request-error") throw apiError(503, "service unavailable");
+          return {
+            stream: new ReadableStream({
+              start(c) {
+                c.enqueue({ type: "stream-start" });
+                c.enqueue({ type: "text-delta", delta: "你" });
+                // error() 会清掉排队里的分段，等下游先读到已输出的内容再中途报错。
+                setTimeout(() => c.error(apiError(503, "mid stream 503")), 10);
+              },
+            }),
+          };
+        },
+      };
+      const backup = fakeModel("b", async () => ({ ok: "b" }));
+      const logs: Record<string, unknown>[] = [];
+      const t = 1_000;
+      const wrapped = fallbackLanguageModel(primary, "c/p", {
+        candidates: async () => ["c/b"],
+        build: () => backup.model,
+        now: () => t,
+        log: (l) => logs.push(l),
+        firstOutputMs: 5_000,
+      });
+      const result = (await wrapped.doStream({})) as { stream: ReadableStream<{ type?: string }> };
+      // 错误顺流上抛，不换模型、不进冷却，但记一次连续失败。
+      await expect(parts(result.stream)).rejects.toThrow("mid stream 503");
+      expect(backup.calls.length).toBe(0);
+      expect(coolingDown("c/p", t)).toBe(false);
+      expect(logs.filter((l) => l.event === "stream-error")).toHaveLength(1);
+      expect(logs.find((l) => l.event === "stream-error")).toMatchObject({ model: "c/p", consecutiveFailures: 1 });
+      // 下一次请求级失败把连续失败算到 2，冷却翻成 120s（否则是首次的 60s）。
+      phase = "request-error";
+      expect(await wrapped.doStream({})).toEqual({ ok: "b" });
+      expect(logs.filter((l) => l.event === "primary-unavailable").at(-1)).toMatchObject({ consecutiveFailures: 2, cooldownSeconds: 120 });
+    });
+
     test("a primary that streams in time is untouched: same parts in order, nothing announced", async () => {
       const primary = {
         modelId: "p",

@@ -2282,9 +2282,16 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 ### 101.10 主模型一直不回也换备用模型（`server/src/agents/model-fallback.ts`）
 - 生产证据（10-18）：管理员自检 `codex/gpt-6-luna` 45007 ms 一个字没回、判失败，备用模型一次都没被用上——包装只在主模型**报错**时换，一直不回不算错。
 - 现在：有备用模型可换时，主模型的第一段输出有期限（默认 30 秒，`CHISABOT_MODEL_FIRST_OUTPUT_MS`，0 关闭）：流式算到第一段真正的内容
-  （`stream-start` 不算），非流式算到整个结果。到期中止这次请求、主模型冷却 1 分钟（日志 `primary-timeout`），换下一个候选，对话里照 §61 出「主模型暂时不可用，已改用 X」。
+  （只有 `text-delta` / `reasoning` / `tool-call`（含 `tool-input-*`）算——`stream-start`、`response-metadata`、心跳这类传输帧不算也不续期，
+  @ai-sdk/openai 的 Responses 流在 `response.created` 就发 `response-metadata`，之后可以一直挂着），非流式算到整个结果。
+  到期中止这次请求、主模型冷却 1 分钟（日志 `primary-timeout`），换下一个候选，对话里照 §61 出「主模型暂时不可用，已改用 X」。
   用户点了停止不算超时、不换模型；没配备用模型时不设期限，照旧等。已经开始输出的流不受影响（读到的几段原样放回流的开头）。
-- 回归：`server/tests/model-fallback.test.ts`（卡住的 doGenerate / 只有 stream-start 的流换备用、按时输出的流原样、停止不换、没备用不设期限）。
+  已开始输出后流中途报错：记一次连续失败（下一次真失败的退避更长一档，日志 `stream-error`），但不进冷却、不换模型，错误照上抛。
+- Hermes 适配器（`examples/hermes-agent/chisabot_acp.py`）同样在适配层执行首字期限：`CHISABOT_FIRST_TOKEN_TIMEOUT_S`（默认 30 秒，0 关闭；
+  设了 `CHISABOT_MODEL_FIRST_OUTPUT_MS` 也认）。每一次尝试——首轮和半开探测都算——在期限内没有任何文本 / 推理 / 工具回调输出时，
+  就中断这次上游调用、给熔断器记一次失败（`primary-timeout`），回合换到下一个健康的备用模型继续。
+- 回归：`server/tests/model-fallback.test.ts`（卡住的 doGenerate / 只有 stream-start 的流换备用、metadata 后挂起仍算超时、按时输出的流原样、
+  停止不换、没备用不设期限、中途报错只记失败不冷却）；`examples/hermes-agent/tests`（超时中断换备用、探测受期限约束、中途报错只记不冷却）。
 
 ### 101.11 下载卡片的站内链接不再被当成工作区文件（`lib/chat/workspace-links.ts`）
 - 实测（e2，10-18 05:22）：机器人用 `file_share` 交了文件（聊天里有下载卡片，能下），又在回复里写了「[下载 primes.py](/api/chat-files/<id>)」，

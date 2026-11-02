@@ -91,14 +91,33 @@ class FirstOutputTimeout extends Error {
 type StreamResult = { stream: ReadableStream<{ type?: string }> } & Record<string, unknown>;
 
 /**
+ * 流里算「第一段真正输出」的部分：文本 / 推理增量、工具调用（含流式的 tool-input-*）。stream-start、
+ * response-metadata、start-step、raw、心跳 / keepalive 这类传输帧都不算，也不能给期限续期——
+ * @ai-sdk/openai 的 Responses 流在 response.created 时就发 response-metadata，之后可以一直挂着。
+ */
+function isFirstOutputPart(part: { type?: string } | undefined): boolean {
+  const type = part?.type ?? "";
+  return (
+    type === "text-delta" ||
+    type === "reasoning" ||
+    type === "reasoning-delta" ||
+    type === "tool-call" ||
+    type === "tool-result" ||
+    type.startsWith("tool-input")
+  );
+}
+
+/**
  * 带「第一段输出」期限地调用主模型。到期就中止这次请求、抛 FirstOutputTimeout；调用方自己的中止（用户点了停止）
  * 原样传下去、不当成超时。流式结果把已经读到的几段放回流的开头，下游看到的是同一条流。
+ * onStreamError：已经开始输出（或流途中）再遇到错误时记一下——每次调用最多一回，用来给熔断器记连续失败。
  */
 async function withFirstOutputDeadline(
   call: (options: unknown) => Promise<unknown>,
   options: unknown,
   property: "doStream" | "doGenerate",
   ms: number,
+  onStreamError?: () => void,
 ): Promise<unknown> {
   const parent = (options as { abortSignal?: AbortSignal } | null)?.abortSignal;
   const controller = new AbortController();
@@ -126,6 +145,12 @@ async function withFirstOutputDeadline(
           configurable: true,
           writable: true,
         });
+  let streamErrorNoted = false;
+  const noteStreamError = () => {
+    if (streamErrorNoted || parent?.aborted) return;
+    streamErrorNoted = true;
+    onStreamError?.();
+  };
   try {
     const result = await Promise.race([call(callOptions), deadline]);
     if (
@@ -146,7 +171,8 @@ async function withFirstOutputDeadline(
         break;
       }
       head.push(next.value);
-      if (next.value?.type !== "stream-start") break;
+      if (next.value?.type === "error") noteStreamError();
+      if (isFirstOutputPart(next.value)) break;
     }
     if (!done) streaming = true;
     const stream = new ReadableStream<{ type?: string }>({
@@ -164,10 +190,12 @@ async function withFirstOutputDeadline(
             cleanupParent();
             out.close();
           } else {
+            if (next.value?.type === "error") noteStreamError();
             out.enqueue(next.value);
           }
         } catch (err) {
           cleanupParent();
+          noteStreamError();
           throw err;
         }
       },
@@ -311,6 +339,14 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
   const now = deps.now ?? Date.now;
   const log = deps.log ?? ((line) => console.log(JSON.stringify(line)));
   const target = model as unknown as Model;
+  /**
+   * 已经开始输出后流中途报错：给这个模型记一次连续失败（下一次真失败的退避更长一档），但不进冷却、
+   * 不换模型——错误顺着流原样上抛，这一轮不该被换掉。
+   */
+  const midStreamFailure = (modelId: string) => () => {
+    failures.set(modelId, (failures.get(modelId) ?? 0) + 1);
+    log({ type: "model-fallback", event: "stream-error", model: modelId, consecutiveFailures: failures.get(modelId) });
+  };
   const wrap = (property: "doStream" | "doGenerate") => async (options: unknown) => {
     const primaryCall = (target[property] as Call).bind(model);
     let firstError: unknown = null;
@@ -324,7 +360,7 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
         // 有备用模型可换时才给主模型设「第一段输出」期限（§101.10）；没得换就照旧等它。
         const result =
           deadlineMs > 0 && list.some((id) => id !== primaryId)
-            ? await withFirstOutputDeadline(primaryCall, options, property, deadlineMs)
+            ? await withFirstOutputDeadline(primaryCall, options, property, deadlineMs, midStreamFailure(primaryId))
             : await primaryCall(options);
         // 主模型答上了：探测恢复，连续失败计数清零。
         failures.delete(primaryId);
@@ -379,7 +415,7 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
       try {
         const result =
           deadlineMs > 0
-            ? await withFirstOutputDeadline(call, sent, property, deadlineMs)
+            ? await withFirstOutputDeadline(call, sent, property, deadlineMs, midStreamFailure(id))
             : await call(sent);
         failures.delete(id);
         log({ type: "model-fallback", event: "used", model: primaryId, fallback: id, reason });
