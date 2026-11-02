@@ -1234,6 +1234,74 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(calls, ["magpie-model"])
             self.assertIsNone(response.field_meta)
 
+    def rebuilding_agent_switch(self):
+        """QA1102-13 r1：和 QA 的 rebuilding fake 一样——换模型像真实 _make_agent 那样
+        重建 state.agent，但保留 run_hook / provider / base_url，让行为脚本继续生效。"""
+        server_mod = self.modules["acp_adapter.server"]
+
+        async def replacing(agent_self, model_id, session_id, **kwargs):
+            agent_self.switches.append(model_id)
+            target = agent_self.session_manager.get_session(session_id)
+            old = target.agent
+            fresh = FakeAgent()  # tools=[] / valid_tool_names=∅ / callbacks=None / system=None
+            fresh.run_hook = old.run_hook
+            fresh.provider, fresh.base_url = old.provider, old.base_url
+            fresh.model = model_id
+            target.agent = fresh
+            target.model = model_id
+            return Model()
+
+        return patch.object(server_mod.HermesACPAgent, "set_session_model", replacing)
+
+    async def test_breaker_skip_turn_rebinds_rebuilt_agent(self):
+        # QA1102-13 r1：断路器跳过主模型那一轮——备用模型那次请求也必须带工具和系统提示词，
+        # 哪怕 set_session_model 把整个 agent 换了一个对象。
+        import chisabot_acp
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        chisabot_acp.breaker_fail(("custom", "https://magpie.invalid/v1", "magpie-model"),
+                                "unavailable", chisabot_acp._now())
+        raw = payload()
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with self.rebuilding_agent_switch():
+            response = await self.prompt(state, raw)
+        live = state.agent
+        self.assertEqual(live.model, "backup-a")
+        self.assertEqual(len(live.inputs), 1)
+        inputs = live.inputs[0]
+        self.assertEqual([t["function"]["name"] for t in inputs["tools"]], ["device_list"])
+        self.assertEqual(inputs["system"], "Host identity")
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                         {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+
+    async def test_first_token_timeout_fallback_rebinds_rebuilt_agent(self):
+        # QA1102-13 r1：首 token 超时后同轮换备用——_retry_turn_model 也要把工具面 /
+        # 系统提示词 / 回调绑到重建后的活 agent 上（旧实现全部写进了被丢弃的旧对象）。
+        import chisabot_acp
+        calls = []
+        down = {"magpie-model": True}
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        state.agent.run_hook = self.hanging_turn(down, calls)
+        raw = payload()
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with self.rebuilding_agent_switch():
+            with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.3"}):
+                response = await self.prompt(state, raw)
+        self.assertEqual(calls, ["magpie-model", "backup-a"])
+        live = state.agent
+        self.assertEqual(live.model, "backup-a")
+        inputs = live.inputs[-1]
+        self.assertEqual([t["function"]["name"] for t in inputs["tools"]], ["device_list"])
+        self.assertEqual(inputs["system"], "Host identity")
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                         {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+        # 流式回调也接回了新 agent：备用那句回答是流出来的，不只靠末尾补发。
+        self.assertTrue(any(e[0] == "acp" and e[2].session_update == "agent_message_chunk"
+                            for e in self.events))
+
     def replace_agent_on_switch(self):
         """QA1102-13：原生换模型路径会重建 state.agent（_switch_model → _make_agent），
         不是只改 model 字段。返回一个替换用的 set_session_model。"""

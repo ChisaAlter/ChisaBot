@@ -523,15 +523,47 @@ def build_agent_class():
             return NewSessionResponse(session_id=state.session_id,
                                       field_meta={"chisabotHostTools": 1})
 
+        def _bind_live_agent(self, state, config: HostPrompt, *, applied=None, skip_reason=None,
+                             cbs=None, gate=None):
+            """把宿主的绑定重新落在切换后还活着的 agent 上。
+
+            原生换模型路径 set_session_model → _switch_model → _make_agent 可能整个重建
+            state.agent：切换前绑定在旧对象上的 restrict / 工具面 / 系统提示词 / 模型控制 /
+            流式回调会全部丢掉（QA1102-13 r1：首 token 超时同轮换备用，那次 tools=[] 还没
+            系统提示词）。任何一次模型切换之后都必须经过这里，先重新读一次 state.agent。
+            """
+            agent = state.agent
+            if applied is not None:
+                agent._chisabot_turn_model = applied
+                agent._chisabot_breaker_skip = (applied, skip_reason) if applied != config.model_id else None
+            restrict(agent)
+            apply_call_limits(agent)
+            apply_model_controls(agent, config, self._controls(), applied)
+            installed = self._host_tools.get(state.session_id) or set()
+            with session_tool_scope(state.session_id):
+                agent.tools = registry.get_definitions(installed, quiet=True)
+            agent.valid_tool_names = {t["function"]["name"] for t in agent.tools}
+            if installed and agent.valid_tool_names != installed:
+                raise ProtocolError("Hermes did not expose the complete host tool surface")
+            aliases = self._host_aliases.get(state.session_id)
+            if aliases is not None:
+                agent.ephemeral_system_prompt = aliases.text(config.system_prompt)
+                if callable(invalidate := getattr(agent, "_invalidate_system_prompt", None)):
+                    invalidate()
+            if cbs is not None and callable(getattr(cbs, "attach", None)):
+                cbs.attach(agent, gate if gate is not None else getattr(cbs, "gate", None))
+            return agent
+
         async def _configure(self, state, config: HostPrompt):
             session_id = state.session_id
             known_scope = self._host_scopes.get(session_id)
             if known_scope is not None and known_scope != config.scope.session_key:
                 raise ProtocolError("ACP session scope does not match actorId, botId and threadId")
             aliases = tool_aliases(config)
-            agent = state.agent
+            self._host_aliases[session_id] = aliases
             applied, skip_reason = config.model_id, None
-            for model_id, cooled_reason in pick_turn_model(agent, config):
+            for model_id, cooled_reason in pick_turn_model(state.agent, config):
+                agent = state.agent
                 if self._host_models.get(session_id) != model_id or getattr(agent, "model", model_id) != model_id:
                     try:
                         # Native method validates unknown models and passes keep_endpoint=True
@@ -542,7 +574,7 @@ def build_agent_class():
                     if response is None:
                         if model_id != config.model_id:
                             # A fallback Hermes itself rejects is cooled like any broken model.
-                            breaker_fail(_breaker_key(agent, model_id), "unavailable", _now())
+                            breaker_fail(_breaker_key(state.agent, model_id), "unavailable", _now())
                             continue
                         raise ProtocolError("The requested host model was rejected or could not be configured") from None
                     self._host_models[session_id] = model_id
@@ -550,15 +582,6 @@ def build_agent_class():
                 break
             if applied is None:
                 raise ProtocolError("The requested host model could not be configured")
-            # QA1102-13：原生换模型路径 _switch_model → _make_agent 会重建 state.agent——
-            # 循环里拿到的可能已经是被丢弃的旧对象。restrict / 工具注册 / 系统提示词 /
-            # 模型控制必须落在切换后的活 agent 上，先重新读一次。
-            agent = state.agent
-            agent._chisabot_turn_model = applied
-            agent._chisabot_breaker_skip = (applied, skip_reason) if applied != config.model_id else None
-            restrict(agent)
-            apply_call_limits(agent)
-            apply_model_controls(agent, config, self._controls(), applied)
             for name in self._host_tools.pop(session_id, set()):
                 registry.deregister(name, scope=session_id)
             installed = set()
@@ -586,18 +609,16 @@ def build_agent_class():
                         entry = registry.snapshot_registration(internal_name, scope=session_id)
                         if entry is None or entry.handler is not handler or entry.toolset != "chisabot":
                             raise ProtocolError("Hermes rejected a scoped host tool registration")
-                    agent.tools = registry.get_definitions(installed, quiet=True)
-                    agent.valid_tool_names = {t["function"]["name"] for t in agent.tools}
-                    if agent.valid_tool_names != installed:
-                        raise ProtocolError("Hermes did not expose the complete host tool surface")
             except Exception:
                 for name in installed:
                     registry.deregister(name, scope=session_id)
-                restrict(agent)
+                restrict(state.agent)
                 raise ProtocolError("The scoped host tool surface could not be registered") from None
             self._host_tools[session_id] = installed
             self._host_scopes[session_id] = config.scope.session_key
-            self._host_aliases[session_id] = aliases
+            # QA1102-13：原生换模型路径可能重建 state.agent——restrict / 工具面 / 系统提示词 /
+            # 模型控制 / 回调一律通过 _bind_live_agent 落在切换后的活 agent 上。
+            agent = self._bind_live_agent(state, config, applied=applied, skip_reason=skip_reason)
             # QA1102-13 防御：宿主给了工具但活 agent 上没长出任何可调工具——显式失败，
             # 别让模型在没有 tools 数组的情况下静默跑完这一轮（4b323956 曾把配置写进被
             # 换模型重建丢弃的旧 agent，那一轮 tools=[] 还没系统提示词）。
@@ -610,9 +631,6 @@ def build_agent_class():
                                                               files=config.model_files))
             state.queued_prompts.clear()
             state.interrupted_prompt_text = ""
-            agent.ephemeral_system_prompt = aliases.text(config.system_prompt)
-            if callable(invalidate := getattr(agent, "_invalidate_system_prompt", None)):
-                invalidate()
 
         @staticmethod
         def _send_tool(conn, session_id, loop, update):
@@ -631,57 +649,67 @@ def build_agent_class():
                 raise RuntimeError("A host run is required")
             cbs = SimpleNamespace(streamed=False, approval_cb=None, edit_approval_requester=None)
             aliases = self._host_aliases[session_id]
-            agent = state.agent
             if state.message_ids is None:
                 state.message_ids = AssistantMessageIdAllocator()
             state.message_ids.close()
             text_cb = make_message_cb(conn, session_id, loop, state.message_ids) if conn else None
             thought_cb = make_thinking_cb(conn, session_id, loop, state.message_ids) if conn else None
 
-            def produced():
-                # Any text/reasoning/tool callback is real model output: it satisfies the
-                # first-token deadline (stream-start / metadata frames never reach here).
-                if first_output is not None:
-                    first_output.set()
+            def attach(agent, gate):
+                """Pin this turn's callbacks on the agent — again after a switch rebuilt it."""
 
-            def stream(text):
-                if not (run.may_stream() and text_cb):
-                    return
-                if reply_failure_category(text) is not None:
-                    # Hermes narrates a failed model call as reply text ("custom
-                    # rejected your API key … Provider said: HTTP 401: …"): the
-                    # classified turn error carries it, not an assistant bubble.
-                    return
-                produced()
-                safe = redact(text, run.config.gateway.capability)
-                cbs.streamed = cbs.streamed or bool(safe)
-                text_cb(safe)
+                def produced():
+                    # Any text/reasoning/tool callback is real model output: it satisfies the
+                    # first-token deadline (stream-start / metadata frames never reach here).
+                    if gate is not None and gate.live:
+                        gate.event.set()
+                        if gate.overall is not None:
+                            gate.overall.set()
 
-            def reasoning(text):
-                produced()
-                if run.may_stream() and thought_cb:
-                    thought_cb(redact(text, run.config.gateway.capability))
+                def stream(text):
+                    if not (gate.live and run.may_stream() and text_cb):
+                        return
+                    if reply_failure_category(text) is not None:
+                        # Hermes narrates a failed model call as reply text ("custom
+                        # rejected your API key … Provider said: HTTP 401: …"): the
+                        # classified turn error carries it, not an assistant bubble.
+                        return
+                    produced()
+                    safe = redact(text, run.config.gateway.capability)
+                    cbs.streamed = cbs.streamed or bool(safe)
+                    text_cb(safe)
 
-            def start(call_id, name, args):
-                produced()
-                name = aliases.canonical(name)
-                safe_args = redact(copy.deepcopy(args), run.config.gateway.capability)
-                update = ToolCallStart(session_update="tool_call", tool_call_id=call_id,
-                                       title=name, kind="other", status="in_progress", raw_input=safe_args,
-                                       field_meta={"name": name, "chisabot": {"version": 1, "callId": call_id, "name": name,
-                                                                               "inputComplete": True}})
-                run.start(call_id, name, args,
-                          lambda: self._send_tool(conn, session_id, loop, update))
+                def reasoning(text):
+                    produced()
+                    if gate.live and run.may_stream() and thought_cb:
+                        thought_cb(redact(text, run.config.gateway.capability))
 
-            def complete(call_id, name, args, result):
-                self._complete_tool(run, conn, loop, call_id, aliases.canonical(name), result)
+                def start(call_id, name, args):
+                    produced()
+                    name = aliases.canonical(name)
+                    safe_args = redact(copy.deepcopy(args), run.config.gateway.capability)
+                    update = ToolCallStart(session_update="tool_call", tool_call_id=call_id,
+                                           title=name, kind="other", status="in_progress", raw_input=safe_args,
+                                           field_meta={"name": name, "chisabot": {"version": 1, "callId": call_id, "name": name,
+                                                                                   "inputComplete": True}})
+                    run.start(call_id, name, args,
+                              lambda: self._send_tool(conn, session_id, loop, update))
 
-            # Default progress/step callbacks manufacture IDs; retain only text/reasoning.
-            agent.tool_progress_callback = None
-            agent.step_callback = None
-            agent.thinking_callback = None
-            agent.reasoning_callback, agent.stream_delta_callback = reasoning, stream
-            agent.tool_start_callback, agent.tool_complete_callback = start, complete
+                def complete(call_id, name, args, result):
+                    self._complete_tool(run, conn, loop, call_id, aliases.canonical(name), result)
+
+                # Default progress/step callbacks manufacture IDs; retain only text/reasoning.
+                agent.tool_progress_callback = None
+                agent.step_callback = None
+                agent.thinking_callback = None
+                agent.reasoning_callback, agent.stream_delta_callback = reasoning, stream
+                agent.tool_start_callback, agent.tool_complete_callback = start, complete
+
+            gate = SimpleNamespace(event=first_output or threading.Event(), live=True,
+                                   overall=first_output)
+            cbs.gate = gate
+            cbs.attach = attach
+            attach(state.agent, gate)
             return cbs
 
         def _complete_tool(self, run, conn, loop, call_id, name, result, *, abandoned=False):
@@ -758,10 +786,13 @@ def build_agent_class():
             except Exception:
                 pass
 
-        def _prime_rejected_retry(self, state, config: HostPrompt) -> None:
+        def _prime_rejected_retry(self, state, config: HostPrompt, cbs=None) -> None:
             """QA1102-14：回到主模型、清掉这一轮里 Hermes 记的换模型记录、换上激进压缩后的历史。"""
-            agent = state.agent
-            applied = getattr(agent, "_chisabot_turn_model", None) or config.model_id
+            applied = getattr(state.agent, "_chisabot_turn_model", None) or config.model_id
+            # 同一条 _bind_live_agent 路径：就算这次重试前 agent 又被重建过，
+            # 绑定也照样落在活对象上。
+            agent = self._bind_live_agent(state, config, applied=applied, cbs=cbs,
+                                          gate=getattr(cbs, "gate", None))
             agent.model = applied
             agent._fallback_index = 0
             agent._chisabot_fallback_uses = []
@@ -770,17 +801,18 @@ def build_agent_class():
             _breaker_log({"type": "model-fallback", "event": "rejected-retry", "model": applied,
                           "kernel": "hermes-adapter"})
 
-        async def _retry_turn_model(self, state, config: HostPrompt, tried: set[str]) -> bool:
+        async def _retry_turn_model(self, state, config: HostPrompt, tried: set[str], *,
+                                    cbs=None, gate=None) -> bool:
             """Switch the session to the next healthy model after a first-token timeout.
 
             The just-failed model's breaker is already open, so pick_turn_model orders the
             configured fallbacks first; models this turn already tried are skipped so a turn
             with no healthy candidate ends instead of dialling a dead model again.
             """
-            agent = state.agent
-            for model_id, cooled_reason in pick_turn_model(agent, config):
+            for model_id, cooled_reason in pick_turn_model(state.agent, config):
                 if model_id in tried:
                     continue
+                previous = state.agent
                 try:
                     response = await super().set_session_model(model_id=model_id, session_id=state.session_id)
                 except Exception:
@@ -788,22 +820,22 @@ def build_agent_class():
                 if response is None:
                     tried.add(model_id)
                     if model_id != config.model_id:
-                        breaker_fail(_breaker_key(agent, model_id), "unavailable", _now())
+                        breaker_fail(_breaker_key(state.agent, model_id), "unavailable", _now())
                     continue
                 self._host_models[state.session_id] = model_id
-                agent._chisabot_turn_model = model_id
-                agent._chisabot_breaker_skip = (model_id, cooled_reason) if model_id != config.model_id else None
-                apply_model_controls(agent, config, self._controls(), model_id)
-                # set_session_model may rebuild the tool surface; re-pin the host's.
-                installed = self._host_tools.get(state.session_id) or set()
-                with session_tool_scope(state.session_id):
-                    agent.tools = registry.get_definitions(installed, quiet=True)
-                agent.valid_tool_names = {t["function"]["name"] for t in agent.tools}
+                uses = getattr(previous, "_chisabot_fallback_uses", None)
+                # set_session_model may rebuild state.agent wholesale: re-pin the host's
+                # restrict/tools/system-prompt/controls and this turn's callbacks on the
+                # live object, not on the one the switch discarded (QA1102-13 r1).
+                agent = self._bind_live_agent(state, config, applied=model_id,
+                                              skip_reason=cooled_reason, cbs=cbs, gate=gate)
+                if isinstance(uses, list) and getattr(agent, "_chisabot_fallback_uses", None) is None:
+                    agent._chisabot_fallback_uses = uses
                 return True
             return False
 
-        async def _bounded_turn(self, state, config: HostPrompt, ctx, execute,
-                                first_output: threading.Event, attempt_reset: threading.Event):
+        async def _bounded_turn(self, state, config: HostPrompt, ctx, execute, cbs,
+                                attempt_reset: threading.Event):
             """Run one turn; every model attempt is bounded by the first-token deadline.
 
             An attempt that produces no text/reasoning/tool output within
@@ -817,6 +849,7 @@ def build_agent_class():
             loop = asyncio.get_running_loop()
             deadline = _first_token_timeout_s()
             tried: set[str] = set()
+            gate = cbs.gate
             while True:
                 applied = str(getattr(state.agent, "_chisabot_turn_model", None) or config.model_id)
                 tried.add(applied)
@@ -824,12 +857,12 @@ def build_agent_class():
                 if deadline <= 0:
                     return await future
                 while True:
-                    waiter = asyncio.ensure_future(asyncio.to_thread(_wait_first_output, first_output,
+                    waiter = asyncio.ensure_future(asyncio.to_thread(_wait_first_output, gate.event,
                                                                      deadline, attempt_reset))
                     done, _pending = await asyncio.wait({future, waiter},
                                                         return_when=asyncio.FIRST_COMPLETED)
                     if future in done:
-                        first_output.set()  # Release the waiter thread promptly.
+                        gate.event.set()  # Release the waiter thread promptly.
                         return future.result()
                     if waiter.result():
                         return await future
@@ -851,11 +884,11 @@ def build_agent_class():
                 breaker_fail(_breaker_key(state.agent, applied), "unavailable", _now())
                 _breaker_log({"type": "model-fallback", "event": "primary-timeout", "model": applied,
                               "timeoutSeconds": round(deadline), "kernel": "hermes-adapter"})
-                if not await self._retry_turn_model(state, config, tried):
+                if not await self._retry_turn_model(state, config, tried, cbs=cbs, gate=gate):
                     raise acp.RequestError(-32603, failure_message("timeout"))
                 if state.cancel_event:
                     state.cancel_event.clear()
-                first_output.clear()
+                gate.event.clear()
                 attempt_reset.clear()
 
         def _run_agent_turn(self, **kwargs):
@@ -923,13 +956,13 @@ def build_agent_class():
                                     attempts += 1
                                     # 拒单是作答不是挂起：重试作为新一次尝试领新的首字窗口。
                                     attempt_reset.set()
-                                    self._prime_rejected_retry(state, config)
+                                    self._prime_rejected_retry(state, config, cbs)
                                     continue
                                 raise
                             if attempts == 0 and run.may_stream() and turn_failure(result) in _RETRY_ONCE_CATEGORIES:
                                 attempts += 1
                                 attempt_reset.set()
-                                self._prime_rejected_retry(state, config)
+                                self._prime_rejected_retry(state, config, cbs)
                                 continue
                             # QA1102-13：这轮一个工具都没调、回复却在承诺「先去查/先做」——
                             # 催它现在就调，只多走一步，之后无论说什么都收尾。
@@ -956,7 +989,7 @@ def build_agent_class():
                     attempt_reset = threading.Event()
                     cbs = self._wire_turn_callbacks(state, session_id, conn, loop, first_output)
                     ctx = contextvars.copy_context()
-                    result = await self._bounded_turn(state, config, ctx, execute, first_output,
+                    result = await self._bounded_turn(state, config, ctx, execute, cbs,
                                                       attempt_reset)
                     if run.fatal_error:
                         raise acp.RequestError(-32603, run.fatal_error)
