@@ -28,6 +28,7 @@ const expected: Record<string, string> = {
   model_not_found: "找不到所选模型",
   content_filter: "请求被模型的内容安全策略拦截",
   region: "模型服务商不支持服务器所在地区",
+  invalid_request: "请求被主模型拒绝",
   stream: "模型的连接中途断开了",
 };
 

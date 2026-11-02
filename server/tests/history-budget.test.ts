@@ -96,9 +96,9 @@ function summarizer(calls: Call[], fail?: "throw" | "hang"): Summarize {
 }
 
 describe("Hermes history budget", () => {
-  test("below 70% of the window, or with an unknown window, the history goes out unchanged", async () => {
+  test("below 55% of the window, or under the assumed window when it is unknown, the history goes out unchanged", async () => {
     const history = longTopic(6);
-    for (const contextWindow of [undefined, 0, windowAt(history, 0.69)]) {
+    for (const contextWindow of [undefined, 0, windowAt(history, 0.5)]) {
       const result = await compactHistory({
         threadId: "t",
         runId: `r-${contextWindow}`,
@@ -115,7 +115,7 @@ describe("Hermes history budget", () => {
     }
   });
 
-  test(">70%: old tool results and very long old messages are trimmed, the last two turns stay verbatim, the stored history is untouched", async () => {
+  test(">55%: old tool results and very long old messages are trimmed, the last two turns stay verbatim, the stored history is untouched", async () => {
     const history = longTopic(10);
     const stored = clone(history);
     const calls: Call[] = [];
@@ -124,7 +124,7 @@ describe("Hermes history budget", () => {
       runId: "r1",
       history,
       overheadTokens: OVERHEAD,
-      contextWindow: windowAt(history, 0.78),
+      contextWindow: windowAt(history, 0.62),
       store: createMemoryHistorySummaryStore(),
       summarize: summarizer(calls),
     });
@@ -159,12 +159,12 @@ describe("Hermes history budget", () => {
     expect(history).toEqual(stored);
   });
 
-  test(">85%: this turn only trims and never calls the summary model; the summary is written after the reply and used from the next turn", async () => {
+  test(">70%: this turn only trims and never calls the summary model; the summary is written after the reply and used from the next turn", async () => {
     const history = longTopic(12);
     const stored = clone(history);
     const store = createMemoryHistorySummaryStore();
     const calls: Call[] = [];
-    const window = windowAt(history, 0.9);
+    const window = windowAt(history, 0.8);
     const first = await compactHistory({
       threadId: "t",
       runId: "r1",
@@ -211,8 +211,8 @@ describe("Hermes history budget", () => {
       summarizedTurns: 8,
       beforeTokens: estimate(history),
     });
-    // 摘要后回到 70% 以内，保留的 4 轮就不再裁剪。
-    expect(again.compaction?.afterTokens ?? 0).toBeLessThan(window * 0.7);
+    // 摘要后回到 55% 以内，保留的 4 轮就不再裁剪。
+    expect(again.compaction?.afterTokens ?? 0).toBeLessThan(window * 0.55);
     expect(again.refresh).toBeNull();
     expect(calls).toHaveLength(1);
     expect(history).toEqual(stored);
@@ -227,7 +227,7 @@ describe("Hermes history budget", () => {
         runId,
         history,
         overheadTokens: OVERHEAD,
-        contextWindow: windowAt(history, 0.9),
+        contextWindow: windowAt(history, 0.8),
         store,
         summarize: summarizer(calls),
       });
@@ -316,7 +316,7 @@ describe("Hermes history budget", () => {
         runId,
         history,
         overheadTokens: OVERHEAD,
-        contextWindow: windowAt(history, 0.9),
+        contextWindow: windowAt(history, 0.8),
         store,
         summarize: summarizer(calls),
       });
@@ -357,7 +357,7 @@ describe("Hermes history budget", () => {
         runId: `r-${fail}`,
         history,
         overheadTokens: OVERHEAD,
-        contextWindow: windowAt(history, 0.9),
+        contextWindow: windowAt(history, 0.8),
         store,
         summarize: summarizer(calls, fail),
         timeoutMs: 50,
@@ -384,8 +384,8 @@ describe("Hermes history budget", () => {
       ...before,
       { id: "u11", role: "user", content: "第 11 轮：继续。" } as Message,
     ];
-    // 估算本身只占 65%：不乘系数不会压缩，乘 1.15 的安全系数后约 75%，早一点裁剪。
-    const window = Math.ceil(raw(history) / 0.65);
+    // 估算本身只占 50%：不乘系数不会压缩，乘 1.15 的安全系数后约 58%，早一点裁剪。
+    const window = Math.ceil(raw(history) / 0.5);
     const margin = await compactHistory({
       threadId: "t",
       runId: "m",
@@ -416,9 +416,9 @@ describe("Hermes history budget", () => {
         memo,
         previousUsage: { runId: previousRunId, tokens },
       });
-    // provider 说上一轮正好和估算一样：系数 1，65% 不压缩。
+    // provider 说上一轮正好和估算一样：系数 1，50% 不压缩。
     expect((await run("same", raw(before))).compaction).toBeNull();
-    // provider 说上一轮是估算的 1.2 倍：按 1.2 校准，78% → 裁剪。
+    // provider 说上一轮是估算的 1.2 倍：按 1.2 校准，60% → 裁剪。
     const scaled = await run("more", Math.round(raw(before) * 1.2));
     expect(scaled.compaction?.mode).toBe("trim");
     expect(scaled.compaction?.beforeTokens).toBeGreaterThan(
@@ -440,7 +440,7 @@ describe("Hermes history budget", () => {
     const memo = new HistoryPlanMemo();
     const store = createMemoryHistorySummaryStore();
     const calls: Call[] = [];
-    const window = windowAt(history, 0.9);
+    const window = windowAt(history, 0.8);
     await (
       await compactHistory({
         threadId: "t",
@@ -574,7 +574,7 @@ describe("Hermes history budget", () => {
   });
 
   test("token comparison on the long-topic sample (numbers quoted in the PR)", async () => {
-    // 同一个 30 轮长话题。窗口 200k：约 82%（只裁剪）。窗口 160k：超过 85%——第一次只裁剪并在后台写摘要，
+    // 同一个 30 轮长话题。窗口 250k：约 62–70%（只裁剪）。窗口 200k：超过 70%——第一次只裁剪并在后台写摘要，
     // 下一轮（31 轮）用上摘要。估算都乘了 1.15 的安全系数（没有真实用量校准时的默认）。
     const history = longTopic(30);
     const store = createMemoryHistorySummaryStore();
@@ -583,7 +583,7 @@ describe("Hermes history budget", () => {
       runId: "m",
       history,
       overheadTokens: OVERHEAD,
-      contextWindow: 200_000,
+      contextWindow: 250_000,
       store,
       summarize: summarizer([]),
     });
@@ -592,7 +592,7 @@ describe("Hermes history budget", () => {
       runId: "s1",
       history,
       overheadTokens: OVERHEAD,
-      contextWindow: 160_000,
+      contextWindow: 200_000,
       store,
       summarize: summarizer([]),
     });
@@ -603,7 +603,7 @@ describe("Hermes history budget", () => {
       runId: "s2",
       history: nextHistory,
       overheadTokens: OVERHEAD,
-      contextWindow: 160_000,
+      contextWindow: 200_000,
       store,
       summarize: summarizer([]),
     });
@@ -612,22 +612,22 @@ describe("Hermes history budget", () => {
       JSON.stringify({
         sample: "longTopic(30)",
         rawEstimate: raw(history),
-        trim: { window: 200_000, ...strip(trimmed.compaction) },
+        trim: { window: 250_000, ...strip(trimmed.compaction) },
         overSummaryFirstTurn: {
-          window: 160_000,
+          window: 200_000,
           ...strip(firstTurn.compaction),
         },
         overSummaryNextTurn: {
-          window: 160_000,
+          window: 200_000,
           turns: 31,
           rawEstimate: raw(nextHistory),
           ...strip(nextTurn.compaction),
         },
       }),
     );
+    expect(estimate(history) / 250_000).toBeGreaterThan(0.55);
+    expect(estimate(history) / 250_000).toBeLessThanOrEqual(0.7);
     expect(estimate(history) / 200_000).toBeGreaterThan(0.7);
-    expect(estimate(history) / 200_000).toBeLessThanOrEqual(0.85);
-    expect(estimate(history) / 160_000).toBeGreaterThan(0.85);
     expect(trimmed.compaction?.mode).toBe("trim");
     expect(firstTurn.compaction?.mode).toBe("trim");
     expect(nextTurn.compaction?.mode).toBe("summary");

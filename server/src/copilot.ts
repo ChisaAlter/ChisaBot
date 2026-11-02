@@ -264,8 +264,10 @@ export function connectionLanguageModel(
 }
 
 /** 模型目录（index.ts 接上），给额度用完时找候选模型用（agents/model-fallback.ts）。 */
-let fallbackCatalog: () => Promise<string[]> = async () => [];
-export function setModelFallbackCatalog(catalog: () => Promise<string[]>): void {
+let fallbackCatalog: () => Promise<readonly (string | { id: string; supportsTools?: boolean })[]> = async () => [];
+export function setModelFallbackCatalog(
+  catalog: () => Promise<readonly (string | { id: string; supportsTools?: boolean })[]>,
+): void {
   fallbackCatalog = catalog;
 }
 /** 管理员排好的「备用模型」（设置 → 模型，DESIGN.md §61；index.ts 接上）。 */
@@ -284,6 +286,7 @@ export function fallbackConnectionModel(
     ...(adapt ? { adapt } : {}),
     candidates: fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured()),
     build: (id) => connectionLanguageModel({ ...model, defaultModel: id }, apiKey),
+    supportsFiles: (id) => resolveModelFileSupport(id),
   });
 }
 
@@ -330,6 +333,45 @@ export async function resolveContextWindow(modelId: string): Promise<number | un
       new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
     ]);
     return typeof window === "number" && Number.isFinite(window) && window > 0 ? window : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/**
+ * 模型目录说这一轮模型能不能看图（DESIGN.md §59 supportsImages；index.ts 接上）。
+ * Hermes 内核下桥按它转换历史/当前消息里的图片与文档块（QA1102-14）：false → 文字占位，
+ * undefined → 目录没说就当能看（和识图回退的判断一致），不下发标记。
+ */
+type VisionResolver = (modelId: string) => Promise<boolean | undefined>;
+let visionFor: VisionResolver = async () => undefined;
+export function setModelVisionResolver(resolver: VisionResolver): void {
+  visionFor = resolver;
+}
+export async function resolveModelVisionSupport(modelId: string): Promise<boolean | undefined> {
+  try {
+    const value = await Promise.race([
+      visionFor(modelId),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
+    ]);
+    return typeof value === "boolean" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 目录说这一轮模型能不能收 `file` 文档块（QA1102-14；index.ts 接上）。没说就当不能收。 */
+type FilesResolver = (modelId: string) => Promise<boolean | undefined>;
+let filesFor: FilesResolver = async () => undefined;
+export function setModelFileResolver(resolver: FilesResolver): void {
+  filesFor = resolver;
+}
+export async function resolveModelFileSupport(modelId: string): Promise<boolean | undefined> {
+  try {
+    const value = await Promise.race([
+      filesFor(modelId),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
+    ]);
+    return typeof value === "boolean" ? value : undefined;
   } catch {
     return undefined;
   }
@@ -1189,11 +1231,12 @@ async function hermesKernelAgent(options: {
     signRun: (runId, threadId, previous) => signRun(agent.id, runId, threadId, previous),
     // 备用模型 / 输出上限与内置路径同源：管理员列表 → CHISABOT_MODEL_FALLBACKS → 同平台自动挑选；模型目录的输出上限。
     modelControls: async (modelId) => {
-      const [fallbacks, maxOutputTokens] = await Promise.all([
+      const [fallbacks, maxOutputTokens, supportsImages] = await Promise.all([
         fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured())(modelId).catch(() => [] as string[]),
         resolveOutputLimit(modelId),
+        resolveModelVisionSupport(modelId),
       ]);
-      return { fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS), ...(maxOutputTokens ? { maxOutputTokens } : {}) };
+      return { fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS), ...(maxOutputTokens ? { maxOutputTokens } : {}), ...(supportsImages === undefined ? {} : { supportsImages }) };
     },
     finishedMetadata: (runId) => {
       // 回复已经结束：这时才在后台写摘要（这一轮只裁剪，首字时间不变）。

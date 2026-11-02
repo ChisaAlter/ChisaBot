@@ -85,6 +85,10 @@ class HostPrompt:
     # False when ChisaBot already compacted this run's history (trimmed / summarized older turns):
     # Hermes' own context compression stays off for the run so nothing is compressed twice.
     context_compression: bool | None = None
+    # Catalog capability flags for this turn's model (QA1102-14): False strips image blocks to
+    # text, True keeps standard image_url parts, None means the catalog said nothing (= capable).
+    model_images: bool | None = None
+    model_files: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -289,6 +293,12 @@ def parse_host_prompt(value: Any) -> HostPrompt:
     context_compression = raw_model.get("contextCompression")
     if context_compression is not None and type(context_compression) is not bool:
         raise ProtocolError("chisabot.model.contextCompression must be a boolean")
+    model_images = raw_model.get("supportsImages")
+    model_files = raw_model.get("supportsFiles")
+    if model_images is not None and type(model_images) is not bool:
+        raise ProtocolError("chisabot.model.supportsImages must be a boolean")
+    if model_files is not None and type(model_files) is not bool:
+        raise ProtocolError("chisabot.model.supportsFiles must be a boolean")
     continuation = value.get("continuation", False)
     if type(continuation) is not bool:
         raise ProtocolError("chisabot.continuation must be a boolean")
@@ -304,7 +314,244 @@ def parse_host_prompt(value: Any) -> HostPrompt:
     if capability in model_visible:
         raise ProtocolError("The gateway capability must not occur in model-visible content")
     return HostPrompt(scope, system, history, tuple(tools), Gateway(url.rstrip("/"), capability), model_id, continuation, current,
-                      fallbacks, max_output_tokens, context_compression)
+                      fallbacks, max_output_tokens, context_compression, model_images, model_files)
+
+
+"""QA1102-14: normalize history before every OpenAI-compatible request.
+
+生产事故：一段 ~174k token、154 轮工具调用的历史，DeepSeek（OpenAI 兼容端点）每次请求都
+回 HTTP 400「Invalid input」，param messages.370.content，主模型被判死、每轮都落在备用
+模型上。400 的素材来自历史本身：空 / null content、带不支持块（图片、thinking、
+tool_result）的数组 content、没有结果的 tool_calls、没有对应调用的孤儿 tool 消息、
+单条几百 KB 的 tool 输出。Hermes 把 ``state.history`` 几乎原样发给端点，所以适配器在
+``_configure`` 里先过一遍这个纯函数。
+
+规则：
+- 空 / null / 空白 content：带 tool_calls 的 assistant 保留 None（OpenAI 合法形状，
+  DeepSeek 自己的回包就长这样），其它一律换成占位文本——裸 ``""`` / ``null`` 就是
+  messages.N.content 被判 invalid 的第一种样子；
+- 数组 content：只留文本块，图片 / 文件 / 思考 / tool_use 等换成一句占位，
+  Anthropic 的 tool_result 块取它里面的文本；
+- tool 消息：内容摊平成字符串，超过 ~16k 字符截断并标注——超长 tool 输出是第二种样子；
+- assistant 的 tool_calls 没有对应 tool 结果：补一条合成的 tool 消息（第三种样子；
+  丢弃调用也行，但留下一条「没返回」的结果模型更看得懂）；
+- 孤儿 tool 消息（前面没有匹配的 tool_call，或已应答过）：丢掉。
+"""
+_EMPTY_CONTENT = "[empty]"
+_EMPTY_TOOL_RESULT = "[empty tool result]"
+_MISSING_TOOL_RESULT = "[no tool result: the run ended before this call returned]"
+_TOOL_OUTPUT_MAX_CHARS = 16_000
+_TRUNCATED_NOTE = "...[truncated]"
+
+
+def _flatten_blocks(content: Any) -> str:
+    """数组 content 摊成一段文本：只留文本块，其它块换成占位。"""
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+            continue
+        if not isinstance(block, dict):
+            continue
+        kind = str(block.get("type") or "")
+        if kind in {"text", "input_text", "output_text"} and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+        elif kind == "tool_result":
+            inner = block.get("content")
+            parts.append(inner if isinstance(inner, str) else _flatten_blocks(inner))
+        elif kind in {"image_url", "image", "input_image"}:
+            parts.append("[image]")
+        elif kind in {"file", "input_file", "input_audio", "audio"}:
+            parts.append("[file]")
+        elif kind in {"thinking", "reasoning", "redacted_thinking", "reasoning_content"}:
+            continue
+        elif kind in {"tool_use", "tool_call", "function_call"}:
+            parts.append("[tool call]")
+        else:
+            parts.append(f"[{kind or 'content'}]")
+    return "\n".join(part for part in parts if part)
+
+
+def _content_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content if content.strip() else ""
+    if isinstance(content, list):
+        return _flatten_blocks(content)
+    return ""
+
+
+def _normalize_parts(content: list[Any], images: bool | None, files: bool | None) -> list[dict[str, Any]] | None:
+    """数组 content 里属于标准 OpenAI 形状的多模态块保留（image_url 按识图能力、file 按收文件能力），
+    其余按老规则降级成文本占位。没有多模态块存活时返回 None（调用方收成字符串）。"""
+    parts: list[dict[str, Any]] = []
+    saw_media = False
+    for block in content:
+        if isinstance(block, str):
+            if block.strip():
+                parts.append({"type": "text", "text": block})
+            continue
+        if not isinstance(block, dict):
+            continue
+        kind = str(block.get("type") or "")
+        if kind == "image_url":
+            url = block.get("image_url")
+            if images is not False and isinstance(url, dict) and isinstance(url.get("url"), str) and url["url"].strip():
+                kept: dict[str, Any] = {"type": "image_url", "image_url": {"url": url["url"]}}
+                if isinstance(url.get("detail"), str):
+                    kept["image_url"]["detail"] = url["detail"]
+                parts.append(kept)
+                saw_media = True
+            else:
+                parts.append({"type": "text", "text": "[image]"})
+            continue
+        if kind == "file":
+            body = block.get("file")
+            if files is True and isinstance(body, dict) and (body.get("file_data") or body.get("file_url") or body.get("file_id")):
+                parts.append({"type": "file", "file": dict(body)})
+                saw_media = True
+            else:
+                parts.append({"type": "text", "text": "[file]"})
+            continue
+        flat = _flatten_blocks([block])
+        if flat:
+            parts.append({"type": "text", "text": flat})
+    return parts if saw_media else None
+
+
+def normalize_content(content: Any, *, images: bool | None = None, files: bool | None = None) -> Any:
+    """一条消息 content（字符串 / 块数组）→ 兼容端点收的形状；当前用户消息用（QA1102-14）。"""
+    if not isinstance(content, list):
+        return content
+    parts = _normalize_parts(content, images, files)
+    if parts is not None:
+        return parts
+    return _flatten_blocks(content)
+
+
+def _merge_content(a: Any, b: Any) -> Any:
+    """两条连续同 role 消息的 content 合成一条：摊成块拼接，纯文本收成字符串。"""
+    parts: list[Any] = []
+    for value in (a, b):
+        if isinstance(value, str):
+            if value.strip():
+                parts.append({"type": "text", "text": value})
+        elif isinstance(value, list):
+            parts.extend(item for item in value if item is not None)
+        elif value is not None:
+            parts.append({"type": "text", "text": str(value)})
+    if not parts:
+        return None
+    if all(isinstance(part, dict) and part.get("type") == "text" for part in parts):
+        return "\n\n".join(str(part.get("text") or "") for part in parts if str(part.get("text") or "").strip())
+    return parts
+
+
+def normalize_history(messages: Any, *, images: bool | None = None, files: bool | None = None) -> list[dict[str, Any]]:
+    """把一段 OpenAI 消息数组改成兼容端点一定收的形状。纯函数，输入不被改动。"""
+    if not isinstance(messages, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        row = dict(message)
+        role = row.get("role")
+        if role == "assistant":
+            calls = row.get("tool_calls") if isinstance(row.get("tool_calls"), list) else []
+            row["tool_calls"] = [call for call in calls if isinstance(call, dict)]
+            text = _content_text(row)
+            row["content"] = text if text else (None if row["tool_calls"] else _EMPTY_CONTENT)
+        elif role == "tool":
+            text = _content_text(row) or _EMPTY_TOOL_RESULT
+            row["content"] = (text[:_TOOL_OUTPUT_MAX_CHARS] + _TRUNCATED_NOTE
+                              if len(text) > _TOOL_OUTPUT_MAX_CHARS else text)
+        elif role == "user":
+            parts = _normalize_parts(row["content"], images, files) if isinstance(row.get("content"), list) else None
+            row["content"] = parts if parts is not None else (_content_text(row) or _EMPTY_CONTENT)
+        else:
+            normalized.append(row)
+            continue
+        normalized.append(row)
+    # tool_call / tool 配对：真实结果只在「调用之后、下一条非 tool 消息之前」算数；
+    # 没等到的调用在边界处补一条合成结果，孤儿 tool 消息丢掉。
+    result: list[dict[str, Any]] = []
+    pending: dict[str, bool] = {}
+    answered: set[str] = set()
+
+    def flush() -> None:
+        for cid in list(pending):
+            if cid not in answered:
+                answered.add(cid)
+                result.append({"role": "tool", "tool_call_id": cid, "content": _MISSING_TOOL_RESULT})
+        pending.clear()
+
+    def register(row: dict[str, Any]) -> None:
+        for call in row.get("tool_calls") or []:
+            cid = call.get("id")
+            if isinstance(cid, str) and cid:
+                pending[cid] = True
+
+    for row in normalized:
+        role = row.get("role")
+        if role == "assistant":
+            # 上一个 assistant 的调用还没拿到结果：先在它后面补合成结果再开新 assistant——
+            # 「assistant(c1), assistant(c2), tool(c1)」这种形状端点同样整单拒。
+            flush()
+            previous = result[-1] if result else None
+            if previous is not None and previous.get("role") == "assistant" and not previous.get("tool_calls"):
+                # QA1102-13：连续 assistant 合并成一条（线上历史曾触发 Hermes 修 14 处交替违规）。
+                previous["content"] = _merge_content(previous.get("content"), row.get("content"))
+                if row.get("tool_calls"):
+                    previous["tool_calls"] = list(row["tool_calls"])
+                    register(previous)
+            else:
+                register(row)
+                result.append(row)
+        elif role == "tool":
+            cid = row.get("tool_call_id")
+            if cid in pending and cid not in answered:
+                answered.add(cid)
+                result.append(row)
+        else:
+            flush()
+            previous = result[-1] if result else None
+            if role == "user" and previous is not None and previous.get("role") == "user":
+                # QA1102-13：连续 user 合并成一条——失败的轮次只存了 user 没存 assistant
+                # 回复，下一条 user 接在上一条后面就是交替违规。
+                previous["content"] = _merge_content(previous.get("content"), row.get("content"))
+            else:
+                result.append(row)
+    flush()
+    return result
+
+
+"""QA1102-13：回复承诺了「先去查/先做」却一个工具都没调时，适配器多走一步催它现在调。"""
+_ACTION_NUDGE = "你刚才说要先查/先做——现在就调用工具执行，不要只回复文字说明。"
+_ACTION_PROMISE = re.compile(
+    r"我先(?:去|来|就|马上|现在|帮你)?(?:查|搜|看|找|试|确认|处理|接入|连接|问|弄|下载|打开)|"
+    r"我来(?:查|搜|看|找|确认|处理|接入|连接|搜索|帮你)|"
+    r"让我(?:先|来)?(?:查|搜|看|找|搜索|确认|试|问)|"
+    r"我(?:这就|马上|现在|就|再|帮你)?(?:去|帮你)?(?:查|搜|搜索|看看|看|确认|找|处理|试|弄|问|下载|打开|接入|连接)|"
+    r"\b(?:i(?:'ll|’ll| will)|let me|i'?m (?:going|gonna)\s*to|i am going to)\b"
+    r"[^.!?。！？\n]{0,120}?\b(?:search|look(?:ing)?\s*(?:for|into|up|at)|check|find|fetch|dig|inspect|investigate|open|download|connect|try)\b",
+    re.I,
+)
+"""QA1102-13 r1：已完成 / 过去时的说法——「我下载好了」「我找到了」「I've downloaded it」——
+不是承诺，永不催。出现这些标记就一票否决。"""
+_ACTION_DONE = re.compile(
+    r"了|好了|已经|已完成|完成|找到[了得]?|查到|办妥|搞定|处理好|下好|"
+    r"\b(?:i'?ve|i have|already|done|finished|completed|downloaded|found|checked|searched|handled|got it)\b",
+    re.I,
+)
+
+
+def action_promise(text: Any) -> bool:
+    """这段回复是不是「承诺行动」的话术：只有未来时承诺才算——已完成 / 过去时一律不催。"""
+    return (isinstance(text, str) and not _ACTION_DONE.search(text)
+            and bool(_ACTION_PROMISE.search(text)))
 
 
 def redact(value: Any, secret: str) -> Any:
@@ -504,13 +751,19 @@ active_run: ContextVar[RunState | None] = ContextVar("chisabot_host_run", defaul
 
 # Hermes FailoverReason values that mean "this model's quota / rate limit is used up". Everything
 # else that makes Hermes switch (overloaded, server_error, timeout, ...) is "temporarily unavailable".
-# These are the two reasons ChisaBot's existing backup-model notice distinguishes.
 _QUOTA_REASONS = frozenset({"billing", "rate_limit", "upstream_rate_limit", "quota", "model_entitlement"})
+# QA1102-14：还有一类——主模型拒绝了这一次请求本身（400 参数非法 / 上下文超长 / 内容拦截）。
+# 模型没病，所以叫 "rejected"：不该进冷却 / 断路器，提示语也另有一句（「请求被主模型拒绝」）。
+_REJECTED_REASONS = frozenset({"bad_request", "invalid_request", "malformed_request", "context_overflow",
+                               "context_length", "payload_too_large", "long_context_tier",
+                               "content_policy_blocked", "provider_policy_blocked"})
 
 
 def fallback_reason(reason: Any) -> str:
     value = str(getattr(reason, "value", reason) or "").strip().lower()
-    return "quota" if value in _QUOTA_REASONS else "unavailable"
+    if value in _QUOTA_REASONS:
+        return "quota"
+    return "rejected" if value in _REJECTED_REASONS else "unavailable"
 
 
 def fallback_use(primary: str, fallback: Any, reason: Any) -> dict[str, str] | None:
@@ -534,6 +787,7 @@ _FAILURE_MESSAGES = {
     "model_not_found": "Hermes model call failed: model not found (HTTP 404)",
     "content_filter": "Hermes model call failed: content_filter",
     "region": "Hermes model call failed: unsupported_region (HTTP 403)",
+    "invalid_request": "Hermes model call failed: invalid_request (HTTP 400)",
     "stream": "Hermes model call failed: stream error",
 }
 # Hermes' FailoverReason values (agent/error_classifier.py) folded into the categories above.
@@ -546,6 +800,8 @@ _REASONS = {
     "overloaded": "provider_unavailable", "server_error": "provider_unavailable", "upstream_blocked": "provider_unavailable",
     "model_not_found": "model_not_found",
     "content_policy_blocked": "content_filter", "provider_policy_blocked": "content_filter",
+    "bad_request": "invalid_request", "invalid_request": "invalid_request",
+    "malformed_request": "invalid_request",
     "incomplete_response": "stream",
 }
 # 403 is not always a key problem: providers also answer 403 for a blocked region or a content
@@ -664,6 +920,10 @@ def failure_category(reason: Any = None, error: BaseException | None = None) -> 
                     return _STATUS[status]
                 if 500 <= status < 600:
                     return "provider_unavailable"
+                if status in (400, 422):
+                    # QA1102-14：400/422 是「这一次请求本身被拒」（参数非法 / 上下文超长），
+                    # 不是模型坏了——归 invalid_request，绝不进冷却 / 断路器。
+                    return _from_body(_error_body(error)) or "invalid_request"
                 if 400 <= status < 500:
                     return _from_body(_error_body(error)) or "unknown"
             sdk = _sdk_type(error)
@@ -702,6 +962,8 @@ _PROSE_HINTS = (
     ("region", _REGION),
     ("timeout", re.compile(r"timed out|timeout|deadline", re.I)),
     ("provider_unavailable", re.compile(r"can't be reached|could not be reached|unreachable|service unavailable|overloaded", re.I)),
+    # 放最后：前面几条更具体（context 过长、限流…），都认不出才是「请求本身被拒」。
+    ("invalid_request", re.compile(r"invalid[_ ]?(input|request|param)|bad request|malformed", re.I)),
 )
 _HTTP_STATUS = re.compile(r"\bHTTP (\d{3})\b")
 
@@ -722,6 +984,11 @@ def reply_failure_category(text: Any) -> str | None:
             return _from_403(text)
         if status in _STATUS:
             return _STATUS[status]
+        if status in (400, 422):
+            for category, pattern in _PROSE_HINTS:
+                if pattern.search(text):
+                    return category
+            return "invalid_request"
         if status >= 500:
             return "provider_unavailable"
     for category, pattern in _PROSE_HINTS:

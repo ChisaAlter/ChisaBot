@@ -485,7 +485,7 @@ export function connectServiceTools(
       name: "connect_service",
       ref: "web/connect_service",
       description:
-        "查看或主动开启外部服务连接器（填「全部」可列出当前所有内置连接器、已启用 MCP 插件、官方目录与账号状态；或填具体服务名如 Gmail、日历、GitHub、Notion、Google Drive、腾讯 ima 等）。当用户问「你现在有什么连接器」「能连什么」「有 Gmail / Notion 连接器吗」或让你连接/接入/开启某个服务时，第一步就调用它。",
+        "查看或主动开启外部服务连接器（填「全部」可列出当前所有内置连接器、已启用 MCP 插件、官方目录与账号状态；或填具体服务名如 Gmail、日历、GitHub、Notion、Google Drive、腾讯 ima 等）。当用户问「你现在有什么连接器」「能连什么」「有 Gmail / Notion 连接器吗」或让你连接/接入/开启某个服务时，第一步就调用它。用户指了一个你不认识的服务名也把名字原样传进来：查不到连接器时它会联网搜官方接法，比反问用户「X 是什么」有用。",
       parameters: z.object({
         service: z
           .string()

@@ -198,6 +198,7 @@ describe("Hermes host runtime", () => {
     expect(hermesWireModel("m", { fallbacks: [], maxOutputTokens: 0 })).toEqual({ id: "m" });
     expect(hermesWireModel("m", { fallbacks: Array.from({ length: 12 }, (_, i) => `b${i}`) }).fallbacks).toHaveLength(8);
     expect(acceptedHermesFallback({ from: "m", to: "b", reason: "overloaded" }, { id: "m", fallbacks: ["b"] })).toEqual({ from: "m", to: "b", reason: "unavailable" });
+    expect(acceptedHermesFallback({ from: "m", to: "b", reason: "rejected" }, { id: "m", fallbacks: ["b"] })).toEqual({ from: "m", to: "b", reason: "rejected" });
     expect(acceptedHermesFallback({ from: "x", to: "b" }, { id: "m", fallbacks: ["b"] })).toBeNull();
   });
 

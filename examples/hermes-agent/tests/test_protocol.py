@@ -453,8 +453,8 @@ class FailureCategoryTests(unittest.TestCase):
             def __init__(self, body):
                 super().__init__("bad request")
                 self.body = body
-        # Not JSON-serializable: bytes and objects inside a dict.
-        self.assertEqual(failure_category(error=BadRequestError({"raw": b"\xff", "obj": object()})), "unknown")
+        # Not JSON-serializable: bytes and objects inside a dict. A bare 400 is a rejected request.
+        self.assertEqual(failure_category(error=BadRequestError({"raw": b"\xff", "obj": object()})), "invalid_request")
         self.assertEqual(failure_category(error=BadRequestError({"error": {"code": "context_length_exceeded"}, "raw": b"x"})),
                          "context_length")
         class Hostile(Exception):
@@ -525,3 +525,196 @@ class FailureCategoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NormalizeHistoryTests(unittest.TestCase):
+    """QA1102-14：发给 OpenAI 兼容端点（DeepSeek）的历史先规范化。"""
+
+    def test_empty_and_null_content_get_placeholders_but_tool_call_assistant_keeps_null(self):
+        from chisabot_protocol import normalize_history
+        out = normalize_history([
+            {"role": "user", "content": None},
+            {"role": "assistant", "content": None},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": ""},
+            {"role": "user", "content": "   "},
+        ])
+        self.assertEqual(out[0]["content"], "[empty]")
+        # 连续 assistant 合并成一条：空壳 content 与调用并入同一个 assistant 行。
+        self.assertEqual(out[1]["content"], "[empty]")
+        self.assertEqual([c["id"] for c in out[1]["tool_calls"]], ["c1"])
+        self.assertEqual(out[2]["content"], "[empty tool result]")
+        self.assertEqual(out[3]["content"], "[empty]")
+        self.assertEqual([row["role"] for row in out], ["user", "assistant", "tool", "user"])
+
+    def test_array_content_keeps_image_url_but_flattens_the_rest(self):
+        from chisabot_protocol import normalize_history
+        out = normalize_history([
+            {"role": "user", "content": [{"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "https://x/y.png"}},
+                {"type": "thinking", "thinking": "hidden"}, {"type": "tool_use", "id": "t1"}]},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "t1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "t1", "content": [{"type": "tool_result", "content": [{"type": "text", "text": "inner"}]}]},
+        ])
+        self.assertEqual(out[0]["content"], [{"type": "text", "text": "look"},
+            {"type": "image_url", "image_url": {"url": "https://x/y.png"}}, {"type": "text", "text": "[tool call]"}])
+        self.assertEqual(out[2]["content"], "inner")
+
+    def test_image_url_and_file_blocks_follow_model_capability(self):
+        from chisabot_protocol import normalize_content, normalize_history
+        image = {"type": "image_url", "image_url": {"url": "https://x/y.png"}}
+        raw = [{"role": "user", "content": [{"type": "text", "text": "look"}, image]}]
+        self.assertEqual(normalize_history(raw)[0]["content"][1], image)
+        out = normalize_history(raw, images=False)
+        self.assertEqual(out[0]["content"], "look\n[image]")
+        file = {"type": "file", "file": {"file_data": "data:application/pdf;base64,QUJD", "filename": "a.pdf"}}
+        raw = [{"role": "user", "content": [{"type": "text", "text": "read"}, file]}]
+        self.assertEqual(normalize_history(raw)[0]["content"], "read\n[file]")
+        self.assertEqual(normalize_history(raw, files=True)[0]["content"][1], file)
+        # 当前用户消息同样规则：不识图时图片降级占位，其它形状原样。
+        content = [{"type": "text", "text": "look"}, image]
+        self.assertEqual(normalize_content(content)[1], image)
+        self.assertEqual(normalize_content(content, images=False), "look\n[image]")
+        self.assertEqual(normalize_content("plain"), "plain")
+
+    def test_consecutive_same_role_rows_merge_and_calls_stay_valid(self):
+        from chisabot_protocol import normalize_history
+        out = normalize_history([
+            {"role": "user", "content": "one"},
+            {"role": "user", "content": "two"},
+            {"role": "user", "content": [{"type": "text", "text": "three"},
+                {"type": "image_url", "image_url": {"url": "https://x/y.png"}}]},
+            {"role": "assistant", "content": "a"},
+            {"role": "assistant", "content": "b"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+            {"role": "user", "content": "next"},
+        ])
+        self.assertEqual([row["role"] for row in out], ["user", "assistant", "tool", "user"])
+        self.assertEqual(out[0]["content"], [{"type": "text", "text": "one\n\ntwo"},
+            {"type": "text", "text": "three"}, {"type": "image_url", "image_url": {"url": "https://x/y.png"}}])
+        self.assertEqual(out[1]["content"], "a\n\nb")
+        self.assertEqual([c["id"] for c in out[1]["tool_calls"]], ["c1"])
+        self.assertEqual(out[2]["tool_call_id"], "c1")
+        # assistant(c1), assistant(c2), tool(c1)：前一个调用先补合成结果，迟到的真结果丢掉。
+        out = normalize_history([
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c2", "type": "function", "function": {"name": "y", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "late real result"},
+        ])
+        self.assertEqual([row["role"] for row in out], ["assistant", "tool", "assistant", "tool"])
+        self.assertEqual(out[1]["tool_call_id"], "c1")
+        self.assertIn("no tool result", out[1]["content"])
+        self.assertEqual(out[3]["tool_call_id"], "c2")
+
+    def test_model_capability_flags_parse_as_strict_booleans(self):
+        raw = payload()
+        self.assertIsNone(parse_host_prompt(raw).model_images)
+        self.assertIsNone(parse_host_prompt(raw).model_files)
+        raw["model"].update({"supportsImages": False, "supportsFiles": True})
+        config = parse_host_prompt(raw)
+        self.assertIs(config.model_images, False)
+        self.assertIs(config.model_files, True)
+        for bad in ("yes", 0, 1):
+            broken = payload()
+            broken["model"]["supportsImages"] = bad
+            with self.assertRaises(ProtocolError):
+                parse_host_prompt(broken)
+
+    def test_action_promise_matches_intent_not_plain_answers(self):
+        from chisabot_protocol import action_promise
+        for text in ("我先去查一下再回答你", "我来查一下 ima 的接入文档", "让我搜索一下官方文档",
+                     "我这就去查", "I'll search the docs and get back", "let me check the official site",
+                     "I'm going to look for it"):
+            with self.subTest(text=text):
+                self.assertTrue(action_promise(text))
+        for text in ("这是答案", "ima 是一个知识管理平台", "I checked already: it works", None, 42,
+                     "你可以去查官方文档"):
+            with self.subTest(text=text):
+                self.assertFalse(action_promise(text))
+
+    def test_action_promise_future_tense_only(self):
+        # QA1102-13 r1：已完成 / 过去时的说法永不催；未来时承诺才催。
+        from chisabot_protocol import action_promise
+        for text in ("我马上处理", "I'll look into it", "我现在去处理", "我马上帮你查一下"):
+            with self.subTest(text=text):
+                self.assertTrue(action_promise(text))
+        for text in ("我下载好了", "我找到了接入文档", "已经查完了", "I've downloaded it",
+                     "I found it", "done"):
+            with self.subTest(text=text):
+                self.assertFalse(action_promise(text))
+
+    def test_tool_output_is_capped_and_orphans_and_missing_results_fixed(self):
+        from chisabot_protocol import normalize_history
+        out = normalize_history([
+            {"role": "tool", "tool_call_id": "ghost", "content": "orphan"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "a1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                {"id": "a2", "type": "function", "function": {"name": "y", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "a1", "content": "r" * 20_000},
+            {"role": "tool", "tool_call_id": "a1", "content": "duplicate"},
+            {"role": "user", "content": "next"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "b1", "type": "function", "function": {"name": "z", "arguments": "{}"}}]},
+        ])
+        roles = [row["role"] for row in out]
+        # orphan dropped; duplicate answer dropped; a2 and b1 got synthetic results at the boundaries
+        self.assertEqual(roles, ["assistant", "tool", "tool", "user", "assistant", "tool"])
+        self.assertTrue(out[1]["content"].startswith("r" * 100))
+        self.assertLessEqual(len(out[1]["content"]), 16_000 + len("...[truncated]"))
+        self.assertTrue(out[1]["content"].endswith("...[truncated]"))
+        self.assertEqual(out[2]["tool_call_id"], "a2")
+        self.assertIn("no tool result", out[2]["content"])
+        self.assertEqual(out[5]["tool_call_id"], "b1")
+
+    def test_long_agent_history_370_rows_normalizes_completely(self):
+        from chisabot_protocol import normalize_history
+        history = [{"role": "user", "content": "start"}]
+        for index in range(154):
+            history += [
+                {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": f"c{index}", "type": "function", "function": {"name": "dev", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": f"c{index}", "content": "x" * (30_000 if index % 17 == 0 else 20)},
+            ]
+        out = normalize_history(history)
+        self.assertEqual(len(out), 1 + 154 * 2)
+        for row in out:
+            if row["role"] == "assistant" and row.get("tool_calls"):
+                ids = {call["id"] for call in row["tool_calls"]}
+                after = out[out.index(row) + 1:]
+                self.assertEqual({r["tool_call_id"] for r in after if r["role"] == "tool" and r["tool_call_id"] in ids},
+                                 ids)
+            if not (row["role"] == "assistant" and row.get("tool_calls")):
+                self.assertIsNotNone(row["content"])
+        original = copy.deepcopy(history)
+        normalize_history(history)
+        self.assertEqual(history, original)
+
+    def test_rejected_reasons_and_invalid_request_category(self):
+        from types import SimpleNamespace
+        self.assertEqual(fallback_reason("context_overflow"), "rejected")
+        self.assertEqual(fallback_reason("bad_request"), "rejected")
+        self.assertEqual(fallback_reason("payload_too_large"), "rejected")
+        self.assertEqual(fallback_reason(SimpleNamespace(value="invalid_request")), "rejected")
+        self.assertEqual(fallback_use("main", "backup", "context_overflow"),
+                         {"from": "main", "to": "backup", "reason": "rejected"})
+        self.assertEqual(fallback_reason("server_error"), "unavailable")
+        self.assertEqual(failure_message("invalid_request"),
+                         "Hermes model call failed: invalid_request (HTTP 400)")
+
+    def test_400_and_422_errors_classify_as_invalid_request(self):
+        class BadRequest(Exception):
+            def __init__(self, status):
+                super().__init__("opaque")
+                self.status_code = status
+        BadRequest.__module__ = "openai._exceptions"
+        self.assertEqual(failure_category(error=BadRequest(400)), "invalid_request")
+        self.assertEqual(failure_category(error=BadRequest(422)), "invalid_request")
+        self.assertEqual(failure_category("bad_request"), "invalid_request")
+        self.assertEqual(reply_failure_category("Provider said: HTTP 400: Invalid input, param messages.370.content"),
+                         "invalid_request")
+        self.assertEqual(reply_failure_category("Provider said: HTTP 400: prompt is too long"), "context_length")

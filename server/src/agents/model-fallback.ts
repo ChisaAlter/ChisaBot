@@ -14,11 +14,16 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { filePartsToText, sanitizeCallOptionsForRetry } from "./request-sanitize";
 
 type Model = Record<string, unknown> & { modelId?: string };
 
-/** 为什么换了模型：额度 / 限流（quota），或者模型服务 5xx / 过载（unavailable）。 */
-export type FallbackReason = "quota" | "unavailable";
+/**
+ * 为什么换了模型：额度 / 限流（quota），模型服务 5xx / 过载（unavailable），或者
+ * 主模型拒绝了这一次请求本身（rejected：400/413/422 参数非法、上下文过长——模型没病，
+ * 是这份历史 / 参数它不接收，QA1102-14）。
+ */
+export type FallbackReason = "quota" | "unavailable" | "rejected";
 export type FallbackUse = { from: string; to: string; reason: FallbackReason };
 type FallbackListener = (use: FallbackUse) => void;
 
@@ -57,6 +62,17 @@ export type FallbackDeps = {
    * 改失败就用原请求。主模型那一次不经过这里。
    */
   adapt?: (modelId: string, options: unknown) => Promise<unknown>;
+  /**
+   * 主模型 400（invalid input / context too long）后，重试那一次之前把请求清洗 + 压缩一遍
+   * （空内容占位、超长 tool 结果截断、最老整轮丢弃）。不给就用 {@link sanitizeCallOptionsForRetry}。
+   */
+  sanitize?: (options: unknown) => unknown | Promise<unknown>;
+  /**
+   * 这个模型能不能收 `file` 文档块（模型目录的 file modalities / file 能力标记）。
+   * 不说就当不能：多数 OpenAI 兼容端点（DeepSeek 等）对不认识的 part 类型整单 400——
+   * 所以第一次请求就把文档块换成文字 / 占位，不是等 400 之后才救（QA1102-14 r1）。
+   */
+  supportsFiles?: (modelId: string) => boolean | undefined | Promise<boolean | undefined>;
 };
 
 /**
@@ -283,6 +299,8 @@ export function fallbackReason(error: unknown): FallbackReason | null {
   const { status, text } = errorParts(error);
   if (status !== undefined && (status === 529 || (status >= 500 && status <= 504))) return "unavailable";
   if (status === undefined && /\b(50[0234]|529)\b/.test(text) && UNAVAILABLE_TEXT.test(text)) return "unavailable";
+  // 400/413/422 是「这一次请求本身被拒」（invalid input、context too long）：不算模型不可用。
+  if (status === 400 || status === 413 || status === 422) return "rejected";
   return null;
 }
 
@@ -341,6 +359,13 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
     let reason: FallbackReason = "quota";
     const list = await deps.candidates(primaryId).catch(() => [] as string[]);
     const deadlineMs = deps.firstOutputMs ?? FIRST_OUTPUT_MS;
+    // 模型明说能收 `file` 文档块才原样发；没说 / 说不能就把文档块换成文字 / 占位
+    // （DeepSeek 这类端点对不认识的 part 整单 400）——每一次调用前都换，第一次就在内。
+    const prepare = async (modelId: string, opts: unknown): Promise<unknown> => {
+      const accepts = await Promise.resolve(deps.supportsFiles?.(modelId)).catch(() => undefined);
+      return accepts === true ? opts : filePartsToText(opts);
+    };
+    const primaryOptions = await prepare(primaryId, options);
     const until = cooldown.get(primaryId);
     if (until === undefined || until <= now()) {
       if (until !== undefined) cooldown.delete(primaryId);
@@ -348,8 +373,8 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
         // 有备用模型可换时才给主模型设「第一段输出」期限（§101.10）；没得换就照旧等它。
         const result =
           deadlineMs > 0 && list.some((id) => id !== primaryId)
-            ? await withFirstOutputDeadline(primaryCall, options, property, deadlineMs, midStreamFailure(primaryId))
-            : await primaryCall(options);
+            ? await withFirstOutputDeadline(primaryCall, primaryOptions, property, deadlineMs, midStreamFailure(primaryId))
+            : await primaryCall(primaryOptions);
         // 主模型答上了：探测恢复，连续失败计数清零。
         failures.delete(primaryId);
         return result;
@@ -358,15 +383,36 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
         if (!why) throw error;
         firstError = error;
         reason = why;
-        const ms = cool(primaryId, why, error, now());
-        log({
-          type: "model-fallback",
-          event: error instanceof FirstOutputTimeout ? "primary-timeout" : why === "quota" ? "primary-quota" : "primary-unavailable",
-          model: primaryId,
-          cooldownSeconds: Math.round(ms / 1000),
-          consecutiveFailures: failures.get(primaryId),
-          error: error instanceof FirstOutputTimeout ? error.message : errorSnippet(error),
-        });
+        if (why === "rejected") {
+          /*
+           * 主模型拒绝了这一次请求本身（400/413/422）：模型没病，不进冷却、不计连续失败，
+           * 也不该让它按默认重试三次。先清洗 + 压缩这份请求，再用主模型重试一次；
+           * 还不行才落到下面的备用模型（QA1102-14）。
+           */
+          const clean = deps.sanitize ?? sanitizeCallOptionsForRetry;
+          const cleaned = await Promise.resolve(clean(primaryOptions)).catch(() => primaryOptions);
+          try {
+            const result =
+              deadlineMs > 0 && list.some((id) => id !== primaryId)
+                ? await withFirstOutputDeadline(primaryCall, cleaned, property, deadlineMs)
+                : await primaryCall(cleaned);
+            failures.delete(primaryId);
+            return result;
+          } catch (retryError) {
+            firstError = retryError;
+            log({ type: "model-fallback", event: "primary-rejected", model: primaryId, error: errorSnippet(retryError) });
+          }
+        } else {
+          const ms = cool(primaryId, why, error, now());
+          log({
+            type: "model-fallback",
+            event: error instanceof FirstOutputTimeout ? "primary-timeout" : why === "quota" ? "primary-quota" : "primary-unavailable",
+            model: primaryId,
+            cooldownSeconds: Math.round(ms / 1000),
+            consecutiveFailures: failures.get(primaryId),
+            error: error instanceof FirstOutputTimeout ? error.message : errorSnippet(error),
+          });
+        }
       }
     } else {
       reason = cooledReason.get(primaryId) ?? "quota";
@@ -378,7 +424,8 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
       const other = deps.build(id) as Model | null;
       const call = other && typeof other[property] === "function" ? (other[property] as Call).bind(other) : null;
       if (!call) continue;
-      const sent = deps.adapt ? await deps.adapt(id, options).catch(() => options) : options;
+      const adapted = deps.adapt ? await deps.adapt(id, options).catch(() => options) : options;
+      const sent = await prepare(id, adapted);
       try {
         const result =
           deadlineMs > 0
@@ -403,7 +450,7 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
       }
     }
     // 这一次主模型是因为冷却被跳过的（没真的试）：候选都不行就再试一次主模型，它可能已经恢复了。
-    if (!firstError) return primaryCall(options);
+    if (!firstError) return primaryCall(primaryOptions);
     throw firstError;
   };
   return new Proxy(model as unknown as object, {
@@ -419,11 +466,12 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
  * 候选模型，按优先级：
  * 1. 管理员在 设置 → 模型 →「备用模型」里排好的列表（configured，DESIGN.md §61）；
  * 2. 环境变量 CHISABOT_MODEL_FALLBACKS（逗号分隔；off / 0 关闭自动挑选）；
- * 3. 目录里与当前模型同平台前缀的其它模型（最多 3 个）。
+ * 3. 目录里与当前模型同平台前缀的其它模型（最多 3 个；目录明说不能调工具的跳过——备用模型
+ *    要接着主模型手里的工具往下跑，QA1102-13）。
  * 只返回目录里存在的模型的规则只用于第 3 条；管理员列表照填写的顺序，目录暂时读不到也照用。
  */
 export function fallbackCandidates(
-  catalog: () => Promise<string[]>,
+  catalog: () => Promise<readonly (string | { id: string; supportsTools?: boolean })[]>,
   env: Record<string, string | undefined> = process.env,
   configured: () => Promise<string[]> = async () => [],
 ): (primary: string) => Promise<string[]> {
@@ -436,12 +484,20 @@ export function fallbackCandidates(
     const slash = primary.indexOf("/");
     if (slash <= 0) return [];
     const prefix = primary.slice(0, slash + 1);
-    return (await catalog()).filter((id) => id !== primary && id.startsWith(prefix)).slice(0, 3);
+    const entries = (await catalog()).map((row) => (typeof row === "string" ? { id: row } : row));
+    return entries
+      .filter((row) => row.id !== primary && row.id.startsWith(prefix) && row.supportsTools !== false)
+      .slice(0, 3)
+      .map((row) => row.id);
   };
 }
 
 /** 对话里那行淡色小字（DESIGN.md §61）：模型 id 只留最后一段（clinepass/cline-free/step-5 → step-5）。 */
 export function fallbackNotice(use: Pick<FallbackUse, "to" | "reason">): string {
   const short = use.to.split("/").filter(Boolean).pop() || use.to;
-  return use.reason === "unavailable" ? `主模型暂时不可用，已改用 ${short}` : `主模型额度用完，已改用 ${short}`;
+  return use.reason === "unavailable"
+    ? `主模型暂时不可用，已改用 ${short}`
+    : use.reason === "rejected"
+      ? `请求被主模型拒绝，已改用 ${short}`
+      : `主模型额度用完，已改用 ${short}`;
 }

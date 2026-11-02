@@ -75,6 +75,13 @@ const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boo
     hint: "换用上下文更长的模型后重试。",
   },
   {
+    // QA1102-14：适配器把 HTTP 400/422（参数非法、格式或附件不被支持）归成 invalid_request——
+    // 是这一次请求本身被主模型拒绝，不是模型坏了，不进冷却 / 断路器。
+    test: /invalid[_ ]?(request|input|param)|bad request|malformed|\b(400|422)\b/i,
+    title: "请求被主模型拒绝",
+    hint: "这一轮的请求内容模型不接受（可能是附件或格式不被支持）。换个模型或换种问法再试。",
+  },
+  {
     test: /timeout|timed out|超时|stopped responding|停止响应|停止了输出|no longer streaming/i,
     title: "模型响应超时",
     hint: "可能是网络或服务商繁忙，稍后重试。",

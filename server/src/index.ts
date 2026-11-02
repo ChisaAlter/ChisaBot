@@ -176,6 +176,8 @@ import {
   setAgentKernel,
   setHistorySummaries,
   setModelContextWindowResolver,
+  setModelVisionResolver,
+  setModelFileResolver,
   setPreviousRunUsageResolver,
   setModelOutputLimitResolver,
   setModelFallbackCatalog,
@@ -1153,7 +1155,10 @@ const modelCatalog = createModelCatalogService({
 setModelOutputLimitResolver(async (modelId) =>
   (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.maxOutputTokens,
 );
-setModelFallbackCatalog(async () => (await modelCatalog.list()).models.map((entry) => entry.id));
+// 目录项带 supportsTools 标记（有的话）：自动挑备用模型时跳过明说不能调工具的（QA1102-13）。
+setModelFallbackCatalog(async () =>
+  (await modelCatalog.list()).models.map((entry) => ({ id: entry.id, supportsTools: entry.supportsTools })),
+);
 // 设置 → 模型 →「备用模型」（DESIGN.md §61）：管理员排好的顺序优先于环境变量 / 同平台自动挑选。
 const modelFallbacks = createModelFallbackService({ store: createModelFallbackStore(database) });
 setModelFallbackList(() => modelFallbacks.models());
@@ -1161,6 +1166,14 @@ setModelFallbackList(() => modelFallbacks.models());
 // 摘要模型在 设置 → 模型 →「摘要模型」，没配置就用这一轮的主模型。
 setModelContextWindowResolver(async (modelId) =>
   (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.contextWindow,
+);
+// Hermes 桥按目录的 supportsImages 转换图片/文档块（QA1102-14）：没说就当能看。
+setModelVisionResolver(async (modelId) =>
+  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsImages,
+);
+// 内置内核按目录的 supportsFiles 决定 `file` 文档块是原样发还是换文字占位（QA1102-14 r1）。
+setModelFileResolver(async (modelId) =>
+  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsFiles,
 );
 const historySummaryModel = createHistorySummaryModelService({ store: createHistorySummaryModelStore(database) });
 setHistorySummaries({ store: createPgHistorySummaryStore(database), model: () => historySummaryModel.model() });
