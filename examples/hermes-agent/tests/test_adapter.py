@@ -722,6 +722,46 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(e[0] == "acp" and e[2].session_update == "agent_message_chunk" for e in self.events))
         self.assertFalse(state.is_running)
 
+    async def test_provider_prose_reply_becomes_classified_turn_error(self):
+        state = await self.new()
+        def hook(agent, user, history):
+            return {"messages": history + [{"role": "user", "content": user}],
+                    "final_response": ("custom rejected your API key, so the model can't be reached. "
+                                       "Update it in Settings → Providers, or run `hermes setup` in a terminal.\n\n"
+                                       "Provider said: HTTP 401: Codex: agent@example.com's sign-in was revoked; sign in again")}
+        state.agent.run_hook = hook
+        with self.assertRaises(RequestError) as error:
+            await self.prompt(state)
+        self.assertEqual(error.exception.code, -32603)
+        self.assertEqual(str(error.exception), "Hermes model call failed: unauthorized (HTTP 401)")
+        self.assertFalse(any(e[0] == "acp" and e[2].session_update == "agent_message_chunk" for e in self.events))
+
+    async def test_streamed_provider_prose_is_dropped_before_the_turn_error(self):
+        state = await self.new()
+        def hook(agent, user, history):
+            agent.stream_delta_callback("custom rejected your API key, so the model can't be reached. "
+                                        "Update it in Settings → Providers, or run `hermes setup` in a terminal.")
+            agent.stream_delta_callback("Provider said: HTTP 401: Codex: agent@example.com's sign-in was revoked; sign in again")
+            return {"messages": history, "failed": True, "failure_reason": "auth"}
+        state.agent.run_hook = hook
+        with self.assertRaises(RequestError) as error:
+            await self.prompt(state)
+        self.assertEqual(str(error.exception), "Hermes model call failed: unauthorized (HTTP 401)")
+        self.assertFalse(any(e[0] == "acp" and e[2].session_update == "agent_message_chunk" for e in self.events))
+
+    async def test_real_text_before_provider_prose_stays_but_prose_does_not(self):
+        state = await self.new()
+        def hook(agent, user, history):
+            agent.stream_delta_callback("partial answer")
+            agent.stream_delta_callback("Provider said: HTTP 401: Codex: agent@example.com's sign-in was revoked")
+            return {"messages": history, "failed": True, "failure_reason": "auth"}
+        state.agent.run_hook = hook
+        with self.assertRaises(RequestError):
+            await self.prompt(state)
+        texts = [e[2].content.text for e in self.events
+                 if e[0] == "acp" and e[2].session_update == "agent_message_chunk"]
+        self.assertEqual(texts, ["partial answer"])
+
     async def test_model_exception_keeps_its_category_but_not_its_text(self):
         state = await self.new()
         class BadRequestError(Exception):

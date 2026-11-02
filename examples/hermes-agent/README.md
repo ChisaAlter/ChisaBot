@@ -92,6 +92,11 @@ sentence per category (`rate_limit`, `quota`, `auth`, `context_length`,
 `region`, `stream`; see `_FAILURE_MESSAGES` in `chisabot_protocol.py`). The category comes
 from Hermes' `failure_reason` when it returns a failed result, or from the
 exception's status code and type; the provider's own text is never forwarded.
+Hermes also writes the failure up as reply text for a CLI operator
+("… rejected your API key … run `hermes setup` in a terminal. Provider said:
+HTTP 401: …"): `reply_failure_category` recognises that prose, streamed chunks
+of it are dropped, and a result that "succeeds" with it as `final_response`
+fails with the classified sentence instead of storing the warning as the reply.
 Anything unclassified keeps the old `Hermes host turn execution failed`. The web
 app's `friendly-error.ts` turns each sentence into its Chinese headline and
 next step (`app/tests/hermes-error-categories.test.ts` keeps both sides in step).

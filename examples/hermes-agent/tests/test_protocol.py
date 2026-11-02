@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from chisabot_protocol import (Gateway, GatewayClient, GatewayError, ProtocolError, RunState,
                                  ToolAliases, ToolSuspended, TURN_FAILED, failure_category,
                                  failure_message, fallback_reason, fallback_use, host_metadata,
-                                 parse_host_prompt)
+                                 parse_host_prompt, reply_failure_category, turn_failure)
 
 
 def payload():
@@ -488,6 +488,39 @@ class FailureCategoryTests(unittest.TestCase):
     def test_messages_are_fixed_and_unknown_keeps_old_sentence(self):
         self.assertEqual(failure_message("unknown"), TURN_FAILED)
         self.assertEqual(failure_message("rate_limit"), "Hermes model call failed: rate_limit (HTTP 429)")
+
+    def test_hermes_own_prose_is_a_failure_never_an_answer(self):
+        # The wording Hermes prints for a CLI operator when the model call cannot run.
+        advice = ("custom rejected your API key, so the model can't be reached. "
+                  "Update it in Settings → Providers, or run `hermes setup` in a terminal.")
+        detail = "Provider said: HTTP 401: Codex: agent@example.com's sign-in was revoked; sign in again"
+        self.assertEqual(reply_failure_category(advice), "auth")
+        self.assertEqual(reply_failure_category(detail), "auth")
+        self.assertEqual(reply_failure_category(advice + "\n\n" + detail), "auth")
+        self.assertEqual(reply_failure_category("Provider said: HTTP 429: slow down"), "rate_limit")
+        self.assertEqual(reply_failure_category("Provider said: HTTP 503: overloaded"), "provider_unavailable")
+        self.assertIsNone(reply_failure_category("a real answer about API keys and providers"))
+        self.assertIsNone(reply_failure_category("the provider said the region is unsupported"))
+        self.assertIsNone(reply_failure_category(None))
+        self.assertIsNone(reply_failure_category(401))
+
+    def test_turn_failure_reads_flag_reason_and_reply_text(self):
+        self.assertEqual(turn_failure({"failed": True, "failure_reason": "rate_limit"}), "rate_limit")
+        self.assertEqual(turn_failure({"failed": True}), "unknown")
+        # A Hermes that reports only the reason still fails the turn.
+        self.assertEqual(turn_failure({"failure_reason": "auth"}), "auth")
+        prose = ("custom rejected your API key, so the model can't be reached. "
+                 "Update it in Settings → Providers, or run `hermes setup` in a terminal.\n\n"
+                 "Provider said: HTTP 401: Codex: agent@example.com's sign-in was revoked; sign in again")
+        self.assertEqual(turn_failure({"final_response": prose}), "auth")
+        self.assertEqual(turn_failure({"messages": [{"role": "user", "content": "hi"},
+                                                   {"role": "assistant", "content": "Provider said: HTTP 503: down"}]}),
+                         "provider_unavailable")
+        self.assertIsNone(turn_failure({"final_response": "a real answer"}))
+        self.assertIsNone(turn_failure({"messages": [{"role": "assistant", "content": "a real answer"}]}))
+        self.assertIsNone(turn_failure(None))
+        self.assertEqual(failure_message(turn_failure({"final_response": "Provider said: HTTP 401: x"})),
+                         "Hermes model call failed: unauthorized (HTTP 401)")
 
 
 if __name__ == "__main__":

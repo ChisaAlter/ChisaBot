@@ -21,7 +21,7 @@ from typing import Any
 from chisabot_protocol import (GatewayClient, HostPrompt, ProtocolError, RunState, ToolAliases,
                                  TURN_FAILED, active_run, failure_category, failure_message,
                                  fallback_use, host_metadata, parse_host_prompt, redact,
-                                 tool_error)
+                                 reply_failure_category, tool_error, turn_failure)
 
 logger = logging.getLogger("chisabot_acp")
 
@@ -342,10 +342,16 @@ def build_agent_class():
             thought_cb = make_thinking_cb(conn, session_id, loop, state.message_ids) if conn else None
 
             def stream(text):
-                if run.may_stream() and text_cb:
-                    safe = redact(text, run.config.gateway.capability)
-                    cbs.streamed = cbs.streamed or bool(safe)
-                    text_cb(safe)
+                if not (run.may_stream() and text_cb):
+                    return
+                if reply_failure_category(text) is not None:
+                    # Hermes narrates a failed model call as reply text ("custom
+                    # rejected your API key … Provider said: HTTP 401: …"): the
+                    # classified turn error carries it, not an assistant bubble.
+                    return
+                safe = redact(text, run.config.gateway.capability)
+                cbs.streamed = cbs.streamed or bool(safe)
+                text_cb(safe)
 
             def reasoning(text):
                 if run.may_stream() and thought_cb:
@@ -497,11 +503,12 @@ def build_agent_class():
                         return PromptResponse(stop_reason="cancelled", field_meta={"chisabot": meta})
                     if state.cancel_event and state.cancel_event.is_set():
                         return PromptResponse(stop_reason="cancelled")
-                    if result.get("failed"):
+                    failed_category = turn_failure(result)
+                    if failed_category is not None:
                         # Hermes reports an exhausted model call as a result, not an exception, with
                         # its own English warning as final_response. Surface it as a turn error the
                         # web app can classify (rate limit, too long, timeout...) instead of a reply.
-                        raise acp.RequestError(-32603, failure_message(failure_category(result.get("failure_reason"))))
+                        raise acp.RequestError(-32603, failure_message(failed_category))
                     final = result.get("final_response")
                     if final and conn and (not cbs.streamed or result.get("response_transformed")):
                         update = acp.update_agent_message_text(redact(final, config.gateway.capability))
