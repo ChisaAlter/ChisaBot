@@ -126,7 +126,17 @@ for (const how of [
       await act(async () => {
         await new Promise((r) => setTimeout(r, 60));
       });
-      expect(view.getByTestId("chat").textContent).toBe("thread_b");
+      // KeepAlive 多槽位：上一段聊天可能还藏着（未过 ttl），按 data-visible 取看得见的那段。
+      const visibleChats = view
+        .getAllByTestId("chat")
+        .filter(
+          (el) =>
+            el
+              .closest('[data-testid="kept-page"]')
+              ?.getAttribute("data-visible") === "true",
+        );
+      expect(visibleChats).toHaveLength(1);
+      expect(visibleChats[0]?.textContent).toBe("thread_b");
       expect(firstRead.thread_b).toBe(true);
       // 刚挂上的聊天按 2 秒的节奏等下一次，不会马上问。
       expect(

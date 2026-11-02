@@ -96,17 +96,33 @@ test("换对话还没画好：旧的一页半透明留着（data-switching），
       {null}
     </KeepAliveStage>
   );
+  /** KeepAlive 多槽位：旧的留着的页和当前页同时渲染，按 data-visible 取看得见的那页。 */
+  const visiblePage = (root: ReturnType<typeof render>) => {
+    const pages = root
+      .getAllByTestId("page")
+      .filter(
+        (el) =>
+          el
+            .closest('[data-testid="kept-page"]')
+            ?.getAttribute("data-visible") === "true",
+      );
+    expect(pages).toHaveLength(1);
+    return pages[0]!;
+  };
   const view = render(stage("c1", true));
   const kept = view.getByTestId("kept-page");
   expect(kept.getAttribute("data-switching")).toBe("true");
   expect(kept.getAttribute("data-visible")).toBe("true");
   expect(kept.hasAttribute("inert")).toBe(true);
-  expect(view.getByTestId("page").textContent).toBe("c1");
+  expect(visiblePage(view).textContent).toBe("c1");
   view.rerender(stage("c2", false));
-  expect(view.getByTestId("kept-page").hasAttribute("data-switching")).toBe(
-    false,
-  );
-  expect(view.getByTestId("page").textContent).toBe("c2");
+  expect(
+    view
+      .getAllByTestId("kept-page")
+      .find((el) => el.getAttribute("data-visible") === "true")
+      ?.hasAttribute("data-switching"),
+  ).toBe(false);
+  expect(visiblePage(view).textContent).toBe("c2");
 });
 
 test("连着排两次导航只跑最后一次；撤销后一次都不跑（点会话再马上点设置不会被拉回去）", async () => {

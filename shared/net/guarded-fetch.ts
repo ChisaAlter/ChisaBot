@@ -5,7 +5,11 @@ import { isIP } from "node:net";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { OPS_CODES } from "../ops-codes";
 import { bumpOps } from "../ops-counters";
-import { checkPublicUrl, isBlockedAddress } from "./ssrf";
+import {
+  checkPublicUrl,
+  isBlockedAddress,
+  isBlockedAddressAllowPrivate,
+} from "./ssrf";
 
 /**
  * 只连公网的 GET（链接预览卡和预览截图共用，2026-10-13）。
@@ -64,6 +68,12 @@ export type GuardedFetchOptions = {
   ) => Promise<{ address: string; family: number }[]>;
   /** 测试用：替换「这个 IP 能不能连」。 */
   isBlocked?: (address: string) => boolean;
+  /**
+   * 自托管 IM 协议端的内网放行（管理员显式开关）：本机 / RFC1918 可以连，
+   * 云元数据等地址仍拦（`ssrf.ts` 的 ALLOW_PRIVATE 名单）；只对第一跳生效——重定向目标一律回到普通政策。
+   * 用户 / 模型给的网址永远不传这个。
+   */
+  allowPrivate?: boolean;
 };
 
 const defaultFetch = globalThis.fetch;
@@ -347,8 +357,16 @@ export async function guardedFetch(
     !options.isBlocked;
 
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
-    const verdict = checkPublicUrl(current);
+    // 内网放行只抵自己配的那一跳：一旦重定向，目标回到普通（纯公网）政策重新判——
+    // 否则内网端点 302 一下就能把请求带进任意内网地址（审计 #467 r2）。
+    const hopPrivate = options.allowPrivate === true && hop === 0;
+    const verdict = checkPublicUrl(current, {
+      allowPrivate: hopPrivate,
+    });
     if (!verdict.ok) denySsrf(verdict.reason);
+    const isBlocked =
+      options.isBlocked ??
+      (hopPrivate ? isBlockedAddressAllowPrivate : isBlockedAddress);
     const hopOptions: GuardedFetchOptions = {
       ...options,
       method: currentMethod,
@@ -364,7 +382,10 @@ export async function guardedFetch(
         )
       : await oneHop(
           verdict.url,
-          await resolvePublic(verdict.url.hostname, options),
+          await resolvePublic(verdict.url.hostname, {
+            ...options,
+            isBlocked,
+          }),
           hopOptions,
           deadline,
         );
@@ -403,4 +424,74 @@ export async function guardedFetch(
     };
   }
   throw new Error("重定向次数太多");
+}
+
+/**
+ * 把 {@link guardedFetch} 包成标准 fetch 的形状（`(url, init) => Promise<Response>`），给 IM 适配器、
+ * 扫码登录这类「本来就该用 fetch」的调用方换底（RV-01）：DNS 解析 → 全部公网 → 钉死 IP → 逐跳检查
+ * 重定向，和裸 fetch 的行为差异只剩「连不出去的内网地址直接拒」。
+ *
+ * `timeoutMs` 是兜底上限——调用方自己的 `init.signal`（AbortSignal.timeout 之类）决定真实时限；
+ * 因 init.signal 中止时抛 `AbortError`，和长轮询适配器靠 abort 结束一轮等待的用法兼容。
+ */
+export function createGuardedFetchLike(defaults: {
+  timeoutMs: number;
+  maxBytes: number;
+  maxRedirects?: number;
+  resolve?: GuardedFetchOptions["resolve"];
+  isBlocked?: (address: string) => boolean;
+  allowPrivate?: boolean;
+}): (input: string | URL, init?: RequestInit) => Promise<Response> {
+  return async (input, init = {}) => {
+    const headers: Record<string, string> = {};
+    if (init.headers) {
+      new Headers(init.headers).forEach((value, key) => {
+        headers[key] = value;
+      });
+    }
+    let body: string | Buffer | Uint8Array | undefined;
+    const rawBody = init.body as unknown;
+    if (typeof rawBody === "string") body = rawBody;
+    else if (rawBody instanceof URLSearchParams) body = rawBody.toString();
+    else if (rawBody instanceof Uint8Array)
+      body = Buffer.from(
+        rawBody.buffer,
+        rawBody.byteOffset,
+        rawBody.byteLength,
+      );
+    else if (rawBody instanceof ArrayBuffer) body = Buffer.from(rawBody);
+    else if (rawBody instanceof Blob)
+      body = Buffer.from(await rawBody.arrayBuffer());
+    else if (rawBody != null)
+      throw new TypeError("guarded fetch 不支持这种请求体");
+    try {
+      const res = await guardedFetch(String(input), {
+        method: init.method ?? "GET",
+        ...(Object.keys(headers).length ? { headers } : {}),
+        ...(body !== undefined ? { body } : {}),
+        signal: init.signal ?? undefined,
+        timeoutMs: defaults.timeoutMs,
+        maxBytes: defaults.maxBytes,
+        maxRedirects: defaults.maxRedirects,
+        ...(defaults.resolve ? { resolve: defaults.resolve } : {}),
+        ...(defaults.isBlocked ? { isBlocked: defaults.isBlocked } : {}),
+        ...(defaults.allowPrivate ? { allowPrivate: true } : {}),
+      });
+      const status = res.status >= 200 && res.status <= 599 ? res.status : 502;
+      const response = new Response(new Uint8Array(res.body), {
+        status,
+        headers: res.headers,
+      });
+      Object.defineProperty(response, "url", { value: res.url });
+      return response;
+    } catch (error) {
+      // 调用方主动 abort（长轮询到点收工）：按 fetch 语义抛 AbortError。
+      if (init.signal?.aborted) {
+        const aborted = new Error("The operation was aborted");
+        aborted.name = "AbortError";
+        throw aborted;
+      }
+      throw error;
+    }
+  };
 }

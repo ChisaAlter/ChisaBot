@@ -68,6 +68,33 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  /*
+   * 共享进程里后面的文件（wallpaper-loading 等）接着用这个 documentElement、这份 localStorage 和
+   * perf / appearance 的模块状态：用例里写过的 data-perf、data-palette、data-glass、dark、
+   * body 的天空色都要收干净，不然「退回天空」之类的断言拿到的还是这摊剩局。
+   */
+  perf.setPerfMode(false);
+  appearance.resetAppearanceDefaults();
+  appearance.flushAppearanceWrites();
+  appearance.flushGlassAlpha();
+  // 天空的模块级 mode 也收回去：留着 "off" 的话，后面文件里第一次 setSkyMode("off") 会被当成
+  // 没变而跳过，data-sky-off 就不会再写（wallpaper-loading 的「退回天空」断言就栽在这）。
+  sky.__skyLoopForTestOnly.setMode("snapshot");
+  window.localStorage.clear();
+  const root = document.documentElement;
+  for (const name of [
+    "data-palette",
+    "data-glass",
+    "data-perf",
+    "data-theme",
+    "data-wallpaper",
+    "data-sky-painted",
+    "data-sky-ease",
+  ]) {
+    root.removeAttribute(name);
+  }
+  root.classList.remove("dark");
+  document.body.removeAttribute("style");
 });
 
 const nextFrame = () =>

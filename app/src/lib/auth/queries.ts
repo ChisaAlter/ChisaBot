@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import { type AuthenticatedUser, authKeys } from "@/lib/auth/keys";
 import {
   clearLoginRedirectMark,
   goToLogin,
@@ -6,39 +7,20 @@ import {
 } from "@/lib/auth/login-redirect";
 import { client, tryClient } from "@/lib/client";
 
+export type { AuthenticatedUser, OnboardingStatus } from "@/lib/auth/keys";
+export { authKeys };
+
 /**
  * Where this person is in first-run onboarding.
  *
  * On the user rather than its own query, so the `_authed` gate learns it from the request it
  * already makes. A null `completedAt` is what sends the app to /onboarding.
  */
-export type OnboardingStatus = {
-  step: number;
-  completedAt: string | null;
-};
-
-export type AuthenticatedUser = {
-  id: string;
-  email: string;
-  name?: string | null;
-  image?: string | null;
-  role: "admin" | "user";
-  /** 名称还没设置（空或仍是邮箱）：进入应用前先弹「首次设置」。 */
-  profileNeedsSetup?: boolean;
-  /** Null means this deployment does not track onboarding, which reads as nothing to finish. */
-  onboarding: OnboardingStatus | null;
-};
 
 /** Whether the gate holds: there is an onboarding to do and this person has not finished it. */
 export function needsOnboarding(user: AuthenticatedUser): boolean {
   return user.onboarding !== null && user.onboarding.completedAt === null;
 }
-
-export const authKeys = {
-  all: ["auth"] as const,
-  currentUser: () => [...authKeys.all, "current-user"] as const,
-  providers: () => [...authKeys.all, "providers"] as const,
-};
 
 /** An identity provider this deployment can sign somebody in with. */
 export type AuthProviderId = "google" | "microsoft" | "okta";

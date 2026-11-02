@@ -41,7 +41,7 @@ import { settleReactWork } from "./settle-react-work";
  * 先注册 happy-dom 再加载组件（DESIGN.md §81 起表单里多了头像窗）：Base UI 在模块加载时就判断有没有 document，
  * 静态 import 会早于 beforeAll，弹窗就画不出来。
  */
-GlobalRegistrator.register();
+if (!GlobalRegistrator.isRegistered) GlobalRegistrator.register();
 const { AgentDialog } = await import("@/components/agents/agent-dialog");
 afterEach(cleanup);
 afterAll(async () => {

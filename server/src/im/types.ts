@@ -40,9 +40,22 @@ export type WsLike = {
   onerror: ((event: unknown) => void) | null;
 };
 
-export type WsFactory = (url: string, options?: { headers?: Record<string, string> }) => WsLike;
+export type WsFactory = (
+  url: string,
+  options?: {
+    headers?: Record<string, string>;
+    /**
+     * 这条连接的管理员显式开了「允许内网地址」、且目标是该连接自己配置的协议端时才为 true：
+     * 本机 / 内网可连，云元数据仍拦。用户 / 模型给的地址永远不传。
+     */
+    allowPrivate?: boolean;
+  },
+) => WsLike;
 
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+export type FetchLike = (
+  input: string,
+  init?: RequestInit,
+) => Promise<Response>;
 
 export type AdapterContext = {
   connectionId: string;

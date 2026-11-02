@@ -443,7 +443,7 @@ export async function cancelSchedulesForDeletedThreads(
       console.warn(
         JSON.stringify({
           type: "schedule-thread-cancel-failed",
-          reason: String(error instanceof Error ? error.message : error).slice(0, 200),
+          reason: reasonWithoutStatement(error).slice(0, 200),
         }),
       );
       return [] as { id: string }[];
@@ -1157,7 +1157,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
 
   const busyError = (error: unknown) =>
     /already running|thread.*lock|locked|正在运行/i.test(
-      error instanceof Error ? error.message : String(error),
+      reasonWithoutStatement(error),
     );
 
   async function fire(
@@ -1275,7 +1275,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
             try {
               await deps.pushToIm(threadId, result.replyText?.trim() || text);
             } catch (error) {
-              runnerError = error instanceof Error ? error.message : String(error);
+              runnerError = reasonWithoutStatement(error);
               text += `\n（推送到 IM 失败：${runnerError}）`;
             }
           }
@@ -1294,8 +1294,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           if (deps.isSuspension?.(error)) {
             // FIX-02：定时任务里需要人在场的一步（浏览器交还 / 登录）不再挂成「等你确认」占着对话；
             // 快速失败并释放锁，用户可继续聊天。要做这类事请在网页聊天里当面让机器人做。
-            const detail =
-              error instanceof Error ? error.message : String(error);
+            const detail = reasonWithoutStatement(error);
             const reason =
               `这次定时任务做到需要你在场的一步（${detail.slice(0, 160)}），没有继续。` +
               "请在网页聊天里让机器人再做一次，或在 设置 → 权限与审批 把相关类别改成「直接做」。";
@@ -1321,7 +1320,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         }
       }
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = reasonWithoutStatement(error);
       console.warn(
         JSON.stringify({
           type: "schedule-run-failed",

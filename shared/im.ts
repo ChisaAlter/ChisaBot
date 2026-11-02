@@ -138,8 +138,8 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
     steps: [
       "在一台能常开的电脑或服务器上安装 NapCat（github.com/NapNeko/NapCatQQ）或 LLOneBot，用要当机器人的 QQ 号扫码登录。",
       "在协议端的网络配置里二选一：",
-      "· 正向 WebSocket（推荐，协议端当服务器）：新建「WebSocket 服务端」，监听 0.0.0.0:3001，设置 token；下面填 ws://协议端的地址:3001 和这个 token。ChisaBot 服务器要能访问到这个地址。",
-      "· 反向 WebSocket（ChisaBot 当服务器，适合协议端在家里内网）：先保存这个连接，复制它显示的「反向连接地址」和 token，在协议端新建「WebSocket 客户端」填进去。",
+      "· 正向 WebSocket（协议端当服务器）：新建「WebSocket 服务端」，监听 0.0.0.0:3001，设置 token；下面填 ws://协议端的地址:3001 和这个 token。协议端在本机 / 内网 / Docker 兄弟容器时，需要管理员给这个连接打开「允许内网地址」开关才连得上（开关只对这个地址生效，云元数据地址照样拦）；没有管理员时改用反向。",
+      "· 反向 WebSocket（推荐，ChisaBot 当服务器，适合协议端在家里内网）：先保存这个连接，复制它显示的「反向连接地址」和 token，在协议端新建「WebSocket 客户端」填进去。",
       "消息格式选 array（数组）或 string 都可以。",
     ],
     fields: [
@@ -153,7 +153,7 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
           { value: "reverse", label: "反向（协议端连 ChisaBot）" },
         ],
       },
-      { key: "url", label: "协议端 WebSocket 地址", type: "url", placeholder: "ws://192.168.1.10:3001", showIf: { key: "mode", equals: "forward" } },
+      { key: "url", label: "协议端 WebSocket 地址", type: "url", placeholder: "ws://192.168.1.10:3001", help: "公网地址直接填；本机 / 内网地址要管理员先打开「允许内网地址」，否则请用反向连接。", showIf: { key: "mode", equals: "forward" } },
       { key: "accessToken", label: "Access Token", type: "secret", help: "协议端里设置的 token；反向连接时不填会自动生成。" },
     ],
     groupNote: "群里 @ 这个 QQ 号才回复；私聊直接回复。",
@@ -251,10 +251,14 @@ export type ImConnectionView = {
   /** 非密钥字段的原值；密钥字段只回 true（已保存）/ false。 */
   config: Record<string, string>;
   secrets: Record<string, boolean>;
-  /** 谁能用：空 = 所有人；否则只有这些平台用户 id。 */
+  /** 除主人外还能用的人（平台用户 id）。主人 id + 白名单都空 = 机器人不理任何人。 */
   allowUsers: string[];
+  /** 主人本人的平台用户 id：只有这些人能用，也只有他们能在私聊里回「允许 / 拒绝」审批。 */
+  ownerUsers: string[];
   /** 允许机器人在 IM 里用电脑 / 设备等高权限工具（默认关）。 */
   allowDevices: boolean;
+  /** 「允许内网地址」（仅管理员可改）：这个连接自己配置的协议端主机可以指向本机 / 内网；云元数据地址照样拦。 */
+  allowPrivate?: boolean;
   status: ImStatus;
   statusDetail: string | null;
   /** 机器人登录后平台给的身份（QQ 号、机器人名字……）。 */
