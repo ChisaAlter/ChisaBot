@@ -33,7 +33,8 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function validModelId(value: unknown): value is string {
+/** Whether a string can be a model id at all. Shared by the chooser and the bot factory's `model`. */
+export function validModelId(value: unknown): value is string {
   if (
     typeof value !== "string" ||
     !value ||

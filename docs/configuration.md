@@ -366,6 +366,24 @@ see the Bot can read it.
 With both caps above at zero the screen says the capability is switched off, because a grant made
 then is a row nothing will read.
 
+## A Bot creating other Bots
+
+| Variable                   | Meaning                                                                                     |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| `BOT_FACTORY_MAX_DEPTH`    | How deep the creation chain may go. A person-made Bot has depth `0`; `1` (default) lets Bots create Bots but stops the ones they create from creating more. `0` switches the capability off. |
+| `BOT_FACTORY_MAX_PER_USER` | How many live Bot-made coworkers one person may have at once. Default `20`; `0` also switches the capability off. Administrators are not exempt — it is a recursion guard, not a permission. |
+
+Same read rule as the handoff caps: refused at start-up when not a whole number of zero or more.
+
+A Bot that may create Bots gets `create_bot`, `list_managed_bots`, `update_bot` and `disable_bot` on
+the same coordination channel as `message_bot`, so create/update/disable wait on the person's
+approval card and an approval resumes the action. A Bot-made coworker is always `built_in` and
+`private`, runs on the role description the creating Bot wrote, may only pick a catalog model, and
+is born holding just the two `kind="bot"` grants that let it and its creator hand work to each
+other — it inherits none of its creator's connector grants or accounts. `disable_bot` pauses
+(reversible); there is no delete tool. Refusals for the caps or for Bots it did not make are
+audited as `bot.factory_refused`.
+
 ## Slack / Teams / 短信 / 推送
 
 上游的 OpenTag（Slack、Teams）、Twilio 短信和 Expo 推送通道已在瘦身 P4b-2 删除，`OPENTAG_*`、`DELIVERY_PUBLIC_URL`、`TWILIO_*`、`EXPO_*` 不再读取。ChisaBot 的外部消息走 IM 通道（docs/im.md）。

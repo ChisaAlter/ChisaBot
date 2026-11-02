@@ -29,6 +29,7 @@ import type {
   PrivateShareInput,
   ShareAudience,
 } from "../proactive/private-share";
+import { BOT_FACTORY_TOOL_NAMES, type BotFactory } from "./bot-factory";
 import type { RunAssertion } from "./callback-token";
 import {
   ESCALATE_TOOL,
@@ -350,6 +351,11 @@ export function createCoordinationTools(options: {
   authoriseRun: (run: RunAssertion) => Promise<boolean>;
   approvalGate?: ApprovalGate;
   privateShare?: PrivateShareGate;
+  /**
+   * The bot factory's four tools (`create_bot` and friends). Optional so a deployment or a test
+   * without the machinery simply offers and dispatches nothing more than the original two.
+   */
+  factory?: BotFactory;
 }) {
   const asking = (from: RunAssertion): GrantedTool => {
     const tool = escalationTool({
@@ -411,7 +417,10 @@ export function createCoordinationTools(options: {
               : {}),
           })
         : null;
-      return passing ? [passing, asking(from)] : [asking(from)];
+      const factory = options.factory
+        ? await options.factory.toolsFor(from)
+        : [];
+      return [...(passing ? [passing] : []), asking(from), ...factory];
     },
     async call(input: {
       name: string;
@@ -419,7 +428,12 @@ export function createCoordinationTools(options: {
       run: RunAssertion;
     }): Promise<{ text: string; isError: boolean } | null> {
       const name = input.name.replace(/^bot\//, "");
-      if (name !== HANDOFF_TOOL && name !== ESCALATE_TOOL) return null;
+      if (
+        name !== HANDOFF_TOOL &&
+        name !== ESCALATE_TOOL &&
+        !BOT_FACTORY_TOOL_NAMES.has(name)
+      )
+        return null;
       if (!(await options.authoriseRun(input.run))) {
         const text = `${REFUSAL_MARKER} This run no longer has permission to coordinate work in this conversation.`;
         await recordAuditEvent(options.auditStore, {
@@ -436,6 +450,28 @@ export function createCoordinationTools(options: {
           },
         });
         return { text, isError: true };
+      }
+      /*
+       * The factory's own names dispatch to it: it does its own cap, ownership and approval checks
+       * on the call, so a stale schema or an approved action resumed long after still lands on the
+       * live verdict rather than on what was offered at the time.
+       */
+      if (BOT_FACTORY_TOOL_NAMES.has(name)) {
+        const answered = options.factory
+          ? await options.factory.call({
+              name,
+              args: input.args,
+              run: input.run,
+            })
+          : null;
+        if (!answered)
+          throw new Error("The coordination tool could not be constructed.");
+        return {
+          text: answered.isError
+            ? `${REFUSAL_MARKER} ${answered.text}`
+            : answered.text,
+          isError: answered.isError,
+        };
       }
       // Availability only controls offered schemas. A stale remote schema still reaches the desk,
       // which performs and audits the live grant and cap checks with the original signed depth.

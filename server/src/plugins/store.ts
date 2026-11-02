@@ -4511,8 +4511,14 @@ export function createPluginStore(options: PluginStoreOptions) {
       ref: string,
       agentId: string,
       by: string,
+      /**
+       * A caller's open transaction, when the grant must commit or roll back with other work (the
+       * bot factory's birth grants ride on the coworker's creation transaction). The pool is used
+       * when absent, which is every other caller.
+       */
+      executor?: { insert: Database["insert"] },
     ): Promise<void> {
-      await database
+      await (executor ?? database)
         .insert(pluginGrants)
         .values({ kind, ref, agentId, grantedBy: by })
         .onConflictDoUpdate({

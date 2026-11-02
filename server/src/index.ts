@@ -51,7 +51,12 @@ import {
 } from "./agents/lifecycle";
 import { createBotReset } from "./agents/lifecycle-reset";
 import { createAgentPurge } from "./agents/purge";
+import {
+  createBotFactory,
+  createBotFactoryQueries,
+} from "./agents/bot-factory";
 import { createAgentProfileStore } from "./agents/profile-store";
+import { createCoworkerService } from "./agents/service";
 import { createAgentModelService } from "./agents/model-selection";
 import type { AgentActor } from "./agents/profile-types";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
@@ -1863,6 +1868,17 @@ const channelSourceForRun = async (run: RunAssertion) => {
   );
 };
 const personQuestions = createWorkQueue(database);
+/*
+ * The shared coworker write path (`POST`/`PATCH /api/agents`) and the lifecycle store, built once
+ * here because the bot factory's tools reach both through the coordination channel below.
+ */
+const coworkerService = createCoworkerService({
+  store: agentProfileStore,
+  allowPrivateHosts: config.computer?.allowPrivateHosts ?? false,
+  allowedHosts: config.agentEndpointAllowedHosts,
+  auditStore: bootAuditStore,
+});
+const botLifecycle = createBotLifecycleStore(database);
 const coordination = createCoordinationTools({
   desk: handoffDesk,
   caps: config.handoff,
@@ -1920,6 +1936,33 @@ const coordination = createCoordinationTools({
     },
   },
   botsReachableFrom: (botId) => pluginStore.botsReachableFrom(botId),
+  /*
+   * One Bot minting another. The factory rides the same channel as `message_bot` — signature
+   * assertion, source thread, approval card and `approval.resume` — and the coworker service it
+   * writes through is the one `POST /api/agents` uses, so a Bot-made Bot is byte-for-byte what the
+   * form makes. Its only reach beyond a person's own is the pair of `kind="bot"` grants it is born
+   * holding, written inside the creation transaction.
+   */
+  factory: createBotFactory({
+    queries: createBotFactoryQueries(database),
+    queriesWithin: (executor) => createBotFactoryQueries(executor),
+    coworker: coworkerService,
+    // The run's owner, with the email the grant rows and audit trail record alongside the id.
+    actorFor: async (userId) => ({
+      ...(await actorFor(userId)),
+      email: (await peopleStore.find(userId))?.email,
+    }),
+    caps: config.botFactory,
+    auditStore: bootAuditStore,
+    approvalGate: approvalService.gate,
+    grant: (kind, ref, agentId, by, executor) =>
+      pluginStore.grant(kind, ref, agentId, by, executor),
+    pause: (ownerUserId, agentId) =>
+      botLifecycle.pause(ownerUserId, agentId),
+    catalog: modelCatalog,
+    setModel: (actor, agentId, model) =>
+      agentModels.set(actor, agentId, model),
+  }),
   auditStore: bootAuditStore,
   authoriseRun: (run) =>
     authoriseCoordinationRun(run, {
@@ -3880,7 +3923,7 @@ const app = createApp(
       triggers: responsibilityTriggers,
     },
     lifecycle: {
-      lifecycle: createBotLifecycleStore(database),
+      lifecycle: botLifecycle,
       reset: botReset,
       purge: createAgentPurge({
         database,

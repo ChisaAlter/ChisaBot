@@ -397,6 +397,12 @@ export const auditEventTypes = [
   "bot.follow_up_scheduled",
   "bot.follow_up_cancelled",
   "bot.handoff_stopped",
+  /*
+   * A Bot reaching for the factory past its limits: the depth cap, the per-person count, or a Bot it
+   * did not make. The refusal is otherwise invisible — the tool was never offered, or a stale call
+   * was answered with a sentence only the model read.
+   */
+  "bot.factory_refused",
 
   /*
    * One Bot handing work to another.
