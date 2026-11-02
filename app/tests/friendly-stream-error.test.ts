@@ -47,3 +47,24 @@ describe("模型被服务商下线", () => {
     expect(f.retryable).toBe(true);
   });
 });
+
+/*
+ * Hermes 上游把登录被撤说成「<email>'s sign-in was revoked; sign in again」：
+ * 不是换 key 能解决的，要让用户去重新登录，所以说得更具体而不是笼统的「密钥无效」。
+ */
+describe("模型登录被服务商撤销", () => {
+  test("登录被撤说清楚要重新登录", () => {
+    const f = friendlyError(
+      "Provider said: HTTP 401: Codex: agent@example.com's sign-in was revoked; sign in again",
+    );
+    expect(f.title).toBe("模型登录已失效");
+    expect(f.hint).toContain("重新登录");
+    expect(f.retryable).toBe(false);
+  });
+
+  test("key 被拒仍是密钥提示", () => {
+    expect(
+      friendlyError("custom rejected your API key, so the model can't be reached.").title,
+    ).toBe("模型密钥无效或已过期");
+  });
+});

@@ -679,3 +679,83 @@ def failure_category(reason: Any = None, error: BaseException | None = None) -> 
 
 def failure_message(category: str) -> str:
     return _FAILURE_MESSAGES.get(category, TURN_FAILED)
+
+
+# Hermes also narrates a failed model call as ordinary reply text written for a CLI
+# operator: "<provider> rejected your API key, so the model can't be reached. Update
+# it in Settings → Providers, or run `hermes setup` in a terminal." and a
+# "Provider said: HTTP <status>: <upstream>" line. That prose is not an answer to the
+# person in this conversation — these markers name only the shapes narration writes,
+# so a turn can end in one classified sentence instead of storing the warning as its
+# reply.
+_REPLY_FAILURE = re.compile(
+    r"provider said\s*:\s*http\b|rejected your (?:api[-_ ]?key|key|credentials?)|"
+    r"'s sign-in was revoked|\w[\w-]* setup`?\s+in a terminal|settings ?→ ?providers", re.I)
+_PROSE_HINTS = (
+    ("auth", re.compile(r"rejected your (?:api[-_ ]?key|key|credentials?)|'s sign-in was revoked|"
+                        r"sign in again|not signed in|invalid (?:api[-_ ]?key|token)", re.I)),
+    ("rate_limit", re.compile(r"rate[- ]?limit|too many requests", re.I)),
+    ("quota", re.compile(r"out of (?:credits|quota)|insufficient[_ ]?quota|billing|credit balance", re.I)),
+    ("context_length", re.compile(r"context[_ ]?(?:window|length|overflow)|too many tokens|prompt is too long", re.I)),
+    ("content_filter", _CONTENT),
+    ("model_not_found", re.compile(r"model\b.{0,40}\b(?:not found|does not exist|unavailable|deprecat|retired)|no such model", re.I)),
+    ("region", _REGION),
+    ("timeout", re.compile(r"timed out|timeout|deadline", re.I)),
+    ("provider_unavailable", re.compile(r"can't be reached|could not be reached|unreachable|service unavailable|overloaded", re.I)),
+)
+_HTTP_STATUS = re.compile(r"\bHTTP (\d{3})\b")
+
+
+def reply_failure_category(text: Any) -> str | None:
+    """Category when text is Hermes' own provider-failure narration, else None.
+
+    The category is read off the prose itself: an embedded ``HTTP <status>`` first,
+    then the same keyword hints a 4xx body gets. A match that names nothing still
+    fails the turn — only with the generic sentence.
+    """
+    if not isinstance(text, str) or not _REPLY_FAILURE.search(text):
+        return None
+    match = _HTTP_STATUS.search(text)
+    if match:
+        status = int(match.group(1))
+        if status == 403:
+            return _from_403(text)
+        if status in _STATUS:
+            return _STATUS[status]
+        if status >= 500:
+            return "provider_unavailable"
+    for category, pattern in _PROSE_HINTS:
+        if pattern.search(text):
+            return category
+    return "unknown"
+
+
+def _reply_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(block.get("text") or "" for block in content if isinstance(block, dict))
+    return ""
+
+
+def turn_failure(result: Any) -> str | None:
+    """Category when a Hermes turn result is a model-call failure, else None.
+
+    ``failed`` (or ``failure_reason`` on its own, for a Hermes that skips the flag) is
+    the documented witness; the reply text is the third. A turn that "succeeds" with
+    nothing but provider narration fails here rather than storing the prose as its
+    answer.
+    """
+    if not isinstance(result, dict):
+        return None
+    if result.get("failed") or result.get("failure_reason"):
+        return failure_category(result.get("failure_reason"))
+    found = reply_failure_category(result.get("final_response"))
+    if found is not None:
+        return found
+    history = result.get("messages")
+    if isinstance(history, list):
+        for message in reversed(history):
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                return reply_failure_category(_reply_text(message.get("content")))
+    return None

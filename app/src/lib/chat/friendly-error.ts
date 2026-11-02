@@ -41,6 +41,13 @@ const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boo
     retryable: false,
   },
   {
+    // 服务商撤掉了登录态（如「sign-in was revoked; sign in again」）：换 key 没用，要重新登录。
+    test: /sign-in was revoked|revoked.*sign[-_ ]?in|sign in again|登录已失效|登录被撤销/i,
+    title: "模型登录已失效",
+    hint: "服务商撤销了当前登录，请到管理后台重新登录后再试，或先切换到其他模型。",
+    retryable: false,
+  },
+  {
     test: /\b401\b|unauthori[sz]ed|invalid[_ ]?api[_ ]?key|incorrect api key|authentication|api key|密钥无效|鉴权/i,
     title: "模型密钥无效或已过期",
     hint: "请检查管理后台中的模型凭据，或切换到其他模型。",
