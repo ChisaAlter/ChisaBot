@@ -185,6 +185,33 @@ def _first_token_timeout_s() -> float:
     return ms / 1000.0 if ms is not None else 30.0
 
 
+def _discard_attempt(future) -> None:
+    """Retrieve an abandoned attempt's outcome so it never warns "exception was never
+    retrieved"; the result itself is thrown away — the turn already moved to a fallback."""
+    try:
+        future.exception()
+    except Exception:
+        pass
+
+
+def _interrupt_until_done(interrupt, agent: Any, future, *, tries: int = 40,
+                          interval: float = 0.25) -> None:
+    """Keep nudging an abandoned call's interrupt until it exits (bounded, daemon).
+
+    The one-shot interrupt can be lost: a call that had not entered its interruptible
+    section yet clears the flag on entry and then ignores the one that already fired.
+    It runs on a daemon thread so nothing — including an executor shutdown — joins it.
+    """
+    for _ in range(tries):
+        if future.done():
+            return
+        time.sleep(interval)
+        try:
+            interrupt(agent)
+        except Exception:
+            return
+
+
 def _wait_first_output(event: threading.Event, deadline: float,
                        reset: threading.Event | None = None) -> bool:
     """True when real output arrived before the deadline; polls so a stale wait ends quickly.
@@ -657,11 +684,13 @@ def build_agent_class():
 
             def attach(agent, gate):
                 """Pin this turn's callbacks on the agent — again after a switch rebuilt it."""
+                if gate is None:
+                    gate = SimpleNamespace(event=threading.Event(), live=True, overall=None)
 
                 def produced():
                     # Any text/reasoning/tool callback is real model output: it satisfies the
                     # first-token deadline (stream-start / metadata frames never reach here).
-                    if gate is not None and gate.live:
+                    if gate.live:
                         gate.event.set()
                         if gate.overall is not None:
                             gate.overall.set()
@@ -834,7 +863,7 @@ def build_agent_class():
                 return True
             return False
 
-        async def _bounded_turn(self, state, config: HostPrompt, ctx, execute, cbs,
+        async def _bounded_turn(self, state, config: HostPrompt, execute, cbs,
                                 attempt_reset: threading.Event):
             """Run one turn; every model attempt is bounded by the first-token deadline.
 
@@ -853,7 +882,11 @@ def build_agent_class():
             while True:
                 applied = str(getattr(state.agent, "_chisabot_turn_model", None) or config.model_id)
                 tried.add(applied)
-                future = loop.run_in_executor(None, ctx.run, execute)
+                abandoned = threading.Event()
+                # A fresh Context per attempt: an abandoned call still holds its own — the same
+                # Context object cannot be re-entered while a previous attempt runs inside it.
+                future = loop.run_in_executor(None, contextvars.copy_context().run,
+                                              execute, abandoned)
                 if deadline <= 0:
                     return await future
                 while True:
@@ -872,23 +905,36 @@ def build_agent_class():
                         attempt_reset.clear()
                         continue
                     break
-                # Hung upstream: interrupt the call, count a breaker failure, retry on a fallback.
+                # Hung upstream: interrupt the call, count a breaker failure, retry on a fallback
+                # WITHOUT joining the attempt. An upstream that ignores request_hard_interrupt
+                # (a blocking read) may take the whole call timeout to return; the turn must not
+                # wait it out (deadline 300ms measured 2005ms). The abandoned attempt finishes in
+                # the background: its callbacks die on this dead gate, its result is discarded,
+                # and it must not touch state via the cleanup retry or the promise nudge.
+                gate.live = False
+                abandoned.set()
+                attempt_agent = state.agent
                 try:
-                    request_hard_interrupt(state.agent)
+                    request_hard_interrupt(attempt_agent)
                 except Exception:
                     pass
-                try:
-                    await future
-                except Exception:
-                    pass
+                future.add_done_callback(_discard_attempt)
+                # The single interrupt above can race the call's own entry reset; keep
+                # re-firing on a bounded daemon thread until the hung call exits.
+                threading.Thread(target=_interrupt_until_done,
+                                 args=(request_hard_interrupt, attempt_agent, future),
+                                 daemon=True).start()
                 breaker_fail(_breaker_key(state.agent, applied), "unavailable", _now())
                 _breaker_log({"type": "model-fallback", "event": "primary-timeout", "model": applied,
                               "timeoutSeconds": round(deadline), "kernel": "hermes-adapter"})
+                # The next attempt answers to a fresh gate; late output from the abandoned
+                # call stays on the old one and can never satisfy the new deadline.
+                gate = SimpleNamespace(event=threading.Event(), live=True, overall=gate.overall)
+                cbs.gate = gate
                 if not await self._retry_turn_model(state, config, tried, cbs=cbs, gate=gate):
                     raise acp.RequestError(-32603, failure_message("timeout"))
                 if state.cancel_event:
                     state.cancel_event.clear()
-                gate.event.clear()
                 attempt_reset.clear()
 
         def _run_agent_turn(self, **kwargs):
@@ -939,11 +985,11 @@ def build_agent_class():
                 self._host_runs[session_id] = run
                 state.agent._chisabot_fallback_uses = []
 
-                def execute():
+                def execute(abandoned):
                     attempts = 0
                     nudged = False
                     step_text, step_content = user_text, user_content
-                    while True:
+                    while not abandoned.is_set():
                         try:
                             try:
                                 result = self._run_agent_turn(state=state, session_id=session_id, user_text=step_text,
@@ -952,21 +998,23 @@ def build_agent_class():
                             except Exception as error:
                                 # QA1102-14：请求本身被主模型拒了（400 / 上下文超长）——清洗 + 激进
                                 # 压缩历史后用主模型重试一次；再不行才落到备用 / 报错，且只重试这一次。
-                                if attempts == 0 and run.may_stream() and failure_category(error=error) in _RETRY_ONCE_CATEGORIES:
+                                if (not abandoned.is_set() and attempts == 0 and run.may_stream()
+                                        and failure_category(error=error) in _RETRY_ONCE_CATEGORIES):
                                     attempts += 1
                                     # 拒单是作答不是挂起：重试作为新一次尝试领新的首字窗口。
                                     attempt_reset.set()
                                     self._prime_rejected_retry(state, config, cbs)
                                     continue
                                 raise
-                            if attempts == 0 and run.may_stream() and turn_failure(result) in _RETRY_ONCE_CATEGORIES:
+                            if (not abandoned.is_set() and attempts == 0 and run.may_stream()
+                                    and turn_failure(result) in _RETRY_ONCE_CATEGORIES):
                                 attempts += 1
                                 attempt_reset.set()
                                 self._prime_rejected_retry(state, config, cbs)
                                 continue
                             # QA1102-13：这轮一个工具都没调、回复却在承诺「先去查/先做」——
                             # 催它现在就调，只多走一步，之后无论说什么都收尾。
-                            if (not nudged and config.tools and not run.records and run.may_stream()
+                            if (not abandoned.is_set() and not nudged and config.tools and not run.records and run.may_stream()
                                     and not run.pending_suspension and not result.get("interrupted")
                                     and turn_failure(result) is None
                                     and action_promise(result.get("final_response"))):
@@ -988,8 +1036,7 @@ def build_agent_class():
                     first_output = threading.Event()
                     attempt_reset = threading.Event()
                     cbs = self._wire_turn_callbacks(state, session_id, conn, loop, first_output)
-                    ctx = contextvars.copy_context()
-                    result = await self._bounded_turn(state, config, ctx, execute, cbs,
+                    result = await self._bounded_turn(state, config, execute, cbs,
                                                       attempt_reset)
                     if run.fatal_error:
                         raise acp.RequestError(-32603, run.fatal_error)

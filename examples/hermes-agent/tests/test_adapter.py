@@ -842,6 +842,45 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(calls, ["backup-a"])
             self.assertEqual(response.field_meta["chisabot"]["modelFallback"]["to"], "backup-a")
 
+    async def test_deadline_abandons_a_request_that_ignores_the_interrupt(self):
+        # QA1102-06 r1：上游不理 request_hard_interrupt（阻塞读）时，整轮不能等满挂起时长——
+        # 到点放弃这次请求，让它在后台自己跑完；迟到的结果不得漏进这一轮。
+        import chisabot_acp
+        calls = []
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+
+        def hermes_turn(agent, user, history):
+            calls.append(agent.model)
+            if agent.model == "magpie-model":
+                time.sleep(2.0)  # 阻塞读：agent.interrupted 置位也不醒
+                return {"messages": history, "final_response": "late answer from hung primary"}
+            text = "answer from backup-a"
+            agent.stream_delta_callback(text)
+            return {"messages": history + [{"role": "user", "content": user},
+                                           {"role": "assistant", "content": text}],
+                    "final_response": text}
+
+        state.agent.run_hook = hermes_turn
+        raw = payload()
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.3"}):
+            t0 = time.monotonic()
+            response = await self.prompt(state, raw)
+            elapsed = time.monotonic() - t0
+        # 300ms 的期限 + 余量，绝不能接近 2s 的挂起时长。
+        self.assertLess(elapsed, 0.9)
+        self.assertEqual(calls, ["magpie-model", "backup-a"])
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                         {"from": "magpie-model", "to": "backup-a", "reason": "unavailable"})
+        # 等被放弃的那次在后台跑完：迟到的 final_response 不进历史、不进流出文本。
+        time.sleep(2.2)
+        self.assertNotIn("late answer", json.dumps(state.history, ensure_ascii=False))
+        texts = [e[2].content.text for e in self.events
+                 if e[0] == "acp" and e[2].session_update == "agent_message_chunk"]
+        self.assertFalse(any("late answer" in t for t in texts))
+
     async def test_half_open_probe_is_bounded_by_the_first_token_deadline(self):
         # After the cooldown the probe dials the primary once; a hung probe is interrupted at
         # the first-token deadline (not the upstream timeout), re-opens and uses the backup.
