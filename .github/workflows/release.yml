@@ -12,6 +12,8 @@ name: Client release
 # PC 更新验签（docs/pc-update-signing.md）：发布时 pc-sign job（Environment pc-release，只允许 v* 标签）用
 # Environment Secret PC_UPDATE_SIGNING_KEY 给 latest.yml 签名；通用版必须内置公钥（pc/src/update-keys.json），
 # 自建版用仓库变量 CHISABOT_UPDATE_PUBKEYS 提供公钥（不配 = 自建版不验签）。发布只能从标签运行。
+# 明确不验签：仓库变量 CHISABOT_PC_UPDATE_UNSIGNED=1 → 通用版空公钥表也放行、pc-sign 整个跳过（latest.yml 不签名，
+# 和旧版本一致，客户端不验签照样更新）。删掉这个变量后空公钥表会拦发布。
 on:
   push:
     tags: ["v*"]
@@ -58,6 +60,7 @@ jobs:
       version: ${{ steps.c.outputs.version }}
       version_code: ${{ steps.c.outputs.version_code }}
       flavors: ${{ steps.c.outputs.flavors }}
+      pc_sign: ${{ steps.c.outputs.pc_sign }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -70,6 +73,7 @@ jobs:
           SERVER_URL: ${{ inputs.server_url || vars.CHISABOT_SERVER_URL }}
           PC_FEED: ${{ inputs.update_feed || vars.CHISABOT_UPDATE_FEED }}
           ANDROID_FEED: ${{ inputs.android_update_feed || vars.CHISABOT_ANDROID_UPDATE_FEED }}
+          PC_UNSIGNED: ${{ vars.CHISABOT_PC_UPDATE_UNSIGNED }}
         run: |
           tag="$INPUT_TAG"
           if [ -z "$tag" ] && [ "$REF_TYPE" = tag ]; then tag="$REF_NAME"; fi
@@ -82,7 +86,7 @@ jobs:
           if [ -n "$tag" ] && { [ "$REF_TYPE" != tag ] || [ "$REF_NAME" != "$tag" ]; }; then echo "::error::发布 $tag 必须从标签 $tag 运行（现在是 $REF_TYPE $REF_NAME）"; exit 1; fi
           flavors='["generic"]'
           if [ -n "$SERVER_URL$PC_FEED$ANDROID_FEED" ]; then flavors='["generic","custom"]'; fi
-          { echo "tag=$tag"; echo "version=$version"; echo "version_code=$code"; echo "flavors=$flavors"; } >> "$GITHUB_OUTPUT"
+          { echo "tag=$tag"; echo "version=$version"; echo "version_code=$code"; echo "flavors=$flavors"; echo "pc_sign=$([ "$PC_UNSIGNED" = 1 ] && echo false || echo true)"; } >> "$GITHUB_OUTPUT"
           echo "版本 $version（$code），标签 ${tag:-（不发布）}，构建 $flavors"
 
   # PC 单元测试是 POSIX 的（本机操作的 shell 测试用 /bin/sh），在 Linux 上跑；Windows 只负责打包。
@@ -145,11 +149,16 @@ jobs:
           FLAVOR: ${{ matrix.flavor }}
           TAG: ${{ needs.config.outputs.tag }}
           CHISABOT_UPDATE_PUBKEYS: ${{ vars.CHISABOT_UPDATE_PUBKEYS }}
+          PC_UNSIGNED: ${{ vars.CHISABOT_PC_UPDATE_UNSIGNED }}
         run: |
           if [ "$FLAVOR" = custom ]; then
             node scripts/sign-update.js --keys-from-env
           elif [ -n "$TAG" ]; then
-            node scripts/sign-update.js --require-keys
+            if [ "$PC_UNSIGNED" = "1" ]; then
+              echo "::warning::CHISABOT_PC_UPDATE_UNSIGNED=1：通用版不验签（空公钥表放行）"
+            else
+              node scripts/sign-update.js --require-keys
+            fi
           else
             node scripts/sign-update.js --require-keys || echo "::warning::src/update-keys.json 没有公钥：这个构建不验签（只构建不发布）"
           fi
@@ -189,7 +198,7 @@ jobs:
   # Secret PC_UPDATE_SIGNING_KEY 只在这个 job 的签名步骤里出现。签完立刻验签 + 篡改自检，再交给 release。
   pc-sign:
     needs: [config, pc]
-    if: needs.config.outputs.tag != ''
+    if: needs.config.outputs.tag != '' && needs.config.outputs.pc_sign == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: pc-release
