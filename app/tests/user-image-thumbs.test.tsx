@@ -13,7 +13,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { toMessageContent } from "@/components/channels/channel-chat";
 import { ChatTranscript } from "@/components/channels/chat-transcript";
-import { attachmentUrl } from "@/lib/channels/attachments";
+import { attachmentThumbUrl, attachmentUrl } from "@/lib/channels/attachments";
 import { readThreadMessages } from "@/lib/copilot/thread-messages";
 import { settleReactWork } from "./settle-react-work";
 
@@ -139,7 +139,10 @@ describe("气泡里的样子", () => {
     const img = container.querySelector(
       ".rp-image-single img",
     ) as HTMLImageElement;
-    expect(img.getAttribute("src")).toBe(attachmentUrl(ids[0]!));
+    // 气泡里画的是缩略图（单张 320px，测试环境 1x 屏 → 480 档）；点开看大图才是原图。
+    expect(img.getAttribute("src")).toBe(
+      attachmentThumbUrl(attachmentUrl(ids[0]!), 480),
+    );
     expect(img.style.width).toBe("318px");
     expect(img.style.aspectRatio.replace(/\s/g, "")).toBe("640/480");
   });
@@ -184,7 +187,10 @@ describe("气泡里的样子", () => {
       Array.from(cards).map((card) =>
         card.querySelector("img")?.getAttribute("src"),
       ),
-    ).toEqual(ids.slice(0, 3).map((id) => attachmentUrl(id)));
+    ).toEqual(
+      // 一摞里的卡片是缩略图（220px → 240 档），点开看大图仍是原图。
+      ids.slice(0, 3).map((id) => attachmentThumbUrl(attachmentUrl(id), 240)),
+    );
 
     fireEvent.click(getByLabelText("查看第 2 张图片（共 3 张）"));
     const dialog = getByRole("dialog");

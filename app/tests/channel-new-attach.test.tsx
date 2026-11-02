@@ -55,6 +55,59 @@ afterAll(async () => {
 const originalFetch = globalThis.fetch;
 let requests: { method: string; path: string; body?: unknown }[];
 
+/*
+ * 附件上传走 XMLHttpRequest（只有它能报上传进度，见 composer/attachments.ts），fetch 打桩拦不到：
+ * happy-dom 会真的发请求。这里换成一个把请求记进 requests、直接回 201 的替身。
+ */
+let realXHR: typeof XMLHttpRequest;
+let xhrSeq = 0;
+class MockXHR {
+  static OK = 201;
+  method = "";
+  url = "";
+  withCredentials = false;
+  status = 0;
+  responseText = "";
+  upload: {
+    onprogress: ((event: ProgressEvent) => void) | null;
+    onload: (() => void) | null;
+  } = { onprogress: null, onload: null };
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  ontimeout: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  open(method: string, url: string) {
+    this.method = method;
+    this.url = url;
+  }
+  send(body: FormData) {
+    const file = body.get("file") as File | null;
+    requests.push({ method: this.method, path: this.url, body: file?.name });
+    xhrSeq += 1;
+    const id = `att-${xhrSeq}`;
+    queueMicrotask(() => {
+      this.upload.onprogress?.({
+        lengthComputable: true,
+        loaded: 1,
+        total: 1,
+      } as ProgressEvent);
+      this.upload.onload?.();
+      this.status = MockXHR.OK;
+      this.responseText = JSON.stringify({
+        id,
+        name: file?.name,
+        mimeType: file?.type || "image/png",
+        width: 640,
+        height: 480,
+      });
+      this.onload?.();
+    });
+  }
+  abort() {
+    this.onabort?.();
+  }
+}
+
 const DRAFT = {
   id: "channel_draft",
   name: "General Assistant",
@@ -74,6 +127,8 @@ beforeEach(() => {
   resetDraftChannelsForTest();
   requests = [];
   holdCreate = null;
+  realXHR = globalThis.XMLHttpRequest;
+  globalThis.XMLHttpRequest = MockXHR as unknown as typeof XMLHttpRequest;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     const method = init?.method ?? "GET";
@@ -102,6 +157,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  globalThis.XMLHttpRequest = realXHR;
 });
 
 function agent(

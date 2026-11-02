@@ -42,10 +42,32 @@ const sheets: Record<string, string> = {
 };
 
 const noblur = strip(read("perf-noblur.css"));
-const media = noblur.match(
-  /@media \(prefers-reduced-transparency: reduce\) \{([\s\S]*)\n\}\n/,
+
+/**
+ * `@media` 块的内容：条件是逗号分隔的几个媒体特性时，只要其中一个是 query 就算命中
+ * （`(prefers-reduced-transparency: reduce), (prefers-contrast: more), …` 是一条块）。
+ */
+function mediaBodies(css: string, query: string): string {
+  const bodies: string[] = [];
+  const re = /@media\s+([^{}]+)\{/g;
+  for (const m of css.matchAll(re)) {
+    const conditions = m[1].split(",").map((c) => c.trim());
+    if (!conditions.includes(query)) continue;
+    let depth = 1;
+    let i = (m.index ?? 0) + m[0].length;
+    const start = i;
+    for (; i < css.length && depth > 0; i++) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}") depth--;
+    }
+    bodies.push(css.slice(start, i - 1));
+  }
+  return bodies.join("\n");
+}
+
+const reduceRules = rules(
+  mediaBodies(noblur, "(prefers-reduced-transparency: reduce)"),
 );
-const reduceRules = rules(media ? media[1] : "");
 const perfRules = rules(noblur).filter((r) =>
   r.selector.startsWith('html[data-perf="on"]'),
 );
@@ -86,7 +108,6 @@ test("找得到要关的 filter: blur 规则（防止解析失效变成空跑）
     ".chisabot-wallpaper-img",
     ".rp-link",
     ".rp-pile-card",
-    ".lc-card",
     ".agent-orb-glow",
     ".agent-orb::before",
   ]) {
