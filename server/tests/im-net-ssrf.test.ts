@@ -382,7 +382,15 @@ describe("RV-01: IM 默认出站实现就是带防护的那份", () => {
 
 describe("RV-01 放宽项：allowPrivate（管理员给连接开的「允许内网地址」）", () => {
   test("地址判定：本机 / RFC1918 / ULA 放行，云元数据和保留段照样拦", () => {
-    for (const allowed of ["127.0.0.1", "10.0.0.9", "172.17.0.2", "192.168.1.10", "::1", "fd00::8", "fc00::1"])
+    for (const allowed of [
+      "127.0.0.1",
+      "10.0.0.9",
+      "172.17.0.2",
+      "192.168.1.10",
+      "::1",
+      "fd00::8",
+      "fc00::1",
+    ])
       expect(isBlockedAddressAllowPrivate(allowed)).toBe(false);
     for (const blocked of [
       "169.254.169.254", // AWS/GCP/Azure 元数据
@@ -402,18 +410,29 @@ describe("RV-01 放宽项：allowPrivate（管理员给连接开的「允许内�
     expect(isBlockedHostnameAllowPrivate("napcat")).toBe(false);
     expect(isBlockedHostnameAllowPrivate("localhost")).toBe(false);
     expect(isBlockedHostnameAllowPrivate("service.internal")).toBe(false);
-    expect(isBlockedHostnameAllowPrivate("metadata.google.internal")).toBe(true);
+    expect(isBlockedHostnameAllowPrivate("metadata.google.internal")).toBe(
+      true,
+    );
     expect(isBlockedHostnameAllowPrivate("")).toBe(true);
   });
 
   test("checkPublicWsUrl：字面内网只在 allowPrivate 下才过", () => {
-    expect(checkPublicWsUrl("ws://127.0.0.1:3001/", { allowPrivate: true }).ok).toBe(true);
-    expect(checkPublicWsUrl("ws://napcat:3001/", { allowPrivate: true }).ok).toBe(true);
+    expect(
+      checkPublicWsUrl("ws://127.0.0.1:3001/", { allowPrivate: true }).ok,
+    ).toBe(true);
+    expect(
+      checkPublicWsUrl("ws://napcat:3001/", { allowPrivate: true }).ok,
+    ).toBe(true);
     expect(checkPublicWsUrl("ws://127.0.0.1:3001/").ok).toBe(false);
     expect(checkPublicWsUrl("ws://napcat:3001/").ok).toBe(false);
     // 开关开着也够不到云元数据
-    expect(checkPublicWsUrl("ws://169.254.169.254/", { allowPrivate: true }).ok).toBe(false);
-    expect(checkPublicWsUrl("ws://metadata.google.internal/", { allowPrivate: true }).ok).toBe(false);
+    expect(
+      checkPublicWsUrl("ws://169.254.169.254/", { allowPrivate: true }).ok,
+    ).toBe(false);
+    expect(
+      checkPublicWsUrl("ws://metadata.google.internal/", { allowPrivate: true })
+        .ok,
+    ).toBe(false);
   });
 
   test("guarded fetch：allowPrivate 能连本机 HTTP，不开就拒；元数据永远拒", async () => {
@@ -422,11 +441,20 @@ describe("RV-01 放宽项：allowPrivate（管理员给连接开的「允许内�
       res.end("ok");
     });
     try {
-      const open = createGuardedFetchLike({ timeoutMs: 5000, maxBytes: 1024, allowPrivate: true });
+      const open = createGuardedFetchLike({
+        timeoutMs: 5000,
+        maxBytes: 1024,
+        allowPrivate: true,
+      });
       const res = await open(`http://127.0.0.1:${port}/`);
       expect(await res.text()).toBe("ok");
-      const strict = createGuardedFetchLike({ timeoutMs: 5000, maxBytes: 1024 });
-      await expect(strict(`http://127.0.0.1:${port}/`)).rejects.toBeInstanceOf(BlockedUrlError);
+      const strict = createGuardedFetchLike({
+        timeoutMs: 5000,
+        maxBytes: 1024,
+      });
+      await expect(strict(`http://127.0.0.1:${port}/`)).rejects.toBeInstanceOf(
+        BlockedUrlError,
+      );
       // 解析到元数据的域名：开关开着也拒
       const meta = createGuardedFetchLike({
         timeoutMs: 5000,
@@ -434,7 +462,9 @@ describe("RV-01 放宽项：allowPrivate（管理员给连接开的「允许内�
         allowPrivate: true,
         resolve: async () => [{ address: "169.254.169.254", family: 4 }],
       });
-      await expect(meta("http://169.254.169.254.nip.io/latest/")).rejects.toBeInstanceOf(BlockedUrlError);
+      await expect(
+        meta("http://169.254.169.254.nip.io/latest/"),
+      ).rejects.toBeInstanceOf(BlockedUrlError);
     } finally {
       await closeServer(server);
     }
@@ -443,8 +473,12 @@ describe("RV-01 放宽项：allowPrivate（管理员给连接开的「允许内�
   test("guarded socket：allowPrivate 能连本机 WS，不开就拒", async () => {
     const { server, port } = await wsEchoServer();
     try {
-      const socket = openGuardedSocket(`ws://127.0.0.1:${port}/ws`, { allowPrivate: true });
-      const opened = new Promise<void>((resolve) => (socket.onopen = () => resolve()));
+      const socket = openGuardedSocket(`ws://127.0.0.1:${port}/ws`, {
+        allowPrivate: true,
+      });
+      const opened = new Promise<void>(
+        (resolve) => (socket.onopen = () => resolve()),
+      );
       const closed = waitSocket(socket);
       await opened;
       expect(socket.readyState).toBe(1);
