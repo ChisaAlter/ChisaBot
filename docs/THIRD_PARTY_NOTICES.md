@@ -8,6 +8,10 @@ ChisaBot 基于 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) 定�
 - [CopilotKit](https://github.com/CopilotKit/CopilotKit)：运行与界面相关依赖，版本以各包清单和锁文件为准。
 - [Magpie](https://github.com/yetone/magpie)：可独立部署的模型网关，通过 API 集成；其源码、镜像和依赖遵循该项目自身的许可。
 
+工程纪律技能与工作流（`examples/zh-CN/skills.yaml` 中 `# >>> pstack-port` 区块、`server/src/workflows/presets/pstack-adversarial-review.md`，见 [pstack-port.md](pstack-port.md)）移植自：
+
+- [cursor/plugins 的 pstack 插件](https://github.com/cursor/plugins/tree/main/pstack)（MIT，Copyright (c) Cursor，作者 Lauren Tan / poteto）：24 条工程原则、`unslop`/`technical-writing`/`tdd`/`benchmark-checklist` 等技能正文按其 SKILL.md 原文移植，`pstack-adversarial-review` 按其 `interrogate` 技能的流程改写为 ChisaBot 工作流格式。
+
 IM 接入（`server/src/im/`，见 [im.md](im.md)）参考了这些项目的设计和公开协议格式，没有复制其代码：
 
 - [LangBot](https://github.com/langbot-app/LangBot)（Apache-2.0）：平台配置项与飞书、QQ 官方机器人、企业微信智能机器人、个人微信 ClawBot（iLink）的消息格式和流程。
