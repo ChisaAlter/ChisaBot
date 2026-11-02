@@ -13,6 +13,7 @@ import { ActiveBotProvider } from "./active-bot";
 import { ComputerTools } from "./computer-tools";
 import { EscalationTool } from "./escalation-tool";
 import { GalleryTools } from "./gallery-tools";
+import { BotFactoryTool } from "./bot-factory-tool";
 import { HandoffTool } from "./handoff-tool";
 import { RenderUiTool } from "./render-ui-tool";
 import { WorkerTool } from "./worker-tool";
@@ -94,6 +95,11 @@ export function CopilotProvider({ children }: { children: ReactNode }) {
           where the grant and the caps are. A hop that happens off-screen is the thing to avoid.
         */}
         <HandoffTool />
+        {/*
+          A Bot making / listing / changing / pausing the Bots it created (bot factory). Same deal as
+          the handoff beside it: server runs the tool and the approval, here only draws the outcome.
+        */}
+        <BotFactoryTool />
         <EscalationTool />
         {/* Gallery tools are registered once; their handlers re-read the active Bot to avoid shadowing renderers. */}
         <GalleryTools />

@@ -18,6 +18,7 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
+import { createdByLabel } from "@/lib/agents/created-by";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { botAttentionQueryOptions } from "@/lib/bot-lifecycle/queries";
 import { latestChannelFor } from "@/lib/channels/latest";
@@ -72,6 +73,7 @@ function BotsPage() {
             const summary = state
               ? [state.paused ? "已暂停" : "", attentionSummary(state)].filter(Boolean).join(" · ")
               : "";
+            const createdBy = createdByLabel(agent, agents.data);
             return (
               <Fragment key={agent.id}>
                 {index > 0 ? <Separator /> : null}
@@ -91,7 +93,17 @@ function BotsPage() {
                     </ItemMedia>
                     <ItemContent>
                       <ItemTitle>{agent.name}</ItemTitle>
-                      <ItemDescription>{summary || agent.title}</ItemDescription>
+                      <ItemDescription>
+                        {createdBy ? (
+                          <span
+                            className="mr-1.5 inline-flex items-center rounded-full bg-muted px-1.5 py-px font-medium text-[11px] text-muted-foreground"
+                            data-testid="created-by-badge"
+                          >
+                            {createdBy}
+                          </span>
+                        ) : null}
+                        {summary || agent.title}
+                      </ItemDescription>
                     </ItemContent>
                   </button>
                   <ItemActions>

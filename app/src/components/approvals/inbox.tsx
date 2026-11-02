@@ -13,6 +13,7 @@ import { agentListQueryOptions } from "@/lib/agents/queries";
 import { type ApprovalDecision, type ApprovalInboxData, answerPersonQuestion, approvalInboxOptions, decideApproval, dismissPersonQuestion } from "@/lib/approvals";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
 import { confirmKeys, recentConfirmationsQueryOptions } from "@/lib/confirmations";
+import { botFactoryApprovalSpec } from "@/lib/copilot/bot-factory-tool";
 import { agoText } from "@/lib/im";
 
 /**
@@ -114,13 +115,31 @@ function HandOffCard({ request, botName, onDone }: { request: PendingRequest; bo
   const first = useAsyncAction(() => decide(handOff ? "handled" : "allow_once"), opts);
   const always = useAsyncAction(() => decide("allow_always"), opts);
   const deny = useAsyncAction(() => decide("deny"), opts);
-  const what = request.action.toolRef.replace(/^computer_|^host\//, "").replaceAll("_", " ");
+  /*
+   * bot/ 的审批（bot factory）：服务器把要建的机器人放在 action.target，卡片直接画出名字、职责、
+   * 完整提示词和模型——这是点「允许」前要看的东西，不能埋在 args JSON 里。
+   */
+  const factorySpec = botFactoryApprovalSpec(
+    request.action.toolRef,
+    request.action.target,
+  );
+  const what = factorySpec?.verb ?? request.action.toolRef.replace(/^computer_|^host\//, "").replaceAll("_", " ");
   return (
     <Card className="pending-card">
       <div className="pending-card-t">{handOff ? `${botName}把这一步交给你亲自完成` : `${botName}想执行「${what}」`}</div>
       <div className="pending-card-s">
         {[request.action.policy?.reason, agoText(request.createdAt)].filter(Boolean).join(" · ")}
       </div>
+      {factorySpec?.rows.length ? (
+        <dl className="pending-card-spec">
+          {factorySpec.rows.map((row) => (
+            <div className="pending-card-spec-row" key={row.label}>
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
       <details className="pending-card-d">
         <summary>{"查看详情"}</summary>
         <pre>{JSON.stringify(request.action.args, null, 2)}</pre>
