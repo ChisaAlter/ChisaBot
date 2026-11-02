@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  sanitizeCallOptionsForRetry,
   RETRY_PROMPT_CHARS,
+  sanitizeCallOptionsForRetry,
   TOOL_RESULT_MAX_CHARS,
 } from "../src/agents/request-sanitize";
 

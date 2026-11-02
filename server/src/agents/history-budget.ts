@@ -506,7 +506,9 @@ export async function compactHistory(input: {
   if (!history.length) return unchanged;
   // 目录读不到窗口时按假定窗口压缩（64k 触发裁剪），不再整段原样发上去（QA1102-14）。
   const window =
-    input.contextWindow && Number.isFinite(input.contextWindow) && input.contextWindow > 0
+    input.contextWindow &&
+    Number.isFinite(input.contextWindow) &&
+    input.contextWindow > 0
       ? input.contextWindow
       : ASSUMED_CONTEXT_WINDOW;
   const ratio = calibrationRatio(history, input.previousUsage, input.memo);
