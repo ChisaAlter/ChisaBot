@@ -18,14 +18,14 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- 平台层放开明文（networkSecurityConfig 表达不了「私网 IP 段」）：真正的闸门在 GatewayAuth.normalize ——
+         http 只允许 localhost / *.local / 私网与环回 IP，公网 http 一律拒。WebView 导航也锁在同一 origin。 -->
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        <!-- 平台层放开明文（networkSecurityConfig 表达不了「私网 IP 段」）：真正的闸门在 GatewayAuth.normalize ——
-             http 只允许 localhost / *.local / 私网与环回 IP，公网 http 一律拒。WebView 导航也锁在同一 origin。 -->
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.ChisaBot">
 
