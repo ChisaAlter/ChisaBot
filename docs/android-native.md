@@ -38,7 +38,7 @@ Android 客户端（`android/`）是 Kotlin + Jetpack Compose（Material3）原�
 ## 构建
 
 和以前一样：`cd android && gradle assembleRelease`（JDK 17、Gradle 8.9、AGP 8.5.2、Kotlin 1.9.24、Compose 编译器 1.5.14）。单测 `gradle testDebugUnitTest`。
-调试包允许 `http://10.0.2.2:<端口>`（模拟器连本机开发服务器）。
+服务器地址默认 https；http 只放行局域网 / 环回地址（`GatewayAuth.normalize` → `privateHost`：localhost、*.local、10/8 · 172.16/12 · 192.168/16、127/8、169.254/16、IPv6 ::1 / ULA / fe80::），调试包连模拟器的 `http://10.0.2.2:<端口>` 也在这条规则里。平台层 `usesCleartextTraffic` 已放开，公网 http 的拦截靠 `normalize`。
 
 ## 阶段
 

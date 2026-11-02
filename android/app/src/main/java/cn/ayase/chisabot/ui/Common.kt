@@ -66,7 +66,8 @@ fun AsyncButton(
     modifier: Modifier = Modifier,
     primary: Boolean = true,
     enabled: Boolean = true,
-    action: suspend () -> Boolean,
+    /** true = 成功，false = 失败，null = 用户中途取消（如关掉扫码页）：直接回 idle，不闪「失败」。 */
+    action: suspend () -> Boolean?,
 ) {
     val sky = LocalSky.current
     val scope = rememberCoroutineScope()
@@ -88,12 +89,15 @@ fun AsyncButton(
                 scope.launch {
                     state = BtnState.Pending
                     val started = System.currentTimeMillis()
-                    val ok = runCatching { action() }.getOrDefault(false)
+                    val result = runCatching { action() }
                     val wait = 300 - (System.currentTimeMillis() - started)
                     if (wait > 0) delay(wait)
-                    state = if (ok) BtnState.Done else BtnState.Failed
-                    delay(if (ok) 1500 else 2200)
-                    if (state != BtnState.Pending) state = BtnState.Idle
+                    state = if (result.isFailure || result.getOrNull() == false) BtnState.Failed
+                        else if (result.getOrNull() == true) BtnState.Done else BtnState.Idle
+                    if (state != BtnState.Idle) {
+                        delay(if (state == BtnState.Done) 1500 else 2200)
+                        if (state != BtnState.Pending) state = BtnState.Idle
+                    }
                 }
             },
         contentAlignment = Alignment.Center,

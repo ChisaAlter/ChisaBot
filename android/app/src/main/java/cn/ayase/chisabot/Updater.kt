@@ -3,6 +3,8 @@ package cn.ayase.chisabot
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -171,6 +173,7 @@ class Updater(private val activity: Activity) {
 
     private fun install(apk: File) {
         if (!alive()) return
+        signatureProblem(apk)?.let { apk.delete(); toast(it); return }
         if (!canInstall()) {
             waitingForPermission = apk
             AlertDialog.Builder(activity)
@@ -191,6 +194,42 @@ class Updater(private val activity: Activity) {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { activity.startActivity(intent) }.onFailure { toast("无法打开安装器：${it.message}") }
     }
+
+    /**
+     * sha256 只保证下载没坏；装不上的两种签名问题在这里先说清楚：
+     * 更新包没签名（CI 没配 keystore）；签名和当前安装的不一致（换了签名渠道，覆盖安装必失败）。
+     */
+    @Suppress("DEPRECATION") // GET_SIGNATURES 在 API 28+ 已过时、旧签名 getPackage*(int) 在 API 33+ 已过时，老系统还需要
+    private fun signatureProblem(apk: File): String? {
+        val update = readPackageInfo(apk.absolutePath)?.let(::firstSigner)
+            ?: return "更新包没有签名或已损坏，无法安装"
+        val mine = readPackageInfo(null)?.let(::firstSigner)
+        if (mine != null && !mine.contentEquals(update)) {
+            return "更新包签名和当前安装的不一致，无法覆盖安装——请先卸载，再安装同一个渠道出的包"
+        }
+        return null
+    }
+
+    /** path=null 读本机自己，否则读磁盘上的安装包。 */
+    @Suppress("DEPRECATION")
+    private fun readPackageInfo(path: String?): PackageInfo? {
+        val pm = activity.packageManager
+        val flags = PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val f = PackageManager.PackageInfoFlags.of(flags.toLong())
+                if (path == null) pm.getPackageInfo(activity.packageName, f) else pm.getPackageArchiveInfo(path, f)
+            } else if (path == null) pm.getPackageInfo(activity.packageName, flags) else pm.getPackageArchiveInfo(path, flags)
+        }.getOrNull()
+    }
+
+    /** 包的第一位签名者证书（API 28+ signingInfo，以下用老 signatures；都没 → 未签名）。 */
+    private fun firstSigner(info: PackageInfo): ByteArray? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.let { si -> (if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory)?.firstOrNull()?.toByteArray() }
+        } else {
+            @Suppress("DEPRECATION") info.signatures?.firstOrNull()?.toByteArray()
+        }
 
     private fun toast(msg: String) = Toast.makeText(activity, msg, Toast.LENGTH_LONG).show()
 }

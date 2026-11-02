@@ -24,11 +24,12 @@ android {
         applicationId = "cn.ayase.chisabot"
         minSdk = 24
         targetSdk = 34
-        versionCode = 298        // 只增不减（已安装的 Android 按它判断更新）；2026-10-12 版本号重置为 0.1.0 时从 206 接着往上
-        versionName = "0.1.116"
+        versionCode = 299        // 只增不减（已安装的 Android 按它判断更新）；2026-10-12 版本号重置为 0.1.0 时从 206 接着往上
+        versionName = "0.1.117"
         buildConfigField("String", "DEFAULT_SERVER", quoted(defaultServer))
         buildConfigField("String", "UPDATE_FEED", quoted(updateFeed))
-        // 只有 debug 包允许 http://10.0.2.2（模拟器连本机预览）；正式包一律 https。
+        // http 只放行局域网 / 环回地址（GatewayAuth.normalize → privateHost）；ALLOW_LOCAL_HTTP 现在只控制登录页
+        // 「直接打开（无登录网关的服务器）」按钮，不再决定 http 白名单。
         buildConfigField("boolean", "ALLOW_LOCAL_HTTP", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -40,6 +41,8 @@ android {
                 storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("ANDROID_KEY_ALIAS")
                 keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+                // JKS 之外（如 openssl 生成的 PKCS12）由环境变量声明；不设 = AGP 默认 JKS
+                System.getenv("ANDROID_KEYSTORE_TYPE")?.takeIf { it.isNotBlank() }?.let { storeType = it }
             }
         }
     }

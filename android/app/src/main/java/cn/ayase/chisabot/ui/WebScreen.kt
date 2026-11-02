@@ -148,7 +148,8 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                                 val url = request.url
-                                val same = url.scheme + "://" + url.authority == origin || (url.scheme == "http" || url.scheme == "https") && url.host == Uri.parse(origin).host && url.port == Uri.parse(origin).port
+                                // originKey 已把协议 / 主机小写、默认端口补齐：https://host 和 https://host:443 算同一个。
+                                val same = originKey(url.toString())?.let { it == originKey(origin) } == true
                                 if (same) return false
                                 runCatching { view.context.startActivity(Intent(Intent.ACTION_VIEW, url)) }
                                 return true

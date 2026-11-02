@@ -33,6 +33,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -151,7 +153,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun start() {
         if (stack.isNotEmpty()) return
-        if (prefs.getString("server", null).isNullOrBlank()) { stack += Screen.Login; return }
+        // loggedIn 只有退出 / 会话失效才写成 false；老版本没这个键（升级过来）按已登录处理，Cookie 不行自然回落登录页。
+        if (prefs.getString("server", null).isNullOrBlank() || !prefs.getBoolean("loggedIn", true)) { stack += Screen.Login; return }
         stack += Screen.Bots
         viewModelScope.launch {
             runCatching { ctx.store.data.first()[BOTS_CACHE] }.getOrNull()?.let { cached ->
@@ -174,12 +177,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun pair(link: Pairing.Link) = withContext(Dispatchers.IO) {
         val os = Pairing.osVersion()
         val paired = GatewayAuth.pair(link.server, link.code, Pairing.deviceName(ctx.contentResolver), Pairing.model(), os)
+        // 先换出会话再动本机状态：换不成（旧服务器没这个接口、网络断）时旧绑定和旧登录原样保留，可以重扫。
+        val cookies = GatewayAuth.deviceSession(link.server, paired.token, os)
         val oldToken = prefs.getString("deviceToken", null)
         val oldServer = prefs.getString("deviceServer", null)
         if (oldToken != null && oldServer != null) GatewayAuth.unenroll(oldServer, oldToken)
         prefs.edit().putString("deviceToken", paired.token).putString("deviceServer", link.server)
             .putString("deviceId", paired.deviceId).putString("deviceName", paired.deviceName).apply()
-        setCookies(link.server, GatewayAuth.deviceSession(link.server, paired.token, os))
+        setCookies(link.server, cookies)
         prefs.edit().putString("server", link.server).putBoolean("remember", true).putBoolean("loggedIn", true).apply()
         saveRecent(link.server)
     }
@@ -293,6 +298,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val workEnded = HashMap<String, Long>()
     private var runJob: Job? = null
     private var watchJob: Job? = null
+    /** threadId/channelId 的检查 + 建会话 + 写入要串行：发送、附件上传、loadChat 并发时不能各建一个频道。 */
+    private val channelLock = Mutex()
     private var liveCall: Call? = null
 
     fun openChat(bot: Bot) {
@@ -315,9 +322,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ids?.size == 1 && ids[0] == bot.id
                 }
                 val chosen = mine.maxByOrNull { it.s("lastMessageAt") ?: "" } ?: mine.firstOrNull()
-                val t = chosen?.s("threadId")
-                threadId = t
-                channelId = chosen?.s("id")
+                channelLock.withLock {
+                    // ensureChannel 可能已经建了新会话（进页手快先发了消息/传了附件）：用它的，别盖成查出来的旧会话
+                    if (threadId == null && channelId == null) {
+                        threadId = chosen?.s("threadId")
+                        channelId = chosen?.s("id")
+                    }
+                }
+                val t = threadId
                 if (t != null) {
                     val hist = api.get("/api/copilotkit/threads/$t/messages").a("messages") ?: JsonArray(emptyList())
                     if (!running) messages = parseHistory(hist)
@@ -342,7 +354,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 while (true) {
                     delay(1500)
-                    if (chatBot?.id != bot.id || threadId != t) break
+                    if (chatBot?.id != bot.id || threadId != t || screen !is Screen.Chat) break
                     val hist = api.get("/api/copilotkit/threads/$t/messages").a("messages") ?: break
                     messages = parseHistory(hist)
                     val inbox = api.get("/api/copilotkit/threads/$t/inbox")
@@ -355,14 +367,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun stopWatching() { watchJob?.cancel(); watchJob = null }
 
     /** 这段对话的会话（频道）：没有就先建一个一对一的（POST /api/channels）。附件要先有会话才能上传。 */
-    private suspend fun ensureChannel(api: Api, bot: Bot): Pair<String, String> {
+    private suspend fun ensureChannel(api: Api, bot: Bot): Pair<String, String> = channelLock.withLock {
         val t = threadId; val c = channelId
-        if (t != null && c != null) return c to t
+        if (t != null && c != null) return@withLock c to t
         val created = api.post("/api/channels", buildJsonObject { putJsonArray("agentIds") { add(JsonPrimitive(bot.id)) } })
         val nt = created.o("channel")?.s("threadId") ?: throw IllegalStateException("无法开始会话")
         val nc = created.o("channel")?.s("id") ?: throw IllegalStateException("无法开始会话")
         threadId = nt; channelId = nc
-        return nc to nt
+        nc to nt
     }
 
     /** 发一条：没有会话就先建，带上传好的附件（AG-UI image / document 段），然后 POST /api/copilotkit/agent/<bot>/run 读事件流。 */

@@ -126,11 +126,23 @@ object Markdown {
         return out
     }
 
+    /** 表格行按「没转义的」| 切格：\| 是字面竖线（GFM 转义规则：奇数个反斜杠后才是转义）。 */
     private fun cells(row: String): List<String> {
         var r = row.trim()
         if (r.startsWith("|")) r = r.substring(1)
-        if (r.endsWith("|")) r = r.dropLast(1)
-        return r.split("|").map { it.trim() }
+        var trailing = 0
+        var i = r.length - 2
+        while (i >= 0 && r[i] == '\\') { trailing++; i-- }
+        if (r.endsWith("|") && trailing % 2 == 0) r = r.dropLast(1)
+        val out = mutableListOf<String>()
+        var cell = StringBuilder()
+        var slashes = 0
+        for (ch in r) {
+            if (ch == '|' && slashes % 2 == 0) { out += cell.toString(); cell = StringBuilder() } else cell.append(ch)
+            slashes = if (ch == '\\') slashes + 1 else 0
+        }
+        out += cell.toString()
+        return out.map { it.trim().replace("\\|", "|") }
     }
 
     private fun isWide(b: Block) = when (b) {

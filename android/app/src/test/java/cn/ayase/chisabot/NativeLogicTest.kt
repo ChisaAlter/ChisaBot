@@ -327,4 +327,53 @@ class NativeLogicTest {
         assertTrue(MIC_DENIED_SETTINGS_MESSAGE.contains("系统设置") && MIC_DENIED_SETTINGS_MESSAGE.contains("重新录音"))
         assertTrue(MIC_DENIED_ONCE_MESSAGE.contains("重新录音"))
     }
+
+    @Test fun pairingInspectSeparatesReasons() {
+        val good = Pairing.inspect("chisabot://pair?server=https%3A%2F%2Fchat.example.com%3A8443&code=cbp_${"a".repeat(32)}")
+        assertTrue(good is Pairing.Result.Ok)
+        assertEquals("https://chat.example.com:8443", (good as Pairing.Result.Ok).link.server)
+        assertEquals("cbp_${"a".repeat(32)}", good.link.code)
+        // 不是本应用的码：报不是绑定二维码；认得出 URL 的把 host 带上
+        val other = Pairing.inspect("https://weixin.qq.com/some/path") as Pairing.Result.Bad
+        assertTrue(other.reason.contains("不是 ChisaBot") && other.reason.contains("weixin.qq.com"))
+        // 本应用的码 + 局域网 http 服务器（内网自建部署走 http 是常态）：直接能用
+        val lan = Pairing.inspect("chisabot://pair?server=http%3A%2F%2F192.168.1.5%3A3000&code=cbp_${"a".repeat(32)}") as Pairing.Result.Ok
+        assertEquals("http://192.168.1.5:3000", lan.link.server)
+        // 本应用的码但服务器是公网 http：说明 http 只放局域网，别说「不是绑定二维码」
+        val http = Pairing.inspect("chisabot://pair?server=http%3A%2F%2Fexample.com&code=cbp_${"a".repeat(32)}") as Pairing.Result.Bad
+        assertTrue(http.reason.contains("example.com") && http.reason.contains("https"))
+        // 码不完整 / 缺 server / 空 / null
+        assertTrue(Pairing.inspect("chisabot://pair?server=https%3A%2F%2Fx&code=bad") is Pairing.Result.Bad)
+        assertTrue(Pairing.inspect("chisabot://pair?code=cbp_${"a".repeat(32)}") is Pairing.Result.Bad)
+        assertTrue(Pairing.inspect("") is Pairing.Result.Bad)
+        assertTrue(Pairing.inspect(null) is Pairing.Result.Bad)
+        assertTrue(Pairing.inspect("chisabot://pair?server=https%3A%2F%2Fx&code=cbp_${"a".repeat(31)}") is Pairing.Result.Bad)
+    }
+
+    @Test fun normalizePrivateHttp() {
+        // 局域网 / 环回字面量 + localhost / *.local：http 放行（内网自建）
+        assertEquals("http://192.168.1.5:3000", GatewayAuth.normalize("http://192.168.1.5:3000"))
+        assertEquals("http://10.0.2.2:3000", GatewayAuth.normalize("http://10.0.2.2:3000"))
+        assertEquals("http://172.16.8.1", GatewayAuth.normalize("http://172.16.8.1"))
+        assertEquals("http://172.31.255.254", GatewayAuth.normalize("http://172.31.255.254"))
+        assertEquals("http://127.0.0.1:8080", GatewayAuth.normalize("http://127.0.0.1:8080"))
+        assertEquals("http://localhost:3000", GatewayAuth.normalize("http://localhost:3000"))
+        assertEquals("http://nas.local", GatewayAuth.normalize("http://nas.local"))
+        assertEquals("http://[::1]:3000", GatewayAuth.normalize("http://[::1]:3000"))
+        // 公网 http 一律拒（含公网 IP、域名）
+        for (bad in listOf("http://example.com", "http://8.8.8.8", "http://192.168.1.5.evil.com", "http://172.32.0.1", "ftp://192.168.1.5")) {
+            val e = try { GatewayAuth.normalize(bad); null } catch (x: GatewayAuth.LoginError) { x }
+            assertEquals("$bad", "invalid", e?.kind)
+        }
+        // 没写协议的默认 https；显式 :80 的 http 归一掉端口
+        assertEquals("https://chat.example.com", GatewayAuth.normalize("chat.example.com"))
+        assertEquals("http://192.168.1.5", GatewayAuth.normalize("http://192.168.1.5:80"))
+    }
+
+    @Test fun tableEscapedPipe() {
+        // \| 是字面竖线不当分隔符；首尾的分界 | 照旧去掉
+        val t = Markdown.parse("| a \\| b | c |\n|---|---|\n| 1 \\| 2 | 3 |\n")[0] as Block.Table
+        assertEquals(listOf("a | b", "c"), t.header)
+        assertEquals(listOf("1 | 2", "3"), t.rows[0])
+    }
 }
