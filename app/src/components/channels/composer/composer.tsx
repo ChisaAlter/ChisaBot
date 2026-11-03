@@ -2260,13 +2260,27 @@ function ComposerImpl({
         <div className="flex flex-col" ref={containerRef} {...dropZone}>
           <RejectedFiles onDismiss={dismissRejections} rejected={rejected} />
           {tooManyStagedNotice}
+          {/*
+           * 附件在框的上方而不是框里面：80px 的缩略图塞进 999px 圆角的横条，会把它撑成一块
+           * 带图的高圆角块，图还被胶囊边缘裁掉。挪出来（与 RejectedFiles 同级的同一列）横条
+           * 才永远是一行高的胶囊；条自己的 pb-3 在 Collapse 里撑起与框的间距。
+           */}
+          <AttachmentStrip
+            failed={failedTiles}
+            files={files}
+            images={images}
+            onDismissFailed={dismissFailedUpload}
+            onRemove={discardAttachment}
+            onRetry={retryUpload}
+            progress={progressStore}
+          />
           <form
             aria-busy={isBusy}
             data-drag-over={canAttach && dragOver ? "true" : undefined}
             onKeyDown={handleEscapeStop}
             /*
-             * `glass-composer-pill` 把框收成两头半圆的横条（styles.css）：附件列、引用条仍在
-             * 编辑区上方排成一列，只是日常只剩「+ · 输入区 · 下箭头 · 发送」一行。
+             * `glass-composer-pill` 把框收成两头半圆的横条（styles.css）：附件列已挪到框外，
+             * 引用条仍在编辑区上方，日常只剩「+ · 输入区 · 下箭头 · 发送」一行。
              */
             className={cn(
               "glass-composer glass-composer-pill flex flex-col",
@@ -2277,15 +2291,6 @@ function ComposerImpl({
           >
             <DictationSurface dictation={dictation} canSend={canSendRecording}>
               {filePicker}
-              <AttachmentStrip
-                failed={failedTiles}
-                files={files}
-                images={images}
-                onDismissFailed={dismissFailedUpload}
-                onRemove={discardAttachment}
-                onRetry={retryUpload}
-                progress={progressStore}
-              />
               {replyQuoteBar}
               {/*
                * 横条里唯一的一行：编辑器 flex-1 把「+」和右边的箭头、发送键顶到两头；内容多了
