@@ -3,17 +3,22 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, renderHook } from "@testing-library/react";
+import { turnAnswered } from "@/components/channels/channel-chat";
 import { botUi, flushUiMemory, resetUiMemory, setBotUi, threadUi } from "@/lib/chat/ui-memory";
 import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
+import { installOverlayBack, noteUserIntent } from "@/lib/overlay-back";
 import { setPanelRailOpen, showRailFor } from "@/lib/panels/rail-open";
-import { turnAnswered } from "@/components/channels/channel-chat";
 import { settleReactWork } from "./settle-react-work";
 
 /**
  * 每个机器人记住「面板 | 计算机」、右栏展开 / 宽度（DESIGN.md §88.2），以及聊天滚动「不往回跳」的接线（§88.1）。
  * 滚动本身在真浏览器里量（tests/bot-state/bot-state.mjs）；这里锁住规则和接线。
  */
-beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
+beforeAll(() => {
+  GlobalRegistrator.register({ url: "http://localhost/" });
+  // `useBotComputerTab` 靠 popstate / 用户操作的先后区分「后退关计算机」和「别的导航丢了参数」。
+  installOverlayBack();
+});
 afterAll(async () => {
   await settleReactWork();
   await GlobalRegistrator.unregister();
@@ -22,6 +27,8 @@ afterEach(cleanup);
 beforeEach(() => {
   resetUiMemory();
   window.localStorage.clear();
+  // 每条用例从「最后一次是用户操作」开始；要后退的那条自己再派 popstate。
+  noteUserIntent();
 });
 
 type Write = { open: boolean; replace: boolean };
@@ -76,10 +83,20 @@ describe("右栏「计算机」按机器人记住", () => {
 
   test("浏览器后退把 watch 去掉 = 关上（后退仍然能关）", () => {
     const { hook } = mount("bot_a", true);
+    window.dispatchEvent(new Event("popstate"));
     hook.rerender({ id: "bot_a", w: undefined });
     expect(botUi("bot_a")?.computer).toBe(false);
     hook.rerender({ id: "bot_a", w: undefined });
     expect(hook.result.current[0]).toBe(false);
+  });
+
+  test("不是后退的导航把 watch 抹掉（`/` 落地跳回、左栏再点同一行）：不算关上，记忆还在、地址补回来", () => {
+    const { hook, writes } = mount("bot_a", true);
+    // 同一段对话的另一次导航丢了参数：页面没藏过（epoch 不变）、不是 popstate。
+    hook.rerender({ id: "bot_a", w: undefined });
+    expect(botUi("bot_a")?.computer).toBe(true);
+    expect(hook.result.current[0]).toBe(true);
+    expect(writes).toEqual([{ open: true, replace: true }]);
   });
 
   test("机器人还不知道（对话详情没读到）：不动地址", () => {
