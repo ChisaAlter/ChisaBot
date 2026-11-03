@@ -238,7 +238,7 @@ CHISABOT_MODEL_MAX_RETRIES (default 1)."""
 _LIMIT_PARAMS = {
     "timeout": ("timeout", "request_timeout", "read_timeout", "model_timeout", "llm_timeout", "call_timeout"),
     "connect_timeout": ("connect_timeout",),
-    "max_retries": ("max_retries", "retries", "retry_count", "max_retry_count"),
+    "max_retries": ("_api_max_retries", "max_retries", "retries", "retry_count", "max_retry_count"),
 }
 
 
@@ -488,7 +488,9 @@ def build_agent_class():
             if "request_overrides" in signature:
                 overrides = dict(kwargs.get("request_overrides") or {})
                 overrides.setdefault("timeout", limits["timeout"])
-                overrides.setdefault("max_retries", limits["max_retries"])
+                # NOT max_retries: it is not a per-request kwarg on openai >= 2.x — the SDK
+                # raises TypeError on every create() and the whole turn dies. The retry
+                # bound reaches the agent via _api_max_retries (apply_call_limits below).
                 kwargs["request_overrides"] = overrides
             agent = AIAgent(**kwargs)
             restrict(agent)
