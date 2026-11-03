@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- 模型拒绝错误不再吞因 + 主模型配不出来可走备用：适配器 `_configure` 原来 `except Exception: response = None` 把上游放在 `data.details` 里的真实原因（模型不在清单、provider 无法解析、AuthError 等）整个丢掉，界面只剩一句通用文案，「又拒绝」永远不可诊断。现在结构化 details 原样透传进错误详情、全文进服务端日志（capability 依旧脱敏）；会话本身丢失（进程重启后内存 session 没了）单独报「开新对话」，不再误报成模型拒绝；busy 等会话级 ACP 错误原样透传、不再被改写成 invalid_params。主模型 configure 失败从硬死改为冷却后进候选循环——配了备用模型时本轮直接跑备用（field_meta 照旧带 modelFallback），一次配错不再让整个机器人每轮必死。具名 custom provider 反查优先用 upstream `canonical_custom_identity`/`find_custom_provider_identity`（规范化 URL、扫描 `providers:` 新条目、可按模型反查），手写 base_url 精确匹配降级为旧版兜底。`chisabot_acp.py`；适配器测试新增 5 项回归。
+## 0.1.127 — 2026-11-03
+
+这一版合并 #488：模型配置失败透出真实原因、配不出来可落备用模型。全端同步版本号到 0.1.127（Android versionCode 309）；PC 外壳和 Android 应用本体不变。
+
+- 模型拒绝错误不再吞因 + 主模型配不出来可走备用（#488）：适配器 `_configure` 原来 `except Exception: response = None` 把上游放在 `data.details` 里的真实原因（模型不在清单、provider 无法解析、AuthError 等）整个丢掉，界面只剩一句通用文案，「又拒绝」永远不可诊断。现在结构化 details 原样透传进错误详情、全文进服务端日志（capability 依旧脱敏）；会话本身丢失（进程重启后内存 session 没了）单独报「开新对话」，不再误报成模型拒绝；busy 等会话级 ACP 错误原样透传、不再被改写成 invalid_params。主模型 configure 失败从硬死改为冷却后进候选循环——配了备用模型时本轮直接跑备用（field_meta 照旧带 modelFallback），一次配错不再让整个机器人每轮必死。具名 custom provider 反查优先用 upstream `canonical_custom_identity`/`find_custom_provider_identity`（规范化 URL、扫描 `providers:` 新条目、可按模型反查），手写 base_url 精确匹配降级为旧版兜底。`chisabot_acp.py`；适配器测试新增 5 项回归。
 
 ## 0.1.126 — 2026-11-03
 
