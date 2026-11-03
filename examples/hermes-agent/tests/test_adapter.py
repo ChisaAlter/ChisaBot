@@ -27,13 +27,13 @@ class Model(SimpleNamespace):
 
 
 class RequestError(Exception):
-    def __init__(self, code, message):
-        self.code, self.message = code, message
+    def __init__(self, code, message, data=None):
+        self.code, self.message, self.data = code, message, data
         super().__init__(message)
 
     @classmethod
     def invalid_params(cls, data):
-        return cls(-32602, data["details"])
+        return cls(-32602, data["details"], data)
 
 
 class Registry:
@@ -1166,6 +1166,122 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                                 requested_provider="custom", base_url="https://unknown.invalid/v1")
         self.assertEqual(requested, ["magpie", "custom"])
         self.assertEqual(captured["model"], "clinepass/x")
+
+    async def test_custom_provider_echo_uses_upstream_identity_lookup(self):
+        # 具名 custom provider 反查优先走 upstream canonical identity（规范化 URL、
+        # 扫描 providers: 新条目、可按模型反查）；手写 base_url 匹配只是旧版兜底。
+        requested = []
+        captured = {}
+        class AIAgent(FakeAgent):
+            def __init__(self, **kwargs):
+                super().__init__()
+                captured.update(kwargs)
+        additions = {}
+        for name, attrs in {
+            "run_agent": {"AIAgent": AIAgent},
+            "hermes_cli": {"__path__": []},
+            "hermes_cli.config": {"load_config": lambda: {"model": {"default": "magpie-model", "provider": "custom"}},
+                                  "get_compatible_custom_providers": lambda _cfg=None: []},
+            "hermes_cli.runtime_provider": {"resolve_runtime_provider": lambda **kw: requested.append(kw.get("requested")) or
+                                            {"provider": "custom", "base_url": "https://magpie.invalid/v1", "api_key": "k"},
+                                            "canonical_custom_identity": lambda base_url=None, model=None, **kw: "custom:magpie"},
+            "hermes_constants": {"resolve_reasoning_config": lambda *_a: {}},
+        }.items():
+            module = ModuleType(name)
+            module.__dict__.update(attrs)
+            additions[name] = module
+        with patch.dict(sys.modules, additions):
+            manager = self.cls().session_manager
+            manager._make_agent(session_id="s", cwd="/w", model="SWE-2",
+                                requested_provider="custom", base_url="https://magpie.invalid/v1")
+        self.assertEqual(requested, ["magpie"])
+        self.assertEqual(captured["model"], "SWE-2")
+
+    async def test_configure_rejection_surfaces_upstream_details(self):
+        # 根因修复：configure 失败必须带上 Hermes 放在 data.details 里的真实原因，
+        # 而不是吞成固定文案——否则「又拒绝」永远不可诊断。
+        state = await self.new()
+        server_mod = self.modules["acp_adapter.server"]
+
+        async def rejecting(agent_self, model_id, session_id, **kwargs):
+            agent_self.switches.append(model_id)
+            raise RequestError.invalid_params({"details": "Model `SWE-2` was not found in this provider's model listing"})
+
+        with patch.object(server_mod.HermesACPAgent, "set_session_model", rejecting):
+            with self.assertRaises(RequestError) as error:
+                await self.prompt(state)
+        self.assertEqual(error.exception.code, -32602)
+        self.assertIn("SWE-2", str(error.exception))
+        self.assertIn("was not found", str(error.exception))
+        self.assertFalse(state.agent.inputs)
+
+    async def test_configure_failure_cools_primary_and_falls_back(self):
+        # 主模型 configure 失败以前直接硬死每轮；现在冷却它并换下一个健康候选，
+        # 一次配错的选型不再让整个机器人永久死锁。
+        import chisabot_acp
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        server_mod = self.modules["acp_adapter.server"]
+
+        async def flaky(agent_self, model_id, session_id, **kwargs):
+            agent_self.switches.append(model_id)
+            if model_id == "unknown":
+                raise RequestError.invalid_params({"details": "Model `unknown` was not found"})
+            target = agent_self.session_manager.get_session(session_id)
+            target.agent.model = target.model = model_id
+            return Model()
+
+        raw = payload()
+        raw["model"]["id"] = "unknown"
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with patch.object(server_mod.HermesACPAgent, "set_session_model", flaky):
+            response = await self.prompt(state, raw)
+        self.assertEqual(self.adapter.switches, ["unknown", "backup-a"])
+        self.assertEqual(state.agent.model, "backup-a")
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertEqual(response.field_meta["chisabot"]["modelFallback"],
+                         {"from": "unknown", "to": "backup-a", "reason": "unavailable"})
+
+    async def test_missing_session_reports_session_loss_not_model_rejection(self):
+        # set_session_model 返回 None = 会话本身没了，不是模型拒绝——报不同的错，
+        # 也不去逐个冷却无辜的模型。
+        import chisabot_acp
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        server_mod = self.modules["acp_adapter.server"]
+
+        async def missing(agent_self, model_id, session_id, **kwargs):
+            agent_self.switches.append(model_id)
+            return None
+
+        raw = payload()
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with patch.object(server_mod.HermesACPAgent, "set_session_model", missing):
+            with self.assertRaises(RequestError) as error:
+                await self.prompt(state, raw)
+        self.assertIn("session", str(error.exception).lower())
+        self.assertIn("new conversation", str(error.exception))
+        self.assertEqual(self.adapter.switches, ["magpie-model"])
+
+    async def test_session_level_acp_error_is_not_mislabeled_as_model_rejection(self):
+        # -32603 之类会话级失败不是模型拒绝——原样透传，不吞成 invalid_params，
+        # 也不冷却一个根本没问题的模型。
+        import chisabot_acp
+        self.addCleanup(chisabot_acp.reset_model_breakers)
+        state = await self.new()
+        server_mod = self.modules["acp_adapter.server"]
+
+        async def busy(agent_self, model_id, session_id, **kwargs):
+            agent_self.switches.append(model_id)
+            raise RequestError(-32603, "Session is busy")
+
+        raw = payload()
+        raw["model"]["fallbacks"] = ["backup-a"]
+        with patch.object(server_mod.HermesACPAgent, "set_session_model", busy):
+            with self.assertRaises(RequestError) as error:
+                await self.prompt(state, raw)
+        self.assertEqual(error.exception.code, -32603)
+        self.assertEqual(str(error.exception), "Session is busy")
 
     async def test_source_is_pinned_before_bootstrap_and_lazy_installs_disabled(self):
         import os

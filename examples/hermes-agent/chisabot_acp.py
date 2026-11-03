@@ -300,6 +300,24 @@ def pick_turn_model(agent: Any, config: HostPrompt, now: float | None = None) ->
     return [(model, cooling["reason"]) for model in candidates] + [(config.model_id, None)]
 
 
+def _model_configure_reason(error: BaseException, capability: str) -> str:
+    """Bounded, safe reason for a rejected model configure.
+
+    Upstream puts its sanitized validation prose in the ACP error's structured
+    ``data.details``/``details`` field; that field is safe to surface. Generic
+    exception text can carry provider bodies, so only the exception type is
+    returned for those — the full message still reaches the server log at the
+    call site. The run capability is stripped regardless.
+    """
+    for attr in ("data", "details"):
+        value = getattr(error, attr, None)
+        if isinstance(value, dict):
+            value = value.get("details") or value.get("message")
+        if isinstance(value, str) and value.strip():
+            return str(redact(value.strip(), capability))[:240]
+    return type(error).__name__
+
+
 def model_controls() -> dict[str, bool]:
     """Which per-turn model controls the installed Hermes really has (detected, never assumed).
 
@@ -455,12 +473,30 @@ def build_agent_class():
             if wanted == "custom" and base_url:
                 # _switch_model echoes the resolved provider *type* ("custom") when the session
                 # stays on a named custom provider's endpoint, but the runtime resolver only
-                # accepts real provider names. Recover the name from the carried endpoint.
-                kept = str(base_url).strip().rstrip("/").lower()
-                for entry in get_compatible_custom_providers(config):
-                    if str(entry.get("base_url") or "").strip().rstrip("/").lower() == kept:
-                        wanted = str(entry.get("name") or "").strip() or wanted
+                # accepts real provider names. Recover the configured identity from the
+                # carried endpoint/model: upstream's canonical lookup first (it scans
+                # providers:, honours aliases and normalizes URLs, and can match on the
+                # model), then the raw entry match as a fallback for older installs.
+                found = None
+                runtime_provider_mod = sys.modules.get("hermes_cli.runtime_provider")
+                for helper in ("canonical_custom_identity", "find_custom_provider_identity"):
+                    lookup = getattr(runtime_provider_mod, helper, None)
+                    if not callable(lookup):
+                        continue
+                    try:
+                        found = (lookup(base_url=str(base_url), model=selected_model or None)
+                                 if helper == "canonical_custom_identity" else lookup(str(base_url)))
+                    except Exception:
+                        found = None
+                    if isinstance(found, str) and found.strip():
+                        wanted = found.strip().removeprefix("custom:") or wanted
                         break
+                else:
+                    kept = str(base_url).strip().rstrip("/").lower()
+                    for entry in get_compatible_custom_providers(config):
+                        if str(entry.get("base_url") or "").strip().rstrip("/").lower() == kept:
+                            wanted = str(entry.get("name") or "").strip() or wanted
+                            break
             route = resolve_runtime_provider(requested=wanted, target_model=selected_model or None)
             kwargs = dict(model=selected_model, provider=route.get("provider"),
                           api_mode=api_mode or route.get("api_mode"), base_url=base_url or route.get("base_url"),
@@ -591,26 +627,44 @@ def build_agent_class():
             aliases = tool_aliases(config)
             self._host_aliases[session_id] = aliases
             applied, skip_reason = config.model_id, None
-            for model_id, cooled_reason in pick_turn_model(state.agent, config):
+            tried: set[str] = set()
+            failures: dict[str, str] = {}
+            while True:
+                candidate = next(((m, r) for m, r in pick_turn_model(state.agent, config) if m not in tried), None)
+                if candidate is None:
+                    detail = "; ".join(f"{model}: {reason}" for model, reason in failures.items())[:400]
+                    raise ProtocolError("The requested host model was rejected or could not be configured"
+                                        + (f" ({detail})" if detail else "")) from None
+                model_id, cooled_reason = candidate
+                tried.add(model_id)
                 agent = state.agent
                 if self._host_models.get(session_id) != model_id or getattr(agent, "model", model_id) != model_id:
                     try:
                         # Native method validates unknown models and passes keep_endpoint=True
                         # to _switch_model: the configured server Magpie route survives.
                         response = await super().set_session_model(model_id=model_id, session_id=session_id)
-                    except Exception:
-                        response = None
+                    except Exception as error:
+                        code = getattr(error, "code", None)
+                        if isinstance(code, int) and code != -32602:
+                            # Session-level ACP failures (busy, internal) are not the model
+                            # rejecting; surface them unchanged instead of cooling a good model.
+                            raise
+                        reason = _model_configure_reason(error, config.gateway.capability)
+                        failures[model_id] = reason
+                        # A model that cannot be configured is unavailable; cool it and try
+                        # the next healthy candidate — the primary is not exempt.
+                        breaker_fail(_breaker_key(state.agent, model_id), "unavailable", _now())
+                        _breaker_log({"type": "model-fallback", "event": "configure-failed", "model": model_id,
+                                      "reason": reason, "kernel": "hermes-adapter",
+                                      "detail": redact(str(error), config.gateway.capability)[:300]})
+                        continue
                     if response is None:
-                        if model_id != config.model_id:
-                            # A fallback Hermes itself rejects is cooled like any broken model.
-                            breaker_fail(_breaker_key(state.agent, model_id), "unavailable", _now())
-                            continue
-                        raise ProtocolError("The requested host model was rejected or could not be configured") from None
+                        # set_session_model returns None only when the session lookup fails;
+                        # every remaining candidate hits the same missing state — fail now.
+                        raise ProtocolError("The host session is no longer available; start a new conversation") from None
                     self._host_models[session_id] = model_id
                 applied, skip_reason = model_id, cooled_reason
                 break
-            if applied is None:
-                raise ProtocolError("The requested host model could not be configured")
             for name in self._host_tools.pop(session_id, set()):
                 registry.deregister(name, scope=session_id)
             installed = set()
@@ -846,13 +900,20 @@ def build_agent_class():
                 previous = state.agent
                 try:
                     response = await super().set_session_model(model_id=model_id, session_id=state.session_id)
-                except Exception:
-                    response = None
-                if response is None:
+                except Exception as error:
+                    code = getattr(error, "code", None)
+                    if isinstance(code, int) and code != -32602:
+                        raise
+                    _breaker_log({"type": "model-fallback", "event": "configure-failed", "model": model_id,
+                                  "reason": _model_configure_reason(error, config.gateway.capability),
+                                  "kernel": "hermes-adapter",
+                                  "detail": redact(str(error), config.gateway.capability)[:300]})
                     tried.add(model_id)
-                    if model_id != config.model_id:
-                        breaker_fail(_breaker_key(state.agent, model_id), "unavailable", _now())
+                    breaker_fail(_breaker_key(state.agent, model_id), "unavailable", _now())
                     continue
+                if response is None:
+                    # The session itself is gone; no other model can fix that.
+                    return False
                 self._host_models[state.session_id] = model_id
                 uses = getattr(previous, "_chisabot_fallback_uses", None)
                 # set_session_model may rebuild state.agent wholesale: re-pin the host's
