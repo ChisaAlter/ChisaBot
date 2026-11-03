@@ -9952,6 +9952,11 @@ html.dark .rail-tabs-thumb {
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
 }
+/* 深色下只靠黑投影当边界，压在深色底上几乎看不见：给 --lg-shadow 叠一圈 1px 内描边（顶边再亮一档），
+ * 圆角自动跟随。只改变量不动上面 !important 规则（Biome 不许新增）；resize 暂停把它置 none 时连描边一起关。 */
+html.dark :is(.glass-composer, .glass-composer:focus-within) {
+  --lg-shadow: var(--card-shadow), inset 0 0 0 1px rgba(255, 255, 255, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
 :is(.model-pill, .perm-chip) {
   background: var(--fill-tertiary) !important;
   border: 0 !important;
