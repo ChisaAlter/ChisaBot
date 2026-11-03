@@ -9346,7 +9346,7 @@ html[data-theme="dark"] #sky-root::after {
   );
 }
 
-/* 1. 精选 6 款主题配色令牌覆盖（支持浅色与深色高对比度）。
+/* 1. 精选 8 款主题配色令牌覆盖（支持浅色与深色高对比度）。
  * 除了旧的 --accent-blue，还要覆盖 --accent-color / --accent-soft（强调色）、--ink-primary（主按钮）、
  * --focus / --focus-line（聚焦）和 --glass-tint（混进毛玻璃的强调色，约 8%）；default 不写，保持原样。
  * 主按钮底色与 --on-primary 的对比度都 ≥ 4.5（见 PR 描述里的表）。 */
@@ -9479,6 +9479,58 @@ html.dark[data-palette="sunset"] {
   --focus: rgba(255, 192, 72, 0.28);
   --focus-line: rgba(255, 192, 72, 0.7);
   --glass-tint: rgba(255, 192, 72, 0.1);
+}
+html[data-palette="gold"] {
+  --accent-blue: #a16207;
+  --accent-blue-ink: #854d0e;
+  --accent-blue-soft: rgba(161, 98, 7, 0.14);
+  --accent-color: #a16207;
+  --accent-soft: rgba(161, 98, 7, 0.14);
+  --ink-primary: #854d0e;
+  --ink-primary-hover: #713f12;
+  --on-primary: #ffffff;
+  --focus: rgba(161, 98, 7, 0.24);
+  --focus-line: rgba(161, 98, 7, 0.6);
+  --glass-tint: rgba(161, 98, 7, 0.08);
+}
+html.dark[data-palette="gold"] {
+  --accent-blue: #facc15;
+  --accent-blue-ink: #fde047;
+  --accent-blue-soft: rgba(250, 204, 21, 0.2);
+  --accent-color: #facc15;
+  --accent-soft: rgba(250, 204, 21, 0.2);
+  --ink-primary: #fde047;
+  --ink-primary-hover: #fef08a;
+  --on-primary: #0b1020;
+  --focus: rgba(250, 204, 21, 0.28);
+  --focus-line: rgba(250, 204, 21, 0.7);
+  --glass-tint: rgba(250, 204, 21, 0.1);
+}
+html[data-palette="ruby"] {
+  --accent-blue: #dc2626;
+  --accent-blue-ink: #b91c1c;
+  --accent-blue-soft: rgba(220, 38, 38, 0.14);
+  --accent-color: #dc2626;
+  --accent-soft: rgba(220, 38, 38, 0.14);
+  --ink-primary: #b91c1c;
+  --ink-primary-hover: #991b1b;
+  --on-primary: #ffffff;
+  --focus: rgba(220, 38, 38, 0.24);
+  --focus-line: rgba(220, 38, 38, 0.6);
+  --glass-tint: rgba(220, 38, 38, 0.08);
+}
+html.dark[data-palette="ruby"] {
+  --accent-blue: #f87171;
+  --accent-blue-ink: #fca5a5;
+  --accent-blue-soft: rgba(248, 113, 113, 0.2);
+  --accent-color: #f87171;
+  --accent-soft: rgba(248, 113, 113, 0.2);
+  --ink-primary: #fca5a5;
+  --ink-primary-hover: #fecaca;
+  --on-primary: #0b1020;
+  --focus: rgba(248, 113, 113, 0.28);
+  --focus-line: rgba(248, 113, 113, 0.7);
+  --glass-tint: rgba(248, 113, 113, 0.1);
 }
 
 /* 2. 环境流光层、自定义壁纸层与容器层级（彻底消除祖先 animation 导致的 Chromium Backdrop Root 采样阻断） */

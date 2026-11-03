@@ -51,7 +51,8 @@ export type GlassStyleId = "liquid" | "crystal" | "frosted";
  * Hark 原生 WebGL 动态天空与天气引擎（wallpaper_core.html）精选场景 + 自动跟随模式。
  * - "auto": 根据当前主题配色与浅色/深色模式自动匹配最佳 Hark 动态天空场景（深色模式固定匹配深邃夜幕，保障浅色文字 100% 清晰可见）
  * - "live": 根据当前时间与实时天气（Open-Meteo）动态演算太阳高度、瑞利散射与云层
- * - "0".."11": 对应 wallpaper_core.html 中 SCENES[0..11] 的地标与气象时刻
+ * - "0".."11": 对应 wallpaper_core.html 中 SCENES[0..11] 的地标与气象时刻；设置页精选 8 张卡
+ *   （auto / live + 6 个互不相同的场景：晨霞、晴空、暖金、雪霁、风暴、星夜）
  */
 export type HarkSkySceneId =
   | "auto"
@@ -84,8 +85,9 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     sceneIndex: null,
     name: "智能跟随主题",
     subtitle: "浅色呈现晴空流云，深色自动切换静谧夜幕",
+    // 昼 / 夜对半分：一眼看出它会跟着主题变
     previewGradient:
-      "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 42%, #6da7ec 76%, #b0d5f7 100%)",
+      "linear-gradient(135deg, #4a8fdf 0%, #4a8fdf 44%, #0d1526 56%, #1c2a4a 100%)",
     isNight: false,
   },
   {
@@ -93,8 +95,18 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     sceneIndex: -1,
     name: "实时动态天象",
     subtitle: "按真实太阳轨迹与实时云量动态演进",
+    // 蓝天尽头压一道太阳位置的暖光：示意它跟着真实太阳走
     previewGradient:
-      "linear-gradient(180deg, #164e9f 0%, #3875ca 45%, #79b0ef 80%, #cbe3fa 100%)",
+      "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 42%, #e89a5a 82%, #f5c87e 100%)",
+    isNight: false,
+  },
+  {
+    id: "11",
+    sceneIndex: 11,
+    name: "晨霞初晓 · 檀香山",
+    subtitle: "Honolulu · 日出粉紫霞光与海岸晨雾",
+    previewGradient:
+      "linear-gradient(180deg, #3b3f8f 0%, #7c5cad 35%, #d67fa8 68%, #f5b3a1 100%)",
     isNight: false,
   },
   {
@@ -103,7 +115,7 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     name: "晴空流云 · 帕洛阿尔托",
     subtitle: "Palo Alto · 午后澄澈蓝天与立体体积积云",
     previewGradient:
-      "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 40%, #6da7ec 75%, #b0d5f7 100%)",
+      "linear-gradient(180deg, #1466c2 0%, #3b8de0 48%, #7db8ef 82%, #b8dcf8 100%)",
     isNight: false,
   },
   {
@@ -112,7 +124,7 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     name: "落日暖金 · 凤凰城",
     subtitle: "Phoenix · 黄金时刻暖阳散射与流云",
     previewGradient:
-      "linear-gradient(180deg, #2b5899 0%, #5c7db0 38%, #b88b7c 72%, #f0b175 100%)",
+      "linear-gradient(180deg, #31497c 0%, #6d5d93 38%, #c97e5e 72%, #f2ac63 100%)",
     isNight: false,
   },
   {
@@ -121,8 +133,17 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
     name: "高山雪霁 · 太浩湖",
     subtitle: "Lake Tahoe · 清冽冰晶天光与层叠云海",
     previewGradient:
-      "linear-gradient(180deg, #4b6cb7 0%, #6d8ec9 42%, #9bb4de 76%, #cfe0f5 100%)",
+      "linear-gradient(180deg, #6d93c9 0%, #9dbce4 42%, #cfe0f4 75%, #eaf3fb 100%)",
     isNight: false,
+  },
+  {
+    id: "10",
+    sceneIndex: 10,
+    name: "风暴雷云 · 迈阿密",
+    subtitle: "Miami · 黄昏雷雨云墙与疾风",
+    previewGradient:
+      "linear-gradient(180deg, #141d29 0%, #22303f 42%, #354a5e 78%, #4a637c 100%)",
+    isNight: true,
   },
   {
     id: "4",

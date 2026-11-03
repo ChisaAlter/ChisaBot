@@ -72,7 +72,7 @@ describe("settings copy matches the product", () => {
     expect(palette.description).toContain(`${THEME_PALETTES.length} 款`);
     for (const p of THEME_PALETTES)
       expect(palette.description).toContain(p.name);
-    expect(palette.description).not.toContain("8 款");
+    expect(palette.description).not.toContain("6 款");
   });
 
   test("no built-in wallpaper promise, no hard-coded curated skill count", () => {

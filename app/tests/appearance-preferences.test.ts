@@ -23,8 +23,8 @@ import {
 const css = readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8");
 
 describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () => {
-  test("provides 6 curated high-contrast theme palettes and computes sky variables for non-default palettes", () => {
-    expect(THEME_PALETTES.length).toBe(6);
+  test("provides 8 curated high-contrast theme palettes and computes sky variables for non-default palettes", () => {
+    expect(THEME_PALETTES.length).toBe(8);
     expect(computePaletteSky("default", false)).toBeNull();
     for (const p of THEME_PALETTES) {
       // Every theme's dark sky scene is a deep night scene (2 or 4) for dark mode legibility
@@ -39,14 +39,14 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
     }
   });
 
-  test("provides Hark WebGL wallpaper_core.html and 6 curated sky scene options plus backward-compatible scene resolution", () => {
+  test("provides Hark WebGL wallpaper_core.html and 8 curated sky scene options plus backward-compatible scene resolution", () => {
     const wallpaperHtmlPath = path.join(import.meta.dir, "../public/wallpaper_core.html");
     expect(existsSync(wallpaperHtmlPath)).toBe(true);
     const wallpaperHtml = readFileSync(wallpaperHtmlPath, "utf8");
     expect(wallpaperHtml).toContain("window.hark");
     expect(wallpaperHtml).toContain("const SCENES = [");
 
-    expect(HARK_SKY_SCENES.length).toBe(6);
+    expect(HARK_SKY_SCENES.length).toBe(8);
     resetAppearanceDefaults();
     expect(getAppearanceState().harkScene).toBe("auto");
     expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(0);

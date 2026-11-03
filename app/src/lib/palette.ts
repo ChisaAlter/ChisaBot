@@ -1,5 +1,5 @@
 /**
- * 主题配色（6 套）和它们算出来的天空垫片颜色。
+ * 主题配色（8 套）和它们算出来的天空垫片颜色。
  *
  * 单独成一个不依赖 React / 别名路径的纯模块（2026-10-29，模块 11 审计）：vite.config.ts 要在构建时
  * 把配色表序列化进 index.html 的启动脚本（{@link paletteBootScript}），让启动骨架和地址栏颜色在 JS 加载前
@@ -12,7 +12,9 @@ export type ThemePaletteId =
   | "emerald"
   | "ocean"
   | "sunset"
-  | "sakura";
+  | "sakura"
+  | "gold"
+  | "ruby";
 
 export type ThemePaletteMeta = {
   id: ThemePaletteId;
@@ -121,6 +123,36 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     harkSceneLight: 7,
     harkSceneDark: 2,
   },
+  {
+    id: "gold",
+    name: "银杏暖金",
+    subtitle: "秋日银杏黄与暖阳鎏金",
+    accentLight: "#a16207",
+    accentDark: "#facc15",
+    swatchGradient:
+      "linear-gradient(135deg, #a16207 0%, #eab308 52%, #fde68a 100%)",
+    skyHueLight: [46, 44, 42, 38],
+    skySatLight: [72, 66, 58, 50],
+    skyHueDark: [44, 42, 40, 48],
+    skySatDark: [40, 36, 32, 28],
+    harkSceneLight: 6,
+    harkSceneDark: 4,
+  },
+  {
+    id: "ruby",
+    name: "朱砂绛红",
+    subtitle: "醇厚朱砂红与蔷薇微醺",
+    accentLight: "#dc2626",
+    accentDark: "#f87171",
+    swatchGradient:
+      "linear-gradient(135deg, #991b1b 0%, #dc2626 50%, #fca5a5 100%)",
+    skyHueLight: [356, 352, 348, 342],
+    skySatLight: [62, 58, 54, 66],
+    skyHueDark: [352, 348, 344, 336],
+    skySatDark: [42, 38, 34, 30],
+    harkSceneLight: 1,
+    harkSceneDark: 2,
+  },
 ] as const;
 
 /**
@@ -222,7 +254,7 @@ const BOOT_GLASS_STYLES = ["liquid", "crystal", "frosted"];
  *   启动骨架（骨架读 --sky-1..4）直接是这套配色；
  * - 写 data-glass，应用挂载时不用再改一次根属性；
  * - meta theme-color 按应用自己的深浅色 + 配色写好。
- * 配色表在构建时算好内联（只有 5 套 × 2 个小对象），运行时不用再算。
+ * 配色表在构建时算好内联（非 default 各 2 个小对象），运行时不用再算。
  */
 export function paletteBootScript(): string {
   const map: Record<
