@@ -97,7 +97,7 @@ export function AppearancePreferences() {
 
   return (
     <>
-      {/* 1. 主题配色与动态天空场景（收束为精炼的 6 款配色 + 6 款天象） */}
+      {/* 1. 主题配色与动态天空场景（8 款配色 + 8 款天象，场景彼此观感区分：晨霞 / 晴空 / 暖金 / 雪霁 / 风暴 / 星夜） */}
       <div className="appearance-block" data-setting-item="主题配色">
         <div className="appearance-block-head">
           <div>
@@ -106,7 +106,7 @@ export function AppearancePreferences() {
             </div>
             <div className="appearance-block-desc">
               {
-                "精选 6 款高对比主题色与 Hark WebGL 动态天空；深色模式自动保障夜幕高对比度与文字清晰可读"
+                "精选 8 款高对比主题色与 Hark WebGL 动态天空；深色模式自动保障夜幕高对比度与文字清晰可读"
               }
             </div>
           </div>
