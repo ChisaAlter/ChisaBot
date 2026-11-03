@@ -89,4 +89,74 @@ r=$(drift)
 [ "${r%%|*}" = 0 ] && case "$r" in *"::error::"*"都没有"*) true ;; *) false ;; esac \
   && pass "一个工具都没有 → ::error:: + 漂移（原行为不变）" || fail "无工具时行为变了：$r"
 
+# ---------- 3. magpie.sh --update：拉取挂起有上限、有心跳；成功路径走完整步 ----------
+M="$TMP/m"; mkdir -p "$M/bin" "$M/updater" "$M/magpie" "$M/updater/spool/state"
+printf '' > "$M/magpie/compose.yaml"
+for c in date sleep timeout mkdir; do ln -s "$(command -v "$c")" "$M/bin/$c"; done
+cat > "$M/bin/python3" <<'SH'
+#!/bin/bash
+# 假 python3：write_state 把 STATE 路径当最后一个参数传进来——写一个标记文件。
+cat >/dev/null
+for a; do p=$a; done
+printf '{"installed":true,"updateAvailable":false}\n' > "$p"
+SH
+chmod +x "$M/bin/python3"
+cat > "$M/bin/curl" <<'SH'
+#!/bin/bash
+printf '200'
+SH
+chmod +x "$M/bin/curl"
+run_magpie() { # $1..$n=追加的 env 覆盖（在默认赋值之后、命令之前传入，真正生效）；输出 "rc|输出"
+  local out rc
+  out=$(env CHISABOT_UPDATER_DIR="$M/updater" MAGPIE_DIR="$M/magpie" \
+    MAGPIE_PULL_TIMEOUT_SEC=30 MAGPIE_PULL_HEARTBEAT_SEC=5 MAGPIE_UP_TIMEOUT_SEC=10 \
+    MAGPIE_HEALTH_TIMEOUT_SEC=5 PATH="$M/bin:$BASE" "$@" bash "$HERE/magpie.sh" --update 2>&1)
+  rc=$?
+  printf '%s|%s' "$rc" "$out"
+}
+
+# 3a. pull 永远不回来：到 MAGPIE_PULL_TIMEOUT_SEC 判失败，期间有心跳日志
+cat > "$M/bin/docker" <<'SH'
+#!/bin/bash
+case "$*" in
+  "image inspect"*) printf 'ghcr.io/x/magpie@sha256:aaa\n' ;;
+  "inspect "*) exit 0 ;;
+  *" pull "*) exec sleep 90 ;;
+esac
+SH
+chmod +x "$M/bin/docker"
+r=$(run_magpie MAGPIE_PULL_TIMEOUT_SEC=8)
+case "$r" in "2|"*"::result:: failed"*) pass "pull 挂起超上限 → ::result:: failed" ;; *) fail "pull 挂起未判失败：$r" ;; esac
+case "$r" in *"拉取中"*) pass "拉取过程有心跳日志" ;; *) fail "缺心跳日志：$r" ;; esac
+case "$r" in *"超过 8 秒"*) pass "失败原因带超时秒数" ;; *) fail "失败原因不含超时：$r" ;; esac
+
+# 3b. 正常：pull 出输出、up -d 成功、健康检查过 → succeeded（docker 输出末尾进任务日志）
+cat > "$M/bin/docker" <<'SH'
+#!/bin/bash
+case "$*" in
+  "image inspect"*) printf 'ghcr.io/x/magpie@sha256:aaa\n' ;;
+  "inspect "*) exit 1 ;;                      # 容器不存在 = 首次安装，继续走 swap+health
+  *" pull "*) sleep 2; printf 'Pulled abc123\n' ;;
+  *" up -d "*) exit 0 ;;
+esac
+SH
+r=$(run_magpie)
+case "$r" in "0|"*"::result:: succeeded"*) pass "安装路径 pull→swap→health→done 成功" ;; *) fail "安装路径未成功：$r" ;; esac
+case "$r" in *"::step:: done"*) pass "成功路径走完所有步骤" ;; *) fail "缺 done 步：$r" ;; esac
+case "$r" in *"Pulled abc123"*) pass "pull 输出末尾并进任务日志" ;; *) fail "pull 输出没进日志：$r" ;; esac
+[ -f "$M/updater/spool/state/magpie.json" ] && pass "成功路径写了 magpie.json" || fail "成功路径没写 magpie.json"
+
+# 3c. up -d 超时：回显「重建失败或超过 N 秒」并判失败
+cat > "$M/bin/docker" <<'SH'
+#!/bin/bash
+case "$*" in
+  "image inspect"*) printf 'ghcr.io/x/magpie@sha256:aaa\n' ;;
+  "inspect "*) exit 1 ;;
+  *" pull "*) exit 0 ;;
+  *" up -d "*) exec sleep 60 ;;
+esac
+SH
+r=$(run_magpie MAGPIE_UP_TIMEOUT_SEC=5)
+case "$r" in "2|"*"超过 5 秒"*"::result:: failed"*) pass "up -d 超时 → 带秒数的失败" ;; *) fail "up -d 超时未判失败：$r" ;; esac
+
 [ "$FAIL" = 0 ] && echo "全部通过" || { echo "有失败"; exit 1; }

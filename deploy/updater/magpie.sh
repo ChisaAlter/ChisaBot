@@ -23,6 +23,12 @@ MAGPIE_COMPOSE=${MAGPIE_COMPOSE:-$MAGPIE_DIR/compose.yaml}
 # 健康探测：Magpie 的 web 控制台端口。没有 key 也回一句话，所以「有 HTTP 响应」就是活着。
 MAGPIE_PROBE_URL=${MAGPIE_PROBE_URL:-http://127.0.0.1:3430/}
 MAGPIE_HEALTH_TIMEOUT_SEC=${MAGPIE_HEALTH_TIMEOUT_SEC:-60}
+# 拉取镜像的上限与心跳间隔。registry 不通时 docker 自己的重试能拖很久——没有上限的话
+# 任务就无声地停在「拉取镜像」，页面上读作卡死；到点判失败比挂着更诚实。
+MAGPIE_PULL_TIMEOUT_SEC=${MAGPIE_PULL_TIMEOUT_SEC:-900}
+MAGPIE_PULL_HEARTBEAT_SEC=${MAGPIE_PULL_HEARTBEAT_SEC:-15}
+# 重建容器的上限：up -d 平时几秒，给个宽裕的兜底。
+MAGPIE_UP_TIMEOUT_SEC=${MAGPIE_UP_TIMEOUT_SEC:-120}
 
 STATE="$U/spool/state/magpie.json"
 JOB=""
@@ -111,7 +117,33 @@ do_update() {
   echo "::from:: ${before:-$MAGPIE_IMAGE}"
 
   step pull "拉取镜像（先拉后换：拉不动就不动正在跑的容器）"
-  if ! docker compose -f "$MAGPIE_COMPOSE" pull magpie >/dev/null 2>&1; then
+  # 拉几百 MB 是几分钟的事，输出又都在 docker 那边：放后台跑，这边每隔
+  # MAGPIE_PULL_HEARTBEAT_SEC 往任务日志里报一次「已用 N 秒」，页面上的日志尾巴就一直在动；
+  # 超过 MAGPIE_PULL_TIMEOUT_SEC 判失败。docker 输出留到 pull_log，结束把末尾几行并进
+  # 任务日志——失败时里面就是 registry 的原文，不用上服务器翻。
+  local pull_log pull_rc waited=0
+  pull_log=$(mktemp)
+  docker compose -f "$MAGPIE_COMPOSE" pull magpie >"$pull_log" 2>&1 &
+  local pull_pid=$!
+  while kill -0 "$pull_pid" 2>/dev/null; do
+    sleep 5
+    waited=$((waited + 5))
+    if [ "$waited" -ge "$MAGPIE_PULL_TIMEOUT_SEC" ]; then
+      kill "$pull_pid" 2>/dev/null || true
+      wait "$pull_pid" 2>/dev/null || true
+      tail -n 5 "$pull_log" | sed 's/^/  /'
+      rm -f "$pull_log"
+      fail "拉取 $MAGPIE_IMAGE 超过 ${MAGPIE_PULL_TIMEOUT_SEC} 秒（网络或 registry 不可达）；正在跑的 Magpie 没有动"
+    fi
+    if [ "$waited" -ge "$MAGPIE_PULL_HEARTBEAT_SEC" ] && [ $((waited % MAGPIE_PULL_HEARTBEAT_SEC)) -eq 0 ]; then
+      log "拉取中…已用 $((waited / 60)) 分 $((waited % 60)) 秒"
+    fi
+  done
+  wait "$pull_pid"
+  pull_rc=$?
+  sed 's/^/  /' "$pull_log" | tail -n 6
+  rm -f "$pull_log"
+  if [ "$pull_rc" -ne 0 ]; then
     fail "拉取 $MAGPIE_IMAGE 失败（网络或 registry 不可达）；正在跑的 Magpie 没有动"
   fi
   latest=$(local_digest)
@@ -126,8 +158,8 @@ do_update() {
   fi
 
   step swap "重建 Magpie 容器"
-  if ! docker compose -f "$MAGPIE_COMPOSE" up -d magpie >/dev/null 2>&1; then
-    fail "重建 Magpie 失败；旧容器可能仍在运行，请手动检查 docker compose -f $MAGPIE_COMPOSE ps"
+  if ! timeout "$MAGPIE_UP_TIMEOUT_SEC" docker compose -f "$MAGPIE_COMPOSE" up -d magpie >/dev/null 2>&1; then
+    fail "重建 Magpie 失败或超过 ${MAGPIE_UP_TIMEOUT_SEC} 秒；旧容器可能仍在运行，请手动检查 docker compose -f $MAGPIE_COMPOSE ps"
   fi
 
   step health "健康检查"
@@ -138,7 +170,7 @@ do_update() {
       # 字面标签，回退都真的会把旧镜像换回来 —— 只靠环境变量插值时，字面标签的 compose
       # 会静默不生效，看起来回退了其实还在跑新镜像，那比不回退更糟。
       docker tag "$before" "$MAGPIE_IMAGE" >/dev/null 2>&1 || true
-      docker compose -f "$MAGPIE_COMPOSE" up -d magpie >/dev/null 2>&1 || true
+      timeout "$MAGPIE_UP_TIMEOUT_SEC" docker compose -f "$MAGPIE_COMPOSE" up -d magpie >/dev/null 2>&1 || true
       if wait_healthy; then
         fail "新版本健康检查失败，已回退到 $before"
       fi
