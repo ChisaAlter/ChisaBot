@@ -1100,6 +1100,41 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(agent._session_db)
         self.assertNotIn("hermes_cli.mcp_startup", sys.modules)
 
+    async def test_call_limits_never_inject_max_retries_into_request_overrides(self):
+        # 生产事故（2026-11-03）：request_overrides 里的 max_retries 被一路塞进
+        # openai>=2.x 的 create()——SDK 不认识这个每请求参数，TypeError 干掉每一次
+        # 模型调用（「Hermes host turn execution failed」）。真实 AIAgent.__init__
+        # 声明 request_overrides 时走这条注入路径；旧的 **kwargs 桩永远走不到。
+        captured = {}
+        class AIAgent(FakeAgent):
+            _api_max_retries = 3
+            def __init__(self, model=None, request_overrides=None, **kwargs):
+                super().__init__()
+                captured.update(kwargs)
+                captured["request_overrides"] = request_overrides
+                self.request_overrides = dict(request_overrides or {})
+        additions = {}
+        for name, attrs in {
+            "run_agent": {"AIAgent": AIAgent},
+            "hermes_cli": {"__path__": []},
+            "hermes_cli.config": {"load_config": lambda: {"model": {"default": "magpie-model", "provider": "custom"}},
+                                  "get_compatible_custom_providers": lambda _cfg=None: []},
+            "hermes_cli.runtime_provider": {"resolve_runtime_provider": lambda **_kw: {"provider": "custom", "base_url": "https://magpie.invalid/v1", "api_mode": "chat", "api_key": "provider-key"}},
+            "hermes_constants": {"resolve_reasoning_config": lambda *_a: {}},
+        }.items():
+            module = ModuleType(name)
+            module.__dict__.update(attrs)
+            additions[name] = module
+        with patch.dict(sys.modules, additions):
+            manager = self.cls().session_manager
+            agent = manager._make_agent(session_id="s", cwd="/w", base_url="https://magpie.invalid/v1")
+        overrides = captured["request_overrides"] or {}
+        self.assertIn("timeout", overrides)
+        self.assertNotIn("max_retries", overrides)
+        self.assertNotIn("max_retries", agent.request_overrides)
+        # 重试上限走 agent 上真实存在的 _api_max_retries 旋钮（env 默认 1）。
+        self.assertEqual(agent._api_max_retries, 1)
+
     async def test_custom_provider_echo_resolves_named_provider_by_endpoint(self):
         # _switch_model echoes the resolved provider type "custom" when a session stays on a
         # named custom provider's endpoint; _make_agent must recover the real name so the
