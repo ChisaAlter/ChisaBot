@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.126 — 2026-11-03
+
+这一版合并 #486：Magpie 网关更新给拉取加上限时与心跳，页面补齐进度状态。全端同步版本号到 0.1.126（Android versionCode 308）；PC 外壳和 Android 应用本体不变。
+
+- Magpie 更新拉取加上限时与心跳（#486）：此前 `docker compose pull` 被 `>/dev/null` 静默且无超时——registry 拉不动时任务永远停在「拉取镜像」。现在 pull 后台执行、每 15 秒往任务日志报「已用 N 秒」（`MAGPIE_PULL_HEARTBEAT_SEC`），900 秒超时判失败（`MAGPIE_PULL_TIMEOUT_SEC`），输出末尾进任务日志；`up -d` 加 120 秒兜底（`MAGPIE_UP_TIMEOUT_SEC`）。页面补齐「排队中 / 成功 / 未执行（宿主机拒掉的请求原来无声消失）」三态，进行中显示实时已用时长。`test-shell.sh` 新增 magpie.sh 覆盖。
+
 ## 0.1.125 — 2026-11-03
 
 这一版合并 #482：聊天里工具步骤隐藏时不再残留孤零零的「在活动里看」。全端同步版本号到 0.1.125（Android versionCode 307）；PC 外壳和 Android 应用本体不变。
