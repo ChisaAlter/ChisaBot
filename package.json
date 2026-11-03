@@ -1,6 +1,6 @@
 {
   "name": "chisabot",
-  "description": "ChisaBot 中文自托�?AI 助手�?Magpie 模型集成",
+  "description": "ChisaBot 中文自托管 AI 助手与 Magpie 模型集成",
   "version": "0.1.125",
   "license": "MIT",
   "private": true,
