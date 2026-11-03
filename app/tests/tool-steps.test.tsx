@@ -16,6 +16,7 @@ import {
   OUTPUT_LIMIT,
   ToolLine,
 } from "@/components/channels/tool-line";
+import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { WorkRow } from "@/components/chat/work-card";
 import {
   WorkerCardBody,
@@ -507,5 +508,35 @@ describe("ToolLine 调试输出（可选）", () => {
     expect(output.textContent?.startsWith("# 标题\n| a |")).toBe(true);
     expect(view.container.querySelector("h1")).toBeNull();
     expect(view.container.textContent).toContain("还有");
+  });
+});
+
+describe("「在活动里看」跟着工具步骤一起藏（2026-11-03 气泡外孤儿链接）", () => {
+  afterEach(() => setToolActivityVisible(false));
+  test("工具步骤默认不画时，电脑工具旁边不剩孤零零的「在活动里看」", () => {
+    const view = render(
+      <ActivityJumpButton name="computer_panels" toolCallId="c1" />,
+    );
+    expect(view.container.textContent).toBe("");
+    expect(view.container.querySelector("button")).toBeNull();
+  });
+  test("打开「调试：显示工具调用」后照旧画出来", () => {
+    setToolActivityVisible(true);
+    const view = render(
+      <ActivityJumpButton name="computer_panels" toolCallId="c1" />,
+    );
+    const link = view.getByRole("button", { name: "在活动里看" });
+    expect(link.getAttribute("data-jump-activity")).toBe("c1");
+  });
+  test("开着调试也不给非电脑工具 / 没 id 的画", () => {
+    setToolActivityVisible(true);
+    expect(
+      render(<ActivityJumpButton name="web_search" toolCallId="w1" />)
+        .container.textContent,
+    ).toBe("");
+    expect(
+      render(<ActivityJumpButton name="computer_panels" />).container
+        .textContent,
+    ).toBe("");
   });
 });
