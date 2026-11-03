@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.124 — 2026-11-03
+
+这一版合并 #483：横条输入框的附件挪到框上方。全端同步版本号到 0.1.124（Android versionCode 306）；PC 外壳和 Android 应用本体不变。
+
+- 横条输入框附件挪到框上方（#483）：收起的横条是两头半圆的胶囊（`border-radius: 999px`），此前附件条画在框内、80px 缩略图把它撑成一块高圆角块、图还被胶囊边缘裁掉。现在附件条挪到框上方、与拒收提示同一列，横条始终保持一行高；条同时挪出 `DictationSurface`，语音输入中附件保持可见可删。展开态与 hero 输入框不变。`composer-pill` / `composer-paste` / `composer-attachment-strip` 等 60 项回归通过。
+
 ## 0.1.123 — 2026-11-03
 
 这一版合并 #479：深色模式下聊天输入框边界补可见。全端同步版本号到 0.1.123（Android versionCode 305）；PC 外壳和 Android 应用本体不变。
