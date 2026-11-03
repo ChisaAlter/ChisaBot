@@ -24,7 +24,7 @@ import { MAGPIE_CONSOLE_PATH, agoText, loadMagpieOverview, magpieKeys, magpieOve
 import { loadModelCatalog } from "@/lib/model-selection/queries";
 import { modelSelectionKeys } from "@/lib/model-selection/queries";
 import { notifyModelSelectionChanged } from "@/lib/model-selection/sync";
-import { requestSystemUpdate, systemUpdateKeys, systemUpdateQueryOptions } from "@/lib/system-update";
+import { durationText, requestSystemUpdate, systemUpdateKeys, systemUpdateQueryOptions, useElapsed } from "@/lib/system-update";
 
 export const Route = createFileRoute("/_authed/admin/magpie/")({
   component: MagpiePage,
@@ -275,9 +275,24 @@ function GatewayUpdateSection({ magpieVersion }: { magpieVersion?: string }) {
   const data: SystemUpdateOverview | undefined = update.data;
   const gateway = data?.magpie;
   const job = data?.job?.action === "magpie" ? data.job : null;
-  const running = job?.status === "running" || job?.status === "queued";
+  /*
+   * 请求进了 spool、宿主机还没接手的那几秒，state.json 里还没有 job：只有 pending 知道
+   * 它在排队。不把这一段也算「进行中」，按钮会提前复活、页面上也像没点一样。
+   */
+  const queued = !job && (data?.pending.includes("magpie") ?? false);
+  const running = queued || job?.status === "running" || job?.status === "queued";
   const blocked = data ? !data.configured || data.updaterOutdated : false;
   const lastLog = job?.log?.length ? job.log[job.log.length - 1] : undefined;
+  const elapsed = useElapsed(job?.startedAt, running);
+  /*
+   * 被宿主机拒掉的请求（已有更新在跑、有人在手动更新、更新程序太旧）不进 job，只进历史——
+   * 不读历史，「更新不了」在这页就是一次无声的消失。只在它比当前这个 job 还新时显示，
+   * 免得一次成功的更新旁边还挂着去年的拒绝。
+   */
+  const lastAttempt = data?.history.find((entry) => entry.action === "magpie");
+  const rejected =
+    lastAttempt?.status === "rejected" &&
+    (!job || Date.parse(lastAttempt.at) > Date.parse(job.finishedAt ?? job.startedAt ?? ""));
 
   async function run(action: "check" | "magpie") {
     setBusy(action);
@@ -355,14 +370,43 @@ function GatewayUpdateSection({ magpieVersion }: { magpieVersion?: string }) {
             <code className="magpie-code">{shortDigest(gateway.currentDigest)}</code>
           </SettingRow>
         ) : null}
-        {running ? (
-          <SettingRow description={lastLog ?? "正在准备。"} title="正在更新">
-            <span className="magpie-badge is-warn">{stepLabel(job?.step)}</span>
+        {queued ? (
+          <SettingRow description="已提交，等宿主机更新程序接手（几秒内）。" title="正在更新">
+            <span className="magpie-badge is-warn">排队中</span>
+          </SettingRow>
+        ) : null}
+        {job && (job.status === "running" || job.status === "queued") ? (
+          <SettingRow
+            description={
+              [lastLog ?? "正在准备。", elapsed !== undefined ? `已用 ${durationText(elapsed)}` : ""]
+                .filter(Boolean)
+                .join(" · ")
+            }
+            title="正在更新"
+          >
+            <span className="magpie-badge is-warn">{stepLabel(job.step)}</span>
+          </SettingRow>
+        ) : null}
+        {job && job.status === "succeeded" ? (
+          <SettingRow
+            description={
+              [job.durationSec ? `用时 ${durationText(job.durationSec)}` : "", "摘要与镜像仓库一致，上面的「有新版本」会随之消失。"]
+                .filter(Boolean)
+                .join(" · ")
+            }
+            title="上次更新"
+          >
+            <span className="magpie-badge is-ok">成功</span>
           </SettingRow>
         ) : null}
         {job && !running && job.status === "failed" ? (
           <SettingRow description={job.error ?? "详细日志见「系统更新」页的历史。"} title="上次更新失败">
             <span className="magpie-badge is-danger">失败</span>
+          </SettingRow>
+        ) : null}
+        {rejected ? (
+          <SettingRow description={lastAttempt?.error ?? "宿主机没有执行这个请求。"} title="上次更新没有执行">
+            <span className="magpie-badge is-warn">未执行</span>
           </SettingRow>
         ) : null}
       </Card>

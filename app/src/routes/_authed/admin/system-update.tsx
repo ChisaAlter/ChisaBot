@@ -44,6 +44,7 @@ import {
   systemUpdateKeys,
   systemUpdateQueryOptions,
   timeText,
+  useElapsed,
 } from "@/lib/system-update";
 import { type AdminSmokeResult, runAdminSmoke } from "@/lib/admin-smoke";
 import { runtimeKernelQueryOptions } from "@/lib/runtime-kernel";
@@ -539,18 +540,6 @@ function SmokeSection() {
       </Card>
     </PageSection>
   );
-}
-
-/** 进行中的任务每秒走一次的「已用 x 分 y 秒」。 */
-function useElapsed(startedAt: string | undefined, running: boolean) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [running]);
-  const started = startedAt ? Date.parse(startedAt) : Number.NaN;
-  return running && Number.isFinite(started) ? Math.max(0, (now - started) / 1000) : undefined;
 }
 
 /** 没装 / 离线 / 旧版本：一句话说明 + 在服务器上要运行的那一行命令（可复制）。 */
