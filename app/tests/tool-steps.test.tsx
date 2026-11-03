@@ -531,8 +531,8 @@ describe("「在活动里看」跟着工具步骤一起藏（2026-11-03 气泡�
   test("开着调试也不给非电脑工具 / 没 id 的画", () => {
     setToolActivityVisible(true);
     expect(
-      render(<ActivityJumpButton name="web_search" toolCallId="w1" />)
-        .container.textContent,
+      render(<ActivityJumpButton name="web_search" toolCallId="w1" />).container
+        .textContent,
     ).toBe("");
     expect(
       render(<ActivityJumpButton name="computer_panels" />).container
