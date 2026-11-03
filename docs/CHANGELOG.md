@@ -1,3 +1,8 @@
+## 0.1.127
+
+- 模型配置失败透出真实原因并可落备用（#488）：configure 异常被吞成通用文案，主模型配不出来直接硬死；现在 `data.details` 原文进错误详情、全文进服务端日志，失败冷却该模型并换下一个健康候选，session 丢失 / busy 单独如实报；具名 custom provider 反查改用 upstream canonical identity。
+- 版本号 0.1.127（根、app、server、pc；Android versionCode 309）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.126
 
 - Magpie 更新拉取加上限时与心跳（#486）：pull 静默无超时会永远停在「拉取镜像」；改为后台执行 + 每 15 秒心跳 + 900 秒判失败，`up -d` 加 120 秒兜底，pull 输出末尾进任务日志。页面补齐排队中 / 成功 / 未执行三态与实时已用时长。
