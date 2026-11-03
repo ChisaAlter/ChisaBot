@@ -1,3 +1,8 @@
+## 0.1.121
+
+- 「计算机」标签跨页导航不丢（#477）：同机器人页里非后退导航丢 `watch`（`/` 落地跳回、左栏再点同一行）不再清「计算机」记忆——清除要求 `lastHistoryEventWasPop()`，只认真·后退 / 前进，记忆保留时补地址 effect 把 `watch=true` replace 回来。
+- 版本号 0.1.121（根、app、server、pc；Android versionCode 303）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.120
 
 - Bot 造 Bot（#470 / #471 / #473）：`agent_profiles` provenance 列（迁移 0062）+ `createCoworker` 集中服务；create / list / update / disable 四工具带审批与每人、深度上限；双向 `kind="bot"` 授权；前端工具渲染卡、「由『X』创建」徽章、管理员授权面板、`/api/groups` 最小路由恢复。
