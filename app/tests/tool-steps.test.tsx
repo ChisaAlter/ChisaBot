@@ -16,12 +16,12 @@ import {
   OUTPUT_LIMIT,
   ToolLine,
 } from "@/components/channels/tool-line";
-import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { WorkRow } from "@/components/chat/work-card";
 import {
   WorkerCardBody,
   workerProgressText,
 } from "@/components/chat/worker-card";
+import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { setToolActivityVisible } from "@/lib/chat/tool-activity";
 import {
   isWorkCall,
