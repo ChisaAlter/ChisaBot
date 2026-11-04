@@ -491,6 +491,11 @@ def build_agent_class():
     class HostSessionManager(SessionManager):
         """Host history is authoritative; no transcript or capability is stored in Hermes DB."""
 
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            # Catalog-declared windows from the wire, keyed by exact model id (QA1104-01).
+            self._declared_windows: dict[str, int] = {}
+
         def _get_db(self):
             return None
 
@@ -542,6 +547,40 @@ def build_agent_class():
                             wanted = str(entry.get("name") or "").strip() or wanted
                             break
             route = resolve_runtime_provider(requested=wanted, target_model=selected_model or None)
+            declared = getattr(self, "_declared_windows", {}).get(str(selected_model or ""))
+            if isinstance(declared, int) and declared > 0:
+                # QA1104-01: the wire-declared window must exist before AIAgent() runs —
+                # init re-resolves context from a fresh load_config_readonly() and the
+                # channel that feeds its 64K floor for a named provider is
+                # providers.<name>.models.<model>.context_length (the same field the
+                # per-route disk pin uses, verified on the live host). Mutating the
+                # readonly dict touches the process-wide cache deliberately: the write
+                # is scoped to this exact model id, monotonic (never lowers), and
+                # idempotent — a refreshed cache simply gets re-injected next build.
+                try:
+                    from hermes_cli.config import load_config_readonly
+                    from hermes_cli.route_identity import normalize_route_base_url
+                    ro = load_config_readonly()
+                    # Route dicts report the provider *type* ("custom"), not the entry name —
+                    # match the source entries by normalized base_url (the same identity
+                    # _entries_for_route uses). Mutate the readonly-config source dicts:
+                    # get_compatible_custom_providers only shallow-copies entries, so a
+                    # models dict created on a copy would never reach the next lookup.
+                    target = normalize_route_base_url(str(route.get("base_url") or base_url or ""))
+                    for section in ("providers", "custom_providers"):
+                        entries = ro.get(section)
+                        iterable = (entries.values() if isinstance(entries, dict)
+                                    else entries if isinstance(entries, list) else ())
+                        for entry in iterable:
+                            if not isinstance(entry, dict):
+                                continue
+                            entry_url = normalize_route_base_url(str(entry.get("base_url") or entry.get("api") or ""))
+                            if target and entry_url == target:
+                                node = entry.setdefault("models", {}).setdefault(str(selected_model), {})
+                                if (node.get("context_length") or 0) < declared:
+                                    node["context_length"] = declared
+                except Exception:
+                    pass
             kwargs = dict(model=selected_model, provider=route.get("provider"),
                           api_mode=api_mode or route.get("api_mode"), base_url=base_url or route.get("base_url"),
                           api_key=route.get("api_key"), credential_pool=route.get("credential_pool"),
@@ -671,6 +710,13 @@ def build_agent_class():
                 raise ProtocolError("ACP session scope does not match actorId, botId and threadId")
             aliases = tool_aliases(config)
             self._host_aliases[session_id] = aliases
+            if isinstance(config.context_window, int) and config.context_window > 0:
+                # Stash before any _make_agent call: set_session_model → _switch_model →
+                # _make_agent reads it to pre-seed the route's context pin (QA1104-01).
+                windows = getattr(self.session_manager, "_declared_windows", None)
+                if windows is None:
+                    windows = self.session_manager._declared_windows = {}
+                windows[config.model_id] = config.context_window
             applied, skip_reason = config.model_id, None
             tried: set[str] = set()
             failures: dict[str, str] = {}
