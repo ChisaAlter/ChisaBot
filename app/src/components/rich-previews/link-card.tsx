@@ -9,6 +9,8 @@ import {
   type FocusEvent as ReactFocusEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -632,6 +634,29 @@ export function LinkCardStack({
   // 换完主位后指针下的那张卡：指针离开它之前不算「移到这张卡上」。
   const ignore = useRef<number | "next" | null>(null);
   const pointerType = useRef<string>("mouse");
+  // 触屏长按显示卡上的浮层按钮（[data-reveal]）：450ms 不动触发；松手/滑动取消；
+  // 长按后松手那一下 click 不能误开链接（swallowClick 吃掉一次）。
+  const stackRef = useRef<HTMLDivElement>(null);
+  const pressTimer = useRef(0);
+  const pressPoint = useRef<{ x: number; y: number } | null>(null);
+  const swallowClick = useRef(false);
+
+  const clearRevealed = useCallback(() => {
+    stackRef.current
+      ?.querySelectorAll(".lc-item[data-reveal]")
+      .forEach((el) => {
+        el.removeAttribute("data-reveal");
+      });
+  }, []);
+
+  useEffect(() => {
+    const away = (event: Event) => {
+      const target = event.target as Element | null;
+      if (stackRef.current && !stackRef.current.contains(target)) clearRevealed();
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [clearRevealed]);
   if (total === 0) return null;
   const main = Math.min(chosen ?? defaultLinkStackPrimary(total), total - 1);
   const slots = linkStackSlots(total, main);
@@ -650,6 +675,14 @@ export function LinkCardStack({
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     pointerType.current = event.pointerType;
+    if (pressPoint.current) {
+      const dx = event.clientX - pressPoint.current.x;
+      const dy = event.clientY - pressPoint.current.y;
+      if (dx * dx + dy * dy > 64) {
+        pressPoint.current = null;
+        window.clearTimeout(pressTimer.current);
+      }
+    }
     if (event.pointerType !== "mouse" || !isStack) return;
     if (performance.now() < lockUntil.current) return;
     const index = cardIndexOf(event.target);
@@ -665,6 +698,43 @@ export function LinkCardStack({
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     pointerType.current = event.pointerType;
+    window.clearTimeout(pressTimer.current);
+    if (event.pointerType === "mouse") {
+      pressPoint.current = null;
+      return;
+    }
+    pressPoint.current = { x: event.clientX, y: event.clientY };
+    const item =
+      event.target instanceof Element ? event.target.closest(".lc-item") : null;
+    // 上一次长按松手若没产生 click（拖出卡面），swallowClick 还挂着——下一次按下说明释放点击已过，清掉，
+    // 否则它会把用户真正想点的「追问」吞掉。
+    swallowClick.current = false;
+    // 按到别的卡上就立刻收起原来那张的浮层，不等 450ms。
+    const revealed = stackRef.current?.querySelector(".lc-item[data-reveal]");
+    if (revealed && revealed !== item) clearRevealed();
+    pressTimer.current = window.setTimeout(() => {
+      if (!item) return;
+      clearRevealed();
+      item.setAttribute("data-reveal", "");
+      swallowClick.current = true;
+    }, 450);
+  };
+
+  const onPointerUpOrCancel = () => {
+    pressPoint.current = null;
+    window.clearTimeout(pressTimer.current);
+  };
+
+  const onClickCapture = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!swallowClick.current) return;
+    swallowClick.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const onContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    // 触屏长按 <a> 会弹系统链接菜单 / 预览，和「长按显示追问」冲突；鼠标右键照旧。
+    if (pointerType.current !== "mouse") event.preventDefault();
   };
 
   const layers = slots.map((slot) =>
@@ -672,13 +742,19 @@ export function LinkCardStack({
   );
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 长按 / 点击捕获，键盘入口在内部的链接和「追问」按钮上
     <div
+      ref={stackRef}
       className="lc-stack"
       data-count={total}
       data-deck={isStack ? "" : undefined}
       data-testid="link-cards"
+      onClickCapture={onClickCapture}
+      onContextMenu={onContextMenu}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
+      onPointerUp={onPointerUpOrCancel}
+      onPointerCancel={onPointerUpOrCancel}
       style={
         {
           "--lc-left": slots.includes("left") ? "1" : "0",

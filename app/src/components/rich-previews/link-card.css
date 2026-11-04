@@ -305,42 +305,42 @@ a.lc-card[href]:hover {
   outline: 2px solid var(--focus-line);
   outline-offset: 2px;
 }
+/* 浮层按钮只在用户「表达了要看」时出现：鼠标悬停（下段媒体查询）、键盘 :focus-visible、
+   触屏长按（JS 给卡片打 [data-reveal]）；平常卡面上什么按钮都没有。 */
 .lc-card:focus-visible .lc-go,
 .lc-card:focus-visible + .lc-followup,
-.lc-item[data-primary] :is(.lc-go, .lc-followup),
+.lc-item[data-reveal] :is(.lc-go, .lc-followup),
 .lc-followup:focus-visible {
   opacity: 1;
   transform: none;
   pointer-events: auto;
 }
-/* 叠放时不在主位的卡：按钮藏起来、点不到也 Tab 不到。 */
-.lc-stack[data-deck] .lc-item:not([data-primary]) :is(.lc-go, .lc-followup) {
+/* 叠放时不在主位的卡：按钮藏起来、点不到也 Tab 不到——除非它被长按点名（[data-reveal]）。 */
+.lc-stack[data-deck] .lc-item:not([data-primary]):not([data-reveal]) :is(.lc-go, .lc-followup) {
   visibility: hidden;
   pointer-events: none;
 }
-/* 只有真鼠标才靠悬停显示；带触屏的设备（含触屏笔记本）悬停不算数，见下一段。 */
+/* 只有真鼠标才靠悬停显示；任何输入里有触摸的设备不算数——触屏笔记本上悬停会误伤（同一下里冒出来接住点击）。 */
 @media (hover: hover) and (pointer: fine) {
-  .lc-item:not([data-stack-slot]):hover :is(.lc-go, .lc-followup) {
+  .lc-item:hover :is(.lc-go, .lc-followup) {
     opacity: 1;
     transform: none;
     pointer-events: auto;
   }
 }
 /*
- * 触屏：「追问」明确显示出来（单张卡一直显示；一叠里主位那张由上面的 [data-primary] 显示；窄容器里一叠的去掉，见下），
- * 不靠悬停。触屏上点一下会先触发悬停再命中测试，靠悬停显示的按钮会在同一下里冒出来接住点击（审查模块 6 第 3 条）。
- * ↗ 只是图标（不接事件），常显 0.7。
+ * 触屏：没有悬停可言，「追问」等长按（link-card.tsx 的 pointerdown 计时，给卡打 [data-reveal]）。
+ * 不再常显：默认干净卡面，避免浮层一直压在图上。↗ 只是图标（不接事件），常显 0.7 提示这是链接。
  */
 @media (hover: none), (any-pointer: coarse) {
   .lc-go {
     opacity: 0.7;
     transform: none;
   }
-  .lc-item:not([data-stack-slot]) > .lc-followup {
-    opacity: 1;
-    transform: none;
-    pointer-events: auto;
-  }
+}
+/* 触屏长按 <a> 会弹系统链接预览 / 复制菜单，和「长按显示追问」打架：卡上禁掉。 */
+.lc-item {
+  -webkit-touch-callout: none;
 }
 
 /*

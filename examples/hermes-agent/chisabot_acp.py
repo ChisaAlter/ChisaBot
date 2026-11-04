@@ -1196,6 +1196,9 @@ def build_agent_class():
                     first_output = threading.Event()
                     attempt_reset = threading.Event()
                     cbs = self._wire_turn_callbacks(state, session_id, conn, loop, first_output)
+                    # _last_turn_usage is stashed per provider call (a fresh dict each time):
+                    # same object afterwards means this turn made no call, so the number is stale.
+                    usage_before = getattr(state.agent, "_last_turn_usage", None)
                     result = await self._bounded_turn(state, config, execute, cbs,
                                                       attempt_reset)
                     if run.fatal_error:
@@ -1231,6 +1234,25 @@ def build_agent_class():
                     switched = (uses[-1] if uses else getattr(state.agent, "_chisabot_breaker_skip", None))
                     used = fallback_use(config.model_id, *switched) if switched else None
                     meta = {**(waiting or {}), **({"modelFallback": used} if used else {})}
+                    # Real provider usage for the host's next-turn estimate calibration: without it
+                    # every turn budgets by the uncalibrated margin and compacts far too early.
+                    # Only a reading produced THIS turn counts — a leftover dict is the last turn's.
+                    raw_usage = getattr(state.agent, "_last_turn_usage", None)
+                    if raw_usage is usage_before:
+                        raw_usage = None
+                    if isinstance(raw_usage, dict):
+                        usage = {}
+                        prompt_tokens = raw_usage.get("prompt_tokens")
+                        completion_tokens = raw_usage.get("completion_tokens")
+                        if type(prompt_tokens) is int and prompt_tokens > 0:
+                            usage["inputTokens"] = prompt_tokens
+                        if type(completion_tokens) is int and completion_tokens >= 0:
+                            usage["outputTokens"] = completion_tokens
+                        answering = getattr(state.agent, "model", None)
+                        if isinstance(answering, str) and answering:
+                            usage["model"] = answering
+                        if "inputTokens" in usage:
+                            meta["usage"] = usage
                     if waiting:
                         return PromptResponse(stop_reason="cancelled", field_meta={"chisabot": meta})
                     if state.cancel_event and state.cancel_event.is_set():

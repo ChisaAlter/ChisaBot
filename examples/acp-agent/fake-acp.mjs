@@ -96,7 +96,7 @@ lines.on("line", (line) => {
     if (config.noTools || behavior.noTools) {
       turn.done = true;
       record("prompt_end", { sessionId: turn.sessionId, text });
-      respond(message.id, { stopReason: "end_turn", ...(config.modelFallback ? { _meta: { chisabot: { modelFallback: config.modelFallback } } } : {}) });
+      respond(message.id, { stopReason: "end_turn", ...(config.modelFallback || config.usage !== undefined ? { _meta: { chisabot: { ...(config.modelFallback ? { modelFallback: config.modelFallback } : {}), ...(config.usage !== undefined ? { usage: config.usage } : {}) } } } : {}) });
       if (config.exitAfterPromptMs) setTimeout(() => process.exit(0), config.exitAfterPromptMs);
       return;
     }
