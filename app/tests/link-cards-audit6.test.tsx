@@ -134,7 +134,7 @@ describe("审查模块 6", () => {
       expect(quotes).toHaveLength(1);
     });
 
-    test("CSS：默认透明且 pointer-events: none；显示时才 auto；悬停显示只给真鼠标；触屏明确显示", () => {
+    test("CSS：默认透明且 pointer-events: none；显示时才 auto；悬停只给真鼠标；触屏长按 data-reveal", () => {
       const base = rulesFor(".lc-followup").join("\n");
       expect(rulesFor(".lc-go").some((r) => /opacity: 0;/.test(r))).toBe(true);
       const shared = css.match(/\.lc-go,\s*\.lc-followup \{([^}]*)\}/)![1]!;
@@ -157,12 +157,20 @@ describe("审查模块 6", () => {
       expect(rulesFor(".lc-item > .lc-card").join("\n")).toMatch(
         /pointer-events: auto;/,
       );
+      // 只有真鼠标悬停显示（任何输入里有触摸的设备不悬停显示）。
       expect(mediaBlock("(hover: hover) and (pointer: fine)")).toMatch(
-        /\.lc-item:not\(\[data-stack-slot\]\):hover :is\(\.lc-go, \.lc-followup\)/,
+        /\.lc-item:hover :is\(\.lc-go, \.lc-followup\)/,
       );
+      // 触屏不再常显按钮：媒体块里只剩 ↗ 指示（0.7、不接事件），「追问」等长按——JS 给卡打 [data-reveal] 才显示。
       const touch = mediaBlock("(hover: none), (any-pointer: coarse)");
-      expect(touch).toMatch(
-        /\.lc-item:not\(\[data-stack-slot\]\) > \.lc-followup \{\s*opacity: 1;\s*transform: none;\s*pointer-events: auto;/,
+      expect(touch).not.toMatch(/\.lc-followup[^}]*opacity: 1;/);
+      expect(touch).toMatch(/\.lc-go \{\s*opacity: 0\.7;/);
+      expect(css).toMatch(
+        /\.lc-item\[data-reveal\] :is\(\.lc-go, \.lc-followup\)/,
+      );
+      // 长按卡上的链接不能弹系统菜单（否则和长按显示追问打架）。
+      expect(rulesFor(".lc-item").join("\n")).toMatch(
+        /-webkit-touch-callout: none;/,
       );
       // 窄容器里一叠的「追问」去掉（手机上一叠只剩换主位和打开两件事）。
       expect(css).toMatch(
@@ -189,7 +197,7 @@ describe("审查模块 6", () => {
       expect(item(cards[0]!).getAttribute("data-stack-slot")).toBe("main");
       expect(tap(cards[0]!)).toBe(true);
       const hidden =
-        ".lc-stack[data-deck] .lc-item:not([data-primary]) :is(.lc-go, .lc-followup)";
+        ".lc-stack[data-deck] .lc-item:not([data-primary]):not([data-reveal]) :is(.lc-go, .lc-followup)";
       const buttons = cards.map((c) => item(c).querySelector(".lc-followup")!);
       expect(buttons.map((b) => b.matches(hidden))).toEqual([
         false,
@@ -305,8 +313,9 @@ describe("审查模块 6", () => {
     });
     const view = render(<LinkCard url={url} />);
     const icon = await waitFor(() => {
-      const el =
-        view.container.querySelector<HTMLImageElement>(".lc-banner-mark img");
+      const el = view.container.querySelector<HTMLImageElement>(
+        ".lc-banner-mark img",
+      );
       expect(el).not.toBeNull();
       return el!;
     });

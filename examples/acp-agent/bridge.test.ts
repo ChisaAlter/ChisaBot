@@ -383,6 +383,21 @@ describe("ACP AG-UI bridge host contract", () => {
     expect((await post(created, leaked)).at(-1).code).toBe("ACP_INVALID_HOST_CONTEXT");
   });
 
+  test("adapter turn usage lands on RUN_FINISHED as contextUsage, validated and merged with fallback", async () => {
+    const both = bridge({ noTools: true, usage: { inputTokens: 98543, outputTokens: 16, model: "test-model", ignored: true }, modelFallback: { from: "test-model", to: "backup-model", reason: "quota" } });
+    expect((await post(both, host())).at(-1)).toEqual({
+      type: "RUN_FINISHED", threadId: "thread-1", runId: "run-1",
+      metadata: {
+        contextUsage: { inputTokens: 98543, outputTokens: 16, model: "test-model" },
+        modelFallback: { from: "test-model", to: "backup-model", reason: "quota" },
+      },
+    });
+    for (const usage of [{ outputTokens: 1 }, { inputTokens: 0, outputTokens: 1 }, { inputTokens: -3, outputTokens: 1 }, { inputTokens: 1.5, outputTokens: 1 }, { inputTokens: 10, outputTokens: -1 }, "string", 42]) {
+      const bad = bridge({ noTools: true, usage });
+      expect((await post(bad, host())).at(-1)).toEqual({ type: "RUN_FINISHED", threadId: "thread-1", runId: "run-1" });
+    }
+  });
+
   test("an adapter that detected no model controls reports them as unsupported, and malformed switches are dropped", async () => {
     const created = bridge({ noTools: true, modelFallback: { from: "test-model", to: "test-model" } });
     const result = await post(created, host());

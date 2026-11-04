@@ -1854,8 +1854,10 @@ export async function createLocalConversations(
     return [...turns.values()];
   };
   /**
-   * 「已压缩前文」（Hermes 内核长对话，agents/history-budget.ts）：发给模型时压缩过较早历史的那些轮次
-   * （RUN_FINISHED 的 metadata.historyCompaction），同 fallbackTurns 一样用开启那一轮的用户消息 id 表示。只读。
+   * 「已压缩前文」（Hermes 内核长对话，agents/history-budget.ts）：发给模型时压缩过较早历史的轮次
+   * （RUN_FINISHED 的 metadata.historyCompaction），同 fallbackTurns 一样用开启那一轮的用户消息 id 表示。
+   * 长话题里每轮都会压缩——它回答的是「模型现在还看得到全部前文吗」，所以只给最近一次压缩的轮次一行，
+   * 历史轮次不再各挂一条（否则每条回复下面都有这行字）。只读。
    */
   const compactionTurns = async (
     threadId: string,
@@ -1905,7 +1907,8 @@ export async function createLocalConversations(
         break;
       }
     }
-    return [...turns.values()];
+    // rows 按 sequence DESC，Map 保持插入序——第一个值就是最新一次压缩的轮次，只留它一条。
+    return [...turns.values()].slice(0, 1);
   };
   /**
    * 最新一条用户消息什么时候发的（DESIGN.md §94：5 分钟内连续发消息不翻页）：它第一次出现在某次运行的

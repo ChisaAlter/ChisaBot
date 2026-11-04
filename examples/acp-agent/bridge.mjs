@@ -526,6 +526,19 @@ function modelFallback(value) {
   return { from: value.from, to: value.to, reason: value.reason === "quota" ? "quota" : value.reason === "rejected" ? "rejected" : "unavailable" };
 }
 
+/** Last provider call's real token usage, returned in `session/prompt` `_meta.chisabot.usage`.
+ *  The host calibrates its next-turn history estimate with it (RUN_FINISHED metadata.contextUsage);
+ *  without it every turn estimates by margin and compacts far earlier than needed. */
+function turnUsage(value) {
+  if (!isObject(value)) return null;
+  const inputTokens = value.inputTokens;
+  const outputTokens = value.outputTokens;
+  if (!Number.isSafeInteger(inputTokens) || inputTokens <= 0 || inputTokens > 16_000_000) return null;
+  if (!Number.isSafeInteger(outputTokens) || outputTokens < 0 || outputTokens > 16_000_000) return null;
+  const model = typeof value.model === "string" && value.model.trim() ? value.model : undefined;
+  return { inputTokens, outputTokens, ...(model ? { model } : {}) };
+}
+
 function prepareInput(input, options) {
   const host = input?.forwardedProps?.chisabotHermes;
   let context = null;
@@ -905,7 +918,10 @@ export function createAcpBridge(overrides = {}) {
       }
       closeMessages();
       const fallbackUsed = modelFallback(resultMetadata?.modelFallback);
-      const finishedMetadata = fallbackUsed ? { metadata: { modelFallback: fallbackUsed } } : {};
+      const usageUsed = turnUsage(resultMetadata?.usage);
+      const finishedMetadata = (fallbackUsed || usageUsed)
+        ? { metadata: { ...(fallbackUsed ? { modelFallback: fallbackUsed } : {}), ...(usageUsed ? { contextUsage: usageUsed } : {}) } }
+        : {};
       const waitingId = waiting?.toolCallId ?? waitingCallId ?? waiting?.requestId ?? `waiting-${prepared.runId}`;
       const unresolved = [...toolCalls.values()].filter((tool) => !tool.result && (!waiting || tool.id !== waitingId));
       if (unresolved.length) throw rpcError(`ACP finished without tool results: ${unresolved.map((tool) => tool.id).join(", ")}`, "ACP_MISSING_TOOL_RESULT");

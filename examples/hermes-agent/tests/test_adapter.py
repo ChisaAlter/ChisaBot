@@ -639,6 +639,40 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(chains[-1], [])
             self.assertIsNone(response.field_meta)
 
+    async def test_last_turn_usage_reaches_field_meta_and_malformed_values_are_dropped(self):
+        state = await self.new()
+        # Hermes 每次 provider 调用都把一个新的 usage dict 塞进 agent._last_turn_usage；同一对象
+        # 留到下轮说明这轮没调过模型——那种读数不能报。
+        recorded = {"usage": {"prompt_tokens": 98543, "completion_tokens": 16, "total_tokens": 98559},
+                    "stash": True}
+
+        def hook(agent, user, history):
+            if recorded["stash"]:
+                usage = recorded["usage"]
+                agent._last_turn_usage = copy.deepcopy(usage) if isinstance(usage, dict) else usage
+            return {"messages": history + [{"role": "user", "content": user}, {"role": "assistant", "content": "ok"}],
+                    "final_response": "ok"}
+        state.agent.run_hook = hook
+        response = await self.prompt(state)
+        self.assertEqual(response.field_meta["chisabot"]["usage"],
+                         {"inputTokens": 98543, "outputTokens": 16, "model": state.agent.model})
+        # 没有 inputTokens（给不出真实输入就不报）、类型不对，都不进 meta。
+        for raw_usage in ({"completion_tokens": 3}, {"prompt_tokens": 0, "completion_tokens": 1},
+                          {"prompt_tokens": "x", "completion_tokens": 1}, "not-a-dict"):
+            recorded["usage"] = raw_usage
+            response = await self.prompt(state)
+            self.assertNotIn("usage", response.field_meta["chisabot"] if response.field_meta else {})
+        # 这轮根本没产生新读数（dict 还是上一轮那个对象）：不报，避免拿旧值校准。
+        recorded["stash"] = False
+        state.agent._last_turn_usage = stale = {"prompt_tokens": 70000, "completion_tokens": 9}
+        response = await self.prompt(state)
+        self.assertIsNone(response.field_meta)
+        recorded["stash"] = True
+        recorded["usage"] = None
+        state.agent._last_turn_usage = None
+        response = await self.prompt(state)
+        self.assertIsNone(response.field_meta)
+
     async def test_mock_hermes_429_walks_to_the_backup_model_and_the_switch_is_reported(self):
         chains = []
         with patch.dict(sys.modules, self.model_control_modules(chains)):
