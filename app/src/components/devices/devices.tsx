@@ -550,7 +550,7 @@ export function DownloadCard({ download }: { download: PcDownload | null | undef
             : "安装包还没有发布到这台服务器。"
         }
         icon={<IconBrandWindows className="size-5" />}
-        title="ChisaBot PC 客户端"
+        title="ChisaBot 桌面客户端"
       />
       {portable ? (
         <SettingRow description={`解压即用，不写注册表 · ${bytesText(portable.bytes)}`} title="免安装版（zip）">
@@ -604,7 +604,7 @@ export function ConnectionCard({
   const summary = online.length
     ? `${online.map((device) => `「${device.name}」`).join("、")}在线：你的所有机器人都能使用，范围是每台开启的能力和允许的文件夹。`
     : devices.length
-      ? "都不在线，机器人现在用不了你的电脑。在电脑上打开 ChisaBot PC，托盘图标变蓝就是在线；问机器人时它也会如实告诉你。"
+      ? "都不在线，机器人现在用不了你的电脑。在电脑上打开 ChisaBot，托盘图标变蓝就是在线；问机器人时它也会如实告诉你。"
       : "这台电脑还没有关联到你的账号。";
   return (
     <Card className="device-connection">
@@ -729,7 +729,7 @@ export function AddPhoneCard() {
 export function NoDevices() {
   return (
     <EmptyState
-      description="在电脑上安装 ChisaBot PC 客户端并用这个账号登录，或用安卓 App 扫「绑定手机」的二维码，它就会出现在这里。电脑关联后你的每个机器人都能在你开启的能力范围内使用它（能力默认「询问」，每次操作要你批准）；手机只用来登录聊天。"
+      description="在电脑上安装 ChisaBot 客户端并用这个账号登录，或用安卓 App 扫「绑定手机」的二维码，它就会出现在这里。电脑关联后你的每个机器人都能在你开启的能力范围内使用它（能力默认「询问」，每次操作要你批准）；手机只用来登录聊天。"
       icon={<IconDeviceDesktop className="size-6" />}
       title="还没有关联的设备"
     />
@@ -1201,7 +1201,7 @@ export function ThisPcPanel({ local, onLocal }: { local: PcLocalState; onLocal: 
               onCheckedChange={(value) => void set("forceLocalApproval", value)}
             />
           </SettingRow>
-          <SettingRow description="登录 Windows 后自动启动 ChisaBot PC，保持节点在线。" title="开机自动启动">
+          <SettingRow description="登录 Windows 后自动启动 ChisaBot，保持节点在线。" title="开机自动启动">
             <Switch
               aria-label="开机自动启动"
               checked={local.autoStart}

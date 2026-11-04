@@ -16,6 +16,7 @@ import {
   ACTION_GUIDANCE,
   botIdentityGuidance,
   PROVENANCE_GUIDANCE,
+  selfMapGuidance,
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
 import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
@@ -625,6 +626,18 @@ export function standingInstructionsGuidance(
   ].join("\n\n");
 }
 
+/**
+ * Who the run belongs to, reduced to the one fact a Bot's self-map may state about them.
+ *
+ * A `BotAudience` rather than the `AgentActor`, because the prompt is not the place for a user id
+ * or an email address: it needs "is this person allowed to approve an admin action", and nothing
+ * else. Resolved per build like the tools and the standing instructions, so a role edited a moment
+ * ago applies to the next run.
+ */
+export type BotAudience = {
+  isAdmin?: boolean;
+};
+
 export function builtInAgentConfiguration(
   agent: RegisteredBuiltInAgent,
   model: RuntimeModel,
@@ -662,6 +675,8 @@ export function builtInAgentConfiguration(
   planModel?: PlanModel,
   /** Rewrites a request for the model a fallback switches to (images it cannot see → descriptions). */
   adaptForFallback?: (modelId: string, callOptions: unknown) => Promise<unknown>,
+  /** Who is asking, for the self-map. Appended last for the usual positional reason. */
+  audience?: BotAudience,
 ): BuiltInAgentConfiguration {
   if (!apiKey && !planModel && model.useApiKey !== false) {
     return {
@@ -718,6 +733,17 @@ export function builtInAgentConfiguration(
       ...(tools.length > 0 ? [ACTION_GUIDANCE] : []),
       // 机器人的名字（不然它会自称模型名，DESIGN.md §69）。
       botIdentityGuidance(agent.name, model.defaultModel),
+      /*
+       * 它在架构里的位置（§121）：为谁工作、MCP 接到它身上、内核在它之下。能力行照着这一轮
+       * 实际提供的工具说——mcp_add / device_mcp_call 在不在，本身就是管理员和配对设备的事实。
+       */
+      selfMapGuidance({
+        actorIsAdmin: audience?.isAdmin,
+        offersMcpAdd: tools.some((tool) => tool.name === "mcp_add"),
+        offersDeviceMcp: tools.some(
+          (tool) => tool.name === "device_mcp_call",
+        ),
+      }),
       ...(tools.some((tool) => tool.name === "web_search") ? [WEB_GUIDANCE] : []),
       ...(tools.some((tool) => tool.name === "panel_create") ? [LIVE_PANEL_GUIDANCE] : []),
       ...(grantedToolGuidance(tools, connectedVendors)
@@ -863,6 +889,8 @@ export async function buildAgents(
   resolveConnectionForAgent?: (
     agentId: string,
   ) => Promise<RuntimeModelConnection>,
+  /** Who the build is for, for each built-in Bot's self-map. Appended last, positionally as ever. */
+  audience?: BotAudience,
 ): Promise<Record<string, AbstractAgent>> {
   let vendors: readonly string[] = [];
   try {
@@ -935,6 +963,7 @@ export async function buildAgents(
                 : {},
             ),
           markAttachmentsSent,
+          audience,
         );
         if (loadPersonalMemory)
           built.use(new PersonalMemoryMiddleware(agent.id, loadPersonalMemory));
@@ -1217,6 +1246,7 @@ async function hermesKernelAgent(options: {
   loadAttachment?: LoadAttachment;
   markAttachmentsSent?: MarkAttachmentsSent;
   handoff?: HandoffForRun;
+  audience?: BotAudience;
 }): Promise<AbstractAgent> {
   const { agent, kernel, signRun } = options;
   if (!kernel.binding || !signRun)
@@ -1259,7 +1289,7 @@ async function hermesKernelAgent(options: {
     },
     prepare: async (input, tools) => {
       // Reuse the shipped prompt and host tool guidance; no provider client is constructed here.
-      const configured = builtInAgentConfiguration(agent, { ...options.model, useApiKey: false }, null, [...tools], options.computerGuidance, options.connectedVendors, options.standingInstructions);
+      const configured = builtInAgentConfiguration(agent, { ...options.model, useApiKey: false }, null, [...tools], options.computerGuidance, options.connectedVendors, options.standingInstructions, undefined, undefined, options.audience);
       const prompt = "prompt" in configured ? configured.prompt : undefined;
       if (typeof prompt !== "string") throw new Error("The Hermes host instructions could not be prepared.");
       const answeredByResume = new Set((input.resume ?? []).map((entry) => entry.interruptId));
@@ -1332,6 +1362,8 @@ async function buildAgent(
   loadAttachment?: LoadAttachment,
   /** How this run records that those files were sent. See {@link buildAgents}. */
   markAttachmentsSent?: MarkAttachmentsSent,
+  /** Who the run belongs to, for the self-map. Appended last for the usual positional reason. */
+  audience?: BotAudience,
 ): Promise<AbstractAgent> {
   if (agent.type === "unavailable") {
     return new UnavailableAgent(agent);
@@ -1355,6 +1387,7 @@ async function buildAgent(
       loadAttachment,
       markAttachmentsSent,
       handoff,
+      audience,
     });
   }
 
@@ -1490,6 +1523,7 @@ async function buildAgent(
             )
           : undefined,
         promptForFallback,
+        audience,
       ),
       loadAttachment,
       markAttachmentsSent,
@@ -2370,6 +2404,8 @@ export async function resolveRuntimeAgents(
   resolveConnectionForAgent?: (
     agentId: string,
   ) => Promise<RuntimeModelConnection>,
+  /** Appended after `resolveConnectionForAgent`, for the same positional reason it gives. */
+  audience?: BotAudience,
 ): Promise<Record<string, AbstractAgent>> {
   const all = await loadAgents();
   if (all.length === 0) {
@@ -2407,6 +2443,7 @@ export async function resolveRuntimeAgents(
     undefined,
     loadPersonalMemory,
     resolveConnectionForAgent,
+    audience,
   );
 }
 

@@ -1,5 +1,5 @@
 /*
- * ChisaBot PC 本机窗口（设置向导、审批弹窗、本机确认、离线页）的组件层。
+ * ChisaBot 本机窗口（设置向导、审批弹窗、本机确认、离线页）的组件层。
  * 令牌、天空、深色模式逐字来自网页（skyglass-tokens.css，由 scripts/sync-skyglass.mjs 生成）；这里只把网页
  * 组件（Button / Input / auth-card 模板 F / sg-card / sg-srow / 徽标 / 分段）按同样的尺寸和类名重写一遍，
  * 所以这几个原生窗口和 PC 主窗口里的网页看起来是同一个应用（DESIGN.md §16.5）。

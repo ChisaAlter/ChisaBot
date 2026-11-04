@@ -4,6 +4,7 @@ import {
   IconClockHour4,
   IconCreditCard,
   IconDeviceDesktop,
+  IconPlugConnected,
   IconSend2,
   IconShieldCheck,
   IconTrash,
@@ -38,6 +39,7 @@ const ICON: Record<ConfirmCategory, typeof IconSend2> = {
   delete: IconTrash,
   purchase: IconCreditCard,
   device: IconDeviceDesktop,
+  admin: IconPlugConnected,
 };
 
 const DECIDED_TEXT: Record<Exclude<ConfirmStatus, "pending">, string> = {
@@ -161,7 +163,7 @@ export function ConfirmCardView({
             ) : info.locked && pending ? (
               <span className="cf-lock">
                 <IconShieldCheck className="size-3.5" aria-hidden />
-                {"付款一律先问你"}
+                {`${info.label}一律先问你`}
               </span>
             ) : null}
           </div>

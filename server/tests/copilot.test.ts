@@ -12,6 +12,7 @@ import {
   ACTION_GUIDANCE,
   botIdentityGuidance,
   PROVENANCE_GUIDANCE,
+  selfMapGuidance,
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
 import { createActorAgentResolver } from "../src/agents/agent-resolver";
@@ -303,7 +304,7 @@ describe("registered Copilot agents", () => {
       model: "openai/gpt-5.6-terra",
       // The provenance rule is unconditional, so even a Bot with no tools and no computer carries
       // it. That Bot needs it most: nothing it says was read anywhere.
-      prompt: `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${UNTRUSTED_GUIDANCE}\n\n${WORK_STYLE_GUIDANCE}\n\n${botIdentityGuidance("General Assistant", "gpt-5.6-terra")}`,
+      prompt: `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${UNTRUSTED_GUIDANCE}\n\n${WORK_STYLE_GUIDANCE}\n\n${botIdentityGuidance("General Assistant", "gpt-5.6-terra")}\n\n${selfMapGuidance({ offersMcpAdd: false, offersDeviceMcp: false })}`,
       apiKey: "openai-secret",
     });
   });
@@ -1339,10 +1340,10 @@ describe("a person's standing instructions", () => {
       const prompt = promptWith(instructions as string | null);
 
       expect(prompt).not.toContain("standing instructions");
-      // Byte for byte what a deployment had before any of this existed, which is what most people
-      // on most days get.
+      // Byte for byte what a deployment without standing instructions gets, which is most people
+      // on most days.
       expect(prompt).toBe(
-        `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${UNTRUSTED_GUIDANCE}\n\n${WORK_STYLE_GUIDANCE}\n\n${botIdentityGuidance("General Assistant", "gpt-5.6-terra")}`,
+        `Be helpful.\n\n${PROVENANCE_GUIDANCE}\n\n${UNTRUSTED_GUIDANCE}\n\n${WORK_STYLE_GUIDANCE}\n\n${botIdentityGuidance("General Assistant", "gpt-5.6-terra")}\n\n${selfMapGuidance({ offersMcpAdd: false, offersDeviceMcp: false })}`,
       );
     },
   );
@@ -2621,5 +2622,73 @@ describe("where an attachment reaches the model, and where it deliberately does 
       (messages[4] as { content?: { source?: unknown }[] }).content?.[0]
         ?.source,
     ).toMatchObject({ type: "data" });
+  });
+});
+
+describe("selfMapGuidance — the Bot's place in the architecture (§121)", () => {
+  const bare = { offersMcpAdd: false, offersDeviceMcp: false };
+
+  test("tells an admin they can approve admin actions, and offers mcp_add when it is held", () => {
+    const text = selfMapGuidance({
+      actorIsAdmin: true,
+      offersMcpAdd: true,
+      offersDeviceMcp: false,
+    });
+    expect(text).toContain("管理员");
+    expect(text).toContain("mcp_add");
+    expect(text).not.toContain("插件与 MCP」页");
+  });
+
+  test("tells a member that connector admin is an administrator's job, without mcp_add", () => {
+    const text = selfMapGuidance({ ...bare, actorIsAdmin: false });
+    expect(text).toContain("成员");
+    expect(text).toContain("请管理员");
+    expect(text).not.toContain("mcp_add");
+  });
+
+  test("names the paired-computer bridge only when device_mcp_call is actually offered", () => {
+    expect(
+      selfMapGuidance({ offersMcpAdd: false, offersDeviceMcp: true }),
+    ).toContain("device_mcp_call");
+    expect(selfMapGuidance(bare)).not.toContain("device_mcp_call");
+  });
+
+  test("always says it is the MCP host and the kernel is below it — the Hermes mistake", () => {
+    for (const text of [
+      selfMapGuidance(bare),
+      selfMapGuidance({
+        actorIsAdmin: true,
+        offersMcpAdd: true,
+        offersDeviceMcp: true,
+      }),
+    ]) {
+      expect(text).toContain("MCP 宿主");
+      expect(text).toContain("Hermes");
+      expect(text).toContain("你是宿主本身，不是教程的读者");
+    }
+  });
+
+  test("builtInAgentConfiguration derives the map from the run's tools and audience", () => {
+    const prompt = builtInAgentConfiguration(
+      {
+        id: "assistant",
+        name: "助手",
+        type: "built_in",
+        systemPrompt: "Be helpful.",
+      },
+      { provider: "openai", defaultModel: "gpt-5.6-terra" },
+      "openai-secret",
+      [{ name: "mcp_add" }] as never[],
+      undefined,
+      [],
+      null,
+      undefined,
+      undefined,
+      { isAdmin: true },
+    ).prompt as string;
+
+    expect(prompt).toContain("自我地图");
+    expect(prompt).toContain("管理员");
+    expect(prompt).toContain("mcp_add");
   });
 });

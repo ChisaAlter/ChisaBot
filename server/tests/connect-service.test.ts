@@ -341,3 +341,160 @@ describe("connect_service", () => {
     );
   });
 });
+
+/**
+ * mcp_add（CB-120）：管理员在对话里把自定义 MCP 端点接进来，确认卡片代替管理页那次点击。
+ *
+ * 要钉住的不是「能装」而是「谁能装、装之前人看到什么」：非管理员拿不到工具；确认卡片上
+ * 写的是探测到的真实工具清单；写的时候 destructive 工具不被静默放行。
+ */
+describe("mcp_add", () => {
+  const input = {
+    id: "ima-knowledge",
+    title: "腾讯 ima 知识库",
+    url: "https://mcp.example.com/ima",
+  };
+
+  function mcpAddStore(overrides: {
+    servers?: ServerRecord[];
+    added?: { id: string; url: string; by: string }[];
+    granted?: string[];
+    tools?: ToolRecord[];
+  }) {
+    const added = overrides.added ?? [];
+    const granted = overrides.granted ?? [];
+    return {
+      listServers: async () => overrides.servers ?? [],
+      connectionsFor: async () => [],
+      brokeredConnectionsFor: async () => [],
+      addCustomServer: async (args: {
+        id: string;
+        title: string;
+        url: string;
+        by: string;
+      }) => {
+        added.push({ id: args.id, url: args.url, by: args.by });
+        return server({
+          id: args.id,
+          title: args.title,
+          url: args.url,
+          provenance: "custom",
+          hasCredential: false,
+          authScheme: null,
+          tools: overrides.tools ?? [
+            toolRecord({
+              serverId: args.id,
+              name: "search_docs",
+              ref: `${args.id}/search_docs`,
+            }),
+            toolRecord({
+              serverId: args.id,
+              name: "delete_all",
+              ref: `${args.id}/delete_all`,
+              effect: "write",
+              destructive: true,
+            }),
+          ],
+        });
+      },
+      grant: async (_kind: string, ref: string, agentId: string) => {
+        granted.push(`${ref}->${agentId}`);
+      },
+    } as unknown as PluginStore;
+  }
+
+  function mcpAddTool(options: {
+    offerMcpAdd?: boolean;
+    canAutoEnable?: () => Promise<{ allowed: boolean; by: string }>;
+    probeMcp?: (url: string) => Promise<{ name: string }[]>;
+    store?: PluginStore;
+  }) {
+    const tools = connectServiceTools({
+      store: options.store ?? storeWith([]),
+      ownerUserId: "owner",
+      botId,
+      search: async () => [],
+      ...(options.canAutoEnable
+        ? { canAutoEnable: options.canAutoEnable }
+        : {}),
+      ...(options.probeMcp ? { probeMcp: options.probeMcp } : {}),
+      ...(options.offerMcpAdd !== undefined
+        ? { offerMcpAdd: options.offerMcpAdd }
+        : {}),
+    });
+    return tools.find((tool) => tool.name === "mcp_add");
+  }
+
+  test("is only offered when offerMcpAdd says so", () => {
+    expect(mcpAddTool({})).toBeUndefined();
+    expect(mcpAddTool({ offerMcpAdd: false })).toBeUndefined();
+    const tool = mcpAddTool({ offerMcpAdd: true });
+    expect(tool?.ref).toBe("plugins/mcp_add");
+    expect(tool?.description).toContain("管理员");
+  });
+
+  test("prepareConfirm refuses a non-https URL before any card", async () => {
+    const tool = mcpAddTool({ offerMcpAdd: true });
+    const plan = await tool!.prepareConfirm!({
+      ...input,
+      url: "http://mcp.example.com/ima",
+    });
+    expect("skip" in plan && plan.skip).toContain("https");
+  });
+
+  test("prepareConfirm shows the probed tool list on the card", async () => {
+    const tool = mcpAddTool({
+      offerMcpAdd: true,
+      probeMcp: async (url) => {
+        expect(url).toBe(input.url);
+        return [{ name: "search_docs" }, { name: "delete_all" }];
+      },
+    });
+    const plan = await tool!.prepareConfirm!(input);
+    expect("skip" in plan).toBe(false);
+    if ("skip" in plan) return;
+    expect(plan.title).toContain(input.title);
+    const probe = plan.details.find((d) => d.label === "探测");
+    expect(probe?.value).toContain("2 个工具");
+    expect(probe?.value).toContain("search_docs");
+    expect(plan.details.find((d) => d.label === "网址")?.value).toBe(
+      input.url,
+    );
+  });
+
+  test("execute adds the server, grants non-destructive tools, and names the blocked ones", async () => {
+    const added: { id: string; url: string; by: string }[] = [];
+    const granted: string[] = [];
+    const tool = mcpAddTool({
+      offerMcpAdd: true,
+      canAutoEnable: async () => ({ allowed: true, by: "admin@example.com" }),
+      store: mcpAddStore({ added, granted }),
+    });
+
+    const answer = (await tool!.execute(input)) as string;
+
+    expect(added).toEqual([
+      { id: input.id, url: input.url, by: "admin@example.com" },
+    ]);
+    expect(granted).toEqual([`ima-knowledge/search_docs->${botId}`]);
+    expect(answer).toContain("已添加 MCP 服务器「腾讯 ima 知识库」");
+    expect(answer).toContain("已授权给当前机器人 1 个工具");
+    expect(answer).toContain("delete_all");
+    expect(answer).toContain(`/admin/plugins/${input.id}`);
+  });
+
+  test("execute refuses when the asker is not an admin, whatever the card said", async () => {
+    const added: { id: string; url: string; by: string }[] = [];
+    const tool = mcpAddTool({
+      offerMcpAdd: true,
+      canAutoEnable: async () => ({ allowed: false, by: "u_1" }),
+      store: mcpAddStore({ added }),
+    });
+
+    const answer = (await tool!.execute(input)) as string;
+
+    expect(added).toEqual([]);
+    expect(answer).toContain("Refused.");
+    expect(answer).toContain("管理员");
+  });
+});

@@ -29,7 +29,7 @@ sealed class Row(val key: String) {
     class Confirm(val card: ConfirmCard) : Row("cf:" + card.id)
     /** 机器人的一段话：opening = 开场一句，result = 结果，process = 过程话（还在跑时淡色显示，结束后收起）。 */
     class Bot(key: String, val text: String, val kind: Kind, val streaming: Boolean, val copyable: Boolean, val regenerate: Boolean = false) : Row(key)
-    /** 一轮一张干活卡（§75）：live = 这一轮还在跑。 */
+    /** 一轮一张干活卡（§75）：live = 这一轮还在跑。胶囊只在干活时出现（§123），这一轮一结束整行收起、不再发这一行。 */
     class Work(key: String, val turnKey: String, val calls: List<ToolCall>, val live: Boolean) : Row(key)
     /** render_ui 画的卡片（json-render spec）。 */
     class Card(key: String, val spec: String) : Row(key)
@@ -127,7 +127,8 @@ object Turns {
                     }
                 }
                 is Seg.Tool -> {
-                    if (n == workIdx && !workPlaced) {
+                    // 胶囊只在思考和干活时出现（§123）：这一轮一结束，干活那一行整行收起，不再留「✓ N 步」那行。
+                    if (live && n == workIdx && !workPlaced) {
                         rows += Row.Work("w:$turnKey", turnKey, calls, live)
                         workPlaced = true
                     }

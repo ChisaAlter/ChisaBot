@@ -39,7 +39,7 @@ function fakeTimers() {
   return t;
 }
 
-const installedExec = path.join(require("node:os").tmpdir(), "chisabot-pc-update-check", "ChisaBotPC.exe");
+const installedExec = path.join(require("node:os").tmpdir(), "chisabot-pc-update-check", "ChisaBot.exe");
 
 function make(options = {}) {
   const autoUpdater = "autoUpdater" in options ? options.autoUpdater : fakeAutoUpdater(options.behavior);
@@ -49,13 +49,13 @@ function make(options = {}) {
   const timers = fakeTimers();
   const dir = path.dirname(installedExec);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "Uninstall ChisaBot PC.exe"), "");
+  fs.writeFileSync(path.join(dir, "Uninstall ChisaBot.exe"), "");
   const updater = createUpdater({
     autoUpdater,
     isPackaged: options.isPackaged ?? true,
     platform: options.platform ?? "win32",
     execPath: options.execPath ?? installedExec,
-    productName: "ChisaBot PC",
+    productName: "ChisaBot",
     getAutoUpdate: () => auto,
     onState: (s) => states.push(s),
     onDownloaded: (v) => downloaded.push(v),
@@ -68,10 +68,10 @@ function make(options = {}) {
 test("only an NSIS-installed packaged Windows build updates", () => {
   assert.strictEqual(make({ isPackaged: false }).updater.supported, false, "开发运行");
   assert.strictEqual(make({ platform: "linux" }).updater.supported, false, "非 Windows");
-  assert.strictEqual(make({ execPath: path.join(__dirname, "no-such-dir", "ChisaBotPC.exe") }).updater.supported, false, "免安装 zip（没有卸载程序）");
+  assert.strictEqual(make({ execPath: path.join(__dirname, "no-such-dir", "ChisaBot.exe") }).updater.supported, false, "免安装 zip（没有卸载程序）");
   assert.strictEqual(make({ autoUpdater: null }).updater.supported, false, "没有 electron-updater");
   assert.strictEqual(make().updater.supported, true);
-  assert.ok(isInstalledBuild({ execPath: "C:\\x\\ChisaBotPC.exe", productName: "ChisaBot PC", exists: (p) => p.endsWith("Uninstall ChisaBot PC.exe") }));
+  assert.ok(isInstalledBuild({ execPath: "C:\\x\\ChisaBot.exe", productName: "ChisaBot", exists: (p) => p.endsWith("Uninstall ChisaBot.exe") }));
 });
 
 test("unsigned installer: Authenticode verification is a pass, sha512 stays electron-updater's", async () => {

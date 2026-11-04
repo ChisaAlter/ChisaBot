@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 /**
- * ChisaBot PC 客户端的本机桥（docs/pc-node.md §8.2）。
+ * ChisaBot 桌面客户端的本机桥（docs/pc-node.md §8.2）。
  *
  * PC 客户端的主窗口就是这个网页本身，所以「设备」页面同时是 PC 的本机设置页。只有网页做不到的本机事情
  * 才走这座桥：本机紧急停止、高风险操作的本机确认、开机自启、文件夹选择器、退出登录。桥由 Electron 的

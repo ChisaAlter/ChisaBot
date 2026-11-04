@@ -29,7 +29,7 @@
 
 | 删除 | 原来是什么 |
 |---|---|
-| `desktop/` | 上游 Tauri 桌面端（ChisaBot PC 用 `pc/`） |
+| `desktop/` | 上游 Tauri 桌面端（ChisaBot 桌面客户端用 `pc/`） |
 | `mobile/` | 上游 Expo 移动端（Android 用 `android/`） |
 | `agent-adk/ag2/agno/bot/claude-sdk/crewai/langgraph/langgraph-agui/langroid/llamaindex/mastra/microsoft/pydantic-ai/strands` | 外部框架适配器（`agent-computer` 保留，它进镜像） |
 | `charts/`、`spire/`、`supervisor/` | Helm chart、SPIRE 身份、每机器人一台计算机的 supervisor 进程 |

@@ -347,7 +347,7 @@ PR #283 / #284 / #285 已发布，最终运行提交 `8a94383048c8c331fb7e7aa4db
 
 #### 背景
 
-除了 Windows 上的 ChisaBot PC，用户的 Linux 服务器、Mac 也要能关联成设备，让机器人去操作。
+除了 Windows 上的 ChisaBot 桌面客户端，用户的 Linux 服务器、Mac 也要能关联成设备，让机器人去操作。
 
 #### 验收标准
 

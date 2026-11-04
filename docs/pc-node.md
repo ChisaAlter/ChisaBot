@@ -1,4 +1,4 @@
-# ChisaBot PC 节点（服务器端 + Windows 客户端）
+# ChisaBot 桌面节点（服务器端 + Windows 客户端）
 
 > 2026-10-10，image `local/chisabot:glass-20261010m`，客户端 `chisabot-pc` 0.1.0。
 > 目标：服务器、PC、手机任何一端都能管理其他端；PC 既是远程聊天客户端，也是让服务器上的机器人在授权范围内操作这台电脑的「节点」（参考 OpenClaw 的 node：节点出站连接网关、声明命令面、危险命令需显式开启与审批）。
@@ -8,7 +8,7 @@
 | 端 | 是什么 | 能做什么 |
 | --- | --- | --- |
 | **服务器** | 现有 ChisaBot（`chisabot-zh` 容器，公网 `https://<你的域名>:8443`，前面是 nginx 登录网关） | 机器人运行处；设备登记表、WebSocket 中转、审批、审计都在这里 |
-| **PC（Windows）** | `ChisaBot PC` Electron 客户端 | ① 聊天窗口直接载入该服务器的网页；② 节点：执行机器人发来的操作（PowerShell、文件、截图、鼠标键盘、打开网址 / 文件、剪贴板） |
+| **PC（Windows）** | `ChisaBot` Electron 桌面客户端 | ① 聊天窗口直接载入该服务器的网页；② 节点：执行机器人发来的操作（PowerShell、文件、截图、鼠标键盘、打开网址 / 文件、剪贴板） |
 | **手机** | 现有网页（已适配 390px） | 聊天；在 设置 → 设备 管理所有 PC：开关能力、审批、紧急停止、撤销、看记录 |
 
 「从任何一端管理其他端」：设备配置只存服务器一份。网页/手机改 → 服务器写库 → 推送给 PC；PC 改 → 发 `set_config` → 服务器写库 → 网页 5 秒内刷新。PC 客户端里的聊天窗口就是网页本身，所以在 PC 上也能管理其他 PC 和服务器（管理后台）。
@@ -62,7 +62,7 @@ PC → 服务器：`hello{clientVersion,platform,osVersion,hostname,arch}`、`re
 
 **允许的文件夹之外的路径（0.1.12，2026-10-16）**：以前机器人要列 / 读允许的文件夹之外的地方（例如 `C:\AI`），审批卡只写「列出：C:\AI」，用户批准后 PC 还是回「路径不在允许的文件夹内」——白批一次，机器人也说不清为什么。现在服务器（`server/src/devices/roots.ts`，按设备平台用 `path.win32` / `path.posix`，Windows 不区分大小写、`\` `/` 都认）在发出调用前判断：文件类操作（列目录、读、写、改、搜索、上传、下载，git / 补丁的 `cwd`）给的绝对路径不在任何允许的文件夹里 → **照样审批**（能力是「允许」、审批偏好是「直接做」也要问），卡片 / PC 弹窗写「C:\AI 不在允许的文件夹里；批准后会把它加入允许的文件夹」（盘符根写「整个 C:\」）；批准后先把文件夹（文件就是它所在的文件夹）加进设备的允许列表（审计 `roots_added`，上限 20 个）、推 `config` 给 PC，再在同一条连接上发调用，所以 PC 先拿到新列表。拒绝 / 超时什么都不加。能力「关闭」照旧直接拒绝，完全访问不查文件夹。相对路径、`device_run_shell` 不受影响。PC 端 `resolveInRoots` 照旧用真实路径再查一遍；它的报错现在列出允许的文件夹。
 
-机器人工具（`server/src/devices/tools.ts`）：`device_list`、`device_system_info`、`device_run_shell`、`device_list_files`、`device_read_file`、`device_write_file`、`device_screenshot`、`device_input`、`device_open`、`device_clipboard`。**设备属于账号，不属于某个机器人**（2026-10-12 起）：这次运行的人名下的每台在线设备，他的任何机器人都能用；只有别人发布的团队机器人（`agent_profiles` 的主人是另一个人）拿不到。至少一台在线时才给操作类工具；某能力在所有在线设备上都关闭时对应工具不出现。**有关联设备但都离线时只给只读的 `device_list`**，并且不论在线与否，机器人提示词里都有一段「用户的电脑」说明（`deviceGuidance`，挂在 `device_list` 的 `guidance` 上、放在计算机提示词之后）：在线 → 如实说能用、能力没开就让用户去 设置 → 设备 → 权限；离线 → 说已关联但没连上、最后在线多久前、请打开 ChisaBot PC（2026-10-13：以前离线或能力全关时机器人只会说「我只有隔离的浏览器」）。安全边界不变：每台设备的能力默认全关、允许的文件夹、审批、紧急停止、审计都在 hub 里逐台生效。`deviceId` 可以是设备 id、设备名称或主机名；只有一台在线时可以省略，多台在线时必须指定（`resolveDevice`）。旧的 `device_bot_access` 表和 `botIds` 字段保留但不再参与授权（便于回滚）。上游桌面宿主的文件夹授权（host_* 工具）同样改为按人共用：发给桌面的操作仍带授权时的机器人 id（桌面端按它校验），真正发起的机器人在审批与审计里。截图原图留在服务器内存 30 分钟，工具返回 `/api/devices/<id>/screenshots/<sid>`，机器人可以在回复里用 Markdown 展示。
+机器人工具（`server/src/devices/tools.ts`）：`device_list`、`device_system_info`、`device_run_shell`、`device_list_files`、`device_read_file`、`device_write_file`、`device_screenshot`、`device_input`、`device_open`、`device_clipboard`。**设备属于账号，不属于某个机器人**（2026-10-12 起）：这次运行的人名下的每台在线设备，他的任何机器人都能用；只有别人发布的团队机器人（`agent_profiles` 的主人是另一个人）拿不到。至少一台在线时才给操作类工具；某能力在所有在线设备上都关闭时对应工具不出现。**有关联设备但都离线时只给只读的 `device_list`**，并且不论在线与否，机器人提示词里都有一段「用户的电脑」说明（`deviceGuidance`，挂在 `device_list` 的 `guidance` 上、放在计算机提示词之后）：在线 → 如实说能用、能力没开就让用户去 设置 → 设备 → 权限；离线 → 说已关联但没连上、最后在线多久前、请打开 ChisaBot（2026-10-13：以前离线或能力全关时机器人只会说「我只有隔离的浏览器」）。安全边界不变：每台设备的能力默认全关、允许的文件夹、审批、紧急停止、审计都在 hub 里逐台生效。`deviceId` 可以是设备 id、设备名称或主机名；只有一台在线时可以省略，多台在线时必须指定（`resolveDevice`）。旧的 `device_bot_access` 表和 `botIds` 字段保留但不再参与授权（便于回滚）。上游桌面宿主的文件夹授权（host_* 工具）同样改为按人共用：发给桌面的操作仍带授权时的机器人 id（桌面端按它校验），真正发起的机器人在审批与审计里。截图原图留在服务器内存 30 分钟，工具返回 `/api/devices/<id>/screenshots/<sid>`，机器人可以在回复里用 Markdown 展示。
 
 ## 6. 安全
 
@@ -85,7 +85,7 @@ PC → 服务器：`hello{clientVersion,platform,osVersion,hostname,arch}`、`re
 
 ## 8. Windows 客户端（`pc/`，2026-10-11 起）
 
-- 技术栈：Electron 44 + `ws`；无原生模块（输入/截图兜底都走 PowerShell），所以能在 Linux 上交叉打包。安装包用 electron-builder（NSIS，中文界面，可选安装目录，桌面 / 开始菜单快捷方式）+ 免安装 zip；只保留 zh-CN / en-US 两个 Chromium 语言包；exe 图标和版本信息（ChisaBot PC / ChisaBot / `pc/package.json` 的版本号）在打包时写入，未签名。
+- 技术栈：Electron 44 + `ws`；无原生模块（输入/截图兜底都走 PowerShell），所以能在 Linux 上交叉打包。安装包用 electron-builder（NSIS，中文界面，可选安装目录，桌面 / 开始菜单快捷方式）+ 免安装 zip；只保留 zh-CN / en-US 两个 Chromium 语言包；exe 图标和版本信息（ChisaBot / ChisaBot / `pc/package.json` 的版本号）在打包时写入，未签名。
 
 ### 8.1 界面：和网页是同一个应用
 

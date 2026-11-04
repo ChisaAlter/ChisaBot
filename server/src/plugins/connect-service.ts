@@ -1,8 +1,16 @@
 import { z } from "zod";
+import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { markUntrusted } from "../untrusted-content";
-import { CATALOGUE } from "./catalogue";
-import type { PluginStore, ServerRecord } from "./store";
-import type { GrantedTool } from "./tools";
+import { CATALOGUE, customUrlRefusal } from "./catalogue";
+import { listTools } from "./mcp";
+import {
+  CatalogueEntryUnknownError,
+  CustomServerRefusedError,
+  isDeploymentFault,
+  type PluginStore,
+  type ServerRecord,
+} from "./store";
+import { type GrantedTool, REFUSAL_MARKER } from "./tools";
 
 /**
  * 「把这个服务接进来」——先查这个部署里有什么，再查外面怎么接。
@@ -58,6 +66,17 @@ export type ConnectServiceOptions = {
    * server proactively enables the server and grants its non-destructive tools to `botId`.
    */
   canAutoEnable?: () => Promise<{ allowed: boolean; by: string }>;
+  /**
+   * When the asker is an admin on an interactive surface, offer `mcp_add`: a custom MCP endpoint
+   * is added in-chat behind a confirmation card. False for non-admins and IM / panel turns, so the
+   * tool is never advertised where it cannot be decided.
+   */
+  offerMcpAdd?: boolean;
+  /**
+   * The tools/list probe `mcp_add`'s confirm card runs against the URL it is about to add.
+   * Injected so tests never reach the network; production leaves it unset and gets `listTools`.
+   */
+  probeMcp?: (url: string) => Promise<{ name: string }[]>;
 };
 
 /** Lower-cased, with the punctuation a person types between words removed. */
@@ -262,14 +281,24 @@ function officialSection(hits: readonly ConnectSearchHit[]): string {
   return markUntrusted(body, "web search results");
 }
 
-const CUSTOM_MCP_NOTE = [
-  "这个部署接一个没有现成连接器的服务，只有一条路：Streamable HTTP 的 MCP 服务器。",
-  "1. 在该服务的开放平台拿凭证（Client ID / API Key / OAuth）。",
-  "2. 把它的 MCP 桥跑在一个能访问公网的地址上；stdio 的 MCP 进程这个部署跑不了。",
-  "3. 管理员在 设置 → 插件 → 添加 MCP 服务器，填标题和地址，刷新工具。",
-  "4. 在插件页把工具勾给这个机器人。",
-  "第 1 步我能替你查、替你把配置写好；第 3 步是管理员页面的动作，我的工具里没有安装入口。",
-].join("\n");
+function customMcpNote(offerMcpAdd: boolean): string {
+  const tail = offerMcpAdd
+    ? [
+        "3. 拿到公网地址后，管理员在对话里把地址发给我让我接上——我调用 mcp_add 出确认卡片，确认后自动完成添加并把非 destructive 工具授给当前机器人；也可以在 设置 → 插件 → 添加 MCP 服务器 手动填。",
+        "第 1、2 步我能替你查、替你把配置写好；第 3 步你如果是管理员，直接把地址发我就能办。",
+      ]
+    : [
+        "3. 管理员在 设置 → 插件 → 添加 MCP 服务器，填标题和地址，刷新工具。",
+        "4. 在插件页把工具勾给这个机器人。",
+        "第 1 步我能替你查、替你把配置写好；第 3 步是管理员页面的动作，我的工具里没有安装入口。",
+      ];
+  return [
+    "这个部署接一个没有现成连接器的服务，只有一条路：Streamable HTTP 的 MCP 服务器。",
+    "1. 在该服务的开放平台拿凭证（Client ID / API Key / OAuth）。",
+    "2. 把它的 MCP 桥跑在一个能访问公网的地址上；stdio 的 MCP 进程这个部署跑不了。",
+    ...tail,
+  ].join("\n");
+}
 
 function builtinMatchSection(
   names: readonly string[],
@@ -470,11 +499,152 @@ function report(
     );
 
     if (matched.length === 0) {
-      sections.push("怎么接进来：", CUSTOM_MCP_NOTE);
+      sections.push("怎么接进来：", customMcpNote(options.offerMcpAdd === true));
     }
   }
 
   return sections.join("\n\n");
+}
+
+/**
+ * `mcp_add`：管理员在对话里把一个自定义 MCP 端点接进来。
+ *
+ * 确认卡片（category "admin"，locked 恒问）代替了管理页的那次点击——prepareConfirm 先把
+ * {@link customUrlRefusal} 的静态检查和一次无凭据 tools/list 探测跑掉，让卡片上写的是端点
+ * 实际提供了什么，而不是一段地址。确认后 execute 走的是和管理页同一个 `addCustomServer`：
+ * SSRF、命名、凭据类型的检查原样生效，审计行的 `by` 记的是管理员本人。
+ *
+ * 不接受明文 token 参数——进了模型上下文就会落进聊天记录。需要凭证的服务器先添加，
+ * 再去插件页填；或者传一个部署里已存在的 credentialId。
+ */
+const mcpAddInput = z.object({
+  id: z
+    .string()
+    .trim()
+    .min(1)
+    .max(40)
+    .describe("服务器标识：小写字母、数字、连字符，例如 ima-knowledge"),
+  title: z.string().trim().min(1).max(60).describe("显示名，例如「腾讯 ima 知识库」"),
+  url: z.string().trim().min(1).max(500).describe("Streamable HTTP 端点地址，必须 https"),
+  credentialId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .optional()
+    .describe("部署里已存在的凭证 id；一般留空，用户稍后在插件页填 token 更稳妥"),
+});
+
+function mcpAddTool(options: ConnectServiceOptions): GrantedTool {
+  return {
+    name: "mcp_add",
+    ref: "plugins/mcp_add",
+    description:
+      "管理员专用：把一个自定义 MCP 服务器（Streamable HTTP 端点）接进这个部署，并把它的工具授权给当前机器人。当管理员在对话里给出 MCP 地址要求「接上 / 添加 / 安装」时调用；调用会先出一张确认卡片（显示地址和实际探测到的工具清单），用户点「确认」才真正写入，不要先在文字里再问一遍。目录里已有的官方连接器（Notion / Google Drive / Parallel）不要用这个——connect_service 会自动启用。",
+    parameters: mcpAddInput,
+    prepareConfirm: async (input) => {
+      const parsed = mcpAddInput.safeParse(input);
+      if (!parsed.success) {
+        return { skip: `mcp_add 需要 id、title、url 参数：${parsed.error.issues[0]?.message ?? ""}` };
+      }
+      const { id, title, url, credentialId } = parsed.data;
+      const refusal = customUrlRefusal(url);
+      if (refusal) return { skip: `这个地址不能接：${refusal}` };
+      let probe: string;
+      try {
+        const tools = options.probeMcp
+          ? await options.probeMcp(url)
+          : await listTools({ url });
+        probe = tools.length
+          ? `已连上，发现 ${tools.length} 个工具：${tools
+              .slice(0, 12)
+              .map((tool) => tool.name)
+              .join("、")}${tools.length > 12 ? " …" : ""}`
+          : "已连上，但服务器没有列出任何工具";
+      } catch (error) {
+        probe = `暂时无法列出工具：${error instanceof Error ? error.message : String(error)}（需要凭证的服务器可以先添加，再去插件页填 token 后刷新）`;
+      }
+      return {
+        args: { id, title, url, ...(credentialId ? { credentialId } : {}) },
+        title: `添加 MCP 服务器「${title}」`,
+        details: [
+          { label: "网址", value: url, code: true },
+          { label: "标识", value: id, code: true },
+          { label: "探测", value: probe },
+          {
+            label: "说明",
+            value:
+              "这个端点未经官方目录审查：它的每个工具都会按写操作对待，之后每次调用仍会按审批规则单独确认。",
+          },
+        ],
+      };
+    },
+    execute: async (input, ctx) => {
+      if (ctx?.signal?.aborted || currentToolAbort()?.aborted) {
+        return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
+      }
+      // 工具列表是构建时的快照；真正写入前按当时身份再问一次。
+      const permission = options.canAutoEnable
+        ? await options.canAutoEnable().catch(() => ({ allowed: false, by: "" }))
+        : { allowed: false, by: "" };
+      if (!permission.allowed) {
+        return `${REFUSAL_MARKER} 只有管理员能在对话里添加 MCP 服务器。`;
+      }
+      const parsed = mcpAddInput.safeParse(input);
+      if (!parsed.success) {
+        return `${REFUSAL_MARKER} 参数不对：${parsed.error.issues[0]?.message ?? ""}`;
+      }
+      const { id, title, url, credentialId } = parsed.data;
+      try {
+        const server = await options.store.addCustomServer({
+          id,
+          title,
+          url,
+          ...(credentialId ? { credentialId } : {}),
+          by: permission.by,
+        });
+        const held = new Set<string>();
+        for (const tool of server.tools.filter((t) => !t.destructive)) {
+          if (tool.grantedTo.includes(options.botId)) {
+            held.add(tool.name);
+            continue;
+          }
+          try {
+            await options.store.grant("mcp", tool.ref, options.botId, permission.by);
+            held.add(tool.name);
+          } catch {
+            // 单个授权失败不撤销已完成的添加；结果里如实报数量。
+          }
+        }
+        const blocked = server.tools.filter((tool) => tool.destructive).map((tool) => tool.name);
+        return [
+          `已添加 MCP 服务器「${server.title}」（${server.url}）。`,
+          server.tools.length === 0
+            ? `服务器目前没有列出工具${server.lastError ? `：${server.lastError}` : "。"}`
+            : held.size > 0
+              ? `已授权给当前机器人 ${held.size} 个工具：${markUntrusted([...held].slice(0, 20).join("、"), "connector tools")}${held.size > 20 ? " …" : ""}`
+              : "没有可自动授权的工具。",
+          blocked.length > 0
+            ? `以下工具被服务器自己标记为 destructive，未自动授权——确认要用时在插件页手动勾选：${markUntrusted(blocked.join("、"), "connector tools")}`
+            : null,
+          !server.hasCredential
+            ? "如果这个服务器要求凭证：到插件页填好 token 后刷新工具。"
+            : null,
+          `[管理 ${server.title} 插件设置](/admin/plugins/${server.id})`,
+        ]
+          .filter(Boolean)
+          .join("\n");
+      } catch (error) {
+        if (error instanceof CustomServerRefusedError || error instanceof CatalogueEntryUnknownError) {
+          return `${REFUSAL_MARKER} ${error.message}`;
+        }
+        if (isDeploymentFault(error)) {
+          return "这次添加没有完成：部署内部的连接器状态不一致，请在插件页查看刷新报错。";
+        }
+        return `添加失败：${error instanceof Error ? error.message : "未知错误"}`;
+      }
+    },
+  };
 }
 
 export function connectServiceTools(
@@ -653,5 +823,6 @@ export function connectServiceTools(
         );
       },
     },
+    ...(options.offerMcpAdd ? [mcpAddTool(options)] : []),
   ];
 }

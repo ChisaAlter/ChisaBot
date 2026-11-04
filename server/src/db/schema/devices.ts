@@ -10,7 +10,7 @@ import {
 import { jsonb } from "./json";
 
 /**
- * PC 节点（设备）。一台装了 ChisaBot PC 客户端的电脑一行；令牌只存 SHA-256。
+ * PC 节点（设备）。一台装了 ChisaBot 桌面客户端的电脑一行；令牌只存 SHA-256。
  * 见 docs/pc-node.md。
  */
 export const devices = pgTable(

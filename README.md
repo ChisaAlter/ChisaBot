@@ -362,7 +362,7 @@ sh /opt/chisabot-updater/smoke.sh                                               
 | `.github/workflows/release.yml` | 推 `v*` 标签时用 GitHub Actions 构建 PC + Android 安装包并发布到 Releases |
 | `deploy/updater/` | 宿主机在线更新服务（管理后台 → 系统更新） |
 | `docs/` | 中文使用指南、模型集成与上游技术参考；`docs/images/` 是 README 截图 |
-| `assets/brand/` | 品牌头像原图与生成脚本（`python3 assets/brand/generate.py` 生成网页、登录页、PC、Android 的全部图标），规则见 `DESIGN.md` §28 |
+| `assets/brand/` | 品牌头像原图与生成脚本（`node assets/brand/generate.mjs` 生成网页、登录页、PC、Android 的全部图标），规则见 `DESIGN.md` §28 |
 
 上游 Intelligence、第三方连接器按需使用；上游的 Tauri 桌面端、Expo 移动端、外部框架适配器、Helm chart 等不发布的目录已在瘦身 P3 删除（见 `docs/slimming.md`）。本仓库不提供 ChisaBot 公共镜像。PC（`pc/`）和 Android（`android/`）客户端的通用安装包在本仓库的 GitHub Releases（CI 构建，首次运行填自己的服务器地址）；也可以自己构建并放到自己的更新源（见上文第 8 步）。
 

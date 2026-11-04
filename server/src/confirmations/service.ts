@@ -339,7 +339,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
   async function setPref(owner: string, category: ConfirmCategory, mode: ConfirmMode, note?: string | null) {
     if (!CONFIRM_CATEGORIES.includes(category)) throw new ConfirmError("没有这一类。");
     if (CONFIRM_CATEGORY_INFO[category].locked && mode === "auto")
-      throw new ConfirmError("付款购买一律先问你（安全底线），不能改成直接做。");
+      throw new ConfirmError(`${CONFIRM_CATEGORY_INFO[category].label}一律先问你（安全底线），不能改成直接做。`);
     await sql.unsafe(
       `INSERT INTO chisabot_confirm_prefs (owner_user_id, category, mode, note, updated_at) VALUES ($1, $2, $3, $4, now())
        ON CONFLICT (owner_user_id, category) DO UPDATE SET mode = EXCLUDED.mode, note = EXCLUDED.note, updated_at = now()`,
@@ -362,7 +362,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
   async function addRule(owner: string, input: z.input<typeof ruleInput>, by: { source: "user" | "bot"; agentId?: string | null } = { source: "user" }) {
     const parsed = ruleInput.parse(input);
     if (CONFIRM_CATEGORY_INFO[parsed.category].locked && parsed.mode === "auto")
-      throw new ConfirmError("付款购买一律先问你（安全底线），不能设成直接做。");
+      throw new ConfirmError(`${CONFIRM_CATEGORY_INFO[parsed.category].label}一律先问你（安全底线），不能设成直接做。`);
     const keywords = [...new Set((parsed.keywords ?? []).map((k) => k.trim()).filter(Boolean))];
     const count = await sql.unsafe<{ n: number }[]>("SELECT count(*)::int AS n FROM chisabot_confirm_rules WHERE owner_user_id = $1", [owner]);
     if ((count[0]?.n ?? 0) >= 200) throw new ConfirmError("规则最多 200 条，先删掉几条不用的。");
@@ -713,7 +713,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
         "做一件有后果的事之前、而这件事不是用会自动弹确认卡的工具完成时（例如在浏览器里下单付款、在网页上替用户发消息 / 发帖 / 发邮件、在网页上删除东西），先调用它：按用户的审批偏好，要么直接放行，要么在聊天里出一张确认卡片，工具会等用户点「确认 / 取消」再返回。付款一律要问。返回「已确认」才能做；返回「取消」就不要做。不要在聊天里再用文字问一遍。",
         z
           .object({
-            category: z.enum(CONFIRM_CATEGORIES).describe("message=对外发消息 delete=删除 purchase=付款购买 device=操作用户的电脑"),
+            category: z.enum(CONFIRM_CATEGORIES).describe("message=对外发消息 delete=删除 purchase=付款购买 device=操作用户的电脑 admin=添加连接器"),
             title: z.string().min(1).max(80).describe("要做什么，一句话，如「在京东下单：AirPods Pro 2」"),
             target: z.string().max(120).optional().describe("对象：发给谁 / 删哪个 / 哪个网站 / 哪台电脑"),
             details: z.array(detailSchema).max(6).optional().describe("细节行，如 [{label:\"金额\",value:\"¥1,899\"},{label:\"收货地址\",value:\"…\"}]"),
@@ -743,7 +743,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
       ),
       tool(
         "approval_preference_save",
-        "用户说「以后 X 不用问我 / 直接做」或「X 要先问我」时调用，把这条审批偏好记下来（之后所有机器人都照做）。text 用用户的原话。只针对某个人 / 某个对象的（如「给张三发微信不用问」）要给 keywords（如 [\"张三\"]，执行时参数里全部出现才算）；针对整一类的不给 keywords，等于改这一类的偏好。付款购买不能设成直接做。",
+        "用户说「以后 X 不用问我 / 直接做」或「X 要先问我」时调用，把这条审批偏好记下来（之后所有机器人都照做）。text 用用户的原话。只针对某个人 / 某个对象的（如「给张三发微信不用问」）要给 keywords（如 [\"张三\"]，执行时参数里全部出现才算）；针对整一类的不给 keywords，等于改这一类的偏好。标了（固定）的类别（付款购买、添加连接器）不能设成直接做。",
         z
           .object({
             text: z.string().min(1).max(300).describe("用户原话"),

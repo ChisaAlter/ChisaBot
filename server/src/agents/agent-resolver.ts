@@ -127,6 +127,8 @@ export function createActorAgentResolver(
       undefined, // was Automatic Learning (removed in slimming P4b-3)
       deps.loadPersonalMemoryForActor?.(actor.id),
       deps.resolveConnectionForAgent,
+      // The self-map's one fact about the person: may they approve an admin action.
+      { isAdmin: actor.role === "admin" },
     );
   };
 

@@ -174,7 +174,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     to: "/settings/devices",
     keywords: ["sb", "shebei", "device", "电脑", "手机", "pc", "android", "安卓", "服务器", "配对", "添加电脑", "紧急停止", "允许的文件夹"],
     items: [
-      { id: "add-pc", title: "添加一台电脑", description: "装 ChisaBot PC 客户端并配对", find: "添加一台电脑", keywords: ["配对", "pair", "pc 客户端", "下载"] },
+      { id: "add-pc", title: "添加一台电脑", description: "装 ChisaBot 客户端并配对", find: "添加一台电脑", keywords: ["配对", "pair", "pc 客户端", "下载"] },
       { id: "add-phone", title: "添加一台手机", description: "安卓客户端扫码配对", find: "添加一台手机", keywords: ["安卓", "android", "扫码"] },
       { id: "add-server", title: "添加一台服务器", description: "服务器节点安装命令", find: "添加一台服务器", keywords: ["节点", "node", "linux"] },
       { id: "device-full-access", title: "设备的完全访问", description: "在某台设备上临时放开所有能力（设备详情 → 权限）", keywords: ["完全访问", "管理员身份", "elevated"] },

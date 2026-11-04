@@ -26,7 +26,7 @@ ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、
 
 ## 2. PC 客户端
 
-- `electron-updater`（6.8.9）generic provider，更新源是一个公开目录：`latest.yml` + `ChisaBot-PC-<版本>-x64-setup.exe`
+- `electron-updater`（6.8.9）generic provider，更新源是一个公开目录：`latest.yml` + `ChisaBot-<版本>-x64-setup.exe`
   + `.blockmap`。目录按 `pc/src/build-config.js` 的顺序选：本机 `config.json` 的 `updateFeed` → 构建期 `updateFeed`
   （CI 变量 `CHISABOT_UPDATE_FEED`）→ `https://github.com/<owner>/<repo>/releases/latest/download/`（GitHub Releases，仓库须公开）。
   通用版（仓库 Releases 里的）就走最后一项；自建发布把自己的静态 HTTPS 目录写进 `CHISABOT_UPDATE_FEED`。
@@ -45,7 +45,7 @@ ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、
 - 新 IPC 都经过来源检查：`pc:check-update`、`pc:install-update` 走 `handleWeb`（主窗口 + 顶层框架 + 已登录服务器）；
   `update:current`、`update:answer` 走 `handleLocal`（`src/ui/` 下的本机页面）。网页只能把「新版本已下载」窗口叫出来，
   立即重启要在本机窗口里由本人点。
-- 只有 NSIS 安装版会更新（安装目录里有 `Uninstall ChisaBot PC.exe`）；开发运行和免安装 zip 显示「只有安装版能自动更新」。
+- 只有 NSIS 安装版会更新（安装目录里有 `Uninstall ChisaBot.exe`，改名前的 `Uninstall ChisaBotPC.exe` / `Uninstall ChisaBot PC.exe` 也认）；开发运行和免安装 zip 显示「只有安装版能自动更新」。
 - **版本号重置（2026-10-12）**：首个公开版本定为 0.1.0。之前内部测试过的 0.2.x 安装版不会自动“更新”到更低的 0.1.0（不允许降级），要卸载后手动装一次 0.1.0，之后正常自动更新。
 
 ### 2.1 普通更新与「重新安装」（外壳指纹）
@@ -71,7 +71,7 @@ electron-updater 一定以 `--updated /S` 运行安装包，electron-builder 的
 - **客户端**（`pc/src/updater.js` `requiresFullInstall`）：更新源的 `chisabotShell` 和本机指纹不同，或 `fullInstall: true`
   → 这次是「重新安装」：下载好后弹窗标题换成 **「此更新需要重新安装，以更新图标/组件」**，按钮「重新安装」。点了以后
   客户端自己运行下载好的安装包 `/S --force-run`（**不带 `--updated`**）：卸载旧版（保留数据，旧卸载程序拿到 `--updated`）、
-  全新安装、重建桌面和开始菜单快捷方式，装好自动打开。选「稍后」时，退出 ChisaBot PC 的那一刻静默重新安装
+  全新安装、重建桌面和开始菜单快捷方式，装好自动打开。选「稍后」时，退出 ChisaBot 的那一刻静默重新安装
   （`installOnQuit`；electron-updater 自带的退出安装会关掉，因为它一定带 `--updated`）。更新源没有 `chisabotShell`
   （旧发布）→ 普通更新。
 - **安装脚本**（`pc/build/installer.nsh`，`build.nsis.include`）：每次安装（全新 / 更新 / 重新安装）结束都把还存在的桌面、
@@ -82,18 +82,23 @@ electron-updater 一定以 `--updated /S` 运行安装包，electron-builder 的
   `shell.writeShortcutLink(…, "update", { icon: exe, iconIndex: 0 })` 重写，再跑 `ie4uinit.exe -show`，记下新指纹，
   写一条本机记录 `shell_refresh`。
 - **快捷方式图标指向按内容哈希命名的 .ico（0.1.12）**：0.1.11 在 Windows 11 上手动重新安装后，桌面 / 开始菜单 / 任务栏仍是旧图标
-  ——exe 里是新图标（已解出 v0.1.11 安装包和 ChisaBotPC.exe 的图标资源核对），但资源管理器按「图标文件路径 + 序号」缓存，
-  exe 路径没变就继续用缓存里的旧图，`ie4uinit -show` 并不总能清掉。现在 `pc/scripts/win-icon.py` 生成 `build/icon.ico`
+  ——exe 里是新图标（已解出 v0.1.11 安装包和旧名 ChisaBotPC.exe 的图标资源核对），但资源管理器按「图标文件路径 + 序号」缓存，
+  exe 路径没变就继续用缓存里的旧图，`ie4uinit -show` 并不总能清掉。现在 `pc/scripts/win-icon.mjs` 生成 `build/icon.ico`
   （16 20 24 32 40 48 存 32 位 BMP，64 96 128 256 存 PNG）并按内容哈希复制一份 `build/icons/chisabot-<12 位哈希>.ico`，
   `build.extraResources` 打到 `resources/icons/`。安装脚本（`chisabotFindIcon`）和 `shell-refresh.js`（`findIcon`）把快捷方式的
   图标指向这个文件——新路径缓存里没有，必然重新读；换图标后哈希变、路径也变。安装脚本对每个快捷方式和 exe 再发
   `SHChangeNotify(SHCNE_UPDATEITEM)`。客户端每次启动都检查（`staleShortcuts`）：桌面、开始菜单 Programs（含一层子文件夹）、
-  任务栏固定里**所有**指向本程序 exe 的 .lnk（不论名字），以及指向已不存在的旧安装位置里 `ChisaBotPC.exe` 的 .lnk，图标不是这份
+  任务栏固定里**所有**指向本程序 exe 的 .lnk（不论名字），以及指向已不存在的旧安装位置里旧 exe（含改名前的 `ChisaBotPC.exe`）的 .lnk，图标不是这份
   .ico 就重写（外壳指纹没变也会修）。窗口 / 任务栏图标（`BrowserWindow.icon`）在 Windows 上也用这份多尺寸 .ico。
-  换图标：改 `assets/brand/source.webp` 后 `python3 pc/scripts/win-icon.py && npm run fingerprint`（`npm test` 检查文件名和内容一致）。
+  换图标：改 `assets/brand/source.webp` 后 `node pc/scripts/win-icon.mjs && npm run fingerprint`（`npm test` 检查文件名和内容一致）。
 - **已经装了 0.1.2 及更早版本的电脑**：它们不认识 `chisabotShell`，照旧以 `--updated /S` 运行新安装包。但新安装包里的
   `installer.nsh` 会重写快捷方式、刷新图标缓存，新版本第一次启动也会再刷新一次（它们的 `shellHash` 为空），所以不用手动重装，
   图标在这次更新后就换过来。从下一次外壳变化开始，它们已经是新客户端，走「重新安装」。
+- **改名迁移（0.1.129，ChisaBot PC → ChisaBot）**：`productName` / `executableName` / `shortcutName` / `artifactName` 一起去掉了 PC 后缀，
+  默认安装目录从 `Programs\ChisaBot PC` 变成 `Programs\ChisaBot`。不带 `--updated` 的安装包会在 `customInit` 里先找到旧安装的
+  卸载入口（注册表 `Uninstall\cn.ayase.chisabot.pc` / `Uninstall\ChisaBot PC`，兜底默认目录下的 `Uninstall ChisaBotPC.exe`）静默卸掉再装；
+  客户端启动时把 `%APPDATA%\ChisaBot PC` 整个改名成 `%APPDATA%\ChisaBot`（设备令牌、会话、本机配置不丢），旧 exe 的快捷方式经
+  `LEGACY_EXE_BASENAMES` 照旧重定向到新 exe。`appId` / `APP_USER_MODEL_ID` / 更新源路径不变。
 
 发布：推 `v*` 标签（或手动运行）触发 `.github/workflows/release.yml`：windows-latest 上 `npm ci`、`npm test`、
 `electron-builder --win nsis zip --x64 --publish never`，产物（安装包、zip、`latest.yml`、`.blockmap`）上传到该标签的

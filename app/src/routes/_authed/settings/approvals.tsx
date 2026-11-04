@@ -1,4 +1,4 @@
-import { IconCreditCard, IconDeviceDesktop, IconDots, IconLock, IconSend2, IconTrash } from "@tabler/icons-react";
+import { IconCreditCard, IconDeviceDesktop, IconDots, IconLock, IconPlugConnected, IconSend2, IconTrash } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -42,6 +42,7 @@ const ICON: Record<ConfirmCategory, typeof IconSend2> = {
   delete: IconTrash,
   purchase: IconCreditCard,
   device: IconDeviceDesktop,
+  admin: IconPlugConnected,
 };
 
 const CATEGORY_ITEMS = Object.fromEntries(CONFIRM_CATEGORIES.map((c) => [c, CONFIRM_CATEGORY_INFO[c].label])) as Record<ConfirmCategory, string>;
@@ -204,7 +205,7 @@ function PrefRow({ pref, onSaved }: { pref: ConfirmPrefView; onSaved: () => Prom
               {pref.locked ? (
                 <span className="ap-quote">
                   <IconLock className="mr-1 inline size-3 align-[-1px]" />
-                  {"付款一律先问你，这是安全底线，不能关。"}
+                  {`${pref.label}一律先问你，这是安全底线，不能关。`}
                 </span>
               ) : pref.note ? (
                 <span className="ap-quote">{`你说过：「${pref.note}」`}</span>
@@ -223,7 +224,7 @@ function PrefRow({ pref, onSaved }: { pref: ConfirmPrefView; onSaved: () => Prom
             disabled={pref.locked && value === "auto"}
             key={value}
             onClick={() => void choose(value)}
-            title={pref.locked && value === "auto" ? "付款一律先问你" : undefined}
+            title={pref.locked && value === "auto" ? `${pref.label}一律先问你` : undefined}
             type="button"
           >
             <T>{CONFIRM_MODE_LABEL[value]}</T>
@@ -243,7 +244,7 @@ function RuleForm({ onAdded }: { onAdded: () => Promise<unknown> }) {
     .split(/[\s,，、]+/)
     .map((k) => k.trim())
     .filter(Boolean);
-  const blocked = category === "purchase" && mode === "auto";
+  const blocked = CONFIRM_CATEGORY_INFO[category].locked === true && mode === "auto";
   const add = useAsyncAction(
     async () => {
       await addConfirmRule({ text: text.trim(), category, mode, ...(words.length ? { keywords: words } : {}) });
@@ -317,7 +318,7 @@ function RuleForm({ onAdded }: { onAdded: () => Promise<unknown> }) {
       </div>
       <span className="ap-quote">
         {blocked
-          ? "付款购买一律先问你，不能设成直接做。"
+          ? `${CONFIRM_CATEGORY_INFO[category].label}一律先问你，不能设成直接做。`
           : words.length
             ? `执行时内容里同时出现「${words.join("」「")}」才按这条来；「先问我」的规则优先。`
             : "不填「涉及」= 整一类都按这条来（等于改上面这一类的偏好）。"}

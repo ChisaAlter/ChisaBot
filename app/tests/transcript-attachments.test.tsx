@@ -10,6 +10,7 @@ import {
   render,
   waitFor,
 } from "@testing-library/react";
+import { toVisibleChatItems } from "@/components/channels/chat-messages";
 import {
   anchorRowIds,
   ChatTranscript,
@@ -17,9 +18,9 @@ import {
   sameAttachmentRow,
   TranscriptAttachments,
 } from "@/components/channels/chat-transcript";
-import { toVisibleChatItems } from "@/components/channels/chat-messages";
 import type { QueuedMessage } from "@/components/channels/composer";
 import { attachmentThumbUrl, attachmentUrl } from "@/lib/channels/attachments";
+import { buildWakeUpInstruction } from "../../shared/follow-up-turn";
 import { frameFiring } from "../../shared/routine-firing";
 import { settleReactWork } from "./settle-react-work";
 
@@ -143,7 +144,9 @@ function renderTranscript(
    * 现在每个用例都得有 QueryClient，否则整个文件红在「No QueryClient set」上（2026-10-20 清基线）。
    */
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+    defaultOptions: {
+      queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+    },
   });
   const tree = (next: readonly Message[]) => (
     <QueryClientProvider client={queryClient}>
@@ -1111,4 +1114,36 @@ test("a responsibility turn is drawn as a compact line with the model's message 
   const details = container.querySelector("details");
   expect(details?.open).toBe(false);
   expect(details?.textContent).toContain("Success criteria: Posted.");
+});
+
+/**
+ * §124：机器人给自己排的跟进到点也是一条触发帧——但它写给模型的唤醒话整段英文，平铺出来是
+ * 一面墙的脚手架。画法和长期任务一样：原因和「打算做什么」在行上，整条原文收进「详情」。
+ */
+test("a follow-up firing is drawn as a compact line with the wake message behind Details", async () => {
+  const wake = buildWakeUpInstruction({
+    scheduledAt: "2026-11-04T06:42:13.759Z",
+    reason: "云端服务器性能面板每小时自动刷新",
+    instruction:
+      "刷新面板 lp_53b7ba32：读 /proc/loadavg，然后 panel_update 提交",
+  });
+  const message: UserMessage = {
+    id: "wake-1",
+    role: "user",
+    content: frameFiring(wake),
+  };
+  const { container, getByText } = renderTranscript([message]);
+  await settleReactWork();
+
+  expect(getByText("定时任务已运行。")).toBeTruthy();
+  expect(container.textContent).toContain("云端服务器性能面板每小时自动刷新");
+  expect(
+    getByText("刷新面板 lp_53b7ba32：读 /proc/loadavg，然后 panel_update 提交"),
+  ).toBeTruthy();
+  // 模型侧脚手架只进「详情」，不摊在行上（全文只出现一次，在收起的 details 里）。
+  expect(container.textContent?.split("Pick it up now").length).toBe(2);
+  const details = container.querySelector("details");
+  expect(details?.open).toBe(false);
+  expect(details?.textContent).toContain("You scheduled this follow-up");
+  expect(details?.textContent).toContain("Pick it up now");
 });

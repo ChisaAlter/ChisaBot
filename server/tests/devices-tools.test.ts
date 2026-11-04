@@ -105,7 +105,7 @@ describe("the bot knows whether the person's computer is linked and online (2026
     expect(guidance).toContain("书房电脑");
     expect(guidance).toContain("offline");
     expect(guidance).toContain("约 15 小时前");
-    expect(guidance).toContain("ChisaBot PC");
+    expect(guidance).toContain("ChisaBot desktop app");
     const list = JSON.parse(String(await tools[0]!.execute({})));
     expect(list.devices[0]).toMatchObject({ deviceId: "dev_1", online: false, lastSeen: "约 15 小时前" });
   });

@@ -1,4 +1,4 @@
-import { IconCreditCard, IconDeviceDesktop, IconSend2, IconTrash } from "@tabler/icons-react";
+import { IconCreditCard, IconDeviceDesktop, IconPlugConnected, IconSend2, IconTrash } from "@tabler/icons-react";
 import { CONFIRM_CATEGORY_INFO, type ConfirmCategory, type ConfirmRequestView } from "../../../../shared/confirmations";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ export const CONFIRM_ICON: Record<ConfirmCategory, typeof IconSend2> = {
   delete: IconTrash,
   purchase: IconCreditCard,
   device: IconDeviceDesktop,
+  admin: IconPlugConnected,
 };
 
 const STATUS_TEXT: Record<ConfirmRequestView["status"], string> = {

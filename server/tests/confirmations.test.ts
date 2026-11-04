@@ -113,9 +113,12 @@ describe.skipIf(!url)("confirmations service", () => {
 
   test("defaults are ask; purchase cannot be auto", async () => {
     const prefs = await confirm.prefs(owner);
-    expect(prefs.map((p) => p.mode)).toEqual(["ask", "ask", "ask", "ask"]);
+    expect(prefs.map((p) => p.mode)).toEqual(["ask", "ask", "ask", "ask", "ask"]);
     expect(prefs.find((p) => p.category === "purchase")!.locked).toBe(true);
+    expect(prefs.find((p) => p.category === "admin")!.locked).toBe(true);
     await expect(confirm.setPref(owner, "purchase", "auto")).rejects.toThrow("安全底线");
+    await expect(confirm.setPref(owner, "admin", "auto")).rejects.toThrow("安全底线");
+    await expect(confirm.addRule(owner, { text: "添加连接器不用问我", category: "admin", mode: "auto" })).rejects.toThrow("安全底线");
   });
 
   test("ask → card in the thread under the tool call → approve runs the tool once", async () => {

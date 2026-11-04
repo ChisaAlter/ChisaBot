@@ -92,7 +92,7 @@ test("requiresFullInstall: only a different shell hash or an explicit fullInstal
 
 // ---------- 客户端安装方式 ----------
 
-function fakeAutoUpdater(info, { installerPath = "C:\\Users\\u\\AppData\\Local\\chisabot-pc-updater\\pending\\ChisaBot-PC-0.1.3-x64-setup.exe" } = {}) {
+function fakeAutoUpdater(info, { installerPath = "C:\\Users\\u\\AppData\\Local\\chisabot-pc-updater\\pending\\ChisaBot-0.1.3-x64-setup.exe" } = {}) {
   const e = new EventEmitter();
   e.installs = [];
   e.installerPath = installerPath;
@@ -108,17 +108,17 @@ function fakeAutoUpdater(info, { installerPath = "C:\\Users\\u\\AppData\\Local\\
   return e;
 }
 
-const execPath = path.join(os.tmpdir(), "chisabot-pc-shell-check", "ChisaBotPC.exe");
+const execPath = path.join(os.tmpdir(), "chisabot-pc-shell-check", "ChisaBot.exe");
 fs.mkdirSync(path.dirname(execPath), { recursive: true });
-fs.writeFileSync(path.join(path.dirname(execPath), "Uninstall ChisaBot PC.exe"), "");
+fs.writeFileSync(path.join(path.dirname(execPath), "Uninstall ChisaBot.exe"), "");
 
-test("installed build accepts electron-builder's no-space uninstaller name", () => {
+test("installed build accepts electron-builder's legacy no-space uninstaller name", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "chisabot-pc-uninstaller-"));
-  const exe = path.join(dir, "ChisaBotPC.exe");
+  const exe = path.join(dir, "ChisaBot.exe");
   fs.writeFileSync(exe, "");
   fs.writeFileSync(path.join(dir, "Uninstall ChisaBotPC.exe"), "");
   try {
-    assert.strictEqual(isInstalledBuild({ execPath: exe, productName: "ChisaBot PC" }), true);
+    assert.strictEqual(isInstalledBuild({ execPath: exe, productName: "ChisaBot" }), true);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -133,7 +133,7 @@ function make(info, { shellHash = "aaaa", installerPath } = {}) {
     isPackaged: true,
     platform: "win32",
     execPath,
-    productName: "ChisaBot PC",
+    productName: "ChisaBot",
     shellHash,
     getAutoUpdate: () => true,
     spawn: (cmd, args) => spawned.push([cmd, args]),
@@ -198,16 +198,16 @@ test("needsShellRefresh: new hash or never refreshed (upgraded from a version wi
 });
 
 test("refreshShell rewrites only shortcuts that point at this exe and refreshes the icon cache", () => {
-  const exe = "C:\\Users\\u\\AppData\\Local\\Programs\\ChisaBot PC\\ChisaBotPC.exe";
+  const exe = "C:\\Users\\u\\AppData\\Local\\Programs\\ChisaBot\\ChisaBot.exe";
   const candidates = shellRefresh.shortcutCandidates({
     desktopDir: "C:\\Users\\u\\Desktop",
     appData: "C:\\Users\\u\\AppData\\Roaming",
-    shortcutName: "ChisaBot PC",
+    shortcutName: "ChisaBot",
   });
   assert.deepStrictEqual(candidates, [
-    "C:\\Users\\u\\Desktop\\ChisaBot PC.lnk",
-    "C:\\Users\\u\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\ChisaBot PC.lnk",
-    "C:\\Users\\u\\AppData\\Roaming\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar\\ChisaBot PC.lnk",
+    "C:\\Users\\u\\Desktop\\ChisaBot.lnk",
+    "C:\\Users\\u\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\ChisaBot.lnk",
+    "C:\\Users\\u\\AppData\\Roaming\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar\\ChisaBot.lnk",
   ]);
   const links = {
     [candidates[0]]: { target: exe.toLowerCase() },
@@ -241,7 +241,7 @@ test("refreshShell rewrites only shortcuts that point at this exe and refreshes 
 });
 
 test("a broken shortcut does not stop the others", () => {
-  const exe = "C:\\A\\ChisaBotPC.exe";
+  const exe = "C:\\A\\ChisaBot.exe";
   const logs = [];
   const result = shellRefresh.refreshShell({
     shell: {
@@ -311,7 +311,7 @@ test("build/icon.ico: brand icon 16–256, small sizes as 32-bit BMP, big as PNG
   const names = fs.readdirSync(path.join(PC, "build", "icons")).filter((n) => n.endsWith(".ico"));
   assert.strictEqual(names.length, 1, "build/icons 里只放当前这一份");
   const hash = require("node:crypto").createHash("sha256").update(ico).digest("hex").slice(0, 12);
-  assert.strictEqual(names[0], `chisabot-${hash}.ico`, "换了 build/icon.ico 要重跑 python3 pc/scripts/win-icon.py");
+  assert.strictEqual(names[0], `chisabot-${hash}.ico`, "换了 build/icon.ico 要重跑 node pc/scripts/win-icon.mjs");
   assert.ok(fs.readFileSync(path.join(PC, "build", "icons", names[0])).equals(ico));
   const pkg = JSON.parse(fs.readFileSync(path.join(PC, "package.json"), "utf8"));
   assert.deepStrictEqual(pkg.build.extraResources, [{ from: "build/icons", to: "icons", filter: ["*.ico"] }]);
@@ -335,8 +335,8 @@ test("installer.nsh points shortcuts at resources\\icons\\chisabot-*.ico and not
 });
 
 test("findIcon / scanShortcuts / staleShortcuts / refreshShell with the hashed icon", () => {
-  const res = "C:\\Users\\u\\AppData\\Local\\Programs\\ChisaBot PC\\resources";
-  const exe = "C:\\Users\\u\\AppData\\Local\\Programs\\ChisaBot PC\\ChisaBotPC.exe";
+  const res = "C:\\Users\\u\\AppData\\Local\\Programs\\ChisaBot\\resources";
+  const exe = "C:\\Users\\u\\AppData\\Local\\Programs\\ChisaBot\\ChisaBot.exe";
   const ico = `${res}\\icons\\chisabot-61767ffc510d.ico`;
   assert.strictEqual(shellRefresh.findIcon({ resourcesPath: res, readdir: () => ["x.png", "chisabot-61767ffc510d.ico"] }), ico);
   assert.strictEqual(shellRefresh.findIcon({ resourcesPath: res, readdir: () => { throw new Error("ENOENT"); } }), "");
@@ -347,35 +347,35 @@ test("findIcon / scanShortcuts / staleShortcuts / refreshShell with the hashed i
   const start = `${appData}\\Microsoft\\Windows\\Start Menu\\Programs`;
   const bar = `${appData}\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar`;
   const tree = {
-    [desk]: ["ChisaBot PC.lnk", "ChisaBot PC - 副本.lnk", "笔记.txt", "别的.lnk"],
-    [start]: ["ChisaBot PC.lnk", "工具"],
+    [desk]: ["ChisaBot.lnk", "ChisaBot - 副本.lnk", "笔记.txt", "别的.lnk"],
+    [start]: ["ChisaBot.lnk", "工具"],
     [`${start}\\工具`]: ["ChisaBot.lnk"],
-    [bar]: ["ChisaBot PC (2).lnk"],
+    [bar]: ["ChisaBot (2).lnk"],
   };
   const found = shellRefresh.scanShortcuts({ desktopDir: desk, appData, readdir: (d) => { if (!(d in tree)) throw new Error("ENOENT"); return tree[d]; }, isDir: (p) => p in tree });
   assert.deepStrictEqual(found, [
-    `${desk}\\ChisaBot PC.lnk`, `${desk}\\ChisaBot PC - 副本.lnk`, `${desk}\\别的.lnk`,
-    `${start}\\ChisaBot PC.lnk`, `${start}\\工具\\ChisaBot.lnk`, `${bar}\\ChisaBot PC (2).lnk`,
+    `${desk}\\ChisaBot.lnk`, `${desk}\\ChisaBot - 副本.lnk`, `${desk}\\别的.lnk`,
+    `${start}\\ChisaBot.lnk`, `${start}\\工具\\ChisaBot.lnk`, `${bar}\\ChisaBot (2).lnk`,
   ]);
 
   const oldExe = "D:\\旧\\ChisaBot PC\\ChisaBotPC.exe"; // 以前装在别处、现在已经删了
   const links = {
-    [`${desk}\\ChisaBot PC.lnk`]: { target: exe, icon: exe, iconIndex: 0 },
-    [`${desk}\\ChisaBot PC - 副本.lnk`]: { target: oldExe },
+    [`${desk}\\ChisaBot.lnk`]: { target: exe, icon: exe, iconIndex: 0 },
+    [`${desk}\\ChisaBot - 副本.lnk`]: { target: oldExe },
     [`${desk}\\别的.lnk`]: { target: "C:\\Windows\\notepad.exe" },
-    [`${start}\\ChisaBot PC.lnk`]: { target: exe, icon: ico },
-    [`${bar}\\ChisaBot PC (2).lnk`]: { target: exe.toUpperCase(), icon: "" },
+    [`${start}\\ChisaBot.lnk`]: { target: exe, icon: ico },
+    [`${bar}\\ChisaBot (2).lnk`]: { target: exe.toUpperCase(), icon: "" },
   };
   const exists = (p) => p in links || p === exe || p === ico;
   const shell = { readShortcutLink: (p) => links[p], writeShortcutLink: (p, op, opts) => (writes.push([p, opts.target, opts.icon]), true) };
   const writes = [];
   const stale = shellRefresh.staleShortcuts({ shell, exists, execPath: exe, icon: ico, candidates: found });
-  assert.deepStrictEqual(stale, [`${desk}\\ChisaBot PC.lnk`, `${desk}\\ChisaBot PC - 副本.lnk`, `${bar}\\ChisaBot PC (2).lnk`]);
+  assert.deepStrictEqual(stale, [`${desk}\\ChisaBot.lnk`, `${desk}\\ChisaBot - 副本.lnk`, `${bar}\\ChisaBot (2).lnk`]);
   // 全都已经是新图标：不需要刷新。
   assert.deepStrictEqual(shellRefresh.staleShortcuts({ shell: { readShortcutLink: () => ({ target: exe, icon: ico }) }, exists: () => true, execPath: exe, icon: ico, candidates: found }), []);
 
-  const result = shellRefresh.refreshShell({ shell, exists, execPath: exe, icon: ico, candidates: [...found, `${desk}\\ChisaBot PC.lnk`] });
-  assert.deepStrictEqual(result.updated, [`${desk}\\ChisaBot PC.lnk`, `${desk}\\ChisaBot PC - 副本.lnk`, `${start}\\ChisaBot PC.lnk`, `${bar}\\ChisaBot PC (2).lnk`]);
+  const result = shellRefresh.refreshShell({ shell, exists, execPath: exe, icon: ico, candidates: [...found, `${desk}\\ChisaBot.lnk`] });
+  assert.deepStrictEqual(result.updated, [`${desk}\\ChisaBot.lnk`, `${desk}\\ChisaBot - 副本.lnk`, `${start}\\ChisaBot.lnk`, `${bar}\\ChisaBot (2).lnk`]);
   assert.ok(writes.every(([, target, icon]) => target === exe && icon === ico));
   assert.strictEqual(writes.length, 4, "同一个快捷方式只写一次，别人的不碰");
 });

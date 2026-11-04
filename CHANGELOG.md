@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 聊天：机器人给自己排的跟进到点那行折叠（DESIGN.md §124）：唤醒话（「You scheduled this follow-up… Pick it up now…」）是写给模型的英文脚手架，以前整段平铺；现在和长期任务到点行同一画法——「定时任务已运行。」+ 原因 + 打算做什么，整条原文收进「详情」。唤醒消息格局提到 `shared/follow-up-turn.ts` 一处声明两端读；跟进 / 长期任务开的频道标题不再拿英文脚手架当「Asked:」；Android 触发帧同样改画一行淡字（以前整条英文帧画成用户气泡）。
+- 聊天：气泡只要正文、胶囊只在干活时出现（DESIGN.md §123）：干活卡 / 状态胶囊只在思考和操作期间显示——这一轮一结束，那一行整行收起（§82.9 收成 0 高），不再留「✓ 搜索 2 次 · 12 秒 ⌄」的总结行（被停的、没有回答的轮次也一样收起；「◼ 已停止」「这一轮没有回答 + 重试」是另外的行，照旧）。提示词不再要求工具前先写「我去查一下」这类开场短句：气泡分几个都行、每个只装正文内容，不要没内容的短气泡。§93.1 的「简单回合才收」整套判断（isQuietWork / QUIET_TOOLS）删成「不在跑就收起」；Android 的 `Row.Work` 同步改成只在 live 时发出。
+- 管理员在对话里添加自定义 MCP 服务器（DESIGN.md §120）：管理员把 Streamable HTTP 端点地址发给机器人即可接入——`mcp_add` 先出确认卡片（卡片上是探测到的真实工具清单而非裸地址），确认后走管理页同一个 `addCustomServer` 写入并把非 destructive 工具授权给当前机器人。新增第 5 个确认类别「添加连接器」（locked，与付款同级恒问，不能设成「直接做」）；工具仅对 admin 身份的网页对话可见，IM / 后台回合不提供；不接受明文 token 参数。
+- 机器人的自我地图（DESIGN.md §121）：内置 Bot 的提示词新增一段「自我地图」——为当前对话的人工作（含对方是不是管理员）、自己就是 MCP 宿主（mcp_add / device_mcp_call 按本轮实际工具说）、执行内核（Hermes / 内置循环）在它之下、不要把其它 MCP 客户端的配置教程当成自己的接入方案。修的是星灵照「Hermes MCP 文档」答「给 Hermes 配 MCP」——它不知道 Hermes 是自己的内核，也不知道自己是宿主。actor 角色经 agent-resolver 逐层透传进 `builtInAgentConfiguration`，remote AG-UI Bot 不变。
+- 品牌图标换成朽叶千咲（鸣潮）白底半身像（DESIGN.md §28）：`assets/brand/source.webp` 换新，网页 favicon / PWA / 登录网关 / PC 托盘与窗口 / Android 各密度图标全部重新生成；Android 自适应图标底色由海蓝改纯白（新图是白底）。生成脚本从 Pillow 移植成 Node + sharp（`assets/brand/generate.mjs` + `pc/scripts/win-icon.mjs`，本机不再需要 Python）；`pc/build/icon.ico` 与哈希命名副本按新图重出，外壳指纹已重算（旧客户端走「重新安装」路径自动换图标）。
+- 桌面客户端改名 ChisaBot（DESIGN.md §122）：productName / executableName / shortcutName / artifactName 去掉 PC 后缀，窗口标题、托盘、通知、网页设备页、服务端机器人说明文全端同步；安装包 `customInit` 先静默卸掉旧「ChisaBot PC」安装（注册表 + 默认目录两处入口），客户端启动把 `%APPDATA%\ChisaBot PC` 整体改名搬过来（设备令牌 / 会话 / 本机配置不丢），指向旧 exe 的快捷方式经 `LEGACY_EXE_BASENAMES` 重写指向新 exe。appId / APP_USER_MODEL_ID / 更新源路径不变；`latest.yml` 的 path 变为 `ChisaBot-<版本>-x64-setup.exe`。外壳指纹已重算，旧客户端走「重新安装」路径自动迁移，不需要手动卸载。
+
 ## 0.1.129 — 2026-11-04
 
 这一版合并 #499 与 #500：「追问」改按需出现、真实用量回传校准估算；液态玻璃材质按规格全量重写并成为默认。全端同步版本号到 0.1.129（Android versionCode 311）；PC 外壳和 Android 应用本体不变。

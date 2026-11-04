@@ -180,8 +180,8 @@ describe("停止后的步骤（应改 3）", () => {
       [false, false, true],
       [false, false, true],
     ]);
-    // 不收：那一行留着（收起的），点开看做过哪些步。
-    expect(work?.quiet).toBe(false);
+    // 也收起（§123：胶囊只在干活时出现）：「已停止」那行照旧挂，做过的步骤还在 work.calls 里。
+    expect(work?.quiet).toBe(true);
     // 没被停掉的一轮：没结果的还是失败。
     const plain = compactTurns(items, false, new Set()).work.get("t1");
     expect(plain?.calls.some((call) => call.stopped)).toBe(false);

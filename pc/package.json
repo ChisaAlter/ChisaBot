@@ -1,8 +1,8 @@
 {
   "name": "chisabot-pc",
-  "productName": "ChisaBot PC",
+  "productName": "ChisaBot",
   "version": "0.1.129",
-  "description": "ChisaBot PC 客户端：远程聊天 + 让机器人在授权范围内操作这台电脑",
+  "description": "ChisaBot 桌面客户端：远程聊天 + 让机器人在授权范围内操作这台电脑",
   "main": "src/main.js",
   "author": "ChisaBot",
   "license": "MIT",
@@ -25,7 +25,7 @@
   },
   "build": {
     "appId": "cn.ayase.chisabot.pc",
-    "productName": "ChisaBot PC",
+    "productName": "ChisaBot",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -53,8 +53,8 @@
       ],
       "icon": "build/icon.ico",
       "signAndEditExecutable": true,
-      "executableName": "ChisaBotPC",
-      "artifactName": "ChisaBot-PC-${version}-${arch}-portable.${ext}",
+      "executableName": "ChisaBot",
+      "artifactName": "ChisaBot-${version}-${arch}-portable.${ext}",
       "signExecutable": false,
       "verifyUpdateCodeSignature": false
     },
@@ -64,14 +64,14 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "ChisaBot PC",
+      "shortcutName": "ChisaBot",
       "language": "2052",
       "installerLanguages": [
         "zh_CN"
       ],
       "unicode": true,
       "include": "build/installer.nsh",
-      "artifactName": "ChisaBot-PC-${version}-${arch}-setup.${ext}"
+      "artifactName": "ChisaBot-${version}-${arch}-setup.${ext}"
     },
     "electronLanguages": [
       "zh-CN",

@@ -107,6 +107,11 @@
 | [116](#116-机器人之间的往来锚点卡2026-10-25cb-093) | 机器人之间的往来锚点卡 | 2026-10-25，CB-093 |
 | [117](#117-多用户管理与管理员账户体系2026-10-26cb-096) | 多用户管理与管理员账户体系 | 2026-10-26，CB-096 |
 | [118](#118-知识库skillsmcp-后台统一配置2026-10-26cb-097) | 知识库、Skills、MCP 后台统一配置 | 2026-10-26，CB-097 |
+| [120](#120-管理员在对话里添加自定义-mcp-服务器2026-11-04) | 管理员在对话里添加自定义 MCP 服务器 | 2026-11-04 |
+| [121](#121-机器人的自我地图2026-11-04) | 机器人的自我地图 | 2026-11-04 |
+| [122](#122-桌面端改名-chisabot-与升级迁移2026-11-04) | 桌面端改名 ChisaBot 与升级迁移 | 2026-11-04 |
+| [123](#123-气泡只要正文胶囊只在干活时出现2026-11-04) | 气泡只要正文，胶囊只在干活时出现 | 2026-11-04 |
+| [124](#124-到点触发的行折叠给模型的脚手架收进详情2026-11-04) | 到点触发的行折叠：给模型的脚手架收进「详情」 | 2026-11-04 |
 
 ## 0. 总原则
 
@@ -589,7 +594,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
   「回滚」：`SettingRow` + destructive「回滚」（确认框红色，写清只换镜像、数据库不回退）。「历史」：时间 · 动作 · 镜像 A → B · 发起者 / 原因 + 结果徽标。
   更新程序离线时页头下浅红错误卡；未安装时虚线空状态卡。
 - **PC 客户端**：网页「本机」标签多两行 ——「自动更新」开关、「客户端版本」（当前 / 新版本 / 状态 / 下载百分比 / 上次检查）+ outline「检查更新」或主按钮「立即重启以安装」。
-  本机窗口 `update.html`（440×260，右下角置顶，和本机确认同一套对话框）：天蓝下载图标块 + 眉题「ChisaBot PC · 在线更新」+「新版本已下载，重启以安装」+ 说明 + outline「稍后」+ 主按钮「立即重启」（异步：正在重启… → ✓ 正在安装）；默认焦点「立即重启」，Esc = 稍后。
+  本机窗口 `update.html`（440×260，右下角置顶，和本机确认同一套对话框）：天蓝下载图标块 + 眉题「ChisaBot · 在线更新」+「新版本已下载，重启以安装」+ 说明 + outline「稍后」+ 主按钮「立即重启」（异步：正在重启… → ✓ 正在安装）；默认焦点「立即重启」，Esc = 稍后。
   更新验签（2026-10-29，`docs/pc-update-signing.md`）：「客户端版本」行的状态多一种「正在校验更新包签名」；验签失败显示错误「更新包签名校验失败，已拒绝安装：…」，不弹本机窗口；
   构建没有内置更新公钥（自建版没配）时状态后面附一句「此版本未启用更新验签」。
 
@@ -669,7 +674,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ## 28. 品牌头像与品牌色（2026-10-13）
 
-- 标志 = 一张头像：黑长发、红发带、红瞳、黑项圈，海蓝背景。原图 `assets/brand/source.webp`，所有尺寸由 `python3 assets/brand/generate.py` 生成（网页 favicon / PWA、登录网关、PC、Android、`desktop/`、README）。不要手工改单个图标文件，改脚本重跑。
+- 标志 = 一张头像：朽叶千咲（鸣潮 Kuchiba Chisa）淡色底半身像——黑长发姬发式、红瞳泪痣、红发带、黑项圈，托腮姿势、白衬衫紫领结（二周年咖啡厅立绘画风）。原图 `assets/brand/source.webp`，所有尺寸由 `node assets/brand/generate.mjs` 生成（网页 favicon / PWA、登录网关、PC、Android、`desktop/`、README）。不要手工改单个图标文件，改脚本重跑。
 - 裁切：≥ 64px 用「脸 + 发带 + 项圈」的主裁切；≤ 64px（favicon、托盘）用更紧的脸部裁切，保证 16/32px 还认得出红眼和黑发。圆形用于头像位（顶栏、登录页、Android 圆形图标），圆角方形用于应用图标（PC、favicon、Android 方形）。
 - 品牌色只取两种：发带红 `--brand-ribbon`（亮 `#d4202c` / 暗 `#ff4d5a`）、海蓝 `--brand-ocean`（亮 `#66b4d4` / 暗 `#4f9fc4`）。**只用在品牌位置**：顶栏头像外的细红环、登录页头像与标题后的红点、Android 自适应图标底色、README。界面主色、按钮、焦点仍是 `--accent-blue`，不要把整个主题改成红色。
 - 顶栏：头像 28px 圆形，在品牌名前面（`BrandAvatar`，`brand-mark.tsx`），白色 1.5px 描边 + 3px 半透明发带红环。头像固定，品牌名仍可按人修改。
@@ -821,7 +826,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 用户原话：「增加一个按键，一键可以变成这种比例。然后优化一下这个状态下的显示问题」；追加「面板库弹层比右侧面板本身还大，缩小」。样式在 `styles.css` 末尾的「§36」段。
 
-**36.1 小窗模式（ChisaBot PC）**：右上角标题按钮最左边多一个「小窗模式」（竖放手机图标），点一下主窗口变成手机比例的竖长小窗 **420×860**（矮屏夹到工作区高度 − 24），再点（图标变成横放显示器，提示「恢复窗口」）回到原来的位置、大小、最大化 / 全屏状态。快捷键 **Ctrl+Shift+M**（主进程拦截，网页和离线页都能用）。
+**36.1 小窗模式（ChisaBot 桌面客户端）**：右上角标题按钮最左边多一个「小窗模式」（竖放手机图标），点一下主窗口变成手机比例的竖长小窗 **420×860**（矮屏夹到工作区高度 − 24），再点（图标变成横放显示器，提示「恢复窗口」）回到原来的位置、大小、最大化 / 全屏状态。快捷键 **Ctrl+Shift+M**（主进程拦截，网页和离线页都能用）。
 - 小窗留在窗口所在的显示器上，贴着窗口原来的右边缘和上边缘收缩；最大化时贴工作区右上角、留 12px；整体夹回工作区，不跑出屏幕、不压任务栏。
 - 本次运行里拖动过的小窗位置会记住，下次进小窗回到那里（同一台显示器）。
 - 小窗里自己最大化、全屏或拉宽到 > 640px = 离开小窗，不再「恢复」。
@@ -917,7 +922,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 用户：「我们不是做了个竖屏优化吗。如果检测用户是手机，也展示竖屏网页版。然后网页访问的时候，在浏览器提示用户可以安装应用。安装web应用之后如果是Windows，默认宽屏，手机版默认竖屏。重点优化竖屏体验」。样式在 `styles.css` 末尾的「§40」段；运维说明 `docs/pwa.md`。
 
-**40.1 布局由设备决定**：`index.html` 内联脚本在第一帧之前写 `<html data-phone>`：主要指针是触屏（`pointer: coarse` + `hover: none`）且**屏幕短边 < 600px**，或 UA-CH `mobile === true`。不靠 UA 字符串猜。横过来的手机（844×390）也是手机；平板（短边 ≥ 600）、电脑、ChisaBot PC 小窗照旧按窗口宽度（< 768 窄布局，§36）。`localStorage chisabot-layout = phone | wide` 可覆盖。
+**40.1 布局由设备决定**：`index.html` 内联脚本在第一帧之前写 `<html data-phone>`：主要指针是触屏（`pointer: coarse` + `hover: none`）且**屏幕短边 < 600px**，或 UA-CH `mobile === true`。不靠 UA 字符串猜。横过来的手机（844×390）也是手机；平板（短边 ≥ 600）、电脑、ChisaBot 小窗照旧按窗口宽度（< 768 窄布局，§36）。`localStorage chisabot-layout = phone | wide` 可覆盖。
 - 手机上 `lib/device.ts` 把样式表里 `max-width ≥ 760px` 的媒体查询改成永远成立、`min-width ≥ 768px` 的改成永远不成立（含 Tailwind `md:` / `xl:`），等于「767px 宽的窗口」；`useIsMobile()` 对手机永远为真（左栏是抽屉）。新写的窄窗口样式继续用 `@media (max-width: 767px)`，手机会自动吃到；手机独有的写 `html[data-phone] …`。
 - 另有 `data-ios`、`data-standalone`（以安装后的应用打开）、`data-android-app`（安卓客户端外壳）。
 
@@ -934,10 +939,10 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 **40.3 安装提示**（`components/install-hint.tsx`）：与「有新版本」同一种玻璃胶囊，顶栏下面居中（让开状态栏）。
 - Chrome / Edge：接住 `beforeinstallprompt`（内联脚本先接住，避免浏览器在加载第一秒弹条），页面打开 **8 秒**后出现「安装 ChisaBot 应用 · [安装] · ×」，「安装」弹出浏览器自己的确认。
 - iPhone / iPad Safari（不含 iOS 上的 Chrome / 微信等）：按钮是「怎么装」，点开是两步说明「点分享 → 添加到主屏幕」。
-- 不出现：ChisaBot PC、安卓客户端、已经以应用打开、引导页、刚装完（`appinstalled`）。「有新版本」在时让位。关掉（或在浏览器确认里取消）后 **14 天**内不再出现（`localStorage chisabot-install-hint`）。
+- 不出现：ChisaBot 桌面客户端、安卓客户端、已经以应用打开、引导页、刚装完（`appinstalled`）。「有新版本」在时让位。关掉（或在浏览器确认里取消）后 **14 天**内不再出现（`localStorage chisabot-install-hint`）。
 - 进场 300ms 淡入 + 上浮 6px + 0.98 缩放，离场 150ms；减少动态效果时只淡入淡出。
 
-**40.4 安装后的应用（PWA）**：清单 `display: standalone`、`orientation: any`（不锁方向，布局由设备决定）、`id/start_url/scope = /`、中文描述、天空色 `theme_color #9dbddc` / `background_color #c9dbeb`；图标 `pwa-any-192/512`（圆角，电脑应用图标）+ `pwa-maskable-192/512`（满版，脸和发带在 80% 安全区里，`assets/brand/generate.py` 生成）。浏览器工具栏 / 应用标题栏颜色跟应用里选的浅色 / 深色走。
+**40.4 安装后的应用（PWA）**：清单 `display: standalone`、`orientation: any`（不锁方向，布局由设备决定）、`id/start_url/scope = /`、中文描述、天空色 `theme_color #9dbddc` / `background_color #c9dbeb`；图标 `pwa-any-192/512`（圆角，电脑应用图标）+ `pwa-maskable-192/512`（满版，脸和发带在 80% 安全区里，`assets/brand/generate.mjs` 生成）。浏览器工具栏 / 应用标题栏颜色跟应用里选的浅色 / 深色走。
 - 电脑上第一次以应用打开且窗口比 1200 窄：开到最多 1440×920 并居中（只做一次，之后浏览器记住用户自己的大小）→ 宽屏布局。手机上是竖屏布局。
 - iOS：`apple-mobile-web-app-capable`、状态栏 `black-translucent`（内容铺到状态栏下面，顶栏用安全区让开）、`apple-touch-icon`。
 
@@ -965,7 +970,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ## 42. 全端同步：同一个机器人，所有设备是同一段对话（2026-10-13）
 
-用户：「改，全端同步」。以前机器人聊天用哪条对话只记在浏览器 localStorage（`openbot.bot-thread.<agentId>`），网页、装成应用的 PWA、ChisaBot PC、安卓客户端各有各的存储，于是同一个机器人在每台设备上是另一段对话。对话内容本来就在服务器上按人存，缺的只是「现在用的是哪一条」。服务器 `server/src/bot-threads.ts`，网页 `lib/copilot/bot-thread.ts`（`useBotThread`）+ `lib/copilot/use-conversation-sync.ts`。PC / 安卓外壳只加载网页、不自己记对话 id，不用改。
+用户：「改，全端同步」。以前机器人聊天用哪条对话只记在浏览器 localStorage（`openbot.bot-thread.<agentId>`），网页、装成应用的 PWA、ChisaBot 桌面客户端、安卓客户端各有各的存储，于是同一个机器人在每台设备上是另一段对话。对话内容本来就在服务器上按人存，缺的只是「现在用的是哪一条」。服务器 `server/src/bot-threads.ts`，网页 `lib/copilot/bot-thread.ts`（`useBotThread`）+ `lib/copilot/use-conversation-sync.ts`。PC / 安卓外壳只加载网页、不自己记对话 id，不用改。
 
 **42.1 当前对话在服务器上**：表 `chisabot_bot_threads`（owner_user_id + agent_id → thread_id，一人一机器人一行，只是指针）。`GET/PUT /api/bot-threads/:agentId`；库里已有这条对话但不是自己的 / 不是这个机器人的 → 404；还没发过消息的新对话（库里没有行）也可以是当前对话——它就是一段空对话，**不再**用「Intelligence 还认不认」去检查服务器给的 id。
 - 打开机器人：先问服务器；服务器有 → 用它（localStorage 只当缓存）。
@@ -1050,7 +1055,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 用户报告「桌面端还是不能操作本地」。原因有两层：电脑能力出厂全部「关闭」，用户从没进过 设置 → 设备 → 权限；以及用户一直待在聊天里，看不到设备页写的离线原因（版本号归正前装的 0.2.x 客户端永远不会自动更新到 0.1.x，节点也不再连接）。
 
 - **默认「询问」**：新电脑七项能力都是「询问」，机器人直接调用、用户在弹窗 / 审批卡片上批准。「关闭」只代表用户自己关掉。老设备停在出厂「全部关闭」且没人改过的，启动时迁移成「询问」（docs/pc-node.md §5）。设备页文案同步（「新电脑默认全部「询问」」）。
-- **PC 里的提示胶囊**（`components/pc-link-hint.tsx`）：与 §40.3「安装应用」同一枚玻璃胶囊，顶栏下面居中，浮层、不占版面（§35.4 规则），「有新版本」在时让位。只在 ChisaBot PC 里出现；设备页本身、引导页、本机紧急停止、已撤销时不出现。三种情况：0.2.x 旧版 →「ChisaBot PC 需要重新安装（当前 x，不会自动更新）· 怎么装」，展开三步（设置 → 设备 下载 → Windows 里卸载旧版 → 安装后登录），关掉后 1 天内不再出现；没登记 →「这台电脑还没登记 · 登记」（走桥 `enroll()`）；节点离线 ≥15 秒 →「这台电脑没连上 · 重新连接」（走桥 `reconnect()`，旧客户端没有这座桥就去设备页），悬停显示真实原因 statusText。离线 / 登记提示关掉后本次打开不再出现。
+- **PC 里的提示胶囊**（`components/pc-link-hint.tsx`）：与 §40.3「安装应用」同一枚玻璃胶囊，顶栏下面居中，浮层、不占版面（§35.4 规则），「有新版本」在时让位。只在 ChisaBot 桌面客户端里出现；设备页本身、引导页、本机紧急停止、已撤销时不出现。三种情况：0.2.x 旧版 →「ChisaBot 需要重新安装（当前 x，不会自动更新）· 怎么装」，展开三步（设置 → 设备 下载 → Windows 里卸载旧版 → 安装后登录），关掉后 1 天内不再出现；没登记 →「这台电脑还没登记 · 登记」（走桥 `enroll()`）；节点离线 ≥15 秒 →「这台电脑没连上 · 重新连接」（走桥 `reconnect()`，旧客户端没有这座桥就去设备页），悬停显示真实原因 statusText。离线 / 登记提示关掉后本次打开不再出现。
 
 ## 46. 输入框选中没有蓝色；新建机器人一步完成、一律私有、一律在服务器上（2026-10-14）
 
@@ -1578,7 +1583,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 **75.1 一轮一张卡，画在原位**（`components/chat/work-card.tsx` `WorkRow`，`chat-transcript.tsx` `compactTurns().work`）
 - 干活卡画在这一轮**第一个干活的工具那一行**里（`isWorkCall`：不算 `render_ui` / `worker_plan` / `skill_list` / `skill_load`；第一个落在浏览步骤上、而那一组浏览后来被收起时，用最后一组浏览那一行）。开场一句在它上面，中间的过程话、后面的工具、结果都排在它下面——卡片从出现到这一轮结束一直在同一个位置，不再随过程话消失又出现。
 - 只做了准备动作（看技能）时还没有卡，末尾照旧是「思考中」；第一个干活的工具出现那一刻「思考中」换成卡（同一帧、同一个位置）。有卡时末尾不再画「思考中」。
-- 这一轮结束（有结果、被停掉、出错都算）：**同一个按钮原地**换成「✓ 搜索 2 次 · 看了 3 个网页 · 12 秒 ⌄」——胶囊底色在 240ms 里淡掉，字变淡色；内边距、字号、行高不变，所以高度不变（实测 38 → 38px），结束那一刻画面不跳。这就是 Hark「Searched 3 sites ⌄」在答案上面的那一行；§70.2 那颗挂在复制 / 重新生成那一排里的按钮去掉。
+- 这一轮结束（有结果、被停掉、出错都算）：**同一个按钮原地**换成「✓ 搜索 2 次 · 看了 3 个网页 · 12 秒 ⌄」——胶囊底色在 240ms 里淡掉，字变淡色；内边距、字号、行高不变，所以高度不变（实测 38 → 38px），结束那一刻画面不跳。这就是 Hark「Searched 3 sites ⌄」在答案上面的那一行；§70.2 那颗挂在复制 / 重新生成那一排里的按钮去掉。（§123 起取代：结束后那一行整行收起，不再留「✓ N 步」。）
 - 从历史打开的对话：同一个位置直接是收成的一行（不写用时，§70.2 规则不变）。打开「调试：显示工具调用」时照旧每一步一行、没有卡。
 
 **75.2 干活时也能点开看每一步；准备动作不算一步**
@@ -1971,11 +1976,11 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 
 用户（2026-10-16 18:39，网页，#185 之后）问「k看我当前的电脑」：机器人先说「我来查看你当前在线电脑的屏幕；如果有多台在线，会先确认设备列表。」（一个气泡），下面「✓ 做了 2 步 7 秒」，再下面「这是你当前在线的 DESKTOP-ES2O7G4 屏幕：」气泡，紧跟着一个**空的小气泡**，然后是截图，截图下面到输入框还有一大块空。用户：「做了 2 步 7 秒这个应该隐藏，下面还有额外的空白」。本节改 §75 / §90 的干活卡和过程话，改 §88 的留白。
 
-**93.1 简单回合：干活卡整行收起**（唯一的判断 `isQuietWork`，`lib/chat/work-steps.ts`；结构部分在 `compactTurns().work[].quiet`，确认卡 / 用时在 `ChatTranscript`）
+**93.1 简单回合：干活卡整行收起**（唯一的判断 `isQuietWork`，`lib/chat/work-steps.ts`；结构部分在 `compactTurns().work[].quiet`，确认卡 / 用时在 `ChatTranscript`。§123 起被取代：判断改成「不在跑就收起」，`isQuietWork` / `QUIET_TOOLS` / `HIDE_FINISHED_WORK_SUMMARY` 已删）
 - 全部成立才收：这一轮**结束了**（不在跑）、没被停掉、**有结果**（最后一段回答）；每个调用都有结果、没有一个失败（`workCallFailed`：`Refused.`、服务器补的「This call produced no result」、`The vendor reported an error:` / `That tool could not be called`、JSON 带 `error` / `ok:false`、以 Error / 错误 / 失败 开头）；只用了 `QUIET_TOOLS`（列设备、截屏、系统信息、文件列表 / 读文件 / 设备上搜、进程、编程助手状态、翻记忆、页面 / 定时任务 / 面板 / 后台任务列表、最近的文件）加上不算步骤的准备动作（看技能、画卡片），步数 1–3（`QUIET_MAX_STEPS`）；没有一个调用有确认卡（确认列表和确认卡片同一份缓存）；这一页知道用时时不超过 15 秒（`QUIET_MAX_SECONDS`，从历史打开不知道用时，只按上面几条）。
 - 不收：还在跑（实时卡片照常，用户看得到在干活）；跑命令、写文件、装东西、操作鼠标键盘、上网搜索 / 读网页、开浏览器（那些步骤本身就是用户想看的）；出错、被停、被中断、要确认的；超过 3 步或 15 秒的；没有结果的。
 - 只是不画：调用和收进去的过程话都还在 `compactTurns().work` 里；打开「调试：显示工具调用」时照常全画。这一页亲眼看着卡片跑过的，结束时按 §82.9 收成 0 高（220ms），不是一下拔掉；刷新 / 重新打开本来就不画。
-- Android 原生没有改（它的卡片规则在 `chat/Turns.kt`，下次发版再跟）。
+- Android 原生没有改（它的卡片规则在 `chat/Turns.kt`，下次发版再跟）。（§123 起 Android 同步：`Row.Work` 只在 live 时发出。）
 
 **93.2 开场一句收进卡片**（改 §90.2 的「不收：卡片之前的开场一句（照旧是气泡）」）：有干活卡的一轮里，开场一句后面就是干活的工具时，它和两步之间的话一样是过程话——实时时第一个干活的工具一开始就收（§82.9 收成 0 高），结束后点开卡片排在最前面。开场一句后面还没调工具时照旧露着（它可能就是回答）；没有干活卡的一轮不变。于是简单回合结束后只剩「问题 → 回答 + 图片」。
 
@@ -2627,3 +2632,52 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - 桌面去掉账号卡、入口收进右上角头像菜单、PR 拆分：见 [`docs/rfc/hark-redesign.md`](docs/rfc/hark-redesign.md#下一步)。
 - 小爱已定：大面板模糊 24px；手机端红点放在抽屉按钮上；§36.1 右上角改成「窗口按钮在最右，头像紧挨在它们左边」（已改）。
 - 批准后，按 design-system.md §10 的顺序拆成小 PR：① 主题数据和切换，同时删掉旧色板、玻璃材质和雾度滑块；② 削减 backdrop-filter；③ 存储；④ 去掉账号卡。每个 PR 改动哪一节，就在本文件对应的节里更新规则。
+
+## 120. 管理员在对话里添加自定义 MCP 服务器（2026-11-04）
+
+「把部署指向一个新端点」从管理页独有动作变成对话内可达，但**授权的那次点击仍在人手里**——只是从插件页的「添加」按钮换成确认卡片的「确认」：
+
+- **新工具 `mcp_add`（`server/src/plugins/connect-service.ts`）**：仅当 `offerMcpAdd`（提问者是 admin + 网页对话，非 IM / `lp_` 后台回合）才进工具列表——非管理员看不到工具，而不是看到再被拒。参数 `{id, title, url, credentialId?}`，**不接受明文 token**（进了模型上下文就落进聊天记录）；需要凭证的服务器先添加、再去插件页填。
+- **确认卡片先探测再出**：`prepareConfirm` 先跑 `customUrlRefusal` 静态检查（不合格直接 skip 不出卡），再对 URL 做一次无凭据 `tools/list` 探测（SSRF 与超时走 `mcp.ts` 同一客户端），卡片上呈现的是端点实际提供的工具清单而非一段裸地址。
+- **新确认类别 `admin`（locked）**：`shared/confirmations.ts` 第五类「添加连接器」。与 purchase 同级——`decideMode` 按 `locked` 恒问，偏好 / 规则都不能设成「直接做」，「以后这类直接做」按钮对它不画。
+- **写入路径零新逻辑**：确认后 execute 调管理页同一个 `store.addCustomServer`（SSRF、命名冒名、凭据类型、审计行 `by` 记管理员本人全部继承），随后把非 destructive 工具 `grant` 给当前 Bot；destructive 工具如实列出、去插件页手动勾选。
+- **execute 里再查一次身份**：工具列表是构建时快照，`canAutoEnable()` 在执行点重判，防止卡片确认后身份/会话已变的边沿情况。
+
+## 121. 机器人的自我地图（2026-11-04）
+
+提示词给了 Bot 名字（§69）和工具清单，从没给过它在架构里的**位置**。现场：星灵被要求接 ima，搜到「Hermes MCP 文档」后照教程答「在 Hermes 里配 MCP」——Hermes 恰恰是它自己的执行内核，而它不知道；网上的 MCP 教程又全是写给「宿主操作者」的，它也不知道自己就是宿主。涉及自身架构的题，它只能拿别人的框架答。
+
+- **`selfMapGuidance`（`shared/bot-prompt.ts`）**：紧随 `botIdentityGuidance` 注入，所有内置 Bot 都有，两条内核路径共用（`hermesKernelAgent` 复用 `builtInAgentConfiguration`）。说三件事：为当前对话的人工作（含对方是不是管理员）；自己是 MCP 宿主，能力行照本轮实际工具说（`mcp_add` 在 → HTTP 端点当场接，`device_mcp_call` 在 → 对方电脑上的 stdio 桥，都不在 → 管理员在插件页添加）；执行内核（Hermes / 内置循环）在它之下，不要把其它 MCP 客户端的配置教程当成自己的接入方案。
+- **`BotAudience` 透传**：actor 的 role 经 `agent-resolver` → `resolveRuntimeAgents` → `buildAgents` → `buildAgent` → `builtInAgentConfiguration` 逐层以尾部参数下传（沿用文件内 positional 惯例）；只传 `isAdmin` 一个事实，用户 id / 邮箱不进 prompt。
+- **边界**：remote AG-UI Bot 的 `standingRoleMessage` 不加——那是别人家的端点，自我地图是宿主的自我认知，不是发给外人的人设。
+
+## 122. 桌面端改名 ChisaBot 与升级迁移（2026-11-04）
+
+用户：「桌面端改名 ChisaBot，不需要 PC 两个字母」。`productName` / `executableName` / `shortcutName` / `artifactName` 统一去掉 PC 后缀（`appId` / `APP_USER_MODEL_ID` / 更新源路径不动）。改名不是纯字符串替换——`productName` 变了，默认安装目录（`Programs\ChisaBot PC` → `Programs\ChisaBot`）和 `userData`（`%APPDATA%\ChisaBot PC` → `…\ChisaBot`）都跟着换，不处理的话更新会并排装第二个程序、设备令牌全丢：
+
+- **安装包先卸旧版**（`installer.nsh` `customInit`）：注册表卸载串（`Uninstall\cn.ayase.chisabot.pc` → `Uninstall\ChisaBot PC`）+ 默认目录兜底，找到就 `ExecWait '<卸载器> /S'`。此时旧进程已退出（quitAndInstall），能删干净。
+- **userData 整体搬家**（`main.js` 最早处）：新目录还没建、旧目录还在就 `renameSync`——设备令牌、登录会话、本机配置原样带过去。
+- **旧 exe 的快捷方式**（`shell-refresh.js` `LEGACY_EXE_BASENAMES = chisabotpc.exe`）：指向已不存在的旧安装位置的 .lnk 也算本程序的，重写时 `target` 指向新 exe + 新图标 + 正确 AUMID（任务栏 pin 被修好）。
+- **安装版判定**（`updater.js` `isInstalledBuild`）：新旧四种卸载器名都认，新 exe 落在旧目录里也算安装版。
+- **全端文案**：pc/src 窗口标题 / 托盘 / 通知 / 本机窗口、网页设备页与提示胶囊、服务端给机器人的 guidance（「ChisaBot desktop app」）统一换名；`User-Agent` 头改 `ChisaBot/`（服务端不解析它）。历史文档（CHANGELOG、发版说明、ADR）不改写。
+- **发版注意**：`latest.yml` 的 `path` 变成 `ChisaBot-<版本>-x64-setup.exe`，旧客户端按清单下载照常工作；把关脚本本来就按 `*-setup.exe` 通配，不受影响。
+
+## 123. 气泡只要正文，胶囊只在干活时出现（2026-11-04）
+
+用户（2026-11-04）：「也允许生成多个气泡，但是气泡只要正文内容。只有思考和操作的时候的时候允许出现」；追问收成的一行「✓ 搜索 2 次 · 12 秒 ⌄」答「不要」，开场短句答「可以生成气泡，但是不要生成短气泡」。本节取代 §75.1 的「结束原地换成收成的一行」和 §93.1 的「简单回合才收」——状态胶囊（「思考中」「正在操作你的设备 · N 秒」）只在思考和干活时出现，这一轮一结束那一行整行收起，什么收尾都不留。
+
+- **结束一律收起**（`chat-transcript.tsx`：`compactTurns().work[].quiet = !live`）：做完的、被停的、没有回答的轮次，干活那一行都按 §82.9 收成 0 高；锚点工具自己画卡片（确认卡、render_ui）时行留给卡片、只有胶囊不画（`quietWorkOnly`）。「◼ 已停止」「这一轮没有回答 + 重试」是另外的行，照旧。「调试：显示工具调用」开着时不收。§93.1 的 `isQuietWork` / `QUIET_TOOLS` / `HIDE_FINISHED_WORK_SUMMARY` 整套细判断删掉——规则就是「不在跑就收起」。
+- **`WorkRow` done 态只剩收起动画里画**（`work-card.tsx`）：「✓ N 步 · N 秒 ⌄」在那 220ms 里还画着，之后不再留；步骤清单 `workTimeline` / `summarizeDoneWork` 保留（调试开关和动画都用）。
+- **提示词**（`shared/bot-prompt.ts` `WORK_STYLE_GUIDANCE`）：气泡分几个都行、每个只装正文内容，不要没内容的短气泡 / 占位气泡；动手时直接调用工具，删掉「先写一句 15 字以内『我去查一下』」的强制开场白——状态由胶囊显示，不进气泡。§93.2 的开场一句收进卡片照旧（模型还写开场白时不占气泡）。
+- **Android 同步**（§93.1 当时没改、`chat/Turns.kt`）：`Row.Work` 只在 `live` 时发出，结束后那一行也不留；`WorkCard` 的 done 分支保留（防御）。
+- **验证**：`app/tests/quiet-turn.test.ts`（被停 / 没回答的轮次也收）、`reply-steps.test.tsx`、`tool-steps.test.tsx`、Android `NativeLogicTest.kt`（done 轮不再有 `Row.Work`）。
+
+## 124. 到点触发的行折叠：给模型的脚手架收进「详情」（2026-11-04）
+
+用户（2026-11-04）：「还有这种。也改成折叠的气泡」——机器人给自己排的跟进到点那一行（`wakeUpInstruction`：「You scheduled this follow-up for yourself on … Your reason: … Pick it up now…」）整段英文唤醒话平铺在对话里。同 §123 一族：不是给人看的正文收起来；画法和更早的长期任务到点行（`ResponsibilityFiring`）统一。
+
+- **一处声明、两端读**（`shared/follow-up-turn.ts`）：唤醒消息的格局 `buildWakeUpInstruction` / `readWakeUpTurn` 写在 shared——服务端 `wake-up.ts` 写、网页 `RoutineFiring` 读，改一处措辞两边对得上（同 `responsibility-turn.ts` / `routine-firing.ts` 的惯例）。
+- **画法同长期任务**（`chat-transcript.tsx` `FollowUpFiring`）：⏰「定时任务已运行。」+ 原因一行，「打算做什么」一段，整条原文（触发时间戳、「Pick it up now…」指令尾）收进「详情 ⌄」。普通定时触发（人写的说明）照旧平铺——那句话本来就是写给人看的。
+- **频道标题顺手解包**（`server/src/channels/summary.ts`）：跟进 / 长期任务开的频道，标题以前拿帧里那整段（含模型侧脚手架）当「Asked:」；现在再剥一层，用原因 / 说明起名。
+- **Android 同步**（`chat/Model.kt` `ServerRows`）：触发帧首句（「One of your routines is firing right now…」）也算服务器行——以前整条英文帧画成用户气泡（还能当成人发的消息编辑重发），现在一行淡字「定时任务已运行，机器人开始做」。
+- **验证**：`shared/follow-up-turn.test.ts`（round-trip + 拒认只像开头的文本）、`transcript-attachments.test.tsx`（行上只见原因和正文，原文在详情里）、Android `NativeLogicTest.kt`（触发帧走 `Row.Server`）。

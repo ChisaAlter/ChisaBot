@@ -17,6 +17,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import { buildWakeUpInstruction } from "../../../shared/follow-up-turn";
 import type { AuditInitiator, AuditStore } from "../audit";
 import { recordAuditEvent } from "../audit";
 import type { AgentChannel } from "../channels/routes";
@@ -375,14 +376,23 @@ export function wakeUpTools(options: {
         // （实测 2026-10-13：抄短了就 cancelled:false，提醒照样到点叫醒）。只认这个人、这个机器人
         // 自己还没开始的提醒里唯一一条以它结尾的。
         const tail = id.trim();
-        const matches = tail.length >= 8
-          ? (await store.list(ownerUserId, agentId)).filter(
-              (record) => record.state !== "done" && record.id !== tail && record.id.endsWith(`:${tail}`),
-            )
-          : [];
+        const matches =
+          tail.length >= 8
+            ? (await store.list(ownerUserId, agentId)).filter(
+                (record) =>
+                  record.state !== "done" &&
+                  record.id !== tail &&
+                  record.id.endsWith(`:${tail}`),
+              )
+            : [];
         if (matches.length !== 1) return { cancelled: false };
         return {
-          cancelled: await store.cancel(ownerUserId, agentId, matches[0]!.id, initiator),
+          cancelled: await store.cancel(
+            ownerUserId,
+            agentId,
+            matches[0]!.id,
+            initiator,
+          ),
         };
       },
     ),
@@ -391,15 +401,7 @@ export function wakeUpTools(options: {
 
 /** The message the Bot wakes up to. The reason is its own words, quoted back to it. */
 export function wakeUpInstruction(payload: WakeUpPayload): string {
-  const lines = [
-    `You scheduled this follow-up for yourself on ${payload.scheduledAt}. Your reason: ${payload.reason}`,
-  ];
-  if (payload.instruction)
-    lines.push(`What you meant to do: ${payload.instruction}`);
-  lines.push(
-    "Pick it up now. Call the needed tools to check the latest status or finish the next step, and tell the person what you found or did in a sentence or two (if it is still in progress and needs another check later, you may call schedule_follow_up again).",
-  );
-  return lines.join("\n");
+  return buildWakeUpInstruction(payload);
 }
 
 export type WakeUpTurn = (input: {

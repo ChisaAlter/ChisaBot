@@ -1,6 +1,6 @@
 "use strict";
 /**
- * ChisaBot PC 客户端（Electron 主进程）。docs/pc-node.md §8。
+ * ChisaBot 桌面客户端（Electron 主进程）。docs/pc-node.md §8。
  *
  *  - 登录（ui/login.html）：本机的「登录 ChisaBot」页 —— 服务器地址（记住、带历史）+ 账号 + 密码
  *    + 记住登录。先探测地址，再直接请求服务器登录网关（和网页登录表单同一个 POST /auth/login），会话 Cookie
@@ -78,6 +78,21 @@ const HIDDEN = process.argv.includes("--hidden");
 const SHELL_HASH = shellRefresh.loadFingerprint();
 const APP_USER_MODEL_ID = "cn.ayase.chisabot.pc";
 
+/**
+ * 改名迁移（0.1.129，ChisaBot PC → ChisaBot）：productName 换了，userData 默认目录跟着换
+ * （%APPDATA%\ChisaBot PC → %APPDATA%\ChisaBot），里面的设备令牌、登录会话、本机配置不能丢——
+ * 新目录还没建、旧目录还在就整体改名搬过去。必须在任何 app.getPath("userData") 读取之前跑。
+ */
+(() => {
+  try {
+    const legacy = path.join(app.getPath("appData"), "ChisaBot PC");
+    const current = app.getPath("userData");
+    if (current !== legacy && !fs.existsSync(current) && fs.existsSync(legacy)) {
+      fs.renameSync(legacy, current);
+    }
+  } catch {}
+})();
+
 if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -138,7 +153,7 @@ function localWindow(name, file, { query, ...options } = {}) {
     minWidth: 380,
     minHeight: 520,
     show: false,
-    title: "ChisaBot PC",
+    title: "ChisaBot",
     icon: WINDOW_ICON,
     autoHideMenuBar: true,
     backgroundColor: windowBackground(),
@@ -450,7 +465,7 @@ function refreshTray() {
   if (!tray) return;
   const kind = statusKind();
   tray.setImage(trayIcon(kind));
-  tray.setToolTip(`ChisaBot PC · ${statusText()}`);
+  tray.setToolTip(`ChisaBot · ${statusText()}`);
   const paused = config.get().localPaused;
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -487,7 +502,7 @@ function refreshTray() {
       ...(config.get().serverUrl ? [{ label: "退出登录…", click: () => void confirmLogout() }] : []),
       { type: "separator" },
       {
-        label: "退出 ChisaBot PC",
+        label: "退出 ChisaBot",
         click: () => {
           quitting = true;
           app.quit();
@@ -571,7 +586,7 @@ function repairDevice({ force = false, manual = false } = {}) {
       }
       if (manual && result.status === "login") void openApp();
       if (manual && Notification.isSupported() && result.status !== "already")
-        new Notification({ title: "ChisaBot PC", body: result.message }).show();
+        new Notification({ title: "ChisaBot", body: result.message }).show();
       refreshTray();
       return result;
     })
@@ -648,13 +663,13 @@ function startAgent() {
     broadcast("audit");
   });
   agent.events.on("call", ({ operation, botName }) => {
-    if (operation === "input" || operation === "shell") tray?.setToolTip(`ChisaBot PC · ${botName || "机器人"} 正在操作…`);
+    if (operation === "input" || operation === "shell") tray?.setToolTip(`ChisaBot · ${botName || "机器人"} 正在操作…`);
   });
   agent.events.on("approval_closed", ({ id }) => closeApproval(id));
   agent.events.on("revoked", () => {
     refreshTray();
     if (Notification.isSupported())
-      new Notification({ title: "ChisaBot PC", body: "这台电脑已被撤销，请重新登录。" }).show();
+      new Notification({ title: "ChisaBot", body: "这台电脑已被撤销，请重新登录。" }).show();
   });
   agent.start();
   refreshTray();
@@ -717,7 +732,7 @@ function pumpConfirm() {
     modal: !!parent,
     alwaysOnTop: !parent,
     show: false,
-    title: "ChisaBot PC · 本机确认",
+    title: "ChisaBot · 本机确认",
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true },
   });
   confirmWindow.loadFile(path.join(UI, "confirm.html"), { query: windowChrome.frameQuery(FRAME) });
@@ -837,7 +852,7 @@ function startUpdater() {
     isPackaged: app.isPackaged,
     platform: process.platform,
     execPath: process.execPath,
-    productName: pkg.productName || "ChisaBot PC",
+    productName: pkg.productName || "ChisaBot",
     shellHash: SHELL_HASH,
     // 内置更新公钥（docs/pc-update-signing.md）：为空 = 这个构建不验签（自建版没配公钥），保持旧行为。
     updateKeys: updateSignature.loadKeys(),
@@ -849,7 +864,7 @@ function startUpdater() {
     onDownloaded: (version) => {
       config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_downloaded", outcome: "succeeded", summary: `新版本 ${version || ""} 已下载` });
       if (Notification.isSupported())
-        new Notification({ title: "ChisaBot PC", body: `新版本 ${version || ""} 已下载，重启以安装。` }).show();
+        new Notification({ title: "ChisaBot", body: `新版本 ${version || ""} 已下载，重启以安装。` }).show();
       openUpdateWindow();
     },
     onRejected: ({ version, code, reason }) => {
@@ -873,7 +888,7 @@ function openUpdateWindow() {
     height: updateContentHeight,
     ...windowChrome.dialogWindowOptions(FRAME, { background: windowBackground() }),
     show: false,
-    title: "ChisaBot PC · 新版本",
+    title: "ChisaBot · 新版本",
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true },
   });
   placeUpdateWindow();
@@ -1031,7 +1046,7 @@ function fromServerPage(event) {
 
 function handleLocal(channel, fn) {
   ipcMain.handle(channel, (event, payload) => {
-    if (!fromLocalUi(event)) throw new Error("拒绝：调用来源不是 ChisaBot PC 本机页面。");
+    if (!fromLocalUi(event)) throw new Error("拒绝：调用来源不是 ChisaBot 本机页面。");
     return fn(payload, event);
   });
 }
@@ -1375,7 +1390,7 @@ function refreshShellIfChanged() {
     ...shellRefresh.shortcutCandidates({
       desktopDir,
       appData: process.env.APPDATA,
-      shortcutName: pkg.build?.nsis?.shortcutName || pkg.productName || "ChisaBot PC",
+      shortcutName: pkg.build?.nsis?.shortcutName || pkg.productName || "ChisaBot",
     }),
     ...shellRefresh.scanShortcuts({ desktopDir, appData: process.env.APPDATA }),
   ];

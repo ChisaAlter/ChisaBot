@@ -36,13 +36,16 @@ object ServerRows {
     private const val WORKER = "⟦chisabot:worker-result:"
     private const val LOCAL_AGENT = "⟦chisabot:local-agent-result:"
     private const val CONFIRM = "⟦chisabot:confirm:"
+    /** 定时 / 长期任务 / 跟进到点那一轮的触发帧（shared/routine-firing.ts 的首句），不是人打的字。 */
+    private const val FIRING = "One of your routines is firing right now"
 
-    fun isServerRow(text: String) = text.startsWith(SCHEDULE) || text.startsWith(WORKER) || text.startsWith(LOCAL_AGENT) || text.startsWith(CONFIRM)
+    fun isServerRow(text: String) = text.startsWith(SCHEDULE) || text.startsWith(WORKER) || text.startsWith(LOCAL_AGENT) || text.startsWith(CONFIRM) || text.startsWith(FIRING)
 
     /** 那一行显示的话。 */
     fun label(text: String): String = when {
         text.startsWith(CONFIRM) -> Regex("用户确认了「([^」]*)」").find(text)?.groupValues?.get(1)?.let { "你确认了「$it」，机器人接着做" } ?: "你确认了，机器人接着做"
         text.startsWith(SCHEDULE) -> "定时任务到点了，机器人开始做"
+        text.startsWith(FIRING) -> "定时任务已运行，机器人开始做"
         text.startsWith(WORKER) -> "后台任务交回了结果"
         else -> "电脑上的助手交回了结果"
     }

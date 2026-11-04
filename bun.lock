@@ -18,13 +18,14 @@
         "@types/bun": "^1.4.4",
         "@types/css-tree": "^3.2.0",
         "roughjs": "^4.6.6",
+        "sharp": "^0.35.5",
         "typescript": "^5.9.3",
         "yaml": "^2.9.1",
       },
     },
     "app": {
       "name": "app",
-      "version": "0.1.117",
+      "version": "0.1.128",
       "dependencies": {
         "@ag-ui/core": "1.0.2",
         "@base-ui/react": "^1.9.0",
@@ -81,7 +82,7 @@
     },
     "server": {
       "name": "server",
-      "version": "0.1.117",
+      "version": "0.1.128",
       "dependencies": {
         "@ag-ui/client": "1.0.2",
         "@ag-ui/core": "1.0.2",

@@ -8,10 +8,10 @@
     $("title").textContent = "此更新需要重新安装，以更新图标/组件";
     $("restart").textContent = "重新安装";
     $("desc").textContent =
-      `ChisaBot PC ${info.version} 已下载并校验（当前 ${info.currentVersion}）。将卸载旧版后全新安装并重建快捷方式，登录、设置和本机记录都会保留，装好后自动打开；选「稍后」则在下次退出时安装。`;
+      `ChisaBot ${info.version} 已下载并校验（当前 ${info.currentVersion}）。将卸载旧版后全新安装并重建快捷方式，登录、设置和本机记录都会保留，装好后自动打开；选「稍后」则在下次退出时安装。`;
   } else {
     $("desc").textContent =
-      `ChisaBot PC ${info.version} 已在后台下载并校验完毕（当前 ${info.currentVersion}）。重启后自动安装并重新打开，大约需要十几秒；选「稍后」会在下次退出 ChisaBot PC 时安装。`;
+      `ChisaBot ${info.version} 已在后台下载并校验完毕（当前 ${info.currentVersion}）。重启后自动安装并重新打开，大约需要十几秒；选「稍后」会在下次退出 ChisaBot 时安装。`;
   }
   const run = asyncButton(
     $("restart"),

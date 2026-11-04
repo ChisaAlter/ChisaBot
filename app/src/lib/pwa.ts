@@ -5,7 +5,7 @@ import { isAndroidApp, isIOS, isPhone, isStandalone } from "@/lib/device";
  * 网页应用（PWA，DESIGN.md §40，docs/pwa.md）：注册 service worker、接住浏览器的「可安装」事件、
  * 安装后在电脑上把独立窗口开到宽屏大小。
  *
- * ChisaBot PC（Electron）和安卓客户端本身就是应用：不注册 service worker，也不提示安装。
+ * ChisaBot 桌面客户端（Electron）和安卓客户端本身就是应用：不注册 service worker，也不提示安装。
  */
 
 type InstallPromptEvent = Event & {

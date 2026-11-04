@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 /**
- * ChisaBot PC 无边框窗口的窗口控制（DESIGN.md §18）。
+ * ChisaBot 无边框窗口的窗口控制（DESIGN.md §18）。
  *
  * PC 客户端的主窗口没有系统标题栏：网页自己的顶栏就是标题栏（拖动区 + 最小化 / 最大化 / 关闭）。
  * 桥由 Electron 的 web-preload 只在已登录服务器的顶层页面里注入；普通浏览器里 `window.chisabotWindow`
