@@ -165,6 +165,26 @@ test.each([
   },
 );
 
+test("catalog rows missing context metadata fall back to the known-window table", async () => {
+  const catalog = catalogWith(async () =>
+    response({
+      data: [
+        { id: "devin/swe-2", owned_by: "devin", display_name: "SWE-2" },
+        { id: "devin/swe-2-high-lightning" },
+        { id: "vendor/other", context_length: 99999 },
+        { id: "vendor/unlisted" },
+      ],
+    }),
+  );
+  const models = (await catalog.list()).models;
+  expect(models.map((m) => m.contextWindow)).toEqual([
+    262144,
+    262144,
+    99999,
+    undefined,
+  ]);
+});
+
 test("missing saved credentials do not issue a gateway request", async () => {
   let calls = 0;
   const catalog = createModelCatalogService({

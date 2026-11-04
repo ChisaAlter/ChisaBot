@@ -1231,12 +1231,13 @@ async function hermesKernelAgent(options: {
     signRun: (runId, threadId, previous) => signRun(agent.id, runId, threadId, previous),
     // 备用模型 / 输出上限与内置路径同源：管理员列表 → CHISABOT_MODEL_FALLBACKS → 同平台自动挑选；模型目录的输出上限。
     modelControls: async (modelId) => {
-      const [fallbacks, maxOutputTokens, supportsImages] = await Promise.all([
+      const [fallbacks, maxOutputTokens, supportsImages, contextWindow] = await Promise.all([
         fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured())(modelId).catch(() => [] as string[]),
         resolveOutputLimit(modelId),
         resolveModelVisionSupport(modelId),
+        resolveContextWindow(modelId),
       ]);
-      return { fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS), ...(maxOutputTokens ? { maxOutputTokens } : {}), ...(supportsImages === undefined ? {} : { supportsImages }) };
+      return { fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS), ...(maxOutputTokens ? { maxOutputTokens } : {}), ...(supportsImages === undefined ? {} : { supportsImages }), ...(contextWindow ? { contextWindow } : {}) };
     },
     finishedMetadata: (runId) => {
       // 回复已经结束：这时才在后台写摘要（这一轮只裁剪，首字时间不变）。

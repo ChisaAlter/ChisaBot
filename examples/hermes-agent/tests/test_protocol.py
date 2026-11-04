@@ -55,6 +55,16 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(raw["history"][0]["content"], "Earlier question")
         self.assertNotIn(raw["toolGateway"]["capability"], repr(config))
 
+    def test_context_window_field(self):
+        raw = payload()
+        self.assertIsNone(parse_host_prompt(raw).context_window)
+        raw["model"]["contextWindow"] = 262144
+        self.assertEqual(parse_host_prompt(raw).context_window, 262144)
+        for bad in ("262144", 262144.5, 0, -1, 20_000_000, True):
+            raw["model"]["contextWindow"] = bad
+            with self.assertRaises(ProtocolError, msg=f"rejected {bad!r}"):
+                parse_host_prompt(raw)
+
     def test_metadata_supports_router_flattening_and_direct_calls(self):
         raw = payload()
         for metadata in ({"chisabot": raw}, {"_meta": {"chisabot": raw}}, {"field_meta": {"chisabot": raw}}):

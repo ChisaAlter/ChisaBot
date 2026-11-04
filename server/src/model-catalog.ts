@@ -82,6 +82,27 @@ export function imageInputOf(row: Record<string, unknown>): boolean | undefined 
  * 按完整 id 或最后一个 / 段匹配；目录明说 false 也压不过去——已知结论优先。
  */
 const KNOWN_VISION_MODELS = new Set(["deepseek-v4.1-flash-1017"]);
+/**
+ * 目录行三个上下文字段全缺、但官方已知的窗口（QA1104-01：Devin 插件表给 swe-2 系登记
+ * context:0，Magpie /models 不带 context_length，Hermes 探测落缺省 32K、卡在 64K 下限外）。
+ * 值来自 `devin models` 的官方输出（SWE-2 / SWE-1.7 系均 262K）。按完整 id 或最后一个 /
+ * 段匹配；目录明说了就压不过去。
+ */
+const KNOWN_CONTEXT_WINDOWS = new Map<string, number>([
+  ["swe-2", 262_144],
+  ["swe-2-medium", 262_144],
+  ["swe-2-high", 262_144],
+  ["swe-2-max", 262_144],
+  ["swe-2-medium-lightning", 262_144],
+  ["swe-2-high-lightning", 262_144],
+  ["swe-2-max-lightning", 262_144],
+  ["swe-1-7", 262_144],
+  ["swe-1-7-medium", 262_144],
+]);
+function knownContextOf(row: Record<string, unknown>): number | undefined {
+  const id = typeof row.id === "string" ? row.id : "";
+  return KNOWN_CONTEXT_WINDOWS.get(id) ?? KNOWN_CONTEXT_WINDOWS.get(id.split("/").pop() ?? "");
+}
 function visionOf(row: Record<string, unknown>): boolean | undefined {
   const id = typeof row.id === "string" ? row.id : "";
   if (KNOWN_VISION_MODELS.has(id) || KNOWN_VISION_MODELS.has(id.split("/").pop() ?? "")) return true;
@@ -144,7 +165,7 @@ function project(body: unknown): ModelCatalogEntry[] {
     const provider =
       prefix ?? (safeText(row.owned_by, 200) ? row.owned_by : "");
     const context =
-      row.context_window ?? row.context_length ?? row.max_input_tokens;
+      row.context_window ?? row.context_length ?? row.max_input_tokens ?? knownContextOf(row);
     const providerName = providerNameOf(row.magpie_label);
     const maxOutput = row.max_output_tokens ?? row.max_completion_tokens;
     const supportsImages = visionOf(row);
