@@ -498,6 +498,14 @@ function hostModel(model) {
     if (typeof model.contextCompression !== "boolean") throw rpcError("Invalid chisabotHermes model compression flag", "ACP_INVALID_HOST_CONTEXT");
     result.contextCompression = model.contextCompression;
   }
+  if (model.contextWindow !== undefined) {
+    // The host's declared context window seeds the adapter's pre-construction provider pin
+    // (QA1104-01): gateways that omit context metadata would otherwise probe 32K defaults.
+    if (!Number.isSafeInteger(model.contextWindow) || model.contextWindow <= 0 || model.contextWindow > 16_000_000) {
+      throw rpcError("Invalid chisabotHermes model context window", "ACP_INVALID_HOST_CONTEXT");
+    }
+    result.contextWindow = model.contextWindow;
+  }
   for (const key of ["supportsImages", "supportsFiles"]) {
     // Catalog capability flags drive image/document part conversion in openAIContent.
     if (model[key] === undefined) continue;
