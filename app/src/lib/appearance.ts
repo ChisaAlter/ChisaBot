@@ -47,7 +47,7 @@ export const HARK_ENGINE_STORAGE_KEYS: readonly string[] = [
 export const GLASS_OPACITY_MIN = 5;
 export const GLASS_OPACITY_MAX = 55;
 
-export type GlassStyleId = "liquid" | "crystal" | "frosted";
+export type GlassStyleId = "liquid" | "mist" | "crystal" | "frosted";
 
 /**
  * Hark 原生 WebGL 动态天空与天气引擎（wallpaper_core.html）精选场景 + 自动跟随模式。
@@ -456,6 +456,7 @@ export type AppearanceState = {
 const VALID_PALETTES = new Set<ThemePaletteId>(THEME_PALETTES.map((p) => p.id));
 const VALID_GLASS_STYLES = new Set<GlassStyleId>([
   "liquid",
+  "mist",
   "crystal",
   "frosted",
 ]);

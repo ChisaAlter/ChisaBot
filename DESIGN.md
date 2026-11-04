@@ -344,7 +344,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ### 10.6 液态玻璃材质（liquid，默认）
 
-`data-glass="liquid"` 的完整材质，令牌集中在 `styles.css` 的「液态玻璃材质」段，四个应用点（`background` / `backdrop-filter` / `box-shadow` / `color`）引用变量；crystal / frosted 保留各自旧材质，只补 `--lg-ink` 等共用变量。运行时在 `app/src/lib/liquid-glass.ts`（`installLiquidGlass`，从 `sky-background.tsx` 挂）。
+`data-glass="liquid"` 的完整材质，令牌集中在 `styles.css` 的「液态玻璃材质」段，四个应用点（`background` / `backdrop-filter` / `box-shadow` / `color`）引用变量；crystal / frosted 保留各自旧材质，只补 `--lg-ink` 等共用变量。运行时在 `app/src/lib/liquid-glass.ts`（`installLiquidGlass`，从 `sky-background.tsx` 挂）。重写前的旧默认材质另存为第四档 `data-glass="mist"`（薄雾玻璃）：20px 柔焦 + 白釉/深釉渐变，无透镜无自适应，透镜运行时按 `liquidActive()` 只认 liquid / 未设 data-glass，mist 天然被跳过。
 
 **令牌与状态**
 

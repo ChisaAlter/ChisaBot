@@ -36,11 +36,13 @@ import { cn } from "@/lib/utils";
 
 const GLASS_STYLE_OPTIONS: readonly { value: GlassStyleId; label: string }[] = [
   { value: "liquid", label: "液态玻璃" },
+  { value: "mist", label: "薄雾玻璃" },
   { value: "crystal", label: "晶莹全透" },
   { value: "frosted", label: "柔光磨砂" },
 ];
 const GLASS_STYLE_VALUES: readonly GlassStyleId[] = [
   "liquid",
+  "mist",
   "crystal",
   "frosted",
 ];
@@ -233,7 +235,7 @@ export function AppearancePreferences() {
             </div>
             <div className="appearance-block-desc">
               {
-                "液态玻璃（立体镜面高光折射）、晶莹全透（超薄水母级透明）、柔光磨砂（细腻雾面柔焦），均可透出底层流云与壁纸"
+                "液态玻璃（立体镜面高光折射）、薄雾玻璃（旧版柔焦渐变）、晶莹全透（超薄水母级透明）、柔光磨砂（细腻雾面柔焦），均可透出底层流云与壁纸"
               }
             </div>
           </div>

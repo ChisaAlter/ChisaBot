@@ -103,11 +103,12 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
     expect(getAppearanceState().wallpaperId).toBe("none");
   });
 
-  test("styles.css defines Hark #sky-root, 3 translucent borderless glass modes, light/dark sky contrast veils, and zero -webkit-backdrop-filter minifier traps", () => {
+  test("styles.css defines Hark #sky-root, 4 translucent borderless glass modes, light/dark sky contrast veils, and zero -webkit-backdrop-filter minifier traps", () => {
     expect(css).toContain("#sky-root");
     expect(css).toContain("html:not(.dark) #sky-root::after");
     expect(css).toContain("html.dark #sky-root::after");
     expect(css).toContain('html[data-glass="liquid"]');
+    expect(css).toContain('html[data-glass="mist"]');
     expect(css).toContain('html[data-glass="crystal"]');
     expect(css).toContain('html[data-glass="frosted"]');
     expect(css).toMatch(/@property --lg-alpha \{[^}]*inherits: false; initial-value: 0\.16;/);

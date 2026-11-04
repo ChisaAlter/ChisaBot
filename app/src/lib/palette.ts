@@ -246,7 +246,7 @@ export function applyThemeColor(
 
 export const PALETTE_STORAGE_KEY = "chisabot-theme-palette";
 export const GLASS_STYLE_STORAGE_KEY = "chisabot-glass-style";
-const BOOT_GLASS_STYLES = ["liquid", "crystal", "frosted"];
+const BOOT_GLASS_STYLES = ["liquid", "mist", "crystal", "frosted"];
 
 /**
  * index.html 的启动脚本（vite.config.ts 的 chisabot-sky-boot 插件塞在 <body> 第一行、时段天空之后）：
