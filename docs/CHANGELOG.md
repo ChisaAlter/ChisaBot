@@ -1,3 +1,9 @@
+## 0.1.129
+
+- 液态玻璃材质重写（#500）：liquid（默认档）换完整材质——`--lg-*` 令牌 + `@property` 滑行，Chromium 加 feDisplacementMap 边缘透镜与红蓝色散，其余浏览器纯 CSS；背景 5×3 采样自适应墨/密度，`alphaForContrast` 兜底最暗墨 ≥4.5；深浅两套雾度设置；性能/减透明度/强制色彩不透明兜底，弹层菜单行保持原样。
+- 「追问」按需出现（#499）：链接卡浮层按钮改悬停 / :focus-visible / 触屏长按 450ms 才出，「已压缩前文」只留最新一条，用量回传用真实值校准估算。
+- 版本号 0.1.129（根、app、server、pc；Android versionCode 311）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.128
 
 - 目录声明窗口抬过端点误报 + 轮中换模真修好（#490）：Magpie /models 不给 swe-2 带 context，Ollama 探测回落 32K < Hermes 64K 下限导致 configure 永远失败；轮中重试调公共 set_session_model 必撞 -32603 busy，备用模型落不上去。现在服务端 catalog 内置已知窗口表（swe-2/swe-1.7 系 262144）并经 contextWindow 下发，适配器按目录值抬上下文下限（只抬不压），轮中重试改走 _switch_model。
