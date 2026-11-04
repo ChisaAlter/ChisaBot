@@ -368,12 +368,12 @@ describe("ACP AG-UI bridge host contract", () => {
     const created = bridge({ noTools: true, modelControls: { fallback: true, maxOutputTokens: true }, modelFallback: { from: "test-model", to: "backup-model", reason: "quota", extra: "dropped" } });
     expect((await health(created)).modelControls).toBeNull();
     const input = host();
-    (input.forwardedProps.chisabotHermes as { model: unknown }).model = { id: "test-model", fallbacks: ["backup-model", "other-model"], maxOutputTokens: 32000, contextCompression: false };
+    (input.forwardedProps.chisabotHermes as { model: unknown }).model = { id: "test-model", fallbacks: ["backup-model", "other-model"], maxOutputTokens: 32000, contextCompression: false, contextWindow: 262144 };
     const result = await post(created, input);
-    expect(prompts(created)[0].params._meta.chisabot.model).toEqual({ id: "test-model", fallbacks: ["backup-model", "other-model"], maxOutputTokens: 32000, contextCompression: false });
+    expect(prompts(created)[0].params._meta.chisabot.model).toEqual({ id: "test-model", fallbacks: ["backup-model", "other-model"], maxOutputTokens: 32000, contextCompression: false, contextWindow: 262144 });
     expect(result.at(-1)).toEqual({ type: "RUN_FINISHED", threadId: "thread-1", runId: "run-1", metadata: { modelFallback: { from: "test-model", to: "backup-model", reason: "quota" } } });
     expect((await health(created)).modelControls).toEqual({ fallback: true, maxOutputTokens: true });
-    for (const model of [{ id: "m", fallbacks: "backup" }, { id: "m", fallbacks: ["has space"] }, { id: "m", fallbacks: Array.from({ length: 9 }, (_, i) => `m${i}`) }, { id: "m", maxOutputTokens: 0 }, { id: "m", maxOutputTokens: 1.5 }, { id: "m", contextCompression: "off" }]) {
+    for (const model of [{ id: "m", fallbacks: "backup" }, { id: "m", fallbacks: ["has space"] }, { id: "m", fallbacks: Array.from({ length: 9 }, (_, i) => `m${i}`) }, { id: "m", maxOutputTokens: 0 }, { id: "m", maxOutputTokens: 1.5 }, { id: "m", contextCompression: "off" }, { id: "m", contextWindow: 0 }, { id: "m", contextWindow: 1.5 }, { id: "m", contextWindow: 17_000_000 }]) {
       const bad = host("x", "bad-run");
       (bad.forwardedProps.chisabotHermes as { model: unknown }).model = model;
       expect((await post(created, bad)).at(-1).code).toBe("ACP_INVALID_HOST_CONTEXT");
