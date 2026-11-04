@@ -457,9 +457,7 @@ describe("mcp_add", () => {
     const probe = plan.details.find((d) => d.label === "探测");
     expect(probe?.value).toContain("2 个工具");
     expect(probe?.value).toContain("search_docs");
-    expect(plan.details.find((d) => d.label === "网址")?.value).toBe(
-      input.url,
-    );
+    expect(plan.details.find((d) => d.label === "网址")?.value).toBe(input.url);
   });
 
   test("execute adds the server, grants non-destructive tools, and names the blocked ones", async () => {

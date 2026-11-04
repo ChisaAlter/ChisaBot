@@ -1,3 +1,12 @@
+## 0.1.130
+
+- 桌面端改名 ChisaBot：productName / 可执行文件 / 快捷方式 / 安装包名去 PC 后缀；安装包 customInit 静默卸旧「ChisaBot PC」，启动时迁移 userData 目录，指向旧 exe 的快捷方式/pin 重写指向新 exe；appId 与更新源路径不变。
+- 品牌图标换朽叶千咲淡色底半身像：全端 favicon/PWA/登录页/PC/安卓图标重出；生成脚本 Pillow → Node+sharp（generate.mjs / win-icon.mjs），不再依赖 Python。
+- 管理员在网页对话里 `mcp_add` 接自定义 MCP：探测出确认卡、「添加连接器」类别 locked 恒问、非 destructive 工具自动授权、不收明文凭据。
+- 机器人自我地图：为当前对话的人工作（含是否管理员）、自己是 MCP 宿主、执行内核在下层，别把别家客户端教程当接入方案。
+- 聊天：气泡只要正文、胶囊只在干活时出现（§123）；唤醒话折叠成一行（§124）；收起右栏/关抽屉不再清「计算机」标签。
+- 版本号 0.1.130（根、app、server、pc；Android versionCode 312）；PC 外壳变更（图标 + 改名），旧客户端走「重新安装」路径自动迁移。
+
 ## 0.1.129
 
 - 液态玻璃材质重写（#500）：liquid（默认档）换完整材质——`--lg-*` 令牌 + `@property` 滑行，Chromium 加 feDisplacementMap 边缘透镜与红蓝色散，其余浏览器纯 CSS；背景 5×3 采样自适应墨/密度，`alphaForContrast` 兜底最暗墨 ≥4.5；深浅两套雾度设置；性能/减透明度/强制色彩不透明兜底，弹层菜单行保持原样。
