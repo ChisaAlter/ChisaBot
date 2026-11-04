@@ -45,6 +45,7 @@ import {
   planModelForEnvironment,
 } from "./agents/plan-model";
 import type { AgentActor } from "./agents/profile-types";
+import { knownContextWindowOf } from "./model-catalog";
 import { modelOverrideFromValue } from "./agents/model-selection";
 import { thinkTagLanguageModel } from "./agents/think-tags";
 import { currentConfirmTurn, currentToolAbort, TOOL_STOPPED_ZH, withConfirmToolCall } from "./confirmations/context";
@@ -332,10 +333,14 @@ export async function resolveContextWindow(modelId: string): Promise<number | un
       contextWindowFor(modelId),
       new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
     ]);
-    return typeof window === "number" && Number.isFinite(window) && window > 0 ? window : undefined;
+    if (typeof window === "number" && Number.isFinite(window) && window > 0) return window;
   } catch {
-    return undefined;
+    // Fall through to the known-window table.
   }
+  // The settings catalog can be a different gateway than the one the runtime actually
+  // serves the model from (settings → MiniMax; Hermes → local Magpie). A miss there
+  // must not lose the declared window entirely (QA1104-01).
+  return knownContextWindowOf(modelId);
 }
 /**
  * 模型目录说这一轮模型能不能看图（DESIGN.md §59 supportsImages；index.ts 接上）。
