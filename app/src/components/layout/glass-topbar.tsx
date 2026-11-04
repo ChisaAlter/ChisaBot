@@ -99,7 +99,7 @@ export function GlassTopBar({
         {mobile ? (
           <button
             aria-label={`打开${drawerLabel}`}
-            className="hk-circle glass is-flat"
+            className="hk-circle hk-top-ico"
             onClick={() => sidebar?.setOpenMobile(true)}
             type="button"
           >
@@ -137,7 +137,7 @@ function MobileSearchButton({ scope }: { scope: ShellScope }) {
   return (
     <button
       aria-label={"搜索会话"}
-      className="hk-circle glass is-flat"
+      className="hk-circle hk-top-ico"
       onClick={() => {
         if (scope !== "app") {
           requestSidebarSearchFocus();
