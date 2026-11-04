@@ -229,8 +229,9 @@ export function PanelRail({ className }: { className?: string }) {
 
   /*
    * 右栏 = 「面板 | 计算机」两个标签（DESIGN.md §23）。计算机是否打开仍由聊天页的 `watch` 参数决定，
-   * 这里只负责：它一打开就把右栏亮出来（宽窗口展开面板卡，窄窗口拉出抽屉）；收起右栏时顺手关掉计算机，
-   * 免得地址栏说开着、屏幕上却看不见。
+   * 这里只负责：它一打开就把右栏亮出来（宽窗口展开面板卡，窄窗口拉出抽屉）。收起只是把右栏藏起来，
+   * 不动计算机——标签记忆（§88.2）和地址里的 `watch` 都留着，展开时还在「计算机」；和 Ctrl+Alt+B、
+   * 缩窗口收抽屉、划手势关抽屉同一条规则。只有抽屉上的「返回」才算关掉计算机（rail-sheet-close）。
    */
   const chat = useCurrentBotChat();
   const computerOn = Boolean(chat?.canComputer && chat.computerOpen);
@@ -283,12 +284,12 @@ export function PanelRail({ className }: { className?: string }) {
     if (current?.canComputer && current.computerOpen) current.toggleComputer();
   }, []);
   const collapseWide = useCallback(() => {
-    closeComputer();
     setPanelRailOpen(false);
-  }, [closeComputer]);
+  }, []);
   const closeSheet = useCallback(
-    (reason: OverlayCloseReason = "user") => {
-      closeRailSheet(reason, {
+    // onCollapse 被直接绑到 onClick 上时拿到的是 MouseEvent——只有显式 "back" 才算返回关闭。
+    (reason?: OverlayCloseReason) => {
+      closeRailSheet(reason === "back" ? "back" : "user", {
         agentId: latestChat.current?.agentId,
         closeComputer,
         closeSheet: () => setPanelSheetOpen(false),

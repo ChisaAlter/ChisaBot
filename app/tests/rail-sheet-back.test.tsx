@@ -6,6 +6,8 @@ import {
   expect,
   test,
 } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { useEffect, useRef, useState } from "react";
@@ -84,14 +86,14 @@ async function harness(agentId: string) {
         return true;
       });
     }, [computerOpen]);
-    useBackDismiss(sheet, (reason) =>
+    const close = (reason: "back" | "user" | unknown) =>
       closeRailSheet(reason, {
         agentId,
         closeComputer,
         closeSheet: () => setSheet(false),
-      }),
-    );
-    return { sheet, computerOpen, setSheet, setComputer };
+      });
+    useBackDismiss(sheet, close);
+    return { sheet, computerOpen, setSheet, setComputer, close };
   });
   const userOpenSheet = async () => {
     noteUserIntent();
@@ -110,7 +112,19 @@ async function harness(agentId: string) {
       await tick(60);
     });
   };
-  return { hook, userOpenSheet, userTab, back, opens: () => sheetOpens };
+  const closeWith = async (reason: "back" | "user" | unknown) => {
+    noteUserIntent();
+    act(() => hook.result.current.close(reason));
+    await tick(60);
+  };
+  return {
+    hook,
+    userOpenSheet,
+    userTab,
+    back,
+    closeWith,
+    opens: () => sheetOpens,
+  };
 }
 
 describe("右栏抽屉停在「计算机」时返回（CB-098 QA 第三轮）", () => {
@@ -186,5 +200,110 @@ describe("右栏抽屉停在「计算机」时返回（CB-098 QA 第三轮）", 
     } finally {
       document.documentElement.removeAttribute("data-phone");
     }
+  });
+});
+
+/**
+ * 「关闭面板」/ 收起右栏只是藏起右栏，不再顺手关掉计算机：标签记忆和地址里的 `watch` 都留着，
+ * 下次打开还在「计算机」。只有「返回」才算离开（关计算机、清记忆）。
+ */
+describe("「关闭面板」只是藏起抽屉（不再顺手关掉计算机）", () => {
+  test("PC / 桌面：user 关抽屉，计算机和记忆都留着；重开还在「计算机」", async () => {
+    const { botUi } = await import("@/lib/chat/ui-memory");
+    window.history.replaceState({ page: true }, "", "/channel/new");
+    const h = await harness("agent-userclose-pc");
+    await h.userOpenSheet();
+    await h.userTab(true);
+    expect(window.location.search).toBe("?watch=true");
+    await h.closeWith("user");
+    expect(h.hook.result.current.sheet).toBe(false);
+    expect(h.hook.result.current.computerOpen).toBe(true);
+    expect(botUi("agent-userclose-pc")?.computer).toBe(true);
+    expect(window.location.search).toBe("?watch=true");
+    await h.userOpenSheet();
+    expect(h.hook.result.current.computerOpen).toBe(true);
+  });
+
+  test("PC / 桌面：返回（__chisabotBack）才算离开——关计算机、清记忆", async () => {
+    const { botUi } = await import("@/lib/chat/ui-memory");
+    const { closeTopOverlay } = await import("@/lib/overlay-back");
+    window.history.replaceState({ page: true }, "", "/channel/new");
+    const h = await harness("agent-backclose-pc");
+    await h.userOpenSheet();
+    await h.userTab(true);
+    await act(async () => {
+      closeTopOverlay();
+      await tick(60);
+    });
+    expect(h.hook.result.current.sheet).toBe(false);
+    expect(h.hook.result.current.computerOpen).toBe(false);
+    expect(botUi("agent-backclose-pc")?.computer).toBe(false);
+  });
+
+  test("手机网页：user 关抽屉，标记退掉后地址照记忆补回 watch，重开还在「计算机」", async () => {
+    document.documentElement.setAttribute("data-phone", "");
+    try {
+      const { botUi } = await import("@/lib/chat/ui-memory");
+      window.history.replaceState({ outside: true }, "", "/before");
+      window.history.pushState({ page: true }, "", "/channel/new");
+      const h = await harness("agent-userclose-phone");
+      await h.userOpenSheet();
+      await h.userTab(true);
+      expect(window.location.search).toBe("?watch=true");
+      const len = window.history.length;
+      await h.closeWith("user");
+      await tick(90);
+      expect(h.hook.result.current.sheet).toBe(false);
+      expect(h.hook.result.current.computerOpen).toBe(true);
+      expect(botUi("agent-userclose-phone")?.computer).toBe(true);
+      // 抽屉的标记记录收回去了，没多压一格（≤：happy-dom 的 replaceState 会截掉 forward 那条旧标记）；
+      // watch 由 useBotComputerTab 照记忆 replace 补回。
+      expect(markers()).toBeNull();
+      expect(window.location.search).toBe("?watch=true");
+      expect(window.history.length).toBeLessThanOrEqual(len);
+      await h.userOpenSheet();
+      expect(h.hook.result.current.computerOpen).toBe(true);
+    } finally {
+      document.documentElement.removeAttribute("data-phone");
+    }
+  });
+
+  // 真机回归：onClick={onCollapse} 把 MouseEvent 当 reason 传进来，必须按 user 处理，
+  // 不能落进 back 分支清记忆（真浏览器上手机抽屉就是这么被清的，happy-dom 的字符串调用没覆盖到）。
+  test("手机网页：关抽屉的回调拿到事件对象（onClick 实参）也按 user 处理", async () => {
+    document.documentElement.setAttribute("data-phone", "");
+    try {
+      const { botUi } = await import("@/lib/chat/ui-memory");
+      window.history.replaceState({ outside: true }, "", "/before");
+      window.history.pushState({ page: true }, "", "/channel/new");
+      const h = await harness("agent-eventarg-phone");
+      await h.userOpenSheet();
+      await h.userTab(true);
+      expect(window.location.search).toBe("?watch=true");
+      await h.closeWith({ type: "click", target: "button" });
+      await tick(90);
+      expect(h.hook.result.current.sheet).toBe(false);
+      expect(h.hook.result.current.computerOpen).toBe(true);
+      expect(botUi("agent-eventarg-phone")?.computer).toBe(true);
+      expect(markers()).toBeNull();
+      expect(window.location.search).toBe("?watch=true");
+      await h.userOpenSheet();
+      expect(h.hook.result.current.computerOpen).toBe(true);
+    } finally {
+      document.documentElement.removeAttribute("data-phone");
+    }
+  });
+
+  test("宽窗口「收起右栏」按钮也不再碰计算机（和 Ctrl+Alt+B 同一套）", () => {
+    const rail = readFileSync(
+      join(import.meta.dir, "../src/components/panels/panel-rail.tsx"),
+      "utf8",
+    );
+    const collapse = rail.slice(
+      rail.indexOf("const collapseWide"),
+      rail.indexOf("const closeSheet"),
+    );
+    expect(collapse).toContain("setPanelRailOpen(false)");
+    expect(collapse).not.toContain("closeComputer");
   });
 });
