@@ -178,7 +178,10 @@ test("catalog rows missing context metadata fall back to the known-window table"
   );
   const models = (await catalog.list()).models;
   expect(models.map((m) => m.contextWindow)).toEqual([
-    262144, 262144, 99999, undefined,
+    262144,
+    262144,
+    99999,
+    undefined,
   ]);
 });
 
