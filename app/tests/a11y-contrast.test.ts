@@ -18,6 +18,7 @@ import {
   scrimLayers,
   scrimPainters,
   stylesCss,
+  rangeAdaptive,
   surfaceInk,
   wallpaperSurfaceBackdrops,
 } from "./contrast-model";
@@ -71,9 +72,10 @@ describe("sidebar small text and letter avatars meet WCAG AA in every palette ×
         const color = decl(m[2], "color");
         if (color !== undefined) expect(color).toBe(`var(${token})`);
       }
-      // 令牌只在浅 / 深两块里定义（增加对比度的覆盖在 a11y-modes.css）。
+      // 令牌在浅 / 深两块里定义；液态深釉翻墨块（data-lg-ink）可能再写一次（=3）；
+      // --avatar-ink 深浅同值不用翻（=2）。增加对比度的覆盖在 a11y-modes.css。
       const defs = [...stylesCss.matchAll(new RegExp(`${token}\\s*:`, "g"))];
-      expect(defs.length).toBe(2);
+      expect([2, 3]).toContain(defs.length);
     }
   });
 
@@ -81,8 +83,8 @@ describe("sidebar small text and letter avatars meet WCAG AA in every palette ×
     for (const palette of PALETTE_IDS)
       test(`${palette} / ${scheme}`, () => {
         for (const element of Object.keys(TOKENS) as ElementId[]) {
-          const { min } = range(
-            ink(element, scheme),
+          const { min } = rangeAdaptive(
+            (s) => ink(element, s),
             backdropsFor(element, palette, scheme),
           );
           if (!(min >= AA))
@@ -99,8 +101,8 @@ describe("custom / preset wallpapers: worst case still meets WCAG AA", () => {
     for (const palette of PALETTE_IDS)
       test(`wallpaper ${palette} / ${scheme}`, () => {
         for (const element of Object.keys(TOKENS) as ElementId[]) {
-          const { min } = range(
-            ink(element, scheme),
+          const { min } = rangeAdaptive(
+            (s) => ink(element, s),
             backdropsFor(element, palette, scheme, "wallpaper"),
           );
           if (!(min >= AA))
@@ -150,7 +152,10 @@ describe("wallpapers: text on the wallpaper, cards, chat bubbles, nested cards a
       test(`${id} / ${scheme}`, () => {
         const backdrops = wallpaperSurfaceBackdrops(id, scheme);
         for (const ink of SURFACES[id].inks) {
-          const { min } = range(surfaceInk(scheme, ink), backdrops);
+          const { min } = rangeAdaptive(
+            (s) => surfaceInk(s, ink),
+            backdrops,
+          );
           if (!(min >= AA))
             throw new Error(
               `${id} ${ink} wallpaper/${scheme}: ${min.toFixed(2)} < ${AA}`,

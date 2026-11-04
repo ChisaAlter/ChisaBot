@@ -342,6 +342,36 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 `app/tests/hark-token-dark.test.ts` 检查这条：`html:root` 里和旧深色层同名、又不是由 `var(--…)` 算出来的令牌，`html.dark` 里必须有。
 
+### 10.6 液态玻璃材质（liquid，默认）
+
+`data-glass="liquid"` 的完整材质，令牌集中在 `styles.css` 的「液态玻璃材质」段，四个应用点（`background` / `backdrop-filter` / `box-shadow` / `color`）引用变量；crystal / frosted 保留各自旧材质，只补 `--lg-ink` 等共用变量。运行时在 `app/src/lib/liquid-glass.ts`（`installLiquidGlass`，从 `sky-background.tsx` 挂）。
+
+**令牌与状态**
+
+| 令牌 | 作用 |
+| --- | --- |
+| `--lg-alpha` | 雾度设置（`@property` 注册，切换主题时插值滑行）；`#chisabot-glass-alpha` 里按深浅色各写一条规则，外观设置两处持久化 |
+| `--lg-tint-rgb` / `--lg-tint-lo` / `--lg-tint-mul` / `--lg-tint-hi` | 釉色、密度区间（lo–hi）、雾度系数。浅色档白釉 lo 0.06 hi 0.85；深色档 `16 18 22` lo 0.16 hi 0.9；暗底翻转档 `16 18 22` lo 0.1 hi 0.95 |
+| `--lg-tint-a` | `clamp(lo, alpha·mul·density-k·aa-boost·hover-a, hi)` — 一个公式吃完密度、AA 补偿、悬停提亮 |
+| `--lg-density-k` / `--lg-aa-boost` / `--lg-sat-keep` | 自适应写入的三个标量：背景密度、对比度补偿、保色率 |
+| `--lg-blur` | `blur(2px) saturate(…·sat-keep) brightness(…)` + 末尾 `var(--lg-lens-url,)`；透镜 url 永远在链尾。`--lg-blur: none` 的表面只剩釉色和边 |
+| `--lg-edge-light` / `--lg-edge-dark` / `--lg-shadow` | 描边 inset 高光 + 0.5px 描线 + 落影；深色档强度约三分之一 |
+| `--lg-hl` / `--lg-bright` | 内光强度（左上径向高光）与亮度提升；亮度随 `--lg-alpha` 变稀而减弱 |
+| `--lg-ink` / `--lg-ink-2` / `--lg-blend` | 墨：浅釉黑 86% / `60 60 67`·70%，multiply；深釉白 94% / `235 235 245`·64%，plus-lighter |
+| `--lg-lens-url` | 边缘透镜滤镜 `url(#id)`，运行时按表面尺寸生成 |
+
+**透镜（rim lens）**：对每条边生成一张位移图（R=横向、G=纵向、128=不动，只有边缘弯），宽 `min(44px, 短边/3.5, ≥4px)`，深度 `1.1·rim·(1−d/rim)^2.6`；装进 `feImage`+`feDisplacementMap`（scale=2×最大偏移）+ 红蓝通道错位 ±15% 的 `feColorMatrix`/screen 合成。`CSS.supports("backdrop-filter","url(#a)")` 不过（Firefox 等）就只留 CSS 玻璃。图按 尺寸+圆角+rim 缓存，等 `img.decode()` 后才把 `--lg-lens-url` 写到表面；短边 <32px、`will-change`/合成层、菜单动画面跳过。
+
+**背景自适应**：对表面下方 5×3 采样（去最暗最亮各 2 取平均），浅色主题按亮度 <0.5（±0.05 迟滞，同一行共用多数决）翻到 `data-lg-ink="dark"` 深釉档，深色主题恒深釉；密度 `0.55·墨距 + 0.7·纹理 + 0.3·色度` 驱动 `--lg-density-k`，色度再压 `--lg-sat-keep`（≥0.45）。`alphaForContrast` 把 `--lg-aa-boost` 升到最暗墨（`LG_WORST_INK`）过 4.5，封顶 hi。采样结果记 `chisabot-lg-ink`，下次先按记忆画。
+
+**设置**：外观里「玻璃浓度」按当前主题写 `glassOpacity` / `glassOpacityDark`（5–55，默认 16），老用户只有一个值时深色回落到浅色值；两条规则都走 rAF 合并写入。
+
+**兜底**：`perf-noblur.css` / `resize-pause.css` / `a11y-modes.css` 下 `--lg-blur: none` + 不透明面 `--glass-bg-opaque`，深釉翻转态一并还原浅墨浅釉；焦点圈、禁用态、错误红不动。
+
+**覆盖面**（透镜/全材质）：`.glass-side-card` `.acct-card` `.acct-mini-card` `.glass-mini-card` `.rail-card` `.glass-seg` `.glass-search` `.glass-newchat` `.glass-icon-btn` `.glass-mini-new` `.glass-composer`。**只上材质不模糊**：气泡 `[data-slot="bubble-content"]`、`.jr-card`、`.page-rows`、`.sg-card`、`.page-section > form`、`.page .border`。**保持原样**：弹层/菜单/对话框/抽屉/toast（`--popover`/`--glass-pop-*`，INP 原因本来就不模糊）、`.sg-segmented` `.rail-tabs` `.side-search` `.model-pill` `.perm-chip`（玻璃壳上的平色填充）；行（`.glass-bot-row` `.nav-row` `.glass-mini-bot`）只做亮一档的悬停/选中填充。
+
+验证：`app/tests/liquid-glass.test.ts`（纯函数 + CSS 挂接）、`a11y-contrast.test.ts` 的 `rangeAdaptive`/`liquidComposite` 与运行时同一组判定函数。
+
 ---
 
 ## 11. 组件
