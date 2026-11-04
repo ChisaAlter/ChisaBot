@@ -16,7 +16,7 @@
   const Host = (function () {
     if (window.chisa) {
       return {
-        label: "ChisaBot PC",
+        label: "ChisaBot",
         state: () =>
           window.chisa.invoke("state:get").then((s) => ({
             server: s.serverUrl || s.defaultServerUrl || "",

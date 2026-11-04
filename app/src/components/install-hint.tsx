@@ -26,7 +26,7 @@ import {
  * 浏览器里打开网页版时，在顶栏下面居中出现一枚可关闭的玻璃胶囊（与「有新版本」同一种）：
  * - Chrome / Edge（安卓、Windows、macOS…）：浏览器说可以安装时出现，「安装」弹出浏览器自己的安装确认；
  * - iPhone / iPad 的 Safari：点开是一张小卡片，教「点分享 → 添加到主屏幕」；
- * - ChisaBot PC、安卓客户端、已经安装后打开（独立窗口）、引导页：都不出现。
+ * - ChisaBot 桌面客户端、安卓客户端、已经安装后打开（独立窗口）、引导页：都不出现。
  * 打开页面 8 秒后才出现，不在加载的第一秒打扰；× 永久关掉，安装取消则 14 天暂避（localStorage）。
  * 「有新版本」提示在的时候让位（styles.css）。
  * DOG-03 / dogfood friction 2026-10-19：仅在 beforeinstallprompt（或 iOS Safari）时出现；

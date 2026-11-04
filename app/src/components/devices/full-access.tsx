@@ -104,7 +104,7 @@ export function FullAccessCard({ device }: { device: DeviceView }) {
                 : "所有能力按「允许」执行，不再逐次询问（也跳过这台电脑上的本机确认）；不限「允许的文件夹」，可以访问整台电脑；后台命令不限时长；可以申请管理员 / root 权限。只能由你在这里打开，机器人不能自己开启。开启后 PC 客户端还会在本机再确认一次。"}
             </p>
             {device.online && device.features && !device.features.includes("edit_file") ? (
-              <p className="full-access-s is-warn">{"这台设备上的客户端版本较旧，完全访问和编码工具需要 ChisaBot PC 0.1.8+（服务器节点重新运行安装命令即可升级）。"}</p>
+              <p className="full-access-s is-warn">{"这台设备上的客户端版本较旧，完全访问和编码工具需要 ChisaBot 客户端 0.1.8+（服务器节点重新运行安装命令即可升级）。"}</p>
             ) : null}
           </div>
         </div>

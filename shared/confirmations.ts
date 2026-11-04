@@ -5,7 +5,7 @@
  * 「先问我」= 聊天里出一张确认卡片（要做什么 · 对象 · 细节 · 确认 / 取消），确认后这一轮接着做；
  * 「直接做」= 不问。用户还能用自己的话写规则（「给张三发微信不用问我」），机器人每轮都读得到。
  */
-export const CONFIRM_CATEGORIES = ["message", "delete", "purchase", "device"] as const;
+export const CONFIRM_CATEGORIES = ["message", "delete", "purchase", "device", "admin"] as const;
 export type ConfirmCategory = (typeof CONFIRM_CATEGORIES)[number];
 export type ConfirmMode = "ask" | "auto";
 
@@ -29,6 +29,11 @@ export const CONFIRM_CATEGORY_INFO: Record<
   device: {
     label: "操作你的电脑",
     description: "在你的电脑上运行命令、写文件、截图、操作鼠标键盘（只问设成「询问」的能力）",
+  },
+  admin: {
+    label: "添加连接器",
+    description: "把一个新的 MCP 服务器 / 外部服务接进这个部署（凭据会发往该地址）",
+    locked: true,
   },
 };
 

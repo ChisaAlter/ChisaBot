@@ -34,8 +34,9 @@ function announceStep(detail: WorkStepDetail) {
  *
  * 一轮里机器人开始干真正的活（搜索、读网页、操作设备…，不算看技能 / 画卡片）后，这张卡画在这一轮**第一个干活的工具
  * 那一行**里（不是末尾的「思考中」那个槽）：中间夹的过程话、后面的工具都排在它下面，卡片一直在原地，不会一会儿出现
- * 一会儿消失（§75.1）。干活时是「● 正在搜索「…」 · 第 3 步 · 12 秒 ⌄」；这一轮结束，同一个按钮原地换成
- * 「✓ 搜索 2 次 · 看了 3 个网页 · 12 秒 ⌄」，高度不变，所以结束那一刻画面不跳。点开（用户自己点才长高）是每一步。
+ * 一会儿消失（§75.1）。干活时是「● 正在搜索「…」 · 12 秒 ⌄」。胶囊只在思考和干活时出现（§123）：
+ * 这一轮一结束，那一行整行收起（220ms 收成 0 高，§82.9）——done 态（「✓ 搜索 2 次 · 12 秒 ⌄」）只在
+ * 收起动画里画，之后不再留。
  *
  * 用时从这一轮第一次看到干活卡算起（按 `turnKey` 记在模块里，卡片重挂也不归零）。
  */
@@ -121,14 +122,6 @@ export function workSeconds(turnKey: string): number | null {
   return seconds >= 2 ? seconds : null;
 }
 
-/**
- * 这一轮用了几秒——知道才给（这一页看着它跑过，或这台浏览器记下过，§88）；不知道为 null。
- * 简单回合（§93）用它挡住「其实跑了很久」的那几轮。
- */
-export function knownWorkSeconds(turnKey: string): number | null {
-  return workSeconds(turnKey) ?? workUi(turnKey)?.seconds ?? null;
-}
-
 export function WorkRow({
   calls,
   turnKey,
@@ -144,8 +137,9 @@ export function WorkRow({
   /** 有形象头像时保留签名兼容。 */
   agentId?: string;
   /**
-   * 这一轮做完了却没有看得见的回答（回复显示①）：这一行留着写「N 步失败」。窄屏上做完的行不写用时 / 步数
-   * （styles.css），这一行例外，用 `data-unanswered` 在 status-capsule.css 里重新显示。
+   * 这一轮做完了却没有看得见的回答（回复显示①）：done 态写「N 步失败」。§123 起这一行只在收起动画里画，
+   * 之后收起；窄屏上做完的行不写用时 / 步数（styles.css），这一行例外，用 `data-unanswered` 在
+   * status-capsule.css 里重新显示。
    */
   unanswered?: boolean;
   /** 收进卡片的过程话（§90）。 */
@@ -279,7 +273,8 @@ export function WorkRow({
           className={live ? "chat-work-meta rs-capsule-time" : "chat-work-meta"}
         >
           {/*
-           * 跑着的时候只报时间，不再报「第 N 步」；做完的那一行整行不画（用户：全部不显示步数，只留回答）。
+           * 跑着的时候只报时间，不再报「第 N 步」；做完的那一行整行收起（§123：胶囊只在干活时出现，
+           * 这个 done 态只剩收起动画里画）。
            */}
           {metaFailed ? `${metaFailed} 步失败` : ""}
           {metaFailed && seconds !== null && seconds >= 2 ? " · " : ""}

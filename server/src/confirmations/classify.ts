@@ -1,4 +1,9 @@
-import type { ConfirmCategory, ConfirmDetail, ConfirmMode } from "../../../shared/confirmations";
+import {
+  CONFIRM_CATEGORY_INFO,
+  type ConfirmCategory,
+  type ConfirmDetail,
+  type ConfirmMode,
+} from "../../../shared/confirmations";
 
 /**
  * 哪些工具调用算「有后果的事」、算哪一类，以及按偏好 + 规则该不该问。纯函数，单测直接驱动。
@@ -31,6 +36,8 @@ export function categoryOfTool(name: string, ref?: string): ConfirmCategory | nu
   const id = ref ?? name;
   // 整理记忆会删掉被并掉的笔记：算「删除」，按偏好先问（审计 12-settings 必修 1：周报技能不能静默触发）。
   if (name === "memory_dream" && (!ref || ref === "memory/memory_dream")) return "delete";
+  // 把部署指向一个新端点（自定义 MCP）：凭据会发往该地址，和付款同级——固定先问。
+  if (name === "mcp_add" && ref === "plugins/mcp_add") return "admin";
   if (SKIP_REF.test(id)) return null;
   if (name === "panel_remove") return "delete";
   if (id.startsWith("live-panels/")) return null;
@@ -68,7 +75,7 @@ export function decideMode(input: {
   pref: ConfirmMode | undefined;
   rules: readonly RuleLike[];
 }): { mode: ConfirmMode; source: "safety" | "rule" | "preference" | "default"; ruleId?: string } {
-  if (input.category === "purchase") return { mode: "ask", source: "safety" };
+  if (CONFIRM_CATEGORY_INFO[input.category].locked) return { mode: "ask", source: "safety" };
   const text = input.text.toLowerCase();
   const hits = input.rules.filter(
     (rule) =>
@@ -129,9 +136,10 @@ export function titleForTool(name: string, category: ConfirmCategory): string {
     page_delete: "删除一个页面（链接立刻失效，素材一起删）",
     email_send: "通过已连接邮箱发送一封邮件",
     memory_dream: "整理记忆：合并同主题的重复笔记（被并掉的条目会删除，可在 设置 → 记忆 撤销）",
+    mcp_add: "添加一个 MCP 服务器（自定义端点，凭据会发往该地址）",
   };
   if (known[name]) return known[name];
-  const verb = { message: "发送", delete: "删除", purchase: "付款 / 下单", device: "电脑操作" }[category];
+  const verb = { message: "发送", delete: "删除", purchase: "付款 / 下单", device: "电脑操作", admin: "添加连接器" }[category];
   return `${verb}（${name}）`;
 }
 

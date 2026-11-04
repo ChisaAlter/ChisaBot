@@ -10,7 +10,7 @@ ChisaBot 现在实际在跑的结构；上游 ChisaBot 的原始架构（Intelli
 ## 1. 总览
 
 ```
- 浏览器 / PWA          ChisaBot PC (Electron)        ChisaBot Android (原生 Compose)  IM 平台
+ 浏览器 / PWA          ChisaBot (Electron)           ChisaBot Android (原生 Compose)  IM 平台
       │                  │  聊天窗口 = 同一个网页          │ 原生聊天 + 网页兜底          │ QQ/微信/飞书/…
       │                  │  设备节点 WSS ───────┐         │                            │
       ▼                  ▼                      │         ▼                            ▼
@@ -70,7 +70,7 @@ React + TanStack Router + CopilotKit。一个应用覆盖聊天、设置、管�
 
 ### 2.5 设备节点（`pc/`、`server/src/devices/`）
 
-- ChisaBot PC（Electron，Windows）：一个窗口加载服务器网页 + 一个设备节点。节点主动发起 WSS 连到服务器（经系统代理），
+- ChisaBot（Electron，Windows 桌面客户端）：一个窗口加载服务器网页 + 一个设备节点。节点主动发起 WSS 连到服务器（经系统代理），
   用每台设备自己的令牌；70 s 静默看门狗，休眠唤醒 / 解锁时重连。
 - 设备属于**账号**，不属于某个机器人：用户的每个机器人都能拿到在线设备的 `device_*` 工具
   （[ADR-0002](adr/0002-devices-belong-to-account.md)）。能力分「关闭 / 询问 / 允许」，新设备默认「询问」；命令行、写文件、

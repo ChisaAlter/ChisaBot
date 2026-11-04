@@ -55,7 +55,6 @@ import {
   StatusCapsule,
 } from "@/components/chat/status-capsule";
 import {
-  knownWorkSeconds,
   markTurnRunEnded,
   turnStartedAt,
   WorkRow,
@@ -102,10 +101,11 @@ import {
   pickAttachmentThumbWidth,
 } from "@/lib/channels/attachments";
 import { isMessageHeld } from "@/lib/channels/focus-message";
+import { readWakeUpTurn } from "@/lib/channels/follow-up-turn";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { collapseScheduleRuns } from "@/lib/schedule-fired";
 import { readFiring } from "@/lib/channels/routine-firing";
-import { nextBlankHeight } from "@/lib/chat/blank-release";
+import { contentGap, nextBlankHeight } from "@/lib/chat/blank-release";
 import { friendlyError, UNANSWERED_TURN_REASON } from "@/lib/chat/friendly-error";
 import { supersededPageCalls } from "@/lib/chat/page-cards";
 import {
@@ -129,9 +129,7 @@ import {
 import type { VirtualizerHandle } from "virtua";
 import {
   isBlankNote,
-  isQuietWork,
   isWorkCall,
-  summarizeDoneWork,
   summarizeWork,
   type WorkCall,
   type WorkNote,
@@ -1224,15 +1222,33 @@ function SettleAtEnd({
         lastHeight = content.offsetHeight;
       }
       look();
-      // 留白整个在视口下面（人往上翻了）：收掉，看得见的东西一点都不动。
-      if (
-        s.slack > 0 &&
-        element.scrollTop + element.clientHeight <
-          element.scrollHeight - s.slack - 1
-      ) {
-        setSlack(0);
-        lastHeight = content.offsetHeight;
+      /*
+       * 留白整个在视口下面（人往上翻了）：收掉，看得见的东西一点都不动。滚动容器的 spacer 也是：
+       * 它只在「对齐某一轮 / 回到底部」时才重算，人翻走成 free-scrolling 后没人再管它——按它自己
+       * v(0) 的样子在这里收掉（下一次它要写 spacer 时照样写回来）。
+       */
+      {
+        const spacer = content.querySelector<HTMLElement>(
+          "[data-message-scroller-spacer]",
+        );
+        const spacerPx = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
+        const blank = s.slack + spacerPx;
+        if (
+          blank > 0 &&
+          element.scrollTop + element.clientHeight <
+            element.scrollHeight - blank - 1
+        ) {
+          if (spacer && spacerPx > 0) {
+            spacer.hidden = true;
+            spacer.style.height = "0px";
+            spacer.style.marginTop = "";
+          }
+          setSlack(0);
+          lastHeight = content.offsetHeight;
+        }
       }
+      // 落定在底部、底下还留着空（§93.3 当时人不在底部没收成）：接着收。release 自己会按 busy / touched 拒。
+      releaseRef.current?.();
       save();
     };
     /*
@@ -1297,6 +1313,7 @@ function SettleAtEnd({
       write();
     };
     let releaseFrame = 0;
+    let touchedRetry = 0;
     releaseRef.current = () => {
       const why = (reason: string) => {
         element.dataset.cbRelease = reason;
@@ -1306,15 +1323,28 @@ function SettleAtEnd({
         return why(
           `skip:${s.busy ? "busy" : s.releasing ? "releasing" : s.restore ? "restore" : "settling"}`,
         );
-      if (performance.now() - touchedAt < 400) return why("touched");
-      const gap =
-        element.scrollHeight - element.scrollTop - element.clientHeight;
-      if (gap > 4) return why(`gap:${Math.round(gap)}`); // 人不在底部：留白在视口外，§88.1 自己会收
       const spacer = content.querySelector<HTMLElement>(
         "[data-message-scroller-spacer]",
       );
       const spacerHeight = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
       const total = spacerHeight + s.slack;
+      if (performance.now() - touchedAt < 400) {
+        // 人刚滚完：等手停下来再试一次（滚到底部那一下正好撞上 touched，空白就永远留下了）。
+        window.clearTimeout(touchedRetry);
+        touchedRetry = window.setTimeout(() => releaseRef.current?.(), 420);
+        return why("touched");
+      }
+      /*
+       * 离真正的内容末尾多远：两块留白（spacer / slack）自己不算距离。上一轮对齐到视口 1/3 的那一轮底下
+       * 一定留着 spacer，把它算进 gap 就永远 >4——以前锚定的那一轮收空在这里被全部拒掉（§93.3 从没生效）。
+       */
+      const gap = contentGap(
+        element.scrollHeight,
+        element.scrollTop,
+        element.clientHeight,
+        total,
+      );
+      if (gap > 4) return why(`gap:${Math.round(gap)}`); // 人不在底部：留白在视口外，§88.1 自己会收
       if (total <= 1) return why("none");
       s.releasing = true;
       element.dataset.cbRelease = `release:${Math.round(total)}`;
@@ -1414,6 +1444,7 @@ function SettleAtEnd({
     return () => {
       if (s.floor !== null) setSlack(s.slack);
       if (saveTimer !== null) clearTimeout(saveTimer);
+      window.clearTimeout(touchedRetry);
       window.cancelAnimationFrame(releaseFrame);
       releaseRef.current = null;
       s.releasing = false;
@@ -1581,11 +1612,20 @@ function Arriving({
  * So: start-aligned and muted, because this is not the person speaking; the clock, because that is
  * what a routine already is everywhere else in the app; and the instruction ALONE, because that is
  * the part a person wrote and the only part addressed to them.
+ *
+ * Two of the instructions a firing can carry are themselves model-facing envelopes — a
+ * responsibility's turn (`shared/responsibility-turn.ts`) and a follow-up's wake message
+ * (`shared/follow-up-turn.ts`). Those get their own folded rows: the part a person reads on the
+ * line, the scaffolding behind "详情".
  */
 function RoutineFiring({ instruction }: { instruction: string }) {
   const responsibility = readResponsibilityTurn(instruction);
   if (responsibility) {
     return <ResponsibilityFiring raw={instruction} turn={responsibility} />;
+  }
+  const followUp = readWakeUpTurn(instruction);
+  if (followUp) {
+    return <FollowUpFiring raw={instruction} turn={followUp} />;
   }
   return (
     <div className="flex min-w-0 items-baseline gap-2 text-muted-foreground text-sm">
@@ -1630,6 +1670,47 @@ function ResponsibilityFiring({
           {describeTrigger(turn.trigger)}
         </p>
         <p className="whitespace-pre-wrap">{turn.instruction}</p>
+        <details className="group mt-1">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+            {"详情"}
+            <IconChevronDown
+              aria-hidden
+              className="size-3 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+            />
+          </summary>
+          <p className="mt-1 whitespace-pre-wrap break-words text-xs">{raw}</p>
+        </details>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A follow-up the Bot scheduled for itself, fired — same folded shape as a responsibility's turn.
+ *
+ * The wake message is written to the model ("You scheduled this follow-up for yourself on
+ * 2026-11-04T06:42Z. Your reason: … Pick it up now…"), so drawn inline a person read a page of
+ * English scaffolding every time a reminder went off. The line keeps the two parts a person can
+ * use — why the Bot wanted to come back and what it meant to do — and the whole message sits
+ * behind "详情".
+ */
+function FollowUpFiring({
+  raw,
+  turn,
+}: {
+  raw: string;
+  turn: { scheduledAt: string; reason: string; instruction: string };
+}) {
+  return (
+    <div className="flex min-w-0 items-baseline gap-2 text-muted-foreground text-sm">
+      <IconClock aria-hidden className="size-4 shrink-0 translate-y-0.5" />
+      <div className="min-w-0">
+        <p>
+          <span className="font-medium">{"定时任务已运行。"}</span> {turn.reason}
+        </p>
+        {turn.instruction ? (
+          <p className="whitespace-pre-wrap">{turn.instruction}</p>
+        ) : null}
         <details className="group mt-1">
           <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
             {"详情"}
@@ -3237,9 +3318,10 @@ export function ChatTranscript({
   }, [runningKey]);
   const showToolActivity = useToolActivityVisible();
   /*
-   * 简单回合（DESIGN.md §93）：做完了、只读的一两步、有结果——干活卡那一行整行收起，只留结果。结构上的判断在
-   * compactTurns（`quiet`）；有确认卡的调用、这一页知道用时超过 15 秒的，照常显示。确认列表和确认卡片用同一份
-   * 缓存（同一个 queryKey），不多发请求。打开「调试：显示工具调用」时不收（每一步本来就画着）。
+   * 干活胶囊只在思考和干活时出现（回复显示②，DESIGN.md §123，2026-11-04）：这一轮一结束，干活那一行整行收起——
+   * 不再留「✓ N 步 · N 秒 ⌄」那行（「◼ 已停止」「这一轮没有回答」是另外的行，不受影响）。结构上的判断在
+   * compactTurns（`quiet`）。确认列表和确认卡片用同一份缓存（同一个 queryKey），不多发请求。
+   * 打开「调试：显示工具调用」时不收（每一步本来就画着）。
    */
   const hasQuiet =
     !showToolActivity && [...compact.work.values()].some((work) => work.quiet);
@@ -3273,24 +3355,11 @@ export function ChatTranscript({
   if (hasQuiet) {
     for (const [anchor, work] of compact.work) {
       if (!work.quiet) continue;
-      if (
-        isQuietWork({
-          calls: work.calls,
-          live: work.live,
-          stopped: work.stopped,
-          hasFinal: work.answered,
-          confirmed,
-          seconds: knownWorkSeconds(work.key),
-          // 除了「做了 N 步」什么也说不出的行：成功做完就整行收起（2026-10-20 用户要求）。
-          genericSummary: summarizeDoneWork(work.calls)?.generic === true,
-        })
-      ) {
-        if (anchorDrawsCard(anchor)) quietWorkOnly.add(anchor);
-        else quietRows.add(anchor);
-      }
+      if (anchorDrawsCard(anchor)) quietWorkOnly.add(anchor);
+      else quietRows.add(anchor);
     }
   }
-  /** 这一行不画（收起的过程话、旧的浏览小条、简单回合的干活卡那一行）。 */
+  /** 这一行不画（收起的过程话、旧的浏览小条、结束那轮的干活卡那一行）。 */
   const rowHidden = (id: string) => compact.hidden.has(id) || quietRows.has(id);
   /*
    * 收起而不是拔掉（DESIGN §82.9）：一轮结束时过程话 / 旧的浏览小条被收起（compact.hidden），以前那一帧直接卸载，
@@ -3834,7 +3903,7 @@ export function ChatTranscript({
     ];
   }
 
-  /** 这一轮的干活卡 / 收成的一行，画在这一轮第一个干活的工具那一行里（DESIGN.md §75.1）。打开「调试：显示工具调用」时不画（每一步本来就画着）。 */
+  /** 这一轮的干活胶囊画在第一个干活的工具那一行里（DESIGN.md §75.1）；只在干活时画，结束那一行整行收起（§123）。打开「调试：显示工具调用」时不画（每一步本来就画着）。 */
   function workRowFor(id: string) {
     if (showToolActivity || quietWorkOnly.has(id)) return null;
     const work = compact.work.get(id);
@@ -4117,9 +4186,9 @@ export type WorkEntry = {
   key: string;
   live: boolean;
   notes: WorkNote[];
-  /** 简单回合（只读的一两步、做完了、有结果）：结构上可以整行收起（§93）。 */
+  /** 这一轮结束了（不在跑）：干活那一行整行收起，胶囊只在干活时画（§123）。 */
   quiet: boolean;
-  /** 这一轮有看得见的回答（结果气泡、卡片、留着的气泡）。没有时那一行不收（回复显示①）。 */
+  /** 这一轮有看得见的回答（结果气泡、卡片、留着的气泡）。没有时挂「这一轮没有回答」（回复显示①）。 */
   answered: boolean;
   /** 这一轮被用户停掉了。 */
   stopped: boolean;
@@ -4206,7 +4275,7 @@ export function compactTurns(
   compactionAfter: Map<string, CompactionNote>;
   /**
    * 干活卡（§75.1）：这一轮第一个干活的工具那一行 → 这一轮的全部调用、是否还在跑；key = 这一轮开头那条消息（记用时用）。
-   * 还在跑时画实时卡，结束后同一个位置收成「搜索 2 次 · 12 秒 ⌄」。
+   * 还在跑时画实时卡；这一轮一结束，那一行整行收起（§123：胶囊只在思考和干活时出现）。
    */
   work: Map<string, WorkEntry>;
   /** Hark 式回复引用（`╭─`）：当用户连发多条或中途插话时，助手回复自动挂上所回应的用户原话与消息 id。 */
@@ -4425,15 +4494,9 @@ export function compactTurns(
             }
           }
         });
-        // 简单回合（§93）：结构上的判断在这里；确认卡、用时只有渲染时知道，ChatTranscript 再看一遍。
-        const quiet = isQuietWork({
-          calls,
-          live,
-          stopped: isStopped,
-          hasFinal: final !== null,
-          // 只说得出「做了 N 步」的一轮（例如跑了几条命令）：收起这一行，只留回答（2026-10-20 用户要求）。
-          genericSummary: summarizeDoneWork(calls)?.generic === true,
-        });
+        // 胶囊只在思考和干活时出现（回复显示②，§123）：这一轮一结束，干活那一行整行收起——
+        // 做完的、被停的、没回答的都一样收起（「◼ 已停止」「这一轮没有回答」是另外的行）。还在跑的照旧画着。
+        const quiet = !live;
         workAnchor = anchor;
         work.set(anchor, {
           calls,
@@ -4486,7 +4549,7 @@ export function compactTurns(
     }
     /*
      * 回复显示①（2026-10-29）：这一轮有没有看得见的回答——结果气泡、以卡片收尾（`drawsCard`：自定义渲染器、确认卡、宿主提示、活动卡）、或者留着没收的气泡。
-     * 工具失败后没有字、或只回了「---」时都没有：那一行不收（否则一片空白），最后挂「这一轮没有回答」。
+     * 工具失败后没有字、或只回了「---」时都没有：最后挂「这一轮没有回答」（干活那一行现在也收，§123；答案的位置上不能一片空白）。
      */
     const answered =
       final !== null ||
@@ -4498,16 +4561,7 @@ export function compactTurns(
       ) ||
       texts.some((item) => !hidden.has(item.id));
     const entry = workAnchor === null ? undefined : work.get(workAnchor);
-    if (entry) {
-      entry.answered = answered;
-      entry.quiet = isQuietWork({
-        calls: entry.calls,
-        live,
-        stopped: isStopped,
-        hasFinal: answered,
-        genericSummary: summarizeDoneWork(entry.calls)?.generic === true,
-      });
-    }
+    if (entry) entry.answered = answered;
     const visible = [...turn.users, ...turn.rest].filter(
       (item) => !hidden.has(item.id),
     );

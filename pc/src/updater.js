@@ -18,7 +18,7 @@
  *    state.signing = false，网页提示。
  *  - 什么时候检查：开着「自动更新」时，启动 30 秒后一次、之后每 30 分钟一次；下载在后台进行，下载好了
  *    调 onDownloaded（主进程弹本机窗口「新版本已下载，重启以安装」：立即重启 / 稍后）。选「稍后」时，
- *    下次退出 ChisaBot PC 时自动安装（autoInstallOnAppQuit）。
+ *    下次退出 ChisaBot 时自动安装（autoInstallOnAppQuit）。
  *  - 关掉「自动更新」只停掉定时检查；网页「本机」标签里的「检查更新」照样可以手动检查和下载。
  *  - 只有 NSIS 安装版能更新（安装目录里有卸载程序）。开发运行、免安装 zip 一律 supported = false。
  *  - 两种安装方式（docs/online-update.md §2.1）。每次更新下载的都是完整安装包，区别只在怎么运行它：
@@ -80,10 +80,11 @@ function defaultQuit() {
 /** NSIS 安装版：安装目录里有卸载程序。免安装 zip 解压出来的没有。 */
 function isInstalledBuild({ execPath, productName, exists = fs.existsSync }) {
   const dir = path.dirname(execPath);
-  // electron-builder 的 NSIS 卸载程序用 executableName（ChisaBotPC），不带 productName 里的空格。
-  // 先找带空格的名字（旧安装器 / 测试），再找去掉空格的名字（当前安装包）。
+  // electron-builder 的 NSIS 卸载程序按 executableName 命名；改名前（≤0.1.128）那两种写法也认，
+  // 新 exe 万一落在旧安装目录里照样算安装版。
   const compact = String(productName).replace(/\s+/g, "");
-  return [`Uninstall ${productName}.exe`, `Uninstall ${compact}.exe`].some((name) => exists(path.join(dir, name)));
+  const names = [`Uninstall ${productName}.exe`, `Uninstall ${compact}.exe`, "Uninstall ChisaBotPC.exe", "Uninstall ChisaBot PC.exe"];
+  return [...new Set(names)].some((name) => exists(path.join(dir, name)));
 }
 
 function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, productName, shellHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onDownloaded, onRejected, logger, spawn = defaultSpawn, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {

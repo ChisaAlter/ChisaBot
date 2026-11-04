@@ -369,7 +369,7 @@ function createNodeAgent(options) {
       const agent = options.getAgent ? await options.getAgent(url).catch(() => undefined) : undefined;
       if (stopped) return;
       ws = new WebSocketImpl(url, {
-        headers: { "X-Device-Token": token, Origin: origin, "User-Agent": `ChisaBotPC/${options.clientInfo?.clientVersion || "0"}` },
+        headers: { "X-Device-Token": token, Origin: origin, "User-Agent": `ChisaBot/${options.clientInfo?.clientVersion || "0"}` },
         handshakeTimeout: 15_000,
         ...(agent ? { agent } : {}),
       });

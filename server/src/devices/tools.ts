@@ -303,7 +303,7 @@ export function deviceGuidance(
   };
   const online = devices.filter((device) => isOnline(device.id));
   const lines = [
-    "The person's own computers. Besides your own cloud browser (the computer_* tools), the person has linked these computers of theirs to their account through the ChisaBot PC client. They are shared by all of the person's Bots, including you:",
+    "The person's own computers. Besides your own cloud browser (the computer_* tools), the person has linked these computers of theirs to their account through the ChisaBot desktop app. They are shared by all of the person's Bots, including you:",
     ...devices.map(describe),
   ];
   if (online.length) {
@@ -317,7 +317,7 @@ export function deviceGuidance(
     );
   } else {
     lines.push(
-      "None of them is online right now, so you cannot operate them at this moment. If the person asks about their computer, say it is linked but not connected, give the name and when it was last online, and ask them to open ChisaBot PC on it (the tray icon turns blue when it is connected). If ChisaBot PC is open but it still shows offline, they can use the tray menu 「重新登记这台电脑」 or sign out and sign in again in ChisaBot PC.",
+      "None of them is online right now, so you cannot operate them at this moment. If the person asks about their computer, say it is linked but not connected, give the name and when it was last online, and ask them to open ChisaBot on it (the tray icon turns blue when it is connected). If ChisaBot is open but it still shows offline, they can use the tray menu 「重新登记这台电脑」 or sign out and sign in again in ChisaBot.",
     );
   }
   return lines.join("\n");
@@ -416,7 +416,7 @@ export function deviceTools(options: {
     {
       name: "device_list",
       ref: "devices/list",
-      description: `列出用户账号下关联的全部设备（ChisaBot PC / 手机客户端）及其在线状态和已开启的能力。这些设备由用户的所有机器人共用。被问到「能不能看到 / 用我的电脑」时先调用它。当前：${roster}`,
+      description: `列出用户账号下关联的全部设备（ChisaBot 桌面客户端 / 手机客户端）及其在线状态和已开启的能力。这些设备由用户的所有机器人共用。被问到「能不能看到 / 用我的电脑」时先调用它。当前：${roster}`,
       parameters: schemas.list,
       execute: async () => {
         const fresh = await store.forOwner(actorId);

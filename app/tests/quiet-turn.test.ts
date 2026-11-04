@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { compactTurns } from "../src/components/channels/chat-transcript";
 import { isMediaOnly, splitBubbles } from "../src/lib/chat/bubbles";
-import { isQuietWork, QUIET_MAX_SECONDS, workCallFailed, type WorkCall } from "../src/lib/chat/work-steps";
+import { workCallFailed } from "../src/lib/chat/work-steps";
 
 /**
- * DESIGN.md §93：简单回合收起干活卡 + 开场一句收进卡片 + 只有图片的段不画空气泡。
+ * DESIGN.md §93 / §123：干活胶囊只在思考和干活时出现——这一轮一结束，干活那一行整行收起（做完的、被停的、
+ * 没回答的都一样）；开场一句收进卡片；只有图片的段不画空气泡。
  * 复现 2026-10-16 18:39 用户那一轮：「k看我当前的电脑」→ 开场一句 → device_list → device_screenshot → 「这是你当前在线的 …屏幕：」+ 截图。
  */
 type Item = Parameters<typeof compactTurns>[0][number];
@@ -27,8 +28,8 @@ const userTurn = (extra: Item[] = []): Item[] => [
   ...extra,
 ];
 
-describe("简单回合（§93）", () => {
-  test("用户那一轮：做完后干活卡可以整行收起，开场一句收进卡片，结果照旧是气泡", () => {
+describe("胶囊只在干活时出现（§93 / §123）", () => {
+  test("用户那一轮：做完后干活卡整行收起，开场一句收进卡片，结果照旧是气泡", () => {
     const compact = compactTurns([...userTurn(), bot("a2", ANSWER)], false, new Set());
     expect(compact.work.get("t1")?.quiet).toBe(true);
     expect(compact.hidden.has("a1")).toBe(true);
@@ -51,15 +52,15 @@ describe("简单回合（§93）", () => {
     expect(compact.hidden.has("a1")).toBe(false);
   });
 
-  test("跑完了但没有看得见的回答（出错 / 中断）：那一行不收，下面挂「这一轮没有回答」（回复显示①，2026-10-29）", () => {
+  test("跑完了但没有看得见的回答（出错 / 中断）：干活那一行也收起（§123），下面挂「这一轮没有回答」（回复显示①）", () => {
     const compact = compactTurns(userTurn(), false, new Set());
-    expect(compact.work.get("t1")?.quiet).toBe(false);
+    expect(compact.work.get("t1")?.quiet).toBe(true);
     expect(compact.work.get("t1")?.answered).toBe(false);
     expect(compact.noAnswerAfter.get("t2")).toEqual({ last: true });
   });
 
-  test("被停掉的一轮不收（审查模块 7：收起的一行留着，点开看做过的步骤），还在跑的照旧画着", () => {
-    expect(compactTurns([...userTurn(), bot("a2", ANSWER)], false, new Set(["u1"])).work.get("t1")?.quiet).toBe(false);
+  test("被停掉的一轮也收起（§123：胶囊只在干活时出现，「已停止」是另外一行）；还在跑的照旧画着", () => {
+    expect(compactTurns([...userTurn(), bot("a2", ANSWER)], false, new Set(["u1"])).work.get("t1")?.quiet).toBe(true);
     expect(compactTurns(userTurn(), true, new Set()).work.get("t1")?.quiet).toBe(false);
   });
 
@@ -98,39 +99,13 @@ describe("简单回合（§93）", () => {
     ];
     expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(true);
     expect(compactTurns(items, true, new Set()).work.get("t1")?.quiet).toBe(false);
-    // 没回答（中断 / 出错）：不收，否则这一轮是一片空白（回复显示①，2026-10-29）。
-    expect(compactTurns(items.slice(0, 5), false, new Set()).work.get("t1")?.quiet).toBe(false);
+    // 没回答（中断 / 出错）：也收起（§123）——答案位置挂「这一轮没有回答」，不再留「N 步失败」那行。
+    expect(compactTurns(items.slice(0, 5), false, new Set()).work.get("t1")?.quiet).toBe(true);
   });
 
   test("准备动作（看技能）不算步骤、也不挡", () => {
     const items = [user("u1", "看"), call("s1", "skill_list"), call("t1", "device_screenshot", SHOT), bot("a2", ANSWER)];
     expect(compactTurns(items, false, new Set()).work.get("t1")?.quiet).toBe(true);
-  });
-
-  test("isQuietWork：默认做完就收，关掉才回到 §93 的细规则", () => {
-    const calls: WorkCall[] = [
-      { name: "device_list", arguments: "{}", done: true, id: "t1" },
-      { name: "device_screenshot", arguments: "{}", done: true, id: "t2" },
-    ];
-    // 默认（HIDE_FINISHED_WORK_SUMMARY）：做完、有回答 → 一律收起，不再看确认卡 / 用时。
-    expect(isQuietWork({ calls, live: false, hasFinal: true })).toBe(true);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, confirmed: new Set(["t2"]) })).toBe(true);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, seconds: QUIET_MAX_SECONDS + 1 })).toBe(true);
-    // 还在跑：不收（它是进度）。跑完有回答的收起；没有回答的不收（回复显示①）。
-    // 被停掉的也不收（审查模块 7）：那一行留着、收起的，点开看做过哪些步、哪些停掉了。
-    expect(isQuietWork({ calls, live: true, hasFinal: true })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: false })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: false, stopped: true })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, stopped: true })).toBe(false);
-    // hideSummary: false 时是原来的 §93：没回答 / 被停掉 / 确认卡 / 用时都还有效。
-    expect(isQuietWork({ calls, live: false, hasFinal: false, hideSummary: false })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, stopped: true })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false })).toBe(true);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, confirmed: new Set(["t2"]) })).toBe(false);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, seconds: 7 })).toBe(true);
-    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, seconds: QUIET_MAX_SECONDS + 1 })).toBe(false);
-    expect(isQuietWork({ calls: [], live: false, hasFinal: true, hideSummary: false })).toBe(false);
-    expect(isQuietWork({ calls: [{ ...calls[0]!, done: false }], live: false, hasFinal: true, hideSummary: false })).toBe(false);
   });
 
   /*
@@ -154,28 +129,6 @@ describe("简单回合（§93）", () => {
       bot("a2", "没装成。"),
     ];
     expect(compactTurns(failed, false, new Set()).work.get("c1")?.quiet).toBe(true);
-  });
-
-  test("§93 的 genericSummary 判定还在（hideSummary: false 时用）", () => {
-    const calls: WorkCall[] = [
-      { name: "computer_run_command", arguments: "{}", done: true, id: "c1" },
-      { name: "computer_run_command", arguments: "{}", done: true, id: "c2" },
-    ];
-    expect(isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, seconds: 600 })).toBe(false);
-    expect(
-      isQuietWork({ calls, live: false, hasFinal: true, hideSummary: false, seconds: 600, genericSummary: true }),
-    ).toBe(true);
-    expect(isQuietWork({ calls, live: false, hasFinal: false, hideSummary: false, genericSummary: true })).toBe(false);
-    expect(
-      isQuietWork({
-        calls,
-        live: false,
-        hasFinal: true,
-        hideSummary: false,
-        genericSummary: true,
-        confirmed: new Set(["c1"]),
-      }),
-    ).toBe(false);
   });
 
   test("workCallFailed", () => {

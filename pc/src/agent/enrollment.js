@@ -34,7 +34,7 @@ async function ensureEnrolled({ config, sessionStatus, cookieHeader, enroll, che
     }
   }
   const session = await sessionStatus().catch(() => "offline");
-  if (session === "login") return { status: "login", message: "登录已过期，请重新登录 ChisaBot PC。" };
+  if (session === "login") return { status: "login", message: "登录已过期，请重新登录 ChisaBot。" };
   if (session === "offline") return { status: "offline", message: "暂时连不上服务器，稍后会自动重试。" };
   try {
     const result = await enroll({ serverUrl, cookieHeader: await cookieHeader(), info });

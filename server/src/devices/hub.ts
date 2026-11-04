@@ -688,7 +688,7 @@ export function createDeviceHub(options: {
         if (!supported)
           return refuse(
             "refused",
-            `这台设备上的 ChisaBot 客户端（${record.clientVersion ?? "旧版"}）还不支持「${OPERATION_LABEL[input.operation] ?? input.operation}」。请把 ChisaBot PC 更新到 0.1.8 或更新版本（服务器节点重新运行安装命令即可）。`,
+            `这台设备上的 ChisaBot 客户端（${record.clientVersion ?? "旧版"}）还不支持「${OPERATION_LABEL[input.operation] ?? input.operation}」。请把 ChisaBot 客户端更新到 0.1.8 或更新版本（服务器节点重新运行安装命令即可）。`,
           );
       }
 

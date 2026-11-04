@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 谁在想 | 服务器上的机器人（你给它配的模型） | 电脑上的 agent：Claude Code / Codex CLI / OpenCode / Gemini CLI / Aider，或 ChisaBot 内置循环 |
 | 怎么动手 | 每一步一个 `device_*` 工具调用，经 WebSocket 发到电脑执行（docs/pc-node.md） | agent 在电脑上自己读写文件、跑命令；服务器只收进度 |
-| 电脑上要装什么 | 只要 ChisaBot PC / 无界面节点 | 再加上想用的 CLI agent（内置循环不用装） |
+| 电脑上要装什么 | 只要 ChisaBot 桌面客户端 / 无界面节点 | 再加上想用的 CLI agent（内置循环不用装） |
 | 适合 | 零散操作、看看文件、点点鼠标、截图 | 一整件编码活儿（修 bug、跑测试、重构），或指定「用 Claude Code」 |
 | 进度 | 聊天里的工具调用 | 聊天里的任务卡片（实时输出、停止、改动、应用改动） |
 

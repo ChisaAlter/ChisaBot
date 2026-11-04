@@ -58,8 +58,8 @@ function run(dir: string, ...args: string[]) {
   return { code: p.exitCode, out: p.stdout.toString() + p.stderr.toString() };
 }
 
-const EXE = "ChisaBot-PC-1.0.0-x64-setup.exe";
-const ZIP = "ChisaBot-PC-1.0.0-x64-portable.zip";
+const EXE = "ChisaBot-1.0.0-x64-setup.exe";
+const ZIP = "ChisaBot-1.0.0-x64-portable.zip";
 const APK = "ChisaBot-Android-1.0.0.apk";
 
 /** 写一份 pc job 上传的 <flavor> 产物（文件名与 flavor 无关，和线上一样）。 */

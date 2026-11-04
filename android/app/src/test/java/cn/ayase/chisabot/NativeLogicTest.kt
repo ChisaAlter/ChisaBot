@@ -100,7 +100,8 @@ class NativeLogicTest {
         assertFalse(done.any { it is Row.Bot && it.kind == Row.Kind.Process })
         assertEquals("结果在这。", (done.last() as Row.Bot).text)
         assertTrue((done.last() as Row.Bot).copyable)
-        assertEquals(live.first { it is Row.Work }.key, done.first { it is Row.Work }.key) // 同一个 key：原地换样子，不跳
+        // 胶囊只在干活时出现（§123）：这一轮一结束，干活那一行整行收起，不再留「✓ N 步」那行
+        assertFalse(done.any { it is Row.Work })
     }
 
     @Test fun narrationFoldsIntoWorkCard() {
@@ -286,6 +287,14 @@ class NativeLogicTest {
         assertTrue(plain.filterIsInstance<Row.Bot>().last().regenerate)
         assertFalse(plain.filterIsInstance<Row.User>().first().editable)
         assertFalse(Turns.build(msgs.take(2) + ChatMessage("u3", "user", "再说一次"), true, null).filterIsInstance<Row.User>().any { it.editable })
+
+        // §124：触发帧（定时 / 长期任务 / 跟进到点）也是服务器行，不画成用户气泡、不给编辑。
+        val firing = Turns.build(
+            listOf(ChatMessage("u9", "user", "One of your routines is firing right now, on its schedule, and this is that firing.\nCarry out the instruction below in this turn: do the work now, then say what happened.\nDo not create, list or change any routine unless the instruction itself asks you to.\n\nYou scheduled this follow-up for yourself on 2026-11-04. Your reason: 看一眼"),),
+            running = false, error = null,
+        )
+        assertEquals("定时任务已运行，机器人开始做", firing.filterIsInstance<Row.Server>().single().text)
+        assertFalse(firing.any { it is Row.User })
     }
 
     @Test

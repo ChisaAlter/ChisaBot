@@ -87,7 +87,7 @@ test("all linked computers offline: says the bots cannot use it and what to do",
   expect(view.container.textContent).toContain(
     "都不在线，机器人现在用不了你的电脑",
   );
-  expect(view.container.textContent).toContain("ChisaBot PC");
+  expect(view.container.textContent).toContain("ChisaBot");
 });
 
 test("online with every capability off: says so and links to permissions", () => {

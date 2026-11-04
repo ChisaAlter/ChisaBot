@@ -8,6 +8,8 @@
  * event, so a missed sweep costs two seconds where a missed event would cost the name entirely.
  */
 import { and, asc, eq, isNull, notExists, sql } from "drizzle-orm";
+import { readWakeUpTurn } from "../../../shared/follow-up-turn";
+import { readResponsibilityTurn } from "../../../shared/responsibility-turn";
 import { readFiring } from "../../../shared/routine-firing";
 import type { Database } from "../db/client";
 import {
@@ -302,8 +304,15 @@ async function openingOf(
   if (!rawAsked) return null;
   // A channel a routine opened has the firing frame wrapped around its first message, not a
   // person's words. Unwrapped before it can become the title, same as the transcript unwraps it
-  // before it can become what a person reads.
-  const asked = readFiring(rawAsked) ?? rawAsked;
+  // before it can become what a person reads — and a responsibility's or follow-up's instruction
+  // inside that frame is another envelope around the model, so it is unwrapped one layer further.
+  const firing = readFiring(rawAsked);
+  const asked =
+    firing === null
+      ? rawAsked
+      : readResponsibilityTurn(firing)?.instruction ||
+        readWakeUpTurn(firing)?.reason ||
+        firing;
   const replied = answer ? textOf(answer.content) : "";
 
   return oneLine(

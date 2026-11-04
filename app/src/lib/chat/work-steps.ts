@@ -137,6 +137,7 @@ export function isWorkCall(name: string): boolean {
 /**
  * 一轮结束后收成的一行（DESIGN.md §70.2）：「搜索 2 次 · 看了 3 个网页」/「做了 5 步」，点开是每一步。
  * 只数真的干活的工具；一步都没有返回 null（不出这一行）。
+ * §123（2026-11-04）起结束的那一轮整行收起、不再留这一行——它只剩收起动画里 `WorkRow` 的 done 态还在用。
  */
 export function summarizeDoneWork(calls: readonly WorkCall[]): DoneWork | null {
   const work = calls.filter((call) => !NOT_WORK.has(call.name));
@@ -336,102 +337,4 @@ export function workCallFailed(result: string | undefined): boolean {
     }
   }
   return false;
-}
-
-/**
- * 「简单回合」允许的工具（§93）：只读、很快、对用户没有信息量——列设备、截屏、看系统信息 / 文件列表、翻记忆、
- * 看页面 / 定时任务 / 面板列表。改东西（写文件、跑命令、装软件、点鼠标）、上网搜索 / 读网页、开浏览器都不在里面：
- * 那些干活卡本身就是用户想看的（搜了什么、跑了什么）。准备动作 / 画卡片（NOT_WORK）不算步骤，也不挡。
- */
-export const QUIET_TOOLS: ReadonlySet<string> = new Set([
-  "device_list",
-  "device_system_info",
-  "device_screenshot",
-  "device_list_files",
-  "device_read_file",
-  "device_search",
-  "device_processes",
-  "device_agent_list",
-  "device_agent_status",
-  "memory_search",
-  "page_list",
-  "page_get",
-  "schedule_list",
-  "panel_list",
-  "worker_status",
-  "chat_files_recent",
-  "list_recent_files",
-]);
-
-/** 简单回合最多几步（不算准备动作）。 */
-export const QUIET_MAX_STEPS = 3;
-/** 简单回合最长几秒（这一页知道用时时才看；从历史打开不知道用时，只按步骤判断）。 */
-export const QUIET_MAX_SECONDS = 15;
-
-/**
- * 做完的一轮还画不画那行步数。
- *
- * 2026-10-20 用户：「全部不显示步数吧，只留回答」。所以做完、有结果的一轮，那行步数一律收起——
- * 失败过的、步数多的、搜索网页的都不再单独占一行，回答就是回答（失败的提示卡「这一轮没有做完」
- * 和确认卡是另外的东西，不受影响）。还在跑的那一行照旧（不然聊天像卡住），只是不再写「第 N 步」。
- *
- * 想改回 §93 的「只收简单回合」，把这里改成 `false` 即可，下面的白名单 / 步数 / 用时规则都还在。
- */
-export const HIDE_FINISHED_WORK_SUMMARY = true;
-
-/**
- * 这一轮做完以后要不要把干活卡整行收起（DESIGN.md §93，用户 2026-10-16「做了 2 步 7 秒这个应该隐藏」）。
- * 唯一的判断，渲染和测试都用它。全部成立才收：
- *  - 这一轮结束了（不在跑）、没被停掉，并且有结果（最后一段回答）；
- *  - 每个调用都有结果、没有一个出错 / 被拒 / 被中断；
- *  - 只用了 QUIET_TOOLS 里的工具（加上不算步骤的准备动作），步数 1..QUIET_MAX_STEPS；
- *  - 没有确认卡（`confirmed` = 有确认请求的调用 id）；
- *  - 用时：这一页知道（亲眼看着跑过 / 记下过）时不超过 QUIET_MAX_SECONDS 秒；不知道就不看。
- * 收起的只是这一行的画法：调用、过程话都还在 `compactTurns().work` 里，打开「调试：显示工具调用」照常全画。
- *
- * `genericSummary`（2026-10-20 用户「把做了几步去掉，隐藏」）：这一行除了「做了 N 步」什么也说不出
- * （`summarizeDoneWork().generic`，例如跑了几条命令）。这种行没有信息量：工具白名单和用时都不再拦它，
- * 成功做完、步数不超过 QUIET_MAX_STEPS 就整行收起——「做了 2 步 · 13 秒」不该占在回答上面。
- * 失败的（「1 步失败」）照常显示；步数多的（>QUIET_MAX_STEPS）也照常显示。
- */
-export function isQuietWork({
-  calls,
-  live,
-  stopped = false,
-  hasFinal,
-  confirmed,
-  seconds = null,
-  genericSummary = false,
-  hideSummary = HIDE_FINISHED_WORK_SUMMARY,
-}: {
-  calls: readonly WorkCall[];
-  live: boolean;
-  stopped?: boolean;
-  hasFinal: boolean;
-  confirmed?: ReadonlySet<string> | undefined;
-  seconds?: number | null;
-  genericSummary?: boolean;
-  /** 见 `HIDE_FINISHED_WORK_SUMMARY`：做完有结果就整行收起，不再看失败 / 步数 / 用时。 */
-  hideSummary?: boolean;
-}): boolean {
-  if (live) return false;
-  // 用户要的是「只留回答」：有回答时那行步数一律不画（2026-10-20）。
-  // 回复显示①（2026-10-29）：没有看得见的回答（工具失败、后面没有字，或只回了「---」）时不收——
-  // 收了这一轮就是一片空白；这一行留着（「N 步失败」），下面再挂「这一轮没有回答」和重试。
-  // 审查模块 7：被停掉的一轮也不收——那一行留着（收起的，点开看做过哪些步、哪些被停掉），以前停下后只剩「已停止」。
-  if (hideSummary) return hasFinal && !stopped;
-  if (stopped || !hasFinal) return false;
-  let steps = 0;
-  for (const call of calls) {
-    if (!call.done || call.failed) return false;
-    if (call.id && confirmed?.has(call.id)) return false;
-    if (NOT_WORK.has(call.name)) continue;
-    // 只说得出「做了 N 步」的一轮，工具在不在白名单里都不影响：这一行本来就没说做了什么。
-    if (!QUIET_TOOLS.has(call.name) && !genericSummary) return false;
-    steps += 1;
-  }
-  if (steps === 0 || steps > QUIET_MAX_STEPS) return false;
-  // 说得出「跑了很久」的那几轮不再悄悄收起；「做了 N 步」本身没有信息量，用时也不拦它。
-  if (genericSummary) return true;
-  return seconds === null || seconds <= QUIET_MAX_SECONDS;
 }

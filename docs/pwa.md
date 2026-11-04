@@ -7,7 +7,7 @@ ChisaBot 的网页版可以直接在手机浏览器里用，也可以「安装�
 | 设备 | 怎么判断 | 布局 |
 | --- | --- | --- |
 | 手机（竖屏、横屏都算） | 主要指针是触屏且屏幕短边 < 600px，或浏览器的 UA-CH 说 `mobile` | 窄（竖屏）布局：左栏是抽屉、面板是抽屉、输入框贴底 |
-| 平板、电脑浏览器、ChisaBot PC | 看窗口宽度 | < 768px 窄布局，≥ 768px 宽布局（≥ 1280 带右侧面板栏） |
+| 平板、电脑浏览器、ChisaBot 桌面客户端 | 看窗口宽度 | < 768px 窄布局，≥ 768px 宽布局（≥ 1280 带右侧面板栏） |
 | 安装后的应用（PWA） | 同上 | Windows / macOS 默认宽屏（第一次打开把窗口开到最多 1440×920），手机默认竖屏 |
 
 - 判断在 `app/index.html` 的内联脚本里，第一帧之前把 `data-phone` / `data-ios` / `data-standalone` / `data-android-app` 写到 `<html>` 上；完整说明在 `app/src/lib/device.ts`。
@@ -19,7 +19,7 @@ ChisaBot 的网页版可以直接在手机浏览器里用，也可以「安装�
 
 - **安卓 Chrome / 电脑 Chrome、Edge**：打开网页版 8 秒后，顶栏下面出现「安装 ChisaBot 应用」，点「安装」弹出浏览器自己的确认；也可以从浏览器菜单「安装应用 / 添加到主屏幕」。
 - **iPhone / iPad Safari**：提示里点「怎么装」看步骤：点分享按钮 → 添加到主屏幕。
-- ×「不再提示」永久关掉；点「安装」后取消/超时则 14 天内不再出现（`localStorage` 的 `chisabot-install-hint`）。ChisaBot PC、安卓客户端、已经以应用方式打开时都不提示。
+- ×「不再提示」永久关掉；点「安装」后取消/超时则 14 天内不再出现（`localStorage` 的 `chisabot-install-hint`）。ChisaBot 桌面客户端、安卓客户端、已经以应用方式打开时都不提示。
 - 安装需要 HTTPS（或 localhost）。清单和图标在登录网关后面：清单用 `crossorigin="use-credentials"` 带上登录 cookie。
 
 ## Service worker（`app/public/sw.js`）
@@ -31,7 +31,7 @@ ChisaBot 的网页版可以直接在手机浏览器里用，也可以「安装�
 
 其它请求（`/api`、`/auth`、WebSocket、非 GET、跨域、Range、`/magpie-admin`、`/downloads`）一律不拦。服务器对 `/sw.js` 和清单回 `Cache-Control: no-cache`，注册时 `updateViaCache: "none"`，部署后下一次打开就换上新的 service worker。
 
-ChisaBot PC（Electron）和安卓客户端里不注册（已经注册过的会注销）。
+ChisaBot 桌面客户端（Electron）和安卓客户端里不注册（已经注册过的会注销）。
 
 ### 出问题时
 
@@ -45,4 +45,4 @@ self.addEventListener("activate", (event) => event.waitUntil(self.registration.u
 
 ## 图标
 
-`assets/brand/generate.py` 生成：`pwa-any-192/512.png`（圆角透明边，电脑上的应用图标）、`pwa-maskable-192/512.png`（满版，系统按圆 / 圆角裁切，脸和发带都在中间 80% 安全区里），`apple-touch-icon.png`（iOS 主屏幕）。
+`assets/brand/generate.mjs` 生成：`pwa-any-192/512.png`（圆角透明边，电脑上的应用图标）、`pwa-maskable-192/512.png`（满版，系统按圆 / 圆角裁切，脸和发带都在中间 80% 安全区里），`apple-touch-icon.png`（iOS 主屏幕）。

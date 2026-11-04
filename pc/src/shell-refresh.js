@@ -10,7 +10,7 @@
  * 何时运行：src/shell-fingerprint.json 的哈希和本机 config.json 记下的 shellHash 不同（包括第一次装上带
  * 这个功能的版本，那时 shellHash 为空）；或者（0.1.12 起每次启动都看一眼）有指向本程序的快捷方式图标不是
  * 现在这份 resources\icons\chisabot-<哈希>.ico。只改指向本程序 exe 的快捷方式（以及指向已经不存在的
- * 旧安装位置里 ChisaBotPC.exe 的快捷方式——换了安装目录重装后，旧快捷方式会一直显示旧图标）。
+ * 旧安装位置里旧 exe 的快捷方式——换了安装目录重装后，旧快捷方式会一直显示旧图标）。
  *
  * 图标为什么指向单独的 .ico 而不是 exe：资源管理器按「图标文件路径 + 序号」缓存图标，exe 路径不变就可能
  * 一直用缓存里的旧图（0.1.11 在 Windows 11 上重新安装后仍是旧图标）。按内容哈希命名的 .ico 是新路径，必然重新读取。
@@ -41,7 +41,7 @@ function findIcon({ resourcesPath, readdir = fs.readdirSync } = {}) {
 }
 
 /**
- * 去这几个地方找 .lnk：桌面、开始菜单 Programs（含一层子文件夹）、任务栏固定。名字不一定是「ChisaBot PC.lnk」
+ * 去这几个地方找 .lnk：桌面、开始菜单 Programs（含一层子文件夹）、任务栏固定。名字不一定是「ChisaBot.lnk」
  * （用户自己固定 / 复制出来的可能叫别的），所以列目录，再按目标判断是不是本程序。
  */
 function scanShortcuts({ desktopDir, appData, readdir = fs.readdirSync, isDir = (p) => fs.statSync(p).isDirectory() }) {
@@ -95,12 +95,15 @@ function needsShellRefresh({ current, last }) {
   return current !== (last || "");
 }
 
-/** 这个快捷方式是不是本程序的：目标就是现在的 exe；或者目标是别处的 ChisaBotPC.exe 而那个文件已经不在了（旧安装位置）。 */
+/** 改名前（≤0.1.128）的 exe 名：旧安装被卸掉后，指向它的快捷方式也算本程序的，照样重定向到新 exe。 */
+const LEGACY_EXE_BASENAMES = new Set(["chisabotpc.exe"]);
+
+/** 这个快捷方式是不是本程序的：目标就是现在的 exe；或者目标是指向已不存在的旧安装位置的旧 exe。 */
 function pointsAtUs(target, execPath, exists) {
   if (!target) return false;
   if (samePath(target, execPath)) return true;
   const base = path.win32.basename(String(target)).toLowerCase();
-  return base === path.win32.basename(String(execPath)).toLowerCase() && !exists(target);
+  return (base === path.win32.basename(String(execPath)).toLowerCase() || LEGACY_EXE_BASENAMES.has(base)) && !exists(target);
 }
 
 /** 图标已经是想要的那份？（icon 为空 = 用 exe 自己的图标） */

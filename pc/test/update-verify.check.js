@@ -11,9 +11,9 @@ const { EventEmitter } = require("node:events");
 const { createUpdater } = require("../src/updater");
 const sig = require("../src/update-signature");
 
-const execPath = path.join(os.tmpdir(), "chisabot-pc-update-verify", "ChisaBotPC.exe");
+const execPath = path.join(os.tmpdir(), "chisabot-pc-update-verify", "ChisaBot.exe");
 fs.mkdirSync(path.dirname(execPath), { recursive: true });
-fs.writeFileSync(path.join(path.dirname(execPath), "Uninstall ChisaBot PC.exe"), "");
+fs.writeFileSync(path.join(path.dirname(execPath), "Uninstall ChisaBot.exe"), "");
 
 /** 和 electron-updater 6.8.9 一样：先派发 update-downloaded（带 downloadedFile），再看 autoInstallOnAppQuit 决定挂不挂退出安装。 */
 function fakeAutoUpdater(info) {
@@ -42,7 +42,7 @@ function make(info, { updateKeys = { enforce: true, keys: new Map(), problem: ""
     isPackaged: true,
     platform: "win32",
     execPath,
-    productName: "ChisaBot PC",
+    productName: "ChisaBot",
     shellHash,
     updateKeys,
     verifyDownload,
@@ -62,7 +62,7 @@ const pass = async () => ({ keyId: "00000000" });
 const reject = async () => {
   throw new sig.UpdateSignatureError("ERR_SIGNATURE_MISMATCH", "更新清单的签名不符");
 };
-const INFO = { version: "0.1.200", chisabotShell: "aaaa", downloadedFile: "C:\\pending\\ChisaBot-PC-0.1.200-x64-setup.exe" };
+const INFO = { version: "0.1.200", chisabotShell: "aaaa", downloadedFile: "C:\\pending\\ChisaBot-0.1.200-x64-setup.exe" };
 
 test("signing on: electron-updater never registers its own quit-time install", async () => {
   const t = make(INFO, { verifyDownload: pass });
@@ -172,7 +172,7 @@ test("real verification end to end: signed release passes, re-signed by a strang
     const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
     const pub = sig.rawPublicKey(publicKey).toString("base64");
     const updateKeys = { enforce: true, keys: sig.parseKeys({ keys: [{ publicKey: pub }] }), problem: "" };
-    const file = path.join(dir, "ChisaBot-PC-0.1.200-x64-setup.exe");
+    const file = path.join(dir, "ChisaBot-0.1.200-x64-setup.exe");
     const bytes = crypto.randomBytes(2048);
     fs.writeFileSync(file, bytes);
     const sha512 = crypto.createHash("sha512").update(bytes).digest("base64");

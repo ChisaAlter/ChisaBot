@@ -1521,6 +1521,13 @@ const loadToolsForActor =
     // 电脑 / 设备类工具只有连接里打开了「允许使用电脑和设备」才给。
     const imConnection = imConnectionOf(initiator);
     const imDevices = !imConnection || imService?.allowsDevices(imConnection) === true;
+    // mcp_add 只对「本人是管理员」的网页对话提供：非管理员看不到工具（不是看到了再拒绝），
+    // IM / 后台面板回合没有可交互的确认卡片场景，也不放。
+    const chatActor = await actorFor(actorId).catch(() => null);
+    const offerMcpAdd =
+      !imConnection &&
+      !(initiator.kind === "routine" && initiator.id.startsWith("lp_")) &&
+      chatActor?.role === "admin";
     // 有后果的工具（删除 / 付款 / 对外发消息）按审批偏好先出确认卡片（server/src/confirmations）。
     return confirmations.wrap([
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : confirmations.tools(actorId, botId, initiator)),
@@ -1587,6 +1594,7 @@ const loadToolsForActor =
           by: actor.id,
         };
       },
+      offerMcpAdd,
     }),
     // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
     // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：

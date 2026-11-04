@@ -35,7 +35,7 @@ function tmpdir(prefix = "chisabot-update-sig-") {
 
 /** 造一个安装包和对应的 latest.yml（和 electron-builder + shell-fingerprint --stamp 产出的格式一样）。 */
 function release(dir, { version = "0.1.200", content = crypto.randomBytes(4096), shell = "0123456789abcdef", full = false } = {}) {
-  const name = `ChisaBot-PC-${version}-x64-setup.exe`;
+  const name = `ChisaBot-${version}-x64-setup.exe`;
   fs.writeFileSync(path.join(dir, name), content);
   const sha512 = crypto.createHash("sha512").update(content).digest("base64");
   let text = `version: ${version}\nfiles:\n  - url: ${name}\n    sha512: ${sha512}\n    size: ${content.length}\npath: ${name}\nsha512: ${sha512}\nreleaseDate: '2026-10-29T00:00:00.000Z'\nchisabotShell: ${shell}\n`;
@@ -290,7 +290,7 @@ test("--require-keys and --keys-from-env (self-built: CHISABOT_UPDATE_PUBKEYS)",
 });
 
 test("js-yaml round trip: what electron-updater parses is what was signed", () => {
-  const info = { version: "0.1.200", path: "ChisaBot PC 0.1.200.exe", sha512: "abc+/==", files: [{ url: "ChisaBot PC 0.1.200.exe", sha512: "abc+/==", size: 7 }], chisabotShell: "0123456789abcdef" };
+  const info = { version: "0.1.200", path: "ChisaBot 0.1.200.exe", sha512: "abc+/==", files: [{ url: "ChisaBot 0.1.200.exe", sha512: "abc+/==", size: 7 }], chisabotShell: "0123456789abcdef" };
   const value = sig.signManifest(info, PRIMARY.pem);
   const text = signer.writeSignature(yaml.dump(info), value);
   const back = yaml.load(text);

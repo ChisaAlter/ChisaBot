@@ -1,4 +1,4 @@
-# ChisaBot PC（Windows 客户端）
+# ChisaBot（Windows 桌面客户端）
 
 架构与安全模型见 `../docs/pc-node.md`（§8 是客户端），界面规范见 `../DESIGN.md` §16。
 
@@ -18,7 +18,7 @@ node src/cli.js run --server https://chisabot.example.com:8443 --token-file devi
 本地打包需要 Windows，或 x86_64 Linux + wine（如 `electronuserland/builder:wine` 容器）：
 
 ```sh
-npx electron-builder --win nsis zip --x64 --publish never   # → dist/ChisaBot-PC-<版本>-x64-setup.exe / -portable.zip
+npx electron-builder --win nsis zip --x64 --publish never   # → dist/ChisaBot-<版本>-x64-setup.exe / -portable.zip
 ```
 
 构建期默认值在 `src/build-config.json`（仓库里为空 = 通用版：首次运行在本机登录页里填自己的服务器地址）。登录页 `src/ui/login.*`（Android 0.1.13 起是原生登录页，不再共用）。

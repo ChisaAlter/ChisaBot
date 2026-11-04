@@ -32,7 +32,7 @@ export function BotComputerAccess({ compact }: { agentId?: string; botName?: str
         <IconDeviceDesktop className="size-5 shrink-0 opacity-70" />
         <div className="min-w-0 flex-1">
           <div className="bca-t">{"还没有关联设备"}</div>
-          <div className="bca-s">{"在电脑上安装 ChisaBot PC 客户端并用这个账号登录，你的机器人就能在你允许的范围内操作它。"}</div>
+          <div className="bca-s">{"在电脑上安装 ChisaBot 客户端并用这个账号登录，你的机器人就能在你允许的范围内操作它。"}</div>
         </div>
         <Button nativeButton={false} render={<Link to="/settings/devices" />} size="sm" variant="outline">
           <IconDownload />

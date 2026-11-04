@@ -3868,7 +3868,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 .admin-group [data-slot="item-content"] { min-width: 0; }
 .page-rows.admin-group [data-slot="item-media"][data-variant="icon"] { width: 24px; height: 24px; background: transparent; border: 0; box-shadow: none; color: var(--ink-3); }
 
-/* ---------- ChisaBot PC frameless window (html[data-desktop]) ---------- */
+/* ---------- ChisaBot frameless window (html[data-desktop]) ---------- */
 /* v3：不透明无边框窗口，圆角和阴影交给 Windows 11（DWM，约 8px），网页不再画圆角 / 描边；
    最大化、贴靠、拖边调整大小都是系统行为。Windows 10 上是方角。 */
 html[data-desktop] .glass-topbar { -webkit-app-region: drag; app-region: drag; pointer-events: auto; }
@@ -6593,7 +6593,7 @@ body[data-install-hint="open"] [data-slot="sidebar-container"].glass-sidebar-con
   display: inline-flex; align-items: center; gap: 3px; margin: 0 4px; padding: 0 8px; height: 24px; vertical-align: middle;
   border-radius: 999px; background: var(--glass-3); border: 1px solid var(--line-strong, rgba(0, 0, 0, 0.08)); color: var(--ink-1); font-weight: 500;
 }
-/* §45「这台电脑没连上」：同一枚胶囊，只在 ChisaBot PC 里出现。 */
+/* §45「这台电脑没连上」：同一枚胶囊，只在 ChisaBot 桌面客户端里出现。 */
 .pc-link-hint .install-hint-main:disabled { cursor: progress; opacity: 0.85; }
 .pc-link-hint .install-hint-ios { max-width: 380px; }
 .pc-link-hint-link { color: var(--accent-blue); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }

@@ -33,7 +33,6 @@ import {
 import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
 import {
   isBlankNote,
-  isQuietWork,
   type WorkCall,
   workTimeline,
 } from "@/lib/chat/work-steps";
@@ -344,7 +343,7 @@ describe("没有看得见的回答", () => {
     expect(done.noAnswerAfter.size).toBe(0);
   });
 
-  test("工具失败、后面没有文字：干活那一行不收，后面挂「这一轮没有回答」（最后一轮带重试）", () => {
+  test("工具失败、后面没有文字：干活那一行也收起（§123），后面挂「这一轮没有回答」（最后一轮带重试）", () => {
     const items = [
       user("u1", "查东京天气"),
       bot("a0", "我查一下。"),
@@ -353,18 +352,9 @@ describe("没有看得见的回答", () => {
     const compact = compactTurns(items, false, new Set());
     const work = compact.work.get("t1")!;
     expect(work.answered).toBe(false);
-    expect(work.quiet).toBe(false);
+    expect(work.quiet).toBe(true);
     expect(compact.noAnswerAfter.get("t1")).toEqual({ last: true });
-    // ChatTranscript 渲染时再判一遍的也一样不收。
-    expect(
-      isQuietWork({
-        calls: work.calls,
-        live: false,
-        hasFinal: work.answered,
-        stopped: work.stopped,
-      }),
-    ).toBe(false);
-    // 还在跑时不挂。
+    // 还在跑时不挂（胶囊还在动）。
     expect(compactTurns(items, true, new Set()).noAnswerAfter.size).toBe(0);
     // 后面又有一轮：这一轮的提示不带重试。
     const more = compactTurns(
