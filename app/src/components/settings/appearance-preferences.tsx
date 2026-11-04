@@ -21,6 +21,7 @@ import {
   saveUploadedWallpaper,
   setCustomWallpaperUrl,
   setGlassOpacity,
+  setGlassOpacityDark,
   setGlassStyle,
   setHarkSkyScene,
   setThemePalette,
@@ -114,7 +115,8 @@ export function AppearancePreferences() {
           appearance.palette !== "default" ||
           appearance.wallpaperId !== "none" ||
           appearance.glassStyle !== "liquid" ||
-          appearance.glassOpacity !== 16 ? (
+          appearance.glassOpacity !== 16 ||
+          appearance.glassOpacityDark !== 16 ? (
             <Button
               onClick={() => {
                 resetAppearanceDefaults();
@@ -262,7 +264,7 @@ export function AppearancePreferences() {
         <div className="appearance-sliders">
           <label className="appearance-slider-row">
             <span className="appearance-slider-label">
-              <span>{"面板雾度（数值越小越通透）"}</span>
+              <span>{"面板雾度 · 浅色（数值越小越通透）"}</span>
               <span className="appearance-slider-val">
                 {`${appearance.glassOpacity}%（透光率 ${100 - appearance.glassOpacity}%）`}
               </span>
@@ -276,6 +278,24 @@ export function AppearancePreferences() {
               step={1}
               type="range"
               value={appearance.glassOpacity}
+            />
+          </label>
+          <label className="appearance-slider-row">
+            <span className="appearance-slider-label">
+              <span>{"面板雾度 · 深色（浅色和深色各存一档，切换时滑行到各自的值）"}</span>
+              <span className="appearance-slider-val">
+                {`${appearance.glassOpacityDark}%（透光率 ${100 - appearance.glassOpacityDark}%）`}
+              </span>
+            </span>
+            <Input
+              aria-label="深色玻璃面板不透明度"
+              className="appearance-range"
+              max={GLASS_OPACITY_MAX}
+              min={GLASS_OPACITY_MIN}
+              onChange={(e) => setGlassOpacityDark(Number(e.target.value))}
+              step={1}
+              type="range"
+              value={appearance.glassOpacityDark}
             />
           </label>
         </div>

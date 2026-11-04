@@ -25,6 +25,11 @@ import {
   THEME_PALETTES,
   type ThemePaletteId,
 } from "../src/lib/appearance";
+import {
+  alphaForContrast,
+  decideInk,
+  LG_WORST_INK,
+} from "../src/lib/liquid-glass";
 
 export type RGBA = [number, number, number, number];
 
@@ -216,7 +221,7 @@ const GLASS_SCOPE: Record<string, RegExp> = {
 /** 某档材质某个 scheme 的材质规则里 token 的值（取最后一条命中的规则）。 */
 const glassDeclCache = new Map<string, string | undefined>();
 function glassDecl(
-  token: "--lg-surface" | "--lg-surface-strong",
+  token: string,
   style: (typeof GLASS_STYLES)[number],
   scheme: Scheme,
 ): string | undefined {
@@ -232,8 +237,117 @@ function glassDecl(
   return value;
 }
 
-/** 玻璃材质 --lg-surface 渐变起点在某个雾度下的颜色。 */
-export function glassSurface(
+/**
+ * 液态玻璃材质规则里解析出来的参数：
+ * --lg-tint-rgb 基色 + --lg-tint-a 的 clamp(lo, alpha × 各标量, hi) 公式 + 内光 --lg-hl。
+ * data-lg-ink="dark" 的深釉档参数写死在 lib/liquid-glass.ts 的材质规则里，这里同写一份
+ * （applyAdapt 的 mul 1.4、lo 0.1、hl 0.08 见 styles.css data-lg-ink 规则）。
+ */
+interface LiquidMaterial {
+  tintRGB: [number, number, number];
+  lo: number;
+  hi: number;
+  mul: number;
+  hl: number;
+}
+const liquidMaterialCache = new Map<Scheme, LiquidMaterial>();
+export function liquidMaterial(scheme: Scheme): LiquidMaterial {
+  const cached = liquidMaterialCache.get(scheme);
+  if (cached) return cached;
+  const rgb = (glassDecl("--lg-tint-rgb", "liquid", scheme) ?? "")
+    .trim()
+    .split(/\s+/)
+    .map(Number);
+  const ta = glassDecl("--lg-tint-a", "liquid", scheme) ?? "";
+  const m =
+    /clamp\(\s*var\(--lg-tint-lo\)\s*,\s*calc\(var\(--lg-alpha,\s*([\d.]+)\)((?:\s*\*\s*var\(--[\w-]+(?:,\s*[\d.]+)?\))*)\)\s*,\s*var\(--lg-tint-hi\)\s*\)/.exec(
+      ta,
+    );
+  const lo = Number.parseFloat(
+    glassDecl("--lg-tint-lo", "liquid", scheme) ?? "",
+  );
+  const hi = Number.parseFloat(
+    glassDecl("--lg-tint-hi", "liquid", scheme) ?? "",
+  );
+  if (!m || !Number.isFinite(lo) || !Number.isFinite(hi) || rgb.length < 3 || rgb.some((n) => !Number.isFinite(n)))
+    throw new Error(`liquid material for ${scheme}`);
+  // 公式里除了 --lg-alpha 以外的标量因子（--lg-tint-mul / --lg-density-k / …）：
+  // var 带 fallback 用 fallback，否则读同规则里声明的默认值（都是 1）。
+  let mul = 1;
+  for (const f of m[2].matchAll(
+    /\*\s*var\(--([\w-]+)(?:,\s*([\d.]+))?\)/g,
+  )) {
+    const fb = Number(f[2]);
+    mul *= Number.isFinite(fb)
+      ? fb
+      : (Number.parseFloat(glassDecl(`--${f[1]}`, "liquid", scheme) ?? "") || 1);
+  }
+  const hl = Number.parseFloat(glassDecl("--lg-hl", "liquid", scheme) ?? "0");
+  const mat = {
+    tintRGB: [rgb[0], rgb[1], rgb[2]] as [number, number, number],
+    lo,
+    hi,
+    mul,
+    hl: Number.isFinite(hl) ? hl : 0,
+  };
+  liquidMaterialCache.set(scheme, mat);
+  return mat;
+}
+
+/** 采样用的亮度（weighted sRGB，与 lib/liquid-glass.ts 的 sampleStats 同公式）。 */
+const bgLum = (c: RGBA) => (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
+
+/** 一行底色的判定结果：底色合成后的不透明色 + 字该用哪个 scheme 的墨色。 */
+export interface Backdrop {
+  bg: RGBA;
+  inkScheme: Scheme;
+}
+
+/**
+ * 液态玻璃在某个底色上的自适应合成（和 lib/liquid-glass.ts applyAdapt 同一份判定）：
+ * 浅色档按亮度决定浅釉深墨 / 深釉浅墨，密度系数取两端（0.7 / 1.3 覆盖整个密度区间），
+ * 釉色不够对比时按「升密度」求到 4.5——alphaForContrast 就是产品里跑的那一份。
+ */
+function liquidComposite(
+  base: RGBA,
+  scheme: Scheme,
+  haze: number,
+  strong: boolean,
+): Backdrop[] {
+  const mat = liquidMaterial(scheme);
+  const ink = decideInk(scheme, bgLum(base), null);
+  const under = scheme === "light" && ink === "dark";
+  const tintRGB: [number, number, number] = under
+    ? [16, 18, 22]
+    : mat.tintRGB;
+  const lo = under ? 0.1 : mat.lo;
+  const mul = under ? 1.4 : mat.mul;
+  const hl = under ? 0.08 : mat.hl;
+  const hi = under ? 0.95 : mat.hi;
+  const out: Backdrop[] = [];
+  for (const dk of [0.7, 1.3]) {
+    const raw = Math.min(hi, Math.max(lo, haze * mul * dk));
+    const boost = alphaForContrast({
+      bg: base,
+      tintRGB,
+      hlAlpha: hl,
+      ink,
+      base: raw,
+      max: hi,
+      inkColor: LG_WORST_INK[ink],
+    });
+    const alpha = Math.min(boost * (strong ? 1.4 : 1), 0.9);
+    const surf = over(
+      [255, 255, 255, hl],
+      [tintRGB[0], tintRGB[1], tintRGB[2], alpha],
+    );
+    out.push({ bg: over(surf, base), inkScheme: ink === "dark" ? "dark" : "light" });
+  }
+  return out;
+}
+
+/** 非液态材质的玻璃面（crystal / frosted，不自适应）：渐变色标照旧解析。 */
+function glassSurface(
   style: (typeof GLASS_STYLES)[number],
   scheme: Scheme,
   haze: number,
@@ -271,19 +385,27 @@ export function rowFills(scheme: Scheme): RGBA[] {
   return [parseColor(hover), ...onStops];
 }
 
-/** 左栏卡片上文字背后所有可能的不透明底色。 */
+/** 左栏卡片上文字背后所有可能的不透明底色（液态玻璃按底色自适应出合成结果）。 */
 export function panelBackdrops(
   palette: ThemePaletteId,
   scheme: Scheme,
-): RGBA[] {
+): Backdrop[] {
   const sky = skyStops(palette, scheme);
   const veil = veilStops(scheme);
-  const out: RGBA[] = [opaqueSurface(scheme)];
+  const out: Backdrop[] = [{ bg: opaqueSurface(scheme), inkScheme: scheme }];
   for (const stop of sky) {
     const base = over(sample(veil, stop.at), stop.color);
     for (const style of GLASS_STYLES)
-      for (const haze of HAZE_RANGE)
-        out.push(over(glassSurface(style, scheme, haze), base));
+      for (const haze of HAZE_RANGE) {
+        if (style === "liquid") {
+          out.push(...liquidComposite(base, scheme, haze, false));
+        } else {
+          out.push({
+            bg: over(glassSurface(style, scheme, haze), base),
+            inkScheme: scheme,
+          });
+        }
+      }
   }
   return out;
 }
@@ -358,12 +480,20 @@ export function wallpaperBases(scheme: Scheme): RGBA[] {
 }
 
 /** 壁纸模式下左栏卡片上文字背后所有可能的不透明底色。 */
-export function wallpaperPanelBackdrops(scheme: Scheme): RGBA[] {
-  const out: RGBA[] = [opaqueSurface(scheme)];
+export function wallpaperPanelBackdrops(scheme: Scheme): Backdrop[] {
+  const out: Backdrop[] = [{ bg: opaqueSurface(scheme), inkScheme: scheme }];
   for (const base of wallpaperBases(scheme))
     for (const style of GLASS_STYLES)
-      for (const haze of HAZE_RANGE)
-        out.push(over(glassSurface(style, scheme, haze), base));
+      for (const haze of HAZE_RANGE) {
+        if (style === "liquid") {
+          out.push(...liquidComposite(base, scheme, haze, false));
+        } else {
+          out.push({
+            bg: over(glassSurface(style, scheme, haze), base),
+            inkScheme: scheme,
+          });
+        }
+      }
   return out;
 }
 
@@ -383,15 +513,21 @@ export function backdropsFor(
   palette: ThemePaletteId,
   scheme: Scheme,
   surface: "sky" | "wallpaper" = "sky",
-): RGBA[] {
-  if (element === "avatar") return avatarStops();
+): Backdrop[] {
+  if (element === "avatar")
+    return avatarStops().map((bg) => ({ bg, inkScheme: scheme }));
   const panel =
     surface === "wallpaper"
       ? wallpaperPanelBackdrops(scheme)
       : panelBackdrops(palette, scheme);
   if (element === "sec-main") return panel;
-  const rows = rowFills(scheme);
-  return [...panel, ...panel.flatMap((b) => rows.map((r) => over(r, b)))];
+  // 行底色跟着墨的档走：深釉浅墨档（inkScheme=dark 的翻转条目）用深色行底。
+  return [
+    ...panel,
+    ...panel.flatMap(({ bg, inkScheme }) =>
+      rowFills(inkScheme).map((r) => ({ bg: over(r, bg), inkScheme })),
+    ),
+  ];
 }
 
 export function range(
@@ -399,6 +535,18 @@ export function range(
   backdrops: RGBA[],
 ): { min: number; max: number } {
   const values = backdrops.map((b) => contrast(over(text, b), b));
+  return { min: Math.min(...values), max: Math.max(...values) };
+}
+
+/** 自适应底色：每条底色的墨按它自己的 inkScheme 取（深釉档翻成深色墨色）。 */
+export function rangeAdaptive(
+  textFor: (inkScheme: Scheme) => RGBA,
+  backdrops: Backdrop[],
+): { min: number; max: number } {
+  const values = backdrops.map(({ bg, inkScheme }) => {
+    const text = textFor(inkScheme);
+    return contrast(over(text, bg), bg);
+  });
   return { min: Math.min(...values), max: Math.max(...values) };
 }
 
@@ -422,13 +570,14 @@ export function tokenColor(scheme: Scheme, token: string): RGBA {
   return parseColor(raw);
 }
 
-/** --lg-surface / --lg-surface-strong 渐变的全部色标（文字可能落在任何位置）。 */
+/** --lg-surface / --lg-surface-strong 渐变的全部色标（文字可能落在任何位置；只用于非液态材质）。 */
 export function glassStops(
   token: "--lg-surface" | "--lg-surface-strong",
   style: (typeof GLASS_STYLES)[number],
   scheme: Scheme,
   haze: number,
 ): RGBA[] {
+  if (style === "liquid") throw new Error("liquid uses liquidComposite");
   const value = glassDecl(token, style, scheme);
   const stops = [
     ...(value ?? "").matchAll(
@@ -598,32 +747,64 @@ export function surfaceInk(scheme: Scheme, ink: string): RGBA {
   return tokenColor(scheme, ref ?? ink);
 }
 
-/** 壁纸下某种文字位置背后所有可能的不透明底色。 */
+/** 壁纸下某种文字位置背后所有可能的不透明底色（含每条的墨色档）。 */
 export function wallpaperSurfaceBackdrops(
   id: SurfaceId,
   scheme: Scheme,
-): RGBA[] {
+): Backdrop[] {
   const { layers } = SURFACES[id];
   const bases = wallpaperBases(scheme);
-  if (layers.length === 0) return bases;
+  if (layers.length === 0)
+    return bases.map((bg) => ({ bg, inkScheme: scheme }));
   if (layers[0] === "--bubble-user-bg") {
-    const fill = fillToken(scheme, "--bubble-user-bg");
-    return bases.map((b) => over(fill, b));
+    // 用户气泡也在玻璃名单里会被采样：深釉档连底色带墨一起翻深（--bubble-user-bg 在
+    // [data-lg-ink="dark"] 里被覆盖成深色档的值）。
+    return bases.map((b) => {
+      const ink = decideInk(scheme, bgLum(b), null);
+      const flipped = scheme === "light" && ink === "dark";
+      const fill = fillToken(flipped ? "dark" : scheme, "--bubble-user-bg");
+      return {
+        bg: over(fill, b),
+        inkScheme: flipped ? ("dark" as Scheme) : scheme,
+      };
+    });
   }
-  const out: RGBA[] = [];
-  for (const style of GLASS_STYLES)
-    for (const haze of HAZE_RANGE) {
-      let stack = bases;
-      for (const layer of layers) {
-        const stops = glassStops(
-          layer as "--lg-surface" | "--lg-surface-strong",
-          style,
-          scheme,
-          haze,
-        );
-        stack = stack.flatMap((b) => stops.map((stop) => over(stop, b)));
+  const out: Backdrop[] = [];
+  for (const base of bases)
+    for (const style of GLASS_STYLES)
+      for (const haze of HAZE_RANGE) {
+        if (style === "liquid") {
+          // 每层都按它下面那层重新判定（嵌套卡第二层还是看同一底色附近）。
+          let entries = liquidComposite(
+            base,
+            scheme,
+            haze,
+            layers[0] === "--lg-surface-strong",
+          );
+          for (let i = 1; i < layers.length; i++) {
+            entries = entries.flatMap((e) =>
+              liquidComposite(
+                e.bg,
+                scheme,
+                haze,
+                layers[i] === "--lg-surface-strong",
+              ).map((n) => ({ bg: n.bg, inkScheme: n.inkScheme })),
+            );
+          }
+          out.push(...entries);
+        } else {
+          let stack = [base];
+          for (const layer of layers) {
+            const stops = glassStops(
+              layer as "--lg-surface" | "--lg-surface-strong",
+              style,
+              scheme,
+              haze,
+            );
+            stack = stack.flatMap((b) => stops.map((stop) => over(stop, b)));
+          }
+          out.push(...stack.map((bg) => ({ bg, inkScheme: scheme })));
+        }
       }
-      out.push(...stack);
-    }
   return out;
 }

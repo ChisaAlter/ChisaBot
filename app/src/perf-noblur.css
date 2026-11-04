@@ -81,6 +81,31 @@ html.dark {
     ) {
     background: var(--glass-bg-opaque);
   }
+  /* 液态玻璃采样出的「深釉浅墨」档（data-lg-ink="dark"）：不透明底色上墨要翻回浅色档，
+     否则白字会印在白色实底上。行内标量（--lg-density-k 等）对实色底无害，不用清。 */
+  html:not(#chisabot-no-blur) [data-lg-ink="dark"] {
+    --lg-ink: rgba(0, 0, 0, 0.86);
+    --lg-ink-2: rgba(60, 60, 67, 0.7);
+    --lg-blend: multiply;
+    --lg-tint-rgb: 255 255 255;
+    --lg-tint-lo: 0.06;
+    --lg-tint-mul: 1;
+    --lg-bright: 1.06;
+    --lg-hl: 0.3;
+    --lg-edge-cur: var(--lg-edge-light);
+    --text: rgb(29, 29, 31);
+    --text-primary: rgb(29, 29, 31);
+    --fill-primary: rgb(29, 29, 31);
+    --ink-1: #111a2b;
+    --ink-2: #3b4659;
+    --ink-3: var(--sky-muted, #5f6673);
+    --ink-4: rgba(17, 26, 43, 0.36);
+    --glass-ink: var(--ink-1);
+    --glass-ink-2: var(--ink-2);
+    --glass-ink-3: var(--ink-3);
+    --glass-ink-4: var(--ink-4);
+    --muted-foreground: var(--sky-muted, #5f6673);
+  }
   /* 普通 filter: blur 也关：链接卡片堆里没聚焦的卡（styles.css .rp-link / .rp-pile-card 的
      [data-dimmed]）改成只靠更低的透明度区分；agent-orb 的光晕和 ::before 色团去掉模糊，保留对比度/饱和度。 */
   html:not(#chisabot-no-blur)
@@ -172,6 +197,30 @@ html[data-perf="on"]:not(#chisabot-no-blur)
 }
 html[data-perf="on"]:not(#chisabot-no-blur) .appearance-swatch-check {
   background: rgb(15, 23, 42);
+}
+/* 与上面媒体查询里同一批还原：深釉浅墨档换不透明底色时，墨翻回浅色档。 */
+html[data-perf="on"]:not(#chisabot-no-blur) [data-lg-ink="dark"] {
+  --lg-ink: rgba(0, 0, 0, 0.86);
+  --lg-ink-2: rgba(60, 60, 67, 0.7);
+  --lg-blend: multiply;
+  --lg-tint-rgb: 255 255 255;
+  --lg-tint-lo: 0.06;
+  --lg-tint-mul: 1;
+  --lg-bright: 1.06;
+  --lg-hl: 0.3;
+  --lg-edge-cur: var(--lg-edge-light);
+  --text: rgb(29, 29, 31);
+  --text-primary: rgb(29, 29, 31);
+  --fill-primary: rgb(29, 29, 31);
+  --ink-1: #111a2b;
+  --ink-2: #3b4659;
+  --ink-3: var(--sky-muted, #5f6673);
+  --ink-4: rgba(17, 26, 43, 0.36);
+  --glass-ink: var(--ink-1);
+  --glass-ink-2: var(--ink-2);
+  --glass-ink-3: var(--ink-3);
+  --glass-ink-4: var(--ink-4);
+  --muted-foreground: var(--sky-muted, #5f6673);
 }
 /* 普通 filter: blur 也关：链接卡片堆里没聚焦的卡（styles.css .rp-link / .rp-pile-card 的
    [data-dimmed]）改成只靠更低的透明度区分；agent-orb 的光晕和 ::before 色团去掉模糊，保留对比度/饱和度。 */

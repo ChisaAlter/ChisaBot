@@ -14,6 +14,7 @@ import {
   usesPaletteGradientSky,
   useWallpaperLoading,
 } from "@/lib/appearance";
+import { installLiquidGlass } from "@/lib/liquid-glass";
 import { usePerfMode } from "@/lib/perf-mode";
 import { noteSkyFrame, skyFadeHolding, wakeSkyOnWeather } from "@/lib/sky-fade";
 import {
@@ -581,9 +582,11 @@ export function SkyBackground() {
 
   // 1. 挂载时把外观写到 <html>（之后每次改动由 updateAppearance 自己写，不在这里跟着每一步滑块重跑）。
   //    同时开始听别的标签页改外观（storage 事件）。
+  //    液态玻璃的边缘透镜 + 背景自适应也在这里挂上（liquid 材质 / 支持 backdrop url 时才生效）。
   useEffect(() => {
     applyAppearanceToDocument(getAppearanceState());
     installAppearanceStorageSync();
+    return installLiquidGlass();
   }, []);
 
   // 2. 深浅色 / 配色变了：data-theme、天空垫片变量（写在 body 上，--sky-* 注册为不继承）、地址栏颜色。

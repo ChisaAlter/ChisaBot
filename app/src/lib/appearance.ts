@@ -31,6 +31,8 @@ export const WALLPAPER_CUSTOM_URL_STORAGE_KEY = "chisabot-wallpaper-custom-url";
 export const WALLPAPER_BLUR_STORAGE_KEY = "chisabot-wallpaper-blur";
 export const WALLPAPER_DIM_STORAGE_KEY = "chisabot-wallpaper-dim";
 export const GLASS_OPACITY_STORAGE_KEY = "chisabot-glass-opacity";
+/** 深色模式自己的一档釉色浓度（和浅色档分开存，切主题时各自滑行到各自的值）。 */
+export const GLASS_OPACITY_DARK_STORAGE_KEY = "chisabot-glass-opacity-dark";
 export const HARK_SCENE_STORAGE_KEY = "chisabot-hark-scene";
 /**
  * 天空引擎（public/wallpaper_core.html 的 SAVE_KEY）存的地点和天气快照。不归 AppearanceState 管，
@@ -439,8 +441,10 @@ export const WALLPAPER_PRESETS: readonly WallpaperPresetMeta[] = [
 export type AppearanceState = {
   palette: ThemePaletteId;
   glassStyle: GlassStyleId;
-  /** 玻璃面板不透明度（8 ~ 55，默认 16，即 84% 透光率） */
+  /** 玻璃面板不透明度（8 ~ 55，默认 16，即 84% 透光率）——浅色档 */
   glassOpacity: number;
+  /** 深色档（同上；未存过时跟随浅色档的值） */
+  glassOpacityDark: number;
   /** Hark WebGL 动态天空场景（默认 "auto"） */
   harkScene: HarkSkySceneId;
   wallpaperId: WallpaperPresetId;
@@ -531,6 +535,16 @@ function readInitialAppearance(): AppearanceState {
       GLASS_OPACITY_MIN,
       GLASS_OPACITY_MAX,
       16,
+    ),
+    // 深色档没存过就用浅色档的值，老用户拖过的滑块在深色下照旧生效。
+    glassOpacityDark: clampNumber(
+      Number(
+        readStoredPreference(GLASS_OPACITY_DARK_STORAGE_KEY) ??
+          rawGlassOpacity,
+      ),
+      GLASS_OPACITY_MIN,
+      GLASS_OPACITY_MAX,
+      clampNumber(rawGlassOpacity, GLASS_OPACITY_MIN, GLASS_OPACITY_MAX, 16),
     ),
     harkScene:
       rawHarkScene && VALID_HARK_SCENES.has(rawHarkScene)
@@ -762,46 +776,67 @@ export const GLASS_ALPHA_STYLE_ID = "chisabot-glass-alpha";
 
 let glassAlphaApplied: string | null = null;
 let glassAlphaFrame: number | null = null;
-let glassAlphaPending: number | null = null;
+let glassAlphaPending: { light: number; dark: number } | null = null;
 
 function glassAlphaValue(glassOpacity: number): string {
   return (glassOpacity / 100).toFixed(2);
 }
 
 /**
- * 把 --lg-alpha 写进 <head> 里一条只命中玻璃元素的规则。已经有这条规则时直接改它的声明（CSSOM），
- * 浏览器只让匹配它的元素重算；不改 <html> 的行内样式（那样整页都要重算）。
+ * 把 --lg-alpha 写进 <head> 里只命中玻璃元素的两条规则：浅色档一条，深色档一条
+ * （html.dark 前缀的那条）。浅 / 深各自的雾度分开存，切主题时各自的值各自生效。
+ * 已经有这两条规则时直接改它们的声明（CSSOM），浏览器只让匹配的元素重算。
  */
-function writeGlassAlpha(glassOpacity: number) {
+function writeGlassAlpha(glassOpacity: number, glassOpacityDark: number) {
   if (typeof document === "undefined") return;
-  const value = glassAlphaValue(glassOpacity);
+  const light = glassAlphaValue(glassOpacity);
+  const dark = glassAlphaValue(glassOpacityDark);
   const el = document.getElementById(GLASS_ALPHA_STYLE_ID);
-  if (value === glassAlphaApplied && el) return;
-  glassAlphaApplied = value;
+  if (`${light}|${dark}` === glassAlphaApplied && el) return;
+  glassAlphaApplied = `${light}|${dark}`;
   if (el instanceof HTMLStyleElement) {
-    const rule = el.sheet?.cssRules?.[0] as CSSStyleRule | undefined;
-    if (rule?.style && typeof rule.style.setProperty === "function") {
-      rule.style.setProperty("--lg-alpha", value);
+    const rules = el.sheet?.cssRules;
+    const lightRule = rules?.[0] as CSSStyleRule | undefined;
+    const darkRule = rules?.[1] as CSSStyleRule | undefined;
+    if (
+      lightRule?.style &&
+      darkRule?.style &&
+      typeof lightRule.style.setProperty === "function"
+    ) {
+      lightRule.style.setProperty("--lg-alpha", light);
+      darkRule.style.setProperty("--lg-alpha", dark);
       return;
     }
-    el.textContent = `${GLASS_SURFACE_SELECTOR}{--lg-alpha:${value}}`;
+    el.textContent = `${GLASS_SURFACE_SELECTOR}{--lg-alpha:${light}}html.dark ${GLASS_SURFACE_SELECTOR}{--lg-alpha:${dark}}`;
     return;
   }
   const style = document.createElement("style");
   style.id = GLASS_ALPHA_STYLE_ID;
-  style.textContent = `${GLASS_SURFACE_SELECTOR}{--lg-alpha:${value}}`;
+  style.textContent = `${GLASS_SURFACE_SELECTOR}{--lg-alpha:${light}}html.dark ${GLASS_SURFACE_SELECTOR}{--lg-alpha:${dark}}`;
   document.head.appendChild(style);
 }
 
-/** 当前写进页面的 --lg-alpha（测试和调试用）；还没写过时为 null。 */
-export function readGlassAlpha(): string | null {
+function readGlassAlphaRule(index: number): string | null {
   if (typeof document === "undefined") return null;
   const el = document.getElementById(GLASS_ALPHA_STYLE_ID);
   if (!(el instanceof HTMLStyleElement)) return null;
-  const rule = el.sheet?.cssRules?.[0] as CSSStyleRule | undefined;
+  const rule = el.sheet?.cssRules?.[index] as CSSStyleRule | undefined;
   const fromRule = rule?.style?.getPropertyValue?.("--lg-alpha")?.trim();
   if (fromRule) return fromRule;
-  return /--lg-alpha:\s*([\d.]+)/.exec(el.textContent ?? "")?.[1] ?? null;
+  return (
+    [...(el.textContent ?? "").matchAll(/--lg-alpha:\s*([\d.]+)/g)][index]?.[1] ??
+    null
+  );
+}
+
+/** 当前写进页面的浅色档 --lg-alpha（测试和调试用）；还没写过时为 null。 */
+export function readGlassAlpha(): string | null {
+  return readGlassAlphaRule(0);
+}
+
+/** 当前写进页面的深色档 --lg-alpha。 */
+export function readGlassAlphaDark(): string | null {
+  return readGlassAlphaRule(1);
 }
 
 /** 立即写出还在等下一帧的 --lg-alpha（测试、以及需要同步结果的调用方）。 */
@@ -813,15 +848,15 @@ export function flushGlassAlpha() {
   if (glassAlphaPending === null) return;
   const next = glassAlphaPending;
   glassAlphaPending = null;
-  writeGlassAlpha(next);
+  writeGlassAlpha(next.light, next.dark);
 }
 
 /**
  * 拖滑块：一帧最多写一次（指针拖动一帧能来好几个 input 事件），写在下一帧开始前。
  * 状态和滑块数字仍然每一步立即更新，只有写进样式这一步合并。
  */
-function scheduleGlassAlpha(glassOpacity: number) {
-  glassAlphaPending = glassOpacity;
+function scheduleGlassAlpha(glassOpacity: number, glassOpacityDark: number) {
+  glassAlphaPending = { light: glassOpacity, dark: glassOpacityDark };
   if (glassAlphaFrame !== null) return;
   if (typeof requestAnimationFrame !== "function") {
     flushGlassAlpha();
@@ -855,7 +890,7 @@ export function applyAppearanceToDocument(
   if (root.style.getPropertyValue("--lg-alpha"))
     root.style.removeProperty("--lg-alpha");
   glassAlphaPending = null;
-  writeGlassAlpha(state.glassOpacity);
+  writeGlassAlpha(state.glassOpacity, state.glassOpacityDark);
   setRootAttribute(
     root,
     "data-wallpaper",
@@ -883,6 +918,15 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
             prev.glassOpacity,
           )
         : prev.glassOpacity,
+    glassOpacityDark:
+      patch.glassOpacityDark !== undefined
+        ? clampNumber(
+            patch.glassOpacityDark,
+            GLASS_OPACITY_MIN,
+            GLASS_OPACITY_MAX,
+            prev.glassOpacityDark,
+          )
+        : prev.glassOpacityDark,
     harkScene:
       patch.harkScene && VALID_HARK_SCENES.has(patch.harkScene)
         ? patch.harkScene
@@ -920,6 +964,11 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
   }
   const sliderWrites: Array<[string, number, number]> = [
     [GLASS_OPACITY_STORAGE_KEY, prev.glassOpacity, next.glassOpacity],
+    [
+      GLASS_OPACITY_DARK_STORAGE_KEY,
+      prev.glassOpacityDark,
+      next.glassOpacityDark,
+    ],
     [WALLPAPER_BLUR_STORAGE_KEY, prev.wallpaperBlur, next.wallpaperBlur],
     [WALLPAPER_DIM_STORAGE_KEY, prev.wallpaperDim, next.wallpaperDim],
   ];
@@ -939,12 +988,14 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
 
   // 只动了玻璃雾度（拖滑块）：不重写根属性，--lg-alpha 合并到下一帧写。
   const onlyGlassOpacity =
-    prev.glassOpacity !== next.glassOpacity &&
+    (prev.glassOpacity !== next.glassOpacity ||
+      prev.glassOpacityDark !== next.glassOpacityDark) &&
     prev.palette === next.palette &&
     prev.glassStyle === next.glassStyle &&
     prev.wallpaperId === next.wallpaperId &&
     prev.customWallpaperUrl === next.customWallpaperUrl;
-  if (onlyGlassOpacity) scheduleGlassAlpha(next.glassOpacity);
+  if (onlyGlassOpacity)
+    scheduleGlassAlpha(next.glassOpacity, next.glassOpacityDark);
   else applyAppearanceToDocument(next);
   emitChange();
 }
@@ -958,6 +1009,7 @@ const SYNCED_APPEARANCE_KEYS = new Set<string>([
   WALLPAPER_DIM_STORAGE_KEY,
   GLASS_STYLE_STORAGE_KEY,
   GLASS_OPACITY_STORAGE_KEY,
+  GLASS_OPACITY_DARK_STORAGE_KEY,
   HARK_SCENE_STORAGE_KEY,
 ]);
 
@@ -1023,6 +1075,10 @@ export function setGlassOpacity(glassOpacity: number) {
   updateAppearance({ glassOpacity });
 }
 
+export function setGlassOpacityDark(glassOpacityDark: number) {
+  updateAppearance({ glassOpacityDark });
+}
+
 export function setHarkSkyScene(harkScene: HarkSkySceneId) {
   updateAppearance({ harkScene, wallpaperId: "none" });
 }
@@ -1052,6 +1108,7 @@ export function resetAppearanceDefaults() {
     palette: "default",
     glassStyle: "liquid",
     glassOpacity: 16,
+    glassOpacityDark: 16,
     harkScene: "auto",
     wallpaperId: "none",
     customWallpaperUrl: "",

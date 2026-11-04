@@ -1044,19 +1044,19 @@ html[data-sky-ease] body::before {
   transition: background-color 120ms ease, box-shadow 120ms ease;
 }
 .glass-bot-row:hover {
-  background: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.42);
 }
 .dark .glass-bot-row:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(10, 12, 18, 0.2);
 }
 .glass-bot-row.is-on {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 14%, transparent), rgba(255, 255, 255, 0.7) 70%);
-  box-shadow: var(--glass-shadow-sm), inset 0 0 0 1px color-mix(in srgb, var(--pal-accent, rgb(47, 124, 246)) 18%, transparent);
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: var(--glass-shadow-sm), inset 0 0 0 1.5px rgba(255, 255, 255, 0.9);
   color: var(--glass-ink);
 }
 .dark .glass-bot-row.is-on {
-  background: linear-gradient(90deg, rgba(76, 141, 255, 0.26), rgba(255, 255, 255, 0.07) 75%);
-  box-shadow: inset 0 0 0 1px rgba(110, 165, 255, 0.28);
+  background: rgba(10, 12, 18, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
 }
 .glass-bot-row.is-on::before {
   content: "";
@@ -9636,11 +9636,25 @@ html[data-wallpaper="on"] {
 @property --lg-surface-strong { syntax: "*"; inherits: false; }
 @property --lg-blur { syntax: "*"; inherits: false; }
 @property --lg-shadow { syntax: "*"; inherits: false; }
+/* 液态玻璃的可动画材质参数：釉色 alpha、采样密度、对比补偿、悬停提亮、内光、
+ * 滤镜亮度、保饱和与两级墨色。注册成 <number>/<color> 才能在采样、悬停、换主题时
+ * 渐变不跳变（lib/liquid-glass.ts 写行内标量；data-lg-ink 换状态档）。 */
+@property --lg-tint-a { syntax: "<number>"; inherits: false; initial-value: 0.16; }
+@property --lg-density-k { syntax: "<number>"; inherits: false; initial-value: 1; }
+@property --lg-aa-boost { syntax: "<number>"; inherits: false; initial-value: 1; }
+@property --lg-hover-a { syntax: "<number>"; inherits: false; initial-value: 1; }
+@property --lg-hl { syntax: "<number>"; inherits: false; initial-value: 0.3; }
+@property --lg-bright { syntax: "<number>"; inherits: false; initial-value: 1.06; }
+@property --lg-sat-keep { syntax: "<number>"; inherits: false; initial-value: 1; }
+@property --lg-ink { syntax: "<color>"; inherits: false; initial-value: rgba(0, 0, 0, 0.86); }
+@property --lg-ink-2 { syntax: "<color>"; inherits: false; initial-value: rgba(60, 60, 67, 0.7); }
 :root {
   --lg-border: transparent;
   --lg-rim: 0 0 0 transparent;
 }
-/* 3.1 液态玻璃（liquid）：温润通透的凝脂光学玻璃，兼顾流云透光感与极佳的正文对比度 */
+/* 3.1 液态玻璃（liquid）· 浅色：清透厚玻璃板——颜色取自背后场景（白釉 6–22% 起），
+ * 边缘一圈 1.5px 折射高光 + 左上角内光，blur 只有 2px，弯折交给边缘透镜
+ * （lib/liquid-glass.ts 把 url(#id) 挂进 --lg-lens-url，追加在滤镜链尾）。 */
 :where(html[data-glass="liquid"], html:not([data-glass]))
   :where(
     .glass-side-card,
@@ -9662,20 +9676,53 @@ html[data-wallpaper="on"] {
     .page-section > form,
     .page .border
   ) {
-  --lg-blur: blur(20px) saturate(180%);
-  --lg-surface: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, clamp(0.38, calc(var(--lg-alpha, 0.16) * 2.65), 0.7)) 0%,
-    rgba(255, 255, 255, clamp(0.28, calc(var(--lg-alpha, 0.16) * 2.05), 0.58)) 52%,
-    rgba(255, 255, 255, clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.35), 0.64)) 100%
+  /* 墨：浅玻璃上深色字（不透明色画、svg 用 multiply 融进底色）。 */
+  --lg-ink: rgba(0, 0, 0, 0.86);
+  --lg-ink-2: rgba(60, 60, 67, 0.7);
+  --lg-blend: multiply;
+  /* 釉：采样把下面这组标量改成「深色釉」即变 data-lg-ink="dark" 档。 */
+  --lg-tint-rgb: 255 255 255;
+  --lg-tint-lo: 0.06;
+  --lg-tint-mul: 1;
+  --lg-density-k: 1;
+  --lg-aa-boost: 1;
+  --lg-hover-a: 1;
+  --lg-tint-hi: 0.85;
+  --lg-tint-a: clamp(
+    var(--lg-tint-lo),
+    calc(var(--lg-alpha, 0.16) * var(--lg-tint-mul) * var(--lg-density-k) * var(--lg-aa-boost) * var(--lg-hover-a)),
+    var(--lg-tint-hi)
   );
-  --lg-surface-strong: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.1), 0.78)) 0%,
-    rgba(255, 255, 255, clamp(0.36, calc(var(--lg-alpha, 0.16) * 2.5), 0.68)) 54%,
-    rgba(255, 255, 255, clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.85), 0.74)) 100%
-  );
-  --lg-shadow: var(--card-shadow);
+  /* 内光：左上角径向高光，white --lg-hl 在 55% 处淡出。 */
+  --lg-hl: 0.3;
+  /* 滤镜：blur(2px) + 饱和提色 + 随雾度变薄的一点提亮；透镜 url 永远在链尾。 */
+  --lg-bright: calc(1 + 0.06 * min(var(--lg-alpha, 0.16) / 0.16, 1));
+  --lg-sat-keep: 1;
+  --lg-blur: blur(2px) saturate(calc(180% * var(--lg-sat-keep))) brightness(var(--lg-bright)) var(--lg-lens-url, );
+  /* 边缘：顶左 1.5px 高光 + 0.5px 内描边 + 缘内柔光，外 0.5px 轮廓 + 24px 软影。 */
+  --lg-edge-light:
+    inset 1.5px 1.5px 1px -1px rgba(255, 255, 255, 0.95),
+    inset -1.5px -1.5px 1px -1px rgba(255, 255, 255, 0.55),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.3),
+    inset 0 4px 8px -2px rgba(255, 255, 255, 0.3),
+    inset 0 -5px 12px -3px rgba(15, 23, 42, 0.06),
+    0 0 0 0.5px rgba(0, 0, 0, 0.06),
+    0 6px 24px rgba(0, 0, 0, 0.08);
+  --lg-edge-dark:
+    inset 1.5px 1.5px 1px -1px rgba(255, 255, 255, 0.32),
+    inset -1.5px -1.5px 1px -1px rgba(255, 255, 255, 0.18),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.1),
+    inset 0 4px 8px -2px rgba(255, 255, 255, 0.1),
+    inset 0 -5px 12px -3px rgba(0, 0, 0, 0.16),
+    0 0 0 0.5px rgba(0, 0, 0, 0.34),
+    0 6px 24px rgba(0, 0, 0, 0.3);
+  --lg-shadow: var(--lg-edge-cur, var(--lg-edge-light));
+  --lg-surface:
+    radial-gradient(140% 110% at 12% -8%, rgba(255, 255, 255, var(--lg-hl)), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(135deg, rgb(var(--lg-tint-rgb) / var(--lg-tint-a)) 0%, rgb(var(--lg-tint-rgb) / var(--lg-tint-a)) 100%);
+  --lg-surface-strong:
+    radial-gradient(140% 110% at 12% -8%, rgba(255, 255, 255, var(--lg-hl)), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(135deg, rgb(var(--lg-tint-rgb) / min(calc(var(--lg-tint-a) * 1.4), 0.9)) 0%, rgb(var(--lg-tint-rgb) / min(calc(var(--lg-tint-a) * 1.4), 0.9)) 100%);
 }
 
 :where(html.dark[data-glass="liquid"], html.dark:not([data-glass]))
@@ -9699,20 +9746,105 @@ html[data-wallpaper="on"] {
     .page-section > form,
     .page .border
   ) {
-  --lg-blur: blur(20px) saturate(180%);
-  --lg-surface: linear-gradient(
-    135deg,
-    rgba(14, 21, 36, clamp(0.38, calc(var(--lg-alpha, 0.16) * 2.6), 0.7)) 0%,
-    rgba(9, 14, 26, clamp(0.28, calc(var(--lg-alpha, 0.16) * 2.0), 0.58)) 54%,
-    rgba(12, 18, 32, clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.35), 0.64)) 100%
+  /* 深色档：rgb(20 20 24) 16–38% 的暗釉，亮度 0.8 压成 multiply 式暗化；边缘/内光
+   * 取浅色档的约三分之一，外轮廓和阴影更深。 */
+  --lg-ink: rgba(255, 255, 255, 0.94);
+  --lg-ink-2: rgba(235, 235, 245, 0.64);
+  --lg-blend: plus-lighter;
+  --lg-tint-rgb: 20 20 24;
+  --lg-tint-lo: 0.16;
+  --lg-tint-mul: 1.75;
+  --lg-density-k: 1;
+  --lg-aa-boost: 1;
+  --lg-hover-a: 1;
+  --lg-tint-hi: 0.9;
+  --lg-tint-a: clamp(
+    var(--lg-tint-lo),
+    calc(var(--lg-alpha, 0.16) * var(--lg-tint-mul) * var(--lg-density-k) * var(--lg-aa-boost) * var(--lg-hover-a)),
+    var(--lg-tint-hi)
   );
-  --lg-surface-strong: linear-gradient(
-    135deg,
-    rgba(16, 24, 42, clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.0), 0.78)) 0%,
-    rgba(11, 17, 30, clamp(0.36, calc(var(--lg-alpha, 0.16) * 2.45), 0.68)) 54%,
-    rgba(14, 21, 38, clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.75), 0.74)) 100%
-  );
-  --lg-shadow: var(--card-shadow);
+  --lg-hl: 0.1;
+  --lg-bright: 0.8;
+  --lg-sat-keep: 1;
+  --lg-blur: blur(2px) saturate(calc(160% * var(--lg-sat-keep))) brightness(var(--lg-bright)) var(--lg-lens-url, );
+  --lg-edge-dark:
+    inset 1.5px 1.5px 1px -1px rgba(255, 255, 255, 0.32),
+    inset -1.5px -1.5px 1px -1px rgba(255, 255, 255, 0.18),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.1),
+    inset 0 4px 8px -2px rgba(255, 255, 255, 0.1),
+    inset 0 -5px 12px -3px rgba(0, 0, 0, 0.16),
+    0 0 0 0.5px rgba(0, 0, 0, 0.34),
+    0 6px 24px rgba(0, 0, 0, 0.3);
+  --lg-shadow: var(--lg-edge-cur, var(--lg-edge-dark));
+  --lg-surface:
+    radial-gradient(140% 110% at 12% -8%, rgba(255, 255, 255, var(--lg-hl)), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(135deg, rgb(var(--lg-tint-rgb) / var(--lg-tint-a)) 0%, rgb(var(--lg-tint-rgb) / var(--lg-tint-a)) 100%);
+  --lg-surface-strong:
+    radial-gradient(140% 110% at 12% -8%, rgba(255, 255, 255, var(--lg-hl)), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(135deg, rgb(var(--lg-tint-rgb) / min(calc(var(--lg-tint-a) * 1.4), 0.9)) 0%, rgb(var(--lg-tint-rgb) / min(calc(var(--lg-tint-a) * 1.4), 0.9)) 100%);
+}
+
+/* 浅色液态玻璃压在深色背景上（lib/liquid-glass.ts 采样判定后挂 data-lg-ink="dark"）：
+ * 换深釉 + 浅墨 + 暗边，整套墨色令牌翻成深色档让子元素直接继承。 */
+:where(html[data-glass="liquid"]:not(.dark), html:not([data-glass]):not(.dark))
+  :where(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .glass-composer,
+    [data-slot="bubble-content"],
+    .jr-card,
+    .page-rows,
+    .sg-card,
+    .page-section > form,
+    .page .border
+  )[data-lg-ink="dark"] {
+  --lg-tint-rgb: 16 18 22;
+  --lg-tint-lo: 0.1;
+  --lg-tint-hi: 0.95;
+  --lg-tint-mul: 1.4;
+  --lg-ink: rgba(255, 255, 255, 0.94);
+  --lg-ink-2: rgba(235, 235, 245, 0.64);
+  --lg-blend: plus-lighter;
+  --lg-bright: 0.85;
+  --lg-hl: 0.08;
+  --lg-edge-cur: var(--lg-edge-dark);
+  --text: rgb(245, 245, 247);
+  --text-primary: rgb(245, 245, 247);
+  --fill-primary: rgb(245, 245, 247);
+  --ink-1: #e9eef8;
+  --ink-2: #b7c1d3;
+  --ink-3: #8b97ab;
+  --ink-4: rgba(233, 238, 248, 0.32);
+  --glass-ink: #e8ecf3;
+  --glass-ink-2: #c7cedb;
+  --glass-ink-3: #97a1b2;
+  --glass-ink-4: #6f7a8c;
+  --muted-foreground: #97a1b2;
+  --side-sec-main-ink: #f2c14e;
+  --side-sub-ink: #b4bfcf;
+  --bubble-user-bg: rgba(15, 23, 42, 0.52);
+}
+
+/* 深釉档里的行底色也翻成深色档的值：白釉 76% 的行配浅墨会读不到字。 */
+:where(html[data-glass="liquid"]:not(.dark), html:not([data-glass]):not(.dark))
+  :where(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)[data-lg-ink="dark"]
+  :is(.glass-bot-row:hover, .glass-mini-bot:hover, .nav-row:hover) {
+  background: rgba(10, 12, 18, 0.2);
+}
+:where(html[data-glass="liquid"]:not(.dark), html:not([data-glass]):not(.dark))
+  :where(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)[data-lg-ink="dark"]
+  :is(.glass-bot-row.is-on, .glass-mini-bot.is-on, .nav-row.is-on) {
+  background: rgba(10, 12, 18, 0.5) !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3), 0 2px 10px rgba(0, 0, 0, 0.2) !important;
 }
 
 /* 3.2 晶莹全透（crystal）：轻薄透明晶片，最大化透出底层 WebGL 天空与流云，同时保证文字清晰可读 */
@@ -9749,6 +9881,9 @@ html[data-wallpaper="on"] {
     rgba(255, 255, 255, clamp(0.24, calc(var(--lg-alpha, 0.16) * 1.85), 0.52)) 100%
   );
   --lg-shadow: 0 8px 28px rgba(15, 23, 42, 0.07);
+  --lg-ink: var(--glass-ink);
+  --lg-ink-2: var(--glass-ink-2);
+  --lg-blend: multiply;
 }
 :where(html.dark[data-glass="crystal"])
   :where(
@@ -9783,6 +9918,9 @@ html[data-wallpaper="on"] {
     rgba(10, 16, 28, clamp(0.24, calc(var(--lg-alpha, 0.16) * 1.85), 0.52)) 100%
   );
   --lg-shadow: 0 10px 32px rgba(0, 0, 0, 0.34);
+  --lg-ink: var(--glass-ink);
+  --lg-ink-2: var(--glass-ink-2);
+  --lg-blend: plus-lighter;
 }
 
 /* 3.3 柔光磨砂（frosted）：细腻丝滑半透明亚克力磨砂（28px 柔焦 + 高可读性雾面） */
@@ -9819,6 +9957,9 @@ html[data-wallpaper="on"] {
     rgba(255, 255, 255, clamp(0.48, calc(var(--lg-alpha, 0.16) * 3.2), 0.78)) 100%
   );
   --lg-shadow: var(--card-shadow);
+  --lg-ink: var(--glass-ink);
+  --lg-ink-2: var(--glass-ink-2);
+  --lg-blend: multiply;
 }
 :where(html.dark[data-glass="frosted"])
   :where(
@@ -9853,6 +9994,9 @@ html[data-wallpaper="on"] {
     rgba(12, 18, 34, clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.1), 0.76)) 100%
   );
   --lg-shadow: var(--card-shadow);
+  --lg-ink: var(--glass-ink);
+  --lg-ink-2: var(--glass-ink-2);
+  --lg-blend: plus-lighter;
 }
 
 /* 将 .glass-shell 内部嵌套子卡片玻璃变量统一收束为纯净无边框薄纱 */
@@ -9879,6 +10023,7 @@ html.dark .glass-shell {
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
+  color: var(--lg-ink) !important;
 }
 
 /* 顶栏主导航胶囊与按钮：纯净无边框胶囊 */
@@ -9887,12 +10032,19 @@ html.dark .glass-shell {
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06) !important;
+  color: var(--lg-ink) !important;
 }
 html.dark :is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new) {
   background: var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.26) !important;
+  color: var(--lg-ink) !important;
+}
+
+/* 液态玻璃的可交互小面：悬停把釉提亮约 14%（--lg-hover-a 乘进 --lg-tint-a）。 */
+:is(.glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-search):hover {
+  --lg-hover-a: 1.14;
 }
 
 /* 左栏搜索框、收起态搜索按钮、新建按钮与快捷键角标：完全去除线框，仅用柔和底色区分 */
@@ -9951,6 +10103,7 @@ html.dark .rail-tabs-thumb {
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
+  color: var(--lg-ink) !important;
 }
 /* 深色下只靠黑投影当边界，压在深色底上几乎看不见：给 --lg-shadow 叠一圈 1px 内描边（顶边再亮一档），
  * 圆角自动跟随。只改变量不动上面 !important 规则（Biome 不许新增）；resize 暂停把它置 none 时连描边一起关。 */
@@ -9970,6 +10123,7 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
+  color: var(--lg-ink) !important;
 }
 /* 保持嵌套在卡片内部的 .jr-card 平铺无边框（DESIGN.md §29） */
 :is(.jr-card, .live-panel-body) .jr-card {
@@ -10006,6 +10160,7 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
+  color: var(--lg-ink) !important;
 }
 
 /* 左栏当前选中机器人项与导航项：圆润无边框半透明晶块 */
@@ -10014,19 +10169,50 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
 .nav-row.is-on::before {
   display: none !important;
 }
+/* 选中行 = 玻璃的更亮一层（白釉 76% + 白描边），不是一块灰底。 */
 .glass-bot-row.is-on,
 .glass-mini-bot.is-on,
 .nav-row.is-on {
-  background: var(--cell-bg) !important;
+  background: rgba(255, 255, 255, 0.76) !important;
   border: 0 !important;
-  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05) !important;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.9), 0 2px 10px rgba(15, 23, 42, 0.05) !important;
 }
 .dark .glass-bot-row.is-on,
 .dark .glass-mini-bot.is-on,
 .dark .nav-row.is-on {
-  background: var(--accent-fill-paper) !important;
+  background: rgba(10, 12, 18, 0.5) !important;
   border: 0 !important;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2) !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3), 0 2px 10px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* 液态玻璃上的图标用不透明色画、以 blend 融进背后场景：浅色 multiply、深色 plus-lighter；
+ * 彩色图表 / 头像 / 媒体不融（会被底色吞掉）。 */
+:where(html[data-glass="liquid"], html:not([data-glass]))
+  :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-composer)
+  :where(svg) {
+  mix-blend-mode: var(--lg-blend, multiply);
+}
+:where(html[data-glass="liquid"], html:not([data-glass]))
+  :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-composer)
+  :where(.recharts svg, .recharts-wrapper svg, svg.sa, .mermaid svg, .agent-orb svg, canvas, img, video) {
+  mix-blend-mode: normal;
+}
+
+/* 状态渐变兜底：换主题 / 换档 / 采样改墨时注册的材质参数滑行。
+ * :where 优先级为 0——元素自己声明过 transition 的一律按它的走。 */
+:where(
+  .glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card,
+  .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new,
+  .glass-composer, [data-slot="bubble-content"], .jr-card,
+  .page-rows, .sg-card, .page-section > form, .page .border
+) {
+  transition:
+    --lg-alpha var(--dur-2) ease,
+    --lg-tint-a var(--dur-2) ease,
+    --lg-ink var(--dur-2) ease,
+    --lg-hl var(--dur-2) ease,
+    --lg-bright var(--dur-2) ease,
+    --lg-hover-a var(--dur-1) ease;
 }
 
 /* 4. 设置 → 通用 → 外观：主题配色网格与 Hark 天空场景选择器样式 */
