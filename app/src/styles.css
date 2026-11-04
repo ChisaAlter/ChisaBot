@@ -9619,7 +9619,7 @@ html[data-wallpaper="on"] {
   --text-tertiary: var(--text-secondary);
 }
 
-/* 3. 三档无边框高通透光学玻璃材质（liquid 液态玻璃 / crystal 晶莹全透 / frosted 柔光磨砂）
+/* 3. 四档无边框高通透光学玻璃材质（liquid 液态玻璃 / mist 薄雾玻璃 / crystal 晶莹全透 / frosted 柔光磨砂）
  * 注意：严禁在此手写 -webkit-backdrop-filter，只写标准 backdrop-filter，否则压缩器会丢弃标准属性导致模糊失效。 */
 /*
  * 性能（2026-10-29，模块 11 审计）：玻璃变量只算在「真正读它的元素」上，不再挂在 <html> 上往下继承。
@@ -9992,6 +9992,87 @@ html[data-wallpaper="on"] {
     180deg,
     rgba(18, 26, 44, clamp(0.56, calc(var(--lg-alpha, 0.16) * 3.6), 0.84)) 0%,
     rgba(12, 18, 34, clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.1), 0.76)) 100%
+  );
+  --lg-shadow: var(--card-shadow);
+  --lg-ink: var(--glass-ink);
+  --lg-ink-2: var(--glass-ink-2);
+  --lg-blend: plus-lighter;
+}
+
+/* 3.4 薄雾玻璃（mist）：液态玻璃重写前（0.1.128 及更早）的默认材质——20px 柔焦 +
+ * 白釉/深釉渐变底，没有边缘透镜与背景自适应，给想要旧观感的用户留的选择。 */
+:where(html[data-glass="mist"])
+  :where(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .glass-composer,
+    [data-slot="bubble-content"],
+    .jr-card,
+    .page-rows,
+    .sg-card,
+    .page-section > form,
+    .page .border
+  ) {
+  --lg-blur: blur(20px) saturate(180%);
+  --lg-surface: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, clamp(0.38, calc(var(--lg-alpha, 0.16) * 2.65), 0.7)) 0%,
+    rgba(255, 255, 255, clamp(0.28, calc(var(--lg-alpha, 0.16) * 2.05), 0.58)) 52%,
+    rgba(255, 255, 255, clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.35), 0.64)) 100%
+  );
+  --lg-surface-strong: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.1), 0.78)) 0%,
+    rgba(255, 255, 255, clamp(0.36, calc(var(--lg-alpha, 0.16) * 2.5), 0.68)) 54%,
+    rgba(255, 255, 255, clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.85), 0.74)) 100%
+  );
+  --lg-shadow: var(--card-shadow);
+  --lg-ink: var(--glass-ink);
+  --lg-ink-2: var(--glass-ink-2);
+  --lg-blend: multiply;
+}
+:where(html.dark[data-glass="mist"])
+  :where(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-seg,
+    .glass-search,
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .glass-composer,
+    [data-slot="bubble-content"],
+    .jr-card,
+    .page-rows,
+    .sg-card,
+    .page-section > form,
+    .page .border
+  ) {
+  --lg-blur: blur(20px) saturate(180%);
+  --lg-surface: linear-gradient(
+    135deg,
+    rgba(14, 21, 36, clamp(0.38, calc(var(--lg-alpha, 0.16) * 2.6), 0.7)) 0%,
+    rgba(9, 14, 26, clamp(0.28, calc(var(--lg-alpha, 0.16) * 2.0), 0.58)) 54%,
+    rgba(12, 18, 32, clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.35), 0.64)) 100%
+  );
+  --lg-surface-strong: linear-gradient(
+    135deg,
+    rgba(16, 24, 42, clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.0), 0.78)) 0%,
+    rgba(11, 17, 30, clamp(0.36, calc(var(--lg-alpha, 0.16) * 2.45), 0.68)) 54%,
+    rgba(14, 21, 38, clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.75), 0.74)) 100%
   );
   --lg-shadow: var(--card-shadow);
   --lg-ink: var(--glass-ink);

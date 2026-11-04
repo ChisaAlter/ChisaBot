@@ -169,7 +169,7 @@ function sample(stops: Stop[], at: number): RGBA {
 
 export type Scheme = "light" | "dark";
 export const SCHEMES: Scheme[] = ["light", "dark"];
-export const GLASS_STYLES = ["liquid", "crystal", "frosted"] as const;
+export const GLASS_STYLES = ["liquid", "mist", "crystal", "frosted"] as const;
 /** lib/appearance.ts 存储 / 校验的雾度范围（clampNumber(…, 5, 55, …)）。 */
 export const HAZE_RANGE = [0.05, 0.55] as const;
 
@@ -216,6 +216,8 @@ const GLASS_SCOPE: Record<string, RegExp> = {
   "crystal-dark": /^:where\(html\.dark\[data-glass="crystal"\]\)/,
   "frosted-light": /^:where\(html\[data-glass="frosted"\]\)/,
   "frosted-dark": /^:where\(html\.dark\[data-glass="frosted"\]\)/,
+  "mist-light": /^:where\(html\[data-glass="mist"\]\)/,
+  "mist-dark": /^:where\(html\.dark\[data-glass="mist"\]\)/,
 };
 
 /** 某档材质某个 scheme 的材质规则里 token 的值（取最后一条命中的规则）。 */
@@ -346,7 +348,7 @@ function liquidComposite(
   return out;
 }
 
-/** 非液态材质的玻璃面（crystal / frosted，不自适应）：渐变色标照旧解析。 */
+/** 非液态材质的玻璃面（mist / crystal / frosted，不自适应）：渐变色标照旧解析。 */
 function glassSurface(
   style: (typeof GLASS_STYLES)[number],
   scheme: Scheme,

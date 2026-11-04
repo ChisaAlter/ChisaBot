@@ -41,7 +41,7 @@ Jun 说的三个问题，在 main（`3856d360`）上都找到了原因：
 ## 1. 删掉什么
 
 - 6 套配色：`data-palette` = default / aurora / emerald / ocean / sunset / sakura。
-- 3 种玻璃材质切换：`data-glass` = liquid / crystal / frosted。
+- 4 种玻璃材质切换：`data-glass` = liquid / mist / crystal / frosted（mist = 液态玻璃重写前的旧默认材质）。
 - 「玻璃面板不透明度」滑块：`--lg-alpha`，`chisabot-glass-opacity`。
 - 三档玻璃那一整层（`styles.css` 末尾的 `--lg-*` 和它的 `!important` 规则）。
 - 设置页里的「Hark 动态天空场景」12 宫格，以及每个缩略图里的玻璃演示。

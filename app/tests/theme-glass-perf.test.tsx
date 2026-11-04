@@ -182,14 +182,14 @@ describe("1) 玻璃变量只算在读它的元素上（不再整页重算）", (
     }
   });
 
-  test("三档材质的 :where 名单和 appearance.ts 的 GLASS_SURFACE_SELECTOR 一致", () => {
+  test("四档材质的 :where 名单和 appearance.ts 的 GLASS_SURFACE_SELECTOR 一致", () => {
     const tokens = surfaceTokens();
     expect(tokens.length).toBeGreaterThan(10);
     const declaring = innermostRules(css).filter(
       ([sel, body]) =>
         /^:where\(html/.test(sel) && /--lg-surface\s*:/.test(body),
     );
-    expect(declaring.length).toBe(6);
+    expect(declaring.length).toBe(8);
     for (const [sel] of declaring) {
       const list = /\)\s*:where\(([\s\S]*)\)\s*$/.exec(sel)?.[1] ?? "";
       expect(splitSelectors(list).map((s) => s.replace(/\s+/g, " "))).toEqual(
