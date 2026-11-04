@@ -1,3 +1,8 @@
+## 0.1.128
+
+- 目录声明窗口抬过端点误报 + 轮中换模真修好（#490）：Magpie /models 不给 swe-2 带 context，Ollama 探测回落 32K < Hermes 64K 下限导致 configure 永远失败；轮中重试调公共 set_session_model 必撞 -32603 busy，备用模型落不上去。现在服务端 catalog 内置已知窗口表（swe-2/swe-1.7 系 262144）并经 contextWindow 下发，适配器按目录值抬上下文下限（只抬不压），轮中重试改走 _switch_model。
+- 版本号 0.1.128（根、app、server、pc；Android versionCode 310）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.127
 
 - 模型配置失败透出真实原因并可落备用（#488）：configure 异常被吞成通用文案，主模型配不出来直接硬死；现在 `data.details` 原文进错误详情、全文进服务端日志，失败冷却该模型并换下一个健康候选，session 丢失 / busy 单独如实报；具名 custom provider 反查改用 upstream canonical identity。

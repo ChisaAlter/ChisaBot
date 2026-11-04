@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.128 — 2026-11-04
+
+这一版合并 #490：Magpie 目录漏报上下文窗口的模型（devin/swe-2 等）能配上并作答，轮中模型回退真正可用。全端同步版本号到 0.1.128（Android versionCode 310）；PC 外壳和 Android 应用本体不变。
+
+- 目录声明窗口抬过端点误报 + 轮中换模真修好（#490）：Magpie 的 /models 不给 devin/swe-2 带 context 字段，Hermes 的 Ollama 探测回落到 32K、卡在 64K 下限外，SWE-2 永远 configure-failed，表现成「这一轮没有收到回答」；同时轮中重试调公共 set_session_model 必撞 -32603 Session is busy（is_running 轮中恒真），备用模型根本落不上去。现在：服务端模型目录内置已知窗口表（swe-2/swe-1.7 系 262144，按官方 devin models），catalog 值经 _meta.chisabot.model.contextWindow 下发到适配器；适配器按目录值抬 compressor/_config_context_length/_ollama_num_ctx 三处下限（只抬不压、只作用于本轮模型）；轮中重试改用内部 _switch_model(keep_endpoint=True) 并以 command_op 防并发切换。model-catalog / hermes-runtime / copilot / chisabot_protocol / chisabot_acp；适配器测试新增 context floor 回归、rebuilding fake 同时覆盖 _switch_model 路径，model-catalog 测试新增已知窗口表回归。
+
 ## 0.1.127 — 2026-11-03
 
 这一版合并 #488：模型配置失败透出真实原因、配不出来可落备用模型。全端同步版本号到 0.1.127（Android versionCode 309）；PC 外壳和 Android 应用本体不变。
