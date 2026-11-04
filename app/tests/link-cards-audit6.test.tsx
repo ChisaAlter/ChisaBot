@@ -165,9 +165,13 @@ describe("审查模块 6", () => {
       const touch = mediaBlock("(hover: none), (any-pointer: coarse)");
       expect(touch).not.toMatch(/\.lc-followup[^}]*opacity: 1;/);
       expect(touch).toMatch(/\.lc-go \{\s*opacity: 0\.7;/);
-      expect(css).toMatch(/\.lc-item\[data-reveal\] :is\(\.lc-go, \.lc-followup\)/);
+      expect(css).toMatch(
+        /\.lc-item\[data-reveal\] :is\(\.lc-go, \.lc-followup\)/,
+      );
       // 长按卡上的链接不能弹系统菜单（否则和长按显示追问打架）。
-      expect(rulesFor(".lc-item").join("\n")).toMatch(/-webkit-touch-callout: none;/);
+      expect(rulesFor(".lc-item").join("\n")).toMatch(
+        /-webkit-touch-callout: none;/,
+      );
       // 窄容器里一叠的「追问」去掉（手机上一叠只剩换主位和打开两件事）。
       expect(css).toMatch(
         /@container \(max-width: 420px\) \{[\s\S]*?\.lc-stack\[data-deck\] \.lc-followup \{\s*display: none;/,
@@ -309,8 +313,9 @@ describe("审查模块 6", () => {
     });
     const view = render(<LinkCard url={url} />);
     const icon = await waitFor(() => {
-      const el =
-        view.container.querySelector<HTMLImageElement>(".lc-banner-mark img");
+      const el = view.container.querySelector<HTMLImageElement>(
+        ".lc-banner-mark img",
+      );
       expect(el).not.toBeNull();
       return el!;
     });

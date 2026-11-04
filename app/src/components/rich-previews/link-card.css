@@ -316,7 +316,9 @@ a.lc-card[href]:hover {
   pointer-events: auto;
 }
 /* 叠放时不在主位的卡：按钮藏起来、点不到也 Tab 不到——除非它被长按点名（[data-reveal]）。 */
-.lc-stack[data-deck] .lc-item:not([data-primary]):not([data-reveal]) :is(.lc-go, .lc-followup) {
+.lc-stack[data-deck]
+  .lc-item:not([data-primary]):not([data-reveal])
+  :is(.lc-go, .lc-followup) {
   visibility: hidden;
   pointer-events: none;
 }

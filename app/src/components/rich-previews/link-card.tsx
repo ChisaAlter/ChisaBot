@@ -476,9 +476,7 @@ export function LinkCard({
         <span
           className="lc-media"
           data-ratio={media.source}
-          data-fit={
-            showPhoto && (square || small) ? "contain" : undefined
-          }
+          data-fit={showPhoto && (square || small) ? "contain" : undefined}
           data-square={showPhoto && square ? "" : undefined}
           style={{ aspectRatio: String(media.ratio) }}
         >
@@ -652,7 +650,8 @@ export function LinkCardStack({
   useEffect(() => {
     const away = (event: Event) => {
       const target = event.target as Element | null;
-      if (stackRef.current && !stackRef.current.contains(target)) clearRevealed();
+      if (stackRef.current && !stackRef.current.contains(target))
+        clearRevealed();
     };
     document.addEventListener("pointerdown", away, true);
     return () => document.removeEventListener("pointerdown", away, true);
