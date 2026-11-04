@@ -10392,6 +10392,11 @@ html[data-sky-off] #sky-root #skyph {
 :is(.hk-circle, .hk-avatar-btn):hover { background: color-mix(in srgb, var(--glass-bg) 92%, var(--text)); }
 .hk-circle:focus-visible,
 .hk-avatar-btn:focus-visible { box-shadow: var(--glass-highlight), 0 0 0 2px var(--accent-color); }
+/* 手机顶栏 ☰ / 🔍 改幽灵钮：白玻璃圆点在天空渐变上是一块突兀的白斑，平常只留墨色图标，
+   悬停 / 按下才浮现一层浅玻璃底；焦点描边沿用上面的 accent 规则。 */
+.hk-top-ico { background: transparent; box-shadow: none; color: var(--ink-2); }
+.hk-top-ico:hover { background: var(--glass-hover); color: var(--ink-1); }
+.hk-top-ico:active { background: var(--glass-hover); color: var(--ink-1); }
 .glass-topbar[data-sidebar="collapsed"] .glass-topbar-start { width: auto; }
 /* 手机布局（含 PC 小窗 < 768px）：左 菜单 ｜ 中 留空 ｜ 右 搜索 + 头像，和 #374 时一样；圆钮不参与窗口拖动。 */
 @media (max-width: 767px) {
