@@ -53,6 +53,8 @@ export type HermesRunConfiguration = {
 export type HermesModelControls = {
   fallbacks?: readonly string[];
   maxOutputTokens?: number;
+  /** 模型目录声明的上下文窗口（含已知窗口表）。网关元数据缺失时 Hermes 探测会低估，桥用它抬下限（QA1104-01）。 */
+  contextWindow?: number;
   /** 模型目录对这个模型的判定：能不能看图（supportsImages）/ 收文件（supportsFiles）。桥按它转换图片/文档块（QA1102-14）。 */
   supportsImages?: boolean;
   supportsFiles?: boolean;
@@ -72,6 +74,7 @@ export function hermesWireModel(modelId: string, controls: HermesModelControls |
     ...(fallbacks.length ? { fallbacks } : {}),
     ...(typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0 && limit <= 1_000_000 ? { maxOutputTokens: limit } : {}),
     ...(hostCompacted ? { contextCompression: false } : {}),
+    ...(typeof controls?.contextWindow === "number" && Number.isSafeInteger(controls.contextWindow) && controls.contextWindow > 0 && controls.contextWindow <= 16_000_000 ? { contextWindow: controls.contextWindow } : {}),
     ...(typeof controls?.supportsImages === "boolean" ? { supportsImages: controls.supportsImages } : {}),
     ...(typeof controls?.supportsFiles === "boolean" ? { supportsFiles: controls.supportsFiles } : {}),
   };

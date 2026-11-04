@@ -390,6 +390,50 @@ def apply_model_controls(agent: Any, config: HostPrompt, controls: dict[str, boo
             logger.warning("Hermes rejected the host backup model chain; this turn runs without backups")
 
 
+def apply_context_floor(agent: Any, config: HostPrompt, applied: str | None = None) -> None:
+    """Raise the agent's context floor to the catalog-declared window when the endpoint
+    under-reports it (QA1104-01: a gateway can omit context metadata — Magpie serves
+    devin/swe-2 without it, its /api/show answers a default 32,768, and Hermes' 64K
+    floor then rejects every configure and its turn preflight refuses the call). The
+    wire value describes config.model_id only, so a fallback-applied turn keeps its own
+    probe. Floor-only: a probe that found a larger window (a 1M model) is never walked
+    back.
+    """
+    ctx = config.context_window
+    if not isinstance(ctx, int) or ctx <= 0 or (applied or config.model_id) != config.model_id:
+        return
+    compressor = getattr(agent, "context_compressor", None)
+    if compressor is not None and (getattr(compressor, "context_length", 0) or 0) < ctx:
+        try:
+            compressor.update_model(model=getattr(agent, "model", "") or "", context_length=ctx,
+                                    base_url=getattr(agent, "base_url", "") or "",
+                                    api_key=getattr(agent, "api_key", ""),
+                                    provider=getattr(agent, "provider", "") or "",
+                                    api_mode=getattr(agent, "api_mode", "") or "")
+        except Exception:
+            pass
+        if (getattr(compressor, "context_length", 0) or 0) < ctx:
+            try:
+                compressor.context_length = ctx
+            except Exception:
+                pass
+    declared = getattr(agent, "_config_context_length", None)
+    if not isinstance(declared, int) or declared < ctx:
+        try:
+            agent._config_context_length = ctx
+        except Exception:
+            pass
+    # The ollama runtime probe feeds a second, turn-level refusal: a mis-detected small
+    # window blocks the call even when the agent built fine. Raise only a set value —
+    # an untouched remote endpoint keeps None and skips that check entirely.
+    num_ctx = getattr(agent, "_ollama_num_ctx", None)
+    if type(num_ctx) is int and 0 < num_ctx < ctx:
+        try:
+            agent._ollama_num_ctx = ctx
+        except Exception:
+            pass
+
+
 def configure_source(source_dir: str | None = None) -> Path:
     """Pin source before *any* Hermes import, including hermes_bootstrap."""
     os.environ["HERMES_DISABLE_LAZY_INSTALLS"] = "1"
@@ -604,6 +648,7 @@ def build_agent_class():
             restrict(agent)
             apply_call_limits(agent)
             apply_model_controls(agent, config, self._controls(), applied)
+            apply_context_floor(agent, config, applied)
             installed = self._host_tools.get(state.session_id) or set()
             with session_tool_scope(state.session_id):
                 agent.tools = registry.get_definitions(installed, quiet=True)
@@ -899,11 +944,20 @@ def build_agent_class():
                     continue
                 previous = state.agent
                 try:
-                    response = await super().set_session_model(model_id=model_id, session_id=state.session_id)
+                    # The turn is running, so the ACP-level set_session_model is busy-guarded
+                    # (-32603) by design and can never succeed mid-turn. _switch_model performs
+                    # the same catalog/agent validation and rebuild without that guard;
+                    # command_op mirrors its exclusion so a concurrent client switch cannot
+                    # interleave (QA1104-02).
+                    with state.runtime_lock:
+                        state.command_op = True
+                    try:
+                        await asyncio.to_thread(self._switch_model, state, model_id,
+                                                keep_endpoint=True)
+                    finally:
+                        with state.runtime_lock:
+                            state.command_op = False
                 except Exception as error:
-                    code = getattr(error, "code", None)
-                    if isinstance(code, int) and code != -32602:
-                        raise
                     _breaker_log({"type": "model-fallback", "event": "configure-failed", "model": model_id,
                                   "reason": _model_configure_reason(error, config.gateway.capability),
                                   "kernel": "hermes-adapter",
@@ -911,12 +965,9 @@ def build_agent_class():
                     tried.add(model_id)
                     breaker_fail(_breaker_key(state.agent, model_id), "unavailable", _now())
                     continue
-                if response is None:
-                    # The session itself is gone; no other model can fix that.
-                    return False
                 self._host_models[state.session_id] = model_id
                 uses = getattr(previous, "_chisabot_fallback_uses", None)
-                # set_session_model may rebuild state.agent wholesale: re-pin the host's
+                # _switch_model may rebuild state.agent wholesale: re-pin the host's
                 # restrict/tools/system-prompt/controls and this turn's callbacks on the
                 # live object, not on the one the switch discarded (QA1102-13 r1).
                 agent = self._bind_live_agent(state, config, applied=model_id,

@@ -89,6 +89,11 @@ class HostPrompt:
     # text, True keeps standard image_url parts, None means the catalog said nothing (= capable).
     model_images: bool | None = None
     model_files: bool | None = None
+    # Catalog-declared context window for this turn's model (QA1104-01): a gateway that omits
+    # context metadata is probed at a 32K default below Hermes' 64K floor, so every configure
+    # raises ValueError and the turn preflight refuses. The catalog value — including the
+    # server's known-window table — is authoritative and only ever raises the floor.
+    context_window: int | None = None
 
 
 @dataclass(frozen=True)
@@ -299,6 +304,10 @@ def parse_host_prompt(value: Any) -> HostPrompt:
         raise ProtocolError("chisabot.model.supportsImages must be a boolean")
     if model_files is not None and type(model_files) is not bool:
         raise ProtocolError("chisabot.model.supportsFiles must be a boolean")
+    context_window = raw_model.get("contextWindow")
+    if context_window is not None and (type(context_window) is not int
+                                       or not 0 < context_window <= 16_000_000):
+        raise ProtocolError("chisabot.model.contextWindow must be a positive integer")
     continuation = value.get("continuation", False)
     if type(continuation) is not bool:
         raise ProtocolError("chisabot.continuation must be a boolean")
@@ -314,7 +323,7 @@ def parse_host_prompt(value: Any) -> HostPrompt:
     if capability in model_visible:
         raise ProtocolError("The gateway capability must not occur in model-visible content")
     return HostPrompt(scope, system, history, tuple(tools), Gateway(url.rstrip("/"), capability), model_id, continuation, current,
-                      fallbacks, max_output_tokens, context_compression, model_images, model_files)
+                      fallbacks, max_output_tokens, context_compression, model_images, model_files, context_window)
 
 
 """QA1102-14: normalize history before every OpenAI-compatible request.

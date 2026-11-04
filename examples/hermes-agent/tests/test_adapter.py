@@ -142,7 +142,10 @@ class FakeHermesACPAgent:
         return Model()
 
     def _switch_model(self, state, raw_model, *, keep_endpoint=False):
-        return None
+        if raw_model == "unknown":
+            raise Exception("model 'unknown' was rejected")
+        state.agent.model = state.model = raw_model
+        return ("custom", "custom", raw_model)
 
     def _run_agent_turn(self, *, state, session_id, user_text, user_content, **kwargs):
         return state.agent.run_conversation(user_message=user_content, conversation_history=state.history,
@@ -1426,12 +1429,13 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
 
     def rebuilding_agent_switch(self):
         """QA1102-13 r1：和 QA 的 rebuilding fake 一样——换模型像真实 _make_agent 那样
-        重建 state.agent，但保留 run_hook / provider / base_url，让行为脚本继续生效。"""
+        重建 state.agent，但保留 run_hook / provider / base_url，让行为脚本继续生效。
+        配置走 set_session_model（异步），轮中重试走 _switch_model（同步，QA1104-02），
+        两条路都要重建。"""
         server_mod = self.modules["acp_adapter.server"]
 
-        async def replacing(agent_self, model_id, session_id, **kwargs):
+        def rebuild(agent_self, target, model_id):
             agent_self.switches.append(model_id)
-            target = agent_self.session_manager.get_session(session_id)
             old = target.agent
             fresh = FakeAgent()  # tools=[] / valid_tool_names=∅ / callbacks=None / system=None
             fresh.run_hook = old.run_hook
@@ -1439,9 +1443,22 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             fresh.model = model_id
             target.agent = fresh
             target.model = model_id
+
+        async def replacing(agent_self, model_id, session_id, **kwargs):
+            rebuild(agent_self, agent_self.session_manager.get_session(session_id), model_id)
             return Model()
 
-        return patch.object(server_mod.HermesACPAgent, "set_session_model", replacing)
+        def replacing_sync(agent_self, state, raw_model, *, keep_endpoint=False):
+            rebuild(agent_self, state, raw_model)
+            return ("custom", "custom", raw_model)
+
+        @contextmanager
+        def both():
+            with patch.object(server_mod.HermesACPAgent, "set_session_model", replacing), \
+                 patch.object(server_mod.HermesACPAgent, "_switch_model", replacing_sync):
+                yield
+
+        return both()
 
     async def test_breaker_skip_turn_rebinds_rebuilt_agent(self):
         # QA1102-13 r1：断路器跳过主模型那一轮——备用模型那次请求也必须带工具和系统提示词，
@@ -1491,6 +1508,43 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         # 流式回调也接回了新 agent：备用那句回答是流出来的，不只靠末尾补发。
         self.assertTrue(any(e[0] == "acp" and e[2].session_update == "agent_message_chunk"
                             for e in self.events))
+
+    def test_context_floor_raises_underreported_window(self):
+        # QA1104-01：目录声明的窗口抬过端点探测的误报——swe-2 的 /api/show 报 32K，
+        # 低于 Hermes 64K 下限会让 configure/turn 双双被拒；三处都按目录值抬，
+        # 更大的探测值（1M 模型）不被压低，备用应用的轮次不被主模型窗口污染。
+        import chisabot_acp
+        from chisabot_protocol import parse_host_prompt
+        raw = payload()
+        raw["model"]["contextWindow"] = 262144
+        config = parse_host_prompt(raw)
+
+        class Compressor:
+            def __init__(self, ctx):
+                self.context_length = ctx
+            def update_model(self, model, context_length, **kw):
+                self.model, self.context_length = model, context_length
+
+        agent = SimpleNamespace(model="magpie-model", provider="custom", api_key="",
+                                api_mode="chat", base_url="https://magpie.invalid/v1",
+                                context_compressor=Compressor(32768),
+                                _config_context_length=None, _ollama_num_ctx=32768)
+        chisabot_acp.apply_context_floor(agent, config, applied="magpie-model")
+        self.assertEqual(agent.context_compressor.context_length, 262144)
+        self.assertEqual(agent._config_context_length, 262144)
+        self.assertEqual(agent._ollama_num_ctx, 262144)
+
+        bigger = SimpleNamespace(model="magpie-model", context_compressor=Compressor(1_000_000),
+                                 _config_context_length=None, _ollama_num_ctx=None)
+        chisabot_acp.apply_context_floor(bigger, config, applied="magpie-model")
+        self.assertEqual(bigger.context_compressor.context_length, 1_000_000)
+        self.assertIsNone(bigger._ollama_num_ctx)  # 未设置的远端端点不补 num_ctx
+
+        other = SimpleNamespace(model="backup-a", context_compressor=Compressor(32768),
+                                _config_context_length=None, _ollama_num_ctx=32768)
+        chisabot_acp.apply_context_floor(other, config, applied="backup-a")
+        self.assertEqual(other.context_compressor.context_length, 32768)
+        self.assertEqual(other._ollama_num_ctx, 32768)
 
     def replace_agent_on_switch(self):
         """QA1102-13：原生换模型路径会重建 state.agent（_switch_model → _make_agent），
