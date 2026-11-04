@@ -15,3 +15,19 @@ export function nextBlankHeight(height: number, elapsedMs: number): number {
   );
   return Math.max(0, remaining - movement);
 }
+
+/**
+ * How far the reader is from the end of the real content: the trailing blank items (the
+ * scroller's own spacer and the app's slack) do not count as distance. A turn aligned a
+ * third of the viewport down always keeps a spacer underneath — count it in the gap and
+ * "still at the bottom" can never be true, so the release that removes the blank never
+ * runs (§93.3).
+ */
+export function contentGap(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+  blank: number,
+): number {
+  return scrollHeight - scrollTop - clientHeight - Math.max(0, blank);
+}
