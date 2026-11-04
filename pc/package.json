@@ -1,7 +1,7 @@
 {
   "name": "chisabot-pc",
   "productName": "ChisaBot",
-  "version": "0.1.130",
+  "version": "0.1.131",
   "description": "ChisaBot 桌面客户端：远程聊天 + 让机器人在授权范围内操作这台电脑",
   "main": "src/main.js",
   "author": "ChisaBot",

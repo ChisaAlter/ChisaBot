@@ -1,3 +1,8 @@
+## 0.1.131
+
+- 车队模型审计 `fleet_audit`（§125）：只读工具，机器人据此评估每个 bot 的模型配得对不对并给换模型建议；远程 bot 只列不评，fleet/ 只读豁免不需确认。
+- 版本号 0.1.131（根、app、server、pc；Android versionCode 313）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.130
 
 - 桌面端改名 ChisaBot：productName / 可执行文件 / 快捷方式 / 安装包名去 PC 后缀；安装包 customInit 静默卸旧「ChisaBot PC」，启动时迁移 userData 目录，指向旧 exe 的快捷方式/pin 重写指向新 exe；appId 与更新源路径不变。
