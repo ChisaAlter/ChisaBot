@@ -101,7 +101,12 @@ const KNOWN_CONTEXT_WINDOWS = new Map<string, number>([
 ]);
 function knownContextOf(row: Record<string, unknown>): number | undefined {
   const id = typeof row.id === "string" ? row.id : "";
-  return KNOWN_CONTEXT_WINDOWS.get(id) ?? KNOWN_CONTEXT_WINDOWS.get(id.split("/").pop() ?? "");
+  return knownContextWindowOf(id);
+}
+/** Resolve the known-window table by model id (exported for resolvers whose catalog
+ *  connection is a different gateway than the runtime's — QA1104-01). */
+export function knownContextWindowOf(modelId: string): number | undefined {
+  return KNOWN_CONTEXT_WINDOWS.get(modelId) ?? KNOWN_CONTEXT_WINDOWS.get(modelId.split("/").pop() ?? "");
 }
 function visionOf(row: Record<string, unknown>): boolean | undefined {
   const id = typeof row.id === "string" ? row.id : "";
