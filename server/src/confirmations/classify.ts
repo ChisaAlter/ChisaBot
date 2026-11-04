@@ -13,7 +13,7 @@ import {
  *   本身就是用户要求的记录类操作，删除也有撤销。例外：memory_dream（整理记忆）一次合并、删除多条，算「删除」。
  * - 其余工具（内置任务工具、连接器 / MCP 工具）按名字判断：删除类、付款类、发消息类；读类动词开头的不算。
  */
-const SKIP_REF = /^(memory|vault|skills|lifecycle|web|workflows|devices|host-access|confirmations|github|chat-files)\//;
+const SKIP_REF = /^(memory|vault|skills|lifecycle|web|workflows|devices|host-access|confirmations|github|chat-files|fleet)\//;
 const READ_VERB = /^(list|get|search|find|read|fetch|query|describe|count|check|lookup|preview|view|show|download)(_|$)/i;
 const DELETE = /(^|[_\-/])(delete|remove|trash|destroy|purge|erase|wipe|drop)([_\-/]|$)/i;
 const PURCHASE = /(^|[_\-/])(pay|payment|purchase|checkout|buy|place_order|create_order|order_create|transfer|send_money|charge|subscribe)([_\-/]|$)/i;

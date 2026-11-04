@@ -218,6 +218,7 @@ import { createChatShots } from "./chat-shots";
 import { createImService, type ImService, imConnectionOf } from "./im/service";
 import { createLinkPreviews } from "./link-preview/service";
 import { createMemoryNotes } from "./memory-notes/service";
+import { createFleetAudit } from "./fleet-audit/service";
 import { createBotAvatars } from "./bot-avatars/service";
 import { createBrowserBookmarks } from "./browser-bookmarks/service";
 import { createChisaSkills } from "./skills-chisa/tools";
@@ -1539,6 +1540,8 @@ const loadToolsForActor =
     }),
     // 长期记忆（server/src/memory-notes，DESIGN.md §50）：一个人的所有机器人共用；后台刷新面板的回合不给。
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : memoryNotes.tools(actorId, botId)),
+    // 车队模型审计（server/src/fleet-audit）：只读，评估每个 bot 的模型是否匹配它的活动；后台刷新面板的回合不给。
+    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : fleetAudit.tools(actorId)),
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : chisaSkills.tools(actorId, botId)),
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : vault.tools(actorId, botId, initiator)),
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : await github.tools(actorId, botId, initiator).catch(() => [])),
@@ -1839,6 +1842,18 @@ const actorFor = async (ownerUserId: string): Promise<AgentActor> => {
     role: roles.includes("admin") ? "admin" : "user",
   };
 };
+
+// 车队模型审计（server/src/fleet-audit）：只读工具，把每个 bot 的职责、生效模型、定时任务和
+// 模型目录摊给机器人看，机器人评估「谁的模型配贵了 / 配弱了 / 缺能力」并给换模型建议。
+const fleetAudit = createFleetAudit({
+  database,
+  loadAgents: loadAgentsForActor,
+  actorFor,
+  profiles: agentProfileStore,
+  agentModels,
+  resolveDefaultModel: async () => (await resolveRuntimeConnection()).model.defaultModel,
+  catalog: modelCatalog,
+});
 
 /*
  * A run's source conversation: a channel's own thread, or a Bot's thread in a group conversation.
@@ -3886,6 +3901,7 @@ const app = createApp(
         agentId: botId,
         ...(initiator ? { initiator } : {}),
       }),
+      ...fleetAudit.tools(actorId),
       ...chisaSkills.tools(actorId, botId),
       ...vault.tools(actorId, botId, initiator ?? undefined),
       ...pages.tools(actorId, botId, initiator ?? undefined),
