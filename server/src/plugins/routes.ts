@@ -18,6 +18,7 @@ import {
 } from "./broker";
 import { CATALOGUE, catalogueEntry } from "./catalogue";
 import { toolkitOf, vendorSentence } from "./composio";
+import { CHINA_DIRECTORY, pathwayLines } from "./directory";
 import {
   authorizationUrlFor,
   type ConnectOrigin,
@@ -275,6 +276,37 @@ export function createPluginRoutes(
       redirectUri: connect?.publicUrl
         ? redirectUriFor(connect.publicUrl)
         : null,
+    }),
+  );
+
+  /**
+   * The China-app directory: every service a person might ask about, with its connect pathway.
+   *
+   * Browse data only — nothing here is admissible the way `catalogue` is. `catalogueKey` on an
+   * entry marks the few that are also reviewed connectors, which the page renders as the
+   * one-click path; everything else is instructions (custom endpoint, paired-PC stdio, or an
+   * external link), and instructions are all this endpoint serves. Static data, so no store call.
+   */
+  routes.get("/directory", requireUser, async (context) =>
+    context.json({
+      entries: CHINA_DIRECTORY.map((entry) => ({
+        key: entry.key,
+        title: entry.title,
+        vendor: entry.vendor,
+        category: entry.category,
+        summary: entry.summary,
+        official: entry.official,
+        connect: entry.connect,
+        /*
+         * The pathway as composed lines, from the same helper connect_service uses —
+         * the page renders them, the Bot reads them, and one source keeps the two
+         * from telling the person different steps for the same service.
+         */
+        pathway: pathwayLines(entry),
+        catalogueKey: entry.catalogueKey ?? null,
+        note: entry.note ?? null,
+        docsUrl: entry.docsUrl,
+      })),
     }),
   );
 

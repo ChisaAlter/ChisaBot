@@ -138,6 +138,40 @@ export type ComposioApp = {
   enabled: boolean;
 };
 
+/**
+ * One row of the China-app directory — a service a person might want to connect,
+ * with the honest pathway to it rather than a live connector.
+ *
+ * `connect.kind` is the whole answer: `remote` has a hosted endpoint (added in
+ * one click when `catalogueKey` is set, else through the custom-MCP dialog);
+ * `stdio` is an npm/uvx/GitHub package run on the person's own paired computer
+ * via `device_mcp_call`; `link` is an official API / Skill / marketplace with
+ * no MCP server at all, where `docsUrl` itself is the pathway.
+ */
+export type DirectoryItem = {
+  key: string;
+  title: string;
+  vendor: string;
+  category: string;
+  summary: string;
+  /** True for a first-party/官方 entry, false for community. */
+  official: boolean;
+  connect:
+    | { kind: "remote"; url: string; auth: string }
+    | { kind: "stdio"; command?: string; repoUrl?: string; env?: string[] }
+    | { kind: "link" };
+  /** Set when the reviewed catalogue already carries it — the one-click path. */
+  catalogueKey: string | null;
+  /**
+   * The connect steps, composed server-side by the same helper `connect_service`
+   * reads to a Bot — rendered verbatim so the two never tell different steps.
+   */
+  pathway: string[];
+  /** A caveat the connect dialog must not drop (session risk, billing, gaps). */
+  note: string | null;
+  docsUrl: string;
+};
+
 export type PluginsPage = {
   catalogue: CatalogueItem[];
   servers: PluginServer[];
@@ -192,6 +226,7 @@ export const pluginKeys = {
   connections: () => ["plugins", "connections"] as const,
   composioApps: (query: string) =>
     ["plugins", "composio", "apps", query] as const,
+  directory: () => ["plugins", "directory"] as const,
 };
 
 /**
@@ -301,6 +336,24 @@ export function pluginsPageQueryOptions() {
     queryFn: async (): Promise<PluginsPage> => {
       const response = await client("/api/plugins", {
         fallback: "插件无法加载。",
+      });
+      return response.json();
+    },
+  });
+}
+
+/**
+ * The whole China-app directory in one read — static data the server never
+ * queries a store for, so `staleTime: Infinity` is honest rather than greedy:
+ * the answer only changes on a redeploy.
+ */
+export function pluginsDirectoryQueryOptions() {
+  return queryOptions({
+    queryKey: pluginKeys.directory(),
+    staleTime: Number.POSITIVE_INFINITY,
+    queryFn: async (): Promise<{ entries: DirectoryItem[] }> => {
+      const response = await client("/api/plugins/directory", {
+        fallback: "国内应用目录无法加载。",
       });
       return response.json();
     },

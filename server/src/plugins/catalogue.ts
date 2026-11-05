@@ -109,6 +109,19 @@ export type CatalogueEntry = {
    */
   auth: CatalogueAuth;
   /**
+   * Where a `deployment-bearer` credential is presented when it is not an `Authorization` header.
+   *
+   * `keyParam` appends `?name=<token>` to the pinned URL at call time — the form 高德 (`key`),
+   * 腾讯地图 (`key`), 滴滴 (`key`) and 百度地图 (`ak`) publish for their MCP endpoints.
+   * `keyHeader` sends it as a named request header instead (途牛 `apiKey`). The token itself stays
+   * in the vault either way, so the stored `mcp_servers.url` and the audit row carry no credential —
+   * the same property `customUrlRefusal` enforces on hand-typed endpoints. Placement is a reviewed
+   * property of the entry: a caller never supplies it, which is why `resolveServerUrl` still
+   * returns the bare URL.
+   */
+  keyParam?: string;
+  keyHeader?: string;
+  /**
    * The tools this vendor's server exposes that change something.
    *
    * Kept so the policy can be written about effect rather than about tool names a rule author would
@@ -149,9 +162,13 @@ export type CatalogueEntry = {
  * asserts more than this deployment can stand behind. They are in the history if they are wanted
  * back, and re-adding one is a review of that vendor rather than a revert.
  *
- * `deployment-bearer` therefore has no entry using it. The shape stays because the call path still
- * needs it: a server an administrator added by URL has no catalogue entry at all, and that is the
- * branch it falls into.
+ * The China-app block below (高德 through 选股宝) is the portion of the much larger
+ * awesome-china-mcp index that meets this file's bar today: an OFFICIAL remote MCP endpoint the
+ * vendor itself publishes, reached over Streamable HTTP, with a credential model this deployment
+ * can honour without putting secrets in stored URLs. The rest of that index lives in
+ * `directory.ts` — browsable with its own connect pathway, deliberately NOT admissible here:
+ * community servers, account-session logins, per-person tokens, SSE-only endpoints and API-only
+ * entries each fail at least one of those checks. Promoting one is a review of that vendor.
  *
  * Routines is the first entry here that is not a remote vendor at all — no host to dial, nothing
  * outside this process to trust. It is in the catalogue anyway, on purpose rather than by oversight:
@@ -301,6 +318,140 @@ export const CATALOGUE: readonly CatalogueEntry[] = Object.freeze([
       "notion-update-view",
     ]),
     docsUrl: "https://developers.notion.com/guides/mcp/build-mcp-client",
+  },
+  /*
+   * Official remote China-app MCP endpoints. The common properties: the vendor publishes the
+   * endpoint itself (all pinned below from the vendor's own docs), the transport is Streamable
+   * HTTP, and the credential is either absent or a deployment-held key interpolated by
+   * `keyParam`/`keyHeader` at call time — never stored in the URL. Read-only where writeTools
+   * is empty; the one exception names its order-placing tools explicitly.
+   */
+  {
+    key: "amap",
+    title: "高德地图 Amap",
+    vendor: "高德地图",
+    summary:
+      "地理/逆地理编码、POI 检索、路径规划（驾车/公交/步行/骑行）、天气、IP 定位。只读查询。",
+    host: "https://mcp.amap.com",
+    path: "/mcp",
+    keyParam: "key",
+    auth: { kind: "deployment-bearer" },
+    writeTools: Object.freeze([]),
+    docsUrl: "https://developer.amap.com/api/mcp-server/gettingstarted",
+  },
+  {
+    key: "baidu-map",
+    title: "百度地图 Baidu Maps",
+    vendor: "百度地图",
+    summary:
+      "地点检索、路线规划、天气、路况等 10 大 API。只读查询；AK 走地址参数，由部署保管。",
+    host: "https://mcp.map.baidu.com",
+    path: "/mcp",
+    keyParam: "ak",
+    auth: { kind: "deployment-bearer" },
+    writeTools: Object.freeze([]),
+    docsUrl: "https://lbsyun.baidu.com/faq/api?title=mcpserver/quickstart",
+  },
+  {
+    key: "tencent-map",
+    title: "腾讯地图 Tencent Maps",
+    vendor: "腾讯位置服务",
+    summary: "地理编码、POI、路径规划、天气等腾讯位置服务。只读查询。",
+    host: "https://mcp.map.qq.com",
+    path: "/mcp",
+    keyParam: "key",
+    auth: { kind: "deployment-bearer" },
+    writeTools: Object.freeze([]),
+    docsUrl: "https://lbs.qq.com/service/MCPServer/MCPServerGuide/overview",
+  },
+  {
+    key: "didi",
+    title: "滴滴出行 DiDi（生产）",
+    vendor: "滴滴出行",
+    summary:
+      "打车全流程：预估车型与价格、下单、订单查询、取消、司机位置，以及地图检索与路线规划。管理员持有的开发者 MCP Key 全部署共用——真实叫车会落在该账号并产生费用，写操作需审批。",
+    host: "https://mcp.didichuxing.com",
+    path: "/mcp-servers",
+    keyParam: "key",
+    auth: { kind: "deployment-bearer" },
+    /*
+     * Order placement and cancellation change the real world and spend real money; the app-link
+     * generators create a call the person finishes in the DiDi app. Both spellings of the link
+     * tool are listed because the docs have published both.
+     */
+    writeTools: Object.freeze([
+      "taxi_create_order",
+      "taxi_cancel_order",
+      "taxi_new_order",
+      "taxi_generate_ride_app_link",
+    ]),
+    docsUrl: "https://mcp.didichuxing.com/api",
+  },
+  {
+    key: "didi-sandbox",
+    title: "滴滴出行 DiDi（沙箱）",
+    vendor: "滴滴出行",
+    summary:
+      "与生产端点相同的工具面，返回模拟数据、不产生真实订单与费用——接入与联调走这里。同一开发者 MCP Key。",
+    host: "https://mcp.didichuxing.com",
+    path: "/mcp-servers-sandbox",
+    keyParam: "key",
+    auth: { kind: "deployment-bearer" },
+    writeTools: Object.freeze([
+      "taxi_create_order",
+      "taxi_cancel_order",
+      "taxi_new_order",
+      "taxi_generate_ride_app_link",
+    ]),
+    docsUrl: "https://mcp.didichuxing.com/api",
+  },
+  {
+    key: "aihot",
+    title: "AIHOT 中文 AI 资讯",
+    vendor: "AIHOT",
+    summary:
+      "AI 资讯话题搜索、热点事件、日/周/月简报。官方托管，匿名只读，无需凭证。",
+    host: "https://aihot.news",
+    path: "/api/mcp",
+    auth: { kind: "none" },
+    writeTools: Object.freeze([]),
+    docsUrl: "https://aihot.news/agent?tab=mcp",
+  },
+  {
+    key: "metaso",
+    title: "秘塔 AI 搜索 Metaso",
+    vendor: "秘塔科技",
+    summary:
+      "多源中文网页搜索、网页阅读与 RAG 问答。只读；API Key 按量计费，由部署保管。",
+    host: "https://metaso.cn",
+    path: "/api/mcp",
+    auth: { kind: "deployment-bearer" },
+    writeTools: Object.freeze([]),
+    docsUrl: "https://metaso.cn/search-api/playground",
+  },
+  {
+    key: "lava",
+    title: "熔岩 Lava（A股消息面热度）",
+    vendor: "AI Dolphin",
+    summary:
+      "A股个股与概念板块的消息流热度：热榜、首发、小时窗口、日面板、机构/KOL 覆盖。只读；`lvk_` Key 按次计费，由部署保管。",
+    host: "https://lava.ai-dolphin.com",
+    path: "/subscribe/v1/mcp",
+    auth: { kind: "deployment-bearer" },
+    writeTools: Object.freeze([]),
+    docsUrl: "https://lava.ai-dolphin.com/subscribe/docs",
+  },
+  {
+    key: "xgb",
+    title: "选股宝 / 华尔街见闻",
+    vendor: "华尔街见闻",
+    summary:
+      "大涨股板块与异动原因、全球财经资讯全文（近两个月）。只读查询，无实时行情；token 在控制台生成，由部署保管。",
+    host: "https://xgb-mcp-api.xuangubao.cn",
+    path: "/mcp",
+    auth: { kind: "deployment-bearer" },
+    writeTools: Object.freeze([]),
+    docsUrl: "https://wallstreetcn.com/org-mcp/token",
   },
   {
     key: "routines",

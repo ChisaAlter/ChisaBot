@@ -64,9 +64,22 @@ export type VendorTransport = {
     url: string;
     token?: string;
     /**
+     * Reviewed credential placement, passed through from the catalogue entry.
+     *
+     * `keyParam` appends `?name=<token>` to the dialled URL at call time (高德
+     * `key`, 百度地图 `ak`, 滴滴 `key`); `keyHeader` sends it as a named header.
+     * This is how a vendor whose credential travels in the query string keeps
+     * the secret out of the stored URL and the audit row — the caller supplies
+     * the FIELD NAME from the frozen entry, never a credential-carrying URL.
+     * A transport that does not read them ignores them harmlessly.
+     */
+    keyParam?: string;
+    keyHeader?: string;
+    /**
      * Declared by the shared connection shape, and never supplied on THIS path.
      *
-     * `refreshTools` is the only caller of `listTools` in the system, and it passes `{url, token}`.
+     * `refreshTools` is the only caller of `listTools` in the system, and it passes
+     * `{url, token, keyParam, keyHeader}` — the credential placement, never an actor.
      * No implementation here even accepts either field: `builtin-routines` takes no argument at
      * all, Composio takes only `url`, and MCP and Drive take `{url, token}`. So a transport that
      * read one would read `undefined` every time, and nothing on the listing path may be
@@ -85,6 +98,9 @@ export type VendorTransport = {
     connection: {
       url: string;
       token?: string;
+      /** Reviewed credential placement from the catalogue entry — see `listTools`. */
+      keyParam?: string;
+      keyHeader?: string;
       /**
        * Who this call is for, and which Bot is making it.
        *

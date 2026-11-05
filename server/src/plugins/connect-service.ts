@@ -2,6 +2,7 @@ import { z } from "zod";
 import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { markUntrusted } from "../untrusted-content";
 import { CATALOGUE, customUrlRefusal } from "./catalogue";
+import { CHINA_DIRECTORY, type DirectoryEntry, pathwayLines } from "./directory";
 import { listTools } from "./mcp";
 import {
   CatalogueEntryUnknownError,
@@ -125,6 +126,136 @@ const ALIASES: Record<string, readonly string[]> = {
   "google-drive": ["googledrive", "谷歌云盘", "谷歌drive", "drive"],
   parallel: ["parallel", "parallelsearch"],
   腾讯文档: ["腾讯文档", "docsqq"],
+  /*
+   * 国内服务目录的常用叫法。key 是 directory.ts 里的条目 key（normalized 后必然落在该条目的
+   * 检索文本里），aliases 是用户嘴里会说的名字——例如「我要连高德」里的「高德」就是靠
+   * 下面这组别名展开成名字集，再去撞目录条目的 title/vendor/summary。
+   */
+  amap: ["amap", "高德", "高德地图", "gaode"],
+  "baidu-map": ["baidumap", "百度地图"],
+  "tencent-map": ["tencentmap", "腾讯地图", "qqmap", "qq地图"],
+  didi: ["didi", "滴滴", "滴滴出行", "打车", "叫车"],
+  "12306-mcp": ["12306", "火车票", "高铁票", "动车票", "train"],
+  xiaohongshu: ["xiaohongshu", "xhs", "小红书", "rednote", "红薯"],
+  weibo: ["weibo", "微博"],
+  zhihu: ["zhihu", "知乎"],
+  bilibili: ["bilibili", "b站", "哔哩哔哩"],
+  douyin: ["douyin", "抖音"],
+  meituan: ["meituan", "美团"],
+  "taobao-xianyu": ["taobao", "淘宝", "xianyu", "闲鱼"],
+  "jd-deals": ["jd", "京东", "jingdong"],
+  weread: ["weread", "微信读书"],
+  "lark-openapi": ["lark", "feishu", "飞书"],
+  yuque: ["yuque", "语雀"],
+  "dingtalk-doc": ["dingtalk", "钉钉"],
+  wemeet: ["wemeet", "腾讯会议"],
+  wps: ["wps", "金山文档", "wps365"],
+  dida365: ["dida365", "ticktick", "滴答清单", "dida"],
+  "baidu-netdisk": ["baidunetdisk", "百度网盘", "bdpan", "网盘"],
+  "wecom-bot": ["wecom", "企业微信", "企微"],
+  luckin: ["luckin", "瑞幸", "瑞幸咖啡", "luckincoffee"],
+  mcd: ["mcd", "麦当劳", "mcdonald", "mcdonalds", "金拱门"],
+  tuniu: ["tuniu", "途牛"],
+  variflight: ["variflight", "飞常准", "航班查询"],
+  "netease-music": ["netease", "网易云", "网易云音乐", "neteasemusic"],
+  meting: ["meting", "qq音乐", "酷狗", "酷我"],
+  caiyun: ["caiyun", "彩云天气", "彩云"],
+  seniverse: ["seniverse", "心知天气"],
+  "gap-qweather": ["qweather", "和风天气", "和风"],
+  mijia: ["mijia", "米家", "小米智能家居", "小米"],
+  minimax: ["minimax", "海螺"],
+  zhipu: ["zhipu", "智谱", "glm", "bigmodel", "智谱清言"],
+  modelscope: ["modelscope", "魔搭"],
+  qcc: ["qcc", "企查查"],
+  tianyancha: ["tianyancha", "天眼查"],
+  chineselaw: ["chineselaw", "华宇元典", "元典"],
+  kuaidi100: ["kuaidi", "kuaidi100", "快递100", "查快递", "物流查询"],
+  cnki: ["cnki", "知网"],
+  metaso: ["metaso", "秘塔", "秘塔搜索"],
+  bocha: ["bocha", "博查"],
+  niutrans: ["niutrans", "小牛翻译"],
+  "alipay-global": ["alipay", "支付宝"],
+  "huawei-cloud": ["huawei", "华为云", "huaweicloud"],
+  cloudbase: ["cloudbase", "云开发", "tcb", "腾讯云开发"],
+  volcengine: ["volcengine", "火山引擎", "火山"],
+  qiniu: ["qiniu", "七牛", "七牛云"],
+  gitee: ["gitee", "码云"],
+  tapd: ["tapd"],
+  jinshuju: ["jinshuju", "金数据"],
+  modao: ["modao", "墨刀"],
+  pixso: ["pixso"],
+  mastergo: ["mastergo"],
+  weiyun: ["weiyun", "微云", "腾讯微云"],
+  lexiang: ["lexiang", "乐享", "腾讯乐享"],
+  h3yun: ["h3yun", "氚云"],
+  shimo: ["shimo", "石墨", "石墨文档"],
+  flomo: ["flomo", "浮墨"],
+  wolai: ["wolai", "我来"],
+  yinxiang: ["yinxiang", "印象笔记", "evernote"],
+  sealos: ["sealos"],
+  apifox: ["apifox"],
+  rongcloud: ["rongcloud", "融云"],
+  "antv-chart": ["antv", "图表生成", "antvchart"],
+  textin: ["textin", "合合", "合合信息"],
+  patsnap: ["patsnap", "智慧芽"],
+  mineru: ["mineru", "文档解析"],
+  doc2x: ["doc2x"],
+  "gap-sf": ["sfexpress", "顺丰", "sf快递"],
+  "gap-youdao": ["youdao", "有道", "有道翻译"],
+  "gap-pgyer": ["pgyer", "蒲公英"],
+  "gap-esign": ["esign", "e签宝"],
+  "gap-fadada": ["fadada", "法大大"],
+  "gap-essign": ["essign", "腾讯电子签", "电子签"],
+  "gap-jianguoyun": ["jianguoyun", "坚果云"],
+  "gap-quark": ["quark", "夸克", "夸克网盘"],
+  "gap-tuya": ["tuya", "涂鸦", "涂鸦智能"],
+  "gap-ys7": ["ys7", "萤石", "萤石云"],
+  "gap-vika": ["vika", "维格表"],
+  "gap-mingdao": ["mingdao", "明道云"],
+  "gap-worktile": ["worktile"],
+  "gap-pingcode": ["pingcode"],
+  "gap-teambition": ["teambition"],
+  "gap-jushuitan": ["jushuitan", "聚水潭"],
+  "gap-yonyou": ["yonyou", "用友", "u8"],
+  "gap-xiaoetong": ["xiaoetong", "小鹅通"],
+  "gap-fxiaoke": ["fxiaoke", "纷享销客"],
+  "gap-moka": ["moka"],
+  "gap-udesk": ["udesk"],
+  "gap-meiqia": ["meiqia", "美洽"],
+  "gap-yunpian": ["yunpian", "云片", "云片短信"],
+  "gap-jpush": ["jpush", "极光推送", "极光"],
+  "gap-agora": ["agora", "声网"],
+  "gap-easemob": ["easemob", "环信"],
+  "gap-yunxin": ["yunxin", "网易云信", "云信"],
+  "gap-onenet": ["onenet"],
+  "gap-ctrip-wendao": ["ctrip", "携程", "携程问道", "wendao"],
+  "gap-dnspod": ["dnspod", "域名解析", "dns解析"],
+  "gap-ucloud": ["ucloud"],
+  "gap-jdcloud": ["jdcloud", "京东云"],
+  "gap-ksyun": ["ksyun", "金山云"],
+  "gap-guance": ["guance", "观测云"],
+  "gap-qingcloud": ["qingcloud", "青云"],
+  "gap-upyun": ["upyun", "又拍云"],
+  "gap-guosen": ["guosen", "国信证券"],
+  "gap-tiger": ["tiger", "老虎证券", "老虎"],
+  "gap-alltick": ["alltick"],
+  "gap-mairui": ["mairui", "麦蕊"],
+  "gap-juhe": ["juhe", "聚合数据"],
+  "gap-tianapi": ["tianapi", "天行数据"],
+  "gap-baidu-ocr": ["baiduocr", "百度ocr"],
+  "gap-163mail": ["163邮箱"],
+  "gap-126mail": ["126邮箱"],
+  "gap-sinamail": ["sina邮箱", "新浪邮箱", "sinamail"],
+  "gap-mp": ["微信小程序", "小程序"],
+  "gap-kdniao": ["kdniao", "快递鸟"],
+  "gap-pushdeer": ["pushdeer"],
+  "gap-wxpusher": ["wxpusher"],
+  "gap-sendcloud": ["sendcloud"],
+  "gap-getui": ["getui", "个推"],
+  "gap-oppopush": ["oppo推送", "oppopush"],
+  "gap-vivopush": ["vivo推送", "vivopush"],
+  "gap-honorpush": ["honor推送", "荣耀推送", "honorpush"],
+  "gap-mipush": ["mipush", "小米推送"],
 };
 
 const OVERVIEW_KEYWORDS = new Set([
@@ -265,6 +396,38 @@ function catalogueSection(names: readonly string[]): string | null {
         }`,
     )
     .join("\n");
+}
+
+/**
+ * The China-app directory entries this request might be naming.
+ *
+ * Bounded to the first five by file order (roughly the README's own official-first ordering),
+ * with the caller told how many more matched — a name like 「腾讯」 correctly hits dozens of
+ * entries and the useful answer is a pointer to the full browse page, not a wall.
+ */
+function directoryMatches(names: readonly string[]): DirectoryEntry[] {
+  return CHINA_DIRECTORY.filter((entry) =>
+    mentions(
+      `${entry.key} ${entry.title} ${entry.vendor} ${entry.summary}`,
+      names,
+    ),
+  );
+}
+
+function directorySection(entries: readonly DirectoryEntry[]): string {
+  const shown = entries.slice(0, 5).map((entry) =>
+    [
+      `- ${entry.title}${entry.official ? "（官方）" : "（社区）"}：${firstSentence(entry.summary)}`,
+      ...pathwayLines(entry).map((line) => `  ${line}`),
+      ...(entry.note ? [`  ⚠️ ${entry.note}`] : []),
+    ].join("\n"),
+  );
+  if (entries.length > shown.length) {
+    shown.push(
+      `……另外 ${entries.length - shown.length} 条相关条目，用更具体的名字再问，或到 设置 → 插件 → 国内应用目录 浏览全表。`,
+    );
+  }
+  return shown.join("\n");
 }
 
 function officialSection(hits: readonly ConnectSearchHit[]): string {
@@ -431,7 +594,12 @@ function overviewReport(
 
   sections.push(
     [
-      "四、快捷操作入口（请在回复末尾原样附上下方独立成行的链接卡，方便用户一键点击）：",
+      "四、国内应用目录（高德 / 百度地图 / 滴滴 / 12306 / 小红书 / 飞书 / 语雀 / A股 等 200+ 条目）：",
+      "想连哪个直接说「连 <服务名>」，我再调用 connect_service 会给出对应的接入途径——已收录的一键添加、官方端点管理员加自定义 MCP、stdio 包在配对电脑上由我调 device_mcp_call 拉起、暂无 MCP 的给官方 API 文档。",
+      "[浏览国内应用目录](/admin/plugins/directory)",
+    ].join("\n"),
+    [
+      "五、快捷操作入口（请在回复末尾原样附上下方独立成行的链接卡，方便用户一键点击）：",
       "[打开账号连接](/settings/connected-accounts)",
       "[管理插件与 MCP](/admin/plugins)",
     ].join("\n"),
@@ -449,6 +617,7 @@ function report(
   searchError: string | null,
   builtinSection: string | null = null,
   autoActions: readonly string[] = [],
+  dirEntries: readonly DirectoryEntry[] = [],
 ): string {
   const names = namesFor(service);
   const matched = servers.filter((server) =>
@@ -458,6 +627,16 @@ function report(
     ),
   );
   const catalogue = matched.length === 0 ? catalogueSection(names) : null;
+  /*
+   * The directory answers only where the two nearer answers did not: an enabled connector wins,
+   * then a reviewed catalogue row, then the directory's own pathway. A directory entry whose
+   * catalogueKey was promoted already answered through `catalogue` — showing its pathway too
+   * would restate the same vendor's docs one layer down.
+   */
+  const directory =
+    matched.length === 0 && !catalogue && dirEntries.length > 0
+      ? directorySection(dirEntries)
+      : null;
   const sections: string[] = [`【${service}】`];
 
   if (autoActions.length > 0) {
@@ -475,22 +654,34 @@ function report(
         .map((server) => serverSection(server, options.botId, connections))
         .join("\n"),
     );
-    if (autoActions.length > 0) {
+    const first = matched[0];
+    if (autoActions.length > 0 && first) {
       sections.push(
         [
           "快捷操作入口（请在回复末尾原样附上下方独立成行的链接卡）：",
-          `[去连接 ${matched[0]!.title} 账号](/settings/connected-accounts/${matched[0]!.id})`,
-          `[管理 ${matched[0]!.title} 插件设置](/admin/plugins/${matched[0]!.id})`,
+          `[去连接 ${first.title} 账号](/settings/connected-accounts/${first.id})`,
+          `[管理 ${first.title} 插件设置](/admin/plugins/${first.id})`,
         ].join("\n"),
       );
     }
   } else if (catalogue) {
     sections.push("这个部署里没有启用的连接器，但目录里有：", catalogue);
+  } else if (directory) {
+    sections.push(
+      "这个部署里没有这个服务的连接器；国内应用目录收录了它的接法：",
+      directory,
+    );
   } else if (!builtinSection) {
     sections.push("这个部署里没有这个服务的连接器，目录里也没有。");
   }
 
-  if (!builtinSection) {
+  /*
+   * A directory hit ends the question: the pathway lines already name the vendor's docs and the
+   * route (one-click add, custom endpoint, paired-PC stdio, or external link), so the generic
+   * web search and the Streamable-HTTP-only note would only restate it — and for a stdio or
+   * login-session entry, restate it wrongly.
+   */
+  if (!builtinSection && !directory) {
     sections.push(
       "官方接入方式：",
       searchError
@@ -540,7 +731,7 @@ function mcpAddTool(options: ConnectServiceOptions): GrantedTool {
     name: "mcp_add",
     ref: "plugins/mcp_add",
     description:
-      "管理员专用：把一个自定义 MCP 服务器（Streamable HTTP 端点）接进这个部署，并把它的工具授权给当前机器人。当管理员在对话里给出 MCP 地址要求「接上 / 添加 / 安装」时调用；调用会先出一张确认卡片（显示地址和实际探测到的工具清单），用户点「确认」才真正写入，不要先在文字里再问一遍。目录里已有的官方连接器（Notion / Google Drive / Parallel）不要用这个——connect_service 会自动启用。",
+      "管理员专用：把一个自定义 MCP 服务器（Streamable HTTP 端点）接进这个部署，并把它的工具授权给当前机器人。当管理员在对话里给出 MCP 地址要求「接上 / 添加 / 安装」时调用；调用会先出一张确认卡片（显示地址和实际探测到的工具清单），用户点「确认」才真正写入，不要先在文字里再问一遍。目录里已有的官方连接器（Notion / Google Drive / Parallel / 高德 / 滴滴 / 秘塔等）不要用这个——connect_service 会自动启用或指路。",
     parameters: mcpAddInput,
     prepareConfirm: async (input) => {
       const parsed = mcpAddInput.safeParse(input);
@@ -655,7 +846,7 @@ export function connectServiceTools(
       name: "connect_service",
       ref: "web/connect_service",
       description:
-        "查看或主动开启外部服务连接器（填「全部」可列出当前所有内置连接器、已启用 MCP 插件、官方目录与账号状态；或填具体服务名如 Gmail、日历、GitHub、Notion、Google Drive、腾讯 ima 等）。当用户问「你现在有什么连接器」「能连什么」「有 Gmail / Notion 连接器吗」或让你连接/接入/开启某个服务时，第一步就调用它。用户指了一个你不认识的服务名也把名字原样传进来：查不到连接器时它会联网搜官方接法，比反问用户「X 是什么」有用。",
+        "查看或主动开启外部服务连接器（填「全部」可列出当前所有内置连接器、已启用 MCP 插件、官方目录与账号状态；或填具体服务名如 Gmail、日历、GitHub、Notion、Google Drive、腾讯 ima、高德、滴滴、12306、小红书、飞书、语雀 等）。当用户问「你现在有什么连接器」「能连什么」「有 X 连接器吗」或让你连接/接入/开启某个服务时，第一步就调用它。用户指了一个你不认识的服务名也把名字原样传进来：国内应用它会查内置目录直接给出接法（一键添加 / 自定义端点 / 配对电脑 stdio / 官方 API 文档），查不到的再联网搜官方接法，比反问用户「X 是什么」有用。",
       parameters: z.object({
         service: z
           .string()
@@ -791,7 +982,12 @@ export function connectServiceTools(
 
         let hits: ConnectSearchHit[] = [];
         let searchError: string | null = null;
-        // Only search when the deployment does not already have a matching connector or built-in source.
+        /*
+         * A directory match counts as a match too: its pathway lines already carry the vendor's
+         * own docs and the route, so spending a web search only restates them — and for a stdio
+         * or login-session entry, restates them wrongly.
+         */
+        const dirEntries = directoryMatches(names);
         const hasMatch =
           Boolean(builtinSection) ||
           servers.some((server) =>
@@ -799,7 +995,8 @@ export function connectServiceTools(
               `${server.id} ${server.title} ${server.vendor} ${server.url} ${server.summary}`,
               names,
             ),
-          );
+          ) ||
+          dirEntries.length > 0;
         if (!hasMatch) {
           const query = /[\u3400-\u9fff]/.test(service)
             ? `${service} 官方 API MCP 开放平台 接入`
@@ -820,6 +1017,7 @@ export function connectServiceTools(
           searchError,
           builtinSection,
           autoActions,
+          dirEntries,
         );
       },
     },

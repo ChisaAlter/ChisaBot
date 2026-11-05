@@ -216,11 +216,48 @@ type Connection = {
   /** The bearer token for this server, already decrypted. Absent for a server that needs none. */
   token?: string;
   /**
+   * Where the token is presented, copied from the reviewed catalogue entry by the store.
+   *
+   * `keyParam` appends `?name=<token>` to the dialled URL; `keyHeader` sends it as a named
+   * header; both absent means the Authorization header as before. A caller never supplies
+   * these — they are how vendors whose credential travels in the query string keep the
+   * secret out of the stored URL. Both are ignored when `token` is absent.
+   */
+  keyParam?: string;
+  keyHeader?: string;
+  /**
    * Test harness only (MCPMock on 127.0.0.1). Production call sites never set this — CR-P2-08
    * still resolves and refuses private / metadata addresses for every real vendor URL.
    */
   allowPrivateHost?: boolean;
 };
+
+/**
+ * The URL and headers one dial is made with, by the connection's reviewed credential placement.
+ *
+ * Its own exported function because it is a decision rather than plumbing: this is the one place
+ * a vault-held key may be interpolated into a URL, and the string it lands in exists only for this
+ * call's lifetime — the stored `mcp_servers.url` and the audit row keep carrying the bare address.
+ * Asserted as `{url, headers}` so a regression is caught without a server to talk to.
+ */
+export function dialAddress(connection: Connection): {
+  url: URL;
+  headers?: Record<string, string>;
+} {
+  const target = new URL(connection.url);
+  if (!connection.token) return { url: target };
+  if (connection.keyParam) {
+    target.searchParams.set(connection.keyParam, connection.token);
+    return { url: target };
+  }
+  if (connection.keyHeader) {
+    return { url: target, headers: { [connection.keyHeader]: connection.token } };
+  }
+  return {
+    url: target,
+    headers: { Authorization: authorizationHeader(connection.token) },
+  };
+}
 
 /**
  * The vendor's own sentence out of a failure, when there is one worth reading.
@@ -371,7 +408,9 @@ async function withClient<T>(
     throw err;
   }
   // CR-P2-08：名字形状检查不够；连接前解析并拒绝内网 / 元数据地址。
-  const target = new URL(connection.url);
+  // Placement is applied first: the credential lands in the query string only for a reviewed
+  // entry that names the parameter, and the host check reads the host, which is unaffected.
+  const { url: target, headers } = dialAddress(connection);
   if (!connection.allowPrivateHost) {
     try {
       await resolvePublic(target.hostname);
@@ -390,9 +429,7 @@ async function withClient<T>(
     }
   }
   const transport = new StreamableHTTPClientTransport(target, {
-    requestInit: connection.token
-      ? { headers: { Authorization: authorizationHeader(connection.token) } }
-      : undefined,
+    requestInit: headers ? { headers } : undefined,
   });
   const client = new Client({ name: "chisabot", version: "1.0.0" });
 

@@ -71,6 +71,7 @@ import { Route as AuthedAdminMagpieConsoleRouteImport } from './routes/_authed/a
 import { Route as AuthedAdminPluginsIndexRouteImport } from './routes/_authed/admin/plugins/index'
 import { Route as AuthedAdminPluginsKeyRouteImport } from './routes/_authed/admin/plugins/$key'
 import { Route as AuthedAdminPluginsComposioRouteImport } from './routes/_authed/admin/plugins/composio'
+import { Route as AuthedAdminPluginsDirectoryRouteImport } from './routes/_authed/admin/plugins/directory'
 import { Route as AuthedSettingsConnectedAccountsIndexRouteImport } from './routes/_authed/settings/connected-accounts/index'
 import { Route as AuthedSettingsConnectedAccountsKeyRouteImport } from './routes/_authed/settings/connected-accounts/$key'
 import { Route as AuthedSettingsDevicesIndexRouteImport } from './routes/_authed/settings/devices/index'
@@ -396,6 +397,12 @@ const AuthedAdminPluginsComposioRoute =
     path: '/plugins/composio',
     getParentRoute: () => AuthedAdminRouteRoute,
   } as any)
+const AuthedAdminPluginsDirectoryRoute =
+  AuthedAdminPluginsDirectoryRouteImport.update({
+    id: '/plugins/directory',
+    path: '/plugins/directory',
+    getParentRoute: () => AuthedAdminRouteRoute,
+  } as any)
 const AuthedSettingsConnectedAccountsIndexRoute =
   AuthedSettingsConnectedAccountsIndexRouteImport.update({
     id: '/connected-accounts/',
@@ -494,6 +501,7 @@ export interface FileRoutesByFullPath {
   '/admin/magpie/console': typeof AuthedAdminMagpieConsoleRoute
   '/admin/plugins/$key': typeof AuthedAdminPluginsKeyRoute
   '/admin/plugins/composio': typeof AuthedAdminPluginsComposioRoute
+  '/admin/plugins/directory': typeof AuthedAdminPluginsDirectoryRoute
   '/settings/connected-accounts/$key': typeof AuthedSettingsConnectedAccountsKeyRoute
   '/settings/devices/$deviceId': typeof AuthedSettingsDevicesDeviceIdRoute
   '/agents/': typeof AuthedAppAgentsIndexRoute
@@ -561,6 +569,7 @@ export interface FileRoutesByTo {
   '/admin/magpie/console': typeof AuthedAdminMagpieConsoleRoute
   '/admin/plugins/$key': typeof AuthedAdminPluginsKeyRoute
   '/admin/plugins/composio': typeof AuthedAdminPluginsComposioRoute
+  '/admin/plugins/directory': typeof AuthedAdminPluginsDirectoryRoute
   '/settings/connected-accounts/$key': typeof AuthedSettingsConnectedAccountsKeyRoute
   '/settings/devices/$deviceId': typeof AuthedSettingsDevicesDeviceIdRoute
   '/agents': typeof AuthedAppAgentsIndexRoute
@@ -633,6 +642,7 @@ export interface FileRoutesById {
   '/_authed/admin/magpie/console': typeof AuthedAdminMagpieConsoleRoute
   '/_authed/admin/plugins/$key': typeof AuthedAdminPluginsKeyRoute
   '/_authed/admin/plugins/composio': typeof AuthedAdminPluginsComposioRoute
+  '/_authed/admin/plugins/directory': typeof AuthedAdminPluginsDirectoryRoute
   '/_authed/settings/connected-accounts/$key': typeof AuthedSettingsConnectedAccountsKeyRoute
   '/_authed/settings/devices/$deviceId': typeof AuthedSettingsDevicesDeviceIdRoute
   '/_authed/_app/agents/': typeof AuthedAppAgentsIndexRoute
@@ -704,6 +714,7 @@ export interface FileRouteTypes {
     | '/admin/magpie/console'
     | '/admin/plugins/$key'
     | '/admin/plugins/composio'
+    | '/admin/plugins/directory'
     | '/settings/connected-accounts/$key'
     | '/settings/devices/$deviceId'
     | '/agents/'
@@ -771,6 +782,7 @@ export interface FileRouteTypes {
     | '/admin/magpie/console'
     | '/admin/plugins/$key'
     | '/admin/plugins/composio'
+    | '/admin/plugins/directory'
     | '/settings/connected-accounts/$key'
     | '/settings/devices/$deviceId'
     | '/agents'
@@ -842,6 +854,7 @@ export interface FileRouteTypes {
     | '/_authed/admin/magpie/console'
     | '/_authed/admin/plugins/$key'
     | '/_authed/admin/plugins/composio'
+    | '/_authed/admin/plugins/directory'
     | '/_authed/settings/connected-accounts/$key'
     | '/_authed/settings/devices/$deviceId'
     | '/_authed/_app/agents/'
@@ -1298,6 +1311,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAdminPluginsComposioRouteImport
       parentRoute: typeof AuthedAdminRouteRoute
     }
+    '/_authed/admin/plugins/directory': {
+      id: '/_authed/admin/plugins/directory'
+      path: '/plugins/directory'
+      fullPath: '/admin/plugins/directory'
+      preLoaderRoute: typeof AuthedAdminPluginsDirectoryRouteImport
+      parentRoute: typeof AuthedAdminRouteRoute
+    }
     '/_authed/settings/connected-accounts/': {
       id: '/_authed/settings/connected-accounts/'
       path: '/connected-accounts'
@@ -1371,6 +1391,7 @@ interface AuthedAdminRouteRouteChildren {
   AuthedAdminMagpieConsoleRoute: typeof AuthedAdminMagpieConsoleRoute
   AuthedAdminPluginsKeyRoute: typeof AuthedAdminPluginsKeyRoute
   AuthedAdminPluginsComposioRoute: typeof AuthedAdminPluginsComposioRoute
+  AuthedAdminPluginsDirectoryRoute: typeof AuthedAdminPluginsDirectoryRoute
   AuthedAdminComponentsIndexRoute: typeof AuthedAdminComponentsIndexRoute
   AuthedAdminMagpieIndexRoute: typeof AuthedAdminMagpieIndexRoute
   AuthedAdminPluginsIndexRoute: typeof AuthedAdminPluginsIndexRoute
@@ -1399,6 +1420,7 @@ const AuthedAdminRouteRouteChildren: AuthedAdminRouteRouteChildren = {
   AuthedAdminMagpieConsoleRoute: AuthedAdminMagpieConsoleRoute,
   AuthedAdminPluginsKeyRoute: AuthedAdminPluginsKeyRoute,
   AuthedAdminPluginsComposioRoute: AuthedAdminPluginsComposioRoute,
+  AuthedAdminPluginsDirectoryRoute: AuthedAdminPluginsDirectoryRoute,
   AuthedAdminComponentsIndexRoute: AuthedAdminComponentsIndexRoute,
   AuthedAdminMagpieIndexRoute: AuthedAdminMagpieIndexRoute,
   AuthedAdminPluginsIndexRoute: AuthedAdminPluginsIndexRoute,

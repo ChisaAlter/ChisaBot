@@ -3727,6 +3727,8 @@ export function createPluginStore(options: PluginStoreOptions) {
         listed = await transport.listTools({
           url: effectiveUrl(row, entry),
           token,
+          keyParam: entry?.keyParam,
+          keyHeader: entry?.keyHeader,
         });
       } catch (error) {
         /*
@@ -7334,6 +7336,8 @@ export function createPluginStore(options: PluginStoreOptions) {
           {
             url: effectiveUrl(row, entry),
             token,
+            keyParam: entry?.keyParam,
+            keyHeader: entry?.keyHeader,
             actorId: input.credentialActorId ?? input.actorId,
             botId: input.botId,
           },

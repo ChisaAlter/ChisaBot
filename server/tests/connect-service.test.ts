@@ -169,10 +169,11 @@ describe("connect_service", () => {
       },
     });
 
-    const answer = await run(tool, "腾讯ima");
+    // 虚无存储 hits no alias and no directory entry, so the web-search path is what runs.
+    const answer = await run(tool, "虚无存储");
 
     expect(searched).toHaveLength(1);
-    expect(searched[0]).toContain("腾讯ima");
+    expect(searched[0]).toContain("虚无存储");
     expect(searched[0]).toContain("API");
     expect(answer).toContain("没有这个服务的连接器");
     expect(answer).toContain("https://ima.qq.com/agent-interface");
@@ -199,7 +200,7 @@ describe("connect_service", () => {
       },
     });
 
-    const answer = await run(tool, "腾讯ima");
+    const answer = await run(tool, "虚无存储");
 
     expect(answer).toContain("联网搜索失败");
     expect(answer).toContain("搜索超时");
@@ -283,6 +284,57 @@ describe("connect_service", () => {
     expect(answer).toContain("chisa@gmail.com");
     expect(answer).toContain("email_connect");
     expect(answer).toContain("[打开账号连接](/settings/connected-accounts)");
+    expect(calls).toEqual([]);
+  });
+
+  test("a directory service is answered with its connect pathway, not a web search", async () => {
+    const { tool, calls } = connectTool({ servers: [] });
+
+    const answer = await run(tool, "小红书");
+
+    expect(answer).toContain("国内应用目录收录了它的接法");
+    expect(answer).toContain("小红书");
+    // A stdio package's pathway is the paired-PC bridge, spelled out rather than implied.
+    expect(answer).toContain("device_mcp_call");
+    expect(answer).toContain("xpzouying/xiaohongshu-mcp");
+    // The session-account warning travels with the pathway, not dropped on the way.
+    expect(answer).toContain("⚠️");
+    // A directory hit is an answer, not a reason to search the web anyway.
+    expect(calls).toEqual([]);
+    expect(answer).not.toContain("联网搜索");
+    expect(answer).not.toContain("Streamable HTTP");
+  });
+
+  test("an official remote endpoint without a catalogue row points at the custom-MCP path", async () => {
+    const { tool, calls } = connectTool({ servers: [] });
+
+    const answer = await run(tool, "天眼查");
+
+    expect(answer).toContain("国内应用目录收录了它的接法");
+    expect(answer).toContain("mcp.tianyancha.com/mcp");
+    expect(answer).toContain("添加自定义 MCP");
+    expect(calls).toEqual([]);
+  });
+
+  test("a service the catalogue carries still answers through the catalogue, not the directory", async () => {
+    const { tool } = connectTool({ servers: [] });
+
+    const answer = await run(tool, "高德地图");
+
+    // amap is BOTH a catalogue row and a directory entry: the reviewed one-click path
+    // is the nearer answer, and the directory's version must not restate it below.
+    expect(answer).toContain("目录里有");
+    expect(answer).toContain("还没启用");
+    expect(answer).not.toContain("device_mcp_call");
+  });
+
+  test("a directory link entry gives the official docs rather than claiming nothing exists", async () => {
+    const { tool, calls } = connectTool({ servers: [] });
+
+    const answer = await run(tool, "腾讯ima");
+
+    expect(answer).toContain("国内应用目录收录了它的接法");
+    expect(answer).toContain("ima.qq.com/agent-interface");
     expect(calls).toEqual([]);
   });
 

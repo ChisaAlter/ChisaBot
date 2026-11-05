@@ -597,3 +597,95 @@ test("a recorded read cannot take an action off a curated entry's write list", (
   // the write list and read as a read for an action the list omits.
   expect(classifyTool(notion, "notion-fetch", true, "")).toBe("write");
 });
+
+/**
+ * The China-app block. The entries promoted out of the directory — the few whose
+ * vendor publishes an official remote MCP endpoint this deployment can reach —
+ * carry a second reviewed property beside the URL: where the vault-held key is
+ * presented. A `keyParam` names the query parameter the vendor's docs require
+ * (高德 ?key=, 百度 ?ak=), `keyHeader` a named request header; either way the
+ * stored URL and the audit row stay bare, which is exactly what customUrlRefusal
+ * enforces on a hand-typed endpoint. These cases pin the review decisions.
+ */
+describe("the promoted China-app entries", () => {
+  const PROMOTED = [
+    "amap",
+    "baidu-map",
+    "tencent-map",
+    "didi",
+    "didi-sandbox",
+    "aihot",
+    "metaso",
+    "lava",
+    "xgb",
+  ];
+
+  test("each is an https-pinned host entry", () => {
+    for (const key of PROMOTED) {
+      const entry = catalogueEntry(key);
+      expect(entry, key).not.toBeNull();
+      expect(entry!.host?.startsWith("https://"), key).toBe(true);
+    }
+  });
+
+  test("an entry places its credential at most once", () => {
+    for (const key of PROMOTED) {
+      const entry = catalogueEntry(key)!;
+      expect(!(entry.keyParam && entry.keyHeader), key).toBe(true);
+    }
+  });
+
+  test("the query-string vendors name the parameter their docs require", () => {
+    expect(catalogueEntry("amap")?.keyParam).toBe("key");
+    expect(catalogueEntry("baidu-map")?.keyParam).toBe("ak");
+    expect(catalogueEntry("tencent-map")?.keyParam).toBe("key");
+    expect(catalogueEntry("didi")?.keyParam).toBe("key");
+    expect(catalogueEntry("didi-sandbox")?.keyParam).toBe("key");
+  });
+
+  test("the key-carrying vendors take a deployment credential, and aihot none", () => {
+    for (const key of ["amap", "baidu-map", "tencent-map", "didi"]) {
+      const entry = catalogueEntry(key)!;
+      expect(entry.auth.kind, key).toBe("deployment-bearer");
+      expect(serverCredentialKind(entry), key).toBe("mcp");
+    }
+    expect(catalogueEntry("aihot")!.auth.kind).toBe("none");
+    expect(serverCredentialKind(catalogueEntry("aihot")!)).toBeNull();
+  });
+
+  test("resolveServerUrl still returns the bare URL — placement never reaches a stored string", () => {
+    expect(resolveServerUrl("amap")?.url).toBe("https://mcp.amap.com/mcp");
+    expect(resolveServerUrl("baidu-map")?.url).toBe(
+      "https://mcp.map.baidu.com/mcp",
+    );
+    expect(resolveServerUrl("tencent-map")?.url).toBe(
+      "https://mcp.map.qq.com/mcp",
+    );
+    expect(resolveServerUrl("didi")?.url).toBe(
+      "https://mcp.didichuxing.com/mcp-servers",
+    );
+    expect(resolveServerUrl("didi-sandbox")?.url).toBe(
+      "https://mcp.didichuxing.com/mcp-servers-sandbox",
+    );
+  });
+
+  test("didi's order actions are the reviewed writes — a booking is not a read", () => {
+    const didi = catalogueEntry("didi")!;
+    for (const name of [
+      "taxi_create_order",
+      "taxi_cancel_order",
+      "taxi_new_order",
+      "taxi_generate_ride_app_link",
+    ]) {
+      expect(classifyTool(didi, name, true), name).toBe("write");
+    }
+    // And the list stays a list: an action review never named is not widened by the
+    // neighbour cases — a price estimate still classifies read, not unknown write.
+    expect(classifyTool(didi, "taxi_estimate_price", true)).toBe("read");
+  });
+
+  test("the same writes apply to the sandbox twin", () => {
+    const sandbox = catalogueEntry("didi-sandbox")!;
+    expect(classifyTool(sandbox, "taxi_create_order", true)).toBe("write");
+  });
+});

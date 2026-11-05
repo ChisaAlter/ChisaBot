@@ -274,6 +274,34 @@ function RouteComponent() {
           </PageSection>
 
           <PageSection
+            description={
+              "高德、滴滴、12306、小红书等国内服务的接入目录（官方优先，未逐个审查）。"
+            }
+            title={"国内应用"}
+          >
+            <PageRows>
+              <Item
+                data-testid="plugin-china-directory"
+                render={<Link to="/admin/plugins/directory" />}
+                size="sm"
+              >
+                <RowMark>
+                  <IconPlug className="size-4" />
+                </RowMark>
+                <ItemContent>
+                  <ItemTitle>{"浏览国内应用目录"}</ItemTitle>
+                  <ItemDescription>
+                    {"200+ 条目：已收录的一键添加，官方端点走自定义 MCP，stdio 包在配对电脑上由机器人拉起，暂无 MCP 的给官方 API 文档。"}
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                </ItemActions>
+              </Item>
+            </PageRows>
+          </PageSection>
+
+          <PageSection
             description={"通过 Composio 接入的更多应用（未逐个审查）。"}
             title={"更多应用"}
           >
