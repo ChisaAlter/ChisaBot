@@ -13,7 +13,9 @@
  *   覆盖范围内任何一条消息被编辑 / 删除 / 重新生成，内容摘要（digest）就对不上，自然失效；截断时还会按被截掉的
  *   消息 id 主动删掉相关缓存。新一轮只多出几条时在上一份摘要的基础上续写（只把新增的几轮发给摘要模型）；
  *   连续续写 5 次，或上一份摘要已超过 600 字，就把整段重新摘要一次，免得越续越长、越续越走样。
- * - 数据库里的完整对话历史从不改动：这里只改这一次发给 Hermes 的副本。
+ * - 数据库里的完整对话历史从不改动：这里只改这一次发给 Hermes 的副本。被裁掉 / 被摘要代替的
+ *   内容模型可以自己取回：占位符和摘要消息上带着消息 id，`history_recover` 工具（agents/history-recover.ts，
+ *   index.ts 的 handoff 里按线程挂载）按 id 把原文还给模型——裁剪是「发出的视图」，不是删除。
  * - 同一次运行（runId）被拆成几段（等确认后接着跑）时复用同一份方案，桥接层要求同一次运行的输入只能在末尾追加。
  *
  * 估算用 context-usage.ts 的 estimateTokens（中日韩字符 1 字 1 token，其它 4 字符 1 token），再乘一个系数：
@@ -54,6 +56,13 @@ export const UNCALIBRATED_MARGIN = 1.15;
 export const CALIBRATION_MIN = 0.8;
 export const CALIBRATION_MAX = 3;
 export const HISTORY_SUMMARY_ID = "hermes-history-summary";
+/**
+ * 取回被省略内容的工具名（实现在 agents/history-recover.ts）：占位符和摘要把这个名字
+ * 连同消息 id 一起写给模型，模型按需取回原文——原文一直在数据库里，这里只改发出的副本。
+ */
+export const HISTORY_RECOVER_TOOL = "history_recover";
+const recoverHint = (id: string) =>
+  `；需要原文时用 ${HISTORY_RECOVER_TOOL} 取回，id: ${id}`;
 
 export type HistoryCompaction = {
   mode: "trim" | "summary";
@@ -139,10 +148,10 @@ const userStarts = (messages: readonly Message[]) =>
     message.role === "user" ? [index] : [],
   );
 
-function shortenText(text: string): string {
+function shortenText(text: string, messageId: string): string {
   if (text.length <= LONG_TEXT_CHARS) return text;
   const omitted = text.length - LONG_TEXT_HEAD - LONG_TEXT_TAIL;
-  return `${text.slice(0, LONG_TEXT_HEAD)}\n…［较早的长消息中间省略 ${omitted} 字］…\n${text.slice(-LONG_TEXT_TAIL)}`;
+  return `${text.slice(0, LONG_TEXT_HEAD)}\n…［较早的长消息中间省略 ${omitted} 字${recoverHint(messageId)}］…\n${text.slice(-LONG_TEXT_TAIL)}`;
 }
 
 /** 旧消息瘦身：只换内容，id / 角色 / 工具调用 id 不变（返回新对象，原消息不动）。 */
@@ -159,14 +168,14 @@ export function trimOldMessage(message: Message): Message {
     return content.length > OLD_TOOL_RESULT_CHARS
       ? ({
           ...message,
-          content: `[较早的工具结果已省略，原长 ${content.length} 字]`,
+          content: `[较早的工具结果已省略，原长 ${content.length} 字${recoverHint(message.id)}]`,
         } as Message)
       : message;
   }
   let changed = false;
   let content = record.content;
   if (typeof content === "string") {
-    const shorter = shortenText(content);
+    const shorter = shortenText(content, message.id);
     if (shorter !== content) {
       content = shorter;
       changed = true;
@@ -180,7 +189,7 @@ export function trimOldMessage(message: Message): Message {
         typeof (part as { text?: unknown }).text === "string"
       ) {
         const text = (part as { text: string }).text;
-        const shorter = shortenText(text);
+        const shorter = shortenText(text, message.id);
         if (shorter !== text) {
           changed = true;
           return { ...part, text: shorter };
@@ -201,7 +210,7 @@ export function trimOldMessage(message: Message): Message {
           function: {
             ...call.function,
             arguments: JSON.stringify({
-              省略: `较早的工具参数已省略，原长 ${args.length} 字`,
+              省略: `较早的工具参数已省略，原长 ${args.length} 字${recoverHint(message.id)}`,
             }),
           },
         };
@@ -218,11 +227,15 @@ export function trimOldMessage(message: Message): Message {
   } as Message;
 }
 
-export function summaryMessage(summary: string, turns: number): Message {
+export function summaryMessage(
+  summary: string,
+  turns: number,
+  range?: { firstId: string; lastId: string },
+): Message {
   return {
     id: HISTORY_SUMMARY_ID,
     role: "system",
-    content: `【较早对话摘要】本对话较早的 ${turns} 轮没有逐字发送，下面是它们的摘要（完整原文仍保存在对话记录里）：\n${summary}`,
+    content: `【较早对话摘要】本对话较早的 ${turns} 轮没有逐字发送，下面是它们的摘要（完整原文仍保存在对话记录里${range ? `；需要某段的原文时用 ${HISTORY_RECOVER_TOOL} 取回：from=${range.firstId}、to=${range.lastId}，或其中一部分` : ""}）：\n${summary}`,
   } as Message;
 }
 
@@ -429,10 +442,15 @@ function applyPlan(
     trimAt > 0
       ? [...kept.slice(0, trimAt).map(trimOldMessage), ...kept.slice(trimAt)]
       : kept;
+  const coveredFirst = history[0];
+  const coveredLast = cut > 0 ? history[cut - 1] : undefined;
   return {
     summary:
-      useSummary && plan.summary !== null
-        ? summaryMessage(plan.summary, plan.summarizedTurns)
+      useSummary && plan.summary !== null && coveredFirst && coveredLast
+        ? summaryMessage(plan.summary, plan.summarizedTurns, {
+            firstId: coveredFirst.id,
+            lastId: coveredLast.id,
+          })
         : null,
     messages,
   };

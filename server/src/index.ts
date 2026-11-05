@@ -318,6 +318,7 @@ import { OPS_CODES } from "../../shared/ops-codes";
 import { bumpOps } from "../../shared/ops-counters";
 import { createModelFallbackService, createModelFallbackStore } from "./agents/model-fallback-settings";
 import { createPgHistorySummaryStore, lastMeasuredUsage } from "./agents/history-budget";
+import { historyRecoverTools } from "./agents/history-recover";
 import { createHistorySummaryModelService, createHistorySummaryModelStore } from "./agents/history-summary-settings";
 import { createSelfHostBanner } from "./self-host-banner";
 import { createTeamBots } from "./team-bots/team-bots";
@@ -2919,11 +2920,19 @@ const actorAgentResolver = createActorAgentResolver({
             })().catch(() => [])
           : [];
       const withLocal = localAgentTools.length ? [...tools, ...localAgentTools] : tools;
+      // 长对话取回（agents/history-recover.ts）：预算裁掉 / 摘要代替的内容按 id 取回原文。
+      // 只读这段对话自己的历史——模型在被裁前本来就逐字看过；群聊、IM、后台回合一样给。
+      const recovered = input.threadId
+        ? await restrictNamedToolsForWorkflow(initiator, async () =>
+            historyRecoverTools({ database, threadId: input.threadId }),
+          )().catch(() => [])
+        : [];
+      const withHistory = recovered.length ? [...withLocal, ...recovered] : withLocal;
       const sessionId = props?.panelAuthoring?.sessionId;
       if (typeof sessionId !== "string" || !sessionId || sessionId.length > 128)
-        return withLocal;
+        return withHistory;
       return [
-        ...withLocal,
+        ...withHistory,
         ...(await restrictNamedToolsForWorkflow(initiator, () =>
           panels.authoring.tools({ actorId, botId }, sessionId),
         )()),

@@ -143,9 +143,10 @@ describe("Hermes history budget", () => {
       result.messages.map((message) => [message.id, message]),
     );
     expect(byId.get("t1")?.content).toMatch(
-      /^\[较早的工具结果已省略，原长 \d+ 字\]$/u,
+      /^\[较早的工具结果已省略，原长 \d+ 字；需要原文时用 history_recover 取回，id: t1\]$/u,
     );
     expect(String(byId.get("u5")?.content)).toContain("较早的长消息中间省略");
+    expect(String(byId.get("u5")?.content)).toContain("id: u5");
     expect(String(byId.get("u5")?.content).length).toBeLessThan(2_100);
     // 最近两轮（u9、u10）原样；消息 id、顺序、工具调用 id 都不变。
     for (const id of ["u9", "t9", "a9", "u10", "t10", "a10"])
@@ -205,6 +206,9 @@ describe("Hermes history budget", () => {
       role: "system",
     });
     expect(String(again.summary?.content)).toContain("较早的 8 轮");
+    // 摘要消息带覆盖范围的 id：模型要原文时用 history_recover 按 from/to 取回。
+    expect(String(again.summary?.content)).toContain("from=u1");
+    expect(String(again.summary?.content)).toContain("to=a8");
     expect(again.messages[0]?.id).toBe("u9");
     expect(again.compaction).toMatchObject({
       mode: "summary",
