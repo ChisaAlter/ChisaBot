@@ -7,8 +7,9 @@
 //   3. 同一份图标再按内容哈希命名一份放进 build/icons/（打包到 resources/icons/）：快捷方式的图标指向这个
 //      新文件名，资源管理器的图标缓存里从来没有这个路径，换了图标就一定按新文件读，不会继续显示旧图标。
 //
-// 用法：node pc/scripts/win-icon.mjs   （源图 assets/brand/source.webp，裁切和
-// assets/brand/generate.mjs 一致：≤64px 用更紧的脸部裁切，圆角）
+// 用法：node pc/scripts/win-icon.mjs   （源图 assets/brand/source.webp。
+// 所有尺寸统一用整幅胸像——与桌面大图标同一构图；≤64px 保留饱和/对比/锐化增强保可读性，圆角。
+// 网页 favicon / 安卓等仍走 generate.mjs 的 ≤64px 脸部紧裁，不归这个脚本管。）
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -22,8 +23,6 @@ const SIZES = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256];
 const BMP_MAX = 48;
 
 const srcBuf = await sharp(SRC).png().toBuffer();
-const FACE_CROP = { left: 400, top: 150, width: 680, height: 680 }; // 与 generate.mjs 一致（1254 坐标）
-const faceBuf = await sharp(srcBuf).extract(FACE_CROP).png().toBuffer();
 
 async function sized(buf, s) {
   let p = sharp(buf).resize(s, s, { kernel: "lanczos3" });
@@ -43,7 +42,7 @@ async function roundedMask(s) {
 }
 
 async function frame(s) {
-  const base = sharp(await sized(s <= 64 ? faceBuf : srcBuf, s)).ensureAlpha();
+  const base = sharp(await sized(srcBuf, s)).ensureAlpha();
   const mask = await roundedMask(s);
   return base.composite([{ input: mask, blend: "dest-in" }]).png().toBuffer();
 }

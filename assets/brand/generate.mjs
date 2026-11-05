@@ -156,9 +156,11 @@ spawnSync(process.execPath, [path.join(R, "pc", "scripts", "win-icon.mjs")], {
 await save(await icon(192, "circle"), "pc/src/ui/logo.png");
 
 // 托盘徽标（32px 圆角底图 + 右下角状态点；offline = 灰度 + 提亮 + 80% 透明）
+// 底图传 srcBuf = 整幅胸像（和桌面/任务栏图标同一构图）；不走路径 pick 的 ≤64px 脸部紧裁——
+// 那是给 favicon / 安卓这类更小的面准备的。状态点照旧。
 async function tray(kind) {
   const s = 32;
-  let buf = await icon(s, "rounded");
+  let buf = await icon(s, "rounded", srcBuf);
   if (kind === "offline") {
     buf = await sharp(buf)
       .grayscale()

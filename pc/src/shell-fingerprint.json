@@ -1,14 +1,14 @@
 {
   "schema": 1,
-  "hash": "37ad99811cd768b6",
+  "hash": "7314f9105596bec5",
   "inputs": {
-    "build/icon.ico": "d4486d9c9691a359d82e74ef6c05cbea90feff669b6c88778ea16087fa27bd45",
+    "build/icon.ico": "810490cc1a521e659a2d3ada6808de6456a5fd3b9e5cb79f1ebe3cbfdc003a2a",
     "build/installer.nsh": "6ffde3df308ff1d4ebd20b4b4df3c06157c7c60139345b697e4961b4d66dd921",
     "assets/icon.png": "2659415f8ce180ae9ebd39fccfe8e6fe7478a5876dc226f6a9d7819fc831734f",
-    "build/icons/chisabot-d4486d9c9691.ico": "d4486d9c9691a359d82e74ef6c05cbea90feff669b6c88778ea16087fa27bd45",
-    "assets/tray-offline.png": "7f52ffbd8515dd726fdf3c28aeb458d61581fb57536bfa88f3099b21044dfd38",
-    "assets/tray-online.png": "309444361dd013be2cb48a967fd618d38fb36e25f6d0f5c55d80d15ca36ca28f",
-    "assets/tray-paused.png": "7921b21417d3cf79c25810b30b20caac4f7f514ee475a8b5324f3af73dd87c10",
+    "build/icons/chisabot-810490cc1a52.ico": "810490cc1a521e659a2d3ada6808de6456a5fd3b9e5cb79f1ebe3cbfdc003a2a",
+    "assets/tray-offline.png": "532dc3ae28cfb23f4d7fbfbe5ea1ec46ef5a18499d978958ba7df7a335aa4647",
+    "assets/tray-online.png": "588933e0a0cecdb64cc38a82261abb88f52fe2b02076fe9fed931ed64a5714dd",
+    "assets/tray-paused.png": "daf8158d4aa270c67188a2a9209c5a8fa171d5096f6c0b45d384a38a39fcd9d8",
     "package.json#shell": "d4cd6ddb3a42b607a87179811c919825822730fc82cd785f0e4e86df61038c2c"
   }
 }
