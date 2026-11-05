@@ -1249,9 +1249,16 @@ export function ChannelChat({
           forceUnlockThread(channel.threadId);
           failRef.current(second.reason);
           void runPromise.catch(() => undefined);
-          throw new Error(second.reason);
+          /*
+           * 不在这里 throw、也不 await runPromise（刚被停掉，多半以 HERMES_RUN_CANCELLED
+           * 拒绝，抛出去殊途同归）。交给下面统一的 turnFailure 出口按 turnAnswered 判定：
+           * 消息已落库、这一轮做出过东西（工具步骤/半截回答在屏上）就只挂原因不回填草稿——
+           * 直接 throw 会让 composer 把已发出的原句塞回输入框，重试时和 transcript 里那条重复发。
+           * 什么都没做成才走 throw，照旧恢复草稿让人重发。
+           */
+        } else {
+          await runPromise;
         }
-        await runPromise;
       } else {
         await runPromise;
       }
