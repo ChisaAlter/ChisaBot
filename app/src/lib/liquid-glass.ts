@@ -90,7 +90,13 @@ export function displacementScale(rim: number): number {
 }
 
 /** 圆角矩形 SDF（外部为正、内部为负），CSS 普通 border-radius 用这条。 */
-function sdRoundBox(px: number, py: number, hw: number, hh: number, r: number): number {
+function sdRoundBox(
+  px: number,
+  py: number,
+  hw: number,
+  hh: number,
+  r: number,
+): number {
   const qx = Math.abs(px) - (hw - r);
   const qy = Math.abs(py) - (hh - r);
   const ox = Math.max(qx, 0);
@@ -164,7 +170,9 @@ export interface BgStats {
 /** 5×3 采样点的统计（点 = [r,g,b]，0..255）。 */
 export function sampleStats(points: readonly RGBA[]): BgStats {
   if (points.length === 0) return { lum: 0.5, texture: 0, chroma: 0 };
-  const lums = points.map((c) => (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255);
+  const lums = points.map(
+    (c) => (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255,
+  );
   const idx = lums.map((_, i) => i).sort((a, b) => lums[a] - lums[b]);
   const keep = idx.slice(2, Math.max(2, idx.length - 2));
   let r = 0;
@@ -223,7 +231,10 @@ export function decideInk(
 export function densityOf(ink: GlassInkState, s: BgStats): number {
   const inkLum = ink === "dark" ? 1 : 0;
   const proximity = 1 - Math.abs(s.lum - inkLum);
-  return Math.min(1, Math.max(0, 0.55 * proximity + 0.7 * s.texture + 0.3 * s.chroma));
+  return Math.min(
+    1,
+    Math.max(0, 0.55 * proximity + 0.7 * s.texture + 0.3 * s.chroma),
+  );
 }
 
 /** 密度 0..1 映射到釉色的浓淡系数（0.7 薄 – 1.3 浓，0.5 时≈1）。 */
@@ -286,7 +297,11 @@ export function alphaForContrast(opts: {
   const inkColor: RGBA =
     opts.inkColor ?? (opts.ink === "dark" ? LG_INK_ON_DARK : LG_INK_ON_LIGHT);
   const comp = (a: number) =>
-    glassComposite([opts.tintRGB[0], opts.tintRGB[1], opts.tintRGB[2], a], opts.hlAlpha, opts.bg);
+    glassComposite(
+      [opts.tintRGB[0], opts.tintRGB[1], opts.tintRGB[2], a],
+      opts.hlAlpha,
+      opts.bg,
+    );
   const ratio = (a: number) => {
     const c = comp(a);
     return contrast(over(inkColor, c), c);
@@ -371,7 +386,8 @@ function darkScheme(): boolean {
 function glassSuppressed(): boolean {
   if (document.documentElement.hasAttribute("data-perf")) return true;
   try {
-    if (window.matchMedia("(prefers-reduced-transparency: reduce)").matches) return true;
+    if (window.matchMedia("(prefers-reduced-transparency: reduce)").matches)
+      return true;
   } catch {
     /* matchMedia 不可用时按不抑制处理 */
   }
@@ -406,7 +422,10 @@ class LiquidGlass {
     this.enabled = true;
     // 「记住上次的墨」：浅色模式下上次是深釉，先给已存在的面板挂上深釉，第一次采样再纠正。
     try {
-      if (!darkScheme() && window.localStorage.getItem(LG_INK_STORAGE_KEY) === "dark") {
+      if (
+        !darkScheme() &&
+        window.localStorage.getItem(LG_INK_STORAGE_KEY) === "dark"
+      ) {
         for (const el of document.querySelectorAll(GLASS_SURFACE_SELECTOR)) {
           el.setAttribute("data-lg-ink", "dark");
         }
@@ -426,7 +445,10 @@ class LiquidGlass {
     });
     this.resizeObs = new ResizeObserver(() => this.refresh());
     this.resizeObs.observe(document.documentElement);
-    window.addEventListener("scroll", this.onScroll, { passive: true, capture: true });
+    window.addEventListener("scroll", this.onScroll, {
+      passive: true,
+      capture: true,
+    });
     this.refresh();
   }
 
@@ -436,7 +458,9 @@ class LiquidGlass {
     window.clearTimeout(this.pendingRescan);
     window.clearTimeout(this.pendingSample);
     window.clearInterval(this.liveSkyTimer);
-    window.removeEventListener("scroll", this.onScroll, { capture: true } as EventListenerOptions);
+    window.removeEventListener("scroll", this.onScroll, {
+      capture: true,
+    } as EventListenerOptions);
     this.htmlObs?.disconnect();
     this.mutationObs?.disconnect();
     this.resizeObs?.disconnect();
@@ -507,13 +531,23 @@ class LiquidGlass {
     // --lg-blur: none（渲染预算关掉的小元素 / 滚动区）上透镜自然缺席。
     if (cs.getPropertyValue("backdrop-filter") === "none") return false;
     // will-change / 变换 / 固定定位 / 弹层菜单：Chromium 会画出位移图而不是弯折后的背景。
-    if (cs.willChange !== "auto" || cs.transform !== "none" || cs.filter !== "none") return false;
+    if (
+      cs.willChange !== "auto" ||
+      cs.transform !== "none" ||
+      cs.filter !== "none"
+    )
+      return false;
     if (cs.position === "fixed" || cs.position === "sticky") return false;
     if (el.closest(LENS_SKIP_SELECTOR)) return false;
     return true;
   }
 
-  private lensKey(el: HTMLElement): { key: string; w: number; h: number; rim: number } {
+  private lensKey(el: HTMLElement): {
+    key: string;
+    w: number;
+    h: number;
+    rim: number;
+  } {
     const rect = el.getBoundingClientRect();
     const w = Math.max(8, Math.round(rect.width / 8) * 8);
     const h = Math.max(8, Math.round(rect.height / 8) * 8);
@@ -529,10 +563,21 @@ class LiquidGlass {
     });
     const radius = Math.min(Math.max(...radii, 0), Math.min(w, h) / 2);
     const rim = rimWidthPx(Math.min(w, h));
-    return { key: `${w}x${h}r${Math.round(radius)}m${Math.round(rim)}`, w, h, rim };
+    return {
+      key: `${w}x${h}r${Math.round(radius)}m${Math.round(rim)}`,
+      w,
+      h,
+      rim,
+    };
   }
 
-  private mapFor(key: string, w: number, h: number, radius: number, rim: number): Promise<string> {
+  private mapFor(
+    key: string,
+    w: number,
+    h: number,
+    radius: number,
+    rim: number,
+  ): Promise<string> {
     const cached = this.mapCache.get(key);
     if (cached) return cached;
     const promise = (async () => {
@@ -542,7 +587,7 @@ class LiquidGlass {
       canvas.height = h;
       const imgData = new ImageData(w, h);
       imgData.data.set(data);
-      canvas.getContext("2d")!.putImageData(imgData, 0, 0);
+      canvas.getContext("2d")?.putImageData(imgData, 0, 0);
       const url = canvas.toDataURL("image/png");
       // 等图解码完再把元素指过去，不然第一帧按「没有模糊」画。
       const img = new Image();
@@ -579,36 +624,43 @@ class LiquidGlass {
     if (existing) this.removeLens(el);
     const id = `lgf${this.seq++}`;
     const scale = displacementScale(rim);
-    void this.mapFor(key, w, h, radius, rim).then((url) => {
-      // 解码期间元素可能已挂过新透镜 / 被卸载：已有一条就不再叠第二个 svg。
-      if (this.destroyed || this.lens.has(el)) return;
-      const host = this.ensureSvgHost();
-      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("width", "0");
-      svg.setAttribute("height", "0");
-      svg.setAttribute("aria-hidden", "true");
-      svg.style.position = "absolute";
-      svg.innerHTML =
-        `<filter id="${id}" filterUnits="userSpaceOnUse" x="0" y="0" width="${w}" height="${h}" color-interpolation-filters="sRGB">` +
-        `<feImage href="${url}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="lgmap"/>` +
-        `<feDisplacementMap in="SourceGraphic" in2="lgmap" scale="${(scale * LG_SPLIT_R).toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="dR"/>` +
-        `<feColorMatrix in="dR" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cR"/>` +
-        `<feDisplacementMap in="SourceGraphic" in2="lgmap" scale="${scale.toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="dG"/>` +
-        `<feColorMatrix in="dG" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cG"/>` +
-        `<feDisplacementMap in="SourceGraphic" in2="lgmap" scale="${(scale * LG_SPLIT_B).toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="dB"/>` +
-        `<feColorMatrix in="dB" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="cB"/>` +
-        `<feBlend in="cR" in2="cG" mode="screen" result="rg"/>` +
-        `<feBlend in="rg" in2="cB" mode="screen"/>` +
-        `</filter>`;
-      host.appendChild(svg);
-      this.lens.set(el, { id, key, svg });
-      this.lensRules.set(id, `[data-lg-lens="${id}"]{--lg-lens-url:url(#${id});}`);
-      this.rewriteLensStyle();
-      el.setAttribute("data-lg-lens", id);
-    })
-    .catch(() => {
-      /* 位移图构建失败（canvas 不可用等）：退回无透镜的 CSS 玻璃 */
-    });
+    void this.mapFor(key, w, h, radius, rim)
+      .then((url) => {
+        // 解码期间元素可能已挂过新透镜 / 被卸载：已有一条就不再叠第二个 svg。
+        if (this.destroyed || this.lens.has(el)) return;
+        const host = this.ensureSvgHost();
+        const svg = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "svg",
+        );
+        svg.setAttribute("width", "0");
+        svg.setAttribute("height", "0");
+        svg.setAttribute("aria-hidden", "true");
+        svg.style.position = "absolute";
+        svg.innerHTML =
+          `<filter id="${id}" filterUnits="userSpaceOnUse" x="0" y="0" width="${w}" height="${h}" color-interpolation-filters="sRGB">` +
+          `<feImage href="${url}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="lgmap"/>` +
+          `<feDisplacementMap in="SourceGraphic" in2="lgmap" scale="${(scale * LG_SPLIT_R).toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="dR"/>` +
+          `<feColorMatrix in="dR" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cR"/>` +
+          `<feDisplacementMap in="SourceGraphic" in2="lgmap" scale="${scale.toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="dG"/>` +
+          `<feColorMatrix in="dG" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cG"/>` +
+          `<feDisplacementMap in="SourceGraphic" in2="lgmap" scale="${(scale * LG_SPLIT_B).toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="dB"/>` +
+          `<feColorMatrix in="dB" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="cB"/>` +
+          `<feBlend in="cR" in2="cG" mode="screen" result="rg"/>` +
+          `<feBlend in="rg" in2="cB" mode="screen"/>` +
+          `</filter>`;
+        host.appendChild(svg);
+        this.lens.set(el, { id, key, svg });
+        this.lensRules.set(
+          id,
+          `[data-lg-lens="${id}"]{--lg-lens-url:url(#${id});}`,
+        );
+        this.rewriteLensStyle();
+        el.setAttribute("data-lg-lens", id);
+      })
+      .catch(() => {
+        /* 位移图构建失败（canvas 不可用等）：退回无透镜的 CSS 玻璃 */
+      });
   }
 
   private removeLens(el: Element) {
@@ -664,8 +716,15 @@ class LiquidGlass {
       const stats = raster ? this.sampleUnder(el, raster) : null;
       const prev = this.lastInk.get(el) ?? null;
       const lum = stats?.lum ?? 0.5;
-      const ink = stats ? decideInk(scheme, lum, prev) : scheme === "dark" ? "dark" : "light";
-      decided.set(el, { stats: stats ?? { lum: 0.5, texture: 0.4, chroma: 0.4 }, ink });
+      const ink = stats
+        ? decideInk(scheme, lum, prev)
+        : scheme === "dark"
+          ? "dark"
+          : "light";
+      decided.set(el, {
+        stats: stats ?? { lum: 0.5, texture: 0.4, chroma: 0.4 },
+        ink,
+      });
       const rowKey = Math.round(el.getBoundingClientRect().top / 24);
       const list = rows.get(rowKey) ?? [];
       list.push(ink);
@@ -684,24 +743,34 @@ class LiquidGlass {
       else if (!globalDark) ink = "light";
       else if (rowDark * 2 > row.length) ink = "dark";
       else if (rowLight * 2 > row.length) ink = "light";
-      else ink = decided.get(el)!.ink;
+      else ink = decided.get(el)?.ink ?? "light";
       if (ink === "dark") darkCount++;
       else lightCount++;
-      this.applyAdapt(el, ink, decided.get(el)!.stats, scheme);
+      const decision = decided.get(el);
+      if (decision) this.applyAdapt(el, ink, decision.stats, scheme);
       this.lastInk.set(el, ink);
     }
     // 记住浅色模式下多数面板的墨，下次加载直接打开在它。
     try {
       if (scheme === "light") {
-        window.localStorage.setItem(LG_INK_STORAGE_KEY, darkCount > lightCount ? "dark" : "light");
+        window.localStorage.setItem(
+          LG_INK_STORAGE_KEY,
+          darkCount > lightCount ? "dark" : "light",
+        );
       }
     } catch {
       /* 存储不可用跳过 */
     }
   }
 
-  private applyAdapt(el: HTMLElement, ink: GlassInkState, stats: BgStats, scheme: "light" | "dark") {
-    if (ink === "dark" && scheme === "light") el.setAttribute("data-lg-ink", "dark");
+  private applyAdapt(
+    el: HTMLElement,
+    ink: GlassInkState,
+    stats: BgStats,
+    scheme: "light" | "dark",
+  ) {
+    if (ink === "dark" && scheme === "light")
+      el.setAttribute("data-lg-ink", "dark");
     else el.removeAttribute("data-lg-ink");
     const density = densityOf(ink, stats);
     const densityK = densityKOf(density);
@@ -713,7 +782,8 @@ class LiquidGlass {
     const bgColor = this.averageColor(el);
     const needed = alphaForContrast({
       bg: bgColor,
-      tintRGB: scheme === "dark" || ink === "dark" ? [16, 18, 22] : [255, 255, 255],
+      tintRGB:
+        scheme === "dark" || ink === "dark" ? [16, 18, 22] : [255, 255, 255],
       hlAlpha: scheme === "dark" ? 0.1 : ink === "dark" ? 0.08 : 0.3,
       ink,
       base: raw,
@@ -729,7 +799,9 @@ class LiquidGlass {
 
   /** 元素当前的 --lg-alpha 计算值（滑块实时值），行内数值变量以它为底。 */
   private currentAlpha(el: HTMLElement): number {
-    const v = Number.parseFloat(getComputedStyle(el).getPropertyValue("--lg-alpha"));
+    const v = Number.parseFloat(
+      getComputedStyle(el).getPropertyValue("--lg-alpha"),
+    );
     return Number.isFinite(v) ? v : 0.16;
   }
 
@@ -778,7 +850,8 @@ class LiquidGlass {
     const scale = this.rasterScale;
     const cw = Math.max(2, Math.round(vw / scale));
     const ch = Math.max(2, Math.round(vh / scale));
-    if (!this.rasterCanvas) this.rasterCanvas = document.createElement("canvas");
+    if (!this.rasterCanvas)
+      this.rasterCanvas = document.createElement("canvas");
     const canvas = this.rasterCanvas;
     canvas.width = cw;
     canvas.height = ch;
@@ -787,7 +860,8 @@ class LiquidGlass {
     ctx.setTransform(1 / scale, 0, 0, 1 / scale, 0, 0);
     const dark = darkScheme();
     if (!this.drawWallpaper(ctx, vw, vh, dark)) {
-      if (!this.drawSky(ctx, vw, vh)) this.drawSkyPlaceholder(ctx, vw, vh, dark);
+      if (!this.drawSky(ctx, vw, vh))
+        this.drawSkyPlaceholder(ctx, vw, vh, dark);
       this.drawOrbs(ctx, vw, vh, dark);
     }
     this.drawVeil(ctx, vw, vh, dark);
@@ -805,7 +879,9 @@ class LiquidGlass {
     vh: number,
     dark: boolean,
   ): boolean {
-    const layer = document.querySelector<HTMLElement>(".chisabot-wallpaper-img");
+    const layer = document.querySelector<HTMLElement>(
+      ".chisabot-wallpaper-img",
+    );
     if (!layer) return false;
     const bg = getComputedStyle(layer).backgroundImage;
     const url = /^url\((['"]?)(.*)\1\)$/.exec(bg)?.[2];
@@ -826,21 +902,33 @@ class LiquidGlass {
     if (!img.complete || img.naturalWidth === 0) return false;
     drawCover(ctx, img, 0, 0, vw, vh);
     // 压暗遮罩（radial at 50% 45%，与 styles.css .chisabot-wallpaper-dim 同两色标）。
-    const dimEl = document.querySelector<HTMLElement>(".chisabot-wallpaper-dim");
+    const dimEl = document.querySelector<HTMLElement>(
+      ".chisabot-wallpaper-dim",
+    );
     const dimOpacity = dimEl
       ? Number.parseFloat(getComputedStyle(dimEl).opacity) || 0
       : 0;
     if (dimOpacity > 0) {
       const g = ctx.createRadialGradient(
-        vw * 0.5, vh * 0.45, 0,
-        vw * 0.5, vh * 0.45, Math.max(vw, vh) * 0.75,
+        vw * 0.5,
+        vh * 0.45,
+        0,
+        vw * 0.5,
+        vh * 0.45,
+        Math.max(vw, vh) * 0.75,
       );
       if (dark) {
         g.addColorStop(0, `rgba(6, 10, 22, ${(0.42 * dimOpacity).toFixed(3)})`);
         g.addColorStop(1, `rgba(4, 8, 18, ${(0.72 * dimOpacity).toFixed(3)})`);
       } else {
-        g.addColorStop(0, `rgba(244, 248, 255, ${(0.46 * dimOpacity).toFixed(3)})`);
-        g.addColorStop(1, `rgba(228, 238, 252, ${(0.58 * dimOpacity).toFixed(3)})`);
+        g.addColorStop(
+          0,
+          `rgba(244, 248, 255, ${(0.46 * dimOpacity).toFixed(3)})`,
+        );
+        g.addColorStop(
+          1,
+          `rgba(228, 238, 252, ${(0.58 * dimOpacity).toFixed(3)})`,
+        );
       }
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, vw, vh);
@@ -857,7 +945,11 @@ class LiquidGlass {
   }
 
   /** WebGL 天空画布（#gl）直接拷；读不了（缓冲被清 / 未上屏）返回 false。 */
-  private drawSky(ctx: CanvasRenderingContext2D, vw: number, vh: number): boolean {
+  private drawSky(
+    ctx: CanvasRenderingContext2D,
+    vw: number,
+    vh: number,
+  ): boolean {
     const gl = document.getElementById("gl") as HTMLCanvasElement | null;
     if (
       !gl ||
@@ -893,12 +985,17 @@ class LiquidGlass {
     const stops = parseLinearGradient(bg);
     const g = ctx.createLinearGradient(0, 0, 0, vh);
     for (const s of stops) g.addColorStop(s.at, s.color);
-    ctx.fillStyle = stops.length ? g : (darkScheme() ? "#12203a" : "#9dbddc");
+    ctx.fillStyle = stops.length ? g : darkScheme() ? "#12203a" : "#9dbddc";
     ctx.fillRect(0, 0, vw, vh);
   }
 
   /** 环境流光球（styles.css .chisabot-ambient-orbs 的三团径向柔光，近似画）。 */
-  private drawOrbs(ctx: CanvasRenderingContext2D, vw: number, vh: number, dark: boolean) {
+  private drawOrbs(
+    ctx: CanvasRenderingContext2D,
+    vw: number,
+    vh: number,
+    dark: boolean,
+  ) {
     const orbs = dark
       ? ([
           [0.2, 0.24, 0.34, "rgba(56, 189, 248, 0.14)"],
@@ -912,7 +1009,14 @@ class LiquidGlass {
         ] as const);
     for (const [fx, fy, fr, color] of orbs) {
       const r = Math.max(vw, vh) * fr;
-      const g = ctx.createRadialGradient(vw * fx, vh * fy, 0, vw * fx, vh * fy, r);
+      const g = ctx.createRadialGradient(
+        vw * fx,
+        vh * fy,
+        0,
+        vw * fx,
+        vh * fy,
+        r,
+      );
       g.addColorStop(0, color);
       g.addColorStop(1, "rgba(0, 0, 0, 0)");
       ctx.fillStyle = g;
@@ -921,7 +1025,12 @@ class LiquidGlass {
   }
 
   /** 天幕薄纱 #sky-root::after（浅色提亮 / 深色压暗的线性渐变）。 */
-  private drawVeil(ctx: CanvasRenderingContext2D, vw: number, vh: number, dark: boolean) {
+  private drawVeil(
+    ctx: CanvasRenderingContext2D,
+    vw: number,
+    vh: number,
+    dark: boolean,
+  ) {
     const g = ctx.createLinearGradient(0, 0, 0, vh);
     if (dark) {
       g.addColorStop(0, "rgba(5, 9, 18, 0.5)");
@@ -946,11 +1055,17 @@ class LiquidGlass {
       for (const fx of xs) {
         const x = Math.min(
           raster.width - 1,
-          Math.max(0, Math.round((rect.left + rect.width * fx) / this.rasterScale)),
+          Math.max(
+            0,
+            Math.round((rect.left + rect.width * fx) / this.rasterScale),
+          ),
         );
         const y = Math.min(
           raster.height - 1,
-          Math.max(0, Math.round((rect.top + rect.height * fy) / this.rasterScale)),
+          Math.max(
+            0,
+            Math.round((rect.top + rect.height * fy) / this.rasterScale),
+          ),
         );
         const i = (y * raster.width + x) * 4;
         pts.push([raster.data[i], raster.data[i + 1], raster.data[i + 2], 1]);
@@ -1000,7 +1115,11 @@ function parseLinearGradient(bg: string): { at: number; color: string }[] {
   for (const raw of parts.slice(1)) {
     const mm = /^(.*?)\s+([\d.]+)%$/.exec(raw);
     if (mm) stops.push({ at: Number(mm[2]) / 100, color: mm[1] });
-    else stops.push({ at: stops.length ? stops[stops.length - 1].at : 0, color: raw });
+    else
+      stops.push({
+        at: stops.length ? stops[stops.length - 1].at : 0,
+        color: raw,
+      });
   }
   return stops;
 }

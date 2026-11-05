@@ -251,7 +251,10 @@ export function dialAddress(connection: Connection): {
     return { url: target };
   }
   if (connection.keyHeader) {
-    return { url: target, headers: { [connection.keyHeader]: connection.token } };
+    return {
+      url: target,
+      headers: { [connection.keyHeader]: connection.token },
+    };
   }
   return {
     url: target,

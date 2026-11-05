@@ -8,7 +8,6 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import * as React from "react";
-import { sendPromptToChat } from "@/lib/chat/quote-event";
 import {
   PageEmpty,
   PageRows,
@@ -36,6 +35,7 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import {
   type DirectoryItem,
   pluginsDirectoryQueryOptions,
