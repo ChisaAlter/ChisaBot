@@ -226,3 +226,63 @@ describe("short-flag passwords, by command", () => {
     });
   });
 });
+
+/**
+ * 长得像 URL 但 `new URL` 解析不了的串（`http://[`、`http://%`、半截的 `http://[::1`）：redactUrl 的
+ * 兜底以前回调 redactText，而 redactText 又把它当 URL 送回 redactUrl——两个函数互递归直到爆栈
+ * （活动记录 begin 实测 RangeError，整行记录丢掉；在 planFor 里抛还会把命令本身也挡掉）。
+ */
+describe("malformed URLs", () => {
+  const broken = [
+    "http://[",
+    "http://%",
+    "http://:",
+    "https://#",
+    "http://[::1",
+  ];
+  for (const bad of broken) {
+    test(`redactText keeps "${bad}" without overflowing`, () => {
+      expect(redactText(`see ${bad} now`)).toBe(`see ${bad} now`);
+    });
+  }
+  test("redactUrl on a non-URL returns text-redacted input instead of recursing", () => {
+    expect(redactUrl("http://[")).toBe("http://[");
+    expect(redactUrl("http://[")).toBe("http://[");
+  });
+  test("a broken URL does not stop a parseable one beside it from being masked", () => {
+    const out = redactText(`a http://[ b https://good.example/?ok=1&token=t9`);
+    expect(out).toContain("http://[");
+    expect(out).not.toContain("t9");
+    expect(out).toContain("ok=1");
+  });
+  test("a broken URL inside a command still gets secret redaction", () => {
+    const out = redactText("open http://[ && mysql -p hunter2 db");
+    expect(out).toContain("http://[");
+    expect(out).toContain("-p ••••");
+  });
+});
+
+/** detail 之后要 JSON.stringify 进库：环和超深嵌套不拦会先炸递归、再把整行记录赔掉。 */
+describe("redactDetail safety", () => {
+  test("a circular detail degrades to null instead of overflowing", () => {
+    const cyclic: Record<string, unknown> = { keep: "sshpass -p x ssh" };
+    cyclic.self = cyclic;
+    const out = redactDetail(cyclic) as Record<string, unknown>;
+    expect(out.keep).toBe("sshpass -p •••• ssh");
+    expect(out.self).toBeNull();
+    expect(() => JSON.stringify(out)).not.toThrow();
+  });
+  test("a deeply nested detail degrades to null instead of overflowing", () => {
+    let deep: Record<string, unknown> = { leaf: "ok" };
+    for (let i = 0; i < 200; i++) deep = { next: deep };
+    const out = redactDetail(deep);
+    expect(() => JSON.stringify(out)).not.toThrow();
+  });
+  test("an array detail is walked the same way", () => {
+    const cyclic: unknown[] = ["mysql -px"];
+    cyclic.push(cyclic);
+    const out = redactDetail(cyclic) as unknown[];
+    expect(out[0]).toBe("mysql -p••••");
+    expect(out[1]).toBeNull();
+  });
+});

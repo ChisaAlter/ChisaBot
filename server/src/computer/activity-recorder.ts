@@ -469,7 +469,20 @@ export function withComputerActivity(
     run: () => Promise<T>,
   ): Promise<T> {
     const store = storeOf();
-    const plan = store ? planFor(method, args) : undefined;
+    // 记录用的计划算不出来（入参形状怪、打码抛错）不能挡住动作本身——见文件头：记录失败绝不影响动作。
+    let plan: Plan | undefined;
+    try {
+      plan = store ? planFor(method, args) : undefined;
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          type: "computer-activity-write-failed",
+          phase: "plan",
+          method,
+          error: String(error),
+        }),
+      );
+    }
     if (!store || !plan) return run();
     const scope = currentActivityScope();
     const approval = currentApprovalContext();
@@ -538,6 +551,7 @@ export function withComputerActivity(
         JSON.stringify({
           type: "computer-activity-write-failed",
           phase: "begin",
+          method,
           error: String(error),
         }),
       );
@@ -553,13 +567,27 @@ export function withComputerActivity(
     try {
       const result = await run();
       if (stepId) {
-        const extra = plan.finish?.(result) ?? {};
+        // finish 回调里的打码 / 取值同样不许把异常传回给调用方——动作已经成功了。
+        let extra: Partial<FinishInput> = {};
+        try {
+          extra = plan.finish?.(result) ?? {};
+        } catch (error) {
+          console.warn(
+            JSON.stringify({
+              type: "computer-activity-write-failed",
+              phase: "plan-finish",
+              method,
+              error: String(error),
+            }),
+          );
+        }
         const id = stepId;
         await store.finish(id, { status: "ok", ...extra }).catch((error) =>
           console.warn(
             JSON.stringify({
               type: "computer-activity-write-failed",
               phase: "finish",
+              method,
               error: String(error),
             }),
           ),

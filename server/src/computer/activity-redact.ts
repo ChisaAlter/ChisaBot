@@ -10,13 +10,17 @@ const SENSITIVE_PARAM =
 
 export const MASK = "••••";
 
-/** URL 打码：敏感 query 参数值、userinfo、fragment 里的 token 都换成 ••••。不是 URL 时原样返回（再交给 redactText）。 */
+/** URL 打码：敏感 query 参数值、userinfo、fragment 里的 token 都换成 ••••。 */
 export function redactUrl(value: string): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    return redactText(value);
+    /*
+     * 解析不了（`http://[`、`http://%`）：只过文本打码。这里不能回调 redactText——它会把这个串再
+     * 当 URL 送回 redactUrl，两个函数互递归直到爆栈（活动记录 begin 实测 RangeError）。
+     */
+    return redactPlain(value);
   }
   if (parsed.username || parsed.password) {
     parsed.username = parsed.username ? MASK : "";
@@ -232,10 +236,9 @@ function redactCommands(value: string): string {
     .join("");
 }
 
-/** 文本（命令、输出）打码：像密钥的串换成 ••••；其中的 URL 也按 redactUrl 处理。 */
-export function redactText(value: string): string {
+/** 文本打码中不碰 URL 的那一半：命令短参数 + 密钥形状。redactUrl 的兜底走这里，不走 redactText。 */
+function redactPlain(value: string): string {
   let out = redactCommands(value);
-  out = out.replace(/https?:\/\/[^\s"'<>]+/g, (url) => redactUrl(url));
   out = out.replace(
     SECRET_SHAPES[0] as RegExp,
     (_m, scheme: string) => `${scheme} ${MASK}`,
@@ -250,6 +253,14 @@ export function redactText(value: string): string {
   );
   out = out.replace(SECRET_SHAPES[3] as RegExp, MASK);
   return out;
+}
+
+/** 文本（命令、输出）打码：像密钥的串换成 ••••；其中能解析的 URL 也按 redactUrl 处理。 */
+export function redactText(value: string): string {
+  const out = redactCommands(value);
+  return redactPlain(
+    out.replace(/https?:\/\/[^\s"'<>]+/g, (url) => redactUrl(url)),
+  );
 }
 
 const SENSITIVE_FIELD =
@@ -283,17 +294,23 @@ export function clip(
   return { text: `${value.slice(0, max)}…`, truncated: true };
 }
 
-/** 写库前的最后一道：detail 里所有字符串（含嵌套）都过一遍 redactText。 */
+/**
+ * 写库前的最后一道：detail 里所有字符串（含嵌套）都过一遍 redactText。
+ * 循环引用 / 超深嵌套的子树换成 null：detail 之后要 JSON.stringify 进库，递归遍历不防环会先爆栈，
+ * 把整行记录赔进去（begin 实测 RangeError）。
+ */
+const DETAIL_MAX_DEPTH = 40;
 export function redactDetail<T>(value: T): T {
-  if (typeof value === "string") return redactText(value) as T;
-  if (Array.isArray(value)) return value.map((item) => redactDetail(item)) as T;
-  if (value && typeof value === "object") {
+  const seen = new WeakSet<object>();
+  const walk = (item: unknown, depth: number): unknown => {
+    if (typeof item === "string") return redactText(item);
+    if (!item || typeof item !== "object") return item;
+    if (seen.has(item) || depth > DETAIL_MAX_DEPTH) return null;
+    seen.add(item);
+    if (Array.isArray(item)) return item.map((part) => walk(part, depth + 1));
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-        key,
-        redactDetail(item),
-      ]),
-    ) as T;
-  }
-  return value;
+      Object.entries(item).map(([key, part]) => [key, walk(part, depth + 1)]),
+    );
+  };
+  return walk(value, 0) as T;
 }
