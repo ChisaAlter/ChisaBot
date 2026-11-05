@@ -1,4 +1,3 @@
-import type { SentAtReading } from "@/lib/chat/send-scroll";
 import type { Message } from "@ag-ui/core";
 import type { Attachment } from "@copilotkit/react-core/v2";
 import {
@@ -22,6 +21,7 @@ import {
   reduceQueue,
 } from "@/components/channels/composer";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import type { SentAtReading } from "@/lib/chat/send-scroll";
 import { newId } from "../../lib/new-id";
 
 /** 默认值用同一个空数组：每次渲染新建 `[]` 会让 memo 过的 Composer 跟着每个 token 重渲。 */
@@ -174,6 +174,11 @@ export function ConversationView({
    */
   const [queued, setQueued] = useState<readonly QueuedMessage[]>([]);
   const queuedRef = useRef<readonly QueuedMessage[]>(queued);
+  /**
+   * `heldBack` 的渲染镜像：上一次从队列出发的发送失败、消息被放回队列后，这一排 parked 行
+   * 不能再只写「排队」干等一个不会来的自动重试——它得说出发生了什么，并给一条出路。
+   */
+  const [queueHeld, setQueueHeld] = useState(false);
 
   /**
    * Files the queue left behind AND the reason it did, forwarded to the composer so it can say so
@@ -335,10 +340,28 @@ export function ConversationView({
       // Before the restore, not after: the effect reads both off refs, and the guard has to be
       // true by the moment the queue is non-empty again rather than one statement later.
       heldBack.current = true;
+      setQueueHeld(true);
       apply({ messages, type: "restore" });
     },
     [apply],
   );
+
+  /**
+   * The manual half of `heldBack`: the drain is held until somebody asks — this is somebody asking.
+   * Same path the turn-ending effect takes, minus the guard that would refuse it.
+   */
+  const retryParked = useCallback(() => {
+    heldBack.current = false;
+    setQueueHeld(false);
+    const next = apply({ type: "settle" });
+    if (!next.run) {
+      return;
+    }
+    const carried = next.restoreIfRunFails;
+    void startRef.current(next.run).catch(() => {
+      restoreFailedRun(carried);
+    });
+  }, [apply, restoreFailedRun]);
 
   const start = async (draft: ComposerDraft) => {
     setRunning(true);
@@ -430,9 +453,15 @@ export function ConversationView({
        * never this effect trying again on its own.
        */
       heldBack.current = false;
+      setQueueHeld(false);
       return;
     }
-    if (disabled || sendBlocked || heldBack.current || queuedRef.current.length === 0) {
+    if (
+      disabled ||
+      sendBlocked ||
+      heldBack.current ||
+      queuedRef.current.length === 0
+    ) {
       return;
     }
     const next = apply({ type: "settle" });
@@ -538,20 +567,25 @@ export function ConversationView({
     [commands],
   );
   const queuedAttachmentCount = useMemo(
-    () => queued.reduce((total, message) => total + message.attachments.length, 0),
+    () =>
+      queued.reduce((total, message) => total + message.attachments.length, 0),
     [queued],
   );
   const retry = useCallback(() => {
     const { onRetryTurn, onBeforeRetry } = latest.current;
     if (onRetryTurn?.()) return;
     const box = composerBoxRef.current;
-    const send = box?.querySelector<HTMLButtonElement>('form button[type="submit"]');
+    const send = box?.querySelector<HTMLButtonElement>(
+      'form button[type="submit"]',
+    );
     if (send && !send.disabled) {
       onBeforeRetry?.();
       send.click();
       return;
     }
-    box?.querySelector<HTMLElement>('[contenteditable="true"], textarea')?.focus();
+    box
+      ?.querySelector<HTMLElement>('[contenteditable="true"], textarea')
+      ?.focus();
   }, []);
 
   return (
@@ -571,7 +605,9 @@ export function ConversationView({
           commandNames={commandNames}
           messages={messages}
           onRemoveQueued={removeQueued}
+          onRetryQueued={disabled || sendBlocked ? undefined : retryParked}
           queued={queued}
+          queuedHeld={queueHeld}
           restoring={restoring}
           hydrating={hydrating}
           {...(scrollKey ? { scrollKey } : {})}

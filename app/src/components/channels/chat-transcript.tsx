@@ -195,6 +195,13 @@ type ChatTranscriptProps = {
   queued?: readonly QueuedMessage[];
   /** Take one back before it runs. Without it a queued line is shown but cannot be undone. */
   onRemoveQueued?: (id: string) => void;
+  /**
+   * The drain the queue waited on failed and its messages came back. `held` marks every parked row
+   * 没发出去 instead of 排队 — a queue that only ever says "waiting" would sit on screen promising
+   * a send that has already been tried and lost — and `onRetryQueued` is the way to ask again.
+   */
+  queuedHeld?: boolean;
+  onRetryQueued?: () => void;
   /** History has been asked for and has not arrived. Drawn only when there is nothing else to draw. */
   restoring?: boolean;
   /**
@@ -527,10 +534,13 @@ function describeParked(
  */
 function Queued({
   attachments,
+  held,
   text,
   onRemove,
 }: {
   attachments: readonly Attachment[];
+  /** The send this row was waiting on failed. Still parked — but「排队」would be a lie. */
+  held?: boolean;
   text: string;
   onRemove?: (() => void) | undefined;
 }) {
@@ -567,7 +577,7 @@ function Queued({
            * `status` rather than `alert`, matching the thinking line: a person who has just chosen
            * to queue something is not being interrupted by the news that it is queued.
            */}
-          <span role="status">{"排队"}</span>
+          <span role="status">{held ? "没发出去" : "排队"}</span>
           {onRemove ? (
             <button
               /*
@@ -3186,7 +3196,9 @@ export function ChatTranscript({
   commandNames = "",
   messages,
   onRemoveQueued,
+  onRetryQueued,
   queued = EMPTY_QUEUE,
+  queuedHeld = false,
   restoring = false,
   hydrating = false,
   stopped,
@@ -3743,6 +3755,7 @@ export function ChatTranscript({
               {queued.map((message) => (
                 <Queued
                   attachments={message.attachments}
+                  held={queuedHeld}
                   key={message.id}
                   onRemove={
                     onRemoveQueued
@@ -3752,6 +3765,26 @@ export function ChatTranscript({
                   text={message.text}
                 />
               ))}
+              {/*
+               * The retry is one row for the whole stack: `settle` sends every parked message as one
+               * turn, so a button per row would offer several names for the same send.
+               */}
+              {queuedHeld && onRetryQueued && queued.length > 0 ? (
+                <MessageRow align="end">
+                  <MessageContent>
+                    <MessageFooter>
+                      <button
+                        aria-label={"重试发送排队的消息"}
+                        className="underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                        onClick={onRetryQueued}
+                        type="button"
+                      >
+                        {"重试"}
+                      </button>
+                    </MessageFooter>
+                  </MessageContent>
+                </MessageRow>
+              ) : null}
               {/* 回答期间发的、进了服务器收件箱的（DESIGN.md §38.1）：读到之前画在这里，读到后出现在它被读到的位置。 */}
               <QueuedMessages />
               {/* 最后一条下面的留白（§88.1）：在这一格里，不算一行；高度由 SettleAtEnd 直接改。 */}
