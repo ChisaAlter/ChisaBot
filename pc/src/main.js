@@ -846,9 +846,13 @@ function startUpdater() {
       autoUpdater = null;
     }
   }
+  const feed = buildConfig.resolveFeedDetail(BUILD, config.get());
   updater = createUpdater({
     autoUpdater,
-    feedUrl: buildConfig.resolveFeed(BUILD, config.get()),
+    feedUrl: feed.url,
+    // 本机 config.json 的 updateFeed 是手动覆盖：它失效（源上版本比本机还低）时退回构建期的源再查。
+    fallbackFeed: feed.source === "local" ? buildConfig.resolveFeed(BUILD, {}) : "",
+    currentVersion: pkg.version,
     isPackaged: app.isPackaged,
     platform: process.platform,
     execPath: process.execPath,

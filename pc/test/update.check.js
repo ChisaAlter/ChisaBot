@@ -52,6 +52,9 @@ function make(options = {}) {
   fs.writeFileSync(path.join(dir, "Uninstall ChisaBot.exe"), "");
   const updater = createUpdater({
     autoUpdater,
+    feedUrl: options.feedUrl,
+    fallbackFeed: options.fallbackFeed,
+    currentVersion: options.currentVersion,
     isPackaged: options.isPackaged ?? true,
     platform: options.platform ?? "win32",
     execPath: options.execPath ?? installedExec,
@@ -110,6 +113,63 @@ test("no update and errors become readable states", async () => {
   assert.strictEqual(state.status, "error");
   assert.strictEqual(state.error, "连不上更新服务器，请检查网络。");
   assert.strictEqual(cleanMessage(new Error("sha512 checksum mismatch, expected x")), "下载的安装包校验失败，已丢弃，稍后会重新下载。");
+});
+
+test("stale feed (version lower than installed) is flagged and falls back to the next tier", async () => {
+  const emitter = new EventEmitter();
+  const feeds = [];
+  let calls = 0;
+  emitter.setFeedURL = (c) => feeds.push(c.url);
+  emitter.checkForUpdates = async () => {
+    emitter.emit("checking-for-update");
+    calls++;
+    if (calls === 1) {
+      emitter.emit("update-not-available", {});
+      return { updateInfo: { version: "0.1.125" } };
+    }
+    emitter.emit("update-available", { version: "0.1.131" });
+    emitter.emit("update-downloaded", { version: "0.1.131" });
+    return { updateInfo: { version: "0.1.131" } };
+  };
+  const { updater, states, downloaded } = make({
+    autoUpdater: emitter,
+    feedUrl: "https://stale.example/feed/",
+    fallbackFeed: "https://github.com/me/chisabot/releases/latest/download/",
+    currentVersion: "0.1.129",
+  });
+  const state = await updater.check();
+  assert.strictEqual(calls, 2, "退回后再查一次");
+  assert.strictEqual(feeds[0], "https://stale.example/feed/");
+  assert.strictEqual(feeds[1], "https://github.com/me/chisabot/releases/latest/download/");
+  assert.strictEqual(state.status, "downloaded");
+  assert.strictEqual(state.version, "0.1.131");
+  assert.deepStrictEqual(state.feedStale, { url: "https://stale.example/feed/", version: "0.1.125" });
+  assert.strictEqual(state.feedUrl, "https://github.com/me/chisabot/releases/latest/download/");
+  assert.deepStrictEqual(downloaded, ["0.1.131"]);
+  assert.ok(states.some((s) => s.feedStale));
+});
+
+test("stale feed without a fallback stays flagged instead of claiming 已是最新", async () => {
+  const emitter = new EventEmitter();
+  emitter.setFeedURL = () => {};
+  emitter.checkForUpdates = async () => {
+    emitter.emit("checking-for-update");
+    emitter.emit("update-not-available", {});
+    return { updateInfo: { version: "0.1.125" } };
+  };
+  const { updater } = make({ autoUpdater: emitter, feedUrl: "https://stale.example/feed/", currentVersion: "0.1.129" });
+  const state = await updater.check();
+  assert.strictEqual(state.status, "none");
+  assert.deepStrictEqual(state.feedStale, { url: "https://stale.example/feed/", version: "0.1.125" });
+  await updater.check();
+  assert.strictEqual(updater.state.feedStale.url, "https://stale.example/feed/");
+});
+
+test("compareVersion orders numeric segments", () => {
+  const { compareVersion } = require("../src/updater");
+  assert.ok(compareVersion("0.1.131", "0.1.9") > 0);
+  assert.ok(compareVersion("0.1.125", "0.1.129") < 0);
+  assert.strictEqual(compareVersion("v0.1.130", "0.1.130"), 0);
 });
 
 test("scheduled checks follow the 自动更新 switch", () => {

@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const path = require("node:path");
-const { load, resolveFeed } = require("../src/build-config");
+const { load, resolveFeed, resolveFeedDetail } = require("../src/build-config");
 
 test("committed build-config.json is the generic build (no server, no feed)", () => {
   const c = load(path.join(__dirname, "..", "src", "build-config.json"));
@@ -17,6 +17,14 @@ test("feed order: local override → build feed → GitHub Releases → none", (
   assert.strictEqual(resolveFeed(build, { updateFeed: "http://insecure/" }), "https://example.com/pc/");
   assert.strictEqual(resolveFeed({ ...build, updateFeed: "" }), "https://github.com/me/chisabot/releases/latest/download/");
   assert.strictEqual(resolveFeed({ serverUrl: "", updateFeed: "", githubRepo: "" }), "");
+});
+
+test("resolveFeedDetail reports which tier the feed came from (local override can fall back)", () => {
+  const build = { serverUrl: "", updateFeed: "https://example.com/pc", githubRepo: "me/chisabot" };
+  assert.deepStrictEqual(resolveFeedDetail(build, { updateFeed: "https://mine.example/feed" }), { url: "https://mine.example/feed/", source: "local" });
+  assert.deepStrictEqual(resolveFeedDetail(build, { updateFeed: "http://insecure/" }), { url: "https://example.com/pc/", source: "build" });
+  assert.deepStrictEqual(resolveFeedDetail({ ...build, updateFeed: "" }, {}), { url: "https://github.com/me/chisabot/releases/latest/download/", source: "github" });
+  assert.deepStrictEqual(resolveFeedDetail({ serverUrl: "", updateFeed: "", githubRepo: "" }, {}), { url: "", source: "" });
 });
 
 test("missing file falls back to empty defaults", () => {

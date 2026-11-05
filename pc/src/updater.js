@@ -57,6 +57,21 @@ function requiresFullInstall(info, localShell) {
   return remote !== String(localShell || "");
 }
 
+/** 语义化版本比较（0.1.131 > 0.1.9）：只比数字段，非数字段按字典序。返回 <0 / 0 / >0。 */
+function compareVersion(a, b) {
+  const pa = String(a || "").replace(/^v/i, "").split(".");
+  const pb = String(b || "").replace(/^v/i, "").split(".");
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const sa = pa[i] || "0", sb = pb[i] || "0";
+    const na = Number(sa), nb = Number(sb);
+    if (Number.isNaN(na) || Number.isNaN(nb)) {
+      if (sa !== sb) return sa < sb ? -1 : 1;
+    } else if (na !== nb) return na - nb;
+  }
+  return 0;
+}
+
 function defaultSpawn(cmd, args) {
   const child = childProcess.spawn(cmd, args, { detached: true, stdio: "ignore" });
   child.on("error", () => {});
@@ -87,12 +102,13 @@ function isInstalledBuild({ execPath, productName, exists = fs.existsSync }) {
   return [...new Set(names)].some((name) => exists(path.join(dir, name)));
 }
 
-function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, productName, shellHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onDownloaded, onRejected, logger, spawn = defaultSpawn, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
+function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion = "", isPackaged, platform, execPath, productName, shellHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onDownloaded, onRejected, logger, spawn = defaultSpawn, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
   const supported = Boolean(isPackaged && platform === "win32" && autoUpdater && isInstalledBuild({ execPath, productName }));
   // updateKeys：update-signature.loadKeys() 的结果。不给（旧调用方 / 测试）= 不验签。
   const signing = Boolean(updateKeys && updateKeys.enforce);
   const verify = verifyDownload || ((info, file) => updateSignature.verifyDownloadedUpdate({ info, file, keys: updateKeys.keys }));
-  const state = { supported, status: "idle" };
+  let activeFeed = feedUrl || "";
+  const state = { supported, status: "idle", feedUrl: activeFeed };
   if (updateKeys) state.signing = signing;
   let installing = false;
   let verifySeq = 0;
@@ -106,6 +122,7 @@ function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, p
     if (state.status !== "downloading") delete state.percent;
     if (state.status !== "error") delete state.error;
     if (!state.fullInstall) delete state.fullInstall;
+    if (!state.feedStale) delete state.feedStale;
     onState?.({ ...state });
   }
 
@@ -117,7 +134,7 @@ function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, p
     autoUpdater.allowDowngrade = false;
     if (logger) autoUpdater.logger = logger;
     // 运行时指定更新源（覆盖打包时的 app-update.yml）；不给就沿用 app-update.yml。
-    if (feedUrl) autoUpdater.setFeedURL({ provider: "generic", url: feedUrl });
+    if (activeFeed) autoUpdater.setFeedURL({ provider: "generic", url: activeFeed });
     if (updateKeys?.problem) logger?.warn?.(`更新公钥表有问题，所有更新都会被拒绝：${updateKeys.problem}`);
     // 安装包没有 Authenticode 签名：见文件头（没有 publisherName 时 electron-updater 本来就不调它）。sha512 校验照常。
     try {
@@ -175,14 +192,33 @@ function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, p
     if (checking) return checking;
     checking = (async () => {
       set({ status: "checking" });
+      let fellBack = false;
       try {
-        await autoUpdater.checkForUpdates();
+        const result = await autoUpdater.checkForUpdates();
         if (state.status === "checking") set({ status: "none", checkedAt: now().toISOString() });
+        // 失效源检测：源上 latest.yml 的版本比本机还低——不是「已是最新」，是源被遗弃了（发版迁走 /
+        // 测试残留 / 手改 config.json 的 updateFeed）。本机覆盖来源时自动退回下一级源再查一次，
+        // 并把这个状态露给「本机」标签，不再静默显示「已是最新」。
+        const feedVersion = result?.updateInfo?.version;
+        if (feedVersion && currentVersion && compareVersion(feedVersion, currentVersion) < 0) {
+          set({ feedStale: { url: activeFeed, version: feedVersion } });
+          logger?.warn?.(`更新源已失效：${activeFeed} 上最高 ${feedVersion}，低于当前版本 ${currentVersion}`);
+          if (fallbackFeed && fallbackFeed !== activeFeed) {
+            activeFeed = fallbackFeed;
+            autoUpdater.setFeedURL({ provider: "generic", url: activeFeed });
+            set({ feedUrl: activeFeed });
+            logger?.warn?.(`已退回下一级更新源：${activeFeed}`);
+            fellBack = true;
+          }
+        } else if (state.feedStale && activeFeed === state.feedStale.url) {
+          set({ feedStale: undefined });
+        }
       } catch (error) {
         set({ status: "error", error: cleanMessage(error), checkedAt: now().toISOString() });
       } finally {
         checking = null;
       }
+      if (fellBack) return check();
       return { ...state };
     })();
     return checking;
@@ -256,7 +292,7 @@ function createUpdater({ autoUpdater, feedUrl, isPackaged, platform, execPath, p
     return true;
   }
 
-  return { get state() { return { ...state }; }, supported, signing, feedUrl: feedUrl || "", check, schedule, stop, install, installOnQuit, settled: () => verifying };
+  return { get state() { return { ...state }; }, supported, signing, get feedUrl() { return activeFeed; }, check, schedule, stop, install, installOnQuit, settled: () => verifying };
 }
 
-module.exports = { createUpdater, cleanMessage, isInstalledBuild, requiresFullInstall, FIRST_CHECK_MS, INTERVAL_MS };
+module.exports = { createUpdater, cleanMessage, isInstalledBuild, requiresFullInstall, compareVersion, FIRST_CHECK_MS, INTERVAL_MS };

@@ -24,12 +24,16 @@ function withSlash(url) {
   return url.endsWith("/") ? url : `${url}/`;
 }
 
-/** 更新源：本机覆盖 → 构建期 updateFeed → GitHub Releases → 空（不检查更新）。 */
-function resolveFeed(build, local = {}) {
-  if (local.updateFeed && /^https:\/\//i.test(local.updateFeed)) return withSlash(local.updateFeed);
-  if (build.updateFeed) return withSlash(build.updateFeed);
-  if (/^[\w.-]+\/[\w.-]+$/.test(build.githubRepo)) return `https://github.com/${build.githubRepo}/releases/latest/download/`;
-  return "";
+/** 更新源 + 来源级别：本机覆盖 → 构建期 updateFeed → GitHub Releases → 空（不检查更新）。 */
+function resolveFeedDetail(build, local = {}) {
+  if (local.updateFeed && /^https:\/\//i.test(local.updateFeed)) return { url: withSlash(local.updateFeed), source: "local" };
+  if (build.updateFeed) return { url: withSlash(build.updateFeed), source: "build" };
+  if (/^[\w.-]+\/[\w.-]+$/.test(build.githubRepo)) return { url: `https://github.com/${build.githubRepo}/releases/latest/download/`, source: "github" };
+  return { url: "", source: "" };
 }
 
-module.exports = { load, resolveFeed };
+function resolveFeed(build, local = {}) {
+  return resolveFeedDetail(build, local).url;
+}
+
+module.exports = { load, resolveFeed, resolveFeedDetail };

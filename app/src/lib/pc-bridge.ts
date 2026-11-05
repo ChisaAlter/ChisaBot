@@ -47,6 +47,10 @@ export type PcUpdateState = {
   error?: string;
   /** 这个构建是否启用更新验签（内置了更新公钥）。false = 自建版没配公钥，只校验 sha512；旧客户端不报这一项。 */
   signing?: boolean;
+  /** 实际在用的更新源 URL。 */
+  feedUrl?: string;
+  /** 检查通过的源上版本比本机还低 = 源已失效（遗弃 / 手改残留）。url 是被判定失效的那个源。 */
+  feedStale?: { url: string; version: string };
 };
 
 export type PcLocalPatch = Partial<

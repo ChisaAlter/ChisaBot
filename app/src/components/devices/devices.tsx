@@ -1072,8 +1072,10 @@ function PcUpdateRows({ local, onLocal }: { local: PcLocalState; onLocal: (next:
   const install = useAsyncAction(async () => {
     await bridge?.installUpdate?.();
   });
-  const status =
-    update.status === "downloading" && typeof update.percent === "number"
+  const stale = update.feedStale;
+  const status = stale
+    ? `更新源已失效（源上最高 ${stale.version}）${update.feedUrl && update.feedUrl !== stale.url ? "，已改用内置更新源" : ""}`
+    : update.status === "downloading" && typeof update.percent === "number"
       ? `正在后台下载 ${Math.round(update.percent)}%`
       : PC_UPDATE_TEXT[update.status];
   const detail = [
