@@ -1184,11 +1184,19 @@ export function ChannelChat({
         } } : {}),
       });
       /**
-       * 看门狗问的「最近一次有进展」：这一轮的 run 事件（模型在写、工具结果在回来…），或者浏览器里
-       * 正在跑的前端工具（`computer_run_command` 那种，执行期间没有任何事件）。
+       * 看门狗问的「最近一次有进展」的三类证词：这一轮的 run 事件（模型在写、工具结果在回来…）；
+       * 浏览器里正在跑的前端工具（`computer_run_command` 那种，执行期间没有任何事件，15 分钟额度）；
+       * 服务端在飞的工具调用（同样 15 分钟额度——它在飞期间流里没有任何事件，调用 START
+       * 就是最后一次事件，额度自然从它的起点算）。判定见 openToolCallPending。
        */
       const lastProgressAt = () =>
-        Math.max(runProgressAt.current, frontendToolProgressAt());
+        Math.max(
+          runProgressAt.current,
+          frontendToolProgressAt(),
+          openToolCallPending(agentRef.current?.messages ?? target.messages)
+            ? runProgressAt.current + OPEN_TOOL_CALL_CREDIT_MS
+            : 0,
+        );
       const race = await raceSendWatchdog(runPromise, {
         afterMs,
         timeoutMs: SEND_WATCHDOG_MS,
@@ -2204,6 +2212,41 @@ export function turnAnswered(list: readonly Message[]): boolean {
     const message = list[i]!;
     if (message.role === "user") return false;
     if (message.role === "assistant" || message.role === "tool") return true;
+  }
+  return false;
+}
+
+/**
+ * 一次在飞的工具调用替整轮「作证」多久。前端工具有 frontend-tool-activity 的 15 分钟额度；
+ * 服务端工具（device_run_shell 最长 620s、后台持有的 computer 调用、MCP）在飞时 AG-UI 流一个字节
+ * 都不出，以前没有任何证言——一条超过看门狗静默上限（180s）的设备命令必被掐死（在 PC 上喂
+ * `devin login` 的 code 实测连环失败，命令其实还在跑）。对齐同一口径：在飞就从调用开始再授
+ * `MAX_TOOL_CREDIT_MS`；更久才算真卡死，静默重新累计照常兜底，只是晚点报。
+ */
+export const OPEN_TOOL_CALL_CREDIT_MS = 15 * 60_000;
+
+/**
+ * 消息里现在有没有「发起了、结果还没回来」的工具调用。
+ *
+ * 倒序扫：先收集调用之后到的 tool 结果 id，碰到发出调用的那条 assistant 就判定（它的调用
+ * 若都有结果，说明在飞的不是这条——更老的空洞是历史遗留，由修复层管，不算本轮在飞）；
+ * 碰到 user 说明调用的结果不可能跨过来（结果先于下一轮），同样没有在飞。
+ */
+export function openToolCallPending(list: readonly Message[]): boolean {
+  const answered = new Set<string>();
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const message = list[i];
+    if (!message) continue;
+    if (message.role === "tool") {
+      if (typeof message.toolCallId === "string") answered.add(message.toolCallId);
+      continue;
+    }
+    if (message.role === "assistant") {
+      return (message.toolCalls ?? []).some(
+        (call) => call.id != null && !answered.has(call.id),
+      );
+    }
+    if (message.role === "user") return false;
   }
   return false;
 }

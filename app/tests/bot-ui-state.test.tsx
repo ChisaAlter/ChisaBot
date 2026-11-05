@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { turnAnswered } from "@/components/channels/channel-chat";
+import { openToolCallPending, turnAnswered } from "@/components/channels/channel-chat";
 import { botUi, flushUiMemory, resetUiMemory, setBotUi, threadUi } from "@/lib/chat/ui-memory";
 import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
 import { installOverlayBack, noteUserIntent } from "@/lib/overlay-back";
@@ -206,5 +206,41 @@ describe("中途断的一轮不把字放回输入框（§88.4）", () => {
     const after = chat.slice(chat.indexOf('second.kind === "reply_hang"'));
     const branch = after.slice(0, after.indexOf("persistFailedFrontendResults"));
     expect(branch).toMatch(/\}\s*else\s*\{\s*await runPromise;\s*\}/);
+  });
+});
+
+describe("在飞的服务端工具调用替整轮作证（看门狗不误杀长命令）", () => {
+  const call = (id: string) => ({ id, function: { name: "device_run_shell", arguments: "{}" } });
+  const assistant = (id: string, calls: ReturnType<typeof call>[]) => ({ id, role: "assistant", toolCalls: calls });
+  const result = (id: string, toolCallId: string) => ({ id, role: "tool", toolCallId, content: "ok" });
+  const user = { id: "u1", role: "user", content: "在吗" };
+
+  test("发起了、结果还没回来 = 在飞", () => {
+    // 单调用在飞；并行调用只回了一个也算在飞
+    expect(openToolCallPending([user, assistant("a1", [call("c1")])] as never)).toBe(true);
+    expect(
+      openToolCallPending([user, assistant("a1", [call("c1"), call("c2")]), result("t1", "c1")] as never),
+    ).toBe(true);
+    // 回齐了 / 纯文本回复 / 用户消息收尾 = 没有在飞
+    expect(openToolCallPending([user, assistant("a1", [call("c1")]), result("t1", "c1")] as never)).toBe(false);
+    expect(openToolCallPending([user, assistant("a1", [])] as never)).toBe(false);
+    expect(openToolCallPending([assistant("a1", [call("c1")]), result("t1", "c1"), user] as never)).toBe(false);
+    // 更老 assistant 上的历史空洞不算本轮在飞：最近一条 assistant 的调用已答就停
+    expect(
+      openToolCallPending([
+        assistant("a0", [call("stale")]),
+        user,
+        assistant("a1", [call("c1")]),
+        result("t1", "c1"),
+      ] as never),
+    ).toBe(false);
+    expect(openToolCallPending([] as never)).toBe(false);
+  });
+
+  test("接线：lastProgressAt 把在飞调用折成 run 事件 + 15 分钟额度", () => {
+    const chat = src("components/channels/channel-chat.tsx");
+    expect(chat).toContain("OPEN_TOOL_CALL_CREDIT_MS = 15 * 60_000");
+    expect(chat).toContain("openToolCallPending(agentRef.current?.messages ?? target.messages)");
+    expect(chat).toContain("runProgressAt.current + OPEN_TOOL_CALL_CREDIT_MS");
   });
 });
