@@ -16,6 +16,8 @@
  *    点后取均值得亮度，纹理 = 最亮点减最暗点，色度 = 平均通道饱和度。按亮度决定这块玻璃
  *    用浅釉深墨还是深釉浅墨（浅色模式下 ±0.05 迟滞防闪；深色模式恒浅墨），
  *    按密度公式推釉色浓淡，色度高时压低 saturate() 免得背景染色。
+ *    两道保险防「整屏翻暗」：浅色档先按全屏光栅平均亮度一票否决（整体不暗就一律浅釉，
+ *    压在暗角上的面板靠升密度保可读）；过闸后同一行的面板要过半共识才统一翻深釉。
  *    墨色写进 data-lg-ink 属性（样式表规则翻整套墨色令牌），密度 / 对比补偿 /
  *    保饱和写成行内数值变量；性能模式 / 减少透明度下撤掉全部行内值。
  *
@@ -43,8 +45,8 @@ export const LG_SPLIT_R = 1.15;
 export const LG_SPLIT_B = 0.85;
 /** 小于 32px 的面不上透镜。 */
 export const LG_MIN_SIDE = 32;
-/** 浅墨 / 深釉的分界与迟滞。 */
-export const LG_INK_LINE = 0.5;
+/** 浅墨 / 深釉的分界与迟滞：浅色档采到 <0.40 才翻深釉，回到 ≥0.50 翻回浅釉。 */
+export const LG_INK_LINE = 0.45;
 export const LG_INK_HYST = 0.05;
 /** 文字对比度目标（WCAG AA 正文）。 */
 export const LG_AA_TARGET = 4.5;
@@ -184,11 +186,26 @@ export function sampleStats(points: readonly RGBA[]): BgStats {
   return { lum, texture, chroma };
 }
 
+/**
+ * 整屏光栅的平均亮度（隔 step 个像素抽样，weighted sRGB 与 sampleStats 同公式）。
+ * 浅色档的全屏否决线：均值 ≥ LG_INK_LINE 就一块面板都不许翻深釉——半深半浅的壁纸
+ * 整体是亮背景，不该把整个界面翻暗；面板压在局部暗角上靠升密度保证读得清。
+ */
+export function rasterMeanLum(data: Uint8ClampedArray, step = 16): number {
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i + 2 < data.length; i += 4 * Math.max(1, step)) {
+    sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    n++;
+  }
+  return n ? sum / (255 * n) : 0.5;
+}
+
 /** 墨的状态：'light' = 浅釉深墨（默认浅色档）；'dark' = 深釉浅墨（浅色压暗底 / 深色模式）。 */
 export type GlassInkState = "light" | "dark";
 
 /**
- * 浅色模式：背景亮度 < 0.5 用深釉浅墨；亮度在分界线 ±0.05 内保持上次的墨。
+ * 浅色模式：背景亮度 < LG_INK_LINE − 迟滞才用深釉浅墨；亮度在分界线 ±迟滞 内保持上次的墨。
  * 深色模式恒浅墨。
  */
 export function decideInk(
@@ -636,6 +653,10 @@ class LiquidGlass {
     if (els.length === 0) return;
     const raster = this.raster();
     const scheme = darkScheme() ? "dark" : "light";
+    // 全屏否决：整体底色不算暗就不许任何面板翻深釉（半深半浅的壁纸不该把整屏翻暗）。
+    const globalDark =
+      scheme === "dark" ||
+      (raster !== null && rasterMeanLum(raster.data) < LG_INK_LINE);
     // 同一行（中心 y 差 < 24px）的面板共享一次判定。
     const rows = new Map<number, GlassInkState[]>();
     const decided = new Map<Element, { stats: BgStats; ink: GlassInkState }>();
@@ -655,10 +676,15 @@ class LiquidGlass {
     for (const el of els) {
       const rowKey = Math.round(el.getBoundingClientRect().top / 24);
       const row = rows.get(rowKey) ?? [];
-      // 同一行共享一个判定：取多数。
       const rowDark = row.filter((i) => i === "dark").length;
-      const ink: GlassInkState =
-        scheme === "dark" ? "dark" : rowDark * 2 >= row.length ? "dark" : "light";
+      const rowLight = row.length - rowDark;
+      // 同一行共享一个判定：要过半共识才统一翻；两边都不过半保留这块面板自己的判定。
+      let ink: GlassInkState;
+      if (scheme === "dark") ink = "dark";
+      else if (!globalDark) ink = "light";
+      else if (rowDark * 2 > row.length) ink = "dark";
+      else if (rowLight * 2 > row.length) ink = "light";
+      else ink = decided.get(el)!.ink;
       if (ink === "dark") darkCount++;
       else lightCount++;
       this.applyAdapt(el, ink, decided.get(el)!.stats, scheme);

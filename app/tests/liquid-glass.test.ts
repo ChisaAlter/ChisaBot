@@ -21,6 +21,7 @@ import {
   LG_SPLIT_R,
   LG_WORST_INK,
   over,
+  rasterMeanLum,
   rimBend,
   rimWidthPx,
   sampleStats,
@@ -102,7 +103,22 @@ describe("background adaptation (spec §4)", () => {
     expect(s.chroma).toBeCloseTo(1);
   });
 
-  test("ink decision: light mode flips under the 0.5 line with ±0.05 hysteresis, dark always light-ink", () => {
+  test("raster mean luminance averages every pixel with the same weights as sampleStats", () => {
+    const black = new Uint8ClampedArray(400);
+    expect(rasterMeanLum(black)).toBe(0);
+    const white = new Uint8ClampedArray(400).fill(255);
+    expect(rasterMeanLum(white)).toBeCloseTo(1);
+    // 半黑半白 → ~0.5（半深半浅的壁纸整体算亮背景，不该触发深釉）。
+    const mixed = new Uint8ClampedArray(800);
+    for (let px = 0; px < 200; px++) {
+      const i = px * 4;
+      if (px >= 100) mixed[i] = mixed[i + 1] = mixed[i + 2] = 255;
+    }
+    expect(rasterMeanLum(mixed)).toBeCloseTo(0.5, 1);
+    expect(rasterMeanLum(new Uint8ClampedArray(0))).toBe(0.5);
+  });
+
+  test("ink decision: light mode flips under the LG_INK_LINE boundary with ±0.05 hysteresis, dark always light-ink", () => {
     expect(decideInk("dark", 0.9, null)).toBe("dark");
     expect(decideInk("light", LG_INK_LINE - 0.06, null)).toBe("dark");
     expect(decideInk("light", 0.8, null)).toBe("light");
