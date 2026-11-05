@@ -48,7 +48,7 @@ describe("确认卡片", () => {
   test("付款：没有「以后这类直接做」，有锁的说明", () => {
     const view = render(<ConfirmCardView model={{ category: "purchase", title: "下单 AirPods", status: "pending" }} onAlways={async () => {}} />);
     expect(view.queryByTestId("confirm-always")).toBeNull();
-    expect(view.getByTestId("confirm-card").textContent).toContain("付款一律先问你");
+    expect(view.getByTestId("confirm-card").textContent).toContain("付款购买一律先问你");
   });
 
   test("接着做的那条消息", () => {
