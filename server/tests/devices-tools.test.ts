@@ -144,3 +144,65 @@ describe("the bot knows whether the person's computer is linked and online (2026
   });
 });
 
+describe("device_run_shell never strands the turn on a foreground wait", () => {
+  const shellTools = (invoke: DeviceHub["invoke"]) => {
+    const device = record({ capabilities: { ...defaultCapabilities(), shell: "allow" } });
+    const store = {
+      get: async () => device,
+      forOwner: async () => [device],
+    } as unknown as DeviceStore;
+    const hub = { isOnline: () => true, invoke } as unknown as DeviceHub;
+    return deviceTools({ store, hub, botId: "bot-a", actorId: "u1", devices: [device] });
+  };
+
+  const shellTool = (invoke: DeviceHub["invoke"]) =>
+    shellTools(invoke).find((tool) => tool.name === "device_run_shell")!;
+
+  test("the description itself steers interactive programs away from the foreground", () => {
+    const tool = shellTool(async () => ({}));
+    expect(tool.description).toContain("交互式");
+    expect(tool.description).toContain("stdin");
+    expect(tool.description).toContain("device_shell_output");
+  });
+
+  test("a timedOut result comes back with timeoutSec and the next-step note", async () => {
+    const tool = shellTool(async () => ({
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      truncated: false,
+      timedOut: true,
+      durationMs: 300_000,
+    }));
+    const out = JSON.parse(String(await tool.execute({ command: "npm run build", timeoutSec: 300 })));
+    expect(out.timedOut).toBe(true);
+    expect(out.timeoutSec).toBe(300);
+    expect(out.note).toContain("不要原样重跑");
+    expect(out.note).toContain("background: true");
+    expect(out.note).toContain("stdin");
+  });
+
+  test("a hub-level timeout error also carries the note instead of a bare refusal", async () => {
+    const tool = shellTool(async () => {
+      throw new Error("PC 端 620 秒内没有返回结果。");
+    });
+    const out = String(await tool.execute({ command: "devin login", timeoutSec: 600 }));
+    expect(out).toContain("设备操作失败");
+    expect(out).toContain("不要原样重跑");
+    expect(out).toContain("等输入");
+  });
+
+  test("a normal result passes through untouched", async () => {
+    const tool = shellTool(async () => ({
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "",
+      truncated: false,
+      timedOut: false,
+      durationMs: 1200,
+    }));
+    const out = JSON.parse(String(await tool.execute({ command: "echo ok" })));
+    expect(out).toEqual({ exitCode: 0, stdout: "ok", stderr: "", truncated: false, timedOut: false, durationMs: 1200 });
+  });
+});
+

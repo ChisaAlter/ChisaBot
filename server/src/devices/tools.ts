@@ -43,8 +43,8 @@ const schemas = {
     deviceId,
     command: z.string().min(1).max(20_000).describe("要运行的命令：Windows 上是 PowerShell，Linux / macOS 上是 bash（没有 bash 时 sh）"),
     cwd: z.string().optional().describe("工作目录（绝对路径，可选）"),
-    timeoutSec: z.number().int().min(1).max(600).optional().describe("前台等待的超时秒数，默认 60，最多 600；更久的（编译、测试、开发服务器）用 background: true"),
-    background: z.boolean().optional().describe("true = 后台运行，立刻返回 jobId 和开头的输出；之后用 device_shell_output 看输出、device_shell_kill 结束。适合构建、测试、开发服务器、长时间任务"),
+    timeoutSec: z.number().int().min(1).max(600).optional().describe("前台等待的超时秒数，默认 60，最多 600；更久的（编译、测试、开发服务器）用 background: true；会等输入的交互式程序放前台只会空等到超时"),
+    background: z.boolean().optional().describe("true = 后台运行，立刻返回 jobId 和开头的输出；之后用 device_shell_output 看输出、device_shell_kill 结束。适合构建、测试、开发服务器、长时间任务，以及会等输入的交互式程序"),
     session: z.string().max(64).optional().describe("持久会话名（例如 \"main\"）：同名会话里 cd、export / $env: 设置的目录和环境变量会保留到下一条命令"),
     elevated: z.boolean().optional().describe("以管理员 / root 身份运行（只在完全访问模式下可用；Windows 首次会弹一次 UAC，Linux/macOS 需要节点是 root 或有免密 sudo）"),
   }),
@@ -233,6 +233,21 @@ function clip(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+/**
+ * 前台命令被超时停掉 / 设备没在时限内返回时交回给机器人的说明。
+ *
+ * 目的和 §102 的 commandTimeoutNote 一样：不要原样重跑——那只会在同一个点再被停一次，而且每次重跑都是
+ * 一轮全程无输出的等待。多一条这里特有的路：会等输入的交互式程序（登录、REPL、确认提示）放前台永远等不到
+ * 退出，重跑多少次都一样。
+ */
+function deviceShellTimeoutNote(sec: number): string {
+  const interactive =
+    "如果命令在等输入（登录提示、REPL、y/n 确认），前台等再久也不会退出——改用 stdin 管道一次喂入（echo CODE | 命令）或非交互参数，或 background: true + device_shell_output 轮询看输出。";
+  if (sec >= 600)
+    return `命令等了 ${sec} 秒没有结束（前台命令最多 600 秒）。不要原样重跑：还需要更久就用 background: true 后台跑 + device_shell_output 轮询。${interactive}`;
+  return `命令等了 ${sec} 秒没有结束。不要原样重跑：只是需要更久就把 timeoutSec 调大（最多 600）或 background: true。${interactive}`;
+}
+
 /** diff 头里的路径：去掉开头的 / 或盘符前的 /，避免「a//work/x」。 */
 function diffPath(path: string) {
   return path.replace(/^\/+/, "");
@@ -312,7 +327,7 @@ export function deviceGuidance(
       "Capabilities marked 每次需用户批准 (the default for a newly linked computer) work right away: just call the device_* tool; ChisaBot shows the person an approval prompt on that computer and on the web/phone, and the call returns once they approve (or is refused if they deny or nobody answers within 2 minutes). Say in one short line that they will see a prompt to approve; do not ask for permission in chat first. File tools work inside the computer's 允许的文件夹 (listed by device_list as allowedRoots). For an absolute path outside them (e.g. C:\\AI) just call the file tool with that path: the approval prompt tells the person the folder will be added to 允许的文件夹, and once they approve it is added and the call runs. Do not tell them to add the folder by hand first.",
       "A capability that is off was switched off by the person (命令行、读取文件、写入文件、截图、鼠标键盘、打开网址 / 文件、剪贴板). If a request needs one that is off, say which one and tell them they can set it to 询问 in 设置 → 设备 → the computer → 权限, then try again; do not pretend to have done it.",
       "完全访问 (full access) can only be turned on by the person in 设置 → 设备 → the computer → 权限; you cannot turn it on. If a task genuinely needs it (whole-disk access, admin rights, unattended long jobs) say so once and let them decide.",
-      "Coding / changing files on their device (also servers running chisabot-node): work like a careful engineer. 1) Find: device_search (pattern + glob) and device_list_files. 2) Read only what you need: device_read_file with startLine/endLine (numbered lines; never dump whole large files into the chat). 3) Change: device_edit_file with exact oldText/newText (copy the text from what you read, without the line-number prefix; add surrounding lines until it is unique), or device_apply_patch for multi-file changes; device_write_file only for new files or full rewrites. 4) Verify: run the tests / build with device_run_shell (cwd = the project; background: true + device_shell_output for anything longer than a minute, e.g. dev servers, big builds). 5) Report: a short summary plus the diffs the tools returned (only the relevant hunks), test results, and git status if it is a repo; commit with device_git only when the person asked or clearly expects it, and push only when asked (push always needs their approval). Use a session name (e.g. session: \"main\") when later commands depend on cd / env from earlier ones.",
+      "Coding / changing files on their device (also servers running chisabot-node): work like a careful engineer. 1) Find: device_search (pattern + glob) and device_list_files. 2) Read only what you need: device_read_file with startLine/endLine (numbered lines; never dump whole large files into the chat). 3) Change: device_edit_file with exact oldText/newText (copy the text from what you read, without the line-number prefix; add surrounding lines until it is unique), or device_apply_patch for multi-file changes; device_write_file only for new files or full rewrites. 4) Verify: run the tests / build with device_run_shell (cwd = the project; background: true + device_shell_output for anything longer than a minute, e.g. dev servers, big builds). 5) Report: a short summary plus the diffs the tools returned (only the relevant hunks), test results, and git status if it is a repo; commit with device_git only when the person asked or clearly expects it, and push only when asked (push always needs their approval). Use a session name (e.g. session: \"main\") when later commands depend on cd / env from earlier ones. Never wait in the foreground on a program that is itself waiting for input (login prompts, REPLs, y/n confirmations): it will not exit, every retry burns the whole timeout, and the turn looks dead. Feed input through a stdin pipe (`echo CODE | cmd`) or a non-interactive flag, or run it with background: true and poll device_shell_output.",
       "Operating their local desktop software & local browser (Chrome / Edge / VS Code / WeChat / WPS / Notion / etc.): 1) Use device_windows (action: \"list\") to inspect all open desktop windows, the currently active foreground window, and each window's exact screen coordinates (bounds: left, top, width, height). 2) Use device_windows (action: \"focus\" or \"launch\") or device_open to bring the target app/browser window to the front or open a URL/file in their default app. 3) Use device_screenshot to see the live window on their screen, then use device_input (click, double_click, type, key, scroll) with the window bounds from device_windows to interact with buttons, inputs, or menus. 4) For stdio MCP servers on their PC, use device_mcp_call.",
     );
   } else {
@@ -468,7 +483,7 @@ export function deviceTools(options: {
         name: "device_run_shell",
         ref: "devices/run_shell",
         description:
-          "在用户设备上运行命令（Windows = PowerShell，Linux / macOS = bash），返回退出码、stdout、stderr（各最多 64KB，超长保留开头和结尾）。cwd 设工作目录；session 让 cd / 环境变量在多条命令间保留；background: true 后台运行（构建、测试、开发服务器），之后用 device_shell_output / device_shell_kill。可能需要用户审批。不要运行破坏性命令。",
+          "在用户设备上运行命令（Windows = PowerShell，Linux / macOS = bash），返回退出码、stdout、stderr（各最多 64KB，超长保留开头和结尾）。cwd 设工作目录；session 让 cd / 环境变量在多条命令间保留；background: true 后台运行（构建、测试、开发服务器），之后用 device_shell_output / device_shell_kill。会等输入的交互式程序（登录提示、REPL、y/n 确认）不能在前台等——它不会自己退出，只会空等到超时：改用 stdin 管道一次喂入（echo CODE | 命令）、非交互参数，或 background: true + device_shell_output 轮询输出。可能需要用户审批。不要运行破坏性命令。",
         parameters: schemas.shell,
         execute: async (input) => {
           const args = schemas.shell.parse(input ?? {});
@@ -482,12 +497,24 @@ export function deviceTools(options: {
               60_000,
             );
           const timeoutSec = args.timeoutSec ?? 60;
-          return run(
+          const result = await raw(
             "shell",
             args.deviceId,
             { command: args.command, cwd: args.cwd, timeoutSec, session: args.session, elevated: args.elevated === true },
             `运行命令：${clip(args.command, 300)}${where}`,
             (timeoutSec + 20) * 1000,
+          );
+          // 超时（PC 端 timedOut，或连结果都没回来）时把下一步写进结果：不然机器人会原样重跑同一条命令。
+          if (typeof result === "string")
+            return /没有返回结果|timed out|timeout/i.test(result)
+              ? `${result} ${deviceShellTimeoutNote(timeoutSec)}`
+              : result;
+          const out =
+            result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+          return JSON.stringify(
+            out.timedOut === true
+              ? { ...out, timeoutSec, note: deviceShellTimeoutNote(timeoutSec) }
+              : out,
           );
         },
       },
