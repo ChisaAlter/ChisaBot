@@ -2,16 +2,20 @@
 /* 滚动放在 .login 里而不是视口上：视口滚动条画在 body 的圆角裁切之外（透明窗口里会在窗口右缘外露出一条，§91.2）。 */
 body.login-page { overflow: hidden; }
 .login {
+  position: relative;
   height: 100%; overflow-y: auto; overscroll-behavior: contain;
   display: flex; flex-direction: column; align-items: center; justify-content: safe center;
-  padding: max(20px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  padding: 0;
 }
-.login-card { width: 100%; max-width: 400px; padding: 28px 28px 18px; display: flex; flex-direction: column; align-items: center; }
-/* 无边框窗口（DESIGN.md §91）：顶部 40px 是拖动带（.win-bar，chrome.css），内容从它下面开始。
-   （不把整片天空设成拖动区：拖动区会吞掉滚轮和滚动条。）
-   卡片外沿是柔和的玻璃边（描边减半 + 顶部高光），不再是一圈硬白线。 */
-.login { padding-top: max(44px, env(safe-area-inset-top)); }
-.login-card.auth-card { border-color: color-mix(in srgb, var(--stroke) 45%, transparent); }
+/* 卡片铺满窗口：窗沿那道细线（chrome.css body::after）就是唯一的边，不再「卡片外再套一圈天空框」。
+   .win-bar 拖动带和窗口按钮是透明浮层，直接压在卡面上（顶部留白让出来）。卡片没有自己的边，
+   圆角由 body 的 clip-path 裁出来。 */
+.login-card {
+  width: 100%; max-width: none; flex: 1; min-height: 100%;
+  padding: 52px 28px 52px; display: flex; flex-direction: column; align-items: center; justify-content: safe center;
+  border-radius: 0;
+}
+.login-card.auth-card { border: 0; }
 
 /* 标志：品牌头像（logo.png，由 assets/brand/generate.mjs 生成；PC / Android 同一份文件）。
    发带红细环点缀，只用在品牌位置（DESIGN.md §28）。 */
@@ -99,7 +103,8 @@ body.login-page { overflow: hidden; }
 .fields .alert { margin-top: 16px; line-height: 1.5; animation: enter var(--dur-2) var(--ease-out) both; }
 .fields .btn { margin-top: 20px; }
 .step { min-height: 18px; margin: 10px 0 0; transition: opacity var(--dur-2) var(--ease-out); }
-.foot { margin: 14px 0 0; opacity: .85; }
+/* 版本脚标钉在窗口底缘、浮在卡面上（卡片已铺满，没有天空带放它了）。 */
+.foot { position: fixed; left: 0; right: 0; bottom: 10px; margin: 0; opacity: .85; pointer-events: none; }
 
 /* 扫码绑定（Android，DESIGN.md §33）：主按钮在上，账号密码在分隔线下（登录按钮降为描边样式）。 */
 .scan { width: 100%; margin-top: 22px; display: flex; flex-direction: column; }
@@ -112,8 +117,8 @@ body.login-page { overflow: hidden; }
 .scan:not(.hidden) + .fields { margin-top: 14px; }
 
 @media (max-width: 440px) {
-  .login { justify-content: flex-start; padding-top: max(44px, env(safe-area-inset-top)); }
-  .login-card { padding: 24px 20px 14px; }
+  .login { justify-content: flex-start; }
+  .login-card { padding: 44px 20px 40px; }
 }
 
 /* 矮屏幕（1366×768 @125% 工作区只有 ~614px，登录窗贴着工作区，DESIGN.md §91.2）：收紧间距；还放不下时页面内滚动，
@@ -124,8 +129,7 @@ body.login-page { overflow: hidden; }
 .dark .login::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2) padding-box; }
 .login::-webkit-scrollbar-button { display: none; height: 0; }
 @media (max-height: 720px) {
-  .login { padding-bottom: 10px; }
-  .login-card { padding: 20px 24px 12px; }
+  .login-card { padding: 44px 24px 36px; }
   .mark { width: 52px; height: 52px; }
   .login-card .t-h1 { margin-top: 10px; font-size: 22px; }
   .fields { margin-top: 14px; }
