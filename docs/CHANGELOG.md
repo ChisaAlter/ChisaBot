@@ -1,3 +1,11 @@
+## 0.1.136
+
+- 工作流闭环与续跑：步骤支持 `rejectTo`/`maxReworks`、`onFailure`（`fail/reject/continue`）、`retryStrategy`（`targeted_fix/full_redo`）；`targeted_fix` 保留步骤底层 `threadId` 续跑并注入结构化修改反馈，重试自动叠加最新角色绑定。
+- 结构化验收门禁（Gate）：步骤开启 `gate` 时注入 `submit_gate_result`（`pass/rework/fail/human` + `findings`），支持本步自修正闭环、跨步打回与人工升级。
+- Bot 工具治理与工作流操控：新增 `get_workflow_run`、`control_workflow_run`（服务端强绑定 `person` 身份 + 异步受理）与 `inspect_tool_schema`；远程工具回调入口接入 `guardWorkflowCallback` + `restrictToolsForWorkflow`；`confirmations.wrap` 对所有工具统一执行回合停止守卫。
+- Android：面板标题去重读 `props.text` 及编译修复。
+- 版本：0.1.136（根、app、server、pc；Android versionCode 318）；PC 外壳不变；Android 应用本体有改动正常原地更新。
+
 ## 0.1.135
 
 - AI 输出契约（§126）：`shared/output-contract` 一张表定每种输出在 web/app/IM 的归宿（native/degraded/none）+ 完整性测试；无壳 render 内容自动补壳（`shared/json-render/shell` + web/Android 两侧）；`:::card/group` 容错；GitHub 就地连接胶囊两端同款；`person.surface` 闸门让 App/IM 回合不开等人填的卡。

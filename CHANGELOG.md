@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.136 — 2026-11-06
+
+这一版合并：工作流（SOP 引擎）打回重做闭环、保留对话记忆的断点续跑、步骤级结构化验收门禁（`submit_gate_result`）、对话内工作流双向操控（`get_workflow_run` / `control_workflow_run`）、工具参数契约按需自省（`inspect_tool_schema`）、远程工具回调约束守卫与全工具回合停止守卫，以及 Android 面板标题去重与编译修复。全端同步版本号 0.1.136（Android versionCode 318）；PC 外壳不变；Android 应用本体有改动，正常原地更新。
+
+- 工作流打回重做与断点续跑：审批拒绝或步骤配置 `onFailure: "reject"` 时可按 `rejectTo` 打回指定前序步骤重做（受 `maxReworks` 保护）；失败或停止的运行支持 `targeted_fix`（复用步骤底层 `threadId` 对话记忆定向修正）与 `full_redo`（清空记忆全新重跑），重试时自动叠加最新角色机器人绑定。
+- 结构化验收门禁（Gate）：开启验收门的步骤注入专属工具 `submit_gate_result`（`pass / rework / fail / human` + `findings` 问题清单），支持未调用时自动追问、本步按 `maxLoops` 自修正闭环、跨步打回重做及 `human` 升级人工审批。
+- 对话内工作流双向管控与契约自省：新增 `get_workflow_run`（查进度与卡点）、`control_workflow_run`（在聊天中直接批准、打回重做、断点重试或停止，强制绑定真实用户交互身份并采用异步受理语义）与 `inspect_tool_schema`（调用复杂工具前按需读取 JSON Schema 契约）。
+- 工具治理边界加固：远程工具回调入口补齐 `guardWorkflowCallback` 与 `restrictToolsForWorkflow`，封堵工作流步骤越权调工具的后门；`confirmations.wrap` 对全部工具（含免审工具）统一执行已停止/已中止回合拦截。
+- Android：修复面板标题去重（读 `props.text`）及 `parseSpec` / 简报小节类型编译问题。
+
 ## 0.1.135 — 2026-11-06
 
 这一版合并：AI 输出归宿契约落地（每种输出在三端有明确画法，裸文本不再直接躺在壁纸上）、对话里就地连接 GitHub、「没发出去」改诚实判词加 90 秒事后对账、撤销/停止/取消在每个边界生效、定时任务/页面/凭据/模型降级的一批竞态修复。全端同步版本号 0.1.135（Android versionCode 317）；PC 外壳有改动，旧客户端在线更新走「重新安装」路径自动迁移；Android 应用本体有改动，正常原地更新。
