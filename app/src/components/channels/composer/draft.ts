@@ -87,20 +87,22 @@ export function retractRestoredDraft(
    * （`whole` 是 trim 过的，开头的空白分段先摘掉，不然逐段计数会错位。）
    */
   let k = 0;
-  while (
-    k < segments.length &&
-    segmentsToPlainText([segments[k]!]).trim() === ""
-  ) {
+  while (k < segments.length) {
+    const seg = segments[k];
+    if (!seg || segmentsToPlainText([seg]).trim() !== "") break;
     k += 1;
   }
   let consumed = 0;
   let matched = false;
   let partialTail: Segment | null = null;
   while (k < segments.length) {
+    const seg = segments[k];
+    if (!seg) break;
     // `whole` 是 trim 过的：第一个非空分段自己的前导空格不计入对齐（consumed 还是 0 时就是它）。
-    const plain = consumed === 0
-      ? segmentsToPlainText([segments[k]!]).replace(/^ +/, "")
-      : segmentsToPlainText([segments[k]!]);
+    const plain =
+      consumed === 0
+        ? segmentsToPlainText([seg]).replace(/^ +/, "")
+        : segmentsToPlainText([seg]);
     const next = consumed + plain.length;
     if (next <= target.length) {
       consumed = next;
@@ -108,7 +110,7 @@ export function retractRestoredDraft(
       continue;
     }
     const need = target.length - consumed;
-    if (segments[k]!.type === "text" && plain.startsWith(target.slice(consumed))) {
+    if (seg.type === "text" && plain.startsWith(target.slice(consumed))) {
       const tail = plain.slice(need).replace(/^ /, "");
       if (tail) partialTail = text(tail);
       matched = true;
