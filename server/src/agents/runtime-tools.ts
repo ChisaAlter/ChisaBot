@@ -34,7 +34,12 @@ export type RuntimeToolRegistration = {
   initiator?: AuditInitiator;
   /** 本地对话运行器里的插话会话：Hermes 在每次工具调用完成时领走用户中途发来的排队消息并注入上下文。 */
   steerSession?: SteerSession;
-  /** Defaults to 3 seconds, capped at 5 seconds. */
+  /**
+   * Defaults to 60 seconds, capped at 120. Waiting only delays a call that has not run yet — nothing
+   * executes before capture, so a longer wait cannot duplicate a side effect. 3 seconds was too short
+   * for a long thread whose event backlog the server was still working through (2026-11-06: the
+   * HTTP call outran its own TOOL_CALL_START, got 409, and Hermes ended the turn as "outcome unknown").
+   */
   callCaptureTimeoutMs?: number;
 };
 export type RuntimeToolRun = {
@@ -140,7 +145,7 @@ export function createRuntimeToolRegistry() {
         .every((value) => typeof value === "string" && value.trim())
     )
       throw new RuntimeToolError("invalid_call", "A run, thread, actor and Bot are required.");
-    const timeout = options.callCaptureTimeoutMs ?? 3_000;
+    const timeout = options.callCaptureTimeoutMs ?? 60_000;
     if (!Number.isFinite(timeout) || timeout <= 0)
       throw new RuntimeToolError("invalid_call", "The call capture timeout must be positive.");
     const tools = new Map<string, GrantedTool>();
@@ -206,7 +211,7 @@ export function createRuntimeToolRegistry() {
         };
         const timer = setTimeout(() => finish(new RuntimeToolError(
           "call_capture_timeout", "The assistant tool call was not captured before the timeout.",
-        )), Math.min(timeout, 5_000));
+        )), Math.min(timeout, 120_000));
         updates.add(check);
         controller.signal.addEventListener("abort", check, { once: true });
         check();

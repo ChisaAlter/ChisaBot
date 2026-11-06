@@ -116,6 +116,16 @@ function asGranted(tool: HeadlessTool): GrantedTool {
   };
 }
 
+/** Events after which the captured messages can differ in a way a tool call or continuation reads. */
+const CAPTURE_MESSAGE_EVENTS: ReadonlySet<string> = new Set([
+  EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS, EventType.TOOL_CALL_END, EventType.TOOL_CALL_RESULT,
+  EventType.TEXT_MESSAGE_END, EventType.REASONING_MESSAGE_END, EventType.MESSAGES_SNAPSHOT,
+  EventType.RUN_FINISHED, EventType.RUN_ERROR,
+]);
+const CAPTURE_STATE_EVENTS: ReadonlySet<string> = new Set([
+  EventType.STATE_SNAPSHOT, EventType.STATE_DELTA, EventType.MESSAGES_SNAPSHOT, EventType.RUN_FINISHED,
+]);
+
 /** Capture real AG-UI calls before the separate HTTP tool request may spend a grant. */
 class CaptureHermesRun extends Middleware {
   constructor(private readonly runTools: RuntimeToolRun, private readonly ownedNames: string[]) { super(); }
@@ -126,8 +136,14 @@ class CaptureHermesRun extends Middleware {
       let terminal = false;
       return this.runNextWithState(input, next).subscribe({
         next: ({ event, messages, state }) => {
-          this.runTools.updateMessages(messages);
-          this.runTools.updateState(state);
+          /*
+           * 只在会改动工具调用 / 状态的事件上刷新快照（2026-11-06 线上：1287 条消息、1.5MB 的长会话里，
+           * 每个推理字符都整份 structuredClone 一次历史，服务端每秒只消化 10–20 个事件，积压几十秒；
+           * Hermes 的 HTTP 工具调用先到，3 秒内等不到捕获就 409，整轮以「outcome is unknown」失败）。
+           * 文本 / 推理增量不碰工具调用，等它们的 END 一起刷新即可。
+           */
+          if (CAPTURE_MESSAGE_EVENTS.has(event.type)) this.runTools.updateMessages(messages);
+          if (CAPTURE_STATE_EVENTS.has(event.type)) this.runTools.updateState(state);
           if (event.type === EventType.TOOL_CALL_START) {
             const call = event as ToolCallStartEvent;
             pending.set(call.toolCallId, call.toolCallName);

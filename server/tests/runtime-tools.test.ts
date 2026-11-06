@@ -303,6 +303,19 @@ describe("runtime tool run", () => {
     } finally { f.run.close(); }
   });
 
+  test("a capture that lags past the old 5s cap still runs once instead of answering 409 (2026-11-06)", async () => {
+    let executions = 0;
+    const f = fixture({ input: input([]), tools: [tool({ execute: async () => { executions++; return "late capture"; } })] });
+    try {
+      const result = f.run.execute("call-1", name, args);
+      await new Promise((resolve) => setTimeout(resolve, 5_500));
+      expect(executions).toBe(0);
+      f.run.updateMessages(input([assistant()]).messages);
+      expect(await result).toBe("late capture");
+      expect(executions).toBe(1);
+    } finally { f.run.close(); }
+  }, 10_000);
+
   test("missing captures time out without inventing calls or tool results", async () => {
     let executions = 0;
     const f = fixture({ input: input([]), callCaptureTimeoutMs: 10, tools: [tool({ execute: async () => { executions++; return "wrong"; } })] });

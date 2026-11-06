@@ -50,6 +50,10 @@ export function friendlyStopReason(said: string): string {
   // CB-100：服务器在流开始前连不上智能体运行时（Hermes 桥接等）。放在 ECONNREFUSED 那条前面，免得说成「连不上模型服务」。
   if (/智能体运行时无法连接|智能体运行时在开始回答前出错|AGENT_RUNTIME_UNREACHABLE/.test(text))
     return "智能体运行时无法连接，这一轮没有开始。请管理员检查运行时服务（Hermes 桥接）后再发一次。";
+  // Hermes 调宿主工具时拿不到确定结果（网关 409 / 5xx / 断开），为了不重复执行副作用主动停下这一轮。
+  // 以前落到「这一轮出错了：<英文>」，标题又成了「这一轮没有收到回答」，可前面的回答明明在（2026-11-06）。
+  if (/host gateway outcome is unknown|HERMES_MISSING_TOOL_RECEIPT|ended before a host tool returned/i.test(text))
+    return "有一步工具调用没拿到确定结果，为免重复执行，这一轮先停下了。点「重试」接着做。";
   if (/only be used from within OpenCode/i.test(text))
     return "这个模型只能在 OpenCode 客户端里用。点输入框右下角的模型名，换一个模型再发。";
   if (/daily (free )?limit|free (tier|limit)|quota|insufficient.*(credit|balance)|\b402\b/i.test(text))
