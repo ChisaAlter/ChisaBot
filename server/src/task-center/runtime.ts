@@ -188,7 +188,9 @@ export function createTaskCenterRuntime(
       ownerUserId: task.ownerUserId,
       routineId: `task:${task.id}:${tag}`,
       agentId: await resolveAgent(task),
-      threadId: `${TASK_THREAD_PREFIX}${task.id}`,
+      // 每次尝试独立线程：上一次异常退出会把线程标成 paused/held，重试沿用同一线程
+      // 只会重复 409「保留的消息已暂停」，永远到不了模型。
+      threadId: `${TASK_THREAD_PREFIX}${task.id}:${tag}:${task.attempts}`,
       instruction,
       initiator: { kind: "routine", id: `task:${task.id}` },
       signal,
