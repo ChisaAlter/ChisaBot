@@ -18,6 +18,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { PageShell, PageSkeleton } from "@/components/layout/page-shell";
+import { AgentsRailCard } from "@/components/panels/agents-rail-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -499,6 +500,7 @@ function Capabilities() {
       <p className="tc-muted">
         执行器和工具的当前可用状态。任务会按实际能力与授权选择执行路径。
       </p>
+      <AgentsRailCard />
       {(["executor", "source", "tool"] as const).map((kind) => {
         const entries = capabilities.filter((entry) => entry.kind === kind);
         return entries.length ? (

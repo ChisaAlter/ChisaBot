@@ -1,4 +1,5 @@
 import {
+  IconChecklist,
   IconDeviceDesktop,
   IconLayoutGrid,
   IconLayoutSidebarRightCollapse,
@@ -63,8 +64,8 @@ import {
 } from "@/lib/preference-storage";
 import { presenceRef } from "@/lib/presence-flag";
 import { cn } from "@/lib/utils";
-import { AgentsRailCard } from "./agents-rail-card";
 import { useLivePanels } from "./live-panels-query";
+import { TasksRailCard, useRailTasksSummary } from "./tasks-rail-card";
 
 const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
@@ -486,8 +487,14 @@ function PanelRailBody({
   const rosterPending = useQuery(agentListQueryOptions()).isPending;
   const chat = useCurrentBotChat();
   const canComputer = Boolean(chat?.canComputer);
+  const [innerTab, setInnerTab] = useState<"panels" | "tasks">(() =>
+    readStoredPreference("chisabot-panel-rail-subtab") === "tasks"
+      ? "tasks"
+      : "panels",
+  );
   const tab: RailTab =
-    canComputer && chat?.computerOpen ? "computer" : "panels";
+    canComputer && chat?.computerOpen ? "computer" : innerTab;
+  const tasksSummary = useRailTasksSummary();
   const liveList = useLivePanels(botId);
   // 没有面板时不加载卡片渲染（json-render、图表……，按需块）；一旦有过就一直挂着，
   // 删掉最后一张后「撤销」还要靠 LivePanelList 里的 mutation。
@@ -498,24 +505,33 @@ function PanelRailBody({
   }, [hasLive]);
 
   /*
-   * 右栏只放实时面板（live_panels，DESIGN.md §29/§43）。上游旧面板系统（沙箱 HTML 面板、面板库、「新建」创作会话、
-   * bot_panel_instances）的卡片已从右栏去掉（DESIGN.md §57 导航收敛）；数据还在库里，合并 / 清理在后续阶段。
-   * 新面板在对话里说一句就行。
+   * 右栏顶部选项卡：「面板 | 任务 | 计算机（按需）」。
+   * - 「面板」只放自定义实时面板（live_panels，DESIGN.md §29/§43）；
+   * - 「任务」放任务中心与工作流的实时进度及待确认审批；
+   * - 「计算机」放远程桌面与操作流。
    */
   return (
     <>
       <header className="rail-head">
-        {canComputer && chat ? (
-          <RailSwitch
-            needsYou={chat.needsYou && tab !== "computer"}
-            onChange={(next) => {
-              if (next !== tab) chat.toggleComputer();
-            }}
-            tab={tab}
-          />
-        ) : (
-          <h2 className="rail-head-t">{"面板"}</h2>
-        )}
+        <RailSwitch
+          canComputer={canComputer && Boolean(chat)}
+          needsYou={Boolean(chat?.needsYou) && tab !== "computer"}
+          onChange={(next) => {
+            if (next === "computer") {
+              if (canComputer && chat && !chat.computerOpen) {
+                chat.toggleComputer();
+              }
+              return;
+            }
+            setInnerTab(next);
+            writeStoredPreference("chisabot-panel-rail-subtab", next);
+            if (canComputer && chat?.computerOpen) {
+              chat.toggleComputer();
+            }
+          }}
+          tab={tab}
+          tasksNeedsYou={tasksSummary.approvalCount > 0 && tab !== "tasks"}
+        />
         <span className="flex-1" />
         {tab === "panels" && botId ? (
           <RailAddPanelMenu
@@ -550,8 +566,6 @@ function PanelRailBody({
         hidden={tab !== "panels"}
       >
         <div className="glass-rail-scroll relative flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-          {/* 内置卡第一位：Agent 管理（设备归账号，不看当前机器人，恒在实时面板之前）。 */}
-          <AgentsRailCard />
           {!botId ? (
             <RailNote>
               {rosterPending ? "正在加载机器人…" : "还没有可用的机器人。"}
@@ -595,6 +609,17 @@ function PanelRailBody({
         </div>
       </div>
 
+      <div
+        aria-hidden={tab !== "tasks" || undefined}
+        className="rail-pane flex min-h-0 flex-1 flex-col gap-[10px]"
+        data-active={tab === "tasks"}
+        hidden={tab !== "tasks"}
+      >
+        <div className="glass-rail-scroll relative flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          <TasksRailCard />
+        </div>
+      </div>
+
       {canComputer && chat ? (
         <RailComputerPane
           active={tab === "computer"}
@@ -626,29 +651,42 @@ export function panelSheetInitialFocus(
   return sheet?.querySelector<HTMLElement>(PANEL_SHEET_HEAD_FOCUSABLE) ?? true;
 }
 
-type RailTab = "panels" | "computer";
+type RailTab = "panels" | "tasks" | "computer";
 
-/** 右栏顶部的「面板 | 计算机」分段切换（sg-segmented，与设置页同一套）。 */
+/** 右栏顶部的「面板 | 任务 | 计算机」分段切换（sg-segmented，与设置页同一套）。 */
 function RailSwitch({
   tab,
+  canComputer,
   onChange,
   needsYou,
+  tasksNeedsYou,
 }: {
   tab: RailTab;
+  canComputer: boolean;
   onChange: (tab: RailTab) => void;
   needsYou: boolean;
+  tasksNeedsYou?: boolean;
 }) {
+  const values: readonly RailTab[] = canComputer
+    ? ["panels", "tasks", "computer"]
+    : ["panels", "tasks"];
   // 键盘约定走共用的 `useSegmentedKeys`（2026-10-20）：以前这里手写了一份，方向键换了项但焦点留在原处。
   const keys = useSegmentedKeys<RailTab>({
     value: tab,
-    values: ["panels", "computer"],
+    values,
     onChange,
   });
-  const item = (value: RailTab, label: string, icon: React.ReactNode) => (
+  const item = (
+    value: RailTab,
+    label: string,
+    icon: React.ReactNode,
+    dot?: boolean,
+  ) => (
     // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
     <button
       aria-checked={tab === value}
       className="sg-segmented-item rail-tabs-item"
+      data-testid={`rail-tab-${value}`}
       onClick={() => onChange(value)}
       role="radio"
       tabIndex={keys.itemTabIndex(value)}
@@ -656,7 +694,7 @@ function RailSwitch({
     >
       {icon}
       {label}
-      {value === "computer" && needsYou ? (
+      {dot ? (
         <span aria-label={"需要你"} className="rail-tabs-dot" role="img" />
       ) : null}
     </button>
@@ -665,6 +703,7 @@ function RailSwitch({
     <div
       aria-label={"右栏内容"}
       className="sg-segmented rail-tabs"
+      data-count={values.length}
       data-tab={tab}
       {...keys.groupProps}
       ref={keys.groupRef}
@@ -673,10 +712,19 @@ function RailSwitch({
       <span aria-hidden className="rail-tabs-thumb" />
       {item("panels", "面板", <IconLayoutGrid className="size-[15px]" />)}
       {item(
-        "computer",
-        "计算机",
-        <IconDeviceDesktop className="size-[15px]" />,
+        "tasks",
+        "任务",
+        <IconChecklist className="size-[15px]" />,
+        tasksNeedsYou,
       )}
+      {canComputer
+        ? item(
+            "computer",
+            "计算机",
+            <IconDeviceDesktop className="size-[15px]" />,
+            needsYou,
+          )
+        : null}
     </div>
   );
 }
