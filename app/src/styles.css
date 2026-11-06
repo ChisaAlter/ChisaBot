@@ -4685,7 +4685,10 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 }
 .dark .rail-tabs-thumb { background: rgba(255, 255, 255, 0.12); }
 .rail-tabs .rail-tabs-item { flex: none; width: 74px; padding: 0 6px; justify-content: center; }
-.rail-tabs[data-tab="computer"] .rail-tabs-thumb { translate: 100% 0; }
+.rail-tabs[data-count="3"] .rail-tabs-item,
+.rail-tabs[data-count="3"] .rail-tabs-thumb { width: 68px; }
+.rail-tabs[data-tab="tasks"] .rail-tabs-thumb { translate: 100% 0; }
+.rail-tabs[data-tab="computer"] .rail-tabs-thumb { translate: 200% 0; }
 .rail-tabs-dot { width: 7px; height: 7px; border-radius: 999px; background: #f59e0b; box-shadow: 0 0 0 2px var(--glass-3); }
 /* 2026-10-13「计算机3个字完犊子了」：标签固定 74px，图标+「计算机」+琥珀点超宽，字被挤成「计算 / 机」两行。
    标签文字永不换行；「需要你」圆点浮在标签右上角，不占宽度（DESIGN.md §23）。 */

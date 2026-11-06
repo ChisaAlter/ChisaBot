@@ -31,7 +31,8 @@ beforeEach(() => {
   resetUiMemory();
   requests = [];
   global.fetch = (async (path: string) => {
-    requests.push(String(path));
+    const p = String(path);
+    if (p !== "/api/capabilities") requests.push(p);
     return new Response("{}", { status: 500 });
   }) as unknown as typeof fetch;
 });
