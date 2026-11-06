@@ -161,7 +161,7 @@ object Markdown {
                     if (l.startsWith(":::card")) { openCard(l); i++; continue }
                     if (l == ":::") { i++; if (cur != null) closeCard() else break; if (!grouped) break; continue }
                     if (cur == null) { if (grouped && l.isEmpty()) { i++; continue } else break }
-                    cur.append(lines[i]).append('\n'); i++
+                    cur?.append(lines[i])?.append('\n'); i++
                 }
                 closeCard()
                 if (cards.isNotEmpty()) out += Block.StatusCards(cards)

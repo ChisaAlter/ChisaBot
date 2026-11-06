@@ -279,10 +279,10 @@ private fun parseBrief(body: String, fallback: String): BriefView {
             continue
         }
         val h = Regex("^#{1,4}\\s+(.+)$").find(l)
-        if (h != null) { heads += h.groupValues[1].trim() to kindOf(h.groupValues[1].trim()); sections += mutableListOf(); continue }
+        if (h != null) { heads += h.groupValues[1].trim() to kindOf(h.groupValues[1].trim()); sections += mutableListOf<String>(); continue }
         val item = Regex("^(?:[-*+]|\\d+[.)、])\\s+(.+)$").find(l)
         if (item != null || heads.isNotEmpty()) {
-            if (heads.isEmpty()) { heads += "今日要点" to "highlight"; sections += mutableListOf() }
+            if (heads.isEmpty()) { heads += "今日要点" to "highlight"; sections += mutableListOf<String>() }
             sections.last() += clean(item?.groupValues?.get(1) ?: l)
         } else if (greeting.isEmpty()) greeting = clean(l)
     }

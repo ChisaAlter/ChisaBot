@@ -92,6 +92,10 @@ private val LAYOUT_TYPES = setOf("Stack", "Grid", "Carousel", "Tabs")
 private fun JsonObject?.bareText(key: String): Boolean =
     (this?.get(key) as? JsonPrimitive)?.let { it.isString && it.content.isNotBlank() } == true
 
+/** spec 串 → JsonObject；还在流式写或格式不对时按没有界面处理（同 WorkSteps.parseArgs 的口径）。 */
+private fun parseSpec(spec: String): JsonObject? =
+    runCatching { Api.json.parseToJsonElement(spec) as? JsonObject }.getOrNull()
+
 /** 这个元素自己有没有直接画在背景上的东西（不看孩子；shell.ts 的 drawsBare）。 */
 private fun drawsBare(type: String, props: JsonObject?): Boolean {
     if (type in SURFACED_TYPES) return false
