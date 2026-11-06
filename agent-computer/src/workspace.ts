@@ -24,8 +24,8 @@
 import {
   lstat,
   mkdir,
+  open,
   readdir,
-  readFile,
   readlink,
   realpath,
   stat,
@@ -269,23 +269,35 @@ export function createWorkspace(
       if (!info) {
         throw new WorkspaceFileError(`There is no file at ${requested}.`);
       }
-      if (info.isDirectory()) {
-        throw new WorkspaceFileError(
-          `${requested} is a directory, not a file.`,
-        );
+      if (!info.isFile()) {
+        throw new WorkspaceFileError(`${requested} is not a regular file.`);
       }
 
-      const buffer = await readFile(full);
-      const slice = buffer.subarray(0, limits.readBytes);
-      return {
-        path: requested,
-        // Decoded as UTF-8. A binary file therefore comes back as replacement characters rather
-        // than as a base64 blob nothing can read: this tool is for the notes, CSVs and JSON a Bot
-        // actually works with, and pretending otherwise would invite it to try images.
-        text: slice.toString("utf8"),
-        truncated: buffer.byteLength > slice.byteLength,
-        bytes: buffer.byteLength,
-      };
+      const file = await open(full, "r");
+      try {
+        // Bound the disk read itself: slicing readFile's result still allocates the whole file.
+        const buffer = Buffer.alloc(Math.min(info.size, limits.readBytes));
+        let read = 0;
+        while (read < buffer.length) {
+          const { bytesRead } = await file.read(
+            buffer,
+            read,
+            buffer.length - read,
+            read,
+          );
+          if (bytesRead === 0) break;
+          read += bytesRead;
+        }
+        return {
+          path: requested,
+          // This tool reads text; downloads preserve binary files byte-for-byte.
+          text: buffer.subarray(0, read).toString("utf8"),
+          truncated: info.size > read,
+          bytes: info.size,
+        };
+      } finally {
+        await file.close();
+      }
     },
 
     /**

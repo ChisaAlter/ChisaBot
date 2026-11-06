@@ -75,6 +75,7 @@ const ACTING_PATHS = new Set([
   "/scroll",
   "/exec",
   "/files/write",
+  "/files/write-bytes",
   // Typing a person's login into the page. Refused while they hold the wheel, like any other typing.
   "/sign-in/fill",
   // 机器人开 / 切 / 关标签：人接管时不许，和其他操作一样。人自己的标签操作走 /human/tab。

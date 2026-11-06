@@ -84,6 +84,49 @@ describe("the run a session carries", () => {
     expect(sessions.for("bot-1").run).toBe(first);
   });
 
+  test("the session being returned survives a sweep before its first action", () => {
+    const sessions = createSessions({ isLive: () => false, cap: 1 });
+    sessions.for("old-bot");
+    const current = sessions.for("new-bot");
+    const waiting = current.control.requestHelp("Sign in");
+
+    expect(sessions.get("old-bot")).toBeUndefined();
+    expect(sessions.get("new-bot")).toBe(current);
+    expect(sessions.for("new-bot").control.get().request?.id).toBe(waiting.request?.id);
+  });
+
+  test("a sweep preserves in-flight non-browser actions and their handoff barrier", async () => {
+    const sessions = createSessions({ isLive: () => false, cap: 1 });
+    const running = sessions.for("shell-bot");
+    const release = running.control.admitBotAction(false, "/exec");
+    try {
+      sessions.for("other-bot");
+      const same = sessions.for("shell-bot");
+      expect(same).toBe(running);
+      const request = same.control.requestHelp("Take control").request;
+      if (!request) throw new Error("The handoff request was not created.");
+      const taking = same.control.take(request.id);
+      await Promise.resolve();
+      expect(same.control.get().transitioning).toBe(true);
+      expect(same.control.humanMayDrive()).toBe(false);
+      release();
+      expect((await taking).holder).toBe("human");
+    } finally {
+      release();
+    }
+  });
+
+  test("a screenshot in flight keeps its session until the capture finishes", () => {
+    const sessions = createSessions({ isLive: () => false, cap: 1 });
+    const capturing = sessions.for("capture-bot");
+    const release = capturing.capture.enter(false);
+    sessions.for("other-bot");
+    expect(sessions.get("capture-bot")).toBe(capturing);
+    release();
+    sessions.for("next-bot");
+    expect(sessions.get("capture-bot")).toBeUndefined();
+  });
+
   test("a Bot somebody is watching is not swept either", () => {
     const sessions = createSessions({
       isLive: () => false,

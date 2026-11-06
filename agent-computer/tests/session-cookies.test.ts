@@ -1,13 +1,14 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
-import type { Cookie } from "playwright";
+import type { BrowserContext, Cookie } from "playwright";
 import {
   cookiesToRestore,
   isSessionCookie,
   SESSION_COOKIES_FILE,
   serialiseSessionCookies,
+  sessionCookieKeeper,
 } from "../src/session-cookies";
 
 /**
@@ -63,6 +64,36 @@ describe("which cookies are kept", () => {
       now,
     );
     expect(restored.map((c) => c.name)).toEqual(["sid", "fresh"]);
+  });
+
+  test("a superseded session cookie cannot return after the persistent cookie expires", async () => {
+    const root = await mkdtemp(join(tmpdir(), "chisabot-cookie-replaced-"));
+    const file = join(root, SESSION_COOKIES_FILE);
+    let held = [cookie({ value: "new-persistent", expires: 4_000_000_000 })];
+    const context = {
+      cookies: async () => held,
+      addCookies: async (cookies: Cookie[]) => {
+        held.push(...cookies);
+      },
+    } as unknown as BrowserContext;
+    try {
+      await writeFile(
+        file,
+        serialiseSessionCookies([cookie({ value: "old-session" })]),
+      );
+      const first = sessionCookieKeeper("cookie-bot", root, context);
+      expect(await first.restore()).toBe(0);
+      await first.stop();
+      expect(JSON.parse(await readFile(file, "utf8")).cookies).toEqual([]);
+
+      held = [];
+      const restarted = sessionCookieKeeper("cookie-bot", root, context);
+      expect(await restarted.restore()).toBe(0);
+      expect(held).toEqual([]);
+      await restarted.stop();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
