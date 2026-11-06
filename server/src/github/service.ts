@@ -282,6 +282,17 @@ export function createGithub(database: Database, options: { vault: Vault; fetch?
     return response.data;
   }
 
+  /** Fixed read-only API surface for the owner's configured task-center repository source. */
+  async function listOpenItems(owner: string, repo: string): Promise<{
+    number: number; title: string; body: string | null; html_url: string; updated_at: string;
+    pull_request?: unknown; labels: ({ name?: string } | string)[];
+  }[]> {
+    if (!GITHUB_REPO.test(repo)) throw new GithubError("仓库要写成 owner/repo。");
+    const items = await read(owner, `/repos/${repo}/issues?state=open&sort=updated&direction=desc&per_page=100`, `仓库 ${repo}`);
+    if (!Array.isArray(items)) throw new GithubError("GitHub 未返回事项列表。");
+    return items;
+  }
+
   // ---- 写操作 ----
   const actionById = async (owner: string, id: string) =>
     (await sql.unsafe<ActionRow[]>("SELECT * FROM chisabot_github_actions WHERE id = $1 AND owner_user_id = $2", [id, owner]))[0] ?? null;
@@ -613,6 +624,6 @@ export function createGithub(database: Database, options: { vault: Vault; fetch?
     return githubGuidance(await status(owner).catch(() => null));
   }
 
-  return { ensure, status, connect, check, disconnect, tools, routes, guidance, decide, actionById, apiBase: base };
+  return { ensure, status, connect, check, disconnect, tools, routes, guidance, decide, actionById, listOpenItems, apiBase: base };
 }
 export type Github = ReturnType<typeof createGithub>;

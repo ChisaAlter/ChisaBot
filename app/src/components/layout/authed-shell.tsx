@@ -101,7 +101,7 @@ function ShellFrame({ pathname }: { pathname: string }) {
       banner={scope === "app" ? <SelfHostBanner /> : undefined}
       // 右栏面板卡只属于机器人；在设置 / 管理里藏起来而不是卸载，回来不重载。
       right={<KeptPanelRail />}
-      rightHidden={scope !== "app"}
+      rightHidden={scope !== "app" || pathname === "/tasks"}
       scope={scope}
       sidebar={sidebar}
     >

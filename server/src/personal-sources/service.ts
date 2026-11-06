@@ -198,13 +198,34 @@ export class WebhookRateLimitError extends Error {
   }
 }
 
+export type ScannedEmailSummary = EmailSummaryItem & { messageId?: string; mailboxUid?: string };
+
+export function parseImapSummaryResponse(buffer: string, uidValidity: string): ScannedEmailSummary[] {
+  if (/^A3 (?:NO|BAD)/m.test(buffer)) throw new Error("IMAP 服务器拒绝读取邮件摘要。");
+  if (!/^A3 OK/m.test(buffer)) throw new Error("IMAP 服务器未完成读取邮件摘要。");
+  const rawBlocks = [...buffer.matchAll(/^\*\s+(\d+)\s+FETCH\b([\s\S]*?)(?=^\*\s+\d+\s+FETCH\b|^A3\s|$(?![\s\S]))/gm)];
+  return rawBlocks.map((match) => {
+    const block = match[2]!;
+    const metadata = block.slice(0, block.indexOf("\n") < 0 ? block.length : block.indexOf("\n"));
+    const header = (name: string) => new RegExp(`^${name}:\\s*(.+?)(?:\\r?\\n(?![ \\t])|$)`, "ims").exec(block)?.[1]?.trim();
+    const messageId = header("Message-ID");
+    const uid = /\bUID\s+(\d+)/i.exec(metadata)?.[1];
+    return {
+      seq: Number(match[1]), subject: decodeMimeWords(header("Subject") ?? "（无主题）").slice(0, 140),
+      from: decodeMimeWords(header("From") ?? "未知发件人").slice(0, 100), date: header("Date") ?? "",
+      unread: !/FLAGS\s*\([^)]*\\Seen\b/i.test(metadata), ...(messageId ? { messageId } : {}),
+      ...(uid && uidValidity ? { mailboxUid: `${uidValidity}:${uid}` } : {}),
+    };
+  }).reverse();
+}
+
 export async function fetchImapInboxSummary(input: {
   host: string;
   port: number;
   user: string;
   pass: string;
   limit?: number;
-}): Promise<EmailSummaryItem[]> {
+}): Promise<ScannedEmailSummary[]> {
   const limit = Math.max(1, Math.min(20, input.limit ?? 8));
   if (/[\r\n\0]/.test(input.host) || /[\r\n\0]/.test(input.user) || /[\r\n\0]/.test(input.pass)) {
     throw new Error("邮箱配置参数不能包含换行或控制字符。");
@@ -241,7 +262,7 @@ export async function fetchImapInboxSummary(input: {
     throw new Error("不能连接内网或本机 IMAP 服务器地址。");
   }
 
-  return new Promise<EmailSummaryItem[]>((resolve, reject) => {
+  return new Promise<ScannedEmailSummary[]>((resolve, reject) => {
     const socket = tls.connect(
       {
         host: cleanHost,
@@ -257,13 +278,14 @@ export async function fetchImapInboxSummary(input: {
     let buffer = "";
     let step: "greet" | "login" | "select" | "fetch" | "done" = "greet";
     let totalMessages = 0;
+    let uidValidity = "";
 
     const timer = setTimeout(() => {
       socket.destroy();
       reject(new Error("连接 IMAP 服务器超时（8 秒），请检查服务器地址、端口或应用专用密码。"));
     }, 8_000);
 
-    const finish = (err?: Error, items?: EmailSummaryItem[]) => {
+    const finish = (err?: Error, items?: ScannedEmailSummary[]) => {
       clearTimeout(timer);
       try {
         socket.end("A9 LOGOUT\r\n");
@@ -291,7 +313,7 @@ export async function fetchImapInboxSummary(input: {
         if (/^A1 OK/m.test(buffer)) {
           buffer = "";
           step = "select";
-          socket.write("A2 SELECT INBOX\r\n");
+          socket.write("A2 EXAMINE INBOX\r\n");
         } else if (/^A1 (?:NO|BAD)/m.test(buffer)) {
           finish(new Error("邮箱登录失败：请确认账号及「应用专用密码 / 授权码」是否正确。"));
         }
@@ -301,6 +323,7 @@ export async function fetchImapInboxSummary(input: {
         if (/^A2 OK/m.test(buffer)) {
           const existsMatch = /\*\s+(\d+)\s+EXISTS/i.exec(buffer);
           totalMessages = existsMatch ? Number.parseInt(existsMatch[1]!, 10) : 0;
+          uidValidity = /\[UIDVALIDITY\s+(\d+)\]/i.exec(buffer)?.[1] ?? "";
           buffer = "";
           if (totalMessages <= 0) {
             step = "done";
@@ -310,7 +333,7 @@ export async function fetchImapInboxSummary(input: {
           const startSeq = Math.max(1, totalMessages - limit + 1);
           step = "fetch";
           socket.write(
-            `A3 FETCH ${startSeq}:${totalMessages} (FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])\r\n`,
+            `A3 FETCH ${startSeq}:${totalMessages} (UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE MESSAGE-ID)])\r\n`,
           );
         } else if (/^A2 (?:NO|BAD)/m.test(buffer)) {
           finish(new Error("无法打开收件箱 INBOX。"));
@@ -319,26 +342,9 @@ export async function fetchImapInboxSummary(input: {
       }
       if (step === "fetch") {
         if (/^A3 (?:OK|NO|BAD)/m.test(buffer)) {
-          const rawBlocks = buffer.split(/^\*\s+\d+\s+FETCH\b/m).slice(1);
-          const items: EmailSummaryItem[] = [];
-          rawBlocks.forEach((blk, idx) => {
-            const seen = /\\Seen/i.test(blk);
-            const subjMatch = /^Subject:\s*(.+?)(?:\r?\n(?![ \t])|$)/ims.exec(blk);
-            const fromMatch = /^From:\s*(.+?)(?:\r?\n(?![ \t])|$)/ims.exec(blk);
-            const dateMatch = /^Date:\s*(.+?)(?:\r?\n(?![ \t])|$)/ims.exec(blk);
-            const subject = subjMatch ? decodeMimeWords(subjMatch[1]!) : "（无主题）";
-            const from = fromMatch ? decodeMimeWords(fromMatch[1]!) : "未知发件人";
-            const date = dateMatch ? dateMatch[1]!.trim() : new Date().toISOString();
-            items.push({
-              seq: idx + 1,
-              subject: subject.slice(0, 140),
-              from: from.slice(0, 100),
-              date,
-              unread: !seen,
-            });
-          });
           step = "done";
-          finish(undefined, items.reverse());
+          try { finish(undefined, parseImapSummaryResponse(buffer, uidValidity)); }
+          catch (error) { finish(error instanceof Error ? error : new Error("邮件摘要无法解析。")); }
         }
       }
     });
@@ -743,6 +749,46 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       // 使用缓存兜底
     }
     return emails.slice(0, limit);
+  }
+
+  /** Background discovery must distinguish a fresh empty result from a failed read or a demo. */
+  async function scanCalendar(actorId: string, days = 7): Promise<CalendarEventItem[]> {
+    const row = await getRow(actorId);
+    if (!row?.calendar_ics_enc) throw new Error("尚未连接日历，请先在账号连接中设置日历。");
+    const raw = decryptText(row.calendar_ics_enc, options.encryptionKey);
+    let ics = raw;
+    if (!/^BEGIN:VCALENDAR/i.test(raw)) {
+      const response = await guardedFetch(raw.replace(/^webcal:\/\//i, "https://"), {
+        fetchImpl, timeoutMs: 8_000, maxBytes: 2 * 1024 * 1024,
+      });
+      if (response.status < 200 || response.status >= 300) throw new Error(`日历巡检失败（HTTP ${response.status}）。`);
+      ics = response.body.toString("utf8");
+    }
+    if (!/BEGIN:VCALENDAR/i.test(ics)) throw new Error("日历服务未返回有效的 iCalendar 内容。");
+    const events = parseIcsEvents(ics);
+    await sql.unsafe(
+      "UPDATE chisabot_personal_sources SET cached_events = $2::jsonb, calendar_event_count = $3, calendar_checked_at = now() WHERE owner_user_id = $1",
+      [actorId, JSON.stringify(events.slice(0, 100)), events.length],
+    );
+    const now = Date.now();
+    const horizon = now + Math.min(30, Math.max(1, days)) * 86_400_000;
+    return events.filter((event) => {
+      const start = Date.parse(event.startIso);
+      return start >= now && start <= horizon;
+    }).slice(0, 50);
+  }
+
+  async function scanEmails(actorId: string, limit = 20): Promise<ScannedEmailSummary[]> {
+    const row = await getRow(actorId);
+    if (!row?.email_address || !row.imap_host || !row.imap_pass_enc) throw new Error("尚未连接邮箱，请先在账号连接中设置邮箱。");
+    const pass = decryptText(row.imap_pass_enc, options.encryptionKey);
+    if (row.imap_host === "demo.imap.local" || pass === "demo-inbox") throw new Error("演示邮箱不能作为真实任务巡检来源，请连接实际邮箱。");
+    const emails = await fetchImapInboxSummary({ host: row.imap_host, port: Number(row.imap_port ?? 993), user: row.email_address, pass, limit });
+    await sql.unsafe(
+      "UPDATE chisabot_personal_sources SET cached_emails = $2::jsonb, email_checked_at = now() WHERE owner_user_id = $1",
+      [actorId, JSON.stringify(emails)],
+    );
+    return emails;
   }
 
   async function generateMorningBrief(actorId: string, cityOverride?: string): Promise<{
@@ -1670,6 +1716,8 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     routes,
     listEvents,
     listEmails,
+    scanCalendar,
+    scanEmails,
     sendSmtpEmail,
     connectNotifyWebhook,
     pushNotifyMessage,
