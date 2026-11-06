@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.134 — 2026-11-06
+
+这一版合并：发送看门狗不再把「受理到开跑」的静默前置误判成没发出去（服务端订阅即回执 RUN_STARTED）、上一轮收尾两处死等加 60 秒上界、前端接力 settle 重试 60 秒让位、看门狗落库检查增加收件箱证人。全端同步版本号 0.1.134（Android versionCode 316）；PC 外壳、Android 应用本体不变。
+
+- 发送看门狗误报（「明明 AI 都输出了」）：`run()` 受理到真正开跑之间有一段合法静默前置——等上一轮收尾（`running.done` / 前端接力 `relay.closing`）、join 的收件箱写入、execute 的抢锁 + 三次串行事务 + `store.snapshot`——期间流上无事件、消息表也没有这条 id，12 秒看门狗两个证人全缺席就判 `hang`：stopAgent + forceUnlockThread + 报错卡 + 草稿回填；而服务端 execute 已派出、照常答完，回答经同步落回 → 错误卡和答案同屏。现在每条 /run 流订阅一建立就先回执一条 `RUN_STARTED`（AG-UI 校验器唯一合法首事件；下游真实 RUN_STARTED 去重，订阅者从头到尾只见一条），证人一永远即时成立，`hang` 只在「什么都没到服务器」时成立。
+- 上一轮收尾等待有界：等 `running.done` / `relay.closing` 的两条 resume 路径以前无界死等，现在 60 秒（`RESUME_WAIT_MS`）超时如实 RUN_ERROR——消息确实没被受理时让浏览器去重发，不陪死掉的前置承诺挂下去；`closeFrontend` 的 settle 每秒重试也加 60 秒让位（`FRONTEND_CLOSE_GIVE_UP_MS`），腾出槽位让新回合进得来，没收尾的收件箱行维持原状留痕可查。
+- 落库检查双证人（`sendReachedServer`）：正在回答时发来的消息走 join/排队路径，只进 `chisabot_thread_inbox`、不进 messages——单查 messages 会把「已排队」误判成「没到」。看门狗现在并行查 messages 表与服务端收件箱，任一证人确认即算到了；滚动部署期间旧服务端同样受益。
+
 ## 0.1.133 — 2026-11-05
 
 这一版合并：回复看门狗超时不再把已落库消息塞回输入框（重复发送隐患）、队列排水失败的 parked 消息如实标注并可手动重试、活动记录打码防互递归/循环引用爆栈、PC 三处图标统一桌面构图。全端同步版本号 0.1.133（Android versionCode 315）；PC 外壳有改动（图标管线），旧客户端在线更新走「重新安装」路径自动迁移；Android 应用本体不变。
