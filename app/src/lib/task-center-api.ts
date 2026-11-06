@@ -10,12 +10,15 @@ import type {
   TaskContext,
   TaskInput,
   TaskSourceInput,
+  TaskTrace,
 } from "../../../shared/task-center";
 
 export const taskCenterKeys = {
   all: ["task-center"] as const,
   snapshot: ["task-center", "snapshot"] as const,
   detail: (id: string) => ["task-center", "task", id] as const,
+  trace: (id: string) => ["task-center", "trace", id] as const,
+  roots: ["task-center", "roots"] as const,
   context: ["task-center", "context"] as const,
   capabilities: ["task-center", "capabilities"] as const,
 };
@@ -84,6 +87,20 @@ export const taskCenterApi = {
     }),
   capabilities: (signal?: AbortSignal) =>
     request<{ capabilities: TaskCapability[] }>("/capabilities", { signal }),
+  taskTrace: (id: string, signal?: AbortSignal) =>
+    request<TaskTrace>(`/tasks/${encodeURIComponent(id)}/trace`, { signal }),
+  listRoots: (signal?: AbortSignal) =>
+    request<{ roots: string[] }>("/roots", { signal }),
+  addRoot: (path: string) =>
+    request<{ roots: string[] }>("/roots", {
+      method: "PUT",
+      body: { path },
+    }),
+  removeRoot: (path: string) =>
+    request<{ roots: string[] }>("/roots", {
+      method: "DELETE",
+      body: { path },
+    }),
 };
 
 export function taskCenterSnapshotOptions() {
@@ -111,5 +128,18 @@ export function taskCenterCapabilityOptions() {
     queryKey: taskCenterKeys.capabilities,
     queryFn: ({ signal }) => taskCenterApi.capabilities(signal),
     staleTime: 30_000,
+  });
+}
+export function taskTraceOptions(id: string) {
+  return queryOptions({
+    queryKey: taskCenterKeys.trace(id),
+    queryFn: ({ signal }) => taskCenterApi.taskTrace(id, signal),
+    enabled: Boolean(id),
+  });
+}
+export function taskCenterRootsOptions() {
+  return queryOptions({
+    queryKey: taskCenterKeys.roots,
+    queryFn: ({ signal }) => taskCenterApi.listRoots(signal),
   });
 }

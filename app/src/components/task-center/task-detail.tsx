@@ -16,11 +16,13 @@ import {
   taskCenterApi,
   taskCenterDetailOptions,
   taskCenterKeys,
+  taskTraceOptions,
 } from "@/lib/task-center-api";
 import {
   TASK_LEVEL_LABELS,
   type TaskArtifact,
   type TaskCenterTask,
+  type TaskTraceEvent,
 } from "../../../../shared/task-center";
 import {
   ACTIVE_STATUSES,
@@ -51,7 +53,7 @@ export function TaskDetail({
 }) {
   const query = useQuery(taskCenterDetailOptions(id));
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"overview" | "events">("overview");
+  const [tab, setTab] = useState<"overview" | "events" | "trace">("overview");
   const heading = useRef<HTMLHeadingElement>(null);
   const control = useMutation({
     mutationFn: (action: TaskControl) => taskCenterApi.controlTask(id, action),
@@ -165,7 +167,11 @@ export function TaskDetail({
               ) : null}
             </div>
           ) : null}
-          <div className="tc-detail-tabs" aria-label="任务详情内容">
+          <div
+            className="tc-detail-tabs"
+            role="toolbar"
+            aria-label="任务详情内容"
+          >
             <Button
               variant={tab === "overview" ? "secondary" : "ghost"}
               size="sm"
@@ -182,8 +188,18 @@ export function TaskDetail({
             >
               执行日志 · {events.length}
             </Button>
+            <Button
+              variant={tab === "trace" ? "secondary" : "ghost"}
+              size="sm"
+              aria-pressed={tab === "trace"}
+              onClick={() => setTab("trace")}
+            >
+              执行轨迹
+            </Button>
           </div>
-          {tab === "overview" ? (
+          {tab === "trace" ? (
+            <TaskTracePanel task={task} />
+          ) : tab === "overview" ? (
             <div className="tc-detail-sections">
               <section>
                 <h4>任务目标</h4>
@@ -401,5 +417,95 @@ function Artifact({ artifact }: { artifact: TaskArtifact }) {
         </details>
       ) : null}
     </article>
+  );
+}
+
+const TRACE_KIND: Record<string, string> = {
+  RUN_STARTED: "回合开始",
+  TOOL_CALL_START: "工具调用",
+  TOOL_CALL_END: "调用完成",
+  TOOL_CALL_RESULT: "工具结果",
+  TEXT_MESSAGE: "回复",
+  RUN_FINISHED: "回合完成",
+  RUN_ERROR: "出错",
+};
+
+/** `task-center:<taskId>:<tag>:<attempt>` → 「规划」/「执行 · 第 N 次」。 */
+function traceThreadLabel(thread: string): string {
+  const parts = thread.split(":");
+  const tag = parts[2];
+  const attempt = parts[3];
+  const name = tag === "plan" ? "规划" : tag === "run" ? "执行" : tag || "回合";
+  return attempt ? `${name} · 第 ${attempt} 次` : name;
+}
+
+function usageLine(usage: TaskTraceEvent["usage"]): string {
+  if (!usage) return "";
+  const parts = [
+    `模型调用 ${usage.modelCalls ?? "—"}`,
+    `输入 ${usage.inputTokens ?? "—"}`,
+    `输出 ${usage.outputTokens ?? "—"}`,
+  ];
+  return parts.join(" · ");
+}
+
+/** 执行轨迹：机器人回合里的工具调用、结果与成段回复，按规划 / 各次尝试分组。 */
+function TaskTracePanel({ task }: { task: TaskCenterTask }) {
+  const running = ACTIVE_STATUSES.includes(task.status);
+  const trace = useQuery({
+    ...taskTraceOptions(task.id),
+    refetchInterval: running ? 30_000 : false,
+  });
+  const threads = trace.data?.threads ?? [];
+  return (
+    <div className="tc-event-list" aria-live="polite" aria-relevant="additions">
+      <div className="tc-actions">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => void trace.refetch()}
+          state={trace.isFetching && !trace.isPending ? "pending" : "idle"}
+        >
+          <IconRefresh />
+          刷新
+        </Button>
+        {running ? (
+          <span className="tc-meta">任务进行中，每 30 秒自动刷新</span>
+        ) : null}
+      </div>
+      {trace.isPending ? <PageSkeleton rows={3} /> : null}
+      {trace.error ? (
+        <div className="tc-error" role="alert">
+          {trace.error.message}
+          <Button variant="ghost" onClick={() => void trace.refetch()}>
+            重新加载
+          </Button>
+        </div>
+      ) : null}
+      {trace.data && !threads.length ? (
+        <p className="tc-muted">
+          {running
+            ? "执行线程还没有产生事件，稍后再看。"
+            : "这个任务没有留下执行轨迹；只有本地会话模式的回合会记录。"}
+        </p>
+      ) : null}
+      {threads.map((thread) => (
+        <section className="tc-trace-thread" key={thread.thread}>
+          <h4>{traceThreadLabel(thread.thread)}</h4>
+          {thread.events.map((event) => (
+            <article className="tc-event" key={event.sequence}>
+              <div className="tc-event-meta">
+                <time dateTime={event.at}>{taskDate(event.at)}</time>
+                <span>{TRACE_KIND[event.type] ?? event.type}</span>
+              </div>
+              <p>{event.summary}</p>
+              {event.usage ? (
+                <p className="tc-meta">{usageLine(event.usage)}</p>
+              ) : null}
+            </article>
+          ))}
+        </section>
+      ))}
+    </div>
   );
 }

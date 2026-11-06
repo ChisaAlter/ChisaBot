@@ -11,6 +11,10 @@ import {
   learnEntry,
   taskThreadId,
 } from "../src/task-center/runtime";
+import {
+  isLocalAgentExecutor,
+  localAgentKindOf,
+} from "../src/task-center/local-agent-runner";
 
 function task(overrides: Partial<TaskCenterTask> = {}): TaskCenterTask {
   return {
@@ -167,6 +171,22 @@ describe("execution bookkeeping", () => {
     expect(long).toBe("new-line");
     const kept = appendLearned("line1\nline2", "line3", 12);
     expect(kept).toBe("line2\nline3");
+  });
+});
+
+describe("local-agent executor routing", () => {
+  test("executor suffix picks an agent kind, bare and unknown stay default", () => {
+    expect(localAgentKindOf("local-agent")).toBeUndefined();
+    expect(localAgentKindOf("local-agent:codex")).toBe("codex");
+    expect(localAgentKindOf("local-agent:CLAUDE")).toBe("claude");
+    expect(localAgentKindOf("local-agent:unknown-thing")).toBeUndefined();
+  });
+
+  test("local-agent executors route to the device-agent branch", () => {
+    expect(isLocalAgentExecutor("local-agent")).toBe(true);
+    expect(isLocalAgentExecutor("local-agent:codex")).toBe(true);
+    expect(isLocalAgentExecutor("bot")).toBe(false);
+    expect(isLocalAgentExecutor("local-agentx")).toBe(false);
   });
 });
 

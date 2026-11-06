@@ -334,6 +334,8 @@ import { createUserPreferencesStore } from "./user-preferences";
 import { repeatAfterEach } from "./work/loop";
 import { createWorkerService, type WorkerService } from "./workers/service";
 import { createLocalAgentService, type LocalAgentService } from "./local-agents/service";
+import { createLocalAgentRun } from "./task-center/local-agent-runner";
+import { createTaskCenterRoots } from "./task-center/roots";
 import { reasonWithoutStatement } from "./db/query-failure";
 import {
   createWorkQueue,
@@ -2577,20 +2579,54 @@ const taskCenter = createTaskCenterRuntime({
       { text, agentId, at: new Date() },
       { id: `task-center-notice:${randomUUID()}` },
     );
+    // 同一提醒推给这个机器人最近活跃过的私聊 IM（Telegram / 微信等，推送即触达移动端）；
+    // 没连过 IM 或推送失败只少一个渠道，站内活动已经记过了。
+    const [imChat] = await database.$client.unsafe<{ thread_id: string }[]>(
+      `SELECT c.thread_id FROM chisabot_im_chats c
+       JOIN chisabot_im_connections n ON n.id = c.connection_id
+       WHERE n.owner_user_id = $1 AND n.agent_id = $2
+         AND c.chat_key LIKE 'private:%' AND c.last_inbound IS NOT NULL
+       ORDER BY c.updated_at DESC LIMIT 1`,
+      [ownerUserId, agentId],
+    );
+    if (imChat)
+      void imService
+        ?.pushToThread(imChat.thread_id, text, { privateOnly: true })
+        .catch(() => {});
   },
-  localRoots: () => {
+  localRoots: async (ownerUserId) => {
+    const roots = new Set<string>();
     const raw = process.env.CHISABOT_TASK_CENTER_ROOTS?.trim();
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed)) return parsed.filter((p): p is string => typeof p === "string" && p.trim().length > 0);
-    } catch {
-      // fall through to separator parsing
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed))
+          for (const p of parsed)
+            if (typeof p === "string" && p.trim()) roots.add(p.trim());
+      } catch {
+        for (const p of raw.split(/[;\n]/)) if (p.trim()) roots.add(p.trim());
+      }
     }
-    return raw.split(/[;\n]/).map((p) => p.trim()).filter(Boolean);
+    // 用户在任务中心设置里加的授权目录与 env 白名单取并集（都是「允许读」语义）。
+    for (const p of await taskCenterRoots.list(ownerUserId).catch(() => [] as string[]))
+      roots.add(p);
+    return [...roots];
   },
   localConversationsAvailable: config.runtime.mode === "local",
+  memoryNotes,
+  ...(localAgents
+    ? {
+        localAgentRun: createLocalAgentRun({
+          database,
+          localAgents,
+          botNameFor: async (ownerUserId, agentId) =>
+            (await agentProfileStore.get(await actorFor(ownerUserId), agentId))?.name ?? null,
+        }),
+      }
+    : {}),
 });
+const taskCenterRoots = createTaskCenterRoots(database);
+await taskCenterRoots.ensure();
 await taskCenter.ensure();
 if (process.env.NODE_ENV !== "test" && process.env.CHISABOT_TASK_CENTER !== "0") taskCenter.start();
 

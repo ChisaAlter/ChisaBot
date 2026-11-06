@@ -460,6 +460,15 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.tc-trace-thread > h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tc-muted);
+  margin-bottom: 14px;
+}
+.tc-trace-thread + .tc-trace-thread {
+  margin-top: 26px;
+}
 .tc-decisions {
   display: flex;
   flex-direction: column;
