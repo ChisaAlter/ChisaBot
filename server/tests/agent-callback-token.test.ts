@@ -62,6 +62,17 @@ describe("the run assertion", () => {
     expect(readRunAssertion(signed, KEY)?.initiator).toEqual(initiator);
   });
 
+  test("a person's surface survives the round trip so a resumed app turn still cannot wait on cards", () => {
+    const signed = mintRunAssertion(
+      { ...RUN, initiator: { kind: "person", surface: "app" } },
+      KEY,
+    );
+    expect(readRunAssertion(signed, KEY)?.initiator).toEqual({
+      kind: "person",
+      surface: "app",
+    });
+  });
+
   test("is refused when signed with another key", () => {
     const signed = mintRunAssertion(RUN, "another-key");
     expect(readRunAssertion(signed, KEY)).toBeNull();

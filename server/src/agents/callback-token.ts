@@ -219,7 +219,14 @@ export function readRunAssertion(
 function readInitiator(value: unknown): AuditInitiator {
   if (!value || typeof value !== "object") return PERSON_INITIATOR;
   const kind = (value as { kind?: unknown }).kind;
-  if (kind === "person" || kind === "deployment") return { kind };
+  if (kind === "person") {
+    // 人发起时所在的界面随回合走：中断后从别处续上的那一轮，还是那个界面在等卡片。
+    const surface = (value as { surface?: unknown }).surface;
+    return surface === "app" || surface === "web"
+      ? { kind: "person", surface }
+      : PERSON_INITIATOR;
+  }
+  if (kind === "deployment") return { kind };
   if (
     kind !== "routine" &&
     kind !== "handoff" &&

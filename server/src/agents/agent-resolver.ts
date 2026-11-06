@@ -28,6 +28,7 @@ export class CoworkerUnavailableError extends Error {}
 export type ActorAgentResolver = {
   resolveAgentsForActor(
     actor: AgentActor,
+    context?: AgentResolutionContext,
   ): Promise<Record<string, AbstractAgent>>;
   resolveAgentForActor(
     actor: AgentActor,
@@ -132,8 +133,16 @@ export function createActorAgentResolver(
     );
   };
 
-  const resolveAgentsForActor = async (actor: AgentActor) =>
-    resolveRegisteredAgents(actor, await deps.loadAgents(actor));
+  const resolveAgentsForActor = async (
+    actor: AgentActor,
+    context?: AgentResolutionContext,
+  ) =>
+    resolveRegisteredAgents(
+      actor,
+      await deps.loadAgents(actor),
+      undefined,
+      context,
+    );
 
   return {
     resolveAgentsForActor,

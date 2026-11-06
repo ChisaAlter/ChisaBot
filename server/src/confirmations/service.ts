@@ -148,7 +148,7 @@ function stable(value: unknown, depth = 0): unknown {
 export const digestOf = (tool: string, args: unknown) =>
   createHash("sha256").update(JSON.stringify([tool, stable(args)])).digest("hex").slice(0, 32);
 
-/** 网页聊天可以实时挂起等待卡片确认；「confirm:」是用户刚确认后接着做的那一轮。 */
+/** 能当场答确认卡片的回合：网页聊天挂起等卡，原生 App 自己拉 /api/confirmations 决定；「confirm:」是用户刚确认后接着做的那一轮。 */
 export function interactiveInitiator(initiator: AuditInitiator | undefined) {
   if (!initiator || initiator.kind !== "routine") return true;
   return initiator.id.startsWith("confirm:");
