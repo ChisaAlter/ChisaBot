@@ -117,34 +117,44 @@ type Head = {
 function openStream(
   url: URL,
   pinned: { address: string; family: number },
+  onConnecting: (socket: Socket | TLSSocket) => void,
 ): Promise<Socket | TLSSocket> {
   const port = url.port ? Number(url.port) : url.protocol === "wss:" ? 443 : 80;
+  const secure = url.protocol === "wss:";
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
   return new Promise((resolve, reject) => {
+    // Keep the connecting stream visible to close() and the handshake deadline,
+    // including while TCP or TLS has not completed yet.
+    const socket = secure
+      ? tlsConnect({
+          host: pinned.address,
+          port,
+          servername: isIP(hostname) ? undefined : hostname,
+        })
+      : netConnect({ host: pinned.address, port });
+    const connectedEvent = secure ? "secureConnect" : "connect";
+    const cleanup = () => {
+      socket.off(connectedEvent, onConnected);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+    };
     const onError = (error: Error) => {
+      cleanup();
       socket.destroy();
       reject(error);
     };
-    if (url.protocol === "wss:") {
-      const hostname = url.hostname.replace(/^\[|\]$/g, "");
-      const socket = tlsConnect({
-        // 钉死：不管系统 DNS 现在说什么，只连刚才检查过的地址。
-        host: pinned.address,
-        port,
-        servername: isIP(hostname) ? undefined : hostname,
-      });
-      socket.once("secureConnect", () => {
-        socket.off("error", onError);
-        resolve(socket);
-      });
-      socket.once("error", onError);
-      return;
-    }
-    const socket = netConnect({ host: pinned.address, port });
-    socket.once("connect", () => {
-      socket.off("error", onError);
+    const onClose = () => {
+      cleanup();
+      reject(new Error("连接在建立前关闭"));
+    };
+    const onConnected = () => {
+      cleanup();
       resolve(socket);
-    });
+    };
+    socket.once(connectedEvent, onConnected);
     socket.once("error", onError);
+    socket.once("close", onClose);
+    onConnecting(socket);
   });
 }
 
@@ -184,16 +194,19 @@ function sendHandshake(
       clearTimeout(timer);
       socket.off("data", onData);
       socket.off("error", onError);
+      socket.off("close", onClose);
       fn();
     };
     const onError = (error: Error) => finish(() => reject(error));
+    const onClose = () =>
+      finish(() => reject(new Error("连接在握手完成前关闭")));
     const onData = (chunk: Buffer) => {
       head = Buffer.concat([head, chunk]);
-      if (head.length > HANDSHAKE_LIMIT) {
+      const mark = head.indexOf("\r\n\r\n");
+      if ((mark < 0 ? head.length : mark + 4) > HANDSHAKE_LIMIT) {
         socket.destroy();
         return finish(() => reject(new Error("握手响应太大")));
       }
-      const mark = head.indexOf("\r\n\r\n");
       if (mark < 0) return;
       const text = head.subarray(0, mark).toString("latin1");
       const rest = Buffer.from(head.subarray(mark + 4));
@@ -236,6 +249,7 @@ function sendHandshake(
     };
     socket.on("data", onData);
     socket.once("error", onError);
+    socket.once("close", onClose);
     socket.write(request);
   });
 }
@@ -276,6 +290,7 @@ class PinnedSocket implements GuardedSocketLike {
   private buffer: Buffer = Buffer.alloc(0);
   private fragOpcode = 0;
   private frags: Buffer[] = [];
+  private fragBytes = 0;
   private closeSent = false;
   private closedEmitted = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -293,6 +308,7 @@ class PinnedSocket implements GuardedSocketLike {
   }
 
   private async connect(raw: string) {
+    if (this.readyState !== 0) return;
     const timeoutMs = this.options.handshakeTimeoutMs ?? 20_000;
     const deadline = Date.now() + timeoutMs;
     this.timer = setTimeout(() => {
@@ -321,7 +337,9 @@ class PinnedSocket implements GuardedSocketLike {
             (hopPrivate ? isBlockedAddressAllowPrivate : isBlockedAddress),
         });
         if (this.readyState !== 0) return;
-        const socket = await openStream(verdict.url, pinned);
+        const socket = await openStream(verdict.url, pinned, (connecting) => {
+          this.stream = connecting;
+        });
         if (this.readyState !== 0) {
           socket.destroy();
           return;
@@ -382,15 +400,13 @@ class PinnedSocket implements GuardedSocketLike {
   private attach(socket: Socket | TLSSocket) {
     this.stream = socket;
     socket.on("data", (chunk: Buffer) => {
+      if (this.readyState === 3) return;
       this.buffer = this.buffer.length
         ? Buffer.concat([this.buffer, chunk])
         : chunk;
       this.pump();
     });
-    socket.on("error", (error: Error) => {
-      this.onerror?.({ error });
-      this.emitClose(1006);
-    });
+    socket.on("error", (error: Error) => this.fail(error));
     socket.on("close", () => {
       if (this.readyState !== 3) this.emitClose(1006);
     });
@@ -462,14 +478,16 @@ class PinnedSocket implements GuardedSocketLike {
         return;
       case 0x0: {
         if (!this.fragOpcode) return this.protocolClose(1002);
-        this.frags.push(payload);
-        if (this.fragsSize() > this.maxFrameBytes)
+        this.fragBytes += payload.length;
+        if (this.fragBytes > this.maxFrameBytes)
           return this.protocolClose(1009);
+        if (payload.length) this.frags.push(payload);
         if (fin) {
           const opcode0 = this.fragOpcode;
           const body = Buffer.concat(this.frags);
           this.fragOpcode = 0;
           this.frags = [];
+          this.fragBytes = 0;
           this.deliver(opcode0, body);
         }
         return;
@@ -479,16 +497,13 @@ class PinnedSocket implements GuardedSocketLike {
         if (this.fragOpcode) return this.protocolClose(1002);
         if (fin) return this.deliver(opcode, payload);
         this.fragOpcode = opcode;
-        this.frags = [payload];
+        this.frags = payload.length ? [payload] : [];
+        this.fragBytes = payload.length;
         return;
       }
       default:
         return this.protocolClose(1002);
     }
-  }
-
-  private fragsSize() {
-    return this.frags.reduce((total, item) => total + item.length, 0);
   }
 
   private deliver(opcode: number, payload: Buffer) {
@@ -528,10 +543,11 @@ class PinnedSocket implements GuardedSocketLike {
     }
     const stream = this.stream;
     this.stream = null;
-    if (stream) {
-      stream.removeAllListeners();
-      stream.destroy();
-    }
+    this.buffer = Buffer.alloc(0);
+    this.frags = [];
+    this.fragBytes = 0;
+    this.fragOpcode = 0;
+    stream?.destroy();
     this.onclose?.({ code, reason });
   }
 

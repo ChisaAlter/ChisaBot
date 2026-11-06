@@ -103,6 +103,42 @@ export async function resolvePublic(
   return addresses[0]!;
 }
 
+/** DNS shares the request's deadline and cancellation; a late result must not start a connection. */
+function resolveForRequest(
+  hostname: string,
+  options: GuardedFetchOptions,
+  deadline: number,
+): Promise<{ address: string; family: number }> {
+  return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) return reject(new Error("已取消"));
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return reject(new Error("请求超时"));
+    const cleanup = () => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(new Error("已取消"));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("请求超时"));
+    }, remaining);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    resolvePublic(hostname, options).then(
+      (address) => {
+        cleanup();
+        resolve(address);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
 function decoderFor(encoding: string | undefined) {
   const e = (encoding ?? "").trim().toLowerCase();
   if (e === "gzip" || e === "x-gzip") return createGunzip();
@@ -137,6 +173,7 @@ function oneHop(
   deadline: number,
 ): Promise<Hop> {
   return new Promise<Hop>((resolve, reject) => {
+    if (options.signal?.aborted) return reject(new Error("已取消"));
     const remaining = deadline - Date.now();
     if (remaining <= 0) return reject(new Error("请求超时"));
     const send = url.protocol === "https:" ? httpsRequest : httpRequest;
@@ -187,7 +224,7 @@ function oneHop(
         const headers = flatHeaders(res);
         const status = res.statusCode ?? 0;
         if (status >= 300 && status < 400 && headers.location) {
-          res.resume();
+          res.destroy();
           return finish(() =>
             resolve({
               status,
@@ -277,6 +314,7 @@ async function oneHopViaFetch(
   deadline: number,
 ): Promise<Hop> {
   const remaining = deadline - Date.now();
+  if (options.signal?.aborted) throw new Error("已取消");
   if (remaining <= 0) throw new Error("请求超时");
   const timeoutSignal = AbortSignal.timeout(remaining);
   const signal = options.signal
@@ -382,10 +420,14 @@ export async function guardedFetch(
         )
       : await oneHop(
           verdict.url,
-          await resolvePublic(verdict.url.hostname, {
-            ...options,
-            isBlocked,
-          }),
+          await resolveForRequest(
+            verdict.url.hostname,
+            {
+              ...options,
+              isBlocked,
+            },
+            deadline,
+          ),
           hopOptions,
           deadline,
         );
@@ -399,7 +441,7 @@ export async function guardedFetch(
         ]);
       }
       if (
-        result.status === 303 ||
+        (result.status === 303 && currentMethod !== "HEAD") ||
         ((result.status === 301 || result.status === 302) &&
           currentMethod === "POST")
       ) {
@@ -478,7 +520,12 @@ export function createGuardedFetchLike(defaults: {
         ...(defaults.allowPrivate ? { allowPrivate: true } : {}),
       });
       const status = res.status >= 200 && res.status <= 599 ? res.status : 502;
-      const response = new Response(new Uint8Array(res.body), {
+      const noBody =
+        init.method?.toUpperCase() === "HEAD" ||
+        status === 204 ||
+        status === 205 ||
+        status === 304;
+      const response = new Response(noBody ? null : new Uint8Array(res.body), {
         status,
         headers: res.headers,
       });
