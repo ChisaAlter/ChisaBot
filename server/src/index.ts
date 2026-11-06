@@ -291,10 +291,11 @@ import {
   restrictToolsForWorkflow,
   filterHeadlessForWorkflow,
   workflowToolAllowed,
+  guardWorkflowCallback,
 } from "./workflows/policy";
 import { createWorkflowRoutes } from "./workflows/routes";
 import { createWorkflowStore } from "./workflows/store";
-import { workflowChatTools } from "./workflows/tools";
+import { createInspectToolSchemaTool, workflowChatTools } from "./workflows/tools";
 import { createModelCompleter } from "./routing/model";
 import {
   createModelSettingsService,
@@ -1534,7 +1535,7 @@ const loadToolsForActor =
       !(initiator.kind === "routine" && initiator.id.startsWith("lp_")) &&
       chatActor?.role === "admin";
     // 有后果的工具（删除 / 付款 / 对外发消息）按审批偏好先出确认卡片（server/src/confirmations）。
-    return confirmations.wrap([
+    const rawTools = [
     ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : confirmations.tools(actorId, botId, initiator)),
     ...wakeUpTools({
       store: wakeUpStore,
@@ -1614,7 +1615,7 @@ const loadToolsForActor =
         })
       : []),
     // 工作流（docs/workflows.md）：在聊天和长期任务里运行工作流；工作流自己的步骤拿不到。
-    // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 workflows 才给机器人这两个工具。
+    // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 workflows 才给机器人这几个工具。
     ...(config.extras?.includes("workflows")
       ? workflowChatTools({
           store: workflowStore,
@@ -1624,7 +1625,9 @@ const loadToolsForActor =
           initiator,
         })
       : []),
-  ], { ownerUserId: actorId, agentId: botId, initiator });
+    ];
+    rawTools.push(createInspectToolSchemaTool(() => rawTools));
+    return confirmations.wrap(rawTools, { ownerUserId: actorId, agentId: botId, initiator });
   };
 
 /** One person's standing instructions, for both the /api/settings routes and every run they start. */
@@ -3977,6 +3980,8 @@ const app = createApp(
       proactiveReadOnlyRefs,
     );
     if (proactiveRefusal) return proactiveRefusal;
+    const workflowRefusal = guardWorkflowCallback(input.initiator, input.name);
+    if (workflowRefusal) return workflowRefusal;
     const coordinated = await coordination.call(input);
     if (coordinated) return coordinated;
     const followUp = wakeUpTools({
@@ -4041,7 +4046,10 @@ const app = createApp(
       return { text, isError: text.startsWith(REFUSAL_MARKER) };
     }
     const actorTool = (
-      await loadToolsForActor(actorId, initiator ?? PERSON_INITIATOR)(botId)
+      await restrictToolsForWorkflow(
+        initiator ?? PERSON_INITIATOR,
+        loadToolsForActor(actorId, initiator ?? PERSON_INITIATOR),
+      )(botId)
     ).find((candidate) => candidate.name === name || candidate.ref === name);
     if (actorTool) {
       const text = await actorTool.execute(args);

@@ -11,12 +11,16 @@ import { useMemo, useState } from "react";
 import {
   HANDOFF_LABEL,
   INPUT_TYPE_LABEL,
+  ON_FAILURE_LABEL,
   OUTPUT_FORMAT_LABEL,
+  RETRY_STRATEGY_LABEL,
   TOOL_GROUP_INFO,
   type ToolRule,
   WORKFLOW_HANDOFFS,
   WORKFLOW_INPUT_TYPES,
+  WORKFLOW_ON_FAILURES,
   WORKFLOW_OUTPUT_FORMATS,
+  WORKFLOW_RETRY_STRATEGIES,
   WORKFLOW_TOOL_GROUPS,
   type WorkflowDefinition,
   type WorkflowInput,
@@ -570,6 +574,8 @@ function StepEditor({
         <Input aria-label="步骤标识" className="h-9 max-w-[130px] font-mono text-xs" disabled={readOnly} maxLength={32} onChange={(e) => onChange({ id: e.target.value })} value={step.id} />
         {step.group ? <span className="wf-chip">{`并行组 ${step.group}`}</span> : null}
         {step.approval ? <span className="wf-chip is-warn">{"需审批"}</span> : null}
+        {step.gate?.enabled ? <span className="wf-chip">{"验收门禁"}</span> : null}
+        {step.rejectTo ? <span className="wf-chip">{`打回→${step.rejectTo}`}</span> : null}
         <span className="flex-1" />
         <RowActions count={count} disabled={readOnly} index={index} onDuplicate={onDuplicate} onMove={onMove} onRemove={onRemove} what="步骤" />
       </div>
@@ -639,9 +645,19 @@ function StepEditor({
           <Switch checked={!!step.approval} disabled={readOnly} onCheckedChange={(v) => onChange({ approval: Boolean(v) || undefined })} />
         </div>
         <div className="wf-field is-inline wf-field-switch">
+          <span className="wf-label">{"结构化验收门禁"}</span>
+          <Switch
+            checked={!!step.gate?.enabled}
+            disabled={readOnly}
+            onCheckedChange={(v) => onChange({ gate: v ? { enabled: true, maxLoops: step.gate?.maxLoops ?? 2 } : undefined })}
+          />
+        </div>
+        <div className="wf-field is-inline wf-field-switch">
           <span className="wf-label">{"可以保存面板"}</span>
           <Switch checked={!!step.panel} disabled={readOnly} onCheckedChange={(v) => onChange({ panel: Boolean(v) || undefined })} />
         </div>
+      </div>
+      <div className="wf-grid-3">
         <Field label="这一步的输出格式">
           <SimpleSelect
             disabled={readOnly}
@@ -649,6 +665,40 @@ function StepEditor({
             onChange={(output) => onChange({ output: output === "" ? undefined : (output as "markdown") })}
             options={[{ value: "", label: "默认" }, ...WORKFLOW_OUTPUT_FORMATS.map((f) => ({ value: f, label: OUTPUT_FORMAT_LABEL[f] }))]}
             value={step.output ?? ""}
+          />
+        </Field>
+        {index > 0 ? (
+          <Field hint="审批拒绝或门禁打回时回退重做的步骤" label="打回目标步骤">
+            <SimpleSelect
+              disabled={readOnly}
+              label="打回目标步骤"
+              onChange={(rejectTo) => onChange({ rejectTo: rejectTo === "" ? undefined : rejectTo })}
+              options={[
+                { value: "", label: "不打回（直接停止）" },
+                ...def.steps.slice(0, index).map((s) => ({ value: s.id, label: `${s.name} (${s.id})` })),
+              ]}
+              value={step.rejectTo ?? ""}
+            />
+          </Field>
+        ) : null}
+        <Field label="失败时处理">
+          <SimpleSelect
+            disabled={readOnly}
+            label="失败时处理"
+            onChange={(onFailure) => onChange({ onFailure: onFailure === "fail" ? undefined : (onFailure as WorkflowStep["onFailure"]) })}
+            options={WORKFLOW_ON_FAILURES.map((f) => ({ value: f, label: ON_FAILURE_LABEL[f] }))}
+            value={step.onFailure ?? "fail"}
+          />
+        </Field>
+        <Field label="重做与重试策略">
+          <SimpleSelect
+            disabled={readOnly}
+            label="重做与重试策略"
+            onChange={(retryStrategy) =>
+              onChange({ retryStrategy: retryStrategy === "targeted_fix" ? undefined : (retryStrategy as WorkflowStep["retryStrategy"]) })
+            }
+            options={WORKFLOW_RETRY_STRATEGIES.map((r) => ({ value: r, label: RETRY_STRATEGY_LABEL[r] }))}
+            value={step.retryStrategy ?? "targeted_fix"}
           />
         </Field>
       </div>

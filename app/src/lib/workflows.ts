@@ -89,12 +89,30 @@ export const workflowsApi = {
     >("/api/workflows/validate", "POST", input),
   run: (id: string, inputs: Record<string, unknown>, bindings: Record<string, string>) =>
     send<{ run: WorkflowRunView }>(`/api/workflows/${encodeURIComponent(id)}/runs`, "POST", { inputs, bindings }),
-  approve: (runId: string, stepId: string, decision: "approve" | "reject", comment?: string) =>
+  approve: (
+    runId: string,
+    stepId: string,
+    decision: "approve" | "reject",
+    comment?: string,
+    options?: { rejectTo?: string; retryMode?: "targeted_fix" | "full_redo" },
+  ) =>
     send<{ run: WorkflowRunView | null }>(`/api/workflows/runs/${encodeURIComponent(runId)}/approve`, "POST", {
       stepId,
       decision,
       ...(comment ? { comment } : {}),
+      ...(options?.rejectTo ? { rejectTo: options.rejectTo } : {}),
+      ...(options?.retryMode ? { retryMode: options.retryMode } : {}),
     }),
+  retry: (
+    runId: string,
+    options?: {
+      stepId?: string;
+      mode?: "targeted_fix" | "full_redo";
+      comment?: string;
+      bindings?: Record<string, string>;
+    },
+  ) =>
+    send<{ run: WorkflowRunView | null }>(`/api/workflows/runs/${encodeURIComponent(runId)}/retry`, "POST", options ?? {}),
   cancel: (runId: string) => send<{ ok: true }>(`/api/workflows/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
   removeRun: (runId: string) => send<{ ok: true }>(`/api/workflows/runs/${encodeURIComponent(runId)}`, "DELETE"),
 };

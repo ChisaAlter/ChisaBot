@@ -90,6 +90,12 @@ function RunPage() {
     await queryClient.invalidateQueries({ queryKey: workflowKeys.run(runId) });
   });
 
+  const retryRun = useAsyncAction(async (mode: "targeted_fix" | "full_redo" = "targeted_fix") => {
+    await workflowsApi.retry(runId, { mode });
+    await queryClient.invalidateQueries({ queryKey: workflowKeys.run(runId) });
+    toast.success(mode === "targeted_fix" ? "已保留上下文继续重试" : "已从失败步骤全新重跑");
+  });
+
   const removeRun = async () => {
     const ok = await confirmDialog({
       title: "删除这条运行记录？",
@@ -147,14 +153,27 @@ function RunPage() {
               {"停止"}
             </Button>
           ) : (
-            <Button
-              nativeButton={false}
-              render={<Link search={{ run: run.workflowId }} to="/workflows" />}
-              size="sm"
-            >
-              <IconPlayerPlayFilled />
-              {"再运行一次"}
-            </Button>
+            <>
+              {run.status === "failed" || run.status === "cancelled" ? (
+                <Button
+                  disabled={retryRun.state === "pending"}
+                  onClick={() => void retryRun.run("targeted_fix").catch((e: Error) => toast.error(e.message))}
+                  size="sm"
+                  variant="outline"
+                >
+                  <IconPlayerPlayFilled />
+                  {"断点续跑"}
+                </Button>
+              ) : null}
+              <Button
+                nativeButton={false}
+                render={<Link search={{ run: run.workflowId }} to="/workflows" />}
+                size="sm"
+              >
+                <IconPlayerPlayFilled />
+                {"再运行一次"}
+              </Button>
+            </>
           )}
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -165,6 +184,12 @@ function RunPage() {
               }
             />
             <DropdownMenuContent align="end">
+              {!active && (run.status === "failed" || run.status === "cancelled") ? (
+                <DropdownMenuItem onClick={() => void retryRun.run("full_redo").catch((e: Error) => toast.error(e.message))}>
+                  <IconPlayerPlayFilled />
+                  {"清空失败步记忆并全新重跑"}
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem onClick={() => void removeRun()} variant="destructive">
                 <IconTrash />
                 {"删除运行记录"}
@@ -333,12 +358,21 @@ function Meter({ icon, label, value, pct, done = false, progress = false }: { ic
 }
 
 function StepCard({ run, step }: { run: WorkflowRunView; step: WorkflowStepState }) {
+  const queryClient = useQueryClient();
   const agents = useQuery(agentListQueryOptions());
   const bot = agents.data?.find((b) => b.id === step.botId);
   const [expanded, setExpanded] = useState(false);
   const long = step.output.length > 1600;
-  const index = run.steps.indexOf(step) + 1;
+  const stepIndex = run.steps.indexOf(step);
+  const index = stepIndex + 1;
   const elapsed = step.startedAt ? (step.finishedAt ? Date.parse(step.finishedAt) : Date.now()) - Date.parse(step.startedAt) : 0;
+  const runActive = ACTIVE_RUN_STATUSES.includes(run.status);
+
+  const retryStep = useAsyncAction(async () => {
+    await workflowsApi.retry(run.id, { stepId: step.id, mode: "targeted_fix" });
+    await queryClient.invalidateQueries({ queryKey: workflowKeys.run(run.id) });
+    toast.success(`已从「${step.name}」继续重试`);
+  });
 
   return (
     <Card className={cn("wf-step", `is-${step.status}`)}>
@@ -347,6 +381,8 @@ function StepCard({ run, step }: { run: WorkflowRunView; step: WorkflowStepState
           <div className="wf-step-title">
             <span className="wf-step-no">{`第 ${index} 步`}</span>
             {step.name}
+            {(step.attempt ?? 0) > 1 ? <span className="wf-chip">{`第 ${step.attempt} 次尝试`}</span> : null}
+            {(step.reworkCount ?? 0) > 0 ? <span className="wf-chip is-warn">{`已返工 ${step.reworkCount} 次`}</span> : null}
           </div>
           <div className="wf-step-who">
             <AbstractAvatar agentId={step.botId} name={step.botName} seed={bot?.avatarSeed ?? step.botId} size={18} />
@@ -358,6 +394,16 @@ function StepCard({ run, step }: { run: WorkflowRunView; step: WorkflowStepState
         </div>
         <div className="wf-step-meta">
           <StepStatusBadge status={step.status} />
+          {!runActive && (step.status === "failed" || step.status === "cancelled") ? (
+            <Button
+              disabled={retryStep.state === "pending"}
+              onClick={() => void retryStep.run().catch((e: Error) => toast.error(e.message))}
+              size="xs"
+              variant="outline"
+            >
+              {"重试此步"}
+            </Button>
+          ) : null}
           {step.tokens || elapsed ? (
             <span className="wf-muted">
               {step.tokens ? `约 ${tokensText(step.tokens)} token` : ""}
@@ -368,12 +414,20 @@ function StepCard({ run, step }: { run: WorkflowRunView; step: WorkflowStepState
         </div>
       </div>
 
-      {step.status === "waiting_approval" ? <ApprovalCard runId={run.id} step={step} /> : null}
+      {step.status === "waiting_approval" ? (
+        <ApprovalCard earlierSteps={run.steps.slice(0, stepIndex)} runId={run.id} step={step} />
+      ) : null}
       {step.approval?.decision ? (
         <p className={cn("wf-approval-note", step.approval.decision === "reject" && "is-danger")}>
           {step.approval.decision === "approve" ? <IconShieldCheck className="size-3.5" /> : <IconX className="size-3.5" />}
           {`${step.approval.decidedBy ?? "你"}${step.approval.decision === "approve" ? "批准了这一步" : "拒绝了这一步"}`}
           {step.approval.comment ? `：${step.approval.comment}` : ""}
+        </p>
+      ) : null}
+      {step.gateResult ? (
+        <p className={cn("wf-approval-note", step.gateResult.decision !== "pass" && "is-danger")}>
+          <IconShieldCheck className="size-3.5" />
+          {`验收结论（${step.gateResult.decision}）：${step.gateResult.summary ?? step.gateResult.reason}`}
         </p>
       ) : null}
 
@@ -407,11 +461,26 @@ function StepCard({ run, step }: { run: WorkflowRunView; step: WorkflowStepState
   );
 }
 
-function ApprovalCard({ runId, step }: { runId: string; step: WorkflowStepState }) {
+function ApprovalCard({
+  runId,
+  step,
+  earlierSteps,
+}: {
+  runId: string;
+  step: WorkflowStepState;
+  earlierSteps: WorkflowStepState[];
+}) {
   const queryClient = useQueryClient();
   const [comment, setComment] = useState("");
-  const decide = useAsyncAction(async (decision: "approve" | "reject") => {
-    await workflowsApi.approve(runId, step.id, decision, comment.trim() || undefined);
+  const defaultReworkTarget = step.rejectTo ?? earlierSteps[earlierSteps.length - 1]?.id;
+  const decide = useAsyncAction(async (input: { decision: "approve" | "reject"; rejectTo?: string }) => {
+    await workflowsApi.approve(
+      runId,
+      step.id,
+      input.decision,
+      comment.trim() || undefined,
+      input.rejectTo ? { rejectTo: input.rejectTo } : undefined,
+    );
     await queryClient.invalidateQueries({ queryKey: workflowKeys.run(runId) });
   });
   return (
@@ -422,27 +491,41 @@ function ApprovalCard({ runId, step }: { runId: string; step: WorkflowStepState 
         {"这一步开始前需要你批准"}
       </div>
       {step.approval?.note ? <p className="wf-approval-text">{step.approval.note}</p> : null}
-      <p className="wf-approval-text">{"先看看上面一步的输出，没问题再继续。"}</p>
+      <p className="wf-approval-text">{"先看看上面一步的输出，没问题再继续；如果有修改意见，可以打回重做。"}</p>
       <div className="wf-approval-actions">
         <Input
           aria-label="备注（可选）"
           className="h-8 flex-1"
           maxLength={500}
           onChange={(event) => setComment(event.target.value)}
-          placeholder="备注（可选）"
+          placeholder="审批意见或返工修改要求（可选）"
           value={comment}
         />
+        {defaultReworkTarget ? (
+          <Button
+            disabled={decide.state === "pending"}
+            onClick={() =>
+              void decide.run({ decision: "reject", rejectTo: defaultReworkTarget }).catch((e: Error) => toast.error(e.message))
+            }
+            size="sm"
+            variant="outline"
+          >
+            {"打回重做"}
+          </Button>
+        ) : null}
         <Button
           disabled={decide.state === "pending"}
-          onClick={() => void decide.run("reject").catch((e: Error) => toast.error(e.message))}
+          onClick={() =>
+            void decide.run({ decision: "reject", rejectTo: "__cancel__" }).catch((e: Error) => toast.error(e.message))
+          }
           size="sm"
           variant="outline"
         >
-          {"拒绝"}
+          {"拒绝并停止"}
         </Button>
         <Button
           feedback={{ pending: "提交中…", success: "已批准", error: "提交失败" }}
-          onClick={() => void decide.run("approve").catch((e: Error) => toast.error(e.message))}
+          onClick={() => void decide.run({ decision: "approve" }).catch((e: Error) => toast.error(e.message))}
           size="sm"
           state={decide.state}
         >

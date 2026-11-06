@@ -205,13 +205,14 @@ export function createWorkflowStore(database: Database) {
     },
     async saveRun(
       id: string,
-      patch: Partial<Pick<StoredRun, "status" | "state" | "output" | "error" | "startedAt" | "finishedAt">>,
+      patch: Partial<Pick<StoredRun, "status" | "state" | "bindings" | "output" | "error" | "startedAt" | "finishedAt">>,
     ): Promise<void> {
       await database
         .update(workflowRuns)
         .set({
           ...(patch.status ? { status: patch.status } : {}),
           ...(patch.state ? { state: json(patch.state) } : {}),
+          ...(patch.bindings ? { bindings: json(patch.bindings) } : {}),
           ...(patch.output !== undefined ? { output: patch.output } : {}),
           ...(patch.error !== undefined ? { error: patch.error } : {}),
           ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
@@ -226,13 +227,14 @@ export function createWorkflowStore(database: Database) {
     async transitionRun(
       id: string,
       from: WorkflowRunStatus[],
-      patch: Pick<StoredRun, "status"> & Partial<Pick<StoredRun, "state" | "output" | "error" | "startedAt" | "finishedAt">>,
+      patch: Pick<StoredRun, "status"> & Partial<Pick<StoredRun, "state" | "bindings" | "output" | "error" | "startedAt" | "finishedAt">>,
     ): Promise<boolean> {
       const rows = await database
         .update(workflowRuns)
         .set({
           status: patch.status,
           ...(patch.state ? { state: json(patch.state) } : {}),
+          ...(patch.bindings ? { bindings: json(patch.bindings) } : {}),
           ...(patch.output !== undefined ? { output: patch.output } : {}),
           ...(patch.error !== undefined ? { error: patch.error } : {}),
           ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),

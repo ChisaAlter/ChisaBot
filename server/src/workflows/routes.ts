@@ -76,6 +76,8 @@ export function createWorkflowRoutes(options: {
   auditStore?: AuditStore;
   /** 这个人能用的技能 slug（只用来给出「找不到技能」的提醒，不拦保存）。 */
   librarySkillSlugs?: (actorId: string) => Promise<Set<string>>;
+  /** 检查默认绑定的机器人是否可用（用于运行前预检提醒）。 */
+  botInfo?: (actorId: string, botId: string) => Promise<{ id: string; name: string } | null>;
 }) {
   const { store, engine } = options;
   const routes = new Hono<{ Variables: AppVariables }>();
@@ -103,11 +105,25 @@ export function createWorkflowRoutes(options: {
   };
 
   const warningsFor = async (actorId: string, def: WorkflowDefinition) => {
-    if (!options.librarySkillSlugs) return [];
-    const library = await options.librarySkillSlugs(actorId).catch(() => new Set<string>());
-    const embedded = new Set((def.skills ?? []).map((s) => s.slug));
-    const missing = [...new Set(def.steps.flatMap((s) => s.skills ?? []))].filter((slug) => !embedded.has(slug) && !library.has(slug));
-    return missing.map((slug) => `技能 /${slug} 不在你的技能里，运行时会跳过它。`);
+    const warnings: string[] = [];
+    if (options.librarySkillSlugs) {
+      const library = await options.librarySkillSlugs(actorId).catch(() => new Set<string>());
+      const embedded = new Set((def.skills ?? []).map((s) => s.slug));
+      const missing = [...new Set(def.steps.flatMap((s) => s.skills ?? []))].filter((slug) => !embedded.has(slug) && !library.has(slug));
+      for (const slug of missing) {
+        warnings.push(`技能 /${slug} 不在你的技能里，运行时会跳过它。`);
+      }
+    }
+    if (options.botInfo) {
+      for (const role of def.bots) {
+        if (!role.botId?.trim()) continue;
+        const info = await options.botInfo(actorId, role.botId.trim()).catch(() => null);
+        if (!info) {
+          warnings.push(`角色「${role.name}」绑定的默认机器人不可用或已删除，运行时需要重新选择。`);
+        }
+      }
+    }
+    return warnings;
   };
 
   routes.get("/", async (context) => {
@@ -132,10 +148,17 @@ export function createWorkflowRoutes(options: {
     return context.json({ run: engine.view(run, await store.events(run.id)) });
   });
   routes.post("/runs/:runId/approve", async (context) => {
-    const body = (await context.req.json().catch(() => null)) as { stepId?: unknown; decision?: unknown; comment?: unknown } | null;
+    const body = (await context.req.json().catch(() => null)) as {
+      stepId?: unknown;
+      decision?: unknown;
+      comment?: unknown;
+      rejectTo?: unknown;
+      retryMode?: unknown;
+    } | null;
     if (!body || typeof body.stepId !== "string" || (body.decision !== "approve" && body.decision !== "reject"))
       return context.json({ error: "请求格式无效。" }, 400);
     const actor = context.var.actor;
+    const retryMode = body.retryMode === "targeted_fix" || body.retryMode === "full_redo" ? body.retryMode : undefined;
     try {
       await engine.approve({
         ownerUserId: actor.id,
@@ -143,6 +166,8 @@ export function createWorkflowRoutes(options: {
         stepId: body.stepId,
         decision: body.decision,
         ...(typeof body.comment === "string" && body.comment.trim() ? { comment: body.comment.trim() } : {}),
+        ...(typeof body.rejectTo === "string" && body.rejectTo.trim() ? { rejectTo: body.rejectTo.trim() } : {}),
+        ...(retryMode ? { retryMode } : {}),
         by: actor.name?.trim() || actor.email,
       });
     } catch (error) {
@@ -151,6 +176,35 @@ export function createWorkflowRoutes(options: {
     }
     const run = await store.getOwnRun(actor.id, context.req.param("runId"));
     return context.json({ run: run ? engine.view(run) : null });
+  });
+  routes.post("/runs/:runId/retry", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as {
+      stepId?: unknown;
+      mode?: unknown;
+      comment?: unknown;
+      bindings?: unknown;
+    } | null;
+    const actor = context.var.actor;
+    const mode = body?.mode === "targeted_fix" || body?.mode === "full_redo" ? body.mode : undefined;
+    const bindings =
+      body?.bindings && typeof body.bindings === "object" && !Array.isArray(body.bindings)
+        ? (body.bindings as Record<string, unknown>)
+        : undefined;
+    try {
+      const run = await engine.retry({
+        ownerUserId: actor.id,
+        runId: context.req.param("runId"),
+        ...(typeof body?.stepId === "string" && body.stepId.trim() ? { stepId: body.stepId.trim() } : {}),
+        ...(mode ? { mode } : {}),
+        ...(typeof body?.comment === "string" && body.comment.trim() ? { comment: body.comment.trim() } : {}),
+        ...(bindings ? { bindings } : {}),
+        by: actor.name?.trim() || actor.email,
+      });
+      return context.json({ run: engine.view(run) });
+    } catch (error) {
+      const { body: b, status } = fail(error);
+      return context.json(b, status);
+    }
   });
   routes.post("/runs/:runId/cancel", async (context) => {
     try {

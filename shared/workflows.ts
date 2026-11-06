@@ -140,6 +140,31 @@ export const HANDOFF_LABEL: Record<WorkflowHandoff, string> = {
   none: "不带入",
 };
 
+export const WORKFLOW_ON_FAILURES = ["fail", "reject", "continue"] as const;
+export type WorkflowOnFailure = (typeof WORKFLOW_ON_FAILURES)[number];
+export const ON_FAILURE_LABEL: Record<WorkflowOnFailure, string> = {
+  fail: "停止运行",
+  reject: "打回前面步骤重做",
+  continue: "跳过错误继续下一步",
+};
+
+export const WORKFLOW_RETRY_STRATEGIES = ["targeted_fix", "full_redo"] as const;
+export type WorkflowRetryStrategy = (typeof WORKFLOW_RETRY_STRATEGIES)[number];
+export const RETRY_STRATEGY_LABEL: Record<WorkflowRetryStrategy, string> = {
+  targeted_fix: "保留记忆继续修正",
+  full_redo: "清空上下文重新开始",
+};
+
+export const workflowStepGateSchema = z
+  .object({
+    /** 开启后，机器人通过 submit_gate_result 提交 pass / rework / fail / human 结构化裁决。 */
+    enabled: z.boolean(),
+    /** 未配置 rejectTo 时，本步骤内部自修正的最大循环次数（默认 2）。 */
+    maxLoops: z.number().int().min(1).max(5).optional(),
+  })
+  .strict();
+export type WorkflowStepGate = z.infer<typeof workflowStepGateSchema>;
+
 export const workflowStepSchema = z
   .object({
     id: key,
@@ -158,6 +183,16 @@ export const workflowStepSchema = z
     approval: z.boolean().optional(),
     /** 审批时给人看的说明。 */
     approvalNote: z.string().trim().max(400).optional(),
+    /** 审批拒绝、验证门打回或失败打回时，退回到前面的哪个步骤 id 重新执行。 */
+    rejectTo: key.optional(),
+    /** 这一步最多允许被下游打回返工几次（默认 3）。 */
+    maxReworks: z.number().int().min(1).max(10).optional(),
+    /** 步骤执行失败时的策略：默认 fail（停止运行），可选 reject（打回 rejectTo）或 continue（忽略错误继续）。 */
+    onFailure: z.enum(WORKFLOW_ON_FAILURES).optional(),
+    /** 重试或返工时的上下文策略：默认 targeted_fix（复用原对话带记忆修正），可选 full_redo（新建对话重跑）。 */
+    retryStrategy: z.enum(WORKFLOW_RETRY_STRATEGIES).optional(),
+    /** 结构化验证门（Gate）：由机器人提交 pass / rework / fail / human 裁决。 */
+    gate: workflowStepGateSchema.optional(),
     /** 只对这一步生效的工具规则，叠加在工作流约束上。 */
     tools: toolRule.optional(),
     /** 这一步可以把面板直接保存到该机器人的右栏面板（需要「界面与面板」工具）。 */
@@ -241,7 +276,7 @@ export function effectiveConstraints(def: WorkflowDefinition) {
 
 /**
  * 结构上的检查（zod 之外）：key 唯一、步骤引用的角色和技能存在、模板引用的输入和步骤存在、
- * 并行组相邻、步骤数不超过 maxSteps。`librarySkills` 是此人能用的技能 slug；不传就不检查库技能。
+ * 并行组相邻、打回目标在前面、步骤数不超过 maxSteps。`librarySkills` 是此人能用的技能 slug；不传就不检查库技能。
  */
 export function workflowProblems(def: WorkflowDefinition, librarySkills?: ReadonlySet<string>): string[] {
   const problems: string[] = [];
@@ -259,6 +294,7 @@ export function workflowProblems(def: WorkflowDefinition, librarySkills?: Readon
   const bots = new Set(def.bots.map((b) => b.key));
   const embedded = new Set((def.skills ?? []).map((s) => s.slug));
   const inputs = new Set(def.inputs.map((i) => i.key));
+  const allStepsById = new Map(def.steps.map((s) => [s.id, s]));
   const seenSteps = new Set<string>();
   def.steps.forEach((step, index) => {
     const label = `第 ${index + 1} 步「${step.name}」`;
@@ -270,6 +306,17 @@ export function workflowProblems(def: WorkflowDefinition, librarySkills?: Readon
     for (const ref of templateRefs(step.prompt)) {
       if (ref.kind === "inputs" && !inputs.has(ref.key)) problems.push(`${label}引用的输入 {{inputs.${ref.key}}} 不存在。`);
       if (ref.kind === "steps" && !seenSteps.has(ref.key)) problems.push(`${label}引用的步骤 {{steps.${ref.key}}} 不在它前面。`);
+    }
+    if (step.rejectTo) {
+      const target = allStepsById.get(step.rejectTo);
+      if (!target) {
+        problems.push(`${label}打回的目标步骤「${step.rejectTo}」不存在。`);
+      } else if (!seenSteps.has(step.rejectTo) || (step.group && target.group === step.group)) {
+        problems.push(`${label}打回的目标步骤「${step.rejectTo}」必须在它前面的阶段。`);
+      }
+    }
+    if (step.onFailure === "reject" && !step.rejectTo) {
+      problems.push(`${label}设置了失败时打回重做，需要指定打回的目标步骤（rejectTo）。`);
     }
     if (step.group && index > 0) {
       const prev = def.steps[index - 1]!;
@@ -339,7 +386,7 @@ export function emptyWorkflow(): WorkflowDefinition {
   });
 }
 
-// ─── 运行 ────────────────────────────────────────────────────────────────
+// ─── 运行 ───────────────────────────────────────────────────────────────
 
 export const RUN_STATUSES = ["queued", "running", "waiting_approval", "succeeded", "failed", "cancelled"] as const;
 export type WorkflowRunStatus = (typeof RUN_STATUSES)[number];
@@ -365,6 +412,30 @@ export const STEP_STATUS_LABEL: Record<WorkflowStepStatus, string> = {
   cancelled: "已停止",
 };
 
+export type WorkflowGateFinding = {
+  severity: "high" | "medium" | "low";
+  title: string;
+  evidence?: string;
+  detail?: string;
+};
+
+export type WorkflowGateResult = {
+  decision: "pass" | "rework" | "fail" | "human";
+  reason: string;
+  summary?: string;
+  actionRequired?: string;
+  findings?: WorkflowGateFinding[];
+  submittedAt: string;
+};
+
+export type WorkflowStepFeedback = {
+  fromStepId?: string;
+  by: string;
+  reason: string;
+  at: string;
+  findings?: WorkflowGateFinding[];
+};
+
 export type WorkflowStepState = {
   id: string;
   name: string;
@@ -381,6 +452,31 @@ export type WorkflowStepState = {
   finishedAt?: string;
   approval?: { required: boolean; note?: string; decidedBy?: string; decidedAt?: string; decision?: "approve" | "reject"; comment?: string };
   skills: string[];
+  /** 打回目标步骤 id（来自定义，供审批卡片直接展示「打回给…」）。 */
+  rejectTo?: string;
+  /** 最多允许返工次数。 */
+  maxReworks?: number;
+  /** 当前是第几次执行尝试（从 1 开始）。 */
+  attempt?: number;
+  /** 被下游打回返工的累计次数。 */
+  reworkCount?: number;
+  /** 步骤专属对话的 channelId / threadId（用于 targeted_fix 带记忆重试）。 */
+  channelId?: string;
+  threadId?: string;
+  /** 下次执行时采用的重试模式（targeted_fix 复用原对话，full_redo 开新对话）。 */
+  retryMode?: WorkflowRetryStrategy;
+  /** 被打回或重试时附带的反馈意见。 */
+  feedback?: WorkflowStepFeedback;
+  /** 结构化验证门（Gate）提交的裁决结果。 */
+  gateResult?: WorkflowGateResult;
+};
+
+export type WorkflowPreflightItem = {
+  kind: "missing_role_bot" | "missing_skill" | "computer_unavailable" | "device_unpaired";
+  severity: "blocking" | "warning";
+  message: string;
+  stepId?: string;
+  roleKey?: string;
 };
 
 export type WorkflowRunEventView = {

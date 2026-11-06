@@ -774,9 +774,17 @@ export function createConfirmations(database: Database, options: { auditStore?: 
     return list.map((tool) => {
       const category = categoryOfTool(tool.name, tool.ref);
       if (!category)
-        return tool.name.startsWith("device_")
-          ? { ...tool, execute: (args: unknown, ctx) => withConfirmInteractive(deviceInteractive(tool), () => tool.execute(args, ctx)) }
-          : tool;
+        return {
+          ...tool,
+          execute: async (args: unknown, ctx) => {
+            if (currentConfirmTurn()?.stopped() || currentToolAbort()?.aborted) {
+              return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
+            }
+            return tool.name.startsWith("device_")
+              ? withConfirmInteractive(deviceInteractive(tool), () => tool.execute(args, ctx))
+              : tool.execute(args, ctx);
+          },
+        };
       return {
         ...tool,
         execute: async (args: unknown, ctx) => {

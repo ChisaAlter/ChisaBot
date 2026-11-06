@@ -8,10 +8,10 @@ import {
 } from "../../shared/workflows";
 import { createWorkflowEngine, extractJson, MAX_ACTIVE_RUNS_PER_USER, normalizeInputs, renderTemplate } from "../src/workflows/engine";
 import { parseWorkflowMarkdown, serializeWorkflowMarkdown, WorkflowFormatError } from "../src/workflows/format";
-import { clearStepPolicy, registerStepPolicy, restrictToolsForWorkflow } from "../src/workflows/policy";
+import { clearStepPolicy, guardWorkflowCallback, registerStepPolicy, restrictToolsForWorkflow } from "../src/workflows/policy";
 import { loadPresets } from "../src/workflows/presets";
 import type { RunState, StoredRun, WorkflowStore } from "../src/workflows/store";
-import { findWorkflow } from "../src/workflows/tools";
+import { createInspectToolSchemaTool, findWorkflow, workflowChatTools } from "../src/workflows/tools";
 import type { TurnRunner } from "../src/turns/types";
 
 const base = {
@@ -459,3 +459,222 @@ describe("engine concurrency (S5)", () => {
     expect(t.runs.get(dead)!.status).toBe("failed");
   });
 });
+
+describe("rework loops, stateful retry, gates, and chat control tools", () => {
+  test("approval reject with rejectTo reworks earlier step on same threadId and carries feedback", async () => {
+    const stepOneThreads: string[] = [];
+    const stepOneInstructions: string[] = [];
+    const t = engineWith(async (input) => {
+      if (input.agentId === "bot1") {
+        stepOneThreads.push(input.threadId);
+        stepOneInstructions.push(input.instruction);
+        return { replyText: `草稿 v${stepOneThreads.length}` };
+      }
+      return { replyText: `终稿基于 ${input.instruction.includes("草稿 v2") ? "v2" : "v1"}` };
+    });
+    const def = workflowDefinitionSchema.parse({
+      ...base,
+      steps: [
+        base.steps[0],
+        { ...base.steps[1], approval: true, rejectTo: "one", maxReworks: 2 },
+      ],
+    });
+    const run = await t.engine.start({
+      ownerUserId: "u",
+      workflowId: "w",
+      definition: def,
+      inputs: { topic: "量子计算" },
+      bindings: { a: "bot1", b: "bot2" },
+      source: "page",
+    });
+    const waiting1 = await settle(t.runs, run.id);
+    expect(waiting1.status).toBe("waiting_approval");
+
+    // Reject and route back to step "one"
+    await t.engine.approve({
+      ownerUserId: "u",
+      runId: run.id,
+      stepId: "two",
+      decision: "reject",
+      comment: "请补充容错量子比特章节",
+      by: "我",
+    });
+
+    const waiting2 = await settle(t.runs, run.id);
+    expect(waiting2.status).toBe("waiting_approval");
+    expect(stepOneThreads).toHaveLength(2);
+    // targeted_fix reuses the existing threadId!
+    expect(stepOneThreads[1]).toBe(stepOneThreads[0]);
+    expect(stepOneInstructions[1]).toContain("请补充容错量子比特章节");
+
+    // Now approve step "two"
+    await t.engine.approve({
+      ownerUserId: "u",
+      runId: run.id,
+      stepId: "two",
+      decision: "approve",
+      by: "我",
+    });
+    const done = await settle(t.runs, run.id, ["succeeded", "failed"]);
+    expect(done.status).toBe("succeeded");
+    expect(done.output).toBe("终稿基于 v2");
+  });
+
+  test("step retry supports targeted_fix (same thread) vs full_redo (new thread) and overlays latest role bindings", async () => {
+    let failStepTwo = true;
+    const stepTwoCalls: { threadId: string; agentId: string; instruction: string }[] = [];
+    const t = engineWith(async (input) => {
+      if (input.initiator?.id.endsWith("/two")) {
+        stepTwoCalls.push({ threadId: input.threadId, agentId: input.agentId, instruction: input.instruction });
+        if (failStepTwo) throw new Error("网络超时");
+        return { replyText: "重试成功输出" };
+      }
+      return { replyText: "第一步结果" };
+    });
+    const def = workflowDefinitionSchema.parse({
+      ...base,
+      bots: [
+        { key: "a", name: "甲", botId: "bot1" },
+        { key: "b", name: "乙", botId: "bot2" },
+      ],
+    });
+    const run = await t.engine.start({
+      ownerUserId: "u",
+      workflowId: "w",
+      definition: def,
+      inputs: { topic: "AI" },
+      bindings: { a: "bot1", b: "bot2" },
+      source: "page",
+    });
+    const failed = await settle(t.runs, run.id);
+    expect(failed.status).toBe("failed");
+    expect(stepTwoCalls).toHaveLength(1);
+
+    // Update workflow definition's default bot for role "b" to "bot3" and retry with targeted_fix
+    failStepTwo = false;
+    const updatedDef = workflowDefinitionSchema.parse({
+      ...def,
+      bots: [
+        { key: "a", name: "甲", botId: "bot1" },
+        { key: "b", name: "乙", botId: "bot3" },
+      ],
+    });
+    await t.engine.retry({
+      ownerUserId: "u",
+      runId: run.id,
+      mode: "targeted_fix",
+      comment: "换用稳定接口再试",
+      latestDefinition: updatedDef,
+    });
+    const done = await settle(t.runs, run.id, ["succeeded", "failed"]);
+    expect(done.status).toBe("succeeded");
+    expect(done.output).toBe("重试成功输出");
+    expect(stepTwoCalls).toHaveLength(2);
+    // Reused threadId on targeted_fix and overlaid bot3 from latestDefinition
+    expect(stepTwoCalls[1]!.threadId).toBe(stepTwoCalls[0]!.threadId);
+    expect(stepTwoCalls[1]!.agentId).toBe("bot3");
+    expect(stepTwoCalls[1]!.instruction).toContain("换用稳定接口再试");
+  });
+
+  test("verification gate (submit_gate_result) supports rework loop and pass", async () => {
+    let stepTwoTurns = 0;
+    const t = engineWith(async (input) => {
+      if (input.initiator?.id.endsWith("/two")) {
+        stepTwoTurns++;
+        const tools = await restrictToolsForWorkflow(input.initiator!, async () => [])();
+        const gateTool = tools.find((x) => x.name === "submit_gate_result");
+        expect(gateTool).toBeDefined();
+        if (stepTwoTurns === 1) {
+          await gateTool!.execute({
+            decision: "rework",
+            summary: "第一版缺少引用来源",
+            findings: [{ severity: "high", title: "无引用", detail: "请加上数据出处" }],
+          });
+          return { replyText: "初稿" };
+        }
+        await gateTool!.execute({
+          decision: "pass",
+          summary: "引用已补全，验收通过",
+        });
+        return { replyText: "带引用的终稿" };
+      }
+      return { replyText: "调研素材" };
+    });
+    const def = workflowDefinitionSchema.parse({
+      ...base,
+      steps: [
+        base.steps[0],
+        { ...base.steps[1], gate: { enabled: true, maxLoops: 2 } },
+      ],
+    });
+    const run = await t.engine.start({
+      ownerUserId: "u",
+      workflowId: "w",
+      definition: def,
+      inputs: { topic: "芯片" },
+      fallbackBotId: "bot1",
+      source: "page",
+    });
+    const done = await settle(t.runs, run.id);
+    expect(done.status).toBe("succeeded");
+    expect(done.output).toBe("带引用的终稿");
+    expect(stepTwoTurns).toBe(2);
+    expect(done.state.steps[1]!.gateResult?.decision).toBe("pass");
+  });
+
+  test("onFailure: continue allows downstream steps to proceed when a step fails", async () => {
+    const t = engineWith(async (input) => {
+      if (input.initiator?.id.endsWith("/one")) throw new Error("第一步非致命报错");
+      return { replyText: `第二步收到：${input.instruction}` };
+    });
+    const def = workflowDefinitionSchema.parse({
+      ...base,
+      steps: [
+        { ...base.steps[0], onFailure: "continue" },
+        base.steps[1],
+      ],
+    });
+    const run = await t.engine.start({
+      ownerUserId: "u",
+      workflowId: "w",
+      definition: def,
+      inputs: { topic: "容错" },
+      fallbackBotId: "bot1",
+      source: "page",
+    });
+    const done = await settle(t.runs, run.id);
+    expect(done.status).toBe("succeeded");
+    expect(done.state.steps[0]!.status).toBe("failed");
+    expect(done.state.steps[1]!.status).toBe("succeeded");
+  });
+
+  test("guardWorkflowCallback blocks unallowed tools on remote callback path and inspect_tool_schema returns JSON contract", async () => {
+    const initiator = { kind: "workflow" as const, id: "run99/step1" };
+    registerStepPolicy(initiator.id, { rules: [{ allow: ["computer"] }] });
+    expect(guardWorkflowCallback(initiator, "computer_navigate")).toBeNull();
+    expect(guardWorkflowCallback(initiator, "device_run_shell")?.isError).toBe(true);
+    clearStepPolicy(initiator.id);
+
+    const sampleTools = workflowChatTools({
+      store: memoryStore().store,
+      engine: { current: null },
+      ownerUserId: "u",
+      actorName: "测试用户",
+      botId: "bot1",
+      initiator: { kind: "person" },
+    });
+    expect(sampleTools.map((x) => x.name)).toEqual([
+      "list_workflows",
+      "run_workflow",
+      "get_workflow_run",
+      "control_workflow_run",
+    ]);
+
+    const inspector = createInspectToolSchemaTool(() => sampleTools);
+    const schemaJson = await inspector.execute({ names: ["control_workflow_run"] });
+    const parsed = JSON.parse(schemaJson);
+    expect(parsed.schemas.control_workflow_run).toBeDefined();
+    expect(parsed.schemas.control_workflow_run.schema.properties.action.enum).toEqual(["approve", "reject", "retry", "cancel"]);
+  });
+});
+
