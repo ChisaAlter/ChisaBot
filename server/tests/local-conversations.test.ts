@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 import { EventType, type BaseEvent } from "@ag-ui/client";
+import { Observable, lastValueFrom, of, throwError, toArray } from "rxjs";
 import {
   mergeConversationMessages,
   prepareConversationMessages,
   toLocalHistoryMessage,
+  withRunStartedAck,
 } from "../src/local-conversations";
 
 test("tool call arguments and result identifiers survive the history boundary", () => {
@@ -51,4 +53,45 @@ test("a caller cannot overwrite canonical history by reusing a message id", () =
     { id: "old", role: "user", content: "Original" },
     { id: "new", role: "user", content: "Next" },
   ]);
+});
+
+/*
+ * 「明明 AI 都输出了」误报修复（受理回执）：服务端受理到开跑之间有静默前置
+ * （等上一轮收尾 / 前端接力 settle / 抢锁落库），浏览器 12 秒看门狗把这段误判成「没发出去」。
+ * 订阅一建立就先发 RUN_STARTED，真正的 RUN_STARTED 下游去重，订阅者从头到尾只见一条。
+ */
+const runStarted = (threadId: string, runId: string) =>
+  ({ type: EventType.RUN_STARTED, threadId, runId }) as BaseEvent;
+
+test("withRunStartedAck: the receipt is the first event, emitted synchronously at subscribe", () => {
+  const seen: BaseEvent[] = [];
+  const never = new Observable<BaseEvent>(() => {});
+  withRunStartedAck({ threadId: "t1" }, "r1", never).subscribe((event) => seen.push(event));
+  expect(seen).toEqual([runStarted("t1", "r1")]);
+});
+
+test("withRunStartedAck: the real RUN_STARTED is deduplicated, everything else passes through", async () => {
+  const text = { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "m1", delta: "hi" } as BaseEvent;
+  const finished = { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" } as BaseEvent;
+  const events = await lastValueFrom(
+    withRunStartedAck({ threadId: "t1" }, "r1", of(runStarted("t1", "r1"), text, finished)).pipe(toArray()),
+  );
+  expect(events).toEqual([runStarted("t1", "r1"), text, finished]);
+  expect(events.filter((event) => event.type === EventType.RUN_STARTED)).toHaveLength(1);
+});
+
+test("withRunStartedAck: a source error still terminates the stream after the receipt", async () => {
+  const events: BaseEvent[] = [];
+  let failure: unknown;
+  await new Promise<void>((resolve) => {
+    withRunStartedAck({ threadId: "t1" }, "r1", throwError(() => new Error("busy"))).subscribe({
+      next: (event) => events.push(event),
+      error: (error) => {
+        failure = error;
+        resolve();
+      },
+    });
+  });
+  expect(events).toEqual([runStarted("t1", "r1")]);
+  expect(failure).toBeInstanceOf(Error);
 });

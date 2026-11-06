@@ -6,6 +6,7 @@ import {
   isHonestSendFailureReason,
   raceSendWatchdog,
   reportBudgetEvent,
+  sendReachedServer,
   SEND_HANG_REASON,
   SEND_REPLY_HANG_REASON,
   SEND_REPLY_WATCHDOG_MS,
@@ -343,6 +344,38 @@ test("decideSendWatchdogAction: timeout + persisted + reply done → proceed", (
       replyRace: "done",
     }),
   ).toEqual({ kind: "proceed" });
+});
+
+/*
+ * 「明明 AI 都输出了」误报修复（发送看门狗双证人）：正在回答时发来的消息走 join/排队路径，
+ * 只进服务端收件箱、不进 messages 表——单看落库会把「已排队」误判成「没发出去」。
+ * 收件箱里读到这条 id 同样算「到了」；两个证人都缺席才算「不知道」（null，按没确认处理）。
+ */
+test("sendReachedServer: any witness confirming the message counts as reached", () => {
+  expect(sendReachedServer({ stored: true, queued: null })).toBe(true);
+  expect(sendReachedServer({ stored: false, queued: true })).toBe(true);
+  expect(sendReachedServer({ stored: null, queued: true })).toBe(true);
+});
+
+test("sendReachedServer: both witnesses read, neither has it → genuinely not sent", () => {
+  expect(sendReachedServer({ stored: false, queued: false })).toBe(false);
+});
+
+test("sendReachedServer: a missing witness downgrades a negative to unknown", () => {
+  expect(sendReachedServer({ stored: false, queued: null })).toBeNull();
+  expect(sendReachedServer({ stored: null, queued: false })).toBeNull();
+  expect(sendReachedServer({ stored: null, queued: null })).toBeNull();
+});
+
+test("decideSendWatchdogAction: inbox-witnessed send takes the reply path, not hang", () => {
+  const reached = sendReachedServer({ stored: false, queued: true });
+  expect(
+    decideSendWatchdogAction({
+      firstRace: "timeout",
+      persisted: reached,
+      replyRace: "timeout",
+    }).kind,
+  ).toBe("reply_hang");
 });
 
 test("honest failure reasons never look like send success", () => {

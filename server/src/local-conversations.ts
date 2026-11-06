@@ -15,7 +15,7 @@ import {
   createRunEventFinalizer,
 } from "@copilotkit/runtime/v2";
 import { Observable, ReplaySubject, Subject } from "rxjs";
-import { concatMap } from "rxjs/operators";
+import { concatMap, filter } from "rxjs/operators";
 import { capConnectMessages } from "../../shared/connect-snapshot";
 import { fallbackNotice } from "./agents/model-fallback";
 import { forgetHistorySummaries } from "./agents/history-budget";
@@ -668,6 +668,15 @@ const EMPTY_THREAD_READS: Record<string, unknown> = {
   "sent-at": { userMessageId: null, at: null, now: null },
 };
 
+/**
+ * 等上一轮收尾（内存回合 done / 前端接力 closing）的最长时间：超时如实 RUN_ERROR，
+ * 不能静默无限等——以前死等的请求在流上一片死寂，浏览器 12 秒发送看门狗把它当「没发出去」毙掉。
+ */
+const RESUME_WAIT_MS = 60_000;
+
+/** 前端接力收尾（settle/停轮落账）重试的最长时间：到点让位，不能让一个卡住的 settle 永久堵死这条对话。 */
+const FRONTEND_CLOSE_GIVE_UP_MS = 60_000;
+
 /** How long a stopped segment may keep running before the runner stops waiting for it (CB-104). */
 export const STOP_GRACE_MS = 1_500;
 
@@ -681,6 +690,33 @@ export const afterStopGrace = (signal: AbortSignal, ms: number): Promise<true> =
     if (signal.aborted) arm();
     else signal.addEventListener("abort", arm, { once: true });
   });
+
+/**
+ * 「受理回执」。AG-UI 校验器要求流上第一个事件是 RUN_STARTED，浏览器的 12 秒发送看门狗
+ * 要的是「流上有动静」。服务端从受理到真正开跑之间有一段静默前置（等上一轮收尾、前端接力
+ * settle、抢锁、读收件箱、落快照），以前这段超过 12 秒就被误判成「没发出去」并停掉在途回合。
+ * 订阅一建立就先发一条 RUN_STARTED——请求此刻确实已经到服务端手里；后面真正的那条
+ * RUN_STARTED（写日记的那条）在这里被去重，订阅者从头到尾只看到一条。
+ * `runId` 取订阅者本会看到的那个：新回合是请求的 runId，接入在跑回合是那个回合的 runId。
+ * 回执只发给这个订阅者，不进事件日志、不推快照，旁听者也不可见。
+ */
+export function withRunStartedAck(
+  request: { threadId: string },
+  runId: string,
+  source: Observable<BaseEvent>,
+): Observable<BaseEvent> {
+  return new Observable<BaseEvent>((subscriber) => {
+    subscriber.next({
+      type: EventType.RUN_STARTED,
+      threadId: request.threadId,
+      runId,
+    } as BaseEvent);
+    const subscription = source
+      .pipe(filter((event) => event.type !== EventType.RUN_STARTED))
+      .subscribe(subscriber);
+    return () => subscription.unsubscribe();
+  });
+}
 
 /** Public OSS runner with our own PostgreSQL transcript and per-thread lease. */
 class PostgresAgentRunner extends AgentRunner {
@@ -698,6 +734,7 @@ class PostgresAgentRunner extends AgentRunner {
     if (relay.closing) return relay.closing;
     clearTimeout(relay.timer);
     relay.closing = (async () => {
+      const giveUpAt = Date.now() + FRONTEND_CLOSE_GIVE_UP_MS;
       while (this.frontend.get(threadId) === relay) {
         try {
           // These state transitions are idempotent, including an unknown COMMIT result.
@@ -707,7 +744,23 @@ class PostgresAgentRunner extends AgentRunner {
           );
           if (this.frontend.get(threadId) === relay) this.clearFrontend(threadId);
           return;
-        } catch {
+        } catch (error) {
+          if (Date.now() >= giveUpAt) {
+            /*
+             * 收尾写可以重试但不是没有上限：以前每秒重试、永不落地，等它的 /run 全部静默吊死，
+             * 这条对话看起来永远忙碌。到点让位：腾出槽位让新回合进得来；
+             * 没收尾的收件箱行维持原状（queued 的由下一轮 claim 读走，read 的留痕可查）。
+             */
+            console.warn(JSON.stringify({
+              type: "frontend-close-gave-up",
+              threadId,
+              runId: relay.runId,
+              outcome,
+              error: error instanceof Error ? error.message : String(error),
+            }));
+            if (this.frontend.get(threadId) === relay) this.clearFrontend(threadId);
+            return;
+          }
           // The database bounds each attempt. Keep one closing owner while it recovers;
           // retry only inbox/Stop bookkeeping, never a model request or tool execution.
           await new Promise<void>((resolve) => setTimeout(resolve, 1000));
@@ -779,6 +832,30 @@ class PostgresAgentRunner extends AgentRunner {
     };
   }
 
+  /**
+   * 等一个收尾中的承诺落地后重进 run()（内存回合 done / 前端接力 closing）。等待必须有界：
+   * 以前死等，closing 卡住时这条请求在流上一片死寂；超时如实报错——此刻消息确实没被受理，
+   * 让浏览器去重发，而不是陪着一个可能死掉的前置承诺挂下去。
+   */
+  private resumeAfter(
+    request: AgentRunnerRunRequest,
+    pending: Promise<unknown>,
+  ): Observable<BaseEvent> {
+    return withRunStartedAck(request, request.input.runId, new Observable<BaseEvent>((subscriber) => {
+      let subscription: { unsubscribe(): void } | undefined;
+      let closed = false;
+      const timer = setTimeout(() => {
+        if (!closed)
+          subscriber.error(new LocalConversationError("上一轮收尾超时，请再发一次", 409));
+      }, RESUME_WAIT_MS);
+      timer.unref?.();
+      void pending.then(() => {
+        if (!closed) subscription = this.run(request).subscribe(subscriber);
+      }).catch((error) => subscriber.error(error));
+      return () => { closed = true; clearTimeout(timer); subscription?.unsubscribe(); };
+    }));
+  }
+
   run(request: AgentRunnerRunRequest): Observable<BaseEvent> {
     if (request.input.threadId !== request.threadId || !request.input.runId)
       throw new LocalConversationError(
@@ -792,33 +869,18 @@ class PostgresAgentRunner extends AgentRunner {
       // A frontend result in that window must resume after cleanup, rather than join and lose it.
       const pending = this.pendingFrontend(running, request.input.tools);
       const answered = new Set(request.input.messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
-      if (pending.length && pending.every((id) => answered.has(id))) {
-        return new Observable<BaseEvent>((subscriber) => {
-          let subscription: { unsubscribe(): void } | undefined;
-          let closed = false;
-          void running.done.then(() => {
-            if (!closed) subscription = this.run(request).subscribe(subscriber);
-          }).catch((error) => subscriber.error(error));
-          return () => { closed = true; subscription?.unsubscribe(); };
-        });
-      }
-      return this.join(request, running);
+      if (pending.length && pending.every((id) => answered.has(id)))
+        return this.resumeAfter(request, running.done);
+      return withRunStartedAck(request, running.runId, this.join(request, running));
     }
     const relay = this.frontend.get(request.threadId);
     if (relay) {
-      if (relay.closing) return new Observable<BaseEvent>((subscriber) => {
-        let subscription: { unsubscribe(): void } | undefined;
-        let closed = false;
-        void relay.closing!.then(() => {
-          if (!closed) subscription = this.run(request).subscribe(subscriber);
-        }).catch((error) => subscriber.error(error));
-        return () => { closed = true; subscription?.unsubscribe(); };
-      });
+      if (relay.closing) return this.resumeAfter(request, relay.closing);
       const answered = new Set(request.input.messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
       // A concurrent user send is not a tool continuation. Park it without replaying the old
       // tool events (which would dispatch those tools again on the joining browser).
       if (!relay.callIds.every((id) => answered.has(id))) {
-        return new Observable<BaseEvent>((subscriber) => {
+        return withRunStartedAck(request, request.input.runId, new Observable<BaseEvent>((subscriber) => {
           void (async () => {
             const row = await this.store.thread(request.threadId);
             const known = new Set(row.messages.map((message) => message.id));
@@ -831,7 +893,7 @@ class PostgresAgentRunner extends AgentRunner {
             subscriber.next({ type: EventType.RUN_FINISHED, threadId: request.threadId, runId: request.input.runId } as BaseEvent);
             subscriber.complete();
           })().catch((error) => subscriber.error(error));
-        });
+        }));
       }
       this.clearFrontend(request.threadId);
     }
@@ -850,10 +912,10 @@ class PostgresAgentRunner extends AgentRunner {
     this.active.set(request.threadId, entry);
     entry.done = this.execute(request, entry);
     // Do not let a fast frontend continuation overtake the old lease cleanup.
-    return entry.stream.pipe(concatMap(async (event) => {
+    return withRunStartedAck(request, request.input.runId, entry.stream.pipe(concatMap(async (event) => {
       if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) await entry.done;
       return event;
-    }));
+    })));
   }
 
   private join(

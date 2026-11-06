@@ -148,6 +148,25 @@ export type SendWatchdogDecision =
       budget: "SEND_REPLY_HANG";
     };
 
+/**
+ * 「这句到没到服务器」的多证人合并（发送看门狗落库检查用）。
+ * 证人一：messages 表里读到这条消息 id（普通回合落库）。
+ * 证人二：服务端收件箱里躺着这条消息 id——正在回答时发来的消息走 join/排队路径，
+ * 只进 chisabot_thread_inbox、不进 messages，光看证人一会把「已排队」误判成「没到」。
+ * 任一证人确认在 → true；两边都读到、都没有 → false（真的没到）；
+ * 有证人缺席（读失败）且没人确认 → null（不知道，按没确认处理）。
+ */
+export function sendReachedServer(witnesses: {
+  /** messages 表读到了吗：true 有 / false 读到但没有 / null 没读到。 */
+  stored: boolean | null;
+  /** 收件箱里读到了吗：true 有 / false 读到但没有 / null 没读到。 */
+  queued: boolean | null;
+}): boolean | null {
+  if (witnesses.stored === true || witnesses.queued === true) return true;
+  if (witnesses.stored === false && witnesses.queued === false) return false;
+  return null;
+}
+
 export function decideSendWatchdogAction(input: {
   firstRace: "done" | "timeout";
   /** Whether the optimistic user message id is in the server thread. null = check failed. */

@@ -61,6 +61,7 @@ import {
   isConnectionDrop,
   raceSendWatchdog,
   reportBudgetEvent,
+  sendReachedServer,
   SEND_REPLY_WATCHDOG_MS,
   SEND_UNREACHABLE_REASON,
   SEND_WATCHDOG_MS,
@@ -90,7 +91,7 @@ import {
   useThreadActivity,
   withStoredTail,
 } from "@/lib/copilot/thread-activity";
-import { queueMessage, queuedFor, restoreQueue, useQueuedMessages } from "@/lib/copilot/thread-inbox";
+import { inboxState, queueMessage, queuedFor, restoreQueue, useQueuedMessages } from "@/lib/copilot/thread-inbox";
 import {
   HISTORY_RETRY_DELAYS_MS,
   readThreadMessages,
@@ -1203,16 +1204,29 @@ export function ChannelChat({
         lastProgressAt,
       });
       if (race === "timeout") {
-        let persisted = runEventSeenRef.current;
+        let persisted: boolean | null = runEventSeenRef.current;
         if (!persisted) {
-          const stored = await readThreadMessages(
-            channel.threadId,
-            runtimeAgentId,
-          ).catch(() => null);
-          persisted =
-            stored != null &&
-            stored.availability === "ready" &&
-            stored.messages.some((message) => message.id === userMessageId);
+          /*
+           * 落库检查要两个证人都问：messages 表（普通回合）和服务端收件箱（正在回答时
+           * 发来的消息走 join/排队路径，只进收件箱不进 messages）。单看 messages 会把
+           * 一条安全躺在收件箱里、等着被当前回合读走的消息误判成「没发出去」。
+           */
+          const [stored, inbox] = await Promise.all([
+            readThreadMessages(
+              channel.threadId,
+              runtimeAgentId,
+            ).catch(() => null),
+            inboxState(channel.threadId).catch(() => null),
+          ]);
+          persisted = sendReachedServer({
+            stored:
+              stored != null && stored.availability === "ready"
+                ? stored.messages.some((message) => message.id === userMessageId)
+                : null,
+            queued: inbox != null
+              ? inbox.items.some((item) => item.id === userMessageId)
+              : null,
+          });
         }
         // First-bound decision without reply race yet.
         // Only abort the agent if the message never reached the server (`hang`). Calling
