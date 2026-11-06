@@ -516,6 +516,7 @@ function createCodeOps(options = {}) {
 
   function runCollect(script, { cwd, env, timeoutMs, signal, elevated, input, noCap }) {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(new OpError("已取消。"));
       const started = Date.now();
       let child;
       try {
@@ -695,6 +696,7 @@ function createCodeOps(options = {}) {
       cwd = args.cwd ? await resolveCwd({ cwd: args.cwd }, ctx, true) : session.cwd;
       env = session.env;
     } else cwd = await resolveCwd(args, ctx, true);
+    if (ctx.signal?.aborted) throw new OpError("已取消。");
     let child;
     try {
       child = spawnShell(command, { cwd, env, elevated });

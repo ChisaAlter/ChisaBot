@@ -146,6 +146,21 @@ function createNodeAgent(options) {
     events.emit("audit", { at: new Date().toISOString(), ...entry });
   }
 
+  function cancelPending() {
+    for (const controller of running.values()) controller.abort();
+    running.clear();
+    for (const [id, prompt] of approvalPrompts) {
+      prompt.cancel();
+      events.emit("approval_closed", { id });
+    }
+    approvalPrompts.clear();
+  }
+
+  function stopOperations(reason) {
+    cancelPending();
+    options.ops.stopAll?.(reason);
+  }
+
   /** 连接还在但一直没有消息（休眠唤醒、换网络、代理悄悄断开）：服务器那边早就判离线了，这里也要尽快重连。 */
   function armWatchdog(ws) {
     clearTimeout(watchdog);
@@ -193,7 +208,7 @@ function createNodeAgent(options) {
       fullAccessAccepted = null;
       fullAccessExpired = false;
       if (wasOn) {
-        options.ops.stopAll?.("full_access_off");
+        stopOperations("full_access_off");
         events.emit("full_access", { on: false });
       }
       return;
@@ -202,7 +217,7 @@ function createNodeAgent(options) {
     if (typeof device.fullAccessRemainingMs === "number" && device.fullAccessRemainingMs < 400 * 24 * 3600_000) {
       fullAccessTimer = setTimeout(() => {
         fullAccessExpired = true;
-        options.ops.stopAll?.("full_access_expired");
+        stopOperations("full_access_expired");
         events.emit("full_access", { on: false, expired: true });
       }, Math.max(0, device.fullAccessRemainingMs));
       if (typeof fullAccessTimer.unref === "function" && options.unrefTimers) fullAccessTimer.unref();
@@ -215,7 +230,7 @@ function createNodeAgent(options) {
       .catch(() => false)
       .then((ok) => {
         fullAccessAsking = null;
-        if (!device || device.fullAccessUntil !== grant) return;
+        if (stopped || !device?.fullAccess || fullAccessExpired || device.fullAccessUntil !== grant) return;
         if (ok) {
           fullAccessAccepted = grant;
           send({ type: "local_audit", action: "full_access_accepted", outcome: "succeeded", summary: "本机同意了完全访问" });
@@ -231,11 +246,12 @@ function createNodeAgent(options) {
     const { id, operation } = message;
     const args = message.args || {};
     const capability = capabilityFor(operation, args);
-    const full = fullAccessOn();
+    let full = fullAccessOn();
     const policy = full ? "allow" : capability ? device?.capabilities?.[capability] ?? "off" : "allow";
     const started = Date.now();
+    const controller = new AbortController();
     const reply = (ok, payload) => {
-      running.delete(id);
+      if (running.get(id) === controller) running.delete(id);
       send(ok ? { type: "result", id, ok: true, result: payload } : { type: "result", id, ok: false, error: payload });
       audit({
         actor: message.botName || "机器人",
@@ -251,8 +267,12 @@ function createNodeAgent(options) {
     if (device?.paused) return reply(false, "这台设备已紧急停止。");
     if (policy === "off") return reply(false, "本机设置中这项能力是关闭的。");
     if (args.elevated && !full) return reply(false, "管理员身份运行只在「完全访问」模式下可用（本机尚未同意或已到期）。");
+    // 等待本机确认也属于这次调用；取消、断线和退出必须在真正执行前生效。
+    running.set(id, controller);
     // 本机强制审批：危险能力即使服务器设为「直接执行」也在本机再问一次。完全访问模式下不问（用户已在本机同意过）。
     if (!full && local().forceLocalApproval && capability && DANGEROUS.has(capability) && policy === "allow" && options.approve) {
+      const closePrompt = () => events.emit("approval_closed", { id: `local-${id}` });
+      controller.signal.addEventListener("abort", closePrompt, { once: true });
       const decision = await options
         .approve({
           id: `local-${id}`,
@@ -264,10 +284,14 @@ function createNodeAgent(options) {
           remainingMs: Math.min(120_000, Math.max(10_000, (message.timeoutMs || 120_000) - 5_000)),
         })
         .catch(() => "deny");
+      controller.signal.removeEventListener("abort", closePrompt);
+      if (controller.signal.aborted) return reply(false, "已取消。");
       if (decision !== "approve") return reply(false, "用户在本机拒绝了这次操作。");
     }
-    const controller = new AbortController();
-    running.set(id, controller);
+    if (controller.signal.aborted || stopped) return reply(false, "已取消。");
+    if (local().paused || device?.paused) return reply(false, "这台设备已紧急停止。");
+    full = fullAccessOn();
+    if (!full && capability && (device?.capabilities?.[capability] ?? "off") === "off") return reply(false, "本机设置中这项能力是关闭的。");
     events.emit("call", { id, operation, botName: message.botName });
     try {
       const result = await options.ops.run(operation, args, {
@@ -312,7 +336,7 @@ function createNodeAgent(options) {
         const previous = device;
         device = message.device;
         attempt = 0;
-        if (device?.paused && !previous?.paused) options.ops.stopAll?.("paused");
+        if (device?.paused && !previous?.paused) stopOperations("paused");
         syncFullAccess(previous);
         setState("online");
         events.emit("config", device);
@@ -337,8 +361,9 @@ function createNodeAgent(options) {
         return;
       }
       case "revoked":
-        options.ops.stopAll?.("revoked");
         stopped = true;
+        clearTimeout(fullAccessTimer);
+        stopOperations("revoked");
         setState("revoked");
         events.emit("revoked");
         return;
@@ -384,10 +409,12 @@ function createNodeAgent(options) {
     socket = ws;
     armWatchdog(ws);
     ws.on("open", () => {
+      if (socket !== ws || stopped) return;
       lastError = "";
       send({ type: "hello", ...(options.clientInfo || {}), features: options.ops.features || undefined });
     });
     ws.on("message", (data) => {
+      if (socket !== ws || stopped) return;
       armWatchdog(ws);
       onMessage(data);
     });
@@ -411,6 +438,8 @@ function createNodeAgent(options) {
           if (revoked) {
             // 服务器明确说这台设备被撤销（server/src/devices/routes.ts requireDevice）：停下。
             stopped = true;
+            clearTimeout(fullAccessTimer);
+            stopOperations("revoked");
             setState("revoked", "设备已被撤销");
             events.emit("revoked");
           } else {
@@ -435,12 +464,11 @@ function createNodeAgent(options) {
       if (socket === ws) socket = null;
       else return; // 已被 reconnectNow() 换掉的旧连接
       clearTimeout(watchdog);
-      for (const controller of running.values()) controller.abort();
-      running.clear();
-      for (const prompt of approvalPrompts.values()) prompt.cancel();
-      approvalPrompts.clear();
+      cancelPending();
       if (code === 4401) {
         stopped = true;
+        clearTimeout(fullAccessTimer);
+        options.ops.stopAll?.("revoked");
         setState("revoked", "设备已被撤销");
         events.emit("revoked");
         return;
@@ -491,6 +519,9 @@ function createNodeAgent(options) {
       stopped = true;
       clearTimeout(reconnectTimer);
       clearTimeout(watchdog);
+      clearTimeout(fullAccessTimer);
+      fullAccessAccepted = null;
+      stopOperations("stopped");
       const ws = socket;
       socket = null;
       // 握手中的连接 close() 会中止握手并异步报错；先置空 socket，error 监听据此忽略。
@@ -507,8 +538,7 @@ function createNodeAgent(options) {
         events.emit("config", device);
       }
       if (patch.paused === true) {
-        for (const controller of running.values()) controller.abort();
-        options.ops.stopAll?.("paused");
+        stopOperations("paused");
       }
       return send({ type: "set_config", ...patch });
     },

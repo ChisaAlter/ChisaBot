@@ -3,7 +3,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { WebSocketServer } = require("ws");
 const WebSocket = require("ws");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { createNodeAgent } = require("../src/agent/core");
+const { createOps } = require("../src/agent/ops");
 
 function device(overrides = {}) {
   return {
@@ -16,7 +20,7 @@ function device(overrides = {}) {
   };
 }
 
-function setup(t, { approve, local } = {}) {
+function setup(t, { approve, local, ops: customOps } = {}) {
   const wss = new WebSocketServer({ port: 0 });
   const port = wss.address().port;
   const received = [];
@@ -31,7 +35,7 @@ function setup(t, { approve, local } = {}) {
       resolve(ws);
     });
   });
-  const ops = { platform: "linux", run: async (op, args) => (op === "shell" ? { stdout: `ran ${args.command}` } : { op }) };
+  const ops = customOps || { platform: "linux", run: async (op, args) => (op === "shell" ? { stdout: `ran ${args.command}` } : { op }) };
   const agent = createNodeAgent({ serverUrl: `http://127.0.0.1:${port}`, getToken: () => "cbd_test", ops, WebSocket, approve, local, clientInfo: { clientVersion: "t" } });
   t.after(() => {
     agent.stop();
@@ -121,4 +125,109 @@ test("reconnects after drop", async (t) => {
   const again = new Promise((r) => s.agent.events.on("state", (e) => e.state === "online" && r()));
   ws.terminate();
   await again;
+});
+
+for (const action of ["cancel", "stop", "remote-pause", "disconnect"]) {
+  test(`pending local approval cannot run after ${action}`, async (t) => {
+    let decide;
+    let asked;
+    const prompted = new Promise((resolve) => (asked = resolve));
+    let executions = 0;
+    const s = setup(t, {
+      local: () => ({ paused: false, forceLocalApproval: true }),
+      approve: () => new Promise((resolve) => { decide = resolve; asked(); }),
+      ops: { run: async () => { executions++; return {}; } },
+    });
+    const closed = [];
+    const audits = [];
+    s.agent.events.on("approval_closed", (entry) => closed.push(entry.id));
+    s.agent.events.on("audit", (entry) => audits.push(entry));
+    const ws = await s.connected;
+    await s.waitFor((m) => m.type === "hello");
+    ws.send(JSON.stringify({ type: "call", id: "pending", operation: "shell", args: { command: "ignored" } }));
+    await prompted;
+    const cancelled = new Promise((resolve) => s.agent.events.once("approval_closed", resolve));
+    if (action === "cancel") ws.send(JSON.stringify({ type: "cancel", id: "pending" }));
+    if (action === "stop") s.agent.stop();
+    if (action === "remote-pause") ws.send(JSON.stringify({ type: "config", device: device({ paused: true }) }));
+    if (action === "disconnect") ws.terminate();
+    await cancelled;
+    decide("approve");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(executions, 0);
+    assert.deepEqual(closed, ["local-pending"]);
+    assert.ok(audits.some((entry) => entry.outcome === "failed" && /取消/.test(entry.detail)));
+  });
+}
+
+test("capability disabled while local approval is open is checked before execution", async (t) => {
+  let decide;
+  let asked;
+  const prompted = new Promise((resolve) => (asked = resolve));
+  let executions = 0;
+  const s = setup(t, {
+    local: () => ({ paused: false, forceLocalApproval: true }),
+    approve: () => new Promise((resolve) => { decide = resolve; asked(); }),
+    ops: { run: async () => { executions++; return {}; } },
+  });
+  const ws = await s.connected;
+  await s.waitFor((m) => m.type === "hello");
+  ws.send(JSON.stringify({ type: "call", id: "policy", operation: "shell", args: { command: "ignored" } }));
+  await prompted;
+  s.agent.setConfig({ capabilities: { shell: "off" } });
+  decide("approve");
+  const result = await s.waitFor((m) => m.type === "result" && m.id === "policy");
+  assert.equal(executions, 0);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /关闭/);
+});
+
+for (const action of ["stop", "remote-pause", "revoke-close"]) {
+  test(`${action} terminates an active local shell process`, { timeout: 12_000 }, async (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cb-stop-"));
+    const ready = path.join(dir, "ready");
+    const late = path.join(dir, "late");
+    const command = process.platform === "win32"
+      ? `[IO.File]::WriteAllText('${ready.replace(/'/g, "''")}', 'ready'); Start-Sleep -Seconds 8; [IO.File]::WriteAllText('${late.replace(/'/g, "''")}', 'late')`
+      : `printf ready > '${ready}'; sleep 8; printf late > '${late}'`;
+    const ops = createOps();
+    const s = setup(t, { ops });
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const completed = new Promise((resolve) => s.agent.events.once("audit", resolve));
+    const ws = await s.connected;
+    await s.waitFor((m) => m.type === "hello");
+    ws.send(JSON.stringify({ type: "call", id: "live", operation: "shell", args: { command, timeoutSec: 10 } }));
+    const deadline = Date.now() + 5000;
+    while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(fs.existsSync(ready), true, "shell reached its running marker");
+    const stoppedAt = Date.now();
+    if (action === "stop") s.agent.stop();
+    if (action === "remote-pause") ws.send(JSON.stringify({ type: "config", device: device({ paused: true }) }));
+    if (action === "revoke-close") ws.close(4401, "revoked");
+    const audit = await completed;
+    assert.ok(Date.now() - stoppedAt < 4000, "shell was cancelled before its normal completion");
+    assert.equal(audit.outcome, "failed");
+    assert.equal(fs.existsSync(late), false);
+  });
+}
+
+test("stop terminates already-started background jobs", { timeout: 12_000 }, async (t) => {
+  const ops = createOps();
+  const s = setup(t, { ops });
+  const ws = await s.connected;
+  await s.waitFor((m) => m.type === "hello");
+  ws.send(JSON.stringify({ type: "call", id: "bg", operation: "exec_start", args: { command: process.platform === "win32" ? "Start-Sleep -Seconds 8" : "sleep 8", waitMs: 100 } }));
+  const result = await s.waitFor((m) => m.type === "result" && m.id === "bg");
+  assert.equal(result.ok, true);
+  assert.equal(result.result.status, "running");
+  s.agent.stop();
+  let job;
+  const deadline = Date.now() + 4000;
+  do {
+    job = await ops.run("exec_poll", { jobId: result.result.jobId });
+    if (job.endedAt) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } while (Date.now() < deadline);
+  assert.equal(job.status, "killed");
+  assert.ok(job.endedAt, "background process actually exited");
 });

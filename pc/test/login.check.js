@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const auth = require("../src/agent/auth");
 
 function res(status, body, headers = {}) {
@@ -83,3 +84,52 @@ test("main process: no setup wizard left, login channels go through the local-pa
   const preload = fs.readFileSync(path.join(__dirname, "..", "src", "preload.js"), "utf8");
   assert.ok(!preload.includes("setup:"));
 });
+
+for (const username of ["first-user", "second-user"]) {
+  test(`desktop login binds the node to the logged-in account: ${username}`, async () => {
+    const source = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
+    const submit = source.slice(source.indexOf("async function submitLogin(input) {"), source.indexOf("\nasync function setLocal("));
+    let state = { serverUrl: "https://login.example.com", username: "first-user", deviceName: "old-device" };
+    let token = "old-token";
+    let drops = 0;
+    let clears = 0;
+    let enrolls = 0;
+    const context = {
+      auth: {
+        normalizeServerUrl: auth.normalizeServerUrl,
+        login: async () => ({ cookies: [], cookieHeader: "session=new" }),
+        checkToken: async ({ token: checked }) => {
+          assert.equal(checked, "old-token");
+          return { ok: true, device: { id: "old-id" } };
+        },
+        enroll: async () => { enrolls++; return { token: "new-token", device: { id: "new-id", name: "new-device" } }; },
+      },
+      config: {
+        get: () => state,
+        getToken: () => token,
+        set: (patch) => { state = { ...state, ...patch }; },
+        setToken: (value) => { token = value; },
+        appendAudit: () => {},
+      },
+      session: { fromPartition: () => ({ clearStorageData: async () => { clears++; } }) },
+      PARTITION: "test",
+      netFetch: () => {},
+      dropDevice: async () => { drops++; token = null; },
+      windows: { chat: null },
+      injectCookies: async () => {},
+      clientInfo: () => ({}),
+      os: { hostname: () => "test-device" },
+      clearTimeout,
+      enrollRetryTimer: null,
+      startAgent: () => {},
+    };
+    const submitLogin = vm.runInNewContext(`${submit}\nsubmitLogin`, context);
+    const result = await submitLogin({ serverUrl: state.serverUrl, username, remember: true });
+    const changed = username !== "first-user";
+    assert.equal(drops, Number(changed));
+    assert.equal(clears, Number(changed));
+    assert.equal(enrolls, Number(changed));
+    assert.equal(result.device.id, changed ? "new-id" : "old-id");
+    assert.equal(token, changed ? "new-token" : "old-token");
+  });
+}

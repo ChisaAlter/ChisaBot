@@ -202,6 +202,7 @@ function createAgentRuntime(options) {
         throw new Error("工作目录不在这台电脑的工作区文件夹里。");
       emit("status", "正在准备工作目录", "正在准备工作目录");
       prep = await sandbox.prepare({ taskId, cwd: message.cwd, isolation: message.isolation });
+      controller.signal.throwIfAborted();
       for (const note of prep.notes) emit("status", note);
       out({ type: "agent_started", taskId, workdir: prep.workdir });
       emit("status", prep.mode === "direct" ? `在 ${prep.workdir} 里工作` : `在一次性${prep.mode === "worktree" ? " worktree " : "副本"}里工作：${prep.workdir}`, "agent 开始工作");

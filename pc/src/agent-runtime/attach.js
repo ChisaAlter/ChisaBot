@@ -25,6 +25,7 @@ function attachAgentRuntime(options = {}) {
       if (more.isPaused) isPaused = more.isPaused;
       nodeAgent.events.on("state", (event) => {
         if (event && event.state === "online") runtime.onOnline();
+        if (event && (event.state === "stopped" || event.state === "revoked")) runtime.stopAll();
       });
       // 紧急停止（网页 / 托盘 / 本机）：本地 agent 任务立刻停。
       nodeAgent.events.on("config", (device) => {

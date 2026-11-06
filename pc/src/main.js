@@ -1125,7 +1125,7 @@ async function confirmLogout() {
 
 /**
  * 本机登录页的「登录」：先 probe（login:probe）再调这里。
- * 换了服务器时先作废旧服务器上的设备令牌；同一台服务器且令牌仍有效时不重复登记。
+ * 换了服务器或账号时先作废旧身份的设备令牌；同一身份且令牌仍有效时不重复登记。
  * 设备登记失败（例如服务器还不支持 PC 设备）不挡登录，只在结果里带上 warning。
  */
 async function submitLogin(input) {
@@ -1135,7 +1135,7 @@ async function submitLogin(input) {
   const sessionInfo = await auth.login({ fetchImpl: netFetch, serverUrl, username, password: String(input.password || ""), remember });
   const prev = config.get();
   const ses = session.fromPartition(PARTITION);
-  if (prev.serverUrl && prev.serverUrl !== serverUrl) {
+  if (prev.serverUrl && (prev.serverUrl !== serverUrl || prev.username !== username)) {
     await dropDevice(prev.serverUrl);
     if (windows.chat && !windows.chat.isDestroyed()) windows.chat.destroy();
     windows.chat = null;
