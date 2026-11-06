@@ -16,6 +16,7 @@ import {
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
 import { createActorAgentResolver } from "../src/agents/agent-resolver";
+import type { AuditInitiator } from "../src/audit";
 import { MAX_INLINED_BYTES_PER_RUN } from "../src/channels/attachment-parts";
 import { loadConfig } from "../src/config";
 import type { LoadAttachment } from "../src/copilot";
@@ -787,6 +788,46 @@ describe("standing agent roles", () => {
     expect(seen.request).toBe(request);
     expect(seen.actors).toEqual([{ id: "user-7", role: "user" }]);
     expectWrappedHttpTransport(resolved.agent_expense);
+  });
+
+  test("tags the person's surface from the user agent so tools know whether a card can wait", async () => {
+    const seen: (AuditInitiator | undefined)[] = [];
+    const factory = createRequestAgents(
+      async () => ({ id: "user-7", role: "user" as const }),
+      {
+        resolveAgentsForActor: async (_actor, context) => {
+          seen.push(context?.initiator);
+          return {};
+        },
+        resolveAgentForActor: async () => {
+          throw new Error("unused in this test");
+        },
+      },
+    );
+
+    await factory({
+      request: new Request("http://chisabot.test/api/copilotkit", {
+        headers: { "user-agent": "ChisaBotAndroid/1.4.0 native" },
+      }),
+    });
+    // The in-app WebView (`WebScreen.kt`) runs the full React web app and omits `native`:
+    // when the user taps "在网页中打开这段对话" to fill a card, it must be treated as web.
+    await factory({
+      request: new Request("http://chisabot.test/api/copilotkit", {
+        headers: { "user-agent": "Mozilla/5.0 (Linux; Android 14) ChisaBotAndroid/1.4.0" },
+      }),
+    });
+    await factory({
+      request: new Request("http://chisabot.test/api/copilotkit", {
+        headers: { "user-agent": "Mozilla/5.0" },
+      }),
+    });
+
+    expect(seen).toEqual([
+      { kind: "person", surface: "app" },
+      { kind: "person" },
+      { kind: "person" },
+    ]);
   });
 
   test("rebuilds each agent from the loader so an edited role applies to the next run", async () => {

@@ -55,7 +55,7 @@ import {
   executeNativeApprovalTool,
   nativeApprovalRun,
 } from "./approvals/native-context";
-import type { AuditInitiator } from "./audit";
+import { PERSON_INITIATOR, type AuditInitiator } from "./audit";
 import {
   attachmentIdsIn,
   newInlineBudget,
@@ -2486,7 +2486,26 @@ export function createRequestAgents(
   resolver: ActorAgentResolver,
 ) {
   return async ({ request }: { request: Request }) =>
-    resolver.resolveAgentsForActor(await identifyActor(request));
+    resolver.resolveAgentsForActor(await identifyActor(request), {
+      initiator: personInitiatorForRequest(request),
+    });
+}
+
+/**
+ * Which surface this person's run speaks from, read off the request. The Android client declares
+ * itself in the user agent (`ChisaBotAndroid/<version> native`); anything else is the web app —
+ * browser, PWA and desktop all render the same React surface.
+ *
+ * The initiator rather than a header passed onward: the tools that ask "can this turn hang a card
+ * somebody must fill" already read it (`vault` `interactive`, GitHub `canConfirm`), so the answer
+ * travels with the turn instead of being re-derived per tool.
+ */
+export function personInitiatorForRequest(request: Request): AuditInitiator {
+  return /\bChisaBotAndroid\/[^\s]+\s+native\b/i.test(
+    request.headers.get("user-agent") ?? "",
+  )
+    ? { kind: "person", surface: "app" }
+    : PERSON_INITIATOR;
 }
 
 /**

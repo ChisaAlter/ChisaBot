@@ -48,6 +48,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -93,6 +94,8 @@ fun ChatScreen(vm: AppViewModel, bot: Bot) {
     val atBottom by remember { derivedStateOf { list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset < 40 } }
     val webFallback = { vm.push(Screen.Web(vm.channelId?.let { "/channel/$it" } ?: "/channel/new?agent=${bot.id}", bot.name)) }
     val actions = remember(bot.id) { RenderActions(ask = { text -> scope.launch { vm.send(text) } }, fallback = webFallback) }
+    // 站内操作胶囊：GitHub 连接就地弹原生令牌对话框（同网页 GITHUB_CONNECT_HREF 拦截）；其它站内路径在壳内网页里打开。
+    var githubConnect by remember { mutableStateOf(false) }
 
     // 刚发出 / 自己在底部：新内容来了贴着底部（reverseLayout，index 0 = 最底下）。
     // 「跟着底部」在手指滑完时才更新：新的一行插在 index 0 时列表按 key 保住原来那一行，atBottom 会先变 false，
@@ -114,6 +117,13 @@ fun ChatScreen(vm: AppViewModel, bot: Bot) {
             }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
+            CompositionLocalProvider(
+                LocalActionPill provides { href: String ->
+                    if (href == GITHUB_CONNECT_HREF) githubConnect = true
+                    else vm.push(Screen.Web(href, href.substringAfterLast('/')))
+                },
+                LocalPreviewFallback provides webFallback,
+            ) {
             when {
                 rows.isEmpty() && vm.chatLoading -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Box(Modifier.align(Alignment.End).width(180.dp).height(40.dp).glass(sky, level = 1))
@@ -134,6 +144,7 @@ fun ChatScreen(vm: AppViewModel, bot: Bot) {
                     items(rows.asReversed(), key = { it.key }) { row -> RowView(vm, row, actions) }
                 }
             }
+            }
             NoticePill(vm, Modifier.align(Alignment.TopCenter))
             // 回到底部：手机上是 36dp 圆形 ↓（§78.4）
             androidx.compose.animation.AnimatedVisibility(visible = !atBottom && rows.isNotEmpty(), Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp), enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.8f), exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.8f)) {
@@ -144,6 +155,7 @@ fun ChatScreen(vm: AppViewModel, bot: Bot) {
         }
         Composer(vm, onSent = { scope.launch { delay(50); list.scrollToItem(0) } })
     }
+    if (githubConnect) GithubConnectDialog(vm) { githubConnect = false }
 }
 
 @Composable
@@ -167,6 +179,7 @@ private fun RowView(vm: AppViewModel, row: ChatRow, actions: RenderActions) {
         }
         is ChatRow.Work -> WorkCard(vm, row)
         is ChatRow.Card -> JsonRenderView(row.spec, actions, Modifier.fillMaxWidth())
+        is ChatRow.FileCards -> FileCardsView(row.files)
         is ChatRow.Thinking -> ThinkingPill()
         is ChatRow.Pause -> PauseDots(row.lastText)
         is ChatRow.Error -> Column {

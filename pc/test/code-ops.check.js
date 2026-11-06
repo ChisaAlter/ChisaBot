@@ -30,6 +30,17 @@ test("features list includes coding ops", () => {
     assert.ok(ops.features.includes(op), op);
 });
 
+test("cancelled shell requests do not start after resolving their working directory", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const marker = path.join(root, "cancelled-command.txt");
+  const command = process.platform === "win32" ? "Set-Content cancelled-command.txt ran" : "printf ran > cancelled-command.txt";
+  for (const operation of ["shell", "exec_start"]) {
+    await assert.rejects(ops.run(operation, { command, cwd: root }, { ...ctx, signal: controller.signal }), /取消/);
+  }
+  assert.equal(fs.existsSync(marker), false);
+});
+
 test("search content with line numbers, skips node_modules, glob filter", async () => {
   const r = await ops.run("search", { pattern: "TODO" }, ctx);
   assert.equal(r.count, 2);

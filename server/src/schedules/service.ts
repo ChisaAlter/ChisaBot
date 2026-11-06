@@ -290,7 +290,7 @@ export function resolveWhen(
       runAt = new Date(now.getTime() + when.in_minutes * 60_000);
     else {
       const m =
-        /^(\d{4})-(\d{1,2})-(\d{1,2})[ T]([01]?\d|2[0-3])[:：]([0-5]\d)/.exec(
+        /^(\d{4})-(\d{1,2})-(\d{1,2})[ T]([01]?\d|2[0-3])[:：]([0-5]\d)$/.exec(
           (when.at ?? "").trim(),
         );
       if (!m)
@@ -306,8 +306,14 @@ export function resolveWhen(
         timezone,
       );
       const check = partsIn(runAt, timezone);
-      if (check.month !== Number(m[2]) || check.day !== Number(m[3]))
-        throw new ScheduleError("这个日期不存在。");
+      if (
+        check.year !== Number(m[1]) ||
+        check.month !== Number(m[2]) ||
+        check.day !== Number(m[3]) ||
+        check.hour !== Number(m[4]) ||
+        check.minute !== Number(m[5])
+      )
+        throw new ScheduleError("这个日期或当地时间不存在。");
     }
     // 整到分钟：「2 分钟后」按四舍五入，不会只剩 1 分多。
     runAt = new Date(Math.round(runAt.getTime() / 60_000) * 60_000);
@@ -808,25 +814,40 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     owner: string,
     id: string,
   ): Promise<{ runId: string; schedule: ScheduleView }> {
-    const row = await need(owner, id);
-    if (row.status === "cancelled")
-      throw new ScheduleError("这个任务已经取消了。");
-    if (running.has(row.id))
-      throw new ScheduleError("这个任务正在运行，等它跑完。");
     const runId = `run_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    // 一次性的立即运行 = 提前做完，不再到点再来一次。
-    const rows = await sql.unsafe<Row[]>(
-      row.kind === "once" && row.status === "active"
-        ? "UPDATE chisabot_schedules SET status='done', next_run_at=NULL, updated_at=now() WHERE id=$1 RETURNING *"
-        : "SELECT * FROM chisabot_schedules WHERE id=$1",
-      [row.id],
-    );
-    await sql.unsafe(
-      "INSERT INTO chisabot_schedule_runs (id, schedule_id, owner_user_id, scheduled_for, manual) VALUES ($1,$2,$3,now(),true)",
-      [runId, row.id, owner],
-    );
-    void fire(rows[0]!, runId, { manual: true, lateMs: 0 });
-    return { runId, schedule: view(rows[0]!) };
+    const row = await sql.begin(async (transaction) => {
+      const tx = transaction as unknown as Database["$client"];
+      const [current] = await tx.unsafe<Row[]>(
+        "SELECT * FROM chisabot_schedules WHERE id = $1 AND owner_user_id = $2 FOR UPDATE",
+        [id.trim(), owner],
+      );
+      if (!current)
+        throw new ScheduleError("找不到这个定时任务（用 schedule_list 看 id）。");
+      if (current.status === "cancelled")
+        throw new ScheduleError("这个任务已经取消了。");
+      const active = await tx.unsafe(
+        "SELECT 1 FROM chisabot_schedule_runs WHERE schedule_id = $1 AND status = 'running' LIMIT 1",
+        [current.id],
+      );
+      if (active.length)
+        throw new ScheduleError("这个任务正在运行，等它跑完。");
+      // 同一把行锁保护手动运行与扫描；立即运行和运行记录一起提交，失败不会提前消耗一次性提醒。
+      let claimed = current;
+      if (current.kind === "once" && current.status === "active") {
+        const rows = await tx.unsafe<Row[]>(
+          "UPDATE chisabot_schedules SET status='done', next_run_at=NULL, updated_at=now() WHERE id=$1 RETURNING *",
+          [current.id],
+        );
+        claimed = rows[0]!;
+      }
+      await tx.unsafe(
+        "INSERT INTO chisabot_schedule_runs (id, schedule_id, owner_user_id, scheduled_for, manual) VALUES ($1,$2,$3,now(),true)",
+        [runId, current.id, owner],
+      );
+      return claimed;
+    }) as Row;
+    void fire(row, runId, { manual: true, lateMs: 0 });
+    return { runId, schedule: view(row) };
   }
 
   async function finishRun(
@@ -1260,7 +1281,12 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
             forwardedProps: { chisabotSchedule: { id: row.id, runId } },
           });
           let text = result.replyText?.trim() || "（机器人这次没有文字回复）";
-          const silent = !options.manual && isSilentScheduleReply(text);
+          const replyStatus = classifyScheduleReply(text, { toolErrors: result.toolErrors });
+          // 静默只适用于成功巡检：工具失败后模型仍可能返回静默标记，不能据此删记录并报成功。
+          const silent =
+            !options.manual &&
+            isSilentScheduleReply(text) &&
+            replyStatus === "ok";
           if (silent) {
             text = "巡检完成：暂无需要打扰用户的事项";
             // 静默巡检无事发生：把刚塞进本地对话的触发消息和静默回复收起，不在聊天窗刷屏（「无事不打扰，有事主动开口」）。
@@ -1269,23 +1295,23 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
             await removeSilentRunMessages(threadId, row.owner_user_id, `schedule-${runId}`).catch(
               () => {},
             );
+          } else if (replyStatus === "failed" && isSilentScheduleReply(text)) {
+            text = "巡检未完成：本次有工具执行失败。";
           }
           let runnerError: string | null = null;
           if (!silent && im && deps.pushToIm) {
             try {
-              await deps.pushToIm(threadId, result.replyText?.trim() || text);
+              await deps.pushToIm(threadId, text);
             } catch (error) {
               runnerError = reasonWithoutStatement(error);
               text += `\n（推送到 IM 失败：${runnerError}）`;
             }
           }
           // M1：失败只看工具结果 / 运行器错误（及运行器固定前缀），不扫模型正文。
-          const status = silent
-            ? "ok"
-            : classifyScheduleReply(text, {
-                toolErrors: result.toolErrors,
-                runnerError,
-              });
+          const status = classifyScheduleReply(text, {
+            toolErrors: result.toolErrors,
+            runnerError,
+          });
           await finishRun(runId, row.id, status, text);
           if (status !== "ok")
             await deps.releaseThread?.(threadId).catch(() => {});
@@ -1389,7 +1415,22 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           }
         }
         const runId = `run_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-        const won = await sql.unsafe<{ id: string }[]>(
+        const won = await sql.begin(async (transaction) => {
+          const tx = transaction as unknown as Database["$client"];
+          const current = await tx.unsafe(
+            "SELECT id FROM chisabot_schedules WHERE id = $1 AND status = 'active' AND date_trunc('milliseconds', next_run_at) = $2::timestamptz FOR UPDATE",
+            [row.id, row.next_run_at],
+          );
+          if (!current.length) return [];
+          const active = fireIt ? await tx.unsafe(
+            "SELECT 1 FROM chisabot_schedule_runs WHERE schedule_id = $1 AND status = 'running' LIMIT 1",
+            [row.id],
+          ) : [];
+          if (active.length) {
+            fireIt = false;
+            skipReason = "上一次还没跑完，这一次跳过。";
+          }
+          return tx.unsafe<{ id: string }[]>(
           `WITH upd AS (
              UPDATE chisabot_schedules SET next_run_at = $3, status = $4, updated_at = now()
              WHERE id = $1 AND status = 'active' AND date_trunc('milliseconds', next_run_at) = $2::timestamptz RETURNING id, owner_user_id
@@ -1405,7 +1446,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
             fireIt ? "running" : "skipped",
             fireIt ? null : skipReason,
           ],
-        );
+          );
+        });
         if (!won.length) continue; // 别的进程先抢到了
         if (!fireIt) {
           await sql.unsafe(

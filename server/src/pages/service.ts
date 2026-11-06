@@ -192,6 +192,7 @@ export function createPages(
   } = {},
 ) {
   const sql = database.$client;
+  type PageSql = Pick<typeof sql, "unsafe">;
 
   async function ensure() {
     await sql.unsafe(`
@@ -258,17 +259,17 @@ export function createPages(
     return rows.map(pageView);
   }
 
-  async function row(owner: string, ref: string, includeDeleted = false) {
+  async function row(owner: string, ref: string, query: PageSql = sql, lock = false) {
     const key = ref.trim();
     const slug = key.match(/\/p\/([a-z0-9]{16})/)?.[1] ?? key;
-    const rows = await sql.unsafe<PageRow[]>(
-      `SELECT p.*, ${COUNTS} FROM chisabot_pages p WHERE p.owner_user_id = $1 AND (p.id = $2 OR p.slug = $2) ${includeDeleted ? "" : "AND p.deleted_at IS NULL"}`,
+    const rows = await query.unsafe<PageRow[]>(
+      `SELECT p.*, ${COUNTS} FROM chisabot_pages p WHERE p.owner_user_id = $1 AND (p.id = $2 OR p.slug = $2) AND p.deleted_at IS NULL${lock ? " FOR UPDATE OF p" : ""}`,
       [owner, slug],
     );
     return rows[0] ?? null;
   }
-  async function mustRow(owner: string, ref: string) {
-    const found = await row(owner, ref);
+  async function mustRow(owner: string, ref: string, query: PageSql = sql, lock = false) {
+    const found = await row(owner, ref, query, lock);
     if (!found) throw new PageError(`找不到页面「${ref}」。用 page_list 看看有哪些。`);
     return found;
   }
@@ -277,10 +278,10 @@ export function createPages(
     return found ? pageView(found) : null;
   };
 
-  async function version(pageId: string, n?: number) {
+  async function version(pageId: string, n?: number, query: PageSql = sql) {
     const rows = n
-      ? await sql.unsafe<VersionRow[]>("SELECT * FROM chisabot_page_versions WHERE page_id = $1 AND version = $2", [pageId, n])
-      : await sql.unsafe<VersionRow[]>("SELECT * FROM chisabot_page_versions WHERE page_id = $1 ORDER BY version DESC LIMIT 1", [pageId]);
+      ? await query.unsafe<VersionRow[]>("SELECT * FROM chisabot_page_versions WHERE page_id = $1 AND version = $2", [pageId, n])
+      : await query.unsafe<VersionRow[]>("SELECT * FROM chisabot_page_versions WHERE page_id = $1 ORDER BY version DESC LIMIT 1", [pageId]);
     return rows[0] ?? null;
   }
 
@@ -305,10 +306,11 @@ export function createPages(
     if (css && byteLength(css) > PAGE_LIMITS.cssBytes) throw new PageError("额外 CSS 超过 200KB。");
   }
 
-  async function addVersion(pageId: string, input: { title: string; html: string; css?: string | null; note?: string | null }) {
-    const [next] = await sql.unsafe<{ n: number }[]>("SELECT coalesce(max(version), 0) + 1 AS n FROM chisabot_page_versions WHERE page_id = $1", [pageId]);
+  // The caller owns the page row lock for the transaction, including the read used to build edits.
+  async function addVersion(query: PageSql, pageId: string, input: { title: string; html: string; css?: string | null; note?: string | null }) {
+    const [next] = await query.unsafe<{ n: number }[]>("SELECT coalesce(max(version), 0) + 1 AS n FROM chisabot_page_versions WHERE page_id = $1", [pageId]);
     const n = Number(next!.n);
-    await sql.unsafe("INSERT INTO chisabot_page_versions (page_id, version, title, html, css, note) VALUES ($1, $2, $3, $4, $5, $6)", [
+    await query.unsafe("INSERT INTO chisabot_page_versions (page_id, version, title, html, css, note) VALUES ($1, $2, $3, $4, $5, $6)", [
       pageId,
       n,
       input.title,
@@ -316,9 +318,9 @@ export function createPages(
       input.css?.trim() ? input.css : null,
       input.note?.trim() ? input.note.trim().slice(0, 200) : null,
     ]);
-    await sql.unsafe("UPDATE chisabot_pages SET current_version = $2, title = $3, updated_at = now() WHERE id = $1", [pageId, n, input.title]);
+    await query.unsafe("UPDATE chisabot_pages SET current_version = $2, title = $3, updated_at = now() WHERE id = $1", [pageId, n, input.title]);
     // 只留最近 50 版（当前版永远在）。
-    await sql.unsafe("DELETE FROM chisabot_page_versions WHERE page_id = $1 AND version <= $2", [pageId, n - PAGE_LIMITS.versionsKept]);
+    await query.unsafe("DELETE FROM chisabot_page_versions WHERE page_id = $1 AND version <= $2", [pageId, n - PAGE_LIMITS.versionsKept]);
     return n;
   }
 
@@ -326,15 +328,18 @@ export function createPages(
     const title = titleSchema.parse(input.title);
     const description = descriptionSchema.parse(input.description) || null;
     checkContent(input.html, input.css);
-    const [count] = await sql.unsafe<{ n: number }[]>("SELECT count(*)::int AS n FROM chisabot_pages WHERE owner_user_id = $1 AND deleted_at IS NULL", [owner]);
-    if (Number(count?.n ?? 0) >= PAGE_LIMITS.pagesPerUser) throw new PageError(`页面已经有 ${PAGE_LIMITS.pagesPerUser} 个了，先在 设置 → 页面 里删掉一些。`);
     const id = `pg_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
-    await sql.unsafe(
-      "INSERT INTO chisabot_pages (id, owner_user_id, agent_id, slug, title, description, published, current_version) VALUES ($1, $2, $3, $4, $5, $6, $7, 0)",
-      [id, owner, input.agentId ?? null, newSlug(), title, description, input.published ?? true],
-    );
-    await addVersion(id, { title, html: input.html, css: input.css ?? null, note: "创建" });
-    return pageView((await row(owner, id))!);
+    return sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended('chisabot-pages:' || $1, 0))", [owner]);
+      const [count] = await transaction.unsafe<{ n: number }[]>("SELECT count(*)::int AS n FROM chisabot_pages WHERE owner_user_id = $1 AND deleted_at IS NULL", [owner]);
+      if (Number(count?.n ?? 0) >= PAGE_LIMITS.pagesPerUser) throw new PageError(`页面已经有 ${PAGE_LIMITS.pagesPerUser} 个了，先在 设置 → 页面 里删掉一些。`);
+      await transaction.unsafe(
+        "INSERT INTO chisabot_pages (id, owner_user_id, agent_id, slug, title, description, published, current_version) VALUES ($1, $2, $3, $4, $5, $6, $7, 0)",
+        [id, owner, input.agentId ?? null, newSlug(), title, description, input.published ?? true],
+      );
+      await addVersion(transaction, id, { title, html: input.html, css: input.css ?? null, note: "创建" });
+      return pageView((await row(owner, id, transaction))!);
+    });
   }
 
   /** 改一页：整页换 html，或者若干处「原文 → 新文」替换（原文必须在当前版里恰好出现一次）。 */
@@ -343,37 +348,41 @@ export function createPages(
     ref: string,
     input: { title?: string | null; description?: string | null; html?: string | null; css?: string | null; edits?: { find: string; replace: string }[]; note?: string | null },
   ) {
-    const page = await mustRow(owner, ref);
-    const current = await version(page.id, page.current_version);
-    if (!current) throw new PageError("这个页面没有内容版本。");
-    let html = input.html ?? current.html;
-    for (const edit of input.edits ?? []) {
-      if (!edit.find) throw new PageError("替换的原文不能是空的。");
-      const first = html.indexOf(edit.find);
-      if (first < 0) throw new PageError(`当前版里找不到这段原文：「${edit.find.slice(0, 80)}」。先用 page_get 看最新内容。`);
-      if (html.indexOf(edit.find, first + 1) >= 0) throw new PageError(`这段原文出现了不止一次：「${edit.find.slice(0, 80)}」。多带一点上下文让它唯一。`);
-      html = html.slice(0, first) + edit.replace + html.slice(first + edit.find.length);
-    }
-    const css = input.css === undefined || input.css === null ? current.css : input.css;
-    const title = input.title ? titleSchema.parse(input.title) : page.title;
-    // 换标题时，正文里第一个和旧标题一字不差的 <h1> 跟着换（机器人常常只改 title，页面上的大标题没变）。
-    if (title !== page.title && !html.includes(title)) html = syncHeading(html, page.title, title);
-    checkContent(html, css);
-    const description = input.description === undefined || input.description === null ? undefined : descriptionSchema.parse(input.description) || null;
-    if (description !== undefined) await sql.unsafe("UPDATE chisabot_pages SET description = $2 WHERE id = $1", [page.id, description]);
-    const changed = html !== current.html || (css ?? null) !== (current.css ?? null) || title !== current.title;
-    if (changed) await addVersion(page.id, { title, html, css, note: input.note ?? null });
-    else await sql.unsafe("UPDATE chisabot_pages SET updated_at = now() WHERE id = $1", [page.id]);
-    return { page: pageView((await row(owner, page.id))!), changed };
+    return sql.begin(async (transaction) => {
+      const page = await mustRow(owner, ref, transaction, true);
+      const current = await version(page.id, page.current_version, transaction);
+      if (!current) throw new PageError("这个页面没有内容版本。");
+      let html = input.html ?? current.html;
+      for (const edit of input.edits ?? []) {
+        if (!edit.find) throw new PageError("替换的原文不能是空的。");
+        const first = html.indexOf(edit.find);
+        if (first < 0) throw new PageError(`当前版里找不到这段原文：「${edit.find.slice(0, 80)}」。先用 page_get 看最新内容。`);
+        if (html.indexOf(edit.find, first + 1) >= 0) throw new PageError(`这段原文出现了不止一次：「${edit.find.slice(0, 80)}」。多带一点上下文让它唯一。`);
+        html = html.slice(0, first) + edit.replace + html.slice(first + edit.find.length);
+      }
+      const css = input.css === undefined || input.css === null ? current.css : input.css;
+      const title = input.title ? titleSchema.parse(input.title) : page.title;
+      // 换标题时，正文里第一个和旧标题一字不差的 <h1> 跟着换（机器人常常只改 title，页面上的大标题没变）。
+      if (title !== page.title && !html.includes(title)) html = syncHeading(html, page.title, title);
+      checkContent(html, css);
+      const description = input.description === undefined || input.description === null ? undefined : descriptionSchema.parse(input.description) || null;
+      if (description !== undefined) await transaction.unsafe("UPDATE chisabot_pages SET description = $2 WHERE id = $1", [page.id, description]);
+      const changed = html !== current.html || (css ?? null) !== (current.css ?? null) || title !== current.title;
+      if (changed) await addVersion(transaction, page.id, { title, html, css, note: input.note ?? null });
+      else await transaction.unsafe("UPDATE chisabot_pages SET updated_at = now() WHERE id = $1", [page.id]);
+      return { page: pageView((await row(owner, page.id, transaction))!), changed };
+    });
   }
 
   async function restore(owner: string, ref: string, n: number) {
-    const page = await mustRow(owner, ref);
-    const old = await version(page.id, n);
-    if (!old) throw new PageError(`没有第 ${n} 版（只保留最近 ${PAGE_LIMITS.versionsKept} 版）。`);
-    if (n === page.current_version) return pageView(page);
-    await addVersion(page.id, { title: old.title, html: old.html, css: old.css, note: `恢复到第 ${n} 版` });
-    return pageView((await row(owner, page.id))!);
+    return sql.begin(async (transaction) => {
+      const page = await mustRow(owner, ref, transaction, true);
+      const old = await version(page.id, n, transaction);
+      if (!old) throw new PageError(`没有第 ${n} 版（只保留最近 ${PAGE_LIMITS.versionsKept} 版）。`);
+      if (n === page.current_version) return pageView(page);
+      await addVersion(transaction, page.id, { title: old.title, html: old.html, css: old.css, note: `恢复到第 ${n} 版` });
+      return pageView((await row(owner, page.id, transaction))!);
+    });
   }
 
   async function setPublished(owner: string, ref: string, published: boolean) {
@@ -395,25 +404,27 @@ export function createPages(
   }
 
   async function putAsset(owner: string, ref: string, rawName: string, bytes: Uint8Array) {
-    const page = await mustRow(owner, ref);
     const name = assetName(rawName);
     if (bytes.byteLength === 0) throw new PageError(`素材「${name}」是空文件。`);
     if (bytes.byteLength > PAGE_LIMITS.assetBytes) throw new PageError(`素材「${name}」超过 8MB。先压缩一下（比如缩小图片尺寸）。`);
     if (!sniffMatches(name, bytes)) throw new PageError(`素材「${name}」的内容和扩展名对不上。`);
-    const [usage] = await sql.unsafe<{ n: number; total: number }[]>(
-      "SELECT count(*)::int AS n, coalesce(sum(bytes), 0)::bigint AS total FROM chisabot_page_assets WHERE page_id = $1 AND name <> $2",
-      [page.id, name],
-    );
-    if (Number(usage!.n) >= PAGE_LIMITS.assetsPerPage) throw new PageError(`一个页面最多 ${PAGE_LIMITS.assetsPerPage} 个素材。`);
-    if (Number(usage!.total) + bytes.byteLength > PAGE_LIMITS.pageAssetBytes) throw new PageError("这个页面的素材加起来超过 40MB 了。");
-    const ext = name.slice(name.lastIndexOf(".") + 1);
-    await sql.unsafe(
-      `INSERT INTO chisabot_page_assets (page_id, name, type, bytes, data) VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (page_id, name) DO UPDATE SET type = EXCLUDED.type, bytes = EXCLUDED.bytes, data = EXCLUDED.data, created_at = now()`,
-      [page.id, name, PAGE_ASSET_TYPES[ext]!, bytes.byteLength, Buffer.from(bytes)],
-    );
-    await sql.unsafe("UPDATE chisabot_pages SET updated_at = now() WHERE id = $1", [page.id]);
-    return name;
+    return sql.begin(async (transaction) => {
+      const page = await mustRow(owner, ref, transaction, true);
+      const [usage] = await transaction.unsafe<{ n: number; total: number }[]>(
+        "SELECT count(*)::int AS n, coalesce(sum(bytes), 0)::bigint AS total FROM chisabot_page_assets WHERE page_id = $1 AND name <> $2",
+        [page.id, name],
+      );
+      if (Number(usage!.n) >= PAGE_LIMITS.assetsPerPage) throw new PageError(`一个页面最多 ${PAGE_LIMITS.assetsPerPage} 个素材。`);
+      if (Number(usage!.total) + bytes.byteLength > PAGE_LIMITS.pageAssetBytes) throw new PageError("这个页面的素材加起来超过 40MB 了。");
+      const ext = name.slice(name.lastIndexOf(".") + 1);
+      await transaction.unsafe(
+        `INSERT INTO chisabot_page_assets (page_id, name, type, bytes, data) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (page_id, name) DO UPDATE SET type = EXCLUDED.type, bytes = EXCLUDED.bytes, data = EXCLUDED.data, created_at = now()`,
+        [page.id, name, PAGE_ASSET_TYPES[ext]!, bytes.byteLength, Buffer.from(bytes)],
+      );
+      await transaction.unsafe("UPDATE chisabot_pages SET updated_at = now() WHERE id = $1", [page.id]);
+      return name;
+    });
   }
   async function deleteAsset(owner: string, ref: string, name: string) {
     const page = await mustRow(owner, ref);

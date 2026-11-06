@@ -319,7 +319,7 @@ export function useConversationSync(
       seenSeq = activity.seq;
       if (revisionNeedsRebuild(knownRevision, activity.revision, ownRevisions.get(threadId))) rebuildPending = true;
       if (activity.revision !== undefined) knownRevision = activity.revision;
-      if (rebuildPending && !agent.isRunning && !connecting) {
+      if (rebuildPending && !agent.isRunning && !connecting && !suppressConnect?.()) {
         // 别的设备重新生成 / 编辑重发截断了这段对话：清空，按服务器回放重建（截掉的气泡、卡片一起消失）。
         rebuildPending = false;
         last = activity;

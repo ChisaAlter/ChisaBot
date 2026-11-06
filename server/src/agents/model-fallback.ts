@@ -141,6 +141,7 @@ async function withFirstOutputDeadline(
   });
   deadline.catch(() => {});
   let streaming = false;
+  let openingReader: ReadableStreamDefaultReader<{ type?: string }> | undefined;
   const cleanupParent = () => parent?.removeEventListener("abort", forward);
   const callOptions =
     options && typeof options === "object" && "abortSignal" in options
@@ -168,6 +169,7 @@ async function withFirstOutputDeadline(
       return result;
     const streamed = result as StreamResult;
     const reader = streamed.stream.getReader();
+    openingReader = reader;
     const head: { type?: string }[] = [];
     let done = false;
     for (;;) {
@@ -176,8 +178,11 @@ async function withFirstOutputDeadline(
         done = true;
         break;
       }
+      // Providers can report a rejected request as an error part after HTTP 200. Until real
+      // output arrives this is still a request failure, so the same fallback rules apply.
+      if (next.value?.type === "error")
+        throw (next.value as { error?: unknown }).error ?? new Error("Model stream failed before producing output.");
       head.push(next.value);
-      if (next.value?.type === "error") noteStreamError();
       if (isFirstOutputPart(next.value)) break;
     }
     if (!done) streaming = true;
@@ -212,6 +217,9 @@ async function withFirstOutputDeadline(
     });
     return { ...streamed, stream };
   } catch (error) {
+    // The first-output race may abandon a pending read. Cancel the owned reader as well as
+    // aborting the request so transformed streams release their upstream connection.
+    if (openingReader && !streaming) void openingReader.cancel(error).catch(() => {});
     if (timedOut && !parent?.aborted) throw new FirstOutputTimeout(ms);
     throw error;
   } finally {
@@ -354,6 +362,8 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
     log({ type: "model-fallback", event: "stream-error", model: modelId, consecutiveFailures: failures.get(modelId) });
   };
   const wrap = (property: "doStream" | "doGenerate") => async (options: unknown) => {
+    const parentSignal = (options as { abortSignal?: AbortSignal } | null)?.abortSignal;
+    parentSignal?.throwIfAborted();
     const primaryCall = (target[property] as Call).bind(model);
     let firstError: unknown = null;
     let reason: FallbackReason = "quota";
@@ -366,6 +376,7 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
       return accepts === true ? opts : filePartsToText(opts);
     };
     const primaryOptions = await prepare(primaryId, options);
+    parentSignal?.throwIfAborted();
     const until = cooldown.get(primaryId);
     if (until === undefined || until <= now()) {
       if (until !== undefined) cooldown.delete(primaryId);
@@ -379,6 +390,7 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
         failures.delete(primaryId);
         return result;
       } catch (error) {
+        if (parentSignal?.aborted) throw error;
         const why = error instanceof FirstOutputTimeout ? ("unavailable" as const) : fallbackReason(error);
         if (!why) throw error;
         firstError = error;
@@ -391,6 +403,7 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
            */
           const clean = deps.sanitize ?? sanitizeCallOptionsForRetry;
           const cleaned = await Promise.resolve(clean(primaryOptions)).catch(() => primaryOptions);
+          parentSignal?.throwIfAborted();
           try {
             const result =
               deadlineMs > 0 && list.some((id) => id !== primaryId)
@@ -399,6 +412,7 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
             failures.delete(primaryId);
             return result;
           } catch (retryError) {
+            if (parentSignal?.aborted) throw retryError;
             firstError = retryError;
             log({ type: "model-fallback", event: "primary-rejected", model: primaryId, error: errorSnippet(retryError) });
           }
@@ -420,12 +434,14 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
       log({ type: "model-fallback", event: "skip-primary", model: primaryId, reason, cooldownRemainingSeconds: Math.max(0, Math.round((until - now()) / 1000)) });
     }
     for (const id of list) {
+      parentSignal?.throwIfAborted();
       if (id === primaryId || coolingDown(id, now())) continue;
       const other = deps.build(id) as Model | null;
       const call = other && typeof other[property] === "function" ? (other[property] as Call).bind(other) : null;
       if (!call) continue;
       const adapted = deps.adapt ? await deps.adapt(id, options).catch(() => options) : options;
       const sent = await prepare(id, adapted);
+      parentSignal?.throwIfAborted();
       try {
         const result =
           deadlineMs > 0
@@ -436,7 +452,6 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
         announce({ from: primaryId, to: id, reason });
         return result;
       } catch (error) {
-        const parentSignal = (options as { abortSignal?: AbortSignal } | null)?.abortSignal;
         if (parentSignal?.aborted) throw error;
         // 备用模型的任何错误都不该挡住下一个候选（以前 404「model not found」直接抛出，后面的候选和主模型都没机会，§101）。
         const why = error instanceof FirstOutputTimeout ? "unavailable" : fallbackReason(error);

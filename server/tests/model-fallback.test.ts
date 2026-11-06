@@ -483,17 +483,62 @@ describe("model fallback on quota errors", () => {
 
     test("doStream whose stream only says stream-start counts as no output; the hung request is aborted", async () => {
       let signal: AbortSignal | undefined;
+      let cancelled = false;
       const primary = {
         modelId: "p",
         async doStream(options: { abortSignal?: AbortSignal }) {
           signal = options.abortSignal;
-          return { stream: new ReadableStream({ start: (c) => c.enqueue({ type: "stream-start" }) }) };
+          return { stream: new ReadableStream({
+            start: (c) => c.enqueue({ type: "stream-start" }),
+            cancel: () => { cancelled = true; },
+          }) };
         },
       };
       const backup = fakeModel("b", async () => ({ ok: "b" }));
       const wrapped = fallbackLanguageModel(primary, "c/p", { candidates: async () => ["c/b"], build: () => backup.model, log: () => {}, firstOutputMs: 30 });
       expect(await wrapped.doStream({})).toEqual({ ok: "b" });
       expect(signal?.aborted).toBe(true);
+      expect(cancelled).toBe(true);
+    });
+
+    test("an error part before real output switches immediately and closes the rejected stream", async () => {
+      let cancelled = false;
+      const primary = {
+        async doStream() {
+          return { stream: new ReadableStream({
+            start(c) {
+              c.enqueue({ type: "stream-start" });
+              c.enqueue({ type: "error", error: apiError(429, "rate limited") });
+            },
+            cancel: () => { cancelled = true; },
+          }) };
+        },
+      };
+      const backup = fakeModel("b", async () => ({ ok: "backup" }));
+      const logs: Record<string, unknown>[] = [];
+      const wrapped = fallbackLanguageModel(primary, "c/p", {
+        candidates: async () => ["c/b"], build: () => backup.model,
+        log: (line) => logs.push(line), firstOutputMs: 1_000,
+      });
+      expect(await wrapped.doStream({})).toEqual({ ok: "backup" });
+      expect(cancelled).toBe(true);
+      expect(logs.some((line) => line.event === "primary-quota")).toBe(true);
+      expect(logs.some((line) => line.event === "primary-timeout")).toBe(false);
+    });
+
+    test("Stop during rejected-request cleanup cannot start a retry or backup", async () => {
+      const controller = new AbortController();
+      const primary = fakeModel("p", async () => { throw apiError(400, "invalid input"); });
+      const backup = fakeModel("b", async () => ({ ok: "backup" }));
+      const wrapped = fallbackLanguageModel(primary.model, "c/p", {
+        candidates: async () => ["c/b"], build: () => backup.model,
+        log: () => {}, firstOutputMs: 0,
+        sanitize: (options) => { controller.abort(new Error("stopped")); return options; },
+      });
+      await expect(wrapped.doGenerate({ abortSignal: controller.signal })).rejects.toThrow("stopped");
+      expect(primary.calls).toHaveLength(1);
+      expect(backup.calls).toHaveLength(0);
+      expect(coolingDown("c/p")).toBe(false);
     });
 
     test("stream-start + response-metadata then hang still hits the deadline; probe rounds are bounded too", async () => {

@@ -47,7 +47,7 @@ import {
 import { Card, ErrorCard, ListRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
-import { agentListQueryOptions } from "@/lib/agents/queries";
+import { agentKeys, agentListQueryOptions } from "@/lib/agents/queries";
 import { useOpenThread } from "@/lib/channels/open-thread";
 import { agoText } from "@/lib/im";
 import { scheduleZone } from "@/lib/schedule-edit";
@@ -124,20 +124,12 @@ function SchedulesPage() {
     if (!ok) return;
     setPurging(true);
     try {
-      const r = await purgeOrphanSchedules();
-      let n = r.deleted;
-      // 服务端按 agent_profiles 硬删；若 UI 仍看见孤儿（隐藏/列表不同步），再逐条兜底。
-      if (n === 0 && orphanAll.length) {
-        for (const s of orphanAll) {
-          try {
-            await deleteSchedule(s.id);
-            n += 1;
-          } catch {
-            // 已不存在或无权限：跳过
-          }
-        }
-      }
-      await queryClient.invalidateQueries({ queryKey: scheduleKeys.all });
+      const { deleted: n } = await purgeOrphanSchedules();
+      // 前端机器人列表可能过期；是否孤儿只由服务端判断，不能再逐条删除绕过检查。
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: scheduleKeys.all }),
+        queryClient.invalidateQueries({ queryKey: agentKeys.all }),
+      ]);
       if (n) toast.success(`已清理 ${n} 条`);
       else toast.success("没有可清理的条目");
     } catch (error) {
@@ -256,13 +248,13 @@ function SchedulesPage() {
           </>
         ) : (
           <PageEmpty>
-            <div className="flex flex-col items-center gap-3">
+            <span className="flex flex-col items-center gap-3">
               <span>
                 {
                   "还没有定时任务。在对话里对机器人说「明早 9 点提醒我给妈妈打电话」就会建一个。也可以点下面的起手句，它会填进对话输入框，补完再发送："
                 }
               </span>
-              <div className="flex flex-wrap items-center justify-center gap-2">
+              <span className="flex flex-wrap items-center justify-center gap-2">
                 {SCHEDULE_PRESETS.map((preset) => (
                   <Button
                     data-testid={`schedule-preset-${preset.id}`}
@@ -275,8 +267,8 @@ function SchedulesPage() {
                     {preset.label}
                   </Button>
                 ))}
-              </div>
-            </div>
+              </span>
+            </span>
           </PageEmpty>
         )}
       </PageShell>

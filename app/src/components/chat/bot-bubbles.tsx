@@ -1,4 +1,5 @@
 import {
+  IconBrandGithub,
   IconCalendarEvent,
   IconChevronDown,
   IconCode,
@@ -11,18 +12,34 @@ import {
   IconSparkles,
   IconSun,
 } from "@tabler/icons-react";
+import { useQuery } from "@tanstack/react-query";
 import DOMPurify from "dompurify";
 import { motion, useReducedMotion } from "motion/react";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { DiagramZoom, svgNaturalWidth } from "@/components/chat/diagram-zoom";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { useDisplayText } from "@/components/rich-previews/rich-previews";
+import { GithubTokenDialog } from "@/components/settings/github-connection";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { CopyButton } from "@/components/ui/copy-button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { type BubbleSegment, splitBubbles } from "@/lib/chat/bubbles";
 import { renderMermaidToSvg } from "@/lib/chat/mermaid-lite";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
+import { githubQueryOptions } from "@/lib/github";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 
 export type ReplyTarget = {
@@ -69,9 +86,18 @@ export const BotBubbles = memo(function BotBubbles({
   const effectiveReplyText = replyToText ?? replyTo?.text;
   const effectiveReplyId = replyToId ?? replyTo?.id;
   const display = useDisplayText(text);
-  const normalizedDisplay = useMemo(() => normalizeDirectiveCards(display), [display]);
-  const segments = useMemo(() => splitBubbles(normalizedDisplay), [normalizedDisplay]);
-  const hasExplicitQuote = useMemo(() => segments.some((s) => Boolean(s.quote)), [segments]);
+  const normalizedDisplay = useMemo(
+    () => normalizeDirectiveCards(display),
+    [display],
+  );
+  const segments = useMemo(
+    () => splitBubbles(normalizedDisplay),
+    [normalizedDisplay],
+  );
+  const hasExplicitQuote = useMemo(
+    () => segments.some((s) => Boolean(s.quote)),
+    [segments],
+  );
   // 第一次渲染时已经在的气泡排队淡入；之后流式新增的不排队。
   const initial = useRef<number | null>(null);
   if (initial.current === null) initial.current = segments.length;
@@ -79,26 +105,38 @@ export const BotBubbles = memo(function BotBubbles({
   if (segments.length === 0) {
     return effectiveReplyText ? (
       <div className="chat-bubbles" data-cb-turn={tone}>
-        <ReplyQuote targetMessageId={effectiveReplyId} text={effectiveReplyText} />
+        <ReplyQuote
+          targetMessageId={effectiveReplyId}
+          text={effectiveReplyText}
+        />
       </div>
     ) : null;
   }
   return (
     <div className="chat-bubbles" data-cb-turn={tone}>
       {segments.map((seg, i) => {
-        const effectiveQuote = seg.quote ?? (!hasExplicitQuote && i === 0 ? effectiveReplyText : undefined);
+        const effectiveQuote =
+          seg.quote ??
+          (!hasExplicitQuote && i === 0 ? effectiveReplyText : undefined);
         const targetId = seg.quote ? undefined : effectiveReplyId;
         return (
           <motion.div
             animate={{ opacity: 1, transform: "translateY(0px)" }}
             className="chat-bubble-arrive"
             data-slot="bubble-arriving"
-            initial={!animate || i === 0 ? false : { opacity: 0, transform: reduce ? "none" : "translateY(6px)" }}
+            initial={
+              !animate || i === 0
+                ? false
+                : { opacity: 0, transform: reduce ? "none" : "translateY(6px)" }
+            }
             // 段落的序号就是它的身份：流式时只会在末尾追加，前面的段不会换位置。
             // biome-ignore lint/suspicious/noArrayIndexKey: 见上
             key={i}
             transition={{
-              delay: !animate || reduce || i >= (initial.current ?? 0) ? 0 : delay + i * BEAT_SECONDS,
+              delay:
+                !animate || reduce || i >= (initial.current ?? 0)
+                  ? 0
+                  : delay + i * BEAT_SECONDS,
               duration: ENTRANCE_SECONDS,
               ease: EASE_OUT,
             }}
@@ -136,17 +174,25 @@ export function normalizeDirectiveCards(raw: string): string {
       i++;
       let inCard = false;
       while (i < rawLines.length) {
-        const cur = (rawLines[i] ?? "").trim();
-        groupLines.push(rawLines[i]!);
-        i++;
+        const raw = rawLines[i] ?? "";
+        const cur = raw.trim();
         if (cur.startsWith(":::card")) {
           inCard = true;
+          groupLines.push(raw);
+          i++;
         } else if (cur === ":::") {
+          groupLines.push(raw);
+          i++;
           if (inCard) {
             inCard = false;
           } else {
             break;
           }
+        } else if (!inCard && cur !== "") {
+          break;
+        } else {
+          groupLines.push(raw);
+          i++;
         }
       }
       step1.push("```cards", ...groupLines, "```");
@@ -231,7 +277,9 @@ function autoWrapMultiSectionDoc(text: string): string {
       tailParaLines.length <= 2 &&
       tailText.length > 0 &&
       tailText.length <= 120 &&
-      !tailParaLines.some((l) => /^(\s*[-*+]|\s*\d+[.)]|\s*#|\s*\||\[[^\]]+\]\(\/)/.test(l));
+      !tailParaLines.some((l) =>
+        /^(\s*[-*+]|\s*\d+[.)]|\s*#|\s*\||\[[^\]]+\]\(\/)/.test(l),
+      );
     if (isPlainFollowup) {
       docEndIdx = tailStart - 1;
       while (docEndIdx > lastHeadingIdx && !(lines[docEndIdx] ?? "").trim()) {
@@ -266,13 +314,23 @@ function autoWrapMultiSectionDoc(text: string): string {
         .join(" ")
         .replace(/[*_`~：:。！!？?]+/g, " ")
         .trim();
-      const leadMatch = /(?:整理了|汇总了|生成了|如下|关于)\s*([^，,。：:\s]{3,22})/.exec(leadText);
-      docTitle = (leadMatch?.[1] ?? rawHeadingText.replace(/^[0-9一二三四五六七八九十]+[、.．)\s]+/, "")).slice(0, 36) || "重点事项总览";
+      const leadMatch =
+        /(?:整理了|汇总了|生成了|如下|关于)\s*([^，,。：:\s]{3,22})/.exec(
+          leadText,
+        );
+      docTitle =
+        (
+          leadMatch?.[1] ??
+          rawHeadingText.replace(/^[0-9一二三四五六七八九十]+[、.．)\s]+/, "")
+        ).slice(0, 36) || "重点事项总览";
     }
   }
 
   const before = lines.slice(0, firstHeadingIdx).join("\n").trim();
-  const after = lines.slice(docEndIdx + 1).join("\n").trim();
+  const after = lines
+    .slice(docEndIdx + 1)
+    .join("\n")
+    .trim();
   const parts: string[] = [];
   if (before) parts.push(before);
   parts.push(["````doc", `标题：${docTitle}`, ...bodyLines, "````"].join("\n"));
@@ -280,17 +338,23 @@ function autoWrapMultiSectionDoc(text: string): string {
   return parts.join("\n\n");
 }
 
-export function parseStatusCardsFence(rawText: string): ParsedStatusCard[] | null {
+export function parseStatusCardsFence(
+  rawText: string,
+): ParsedStatusCard[] | null {
   const lines = rawText.replace(/\r\n?/g, "\n").split("\n");
   const first = (lines[0] ?? "").trim();
   if (!/^```+cards\b/i.test(first)) return null;
   const inner = lines.slice(1);
-  if (inner.length > 0 && /^```+$/.test((inner[inner.length - 1] ?? "").trim())) {
+  if (
+    inner.length > 0 &&
+    /^```+$/.test((inner[inner.length - 1] ?? "").trim())
+  ) {
     inner.pop();
   }
 
   const cards: ParsedStatusCard[] = [];
-  let curCard: { title: string; status?: string; bodyLines: string[] } | null = null;
+  let curCard: { title: string; status?: string; bodyLines: string[] } | null =
+    null;
 
   for (const rawLine of inner) {
     const trimmed = rawLine.trim();
@@ -346,7 +410,9 @@ type ParsedArtifactFence = {
   closed: boolean;
 };
 
-export function parseArtifactFence(rawText: string): ParsedArtifactFence | null {
+export function parseArtifactFence(
+  rawText: string,
+): ParsedArtifactFence | null {
   const lines = rawText.replace(/\r\n?/g, "\n").split("\n");
   let heading: string | undefined;
   let fenceStart = -1;
@@ -375,7 +441,11 @@ export function parseArtifactFence(rawText: string): ParsedArtifactFence | null 
   if (lang !== "mermaid" && lang !== "svg" && lang !== "html") return null;
 
   const bodyLines = lines.slice(fenceStart + 1);
-  while (bodyLines.length > 0 && (bodyLines[bodyLines.length - 1] ?? "").trim() === "") bodyLines.pop();
+  while (
+    bodyLines.length > 0 &&
+    (bodyLines[bodyLines.length - 1] ?? "").trim() === ""
+  )
+    bodyLines.pop();
   let closed = false;
   if (bodyLines.length > 0) {
     const last = (bodyLines[bodyLines.length - 1] ?? "").trim();
@@ -387,9 +457,10 @@ export function parseArtifactFence(rawText: string): ParsedArtifactFence | null 
 
   let title = heading;
   const firstBody = (bodyLines[0] ?? "").trim();
-  const tm = /^(?:<!--\s*(?:标题|title)\s*[：:]\s*(.+?)\s*-->|(?:%%|\/\/)\s*(?:标题|title)\s*[：:]\s*(.+)|(?:标题|title)\s*[：:]\s*(.+))$/i.exec(
-    firstBody,
-  );
+  const tm =
+    /^(?:<!--\s*(?:标题|title)\s*[：:]\s*(.+?)\s*-->|(?:%%|\/\/)\s*(?:标题|title)\s*[：:]\s*(.+)|(?:标题|title)\s*[：:]\s*(.+))$/i.exec(
+      firstBody,
+    );
   if (tm) {
     title = (tm[1] ?? tm[2] ?? tm[3] ?? "").trim().slice(0, 44);
     bodyLines.shift();
@@ -404,7 +475,11 @@ export function parseArtifactFence(rawText: string): ParsedArtifactFence | null 
   }
 
   const defaultTitle =
-    lang === "mermaid" ? "架构与流程图" : lang === "svg" ? "SVG 矢量图" : "HTML 交互微应用";
+    lang === "mermaid"
+      ? "架构与流程图"
+      : lang === "svg"
+        ? "SVG 矢量图"
+        : "HTML 交互微应用";
 
   return {
     lang,
@@ -415,7 +490,9 @@ export function parseArtifactFence(rawText: string): ParsedArtifactFence | null 
   };
 }
 
-function parseActionPillSegment(rawText: string): { label: string; href: string } | null {
+function parseActionPillSegment(
+  rawText: string,
+): { label: string; href: string } | null {
   const trimmed = rawText.trim();
   const match = /^\[([^\]]{2,32})\]\((\/[a-zA-Z0-9/_?=&#-]*)\)$/.exec(trimmed);
   if (!match) return null;
@@ -425,45 +502,97 @@ function parseActionPillSegment(rawText: string): { label: string; href: string 
   return { label, href };
 }
 
-function HarkActionPill({ label, href }: { label: string; href: string }) {
+const GITHUB_CONNECT_HREF = "/settings/connected-accounts/github";
+
+export function HarkActionPill({
+  label,
+  href,
+}: {
+  label: string;
+  href: string;
+}) {
   const lower = `${label} ${href}`.toLowerCase();
+  const isGithub = href === GITHUB_CONNECT_HREF;
   const isGoogle = lower.includes("google") || lower.includes("gmail");
   const isCalendar = lower.includes("日历") || lower.includes("calendar");
-  const isMail = lower.includes("邮箱") || lower.includes("邮件") || lower.includes("mail");
+  const isMail =
+    lower.includes("邮箱") || lower.includes("邮件") || lower.includes("mail");
+  const icon = isGithub ? (
+    <IconBrandGithub
+      aria-hidden="true"
+      className="size-4 shrink-0 text-[#14171f]"
+    />
+  ) : isGoogle ? (
+    <svg aria-hidden="true" className="size-4 shrink-0" viewBox="0 0 24 24">
+      <path
+        d="M21.805 10.023h-9.765v3.954h5.617c-.242 1.296-.977 2.391-2.086 3.125v2.594h3.375c1.977-1.82 3.117-4.5 3.117-7.688 0-.664-.062-1.305-.258-1.985z"
+        fill="#4285F4"
+      />
+      <path
+        d="M12.04 22c2.812 0 5.172-.93 6.898-2.523l-3.375-2.594c-.937.633-2.133 1.008-3.523 1.008-2.711 0-5.008-1.828-5.828-4.289H2.727v2.68C4.445 19.695 7.969 22 12.04 22z"
+        fill="#34A853"
+      />
+      <path
+        d="M6.212 13.602A5.996 5.996 0 0 1 5.89 11.99c0-.562.102-1.109.32-1.617V7.693H2.727A9.963 9.963 0 0 0 1.65 11.99c0 1.617.39 3.148 1.077 4.305l3.485-2.693z"
+        fill="#FBBC05"
+      />
+      <path
+        d="M12.04 5.969c1.531 0 2.906.523 3.992 1.562l2.992-2.992C17.204 2.844 14.852 1.98 12.04 1.98 7.969 1.98 4.445 4.285 2.727 7.693l3.485 2.68c.82-2.461 3.117-4.404 5.828-4.404z"
+        fill="#EA4335"
+      />
+    </svg>
+  ) : isCalendar ? (
+    <IconCalendarEvent
+      aria-hidden="true"
+      className="size-4 shrink-0 text-[var(--pal-accent,#2563eb)]"
+    />
+  ) : isMail ? (
+    <IconMail
+      aria-hidden="true"
+      className="size-4 shrink-0 text-[var(--pal-accent,#2563eb)]"
+    />
+  ) : (
+    <IconSparkles
+      aria-hidden="true"
+      className="size-4 shrink-0 text-[#14171f]"
+    />
+  );
+  if (isGithub) return <GithubConnectPill icon={icon} label={label} />;
   return (
-    <a
-      className="hark-action-pill"
-      data-testid="hark-action-pill"
-      href={href}
-    >
-      {isGoogle ? (
-        <svg aria-hidden="true" className="size-4 shrink-0" viewBox="0 0 24 24">
-          <path
-            d="M21.805 10.023h-9.765v3.954h5.617c-.242 1.296-.977 2.391-2.086 3.125v2.594h3.375c1.977-1.82 3.117-4.5 3.117-7.688 0-.664-.062-1.305-.258-1.985z"
-            fill="#4285F4"
-          />
-          <path
-            d="M12.04 22c2.812 0 5.172-.93 6.898-2.523l-3.375-2.594c-.937.633-2.133 1.008-3.523 1.008-2.711 0-5.008-1.828-5.828-4.289H2.727v2.68C4.445 19.695 7.969 22 12.04 22z"
-            fill="#34A853"
-          />
-          <path
-            d="M6.212 13.602A5.996 5.996 0 0 1 5.89 11.99c0-.562.102-1.109.32-1.617V7.693H2.727A9.963 9.963 0 0 0 1.65 11.99c0 1.617.39 3.148 1.077 4.305l3.485-2.693z"
-            fill="#FBBC05"
-          />
-          <path
-            d="M12.04 5.969c1.531 0 2.906.523 3.992 1.562l2.992-2.992C17.204 2.844 14.852 1.98 12.04 1.98 7.969 1.98 4.445 4.285 2.727 7.693l3.485 2.68c.82-2.461 3.117-4.404 5.828-4.404z"
-            fill="#EA4335"
-          />
-        </svg>
-      ) : isCalendar ? (
-        <IconCalendarEvent aria-hidden="true" className="size-4 shrink-0 text-[var(--pal-accent,#2563eb)]" />
-      ) : isMail ? (
-        <IconMail aria-hidden="true" className="size-4 shrink-0 text-[var(--pal-accent,#2563eb)]" />
-      ) : (
-        <IconSparkles aria-hidden="true" className="size-4 shrink-0 text-[#14171f]" />
-      )}
+    <a className="hark-action-pill" data-testid="hark-action-pill" href={href}>
+      {icon}
       <span>{label}</span>
     </a>
+  );
+}
+
+/** GitHub 连接卡：点了不跳设置页，就地弹设置里同一个令牌弹窗（令牌只发往服务器，不进对话）。 */
+function GithubConnectPill({
+  icon,
+  label,
+}: {
+  icon: ReactNode;
+  label: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const connection = useQuery(githubQueryOptions());
+  return (
+    <>
+      <button
+        className="hark-action-pill"
+        data-testid="hark-action-pill"
+        onClick={() => setOpen(true)}
+        type="button"
+      >
+        {icon}
+        <span>{label}</span>
+      </button>
+      <GithubTokenDialog
+        onOpenChange={setOpen}
+        open={open}
+        replacing={Boolean(connection.data)}
+      />
+    </>
   );
 }
 
@@ -478,7 +607,9 @@ function Segment({
   quote?: string | undefined;
   targetMessageId?: string | undefined;
 }) {
-  const quoteNode = quote ? <ReplyQuote targetMessageId={targetMessageId} text={quote} /> : null;
+  const quoteNode = quote ? (
+    <ReplyQuote targetMessageId={targetMessageId} text={quote} />
+  ) : null;
   if (seg.kind === "draft") {
     return (
       <>
@@ -539,12 +670,20 @@ function Segment({
       {quoteNode}
       <Bubble
         align="start"
-        className={seg.kind === "code" ? "chat-bubble-bare w-full" : seg.wide ? "w-full" : "chat-bubble-fit"}
+        className={
+          seg.kind === "code"
+            ? "chat-bubble-bare w-full"
+            : seg.wide
+              ? "w-full"
+              : "chat-bubble-fit"
+        }
         data-cb-bubble={seg.kind}
         variant="ghost"
       >
         <BubbleContent className={seg.wide ? "w-full" : undefined}>
-          <SmoothStreamdown components={components as never}>{seg.text}</SmoothStreamdown>
+          <SmoothStreamdown components={components as never}>
+            {seg.text}
+          </SmoothStreamdown>
         </BubbleContent>
       </Bubble>
     </>
@@ -552,7 +691,10 @@ function Segment({
 }
 
 function flashMessageElement(el: HTMLElement) {
-  const bubble = el.querySelector<HTMLElement>('[data-slot="bubble"], .chat-doc-card, .chat-brief-card, .chat-artifact-card') ?? el;
+  const bubble =
+    el.querySelector<HTMLElement>(
+      '[data-slot="bubble"], .chat-doc-card, .chat-brief-card, .chat-artifact-card',
+    ) ?? el;
   el.scrollIntoView({ behavior: "smooth", block: "center" });
   bubble.classList.remove("message-flash");
   void bubble.offsetWidth;
@@ -562,18 +704,32 @@ function flashMessageElement(el: HTMLElement) {
   }, 2200);
 }
 
-function scrollToQuotedMessage(text: string, targetMessageId?: string, selfRow?: HTMLElement | null) {
+function scrollToQuotedMessage(
+  text: string,
+  targetMessageId?: string,
+  selfRow?: HTMLElement | null,
+) {
   if (typeof document === "undefined") return;
   const rawNeedle = text.replace(/^\[[^\]]+\]\s*/, "").trim();
   const needle = rawNeedle || text.trim();
   // 1. 先按精确文本找对话流里的原消息（支持跳到用户原话或机器人回复/卡片）。
   if (needle) {
     const rows = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-testid="chat-transcript"] [data-message-id]'),
+      document.querySelectorAll<HTMLElement>(
+        '[data-testid="chat-transcript"] [data-message-id]',
+      ),
     ).reverse();
     // 优先搜索用户消息，再兜底搜索任意其他消息行
-    const userRows = rows.filter((r) => r !== selfRow && r.querySelector('[data-slot="message"][data-align="end"]'));
-    const otherRows = rows.filter((r) => r !== selfRow && !r.querySelector('[data-slot="message"][data-align="end"]'));
+    const userRows = rows.filter(
+      (r) =>
+        r !== selfRow &&
+        r.querySelector('[data-slot="message"][data-align="end"]'),
+    );
+    const otherRows = rows.filter(
+      (r) =>
+        r !== selfRow &&
+        !r.querySelector('[data-slot="message"][data-align="end"]'),
+    );
     for (const row of [...userRows, ...otherRows]) {
       const content = row.textContent?.replace(/\s+/g, " ").trim() ?? "";
       if (content && (content.includes(needle) || needle.includes(content))) {
@@ -584,8 +740,13 @@ function scrollToQuotedMessage(text: string, targetMessageId?: string, selfRow?:
   }
   // 2. 兜底跳到本轮关联的消息 id。
   if (targetMessageId) {
-    const escaped = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(targetMessageId) : targetMessageId;
-    const byId = document.querySelector<HTMLElement>(`[data-message-id="${escaped}"]`);
+    const escaped =
+      typeof CSS !== "undefined" && CSS.escape
+        ? CSS.escape(targetMessageId)
+        : targetMessageId;
+    const byId = document.querySelector<HTMLElement>(
+      `[data-message-id="${escaped}"]`,
+    );
     if (byId) {
       flashMessageElement(byId);
     }
@@ -608,18 +769,27 @@ export function ReplyQuote({
   return (
     <button
       aria-label={`回应：${text}`}
-      className={align === "end" ? "chat-reply-quote self-end" : "chat-reply-quote"}
+      className={
+        align === "end" ? "chat-reply-quote self-end" : "chat-reply-quote"
+      }
       data-align={align}
       data-slot="reply-quote"
       data-testid="chat-reply-quote"
       onClick={(e) => {
-        const selfRow = (e.currentTarget as HTMLElement).closest<HTMLElement>("[data-message-id]");
+        const selfRow = (e.currentTarget as HTMLElement).closest<HTMLElement>(
+          "[data-message-id]",
+        );
         scrollToQuotedMessage(text, targetMessageId, selfRow);
       }}
       title={`点击定位原消息：${text}`}
       type="button"
     >
-      <svg aria-hidden="true" className="chat-reply-elbow" fill="none" viewBox="0 0 22 18">
+      <svg
+        aria-hidden="true"
+        className="chat-reply-elbow"
+        fill="none"
+        viewBox="0 0 22 18"
+      >
         <path
           d="M5 17V9.5C5 6.462 7.462 4 10.5 4H20"
           stroke="currentColor"
@@ -635,7 +805,9 @@ export function ReplyQuote({
 }
 
 /** 文档卡「展开全文 / 阅读全文」的图标：卡片每个 token 重渲，图标元素不变（P2-1）。 */
-const DOC_MORE_TALL_ICON = <IconChevronDown aria-hidden="true" className="size-3.5" />;
+const DOC_MORE_TALL_ICON = (
+  <IconChevronDown aria-hidden="true" className="size-3.5" />
+);
 const DOC_MORE_ICON = <IconMaximize aria-hidden="true" className="size-3.5" />;
 
 /** 「追问」按钮的内容：流式时摘要每个 token 都变，图标和字不变，放模块级（P2-1）。 */
@@ -680,16 +852,35 @@ function CardFollowupButtonImpl({
 }
 
 /** 草稿卡：要用户发出去的文字（微信、邮件、短信），一键复制；标题可选。 */
-export function DraftCard({ text, title }: { text: string; title?: string | undefined }) {
+export function DraftCard({
+  text,
+  title,
+}: {
+  text: string;
+  title?: string | undefined;
+}) {
   const heading = title || "草稿";
   return (
-    <section aria-label={title ? `草稿：${title}` : "草稿"} className="chat-draft-card" data-testid="chat-draft-card">
+    <section
+      aria-label={title ? `草稿：${title}` : "草稿"}
+      className="chat-draft-card"
+      data-testid="chat-draft-card"
+    >
       <header className="chat-draft-head">
         <IconPencil aria-hidden="true" className="size-3.5 shrink-0" />
         <span className="chat-draft-title">{heading}</span>
         <div className="ml-auto flex items-center gap-1">
-          <CardFollowupButton snippet={text} source={`草稿 · ${heading}`} title={heading} />
-          <CopyButton className="chat-draft-copy" size="sm" value={text} variant="ghost">
+          <CardFollowupButton
+            snippet={text}
+            source={`草稿 · ${heading}`}
+            title={heading}
+          />
+          <CopyButton
+            className="chat-draft-copy"
+            size="sm"
+            value={text}
+            variant="ghost"
+          >
             {"复制"}
           </CopyButton>
         </div>
@@ -744,7 +935,8 @@ export function DocCard({
     const observer = new ResizeObserver((entries) => {
       const entry = entries[entries.length - 1];
       if (!entry) return;
-      const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+      const height =
+        entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
       setTall(hasTextRef.current && docIsTall(height));
     });
     observer.observe(el);
@@ -763,9 +955,11 @@ export function DocCard({
         className="chat-draft-card chat-doc-card"
         data-testid="chat-doc-card"
         onClick={(event) => {
-          const sel = typeof window !== "undefined" ? window.getSelection() : null;
+          const sel =
+            typeof window !== "undefined" ? window.getSelection() : null;
           if (sel && sel.toString().length > 0) return;
-          if ((event.target as HTMLElement | null)?.closest("a, button")) return;
+          if ((event.target as HTMLElement | null)?.closest("a, button"))
+            return;
           setOpen(true);
         }}
       >
@@ -774,8 +968,17 @@ export function DocCard({
             <span className="chat-doc-title">{heading}</span>
           </div>
           <div className="chat-doc-head-actions">
-            <CardFollowupButton snippet={text} source={`文档 · ${heading}`} title={heading} />
-            <CopyButton className="chat-draft-copy" size="sm" value={text} variant="ghost">
+            <CardFollowupButton
+              snippet={text}
+              source={`文档 · ${heading}`}
+              title={heading}
+            />
+            <CopyButton
+              className="chat-draft-copy"
+              size="sm"
+              value={text}
+              variant="ghost"
+            >
               {"复制"}
             </CopyButton>
           </div>
@@ -787,7 +990,9 @@ export function DocCard({
             style={{ maxHeight: DOC_COLLAPSED_PX }}
           >
             <div className="chat-doc-inner" ref={inner}>
-              <SmoothStreamdown components={components as never}>{text}</SmoothStreamdown>
+              <SmoothStreamdown components={components as never}>
+                {text}
+              </SmoothStreamdown>
             </div>
           </div>
           <button
@@ -817,7 +1022,12 @@ export function DocCard({
                 title="收起文档 (Esc)"
                 type="button"
               >
-                <svg aria-hidden="true" className="size-4" fill="none" viewBox="0 0 24 24">
+                <svg
+                  aria-hidden="true"
+                  className="size-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
                   <path
                     d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"
                     stroke="currentColor"
@@ -836,7 +1046,12 @@ export function DocCard({
                 source={`文档 · ${heading}`}
                 title={heading}
               />
-              <CopyButton className="chat-draft-copy" size="sm" value={text} variant="ghost">
+              <CopyButton
+                className="chat-draft-copy"
+                size="sm"
+                value={text}
+                variant="ghost"
+              >
                 {"复制"}
               </CopyButton>
             </div>
@@ -844,7 +1059,9 @@ export function DocCard({
           <div className="chat-doc-dialog-body">
             <h1 className="chat-doc-sheet-title">{heading}</h1>
             <div className="chat-doc-inner">
-              <SmoothStreamdown components={components as never}>{text}</SmoothStreamdown>
+              <SmoothStreamdown components={components as never}>
+                {text}
+              </SmoothStreamdown>
             </div>
           </div>
         </DialogContent>
@@ -1025,13 +1242,20 @@ export function ArtifactCard({
   );
 
   const badgeLabel =
-    artifact.lang === "mermaid" ? "MERMAID" : artifact.lang === "svg" ? "SVG" : "HTML APP";
+    artifact.lang === "mermaid"
+      ? "MERMAID"
+      : artifact.lang === "svg"
+        ? "SVG"
+        : "HTML APP";
 
   // 源码 / 回退显示：Mermaid 按纯文本代码块显示。交给 Streamdown 的 ```mermaid 会走它自带的
   // Mermaid 渲染（另一套库，认不出的图是一块空白），回退的本意是让人看到原文。
   const codeMarkdown = useMemo(() => {
     if (artifact.lang !== "mermaid") return artifact.rawMarkdown;
-    const longest = Math.max(2, ...(artifact.code.match(/`+/g) ?? []).map((m) => m.length));
+    const longest = Math.max(
+      2,
+      ...(artifact.code.match(/`+/g) ?? []).map((m) => m.length),
+    );
     const fence = "`".repeat(longest + 1);
     return `${fence}text\n${artifact.code}\n${fence}`;
   }, [artifact.lang, artifact.code, artifact.rawMarkdown]);
@@ -1040,7 +1264,11 @@ export function ArtifactCard({
     if (artifact.lang === "html") {
       return (
         <iframe
-          className={inModal ? "chat-artifact-iframe chat-artifact-iframe-modal" : "chat-artifact-iframe"}
+          className={
+            inModal
+              ? "chat-artifact-iframe chat-artifact-iframe-modal"
+              : "chat-artifact-iframe"
+          }
           data-testid="artifact-html-preview"
           sandbox="allow-scripts"
           srcDoc={htmlDoc}
@@ -1051,7 +1279,10 @@ export function ArtifactCard({
     if (svgImageUrl && inModal) {
       return (
         <DiagramZoom naturalWidth={svgNaturalWidth(artifact.code)}>
-          <div className="chat-artifact-svg chat-artifact-svg-modal" data-testid="artifact-svg-preview">
+          <div
+            className="chat-artifact-svg chat-artifact-svg-modal"
+            data-testid="artifact-svg-preview"
+          >
             <img
               alt={artifact.title}
               data-testid="artifact-svg-image"
@@ -1092,7 +1323,9 @@ export function ArtifactCard({
         <DiagramZoom naturalWidth={svgNaturalWidth(renderedSvg)}>
           <div
             className="chat-artifact-svg chat-artifact-svg-modal"
-            dangerouslySetInnerHTML={{ __html: renderedSvg.replace(/max-width:\s*[\d.]+px;?\s*/, "") }}
+            dangerouslySetInnerHTML={{
+              __html: renderedSvg.replace(/max-width:\s*[\d.]+px;?\s*/, ""),
+            }}
             data-testid="artifact-svg-preview"
           />
         </DiagramZoom>
@@ -1114,7 +1347,9 @@ export function ArtifactCard({
     }
     return (
       <div className="chat-doc-inner p-3">
-        <SmoothStreamdown components={components as never}>{codeMarkdown}</SmoothStreamdown>
+        <SmoothStreamdown components={components as never}>
+          {codeMarkdown}
+        </SmoothStreamdown>
       </div>
     );
   };
@@ -1165,7 +1400,12 @@ export function ArtifactCard({
               source={`${badgeLabel} · ${artifact.title}`}
               title={artifact.title}
             />
-            <CopyButton className="chat-draft-copy" size="sm" value={artifact.code} variant="ghost">
+            <CopyButton
+              className="chat-draft-copy"
+              size="sm"
+              value={artifact.code}
+              variant="ghost"
+            >
               {"复制"}
             </CopyButton>
             <button
@@ -1185,13 +1425,21 @@ export function ArtifactCard({
             renderPreview(false)
           ) : (
             <div className="chat-doc-inner p-3">
-              <SmoothStreamdown components={components as never}>{codeMarkdown}</SmoothStreamdown>
+              <SmoothStreamdown components={components as never}>
+                {codeMarkdown}
+              </SmoothStreamdown>
             </div>
           )}
         </div>
       </section>
       <Dialog onOpenChange={setOpen} open={open}>
-        <DialogContent className={artifact.lang === "html" ? "chat-doc-dialog" : "chat-doc-dialog chat-artifact-dialog"}>
+        <DialogContent
+          className={
+            artifact.lang === "html"
+              ? "chat-doc-dialog"
+              : "chat-doc-dialog chat-artifact-dialog"
+          }
+        >
           <DialogHeader className="chat-doc-dialog-head">
             <div className="chat-doc-dialog-title-wrap">
               <span className="chat-artifact-badge">{badgeLabel}</span>
@@ -1204,7 +1452,12 @@ export function ArtifactCard({
                 source={`${badgeLabel} · ${artifact.title}`}
                 title={artifact.title}
               />
-              <CopyButton className="chat-draft-copy" size="sm" value={artifact.code} variant="ghost">
+              <CopyButton
+                className="chat-draft-copy"
+                size="sm"
+                value={artifact.code}
+                variant="ghost"
+              >
                 {"复制"}
               </CopyButton>
             </div>
@@ -1241,7 +1494,10 @@ function parseBriefBody(raw: string, fallbackTitle?: string) {
   for (const rawLine of lines) {
     const l = rawLine.trim();
     if (!l) continue;
-    const meta = /^(日期|date|天气|weather|问候|导语|greeting|标题|title)\s*[：:]\s*(.+)$/i.exec(l);
+    const meta =
+      /^(日期|date|天气|weather|问候|导语|greeting|标题|title)\s*[：:]\s*(.+)$/i.exec(
+        l,
+      );
     if (meta && sections.length === 0 && !curSection) {
       const k = meta[1]!.toLowerCase();
       const v = meta[2]!.trim();
@@ -1259,7 +1515,10 @@ function parseBriefBody(raw: string, fallbackTitle?: string) {
       continue;
     }
     const cleanInline = (s: string) =>
-      s.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").trim();
+      s
+        .replace(/\*\*([^*]+)\*\*/g, "$1")
+        .replace(/\*([^*]+)\*/g, "$1")
+        .trim();
     const bm = /^(?:[-*+]|\d+[.)、])\s+(.+)$/.exec(l);
     if (bm) {
       if (!curSection) {
@@ -1305,12 +1564,18 @@ export function BriefCard({
         <header className="chat-brief-hero">
           <div className="chat-brief-hero-top">
             <div className="chat-brief-badge">
-              <IconSun aria-hidden="true" className="size-4 text-amber-500 dark:text-amber-400" />
+              <IconSun
+                aria-hidden="true"
+                className="size-4 text-amber-500 dark:text-amber-400"
+              />
               <span>{"今日晨报"}</span>
             </div>
             <div className="flex items-center gap-1.5">
               {parsed.weather ? (
-                <span className="chat-brief-weather" data-testid="brief-weather-pill">
+                <span
+                  className="chat-brief-weather"
+                  data-testid="brief-weather-pill"
+                >
                   {parsed.weather}
                 </span>
               ) : null}
@@ -1323,9 +1588,13 @@ export function BriefCard({
           </div>
           <div className="chat-brief-title-row">
             <h3 className="chat-brief-title">{parsed.title}</h3>
-            {parsed.dateStr ? <span className="chat-brief-date">{parsed.dateStr}</span> : null}
+            {parsed.dateStr ? (
+              <span className="chat-brief-date">{parsed.dateStr}</span>
+            ) : null}
           </div>
-          {parsed.greeting ? <p className="chat-brief-greeting">{parsed.greeting}</p> : null}
+          {parsed.greeting ? (
+            <p className="chat-brief-greeting">{parsed.greeting}</p>
+          ) : null}
         </header>
 
         <div className="chat-brief-grid">
@@ -1339,11 +1608,20 @@ export function BriefCard({
               >
                 <div className="chat-brief-tile-head">
                   {sec.kind === "calendar" ? (
-                    <IconCalendarEvent aria-hidden="true" className="size-3.5 text-sky-400" />
+                    <IconCalendarEvent
+                      aria-hidden="true"
+                      className="size-3.5 text-sky-400"
+                    />
                   ) : sec.kind === "mail" ? (
-                    <IconMail aria-hidden="true" className="size-3.5 text-indigo-400" />
+                    <IconMail
+                      aria-hidden="true"
+                      className="size-3.5 text-indigo-400"
+                    />
                   ) : (
-                    <IconSparkles aria-hidden="true" className="size-3.5 text-amber-400" />
+                    <IconSparkles
+                      aria-hidden="true"
+                      className="size-3.5 text-amber-400"
+                    />
                   )}
                   <span className="chat-brief-tile-title">{sec.heading}</span>
                 </div>
@@ -1357,7 +1635,9 @@ export function BriefCard({
             ))
           ) : (
             <div className="chat-doc-inner p-3">
-              <SmoothStreamdown components={components as never}>{text}</SmoothStreamdown>
+              <SmoothStreamdown components={components as never}>
+                {text}
+              </SmoothStreamdown>
             </div>
           )}
         </div>
@@ -1374,12 +1654,22 @@ export function BriefCard({
       </section>
 
       <Dialog onOpenChange={setOpen} open={open}>
-        <DialogContent className="chat-doc-dialog" data-testid="chat-brief-dialog">
+        <DialogContent
+          className="chat-doc-dialog"
+          data-testid="chat-brief-dialog"
+        >
           <DialogHeader className="chat-doc-dialog-head">
             <div className="chat-doc-dialog-title-wrap">
-              <IconSun aria-hidden="true" className="size-4 shrink-0 text-amber-400" />
+              <IconSun
+                aria-hidden="true"
+                className="size-4 shrink-0 text-amber-400"
+              />
               <DialogTitle className="truncate">{parsed.title}</DialogTitle>
-              {parsed.weather ? <span className="chat-brief-weather ml-2">{parsed.weather}</span> : null}
+              {parsed.weather ? (
+                <span className="chat-brief-weather ml-2">
+                  {parsed.weather}
+                </span>
+              ) : null}
             </div>
             <div className="mr-7 flex items-center gap-1.5">
               <CardFollowupButton
@@ -1388,14 +1678,21 @@ export function BriefCard({
                 source={`晨报 · ${parsed.title}`}
                 title={parsed.title}
               />
-              <CopyButton className="chat-draft-copy" size="sm" value={text} variant="ghost">
+              <CopyButton
+                className="chat-draft-copy"
+                size="sm"
+                value={text}
+                variant="ghost"
+              >
                 {"复制"}
               </CopyButton>
             </div>
           </DialogHeader>
           <div className="chat-doc-dialog-body">
             <div className="chat-doc-inner">
-              <SmoothStreamdown components={components as never}>{text}</SmoothStreamdown>
+              <SmoothStreamdown components={components as never}>
+                {text}
+              </SmoothStreamdown>
             </div>
           </div>
         </DialogContent>
@@ -1425,7 +1722,9 @@ export function StatusCardGroup({
       >
         <header className="chat-doc-head items-start">
           <div className="chat-doc-head-main min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="chat-doc-title whitespace-normal break-words font-semibold">{card.title}</span>
+            <span className="chat-doc-title whitespace-normal break-words font-semibold">
+              {card.title}
+            </span>
             {card.status ? (
               <span className="chat-brief-weather shrink-0 text-[11px]">
                 {card.status}
@@ -1438,14 +1737,21 @@ export function StatusCardGroup({
               source={card.title}
               title={card.title}
             />
-            <CopyButton className="chat-draft-copy" size="sm" value={card.body} variant="ghost">
+            <CopyButton
+              className="chat-draft-copy"
+              size="sm"
+              value={card.body}
+              variant="ghost"
+            >
               {"复制"}
             </CopyButton>
           </div>
         </header>
         <div className="chat-doc-inset p-3.5">
           <div className="chat-doc-inner text-sm">
-            <SmoothStreamdown components={components as never}>{card.body}</SmoothStreamdown>
+            <SmoothStreamdown components={components as never}>
+              {card.body}
+            </SmoothStreamdown>
           </div>
         </div>
       </section>
@@ -1467,7 +1773,9 @@ export function StatusCardGroup({
         >
           <header className="chat-doc-head items-start">
             <div className="chat-doc-head-main min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="chat-doc-title whitespace-normal break-words font-semibold">{card.title}</span>
+              <span className="chat-doc-title whitespace-normal break-words font-semibold">
+                {card.title}
+              </span>
               {card.status ? (
                 <span className="chat-brief-weather shrink-0 text-[11px]">
                   {card.status}
@@ -1484,7 +1792,9 @@ export function StatusCardGroup({
           </header>
           <div className="chat-doc-inset p-3">
             <div className="chat-doc-inner text-xs leading-relaxed">
-              <SmoothStreamdown components={components as never}>{card.body}</SmoothStreamdown>
+              <SmoothStreamdown components={components as never}>
+                {card.body}
+              </SmoothStreamdown>
             </div>
           </div>
         </section>

@@ -285,6 +285,8 @@ export function createDeviceHub(options: {
     const before = await store.get(connection.deviceId);
     const after = await store.update(connection.deviceId, patch);
     if (!before || !after) return;
+    if (patch.paused === true) cancelAllFor(connection.deviceId, "已在 PC 上紧急停止。");
+    await pushConfig(connection.deviceId);
     await store.audit({
       deviceId: connection.deviceId,
       ownerUserId: connection.ownerUserId,
@@ -303,8 +305,6 @@ export function createDeviceHub(options: {
       detail: null,
       durationMs: null,
     });
-    if (patch.paused === true) cancelAllFor(connection.deviceId, "已在 PC 上紧急停止。");
-    await pushConfig(connection.deviceId);
   }
 
   function cancelAllFor(deviceId: string, reason: string) {

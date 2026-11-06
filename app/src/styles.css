@@ -3688,6 +3688,12 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 :is(.jr-card, .live-panel-body) .jr-list-row { padding: 9px 0; min-height: 0; }
 :is(.jr-card, .live-panel-body) .jr-list-row:hover, :is(.jr-card, .live-panel-body) .jr-table tbody tr:hover { background: none; }
 .jr-card .jr-metric-v { font-size: 24px; }
+/*
+ * 整张界面自己当外壳（DESIGN.md §29，shared/json-render/shell.ts）：最外层不是 Card、又有字直接落在背景上时，
+ * json-render-surface.tsx 给 .jr-surface 加上 .jr-card——玻璃、配色、深浅档、里面的卡片平铺都沿用 .jr-card 的规则，
+ * 这里只补卡片正文那圈内边距（同 .jr-card-b）。
+ */
+.jr-surface.jr-card { padding: 16px 20px 20px; }
 .jr-placeholder { position: relative; }
 .jr-placeholder-label { display: block; margin-top: 6px; font-size: 12px; color: var(--ink-3); }
 .jr-skel-title, .jr-skel-line {
@@ -7327,6 +7333,7 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
   height: 40px; padding: 0 18px; border-radius: 999px;
   background: #ffffff; color: #14171f;
   border: 1px solid rgba(15, 23, 42, 0.1);
+  font-family: inherit;
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
   font-size: 14px; font-weight: 600; line-height: 1; text-decoration: none;
   cursor: pointer; user-select: none;

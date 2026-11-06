@@ -47,6 +47,7 @@ import {
   channelKeys,
 } from "@/lib/channels/queries";
 import { noteSendWhileBusy } from "@/lib/chat/send-scroll";
+import { sendLanded } from "@/lib/chat/ui-memory";
 import { bindAgentBot, useActiveBot } from "@/lib/copilot/active-bot";
 import { observeApprovalAgent } from "@/lib/copilot/approval-context";
 import type { ThreadActivity } from "@/lib/copilot/bot-thread";
@@ -1047,6 +1048,85 @@ export function ChannelChat({
   reportRef.current = report;
 
   /**
+   * 判过失败的发送，事后对账（「明明 AI 都输出了」的收尾）。看门狗说「没发出去 / 可能没发出去」
+   * 的那一刻，请求可能只是还在路上（订阅前静默）——它随后落地、服务端照常开跑，回答经同步
+   * （useConversationSync，独立的一条通道）落回屏幕；那张卡没有它会一直挂着，气泡里一份、
+   * 输入框里又一份，再发就是重复。所以失败判定后开一段有界对账：这条 id 进了存储、或它后面
+   * 跟上了机器人的东西，就是「其实到了」——撤卡、撤草稿。
+   */
+  const reconcileLandedSend = (
+    userMessageId: string,
+    reason: string,
+    trimmed: string,
+    /**
+     * 「回答迟迟没回来」（answeredOnly）要被「真答完了」推翻；「没发出去」只要这句落库、
+     * 或它后面跟上机器人的东西就已被推翻。两种卡说谎的门槛不一样。
+     */
+    answeredOnly: boolean,
+    /**
+     * 延后清理（unverified 专用）：判「可能没发出去」时没有立即停代理——请求可能还在路上、或服务端
+     * 正在跑而证词读不到，一刀下去正好杀掉一个活着的回合（2026-10-20 那类事故）。于是清理挪到这里：
+     * 证实落地但本地这条流从没出过一个字节（`runEventSeenRef` 仍是 false），说明本地 run 是死的、
+     * 它的 `isRunning` 卡着 sync 的 join 闸和下一次发送——停掉放行；对账到期仍证不出，那时零证据
+     * 已撑满 ~102 秒，按真没到收尾，同样清掉挂着的请求。`hang` / `reply_hang` 在判定处就已停过，不传。
+     */
+    onGiveUp?: () => void,
+  ): void => {
+    void (async () => {
+      const deadline = Date.now() + 90_000;
+      let landed = false;
+      while (!landed && Date.now() < deadline) {
+        const list = agentRef.current?.messages ?? [];
+        const at = list.findIndex((message) => message.id === userMessageId);
+        if (at >= 0) {
+          landed = answeredOnly
+            ? storedTurnAnswered(list, userMessageId)
+            : list
+                .slice(at + 1)
+                .some(
+                  (message) =>
+                    message.role === "assistant" || message.role === "tool",
+                );
+        }
+        if (!landed) {
+          const stored = await readThreadMessages(
+            channel.threadId,
+            runtimeAgentId,
+          ).catch(() => null);
+          if (stored?.availability === "ready") {
+            landed = answeredOnly
+              ? storedTurnAnswered(stored.messages, userMessageId)
+              : stored.messages.some(
+                  (message) => message.id === userMessageId,
+                );
+          }
+        }
+        if (!landed) await afterMs(2_000);
+      }
+      /*
+       * 挂着的还是这次失败才动：用户已点重试 / 新一轮失败盖住了（`deliver` 开头把 turnFailure 清零、
+       * 失败时再写成它自己的），就不动屏幕、也不清理——新发送自己的回合不能替旧的挨刀。
+       */
+      if (turnFailure.current !== reason) return;
+      if (!landed) {
+        // 到期还证不出：那时才当死了清理——挂着的本地请求放掉，闸打开让人重发。
+        onGiveUp?.();
+        return;
+      }
+      turnFailure.current = null;
+      setRunError(null);
+      /*
+       * 落地被证实，塞回输入框的那份草稿就多余了：对「没发出去」是重复发送的引信（气泡里一份、
+       * 输入框一份）；对「回答迟迟没回来」也一样——`!turnAnswered` 时它走的是 throw、照样塞了回来，
+       * 而 landed 成立（答完了）恰好证明那句已经处理完。两种卡都收；收不干净的（人改过）会原样留下。
+       */
+      sendLanded(channel.id, trimmed);
+      // 证实落地但本地流从没醒过：答案在服务器上、本地 run 是死的，停掉它 sync 才能把回答接进来。
+      if (!runEventSeenRef.current) onGiveUp?.();
+    })();
+  };
+
+  /**
    * Everything `say` does once it has something worth sending, split out so the counter it is
    * wrapped in covers every way out of here, a throw included.
    */
@@ -1236,15 +1316,38 @@ export function ChannelChat({
           firstRace: "timeout",
           persisted,
         });
-        if (first.kind === "hang") {
-          try {
-            copilotkit.stopAgent({ agent: target });
-          } catch {
-            /* stop best-effort */
+        if (first.kind === "hang" || first.kind === "unverified") {
+          /*
+           * hang（两个证人都读到、都说没有）才立即停：请求真的没到，停掉挂着的请求、放锁，免得它迟到
+           * 落地变成没人知道的幽灵回合。unverified（证人瞎了，不能说没到）不停——可能正在落地或正在
+           * 跑，一刀下去正好杀掉活回合；清理交给对账，证不出再动手（reconcileLandedSend 的 onGiveUp）。
+           */
+          if (first.kind === "hang") {
+            try {
+              copilotkit.stopAgent({ agent: target });
+            } catch {
+              /* stop best-effort */
+            }
+            forceUnlockThread(channel.threadId);
           }
           reportBudgetEvent(first.budget);
-          forceUnlockThread(channel.threadId);
           failRef.current(first.reason);
+          reconcileLandedSend(
+            userMessageId,
+            first.reason,
+            trimmed,
+            false,
+            first.kind === "unverified"
+              ? () => {
+                  try {
+                    copilotkit.stopAgent({ agent: target });
+                  } catch {
+                    /* stop best-effort */
+                  }
+                  forceUnlockThread(channel.threadId);
+                }
+              : undefined,
+          );
           // Still let runPromise settle in the background so CopilotKit counters clear.
           void runPromise.catch(() => undefined);
           throw new Error(first.reason);
@@ -1270,6 +1373,7 @@ export function ChannelChat({
           reportBudgetEvent(second.budget);
           forceUnlockThread(channel.threadId);
           failRef.current(second.reason);
+          reconcileLandedSend(userMessageId, second.reason, trimmed, true);
           void runPromise.catch(() => undefined);
           /*
            * 不在这里 throw、也不 await runPromise（刚被停掉，多半以 HERMES_RUN_CANCELLED

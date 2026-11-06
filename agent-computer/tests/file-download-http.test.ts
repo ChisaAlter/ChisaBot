@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   mkdir,
   mkdtemp,
+  readFile,
   rm,
   symlink,
   truncate,
@@ -88,6 +89,60 @@ afterAll(async () => {
 });
 
 describe.skipIf(!asked)("the computer file download endpoint", () => {
+  test("public health never reads or rewrites a bot's control state", async () => {
+    const directory = join(root, "profiles", ".control");
+    await mkdir(directory, { recursive: true });
+    const file = join(directory, "probe-bot.json");
+    await writeFile(file, "invalid control state");
+    const response = await fetch(`${base}/health`, {
+      headers: { "x-chisabot-bot-id": "probe-bot" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status).toBe("ok");
+    expect(body).not.toHaveProperty("profile");
+    expect(body).not.toHaveProperty("identity");
+    expect(await readFile(file, "utf8")).toBe("invalid control state");
+
+    const trusted = await api("/health");
+    expect(trusted.status).toBe(200);
+    expect(await trusted.json()).toMatchObject({
+      profile: { botId: BOT },
+      identity: null,
+    });
+  });
+
+  test("binary writes obey human control and resume after handback", async () => {
+    const post = (path: string, body: unknown) =>
+      fetch(`${base}${path}`, {
+        method: "POST",
+        headers: {
+          "x-chisabot-computer-token": TOKEN,
+          "x-chisabot-bot-id": BOT,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    const waiting = await (
+      await post("/control/request", { reason: "Human upload review" })
+    ).json();
+    const requestId = waiting.request.id;
+    expect((await post("/control/take", { requestId })).status).toBe(200);
+    const upload = {
+      path: "human-guard.txt",
+      base64: Buffer.from("uploaded").toString("base64"),
+    };
+    expect((await post("/files/write-bytes", upload)).status).toBe(409);
+    expect(await Bun.file(join(root, "workspace", upload.path)).exists()).toBe(
+      false,
+    );
+    expect((await post("/control/release", { requestId })).status).toBe(200);
+    expect((await post("/files/write-bytes", upload)).status).toBe(200);
+    expect(await readFile(join(root, "workspace", upload.path), "utf8")).toBe(
+      "uploaded",
+    );
+  });
+
   test("streams binary bytes and safe attachment headers", async () => {
     const payload = Buffer.alloc(70_000);
     for (let index = 0; index < payload.length; index += 1) {

@@ -72,6 +72,45 @@ fun JsonObject.s(key: String): String? = this[key].str()
 fun JsonObject.o(key: String): JsonObject? = this[key] as? JsonObject
 fun JsonObject.a(key: String): JsonArray? = this[key] as? JsonArray
 
+/** 工具结果里交付的文件（同 shared/chat-files.ts 的 ChatFileView 子集）。 */
+data class ChatFile(
+    val name: String,
+    val mimeType: String,
+    val url: String,
+    val prompt: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+) { val image get() = mimeType.startsWith("image/") }
+
+private const val CHAT_FILES_MARKER = "⟦chisabot:files⟧"
+private const val CHAT_FILE_URL_PREFIX = "/api/chat-files/"
+
+/** 工具结果最后一行的 `⟦chisabot:files⟧[…]` 清单（同网页 filesFromToolResult）；没有 / 解析失败返回空。 */
+fun filesFromToolResult(raw: String?): List<ChatFile> {
+    if (raw == null) return emptyList()
+    val text = raw.trim().let { t ->
+        if (t.startsWith("\"")) runCatching {
+            (kotlinx.serialization.json.Json.parseToJsonElement(t) as? JsonPrimitive)?.contentOrNull
+        }.getOrNull() ?: t else t
+    }
+    val at = text.lastIndexOf(CHAT_FILES_MARKER)
+    if (at < 0) return emptyList()
+    val arr = runCatching {
+        kotlinx.serialization.json.Json.parseToJsonElement(text.substring(at + CHAT_FILES_MARKER.length).trim()) as? JsonArray
+    }.getOrNull() ?: return emptyList()
+    return arr.mapNotNull { el ->
+        val f = el as? JsonObject ?: return@mapNotNull null
+        val url = f.s("url")?.takeIf { it.startsWith(CHAT_FILE_URL_PREFIX) } ?: return@mapNotNull null
+        ChatFile(
+            name = f.s("name") ?: "文件",
+            mimeType = f.s("mimeType") ?: "application/octet-stream",
+            url = url,
+            prompt = f.s("prompt"),
+            width = f.s("width")?.toIntOrNull(), height = f.s("height")?.toIntOrNull(),
+        )
+    }
+}
+
 /** user 消息的 content 可能是字符串，也可能是 [{type:text,text}, {type:image|document, source:{type:url,value}, metadata}]。 */
 fun contentParts(content: JsonElement?): Pair<String, List<String>> = contentAll(content).let { it.first to it.second }
 

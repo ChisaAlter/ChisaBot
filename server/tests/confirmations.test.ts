@@ -63,6 +63,8 @@ describe("classify", () => {
     const { deviceLinkableInitiator, interactiveInitiator } = await import("../src/confirmations/service");
     expect(interactiveInitiator(undefined)).toBe(true);
     expect(interactiveInitiator({ kind: "person" })).toBe(true);
+    // The Android app polls /api/confirmations/requests and decides natively, so a person there is interactive.
+    expect(interactiveInitiator({ kind: "person", surface: "app" })).toBe(true);
     expect(interactiveInitiator({ kind: "routine", id: "confirm:123" })).toBe(true);
     expect(interactiveInitiator({ kind: "routine", id: "im:conn-1" })).toBe(false);
     expect(interactiveInitiator({ kind: "routine", id: "schedule:1" })).toBe(false);

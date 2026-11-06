@@ -109,6 +109,8 @@ export function createSessions(options: SessionsOptions) {
     for (const [botId, session] of [...sessions.entries()]) {
       if (session.viewer.occupied()) continue;
       if (options.isLive(botId)) continue;
+      if (session.control.admittedActions().length > 0) continue;
+      if (session.capture.pending() > 0) continue;
       if (
         session.control.get().request?.status === "waiting" ||
         session.control.get().holder === "human"
@@ -121,6 +123,9 @@ export function createSessions(options: SessionsOptions) {
   function sessionFor(botId: string): BotSession {
     const existing = sessions.get(botId);
     if (existing) return existing;
+    // Sweep before inserting: the caller has not yet claimed a viewer or started a browser/action,
+    // so its new session would otherwise look idle and disappear before it could be used.
+    if (sessions.size >= cap) forgetIdle();
     let generation = 0;
     const created: BotSession = {
       control: createControl(undefined, {
@@ -144,8 +149,6 @@ export function createSessions(options: SessionsOptions) {
       capture: createCaptureGate(),
     };
     sessions.set(botId, created);
-    // Cheap, and only ever on the path that adds one, so the map cannot grow without this running.
-    if (sessions.size > cap) forgetIdle();
     return created;
   }
 

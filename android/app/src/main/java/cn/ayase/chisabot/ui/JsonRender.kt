@@ -60,6 +60,7 @@ import coil.compose.AsyncImage
 import cn.ayase.chisabot.net.absUrl
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
@@ -67,25 +68,114 @@ import kotlinx.serialization.json.doubleOrNull
 /**
  * json-render（render_ui 卡片、右栏面板）的原生渲染：读同一份 {root, elements} spec（shared/json-render/catalog.ts）。
  * 常用组件都是原生的；表单类（Input / Select / Checkbox）和不认识的组件交给 onFallback（在应用内网页里看）。
+ * §29：对话里缺外壳的界面自己当外壳（autoShell + needsShell），外壳/面板卡片里的 Card 平铺成小节、
+ * Metric / 表格 / 列表去底（LocalInShell），和 shared/json-render/shell.ts、panel-title.ts 同一套规则。
  */
 class RenderActions(val ask: (String) -> Unit, val fallback: () -> Unit)
 
 val LocalRenderActions = compositionLocalOf { RenderActions({}, {}) }
 
+/** 已经在外壳（玻璃卡 / 面板卡片）里：里面的 Card 平铺成小节、Metric / 表格 / 列表不再各自带底（§29）。 */
+val LocalInShell = compositionLocalOf { false }
+
 private val FALLBACK_TYPES = setOf("Input", "Select", "Checkbox")
 
-fun parseSpec(spec: String): JsonObject? = runCatching { Api.json.parseToJsonElement(spec) as? JsonObject }.getOrNull()
-    ?.let { o -> if (o["root"] != null && o["elements"] is JsonObject) o else (o.o("spec") ?: o) }
+/** 自己有底色的组件：可以直接放在天空/背景上（和 shell.ts 的 SURFACED 一致）。 */
+private val SURFACED_TYPES = setOf("Metric", "List", "Alert", "Hero", "Products", "Link", "Badge", "Button", "Delta")
+
+/** 有这个属性时多出一行直接画在背景上的小字（和 shell.ts 的 LABELLED 一致）。 */
+private val LABELLED_PROPS = mapOf("Separator" to "label", "Image" to "caption", "Icon" to "label")
+
+/** 只负责排版、自己不画字的容器：看它的孩子（和 shell.ts 的 LAYOUT 一致）。 */
+private val LAYOUT_TYPES = setOf("Stack", "Grid", "Carousel", "Tabs")
+
+private fun JsonObject?.bareText(key: String): Boolean =
+    (this?.get(key) as? JsonPrimitive)?.let { it.isString && it.content.isNotBlank() } == true
+
+/** 这个元素自己有没有直接画在背景上的东西（不看孩子；shell.ts 的 drawsBare）。 */
+private fun drawsBare(type: String, props: JsonObject?): Boolean {
+    if (type in SURFACED_TYPES) return false
+    LABELLED_PROPS[type]?.let { return props.bareText(it) }
+    if (type == "Tabs") return props.p("variant") == "tabs"
+    return type !in LAYOUT_TYPES
+}
+
+/**
+ * 界面缺的那层外壳（DESIGN.md §29）：从根往下只穿过 Stack / Grid / Carousel / Tabs，遇到 Card 就停；
+ * 路上碰到自己没有底的东西（Text、Heading、KeyValue、图表……）就返回 true——它直接画在天空上。
+ * 流式时还没写到的孩子先跳过；互相引用只看一次。shared/json-render/shell.ts 的 Kotlin 版。
+ */
+fun needsShell(spec: JsonObject?): Boolean {
+    val elements = spec?.o("elements") ?: return false
+    val root = spec.s("root") ?: return false
+    val seen = HashSet<String>()
+    fun bare(key: String): Boolean {
+        if (!seen.add(key)) return false
+        val element = elements.o(key) ?: return false
+        val type = element.s("type") ?: return false
+        if (type == "Card") return false
+        if (drawsBare(type, element.o("props"))) return true
+        if (type !in LAYOUT_TYPES) return false
+        return element.a("children")?.mapNotNull { it.str() }?.any { bare(it) } == true
+    }
+    return bare(root)
+}
+
+private fun normTitle(value: String?): String =
+    value.orEmpty().lowercase().replace(Regex("(?U)[\\s\\p{P}\\p{S}]+"), "")
+
+/** 忽略空白和标点后相同、或一方包含另一方（短的那个至少 2 字）：算同一个标题（panel-title.ts 的 sameTitle）。 */
+fun sameTitle(a: String?, b: String?): Boolean {
+    val x = normTitle(a); val y = normTitle(b)
+    if (x.isEmpty() || y.isEmpty()) return false
+    return x == y || (minOf(x.length, y.length) >= 2 && (x.contains(y) || y.contains(x)))
+}
+
+/**
+ * 面板卡片头已经写了标题，规范里同名的 Card.title / 第一个 Heading 不再画第二遍（panel-title.ts 的 dropDuplicateTitle）。
+ * 只去一次；Card 只去 title（description 留作副标题），Heading 整个去掉。返回新的 spec 字符串。
+ */
+fun dropDuplicatePanelTitle(spec: String, title: String?): String {
+    if (title.isNullOrBlank()) return spec
+    val parsed = parseSpec(spec) ?: return spec
+    val elements = parsed.o("elements") ?: return spec
+    fun rewrite(key: String, element: JsonObject) =
+        JsonObject(parsed + ("elements" to JsonObject(elements + (key to element)))).toString()
+    var key: String? = parsed.s("root") ?: return spec
+    repeat(4) {
+        val k = key ?: return spec
+        val element = elements.o(k) ?: return spec
+        val props = element.o("props")
+        if (element.s("type") == "Card" && sameTitle(props.p("title"), title)) {
+            val newProps = JsonObject((props ?: JsonObject(emptyMap())) + ("title" to JsonNull))
+            return rewrite(k, JsonObject(element + ("props" to newProps)))
+        }
+        val kids = element.a("children")?.mapNotNull { it.str() } ?: emptyList()
+        val first = kids.firstOrNull()
+        if (first != null && elements.o(first)?.s("type") == "Heading" && sameTitle(elements.o(first).p("text"), title)) {
+            return rewrite(k, JsonObject(element + ("children" to JsonArray(kids.drop(1).map { JsonPrimitive(it) }))))
+        }
+        if (element.s("type") == "Card" && props.p("title") != null) return spec
+        key = first
+    }
+    return spec
+}
 
 @Composable
-fun JsonRenderView(spec: String, actions: RenderActions, modifier: Modifier = Modifier) {
+fun JsonRenderView(spec: String, actions: RenderActions, modifier: Modifier = Modifier, autoShell: Boolean = true) {
     val parsed = remember(spec) { parseSpec(spec) }
     val elements = parsed?.o("elements")
     val root = parsed?.s("root")
+    val asShell = autoShell && remember(parsed) { needsShell(parsed) }
     CompositionLocalProvider(LocalRenderActions provides actions) {
         Column(modifier) {
             if (elements == null || root == null || elements[root] == null) FallbackRow("这张卡片还在生成或格式不对")
-            else Element(elements, root, 0)
+            else if (asShell) {
+                val sky = LocalSky.current
+                Column(Modifier.fillMaxWidth().glass(sky, RoundedCornerShape(16.dp), 2).padding(14.dp)) {
+                    CompositionLocalProvider(LocalInShell provides true) { Element(elements, root, 0) }
+                }
+            } else Element(elements, root, 0)
         }
     }
 }
@@ -147,13 +237,25 @@ private fun Element(els: JsonObject, key: String, depth: Int) {
     val children = el.a("children")?.mapNotNull { it.str() } ?: emptyList()
     val sky = LocalSky.current
     val ctx = LocalContext.current
+    val inShell = LocalInShell.current
     val gap = when (props.p("gap")) { "sm" -> 6.dp; "lg" -> 16.dp; else -> 10.dp }
     @Composable fun kids() { children.forEach { Element(els, it, depth + 1) } }
     when (type) {
-        "Card" -> Column(Modifier.fillMaxWidth().glass(sky, RoundedCornerShape(16.dp), 2).padding(14.dp), verticalArrangement = Arrangement.spacedBy(gap)) {
-            props.p("title")?.let { Text(it, color = sky.ink1, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold) }
-            props.p("description")?.let { Text(it, color = sky.ink3, fontSize = 13.sp) }
-            kids()
+        "Card" -> {
+            val title = props.p("title")
+            val description = props.p("description")
+            // 外壳里平铺成小节（§29）：标题降成一行淡色小标题，不再画玻璃底
+            if (inShell) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
+                if (title != null || description != null) Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    title?.let { Text(it, color = sky.ink3, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+                    description?.let { Text(it, color = sky.ink3, fontSize = 12.5.sp) }
+                }
+                kids()
+            } else Column(Modifier.fillMaxWidth().glass(sky, RoundedCornerShape(16.dp), 2).padding(14.dp), verticalArrangement = Arrangement.spacedBy(gap)) {
+                title?.let { Text(it, color = sky.ink1, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold) }
+                description?.let { Text(it, color = sky.ink3, fontSize = 13.sp) }
+                CompositionLocalProvider(LocalInShell provides true) { kids() }
+            }
         }
         "Stack" -> if (props.p("direction") == "horizontal") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(gap), verticalArrangement = Arrangement.spacedBy(gap)) { kids() }
@@ -185,11 +287,13 @@ private fun Element(els: JsonObject, key: String, depth: Int) {
         }
         "Metric" -> {
             val tinted = props.p("variant") == "tinted"
+            val flat = inShell && !tinted
             val tc = toneColor(props.p("tone"))
             Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                    .background(if (tinted) Brush.linearGradient(listOf(tc.copy(alpha = 0.18f), tc.copy(alpha = 0.06f))) else Brush.linearGradient(listOf(sky.glass1, sky.glass1)))
-                    .itemAction(props).padding(12.dp),
+                Modifier.fillMaxWidth()
+                    .then(if (flat) Modifier else Modifier.clip(RoundedCornerShape(14.dp))
+                        .background(if (tinted) Brush.linearGradient(listOf(tc.copy(alpha = 0.18f), tc.copy(alpha = 0.06f))) else Brush.linearGradient(listOf(sky.glass1, sky.glass1))))
+                    .itemAction(props).padding(if (flat) 0.dp else 12.dp),
             ) {
                 Text(props.p("label") ?: "", color = sky.ink3, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(props.p("value") ?: "", color = sky.ink1, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -203,10 +307,10 @@ private fun Element(els: JsonObject, key: String, depth: Int) {
             val rows = props?.a("rows")?.mapNotNull { it as? JsonObject } ?: emptyList()
             Column {
                 Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                    Column(Modifier.clip(RoundedCornerShape(10.dp)).border(1.dp, sky.ink4.copy(alpha = 0.35f), RoundedCornerShape(10.dp))) {
-                        Row(Modifier.background(sky.accentSoft)) { cols.forEach { c -> TCell(c.s("label") ?: "", c.s("align"), true) } }
+                    Column(Modifier.then(if (inShell) Modifier else Modifier.clip(RoundedCornerShape(10.dp)).border(1.dp, sky.ink4.copy(alpha = 0.35f), RoundedCornerShape(10.dp)))) {
+                        Row(Modifier.background(sky.accentSoft)) { cols.forEachIndexed { i, c -> TCell(c.s("label") ?: "", c.s("align"), true, inShell && i == 0, inShell && i == cols.lastIndex) } }
                         rows.forEachIndexed { i, r ->
-                            Row(Modifier.background(if (i % 2 == 1) sky.glass1 else Color.Transparent)) { cols.forEach { c -> TCell(r[c.s("key") ?: ""].str() ?: "", c.s("align"), false) } }
+                            Row(Modifier.background(if (i % 2 == 1) sky.glass1 else Color.Transparent)) { cols.forEachIndexed { j, c -> TCell(r[c.s("key") ?: ""].str() ?: "", c.s("align"), false, inShell && j == 0, inShell && j == cols.lastIndex) } }
                         }
                     }
                 }
@@ -216,7 +320,7 @@ private fun Element(els: JsonObject, key: String, depth: Int) {
         "List" -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val ordered = props.bool("ordered")
             props?.a("items")?.mapNotNull { it as? JsonObject }?.forEachIndexed { i, it ->
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).itemAction(it).padding(vertical = 7.dp, horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).itemAction(it).padding(vertical = if (inShell) 9.dp else 7.dp, horizontal = if (inShell) 0.dp else 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (ordered) Text("${i + 1}.", color = sky.ink3, fontSize = 14.sp, modifier = Modifier.width(24.dp))
                     it.s("image")?.takeIf { u -> u.startsWith("https") }?.let { u ->
                         AsyncImage(absUrl(u), null, contentScale = ContentScale.Crop, modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)).background(sky.glass1))
@@ -307,7 +411,10 @@ private fun Element(els: JsonObject, key: String, depth: Int) {
             }
         }
         "Link" -> props.p("href")?.let { LinkCardView(it, props.p("title"), props.p("description")) }
-        "Icon" -> Unit
+        // 图标字库在网页是 Tabler；原生没有这套字形，label 画成字、没 label 画名字，不再静默丢掉。
+        "Icon" -> (props.p("label") ?: props.p("icon") ?: props.p("name"))?.let {
+            Text(it, color = sky.ink3, fontSize = 13.sp)
+        }
         "Status" -> Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(9.dp).clip(CircleShape).background(toneColor(props.p("tone"))))
             Spacer(Modifier.width(8.dp))
@@ -412,14 +519,14 @@ private fun Element(els: JsonObject, key: String, depth: Int) {
             }
         }
         "RelativeTime" -> { Ticker(30_000); Text(relativeTime(props.p("time") ?: props.p("value")), color = sky.ink3, fontSize = 13.sp) }
-        else -> if (type in FALLBACK_TYPES) FallbackRow("这张卡片里有要填写的内容") else FallbackRow("这一块暂不支持原生显示")
+        else -> if (type in FALLBACK_TYPES) FallbackRow("这张卡片里有要填写的内容，原生端还填不了") else FallbackRow("这一块暂不支持原生显示")
     }
 }
 
 @Composable
-private fun TCell(text: String, align: String?, header: Boolean) {
+private fun TCell(text: String, align: String?, header: Boolean, trimStart: Boolean = false, trimEnd: Boolean = false) {
     val sky = LocalSky.current
-    Box(Modifier.widthIn(min = 76.dp, max = 220.dp).padding(horizontal = 10.dp, vertical = 7.dp),
+    Box(Modifier.widthIn(min = 76.dp, max = 220.dp).padding(start = if (trimStart) 0.dp else 10.dp, top = 7.dp, end = if (trimEnd) 0.dp else 10.dp, bottom = 7.dp),
         contentAlignment = when (align) { "right" -> Alignment.CenterEnd; "center" -> Alignment.Center; else -> Alignment.CenterStart }) {
         Text(text, color = if (header) sky.ink2 else sky.ink1, fontSize = 13.5.sp, fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal)
     }

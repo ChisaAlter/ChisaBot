@@ -26,6 +26,7 @@ sed -e "s#/live/chisabot\.example\.com/#/live/$C/#g" \
     -e "s#chisabot\.example\.com:2053#$OM#g" \
     -e "s#listen 8443 ssl#listen $P ssl#" \
     -e "s#listen 2053 ssl#listen $M ssl#" \
+    -e "s#:8443/#:$P/#g" \
     -e "s#chisabot\.example\.com#$CHISABOT_DOMAIN#g" \
     "$HERE/nginx.conf" > "$HERE/nginx.generated.conf.tmp"
 mv "$HERE/nginx.generated.conf.tmp" "$HERE/nginx.generated.conf"

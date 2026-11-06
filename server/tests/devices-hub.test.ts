@@ -196,6 +196,24 @@ describe("device hub", () => {
     expect(hub.isOnline("dev_1")).toBe(false);
   });
 
+  test("a failed kill-switch audit still cancels pending calls and pushes the paused config", async () => {
+    const fake = fakeStore(record());
+    const audit = fake.store.audit;
+    fake.store.audit = async (input: Record<string, unknown>) => {
+      if (input.action === "kill_switch_on") throw new Error("audit down");
+      return audit(input);
+    };
+    const hub = createDeviceHub({ store: fake.store as never });
+    const s = fakeSocket();
+    const handlers = hub.attach(record(), s.socket, null);
+    const hanging = hub.invoke({ device: record(), operation: "shell", args: {}, bot: { id: "b", name: null }, summary: "x" });
+    const stopped = hanging.then(() => null, (error: unknown) => error);
+    await tick();
+    await expect(handlers.onMessage(JSON.stringify({ type: "set_config", paused: true }))).rejects.toThrow("audit down");
+    expect(String(await stopped)).toContain("紧急停止");
+    expect(s.sent.some((m) => m.type === "config" && (m as { device?: { paused?: boolean } }).device?.paused === true)).toBe(true);
+  });
+
   test("screenshot base64 is kept server-side and replaced by a url", async () => {
     const fake = fakeStore(record({ capabilities: { ...defaultCapabilities(), screenshot: "allow" } }));
     const hub = createDeviceHub({ store: fake.store as never });

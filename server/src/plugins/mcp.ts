@@ -1,3 +1,7 @@
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { isIP } from "node:net";
+import { Readable } from "node:stream";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
@@ -5,6 +9,7 @@ import {
   BlockedUrlError,
   resolvePublic,
 } from "../../../shared/net/guarded-fetch";
+import { checkPublicUrl } from "../../../shared/net/ssrf";
 import { cutAtCodeUnits } from "../channels/text";
 
 /**
@@ -400,6 +405,90 @@ export function isMcpAbortError(error: unknown): boolean {
   return /abort(ed)?|The operation was aborted|user has aborted/i.test(message);
 }
 
+/** Stream the SDK's HTTP/SSE requests over the address that passed the public-IP check. */
+export function pinnedMcpFetch(
+  target: URL,
+  pinned: { address: string; family: number },
+): (url: string | URL, init?: RequestInit) => Promise<Response> {
+  return async (input, init = {}) => {
+    const url = new URL(input);
+    // The client has one endpoint. Never send its credential to a redirect or another origin.
+    if (url.href !== target.href)
+      throw new McpServerError("The MCP endpoint changed during the request.");
+    if (init.body != null && typeof init.body !== "string")
+      throw new McpServerError("The MCP request body must be JSON text.");
+    init.signal?.throwIfAborted();
+    const headers = new Headers(init.headers);
+    headers.set("host", target.host);
+    // Node's HTTP client streams compressed bytes unchanged; request the SSE/JSON body as-is.
+    headers.set("accept-encoding", "identity");
+    const hostname = target.hostname.replace(/^\[|\]$/g, "");
+    return new Promise<Response>((resolve, reject) => {
+      const req = (target.protocol === "https:" ? httpsRequest : httpRequest)(
+        {
+          protocol: target.protocol,
+          hostname,
+          port: target.port || undefined,
+          path: `${target.pathname}${target.search}`,
+          method: init.method ?? "GET",
+          headers: Object.fromEntries(headers),
+          // A pooled socket could have been opened before this DNS verdict.
+          agent: false,
+          servername: isIP(hostname) ? undefined : hostname,
+          lookup: ((
+            _host: string,
+            opts: { all?: boolean },
+            cb: (...args: unknown[]) => void,
+          ) => {
+            if (opts?.all) cb(null, [pinned]);
+            else cb(null, pinned.address, pinned.family);
+          }) as never,
+          signal: init.signal ?? undefined,
+        },
+        (res) => {
+          const status = res.statusCode ?? 500;
+          const responseHeaders = new Headers();
+          for (const [name, value] of Object.entries(res.headers)) {
+            if (Array.isArray(value)) {
+              for (const part of value) responseHeaders.append(name, part);
+            } else if (value !== undefined) responseHeaders.set(name, value);
+          }
+          if (status >= 300 && status < 400) {
+            res.destroy();
+            reject(
+              new McpServerError(
+                "The MCP endpoint redirected the request. Configure its final address instead.",
+              ),
+            );
+            return;
+          }
+          const empty =
+            init.method === "HEAD" ||
+            status === 204 ||
+            status === 205 ||
+            status === 304;
+          if (empty) res.resume();
+          resolve(
+            new Response(
+              empty
+                ? null
+                : (Readable.toWeb(
+                    res,
+                  ) as unknown as ReadableStream<Uint8Array>),
+              {
+                status,
+                headers: responseHeaders,
+              },
+            ),
+          );
+        },
+      );
+      req.on("error", reject);
+      req.end(init.body ?? undefined);
+    });
+  };
+}
+
 async function withClient<T>(
   connection: Connection,
   use: (client: Client) => Promise<T>,
@@ -414,25 +503,32 @@ async function withClient<T>(
   // Placement is applied first: the credential lands in the query string only for a reviewed
   // entry that names the parameter, and the host check reads the host, which is unaffected.
   const { url: target, headers } = dialAddress(connection);
-  if (!connection.allowPrivateHost) {
-    try {
-      await resolvePublic(target.hostname);
-    } catch (error) {
-      if (error instanceof BlockedUrlError) {
-        throw new McpServerError(
-          error.message ||
-            "That MCP address is not reachable from outside this network.",
-        );
-      }
+  const verdict = checkPublicUrl(target.href, {
+    allowPrivate: connection.allowPrivateHost,
+  });
+  if (!verdict.ok) throw new McpServerError(verdict.reason);
+  let pinned: Awaited<ReturnType<typeof resolvePublic>>;
+  try {
+    pinned = await resolvePublic(
+      target.hostname,
+      connection.allowPrivateHost ? { isBlocked: () => false } : {},
+    );
+  } catch (error) {
+    if (error instanceof BlockedUrlError) {
       throw new McpServerError(
-        error instanceof Error
-          ? error.message
-          : "That MCP address could not be resolved.",
+        error.message ||
+          "That MCP address is not reachable from outside this network.",
       );
     }
+    throw new McpServerError(
+      error instanceof Error
+        ? error.message
+        : "That MCP address could not be resolved.",
+    );
   }
   const transport = new StreamableHTTPClientTransport(target, {
     requestInit: headers ? { headers } : undefined,
+    fetch: pinnedMcpFetch(target, pinned),
   });
   const client = new Client({ name: "chisabot", version: "1.0.0" });
 

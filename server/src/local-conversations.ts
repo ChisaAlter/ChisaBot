@@ -26,6 +26,7 @@ import {
   type ThreadContextReading,
 } from "./context-usage";
 import type { Database } from "./db/client";
+import { reasonWithoutStatement } from "./db/query-failure";
 import { imageDimsFor } from "./image-dims";
 import {
   anchorsPresent,
@@ -756,7 +757,7 @@ class PostgresAgentRunner extends AgentRunner {
               threadId,
               runId: relay.runId,
               outcome,
-              error: error instanceof Error ? error.message : String(error),
+              error: error instanceof Error ? reasonWithoutStatement(error).slice(0, 200) : "unknown",
             }));
             if (this.frontend.get(threadId) === relay) this.clearFrontend(threadId);
             return;

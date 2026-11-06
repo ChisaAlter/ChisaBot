@@ -917,13 +917,28 @@ serve<StreamData>({
      * stream carries the token as a query
      * parameter the same way it already carries the Bot.
      */
-    if (
-      !isOpenPath(url.pathname) &&
-      !matchesToken(COMPUTER_TOKEN, offeredToken(request.headers, url))
-    ) {
+    const authenticated = matchesToken(COMPUTER_TOKEN, offeredToken(request.headers, url));
+    if (!isOpenPath(url.pathname) && !authenticated) {
       // Says nothing about what is here. A refusal that describes the endpoint it is protecting is a
       // directory listing for whoever is knocking.
       return json({ error: "Not authorised." }, 401);
+    }
+
+    // Health probes must not create or restore control sessions. Keep the public readiness fields,
+    // but expose profile and workload identity details only to the authenticated API server.
+    if (url.pathname === "/health") {
+      const healthBotId = authenticated ? botIdOf(request) : DEFAULT_BOT_ID;
+      if (authenticated && !isPlainBotId(healthBotId))
+        return json({ error: "That is not a usable bot id." }, 400);
+      const profile = profiles.summary([healthBotId]).find((item) => item.botId === healthBotId);
+      return json({
+        status: "ok",
+        browser: profile?.running ?? false,
+        browserMode: BROWSER_MODE,
+        browserBackend: RUNTIME.backend,
+        browserChannel: RUNTIME.channel,
+        ...(authenticated ? { profile, identity: await identity() } : {}),
+      });
     }
 
     // Resolved once per request. Everything below that touches a browser, a takeover or a snapshot
@@ -1191,23 +1206,6 @@ serve<StreamData>({
         } catch (error) {
           return json({ error: describe(error, "That did not work.") }, 502);
         }
-      }
-
-      if (url.pathname === "/health") {
-        const [profile] = profiles.summary([botId]);
-        return json({
-          status: "ok",
-          // `browser` kept as it was: it is in the published contract and start.sh reads it.
-          browser: profile?.running ?? false,
-          profile,
-          // Which Bot this computer can prove it is, when the deployment runs SPIRE. Null is a
-          // deployment without it, not a failure, and it is reported rather than omitted so the
-          // difference between "no identity here" and "identity broken" is visible.
-          identity: await identity(),
-          browserMode: BROWSER_MODE,
-          browserBackend: RUNTIME.backend,
-          browserChannel: RUNTIME.channel,
-        });
       }
 
       /**

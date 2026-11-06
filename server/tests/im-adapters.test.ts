@@ -1037,6 +1037,66 @@ describe("Telegram", () => {
   });
 });
 
+describe("IM 停用取消并发请求", () => {
+  for (const platform of ["telegram", "weixin"] as const) {
+    test(`${platform} 收消息、输入提示和发送并发时全部取消`, async () => {
+      const pending: AbortSignal[] = [];
+      const finish: (() => void)[] = [];
+      const waitForAbort = (call: FetchCall) =>
+        new Promise((_resolve, reject) => {
+          const signal = call.init?.signal;
+          if (!signal) throw new Error("请求缺少取消信号");
+          pending.push(signal);
+          const abort = () => reject(new DOMException("Stopped", "AbortError"));
+          finish.push(abort);
+          signal.addEventListener("abort", abort, { once: true });
+        });
+      const h = harness(
+        {},
+        { token: "test-token" },
+        {
+          "/getMe": () => ({ ok: true, result: { id: 1, username: "cb_bot" } }),
+          "/getUpdates": waitForAbort,
+          "/sendChatAction": waitForAbort,
+          "/sendMessage": waitForAbort,
+          "/getupdates": waitForAbort,
+          "/getconfig": waitForAbort,
+          "/sendmessage": waitForAbort,
+        },
+      );
+      const adapter =
+        platform === "telegram"
+          ? new TelegramAdapter(h.ctx)
+          : new WeixinAdapter(h.ctx);
+      try {
+        await adapter.start();
+        await waitFor(() => pending.length === 1);
+        const typing = adapter.typing(inbound());
+        const sending = adapter
+          .send({ inbound: inbound(), chunks: ["回答"], text: "回答" })
+          .catch((error) => error);
+        await waitFor(() => pending.length === 3);
+        await adapter.stop();
+        expect(pending.every((signal) => signal.aborted)).toBe(true);
+        await typing;
+        expect(await sending).toBeInstanceOf(Error);
+        const calls = h.calls.length;
+        await expect(
+          adapter.send({
+            inbound: inbound(),
+            chunks: ["迟到的回答"],
+            text: "迟到的回答",
+          }),
+        ).rejects.toThrow("连接已停止");
+        expect(h.calls).toHaveLength(calls);
+      } finally {
+        for (const release of finish) release();
+        await adapter.stop();
+      }
+    });
+  }
+});
+
 describe("多平台扫码绑定与消息来源解析", () => {
   test("QQ 机器人扫码绑定：AES-256-GCM 解密 bot_encrypt_secret 并返回 appId + appSecret", async () => {
     const taskId = "qq-task-123";

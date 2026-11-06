@@ -11,6 +11,8 @@ const { runBuiltin } = require("../src/agent-runtime/builtin");
 const { builtinToolGate, isInside } = require("../src/agent-runtime/profile");
 const { claudeParser, codexParser, buildCommand } = require("../src/agent-runtime/cli-agents");
 const { createAgentRuntime } = require("../src/agent-runtime/index");
+const { attachAgentRuntime } = require("../src/agent-runtime/attach");
+const { EventEmitter } = require("node:events");
 
 const hasGit = (() => {
   try {
@@ -54,6 +56,41 @@ test("profile gate: reads inside, writes by profile, outside asks", () => {
     assert.match(builtinToolGate("workspace", "write_file", { path: "/home/u/repo/x" }, dctx), /不在工作区/);
   }
   assert.equal(isInside(path.join(dir, "src", "new.js"), [dir]), true);
+});
+
+test("node stop and revocation stop the attached agent runtime", () => {
+  const attached = attachAgentRuntime();
+  let stopped = 0;
+  attached.runtime.stopAll = () => { stopped++; };
+  const agent = { events: new EventEmitter(), sendRaw: () => true };
+  attached.bind(agent);
+  agent.events.emit("state", { state: "offline" });
+  assert.equal(stopped, 0, "ordinary reconnect preserves resumable agent work");
+  agent.events.emit("state", { state: "stopped" });
+  agent.events.emit("state", { state: "revoked" });
+  assert.equal(stopped, 2);
+});
+
+test("stopping while preparing a workdir does not start the agent afterwards", async () => {
+  const originalPrepare = sandbox.prepare;
+  let prepared;
+  let cleaned = false;
+  const sent = [];
+  const runtime = createAgentRuntime({ send: (message) => { sent.push(message); return true; } });
+  sandbox.prepare = () => new Promise((resolve) => { prepared = resolve; });
+  try {
+    runtime.handle({ type: "agent_run", taskId: "cancel-prep", agent: "builtin", prompt: "unused", cwd: os.tmpdir(), profile: "readonly", roots: [os.tmpdir()], isolation: "none", timeoutMs: 5000 });
+    runtime.stopAll();
+    prepared({ workdir: os.tmpdir(), notes: [], mode: "direct", cleanup: async () => { cleaned = true; } });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(cleaned, true);
+    assert.equal(runtime.running, 0);
+    assert.equal(sent.some((message) => message.type === "agent_started" || message.type === "agent_llm"), false);
+    assert.ok(sent.some((message) => message.type === "agent_done" && message.stopped === true));
+  } finally {
+    sandbox.prepare = originalPrepare;
+    runtime.stopAll();
+  }
 });
 
 test("worktree: changes stay in the copy until applied", { skip: !hasGit }, async () => {

@@ -35,6 +35,29 @@ describe("resolveWhen", () => {
     expect(() => resolveWhen({ repeat: "every_minutes", every: 25 }, TZ, NOW)).toThrow(ScheduleError);
     expect(() => resolveWhen({ repeat: "daily", at: "09:00" }, "Mars/Base", NOW)).toThrow(/时区/);
   });
+  test("one-off local times reject trailing data and nonexistent DST times", () => {
+    for (const at of [
+      "2026-10-15T09:00Z",
+      "2026-10-15T09:00+08:00",
+      "2026-10-15 09:000",
+      "2026-10-15 09:00 tomorrow",
+    ]) {
+      expect(() => resolveWhen({ repeat: "once", at }, TZ, NOW)).toThrow(/本地时间/);
+    }
+    expect(() =>
+      resolveWhen(
+        { repeat: "once", at: "2027-03-14 02:30" },
+        "America/New_York",
+        NOW,
+      ),
+    ).toThrow(/不存在/);
+    const valid = resolveWhen(
+      { repeat: "once", at: "2027-03-14 03:30" },
+      "America/New_York",
+      NOW,
+    );
+    expect(valid.runAt!.toISOString()).toBe("2027-03-14T07:30:00.000Z");
+  });
   test("recurring shapes become cron with the next run in the zone", () => {
     const daily = resolveWhen({ repeat: "daily", at: "09:00" }, TZ, NOW);
     expect(daily.cron).toBe("0 9 * * *");

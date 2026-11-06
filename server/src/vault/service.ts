@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as wait } from "node:timers/promises";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
@@ -11,6 +12,8 @@ import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { markUntrusted } from "../untrusted-content";
 import { BlockedUrlError, guardedFetch } from "../../../shared/net/guarded-fetch";
 import { assertPublicUrl } from "../web/tools";
+import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
+import { reasonWithoutStatement } from "../db/query-failure";
 
 /**
  * 密钥保险箱（DESIGN.md §52，docs/vault.md）。
@@ -104,7 +107,12 @@ export const VAULT_GUIDANCE = [
 ].join("");
 
 export function interactive(initiator: AuditInitiator | undefined) {
-  return !initiator || initiator.kind !== "routine";
+  if (!initiator) return true;
+  // 只有网页聊天的真人回合能弹安全输入卡片：原生 App 没这张卡，IM（routine im:）和后台任务（handoff 等）也没人在看。
+  return (
+    initiator.kind === "person" &&
+    (!initiator.surface || initiator.surface === "web")
+  );
 }
 
 export function createVault(database: Database, options: { encryptionKey: string; fetch?: typeof fetch }) {
@@ -197,6 +205,7 @@ export function createVault(database: Database, options: { encryptionKey: string
 
   /** 发请求：替换占位、只发往绑定的域名、不跟随重定向、回来的内容抹掉密钥。 */
   async function request(owner: string, input: { method: string; url: string; headers?: Record<string, string>; body?: string }, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const used = new Map<string, SecretRow>();
     const names = new Set<string>();
     const scan = (text: string) => {
@@ -223,104 +232,125 @@ export function createVault(database: Database, options: { encryptionKey: string
     const values = new Map<string, string>();
     for (const [name, row] of used) values.set(name, await decryptSecret(options.encryptionKey, row.value));
     const fillIn = (text: string) => text.replace(PLACEHOLDER, (_, name: string) => values.get(name) ?? "");
-    const method = input.method.toUpperCase();
-    const headerRecord: Record<string, string> = {};
-    for (const [k, v] of Object.entries(input.headers ?? {})) headerRecord[fillIn(k)] = fillIn(v);
-    if (!Object.keys(headerRecord).some((k) => k.toLowerCase() === "user-agent")) {
-      headerRecord["user-agent"] = "ChisaBot/0.1 (+https://github.com/ChisaAlter/ChisaBot)";
-    }
-    const filledUrl = fillIn(input.url);
-    const abort = signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-      : AbortSignal.timeout(30_000);
     const scrub = (s: string) => {
       let out = s;
-      for (const value of values.values()) if (value.length >= 4) out = out.split(value).join("••••");
+      const representations = [...values.values()].flatMap((value) => [value, encodeURIComponent(value)]);
+      for (const value of [...new Set(representations)].sort((a, b) => b.length - a.length)) {
+        if (value) out = out.split(value).join("••••");
+      }
       return out;
     };
-
-    // 默认走 guardedFetch（DNS 钉死、不跟重定向）；测试注入 fetch 时仍用强 assert + 手动 redirect。
-    if (!options.fetch) {
-      let guarded: Awaited<ReturnType<typeof guardedFetch>>;
-      try {
-        guarded = await guardedFetch(filledUrl, {
-          method,
-          headers: headerRecord,
-          ...(input.body && method !== "GET" && method !== "HEAD"
-            ? { body: fillIn(input.body) }
-            : {}),
-          maxBytes: MAX_RESPONSE + 1,
-          timeoutMs: 30_000,
-          maxRedirects: 0,
-          signal: abort,
-        });
-      } catch (error) {
-        if (error instanceof BlockedUrlError) throw new VaultError(error.message);
-        throw error;
+    try {
+      const method = input.method.toUpperCase();
+      const headerRecord: Record<string, string> = {};
+      for (const [k, v] of Object.entries(input.headers ?? {})) headerRecord[fillIn(k)] = fillIn(v);
+      if (!Object.keys(headerRecord).some((k) => k.toLowerCase() === "user-agent")) {
+        headerRecord["user-agent"] = "ChisaBot/0.1 (+https://github.com/ChisaAlter/ChisaBot)";
       }
+      const filledUrl = fillIn(input.url);
+      const filledTarget = new URL(filledUrl);
+      if (filledTarget.protocol !== "https:") throw new VaultError("带密钥的请求只能发 https。");
+      for (const [name, row] of used) {
+        if (!domainAllowed(filledTarget.hostname, domainList(row.domains))) {
+          throw new VaultError(`替换后的网址不在密钥「${name}」允许的域名内。`);
+        }
+      }
+      const abort = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+        : AbortSignal.timeout(30_000);
+      abort.throwIfAborted();
+
+      // 默认走 guardedFetch（DNS 钉死、不跟重定向）；测试注入 fetch 时仍用强 assert + 手动 redirect。
+      if (!options.fetch) {
+        let guarded: Awaited<ReturnType<typeof guardedFetch>>;
+        try {
+          guarded = await guardedFetch(filledUrl, {
+            method,
+            headers: headerRecord,
+            ...(input.body && method !== "GET" && method !== "HEAD"
+              ? { body: fillIn(input.body) }
+              : {}),
+            maxBytes: MAX_RESPONSE + 1,
+            timeoutMs: 30_000,
+            maxRedirects: 0,
+            signal: abort,
+          });
+        } catch (error) {
+          if (error instanceof BlockedUrlError) throw new VaultError(error.message);
+          throw error;
+        }
+        if (used.size)
+          await sql.unsafe(
+            "UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE owner_user_id = $1 AND name = ANY(string_to_array($2, ','))",
+            [owner, [...used.keys()].join(",")],
+          );
+        const bodyText = new TextDecoder("utf-8", { fatal: false }).decode(guarded.body);
+        return {
+          status: guarded.status,
+          contentType: scrub(guarded.contentType),
+          location: null,
+          body: scrub(bodyText).slice(0, 20_000),
+          truncated: guarded.truncated || bodyText.length > 20_000,
+        };
+      }
+
+      const url = await assertPublicUrl(filledUrl);
+      const headers = new Headers(headerRecord);
+      const response = await doFetch(url, {
+        method,
+        headers,
+        ...(input.body && method !== "GET" && method !== "HEAD" ? { body: fillIn(input.body) } : {}),
+        redirect: "manual",
+        signal: abort,
+      });
       if (used.size)
-        await sql.unsafe(
-          "UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE owner_user_id = $1 AND name = ANY(string_to_array($2, ','))",
-          [owner, [...used.keys()].join(",")],
-        );
-      const bodyText = new TextDecoder("utf-8", { fatal: false }).decode(guarded.body);
-      return {
-        status: guarded.status,
-        contentType: guarded.contentType,
-        location: null,
-        body: scrub(bodyText).slice(0, 20_000),
-        truncated: guarded.truncated || bodyText.length > 20_000,
-      };
-    }
-
-    const url = await assertPublicUrl(filledUrl);
-    const headers = new Headers(headerRecord);
-    const response = await doFetch(url, {
-      method,
-      headers,
-      ...(input.body && method !== "GET" && method !== "HEAD" ? { body: fillIn(input.body) } : {}),
-      redirect: "manual",
-      signal: abort,
-    });
-    if (used.size)
-      await sql.unsafe("UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE owner_user_id = $1 AND name = ANY(string_to_array($2, ','))", [owner, [...used.keys()].join(",")]);
-    let text = "";
-    const reader = response.body?.getReader();
-    let size = 0;
-    const chunks: Uint8Array[] = [];
-    while (reader) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_RESPONSE) {
-        await reader.cancel().catch(() => {});
-        break;
+        await sql.unsafe("UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE owner_user_id = $1 AND name = ANY(string_to_array($2, ','))", [owner, [...used.keys()].join(",")]);
+      let text = "";
+      const reader = response.body?.getReader();
+      let size = 0;
+      const chunks: Uint8Array[] = [];
+      while (reader) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > MAX_RESPONSE) {
+          await reader.cancel().catch(() => {});
+          break;
+        }
+        chunks.push(value);
       }
-      chunks.push(value);
+      text = new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks));
+      const location = response.headers.get("location");
+      return {
+        status: response.status,
+        contentType: scrub(response.headers.get("content-type") ?? ""),
+        location: location ? scrub(location) : null,
+        body: scrub(text).slice(0, 20_000),
+        truncated: size > MAX_RESPONSE || text.length > 20_000,
+      };
+    } catch (error) {
+      if (signal?.aborted) signal.throwIfAborted();
+      if (error instanceof Error) throw new VaultError(scrub(reasonWithoutStatement(error)));
+      throw new VaultError("请求未能完成，请稍后重试。");
     }
-    text = new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks));
-    const location = response.headers.get("location");
-    return {
-      status: response.status,
-      contentType: response.headers.get("content-type") ?? "",
-      location: location ? scrub(location) : null,
-      body: scrub(text).slice(0, 20_000),
-      truncated: size > MAX_RESPONSE || text.length > 20_000,
-    };
   }
 
   function tools(owner: string, agentId: string, initiator?: AuditInitiator): GrantedTool[] {
-    const tool = <T extends z.ZodType>(name: string, description: string, parameters: T, run: (input: z.infer<T>) => Promise<string>): GrantedTool => ({
+    const tool = <T extends z.ZodType>(name: string, description: string, parameters: T, run: (input: z.infer<T>, signal?: AbortSignal) => Promise<string>): GrantedTool => ({
       name,
       ref: `vault/${name}`,
       description,
       parameters,
-      async execute(args) {
+      async execute(args, context) {
+        const signal = context?.signal ?? currentToolAbort();
+        if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
         const parsed = parameters.safeParse(args);
         if (!parsed.success) return `${REFUSAL_MARKER} ${name} 参数不对：${parsed.error.issues[0]?.message ?? ""}`;
         try {
-          return await run(parsed.data);
+          const result = await run(parsed.data, signal);
+          return signal?.aborted ? `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}` : result;
         } catch (error) {
+          if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
           if (error instanceof VaultError) return `${REFUSAL_MARKER} ${error.message}`;
           if (error instanceof z.ZodError) return `${REFUSAL_MARKER} ${error.issues[0]?.message ?? "参数不对。"}`;
           if (error instanceof Error && /网址|内网|http/.test(error.message)) return `${REFUSAL_MARKER} ${error.message}`;
@@ -349,10 +379,10 @@ export function createVault(database: Database, options: { encryptionKey: string
             domains: z.array(z.string()).min(1).max(5).describe("这个密钥能发往的域名，如 [\"api.openai.com\"]"),
           })
           .strict(),
-        async (input) => {
+        async (input, signal) => {
           if (!interactive(initiator)) return `${REFUSAL_MARKER} 这一轮不是在网页聊天里，弹不出安全输入卡片。请用户去 ChisaBot 网页的 设置 → 密钥 里添加「${input.label}」（名字 ${input.name}），或在网页聊天里再让你请求一次。`;
           const name = nameSchema.parse(input.name);
-          if (vaultReserved(name)) return `${REFUSAL_MARKER} 要用 GitHub 请让用户在 设置 → 账号连接 里连接 GitHub，不要用保险箱卡片要 GitHub 令牌。`;
+          if (vaultReserved(name)) return `${REFUSAL_MARKER} 要用 GitHub 请让用户在对话里就地连接——引导输出独立一行的链接卡 [连接 GitHub](/settings/connected-accounts/github)；不要用保险箱卡片要 GitHub 令牌。`;
           const domains = domainsSchema.parse(input.domains);
           const id = `vr_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
           await sql.unsafe(
@@ -360,17 +390,21 @@ export function createVault(database: Database, options: { encryptionKey: string
             [id, owner, agentId, name, input.label.trim(), input.purpose?.trim() || null, JSON.stringify(domains)],
           );
           const deadline = Date.now() + REQUEST_WAIT_MS;
-          while (Date.now() < deadline) {
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            const row = await requestById(owner, id);
-            if (!row || row.status === "cancelled") return `用户取消了，没有存「${input.label}」。不要换别的方式索要密钥。`;
-            if (row.status === "filled") {
-              const secret = await byName(owner, name);
-              return `⟦vault:${id}⟧ 用户已把「${secret?.label ?? input.label}」存进保险箱，名字 ${name}，可用于 ${(secret ? domainList(secret.domains) : domains).join("、")}。用法：在 api_request 的网址 / 请求头 / 请求体里写 {{secret:${name}}}。`;
+          try {
+            while (Date.now() < deadline) {
+              await wait(1000, undefined, { signal });
+              const row = await requestById(owner, id);
+              if (!row || row.status === "cancelled") return `用户取消了，没有存「${input.label}」。不要换别的方式索要密钥。`;
+              if (row.status === "filled") {
+                const secret = await byName(owner, name);
+                return `⟦vault:${id}⟧ 用户已把「${secret?.label ?? input.label}」存进保险箱，名字 ${name}，可用于 ${(secret ? domainList(secret.domains) : domains).join("、")}。用法：在 api_request 的网址 / 请求头 / 请求体里写 {{secret:${name}}}。`;
+              }
             }
+            await sql.unsafe("UPDATE chisabot_vault_requests SET status = 'expired' WHERE id = $1 AND status = 'pending'", [id]);
+            return `⟦vault:${id}⟧ 等了 10 分钟用户没有填。告诉用户可以稍后在 设置 → 密钥 里添加。`;
+          } finally {
+            if (signal?.aborted) await cancel(owner, id);
           }
-          await sql.unsafe("UPDATE chisabot_vault_requests SET status = 'expired' WHERE id = $1 AND status = 'pending'", [id]);
-          return `⟦vault:${id}⟧ 等了 10 分钟用户没有填。告诉用户可以稍后在 设置 → 密钥 里添加。`;
         },
       ),
       tool(
@@ -384,8 +418,8 @@ export function createVault(database: Database, options: { encryptionKey: string
             body: z.string().max(100_000).optional(),
           })
           .strict(),
-        async (input) => {
-          const result = await request(owner, input);
+        async (input, signal) => {
+          const result = await request(owner, input, signal);
           return `状态：${result.status}${result.contentType ? `\n类型：${result.contentType}` : ""}${result.location ? `\n重定向到：${result.location}（没有跟随）` : ""}${result.truncated ? "\n（内容过长，已截断）" : ""}\n${markUntrusted(result.body || "（空）", input.url.replace(PLACEHOLDER, "{{secret}}"))}`;
         },
       ),

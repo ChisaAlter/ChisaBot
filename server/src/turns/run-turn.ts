@@ -530,13 +530,18 @@ export function createTurnRunner(options: {
         : {}),
     });
 
-    await intelligence.ɵacquireThreadLock({
-      threadId,
-      runId,
-      userId: ownerUserId,
-      agentId,
-      ttlSeconds: lockTtlSeconds,
-    });
+    try {
+      await intelligence.ɵacquireThreadLock({
+        threadId,
+        runId,
+        userId: ownerUserId,
+        agentId,
+        ttlSeconds: lockTtlSeconds,
+      });
+    } catch (error) {
+      spoken.unsubscribe();
+      throw error;
+    }
 
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -594,6 +599,9 @@ export function createTurnRunner(options: {
     heartbeat.unref?.();
 
     try {
+      // Cancellation may arrive while acquiring the lock. Stopping a runner that has not
+      // started is a no-op; reject here so no new work starts after cancellation.
+      if (signal?.aborted) throw new Error("The headless turn was cancelled.");
       const cancelled = new Promise<never>((_resolve, reject) => {
         cancelTurn = () => {
           stopTurn();

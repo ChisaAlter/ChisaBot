@@ -476,27 +476,30 @@ export function createAuthApp(config: AuthConfig) {
       if (rest.length === 2 && method === "PATCH") {
         const body = await readJson(request);
         if (body instanceof Response) return body;
-        if (body.disabled !== undefined) {
-          if (typeof body.disabled !== "boolean") return json({ ok: false, error: "disabled 必须是 true / false。" }, 400);
-          db.query("UPDATE accounts SET disabled = ?, updated_at = ? WHERE id = ?").run(body.disabled ? 1 : 0, now(), id);
-          if (body.disabled) db.query("DELETE FROM sessions WHERE user_id = ?").run(id);
-        }
-        if (body.role !== undefined) {
-          if (body.role !== "admin" && body.role !== "user") return json({ ok: false, error: "role 必须是 admin 或 user。" }, 400);
-          db.query("UPDATE accounts SET role = ?, updated_at = ? WHERE id = ?").run(body.role, now(), id);
-        }
+        if (body.disabled !== undefined && typeof body.disabled !== "boolean") return json({ ok: false, error: "disabled 必须是 true / false。" }, 400);
+        if (body.role !== undefined && body.role !== "admin" && body.role !== "user") return json({ ok: false, error: "role 必须是 admin 或 user。" }, 400);
+        let hash: string | undefined;
         if (body.password !== undefined) {
           const problem = passwordProblem(body.password);
           if (problem) return json({ ok: false, error: problem }, 400);
           if (inFlight >= 2) return json({ ok: false, error: "服务器忙，请稍后再试。" }, 429, { "Retry-After": "2" });
           inFlight++;
-          let hash: string;
           try { hash = await hashPassword(body.password as string); } finally { inFlight--; }
-          db.query("UPDATE accounts SET password_hash = ?, updated_at = ? WHERE id = ?").run(hash, now(), id);
-          db.query("DELETE FROM sessions WHERE user_id = ?").run(id);
         }
-        if (body.displayName !== undefined) db.query("UPDATE accounts SET display_name = ?, updated_at = ? WHERE id = ?").run(cleanName(body.displayName, row.username), now(), id);
-        return json({ ok: true, account: accountView(account(id)!) });
+        // Hashing yields to other requests. Apply the validated update together only if the
+        // account still exists; a rejected request must not partially change its permissions.
+        const updated = db.transaction(() => {
+          const current = account(id);
+          if (!current) return null;
+          if (body.disabled !== undefined) db.query("UPDATE accounts SET disabled = ?, updated_at = ? WHERE id = ?").run(body.disabled ? 1 : 0, now(), id);
+          if (body.role !== undefined) db.query("UPDATE accounts SET role = ?, updated_at = ? WHERE id = ?").run(body.role as string, now(), id);
+          if (hash !== undefined) db.query("UPDATE accounts SET password_hash = ?, updated_at = ? WHERE id = ?").run(hash, now(), id);
+          if (body.disabled === true || hash !== undefined) db.query("DELETE FROM sessions WHERE user_id = ?").run(id);
+          if (body.displayName !== undefined) db.query("UPDATE accounts SET display_name = ?, updated_at = ? WHERE id = ?").run(cleanName(body.displayName, current.username), now(), id);
+          return account(id)!;
+        })();
+        if (!updated) return json({ ok: false, error: "账号不存在。" }, 404);
+        return json({ ok: true, account: accountView(updated) });
       }
       if (rest.length === 2 && method === "DELETE") {
         db.transaction(() => {
@@ -568,6 +571,9 @@ export function createAuthApp(config: AuthConfig) {
     // 一次性：用 used_at IS NULL 条件抢占，两个并发请求只有一个成功。
     let accountId: string | null = null;
     db.transaction(() => {
+      // An administrator can disable the account or close invites while Argon2 is running.
+      // Recheck those conditions before consuming the token or changing a password.
+      if (!findInvite(body.token)) return;
       const claimed = db.query("UPDATE invites SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?").run(now(), row.token_hash, now());
       if (claimed.changes !== 1) return;
       if (row.kind === "invite") {
@@ -681,7 +687,10 @@ export function createAuthApp(config: AuthConfig) {
         inFlight++;
         try {
           if (row) {
-            if (await Bun.password.verify(body.password as string, row.password_hash)) principal = accountPrincipal(row);
+            if (await Bun.password.verify(body.password as string, row.password_hash)) {
+              const current = account(row.id);
+              if (current && !current.disabled && current.password_hash === row.password_hash) principal = accountPrincipal(current);
+            }
           } else {
             const ok = await Bun.password.verify(body.password as string, config.passwordHash);
             if (ok && isAdminName) principal = adminPrincipal();

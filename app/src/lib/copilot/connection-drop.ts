@@ -143,6 +143,11 @@ export type SendWatchdogDecision =
       budget: "SEND_HANG";
     }
   | {
+      kind: "unverified";
+      reason: typeof SEND_UNREACHABLE_REASON;
+      budget: "SEND_UNREACHABLE";
+    }
+  | {
       kind: "reply_hang";
       reason: typeof SEND_REPLY_HANG_REASON;
       budget: "SEND_REPLY_HANG";
@@ -174,12 +179,24 @@ export function decideSendWatchdogAction(input: {
   replyRace?: "done" | "timeout";
 }): SendWatchdogDecision {
   if (input.firstRace === "done") return { kind: "proceed" };
-  // Timeout without a confirmed persist = fake-success risk. Treat null like not persisted.
-  if (input.persisted !== true) {
+  /*
+   * 「没到」只在两个证人都读到、都确凿没有（false）时才敢断言。证人缺席（null）是「核实不了」，
+   * 不是「没到」——请求可能只是还在路上（订阅前静默：上传 / 排队 / 服务端受理前处理 / 重启窗口），
+   * 落地后服务端照常开跑，回答经同步落回屏幕时「没发出去」就是一句挂着不撤的谎话。
+   * 这种情况如实说「可能没发出去」，由调用方的迟到对账在答案真的出现时撤卡。
+   */
+  if (input.persisted === false) {
     return {
       kind: "hang",
       reason: SEND_HANG_REASON,
       budget: "SEND_HANG",
+    };
+  }
+  if (input.persisted === null) {
+    return {
+      kind: "unverified",
+      reason: SEND_UNREACHABLE_REASON,
+      budget: "SEND_UNREACHABLE",
     };
   }
   if (input.replyRace === "timeout") {

@@ -1,8 +1,20 @@
-import { createStateStore, JSONUIProvider, Renderer, type Spec } from "@json-render/react";
+import {
+  createStateStore,
+  JSONUIProvider,
+  Renderer,
+  type Spec,
+} from "@json-render/react";
 import { useEffect, useMemo, useRef } from "react";
 import { useConversation } from "@/lib/copilot/conversation";
 import { jsonRenderRegistry } from "@/lib/copilot/json-render/registry";
-import { ChoiceProvider, choiceOptionsOf, copyText, openInNewTab, RichUiProvider } from "@/lib/copilot/json-render/rich-context";
+import {
+  ChoiceProvider,
+  choiceOptionsOf,
+  copyText,
+  openInNewTab,
+  RichUiProvider,
+} from "@/lib/copilot/json-render/rich-context";
+import { needsShell } from "../../../../shared/json-render/shell";
 
 /*
  * 对话里 render_ui 界面的真正渲染（json-render 注册表、图表、表单……）。从 render-ui-tool.tsx 拆出来按需加载：
@@ -34,11 +46,20 @@ export function JsonRenderSurface({
   conversationRef.current = conversation;
   // 互斥选项（CB-090）：这张界面里的 choice 按钮，和对话记录里这张界面之后用户说的第一句话。
   const choiceOptions = useMemo(
-    () => choiceOptionsOf(spec.elements as Record<string, { type?: string; props?: unknown }> | undefined),
+    () =>
+      choiceOptionsOf(
+        spec.elements as
+          | Record<string, { type?: string; props?: unknown }>
+          | undefined,
+      ),
     [spec.elements],
   );
   const answered =
-    !streaming && toolCallId && choiceOptions.length > 0 ? (conversation?.replyAfter?.(toolCallId) ?? null) : null;
+    !streaming && toolCallId && choiceOptions.length > 0
+      ? (conversation?.replyAfter?.(toolCallId) ?? null)
+      : null;
+  // 最外层不是 Card、又有字直接落在背景上：整张界面自己当外壳（DESIGN.md §29，shared/json-render/shell.ts）。
+  const shell = useMemo(() => needsShell(spec), [spec]);
 
   // 每张界面一个状态仓库；表单输入写在这里，不会影响别的消息里的界面。
   // biome-ignore lint/correctness/useExhaustiveDependencies: created once per surface on purpose.
@@ -46,7 +67,9 @@ export function JsonRenderSurface({
   const settled = useRef(!streaming);
   useEffect(() => {
     if (settled.current) return;
-    store.update(topLevelPointers(spec.state as Record<string, unknown> | undefined));
+    store.update(
+      topLevelPointers(spec.state as Record<string, unknown> | undefined),
+    );
     if (!streaming) settled.current = true;
   }, [spec.state, streaming, store]);
 
@@ -56,11 +79,13 @@ export function JsonRenderSurface({
         const ask = conversationRef.current?.ask;
         // `text` 是目录里的参数名；个别模型写成 message / content，照样发出去而不是让按钮没反应。
         const said = [params.text, params.message, params.content].find(
-          (value): value is string => typeof value === "string" && value.trim() !== "",
+          (value): value is string =>
+            typeof value === "string" && value.trim() !== "",
         );
         const base = said?.trim() ?? "";
         if (!ask || !base) return;
-        const path = typeof params.includeState === "string" ? params.includeState : "";
+        const path =
+          typeof params.includeState === "string" ? params.includeState : "";
         const attached = path ? store.get(path) : undefined;
         ask(
           attached === undefined
@@ -74,7 +99,8 @@ export function JsonRenderSurface({
         window.open(url, "_blank", "noopener,noreferrer");
       },
       copy_text: (params: Record<string, unknown>) => {
-        if (typeof params.text === "string" && params.text) void copyText(params.text);
+        if (typeof params.text === "string" && params.text)
+          void copyText(params.text);
       },
       // 对话里的界面没有「刷新」：只有右栏面板会重新取数。
       refresh_panel: () => {},
@@ -87,7 +113,9 @@ export function JsonRenderSurface({
       surface: "chat" as const,
       openLink: openInNewTab,
       copy: copyText,
-      ask: conversation?.ask ? (text: string) => conversationRef.current?.ask(text) : undefined,
+      ask: conversation?.ask
+        ? (text: string) => conversationRef.current?.ask(text)
+        : undefined,
     }),
     [conversation?.ask],
   );
@@ -97,14 +125,26 @@ export function JsonRenderSurface({
     <div
       aria-busy={streaming || undefined}
       aria-label={title || "机器人生成的界面"}
-      className="jr-surface"
+      className={shell ? "jr-surface jr-card" : "jr-surface"}
       data-streaming={streaming || undefined}
       role="region"
     >
       <RichUiProvider value={rich}>
-        <ChoiceProvider ask={rich.ask} initial={answered} options={choiceOptions}>
-          <JSONUIProvider handlers={handlers} registry={jsonRenderRegistry} store={store}>
-            <Renderer loading={streaming} registry={jsonRenderRegistry} spec={spec} />
+        <ChoiceProvider
+          ask={rich.ask}
+          initial={answered}
+          options={choiceOptions}
+        >
+          <JSONUIProvider
+            handlers={handlers}
+            registry={jsonRenderRegistry}
+            store={store}
+          >
+            <Renderer
+              loading={streaming}
+              registry={jsonRenderRegistry}
+              spec={spec}
+            />
           </JSONUIProvider>
         </ChoiceProvider>
       </RichUiProvider>

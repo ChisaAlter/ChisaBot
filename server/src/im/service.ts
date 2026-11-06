@@ -58,6 +58,11 @@ type Row = {
 
 type Live = { adapter: ImAdapter; status: ImAdapterStatus; ctx: AdapterContext };
 
+function canUseConnection(row: Row, userId: string): boolean {
+  return (Array.isArray(row.owner_users) && row.owner_users.includes(userId)) ||
+    (Array.isArray(row.allow_users) && row.allow_users.includes(userId));
+}
+
 export type ImServiceOptions = {
   database: Database;
   encryptionKey: string;
@@ -399,7 +404,7 @@ export function createImService(options: ImServiceOptions) {
     const allow = Array.isArray(row.allow_users) ? row.allow_users : [];
     const owners = Array.isArray(row.owner_users) ? row.owner_users : [];
     const isOwner = owners.includes(inbound.userId);
-    if (!isOwner && !allow.includes(inbound.userId)) {
+    if (!canUseConnection(row, inbound.userId)) {
       // 名单全空（多半是升级前扫码绑的连接还没填主人）：私聊回一次怎么绑，同一个发件人 10 分钟内只回一次；群里绝不开口。
       if (!owners.length && !allow.length && inbound.chatType === "private") {
         const hintKey = `${row.id}|${inbound.userId}`;
@@ -491,6 +496,8 @@ export function createImService(options: ImServiceOptions) {
     const entry = live.get(connectionId);
     const row = await rowById(connectionId);
     if (!entry || !row || !row.enabled) return;
+    // 排队期间名单可能已变更；撤销授权后不再以主人身份执行尚未开始的消息。
+    if (!canUseConnection(row, inbound.userId)) return;
     const adapter = entry.adapter;
     if (!(await options.botAvailable(row.owner_user_id, row.agent_id))) {
       log(row.id, "error", "对接的机器人不存在或已删除，请在设置里重新选择");
@@ -565,6 +572,8 @@ export function createImService(options: ImServiceOptions) {
       options.signalThreadBusy?.(threadId, false);
     }
     try {
+      const current = await rowById(connectionId);
+      if (!current?.enabled || live.get(connectionId) !== entry || !canUseConnection(current, inbound.userId)) return;
       await reply(row, adapter, inbound, answer);
       log(row.id, "info", `已回复（${answer.length} 字，用时 ${Math.round((Date.now() - started) / 1000)} 秒）`);
     } catch (error) {
@@ -1139,6 +1148,7 @@ export function createImService(options: ImServiceOptions) {
       let inbound = chat.last_inbound as ImInbound | string | null;
       if (typeof inbound === "string") inbound = JSON.parse(inbound) as ImInbound;
       if (!inbound) throw new Error("这个 IM 对话还没有可回复的消息");
+      if (!canUseConnection(row, inbound.userId)) throw new Error("这个 IM 对话的发送者已不在可用名单里");
       await reply(row, entry.adapter, inbound, text);
       log(row.id, "info", `主动推送消息（${text.length} 字）`);
     },

@@ -691,6 +691,8 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 **渲染这一侧（兜底，对话 render_ui 也适用）**：
 - 一层外壳：外壳是面板卡片（对话里是最外层 Card）。外壳里的 Card 平铺成小节，Metric / 表格 / 列表不再各自带底色、边框、圆角。和卡片头同名的标题不画第二遍（`shared/json-render/panel-title.ts`），Card 的 description 变成一行淡色副标题。
+- 缺外壳时整张界面自己当外壳（2026-11-06，用户：「为啥AI输出的内容，好多不在气泡里」）：对话里模型常直接用 Stack 起头，上面一排卡片、下面一行淡色小字，那行字落在天空 / 壁纸上。从根往下只穿过 Stack / Grid / Carousel / Tabs，遇到 Card 就停；路上碰到自己没有底的东西（Text、Heading、KeyValue、图表、时间线……）时 `.jr-surface` 加上 `.jr-card`，里面的 Card 按上一条平铺成小节。只有自带底的 Metric / List / 按钮 / 商品卡时不加（`shared/json-render/shell.ts`）。流式时如果那行字最后才到，外壳在它到的那一刻出现。
+- Android 原生渲染同一套（`android/.../ui/JsonRender.kt`）：对话卡 `autoShell` 走 `needsShell` 补玻璃壳，壳内由 `LocalInShell` 平铺 Card（标题 13px 淡色小节头）、Metric（tinted 除外）去底去内边距、表格去边框、列表行去横向内边距；面板页卡片本来就是外壳，只补 `dropDuplicatePanelTitle` 去同名标题。
 - 数字永远一行：`.jr-metric-v` nowrap，放不下由 `FitLine` 缩字号（最小 13px）；「26.9℃」拆成数字 + 小一号淡色单位；标签单行省略号。
 - Grid 的 columns 是上限：每格至少 84–88px，放不下自动少一列（窄面板 3 列 → 2 列）。
 - 表格容器 < 440px（容器查询）换成简表：第一列（第二列是文字时叠在下面）+ 靠右最多 3 个数值列，再多的列折进左边第二行；日期写短（10/13），℃ 写成 °。宽了照常是表格。
@@ -1171,7 +1173,8 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 
 - **为什么用令牌不用 OAuth**：上游 `plugins/oauth.ts` 是 MCP 的动态注册 OAuth，GitHub 不支持；GitHub OAuth App 要管理员在 GitHub 注册应用、配回调。单人自部署最省事的是用户自己建一个 **fine-grained 令牌**（只选给机器人的仓库）。以后有 OAuth App 时可以在同一张卡里加「用 GitHub 登录」。
 - **存放**（`server/src/github/service.ts`）：令牌存进密钥保险箱（§52）的保留名字 `github`，域名绑定 api.github.com；保险箱页面这一行显示 GitHub 图标和「由 账号连接 → GitHub 管理」，点进去跳到账号连接，没有编辑 / 删除；`api_request` 和 `vault_request_secret` 都拒绝用 `github`（否则机器人能绕过写确认）。连接信息（登录名、头像、令牌类型、状态）在 `chisabot_github_connections`，开机建表。连接时服务器先用令牌读一次 `/user`，401 就不保存；之后任何 401 把连接标成「令牌已失效」。
-- **机器人工具**（只在连上后给，每轮开头一句 GitHub 用法；没连时那句话让用户去 设置 → 账号连接）：读 `github_list_repos` / `github_list_issues`（不含 PR）/ `github_list_pulls` / `github_get_issue`（正文 + 最近 20 条评论；PR 加分支、冲突、改动数）/ `github_read_file`（文件或目录，文本 60k 字以内，二进制不读）；写 `github_create_issue` / `github_comment` / `github_create_pr`（只从已有分支开 PR，不推代码）。请求地址固定是 GitHub API、不跟随重定向，回来的内容抹掉令牌，再按外部内容包起来。
+- **对话里就地连接**（2026-11-05）：没连 / 令牌失效时那几句话让回复末尾附独立一行的链接卡 `[连接 GitHub](/settings/connected-accounts/github)`——`HarkActionPill` 认出这个深链后渲染成白胶囊按钮，点开就地弹设置里同一个 `GithubTokenDialog`（令牌只发往服务器，不进对话）；不跳设置页。其它链接卡照常跳转。
+- **机器人工具**（只在连上后给，每轮开头一句 GitHub 用法）：读 `github_list_repos` / `github_list_issues`（不含 PR）/ `github_list_pulls` / `github_get_issue`（正文 + 最近 20 条评论；PR 加分支、冲突、改动数）/ `github_read_file`（文件或目录，文本 60k 字以内，二进制不读）；写 `github_create_issue` / `github_comment` / `github_create_pr`（只从已有分支开 PR，不推代码）。请求地址固定是 GitHub API、不跟随重定向，回来的内容抹掉令牌，再按外部内容包起来。
 - **写操作先确认**：工具在 `chisabot_github_actions` 记一条 pending，在服务器上等最多 10 分钟；用户点「允许」时**服务器才发请求**（原子地 pending → running，第二次点击 / 另一台设备不会重复发），点「拒绝」工具告诉机器人「不要换别的方式绕过」。IM、长期任务、后台任务这些网页不在场的回合直接拒绝写。
 - **确认卡片**（`lib/copilot/github-tool.tsx`，render-only，样式 `.gh-card`）：玻璃卡最宽 520px：40px 图标（等待 = 琥珀 GitHub / PR 图标，完成 = 绿 ✓，失败 = 红 ✕，拒绝 / 过期 = 灰）· 标题「在 owner/repo 创建 Issue / 创建 Pull Request / #12 发表评论」· 一句状态 · 预览框（标题加粗、`head → base` 等宽标签、草稿、标签、正文最高 180px 可滚）· 「允许」（按钮状态机：发送中… → 已发出 ✓）+「拒绝」；完成后「在 GitHub 查看 ↗」。卡片按结果里的 `⟦github:id⟧` 找记录，重新打开对话也显示最终状态。
 - **设置 → 账号连接**（原「账号与密码」改名，路由不变 `/settings/connected-accounts`；最上面一节 GitHub）：没连 = GitHub 黑色标志 · 「未连接 · 用一个 GitHub 访问令牌连接…」·「连接」。连接弹窗两步：① 「打开 GitHub 创建令牌」（预填名称 ChisaBot、90 天、Contents / Issues / Pull requests 读写；仓库范围用户自己选）② 粘贴令牌（密码框、等宽）→「连接」（验证中… → 已连接 ✓）。已连 = 头像 · 名字 `@login` · 绿点「已连接」/ 红点「令牌已失效」· 令牌类型 · 末四位 ·「N 分钟前检查过 · 写操作每次都先问你」·「检查」（失效时换成「更换令牌」）· ⋯（更换令牌… / 在 GitHub 打开 / 断开连接…，断开先确认，并提醒去 GitHub 删除令牌）。
@@ -2692,3 +2695,12 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **边界**：远程 bot（AG-UI / Mastra）模型在各自服务里配，只列出不评；已删 bot 单列 tombstone 提示只剩历史；`canManage` 为假的 bot 在报告里标⚠。`agentId` 参数可只审一个 bot，查无此人回 Refusal。
 - **接线**：`loadToolsForActor` 与记忆/技能同一批工具位置挂上（`index.ts`），后台刷新面板（`lp_` routine）的回合不给；`fleet/` 进 `classify.ts` 的 SKIP_REF——纯读工具，不参与确认分类、不需要确认卡。
 - **验证**：`server/tests/fleet-audit.test.ts`——档位名边界（minimax-m2 不中 mini、pro-mini 算 strong）、负载关键词家族、报告排版 / 单 bot 过滤 / 未知 id 拒答、假库驱动的数据采集（schedules + channel_agents 两张表挂了回空不炸）。
+
+## 126. 输出契约：每种 AI 输出在每个界面都有明确归宿（2026-11-04）
+
+用户：「为啥AI输出的内容，好多不在气泡里」→「能在对话解决的都在对话解决」→「制定完善的计划，深度，全面的彻底优化修复」。审查发现体系成立但靠人肉纪律维持双端一致，分四期修：
+
+- **契约文件（`shared/output-contract.ts`）**：模型能发的每种输出形态（气泡 / 引用 / 表格 / 代码 / draft-doc / brief / :::card / 链接卡两式 / 操作胶囊 / 富预览 / 内联图 / render_ui / ⟦files⟧ / 确认卡 / ⟦github⟧ / ⟦vault⟧ / ⟦page⟧ / 服务端行 / 干活说法）对 web / app / im 三端各写明 native / degraded / none。新增形态必须在清单里为每端做明确决定；`shared/output-contract.test.ts` 校验清单完整性，两端解析测试按 id 对照。
+- **P0 surface 闸门（`audit.ts` `InitiatorSurface`）**：person 加可选 `surface: "web" | "app"`（缺省 = web，兼容旧审计行与 callback token）；copilot 端点按 `User-Agent: ChisaBotAndroid` 标 app。`interactive()` / `canConfirm()` 只认 web person——Android / IM 上的「等人填」卡（⟦vault⟧、⟦github⟧ 写确认）由服务端干净拒绝并指路网页，不再建 pending 卡挂 10 分钟。IM 的 routine im: 确认流不受影响（confirmations 通道照旧）；`interactiveInitiator` 不变——Android 能答通用确认卡。
+- **P1 Android 渲染补齐**：`:::card`/`:::group` 与 ```cards 围栏 → `Block.StatusCards` 原生卡组；```brief → `Block.Brief` 晨报卡；独立行 `[label](url)` → `LinkCard`，短标签站内路径 → `ActionPill`（github 深链就地弹 `GithubConnectDialog`，其它走壳内网页）；⟦chisabot:files⟧ 工具结果 → `Row.FileCards`（image_generate / image_edit / file_share）；mermaid/svg/html 代码卡 + 「在网页中打开可预览」显式降级；Icon 画 label/名字不再静默丢；表单兜底文案补原因。
+- **P2 防漂移**：`WORK_STEP_TOOLS` 工具说法词汇表进契约；`shared/work-step.ts` 与 `WorkSteps.kt` 补齐 delegate_task / ask_person / note / schedule_create / bot_factory（两端同款中文说法）。

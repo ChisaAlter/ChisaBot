@@ -9,6 +9,11 @@ import cn.ayase.chisabot.chat.WorkSteps
 import cn.ayase.chisabot.chat.parseHistory
 import cn.ayase.chisabot.chat.ConfirmCard
 import cn.ayase.chisabot.chat.withEditedText
+import cn.ayase.chisabot.chat.a
+import cn.ayase.chisabot.chat.filesFromToolResult
+import cn.ayase.chisabot.chat.o
+import cn.ayase.chisabot.chat.s
+import cn.ayase.chisabot.chat.str
 import kotlinx.serialization.json.JsonPrimitive
 import cn.ayase.chisabot.md.Block
 import cn.ayase.chisabot.md.Markdown
@@ -19,6 +24,9 @@ import cn.ayase.chisabot.ui.MIC_DENIED_SETTINGS_MESSAGE
 import cn.ayase.chisabot.ui.isMicPermanentlyDenied
 import cn.ayase.chisabot.ui.micResourcesToGrant
 import cn.ayase.chisabot.ui.siteOf
+import cn.ayase.chisabot.ui.needsShell
+import cn.ayase.chisabot.ui.sameTitle
+import cn.ayase.chisabot.ui.dropDuplicatePanelTitle
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -379,10 +387,240 @@ class NativeLogicTest {
         assertEquals("http://192.168.1.5", GatewayAuth.normalize("http://192.168.1.5:80"))
     }
 
+    @Test fun deviceRenewalNeverUsesAnotherServersBinding() {
+        val first = "https://first.example.com"
+        val second = "https://second.example.com"
+        val token = "cbd_device-token"
+        assertEquals(token, boundDeviceToken(first, first, first, token))
+        // 第一台服务器的旧请求晚到 401，此时已经扫码登录第二台：不能把第二台令牌发给第一台。
+        assertNull(boundDeviceToken(first, second, second, token))
+        // 当前服务器、绑定服务器和请求目标三个值都要一致（端口也属于身份边界）。
+        assertNull(boundDeviceToken(second, second, first, token))
+        assertNull(boundDeviceToken(first, first, "$first:8443", token))
+        assertNull(boundDeviceToken(first, null, first, token))
+        assertNull(boundDeviceToken(first, first, first, null))
+        assertNull(boundDeviceToken(first, first, first, "other-token"))
+    }
+
+    // ---- json-render §29：缺外壳时整张界面自己当外壳（对齐 shared/json-render/shell.test.ts）----
+
+    private fun jr(type: String, children: List<String> = emptyList(), props: String = "{}") =
+        """{"type":"$type","props":$props,"children":[${children.joinToString(",") { "\"$it\"" }}]}"""
+
+    private fun jrSpec(elements: Map<String, String>, root: String = "root") =
+        ev("""{"root":"$root","elements":{${elements.entries.joinToString(",") { "\"${it.key}\":${it.value}" }}}}""")
+
+    @Test fun surfaceShellWhenTextSitsOnBackground() {
+        // 2026-11-06 截图同款：Grid 两张对比卡 + 底下一行淡字 → 那行字落在天空上，要补外壳
+        assertTrue(needsShell(jrSpec(mapOf(
+            "root" to jr("Stack", listOf("grid", "note")),
+            "grid" to jr("Grid", listOf("a", "b")),
+            "a" to jr("Card", listOf("at"), """{"title":"方案 A"}"""),
+            "at" to jr("Text"),
+            "b" to jr("Card", listOf("bt"), """{"title":"方案 B"}"""),
+            "bt" to jr("Text"),
+            "note" to jr("Text", props = """{"tone":"muted","size":"sm"}"""),
+        ))))
+    }
+
+    @Test fun surfaceShellSkippedWhenCardCovers() {
+        assertFalse(needsShell(jrSpec(mapOf("root" to jr("Card", listOf("t")), "t" to jr("Text")))))
+        assertFalse(needsShell(jrSpec(mapOf(
+            "root" to jr("Stack", listOf("a", "b")),
+            "a" to jr("Card", listOf("h", "kv")),
+            "h" to jr("Heading"),
+            "kv" to jr("KeyValue"),
+            "b" to jr("Card"),
+        ))))
+    }
+
+    @Test fun surfacedComponentsCanStandAlone() {
+        assertFalse(needsShell(jrSpec(mapOf("root" to jr("Grid", listOf("m1", "m2")), "m1" to jr("Metric"), "m2" to jr("Metric")))))
+        assertFalse(needsShell(jrSpec(mapOf(
+            "root" to jr("Stack", listOf("b1", "b2"), """{"direction":"horizontal"}"""),
+            "b1" to jr("Button"), "b2" to jr("Button"),
+        ))))
+        assertFalse(needsShell(jrSpec(mapOf("root" to jr("Stack", listOf("p", "l")), "p" to jr("Products"), "l" to jr("List")))))
+        assertFalse(needsShell(jrSpec(mapOf("root" to jr("Carousel", listOf("l1", "l2")), "l1" to jr("Link"), "l2" to jr("Link")))))
+    }
+
+    @Test fun bareContentAsksForShell() {
+        assertTrue(needsShell(jrSpec(mapOf("root" to jr("Text")))))
+        assertTrue(needsShell(jrSpec(mapOf("root" to jr("Stack", listOf("h", "p")), "h" to jr("Heading"), "p" to jr("Products")))))
+        assertTrue(needsShell(jrSpec(mapOf("root" to jr("Stack", listOf("kv")), "kv" to jr("KeyValue")))))
+        assertTrue(needsShell(jrSpec(mapOf("root" to jr("Grid", listOf("c")), "c" to jr("Chart")))))
+        // 轮播里一项是没有卡片的 Stack：里面的字一样落在背景上
+        assertTrue(needsShell(jrSpec(mapOf("root" to jr("Carousel", listOf("s")), "s" to jr("Stack", listOf("t")), "t" to jr("Text")))))
+    }
+
+    @Test fun labelPropsTurnLineIntoText() {
+        fun between(sep: String) = jrSpec(mapOf(
+            "root" to jr("Stack", listOf("a", "sep", "b")),
+            "a" to jr("Card"), "sep" to sep, "b" to jr("Card"),
+        ))
+        assertFalse(needsShell(between(jr("Separator"))))
+        assertFalse(needsShell(between(jr("Separator", props = """{"label":"  "}"""))))
+        assertTrue(needsShell(between(jr("Separator", props = """{"label":"更早"}"""))))
+        assertFalse(needsShell(between(jr("Image", props = """{"src":"https://a.test/x.png"}"""))))
+        assertTrue(needsShell(between(jr("Image", props = """{"src":"https://a.test/x.png","caption":"图注"}"""))))
+    }
+
+    @Test fun segmentedTabsAreSurfacedUnderlineTabsAreBare() {
+        fun tabs(props: String, pane: String = "c1") = jrSpec(mapOf(
+            "root" to jr("Tabs", listOf(pane, "c2"), props),
+            "c1" to jr("Card"), "c2" to jr("Card"), "t" to jr("Text"),
+        ))
+        assertFalse(needsShell(tabs("""{"tabs":["今天","本周"]}""")))
+        assertFalse(needsShell(tabs("""{"tabs":["今天","本周"],"variant":"segmented"}""")))
+        assertTrue(needsShell(tabs("""{"tabs":["今天","本周"],"variant":"tabs"}""")))
+        assertTrue(needsShell(tabs("""{"tabs":["今天","本周"]}""", "t")))
+    }
+
+    @Test fun streamingChildrenSkippedUntilTheyArrive() {
+        assertFalse(needsShell(ev("""{"root":"root","elements":{}}""")))
+        val grid = jr("Grid", listOf("a")); val card = jr("Card")
+        assertFalse(needsShell(jrSpec(mapOf("root" to jr("Stack", listOf("grid", "note")), "grid" to grid, "a" to card))))
+        assertTrue(needsShell(jrSpec(mapOf("root" to jr("Stack", listOf("grid", "note")), "grid" to grid, "a" to card, "note" to jr("Text")))))
+    }
+
+    @Test fun malformedSpecNeverThrows() {
+        assertFalse(needsShell(null))
+        assertFalse(needsShell(ev("""{"root":1,"elements":{}}""")))
+        assertFalse(needsShell(ev("""{"root":"root"}""")))
+        assertFalse(needsShell(jrSpec(mapOf("root" to """{"props":{}}"""))))
+        assertFalse(needsShell(jrSpec(mapOf("root" to jr("Stack", listOf("missing"))))))
+        // 互相引用：每个元素只看一次
+        assertFalse(needsShell(jrSpec(mapOf("root" to jr("Stack", listOf("a")), "a" to jr("Stack", listOf("root"))))))
+    }
+
+    // ---- json-render §29：面板卡片头同名标题不画第二遍（对齐 shared/json-render/panel-title.test.ts）----
+
+    @Test fun panelTitleMatching() {
+        assertTrue(sameTitle("香港天气", " 香港 天气！"))
+        assertTrue(sameTitle("比特币价格面板", "比特币价格"))
+        assertFalse(sameTitle("香港天气", "上海天气"))
+        assertFalse(sameTitle("", "香港天气"))
+        assertFalse(sameTitle("甲", "乙"))
+    }
+
+    @Test fun panelTitleDedup() {
+        val spec = """{"root":"root","elements":{"root":{"type":"Card","props":{"title":"香港天气","description":"副标题"},"children":["t"]},"t":{"type":"Text","props":{"text":"正文"},"children":[]}}}"""
+        val card = ev(dropDuplicatePanelTitle(spec, "香港 天气")).o("elements")!!.o("root")!!
+        assertNull(card.o("props")!!.s("title"))
+        assertEquals("副标题", card.o("props")!!.s("description"))
+        // 不同名不动、标题为空不动、没规格不动
+        assertEquals(spec, dropDuplicatePanelTitle(spec, "别的东西"))
+        assertEquals(spec, dropDuplicatePanelTitle(spec, null))
+        assertEquals("bad json", dropDuplicatePanelTitle("bad json", "香港天气"))
+        // 沿着孩子链往下，第一个孩子是同名 Heading 就整只去掉
+        val headed = """{"root":"root","elements":{"root":{"type":"Stack","props":{},"children":["h","t"]},"h":{"type":"Heading","props":{"text":"香港 天气"},"children":[]},"t":{"type":"Text","props":{},"children":[]}}}"""
+        val kids = ev(dropDuplicatePanelTitle(headed, "香港天气")).o("elements")!!.o("root")!!.a("children")!!.map { it.str() }
+        assertEquals(listOf("t"), kids)
+        // 但遇到一张有别的标题的 Card 就停，不再往里找
+        val walled = """{"root":"root","elements":{"root":{"type":"Card","props":{"title":"概览"},"children":["s"]},"s":{"type":"Stack","props":{},"children":["h"]},"h":{"type":"Heading","props":{"text":"香港天气"},"children":[]}}}"""
+        assertEquals(walled, dropDuplicatePanelTitle(walled, "香港天气"))
+    }
+
     @Test fun tableEscapedPipe() {
         // \| 是字面竖线不当分隔符；首尾的分界 | 照旧去掉
         val t = Markdown.parse("| a \\| b | c |\n|---|---|\n| 1 \\| 2 | 3 |\n")[0] as Block.Table
         assertEquals(listOf("a | b", "c"), t.header)
         assertEquals(listOf("1 | 2", "3"), t.rows[0])
+    }
+
+    // ---------- AI 输出语法覆盖（同网页 bot-bubbles，DESIGN §48/§53/§69） ----------
+
+    @Test fun actionPillParsesStandaloneRelativeLink() {
+        // 独立一行的站内操作是胶囊（无论前面隔空行还是单换行）；GitHub 深链由界面层换成令牌对话框
+        val p = Markdown.parse("先连上你的 GitHub：\n\n[连接 GitHub](/settings/connected-accounts/github)\n")
+        assertEquals(2, p.size)
+        assertTrue(p[0] is Block.Paragraph)
+        val pill = p[1] as Block.ActionPill
+        assertEquals("连接 GitHub", pill.label)
+        assertEquals("/settings/connected-accounts/github", pill.href)
+        val singleNewline = Markdown.parse("先连上你的 GitHub：\n[连接 GitHub](/settings/connected-accounts/github)")
+        assertEquals(2, singleNewline.size)
+        assertEquals("/settings/connected-accounts/github", (singleNewline[1] as Block.ActionPill).href)
+        // 独立胶囊自己一段、不套气泡
+        val b = Markdown.bubbles("[连接 GitHub](/settings/connected-accounts/github)")
+        assertTrue(b.single().bare)
+    }
+
+    @Test fun labeledLinkBecomesLinkCard() {
+        // [标签](http…) 独立成行也是链接卡（网页同款）；行内写法仍是普通段落
+        val blocks = Markdown.parse("[发布说明](https://example.com/r)\n")
+        val card = blocks.single() as Block.LinkCard
+        assertEquals("https://example.com/r", card.url)
+        assertEquals("发布说明", card.label)
+        val inline = Markdown.parse("看 [发布说明](https://example.com/r) 这里\n")
+        assertTrue(inline.single() is Block.Paragraph)
+        // 长标签 / 非站内 href 的独立行是带标签链接卡，不是胶囊
+        val long = Markdown.parse("[这个标签实在太长太长太长太长太长太长太长太长太长太长太长](/settings/x)\n")
+        assertTrue(long.single() is Block.LinkCard)
+    }
+
+    @Test fun statusCardDirectives() {
+        val src = "全景如下：\n\n:::group\n:::card{title=\"GitHub\" status=\"已连接\"}\n- 仓库 12 个\n:::card{title=\"邮箱\"}\n未连接\n:::\n:::\n\n接着说。\n"
+        val blocks = Markdown.parse(src)
+        val cards = blocks.filterIsInstance<Block.StatusCards>().single().cards
+        assertEquals(2, cards.size)
+        assertEquals("GitHub", cards[0].title)
+        assertEquals("已连接", cards[0].status)
+        assertEquals("- 仓库 12 个", cards[0].body)
+        assertEquals("未连接", cards[1].body)
+        // 指令记号不漏进正文段
+        assertTrue(blocks.filterIsInstance<Block.Paragraph>().none { it.text.contains(":::") })
+        // 单独 :::card（不在 :::group 里）也能解析；:::group 少写外层 ::: 时不吞掉后面的段落
+        val solo = Markdown.parse(":::card{title=\"单卡\"}\n内容\n:::\n\n后续。")
+        assertEquals("单卡", (solo[0] as Block.StatusCards).cards.single().title)
+        assertEquals("后续。", (solo[1] as Block.Paragraph).text)
+        val singleClose = Markdown.parse(":::group\n:::card{title=\"单收尾\"}\n内容\n:::\n\n后续。")
+        assertEquals("单收尾", (singleClose[0] as Block.StatusCards).cards.single().title)
+        assertEquals("后续。", (singleClose[1] as Block.Paragraph).text)
+    }
+
+    @Test fun cardsFenceParsesToo() {
+        // ```cards = 指令块的围栏形态（网页 normalizeDirectiveCards 归一成这种）
+        val blocks = Markdown.parse("```cards\n:::card{title=\"巡检\" status=\"3 条\"}\n正文\n:::\n```\n")
+        val cards = (blocks.single() as Block.StatusCards).cards
+        assertEquals("巡检", cards.single().title)
+        assertEquals("3 条", cards.single().status)
+        assertEquals("正文", cards.single().body)
+    }
+
+    @Test fun briefFenceParses() {
+        val blocks = Markdown.parse("```brief\n标题：今日晨报\n日期：周一\n## 日程\n- 10:00 站会\n```\n")
+        val brief = blocks.single() as Block.Brief
+        assertEquals("今日晨报", brief.title)
+        assertTrue(brief.body.contains("日程"))
+        assertTrue(Markdown.bubbles("```brief\n正文\n```").single().bare)
+    }
+
+    @Test fun chatFilesFromToolResult() {
+        val result = "画好了。\n⟦chisabot:files⟧[{\"id\":\"f1\",\"name\":\"cat.png\",\"mimeType\":\"image/png\",\"url\":\"/api/chat-files/f1\",\"prompt\":\"一只猫\",\"width\":800,\"height\":600},{\"id\":\"f2\",\"name\":\"r.pdf\",\"mimeType\":\"application/pdf\",\"url\":\"/api/chat-files/f2\"}]"
+        val files = filesFromToolResult(result)
+        assertEquals(2, files.size)
+        assertEquals("cat.png", files[0].name)
+        assertTrue(files[0].image)
+        assertEquals(800, files[0].width)
+        assertFalse(files[1].image)
+        // AG-UI 再 JSON 包一层也能解（同网页 unwrap）
+        val wrapped = "\"画好了。\\n⟦chisabot:files⟧[{\\\"id\\\":\\\"f1\\\",\\\"name\\\":\\\"a.png\\\",\\\"mimeType\\\":\\\"image/png\\\",\\\"url\\\":\\\"/api/chat-files/f1\\\"}]\""
+        assertEquals(1, filesFromToolResult(wrapped).size)
+        assertTrue(filesFromToolResult("没有文件").isEmpty())
+        assertTrue(filesFromToolResult(null).isEmpty())
+        // 指向别处的 url 不收（只认 /api/chat-files/）
+        assertTrue(filesFromToolResult("⟦chisabot:files⟧[{\"id\":\"x\",\"url\":\"https://evil/x\"}]").isEmpty())
+    }
+
+    @Test fun fileCardRowEmittedForImageAndShareTools() {
+        val fileCall = ToolCall("c1", "file_share", "{}", "好\n⟦chisabot:files⟧[{\"id\":\"f\",\"name\":\"a.pdf\",\"mimeType\":\"application/pdf\",\"url\":\"/api/chat-files/f\"}]", ended = true)
+        val imgCall = ToolCall("c2", "image_generate", "{}", "⟦chisabot:files⟧[{\"id\":\"g\",\"name\":\"g.png\",\"mimeType\":\"image/png\",\"url\":\"/api/chat-files/g\"}]", ended = true)
+        val other = ToolCall("c3", "web_search", "{}", "⟦chisabot:files⟧[{\"id\":\"h\",\"name\":\"h\",\"mimeType\":\"text/plain\",\"url\":\"/api/chat-files/h\"}]", ended = true)
+        val rows = Turns.build(listOf(ChatMessage("u1", "user", "q"), ChatMessage("a1", "assistant", "", listOf(fileCall, imgCall, other))), running = false, error = null)
+        val cards = rows.filterIsInstance<Row.FileCards>()
+        assertEquals(2, cards.size)
+        assertEquals("a.pdf", cards[0].files[0].name)
+        assertEquals("g.png", cards[1].files[0].name)
     }
 }

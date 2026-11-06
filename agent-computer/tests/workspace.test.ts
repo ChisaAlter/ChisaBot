@@ -91,6 +91,33 @@ describe("reading and writing inside the workspace", () => {
     expect(read.bytes).toBe(16);
   });
 
+  test("reads an empty file without reporting truncation", async () => {
+    const ws = workspace();
+    await ws.write("empty.txt", "");
+    expect(await ws.read("empty.txt")).toEqual({
+      path: "empty.txt",
+      text: "",
+      bytes: 0,
+      truncated: false,
+    });
+  });
+
+  test("a read at its byte limit keeps the full text", async () => {
+    const ws = createWorkspace(root, {
+      readBytes: 6,
+      writeBytes: 1000,
+      listEntries: 500,
+      downloadBytes: 1000,
+    });
+    await ws.write("utf8.txt", "中文");
+    expect(await ws.read("utf8.txt")).toEqual({
+      path: "utf8.txt",
+      text: "中文",
+      bytes: 6,
+      truncated: false,
+    });
+  });
+
   test("a write that exceeds the limit is refused before it touches the disk", async () => {
     const ws = createWorkspace(root, {
       readBytes: 1000,

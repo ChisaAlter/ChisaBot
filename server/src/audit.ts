@@ -472,9 +472,16 @@ export const auditEventTypes = [
 
 export type AuditEventType = (typeof auditEventTypes)[number];
 
+/**
+ * Which surface a person spoke from. `web` covers the browser, PWA and desktop clients — the whole
+ * React app; `app` is the Android client (`ChisaBotAndroid` user agent). IM never appears here: its
+ * turns carry `routine` `im:` initiators. Absent means web — every path minted before this existed.
+ */
+export type InitiatorSurface = "web" | "app";
+
 /** What caused a row, where `actorUserId` is only whose authority it borrowed. */
 export type AuditInitiator =
-  | { kind: "person" }
+  | { kind: "person"; surface?: InitiatorSurface }
   | { kind: "deployment" }
   | { kind: "routine"; id: string }
   | { kind: "responsibility"; id: string }

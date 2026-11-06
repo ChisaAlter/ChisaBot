@@ -14,6 +14,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -42,6 +43,61 @@ def main():
             f.write("# 中文注释：python3 在 C locale 下也要能读\nCOMPOSE_DIR=%s\nCOMPOSE_FILE=compose.yaml\n"
                     "CONTAINER=chisabot-zh\nIMAGE_REPO=local/chisabot\nPUBLIC_HEALTH_URL=\n" % compose_dir)
         m = load(home)
+
+        # Commands must drain more than one pipe buffer before they can finish.
+        code, output = m.run([sys.executable, "-c",
+                              "import sys; sys.stdout.write('x' * 262144); sys.stdout.flush(); "
+                              "sys.stderr.write('tail'); sys.exit(3)"], timeout=5)
+        assert code == 3 and output == "x" * 262144 + "tail", (code, len(output))
+        code, output = m.run([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.2)
+        assert code == 124 and output == "超时", (code, output)
+
+        # Force two state writes to overlap after their temporary files open.
+        state_path = os.path.join(home, "concurrent.json")
+        original_dump = m.json.dump
+        writers_ready = threading.Event()
+        writer_lock = threading.Lock()
+        writer_count = [0]
+        write_errors = []
+
+        def overlapping_dump(*args, **kwargs):
+            with writer_lock:
+                writer_count[0] += 1
+                if writer_count[0] == 2:
+                    writers_ready.set()
+            assert writers_ready.wait(5), "state writers did not overlap"
+            return original_dump(*args, **kwargs)
+
+        def save_state(value):
+            try:
+                m.write_json(state_path, {"value": value})
+            except Exception as error:
+                write_errors.append(error)
+
+        m.json.dump = overlapping_dump
+        try:
+            writers = [threading.Thread(target=save_state, args=(value,)) for value in ("one", "two")]
+            for writer in writers:
+                writer.start()
+            for writer in writers:
+                writer.join(6)
+            assert all(not writer.is_alive() for writer in writers)
+            assert not write_errors, write_errors
+        finally:
+            m.json.dump = original_dump
+        with io.open(state_path, "r", encoding="utf-8") as f:
+            assert json.load(f) in ({"value": "one"}, {"value": "two"})
+        assert not any(name.endswith(".tmp") for name in os.listdir(home))
+
+        # A serialization failure leaves the previous readable state in place.
+        before = m.read_text(state_path)
+        try:
+            m.write_json(state_path, {"invalid": object()})
+            raise AssertionError("serialization should fail")
+        except TypeError:
+            pass
+        assert m.read_text(state_path) == before
+        assert not any(name.endswith(".tmp") for name in os.listdir(home))
 
         # clean(): str / bytes / control characters / non-text
         assert m.clean("ok\x1b[31m red\x07") == "ok red", m.clean("ok\x1b[31m red\x07")
@@ -109,9 +165,18 @@ def main():
                 stream.close()
             return FakeChild()
 
+        original_popen = m.subprocess.Popen
+        original_setsid = getattr(m.os, "setsid", None)
         m.subprocess.Popen = fake_popen
-        u.internal["job"] = None
-        u.handle({"id": "magpie-test12345", "action": "magpie", "actor": "管理员"})
+        if original_setsid is None:  # Windows runs the stub, never a deployment process.
+            m.os.setsid = lambda: None
+        try:
+            u.internal["job"] = None
+            u.handle({"id": "magpie-test12345", "action": "magpie", "actor": "管理员"})
+        finally:
+            m.subprocess.Popen = original_popen
+            if original_setsid is None:
+                del m.os.setsid
         assert started and started[0][1].endswith("magpie.sh"), started
         assert "--update" in started[0] and "--job" in started[0], started
         assert u.internal["job"]["action"] == "magpie", u.internal["job"]

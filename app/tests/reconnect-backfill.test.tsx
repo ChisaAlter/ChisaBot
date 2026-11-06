@@ -24,7 +24,7 @@ afterAll(() => {
 });
 
 type Subscriber = { onRunFinalized?: () => void; onRunFailed?: () => void };
-function setup() {
+function setup(options: { suppressConnect?: () => boolean } = {}) {
   const subscribers: Subscriber[] = [];
   const agent = {
     isRunning: false,
@@ -51,10 +51,11 @@ function setup() {
     () =>
       useConversationSync("t1", agent as never, connect as never, onActivity, {
         liveTail: true,
+        ...options,
       }),
     { wrapper },
   );
-  const emit = (seq: string) =>
+  const emit = (seq: string, revision?: string) =>
     act(() => {
       listener?.({
         threadId: "t1",
@@ -62,6 +63,7 @@ function setup() {
         running: false,
         workers: null,
         inbox: null,
+        ...(revision === undefined ? {} : { revision }),
       });
     });
   const finishOwnRun = () =>
@@ -138,6 +140,25 @@ test("opening a conversation: the very first activity is only a baseline", async
     expect(connects).toHaveLength(0);
   } finally {
     clock.mockRestore();
+    cleanup();
+  }
+});
+
+test("a remote truncation waits through local send preparation and rebuilds once it is allowed", async () => {
+  let suppress = false;
+  try {
+    const { emit, connects } = setup({ suppressConnect: () => suppress });
+    await emit("5", "0");
+    suppress = true;
+    await emit("3", "1");
+    expect(connects).toHaveLength(0);
+    // No newer revision arrives: the already observed truncation still needs to be applied.
+    suppress = false;
+    await emit("3", "1");
+    expect(connects).toHaveLength(1);
+    await emit("3", "1");
+    expect(connects).toHaveLength(1);
+  } finally {
     cleanup();
   }
 });

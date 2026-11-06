@@ -16,11 +16,14 @@ describe("helpers", () => {
   test("only a person in the web chat can confirm writes", () => {
     expect(canConfirm(undefined)).toBe(true);
     expect(canConfirm({ kind: "person" })).toBe(true);
+    expect(canConfirm({ kind: "person", surface: "web" })).toBe(true);
+    // The app has no GitHub action card yet: a write there must be refused, not hung.
+    expect(canConfirm({ kind: "person", surface: "app" })).toBe(false);
     expect(canConfirm({ kind: "routine", id: "im:x" })).toBe(false);
     expect(canConfirm({ kind: "handoff", id: "w" })).toBe(false);
   });
   test("guidance never contains a token", () => {
-    expect(githubGuidance(null)).toContain("设置 → 账号连接");
+    expect(githubGuidance(null)).toContain("[连接 GitHub](/settings/connected-accounts/github)");
   });
 });
 

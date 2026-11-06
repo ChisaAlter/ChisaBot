@@ -325,6 +325,7 @@ export function ConversationView({
    * entries are drawn as parked either way.
    */
   const heldBack = useRef(false);
+  const wasInFlight = useRef(inFlight);
 
   /**
    * PUT A FAILED RUN'S MESSAGES BACK WHERE THEY CAME FROM, and hold the drain until somebody asks.
@@ -429,11 +430,9 @@ export function ConversationView({
    * and this is the line that hears the second half of it. A finished run, a failed one and a
    * stopped one all arrive here the same way, so there is no stop path to forget.
    *
-   * The one edge it watches is `inFlight` falling, and it does not watch the queue. Nothing can be
-   * parked while the conversation is idle: the composer only parks when it believes a turn is in
-   * flight, and it believes that from the same value this effect reads. A queue that grew here
-   * without a turn to wait for would be a queue that never drains, so if that ever becomes possible
-   * this dependency list is where it will show up.
+   * Also watch newly parked entries: a server inbox request can finish after the turn becomes idle.
+   * Its `send` reply parks the message locally, so that arrival must trigger the drain even though
+   * `inFlight` has already fallen. Failed restores still stay behind the `heldBack` gate.
    *
    * IT REFUSES WHILE THE CONVERSATION IS DISABLED, which is the one thing "however it ended" must
    * not be read to cover. A coworker deleted mid-turn takes the channel with it: the composer stops
@@ -445,6 +444,8 @@ export function ConversationView({
    * AND IT REFUSES ONCE A DRAIN HAS FAILED, until a turn starts. See `heldBack`.
    */
   useEffect(() => {
+    const started = inFlight && !wasInFlight.current;
+    wasInFlight.current = inFlight;
     if (inFlight) {
       /*
        * A TURN STARTING IS WHAT LETS A HELD-BACK QUEUE GO AGAIN, and it is the only thing that
@@ -452,8 +453,10 @@ export function ConversationView({
        * to it, a button inside a rendered card — so the retry is always something a person did,
        * never this effect trying again on its own.
        */
-      heldBack.current = false;
-      setQueueHeld(false);
+      if (started) {
+        heldBack.current = false;
+        setQueueHeld(false);
+      }
       return;
     }
     if (
@@ -503,7 +506,7 @@ export function ConversationView({
        */
       restoreFailedRun(carried);
     });
-  }, [apply, disabled, inFlight, restoreFailedRun, sendBlocked]);
+  }, [apply, disabled, inFlight, queued.length, restoreFailedRun, sendBlocked]);
 
   /*
    * 重试 resends what the failed turn put back into the composer: the composer restores the words,

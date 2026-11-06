@@ -29,6 +29,8 @@ import cn.ayase.chisabot.chat.s
 import cn.ayase.chisabot.net.Api
 import cn.ayase.chisabot.net.Unauthorized
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -124,25 +126,60 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- 登录 ----------
 
+    private val authStateLock = Any()
     private val deviceToken: String?
-        get() = prefs.getString("deviceToken", null)?.takeIf { it.startsWith("cbd_") && prefs.getString("deviceServer", null) == origin() }
+        get() = origin()?.let(::deviceTokenFor)
+
+    private fun deviceTokenFor(requestOrigin: String): String? = boundDeviceToken(
+        requestOrigin, origin(), prefs.getString("deviceServer", null), prefs.getString("deviceToken", null),
+    )
+
+    private fun clearDeviceBinding() {
+        prefs.edit().remove("deviceToken").remove("deviceServer").remove("deviceId").remove("deviceName").apply()
+        lastRenewAt = 0L
+    }
 
     private var lastRenewAt = 0L
+    private val renewLock = Mutex()
     /** 会话没了：用扫码绑定的设备令牌静默换一个（60 秒内最多一次）。 */
     private suspend fun renewWithDevice(o: String): Boolean = withContext(Dispatchers.IO) {
-        val token = deviceToken ?: return@withContext false
-        if (System.currentTimeMillis() - lastRenewAt < 60_000) return@withContext false
-        lastRenewAt = System.currentTimeMillis()
-        try {
-            setCookies(o, GatewayAuth.deviceSession(o, token, Pairing.osVersion()))
-            true
-        } catch (e: GatewayAuth.LoginError) {
-            if (e.kind == "revoked") {
-                prefs.edit().remove("deviceToken").remove("deviceServer").remove("deviceId").remove("deviceName").apply()
-                withContext(Dispatchers.Main) { notice = e.message ?: "" }
-            }
-            false
-        } catch (_: Exception) { false }
+        // 在飞的旧服务器请求不能取用后来登录的服务器令牌；并发 401 共用刚完成的续期结果。
+        val token = synchronized(authStateLock) { deviceTokenFor(o) } ?: return@withContext false
+        renewLock.withLock {
+            if (synchronized(authStateLock) { deviceTokenFor(o) } != token) return@withLock false
+            if (System.currentTimeMillis() - lastRenewAt < 60_000) return@withLock lastRenewSucceededAt >= lastRenewAt
+            lastRenewAt = System.currentTimeMillis()
+            try {
+                val cookies = GatewayAuth.deviceSession(o, token, Pairing.osVersion())
+                synchronized(authStateLock) {
+                    if (deviceTokenFor(o) != token) return@synchronized false
+                    setCookies(o, cookies)
+                    lastRenewSucceededAt = System.currentTimeMillis()
+                    true
+                }
+            } catch (e: GatewayAuth.LoginError) {
+                val revoked = synchronized(authStateLock) {
+                    if (e.kind == "revoked" && deviceTokenFor(o) == token) {
+                        clearDeviceBinding()
+                        true
+                    } else false
+                }
+                if (revoked) withContext(Dispatchers.Main) { notice = e.message ?: "" }
+                false
+            } catch (_: Exception) { false }
+        }
+    }
+
+    private var lastRenewSucceededAt = 0L
+
+    /** 账号密码登录会更换身份，不能继续使用扫码时属于上一个账号的续期令牌。 */
+    private fun replaceLogin(o: String, cookies: List<String>) {
+        synchronized(authStateLock) {
+            clearDeviceBinding()
+            lastRenewSucceededAt = 0L
+            setCookies(o, cookies)
+            prefs.edit().putString("server", o).putBoolean("loggedIn", true).apply()
+        }
     }
 
     private fun setCookies(o: String, lines: List<String>) {
@@ -182,20 +219,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val oldToken = prefs.getString("deviceToken", null)
         val oldServer = prefs.getString("deviceServer", null)
         if (oldToken != null && oldServer != null) GatewayAuth.unenroll(oldServer, oldToken)
-        prefs.edit().putString("deviceToken", paired.token).putString("deviceServer", link.server)
-            .putString("deviceId", paired.deviceId).putString("deviceName", paired.deviceName).apply()
-        setCookies(link.server, cookies)
-        prefs.edit().putString("server", link.server).putBoolean("remember", true).putBoolean("loggedIn", true).apply()
+        synchronized(authStateLock) {
+            prefs.edit().putString("deviceToken", paired.token).putString("deviceServer", link.server)
+                .putString("deviceId", paired.deviceId).putString("deviceName", paired.deviceName).apply()
+            lastRenewAt = 0L; lastRenewSucceededAt = 0L
+            setCookies(link.server, cookies)
+            prefs.edit().putString("server", link.server).putBoolean("remember", true).putBoolean("loggedIn", true).apply()
+        }
         saveRecent(link.server)
     }
 
     suspend fun passwordLogin(serverInput: String, username: String, password: String, remember: Boolean) = withContext(Dispatchers.IO) {
         val o = GatewayAuth.normalize(serverInput)
         GatewayAuth.probe(o, null)
-        setCookies(o, GatewayAuth.login(o, username.trim(), password, remember))
+        val cookies = GatewayAuth.login(o, username.trim(), password, remember)
         val oldServer = prefs.getString("deviceServer", null)
-        if (oldServer != null && oldServer != o) prefs.getString("deviceToken", null)?.let { GatewayAuth.unenroll(oldServer, it) }
-        prefs.edit().putString("server", o).putString("username", username.trim()).putBoolean("remember", remember).putBoolean("loggedIn", true).apply()
+        val oldToken = prefs.getString("deviceToken", null)
+        replaceLogin(o, cookies)
+        prefs.edit().putString("username", username.trim()).putBoolean("remember", remember).apply()
+        if (oldServer != null && oldToken != null) GatewayAuth.unenroll(oldServer, oldToken)
         saveRecent(o)
     }
 
@@ -203,7 +245,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun openWithoutGateway(serverInput: String) = withContext(Dispatchers.IO) {
         val o = GatewayAuth.normalize(serverInput)
         GatewayAuth.probe(o, null)
-        prefs.edit().putString("server", o).putBoolean("loggedIn", true).apply()
+        val oldServer = prefs.getString("deviceServer", null)
+        val oldToken = prefs.getString("deviceToken", null)
+        replaceLogin(o, emptyList())
+        if (oldServer != null && oldToken != null) GatewayAuth.unenroll(oldServer, oldToken)
         saveRecent(o)
     }
 
@@ -217,14 +262,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun logout() {
         val o = origin()
         val token = deviceToken
+        // 先取出会话再清本机 Cookie，否则异步退出请求往往拿到 null，服务器会话没有被撤销。
+        val cookie = o?.let { CookieManager.getInstance().getCookie("$it/") }
         viewModelScope.launch(Dispatchers.IO) {
             if (o != null) {
                 if (token != null) GatewayAuth.unenroll(o, token)
-                GatewayAuth.logout(o, CookieManager.getInstance().getCookie("$o/"))
+                GatewayAuth.logout(o, cookie)
             }
         }
-        prefs.edit().putBoolean("loggedIn", false).remove("deviceToken").remove("deviceServer").remove("deviceId").remove("deviceName").apply()
-        CookieManager.getInstance().removeAllCookies(null)
+        synchronized(authStateLock) {
+            prefs.edit().putBoolean("loggedIn", false).apply()
+            clearDeviceBinding()
+            lastRenewSucceededAt = 0L
+            CookieManager.getInstance().removeAllCookies(null)
+        }
         stopRun()
         stack.clear(); stack += Screen.Login
     }
@@ -298,6 +349,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val workEnded = HashMap<String, Long>()
     private var runJob: Job? = null
     private var watchJob: Job? = null
+    private var chatLoadJob: Job? = null
+    @Volatile private var chatGeneration = 0L
     /** threadId/channelId 的检查 + 建会话 + 写入要串行：发送、附件上传、loadChat 并发时不能各建一个频道。 */
     private val channelLock = Mutex()
     private var liveCall: Call? = null
@@ -312,10 +365,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadChat(bot: Bot) {
         val api = api ?: return
+        val generation = chatGeneration
+        chatLoadJob?.cancel()
         chatLoading = true
-        viewModelScope.launch {
+        chatLoadJob = viewModelScope.launch {
             try {
                 val channels = api.get("/api/channels?limit=100").a("channels") ?: JsonArray(emptyList())
+                if (generation != chatGeneration || chatBot?.id != bot.id) return@launch
                 // 机器人这一行打开它最近的一对一会话（和网页 latestChannelFor 一样；列表按最近排序）
                 val mine = channels.mapNotNull { it as? JsonObject }.filter { c ->
                     val ids = c.a("agentIds")?.map { (it as? JsonPrimitive)?.content }
@@ -323,30 +379,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 val chosen = mine.maxByOrNull { it.s("lastMessageAt") ?: "" } ?: mine.firstOrNull()
                 channelLock.withLock {
+                    if (generation != chatGeneration) return@withLock
                     // ensureChannel 可能已经建了新会话（进页手快先发了消息/传了附件）：用它的，别盖成查出来的旧会话
                     if (threadId == null && channelId == null) {
                         threadId = chosen?.s("threadId")
                         channelId = chosen?.s("id")
                     }
                 }
+                if (generation != chatGeneration) return@launch
                 val t = threadId
                 if (t != null) {
                     val hist = api.get("/api/copilotkit/threads/$t/messages").a("messages") ?: JsonArray(emptyList())
+                    if (generation != chatGeneration || threadId != t) return@launch
                     if (!running) messages = parseHistory(hist)
                     val inbox = runCatching { api.get("/api/copilotkit/threads/$t/inbox") }.getOrNull()
+                    if (generation != chatGeneration || threadId != t) return@launch
                     if (inbox?.get("running")?.toString() == "true" && !running) watch(bot, t)
                     kickConfirms()
                 }
                 chatLoadError = null
-            } catch (_: Unauthorized) { expired() }
-            catch (e: Exception) { chatLoadError = e.message ?: "无法加载对话" }
-            finally { chatLoading = false }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Unauthorized) { if (generation == chatGeneration) expired() }
+            catch (e: Exception) { if (generation == chatGeneration) chatLoadError = e.message ?: "无法加载对话" }
+            finally { if (generation == chatGeneration && currentCoroutineContext()[Job] === chatLoadJob) chatLoading = false }
         }
     }
 
     /** 别的设备上正在回答（或刷新前开始的一轮）：每 1.5 秒读一次历史，直到这一轮结束。流式续接放到第二阶段。 */
     private fun watch(bot: Bot, t: String) {
         watchJob?.cancel()
+        val generation = chatGeneration
         watchJob = viewModelScope.launch {
             val api = api ?: return@launch
             running = true
@@ -356,11 +418,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     delay(1500)
                     if (chatBot?.id != bot.id || threadId != t || screen !is Screen.Chat) break
                     val hist = api.get("/api/copilotkit/threads/$t/messages").a("messages") ?: break
+                    if (generation != chatGeneration || threadId != t) break
                     messages = parseHistory(hist)
                     val inbox = api.get("/api/copilotkit/threads/$t/inbox")
                     if (inbox["running"]?.toString() != "true") break
                 }
-            } catch (_: Exception) { } finally { running = false }
+            } catch (_: Exception) { } finally {
+                if (generation == chatGeneration && threadId == t && currentCoroutineContext()[Job] === watchJob) running = false
+            }
         }
     }
 
@@ -421,6 +486,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun runTurn(api: Api, bot: Bot, t: String, userMsg: ChatMessage) {
+        val generation = chatGeneration
         val reducer = AgUiReducer(messages)
         val body = buildJsonObject {
             put("threadId", t)
@@ -434,29 +500,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         var lastPush = 0L
         try {
-            api.stream("/api/copilotkit/agent/${bot.id}/run", body, onCall = { liveCall = it }) { event ->
+            api.stream("/api/copilotkit/agent/${bot.id}/run", body, onCall = {
+                if (generation == chatGeneration) liveCall = it else it.cancel()
+            }) { event ->
                 reducer.apply(event)
                 val now = System.currentTimeMillis()
                 // 每 50ms 最多推一次画面（逐字平滑由界面负责，§ streaming.md）
                 if (now - lastPush >= 50 || event.s("type") == "RUN_FINISHED" || event.s("type")?.startsWith("TOOL_CALL") == true) {
                     lastPush = now
                     val snapshot = reducer.messages.toList()
-                    withContext(Dispatchers.Main) { if (threadId == t) messages = snapshot }
+                    withContext(Dispatchers.Main) { if (generation == chatGeneration && threadId == t) messages = snapshot }
                 }
             }
             withContext(Dispatchers.Main) {
-                if (threadId == t) {
+                if (generation == chatGeneration && threadId == t) {
                     messages = reducer.messages.toList()
                     runError = reducer.error
                 }
             }
-        } catch (_: Unauthorized) { withContext(Dispatchers.Main) { expired() } }
+        } catch (e: CancellationException) { throw e }
+        catch (_: Unauthorized) { withContext(Dispatchers.Main) { if (generation == chatGeneration) expired() } }
         catch (e: Exception) {
             withContext(Dispatchers.Main) {
-                if (threadId == t && liveCall?.isCanceled() != true) runError = "连接断了：${e.message ?: e.javaClass.simpleName}"
+                if (generation == chatGeneration && threadId == t && liveCall?.isCanceled() != true) runError = "连接断了：${e.message ?: e.javaClass.simpleName}"
             }
         } finally {
             withContext(Dispatchers.Main) {
+                if (generation != chatGeneration) return@withContext
                 running = false
                 stopping = false
                 liveCall = null
@@ -464,7 +534,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // 读一次服务器存下的历史，让本机和别的设备一致（含 MESSAGES_SNAPSHOT 之外的整理）
                 if (threadId == t) runCatching { api.get("/api/copilotkit/threads/$t/messages").a("messages") }.getOrNull()?.let {
                     val parsed = parseHistory(it)
-                    if (parsed.isNotEmpty()) messages = parsed
+                    if (generation == chatGeneration && threadId == t && !running && parsed.isNotEmpty()) messages = parsed
                 }
             }
         }
@@ -477,14 +547,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val t = threadId ?: return
         val api = api ?: return
         if (stopping) return
+        val generation = chatGeneration
         stopping = true
         viewModelScope.launch {
             runCatching { api.post("/api/copilotkit/agent/${bot.id}/stop/$t") }
             delay(400)
+            if (generation != chatGeneration) return@launch
             liveCall?.cancel()
             watchJob?.cancel()
             delay(2500)
-            stopping = false
+            if (generation == chatGeneration) stopping = false
         }
     }
 
@@ -755,11 +827,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** 新话题：下一条消息建一个新的一对一会话（和网页「新话题」一样，旧会话留在历史里）。 */
     fun newTopic() {
         if (running) return
+        chatGeneration++
+        chatLoadJob?.cancel(); chatLoadJob = null; chatLoading = false
         threadId = null; channelId = null; messages = emptyList(); runError = null
         workStarted.clear(); workEnded.clear(); confirms = emptyMap(); files.clear()
     }
 
-    private fun stopRun() { liveCall?.cancel(); runJob?.cancel(); stopWatching(); running = false }
+    private fun stopRun() {
+        chatGeneration++
+        chatLoadJob?.cancel(); chatLoadJob = null; chatLoading = false
+        liveCall?.cancel(); runJob?.cancel(); stopWatching(); running = false; stopping = false
+    }
 
     // ---------- 设置（原生基础部分）：外观、账号、服务器、设备（只读） ----------
 

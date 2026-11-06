@@ -159,8 +159,9 @@ export function sessionCookieKeeper(
         Date.now() / 1000,
       );
       if (restoring.length > 0) await context.addCookies(restoring);
-      // What the browser now holds is what the file says, so the first timer tick has nothing to do.
-      lastWritten = serialiseSessionCookies(await context.cookies());
+      // The profile can supersede saved session cookies with persistent cookies. Flush that change
+      // now so a later expiry/restart cannot resurrect the stale session value from this file.
+      await save();
       if (restoring.length > 0) {
         report("computer-session-cookies-restored", botId, {
           count: restoring.length,

@@ -135,14 +135,24 @@ export function createSignInService(deps: SignInServiceDependencies) {
     payload: Record<string, unknown>,
   ) {
     if (!auditStore) return;
-    await recordAuditEvent(auditStore, {
-      eventType,
-      targetType,
-      targetId,
-      initiator: actor.initiator,
-      ...(actor.userId ? { actorUserId: actor.userId } : {}),
-      payload: { actor: actor.id, ...payload },
-    });
+    try {
+      await recordAuditEvent(auditStore, {
+        eventType,
+        targetType,
+        targetId,
+        initiator: actor.initiator,
+        ...(actor.userId ? { actorUserId: actor.userId } : {}),
+        payload: { actor: actor.id, ...payload },
+      });
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          type: "sign-in-audit-failed",
+          eventType,
+          error: error instanceof Error ? error.name : "UnknownError",
+        }),
+      );
+    }
   }
 
   /** The request, with an expired one closed on the way past. */
@@ -298,8 +308,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
       });
       throw new SignInRefusedError(failure, reopened ? 409 : 400);
     }
-    if (method === "saved" && extra.loginId)
-      await store.touchLogin(owner, extra.loginId);
     /*
      * Signed in is recorded, and the Bot told, BEFORE the optional save. The site accepted the login
      * either way; a save that fails afterwards must not leave the request stuck in `filling` with the
@@ -324,6 +332,19 @@ export function createSignInService(deps: SignInServiceDependencies) {
       ...(extra.loginId ? { savedLogin: extra.loginId } : {}),
     });
     await resolved(done);
+    if (method === "saved" && extra.loginId) {
+      try {
+        await store.touchLogin(owner, extra.loginId);
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            type: "saved-login-touch-failed",
+            request: id,
+            error: error instanceof Error ? error.name : "UnknownError",
+          }),
+        );
+      }
+    }
     if (saving && credential.username) {
       try {
         const saved = await store.saveLogin({

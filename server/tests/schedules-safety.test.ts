@@ -101,6 +101,74 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
     reply = async () => ({ replyText: "⏰ 该喝水了" });
   });
 
+  test("failed tools cannot turn a silent reply into success or delete its messages", async () => {
+    const threadId = tid("silent-failure");
+    await addThread(threadId);
+    const sc = await daily("silent-failure", "巡检失败");
+    reply = async ({ threadId, runId }) => {
+      await sql.unsafe(
+        "UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
+        [threadId, JSON.stringify([
+          { id: `schedule-${runId}`, role: "user", content: "巡检" },
+          { id: `reply-${runId}`, role: "assistant", content: SCHEDULE_SILENT_MARKER },
+        ])],
+      );
+      return { replyText: SCHEDULE_SILENT_MARKER, toolErrors: ["upstream unavailable"] };
+    };
+    try {
+      for (let i = 0; i < 3; i++) await fireDue(sc.id);
+      const after = await s.get(owner, sc.id);
+      expect(after.recentRuns!.map((r) => r.status)).toEqual(["failed", "failed", "failed"]);
+      expect(after.recentRuns!.every((r) => r.result === "巡检未完成：本次有工具执行失败。")).toBe(true);
+      expect(after.status).toBe("paused");
+      const [thread] = await sql.unsafe<{ messages: unknown[] }[]>(
+        "SELECT messages FROM openbot_local_threads WHERE id = $1",
+        [threadId],
+      );
+      expect(thread!.messages).toHaveLength(2);
+    } finally {
+      reply = async () => ({ replyText: "⏰ 该喝水了" });
+    }
+  });
+
+  test("manual claims are exclusive across replicas and block an overlapping sweep", async () => {
+    const threadId = tid("manual-race");
+    await addThread(threadId);
+    const sc = await daily("manual-race", "并发手动运行");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const lockedDeps = {
+      ...deps,
+      runTurn: async () => {
+        calls += 1;
+        await gate;
+        return { replyText: "完成" };
+      },
+    };
+    const first = createSchedules(database, lockedDeps);
+    const second = createSchedules(database, lockedDeps);
+    try {
+      const claims = await Promise.allSettled([
+        first.runNow(owner, sc.id),
+        second.runNow(owner, sc.id),
+      ]);
+      expect(claims.filter((claim) => claim.status === "fulfilled")).toHaveLength(1);
+      const refused = claims.find((claim) => claim.status === "rejected");
+      expect(refused?.status === "rejected" && String(refused.reason)).toContain("正在运行");
+      await due(sc.id);
+      expect((await s.sweep()).skipped).toContain(sc.id);
+      await settle();
+      expect(calls).toBe(1);
+      const after = await s.get(owner, sc.id);
+      expect(after.recentRuns!.filter((run) => run.status === "running")).toHaveLength(1);
+      expect(after.recentRuns!.filter((run) => run.status === "skipped")).toHaveLength(1);
+    } finally {
+      release();
+      await settle();
+    }
+  });
+
   test("M2: original thread deleted → nothing is sent anywhere, task is cancelled and marked 原对话已删除", async () => {
     const sc = await daily("m2-a", "喝水");
     // 同一个机器人另有一个最近活跃的对话：以前会回退到这里。
