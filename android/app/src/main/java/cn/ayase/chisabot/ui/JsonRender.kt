@@ -156,7 +156,7 @@ fun dropDuplicatePanelTitle(spec: String, title: String?): String {
         }
         val kids = element.a("children")?.mapNotNull { it.str() } ?: emptyList()
         val first = kids.firstOrNull()
-        if (first != null && elements.o(first)?.s("type") == "Heading" && sameTitle(elements.o(first).p("text"), title)) {
+        if (first != null && elements.o(first)?.s("type") == "Heading" && sameTitle(elements.o(first)?.o("props").p("text"), title)) {
             return rewrite(k, JsonObject(element + ("children" to JsonArray(kids.drop(1).map { JsonPrimitive(it) }))))
         }
         if (element.s("type") == "Card" && props.p("title") != null) return spec

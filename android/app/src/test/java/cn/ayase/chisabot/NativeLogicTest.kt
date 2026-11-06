@@ -555,7 +555,7 @@ class NativeLogicTest {
         val inline = Markdown.parse("看 [发布说明](https://example.com/r) 这里\n")
         assertTrue(inline.single() is Block.Paragraph)
         // 长标签 / 非站内 href 的独立行是带标签链接卡，不是胶囊
-        val long = Markdown.parse("[这个标签实在太长太长太长太长太长太长太长太长太长太长太长](/settings/x)\n")
+        val long = Markdown.parse("[" + "这个标签实在太长太长太长太长太长太长太长太长太长太长太长太长太长太长太长太长" + "](/settings/x)\n")
         assertTrue(long.single() is Block.LinkCard)
     }
 
