@@ -1414,6 +1414,19 @@ function SettleAtEnd({
       typeof ResizeObserver === "undefined" ? null : new ResizeObserver(pinNow);
     sizes?.observe(content);
     /*
+     * 「跟着变」（§94.6）里消息行变矮由留白的 flex 在同一次布局里吃掉：这一列总高不变，上面的观察器
+     * 不动、scrollTop 不变、滚动事件不来——pinNow / onScroll 都看不见这次变矮，留白就一直挂着
+     * （2026-11-06 实测：点开「思考」再折叠，下面的空白留下了）。看留白自己的高：它长高 = 有行矮了
+     * 被吃进来——叫 release 照常判定；在底部、没动过、不忙它就收，条件不满足它自己拒，什么都不动。
+     */
+    const slackSizes =
+      typeof ResizeObserver === "undefined" || !slack.current
+        ? null
+        : new ResizeObserver(() => {
+            releaseRef.current?.();
+          });
+    if (slack.current) slackSizes?.observe(slack.current);
+    /*
      * 视口变矮（输入框打字长高、加了小块 / 附件、手机键盘弹出）时人在底部看着：同一帧把 scrollTop 加上变矮的量，
      * 最后一行留在输入框上面（§94）。滚动容器自己也会回到底部，但要等到下一帧——中间那一帧最后一行被盖住一截。
      * 只在它「跟着底部」（没有 spacer）时做：对齐着某一轮时它会把那一轮留在顶上，这里不插手。
@@ -1459,6 +1472,7 @@ function SettleAtEnd({
       window.cancelAnimationFrame(frame);
       mutations.disconnect();
       sizes?.disconnect();
+      slackSizes?.disconnect();
       viewportSizes?.disconnect();
       element.removeEventListener("wheel", release);
       element.removeEventListener("touchmove", release);
