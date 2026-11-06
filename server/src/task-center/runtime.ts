@@ -10,8 +10,12 @@
  *   线程前缀让 messages 巡检不会再把它扫成「未回复消息」。
  * - notify：Outbox 出现待确认时，在主机器人的对话里记一行活动；通知失败只写在 decision 上，
  *   不阻塞审批本身（decisions.notification_error 在页面上可见）。
- * - learn：任务到达终态后把结果写进「已学到」上下文（appendLearned/learnEntry）；
+ * - learn：任务到达终态后把结果写进「已学到」上下文（appendLearned/learnEntry），
+ *   同时沉淀一条 memory-notes 长期记忆（kind=project，按标题合并）——履历给人看，
+ *   记忆给机器人检索；执行回合本身也握着 memory_* 工具，可以当场记细节。
  *   交付物 = 回合里画出的组件（componentArtifacts），用量 = 回合台账 RUN_FINISHED 的 contextUsage。
+ * - localAgentRun：executor=local-agent 时把任务委派给设备上的本地 agent
+ *   （local-agents 子系统做审批 / 隔离 / 并发），任务侧心跳续租约，等它终态。
  */
 import type { Message } from "@ag-ui/client";
 import type {
@@ -33,14 +37,18 @@ import {
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
 import type { Github } from "../github/service";
+import type { createMemoryNotes } from "../memory-notes/service";
 import type { PersonalSourcesService } from "../personal-sources/service";
 import type { DrawnComponent, TurnRunner } from "../turns/types";
+import { createTaskCenterRoots } from "./roots";
+import { createTaskCenterRoutes } from "./routes";
 import {
   createTaskCenter,
   TaskCenterError,
   type TaskCenterService,
 } from "./service";
 import { createTaskSourceCollectors } from "./sources";
+import { createTaskCenterTrace } from "./trace";
 
 const TASK_THREAD_PREFIX = "task-center:";
 /**
@@ -124,9 +132,20 @@ export type TaskCenterRuntimeOptions = {
     agentId: string,
     text: string,
   ) => Promise<void>;
-  /** 部署策略批准的可巡检目录；缺省 = 不允许读任何本机目录。 */
-  localRoots?: () => string[] | Promise<string[]>;
+  /** 部署策略 + 用户设置的授权巡检目录（按 owner 查）；缺省 = 不允许读任何本机目录。 */
+  localRoots?: (ownerUserId: string) => string[] | Promise<string[]>;
   localConversationsAvailable?: boolean;
+  /** 长期记忆：终态沉淀 + 执行时检索；缺省则不写记忆。 */
+  memoryNotes?: Pick<ReturnType<typeof createMemoryNotes>, "create" | "search">;
+  /**
+   * executor=local-agent 的执行路径（index.ts 接 local-agents 子系统）：
+   * 给设备上的 Codex / Claude 等派发任务，返回其终态结果；缺省 = 该执行器不可用。
+   */
+  localAgentRun?: (
+    task: TaskCenterTask,
+    agentId: string,
+    context: TaskExecutionContext,
+  ) => Promise<TaskExecutionResult>;
   concurrency?: number;
   globalConcurrency?: number;
 };
@@ -189,6 +208,7 @@ export function frameTask(
     `\n背景与要求：\n${clip(task.description, INSTRUCTION_LIMIT)}`,
     dependenciesBrief(context.dependencies),
     approvalBrief(context),
+    `\n执行中如果发现值得长期记住的事实、偏好或教训（用户/项目/习惯），用 memory_save 记入长期记忆，别只写在回复里。`,
     `\n完成后：总结实际交付的结果（这段总结进入任务记录），产出文件 / 页面 / 代码要写明位置；做不到就直说原因，不要假装完成。`,
   ]
     .filter(Boolean)
@@ -227,7 +247,7 @@ export function createTaskCenterRuntime(
     personalSources: options.personalSources,
     github: options.github,
     localRootsFor: options.localRoots
-      ? async () => options.localRoots?.() ?? []
+      ? async (owner) => options.localRoots?.(owner) ?? []
       : undefined,
     localConversationsAvailable: options.localConversationsAvailable,
   });
@@ -304,20 +324,52 @@ export function createTaskCenterRuntime(
     }
   }
 
+  /** 按标题 + 类目检索长期记忆，给执行回合当背景；检索失败不给任务加戏。 */
+  async function memoryBrief(task: TaskCenterTask): Promise<string> {
+    if (!options.memoryNotes) return "";
+    try {
+      const rows = await options.memoryNotes.search(
+        task.ownerUserId,
+        `${task.title} ${task.category}`,
+        undefined,
+        6,
+      );
+      const lines = rows
+        .map(
+          (row) =>
+            `- [${row.kind}${row.subject ? `·${row.subject}` : ""}] ${clip(String(row.content).replace(/\s+/g, " "), 220)}`,
+        )
+        .slice(0, 6);
+      return lines.length ? `\n\n相关记忆：\n${lines.join("\n")}` : "";
+    } catch {
+      return "";
+    }
+  }
+
   async function execute(
     task: TaskCenterTask,
     context: TaskExecutionContext,
   ): Promise<TaskExecutionResult> {
+    if (task.executor === "local-agent") {
+      if (!options.localAgentRun)
+        throw new TaskCenterError(
+          "执行器「local-agent」尚未接入：没有已连接的设备 Agent。",
+          400,
+        );
+      if (needsTaskApproval(task.risk) && !context.approval)
+        throw new TaskCenterError("此操作仍在等待人工确认。", 409);
+      return options.localAgentRun(task, await resolveAgent(task), context);
+    }
     if (task.executor !== "bot")
       throw new TaskCenterError(
-        `执行器「${task.executor}」尚未接入，当前支持 bot。`,
+        `执行器「${task.executor}」尚未接入，当前支持 bot 和 local-agent。`,
         400,
       );
     if (needsTaskApproval(task.risk) && !context.approval)
       throw new TaskCenterError("此操作仍在等待人工确认。", 409);
     const outcome = await runTaskTurn(
       task,
-      frameTask(task, context),
+      `${frameTask(task, context)}${await memoryBrief(task)}`,
       context.signal,
       "run",
     );
@@ -396,8 +448,10 @@ export function createTaskCenterRuntime(
         id: "executor:local-agent",
         name: "本地 Agent（Codex / Claude 等）",
         kind: "executor",
-        available: false,
-        detail: "经设备节点委派执行；当前版本执行器为 bot，后续迭代接入。",
+        available: Boolean(options.localAgentRun),
+        detail: options.localAgentRun
+          ? "经设备节点委派执行：权限档位、隔离与审批沿用设备设置"
+          : "需要设备子系统在线；当前部署未启用。",
       },
     ];
     return [...executors, ...sourceCaps];
@@ -418,6 +472,22 @@ export function createTaskCenterRuntime(
         ownerUserId,
         appendLearned(context.learned, learnEntry(task, outcome)),
       );
+      // 同时沉淀进长期记忆：project 按主题合并，同一任务反复执行只涨一条；
+      // 写不进去（记忆满等）不影响履历本身。
+      try {
+        await options.memoryNotes?.create(
+          ownerUserId,
+          {
+            kind: "project",
+            subject: `任务·${clip(task.title, 60)}`,
+            content: clip(learnEntry(task, outcome), 1500),
+            context: "任务中心执行履历",
+          },
+          task.agentId ?? null,
+        );
+      } catch {
+        // 记忆写入失败不阻断 learn
+      }
     },
     capabilities,
     botAvailable: options.botAvailable,
@@ -427,5 +497,20 @@ export function createTaskCenterRuntime(
       : {}),
   });
   serviceRef = service;
+
+  /**
+   * service.ts 的 routes 组装点不开放协作者入口，这里在 runtime 层把它接上：
+   * 授权目录（roots，用户可维护的本机目录白名单）与执行轨迹（trace，
+   * openbot_local_events 投影）。ensure 顺带建 roots 表，建表失败保持原有行为。
+   */
+  const roots = createTaskCenterRoots(options.database);
+  const trace = createTaskCenterTrace(options.database);
+  const innerEnsure = service.ensure;
+  service.ensure = async () => {
+    await innerEnsure();
+    await roots.ensure();
+  };
+  service.routes = (requireUser) =>
+    createTaskCenterRoutes(service, requireUser, { roots, trace });
   return service;
 }

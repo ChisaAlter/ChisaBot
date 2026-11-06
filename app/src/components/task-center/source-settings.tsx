@@ -1,10 +1,12 @@
 import {
   IconCheck,
+  IconFolderPlus,
   IconPencil,
   IconPlayerPause,
   IconPlayerPlay,
   IconPlus,
   IconRefresh,
+  IconTrash,
 } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -17,6 +19,7 @@ import { agentListQueryOptions } from "@/lib/agents/queries";
 import {
   taskCenterApi,
   taskCenterCapabilityOptions,
+  taskCenterRootsOptions,
 } from "@/lib/task-center-api";
 import {
   SOURCE_KINDS,
@@ -122,61 +125,161 @@ export function SourceSettings({
 }) {
   const [editor, setEditor] = useState<TaskCenterSource | "new" | null>(null);
   return (
-    <section className="space-y-5" aria-label="信息来源">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="max-w-2xl space-y-2">
-          <h2 className="text-lg font-semibold">发现值得推进的事情</h2>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            按来源巡检，发现的事项统一进入 Inbox。邮件、日历与 GitHub
-            使用你的已连接账号。
-          </p>
-          <Link
-            className="inline-block text-sm text-primary underline-offset-4 hover:underline focus-visible:underline"
-            to="/settings/connected-accounts"
+    <>
+      <section className="space-y-5" aria-label="信息来源">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-2xl space-y-2">
+            <h2 className="text-lg font-semibold">发现值得推进的事情</h2>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              按来源巡检，发现的事项统一进入 Inbox。邮件、日历与 GitHub
+              使用你的已连接账号。
+            </p>
+            <Link
+              className="inline-block text-sm text-primary underline-offset-4 hover:underline focus-visible:underline"
+              to="/settings/connected-accounts"
+            >
+              管理已连接账号
+            </Link>
+          </div>
+          <Button
+            disabled={editor !== null}
+            onClick={() => setEditor("new")}
+            variant="outline"
           >
-            管理已连接账号
-          </Link>
+            <IconPlus aria-hidden />
+            添加来源
+          </Button>
         </div>
+        {editor ? (
+          <SourceEditor
+            key={editor === "new" ? "new" : editor.id}
+            onCancel={() => setEditor(null)}
+            onSaved={() => {
+              setEditor(null);
+              onChanged();
+            }}
+            source={editor === "new" ? undefined : editor}
+          />
+        ) : null}
+        {!sources.length && !editor ? (
+          <div className="rounded-2xl border border-border px-5 py-9">
+            <p className="font-medium">还没有巡检来源</p>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
+              先添加一个仓库、文档或已连接的账号。你可以先让事项进入
+              Inbox，再决定是否开启自动推进。
+            </p>
+          </div>
+        ) : null}
+        <div className="divide-y divide-border">
+          {sources.map((source) => (
+            <SourceRow
+              key={source.id}
+              source={source}
+              onChanged={onChanged}
+              onEdit={() => setEditor(source)}
+              editing={editor !== null}
+            />
+          ))}
+        </div>
+      </section>
+      <RootsSection onChanged={onChanged} />
+    </>
+  );
+}
+
+/** 「本地仓库 / 文档」巡检只读这里授权过的服务器目录；部署 env 预设的目录与之取并集。 */
+function RootsSection({ onChanged }: { onChanged: () => void }) {
+  const roots = useQuery(taskCenterRootsOptions());
+  const [path, setPath] = useState("");
+  const add = useMutation({
+    mutationFn: (value: string) => taskCenterApi.addRoot(value),
+    onSuccess: () => {
+      setPath("");
+      onChanged();
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (value: string) => taskCenterApi.removeRoot(value),
+    onSuccess: onChanged,
+  });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (path.trim()) add.mutate(path.trim());
+  };
+  return (
+    <section className="mt-12 space-y-5" aria-label="授权目录">
+      <div className="max-w-2xl space-y-2">
+        <h2 className="text-lg font-semibold">授权目录</h2>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          「本地仓库」和「文档」来源只读取这里列出的服务器目录中的 Markdown /
+          TXT 文件；不在列表里的路径一律不读。
+        </p>
+      </div>
+      <form className="flex max-w-2xl gap-2" onSubmit={submit}>
+        <Input
+          aria-label="添加授权目录"
+          autoComplete="off"
+          maxLength={500}
+          onChange={(event) => setPath(event.target.value)}
+          placeholder="服务器上的绝对路径，如 /srv/docs 或 D:\notes"
+          value={path}
+        />
         <Button
-          disabled={editor !== null}
-          onClick={() => setEditor("new")}
+          disabled={!path.trim()}
+          feedback={{
+            pending: "添加中…",
+            success: "已添加",
+            error: "添加失败",
+          }}
+          mutation={add}
+          type="submit"
           variant="outline"
         >
-          <IconPlus aria-hidden />
-          添加来源
+          <IconFolderPlus aria-hidden />
+          添加
         </Button>
-      </div>
-      {editor ? (
-        <SourceEditor
-          key={editor === "new" ? "new" : editor.id}
-          onCancel={() => setEditor(null)}
-          onSaved={() => {
-            setEditor(null);
-            onChanged();
-          }}
-          source={editor === "new" ? undefined : editor}
-        />
+      </form>
+      {add.error || remove.error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {add.error?.message ?? remove.error?.message}
+        </p>
       ) : null}
-      {!sources.length && !editor ? (
+      {roots.isPending ? null : roots.error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {roots.error.message}
+        </p>
+      ) : roots.data?.roots.length ? (
+        <div className="divide-y divide-border rounded-2xl border border-border">
+          {roots.data.roots.map((root) => (
+            <div className="flex items-center gap-3 px-5 py-3" key={root}>
+              <code className="min-w-0 flex-1 break-all text-sm">{root}</code>
+              <Button
+                aria-label={`删除授权目录 ${root}`}
+                feedback={{
+                  pending: "删除中…",
+                  success: "已删除",
+                  error: "删除失败",
+                }}
+                mutation={remove}
+                mutationWhen={remove.variables === root}
+                onClick={() => remove.mutate(root)}
+                size="sm"
+                variant="ghost"
+              >
+                <IconTrash aria-hidden />
+                删除
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : (
         <div className="rounded-2xl border border-border px-5 py-9">
-          <p className="font-medium">还没有巡检来源</p>
+          <p className="font-medium">还没有授权目录</p>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
-            先添加一个仓库、文档或已连接的账号。你可以先让事项进入
-            Inbox，再决定是否开启自动推进。
+            添加目录后，本地仓库与文档来源才能读取其中的文件；部署方也可以通过环境变量预设目录，两边取并集。
           </p>
         </div>
-      ) : null}
-      <div className="divide-y divide-border">
-        {sources.map((source) => (
-          <SourceRow
-            key={source.id}
-            source={source}
-            onChanged={onChanged}
-            onEdit={() => setEditor(source)}
-            editing={editor !== null}
-          />
-        ))}
-      </div>
+      )}
     </section>
   );
 }

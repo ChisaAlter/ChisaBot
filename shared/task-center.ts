@@ -195,6 +195,25 @@ export type TaskCenterSnapshot = {
   running: boolean;
   concurrency: number;
 };
+/**
+ * One projected line of a task's execution trace (server/src/task-center/trace.ts).
+ * `type` is the AG-UI event type, or "TEXT_MESSAGE" for an aggregated reply.
+ */
+export type TaskTraceEvent = {
+  sequence: number;
+  at: string;
+  type: string;
+  summary: string;
+  usage?: TaskUsage;
+};
+/** One `task-center:<taskId>:<tag>:<attempt>` thread: a planning pass or one execution attempt. */
+export type TaskTraceThread = {
+  thread: string;
+  events: TaskTraceEvent[];
+};
+export type TaskTrace = {
+  threads: TaskTraceThread[];
+};
 
 export const taskInputSchema = z
   .object({

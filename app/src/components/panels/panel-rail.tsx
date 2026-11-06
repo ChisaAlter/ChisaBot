@@ -1,5 +1,3 @@
-import { useLivePanels } from "./live-panels-query";
-import { useSegmentedKeys } from "@/components/ui/segmented";
 import {
   IconDeviceDesktop,
   IconLayoutGrid,
@@ -8,13 +6,6 @@ import {
   IconPlus,
   IconRefresh,
 } from "@tabler/icons-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useQuery } from "@tanstack/react-query";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -24,28 +15,40 @@ import {
   useRef,
   useState,
 } from "react";
+import { ToggleTip } from "@/components/layout/glass-topbar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { lazyPart } from "@/components/ui/lazy-part";
+import { useSegmentedKeys } from "@/components/ui/segmented";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { agentListQueryOptions } from "@/lib/agents/queries";
-import { useCurrentBotChat } from "@/lib/agents/bot-chat-context";
 import { Skeleton } from "@/components/ui/skeleton";
-import { lazyPart } from "@/components/ui/lazy-part";
-import { usePanelBot } from "@/lib/panels/active-bot";
+import { useCurrentBotChat } from "@/lib/agents/bot-chat-context";
+import { agentListQueryOptions } from "@/lib/agents/queries";
 import { setBotUi } from "@/lib/chat/ui-memory";
+import { matchesHotkey } from "@/lib/hotkeys/hotkeys";
 import {
-  readStoredPreference,
-  writeStoredPreference,
-} from "@/lib/preference-storage";
+  lastHistoryEventWasPop,
+  type OverlayCloseReason,
+  overlayHistoryMode,
+  useBackDismiss,
+} from "@/lib/overlay-back";
+import { usePanelBot } from "@/lib/panels/active-bot";
 import {
+  openPanelSheet,
   PANEL_RAIL_HOTKEY,
   PANEL_RAIL_HOTKEY_LABEL,
-  setPanelRailOpen,
-  openPanelSheet,
   panelSheetOpenSource,
+  setPanelRailOpen,
   setPanelSheetOpen,
   showRailFor,
   togglePanelRail,
@@ -53,17 +56,15 @@ import {
   usePanelSheetOpen,
   useWideForRail,
 } from "@/lib/panels/rail-open";
-import { matchesHotkey } from "@/lib/hotkeys/hotkeys";
-import { ToggleTip } from "@/components/layout/glass-topbar";
-import { cn } from "@/lib/utils";
-import {
-  lastHistoryEventWasPop,
-  type OverlayCloseReason,
-  overlayHistoryMode,
-  useBackDismiss,
-} from "@/lib/overlay-back";
 import { closeRailSheet } from "@/lib/panels/rail-sheet-close";
+import {
+  readStoredPreference,
+  writeStoredPreference,
+} from "@/lib/preference-storage";
 import { presenceRef } from "@/lib/presence-flag";
+import { cn } from "@/lib/utils";
+import { AgentsRailCard } from "./agents-rail-card";
+import { useLivePanels } from "./live-panels-query";
 
 const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
@@ -71,7 +72,8 @@ const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 380;
 /** 常驻栏两侧的内边距合计：卡片宽度 = 栏宽 − 它（拖动期两格一起写）。 */
 const CARD_INSET = 24;
-const PANEL_CARD_CLASS = "glass-card glass-rail-inner rail-card flex h-full min-h-0 flex-col";
+const PANEL_CARD_CLASS =
+  "glass-card glass-rail-inner rail-card flex h-full min-h-0 flex-col";
 
 export type PanelPreset = {
   label: string;
@@ -82,11 +84,13 @@ export type PanelPreset = {
 export const PANEL_PRESETS: readonly PanelPreset[] = [
   {
     label: "☀️ 今日晨报看板",
-    prompt: "请帮我创建一个「今日晨报与待办概览」右侧实时面板，汇总天气、今日日程与待办事项",
+    prompt:
+      "请帮我创建一个「今日晨报与待办概览」右侧实时面板，汇总天气、今日日程与待办事项",
   },
   {
     label: "📈 BTC 与黄金行情",
-    prompt: "请帮我创建一个「比特币与黄金实时价格」右侧面板，每 15 分钟自动刷新",
+    prompt:
+      "请帮我创建一个「比特币与黄金实时价格」右侧面板，每 15 分钟自动刷新",
   },
   {
     label: "🌤️ 天气与汇率",
@@ -98,7 +102,8 @@ export const PANEL_PRESETS: readonly PanelPreset[] = [
   },
   {
     label: "📰 科技热点速览",
-    prompt: "请帮我创建一个「今日 AI 与科技头条」右侧面板，每小时自动刷新最新要闻",
+    prompt:
+      "请帮我创建一个「今日 AI 与科技头条」右侧面板，每小时自动刷新最新要闻",
   },
   {
     label: "📦 GitHub 仓库动态",
@@ -118,7 +123,10 @@ export const PANEL_PRESETS: readonly PanelPreset[] = [
   },
 ];
 
-export function panelPresetBatch(batchIndex: number, pageSize = 3): PanelPreset[] {
+export function panelPresetBatch(
+  batchIndex: number,
+  pageSize = 3,
+): PanelPreset[] {
   const total = PANEL_PRESETS.length;
   if (total === 0 || pageSize <= 0) return [];
   const batches = Math.ceil(total / pageSize);
@@ -174,7 +182,10 @@ export function PanelRail({ className }: { className?: string }) {
     const next = Math.round(
       Math.min(
         MAX_WIDTH,
-        Math.max(MIN_WIDTH, start.current.width + start.current.x - event.clientX),
+        Math.max(
+          MIN_WIDTH,
+          start.current.width + start.current.x - event.clientX,
+        ),
       ),
     );
     if (next !== liveWidth.current) applyWidth(next);
@@ -189,7 +200,11 @@ export function PanelRail({ className }: { className?: string }) {
   useLayoutEffect(() => {
     const remembered = showRailFor(widthBot);
     const next =
-      remembered !== undefined && remembered >= MIN_WIDTH && remembered <= MAX_WIDTH ? remembered : storedWidth();
+      remembered !== undefined &&
+      remembered >= MIN_WIDTH &&
+      remembered <= MAX_WIDTH
+        ? remembered
+        : storedWidth();
     liveWidth.current = next;
     setWidth(next);
   }, [widthBot]);
@@ -268,7 +283,10 @@ export function PanelRail({ className }: { className?: string }) {
     if (!items || !railBotId) return;
     const seen = seenPanels.current;
     if (!seen || seen.bot !== railBotId) {
-      seenPanels.current = { bot: railBotId, ids: new Set(items.map((p) => p.id)) };
+      seenPanels.current = {
+        bot: railBotId,
+        ids: new Set(items.map((p) => p.id)),
+      };
       return;
     }
     const fresh = items.filter((p) => !seen.ids.has(p.id));
@@ -332,7 +350,9 @@ export function PanelRail({ className }: { className?: string }) {
           </ToggleTip>
         )}
         <Sheet
-          onOpenChange={(next) => (next ? openPanelSheet("user") : closeSheet("user"))}
+          onOpenChange={(next) =>
+            next ? openPanelSheet("user") : closeSheet("user")
+          }
           open={sheetOpen}
         >
           <SheetContent
@@ -343,8 +363,12 @@ export function PanelRail({ className }: { className?: string }) {
             side="right"
             style={{ width: cardWidth }}
           >
-            <SheetTitle className="sr-only">{computerOn ? "计算机" : "自定义面板"}</SheetTitle>
-            <SheetDescription className="sr-only">{"当前机器人的自定义面板和计算机"}</SheetDescription>
+            <SheetTitle className="sr-only">
+              {computerOn ? "计算机" : "自定义面板"}
+            </SheetTitle>
+            <SheetDescription className="sr-only">
+              {"当前机器人的自定义面板和计算机"}
+            </SheetDescription>
             {panelBody}
           </SheetContent>
         </Sheet>
@@ -354,58 +378,67 @@ export function PanelRail({ className }: { className?: string }) {
 
   return (
     <>
-    <PanelRailHandle open={open} />
-    <aside
-      aria-hidden={open ? undefined : true}
-      aria-label={"自定义面板栏"}
-      className={cn(
-        "glass-rail relative hidden h-full min-h-0 shrink-0 flex-col pr-4 pb-4 pl-2 xl:flex",
-        dragging && "select-none is-dragging",
-        !open && "is-collapsed",
-        className,
-      )}
-      data-state={open ? "expanded" : "collapsed"}
-      id="chisabot-panel-rail"
-      inert={!open}
-      // Collapsed = zero width and no side padding; the inner column keeps its width, so it slides
-      // off the right edge (clipped by .glass-body) instead of reflowing while it narrows.
-      ref={railRef}
-      style={open ? { width } : { width: 0, paddingLeft: 0, paddingRight: 0 }}
-    >
-      {/* biome-ignore lint/a11y/useSemanticElements: a draggable splitter has no native element. */}
-      <div
-        aria-label={"拖动调整面板栏宽度"}
-        aria-orientation="vertical"
-        aria-valuemax={MAX_WIDTH}
-        aria-valuemin={MIN_WIDTH}
-        aria-valuenow={width}
-        className={cn("glass-rail-handle", dragging && "is-dragging")}
-        onDoubleClick={() => {
-          setWidth(DEFAULT_WIDTH);
-          keepWidth(DEFAULT_WIDTH);
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-          const next = Math.min(
-            MAX_WIDTH,
-            Math.max(MIN_WIDTH, width + (event.key === "ArrowLeft" ? 20 : -20)),
-          );
-          setWidth(next);
-          keepWidth(next);
-        }}
-        onPointerCancel={onPointerUp}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        role="separator"
-        tabIndex={0}
-      />
-      {dragging ? <div className="fixed inset-0 z-40 cursor-col-resize" /> : null}
-      {/* DESIGN-v4：面板栏是一张独立的玻璃卡；标题和收起在卡片自己的头部里。 */}
-      <section className={PANEL_CARD_CLASS} ref={cardRef} style={{ width: cardWidth }}>
-        {panelBody}
-      </section>
-    </aside>
+      <PanelRailHandle open={open} />
+      <aside
+        aria-hidden={open ? undefined : true}
+        aria-label={"自定义面板栏"}
+        className={cn(
+          "glass-rail relative hidden h-full min-h-0 shrink-0 flex-col pr-4 pb-4 pl-2 xl:flex",
+          dragging && "select-none is-dragging",
+          !open && "is-collapsed",
+          className,
+        )}
+        data-state={open ? "expanded" : "collapsed"}
+        id="chisabot-panel-rail"
+        inert={!open}
+        // Collapsed = zero width and no side padding; the inner column keeps its width, so it slides
+        // off the right edge (clipped by .glass-body) instead of reflowing while it narrows.
+        ref={railRef}
+        style={open ? { width } : { width: 0, paddingLeft: 0, paddingRight: 0 }}
+      >
+        {/* biome-ignore lint/a11y/useSemanticElements: a draggable splitter has no native element. */}
+        <div
+          aria-label={"拖动调整面板栏宽度"}
+          aria-orientation="vertical"
+          aria-valuemax={MAX_WIDTH}
+          aria-valuemin={MIN_WIDTH}
+          aria-valuenow={width}
+          className={cn("glass-rail-handle", dragging && "is-dragging")}
+          onDoubleClick={() => {
+            setWidth(DEFAULT_WIDTH);
+            keepWidth(DEFAULT_WIDTH);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            const next = Math.min(
+              MAX_WIDTH,
+              Math.max(
+                MIN_WIDTH,
+                width + (event.key === "ArrowLeft" ? 20 : -20),
+              ),
+            );
+            setWidth(next);
+            keepWidth(next);
+          }}
+          onPointerCancel={onPointerUp}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          role="separator"
+          tabIndex={0}
+        />
+        {dragging ? (
+          <div className="fixed inset-0 z-40 cursor-col-resize" />
+        ) : null}
+        {/* DESIGN-v4：面板栏是一张独立的玻璃卡；标题和收起在卡片自己的头部里。 */}
+        <section
+          className={PANEL_CARD_CLASS}
+          ref={cardRef}
+          style={{ width: cardWidth }}
+        >
+          {panelBody}
+        </section>
+      </aside>
     </>
   );
 }
@@ -453,7 +486,8 @@ function PanelRailBody({
   const rosterPending = useQuery(agentListQueryOptions()).isPending;
   const chat = useCurrentBotChat();
   const canComputer = Boolean(chat?.canComputer);
-  const tab: RailTab = canComputer && chat?.computerOpen ? "computer" : "panels";
+  const tab: RailTab =
+    canComputer && chat?.computerOpen ? "computer" : "panels";
   const liveList = useLivePanels(botId);
   // 没有面板时不加载卡片渲染（json-render、图表……，按需块）；一旦有过就一直挂着，
   // 删掉最后一张后「撤销」还要靠 LivePanelList 里的 mutation。
@@ -484,10 +518,17 @@ function PanelRailBody({
         )}
         <span className="flex-1" />
         {tab === "panels" && botId ? (
-          <RailAddPanelMenu drawer={drawer} onCloseDrawer={drawer ? onCollapse : undefined} />
+          <RailAddPanelMenu
+            drawer={drawer}
+            onCloseDrawer={drawer ? onCollapse : undefined}
+          />
         ) : null}
         <span aria-hidden className="rail-head-div" />
-        <ToggleTip keys={showHotkey ? PANEL_RAIL_HOTKEY_LABEL : undefined} label={drawer ? "关闭面板" : "收起右栏"} side="bottom">
+        <ToggleTip
+          keys={showHotkey ? PANEL_RAIL_HOTKEY_LABEL : undefined}
+          label={drawer ? "关闭面板" : "收起右栏"}
+          side="bottom"
+        >
           <button
             aria-controls={controlsId}
             aria-expanded={true}
@@ -509,15 +550,23 @@ function PanelRailBody({
         hidden={tab !== "panels"}
       >
         <div className="glass-rail-scroll relative flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          {/* 内置卡第一位：Agent 管理（设备归账号，不看当前机器人，恒在实时面板之前）。 */}
+          <AgentsRailCard />
           {!botId ? (
-            <RailNote>{rosterPending ? "正在加载机器人…" : "还没有可用的机器人。"}</RailNote>
+            <RailNote>
+              {rosterPending ? "正在加载机器人…" : "还没有可用的机器人。"}
+            </RailNote>
           ) : (
             <>
-              {liveMounted || hasLive ? <LivePanelList botId={botId} drawer={drawer} width={width} /> : null}
+              {liveMounted || hasLive ? (
+                <LivePanelList botId={botId} drawer={drawer} width={width} />
+              ) : null}
               {liveList.isSuccess && (liveList.data?.length ?? 0) === 0 ? (
                 <div className="rail-empty flex flex-col items-center gap-2.5">
                   <p>
-                    {"还没有面板。在对话里说一句，比如「帮我做一个比特币价格面板」，机器人会做好放在这里并按时刷新。"}
+                    {
+                      "还没有面板。在对话里说一句，比如「帮我做一个比特币价格面板」，机器人会做好放在这里并按时刷新。"
+                    }
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
                     {panelPresetBatch(0).map((preset) => (
@@ -547,7 +596,11 @@ function PanelRailBody({
       </div>
 
       {canComputer && chat ? (
-        <RailComputerPane active={tab === "computer"} agentId={chat.agentId} fallbackName={chat.fallbackName} />
+        <RailComputerPane
+          active={tab === "computer"}
+          agentId={chat.agentId}
+          fallbackName={chat.fallbackName}
+        />
       ) : null}
     </>
   );
@@ -565,7 +618,9 @@ export const PANEL_SHEET_HEAD_FOCUSABLE =
  * 90–300ms 的强制样式重算（4x 降速）。抽屉里第一个可 Tab 的元素永远在顶栏（分段切换 / 新建 / 关闭），
  * 顶栏始终可见，所以直接按 DOM 顺序取；万一取不到再交回默认逻辑。
  */
-export function panelSheetInitialFocus(openType: string): HTMLElement | boolean | null {
+export function panelSheetInitialFocus(
+  openType: string,
+): HTMLElement | boolean | null {
   const sheet = document.getElementById("chisabot-panel-sheet");
   if (openType === "touch") return sheet;
   return sheet?.querySelector<HTMLElement>(PANEL_SHEET_HEAD_FOCUSABLE) ?? true;
@@ -584,7 +639,11 @@ function RailSwitch({
   needsYou: boolean;
 }) {
   // 键盘约定走共用的 `useSegmentedKeys`（2026-10-20）：以前这里手写了一份，方向键换了项但焦点留在原处。
-  const keys = useSegmentedKeys<RailTab>({ value: tab, values: ["panels", "computer"], onChange });
+  const keys = useSegmentedKeys<RailTab>({
+    value: tab,
+    values: ["panels", "computer"],
+    onChange,
+  });
   const item = (value: RailTab, label: string, icon: React.ReactNode) => (
     // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
     <button
@@ -603,10 +662,21 @@ function RailSwitch({
     </button>
   );
   return (
-    <div aria-label={"右栏内容"} className="sg-segmented rail-tabs" data-tab={tab} {...keys.groupProps} ref={keys.groupRef} role="radiogroup">
+    <div
+      aria-label={"右栏内容"}
+      className="sg-segmented rail-tabs"
+      data-tab={tab}
+      {...keys.groupProps}
+      ref={keys.groupRef}
+      role="radiogroup"
+    >
       <span aria-hidden className="rail-tabs-thumb" />
       {item("panels", "面板", <IconLayoutGrid className="size-[15px]" />)}
-      {item("computer", "计算机", <IconDeviceDesktop className="size-[15px]" />)}
+      {item(
+        "computer",
+        "计算机",
+        <IconDeviceDesktop className="size-[15px]" />,
+      )}
     </div>
   );
 }
@@ -627,7 +697,9 @@ function RailComputerPane({
 }) {
   const agents = useQuery(agentListQueryOptions());
   const name = agents.data?.find((a) => a.id === agentId)?.name ?? fallbackName;
-  const [mountedFor, setMountedFor] = useState<string | null>(active ? agentId : null);
+  const [mountedFor, setMountedFor] = useState<string | null>(
+    active ? agentId : null,
+  );
   useEffect(() => {
     if (active) setMountedFor(agentId);
   }, [active, agentId]);
@@ -648,13 +720,24 @@ function RailComputerPane({
  * 电脑面板（远程桌面、VNC、预览……）只在打开电脑页时才用到，按需加载，别压在每个页面的首屏外壳里
  * （DESIGN.md §41.5）。
  */
-const ComputerViewPanel = lazyPart<{ agentId: string; name?: string; variant?: "pane" | "rail" }>(
-  () => import("@/components/computer/computer-panel").then((m) => m.ComputerViewPanel),
+const ComputerViewPanel = lazyPart<{
+  agentId: string;
+  name?: string;
+  variant?: "pane" | "rail";
+}>(
+  () =>
+    import("@/components/computer/computer-panel").then(
+      (m) => m.ComputerViewPanel,
+    ),
   <Skeleton className="h-40 w-full" />,
 );
 
 /** 实时面板卡片（json-render 渲染、图表、菜单）同理：数据在 live-panels-query 里先取，卡片按需加载。 */
-const LivePanelList = lazyPart<{ botId: string; width?: number; drawer?: boolean }>(
+const LivePanelList = lazyPart<{
+  botId: string;
+  width?: number;
+  drawer?: boolean;
+}>(
   () => import("./live-panels").then((m) => m.LivePanelList),
   <Skeleton className="h-24 w-full" />,
 );
@@ -679,7 +762,9 @@ function RailAddPanelMenu({
   const [batch, setBatch] = useState(0);
   const presets = panelPresetBatch(batch);
   const prefill = (prompt: string) => {
-    window.dispatchEvent(new CustomEvent("chisabot-prefill", { detail: prompt }));
+    window.dispatchEvent(
+      new CustomEvent("chisabot-prefill", { detail: prompt }),
+    );
     if (drawer && onCloseDrawer) onCloseDrawer();
   };
   return (
