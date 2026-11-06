@@ -226,6 +226,7 @@ import { createVault, VAULT_GUIDANCE } from "./vault/service";
 import { createGithub } from "./github/service";
 import { createPages } from "./pages/service";
 import { createSchedules } from "./schedules/service";
+import { createTaskCenterRuntime } from "./task-center/runtime";
 import { createChannelUploadMirror } from "./chat-files/channel-mirror";
 import { createChatFiles } from "./chat-files/service";
 import { turnAttachmentLoader } from "./chat-files/turn-attachments";
@@ -2543,6 +2544,56 @@ const schedules = createSchedules(database, {
 await schedules.ensure();
 if (process.env.NODE_ENV !== "test" && process.env.CHISABOT_SCHEDULES_SWEEP !== "0") schedules.start();
 
+/*
+ * 任务中心（server/src/task-center，docs/research/task-center-core-handoff.md）：统一 Inbox / Outbox。
+ * 巡检信息源（日历 / 邮箱 / GitHub / 文档 / 消息 / 定时任务 / Webhook）发现事项进 Inbox；
+ * 执行复用 governedTurnRunner 的无头回合，跑在隐藏的 task-center:<taskId> 线程里；
+ * 对外 / 敏感 / 发布类动作先进 Outbox 等人点头。CHISABOT_TASK_CENTER=0 关掉调度与扫描。
+ */
+const taskCenter = createTaskCenterRuntime({
+  database,
+  runTurn: governedTurnRunner,
+  personalSources,
+  github,
+  botAvailable: async (ownerUserId, agentId) => {
+    const profile = await agentProfileStore.get(await actorFor(ownerUserId), agentId);
+    return Boolean(profile && !profile.deletedAt);
+  },
+  defaultAgentFor: async (ownerUserId) => {
+    const [row] = await database.$client.unsafe<{ main: string | null }[]>(
+      "SELECT preferences->>'mainBotId' AS main FROM users WHERE id = $1",
+      [ownerUserId],
+    );
+    if (row?.main) return row.main;
+    const actor = await actorFor(ownerUserId);
+    return (await agentProfileStore.list(actor))[0]?.id ?? null;
+  },
+  recordNotice: async (ownerUserId, agentId, text) => {
+    const actor = await actorFor(ownerUserId);
+    const channel = await channelStore.direct(actor, agentId);
+    await channelStore.recordActivity(
+      actor,
+      channel.id,
+      { text, agentId, at: new Date() },
+      { id: `task-center-notice:${randomUUID()}` },
+    );
+  },
+  localRoots: () => {
+    const raw = process.env.CHISABOT_TASK_CENTER_ROOTS?.trim();
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) return parsed.filter((p): p is string => typeof p === "string" && p.trim().length > 0);
+    } catch {
+      // fall through to separator parsing
+    }
+    return raw.split(/[;\n]/).map((p) => p.trim()).filter(Boolean);
+  },
+  localConversationsAvailable: config.runtime.mode === "local",
+});
+await taskCenter.ensure();
+if (process.env.NODE_ENV !== "test" && process.env.CHISABOT_TASK_CENTER !== "0") taskCenter.start();
+
 const panelTaskService = createNormalPanelTaskService({
   database,
   createConversation: async (request) => {
@@ -4130,6 +4181,7 @@ const app = createApp(
       // 公开页面：不用登录（沙箱 CSP，见 server/src/pages/service.ts）。
       ["/p", pages.publicRoutes()],
       ["/api/schedules", schedules.routes(requireUser)],
+      ["/api/task-center", taskCenter.routes(requireUser)],
       ...(localAgents ? [["/api/local-agents", localAgents.routes(requireUser)] satisfies [string, unknown]] : []),
       ["/api/chat-files", chatFiles.routes(requireUser)],
       ["/api/confirmations", confirmations.routes(requireUser)],
@@ -4424,6 +4476,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     livePanelService.stop();
     wakeUpSweep.stop();
     schedules.stop();
+    void taskCenter.stop();
     wakeUpReaper.stop();
     approvalSweep.stop();
     personResponseSweep.stop();

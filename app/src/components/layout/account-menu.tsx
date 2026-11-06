@@ -6,6 +6,7 @@ import {
   IconQrcode,
   IconSelector,
   IconSettings,
+  IconListCheck,
   IconUserCircle,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -204,6 +205,7 @@ export function AccountMenu({
             }}
           />
           <Row icon={<IconSettings className={icon} />} label={"设置"} onClick={() => go("/settings")} />
+          <Row icon={<IconListCheck className={icon} />} label={"任务中心"} onClick={() => go("/tasks")} />
           <Row icon={<IconAlarm className={icon} />} label={"定时任务"} onClick={() => go("/settings/schedules")} />
           <Row
             hint={pending > 0 ? `${pending} 项` : undefined}
