@@ -342,8 +342,8 @@ export function createTaskCenterRuntime(
         { calls: number; input: number | null; output: number | null }[]
       >(
         `SELECT count(*)::int AS calls,
-          sum((event->'metadata'->'contextUsage'->>'inputTokens')::int) AS input,
-          sum((event->'metadata'->'contextUsage'->>'outputTokens')::int) AS output
+          sum((event->'metadata'->'contextUsage'->>'inputTokens')::int)::int AS input,
+          sum((event->'metadata'->'contextUsage'->>'outputTokens')::int)::int AS output
         FROM openbot_local_events WHERE thread_id=$1 AND event->>'type'='RUN_FINISHED'`,
         [threadId],
       );
