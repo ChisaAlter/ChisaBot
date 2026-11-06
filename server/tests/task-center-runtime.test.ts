@@ -3,7 +3,14 @@ import type {
   TaskCenterTask,
   TaskExecutionContext,
 } from "../../shared/task-center";
-import { extractJson, frameTask, taskThreadId } from "../src/task-center/runtime";
+import {
+  appendLearned,
+  componentArtifacts,
+  extractJson,
+  frameTask,
+  learnEntry,
+  taskThreadId,
+} from "../src/task-center/runtime";
 
 function task(overrides: Partial<TaskCenterTask> = {}): TaskCenterTask {
   return {
@@ -129,6 +136,37 @@ describe("task thread identity", () => {
     expect(taskThreadId(base, "run")).not.toBe(taskThreadId(retry, "run"));
     // 前缀不变：messages 巡检靠 task-center: 前缀把执行线程排除在「未回复消息」之外。
     expect(taskThreadId(retry, "run").startsWith("task-center:")).toBe(true);
+  });
+});
+
+describe("execution bookkeeping", () => {
+  test("drawn components become named, downloadable artifacts", () => {
+    const artifacts = componentArtifacts([
+      { name: "showBarChart", args: { title: "周报图表", points: [] } },
+      { name: "showCard", args: {} },
+    ]);
+    expect(artifacts).toHaveLength(2);
+    expect(artifacts[0].name).toBe("周报图表");
+    expect(artifacts[0].mediaType).toContain("component+json");
+    expect(artifacts[0].content).toContain('"showBarChart"');
+    expect(artifacts[1].name).toBe("showCard #2");
+    expect(componentArtifacts(undefined)).toEqual([]);
+  });
+
+  test("learned log appends entries and drops the oldest beyond the cap", () => {
+    const entry = learnEntry(
+      { title: "整理本周进展" },
+      { status: "succeeded", detail: "  产出 3 项\n结论 " },
+    );
+    expect(entry).toMatch(
+      /\[\d{4}-\d{2}-\d{2}\] 「整理本周进展」完成：产出 3 项 结论/,
+    );
+    const merged = appendLearned("", entry, 30);
+    expect(merged).toBe(entry);
+    const long = appendLearned("x".repeat(40), "new-line", 30);
+    expect(long).toBe("new-line");
+    const kept = appendLearned("line1\nline2", "line3", 12);
+    expect(kept).toBe("line2\nline3");
   });
 });
 

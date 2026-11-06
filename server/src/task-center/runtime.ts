@@ -10,30 +10,34 @@
  *   线程前缀让 messages 巡检不会再把它扫成「未回复消息」。
  * - notify：Outbox 出现待确认时，在主机器人的对话里记一行活动；通知失败只写在 decision 上，
  *   不阻塞审批本身（decisions.notification_error 在页面上可见）。
+ * - learn：任务到达终态后把结果写进「已学到」上下文（appendLearned/learnEntry）；
+ *   交付物 = 回合里画出的组件（componentArtifacts），用量 = 回合台账 RUN_FINISHED 的 contextUsage。
  */
 import type { Message } from "@ag-ui/client";
 import type {
+  TaskArtifact,
+  TaskCapability,
   TaskCenterDecision,
   TaskCenterTask,
-  TaskCapability,
   TaskContext,
   TaskExecutionContext,
   TaskExecutionResult,
   TaskPlan,
+  TaskUsage,
 } from "../../../shared/task-center";
 import {
   needsTaskApproval,
   TASK_LEVEL_LABELS,
   validateTaskPlan,
 } from "../../../shared/task-center";
-import { reasonWithoutStatement } from "../db/query-failure";
 import type { Database } from "../db/client";
+import { reasonWithoutStatement } from "../db/query-failure";
 import type { Github } from "../github/service";
 import type { PersonalSourcesService } from "../personal-sources/service";
-import type { TurnRunner } from "../turns/types";
+import type { DrawnComponent, TurnRunner } from "../turns/types";
 import {
-  TaskCenterError,
   createTaskCenter,
+  TaskCenterError,
   type TaskCenterService,
 } from "./service";
 import { createTaskSourceCollectors } from "./sources";
@@ -47,8 +51,59 @@ export const taskThreadId = (task: TaskCenterTask, tag: string) =>
   `${TASK_THREAD_PREFIX}${task.id}:${tag}:${task.attempts}`;
 const MAX_PLAN_STEPS = 6;
 const INSTRUCTION_LIMIT = 12_000;
+const LEARNED_LIMIT = 5000;
 const clip = (text: string, n: number) =>
   text.length > n ? `${text.slice(0, n)}…` : text;
+
+/** 模型在回合里画的卡片/组件就是任务的交付物；存成可预览、可下载的 JSON 记录。 */
+export function componentArtifacts(
+  components: DrawnComponent[] | undefined,
+): TaskArtifact[] {
+  return (components ?? []).slice(0, 50).map((component, index) => {
+    const title = component.args.title ?? component.args.name;
+    return {
+      name: (typeof title === "string" && title.trim()
+        ? title
+        : `${component.name} #${index + 1}`
+      ).slice(0, 200),
+      content: clip(
+        JSON.stringify(
+          { component: component.name, props: component.args },
+          null,
+          2,
+        ),
+        200_000,
+      ),
+      mediaType: "application/vnd.chisabot.component+json",
+    };
+  });
+}
+
+/** 「已学到」是一行一行的执行履历：日期 + 标题 + 结果；超限时丢最旧的行，只进不出人工编写的字段。 */
+export function learnEntry(
+  task: Pick<TaskCenterTask, "title">,
+  outcome: { status: "succeeded" | "failed"; detail: string },
+): string {
+  const date = new Date().toISOString().slice(0, 10);
+  const mark = outcome.status === "succeeded" ? "完成" : "失败";
+  const detail = clip(
+    outcome.detail.replace(/\s+/g, " ").trim() || "（无说明）",
+    220,
+  );
+  return `[${date}] 「${clip(task.title, 80)}」${mark}：${detail}`;
+}
+
+export function appendLearned(
+  existing: string,
+  entry: string,
+  limit = LEARNED_LIMIT,
+): string {
+  const merged = existing.trim() ? `${existing.trim()}\n${entry}` : entry;
+  if (merged.length <= limit) return merged;
+  const lines = merged.split("\n");
+  while (lines.length > 1 && lines.join("\n").length > limit) lines.shift();
+  return lines.join("\n");
+}
 
 export type TaskCenterRuntimeOptions = {
   database: Database;
@@ -268,7 +323,39 @@ export function createTaskCenterRuntime(
     );
     const summary = outcome.replyText?.trim();
     if (!summary) throw new TaskCenterError("执行回合没有产出结果摘要。");
-    return { summary: clip(summary, 60_000), artifacts: [] };
+    return {
+      summary: clip(summary, 60_000),
+      artifacts: componentArtifacts(outcome.components),
+      usage: await readTurnUsage(taskThreadId(task, "run")),
+    };
+  }
+
+  /**
+   * 回合台账（openbot_local_events）在 RUN_FINISHED 里记录 contextUsage；
+   * 读取失败只意味着用量缺失，不值得为此让任务重试。
+   */
+  async function readTurnUsage(
+    threadId: string,
+  ): Promise<TaskUsage | undefined> {
+    try {
+      const [row] = await options.database.$client.unsafe<
+        { calls: number; input: number | null; output: number | null }[]
+      >(
+        `SELECT count(*)::int AS calls,
+          sum((event->'metadata'->'contextUsage'->>'inputTokens')::int) AS input,
+          sum((event->'metadata'->'contextUsage'->>'outputTokens')::int) AS output
+        FROM openbot_local_events WHERE thread_id=$1 AND event->>'type'='RUN_FINISHED'`,
+        [threadId],
+      );
+      if (!row?.calls) return undefined;
+      return {
+        modelCalls: row.calls,
+        ...(row.input != null ? { inputTokens: row.input } : {}),
+        ...(row.output != null ? { outputTokens: row.output } : {}),
+      };
+    } catch {
+      return undefined;
+    }
   }
 
   async function notify(
@@ -316,11 +403,22 @@ export function createTaskCenterRuntime(
     return [...executors, ...sourceCaps];
   }
 
-  return createTaskCenter(options.database, {
+  let serviceRef: TaskCenterService | undefined;
+  const service = createTaskCenter(options.database, {
     collect: collectors.collect,
     execute,
     plan,
     notify,
+    // 任务终态（成功/失败）回写「已学到」履历；人工编写的六个字段永远不动。
+    learn: async (ownerUserId, task, outcome) => {
+      const service = serviceRef;
+      if (!service) return;
+      const context = await service.getContext(ownerUserId);
+      await service.setLearned(
+        ownerUserId,
+        appendLearned(context.learned, learnEntry(task, outcome)),
+      );
+    },
     capabilities,
     botAvailable: options.botAvailable,
     ...(options.concurrency ? { concurrency: options.concurrency } : {}),
@@ -328,4 +426,6 @@ export function createTaskCenterRuntime(
       ? { globalConcurrency: options.globalConcurrency }
       : {}),
   });
+  serviceRef = service;
+  return service;
 }

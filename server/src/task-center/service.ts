@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
+import type { MiddlewareHandler } from "hono";
 import {
   contextInputSchema,
   needsTaskApproval,
   sourceInputSchema,
-  taskInputSchema,
   TASK_STATUSES,
-  validateTaskPlan,
   type TaskCapability,
   type TaskCenterDecision,
   type TaskCenterEvent,
@@ -20,12 +19,13 @@ import {
   type TaskPlan,
   type TaskSourceInput,
   type TaskStatus,
+  taskInputSchema,
+  validateTaskPlan,
 } from "../../../shared/task-center";
+import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
 import { createTaskCenterRoutes } from "./routes";
-import type { AppVariables } from "../auth/guards";
-import type { MiddlewareHandler } from "hono";
 
 export class TaskCenterError extends Error {
   constructor(
@@ -51,6 +51,12 @@ export type TaskCenterOptions = {
     signal: AbortSignal,
   ) => Promise<TaskPlan>;
   notify?: (ownerUserId: string, decision: TaskCenterDecision) => Promise<void>;
+  /** 任务到达终态（成功或失败）后回写「已学到」的个人上下文；记账失败不影响任务结果。 */
+  learn?: (
+    ownerUserId: string,
+    task: TaskCenterTask,
+    outcome: { status: "succeeded" | "failed"; detail: string },
+  ) => Promise<void>;
   capabilities?: (ownerUserId: string) => Promise<TaskCapability[]>;
   botAvailable?: (ownerUserId: string, agentId: string) => Promise<boolean>;
   concurrency?: number;
@@ -835,7 +841,8 @@ export function createTaskCenter(
           { attempt: task.attempts + 1, executor: task.executor },
           tx,
         );
-        return taskView(claimed!);
+        if (!claimed) throw new TaskCenterError("任务在启动时已不存在。", 409);
+        return taskView(claimed);
       },
     );
     // Only after commit: the notification links to a decision the person must be able to open.
@@ -882,10 +889,27 @@ export function createTaskCenter(
               workspace: input.workspace ?? task.workspace,
               dependencies: [
                 ...(input.dependencies ?? []),
-                ...(dependsOn ?? []).map((key) => ids.get(key)!),
+                ...(dependsOn ?? []).map((key) => {
+                  const depId = ids.get(key);
+                  if (!depId)
+                    throw new TaskCenterError(
+                      `计划引用了不存在的步骤「${key}」。`,
+                      409,
+                    );
+                  return depId;
+                }),
               ],
             },
-            { id: ids.get(key)!, parentId: task.id, status: "queued" },
+            {
+              id: (() => {
+                const childId = ids.get(key);
+                if (!childId)
+                  throw new TaskCenterError("计划步骤缺少稳定标识。", 409);
+                return childId;
+              })(),
+              parentId: task.id,
+              status: "queued",
+            },
           );
           if (child && needsTaskApproval(child.risk)) {
             const decision = await requestApproval(tx, child);
@@ -1007,7 +1031,12 @@ export function createTaskCenter(
             tx,
           );
       });
+      await reportLearn(task, {
+        status: "succeeded",
+        detail: result.summary,
+      });
     } catch (error) {
+      let terminalFailure: string | null = null;
       await sql.begin(async (tx) => {
         const [row] = await tx.unsafe<Row[]>(
           "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3 AND status IN ('planning','running') FOR UPDATE",
@@ -1042,6 +1071,8 @@ export function createTaskCenter(
             interrupted && retry ? 1 : 0,
           ],
         );
+        const terminal = interrupted ? false : !retry;
+        if (terminal) terminalFailure = message;
         await event(
           task.ownerUserId,
           task.id,
@@ -1051,10 +1082,32 @@ export function createTaskCenter(
           tx,
         );
       });
+      if (terminalFailure)
+        await reportLearn(task, {
+          status: "failed",
+          detail: terminalFailure,
+        });
     } finally {
       clearTimeout(timeout);
       clearInterval(heartbeat);
       controllers.delete(task.id);
+    }
+  }
+  async function reportLearn(
+    task: TaskCenterTask,
+    outcome: { status: "succeeded" | "failed"; detail: string },
+  ) {
+    if (!options.learn) return;
+    try {
+      await options.learn(task.ownerUserId, task, outcome);
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          type: "task-center-learn-failed",
+          task: task.id,
+          reason: reasonWithoutStatement(error).slice(0, 300),
+        }),
+      );
     }
   }
   async function sweep() {
