@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { dropTombstoned, planTruncation } from "../src/thread-truncate";
+import type { Database } from "../src/db/client";
+import { dropTombstoned, planTruncation, tombstones } from "../src/thread-truncate";
+
+test("a tombstone read failure cannot permit stale history to be merged", async () => {
+  const failure = new Error("database connection lost");
+  const database = { $client: { unsafe: async () => { throw failure; } } } as unknown as Database;
+  await expect(tombstones(database, "thread")).rejects.toBe(failure);
+});
 
 /** 重新生成 / 编辑后重发（DESIGN.md §67，CB-042）：从哪里截。 */
 describe("planTruncation", () => {

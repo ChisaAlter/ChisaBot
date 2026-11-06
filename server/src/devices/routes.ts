@@ -132,6 +132,14 @@ export function createDeviceRoutes(options: {
   const routes = new Hono<{ Variables: Variables }>();
   const userGuard = requireUser as unknown as MiddlewareHandler<{ Variables: Variables }>;
 
+  async function auditControlChange(input: Parameters<DeviceStore["audit"]>[0]) {
+    try {
+      await store.audit(input);
+    } catch {
+      console.error(JSON.stringify({ type: "device-control-audit-failed", action: input.action, deviceId: input.deviceId }));
+    }
+  }
+
   async function mainAudit(actorUserId: string, deviceId: string, change: string, detail?: string) {
     if (!auditStore) return;
     try {
@@ -203,7 +211,8 @@ export function createDeviceRoutes(options: {
     const device = context.get("device");
     const mobile = isMobilePlatform(device.platform);
     await store.revoke(device.id);
-    await store.audit({
+    hub.kick(device.id);
+    await auditControlChange({
       deviceId: device.id,
       ownerUserId: device.ownerUserId,
       actorType: "device",
@@ -215,7 +224,6 @@ export function createDeviceRoutes(options: {
       detail: null,
       durationMs: null,
     });
-    hub.kick(device.id);
     return context.json({ ok: true });
   });
 
@@ -524,6 +532,9 @@ export function createDeviceRoutes(options: {
     }
     const after = await store.update(before.id, patch);
     if (!after) return context.json({ error: "没有这台设备。" }, 404);
+    // Enforce persisted permissions before audit I/O: a failed audit cannot defer an emergency stop.
+    if (after.paused) hub.cancelAllFor(after.id, "已在网页上紧急停止。");
+    await hub.pushConfig(after.id);
     const fullBefore = fullAccessActive(before);
     const fullAfter = fullAccessActive(after);
     const fullChange =
@@ -536,7 +547,7 @@ export function createDeviceRoutes(options: {
         : null;
     const change = [describeChange(before, after), fullChange].filter((part) => part && part !== "无变化").join("；") || "无变化";
     const pausedChanged = before.paused !== after.paused;
-    await store.audit({
+    await auditControlChange({
       deviceId: after.id,
       ownerUserId: after.ownerUserId,
       actorType: "user",
@@ -557,8 +568,6 @@ export function createDeviceRoutes(options: {
       durationMs: null,
     });
     await mainAudit(actor.id, after.id, "device_updated", change);
-    if (after.paused) hub.cancelAllFor(after.id, "已在网页上紧急停止。");
-    await hub.pushConfig(after.id);
     return context.json({ device: hub.view(after) });
   });
 
@@ -567,7 +576,8 @@ export function createDeviceRoutes(options: {
     if (!device) return context.json({ error: "没有这台设备。" }, 404);
     const actor = context.var.actor;
     await store.revoke(device.id);
-    await store.audit({
+    hub.kick(device.id);
+    await auditControlChange({
       deviceId: device.id,
       ownerUserId: device.ownerUserId,
       actorType: "user",
@@ -580,7 +590,6 @@ export function createDeviceRoutes(options: {
       durationMs: null,
     });
     await mainAudit(actor.id, device.id, "device_revoked", device.name);
-    hub.kick(device.id);
     const after = await store.get(device.id);
     return context.json({ device: after ? hub.view(after) : null });
   });

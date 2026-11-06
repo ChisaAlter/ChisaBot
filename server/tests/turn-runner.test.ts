@@ -96,6 +96,8 @@ function harness(options: {
   historyFails?: () => Error;
   /** What the acquire call does. A thunk that throws, for the same reason `renew` is one. */
   acquireFails?: () => Error;
+  onAcquire?: () => void;
+  signal?: AbortSignal;
   drive?: Driver;
   /**
    * What a renew does. A thunk that THROWS rather than one that returns a rejected promise: a
@@ -157,6 +159,7 @@ function harness(options: {
       order.push("acquire");
       if (options.acquireFails) throw options.acquireFails();
       calls.acquired.push(params);
+      options.onAcquire?.();
       return { threadId: params.threadId, runId: params.runId, joinToken: "t" };
     },
     ɵrenewThreadLock: async (params: {
@@ -221,14 +224,23 @@ function harness(options: {
       : { lockTtlSeconds: options.lockTtlSeconds }),
   });
 
-  const run = () =>
-    runTurn({
-      ownerUserId: OWNER,
-      routineId: ROUTINE_ID,
-      agentId: AGENT_ID,
-      threadId: THREAD_ID,
-      instruction: INSTRUCTION,
-    });
+  const run = async () => {
+    // Real servers have a listening socket. This inert fake has none, and Bun on Windows
+    // otherwise stops servicing the runner's unref'd deadline timers while the test awaits.
+    const keepAlive = setInterval(() => {}, 100);
+    try {
+      return await runTurn({
+        ownerUserId: OWNER,
+        routineId: ROUTINE_ID,
+        agentId: AGENT_ID,
+        threadId: THREAD_ID,
+        instruction: INSTRUCTION,
+        signal: options.signal,
+      });
+    } finally {
+      clearInterval(keepAlive);
+    }
+  };
 
   return { run, agent, calls, order, builtFor };
 }
@@ -683,6 +695,19 @@ describe("the lock is released on every exit path", () => {
 });
 
 describe("cleanup only runs for a lock that was actually taken", () => {
+  test("cancellation during lock acquisition releases the lock without starting work", async () => {
+    const controller = new AbortController();
+    const { run, calls } = harness({
+      signal: controller.signal,
+      onAcquire: () => controller.abort(),
+    });
+    await expect(run()).rejects.toThrow("The headless turn was cancelled.");
+    expect(calls.runs).toHaveLength(0);
+    expect(calls.cleaned).toEqual([
+      { threadId: THREAD_ID, runId: calls.acquired[0]?.runId },
+    ]);
+  });
+
   test("a rejected acquire never cleans up, renews, or starts the heartbeat", async () => {
     // `ɵcleanupThreadLock` is DELETE on the platform's lock endpoint. If cleanup ran when the
     // acquire itself failed, it would delete whoever DOES hold the lock — the person's own browser

@@ -50,7 +50,7 @@ export class TelegramAdapter extends LoopAdapter {
   readonly markdown = false;
   private offset = 0;
   private me: { id: number; username: string } | null = null;
-  private abort: AbortController | null = null;
+  private readonly requests = new Set<AbortController>();
 
   constructor(ctx: AdapterContext) {
     super(ctx);
@@ -61,13 +61,14 @@ export class TelegramAdapter extends LoopAdapter {
   }
 
   protected override onStop() {
-    this.abort?.abort();
-    this.abort = null;
+    for (const controller of this.requests) controller.abort();
+    this.requests.clear();
   }
 
   private async call(method: string, body: Record<string, unknown>, timeoutMs = 15_000) {
+    if (this.stopped) throw new Error("连接已停止");
     const controller = new AbortController();
-    this.abort = controller;
+    this.requests.add(controller);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.ctx.fetch(`${this.base}/${method}`, {
@@ -84,12 +85,14 @@ export class TelegramAdapter extends LoopAdapter {
       return parsed.result;
     } finally {
       clearTimeout(timer);
+      this.requests.delete(controller);
     }
   }
 
   protected async runOnce(): Promise<void> {
     if (!(this.ctx.secrets.token ?? "").trim()) throw new Error("请填写 Bot Token");
     const me = await this.call("getMe", {});
+    if (this.stopped) return;
     this.me = { id: Number(me.id), username: String(me.username ?? "") };
     this.markConnected(`@${this.me.username}`);
     this.ctx.log("info", `已连上 Telegram（@${this.me.username}）`);
@@ -102,6 +105,7 @@ export class TelegramAdapter extends LoopAdapter {
         if ((error as Error)?.name === "AbortError") continue;
         throw error;
       }
+      if (this.stopped) return;
       for (const update of updates ?? []) {
         this.offset = Math.max(this.offset, Number(update.update_id) + 1);
         const inbound = parseTelegramUpdate(update, this.me);

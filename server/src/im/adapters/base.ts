@@ -53,6 +53,7 @@ export abstract class LoopAdapter implements ImAdapter {
 
   /** 收到一条消息：去重后交给服务。 */
   protected emit(message: ImInbound) {
+    if (this.stopped) return;
     const now = Date.now();
     if (message.messageId) {
       if (this.seen.has(message.messageId)) return;

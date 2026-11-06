@@ -107,7 +107,7 @@ export class WeixinAdapter extends LoopAdapter {
   readonly markdown = false;
   private cursor = "";
   private expired = false;
-  private abort: AbortController | null = null;
+  private readonly requests = new Set<AbortController>();
 
   constructor(ctx: AdapterContext) {
     super(ctx);
@@ -118,8 +118,8 @@ export class WeixinAdapter extends LoopAdapter {
   }
 
   protected override onStop() {
-    this.abort?.abort();
-    this.abort = null;
+    for (const controller of this.requests) controller.abort();
+    this.requests.clear();
   }
 
   protected override retryDelay(attempt: number) {
@@ -129,8 +129,9 @@ export class WeixinAdapter extends LoopAdapter {
   }
 
   private async post(endpoint: string, payload: Record<string, unknown>, timeoutMs = 15_000) {
+    if (this.stopped) throw new Error("连接已停止");
     const controller = new AbortController();
-    this.abort = controller;
+    this.requests.add(controller);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.ctx.fetch(`${weixinBase(this.ctx.config)}/${endpoint}`, {
@@ -142,6 +143,7 @@ export class WeixinAdapter extends LoopAdapter {
       return await readJson(response, `微信 ${endpoint}`);
     } finally {
       clearTimeout(timer);
+      this.requests.delete(controller);
     }
   }
 
@@ -161,6 +163,7 @@ export class WeixinAdapter extends LoopAdapter {
         if ((error as Error)?.name === "AbortError") continue;
         throw error;
       }
+      if (this.stopped) return;
       const code = body.errcode ?? body.ret;
       if (code === SESSION_EXPIRED) {
         this.expired = true;
@@ -191,23 +194,17 @@ export class WeixinAdapter extends LoopAdapter {
   async send(reply: ImReply): Promise<void> {
     const contextToken = String((reply.inbound.reply as { contextToken?: string }).contextToken ?? "");
     for (const chunk of reply.chunks) {
-      const response = await this.ctx.fetch(`${weixinBase(this.ctx.config)}/ilink/bot/sendmessage`, {
-        method: "POST",
-        headers: headers(this.token),
-        body: JSON.stringify({
-          msg: {
-            from_user_id: "",
-            to_user_id: reply.inbound.chatId,
-            client_id: `chisabot-${randomId()}`,
-            message_type: 2,
-            message_state: 2,
-            item_list: [{ type: 1, text_item: { text: chunk } }],
-            context_token: contextToken || null,
-          },
-          base_info: { channel_version: "1.0.0" },
-        }),
+      const body = await this.post("ilink/bot/sendmessage", {
+        msg: {
+          from_user_id: "",
+          to_user_id: reply.inbound.chatId,
+          client_id: `chisabot-${randomId()}`,
+          message_type: 2,
+          message_state: 2,
+          item_list: [{ type: 1, text_item: { text: chunk } }],
+          context_token: contextToken || null,
+        },
       });
-      const body = await readJson(response, "微信发送");
       const code = body.errcode ?? body.ret;
       if (code && code !== 0) throw new Error(`微信发送失败：${code} ${body.errmsg ?? ""}`.trim());
     }

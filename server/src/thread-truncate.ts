@@ -55,16 +55,12 @@ export async function ensureTruncationTable(database: Database) {
   await database.$client.unsafe("CREATE INDEX IF NOT EXISTS chisabot_thread_truncations_thread ON chisabot_thread_truncations(thread_id, id)");
 }
 
-/** 这条对话被截掉过的消息 id（墓碑）。表不存在（非本地会话模式）时为空。 */
+/** 本地会话初始化时已建表；读取失败必须阻止合并，不能把旧客户端的已删除消息重新写回。 */
 export async function tombstones(database: Database, threadId: string): Promise<Set<string>> {
-  try {
-    const rows = await database.$client.unsafe<{ id: string }[]>(
-      "SELECT jsonb_array_elements_text(removed) AS id FROM chisabot_thread_truncations WHERE thread_id = $1", [threadId],
-    );
-    return new Set(rows.map((row) => row.id));
-  } catch {
-    return new Set();
-  }
+  const rows = await database.$client.unsafe<{ id: string }[]>(
+    "SELECT jsonb_array_elements_text(removed) AS id FROM chisabot_thread_truncations WHERE thread_id = $1", [threadId],
+  );
+  return new Set(rows.map((row) => row.id));
 }
 
 /** 对话版本：截断过几次。 */
