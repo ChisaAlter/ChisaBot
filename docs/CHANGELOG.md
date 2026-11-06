@@ -1,3 +1,10 @@
+## 0.1.137
+
+- 右栏顶部分段扩为「面板 | 任务 | 计算机」三段（`RailTab` 增 `tasks`，子页签持久化 `chisabot-panel-rail-subtab`），无计算机能力时两段；有待确认审批时「任务」挂 needs-you 圆点。
+- 新增 `TasksRailCard` / `useRailTasksSummary`：聚合任务中心 outbox 待确认（就地 `decide`）、工作流 `ACTIVE_RUN_STATUSES`（步骤进度条 + `waiting_approval` 步骤就地 `approve`/`reject`）、进行中任务（`pause`/`resume`）与近期交付；styles 增三段滑块位移与 `data-count="3"` 窄宽。
+- `AgentsRailCard` 从右栏移入任务中心 Capabilities 视图；「面板」页签只剩实时面板。
+- 版本：0.1.137（根、app、server、pc；Android versionCode 319）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.136
 
 - 工作流闭环与续跑：步骤支持 `rejectTo`/`maxReworks`、`onFailure`（`fail/reject/continue`）、`retryStrategy`（`targeted_fix/full_redo`）；`targeted_fix` 保留步骤底层 `threadId` 续跑并注入结构化修改反馈，重试自动叠加最新角色绑定。
