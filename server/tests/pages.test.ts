@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { PAGE_SLUG } from "../../shared/pages";
+import { PAGE_LIMITS, PAGE_SLUG } from "../../shared/pages";
 import { createDatabase } from "../src/db/client";
 import { REFUSAL_MARKER } from "../src/plugins/tools";
 import { assetName, createPages, newSlug, PAGE_CSP, sniffMatches, syncHeading } from "../src/pages/service";
@@ -110,6 +110,64 @@ describe.skipIf(!url)("pages service", () => {
     expect((await app.request(`/${page.slug}/`)).status).toBe(404);
     await pages.setPublished(owner, page.id, true);
     expect((await app.request(`/${page.slug}/`)).status).toBe(200);
+  });
+
+  test("concurrent edits preserve both changes with unique versions", async () => {
+    const page = await pages.create(owner, { title: "共同编辑", html: "<p>时间 A</p><p>地点 B</p>" });
+    const results = await Promise.all([
+      pages.update(owner, page.id, { edits: [{ find: "时间 A", replace: "时间 C" }] }),
+      pages.update(owner, page.id, { edits: [{ find: "地点 B", replace: "地点 D" }] }),
+    ]);
+    expect(results.map((result) => result.page.version).sort()).toEqual([2, 3]);
+    const html = await pages.publicPage(page.slug);
+    expect(html).toContain("时间 C");
+    expect(html).toContain("地点 D");
+    expect((await pages.versions(owner, page.id)).map((item) => item.version)).toEqual([3, 2, 1]);
+  });
+
+  test("a failed version write rolls back a new page and description changes", async () => {
+    // Fail at the database write boundary, after earlier statements have run in the real transaction.
+    const failingClient = new Proxy(database.$client, {
+      get(target, property) {
+        if (property === "begin") return (run: (tx: unknown) => unknown) => target.begin((transaction) => run(new Proxy(transaction, {
+          get(tx, key) {
+            if (key === "unsafe") return (query: string, values: unknown[]) => {
+              if (query.startsWith("INSERT INTO chisabot_page_versions")) throw new Error("version write failed");
+              return tx.unsafe(query, values);
+            };
+            const value = Reflect.get(tx, key);
+            return typeof value === "function" ? value.bind(tx) : value;
+          },
+        })));
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const failing = createPages({ $client: failingClient } as typeof database);
+    const before = (await pages.list(owner)).length;
+    await expect(failing.create(owner, { title: "不应留下空页", html: "<p>content</p>" })).rejects.toThrow("version write failed");
+    expect((await pages.list(owner)).length).toBe(before);
+
+    const page = await pages.create(owner, { title: "原题", description: "原简介", html: "<p>原文</p>" });
+    await expect(failing.update(owner, page.id, { description: "新简介", html: "<p>新文</p>" })).rejects.toThrow("version write failed");
+    expect((await pages.get(owner, page.id))?.description).toBe("原简介");
+    expect((await pages.get(owner, page.id))?.version).toBe(1);
+    expect(await pages.publicPage(page.slug)).toContain("原文");
+    expect(await pages.versions(owner, page.id)).toHaveLength(1);
+  });
+
+  test("concurrent asset uploads cannot both consume the last slot", async () => {
+    const page = await pages.create(owner, { title: "素材配额", html: "<p>assets</p>" });
+    for (let index = 0; index < PAGE_LIMITS.assetsPerPage - 1; index++) {
+      await pages.putAsset(owner, page.id, `asset-${index}.png`, PNG);
+    }
+    const results = await Promise.allSettled([
+      pages.putAsset(owner, page.id, "last-a.png", PNG),
+      pages.putAsset(owner, page.id, "last-b.png", PNG),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(await pages.assets(owner, page.id)).toHaveLength(PAGE_LIMITS.assetsPerPage);
   });
 
   test("assets round-trip as bytes with the sandbox CSP; bad types refused", async () => {
