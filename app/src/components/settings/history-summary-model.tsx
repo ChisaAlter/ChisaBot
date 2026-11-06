@@ -1,5 +1,5 @@
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import {
@@ -63,19 +63,20 @@ export function HistorySummaryModelCard() {
   const queryClient = useQueryClient();
   const saved = useQuery(historySummaryModelQueryOptions());
   const catalog = useQuery(modelCatalogQueryOptions());
-  const [value, setValue] = useState<string>(FOLLOW_MAIN_MODEL);
-  useEffect(() => {
-    if (saved.data) setValue(saved.data.model ?? FOLLOW_MAIN_MODEL);
-  }, [saved.data]);
+  const [draft, setDraft] = useState<string | null>(null);
   const models = catalog.data?.models ?? [];
   const current = saved.data?.model ?? FOLLOW_MAIN_MODEL;
+  const value = draft ?? current;
   const known =
     value === FOLLOW_MAIN_MODEL || models.some((m) => m.id === value);
   const save = useAsyncAction(
     async () => {
+      const sent = value;
       const result = await call("PUT", {
-        model: value === FOLLOW_MAIN_MODEL ? null : value,
+        model: sent === FOLLOW_MAIN_MODEL ? null : sent,
       });
+      // 旧保存响应不能覆盖用户在请求期间新选的模型。
+      setDraft((currentDraft) => (currentDraft === sent ? null : currentDraft));
       queryClient.setQueryData(summaryKey, result);
     },
     { errorToast: (error) => error.message },
@@ -99,7 +100,7 @@ export function HistorySummaryModelCard() {
       <div className="fb-actions">
         <Select
           onValueChange={(next) =>
-            typeof next === "string" && next && setValue(next)
+            typeof next === "string" && next && setDraft(next)
           }
           value={value}
         >

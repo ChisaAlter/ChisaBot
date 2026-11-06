@@ -1,6 +1,6 @@
 import { IconArrowDown, IconArrowUp, IconX } from "@tabler/icons-react";
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -48,18 +48,18 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
   // 只在适配器明确检测到不支持时才说「不生效」（有依据，不猜）。
   const kernel = useQuery({ ...runtimeKernelQueryOptions(), refetchInterval: false });
   const unsupported = hermesFallbackUnsupportedNote(kernel.data);
-  const [list, setList] = useState<string[]>([]);
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const list = draft ?? saved.data?.models ?? [];
   const [pick, setPick] = useState<string>("");
-  useEffect(() => {
-    if (saved.data) setList(saved.data.models);
-  }, [saved.data]);
   const labels = useMemo(() => new Map((catalog.data?.models ?? []).map((m) => [m.id, m.label || m.id])), [catalog.data]);
   const addable = (catalog.data?.models ?? []).filter((m) => m.id !== mainModel && !list.includes(m.id));
   const dirty = JSON.stringify(list) !== JSON.stringify(saved.data?.models ?? []);
   const save = useAsyncAction(
     async () => {
-      const result = await call("PUT", { models: list });
-      setList(result.models);
+      const sent = list;
+      const result = await call("PUT", { models: sent });
+      // 保存期间仍可调整顺序；响应只清掉本次提交的草稿，保留后续修改。
+      setDraft((current) => (current === sent ? null : current));
       queryClient.setQueryData(fallbackKey, result);
     },
     { errorToast: (error) => error.message },
@@ -88,13 +88,13 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
             <ListRow
               actions={
                 <>
-                  <Button aria-label="上移" disabled={index === 0} onClick={() => setList(moveModel(list, index, -1))} size="icon-sm" type="button" variant="ghost">
+                  <Button aria-label="上移" disabled={index === 0} onClick={() => setDraft(moveModel(list, index, -1))} size="icon-sm" type="button" variant="ghost">
                     <IconArrowUp />
                   </Button>
-                  <Button aria-label="下移" disabled={index === list.length - 1} onClick={() => setList(moveModel(list, index, 1))} size="icon-sm" type="button" variant="ghost">
+                  <Button aria-label="下移" disabled={index === list.length - 1} onClick={() => setDraft(moveModel(list, index, 1))} size="icon-sm" type="button" variant="ghost">
                     <IconArrowDown />
                   </Button>
-                  <Button aria-label="移除" onClick={() => setList(list.filter((m) => m !== id))} size="icon-sm" type="button" variant="ghost">
+                  <Button aria-label="移除" onClick={() => setDraft(list.filter((m) => m !== id))} size="icon-sm" type="button" variant="ghost">
                     <IconX />
                   </Button>
                 </>
@@ -112,7 +112,7 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
         <Select
           disabled={list.length >= MAX_FALLBACK_MODELS || addable.length === 0}
           onValueChange={(value) => {
-            if (typeof value === "string" && value) setList((previous) => (previous.includes(value) ? previous : [...previous, value]));
+            if (typeof value === "string" && value && !list.includes(value)) setDraft([...list, value]);
             setPick("");
           }}
           value={pick}

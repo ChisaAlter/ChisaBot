@@ -193,3 +193,84 @@ test("a drain that keeps failing stays parked and keeps the retry", async () => 
     ).not.toBeNull();
   });
 });
+
+test("a delayed inbox reply sends the follow-up after the original turn has already ended", async () => {
+  const calls: ComposerDraft[] = [];
+  let finishQueue!: (outcome: "send") => void;
+  let queueCalls = 0;
+  const queueToServer = () => {
+    queueCalls++;
+    return new Promise<"send">((resolve) => {
+      finishQueue = resolve;
+    });
+  };
+  const onSubmit = async (draft: ComposerDraft) => {
+    calls.push(draft);
+  };
+  const screen = (pending: boolean) => (
+    <ConversationView
+      channelId="channel-1"
+      messages={[]}
+      onSubmit={onSubmit}
+      pending={pending}
+      queueWhileBusy
+      queueToServer={queueToServer}
+    />
+  );
+  const view = render(screen(true));
+  await act(async () => {
+    typeInto(view.container, "再核对一下结果");
+  });
+  await act(async () => {
+    fireEvent.submit(view.container.querySelector("form") as HTMLFormElement);
+  });
+  expect(queueCalls).toBe(1);
+  expect(calls).toHaveLength(0);
+
+  // The original answer finishes before the inbox POST says it did not queue the follow-up.
+  view.rerender(screen(false));
+  await act(async () => {
+    finishQueue("send");
+  });
+  await waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0]?.text).toBe("再核对一下结果");
+  await waitFor(() => expect(parkedRow(view.container)).toBeNull());
+});
+
+test("a delayed inbox reply stays queued until the original turn finishes", async () => {
+  const calls: ComposerDraft[] = [];
+  let finishQueue!: (outcome: "send") => void;
+  const queueToServer = () =>
+    new Promise<"send">((resolve) => {
+      finishQueue = resolve;
+    });
+  const onSubmit = async (draft: ComposerDraft) => {
+    calls.push(draft);
+  };
+  const screen = (pending: boolean) => (
+    <ConversationView
+      channelId="channel-1"
+      messages={[]}
+      onSubmit={onSubmit}
+      pending={pending}
+      queueWhileBusy
+      queueToServer={queueToServer}
+    />
+  );
+  const view = render(screen(true));
+  await act(async () => {
+    typeInto(view.container, "等当前工具完成再继续");
+  });
+  await act(async () => {
+    fireEvent.submit(view.container.querySelector("form") as HTMLFormElement);
+  });
+  await act(async () => {
+    finishQueue("send");
+  });
+  await waitFor(() => expect(parkedRow(view.container)).not.toBeNull());
+  expect(calls).toHaveLength(0);
+
+  view.rerender(screen(false));
+  await waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0]?.text).toBe("等当前工具完成再继续");
+});
