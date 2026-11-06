@@ -48,6 +48,7 @@ import {
 } from "@/lib/channels/attachments";
 import {
   listenDraftFiles,
+  listenSendLanded,
   markDraftSent,
   rememberedDraft,
   setThreadUi,
@@ -80,6 +81,7 @@ import {
   type ComposerDraft,
   canSendDraft,
   enforceSingleAgent,
+  retractRestoredDraft,
   toDraft,
 } from "./draft";
 import {
@@ -439,6 +441,17 @@ function ComposerImpl({
       !isSegmentsEmpty(value) && !wasJustSent(draftKey, toDraft(value).text);
     setThreadUi(draftKey, { draft: keep ? value : undefined });
   }, [draftKey, value]);
+  /*
+   * 「没发出去」判错、这句其实落地了（channel-chat 的迟到对账 → sendLanded）：失败时塞回来的
+   * 这份草稿是多余的——消息在对话里、回答可能正在写，留着它再按一次发送就是同一句话发两遍。
+   * 只在「字没被动过」时收：塞回来之后他又编辑 / 续打了，那些是他自己的字，照 §88.4 的规矩不碰。
+   */
+  useEffect(() => {
+    if (!draftKey) return;
+    return listenSendLanded(draftKey, (landed) => {
+      setValue((current) => retractRestoredDraft(current, landed) ?? current);
+    });
+  }, [draftKey]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitInFlight = useRef(false);
   /**

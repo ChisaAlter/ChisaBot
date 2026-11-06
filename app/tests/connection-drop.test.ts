@@ -317,10 +317,22 @@ test("decideSendWatchdogAction: timeout + not persisted → hang (catches fake s
   }
 });
 
-test("decideSendWatchdogAction: timeout + persist check failed (null) → hang", () => {
-  expect(
-    decideSendWatchdogAction({ firstRace: "timeout", persisted: null }).kind,
-  ).toBe("hang");
+test("decideSendWatchdogAction: timeout + persist check failed (null) → unverified, not hang", () => {
+  /*
+   * 证人缺席是「核实不了」不是「没到」：请求可能只是还在路上（订阅前静默 / 重启窗口），
+   * 落地后服务端照常开跑、回答经同步落回屏幕——断言「没发出去」就成了挂着不撤的谎话。
+   * 「可能没发出去」如实说不知道，由迟到对账在答案真出现时撤卡。
+   */
+  const d = decideSendWatchdogAction({
+    firstRace: "timeout",
+    persisted: null,
+  });
+  expect(d.kind).toBe("unverified");
+  if (d.kind === "unverified") {
+    expect(d.reason).toBe(SEND_UNREACHABLE_REASON);
+    expect(d.budget).toBe("SEND_UNREACHABLE");
+    expect(isHonestSendFailureReason(d.reason)).toBe(true);
+  }
 });
 
 test("decideSendWatchdogAction: timeout + persisted + reply timeout → reply_hang", () => {

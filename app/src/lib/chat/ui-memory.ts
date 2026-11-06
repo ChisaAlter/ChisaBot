@@ -244,6 +244,36 @@ export function markDraftSent(threadKey: string | undefined, text: string): void
   setThreadUi(threadKey, { draft: undefined, sent: text.trim(), sentAt: now() });
 }
 
+/*
+ * 判过「没发出去」的发送事后对账发现这句其实落地了（channel-chat 的迟到对账）：
+ * 失败时塞回输入框的草稿是多余的一份——消息在对话里、回答可能正在写，留着它一发就是重复。
+ * 输入框只在「字还没被改过」时才收回去（composer.tsx）。
+ */
+const SEND_LANDED_EVENT = "chisabot-send-landed";
+
+/** 按草稿键广播：这句其实发出去了。 */
+export function sendLanded(threadKey: string, text: string): void {
+  window.dispatchEvent(
+    new CustomEvent(SEND_LANDED_EVENT, { detail: { threadKey, text } }),
+  );
+}
+
+/** 挂着那个草稿键的输入框登记收听。返回注销函数。 */
+export function listenSendLanded(
+  threadKey: string,
+  listener: (text: string) => void,
+): () => void {
+  const on = (event: Event) => {
+    const detail = (
+      event as CustomEvent<{ threadKey?: string; text?: string }>
+    ).detail;
+    if (detail?.threadKey === threadKey && typeof detail.text === "string")
+      listener(detail.text);
+  };
+  window.addEventListener(SEND_LANDED_EVENT, on);
+  return () => window.removeEventListener(SEND_LANDED_EVENT, on);
+}
+
 /**
  * 这段对话记下的草稿（prompt-area 分段），只放回结构对的；和刚发出去的那句一模一样的不放回。
  * `plain` 把分段变回纯文本（和发送时同一个算法）。

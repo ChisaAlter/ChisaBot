@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { Composer } from "@/components/channels/composer/composer";
+import { sendLanded } from "@/lib/chat/ui-memory";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -144,4 +145,62 @@ test("a failed send keeps what was typed while it was in flight", async () => {
   expect(restored).toContain("first");
   expect(restored).toContain("second");
   expect(restored.indexOf("first")).toBeLessThan(restored.indexOf("second"));
+});
+
+/*
+ * 「没发出去」判错、这句其实落地了（channel-chat 的迟到对账发 sendLanded）：塞回来的草稿是
+ * 多余的一份——消息在对话里、回答可能正在写，留着它再按一次发送就是同一句话发两遍。
+ * 对账按草稿键精确收回，别处的输入框不受影响。
+ */
+test("a send that landed after failing pulls the restored words back out", async () => {
+  const send = deferredSend();
+  const { container, getByLabelText } = render(
+    <Composer
+      compact
+      draftKey="landed-thread"
+      initialValue="ship it"
+      onSubmit={send.onSubmit}
+    />,
+  );
+
+  await act(async () => {
+    fireEvent.click(getByLabelText("发送消息"));
+  });
+  await send.reject();
+  expect(typedText(container)).toContain("ship it");
+
+  await act(async () => {
+    sendLanded("landed-thread", "ship it");
+  });
+  expect(typedText(container)).toBe("");
+});
+
+test("words typed after the restore survive the landed retraction", async () => {
+  const send = deferredSend();
+  const { container, getByLabelText } = render(
+    <Composer
+      compact
+      draftKey="landed-typed"
+      initialValue="first"
+      onSubmit={send.onSubmit}
+    />,
+  );
+
+  await act(async () => {
+    fireEvent.click(getByLabelText("发送消息"));
+  });
+  await act(async () => {
+    typeInto(container, "second");
+  });
+  await send.reject();
+  expect(typedText(container)).toContain("first");
+  expect(typedText(container)).toContain("second");
+
+  // 收回的是塞回来的那份，续打的「second」是他自己的字——动谁不动谁，规矩见 §88.4。
+  await act(async () => {
+    sendLanded("landed-typed", "first");
+  });
+  const after = typedText(container);
+  expect(after).toContain("second");
+  expect(after).not.toContain("first");
 });

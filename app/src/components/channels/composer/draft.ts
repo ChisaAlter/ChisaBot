@@ -63,6 +63,67 @@ export function canSendDraft(draft: ComposerDraft): boolean {
   return draft.attachments.length > 0 || !draft.isEmpty;
 }
 
+/*
+ * 把「发送失败塞回来、事后对账证明其实已发出」的那份草稿收走（channel-chat 的迟到对账 →
+ * sendLanded）。失败恢复把原句放在输入框内容的最前面（框空时整框就是它；框里已有新字时是
+ * `原句 + 空格分段 + 新字`）：
+ *   - 整框正好就是那句（塞回来之后没再动过）→ 全收；
+ *   - 开头是那句、后面是自己续打的 → 只收前一份，连同中间补的空白分段；
+ *   - 对不上（原句被编辑过）→ 不动：他的字优先，null = 保持现状。
+ */
+export function retractRestoredDraft(
+  segments: Segment[],
+  landed: string,
+): Segment[] | null {
+  const target = landed.trim();
+  if (!target || isSegmentsEmpty(segments)) return null;
+  const whole = segmentsToPlainText(segments).trim();
+  if (whole === target) return [];
+  if (!whole.startsWith(target)) return null;
+  /*
+   * 原句占了开头：逐段把它的纯文本吃掉。恢复时相邻文本会被并成一个分段（`mergeAdjacentTextSegments`），
+   * 所以边界多半落在某个 text 分段**内部**——text 能在段内截断，切完再吃掉还原时补的那个空格；
+   * chip 超界说明原句被改过，他的字优先，不收。
+   * （`whole` 是 trim 过的，开头的空白分段先摘掉，不然逐段计数会错位。）
+   */
+  let k = 0;
+  while (
+    k < segments.length &&
+    segmentsToPlainText([segments[k]!]).trim() === ""
+  ) {
+    k += 1;
+  }
+  let consumed = 0;
+  let matched = false;
+  let partialTail: Segment | null = null;
+  while (k < segments.length) {
+    // `whole` 是 trim 过的：第一个非空分段自己的前导空格不计入对齐（consumed 还是 0 时就是它）。
+    const plain = consumed === 0
+      ? segmentsToPlainText([segments[k]!]).replace(/^ +/, "")
+      : segmentsToPlainText([segments[k]!]);
+    const next = consumed + plain.length;
+    if (next <= target.length) {
+      consumed = next;
+      k += 1;
+      continue;
+    }
+    const need = target.length - consumed;
+    if (segments[k]!.type === "text" && plain.startsWith(target.slice(consumed))) {
+      const tail = plain.slice(need).replace(/^ /, "");
+      if (tail) partialTail = text(tail);
+      matched = true;
+      k += 1;
+    }
+    break;
+  }
+  if (consumed < target.length && !matched) return null;
+  const rest = mergeAdjacentTextSegments([
+    ...(partialTail ? [partialTail] : []),
+    ...segments.slice(k),
+  ]);
+  return isSegmentsEmpty(rest) ? [] : rest;
+}
+
 /** Collapse multiple agent mentions to the most recent one while preserving identity on no-op. */
 export function enforceSingleAgent(segments: Segment[]): Segment[] {
   const agentChipCount = getChipsByTrigger(segments, AGENT_TRIGGER).length;
