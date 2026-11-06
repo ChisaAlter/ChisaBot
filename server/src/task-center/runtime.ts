@@ -6,7 +6,8 @@
  * - plan：一次无头回合让机器人把目标拆成 <= 6 步，输出严格 JSON；拆不出来就当单任务直接执行，
  *   绝不因为规划格式问题把任务卡死在重试里。
  * - execute：同一条 governedTurnRunner（定时任务 / 工作流 / 后台任务都在用），在隐藏的
- *   `task-center:<taskId>` 线程里跑；线程前缀让 messages 巡检不会再把它扫成「未回复消息」。
+ *   `task-center:<taskId>:<tag>:<attempt>` 线程里跑——每次尝试独立线程（见 taskThreadId）；
+ *   线程前缀让 messages 巡检不会再把它扫成「未回复消息」。
  * - notify：Outbox 出现待确认时，在主机器人的对话里记一行活动；通知失败只写在 decision 上，
  *   不阻塞审批本身（decisions.notification_error 在页面上可见）。
  */
@@ -38,6 +39,12 @@ import {
 import { createTaskSourceCollectors } from "./sources";
 
 const TASK_THREAD_PREFIX = "task-center:";
+/**
+ * 每次尝试独立线程：上一次异常退出（宿主工具网关 5xx、容器重启等）会把线程标成
+ * paused/held，重试沿用同一线程只会重复 409「保留的消息已暂停」，永远到不了模型。
+ */
+export const taskThreadId = (task: TaskCenterTask, tag: string) =>
+  `${TASK_THREAD_PREFIX}${task.id}:${tag}:${task.attempts}`;
 const MAX_PLAN_STEPS = 6;
 const INSTRUCTION_LIMIT = 12_000;
 const clip = (text: string, n: number) =>
@@ -188,9 +195,7 @@ export function createTaskCenterRuntime(
       ownerUserId: task.ownerUserId,
       routineId: `task:${task.id}:${tag}`,
       agentId: await resolveAgent(task),
-      // 每次尝试独立线程：上一次异常退出会把线程标成 paused/held，重试沿用同一线程
-      // 只会重复 409「保留的消息已暂停」，永远到不了模型。
-      threadId: `${TASK_THREAD_PREFIX}${task.id}:${tag}:${task.attempts}`,
+      threadId: taskThreadId(task, tag),
       instruction,
       initiator: { kind: "routine", id: `task:${task.id}` },
       signal,

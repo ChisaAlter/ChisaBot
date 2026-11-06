@@ -3,7 +3,7 @@ import type {
   TaskCenterTask,
   TaskExecutionContext,
 } from "../../shared/task-center";
-import { extractJson, frameTask } from "../src/task-center/runtime";
+import { extractJson, frameTask, taskThreadId } from "../src/task-center/runtime";
 
 function task(overrides: Partial<TaskCenterTask> = {}): TaskCenterTask {
   return {
@@ -117,6 +117,18 @@ describe("task instruction framing", () => {
       context(),
     );
     expect(text.length).toBeLessThan(20_000);
+  });
+});
+
+describe("task thread identity", () => {
+  test("retries get a fresh thread so a paused thread cannot block re-execution", () => {
+    const base = task({ id: "abc", attempts: 1 });
+    const retry = task({ id: "abc", attempts: 2 });
+    expect(taskThreadId(base, "run")).toBe("task-center:abc:run:1");
+    expect(taskThreadId(retry, "run")).toBe("task-center:abc:run:2");
+    expect(taskThreadId(base, "run")).not.toBe(taskThreadId(retry, "run"));
+    // 前缀不变：messages 巡检靠 task-center: 前缀把执行线程排除在「未回复消息」之外。
+    expect(taskThreadId(retry, "run").startsWith("task-center:")).toBe(true);
   });
 });
 
