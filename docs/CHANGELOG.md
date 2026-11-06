@@ -1,3 +1,13 @@
+## 0.1.135
+
+- AI 输出契约（§126）：`shared/output-contract` 一张表定每种输出在 web/app/IM 的归宿（native/degraded/none）+ 完整性测试；无壳 render 内容自动补壳（`shared/json-render/shell` + web/Android 两侧）；`:::card/group` 容错；GitHub 就地连接胶囊两端同款；`person.surface` 闸门让 App/IM 回合不开等人填的卡。
+- 「没发出去」诚实化：`persisted:null` 改判 `unverified`（不是「没到」是「核实不了」），channel-chat 90 秒迟到对账——落地就撤卡收草稿；`ui-memory` 增 `sendLanded`/`listenSendLanded`，composer `retractRestoredDraft` 只收没被改过的那份。
+- 撤销/停止/取消在每个边界生效：设备紧急操作先落库再旁路、IM 发回复前后复校 `canUseConnection`、回合锁等待可中止、墓碑读失败拒默；pc 在途 shell/后台任务随 stop 终止；agent-computer 会话清扫保活在途操作、/health 探针不建会话、工作区符号链接拒出。
+- 竞态修复：schedules 认领行锁 + 静默只看成功 + 时间校验；pages 行锁事务；vault api_request 中止/限流/拒跟跳/域名复校；model-fallback 中止传播 + 首输出前流错误走下一键；guarded-fetch/socket 生命周期；MCP 钉公网地址；收件箱回复排空；重连按 revision 回填；设置草稿防迟到覆盖。
+- deploy：auth 改密/停用/删除下旧会话不再存活；updater 管道死锁 + 状态原子写；nginx 端口从访问地址取。
+- Android：设备绑定/续期令牌只属当前登录服务器 + 会话代际；输出渲染对齐网页（干活步骤、files 成果卡、:::card/group/brief、链接卡、动作胶囊、GitHub 连接对话框）。
+- 版本：0.1.135（根、app、server、pc；Android versionCode 317）；PC 外壳有改动走「重新安装」路径；Android 应用本体有改动正常原地更新。
+
 ## 0.1.134
 
 - 发送看门狗误报修复：每条 /run 流订阅即回执 RUN_STARTED（下游真实 RUN_STARTED 去重）——「受理到开跑」的静默前置（等收尾/抢锁/落快照）不再被误判成「没发出去」并停掉在途回合；hang 只在真的什么都没到服务器时成立。
