@@ -29,3 +29,10 @@ All list envelopes `{tasks}`, `{outbox}`, `{sources}`, `{context}`, `{capabiliti
   2. `6a290af`：回合被宿主工具网关 5xx 异常终止后线程被标 `paused/held`，重试沿用同一线程永久 409「保留的消息已暂停」→ 线程按尝试序号独立（`taskThreadId` = `task-center:<id>:<tag>:<attempt>`）。生产注入 paused 回归验证：attempt 1 409 → `retry_scheduled` → attempt 2 新线程真实执行 `succeeded`。
 - 回归测试：`task thread identity` 用例钉住按尝试换线程的不变量。
 - 本机运维通道：回环 `127.0.0.1:3001` + `x-chisabot-local-caller` 头（值 = `CHISABOT_GATEWAY_SECRET`）免会话调 API。
+
+### 第二轮补齐（`d37eadf2` + `1702da69`，已上线 `auto-202611060641-1702da6`）
+
+- 交付物：`execute` 把回合画出的组件映射成 `TaskArtifact`（`componentArtifacts`），生产验证 `showBarChart` → 可预览/下载 artifact。
+- 用量：从 `openbot_local_events` 的 `RUN_FINISHED` → `metadata.contextUsage` 读真实 token（`sum(...)::int`，bigint 会吐字符串）；生产验证 `{modelCalls:1, inputTokens:46571, outputTokens:314}` 全 number。
+- 已学到：`learn` 终态回调（成功 + 终态失败）→ `appendLearned` 追加履历行（超 5000 字丢最旧），人工六字段不动；生产验证两行正确累积。
+- 注：Bun SQL `unsafe` 对 `JSON.stringify` 过的 jsonb 参数存在双重编码（库存 `"[]"`/`"{}"` 字符串），`taskView` 的 `json()` 双向解析恰好抵消——无功能影响，未动。
