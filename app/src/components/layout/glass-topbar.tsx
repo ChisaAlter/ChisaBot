@@ -267,15 +267,16 @@ function onFirstKeydown(event: KeyboardEvent) {
   });
   keyboardListeners.clear();
 }
-if (typeof window !== "undefined") window.addEventListener("keydown", onFirstKeydown, true);
+if (typeof globalThis.window?.addEventListener === "function")
+  globalThis.window.addEventListener("keydown", onFirstKeydown, true);
 
 /** 测试用：回到「还没按过键」的状态。 */
 export function resetToggleTipKeyboardForTest() {
   keyboardSeen = false;
   keyboardListeners.clear();
-  if (typeof window !== "undefined") {
-    window.removeEventListener("keydown", onFirstKeydown, true);
-    window.addEventListener("keydown", onFirstKeydown, true);
+  if (typeof globalThis.window?.addEventListener === "function") {
+    globalThis.window.removeEventListener("keydown", onFirstKeydown, true);
+    globalThis.window.addEventListener("keydown", onFirstKeydown, true);
   }
 }
 
