@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,7 +93,16 @@ private fun PanelCard(p: Panel, actions: RenderActions) {
                     if (p.status != "failed") { Spacer(Modifier.width(6.dp)); Dots(sky.ink3, 4.dp) }
                 }
             }
-            else -> Box(Modifier.alpha(if (stale) 0.6f else 1f)) { JsonRenderView(p.spec, actions, Modifier.fillMaxWidth()) }
+            else -> {
+                // 面板卡片自己就是那层外壳（§29）：里面的 Card 平铺、和面板同名的标题不画第二遍
+                val spec = p.spec
+                Box(Modifier.alpha(if (stale) 0.6f else 1f)) {
+                    val shown = remember(spec, p.title) { dropDuplicatePanelTitle(spec, p.title) }
+                    CompositionLocalProvider(LocalInShell provides true) {
+                        JsonRenderView(shown, actions, Modifier.fillMaxWidth(), autoShell = false)
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(10.dp))
         PanelFoot(p)

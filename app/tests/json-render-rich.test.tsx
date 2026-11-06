@@ -490,4 +490,41 @@ describe("rich components render", () => {
     expect(said).toEqual(["用 Word", "用 Word"]);
     expect(button("Word 文档").hasAttribute("data-choice")).toBe(false);
   });
+
+  test("a chat surface with text outside any Card becomes the shell itself (DESIGN.md §29)", async () => {
+    const { JsonRenderSurface } = await import("@/lib/copilot/json-render-surface");
+    const checked = (raw: Record<string, unknown>) => {
+      const verdict = inspectRenderUiSpec(JSON.stringify(raw));
+      expect(verdict.ok).toBe(true);
+      return (verdict.ok ? verdict.spec : (raw as unknown as Spec)) as Spec;
+    };
+    // 2026-11-06 截图：两张对比卡片 + 下面一行淡色小字，小字以前直接落在天空上。
+    const compare = checked({
+      root: "r",
+      elements: {
+        r: { type: "Stack", props: {}, children: ["g", "note"] },
+        g: { type: "Grid", props: { columns: 2 }, children: ["a", "b"] },
+        a: { type: "Card", props: { title: "方案 A" }, children: ["at"] },
+        at: { type: "Text", props: { text: "快" }, children: [] },
+        b: { type: "Card", props: { title: "方案 B" }, children: ["bt"] },
+        bt: { type: "Text", props: { text: "省" }, children: [] },
+        note: { type: "Text", props: { text: "数值越大越好", tone: "muted", size: "sm" }, children: [] },
+      },
+    });
+    const shelled = render(<JsonRenderSurface spec={compare} streaming={false} />).container.querySelector(".jr-surface");
+    expect(shelled?.classList.contains("jr-card")).toBe(true);
+    // 里面两张卡片照常画（样式上按嵌套卡片平铺成小节）。
+    expect(shelled?.querySelectorAll(".jr-card")).toHaveLength(2);
+    expect(shelled?.textContent).toContain("数值越大越好");
+
+    const carded = checked({
+      root: "c",
+      elements: {
+        c: { type: "Card", props: { title: "概览" }, children: ["t"] },
+        t: { type: "Text", props: { text: "说明" }, children: [] },
+      },
+    });
+    const plain = render(<JsonRenderSurface spec={carded} streaming={false} />).container.querySelector(".jr-surface");
+    expect(plain?.classList.contains("jr-card")).toBe(false);
+  });
 });

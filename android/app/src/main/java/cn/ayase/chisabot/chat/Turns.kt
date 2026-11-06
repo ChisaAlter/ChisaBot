@@ -33,6 +33,8 @@ sealed class Row(val key: String) {
     class Work(key: String, val turnKey: String, val calls: List<ToolCall>, val live: Boolean) : Row(key)
     /** render_ui 画的卡片（json-render spec）。 */
     class Card(key: String, val spec: String) : Row(key)
+    /** 图片 / 文件工具交付的成果卡（`⟦chisabot:files⟧` 清单；同网页 ImagePile / FileToolCard，§56）。 */
+    class FileCards(key: String, val files: List<ChatFile>) : Row(key)
     /** 还没有干活卡、这一轮在跑、末尾不是字：「思考中」。 */
     class Thinking(key: String) : Row(key)
     /** 末尾是字、这一轮还在跑、没有干活卡：停住 0.9 秒后出小点（§78.2，由界面计时）。 */
@@ -48,6 +50,9 @@ private sealed class Seg {
 }
 
 object Turns {
+    /** 结果里有 `⟦chisabot:files⟧` 就出成果卡的工具（同网页 imageToolDrawsCard / fileToolDrawsCard 覆盖的名字）。 */
+    private val FILE_CARD_TOOLS = setOf("image_generate", "image_edit", "file_share")
+
     /** render_ui 的 spec：参数 {spec: "<json 字符串>"} 或 {spec: {…}}。 */
     fun renderSpec(call: ToolCall): String? {
         val args = WorkSteps.parseArgs(call.args)
@@ -133,6 +138,10 @@ object Turns {
                         workPlaced = true
                     }
                     if (seg.call.name == "render_ui") renderSpec(seg.call)?.let { rows += Row.Card("c:" + seg.call.id, it) }
+                    if (seg.call.name in FILE_CARD_TOOLS && seg.call.ended) {
+                        val files = filesFromToolResult(seg.call.result)
+                        if (files.isNotEmpty()) rows += Row.FileCards("f:" + seg.call.id, files)
+                    }
                     confirms[seg.call.id]?.forEach { rows += Row.Confirm(it) }
                 }
             }

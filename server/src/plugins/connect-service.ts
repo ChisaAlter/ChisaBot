@@ -529,9 +529,9 @@ function builtinMatchSection(
         "✅ 【内置 GitHub 连接器】已经内置就绪：",
         `  - 当前账号状态：${statusText}`,
         "  - 支持能力：查看仓库、Issue、Pull Request、读取代码文件、创建 Issue / PR（连接后自动挂载 `github_*` 工具）",
-        "  - 怎么连接：在「设置 → 账号连接」顶部的 GitHub 卡片里填入 Personal Access Token 即可一键连接。",
+        "  - 怎么连接：用户在对话里点开连接卡，就地填入 Personal Access Token 即可（令牌只发往服务器，不进对话）。",
         "  - 回复末尾请附上独立一行的链接卡：",
-        "    [打开账号连接](/settings/connected-accounts)",
+        "    [连接 GitHub](/settings/connected-accounts/github)",
       ].join("\n"),
     );
   }
@@ -553,7 +553,7 @@ function overviewReport(
     : "未连接（支持直接发 iCal/ICS 链接由我调用 `calendar_connect` 代连，或在「设置 → 账号连接」连接）";
   const ghStatus = builtin?.github?.connected
     ? `已连接（@${builtin.github.login ?? "github"}）`
-    : "未连接（在「设置 → 账号连接」填入 GitHub 令牌即可）";
+    : "未连接（对话里点 [连接 GitHub](/settings/connected-accounts/github) 链接卡就地填令牌；也可在「设置 → 账号连接」填）";
 
   const addedIds = new Set(servers.map((s) => s.id));
   const unaddedCatalogue = CATALOGUE.filter((entry) => !addedIds.has(entry.key));

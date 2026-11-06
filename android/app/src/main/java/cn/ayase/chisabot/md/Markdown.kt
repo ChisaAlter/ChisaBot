@@ -15,9 +15,17 @@ sealed class Block {
     data class Code(val lang: String, val code: String, val closed: Boolean) : Block()
     data class Draft(val title: String, val body: String) : Block()
     data class Doc(val title: String, val body: String) : Block()
+    /** 晨报卡（```brief / ```morning-brief），正文按 meta 行 / 小节 / 列表项解析（同网页 parseBriefBody）。 */
+    data class Brief(val title: String, val body: String) : Block()
     data class Image(val alt: String, val url: String) : Block()
-    data class LinkCard(val url: String) : Block()
+    data class LinkCard(val url: String, val label: String? = null) : Block()
+    /** 独立一行的站内操作（`[连接 GitHub](/settings/…)`）：胶囊按钮，href 交给界面层解释。 */
+    data class ActionPill(val label: String, val href: String) : Block()
+    /** `:::group` / `:::card{title="" status=""}` 状态卡组（连接器全景、巡检动态等，同网页 StatusCardGroup）。 */
+    data class StatusCards(val cards: List<StatusCard>) : Block()
 }
+
+data class StatusCard(val title: String, val status: String?, val body: String)
 
 /** 一个气泡：几块连在一起（列表 / 表格前的「…：」引导句、标题跟着下一段）。wide = 整列宽；bare = 不套气泡（代码、草稿、文档卡）。 */
 data class Bubble(val blocks: List<Block>, val wide: Boolean, val bare: Boolean)
@@ -30,6 +38,10 @@ object Markdown {
     private val IMAGE = Regex("^!\\[([^\\]]*)]\\((\\S+?)(?:\\s+\"[^\"]*\")?\\)$")
     private val BARE_URL = Regex("^<?(https?://[^\\s<>]+)>?$")
     private val TABLE_SEP = Regex("^\\s*\\|?\\s*:?-{2,}:?\\s*(\\|\\s*:?-{2,}:?\\s*)*\\|?\\s*$")
+    /** 独立一行的带标签链接 / 站内操作胶囊（同网页 parseActionPillSegment 的形状；标签 2–32 字才是胶囊）。 */
+    private val LINK_LINE = Regex("^\\[([^\\]]+)]\\((\\S+?)\\)$")
+    private val ACTION_HREF = Regex("^/[a-zA-Z0-9/_?=&#-]*$")
+    private val CARD_ATTR = Regex("(title|status)=\"([^\"]*)\"")
 
     fun parse(src: String): List<Block> {
         val lines = src.replace("\r\n", "\n").split("\n")
@@ -60,6 +72,19 @@ object Markdown {
                 }
                 val code = body.toString().trimEnd('\n')
                 out += when (lang) {
+                    "brief", "morning-brief", "daily-brief" -> {
+                        val first = code.lineSequence().firstOrNull().orEmpty()
+                        val titled = first.startsWith("标题：") || first.startsWith("标题:") || first.startsWith("title:", ignoreCase = true)
+                        var title = if (titled) first.substringAfter('：').substringAfter(':').trim() else ""
+                        val rest = if (titled) code.substringAfter('\n', "") else code
+                        if (title.isEmpty() && out.lastOrNull() is Block.Heading) title = (out.removeAt(out.lastIndex) as Block.Heading).text
+                        Block.Brief(title.ifEmpty { "今日晨报" }, rest)
+                    }
+                    "cards" -> {
+                        // ```cards = :::card 指令块的围栏写法（网页 normalizeDirectiveCards 归一成这种）。
+                        statusCards(code.lineSequence().toList())?.let { it }
+                            ?: Block.Code(lang, code, closed)
+                    }
                     "draft", "doc", "summary" -> {
                         val first = code.lineSequence().firstOrNull().orEmpty()
                         val titled = first.startsWith("标题：") || first.startsWith("标题:")
@@ -115,15 +140,75 @@ object Markdown {
                 out += Block.Quote(q.toString().trimEnd())
                 continue
             }
+            if (trimmed == ":::group" || trimmed.startsWith(":::card")) {
+                flush()
+                val grouped = trimmed == ":::group"
+                var title = ""; var status: String? = null
+                var cur: StringBuilder? = null
+                val cards = mutableListOf<StatusCard>()
+                fun closeCard() { cur?.let { cards += StatusCard(title.ifEmpty { "信息卡片" }, status, it.toString().trim()) }; cur = null }
+                fun openCard(header: String) {
+                    closeCard()
+                    val attrs = CARD_ATTR.findAll(header).associate { it.groupValues[1] to it.groupValues[2] }
+                    title = attrs["title"].orEmpty(); status = attrs["status"]
+                    cur = StringBuilder()
+                }
+                // 单独的 :::card{…}（不在 :::group 里）：首行就是它自己的卡头。
+                if (!grouped) openCard(trimmed)
+                i++
+                while (i < lines.size) {
+                    val l = lines[i].trim()
+                    if (l.startsWith(":::card")) { openCard(l); i++; continue }
+                    if (l == ":::") { i++; if (cur != null) closeCard() else break; if (!grouped) break; continue }
+                    if (cur == null) { if (grouped && l.isEmpty()) { i++; continue } else break }
+                    cur.append(lines[i]).append('\n'); i++
+                }
+                closeCard()
+                if (cards.isNotEmpty()) out += Block.StatusCards(cards)
+                continue
+            }
             val image = IMAGE.matchEntire(trimmed)
             if (image != null) { flush(); out += Block.Image(image.groupValues[1], image.groupValues[2]); i++; continue }
+            val linkLine = LINK_LINE.matchEntire(trimmed)
+            if (linkLine != null) {
+                flush()
+                val label = linkLine.groupValues[1].trim()
+                val href = linkLine.groupValues[2]
+                if (ACTION_HREF.matches(href) && label.length in 2..32) out += Block.ActionPill(label, href)
+                else out += Block.LinkCard(href, label.ifEmpty { null })
+                i++; continue
+            }
             val bare = BARE_URL.matchEntire(trimmed)
-            if (bare != null && para.isEmpty()) { out += Block.LinkCard(bare.groupValues[1]); i++; continue }
+            if (bare != null) { flush(); out += Block.LinkCard(bare.groupValues[1]); i++; continue }
             para.append(line).append('\n')
             i++
         }
         flush()
         return out
+    }
+
+    /** :::card 指令 / ```cards 围栏体 → 状态卡列表；一张都没有返回 null（交给调用方按代码块画）。 */
+    private fun statusCards(body: List<String>): Block.StatusCards? {
+        val cards = mutableListOf<StatusCard>()
+        var title = ""; var status: String? = null
+        var cur: StringBuilder? = null
+        fun close() { cur?.let { cards += StatusCard(title.ifEmpty { "信息卡片" }, status, it.toString().trim()) }; cur = null }
+        for (raw in body) {
+            val l = raw.trim()
+            when {
+                l == ":::group" || l == "```cards" || l == "```" -> Unit
+                l.startsWith(":::card") -> {
+                    close()
+                    val attrs = CARD_ATTR.findAll(l).associate { it.groupValues[1] to it.groupValues[2] }
+                    title = attrs["title"].orEmpty(); status = attrs["status"]
+                    cur = StringBuilder()
+                }
+                l == ":::" -> close()
+                else -> cur?.append(raw)?.append('\n')
+            }
+        }
+        close()
+        return if (cards.isEmpty()) null else Block.StatusCards(cards)
     }
 
     /** 表格行按「没转义的」| 切格：\| 是字面竖线（GFM 转义规则：奇数个反斜杠后才是转义）。 */
@@ -146,12 +231,13 @@ object Markdown {
     }
 
     private fun isWide(b: Block) = when (b) {
-        is Block.Table, is Block.Code, is Block.Draft, is Block.Doc -> true
+        is Block.Table, is Block.Code, is Block.Draft, is Block.Doc, is Block.Brief, is Block.StatusCards -> true
         is Block.ListBlock -> b.items.size >= 3
         else -> false
     }
 
-    private fun isBare(b: Block) = b is Block.Code || b is Block.Draft || b is Block.Doc || b is Block.LinkCard || b is Block.Image
+    private fun isBare(b: Block) = b is Block.Code || b is Block.Draft || b is Block.Doc || b is Block.Brief ||
+        b is Block.LinkCard || b is Block.Image || b is Block.ActionPill || b is Block.StatusCards
 
     /** 按块切气泡，最多 6 个（多的并进最后一个，不丢字）。链接卡放到最后。 */
     fun bubbles(src: String, max: Int = 6): List<Bubble> {

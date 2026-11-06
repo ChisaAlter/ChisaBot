@@ -86,16 +86,20 @@ const actionView = (row: ActionRow): GithubActionView => ({
   decidedAt: row.decided_at ? iso(row.decided_at) : null,
 });
 
-/** 只有有人在网页聊天里的回合才能确认写操作。 */
+/** 只有有人在网页聊天里的回合才能确认写操作：原生 App 还没有 GitHub 操作卡，IM 是 routine 的 im: 回合。 */
 export function canConfirm(initiator: AuditInitiator | undefined) {
-  return !initiator || initiator.kind === "person";
+  if (!initiator) return true;
+  return (
+    initiator.kind === "person" &&
+    (!initiator.surface || initiator.surface === "web")
+  );
 }
 
 /** 每轮给机器人的一句 GitHub 用法。 */
 export function githubGuidance(connected: GithubConnectionView | null) {
   if (!connected)
-    return "【GitHub】用户还没连接 GitHub。需要读写 GitHub 时，请用户去 设置 → 账号连接 连接 GitHub（贴一个令牌）；不要在聊天里要令牌，也不要用保险箱卡片要。";
-  return `【GitHub】已连接 GitHub 账号 @${connected.login}${connected.status === "invalid" ? "（令牌已失效，请用户去 设置 → 账号连接 更换）" : ""}。用 github_* 工具读仓库、Issue、PR 和文件；建 Issue、评论、建 PR 会先弹确认卡片，用户允许后才发出——工具返回「拒绝」就停下，不要换别的方式绕过。`;
+    return "【GitHub】用户还没连接 GitHub。需要读写 GitHub 时，引导用户在对话里就地连接——回复末尾附独立一行的链接卡：\n[连接 GitHub](/settings/connected-accounts/github)\n用户点开就在原地填令牌（令牌只发往服务器，不进对话）；不要在聊天里要令牌，也不要用保险箱卡片要。";
+  return `【GitHub】已连接 GitHub 账号 @${connected.login}${connected.status === "invalid" ? "（令牌已失效，请用户更换——回复末尾附独立一行的链接卡：[连接 GitHub](/settings/connected-accounts/github)）" : ""}。用 github_* 工具读仓库、Issue、PR 和文件；建 Issue、评论、建 PR 会先弹确认卡片，用户允许后才发出——工具返回「拒绝」就停下，不要换别的方式绕过。`;
 }
 
 const repoSchema = z.string().trim().regex(GITHUB_REPO, "仓库写成 owner/name");
@@ -200,7 +204,7 @@ export function createGithub(database: Database, options: { vault: Vault; fetch?
 
   function explain(status: number, data: unknown, what: string): string {
     const message = short((data as { message?: string } | null)?.message ?? "", 200);
-    if (status === 401) return "GitHub 说令牌无效或已过期。请用户在 设置 → 账号连接 更换令牌。";
+    if (status === 401) return "GitHub 说令牌无效或已过期。请用户更换令牌——回复末尾附独立一行的链接卡：[连接 GitHub](/settings/connected-accounts/github)。";
     if (status === 404) return `找不到${what}：可能不存在，或者令牌没有这个仓库的权限（fine-grained 令牌要在「仓库访问」里选上它）。`;
     if (status === 403 || status === 429)
       return /rate limit/i.test(message)
@@ -243,7 +247,7 @@ export function createGithub(database: Database, options: { vault: Vault; fetch?
   async function token(owner: string) {
     const row = await connectionRow(owner);
     const secret = row ? await options.vault.internal.reveal(owner, GITHUB_SECRET) : null;
-    if (!row || !secret) throw new GithubError("用户还没连接 GitHub。请用户去 设置 → 账号连接 连接 GitHub。");
+    if (!row || !secret) throw new GithubError("用户还没连接 GitHub。请用户在对话里就地连接——回复末尾附独立一行的链接卡：[连接 GitHub](/settings/connected-accounts/github)。");
     recent.set(owner, secret.value);
     return secret.value;
   }

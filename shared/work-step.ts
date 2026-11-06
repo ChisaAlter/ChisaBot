@@ -83,6 +83,12 @@ export function describeWorkerStep(name: string, args: Record<string, unknown>):
     case "list_recent_files": return "正在找最近的文件";
     case "panel_list": return "正在看面板";
     case "worker_status": return "正在看后台任务进度";
+    // 下面五个和 Android WorkSteps.kt 同款说法（输出契约 shared/output-contract.ts 的 work-steps 条目）。
+    case "delegate_task": return text(args.task, 40) ? `正在后台做「${text(args.task, 40)}」` : "正在交给后台任务";
+    case "ask_person": return "正在发消息问对方";
+    case "note": return "正在写便签";
+    case "schedule_create": return text(args.name) ? `正在建定时任务「${text(args.name)}」` : "正在建定时任务";
+    case "bot_factory": return "正在搭新机器人";
     case "device_list": return "正在看你的设备";
     case "device_list_files": return "正在看设备上的文件";
     case "device_read_file": return text(args.path, 32) ? `正在读设备上的 ${text(args.path, 32)}` : "正在读设备上的文件";

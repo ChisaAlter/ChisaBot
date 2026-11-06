@@ -146,6 +146,11 @@ describe("splitBubbles（DESIGN.md §69）", () => {
         body: "- Webhook（已就绪）",
       },
     ]);
+    // 模型少写外层收尾 ::: 时，后面的段落不会被吞进 cards 围栏
+    const singleClose = normalizeDirectiveCards(":::group\n:::card{title=\"GitHub\"}\n已连接\n:::\n\n接着说。");
+    const singleSegs = splitBubbles(singleClose);
+    expect(singleSegs.map((x) => x.kind)).toEqual(["code", "text"]);
+    expect(singleSegs[1]?.text).toBe("接着说。");
   });
 
   test("Hark 三段式自动折叠：多小节结构化 Markdown 自动折叠为 doc 卡片并保留导语与跟进句", () => {

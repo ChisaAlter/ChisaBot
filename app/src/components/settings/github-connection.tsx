@@ -162,7 +162,7 @@ export function GithubConnectionSection() {
   );
 }
 
-function GithubTokenDialog({ open, replacing, onOpenChange }: { open: boolean; replacing: boolean; onOpenChange: (open: boolean) => void }) {
+export function GithubTokenDialog({ open, replacing, onOpenChange }: { open: boolean; replacing: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
   const [token, setToken] = useState("");
   const save = useAsyncAction(
