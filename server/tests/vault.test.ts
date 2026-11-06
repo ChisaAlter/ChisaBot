@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { domainAllowed } from "../../shared/vault";
 import { createDatabase } from "../src/db/client";
-import { createVault } from "../src/vault/service";
+import { createVault, interactive } from "../src/vault/service";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
 /** 密钥保险箱（DESIGN.md §52）：域名绑定、替换 + 抹值、请求卡片流程、非网页回合拒绝。 */
@@ -13,6 +13,18 @@ describe("domainAllowed", () => {
     expect(domainAllowed("x.example.com", ["*.example.com"])).toBe(true);
     expect(domainAllowed("example.com", ["*.example.com"])).toBe(true);
     expect(domainAllowed("badexample.com", ["*.example.com"])).toBe(false);
+  });
+});
+
+describe("interactive", () => {
+  test("only the web surface can hang the secure-input card", () => {
+    expect(interactive(undefined)).toBe(true);
+    expect(interactive({ kind: "person" })).toBe(true);
+    expect(interactive({ kind: "person", surface: "web" })).toBe(true);
+    // The Android app renders no vault card: a request there must be refused, not hung for 10 minutes.
+    expect(interactive({ kind: "person", surface: "app" })).toBe(false);
+    expect(interactive({ kind: "routine", id: "im:c" })).toBe(false);
+    expect(interactive({ kind: "handoff", id: "b" })).toBe(false);
   });
 });
 

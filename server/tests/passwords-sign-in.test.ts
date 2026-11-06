@@ -256,6 +256,24 @@ describe("a saved login", () => {
     ]);
   });
 
+  test("a failed last-used timestamp does not undo sign-in or strand its waiting turn", async () => {
+    const { service, store, login, resolved } = await withSaved();
+    const next = await service.request({
+      ownerUserId: "owner",
+      botId: "bot",
+      site: "example.com",
+      actor,
+    });
+    store.touchLogin = async () => {
+      throw new Error("timestamp unavailable");
+    };
+    const done = await service.useSaved("owner", next.id, actor, {
+      loginId: login.id,
+    });
+    expect(done.status).toBe("signed_in");
+    expect(resolved.at(-1)?.id).toBe(next.id);
+  });
+
   test("is never typed into another origin", async () => {
     const { service, computer, login } = await withSaved();
     const elsewhere = await service.request({
@@ -305,6 +323,35 @@ describe("a saved login", () => {
     ).rejects.toThrow(/turned off/);
     expect(await context.store.logins("owner")).toEqual([]);
   });
+});
+
+test("an audit outage does not interrupt a completed sign-in or its continuation", async () => {
+  const store = createMemoryPasswordStore();
+  const resolved: string[] = [];
+  const service = createSignInService({
+    store,
+    gateway: fakeGateway().gateway,
+    encryptionKey: KEY,
+    auditStore: {
+      insert: async () => {
+        throw new Error("audit unavailable");
+      },
+    },
+    onResolved: async (request) => {
+      resolved.push(request.id);
+    },
+  });
+  const request = await service.request({
+    ownerUserId: "owner",
+    botId: "bot",
+    site: "example.com",
+    actor,
+  });
+  const done = await service.submit("owner", request.id, actor, {
+    password: PASSWORD,
+  });
+  expect(done.status).toBe("signed_in");
+  expect(resolved).toEqual([request.id]);
 });
 
 describe("the other answers", () => {
