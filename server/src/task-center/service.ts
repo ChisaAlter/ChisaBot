@@ -286,8 +286,8 @@ export function createTaskCenter(
     const dependencies = [...new Set(parsed.dependencies)];
     if (dependencies.length) {
       const found = await tx.unsafe<{ id: string }[]>(
-        "SELECT id FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=ANY($2::text[])",
-        [owner, dependencies],
+        "SELECT id FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=ANY(string_to_array($2, chr(31)))",
+        [owner, dependencies.join("\x1f")],
       );
       if (found.length !== dependencies.length)
         throw new TaskCenterError("依赖任务不存在或不属于当前账号。");
@@ -297,7 +297,7 @@ export function createTaskCenter(
     const rows = await tx.unsafe<Row[]>(
       `INSERT INTO chisabot_task_center_tasks
       (id,owner_user_id,payload,status,parent_id,source_id,source_ref,source_url,dependencies,priority)
-      VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9::text[],$10)
+      VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8,string_to_array($9, chr(31))::text[],$10)
       ON CONFLICT (owner_user_id,source_id,source_ref) WHERE source_id IS NOT NULL AND source_ref IS NOT NULL DO NOTHING RETURNING *`,
       [
         id,
@@ -312,7 +312,7 @@ export function createTaskCenter(
         extra.sourceId ?? null,
         extra.sourceRef ?? null,
         extra.sourceUrl ?? null,
-        dependencies,
+        dependencies.join("\x1f"),
         priority,
       ],
     );
@@ -895,11 +895,11 @@ export function createTaskCenter(
         }
       }
       await tx.unsafe(
-        "UPDATE chisabot_task_center_tasks SET plan_prepared=true,status='waiting_dependencies',dependencies=$3::text[],summary=$4,lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE owner_user_id=$1 AND id=$2",
+        "UPDATE chisabot_task_center_tasks SET plan_prepared=true,status='waiting_dependencies',dependencies=string_to_array($3, chr(31))::text[],summary=$4,lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE owner_user_id=$1 AND id=$2",
         [
           task.ownerUserId,
           task.id,
-          [...task.dependencies, ...ids.values()],
+          [...task.dependencies, ...ids.values()].join("\x1f"),
           plan.summary.slice(0, eventLimit),
         ],
       );
@@ -945,8 +945,8 @@ export function createTaskCenter(
       const dependencies = task.dependencies.length
         ? (
             await sql.unsafe<Row[]>(
-              "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=ANY($2::text[])",
-              [task.ownerUserId, task.dependencies],
+              "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=ANY(string_to_array($2, chr(31)))",
+              [task.ownerUserId, task.dependencies.join("\x1f")],
             )
           ).map(taskView)
         : [];
