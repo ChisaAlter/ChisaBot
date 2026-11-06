@@ -98,6 +98,7 @@ render_into() {
         -e "s#chisabot\.example\.com:2053#$OM#g" \
         -e "s#listen 8443 ssl#listen $P ssl#" \
         -e "s#listen 2053 ssl#listen $M ssl#" \
+        -e "s#:8443/#:$P/#g" \
         -e "s#chisabot\.example\.com#$D#g" \
         "$tmpd/nginx.conf" > "$out"
   fi

@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -248,6 +248,105 @@ describe("invites and friend accounts", () => {
 });
 
 describe("admin-only entries and phone sessions", () => {
+  test("rejected account updates over HTTP leave permissions and existing sessions unchanged", async () => {
+    const service = app();
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: service.fetch });
+    const http = {
+      ...service,
+      fetch: (request: Request) => globalThis.fetch(new Request(new URL(new URL(request.url).pathname, server.url), request)),
+    };
+    try {
+      const admin = await adminCookie(http);
+      const { cookie } = await friend(http, admin);
+      const session = await (await http.fetch(req("/auth/session", { cookie }))).json();
+      for (const body of [
+        { disabled: true, role: "invalid" },
+        { disabled: true, role: "admin", password: "short" },
+      ]) {
+        const response = await http.fetch(req(`/auth/admin/accounts/${session.userId}`, { method: "PATCH", body, cookie: admin }));
+        expect(response.status).toBe(400);
+        expect(await (await http.fetch(req("/auth/session", { cookie }))).json()).toMatchObject({ authenticated: true, role: "user" });
+        const list = await (await http.fetch(req("/auth/admin/accounts", { cookie: admin }))).json();
+        expect(list.accounts.find((entry: { id: string }) => entry.id === session.userId)).toMatchObject({ disabled: false, role: "user" });
+      }
+    } finally { await server.stop(true); service.close(); }
+  });
+
+  test("a login cannot outlive a concurrent credential reset, disable, or deletion", async () => {
+    for (const change of ["reset", "disable", "delete"] as const) {
+      const service = app();
+      let release = () => {};
+      let entered = () => {};
+      const pending = new Promise<void>((resolve) => { release = resolve; });
+      const verifying = new Promise<void>((resolve) => { entered = resolve; });
+      const originalVerify = Bun.password.verify.bind(Bun.password);
+      const admin = await adminCookie(service);
+      const { cookie } = await friend(service, admin);
+      const session = await (await service.fetch(req("/auth/session", { cookie }))).json();
+      const verification = spyOn(Bun.password, "verify").mockImplementation(async (...args) => {
+        const valid = await originalVerify(...args);
+        entered();
+        await pending;
+        return valid;
+      });
+      try {
+        const login = service.fetch(req("/auth/login", { body: { username: "friend1", password: "friend-password-1" } }));
+        await verifying;
+        const mutation = await service.fetch(req(`/auth/admin/accounts/${session.userId}`, {
+          method: change === "delete" ? "DELETE" : "PATCH",
+          ...(change === "delete" ? {} : { body: change === "reset" ? { password: "replacement-test-credential" } : { disabled: true } }),
+          cookie: admin,
+        }));
+        expect(mutation.status).toBe(200);
+        release();
+        const response = await login;
+        expect(response.status).toBe(401);
+        expect(response.headers.has("Set-Cookie")).toBe(false);
+      } finally {
+        release();
+        verification.mockRestore();
+        service.close();
+      }
+    }
+  });
+
+  test("a reset cannot change a disabled account while its password is hashing", async () => {
+    const service = app();
+    const admin = await adminCookie(service);
+    const { cookie } = await friend(service, admin);
+    const session = await (await service.fetch(req("/auth/session", { cookie }))).json();
+    const reset = await (await service.fetch(req(`/auth/admin/accounts/${session.userId}/reset`, { body: {}, cookie: admin }))).json();
+    const token = new URL(reset.invite.url).searchParams.get("invite")!;
+    let release = () => {};
+    let entered = () => {};
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const hashing = new Promise<void>((resolve) => { entered = resolve; });
+    const originalHash = Bun.password.hash.bind(Bun.password);
+    const hash = spyOn(Bun.password, "hash").mockImplementation(async (...args) => {
+      const value = await originalHash(...args);
+      entered();
+      await pending;
+      return value;
+    });
+    try {
+      const redeem = service.fetch(req("/auth/invite", { body: { token, password: "replacement-test-credential" } }));
+      await hashing;
+      expect((await service.fetch(req(`/auth/admin/accounts/${session.userId}`, { method: "PATCH", body: { disabled: true }, cookie: admin }))).status).toBe(200);
+      release();
+      const response = await redeem;
+      expect(response.status).toBe(409);
+      expect(response.headers.has("Set-Cookie")).toBe(false);
+      hash.mockRestore();
+      await service.fetch(req(`/auth/admin/accounts/${session.userId}`, { method: "PATCH", body: { disabled: false }, cookie: admin }));
+      expect((await service.fetch(req("/auth/login", { body: { username: "friend1", password: "friend-password-1" } }))).status).toBe(200);
+      expect((await service.fetch(req(`/auth/invite?token=${token}`))).status).toBe(200);
+    } finally {
+      release();
+      hash.mockRestore();
+      service.close();
+    }
+  });
+
   test("X-ChisaBot-Require-Role: admin refuses friends (Magpie)", async () => {
     const service = app();
     const admin = await adminCookie(service);

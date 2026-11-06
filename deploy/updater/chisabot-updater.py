@@ -29,6 +29,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
@@ -98,17 +99,22 @@ def load_config():
 
 def run(args, timeout=60, env=None):
     """返回 (code, stdout)。stderr 并进 stdout。"""
-    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
-    deadline = time.time() + timeout
-    while p.poll() is None:
-        if time.time() > deadline:
-            try:
-                p.kill()
-            except OSError:
-                pass
-            return 124, "超时"
-        time.sleep(0.1)
-    return p.returncode, p.stdout.read().decode("utf-8", "replace")
+    # 先等退出再读 PIPE 会让输出超过管道容量的命令永久阻塞。临时文件同时兼容
+    # Python 2.7，并让超时轮询与命令输出互不阻塞。
+    with tempfile.TemporaryFile() as output:
+        p = subprocess.Popen(args, stdout=output, stderr=subprocess.STDOUT, env=env)
+        deadline = time.time() + timeout
+        while p.poll() is None:
+            if time.time() > deadline:
+                try:
+                    p.kill()
+                except OSError:
+                    pass
+                p.wait()
+                return 124, "超时"
+            time.sleep(0.1)
+        output.seek(0)
+        return p.returncode, output.read().decode("utf-8", "replace")
 
 
 def git(*args):
@@ -124,11 +130,17 @@ def clean(text, limit=400):
 
 
 def write_json(path, data, mode=0o644):
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, ensure_ascii=True, indent=1)
-    os.chmod(tmp, mode)
-    os.rename(tmp, path)
+    # 后台检查和主循环会同时保存状态；各用独立临时文件，再原子替换同一目标。
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp",
+                               dir=os.path.dirname(os.path.abspath(path)))
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, ensure_ascii=True, indent=1)
+        os.chmod(tmp, mode)
+        getattr(os, "replace", os.rename)(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 def audit(entry):
