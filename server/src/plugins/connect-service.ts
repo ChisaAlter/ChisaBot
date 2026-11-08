@@ -478,9 +478,9 @@ function builtinMatchSection(
       [
         "✅ 【内置电子邮箱连接器（IMAP 收信 + SMTP 审批发信）】已经内置就绪，支持 Gmail、QQ 邮箱、163 邮箱、Outlook、iCloud 等：",
         `  - 当前账号状态：${statusText}`,
-        "  - 当前机器人已持有工具：`email_list_recent`（查看最近邮件与未读摘要）、`email_connect`（在对话中直接绑定连接邮箱）、`email_send`（通过已连接邮箱发信/回信，发信前自动弹确认卡片）、`morning_brief_generate`（生成含未读邮件的每日晨报卡片）",
+        "  - 当前机器人已持有工具：`email_list_recent`（查看最近邮件与未读摘要）、`email_connect`（打开邮箱安全设置）、`email_send`（通过已连接邮箱发信/回信，发信前自动弹确认卡片）、`morning_brief_generate`（生成含未读邮件的每日晨报卡片）",
         "  - 怎么立即连上：",
-        "    1. 【对话内直接代连（最快）】用户只要把邮箱地址和「应用专用密码 / IMAP 授权码」发到对话里（Gmail 在 Google 账号「安全性 → 两步验证 → 应用专用密码」生成 16 位密码；QQ/163 在邮箱设置开启 IMAP 生成授权码），你就可以直接调用 `email_connect` 自动填好 `imap.gmail.com:993` 等服务器并完成绑定；",
+        "    1. 用 email_connect 打开安全设置。应用专用密码或授权码仅在设置表单中输入，不要让用户发到聊天里。",
         "    2. 【设置页一键预设】引导用户点开下方链接卡进入「设置 → 账号连接」，在「个人日程与收件箱」点「连接邮箱」，一键选 Gmail / QQ / 163 / Outlook 预设填入即可。",
         "  - 回复末尾请附上独立一行的链接卡：",
         "    [打开账号连接](/settings/connected-accounts)",
@@ -492,8 +492,8 @@ function builtinMatchSection(
     blocks.push(
       [
         "✅ 【内置随身通知推送 & 外部 Webhook 触发器】已经内置就绪，支持飞书群机器人、钉钉群机器人、企业微信机器人、Bark (iOS)、Server酱及自定义 Webhook：",
-        "  - 当前机器人已持有工具：`notify_webhook_connect`（在对话中直接绑定推送 Webhook）、`notify_push`（向手机/IM 即时推送提醒）、`webhook_trigger_info`（获取专属外部事件入站 Webhook 地址）",
-        "  - 怎么立即连上：用户只要把 Webhook 链接发到对话里（或说「开启演示推送」），直接调用 `notify_webhook_connect` 即可完成绑定。",
+        "  - 当前机器人已持有工具：`notify_webhook_connect`（打开通知安全设置）、`notify_push`（向手机/IM 即时推送提醒）、`webhook_trigger_info`（打开入站地址安全设置）",
+        "  - 怎么立即连上：用 notify_webhook_connect 打开账号连接设置，在安全表单输入 Webhook 地址，不要让用户把带密钥的链接发到聊天里。",
         "  - 回复末尾请附上独立一行的链接卡：",
         "    [打开账号连接](/settings/connected-accounts)",
       ].join("\n"),
@@ -509,9 +509,9 @@ function builtinMatchSection(
       [
         "✅ 【内置个人日历连接器（iCal / ICS 订阅）】已经内置就绪，支持 Google Calendar、Apple iCloud、Outlook、飞书日历：",
         `  - 当前账号状态：${statusText}`,
-        "  - 当前机器人已持有工具：`calendar_list_events`（查看近期日程）、`calendar_connect`（在对话中直接绑定日历订阅链接）、`morning_brief_generate`（每日晨报卡片）",
+        "  - 当前机器人已持有工具：`calendar_list_events`（查看近期日程）、`calendar_connect`（打开日历安全设置）、`morning_brief_generate`（每日晨报卡片）",
         "  - 怎么立即连上：",
-        "    1. 【对话内直接代连（最快）】让用户把日历的 iCal / ICS 私密订阅地址（`https://...` 或 `webcal://...`）发到对话里，你直接调用 `calendar_connect` 当场连上；",
+        "    1. 用 calendar_connect 打开安全设置，私密 ICS 地址仅在设置表单中输入。",
         "    2. 【设置页配置】或者点开下方链接卡在「设置 → 账号连接 → 个人日程与收件箱」里粘贴订阅地址。",
         "  - 回复末尾请附上独立一行的链接卡：",
         "    [打开账号连接](/settings/connected-accounts)",
@@ -547,10 +547,10 @@ function overviewReport(
 ): string {
   const emailStatus = builtin?.email?.connected
     ? `已连接（${builtin.email.email ?? "邮箱"}）`
-    : "未连接（支持对话内直接发邮箱+授权码由我调用 `email_connect` 代连，或在「设置 → 账号连接」连接）";
+    : "未连接（调用 email_connect 打开「设置 → 账号连接」，在安全表单输入授权码）";
   const calStatus = builtin?.calendar?.connected
     ? `已连接（${builtin.calendar.label ?? "我的日历"}，${builtin.calendar.eventCount ?? 0} 个日程）`
-    : "未连接（支持直接发 iCal/ICS 链接由我调用 `calendar_connect` 代连，或在「设置 → 账号连接」连接）";
+    : "未连接（调用 calendar_connect 打开「设置 → 账号连接」，在安全表单输入私密地址）";
   const ghStatus = builtin?.github?.connected
     ? `已连接（@${builtin.github.login ?? "github"}）`
     : "未连接（对话里点 [连接 GitHub](/settings/connected-accounts/github) 链接卡就地填令牌；也可在「设置 → 账号连接」填）";

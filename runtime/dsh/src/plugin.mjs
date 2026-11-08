@@ -109,7 +109,14 @@ export async function apply(ctx, config) {
       await delay(1000, undefined, { signal }); continue;
     }
     if (!response.ok) throw new Error(`ChisaBot ${action} failed (${response.status}).`);
-    return response.json();
+    try { return await response.json(); }
+    catch (error) {
+      // A gateway receipt can be lost after its ledger commit or even after HTTP headers.
+      // Retry the same call identity; the gateway returns its saved result or pending card.
+      signal?.throwIfAborted();
+      if (Date.now() >= until) throw error;
+      await delay(1000, undefined, { signal });
+    }
     }
   }
 

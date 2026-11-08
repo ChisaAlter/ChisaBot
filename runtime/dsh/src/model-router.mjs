@@ -4,6 +4,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const fallbackCodes = new Set(['QUOTA', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'EMPTY_RESPONSE', 'UNKNOWN_MODEL', 'NO_ADAPTER']);
 
+function routeFailure(failure, choice, index) {
+  // PiAi leaves HTTP 404/410 as PI_AI_ERROR. A stale-but-explicit model route is a
+  // missing candidate, so another configured candidate may still answer this request.
+  const missing = failure.code === 'PI_AI_ERROR' && /\b(?:404|410)\b|model.{0,80}(?:not found|does not exist|retired|deprecated)/i.test(failure.message);
+  return { ...failure, code: missing ? 'UNKNOWN_MODEL' : failure.code,
+    message: `${index ? '备用模型' : '主模型'}「${choice.model}」请求失败：${failure.message}` };
+}
+
 /** A stable session/model route with run-scoped credentials and retry state. */
 export class ChisaModelRouter extends LlmAdapter {
   constructor(ctx) { super(); this.ctx = ctx; this.routes = new Map(); }
@@ -47,7 +55,11 @@ export class ChisaModelRouter extends LlmAdapter {
       try { prepared = await this.ctx.llm.prepareCall(choice, signal); }
       catch (error) {
         signal?.throwIfAborted();
-        if (!fallbackCodes.has(error.code) || route.index + 1 >= route.candidates.length) throw error;
+        if (!fallbackCodes.has(error.code) || route.index + 1 >= route.candidates.length) {
+          if (!(error instanceof LlmError)) throw error;
+          const failure = routeFailure(error.failure, choice, route.index);
+          throw new LlmError(failure.message, failure.code, { ...error.failure, cause: error });
+        }
         route.skipped.push({ ...choice, code: error.code });
         route.index++;
       }
@@ -85,10 +97,10 @@ export class ChisaModelRouter extends LlmAdapter {
             }
             if (chunk.type === 'finish') {
               if (abort.signal.aborted && !options.signal?.aborted) {
-                yield { type: 'finish', reason: { kind: 'error', failure: { code: 'TIMEOUT', message: 'Model produced no output within the configured fallback deadline.' } } };
+                yield { type: 'finish', reason: { kind: 'error', failure: routeFailure({ code: 'TIMEOUT', message: 'Model produced no output within the configured fallback deadline.' }, choice, route.index) } };
               } else {
                 const { replayState: _privateReplay, ...safe } = chunk;
-                yield safe;
+                yield safe.reason.kind === 'error' ? { ...safe, reason: { ...safe.reason, failure: routeFailure(safe.reason.failure, choice, route.index) } } : safe;
               }
             } else yield chunk;
           }

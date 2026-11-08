@@ -9,11 +9,12 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { type AppVariables, requireAdmin } from "../auth/guards";
 import type { HermesHealthCheck } from "./hermes-health";
+import type { DshHealthCheck } from "./dsh-health";
 
 export type RuntimeKernelStatus = {
   kernel: "hermes" | "builtin" | "dsh";
   hermes: HermesHealthCheck | null;
-  dsh?: { ok: boolean; version?: string; sessions?: number; running?: number; error?: string } | null;
+  dsh?: DshHealthCheck | null;
 };
 
 export function createRuntimeKernelRoutes(options: {

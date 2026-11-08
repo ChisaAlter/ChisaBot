@@ -1,11 +1,11 @@
 # 功能目录
 
-ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 · 数据 · DESIGN § · 开关 / 状态 · 文档**。截至 main `0e23321`（2026-10-17）。
+ChisaBot 功能入口与实现位置：**做什么 · 入口 · 代码 · 数据 · DESIGN § · 开关 / 状态 · 文档**。原目录基于 main `0e23321`（2026-10-17）；DSH、客户端及个人助理相关条目更新于 2026-11-08，生产交付状态见[实施记录](pipeline-runs/20261108-assistant-production.md)。
 
 - 「入口」写用户在界面上怎么到达；设置页按 2026-10-16 的新分组（[settings-ia.md](settings-ia.md)）。
 - 「代码」只写主要位置；`server/` 的测试在 `server/tests/<功能>*.test.ts`，网页测试在 `app/tests/`。
 - 数据表的完整说明见 [data-model.md](data-model.md)。多数 `chisabot_` 表开机幂等初始化；会话与 DSH 账本在迁移 0063 中显式登记。回滚还须匹配内核日志 reader，见 [DSH 运维](ops/dsh-runtime.md)。
-- 「状态」：**上线** = 默认可用；**隐藏** = 代码在、默认不显示，用开关恢复；**移除** = 代码已删、表保留。
+- 「状态」：**上线** = 已发布能力；**候选** = 本轮实现、尚未生产发布；**隐藏** = 代码在、默认不显示，用开关恢复；**移除** = 代码已删、表保留。连接状态、实际收件和当前服务可达性另按实施记录判断。
 
 ## 开关一览
 
@@ -29,7 +29,7 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 
 | 功能 | 做什么 | 入口 | 代码 | 数据 | DESIGN | 状态 · 文档 |
 |---|---|---|---|---|---|---|
-| DSH 执行内核 | 服务端持久接纳、独立 Host 执行；恢复观察、审批续执行和工具操作对账 | 部署选择 `CHISABOT_AGENT_KERNEL=dsh`，聊天入口沿用 | `runtime/dsh/`、`server/src/conversations/`、`server/src/agents/dsh-runtime.ts` | 0063 会话表、账号 Session 持久卷 | [迁移方案](dsh-kernel-migration.md) | 实施中，生产尚未切换 · [验收记录](pipeline-runs/20261107-dsh-migration.md) |
+| DSH 执行内核 | 服务端持久接纳、独立 Host 执行；恢复观察、审批续执行和工具操作对账 | 部署选择 `CHISABOT_AGENT_KERNEL=dsh`，聊天入口沿用 | `runtime/dsh/`、`server/src/conversations/`、`server/src/agents/dsh-runtime.ts` | 0063 会话表、账号 Session 持久卷 | [迁移方案](dsh-kernel-migration.md) | 已切换，Chisa 一个账号与独立 Host；本轮可靠性修复待发布 · [迁移记录](pipeline-runs/20261107-dsh-migration.md) |
 | 频道聊天（唯一的聊天） | 和一个机器人对话；`/bot?agent=` 旧地址跳转过来 | 左栏点机器人 | `app/src/components/channels/`、`app/src/components/chat/`、`server/src/channels/`、`server/src/local-conversations.ts` | `openbot_local_threads/_runs/_events`、`intelligence_channel_mappings`、`channel_agents` | §68 · ADR-0013 | 上线 · [streaming.md](streaming.md) |
 | 留着的聊天 | 去设置 / 待处理 / 设备再回来，聊天是同一个没卸载过的实例（不重连、不重读、滚动原样）；藏 10 分钟后放掉 | — | `app/src/components/layout/authed-shell.tsx`、`app/src/components/layout/keep-alive.tsx`、`app/src/components/channels/channel-page.tsx` | — | §98 | 上线 |
 | 流式回复 | 按帧匀速放字；断线先问服务器、能接上就接上 | — | `app/src/lib/typed-reveal.ts`、`app/src/lib/chat/` | — | §30、§89 | 上线 · [streaming.md](streaming.md) |
@@ -45,7 +45,7 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 | 聊天截图缩略图 | `computer_screenshot` 在聊天里出缩略图 | — | `server/src/chat-shots.ts` | `chisabot_chat_shots`（≤400KB、每人 200 张、30 天） | §27 | 上线 |
 | 滚动与状态 | 贴底不跳、上滑不拽；打开落在最新一条；5 分钟内连续发不翻页；按机器人记住面板 / 计算机、草稿、滚动 | — | `app/src/components/chat/`、`app/src/lib/chat/` | 浏览器 localStorage `chisabot-ui-memory:v1`（`app/src/lib/chat/ui-memory.ts`） | §35、§83、§88、§94 | 上线 · `tests/chat-scroll/` |
 | 聊天文件 · 生图 | ＋ / 拖拽 / 粘贴上传（≤20 MB）进机器人工作区；机器人交付文件、画图、改图、看图 | ＋；设置 → 模型（生图 / 识图） | `server/src/chat-files/` | `chisabot_chat_files`、`chisabot_image_settings`、`chisabot_media_models`、`chisabot_image_descriptions` | §56、§59 | 上线 · [chat-files.md](chat-files.md) |
-| 备用模型 | 主模型 429 / 额度 / 5xx 时按管理员顺序换模型，聊天末尾一行说明 | 设置 → 模型 → 备用模型 | `server/src/agents/model-fallback.ts` | `enterprise_settings`（key `model_fallbacks`） | §60、§61 | 上线 · [models.md](models.md) |
+| 备用模型 | 主模型限流、缺失或可恢复故障时按管理员顺序有限切换；区分主/备错误，Stop 不切换 | 设置 → 模型 → 备用模型 | `runtime/dsh/src/model-router.mjs`、`server/src/agents/model-fallback.ts` | `enterprise_settings`（key `model_fallbacks`） | §60、§61 | DSH 已有备用能力；本轮故障分类与归属修复为候选 · [models.md](models.md) |
 | 实时语音通话 | — | — | — | `voice_sessions`（保留） | §68.7 | **移除**（#137）；语音听写不受影响 |
 
 ## 2. 右栏：面板与计算机
@@ -100,7 +100,10 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 | 待处理 | 只列等你点头的事（没点的确认卡、要你亲自做的步骤、机器人在等的问题） | 账号菜单 → 待处理（`/approvals`） | `app/src/routes/_authed/_app/approvals.tsx` | 同上 | §71 | 上线 |
 | IM 接入 | 飞书 / Lark、QQ 官方、QQ 个人号（OneBot 11）、企业微信、个人微信、钉钉、Telegram；私聊都回、群里只回 @。回复入持久发件箱，保留正文和平台回执 | 设置 → 账号与连接 → IM 接入 | `server/src/im/`、`shared/im.ts` | `chisabot_im_connections`、`_chats`、`_logs`；0064 `_inbox` / `_outbox` | §49；DSH §13 | 原有入口保留；持久交付随 DSH 候选验收（`CHISABOT_IM=0` 关）· [im.md](im.md) |
 | 联网搜索 · 抓取 | 内置 `web_search` / `web_fetch` | — | `server/src/agents/` | — | §27 | 上线 |
-| 每日简报 | — | — | — | — | — | 未做（CB-014） |
+| 个人日历与邮箱 | ICS 只读日程、IMAP 邮件头与摘要；SMTP 纯文本代发先审批；凭据在安全表单输入 | 设置 → 账号与连接 → 账号连接 → 个人助理数据源与晨报 | `server/src/personal-sources/`、`app/src/components/settings/personal-sources.tsx` | `chisabot_personal_sources`；0065 个人交付账本 | — | 既有能力；重复日程/时区、来源状态和持久交付修复为候选，真实连接待配置 |
+| 每日简报 | 今日天气、日程、邮件、提醒与记忆汇成 `brief` 卡片；区分新鲜、缓存、失败与未连接 | 账号连接 → 个人助理数据源与晨报 → 预览晨报；聊天工具 | `server/src/personal-sources/service.ts`、`app/src/lib/chat/` | 个人来源、定时任务、记忆 | — | 已实现；来源可信度修复为候选，非“未做” |
+| 本人通知 | 既有 Webhook 接收到点结果、任务完成、待批/待登录与失败；持久去重，未知结果不自动重发 | 账号连接 → 随手推通知；原任务 / 待处理页 | `server/src/delivery/personal-notifications.ts`、`server/src/personal-sources/delivery.ts` | 0065 `chisabot_personal_deliveries` | — | **候选**；本人目标尚未配置，真实 IM 验收仍暂缓；旧 push 表不是此入口 |
+| 任务成果核验 | 按任务明确要求核对实际文件、交付回执或设备结果；缺产物不误报成功，结果复核不重做效果 | 任务中心 → 任务详情 / 历史 | `server/src/task-center/`、`app/src/components/task-center/task-detail.tsx` | 既有任务 payload / events、文件与操作 / 交付记录 | — | **候选**；保留旧纯文本任务合同 · [生产计划](production-assistant-plan.md) |
 | Google 账号连接 | — | — | — | — | — | 未做（CB-013，最后） |
 
 ## 7. 设置、管理与系统

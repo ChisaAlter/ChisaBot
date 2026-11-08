@@ -44,6 +44,20 @@ dsh_enabled() {
   else printf '0\n'; fi
 }
 
+# Fail known pre-DSH source before backup/build. The built-image reader comparison remains authoritative.
+dsh_require_source_tools() {
+  local target=$1 path enabled
+  enabled=$(dsh_enabled) || return 1
+  [ "$enabled" = 1 ] || return 0
+  for path in runtime/dsh/package.json runtime/dsh/package-lock.json deploy/dsh/compatibility.mjs \
+    deploy/dsh/ops.ts deploy/updater/dsh-release.sh server/src/agents/dsh-runtime.ts; do
+    git --git-dir="${U:?}/mirror.git" cat-file -e "$target:$path" 2>/dev/null || {
+      echo 'The selected source predates this DSH deployment. Publish the migrated source before updating.' >&2
+      return 1
+    }
+  done
+}
+
 dsh_hold_admission() {
   local owner=$1
   dsh_available || return 1
@@ -111,8 +125,8 @@ dsh_require_compatible_image() {
   candidate=$(docker run --rm --network none --entrypoint cat "$target" /app/deploy/dsh/runtime-compat.json) || {
     echo 'The target image cannot read existing DSH conversations; use the compatible rollback image.' >&2; return 1;
   }
-  [ "$current" = "$candidate" ] || {
-    echo 'The target DSH reader/protocol differs. A verified compatible reader is required before rollback.' >&2; return 1;
+  "${CHISABOT_DSH_NODE:-node}" "${U:?}/reader-compatibility.mjs" "$current" "$candidate" || {
+    echo 'The target native DSH format differs or its product reader is older. A compatible reader is required.' >&2; return 1;
   }
 }
 
@@ -121,7 +135,7 @@ dsh_snapshot() {
   dsh_available || return 0
   dsh_accounts_check || return 1
   if [ -n "${CHISABOT_DSH_ACCOUNTS_CONFIG:-}" ]; then
-    "${CHISABOT_DSH_NODE:-node}" "${U:?}/accounts.mjs" snapshot "$CHISABOT_DSH_ACCOUNTS_CONFIG" "$destination/accounts" || return 1
+    CHISABOT_ACCOUNTS_LOCK_WAIT=60 "${CHISABOT_DSH_NODE:-node}" "${U:?}/accounts.mjs" snapshot "$CHISABOT_DSH_ACCOUNTS_CONFIG" "$destination/accounts" || return 1
     dsh_record_reader || return 1
     return 0
   fi

@@ -124,6 +124,7 @@ export type RunnerLike = {
     agent: AbstractAgent;
     input: RunAgentInput;
     persistedInputMessages?: Message[];
+    continuationRunId?: string;
     join?: boolean;
   }): EventStream;
   stop(request: {
@@ -570,7 +571,9 @@ export function createTurnRunner(options: {
       const completed = new Promise<void>((resolve, reject) => {
         let terminal: Error | undefined;
         runner
-          .run({ threadId, agent, input, persistedInputMessages, join: false })
+          .run({ threadId, agent, input, persistedInputMessages, join: false,
+            ...(continuation ? { continuationRunId: continuation.snapshot.runId } : {}),
+          })
           .subscribe({
             /*
              * RUN_ERROR THROUGH `next` IS TERMINAL. The Intelligence runner reports a failed run by

@@ -5,6 +5,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 . "$HERE/dsh-release.sh"
+U=$TMP
+cp "$HERE/../dsh/reader-compatibility.mjs" "$U/reader-compatibility.mjs"
 CONTAINER=fixture
 COMPOSE_DIR=$TMP
 CURRENT='{"protocol":1,"runtimeVersion":"0.2.2-rc.1","historyReader":"dsh-0.2.2-rc.1","conversationReader":1}'
@@ -34,6 +36,25 @@ reject() { if "$@"; then echo "Unexpected success: $*" >&2; exit 1; fi; }
 
 dsh_require_compatible_image fixture:new
 pass 'matching reader accepts rollback without touching live data'
+CANDIDATE='{"conversationReader":2,"historyReader":"dsh-0.2.2-rc.1","runtimeVersion":"0.2.2-rc.1","protocol":1}'
+dsh_require_compatible_image fixture:reader-2
+pass 'newer product reader accepts existing records regardless of JSON property order'
+PRIOR=$CURRENT
+CURRENT=$CANDIDATE
+CANDIDATE=$PRIOR
+reject dsh_require_compatible_image fixture:reader-1
+pass 'older product reader cannot ignore new delivery and outcome contracts'
+CURRENT=$PRIOR
+CANDIDATE='{"protocol":1,"runtimeVersion":"0.2.2-rc.1","historyReader":"different-native-reader","conversationReader":2}'
+reject dsh_require_compatible_image fixture:native-mismatch
+pass 'product reader upgrade never overrides a native history mismatch'
+CANDIDATE='{"protocol":1,"runtimeVersion":"0.2.2-rc.1","historyReader":"dsh-0.2.2-rc.1","conversationReader":0}'
+reject dsh_require_compatible_image fixture:invalid-reader
+pass 'nonpositive product reader is invalid'
+CANDIDATE='{"protocol":1,"runtimeVersion":"0.2.2-rc.1","historyReader":"dsh-0.2.2-rc.1","conversationReader":"2"}'
+reject dsh_require_compatible_image fixture:string-reader
+pass 'product reader must be an integer rather than a string'
+CANDIDATE=$CURRENT
 grep -q '^exec -e PATH=/command:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin fixture /command/with-contenv /command/s6-setuidgid apiuser /usr/local/bin/bun ' "$CALLS"
 pass 'docker exec supplies the execline PATH and absolute uid wrapper'
 CANDIDATE='{"protocol":1,"runtimeVersion":"0.2.3","historyReader":"dsh-0.2.3"}'
@@ -85,7 +106,11 @@ EXTERNAL_TARGETS=/targets
 reject dsh_accounts_check
 pass 'external targets without explicit host config stop release'
 NODE_FAILURE=0 NODE_CALLS=$TMP/node-calls
-dsh_test_node() { printf '%s\n' "$*" >> "$NODE_CALLS"; [ "$NODE_FAILURE" = 0 ]; }
+dsh_test_node() {
+  printf '%s\n' "$*" >> "$NODE_CALLS"
+  [ "$NODE_FAILURE" = 0 ] || return 1
+  if [ "$1" = "$U/reader-compatibility.mjs" ]; then node "$@"; fi
+}
 CHISABOT_DSH_NODE=dsh_test_node CHISABOT_DSH_ACCOUNTS_CONFIG=/host/accounts.json
 dsh_accounts_check
 grep -q 'accounts-release.mjs check /host/accounts.json fixture /targets' "$NODE_CALLS"
@@ -103,4 +128,16 @@ pass 'replacement receives the same target image as the API'
 EXTERNAL_TARGETS=''
 reject dsh_accounts_check
 pass 'host account config cannot silently act on a managed deployment'
+# Source presence preflight precedes build/maintenance; the built image reader check remains authoritative.
+SOURCE_MISSING=0
+git() { [ "$SOURCE_MISSING" = 0 ]; }
+dsh_require_source_tools fixture-commit
+pass 'selected DSH accepts migrated source tooling'
+SOURCE_MISSING=1
+reject dsh_require_source_tools pre-dsh-commit
+pass 'selected DSH rejects pre-migration source before publication'
+rm -f "$COMPOSE_DIR/.dsh-reader.json"
+AVAILABLE=0
+dsh_require_source_tools legacy-commit
+pass 'legacy source update does not gain DSH prerequisites'
 echo 'DSH release failure-path checks passed'

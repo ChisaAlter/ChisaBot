@@ -28,6 +28,7 @@ import { reasonWithoutStatement } from "../db/query-failure";
 import { createTaskCenterRoutes } from "./routes";
 import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
 import { conversationAdmissionClosed } from "../conversations/maintenance";
+import { assertTaskEvidence, TaskResultNeedsReview } from "./outcome";
 
 export class TaskCenterError extends Error {
   constructor(
@@ -216,7 +217,7 @@ export function createTaskCenter(
   ) {
     const encoded = JSON.stringify(data);
     await tx.unsafe(
-      "INSERT INTO chisabot_task_center_events(id,owner_user_id,task_id,type,message,data) VALUES($1,$2,$3,$4,$5,$6::jsonb)",
+      "INSERT INTO chisabot_task_center_events(id,owner_user_id,task_id,type,message,data) VALUES($1,$2,$3,$4,$5,$6::text::jsonb)",
       [
         randomUUID(),
         owner,
@@ -307,7 +308,7 @@ export function createTaskCenter(
     const rows = await tx.unsafe<Row[]>(
       `INSERT INTO chisabot_task_center_tasks
       (id,owner_user_id,payload,status,parent_id,source_id,source_ref,source_url,dependencies,priority)
-      VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8,string_to_array($9, chr(31))::text[],$10)
+      VALUES($1,$2,$3::text::jsonb,$4,$5,$6,$7,$8,string_to_array($9, chr(31))::text[],$10)
       ON CONFLICT (owner_user_id,source_id,source_ref) WHERE source_id IS NOT NULL AND source_ref IS NOT NULL DO NOTHING RETURNING *`,
       [
         id,
@@ -373,7 +374,7 @@ export function createTaskCenter(
     );
     const [row] = await tx.unsafe<Row[]>(
       `INSERT INTO chisabot_task_center_decisions(id,owner_user_id,task_id,task_version,summary,proposed_action,status)
-      VALUES($1,$2,$3,$4,$5,$6::jsonb,'pending') ON CONFLICT(task_id,task_version) DO NOTHING RETURNING *`,
+      VALUES($1,$2,$3,$4,$5,$6::text::jsonb,'pending') ON CONFLICT(task_id,task_version) DO NOTHING RETURNING *`,
       [
         randomUUID(),
         task.ownerUserId,
@@ -454,11 +455,15 @@ export function createTaskCenter(
         if (!allowed.includes(task.status))
           throw new TaskCenterError("当前状态不能执行这个操作。", 409);
         if (action === "retry") {
+          const [failure] = await tx.unsafe<{ data: { verifyOnly?: boolean; attempt?: number; version?: number } }[]>(
+            "SELECT data FROM chisabot_task_center_events WHERE owner_user_id=$1 AND task_id=$2 AND type='failed' ORDER BY created_at DESC LIMIT 1", [owner, id]);
+          const failedResult = failure ? json(failure.data) : null;
+          const verifyOnly = failedResult?.verifyOnly === true && failedResult.attempt === task.attempts && failedResult.version === task.version;
           await tx.unsafe(
-            "UPDATE chisabot_task_center_tasks SET version=version+1,attempts=0,error=NULL,finished_at=NULL WHERE owner_user_id=$1 AND id=$2",
-            [owner, id],
+            "UPDATE chisabot_task_center_tasks SET version=version+$3,attempts=$4,error=NULL,finished_at=NULL WHERE owner_user_id=$1 AND id=$2",
+            [owner, id, verifyOnly ? 0 : 1, verifyOnly ? Math.max(0, task.attempts - 1) : 0],
           );
-          task = { ...task, version: task.version + 1 };
+          task = { ...task, version: task.version + (verifyOnly ? 0 : 1), attempts: verifyOnly ? Math.max(0, task.attempts - 1) : 0 };
         }
         // Resuming a parent resumes the children its pause stopped, or the parent would wait on them forever.
         const resumed =
@@ -587,7 +592,7 @@ export function createTaskCenter(
   ): Promise<TaskContext> {
     const content = contextInputSchema.parse(input);
     await sql.unsafe(
-      "INSERT INTO chisabot_task_center_context(owner_user_id,content) VALUES($1,$2::jsonb) ON CONFLICT(owner_user_id) DO UPDATE SET content=excluded.content,updated_at=now()",
+      "INSERT INTO chisabot_task_center_context(owner_user_id,content) VALUES($1,$2::text::jsonb) ON CONFLICT(owner_user_id) DO UPDATE SET content=excluded.content,updated_at=now()",
       [owner, JSON.stringify(content)],
     );
     return getContext(owner);
@@ -632,7 +637,7 @@ export function createTaskCenter(
     await checkBot(owner, parsed.agentId);
     const { config, enabled, ...payload } = parsed;
     const [row] = await sql.unsafe<Row[]>(
-      "INSERT INTO chisabot_task_center_sources(id,owner_user_id,payload,config,enabled) VALUES($1,$2,$3::jsonb,$4::jsonb,$5) RETURNING *",
+      "INSERT INTO chisabot_task_center_sources(id,owner_user_id,payload,config,enabled) VALUES($1,$2,$3::text::jsonb,$4::text::jsonb,$5) RETURNING *",
       [
         randomUUID(),
         owner,
@@ -679,7 +684,7 @@ export function createTaskCenter(
       });
       const { config, enabled, ...payload } = next;
       const [updated] = await tx.unsafe<Row[]>(
-        "UPDATE chisabot_task_center_sources SET payload=$3::jsonb,config=$4::jsonb,enabled=$5,next_run_at=CASE WHEN $5 AND NOT enabled THEN now() ELSE next_run_at END,updated_at=now() WHERE owner_user_id=$1 AND id=$2 RETURNING *",
+        "UPDATE chisabot_task_center_sources SET payload=$3::text::jsonb,config=$4::text::jsonb,enabled=$5,next_run_at=CASE WHEN $5 AND NOT enabled THEN now() ELSE next_run_at END,updated_at=now() WHERE owner_user_id=$1 AND id=$2 RETURNING *",
         [owner, id, JSON.stringify(payload), JSON.stringify(config), enabled],
       );
       if (!updated)
@@ -864,10 +869,13 @@ export function createTaskCenter(
   ): Promise<boolean> {
     validateTaskPlan(plan);
     if (!plan.steps.length) {
-      await sql.unsafe(
-        "UPDATE chisabot_task_center_tasks SET plan_prepared=true,status='running',updated_at=now() WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3 AND status='planning'",
-        [task.ownerUserId, task.id, instance],
+      const rows = await sql.unsafe(
+        "UPDATE chisabot_task_center_tasks SET plan_prepared=true,status='running',payload=(CASE WHEN jsonb_typeof(payload)='string' THEN (payload #>> '{}')::jsonb ELSE payload END) || $4::text::jsonb,updated_at=now() WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3 AND status='planning' RETURNING id",
+        [task.ownerUserId, task.id, instance, JSON.stringify(plan.completion && !task.completion ? { completion: plan.completion } : {})],
       );
+      if (!rows.length) throw new TaskCenterError("任务状态已改变。", 409);
+      if (!task.completion && plan.completion) task.completion = plan.completion;
+      if (task.completion) await event(task.ownerUserId, task.id, "completion_criteria", `完成条件：${task.completion.criteria}`, { completion: task.completion });
       return false;
     }
     for (const step of plan.steps)
@@ -928,12 +936,13 @@ export function createTaskCenter(
         }
       }
       await tx.unsafe(
-        "UPDATE chisabot_task_center_tasks SET plan_prepared=true,status='waiting_dependencies',dependencies=string_to_array($3, chr(31))::text[],summary=$4,lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE owner_user_id=$1 AND id=$2",
+        "UPDATE chisabot_task_center_tasks SET plan_prepared=true,status='waiting_dependencies',dependencies=string_to_array($3, chr(31))::text[],summary=$4,payload=(CASE WHEN jsonb_typeof(payload)='string' THEN (payload #>> '{}')::jsonb ELSE payload END) || $5::text::jsonb,lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE owner_user_id=$1 AND id=$2",
         [
           task.ownerUserId,
           task.id,
           [...task.dependencies, ...ids.values()].join("\x1f"),
           plan.summary.slice(0, eventLimit),
+          JSON.stringify(plan.completion && !task.completion ? { completion: plan.completion } : {}),
         ],
       );
       await event(
@@ -941,7 +950,7 @@ export function createTaskCenter(
         task.id,
         "planned",
         plan.summary,
-        { childIds: [...ids.values()] },
+        { childIds: [...ids.values()], ...(plan.completion ? { completion: plan.completion } : {}) },
         tx,
       );
     });
@@ -1006,6 +1015,7 @@ export function createTaskCenter(
         !result.summary.trim()
       )
         throw new TaskCenterError("执行器没有交付结果摘要。");
+      assertTaskEvidence(task, result);
       if (
         (result.artifacts?.length ?? 0) > 50 ||
         JSON.stringify(result).length > 2_000_000
@@ -1013,9 +1023,9 @@ export function createTaskCenter(
         throw new TaskCenterError(
           "交付内容过大，请将文件保存在成果目录并返回引用。",
         );
-      await sql.begin(async (tx) => {
+      const settled = await sql.begin(async (tx) => {
         const rows = await tx.unsafe(
-          "UPDATE chisabot_task_center_tasks SET status='succeeded',summary=$4,artifacts=$5::jsonb,usage=$6::jsonb,error=NULL,lease_owner=NULL,lease_expires_at=NULL,finished_at=now(),updated_at=now() WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3 AND status='running' RETURNING id",
+          "UPDATE chisabot_task_center_tasks SET status='succeeded',summary=$4,artifacts=$5::text::jsonb,usage=$6::text::jsonb,error=NULL,lease_owner=NULL,lease_expires_at=NULL,finished_at=now(),updated_at=now() WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3 AND status='running' RETURNING id",
           [
             task.ownerUserId,
             task.id,
@@ -1030,17 +1040,20 @@ export function createTaskCenter(
             task.ownerUserId,
             task.id,
             "delivered",
-            "成果已交付。",
+            result.evidence?.length ? `成果已核对：${result.evidence.map(item => item.detail).join("；").slice(0, 1000)}` : "结果已交付。",
             {
               artifacts:
                 result.artifacts?.map((a) => ({ name: a.name, uri: a.uri })) ??
                 [],
               usage: result.usage ?? {},
+              evidence: result.evidence ?? [],
+              ...(task.completion ? { completion: task.completion } : {}),
             },
             tx,
           );
+        return rows.length > 0;
       });
-      await reportLearn(task, {
+      if (settled) await reportLearn(task, {
         status: "succeeded",
         detail: result.summary,
       });
@@ -1087,7 +1100,7 @@ export function createTaskCenter(
           task.id,
           interrupted ? "recovered" : retry ? "retry_scheduled" : "failed",
           message,
-          { attempt: row.attempts },
+          { attempt: row.attempts, version: task.version, ...(error instanceof TaskResultNeedsReview ? { verifyOnly: true } : {}) },
           tx,
         );
       });

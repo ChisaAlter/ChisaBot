@@ -27,8 +27,8 @@ ChisaBot 有两种「发布」：
 3. 更新器自动选：
    - **快速更新**：依赖指纹没变 → 在底座镜像上只换代码层（约 1–2 分钟）；
    - **完整构建**：依赖 / Dockerfile 变了，或底座镜像不存在 → 仓库根 Dockerfile 限内存构建（约 4–6 分钟），成功后成为新底座。
-4. 切换前 `pg_dump` 备份（保留 5 份）；切换后健康检查 + 模型自检；**失败自动回滚**到上一镜像。每次切换都留下
-   `rollback-to-<上一镜像>.sh`（只有镜像还在时才有效，更新器保留最近 5 个镜像（见 docs/ops/traffic-cut-rollback.md））。
+4. 切换前按所选内核排空并备份。DSH 部署保存同批数据库、账号 Session 与工作文件，切换后检查健康和读取器；**失败只回滚至兼容镜像，数据库不倒退**。每次切换留下
+   `rollback-to-<上一镜像>.sh`，仅在镜像仍存在且 reader 兼容时可用。镜像与更新备份数量读取宿主配置，不能把仓库默认值当线上事实；手工/迁移恢复批次不参加普通轮换。完整周期备份、保留与恢复见 [DSH 运维](ops/dsh-runtime.md)。
 5. 上线后按 [testing.md](testing.md) §4 做生产检查。纯文档 PR（只改 `docs/`、`*.md`、`.github/` 模板）**不需要部署**。
 
 细节：[ops/deploy.md](ops/deploy.md)、[online-update.md](online-update.md)。网关 / 登录服务 / 云端节点 / Magpie 不随一键更新，要手工部署。
@@ -72,7 +72,7 @@ ChisaBot 有两种「发布」：
 
 - 签名证书必须和已安装的一致（换签名 = 用户要卸载重装）。
 - 更新源是 `latest.json`（GitHub Releases 或自建目录），客户端按 `versionCode` 比较。
-- 0.1.13 起是原生应用（Kotlin + Compose），从 WebView 外壳在线更新过来不需要重新登录（同一签名、同一会话）。
+- 当前主界面为 Kotlin 壳加载与桌面相同的 React 前端手机布局；壳继续负责登录/绑定、文件和系统权限、返回键及 APK 更新。历史 Compose 原生主界面已退出当前产品入口，见 [Android 说明](android-native.md)。
 
 ### 3.5 发版后
 

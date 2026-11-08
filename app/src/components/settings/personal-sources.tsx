@@ -133,8 +133,9 @@ export function PersonalSourcesSection() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          source: "GitHub Actions",
-          title: "PR #306 实机全量测试通过，等待确认发布",
+          source: "ChisaBot 连接测试",
+          title: "入站 Webhook 测试事件",
+          message: "这是手动触发的连接测试，可在巡检动态中查看。",
         }),
       });
       if (!res.ok) throw new Error("触发模拟事件失败");
@@ -217,11 +218,12 @@ export function PersonalSourcesSection() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({}),
+        body: JSON.stringify({ requestId: crypto.randomUUID() }),
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
+      await queryClient.invalidateQueries({ queryKey: personalSourcesKeys.all });
       if (!res.ok) throw new Error(data.error || "发送测试通知失败");
-      toast.success("测试通知已发出！");
+      toast.success("通知平台已接受测试通知");
     },
     { errorToast: (err) => err.message },
   );
@@ -299,12 +301,14 @@ export function PersonalSourcesSection() {
 
       {status.isPending ? (
         <PageSkeleton rows={2} />
+      ) : status.isError ? (
+        <p role="alert" className="text-sm text-destructive">连接状态读取失败。<Button variant="ghost" size="sm" onClick={() => void status.refetch()}>重新读取</Button></p>
       ) : (
         <div className="flex flex-col gap-3" data-testid="personal-sources-section">
           {/* 日历只读接入 */}
           <Card className="mem-card" data-testid="personal-calendar-card">
-            <div className="im-row">
-              <div className="im-row-main is-static">
+            <div className="im-row flex-wrap">
+              <div className="im-row-main is-static max-sm:!basis-full">
                 <ListRow
                   icon={
                     <span className="gh-mark">
@@ -323,7 +327,7 @@ export function PersonalSourcesSection() {
                             <T>{cal.urlHint}</T>
                           </span>
                         </span>
-                        <span className="mem-by">{`${agoText(cal.checkedAt)}同步 · 供 calendar_list_events 工具与晨报读取`}</span>
+                        <span className="mem-by">{`${agoText(cal.checkedAt)}同步 · ${cal.timeZone || "Asia/Shanghai"} · 聊天与晨报共用`}</span>
                       </>
                     ) : (
                       "未连接 · 支持 Apple iCloud / Google / Outlook / 飞书日历的 ICS 订阅链接或直接粘贴 ICS"
@@ -357,8 +361,8 @@ export function PersonalSourcesSection() {
 
           {/* 邮箱 IMAP 收信 + SMTP 审批发信 */}
           <Card className="mem-card" data-testid="personal-email-card">
-            <div className="im-row">
-              <div className="im-row-main is-static">
+            <div className="im-row flex-wrap">
+              <div className="im-row-main is-static max-sm:!basis-full">
                 <ListRow
                   icon={
                     <span className="gh-mark">
@@ -369,7 +373,7 @@ export function PersonalSourcesSection() {
                     mail ? (
                       <>
                         <span className="device-row-meta">
-                          <span className="gh-state is-ok">{"已连接（IMAP 收信 + SMTP 发信）"}</span>
+                          <span className="gh-state is-ok">{"收件箱已验证"}</span>
                           <span className="device-cap-chip">
                             <T>{`未读 ${mail.unreadCount} 封`}</T>
                           </span>
@@ -377,7 +381,7 @@ export function PersonalSourcesSection() {
                             <T>{`${mail.imapHost}:${mail.imapPort}`}</T>
                           </span>
                         </span>
-                        <span className="mem-by">{`${agoText(mail.checkedAt)}检查过 · 密码 AES-256-GCM 加密保存，代发邮件前必弹确认卡片`}</span>
+                        <span className="mem-by">{`${agoText(mail.checkedAt)}检查过 · 发信按审批偏好确认，接收结果记录在下方`}</span>
                       </>
                     ) : (
                       "未连接 · 用应用专用密码连接 QQ / 163 / Gmail / Outlook / iCloud（支持收件箱摘要与确认后发信）"
@@ -412,7 +416,7 @@ export function PersonalSourcesSection() {
           {/* 随身通知推送 & 外部事件入站 Webhook */}
           <Card className="mem-card" data-testid="personal-webhook-card">
             <div className="im-row flex-wrap gap-3">
-              <div className="im-row-main is-static">
+              <div className="im-row-main is-static max-sm:!basis-full">
                 <ListRow
                   icon={
                     <span className="gh-mark">
@@ -435,7 +439,7 @@ export function PersonalSourcesSection() {
                       )}
                       {inboundWh ? (
                         <span className="mem-by">
-                          {`入站事件触发地址：${inboundWh.path}${inboundWh.lastSummary ? ` · 最近触发：${inboundWh.lastSummary}` : ""}`}
+                          {inboundWh.lastSummary ? `最近入站事件：${inboundWh.lastSummary}` : "入站地址含私密密钥，可通过右侧按钮复制。"}
                         </span>
                       ) : null}
                     </>
@@ -517,10 +521,32 @@ export function PersonalSourcesSection() {
             </div>
           </Card>
 
+          <section className="px-1 py-2" aria-label="最近发送记录" data-testid="personal-deliveries">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h3 className="text-sm font-medium">最近发送记录</h3>
+              <Button variant="ghost" size="sm" onClick={() => void status.refetch()}>刷新记录</Button>
+            </div>
+            {status.data?.deliveries?.length ? (
+              <ul className="divide-y divide-border/60">
+                {status.data.deliveries.map(item => (
+                  <li className="py-3 text-sm" key={item.id}>
+                    <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
+                      <span className="min-w-0 break-words font-medium">{item.title}</span>
+                      <span className={item.state === "outcome_unknown" || item.state === "failed" ? "text-destructive" : "text-muted-foreground"}>
+                        {{ queued: "等待发送", sending: "正在发送", sent: "平台已接受", failed: "发送失败", outcome_unknown: "结果待核对", cancelled: "已取消" }[item.state]}
+                      </span>
+                    </div>
+                    <p className="mt-1 break-words text-muted-foreground">{item.target} · {agoText(item.createdAt)}</p>
+                    {item.error ? <p className="mt-1 break-words text-muted-foreground">{item.error}</p> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="text-sm text-muted-foreground">还没有邮件或通知发送记录。</p>}
+          </section>
           {/* 每日晨报（Morning Brief）生成与城市设置 */}
           <Card className="mem-card" data-testid="morning-brief-config-card">
             <div className="im-row flex-wrap gap-3">
-              <div className="im-row-main is-static">
+              <div className="im-row-main is-static max-sm:!basis-full">
                 <ListRow
                   icon={
                     <span className="gh-mark">
@@ -570,32 +596,6 @@ export function PersonalSourcesSection() {
   );
 }
 
-const SAMPLE_ICS = () => {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "BEGIN:VEVENT",
-    "UID:sample-standup@chisabot",
-    `DTSTART:${y}${m}${d}T100000`,
-    `DTEND:${y}${m}${d}T103000`,
-    "SUMMARY:产品体验走查 & 晨会同步",
-    "LOCATION:飞书会议室 A",
-    "END:VEVENT",
-    "BEGIN:VEVENT",
-    "UID:sample-review@chisabot",
-    `DTSTART:${y}${m}${d}T150000`,
-    `DTEND:${y}${m}${d}T160000`,
-    "SUMMARY:ChisaBot 2.0 架构与卡片交互评审",
-    "LOCATION:线上 Room 302",
-    "END:VEVENT",
-    "END:VCALENDAR",
-  ].join("\r\n");
-};
-
 function CalendarConnectDialog({
   open,
   onOpenChange,
@@ -608,6 +608,7 @@ function CalendarConnectDialog({
   const [label, setLabel] = useState("我的日程");
   const [icsUrl, setIcsUrl] = useState("");
   const [icsText, setIcsText] = useState("");
+  const [timeZone, setTimeZone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai");
 
   const save = useAsyncAction(
     async () => {
@@ -619,6 +620,7 @@ function CalendarConnectDialog({
           label: label.trim() || "我的日历",
           icsUrl: icsUrl.trim() || undefined,
           icsText: icsText.trim() || undefined,
+          timeZone,
         }),
       });
       const data = (await res.json()) as PersonalSourcesStatusView & { error?: string };
@@ -668,17 +670,13 @@ function CalendarConnectDialog({
                 value={icsUrl}
               />
             </label>
+            <label className="im-field">
+              <span className="gh-step-t">日历时区（无时区日程采用此设置）</span>
+              <Input data-testid="calendar-timezone-input" value={timeZone} onChange={e => setTimeZone(e.target.value)} placeholder="Asia/Shanghai" />
+            </label>
             <div className="im-field">
               <div className="flex items-center justify-between">
-                <span className="gh-step-t">{"或直接粘贴 ICS 日历内容（离线/快速测试）"}</span>
-                <button
-                  className="text-xs text-primary hover:underline"
-                  data-testid="calendar-fill-sample-btn"
-                  onClick={() => setIcsText(SAMPLE_ICS())}
-                  type="button"
-                >
-                  {"填入今日示例日程"}
-                </button>
+                <span className="gh-step-t">{"或直接粘贴 ICS 日历内容"}</span>
               </div>
               <textarea
                 className="min-h-[110px] w-full rounded-lg border border-border/70 bg-background/60 p-2.5 font-mono text-xs outline-none focus:border-primary"
@@ -763,7 +761,7 @@ function EmailConnectDialog({
         <DialogHeader>
           <DialogTitle>{"连接电子邮箱（IMAP 收件箱 + SMTP 审批发信）"}</DialogTitle>
           <DialogDescription>
-            {"请使用邮箱后台生成的「应用专用密码 / 客户端授权码」。密码经 AES-256-GCM 加密存储，支持读取收件箱摘要，且代发邮件前必弹审批确认卡片。"}
+            {"请使用邮箱后台生成的「应用专用密码 / 客户端授权码」。密码会加密保存，仅在此表单输入。发信按审批偏好确认，平台接收结果会单独记录。"}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -803,19 +801,6 @@ function EmailConnectDialog({
                   </button>
                 ))}
               </div>
-              <button
-                className="text-xs text-primary hover:underline"
-                data-testid="email-fill-demo-btn"
-                onClick={() => {
-                  setEmail("chisa@demo.imap.local");
-                  setImapHost("demo.imap.local");
-                  setImapPort("993");
-                  setPassword("demo-app-pass-2026");
-                }}
-                type="button"
-              >
-                {"填入演示收件箱"}
-              </button>
             </div>
             <label className="im-field">
               <span className="gh-step-t">{"邮箱地址"}</span>
@@ -913,7 +898,7 @@ function NotifyWebhookDialog({
     { errorToast: (err) => err.message },
   );
 
-  const valid = Boolean(url.trim().startsWith("http") || url.trim().toLowerCase() === "demo");
+  const valid = Boolean(url.trim().startsWith("https://"));
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -936,17 +921,6 @@ function NotifyWebhookDialog({
               <span className="text-xs text-muted-foreground">
                 {"自动识别飞书 / 钉钉 / 企业微信 / Bark / Server酱 消息格式"}
               </span>
-              <button
-                className="text-xs text-primary hover:underline"
-                data-testid="notify-fill-demo-btn"
-                onClick={() => {
-                  setLabel("演示随身通知");
-                  setUrl("https://demo.webhook.local/push");
-                }}
-                type="button"
-              >
-                {"填入演示推送"}
-              </button>
             </div>
             <label className="im-field">
               <span className="gh-step-t">{"通知渠道名称"}</span>

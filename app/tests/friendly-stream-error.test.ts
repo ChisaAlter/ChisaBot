@@ -2,6 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { friendlyError } from "../src/lib/chat/friendly-error";
 import { friendlyStopReason } from "../src/lib/copilot/stopped-turn";
 
+test("DSH备用模型错误优先保留真实归属", () => {
+  const raw = '备用模型「backup」请求失败：HTTP 404 model not found';
+  const result = friendlyError(raw);
+  expect(result.title).toBe("备用模型也未能完成回答");
+  expect(result.detail).toBe(raw);
+  expect(friendlyError('主模型「primary」请求失败：HTTP 401 invalid API key').title).toBe("模型密钥无效或已过期");
+});
+
 describe("模型回答到一半断开（成熟度扫查 F7）", () => {
   test("频道聊天的出错卡片说中文", () => {
     const f = friendlyError("AI SDK stream error");

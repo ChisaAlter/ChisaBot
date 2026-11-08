@@ -25,7 +25,7 @@
 # 依赖树 deps-<标签>/），之后的代码改动又走快速更新。
 # 内存紧的机器：构建期间停掉 PROTO_CONTAINERS，结束后（含失败）恢复。
 set -uo pipefail
-U=/opt/chisabot-updater
+U=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
 # shellcheck source=/dev/null
 . "$U/config.env"
 # 完整构建上线后写的底座（覆盖 config.env 里的 BASE_IMAGE / NODE_MODULES_BASE）。
@@ -42,6 +42,16 @@ FULL_BUILD_PARALLELISM=${FULL_BUILD_PARALLELISM:-2}
 BUILD_CACHE_MAX=${BUILD_CACHE_MAX:-20gb}
 KEEP_IMAGES=${KEEP_IMAGES:-5}
 KEEP_BACKUPS=${KEEP_BACKUPS:-5}
+# A retained alias of the same image is not an independent rollback candidate.
+[[ "$KEEP_IMAGES" =~ ^[0-9]+$ ]] && [ "$KEEP_IMAGES" -ge 3 ] || KEEP_IMAGES=3
+[[ "$KEEP_BACKUPS" =~ ^[0-9]+$ ]] && [ "$KEEP_BACKUPS" -ge 1 ] || KEEP_BACKUPS=5
+BACKUP_NODE=${CHISABOT_DSH_NODE:-node}
+BACKUP_STATE_AVAILABLE=1
+command -v "$BACKUP_NODE" >/dev/null 2>&1 || BACKUP_STATE_AVAILABLE=0
+backup_state() {
+  if [ "$BACKUP_STATE_AVAILABLE" = 1 ]; then "$BACKUP_NODE" "$U/backup-state.mjs" "$@"
+  else echo '（宿主未安装 Node，保留现有更新备份且跳过自动轮换；完整 DSH 备份需要其既有 Node 运行时）' >&2; fi
+}
 
 JOB="" TARGET="" DRY=0 BUILD_ONLY=0 TAG="" MODE_REQ=auto
 while [ $# -gt 0 ]; do
@@ -120,6 +130,9 @@ MAIN=$(G rev-parse refs/heads/main) || fail "本机镜像里没有 main"
 if [ "$TARGET" != "$MAIN" ] && ! G merge-base --is-ancestor "$TARGET" "$MAIN"; then
   fail "提交 ${TARGET:0:7} 不在 main 上"
 fi
+if [ "$BUILD_ONLY" != 1 ]; then
+  dsh_require_source_tools "$TARGET" || fail "目标源码不能承载当前 DSH 部署，未备份或切换"
+fi
 CUR_IMAGE=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null) || fail "找不到正在运行的容器 $CONTAINER"
 CUR_TAG=${CUR_IMAGE##*:}
 [ -n "$TAG" ] || TAG="auto-$(date -u +%Y%m%d%H%M)-${TARGET:0:7}"
@@ -168,6 +181,8 @@ else
   step backup "备份数据库与 compose"
   BK="$U/backups/$(date -u +%Y%m%dT%H%M%SZ)-$JOB"
   mkdir -p "$BK"
+  chmod 0700 "$BK"
+  backup_state begin "$BK" update || fail "无法登记更新备份"
   docker exec "$CONTAINER" sh -c 'pg_dump -Fc "$(cat /run/s6/container_environment/DATABASE_URL)"' > "$BK/chisabot.dump" \
     || fail "pg_dump 失败"
   [ -s "$BK/chisabot.dump" ] || fail "数据库备份是空的"
@@ -310,6 +325,11 @@ exit $code
   echo "::image:: $NEW_IMAGE"
 fi
 
+# Reject an incompatible built candidate before admission is paused or a full snapshot is started.
+if [ "$BUILD_ONLY" != 1 ]; then
+  dsh_require_compatible_image "$NEW_IMAGE" || fail "候选镜像不能读取现有会话，当前服务未切换"
+fi
+
 if [ "$BUILD_ONLY" = 1 ] || [ "$DRY" = 1 ]; then
   [ "$DRY" = 1 ] && echo "::dry-run:: 在切换前停下；正在运行的仍是 $CUR_IMAGE"
   step done "完成（未切换，用时 $(( $(date +%s) - START_TS )) 秒）"
@@ -363,6 +383,8 @@ if [ "$DSH_ADMISSION_HELD" = 1 ]; then
   done
   dsh_require_compatible_image "$NEW_IMAGE" || fail "新镜像不能读取现有 DSH 日志，保持旧镜像"
 fi
+
+backup_state complete "$BK" || fail "更新备份不完整，保持旧镜像"
 
 # ---------- swap ----------
 step swap "切换到 $NEW_IMAGE"
@@ -516,12 +538,24 @@ echo "::duration:: $(( $(date +%s) - START_TS ))"
 rm -rf "$B"
 # 只保留最近 KEEP_IMAGES 个一键更新镜像；不动正在用的、上一版（回滚目标）、底座和手动发布的 glass-* 等。
 docker images --format '{{.Repository}}:{{.Tag}} {{.CreatedAt}}' "$IMAGE_REPO" | awk '$1 ~ /:auto-/' | sort -k2 -r | awk '{print $1}' \
-  | tail -n +"$((KEEP_IMAGES + 1))" | while read -r img; do
+  | {
+  declare -A retained_ids=()
+  retained_count=0
+  while read -r img; do
+    image_id=$(docker image inspect -f '{{.Id}}' "$img" 2>/dev/null) || continue
+    if [ -n "${retained_ids[$image_id]:-}" ]; then continue; fi
+    if [ "$retained_count" -lt "$KEEP_IMAGES" ]; then
+      retained_ids[$image_id]=1
+      retained_count=$((retained_count + 1))
+      continue
+    fi
     if [ "$img" != "$NEW_IMAGE" ] && [ "$img" != "$CUR_IMAGE" ] && [ "$img" != "${BASE_IMAGE:-}" ] && docker rmi "$img" >/dev/null 2>&1; then
       echo "清理旧镜像 $img"
     fi
   done
-ls -1dt "$U"/backups/*/ 2>/dev/null | tail -n +"$((KEEP_BACKUPS + 1))" | xargs -r rm -rf
+}
+backup_state prune "$U/backups" update "$KEEP_BACKUPS" \
+  || echo '（备份保留检查未通过，未清理未知或受保护目录）' >&2
 docker image prune -f >/dev/null 2>&1
 RESULT=succeeded
 exit 0

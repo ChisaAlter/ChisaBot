@@ -145,6 +145,7 @@ import { createHeadlessComponentTools } from "./components/headless";
 import { hermesRuntimeTools } from "./agents/hermes-runtime";
 import { probeHermesHealth } from "./agents/hermes-health";
 import { createRuntimeKernelRoutes } from "./agents/kernel-status";
+import { createDshHealthProbe } from "./agents/dsh-health";
 import { createConversationInteractions } from "./conversations/interactions";
 import { createConversationSurfaceTools } from "./conversations/surface-tools";
 import { createDshRunJournal } from "./conversations/run-journal";
@@ -319,6 +320,7 @@ import { readRunningBuild } from "./build-info";
 import { createSystemUpdateRoutes, createSystemUpdateService } from "./system-update";
 import { createAdminSmokeRoutes, resolveSmokeHermesProbe } from "./admin-smoke";
 import {
+  createAssistantSignalsProbe,
   createDatabasePinger,
   createOpsHealthRoutes,
 } from "./ops-health";
@@ -341,6 +343,7 @@ import { markUntrusted } from "./untrusted-content";
 import { createUserInstructionsStore } from "./user-instructions";
 import { createUserPreferencesStore } from "./user-preferences";
 import { repeatAfterEach } from "./work/loop";
+import { createPersonalNotifications } from "./delivery/personal-notifications";
 import { createWorkerService, type WorkerService } from "./workers/service";
 import { createLocalAgentService, type LocalAgentService } from "./local-agents/service";
 import { createLocalAgentRun } from "./task-center/local-agent-runner";
@@ -591,10 +594,8 @@ let deliveryNotifications: (
     kind: "reply" | "question" | "approval";
     requestId?: string;
   },
-) => Promise<void> = async () => {
-  // Slack / Teams / SMS / push delivery was removed in slimming P4b (no transport is configured on a
-  // personal deployment). In-app notifications are unaffected; this stays as a no-op call site.
-};
+) => Promise<void> = async () => {};
+let personalNotificationSweep: (() => Promise<void>) | undefined;
 const authoriseQuestion = async (question: PersonQuestion) => {
   const source = await sourceForCoordinationRun({
     ...question,
@@ -1276,6 +1277,14 @@ const hermesKernelUrl = config.hermesKernel?.url;
 const probeConfiguredHermes = hermesKernelUrl
   ? () => probeHermesHealth(hermesKernelUrl)
   : undefined;
+const probeConfiguredDsh = dshTargetFor ? createDshHealthProbe({
+  targetFor: dshTargetFor,
+  recentSessionFor: async actorId => {
+    const [row] = await database.$client.unsafe<{ session_id: string }[]>(
+      'SELECT session_id FROM chisabot_runtime_bindings WHERE owner_user_id=$1 AND active=true ORDER BY created_at DESC LIMIT 1', [actorId]);
+    return row?.session_id ?? null;
+  },
+}) : undefined;
 /*
  * Magpie, the model gateway. MAGPIE_ADMIN_URL (e.g. http://magpie:3430) plus its web key
  * (MAGPIE_WEB_KEY_FILE, readable only by the API user) turn on 管理后台 → 模型平台 Magpie and the
@@ -1453,6 +1462,20 @@ await github.ensure();
 /** 个人日程与收件箱只读接入（CB-013）+ 每日晨报（CB-014）。 */
 const personalSources = createPersonalSources(database, { encryptionKey: config.keyEncryptionKey });
 await personalSources.ensure();
+const personalNotifications = createPersonalNotifications({ database, sources: personalSources, publicUrl: process.env.CHISABOT_PUBLIC_URL });
+deliveryNotifications = async (scope, input) => {
+  try {
+    await personalNotifications.deliver({
+      id: input.id, owner: scope.ownerUserId, message: input.text,
+      title: input.kind === "reply" ? "ChisaBot 提醒" : "ChisaBot 等待你的确认",
+      thread_id: scope.threadId, agent_id: scope.agentId,
+      path: input.kind === "reply" ? `/channel/${encodeURIComponent(scope.channelId)}` : "/approvals",
+    });
+  } catch {
+    // A notification transport must not replay an already completed action or block an approval.
+    console.warn(JSON.stringify({ type: "personal-notification", id: input.id, state: "staging_failed" }));
+  }
+};
 /** 页面（DESIGN.md §54）：机器人做的单页网页，/p/<随机串>/ 公开可看（沙箱 CSP），设置 → 页面。 */
 const pages = createPages(database, {
   publicUrl: process.env.CHISABOT_PUBLIC_URL?.trim() || null,
@@ -2247,7 +2270,13 @@ const routineIntelligence = localBackend.client;
 const routineAgentRunner = localBackend.runner;
 
 const dshRecoverySweep = config.dshKernel && localBackend ? repeatAfterEach(async () => {
-  await recoverConversations({ backend: localBackend, journal: createDshRunJournal(database), buildAgentFor });
+  try {
+    await recoverConversations({ backend: localBackend, journal: createDshRunJournal(database), buildAgentFor });
+  } finally {
+    await personalNotificationSweep?.().catch(() => {
+      console.warn(JSON.stringify({ type: "personal-notification-sweep", state: "failed" }));
+    });
+  }
 }, 15_000) : undefined;
 
 const governedTurnRunner = createTurnRunner({
@@ -2592,29 +2621,17 @@ const taskCenter = createTaskCenterRuntime({
     const actor = await actorFor(ownerUserId);
     return (await agentProfileStore.list(actor))[0]?.id ?? null;
   },
-  recordNotice: async (ownerUserId, agentId, text) => {
+  recordNotice: async (ownerUserId, agentId, text, context) => {
     const actor = await actorFor(ownerUserId);
     const channel = await channelStore.direct(actor, agentId);
     await channelStore.recordActivity(
       actor,
       channel.id,
       { text, agentId, at: new Date() },
-      { id: `task-center-notice:${randomUUID()}` },
+      { id: context?.id ?? `task-center-notice:${randomUUID()}` },
     );
-    // 同一提醒推给这个机器人最近活跃过的私聊 IM（Telegram / 微信等，推送即触达移动端）；
-    // 没连过 IM 或推送失败只少一个渠道，站内活动已经记过了。
-    const [imChat] = await database.$client.unsafe<{ thread_id: string }[]>(
-      `SELECT c.thread_id FROM chisabot_im_chats c
-       JOIN chisabot_im_connections n ON n.id = c.connection_id
-       WHERE n.owner_user_id = $1 AND n.agent_id = $2
-         AND c.chat_key LIKE 'private:%' AND c.last_inbound IS NOT NULL
-       ORDER BY c.updated_at DESC LIMIT 1`,
-      [ownerUserId, agentId],
-    );
-    if (imChat)
-      void imService
-        ?.pushToThread(imChat.thread_id, text, { privateOnly: true })
-        .catch(() => {});
+    // The persisted decision is picked up by the existing recovery sweep and sent only to the
+    // owner's explicitly configured notification target, using the same stable decision id.
   },
   localRoots: async (ownerUserId) => {
     const roots = new Set<string>();
@@ -2650,6 +2667,7 @@ const taskCenter = createTaskCenterRuntime({
 const taskCenterRoots = createTaskCenterRoots(database);
 await taskCenterRoots.ensure();
 await taskCenter.ensure();
+personalNotificationSweep = personalNotifications.sweep;
 if (process.env.NODE_ENV !== "test" && process.env.CHISABOT_TASK_CENTER !== "0") taskCenter.start();
 
 const panelTaskService = createNormalPanelTaskService({
@@ -4216,10 +4234,13 @@ const app = createApp(
         createOpsHealthRoutes({
           requireUser,
           pingDatabase: createDatabasePinger(database),
+          probeAssistant: createAssistantSignalsProbe(database),
           magpie,
           gatewayMode: gatewaySecret ? "on" : "off",
           // Informational: Hermes being down does not turn /api/admin/health red or roll back a release.
           ...(probeConfiguredHermes ? { probeHermes: probeConfiguredHermes } : {}),
+          dshRequired: !!config.dshKernel,
+          ...(probeConfiguredDsh ? { probeDsh: probeConfiguredDsh } : {}),
           ...(computerProvider
             ? {
                 probeComputer: async () => {
@@ -4266,20 +4287,7 @@ const app = createApp(
           requireUser,
           kernel: config.dshKernel ? "dsh" : probeConfiguredHermes ? "hermes" : "builtin",
           ...(probeConfiguredHermes ? { probe: probeConfiguredHermes } : {}),
-          ...(dshTargetFor ? { probeDsh: async (actorId: string) => {
-            let client: import("../../runtime/dsh/src/client.mjs").DshHostClient | undefined;
-            try {
-              const target = await dshTargetFor!(actorId);
-              const { readFile } = await import("node:fs/promises");
-              const { DshHostClient } = await import("../../runtime/dsh/src/client.mjs");
-              const address = JSON.parse(await readFile(target.connectionFile, "utf8"));
-              client = await DshHostClient.connect(address.endpoint);
-              const health = await client.health(AbortSignal.timeout(5000));
-              if (health.ownerUserId !== actorId) throw new Error("Runtime owner mismatch.");
-              return { ok: true, version: health.version, sessions: health.sessions.length, running: health.sessions.filter(session => session.state === "running").length };
-            } catch { return { ok: false, error: "DSH 执行内核暂时不可用，请检查对应账号的 Host 日志。" }; }
-            finally { await client?.close(); }
-          } } : {}),
+          ...(probeConfiguredDsh ? { probeDsh: probeConfiguredDsh } : {}),
         }),
       ],
       [

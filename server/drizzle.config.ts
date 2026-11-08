@@ -35,6 +35,7 @@ export default defineConfig({
     "./src/db/schema/delivery.ts",
     "./src/db/schema/group.ts",
     "./src/db/schema/im-delivery.ts",
+    "./src/db/schema/personal-delivery.ts",
     "./src/db/schema/admin.ts",
     "./src/db/schema/scim.ts",
     "./src/db/schema/lifecycle.ts",

@@ -156,7 +156,8 @@ class ProtocolSocket implements WsLike {
     const taskOptions = { database, runTurn, personalSources: { scanCalendar: async () => [], scanEmails: async () => [], status: async () => ({}) } as any,
       github: { listOpenItems: async () => [], status: async () => ({}) } as any, botAvailable: async () => true, defaultAgentFor: async () => bot };
     const center = createTaskCenterRuntime(taskOptions); await center.ensure(); cleanups.push(() => center.stop());
-    const task = await center.createTask(owner, { title: "任务中心验收", description: "保存验收产物", level: 2, risk: "read", agentId: bot });
+    const task = await center.createTask(owner, { title: "任务中心验收", description: "保存验收产物", level: 2, risk: "read", agentId: bot,
+      completion: { criteria: "写入隔离工具回执并返回结果总结", required: [] } });
     await center.controlTask(owner, task.id, "start"); await center.sweep();
     const complete = await until(async () => { const result = await center.getTask(owner, task.id); return result?.status === "succeeded" ? result : null; });
     expect(complete.summary).toBe(answer); expect(complete.attempts).toBe(1);

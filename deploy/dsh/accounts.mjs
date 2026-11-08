@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rename, chown } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { canReadDshState } from './reader-compatibility.mjs';
 
 const execute = promisify(execFile);
 const docker = async (...args) => (await execute('docker', args, { maxBuffer: 8 * 1024 * 1024 })).stdout.trim();
@@ -69,7 +70,9 @@ catch (error) { if (error.code !== 'EEXIST') throw error; }
 
 // An OS lease keeps periodic and manual reconciliation from racing, without stale PID ownership.
 if (!process.env.CHISABOT_ACCOUNTS_LOCKED) {
-  const child = await execute('flock', ['--nonblock', '--conflict-exit-code', '73', join(config.stateDirectory, '.reconcile.lock'),
+  const wait = Number(process.env.CHISABOT_ACCOUNTS_LOCK_WAIT ?? 0);
+  if (!Number.isSafeInteger(wait) || wait < 0 || wait > 300) throw new Error('Account lock wait must be 0–300 seconds.');
+  const child = await execute('flock', [...(wait ? ['--wait', String(wait)] : ['--nonblock']), '--conflict-exit-code', '73', join(config.stateDirectory, '.reconcile.lock'),
     process.execPath, ...process.argv.slice(1)], { env: { ...process.env, CHISABOT_ACCOUNTS_LOCKED: '1' }, maxBuffer: 8 * 1024 * 1024 });
   process.stdout.write(child.stdout);
   process.stderr.write(child.stderr);
@@ -190,7 +193,7 @@ for (const owner of owners) {
     if (status.health.running) throw new Error('An account execution is still active; runtime replacement refused.');
     const before = await docker('exec', name, 'cat', '/app/deploy/dsh/runtime-compat.json');
     const after = await docker('run', '--rm', '--network', 'none', '--entrypoint', 'cat', image.Id, '/app/deploy/dsh/runtime-compat.json');
-    if (before !== after) throw new Error('The replacement image must have a verified compatible DSH reader.');
+    if (!canReadDshState(JSON.parse(before), JSON.parse(after))) throw new Error('The replacement image must preserve the native DSH format and product reader contracts.');
     await docker('stop', '--time', '30', name);
     await docker('rm', name);
     existing = undefined;

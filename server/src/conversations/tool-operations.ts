@@ -9,7 +9,7 @@ export type ToolOperationResult = { content: string; error?: string };
 export type ToolOperationClaim =
   | { kind: "claimed"; id: string }
   | { kind: "completed"; id: string; result: ToolOperationResult }
-  | { kind: "pending"; id: string; state: string }
+  | { kind: "pending"; id: string; state: string; confirmationId?: string }
   | { kind: "conflict" };
 
 /** External effects have their own ledger; a missing receipt is never permission to rerun. */
@@ -54,13 +54,13 @@ export function createToolOperationStore(database: Database) {
         ON CONFLICT(binding_id,session_id,turn_number,step_number,call_id) DO NOTHING RETURNING id`,
       [id, input.ownerUserId, input.bindingId, input.sessionId, input.runId, input.callId, input.turn, input.step, input.name, encoded]);
       if (inserted.length) return { kind: "claimed", id };
-      const [existing] = await sql.unsafe<{ id: string; status: string; result: ToolOperationResult | null; matches: boolean }[]>(
-        `SELECT id,status,result,(tool_name=$6 AND args=$7::text::jsonb AND owner_user_id=$8 AND run_id=$9) AS matches
+      const [existing] = await sql.unsafe<{ id: string; status: string; confirmation_id: string | null; result: ToolOperationResult | null; matches: boolean }[]>(
+        `SELECT id,status,confirmation_id,result,(tool_name=$6 AND args=$7::text::jsonb AND owner_user_id=$8 AND run_id=$9) AS matches
          FROM chisabot_tool_operations WHERE binding_id=$1 AND session_id=$2 AND turn_number=$3 AND step_number=$4 AND call_id=$5`,
         [input.bindingId, input.sessionId, input.turn, input.step, input.callId, input.name, encoded, input.ownerUserId, input.runId]);
       if (!existing?.matches) return { kind: "conflict" };
       if (existing.status === "completed" && existing.result) return { kind: "completed", id: existing.id, result: existing.result };
-      return { kind: "pending", id: existing.id, state: existing.status };
+      return { kind: "pending", id: existing.id, state: existing.status, ...(existing.confirmation_id ? { confirmationId: existing.confirmation_id } : {}) };
     },
     async markOutcomeUnknown(id: string) {
       await sql.unsafe(`UPDATE chisabot_tool_operations SET status='outcome_unknown',updated_at=now()

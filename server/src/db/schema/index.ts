@@ -11,6 +11,7 @@ export * from "./delivery";
 export * from "./demonstrations";
 export * from "./group";
 export * from "./im-delivery";
+export * from "./personal-delivery";
 export * from "./learning";
 export * from "./lifecycle";
 export * from "./memory";

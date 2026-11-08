@@ -2,18 +2,35 @@ import { access, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { resolve } from 'node:path';
 import postgres from 'postgres';
-import { DshHostClient } from '../../runtime/dsh/src/client.mjs';
+import { inspectDshRuntime } from '../../runtime/dsh/src/readiness.mjs';
 import { createManagedDshRuntimes } from '../../server/src/conversations/managed-runtime';
 import { loadDshTargets } from '../../server/src/conversations/runtime-targets';
+import { readAssistantSignals } from '../../server/src/assistant-signals';
 
 // Run with the API's environment and uid. Never print endpoints, owner IDs or connection tokens.
 const command = process.argv[2] ?? 'health';
 const kernel = process.env.CHISABOT_AGENT_KERNEL?.trim().toLowerCase();
 const db = postgres(process.env.DATABASE_URL!, { max: 1, connect_timeout: 10 });
 try {
-  const [table] = await db`select to_regclass('public.chisabot_runtime_bindings') as name`;
+  const [table] = await db`select to_regclass('chisabot_runtime_bindings') as name`;
   const bindings = table?.name ? await db`select owner_user_id, session_id from chisabot_runtime_bindings where kernel='dsh'` : [];
-  if (command === 'bindings') {
+  if (command === 'signals') {
+    const owners = [...new Set(bindings.map(row => row.owner_user_id as string))];
+    if (!owners.length) throw new Error('No bound DSH owner to inspect.');
+    const reports = [];
+    for (const owner of owners) reports.push(await readAssistantSignals((statement, parameters) => db.unsafe(statement, parameters), owner));
+    const ok = reports.every(report => report.ok);
+    console.log(JSON.stringify({ ok, state: ok ? 'clear_in_sample' : 'needs_attention', owners: reports.length,
+      taskFailureStreak: Math.max(...reports.map(report => report.taskFailureStreak)),
+      scheduleFailureStreak: Math.max(...reports.map(report => report.scheduleFailureStreak)),
+      failureThreshold: 3, failureWindowHours: 24,
+      unknown: {
+        personalDeliveriesAtLeast: reports.reduce((sum, report) => sum + report.unknown.personalDeliveriesAtLeast, 0),
+        toolOperationsAtLeast: reports.reduce((sum, report) => sum + report.unknown.toolOperationsAtLeast, 0),
+      }, coverage: reports.map(report => report.coverage),
+    }));
+    if (!ok) process.exitCode = 1;
+  } else if (command === 'bindings') {
     console.log(bindings.length);
   } else if (command === 'enabled') {
     console.log(kernel === 'dsh' || bindings.length > 0 ? '1' : '0');
@@ -47,19 +64,12 @@ try {
     let running = 0;
     for (const owner of owners) {
       const target = await targetFor(owner);
-      const address = JSON.parse(await readFile(target.connectionFile, 'utf8'));
-      const client = await DshHostClient.connect(address.endpoint, { signal: AbortSignal.timeout(5000) });
-      try {
-        const health = await client.health(AbortSignal.timeout(5000));
-        if (!health.ok || health.ownerUserId !== owner || health.protocol !== expected.protocol || health.version !== expected.runtimeVersion) {
-          throw new Error('DSH readiness identity, protocol or runtime version mismatch.');
-        }
-        running += health.sessions.filter(session => session.state !== 'idle').length;
-        for (const binding of bindings.filter(row => row.owner_user_id === owner)) {
-          const history = await client.events(binding.session_id, { maxMessages: 1 }, AbortSignal.timeout(10000));
-          watermarks.push({ sessionId: binding.session_id, cursor: history.cursor });
-        }
-      } finally { await client.close(); }
+      const sessionIds = bindings.filter(row => row.owner_user_id === owner).map(row => row.session_id as string);
+      const health = await inspectDshRuntime({ target, ownerUserId: owner, sessionIds, expected,
+        signal: AbortSignal.timeout(10000 + sessionIds.length * 10000),
+      });
+      running += health.running;
+      watermarks.push(...health.watermarks);
     }
     if (command === 'snapshot' && running) throw new Error('A DSH Session is still running; snapshot not ready.');
     const [projection] = await db`select coalesce(max(sequence),0)::text as cursor from openbot_local_events`;

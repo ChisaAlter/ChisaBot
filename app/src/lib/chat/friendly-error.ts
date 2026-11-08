@@ -21,7 +21,7 @@ export const UNANSWERED_TURN_REASON = "unanswered-turn: no reply was stored for 
 
 const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boolean }> = [
   {
-    test: /Hermes fallback model call failed:/i,
+    test: /Hermes fallback model call failed:|备用模型「[^」]+」请求失败：/i,
     title: "备用模型也未能完成回答",
     hint: "主模型未能继续，切换备用模型后仍然失败。请重试或切换模型；管理员可在模型设置中检查备用模型。",
   },

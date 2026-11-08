@@ -79,12 +79,15 @@ set_env() {
 file_sum() { [ -f "$1" ] && cksum < "$1" || echo missing; }
 
 # ---------- 现状 ----------
-SCRIPTS="compose-image.sh update.sh request.sh rollback.sh health.sh post-deploy-smoke.sh hermes-reach.sh smoke.sh deps-fingerprint.sh rollback.template.sh git-askpass.sh chisabot-updater.py Dockerfile.update install.sh"
+SCRIPTS="compose-image.sh dsh-release.sh accounts-release.mjs backup-state.mjs backup-config.mjs complete-backup.sh host-monitor.sh update.sh request.sh rollback.sh health.sh post-deploy-smoke.sh hermes-reach.sh smoke.sh deps-fingerprint.sh rollback.template.sh git-askpass.sh chisabot-updater.py Dockerfile.update install.sh"
 WANT_VERSION=$(sed -n 's/^VERSION = "\([0-9]*\)".*/\1/p' "$SRC/chisabot-updater.py")
 HAVE_VERSION=$(sed -n 's/^VERSION = "\([0-9]*\)".*/\1/p' "$U/chisabot-updater.py" 2>/dev/null || true)
 STALE=""
 for f in $SCRIPTS; do
   [ "$(file_sum "$SRC/$f")" = "$(file_sum "$U/$f")" ] || STALE="$STALE $f"
+done
+for f in reader-compatibility.mjs accounts.mjs; do
+  [ "$(file_sum "$HERE/dsh/$f")" = "$(file_sum "$U/$f")" ] || STALE="$STALE $f"
 done
 INSTALLED=0
 [ -f "$U/config.env" ] && [ -f "$U/chisabot-updater.py" ] && INSTALLED=1

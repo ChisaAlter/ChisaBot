@@ -990,6 +990,7 @@ class PostgresAgentRunner implements ConversationRunner {
     const finalizer = createRunEventFinalizer();
     const newMessages: Message[] = [];
     let prepared = prepareConversationMessages([], [], []);
+    let inputPrepared = false;
     /** 段与段之间扣下的 RUN_FINISHED：还要接着跑就丢掉，最后一段的才发出去。 */
     let heldFinish: BaseEvent | undefined;
     let segmenting = false;
@@ -1183,7 +1184,9 @@ class PostgresAgentRunner implements ConversationRunner {
         await emit(event);
       }
       await durableWrites;
-      await this.store.snapshot(
+      // An admission refusal has no new execution snapshot. In particular, a stale paused
+      // resend must not replace the saved transcript with an uninitialized agent's messages.
+      if (inputPrepared) await this.store.snapshot(
         threadId,
         entry.runId,
         prepared.project(woven(closed ?? agent.messages)),
@@ -1245,6 +1248,14 @@ class PostgresAgentRunner implements ConversationRunner {
         : incoming;
       const storedIds = new Set(row.messages.map((message) => message.id));
       const backgroundDelivery = Boolean(input.forwardedProps?.chisabotWorkerDelivery) || request.persistedInputMessages !== undefined;
+      // Only the internal turn runner supplies this source-run identity and projection.
+      // A recovered receipt can continue without unpausing supplements, but a stopped or
+      // edited source run (including a late sign-in result) cannot authorize another turn.
+      const [continuationSource] = request.continuationRunId ? await this.store.database.$client.unsafe<{ status: string }[]>(
+        "SELECT status FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2", [threadId, request.continuationRunId]) : [];
+      const serverContinuation = continuationSource && continuationSource.status !== "stopped"
+        && request.persistedInputMessages !== undefined && input.resume?.some(item => item.status === "resolved")
+        && !await createDshRunJournal(this.store.database).continuationRefusal(threadId, request.continuationRunId!);
       const freshUser = !backgroundDelivery && incoming.some((message) => message.role === "user" && !isWorkerResult(message) && !storedIds.has(message.id));
       const resume = input.forwardedProps?.chisabotInboxResume as { sourceId?: unknown; messageId?: unknown } | undefined;
       let stored = row.messages;
@@ -1263,7 +1274,7 @@ class PostgresAgentRunner implements ConversationRunner {
           ...shown,
           content: typeof source.content === "string" ? resumeNote + source.content : [{ type: "text", text: resumeNote }, ...(Array.isArray(source.content) ? source.content : [])],
         } as Message : message);
-      } else if (!freshUser && await this.inbox.isPaused(threadId)) {
+      } else if (!freshUser && !serverContinuation && await this.inbox.isPaused(threadId)) {
         // A background completion is useful data, not authority to resume a stopped turn.
         for (const message of incoming) {
           if (message.role !== "user" || storedIds.has(message.id)) continue;
@@ -1276,6 +1287,7 @@ class PostgresAgentRunner implements ConversationRunner {
       const priorIds = new Set(recoveringRun?.input.messages.map(message => message.id));
       const recoveringOutputIds = new Set(recoveringRun ? stored.filter(message => message.role !== "user" && !priorIds.has(message.id)).map(message => message.id) : []);
       prepared = prepareConversationMessages(stored, incoming, visible, held, recoveringOutputIds);
+      inputPrepared = true;
       entry.inputMessageIds = new Set(prepared.execution.map((message) => message.id));
       const oldIds = new Set(row.messages.map((message) => message.id));
       newMessages.push(

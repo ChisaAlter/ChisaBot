@@ -279,6 +279,13 @@ export class DshRuntimeAgent extends AbstractAgent {
               const current = await next.health();
               if (current.generation !== health.generation || current.ownerUserId !== scope.actorId) {
                 await next.close();
+                // The old generation can no longer execute this run. Settle its observation
+                // just as the startup-recovery path does; pending approval/effect rows stay
+                // intact and are resumed only by their durable decision.
+                if (current.ownerUserId === scope.actorId) {
+                  this.executionSettled = true;
+                  await this.configuration.binding.journal?.status(input.threadId, input.runId, "interrupted");
+                }
                 throw new Error("DSH_HOST_RESTARTED: 运行内核已重启，这一轮需要恢复核对。");
               }
               const old = client;

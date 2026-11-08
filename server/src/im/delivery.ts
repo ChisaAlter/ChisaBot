@@ -1,7 +1,8 @@
 import type { Database } from "../db/client";
+import { dispatchDurable } from "../delivery/durable-dispatch";
 import type { ImDeliveryReceipt, ImInbound, ImReply } from "./types";
 
-export type ImDeliveryState = "queued" | "sending" | "sent" | "outcome_unknown" | "cancelled";
+export type ImDeliveryState = "queued" | "sending" | "sent" | "failed" | "outcome_unknown" | "cancelled";
 export type ImInboxRecord = {
   id: string; connection_id: string; owner_user_id: string; agent_id: string;
   thread_id: string; inbound: ImInbound; state: "pending" | "staged";
@@ -63,41 +64,19 @@ export function createImDelivery(database: Database) {
     async dispatch(id: string, target: (record: ImOutboxRecord, reader: Pick<Database["$client"], "unsafe">) => Promise<
       { send: (reply: ImReply) => Promise<void | ImDeliveryReceipt> } | "cancelled" | null
     >) {
-      const connection = await sql.reserve();
-      let locked = false;
-      try {
-        const [lock] = await connection.unsafe<{ locked: boolean }[]>("SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked", [`im-outbox:${id}`]);
-        locked = lock?.locked === true;
-        if (!locked) return;
-        const record = (await connection.unsafe<ImOutboxRecord[]>("SELECT * FROM chisabot_im_outbox WHERE id=$1", [id]))[0];
-        if (!record) return;
-        if (record.state === "sending") {
-          // The previous sender no longer holds its DB session. The platform may have accepted it.
-          await connection.unsafe("UPDATE chisabot_im_outbox SET state='outcome_unknown',error=$2,updated_at=now() WHERE id=$1",
-            [id, "发送进程在收到平台确认前中断；原回复已保留，需核对平台收件记录，不会自动重发。"]);
-          return "outcome_unknown" as const;
-        }
-        if (record.state !== "queued") return record.state;
-        const destination = await target(record, connection);
-        if (!destination) return "queued" as const;
-        if (destination === "cancelled") {
-          await connection.unsafe("UPDATE chisabot_im_outbox SET state='cancelled',error=$2,updated_at=now() WHERE id=$1", [id, "连接、机器人或收件人授权已变更，回复已保留，未发送。"]);
-          return "cancelled" as const;
-        }
-        const claimed = await connection.unsafe("UPDATE chisabot_im_outbox SET state='sending',updated_at=now() WHERE id=$1 AND state='queued' RETURNING id", [id]);
-        if (!claimed.length) return "cancelled" as const;
-        try {
-          const receipt = await destination.send({ inbound: record.inbound, text: record.text, chunks: record.chunks });
-          await connection.unsafe("UPDATE chisabot_im_outbox SET state='sent',receipt=$2::text::jsonb,error=NULL,updated_at=now() WHERE id=$1", [id, JSON.stringify(receipt ?? null)]);
-          return "sent" as const;
-        } catch (error) {
-          await connection.unsafe("UPDATE chisabot_im_outbox SET state='outcome_unknown',error=$2,updated_at=now() WHERE id=$1", [id, String(error instanceof Error ? error.message : error).slice(0, 1000)]);
-          return "outcome_unknown" as const;
-        }
-      } finally {
-        try { if (locked) await connection.unsafe("SELECT pg_advisory_unlock(hashtextextended($1,0))", [`im-outbox:${id}`]); }
-        finally { connection.release(); }
-      }
+      return dispatchDurable({
+        database, key: `im-outbox:${id}`,
+        load: async reader => (await reader.unsafe<ImOutboxRecord[]>("SELECT * FROM chisabot_im_outbox WHERE id=$1", [id]))[0] ?? null,
+        settle: async (reader, state, receipt?: void | ImDeliveryReceipt, error?: string) => {
+          await reader.unsafe("UPDATE chisabot_im_outbox SET state=$2,receipt=$3::text::jsonb,error=$4,updated_at=now() WHERE id=$1", [id, state, JSON.stringify(receipt ?? null), error ?? null]);
+        },
+        target: async (record, reader) => {
+          const destination = await target(record, reader);
+          return destination && destination !== "cancelled"
+            ? { send: () => destination.send({ inbound: record.inbound, text: record.text, chunks: record.chunks }) }
+            : destination;
+        },
+      });
     },
     async cancelConnection(connectionId: string) {
       // A send already in flight must keep its uncertain state for reconciliation.

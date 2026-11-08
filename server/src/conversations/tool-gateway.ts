@@ -90,6 +90,11 @@ export function createDshToolGateway(operations: ToolOperationStore, journal?: D
     if (claim.kind === "completed") return claim.result;
     if (claim.kind === "conflict") throw new Error("A different operation already owns this tool-call identity.");
     if (claim.kind === "pending") {
+      // The decision can commit before its 202 response reaches the Host. A transport retry
+      // observes that same pending card; it must not become a tool failure or open a new one.
+      if (claim.state === "waiting_approval" && claim.confirmationId) {
+        throw new HeadlessToolSuspension("等待你确认这一步。", { kind: "confirmation", requestId: claim.confirmationId, continuation });
+      }
       if (claim.state === "dispatching") await operations.markOutcomeUnknown(claim.id);
       if (claim.state === "dispatching" || claim.state === "outcome_unknown") throw unknownEffect(claim.id, continuation);
       throw new Error(`Tool outcome requires reconciliation (${claim.state === "dispatching" ? "outcome_unknown" : claim.state}); it was not executed again.`);
