@@ -149,7 +149,7 @@ function harness(options: {
       if (options.historyFails) throw options.historyFails();
       return { messages: options.history ?? [] };
     },
-    ɵacquireThreadLock: async (params: {
+    acquire: async (params: {
       threadId: string;
       runId: string;
       userId: string;
@@ -162,7 +162,7 @@ function harness(options: {
       options.onAcquire?.();
       return { threadId: params.threadId, runId: params.runId, joinToken: "t" };
     },
-    ɵrenewThreadLock: async (params: {
+    renew: async (params: {
       threadId: string;
       runId: string;
       ttlSeconds: number;
@@ -171,7 +171,7 @@ function harness(options: {
       if (options.renew) return options.renew();
       return { ttlSeconds: params.ttlSeconds };
     },
-    ɵcleanupThreadLock: async (params: { threadId: string; runId: string }) => {
+    release: async (params: { threadId: string; runId: string }) => {
       order.push("cleanup");
       calls.cleaned.push(params);
     },
@@ -204,6 +204,7 @@ function harness(options: {
   const runTurn = createTurnRunner({
     // biome-ignore lint/suspicious/noExplicitAny: narrow structural fakes, on purpose.
     intelligence: intelligence as any,
+    leases: intelligence,
     // biome-ignore lint/suspicious/noExplicitAny: narrow structural fakes, on purpose.
     runner: runner as any,
     buildAgentFor: async (input) => {
@@ -709,7 +710,7 @@ describe("cleanup only runs for a lock that was actually taken", () => {
   });
 
   test("a rejected acquire never cleans up, renews, or starts the heartbeat", async () => {
-    // `ɵcleanupThreadLock` is DELETE on the platform's lock endpoint. If cleanup ran when the
+    // `releaseThreadLease` is DELETE on the platform's lock endpoint. If cleanup ran when the
     // acquire itself failed, it would delete whoever DOES hold the lock — the person's own browser
     // session, most likely. So this is not just "no cleanup call happened to be made", it is "no
     // cleanup call may ever be made when we never held anything to begin with".

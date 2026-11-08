@@ -105,6 +105,13 @@ describe("mergeSnapshot (merge-mode reconnect)", () => {
     const local = [m("u1"), m("a1")];
     expect(mergeSnapshot(local, [m("a1")])).toBe(local);
   });
+  test("a durable cursor snapshot replaces an interrupted prefix and retains unsent input", () => {
+    const local = [{ id: "a1", content: "Before" }, { id: "unsent", content: "My draft" }];
+    const recovered = [{ id: "a1", content: "Before restart. After restart." }];
+    const merged = mergeSnapshot(local, recovered, true);
+    expect(merged).toEqual([recovered[0]!, local[1]!]);
+    expect(mergeSnapshot(merged, recovered, true)).toBe(merged);
+  });
 });
 
 describe("userOrderDiffers (reconcile after a local turn, DESIGN.md §42.7)", () => {

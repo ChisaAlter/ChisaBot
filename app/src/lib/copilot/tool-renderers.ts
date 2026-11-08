@@ -1,4 +1,4 @@
-import { CopilotKitContext } from "@copilotkit/react-core/v2/context";
+import { ACTIVITY_RENDERERS, useRegisteredToolRenderers } from "@/lib/chat/renderers";
 import {
   createContext,
   useCallback,
@@ -107,28 +107,12 @@ export function pickToolRenderer(
  * 返回空列表，不抛错——`useCopilotKit` 会抛，所以这里直接读 context。
  */
 export function useToolRenderers(): readonly ToolRenderer[] {
-  const copilotkit = useContext(CopilotKitContext)?.copilotkit ?? null;
-  const subscribe = useCallback(
-    (onChange: () => void) =>
-      copilotkit
-        ? copilotkit.subscribe({ onRenderToolCallsChanged: onChange })
-            .unsubscribe
-        : () => undefined,
-    [copilotkit],
-  );
-  const read = () =>
-    (copilotkit?.renderToolCalls as readonly ToolRenderer[] | undefined) ??
-    NO_RENDERERS;
-  return useSyncExternalStore(subscribe, read, read);
+  return useRegisteredToolRenderers();
 }
 
 const NO_ACTIVITY_RENDERERS: readonly { activityType: string }[] = [];
 
 /** 活动消息的渲染器（Provider 配置里给的，和 `useRenderActivityMessage` 读同一份）；不在 Provider 里为空。 */
 export function useActivityRenderers(): readonly { activityType: string }[] {
-  return (
-    (useContext(CopilotKitContext)?.copilotkit?.renderActivityMessages as
-      | readonly { activityType: string }[]
-      | undefined) ?? NO_ACTIVITY_RENDERERS
-  );
+  return ACTIVITY_RENDERERS;
 }

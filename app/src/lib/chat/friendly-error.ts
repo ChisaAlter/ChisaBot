@@ -21,6 +21,17 @@ export const UNANSWERED_TURN_REASON = "unanswered-turn: no reply was stored for 
 
 const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boolean }> = [
   {
+    test: /Hermes fallback model call failed:/i,
+    title: "备用模型也未能完成回答",
+    hint: "主模型未能继续，切换备用模型后仍然失败。请重试或切换模型；管理员可在模型设置中检查备用模型。",
+  },
+  {
+    test: /host gateway outcome is unknown|run is no longer authorized|工具调用没拿到确定结果|这一步可能已经执行|结果尚待核对/i,
+    title: "这一步操作未能确认结果",
+    hint: "工具连接中断或本轮授权已结束。已有操作可能已经执行，请先核对结果，再决定是否重试。",
+    retryable: false,
+  },
+  {
     // CB-100：服务器在流开始前就连不上智能体运行时（Hermes 桥接 / 远程 AG-UI），发来的 RUN_ERROR。
     // 放在最前面：原因里带的 ConnectionRefused / ECONN 不能被当成「网络连接中断」（那是浏览器这边的网络）。
     test: /智能体运行时无法连接|智能体运行时在开始回答前出错|AGENT_RUNTIME_UNREACHABLE/,
@@ -68,6 +79,11 @@ const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boo
     test: /content[_ ]?filter|safety|moderation|sensitive|违规|敏感|审核/i,
     title: "请求被模型的内容安全策略拦截",
     hint: "换个说法再试，或切换到其他模型。",
+  },
+  {
+    test: /context compaction failed|no safe compaction range|上下文压缩未能完成/i,
+    title: "上下文压缩未能完成",
+    hint: "已保存的对话仍然保留。请换用上下文更大的模型后重试。",
   },
   {
     test: /context[_ ]?length|too long|maximum context|token limit|超出.*长度|上下文/i,

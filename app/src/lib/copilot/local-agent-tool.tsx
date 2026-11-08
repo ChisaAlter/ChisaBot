@@ -1,4 +1,4 @@
-import { useRenderTool } from "@copilotkit/react-core/v2";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { z } from "zod";
 import { LocalAgentCard } from "@/components/chat/local-agent-card";
 import { type CardCheck, registerCardCheck } from "./tool-renderers";

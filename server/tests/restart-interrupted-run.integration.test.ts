@@ -56,7 +56,7 @@ suite("a run cut off by a restart is closed on the next boot", () => {
   });
 
   test("boot release marks it interrupted, closes the open tool and ends with a RUN_ERROR that says why", async () => {
-    const released = await backend.client.ɵreleaseOrphanedLocks();
+    const released = await backend.client.releaseOrphanedLocks();
     expect(released.runs).toBeGreaterThanOrEqual(1);
     expect(released.closed).toBeGreaterThanOrEqual(1);
     const [run] = await database.$client.unsafe<{ status: string }[]>(

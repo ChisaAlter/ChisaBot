@@ -1,5 +1,5 @@
 import type { Message } from "@ag-ui/core";
-import type { AbstractAgent } from "@copilotkit/react-core/v2";
+import type { AbstractAgent } from "@ag-ui/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { tryClient } from "../client";
@@ -67,7 +67,7 @@ export function useThreadInbox(
         if (state.running || state.paused) return;
         const left = takeQueued(threadId);
         if (!left.length) return;
-        for (const item of left) agent.addMessage({ id: item.id, role: "user", content: item.text } as Message);
+        for (const item of left) agent.addMessage(item.message ?? { id: item.id, role: "user", content: item.text } as Message);
         await runAgent({ agent }).catch(() => {});
       } finally {
         flushing = false;

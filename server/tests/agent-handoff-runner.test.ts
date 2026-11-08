@@ -5,8 +5,13 @@ import {
   createHandoffRunner,
   type HandoffWork,
 } from "../src/agents/handoff-runner";
-import { signHandoffDeliveryRun } from "../src/agents/handoff-signing";
+import {
+  bindHandoffExecution,
+  coordinationSourceRun,
+  signHandoffDeliveryRun,
+} from "../src/agents/handoff-signing";
 import type { AuditStore } from "../src/audit";
+import type { HandoffExecutions } from "../src/agents/handoff-execution";
 import type { WorkItem, WorkQueue } from "../src/work/queue";
 
 /**
@@ -29,6 +34,52 @@ const WORK: HandoffWork = {
   expecting: "a date range",
 };
 
+test("delegated execution uses the actual run while coordination retains the signed source", () => {
+  const signed = signHandoffDeliveryRun(
+    { ...WORK, initiator: { kind: "routine", id: "daily" } },
+    KEY,
+    "queued-run",
+    { key: "hop", owner: "replica" },
+  );
+  const previous = readRunAssertion(signed, KEY)!;
+  const bound = readRunAssertion(
+    bindHandoffExecution(
+      previous,
+      {
+        actorId: WORK.actorId,
+        botId: WORK.toBotId,
+        runId: "actual-run",
+        threadId: "scratch",
+      },
+      KEY,
+    ),
+    KEY,
+  )!;
+  expect(bound).toMatchObject({
+    runId: "actual-run",
+    threadId: "scratch",
+    depth: 1,
+    initiator: { kind: "routine", id: "daily" },
+    handoff: { key: "hop", owner: "replica", sourceThreadId: WORK.threadId },
+  });
+  expect(coordinationSourceRun(bound)).toMatchObject({
+    runId: "actual-run",
+    threadId: WORK.threadId,
+  });
+  expect(() =>
+    bindHandoffExecution(
+      previous,
+      {
+        actorId: "other",
+        botId: WORK.toBotId,
+        runId: "actual-run",
+        threadId: "scratch",
+      },
+      KEY,
+    ),
+  ).toThrow("does not match");
+});
+
 function runner(options?: {
   claimed?: WorkItem[];
   deliver?: (input: {
@@ -38,6 +89,7 @@ function runner(options?: {
   }) => Promise<void>;
   /** What the delivery says the Bot answered. Null — nothing worth relaying — unless a test cares. */
   answer?: string | null;
+  executions?: HandoffExecutions;
 }) {
   const calls: Array<{ verb: string; key: string; owner?: string }> = [];
   const events: string[] = [];
@@ -107,6 +159,7 @@ function runner(options?: {
       sign: (work, claim) =>
         signHandoffDeliveryRun(work, KEY, "delivery-run", claim),
       auditStore,
+      executions: options?.executions,
       delivery: {
         deliver: async ({ work, message, shown, assertion }) => {
           delivered.push({ message, assertion });
@@ -119,6 +172,36 @@ function runner(options?: {
 }
 
 describe("delivering a hop", () => {
+  test("a retried legacy hop without a durable identity does not create a new execution", async () => {
+    const {
+      runner: sweep,
+      delivered,
+      calls,
+    } = runner({
+      claimed: [
+        {
+          kind: "bot.message",
+          key: "old-hop",
+          payload: WORK as unknown as Record<string, unknown>,
+          attempts: 2,
+        },
+      ],
+      executions: {
+        ensure: async () => {
+          throw new Error("Must not mint an execution");
+        },
+        read: async () => null,
+        defer: async () => false,
+      },
+    });
+    expect((await sweep.sweep()).skipped[0]?.reason).toContain(
+      "prior attempt without a durable execution identity",
+    );
+    expect(delivered).toHaveLength(0);
+    expect(
+      calls.some((call) => call.verb === "finish" && call.key === "old-hop"),
+    ).toBe(true);
+  });
   test("runs the addressed Bot and finishes the work as its owner", async () => {
     const { runner: sweep, calls, delivered } = runner();
 

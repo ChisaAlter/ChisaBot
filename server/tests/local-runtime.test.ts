@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { HttpAgent } from "@ag-ui/client";
-import { InMemoryAgentRunner } from "@copilotkit/runtime/v2";
+import { EMPTY } from "rxjs";
+const unusedRunner = { run: () => EMPTY, connect: () => EMPTY, isRunning: async () => false, stop: async () => false };
 import { Hono } from "hono";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
@@ -27,7 +28,7 @@ test("local OSS configuration has durable history and no Intelligence credential
   });
   expect(() =>
     loadConfig(testEnvironment({ CHISABOT_RUNTIME_MODE: "other" })),
-  ).toThrow("CHISABOT_RUNTIME_MODE must be intelligence or local");
+  ).toThrow("CHISABOT_RUNTIME_MODE must be local");
 });
 
 test("the public SSE runtime reports disabled telemetry and makes no vendor request", async () => {
@@ -39,7 +40,7 @@ test("the public SSE runtime reports disabled telemetry and makes no vendor requ
   let identityCalls = 0;
   try {
     const backend = {
-      runner: new InMemoryAgentRunner(),
+      runner: unusedRunner,
       client: {},
       handle: async () => undefined,
     } as LocalConversationBackend;
@@ -62,8 +63,8 @@ test("the public SSE runtime reports disabled telemetry and makes no vendor requ
     const response = await mounted.handler.request("/api/copilotkit/info");
     expect(response.status).toBe(200);
     const information = await response.json();
-    expect(information.mode).toBe("sse");
-    expect(information.telemetryDisabled).toBe(true);
+    expect(information.version).toBe("chisabot-1");
+    
     expect(identityCalls).toBe(0);
     expect(network).not.toHaveBeenCalled();
     const appArgs: Parameters<typeof createApp> = [
@@ -107,7 +108,7 @@ function localApp(signedIn: boolean) {
   const readers: string[] = [];
   let sdkCalls = 0;
   const backend = {
-    runner: new InMemoryAgentRunner(),
+    runner: unusedRunner,
     client: {
       getOrCreateThread: async (scope: {
         threadId: string;

@@ -2,7 +2,7 @@ import {
   type Attachment,
   type AttachmentsConfig,
   useAttachments,
-} from "@copilotkit/react-core/v2";
+} from "@/lib/chat/attachment-state";
 import {
   IconArrowUp,
   IconChevronDown,

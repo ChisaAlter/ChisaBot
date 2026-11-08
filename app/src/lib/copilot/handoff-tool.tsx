@@ -1,4 +1,4 @@
-import { useRenderTool } from "@copilotkit/react-core/v2";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { IconArrowsExchange, IconChevronDown } from "@tabler/icons-react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";

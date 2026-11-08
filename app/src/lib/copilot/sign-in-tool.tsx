@@ -1,5 +1,8 @@
 import { IconLock } from "@tabler/icons-react";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { client } from "@/lib/client";
+import type { ToolRenderProps } from "@/lib/chat/renderers";
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { SignInForm } from "@/components/passwords/sign-in-form";
@@ -15,7 +18,7 @@ import {
 import { readSignIn, requestSignIn } from "@/lib/passwords/mutations";
 import { FINAL_SIGN_IN } from "@/lib/passwords/queries";
 import { useActiveBotHolder } from "./active-bot";
-import { useFrontendTool } from "./approval-tools";
+import { useComputerToolRenderer } from "./approval-tools";
 import { useComputerAvailable } from "./computer-available";
 
 /** How long the open chat waits for the person to answer. The server's request lasts as long. */
@@ -54,15 +57,8 @@ function parse(result: string | undefined): Outcome {
  * headless tool of the same name, and its owner gets the form as a link on their delivery channels.
  */
 export function SignInTool() {
-  const bot = useActiveBotHolder();
-  // The request the handler opened, so the render can show its form before the call finishes.
-  const [pending, setPending] = useState<Record<string, string>>({});
-  // A sign-in is typed into the Bot's computer; see useComputerAvailable.
-  const available = useComputerAvailable();
-  useFrontendTool({
-    available,
+  useComputerToolRenderer({
     name: "computer_request_sign_in",
-    description: DESCRIPTION,
     parameters: z.object({
       site: z
         .string()
@@ -72,73 +68,18 @@ export function SignInTool() {
         .optional()
         .describe("Why you need to be signed in, in a few words"),
     }),
-    handler: async (
-      input: { site: string; reason?: string },
-      {
-        signal,
-        toolCall,
-      }: { signal?: AbortSignal; toolCall?: { id?: string } } = {},
-    ) => {
-      const asked = await requestSignIn(
-        {
-          botId: bot.current,
-          site: input.site,
-          ...(input.reason ? { reason: input.reason } : {}),
-          ...(toolCall?.id ? { toolCallId: toolCall.id } : {}),
-        },
-        signal,
-      );
-      if (!asked.ok) return { ok: false, reason: asked.reason };
-      const id = asked.request.id;
-      if (toolCall?.id) {
-        const callId = toolCall.id;
-        setPending((current) => ({ ...current, [callId]: id }));
-      }
-      const deadline = Date.now() + WAIT_MS;
-      while (Date.now() < deadline) {
-        if (signal?.aborted)
-          return {
-            ok: false,
-            requestId: id,
-            result: "请求已停止。",
-          };
-        const state = await readSignIn(id, signal);
-        if (state && FINAL_SIGN_IN.includes(state.status))
-          return {
-            ok: state.status === "signed_in",
-            signedIn: state.status === "signed_in",
-            site: state.origin,
-            requestId: id,
-            result:
-              state.outcome ??
-              (state.status === "signed_in"
-                ? `Signed in to ${state.origin}.`
-                : `The sign-in to ${state.origin} did not complete.`),
-            note: "You were not told the credentials and must never ask for them another way.",
-          };
-        await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-      }
-      return {
-        ok: false,
-        requestId: id,
-        result: "Nobody signed in. Do not ask for the login another way.",
-      };
-    },
-    render: ({ args, result, status, toolCallId }) => {
-      const outcome = parse(result);
-      const requestId =
-        outcome.requestId ?? (toolCallId ? pending[toolCallId] : undefined);
-      return (
-        <SignInCard
-          site={typeof args?.site === "string" ? args.site : ""}
-          requestId={requestId}
-          running={status !== "complete"}
-          outcome={outcome}
-        />
-      );
-    },
+    render: SignInCall,
   });
   return null;
+}
+
+function SignInCall({ args, result, status, toolCallId }: ToolRenderProps<{ site: string; reason?: string }>) {
+  const requests = useQuery({ queryKey: ["passwords", "pending"], enabled: result === undefined, refetchInterval: result === undefined ? 1500 : false,
+    queryFn: async () => (await client("/api/sign-in-requests")).json() as Promise<{ requests: { id: string; toolCallId?: string }[] }>,
+  });
+  const outcome = parse(result);
+  const requestId = outcome.requestId ?? requests.data?.requests.find(request => request.toolCallId === toolCallId)?.id;
+  return <SignInCard site={args.site ?? ""} requestId={requestId} running={status !== "complete"} outcome={outcome} />;
 }
 
 function SignInCard({

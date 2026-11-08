@@ -159,6 +159,8 @@ for line in path.read_text(encoding='utf-8').splitlines() if path.exists() else 
         values[match[1]] = match[2].strip().strip('"\'')
 kernel = values.get('CHISABOT_AGENT_KERNEL', sys.argv[2]).strip()
 url = values.get('CHISABOT_HERMES_URL', sys.argv[3]).strip()
+if kernel.lower() == 'dsh':
+    raise SystemExit(3)
 raise SystemExit(0 if kernel == 'hermes' or url else 3)
 PY
   selected=$?

@@ -20,6 +20,7 @@ export default defineConfig({
   schema: [
     "./src/db/schema/core.ts",
     "./src/db/schema/computer.ts",
+    "./src/db/schema/conversations.ts",
     "./src/db/schema/coworker.ts",
     "./src/db/schema/components.ts",
     "./src/db/schema/plugins.ts",
@@ -33,6 +34,7 @@ export default defineConfig({
     "./src/db/schema/demonstrations.ts",
     "./src/db/schema/delivery.ts",
     "./src/db/schema/group.ts",
+    "./src/db/schema/im-delivery.ts",
     "./src/db/schema/admin.ts",
     "./src/db/schema/scim.ts",
     "./src/db/schema/lifecycle.ts",

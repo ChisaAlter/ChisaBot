@@ -52,7 +52,9 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
   const list = draft ?? saved.data?.models ?? [];
   const [pick, setPick] = useState<string>("");
   const labels = useMemo(() => new Map((catalog.data?.models ?? []).map((m) => [m.id, m.label || m.id])), [catalog.data]);
-  const addable = (catalog.data?.models ?? []).filter((m) => m.id !== mainModel && !list.includes(m.id));
+  const available = new Set((catalog.data?.models ?? []).filter((m) => m.supportsTools !== false).map((m) => m.id));
+  const checked = Boolean(catalog.data?.models.length && !catalog.data.stale);
+  const addable = (catalog.data?.models ?? []).filter((m) => m.supportsTools !== false && m.id !== mainModel && !list.includes(m.id));
   const dirty = JSON.stringify(list) !== JSON.stringify(saved.data?.models ?? []);
   const save = useAsyncAction(
     async () => {
@@ -80,6 +82,11 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
           {unsupported}
         </p>
       ) : null}
+      {checked && list.length > 0 && list.every((id) => !available.has(id)) ? (
+        <p className="mb-3 text-muted-foreground text-sm" role="status">
+          {"当前指定的备用模型都不可用，暂时只使用主模型。请移除后重新选择。"}
+        </p>
+      ) : null}
       <Card className="fb-list">
         {list.length === 0 ? (
           <p className="fb-empty">{"还没有指定。主模型用不了时，自动挑同一平台的其它模型。"}</p>
@@ -102,7 +109,7 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
               data-testid="fallback-row"
               icon={<span className="fb-rank">{index + 1}</span>}
               key={id}
-              sub={labels.has(id) ? <span className="font-mono">{id}</span> : <span>{`${id} · 目录里暂时没有这个模型`}</span>}
+              sub={checked && !available.has(id) ? <span>{`${id} · 当前不可用，已跳过`}</span> : <span className="font-mono">{id}</span>}
               title={labels.get(id) ?? id}
             />
           ))

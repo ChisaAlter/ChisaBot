@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { AbstractAgent, RunAgentInput } from "@ag-ui/client";
 import { HttpAgent } from "@ag-ui/client";
 import { LLMock } from "@copilotkit/aimock";
-import { BuiltInAgent } from "@copilotkit/runtime/v2";
+import { ClassicRuntimeAgent as BuiltInAgent } from "../src/agents/classic-runtime";
 import { EMPTY, lastValueFrom } from "rxjs";
 import { z } from "zod";
 import {
@@ -154,7 +154,7 @@ describe("deployment model selection", () => {
     environment: Record<string, string | undefined>,
   ) {
     const config = loadConfig({ ...testEnvironment(), ...environment });
-    expect(config.runtime.mode).toBe("intelligence");
+    expect(config.runtime.mode).toBe("local");
     const tenantPackage = await loadTenantPackage(packagePath);
     const model = runtimeModelForEnvironment(tenantPackage.model, environment);
     const recorder = new LLMock();

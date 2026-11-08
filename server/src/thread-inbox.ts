@@ -110,7 +110,7 @@ export class ThreadInbox {
   }
 
   /** 同一个 id 的重试不改变暂停状态。 */
-  async enqueue(input: { threadId: string; ownerUserId: string; message: Message; kind?: InboxKind }): Promise<boolean> {
+  async enqueue(input: { threadId: string; ownerUserId: string; message: Message; kind?: InboxKind; beforeInsert?: (sql: Database["$client"]) => Promise<void> }): Promise<boolean> {
     return this.locked(input.threadId, async (sql, paused) => {
       const existing = await sql.unsafe("SELECT id FROM chisabot_thread_inbox WHERE thread_id = $1 AND id = $2", [input.threadId, input.message.id]);
       if (existing.length) {
@@ -120,6 +120,7 @@ export class ThreadInbox {
       }
       const [queued] = await sql.unsafe<{ n: number }[]>("SELECT count(*)::int AS n FROM chisabot_thread_inbox WHERE thread_id = $1 AND status IN ('queued', 'paused', 'owed', 'stopped')", [input.threadId]);
       if ((queued?.n ?? 0) >= INBOX_QUEUE_LIMIT) throw new Error("排队的消息太多了，请先发送或撤回保留的消息。");
+      await input.beforeInsert?.(sql);
       const rows = await sql.unsafe(`INSERT INTO chisabot_thread_inbox (thread_id, id, owner_user_id, kind, message, status)
         VALUES ($1, $2, $3, $4, $5::text::jsonb, $6) ON CONFLICT (thread_id, id) DO NOTHING RETURNING id`,
         [input.threadId, input.message.id, input.ownerUserId, input.kind ?? "message", JSON.stringify(input.message), paused ? "paused" : "queued"]);
@@ -199,6 +200,15 @@ export class ThreadInbox {
     return row ? item(row) : null;
   }
 
+  async messagesFor(threadId: string, ids: readonly string[]): Promise<Map<string, Message>> {
+    if (!ids.length) return new Map();
+    const rows = await this.database.$client.unsafe<{ id: string; message: Message }[]>(
+      "SELECT id, message FROM chisabot_thread_inbox WHERE thread_id=$1 AND id IN (SELECT jsonb_array_elements_text($2::text::jsonb))",
+      [threadId, JSON.stringify(ids)],
+    );
+    return new Map(rows.map(row => [row.id, row.message]));
+  }
+
   /** 界面要看的：还在排队的、欠回答的，以及最近 10 分钟内状态变过的（「已读取」的淡出）。 */
   async list(threadId: string): Promise<InboxItem[]> {
     const rows = await this.database.$client.unsafe<InboxRow[]>(
@@ -213,12 +223,13 @@ export class ThreadInbox {
   }
 
   /** After restart there is no live tool owner. Keep every unfinished row for an explicit send. */
-  async releaseInterrupted(): Promise<number> {
+  async releaseInterrupted(preservedThreads: readonly string[] = []): Promise<number> {
     return this.database.$client.begin(async (sql) => {
       await sql.unsafe(`INSERT INTO chisabot_thread_inbox_control (thread_id, paused)
         SELECT DISTINCT thread_id, true FROM chisabot_thread_inbox WHERE status IN ('queued', 'read', 'owed', 'stopped', 'paused')
-        ON CONFLICT (thread_id) DO UPDATE SET paused = true, updated_at = now()`);
-      const rows = await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE status IN ('queued', 'read', 'owed', 'stopped') RETURNING id");
+        AND thread_id NOT IN (SELECT jsonb_array_elements_text($1::text::jsonb))
+        ON CONFLICT (thread_id) DO UPDATE SET paused = true, updated_at = now()`, [JSON.stringify(preservedThreads)]);
+      const rows = await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE status IN ('queued', 'read', 'owed', 'stopped') AND thread_id NOT IN (SELECT jsonb_array_elements_text($1::text::jsonb)) RETURNING id", [JSON.stringify(preservedThreads)]);
       return rows.length;
     }) as Promise<number>;
   }

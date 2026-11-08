@@ -1,4 +1,4 @@
-import { useRenderTool } from "@copilotkit/react-core/v2";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { useEffect } from "react";
 import { z } from "zod";
 import { PageCard } from "@/components/pages/page-card";

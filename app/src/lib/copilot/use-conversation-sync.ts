@@ -1,4 +1,4 @@
-import type { AbstractAgent } from "@copilotkit/react-core/v2";
+import type { AbstractAgent } from "@ag-ui/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { ThreadActivity } from "./bot-thread";
@@ -21,13 +21,20 @@ const KNOWN_TOOL_EVENTS = new Set(["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CA
 
 type Msg = { id: string };
 /** 把快照里这台没有的消息按快照里的位置插进来（跟在它前面最近一条这台也有的消息后面）；这台已有的不动、不删。 */
-export function mergeSnapshot<T extends Msg>(local: readonly T[], snapshot: readonly T[]): T[] {
+export function mergeSnapshot<T extends Msg>(local: readonly T[], snapshot: readonly T[], replaceExisting = false): T[] {
   const result = [...local];
   const index = new Map(result.map((message, at) => [message.id, at]));
   let changed = false;
   for (let at = 0; at < snapshot.length; at++) {
     const message = snapshot[at]!;
-    if (index.has(message.id)) continue;
+    const existing = index.get(message.id);
+    if (existing !== undefined) {
+      if (replaceExisting && JSON.stringify(result[existing]) !== JSON.stringify(message)) {
+        result[existing] = message;
+        changed = true;
+      }
+      continue;
+    }
     let insertAt = 0;
     for (let back = at - 1; back >= 0; back--) {
       const position = index.get(snapshot[back]!.id);
@@ -191,6 +198,8 @@ export function useConversationSync(
   onActivity: (listener: (activity: ThreadActivity) => void) => () => void,
   options: {
     liveTail?: boolean;
+    /** Local Conversation streams start at a durable snapshot and emit only its suffix. */
+    snapshotContinuations?: boolean;
     /**
      * 本机正在发消息 / 等回答：不要再开一次 connect。
      * `agent.isRunning` 只在 run/connect 真正开始后才为 true；`say` 里还有 joinGate /
@@ -206,6 +215,7 @@ export function useConversationSync(
   } = {},
 ) {
   const liveTail = options.liveTail === true;
+  const snapshotContinuations = options.snapshotContinuations === true;
   const suppressConnect = options.suppressConnect;
   const skipReconcile = options.skipReconcile;
   const queryClient = useQueryClient();
@@ -291,7 +301,15 @@ export function useConversationSync(
           // 空快照（HTTP 重连开头那个）丢掉；回放里的历史快照只用来「补」这台没有的消息、按服务器的位置插进去，
           // 不删这台已有的（历史快照比现在短，照 SDK 原样会把之后的消息全删掉）。顺序不一致由 reconcile 重建。
           if (!e.messages.length) return { stopPropagation: true };
-          return { messages: mergeSnapshot(messages as never, e.messages as never) as never, stopPropagation: true };
+          if (snapshotContinuations && tail) {
+            // These bodies already include everything before the durable cursor. A synthetic
+            // START only reopens the stream; clearing that body would lose the recovered prefix.
+            for (const message of e.messages as TailMsg[]) {
+              tail.reset.add(message.id);
+              for (const call of message.toolCalls ?? []) tail.reset.add(`tool:${call.id}`);
+            }
+          }
+          return { messages: mergeSnapshot(messages as never, e.messages as never, snapshotContinuations) as never, stopPropagation: true };
         }
         // 这台已经有的消息：开始 / 正文 / 结束整组都跳过（SDK 在「开始」时会把已有消息的正文清空，只跳正文会留下空气泡）。
         if (e.messageId && KNOWN_MESSAGE_EVENTS.has(e.type) && merge.messages.has(e.messageId)) return { stopPropagation: true };
@@ -355,5 +373,5 @@ export function useConversationSync(
       off();
       subscription.unsubscribe();
     };
-  }, [threadId, agent, connect, onActivity, queryClient, liveTail, suppressConnect]);
+  }, [threadId, agent, connect, onActivity, queryClient, liveTail, snapshotContinuations, suppressConnect]);
 }

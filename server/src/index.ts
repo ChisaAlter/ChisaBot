@@ -1,5 +1,6 @@
 import "../../shared/env-compat";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { conversationAdmissionClosed } from "./conversations/maintenance";
 import { createHash, randomUUID } from "node:crypto";
 import { createPersonalSources } from "./personal-sources/service";
 import { PanelError, type PanelCapability } from "../../shared/panels/types";
@@ -10,10 +11,6 @@ import { createGovernedPanelTaskAdapter } from "./panels/task-adapter";
 import { panelTaskRequests } from "./db/schema/panels";
 import { isDeepStrictEqual } from "node:util";
 import type { AbstractAgent, Message } from "@ag-ui/client";
-import {
-  IntelligenceAgentRunner,
-  type CopilotKitIntelligence,
-} from "@copilotkit/runtime/v2";
 import { serve } from "bun";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -38,7 +35,8 @@ import { createAgentFetch } from "./agents/endpoint";
 import { createHandoffDesk, HANDOFF_KIND } from "./agents/handoff";
 import { createHandoffDelivery } from "./agents/handoff-delivery";
 import { createHandoffRunner } from "./agents/handoff-runner";
-import { signHandoffDeliveryRun } from "./agents/handoff-signing";
+import { createHandoffExecutions } from "./agents/handoff-execution";
+import { bindHandoffExecution, refreshApprovedHandoffRun, signHandoffDeliveryRun } from "./agents/handoff-signing";
 import {
   authoriseCoordinationRun,
   createCoordinationTools,
@@ -147,7 +145,14 @@ import { createHeadlessComponentTools } from "./components/headless";
 import { hermesRuntimeTools } from "./agents/hermes-runtime";
 import { probeHermesHealth } from "./agents/hermes-health";
 import { createRuntimeKernelRoutes } from "./agents/kernel-status";
+import { createConversationInteractions } from "./conversations/interactions";
+import { createConversationSurfaceTools } from "./conversations/surface-tools";
+import { createDshRunJournal } from "./conversations/run-journal";
 import { createRuntimeToolsRoutes } from "./agents/runtime-tools";
+import { createConversationBindings } from "./conversations/bindings";
+import { createToolOperationStore } from "./conversations/tool-operations";
+import { createDshToolGateway } from "./conversations/tool-gateway";
+import { loadDshTargets } from "./conversations/runtime-targets";
 import { createComputerGateway } from "./computer/gateway";
 import { onControlReleased } from "./computer/control-blocks";
 import {
@@ -231,6 +236,9 @@ import { createChannelUploadMirror } from "./chat-files/channel-mirror";
 import { createChatFiles } from "./chat-files/service";
 import { turnAttachmentLoader } from "./chat-files/turn-attachments";
 import { createConfirmations } from "./confirmations/service";
+import { createConfirmationResumer } from "./conversations/confirmation-resume";
+import { proposedSkillSchema, savedSkillAnswer } from "../../shared/skill-authoring";
+import { recoverConversations } from "./conversations/recovery";
 import { createSignInNotifier, createSignInResumer } from "./passwords/resume";
 import { createSignInService } from "./passwords/service";
 import { createPasswordStore } from "./passwords/store";
@@ -419,10 +427,7 @@ const config = loadConfig();
 // `serverPort` in config.ts for what `process.env.PORT ?? …` did with `PORT=` instead.
 const port = config.port;
 const database = createDatabase(config.databaseUrl);
-const localBackend =
-  config.runtime.mode === "local"
-    ? await createLocalConversations(database)
-    : undefined;
+const localBackend = await createLocalConversations(database);
 // Every dispatch point asks this database whether its person paused the Bot. See agents/lifecycle.ts.
 configureBotLifecycle({ database });
 await initializeDevActorUser(database, config.singleUser);
@@ -1167,9 +1172,10 @@ setModelOutputLimitResolver(async (modelId) =>
   (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.maxOutputTokens,
 );
 // 目录项带 supportsTools 标记（有的话）：自动挑备用模型时跳过明说不能调工具的（QA1102-13）。
-setModelFallbackCatalog(async () =>
-  (await modelCatalog.list()).models.map((entry) => ({ id: entry.id, supportsTools: entry.supportsTools })),
-);
+setModelFallbackCatalog(async () => {
+  const catalog = await modelCatalog.list();
+  return { models: catalog.models, stale: catalog.stale };
+});
 // 设置 → 模型 →「备用模型」（DESIGN.md §61）：管理员排好的顺序优先于环境变量 / 同平台自动挑选。
 const modelFallbacks = createModelFallbackService({ store: createModelFallbackStore(database) });
 setModelFallbackList(() => modelFallbacks.models());
@@ -1189,14 +1195,18 @@ setModelFileResolver(async (modelId) =>
 const historySummaryModel = createHistorySummaryModelService({ store: createHistorySummaryModelStore(database) });
 setHistorySummaries({ store: createPgHistorySummaryStore(database), model: () => historySummaryModel.model() });
 setPreviousRunUsageResolver((threadId) => lastMeasuredUsage(database, threadId));
-/* Hermes replaces the execution loop while every host tool keeps its existing policy and identity. */
-setAgentKernel(
-  config.hermesKernel
-    ? {
-        kind: "hermes",
-        url: config.hermesKernel.url,
-        ...(config.hermesKernel.token ? { token: config.hermesKernel.token } : {}),
-        binding: {
+/* Both runtime adapters use the same actor-bound host tools and business policy. */
+const conversationInteractions = createConversationInteractions(database, { saveSkill: async ({ actor, values, proposed, transaction, afterCommit }) => {
+  const skill = proposedSkillSchema.extend({ slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/), title: z.string().trim().min(1).max(120), summary: z.string().max(200).default(""), instructions: z.string().trim().min(1), tools: z.array(z.string().trim().min(1)).default([]) }).parse(values);
+  const original = proposedSkillSchema.parse(proposed);
+  if (skill.slug !== original.slug) throw new Error("技能名称与原卡片不一致。");
+  const owner = await pluginStore.skillOwner(skill.slug);
+  if (actor.role !== "admin" && owner !== undefined && owner !== actor.id) throw new Error("这项技能属于其他用户或部署，无法替换。");
+  await pluginStore.installSkill({ ...skill, ownerUserId: actor.id, by: actor.id }, { database: transaction, afterCommit });
+  return savedSkillAnswer(skill.slug);
+} });
+await conversationInteractions.ensure();
+const runtimeToolBinding: import("./agents/hermes-runtime").HermesRuntimeBinding = {
           toolGatewayUrl: process.env.CHISABOT_HERMES_TOOL_GATEWAY_URL?.trim() || `http://127.0.0.1:${config.port}/api/internal/runtime-tools`,
           readRun: (value) => readRunAssertion(value, config.keyEncryptionKey),
           loadSurfaceTools: async (scope) => {
@@ -1218,7 +1228,9 @@ setAgentKernel(
             const components = !imConnection ? await createHeadlessComponentTools({
               store: componentStore, botId: scope.botId, ownerUserId: scope.actorId, initiator, auditStore: bootAuditStore,
             }) : [];
-            const allowed = filterHeadlessForWorkflow(initiator, [...computer, ...components]);
+            const surfaces = !imConnection ? await createConversationSurfaceTools({ actor, botId: scope.botId, plugins: pluginStore, components: componentStore, sandboxed: sandboxedStore, interactions: conversationInteractions,
+              ...(computerGateway && allowDevices && canUseComputer(profile, actor) ? { computer: { gateway: computerGateway, bookmarks: browserBookmarks, initiator } } : {}) }) : [];
+            const allowed = filterHeadlessForWorkflow(initiator, [...computer, ...components, ...surfaces]);
             return allowed.map((tool) => ({
               ...tool,
               execute: async (args, context) => {
@@ -1227,14 +1239,38 @@ setAgentKernel(
                 const fresh = await agentProfileStore.get(actor, scope.botId);
                 if (!fresh || (tool.definition.name.startsWith("computer_") && !canUseComputer(fresh, actor)))
                   throw new ApprovalRefusedError("That Bot or computer is no longer available to this actor.");
-                return tool.execute(args, context);
+                const result = await tool.execute(args, context);
+                if (tool.definition.name === "computer_screenshot" && result && typeof result === "object" && "base64" in result && typeof result.base64 === "string") {
+                  return chatShots.saveScreenshot(scope.actorId, scope.botId, context.toolCallId, result as { base64: string; url?: string });
+                }
+                return result;
               },
             }));
           },
-        },
-      }
-    : { kind: "builtin" },
-);
+};
+let dshToolGateway: ReturnType<typeof createDshToolGateway> | undefined;
+let dshTargetFor: import("./agents/dsh-runtime").DshRuntimeBinding["targetFor"] | undefined;
+if (config.dshKernel) {
+  const bindings = createConversationBindings(database);
+  const operations = createToolOperationStore(database);
+  const journal = createDshRunJournal(database);
+  await journal.ensure();
+  await bindings.ensure();
+  await operations.ensure();
+  dshToolGateway = createDshToolGateway(operations, journal);
+  dshTargetFor = config.dshKernel.targetsFile ? await loadDshTargets(config.dshKernel.targetsFile)
+    : (await import("./conversations/managed-runtime")).createManagedDshRuntimes({ root: config.dshKernel.root!, gatewayUrl: config.dshKernel.gatewayUrl ?? `http://127.0.0.1:${config.port}/api/internal/dsh-tools` }).targetFor;
+  setAgentKernel({ kind: "dsh", binding: { ...runtimeToolBinding, bindings, journal, gateway: dshToolGateway,
+    toolGatewayUrl: config.dshKernel.gatewayUrl ?? `http://127.0.0.1:${config.port}/api/internal/dsh-tools`,
+    revisionFor: async threadId => {
+      const [row] = await database.$client.unsafe<{ revision: number }[]>("SELECT (count(*)+1)::integer AS revision FROM chisabot_thread_truncations WHERE thread_id=$1", [threadId]);
+      return row!.revision;
+    }, targetFor: dshTargetFor } });
+} else {
+  setAgentKernel(config.hermesKernel
+    ? { kind: "hermes", url: config.hermesKernel.url, ...(config.hermesKernel.token ? { token: config.hermesKernel.token } : {}), binding: runtimeToolBinding }
+    : { kind: "builtin", binding: runtimeToolBinding });
+}
 // One probe, shared by the settings status row and the informational ops-health entry.
 const hermesKernelUrl = config.hermesKernel?.url;
 const probeConfiguredHermes = hermesKernelUrl
@@ -1726,11 +1762,7 @@ const signRunForActor =
       config.keyEncryptionKey,
     );
     if (previous?.handoff) {
-      if (previous.botId !== botId || previous.actorId !== actorId)
-        throw new Error(
-          "The delegated run identity does not match this Bot and owner.",
-        );
-      return previousAssertion as string;
+      return bindHandoffExecution(previous, { botId, actorId, runId, threadId }, config.keyEncryptionKey);
     }
     if (initiator.kind === "person" && threadId) {
       void approvalQuestions.dismissForThread(actorId, threadId).catch(() => undefined);
@@ -2023,7 +2055,7 @@ const coordination = createCoordinationTools({
         );
       },
       sourceThread: sourceForCoordinationRun,
-      delegationFor: (claim) => readCoordinationHandoffClaim(database, claim),
+      delegationFor: (claim, run) => readCoordinationHandoffClaim(database, claim, run),
     }),
   route: async (question) => {
     const source = await sourceForCoordinationRun(question);
@@ -2210,26 +2242,13 @@ const buildAgentFor = async ({
   return agent;
 };
 
-/*
- * The pair a headless turn is driven through, built ONCE.
- *
- * Intelligence keeps its existing client and gateway runner. Local mode shares the Postgres client
- * and OSS runner used by browser turns, so routines persist into the same owner-scoped transcript.
- *
- * One runner for the process, reused across firings: it opens a socket per run and holds no idle
- * connection, but its `threads` map is per instance, and a runner per turn would fragment the
- * already-running check that keeps two turns off one thread. See `routines/run-turn.ts`.
- */
-// Only the legacy turn contracts use this facade; the OSS runtime receives the public runner.
-const routineIntelligence: CopilotKitIntelligence = localBackend
-  ? (localBackend.client as unknown as CopilotKitIntelligence)
-  : createIntelligenceClient(config.runtime.intelligence!);
-const routineAgentRunner =
-  localBackend?.runner ??
-  new IntelligenceAgentRunner({
-    url: routineIntelligence.ɵgetRunnerWsUrl(),
-    authToken: routineIntelligence.ɵgetRunnerAuthToken(),
-  });
+// Browser and background work share one execution owner and the same owner-scoped history.
+const routineIntelligence = localBackend.client;
+const routineAgentRunner = localBackend.runner;
+
+const dshRecoverySweep = config.dshKernel && localBackend ? repeatAfterEach(async () => {
+  await recoverConversations({ backend: localBackend, journal: createDshRunJournal(database), buildAgentFor });
+}, 15_000) : undefined;
 
 const governedTurnRunner = createTurnRunner({
   intelligence: routineIntelligence,
@@ -2530,7 +2549,7 @@ await imService.ensure();
 const schedules = createSchedules(database, {
   runTurn: governedTurnRunner,
   runImTurn: imTurnRunner,
-  pushToIm: (threadId, text) => imService!.pushToThread(threadId, text),
+  pushToIm: (threadId, text, options) => imService!.pushToThread(threadId, text, options),
   isThreadActive: (threadId) => localBackend?.control.isActive(threadId) ?? false,
   ...(localBackend ? { enqueueToThread: (input: { threadId: string; ownerUserId: string; message: Message }) => localBackend.inbox.enqueue({ ...input, kind: "message" }) } : {}),
   // FIX-02：定时回合结束后若仍占着对话锁，放开，避免输入框一直灰、消息发不出去。
@@ -3271,7 +3290,37 @@ const approvalTurnRunner = createTurnRunner({
 });
 const approvalContinuationRunner: typeof approvalTurnRunner = (input) =>
   panelTaskService.runContinuation(input, approvalTurnRunner);
+const resumeConfirmation = localBackend ? createConfirmationResumer({ database, backend: localBackend, confirmations, buildAgentFor, runTurn: approvalContinuationRunner,
+  refreshRunAssertion: (signed, ownerUserId, agentId) => refreshApprovedHandoffRun(signed, ownerUserId, agentId, config.keyEncryptionKey),
+}) : undefined;
+const confirmationOwner = workOwner("conversation-confirmation");
+const confirmationSweep = repeatAfterEach(async () => {
+  if (conversationAdmissionClosed()) return;
+  if (!resumeConfirmation) return;
+  const [item] = await approvalQueue.claim({ kind: "conversation.confirmation-response", owner: confirmationOwner, leaseMs: 15 * 60_000, limit: 1 });
+  if (!item) return;
+  try {
+    const payload = z.object({ ownerUserId: z.string().min(1), requestId: z.string().min(1) }).parse(item.payload);
+    await resumeConfirmation(payload.ownerUserId, payload.requestId);
+    await approvalQueue.finish({ kind: item.kind, key: item.key, owner: confirmationOwner });
+  } catch (error) {
+    await approvalQueue.release({ kind: item.kind, key: item.key, owner: confirmationOwner, delayMs: 5000, reason: reasonWithoutStatement(error) });
+  }
+}, 1000);
+const interactionOwner = workOwner("conversation-interaction");
+const interactionSweep = repeatAfterEach(async () => {
+  if (conversationAdmissionClosed()) return;
+  const [item] = await approvalQueue.claim({ kind: "conversation.interaction-response", owner: interactionOwner, leaseMs: 15 * 60_000, limit: 1 });
+  if (!item) return;
+  try {
+    await conversationInteractions.resume(item.key, approvalContinuationRunner);
+    await approvalQueue.finish({ kind: item.kind, key: item.key, owner: interactionOwner });
+  } catch (error) {
+    await approvalQueue.release({ kind: item.kind, key: item.key, owner: interactionOwner, delayMs: 5000, reason: reasonWithoutStatement(error) });
+  }
+}, 1000);
 const approvalSweep = repeatAfterEach(async () => {
+  if (conversationAdmissionClosed()) return;
   try {
     const [item] = await approvalQueue.claim({
       kind: "approval.resume",
@@ -3290,17 +3339,30 @@ const approvalSweep = repeatAfterEach(async () => {
         })
         .parse(item.payload);
       const resumeDependencies: ApprovalResumeDependencies = {
-        validate: (action) =>
-          approvalService.validateReentry(action, () =>
+        refusal: async action => config.dshKernel ? createDshRunJournal(database).continuationRefusal(action.threadId, action.runId) : null,
+        validate: async (action) => {
+          const refusal = config.dshKernel ? await createDshRunJournal(database).continuationRefusal(action.threadId, action.runId) : null;
+          if (refusal) throw new ApprovalRefusedError(refusal);
+          return approvalService.validateReentry(action, () =>
             executeApprovedAction(action),
-          ),
-        execute: executeApprovedAction,
+          );
+        },
+        execute: async action => {
+          const refusal = config.dshKernel ? await createDshRunJournal(database).continuationRefusal(action.threadId, action.runId) : null;
+          if (refusal) throw new ApprovalRefusedError(refusal);
+          return executeApprovedAction(action);
+        },
         continue: async ({
           continuation: snapshot,
           result,
           messageId,
           approvalId,
         }) => {
+          if (config.dshKernel) {
+            await database.$client.unsafe(`UPDATE chisabot_tool_operations SET status='completed',result=$2::text::jsonb,updated_at=now()
+              WHERE owner_user_id=$1 AND status='waiting_approval' AND (session_id||':'||turn_number||':'||step_number||':'||call_id)=$3`, [input.ownerUserId, JSON.stringify(result), snapshot.toolCallId]);
+            if (await createDshRunJournal(database).continuationRefusal(snapshot.threadId, snapshot.runId)) return;
+          }
           const [waitingRun] = await database
             .select({ id: responsibilityRuns.id })
             .from(responsibilityRuns)
@@ -3370,7 +3432,7 @@ const approvalSweep = repeatAfterEach(async () => {
               { id: messageId, text: outcome.replyText, kind: "reply" },
             );
           if (outcome.replyText?.trim()) {
-            void imService?.pushToThread(snapshot.threadId, outcome.replyText.trim(), { privateOnly: true }).catch(() => {});
+            void imService?.pushToThread(snapshot.threadId, outcome.replyText.trim(), { privateOnly: true, deliveryId: `approval:${approvalId}` }).catch(() => {});
           }
         },
       };
@@ -3699,6 +3761,7 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
   const runner = createHandoffRunner({
     queue: createWorkQueue(database),
     owner: workOwner("handoff"),
+    executions: createHandoffExecutions(database, () => threadIdentity.mint(), value => readRunAssertion(value, config.keyEncryptionKey, Date.now(), { ignoreExpiry: true })),
     auditStore: bootAuditStore,
     /*
      * The signed statement of the run the addressed Bot is about to start, carrying how deep the
@@ -3712,7 +3775,7 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
        * delivery that then rebuilt them as an ordinary user could not find the Bot the desk had just
        * agreed to, and the person was told it never answered.
        */
-      agentFor: async ({ actorId, botId, fromBotId }) => {
+      agentFor: async ({ actorId, botId, fromBotId, initiator, depth }) => {
         const actor = await actorFor(actorId).catch(() => null);
         if (!actor) {
           throw new Error(
@@ -3722,7 +3785,8 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
         return copilotRuntime.agentFor({
           actor,
           botId,
-          initiator: { kind: "handoff", id: fromBotId },
+          initiator: initiator ?? { kind: "handoff", id: fromBotId },
+          depth,
         });
       },
       history: copilotRuntime.history,
@@ -4120,6 +4184,7 @@ const app = createApp(
     ...(gatewaySecret ? { singleUserGuard: createGatewayRequireUser(gatewaySecret, provisionGatewayUser) } : {}),
     extraRoutes: ({ requireUser }) => [
       ["/api/internal/runtime-tools", createRuntimeToolsRoutes(hermesRuntimeTools)],
+      ...(dshToolGateway ? [["/api/internal/dsh-tools", dshToolGateway.routes] as [string, typeof dshToolGateway.routes]] : []),
       [
         "/api/admin/smoke",
         createAdminSmokeRoutes({
@@ -4193,13 +4258,28 @@ const app = createApp(
         }),
       ],
       ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
+      ["/api/conversation-interactions", conversationInteractions.routes(requireUser)],
       ["/api/admin/history-summary-model", historySummaryModel.routes(requireUser)],
       [
         "/api/admin/runtime-kernel",
         createRuntimeKernelRoutes({
           requireUser,
-          kernel: probeConfiguredHermes ? "hermes" : "builtin",
+          kernel: config.dshKernel ? "dsh" : probeConfiguredHermes ? "hermes" : "builtin",
           ...(probeConfiguredHermes ? { probe: probeConfiguredHermes } : {}),
+          ...(dshTargetFor ? { probeDsh: async (actorId: string) => {
+            let client: import("../../runtime/dsh/src/client.mjs").DshHostClient | undefined;
+            try {
+              const target = await dshTargetFor!(actorId);
+              const { readFile } = await import("node:fs/promises");
+              const { DshHostClient } = await import("../../runtime/dsh/src/client.mjs");
+              const address = JSON.parse(await readFile(target.connectionFile, "utf8"));
+              client = await DshHostClient.connect(address.endpoint);
+              const health = await client.health(AbortSignal.timeout(5000));
+              if (health.ownerUserId !== actorId) throw new Error("Runtime owner mismatch.");
+              return { ok: true, version: health.version, sessions: health.sessions.length, running: health.sessions.filter(session => session.state === "running").length };
+            } catch { return { ok: false, error: "DSH 执行内核暂时不可用，请检查对应账号的 Host 日志。" }; }
+            finally { await client?.close(); }
+          } } : {}),
         }),
       ],
       [
@@ -4319,6 +4399,7 @@ const gatewayReplayCache = new GatewayReplayCache();
 
 serve<SocketData>({
   port,
+  hostname: process.env.CHISABOT_BIND_HOST?.trim() || "0.0.0.0",
   async fetch(request, server) {
     if (gatewaySecret && isReplayedGatewayIdentity(gatewaySecret, request.headers, gatewayReplayCache)) {
       return Response.json({ ok: false, error: "请先登录。", openbotAuthRequired: true }, { status: 401 });
@@ -4333,7 +4414,7 @@ serve<SocketData>({
     // §102：网页聊天里的计算机动作（含最长 600 秒的前台命令）经审批网关同步执行，同样不设空闲超时。
     if (url.pathname.startsWith("/api/approvals/computer/")) server.timeout(request, 0);
     // Hermes waits on the same governed long-running tools and approvals; the run owns cancellation.
-    if (url.pathname.startsWith("/api/internal/runtime-tools/")) server.timeout(request, 0);
+    if (url.pathname.startsWith("/api/internal/runtime-tools/") || url.pathname.startsWith("/api/internal/dsh-tools/")) server.timeout(request, 0);
     // IM 接入：微信扫码状态是长轮询（约 25 秒），「测试连接」要等平台握手（最多 15 秒），超过 Bun 默认的 10 秒空闲。
     if (url.pathname.startsWith("/api/im/") && !request.headers.get("upgrade")) server.timeout(request, 60);
     // 模型回合是流式的（SSE）：免费 / 慢模型首个 token 前常常要想十几秒，带很多工具时更久。Bun 默认
@@ -4523,6 +4604,9 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     void taskCenter.stop();
     wakeUpReaper.stop();
     approvalSweep.stop();
+    interactionSweep.stop();
+    confirmationSweep.stop();
+    dshRecoverySweep?.stop();
     personResponseSweep.stop();
     groupSweep.stop();
     void Promise.allSettled([

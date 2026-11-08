@@ -801,9 +801,66 @@ describe("what the trail is told started the hop", () => {
     });
 
     expect(builtFor).toEqual([
-      { actorId: "user-1", botId: "researcher", fromBotId: "assistant" },
+      {
+        actorId: "user-1",
+        botId: "researcher",
+        fromBotId: "assistant",
+        depth: 1,
+      },
     ]);
   });
+});
+
+test("delivery keeps the original initiator when building the addressed Bot", async () => {
+  const { delivery: deliver, builtFor } = delivery(FINISHED);
+  await deliver.deliver({
+    work: { ...WORK, initiator: { kind: "routine", id: "daily" } },
+    message: "m",
+    assertion: "s",
+  });
+  expect(builtFor[0]).toMatchObject({
+    actorId: WORK.actorId,
+    initiator: { kind: "routine", id: "daily" },
+    depth: 1,
+  });
+});
+
+test("a DSH timeout waits for execution termination before releasing the lease and presence", async () => {
+  const agent = Object.assign(stubAgent(), { acknowledgesStop: true });
+  const order: string[] = [];
+  let end: () => void = () => {};
+  const deliver = createHandoffDelivery({
+    agentFor: async () => agent,
+    history: async () => PRIOR,
+    newRunId: () => "run",
+    mintThreadId: () => "scratch",
+    deadlineMs: 10,
+    lock: {
+      acquire: async () => ({ runId: "run" }),
+      renew: async () => {},
+      release: async () => {
+        order.push("outer-release");
+      },
+    },
+    runner: {
+      ownsThreadLease: true,
+      run: () =>
+        new Observable((subscriber) => {
+          end = () => {
+            order.push("kernel-stopped");
+            subscriber.complete();
+          };
+        }),
+      stop: async () => {
+        order.push("stop-requested");
+        setTimeout(end, 30);
+      },
+    },
+  });
+  await expect(
+    deliver.deliver({ work: WORK, message: "m", assertion: "s" }),
+  ).rejects.toThrow("did not finish");
+  expect(order).toEqual(["stop-requested", "kernel-stopped", "outer-release"]);
 });
 
 /**

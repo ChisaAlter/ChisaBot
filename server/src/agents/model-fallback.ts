@@ -483,23 +483,39 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
  * 2. 环境变量 CHISABOT_MODEL_FALLBACKS（逗号分隔；off / 0 关闭自动挑选）；
  * 3. 目录里与当前模型同平台前缀的其它模型（最多 3 个；目录明说不能调工具的跳过——备用模型
  *    要接着主模型手里的工具往下跑，QA1102-13）。
- * 只返回目录里存在的模型的规则只用于第 3 条；管理员列表照填写的顺序，目录暂时读不到也照用。
+ * 当前完整目录会过滤失效的显式候选；目录为空、过期或暂时读不到时保留配置。
+ * 旧调用者只提供模型数组时不把它当作完整目录，继续沿用原有显式候选行为。
  */
+export type FallbackCatalogEntries = readonly (string | { id: string; supportsTools?: boolean })[];
+export type FallbackCatalog = FallbackCatalogEntries | { models: FallbackCatalogEntries; stale?: boolean };
+
 export function fallbackCandidates(
-  catalog: () => Promise<readonly (string | { id: string; supportsTools?: boolean })[]>,
+  catalog: () => Promise<FallbackCatalog>,
   env: Record<string, string | undefined> = process.env,
   configured: () => Promise<string[]> = async () => [],
 ): (primary: string) => Promise<string[]> {
   return async (primary) => {
     const admin = (await configured().catch(() => [] as string[])).filter((id) => id && id !== primary);
-    if (admin.length) return admin;
     const fromEnv = env.CHISABOT_MODEL_FALLBACKS?.trim();
-    if (fromEnv === "off" || fromEnv === "0") return [];
-    if (fromEnv) return fromEnv.split(",").map((s) => s.trim()).filter((s) => s && s !== primary);
+    if (!admin.length && (fromEnv === "off" || fromEnv === "0")) return [];
+    const explicit = admin.length ? admin : fromEnv ? fromEnv.split(",").map((s) => s.trim()).filter((s) => s && s !== primary) : undefined;
     const slash = primary.indexOf("/");
-    if (slash <= 0) return [];
+    if (!explicit && slash <= 0) return [];
+    const snapshot = await catalog().catch(() => [] as FallbackCatalogEntries);
+    const listed = "models" in snapshot ? snapshot.models : snapshot;
+    const entries = listed.map((row) => (typeof row === "string" ? { id: row } : row));
+    if (explicit) {
+      // A successful full directory can rule out retired routes. An unavailable/stale
+      // directory (or a legacy caller supplying only ids) cannot veto configured models.
+      if (!("models" in snapshot) || snapshot.stale || !entries.length) return explicit;
+      const available = new Set(entries.filter((row) => row.supportsTools !== false).map((row) => row.id));
+      const candidates = explicit.filter((id) => available.has(id));
+      const skipped = explicit.filter((id) => !available.has(id));
+      if (skipped.length) console.info(JSON.stringify({ type: "model-fallback", event: "unavailable-candidates", models: skipped }));
+      // Do not substitute a different provider when all explicitly chosen backups are gone.
+      return candidates;
+    }
     const prefix = primary.slice(0, slash + 1);
-    const entries = (await catalog()).map((row) => (typeof row === "string" ? { id: row } : row));
     return entries
       .filter((row) => row.id !== primary && row.id.startsWith(prefix) && row.supportsTools !== false)
       .slice(0, 3)

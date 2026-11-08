@@ -115,7 +115,12 @@ export type RunAssertion = {
    */
   initiator?: AuditInitiator;
   /** The durable handoff claim under which a remote delivery may coordinate further work. */
-  handoff?: { key: string; owner: string };
+  handoff?: {
+    key: string;
+    owner: string;
+    sourceThreadId?: string;
+    executionRunId?: string;
+  };
 };
 
 type SignedRun = RunAssertion & { exp: number };
@@ -178,7 +183,13 @@ export function readRunAssertion(
         typeof payload.handoff.key !== "string" ||
         !payload.handoff.key ||
         typeof payload.handoff.owner !== "string" ||
-        !payload.handoff.owner)
+        !payload.handoff.owner ||
+        (payload.handoff.sourceThreadId !== undefined &&
+          (typeof payload.handoff.sourceThreadId !== "string" ||
+            !payload.handoff.sourceThreadId)) ||
+        (payload.handoff.executionRunId !== undefined &&
+          (typeof payload.handoff.executionRunId !== "string" ||
+            !payload.handoff.executionRunId)))
     )
       return null;
     return {

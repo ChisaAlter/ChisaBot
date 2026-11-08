@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import type { Message } from "@ag-ui/core";
-import { CopilotKitProvider, useCopilotKit } from "@copilotkit/react-core/v2";
+import { ConversationSessionProvider, conversationClient } from "@/lib/chat/session-client";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { type InfiniteData, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
@@ -48,14 +48,14 @@ const fresh = {
 } satisfies Message;
 
 let originalFetch: typeof fetch;
-let core: ReturnType<typeof useCopilotKit>["copilotkit"] | undefined;
+let core: typeof conversationClient | undefined;
 /** 服务器每个版本的整份；版本 k 的 version = v{k}、cursor = c{k}（指向倒数第二条之后）。 */
 let revisions: Message[][] = [];
 let reads: { since: string | null; cursor: string | null }[] = [];
 let answers: Record<string, unknown>[] = [];
 
 function CoreProbe() {
-  core = useCopilotKit().copilotkit;
+  core = conversationClient;
   return null;
 }
 function sse(events: unknown[]) {
@@ -185,10 +185,10 @@ test("the mounted channel re-reads history with since/cursor; unchanged sets not
   cacheChannel();
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <CopilotKitProvider runtimeUrl="http://localhost/api/copilotkit">
+      <ConversationSessionProvider>
         <CoreProbe />
         <ChannelChat channel={channel} runtimeAgentId="incremental-bot" />
-      </CopilotKitProvider>
+      </ConversationSessionProvider>
     </QueryClientProvider>,
   );
   await view.findByText("Second stored");

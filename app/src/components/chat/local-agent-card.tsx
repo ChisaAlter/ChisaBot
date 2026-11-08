@@ -1,4 +1,4 @@
-import { useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
+import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
   IconAlertTriangle,
   IconCheck,
@@ -41,7 +41,7 @@ import { cn } from "@/lib/utils";
  * 需要批准时卡片里直接「允许 / 拒绝」；结束后列出改动文件，改动在一次性副本里时给「应用改动 / 放弃」。
  */
 export function LocalAgentCard({ taskId, pendingTitle }: { taskId?: string; pendingTitle?: string }) {
-  const chat = useCopilotChatConfiguration();
+  const chat = useConversationScope();
   const threadId = chat?.threadId;
   const tasks = useThreadLocalTasks(threadId);
   const task = taskId ? tasks.data?.find((item) => item.id === taskId) : undefined;

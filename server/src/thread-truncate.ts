@@ -53,6 +53,7 @@ export async function ensureTruncationTable(database: Database) {
     removed jsonb NOT NULL DEFAULT '[]'::jsonb, created_at timestamptz NOT NULL DEFAULT now()
   )`);
   await database.$client.unsafe("CREATE INDEX IF NOT EXISTS chisabot_thread_truncations_thread ON chisabot_thread_truncations(thread_id, id)");
+  await database.$client.unsafe("ALTER TABLE chisabot_thread_truncations ADD COLUMN IF NOT EXISTS previous_messages jsonb");
 }
 
 /** 本地会话初始化时已建表；读取失败必须阻止合并，不能把旧客户端的已删除消息重新写回。 */
@@ -99,6 +100,8 @@ export async function truncateThread(
   input: { threadId: string; ownerUserId: string; fromMessageId: string; mode: "regenerate" | "edit" | "resend" },
 ) {
   return await database.$client.begin(async (transaction) => {
+    // Serialize the revision cut with DSH's first/replacement binding, including an absent row.
+    await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [input.threadId]);
     const rows = await transaction.unsafe<ThreadLockRow[]>(
       "SELECT owner_user_id, messages, run_id, lock_expires_at FROM openbot_local_threads WHERE id = $1 FOR UPDATE", [input.threadId],
     );
@@ -137,14 +140,30 @@ export async function truncateThread(
       }
     }
     await transaction.unsafe(
-      "UPDATE openbot_local_threads SET messages = $2::text::jsonb, updated_at = now() WHERE id = $1",
+      `UPDATE openbot_local_threads SET messages = $2::text::jsonb,
+       snapshot_sequence=(SELECT coalesce(max(sequence),0) FROM openbot_local_events WHERE thread_id=$1),
+       updated_at = now() WHERE id = $1`,
       [input.threadId, JSON.stringify(row.messages.slice(0, plan.index))],
     );
     await transaction.unsafe(
-      `INSERT INTO chisabot_thread_truncations (thread_id, owner_user_id, from_message_id, mode, removed)
-       VALUES ($1, $2, $3, $4, $5::text::jsonb)`,
-      [input.threadId, input.ownerUserId, input.fromMessageId, input.mode, JSON.stringify(plan.removed)],
+      `INSERT INTO chisabot_thread_truncations (thread_id, owner_user_id, from_message_id, mode, removed, previous_messages)
+       VALUES ($1, $2, $3, $4, $5::text::jsonb, $6::text::jsonb)`,
+      [input.threadId, input.ownerUserId, input.fromMessageId, input.mode, JSON.stringify(plan.removed), JSON.stringify(row.messages)],
     );
+    const [dsh] = await transaction.unsafe<{ present: boolean }[]>(
+      "SELECT to_regclass('public.chisabot_runtime_bindings') IS NOT NULL AS present",
+    );
+    if (dsh?.present) {
+      // The edit itself revokes the old execution branch. Waiting until the next send would let
+      // an already-approved operation run against the edited history in the meantime.
+      await transaction.unsafe("UPDATE chisabot_runtime_bindings SET active=false WHERE thread_id=$1 AND owner_user_id=$2 AND active", [input.threadId, input.ownerUserId]);
+      await transaction.unsafe(`UPDATE chisabot_dsh_runs SET stop_requested=true,status='interrupted',updated_at=now()
+        WHERE thread_id=$1 AND owner_user_id=$2 AND status IN ('admitting','observing','projecting','waiting')`, [input.threadId, input.ownerUserId]);
+      await transaction.unsafe(`UPDATE chisabot_conversation_commands SET status='stopped',updated_at=now()
+        WHERE thread_id=$1 AND owner_user_id=$2 AND status IN ('accepted','dispatched','queued')`, [input.threadId, input.ownerUserId]);
+      await transaction.unsafe(`UPDATE chisabot_conversation_interactions SET status='cancelled'
+        WHERE thread_id=$1 AND owner_user_id=$2 AND status='pending'`, [input.threadId, input.ownerUserId]);
+    }
     const revision = await transaction.unsafe<{ n: string }[]>(
       "SELECT count(*)::text AS n FROM chisabot_thread_truncations WHERE thread_id = $1", [input.threadId],
     );
@@ -171,6 +190,8 @@ export async function afterTruncate(
     );
   } catch { /* 收件箱没启用 */ }
   if (input.removedToolCalls.length) {
+    await sql.unsafe("UPDATE chisabot_conversation_interactions SET status='cancelled' WHERE owner_user_id=$1 AND thread_id=$2 AND status='pending' AND call_id IN (SELECT jsonb_array_elements_text($3::text::jsonb))",
+      [input.ownerUserId, input.threadId, JSON.stringify(input.removedToolCalls)]);
     try {
       await sql.unsafe(
         `UPDATE chisabot_confirm_requests SET status = 'cancelled', decided_at = coalesce(decided_at, now())

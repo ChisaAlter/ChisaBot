@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test";
-import { CopilotKitProvider } from "@copilotkit/react-core/v2";
+import { ConversationSessionProvider, conversationClient } from "@/lib/chat/session-client";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClientProvider, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { act, cleanup, render } from "@testing-library/react";
@@ -140,9 +140,9 @@ test("a background refetch of preferences / agents / channels with unchanged dat
   try {
     const view = render(
       <QueryClientProvider client={queryClient}>
-        <CopilotKitProvider runtimeUrl="http://localhost/api/copilotkit">
+        <ConversationSessionProvider>
           <Stage />
-        </CopilotKitProvider>
+        </ConversationSessionProvider>
       </QueryClientProvider>,
     );
     await view.findByPlaceholderText?.("输入消息…").catch(() => null);

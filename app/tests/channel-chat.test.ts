@@ -1,4 +1,4 @@
-import type { Attachment } from "@copilotkit/react-core/v2";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import { describe, expect, test } from "bun:test";
 import { toMessageContent } from "@/components/channels/channel-chat";
 import { attachmentUrl } from "@/lib/channels/attachments";

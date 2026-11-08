@@ -1,5 +1,5 @@
 import { errorText } from "../text";
-import type { AdapterContext, ImInbound, ImReply, TestResult, WsLike } from "../types";
+import type { AdapterContext, ImDeliveryReceipt, ImInbound, ImReply, TestResult, WsLike } from "../types";
 import { dataText, LoopAdapter, randomId } from "./base";
 
 /**
@@ -209,18 +209,22 @@ export class OneBotAdapter extends LoopAdapter {
     });
   }
 
-  async send(reply: ImReply): Promise<void> {
+  async send(reply: ImReply): Promise<ImDeliveryReceipt> {
     const { inbound } = reply;
     let first = true;
+    const messageIds: string[] = [];
     for (const chunk of reply.chunks) {
       const message: Segment[] = [];
       if (first && inbound.chatType === "group" && inbound.reply.messageId != null)
         message.push({ type: "reply", data: { id: String(inbound.reply.messageId) } });
       message.push({ type: "text", data: { text: chunk } });
-      if (inbound.chatType === "group") await this.call("send_group_msg", { group_id: Number(inbound.chatId) || inbound.chatId, message });
-      else await this.call("send_private_msg", { user_id: Number(inbound.chatId) || inbound.chatId, message });
+      const receipt = inbound.chatType === "group"
+        ? await this.call("send_group_msg", { group_id: Number(inbound.chatId) || inbound.chatId, message })
+        : await this.call("send_private_msg", { user_id: Number(inbound.chatId) || inbound.chatId, message });
+      if (receipt?.message_id != null) messageIds.push(String(receipt.message_id));
       first = false;
     }
+    return { messageIds };
   }
 }
 

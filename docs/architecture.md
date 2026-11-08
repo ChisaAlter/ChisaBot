@@ -1,17 +1,16 @@
 # ChisaBot 架构
 
-ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：**一个云端服务器上的机器人（agent）+ 用户的设备作为节点**。这一页讲
-ChisaBot 现在实际在跑的结构；上游 ChisaBot 的原始架构（Intelligence、AG-UI Bot 框架、supervisor、SPIRE 等）见
+ChisaBot 源自 OpenBot，采用**云端机器人（agent）+ 用户设备节点**。当前迁移将执行循环交给独立 DSH Host，账号、Bot、工具权限和交付保留在 ChisaBot。上游原始架构（Intelligence、AG-UI Bot 框架、supervisor、SPIRE 等）见
 [chisabot-architecture.md](chisabot-architecture.md)，其中很多部分正在瘦身（[slimming.md](slimming.md)）。
 
 关键决定都记在 [ADR](adr/README.md) 里，界面规则在 [DESIGN.md](../DESIGN.md)。一页概览见 [overview.md](overview.md)，全部功能见
-[features.md](features.md)，全部数据表见 [data-model.md](data-model.md)。本页截至 main `0e23321`（2026-10-17）。
+[features.md](features.md)，全部数据表见 [data-model.md](data-model.md)。以下会话部分更新于 2026-11-08；DSH 已上线，生产切换与客户端验收状态见[实施记录](pipeline-runs/20261107-dsh-migration.md)。
 
 ## 1. 总览
 
 ```
- 浏览器 / PWA          ChisaBot (Electron)           ChisaBot Android (原生 Compose)  IM 平台
-      │                  │  聊天窗口 = 同一个网页          │ 原生聊天 + 网页兜底          │ QQ/微信/飞书/…
+ 浏览器 / PWA          ChisaBot (Electron)           ChisaBot Android (WebView)       IM 平台
+      │                  │  聊天窗口 = 同一个网页          │ 同一个网页的手机布局        │ QQ/微信/飞书/…
       │                  │  设备节点 WSS ───────┐         │                            │
       ▼                  ▼                      │         ▼                            ▼
  ┌──────────── 公网网关（nginx，TLS，默认 8443）────────────────────────────────────────────┐
@@ -20,7 +19,8 @@ ChisaBot 现在实际在跑的结构；上游 ChisaBot 的原始架构（Intelli
  └───────────────────────────┬────────────────────────────────────────────────────────────┘
                              ▼  127.0.0.1:3001
  ┌──────────── ChisaBot 应用容器（chisabot-zh）──────────────────────────────────────────────┐
- │ server（Hono + CopilotKit runtime，内置 agent 循环）  app（React/Vite 构建产物）          │
+ │ server（Hono + 自有 Conversation）                  app（React/Vite 构建产物）          │
+ │ 独立 Node DSH Host（每账号一实例）+ Session 持久卷                                      │
  │ PostgreSQL（容器内）   agent-computer（Chromium + Xvfb，机器人的云端浏览器 / 工作区）      │
  │ 进程内定时：定时任务 15 s · 面板刷新                                                       │
  └───────────┬─────────────────────────────┬────────────────────────────────────────────────┘
@@ -35,12 +35,11 @@ ChisaBot 现在实际在跑的结构；上游 ChisaBot 的原始架构（Intelli
 
 ### 2.1 服务器上的 agent（`server/`）
 
-- 每个机器人的回合都在服务器进程里跑（`server/src/agents/`、`copilot.ts`）：模型来自部署的模型连接（Magpie 或任意
-  OpenAI / Anthropic 兼容接口，[models.md](models.md)），每个机器人可选自己的模型。
+- ChisaBot 的 Conversation 模块接纳命令、保存展示历史并管理业务权限；选择 DSH 时由独立 Node Host 维护模型/工具循环、Session 和压缩（`runtime/dsh/`、`server/src/agents/dsh-runtime.ts`）。模型来自原部署连接（Magpie 或 OpenAI / Anthropic 兼容接口，[models.md](models.md)），Bot 模型覆盖继续生效。
 - 回合开头注入的上下文：工作方式提示、记忆（§50）、技能目录（§51）、保险箱用法（§52）、GitHub（§53）、当前北京时间（§55）、
   用户的设备情况（§45）。工具按回合类型给：人的回合全量；IM 回合只给文字类（§49）；面板刷新回合只给面板工具（§43）；
   后台任务（§38）有自己的工具集。
-- 对话存在本地表 `openbot_local_threads / _runs / _events`（替代上游 Intelligence），线程锁防并发（重启时释放孤儿锁）。
+- 产品历史仍在 `openbot_local_threads / _runs / _events`；0063 迁移补齐 DSH binding、command、run、工具账本、交互与旧历史导入表。DSH 模型历史在账号 Session 卷中。应用重启先接回仍在工作的 Host，工具回执未知时不自动重做。
 - 默认是**云端 agent + 设备节点**；也可以把整件活交给设备上的本地 agent（Claude Code / Codex / OpenCode / 内置循环，
   [ADR-0003](adr/0003-cloud-agent-device-nodes.md)、[ADR-0010](adr/0010-local-agent-handoff.md)，§66）。
 - 每轮的权限：确认卡片 + 审批偏好（§58）+ 每个机器人「请求批准 / 完全访问」（§97，`chisabot_bot_permissions`）在服务器端执行；
@@ -48,8 +47,7 @@ ChisaBot 现在实际在跑的结构；上游 ChisaBot 的原始架构（Intelli
 
 ### 2.2 网页（`app/`）
 
-React + TanStack Router + CopilotKit。一个应用覆盖聊天、设置、管理；PC 和 Android 加载的就是服务器上的这份网页，所以网页
-改动不需要客户端发版。桌面端仍需服务器发布新前端后刷新；本地预览构建不更新线上网页。右侧常驻栏和窄窗口弹出层共享内容与卡片表面，见 [侧栏与弹出面板一致性](sidebar-panel-parity.md)。界面规范见 DESIGN.md（顶部有章节索引）。消息节点、暂停队列、请求期限与数据库故障恢复见[聊天可靠性](chat-reliability.md)。
+React + TanStack Router + 自有会话客户端与呈现注册表。一个应用覆盖聊天、设置、管理；网页、PWA、Electron 和 Android 共用前端，Android 使用手机响应式布局；旧原生客户端的 AG-UI 兼容接口继续保留。服务器前端发布后各端通过网页刷新取得更新；本地预览构建不更新线上网页。右侧常驻栏和窄窗口弹出层共享内容与卡片表面，见 [侧栏与弹出面板一致性](sidebar-panel-parity.md)。界面规范见 DESIGN.md（顶部有章节索引）。消息节点、暂停队列、请求期限与数据库故障恢复见[聊天可靠性](chat-reliability.md)。
 
 ### 2.3 公网网关与登录（`deploy/public/`）
 
@@ -81,8 +79,7 @@ React + TanStack Router + CopilotKit。一个应用覆盖聊天、设置、管�
 
 ### 2.6 Android（`android/`）
 
-Kotlin + Jetpack Compose 原生应用（v0.1.13 起，DESIGN §80、[android-native.md](android-native.md)）：登录、机器人列表、聊天、面板原生；v0.1.14 第二轮加了确认卡片、附件、停止、重新生成 / 编辑、原生设置基础（§86）；其余页面应用内网页兜底；自带登录页，扫码绑定（§33）后用设备令牌换会话；手机只用来
-登录聊天，不是机器人的设备节点。更新源是 `latest.json`（GitHub Releases 或自建静态目录）。
+Kotlin 壳用全屏 WebView 加载桌面端同一套 React 前端，气泡、卡片、抽屉、输入框和设置都使用网页手机布局，不额外包原生聊天顶栏。原生层保留登录、扫码绑定（§33）、CookieManager、文件/相机选择、下载、麦克风权限、返回键、系统栏与键盘处理，以及 APK 更新。按服务器恢复上次网页路由；旧 Compose 页面保留为兼容代码。用户于 2026-11-08 明确采用此方向，替代 §80、§86 的旧原生主界面方案；细节见 [android-native.md](android-native.md)。手机用于登录聊天，不是机器人的设备节点。APK 更新源是 `latest.json`（GitHub Releases 或自建静态目录）。
 
 ### 2.7 云端浏览器（`agent-computer/`）
 
@@ -121,9 +118,9 @@ ChisaBot 自己的表大多在服务启动时 `CREATE TABLE IF NOT EXISTS`（不
 | 确认卡片 · 权限与审批 · 每个机器人的权限 | §58、§97 | [confirmations.md](confirmations.md)、[settings-ia.md](settings-ia.md) | `server/src/confirmations/` | `chisabot_confirm_prefs/_rules/_requests`、`chisabot_bot_permissions` |
 | 设备编码工具 · 完全访问 · 无界面节点 | §62 | [pc-node.md](pc-node.md) | `server/src/devices/tools.ts`、`roots.ts`、`node-install.ts` | `devices.full_access_until` |
 | 本地 agent | §66 · ADR-0010 | [local-agents.md](local-agents.md) | `server/src/local-agents/`、`pc/src/agent-runtime/` | `chisabot_device_agent_settings`、`chisabot_local_agent_tasks` |
-| Android 原生 | §80、§86 | [android-native.md](android-native.md) | `android/` | — |
+| Android 同源网页客户端 | §80 当前方向；§86 旧实现 | [android-native.md](android-native.md) | `android/`、`app/` | — |
 | 设置分组 · 设置搜索 | §97 | [settings-ia.md](settings-ia.md) | `app/src/lib/settings/registry.ts` | — |
-| IM 接入 | §49 | [im.md](im.md) | `server/src/im/`、`shared/im.ts` | `chisabot_im_connections/_chats/_logs` |
+| IM 接入与持久交付 | §49；DSH §13 | [im.md](im.md) | `server/src/im/`、`shared/im.ts` | `chisabot_im_connections/_chats/_logs`、0064 `_inbox/_outbox`；正文与平台回执独立于模型执行保存 |
 | 长期记忆 | §50 | [memory.md](memory.md) | `server/src/memory-notes/` | `chisabot_memory_notes`、`chisabot_memory_bots` |
 | 技能 | §51 | [skills.md](skills.md) | `server/src/skills-chisa/` | 上游 `skills` 表 |
 | 密钥保险箱 | §52 | [vault.md](vault.md) | `server/src/vault/` | `chisabot_vault_secrets`、`chisabot_vault_requests` |

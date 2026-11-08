@@ -1,4 +1,4 @@
-import { CopilotKitProvider } from "@copilotkit/react-core/v2";
+
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { toast } from "@/components/ui/toast";
@@ -20,6 +20,8 @@ import { WorkerTool } from "./worker-tool";
 import { LocalAgentTool } from "./local-agent-tool";
 import { SandboxedTools } from "./sandboxed-tools";
 import { SkillTools } from "./skill-tools";
+import { ToolRendererProvider } from "@/lib/chat/renderers";
+import { ConversationSessionProvider } from "@/lib/chat/session-client";
 
 /**
  * The CopilotKit client, wrapped once for the whole authenticated app.
@@ -53,21 +55,9 @@ export function CopilotProvider({ children }: { children: ReactNode }) {
   const { data: capabilities } = useQuery(deploymentCapabilitiesQueryOptions());
 
   return (
-    <CopilotKitProvider
-      runtimeUrl="/api/copilotkit"
-      credentials="include"
-      onError={({ code, error }) => {
-        const message = describeCopilotError(String(code), error);
-        if (message) toast.error(message);
-      }}
-      /*
-       * 不传 `openGenerativeUI`：Open Generative UI（`generateSandboxedUi`，沙箱 iframe 自写 HTML）
-       * 已停用。SDK 只要运行时声明了该能力或这里出现了这个属性就会把工具提供给 Bot；服务器已不再
-       * 声明，这里也不再传，于是 json-render 的 `render_ui`（下面的 RenderUiTool）是唯一的生成式界面。
-       */
-    >
-      {/* Computer tools target the Bot declared by the mounted surface. */}
-      <ActiveBotProvider>
+    <>
+{/* Computer tools target the Bot declared by the mounted surface. */}
+      <ConversationSessionProvider transport={capabilities?.mode === "intelligence" ? "legacy" : "commands"}><ToolRendererProvider><ActiveBotProvider>
         <ComputerTools />
         {/*
           json-render 生成式界面（取代 A2UI）：`render_ui` 在服务器上执行并校验，这里只负责画。
@@ -108,7 +98,7 @@ export function CopilotProvider({ children }: { children: ReactNode }) {
         {/* Offered only on a Bot holding the skill-creator skill; see skill-tools.tsx. */}
         <SkillTools />
         {children}
-      </ActiveBotProvider>
-    </CopilotKitProvider>
+      </ActiveBotProvider></ToolRendererProvider></ConversationSessionProvider>
+    </>
   );
 }

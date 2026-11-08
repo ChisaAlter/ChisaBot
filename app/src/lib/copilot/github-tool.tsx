@@ -1,4 +1,4 @@
-import { useRenderTool } from "@copilotkit/react-core/v2";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { IconBrandGithub, IconCircleCheck, IconCircleX, IconExternalLink, IconGitPullRequest } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { memo, useRef } from "react";

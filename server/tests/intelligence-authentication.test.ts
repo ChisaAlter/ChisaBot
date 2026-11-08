@@ -104,11 +104,6 @@ describe("Intelligence authentication recovery", () => {
   test("observed methods retain the SDK private-field receiver and lifecycle callbacks", async () => {
     const { client, respondWith } = platform();
     respondWith(200);
-    expect(client.ɵgetApiKey()).toBe("fixture-project-key");
-    expect(client.ɵgetRunnerWsUrl()).toContain("127.0.0.1:1");
-    const unsubscribe = client.onThreadCreated(() => {});
-    expect(typeof unsubscribe).toBe("function");
-    unsubscribe();
     const read = client.listThreads.bind(client);
     expect(await read({ userId: "employee", agentId: "bot" })).toEqual({
       threads: [],

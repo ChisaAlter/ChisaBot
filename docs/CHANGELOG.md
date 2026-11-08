@@ -1,3 +1,7 @@
+## 未发版
+
+- CB-114（`fix/chat-reliability`）：修复失效备用模型导致主模型被误报 404、流式正文出气泡、普通 Markdown 自动转文档及空白/滚动突跳。DESIGN §126；本地验证通过，正式服务与 Hermes 适配器尚未更新。
+
 ## 0.1.137
 
 - 右栏顶部分段扩为「面板 | 任务 | 计算机」三段（`RailTab` 增 `tasks`，子页签持久化 `chisabot-panel-rail-subtab`），无计算机能力时两段；有待确认审批时「任务」挂 needs-you 圆点。

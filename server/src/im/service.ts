@@ -10,6 +10,10 @@ import { upgradeWebSocket } from "../channels/socket";
 import { decryptSecret, encryptSecret } from "../credentials";
 import type { Database } from "../db/client";
 import type { TurnRunner } from "../turns/types";
+import { readDurableTurn, BackgroundTurnNeedsReview } from "../turns/durable-outcome";
+import { conversationAdmissionClosed } from "../conversations/maintenance";
+import { drawnComponents } from "../turns/run-turn";
+import { createImDelivery } from "./delivery";
 import { OneBotAdapter } from "./adapters/onebot";
 import { WEIXIN_DEFAULT_BASE } from "./adapters/weixin";
 import { imGuardedFetch, imGuardedFetchPrivate, imGuardedWs } from "./net";
@@ -142,6 +146,10 @@ export function createImService(options: ImServiceOptions) {
   const emptyListHintAt = new Map<string, number>();
   const queues = new Map<string, { tail: Promise<void>; size: number }>();
   const logCounts = new Map<string, number>();
+  const delivery = createImDelivery(options.database);
+  const activeTurns = new Set<string>();
+  let deliveryTimer: ReturnType<typeof setInterval> | null = null;
+  let recovering = false;
   type QrLogin = {
     owner: string;
     platform: QrPlatform;
@@ -195,9 +203,10 @@ export function createImService(options: ImServiceOptions) {
       ALTER TABLE chisabot_im_connections ADD COLUMN IF NOT EXISTS owner_users jsonb NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE chisabot_im_connections ADD COLUMN IF NOT EXISTS allow_private boolean NOT NULL DEFAULT false;
     `);
+    await delivery.ensure();
   }
 
-  const rowById = async (id: string) => (await sql.unsafe<Row[]>("SELECT * FROM chisabot_im_connections WHERE id = $1", [id]))[0] ?? null;
+  const rowById = async (id: string, reader: Pick<Database["$client"], "unsafe"> = sql) => (await reader.unsafe<Row[]>("SELECT * FROM chisabot_im_connections WHERE id = $1", [id]))[0] ?? null;
   const owned = async (owner: string, id: string) => {
     if (!CONNECTION_ID.test(id)) return null;
     const row = await rowById(id);
@@ -330,6 +339,10 @@ export function createImService(options: ImServiceOptions) {
     const adapter = createAdapter(row.platform, ctx);
     live.set(row.id, { adapter, status: { state: "connecting", account: row.account }, ctx });
     await adapter.start();
+    if (!deliveryTimer) {
+      deliveryTimer = setInterval(() => void recoverDeliveries().catch(error => log(row.id, "error", `交付恢复失败：${errorText(error)}`)), 1000);
+      deliveryTimer.unref?.();
+    }
   }
 
   async function startAll() {
@@ -347,6 +360,8 @@ export function createImService(options: ImServiceOptions) {
   }
 
   async function stopAll() {
+    if (deliveryTimer) clearInterval(deliveryTimer);
+    deliveryTimer = null;
     await Promise.all([...live.keys()].map((id) => stopLive(id)));
   }
 
@@ -384,6 +399,56 @@ export function createImService(options: ImServiceOptions) {
     const chunks = splitText(body, adapter.maxChunk);
     if (!chunks.length) return;
     await adapter.send({ inbound, chunks, text: body });
+  }
+
+  function answerFor(result: { replyText: string; components?: unknown[] }) {
+    return (result.replyText?.trim() || "（这次没有文字回复）") +
+      (result.components?.length ? "\n\n（这条回复里还有卡片，打开 ChisaBot 网页能看到。）" : "");
+  }
+
+  async function dispatchDelivery(id: string) {
+    const state = await delivery.dispatch(id, async (record, reader) => {
+      const row = await rowById(record.connection_id, reader);
+      if (!row || row.owner_user_id !== record.owner_user_id || row.agent_id !== record.agent_id ||
+          !row.enabled || !canUseConnection(row, record.inbound.userId)) return "cancelled";
+      const entry = live.get(row.id);
+      if (!entry || entry.status.state !== "connected") return null;
+      return { send: (message) => entry.adapter.send(message) };
+    });
+    if (state === "outcome_unknown") throw new Error(`IM 发送结果待核对，原回复已保存（${id}），不会自动重发。`);
+    if (state === "cancelled") throw new Error("IM 连接或收件人授权已变更，原回复已保存但没有发送。");
+    return state;
+  }
+
+  async function queueReply(row: Row, adapter: ImAdapter, inbound: ImInbound, threadId: string, text: string, id: string, inboxId?: string) {
+    const body = adapter.markdown ? text.trim() : markdownToPlain(text);
+    await delivery.stage({ id, connection_id: row.id, owner_user_id: row.owner_user_id, agent_id: row.agent_id,
+      thread_id: threadId, inbound, text: body, chunks: splitText(body, adapter.maxChunk) }, inboxId);
+    return dispatchDelivery(id);
+  }
+
+  async function recoverDeliveries() {
+    if (recovering || !live.size) return;
+    recovering = true;
+    try {
+      const ids = [...live.keys()];
+      for (const incoming of await delivery.pending(ids)) {
+        if (activeTurns.has(incoming.id)) continue;
+        const row = await rowById(incoming.connection_id), entry = live.get(incoming.connection_id);
+        if (!row || !entry) continue;
+        const result = await readDurableTurn(options.database, incoming.owner_user_id, incoming.thread_id, incoming.id);
+        if (!result || result.status === "running" || result.status === "waiting") continue;
+        const text = result.status === "finished"
+          ? answerFor({ replyText: result.replyText, components: drawnComponents(result.messages ?? []) })
+          : `抱歉，这次没能回答：${(result.error ?? "原执行中断，请核对已完成的操作。").slice(0, 200)}`;
+        await queueReply({ ...row, owner_user_id: incoming.owner_user_id, agent_id: incoming.agent_id }, entry.adapter,
+          incoming.inbound, incoming.thread_id, text, `reply:${incoming.id}`, incoming.id)
+          .catch(error => log(row.id, "error", errorText(error)));
+      }
+      for (const pending of await delivery.queued(ids)) {
+        await dispatchDelivery(pending.id).catch(error => log("delivery", "error", errorText(error)));
+      }
+    } finally { recovering = false; }
   }
 
   async function onInbound(connectionId: string, inbound: ImInbound) {
@@ -474,6 +539,10 @@ export function createImService(options: ImServiceOptions) {
       return;
     }
     const queueKey = `${row.id}|${key}`;
+    if (conversationAdmissionClosed()) {
+      await reply(row, entry.adapter, inbound, "服务正在更新，这条消息尚未执行，请稍后重发。");
+      return;
+    }
     const queue = queues.get(queueKey) ?? { tail: Promise.resolve(), size: 0 };
     if (queue.size >= MAX_QUEUE) {
       log(row.id, "warn", `${who} 的消息太多，排队已满，丢弃一条`);
@@ -504,7 +573,23 @@ export function createImService(options: ImServiceOptions) {
       await reply(row, adapter, inbound, "这个连接对接的机器人已经不在了，请主人在 ChisaBot 设置里重新选择。").catch(() => {});
       return;
     }
-    const threadId = await threadFor(row, key);
+    const messageId = inbound.messageId
+      ? `im:${row.id}:${Buffer.from(JSON.stringify([key, inbound.messageId]), "utf8").toString("base64url")}`
+      : crypto.randomUUID();
+    const received = await delivery.inbox(messageId);
+    if (received && (received.owner_user_id !== row.owner_user_id || received.agent_id !== row.agent_id)) {
+      log(row.id, "warn", "原消息属于此前的机器人配置，不会重新执行或转交新机器人。");
+      return;
+    }
+    if (received?.state === "staged") {
+      await dispatchDelivery(`reply:${messageId}`).catch(error => log(row.id, "warn", errorText(error)));
+      log(row.id, "info", "原消息已有交付记录，按原记录处理，不会重新执行或重复发送。");
+      return;
+    }
+    const threadId = received?.thread_id ?? await threadFor(row, key);
+    inbound = received?.inbound ?? inbound;
+    await delivery.accept({ id: messageId, connection_id: row.id, owner_user_id: row.owner_user_id,
+      agent_id: row.agent_id, thread_id: threadId, inbound });
     // 定时任务到点或待确认卡片要主动推回这个会话（DESIGN.md §55）：记住最近一条消息的回复信息。
     await sql
       .unsafe(
@@ -520,25 +605,36 @@ export function createImService(options: ImServiceOptions) {
     void adapter.typing?.(inbound);
     const typingTimer = adapter.typing ? setInterval(() => void adapter.typing?.(inbound), 5000) : null;
     let answer: string;
+    activeTurns.add(messageId);
     try {
-      const result = await runWithRetry(() =>
-        options.runTurn({
+      const result = await runWithRetry(async () => {
+        for (;;) {
+          const prior = await readDurableTurn(options.database, row.owner_user_id, threadId, messageId);
+          if (!prior) break;
+          if (prior.status === "finished") return { replyText: prior.replyText, components: drawnComponents(prior.messages ?? []) };
+          if (prior.status === "failed") throw new BackgroundTurnNeedsReview(prior.error ?? "原消息执行未完成，请核对结果后再发送新请求。");
+          if (prior.status === "waiting") return { replyText: "这条消息仍在等待你确认，请在原确认卡片或私聊中处理；没有重新执行。" };
+          if (live.get(connectionId) !== entry) throw new Error("IM observer stopped");
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        return options.runTurn({
           ownerUserId: row.owner_user_id,
           routineId: `${IM_INITIATOR_PREFIX}${row.id}`,
+          runId: messageId,
           agentId: row.agent_id,
           threadId,
           instruction: content,
           initiator: { kind: "routine", id: `${IM_INITIATOR_PREFIX}${row.id}` },
-          userMessage: { id: crypto.randomUUID(), role: "user", content } as Message,
+          userMessage: { id: messageId, role: "user", content } as Message,
           forwardedProps: { chisabotIm: { connectionId: row.id, platform: row.platform } },
-        }),
-      );
-      answer = result.replyText?.trim() || "（这次没有文字回复）";
-      if (result.components?.length) answer += "\n\n（这条回复里还有卡片，打开 ChisaBot 网页能看到。）";
+        });
+      });
+      answer = answerFor(result);
       if (result.replyText?.trim()) {
         void options.recordChannelActivity?.(threadId, row.agent_id, result.replyText.trim()).catch(() => {});
       }
     } catch (error) {
+      if (live.get(connectionId) !== entry) { activeTurns.delete(messageId); return; }
       if (options.isSuspension?.(error)) {
         // 只有主人在私聊里能批（RV-02）：给别人的提示只说去哪确认，不暗示群里/陌生人能批。
         const owners = Array.isArray(row.owner_users) ? row.owner_users : [];
@@ -572,13 +668,12 @@ export function createImService(options: ImServiceOptions) {
       options.signalThreadBusy?.(threadId, false);
     }
     try {
-      const current = await rowById(connectionId);
-      if (!current?.enabled || live.get(connectionId) !== entry || !canUseConnection(current, inbound.userId)) return;
-      await reply(row, adapter, inbound, answer);
-      log(row.id, "info", `已回复（${answer.length} 字，用时 ${Math.round((Date.now() - started) / 1000)} 秒）`);
+      // Save the output even if the connection went offline while the Host was running.
+      const state = await queueReply(row, adapter, inbound, threadId, answer, `reply:${messageId}`, messageId);
+      log(row.id, "info", `${state === "sent" ? "已回复" : "回复已保存，等待发送"}（${answer.length} 字，用时 ${Math.round((Date.now() - started) / 1000)} 秒）`);
     } catch (error) {
       log(row.id, "error", `回复发送失败：${errorText(error)}`);
-    }
+    } finally { activeTurns.delete(messageId); }
   }
 
   /** 对话刚好被占着（极少：同一条对话另一轮还没放锁）时等一下再试一次。 */
@@ -811,6 +906,7 @@ export function createImService(options: ImServiceOptions) {
     const row = await owned(owner, id);
     if (!row) return false;
     await stopLive(id);
+    await delivery.cancelConnection(id);
     allowDevicesCache.delete(id);
     await sql.unsafe("DELETE FROM chisabot_im_connections WHERE id = $1", [id]);
     await sql.unsafe("DELETE FROM chisabot_im_chats WHERE connection_id = $1", [id]);
@@ -1073,6 +1169,11 @@ export function createImService(options: ImServiceOptions) {
       const entries = await logs(c.var.actor.id, c.req.param("id"));
       return entries ? c.json({ logs: entries }) : c.json({ error: "没有这个连接" }, 404);
     });
+    authed.get("/connections/:id/deliveries", async (c) => {
+      // Historical records remain retrievable by their owner after a connection is removed.
+      c.header("Cache-Control", "no-store");
+      return c.json({ deliveries: await delivery.history(c.var.actor.id, c.req.param("id")) });
+    });
     authed.post("/qr/start", async (c) => {
       try {
         const body = (await c.req.json().catch(() => ({}))) as { platform?: string; baseUrl?: string; domain?: string };
@@ -1134,29 +1235,44 @@ export function createImService(options: ImServiceOptions) {
      * 主动把一段文字发到某个 IM 对话（定时任务到点或待确认卡片提示，DESIGN.md §55）：按这个对话最近一条消息的回复信息发。
      * 有的平台只许在一段时间内被动回复（QQ 官方机器人 msg_id 5 分钟、企业微信智能机器人按消息流式），过期会失败。
      */
-    async pushToThread(threadId: string, text: string, opts?: { privateOnly?: boolean }) {
+    async pushToThread(threadId: string, text: string, opts?: { privateOnly?: boolean; deliveryId?: string; connectionId?: string }) {
+      const deliveryId = `push:${opts?.deliveryId ?? crypto.randomUUID()}`;
+      const existing = await delivery.get(deliveryId);
+      if (existing) {
+        if (existing.thread_id !== threadId || (opts?.connectionId && existing.connection_id !== opts.connectionId))
+          throw new Error("IM 交付标识不属于这段对话");
+        await dispatchDelivery(deliveryId);
+        return;
+      }
       const chat = (
         await sql.unsafe<{ connection_id: string; last_inbound: unknown }[]>(
-          `SELECT connection_id, last_inbound FROM chisabot_im_chats WHERE thread_id = $1 AND last_inbound IS NOT NULL ${opts?.privateOnly ? "AND chat_key LIKE 'private:%'" : ""} ORDER BY updated_at DESC LIMIT 1`,
-          [threadId],
+          `SELECT connection_id,last_inbound FROM (
+            SELECT connection_id,last_inbound,updated_at AS at FROM chisabot_im_chats WHERE thread_id=$1
+            UNION ALL SELECT connection_id,inbound,created_at FROM chisabot_im_inbox WHERE thread_id=$1
+          ) targets WHERE last_inbound IS NOT NULL AND ($2::text IS NULL OR connection_id=$2)
+          ${opts?.privateOnly ? "AND last_inbound->>'chatType'='private'" : ""} ORDER BY at DESC LIMIT 1`,
+          [threadId, opts?.connectionId ?? null],
         )
       )[0];
       if (!chat) throw new Error("找不到这个 IM 对话（可能已经 /new 换了新话题）");
       const entry = live.get(chat.connection_id);
       const row = await rowById(chat.connection_id);
-      if (!entry || !row || !row.enabled) throw new Error("IM 连接没有在线");
+      if (!row || !row.enabled) throw new Error("IM 连接已停用或删除");
       let inbound = chat.last_inbound as ImInbound | string | null;
       if (typeof inbound === "string") inbound = JSON.parse(inbound) as ImInbound;
       if (!inbound) throw new Error("这个 IM 对话还没有可回复的消息");
       if (!canUseConnection(row, inbound.userId)) throw new Error("这个 IM 对话的发送者已不在可用名单里");
-      await reply(row, entry.adapter, inbound, text);
-      log(row.id, "info", `主动推送消息（${text.length} 字）`);
+      const adapter = entry?.adapter ?? createAdapter(row.platform, testContext(row.platform, row.id, row.config, {}, row.allow_private));
+      await queueReply(row, adapter, inbound, threadId, text, deliveryId);
+      log(row.id, "info", `主动推送消息已保存（${text.length} 字）`);
     },
     /** IM 回合能不能用电脑 / 设备类工具（连接里的开关）。 */
     allowsDevices: (connectionId: string) => allowDevicesCache.get(connectionId) === true,
     /** 测试用：当前适配器。 */
     adapterOf: (connectionId: string) => live.get(connectionId)?.adapter ?? null,
     statusOf: (connectionId: string) => live.get(connectionId)?.status ?? null,
+    recoverDeliveries,
+    deliveries: delivery.history,
     InputError,
   };
 }

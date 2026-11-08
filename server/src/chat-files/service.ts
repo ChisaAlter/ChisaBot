@@ -327,7 +327,19 @@ export function createChatFiles(
 
   async function remove(owner: string, id: string): Promise<boolean> {
     if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
-    const rows = await sql.unsafe<{ id: string }[]>("DELETE FROM chisabot_chat_files WHERE id = $1 AND owner_user_id = $2 RETURNING id", [id, owner]);
+    const rows = await sql.begin(async transaction => {
+      // Serialize staged cleanup with inbox admission's ownership transfer.
+      await transaction.unsafe("SELECT id FROM chisabot_chat_files WHERE id=$1 AND owner_user_id=$2 FOR UPDATE", [id, owner]);
+      const [inbox] = await transaction.unsafe<{ present: boolean }[]>("SELECT to_regclass('chisabot_thread_inbox') IS NOT NULL AS present");
+      if (inbox?.present) {
+        const held = await transaction.unsafe(`SELECT 1 FROM chisabot_thread_inbox i,
+          LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(i.message->'content')='array' THEN i.message->'content' ELSE '[]'::jsonb END) part
+          WHERE i.owner_user_id=$1 AND i.status <> 'withdrawn'
+          AND split_part(split_part(part->'source'->>'value', '?', 1), '#', 1)=$2 LIMIT 1`, [owner, chatFileUrl(id)]);
+        if (held.length) return [];
+      }
+      return transaction.unsafe<{ id: string }[]>("DELETE FROM chisabot_chat_files WHERE id = $1 AND owner_user_id = $2 RETURNING id", [id, owner]);
+    });
     if (rows.length > 0) await media.forgetDescriptions(id).catch(() => {});
     return rows.length > 0;
   }

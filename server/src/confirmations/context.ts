@@ -38,4 +38,9 @@ const toolAborts = new AsyncLocalStorage<AbortSignal>();
 export const withToolAbort = <T>(signal: AbortSignal, run: () => T): T => toolAborts.run(signal, run);
 export const currentToolAbort = () => toolAborts.getStore();
 
+/** Persistent kernels suspend at approval; their owner resumes the exact saved operation. */
+const durableConfirmations = new AsyncLocalStorage<{ suspend(requestId: string): Promise<never>; approvedRequestId?: string }>();
+export const withDurableConfirmation = <T>(context: NonNullable<ReturnType<typeof durableConfirmations.getStore>>, run: () => T): T => durableConfirmations.run(context, run);
+export const currentDurableConfirmation = () => durableConfirmations.getStore();
+
 export const TOOL_STOPPED_ZH = "用户已停止这一轮，这一步没有执行。";

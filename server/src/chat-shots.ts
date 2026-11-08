@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { AppVariables } from "./auth/guards";
 import type { Database } from "./db/client";
+import sharp from "sharp";
 
 /**
  * 对话里的截图缩略图（computer_screenshot，2026-10-13 第四轮）。
@@ -82,5 +83,14 @@ export async function createChatShots(database: Database) {
     return app;
   }
 
-  return { routes, removeForBot, prune };
+  async function saveScreenshot(ownerUserId: string, botId: string, id: string, frame: { base64: string; url?: string }) {
+    if (!ID.test(id)) throw new Error("Invalid screenshot call identity.");
+    const data = await sharp(Buffer.from(frame.base64, "base64")).resize({ width: 960, withoutEnlargement: true }).jpeg({ quality: 76 }).toBuffer();
+    if (data.length > MAX_BYTES) throw new Error("Screenshot exceeds the storage limit.");
+    await database.$client.unsafe(`INSERT INTO chisabot_chat_shots(id,owner_user_id,bot_id,url,mime,data) VALUES($1,$2,$3,$4,'image/jpeg',$5)
+      ON CONFLICT(owner_user_id,id) DO UPDATE SET data=EXCLUDED.data,url=EXCLUDED.url,mime=EXCLUDED.mime`, [id, ownerUserId, botId, frame.url ?? null, data]);
+    await prune(ownerUserId);
+    return { ok: true, shown: true, url: frame.url ?? null };
+  }
+  return { routes, removeForBot, prune, saveScreenshot };
 }

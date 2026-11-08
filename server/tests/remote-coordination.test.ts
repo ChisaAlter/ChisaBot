@@ -135,6 +135,33 @@ function authority(
 }
 
 describe("coordination run authority", () => {
+  test("scratch execution authorises only its signed original source with a live claim", async () => {
+    const run = {
+      ...DELEGATED,
+      threadId: "scratch",
+      runId: "actual-run",
+      handoff: { ...DELEGATED.handoff!, sourceThreadId: RUN.threadId! },
+    };
+    let checked = "";
+    const actual = {
+      ...authority(),
+      sourceThread: async (scope: RunAssertion) => {
+        checked = scope.threadId!;
+        return { botId: "source-bot" };
+      },
+    };
+    expect(await authoriseCoordinationRun(run, actual)).toBe(true);
+    expect(checked).toBe(RUN.threadId!);
+    expect(
+      await authoriseCoordinationRun(run, authority({ active: false })),
+    ).toBe(false);
+    expect(
+      await authoriseCoordinationRun(
+        { ...run, handoff: { ...run.handoff, sourceThreadId: "unrelated" } },
+        authority(),
+      ),
+    ).toBe(false);
+  });
   test("a signed delivery keeps its source thread and current lease owner", async () => {
     expect(await authoriseCoordinationRun(DELEGATED, authority())).toBe(true);
     expect(

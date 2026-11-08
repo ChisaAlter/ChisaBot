@@ -4,6 +4,8 @@ import { type ApprovalGate, currentApprovalContext } from "../approvals/types";
 import {
   type AuditInitiator,
   type AuditStore,
+  type AuditEventInput,
+  insertTransactionalAuditEvent,
   recordAuditEvent,
 } from "../audit";
 import {
@@ -4379,7 +4381,7 @@ export function createPluginStore(options: PluginStoreOptions) {
        * to the deployment (or take a shared one back) sets this.
        */
       claimOwner?: boolean;
-    }): Promise<void> {
+    }, transaction?: { database: Pick<Database, "insert" | "delete">; afterCommit: (notify: () => void) => void }): Promise<void> {
       /*
        * Checked before anything is written, so a save is all-or-nothing from the caller's side: a
        * skill is never left saved with half its declarations because the fourth ref was a typo.
@@ -4402,7 +4404,8 @@ export function createPluginStore(options: PluginStoreOptions) {
         }
       }
 
-      await database
+      const write = async (writer: Pick<Database, "insert" | "delete">) => {
+      await writer
         .insert(skills)
         .values({
           id: input.slug,
@@ -4433,11 +4436,11 @@ export function createPluginStore(options: PluginStoreOptions) {
        * a save says what it is now; merging would make removing one a thing with no gesture for it.
        */
       if (declared !== undefined) {
-        await database
+        await writer
           .delete(skillTools)
           .where(eq(skillTools.skillId, input.slug));
         if (declared.length > 0) {
-          await database.insert(skillTools).values(
+          await writer.insert(skillTools).values(
             declared.map((ref) => ({
               skillId: input.slug,
               ref,
@@ -4446,8 +4449,11 @@ export function createPluginStore(options: PluginStoreOptions) {
           );
         }
       }
+      };
+      if (transaction) await write(transaction.database);
+      else await database.transaction(write);
 
-      await recordAuditEvent(auditStore, {
+      const audit: AuditEventInput = {
         eventType: "configuration.changed",
         targetType: "skill",
         targetId: input.slug,
@@ -4459,7 +4465,9 @@ export function createPluginStore(options: PluginStoreOptions) {
           // built. It changes nothing about what may be called; the grant still decides that.
           ...(declared === undefined ? {} : { declares: declared }),
         },
-      });
+      };
+      if (transaction) transaction.afterCommit(await insertTransactionalAuditEvent(transaction.database, audit));
+      else await recordAuditEvent(auditStore, audit);
     },
 
     async uninstallSkill(slug: string, by: string): Promise<void> {

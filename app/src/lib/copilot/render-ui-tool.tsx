@@ -1,4 +1,4 @@
-import { useRenderTool } from "@copilotkit/react-core/v2";
+import { useRenderTool } from "@/lib/chat/renderers";
 import type { Spec } from "@json-render/react";
 import { memo, useContext, useMemo } from "react";
 import { z } from "zod";

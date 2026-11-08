@@ -22,6 +22,8 @@ ChisaBot 现在要做什么、接下来做什么、以后做什么。这一页�
 
 | 条目 | 内容 | 里程碑 | 分支 |
 |---|---|---|---|
+| [DSH 主内核迁移](dsh-kernel-migration.md) | 固定 Host、统一会话层、工具审批、去除 CopilotKit 及全入口迁移；[实施记录](pipeline-runs/20261107-dsh-migration.md) | 成熟度 | `fix/chat-reliability` |
+| [CB-114](BACKLOG.md#cb-114) | 聊天模型回退错误归属、流式气泡与留白修复；本地验证后待上线验收 | 成熟度 | `fix/chat-reliability` |
 | [CB-012](BACKLOG.md#cb-012) | 文档整理：概览、功能目录、版本记录、决策日志、发布 / 测试手册、术语、数据模型 | 成熟度 | `docs/handbook-20261017` |
 
 ## 接下来

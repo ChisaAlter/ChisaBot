@@ -8,7 +8,7 @@ import {
 } from "bun:test";
 import type { Message, RunAgentInput } from "@ag-ui/core";
 import { RunAgentInputSchema } from "@ag-ui/core/schemas";
-import { CopilotKitProvider, useCopilotKit } from "@copilotkit/react-core/v2";
+import { ConversationSessionProvider, conversationClient } from "@/lib/chat/session-client";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { type InfiniteData, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -89,11 +89,12 @@ let uploads: string[];
  * rather than as a hang.
  */
 let runAnswers: ((input: RunAgentInput) => Promise<Response>)[];
-let core: ReturnType<typeof useCopilotKit>["copilotkit"] | undefined;
+const admittedEvents = new Map<string, Response>();
+let core: typeof conversationClient | undefined;
 let originalFetch: typeof fetch;
 
 function CoreProbe() {
-  core = useCopilotKit().copilotkit;
+  core = conversationClient;
   return null;
 }
 
@@ -159,13 +160,21 @@ beforeAll(() => {
           { type: "MESSAGES_SNAPSHOT", messages: [opening] },
           { type: "RUN_FINISHED", threadId: channel.threadId, runId: "join" },
         ]);
-      if (url.pathname.endsWith("/run")) {
+      if (url.pathname.endsWith("/commands")) {
         const request =
           input instanceof Request ? input : new Request(url, init);
-        const body = RunAgentInputSchema.parse(await request.json());
+        const body = RunAgentInputSchema.parse((await request.json() as { input: unknown }).input);
         const answer = runAnswers[runs.length];
         runs.push(body);
-        return answer ? await answer(body) : finished(body);
+        const response = answer ? await answer(body) : finished(body);
+        if (!response.ok) return response;
+        const commandId = body.messages.findLast(message => message.role === "user")!.id;
+        admittedEvents.set(commandId, response);
+        return NativeResponse.json({ accepted: true, commandId, runId: body.runId }, { status: 202 });
+      }
+      if (url.pathname.endsWith("/events")) {
+        const { commandId } = JSON.parse(String(init?.body));
+        return admittedEvents.get(commandId)!;
       }
       if (/\/api\/channels\/[^/]+\/attachments$/.test(url.pathname)) {
         const body = init?.body as FormData;
@@ -207,6 +216,7 @@ beforeEach(() => {
   deletes = [];
   uploads = [];
   runAnswers = [];
+  admittedEvents.clear();
 });
 
 afterEach(() => {
@@ -242,10 +252,10 @@ async function mounted() {
   cacheChannel();
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <CopilotKitProvider runtimeUrl="http://localhost/api/copilotkit">
+      <ConversationSessionProvider>
         <CoreProbe />
         <ChannelChat channel={channel} runtimeAgentId="failed-send-bot" />
-      </CopilotKitProvider>
+      </ConversationSessionProvider>
     </QueryClientProvider>,
   );
   await view.findByText(opening.content);

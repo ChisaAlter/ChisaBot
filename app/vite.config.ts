@@ -168,9 +168,7 @@ const VENDOR_CHUNKS: Array<[RegExp, string]> = [
   // React 放一个不依赖任何别的块的叶子块：下面的 vendor 块都要 import React，React 若落进某个共享块，
   // 块之间就可能成环，按需块先执行时会读到还没初始化的 React（forwardRef of undefined）。
   [/\/node_modules\/(react|react-dom|scheduler)\//, "vendor-react"],
-  // web-inspector 是 CopilotKit 自己按需 import 的开发者面板（~870KB 未压缩），不能被拉进来。
-  // MCP SDK 只经 CopilotKit 用到，和它同块：分开的话 Rollup 为保执行顺序会让 vendor-mcp 反过来 import vendor-copilot，成环。
-  [/\/node_modules\/(@copilotkit\/(?!web-inspector)|@ag-ui\/|rxjs\/|phoenix\/|zod-to-json-schema\/|@modelcontextprotocol\/)/, "vendor-copilot"],
+  [/\/node_modules\/(@ag-ui\/|rxjs\/)/, "vendor-conversation"],
   [
     /\/node_modules\/(streamdown|marked|parse5|entities|unified|bail|trough|is-plain-obj|vfile|vfile-message|devlop|zwitch|ccount|longest-streak|markdown-table|trim-lines|property-information|space-separated-tokens|comma-separated-tokens|hastscript|html-void-elements|html-url-attributes|decode-named-character-reference|character-entities|character-entities-legacy|character-entities-html4|character-reference-invalid|is-alphabetical|is-alphanumerical|is-decimal|is-hexadecimal|stringify-entities|web-namespaces|style-to-js|style-to-object|inline-style-parser|@ungap\/structured-clone|get-east-asian-width|escape-string-regexp|remend|micromark(?!-extension-math)[^/]*|mdast-util-[^/]+|hast-util-[^/]+|unist-util-[^/]+|remark-[^/]+|rehype-(?!katex)[^/]+|estree-util-[^/]+)\//,
     "vendor-markdown",
@@ -296,7 +294,6 @@ export const routeBuildRollupOutputOptions = {
 };
 
 export const BUNDLE_STUBS = [
-  { find: /^@copilotkit\/a2ui-renderer$/, replacement: path.resolve(__dirname, "./src/lib/bundle-stubs/a2ui-renderer.ts") },
   { find: /^@ag-ui\/proto$/, replacement: path.resolve(__dirname, "./src/lib/bundle-stubs/ag-ui-proto.ts") },
   { find: /^rehype-katex$/, replacement: path.resolve(__dirname, "./src/lib/bundle-stubs/rehype-katex.ts") },
 ];

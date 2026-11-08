@@ -1,5 +1,5 @@
 import { readImageDims } from "@/lib/image-dims";
-import { useRenderTool } from "@copilotkit/react-core/v2";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { IconPhoto } from "@tabler/icons-react";
 import { memo } from "react";
 import { z } from "zod";

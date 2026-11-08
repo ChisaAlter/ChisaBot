@@ -26,6 +26,8 @@ import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
 import { createTaskCenterRoutes } from "./routes";
+import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
+import { conversationAdmissionClosed } from "../conversations/maintenance";
 
 export class TaskCenterError extends Error {
   constructor(
@@ -61,6 +63,8 @@ export type TaskCenterOptions = {
   botAvailable?: (ownerUserId: string, agentId: string) => Promise<boolean>;
   concurrency?: number;
   globalConcurrency?: number;
+  /** True resumes the same persisted execution attempt instead of creating another one. */
+  hasDurableExecution?: (task: TaskCenterTask) => Promise<boolean>;
 };
 type Sql = Pick<Database["$client"], "unsafe">;
 // biome-ignore lint/suspicious/noExplicitAny: 原生 SQL 行的形状是动态的，逐字段取用。
@@ -765,6 +769,11 @@ export function createTaskCenter(
       );
       for (const row of expired) {
         const task = taskView(row);
+        if (await options.hasDurableExecution?.(task)) {
+          await tx.unsafe("UPDATE chisabot_task_center_tasks SET status='queued',attempts=greatest(attempts-1,0),lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=now(),updated_at=now() WHERE owner_user_id=$1 AND id=$2", [task.ownerUserId, task.id]);
+          await event(task.ownerUserId, task.id, "recovered", "正在接回原执行并核对结果。", {}, tx);
+          continue;
+        }
         const retry =
           !needsTaskApproval(task.risk) && task.attempts < task.maxAttempts;
         await tx.unsafe(
@@ -1046,7 +1055,7 @@ export function createTaskCenter(
         // A shutdown is not the task's fault: give the attempt back. An approved outward action may have
         // partly happened, so it waits for a person instead of running again by itself.
         const interrupted = stopping && controller.signal.aborted;
-        const retry = interrupted
+        const retry = error instanceof BackgroundTurnNeedsReview ? false : interrupted
           ? !needsTaskApproval(task.risk)
           : !needsTaskApproval(task.risk) &&
             row.attempts < task.maxAttempts &&
@@ -1111,7 +1120,7 @@ export function createTaskCenter(
     }
   }
   async function sweep() {
-    if (sweeping) return;
+    if (sweeping || conversationAdmissionClosed()) return;
     sweeping = true;
     try {
       await recover();

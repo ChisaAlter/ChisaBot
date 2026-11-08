@@ -21,13 +21,7 @@ export type RuntimeCapabilities =
       intelligence?: never;
     };
 
-/**
- * The Intelligence contract. Three values are required; see runtimeCapabilities.
- *
- * `licenseToken` is optional. Managed Intelligence derives entitlement from the project key, and
- * `@copilotkit/runtime` declares `licenseToken` optional with a `COPILOTKIT_LICENSE_TOKEN` fallback
- * of its own. A deployment that still holds one keeps passing it; nothing here requires it.
- */
+/** Legacy configuration accepted by migration readers; hosted execution has retired. */
 export type IntelligenceSettings = {
   apiUrl: string;
   gatewayWsUrl: string;
@@ -236,6 +230,7 @@ export type DeploymentConfig = {
    * 现有的和以后新建的 `built_in` 机器人都会走新内核，不会漏掉某一个。
    */
   hermesKernel?: { url: string; token?: string };
+  dshKernel?: { targetsFile?: string; root?: string; gatewayUrl?: string };
   /**
    * Where this deployment is reached from outside, with no trailing slash.
    *
@@ -913,41 +908,16 @@ function oktaAuth(
   return { ...client, issuer };
 }
 
-/** Local mode owns its storage; the default Intelligence mode retains its existing contract. */
+/** Local PostgreSQL owns execution; hosted history is moved through the explicit migration command. */
 function runtimeCapabilities(environment: Environment): RuntimeCapabilities {
-  const mode = optional(environment, "CHISABOT_RUNTIME_MODE") ?? "intelligence";
-  if (mode === "local") return { mode: "local", durableHistory: true };
-  if (mode !== "intelligence") {
-    throw new Error("CHISABOT_RUNTIME_MODE must be intelligence or local.");
+  const configured = optional(environment, "CHISABOT_RUNTIME_MODE");
+  const legacyConfigured = Boolean(optional(environment, "INTELLIGENCE_API_URL") || optional(environment, "INTELLIGENCE_API_KEY"));
+  if (configured === "intelligence" || (!configured && legacyConfigured)) {
+    throw new Error("Intelligence execution has retired. Export existing history with `bun server/scripts/migrate-intelligence.ts inventory --user <owner-id> --agent <bot-id> --out <snapshot.json>`, then import it with `bun server/scripts/migrate-intelligence.ts import --snapshot <snapshot.json>` while admission is paused. Set CHISABOT_RUNTIME_MODE=local after migration; existing data is not moved automatically.");
   }
-  const settings = {
-    apiUrl: url(environment, "INTELLIGENCE_API_URL"),
-    gatewayWsUrl: url(environment, "INTELLIGENCE_GATEWAY_WS_URL"),
-    apiKey: optional(environment, "INTELLIGENCE_API_KEY"),
-    licenseToken: optional(environment, "COPILOTKIT_LICENSE_TOKEN"),
-  };
-
-  const missing = Object.entries({
-    INTELLIGENCE_API_URL: settings.apiUrl,
-    INTELLIGENCE_GATEWAY_WS_URL: settings.gatewayWsUrl,
-    INTELLIGENCE_API_KEY: settings.apiKey,
-  })
-    .filter(([, value]) => !value)
-    .map(([name]) => name);
-
-  if (missing.length > 0) {
-    throw new Error(
-      `CopilotKit Intelligence is required and is not configured. Missing: ${missing.join(", ")}`,
-    );
-  }
-
-  return {
-    mode: "intelligence",
-    durableHistory: true,
-    intelligence: settings as IntelligenceSettings,
-  };
+  if (configured && configured !== "local") throw new Error("CHISABOT_RUNTIME_MODE must be local; intelligence requires history migration.");
+  return { mode: "local", durableHistory: true };
 }
-
 /**
  * Whether a Bot may reach addresses inside this deployment's own network.
  *
@@ -1280,12 +1250,21 @@ export function loadConfig(
   const runtime = runtimeCapabilities(environment);
   const hermesUrl = optional(environment, "CHISABOT_HERMES_URL")?.replace(/\/+$/, "");
   const hermesToken = optional(environment, "CHISABOT_HERMES_TOKEN");
+  const dshTargetsFile = optional(environment, "CHISABOT_DSH_TARGETS_FILE");
+  const dshGatewayUrl = optional(environment, "CHISABOT_DSH_TOOL_GATEWAY_URL");
+  if (dshGatewayUrl) {
+    const address = new URL(dshGatewayUrl);
+    if (!["http:", "https:"].includes(address.protocol) || address.username || address.password || address.search || address.hash) {
+      throw new Error("CHISABOT_DSH_TOOL_GATEWAY_URL must be an HTTP(S) endpoint without credentials, query or fragment.");
+    }
+  }
 
   return {
     port: serverPort(environment),
     transcription: transcriptionConfig(environment),
     databaseUrl: required(environment, "DATABASE_URL"),
     keyEncryptionKey: keyEncryptionKey(environment),
+    ...(optional(environment, "CHISABOT_AGENT_KERNEL") === "dsh" ? { dshKernel: { ...(dshTargetsFile ? { targetsFile: dshTargetsFile } : { root: optional(environment, "CHISABOT_DSH_ROOT") ?? ".data/dsh" }), ...(dshGatewayUrl ? { gatewayUrl: dshGatewayUrl.replace(/\/+$/, "") } : {}) } } : {}),
     ...(managedAgent ? { managedAgent } : {}),
     ...(hermesUrl
       ? {

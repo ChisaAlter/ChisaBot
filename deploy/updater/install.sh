@@ -25,7 +25,7 @@ case "${1:-}" in
   "") ;;
   *) BASE_COMMIT=$1 ;;
 esac
-FILES="compose-image.sh update.sh request.sh rollback.sh health.sh post-deploy-smoke.sh hermes-reach.sh smoke.sh deps-fingerprint.sh rollback.template.sh git-askpass.sh magpie.sh chisabot-updater.py Dockerfile.update install.sh"
+FILES="compose-image.sh dsh-release.sh accounts-release.mjs update.sh request.sh rollback.sh health.sh post-deploy-smoke.sh hermes-reach.sh smoke.sh deps-fingerprint.sh rollback.template.sh git-askpass.sh magpie.sh chisabot-updater.py Dockerfile.update install.sh"
 pick_python() { # python3 (>= 3.6) first, then python2
   local c
   for c in python3 python2 python; do
@@ -63,6 +63,10 @@ for f in $FILES; do
   fi
 done
 [ -z "$CHANGED" ] || echo "updated:$CHANGED"
+if ! cmp -s "$HERE/../dsh/accounts.mjs" "$U/accounts.mjs"; then
+  put "$HERE/../dsh/accounts.mjs" "$U/accounts.mjs" 0755
+  echo 'updated: accounts.mjs'
+fi
 
 UNIT=${CHISABOT_SYSTEMD_UNIT_DIR:-/etc/systemd/system}/chisabot-updater.service
 UNIT_NEW=$(sed "s#^ExecStart=.*#ExecStart=$PY $U/chisabot-updater.py#" "$HERE/chisabot-updater.service")

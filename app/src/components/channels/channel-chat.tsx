@@ -1,19 +1,15 @@
 import type { Message } from "@ag-ui/core";
-import {
-  type Attachment,
-  CopilotChatConfigurationProvider,
-  UseAgentUpdate,
-  useAgent,
-  useCopilotKit,
-} from "@copilotkit/react-core/v2";
+import type { Attachment } from "@/lib/chat/attachment-state";
+import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
+import { conversationClient, useConversationSession } from "@/lib/chat/session-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { ContextMeter } from "@/components/agents/context-meter";
 import { PendingQuestion } from "@/components/approvals/pending-question";
 import { attachmentModality } from "@/components/channels/chat-messages";
 import { isPersonSentMessage } from "@/components/channels/chat-transcript";
-import { toAgentOptions } from "@/components/channels/composer";
+import { toAgentOptions, type ComposerDraft } from "@/components/channels/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import {
@@ -49,7 +45,7 @@ import {
 import { noteSendWhileBusy } from "@/lib/chat/send-scroll";
 import { sendLanded } from "@/lib/chat/ui-memory";
 import { bindAgentBot, useActiveBot } from "@/lib/copilot/active-bot";
-import { observeApprovalAgent } from "@/lib/copilot/approval-context";
+
 import type { ThreadActivity } from "@/lib/copilot/bot-thread";
 import { readSync } from "@/lib/copilot/bot-thread";
 import { reportChatRunning } from "@/lib/copilot/computer-activity";
@@ -399,7 +395,7 @@ export function ChannelChat({
   runtimeAgentId: string;
 }) {
   // The core attaches the frontend tool registry; direct agent runs do not.
-  const { copilotkit } = useCopilotKit();
+  const copilotkit = conversationClient;
   const modelQueryClient = useQueryClient();
   const modelSaving = useModelSelectionSaving(runtimeAgentId);
   /*
@@ -418,16 +414,12 @@ export function ChannelChat({
     (profile) => profile.id === channel.agentIds[0],
   );
   const channelAgentId = `channel:${channel.id}`;
-  const { agent, isReady } = useAgent({
+  const { agent, isReady } = useConversationSession({
     agentId: channelAgentId,
     runtimeAgentId,
     threadId: channel.threadId,
-    updates: [
-      UseAgentUpdate.OnMessagesChanged,
-      UseAgentUpdate.OnRunStatusChanged,
-    ],
   });
-  useEffect(() => observeApprovalAgent(agent), [agent]);
+
   // 这段对话的工具调用操作这个机器人的计算机，不管用户此刻在看哪段对话（§101）。
   bindAgentBot(agent, runtimeAgentId);
 
@@ -737,6 +729,7 @@ export function ChannelChat({
     onJoinedActivity,
     {
       liveTail: true,
+      snapshotContinuations: agent.transport === "commands",
       suppressConnect: suppressConnectDuringSend,
       skipReconcile: skipReconcileWhileJoining,
     },
@@ -940,7 +933,7 @@ export function ChannelChat({
     unreadable,
   });
 
-  // Run failures arrive as events and are reported only for turns started in this mount.
+  // The server replays the latest terminal event when this conversation is reopened.
   const [runError, setRunError] = useState<string | null>(null);
   const awaitingReply = useRef(false);
   /**
@@ -1284,7 +1277,7 @@ export function ChannelChat({
         lastProgressAt,
       });
       if (race === "timeout") {
-        let persisted: boolean | null = runEventSeenRef.current;
+        let persisted: boolean | null = target.isCommandAccepted(userMessageId) || runEventSeenRef.current;
         if (!persisted) {
           /*
            * 落库检查要两个证人都问：messages 表（普通回合）和服务端收件箱（正在回答时
@@ -1324,7 +1317,7 @@ export function ChannelChat({
            */
           if (first.kind === "hang") {
             try {
-              copilotkit.stopAgent({ agent: target });
+              void copilotkit.stopAgent({ agent: target }).catch(() => {});
             } catch {
               /* stop best-effort */
             }
@@ -1340,7 +1333,7 @@ export function ChannelChat({
             first.kind === "unverified"
               ? () => {
                   try {
-                    copilotkit.stopAgent({ agent: target });
+                    void copilotkit.stopAgent({ agent: target }).catch(() => {});
                   } catch {
                     /* stop best-effort */
                   }
@@ -1366,7 +1359,7 @@ export function ChannelChat({
         });
         if (second.kind === "reply_hang") {
           try {
-            copilotkit.stopAgent({ agent: target });
+            void copilotkit.stopAgent({ agent: target }).catch(() => {});
           } catch {
             /* stop best-effort */
           }
@@ -1388,6 +1381,11 @@ export function ChannelChat({
       } else {
         await runPromise;
       }
+    } catch (error) {
+      if (!target.isCommandAccepted(userMessageId)) throw error;
+      // The message is already in the server's command log. Keep a failed execution in the
+      // transcript; restoring its draft would offer to send the accepted command a second time.
+      if (!stopRequestedRef.current && !connectionDropped.current) failRef.current(stoppedReason(error));
     } finally {
       setRunsInFlight((count) => Math.max(0, count - 1));
     }
@@ -1490,7 +1488,7 @@ export function ChannelChat({
        * 输入框清空、记下的草稿也清掉（DESIGN.md §88.4）；「重试」从这条消息起重新生成（`retryTurn`）。
        * 什么都没回来就失败的，照旧把字放回去（重试 = 再发一次，先拿掉失败的那份）。
        */
-      if (!turnAnswered(target.messages)) throw new Error(turnFailure.current);
+      if (!target.isCommandAccepted(userMessageId) && !turnAnswered(target.messages)) throw new Error(turnFailure.current);
     }
     return target.messages
       .filter(
@@ -1536,7 +1534,7 @@ export function ChannelChat({
     assertModelSelectionNotSaving(modelQueryClient, runtimeAgentId);
 
     // Every request shares this turn boundary, including gaps between frontend tools.
-    if (turnsRef.current > 0 || agentRef.current.isRunning) {
+    if (turnsRef.current > 0 || (joinGateSettledRef.current && agentRef.current.isRunning)) {
       throw new Error("代理仍在处理另一个请求。请等待或先停止该任务。");
     }
 
@@ -1568,7 +1566,9 @@ export function ChannelChat({
   };
 
   const failRef = useRef<(message: string) => void>(() => {});
-  useEffect(() => {
+  // AG-UI captures subscribers synchronously when connectAgent begins. Register before the
+  // passive mount effect starts that connection, including its replayed terminal event.
+  useLayoutEffect(() => {
     const fail = (message: string) => {
       if (!awaitingReply.current) return;
       awaitingReply.current = false;
@@ -1590,6 +1590,7 @@ export function ChannelChat({
       onRunStartedEvent: () => {
         runEventSeenRef.current = true;
         noteRunProgress.current();
+        if (!awaitingReply.current) setRunError(null);
       },
       // Both surfaces fall back to the same sentence, from the same place, so a person who uses
       // both is not told two different things about the same silence.
@@ -1597,14 +1598,15 @@ export function ChannelChat({
         noteRunProgress.current();
         if (
           stopRequestedRef.current ||
-          (event as { code?: unknown } | undefined)?.code ===
-            "HERMES_RUN_CANCELLED" ||
+          ["HERMES_RUN_CANCELLED", "DSH_RUN_CANCELLED"].includes(String((event as { code?: unknown } | undefined)?.code)) ||
           event?.message === "This run was stopped."
         ) {
           awaitingReply.current = false;
           return;
         }
-        fail(stoppedReason(event?.message));
+        const reason = stoppedReason(event?.message);
+        if (awaitingReply.current) fail(reason);
+        else setRunError(reason);
       },
       onRunFailed: ({ error }) => {
         noteRunProgress.current();
@@ -1617,8 +1619,19 @@ export function ChannelChat({
         }
         fail(stoppedReason(error));
       },
-      onRunFinishedEvent: () => {
+      onRunFinishedEvent: ({ event }) => {
         noteRunProgress.current();
+        if (event.outcome?.type === "interrupt") {
+          awaitingReply.current = false;
+          const uncertain = event.outcome.interrupts.find(interrupt =>
+            (interrupt.metadata?.openbotWaiting as { kind?: string } | undefined)?.kind === "operation_unknown");
+          if (uncertain) {
+            const message = uncertain.message ?? "这一步可能已经执行，但结果尚待核对。";
+            turnFailure.current = message;
+            setRunError(message);
+          }
+          return;
+        }
         /*
          * 不在这里把 awaitingReply 放下（DESIGN.md §100）。一轮里用浏览器做事是好几个 run 接力：第一个 run
          * 以工具调用结束，浏览器做完再发起下一个。以前第一个 run 一结束就放下，后面接力的 run 出错、断流，
@@ -1663,7 +1676,7 @@ export function ChannelChat({
         if (target.messages.some((message) => message.id === item.id && message.role === "user"))
           target.setMessages(target.messages.filter((message) => message.id !== item.id) as typeof target.messages);
         try {
-          return await sayRef.current(item.text, [], [], undefined, item.id);
+          return await sayRef.current(item.text, [], [], item.message?.content, item.id);
         } finally {
           await restoreQueue(channel.threadId);
         }
@@ -1723,11 +1736,6 @@ export function ChannelChat({
     stopRequest.clear();
     setStopping(true);
     sendStop();
-    try {
-      copilotkit.stopAgent({ agent });
-    } catch {
-      /* stop best-effort */
-    }
   };
   const stopTask = () => {
     setStopping(true);
@@ -1743,23 +1751,10 @@ export function ChannelChat({
         return isPersonSentMessage("user", text);
       }) ??
       [...agent.messages].reverse().find((message) => message.role === "user");
-    if (lastUser)
-      setLocalStops((previous) => new Set([...previous, lastUser.id]));
     // Also blocks inbox fallback after Stop during a frontend tool handoff.
     stopRequestedRef.current = true;
     awaitingReply.current = false;
-    // Track B：停止必须立刻放下 busy，不能干等 runPromise/finally——否则频道永久灰。
-    turnsRef.current = 0;
-    setTurnsInFlight(0);
-    setRunsInFlight(0);
-    sendInFlightRef.current = false;
-    void setChannelBusy({ channelId: channel.id, busy: false });
     sendStop();
-    try {
-      copilotkit.stopAgent({ agent });
-    } catch {
-      /* stop best-effort */
-    }
   };
 
   /*
@@ -1839,7 +1834,10 @@ export function ChannelChat({
    * 补发的那一轮也算「在跑」（Stop 能停、输入框显示在回答）。
    */
   const queueToServer = useCallback(
-    (text: string) => queueMessage(channel.threadId, text),
+    (draft: ComposerDraft) => queueMessage(channel.threadId, {
+      message: { id: newId(), role: "user", content: toMessageContent(draft.text.trim(), draft.attachments) } as Message,
+      skillIds: draft.commandIds,
+    }),
     [channel.threadId],
   );
   const runInboxTurn = useCallback(
@@ -1951,12 +1949,11 @@ export function ChannelChat({
   /*
    * 两个事实，分开用（2026-10-22）：
    * - `agentLive`：这条对话**真的**在跑一轮（本机发起的 / 服务器在写 / 有 run 在路上）。决定「发出去还是排队」，
-   *   以及能不能重新生成。这里仍然算上 `agent.isRunning`——接入期间它为 true，那时候发出去会被 `say` 拒
-   *   （「代理仍在处理另一个请求」），排队等接入结束才是对的。
+   *   以及能不能重新生成。打开时的 connect 只恢复记录，发送由 joinGate 等它完成。
    * - `chatBusy`：**画给人看的**「机器人在回答」。接入（回放）不算，否则每次切换机器人，发送键都先变成
    *   「停止机器人」、末尾挂一行「思考中」，回放完再收回去；那个「停止」按下去撤掉的是回放本身。
    */
-  const agentLive = agent.isRunning || turnsInFlight > 0 || runsInFlight > 0;
+  const agentLive = (agent.isRunning && !joining) || turnsInFlight > 0 || runsInFlight > 0;
   // CB-104: a new turn never carries the previous turn's 「停止失败，重试」.
   const agentLiveBefore = useRef(agentLive);
   useEffect(() => {
@@ -1965,14 +1962,18 @@ export function ChannelChat({
   }, [agentLive, stopRequest.clear]);
   useEffect(() => {
     if (!stopping) return;
-    if (!agentLive) {
-      setStopping(false);
-      return;
-    }
-    // Never leave the composer stuck on 「停止中…」 if the stream end is missed.
-    const timer = setTimeout(() => setStopping(false), 10_000);
-    return () => clearTimeout(timer);
-  }, [stopping, agentLive]);
+    let alive = true;
+    const check = async () => {
+      const state = await restoreQueue(channel.threadId);
+      if (alive && state?.running === false) {
+        setStopping(false);
+        void agent.detachActiveRun();
+      }
+    };
+    void check();
+    const timer = setInterval(() => void check(), 1500);
+    return () => { alive = false; clearInterval(timer); };
+  }, [stopping, agent, channel.threadId]);
   const chatBusy =
     seedSending ||
     turnsInFlight > 0 ||
@@ -2057,10 +2058,7 @@ export function ChannelChat({
   return (
     // Activity renderers resolve their agent through this SDK context. It must match useAgent's
     // channel instance so an action continues this thread instead of looking for a default agent.
-    <CopilotChatConfigurationProvider
-      agentId={channelAgentId}
-      threadId={channel.threadId}
-    >
+    <ConversationScopeProvider agentId={channelAgentId} botId={runtimeAgentId} threadId={channel.threadId}>
       <ConversationProvider ask={askFromComponent} replyAfter={replyAfter}>
         <MessageActionsContext.Provider value={messageActions}>
           <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
@@ -2248,8 +2246,11 @@ export function ChannelChat({
                * part of the conversation and stays.
                */
               onRetryTurn={() => {
-                // 中途断的一轮（已经有回答 / 工具调用）：字没放回输入框，重试 = 从这条消息起重新生成（§88.4）。
-                if (!turnAnswered(agentRef.current.messages)) return false;
+                // An admitted command is retried from its stored turn, including a failure
+                // before the first token. Its original draft has already been sent.
+                const current = agentRef.current;
+                const lastUser = current.messages.findLast(message => message.role === "user");
+                if (!turnAnswered(current.messages) && !(lastUser && current.isCommandAccepted(lastUser.id))) return false;
                 void regenerate().catch(() => undefined);
                 return true;
               }}
@@ -2279,7 +2280,7 @@ export function ChannelChat({
           </div>
         </MessageActionsContext.Provider>
       </ConversationProvider>
-    </CopilotChatConfigurationProvider>
+      </ConversationScopeProvider>
   );
 }
 

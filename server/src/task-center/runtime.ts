@@ -50,6 +50,9 @@ import {
 import { isLocalAgentExecutor } from "./local-agent-runner";
 import { createTaskSourceCollectors } from "./sources";
 import { createTaskCenterTrace } from "./trace";
+import { readDurableTurn, BackgroundTurnNeedsReview } from "../turns/durable-outcome";
+import { setTimeout as delay } from "node:timers/promises";
+import { drawnComponents } from "../turns/run-turn";
 
 const TASK_THREAD_PREFIX = "task-center:";
 /**
@@ -267,11 +270,20 @@ export function createTaskCenterRuntime(
     signal: AbortSignal,
     tag: string,
   ) {
-    return options.runTurn({
+    const threadId = taskThreadId(task, tag);
+    for (;;) {
+      const previous = await readDurableTurn(options.database, task.ownerUserId, threadId);
+      if (!previous) break;
+      if (previous.status === "finished") return { replyText: previous.replyText, components: drawnComponents(previous.messages ?? []) };
+      if (previous.status === "failed") throw new BackgroundTurnNeedsReview(previous.error ?? "原执行需要核对，未自动重做。");
+      await delay(1000, undefined, { signal });
+    }
+    try { return await options.runTurn({
       ownerUserId: task.ownerUserId,
       routineId: `task:${task.id}:${tag}`,
       agentId: await resolveAgent(task),
-      threadId: taskThreadId(task, tag),
+      threadId,
+      runId: threadId,
       instruction,
       initiator: { kind: "routine", id: `task:${task.id}` },
       signal,
@@ -280,7 +292,12 @@ export function createTaskCenterRuntime(
         role: "user",
         content: instruction,
       } as Message,
-    });
+    }); } catch (error) {
+      if (await readDurableTurn(options.database, task.ownerUserId, threadId)) {
+        throw new BackgroundTurnNeedsReview(error instanceof Error ? error.message : "原执行需要核对，未自动重做。");
+      }
+      throw error;
+    }
   }
 
   /**
@@ -310,7 +327,7 @@ export function createTaskCenterRuntime(
         steps: plan.steps,
       };
     } catch (error) {
-      if (signal.aborted) throw error;
+      if (signal.aborted || error instanceof BackgroundTurnNeedsReview) throw error;
       console.warn(
         JSON.stringify({
           type: "task-center-plan-fallback",
@@ -460,6 +477,7 @@ export function createTaskCenterRuntime(
 
   let serviceRef: TaskCenterService | undefined;
   const service = createTaskCenter(options.database, {
+    hasDurableExecution: async task => Boolean(await readDurableTurn(options.database, task.ownerUserId, taskThreadId(task, task.status === "planning" ? "plan" : "run"))),
     collect: collectors.collect,
     execute,
     plan,

@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import type { Message, RunAgentInput } from "@ag-ui/core";
 import { RunAgentInputSchema } from "@ag-ui/core/schemas";
-import { CopilotKitProvider, useCopilotKit } from "@copilotkit/react-core/v2";
+import { ConversationSessionProvider, conversationClient } from "@/lib/chat/session-client";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { type InfiniteData, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
@@ -77,10 +77,10 @@ let gatewaySnapshot: readonly Message[] = [];
 let runRequests: { path: string; input: RunAgentInput }[] = [];
 let activityRequests: ActivityRequest[] = [];
 let runEvents: (input: RunAgentInput) => unknown[];
-let core: ReturnType<typeof useCopilotKit>["copilotkit"] | undefined;
+let core: typeof conversationClient | undefined;
 
 function CoreProbe() {
-  core = useCopilotKit().copilotkit;
+  core = conversationClient;
   return null;
 }
 function stored(messages: unknown[]) {
@@ -127,12 +127,17 @@ beforeAll(() => {
           { type: "MESSAGES_SNAPSHOT", messages: gatewaySnapshot },
           { type: "RUN_FINISHED", threadId: channel.threadId, runId: "join" },
         ]);
-      if (url.pathname.endsWith("/run")) {
+      if (url.pathname.endsWith("/commands")) {
         const request =
           input instanceof Request ? input : new Request(url, init);
-        const body = RunAgentInputSchema.parse(await request.json());
+        const body = RunAgentInputSchema.parse((await request.json() as { input: unknown }).input);
         runRequests.push({ path: url.pathname, input: body });
-        return sse(runEvents(body));
+        return NativeResponse.json({ accepted: true, commandId: body.messages.at(-1)?.id, runId: body.runId }, { status: 202 });
+      }
+      if (url.pathname.endsWith("/events")) {
+        const { commandId } = JSON.parse(String(init?.body));
+        const input = runRequests.findLast(request => request.input.messages.at(-1)?.id === commandId)!.input;
+        return sse(runEvents(input));
       }
       if (/\/api\/channels\/[^/]+\/activity$/.test(url.pathname)) {
         const request =
@@ -181,12 +186,11 @@ afterAll(async () => {
 function tree(selected: AgentChannel) {
   return (
     <QueryClientProvider client={queryClient}>
-      <CopilotKitProvider
-        runtimeUrl="http://localhost/api/copilotkit"
+      <ConversationSessionProvider
       >
         <CoreProbe />
         <ChannelChat channel={selected} runtimeAgentId="refresh-bot" />
-      </CopilotKitProvider>
+      </ConversationSessionProvider>
     </QueryClientProvider>
   );
 }
@@ -307,7 +311,7 @@ test.each([
     );
     await user.click(view.getByRole("button", { name: "发送消息" }));
     await waitFor(() => expect(runRequests).toHaveLength(1));
-    expect(runRequests[0]?.path).toBe("/api/copilotkit/agent/refresh-bot/run");
+    expect(runRequests[0]?.path).toBe("/api/conversations/refresh-thread/commands");
     expect(runRequests[0]?.input.threadId).toBe(channel.threadId);
     expect(runRequests[0]?.input.messages.slice(0, snapshot.length)).toEqual([
       ...snapshot,
@@ -710,7 +714,7 @@ test("a stalled mount history read releases the send gate without appending its 
 
   // 读存储 4 秒截止（THREAD_MESSAGES_DEADLINE_MS）后放行：消息带着网关快照发出去。
   await waitFor(() => expect(runRequests).toHaveLength(1), { timeout: 4000 });
-  expect(runRequests[0]?.path).toBe("/api/copilotkit/agent/refresh-bot/run");
+  expect(runRequests[0]?.path).toBe("/api/conversations/refresh-thread/commands");
   expect(runRequests[0]?.input.threadId).toBe(channel.threadId);
   expect(runRequests[0]?.input.messages.slice(0, -1)).toEqual([initial]);
   expect(runRequests[0]?.input.messages.at(-1)).toMatchObject({

@@ -11,14 +11,16 @@ import { type AppVariables, requireAdmin } from "../auth/guards";
 import type { HermesHealthCheck } from "./hermes-health";
 
 export type RuntimeKernelStatus = {
-  kernel: "hermes" | "builtin";
+  kernel: "hermes" | "builtin" | "dsh";
   hermes: HermesHealthCheck | null;
+  dsh?: { ok: boolean; version?: string; sessions?: number; running?: number; error?: string } | null;
 };
 
 export function createRuntimeKernelRoutes(options: {
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
-  kernel: "hermes" | "builtin";
+  kernel: "hermes" | "builtin" | "dsh";
   probe?: () => Promise<HermesHealthCheck>;
+  probeDsh?: (actorId: string) => Promise<NonNullable<RuntimeKernelStatus["dsh"]>>;
 }) {
   const routes = new Hono<{ Variables: AppVariables }>();
   routes.use("*", options.requireUser, async (context, next) => {
@@ -31,6 +33,7 @@ export function createRuntimeKernelRoutes(options: {
     const status: RuntimeKernelStatus = {
       kernel: options.kernel,
       hermes: options.probe ? await options.probe() : null,
+      ...(options.probeDsh ? { dsh: await options.probeDsh(context.var.actor.id) } : {}),
     };
     return context.json(status);
   });

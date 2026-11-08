@@ -133,9 +133,9 @@ test("groups heavy vendors into stable chunks (DESIGN.md §41.5)", () => {
   expect(selectChisaBotManualChunk("\0commonjsHelpers.js")).toBe("vendor-react");
   expect(
     selectChisaBotManualChunk(
-      "/repo/node_modules/.bun/@copilotkit+react-core@1.70.1/node_modules/@copilotkit/react-core/dist/index.js",
+      "/repo/node_modules/.bun/@ag-ui+client@1.0.2/node_modules/@ag-ui/client/dist/index.js",
     ),
-  ).toBe("vendor-copilot");
+  ).toBe("vendor-conversation");
   expect(
     selectChisaBotManualChunk("/repo/node_modules/.bun/streamdown@2.6.0/node_modules/streamdown/dist/index.js"),
   ).toBe("vendor-markdown");
@@ -147,7 +147,7 @@ test("groups heavy vendors into stable chunks (DESIGN.md §41.5)", () => {
     selectChisaBotManualChunk(
       "/repo/node_modules/.bun/@modelcontextprotocol+sdk@1.20.0/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js",
     ),
-  ).toBe("vendor-copilot");
+  ).toBeUndefined();
   expect(
     selectChisaBotManualChunk(
       "/repo/node_modules/.bun/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/lib/syntax.js",

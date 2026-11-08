@@ -23,6 +23,11 @@
 FROM node:24.18.1-bookworm-slim AS node-toolchain
 FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS bun-toolchain
 
+FROM node-toolchain AS dsh-deps
+WORKDIR /runtime/dsh
+COPY runtime/dsh/package.json runtime/dsh/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+
 FROM ubuntu:24.04 AS base
 
 # The Bun image digest pins the amd64/arm64 release bytes, including if its tag changes.
@@ -37,7 +42,7 @@ COPY --from=bun-toolchain /usr/local/bin/bun /usr/local/bin/bun
 # browser download must change too.
 COPY agent-computer/package.json /tmp/agent-computer-package.json
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl unzip xz-utils \
+      ca-certificates curl unzip xz-utils util-linux \
   && ln -s bun /usr/local/bin/bunx \
   && PLAYWRIGHT_VERSION="$(node -p "require('/tmp/agent-computer-package.json').dependencies.playwright.replace(/^[^0-9]*/, '')")" \
   && test -n "$PLAYWRIGHT_VERSION" \
@@ -83,7 +88,7 @@ RUN mkdir -p /prod && cp package.json bun.lock /prod/ \
   && cd /prod && mkdir -p app server \
   && cp /src/app/package.json app/package.json \
   && cp /src/server/package.json server/package.json \
-  && bun install --frozen-lockfile --production --linker hoisted \
+  && bun install --frozen-lockfile --production --omit=peer --linker hoisted \
   && mkdir -p /prod/server/node_modules
 
 
@@ -165,6 +170,14 @@ COPY --from=deps /src/agent-computer/node_modules agent-computer/node_modules
 COPY server server
 COPY shared shared
 COPY examples examples
+COPY --from=dsh-deps /runtime/dsh/node_modules runtime/dsh/node_modules
+COPY runtime/dsh/package.json runtime/dsh/package-lock.json runtime/dsh/
+COPY runtime/dsh/src runtime/dsh/src
+COPY deploy/dsh deploy/dsh
+RUN node deploy/dsh/compatibility.mjs --print > deploy/dsh/runtime-compat.json \
+  && bun -e 'await import("@ag-ui/client"); await import("./runtime/dsh/src/client.mjs")'
+RUN mkdir -p /var/lib/chisabot-dsh && chown apiuser:apiuser /var/lib/chisabot-dsh
+ENV CHISABOT_DSH_ROOT=/var/lib/chisabot-dsh
 COPY agent-computer/src agent-computer/src
 COPY agent-computer/package.json agent-computer/package.json
 

@@ -1,5 +1,5 @@
 import type { Message } from "@ag-ui/core";
-import type { Attachment } from "@copilotkit/react-core/v2";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import {
   type ReactNode,
   useCallback,
@@ -73,10 +73,10 @@ export function ConversationView({
   /** 最新一条用户消息的服务器发送时刻（本机时钟，DESIGN.md §94）。 */
   lastSentAt?: SentAtReading | null;
   /**
-   * 回答期间发的纯文字消息进服务器收件箱（DESIGN.md §38.1，CB-046 从 `/bot` 搬来）：正在跑的那一轮下一步就读到，
-   * 不用等它说完。"send" = 那一轮其实已经结束，按原来的本地排队走；带附件 / 技能的仍走本地排队。
+   * 回答期间的完整草稿进入持久收件箱，附件和技能随文字一起保留。
+   * "send" 表示当前回合已经结束，按正常发送处理。
    */
-  queueToServer?: (text: string) => Promise<"queued" | "send" | "failed">;
+  queueToServer?: (draft: ComposerDraft) => Promise<"queued" | "send" | "failed">;
   /** Shown above the composer. An error, or why this conversation is read-only. */
   notice?: ReactNode;
   /** 显示在会话顶部（第一条消息之上），例如较早的消息读不到时的提示和「重试」。 */
@@ -548,17 +548,11 @@ export function ConversationView({
   const retryStopRun = useCallback(() => latest.current.onRetryStop?.(), []);
   const queueDraft = useCallback((draft: ComposerDraft) => {
     const { queueToServer: toServer, submit: runSubmit } = latest.current;
-    const plain =
-      toServer !== undefined &&
-      draft.attachments.length === 0 &&
-      draft.commandIds.length === 0 &&
-      draft.text.trim().length > 0 &&
-      queuedRef.current.length === 0;
-    if (!plain) {
+    if (!toServer) {
       runSubmit(draft, true);
       return;
     }
-    void toServer(draft.text.trim()).then((outcome) => {
+    void toServer(draft).then((outcome) => {
       if (outcome === "send") latest.current.submit(draft, true);
     });
   }, []);

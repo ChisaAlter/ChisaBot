@@ -15,15 +15,21 @@ ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:
     PORT=3001 \
     TENANT_PACKAGE_DIR=../examples/zh-CN \
     CHISABOT_PANEL_COMMANDS=1
+ENV CHISABOT_DSH_ROOT=/var/lib/chisabot-dsh
 USER root
 WORKDIR /app
 EXPOSE 3001
 ENTRYPOINT ["/init"]
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 CMD bun -e "const r = await fetch('http://127.0.0.1:3001/health'); process.exit(r.ok ? 0 : 1)"
-RUN rm -rf /app/app/dist /app/server/src /app/server/drizzle /app/server/scripts /app/shared /app/examples/zh-CN /app/agent-computer/src
+RUN rm -rf /app/app/dist /app/server/src /app/server/drizzle /app/server/scripts /app/shared /app/examples/zh-CN /app/agent-computer/src /app/runtime/dsh/src /app/deploy/dsh
 COPY --chown=apiuser:apiuser app/dist /app/app/dist
 COPY --chown=apiuser:apiuser server /app/server
 COPY --chown=apiuser:apiuser shared /app/shared
+COPY --chown=apiuser:apiuser runtime/dsh/src /app/runtime/dsh/src
+COPY --chown=apiuser:apiuser runtime/dsh/package.json runtime/dsh/package-lock.json /app/runtime/dsh/
+COPY --chown=apiuser:apiuser deploy/dsh /app/deploy/dsh
+RUN node /app/deploy/dsh/compatibility.mjs --print > /app/deploy/dsh/runtime-compat.json \
+    && bun -e 'await import("@ag-ui/client"); await import("./runtime/dsh/src/client.mjs")'
 COPY --chown=apiuser:apiuser examples/zh-CN /app/examples/zh-CN
 # 服务器直接 import agent-computer/src/egress.ts（网络策略同一份代码），计算机服务也从这里跑：和代码层一起换。
 COPY --chown=apiuser:apiuser agent-computer/src /app/agent-computer/src

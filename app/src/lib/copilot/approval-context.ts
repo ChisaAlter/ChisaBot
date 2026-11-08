@@ -1,8 +1,8 @@
 import type { RunAgentInput } from "@ag-ui/core";
-import type { ReactFrontendTool } from "@copilotkit/react-core/v2";
+import type { AbstractAgent, ToolCall } from "@ag-ui/client";
 import { markApprovalPause } from "./stopped-turn";
 
-type HandlerContext = Parameters<NonNullable<ReactFrontendTool["handler"]>>[1];
+type HandlerContext = { agent?: AbstractAgent; toolCall: ToolCall; signal?: AbortSignal };
 type Agent = NonNullable<HandlerContext["agent"]>;
 const inputs = new WeakMap<Agent, RunAgentInput>();
 type BackendOwnedRun = {

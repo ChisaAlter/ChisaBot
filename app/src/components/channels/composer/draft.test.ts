@@ -1,4 +1,4 @@
-import type { Attachment } from "@copilotkit/react-core/v2";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import { describe, expect, test } from "bun:test";
 import { chip, type Segment, text } from "prompt-area/helpers";
 import {

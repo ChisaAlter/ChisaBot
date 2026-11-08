@@ -18,12 +18,12 @@ test("verified inbound person message keeps canonical run ID and persists exact 
     getThreadMessages: async () => ({
       messages: [{ id: "old", role: "user", content: "Earlier" }],
     }),
-    ɵacquireThreadLock: async (input: { runId: string; threadId: string }) => {
+    acquireThreadLease: async (input: { runId: string; threadId: string }) => {
       locks.push(input.runId);
       return { ...input, joinToken: "token" };
     },
-    ɵrenewThreadLock: async () => ({ ttlSeconds: 20 }),
-    ɵcleanupThreadLock: async (input: { runId: string }) => {
+    renewThreadLease: async () => ({ ttlSeconds: 20 }),
+    releaseThreadLease: async (input: { runId: string }) => {
       locks.push(input.runId);
     },
   };

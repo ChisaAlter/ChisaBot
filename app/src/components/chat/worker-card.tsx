@@ -1,4 +1,4 @@
-import { useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
+import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
   IconAlertTriangle,
   IconCheck,
@@ -34,7 +34,7 @@ import {
  * `aria-expanded` 跟着真实状态；进度（当前步骤、第几步、结束）放在卡片里一个一直挂着的 role=status 里播报。
  */
 export function WorkerCard({ workerId, pendingTitle }: { workerId?: string; pendingTitle?: string }) {
-  const chat = useCopilotChatConfiguration();
+  const chat = useConversationScope();
   const threadId = chat?.threadId;
   const workers = useThreadWorkers(threadId);
   const worker = workerId ? workers.data?.find((item) => item.id === workerId) : undefined;

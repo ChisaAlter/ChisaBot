@@ -17,7 +17,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
-import * as ReactCoreV2 from "@copilotkit/react-core/v2";
+import * as AttachmentState from "@/lib/chat/attachment-state";
 import { useCallback } from "react";
 import { Composer } from "@/components/channels/composer/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
@@ -80,10 +80,10 @@ function render(ui: ReactElement): RenderResult {
 
 /**
  * Captured before the spy is installed, because the spy replaces this very property: calling
- * `ReactCoreV2.useAttachments` from inside the implementation below would call the spy again and
+ * `AttachmentState.useAttachments` from inside the implementation below would call the spy again and
  * recur forever.
  */
-const realUseAttachments = ReactCoreV2.useAttachments;
+const realUseAttachments = AttachmentState.useAttachments;
 
 beforeAll(() => {
   GlobalRegistrator.register({ url: "http://localhost/" });
@@ -131,7 +131,7 @@ const handedOut = {
  * is a harness that changes the behaviour it is measuring. Keyed on the SDK's own functions, so
  * they stay stable exactly as long as the real ones do.
  */
-const useAttachmentsSpy = spyOn(ReactCoreV2, "useAttachments");
+const useAttachmentsSpy = spyOn(AttachmentState, "useAttachments");
 
 beforeAll(() => {
   useAttachmentsSpy.mockImplementation(
@@ -146,8 +146,8 @@ beforeAll(() => {
       );
       const consumeAttachments = useCallback(() => {
         consumeAttachmentsCallCount += 1;
-        return hook.consumeAttachments();
-      }, [hook.consumeAttachments]);
+        throw new Error("A queue must remove only the selected attachment IDs.");
+      }, []);
 
       handedOut.removeAttachment.add(removeAttachment);
       handedOut.consumeAttachments.add(consumeAttachments);
@@ -361,6 +361,25 @@ function named(name: string) {
   return new File(["hello"], name, { type: "text/plain" });
 }
 
+test("a channel with durable inbox transfers the complete attachment draft and never drains it on Stop", async () => {
+  const drafts: ComposerDraft[] = [];
+  let sends = 0;
+  const common = { channelId: "channel-1", messages: [], onSubmit: () => { sends++; }, queueWhileBusy: true,
+    queueToServer: async (draft: ComposerDraft) => { drafts.push(draft); return "queued" as const; } };
+  const view = render(<ConversationView {...common} pending />);
+  await dropAndWait(view, [notes()]);
+  fireEvent.submit(view.container.querySelector("form") as HTMLFormElement);
+  await waitFor(() => expect(drafts).toHaveLength(1));
+  expect(drafts[0]?.attachments).toHaveLength(1);
+  expect(drafts[0]?.attachments[0]?.metadata).toMatchObject({ attachmentId: "stored-notes.txt" });
+  view.rerender(<ConversationView {...common} pending={false} />);
+  await settleReactWork();
+  expect(sends).toBe(0);
+  expect(deletes).toEqual([]);
+  view.unmount();
+  expect(deletes).toEqual([]);
+});
+
 test("taking a queued message back releases the rows it was carrying", async () => {
   const view = render(
     <ConversationView
@@ -520,7 +539,7 @@ test("the spy hands the composer one stable pair of callbacks, not a fresh pair 
  * unregister a module mock, so re-mocking with a snapshot left one installed for good.
  */
 afterAll(() => {
-  expect(ReactCoreV2.useAttachments).toBe(realUseAttachments);
+  expect(AttachmentState.useAttachments).toBe(realUseAttachments);
 });
 
 /**

@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { assertConversationAdmissionOpen, conversationAdmissionClosed } from "../conversations/maintenance";
+import { readDurableTurn } from "../turns/durable-outcome";
 import type { Message } from "@ag-ui/client";
 import { CronExpressionParser } from "cron-parser";
 import { Hono, type MiddlewareHandler } from "hono";
@@ -70,6 +72,7 @@ export class ScheduleError extends Error {}
 
 /** 和 turns/types 的 TurnRunner 同形（只用到这些字段）。 */
 export type TurnRunner = (input: {
+  runId?: string;
   ownerUserId: string;
   routineId: string;
   agentId: string;
@@ -405,7 +408,7 @@ export type ScheduleDeps = {
   /** IM 会话的回合（只给 IM 能显示的工具）。 */
   runImTurn?: TurnRunner;
   /** IM 来的任务：回复推回那个 IM 会话。 */
-  pushToIm?: (threadId: string, text: string) => Promise<void>;
+  pushToIm?: (threadId: string, text: string, options?: { deliveryId: string; connectionId?: string }) => Promise<void>;
   /** 对话正被一轮占着？是的话把消息排进收件箱。 */
   isThreadActive?: (threadId: string) => boolean;
   enqueueToThread?: (input: {
@@ -529,10 +532,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     await sql.unsafe(
       "UPDATE chisabot_schedules SET next_run_at = NULL WHERE status = 'paused' AND next_run_at IS NOT NULL",
     );
-    // 进程重启时还在「运行中」的记录：那一轮已经没了。
-    await sql.unsafe(
-      "UPDATE chisabot_schedule_runs SET status = 'failed', finished_at = now(), result = coalesce(result, '服务器重启，这次运行中断了') WHERE status = 'running' AND started_at < now() - interval '20 minutes'",
-    );
+    await reconcileDurableRuns();
+    await reclaimStuckRuns();
   }
 
   const runView = (r: RunRow): ScheduleRunView => ({
@@ -814,6 +815,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     owner: string,
     id: string,
   ): Promise<{ runId: string; schedule: ScheduleView }> {
+    assertConversationAdmissionOpen();
     const runId = `run_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const row = await sql.begin(async (transaction) => {
       const tx = transaction as unknown as Database["$client"];
@@ -909,6 +911,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
 
   /** Track B / v0.1.34：卡死的 running 记录标失败；对话仍被占着则 releaseThread；连续失败则暂停（从不 auto-resume）。 */
   async function reclaimStuckRuns(): Promise<number> {
+    const [journal] = await sql.unsafe<{ available: boolean }[]>("SELECT to_regclass('public.chisabot_dsh_runs') IS NOT NULL AS available");
+    // An API lease does not own the lifetime of a surviving DSH execution.
+    const preserved = journal?.available ? "AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.owner_user_id=r.owner_user_id AND d.input->'forwardedProps'->'chisabotSchedule'->>'runId'=r.id)" : "";
     const stuck = await sql.unsafe<
       { id: string; schedule_id: string; thread_id: string | null }[]
     >(
@@ -918,6 +923,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
        FROM chisabot_schedules s
        WHERE r.schedule_id = s.id AND r.status = 'running'
          AND r.started_at < now() - interval '20 minutes'
+         ${preserved}
        RETURNING r.id, r.schedule_id, s.thread_id`,
     );
     const touched = new Set<string>();
@@ -1273,6 +1279,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           const result = await runTurn({
             ownerUserId: row.owner_user_id,
             routineId: `schedule:${row.id}`,
+            runId: `schedule:${runId}`,
             agentId: row.agent_id,
             threadId,
             instruction: (message as { content: string }).content,
@@ -1301,7 +1308,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           let runnerError: string | null = null;
           if (!silent && im && deps.pushToIm) {
             try {
-              await deps.pushToIm(threadId, text);
+              await deps.pushToIm(threadId, text, { deliveryId: `schedule:${runId}`, connectionId: row.im_connection_id ?? undefined });
             } catch (error) {
               runnerError = reasonWithoutStatement(error);
               text += `\n（推送到 IM 失败：${runnerError}）`;
@@ -1318,6 +1325,11 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           return;
         } catch (error) {
           if (deps.isSuspension?.(error)) {
+            if (await readDurableTurn(database, row.owner_user_id, threadId, `schedule:${runId}`)) {
+              await sql.unsafe("UPDATE chisabot_schedule_runs SET status='waiting',result='等待原确认卡片的决定' WHERE id=$1", [runId]);
+              await sql.unsafe("UPDATE chisabot_schedules SET last_status='waiting',last_result='等待原确认卡片的决定',updated_at=now() WHERE id=$1", [row.id]);
+              return;
+            }
             // FIX-02：定时任务里需要人在场的一步（浏览器交还 / 登录）不再挂成「等你确认」占着对话；
             // 快速失败并释放锁，用户可继续聊天。要做这类事请在网页聊天里当面让机器人做。
             const detail = reasonWithoutStatement(error);
@@ -1373,6 +1385,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
    */
   async function sweep(): Promise<{ fired: string[]; skipped: string[] }> {
     const report = { fired: [] as string[], skipped: [] as string[] };
+    if (conversationAdmissionClosed()) return report;
+    await reconcileDurableRuns();
     const due = await sql.unsafe<Row[]>(
       "SELECT * FROM chisabot_schedules WHERE status = 'active' AND next_run_at <= now() ORDER BY next_run_at LIMIT 20",
     );
@@ -1470,6 +1484,37 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       }
     }
     return report;
+  }
+
+  async function reconcileDurableRuns() {
+    const [journal] = await sql.unsafe<{ available: boolean }[]>("SELECT to_regclass('public.chisabot_dsh_runs') IS NOT NULL AS available");
+    if (!journal?.available) return;
+    const runs = await sql.unsafe<{ id: string; schedule_id: string; owner_user_id: string; thread_id: string; run_id: string; manual: boolean; im_connection_id: string | null }[]>(`
+      SELECT r.id,r.schedule_id,r.owner_user_id,d.thread_id,d.run_id,r.manual,s.im_connection_id FROM chisabot_schedule_runs r
+      JOIN chisabot_schedules s ON s.id=r.schedule_id
+      JOIN LATERAL (SELECT thread_id,run_id FROM chisabot_dsh_runs d WHERE d.owner_user_id=r.owner_user_id
+        AND d.input->'forwardedProps'->'chisabotSchedule'->>'runId'=r.id ORDER BY created_at DESC LIMIT 1) d ON true
+      WHERE r.status IN ('running','waiting')`);
+    for (const run of runs) {
+      if (running.has(run.schedule_id)) continue;
+      const state = await readDurableTurn(database, run.owner_user_id, run.thread_id, run.run_id);
+      if (state?.status === "finished") {
+        let text = state.replyText || "（这次没有文字回复）";
+        const silent = !run.manual && isSilentScheduleReply(text);
+        let error: string | null = null;
+        if (!silent && run.im_connection_id && deps.pushToIm) {
+          try { await deps.pushToIm(run.thread_id, text, { deliveryId: `schedule:${run.id}`, connectionId: run.im_connection_id }); }
+          catch (cause) { error = reasonWithoutStatement(cause); text += `\n（推送到 IM 失败：${error}）`; }
+        }
+        if (silent) {
+          text = "巡检完成：暂无需要打扰用户的事项";
+          await removeSilentRunMessages(run.thread_id, run.owner_user_id, `schedule-${run.id}`).catch(() => {});
+        }
+        await finishRun(run.id, run.schedule_id, classifyScheduleReply(text, { runnerError: error }), text);
+      }
+      else if (state?.status === "failed") await finishRun(run.id, run.schedule_id, "failed", state.error ?? "原执行中断，请核对结果。");
+      else if (state?.status === "waiting") await sql.unsafe("UPDATE chisabot_schedule_runs SET status='waiting',result='等待原确认卡片的决定' WHERE id=$1", [run.id]);
+    }
   }
 
   function start() {

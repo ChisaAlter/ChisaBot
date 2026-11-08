@@ -112,11 +112,11 @@ function turnHarness(
     intelligence: {
       getOrCreateThread: async () => undefined,
       getThreadMessages: async () => ({ messages: [] }),
-      ɵacquireThreadLock: async () => {
+      acquireThreadLease: async () => {
         lockCalls.push("acquire");
       },
-      ɵrenewThreadLock: async () => undefined,
-      ɵcleanupThreadLock: async () => {
+      renewThreadLease: async () => undefined,
+      releaseThreadLease: async () => {
         lockCalls.push("cleanup");
       },
     },

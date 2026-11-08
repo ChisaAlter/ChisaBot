@@ -192,14 +192,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (stack.isNotEmpty()) return
         // loggedIn 只有退出 / 会话失效才写成 false；老版本没这个键（升级过来）按已登录处理，Cookie 不行自然回落登录页。
         if (prefs.getString("server", null).isNullOrBlank() || !prefs.getBoolean("loggedIn", true)) { stack += Screen.Login; return }
-        stack += Screen.Bots
-        viewModelScope.launch {
-            runCatching { ctx.store.data.first()[BOTS_CACHE] }.getOrNull()?.let { cached ->
-                runCatching { bots = parseBots(Api.json.parseToJsonElement(cached) as JsonArray) }
-            }
-            loadBots()
+        stack += Screen.Web(webStartPath(), "ChisaBot")
+    }
+
+    private fun webPathKey() = "webPath:${origin().orEmpty()}"
+    private fun webStartPath(): String = prefs.getString(webPathKey(), "/")?.takeIf { it.startsWith("/") && !it.startsWith("//") } ?: "/"
+    fun rememberWebPath(path: String) {
+        if (path.startsWith("/") && !path.startsWith("//") && !path.startsWith("/auth") && !path.startsWith("/login")) {
+            prefs.edit().putString(webPathKey(), path).apply()
         }
     }
+    suspend fun renewWebSession(): Boolean = origin()?.let { renewWithDevice(it) } ?: false
 
     fun recentServers(): List<String> = runCatching {
         org.json.JSONArray(prefs.getString("recent", "[]")).let { arr -> (0 until arr.length()).map { arr.getString(it) } }
@@ -254,9 +257,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun enterApp() {
         notice = ""
-        stack.clear(); stack += Screen.Bots
-        bots = emptyList()
-        viewModelScope.launch { loadBots() }
+        stack.clear(); stack += Screen.Web(webStartPath(), "ChisaBot")
     }
 
     fun logout() {
@@ -389,11 +390,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (generation != chatGeneration) return@launch
                 val t = threadId
                 if (t != null) {
+                    // 先看运行状态再读历史：读到 idle 后取到的历史才包含已结算的最后一段。
+                    val inbox = runCatching { api.get("/api/copilotkit/threads/$t/inbox") }.getOrNull()
                     val hist = api.get("/api/copilotkit/threads/$t/messages").a("messages") ?: JsonArray(emptyList())
                     if (generation != chatGeneration || threadId != t) return@launch
                     if (!running) messages = parseHistory(hist)
-                    val inbox = runCatching { api.get("/api/copilotkit/threads/$t/inbox") }.getOrNull()
-                    if (generation != chatGeneration || threadId != t) return@launch
                     if (inbox?.get("running")?.toString() == "true" && !running) watch(bot, t)
                     kickConfirms()
                 }
@@ -417,10 +418,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 while (true) {
                     delay(1500)
                     if (chatBot?.id != bot.id || threadId != t || screen !is Screen.Chat) break
+                    val inbox = api.get("/api/copilotkit/threads/$t/inbox")
                     val hist = api.get("/api/copilotkit/threads/$t/messages").a("messages") ?: break
                     if (generation != chatGeneration || threadId != t) break
                     messages = parseHistory(hist)
-                    val inbox = api.get("/api/copilotkit/threads/$t/inbox")
                     if (inbox["running"]?.toString() != "true") break
                 }
             } catch (_: Exception) { } finally {

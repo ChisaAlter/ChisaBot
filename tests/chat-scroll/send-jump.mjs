@@ -10,8 +10,11 @@
 //         「事件序号变了 + 服务器在回答」，逼同步在本机发送中 / 刚结束时反复尝试接入；必须 0 跳）。
 import { chromium } from "playwright-core";
 import fs from "node:fs";
-const exe = fs.readdirSync("/ms-playwright").find((d) => d.startsWith("chromium-") && !d.includes("headless"));
-const browser = await chromium.launch({ executablePath: `/ms-playwright/${exe}/chrome-linux64/chrome`, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+import path from "node:path";
+const out = path.resolve(process.env.OUT || "/out");
+fs.mkdirSync(out, { recursive: true });
+const exe = fs.existsSync("/ms-playwright") ? fs.readdirSync("/ms-playwright").find((d) => d.startsWith("chromium-") && !d.includes("headless")) : undefined;
+const browser = await chromium.launch({ ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : exe ? { executablePath: `/ms-playwright/${exe}/chrome-linux64/chrome` } : process.platform === "win32" ? { channel: "msedge" } : {}), headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
 const BASE = process.env.BASE || "http://127.0.0.1:3092";
 const BOT = process.env.BOT || "knowledge";
 const THREAD = process.env.THREAD || "";
@@ -20,7 +23,7 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 23), ...a);
 const vp = { width: W, height: H };
 const ctx = await browser.newContext({
   viewport: vp, deviceScaleFactor: 1, locale: "zh-CN", timezoneId: "Asia/Shanghai",
-  ...(process.env.VIDEO ? { recordVideo: { dir: "/out/video", size: vp } } : {}),
+  ...(process.env.VIDEO ? { recordVideo: { dir: `${out}/video`, size: vp } } : {}),
 });
 await ctx.addInitScript(({ bot, thread }) => {
   try {
@@ -85,7 +88,9 @@ await ctx.addInitScript(({ bot, thread }) => {
           n: all.length, firstVis, firstVisTop,
           running: Boolean(document.querySelector('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]')),
           // 发送后那 700ms 频道聊天自己开着平滑滚动（chat-transcript.tsx useSmoothSendScroll），把刚发的消息滚到顶。
-          smooth: s.style.scrollBehavior === "smooth",
+          // Native scrolling also takes its behavior from a stylesheet. Inspect the effective
+          // value so a CSS smooth scroll is not misreported as an instantaneous upward jump.
+          smooth: getComputedStyle(s).scrollBehavior === "smooth",
         });
       }
     }
@@ -97,9 +102,9 @@ await ctx.addInitScript(({ bot, thread }) => {
 const page = await ctx.newPage();
 let failLeft = process.env.FAIL === "1" ? 1 : 0;
 if (failLeft) {
-  await page.route(/\/api\/copilotkit/, async (route) => {
+  await page.route(/\/api\/(?:copilotkit|conversations)/, async (route) => {
     const req = route.request();
-    if (failLeft > 0 && req.method() === "POST" && /\/run\b|"runId"/.test(req.url() + (req.postData() || "").slice(0, 400)) && !/connect/.test(req.url())) {
+    if (failLeft > 0 && req.method() === "POST" && /\/(?:run|commands)$/.test(req.url())) {
       failLeft--;
       log("FAILING", req.url());
       return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "模拟上游出错：这一轮没有回答。" }) });
@@ -140,7 +145,7 @@ if (process.env.SCROLLUP) {
 }
 const s0 = await page.evaluate(() => { const s = window.__findScroller(); return { top: s.scrollTop, h: s.scrollHeight, ch: s.clientHeight, n: document.querySelectorAll("[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript] [data-message-id]").length }; });
 log("BEFORE", JSON.stringify(s0));
-await page.screenshot({ path: "/out/0-before.png" });
+await page.screenshot({ path: `${out}/0-before.png` });
 await page.evaluate(() => { window.__arm(); window.__sampling = true; });
 await page.waitForTimeout(300);
 const RUNMS = Number(process.env.RUNMS || 60000);
@@ -154,7 +159,7 @@ async function sendOnce(prompt, tag) {
   for (const ms of [40, 120, 250, 500, 900, 1500, 2500]) {
     const now = await page.evaluate(() => performance.now());
     const d = at + ms - now; if (d > 0) await page.waitForTimeout(d);
-    await page.screenshot({ path: `/out/${tag}s-${String(ms).padStart(4, "0")}.png` });
+    await page.screenshot({ path: `${out}/${tag}s-${String(ms).padStart(4, "0")}.png` });
   }
   const t0 = Date.now(); let idle = 0;
   while (Date.now() - t0 < RUNMS && idle < 4) { idle = (await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]').count()) ? 0 : idle + 1; await page.waitForTimeout(500); }
@@ -165,16 +170,16 @@ const PROMPT = process.env.PROMPT_B64 ? Buffer.from(process.env.PROMPT_B64, "bas
 const tSend = await sendOnce(PROMPT || "用一句话回答：1+1 等于几？", "");
 if (process.env.TWICE === "1") {
   await page.waitForTimeout(2000);
-  await page.screenshot({ path: "/out/5-between.png" });
+  await page.screenshot({ path: `${out}/5-between.png` });
   log("BETWEEN", JSON.stringify(await page.evaluate(() => ({ notice: Boolean(document.querySelector('[data-testid=kept-page][data-visible=true] [data-testid="transcript-stopped"]')) }))));
   await sendOnce(process.env.PROMPT2 || "再用一句话回答：2+2 等于几？", "b-");
 }
 await page.waitForTimeout(1500);
-await page.screenshot({ path: "/out/9-end.png" });
+await page.screenshot({ path: `${out}/9-end.png` });
 const { samples, events, anchorId } = await page.evaluate(() => ({ samples: window.__samples, events: window.__events, anchorId: window.__anchorId }));
 const pre = samples.filter((x) => x.t < tSend);
 const post = [...(pre.length ? [pre[pre.length - 1]] : []), ...samples.filter((x) => x.t >= tSend)];
-fs.writeFileSync("/out/samples.json", JSON.stringify({ tSend, anchorId, samples, events }));
+fs.writeFileSync(`${out}/samples.json`, JSON.stringify({ tSend, anchorId, samples, events }));
 // Analysis (no user input after send): fail if, between two consecutive frames, scrollTop drops > 24px, the anchor message
 // moves DOWN on screen > 24px (older history slides into view) or UP > 120px (faster than the stick-to-bottom spring ever
 // moves), or the scroller itself moves on screen (sTop changes: something above it appeared / vanished).

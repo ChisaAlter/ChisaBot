@@ -37,7 +37,7 @@ export type ProposedSkillCardProps = {
   respond?: (result: unknown) => Promise<void>;
   /** The recorded answer, once there is one. Completed cards show it instead of controls. */
   result?: string;
-  save: (values: SkillFormValues) => Promise<void>;
+  save?: (values: SkillFormValues) => Promise<void>;
 };
 
 export function ProposedSkillCard({
@@ -89,7 +89,10 @@ export function ProposedSkillCard({
     setSending("save");
     setRefusal(null);
     try {
-      await save(values);
+      if (save) {
+        await save(values);
+        await respond(skillCardAnswer.saved(values.slug));
+      } else await respond({ kind: "save-skill", values });
     } catch (cause) {
       // Left on the card with the buttons still live. See `refusal` above.
       setSending(null);
@@ -98,7 +101,6 @@ export function ProposedSkillCard({
       );
       return;
     }
-    await answer(respond, skillCardAnswer.saved(values.slug));
   };
 
   const decline = async () => {

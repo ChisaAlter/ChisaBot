@@ -358,7 +358,7 @@ sh /opt/chisabot-updater/smoke.sh                                               
 | `examples/zh-CN/` | 中文品牌、BOT、频道和技能配置 |
 | `deploy/` | 自托管部署与认证网关 |
 | `pc/` | ChisaBot PC（Windows，Electron）客户端：设备节点 + 在线更新 |
-| `android/` | ChisaBot Android 客户端（Kotlin + Jetpack Compose 原生，minSdk 24）：扫码绑定 / 账号密码登录、机器人列表、原生聊天（流式、干活卡、富卡片）、面板；其余页面应用内网页兜底；APK 在线更新（docs/android-native.md） |
+| `android/` | ChisaBot Android 客户端（Kotlin 壳 + WebView，minSdk 24）：使用桌面同一 React 前端的手机布局；保留扫码 / 账号登录、系统文件与权限、返回键及 APK 在线更新（[说明](docs/android-native.md)） |
 | `.github/workflows/release.yml` | 推 `v*` 标签时用 GitHub Actions 构建 PC + Android 安装包并发布到 Releases |
 | `deploy/updater/` | 宿主机在线更新服务（管理后台 → 系统更新） |
 | `docs/` | 中文使用指南、模型集成与上游技术参考；`docs/images/` 是 README 截图 |

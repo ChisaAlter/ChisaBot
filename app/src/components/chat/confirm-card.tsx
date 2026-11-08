@@ -1,4 +1,4 @@
-import { useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
+import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
   IconCheck,
   IconClockHour4,
@@ -233,7 +233,7 @@ export function ToolCallConfirmCards({ toolCallId, answered, recent }: { toolCal
 }
 
 function ToolConfirmCards({ ids, answered, recent }: { ids: readonly string[]; answered: ReadonlySet<string>; recent: boolean }) {
-  const chat = useCopilotChatConfiguration();
+  const chat = useConversationScope();
   const threadId = chat?.threadId ?? null;
   // 有工具调用还没结果、且（这一轮正在跑，或它在最近几条消息里——刷新后卡片还在等）时才轮询；
   // 历史里被打断、永远没结果的调用不让页面一直轮询。一轮刚跑完再取一次，卡片状态马上对上。
@@ -278,7 +278,7 @@ const RESUME_ID = /^⟦chisabot:confirm:([^⟧]+)⟧/;
 export const confirmResumeId = (text: string): string | null => RESUME_ID.exec(text)?.[1] ?? null;
 
 export function LooseConfirmCards({ resumed, version }: { resumed: ReadonlySet<string>; version: number }) {
-  const chat = useCopilotChatConfiguration();
+  const chat = useConversationScope();
   const threadId = chat?.threadId ?? null;
   const list = useThreadConfirmations(threadId, false);
   const queryClient = useQueryClient();

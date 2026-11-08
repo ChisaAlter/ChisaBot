@@ -1,4 +1,5 @@
-import { useFrontendTool, useHumanInTheLoop } from "@copilotkit/react-core/v2";
+import { useRenderTool, useInteractionRenderer } from "@/lib/chat/renderers";
+import { SandboxSurface } from "@/lib/chat/sandbox-surface";
 import { useBotOnScreen } from "@/lib/kept-visible";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -138,33 +139,9 @@ function GrantedTool({
     [Component, isHeld, refusals, spec.title],
   );
 
-  useFrontendTool({
+  useRenderTool({
     name: spec.name,
-    // Published descriptions are model-facing runtime behavior.
-    description: description ?? spec.description,
     parameters: spec.parameters,
-    // Keep the hook mounted and hide revoked grants from the model to preserve hook order.
-    available: isHeld,
-    handler: async (
-      args: Record<string, unknown>,
-      context: { toolCall?: { id?: string } },
-    ) => {
-      const decision = await decideComponent(
-        spec.name,
-        grantsFor,
-        spec.reads?.(args ?? {}) ?? [],
-      );
-      if (!decision.allowed) {
-        const reason = decision.reason ?? "That component is not allowed here.";
-        const id = context?.toolCall?.id;
-        if (id) {
-          setRefusals((current) => new Map(current).set(id, reason));
-        }
-        // Led with the same words the card shows, so the transcript and the card agree.
-        return `${NOT_SHOWN}${spec.title}. ${reason}${NOT_SHOWN_TAIL}`;
-      }
-      return spec.confirmation ?? "It is now on screen for the person.";
-    },
     render,
   });
 
@@ -199,11 +176,9 @@ function GrantedDecision({
     [Component, isHeld, spec.title],
   );
 
-  useHumanInTheLoop({
+  useInteractionRenderer({
     name: spec.name,
-    description: description ?? spec.description,
     parameters: spec.parameters,
-    available: isHeld,
     render: Render,
   });
 

@@ -20,6 +20,7 @@ services:
       - database:/var/lib/postgresql
       - workspace:/workspace
       - profiles:/profiles
+      - dsh:/var/lib/chisabot-dsh
       # 管理后台 → 系统更新：和宿主机更新服务 chisabot-updater 共用的两个目录（deploy/install-updater.sh 安装；
       # docs/online-update.md）。没装时这两个目录是空的，页面显示怎么安装。
       - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/requests:/var/lib/chisabot-updater/requests
@@ -33,6 +34,7 @@ services:
     environment:
       EMBEDDED_POSTGRES: "on"
       CHISABOT_RUNTIME_MODE: ${CHISABOT_RUNTIME_MODE:-${OPENBOT_RUNTIME_MODE:-local}}
+      CHISABOT_DSH_ROOT: /var/lib/chisabot-dsh
       SL_ENABLED: "false"
       COPILOTKIT_TELEMETRY_DISABLED: "true"
       DO_NOT_TRACK: "1"
@@ -68,6 +70,8 @@ volumes:
     name: ${CHISABOT_VOLUME_PREFIX:-openbot-zh}_workspace
   profiles:
     name: ${CHISABOT_VOLUME_PREFIX:-openbot-zh}_profiles
+  dsh:
+    name: ${CHISABOT_VOLUME_PREFIX:-openbot-zh}_dsh
 
 # CB-100: the default network is pinned to the pre-rename one, like the volumes above. Without `name:`
 # the 0.1.75 project rename made compose create `chisabot-zh_default` on a random subnet

@@ -1,5 +1,18 @@
 import { useSyncExternalStore } from "react";
+import type { Message } from "@ag-ui/core";
 import { tryClient, type ClientOptions } from "../client";
+
+export type InboxMessage = Message & {
+  metadata?: { chisabotInbox?: { skillIds?: string[]; skillInstructions?: string[] } };
+};
+export type InboxDraft = { message: InboxMessage; skillIds?: string[] };
+
+/** Display text only; the original typed message remains the send payload. */
+export function inboxMessageText(message: { content?: unknown }): string {
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  return message.content.flatMap((part) => part?.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n");
+}
 
 /**
  * 机器人回答期间又发来的消息（DESIGN.md §38.1；服务器那边是 server/src/thread-inbox.ts）。
@@ -13,6 +26,8 @@ export type QueuedStatus = "sending" | "queued" | "paused" | "failed";
 export type QueuedMessage = {
   id: string;
   text: string;
+  message?: InboxMessage;
+  skillIds?: string[];
   status: QueuedStatus;
   at: number;
   /**
@@ -90,15 +105,16 @@ const api = (threadId: string) => `/api/copilotkit/threads/${encodeURIComponent(
  * 机器人正在回答时发一条：进收件箱。返回 "queued" = 已排队；"send" = 那一轮刚好已经结束，调用方照常发送。
  * 失败（网络、排队满）时气泡标成失败，可以重试或撤回。
  */
-export async function queueMessage(threadId: string, text: string, id: string = crypto.randomUUID(), options: Pick<ClientOptions, "signal" | "timeoutMs"> = {}): Promise<"queued" | "send" | "failed"> {
-  const item: QueuedMessage = { id, text, status: "sending", at: Date.now() };
+export async function queueMessage(threadId: string, draft: string | InboxDraft, id: string = typeof draft === "string" ? crypto.randomUUID() : draft.message.id, options: Pick<ClientOptions, "signal" | "timeoutMs"> = {}): Promise<"queued" | "send" | "failed"> {
+  const text = typeof draft === "string" ? draft : inboxMessageText(draft.message);
+  const item: QueuedMessage = { id, text, ...(typeof draft === "string" ? {} : { message: { ...draft.message, id } as InboxMessage, skillIds: draft.skillIds }), status: "sending", at: Date.now() };
   rememberOwn(id);
   set(threadId, [...queuedFor(threadId).filter((other) => other.id !== id), item]);
   const update = (status: QueuedStatus) =>
     set(threadId, queuedFor(threadId).map((other) => (other.id === id ? { ...other, status } : other)));
   try {
     const post = async () => {
-      const response = await tryClient(api(threadId), { ...options, method: "POST", body: { id, text } });
+      const response = await tryClient(api(threadId), { ...options, method: "POST", body: typeof draft === "string" ? { id, text } : { id, message: item.message, skillIds: item.skillIds } });
       if (!response.ok) throw new Error(String(response.status));
       const body = (await response.json()) as { queued?: boolean; status?: string; stopping?: boolean } | null;
       if (!body || typeof body.queued !== "boolean") throw new Error("Invalid inbox response");
@@ -159,7 +175,7 @@ export function takeQueued(threadId: string): QueuedMessage[] {
 export type InboxState = {
   running: boolean;
   paused?: boolean;
-  items: { id: string; status: string; kind: string; message: { content?: unknown } }[];
+  items: { id: string; status: string; kind: string; message: { content?: unknown; metadata?: InboxMessage["metadata"] } }[];
 };
 
 /** 打开对话时、以及同步发现收件箱变了时：另一台设备 / 刷新前排的队还在服务器上，接回来（别的设备排的标 remote）。 */
@@ -179,16 +195,16 @@ export function applyInboxState(threadId: string, state: InboxState) {
   for (const old of current) {
     const item = active.get(old.id);
     if (item) {
-      next.push({ ...old, status: item.status === "queued" && !state.paused ? "queued" : "paused" });
+      next.push({ ...old, message: item.message as InboxMessage, skillIds: item.message.metadata?.chisabotInbox?.skillIds, status: item.status === "queued" && !state.paused ? "queued" : "paused" });
       active.delete(old.id);
     } else if (!known.has(old.id) && !old.remote) {
       next.push(state.paused && old.status === "queued" ? { ...old, status: "paused" } : old);
     }
   }
   for (const item of active.values()) {
-    const content = typeof item.message.content === "string" ? item.message.content : "";
+    const content = inboxMessageText(item.message);
     const text = item.kind === "worker_result" ? content.replace(/^⟦chisabot:[^⟧]*⟧\s*/, "").split("\n")[0] || "后台任务结果" : content;
-    if (text) next.push({ id: item.id, text, kind: item.kind === "worker_result" ? "worker_result" : "message", status: item.status === "queued" && !state.paused ? "queued" : "paused", at: Date.now(), ...(own.has(item.id) ? {} : { remote: true }) });
+    if (text || Array.isArray(item.message.content)) next.push({ id: item.id, text, message: item.message as InboxMessage, skillIds: item.message.metadata?.chisabotInbox?.skillIds, kind: item.kind === "worker_result" ? "worker_result" : "message", status: item.status === "queued" && !state.paused ? "queued" : "paused", at: Date.now(), ...(own.has(item.id) ? {} : { remote: true }) });
   }
   // CB-104: held items read in the order they were sent (a read-then-held one was re-added last).
   const order = new Map(state.items.map((item, index) => [item.id, index]));

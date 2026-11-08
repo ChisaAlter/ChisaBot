@@ -1,147 +1,39 @@
-import { afterAll, afterEach, beforeAll, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { z } from "zod";
+import { useComputerToolRenderer } from "@/lib/copilot/approval-tools";
+import { ToolRendererProvider, useRenderToolCall } from "@/lib/chat/renderers";
 import { settleReactWork } from "./settle-react-work";
-
-/**
- * The handler the SDK keeps for a computer change.
- *
- * The SDK registers a frontend tool's handler once and never re-registers it when the handler's
- * closure changes, so anything the handler reads from render time is frozen at first render. The
- * handler used to read the "Ask before making changes" switch that way, saw it still loading, and
- * sent every change straight to the computer outside any run; the server then answered "This action
- * needs an authenticated run before it can be approved." This drives the handler the SDK actually
- * kept, captured at first render, with no inbox loaded at all.
- */
-
-const real = await import("@copilotkit/react-core/v2");
-type Registered = Parameters<typeof real.useFrontendTool>[0];
-const registered: Registered[] = [];
-const stopped: unknown[] = [];
-mock.module("@copilotkit/react-core/v2", () => ({
-  ...real,
-  useCopilotKit: () => ({
-    copilotkit: { stopAgent: (input: unknown) => stopped.push(input) },
-  }),
-  useFrontendTool: (tool: Registered) => {
-    if (!registered.some((entry) => entry.name === tool.name))
-      registered.push(tool);
-  },
-}));
-const { useFrontendTool } = await import("@/lib/copilot/approval-tools");
-const { observeApprovalAgent } = await import("@/lib/copilot/approval-context");
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
-afterAll(async () => {
-  await settleReactWork();
-  GlobalRegistrator.unregister();
-});
-
-const direct: unknown[] = [];
-function Tools() {
-  useFrontendTool({
-    name: "computer_click",
-    description: "Click",
-    handler: async (args: Record<string, unknown>) => {
-      direct.push(args);
-      return { clicked: true };
-    },
-  });
+afterAll(async () => { await settleReactWork(); GlobalRegistrator.unregister(); });
+const NativeResponse = globalThis.Response;
+function Tool() {
+  useComputerToolRenderer({ name: "computer_click", parameters: z.object({ ref: z.string() }), render: () => <span>点击结果</span> });
   return null;
 }
-
-test("a change goes to the server's gate even when nothing about approvals has loaded", async () => {
-  const posted: { path: string; body: unknown }[] = [];
-  const originalFetch = global.fetch;
-  global.fetch = Object.assign(
-    async (path: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      posted.push({
-        path: String(path),
-        body: init?.body ? JSON.parse(String(init.body)) : undefined,
-      });
-      return Response.json(
-        { waiting: true, approvalId: "approval-1" },
-        { status: 202 },
-      );
-    },
-    { preconnect: originalFetch.preconnect },
-  );
+function Call() {
+  const draw = useRenderToolCall();
+  return draw({ toolCall: { id: "call", type: "function", function: { name: "computer_click", arguments: '{"ref":"e7"}' } } });
+}
+test("a replayed call only displays its approval; an explicit click sends the decision once", async () => {
+  const original = globalThis.fetch;
+  const posted: { url: string; body: unknown }[] = [];
+  let decided = false;
+  globalThis.fetch = Object.assign(async (url: any, options?: RequestInit) => {
+    if (options?.method === "POST") { posted.push({ url: String(url), body: JSON.parse(String(options.body)) }); decided = true; return NativeResponse.json({ accepted: true }); }
+    return NativeResponse.json({ requests: decided ? [] : [{ id: "approval-1", status: "pending", action: { toolCallId: "call", toolRef: "computer_click", scope: "Submit form", policy: { behaviour: "ask", reason: "请确认" } } }], questions: [] });
+  }, { preconnect: original.preconnect });
+  const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
-    const queries = new QueryClient();
-    const invalidated: unknown[] = [];
-    const invalidate = queries.invalidateQueries.bind(queries);
-    queries.invalidateQueries = ((filters?: unknown) => {
-      invalidated.push(filters);
-      return invalidate(filters as never);
-    }) as typeof queries.invalidateQueries;
-    render(
-      <QueryClientProvider client={queries}>
-        <Tools />
-      </QueryClientProvider>,
-    );
-    const tool = registered.find((entry) => entry.name === "computer_click");
-    // The shape of the SDK's agent the handler reads: its subscriber hooks, thread and history.
-    const toolCall = {
-      id: "click-call",
-      type: "function" as const,
-      function: {
-        name: "computer_click",
-        arguments: '{"ref":"e7","snapshotId":3}',
-      },
-    };
-    const subscribers: {
-      onRunInitialized?: (input: { input: unknown }) => void;
-    }[] = [];
-    const agent = {
-      threadId: "thread",
-      state: {},
-      messages: [
-        { id: "u1", role: "user", content: "Submit the form" },
-        { id: "a1", role: "assistant", content: "", toolCalls: [toolCall] },
-      ],
-      subscribe: (subscriber: (typeof subscribers)[number]) => {
-        subscribers.push(subscriber);
-        return { unsubscribe: () => undefined };
-      },
-    };
-    const stop = observeApprovalAgent(agent as never);
-    for (const subscriber of subscribers)
-      subscriber.onRunInitialized?.({
-        input: {
-          runId: "run-1",
-          threadId: "thread",
-          messages: agent.messages,
-          tools: [],
-          context: [],
-          state: {},
-          forwardedProps: {},
-        },
-      });
-    const result = await tool?.handler?.({ ref: "e7", snapshotId: 3 }, {
-      agent,
-      toolCall,
-    } as never);
-    stop();
-    expect(direct).toEqual([]);
-    expect(posted).toEqual([
-      {
-        path: "/api/approvals/computer/default",
-        body: expect.objectContaining({
-          runId: "run-1",
-          threadId: "thread",
-          toolCallId: "click-call",
-          toolName: "computer_click",
-          args: { ref: "e7", snapshotId: 3 },
-        }),
-      },
-    ]);
-    expect(result).toEqual({ waiting: true });
-    expect(stopped).toHaveLength(1);
-    // The card is drawn now, not on the inbox's next poll.
-    expect(invalidated).toEqual([{ queryKey: ["approvals"] }]);
-  } finally {
-    global.fetch = originalFetch;
-  }
+    const view = render(<QueryClientProvider client={queries}><ToolRendererProvider><Tool /><Call /></ToolRendererProvider></QueryClientProvider>);
+    await waitFor(() => expect(view.getByTestId("upstream-approval-card")).toBeTruthy());
+    expect(posted).toEqual([]);
+    fireEvent.click(view.getByRole("button", { name: /^确认$/ }));
+    await waitFor(() => expect(posted).toEqual([{ url: "/api/approvals/approval-1/decision", body: { decision: "allow_once" } }]));
+    await waitFor(() => expect(view.queryByTestId("upstream-approval-card")).toBeNull());
+  } finally { cleanup(); queries.clear(); globalThis.fetch = original; }
 });

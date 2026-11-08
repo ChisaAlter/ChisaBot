@@ -9,6 +9,8 @@ import { HeadlessToolSuspension, type HeadlessTool } from "../computer/headless-
 import type { TurnRunner } from "../turns/types";
 import { type ThreadInbox, WORKER_RESULT_MARKER } from "../thread-inbox";
 import { reasonWithoutStatement } from "../db/query-failure";
+import { readDurableTurn } from "../turns/durable-outcome";
+import { assertConversationAdmissionOpen, conversationAdmissionClosed } from "../conversations/maintenance";
 
 /**
  * 后台任务（DESIGN.md §38）：机器人把一件耗时、独立的事交给一个并行的「工人」去做，主对话继续能聊。
@@ -21,7 +23,7 @@ import { reasonWithoutStatement } from "../db/query-failure";
  * - 补充说明 = 往工人的对话收件箱里放一条消息，下一步读进去（thread-inbox.ts，和主对话插话同一套）。
  * - 结束后结果作为一条消息回到发起的对话：那边正在回答就进收件箱（下一步读到），没在回答就起一轮
  *   无头回合，让主机器人用一两句话告诉用户结果。
- * - 服务重启：没跑完的标成失败并写明原因，不会一直显示「运行中」。
+ * - 服务重启：接回 DSH 已持久化的运行和结果；没有可恢复执行的旧任务明确标成中断。
  */
 export type WorkerStatus = "queued" | "running" | "waiting" | "done" | "failed" | "cancelled";
 export type WorkerPlanStep = { text: string; status: "done" | "current" | "pending" | "blocked" };
@@ -120,6 +122,8 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
   type LiveState = { step?: string | null; initialStep?: string; plan?: WorkerPlanStep[]; controller: AbortController; unobserve?: () => void; flush?: ReturnType<typeof setTimeout> };
   const live = new Map<string, LiveState>();
   let pumping = false;
+  let deferredPump: ReturnType<typeof setTimeout> | undefined;
+  const recovering = new Set<string>();
 
   const row = async (id: string) => (await sql.unsafe<WorkerRow[]>("SELECT * FROM chisabot_workers WHERE id = $1", [id]))[0] ?? null;
   const owned = async (id: string, actorId: string, threadId?: string) => {
@@ -229,6 +233,7 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
     const timer = setTimeout(() => controller.abort(new Error("timeout")), WORKER_TIMEOUT_MS);
     timer.unref?.();
     let finished: WorkerRow | null = null;
+    let waiting = false;
     try {
       const outcome = await runTurn({
         ownerUserId: worker.owner_user_id, routineId: `worker:${worker.id}`, agentId: worker.agent_id,
@@ -246,7 +251,10 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
       const current = await row(worker.id);
       if (current?.status === "cancelled") finished = null;
       else if (error instanceof HeadlessToolSuspension) {
-        finished = await finish(worker.id, "failed", { error: `需要你确认一个操作才能继续（${error.message}）。请在「审批」里处理后，让我重新做这件事。` });
+        if (await readDurableTurn(database, worker.owner_user_id, worker.thread_id)) {
+          waiting = true;
+          await sql.unsafe("UPDATE chisabot_workers SET status='waiting',step='等待你的确认',updated_at=now() WHERE id=$1 AND status='running'", [worker.id]);
+        } else finished = await finish(worker.id, "failed", { error: `需要你确认一个操作才能继续（${error.message}）。请在「审批」里处理后，让我重新做这件事。` });
       } else if (controller.signal.aborted && String(controller.signal.reason).includes("timeout")) {
         finished = await finish(worker.id, "failed", { error: `超过 ${WORKER_TIMEOUT_MS / 60_000} 分钟还没做完，已停止。` });
       } else {
@@ -258,11 +266,17 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
       left?.unobserve?.();
       live.delete(worker.id);
     }
+    if (waiting) await service.recover();
     if (finished) await deliver(finished).catch((error) => console.warn("worker delivery failed", error));
   };
 
   const pump = async () => {
     if (pumping) return;
+    if (conversationAdmissionClosed()) {
+      deferredPump ??= setTimeout(() => { deferredPump = undefined; void pump(); }, 5000);
+      deferredPump.unref?.();
+      return;
+    }
     pumping = true;
     try {
       for (;;) {
@@ -305,16 +319,45 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
     },
 
     async recover() {
-      const rows = await sql.unsafe(
-        `UPDATE chisabot_workers SET status = 'failed', finished_at = now(), updated_at = now(), step = NULL,
-         error = CASE WHEN status = 'queued' THEN '服务重启了，这个任务还没开始就被取消了。可以让我重新做。'
-                      ELSE '服务重启了，任务做到一半被中断（没有完成）。可以让我重新做。' END
-         WHERE status IN ('queued', 'running', 'waiting') RETURNING id`,
-      );
-      return rows.length;
+      const rows = await sql.unsafe<WorkerRow[]>("SELECT * FROM chisabot_workers WHERE status IN ('running','waiting')");
+      let interrupted = 0;
+      for (const worker of rows) {
+        if (live.has(worker.id) || recovering.has(worker.id)) continue;
+        const execution = await readDurableTurn(database, worker.owner_user_id, worker.thread_id);
+        if (execution) {
+          recovering.add(worker.id);
+          // The conversation recovery owner reconnects the Host. This owner only settles the
+          // worker and delivers its result, including approval continuation in the same thread.
+          void (async () => {
+            try {
+              for (;;) {
+                const current = await row(worker.id);
+                if (!current || !ACTIVE.includes(current.status)) return;
+                const state = await readDurableTurn(database, worker.owner_user_id, worker.thread_id);
+                if (!state || state.status === "failed" || state.status === "finished") {
+                  const finished = await finish(worker.id, state?.status === "finished" ? "done" : "failed", state?.status === "finished"
+                    ? { result: clip(state.replyText || "（任务做完了，但没有文字结果。）", RESULT_LIMIT) }
+                    : { error: state?.error ?? "原执行记录不可用，请核对已有结果。" });
+                  if (finished) await deliver(finished);
+                  return;
+                }
+                await sql.unsafe("UPDATE chisabot_workers SET status=$2,updated_at=now() WHERE id=$1 AND status IN ('running','waiting')", [worker.id, state.status]);
+                await new Promise(resolve => { const timer = setTimeout(resolve, 1000); timer.unref?.(); });
+              }
+            } catch (error) { console.warn(JSON.stringify({ type: "worker-recovery-pending", worker: worker.id, reason: reasonWithoutStatement(error) })); }
+            finally { recovering.delete(worker.id); }
+          })();
+        } else {
+          await finish(worker.id, "failed", { error: "服务重启了，原执行无法恢复；请核对已有成果后再决定是否重试。" });
+          interrupted++;
+        }
+      }
+      void pump();
+      return interrupted;
     },
 
     async start(input) {
+      assertConversationAdmissionOpen();
       const title = clip(input.title.trim() || "后台任务", 40);
       const task = input.task.trim();
       if (!task) throw new Error("任务说明是空的。");

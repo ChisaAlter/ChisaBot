@@ -1,6 +1,6 @@
 import type { ImPlatform } from "../../../../shared/im";
 import { backoffMs, errorText } from "../text";
-import type { AdapterContext, ImAdapter, ImInbound, ImReply, WsLike } from "../types";
+import type { AdapterContext, ImAdapter, ImDeliveryReceipt, ImInbound, ImReply, WsLike } from "../types";
 
 /**
  * 所有适配器共用的「连上 → 断了 → 退避 → 再连」循环。
@@ -24,7 +24,7 @@ export abstract class LoopAdapter implements ImAdapter {
   constructor(protected readonly ctx: AdapterContext) {}
 
   protected abstract runOnce(): Promise<void>;
-  abstract send(reply: ImReply): Promise<void>;
+  abstract send(reply: ImReply): Promise<void | ImDeliveryReceipt>;
 
   async start(): Promise<void> {
     if (!this.stopped) return;

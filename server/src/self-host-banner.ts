@@ -1,9 +1,5 @@
-import type { CopilotKitIntelligence } from "@copilotkit/runtime/v2";
-
-/** What Intelligence says this deployment is entitled to. Typed from the client ChisaBot already uses. */
-export type RuntimeEntitlementResponse = Awaited<
-  ReturnType<CopilotKitIntelligence["getRuntimeEntitlements"]>
->;
+import type { RuntimeEntitlementResponse } from "./conversations/intelligence-history";
+export type { RuntimeEntitlementResponse };
 
 /**
  * The Intelligence plans that pay for it.

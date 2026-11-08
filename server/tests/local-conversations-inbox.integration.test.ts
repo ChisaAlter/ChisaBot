@@ -141,8 +141,8 @@ suite("queued supplements across frontend wire runs", () => {
     const f = await fixture();
     const cleanupReached = deferred();
     const releaseCleanup = deferred();
-    const cleanup = backend.client.ɵcleanupThreadLock.bind(backend.client);
-    backend.client.ɵcleanupThreadLock = async (identity) => {
+    const cleanup = backend.client.releaseThreadLease.bind(backend.client);
+    backend.client.releaseThreadLease = async (identity) => {
       if (identity.threadId === f.threadId) {
         cleanupReached.resolve();
         await releaseCleanup.promise;
@@ -177,7 +177,7 @@ suite("queued supplements across frontend wire runs", () => {
       );
       expect(saved?.status).toBe("stopped");
     } finally {
-      backend.client.ɵcleanupThreadLock = cleanup;
+      backend.client.releaseThreadLease = cleanup;
       releaseCleanup.resolve(); f.finishGeneration.resolve(); f.finishTool.resolve();
       await turn;
       await backend.runner.stop({ threadId: f.threadId });

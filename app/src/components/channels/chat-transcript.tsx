@@ -1,10 +1,10 @@
+import { useConversationScope } from "@/lib/chat/conversation-scope";
 import type { ActivityMessage, Message } from "@ag-ui/core";
-import type { Attachment } from "@copilotkit/react-core/v2";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import {
-  useCopilotChatConfiguration,
   useRenderActivityMessage,
   useRenderToolCall,
-} from "@copilotkit/react-core/v2";
+} from "@/lib/chat/renderers";
 import {
   IconAlertTriangle,
   IconBox,
@@ -48,7 +48,6 @@ import {
 } from "@/components/chat/message-actions";
 import { QueuedMessages } from "@/components/chat/queued-messages";
 import { ScheduleFiredRow } from "@/components/chat/schedule-row";
-import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import {
   NoAnswerRow,
   PausedCapsule,
@@ -432,7 +431,7 @@ function Stopped({
           </>
         ) : null}
       </div>
-      {onRetry ? (
+      {onRetry && friendly.retryable ? (
         <button className="chat-error-retry" onClick={onRetry} type="button">
           <IconRefresh className="size-3.5" />
           {"重试"}
@@ -821,18 +820,16 @@ function SettleAtEnd({
             content.offsetHeight - blankArea(content, s.slack) - s.lastRows;
           const keep = blank - Math.max(0, growth);
           setSlack(keep > 0 ? keep + gap : 0);
-          element.style.scrollBehavior = "auto";
-          scrollToEnd({ behavior: "auto" });
+          scrollToEnd({ behavior: reduceMotion ? "auto" : "smooth" });
           if (
             wasAtBottom &&
             blank > 0 &&
             Math.abs(element.scrollTop - before) <= 2
           )
             element.scrollTop = before;
-          element.style.scrollBehavior = "";
         } else {
           setSlack(0);
-          scrollToEnd({ behavior: "auto" });
+          scrollToEnd({ behavior: reduceMotion ? "auto" : "smooth" });
         }
       } else {
         s.until = 0;
@@ -1062,9 +1059,9 @@ function SettleAtEnd({
       if (held()) return;
       const max = element.scrollHeight - element.clientHeight;
       if (element.scrollTop >= max - 1) return;
-      element.style.scrollBehavior = "auto";
-      element.scrollTop = max;
-      element.style.scrollBehavior = "";
+      // Follow growing content with the scroller's native motion. An error card or a
+      // buffered message can add more than a line; snapping to max moved history >150px.
+      element.scrollTo({ top: max, behavior: reduceMotion ? "auto" : "smooth" });
     };
     const look = () => {
       reflowed();
@@ -1090,6 +1087,7 @@ function SettleAtEnd({
         "[data-message-scroller-spacer]",
       );
       const ok =
+        s.busy &&
         seen.atBottom &&
         !s.releasing &&
         !active() &&
@@ -1183,6 +1181,7 @@ function SettleAtEnd({
       ) {
         stickToBottom();
       } else if (
+        s.busy &&
         grew < 0 &&
         !recentlyTouched &&
         seen.atBottom &&
@@ -1213,6 +1212,7 @@ function SettleAtEnd({
        */
       const max = element.scrollHeight - element.clientHeight;
       if (
+        s.busy &&
         seen.atBottom &&
         !s.releasing &&
         !active() &&
@@ -1352,7 +1352,12 @@ function SettleAtEnd({
         total,
       );
       if (gap > 4) return why(`gap:${Math.round(gap)}`); // 人不在底部：留白在视口外，§88.1 自己会收
-      if (total <= 1) return why("none");
+      if (total <= 1) {
+        // Even a zero-height elastic slack can retain the previous content min-height.
+        // Once idle, a collapsed row must not recreate that floor on the next resize.
+        if (s.floor !== null) setSlack(0);
+        return why("none");
+      }
       s.releasing = true;
       element.dataset.cbRelease = `release:${Math.round(total)}`;
       // 1) 滚动容器的空挪进留白（同一帧），2) 让它改成跟着底部（spacer 清零，位置不变）。
@@ -2041,21 +2046,8 @@ const TranscriptMessage = memo(function TranscriptMessage({
 }: TranscriptMessageProps) {
   const [editing, setEditing] = useState(false);
   const isUser = role === "user";
-  if (!isUser && tone === "step") {
-    return (
-      <MessageRow align="start">
-        <MessageContent>
-          <Arriving animate={animate} delay={delay}>
-            <div className="chat-step-line" data-cb-turn="step">
-              <SmoothStreamdown components={markdownComponents}>
-                {text}
-              </SmoothStreamdown>
-            </div>
-          </Arriving>
-        </MessageContent>
-      </MessageRow>
-    );
-  }
+  // Visible assistant text always uses the same bubbles, including a live or interrupted
+  // intermediate message. compactTurns owns whether narration is folded into the work row.
   /*
    * Checked before anything else a person's message gets. A firing is not a person's message: the
    * chip split, the end alignment and the bubble are all wrong for it, and each one of them would
@@ -3274,7 +3266,7 @@ export function ChatTranscript({
    * 确认卡 / 审批卡挂在哪些工具调用上：简单回合（下面）和「这一轮有没有回答」都要用。确认列表和确认卡片用同一份
    * 缓存（同一个 queryKey），审批收件箱和行内审批卡也是同一份，不多发请求。
    */
-  const chatConfig = useCopilotChatConfiguration();
+  const chatConfig = useConversationScope();
   const chatThreadId = chatConfig?.threadId ?? null;
   const hasTools = items.some((item) => item.kind === "tool");
   const confirmations = useThreadConfirmations(
@@ -3677,7 +3669,7 @@ export function ChatTranscript({
         <MessageScrollerViewport
           ref={viewportRef}
           // 补历史时靠浏览器原生滚动锚定保位（jank P1-2）；chat-tail 那一格单独关掉（§94.6）。
-          className="[overflow-anchor:auto]"
+          className="scroll-smooth motion-reduce:scroll-auto [overflow-anchor:auto]"
         >
           <MessageScrollerContent
             aria-busy={busy}

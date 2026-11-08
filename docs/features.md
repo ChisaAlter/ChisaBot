@@ -4,7 +4,7 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 
 - 「入口」写用户在界面上怎么到达；设置页按 2026-10-16 的新分组（[settings-ia.md](settings-ia.md)）。
 - 「代码」只写主要位置；`server/` 的测试在 `server/tests/<功能>*.test.ts`，网页测试在 `app/tests/`。
-- 数据表的完整说明见 [data-model.md](data-model.md)。表名带 `chisabot_` 的都是开机 `CREATE TABLE IF NOT EXISTS` 建的（回滚安全）。
+- 数据表的完整说明见 [data-model.md](data-model.md)。多数 `chisabot_` 表开机幂等初始化；会话与 DSH 账本在迁移 0063 中显式登记。回滚还须匹配内核日志 reader，见 [DSH 运维](ops/dsh-runtime.md)。
 - 「状态」：**上线** = 默认可用；**隐藏** = 代码在、默认不显示，用开关恢复；**移除** = 代码已删、表保留。
 
 ## 开关一览
@@ -29,6 +29,7 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 
 | 功能 | 做什么 | 入口 | 代码 | 数据 | DESIGN | 状态 · 文档 |
 |---|---|---|---|---|---|---|
+| DSH 执行内核 | 服务端持久接纳、独立 Host 执行；恢复观察、审批续执行和工具操作对账 | 部署选择 `CHISABOT_AGENT_KERNEL=dsh`，聊天入口沿用 | `runtime/dsh/`、`server/src/conversations/`、`server/src/agents/dsh-runtime.ts` | 0063 会话表、账号 Session 持久卷 | [迁移方案](dsh-kernel-migration.md) | 实施中，生产尚未切换 · [验收记录](pipeline-runs/20261107-dsh-migration.md) |
 | 频道聊天（唯一的聊天） | 和一个机器人对话；`/bot?agent=` 旧地址跳转过来 | 左栏点机器人 | `app/src/components/channels/`、`app/src/components/chat/`、`server/src/channels/`、`server/src/local-conversations.ts` | `openbot_local_threads/_runs/_events`、`intelligence_channel_mappings`、`channel_agents` | §68 · ADR-0013 | 上线 · [streaming.md](streaming.md) |
 | 留着的聊天 | 去设置 / 待处理 / 设备再回来，聊天是同一个没卸载过的实例（不重连、不重读、滚动原样）；藏 10 分钟后放掉 | — | `app/src/components/layout/authed-shell.tsx`、`app/src/components/layout/keep-alive.tsx`、`app/src/components/channels/channel-page.tsx` | — | §98 | 上线 |
 | 流式回复 | 按帧匀速放字；断线先问服务器、能接上就接上 | — | `app/src/lib/typed-reveal.ts`、`app/src/lib/chat/` | — | §30、§89 | 上线 · [streaming.md](streaming.md) |
@@ -82,7 +83,7 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 | 本地 agent | 把整件活交给设备上的 Claude Code / Codex / OpenCode / Gemini / Aider 或内置循环；档位只读 / 工作区 / 完全访问；按任务隔离 | 聊天里说；设备详情 | `server/src/local-agents/`、`pc/src/agent-runtime/` | `chisabot_device_agent_settings`、`chisabot_local_agent_tasks` | §66 · ADR-0010 | 上线 · [local-agents.md](local-agents.md) |
 | 扫码绑定手机 | 一次性二维码（5 分钟）→ 手机得到设备令牌 → 会话；撤销即退出 | 账号菜单 → 绑定手机；PC 托盘 | `server/src/devices/pairing.ts`、`android/…/Pairing.kt` | `devices` | §33 | 上线 |
 | PC 客户端 | 窗口 + 设备节点；小窗模式（Ctrl+Shift+M）、托盘、无边框登录窗、连接提示、更新提示 | — | `pc/` | — | §16、§36、§45、§91 | 上线 · [pc-node.md](pc-node.md) |
-| Android 原生 | 登录、机器人列表、聊天（流式、干活卡、富卡片）、面板、确认卡、附件、停止 / 重新生成 / 编辑、原生设置基础；其余页面应用内网页 | — | `android/` | — | §80、§86 | 上线 · [android-native.md](android-native.md) |
+| Android 客户端 | 与桌面共用 React 手机布局；Kotlin 壳承接登录 / 绑定、文件 / 相机选择、下载、麦克风权限、返回与键盘、APK 更新 | — | `android/`、`app/` | — | §80 当前方向 | [android-native.md](android-native.md) · [实机验收](pipeline-runs/20261107-dsh-migration.md) |
 | 手机网页 · PWA | 手机永远窄布局；manifest + Service Worker（导航不缓存） | 浏览器「安装」 | `app/public/sw.js`、`app/src/lib/device.ts` | — | §40 | 上线 · [pwa.md](pwa.md) |
 
 ## 6. Hark 同款能力
@@ -97,7 +98,7 @@ ChisaBot 现在所有的功能，一项一行：**做什么 · 入口 · 代码 
 | 定时任务与提醒 | 一次性 / 周期（≥15 分钟），北京时间；到点回到原对话；IM 来源推回 IM | 设置 → 机器人 → 定时任务；账号菜单 | `server/src/schedules/` | `chisabot_schedules`、`chisabot_schedule_runs` | §55 · ADR-0006 | 上线 · [schedules.md](schedules.md) |
 | 确认卡片 · 权限与审批 | 对外发消息 / 删除 / 付款 / 操作电脑四类「先问我 / 直接做」（付款永远问）；自然语言规则；每个机器人的权限 | 设置 → 机器人 → 权限与审批；聊天里的卡片 | `server/src/confirmations/` | `chisabot_confirm_prefs`、`_rules`、`_requests`、`chisabot_bot_permissions` | §58、§97 | 上线 · [confirmations.md](confirmations.md) |
 | 待处理 | 只列等你点头的事（没点的确认卡、要你亲自做的步骤、机器人在等的问题） | 账号菜单 → 待处理（`/approvals`） | `app/src/routes/_authed/_app/approvals.tsx` | 同上 | §71 | 上线 |
-| IM 接入 | 飞书 / Lark、QQ 官方、QQ 个人号（OneBot 11）、企业微信、个人微信、钉钉、Telegram；私聊都回、群里只回 @ | 设置 → 账号与连接 → IM 接入 | `server/src/im/`、`shared/im.ts` | `chisabot_im_connections`、`_chats`、`_logs` | §49 | 上线（`CHISABOT_IM=0` 关）· [im.md](im.md)；**待决定是否保留** |
+| IM 接入 | 飞书 / Lark、QQ 官方、QQ 个人号（OneBot 11）、企业微信、个人微信、钉钉、Telegram；私聊都回、群里只回 @。回复入持久发件箱，保留正文和平台回执 | 设置 → 账号与连接 → IM 接入 | `server/src/im/`、`shared/im.ts` | `chisabot_im_connections`、`_chats`、`_logs`；0064 `_inbox` / `_outbox` | §49；DSH §13 | 原有入口保留；持久交付随 DSH 候选验收（`CHISABOT_IM=0` 关）· [im.md](im.md) |
 | 联网搜索 · 抓取 | 内置 `web_search` / `web_fetch` | — | `server/src/agents/` | — | §27 | 上线 |
 | 每日简报 | — | — | — | — | — | 未做（CB-014） |
 | Google 账号连接 | — | — | — | — | — | 未做（CB-013，最后） |
@@ -131,6 +132,6 @@ Tauri 桌面端 `desktop/`、Expo `mobile/`、13 个外部框架 agent、Helm ch
 ## 9. 待所有者决定（2026-10-16 功能审查留下）
 
 1. 左栏两个同名「助手」（10-15 恢复误删时留下）：改名或删一个。
-2. IM 接入（还没有任何连接）：留还是隐藏。
+2. IM 接入按 DSH 迁移方案保留；交付与故障恢复验收见 [实施记录](pipeline-runs/20261107-dsh-migration.md)。
 3. 个人「我的生图与识图」（单人时和「模型」页重复）。
 4. 「云端浏览器」管理页（偏技术，但机器人上网要用）。

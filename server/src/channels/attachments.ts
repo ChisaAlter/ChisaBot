@@ -249,6 +249,45 @@ class UnrecordedSend extends Error {
   }
 }
 
+/** Use the caller's transaction so inbox admission and attachment ownership commit together. */
+export async function recordAttachmentsSent(
+  database: Database,
+  turn: { actorId: string; threadId: string },
+  ids: readonly string[],
+): Promise<void> {
+  const known = ids.filter(isUuidShaped);
+  if (!known.length) return;
+  await database
+    .update(attachments)
+    .set({ attachedAt: new Date() })
+    .where(
+      and(
+        inArray(attachments.id, known),
+        eq(attachments.uploadedBy, turn.actorId),
+        // The channel this send actually happened in. See {@link inTheTurnsChannel}.
+        inTheTurnsChannel(database, turn.threadId),
+        isNull(attachments.attachedAt),
+      ),
+    );
+
+  const recorded = await database
+    .select({ id: attachments.id })
+    .from(attachments)
+    .where(
+      and(
+        inArray(attachments.id, known),
+        inTheTurnsChannel(database, turn.threadId),
+        isNotNull(attachments.attachedAt),
+      ),
+    );
+
+  const durable = new Set(recorded.map((row) => row.id));
+  const missing = known.filter((id) => !durable.has(id));
+  // Thrown rather than returned, because the rollback is the point: see the paragraph above on
+  // what keeping a partial set of stamps would leave behind.
+  if (missing.length > 0) throw new UnrecordedSend(missing);
+}
+
 /**
  * Records that these attachments went out in a message, on behalf of the person who sent it.
  *
@@ -390,35 +429,7 @@ export async function markAttachmentsSent(
 
   const unrecorded = await database
     .transaction(async (transaction) => {
-      await transaction
-        .update(attachments)
-        .set({ attachedAt: new Date() })
-        .where(
-          and(
-            inArray(attachments.id, known),
-            eq(attachments.uploadedBy, turn.actorId),
-            // The channel this send actually happened in. See {@link inTheTurnsChannel}.
-            inTheTurnsChannel(database, turn.threadId),
-            isNull(attachments.attachedAt),
-          ),
-        );
-
-      const recorded = await transaction
-        .select({ id: attachments.id })
-        .from(attachments)
-        .where(
-          and(
-            inArray(attachments.id, known),
-            inTheTurnsChannel(database, turn.threadId),
-            isNotNull(attachments.attachedAt),
-          ),
-        );
-
-      const durable = new Set(recorded.map((row) => row.id));
-      const missing = known.filter((id) => !durable.has(id));
-      // Thrown rather than returned, because the rollback is the point: see the paragraph above on
-      // what keeping a partial set of stamps would leave behind.
-      if (missing.length > 0) throw new UnrecordedSend(missing);
+      await recordAttachmentsSent(transaction as unknown as Database, turn, known);
       return [];
     })
     .catch((error: unknown) => {

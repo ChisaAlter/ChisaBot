@@ -10,6 +10,13 @@ if [ -d /workspace ]; then
   mkdir -p /workspace/.chisabot-ops
   chown apiuser:apiuser /workspace/.chisabot-ops
 fi
+# Named volumes copy image ownership on creation; bind mounts and restored volumes do not.
+# Only initialize this dedicated root. Existing account directories keep their ownership.
+if [ -n "${CHISABOT_DSH_ROOT:-}" ]; then
+  mkdir -p "$CHISABOT_DSH_ROOT" || exit 1
+  chown apiuser:apiuser "$CHISABOT_DSH_ROOT" || exit 1
+  chmod 0700 "$CHISABOT_DSH_ROOT" || exit 1
+fi
 cd /app/server
 export HOME=/home/apiuser
 exec s6-setuidgid apiuser /usr/local/bin/bun src/index.ts

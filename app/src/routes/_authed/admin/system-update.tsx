@@ -441,22 +441,23 @@ function KernelSection() {
   const data = kernel.data;
   const hermes = data?.hermes;
   const hermesMode = data?.kernel === "hermes";
-  const connected = hermesMode && hermes?.ok === true;
+  const dshMode = data?.kernel === "dsh";
+  const connected = dshMode ? data?.dsh?.ok === true : hermesMode && hermes?.ok === true;
   const label = kernel.isError
     ? "状态不可用"
     : !data
       ? "读取中…"
-      : !hermesMode
+      : dshMode ? connected ? "DSH 已连接" : "DSH 未连接" : !hermesMode
         ? "内置循环"
         : connected
           ? "Hermes 已连接"
           : "Hermes 未连接";
-  const tone = kernel.isError || !data || !hermesMode ? "muted" : connected ? "ok" : "warn";
+  const tone = kernel.isError || !data || (!hermesMode && !dshMode) ? "muted" : connected ? "ok" : "warn";
   const details = kernel.isError
     ? "无法读取执行内核状态：需要管理员权限，或服务器暂时没有回应。"
     : !data
       ? "正在读取执行内核…"
-      : !hermesMode
+      : dshMode ? connected ? `DSH ${data?.dsh?.version ?? ""} · ${data?.dsh?.sessions ?? 0} 个会话 · ${data?.dsh?.running ?? 0} 个正在运行` : data?.dsh?.error ?? "正在读取 DSH 状态。" : !hermesMode
         ? "这个部署没有配置 Hermes，机器人使用应用内置的执行循环。"
         : !hermes
           ? "已配置 Hermes，但还没有健康状态。"

@@ -11,8 +11,8 @@ import type { RunAgentInput } from "@ag-ui/client";
 import { MastraAgent } from "@ag-ui/mastra";
 import { buildAGUITextResponse, LLMock } from "@copilotkit/aimock";
 import { AGUIMock } from "@copilotkit/aimock/agui";
-import { CopilotRuntime } from "@copilotkit/runtime/v2";
-import { createCopilotHonoHandler } from "@copilotkit/runtime/v2/hono";
+
+
 import { z } from "zod";
 import {
   buildAgents,
@@ -654,30 +654,16 @@ describe("a remote Mastra Bot", () => {
           selection(),
           mastraFetch,
         );
-        const runtime = new CopilotRuntime({ agents });
-        const handler = createCopilotHonoHandler({ runtime, basePath: "/api" });
-        const response = await handler.fetch(
-          new Request("http://localhost/api/agent/risk-mastra/run", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              threadId: `thread-${runId}`,
-              runId,
-              state: {},
-              messages: [
-                {
-                  id: `message-${runId}`,
-                  role: "user",
-                  content: "summarise the Slack channel",
-                },
-              ],
-              tools: [],
-              context,
-              forwardedProps: {},
-            }),
-          }),
-        );
-        return { response, text: await response.text() };
+        const agent = agents["risk-mastra"]!;
+        agent.threadId = `thread-${runId}`;
+        agent.setMessages([{ id: `message-${runId}`, role: "user", content: "summarise the Slack channel" }]);
+        const events: unknown[] = [];
+        await agent.runAgent({ runId, tools: [], context, forwardedProps: {} }, {
+          onEvent: ({ event }) => { events.push(event); },
+        });
+        const response = new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+          headers: { "content-type": "text/event-stream" },
+        });        return { response, text: await response.text() };
       };
 
       const forgedContext = [

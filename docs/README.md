@@ -11,12 +11,13 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 | 知道有哪些功能、入口在哪、代码在哪、怎么开关 | [功能目录 features](features.md) |
 | 知道每个版本改了什么 | [版本记录 CHANGELOG](CHANGELOG.md)（按版本 / PR）· 部署者向的逐条说明在根 [CHANGELOG.md](../CHANGELOG.md) |
 | 知道现在在做什么、接下来做什么 | [ROADMAP（看板）](ROADMAP.md) · [BACKLOG（带验收标准的条目）](BACKLOG.md) |
+| 让现有 DSH 版成为可长期使用的个人助理 | [个人助理生产交付计划](production-assistant-plan.md)：复用能力、必要修补、桌面与服务器验收、发布恢复 |
 | 理解系统怎么搭的 | [架构 architecture](architecture.md) · [数据模型 data-model](data-model.md) · [ADR](adr/README.md) |
 | 知道为什么这样做、有哪些长期规则 | [产品决策与需求原则 decisions](decisions.md) · [ADR](adr/README.md) |
 | 改界面 | [DESIGN.md](../DESIGN.md)（顶部章节索引）· [设置的信息结构](settings-ia.md) |
 | 提交改动 | [CONTRIBUTING](../CONTRIBUTING.md) · [并行开发协议](dev/parallel-work.md) |
 | 自己部署、运维一套 ChisaBot | [运维手册 ops/](ops/README.md)（主机端口、容器、目录、部署回滚、网关、云端节点、发版、模型、测试环境、巡检、清理、故障复盘） |
-| 发版、上线、回滚 | [发布流程 release](release.md) · [部署、回滚与上线检查](ops/deploy.md) · [在线更新](online-update.md) |
+| 发版、上线、回滚 | [发布流程 release](release.md) · [部署、回滚与上线检查](ops/deploy.md) · [在线更新](online-update.md) · [DSH 运行时与回滚](ops/dsh-runtime.md) · [旧托管历史导入](intelligence-migration.md) |
 | 测试 | [测试与验证 testing](testing.md) |
 | 看懂中文术语 | [术语表 glossary](glossary.md) |
 
@@ -33,6 +34,8 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 
 ## 架构
 
+- [DSH 主内核完整设计与迁移方案](dsh-kernel-migration.md)：已实施的内核迁移设计；实际上线与证据见 [R5 实施记录](pipeline-runs/20261107-dsh-migration.md)。
+- [个人助理生产交付计划](production-assistant-plan.md)：基于当前能力及 OpenBot / DSH Bot 源码的生产收尾，优先桌面端、信息可信、实际成果、外发与恢复；[现有能力核对](research/20261108-assistant-capability-baseline.md) · [开源实现核对](research/20261108-assistant-upstream-patterns.md)。
 - [ChisaBot 架构](architecture.md)：服务器 agent、公网网关、更新器、PC 节点、Android、云端浏览器，以及每个功能的代码位置、
   数据表和 DESIGN 章节、常用运行时开关。
 - [数据模型](data-model.md)：全部 `chisabot_*` 表、本地对话表、仍在用的上游表、网关 SQLite、浏览器本地存储。
@@ -51,7 +54,7 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 | 确认与权限 | [确认卡片与审批偏好](confirmations.md) | §58、§97 |
 | 模型 | [模型配置与切换](models.md) · [Magpie 深度集成](magpie.md) | §15、§59–§61 |
 | 面板 / 计算机 | [浏览器多标签与收藏夹](browser-tabs.md) · [侧栏与弹出面板一致性](sidebar-panel-parity.md) · [面板的直连数据源与看板布局](live-panel-sources.md) | §23、§29、§39、§43、§77、§79、§95、§96、§109 |
-| 设备 / PC / 手机 | [PC 节点与扫码绑定](pc-node.md) · [本地 agent 与权限档位](local-agents.md) · [Android 原生版](android-native.md) · [手机网页版与 PWA](pwa.md) | §16、§33、§36、§40、§45、§62、§66、§80、§86、§91 |
+| 设备 / PC / 手机 | [PC 节点与扫码绑定](pc-node.md) · [本地 agent 与权限档位](local-agents.md) · [Android 客户端](android-native.md) · [手机网页版与 PWA](pwa.md) | §16、§33、§36、§40、§45、§62、§66、§80、§86、§91 |
 | 记忆 · 技能 · 保险箱 | [长期记忆](memory.md) · [技能](skills.md) · [密钥保险箱](vault.md) | §50–§52 |
 | GitHub · 页面 · 定时 | [GitHub 账号连接](github.md) · [页面](pages.md) · [定时任务与提醒](schedules.md) | §53–§55 |
 | IM | [IM 接入](im.md) | §49 |

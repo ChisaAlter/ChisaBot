@@ -1,7 +1,5 @@
-import {
-  OpenGenerativeUIActivityRenderer,
-  useFrontendTool,
-} from "@copilotkit/react-core/v2";
+import { useRenderTool, useInteractionRenderer } from "@/lib/chat/renderers";
+import { SandboxSurface } from "@/lib/chat/sandbox-surface";
 import { useBotOnScreen } from "@/lib/kept-visible";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
@@ -115,9 +113,7 @@ function SandboxedTool({
 
       return (
         <div className="my-2">
-          <OpenGenerativeUIActivityRenderer
-            activityType="open-generative-ui"
-            agent={null}
+          <SandboxSurface
             content={{
               css: component.css,
               cssComplete: true,
@@ -128,7 +124,6 @@ function SandboxedTool({
               generating: false,
             }}
             key={JSON.stringify(props.args ?? {})}
-            message={null}
           />
         </div>
       );
@@ -136,25 +131,9 @@ function SandboxedTool({
     [component, isHeld, refusals],
   );
 
-  useFrontendTool({
+  useRenderTool({
     name: component.name,
-    description: description ?? `此部署中编写的组件：${component.name}。`,
     parameters: parametersFor(component.argumentSchema),
-    // Keep the hook mounted and hide revoked grants from the model to preserve hook order.
-    available: isHeld,
-    handler: async (
-      _args: unknown,
-      context: { toolCall?: { id?: string } } = {},
-    ) => {
-      const decision = await decideComponent(component.name, botId);
-      if (!decision.allowed) {
-        const reason = decision.reason ?? "That component is not allowed here.";
-        const id = context?.toolCall?.id;
-        if (id) setRefusals((current) => new Map(current).set(id, reason));
-        return reason;
-      }
-      return "It is now on screen for the person.";
-    },
     render,
   });
 

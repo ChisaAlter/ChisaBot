@@ -851,6 +851,24 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     "final_response": text}
         return hermes_turn
 
+    async def test_no_usable_backup_waits_for_the_primary_under_its_request_limit(self):
+        state = await self.new()
+
+        def slow_answer(agent, user, history):
+            time.sleep(0.08)
+            text = "primary answer"
+            agent.stream_delta_callback(text)
+            return {"messages": history + [{"role": "assistant", "content": text}],
+                    "final_response": text}
+
+        state.agent.run_hook = slow_answer
+        raw = payload()
+        raw["model"].pop("fallbacks", None)
+        with patch.dict(os.environ, {"CHISABOT_FIRST_TOKEN_TIMEOUT_S": "0.02"}):
+            response = await self.prompt(state, raw)
+        self.assertEqual(response.stop_reason, "end_turn")
+        self.assertEqual(state.agent.model, "magpie-model")
+
     async def test_first_token_timeout_interrupts_and_retries_on_the_backup(self):
         # QA1102-06: a hung primary is interrupted at the first-token deadline and the turn
         # retries on a fallback, instead of paying the full upstream call timeout.

@@ -153,7 +153,7 @@ describe("splitBubbles（DESIGN.md §69）", () => {
     expect(singleSegs[1]?.text).toBe("接着说。");
   });
 
-  test("Hark 三段式自动折叠：多小节结构化 Markdown 自动折叠为 doc 卡片并保留导语与跟进句", () => {
+  test("多小节正文在流式增长时保持 Markdown，不突然变成折叠文档", () => {
     const raw = [
       "我已经把今天下午的执行清单整理好了，重点都标出来了：",
       "",
@@ -170,11 +170,22 @@ describe("splitBubbles（DESIGN.md §69）", () => {
     ].join("\n");
     const normalized = normalizeDirectiveCards(raw);
     const segments = splitBubbles(normalized);
-    expect(segments.map((x) => x.kind)).toEqual(["text", "doc", "text"]);
+    expect(normalized).toBe(raw);
+    expect(segments.every((x) => x.kind === "text")).toBe(true);
     expect(segments[0]?.text).toBe("我已经把今天下午的执行清单整理好了，重点都标出来了：");
-    expect(segments[1]?.title).toBe("下午执行总览");
     expect(segments[1]?.text).toContain("### 1. 优先处理事项");
-    expect(segments[2]?.text).toBe("需要的话，我可以帮你直接起草客户邮件的回复。");
+    expect(segments.at(-1)?.text).toBe("需要的话，我可以帮你直接起草客户邮件的回复。");
+    for (let end = 1; end <= raw.length; end++) {
+      expect(normalizeDirectiveCards(raw.slice(0, end))).toBe(raw.slice(0, end));
+    }
+  });
+
+  test("代码里的卡片指令和站内链接保持原样", () => {
+    const raw = '```markdown\n:::card{title="示例"}\n说明\n:::\n[连接 Google](/settings/connected-accounts)\n```';
+    for (let end = raw.indexOf("\n") + 1; end <= raw.length; end++) {
+      expect(normalizeDirectiveCards(raw.slice(0, end))).toBe(raw.slice(0, end));
+    }
+    expect(splitBubbles(normalizeDirectiveCards(raw))).toHaveLength(1);
   });
 
   test("Hark 站内操作胶囊行：自动拆分为独立段落供 HarkActionPill 渲染", () => {

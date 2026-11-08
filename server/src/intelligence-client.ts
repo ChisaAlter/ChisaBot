@@ -1,18 +1,18 @@
-import { CopilotKitIntelligence } from "@copilotkit/runtime/v2";
+import { IntelligenceHistoryClient } from "./conversations/intelligence-history";
 import type { IntelligenceSettings } from "./config";
 import {
   clearDesktopConnectionFailure,
   recordDesktopConnectionFailure,
 } from "./desktop-connection-failure";
 
-/** Observe the SDK's typed HTTP errors before runtime handlers turn them into generic 500s. */
+/** Keep rejected hosted credentials visible to the desktop while reading legacy history. */
 export function observeIntelligenceAuthentication<
-  T extends CopilotKitIntelligence,
+  T extends IntelligenceHistoryClient,
 >(client: T): T {
   const methods = new Map<PropertyKey, (...args: unknown[]) => unknown>();
   return new Proxy(client, {
     get(target, property) {
-      // Both getters and methods must keep the original receiver: the SDK owns #private fields.
+      // Both getters and methods must keep the original receiver: the client owns its configuration.
       const value: unknown = Reflect.get(target, property, target);
       if (typeof value !== "function" || property === "constructor")
         return value;
@@ -55,27 +55,13 @@ export function observeIntelligenceAuthentication<
   });
 }
 
-/**
- * A client through which this deployment can ask Intelligence a question of its own.
- *
- * The runtime already holds one of these, built where it is mounted, and everything a conversation
- * does goes through that. This is for the questions ChisaBot asks on its own account rather than on
- * a run's: whether a thread the browser remembers is still there, and whatever else later needs an
- * answer from the platform outside a turn.
- *
- * A second instance rather than a shared one, deliberately. The constructor stores its settings and
- * opens nothing — no socket, no handshake, no pool — so the cost is an object, while reaching into
- * the runtime for the client it built would tie this to the mounting order of a module that has no
- * other reason to care. The settings both read come from one place, which is the part that has to
- * agree.
- */
+/** Read-only access for hosted-history migration and entitlement diagnostics. */
 export function createIntelligenceClient(
   settings: IntelligenceSettings,
-): CopilotKitIntelligence {
+): IntelligenceHistoryClient {
   return observeIntelligenceAuthentication(
-    new CopilotKitIntelligence({
+    new IntelligenceHistoryClient({
       apiUrl: settings.apiUrl,
-      wsUrl: settings.gatewayWsUrl,
       apiKey: settings.apiKey,
     }),
   );

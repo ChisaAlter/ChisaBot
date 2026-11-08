@@ -416,7 +416,7 @@ export function createApp(
    */
   const compressApi = compress();
   app.use("/api/*", async (context, next) => {
-    if (context.req.path.startsWith("/api/copilotkit/")) return next();
+    if (context.req.path.startsWith("/api/copilotkit/") || context.req.path.startsWith("/api/conversations/")) return next();
     return compressApi(context, next);
   });
   mountDesktopConnectionFailure(app, desktopHostToken);
@@ -1030,6 +1030,7 @@ export function createApp(
   // The CopilotKit runtime, behind the same session guard as every other API route. Mounted last so
   // its own routing under /api/copilotkit cannot shadow an ChisaBot route declared above.
   if (copilotHandler) {
+    app.use("/api/conversations/*", requireUser, markEventStreamUnbuffered);
     // 流式回复（SSE）对任何反向代理都声明「别缓冲、别压缩」：nginx 认 X-Accel-Buffering，
     // no-transform 让 CDN / 代理不去 gzip 它（gzip 会攒够一块才发，回复就一段一段地蹦）。
     // 自带网关已经关了缓冲；这两个头是给别人自己部署时前面再套一层代理用的（docs/streaming.md）。

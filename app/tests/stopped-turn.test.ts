@@ -26,13 +26,18 @@ describe("model errors in plain Chinese (2026-10-15)", () => {
   test("a host tool with no definite outcome says the turn paused, not that no answer came (2026-11-06)", async () => {
     const { friendlyError } = await import("../src/lib/chat/friendly-error");
     const r = stoppedReason("The host gateway outcome is unknown or the run is no longer authorized");
-    expect(r).toContain("为免重复执行");
-    expect(friendlyError(r).title).toBe(r);
+    expect(r).toContain("先核对这一步是否已经执行");
+    expect(friendlyError(r).title).toBe("这一步操作未能确认结果");
+    expect(friendlyError(r).retryable).toBe(false);
     expect(friendlyError(r).title).not.toBe("这一轮没有收到回答");
     expect(stoppedReason("Hermes ended before a host tool returned its execution receipt. The operation will not be repeated automatically.")).toBe(r);
   });
   test("Chinese reasons pass through unchanged", () => {
     expect(stoppedReason("机器人超过 2 分钟没有回应，这一轮已结束。")).toBe("机器人超过 2 分钟没有回应，这一轮已结束。");
+  });
+  test("compaction diagnostics survive without assigning a cause", () => {
+    const reason = "context compaction failed: no safe compaction range can reduce context below target";
+    expect(stoppedReason(reason)).toBe(reason);
   });
   test("cancelled run reason is translated as an interruption rather than a raw English error", () => {
     expect(stoppedReason("This run was stopped.")).toContain("这一轮被中断了");

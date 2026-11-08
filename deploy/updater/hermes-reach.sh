@@ -30,6 +30,13 @@ normalize_kernel() {
 }
 TIMEOUT_MS=${HERMES_REACH_TIMEOUT_MS:-5000}
 
+# A retained Hermes URL is recovery configuration after switching kernels, not an active dependency.
+SELECTED=$(docker exec "$CONTAINER" sh -c 'cat /run/s6/container_environment/CHISABOT_AGENT_KERNEL 2>/dev/null || printenv CHISABOT_AGENT_KERNEL 2>/dev/null' 2>/dev/null | head -n 1)
+if [ "$(normalize_kernel "$SELECTED")" = dsh ]; then
+  echo 'hermes=skipped（当前执行内核是 DSH）'
+  exit 0
+fi
+
 # s6 把容器环境写在 /run/s6/container_environment（update.sh 取 DATABASE_URL 也是这样）；兜底用 printenv。
 URL=$(docker exec "$CONTAINER" sh -c 'cat /run/s6/container_environment/CHISABOT_HERMES_URL 2>/dev/null || printenv CHISABOT_HERMES_URL 2>/dev/null' 2>/dev/null | tr -d '\r\n')
 if [ -z "$URL" ]; then

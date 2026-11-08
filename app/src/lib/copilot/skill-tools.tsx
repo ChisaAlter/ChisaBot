@@ -1,16 +1,14 @@
-import { useFrontendTool, useHumanInTheLoop } from "@copilotkit/react-core/v2";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useRenderTool, useInteractionRenderer } from "@/lib/chat/renderers";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { z } from "zod";
 import { ProposedSkillCard } from "@/components/skills/proposed-skill";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { useDeclaredBotId } from "@/lib/copilot/active-bot";
-import { saveSkillMutationOptions } from "@/lib/plugins/mutations";
 import {
   agentPluginsQueryOptions,
   pluginsPageQueryOptions,
 } from "@/lib/plugins/queries";
-import type { SkillFormValues } from "@/lib/skills/form";
 import {
   describeSkill,
   describeSkills,
@@ -68,49 +66,8 @@ export function SkillTools() {
     enabled: authoring,
   });
   const { data: me } = useQuery(currentUserQueryOptions());
-  const saveSkill = useMutation(saveSkillMutationOptions(queryClient));
 
   const skills = page?.skills ?? [];
-
-  useFrontendTool({
-    name: "list_skills",
-    description:
-      "此部署中已存在的技能，每行一个，带有每个技能的。写技能前阅读此内容：slug 是身份，因此重用一个会替换该技能，且不是本人拥有的 slug 无法替换。",
-    parameters: z.object({}),
-    available: authoring,
-    handler: async () => describeSkills(skills, me?.id),
-  });
-
-  useFrontendTool({
-    name: "read_skill",
-    description:
-      "一个现有的技能，包含其指令。当改进技能而非编写新技能时使用此选项——切勿改写未阅读过的指令。",
-    parameters: z.object({
-      slug: z
-        .string()
-        .describe(
-          "The skill's `/` command, without the slash, as list_skills spells it.",
-        ),
-    }),
-    available: authoring,
-    handler: async ({ slug }) => {
-      const wanted = String(slug).replace(/^\//, "");
-      const skill = skills.find((candidate) => candidate.slug === wanted);
-      if (!skill) {
-        return `There is no skill called ${wanted} that this person can see. Call list_skills for the ones there are.`;
-      }
-      return describeSkill(skill);
-    },
-  });
-
-  useFrontendTool({
-    name: "list_skill_tools",
-    description:
-      "`serverId/toolName` 引用此处技能可声明的，由连接器分组。声明工具无任何授予——运行获得的提供始终是技能命名与 Bot 授予的交集——因此技能可为 Bot 尚未持有的连接器命名工具。",
-    parameters: z.object({}),
-    available: authoring,
-    handler: async () => describeToolRefs(page?.servers ?? []),
-  });
 
   /**
    * The save, as a card rather than a handler.
@@ -143,31 +100,15 @@ export function SkillTools() {
             }
             respond={props.respond}
             result={props.result}
-            save={async (values: SkillFormValues) => {
-              await saveSkill.mutateAsync({
-                instructions: values.instructions,
-                slug: values.slug,
-                summary: values.summary,
-                title: values.title,
-                /*
-                 * Sent on every save, including empty, because the server replaces the declared set
-                 * rather than merging into it. See `SkillInput`.
-                 */
-                tools: values.tools,
-              });
-            }}
           />
         );
       },
-    [me?.id, saveSkill, skills],
+    [me?.id, skills],
   );
 
-  useHumanInTheLoop({
+  useInteractionRenderer({
     name: "save_skill",
-    description:
-      "将一个完成的技能放在要保存的人面前。他们看到命令、标题和整个指令，除非他们按下按钮，否则什么都不会被写入。在他们同意技能所说的话之后，在最后一次调用它——不要检查你的草稿。",
     parameters: proposedSkillSchema,
-    available: authoring,
     render: Card,
   });
 

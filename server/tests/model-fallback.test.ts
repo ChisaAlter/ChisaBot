@@ -210,6 +210,7 @@ describe("model fallback on quota errors", () => {
     expect(await fallbackCandidates(catalog, { CHISABOT_MODEL_FALLBACKS: "codex/g, clinepass/p ,clinepass/b" })("clinepass/p")).toEqual(["codex/g", "clinepass/b"]);
     expect(await fallbackCandidates(catalog, { CHISABOT_MODEL_FALLBACKS: "off" })("clinepass/p")).toEqual([]);
     expect(await fallbackCandidates(catalog, {})("gpt-4o")).toEqual([]);
+    expect(await fallbackCandidates(catalog, { CHISABOT_MODEL_FALLBACKS: "  " })("clinepass/p")).toEqual(["clinepass/a", "clinepass/b", "clinepass/c"]);
   });
 
   test("5xx / overloaded fall back too (cooldown backs off); 401/network do not", async () => {
@@ -384,6 +385,20 @@ describe("model fallback on quota errors", () => {
     expect(await fallbackCandidates(catalog, {}, async () => { throw new Error("db down"); })("clinepass/p")).toEqual(["clinepass/a", "clinepass/b"]);
   });
 
+
+  test("fresh directory skips retired explicit backups without inventing replacements", async () => {
+    const admin = async () => ["clinepass/retired", "devin/backup"];
+    expect(await fallbackCandidates(async () => ({ models: ["devin/primary", "devin/backup"] }), {}, admin)("devin/primary"))
+      .toEqual(["devin/backup"]);
+    expect(await fallbackCandidates(async () => ({ models: ["devin/primary", "devin/other"] }), {}, admin)("devin/primary"))
+      .toEqual([]);
+    expect(await fallbackCandidates(async () => ({ models: ["devin/primary"], stale: true }), {}, admin)("devin/primary"))
+      .toEqual(await admin());
+    expect(await fallbackCandidates(async () => { throw new Error("catalog unavailable"); }, {}, admin)("devin/primary"))
+      .toEqual(await admin());
+    expect(await fallbackCandidates(async () => ({ models: [] }), {}, admin)("devin/primary"))
+      .toEqual(await admin());
+  });
 
   test("candidates: catalog entries the directory says cannot call tools are skipped (QA1102-13)", async () => {
     const catalog = async () => [

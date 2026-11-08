@@ -1,18 +1,15 @@
 import { createHash } from "node:crypto";
 import { HttpAgent, type Message, type RunAgentInput } from "@ag-ui/client";
 import { EventSchemas } from "@ag-ui/core/schemas";
-import type { BuiltInAgentClassicConfig } from "@copilotkit/runtime/v2";
+import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { Subscription } from "rxjs";
 import {
   clearDesktopConnectionFailure,
   recordDesktopConnectionFailure,
 } from "../desktop-connection-failure";
 
-// Use the model contract of the runtime we actually ship, without a second AI SDK version.
-export type PlanLanguageModel = Extract<
-  BuiltInAgentClassicConfig["model"],
-  { specificationVersion: "v3" }
->;
+// The same provider contract used by the deployment model adapters.
+export type PlanLanguageModel = LanguageModelV3;
 type Options = Parameters<PlanLanguageModel["doStream"]>[0];
 type StreamResult = Awaited<ReturnType<PlanLanguageModel["doStream"]>>;
 type Part = StreamResult["stream"] extends ReadableStream<infer T> ? T : never;

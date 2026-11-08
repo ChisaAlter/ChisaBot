@@ -1,4 +1,4 @@
-import { useRenderTool } from "@copilotkit/react-core/v2";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { z } from "zod";
 import { WorkerCard } from "@/components/chat/worker-card";
 import { pendingWorkerTitle } from "@/lib/chat/worker-title";

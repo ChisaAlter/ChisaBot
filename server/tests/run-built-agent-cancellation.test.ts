@@ -2,7 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import type { AbstractAgent, BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { EventType, HttpAgent } from "@ag-ui/client";
 import { LLMock } from "@copilotkit/aimock";
-import { BuiltInAgent } from "@copilotkit/runtime/v2";
+import { ClassicRuntimeAgent as BuiltInAgent } from "../src/agents/classic-runtime";
 import { z } from "zod";
 import {
   buildAgents,

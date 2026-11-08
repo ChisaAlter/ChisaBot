@@ -24,6 +24,9 @@ import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { categoryOfPageAction, categoryOfTool, decideMode, detailsFromArgs, flattenForMatch, titleForTool } from "./classify";
 import { currentConfirmActor, currentConfirmInteractive, currentConfirmToolCall, currentConfirmTurn, currentToolAbort, TOOL_STOPPED_ZH, withConfirmInteractive } from "./context";
 import { reasonWithoutStatement } from "../db/query-failure";
+import { currentDurableConfirmation } from "./context";
+import { currentApprovalContext, parseApprovalContinuation } from "../approvals/types";
+import { createDshRunJournal } from "../conversations/run-journal";
 
 /**
  * 确认卡片 + 审批偏好（DESIGN.md §58，docs/confirmations.md）。
@@ -94,6 +97,7 @@ type RequestRow = {
   created_at: Date | string;
   decided_at: Date | string | null;
   expires_at: Date | string;
+  continuation: unknown | null;
 };
 
 export class ConfirmError extends Error {}
@@ -232,6 +236,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
       expires_at timestamptz NOT NULL
     )`);
     await sql.unsafe("CREATE INDEX IF NOT EXISTS chisabot_confirm_requests_thread ON chisabot_confirm_requests(owner_user_id, thread_id, created_at)");
+    await sql.unsafe("ALTER TABLE chisabot_confirm_requests ADD COLUMN IF NOT EXISTS continuation jsonb");
     await sql.unsafe("CREATE INDEX IF NOT EXISTS chisabot_confirm_requests_owner ON chisabot_confirm_requests(owner_user_id, created_at)");
     await sql.unsafe("CREATE INDEX IF NOT EXISTS chisabot_confirm_requests_external ON chisabot_confirm_requests(external) WHERE external IS NOT NULL");
     // 机器人权限（§97）：每人每个机器人一行，只加表，回滚安全（旧镜像不读它 = 回到审批偏好）。
@@ -409,8 +414,8 @@ export function createConfirmations(database: Database, options: { auditStore?: 
     const id = `cf_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
     const expires = input.expiresAt ?? new Date(Date.now() + CARD_TTL_HOURS * 3_600_000);
     const rows = await sql.unsafe<RequestRow[]>(
-      `INSERT INTO chisabot_confirm_requests (id, owner_user_id, agent_id, thread_id, tool_call_id, category, tool, title, target, details, digest, external, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13) RETURNING *`,
+      `INSERT INTO chisabot_confirm_requests (id, owner_user_id, agent_id, thread_id, tool_call_id, category, tool, title, target, details, digest, external, expires_at, continuation)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::jsonb, $11, $12, $13, $14::text::jsonb) RETURNING *`,
       [
         id,
         input.ownerUserId,
@@ -425,6 +430,7 @@ export function createConfirmations(database: Database, options: { auditStore?: 
         input.digest ?? "",
         input.external ?? null,
         expires.toISOString(),
+        currentDurableConfirmation() ? JSON.stringify(currentApprovalContext() ?? null) : null,
       ],
     );
     return rows[0]!;
@@ -474,10 +480,11 @@ export function createConfirmations(database: Database, options: { auditStore?: 
       `UPDATE chisabot_confirm_requests SET consumed_at = now()
        WHERE id = (SELECT id FROM chisabot_confirm_requests WHERE owner_user_id = $1 AND thread_id = $2 AND status = 'approved'
          AND consumed_at IS NULL AND decided_at > now() - $5::int * interval '1 millisecond'
+         AND ($6::text IS NULL AND continuation IS NULL OR id=$6)
          AND (($3::text IS NOT NULL AND digest = $3) OR ($3::text IS NULL AND category = $4))
          ORDER BY decided_at DESC LIMIT 1)
        RETURNING id`,
-      [owner, threadId, match.digest ?? null, match.category ?? null, GRANT_MS],
+      [owner, threadId, match.digest ?? null, match.category ?? null, GRANT_MS, currentDurableConfirmation()?.approvedRequestId ?? null],
     );
     return rows.length > 0;
   }
@@ -507,7 +514,8 @@ export function createConfirmations(database: Database, options: { auditStore?: 
     const call = currentConfirmToolCall();
     if (turn?.threadId && (await consumeGrant(input.ownerUserId, turn.threadId, { digest: input.digest }))) return { ok: true, via: "grant" };
     if (!turn?.threadId) return { ok: false, message: NOT_INTERACTIVE(CONFIRM_CATEGORY_INFO[input.category].label) };
-    if (!interactiveInitiator(input.initiator)) {
+    const durable = currentDurableConfirmation();
+    if (!durable && !interactiveInitiator(input.initiator)) {
       // 同一段对话里同一个工具还没人理的旧卡片作废（定时任务每次触发都会再放一张，只留最新的）。
       await sql.unsafe(
         `UPDATE chisabot_confirm_requests SET status = 'cancelled', decided_at = now()
@@ -546,6 +554,11 @@ export function createConfirmations(database: Database, options: { auditStore?: 
     try {
       onOpened?.(requestView(row));
     } catch {}
+    if (durable) {
+      const continuation = currentApprovalContext();
+      if (!continuation) throw new Error("A durable confirmation requires its original tool context.");
+      return durable.suspend(row.id);
+    }
     const status = await waitFor(row.id, turn.stopped);
     if (status === "approved") {
       await sql.unsafe("UPDATE chisabot_confirm_requests SET consumed_at = now() WHERE id = $1", [row.id]);
@@ -572,6 +585,20 @@ export function createConfirmations(database: Database, options: { auditStore?: 
         throw new ConfirmError("电脑上的这次请求已经结束了（超时或电脑离线）。");
       }
       return requestView((await requestById(owner, id)) ?? row);
+    }
+    if (row.continuation) {
+      const snapshot = parseApprovalContinuation(row.continuation);
+      const refusal = await createDshRunJournal(database).continuationRefusal(snapshot.threadId, snapshot.runId);
+      if (refusal) {
+        await setStatus(id, ["pending"], "cancelled");
+        throw new ConfirmError(refusal);
+      }
+      const updated = await sql.begin(async tx => {
+        const [saved] = await tx.unsafe<RequestRow[]>("UPDATE chisabot_confirm_requests SET status=$3,decided_via=$4,decided_at=now() WHERE id=$1 AND owner_user_id=$2 AND status='pending' RETURNING *", [id, owner, decision === "approve" ? "approved" : "denied", via]);
+        if (saved) await tx.unsafe("INSERT INTO work_items(kind,key,payload) VALUES('conversation.confirmation-response',$1,$2::text::jsonb) ON CONFLICT DO NOTHING", [id, JSON.stringify({ ownerUserId: owner, requestId: id })]);
+        return saved;
+      });
+      return requestView(updated ?? (await requestById(owner, id))!);
     }
     const updated = await setStatus(id, ["pending"], decision === "approve" ? "approved" : "denied", via);
     if (!updated) return requestView((await requestById(owner, id)) ?? row);
@@ -910,6 +937,11 @@ export function createConfirmations(database: Database, options: { auditStore?: 
     modeFor,
     check,
     decide,
+    async durableDecision(owner: string, id: string) {
+      const row = await requestById(owner, id);
+      if (!row?.continuation || !["approved", "denied"].includes(row.status)) return null;
+      return { ownerUserId: owner, agentId: row.agent_id, requestId: id, approved: row.status === "approved", snapshot: parseApprovalContinuation(row.continuation) };
+    },
     list,
     purchaseConfirmed,
     pageAction,

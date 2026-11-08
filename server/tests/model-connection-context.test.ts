@@ -128,9 +128,9 @@ test("routine turns retain their built connection through asynchronous execution
     intelligence: {
       getOrCreateThread: async () => ({}),
       getThreadMessages: async () => ({ messages: [] }),
-      ɵacquireThreadLock: async () => ({}),
-      ɵrenewThreadLock: async () => ({}),
-      ɵcleanupThreadLock: async () => {},
+      acquireThreadLease: async () => ({}),
+      renewThreadLease: async () => ({}),
+      releaseThreadLease: async () => {},
     },
     buildAgentFor: async () => {
       seen.push(

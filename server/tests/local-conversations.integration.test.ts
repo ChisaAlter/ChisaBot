@@ -82,12 +82,12 @@ suite("local conversations on a dedicated PostgreSQL database", () => {
   });
 
   test("a stale cleanup or stop cannot release a newer run", async () => {
-    await backend.client.ɵacquireThreadLock({ threadId: thread, runId: "first", userId: owner, agentId: bot });
-    await expect(backend.client.ɵacquireThreadLock({ threadId: thread, runId: "second", userId: owner, agentId: bot })).rejects.toMatchObject({ status: 409 });
-    await backend.client.ɵcleanupThreadLock({ threadId: thread, runId: "unrelated" });
+    await backend.client.acquireThreadLease({ threadId: thread, runId: "first", userId: owner, agentId: bot });
+    await expect(backend.client.acquireThreadLease({ threadId: thread, runId: "second", userId: owner, agentId: bot })).rejects.toMatchObject({ status: 409 });
+    await backend.client.releaseThreadLease({ threadId: thread, runId: "unrelated" });
     expect(await backend.runner.stop({ threadId: thread, runId: "unrelated" })).toBe(false);
     expect(await backend.runner.isRunning({ threadId: thread })).toBe(true);
-    await backend.client.ɵcleanupThreadLock({ threadId: thread, runId: "first" });
+    await backend.client.releaseThreadLease({ threadId: thread, runId: "first" });
   });
 
   test("completed text, tool results, state, and input survive a recreated backend", async () => {
@@ -198,7 +198,8 @@ suite("local conversations on a dedicated PostgreSQL database", () => {
     stream.subscribe({ next: (event) => { if (event.type === EventType.TOOL_CALL_ARGS) argsSeen(); } });
     const completed = collect(stream);
     await reachedTool;
-    expect(() => backend.runner.run({ threadId: pausedThread, agent, input: { ...input, runId: randomUUID() } })).toThrow("Thread already running");
+    // Background owners request exclusivity; interactive sends join through the inbox.
+    expect(() => backend.runner.run({ threadId: pausedThread, agent, input: { ...input, runId: randomUUID() }, join: false })).toThrow("Thread already running");
     expect(await backend.runner.stop({ threadId: pausedThread, runId: "stale-run" })).toBe(false);
     const joined = collect(backend.runner.connect({ threadId: pausedThread, agentId: bot }));
     expect(await backend.runner.stop({ threadId: pausedThread, runId: input.runId })).toBe(true);

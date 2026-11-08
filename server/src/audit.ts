@@ -648,13 +648,15 @@ export function addAuditTap(tap: AuditTap): () => void {
 
 export function createAuditStore(database: Database): AuditStore {
   return {
-    insert: async ({ initiator, ...event }) => {
-      const row = {
-        ...event,
-        ...initiatorColumns(initiator),
-        payload: redactAuditPayload(event.payload) as Record<string, unknown>,
-      };
-      await database.insert(auditEvents).values(row);
+    insert: async event => { (await insertTransactionalAuditEvent(database, event))(); },
+  };
+}
+
+/** Write with the business transaction; its owner publishes taps only after commit succeeds. */
+export async function insertTransactionalAuditEvent(database: Pick<Database, "insert">, { initiator, ...event }: AuditEventInput): Promise<() => void> {
+  const row = { ...event, ...initiatorColumns(initiator), payload: redactAuditPayload(event.payload) as Record<string, unknown> };
+  await database.insert(auditEvents).values(row);
+  return () => {
       for (const tap of auditTaps) {
         try {
           tap(row);
@@ -668,7 +670,6 @@ export function createAuditStore(database: Database): AuditStore {
           );
         }
       }
-    },
   };
 }
 

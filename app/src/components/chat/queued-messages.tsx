@@ -1,7 +1,8 @@
-import { useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
-import { IconClockHour4, IconRefresh, IconX } from "@tabler/icons-react";
+import { useConversationScope } from "@/lib/chat/conversation-scope";
+import { IconClockHour4, IconPaperclip, IconRefresh, IconX } from "@tabler/icons-react";
 import { useState } from "react";
 import { queueMessage, sendPausedMessage, useQueuedMessages, withdrawMessage } from "@/lib/copilot/thread-inbox";
+import { toVisibleChatItems } from "@/components/channels/chat-messages";
 
 /**
  * 消息列表末尾的「已排队」气泡（DESIGN.md §38.1）：机器人回答期间发的消息，在它被读进去之前画在这里，
@@ -9,7 +10,7 @@ import { queueMessage, sendPausedMessage, useQueuedMessages, withdrawMessage } f
  * 被读到时这一条从这里消失，同一条消息出现在对话记录里它被读到的位置（服务器推的快照），不重复。
  */
 export function QueuedMessages() {
-  const chat = useCopilotChatConfiguration();
+  const chat = useConversationScope();
   const threadId = chat?.threadId;
   const items = useQueuedMessages(threadId);
   const [sending, setSending] = useState<string | null>(null);
@@ -60,7 +61,14 @@ export function QueuedMessages() {
       )}
       {items.map((item) => (
         <div className="queued-msg" data-queued-id={item.id} data-status={item.status} key={item.id}>
-          <div className="queued-bubble">{item.text}</div>
+          <div className="queued-bubble">
+            {item.message && toVisibleChatItems([item.message]).flatMap((row) => row.kind === "attachments" ? row.attachments : []).map((file) => (
+              <a className="flex items-center gap-1.5 py-1 text-sm underline-offset-2 hover:underline" href={file.url} target="_blank" rel="noreferrer" key={file.id}>
+                <IconPaperclip className="size-4 shrink-0" />{file.filename || "附件"}
+              </a>
+            ))}
+            {item.text}
+          </div>
           <div className="queued-meta">
             {item.status === "paused" ? (
               <>
@@ -75,7 +83,7 @@ export function QueuedMessages() {
                 <span className="queued-state is-failed">{"没发出去"}</span>
                 <button
                   className="queued-action"
-                  onClick={() => void queueMessage(threadId, item.text, item.id)}
+                  onClick={() => void queueMessage(threadId, item.message ? { message: item.message, skillIds: item.skillIds } : item.text, item.id)}
                   title={"重新发送"}
                   type="button"
                 >

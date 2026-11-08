@@ -1,18 +1,18 @@
 # 数据模型
 
-ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `chisabot`）；登录网关另有一个 SQLite（账号、邀请、会话）。截至 main `0e23321`。
+ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite（账号、邀请、会话）。启用 DSH 后，每账号的执行历史另存于 `CHISABOT_DSH_ROOT` 持久目录。2026-11-08 增补会话迁移；实施状态见 [DSH 迁移记录](pipeline-runs/20261107-dsh-migration.md)。
 
 ## 1. 两种建表方式
 
 | 方式 | 用在哪 | 回滚 |
 |---|---|---|
-| **开机自建**：服务启动时 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` | 所有 `chisabot_*` 表、`openbot_local_*` 表、少数给上游表加的可空列 | 只换镜像即可：旧代码不认识新表 / 新列，直接忽略 |
-| **迁移**：`server/drizzle/NNNN_*.sql`（drizzle） | 上游表，以及必须改上游表的 ChisaBot 变化（0054 设备、0055 工作流、0056/0057 面板、0058 机器人一律私有） | 迁移只加表 / 可空列，回滚镜像安全；**瘦身 P5 的 DROP 迁移例外**，回滚前要先恢复数据库 |
+| **开机自建**：服务启动时 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` | 多数 `chisabot_*` 表及少数扩展列；已登记迁移的会话模块仍保留幂等初始化 | 旧代码可忽略新增表、列；能否继续执行还须符合内核与日志读取版本 |
+| **迁移**：`server/drizzle/NNNN_*.sql`（drizzle） | 上游表与显式版本化变更；0063 接管本地会话、DSH 账本、确认卡和历史导入表 | 0063 只加表、列、索引，已有数据原地保留；DSH 回滚必须保留 PostgreSQL 与 Session 卷，并使用兼容 reader |
 
 原则：**只加不删**。瘦身移除的功能保留它们的表和数据（P5 才会在稳定 ≥ 2 周后 DROP 空表，见 [slimming.md](slimming.md)）。
 所有用户数据都带 `user_id`（或经机器人 / 设备归属到人），多账号下按人隔离（[accounts.md](accounts.md)）。
 
-## 2. ChisaBot 自己的表（`chisabot_*`，46 张）
+## 2. ChisaBot 自己的表（`chisabot_*`）
 
 按功能分组。「代码」是建表所在文件（`server/src/` 下）。
 
@@ -20,6 +20,12 @@ ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `chisabot`）�
 
 | 表 | 用途 | 代码 | DESIGN |
 |---|---|---|---|
+| `chisabot_runtime_bindings` | thread/revision → 账号 Host/Session；每线程只有一个 active binding，编辑后旧绑定保留 | `conversations/bindings.ts`；迁移 0063 | [DSH §5](dsh-kernel-migration.md#5-身份会话运行与任务) |
+| `chisabot_conversation_commands` | 持久接纳；同 thread/command ID 幂等；`execution_run_id` 记录补话加入的实际运行 | `conversations/commands.ts`；迁移 0063 | DSH §6 |
+| `chisabot_dsh_runs` | 运行来源、Host generation、源日志 baseline、分段 request ID、停止状态和恢复状态 | `conversations/run-journal.ts`；迁移 0063 | DSH §7–8 |
+| `chisabot_tool_operations` | 工具调用身份、不可变参数、审批 ID、实际结果；回执未知时禁止自动重做 | `conversations/tool-operations.ts`；迁移 0063 | DSH §9 |
+| `chisabot_conversation_interactions` | 卡片问题、原 continuation、答复及原始答复输入；答复与后续工作入队同事务 | `conversations/interactions.ts`；迁移 0063 | DSH §10 |
+| `chisabot_legacy_imports` | 托管旧历史导入来源、原 thread 元数据和事件，关联保持原 ID 的本地线程 | `conversations/legacy-import.ts`；迁移 0063 | DSH §14 |
 | `chisabot_bot_threads` | 每个 (用户, 机器人) 当前的对话指针 + 历史对话；全端同步的依据 | `bot-threads.ts` | §42 |
 | `chisabot_thread_inbox` | 回答期间的消息与后台结果队列；Stop/失败后持久暂停，用户显式发送或撤回；HTTP 撤回预留终态防晚到提交 | `thread-inbox.ts` | §38、§108 |
 | `chisabot_thread_inbox_control` | 每线程暂停状态；行锁串行暂停、晚入队、认领和单条恢复；删线程/机器人一并清理 | `thread-inbox.ts` | §108 |
@@ -43,7 +49,7 @@ ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `chisabot`）�
 |---|---|---|---|
 | `chisabot_confirm_prefs` | 四类（对外发消息 / 删除 / 付款 / 操作电脑）「先问我 / 直接做」 | `confirmations/service.ts` | §58 |
 | `chisabot_confirm_rules` | 用户用自己的话写的规则（关键词全部命中；问 > 直接做） | `confirmations/service.ts` | §58 |
-| `chisabot_confirm_requests` | 聊天里的确认卡（等 10 分钟，跨刷新 / 设备 / 重启，晚批准会接着做） | `confirmations/service.ts` | §58 |
+| `chisabot_confirm_requests` | 确认卡与决定；0063 的 `continuation` 保存原运行/工具上下文。恢复前重查 Stop、编辑版本和操作账本 | `confirmations/service.ts`；迁移 0063 | §58；DSH §10 |
 
 ### 设备与本地 agent
 
@@ -83,6 +89,7 @@ ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `chisabot`）�
 | `chisabot_pages` · `chisabot_page_versions` · `chisabot_page_assets` · `chisabot_page_origins` | 页面、版本（保留 50 个）、资源（bytea）、来源 | `pages/service.ts` | §54 |
 | `chisabot_schedules` · `chisabot_schedule_runs` | 定时任务与每次触发（`next_run_at` 比较并交换，多容器不重复触发） | `schedules/service.ts` | §55 |
 | `chisabot_im_connections` · `chisabot_im_chats` · `chisabot_im_logs` | IM 连接（凭据加密）、每个 IM 会话（开机加列 `last_inbound`）、最近 100 条日志 | `im/service.ts` | §49 |
+| `chisabot_im_inbox` · `chisabot_im_outbox` | 0064 持久收发账本：账号/Bot/thread 身份、原消息信封、回复正文/分片、平台回执和状态；发送结果未知时保留记录供核对，不自动重发。连接删除后仍可按账号查询交付记录 | `im/delivery.ts`；迁移 0064 | DSH §13 |
 | `chisabot_browser_bookmarks` · `chisabot_browser_bookmark_seeds` | 每账号的浏览器收藏夹；种子行记录「已用旧起始页 5 个链接初始化过」（第一次 GET 会写入） | `browser-bookmarks/service.ts` | §95 |
 
 ### 模型与图片
@@ -97,13 +104,15 @@ ChisaBot 的数据都在应用容器里的 PostgreSQL（数据库 `chisabot`）�
 
 ## 3. 本地对话表（`openbot_local_*`）
 
-替代上游 Intelligence 托管服务，开机自建（`server/src/local-conversations.ts`）：
+本地会话与 DSH 展示投影共用这些表。0063 将它们登记到正式迁移，`local-conversations.ts` 保留幂等初始化以兼容已有安装。
 
 | 表 | 用途 |
 |---|---|
-| `openbot_local_threads` | 对话线程 + **线程锁**（`lock_expires_at`；启动时释放孤儿锁，部署脚本等锁清零再切换） |
+| `openbot_local_threads` | 对话线程、展示快照与线程 lease；`snapshot_sequence` 标识快照包含到哪个事件。已有 DSH 执行重启时恢复观察，不能仅清锁重新派发 |
 | `openbot_local_runs` | 每一轮的运行记录（finished / error / interrupted / stopped） |
-| `openbot_local_events` | AG-UI 事件流（回放用；目前无上限增长，CB-031） |
+| `openbot_local_events` | 持久产品事件和 AG-UI 兼容回放；DSH 源日志仍在 Session 卷 |
+
+迁移 0063 可在全新数据库和已执行运行时 `ensure()` 的数据库上执行：建表、索引使用 `IF NOT EXISTS`，新增列保留可空状态；旧快照缺失水位时按已存事件回填，新 DSH run 的 `initiator` 默认 `person`。现有非空水位、运行输入、消息 ID、审批状态不会被覆盖。迁移与数据备份命令见 [DSH 运维](ops/dsh-runtime.md)。
 
 ## 4. 仍在用的上游表（节选）
 

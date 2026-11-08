@@ -1,4 +1,4 @@
-import { useRenderTool } from "@copilotkit/react-core/v2";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { IconAlarm } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 import { memo } from "react";

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import { CopilotChatConfigurationProvider } from "@copilotkit/react-core/v2";
+import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
   act,
@@ -191,9 +191,9 @@ test("「全部发送」 sends every held item in order", async () => {
   window.addEventListener("chisabot-send-paused", onSend);
   try {
     const view = render(
-      <CopilotChatConfigurationProvider threadId={threadId}>
+      <ConversationScopeProvider agentId="bot" threadId={threadId}>
         <QueuedMessages />
-      </CopilotChatConfigurationProvider>,
+      </ConversationScopeProvider>,
     );
     const button = view.getByTestId("queued-send-all");
     expect(button.textContent).toBe("全部发送");
@@ -221,11 +221,47 @@ test("a single held item has no 「全部发送」", () => {
     }),
   );
   const view = render(
-    <CopilotChatConfigurationProvider threadId={threadId}>
+    <ConversationScopeProvider agentId="bot" threadId={threadId}>
       <QueuedMessages />
-    </CopilotChatConfigurationProvider>,
+    </ConversationScopeProvider>,
   );
   expect(view.queryByTestId("queued-send-all")).toBeNull();
+  expect(view.getByText("发送这条")).toBeTruthy();
+});
+
+test("rich inbox admission and failed retry keep attachment parts and selected skills", async () => {
+  const threadId = crypto.randomUUID();
+  const message = {
+    id: crypto.randomUUID(), role: "user" as const,
+    content: [{ type: "document" as const, source: { type: "url" as const, value: "/api/attachments/queued-file" }, metadata: { attachmentId: "queued-file", filename: "计划.txt" } }],
+  };
+  const posted: unknown[] = [];
+  impl = (async (_url: string | URL | Request, init?: RequestInit) => {
+    posted.push(JSON.parse(String(init?.body)));
+    return posted.length === 1 ? new NativeResponse("unavailable", { status: 503 }) : NativeResponse.json({ queued: true, status: "queued" });
+  }) as unknown as typeof fetch;
+  expect(await queueMessage(threadId, { message, skillIds: ["review-plan"] })).toBe("failed");
+  const view = render(<ConversationScopeProvider agentId="bot" threadId={threadId}><QueuedMessages /></ConversationScopeProvider>);
+  expect(view.getByRole("link", { name: "计划.txt" }).getAttribute("href")).toBe("/api/attachments/queued-file");
+  fireEvent.click(view.getByText("重试"));
+  await waitFor(() => expect(queuedFor(threadId)[0]?.status).toBe("queued"));
+  expect(posted).toEqual([1, 2].map(() => ({ id: message.id, message, skillIds: ["review-plan"] })));
+});
+
+test("a fresh browser restores attachment-only and skill payloads as paused without draining", () => {
+  const threadId = crypto.randomUUID();
+  const message = {
+    id: "rich-restored", role: "user" as const,
+    content: [{ type: "document" as const, source: { type: "url" as const, value: "/api/attachments/restored-file" }, metadata: { attachmentId: "restored-file", filename: "保留.txt" } }],
+    metadata: { chisabotInbox: { skillIds: ["summarize"], skillInstructions: ["Summarize the supplied file."] } },
+  };
+  applyInboxState(threadId, { running: false, paused: true, items: [{ id: message.id, kind: "message", status: "paused", message }] });
+  expect(queuedFor(threadId)).toHaveLength(1);
+  expect(queuedFor(threadId)[0]?.message).toEqual(message);
+  expect(queuedFor(threadId)[0]?.skillIds).toEqual(["summarize"]);
+  expect(takeQueued(threadId)).toEqual([]);
+  const view = render(<ConversationScopeProvider agentId="bot" threadId={threadId}><QueuedMessages /></ConversationScopeProvider>);
+  expect(view.getByRole("link", { name: "保留.txt" })).toBeTruthy();
   expect(view.getByText("发送这条")).toBeTruthy();
 });
 

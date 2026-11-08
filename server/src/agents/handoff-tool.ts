@@ -39,6 +39,7 @@ import {
 } from "./escalation";
 import { HANDOFF_KIND, type HandoffCaps, type HandoffDesk } from "./handoff";
 import type { HandoffWork } from "./handoff-runner";
+import { coordinationSourceRun } from "./handoff-signing";
 
 /** What the model is offered. One name, so a transcript can find every hop by searching for it. */
 export const HANDOFF_TOOL = "message_bot";
@@ -266,7 +267,10 @@ export type CoordinationRunAuthority = {
   /** The actor's current membership and the source thread's actual Bot. */
   sourceThread: (run: RunAssertion) => Promise<{ botId: string } | null>;
   /** Read the signed claim by key; active must use the database clock and exclude finished work. */
-  delegationFor: (claim: NonNullable<RunAssertion["handoff"]>) => Promise<{
+  delegationFor: (
+    claim: NonNullable<RunAssertion["handoff"]>,
+    run: RunAssertion,
+  ) => Promise<{
     work: HandoffWork;
     owner: string;
     active: boolean;
@@ -281,31 +285,43 @@ const delegatedWork = z.object({
   runId: z.string().min(1),
   depth: z.number().int().nonnegative(),
   task: z.string(),
+  execution: z
+    .object({ threadId: z.string().min(1), runId: z.string().min(1) })
+    .optional(),
   initiator: z
     .discriminatedUnion("kind", [
-      z.object({ kind: z.literal("person") }),
+      z.object({
+        kind: z.literal("person"),
+        surface: z.enum(["app", "web"]).optional(),
+      }),
       z.object({ kind: z.literal("deployment") }),
       z.object({ kind: z.literal("routine"), id: z.string().min(1) }),
       z.object({ kind: z.literal("handoff"), id: z.string().min(1) }),
+      z.object({ kind: z.literal("responsibility"), id: z.string().min(1) }),
+      z.object({ kind: z.literal("memory"), id: z.string().min(1) }),
+      z.object({ kind: z.literal("workflow"), id: z.string().min(1) }),
     ])
     .optional(),
 });
 
-/** Only the current database-clock lease holder may make new coordination calls during delivery. */
+/** Active lease, or the same unfinished durable execution resuming after approval. */
 export async function readCoordinationHandoffClaim(
   database: Database,
   claim: NonNullable<RunAssertion["handoff"]>,
+  run?: RunAssertion,
 ): ReturnType<CoordinationRunAuthority["delegationFor"]> {
   const [row] = await database
-    .select({ payload: workItems.payload })
+    .select({
+      payload: workItems.payload,
+      owner: workItems.claimedBy,
+      active: sql<boolean>`${workItems.leaseUntil} > now()`,
+    })
     .from(workItems)
     .where(
       and(
         eq(workItems.kind, HANDOFF_KIND),
         eq(workItems.key, claim.key),
-        eq(workItems.claimedBy, claim.owner),
         isNull(workItems.finishedAt),
-        sql`${workItems.leaseUntil} > now()`,
       ),
     )
     .limit(1);
@@ -313,6 +329,23 @@ export async function readCoordinationHandoffClaim(
   const parsed = delegatedWork.safeParse(row.payload);
   if (!parsed.success)
     throw new Error("The active handoff claim has invalid work context.");
+  let continuation = Boolean(
+    run &&
+      parsed.data.execution &&
+      parsed.data.execution.runId === (claim.executionRunId ?? run.runId),
+  );
+  if (continuation && parsed.data.execution) {
+    const [active] = await database.$client.unsafe(
+      `SELECT 1 FROM chisabot_dsh_runs WHERE owner_user_id=$1 AND thread_id=$2 AND run_id=$3 AND NOT stop_requested`,
+      [
+        parsed.data.actorId,
+        parsed.data.execution.threadId,
+        parsed.data.execution.runId,
+      ],
+    );
+    continuation = Boolean(active);
+  }
+  if (!(row.active && row.owner === claim.owner) && !continuation) return null;
   return { work: parsed.data, owner: claim.owner, active: true };
 }
 
@@ -321,11 +354,12 @@ export async function authoriseCoordinationRun(
   run: RunAssertion,
   authority: CoordinationRunAuthority,
 ): Promise<boolean> {
+  run = coordinationSourceRun(run);
   if (!run.threadId || !(await authority.canUseBot(run))) return false;
   const source = await authority.sourceThread(run);
   if (!source) return false;
   if (!run.handoff) return (run.depth ?? 0) === 0 && source.botId === run.botId;
-  const claim = await authority.delegationFor(run.handoff);
+  const claim = await authority.delegationFor(run.handoff, run);
   if (!claim?.active || claim.owner !== run.handoff.owner) return false;
   const work = claim.work;
   const workInitiator = work.initiator ?? PERSON_INITIATOR;
@@ -395,6 +429,7 @@ export function createCoordinationTools(options: {
   };
   return {
     async toolsForRun(from: RunAssertion): Promise<GrantedTool[]> {
+      from = coordinationSourceRun(from);
       // Offered only when `call` would accept it: a group peer turn at depth 1 holds no handoff
       // claim, so every call from it was refused and audited. `call` still checks, for stale schemas.
       if (!(await options.authoriseRun(from))) return [];
@@ -427,6 +462,7 @@ export function createCoordinationTools(options: {
       args: Record<string, unknown>;
       run: RunAssertion;
     }): Promise<{ text: string; isError: boolean } | null> {
+      input = { ...input, run: coordinationSourceRun(input.run) };
       const name = input.name.replace(/^bot\//, "");
       if (
         name !== HANDOFF_TOOL &&

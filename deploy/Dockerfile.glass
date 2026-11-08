@@ -5,16 +5,20 @@
 ARG BASE_IMAGE=local/chisabot-zh:20261010-custom-panels
 FROM ${BASE_IMAGE}
 USER root
-RUN rm -rf /app/app/dist
+RUN rm -rf /app/app/dist /app/server/src /app/server/drizzle /app/server/scripts /app/shared /app/runtime/dsh/src /app/deploy/dsh
 COPY --chown=apiuser:apiuser app/dist /app/app/dist
 COPY --chown=apiuser:apiuser server /app/server
 COPY --chown=apiuser:apiuser shared /app/shared
+COPY --chown=apiuser:apiuser runtime/dsh/src /app/runtime/dsh/src
+COPY --chown=apiuser:apiuser runtime/dsh/package.json runtime/dsh/package-lock.json /app/runtime/dsh/
+COPY --chown=apiuser:apiuser deploy/dsh /app/deploy/dsh
+RUN node /app/deploy/dsh/compatibility.mjs --print > /app/deploy/dsh/runtime-compat.json
 # The browser/server and the computer must use the same cancellation protocol.
 RUN rm -rf /app/agent-computer/src
 COPY --chown=apiuser:apiuser agent-computer/src /app/agent-computer/src
 COPY --chown=apiuser:apiuser examples/zh-CN /app/examples/zh-CN
 RUN cd /app/server \
-    && bun -e 'await import("@copilotkit/runtime/v2"); await import("./src/panels/routes.ts"); console.log("runtime_and_panels_import_ok")'
+    && bun -e 'await import("@ag-ui/client"); await import("../runtime/dsh/src/client.mjs"); await import("./src/panels/routes.ts"); console.log("runtime_and_panels_import_ok")'
 ENV TENANT_PACKAGE_DIR=../examples/zh-CN
 LABEL chisabot.locale="zh-CN"
 LABEL org.opencontainers.image.title="ChisaBot"

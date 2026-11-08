@@ -1036,7 +1036,9 @@ def build_agent_class():
             that retry re-arms its own deadline window and never reaches the breaker.
             """
             loop = asyncio.get_running_loop()
-            deadline = _first_token_timeout_s()
+            # This deadline is a switch-to-backup deadline, not the model request timeout.
+            # With no usable backup, keep waiting under apply_call_limits, like the builtin path.
+            deadline = _first_token_timeout_s() if config.fallbacks else 0
             tried: set[str] = set()
             gate = cbs.gate
             while True:
@@ -1261,7 +1263,8 @@ def build_agent_class():
                         # Hermes reports an exhausted model call as a result, not an exception, with
                         # its own English warning as final_response. Surface it as a turn error the
                         # web app can classify (rate limit, too long, timeout...) instead of a reply.
-                        raise acp.RequestError(-32603, failure_message(failed_category))
+                        raise acp.RequestError(-32603, failure_message(
+                            failed_category, fallback=getattr(state.agent, "model", None) in config.fallbacks))
                     final = result.get("final_response")
                     if final and conn and (not cbs.streamed or result.get("response_transformed")):
                         update = acp.update_agent_message_text(redact(final, config.gateway.capability))
@@ -1285,7 +1288,8 @@ def build_agent_class():
                         pass
                     # Only a fixed category sentence leaves the process, never the provider's text.
                     try:
-                        message = failure_message(failure_category(error=error))
+                        message = failure_message(failure_category(error=error),
+                                                  fallback=getattr(state.agent, "model", None) in config.fallbacks)
                     except Exception:
                         # Classifying must never keep run.fail from running, or the run hangs.
                         message = TURN_FAILED

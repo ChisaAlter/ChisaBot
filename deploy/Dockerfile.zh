@@ -6,26 +6,40 @@ WORKDIR /chisabot-deps
 COPY package.json bun.lock ./
 COPY app/package.json app/package.json
 COPY server/package.json server/package.json
-RUN bun install --frozen-lockfile --production --linker hoisted --backend copyfile \
+RUN bun install --frozen-lockfile --production --omit=peer --linker hoisted --backend copyfile \
     && mkdir -p server/node_modules \
     && cd server \
-    && bun -e 'await import("@copilotkit/runtime/v2"); console.log("runtime_import_ok")'
+    && bun -e 'await import("@ag-ui/client"); console.log("conversation_transport_import_ok")'
+
+FROM node:24.18.1-bookworm-slim AS dsh-deps
+WORKDIR /runtime/dsh
+COPY runtime/dsh/package.json runtime/dsh/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
 
 FROM ${BASE_IMAGE}
 
 USER root
 # Match the standalone image's Office-capable Python for the inherited friend image too.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python-is-python3 python3-openpyxl python3-docx \
+      python3 python-is-python3 python3-openpyxl python3-docx util-linux \
     && python -c 'import openpyxl, docx' \
     && rm -rf /var/lib/apt/lists/*
 RUN rm -rf /app/node_modules /app/server/node_modules
 COPY --from=production-deps --chown=apiuser:apiuser /chisabot-deps/node_modules /app/node_modules
 COPY --from=production-deps --chown=apiuser:apiuser /chisabot-deps/server/node_modules /app/server/node_modules
+COPY --chown=apiuser:apiuser package.json bun.lock /app/
 
 COPY --chown=apiuser:apiuser app/dist /app/app/dist
 COPY --chown=apiuser:apiuser server /app/server
 COPY --chown=apiuser:apiuser shared /app/shared
+COPY --from=dsh-deps /usr/local/bin/node /usr/local/bin/node
+COPY --from=dsh-deps --chown=apiuser:apiuser /runtime/dsh/node_modules /app/runtime/dsh/node_modules
+COPY --chown=apiuser:apiuser runtime/dsh/package.json runtime/dsh/package-lock.json /app/runtime/dsh/
+COPY --chown=apiuser:apiuser runtime/dsh/src /app/runtime/dsh/src
+COPY --chown=apiuser:apiuser deploy/dsh /app/deploy/dsh
+RUN node /app/deploy/dsh/compatibility.mjs --print > /app/deploy/dsh/runtime-compat.json
+RUN mkdir -p /var/lib/chisabot-dsh && chown apiuser:apiuser /var/lib/chisabot-dsh
+ENV CHISABOT_DSH_ROOT=/var/lib/chisabot-dsh
 COPY --chown=apiuser:apiuser examples/zh-CN /app/examples/zh-CN
 # 计算机服务（机器人的浏览器 / 接管直播屏）也用本仓库的代码，和 updater 的 Dockerfile.update 一致。
 # 以前只换了 app/server，计算机仍是底座镜像里的旧 agent-computer：网页的直播屏协议（keepalive pong、
@@ -33,8 +47,12 @@ COPY --chown=apiuser:apiuser examples/zh-CN /app/examples/zh-CN
 RUN rm -rf /app/agent-computer/src
 COPY --chown=apiuser:apiuser agent-computer/src /app/agent-computer/src
 
-RUN cd /app/server \
-    && bun -e 'await import("@copilotkit/runtime/v2"); console.log("runtime_import_ok")'
+RUN cd /app \
+    && bun -e 'await import("@ag-ui/client"); await import("./runtime/dsh/src/client.mjs"); console.log("conversation_runtime_import_ok")'
+
+# The inherited image predates DSH volume initialization.
+COPY docker/s6/s6-rc.d/api/run /etc/s6-overlay/s6-rc.d/api/run
+RUN chmod 755 /etc/s6-overlay/s6-rc.d/api/run
 
 COPY deploy/migrate-wait.sh /etc/s6-overlay/scripts/migrate-wait.sh
 RUN chmod 755 /etc/s6-overlay/scripts/migrate-wait.sh \

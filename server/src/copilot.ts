@@ -2,13 +2,7 @@ import type { BaseEvent, Message, RunAgentInput } from "@ag-ui/client";
 import { AbstractAgent, HttpAgent } from "@ag-ui/client";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
-import type { BuiltInAgentConfiguration } from "@copilotkit/runtime/v2";
-import {
-  BuiltInAgent,
-  CopilotKitIntelligence,
-  CopilotRuntime,
-} from "@copilotkit/runtime/v2";
-import { createCopilotHonoHandler } from "@copilotkit/runtime/v2/hono";
+import { ClassicRuntimeAgent as BuiltInAgent, type ClassicAgentConfiguration as BuiltInAgentConfiguration } from "./agents/classic-runtime";
 import type { Observable } from "rxjs";
 import { defer, finalize, from, fromEvent, switchMap, takeUntil } from "rxjs";
 import { z } from "zod";
@@ -29,6 +23,7 @@ import { guaranteeFinalAnswer } from "./agents/final-answer-guard";
 import { sanitizeSeededHistory } from "./agents/history-sanitize";
 import { FailFastTransport } from "./agents/pre-stream-failure";
 import { HERMES_MAX_FALLBACKS, HermesRuntimeAgent, type HermesRuntimeBinding } from "./agents/hermes-runtime";
+import type { DshRuntimeBinding } from "./agents/dsh-runtime";
 import {
   compactHistory,
   HISTORY_SUMMARY_ID,
@@ -50,7 +45,7 @@ import { knownContextWindowOf } from "./model-catalog";
 import { modelOverrideFromValue } from "./agents/model-selection";
 import { thinkTagLanguageModel } from "./agents/think-tags";
 import { currentConfirmTurn, currentToolAbort, TOOL_STOPPED_ZH, withConfirmToolCall } from "./confirmations/context";
-import { fallbackCandidates, fallbackLanguageModel } from "./agents/model-fallback";
+import { type FallbackCatalog, fallbackCandidates, fallbackLanguageModel } from "./agents/model-fallback";
 import {
   executeNativeApprovalTool,
   nativeApprovalRun,
@@ -69,9 +64,10 @@ import { estimateTokens, meterLanguageModel, meterRun } from "./context-usage";
 import { steerLanguageModel } from "./thread-inbox";
 import { reasonWithoutStatement } from "./db/query-failure";
 import { observeModelConnection } from "./desktop-connection-failure";
-import { desktopTelemetryProperties } from "./desktop-telemetry";
-import { observeIntelligenceAuthentication } from "./intelligence-client";
+
+
 import type { LocalConversationBackend } from "./local-conversations";
+import { createConversationRoutes } from "./conversations/routes";
 import {
   type LoadPersonalMemory,
   PersonalMemoryMiddleware,
@@ -85,17 +81,8 @@ import {
 import { REFUSAL_MARKER, type GrantedTool, grantedToolGuidance, parametersFor, toolCarriedGuidance } from "./plugins/tools";
 import { UNTRUSTED_GUIDANCE } from "./untrusted-content";
 
-/**
- * The CopilotKit runtime, using Intelligence or an operator-owned OSS runner.
- *
- * Package-declared built-in Bots run as CopilotKit `BuiltInAgent` instances. External Bots are
- * reached over AG-UI as `HttpAgent` instances, so anything that speaks the protocol remains a Bot
- * with no framework adapter here: LangGraph, Pydantic-AI, CrewAI, Mastra, ADK, or a hand-written
- * server.
- *
- * Intelligence supplies managed persistence. The local OSS mode uses operator-owned Postgres
- * persistence and personal memory; managed Automatic Learning is unavailable in that mode.
- */
+/** Product model/tool assembly and the compatibility AG-UI mount. DSH owns new execution;
+ * existing builtin bindings use the AI SDK adapter, and remote Bots retain their transports. */
 
 /** Resolve the signed-in person for a request. Threads and memory are scoped to whoever this returns. */
 export type IdentifyUser = (
@@ -219,14 +206,15 @@ export type RuntimeModelResolver = () => Promise<RuntimeModelConnection>;
 /**
  * 机器人用哪个内核回答。
  *
- * `builtin` 是原来的 CopilotKit + AI SDK 工具循环。`hermes` 把所有 built-in 机器人转成
+ * `builtin` 是保留旧绑定的 AI SDK 工具循环。`hermes` 把所有 built-in 机器人转成
  * remote-ag-ui，指向 `examples/acp-agent` 的桥；Hermes 的 ACP session 就是新的循环。
  *
  * 这是部署级开关，不是每个机器人的字段：现有机器人都有 `built_in` 行，逐个改会漏掉新建的；
  * 一个开关让「以后新建的机器人」也自动走新内核。
  */
 export type AgentKernel =
-  | { kind: "builtin" }
+  | { kind: "builtin"; binding?: HermesRuntimeBinding }
+  | { kind: "dsh"; binding: DshRuntimeBinding }
   | { kind: "hermes"; url: string; token?: string; binding?: HermesRuntimeBinding };
 let agentKernel: AgentKernel = { kind: "builtin" };
 export function setAgentKernel(kernel: AgentKernel): void {
@@ -266,9 +254,9 @@ export function connectionLanguageModel(
 }
 
 /** 模型目录（index.ts 接上），给额度用完时找候选模型用（agents/model-fallback.ts）。 */
-let fallbackCatalog: () => Promise<readonly (string | { id: string; supportsTools?: boolean })[]> = async () => [];
+let fallbackCatalog: () => Promise<FallbackCatalog> = async () => [];
 export function setModelFallbackCatalog(
-  catalog: () => Promise<readonly (string | { id: string; supportsTools?: boolean })[]>,
+  catalog: () => Promise<FallbackCatalog>,
 ): void {
   fallbackCatalog = catalog;
 }
@@ -1457,6 +1445,30 @@ async function buildAgent(
     return chosen.offered;
   };
 
+  if (agentKernel.kind === "dsh" && agent.type === "built_in") {
+    if (!signRun) throw new Error("DSH requires an authenticated run binding.");
+    const { DshRuntimeAgent } = await import("./agents/dsh-runtime");
+    return new DshRuntimeAgent({
+      botId: agent.id, binding: agentKernel.binding, tools: granted,
+      selectTools: narrowing ? offeredFor : undefined,
+      ...(model.plan ? { plan: model.plan } : {}),
+      toolsFor: async (input, signal) => { const tools = await handoff?.(agent.id, input) ?? []; signal.throwIfAborted(); return tools; },
+      prepareInput: async input => ({ ...input, messages: loadAttachment ? await inlineAttachments(input.messages, loadAttachment, input.threadId, markAttachmentsSent) : input.messages }),
+      signRun: input => signRun(agent.id, input.runId, input.threadId, input.forwardedProps?.openbotRun),
+      connection: { provider: model.provider, baseUrl: model.baseUrl ?? (model.provider === "anthropic" ? process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com" : process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1"),
+        apiKey, useApiKey: model.useApiKey, model: model.defaultModel },
+      prompt: tools => {
+        const configured = builtInAgentConfiguration(agent, { ...model, useApiKey: false }, null, [...tools], computerGuidance, connectedVendors, standingInstructions, undefined, undefined, audience);
+        if (!("prompt" in configured) || typeof configured.prompt !== "string") throw new Error("The ChisaBot prompt is unavailable.");
+        return configured.prompt;
+      },
+      modelInfo: async modelId => {
+        const [maxOutputTokens, contextWindow, supportsImages] = await Promise.all([resolveOutputLimit(modelId), resolveContextWindow(modelId), resolveModelVisionSupport(modelId)]);
+        return { maxOutputTokens, contextWindow, supportsImages };
+      },
+      fallbacks: () => fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured())(model.defaultModel),
+    });
+  }
   if (agent.type === "remote_ag_ui" || agent.type === "remote_mastra") {
     /*
      * The remote path narrows inside its own middleware rather than by being wrapped.
@@ -2562,40 +2574,11 @@ export async function historyOrEmpty<T>(
   }
 }
 
-/**
- * The platform client, with one answer corrected.
- *
- * A subclass rather than a wrapper. The runtime is handed this object and calls many methods on it,
- * and the base class keeps its state in `#private` fields. Extending keeps every other method on
- * the instance that owns those fields. The authentication observer separately binds methods to
- * that original instance, so it preserves this override and its private-field receiver.
- *
- * `getThreadMessages` is the only override. `handleGetThreadMessages` in the runtime calls it and
- * returns `Response.json` of whatever comes back, so an empty history here is the `{ messages: [] }`
- * the browser expects and a 200 instead of a 500.
- */
-class IntelligenceKnowingANewThread extends CopilotKitIntelligence {
-  override getThreadMessages(
-    params: Parameters<CopilotKitIntelligence["getThreadMessages"]>[0],
-  ) {
-    return historyOrEmpty(() => super.getThreadMessages(params), {
-      messages: [],
-    });
-  }
-}
-
-/**
- * How long a conversation's lock is held before it lapses on its own.
- *
- * Matches the platform's own default rather than picking a number: this is renewed while a Bot works,
- * so what it really sets is how long a conversation stays stuck after a process dies mid-run.
- */
-const THREAD_LOCK_TTL_SECONDS = 120;
-
+/** One mount for browser, Android compatibility and server-side handoffs. */
 export function mountCopilotRuntime(
   config: DeploymentConfig,
   resolver: ActorAgentResolver,
-  identifyUser: IdentifyUser,
+  _identifyUser: IdentifyUser,
   identifyActor: IdentifyActor,
   options: {
     basePath?: string;
@@ -2603,230 +2586,51 @@ export function mountCopilotRuntime(
     localBackend?: LocalConversationBackend;
   } = {},
 ) {
-  const intelligence =
-    config.runtime.mode === "intelligence"
-      ? config.runtime.intelligence
-      : undefined;
-  const localBackend =
-    config.runtime.mode === "local" ? options.localBackend : undefined;
-  if (!intelligence && !localBackend) {
-    throw new Error(
-      "The local conversation backend must be initialized before mounting the runtime.",
-    );
+  const backend = options.localBackend;
+  if (config.runtime.mode !== "local" || !backend) {
+    throw new Error("The local conversation backend must be initialized before mounting the runtime.");
   }
-  if (localBackend) {
-    // /info reads these switches at request time so the browser also disables its own telemetry.
-    process.env.COPILOTKIT_TELEMETRY_DISABLED = "true";
-    process.env.DO_NOT_TRACK = "1";
+  if (options.basePath && options.basePath !== "/api/copilotkit") {
+    throw new Error("The local runtime requires /api/copilotkit so every request passes the owner guard.");
   }
-  const { basePath = "/api/copilotkit", onRunBusy } = options;
-  if (localBackend && basePath !== "/api/copilotkit") {
-    throw new Error(
-      "The local runtime requires /api/copilotkit so every request passes the owner guard.",
-    );
-  }
-
-  /**
-   * The same Bot a person's run would get, built without a request.
-   *
-   * Handed out from here rather than assembled again elsewhere, because "built exactly the way a
-   * person's run builds it" is a property worth guaranteeing structurally. A hop delivering to a Bot
-   * assembled by parallel wiring would drift the first time one of these arguments changed, and the
-   * drift would be invisible: the Bot would run, and quietly hold different tools or a different
-   * role from the one the person talks to.
-   */
-  const agentFor = async (input: {
-    /**
-     * The person, WITH THEIR ROLE, rather than an id this rebuilds a role for.
-     *
-     * An administrator sees Bots a user does not. Assumed to be a user here while the desk resolved
-     * the real role, the two disagreed in the worst direction: the desk accepted an administrator's
-     * hop to a Bot only they can see, the model was told it had been handed over, and then every
-     * delivery attempt failed to build that Bot and the person was told it never answered. A
-     * refusal that failed closed became a lie that failed slowly.
-     */
-    actor: AgentActor;
-    botId: string;
-    initiator?: AuditInitiator;
-  }): Promise<AbstractAgent | null> => {
-    try {
-      return await resolver.resolveAgentForActor(input.actor, input.botId, {
-        initiator: input.initiator,
-      });
-    } catch (error) {
-      if (error instanceof CoworkerUnavailableError) return null;
-      throw error;
-    }
+  const announce = (threadId: string, busy: boolean) => {
+    try { options.onRunBusy?.({ threadId, busy }); } catch { /* Presence cannot revoke an acquired lease. */ }
   };
-
-  /*
-   * One client, used by the runtime and by anything reading a thread beside it, so a hop reads the
-   * history a person's run would read rather than a second view of it that could disagree.
-   */
-  const intelligenceClient: CopilotKitIntelligence = localBackend
-    ? (localBackend.client as unknown as CopilotKitIntelligence)
-    : observeIntelligenceAuthentication(
-        new IntelligenceKnowingANewThread({
-          apiUrl: intelligence!.apiUrl,
-          wsUrl: intelligence!.gatewayWsUrl,
-          apiKey: intelligence!.apiKey,
-        }),
-      );
-
-  const runtime = new CopilotRuntime({
-    // `mode` is inferred from the presence of `intelligence`; passing it is a type error.
-    //
-    // Intelligence needs identifyUser to scope its managed threads. Local SSE requests are guarded
-    // by ChisaBot's verified actor and owner checks in app.ts before the SDK handler is reached.
-    ...(localBackend
-      ? {
-          runner: localBackend.runner,
-          // A local runtime reports no usage to CopilotKit. This capture scope is supported by
-          // the OSS SDK and avoids its process-global telemetry fallback.
-          ɵtelemetry: { capture: async () => {} },
-        }
-      : {
-          identifyUser,
-          intelligence: intelligenceClient,
-          licenseToken: intelligence!.licenseToken,
-        }),
-    // Carried on the events the runtime already sends, so ChisaBot's traffic is separable from any
-    // other deployment's. Adds no events of its own.
-    ...(!localBackend
-      ? {
-          telemetryProperties: {
-            ...(config.accessibility ? { accessibility_title: "ChisaBot" } : {}),
-            ...desktopTelemetryProperties(),
-          },
-        }
-      : {}),
-    // Open Generative UI（`generateSandboxedUi`，沙箱 iframe 里的自写 HTML）已停用：json-render 的
-    // `render_ui` 服务器工具（server/src/generative-ui/render-ui.ts）是唯一的生成式界面，仍由
-    // DeploymentConfig.generativeUi（CHISABOT_GENERATIVE_UI）控制。这里不再传 `openGenerativeUI`，
-    // 运行时就不会声明该能力，浏览器端也就不会把 `generateSandboxedUi` 工具提供给 Bot。
-    // A2UI 已被 json-render 取代（server/src/generative-ui/render-ui.ts 的 `render_ui` 工具）。
-    // 始终关闭 SDK 的 A2UI 中间件：旧的浏览器缓存仍可能带着 A2UI 目录，不能让它把中间件重新打开。
-    a2ui: { enabled: false },
-    // `identifyUser` is the Intelligence projection of the same person `identifyActor` returns:
-    // one resolver decides both whose threads these are and whose coworkers exist.
-    agents: createRequestAgents(identifyActor, resolver) as never,
-  });
-
   return {
-    handler: createCopilotHonoHandler({ runtime, basePath }),
-    runner: runtime.runner,
-    /**
-     * How to reach the platform's runner, exactly as the runtime reaches it.
-     *
-     * TAKEN FROM THE CLIENT, NOT FROM CONFIGURATION, and this is the whole of a bug that only a real
-     * gateway could show. Built from `gatewayWsUrl` and the deployment's API key, every join was
-     * refused with `active_lock_mismatch`: a thread's active run is a lock the platform issues, and
-     * the token that holds it is not the API key. The runtime asks the client for both, so anything
-     * else driving a run has to ask the same client the same way.
-     */
-    runnerConnection: () => {
-      if (!intelligence)
-        throw new Error("The local runtime has no Intelligence gateway.");
-      return {
-        url: intelligenceClient.ɵgetRunnerWsUrl(),
-        authToken: intelligenceClient.ɵgetRunnerAuthToken(),
-      };
-    },
-    /**
-     * The conversation's run lock, as the platform issues it.
-     *
-     * ONE RUN AT A TIME PER CONVERSATION. Taken before anything is streamed, because the gateway
-     * checks every event against the run the lock names: a run that skips this is claiming to be one
-     * nobody was told about, and every event is refused. That refusal reads like a platform
-     * limitation and is a missing step.
-     *
-     * A conversation somebody else is already running in refuses rather than queues, which is right:
-     * the caller waits and tries again rather than two Bots writing over each other.
-     */
+    handler: createConversationRoutes({ backend, resolver, identifyActor,
+      prepareAgent: async (actorId, agent) => {
+        if (agentKernel.kind !== "dsh" || !config.dshKernel?.targetsFile) return;
+        const { DshRuntimeAgent } = await import("./agents/dsh-runtime");
+        if (agent instanceof DshRuntimeAgent) await agentKernel.binding.targetFor(actorId);
+      },
+      toolsFor: async (actorId, botId, input) => agentKernel.kind === "dsh" ? [] : await agentKernel.binding?.loadSurfaceTools?.({ actorId, botId, threadId: input.threadId, runId: input.runId, depth: 0, initiator: PERSON_INITIATOR }) ?? [],
+    }),
+    runner: backend.runner,
     threadLock: {
-      acquire: async (input: {
-        threadId: string;
-        runId: string;
-        userId: string;
-        agentId: string;
-      }) => {
+      acquire: async (input: { threadId: string; runId: string; userId: string; agentId: string }) => {
         try {
-          await intelligenceClient.getOrCreateThread(input);
-          const held = await intelligenceClient.ɵacquireThreadLock(input);
-          // A run started on this thread. Side effect only, never awaited: a channel showing it is
-          // working is worth nothing next to the lock the run depends on.
-          try {
-            onRunBusy?.({ threadId: input.threadId, busy: true });
-          } catch {}
-          /*
-           * The run id only. The lock also hands back a join token, which is what a browser presents
-           * to watch the conversation; the runner's socket has its own credential and passing this
-           * one in place of it means a socket that is refused and a run that never starts. See the
-           * note on `runner.run` in handoff-delivery.ts.
-           */
+          await backend.client.getOrCreateThread(input);
+          const held = await backend.leases.acquire(input);
+          announce(input.threadId, true);
           return { runId: held.runId };
         } catch (error) {
-          /*
-           * ONLY A CONFLICT MEANS "NOT NOW". Everything else is raised.
-           *
-           * A conversation somebody is already running in answers 409, and that is ordinary: the hop
-           * waits and is tried again. Anything else is not — a platform that cannot be reached, a
-           * token that stopped working, or one of the underscored APIs below being renamed by a
-           * routine version bump. Returned as `null` those all read as contention: every hop retries
-           * to exhaustion, every person is told their question was never answered, and the only
-           * evidence is a warning line that looks like a busy conversation.
-           *
-           * Raised, the runner writes the real reason onto `agent.handoff_failed`, and the sentence
-           * the person eventually gets names it.
-           */
-          const status =
-            error instanceof Error && "status" in error
-              ? (error as { status?: unknown }).status
-              : undefined;
-          if (status === 409) return null;
+          if (error instanceof Error && "status" in error && error.status === 409) return null;
           throw error;
         }
       },
       renew: async (input: { threadId: string; runId: string }) => {
-        await intelligenceClient.ɵrenewThreadLock({
-          ...input,
-          ttlSeconds: THREAD_LOCK_TTL_SECONDS,
-        });
+        await backend.leases.renew({ ...input, ttlSeconds: 120 });
       },
       release: async (input: { threadId: string; runId: string }) => {
-        // The run on this thread is over. Cleared here rather than trusting a browser: the run may
-        // have outlived the tab that started it, and this is where the platform is told it ended.
-        try {
-          onRunBusy?.({ threadId: input.threadId, busy: false });
-        } catch {}
-        await intelligenceClient.ɵcleanupThreadLock(input);
+        announce(input.threadId, false);
+        await backend.leases.release(input);
       },
     },
-    agentFor,
-    /**
-     * A thread's messages, as the platform holds them.
-     *
-     * The same client the runtime uses, so a hop reads the history a person's run would read rather
-     * than a second view of it that could disagree.
-     */
-    history: async (input: { threadId: string; actorId: string }) => {
-      /*
-       * The platform's own message type rather than AG-UI's, inferred rather than named: the two are
-       * compatible where it matters and naming the wrong one here would mean converting a history
-       * that does not need converting.
-       */
-      type Read = Awaited<
-        ReturnType<CopilotKitIntelligence["getThreadMessages"]>
-      >;
-      const read = await historyOrEmpty<Read>(
-        () =>
-          intelligenceClient.getThreadMessages({
-            threadId: input.threadId,
-            userId: input.actorId,
-          }),
-        { messages: [] } as Read,
-      );
-      return read.messages;
+    agentFor: async (input: { actor: AgentActor; botId: string; initiator?: AuditInitiator; depth?: number }): Promise<AbstractAgent | null> => {
+      try { return await resolver.resolveAgentForActor(input.actor, input.botId, { initiator: input.initiator, depth: input.depth }); }
+      catch (error) { if (error instanceof CoworkerUnavailableError) return null; throw error; }
     },
+    history: async (input: { threadId: string; actorId: string }) =>
+      (await backend.client.getThreadMessages({ threadId: input.threadId, userId: input.actorId })).messages,
   };
 }

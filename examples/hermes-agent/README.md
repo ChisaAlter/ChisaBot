@@ -116,7 +116,10 @@ the first failing one and each half-open probe alike — is interrupted when no
 real output (text / reasoning / tool delta) arrives in time, counted as a
 breaker failure, and the turn retries on the next healthy fallback. Once real
 output arrives the attempt runs unbounded; a mid-stream error after output
-counts one consecutive failure without opening a cooldown.
+counts one consecutive failure without opening a cooldown. With no usable backup in the
+host's list, this switch deadline is disabled; the primary remains subject to the model
+request timeout (90 seconds by default). A failed backup is reported with the distinct
+`Hermes fallback model call failed:` prefix so its 404 is not attributed to the selected primary.
 
 `model.contextCompression: false` means ChisaBot already trimmed or
 summarized this run's history. The adapter then sets

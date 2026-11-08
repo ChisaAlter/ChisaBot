@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { AbstractAgent, EventType, type BaseEvent, type RunAgentInput } from "@ag-ui/client";
-import { CopilotKitCore } from "@copilotkit/react-core/v2";
+
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
@@ -75,60 +75,48 @@ function reset() {
   stateReads = 0;
 }
 
-test("a real SDK frontend handoff keeps queued messages parked until the whole turn resolves", async () => {
+test("a server tool keeps supplements parked until its result is durably consumed", async () => {
   reset();
   const toolStarted = deferred();
   const finishTool = deferred();
   let executions = 0;
-  let modelRuns = 0;
   class ToolAgent extends AbstractAgent {
     run(input: RunAgentInput) {
-      modelRuns++;
-      const result = input.messages.some((message) => message.role === "tool" && message.toolCallId === "call-1");
-      return of(...(result ? [
-        { type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId },
-        { type: EventType.TEXT_MESSAGE_START, messageId: "answer", role: "assistant" },
-        { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "answer", delta: "ONCE_DONE" },
-        { type: EventType.TEXT_MESSAGE_END, messageId: "answer" },
-        { type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId },
-      ] : [
-        { type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId },
-        { type: EventType.TOOL_CALL_START, parentMessageId: "command", toolCallId: "call-1", toolCallName: "computer_run_command" },
-        { type: EventType.TOOL_CALL_ARGS, toolCallId: "call-1", delta: '{"command":"run once"}' },
-        { type: EventType.TOOL_CALL_END, toolCallId: "call-1" },
-        { type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId },
-      ])) as Observable<BaseEvent>;
+      return new Observable<BaseEvent>(subscriber => {
+        subscriber.next({ type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId });
+        subscriber.next({ type: EventType.TOOL_CALL_START, parentMessageId: "command", toolCallId: "call-1", toolCallName: "computer_run_command" });
+        subscriber.next({ type: EventType.TOOL_CALL_ARGS, toolCallId: "call-1", delta: '{"command":"run once"}' });
+        subscriber.next({ type: EventType.TOOL_CALL_END, toolCallId: "call-1" });
+        serverRunning = true;
+        executions++;
+        toolStarted.resolve();
+        void finishTool.promise.then(() => {
+          status = "read";
+          serverRunning = false;
+          subscriber.next({ type: EventType.TOOL_CALL_RESULT, messageId: "result", toolCallId: "call-1", role: "tool", content: "ONCE_DONE" });
+          subscriber.next({ type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId });
+          subscriber.complete();
+        });
+      });
     }
   }
-  const agent = new ToolAgent({ agentId: "bot", threadId, initialMessages: [{ id: "primary", role: "user", content: "Run once" }] });
-  const core = new CopilotKitCore({ agents__unsafe_dev_only: { bot: agent }, tools: [{
-    name: "computer_run_command", description: "Execute probe", parameters: z.object({ command: z.string() }),
-    handler: async () => { executions++; toolStarted.resolve(); await finishTool.promise; return "ONCE_DONE"; },
-  }] });
+  const agent = new ToolAgent({ agentId: "bot", threadId });
   let fallbackRuns = 0;
-  const runFallback = async () => { fallbackRuns++; return core.runAgent({ agent }); };
-  const view = mount(agent, runFallback, true);
-  const errors: string[] = [];
-  core.subscribe({ onError: ({ error }) => { errors.push(error.message); } });
-  const turn = core.runAgent({ agent });
+  const view = mount(agent, async () => { fallbackRuns++; }, true);
+  const turn = agent.runAgent();
   try {
-    await Promise.race([toolStarted.promise, turn.then(() => { throw new Error(`Turn ended before frontend handler: ${errors.join("; ")}`); })]);
-    expect(agent.isRunning).toBe(false);
+    await toolStarted.promise;
     await queueMessage(threadId, "Keep the original command running", "followup");
     await act(async () => { await pause(400); });
     expect(fallbackRuns).toBe(0);
     expect(executions).toBe(1);
-    expect(modelRuns).toBe(1);
-    expect(agent.messages.some((message) => message.id === "followup")).toBe(false);
+    expect(queuedFor(threadId)).toHaveLength(1);
     finishTool.resolve();
     await act(async () => { await turn; view.setRunning(false); });
-    await waitFor(() => expect(fallbackRuns).toBe(1));
+    await waitFor(() => expect(queuedFor(threadId)).toHaveLength(0));
+    expect(fallbackRuns).toBe(0);
     expect(executions).toBe(1);
-    expect(agent.messages.findIndex((message) => message.id === "followup")).toBeGreaterThan(agent.messages.findIndex((message) => message.role === "tool"));
-  } finally {
-    finishTool.resolve();
-    await turn;
-  }
+  } finally { finishTool.resolve(); await turn; }
 });
 
 test("server relay and an unseen read claim prevent fallback even while the browser is idle", async () => {

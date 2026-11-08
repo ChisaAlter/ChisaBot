@@ -11,6 +11,7 @@ export function testEnvironment(
   overrides: Record<string, string | undefined> = {},
 ): Record<string, string | undefined> {
   return {
+    CHISABOT_RUNTIME_MODE: "local",
     DATABASE_URL: "postgres://openbot:openbot@localhost:5432/openbot",
     KEY_ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     GOOGLE_OAUTH_CLIENT_ID: "google-client-id",

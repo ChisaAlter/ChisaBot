@@ -1,5 +1,5 @@
 import { readImageDims } from "@/lib/image-dims";
-import type { AttachmentsConfig } from "@copilotkit/react-core/v2";
+import type { AttachmentsConfig } from "@/lib/chat/attachment-state";
 import {
   ACCEPTED_IMAGE_MIME,
   ACCEPTED_TEXT_MIME,
