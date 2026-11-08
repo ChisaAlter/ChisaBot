@@ -231,6 +231,12 @@ export function createDatabase(
   const address = addressOf(databaseUrl);
   const client = recoveringSql(() => new SQL({
     ...address,
+    // Bun 1.3.14's simple BEGIN sends Query+Sync, producing two ReadyForQuery replies.
+    // When split across reads, the second reply can advance named preparation before its
+    // metadata arrives and assign a concurrent query's types to the wrong statement. Use Bun's
+    // existing unnamed extended-query mode: Parse+Bind stay together, with no named cache or
+    // automatic pipeline. Keep this explicit until the split-reply regression passes upstream.
+    prepare: false,
     // Bound the work on PostgreSQL itself, so a browser deadline does not leave a locked or
     // expensive query occupying the pool forever. Operators can override these per deployment
     // with connection parameters in DATABASE_URL; transactions may still set a local budget.

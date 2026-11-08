@@ -45,7 +45,7 @@ export async function stampSignIn(
     await database
       .update(users)
       .set({
-        lastSignedInAt: sql`greatest(coalesce(${users.lastSignedInAt}, ${at}), ${at})`,
+        lastSignedInAt: sql`greatest(coalesce(${users.lastSignedInAt}, ${at.toISOString()}), ${at.toISOString()})`,
         updatedAt: new Date(),
       })
       .where(eq(users.id, userId));

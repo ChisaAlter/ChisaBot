@@ -186,7 +186,7 @@ export function createDeviceStore(database: Database) {
 
   async function setFullAccess(id: string, until: string | null) {
     if (!fullAccessColumn) await store.ensure();
-    await database.$client.unsafe("UPDATE devices SET full_access_until = $2 WHERE id = $1", [id, until ? new Date(until) : null]);
+    await database.$client.unsafe("UPDATE devices SET full_access_until = $2 WHERE id = $1", [id, until ? new Date(until).toISOString() : null]);
   }
 
   async function hydrate(rows: Row[]): Promise<DeviceRecord[]> {

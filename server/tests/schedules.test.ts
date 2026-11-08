@@ -222,8 +222,9 @@ describe.skipIf(!url)("schedules (database)", () => {
     expect(changed.cron).toBe("30 7 * * *");
     expect(changed.title).toBe("早报");
     expect(await a.remove(owner, s.id)).toBe(true);
-    await expect(a.get(owner, s.id)).rejects.toThrow(ScheduleError);
-    await expect(a.get("someone-else", s.id)).rejects.toThrow(ScheduleError);
+    // Let PostgreSQL I/O finish before Bun's assertion helper waits on the rejected promise.
+    expect(await a.get(owner, s.id).catch((error: unknown) => error)).toBeInstanceOf(ScheduleError);
+    expect(await a.get("someone-else", s.id).catch((error: unknown) => error)).toBeInstanceOf(ScheduleError);
   });
 
   test("IM-origin tasks push the reply back to the IM chat", async () => {

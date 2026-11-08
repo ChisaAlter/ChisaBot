@@ -692,9 +692,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         instruction,
         resolved.kind,
         resolved.cron,
-        resolved.runAt,
+        isoOrNull(resolved.runAt),
         timezone,
-        resolved.next,
+        iso(resolved.next),
       ],
     );
     return view(rows[0]!);
@@ -766,9 +766,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         timezone,
         kind,
         cron,
-        runAt,
+        isoOrNull(runAt),
         status,
-        next,
+        isoOrNull(next),
       ],
     );
     return view(rows[0]!);
@@ -806,7 +806,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     );
     const rows = await sql.unsafe<Row[]>(
       "UPDATE chisabot_schedules SET next_run_at=$2, updated_at=now() WHERE id=$1 RETURNING *",
-      [row.id, next],
+      [row.id, iso(next)],
     );
     return view(rows[0]!);
   }
@@ -1433,7 +1433,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           const tx = transaction as unknown as Database["$client"];
           const current = await tx.unsafe(
             "SELECT id FROM chisabot_schedules WHERE id = $1 AND status = 'active' AND date_trunc('milliseconds', next_run_at) = $2::timestamptz FOR UPDATE",
-            [row.id, row.next_run_at],
+            [row.id, iso(row.next_run_at!)],
           );
           if (!current.length) return [];
           const active = fireIt ? await tx.unsafe(
@@ -1453,8 +1453,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
            SELECT $5, id, owner_user_id, $2::timestamptz, $6::text, $7::text, CASE WHEN $6::text = 'running' THEN NULL ELSE now() END FROM upd RETURNING id`,
           [
             row.id,
-            row.next_run_at,
-            nextAt,
+            iso(row.next_run_at!),
+            isoOrNull(nextAt),
             status,
             runId,
             fireIt ? "running" : "skipped",
@@ -1579,7 +1579,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     >(
       `SELECT r.*, s.title, s.agent_id, s.thread_id FROM chisabot_schedule_runs r JOIN chisabot_schedules s ON s.id = r.schedule_id
        WHERE r.owner_user_id = $1 AND r.finished_at > $2 AND r.finished_at > now() - interval '1 hour' ORDER BY r.finished_at LIMIT 20`,
-      [owner, after],
+      [owner, iso(after)],
     );
     return rows.map((r) => ({
       runId: r.id,

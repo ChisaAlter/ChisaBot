@@ -70,7 +70,7 @@ sh /opt/chisabot-zh/rollback-to-auto-<时间>-<提交>.sh
 
 - 网页上：设置 → 系统更新 →「回滚到上一版」，效果相同。
 - **只换镜像，保留当前数据库与 DSH Session**。回滚前必须同时检查运行时、协议、native history reader 和产品 conversation reader；旧镜像存在不代表它能读取当前数据。产品进入 reader 2 后不能回 reader 1；进入 reader 3 后不能回 reader 1/2。
-- 当前生产仍为 reader 1。个人助理候选 `9244b43a`（reader 2 / 0065）已完整构建并通过隔离恢复、迁移与 API 冷启动，尚未发布；后续容量源码（reader 3 / 0066）的 API SIGKILL 混合执行恢复仍失败，**未放行、未构建或部署**。不要因工作区的 reader 声明已更新就修改线上 marker。最新验收以[实施记录](../pipeline-runs/20261108-assistant-production.md)为准；兼容检查与恢复入口见 [DSH 运维](dsh-runtime.md)。
+- 当前生产仍为 reader 1。个人助理候选 `9244b43a`（reader 2 / 0065）已完整构建并通过隔离恢复、迁移与 API 冷启动，尚未发布。后续容量源码（reader 3 / 0066）已完成 Bun 1.3.14 的 `prepare:false` 兼容修复、实际 PG 类型与调用方验证，原直连 API SIGKILL 混合恢复通过，可进入候选装配；**新的 reader 3 完整镜像、镜像恢复与发布验收尚待执行，生产未切换**。不要因源码验收通过就修改线上 marker。最新验收以[实施记录](../pipeline-runs/20261108-assistant-production.md)为准；兼容检查与恢复入口见 [DSH 运维](dsh-runtime.md)。
 - 涉及 DROP 等不可逆迁移时，先制定独立数据恢复方案，见 [slimming.md](../slimming.md)。恢复旧数据库也不会撤销已发送邮件、已执行设备操作等外部效果；必须保留和核对当前操作/交付账本，不自动重做未知操作。
 - 回滚脚本会越积越多，但**只有镜像还在的才有效**（默认只留 5 个镜像，清理磁盘后可能更少）。运行前先确认镜像存在。
 - 需要更早的版本：在 main 上合并一个 revert PR 走正常上线，或检出对应提交后 `request.sh update --full`。

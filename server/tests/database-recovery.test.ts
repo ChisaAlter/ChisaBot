@@ -21,18 +21,33 @@ type Peer = { socket: Socket; connection: number; command: string; transaction: 
 
 // A loopback-only PostgreSQL peer. It records work that actually reached the wire, including COMMIT.
 // It deliberately never opens an application or development database.
-async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" | "protocol", brokenJson: (peer: Peer) => boolean = () => false) {
+async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" | "protocol", brokenJson: (peer: Peer) => boolean = () => false, splitBegin = false) {
   const commands: Array<{ connection: number; sql: string }> = [];
+  const bindings: Array<{ sql: string; count: number }> = [];
   const sockets = new Set<Socket>();
+  const timers = new Set<ReturnType<typeof setTimeout>>();
   let connections = 0;
   let closed = 0;
+  let parsedBeforeSecondReady = 0;
   const server = createServer((socket) => {
+    socket.setNoDelay(true);
     sockets.add(socket);
     const peer: Peer = { socket, connection: ++connections, command: "", transaction: false };
     let input = Buffer.alloc(0);
     let startup = true;
     let failed = false;
     let silent = false;
+    let binary = false;
+    let waitingForBeginSync = false;
+    let held = false;
+    const pending: Buffer[] = [];
+    const statements = new Map<string, string>();
+    const send = (message: Buffer) => { if (held) pending.push(message); else socket.write(message); };
+    const resultColumn = () => / AS thread_id\b/.test(peer.command)
+      ? packet("T", int16(1), cstring("thread_id"), int32(0), int16(0), int32(25), int16(-1), int32(-1), int16(0))
+      : / AS event\b/.test(peer.command)
+        ? packet("T", int16(1), cstring("event"), int32(0), int16(0), int32(114), int16(-1), int32(-1), int16(0))
+        : column(binary);
     socket.on("error", () => {});
     socket.on("close", () => { sockets.delete(socket); closed++; });
     const execute = (simple: boolean) => {
@@ -40,13 +55,16 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
       const mode = onCommand(peer);
       if (mode === "silence") { silent = true; return; }
       if (mode === "eof") { socket.end(); return; }
-      if (mode === "protocol") { socket.write(error("08P01")); failed = true; if (simple) socket.write(ready(peer.transaction)); return; }
+      if (mode === "protocol") { send(error("08P01")); failed = true; if (simple) send(ready(peer.transaction)); return; }
       if (/^BEGIN/i.test(peer.command)) peer.transaction = true;
       if (/^(COMMIT|ROLLBACK)/i.test(peer.command)) peer.transaction = false;
       const select = /^SELECT/i.test(peer.command);
       const jsonColumn = packet("T", int16(1), cstring("broken"), int32(0), int16(0), int32(114), int16(-1), int32(-1), int16(0));
       const jsonRow = packet("D", int16(1), int32(14), Buffer.from("thread-invalid"));
-      socket.write(Buffer.concat([...(select ? [...(simple ? [brokenJson(peer) ? jsonColumn : column()] : []), brokenJson(peer) ? jsonRow : row(simple)] : []), packet("C", cstring(select ? "SELECT 1" : peer.command.split(" ")[0] || "OK")), ...(simple ? [ready(peer.transaction)] : [])]));
+      const textValue = / AS thread_id\b/.test(peer.command) ? "thread-alpha" : / AS event\b/.test(peer.command) ? '{"kind":"json"}' : undefined;
+      const resultRow = textValue === undefined ? row(simple || !binary) : packet("D", int16(1), int32(Buffer.byteLength(textValue)), Buffer.from(textValue));
+      send(Buffer.concat([...(select ? [...(simple ? [brokenJson(peer) ? jsonColumn : resultColumn()] : []), brokenJson(peer) ? jsonRow : resultRow] : []), packet("C", cstring(select ? "SELECT 1" : peer.command.split(" ")[0] || "OK")), ...(simple ? [ready(peer.transaction)] : [])]));
+      if (splitBegin && simple && /^BEGIN/i.test(peer.command)) { waitingForBeginSync = true; held = true; }
     };
     socket.on("data", (chunk: Buffer) => {
       input = Buffer.concat([input, chunk]);
@@ -68,19 +86,47 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
         if (tag === "Q") { peer.command = body.toString().replace(/\0$/, ""); execute(true); }
         if (tag === "P") {
           const end = body.indexOf(0);
+          const name = body.subarray(0, end).toString();
           peer.command = body.subarray(end + 1, body.indexOf(0, end + 1)).toString();
-          socket.write(packet("1"));
+          statements.set(name, peer.command);
+          if (held) parsedBeforeSecondReady++;
+          send(packet("1"));
         }
         if (tag === "D") {
-          if (body[0] === 83) socket.write(packet("t", int16((peer.command.match(/\$\d+/g) ?? []).length), ...Array.from(peer.command.matchAll(/\$\d+/g), () => int32(23))));
-          socket.write(/^SELECT/i.test(peer.command) ? brokenJson(peer)
+          const name = body.subarray(1, body.indexOf(0, 1)).toString();
+          peer.command = statements.get(name) ?? peer.command;
+          const count = Math.max(0, ...Array.from(peer.command.matchAll(/\$(\d+)/g), match => Number(match[1])));
+          const types = Array.from({ length: count }, (_, i) => / AS event\b/.test(peer.command) && i === 2 ? 114 : / AS (thread_id|event)\b/.test(peer.command) ? 25 : 23);
+          if (body[0] === 83) send(packet("t", int16(count), ...types.map(int32)));
+          send(/^SELECT/i.test(peer.command) ? brokenJson(peer)
             ? packet("T", int16(1), cstring("broken"), int32(0), int16(0), int32(114), int16(-1), int32(-1), int16(0))
-            : column(body[0] === 80) : packet("n"));
+            : resultColumn() : packet("n"));
         }
-        if (tag === "B") socket.write(packet("2"));
+        if (tag === "B") {
+          const afterPortal = body.indexOf(0) + 1, afterName = body.indexOf(0, afterPortal) + 1;
+          peer.command = statements.get(body.subarray(afterPortal, afterName - 1).toString()) ?? peer.command;
+          const formats = body.readInt16BE(afterName), atCount = afterName + 2 + formats * 2, count = body.readInt16BE(atCount);
+          let offset = atCount + 2;
+          for (let i = 0; i < count; i++) { const length = body.readInt32BE(offset); offset += 4 + Math.max(0, length); }
+          const resultFormats = body.readInt16BE(offset);
+          binary = resultFormats > 0 && body.readInt16BE(offset + 2) === 1;
+          bindings.push({ sql: peer.command, count });
+          send(packet("2"));
+        }
         if (tag === "E" && !failed) execute(false);
-        if (tag === "S" && !silent) { socket.write(ready(peer.transaction)); failed = false; }
-        if (tag === "C") socket.write(packet("3"));
+        if (tag === "S" && !silent) {
+          if (waitingForBeginSync) {
+            waitingForBeginSync = false;
+            const timer = setTimeout(() => {
+              timers.delete(timer);
+              socket.write(Buffer.concat([ready(peer.transaction), ...pending]));
+              pending.length = 0; held = false;
+            }, 15);
+            timers.add(timer);
+          } else send(ready(peer.transaction));
+          failed = false;
+        }
+        if (tag === "C") send(packet("3"));
       }
     });
   });
@@ -88,10 +134,11 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("No loopback port");
   return {
-    url: `postgres://t:t@127.0.0.1:${address.port}/fake_test`, commands,
+    url: `postgres://t:t@127.0.0.1:${address.port}/fake_test`, commands, bindings,
     get connections() { return connections; },
     get closed() { return closed; },
-    async close() { for (const socket of sockets) socket.destroy(); await new Promise<void>((resolve) => server.close(() => resolve())); },
+    get parsedBeforeSecondReady() { return parsedBeforeSecondReady; },
+    async close() { for (const timer of timers) clearTimeout(timer); for (const socket of sockets) socket.destroy(); await new Promise<void>((resolve) => server.close(() => resolve())); },
   };
 }
 
@@ -106,6 +153,26 @@ async function observed<T>(promise: PromiseLike<T>, timeoutMs = 250) {
 }
 
 describe("Bun SQL recovery", () => {
+  test("split simple-BEGIN replies preserve concurrent parameter and JSON result ownership", async () => {
+    const fake = await fakePostgres(() => "ok", () => false, true);
+    const database = createDatabase(fake.url, { max: 4, queryTimeoutMs: 1000 });
+    const text = "SELECT $1::text AS thread_id WHERE $2::text IS NOT NULL";
+    const json = "SELECT $3::json AS event WHERE $1::text IS NOT NULL AND $2::text IS NOT NULL";
+    try {
+      const [a, b] = await database.$client.begin(tx => Promise.all([
+        tx.unsafe(text, ["thread-alpha", "second"]),
+        tx.unsafe(json, ["first", "second", '{"kind":"json"}']),
+      ]));
+      expect(database.$client.options.prepare).toBe(false);
+      expect(fake.parsedBeforeSecondReady).toBeGreaterThan(0);
+      expect(a[0]).toEqual({ thread_id: "thread-alpha" });
+      const event = typeof b[0]?.event === "string" ? JSON.parse(b[0].event) : b[0]?.event;
+      expect(event).toEqual({ kind: "json" });
+      expect(fake.bindings.map(binding => binding.count)).toEqual([2, 3]);
+      expect(fake.commands.map(command => command.sql)).toEqual(["BEGIN", text, json, "COMMIT"]);
+    } finally { await database.$client.close(); await fake.close(); }
+  });
+
   test("a native row JSON decoder failure retires current and pending queries without replay", async () => {
     const fake = await fakePostgres(() => "ok", peer => peer.connection === 1 && /^SELECT/.test(peer.command));
     const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 1000 });

@@ -14,23 +14,6 @@ import { createTurnRunner } from "../../src/turns/run-turn";
 
 const config = JSON.parse(await readFile(process.argv[2]!, "utf8"));
 const database = createDatabase(process.env.CHISABOT_DSH_TEST_DATABASE_URL!, { max: 4 });
-// Local protocol diagnosis only: identify native SQL rejection before a product JSON parser runs.
-function traceSql(sql: any): any {
-  const unsafe = sql.unsafe.bind(sql), begin = sql.begin.bind(sql);
-  sql.unsafe = (statement: string, parameters?: unknown[]) => {
-    const query = unsafe(statement, parameters);
-    return new Proxy(query, { get(target, key) {
-      if (key === "then") return (ok: any, bad: any) => target.then(ok, (error: any) => {
-        console.warn(JSON.stringify({ sqlBoundary: statement.slice(0, 700), error: String(error), code: error.code, errno: error.errno, stack: error.stack }));
-        if (bad) return bad(error); throw error;
-      });
-      const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
-    } });
-  };
-  sql.begin = (...args: any[]) => begin(...args.map(arg => typeof arg === "function" ? (tx: any) => arg(traceSql(tx)) : arg));
-  return sql;
-}
-traceSql(database.$client);
 const backend = await createLocalConversations(database);
 const bindings = createConversationBindings(database), journal = createDshRunJournal(database), operations = createToolOperationStore(database);
 await bindings.ensure(); await journal.ensure(); await operations.ensure();

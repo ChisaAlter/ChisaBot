@@ -131,7 +131,7 @@ ExecStart=/bin/bash /opt/chisabot-updater/complete-backup.sh
 
 读取器描述同时包含 `conversationReader`，覆盖产品层数据：版本 1 包含附件与技能补话，版本 2 增加个人交付账本与任务成果要求；后续容量源码的版本 3 增加账号后台容量等待及恢复归属。目标镜像必须匹配 DSH 协议、运行时和日志版本，且产品读取器版本不低于当前版本。版本 2 开始接纳任务后，不能回滚至会忽略发送账本或成果要求的版本 1；版本 3 的持久容量等待也不能交给版本 2 恢复。旧 Hermes 镜像只可在尚未产生任何 DSH 绑定时恢复。
 
-当前生产仍为 reader 1；`9244b43a` 的 reader 2 / 0065 镜像已完整构建，原镜像恢复和候选迁移、API 冷启动、DSH readiness 均通过，尚未发布。reader 3 / 0066 容量源码的真实 API SIGKILL 混合恢复仍出现 HTTP 500 / `08P01`，尚未放行或构建；不能把 reader 声明或局部通过当作可部署版本，也不能提前升级线上 marker。最新状态见[实施记录](../pipeline-runs/20261108-assistant-production.md)。
+当前生产仍为 reader 1；`9244b43a` 的 reader 2 / 0065 镜像已完整构建，原镜像恢复和候选迁移、API 冷启动、DSH readiness 均通过，尚未发布。reader 3 / 0066 容量源码已完成 Bun 1.3.14 命名 prepare 协议错位的兼容修复：`createDatabase` 显式使用现成 `prepare:false` unnamed extended 模式，并完成标准 Drizzle JSON 映射、裸 Date 的 ISO 绑定及实际 PG 类型验证。原直连 API SIGKILL 混合恢复已通过，容量源码可进入候选装配；新的 reader 3 完整镜像及其迁移、恢复和发布验收仍待执行，不能提前升级线上 marker。最新状态见[实施记录](../pipeline-runs/20261108-assistant-production.md)。
 
 通过检查后只恢复应用镜像和原运行时配置，继续挂载当前 PostgreSQL、DSH、workspace、profiles。不会自动导入发布前的数据库或会话备份，因此发布后新增的消息、审批、暂停输入、附件和已执行工具结果仍然保留。
 

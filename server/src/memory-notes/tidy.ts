@@ -401,8 +401,8 @@ export async function undoTidy(
             original.content,
             original.context,
             original.agent_id,
-            new Date(original.created_at),
-            new Date(original.updated_at),
+            new Date(original.created_at).toISOString(),
+            new Date(original.updated_at).toISOString(),
           ],
         );
         if (inserted.length) restored++;
@@ -415,7 +415,7 @@ export async function undoTidy(
             owner,
             original.content,
             backup.after_content,
-            new Date(original.updated_at),
+            new Date(original.updated_at).toISOString(),
           ],
         );
         if (updated.length) restored++;

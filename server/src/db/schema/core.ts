@@ -13,8 +13,8 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { UserPreferences } from "../../../../shared/user-preferences";
-// NOT drizzle's `jsonb`: that one serialises, and so does the driver, so every object landed as a
-// JSON string and nothing in this database could be queried by a JSON field. See ./json.ts.
+// Keep object-valued JSON typed consistently. The helper uses Drizzle's serializer/read mapping
+// with createDatabase's unnamed extended-query mode; see ./json.ts.
 import { jsonb } from "./json";
 
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({

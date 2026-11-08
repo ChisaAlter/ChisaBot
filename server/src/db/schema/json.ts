@@ -1,29 +1,28 @@
-import { customType } from "drizzle-orm/pg-core";
+import { jsonb as drizzleJsonb, type PgJsonbBuilder } from "drizzle-orm/pg-core";
+
+type ObjectJsonbBuilder<TName extends string> = PgJsonbBuilder<{
+  name: TName;
+  dataType: "json";
+  columnType: "PgJsonb";
+  data: Record<string, unknown>;
+  driverParam: unknown;
+  enumValues: undefined;
+}>;
 
 /**
- * A `jsonb` column that actually stores JSON.
+ * Object-valued JSON using Drizzle's normal serialization and read mapping.
  *
- * Drizzle's ordinary `jsonb()` serialises the value in `mapToDriverValue`, and Bun's `SQL` driver
- * serialises it again on the way to Postgres. Objects that need SQL JSON operators use this custom
- * type so they are stored as JSON objects. The same insert through both paths:
+ * createDatabase explicitly uses Bun's unnamed extended-query mode. Before the server describes
+ * a parameter, that mode sends a plain object's string conversion rather than JSON. Drizzle must
+ * serialize it once, so PostgreSQL stores an object and JSON operators can address its fields.
  *
- *   drizzle jsonb()   jsonb_typeof = "string"   payload->>'bot' = NULL
- *   this type         jsonb_typeof = "object"   payload->>'bot' = "y"
+ * The old named-statement workaround passed objects through to Bun to avoid double serialization;
+ * it is incompatible with the unnamed mode. Keep the schema entry point and object type while
+ * reusing Drizzle's serializer and its string-or-object result mapping.
  *
- * Application reads can still render double-encoded values as objects. SQL consumers require stored
- * JSON objects so fields such as `payload->>'bot'` stay queryable.
- *
- * Serialize once. The driver already knows how to send an object to a `jsonb`
- * parameter, so this hands it the object and stays out of the way. Reads are unchanged: both paths
- * return an object, which is why this can be swapped in without touching a single call site.
- *
- * Use this everywhere instead of `jsonb` from `drizzle-orm/pg-core`.
  */
-export const jsonb = customType<{
-  data: Record<string, unknown>;
-  driverData: unknown;
-}>({
-  dataType: () => "jsonb",
-  // Straight through. The double `JSON.stringify` is the whole bug.
-  toDriver: (value) => value,
-});
+export function jsonb<TName extends string = "">(name: TName = "" as TName) {
+  // Set the base data type rather than calling $type here: callers must remain free to use
+  // $type<SomeArray>() without intersecting that override with Record<string, unknown>.
+  return drizzleJsonb(name) as ObjectJsonbBuilder<TName>;
+}

@@ -9,9 +9,10 @@ import { TEST_POOL, testDatabaseUrl } from "./support/database";
 /**
  * A jsonb column must hold JSON, not a string that looks like it.
  *
- * Drizzle's `jsonb()` serialises the value and Bun's SQL driver serialises it again, so this codebase
- * uses a custom type for objects that must stay queryable with JSON operators. The audit trail depends
- * on `payload->>'bot'` and related SQL reads returning fields from an object, not from a JSON string.
+ * The schema helper uses Drizzle's normal serialization with createDatabase's unnamed query mode.
+ * The former named-mode pass-through would send `[object Object]` in this mode; serializing twice
+ * would store a JSON string instead. The audit trail depends on `payload->>'bot'` and related SQL
+ * reads returning fields from an object.
  *
  * These assertions are deliberately made in SQL, against a real database, on the shape of the stored
  * value rather than on what comes back through the application.
@@ -71,7 +72,7 @@ describe("what a jsonb column actually stores", () => {
   test("the whole trail is objects, not strings", async () => {
     // A deployment that has run the migration has no string-shaped payloads left. Written as a sweep
     // rather than a single row because the failure this guards against is partial by nature: a new
-    // column added with drizzle's `jsonb` would pass every test above and fail only here.
+    // column whose stored value is accidentally double-encoded would fail only here.
     const [row] = await database.execute<{ strings: number }>(
       sql`select count(*)::int as strings from audit_events
           where jsonb_typeof(payload) <> 'object'`,
