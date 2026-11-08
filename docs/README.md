@@ -12,6 +12,7 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 | 知道每个版本改了什么 | [版本记录 CHANGELOG](CHANGELOG.md)（按版本 / PR）· 部署者向的逐条说明在根 [CHANGELOG.md](../CHANGELOG.md) |
 | 知道现在在做什么、接下来做什么 | [ROADMAP（看板）](ROADMAP.md) · [BACKLOG（带验收标准的条目）](BACKLOG.md) |
 | 让现有 DSH 版成为可长期使用的个人助理 | [个人助理生产交付计划](production-assistant-plan.md)：复用能力、必要修补、桌面与服务器验收、发布恢复 |
+| 用个人助理整理资料、设提醒、接日历邮箱和检查发送结果 | [个人助理使用说明](personal-assistant.md)（候选功能；部署状态见实施记录） |
 | 理解系统怎么搭的 | [架构 architecture](architecture.md) · [数据模型 data-model](data-model.md) · [ADR](adr/README.md) |
 | 知道为什么这样做、有哪些长期规则 | [产品决策与需求原则 decisions](decisions.md) · [ADR](adr/README.md) |
 | 改界面 | [DESIGN.md](../DESIGN.md)（顶部章节索引）· [设置的信息结构](settings-ia.md) |

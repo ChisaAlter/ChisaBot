@@ -44,8 +44,8 @@
 - **快速更新**：依赖指纹（`deps-fingerprint.sh`，忽略根 `package.json` 的版本行）没变 → 用 `Dockerfile.update` 以底座镜像为基础只换代码层，约 1–2 分钟。
 - **完整构建**：指纹变了、`Dockerfile` 变了，或底座镜像不存在 → 用仓库根 `Dockerfile` 在 buildx 构建器 `chisabot-builder` 里构建
   （内存 `FULL_BUILD_MEMORY`、并行 `FULL_BUILD_PARALLELISM`、层缓存上限 `BUILD_CACHE_MAX`），约 4–8 分钟；成功后写 `base.env`（新底座 + 依赖树）。
-- **每次更新**：`pg_dump` + compose + 卷快照 → `backups/<时间>-<任务>/`（保留 `KEEP_BACKUPS`=5 份）→ 切换 → 健康检查（含模型自检、
-  `PUBLIC_HEALTH_URL`）→ **失败自动回滚**。
+- **每次更新**：`pg_dump` + compose + 所选内核的配套卷快照 → `backups/<时间>-<任务>/` → 切换 → 健康检查（含模型自检、
+  `PUBLIC_HEALTH_URL`）→ **失败仅回滚到兼容镜像**。`KEEP_BACKUPS` 默认 5，线上值以宿主配置为准；普通轮换只处理自己创建且已完成的更新批次，手工、迁移、未完成及 `.keep` 批次保留。
 - **drain**：切换前等正在回答的对话结束（`DRAIN_SECONDS`，默认 900 秒，0 关闭）。
 - **镜像保留**：`KEEP_IMAGES`=5（切流窗口，见 [traffic-cut-rollback.md](traffic-cut-rollback.md)）。
 - **自升级**：每次成功更新后，更新器用新版本的 `deploy/updater/` 升级自己。2026-10-13 之前的老部署跑一次
@@ -69,8 +69,8 @@ sh /opt/chisabot-zh/rollback-to-auto-<时间>-<提交>.sh
 ```
 
 - 网页上：设置 → 系统更新 →「回滚到上一版」，效果相同。
-- **只换镜像，数据库不回退**。ChisaBot 自己的表都是开机 `CREATE TABLE IF NOT EXISTS`、迁移只加可空列，所以回滚到旧镜像是安全的。
-  **例外**：瘦身 P5 之后的 DROP 迁移不能只换镜像回滚，必须先恢复数据库（[slimming.md](../slimming.md)）。
+- **只换镜像，保留当前数据库与 DSH Session**。回滚前必须同时检查运行时、协议、native history reader 和产品 conversation reader；旧镜像存在不代表它能读取当前数据。个人助理候选将产品 reader 从 1 升到 2，进入 reader2 后不能回滚到 reader1 镜像。实际兼容检查与恢复入口见 [DSH 运维](dsh-runtime.md)。
+- 涉及 DROP 等不可逆迁移时，先制定独立数据恢复方案，见 [slimming.md](../slimming.md)。恢复旧数据库也不会撤销已发送邮件、已执行设备操作等外部效果；必须保留和核对当前操作/交付账本，不自动重做未知操作。
 - 回滚脚本会越积越多，但**只有镜像还在的才有效**（默认只留 5 个镜像，清理磁盘后可能更少）。运行前先确认镜像存在。
 - 需要更早的版本：在 main 上合并一个 revert PR 走正常上线，或检出对应提交后 `request.sh update --full`。
 - 数据恢复：`/opt/chisabot-updater/backups/<时间>-<任务>/` 里的 `pg_dump`。恢复前先对当前库再做一次转储。
