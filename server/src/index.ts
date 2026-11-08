@@ -1231,7 +1231,9 @@ const runtimeToolBinding: import("./agents/hermes-runtime").HermesRuntimeBinding
             }) : [];
             const surfaces = !imConnection ? await createConversationSurfaceTools({ actor, botId: scope.botId, plugins: pluginStore, components: componentStore, sandboxed: sandboxedStore, interactions: conversationInteractions,
               ...(computerGateway && allowDevices && canUseComputer(profile, actor) ? { computer: { gateway: computerGateway, bookmarks: browserBookmarks, initiator } } : {}) }) : [];
-            const allowed = filterHeadlessForWorkflow(initiator, [...computer, ...components, ...surfaces]);
+            const worker = scope.threadId?.startsWith("worker-") && initiator.kind === "routine" && initiator.id === `worker:${scope.threadId.slice(7)}`
+              ? workerService?.workerTools(scope.threadId.slice(7)) ?? [] : [];
+            const allowed = filterHeadlessForWorkflow(initiator, [...computer, ...components, ...surfaces, ...worker]);
             return allowed.map((tool) => ({
               ...tool,
               execute: async (args, context) => {

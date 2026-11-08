@@ -21,7 +21,7 @@ type Peer = { socket: Socket; connection: number; command: string; transaction: 
 
 // A loopback-only PostgreSQL peer. It records work that actually reached the wire, including COMMIT.
 // It deliberately never opens an application or development database.
-async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" | "protocol") {
+async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" | "protocol", brokenJson: (peer: Peer) => boolean = () => false) {
   const commands: Array<{ connection: number; sql: string }> = [];
   const sockets = new Set<Socket>();
   let connections = 0;
@@ -44,7 +44,9 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
       if (/^BEGIN/i.test(peer.command)) peer.transaction = true;
       if (/^(COMMIT|ROLLBACK)/i.test(peer.command)) peer.transaction = false;
       const select = /^SELECT/i.test(peer.command);
-      socket.write(Buffer.concat([...(select ? [...(simple ? [column()] : []), row(simple)] : []), packet("C", cstring(select ? "SELECT 1" : peer.command.split(" ")[0] || "OK")), ...(simple ? [ready(peer.transaction)] : [])]));
+      const jsonColumn = packet("T", int16(1), cstring("broken"), int32(0), int16(0), int32(114), int16(-1), int32(-1), int16(0));
+      const jsonRow = packet("D", int16(1), int32(14), Buffer.from("thread-invalid"));
+      socket.write(Buffer.concat([...(select ? [...(simple ? [brokenJson(peer) ? jsonColumn : column()] : []), brokenJson(peer) ? jsonRow : row(simple)] : []), packet("C", cstring(select ? "SELECT 1" : peer.command.split(" ")[0] || "OK")), ...(simple ? [ready(peer.transaction)] : [])]));
     };
     socket.on("data", (chunk: Buffer) => {
       input = Buffer.concat([input, chunk]);
@@ -71,7 +73,9 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
         }
         if (tag === "D") {
           if (body[0] === 83) socket.write(packet("t", int16((peer.command.match(/\$\d+/g) ?? []).length), ...Array.from(peer.command.matchAll(/\$\d+/g), () => int32(23))));
-          socket.write(/^SELECT/i.test(peer.command) ? column(body[0] === 80) : packet("n"));
+          socket.write(/^SELECT/i.test(peer.command) ? brokenJson(peer)
+            ? packet("T", int16(1), cstring("broken"), int32(0), int16(0), int32(114), int16(-1), int32(-1), int16(0))
+            : column(body[0] === 80) : packet("n"));
         }
         if (tag === "B") socket.write(packet("2"));
         if (tag === "E" && !failed) execute(false);
@@ -102,6 +106,33 @@ async function observed<T>(promise: PromiseLike<T>, timeoutMs = 250) {
 }
 
 describe("Bun SQL recovery", () => {
+  test("a native row JSON decoder failure retires current and pending queries without replay", async () => {
+    const fake = await fakePostgres(() => "ok", peer => peer.connection === 1 && /^SELECT/.test(peer.command));
+    const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 1000 });
+    try {
+      const current = observed(database.$client.unsafe("SELECT native_json"), 500);
+      const pending = observed(database.$client.unsafe("INSERT INTO probe VALUES (9)"), 500);
+      const [failed, cancelled] = await Promise.all([current, pending]);
+      expect(failed.status).toBe("rejected"); expect(cancelled.status).toBe("rejected");
+      if (failed.status === "rejected") { expect(failed.error).toBeInstanceOf(SyntaxError); expect(String(failed.error)).toContain("JSON Parse error:"); }
+      expect((await database.$client.unsafe("SELECT 1"))[0]?.ok).toBe(1);
+      expect(fake.connections).toBe(2);
+      expect(fake.commands.filter(command => /^SELECT native_json/.test(command.sql))).toHaveLength(1);
+      expect(fake.commands.filter(command => /^INSERT/.test(command.sql)).length).toBeLessThanOrEqual(1);
+    } finally { await database.$client.close(); await fake.close(); }
+  });
+
+  test("a transaction business JSON SyntaxError does not retire its healthy SQL generation", async () => {
+    const fake = await fakePostgres(() => "ok");
+    const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 1000 });
+    const business = new SyntaxError('JSON Parse error: Unexpected identifier "thread"');
+    try {
+      await expect(database.$client.begin(async tx => { await tx.unsafe("SELECT 1"); throw business; })).rejects.toBe(business);
+      expect((await database.$client.unsafe("SELECT 1"))[0]?.ok).toBe(1);
+      expect(fake.connections).toBe(1);
+      expect(fake.commands.map(command => command.sql)).toEqual(["BEGIN", "SELECT 1", "ROLLBACK", "SELECT 1"]);
+    } finally { await database.$client.close(); await fake.close(); }
+  });
   test("a numeric network errno rejects immediately without a second error in the rejection handler", async () => {
     const network = Object.assign(new Error("Connection refused"), { errno: -111, code: "ECONNREFUSED" });
     const client = recoveringSql(() => ({

@@ -1,5 +1,6 @@
 import type { Message } from "@ag-ui/client";
 import type { Database } from "../db/client";
+import { reportCapacityState } from "../conversations/capacity";
 
 export type DurableTurn = {
   runId: string;
@@ -15,6 +16,16 @@ export class BackgroundTurnNeedsReview extends Error {
 
 /** Read an existing DSH execution for a background owner; never submit another model request. */
 export async function readDurableTurn(database: Database, owner: string, threadId: string, runId?: string): Promise<DurableTurn | null> {
+  const [queued] = await database.$client.unsafe<{ run_id: string; status: string }[]>(`SELECT r.run_id,r.status FROM openbot_local_runs r
+    JOIN openbot_local_threads t ON t.id=r.thread_id WHERE t.owner_user_id=$1 AND r.thread_id=$2
+    AND ($3::text IS NULL OR r.run_id=$3) AND r.execution IS NOT NULL
+    AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=r.thread_id AND d.run_id=r.run_id)
+    ORDER BY r.created_at DESC LIMIT 1`, [owner, threadId, runId ?? null]);
+  if (queued && ["capacity_wait", "reserved"].includes(queued.status)) {
+    reportCapacityState(queued.status === "capacity_wait" ? "waiting" : "admitted");
+    return { runId: queued.run_id, status: "running", replyText: "" };
+  }
+  if (queued?.status === "stopped") return { runId: queued.run_id, status: "failed", replyText: "", error: "任务已在等待执行位时停止，未调用模型。" };
   const [available] = await database.$client.unsafe<{ available: boolean }[]>("SELECT to_regclass('public.chisabot_dsh_runs') IS NOT NULL AS available");
   if (!available?.available) return null;
   const [row] = await database.$client.unsafe<{
@@ -32,6 +43,7 @@ export async function readDurableTurn(database: Database, owner: string, threadI
     WHERE d.owner_user_id=$1 AND d.thread_id=$2 AND ($3::text IS NULL OR d.run_id=$3)
     ORDER BY d.created_at DESC LIMIT 1`, [owner, threadId, runId ?? null]);
   if (!row) return null;
+  reportCapacityState("admitted");
   if (["admitting", "observing", "projecting"].includes(row.status) || row.local_status === "running") return { runId: row.run_id, status: "running", replyText: "" };
   if (row.status === "waiting" || row.terminal?.outcome?.type === "interrupt") return { runId: row.run_id, status: "waiting", replyText: "" };
   if (row.local_status !== "finished" || row.terminal?.type !== "RUN_FINISHED") return { runId: row.run_id, status: "failed", replyText: "", error: row.terminal?.message ?? "原执行已中断，请核对已完成的操作后再继续。" };

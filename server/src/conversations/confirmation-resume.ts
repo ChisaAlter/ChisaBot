@@ -9,6 +9,7 @@ import { DshRuntimeAgent } from "../agents/dsh-runtime";
 import { createDshRunJournal } from "./run-journal";
 import { assertConversationAdmissionOpen } from "./maintenance";
 import { CHISABOT_WAITING_METADATA } from "../approvals/native-context";
+import { executionClass, executionDeadline, withCapacityFeedback } from "./capacity";
 
 /** Resume the saved effect once, then continue the conversation from its real receipt. */
 export function createConfirmationResumer(options: {
@@ -42,8 +43,12 @@ export function createConfirmationResumer(options: {
     const agent = await options.buildAgentFor({ ownerUserId, agentId: decision.agentId, initiator: snapshot.initiator ?? { kind: "person" } });
     if (!(agent instanceof DshRuntimeAgent)) throw new Error("The saved confirmation requires its DSH execution owner.");
     const abort = new AbortController();
-    const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(5 * 60_000)]);
-    await backend.leases.acquire({ threadId: snapshot.threadId, runId: snapshot.runId, userId: ownerUserId, agentId: decision.agentId, ttlSeconds: 120 });
+    const signal = abort.signal;
+    const deadline = executionDeadline(5 * 60_000, () => abort.abort(new Error("确认续执行达到执行时限。")));
+    try {
+      await withCapacityFeedback(state => deadline.state(state), () => backend.leases.acquire({ threadId: snapshot.threadId, runId: snapshot.runId, userId: ownerUserId, agentId: decision.agentId, ttlSeconds: 120,
+        background: executionClass(snapshot.initiator ?? { kind: "person" }, Boolean(forwarded.chisabotWorkerDelivery)).kind === "background", signal }));
+    } catch (error) { deadline.cancel(); throw error; }
     let checking = false;
     let renewAt = Date.now() + 30_000;
     const heartbeat = setInterval(() => {
@@ -61,6 +66,7 @@ export function createConfirmationResumer(options: {
     let result;
     try {
       assertConversationAdmissionOpen();
+      if (await journal.continuationRefusal(snapshot.threadId, snapshot.runId)) return;
       result = await agent.resumeConfirmation({ ...decision, signal });
     } catch (error) {
       // A new approval belongs to its own durable decision, not a retry of this one.
@@ -79,6 +85,7 @@ export function createConfirmationResumer(options: {
       throw error;
     } finally {
       clearInterval(heartbeat);
+      deadline.cancel();
       await backend.leases.release({ threadId: snapshot.threadId, runId: snapshot.runId });
     }
     if (await journal.continuationRefusal(snapshot.threadId, snapshot.runId)) return;

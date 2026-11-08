@@ -463,6 +463,13 @@
       "when": 1794138087768,
       "tag": "0065_personal_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1794172800000,
+      "tag": "0066_background_capacity",
+      "breakpoints": true
     }
   ]
 }

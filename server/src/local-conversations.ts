@@ -1,6 +1,7 @@
 import { cancelSchedulesForDeletedThreads } from "./schedules/service";
 import { createConversationInteractions } from "./conversations/interactions";
 import { createDshRunJournal } from "./conversations/run-journal";
+import { createExecutionCapacity, CAPACITY_WAIT_MESSAGE, BACKGROUND_CAPACITY, backgroundCount, lockBackgroundAccount, reportCapacityState } from "./conversations/capacity";
 import { assertConversationAdmissionOpen } from "./conversations/maintenance";
 import { createConversationCommands, type ConversationCommands } from "./conversations/commands";
 import { resolveInboxMessage, retainInboxAttachments, stripInboxContext } from "./conversations/inbox-message";
@@ -268,7 +269,7 @@ type ThreadCreation = ThreadIdentity & {
   agentId: string;
   learningContainerId?: string;
 };
-type ThreadLock = ThreadCreation & { runId: string; ttlSeconds?: number };
+type ThreadLock = ThreadCreation & { runId: string; ttlSeconds?: number; background?: boolean; signal?: AbortSignal };
 type LeaseIdentity = { threadId: string; runId: string };
 
 function record(row: ThreadRow) {
@@ -504,7 +505,18 @@ export class LocalConversationClient {
 
   async acquireThreadLease(identity: ThreadLock) {
     await this.getOrCreateThread(identity);
-    const rows = await this.store.database.$client.unsafe(
+    for (;;) {
+      identity.signal?.throwIfAborted();
+      if (identity.background) {
+        const refusal = await createDshRunJournal(this.store.database).continuationRefusal(identity.threadId, identity.runId);
+        if (refusal) throw new LocalConversationError(refusal, 409);
+      }
+      const rows = await this.store.database.$client.begin(async tx => {
+        if (identity.background) {
+          await lockBackgroundAccount(tx, identity.userId);
+          if (await backgroundCount(tx, identity.userId) >= BACKGROUND_CAPACITY) return null;
+        }
+        const claimed = await tx.unsafe(
       `UPDATE openbot_local_threads SET run_id = $2,
        lock_expires_at = now() + $5 * interval '1 second', updated_at = now()
        WHERE id = $1 AND owner_user_id = $3 AND agent_id = $4
@@ -517,10 +529,16 @@ export class LocalConversationClient {
         identity.agentId,
         ttl(identity.ttlSeconds),
       ],
-    );
+        );
+        if (claimed.length && identity.background) await tx.unsafe("UPDATE openbot_local_runs SET execution=coalesce(execution,'{\"kind\":\"background\"}'::jsonb) WHERE thread_id=$1 AND run_id=$2", [identity.threadId, identity.runId]);
+        return claimed;
+      });
+      if (!rows) { reportCapacityState("waiting"); await new Promise(resolve => setTimeout(resolve, 1000)); continue; }
     if (rows.length === 0)
       throw new LocalConversationError("Thread already running", 409);
+    if (identity.background) reportCapacityState("admitted");
     return { threadId: identity.threadId, runId: identity.runId };
+    }
   }
 
   async renewThreadLease(identity: LeaseIdentity & { ttlSeconds: number }) {
@@ -545,6 +563,7 @@ export class LocalConversationClient {
     runs: number;
     closed: number;
   }> {
+    await this.store.database.$client.unsafe("UPDATE openbot_local_runs SET status='capacity_wait' WHERE status='reserved'");
     const runs = await this.store.database.$client.unsafe<
       { thread_id: string; run_id: string }[]
     >(
@@ -739,6 +758,8 @@ class PostgresAgentRunner implements ConversationRunner {
   private readonly active = new Map<string, ActiveRun>();
   /** Kept between wire runs, until all dispatched frontend results arrive or the turn is stopped. */
   private readonly frontend = new Map<string, FrontendRelay>();
+  /** Observers of persisted capacity waits, not execution slots or thread owners. */
+  private readonly capacityWaits = new Map<string, ReplaySubject<BaseEvent>>();
   private clearFrontend(threadId: string): FrontendRelay | undefined {
     const relay = this.frontend.get(threadId);
     if (relay) clearTimeout(relay.timer);
@@ -878,6 +899,8 @@ class PostgresAgentRunner implements ConversationRunner {
         "Run thread and runId are required",
         400,
       );
+    if (request.execution?.kind === "background" && !request.capacityReserved && !request.recover)
+      return this.waitForCapacity(request);
     const running = this.active.get(request.threadId);
     if (request.join === false && (running || this.frontend.has(request.threadId))) throw new LocalConversationError("Thread already running", 409);
     // 正在回答时又发来消息：不拒绝、不打断。新的用户消息进收件箱（下一步读进去），这个请求接上正在跑的那一轮。
@@ -933,6 +956,56 @@ class PostgresAgentRunner implements ConversationRunner {
       if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) await entry.done;
       return event;
     })));
+  }
+
+  private waitForCapacity(request: AgentRunnerRunRequest): Observable<BaseEvent> {
+    const key = `${request.threadId}:${request.input.runId}`;
+    let stream = this.capacityWaits.get(key);
+    if (stream) return withRunStartedAck(request, request.input.runId, stream);
+    stream = new ReplaySubject<BaseEvent>();
+    this.capacityWaits.set(key, stream);
+    const pending = stream;
+    void (async () => {
+      const identity = await this.store.thread(request.threadId);
+      if (request.agent.agentId && request.agent.agentId !== identity.agent_id) throw new LocalConversationError("Thread belongs to a different agent", 409);
+      const capacity = createExecutionCapacity(this.store.database);
+      await capacity.enqueue(request.threadId, request.input.runId, {
+        ...request.execution!, input: request.input,
+        ...(request.persistedInputMessages ? { persistedInputMessages: request.persistedInputMessages } : {}),
+        ...(request.continuationRunId ? { continuationRunId: request.continuationRunId } : {}),
+      });
+      let announced = false;
+      for (;;) {
+        if (request.continuationRunId && await createDshRunJournal(this.store.database).continuationRefusal(request.threadId, request.continuationRunId))
+          await capacity.stop(request.threadId, request.input.runId);
+        const result = await capacity.claim(identity.owner_user_id, request.threadId, request.input.runId, this.isActive(request.threadId));
+        if (result === "stopped") {
+          pending.next({ type: EventType.RUN_FINISHED, threadId: request.threadId, runId: request.input.runId, outcome: { type: "cancelled" } } as BaseEvent);
+          pending.complete(); return;
+        }
+        if (result === "claimed") {
+          reportCapacityState("admitted");
+          pending.next({ type: EventType.CUSTOM, name: "chisabot.capacity", value: { status: "admitted" } } as BaseEvent);
+          this.capacityWaits.delete(key);
+          try { this.run({ ...request, capacityReserved: true }).subscribe(pending); }
+          catch (error) { await capacity.releaseReservation(request.threadId, request.input.runId); throw error; }
+          return;
+        }
+        if (!announced) {
+          reportCapacityState("waiting");
+          const event = { type: EventType.CUSTOM, name: "chisabot.capacity", value: { status: "queued", message: CAPACITY_WAIT_MESSAGE } } as BaseEvent;
+          await this.store.database.$client.unsafe(`INSERT INTO openbot_local_events(thread_id,run_id,event)
+            SELECT $1,$2,$3::text::jsonb WHERE EXISTS(SELECT 1 FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2 AND status='capacity_wait')`, [request.threadId, request.input.runId, JSON.stringify(event)]);
+          pending.next(event);
+          for (const listener of this.observers.get(request.threadId) ?? []) listener(event);
+          announced = true;
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    })().catch(error => pending.error(error)).finally(() => {
+      if (this.capacityWaits.get(key) === pending) this.capacityWaits.delete(key);
+    });
+    return withRunStartedAck(request, request.input.runId, pending);
   }
 
   private join(
@@ -1218,10 +1291,11 @@ class PostgresAgentRunner implements ConversationRunner {
            ON CONFLICT (thread_id, run_id) DO NOTHING RETURNING run_id`,
           [threadId, entry.runId],
         );
-        if (inserted.length === 0 && !request.recover)
+        if (inserted.length === 0 && !request.recover && !request.capacityReserved)
           throw new LocalConversationError("Run ID was already used", 409);
-        if (inserted.length === 0 && request.recover) await transaction.unsafe(
+        if (inserted.length === 0 && (request.recover || request.capacityReserved)) await transaction.unsafe(
           "UPDATE openbot_local_runs SET status='running',finished_at=NULL WHERE thread_id=$1 AND run_id=$2", [threadId, entry.runId]);
+        if (request.execution) await transaction.unsafe("UPDATE openbot_local_runs SET execution=coalesce(execution,$3::text::jsonb) WHERE thread_id=$1 AND run_id=$2", [threadId, entry.runId, JSON.stringify(request.execution)]);
       });
       started = true;
       if (request.recover) {
@@ -1763,6 +1837,7 @@ class PostgresAgentRunner implements ConversationRunner {
   }
 
   async stop({ threadId, runId }: AgentRunnerStopRequest): Promise<boolean> {
+    const queued = await createExecutionCapacity(this.store.database).stop(threadId, runId);
     const persistent = await createDshRunJournal(this.store.database).stop(threadId, runId);
     await createConversationInteractions(this.store.database).cancel(threadId, runId);
     const entry = this.active.get(threadId);
@@ -1789,10 +1864,10 @@ class PostgresAgentRunner implements ConversationRunner {
       }
       // Stop in a browser tool/idle gap still durably holds unseen supplements.
       if (runId === undefined) await this.inbox.pause(threadId);
-      return await this.client.releaseOrphanedLock(threadId, runId);
+      return await this.client.releaseOrphanedLock(threadId, runId) || queued;
     }
     if (entry.stopped || (runId !== undefined && entry.runId !== runId))
-      return false;
+      return queued;
     entry.stopped = true;
     entry.abort.abort();
     entry.agent.abortRun();
@@ -1833,6 +1908,7 @@ export type LocalRunControl = {
 
 export type LocalConversationBackend = {
   commands: ConversationCommands;
+  capacity: ReturnType<typeof createExecutionCapacity>;
   client: LocalConversationClient;
   runner: ConversationRunner;
   control: LocalRunControl;
@@ -1877,6 +1953,13 @@ export async function createLocalConversations(
     "CREATE INDEX IF NOT EXISTS openbot_local_events_thread_sequence ON openbot_local_events(thread_id, sequence)",
   );
   await database.$client.unsafe("ALTER TABLE openbot_local_threads ADD COLUMN IF NOT EXISTS snapshot_sequence bigint");
+  await database.$client.unsafe("ALTER TABLE openbot_local_runs ADD COLUMN IF NOT EXISTS execution jsonb");
+  await database.$client.unsafe(`DO $$ BEGIN IF to_regclass('public.chisabot_local_agent_tasks') IS NOT NULL THEN
+    IF NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='chisabot_local_agent_tasks'::regclass AND attname='capacity_active' AND NOT attisdropped) THEN
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN capacity_active boolean NOT NULL DEFAULT false;
+      UPDATE chisabot_local_agent_tasks SET capacity_active=true WHERE status IN ('starting','running');
+    END IF;
+  END IF; END $$`);
   await database.$client.unsafe("UPDATE openbot_local_threads t SET snapshot_sequence=(SELECT coalesce(max(sequence),0) FROM openbot_local_events e WHERE e.thread_id=t.id) WHERE snapshot_sequence IS NULL");
   await database.$client.unsafe(
     "CREATE INDEX IF NOT EXISTS openbot_local_threads_owner_updated ON openbot_local_threads(owner_user_id, updated_at DESC)",
@@ -2475,6 +2558,7 @@ export async function createLocalConversations(
   };
   return {
     commands,
+    capacity: createExecutionCapacity(database),
     client,
     runner,
     control,

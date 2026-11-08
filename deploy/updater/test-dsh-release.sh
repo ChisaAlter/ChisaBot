@@ -44,6 +44,17 @@ CURRENT=$CANDIDATE
 CANDIDATE=$PRIOR
 reject dsh_require_compatible_image fixture:reader-1
 pass 'older product reader cannot ignore new delivery and outcome contracts'
+READER2=$CURRENT
+CANDIDATE='{"protocol":1,"runtimeVersion":"0.2.2-rc.1","historyReader":"dsh-0.2.2-rc.1","conversationReader":3}'
+dsh_require_compatible_image fixture:reader-3
+pass 'reader 3 accepts reader 2 background history'
+CURRENT=$PRIOR
+dsh_require_compatible_image fixture:reader-3
+pass 'reader 3 accepts reader 1 history'
+CURRENT=$CANDIDATE
+CANDIDATE=$READER2
+reject dsh_require_compatible_image fixture:reader-2
+pass 'reader 2 cannot replay reader 3 persistent capacity waits'
 CURRENT=$PRIOR
 CANDIDATE='{"protocol":1,"runtimeVersion":"0.2.2-rc.1","historyReader":"different-native-reader","conversationReader":2}'
 reject dsh_require_compatible_image fixture:native-mismatch

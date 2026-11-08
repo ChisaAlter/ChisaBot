@@ -25,6 +25,7 @@ import {
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
+import { executionDeadline, withCapacityFeedback, CAPACITY_WAIT_MESSAGE } from "../conversations/capacity";
 import { createTaskCenterRoutes } from "./routes";
 import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
 import { conversationAdmissionClosed } from "../conversations/maintenance";
@@ -960,10 +961,19 @@ export function createTaskCenter(
   async function run(task: TaskCenterTask) {
     const controller = new AbortController();
     controllers.set(task.id, controller);
-    const timeout = setTimeout(
+    const timeout = executionDeadline(task.timeoutSeconds * 1000,
       () => controller.abort(new Error("任务达到执行时限。")),
-      task.timeoutSeconds * 1000,
     );
+    let capacityWaiting = false;
+    const capacityState = (state: "waiting" | "admitted") => {
+      timeout.state(state);
+      if ((state === "waiting") === capacityWaiting) return;
+      capacityWaiting = state === "waiting";
+      const waiting = capacityWaiting;
+      void sql.unsafe("UPDATE chisabot_task_center_tasks SET error=$4 WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3", [task.ownerUserId, task.id, instance, capacityWaiting ? CAPACITY_WAIT_MESSAGE : null])
+        .then(() => event(task.ownerUserId, task.id, "progress", waiting ? CAPACITY_WAIT_MESSAGE : "已取得后台执行位，继续原任务。"))
+        .catch(error => console.warn("task capacity feedback failed", reasonWithoutStatement(error)));
+    };
     const heartbeat = setInterval(() => {
       void sql
         .unsafe(
@@ -979,7 +989,7 @@ export function createTaskCenter(
       await checkBot(task.ownerUserId, task.agentId);
       const context = await getContext(task.ownerUserId);
       if (task.status === "planning" && options.plan) {
-        const plan = await options.plan(task, context, controller.signal);
+        const plan = await withCapacityFeedback(capacityState, () => options.plan!(task, context, controller.signal));
         controller.signal.throwIfAborted();
         if (await applyPlan(task, plan)) return;
       }
@@ -992,7 +1002,7 @@ export function createTaskCenter(
             )
           ).map(taskView)
         : [];
-      const result = await options.execute(task, {
+      const result = await withCapacityFeedback(capacityState, async () => options.execute(task, {
         signal: controller.signal,
         context,
         dependencies,
@@ -1007,7 +1017,7 @@ export function createTaskCenter(
             entry.data,
           );
         },
-      });
+      }));
       controller.signal.throwIfAborted();
       if (
         !result ||
@@ -1110,7 +1120,7 @@ export function createTaskCenter(
           detail: terminalFailure,
         });
     } finally {
-      clearTimeout(timeout);
+      timeout.cancel();
       clearInterval(heartbeat);
       controllers.delete(task.id);
     }

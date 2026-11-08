@@ -46,6 +46,7 @@ import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
 import type { TurnRunner } from "../turns/types";
 import type { ThreadInbox } from "../thread-inbox";
 import { reasonWithoutStatement } from "../db/query-failure";
+import { BACKGROUND_CAPACITY, backgroundCount, lockBackgroundAccount, reportCapacityState, executionDeadline } from "../conversations/capacity";
 
 /**
  * 本地 agent 与权限档位（docs/local-agents.md，DESIGN.md「本地 agent」）。
@@ -142,6 +143,7 @@ type TaskRow = {
   created_at: Date | string;
   started_at: Date | string | null;
   finished_at: Date | string | null;
+  capacity_active: boolean;
 };
 
 const iso = (value: Date | string | null | undefined) => (value ? new Date(value).toISOString() : null);
@@ -177,8 +179,9 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
   const { database, hub, deviceStore } = options;
   const sql = database.$client;
   const settingsCache = new Map<string, DeviceAgentSettings>();
-  type Live = { lines: LocalAgentLine[]; count: number; step: string | null; flush?: ReturnType<typeof setTimeout>; approvalId: string | null; approvalSummary: string | null; timer?: ReturnType<typeof setTimeout> };
+  type Live = { lines: LocalAgentLine[]; count: number; step: string | null; flush?: ReturnType<typeof setTimeout>; approvalId: string | null; approvalSummary: string | null; timer?: ReturnType<typeof setTimeout>; deadline?: ReturnType<typeof executionDeadline>; dispatching?: boolean };
   const live = new Map<string, Live>();
+  const modelCalls = new Map<string, { controller: AbortController; done: Promise<unknown> }>();
   const timeoutMs = options.timeoutMs ?? TASK_TIMEOUT_MS;
 
   async function ensure() {
@@ -228,14 +231,27 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       CREATE INDEX IF NOT EXISTS chisabot_local_agent_tasks_thread ON chisabot_local_agent_tasks (thread_id, created_at);
       CREATE INDEX IF NOT EXISTS chisabot_local_agent_tasks_device ON chisabot_local_agent_tasks (device_id, created_at);
     `);
+    await sql.unsafe(`DO $$ BEGIN
+      IF NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='chisabot_local_agent_tasks'::regclass AND attname='capacity_active' AND NOT attisdropped) THEN
+        ALTER TABLE chisabot_local_agent_tasks ADD COLUMN capacity_active boolean NOT NULL DEFAULT false;
+        UPDATE chisabot_local_agent_tasks SET capacity_active=true WHERE status IN ('starting','running');
+      END IF;
+    END $$`);
   }
 
-  /** 服务重启：没跑完的任务标成失败（电脑上的进程可能还在跑，结果回来时会被忽略）。 */
+  /** Never resend an already dispatched task. Its device receipt releases uncertain occupancy. */
   async function recover(): Promise<number> {
     const rows = await sql.unsafe<{ id: string }[]>(
-      `UPDATE chisabot_local_agent_tasks SET status = 'failed', error = '服务重启，任务做到一半被中断（电脑上的进程可能已经停了）。可以让我重新做。', finished_at = now(), updated_at = now()
-       WHERE status IN ('pending_approval','starting','running') RETURNING id`,
+      `UPDATE chisabot_local_agent_tasks SET status = 'failed', error = CASE WHEN capacity_active
+         THEN '服务重启，已请求停止原设备任务；设备确认前保留执行位，请先核对设备结果。'
+         ELSE '服务重启，原审批已失效，任务没有继续。' END, finished_at = now(), updated_at = now()
+       WHERE status IN ('pending_approval','running') OR (status='starting' AND capacity_active) RETURNING id`,
     );
+    for (const row of await sql.unsafe<TaskRow[]>("SELECT * FROM chisabot_local_agent_tasks WHERE capacity_active AND status='failed'"))
+      hub.sendRaw(row.device_id, { type: "agent_stop", taskId: row.id });
+    for (const row of await sql.unsafe<TaskRow[]>("SELECT * FROM chisabot_local_agent_tasks WHERE status='starting' AND NOT capacity_active")) {
+      void dispatchQueued(row).catch(error => console.warn("local agent capacity recovery pending", reasonWithoutStatement(error)));
+    }
     return rows.length;
   }
 
@@ -350,8 +366,10 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
   // ── 设备 hub 扩展 ─────────────────────────────────────────────────────
 
   const extension = {
-    onHello(record: DeviceRecord) {
+    async onHello(record: DeviceRecord) {
       if (!isMobilePlatform(record.platform)) hub.sendRaw(record.id, { type: "agent_detect" });
+      for (const row of await sql.unsafe<{ id: string }[]>("SELECT id FROM chisabot_local_agent_tasks WHERE device_id=$1 AND capacity_active AND status IN ('failed','cancelled')", [record.id]))
+        hub.sendRaw(record.id, { type: "agent_stop", taskId: row.id });
     },
     async gate(record: DeviceRecord, operation: DeviceOperation, args: Record<string, unknown>) {
       const settings = await settingsFor(record.id);
@@ -446,13 +464,17 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     await sql.unsafe(`UPDATE chisabot_local_agent_tasks SET ${sets.join(", ")} WHERE id = $1`, params as never[]);
   }
 
-  async function finish(id: string, status: "done" | "failed" | "cancelled", fields: { summary?: string | null; error?: string | null; diff?: LocalAgentDiff | null }) {
+  async function finish(id: string, status: "done" | "failed" | "cancelled", fields: { summary?: string | null; error?: string | null; diff?: LocalAgentDiff | null; deviceConfirmed?: boolean; requestDeviceStop?: string }) {
+    const model = modelCalls.get(id);
+    model?.controller.abort(new Error("本地 agent 任务已停止。"));
     const state = live.get(id);
     if (state?.flush) clearTimeout(state.flush);
     if (state?.timer) clearTimeout(state.timer);
+    state?.deadline?.cancel();
     const rows = await sql.unsafe<TaskRow[]>(
       `UPDATE chisabot_local_agent_tasks SET status = $2, summary = $3, error = $4, diff = coalesce($5::text::jsonb, diff), finished_at = now(), updated_at = now(),
-         transcript = coalesce($6::text::jsonb, transcript), line_count = coalesce($7, line_count), step = NULL
+         transcript = coalesce($6::text::jsonb, transcript), line_count = coalesce($7, line_count), step = NULL,
+         capacity_active = CASE WHEN $8 THEN false ELSE capacity_active END
        WHERE id = $1 AND status IN ('pending_approval','starting','running') RETURNING *`,
       [
         id,
@@ -462,10 +484,18 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         fields.diff ? JSON.stringify(fields.diff) : null,
         state ? JSON.stringify(state.lines.slice(-STORED_LINES)) : null,
         state ? state.count : null,
+        fields.deviceConfirmed === true && !model,
       ],
     );
+    // Order Stop after the durable transition, serialized with dispatch's final row lock.
+    // Otherwise an unknown-task Stop can overtake the first agent_run and be lost by old nodes.
+    if (fields.requestDeviceStop) hub.sendRaw(fields.requestDeviceStop, { type: "agent_stop", taskId: id });
     live.delete(id);
     const row = rows[0] ?? null;
+    if (fields.deviceConfirmed && (model || !row)) {
+      if (model) await model.done.catch(() => {});
+      await sql.unsafe("UPDATE chisabot_local_agent_tasks SET capacity_active=false WHERE id=$1 AND status IN ('done','failed','cancelled')", [id]);
+    }
     if (row)
       await deviceStore
         .audit({
@@ -598,15 +628,14 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     const active = ACTIVE_LOCAL_TASK.includes(row.status);
     switch (message.type) {
       case "agent_started":
-        if (active) await setStatus(taskId, "running", { started_at: new Date().toISOString() });
+        if (active && row.capacity_active) await setStatus(taskId, "running", { started_at: new Date().toISOString() });
         return;
       case "agent_event":
-        if (!active) return;
+        if (!active || !row.capacity_active) return;
         if (row.status === "starting") await setStatus(taskId, "running", { started_at: new Date().toISOString() });
         pushLine(taskId, (["text", "tool", "status", "stderr", "approval"].includes(String(message.kind)) ? message.kind : "text") as LocalAgentLine["kind"], String(message.text ?? ""), typeof message.step === "string" ? message.step : null);
         return;
       case "agent_done": {
-        if (!active) return;
         const diff = message.diff && typeof message.diff === "object" ? sanitizeDiff(message.diff as LocalAgentDiff) : null;
         const ok = message.ok === true;
         const stopped = message.stopped === true;
@@ -614,6 +643,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           summary: typeof message.summary === "string" ? clip(message.summary, 8000) : null,
           error: ok ? null : clip(String(message.error ?? "本地 agent 没有完成。"), 1500),
           diff,
+          deviceConfirmed: true,
         });
         return;
       }
@@ -631,31 +661,45 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       case "agent_llm": {
         const reqId = String(message.reqId ?? "");
         const reply = (body: Record<string, unknown>) => hub.sendRaw(record.id, { type: "agent_llm_result", reqId, ...body });
-        if (!active || row.agent !== "builtin") return void reply({ ok: false, error: "任务已经结束。" });
+        if (!active || !row.capacity_active || row.agent !== "builtin") return void reply({ ok: false, error: "任务未在执行，仍在等待批准、执行位或已经结束。" });
+        if (modelCalls.has(taskId)) return void reply({ ok: false, error: "这个任务的上一条模型请求尚未结束。" });
         if (row.llm_calls >= LLM_CALLS_PER_TASK) return void reply({ ok: false, error: `这个任务的模型调用超过 ${LLM_CALLS_PER_TASK} 次上限，已停止。` });
-        await sql.unsafe("UPDATE chisabot_local_agent_tasks SET llm_calls = llm_calls + 1 WHERE id = $1", [taskId]);
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 170_000);
+        const messages = Array.isArray(message.messages) ? (message.messages as LlmMessage[]).slice(-200) : [];
+        const system = typeof message.system === "string" ? clip(message.system, 6000) : "你是 ChisaBot 的本地 agent。";
+        const done = Promise.resolve().then(async () => {
+          await sql.unsafe("UPDATE chisabot_local_agent_tasks SET llm_calls = llm_calls + 1 WHERE id = $1", [taskId]);
+          const current = await taskRow(taskId);
+          if (!current || !ACTIVE_LOCAL_TASK.includes(current.status) || !current.capacity_active) throw new Error("任务已经停止，未调用模型。");
+          controller.signal.throwIfAborted();
+          return generate(row, system, messages, controller.signal);
+        });
+        modelCalls.set(taskId, { controller, done });
         try {
-          const messages = Array.isArray(message.messages) ? (message.messages as LlmMessage[]).slice(-200) : [];
-          const system = typeof message.system === "string" ? clip(message.system, 6000) : "你是 ChisaBot 的本地 agent。";
-          const content = await generate(row, system, messages, controller.signal);
+          const content = await done;
           reply({ ok: true, content });
         } catch (error) {
           reply({ ok: false, error: clip(reasonWithoutStatement(error), 400) });
         } finally {
           clearTimeout(timer);
+          if (modelCalls.get(taskId)?.controller === controller) modelCalls.delete(taskId);
         }
         return;
       }
       case "agent_approval": {
         const reqId = String(message.reqId ?? "");
         const reply = (approved: boolean) => hub.sendRaw(record.id, { type: "agent_approval_result", reqId, approved });
-        if (!active) return void reply(false);
+        if (!active || !row.capacity_active) return void reply(false);
         const fresh = (await deviceStore.get(record.id)) ?? record;
         if (fresh.paused || fresh.revoked) return void reply(false);
         const summary = clip(`本地 agent 任务「${row.title}」：${String(message.summary ?? "")}`, 400);
         const state = liveOf(taskId);
+        // Existing nodes time out approvals locally and can resume planning without a receipt.
+        // Keep their original slot until a device terminal confirms they have really stopped.
+        const parked = await sql.unsafe("UPDATE chisabot_local_agent_tasks SET status='pending_approval',step='等待你批准（设备仍保留执行位）',updated_at=now() WHERE id=$1 AND capacity_active AND status IN ('starting','running') RETURNING id", [taskId]);
+        if (!parked.length) return void reply(false);
+        state.step = "等待你批准（设备仍保留执行位）";
         const decision = await hub.requestUserApproval(
           fresh,
           { bot: { id: row.agent_id, name: row.bot_name }, operation: message.operation === "shell" ? "shell" : "write_file", summary },
@@ -666,6 +710,22 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         );
         state.approvalId = null;
         state.approvalSummary = null;
+        const current = await deviceStore.get(record.id);
+        const currentTask = await taskRow(taskId);
+        if (!current || current.paused || current.revoked || !hub.isOnline(record.id) || !currentTask || !ACTIVE_LOCAL_TASK.includes(currentTask.status)) {
+          hub.sendRaw(record.id, { type: "agent_stop", taskId });
+          await finish(taskId, "failed", { error: "等待批准或执行位期间设备不可用或任务已停止，未继续；设备确认前保留执行位。" });
+          return void reply(false);
+        }
+        const currentSettings = await settingsFor(record.id);
+        if (narrowerProfile(effectiveProfile(currentSettings, current), row.profile as AgentProfile) !== row.profile || (row.profile !== "full" && !isInsideRoots(row.cwd ?? "", effectiveRoots(currentSettings, current.allowedRoots), current.platform))) {
+          hub.sendRaw(record.id, { type: "agent_stop", taskId });
+          await finish(taskId, "failed", { error: "设备权限或允许目录已更改，已请求停止原任务；设备确认前保留执行位。" });
+          return void reply(false);
+        }
+        const resumed = await sql.unsafe("UPDATE chisabot_local_agent_tasks SET status='running',step='正在执行',updated_at=now() WHERE id=$1 AND status='pending_approval' AND capacity_active RETURNING id", [taskId]);
+        if (!resumed.length) return void reply(false);
+        state.step = "正在执行";
         pushLine(taskId, "approval", decision.approved ? "已批准" : decision.by === "expired" ? "审批超时，没有执行" : "你拒绝了这一步");
         reply(decision.approved);
         return;
@@ -765,10 +825,10 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     await sql.unsafe(
       `INSERT INTO chisabot_local_agent_tasks (id, owner_user_id, device_id, device_name, agent_id, bot_name, thread_id, agent, title, task, profile, isolation, network, cwd, status, step)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-      [id, input.ownerUserId, device.id, device.name, input.botId, input.botName, input.threadId, agent, title, input.task, profile, isolation, network, cwd, needsApproval ? "pending_approval" : "starting", needsApproval ? "等待你批准" : "正在发给电脑"],
+      [id, input.ownerUserId, device.id, device.name, input.botId, input.botName, input.threadId, agent, title, input.task, profile, isolation, network, cwd, needsApproval ? "pending_approval" : "starting", needsApproval ? "等待你批准" : "等待后台执行位"],
     );
     const state = liveOf(id);
-    state.step = needsApproval ? "等待你批准" : "正在发给电脑";
+    state.step = needsApproval ? "等待你批准" : "等待后台执行位";
     pushLine(id, "status", `交给「${device.name}」上的 ${LOCAL_AGENT_INFO[agent].label}：${profileLine({ profile, isolation, network })}，文件夹 ${cwd}`);
     await deviceStore.audit({
       deviceId: device.id,
@@ -819,24 +879,80 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           await finish(id, "failed", { error: "批准期间电脑停止、离线或被撤销，任务没有开始。" });
           return;
         }
-        await setStatus(id, "starting", { step: "正在发给电脑" });
+        const approved = await sql.unsafe("UPDATE chisabot_local_agent_tasks SET status='starting',step='等待后台执行位',updated_at=now() WHERE id=$1 AND status='pending_approval' AND NOT capacity_active RETURNING id", [id]);
+        if (!approved.length) return;
         state.step = "正在发给电脑";
         pushLine(id, "approval", "已批准");
       }
-      if (!hub.sendRaw(device.id, run as unknown as { type: string } & Record<string, unknown>)) {
-        await finish(id, "failed", { error: "电脑离线，没能把任务发过去。" });
-        return;
-      }
-      state.timer = setTimeout(() => {
-        hub.sendRaw(device.id, { type: "agent_stop", taskId: id });
-        void finish(id, "failed", { error: `超过 ${Math.round(timeoutMs / 60_000)} 分钟没有结束，已停止。` });
-      }, timeoutMs + 60_000);
-      state.timer.unref?.();
+      await dispatchQueued((await taskRow(id))!, run);
     })().catch((error) => {
       console.warn("local agent start failed", error);
       void finish(id, "failed", { error: "启动失败。" });
     });
     return view((await taskRow(id))!);
+  }
+
+  async function claimDeviceCapacity(row: TaskRow, status: "starting" | "running"): Promise<boolean> {
+    let waiting = false;
+    for (;;) {
+      const claimed = await sql.begin(async tx => {
+        await lockBackgroundAccount(tx, row.owner_user_id);
+        const [current] = await tx.unsafe<{ status: string; capacity_active: boolean }[]>("SELECT status,capacity_active FROM chisabot_local_agent_tasks WHERE id=$1 FOR UPDATE", [row.id]);
+        if (!current || !ACTIVE_LOCAL_TASK.includes(current.status as LocalAgentTaskStatus)) return "stopped";
+        if (current.capacity_active) return "stopped"; // Another dispatcher already owns this row.
+        if (await backgroundCount(tx, row.owner_user_id) >= BACKGROUND_CAPACITY) return "waiting";
+        await tx.unsafe("UPDATE chisabot_local_agent_tasks SET capacity_active=true,status=$2,step='正在执行',updated_at=now() WHERE id=$1", [row.id, status]);
+        return "claimed";
+      });
+      if (claimed === "stopped") return false;
+      if (claimed === "claimed") { liveOf(row.id).step = "正在执行"; reportCapacityState("admitted"); return true; }
+      if (!waiting) {
+        await sql.unsafe("UPDATE chisabot_local_agent_tasks SET step='等待后台执行位',updated_at=now() WHERE id=$1 AND NOT capacity_active", [row.id]);
+        liveOf(row.id).step = "等待后台执行位";
+        pushLine(row.id, "status", "后台执行位已满，任务已保留并排队。");
+        reportCapacityState("waiting"); waiting = true;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  /** A queued row is already authorized but has never been dispatched; recovery reuses it. */
+  async function dispatchQueued(row: TaskRow, supplied?: LocalAgentRunMessage) {
+    const state = liveOf(row.id);
+    if (state.dispatching) return;
+    state.dispatching = true;
+    try {
+      if (!await claimDeviceCapacity(row, "starting")) return;
+      const device = await deviceStore.get(row.device_id);
+      if (!device || device.paused || device.revoked || !hub.isOnline(row.device_id)) {
+        await sql.unsafe("UPDATE chisabot_local_agent_tasks SET capacity_active=false WHERE id=$1", [row.id]);
+        await finish(row.id, "failed", { error: "等待执行位期间电脑停止、离线或被撤销，任务没有发出。" }); return;
+      }
+      const settings = await settingsFor(row.device_id);
+      const roots = effectiveRoots(settings, device.allowedRoots);
+      if (narrowerProfile(effectiveProfile(settings, device), row.profile as AgentProfile) !== row.profile || (row.profile !== "full" && !isInsideRoots(row.cwd ?? "", roots, device.platform))) {
+        await sql.unsafe("UPDATE chisabot_local_agent_tasks SET capacity_active=false WHERE id=$1", [row.id]);
+        await finish(row.id, "failed", { error: "设备权限或允许目录已更改，原任务没有发出。" }); return;
+      }
+      const run: LocalAgentRunMessage = { ...(supplied ?? { type: "agent_run", taskId: row.id, agent: row.agent as LocalAgentKind, prompt: row.task,
+        cwd: row.cwd!, profile: row.profile as AgentProfile, isolation: row.isolation as Isolation, network: row.network,
+        roots, skipPermissions: row.profile === "full" || ISOLATION_INFO[row.isolation as Isolation].sandbox,
+        builtinModel: settings.builtinModel, containerImage: settings.containerImage, timeoutMs }), roots };
+      const dispatched = await sql.begin(async tx => {
+        const [current] = await tx.unsafe<{ status: string; capacity_active: boolean }[]>("SELECT status,capacity_active FROM chisabot_local_agent_tasks WHERE id=$1 FOR UPDATE", [row.id]);
+        if (!current || !ACTIVE_LOCAL_TASK.includes(current.status as LocalAgentTaskStatus) || !current.capacity_active) return "stopped";
+        return hub.sendRaw(row.device_id, run as unknown as { type: string } & Record<string, unknown>) ? "sent" : "offline";
+      });
+      if (dispatched !== "sent") {
+        await sql.unsafe("UPDATE chisabot_local_agent_tasks SET capacity_active=false WHERE id=$1", [row.id]);
+        if (dispatched === "stopped") return;
+        await finish(row.id, "failed", { error: "电脑离线，没能把任务发过去。" }); return;
+      }
+      state.deadline = executionDeadline(timeoutMs + 60_000, () => {
+        hub.sendRaw(row.device_id, { type: "agent_stop", taskId: row.id });
+        void finish(row.id, "failed", { error: `超过 ${Math.round(timeoutMs / 60_000)} 分钟没有结束，已请求停止；设备确认前保留执行位。` });
+      });
+    } finally { state.dispatching = false; }
   }
 
   async function owned(actorId: string, id: string) {
@@ -847,12 +963,14 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
 
   async function stop(actorId: string, id: string, by: "user" | "bot" = "user") {
     const row = await owned(actorId, id);
-    if (!ACTIVE_LOCAL_TASK.includes(row.status)) return view(row);
+    if (!ACTIVE_LOCAL_TASK.includes(row.status)) {
+      if (row.capacity_active) hub.sendRaw(row.device_id, { type: "agent_stop", taskId: id });
+      return view(row);
+    }
     const state = live.get(id);
     if (state?.approvalId) hub.decide(state.approvalId, false, "system");
-    hub.sendRaw(row.device_id, { type: "agent_stop", taskId: id });
     // 电脑会回 agent_done（stopped）；它离线或没回就在这里收尾。
-    const done = await finish(id, "cancelled", { error: by === "user" ? "你在任务卡片上停止了这个任务。" : "机器人停止了这个任务。" });
+    const done = await finish(id, "cancelled", { error: by === "user" ? "你在任务卡片上停止了这个任务。" : "机器人停止了这个任务。", requestDeviceStop: row.device_id });
     return view(done ?? (await taskRow(id))!);
   }
 

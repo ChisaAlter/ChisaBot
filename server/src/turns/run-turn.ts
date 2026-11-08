@@ -10,6 +10,7 @@ import { NOT_SHOWN } from "../../../shared/component-markers";
 import { frameFiring } from "../../../shared/routine-firing";
 import { withModelConnectionScope } from "../model-connection-context";
 import { assertConversationAdmissionOpen } from "../conversations/maintenance";
+import { executionClass, executionDeadline, type ExecutionClass } from "../conversations/capacity";
 import { sanitizeSeededHistory } from "../agents/history-sanitize";
 import { guardBotTurn } from "../agents/lifecycle";
 import { CHISABOT_WAITING_METADATA } from "../approvals/native-context";
@@ -126,6 +127,7 @@ export type RunnerLike = {
     persistedInputMessages?: Message[];
     continuationRunId?: string;
     join?: boolean;
+    execution?: ExecutionClass;
   }): EventStream;
   stop(request: {
     threadId: string;
@@ -501,7 +503,8 @@ export function createTurnRunner(options: {
     }
 
     let heartbeat: ReturnType<typeof setInterval> | undefined;
-    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let deadline: ReturnType<typeof executionDeadline> | undefined;
+    let capacityState: "waiting" | "admitted" = "admitted";
     let backstop: ReturnType<typeof setTimeout> | undefined;
     let heartbeatError: unknown;
     let waiting: HeadlessToolSuspension | undefined;
@@ -572,6 +575,7 @@ export function createTurnRunner(options: {
         let terminal: Error | undefined;
         runner
           .run({ threadId, agent, input, persistedInputMessages, join: false,
+            execution: executionClass(initiator, Boolean(suppliedForwardedProps?.chisabotWorkerDelivery)),
             ...(continuation ? { continuationRunId: continuation.snapshot.runId } : {}),
           })
           .subscribe({
@@ -583,6 +587,11 @@ export function createTurnRunner(options: {
              * answered with nothing.
              */
             next: (event) => {
+              if (event.type === EventType.CUSTOM && "name" in event && event.name === "chisabot.capacity") {
+                const status = (event as BaseEvent & { value?: { status?: string } }).value?.status;
+                capacityState = status === "queued" ? "waiting" : "admitted";
+                deadline?.state(capacityState);
+              }
               if (
                 event.type === EventType.CUSTOM &&
                 event.name === "openbot.headless.waiting"
@@ -612,19 +621,19 @@ export function createTurnRunner(options: {
       });
 
       const timeout = new Promise<never>((_resolve, reject) => {
-        deadline = setTimeout(() => {
+        deadline = executionDeadline(turnTimeoutMs, () => {
           stopped = true;
           stopTurn();
-        }, turnTimeoutMs);
-        deadline.unref?.();
-        if (!awaitsExecutionStop) backstop = setTimeout(() => {
-          reject(
-            new Error(
-              `The routine's turn did not finish within ${Math.round(turnTimeoutMs / 1000)}s and could not be stopped.`,
-            ),
-          );
-        }, turnTimeoutMs + abortGraceMs);
-        backstop?.unref?.();
+          if (!awaitsExecutionStop) backstop = setTimeout(() => {
+            reject(
+              new Error(
+                `The routine's turn did not finish within ${Math.round(turnTimeoutMs / 1000)}s and could not be stopped.`,
+              ),
+            );
+          }, abortGraceMs);
+          backstop?.unref?.();
+        });
+        deadline.state(capacityState);
       });
 
       await Promise.race([completed, timeout, cancelled]);
@@ -642,7 +651,7 @@ export function createTurnRunner(options: {
       clearHeartbeat();
       if (cancelTurn) signal?.removeEventListener("abort", cancelTurn);
       if (signal?.aborted) await stopPromise;
-      if (deadline !== undefined) clearTimeout(deadline);
+      deadline?.cancel();
       if (backstop !== undefined) clearTimeout(backstop);
       spoken.unsubscribe();
       if (!runner.ownsThreadLease) await options.leases!

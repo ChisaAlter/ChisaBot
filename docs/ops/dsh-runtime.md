@@ -18,9 +18,9 @@ API 启动脚本先建立 DSH 根目录并设为 `apiuser` 所有、权限 `0700
 
 `deploy/Dockerfile.update`、`deploy/Dockerfile.glass` 只用于依赖相同且已经包含 DSH 的底座。首次迁移使用完整 Dockerfile 或 `deploy/Dockerfile.zh`；不要拿不含 DSH 的旧底座做源码覆盖。
 
-更新器自身必须先安装本次脚本，包括 `dsh-release.sh`；旧更新器不会识别新卷的备份和读取器检查。升级脚本不等于启动切流。
+更新器自身必须先安装本次脚本，包括 `dsh-release.sh`、`reader-compatibility.mjs` 和账号协调器；旧更新器不会识别新卷的备份和读取器检查。升级脚本不等于启动切流。
 
-已有 DSH 部署更新时，先核对目标源码包含 DSH 运行时及发布工具，再构建候选；构建后的 `runtime-compat.json` 必须匹配当前 reader，随后才暂停接纳、备份和切换。缺少 DSH 的旧 `main` 不会触发切流。兼容性不是只看包版本：产品 inbox reader 也必须匹配。
+已有 DSH 部署更新时，先核对目标源码包含 DSH 运行时及发布工具，再构建候选；构建后的 `runtime-compat.json` 必须与当前 DSH 协议、运行时和 native history reader 相同，且产品 `conversationReader` 不低于当前版本，随后才暂停接纳、备份和切换。缺少 DSH 的旧 `main` 不会触发切流。兼容性检查通过也不代替候选的功能和恢复验收。
 
 更新备份带 `backup-manifest.json`，只有更新器自己登记且已完成的 `kind:update` 批次参加 `KEEP_BACKUPS` 轮换。没有标记的手工/历史备份、未完成批次和带 `.keep` 的目录保留；符号链接不被清理。旧备份不会自动改成可删除批次。`KEEP_IMAGES` 至少保留三个不同的自动构建镜像身份，当前、上一版、底座和手工标签继续保护。
 
@@ -38,7 +38,7 @@ docker exec -e PATH=/command:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/
 
 ## 切换前备份数据库与 DSH 日志
 
-更新器在切换前创建 `CHISABOT_DSH_ROOT/.maintenance`，内容为当前 job ID。服务端据此停止新执行接纳与后台派发，已有执行继续到可结算状态。排空超时或状态不可读时保持旧镜像，不强制切换。
+更新器在切换前创建 `CHISABOT_DSH_ROOT/.maintenance`，内容为当前 job ID。普通对话接纳及检查该标记的后台派发据此暂停，已有执行继续到可结算状态。标记不是全局模型断路器：既有活跃执行恢复、频道标题等模型消费者不全部受它阻挡。隔离验收仍须控制网络出口并核对可执行旧工作，不能仅凭标记断言“所有后台已关闭”。排空超时或状态不可读时保持旧镜像，不强制切换。
 
 排空后，`backups/<批次>/cutover/` 保存：
 
@@ -127,9 +127,11 @@ ExecStart=/bin/bash /opt/chisabot-updater/complete-backup.sh
 
 ## 回滚只切可读镜像，不倒退数据
 
-现有 `rollback.sh` 和自动生成的回滚脚本在改 compose 前比较 DSH 读取器描述。已有 DSH 绑定时，目标缺少读取器或版本不匹配都会拒绝回滚。已登记的 `.dsh-reader.json` 让新容器无法启动时也能完成兼容性检查。
+现有 `rollback.sh` 和自动生成的回滚脚本在改 compose 前比较 DSH 读取器描述。已有 DSH 绑定时，目标缺少读取器、native 格式不同或产品读取器比当前旧，都会拒绝回滚。已登记的 `.dsh-reader.json` 让新容器无法启动时也能完成兼容性检查。
 
-读取器描述同时包含 `conversationReader`，覆盖产品层数据：版本 1 包含附件与技能补话，版本 2 继续读取旧记录，并包含个人交付账本与任务成果要求。目标镜像必须匹配 DSH 协议、运行时和日志版本，且产品读取器版本不低于当前版本。版本 2 开始接纳任务后，不能回滚至会忽略发送账本或成果要求的版本 1。旧 Hermes 镜像只可在尚未产生任何 DSH 绑定时恢复。
+读取器描述同时包含 `conversationReader`，覆盖产品层数据：版本 1 包含附件与技能补话，版本 2 增加个人交付账本与任务成果要求；后续容量源码的版本 3 增加账号后台容量等待及恢复归属。目标镜像必须匹配 DSH 协议、运行时和日志版本，且产品读取器版本不低于当前版本。版本 2 开始接纳任务后，不能回滚至会忽略发送账本或成果要求的版本 1；版本 3 的持久容量等待也不能交给版本 2 恢复。旧 Hermes 镜像只可在尚未产生任何 DSH 绑定时恢复。
+
+当前生产仍为 reader 1；`9244b43a` 的 reader 2 / 0065 镜像已完整构建，原镜像恢复和候选迁移、API 冷启动、DSH readiness 均通过，尚未发布。reader 3 / 0066 容量源码的真实 API SIGKILL 混合恢复仍出现 HTTP 500 / `08P01`，尚未放行或构建；不能把 reader 声明或局部通过当作可部署版本，也不能提前升级线上 marker。最新状态见[实施记录](../pipeline-runs/20261108-assistant-production.md)。
 
 通过检查后只恢复应用镜像和原运行时配置，继续挂载当前 PostgreSQL、DSH、workspace、profiles。不会自动导入发布前的数据库或会话备份，因此发布后新增的消息、审批、暂停输入、附件和已执行工具结果仍然保留。
 

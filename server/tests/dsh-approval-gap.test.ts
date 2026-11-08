@@ -20,6 +20,8 @@ import { createToolOperationStore } from "../src/conversations/tool-operations";
 import { createDatabase } from "../src/db/client";
 import { createLocalConversations } from "../src/local-conversations";
 import { createTurnRunner } from "../src/turns/run-turn";
+import { backgroundCount, executionClass } from "../src/conversations/capacity";
+import type { AuditInitiator } from "../src/audit";
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 
@@ -111,9 +113,9 @@ async function until<T>(read: () => Promise<T | undefined | false>, detail: stri
     if (child?.exitCode === null) { const done = once(child, "exit"); child.kill("SIGKILL"); await done; }
   };
   resources.push(kill);
-  const agent = () => new DshRuntimeAgent({ botId,
+  const agent = (initiator: AuditInitiator = { kind: "person" }) => new DshRuntimeAgent({ botId,
     binding: { bindings, gateway, journal, toolGatewayUrl: origin, targetFor: async () => ({ id: "gap-runtime", ownerUserId: actorId, connectionFile: join(home, "connection.json") }), readRun: value => JSON.parse(String(value)) },
-    signRun: value => JSON.stringify({ actorId, botId, threadId: value.threadId, runId: value.runId }),
+    signRun: value => JSON.stringify({ actorId, botId, threadId: value.threadId, runId: value.runId, initiator }),
     tools: [{ name: "approved_effect", ref: "fixture/approved", description: "An isolated approval-protected counter.", parameters: z.object({ value: z.string() }), execute: async args => {
       const decision = await confirmations.check({ ownerUserId: actorId, agentId: botId, category: "message", tool: "approved_effect", title: "Approve isolated counter", target: "test-only", matchText: "fixture", digest: digestOf("approved_effect", args) });
       if (!decision.ok) return decision.message;
@@ -218,6 +220,43 @@ async function until<T>(read: () => Promise<T | undefined | false>, detail: stri
     expect(await backend.inbox.isPaused(crashed.input.threadId)).toBe(true);
     expect((await backend.inbox.list(crashed.input.threadId)).find(item => item.id === supplement.id)?.status).toBe("paused");
     expect(JSON.stringify(providerInputs.at(-1))).not.toContain(supplement.content);
+
+    // Autonomous approval gaps release their slot. A durable decision must re-enter the same
+    // account budget before executing the original effect, including Stop/Edit during that wait.
+    const autonomous = createTurnRunner({ intelligence: backend.client, runner: backend.runner, buildAgentFor: async input => agent(input.initiator) });
+    const autonomousResume = createConfirmationResumer({ database, backend, confirmations, buildAgentFor: async input => agent(input.initiator), runTurn: autonomous });
+    const waiting: { threadId: string; requestId: string }[] = [];
+    for (const suffix of ["continue", "stop", "edit"]) {
+      const threadId = `${actorId}-capacity-${suffix}`;
+      const suspension = await autonomous({ ownerUserId: actorId, agentId: botId, threadId, routineId: `capacity:${suffix}`, instruction: "Perform the approved counter once." }).catch(error => error);
+      expect(suspension?.name, JSON.stringify({ error: String(suspension), logs, bridgeErrors })).toBe("HeadlessToolSuspension");
+      const cards = await confirmations.list(actorId, { threadId });
+      expect(cards).toHaveLength(1);
+      waiting.push({ threadId, requestId: cards[0]!.id });
+      expect(await backgroundCount(sql, actorId)).toBe(0);
+    }
+    const release: (() => Promise<void>)[] = [];
+    for (const suffix of ["a", "b"]) {
+      const threadId = `${actorId}-occupied-${suffix}`, runId = `occupied:${suffix}`;
+      await backend.client.getOrCreateThread({ threadId, userId: actorId, agentId: botId });
+      await backend.capacity.enqueue(threadId, runId, { ...executionClass({ kind: "routine", id: `occupied:${suffix}` }), input: { threadId, runId, messages: [], state: {}, tools: [], context: [] } });
+      expect(await backend.capacity.claim(actorId, threadId, runId)).toBe("claimed");
+      release.push(async () => { await backend.capacity.releaseReservation(threadId, runId); await backend.capacity.stop(threadId, runId); });
+    }
+    for (const item of waiting) await confirmations.decide(actorId, item.requestId, "approve");
+    const resumed = autonomousResume(actorId, waiting[0]!.requestId);
+    const stopped = autonomousResume(actorId, waiting[1]!.requestId).catch(error => error);
+    const edited = autonomousResume(actorId, waiting[2]!.requestId).catch(error => error);
+    await Bun.sleep(80);
+    expect(effects).toBe(2); expect(await backgroundCount(sql, actorId)).toBe(2);
+    await backend.runner.stop({ threadId: waiting[1]!.threadId });
+    const editedBinding = (await bindings.get(waiting[2]!.threadId))!;
+    await bindings.getOrCreate({ threadId: waiting[2]!.threadId, ownerUserId: actorId, botId, runtimeId: editedBinding.runtimeId, revision: editedBinding.revision + 1 });
+    expect(String(await stopped)).toContain("停止"); expect(String(await edited)).toContain("编辑");
+    expect(effects).toBe(2);
+    await release[0]!(); await resumed; await autonomousResume(actorId, waiting[0]!.requestId);
+    expect(effects).toBe(3); await release[1]!();
+    expect(await backgroundCount(sql, actorId)).toBe(0);
   } finally {
     for (const close of resources.reverse()) await close();
   }

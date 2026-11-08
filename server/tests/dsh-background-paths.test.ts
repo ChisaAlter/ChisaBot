@@ -19,6 +19,7 @@ import { createTaskCenterRuntime } from "../src/task-center/runtime";
 import { createImService } from "../src/im/service";
 import type { WsLike } from "../src/im/types";
 import type { TurnRunner } from "../src/turns/types";
+import { backgroundCount } from "../src/conversations/capacity";
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 const answer = "后台验收完成：产物已保存。";
@@ -61,6 +62,9 @@ class ProtocolSocket implements WsLike {
   let effects = "";
   const modelRequests: unknown[] = [];
   let pauseNextModel = false;
+  const held = new Map<string, () => void>();
+  const holdMarkers = new Set<string>();
+  let shortTurn: TurnRunner;
 
   beforeAll(async () => {
     database = createDatabase(address!, { max: 6 }); cleanups.push(() => database.$client.close());
@@ -75,6 +79,8 @@ class ProtocolSocket implements WsLike {
     const bridge = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
       if (!new URL(request.url).pathname.startsWith("/v1/")) return gateway.routes.fetch(request);
       const body = await request.json() as any; modelRequests.push(body);
+      const marker = [...holdMarkers].find(value => JSON.stringify(body.messages).includes(value));
+      if (marker) { holdMarkers.delete(marker); await new Promise<void>(resolve => held.set(marker, resolve)); held.delete(marker); }
       if (pauseNextModel) { pauseNextModel = false; await Bun.sleep(1000); }
       const latestUser = body.messages.findLastIndex((message: any) => message.role === "user");
       const hasResult = body.messages.slice(latestUser + 1).some((message: any) => message.role === "tool");
@@ -89,8 +95,7 @@ class ProtocolSocket implements WsLike {
     let output = ""; child.stdout.on("data", data => output += data); child.stderr.on("data", data => output += data);
     cleanups.push(async () => { if (child.exitCode === null) { const done = once(child, "exit"); child.kill(); await done; } });
     await until(async () => { if (child.exitCode !== null) throw new Error(output); return output.includes("chisabot-runtime-ready"); }, 60_000);
-    runTurn = createTurnRunner({ intelligence: backend.client, runner: backend.runner,
-      buildAgentFor: async input => new DshRuntimeAgent({ botId: input.agentId,
+    const buildAgentFor = async (input: { ownerUserId: string; agentId: string; initiator: any }) => new DshRuntimeAgent({ botId: input.agentId,
         binding: { bindings, journal, gateway, toolGatewayUrl: bridge.url.origin,
           targetFor: async actor => ({ id: "background-host", ownerUserId: actor, connectionFile: join(home, "connection.json") }),
           readRun: value => JSON.parse(String(value)) },
@@ -100,12 +105,59 @@ class ProtocolSocket implements WsLike {
         prompt: () => "Use write_receipt once then report the result.",
         connection: { provider: "openai", baseUrl: `${bridge.url.origin}/v1`, apiKey: null, useApiKey: false, model: "background" },
         modelInfo: async () => ({ contextWindow: 32000, maxOutputTokens: 1024 }), fallbacks: async () => [],
-      }),
-    });
+      });
+    runTurn = createTurnRunner({ intelligence: backend.client, runner: backend.runner, buildAgentFor });
+    shortTurn = createTurnRunner({ intelligence: backend.client, runner: backend.runner, buildAgentFor, turnTimeoutMs: 700 });
   }, 90_000);
   afterAll(async () => { for (const close of cleanups.reverse()) await close(); }, 30_000);
   const effectCount = async () => (await readFile(effects, "utf8")).trim().split("\n").filter(Boolean).length;
   const history = async (threadId: string) => (await backend.client.getThreadMessages({ threadId, userId: owner })).messages;
+
+  test("shared background capacity spans worker, schedule and task-center; foreground and queued Stop stay usable", async () => {
+    const parentThreadId = `${owner}-capacity-parent`, scheduleThread = `${owner}-capacity-schedule`;
+    for (const threadId of [parentThreadId, scheduleThread]) await backend.client.getOrCreateThread({ threadId, userId: owner, agentId: bot });
+    const workers = createWorkerService({ database, inbox: backend.inbox, control: backend.control, runTurn, agentOfThread: async () => bot }); await workers.ensure();
+    const schedules = createSchedules(database, { runTurn, botAvailable: async () => true }); await schedules.ensure(); cleanups.push(() => schedules.stop());
+    holdMarkers.add("CAPACITY_WORKER"); holdMarkers.add("CAPACITY_SCHEDULE");
+    const worker = await workers.start({ ownerUserId: owner, agentId: bot, parentThreadId, title: "容量任务", task: "CAPACITY_WORKER 保存验收产物" });
+    const schedule = await schedules.create({ owner, agentId: bot, threadId: scheduleThread, title: "容量定时", instruction: "CAPACITY_SCHEDULE 保存验收产物", when: { repeat: "once", in_minutes: 30 } });
+    await schedules.runNow(owner, schedule.id);
+    await until(async () => held.size === 2);
+    expect(await backgroundCount(database.$client, owner)).toBe(2);
+    const center = createTaskCenterRuntime({ database, runTurn, personalSources: { scanCalendar: async () => [], scanEmails: async () => [], status: async () => ({}) } as any,
+      github: { listOpenItems: async () => [], status: async () => ({}) } as any, botAvailable: async () => true, defaultAgentFor: async () => bot });
+    await center.ensure(); cleanups.push(() => center.stop());
+    const task = await center.createTask(owner, { title: "容量任务中心", description: "CAPACITY_CENTER 保存验收产物", level: 2, risk: "read", agentId: bot, completion: { criteria: "返回产物回执", required: [] } });
+    await center.controlTask(owner, task.id, "start"); await center.sweep();
+    const queuedTask = await until(async () => (await database.$client.unsafe<any[]>("SELECT r.* FROM openbot_local_runs r WHERE r.status='capacity_wait' AND r.thread_id LIKE $1", [`task-center:${task.id}:%`]))[0]);
+    expect((await center.getTask(owner, task.id))?.attempts).toBe(1);
+    expect(JSON.stringify(modelRequests)).not.toContain("CAPACITY_CENTER");
+    const queuedThread = `${owner}-queued-and-foreground`;
+    const cancelled = new AbortController();
+    const queuedDone = runTurn({ ownerUserId: owner, agentId: bot, threadId: queuedThread, routineId: "capacity-cancel", runId: "capacity-cancel", instruction: "CAPACITY_CANCEL", signal: cancelled.signal }).catch(error => error);
+    await until(async () => (await database.$client.unsafe<any[]>("SELECT 1 FROM openbot_local_runs WHERE thread_id=$1 AND status='capacity_wait'", [queuedThread]))[0]);
+    holdMarkers.add("CAPACITY_FOREGROUND");
+    const foreground = runTurn({ ownerUserId: owner, agentId: bot, threadId: queuedThread, routineId: "foreground", instruction: "CAPACITY_FOREGROUND", initiator: { kind: "person" } });
+    await until(async () => held.has("CAPACITY_FOREGROUND"));
+    cancelled.abort();
+    expect(await queuedDone).toBeInstanceOf(Error);
+    expect(held.has("CAPACITY_FOREGROUND")).toBe(true);
+    expect(JSON.stringify(modelRequests)).not.toContain("CAPACITY_CANCEL");
+    held.get("CAPACITY_FOREGROUND")!(); await foreground;
+    const short = shortTurn({ ownerUserId: owner, agentId: bot, threadId: `${owner}-short-queue`, routineId: "short", instruction: "CAPACITY_SHORT" });
+    await until(async () => (await database.$client.unsafe<any[]>("SELECT 1 FROM openbot_local_runs WHERE thread_id=$1 AND status='capacity_wait'", [`${owner}-short-queue`]))[0]);
+    await Bun.sleep(1000); // Beyond this turn's execution budget; no model has been called.
+    expect(JSON.stringify(modelRequests)).not.toContain("CAPACITY_SHORT");
+    expect(await backgroundCount(database.$client, owner)).toBe(2);
+    held.get("CAPACITY_WORKER")!(); held.get("CAPACITY_SCHEDULE")!();
+    expect((await short).replyText).toBe(answer);
+    await until(async () => (await center.getTask(owner, task.id))?.status === "succeeded");
+    expect((await center.getTask(owner, task.id))?.attempts).toBe(1);
+    await until(async () => (await workers.get(worker.id))?.status === "done");
+    expect((await database.$client.unsafe<any[]>("SELECT status FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2", [queuedTask.thread_id, queuedTask.run_id]))[0]?.status).toBe("finished");
+    await until(async () => !(backend.control.isActive(parentThreadId)));
+    expect(await backgroundCount(database.$client, owner)).toBe(0);
+  }, 45_000);
 
   test("scheduled firing stores the governed result and settles its schedule row", async () => {
     const threadId = `${owner}-schedule`;

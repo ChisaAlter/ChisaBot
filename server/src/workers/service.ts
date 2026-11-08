@@ -11,6 +11,7 @@ import { type ThreadInbox, WORKER_RESULT_MARKER } from "../thread-inbox";
 import { reasonWithoutStatement } from "../db/query-failure";
 import { readDurableTurn } from "../turns/durable-outcome";
 import { assertConversationAdmissionOpen, conversationAdmissionClosed } from "../conversations/maintenance";
+import { executionDeadline, withCapacityFeedback } from "../conversations/capacity";
 
 /**
  * 后台任务（DESIGN.md §38）：机器人把一件耗时、独立的事交给一个并行的「工人」去做，主对话继续能聊。
@@ -216,7 +217,8 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
     const calls = new Map<string, { name: string; args: string }>();
     state.unobserve = control.observe(worker.thread_id, (event: BaseEvent) => {
       const e = event as BaseEvent & { toolCallId?: string; toolCallName?: string; delta?: string; role?: string };
-      if (e.type === EventType.TOOL_CALL_START && e.toolCallId) calls.set(e.toolCallId, { name: e.toolCallName ?? "", args: "" });
+      if (e.type === EventType.CUSTOM && "name" in e && e.name === "chisabot.capacity") { state.step = "等待后台执行位"; persistLive(worker.id); }
+      else if (e.type === EventType.TOOL_CALL_START && e.toolCallId) calls.set(e.toolCallId, { name: e.toolCallName ?? "", args: "" });
       else if (e.type === EventType.TOOL_CALL_ARGS && e.toolCallId) { const call = calls.get(e.toolCallId); if (call) call.args += e.delta ?? ""; }
       else if (e.type === EventType.TOOL_CALL_END && e.toolCallId) {
         const call = calls.get(e.toolCallId);
@@ -230,19 +232,18 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
         state.step = "正在想怎么做"; persistLive(worker.id);
       }
     });
-    const timer = setTimeout(() => controller.abort(new Error("timeout")), WORKER_TIMEOUT_MS);
-    timer.unref?.();
+    const timer = executionDeadline(WORKER_TIMEOUT_MS, () => controller.abort(new Error("timeout")));
     let finished: WorkerRow | null = null;
     let waiting = false;
     try {
-      const outcome = await runTurn({
+      const outcome = await withCapacityFeedback(state => timer.state(state), () => runTurn({
         ownerUserId: worker.owner_user_id, routineId: `worker:${worker.id}`, agentId: worker.agent_id,
         threadId: worker.thread_id, instruction: worker.task,
         initiator: { kind: "routine", id: `worker:${worker.id}` },
         signal: controller.signal,
         userMessage: { id: `worker-task-${worker.id}`, role: "user", content: frameWorkerTask(worker.title, worker.task) } as Message,
         forwardedProps: { chisabotWorker: { id: worker.id } },
-      });
+      }));
       // 交回的结果 = 工人最后一条有字的回复（过程话不算）；读不到再退回整轮的文字。
       const text = ((await lastAssistantText(worker.thread_id)) ?? outcome.replyText).trim();
       if (state.plan?.length) state.plan = state.plan.map((step) => (step.status === "current" || step.status === "pending" ? { ...step, status: "done" } : step));
@@ -261,7 +262,7 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
         finished = await finish(worker.id, "failed", { error: error instanceof Error ? clip(error.message, 400) : "后台任务出错了。" });
       }
     } finally {
-      clearTimeout(timer);
+      timer.cancel();
       const left = live.get(worker.id);
       left?.unobserve?.();
       live.delete(worker.id);

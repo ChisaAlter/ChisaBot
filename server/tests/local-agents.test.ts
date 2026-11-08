@@ -229,6 +229,9 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
     expect(narrow.profile).toBe("readonly");
     await service.stop(owner, direct.id);
     await service.stop(owner, narrow.id);
+    // Stop is a request; only the actual node terminal proves an already sent run released its slot.
+    await node({ type: "agent_done", taskId: direct.id, stopped: true, ok: false });
+    await node({ type: "agent_done", taskId: narrow.id, stopped: true, ok: false });
     expect(denied.id).toBeTruthy();
     device = { ...device, fullAccessUntil: null };
     await service.saveSettings(owner, device.id, { profile: "readonly" });
@@ -245,7 +248,8 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
     sent.length = 0;
     approve = true;
     const task = await service.start({ ownerUserId: owner, botId: "b", botName: "B", threadId: "t4", task: "列出文件" });
-    await settle();
+    for (let i = 0; i < 200 && !sent.some(message => message.type === "agent_run" && message.taskId === task.id); i++) await Bun.sleep(10);
+    expect(sent.some(message => message.type === "agent_run" && message.taskId === task.id)).toBe(true);
     await node({ type: "agent_started", taskId: task.id });
     await node({ type: "agent_llm", taskId: task.id, reqId: "r1", messages: [{ role: "user", text: "hi" }], system: "s" });
     const reply = sent.find((m) => m.type === "agent_llm_result" && m.reqId === "r1");

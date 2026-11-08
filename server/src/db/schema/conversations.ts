@@ -24,6 +24,7 @@ export const localRuns = pgTable("openbot_local_runs", {
   threadId: text("thread_id").notNull(),
   runId: text("run_id").notNull(),
   status: text("status").notNull(),
+  execution: jsonb("execution"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 }, table => [

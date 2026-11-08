@@ -33,6 +33,15 @@ function brokenConnection(error: unknown): boolean {
   return false;
 }
 
+/** PostgreSQL json/jsonb cannot contain malformed JSON. At the native Query boundary only,
+ * this Bun decoder rejection means the connection's row metadata and values were misaligned.
+ * Application/transaction callback parsers are deliberately outside this classification. */
+function brokenNativeResult(error: unknown): boolean {
+  if (!(error instanceof SyntaxError) || !error.message.startsWith("JSON Parse error:")) return false;
+  const native = error as SyntaxError & { code?: unknown; errno?: unknown };
+  return native.code === undefined && native.errno === undefined;
+}
+
 /**
  * Keep Bun SQL's parameter binding, result modes and transaction implementation. Only supervise its
  * public operations. A PostgreSQL statement_timeout cannot expire Bun's pool queue or a response
@@ -74,7 +83,7 @@ export function recoveringSql(makeClient: () => SQL, timeoutMs = DATABASE_TIMEOU
     for (const operation of pending) operation.fail(error);
     void trackClose(pool.client, 0.001);
   };
-  function supervise<T>(pool: Generation, start: (clock: { pause: () => void; resume: () => void }) => PromiseLike<T>, cancel?: () => void): Promise<T> {
+  function supervise<T>(pool: Generation, start: (clock: { pause: () => void; resume: () => void }) => PromiseLike<T>, cancel?: () => void, nativeQuery = false): Promise<T> {
     if (pool.failed) return Promise.reject(pool.failed.error);
     return new Promise<T>((resolve, reject) => {
       let done = false;
@@ -100,9 +109,10 @@ export function recoveringSql(makeClient: () => SQL, timeoutMs = DATABASE_TIMEOU
         // Per-statement slow queries or lock waits cancelled by PostgreSQL (SQLSTATE 57014 / 55P03,
         // governed by statement_timeout=25s and lock_timeout=5s in client.ts) are not broken sockets:
         // they fail only the offending operation via `operation.fail(error)` while leaving the pool
-        // generation and all other concurrent pending queries intact. Only transport-level 08xxx /
-        // closed-connection errors or a wedged 30s wall-clock pool stall retire the generation.
-        if (brokenConnection(error)) retire(pool, error);
+        // generation and all other concurrent pending queries intact. Transport-level 08xxx /
+        // closed-connection errors, native row-decoder corruption or a wedged wall-clock pool
+        // stall retire the generation; application parsers do not.
+        if (brokenConnection(error) || (nativeQuery && brokenNativeResult(error))) retire(pool, error);
         else operation.fail(error);
       };
       try {
@@ -114,7 +124,7 @@ export function recoveringSql(makeClient: () => SQL, timeoutMs = DATABASE_TIMEOU
     let running: Promise<unknown> | undefined;
     const run = () => running ??= scope && !scope.open
       ? Promise.reject(closedError())
-      : supervise(pool, () => query, () => { query.cancel(); });
+      : supervise(pool, () => query, () => { query.cancel(); }, true);
     const proxy = new Proxy(query, {
       get(target, key) {
         if (key === "then") return (...args: Parameters<Promise<unknown>["then"]>) => run().then(...args);

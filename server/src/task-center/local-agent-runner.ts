@@ -21,6 +21,7 @@ import { TaskCenterError } from "./service";
 import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
 import { TaskResultNeedsReview } from "./outcome";
 import { setTimeout as delay } from "node:timers/promises";
+import { reportCapacityState } from "../conversations/capacity";
 
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
 const POLL_MS = 3000;
@@ -70,12 +71,14 @@ export function createLocalAgentRun(options: {
           error: string | null;
           diff: LocalAgentDiff | null;
           device_id: string;
+          capacity_active: boolean;
         }[]
       >(
-        "SELECT status, summary, error, diff, device_id FROM chisabot_local_agent_tasks WHERE id=$1 AND owner_user_id=$2",
+        "SELECT status, summary, error, diff, device_id, capacity_active FROM chisabot_local_agent_tasks WHERE id=$1 AND owner_user_id=$2",
         [taskId, ownerUserId],
       );
       if (!row) throw new Error("本地 agent 任务记录不见了。");
+      if (!TERMINAL.has(row.status)) reportCapacityState(row.capacity_active ? "admitted" : "waiting");
       if (TERMINAL.has(row.status)) {
         if (row.status === "done") {
           if (requireAppliedChanges && row.diff?.discarded) throw new TaskResultNeedsReview("设备上的改动已放弃，任务没有交付原定成果。");

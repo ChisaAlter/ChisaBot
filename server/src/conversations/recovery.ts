@@ -4,6 +4,7 @@ import type { LocalConversationBackend } from "../local-conversations";
 import type { DshRunJournal } from "./run-journal";
 import { reasonWithoutStatement } from "../db/query-failure";
 import { conversationAdmissionClosed } from "./maintenance";
+import { executionClass } from "./capacity";
 
 /** Recover execution owners first; queued sends may only start after their predecessors settle. */
 export async function recoverConversations(options: {
@@ -19,13 +20,23 @@ export async function recoverConversations(options: {
     if (backend.control.isActive(record.thread_id)) return;
     try {
       const agent = await options.buildAgentFor({ ownerUserId: record.owner_user_id, agentId: record.bot_id, initiator });
-      backend.runner.run({ threadId: record.thread_id, agent, input: record.input, recover: true, join: false }).subscribe({
+      backend.runner.run({ threadId: record.thread_id, agent, input: record.input, recover: true, join: false, execution: executionClass(initiator) }).subscribe({
         error: error => console.warn(JSON.stringify({ type: "conversation-recovery-failed", runId: record.run_id, reason: reasonWithoutStatement(error) })),
       });
     } catch (error) { console.warn(JSON.stringify({ type: "conversation-recovery-pending", runId: record.run_id, reason: reasonWithoutStatement(error) })); }
   };
   for (const record of pending) await start(record, record.initiator);
   if (conversationAdmissionClosed()) return;
+  for (const record of await backend.capacity.queued()) {
+    if (occupied.has(record.thread_id)) continue;
+    const saved = record.execution;
+    try {
+      const agent = await options.buildAgentFor({ ownerUserId: record.owner_user_id, agentId: record.bot_id, initiator: saved.initiator });
+      backend.runner.run({ threadId: record.thread_id, agent, input: saved.input, execution: saved,
+        persistedInputMessages: saved.persistedInputMessages, continuationRunId: saved.continuationRunId, join: false,
+      }).subscribe({ error: error => console.warn(JSON.stringify({ type: "capacity-recovery-pending", runId: record.run_id, reason: reasonWithoutStatement(error) })) });
+    } catch (error) { console.warn(JSON.stringify({ type: "capacity-recovery-pending", runId: record.run_id, reason: reasonWithoutStatement(error) })); }
+  }
   for (const command of await backend.commands.pending()) {
     if (!occupied.has(command.thread_id)) await start(command, { kind: "person" });
   }

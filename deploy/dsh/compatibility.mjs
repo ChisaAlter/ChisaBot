@@ -9,5 +9,6 @@ if (major < 24 || (major === 24 && minor < 9)) throw new Error('DSH requires Nod
 // Product readers retain preceding contracts: 1 = typed inbox/attachments/skills;
 // 2 = durable personal sends and verified task outcomes. Reader 1 could replay these effects
 // or mark a task complete without its required evidence, even though native logs still open.
-export const compatibility = { protocol: 1, runtimeVersion, historyReader: `dsh-${runtimeVersion}`, conversationReader: 2 };
+// 3 = persistent account-wide background admission and safe queued-execution recovery.
+export const compatibility = { protocol: 1, runtimeVersion, historyReader: `dsh-${runtimeVersion}`, conversationReader: 3 };
 if (process.argv.includes('--print')) console.log(JSON.stringify(compatibility));
