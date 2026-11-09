@@ -610,9 +610,10 @@ export function createDeviceStore(database: Database) {
         actorId: row.actorId,
         actorName: row.actorName,
         action: row.action,
-        summary: row.summary,
+        // 读取时再打一遍：挡住写入前规则尚未覆盖的存量明文（线上清理另做）。
+        summary: redactText(row.summary ?? ""),
         outcome: row.outcome,
-        detail: row.detail,
+        detail: row.detail == null ? null : redactText(row.detail),
         durationMs: row.durationMs,
       }));
     },

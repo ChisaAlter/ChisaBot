@@ -44,6 +44,7 @@ import {
   flattenForMatch,
   titleForTool,
 } from "./classify";
+import { redactText } from "../computer/activity-redact";
 import {
   currentConfirmActor,
   currentConfirmInteractive,
@@ -1028,17 +1029,18 @@ export function createConfirmations(
         tool: call?.toolName ?? "device",
         title: `在你的电脑上${input.operationLabel}`,
         target: input.deviceName,
+        // 库里和审批视图只存打码后的摘要；真正执行的命令仍在 hub 内存的 input.args 里。
         details: [
           {
             label: "要做的事",
-            value: input.summary.slice(0, 600),
+            value: redactText(input.summary).slice(0, 600),
             code: /命令|shell|路径/.test(input.operationLabel),
           },
           ...(input.diff
             ? [
                 {
                   label: "改动",
-                  value: input.diff.slice(0, 8000),
+                  value: redactText(input.diff).slice(0, 8000),
                   code: true,
                   diff: true,
                 },

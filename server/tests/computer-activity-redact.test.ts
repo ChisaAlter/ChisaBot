@@ -308,3 +308,356 @@ describe("redactDetail safety", () => {
     expect(out[1]).toBeNull();
   });
 });
+
+describe("QA514 samples", () => {
+  // QA514 全量样本（来自 cb-qa/514-qa/qa/cases514.json）
+  const qa514: Array<{
+    id: string;
+    kind: "secret" | "keep";
+    text: string;
+    secrets?: string[];
+    keep?: string[];
+  }> = [
+    {
+      id: "ima-inline",
+      kind: "secret",
+      text: "IMA_OPENAPI_CLIENTID=FAKEcid0001 IMA_OPENAPI_APIKEY=FAKEkey0002 node wrap.mjs",
+      secrets: ["FAKEcid0001", "FAKEkey0002"],
+      keep: ["IMA_OPENAPI_CLIENTID", "IMA_OPENAPI_APIKEY", "node wrap.mjs"],
+    },
+    {
+      id: "ima-export-dq",
+      kind: "secret",
+      text: 'export IMA_OPENAPI_APIKEY="FAKEkey0003 with space" && node wrap.mjs',
+      secrets: ["FAKEkey0003"],
+      keep: ["IMA_OPENAPI_APIKEY"],
+    },
+    {
+      id: "ima-ps-env-noSpace",
+      kind: "secret",
+      text: "$env:IMA_OPENAPI_CLIENTID='FAKEcid0004'; $env:IMA_OPENAPI_APIKEY='FAKEkey0005'; node wrap.mjs",
+      secrets: ["FAKEcid0004", "FAKEkey0005"],
+    },
+    {
+      id: "ima-ps-env-spaces",
+      kind: "secret",
+      text: "$env:IMA_OPENAPI_CLIENTID = 'FAKEcid0006'; $env:IMA_OPENAPI_APIKEY = \"FAKEkey0007\"; node wrap.mjs",
+      secrets: ["FAKEcid0006", "FAKEkey0007"],
+      keep: ["IMA_OPENAPI_CLIENTID"],
+    },
+    {
+      id: "ima-cmd-set-quoted",
+      kind: "secret",
+      text: 'set "IMA_OPENAPI_APIKEY=FAKEkey0008" && node wrap.mjs',
+      secrets: ["FAKEkey0008"],
+    },
+    {
+      id: "ima-cmd-set-amp",
+      kind: "secret",
+      text: "set IMA_OPENAPI_CLIENTID=FAKEcid0009&& set IMA_OPENAPI_APIKEY=FAKEkey0010&& node wrap.mjs",
+      secrets: ["FAKEcid0009", "FAKEkey0010"],
+    },
+    {
+      id: "ima-json",
+      kind: "secret",
+      text: 'echo \'{"IMA_OPENAPI_APIKEY":"FAKEkey0011","IMA_OPENAPI_CLIENTID":"FAKEcid0012"}\' > cfg.json',
+      secrets: ["FAKEkey0011", "FAKEcid0012"],
+      keep: ["cfg.json"],
+    },
+    {
+      id: "json-client-spaces",
+      kind: "secret",
+      text: 'node -e \'f({"client_id": "FAKEcid0013", "client_secret": "FAKEsec0014"})\' ',
+      secrets: ["FAKEcid0013", "FAKEsec0014"],
+    },
+    {
+      id: "lower-client_id",
+      kind: "secret",
+      text: "client_id=FAKEcid0015 ./run.sh",
+      secrets: ["FAKEcid0015"],
+      keep: ["./run.sh"],
+    },
+    {
+      id: "camel-clientId",
+      kind: "secret",
+      text: "clientId=FAKEcid0016 node a.js",
+      secrets: ["FAKEcid0016"],
+    },
+    {
+      id: "CLIENT_ID",
+      kind: "secret",
+      text: "GOOGLE_CLIENT_ID=FAKEcid0017 GOOGLE_CLIENT_SECRET=FAKEsec0018 npm start",
+      secrets: ["FAKEcid0017", "FAKEsec0018"],
+      keep: ["npm start"],
+    },
+    {
+      id: "flag-client-id",
+      kind: "secret",
+      text: "ima-cli --client-id FAKEcid0019 --client-secret FAKEsec0020 --api-key FAKEkey0021",
+      secrets: ["FAKEcid0019", "FAKEsec0020", "FAKEkey0021"],
+    },
+    {
+      id: "flag-client-id-eq",
+      kind: "secret",
+      text: "ima-cli --client-id=FAKEcid0022 --apikey=FAKEkey0023",
+      secrets: ["FAKEcid0022", "FAKEkey0023"],
+    },
+    {
+      id: "url-query",
+      kind: "secret",
+      text: 'curl "https://ima.qq.com/openapi/x?client_id=FAKEcid0024&api_key=FAKEkey0025&clientid=FAKEcid0026&page=2"',
+      secrets: ["FAKEcid0024", "FAKEkey0025", "FAKEcid0026"],
+      keep: ["page=2"],
+    },
+    {
+      id: "url-userinfo",
+      kind: "secret",
+      text: "git clone https://u:FAKEpw0027@github.com/a/b.git",
+      secrets: ["FAKEpw0027"],
+    },
+    {
+      id: "headers",
+      kind: "secret",
+      text: 'curl -H "X-Api-Key: FAKEkey0028" -H "Authorization: Bearer FAKEtok0029abcdefgh" -H "X-Client-Id: FAKEcid0030" https://e.x/',
+      secrets: ["FAKEkey0028", "FAKEtok0029abcdefgh", "FAKEcid0030"],
+    },
+    {
+      id: "yaml",
+      kind: "secret",
+      text: "printf 'IMA_OPENAPI_APIKEY: FAKEkey0031\\nIMA_OPENAPI_CLIENTID: FAKEcid0032\\n' > .env.yml",
+      secrets: ["FAKEkey0031", "FAKEcid0032"],
+    },
+    {
+      id: "docker-e",
+      kind: "secret",
+      text: "docker run -e IMA_OPENAPI_APIKEY=FAKEkey0033 --env IMA_OPENAPI_CLIENTID=FAKEcid0034 img",
+      secrets: ["FAKEkey0033", "FAKEcid0034"],
+      keep: ["docker run", "img"],
+    },
+    {
+      id: "multiline-cmd",
+      kind: "secret",
+      text: "cat > .env <<EOF\nIMA_OPENAPI_APIKEY=FAKEkey0035\nIMA_OPENAPI_CLIENTID=FAKEcid0036\nPATH=/usr/bin\nEOF",
+      secrets: ["FAKEkey0035", "FAKEcid0036"],
+      keep: ["PATH=/usr/bin"],
+    },
+    {
+      id: "generic-keys",
+      kind: "secret",
+      text: "DB_PASSWORD=FAKEpw0037 GITHUB_TOKEN=FAKEtok0038 AWS_SECRET_ACCESS_KEY=FAKEsec0039 MY_API_KEY=FAKEkey0040 PASSWORD=FAKEpw0041 password=FAKEpw0042 x",
+      secrets: [
+        "FAKEpw0037",
+        "FAKEtok0038",
+        "FAKEsec0039",
+        "FAKEkey0040",
+        "FAKEpw0041",
+        "FAKEpw0042",
+      ],
+    },
+    {
+      id: "plain-_KEY",
+      kind: "secret",
+      text: "OPENAI_KEY=FAKEkey0043 STRIPE_KEY=FAKEkey0044 IMA_OPENAPI_KEY=FAKEkey0045 SECRET_KEY_BASE=FAKEsec0046 x",
+      secrets: ["FAKEkey0043", "FAKEkey0044", "FAKEkey0045", "FAKEsec0046"],
+    },
+    {
+      id: "ima-token-secret",
+      kind: "secret",
+      text: "IMA_OPENAPI_TOKEN=FAKEtok0047 IMA_OPENAPI_SECRET=FAKEsec0048 x",
+      secrets: ["FAKEtok0047", "FAKEsec0048"],
+    },
+    {
+      id: "long-value",
+      kind: "secret",
+      text: "IMA_OPENAPI_APIKEY=FAKElongQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ node x",
+      secrets: ["FAKElong", "QQQQQQQQ"],
+    },
+    {
+      id: "straddle-300",
+      kind: "secret",
+      text: "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa IMA_OPENAPI_APIKEY=FAKEstraddle0049zzzzzzzzzzzzzzzzzzzz",
+      secrets: ["FAKEstr", "FAKEstraddle0049"],
+    },
+    {
+      id: "straddle-sk",
+      kind: "secret",
+      text: "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa sk-FAKEskvalue0050abcdefghijklmnop",
+      secrets: ["FAKEskv", "FAKEskvalue0050"],
+    },
+    {
+      id: "err-detail",
+      kind: "secret",
+      text: "spawn failed: IMA_OPENAPI_APIKEY=FAKEkey0051 IMA_OPENAPI_CLIENTID=FAKEcid0052",
+      secrets: ["FAKEkey0051", "FAKEcid0052"],
+    },
+    {
+      id: "env-dump-detail",
+      kind: "secret",
+      text: "exit 1\nIMA_OPENAPI_APIKEY=FAKEkey0053\nIMA_OPENAPI_CLIENTID=FAKEcid0054\nHOME=/root",
+      secrets: ["FAKEkey0053", "FAKEcid0054"],
+      keep: ["HOME=/root"],
+    },
+    {
+      id: "diff-detail",
+      kind: "secret",
+      text: "true",
+      secrets: ["FAKEkey0055", "FAKEcid0056"],
+    },
+    {
+      id: "local-audit",
+      kind: "secret",
+      text: "本机执行：$env:IMA_OPENAPI_APIKEY='FAKEkey0057'; IMA_OPENAPI_CLIENTID=FAKEcid0058 node x",
+      secrets: ["FAKEkey0057", "FAKEcid0058"],
+    },
+    {
+      id: "plain-cmd",
+      kind: "keep",
+      text: "ls -la /home/qa/project && cat README.md | grep -n client",
+    },
+    {
+      id: "normal-env",
+      kind: "keep",
+      text: "PATH=/usr/local/bin:$PATH HOME=/root NODE_ENV=production PORT=3000 LANG=C.UTF-8 node server.js",
+    },
+    {
+      id: "client-idle",
+      kind: "keep",
+      text: "CLIENT_IDLE_TIMEOUT=30 CLIENT_IDENTIFIER_HEADER=x-req node s.js",
+    },
+    {
+      id: "max-tokens",
+      kind: "keep",
+      text: "MAX_TOKENS=4096 KEYBOARD=us TOKENIZER=bert node s.js",
+    },
+    {
+      id: "names-only",
+      kind: "keep",
+      text: "echo $IMA_OPENAPI_APIKEY $IMA_OPENAPI_CLIENTID; unset IMA_OPENAPI_APIKEY",
+    },
+    {
+      id: "empty-value",
+      kind: "keep",
+      text: 'IMA_OPENAPI_APIKEY= node x.js; IMA_OPENAPI_CLIENTID="" node y.js',
+    },
+    {
+      id: "files",
+      kind: "keep",
+      text: "cat client_id.txt api_key_rotation.md secret-santa.txt ./config/clientid.example",
+    },
+    {
+      id: "email-time-ver",
+      kind: "keep",
+      text: "git commit -m 'release v1.2.3 by qa@example.com at 2026-11-09 21:00:00 error:500'",
+    },
+    {
+      id: "urls",
+      kind: "keep",
+      text: "curl https://example.com/docs/api?page=2&lang=zh https://registry.npmjs.org/@scope/pkg/-/pkg-1.0.0.tgz",
+    },
+    {
+      id: "ports-paths",
+      kind: "keep",
+      text: "ssh -p 22 user@host 'cd /srv/app && mkdir -p logs' && docker run -p 8080:80 img",
+    },
+    { id: "pwd", kind: "keep", text: "PWD=/tmp/work cd $PWD" },
+    {
+      id: "git-msg",
+      kind: "keep",
+      text: 'git commit -m "fix client id handling for ima openapi"',
+    },
+    // SUMMARY 补充样本
+    {
+      id: "ps-space",
+      kind: "secret",
+      text: "$env:IMA_OPENAPI_CLIENTID = 'FAKEcid0006'; $env:IMA_OPENAPI_APIKEY = \"FAKEkey0007\"",
+      secrets: ["FAKEcid0006", "FAKEkey0007"],
+    },
+    {
+      id: "json-ima",
+      kind: "secret",
+      text: '{"IMA_OPENAPI_APIKEY":"FAKEjk1","IMA_OPENAPI_CLIENTID":"FAKEjc1"}',
+      secrets: ["FAKEjk1", "FAKEjc1"],
+    },
+    {
+      id: "json-oauth",
+      kind: "secret",
+      text: '{"client_id": "FAKEcid", "client_secret": "FAKEsec"}',
+      secrets: ["FAKEcid", "FAKEsec"],
+    },
+    {
+      id: "yaml-plain",
+      kind: "secret",
+      text: "IMA_OPENAPI_APIKEY: FAKEyaml1",
+      secrets: ["FAKEyaml1"],
+    },
+    {
+      id: "flag-client-id",
+      kind: "secret",
+      text: "tool --client-id FAKEcidFLAG --api-key=FAKEapikey",
+      secrets: ["FAKEcidFLAG", "FAKEapikey"],
+    },
+    {
+      id: "hdr-x-api",
+      kind: "secret",
+      text: 'curl -H "X-Api-Key: FAKEhdr1" -H "X-Client-Id: FAKEhdr2"',
+      secrets: ["FAKEhdr1", "FAKEhdr2"],
+    },
+    {
+      id: "key-suffix",
+      kind: "secret",
+      text: "OPENAI_KEY=FAKEok1 STRIPE_KEY=FAKEsk1",
+      secrets: ["FAKEok1", "FAKEsk1"],
+    },
+    {
+      id: "semi-pass",
+      kind: "secret",
+      text: "DB_PASSWORD=pa;ss1234",
+      secrets: ["pa;ss1234"],
+    },
+    {
+      id: "pipe-pass",
+      kind: "secret",
+      text: "API_KEY=ab|cd1234",
+      secrets: ["ab|cd1234"],
+    },
+    { id: "false-client-idle", kind: "keep", text: "CLIENT_IDLE_TIMEOUT=30" },
+    {
+      id: "false-client-ident",
+      kind: "keep",
+      text: "CLIENT_IDENTIFIER_HEADER=x-req",
+    },
+    { id: "false-max-tokens", kind: "keep", text: "MAX_TOKENS=4096" },
+    { id: "false-tokenizer", kind: "keep", text: "TOKENIZER=bert" },
+  ];
+
+  for (const sample of qa514) {
+    if (sample.kind === "keep") {
+      test(`keeps ${sample.id}: ${sample.text.slice(0, 60)}`, () => {
+        expect(redactText(sample.text)).toBe(sample.text);
+      });
+      continue;
+    }
+    test(`masks ${sample.id}: ${sample.text.slice(0, 60)}`, () => {
+      const out = redactText(sample.text);
+      for (const secret of sample.secrets ?? []) {
+        expect(out).not.toContain(secret);
+      }
+      for (const keep of sample.keep ?? []) {
+        expect(out).toContain(keep);
+      }
+      expect(redactText(out)).toBe(out);
+    });
+  }
+
+  test("redacts before clip so sk- prefixes are not half-leaked", () => {
+    const sk = `sk-${"A".repeat(40)}`;
+    const masked = redactText(sk);
+    expect(masked).toBe("••••");
+    expect(clip(masked, 20).text).toBe("••••");
+    // 错误顺序：先截到不足 sk- 规则所需长度，前缀会漏出
+    const clippedFirst = sk.slice(0, 10);
+    expect(clippedFirst.startsWith("sk-")).toBe(true);
+    expect(clippedFirst).toContain("sk-");
+    expect(redactText(clippedFirst)).toBe(clippedFirst);
+  });
+});

@@ -39,13 +39,44 @@ export function redactUrl(value: string): string {
   return parsed.toString().replaceAll(encodeURIComponent(MASK), MASK);
 }
 
+/**
+ * 敏感配置名：按「段」匹配，避免 CLIENT_IDLE / TOKENIZER / KEYBOARD / MAX_TOKENS 被误打。
+ * 命中：…_TOKEN / …_SECRET / …_PASSWORD / …_API_KEY / …_CLIENT_ID / …_KEY（OPENAI_KEY）/
+ * CLIENTID（无下划线粘写）/ SSHPASS / MYSQL_PWD。
+ */
+const SENSITIVE_NAME_SEGMENT =
+  /(?:^|_)(?:api_?key|access_?key|private_?key|client_?id|client_?secret|token|secret|password|passwd|key)(?:_|$)/i;
+
+export function isSensitiveConfigName(name: string): boolean {
+  const n = name.trim();
+  if (!n) return false;
+  if (/^SSHPASS$/i.test(n)) return true;
+  if (/^[A-Z0-9_]+_PWD$/i.test(n)) return true;
+  return SENSITIVE_NAME_SEGMENT.test(n);
+}
+
+/** 赋值右侧：引号整段，或非空白整段（密码里的 ;|& 也算值的一部分，QA514）。 */
+const ASSIGNED_VALUE = String.raw`("[^"]*"|'[^']*'|[^\s"'=&\\,{}\[\]]+)`;
+/** 空赋值（含 "" / ''）不算泄漏，原样保留（QA514 empty-value）。 */
+function isEmptyAssignedValue(value: string): boolean {
+  return value === "" || value === "''" || value === '""';
+}
+
+/** 已经是 ••••（或以其开头，避免把后面的 ; 再吞掉）就不要再打。 */
+function alreadyMasked(value: string): boolean {
+  return (
+    value === MASK ||
+    value.startsWith(MASK) ||
+    value === `"${MASK}"` ||
+    value === `'${MASK}'`
+  );
+}
+
 const SECRET_SHAPES: RegExp[] = [
   // Authorization: Bearer xxx / token xxx
   /\b(bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi,
-  // KEY=value（环境变量 / 配置）。`_PWD` 结尾（MYSQL_PWD）和 SSHPASS 也算；单独的 PWD（当前目录）不算。
-  /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CLIENT_?ID|CLIENT_?SECRET)[A-Z0-9_]*|[A-Z0-9_]+_PWD|SSHPASS)=("[^"]*"|'[^']*'|[^\s;|&]+)/gi,
-  // 长参数：--password x / --password=x / --db-password x / --access-token x / --pass x …（任何命令都打）。
-  /(--(?!no-)(?:[a-z0-9]+-)*(?:password|passwd|pass|token|secret|api-?key|apikey|key)(?:-[a-z0-9]+)*(?:=|\s+))("[^"]*"|'[^']*'|[^\s"']+)/gi,
+  // 长参数：--password / --client-id / --api-key …（KEY=value / JSON / YAML / 请求头在 redactPlain）
+  /(--(?!no-)(?:[a-z0-9]+-)*(?:password|passwd|pass|token|secret|api-?key|apikey|client-?id|client-?secret|key)(?:-[a-z0-9]+)*(?:=|\s+))("[^"]*"|'[^']*'|[^\s"']+)/gi,
   // 常见密钥前缀
   /\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g,
 ];
@@ -243,15 +274,77 @@ function redactPlain(value: string): string {
     SECRET_SHAPES[0] as RegExp,
     (_m, scheme: string) => `${scheme} ${MASK}`,
   );
+  // PowerShell：$env:NAME = '…' / $env:NAME="…" / $env:NAME=…（= 两边可有空格）
+  out = out.replace(
+    new RegExp(
+      String.raw`\$env:([A-Za-z_][A-Za-z0-9_]*)\s*=\s*${ASSIGNED_VALUE}`,
+      "gi",
+    ),
+    (whole, name: string, value: string) => {
+      if (
+        !isSensitiveConfigName(name) ||
+        isEmptyAssignedValue(value) ||
+        alreadyMasked(value)
+      )
+        return whole;
+      return `$env:${name}=${MASK}`;
+    },
+  );
+  // shell / .env：NAME=value（= 左边无空格；空值 NAME= 后直接空白不吞下一词）
+  out = out.replace(
+    new RegExp(String.raw`\b([A-Za-z_][A-Za-z0-9_]*)=${ASSIGNED_VALUE}`, "gi"),
+    (whole, name: string, value: string) => {
+      if (
+        !isSensitiveConfigName(name) ||
+        isEmptyAssignedValue(value) ||
+        alreadyMasked(value)
+      )
+        return whole;
+      return `${name}=${MASK}`;
+    },
+  );
+  // YAML：NAME: value（允许 : 后空白）
+  out = out.replace(
+    new RegExp(
+      String.raw`\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*${ASSIGNED_VALUE}`,
+      "gi",
+    ),
+    (whole, name: string, value: string) => {
+      if (
+        !isSensitiveConfigName(name) ||
+        isEmptyAssignedValue(value) ||
+        alreadyMasked(value)
+      )
+        return whole;
+      return `${name}: ${MASK}`;
+    },
+  );
+  // JSON / 对象字面量："client_id": "…" / "IMA_OPENAPI_APIKEY":"…"
+  out = out.replace(
+    new RegExp(
+      String.raw`(["'])([A-Za-z_][A-Za-z0-9_]*)\1\s*:\s*${ASSIGNED_VALUE}`,
+      "gi",
+    ),
+    (whole, quote: string, name: string, value: string) => {
+      if (
+        !isSensitiveConfigName(name) ||
+        isEmptyAssignedValue(value) ||
+        alreadyMasked(value)
+      )
+        return whole;
+      return `${quote}${name}${quote}: ${MASK}`;
+    },
+  );
+  // 请求头：X-Api-Key / X-Client-Id / X-Access-Token（不打 X-Request-Id）
+  out = out.replace(
+    /\b(X-(?:[A-Za-z0-9]+-)*(?:Api-?Key|Client-?Id|Access-?Token|Auth-?Token|Secret(?:-?Key)?))\s*:\s*("[^"]*"|'[^']*'|[^\s"']+)/gi,
+    (_m, header: string) => `${header}: ${MASK}`,
+  );
   out = out.replace(
     SECRET_SHAPES[1] as RegExp,
-    (_m, name: string) => `${name}=${MASK}`,
-  );
-  out = out.replace(
-    SECRET_SHAPES[2] as RegExp,
     (_m, flag: string) => `${flag}${MASK}`,
   );
-  out = out.replace(SECRET_SHAPES[3] as RegExp, MASK);
+  out = out.replace(SECRET_SHAPES[2] as RegExp, MASK);
   return out;
 }
 
@@ -295,7 +388,7 @@ export function isSensitiveField(
 /** 没有空格、够长、混了字母数字符号：大概率是口令或 token，不显示。 */
 export function looksLikeSecret(text: string): boolean {
   if (text.length < 8 || /\s/.test(text)) return false;
-  if (new RegExp((SECRET_SHAPES[3] as RegExp).source).test(text)) return true;
+  if (new RegExp((SECRET_SHAPES[2] as RegExp).source).test(text)) return true;
   const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((re) =>
     re.test(text),
   ).length;
