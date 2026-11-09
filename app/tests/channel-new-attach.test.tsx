@@ -42,7 +42,7 @@ import { settleReactWork } from "./settle-react-work";
  * 替换地址跳到 `/channel/<id>`，那边的输入框第一帧就有字、文件自己重新上传到这段对话。
  *
  * `/channel/$channelId` 这里只挂真正的 Composer（频道 id 作草稿键，和 channel-chat.tsx 一样）：整页聊天要
- * CopilotKit 运行时，和这里要证明的「字和附件跟过去了」无关。
+ * conversation client 运行时，和这里要证明的「字和附件跟过去了」无关。
  */
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));

@@ -1,4 +1,5 @@
 /** Background turns use the same conversation runner and durable history as browser turns. */
+import { normalizeConversationEvent } from "../legacy/protocol";
 import type {
   AbstractAgent,
   BaseEvent,
@@ -26,7 +27,7 @@ import {
   HeadlessToolsMiddleware,
   type HeadlessWaiting,
 } from "../computer/headless-tools";
-import { historyOrEmpty } from "../copilot";
+import { historyOrEmpty } from "../conversation-runtime";
 import { filterHeadlessForWorkflow } from "../workflows/policy";
 import type { DrawnComponent, TurnRunner } from "./types";
 
@@ -34,7 +35,7 @@ import type { DrawnComponent, TurnRunner } from "./types";
  * The gap between stopping a turn and giving up on it.
  *
  * `abortRun` on `RunSelectedAgent` reaches the agent the run turned into, and that agent does not
- * exist until `build()` resolves (`copilot.ts:649, 664-673`): during that window the wrapper has no
+ * exist until `build()` resolves (`conversation-runtime.ts:649, 664-673`): during that window the wrapper has no
  * `inner`, so abort is a no-op and the deadline cannot actually stop anything. This is the backstop
  * that settles the promise anyway, so a firing cannot hang for ever on a build that never finishes.
  *
@@ -172,7 +173,7 @@ function toAgentMessage(message: ThreadHistoryMessage): Message {
 
 /**
  * Re-exported from `agents/history-sanitize.ts`, where it now lives, because a chat turn needs
- * it too and this module cannot be imported from `copilot.ts`, since the import already runs the
+ * it too and this module cannot be imported from `conversation-runtime.ts`, since the import already runs the
  * other way. Kept as a name on this module because this is where the reasoning was found and where the
  * tests that cover the seeding path still reach for it.
  */
@@ -587,6 +588,7 @@ export function createTurnRunner(options: {
              * answered with nothing.
              */
             next: (event) => {
+              event = normalizeConversationEvent(event);
               if (event.type === EventType.CUSTOM && "name" in event && event.name === "chisabot.capacity") {
                 const status = (event as BaseEvent & { value?: { status?: string } }).value?.status;
                 capacityState = status === "queued" ? "waiting" : "admitted";
@@ -594,7 +596,7 @@ export function createTurnRunner(options: {
               }
               if (
                 event.type === EventType.CUSTOM &&
-                event.name === "openbot.headless.waiting"
+                event.name === "chisabot.headless.waiting"
               ) {
                 const value = event.value as HeadlessWaiting & {
                   message?: string;

@@ -103,11 +103,30 @@ dsh_wait_idle() {
 }
 
 dsh_record_reader() {
-  local enabled
+  local enabled observed
   enabled=$(dsh_enabled) || return 1
   [ "$enabled" = 1 ] || return 0
-  dsh_ops compatibility > "$COMPOSE_DIR/.dsh-reader.json.tmp" && chmod 0600 "$COMPOSE_DIR/.dsh-reader.json.tmp" \
-    && mv "$COMPOSE_DIR/.dsh-reader.json.tmp" "$COMPOSE_DIR/.dsh-reader.json"
+  observed=$(dsh_ops compatibility) || return 1
+  dsh_record_reader_floor "$observed"
+}
+
+dsh_record_reader_floor() (
+  local observed=$1
+  umask 077
+  exec 7>"${COMPOSE_DIR:?}/.dsh-reader.lock"
+  flock -w 60 7 || return 1
+  "${CHISABOT_DSH_NODE:-node}" "${U:?}/reader-compatibility.mjs" --record "$COMPOSE_DIR/.dsh-reader.json" "$observed"
+)
+
+# Commit the candidate requirement before its container can run migrations. Even a failed
+# readiness check leaves this floor in place; rollback must use a reader that can read that schema.
+dsh_prepare_candidate_reader() {
+  local image=$1 enabled candidate
+  enabled=$(dsh_enabled) || return 1
+  [ "$enabled" = 1 ] || return 0
+  dsh_require_compatible_image "$image" || return 1
+  candidate=$(docker run --rm --network none --entrypoint cat "$image" /app/deploy/dsh/runtime-compat.json) || return 1
+  dsh_record_reader_floor "$candidate"
 }
 
 # A code rollback keeps the live database and DSH volume. Never restore a pre-release dump automatically.

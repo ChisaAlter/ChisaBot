@@ -50,7 +50,7 @@ describe.skipIf(!url)("paused schedules have no next run", () => {
       [owner],
     );
     await sql
-      .unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [
+      .unsafe("DELETE FROM chisabot_local_threads WHERE owner_user_id = $1", [
         owner,
       ])
       .catch(() => {});
@@ -88,7 +88,7 @@ describe.skipIf(!url)("paused schedules have no next run", () => {
     // 本地库里有对话表时要有这条对话（CI 的库可能没有这张表，没有时服务按「对话还在」处理）。
     await sql
       .unsafe(
-        "INSERT INTO openbot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, 'bot1')",
+        "INSERT INTO chisabot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, 'bot1')",
         [threadId, owner],
       )
       .catch(() => {});

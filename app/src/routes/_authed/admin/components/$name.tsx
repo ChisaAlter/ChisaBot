@@ -61,8 +61,8 @@ import {
   type DataFunctionSummary,
   dataFunctionsQueryOptions,
 } from "@/lib/components/queries";
-import { RENDERABLE_NAMES } from "@/lib/copilot/gallery-registry";
-import { LazyCopilotProvider } from "@/lib/copilot/lazy-provider";
+import { RENDERABLE_NAMES } from "@/lib/conversations/gallery-registry";
+import { LazyConversationToolsProvider } from "@/lib/conversations/lazy-provider";
 import { queryClient } from "@/query-client";
 
 /**
@@ -78,11 +78,11 @@ const BACK = {
 export const Route = createFileRoute("/_authed/admin/components/$name")({
   // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 components 才能进。
   beforeLoad: requireExtra("components"),
-  // 组件预览里的工具卡片要 CopilotKit 上下文；它不再包整个应用，只包聊天主区（DESIGN.md §41.5），这里自己包一层，按需加载。
+  // 组件预览里的工具卡片要 会话客户端 上下文；它不再包整个应用，只包聊天主区（DESIGN.md §41.5），这里自己包一层，按需加载。
   component: () => (
-    <LazyCopilotProvider>
+    <LazyConversationToolsProvider>
       <RouteComponent />
-    </LazyCopilotProvider>
+    </LazyConversationToolsProvider>
   ),
 });
 

@@ -1,3 +1,4 @@
+import { assertConversationNamespace, conversationPath, normalizeConversationEvent, normalizeRunInput } from "./legacy/protocol";
 import { cancelSchedulesForDeletedThreads } from "./schedules/service";
 import { createConversationInteractions } from "./conversations/interactions";
 import { createDshRunJournal } from "./conversations/run-journal";
@@ -296,7 +297,7 @@ class ConversationStore {
 
   async thread(threadId: string): Promise<ThreadRow> {
     const rows = await this.database.$client.unsafe<ThreadRow[]>(
-      "SELECT * FROM openbot_local_threads WHERE id = $1",
+      "SELECT * FROM chisabot_local_threads WHERE id = $1",
       [threadId],
     );
     if (!rows[0]) throw new LocalConversationError("Thread not found", 404);
@@ -311,10 +312,11 @@ class ConversationStore {
   }
 
   async events(threadId: string): Promise<EventRow[]> {
-    return await this.database.$client.unsafe<EventRow[]>(
-      "SELECT sequence, event FROM openbot_local_events WHERE thread_id = $1 ORDER BY sequence",
+    const rows = await this.database.$client.unsafe<EventRow[]>(
+      "SELECT sequence, event FROM chisabot_local_events WHERE thread_id = $1 ORDER BY sequence",
       [threadId],
     );
+    return rows.map(row => ({ ...row, event: normalizeConversationEvent(row.event) }));
   }
 
   /** 只要最大序号，接入时不必把整段事件日志读进内存（长对话可达数千条 / 上 MB）。 */
@@ -322,7 +324,7 @@ class ConversationStore {
     const rows = await this.database.$client.unsafe<
       { sequence: string | number | bigint | null }[]
     >(
-      "SELECT max(sequence) AS sequence FROM openbot_local_events WHERE thread_id = $1",
+      "SELECT max(sequence) AS sequence FROM chisabot_local_events WHERE thread_id = $1",
       [threadId],
     );
     const value = rows[0]?.sequence;
@@ -336,8 +338,8 @@ class ConversationStore {
     state: unknown,
   ) {
     const rows = await this.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET messages = $3::text::jsonb, state = $4::text::jsonb,
-       snapshot_sequence=(SELECT coalesce(max(sequence),0) FROM openbot_local_events WHERE thread_id=$1), updated_at = now()
+      `UPDATE chisabot_local_threads SET messages = $3::text::jsonb, state = $4::text::jsonb,
+       snapshot_sequence=(SELECT coalesce(max(sequence),0) FROM chisabot_local_events WHERE thread_id=$1), updated_at = now()
        WHERE id = $1 AND run_id = $2 AND lock_expires_at > now() RETURNING id`,
       [threadId, runId, JSON.stringify(messages), JSON.stringify(state ?? {})],
     );
@@ -356,8 +358,8 @@ class ConversationStore {
     const rows = await this.database.$client.unsafe<
       { sequence: string | number | bigint }[]
     >(
-      `INSERT INTO openbot_local_events (thread_id, run_id, event)
-       SELECT id, $2, $3::text::jsonb FROM openbot_local_threads
+      `INSERT INTO chisabot_local_events (thread_id, run_id, event)
+       SELECT id, $2, $3::text::jsonb FROM chisabot_local_threads
        WHERE id = $1 AND run_id = $2 AND lock_expires_at > now() RETURNING sequence`,
       [threadId, runId, JSON.stringify(event)],
     );
@@ -375,7 +377,7 @@ class ConversationStore {
  *
  * 以前只把它标成 interrupted、放掉锁：存下的事件停在半截（最后一条常常是 TOOL_CALL_END，没有结果、没有
  * RUN_ERROR），重新打开对话时那张「正在操作你的设备」卡永远在转，报错条要么没有，要么说成「连不上模型服务」。
- * 现在按正常收尾的同一套规则（@copilotkit/shared finalizeRunEvents）把它补完：没结果的工具调用补一条
+ * 现在按正常收尾的同一套规则（finalizeRunEvents）把它补完：没结果的工具调用补一条
  * 「被打断」的结果，最后补一条说清原因的 RUN_ERROR；对话记录里也给这些调用补上同样的结果。
  * 只追加，不改不删已有的事件和消息。
  */
@@ -388,11 +390,11 @@ export async function closeInterruptedRun(
   runId: string,
 ): Promise<boolean> {
   const rows = await database.$client.unsafe<{ event: BaseEvent }[]>(
-    "SELECT event FROM openbot_local_events WHERE thread_id = $1 AND run_id = $2 ORDER BY sequence",
+    "SELECT event FROM chisabot_local_events WHERE thread_id = $1 AND run_id = $2 ORDER BY sequence",
     [threadId, runId],
   );
   if (!rows.length) return false;
-  const events = rows.map((row) => row.event);
+  const events = rows.map((row) => normalizeConversationEvent(row.event));
   if (
     events.some(
       (event) =>
@@ -409,7 +411,7 @@ export async function closeInterruptedRun(
   if (!appended.length) return false;
   for (const event of appended) {
     await database.$client.unsafe(
-      "INSERT INTO openbot_local_events (thread_id, run_id, event) VALUES ($1, $2, $3::text::jsonb)",
+      "INSERT INTO chisabot_local_events (thread_id, run_id, event) VALUES ($1, $2, $3::text::jsonb)",
       [threadId, runId, JSON.stringify(event)],
     );
   }
@@ -420,7 +422,7 @@ export async function closeInterruptedRun(
   >;
   if (results.length) {
     const thread = await database.$client.unsafe<{ messages: Message[] }[]>(
-      "SELECT messages FROM openbot_local_threads WHERE id = $1",
+      "SELECT messages FROM chisabot_local_threads WHERE id = $1",
       [threadId],
     );
     const messages = thread[0]?.messages;
@@ -457,7 +459,7 @@ export async function closeInterruptedRun(
       }
       if (next !== messages) {
         await database.$client.unsafe(
-          "UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
+          "UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
           [threadId, JSON.stringify(next)],
         );
       }
@@ -480,7 +482,7 @@ export class LocalConversationClient {
         400,
       );
     await this.store.database.$client.unsafe(
-      `INSERT INTO openbot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, $3)
+      `INSERT INTO chisabot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, $3)
        ON CONFLICT (id) DO NOTHING`,
       [identity.threadId, identity.userId, identity.agentId],
     );
@@ -517,7 +519,7 @@ export class LocalConversationClient {
           if (await backgroundCount(tx, identity.userId) >= BACKGROUND_CAPACITY) return null;
         }
         const claimed = await tx.unsafe(
-      `UPDATE openbot_local_threads SET run_id = $2,
+      `UPDATE chisabot_local_threads SET run_id = $2,
        lock_expires_at = now() + $5 * interval '1 second', updated_at = now()
        WHERE id = $1 AND owner_user_id = $3 AND agent_id = $4
        AND (run_id IS NULL OR lock_expires_at <= now() OR run_id = $2)
@@ -530,7 +532,7 @@ export class LocalConversationClient {
         ttl(identity.ttlSeconds),
       ],
         );
-        if (claimed.length && identity.background) await tx.unsafe("UPDATE openbot_local_runs SET execution=coalesce(execution,'{\"kind\":\"background\"}'::jsonb) WHERE thread_id=$1 AND run_id=$2", [identity.threadId, identity.runId]);
+        if (claimed.length && identity.background) await tx.unsafe("UPDATE chisabot_local_runs SET execution=coalesce(execution,'{\"kind\":\"background\"}'::jsonb) WHERE thread_id=$1 AND run_id=$2", [identity.threadId, identity.runId]);
         return claimed;
       });
       if (!rows) { reportCapacityState("waiting"); await new Promise(resolve => setTimeout(resolve, 1000)); continue; }
@@ -543,7 +545,7 @@ export class LocalConversationClient {
 
   async renewThreadLease(identity: LeaseIdentity & { ttlSeconds: number }) {
     const rows = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET lock_expires_at = now() + $3 * interval '1 second'
+      `UPDATE chisabot_local_threads SET lock_expires_at = now() + $3 * interval '1 second'
        WHERE id = $1 AND run_id = $2 AND lock_expires_at > now() RETURNING id`,
       [identity.threadId, identity.runId, ttl(identity.ttlSeconds)],
     );
@@ -563,16 +565,16 @@ export class LocalConversationClient {
     runs: number;
     closed: number;
   }> {
-    await this.store.database.$client.unsafe("UPDATE openbot_local_runs SET status='capacity_wait' WHERE status='reserved'");
+    await this.store.database.$client.unsafe("UPDATE chisabot_local_runs SET status='capacity_wait' WHERE status='reserved'");
     const runs = await this.store.database.$client.unsafe<
       { thread_id: string; run_id: string }[]
     >(
-      `UPDATE openbot_local_runs SET status = 'interrupted', finished_at = now()
-       WHERE status = 'running' AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=openbot_local_runs.thread_id AND d.run_id=openbot_local_runs.run_id AND d.status IN ('admitting','observing','projecting')) RETURNING thread_id, run_id`,
+      `UPDATE chisabot_local_runs SET status = 'interrupted', finished_at = now()
+       WHERE status = 'running' AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=chisabot_local_runs.thread_id AND d.run_id=chisabot_local_runs.run_id AND d.status IN ('admitting','observing','projecting')) RETURNING thread_id, run_id`,
     );
     const threads = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET run_id = NULL, lock_expires_at = NULL
-       WHERE run_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=openbot_local_threads.id AND d.run_id=openbot_local_threads.run_id AND d.status IN ('admitting','observing','projecting')) RETURNING id`,
+      `UPDATE chisabot_local_threads SET run_id = NULL, lock_expires_at = NULL
+       WHERE run_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=chisabot_local_threads.id AND d.run_id=chisabot_local_threads.run_id AND d.status IN ('admitting','observing','projecting')) RETURNING id`,
     );
     let closed = 0;
     for (const run of runs) {
@@ -598,13 +600,13 @@ export class LocalConversationClient {
     runId?: string,
   ): Promise<boolean> {
     const rows = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET run_id = NULL, lock_expires_at = NULL
+      `UPDATE chisabot_local_threads SET run_id = NULL, lock_expires_at = NULL
        WHERE id = $1 AND run_id IS NOT NULL AND ($2::text IS NULL OR run_id = $2) RETURNING run_id`,
       [threadId, runId ?? null],
     );
     if (rows.length === 0) return false;
     await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_runs SET status = 'interrupted', finished_at = now()
+      `UPDATE chisabot_local_runs SET status = 'interrupted', finished_at = now()
        WHERE thread_id = $1 AND status = 'running'`,
       [threadId],
     );
@@ -613,7 +615,7 @@ export class LocalConversationClient {
 
   async releaseThreadLease(identity: LeaseIdentity): Promise<void> {
     await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET run_id = NULL, lock_expires_at = NULL
+      `UPDATE chisabot_local_threads SET run_id = NULL, lock_expires_at = NULL
        WHERE id = $1 AND run_id = $2`,
       [identity.threadId, identity.runId],
     );
@@ -627,17 +629,17 @@ export class LocalConversationClient {
     const runs = await this.store.database.$client.unsafe<
       { thread_id: string; run_id: string }[]
     >(
-      `UPDATE openbot_local_runs r SET status = 'interrupted', finished_at = now()
-       FROM openbot_local_threads t
+      `UPDATE chisabot_local_runs r SET status = 'interrupted', finished_at = now()
+       FROM chisabot_local_threads t
        WHERE r.thread_id = t.id AND r.run_id = t.run_id AND r.status = 'running'
          AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=r.thread_id AND d.run_id=r.run_id AND d.status IN ('admitting','observing','projecting'))
          AND (t.lock_expires_at IS NULL OR t.lock_expires_at <= now())
        RETURNING r.thread_id, r.run_id`,
     );
     const threads = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET run_id = NULL, lock_expires_at = NULL
+      `UPDATE chisabot_local_threads SET run_id = NULL, lock_expires_at = NULL
        WHERE run_id IS NOT NULL AND (lock_expires_at IS NULL OR lock_expires_at <= now())
-       AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=openbot_local_threads.id AND d.run_id=openbot_local_threads.run_id AND d.status IN ('admitting','observing','projecting'))
+       AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=chisabot_local_threads.id AND d.run_id=chisabot_local_threads.run_id AND d.status IN ('admitting','observing','projecting'))
        RETURNING id`,
     );
     return { threads: threads.length, runs: runs.length };
@@ -777,7 +779,7 @@ class PostgresAgentRunner implements ConversationRunner {
           // These state transitions are idempotent, including an unknown COMMIT result.
           for (const runId of relay.inboxRunIds) await this.inbox.settle(threadId, runId, outcome);
           if (recordStop) await this.store.database.$client.unsafe(
-            "UPDATE openbot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2", [threadId, relay.runId],
+            "UPDATE chisabot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2", [threadId, relay.runId],
           );
           if (this.frontend.get(threadId) === relay) this.clearFrontend(threadId);
           return;
@@ -893,6 +895,7 @@ class PostgresAgentRunner implements ConversationRunner {
   }
 
   run(request: AgentRunnerRunRequest): Observable<BaseEvent> {
+    request = { ...request, input: normalizeRunInput(request.input) };
     if (!request.recover) assertConversationAdmissionOpen();
     if (request.input.threadId !== request.threadId || !request.input.runId)
       throw new LocalConversationError(
@@ -994,8 +997,8 @@ class PostgresAgentRunner implements ConversationRunner {
         if (!announced) {
           reportCapacityState("waiting");
           const event = { type: EventType.CUSTOM, name: "chisabot.capacity", value: { status: "queued", message: CAPACITY_WAIT_MESSAGE } } as BaseEvent;
-          await this.store.database.$client.unsafe(`INSERT INTO openbot_local_events(thread_id,run_id,event)
-            SELECT $1,$2,$3::text::jsonb WHERE EXISTS(SELECT 1 FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2 AND status='capacity_wait')`, [request.threadId, request.input.runId, JSON.stringify(event)]);
+          await this.store.database.$client.unsafe(`INSERT INTO chisabot_local_events(thread_id,run_id,event)
+            SELECT $1,$2,$3::text::jsonb WHERE EXISTS(SELECT 1 FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2 AND status='capacity_wait')`, [request.threadId, request.input.runId, JSON.stringify(event)]);
           pending.next(event);
           for (const listener of this.observers.get(request.threadId) ?? []) listener(event);
           announced = true;
@@ -1278,7 +1281,7 @@ class PostgresAgentRunner implements ConversationRunner {
       // Claim and run-record creation are atomic. A duplicate ID never releases the existing lease.
       await this.store.database.$client.begin(async (transaction) => {
         const claimed = await transaction.unsafe(
-          `UPDATE openbot_local_threads SET run_id = $2,
+          `UPDATE chisabot_local_threads SET run_id = $2,
            lock_expires_at = now() + interval '120 seconds', updated_at = now()
            WHERE id = $1 AND (run_id IS NULL OR lock_expires_at <= now() OR run_id = $2)
            AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=$1 AND d.run_id<>$2 AND d.status IN ('admitting','observing','projecting')) RETURNING id`,
@@ -1287,15 +1290,15 @@ class PostgresAgentRunner implements ConversationRunner {
         if (claimed.length === 0)
           throw new LocalConversationError("Thread already running", 409);
         const inserted = await transaction.unsafe(
-          `INSERT INTO openbot_local_runs (thread_id, run_id, status) VALUES ($1, $2, 'running')
+          `INSERT INTO chisabot_local_runs (thread_id, run_id, status) VALUES ($1, $2, 'running')
            ON CONFLICT (thread_id, run_id) DO NOTHING RETURNING run_id`,
           [threadId, entry.runId],
         );
         if (inserted.length === 0 && !request.recover && !request.capacityReserved)
           throw new LocalConversationError("Run ID was already used", 409);
         if (inserted.length === 0 && (request.recover || request.capacityReserved)) await transaction.unsafe(
-          "UPDATE openbot_local_runs SET status='running',finished_at=NULL WHERE thread_id=$1 AND run_id=$2", [threadId, entry.runId]);
-        if (request.execution) await transaction.unsafe("UPDATE openbot_local_runs SET execution=coalesce(execution,$3::text::jsonb) WHERE thread_id=$1 AND run_id=$2", [threadId, entry.runId, JSON.stringify(request.execution)]);
+          "UPDATE chisabot_local_runs SET status='running',finished_at=NULL WHERE thread_id=$1 AND run_id=$2", [threadId, entry.runId]);
+        if (request.execution) await transaction.unsafe("UPDATE chisabot_local_runs SET execution=coalesce(execution,$3::text::jsonb) WHERE thread_id=$1 AND run_id=$2", [threadId, entry.runId, JSON.stringify(request.execution)]);
       });
       started = true;
       if (request.recover) {
@@ -1303,7 +1306,7 @@ class PostgresAgentRunner implements ConversationRunner {
         // End those wire streams before rebuilding the same messages from DSH's durable state.
         const lifecycles = createEventLifecycles();
         const previous = await this.store.database.$client.unsafe<{ event: BaseEvent }[]>(
-          "SELECT event FROM openbot_local_events WHERE thread_id=$1 AND run_id=$2 ORDER BY sequence", [threadId, entry.runId]);
+          "SELECT event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 ORDER BY sequence", [threadId, entry.runId]);
         for (const { event } of previous) lifecycles.accept(event);
         for (const event of lifecycles.closeStreams()) await emit(event);
       }
@@ -1326,7 +1329,7 @@ class PostgresAgentRunner implements ConversationRunner {
       // A recovered receipt can continue without unpausing supplements, but a stopped or
       // edited source run (including a late sign-in result) cannot authorize another turn.
       const [continuationSource] = request.continuationRunId ? await this.store.database.$client.unsafe<{ status: string }[]>(
-        "SELECT status FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2", [threadId, request.continuationRunId]) : [];
+        "SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2", [threadId, request.continuationRunId]) : [];
       const serverContinuation = continuationSource && continuationSource.status !== "stopped"
         && request.persistedInputMessages !== undefined && input.resume?.some(item => item.status === "resolved")
         && !await createDshRunJournal(this.store.database).continuationRefusal(threadId, request.continuationRunId!);
@@ -1610,7 +1613,7 @@ class PostgresAgentRunner implements ConversationRunner {
       if (started) {
         try {
           await this.store.database.$client.unsafe(
-            "UPDATE openbot_local_runs SET status = $3, finished_at = now() WHERE thread_id = $1 AND run_id = $2",
+            "UPDATE chisabot_local_runs SET status = $3, finished_at = now() WHERE thread_id = $1 AND run_id = $2",
             [
               threadId,
               entry.runId,
@@ -1654,7 +1657,7 @@ class PostgresAgentRunner implements ConversationRunner {
             if (this.frontend.get(threadId)?.runId === entry.runId) this.clearFrontend(threadId);
             for (const runId of entry.inboxRunIds) await this.inbox.settle(threadId, runId, "stopped");
             await this.store.database.$client.unsafe(
-              "UPDATE openbot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2",
+              "UPDATE chisabot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2",
               [threadId, entry.runId],
             );
           }
@@ -1685,7 +1688,8 @@ class PostgresAgentRunner implements ConversationRunner {
         lastSequence = item.sequence;
         // The durable run row, rather than the HTTP/live subscription, decides completion.
         if ([EventType.RUN_STARTED, EventType.RUN_FINISHED, EventType.RUN_ERROR].includes(item.event.type as any)) return;
-        if (lifecycles.accept(item.event)) subscriber.next(item.event);
+        const event = normalizeConversationEvent(item.event);
+        if (lifecycles.accept(event)) subscriber.next(event);
       };
       const selectRun = (runId: string | undefined) => {
         if (!runId || runId === observedRunId) return;
@@ -1712,18 +1716,21 @@ class PostgresAgentRunner implements ConversationRunner {
             "SELECT status,run_id,execution_run_id FROM chisabot_conversation_commands WHERE thread_id=$1 AND command_id=$2", [request.threadId, request.commandId]) : [];
           const [run] = await this.store.database.$client.unsafe<{ run_id: string; status: string; pending: boolean }[]>(
             `SELECT r.run_id,r.status,EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=r.thread_id AND d.run_id=r.run_id AND d.status IN ('admitting','observing','projecting')) AS pending
-             FROM openbot_local_runs r WHERE r.thread_id=$1 AND ($2::text IS NULL OR r.run_id=$2) ORDER BY r.created_at DESC LIMIT 1`,
+             FROM chisabot_local_runs r WHERE r.thread_id=$1 AND ($2::text IS NULL OR r.run_id=$2) ORDER BY r.created_at DESC LIMIT 1`,
             [request.threadId, command?.execution_run_id ?? command?.run_id ?? request.runId ?? observedRunId ?? null]);
           selectRun(run?.run_id);
           const uncovered = await this.store.database.$client.unsafe<EventRow[]>(
-            "SELECT sequence,event FROM openbot_local_events WHERE thread_id=$1 AND sequence>$2::bigint ORDER BY sequence", [request.threadId, String(lastSequence)]);
-          for (const item of uncovered) publish({ sequence: BigInt(item.sequence), event: item.event });
+            "SELECT sequence,event FROM chisabot_local_events WHERE thread_id=$1 AND sequence>$2::bigint ORDER BY sequence", [request.threadId, String(lastSequence)]);
+          for (const item of uncovered) publish({ sequence: BigInt(item.sequence), event: normalizeConversationEvent(item.event) });
           const commandPending = command && ["accepted", "queued", "dispatched"].includes(command.status);
           if (commandPending || run?.pending || run?.status === "running") return;
           if (run) {
             const [terminal] = await this.store.database.$client.unsafe<{ event: BaseEvent }[]>(
-              "SELECT event FROM openbot_local_events WHERE thread_id=$1 AND run_id=$2 AND event->>'type' IN ('RUN_FINISHED','RUN_ERROR') ORDER BY sequence DESC LIMIT 1", [request.threadId, run.run_id]);
-            if (terminal) subscriber.next(terminal.event.type === EventType.RUN_FINISHED ? { ...terminal.event, runId: streamRunId, threadId: request.threadId } as BaseEvent : terminal.event);
+              "SELECT event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 AND event->>'type' IN ('RUN_FINISHED','RUN_ERROR') ORDER BY sequence DESC LIMIT 1", [request.threadId, run.run_id]);
+            if (terminal) {
+              const event = normalizeConversationEvent(terminal.event);
+              subscriber.next(event.type === EventType.RUN_FINISHED ? { ...event, runId: streamRunId, threadId: request.threadId } as BaseEvent : event);
+            }
             else subscriber.next({ type: EventType.RUN_ERROR, code: "RUN_INTERRUPTED", message: "这一轮缺少完成记录，请查看已保存的输出后再继续。" } as BaseEvent);
           } else if (command) subscriber.next({ type: EventType.RUN_ERROR, code: "ADMISSION_FAILED", message: "消息已保存，但执行未能开始。" } as BaseEvent);
           subscriber.complete();
@@ -1749,7 +1756,7 @@ class PostgresAgentRunner implements ConversationRunner {
         const [command] = request.commandId ? await this.store.database.$client.unsafe<{ run_id: string; execution_run_id: string | null }[]>(
           "SELECT run_id,execution_run_id FROM chisabot_conversation_commands WHERE thread_id=$1 AND command_id=$2", [request.threadId, request.commandId]) : [];
         const [previous] = !entry && !request.runId && !row.run_id && !command ? await this.store.database.$client.unsafe<{ run_id: string }[]>(
-          "SELECT run_id FROM openbot_local_runs WHERE thread_id=$1 ORDER BY created_at DESC LIMIT 1", [request.threadId]) : [];
+          "SELECT run_id FROM chisabot_local_runs WHERE thread_id=$1 ORDER BY created_at DESC LIMIT 1", [request.threadId]) : [];
         selectRun(command?.execution_run_id ?? entry?.runId ?? request.runId ?? row.run_id ?? command?.run_id ?? previous?.run_id);
         lastSequence = BigInt(row.snapshot_sequence ?? 0);
         const dims = imageDimsFor(this.store.database);
@@ -1779,8 +1786,8 @@ class PostgresAgentRunner implements ConversationRunner {
         } as BaseEvent);
         if (observedRunId) {
           const before = await this.store.database.$client.unsafe<{ event: BaseEvent }[]>(
-            "SELECT event FROM openbot_local_events WHERE thread_id=$1 AND run_id=$2 AND sequence<=$3::bigint ORDER BY sequence", [request.threadId, observedRunId, String(lastSequence)]);
-          for (const item of before) lifecycles.accept(item.event);
+            "SELECT event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 AND sequence<=$3::bigint ORDER BY sequence", [request.threadId, observedRunId, String(lastSequence)]);
+          for (const item of before) lifecycles.accept(normalizeConversationEvent(item.event));
           for (const opening of lifecycles.openings()) subscriber.next(opening);
         }
         // Fill the snapshot suffix before releasing buffered live frames.
@@ -1795,13 +1802,13 @@ class PostgresAgentRunner implements ConversationRunner {
   async isRunning({ threadId }: { threadId: string }): Promise<boolean> {
     if (this.isActive(threadId)) return true;
     const rows = await this.store.database.$client.unsafe(
-      "SELECT id FROM openbot_local_threads WHERE id = $1 AND ((run_id IS NOT NULL AND lock_expires_at > now()) OR EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=$1 AND d.status IN ('admitting','observing','projecting')))",
+      "SELECT id FROM chisabot_local_threads WHERE id = $1 AND ((run_id IS NOT NULL AND lock_expires_at > now()) OR EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=$1 AND d.status IN ('admitting','observing','projecting')))",
       [threadId],
     );
     return rows.length > 0;
   }
 
-  /** A failed frontend handler has a real result, but CopilotKit does not open a follow-up run. */
+  /** A failed frontend handler has a real result, but conversation runtime does not open a follow-up run. */
   async finishFrontend(threadId: string, results: readonly Message[]): Promise<boolean> {
     const relay = this.frontend.get(threadId);
     if (!relay) return false;
@@ -1822,11 +1829,11 @@ class PostgresAgentRunner implements ConversationRunner {
       messages.splice(insertAt, 0, result);
     }
     const changed = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads t SET messages = $2::text::jsonb, updated_at = now()
+      `UPDATE chisabot_local_threads t SET messages = $2::text::jsonb, updated_at = now()
        WHERE t.id = $1 AND t.run_id IS NULL AND t.messages = $3::text::jsonb
-       AND EXISTS (SELECT 1 FROM openbot_local_runs r WHERE r.thread_id = t.id
+       AND EXISTS (SELECT 1 FROM chisabot_local_runs r WHERE r.thread_id = t.id
          AND r.run_id = $4 AND r.status = 'finished')
-       AND (SELECT r.run_id FROM openbot_local_runs r WHERE r.thread_id = t.id
+       AND (SELECT r.run_id FROM chisabot_local_runs r WHERE r.thread_id = t.id
          ORDER BY r.created_at DESC, r.run_id DESC LIMIT 1) = $4
        RETURNING t.id`,
       [threadId, JSON.stringify(messages), JSON.stringify(row.messages), relay.runId],
@@ -1845,11 +1852,11 @@ class PostgresAgentRunner implements ConversationRunner {
       if (persistent) {
         await this.inbox.pause(threadId);
         await this.store.database.$client.begin(async tx => {
-          const stopped = await tx.unsafe<{ run_id: string }[]>(`UPDATE openbot_local_runs r SET status='stopped',finished_at=now()
+          const stopped = await tx.unsafe<{ run_id: string }[]>(`UPDATE chisabot_local_runs r SET status='stopped',finished_at=now()
             FROM chisabot_dsh_runs d WHERE d.thread_id=$1 AND d.thread_id=r.thread_id AND d.run_id=r.run_id
               AND d.stop_requested AND d.status='settled' AND r.status<>'stopped' RETURNING r.run_id`, [threadId]);
           for (const run of stopped) {
-            await tx.unsafe("INSERT INTO openbot_local_events(thread_id,run_id,event) VALUES($1,$2,$3::text::jsonb)",
+            await tx.unsafe("INSERT INTO chisabot_local_events(thread_id,run_id,event) VALUES($1,$2,$3::text::jsonb)",
               [threadId, run.run_id, JSON.stringify({ type: EventType.RUN_ERROR, code: "DSH_RUN_CANCELLED", message: "用户已停止这一轮。" })]);
             await tx.unsafe("UPDATE chisabot_conversation_commands SET status='stopped',updated_at=now() WHERE thread_id=$1 AND run_id=$2", [threadId, run.run_id]);
           }
@@ -1926,43 +1933,44 @@ export type LocalConversationBackend = {
 export async function createLocalConversations(
   database: Database,
 ): Promise<LocalConversationBackend> {
+  await assertConversationNamespace(database.$client);
   const commands = createConversationCommands(database);
   await commands.ensure();
   await createDshRunJournal(database).ensure();
   await createConversationInteractions(database).ensure();
   // Independent tables avoid any dependency on a hosted migration service.
-  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_threads (
+  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_threads (
     id text PRIMARY KEY, owner_user_id text NOT NULL, agent_id text NOT NULL,
     name text, archived boolean NOT NULL DEFAULT false,
     messages jsonb NOT NULL DEFAULT '[]'::jsonb, state jsonb NOT NULL DEFAULT '{}'::jsonb,
     run_id text, lock_expires_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
   )`);
-  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_runs (
-    thread_id text NOT NULL REFERENCES openbot_local_threads(id) ON DELETE CASCADE,
+  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_runs (
+    thread_id text NOT NULL REFERENCES chisabot_local_threads(id) ON DELETE CASCADE,
     run_id text NOT NULL, status text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz,
     PRIMARY KEY (thread_id, run_id)
   )`);
-  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_events (
+  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_events (
     sequence bigserial PRIMARY KEY,
-    thread_id text NOT NULL REFERENCES openbot_local_threads(id) ON DELETE CASCADE,
+    thread_id text NOT NULL REFERENCES chisabot_local_threads(id) ON DELETE CASCADE,
     run_id text NOT NULL, event jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
   )`);
   await database.$client.unsafe(
-    "CREATE INDEX IF NOT EXISTS openbot_local_events_thread_sequence ON openbot_local_events(thread_id, sequence)",
+    "CREATE INDEX IF NOT EXISTS chisabot_local_events_thread_sequence ON chisabot_local_events(thread_id, sequence)",
   );
-  await database.$client.unsafe("ALTER TABLE openbot_local_threads ADD COLUMN IF NOT EXISTS snapshot_sequence bigint");
-  await database.$client.unsafe("ALTER TABLE openbot_local_runs ADD COLUMN IF NOT EXISTS execution jsonb");
+  await database.$client.unsafe("ALTER TABLE chisabot_local_threads ADD COLUMN IF NOT EXISTS snapshot_sequence bigint");
+  await database.$client.unsafe("ALTER TABLE chisabot_local_runs ADD COLUMN IF NOT EXISTS execution jsonb");
   await database.$client.unsafe(`DO $$ BEGIN IF to_regclass('public.chisabot_local_agent_tasks') IS NOT NULL THEN
     IF NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='chisabot_local_agent_tasks'::regclass AND attname='capacity_active' AND NOT attisdropped) THEN
       ALTER TABLE chisabot_local_agent_tasks ADD COLUMN capacity_active boolean NOT NULL DEFAULT false;
       UPDATE chisabot_local_agent_tasks SET capacity_active=true WHERE status IN ('starting','running');
     END IF;
   END IF; END $$`);
-  await database.$client.unsafe("UPDATE openbot_local_threads t SET snapshot_sequence=(SELECT coalesce(max(sequence),0) FROM openbot_local_events e WHERE e.thread_id=t.id) WHERE snapshot_sequence IS NULL");
+  await database.$client.unsafe("UPDATE chisabot_local_threads t SET snapshot_sequence=(SELECT coalesce(max(sequence),0) FROM chisabot_local_events e WHERE e.thread_id=t.id) WHERE snapshot_sequence IS NULL");
   await database.$client.unsafe(
-    "CREATE INDEX IF NOT EXISTS openbot_local_threads_owner_updated ON openbot_local_threads(owner_user_id, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS chisabot_local_threads_owner_updated ON chisabot_local_threads(owner_user_id, updated_at DESC)",
   );
   await ensureTruncationTable(database);
   const store = new ConversationStore(database);
@@ -2022,7 +2030,7 @@ export async function createLocalConversations(
     const rows = await database.$client.unsafe<
       { event: Record<string, unknown>; created_at: Date }[]
     >(
-      `SELECT event, created_at FROM openbot_local_events
+      `SELECT event, created_at FROM chisabot_local_events
        WHERE thread_id = $1 AND event->>'type' = 'RUN_FINISHED'
        AND (event ? 'usage' OR event->'metadata' ? 'contextUsage')
        ORDER BY sequence DESC LIMIT 1`,
@@ -2047,8 +2055,8 @@ export async function createLocalConversations(
     const started = await database.$client.unsafe<
       { event: { input?: { messages?: { id?: string }[] } } }[]
     >(
-      `SELECT e.event FROM openbot_local_events e
-       JOIN openbot_local_runs r ON r.thread_id = e.thread_id AND r.run_id = e.run_id
+      `SELECT e.event FROM chisabot_local_events e
+       JOIN chisabot_local_runs r ON r.thread_id = e.thread_id AND r.run_id = e.run_id
        WHERE e.thread_id = $1 AND r.status = 'stopped' AND e.event->>'type' = 'RUN_STARTED'
        ORDER BY e.sequence DESC LIMIT 50`,
       [threadId],
@@ -2079,10 +2087,10 @@ export async function createLocalConversations(
       }[]
     >(
       `SELECT f.event->'metadata'->'modelFallback' AS fallback,
-              (SELECT s.event FROM openbot_local_events s
+              (SELECT s.event FROM chisabot_local_events s
                 WHERE s.thread_id = f.thread_id AND s.run_id = f.run_id AND s.event->>'type' = 'RUN_STARTED'
                 ORDER BY s.sequence ASC LIMIT 1) AS started
-       FROM openbot_local_events f
+       FROM chisabot_local_events f
        WHERE f.thread_id = $1 AND f.event->>'type' = 'RUN_FINISHED' AND f.event->'metadata' ? 'modelFallback'
        ORDER BY f.sequence DESC LIMIT 50`,
       [threadId],
@@ -2142,7 +2150,7 @@ export async function createLocalConversations(
         created_at: Date;
       }[]
     >(
-      `SELECT event, created_at FROM openbot_local_events
+      `SELECT event, created_at FROM chisabot_local_events
        WHERE thread_id = $1 AND event->>'type' = 'RUN_STARTED'
        ORDER BY sequence DESC LIMIT 40`,
       [threadId],
@@ -2170,8 +2178,8 @@ export async function createLocalConversations(
     actorId: string,
   ): Promise<Response | undefined> => {
     const url = new URL(request.url);
-    const matched = /^\/api\/copilotkit\/threads(?:\/(.*))?\/?$/.exec(
-      url.pathname,
+    const matched = /^\/api\/conversations\/threads(?:\/(.*))?\/?$/.exec(
+      conversationPath(url.pathname),
     );
     if (!matched) return undefined;
     try {
@@ -2180,7 +2188,7 @@ export async function createLocalConversations(
       const suffix = matched[1] ?? "";
       if (!suffix && request.method === "GET") {
         const rows = await database.$client.unsafe<ThreadRow[]>(
-          `SELECT * FROM openbot_local_threads WHERE owner_user_id = $1
+          `SELECT * FROM chisabot_local_threads WHERE owner_user_id = $1
            AND ($2::text IS NULL OR agent_id = $2) AND ($3::boolean OR NOT archived)
            ORDER BY updated_at DESC LIMIT 100`,
           [
@@ -2194,7 +2202,7 @@ export async function createLocalConversations(
       if (suffix === "clear" && request.method === "POST") {
         await database.$client.begin(async (transaction) => {
           const rows = await transaction.unsafe<ThreadRow[]>(
-            "SELECT * FROM openbot_local_threads WHERE owner_user_id = $1 FOR UPDATE",
+            "SELECT * FROM chisabot_local_threads WHERE owner_user_id = $1 FOR UPDATE",
             [actorId],
           );
           if (
@@ -2209,10 +2217,10 @@ export async function createLocalConversations(
               "Stop running threads before clearing history",
               409,
             );
-          await transaction.unsafe("DELETE FROM chisabot_thread_inbox_control WHERE thread_id IN (SELECT id FROM openbot_local_threads WHERE owner_user_id = $1)", [actorId]);
-          await transaction.unsafe("DELETE FROM chisabot_thread_inbox WHERE thread_id IN (SELECT id FROM openbot_local_threads WHERE owner_user_id = $1)", [actorId]);
+          await transaction.unsafe("DELETE FROM chisabot_thread_inbox_control WHERE thread_id IN (SELECT id FROM chisabot_local_threads WHERE owner_user_id = $1)", [actorId]);
+          await transaction.unsafe("DELETE FROM chisabot_thread_inbox WHERE thread_id IN (SELECT id FROM chisabot_local_threads WHERE owner_user_id = $1)", [actorId]);
           await transaction.unsafe(
-            "DELETE FROM openbot_local_threads WHERE owner_user_id = $1",
+            "DELETE FROM chisabot_local_threads WHERE owner_user_id = $1",
             [actorId],
           );
         });
@@ -2233,7 +2241,7 @@ export async function createLocalConversations(
       ) {
         const found = await database.$client.unsafe<
           { owner_user_id: string }[]
-        >("SELECT owner_user_id FROM openbot_local_threads WHERE id = $1", [
+        >("SELECT owner_user_id FROM chisabot_local_threads WHERE id = $1", [
           threadId,
         ]);
         if (!found[0] || found[0].owner_user_id !== actorId)
@@ -2242,7 +2250,7 @@ export async function createLocalConversations(
       // Inbox polling needs identity and queue rows, never the growing transcript JSON.
       if (operation === "inbox" && request.method === "GET") {
         const [identity] = await database.$client.unsafe<{ agent_id: string }[]>(
-          "SELECT agent_id FROM openbot_local_threads WHERE id = $1 AND owner_user_id = $2", [threadId, actorId],
+          "SELECT agent_id FROM chisabot_local_threads WHERE id = $1 AND owner_user_id = $2", [threadId, actorId],
         );
         if (!identity) return Response.json(EMPTY_THREAD_READS.inbox);
         const requestedAgent = url.searchParams.get("agentId");
@@ -2458,7 +2466,7 @@ export async function createLocalConversations(
       }
       if (!operation && request.method === "DELETE") {
         const removed = await database.$client.unsafe(
-          `DELETE FROM openbot_local_threads WHERE id = $1 AND owner_user_id = $2
+          `DELETE FROM chisabot_local_threads WHERE id = $1 AND owner_user_id = $2
            AND (run_id IS NULL OR lock_expires_at <= now()) RETURNING id`,
           [threadId, actorId],
         );
@@ -2493,7 +2501,7 @@ export async function createLocalConversations(
         if (body.archived !== undefined && typeof body.archived !== "boolean")
           throw new LocalConversationError("Archived must be boolean", 400);
         const changed = await database.$client.unsafe<ThreadRow[]>(
-          `UPDATE openbot_local_threads SET name = $3, archived = $4, updated_at = now()
+          `UPDATE chisabot_local_threads SET name = $3, archived = $4, updated_at = now()
            WHERE id = $1 AND owner_user_id = $2 RETURNING *`,
           [
             threadId,

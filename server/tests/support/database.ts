@@ -27,7 +27,7 @@ export function testDatabaseUrlFrom(
     url = new URL(raw);
   } catch {
     throw new Error(
-      "TEST_DATABASE_URL must be a PostgreSQL URL such as postgres://openbot:openbot@localhost:5432/openbot_test.",
+      "TEST_DATABASE_URL must be a PostgreSQL URL such as postgres://chisabot:chisabot@localhost:5432/chisabot_test.",
     );
   }
   if (!/^postgres(?:ql)?:$/.test(url.protocol)) {
@@ -41,7 +41,7 @@ export function testDatabaseUrlFrom(
   }
   if (database === "openbot" || database === "chisabot") {
     throw new Error(
-      "TEST_DATABASE_URL must not point at the live chisabot database. Use a dedicated database such as openbot_test.",
+      "TEST_DATABASE_URL must not point at the live chisabot database. Use a dedicated database such as chisabot_test.",
     );
   }
   return raw;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { HANDED_OVER, PUT_TO } from "../src/lib/copilot/markers";
+import { HANDED_OVER, PUT_TO } from "../src/lib/conversations/markers";
 import {
   asText,
   forDisplay,

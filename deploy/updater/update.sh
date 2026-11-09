@@ -188,8 +188,7 @@ else
   [ -s "$BK/chisabot.dump" ] || fail "数据库备份是空的"
   cp -p "$COMPOSE_DIR/$COMPOSE_FILE" "$BK/compose.yaml"
   for v in profiles workspace; do
-    # The volume behind /$v in the running container, whatever the compose project calls it (the
-    # physical names stayed `openbot-zh_*` when the project became `chisabot-zh`).
+    # Back up the actual mounted volume, independent of the deployment project name.
     VSRC=$(docker inspect -f "{{range .Mounts}}{{if eq .Destination \"/$v\"}}{{.Source}}{{end}}{{end}}" "$CONTAINER" 2>/dev/null)
     [ -n "$VSRC" ] || VSRC="/var/lib/docker/volumes/${PROJECT}_$v/_data"
     tar czf "$BK/$v-volume.tgz" -C "$(dirname "$VSRC")" "$(basename "$VSRC")" 2>/dev/null || echo "（卷 $v 未备份）"
@@ -201,6 +200,10 @@ fi
 
 rm -rf "$B" && mkdir -p "$B/src" || fail "无法准备构建目录"
 G archive "$TARGET" | tar -x -C "$B/src" || fail "导出源码失败"
+if [ "$BUILD_ONLY" != 1 ] && [ "$DRY" != 1 ] && [ "$(image_mode)" = env ]; then
+  . "$B/src/deploy/legacy-resources.sh"
+  pin_existing_resources "$COMPOSE_DIR/.env" "$CONTAINER" || fail "无法保留现有部署资源"
+fi
 VERSION=$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$B/src/package.json" | head -n 1)
 BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -351,9 +354,8 @@ if [ "$DSH_ENABLED" = 1 ]; then
   dsh_hold_admission "$JOB" || fail "无法暂停新执行：检查已有 .maintenance 记录"
   DSH_ADMISSION_HELD=1
 fi
-busy_threads() {
-  docker exec "$CONTAINER" sh -c 'psql "$(cat /run/s6/container_environment/DATABASE_URL)" -Atc "select count(*) from openbot_local_threads where lock_expires_at > now()"'
-}
+. "$U/legacy-schema.sh"
+busy_threads() { conversation_busy_threads; }
 if [ "$DRAIN_SECONDS" -gt 0 ] 2>/dev/null || [ "$DSH_ADMISSION_HELD" = 1 ]; then
   step drain "等正在回答的对话结束再切换（最多 $DRAIN_SECONDS 秒）"
   WAITED=0
@@ -444,6 +446,7 @@ if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then HERMES_PENDING_FILE="$COMPOSE_DI
     echo "网络配置变了（$DRIFT）：使用 --force-recreate"
     RECREATE=(--force-recreate)
   fi
+  dsh_prepare_candidate_reader "$NEW_IMAGE" || { echo "无法持久保存候选读取器要求，未启动候选"; exit 1; }
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 240 "$SERVICE" || exit 1
   if [ "$DSH_ENABLED" = 1 ]; then dsh_accounts_replace "$NEW_IMAGE" || exit 1; fi
 )
@@ -476,7 +479,7 @@ if [ "$SWAP" = 0 ] && CHISABOT_SMOKE_DEFER_HERMES=$DEFER_HERMES bash "$U/health.
   else echo "::error:: Hermes 运行时激活或就绪检查失败"; fi
 fi
 if [ "$OK" != 1 ]; then
-  echo "::error:: 新版本健康检查没通过，自动回滚到 $CUR_IMAGE"
+  echo "::error:: 新版本健康检查没通过；仅在 $CUR_IMAGE 满足持久读取器要求时回滚"
   docker logs --tail 15 "$CONTAINER" 2>&1 | cut -c1-240 | sed 's/^/  容器日志 | /'
   HERMES_ROLLBACK_ATTEMPTED=1
   if sh "$RB" && bash "$U/health.sh" "$CUR_IMAGE" ""; then
@@ -485,7 +488,7 @@ if [ "$OK" != 1 ]; then
     RESULT=rolled_back
     exit 3
   fi
-  echo "::error:: 自动回滚后仍不健康，请人工处理（回滚脚本 $RB，备份 ${BK:-无}）"
+  echo "::error:: 自动回滚被兼容门槛阻止或未恢复健康；保持接纳暂停，使用兼容当前读取器的镜像恢复（回滚脚本 $RB，备份 ${BK:-无}）"
   exit 4
 fi
 

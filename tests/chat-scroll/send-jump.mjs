@@ -102,7 +102,7 @@ await ctx.addInitScript(({ bot, thread }) => {
 const page = await ctx.newPage();
 let failLeft = process.env.FAIL === "1" ? 1 : 0;
 if (failLeft) {
-  await page.route(/\/api\/(?:copilotkit|conversations)/, async (route) => {
+  await page.route(/\/api\/conversations/, async (route) => {
     const req = route.request();
     if (failLeft > 0 && req.method() === "POST" && /\/(?:run|commands)$/.test(req.url())) {
       failLeft--;

@@ -12,10 +12,10 @@ import { z } from "zod";
  * 生成式界面（json-render）的组件目录，服务器与浏览器共用一份。
  *
  * 服务器用它生成提示词（`catalog.prompt()`）并在 `render_ui` 工具里校验机器人给出的规范；浏览器用同一份
- * 目录注册组件实现（app/src/lib/copilot/json-render）。两边读同一个文件，所以「模型被告知能用什么」和
+ * 目录注册组件实现（app/src/lib/conversations/json-render）。两边读同一个文件，所以「模型被告知能用什么」和
  * 「界面实际能画什么」不会漂移。
  *
- * 取代原来的 A2UI（@copilotkit/a2ui-renderer basicCatalog）。开关仍是 DeploymentConfig.generativeUi
+ * 开关为 DeploymentConfig.generativeUi
  * （CHISABOT_GENERATIVE_UI），关掉时既不给工具，也不注册渲染器。
  */
 

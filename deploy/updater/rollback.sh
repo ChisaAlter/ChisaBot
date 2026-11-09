@@ -67,6 +67,7 @@ DSH_RELEASE_ALLOWED=0
     echo "网络配置变了（$DRIFT）：使用 --force-recreate"
     RECREATE=(--force-recreate)
   fi
+  dsh_prepare_candidate_reader "$PREV" || exit 1
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 180 "$SERVICE" || exit 1
   if [ "$DSH_ENABLED" = 1 ]; then dsh_accounts_replace "$PREV" || exit 1; fi
 ) || fail "切换失败（compose 已改回上一版，请检查容器）"

@@ -42,10 +42,10 @@ export function createConversationInteractions(database: Database, options: {
     },
     async resume(callId: string, runTurn: TurnRunner) {
       const [row] = await sql.unsafe<(Row & { continuation: unknown; agent_id: string })[]>(`SELECT i.*,t.agent_id FROM chisabot_conversation_interactions i
-        JOIN openbot_local_threads t ON t.id=i.thread_id AND t.owner_user_id=i.owner_user_id WHERE i.call_id=$1 AND i.status='answered'`, [callId]);
+        JOIN chisabot_local_threads t ON t.id=i.thread_id AND t.owner_user_id=i.owner_user_id WHERE i.call_id=$1 AND i.status='answered'`, [callId]);
       if (!row) return;
       const runId = `interaction:${callId}`;
-      const [existing] = await sql.unsafe<{ status: string }[]>("SELECT status FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2", [row.thread_id, runId]);
+      const [existing] = await sql.unsafe<{ status: string }[]>("SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2", [row.thread_id, runId]);
       if (existing) {
         if (["finished", "stopped", "error", "interrupted"].includes(existing.status)) return;
         throw new Error("The interaction continuation is still active.");

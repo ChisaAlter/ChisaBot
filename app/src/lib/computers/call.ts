@@ -1,7 +1,7 @@
 import { normalizeCommandTimeout } from "../../../../shared/command-timeout";
 import { tryClient } from "@/lib/client";
 import { computerCallHeaders } from "./call-meta";
-import { describeComputerCall, reportComputerActivity, reportComputerStatus } from "@/lib/copilot/computer-activity";
+import { describeComputerCall, reportComputerActivity, reportComputerStatus } from "@/lib/conversations/computer-activity";
 
 export type ToolOutcome = Record<string, unknown> & { ok: boolean };
 

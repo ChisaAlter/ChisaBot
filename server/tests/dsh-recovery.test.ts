@@ -82,7 +82,7 @@ const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
     expect(backgroundModels.size).toBe(2); expect(await backgroundCount(database.$client, actorId)).toBe(2);
     let queuedBefore: any;
     for (let i = 0; i < 300; i++) {
-      [queuedBefore] = await database.$client.unsafe<any[]>("SELECT status FROM openbot_local_runs WHERE thread_id=$1", [backgroundThreads[2]!]);
+      [queuedBefore] = await database.$client.unsafe<any[]>("SELECT status FROM chisabot_local_runs WHERE thread_id=$1", [backgroundThreads[2]!]);
       if (queuedBefore) break; await Bun.sleep(20);
     }
     expect(queuedBefore?.status, logs).toBe("capacity_wait");
@@ -95,14 +95,14 @@ const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
     // Ensure the product snapshot actually contains the live prefix before killing its owner.
     let stored: any;
     for (let i = 0; i < 100; i++) {
-      [stored] = await database.$client.unsafe("SELECT messages FROM openbot_local_threads WHERE id=$1", [threadId]);
+      [stored] = await database.$client.unsafe("SELECT messages FROM chisabot_local_threads WHERE id=$1", [threadId]);
       if (stored.messages.some((message: any) => message.content === "Before restart. ")) break;
       await Bun.sleep(20);
     }
     expect(stored.messages.some((message: any) => message.content === "Before restart. ")).toBe(true);
     await killApi();
     // Expired API leases still count their original live Host owners.
-    await database.$client.unsafe("UPDATE openbot_local_threads SET lock_expires_at=now()-interval '1 second' WHERE id IN ($1,$2)", [backgroundThreads[0]!, backgroundThreads[1]!]);
+    await database.$client.unsafe("UPDATE chisabot_local_threads SET lock_expires_at=now()-interval '1 second' WHERE id IN ($1,$2)", [backgroundThreads[0]!, backgroundThreads[1]!]);
     expect(await backgroundCount(database.$client, actorId)).toBe(2);
     await boot(true);
     expect(requests).toBe(3); expect(await backgroundCount(database.$client, actorId)).toBe(2);

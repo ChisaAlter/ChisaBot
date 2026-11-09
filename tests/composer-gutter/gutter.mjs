@@ -25,7 +25,7 @@ async function context(theme, viewport) {
   const phone = viewport.width < 500;
   const ctx = await browser.newContext({ viewport, locale: "zh-CN", timezoneId: "Asia/Shanghai", ignoreHTTPSErrors: true, isMobile: phone, hasTouch: phone });
   await ctx.addInitScript((t) => { try { localStorage.setItem("chisabot-theme", t); } catch {} }, theme);
-  if (TOK) await ctx.addCookies([{ name: "__Host-openbot_session", value: TOK, url: base, secure: true, httpOnly: true, sameSite: "Lax" }]);
+  if (TOK) await ctx.addCookies([{ name: "__Host-chisabot_session", value: TOK, url: base, secure: true, httpOnly: true, sameSite: "Lax" }]);
   await ctx.route("**/*", (r) => (["GET", "HEAD", "OPTIONS"].includes(r.request().method()) ? r.continue() : r.fulfill({ status: 204, body: "" })));
   return ctx;
 }

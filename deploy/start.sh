@@ -7,6 +7,9 @@ if ! test -f .env; then
   exit 1
 fi
 
+. ./legacy-resources.sh
+pin_existing_resources .env chisabot-zh
+
 # Track D + 网络隔离：内部口 deny-by-default —— 拒绝 0.0.0.0 / 无主机绑定发布。
 refuse_bad_binds() {
   f=$1
@@ -34,7 +37,7 @@ if [ -w .env ] && [ "$(env_value CHISABOT_SOURCE_DIR)" != "$src_dir" ]; then
 fi
 
 # 镜像由在线更新管理（CHISABOT_IMAGE 是 local/chisabot:auto-…，管理后台 → 系统更新 写的）时不再重新构建：
-# 用 deploy/Dockerfile.zh 覆盖同一个标签会弄坏回滚和快速更新的底座。要强制按当前检出重新构建：CHISABOT_FORCE_BUILD=1。
+# 用 根 Dockerfile 覆盖同一个标签会弄坏回滚和快速更新的底座。要强制按当前检出重新构建：CHISABOT_FORCE_BUILD=1。
 image=${CHISABOT_IMAGE:-$(env_value CHISABOT_IMAGE)}
 image=${image:-local/chisabot:latest}
 build=1
@@ -51,11 +54,6 @@ case "$image" in
     ;;
 esac
 export CHISABOT_IMAGE="$image"
-
-if [ "$build" = 1 ] && ! test -f ../app/dist/index.html; then
-  echo 'Build the frontend first: TENANT_PACKAGE_DIR=../examples/zh-CN bun run --cwd app build (from the repository root).' >&2
-  exit 1
-fi
 
 # 在线更新服务（管理后台 → 系统更新）：没装或旧了就装 / 升级（root + systemd；不满足时只提示，不影响启动）。
 # 不想装：CHISABOT_UPDATER=off sh deploy/start.sh
@@ -81,7 +79,7 @@ fi
 docker compose -p chisabot-zh -f compose.yaml config --quiet
 # Read only the non-secret network name. Do not source .env as shell code.
 magpie_network=${MAGPIE_NETWORK:-$(env_value MAGPIE_NETWORK)}
-magpie_network=${magpie_network:-openbot_magpie}
+magpie_network=${magpie_network:-chisabot_magpie}
 case "$magpie_network" in *[!a-zA-Z0-9_.-]*|"") echo 'Invalid MAGPIE_NETWORK name.' >&2; exit 1 ;; esac
 docker network inspect "$magpie_network" >/dev/null 2>&1 || docker network create "$magpie_network" >/dev/null
 if [ "$build" = 1 ]; then

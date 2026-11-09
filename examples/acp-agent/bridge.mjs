@@ -927,12 +927,12 @@ export function createAcpBridge(overrides = {}) {
       if (unresolved.length) throw rpcError(`ACP finished without tool results: ${unresolved.map((tool) => tool.id).join(", ")}`, "ACP_MISSING_TOOL_RESULT");
       if (waiting) {
         const safeWaiting = { ...waiting, toolCallId: waitingId };
-        emit(entry, { type: "CUSTOM", name: "openbot.headless.waiting", value: safeWaiting });
+        emit(entry, { type: "CUSTOM", name: "chisabot.headless.waiting", value: safeWaiting });
         complete(entry, {
           type: "RUN_FINISHED", threadId: prepared.threadId, runId: prepared.runId,
           outcome: { type: "interrupt", interrupts: [{
             id: waitingId, toolCallId: waitingId, reason: waiting.reason ?? "waiting", payload: safeWaiting,
-            metadata: { openbotWaiting: safeWaiting },
+            metadata: { chisabotWaiting: safeWaiting },
           }] },
           ...finishedMetadata,
         });

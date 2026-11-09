@@ -3,7 +3,7 @@ import { compactTurns, isPersonSentMessage, serverRowKind } from "../src/compone
 import { SCHEDULE_MARKER } from "../../shared/schedules";
 import { LOCAL_AGENT_RESULT_MARKER } from "../../shared/local-agents";
 import { CONFIRM_RESUME_MARKER } from "../../shared/confirmations";
-import { WORKER_RESULT_MARKER } from "../src/lib/copilot/workers";
+import { WORKER_RESULT_MARKER } from "../src/lib/conversations/workers";
 import { pendingWorkerTitle } from "../src/lib/chat/worker-title";
 
 /** CB-046（DESIGN.md §68）：`/bot` 的几样东西搬进频道聊天后的纯函数。 */

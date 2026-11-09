@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { AbstractAgent, type BaseEvent, EventType } from "@ag-ui/client";
 import { EMPTY, Observable } from "rxjs";
 import { createHandoffDelivery } from "../src/agents/handoff-delivery";
-import type { RuntimeModelConnection } from "../src/copilot";
+import type { RuntimeModelConnection } from "../src/conversation-runtime";
 import {
   resolveScopedModelConnection,
   withModelConnectionScope,

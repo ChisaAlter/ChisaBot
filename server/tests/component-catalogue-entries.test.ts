@@ -40,7 +40,7 @@ function harness() {
   return {
     published,
     announce: (components: unknown) =>
-      app.request("http://openbot.local/components/catalogue", {
+      app.request("http://chisabot.local/components/catalogue", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ components }),

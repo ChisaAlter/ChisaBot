@@ -14,7 +14,7 @@ const errors = [];
 async function context(theme, viewport, extra = {}) {
   const ctx = await browser.newContext({ viewport, locale: "zh-CN", timezoneId: "Asia/Shanghai", ignoreHTTPSErrors: true, ...extra });
   await ctx.addInitScript((t) => { try { localStorage.setItem("chisabot-theme", t); } catch {} }, theme);
-  if (process.env.TOK) await ctx.addCookies([{ name: "__Host-openbot_session", value: process.env.TOK, url: base, secure: true, httpOnly: true, sameSite: "Lax" }]);
+  if (process.env.TOK) await ctx.addCookies([{ name: "__Host-chisabot_session", value: process.env.TOK, url: base, secure: true, httpOnly: true, sameSite: "Lax" }]);
   return ctx;
 }
 async function newPage(ctx, tag) {
@@ -50,8 +50,8 @@ async function guardRoutes(ctx) {
   await ctx.route("**/*", (route) => {
     const r = route.request(); const m = r.method(); const u = r.url();
     if (m === "GET" || m === "HEAD" || m === "OPTIONS") return route.continue();
-    if (allowChat && /\/api\/(agents|copilotkit|channels|bot-threads|chat|agui|messages|threads|link-preview)/.test(u)) return route.continue();
-    if (/\/api\/copilotkit\/info/.test(u)) return route.continue();
+    if (allowChat && /\/api\/(agents|conversations|channels|bot-threads|chat|agui|messages|threads|link-preview)/.test(u)) return route.continue();
+    if (/\/api\/conversations\/info/.test(u)) return route.continue();
     return route.fulfill({ status: 204, body: "" });
   });
   await ctx.addInitScript(MEASURE);

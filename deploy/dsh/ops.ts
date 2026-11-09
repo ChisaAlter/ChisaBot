@@ -41,7 +41,7 @@ try {
   } else if (command === 'busy') {
     const [row] = await db`select
       (select count(*) from chisabot_dsh_runs where status in ('admitting','observing','projecting')) +
-      (select count(*) from openbot_local_threads where lock_expires_at > now()) as count`;
+      (select count(*) from chisabot_local_threads where lock_expires_at > now()) as count`;
     console.log(row.count);
   } else if (command === 'health' || command === 'snapshot') {
     const root = resolve(process.env.CHISABOT_DSH_ROOT ?? '.data/dsh');
@@ -72,7 +72,7 @@ try {
       watermarks.push(...health.watermarks);
     }
     if (command === 'snapshot' && running) throw new Error('A DSH Session is still running; snapshot not ready.');
-    const [projection] = await db`select coalesce(max(sequence),0)::text as cursor from openbot_local_events`;
+    const [projection] = await db`select coalesce(max(sequence),0)::text as cursor from chisabot_local_events`;
     console.log(JSON.stringify({ status: 'ok', ...expected, runtimes: owners.length, sessions: watermarks.length, running,
       ...(command === 'snapshot' ? { capturedAt: new Date().toISOString(), projectionCursor: projection.cursor, watermarks } : {}),
     }));

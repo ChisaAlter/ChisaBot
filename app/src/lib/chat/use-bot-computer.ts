@@ -56,7 +56,7 @@ export function useBotComputerTab(
       was.watch === true &&
       watch !== true &&
       // 只有真·后退 / 前进把参数退掉才算关上。不是后退的同地址导航也会丢 `watch`——`/` 落地跳回这段对话、
-      // 左栏再点正在看的这一行、`useOpenBotChat` 落到同一段——页面没藏过（epoch 不变），那时清了记忆，
+      // 左栏再点正在看的这一行、`useBotChat` 落到同一段——页面没藏过（epoch 不变），那时清了记忆，
       // 离开再回来就永远是「面板」。非后退的丢弃不清记忆，由上面的 effect 把地址补回来。
       lastHistoryEventWasPop()
     ) {

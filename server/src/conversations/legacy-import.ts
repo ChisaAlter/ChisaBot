@@ -177,18 +177,18 @@ export async function importIntelligenceInventory(
     throw new Error(
       "Pause admission with CHISABOT_DSH_ROOT/.maintenance before importing history.",
     );
-  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_threads (
+  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_threads (
     id text PRIMARY KEY, owner_user_id text NOT NULL, agent_id text NOT NULL, name text,
     archived boolean NOT NULL DEFAULT false, messages jsonb NOT NULL DEFAULT '[]', state jsonb NOT NULL DEFAULT '{}',
     run_id text, lock_expires_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(), snapshot_sequence bigint)`);
   await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_legacy_imports (
-    thread_id text PRIMARY KEY REFERENCES openbot_local_threads(id) ON DELETE CASCADE,
+    thread_id text PRIMARY KEY REFERENCES chisabot_local_threads(id) ON DELETE CASCADE,
     owner_user_id text NOT NULL, bot_id text NOT NULL, captured_at timestamptz NOT NULL,
     source jsonb NOT NULL, imported_at timestamptz NOT NULL DEFAULT now())`);
   await database.$client.begin(async (transaction) => {
     await transaction.unsafe(
-      "LOCK TABLE openbot_local_threads IN SHARE ROW EXCLUSIVE MODE",
+      "LOCK TABLE chisabot_local_threads IN SHARE ROW EXCLUSIVE MODE",
     );
     for (const item of inventory.threads) {
       if (
@@ -202,7 +202,7 @@ export async function importIntelligenceInventory(
       if (
         (
           await transaction.unsafe(
-            "SELECT id FROM openbot_local_threads WHERE id=$1",
+            "SELECT id FROM chisabot_local_threads WHERE id=$1",
             [item.thread.id],
           )
         ).length
@@ -211,7 +211,7 @@ export async function importIntelligenceInventory(
           `Local thread ${item.thread.id} already exists; no data was replaced.`,
         );
       await transaction.unsafe(
-        `INSERT INTO openbot_local_threads(id,owner_user_id,agent_id,name,archived,messages,state,created_at,updated_at,snapshot_sequence)
+        `INSERT INTO chisabot_local_threads(id,owner_user_id,agent_id,name,archived,messages,state,created_at,updated_at,snapshot_sequence)
         VALUES($1,$2,$3,$4,$5,$6::text::jsonb,$7::text::jsonb,$8::timestamptz,$9::timestamptz,0)`,
         [
           item.thread.id,

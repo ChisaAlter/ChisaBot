@@ -12,7 +12,7 @@ import { type MdTail, MdTailContext, withMdCache } from "@/lib/chat/md-cache";
 import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useSmoothText } from "@/lib/chat/use-smooth-text";
 import { workspaceLinks } from "@/lib/chat/workspace-links";
-import { useDeclaredBotId } from "@/lib/copilot/active-bot";
+import { useDeclaredBotId } from "@/lib/conversations/active-bot";
 
 /**
  * Streamdown 的块组件换成带解析缓存的版本（md-cache.ts）：渲染仍交给 Streamdown 自己的 `Block`，

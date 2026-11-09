@@ -21,7 +21,7 @@ export const ROUTE_PRELOAD_GROUPS: Record<string, string[]> = {
     "chunk:route-shell",
     "src/routes/_authed/_app/channel/$channelId.tsx",
     "src/components/channels/channel-page.tsx",
-    "src/lib/copilot/provider.tsx",
+    "src/lib/conversations/provider.tsx",
     "src/components/layout/left-rail.tsx",
     "src/components/panels/panel-rail.tsx",
   ],

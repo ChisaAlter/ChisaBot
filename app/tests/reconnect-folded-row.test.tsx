@@ -4,7 +4,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { ChatTranscript } from "@/components/channels/chat-transcript";
-import { withStoredTail } from "@/lib/copilot/thread-activity";
+import { withStoredTail } from "@/lib/conversations/thread-activity";
 import { settleReactWork } from "./settle-react-work";
 
 /*

@@ -3,7 +3,7 @@ import { EventType, HttpAgent } from "@ag-ui/client";
 import {
   frontendApprovalSnapshot,
   observeApprovalAgent,
-} from "../../app/src/lib/copilot/approval-context";
+} from "../../app/src/lib/chat/approval-context";
 import { parseApprovalContinuation } from "../src/approvals/types";
 
 test("the real frontend AG-UI agent supplies canonical call identity, original context and live state for a pending change", async () => {

@@ -29,10 +29,10 @@ suite("a run cut off by a restart is closed on the next boot", () => {
       { id: "a2", role: "assistant", content: "", toolCalls: [{ id: "call-open", type: "function", function: { name: "device_run_shell", arguments: '{"command":"winget install"}' } }] },
     ];
     await database.$client.unsafe(
-      "UPDATE openbot_local_threads SET messages = $2::text::jsonb, run_id = $3, lock_expires_at = now() + interval '120 seconds' WHERE id = $1",
+      "UPDATE chisabot_local_threads SET messages = $2::text::jsonb, run_id = $3, lock_expires_at = now() + interval '120 seconds' WHERE id = $1",
       [thread, JSON.stringify(messages), runId],
     );
-    await database.$client.unsafe("INSERT INTO openbot_local_runs (thread_id, run_id, status) VALUES ($1, $2, 'running')", [thread, runId]);
+    await database.$client.unsafe("INSERT INTO chisabot_local_runs (thread_id, run_id, status) VALUES ($1, $2, 'running')", [thread, runId]);
     const events = [
       { type: EventType.RUN_STARTED, threadId: thread, runId },
       { type: EventType.TOOL_CALL_START, toolCallId: "call-done", toolCallName: "device_run_shell", parentMessageId: "a1" },
@@ -44,14 +44,14 @@ suite("a run cut off by a restart is closed on the next boot", () => {
     ];
     for (const event of events) {
       await database.$client.unsafe(
-        "INSERT INTO openbot_local_events (thread_id, run_id, event) VALUES ($1, $2, $3::text::jsonb)",
+        "INSERT INTO chisabot_local_events (thread_id, run_id, event) VALUES ($1, $2, $3::text::jsonb)",
         [thread, runId, JSON.stringify(event)],
       );
     }
   });
 
   afterAll(async () => {
-    await database.$client.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [owner]);
+    await database.$client.unsafe("DELETE FROM chisabot_local_threads WHERE owner_user_id = $1", [owner]);
     await database.$client.close();
   });
 
@@ -60,11 +60,11 @@ suite("a run cut off by a restart is closed on the next boot", () => {
     expect(released.runs).toBeGreaterThanOrEqual(1);
     expect(released.closed).toBeGreaterThanOrEqual(1);
     const [run] = await database.$client.unsafe<{ status: string }[]>(
-      "SELECT status FROM openbot_local_runs WHERE thread_id = $1 AND run_id = $2", [thread, runId],
+      "SELECT status FROM chisabot_local_runs WHERE thread_id = $1 AND run_id = $2", [thread, runId],
     );
     expect(run?.status).toBe("interrupted");
     const rows = await database.$client.unsafe<{ event: { type: string; toolCallId?: string; message?: string; content?: string } }[]>(
-      "SELECT event FROM openbot_local_events WHERE thread_id = $1 AND run_id = $2 ORDER BY sequence", [thread, runId],
+      "SELECT event FROM chisabot_local_events WHERE thread_id = $1 AND run_id = $2 ORDER BY sequence", [thread, runId],
     );
     const types = rows.map((row) => row.event.type);
     expect(types.slice(-2)).toEqual([EventType.TOOL_CALL_RESULT, EventType.RUN_ERROR]);
@@ -76,7 +76,7 @@ suite("a run cut off by a restart is closed on the next boot", () => {
     expect(rows.filter((row) => row.event.type === EventType.TOOL_CALL_RESULT && row.event.toolCallId === "call-done")).toHaveLength(1);
 
     const [threadRow] = await database.$client.unsafe<{ messages: Array<{ role: string; toolCallId?: string }>; run_id: string | null }[]>(
-      "SELECT messages, run_id FROM openbot_local_threads WHERE id = $1", [thread],
+      "SELECT messages, run_id FROM chisabot_local_threads WHERE id = $1", [thread],
     );
     expect(threadRow?.run_id).toBeNull();
     const toolMessages = threadRow!.messages.filter((message) => message.role === "tool");

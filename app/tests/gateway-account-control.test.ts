@@ -5,9 +5,10 @@ import { Window } from "happy-dom";
 /**
  * CB-100c: the public gateway (deploy/public) is not updated together with the app image. Every
  * gateway generation must see the app's "I draw my own sign-out" marker, or it floats its own
- * 「退出登录」 button over the right drawer (dogfood 2026-10-26, v0.1.75: 「退出 OpenBot 登录」).
+ * sign-out button over the right drawer.
  */
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const compatibility = readFileSync(new URL("../public/compat/legacy-browser.js", import.meta.url), "utf8");
 const gateway = readFileSync(
   new URL("../../deploy/public/auth-web/workspace.js", import.meta.url),
   "utf8",
@@ -27,17 +28,21 @@ afterEach(async () => {
  * The script only reaches the page through `window` and `document` (it is an IIFE written for a
  * browser), so it is run as a function of exactly those two. It is a file from this repository.
  */
-function mountWith(script: string, body: string) {
+function mountWith(script: string, body: string, installLegacyMarker = false) {
   const window = new Window({ url: "https://chisa.example/" });
   windows.push(window);
   window.document.body.innerHTML = body;
+  if (installLegacyMarker) {
+    new Function("globalThis", compatibility)(window);
+    (window as unknown as { ChisaLegacyBrowser: { mountAccountMarker(document: Window["document"]): void } }).ChisaLegacyBrowser.mountAccountMarker(window.document);
+  }
   new Function("window", "document", script)(window, window.document);
   return window.document;
 }
 
-test("index.html carries the current and the pre-rename marker", () => {
+test("index loads the compatibility script before the gateway marker is installed", () => {
   expect(html).toContain('<div id="chisabot-account-control" hidden></div>');
-  expect(html).toContain('<div id="openbot-account-control" hidden></div>');
+  expect(html.indexOf('src="/compat/legacy-browser.js"')).toBeLessThan(html.indexOf("ChisaLegacyBrowser.mountAccountMarker(document)"));
 });
 
 const legacyGateway = gateway.replaceAll(
@@ -50,10 +55,8 @@ for (const [name, script] of [
   ["pre-rename gateway", legacyGateway],
 ] as const) {
   test(`${name} adds no floating sign-out button over the app`, () => {
-    const markers = html
-      .match(/<div id="(?:chisabot|openbot)-account-control" hidden><\/div>/g)!
-      .join("");
-    const document = mountWith(script, markers);
+    const markers = html.match(/<div id="chisabot-account-control" hidden><\/div>/g)!.join("");
+    const document = mountWith(script, markers, true);
     expect(
       document.querySelectorAll(
         "#chisabot-account-control, #openbot-account-control",

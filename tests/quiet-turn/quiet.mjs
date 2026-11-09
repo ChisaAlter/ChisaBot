@@ -37,7 +37,7 @@ await page.route("**/*", (route) => {
   const r = route.request(); const m = r.method(); const u = r.url();
   if (/\/api\/devices\/[^/]+\/screenshots\//.test(u)) return route.fulfill({ status: 200, contentType: "image/png", body: PNG });
   if (m === "GET" || m === "HEAD" || m === "OPTIONS") return route.continue();
-  if (/\/api\/(agents|copilotkit|channels|bot-threads|chat|agui|messages|threads|link-preview)/.test(u)) return route.continue();
+  if (/\/api\/(agents|conversations|channels|bot-threads|chat|agui|messages|threads|link-preview)/.test(u)) return route.continue();
   log("BLOCKED", m, u.replace(base, "")); return route.fulfill({ status: 204, body: "" });
 });
 await page.goto(`${base}/settings`, { waitUntil: "domcontentloaded" });

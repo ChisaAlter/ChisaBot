@@ -13,7 +13,7 @@ import { channelHistoryNotice } from "../src/components/channels/channel-chat";
 import {
   readThreadMessages,
   type StoredThread,
-} from "../src/lib/copilot/thread-messages";
+} from "../src/lib/conversations/thread-messages";
 
 function HistoryNoticeProbe({
   lastMessageAt,
@@ -63,7 +63,7 @@ afterEach(() => cleanup());
 afterAll(() => GlobalRegistrator.unregister());
 
 describe("channel history notice", () => {
-  test("failed history retrieval does not claim the CopilotKit project changed", () => {
+  test("failed history retrieval does not claim the deployment changed", () => {
     const notice = channelHistoryNotice({
       restoring: false,
       messageCount: 0,
@@ -73,7 +73,7 @@ describe("channel history notice", () => {
     });
 
     expect(notice).toContain("暂时无法加载");
-    expect(notice).not.toContain("different CopilotKit project");
+    expect(notice).not.toContain("different");
     expect(notice).not.toContain("fresh history");
   });
 
@@ -87,7 +87,7 @@ describe("channel history notice", () => {
     });
 
     expect(notice).toContain("有一条较早的消息无法读取");
-    expect(notice).not.toContain("different CopilotKit project");
+    expect(notice).not.toContain("different");
   });
 
   test("a malformed successful history response renders the unavailable notice", async () => {
@@ -103,7 +103,7 @@ describe("channel history notice", () => {
         expect((await view.findByRole("status")).textContent).toContain(
           "较早的消息暂时无法加载",
         );
-        expect(view.queryByText(/different CopilotKit project/)).toBeNull();
+        expect(view.queryByText(/different/)).toBeNull();
       },
     );
   });
@@ -135,7 +135,7 @@ describe("channel history notice", () => {
     });
 
     expect(notice).toContain("暂时无法加载");
-    expect(notice).not.toContain("different CopilotKit project");
+    expect(notice).not.toContain("different");
   });
 
   test("valid empty history in a used channel has no project-change notice", () => {

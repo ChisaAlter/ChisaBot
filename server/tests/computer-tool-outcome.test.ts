@@ -17,7 +17,7 @@ import { computerFailureOutcome } from "../src/computer/tool-outcome";
  *
  * 2026-10-17 22:46 生产：星灵在 Hark 注册页的月份下拉框上按 Enter，agent-computer 超时，
  * POST /api/approvals/computer 回了 500「Element f4e36 is not on the page any more…」。
- * 网页里的工具处理函数一抛错，CopilotKit 就不再发起下一轮——这一轮没有回答、没有提示。
+ * 网页里的工具处理函数一抛错，conversation runtime 就不再发起下一轮——这一轮没有回答、没有提示。
  */
 
 describe("computerFailureOutcome", () => {

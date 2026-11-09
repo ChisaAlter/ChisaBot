@@ -66,7 +66,7 @@ function backwardJumps(frames) {
 async function context(width) {
   const mobile = width < 1000;
   const ctx = await browser.newContext({ viewport: { width, height: mobile ? 844 : 800 }, isMobile: mobile, hasTouch: mobile, locale: "zh-CN", timezoneId: "Asia/Shanghai", ignoreHTTPSErrors: true });
-  if (TOK) await ctx.addCookies([{ name: "__Host-openbot_session", value: TOK, url: base }]);
+  if (TOK) await ctx.addCookies([{ name: "__Host-chisabot_session", value: TOK, url: base }]);
   if (READONLY) {
     await ctx.route("**/*", (route) => {
       const req = route.request();
@@ -85,7 +85,7 @@ await p0.goto(`${base}/`, { waitUntil: "domcontentloaded" });
 await p0.waitForTimeout(2500);
 const get = (path) => p0.evaluate(async (p) => (await fetch(p)).json(), path);
 const channels = ((await get("/api/channels")).channels ?? []).filter((c) => c.agentIds?.length === 1);
-for (const c of channels) { const r = await get(`/api/copilotkit/threads/${encodeURIComponent(c.threadId)}/messages?agentId=${encodeURIComponent(c.agentIds[0])}`); c.count = r.messages?.length ?? 0; }
+for (const c of channels) { const r = await get(`/api/conversations/threads/${encodeURIComponent(c.threadId)}/messages?agentId=${encodeURIComponent(c.agentIds[0])}`); c.count = r.messages?.length ?? 0; }
 const agentsRaw = await get("/api/agents");
 const agents = Array.isArray(agentsRaw) ? agentsRaw : agentsRaw.agents ?? [];
 await setup.close();

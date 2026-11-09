@@ -19,8 +19,8 @@ let bot;let thread;
 const get=async p=>{const r=await api(p);assert.equal(r.status,200,p+" "+r.body.slice(0,200));return JSON.parse(r.body);};
 const send=async text=>{events.push({at:new Date().toISOString(),send:text});await page.locator('[aria-label="消息"]:visible').fill(text);await page.keyboard.press("Enter");};
 const until=async(fn,label,timeout=45000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await new Promise(r=>setTimeout(r,200));}throw new Error("Timeout: "+label);};
-const inbox=()=>get(`/api/copilotkit/threads/${thread}/inbox`);
-const messages=async()=>{const r=await get(`/api/copilotkit/threads/${thread}/messages`);return r.messages||r;};
+const inbox=()=>get(`/api/conversations/threads/${thread}/inbox`);
+const messages=async()=>{const r=await get(`/api/conversations/threads/${thread}/messages`);return r.messages||r;};
 const idle=async()=>{let quiet=0;await until(async()=>{const s=await inbox();const stopped=await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="composer-stop"]:visible').count();if(!s.running&&!stopped)quiet++;else quiet=0;return quiet>=8;},"whole turn idle",60000);};
 const shot=async name=>page.screenshot({path:path.join(out,name+".png")});
 try{

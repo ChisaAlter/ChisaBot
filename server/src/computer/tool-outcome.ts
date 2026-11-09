@@ -3,7 +3,7 @@
  *
  * 为什么有这个：网页聊天里改动类的计算机工具（点击 / 填写 / 按键…）走 POST /api/approvals/computer/:bot。
  * 那条路由以前把「元素不在页面上了」「下拉框里没有这个选项」这类普通失败当成 500 抛回去；
- * 浏览器里的工具处理函数一抛错，CopilotKit 就不再发起下一轮（`executeSpecificTool` 只在没有 error
+ * 浏览器里的工具处理函数一抛错，conversation runtime 就不再发起下一轮（`executeSpecificTool` 只在没有 error
  * 时才 follow-up），机器人没机会重新读页面，这一轮就静默结束了——用户 2026-10-17 22:46 截图里的「做了 3 步」。
  *
  * 现在这些失败作为 `{ ok: false, reason, … }` 的正常结果交回去，字段和 /api/computers/:bot/* 的

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { createAdminSmokeRoutes, resolveSmokeHermesProbe, smokeAnswered, smokePrompt } from "../src/admin-smoke";
 import type { AppVariables } from "../src/auth/guards";
-import type { RuntimeModelConnection } from "../src/copilot";
+import type { RuntimeModelConnection } from "../src/conversation-runtime";
 
 const connection: RuntimeModelConnection = {
   model: { provider: "openai", defaultModel: "gpt-test", baseUrl: "http://model.invalid/v1" },

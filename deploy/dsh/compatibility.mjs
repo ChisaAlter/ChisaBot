@@ -10,5 +10,6 @@ if (major < 24 || (major === 24 && minor < 9)) throw new Error('DSH requires Nod
 // 2 = durable personal sends and verified task outcomes. Reader 1 could replay these effects
 // or mark a task complete without its required evidence, even though native logs still open.
 // 3 = persistent account-wide background admission and safe queued-execution recovery.
-export const compatibility = { protocol: 1, runtimeVersion, historyReader: `dsh-${runtimeVersion}`, conversationReader: 3 };
+// 4 = canonical conversation tables and product protocol names; prior table readers cannot recover this state.
+export const compatibility = { protocol: 1, runtimeVersion, historyReader: `dsh-${runtimeVersion}`, conversationReader: 4 };
 if (process.argv.includes('--print')) console.log(JSON.stringify(compatibility));

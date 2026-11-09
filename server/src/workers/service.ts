@@ -134,7 +134,7 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
   };
 
   const lastAssistantText = async (threadId: string): Promise<string | null> => {
-    const rows = await sql.unsafe<{ messages: Message[] }[]>("SELECT messages FROM openbot_local_threads WHERE id = $1", [threadId]);
+    const rows = await sql.unsafe<{ messages: Message[] }[]>("SELECT messages FROM chisabot_local_threads WHERE id = $1", [threadId]);
     const messages = rows[0]?.messages ?? [];
     for (let index = messages.length - 1; index >= 0; index--) {
       const message = messages[index]!;
@@ -454,7 +454,7 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
       );
       const inbox = await sql.unsafe(
         `DELETE FROM chisabot_thread_inbox i WHERE i.updated_at < now() - interval '1 hour'
-         AND NOT EXISTS (SELECT 1 FROM openbot_local_threads t WHERE t.id = i.thread_id) RETURNING id`,
+         AND NOT EXISTS (SELECT 1 FROM chisabot_local_threads t WHERE t.id = i.thread_id) RETURNING id`,
       );
       return { workers: workers.length, inbox: inbox.length };
     },

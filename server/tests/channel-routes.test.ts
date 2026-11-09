@@ -1528,15 +1528,15 @@ describe("draft channels", () => {
    */
   async function ensureLocalThreadTables() {
     // 与 local-conversations.ts 的建表语句相同（IF NOT EXISTS）：测试库里可能还没有跑过本地后端。
-    await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_threads (
+    await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_threads (
     id text PRIMARY KEY, owner_user_id text NOT NULL, agent_id text NOT NULL,
     name text, archived boolean NOT NULL DEFAULT false,
     messages jsonb NOT NULL DEFAULT '[]'::jsonb, state jsonb NOT NULL DEFAULT '{}'::jsonb,
     run_id text, lock_expires_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
   )`);
-    await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_runs (
-    thread_id text NOT NULL REFERENCES openbot_local_threads(id) ON DELETE CASCADE,
+    await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_runs (
+    thread_id text NOT NULL REFERENCES chisabot_local_threads(id) ON DELETE CASCADE,
     run_id text NOT NULL, status text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz,
     PRIMARY KEY (thread_id, run_id)
@@ -1561,14 +1561,14 @@ describe("draft channels", () => {
     messages: unknown[],
   ) {
     await database.$client.unsafe(
-      "INSERT INTO openbot_local_threads (id, owner_user_id, agent_id, messages) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (id) DO UPDATE SET messages = EXCLUDED.messages",
+      "INSERT INTO chisabot_local_threads (id, owner_user_id, agent_id, messages) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (id) DO UPDATE SET messages = EXCLUDED.messages",
       [threadId, owner.id, agentId, JSON.stringify(messages)],
     );
   }
 
   async function dropThread(threadId: string) {
     await database.$client.unsafe(
-      "DELETE FROM openbot_local_threads WHERE id = $1",
+      "DELETE FROM chisabot_local_threads WHERE id = $1",
       [threadId],
     );
   }

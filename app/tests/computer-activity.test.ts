@@ -4,8 +4,8 @@ import {
   clearActivity,
   recordActivity,
 } from "../src/lib/computers/activity";
-import { outputOf, syncComputerMessages } from "../src/lib/copilot/computer-tools";
-import { lastComputerStatusFor } from "../src/lib/copilot/computer-activity";
+import { outputOf, syncComputerMessages } from "../src/lib/conversations/computer-tools";
+import { lastComputerStatusFor } from "../src/lib/conversations/computer-activity";
 
 /**
  * What a Bot did on its computer, other than browse.

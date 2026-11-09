@@ -201,7 +201,7 @@ test("a hand-off approved after its run's assertion expired keeps the run's dept
     target: { bot: "research-desk" },
     continuation: {
       ...continuation("message_bot", args),
-      forwardedProps: { openbotRun: signed },
+      forwardedProps: { chisabotRun: signed },
     },
   });
   const { execute, coordination } = harness({

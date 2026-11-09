@@ -42,8 +42,8 @@ import {
 import { buildStepText, groupSources, panelEditPrompt } from "./panel-meta";
 import { type LivePanel, livePanelKeys, useChatRunning, useLivePanels } from "./live-panels-query";
 import { PanelBoard } from "./panel-board";
-import { jsonRenderRegistry } from "@/lib/copilot/json-render/registry";
-import { copyText, openInNewTab, RichUiProvider, useNow } from "@/lib/copilot/json-render/rich-context";
+import { jsonRenderRegistry } from "@/lib/conversations/json-render/registry";
+import { copyText, openInNewTab, RichUiProvider, useNow } from "@/lib/conversations/json-render/rich-context";
 
 /** 面板里的「问一句」发到当前机器人的对话（bot.tsx 监听）。 */
 function askBot(text: string) {

@@ -221,7 +221,7 @@ describe("admin audit API", () => {
     );
 
     const response = await app.request(
-      "http://openbot.local/api/admin/audit-events?eventType=connector.sync_succeeded&limit=10",
+      "http://chisabot.local/api/admin/audit-events?eventType=connector.sync_succeeded&limit=10",
     );
 
     expect(response.status).toBe(200);
@@ -253,7 +253,7 @@ describe("admin audit API", () => {
     );
 
     const response = await app.request(
-      "http://openbot.local/api/admin/audit-events",
+      "http://chisabot.local/api/admin/audit-events",
     );
 
     expect(response.status).toBe(403);

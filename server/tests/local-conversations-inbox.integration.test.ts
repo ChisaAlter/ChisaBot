@@ -1,9 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { AbstractAgent, EventType, type BaseEvent, type Message, type RunAgentInput } from "@ag-ui/client";
-import { CopilotKitCore } from "@copilotkit/core";
 import { Observable } from "rxjs";
-import { z } from "zod/v4";
 import { sanitizeSeededHistory } from "../src/agents/history-sanitize";
 import { createDatabase } from "../src/db/client";
 import { createLocalConversations, type LocalConversationBackend } from "../src/local-conversations";
@@ -42,12 +40,12 @@ suite("queued supplements across frontend wire runs", () => {
     backend = await createLocalConversations(database);
   });
   afterAll(async () => {
-    await database.$client.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [owner]);
+    await database.$client.unsafe("DELETE FROM chisabot_local_threads WHERE owner_user_id = $1", [owner]);
     await database.$client.unsafe("DELETE FROM chisabot_thread_inbox WHERE owner_user_id = $1", [owner]);
     await database.$client.close();
   });
   async function post(threadId: string, operation: string, body: unknown) {
-    const response = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${threadId}/${operation}`, {
+    const response = await backend.handle(new Request(`http://localhost/api/conversations/threads/${threadId}/${operation}`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     }), owner);
     expect(response?.status).toBe(200);
@@ -94,10 +92,25 @@ suite("queued supplements across frontend wire runs", () => {
       }
     }
     const agent = new BrowserAgent({ agentId: bot, threadId, initialMessages: [{ id: "primary", role: "user", content: "Run the probe exactly once" }] });
-    const core = new CopilotKitCore({ agents__unsafe_dev_only: { [bot]: agent }, tools: [{
-      name: "computer_run_command", description: "Probe", parameters: z.object({ command: z.string() }),
-      handler: async () => { executions++; toolStarted.resolve(); await finishTool.promise; if (failTool) throw new Error("command failed"); return "ONCE_DONE; log_lines=1"; },
-    }] });
+    // Exercise the installed-client wire contract with the official AG-UI agent: receive one
+    // tool call, finish its local effect, then submit exactly one continuation containing its result.
+    let stopped = false;
+    const core = {
+      stopAgent({ agent }: { agent: AbstractAgent }) { stopped = true; agent.abortRun(); },
+      async runAgent({ agent }: { agent: AbstractAgent }) {
+        while (!stopped) {
+          await agent.runAgent({ tools: [{ name: "computer_run_command", description: "Probe", parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } }] });
+          if (stopped) return;
+          const completed = new Set(agent.messages.filter(message => message.role === "tool").map(message => message.toolCallId));
+          const call = agent.messages.flatMap(message => message.toolCalls ?? []).find(call => !completed.has(call.id));
+          if (!call) return;
+          executions++; toolStarted.resolve(); await finishTool.promise;
+          if (stopped) return;
+          agent.addMessage({ id: `result-${call.id}`, role: "tool", toolCallId: call.id, content: failTool ? "Error: command failed" : "ONCE_DONE; log_lines=1" });
+          if (failTool) return;
+        }
+      },
+    };
     return { threadId, agent, core, generated, finishGeneration, toolStarted, finishTool, inputs,
       counts: () => ({ modelRuns, executions }) };
   }
@@ -157,7 +170,7 @@ suite("queued supplements across frontend wire runs", () => {
       // Both active and relay exist here, and the browser has not received RUN_FINISHED.
       await post(f.threadId, "inbox", { id: "cleanup-queued", text: "Stay queued after Stop" });
       const [run] = await database.$client.unsafe<{ run_id: string }[]>(
-        "SELECT run_id FROM openbot_local_threads WHERE id = $1", [f.threadId],
+        "SELECT run_id FROM chisabot_local_threads WHERE id = $1", [f.threadId],
       );
       expect(await backend.runner.stop({ threadId: f.threadId, runId: "stale" })).toBe(false);
       f.core.stopAgent({ agent: f.agent });
@@ -173,7 +186,7 @@ suite("queued supplements across frontend wire runs", () => {
       expect((await backend.inbox.list(f.threadId)).filter((item) => item.status === "paused").map((item) => item.id)).toEqual(["cleanup-queued"]);
       expect(await backend.inbox.isPaused(f.threadId)).toBe(true);
       const [saved] = await database.$client.unsafe<{ status: string }[]>(
-        "SELECT status FROM openbot_local_runs WHERE thread_id = $1 AND run_id = $2", [f.threadId, run!.run_id],
+        "SELECT status FROM chisabot_local_runs WHERE thread_id = $1 AND run_id = $2", [f.threadId, run!.run_id],
       );
       expect(saved?.status).toBe("stopped");
     } finally {
@@ -199,7 +212,7 @@ suite("queued supplements across frontend wire runs", () => {
       await turn;
       const results = f.agent.messages.filter((message) => message.role === "tool");
       interceptUnsafe = async (...args: Parameters<typeof unsafe>) => {
-        if (!intercepted && String(args[0]).includes("UPDATE openbot_local_threads t SET messages")) {
+        if (!intercepted && String(args[0]).includes("UPDATE chisabot_local_threads t SET messages")) {
           intercepted = true;
           updateReached.resolve();
           await releaseUpdate.promise;
@@ -210,10 +223,10 @@ suite("queued supplements across frontend wire runs", () => {
       await updateReached.promise;
       expect(intercepted).toBe(true);
       if (changed === "snapshot") {
-        await unsafe("UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1", [f.threadId, JSON.stringify([{ id: "revised", role: "user", content: "New canonical snapshot" }])]);
+        await unsafe("UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1", [f.threadId, JSON.stringify([{ id: "revised", role: "user", content: "New canonical snapshot" }])]);
       } else {
         // Even identical history must not authorize an older relay after a newer run finished.
-        await unsafe("INSERT INTO openbot_local_runs (thread_id, run_id, status, created_at) VALUES ($1, $2, 'finished', clock_timestamp())", [f.threadId, randomUUID()]);
+        await unsafe("INSERT INTO chisabot_local_runs (thread_id, run_id, status, created_at) VALUES ($1, $2, 'finished', clock_timestamp())", [f.threadId, randomUUID()]);
       }
       releaseUpdate.resolve();
       expect(await completing).toEqual({ finished: false });
@@ -309,7 +322,7 @@ suite("queued supplements across frontend wire runs", () => {
       await post(f.threadId, "inbox", { id: "recover-held", text: "Never run automatically" });
       f.finishTool.resolve(); await turn;
       interceptUnsafe = async (...args: Parameters<typeof unsafe>) => {
-        if (String(args[0]).includes("UPDATE openbot_local_runs SET status = 'stopped'") && args[1]?.[0] === f.threadId) {
+        if (String(args[0]).includes("UPDATE chisabot_local_runs SET status = 'stopped'") && args[1]?.[0] === f.threadId) {
           attempts++;
           if (failures === 0) { failures++; failedCommit.resolve(); throw new Error("forced transient Stop bookkeeping failure"); }
         }
@@ -346,7 +359,7 @@ suite("queued supplements across frontend wire runs", () => {
         f.core.stopAgent({ agent: f.agent });
         expect(await backend.runner.stop({ threadId: f.threadId })).toBe(true);
       } else {
-        // Let the real SDK handler fail: it saves a result locally, without a follow-up /run.
+        // A failed frontend handler saves a local result without a follow-up /run.
         f.finishTool.resolve();
         await turn;
         expect(f.counts()).toEqual({ modelRuns: 1, executions: 1 });

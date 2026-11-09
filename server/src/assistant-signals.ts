@@ -43,7 +43,7 @@ export async function readAssistantSignals(query: Query, ownerUserId: string): P
     query(`SELECT state FROM chisabot_personal_deliveries WHERE owner_user_id=$1
       ORDER BY created_at DESC LIMIT 100`, [ownerUserId]),
     query(`WITH recent_threads AS MATERIALIZED (
-      SELECT id FROM openbot_local_threads WHERE owner_user_id=$1 ORDER BY updated_at DESC LIMIT 20
+      SELECT id FROM chisabot_local_threads WHERE owner_user_id=$1 ORDER BY updated_at DESC LIMIT 20
     ), recent_bindings AS MATERIALIZED (
       SELECT b.id,b.session_id FROM recent_threads t CROSS JOIN LATERAL (
         SELECT id,session_id FROM chisabot_runtime_bindings

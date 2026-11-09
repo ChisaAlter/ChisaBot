@@ -22,7 +22,7 @@ import {
   shortNumber,
   toNumber,
   trendOfText,
-} from "@/lib/copilot/json-render/rich-utils";
+} from "@/lib/conversations/json-render/rich-utils";
 import { settleReactWork } from "./settle-react-work";
 
 /** 富组件（DESIGN.md §29）：纯函数 + 用真实注册表把每个新组件画一遍。 */
@@ -167,7 +167,7 @@ describe("rich components render", () => {
 });
 
   async function draw(spec: Record<string, unknown>) {
-    const { jsonRenderRegistry } = await import("@/lib/copilot/json-render/registry");
+    const { jsonRenderRegistry } = await import("@/lib/conversations/json-render/registry");
     const verdict = inspectRenderUiSpec(JSON.stringify(spec));
     expect(verdict.ok).toBe(true);
     const safe = verdict.ok ? verdict.spec : (spec as unknown as Spec);
@@ -366,7 +366,7 @@ describe("rich components render", () => {
   });
 
   test("a changed value flashes and keeps the same element (refresh updates in place)", async () => {
-    const { jsonRenderRegistry } = await import("@/lib/copilot/json-render/registry");
+    const { jsonRenderRegistry } = await import("@/lib/conversations/json-render/registry");
     const spec = (value: string) =>
       ({ root: "m", elements: { m: { type: "Metric", props: { label: "现价", value }, children: [] } } }) as unknown as Spec;
     const store = createStateStore({});
@@ -396,8 +396,8 @@ describe("rich components render", () => {
   };
 
   async function drawChoices(options: { initial?: string | null; panel?: boolean } = {}) {
-    const { jsonRenderRegistry } = await import("@/lib/copilot/json-render/registry");
-    const { ChoiceProvider, RichUiProvider, choiceOptionsOf } = await import("@/lib/copilot/json-render/rich-context");
+    const { jsonRenderRegistry } = await import("@/lib/conversations/json-render/registry");
+    const { ChoiceProvider, RichUiProvider, choiceOptionsOf } = await import("@/lib/conversations/json-render/rich-context");
     const verdict = inspectRenderUiSpec(JSON.stringify(choiceSpec));
     expect(verdict.ok).toBe(true);
     const safe = (verdict.ok ? verdict.spec : choiceSpec) as Spec;
@@ -492,7 +492,7 @@ describe("rich components render", () => {
   });
 
   test("a chat surface with text outside any Card becomes the shell itself (DESIGN.md §29)", async () => {
-    const { JsonRenderSurface } = await import("@/lib/copilot/json-render-surface");
+    const { JsonRenderSurface } = await import("@/lib/conversations/json-render-surface");
     const checked = (raw: Record<string, unknown>) => {
       const verdict = inspectRenderUiSpec(JSON.stringify(raw));
       expect(verdict.ok).toBe(true);

@@ -23,7 +23,7 @@ import {
 } from "../../../../shared/local-agents";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
-import { formatElapsed } from "@/lib/copilot/workers";
+import { formatElapsed } from "@/lib/conversations/workers";
 import {
   decideDeviceApproval,
   localTaskQueryOptions,

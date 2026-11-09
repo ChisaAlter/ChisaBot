@@ -32,7 +32,7 @@ function fakeDatabase(threads: Record<string, ThreadRow> = {}, events: Record<st
       pointers.set(key, { thread_id: String(params[2]), updated_at: new Date() });
       return [];
     }
-    if (q.startsWith("SELECT owner_user_id, agent_id FROM openbot_local_threads")) {
+    if (q.startsWith("SELECT owner_user_id, agent_id FROM chisabot_local_threads")) {
       const row = threads[String(params[0])];
       return row ? [row] : [];
     }

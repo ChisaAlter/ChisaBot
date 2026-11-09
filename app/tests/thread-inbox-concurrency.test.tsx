@@ -7,8 +7,8 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { Observable, of } from "rxjs";
 import { z } from "zod/v4";
-import { queueMessage, queuedFor, takeQueued } from "../src/lib/copilot/thread-inbox";
-import { useThreadInbox } from "../src/lib/copilot/use-thread-inbox";
+import { queueMessage, queuedFor, takeQueued } from "../src/lib/conversations/thread-inbox";
+import { useThreadInbox } from "../src/lib/conversations/use-thread-inbox";
 import { settleReactWork } from "./settle-react-work";
 
 const originalFetch = globalThis.fetch;

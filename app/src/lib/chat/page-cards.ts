@@ -1,6 +1,6 @@
 import { pageIdFromResult } from "@/lib/pages";
 
-/** 在聊天里画成页面卡片的工具（lib/copilot/pages-tool.tsx）。 */
+/** 在聊天里画成页面卡片的工具（lib/conversations/pages-tool.tsx）。 */
 export const PAGE_CARD_TOOLS: ReadonlySet<string> = new Set(["page_create", "page_update", "page_publish"]);
 
 type PageCall = { id: string; name: string; args: string; result?: string };

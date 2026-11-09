@@ -63,7 +63,7 @@ beforeAll(async () => {
     throw new Error(
       `The test database has showBarChart unpublished: ${decision.reason}`,
     );
-  await store.revoke("showBarChart", deniedBot, "test@openbot.local");
+  await store.revoke("showBarChart", deniedBot, "test@chisabot.local");
 });
 
 afterAll(async () => {
@@ -339,7 +339,7 @@ describe("an unattended routine turn answering with a governed chart", () => {
     });
     const bar = tools.find((tool) => tool.definition.name === "showBarChart");
     expect(bar?.hidden).toBeUndefined();
-    await store.revoke("showBarChart", allowedBot, "test@openbot.local");
+    await store.revoke("showBarChart", allowedBot, "test@chisabot.local");
     try {
       const result = String(
         await bar?.execute(chartArgs, {

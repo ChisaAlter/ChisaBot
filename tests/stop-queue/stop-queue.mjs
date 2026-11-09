@@ -86,10 +86,10 @@ const visible = (selector) => page.locator(`${selector}:visible`).count();
 let bot;
 let thread;
 const inbox = async () =>
-  JSON.parse((await api(`/api/copilotkit/threads/${thread}/inbox`)).body);
+  JSON.parse((await api(`/api/conversations/threads/${thread}/inbox`)).body);
 const serverMessages = async () => {
   const b = JSON.parse(
-    (await api(`/api/copilotkit/threads/${thread}/messages`)).body,
+    (await api(`/api/conversations/threads/${thread}/messages`)).body,
   );
   return b.messages || b;
 };
@@ -414,7 +414,7 @@ try {
   await sleep(1500);
   let unlockCalls = 0;
   let failUnlock = true;
-  await page.route("**/api/copilotkit/threads/*/unlock", (route) => {
+  await page.route("**/api/conversations/threads/*/unlock", (route) => {
     unlockCalls++;
     return failUnlock
       ? route.fulfill({ status: 503, body: "unavailable" })
@@ -513,7 +513,7 @@ try {
       )) === 0,
     "a new turn does not carry 「停止失败，重试」",
   );
-  await page.unroute("**/api/copilotkit/threads/*/unlock");
+  await page.unroute("**/api/conversations/threads/*/unlock");
   await sleep(1000);
   await shot("7-retry-ok");
   results.push({ stop, esc, stopFailed: { failedMs, unlockCalls, retried } });

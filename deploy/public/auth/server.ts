@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmodSync } from "node:fs";
+import { LEGACY_SESSION_COOKIE, applyLegacyAuthEnvironment, clientAddress, legacyAuthRequired } from "./legacy-compat";
 
-const COOKIE = "__Host-openbot_session";
+const COOKIE = "__Host-chisabot_session";
 const SHORT_LIFETIME = 12 * 3600;
 const LONG_LIFETIME = 30 * 24 * 3600;
 const WINDOW = 15 * 60 * 1000;
@@ -27,22 +28,36 @@ export function safeNext(value: unknown): string {
   return value;
 }
 
-function sessionToken(request: Request): string | null {
+function cookieToken(request: Request, name: string): { present: boolean; token: string | null } {
   const cookie = request.headers.get("Cookie") || "";
-  if (cookie.length > 8192) return null;
-  const matches = cookie.split(";").map((part) => part.trim()).filter((part) => part.startsWith(COOKIE + "="));
-  if (matches.length !== 1) return null;
-  const token = matches[0]!.slice(COOKIE.length + 1);
-  return /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null;
+  if (cookie.length > 8192) return { present: true, token: null };
+  const matches = cookie.split(";").map((part) => part.trim()).filter((part) => part.startsWith(name + "="));
+  if (matches.length === 0) return { present: false, token: null };
+  const token = matches.length === 1 ? matches[0]!.slice(name.length + 1) : "";
+  return { present: true, token: /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null };
 }
 
-function cookieHeader(token: string, lifetime?: number): string {
-  return `${COOKIE}=${token}; Path=/; Secure; HttpOnly; SameSite=Lax${lifetime === undefined ? "" : `; Max-Age=${lifetime}`}`;
+function sessionToken(request: Request): string | null {
+  const current = cookieToken(request, COOKIE);
+  return current.present ? current.token : cookieToken(request, LEGACY_SESSION_COOKIE).token;
 }
-function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...headers } });
+
+function cookieHeader(token: string, lifetime?: number, name = COOKIE): string {
+  return name + "=" + token + "; Path=/; Secure; HttpOnly; SameSite=Lax" + (lifetime === undefined ? "" : "; Max-Age=" + lifetime);
 }
-const unauthorized = () => json({ ok: false, error: "请先登录。", openbotAuthRequired: true }, 401);
+
+function sessionHeaders(token: string, lifetime: number | undefined, clearLegacy: boolean): Headers {
+  const headers = new Headers({ "Set-Cookie": cookieHeader(token, lifetime) });
+  if (clearLegacy) headers.append("Set-Cookie", cookieHeader("", 0, LEGACY_SESSION_COOKIE));
+  return headers;
+}
+function json(data: unknown, status = 200, headers: HeadersInit = {}): Response {
+  const output = new Headers(headers);
+  output.set("Cache-Control", "no-store");
+  output.set("X-Content-Type-Options", "nosniff");
+  return Response.json(data, { status, headers: output });
+}
+const unauthorized = () => json({ ok: false, error: "请先登录。", chisabotAuthRequired: true, ...legacyAuthRequired() }, 401);
 
 const STARTUP_EVENTS = new Set(["shell", "entry-loaded", "entry-executing", "react-mounted", "error", "timeout"]);
 const STARTUP_CATEGORIES = new Set(["resource", "syntax", "runtime", "promise", "unknown"]);
@@ -266,8 +281,10 @@ export function createAuthApp(config: AuthConfig) {
     return now() - verifiedAt < DEVICE_GRACE_MS ? principal : null;
   }
   function revoke(request: Request) {
-    const token = sessionToken(request);
-    if (token) db.query("DELETE FROM sessions WHERE token_hash = ?").run(digest(token));
+    for (const name of [COOKIE, LEGACY_SESSION_COOKIE]) {
+      const token = cookieToken(request, name).token;
+      if (token) db.query("DELETE FROM sessions WHERE token_hash = ?").run(digest(token));
+    }
   }
   function attempt(key: string) {
     db.query(`INSERT INTO attempts (client_key, count, expires_at) VALUES (?, 1, ?)
@@ -328,7 +345,7 @@ export function createAuthApp(config: AuthConfig) {
     if (request.method !== "POST") return json({ ok: false, error: "请求方法不支持。" }, 405, { Allow: "POST" });
     if (request.headers.get("Origin") !== config.publicOrigin) return json({ ok: false, error: "登录请求来源无效，请确认服务器地址。" }, 403);
     clean();
-    const clientKey = digest(`client:${request.headers.get("X-ChisaBot-Client") || request.headers.get("X-OpenBot-Client") || "unknown"}`);
+    const clientKey = digest(`client:${clientAddress(request.headers)}`);
     const failures = db.query("SELECT count FROM attempts WHERE client_key = ? AND expires_at > ?").get(clientKey, now()) as { count: number } | null;
     if ((failures?.count || 0) >= 10) return json({ ok: false, error: "尝试次数过多，请稍后再试。" }, 429, { "Retry-After": "60" });
     const deviceToken = (request.headers.get("X-Device-Token") || "").trim();
@@ -373,7 +390,7 @@ export function createAuthApp(config: AuthConfig) {
     }
     db.query("DELETE FROM attempts WHERE client_key = ?").run(clientKey);
     const token = issueSession(request, principal, LONG_LIFETIME, deviceId);
-    return json({ ok: true, device: { id: deviceId, name: typeof body?.device?.name === "string" ? body.device.name : null } }, 200, { "Set-Cookie": cookieHeader(token, LONG_LIFETIME) });
+    return json({ ok: true, device: { id: deviceId, name: typeof body?.device?.name === "string" ? body.device.name : null } }, 200, sessionHeaders(token, LONG_LIFETIME, cookieToken(request, LEGACY_SESSION_COOKIE).present));
   }
 
   // ---- 账号管理（仅管理员，DESIGN.md 账号一节 / CB-096 多用户与管理员体系）----
@@ -533,7 +550,7 @@ export function createAuthApp(config: AuthConfig) {
   async function invite(request: Request): Promise<Response> {
     if (!multi) return json({ ok: false, error: "这个链接无效。" }, 404);
     clean();
-    const clientKey = digest("client:" + (request.headers.get("X-ChisaBot-Client") || request.headers.get("X-OpenBot-Client") || "unknown"));
+    const clientKey = digest("client:" + (clientAddress(request.headers)));
     if (request.method === "GET") {
       const limited = tooMany(clientKey);
       if (limited) return limited;
@@ -595,7 +612,7 @@ export function createAuthApp(config: AuthConfig) {
     const principal = accountPrincipal(account(accountId)!);
     const remember = body.remember === true;
     const token = issueSession(request, principal, remember ? LONG_LIFETIME : SHORT_LIFETIME);
-    return json({ ok: true, next: "/" }, 200, { "Set-Cookie": cookieHeader(token, remember ? LONG_LIFETIME : undefined) });
+    return json({ ok: true, next: "/" }, 200, sessionHeaders(token, remember ? LONG_LIFETIME : undefined, cookieToken(request, LEGACY_SESSION_COOKIE).present));
   }
 
   async function fetch(request: Request): Promise<Response> {
@@ -625,7 +642,16 @@ export function createAuthApp(config: AuthConfig) {
       }
       if (path === "/auth/session" && request.method === "GET") {
         const principal = await authenticated(request);
-        return json(principal ? { authenticated: true, username: principal.username, displayName: principal.name, role: principal.role, userId: principal.id, ...(multi ? { multiAccount: true } : {}) } : { authenticated: false, ...(multi ? { multiAccount: true } : {}) });
+        let headers: HeadersInit = {};
+        const legacy = cookieToken(request, LEGACY_SESSION_COOKIE);
+        if (principal && legacy.present) {
+          const token = sessionToken(request)!;
+          const row = db.query("SELECT expires_at, created_at FROM sessions WHERE token_hash = ?").get(digest(token)) as { expires_at: number; created_at: number };
+          // Preserve session-vs-persistent cookies and the original expiry while renaming them.
+          const lifetime = row.expires_at - row.created_at > SHORT_LIFETIME * 1000 ? Math.max(0, Math.floor((row.expires_at - now()) / 1000)) : undefined;
+          headers = sessionHeaders(token, lifetime, true);
+        }
+        return json(principal ? { authenticated: true, username: principal.username, displayName: principal.name, role: principal.role, userId: principal.id, ...(multi ? { multiAccount: true } : {}) } : { authenticated: false, ...(multi ? { multiAccount: true } : {}) }, 200, headers);
       }
       if (path === "/auth/startup-report") {
         if (request.method !== "POST") return json({ ok: false }, 405, { Allow: "POST" });
@@ -661,7 +687,7 @@ export function createAuthApp(config: AuthConfig) {
       if (contentType !== "application/json" && !(path === "/auth/logout" && !contentType)) return json({ ok: false, error: "请求格式无效，请刷新页面重试。" }, 415);
       if (path === "/auth/logout") {
         revoke(request);
-        return json({ ok: true }, 200, { "Set-Cookie": cookieHeader("", 0) });
+        return json({ ok: true }, 200, sessionHeaders("", 0, true));
       }
       clean();
       const text = await request.text();
@@ -671,7 +697,7 @@ export function createAuthApp(config: AuthConfig) {
         body = JSON.parse(text);
         if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error();
       } catch { return json({ ok: false, error: "请求格式无效。" }, 400); }
-      const clientKey = digest("client:" + (request.headers.get("X-ChisaBot-Client") || request.headers.get("X-OpenBot-Client") || "unknown"));
+      const clientKey = digest("client:" + (clientAddress(request.headers)));
       const limited = tooMany(clientKey);
       if (limited) return limited;
       const validInput = typeof body.username === "string" && body.username.length <= 64 && typeof body.password === "string" && body.password.length > 0 && body.password.length <= 1024;
@@ -704,7 +730,7 @@ export function createAuthApp(config: AuthConfig) {
       db.query("DELETE FROM attempts WHERE client_key = ?").run(clientKey);
       const lifetime = body.remember === true ? LONG_LIFETIME : SHORT_LIFETIME;
       const token = issueSession(request, principal, lifetime);
-      return json({ ok: true, next: safeNext(body.next) }, 200, { "Set-Cookie": cookieHeader(token, body.remember === true ? lifetime : undefined) });
+      return json({ ok: true, next: safeNext(body.next) }, 200, sessionHeaders(token, body.remember === true ? lifetime : undefined, cookieToken(request, LEGACY_SESSION_COOKIE).present));
     } catch {
       // Never log request bodies, password hashes, cookies, or session tokens.
       return json({ ok: false, error: "登录服务暂时不可用，请稍后重试。" }, 503);
@@ -715,10 +741,7 @@ export function createAuthApp(config: AuthConfig) {
 
 if (import.meta.main) {
   process.umask(0o077);
-  // 0.1.75 rename: honour the pre-rename OPENBOT_* names when the CHISABOT_* ones are unset.
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key.startsWith("OPENBOT_") && value !== undefined && process.env[`CHISABOT_${key.slice(8)}`] === undefined) process.env[`CHISABOT_${key.slice(8)}`] = value;
-  }
+  applyLegacyAuthEnvironment(process.env);
   const stored = await Bun.file(process.env.CHISABOT_AUTH_CONFIG || "/auth/config.json").json();
   const app = createAuthApp({ ...stored, databasePath: process.env.CHISABOT_AUTH_DB || "/auth-data/sessions.sqlite", ...(process.env.CHISABOT_AUTH_APP_URL ? { appUrl: process.env.CHISABOT_AUTH_APP_URL } : {}) });
   const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.CHISABOT_AUTH_PORT || 3002), maxRequestBodySize: 4096, fetch: app.fetch });

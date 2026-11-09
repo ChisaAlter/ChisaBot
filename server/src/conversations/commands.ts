@@ -46,9 +46,9 @@ export function createConversationCommands(database: Database) {
       await sql.unsafe(`UPDATE chisabot_conversation_commands c SET status=CASE
           WHEN r.status='finished' THEN 'settled' WHEN r.status='stopped' THEN 'stopped' ELSE 'failed' END,
           execution_run_id=coalesce(c.execution_run_id,c.run_id),updated_at=now()
-        FROM openbot_local_runs r WHERE r.thread_id=c.thread_id AND r.run_id=c.run_id
+        FROM chisabot_local_runs r WHERE r.thread_id=c.thread_id AND r.run_id=c.run_id
           AND c.status IN ('accepted','dispatched') AND r.status IN ('finished','stopped','error','interrupted')
-          AND EXISTS(SELECT 1 FROM openbot_local_events e WHERE e.thread_id=r.thread_id AND e.run_id=r.run_id
+          AND EXISTS(SELECT 1 FROM chisabot_local_events e WHERE e.thread_id=r.thread_id AND e.run_id=r.run_id
             AND e.event->>'type' IN ('RUN_FINISHED','RUN_ERROR'))
           AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=r.thread_id AND d.run_id=r.run_id
             AND d.status IN ('admitting','observing','projecting'))`);

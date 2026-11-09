@@ -11,7 +11,7 @@ import {
   findPendingTool,
   type HandoffAgent,
   resumeHandoffTask,
-} from "@/lib/copilot/handoff-resume";
+} from "@/lib/conversations/handoff-resume";
 
 /** SDK reconnect replays human-in-the-loop tools only; ordinary frontend handlers need this action. */
 export function HandoffResumeNotice({

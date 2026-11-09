@@ -6,9 +6,9 @@ import type { Database } from "./db/client";
 /**
  * 全端同步（2026-10-13，DESIGN.md §42）：每个人和每个机器人的「当前对话」存在服务器上。
  *
- * 以前机器人聊天用哪条对话只记在浏览器的 localStorage 里（`openbot.bot-thread.<agentId>`），网页、装成应用的
+ * 以前机器人聊天用哪条对话只记在浏览器的 localStorage 里（`legacy bot-thread storage <agentId>`），网页、装成应用的
  * PWA、PC 客户端、安卓客户端各有各的 localStorage，于是同一个机器人在每台设备上都是另一段对话。对话本身
- * （openbot_local_threads / events）早就在服务器上、按人存，缺的只是「现在用的是哪一条」。
+ * （chisabot_local_threads / events）早就在服务器上、按人存，缺的只是「现在用的是哪一条」。
  *
  * - `GET  /api/bot-threads/:agentId`        → `{ threadId | null, updatedAt }`
  * - `PUT  /api/bot-threads/:agentId`        `{ threadId, onlyIfNone? }` → 设成当前对话（「新对话」/ 迁移）。
@@ -92,7 +92,7 @@ export async function createBotThreads(database: Database, control?: BotThreadRu
   async function mayUse(ownerUserId: string, agentId: string, threadId: string): Promise<boolean> {
     try {
       const rows = await sql.unsafe<{ owner_user_id: string; agent_id: string }[]>(
-        "SELECT owner_user_id, agent_id FROM openbot_local_threads WHERE id = $1",
+        "SELECT owner_user_id, agent_id FROM chisabot_local_threads WHERE id = $1",
         [threadId],
       );
       const row = rows[0];
@@ -123,9 +123,9 @@ export async function createBotThreads(database: Database, control?: BotThreadRu
     try {
       const rows = await sql.unsafe<{ owner: string | null; locked: boolean | null; seq: string | null; inbox: Date | null }[]>(
         `SELECT
-           (SELECT owner_user_id FROM openbot_local_threads WHERE id = $1) AS owner,
-           (SELECT run_id IS NOT NULL AND lock_expires_at > now() FROM openbot_local_threads WHERE id = $1) AS locked,
-           (SELECT max(sequence)::text FROM openbot_local_events WHERE thread_id = $1) AS seq,
+           (SELECT owner_user_id FROM chisabot_local_threads WHERE id = $1) AS owner,
+           (SELECT run_id IS NOT NULL AND lock_expires_at > now() FROM chisabot_local_threads WHERE id = $1) AS locked,
+           (SELECT max(sequence)::text FROM chisabot_local_events WHERE thread_id = $1) AS seq,
            (SELECT max(updated_at) FROM chisabot_thread_inbox WHERE thread_id = $1) AS inbox`,
         [threadId],
       );
@@ -167,7 +167,7 @@ export async function createBotThreads(database: Database, control?: BotThreadRu
       const rows = await sql.unsafe<{ id: string; name: string | null; first: unknown; count: number; updated_at: Date | string }[]>(
         `SELECT id, name, jsonb_array_length(messages) AS count, updated_at,
            (SELECT m->'content' FROM jsonb_array_elements(messages) m WHERE m->>'role' = 'user' LIMIT 1) AS first
-         FROM openbot_local_threads
+         FROM chisabot_local_threads
          WHERE owner_user_id = $1 AND agent_id = $2 AND id NOT LIKE 'worker-%' AND id NOT LIKE 'im-%' AND jsonb_array_length(messages) > 0
          ORDER BY updated_at DESC LIMIT 30`,
         [ownerUserId, agentId],

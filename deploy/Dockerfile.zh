@@ -1,4 +1,6 @@
-ARG BASE_IMAGE=ghcr.io/copilotkit/openbot@sha256:e3901de8c2b33dbe3eac5a2cfb126168c9c82ac94c0ebf6765515532d6021b62
+# Compatibility overlay entry point. Build the root Dockerfile for a self-contained image.
+# An explicit qualified product base is required; no upstream image is downloaded implicitly.
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS production-deps
 
 USER root

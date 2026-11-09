@@ -1,3 +1,4 @@
+import { interruptWaitingKind } from "@/lib/compat/legacy-client";
 import type { Message } from "@ag-ui/core";
 import type { Attachment } from "@/lib/chat/attachment-state";
 import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
@@ -44,13 +45,13 @@ import {
 } from "@/lib/channels/queries";
 import { noteSendWhileBusy } from "@/lib/chat/send-scroll";
 import { sendLanded } from "@/lib/chat/ui-memory";
-import { bindAgentBot, useActiveBot } from "@/lib/copilot/active-bot";
+import { bindAgentBot, useActiveBot } from "@/lib/conversations/active-bot";
 
-import type { ThreadActivity } from "@/lib/copilot/bot-thread";
-import { readSync } from "@/lib/copilot/bot-thread";
-import { reportChatRunning } from "@/lib/copilot/computer-activity";
+import type { ThreadActivity } from "@/lib/conversations/bot-thread";
+import { readSync } from "@/lib/conversations/bot-thread";
+import { reportChatRunning } from "@/lib/conversations/computer-activity";
 import { activityOf, publishBotActivity } from "@/lib/agents/bot-activity";
-import { syncComputerMessages } from "@/lib/copilot/computer-tools";
+import { syncComputerMessages } from "@/lib/conversations/computer-tools";
 import {
   CONNECTION_LOST_REASON,
   decideSendWatchdogAction,
@@ -64,11 +65,11 @@ import {
   SEND_WATCHDOG_MS,
   settleDroppedTurn,
   storedTurnAnswered,
-} from "@/lib/copilot/connection-drop";
-import { ConversationProvider, replyAfterToolCall } from "@/lib/copilot/conversation";
-import { frontendToolProgressAt } from "@/lib/copilot/frontend-tool-activity";
-import { hideHeldSupplements, useStopRequest } from "@/lib/copilot/held-supplements";
-import { afterMs, joinWithin } from "@/lib/copilot/join-thread";
+} from "@/lib/conversations/connection-drop";
+import { ConversationProvider, replyAfterToolCall } from "@/lib/conversations/conversation";
+import { frontendToolProgressAt } from "@/lib/conversations/frontend-tool-activity";
+import { hideHeldSupplements, useStopRequest } from "@/lib/conversations/held-supplements";
+import { afterMs, joinWithin } from "@/lib/conversations/join-thread";
 import {
   contentText,
   lastUserIndex,
@@ -76,36 +77,36 @@ import {
   type TruncateMode,
   truncateConversation,
   withEditedText,
-} from "@/lib/copilot/regenerate";
-import { repairUnansweredToolCalls } from "@/lib/copilot/repair-history";
+} from "@/lib/conversations/regenerate";
+import { repairUnansweredToolCalls } from "@/lib/conversations/repair-history";
 import {
   isAbortFailure,
   pausedForApproval,
   stoppedReason,
   unfinishedTurnReason,
-} from "@/lib/copilot/stopped-turn";
+} from "@/lib/conversations/stopped-turn";
 import {
   useThreadActivity,
   withStoredTail,
-} from "@/lib/copilot/thread-activity";
-import { inboxState, queueMessage, queuedFor, restoreQueue, useQueuedMessages } from "@/lib/copilot/thread-inbox";
+} from "@/lib/conversations/thread-activity";
+import { inboxState, queueMessage, queuedFor, restoreQueue, useQueuedMessages } from "@/lib/conversations/thread-inbox";
 import {
   HISTORY_RETRY_DELAYS_MS,
   readThreadMessages,
   type StoredThread,
   THREAD_MESSAGES_RETRY_DEADLINE_MS,
-} from "@/lib/copilot/thread-messages";
+} from "@/lib/conversations/thread-messages";
 import {
   cachedTranscript,
   rememberTranscript,
-} from "@/lib/copilot/transcript-cache";
+} from "@/lib/conversations/transcript-cache";
 import {
   useFallbackTurns,
   useLastSentAt,
   useStoppedTurnIds,
-} from "@/lib/copilot/turn-compaction";
-import { useConversationSync } from "@/lib/copilot/use-conversation-sync";
-import { useThreadInbox } from "@/lib/copilot/use-thread-inbox";
+} from "@/lib/conversations/turn-compaction";
+import { useConversationSync } from "@/lib/conversations/use-conversation-sync";
+import { useThreadInbox } from "@/lib/conversations/use-thread-inbox";
 import { readImageDims } from "@/lib/image-dims";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
 import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
@@ -119,7 +120,7 @@ import { newId } from "../../lib/new-id";
 /**
  * How long a stalled thread join is worth waiting for before it is ended.
  *
- * Ended, not outrun. See `lib/copilot/join-thread.ts` for what a connect left in flight does to the
+ * Ended, not outrun. See `lib/conversations/join-thread.ts` for what a connect left in flight does to the
  * next message sent.
  */
 const JOIN_DEADLINE_MS = 1500;
@@ -148,7 +149,7 @@ function sameActivity(
   );
 }
 
-/** Failed frontend handlers do not cause CopilotKit to send a continuation request. */
+/** Failed frontend handlers do not request a continuation. */
 async function persistFailedFrontendResults(threadId: string, messages: readonly Message[]) {
   // Only the last wire segment can still own a relay. Older errors are ordinary history.
   let callAt = -1;
@@ -164,7 +165,7 @@ async function persistFailedFrontendResults(threadId: string, messages: readonly
   if (callAt < 0) return false;
   const results = messages.slice(callAt + 1).filter((message) => message.role === "tool");
   if (!results.some((message) => typeof message.content === "string" && message.content.startsWith("Error:"))) return;
-  await fetch(`/api/copilotkit/threads/${encodeURIComponent(threadId)}/frontend-finished`, {
+  await fetch(`/api/conversations/threads/${encodeURIComponent(threadId)}/frontend-finished`, {
     method: "POST",
     credentials: "include",
     headers: { "content-type": "application/json" },
@@ -394,8 +395,6 @@ export function ChannelChat({
   channel: AgentChannel;
   runtimeAgentId: string;
 }) {
-  // The core attaches the frontend tool registry; direct agent runs do not.
-  const copilotkit = conversationClient;
   const modelQueryClient = useQueryClient();
   const modelSaving = useModelSelectionSaving(runtimeAgentId);
   /*
@@ -600,7 +599,7 @@ export function ChannelChat({
       try {
         // Bounded, and finished when it returns; `join-thread.ts` has why that matters.
         await joinWithin({
-          connect: copilotkit.connectAgent({ agent }),
+          connect: conversationClient.connectAgent({ agent }),
           deadline: afterMs(JOIN_DEADLINE_MS),
           detach: () => agent.detachActiveRun(),
         });
@@ -671,7 +670,7 @@ export function ChannelChat({
       current = false;
     };
   }, [
-    copilotkit,
+    conversationClient,
     agent,
     isReady,
     channel.threadId,
@@ -710,8 +709,8 @@ export function ChannelChat({
     [activity.onActivity],
   );
   const connectChat = useCallback(
-    (options: { agent: typeof agent }) => copilotkit.connectAgent(options),
-    [copilotkit],
+    (options: { agent: typeof agent }) => conversationClient.connectAgent(options),
+    [conversationClient],
   );
   const suppressConnectDuringSend = useCallback(
     () => sendInFlightRef.current,
@@ -936,52 +935,15 @@ export function ChannelChat({
   // The server replays the latest terminal event when this conversation is reopened.
   const [runError, setRunError] = useState<string | null>(null);
   const awaitingReply = useRef(false);
-  /**
-   * 这一轮最后一次「确实动了」的时刻（DESIGN.md §100 / DOG-01）。
-   *
-   * 发送看门狗原来只看「整轮多久没结束」。可一轮里用浏览器做事是好几段 run 接力，中间那一段是浏览器里
-   * 的工具在跑（`computer_run_command` 最长 600 秒，见 lib/copilot/frontend-tool-activity.ts），
-   * 这期间聊天这头一个字节的进展都没有：没有模型输出、没有工具结果。于是 12 秒一到就 `stopAgent()`，
-   * CopilotKit 用**不带 reason** 的 `abort()` 掐掉正在跑的命令，工具结果变成
-   * `Error: signal is aborted without reason`，这一轮以「运行命令 这一步出错」收尾（2026-10-20 真机）。
-   *
-   * 现在看门狗看的是**静默**：模型在写、工具在跑、工具结果在回来，都刷新这个时刻；真的什么都没动满
-   * 12 秒（首段）/ 180 秒（等回答）才算挂起。
-   */
+  /** Last observed progress, including a running tool. The watchdog measures silence rather
+   * than total elapsed time so a long tool does not look like a disconnected model. */
   const runProgressAt = useRef(0);
   const runEventSeenRef = useRef(false);
   const noteRunProgress = useRef(() => {
     runProgressAt.current = Date.now();
   });
-  /**
-   * WHY THIS TURN ENDED WITHOUT AN ANSWER, KEPT WHERE `deliver` CAN STILL SEE IT — because the one
-   * thing that knows is a subscriber, and the one thing that has to act on it is an `await`.
-   *
-   * `copilotkit.runAgent` DOES NOT REJECT ON A FAILED RUN. `CopilotKitCore.runAgent` catches
-   * everything the agent throws, reports it through `emitError` as `AGENT_RUN_FAILED`, and returns
-   * `{ result: undefined, newMessages: [] }` — a value indistinguishable from a run that finished
-   * with nothing to say. So a gateway 503, a stream that dies, a model that refuses the request:
-   * every one of them arrived here as a resolved promise, and `say` reported success for a turn
-   * that never reached the server.
-   *
-   * WHAT THAT COST, WHICH IS THE REASON THIS EXISTS. `say` resolving is what every caller reads as
-   * "it went". The composer clears the box and gives up the chips it was riding; the queue empties
-   * into a draft nothing retries; `conversation-view.tsx` never runs either of the failure paths it
-   * has written for exactly this. The person is left with the failed turn in the transcript and a
-   * notice under it, the words unretryable, and the files behind them staged rows that nothing on
-   * any screen points at any more. The notice is honest and everything under it was not.
-   *
-   * READ OFF THE SAME `fail` THE NOTICE IS, and deliberately not from a second subscription of its
-   * own. `fail` already answers the one question a separate subscriber would get wrong: a turn the
-   * PERSON stopped also reaches `onRunFailed`, with an abort, and `onStop` clears `awaitingReply`
-   * before it — so Stop is not a failure here and nothing restores a draft somebody chose to end.
-   *
-   * ONE SLOT FOR ONE TURN AT A TIME, the same assumption `awaitingReply` beside it already makes.
-   * Two overlapping turns — a component button pressed during a composer send — would have the
-   * second clear the first's reason, which reports the earlier turn as successful. That is the
-   * pre-existing shape of `awaitingReply`, not a new one, and narrowing it means giving a run a
-   * handle that `copilotkit.runAgent` does not hand back.
-   */
+  /** The stream subscriber records a turn failure before the send promise settles. Stop clears
+   * awaitingReply first, so a deliberate cancellation does not restore an abandoned draft. */
   const turnFailure = useRef<string | null>(null);
   /** 这一轮的流在浏览器这头断了（不是模型出错，DESIGN.md §89）：先不报，run 结束后问服务器这一轮怎样了。 */
   const connectionDropped = useRef(false);
@@ -996,7 +958,7 @@ export function ChannelChat({
    * what decides whether the next thing typed is sent or parked, and what tells the queue its wait
    * is over.
    *
-   * `runsInFlight` counts what Stop can actually reach: the run `copilotkit.runAgent` opens, and
+   * `runsInFlight` counts what Stop can actually reach: the run `conversationClient.runAgent` opens, and
    * nothing before it. A turn can be in flight for a second and a half before that, while `say`
    * waits for the runtime agent, and a Stop drawn in that window aborts a controller nobody has
    * made yet.
@@ -1250,7 +1212,7 @@ export function ChannelChat({
        */
       noteRunProgress.current();
       runEventSeenRef.current = false;
-      const runPromise = copilotkit.runAgent({
+      const runPromise = conversationClient.runAgent({
         agent: target,
         ...((panelAuthoring || inboxSourceId) ? { forwardedProps: {
           ...panelAuthoring,
@@ -1317,7 +1279,7 @@ export function ChannelChat({
            */
           if (first.kind === "hang") {
             try {
-              void copilotkit.stopAgent({ agent: target }).catch(() => {});
+              void conversationClient.stopAgent({ agent: target }).catch(() => {});
             } catch {
               /* stop best-effort */
             }
@@ -1333,7 +1295,7 @@ export function ChannelChat({
             first.kind === "unverified"
               ? () => {
                   try {
-                    void copilotkit.stopAgent({ agent: target }).catch(() => {});
+                    void conversationClient.stopAgent({ agent: target }).catch(() => {});
                   } catch {
                     /* stop best-effort */
                   }
@@ -1341,7 +1303,7 @@ export function ChannelChat({
                 }
               : undefined,
           );
-          // Still let runPromise settle in the background so CopilotKit counters clear.
+          // Let runPromise settle so the session counters clear.
           void runPromise.catch(() => undefined);
           throw new Error(first.reason);
         }
@@ -1359,7 +1321,7 @@ export function ChannelChat({
         });
         if (second.kind === "reply_hang") {
           try {
-            void copilotkit.stopAgent({ agent: target }).catch(() => {});
+            void conversationClient.stopAgent({ agent: target }).catch(() => {});
           } catch {
             /* stop best-effort */
           }
@@ -1442,7 +1404,7 @@ export function ChannelChat({
 
     /*
      * 整轮跑完了，既没报错、也不是断流（§100）：看看是不是「做了几步就没下文」。最后一条是工具结果
-     * （工具出错 / 续轮到上限，CopilotKit 不再发起下一轮），或者一条空回复——都要在聊天里说清楚并给「重试」，
+     * （工具出错 / 续轮到上限，会话客户端 不再发起下一轮），或者一条空回复——都要在聊天里说清楚并给「重试」，
      * 不能静默结束。等审批卡、用户自己按停止的不算（awaitingReply 已被放下 / 最后一条是没有结果的工具调用）。
      */
     if (
@@ -1624,7 +1586,7 @@ export function ChannelChat({
         if (event.outcome?.type === "interrupt") {
           awaitingReply.current = false;
           const uncertain = event.outcome.interrupts.find(interrupt =>
-            (interrupt.metadata?.openbotWaiting as { kind?: string } | undefined)?.kind === "operation_unknown");
+            interruptWaitingKind(interrupt.metadata) === "operation_unknown");
           if (uncertain) {
             const message = uncertain.message ?? "这一步可能已经执行，但结果尚待核对。";
             turnFailure.current = message;
@@ -1848,7 +1810,7 @@ export function ChannelChat({
       stopRequestedRef.current = false;
       setRunsInFlight((count) => count + 1);
       try {
-        const result = await copilotkit.runAgent(options);
+        const result = await conversationClient.runAgent(options);
         if (!stopRequestedRef.current && await persistFailedFrontendResults(channel.threadId, options.agent.messages)) {
           turnFailure.current = unfinishedTurnReason(options.agent.messages as never, new Set()) ?? "工具执行失败。";
         }
@@ -1860,7 +1822,7 @@ export function ChannelChat({
         if (turnsRef.current === 0) sendInFlightRef.current = false;
       }
     },
-    [copilotkit, channel.threadId],
+    [conversationClient, channel.threadId],
   );
   useThreadInbox(channel.threadId, agent, runInboxTurn as never, {
     pullServerTurns: false,
@@ -1927,7 +1889,7 @@ export function ChannelChat({
   /*
    * 挂载时的「接入」不是一轮回答（2026-10-22）。
    *
-   * `@copilotkit/core` 的 connect 从开始到回放结束都把 `agent.isRunning` 设成 true（`connectWithoutEventVerification`，
+   * `@conversationClient/core` 的 connect 从开始到回放结束都把 `agent.isRunning` 设成 true（`connectWithoutEventVerification`，
    * 只在那一轮的 finalize 里清掉）。于是每次打开 / 切换机器人 / 从设置回来（留着的那个超过 10 分钟被放掉了），
    * 输入框的发送键先画成「停止机器人」、对话末尾挂一行「思考中」，回放完再收回去——用户看到的就是
    * 「切个机器人像发了一次消息」。更糟的是那个「停止」按下去撤掉的是这一次接入 / 回放本身。
@@ -2127,7 +2089,7 @@ export function ChannelChat({
                     run={async () => {
                       setRunsInFlight((count) => count + 1);
                       try {
-                        await copilotkit.runAgent({ agent });
+                        await conversationClient.runAgent({ agent });
                       } finally {
                         setRunsInFlight((count) => count - 1);
                       }

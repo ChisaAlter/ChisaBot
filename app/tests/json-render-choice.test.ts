@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { inspectRenderUiSpec } from "../../shared/json-render/catalog";
-import { replyAfterToolCall } from "@/lib/copilot/conversation";
-import { choiceOptionsOf, choiceState } from "@/lib/copilot/json-render/rich-context";
+import { replyAfterToolCall } from "@/lib/conversations/conversation";
+import { choiceOptionsOf, choiceState } from "@/lib/conversations/json-render/rich-context";
 
 /**
  * 对话里的选项卡片：选完就定、不能重复点（CB-090，DESIGN.md §112）——纯函数部分。

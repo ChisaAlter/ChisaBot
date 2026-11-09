@@ -14,7 +14,7 @@ import {
   resolveRuntimeAgents,
   type SignRun,
   type ToolSelection,
-} from "../copilot";
+} from "../conversation-runtime";
 import type { LoadPersonalMemory } from "../memory/tools";
 import type { AgentActor } from "./profile-types";
 

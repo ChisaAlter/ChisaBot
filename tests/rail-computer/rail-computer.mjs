@@ -10,7 +10,7 @@ const browser = await chromium.launch({ headless: true, executablePath: exe, arg
 async function context(theme, viewport, extra = {}) {
   const ctx = await browser.newContext({ viewport, locale: "zh-CN", timezoneId: "Asia/Shanghai", ignoreHTTPSErrors: true, ...extra });
   await ctx.addInitScript((t) => { try { localStorage.setItem("chisabot-theme", t); } catch {} }, theme);
-  if (TOK) await ctx.addCookies([{ name: "__Host-openbot_session", value: TOK, url: base, secure: true, httpOnly: true, sameSite: "Lax" }]);
+  if (TOK) await ctx.addCookies([{ name: "__Host-chisabot_session", value: TOK, url: base, secure: true, httpOnly: true, sameSite: "Lax" }]);
   return ctx;
 }
 async function newPage(ctx, tag) {

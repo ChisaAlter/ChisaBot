@@ -1,3 +1,4 @@
+import { runAssertionValue } from "../legacy/protocol";
 import { randomUUID } from "node:crypto";
 import type { Database } from "../db/client";
 import { readDurableTurn } from "../turns/durable-outcome";
@@ -40,7 +41,7 @@ export function createHandoffExecutions(
       const rows = await sql.unsafe<
         {
           run_id: string;
-          input: { forwardedProps?: { openbotRun?: unknown } };
+          input: { forwardedProps?: { chisabotRun?: unknown } };
         }[]
       >(
         "SELECT run_id,input FROM chisabot_dsh_runs WHERE owner_user_id=$1 AND thread_id=$2 ORDER BY created_at DESC",
@@ -48,7 +49,7 @@ export function createHandoffExecutions(
       );
       const latest = rows.find((row) => {
         if (row.run_id === execution.runId) return true;
-        const run = readRun(row.input?.forwardedProps?.openbotRun);
+        const run = readRun(runAssertionValue(row.input?.forwardedProps));
         return (
           run?.actorId === work.actorId &&
           run.botId === work.toBotId &&

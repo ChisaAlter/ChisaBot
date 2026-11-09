@@ -15,7 +15,7 @@ writeFileSync(caFile, caPem);
  * The address goes to Bun in parts, and `$DATABASE_URL` does not survive the call.
  *
  * Both halves matter and only together. Bun reads a connection URL's path as the path of a unix
- * socket, so `postgres://…/openbot` cannot connect on Windows (oven-sh/bun#27713); and it prefers
+ * socket, so `postgres://…/chisabot` cannot connect on Windows (oven-sh/bun#27713); and it prefers
  * `$DATABASE_URL` to the options it was handed, so passing the parts while the variable is still
  * set changes nothing. These assert the observable half: what the environment looks like
  * afterwards, and which addresses are refused before a socket is ever opened.
@@ -30,9 +30,9 @@ afterEach(() => {
 describe("the database address", () => {
   test("is taken out of the environment, so Bun cannot prefer it to the parts", () => {
     process.env.DATABASE_URL =
-      "postgres://openbot:openbot@127.0.0.1:5432/openbot";
+      "postgres://chisabot:chisabot@127.0.0.1:5432/chisabot";
 
-    createDatabase("postgres://openbot:openbot@127.0.0.1:5432/openbot");
+    createDatabase("postgres://chisabot:chisabot@127.0.0.1:5432/chisabot");
 
     expect(process.env.DATABASE_URL).toBeUndefined();
   });
@@ -51,7 +51,7 @@ describe("the database address", () => {
     const secret = "s3cr3t-p4ssw0rd";
     let message = "";
     try {
-      createDatabase(`postgres://openbot:${secret}@127.0.0.1:notaport/openbot`);
+      createDatabase(`postgres://chisabot:${secret}@127.0.0.1:notaport/chisabot`);
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -68,7 +68,7 @@ describe("the database address", () => {
 
   test("refuses a URL that names no database, rather than connecting to a default", () => {
     expect(() =>
-      createDatabase("postgres://openbot:openbot@127.0.0.1:5432"),
+      createDatabase("postgres://chisabot:chisabot@127.0.0.1:5432"),
     ).toThrow(/names no database/);
   });
 
@@ -79,7 +79,7 @@ describe("the database address", () => {
      * and the range, the way every other malformed address does.
      */
     expect(() =>
-      createDatabase("postgres://openbot:openbot@127.0.0.1:0/openbot"),
+      createDatabase("postgres://chisabot:chisabot@127.0.0.1:0/chisabot"),
     ).toThrow(/DATABASE_URL names a port that is not between 1 and 65535/);
   });
 
@@ -91,26 +91,26 @@ describe("the database address", () => {
      * find a literal `%`.
      */
     expect(() =>
-      createDatabase("postgres://openbot:100%pure@127.0.0.1:5432/openbot"),
+      createDatabase("postgres://chisabot:100%pure@127.0.0.1:5432/chisabot"),
     ).toThrow(/DATABASE_URL has a password that is not percent-encoded/);
   });
 
   test("refuses a username holding one too", () => {
     expect(() =>
-      createDatabase("postgres://open%bot:openbot@127.0.0.1:5432/openbot"),
+      createDatabase("postgres://open%bot:chisabot@127.0.0.1:5432/chisabot"),
     ).toThrow(/DATABASE_URL has a username that is not percent-encoded/);
   });
 
   test("refuses a database name holding one too", () => {
     expect(() =>
-      createDatabase("postgres://openbot:openbot@127.0.0.1:5432/open%bot"),
+      createDatabase("postgres://chisabot:chisabot@127.0.0.1:5432/open%bot"),
     ).toThrow(/DATABASE_URL has a database name that is not percent-encoded/);
   });
 
   test("still accepts a password that IS percent-encoded, decoding it", () => {
     // The escape a correctly written password uses: `%40` is `@`, which cannot be written raw.
     expect(() =>
-      createDatabase("postgres://openbot:p%40ss@127.0.0.1:5432/openbot"),
+      createDatabase("postgres://chisabot:p%40ss@127.0.0.1:5432/chisabot"),
     ).not.toThrow();
   });
 
@@ -149,7 +149,7 @@ describe("connection parameters on the URL", () => {
  * tell a managed database to carry, so the documented configuration could not connect at all.
  */
 describe("sslmode on the URL", () => {
-  const base = "postgres://openbot:openbot@db.example.com:5432/openbot";
+  const base = "postgres://chisabot:chisabot@db.example.com:5432/chisabot";
 
   test("require encrypts without checking the certificate, as libpq's require does", () => {
     const options = addressOf(`${base}?sslmode=require`);
@@ -227,7 +227,7 @@ describe("sslmode on the URL", () => {
     let message = "";
     try {
       addressOf(
-        `postgres://openbot:${secret}@db.example.com:5432/openbot?sslmode=verify-full&sslrootcert=/nonexistent/ca.pem`,
+        `postgres://chisabot:${secret}@db.example.com:5432/chisabot?sslmode=verify-full&sslrootcert=/nonexistent/ca.pem`,
         "1.4.0",
       );
     } catch (error) {

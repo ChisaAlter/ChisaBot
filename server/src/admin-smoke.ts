@@ -24,7 +24,7 @@ import { type FallbackUse, fallbackNotice, withFallbackListener } from "./agents
 import {
   fallbackConnectionModel,
   type RuntimeModelConnection,
-} from "./copilot";
+} from "./conversation-runtime";
 import { withModelConnectionScope } from "./model-connection-context";
 
 export const SMOKE_TIMEOUT_MS = 45_000;

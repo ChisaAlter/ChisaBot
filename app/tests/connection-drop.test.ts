@@ -14,8 +14,8 @@ import {
   SEND_WATCHDOG_MS,
   settleDroppedTurn,
   storedTurnAnswered,
-} from "../src/lib/copilot/connection-drop";
-import { friendlyStopReason } from "../src/lib/copilot/stopped-turn";
+} from "../src/lib/conversations/connection-drop";
+import { friendlyStopReason } from "../src/lib/conversations/stopped-turn";
 
 test("browser-side stream failures are connection drops, not model errors", () => {
   expect(isConnectionDrop(new TypeError("network error"))).toBe(true);

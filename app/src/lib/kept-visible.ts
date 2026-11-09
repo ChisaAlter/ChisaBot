@@ -53,7 +53,7 @@ export function useKeptVisibility(): KeptVisibility {
 }
 
 /*
- * 机器人组件授权的轮询挂在全局（CopilotProvider 里的 GalleryTools / SandboxedTools），不在聊天的树里，
+ * 机器人组件授权的轮询挂在全局（ConversationToolsProvider 里的 GalleryTools / SandboxedTools），不在聊天的树里，
  * 读不到上面的 context：藏着的聊天把它的机器人登记成「不在屏幕上」，那两处就不再每 5 秒问一次。
  */
 const hiddenBots = new Map<string, number>();

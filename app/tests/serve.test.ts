@@ -274,7 +274,7 @@ function startAuthenticatedUpstream(port: number) {
       if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
         const headers = snapshotHeaders(request);
         webSocketHandshakes.push(headers);
-        if (headers.cookie !== "openbot_session=valid") {
+        if (headers.cookie !== "chisabot_session=valid") {
           return new Response("Sign in first.", { status: 401 });
         }
         if (server.upgrade(request)) return undefined;
@@ -456,9 +456,9 @@ describe("api proxy", () => {
       new Headers({
         Authorization: "Bearer app-session",
         Connection: "Upgrade",
-        Cookie: "openbot_session=valid",
+        Cookie: "chisabot_session=valid",
         Host: "127.0.0.1:3010",
-        Origin: "http://openbot.local",
+        Origin: "http://chisabot.local",
         "Sec-WebSocket-Key": "client-generated",
         Upgrade: "websocket",
       }),
@@ -466,8 +466,8 @@ describe("api proxy", () => {
 
     expect(Object.fromEntries(headers)).toEqual({
       authorization: "Bearer app-session",
-      cookie: "openbot_session=valid",
-      origin: "http://openbot.local",
+      cookie: "chisabot_session=valid",
+      origin: "http://chisabot.local",
     });
   });
 
@@ -480,8 +480,8 @@ describe("api proxy", () => {
     try {
       const sessionHeaders = {
         Authorization: "Bearer app-session",
-        Cookie: "openbot_session=valid",
-        Origin: "http://openbot.local",
+        Cookie: "chisabot_session=valid",
+        Origin: "http://chisabot.local",
       };
       const httpResponse = await fetch(
         `http://127.0.0.1:${proxyPort}/api/header-check`,
@@ -489,15 +489,15 @@ describe("api proxy", () => {
       );
       expect(await httpResponse.json()).toEqual({
         authorization: "Bearer app-session",
-        cookie: "openbot_session=valid",
-        origin: "http://openbot.local",
+        cookie: "chisabot_session=valid",
+        origin: "http://chisabot.local",
       });
 
       const unauthorizedEvents = await failedHandshake(
         `ws://127.0.0.1:${proxyPort}/api/header-check`,
         {
           Authorization: "Bearer app-session",
-          Origin: "http://openbot.local",
+          Origin: "http://chisabot.local",
         },
       );
       const unauthorizedHandshake = await waitForHandshake(
@@ -508,7 +508,7 @@ describe("api proxy", () => {
       expect(unauthorizedHandshake).toEqual({
         authorization: "Bearer app-session",
         cookie: null,
-        origin: "http://openbot.local",
+        origin: "http://chisabot.local",
       });
 
       const socket = await connectWebSocket(
@@ -520,8 +520,8 @@ describe("api proxy", () => {
       socket.close();
       expect(await waitForHandshake(upstream.webSocketHandshakes, 2)).toEqual({
         authorization: "Bearer app-session",
-        cookie: "openbot_session=valid",
-        origin: "http://openbot.local",
+        cookie: "chisabot_session=valid",
+        origin: "http://chisabot.local",
       });
     } finally {
       upstream.server.stop(true);
@@ -572,8 +572,8 @@ describe("API 响应经代理转发（Content-Encoding）", () => {
           "Content-Encoding": "gzip",
           "Content-Length": String(compressed.byteLength),
         });
-        headers.append("Set-Cookie", "openbot_session=s1; Path=/; HttpOnly");
-        headers.append("Set-Cookie", "openbot_csrf=c1; Path=/");
+        headers.append("Set-Cookie", "chisabot_session=s1; Path=/; HttpOnly");
+        headers.append("Set-Cookie", "chisabot_csrf=c1; Path=/");
         return new Response(compressed, { headers });
       },
     });
@@ -589,8 +589,8 @@ describe("API 响应经代理转发（Content-Encoding）", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("content-encoding")).toBeNull();
       expect(response.headers.getSetCookie()).toEqual([
-        "openbot_session=s1; Path=/; HttpOnly",
-        "openbot_csrf=c1; Path=/",
+        "chisabot_session=s1; Path=/; HttpOnly",
+        "chisabot_csrf=c1; Path=/",
       ]);
       expect(await response.json()).toEqual(payload);
 

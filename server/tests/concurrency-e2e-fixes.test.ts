@@ -1,6 +1,6 @@
 // 2026-10-13 生产实测（后台任务 / 回答中插话）发现的几处问题的回归测试。
 import { expect, test } from "bun:test";
-import { outputLimitLanguageModel, setModelOutputLimitResolver, MAX_OUTPUT_CAP } from "../src/copilot";
+import { outputLimitLanguageModel, setModelOutputLimitResolver, MAX_OUTPUT_CAP } from "../src/conversation-runtime";
 import { stripWorkerMarkers } from "../src/workers/service";
 import { wakeUpTools } from "../src/agents/wake-up";
 

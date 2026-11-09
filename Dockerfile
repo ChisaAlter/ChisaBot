@@ -72,7 +72,7 @@ COPY server/package.json server/package.json
 # `shared/` walks up to a root `node_modules` that does not have them and the build fails. The hoisted
 # layout puts every package at the root, which is also the layout the running ChisaBot images have
 # always had (deploy/Dockerfile.zh installs the same way).
-RUN bun install --frozen-lockfile --linker hoisted
+RUN bun install --frozen-lockfile --omit=peer --linker hoisted
 
 # The lockfile travels with the manifest, because `--frozen-lockfile` with no lockfile in the context
 # is not an error: bun resolves afresh, succeeds, and the flag has decorated nothing. With both files
@@ -154,7 +154,7 @@ WORKDIR /app
 # packages it could hoist go to the root `node_modules`, and a per-workspace `node_modules` sits
 # beside each manifest holding the rest. The server's half used to be taken from /src, which is the
 # unpruned install, so the prune above bought nothing where the server actually resolves — and
-# `@copilotkit/aimock`, a development dependency, shipped as a symlink into a store the prune had
+# a development dependency shipped as a symlink into a store the prune had
 # emptied, along with the two `.bin` shims pointing at it. Every dependency `server/package.json`
 # declares resolves from the /prod half; the ones it does not declare are absent now rather than
 # present and broken.
@@ -188,7 +188,7 @@ COPY agent-computer/package.json agent-computer/package.json
 # instruction that could not be followed where it shipped.
 #
 # ONE FILE, NOT `scripts/`. The others there are the laptop's. `diagram` and `mock:knowledge` reach
-# for `roughjs` and `@copilotkit/aimock`, which the prune above removes; `test:ci` runs a suite that
+# for development fixtures and `roughjs`, which the prune above removes; `test:ci` runs a suite that
 # is not in the image; `generate:app-config` writes a file the build has already baked into
 # `app/dist`. Copying the directory ships four more entries with nothing to do here, to fix one that
 # has something to do.
@@ -340,7 +340,7 @@ RUN mkdir -p /workspace /profiles \
 # Where the embedded database answers, when there is one. Overridden by whatever you set, so an
 # external database needs no special case: set DATABASE_URL and EMBEDDED_POSTGRES stays off.
 ENV EMBEDDED_POSTGRES=off
-ENV DATABASE_URL=postgres://openbot@127.0.0.1:5432/openbot
+ENV DATABASE_URL=postgres://chisabot@127.0.0.1:5432/chisabot
 
 ENV NODE_ENV=production
 ENV PORT=3001

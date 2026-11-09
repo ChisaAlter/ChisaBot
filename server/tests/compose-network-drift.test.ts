@@ -15,7 +15,7 @@ afterAll(() => {
 });
 
 const config = JSON.stringify({
-  networks: { default: { name: "openbot-zh_default", ipam: { config: [{ subnet: "172.19.0.0/16" }] } } },
+  networks: { default: { name: "chisabot-zh_default", ipam: { config: [{ subnet: "172.19.0.0/16" }] } } },
 });
 
 function which(bin: string): string | undefined {
@@ -46,7 +46,7 @@ esac
   }
   return spawnSync(
     which("bash")!,
-    ["-c", `source "${lib}"; PROJECT=p COMPOSE_FILE=c.yaml CONTAINER=openbot-zh; compose_network_drift; echo "rc=$?"`],
+    ["-c", `source "${lib}"; PROJECT=p COMPOSE_FILE=c.yaml CONTAINER=chisabot-zh; compose_network_drift; echo "rc=$?"`],
     { encoding: "utf8", env: { PATH: bin, CHISABOT_PYTHON: "", LANG: "C.UTF-8" } },
   );
 }
@@ -54,22 +54,22 @@ esac
 describe("compose_network_drift without python3 (CB-100b)", () => {
   for (const parser of ["python3", "jq", "bun", "node"]) {
     test.skipIf(!which(parser))(`${parser}: same network → no drift`, () => {
-      const r = run(parser, "openbot-zh_default")!;
+      const r = run(parser, "chisabot-zh_default")!;
       expect(r.stdout.trim()).toBe("rc=1");
     });
     test.skipIf(!which(parser))(`${parser}: other network → drift`, () => {
       const r = run(parser, "old_net")!;
-      expect(r.stdout).toContain("compose 要求 openbot-zh_default");
+      expect(r.stdout).toContain("compose 要求 chisabot-zh_default");
       expect(r.stdout).toContain("rc=0");
     });
     test.skipIf(!which(parser))(`${parser}: other subnet → drift`, () => {
-      const r = run(parser, "openbot-zh_default", "10.0.0.0/24")!;
+      const r = run(parser, "chisabot-zh_default", "10.0.0.0/24")!;
       expect(r.stdout).toContain("compose 要求 172.19.0.0/16");
       expect(r.stdout).toContain("rc=0");
     });
   }
   test("no parser at all → loud error, treated as drift", () => {
-    const r = run(undefined, "openbot-zh_default")!;
+    const r = run(undefined, "chisabot-zh_default")!;
     expect(r.stderr).toContain("python3、jq、bun 或 node");
     expect(r.stdout).toContain("--force-recreate");
     expect(r.stdout).toContain("rc=0");

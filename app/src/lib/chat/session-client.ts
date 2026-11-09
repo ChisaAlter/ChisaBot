@@ -9,7 +9,7 @@ export class ConversationSession extends HttpAgent {
   private observedRunId?: string;
   private readonly acceptedCommands = new Set<string>();
   constructor(readonly runtimeAgentId: string, threadId: string, agentId: string, readonly transport: "commands" | "legacy" = "commands") {
-    super({ agentId, threadId, url: `/api/copilotkit/agent/${encodeURIComponent(runtimeAgentId)}/run`,
+    super({ agentId, threadId, url: `/api/conversations/agent/${encodeURIComponent(runtimeAgentId)}/run`,
       fetch: (url, init) => fetch(url, { ...init, credentials: "include" }),
     });
     this.subscribe({
@@ -66,13 +66,13 @@ export class ConversationSession extends HttpAgent {
     });
   }
   protected override connect(input: RunAgentInput) {
-    const observer = new HttpAgent({ url: `/api/copilotkit/agent/${encodeURIComponent(this.runtimeAgentId)}/connect`,
+    const observer = new HttpAgent({ url: `/api/conversations/agent/${encodeURIComponent(this.runtimeAgentId)}/connect`,
       fetch: (url, init) => fetch(url, { ...init, credentials: "include" }),
     });
     return observer.run(input);
   }
   async stop() {
-    const response = await fetch(`/api/copilotkit/agent/${encodeURIComponent(this.runtimeAgentId)}/stop/${encodeURIComponent(this.threadId)}`, {
+    const response = await fetch(`/api/conversations/agent/${encodeURIComponent(this.runtimeAgentId)}/stop/${encodeURIComponent(this.threadId)}`, {
       method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ runId: this.observedRunId }),
     });
     if (!response.ok) throw new Error("停止请求尚未确认，请重试。");

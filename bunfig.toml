@@ -1,3 +1,7 @@
+[install]
+# Required peers are declared directly by the workspaces; do not auto-install unused integrations.
+peer = false
+
 [test]
 # All of these make the module graph deterministic, so a test file cannot pass or fail depending on
 # the order the suite happened to be walked. See server/scripts/test-preload.ts, which evaluates an

@@ -13,7 +13,7 @@ import { agentListQueryOptions } from "@/lib/agents/queries";
 import { type ApprovalDecision, type ApprovalInboxData, answerPersonQuestion, approvalInboxOptions, decideApproval, dismissPersonQuestion } from "@/lib/approvals";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
 import { confirmKeys, recentConfirmationsQueryOptions } from "@/lib/confirmations";
-import { botFactoryApprovalSpec } from "@/lib/copilot/bot-factory-tool";
+import { botFactoryApprovalSpec } from "@/lib/conversations/bot-factory-tool";
 import { agoText } from "@/lib/im";
 
 /**

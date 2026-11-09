@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, render } from "@testing-library/react";
-import { ActiveBotProvider, bindAgentBot, botForAgent, useActiveBot, useActiveBotHolder, withRunBot } from "@/lib/copilot/active-bot";
+import { ActiveBotProvider, bindAgentBot, botForAgent, useActiveBot, useActiveBotHolder, withRunBot } from "@/lib/conversations/active-bot";
 import { settleReactWork } from "./settle-react-work";
 
 /**

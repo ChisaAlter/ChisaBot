@@ -129,16 +129,16 @@ describe.skipIf(!url)("schedules (database)", () => {
   beforeAll(async () => {
     releaseSweepLock = await holdScheduleSweepLock(url!);
     await a.ensure();
-    // fire() 先确认原对话还在（threadFor）；库里有 openbot_local_threads 时，假的对话 id 会被当成「对话已不在」。
+    // fire() 先确认原对话还在（threadFor）；库里有 chisabot_local_threads 时，假的对话 id 会被当成「对话已不在」。
     for (const id of [tid("t-web-1"), tid("t-web-2"), tid("t-busy"), tid("t-fail-streak")]) {
       await sql.unsafe(
-        "INSERT INTO openbot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, 'bot1')",
+        "INSERT INTO chisabot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, 'bot1')",
         [id, owner],
       ).catch(() => {}); // 没有这张表时 threadFor 本来就放行
     }
   }, 120_000); // 等别的进程放锁
   afterAll(async () => {
-    await sql.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [owner]).catch(() => {});
+    await sql.unsafe("DELETE FROM chisabot_local_threads WHERE owner_user_id = $1", [owner]).catch(() => {});
     await sql.unsafe("DELETE FROM chisabot_schedule_runs WHERE owner_user_id = $1", [owner]);
     await sql.unsafe("DELETE FROM chisabot_schedules WHERE owner_user_id = $1", [owner]);
     await releaseSweepLock?.();

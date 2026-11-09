@@ -30,7 +30,7 @@ const DUP = "刚才安装调用中断了"; // 断网时只流到半句：用开�
 const TAG = process.env.TAG || "f"; const OUT = process.env.OUT || `/tmp/fold-${TAG}`; fs.mkdirSync(OUT, { recursive: true });
 const fails = []; const check = (ok, msg) => { log(ok ? "PASS" : "FAIL", msg); if (!ok) fails.push(msg); };
 const ctx = await context("light", { width: 1280, height: 860 });
-// 模拟「本机的流断了、服务器还在跑」（截图那次）：把 copilotkit 的事件流包一层，window.__cutStream = true 时让它出错（只断一次）。
+// 模拟「本机的流断了、服务器还在跑」（截图那次）：把 conversations 的事件流包一层，window.__cutStream = true 时让它出错（只断一次）。
 await ctx.addInitScript(() => {
   window.__cutStream = false;
   const original = window.fetch.bind(window);
@@ -38,7 +38,7 @@ await ctx.addInitScript(() => {
     const res = await original(input, init);
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const type = res.headers.get("content-type") || "";
-    if (!/copilotkit/.test(url) || !res.body || !/event-stream/.test(type)) return res;
+    if (!/conversations/.test(url) || !res.body || !/event-stream/.test(type)) return res;
     const reader = res.body.getReader();
     const cut = () => new Promise((resolve) => { const t = setInterval(() => { if (window.__cutStream) { clearInterval(t); resolve({ cut: true }); } }, 50); });
     const body = new ReadableStream({
@@ -56,7 +56,7 @@ const page = await newPage(ctx, "f");
 await page.route("**/*", (route) => {
   const r = route.request(); const m = r.method(); const u = r.url();
   if (m === "GET" || m === "HEAD" || m === "OPTIONS") return route.continue();
-  if (/\/api\/(agents|copilotkit|channels|bot-threads|chat|agui|messages|threads|link-preview)/.test(u)) return route.continue();
+  if (/\/api\/(agents|conversations|channels|bot-threads|chat|agui|messages|threads|link-preview)/.test(u)) return route.continue();
   log("BLOCKED", m, u.replace(base, "")); return route.fulfill({ status: 204, body: "" });
 });
 await page.goto(`${base}/settings`, { waitUntil: "domcontentloaded" });

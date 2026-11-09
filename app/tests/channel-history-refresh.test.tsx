@@ -56,7 +56,7 @@ const oneHole = "有一条较早的消息无法读取，未显示。会话其余
 
 /*
  * 按 2026-10 的新行为调整（app/src/components/channels/channel-chat.tsx 的 channelHistoryNotice，
- * 以及 lib/copilot/thread-messages.ts 的 HISTORY_RETRY_DELAYS_MS）：
+ * 以及 lib/conversations/thread-messages.ts 的 HISTORY_RETRY_DELAYS_MS）：
  *
  *   1. 「较早的消息暂时无法加载。」只在**什么都没恢复出来**时出现
  *      （availability unavailable && messageCount === 0 && (读失败 || 有过最后一句)）。
@@ -322,7 +322,7 @@ test.each([
     });
     // 会话里已经有消息（快照或刚发出去的这句）：提示不再挂在那里。
     await waitFor(() => expect(view.queryByText(unavailable)).toBeNull());
-    expect(view.queryByText(/different CopilotKit project/)).toBeNull();
+    expect(view.queryByText(/different/)).toBeNull();
   },
   // 空快照那一种要等真实的后台重试表（1.5s + 4s + 10s）走完，默认 5s 不够。
   30_000,

@@ -15,7 +15,7 @@ const seed = [
   { id: "seed-answer", role: "assistant", content: Array.from({ length: process.argv.includes("--serve") ? 24 : 8 }, (_, i) => `第 ${i + 1} 项处理结果：正文保留在对话中，可以向上翻阅。这里包含**加粗内容**和\`行内代码\`。`).join("\n\n") },
 ];
 const fixture = JSON.parse(fs.readFileSync(new URL("../../perf/fixtures/api.json", import.meta.url), "utf8"));
-fixture["^/api/copilotkit/threads/tc2/messages$"] = { messages: seed };
+fixture["^/api/conversations/threads/tc2/messages$"] = { messages: seed };
 const fixturePath = path.join(out, "fixture.json");
 fs.writeFileSync(fixturePath, JSON.stringify(fixture));
 const mock = await startMockServer({ dist, fixtures: fixturePath });
@@ -31,11 +31,11 @@ const proxy = http.createServer(async (req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify({ thread: { threadId: "tc2", seq: String(runCount), revision: "0", running, workers: null, inbox: null } }));
   }
-  if (req.url?.split("?")[0] === "/api/copilotkit/threads/tc2/messages") {
+  if (req.url?.split("?")[0] === "/api/conversations/threads/tc2/messages") {
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify({ messages: history }));
   }
-  if (req.method === "POST" && req.url === "/api/copilotkit/agent/a2/connect") {
+  if (req.method === "POST" && req.url === "/api/conversations/agent/a2/connect") {
     res.writeHead(200, { "content-type": "text/event-stream" });
     sse(res, { type: "RUN_STARTED", runId: `replay-${runCount}`, threadId: "tc2" });
     sse(res, { type: "MESSAGES_SNAPSHOT", messages: history });

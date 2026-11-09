@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { MCPMock } from "@copilotkit/aimock/mcp";
+import { setTimeout as delay } from "node:timers/promises";
+import { McpTestServer } from "./support/mcp-server";
 import { callTool, listTools } from "../src/plugins/mcp";
 
 /**
@@ -13,16 +14,14 @@ import { callTool, listTools } from "../src/plugins/mcp";
  *
  * None of that was tested. A stubbed fetch would prove we parse what we already believe the protocol
  * says, and every one of these would still pass if MCP changed underneath us or if we had misread it
- * in the first place. `@copilotkit/aimock` is ours, it is the org's deterministic backend for exactly
- * this, and it tracks the protocol as the protocol moves: using it here means ChisaBot finds out about
- * a drift in the same week as everything else that depends on it, rather than in a customer's
- * integration.
+ * in the first place. The fixture uses the official MCP SDK server and Streamable HTTP transport,
+ * so both sides use the protocol implementation to validate requests and replies.
  *
  * Offline and deterministic. No key, no network, no spend, same answer every run, which is what lets
  * it live in CI where a protocol contract most needs watching.
  */
 
-const mock = new MCPMock();
+const mock = new McpTestServer();
 let url = "";
 
 /** Twenty thousand characters is the cap `mcp.ts` applies. This is comfortably past it. */
@@ -32,7 +31,7 @@ const LONG = "x".repeat(25_000);
  * A real one-pixel PNG.
  *
  * The MCP SDK validates that image data is base64, so a placeholder like "iVBOR" fails the whole
- * call rather than the assertion. Worth knowing when writing a fixture: aimock will serve it.
+ * call rather than the assertion. The fixture serves the complete image through the official transport.
  */
 const PIXEL =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -57,7 +56,7 @@ beforeAll(async () => {
      *
      * The official MCP SDK validates the whole listing and rejects it if any tool omits one, so a
      * single schemaless tool makes the server look completely broken rather than making that one
-     * tool uncallable. Worth knowing: aimock will happily serve a tool without it.
+     * tool uncallable. The fixture uses the SDK Tool type to retain that contract.
      */
     .addTool({
       name: "long_answer",
@@ -228,8 +227,8 @@ test("callTool aborts an in-flight MCP call when Stop fires", async () => {
       description: "Takes a while.",
       inputSchema: { type: "object", properties: {} },
     })
-    .onToolCall("slow_hang", async () => {
-      await new Promise((r) => setTimeout(r, 30_000));
+    .onToolCall("slow_hang", async (_args, signal) => {
+      await delay(30_000, undefined, { signal });
       return "should not finish";
     });
   const controller = new AbortController();

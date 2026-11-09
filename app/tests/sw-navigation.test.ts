@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 
 /** DF-13：导航失败要区分「真断网」和「服务器慢 / 部署重启 / 502」。直接在沙箱里跑 app/public/sw.js。 */
 const source = readFileSync(join(import.meta.dir, "../public/sw.js"), "utf8");
+const legacySource = readFileSync(join(import.meta.dir, "../public/compat/legacy-browser.js"), "utf8");
 
 type Timer = { at: number; fn: () => void; id: number };
 function fakeClock() {
@@ -56,6 +57,7 @@ function loadSw(opts: {
   };
   const sandbox = {
     self,
+    importScripts: () => {},
     caches: { keys: async () => [], open: async () => ({}) },
     fetch: opts.fetch ?? (() => new Promise<Response>(() => {})),
     Response,
@@ -69,7 +71,7 @@ function loadSw(opts: {
     clearTimeout: clock.clearTimeout,
   };
   const ctx = runInNewContext(
-    `${source}\n;({ retryMain, RETRY_DELAYS_MS, RETRY_STATUSES: [...RETRY_STATUSES] })`,
+    `${legacySource}\n${source}\n;({ retryMain: (env) => retryMain({ ...env, gatewayLoginRequired: ChisaLegacyBrowser.gatewayLoginRequired }), RETRY_DELAYS_MS, RETRY_STATUSES: [...RETRY_STATUSES] })`,
     sandbox,
   );
   /** 派发一个导航 fetch 事件；返回 respondWith 拿到的 Promise（没调用就是 undefined）。 */
@@ -378,7 +380,7 @@ describe("sw.js 会话过期（401）", () => {
   test("导航拿到 401：302 到 /login?next=原地址，不是把 401 页面交给浏览器", async () => {
     const sw = loadSw({
       fetch: async () =>
-        new Response(JSON.stringify({ ok: false, openbotAuthRequired: true }), {
+        new Response(JSON.stringify({ ok: false, chisabotAuthRequired: true }), {
           status: 401,
           headers: { "content-type": "application/json" },
         }),
@@ -422,7 +424,7 @@ describe("sw.js 会话过期（401）", () => {
     expect(w.clock.pending()).toEqual([]);
   });
 
-  test("导航拿到不带 openbotAuthRequired 的 401（没有网关的部署）：原样交给浏览器，不跳 /login", async () => {
+  test("导航拿到不带 chisabotAuthRequired 的 401（没有网关的部署）：原样交给浏览器，不跳 /login", async () => {
     for (const make of [
       () => new Response("nope", { status: 401 }),
       () =>
@@ -439,7 +441,7 @@ describe("sw.js 会话过期（401）", () => {
     }
   });
 
-  test("重试卡片探测到不带 openbotAuthRequired 的 401：照旧刷新，不跳 /login", async () => {
+  test("重试卡片探测到不带 chisabotAuthRequired 的 401：照旧刷新，不跳 /login", async () => {
     const { ctx } = loadSw({});
     const w = fakeWin([
       new Response(JSON.stringify({ error: "x" }), {
@@ -461,7 +463,7 @@ describe("sw.js 会话过期（401）", () => {
 
 function gateway401() {
   return new Response(
-    JSON.stringify({ ok: false, openbotAuthRequired: true }),
+    JSON.stringify({ ok: false, chisabotAuthRequired: true }),
     {
       status: 401,
       headers: { "content-type": "application/json" },
@@ -471,7 +473,7 @@ function gateway401() {
 
 describe("sw.js 登录跳转防死循环（会话有效但后端仍回网关 401）", () => {
   const make401 = () =>
-    new Response(JSON.stringify({ ok: false, openbotAuthRequired: true }), {
+    new Response(JSON.stringify({ ok: false, chisabotAuthRequired: true }), {
       status: 401,
       headers: { "content-type": "application/json" },
     });

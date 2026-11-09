@@ -3,7 +3,6 @@ import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } fro
 import { KEPT_TTL_MS, KeepAliveStage } from "@/components/layout/keep-alive";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
 import type { ShellScope } from "@/components/layout/glass-topbar";
-import { SelfHostBanner } from "@/components/layout/self-host-banner";
 import { CHANNEL_ROUTE_ID } from "@/components/channels/chat-search";
 import { RouteSkeleton, SidebarSkeleton } from "@/components/startup-status";
 import { lazyPart } from "@/components/ui/lazy-part";
@@ -13,7 +12,7 @@ import { useChannelEvents } from "@/lib/channels/use-channel-events";
 import { clearPendingBot } from "@/lib/chat/pending-switch";
 
 /*
- * 整个聊天（CopilotKit 对话、Markdown、工具卡片……）只在地址是一段聊天、或 `/` 正要跳进聊天时才下载（DESIGN.md §41.5）；
+ * 整个聊天（会话客户端、Markdown、工具卡片……）只在地址是一段聊天、或 `/` 正要跳进聊天时才下载（DESIGN.md §41.5）；
  * 直接打开设置 / 管理 / 待处理时不进首屏。地址是聊天时 index.html 里的首屏预加载已经提前把它拉下来了。
  */
 const ChannelPage = lazyPart(
@@ -22,14 +21,14 @@ const ChannelPage = lazyPart(
 );
 
 /*
- * CopilotKit 客户端连同全部工具卡片（~500KB gzip）也按需下载（DESIGN.md §41.5）。以前它包着整个 `_authed`，
+ * 会话客户端连同工具卡片按需下载（DESIGN.md §41.5）。以前它包着整个 `_authed`，
  * 直接打开设置 / 管理也要先下载、执行它，首屏卡在「正在加载 ChisaBot…」。用得到它的上下文的只有聊天这一块的主区
  * （留着的聊天、新聊天、群聊……；管理里的组件预览自己包一层），所以它只包主区，而且第一次进聊天这一块才挂上：
  * - 挂上的那一刻正好是地址从设置 / 管理换进聊天、主区内容本来就要整个换掉的时候，看不出来；
- * - 挂上以后再也不摘（`copilot` 只会从 false 变 true），留着的聊天去设置再回来照旧不卸载（§98），
+ * - 挂上以后再也不摘（`conversationMounted` 只会从 false 变 true），留着的聊天去设置再回来照旧不卸载（§98），
  *   正在跑的回合、登记过的前端工具一直在，和以前全局一个 Provider 一样只有一个实例。
  */
-const ChatCopilot = lazyPart(() => import("@/lib/copilot/provider").then((m) => m.CopilotProvider), <RouteSkeleton />);
+const ChatConversation = lazyPart(() => import("@/lib/conversations/provider").then((m) => m.ConversationToolsProvider), <RouteSkeleton />);
 
 /* 左栏、右栏只在自己那一块（聊天 / 设置 / 管理）用到时下载；没到之前画同样形状的骨架。 */
 const LeftRail = lazyPart(
@@ -87,28 +86,27 @@ function ShellFrame({ pathname }: { pathname: string }) {
   useChannelEvents();
   const scope = scopeOfPath(pathname);
   useIdleSettingsPrefetch(scope);
-  // 进过一次聊天这一块就一直挂着 CopilotKit（见上面 ChatCopilot）。
-  const [copilot, setCopilot] = useState(scope === "app");
-  if (scope === "app" && !copilot) setCopilot(true);
-  if (copilot) {
+  // 进过一次聊天就保持会话上下文挂载（见上面 ChatConversation）。
+  const [conversationMounted, setConversationMounted] = useState(scope === "app");
+  if (scope === "app" && !conversationMounted) setConversationMounted(true);
+  if (conversationMounted) {
     // 两块一起下载，不排队（index.html 的首屏预加载在地址是聊天时已经提前拉了）。
-    void ChatCopilot.preload();
+    void ChatConversation.preload();
     void ChannelPage.preload();
   }
   const sidebar = <ShellSidebar scope={scope} />;
   return (
     <GlassShell
-      banner={scope === "app" ? <SelfHostBanner /> : undefined}
       // 右栏面板卡只属于机器人；在设置 / 管理里藏起来而不是卸载，回来不重载。
       right={<KeptPanelRail />}
       rightHidden={scope !== "app" || pathname === "/tasks"}
       scope={scope}
       sidebar={sidebar}
     >
-      {copilot ? (
-        <ChatCopilot>
+      {conversationMounted ? (
+        <ChatConversation>
           <ChatStage pathname={pathname} />
-        </ChatCopilot>
+        </ChatConversation>
       ) : (
         <ChatStage pathname={pathname} />
       )}

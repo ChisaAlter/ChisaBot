@@ -5,7 +5,7 @@ import {
   frontendToolsRunning,
   noteFrontendToolActivity,
   resetFrontendToolActivity,
-} from "../src/lib/copilot/frontend-tool-activity";
+} from "../src/lib/conversations/frontend-tool-activity";
 
 beforeEach(() => resetFrontendToolActivity());
 

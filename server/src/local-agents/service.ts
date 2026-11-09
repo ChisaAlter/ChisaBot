@@ -36,7 +36,7 @@ import {
   profileLine,
 } from "../../../shared/local-agents";
 import type { AppVariables } from "../auth/guards";
-import { connectionLanguageModel, type RuntimeModelConnection } from "../copilot";
+import { connectionLanguageModel, type RuntimeModelConnection } from "../conversation-runtime";
 import type { Database } from "../db/client";
 import type { DeviceHub } from "../devices/hub";
 import { type DeviceRecord, type DeviceStore, fullAccessActive } from "../devices/store";

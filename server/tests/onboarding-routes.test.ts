@@ -57,7 +57,7 @@ describe("onboarding routes", () => {
     const { store } = memoryStore({ step: 1, completedAt: null });
     const app = appWith(store);
 
-    const response = await app.request("http://openbot.local/api/me");
+    const response = await app.request("http://chisabot.local/api/me");
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
@@ -69,7 +69,7 @@ describe("onboarding routes", () => {
   test("/api/me reports null onboarding when the deployment has no store", async () => {
     const app = appWith(undefined);
 
-    const response = await app.request("http://openbot.local/api/me");
+    const response = await app.request("http://chisabot.local/api/me");
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { user: { onboarding: null } };
@@ -81,7 +81,7 @@ describe("onboarding routes", () => {
     const app = appWith(store);
 
     const response = await app.request(
-      "http://openbot.local/api/me/onboarding",
+      "http://chisabot.local/api/me/onboarding",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -101,7 +101,7 @@ describe("onboarding routes", () => {
     const app = appWith(store);
 
     const response = await app.request(
-      "http://openbot.local/api/me/onboarding",
+      "http://chisabot.local/api/me/onboarding",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -130,7 +130,7 @@ describe("onboarding routes", () => {
     const app = appWith(store);
 
     const response = await app.request(
-      "http://openbot.local/api/me/onboarding",
+      "http://chisabot.local/api/me/onboarding",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -146,7 +146,7 @@ describe("onboarding routes", () => {
     const app = appWith(undefined);
 
     const response = await app.request(
-      "http://openbot.local/api/me/onboarding",
+      "http://chisabot.local/api/me/onboarding",
       {
         method: "POST",
         headers: { "content-type": "application/json" },

@@ -200,7 +200,7 @@ export function createAgentPurge(options: {
 
       // The local conversation store is created at boot outside the migrations; skip it if absent.
       const [local] = await tx.execute<{ present: boolean }>(
-        sql`select to_regclass('public.openbot_local_threads') is not null as present`,
+        sql`select to_regclass('public.chisabot_local_threads') is not null as present`,
       );
       if ((local as { present?: boolean } | undefined)?.present) {
         // 对话的收件箱（排队消息 / 后台结果）跟着对话走；后台任务的记录和它们隐藏的 worker-* 对话也是
@@ -210,15 +210,15 @@ export function createAgentPurge(options: {
         );
         if ((inbox as { present?: boolean } | undefined)?.present)
           await tx.execute(
-            sql`delete from chisabot_thread_inbox where thread_id in (select id from openbot_local_threads where agent_id = ${agentId})`,
+            sql`delete from chisabot_thread_inbox where thread_id in (select id from chisabot_local_threads where agent_id = ${agentId})`,
           );
         const [inboxControl] = await tx.execute<{ present: boolean }>(
           sql`select to_regclass('public.chisabot_thread_inbox_control') is not null as present`,
         );
         if ((inboxControl as { present?: boolean } | undefined)?.present)
-          await tx.execute(sql`delete from chisabot_thread_inbox_control where thread_id in (select id from openbot_local_threads where agent_id = ${agentId})`);
+          await tx.execute(sql`delete from chisabot_thread_inbox_control where thread_id in (select id from chisabot_local_threads where agent_id = ${agentId})`);
         await tx.execute(
-          sql`delete from openbot_local_threads where agent_id = ${agentId}`,
+          sql`delete from chisabot_local_threads where agent_id = ${agentId}`,
         );
       }
       const [workers] = await tx.execute<{ present: boolean }>(

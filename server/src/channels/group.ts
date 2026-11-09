@@ -222,7 +222,7 @@ export function createGroupStore(
           .values({ kind: GROUP_TURN_KIND, key: turn.messageId, payload: turn })
           .onConflictDoNothing();
         await tx.execute(
-          sql`select pg_notify('openbot_work_offered', ${GROUP_TURN_KIND})`,
+          sql`select pg_notify('chisabot_work_offered', ${GROUP_TURN_KIND})`,
         );
       });
     },

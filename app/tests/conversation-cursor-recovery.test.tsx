@@ -3,8 +3,8 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { ConversationSession } from "@/lib/chat/session-client";
-import type { ThreadActivity } from "@/lib/copilot/bot-thread";
-import { useConversationSync } from "@/lib/copilot/use-conversation-sync";
+import type { ThreadActivity } from "@/lib/conversations/bot-thread";
+import { useConversationSync } from "@/lib/conversations/use-conversation-sync";
 import { settleReactWork } from "./settle-react-work";
 
 const NativeResponse = globalThis.Response;

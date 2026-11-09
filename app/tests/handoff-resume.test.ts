@@ -10,7 +10,7 @@ import type { Message } from "@ag-ui/core";
 import {
   findPendingTool,
   resumeHandoffTask,
-} from "../src/lib/copilot/handoff-resume";
+} from "../src/lib/conversations/handoff-resume";
 
 let fetchSpy: Mock<typeof fetch>;
 beforeEach(() => {

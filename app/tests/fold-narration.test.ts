@@ -3,7 +3,7 @@ import { defaultApplyEvents, type BaseEvent, type Message } from "@ag-ui/client"
 import { from, lastValueFrom, toArray } from "rxjs";
 import { compactTurns } from "../src/components/channels/chat-transcript";
 import { plainNote, workStepLines, workTimeline } from "../src/lib/chat/work-steps";
-import { liveTailOf, tailReplayPatch } from "../src/lib/copilot/use-conversation-sync";
+import { liveTailOf, tailReplayPatch } from "../src/lib/conversations/use-conversation-sync";
 
 /**
  * DESIGN.md §90：中途说明文字（过程话）收进干活卡；liveTail 接入回放不再把同一段话接两遍。

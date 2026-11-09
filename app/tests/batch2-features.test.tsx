@@ -7,8 +7,8 @@ import type { PageView } from "../../shared/pages";
 import { groupArtifactsByBucket } from "@/components/bot-profile/files-section";
 import { PANEL_PRESETS, panelPresetBatch } from "@/components/panels/panel-rail";
 import { isWorkCall } from "@/lib/chat/work-steps";
-import { BotExchangeCard, describeHandoffStatus } from "@/lib/copilot/handoff-tool";
-import { HANDED_OVER } from "@/lib/copilot/markers";
+import { BotExchangeCard, describeHandoffStatus } from "@/lib/conversations/handoff-tool";
+import { HANDED_OVER } from "@/lib/conversations/markers";
 import {
   CONNECTED_ACCOUNTS_TABS,
   normalizeConnectedAccountsTab,

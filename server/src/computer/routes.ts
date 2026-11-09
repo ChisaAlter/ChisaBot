@@ -1022,7 +1022,7 @@ async function act(
  * Compared against rather than imported from `auth/dev-actor` because the computer must not depend on the
  * authentication module's internals; this is the one fact about it that matters here.
  */
-const DEV_ACTOR_EMAIL = "dev@openbot.local";
+const DEV_ACTOR_EMAIL = "dev@chisabot.local";
 
 /** The audit identity derived from the signed-in actor, with the same FK rule as every acting call. */
 function actorOf(record: AppVariables["actor"]): ActionActor {

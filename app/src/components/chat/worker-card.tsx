@@ -20,7 +20,7 @@ import {
   useWorkerAction,
   WORKER_STATUS_ZH,
   type WorkerView,
-} from "@/lib/copilot/workers";
+} from "@/lib/conversations/workers";
 
 /**
  * 后台任务卡片（DESIGN.md §38.2，「思考提示框」）：机器人委派一件事时，在那条回复里出现一张紧凑的玻璃卡——

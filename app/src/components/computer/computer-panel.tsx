@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { markComputerEngaged } from "@/lib/computers/auto-watch";
 import { useComputerControl } from "@/lib/computers/use-control";
 import { useComputerStatus } from "@/lib/computers/use-status";
-import { lastComputerStatusFor } from "@/lib/copilot/computer-activity";
+import { lastComputerStatusFor } from "@/lib/conversations/computer-activity";
 import { JUMP_TO_ACTIVITY, pendingActivityJump } from "./activity-jump";
 import { ActivityLog } from "./activity-log";
 import { ComputerView } from "./computer-view";

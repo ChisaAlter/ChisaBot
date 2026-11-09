@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { client } from "@/lib/client";
-import { isChatRunning } from "@/lib/copilot/computer-activity";
+import { isChatRunning } from "@/lib/conversations/computer-activity";
 import { useKeptVisible } from "@/lib/kept-visible";
 import type { LiveSource } from "@/lib/panels/live-values";
 

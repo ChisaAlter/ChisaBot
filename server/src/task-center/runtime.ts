@@ -430,7 +430,7 @@ export function createTaskCenterRuntime(
   }
 
   /**
-   * 回合台账（openbot_local_events）在 RUN_FINISHED 里记录 contextUsage；
+   * 回合台账（chisabot_local_events）在 RUN_FINISHED 里记录 contextUsage；
    * 读取失败只意味着用量缺失，不值得为此让任务重试。
    */
   async function readTurnUsage(
@@ -443,7 +443,7 @@ export function createTaskCenterRuntime(
         `SELECT count(*)::int AS calls,
           sum((event->'metadata'->'contextUsage'->>'inputTokens')::int)::int AS input,
           sum((event->'metadata'->'contextUsage'->>'outputTokens')::int)::int AS output
-        FROM openbot_local_events WHERE thread_id=$1 AND event->>'type'='RUN_FINISHED'`,
+        FROM chisabot_local_events WHERE thread_id=$1 AND event->>'type'='RUN_FINISHED'`,
         [threadId],
       );
       if (!row?.calls) return undefined;
@@ -556,7 +556,7 @@ export function createTaskCenterRuntime(
   /**
    * service.ts 的 routes 组装点不开放协作者入口，这里在 runtime 层把它接上：
    * 授权目录（roots，用户可维护的本机目录白名单）与执行轨迹（trace，
-   * openbot_local_events 投影）。ensure 顺带建 roots 表，建表失败保持原有行为。
+   * chisabot_local_events 投影）。ensure 顺带建 roots 表，建表失败保持原有行为。
    */
   const roots = createTaskCenterRoots(options.database);
   const trace = createTaskCenterTrace(options.database);

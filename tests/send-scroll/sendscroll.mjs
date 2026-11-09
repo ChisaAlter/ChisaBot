@@ -194,7 +194,7 @@ async function run(width) {
   // 7) 刷新后：服务器时刻 <30 分钟 → 不翻页（走服务器读数，本机记的没了）
   await page.goto(channelUrl, { waitUntil: "domcontentloaded" }); await editor().waitFor({ timeout: 60000 }); await page.waitForTimeout(6000);
   const thread = await page.evaluate(async (u) => { const id = u.split("/channel/")[1]; const c = (await (await fetch("/api/channels")).json()).channels.find((x) => x.id === id); return c?.threadId; }, channelUrl);
-  const sa = await api(`/api/copilotkit/threads/${encodeURIComponent(thread)}/sent-at`);
+  const sa = await api(`/api/conversations/threads/${encodeURIComponent(thread)}/sent-at`);
   log(width, "sent-at", sa.status, sa.body.slice(0, 200));
   check(sa.status === 200 && JSON.parse(sa.body).at, `${width} GET sent-at 有服务器时刻`);
   rows.push(await continuous("r7", "刷新后接着问（连续）"));

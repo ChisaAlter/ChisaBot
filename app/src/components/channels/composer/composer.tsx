@@ -56,7 +56,7 @@ import {
   takeDraftFiles,
   wasJustSent,
 } from "@/lib/chat/ui-memory";
-import { shouldStopOnEscape } from "@/lib/copilot/held-supplements";
+import { shouldStopOnEscape } from "@/lib/conversations/held-supplements";
 import { sendTargetsStaleChannel } from "@/lib/chat/pending-switch";
 import { newId } from "@/lib/new-id";
 import { cn } from "@/lib/utils";
@@ -99,11 +99,7 @@ import { type AgentOption, buildTriggers } from "./triggers";
 import { useDictation } from "./use-dictation";
 import { presenceRef } from "@/lib/presence-flag";
 
-/**
- * The SDK's upload failure, derived rather than imported for the reason `attachments.ts` records
- * against the same derivation: `@copilotkit/shared` declares `AttachmentUploadError` and is not a
- * dependency of `app/`, so the only public spelling of this shape is the config it is passed to.
- */
+/** Upload errors use the same attachment contract as the uploader. */
 type UploadFailure = Parameters<
   NonNullable<AttachmentsConfig["onUploadFailed"]>
 >[0];

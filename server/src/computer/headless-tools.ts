@@ -264,7 +264,7 @@ export class HeadlessToolsMiddleware extends Middleware {
                 };
                 subscriber.next({
                   type: EventType.CUSTOM,
-                  name: "openbot.headless.waiting",
+                  name: "chisabot.headless.waiting",
                   value: {
                     ...failure.waiting,
                     message: failure.message,
@@ -281,7 +281,7 @@ export class HeadlessToolsMiddleware extends Middleware {
                         toolCallId: call.id,
                         reason: "human_input",
                         message: failure.message,
-                        metadata: { openbotWaiting: failure.waiting },
+                        metadata: { chisabotWaiting: failure.waiting },
                       },
                     ],
                   },

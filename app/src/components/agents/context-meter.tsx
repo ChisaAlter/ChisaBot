@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { memo, useState } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ModelCatalogEntry } from "../../../../shared/model-selection";
-import { contextLevel, formatTokens, type ThreadContextReading, useThreadContext } from "@/lib/copilot/thread-context";
+import { contextLevel, formatTokens, type ThreadContextReading, useThreadContext } from "@/lib/conversations/thread-context";
 import { agentModelQueryOptions, modelCatalogQueryOptions } from "@/lib/model-selection/queries";
 import { cn } from "@/lib/utils";
 

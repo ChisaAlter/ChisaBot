@@ -5,7 +5,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 /** Product transcript and execution leases; DSH keeps its model history in its own Session log. */
-export const localThreads = pgTable("openbot_local_threads", {
+export const localThreads = pgTable("chisabot_local_threads", {
   id: text("id").primaryKey(),
   ownerUserId: text("owner_user_id").notNull(),
   agentId: text("agent_id").notNull(),
@@ -18,9 +18,9 @@ export const localThreads = pgTable("openbot_local_threads", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   snapshotSequence: bigint("snapshot_sequence", { mode: "bigint" }),
-}, table => [index("openbot_local_threads_owner_updated").on(table.ownerUserId, table.updatedAt.desc().nullsFirst())]);
+}, table => [index("chisabot_local_threads_owner_updated").on(table.ownerUserId, table.updatedAt.desc().nullsFirst())]);
 
-export const localRuns = pgTable("openbot_local_runs", {
+export const localRuns = pgTable("chisabot_local_runs", {
   threadId: text("thread_id").notNull(),
   runId: text("run_id").notNull(),
   status: text("status").notNull(),
@@ -28,19 +28,19 @@ export const localRuns = pgTable("openbot_local_runs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 }, table => [
-  primaryKey({ name: "openbot_local_runs_pkey", columns: [table.threadId, table.runId] }),
-  foreignKey({ name: "openbot_local_runs_thread_id_fkey", columns: [table.threadId], foreignColumns: [localThreads.id] }).onDelete("cascade"),
+  primaryKey({ name: "chisabot_local_runs_pkey", columns: [table.threadId, table.runId] }),
+  foreignKey({ name: "chisabot_local_runs_thread_id_fkey", columns: [table.threadId], foreignColumns: [localThreads.id] }).onDelete("cascade"),
 ]);
 
-export const localEvents = pgTable("openbot_local_events", {
+export const localEvents = pgTable("chisabot_local_events", {
   sequence: bigserial("sequence", { mode: "bigint" }).primaryKey(),
   threadId: text("thread_id").notNull(),
   runId: text("run_id").notNull(),
   event: jsonb("event").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, table => [
-  foreignKey({ name: "openbot_local_events_thread_id_fkey", columns: [table.threadId], foreignColumns: [localThreads.id] }).onDelete("cascade"),
-  index("openbot_local_events_thread_sequence").on(table.threadId, table.sequence),
+  foreignKey({ name: "chisabot_local_events_thread_id_fkey", columns: [table.threadId], foreignColumns: [localThreads.id] }).onDelete("cascade"),
+  index("chisabot_local_events_thread_sequence").on(table.threadId, table.sequence),
 ]);
 
 export const runtimeBindings = pgTable("chisabot_runtime_bindings", {

@@ -2,7 +2,7 @@
  * What a person said, in the shape a chat model reads. Read by both Bots.
  *
  * A message is a string until somebody attaches a file. Then the composer sends a list of parts —
- * what the person typed, then the file — and `copilot.ts` resolves each file before the run leaves
+ * what the person typed, then the file — and `conversation-runtime.ts` resolves each file before the run leaves
  * the server: a text file becomes a text part carrying its contents, an image an `image` part
  * carrying its bytes. Both Bots read `content` with `String()`, which for that list is
  * `[object Object],[object Object]`, so that is what the model was sent in place of the question and

@@ -6,7 +6,7 @@ import {
   clearTranscriptCache,
   prefetchTranscript,
   rememberTranscript,
-} from "@/lib/copilot/transcript-cache";
+} from "@/lib/conversations/transcript-cache";
 import { channelFromRoster, channelKeys } from "@/lib/channels/queries";
 
 /**

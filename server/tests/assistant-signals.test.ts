@@ -19,8 +19,8 @@ beforeAll(async () => {
     CREATE INDEX chisabot_schedule_runs_owner ON chisabot_schedule_runs(owner_user_id,finished_at DESC);
     CREATE TABLE chisabot_personal_deliveries(id text PRIMARY KEY,owner_user_id text,state text,created_at timestamptz DEFAULT now());
     CREATE INDEX chisabot_personal_deliveries_owner ON chisabot_personal_deliveries(owner_user_id,created_at);
-    CREATE TABLE openbot_local_threads(id text PRIMARY KEY,owner_user_id text,updated_at timestamptz DEFAULT now());
-    CREATE INDEX openbot_local_threads_owner_updated ON openbot_local_threads(owner_user_id,updated_at DESC NULLS FIRST);
+    CREATE TABLE chisabot_local_threads(id text PRIMARY KEY,owner_user_id text,updated_at timestamptz DEFAULT now());
+    CREATE INDEX chisabot_local_threads_owner_updated ON chisabot_local_threads(owner_user_id,updated_at DESC NULLS FIRST);
     CREATE TABLE chisabot_runtime_bindings(id text PRIMARY KEY,thread_id text,owner_user_id text,session_id text,revision int,kernel text DEFAULT 'dsh',UNIQUE(thread_id,revision));
     CREATE TABLE chisabot_tool_operations(id text PRIMARY KEY,owner_user_id text,binding_id text,session_id text,turn_number int,step_number int,call_id text,status text,
       UNIQUE(binding_id,session_id,turn_number,step_number,call_id));
@@ -43,7 +43,7 @@ test("actual PG: three completed failures and unknown receipts surface without f
       ('other-owner','other','succeeded',now(),now());
     INSERT INTO chisabot_personal_deliveries(id,owner_user_id,state) VALUES
       ('private-delivery','owner','outcome_unknown'),('private-other','other','outcome_unknown');
-    INSERT INTO openbot_local_threads VALUES ('thread','owner',now()),('other-thread','other',now());
+    INSERT INTO chisabot_local_threads VALUES ('thread','owner',now()),('other-thread','other',now());
     INSERT INTO chisabot_runtime_bindings(id,thread_id,owner_user_id,session_id,revision) VALUES ('binding','thread','owner','session',1),('other-binding','other-thread','other','other-session',1);
     INSERT INTO chisabot_tool_operations VALUES
       ('private-operation','owner','binding','session',1,1,'one','outcome_unknown'),

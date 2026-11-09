@@ -1,12 +1,12 @@
 /**
- * 任务执行轨迹：把 openbot_local_events 里 `task-center:<taskId>:<tag>:<attempt>` 线程的
+ * 任务执行轨迹：把 chisabot_local_events 里 `task-center:<taskId>:<tag>:<attempt>` 线程的
  * 原始 AG-UI 事件投影成人可读的一行行（runtime.ts taskThreadId 决定线程命名）。
  *
  * 不做全文回放：工具开始/结束/结果、成段回复（CONTENT 增量在 SQL 里聚合）、
  * 回合开始/结束（带 metadata.contextUsage 用量）、回合错误；REASONING_* 与其余事件略过。
  * 线程前缀带冒号收尾（`task-center:<id>:%` 里 id 后的 `:`）防止 id 前缀互相串任务；
  * LIKE 通配符转义后再拼，任务 id 本身不含通配语义。owner 归属除路由校验外，
- * 这里再过一道 openbot_local_threads.owner_user_id，防串账号。
+ * 这里再过一道 chisabot_local_threads.owner_user_id，防串账号。
  */
 import type {
   TaskTraceEvent,
@@ -214,10 +214,10 @@ export function createTaskCenterTrace(database: Database) {
         `SELECT thread_id, sequence, event, created_at FROM (
           SELECT thread_id, sequence, event, created_at,
             row_number() OVER (PARTITION BY thread_id ORDER BY sequence DESC) AS recent
-          FROM openbot_local_events
+          FROM chisabot_local_events
           WHERE thread_id LIKE $1 ESCAPE '\\'
-            AND EXISTS (SELECT 1 FROM openbot_local_threads t
-              WHERE t.id = openbot_local_events.thread_id AND t.owner_user_id = $2)
+            AND EXISTS (SELECT 1 FROM chisabot_local_threads t
+              WHERE t.id = chisabot_local_events.thread_id AND t.owner_user_id = $2)
             AND event->>'type' IN (${PROJECTED_TYPES.map((type) => `'${type}'`).join(",")})
         ) e WHERE recent <= ${RAW_ROWS_PER_THREAD}
         ORDER BY thread_id, sequence`,
@@ -227,10 +227,10 @@ export function createTaskCenterTrace(database: Database) {
         `SELECT thread_id, event->>'messageId' AS message_id,
           max(sequence) AS last_seq, max(created_at) AS last_at,
           left(string_agg(event->>'delta', '' ORDER BY sequence), ${MESSAGE_SQL_LIMIT}) AS text
-        FROM openbot_local_events
+        FROM chisabot_local_events
         WHERE thread_id LIKE $1 ESCAPE '\\'
-          AND EXISTS (SELECT 1 FROM openbot_local_threads t
-            WHERE t.id = openbot_local_events.thread_id AND t.owner_user_id = $2)
+          AND EXISTS (SELECT 1 FROM chisabot_local_threads t
+            WHERE t.id = chisabot_local_events.thread_id AND t.owner_user_id = $2)
           AND event->>'type' IN (${TEXT_TYPES.map((type) => `'${type}'`).join(",")})
           AND event->>'delta' IS NOT NULL
         GROUP BY thread_id, event->>'messageId'`,

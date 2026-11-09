@@ -1,5 +1,5 @@
 /**
- * 公网网关（deploy/public）的登录：会话过期时网关对 /api/* 回 JSON 401 `{ openbotAuthRequired: true }`，
+ * 公网网关（deploy/public）的登录：会话过期时网关对 /api/* 回 JSON 401 `{ chisabotAuthRequired: true }`，
  * 登录页是网关自己的 /login（不是应用里的 /sign）。
  *
  * 以前靠网关注入的 workspace.js 拦 fetch 跳登录页；但应用画了自己的账号控件（index.html 的
@@ -7,11 +7,12 @@
  * → 应用在页面里转到 /sign（SPA 路由，网关的 `/sign → /login` 302 根本碰不到）→ 停在加载 / 出错页。
  *
  * 现在应用自己认这个 401：整页跳到 /login?next=当前地址（网关 login.js 的 safeNext 只收站内路径），
- * 登录后回到原页面。不带 `openbotAuthRequired` 的 401（没有网关的部署、业务接口自己的 401）不动。
+ * 登录后回到原页面。不带网关登录标记的 401（没有网关的部署、业务接口自己的 401）不动。
  * 30 秒内又被弹回来（会话有效但后端仍回这种 401）就停下，见下面的循环保护。
  */
 
 import { mdCache } from "@/lib/chat/md-cache";
+import { gatewayLoginRequired } from "@/lib/compat/legacy-client";
 
 type LoginWindow = Pick<Window, "location" | "fetch"> & {
   sessionStorage?: Pick<Storage, "getItem" | "setItem">;
@@ -150,10 +151,7 @@ export async function isGatewayLoginRequired(
   )
     return false;
   try {
-    const body = (await response.clone().json()) as {
-      openbotAuthRequired?: unknown;
-    } | null;
-    return body?.openbotAuthRequired === true;
+    return gatewayLoginRequired(await response.clone().json());
   } catch {
     return false;
   }

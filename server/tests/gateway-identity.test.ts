@@ -146,13 +146,13 @@ describe("who is asking", () => {
       actor: DEV_ACTOR,
     });
   });
-  test("middleware: 401 with openbotAuthRequired, provisions friends once per request", async () => {
+  test("middleware: 401 with chisabotAuthRequired, provisions friends once per request", async () => {
     const provisioned: AuthenticatedActor[] = [];
     const app = new Hono<{ Variables: AppVariables }>();
     app.get("/me", createGatewayRequireUser(secret, async (actor) => void provisioned.push(actor)), (c) => c.json(c.var.actor));
     const refused = await app.request("/me", { headers: { "x-forwarded-for": "1.1.1.1" } });
     expect(refused.status).toBe(401);
-    expect((await refused.json()).openbotAuthRequired).toBe(true);
+    expect((await refused.json()).chisabotAuthRequired).toBe(true);
     const ok = await app.request("/me", { headers: { "x-forwarded-for": "1.1.1.1", "x-chisabot-identity": signed("u_friend00002") } });
     expect(ok.status).toBe(200);
     expect((await ok.json()).id).toBe("u_friend00002");

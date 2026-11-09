@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AgentModelService } from "../agents/model-selection";
 import type { AgentProfileStore } from "../agents/profile-store";
 import type { AgentActor } from "../agents/profile-types";
-import type { LoadAgentsForActor } from "../copilot";
+import type { LoadAgentsForActor } from "../conversation-runtime";
 import type { Database } from "../db/client";
 import type { ModelCatalogService } from "../model-catalog";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";

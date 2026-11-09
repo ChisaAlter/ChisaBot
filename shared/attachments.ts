@@ -313,7 +313,7 @@ export function shouldClaimPaste(input: {
  * `text | image | audio | video | document | binary`, and a source is `{type:"data"|"url"}` — there
  * is no `base64` literal and no `media_type` key anywhere.
  *
- * The URL is relative and is never fetched by a provider. `copilot.ts` swaps the source for
+ * The URL is relative and is never fetched by a provider. `conversation-runtime.ts` swaps the source for
  * `{type:"data", value:<base64>}` as the run is built, which is what keeps the bytes out of the
  * stored thread while still putting the image in front of the model. `metadata` carries the id
  * because it is `z.unknown().optional()` and survives the parse; a sibling key would be silently

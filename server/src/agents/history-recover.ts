@@ -2,7 +2,7 @@
  * 被历史预算裁掉的内容，按 id 取回原文（agents/history-budget.ts）。
  *
  * 发给模型的那份历史里，较早的工具结果、超长消息的中间、被摘要代替的整段只剩占位符，
- * 占位符和摘要上标着消息 id；原文一直在 openbot_local_threads.messages 里（压缩从不改存储）。
+ * 占位符和摘要上标着消息 id；原文一直在 chisabot_local_threads.messages 里（压缩从不改存储）。
  * 这个工具按 id 把原文还给模型：只读发起它的那条线程自己的历史——这些内容模型在被裁前
  * 本来就逐字看过，没有新的暴露面。
  *
@@ -166,7 +166,7 @@ export function historyRecoverTools(input: {
         if (!parsed.success)
           return `${REFUSAL_MARKER} ${HISTORY_RECOVER_TOOL} 参数不对：${parsed.error.issues[0]?.message ?? ""}`;
         const rows = await database.$client.unsafe<{ messages: unknown }[]>(
-          "SELECT messages FROM openbot_local_threads WHERE id = $1",
+          "SELECT messages FROM chisabot_local_threads WHERE id = $1",
           [threadId],
         );
         const messages = Array.isArray(rows[0]?.messages)

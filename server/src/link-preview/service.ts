@@ -1,3 +1,4 @@
+import { computerHeaders } from "../../../shared/legacy-headers";
 import { imageDimsFor, imageKeyForUrl } from "../image-dims";
 import { createHash } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
@@ -515,10 +516,7 @@ export async function createLinkPreviews(
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-chisabot-bot-id": "link-preview", "x-openbot-bot-id": "link-preview",
-          ...(options.computer.token
-            ? { "x-chisabot-computer-token": options.computer.token , "x-openbot-computer-token": options.computer.token }
-            : {}),
+          ...computerHeaders("link-preview", options.computer.token),
         },
         body: JSON.stringify({ url }),
         signal: AbortSignal.timeout(SHOT_TIMEOUT),

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { callComputer } from "../src/lib/copilot/computer-tools";
+import { callComputer } from "../src/lib/conversations/computer-tools";
 
 /**
  * What a Bot is told when its action did not happen.

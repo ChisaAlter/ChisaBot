@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createAuthApp, safeNext } from "./server";
+import { LEGACY_SESSION_COOKIE } from "./legacy-compat";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +35,7 @@ describe("public cookie login", () => {
     const response = await service.fetch(request("/_internal/check"));
     expect(response.status).toBe(401);
     expect(response.headers.has("WWW-Authenticate")).toBe(false);
-    expect((await response.json()).openbotAuthRequired).toBe(true);
+    expect((await response.json()).chisabotAuthRequired).toBe(true);
     expect((await (await service.fetch(request("/auth/session"))).json()).authenticated).toBe(false);
     service.close();
   });
@@ -53,7 +54,7 @@ describe("public cookie login", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, next: "/channel/demo?hello=1" });
     const header = response.headers.get("Set-Cookie")!;
-    expect(header).toMatch(/^__Host-openbot_session=[A-Za-z0-9_-]{43};/);
+    expect(header).toMatch(/^__Host-chisabot_session=[A-Za-z0-9_-]{43};/);
     for (const attribute of ["Path=/", "Secure", "HttpOnly", "SameSite=Lax"]) expect(header).toContain(attribute);
     expect(header).not.toContain("Domain="); expect(header).not.toContain("Max-Age=");
     const token = cookie(response);
@@ -76,6 +77,49 @@ describe("public cookie login", () => {
     const again = cookie(await login(service, true));
     time += 30 * 24 * 3600 * 1000 + 1;
     expect((await service.fetch(request("/_internal/check", undefined, again))).status).toBe(401);
+    service.close();
+  });
+  test("persisted session cookies migrate names without extending or losing their sessions", async () => {
+    for (const remember of [false, true]) {
+      let time = 1_000_000;
+      const file = join(directory, "cookie-upgrade-" + remember + ".sqlite");
+      let service = app(file, () => time);
+      const current = cookie(await login(service, remember));
+      const legacy = LEGACY_SESSION_COOKIE + current.slice(current.indexOf("="));
+      service.close();
+      time += 3600_000;
+      service = app(file, () => time);
+      expect((await service.fetch(request("/_internal/check", undefined, legacy))).status).toBe(200);
+      const upgraded = await service.fetch(request("/auth/session", undefined, legacy));
+      expect((await upgraded.json()).authenticated).toBe(true);
+      const cookies = upgraded.headers.getSetCookie();
+      expect(cookies).toHaveLength(2);
+      expect(cookies[0]!.split(";")[0]).toBe(current);
+      expect(cookies[1]).toContain(LEGACY_SESSION_COOKIE + "=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
+      if (remember) expect(cookies[0]).toContain("Max-Age=2588400");
+      else expect(cookies[0]).not.toContain("Max-Age=");
+      expect((await service.fetch(request("/_internal/check", undefined, current))).status).toBe(200);
+      expect((await service.fetch(request("/_internal/check", undefined, current + "; " + legacy))).status).toBe(200);
+      time += (remember ? 30 * 24 : 12) * 3600_000;
+      expect((await service.fetch(request("/_internal/check", undefined, current))).status).toBe(401);
+      service.close();
+    }
+  });
+  test("logout revokes both cookie generations and malformed canonical cookies cannot fall back", async () => {
+    const service = app();
+    const current = cookie(await login(service));
+    const another = cookie(await login(service));
+    const legacy = LEGACY_SESSION_COOKIE + another.slice(another.indexOf("="));
+    const malformed = current.slice(0, current.indexOf("=") + 1) + "invalid";
+    expect((await service.fetch(request("/_internal/check", undefined, malformed + "; " + legacy))).status).toBe(401);
+    expect((await service.fetch(request("/_internal/check", undefined, legacy + "; " + legacy))).status).toBe(401);
+    const logout = await service.fetch(request("/auth/logout", {}, current + "; " + legacy));
+    expect(logout.status).toBe(200);
+    const cleared = logout.headers.getSetCookie();
+    expect(cleared).toHaveLength(2);
+    expect(cleared.every((value) => value.includes("Max-Age=0"))).toBe(true);
+    expect((await service.fetch(request("/_internal/check", undefined, current))).status).toBe(401);
+    expect((await service.fetch(request("/_internal/check", undefined, legacy))).status).toBe(401);
     service.close();
   });
   test("default expiry is12hours and login rotates previous token", async () => {
@@ -133,7 +177,7 @@ describe("public cookie login", () => {
     const nav = await service.fetch(request("/_internal/unauthorized", undefined, undefined, { Accept: "text/html", "X-Original-URI": "/channel/a?hello=1", "X-Original-Method": "GET", "X-Original-Fetch-Mode": "navigate" }));
     expect(nav.status).toBe(302); expect(nav.headers.get("Location")).toBe("/login?next=%2Fchannel%2Fa%3Fhello%3D1");
     const api = await service.fetch(request("/_internal/unauthorized", undefined, undefined, { "X-Original-URI": "/api/me", "X-Original-Method": "GET" }));
-    expect(api.status).toBe(401); expect((await api.json()).openbotAuthRequired).toBe(true);
+    expect(api.status).toBe(401); expect((await api.json()).chisabotAuthRequired).toBe(true);
     service.close();
   });
 });

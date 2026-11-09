@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
-import { LLMock } from "@copilotkit/aimock";
-import { buildAgents, type RuntimeModel } from "../src/copilot";
+import { createModelFixture } from "./support/model-fixture";
+import { buildAgents, type RuntimeModel } from "../src/conversation-runtime";
 import { createChatFiles } from "../src/chat-files/service";
 import { turnAttachmentLoader } from "../src/chat-files/turn-attachments";
 import { solidPng } from "../src/chat-files/vision-provider";
@@ -15,7 +15,7 @@ import { TEST_POOL, testDatabaseUrl } from "./support/database";
  * 线上管理员配了单独的识图模型，提示词每轮说「图片由识图模型转成文字描述给你」，可频道附件给的其实是原图、
  * 消息里没有描述——模型每轮先调 chat_files_recent 找图（带图轮首字 9.1–16.6 s），10 次里 1 次说「还没收到截图」。
  *
- * 这里用 aimock 当主模型、真的聊天文件服务（数据库）+ 线上同一个附件加载器（turnAttachmentLoader），
+ * 这里用 loopback 协议端点当主模型、真的聊天文件服务（数据库）+ 线上同一个附件加载器（turnAttachmentLoader），
  * 断言模型这一轮收到了什么：主模型能看图 → 原图 + 「图片直接随这条消息给你」，没有「文字描述」的说法、
  * 一次模型请求就回答、没有 chat_files_recent；主模型看不了图 → 识图模型的描述，没有原图。
  */
@@ -25,7 +25,7 @@ const model: RuntimeModel = { provider: "openai", defaultModel: "gpt-5.5" };
 const url = process.env.TEST_DATABASE_URL ? testDatabaseUrl() : null;
 
 /**
- * 模型请求的原样请求体。aimock 自己的请求记录会把 Responses API 的 input 规范成纯文字，
+ * 模型请求的原样请求体。代理保留 Responses API 的原始 input，
  * 图片（input_image）在那里看不到，所以在它前面放一个只记录、原样转发的小代理。
  */
 type Raw = {
@@ -86,7 +86,7 @@ describe.skipIf(!url)(
           assertPublic: async () => {},
         })
       : (null as never);
-    const llm = new LLMock();
+    const llm = createModelFixture();
     const originalBase = process.env.OPENAI_BASE_URL;
     const raw: Raw[] = [];
     let proxy: ReturnType<typeof Bun.serve> | null = null;
@@ -129,10 +129,10 @@ describe.skipIf(!url)(
         },
       });
       process.env.OPENAI_BASE_URL = `http://127.0.0.1:${proxy.port}${new URL(upstream).pathname.replace(/\/$/, "")}`;
-      llm.onMessage(/你好/, { content: "你好！有什么可以帮你？" });
-      llm.onMessage(/图里写了什么/, {
+      llm.rules.push({ match: /你好/, reply: { content: "你好！有什么可以帮你？" } });
+      llm.rules.push({ match: /图里写了什么/, reply: {
         content: "图里是一个红色方块，右下角写着「编号 7」。",
-      });
+      } });
     });
     afterAll(async () => {
       if (originalBase === undefined) delete process.env.OPENAI_BASE_URL;

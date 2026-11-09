@@ -135,7 +135,7 @@ describe("turning a hop into a turn", () => {
     });
 
     expect(requests[0]?.input.forwardedProps).toEqual({
-      openbotRun: "signed-assertion",
+      chisabotRun: "signed-assertion",
     });
     // The addressed Bot's own conversation, because a thread has exactly one agent.
     expect(requests[0]?.threadId).toBe("scratch-thread");

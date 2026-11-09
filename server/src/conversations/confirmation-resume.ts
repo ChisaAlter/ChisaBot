@@ -1,3 +1,4 @@
+import { runAssertionValue } from "../legacy/protocol";
 import type { AbstractAgent } from "@ag-ui/client";
 import type { AuditInitiator } from "../audit";
 import type { createConfirmations } from "../confirmations/service";
@@ -29,7 +30,7 @@ export function createConfirmationResumer(options: {
     if (!decision) return;
     const { snapshot } = decision;
     const runId = `confirmation:${requestId}`;
-    const [existing] = await database.$client.unsafe<{ status: string }[]>("SELECT status FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2", [snapshot.threadId, runId]);
+    const [existing] = await database.$client.unsafe<{ status: string }[]>("SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2", [snapshot.threadId, runId]);
     if (existing) {
       if (existing.status === "running") throw new Error("The confirmation continuation is still running.");
       return;
@@ -38,8 +39,8 @@ export function createConfirmationResumer(options: {
     if (backend.control.isActive(snapshot.threadId)) throw new Error("The conversation is still settling its previous execution.");
     const forwarded = snapshot.forwardedProps && typeof snapshot.forwardedProps === "object" && !Array.isArray(snapshot.forwardedProps)
       ? snapshot.forwardedProps as Record<string, unknown> : {};
-    const refreshed = options.refreshRunAssertion?.(forwarded.openbotRun, ownerUserId, decision.agentId);
-    if (refreshed) snapshot.forwardedProps = { ...forwarded, openbotRun: refreshed };
+    const refreshed = options.refreshRunAssertion?.(runAssertionValue(forwarded), ownerUserId, decision.agentId);
+    if (refreshed) snapshot.forwardedProps = { ...forwarded, chisabotRun: refreshed };
     const agent = await options.buildAgentFor({ ownerUserId, agentId: decision.agentId, initiator: snapshot.initiator ?? { kind: "person" } });
     if (!(agent instanceof DshRuntimeAgent)) throw new Error("The saved confirmation requires its DSH execution owner.");
     const abort = new AbortController();
@@ -76,7 +77,7 @@ export function createConfirmationResumer(options: {
             await tx.unsafe("UPDATE chisabot_dsh_runs SET status='waiting',updated_at=now() WHERE thread_id=$1 AND run_id=$2 AND NOT stop_requested", [snapshot.threadId, snapshot.runId]);
             const event = { type: "RUN_FINISHED", threadId: snapshot.threadId, runId: snapshot.runId,
               outcome: { type: "interrupt", interrupts: [{ id: snapshot.toolCallId, reason: "human_input", message: error.message, metadata: { [CHISABOT_WAITING_METADATA]: error.waiting } }] } };
-            await tx.unsafe(`INSERT INTO openbot_local_events(thread_id,run_id,event) SELECT $1,$2,$3::text::jsonb
+            await tx.unsafe(`INSERT INTO chisabot_local_events(thread_id,run_id,event) SELECT $1,$2,$3::text::jsonb
               WHERE EXISTS(SELECT 1 FROM chisabot_dsh_runs WHERE thread_id=$1 AND run_id=$2 AND NOT stop_requested)`, [snapshot.threadId, snapshot.runId, JSON.stringify(event)]);
           });
         }

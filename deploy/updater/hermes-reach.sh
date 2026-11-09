@@ -78,5 +78,5 @@ if [ "$CODE" = 0 ] && printf '%s' "$OUT" | grep -q '^status='; then
 fi
 echo "::error:: hermes=unreachable 应用容器 $CONTAINER 连不上 Hermes：$URL（${OUT:-无输出}）"
 echo "  检查：hermes-acp-bridge 的 ACP_BRIDGE_HOST、.env 的 CHISABOT_HERMES_URL / AGENT_ENDPOINT_ALLOWED_HOSTS、ufw 规则，"
-echo "  是否都和 compose 默认网络的网关一致（默认 openbot-zh_default 172.19.0.0/16，网关 172.19.0.1）。"
+echo "  是否都和 compose 默认网络的网关一致（实际 CHISABOT_NETWORK_NAME 172.19.0.0/16，网关 172.19.0.1）。"
 exit 1

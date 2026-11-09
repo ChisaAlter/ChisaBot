@@ -11,7 +11,7 @@ import {
   type ChannelSummary,
   channelKeys,
 } from "@/lib/channels/queries";
-import { resetStoredSyncs } from "@/lib/copilot/thread-messages";
+import { resetStoredSyncs } from "@/lib/conversations/thread-messages";
 import { queryClient } from "@/query-client";
 import { settleReactWork } from "./settle-react-work";
 
@@ -244,7 +244,7 @@ test("reopening an uncertain operation shows the interruption without a retry ac
     { type: "MESSAGES_SNAPSHOT", messages: [...stored, { id: "unknown-user", role: "user", content: "Send once" }] },
     { type: "RUN_FINISHED", threadId: channel.threadId, runId: "unknown", outcome: { type: "interrupt", interrupts: [{
       id: "operation-1", reason: "human_input", message: "这一步可能已经执行，但结果尚待核对。",
-      metadata: { openbotWaiting: { kind: "operation_unknown" } },
+      metadata: { chisabotWaiting: { kind: "operation_unknown" } },
     }] } },
   ];
   cacheChannel();

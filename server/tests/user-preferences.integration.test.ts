@@ -1,6 +1,7 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
+import { DEFAULT_USER_PREFERENCES } from "../../shared/user-preferences";
 import { createDatabase } from "../src/db/client";
 import { users } from "../src/db/schema";
 import { createUserPreferencesStore } from "../src/user-preferences";
@@ -27,20 +28,20 @@ test("database defaults and writes survive a new store and remain scoped to the 
   const alice = await person();
   const bob = await person();
   expect(await store.read(alice)).toEqual({
+    ...DEFAULT_USER_PREFERENCES,
     messageListEmphasis: "thread",
-    selfHostBannerDismissed: false,
   });
   expect(await store.patch(alice, { messageListEmphasis: "agent" })).toEqual({
+    ...DEFAULT_USER_PREFERENCES,
     messageListEmphasis: "agent",
-    selfHostBannerDismissed: false,
   });
   expect(await createUserPreferencesStore(database).read(alice)).toEqual({
+    ...DEFAULT_USER_PREFERENCES,
     messageListEmphasis: "agent",
-    selfHostBannerDismissed: false,
   });
   expect(await store.read(bob)).toEqual({
+    ...DEFAULT_USER_PREFERENCES,
     messageListEmphasis: "thread",
-    selfHostBannerDismissed: false,
   });
 });
 
@@ -55,6 +56,7 @@ test("patching one preference preserves other JSON fields", async () => {
     .select({ preferences: users.preferences })
     .from(users)
     .where(eq(users.id, id));
+  expect(await store.read(id)).toEqual({ ...DEFAULT_USER_PREFERENCES, messageListEmphasis: "agent" });
   expect(user?.preferences).toEqual({
     messageListEmphasis: "agent",
     futurePreference: true,

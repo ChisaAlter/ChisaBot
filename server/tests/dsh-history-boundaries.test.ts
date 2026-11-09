@@ -18,7 +18,7 @@ import { createConfirmationResumer } from "../src/conversations/confirmation-res
 import { DshRuntimeAgent } from "../src/agents/dsh-runtime";
 import { createTurnRunner } from "../src/turns/run-turn";
 import { resolveAttachmentParts } from "../src/channels/attachment-parts";
-import { buildAgents, standingRoleMessage } from "../src/copilot";
+import { buildAgents, standingRoleMessage } from "../src/conversation-runtime";
 import { filesFromToolResult, CHAT_FILES_MARKER } from "../../shared/chat-files";
 import { createChatFiles } from "../src/chat-files/service";
 import { renderUiTools } from "../src/generative-ui/render-ui";
@@ -126,7 +126,7 @@ const cardSpec = JSON.stringify({ root: "card", elements: {
   }, 40_000);
 
   const inputFor = (id: string, content: Message["content"], threadId = thread): RunAgentInput => ({ threadId, runId: randomUUID(), messages: [{ id, role: "user", content } as Message], tools: [], state: {}, context: [] });
-  const legacyRun = async (input: RunAgentInput) => eventsOf(await routes.request(`/api/copilotkit/agent/${bot}/run`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) }));
+  const legacyRun = async (input: RunAgentInput) => eventsOf(await routes.request(`/api/conversations/agent/${bot}/run`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) }));
 
   test("authorized image bytes reach the real Host provider and remain references in visible history", async () => {
     const events = await legacyRun(inputFor(imageId, [{ type: "text", text: "Inspect the attached pixel." }, { type: "image", source: { type: "url", value: `/api/attachments/${imageId}` } }]));
@@ -144,7 +144,7 @@ const cardSpec = JSON.stringify({ root: "card", elements: {
     const oldBinding = await bindings.get(thread); expect(oldBinding).not.toBeNull();
     await confirmations.decide(owner, card!.id, "approve");
     const requestCount = requests.length;
-    const response = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${thread}/truncate`, { method: "POST", body: JSON.stringify({ fromMessageId: askApprovalId, mode: "edit" }) }), owner);
+    const response = await backend.handle(new Request(`http://localhost/api/conversations/threads/${thread}/truncate`, { method: "POST", body: JSON.stringify({ fromMessageId: askApprovalId, mode: "edit" }) }), owner);
     expect(response?.status).toBe(200);
     expect(await bindings.get(thread)).toBeNull();
     const runTurn = createTurnRunner({ intelligence: backend.client, runner: backend.runner, buildAgentFor: async () => agent.clone() });
@@ -162,7 +162,7 @@ const cardSpec = JSON.stringify({ root: "card", elements: {
     expect(stored.messages.some(message => message.id === askApprovalId)).toBe(false);
     expect(stored.messages.some(message => message.content === "Edited branch answered.")).toBe(true);
     expect(JSON.stringify(requests.at(-1).messages)).not.toContain("pause-before-edit");
-    const connected = await eventsOf(await routes.request(`/api/copilotkit/agent/${bot}/connect`, { method: "POST", body: JSON.stringify({ threadId: thread }) }));
+    const connected = await eventsOf(await routes.request(`/api/conversations/agent/${bot}/connect`, { method: "POST", body: JSON.stringify({ threadId: thread }) }));
     expect(connected.find(event => event.type === "MESSAGES_SNAPSHOT")?.messages.some((message: Message) => message.id === editedId)).toBe(true);
     expect(connected.at(-1)?.type).toBe("RUN_FINISHED");
   }, 30_000);
@@ -216,20 +216,20 @@ const cardSpec = JSON.stringify({ root: "card", elements: {
       standingMessage: standingRoleMessage({ id: remoteId, name: "External fixture", title: "Compatibility", roleDescription: "Reply to requests." }) }], { provider: "openai", defaultModel: "unused" }, null);
     const remoteRoutes = createConversationRoutes({ backend, identifyActor: async () => ({ id: owner, role: "user" }), resolver: { resolveAgentForActor: async () => built[remoteId]!.clone(), resolveAgentsForActor: async () => built } });
     const input = inputFor(`${remoteId}-user`, "Hello", remoteThread);
-    const events = await eventsOf(await remoteRoutes.request(`/api/copilotkit/agent/${remoteId}/run`, { method: "POST", body: JSON.stringify(input), headers: { "content-type": "application/json" } }));
+    const events = await eventsOf(await remoteRoutes.request(`/api/conversations/agent/${remoteId}/run`, { method: "POST", body: JSON.stringify(input), headers: { "content-type": "application/json" } }));
     expect(events.find(event => event.type === "RUN_ERROR"), JSON.stringify(events)).toBeUndefined();
     expect(events.at(-1)?.type).toBe("RUN_FINISHED");
-    const replay = await eventsOf(await remoteRoutes.request(`/api/copilotkit/agent/${remoteId}/connect`, { method: "POST", body: JSON.stringify({ threadId: remoteThread }) }));
+    const replay = await eventsOf(await remoteRoutes.request(`/api/conversations/agent/${remoteId}/connect`, { method: "POST", body: JSON.stringify({ threadId: remoteThread }) }));
     expect(JSON.stringify(replay)).toContain("Remote compatible."); expect(remoteCalls).toBe(1);
     const stopThread = `${remoteThread}-stop`;
-    const active = await remoteRoutes.request(`/api/copilotkit/agent/${remoteId}/run`, { method: "POST", body: JSON.stringify(inputFor(`${remoteId}-stop`, "Wait until stopped.", stopThread)), headers: { "content-type": "application/json" } });
+    const active = await remoteRoutes.request(`/api/conversations/agent/${remoteId}/run`, { method: "POST", body: JSON.stringify(inputFor(`${remoteId}-stop`, "Wait until stopped.", stopThread)), headers: { "content-type": "application/json" } });
     const stoppedEvents = eventsOf(active);
     for (let at = 0; at < 100 && remoteCalls < 2; at++) await Bun.sleep(20);
     expect(remoteCalls).toBe(2);
-    const stopped = await remoteRoutes.request(`/api/copilotkit/agent/${remoteId}/stop/${stopThread}`, { method: "POST", body: "{}" });
+    const stopped = await remoteRoutes.request(`/api/conversations/agent/${remoteId}/stop/${stopThread}`, { method: "POST", body: "{}" });
     expect(stopped.status).toBe(200); expect(await stopped.json()).toMatchObject({ stopped: true });
     expect((await stoppedEvents).at(-1)?.type).toBe("RUN_FINISHED");
-    const [run] = await database.$client.unsafe<{ status: string }[]>("SELECT status FROM openbot_local_runs WHERE thread_id=$1", [stopThread]);
+    const [run] = await database.$client.unsafe<{ status: string }[]>("SELECT status FROM chisabot_local_runs WHERE thread_id=$1", [stopThread]);
     expect(run?.status).toBe("stopped");
   }, 30_000);
 });

@@ -188,7 +188,7 @@ const url = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
       await writeFile(join(root, ".maintenance"), "migration-test");
       expect(await importIntelligenceInventory(database, inventory)).toBe(1);
       const [row] = await database.$client.unsafe(
-        "SELECT * FROM openbot_local_threads WHERE id=$1",
+        "SELECT * FROM chisabot_local_threads WHERE id=$1",
         [id],
       );
       expect(row.owner_user_id).toBe("migration-owner");
@@ -217,13 +217,13 @@ const url = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
       ).rejects.toThrow("already exists");
       expect(
         await database.$client.unsafe(
-          "SELECT id FROM openbot_local_threads WHERE id=$1",
+          "SELECT id FROM chisabot_local_threads WHERE id=$1",
           [`${id}-rolled-back`],
         ),
       ).toHaveLength(0);
     } finally {
       await database.$client.unsafe(
-        "DELETE FROM openbot_local_threads WHERE id IN ($1,$2)",
+        "DELETE FROM chisabot_local_threads WHERE id IN ($1,$2)",
         [id, `${id}-rolled-back`],
       );
       await database.$client.close();

@@ -15,7 +15,7 @@ export async function context({ pc = false, viewport } = {}) {
     const noop = () => {}; const off = () => noop;
     window.chisabotWindow = { platform: "win32", minimize: noop, toggleMaximize: noop, close: noop, isMaximized: async () => false, onMaximizedChange: off, toggleCompact: noop, isCompact: async () => false, onCompactChange: off };
   });
-  if (TOK) await ctx.addCookies([{ name: "__Host-openbot_session", value: TOK, domain: new URL(base).hostname, path: "/", secure: true, httpOnly: true, sameSite: "Lax" }]);
+  if (TOK) await ctx.addCookies([{ name: "__Host-chisabot_session", value: TOK, domain: new URL(base).hostname, path: "/", secure: true, httpOnly: true, sameSite: "Lax" }]);
   return ctx;
 }
 export async function newPage(ctx, tag) {
@@ -57,7 +57,7 @@ export async function threadOf(page) {
   const r = await api(page, `/api/channels/${id}`); try { return JSON.parse(r.body).channel?.threadId || JSON.parse(r.body).threadId; } catch { return null; }
 }
 export async function threadMessages(page, tid) {
-  const r = await api(page, `/api/copilotkit/threads/${tid}/messages`); try { const j = JSON.parse(r.body); return j.messages || j; } catch { return []; }
+  const r = await api(page, `/api/conversations/threads/${tid}/messages`); try { const j = JSON.parse(r.body); return j.messages || j; } catch { return []; }
 }
 export function summarize(msgs, fromIndex = 0) {
   const out = [];

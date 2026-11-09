@@ -58,7 +58,7 @@ suite("local conversations on a dedicated PostgreSQL database", () => {
   });
 
   afterAll(async () => {
-    await database.$client.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [owner]);
+    await database.$client.unsafe("DELETE FROM chisabot_local_threads WHERE owner_user_id = $1", [owner]);
     await database.$client.close();
   });
 
@@ -77,7 +77,7 @@ suite("local conversations on a dedicated PostgreSQL database", () => {
   test("thread ownership hides histories from another user and fixes the agent", async () => {
     await expect(backend.client.getThread({ threadId: thread, userId: "someone-else" })).rejects.toMatchObject({ status: 404 });
     await expect(backend.client.getOrCreateThread({ threadId: thread, userId: owner, agentId: "another-bot" })).rejects.toMatchObject({ status: 409 });
-    const response = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${thread}/messages`), "someone-else");
+    const response = await backend.handle(new Request(`http://localhost/api/conversations/threads/${thread}/messages`), "someone-else");
     expect(response?.status).toBe(404);
   });
 
@@ -97,8 +97,8 @@ suite("local conversations on a dedicated PostgreSQL database", () => {
     expect(events.some((event) => event.type === EventType.RUN_FINISHED)).toBe(true);
     const [types] = await database.$client.unsafe(
       `SELECT jsonb_typeof(messages) AS messages, jsonb_typeof(state) AS state,
-       (SELECT jsonb_typeof(event) FROM openbot_local_events WHERE thread_id = $1 ORDER BY sequence LIMIT 1) AS event
-       FROM openbot_local_threads WHERE id = $1`, [thread],
+       (SELECT jsonb_typeof(event) FROM chisabot_local_events WHERE thread_id = $1 ORDER BY sequence LIMIT 1) AS event
+       FROM chisabot_local_threads WHERE id = $1`, [thread],
     );
     expect(types).toMatchObject({ messages: "array", state: "object", event: "object" });
     backend = await createLocalConversations(database);
@@ -113,12 +113,12 @@ suite("local conversations on a dedicated PostgreSQL database", () => {
     expect(restored.some((event) => event.type === EventType.STATE_SNAPSHOT)).toBe(true);
     const snap = restored.find((event) => event.type === EventType.MESSAGES_SNAPSHOT) as { messages?: { id: string; toolCallId?: string }[] };
     expect(snap.messages?.find((message) => message.id === "result")?.toolCallId).toBe("call");
-    const state = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${thread}/state`), owner);
+    const state = await backend.handle(new Request(`http://localhost/api/conversations/threads/${thread}/state`), owner);
     expect(await state?.json()).toEqual({ state: { count: 1 } });
   });
 
   test("clear is scoped to the verified owner", async () => {
-    const response = await backend.handle(new Request("http://localhost/api/copilotkit/threads/clear", { method: "POST" }), "someone-else");
+    const response = await backend.handle(new Request("http://localhost/api/conversations/threads/clear", { method: "POST" }), "someone-else");
     expect(response?.status).toBe(200);
     expect((await backend.client.getThreadMessages({ threadId: thread, userId: owner })).messages.length).toBeGreaterThan(0);
   });
@@ -179,7 +179,7 @@ suite("local conversations on a dedicated PostgreSQL database", () => {
       expect(saved.messages.find((message) => message.id === "handoff-answer")?.content).toBe("42");
       expect(saved.messages.find((message) => message.id === privateTask.id)?.content).toBe(showSummary ? visible.content : undefined);
       const replay = await collect(backend.runner.connect({ threadId: handoffThread, agentId: bot }));
-      const state = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${handoffThread}/state`), owner);
+      const state = await backend.handle(new Request(`http://localhost/api/conversations/threads/${handoffThread}/state`), owner);
       expect(JSON.stringify(saved)).not.toContain(privateTask.content);
       expect(JSON.stringify(streamed)).not.toContain(privateTask.content);
       expect(JSON.stringify(replay)).not.toContain(privateTask.content);

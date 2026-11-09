@@ -9,7 +9,7 @@ import {
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, StatusGlyph } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { useMessageActions } from "@/lib/copilot/regenerate";
+import { useMessageActions } from "@/lib/conversations/regenerate";
 
 /**
  * 消息下面的「重新生成」「编辑」和原地编辑框（DESIGN.md §67，CB-042）。频道聊天用。

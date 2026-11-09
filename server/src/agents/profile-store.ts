@@ -308,7 +308,7 @@ export type AgentRun = {
  *
  * That copy is the failure this repository already has a paragraph about. It looks identical on every
  * screen and its whole instruction becomes `standingRoleMessage` — see the note above that function
- * in `copilot.ts`, which names the compliance Bot that answered a filing question with invented
+ * in `conversation-runtime.ts`, which names the compliance Bot that answered a filing question with invented
  * thresholds because one sentence of role description was all that reached it. The default tenant
  * package ships two `built_in` coworkers, and one of them, `Knowledge`, is a careful
  * do-not-fabricate instruction. Copy it and you get a coworker with the name, the title, the avatar,

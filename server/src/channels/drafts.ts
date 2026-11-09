@@ -47,11 +47,11 @@ function emptyDraftPredicate(channel: SQL): SQL {
     and not exists (
       select 1
       from intelligence_channel_mappings m
-      join openbot_local_threads t on t.id = m.thread_id
+      join chisabot_local_threads t on t.id = m.thread_id
       where m.channel_id = ${channel}.id
         and (
           t.messages <> '[]'::jsonb
-          or exists (select 1 from openbot_local_runs r where r.thread_id = t.id)
+          or exists (select 1 from chisabot_local_runs r where r.thread_id = t.id)
         )
     )
   )`;

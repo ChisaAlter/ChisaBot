@@ -84,7 +84,7 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
   const [sent, setSent] = useState<Message | null>(null);
 
   // Always a new topic: a conversation that already has messages is never reopened from here
-  // ("和它聊天" entries resolve the ongoing chat first, `useOpenBotChat`). Only the Bot's most recent
+  // ("和它聊天" entries resolve the ongoing chat first, `useBotChat`). Only the Bot's most recent
   // channel, when nothing was said in it yet, is reused rather than leaving an empty one beside it.
   const existing = sent || fresh ? undefined : reusableEmptyChannelFor(agent, channels.data)?.id;
   useEffect(() => {

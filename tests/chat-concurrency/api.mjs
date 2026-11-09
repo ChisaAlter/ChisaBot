@@ -16,7 +16,7 @@ const check = (ok, what) => { log(ok ? "PASS" : "FAIL", what); if (!ok) failures
 
 async function run(threadId, messages, label) {
   const runId = uuid();
-  const response = await fetch(`${BASE}/api/copilotkit/agent/${BOT}/run`, {
+  const response = await fetch(`${BASE}/api/conversations/agent/${BOT}/run`, {
     method: "POST", headers: { ...H, accept: "text/event-stream" },
     body: JSON.stringify({ threadId, runId, messages, tools: [], context: [], state: {}, forwardedProps: {} }),
   });
@@ -41,10 +41,10 @@ async function run(threadId, messages, label) {
   return { status: response.status, events };
 }
 const textOf = (m) => (typeof m.content === "string" ? m.content : (m.content || []).map((p) => p.text || "").join(""));
-const messages = async (threadId) => (await (await fetch(`${BASE}/api/copilotkit/threads/${threadId}/messages`, { headers: H })).json()).messages;
-const inbox = async (threadId) => (await (await fetch(`${BASE}/api/copilotkit/threads/${threadId}/inbox`, { headers: H })).json());
+const messages = async (threadId) => (await (await fetch(`${BASE}/api/conversations/threads/${threadId}/messages`, { headers: H })).json()).messages;
+const inbox = async (threadId) => (await (await fetch(`${BASE}/api/conversations/threads/${threadId}/inbox`, { headers: H })).json());
 const queue = async (threadId, text) => {
-  const response = await fetch(`${BASE}/api/copilotkit/threads/${threadId}/inbox`, { method: "POST", headers: H, body: JSON.stringify({ id: uuid(), text }) });
+  const response = await fetch(`${BASE}/api/conversations/threads/${threadId}/inbox`, { method: "POST", headers: H, body: JSON.stringify({ id: uuid(), text }) });
   return { status: response.status, body: await response.json() };
 };
 
@@ -99,7 +99,7 @@ if (SCENARIO === "worker") {
   const first = { id: uuid(), role: "user", content: "DELEGATE 帮我在后台做个测试任务" };
   const r = await run(threadId, [first], "delegate");
   check(r.status === 200 && !r.events.some((e) => e.type === "RUN_ERROR"), "delegating turn finished");
-  const workers = async () => (await (await fetch(`${BASE}/api/copilotkit/threads/${threadId}/workers`, { headers: H })).json()).workers;
+  const workers = async () => (await (await fetch(`${BASE}/api/conversations/threads/${threadId}/workers`, { headers: H })).json()).workers;
   let list = await workers();
   log("workers", JSON.stringify(list));
   check(list.length === 1, "one worker created");
@@ -115,7 +115,7 @@ if (SCENARIO === "worker") {
     if (w.plan?.length) plans.add(w.plan.map((s) => s.status[0]).join(""));
     log("worker", w.status, "|", w.step, "|", w.plan?.map((s) => `${s.text}:${s.status}`).join(", "));
     if (w.status === "running" && !steered && w.plan?.some((s) => s.status === "done")) {
-      const s = await fetch(`${BASE}/api/copilotkit/threads/${threadId}/workers`, { method: "POST", headers: H, body: JSON.stringify({ workerId: id, action: "steer", text: "结果里写上日期" }) });
+      const s = await fetch(`${BASE}/api/conversations/threads/${threadId}/workers`, { method: "POST", headers: H, body: JSON.stringify({ workerId: id, action: "steer", text: "结果里写上日期" }) });
       check(s.status === 200, "steer accepted while running");
       steered = true;
     }
@@ -147,7 +147,7 @@ if (SCENARIO === "worker") {
   await sleep(1500);
   list = await workers();
   const second = list[list.length - 1];
-  const c = await fetch(`${BASE}/api/copilotkit/threads/${threadId}/workers`, { method: "POST", headers: H, body: JSON.stringify({ workerId: second.id, action: "cancel" }) });
+  const c = await fetch(`${BASE}/api/conversations/threads/${threadId}/workers`, { method: "POST", headers: H, body: JSON.stringify({ workerId: second.id, action: "cancel" }) });
   check(c.status === 200, "cancel accepted");
   await sleep(1500);
   const cancelled = (await workers()).find((w) => w.id === second.id);

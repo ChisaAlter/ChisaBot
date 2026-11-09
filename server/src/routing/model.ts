@@ -1,4 +1,4 @@
-import type { RuntimeModel, RuntimeModelResolver } from "../copilot";
+import type { RuntimeModel, RuntimeModelResolver } from "../conversation-runtime";
 
 /**
  * The one model call the router makes, kept apart from the routing logic so that logic stays a pure

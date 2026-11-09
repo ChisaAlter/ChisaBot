@@ -583,7 +583,7 @@ describe("ACP AG-UI bridge host contract", () => {
   test("waiting metadata maps to CUSTOM and interrupt with the actual tool call ID", async () => {
     const created = bridge({ waiting: { note: "confirm please", capability: "do-not-persist" } });
     const result = await post(created, host());
-    const waiting = result.find((event) => event.type === "CUSTOM" && event.name === "openbot.headless.waiting");
+    const waiting = result.find((event) => event.type === "CUSTOM" && event.name === "chisabot.headless.waiting");
     const start = result.find((event) => event.type === "TOOL_CALL_START");
     expect(waiting.value).toMatchObject({ kind: "approval", toolCallId: start.toolCallId, reason: "human_input", capability: "[REDACTED]" });
     expect(result.at(-1)).toMatchObject({

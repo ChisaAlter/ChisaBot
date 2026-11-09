@@ -39,19 +39,19 @@ import {
 import {
   fileToolDrawsCard,
   imageToolDrawsCard,
-} from "@/lib/copilot/chat-file-tools";
-import { localAgentDrawsCard, taskIdOf } from "@/lib/copilot/local-agent-tool";
+} from "@/lib/conversations/chat-file-tools";
+import { localAgentDrawsCard, taskIdOf } from "@/lib/conversations/local-agent-tool";
 import {
   renderUiDrawsCard,
   renderUiFailedDetail,
-} from "@/lib/copilot/render-ui-tool";
-import { scheduleDrawsCard } from "@/lib/copilot/schedule-tool";
+} from "@/lib/conversations/render-ui-tool";
+import { scheduleDrawsCard } from "@/lib/conversations/schedule-tool";
 import {
   lineOnlyRender,
   registeredCardChecks,
   unfinishedToolText,
-} from "@/lib/copilot/tool-renderers";
-import { workerDrawsCard, workerIdOf } from "@/lib/copilot/worker-tool";
+} from "@/lib/conversations/tool-renderers";
+import { workerDrawsCard, workerIdOf } from "@/lib/conversations/worker-tool";
 import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
 import { CHAT_FILES_MARKER } from "../../shared/chat-files";
 import { settleReactWork } from "./settle-react-work";

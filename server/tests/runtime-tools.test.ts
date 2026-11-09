@@ -38,7 +38,7 @@ function input(messages: Message[] = [assistant()]): RunAgentInput {
     tools: [],
     state: { initial: true },
     context: [{ description: "Real run context", value: "canonical" }],
-    forwardedProps: { openbotRun: "signed-real-run" },
+    forwardedProps: { chisabotRun: "signed-real-run" },
   };
 }
 function tool(overrides: Partial<GrantedTool> = {}): GrantedTool {
@@ -449,7 +449,7 @@ describe("runtime tool HTTP helper", () => {
       executions++;
       expect(currentConfirmTurn()).toMatchObject({ runId: "real-run", threadId: "real-thread" });
       expect(currentConfirmToolCall()).toEqual({ toolCallId: "call-1", toolName: name });
-      expect(currentApprovalContext()?.forwardedProps).toEqual({ openbotRun: "signed-real-run" });
+      expect(currentApprovalContext()?.forwardedProps).toEqual({ chisabotRun: "signed-real-run" });
       return `${scoped.actorId}/${scoped.botId}`;
     } })] });
     try {

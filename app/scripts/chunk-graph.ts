@@ -1,7 +1,7 @@
 /**
  * 构建产物的块依赖检查（DESIGN.md §41.5）。手工分块（vite.config.ts 的 VENDOR_CHUNKS / shell / route-*）
  * 一不小心就会让块之间互相静态 import 成环：环里谁先执行，谁就可能读到还没初始化的导出（forwardRef of undefined）。
- * 另外设置页 / 管理页的首屏不该带上聊天才用的 CopilotKit 和 Markdown。
+ * 另外设置页 / 管理页的首屏不该带上聊天才用的 会话客户端 和 Markdown。
  *
  * 这里只看「块 → 块」的静态 import（动态 import 不算）；构建时由 chunkGuard 插件检查，出问题直接让构建失败，
  * tests/chunk-graph.test.ts 再对 dist/ 里的真实产物查一遍。
@@ -16,8 +16,8 @@ export type ChunkGraph = Map<string, ChunkNode>;
 
 /** 首屏不许出现的块（按块名）。chat 组本来就要用，所以只限制这几组。 */
 export const FIRST_SCREEN_FORBIDDEN: Record<string, string[]> = {
-  settings: ["vendor-copilot", "vendor-markdown"],
-  admin: ["vendor-copilot", "vendor-markdown"],
+  settings: ["vendor-conversation", "vendor-markdown"],
+  admin: ["vendor-conversation", "vendor-markdown"],
 };
 
 export function graphFromBundle(bundle: Rollup.OutputBundle): ChunkGraph {

@@ -33,6 +33,8 @@ docker() {
 }
 pass() { printf 'ok - %s\n' "$1"; }
 reject() { if "$@"; then echo "Unexpected success: $*" >&2; exit 1; fi; }
+# This fixture is single-process; production uses the host flock already required by the updater.
+flock() { [ "$*" = '-w 60 7' ]; }
 
 dsh_require_compatible_image fixture:new
 pass 'matching reader accepts rollback without touching live data'
@@ -55,6 +57,38 @@ CURRENT=$CANDIDATE
 CANDIDATE=$READER2
 reject dsh_require_compatible_image fixture:reader-2
 pass 'reader 2 cannot replay reader 3 persistent capacity waits'
+READER3=$CURRENT
+CANDIDATE='{"protocol":1,"runtimeVersion":"0.2.2-rc.1","historyReader":"dsh-0.2.2-rc.1","conversationReader":4}'
+for CURRENT in "$PRIOR" "$READER2" "$READER3"; do
+  dsh_require_compatible_image fixture:reader-4
+done
+pass 'reader 4 accepts prior conversation records for the table migration'
+CURRENT=$CANDIDATE
+CANDIDATE=$READER3
+reject dsh_require_compatible_image fixture:reader-3
+pass 'reader 3 cannot read renamed conversation tables'
+# The migration may finish before API/container readiness. The host floor must already be durable,
+# and a later snapshot of the old image must not lower it or authorize a destructive old startup.
+CURRENT=$READER3
+printf '%s\n' "$CURRENT" > "$COMPOSE_DIR/.dsh-reader.json"
+CANDIDATE='{"protocol":1,"runtimeVersion":"0.2.2-rc.1","historyReader":"dsh-0.2.2-rc.1","conversationReader":4}'
+dsh_prepare_candidate_reader fixture:reader-4
+printf '%s\n' 'chisabot_local_threads:original-row' > "$TMP/canonical-state"
+DB_FAILURE=1
+reject dsh_readiness
+DB_FAILURE=0
+dsh_record_reader # old image observation after the readiness failure; floor must stay at 4
+grep -q '"conversationReader":4' "$COMPOSE_DIR/.dsh-reader.json"
+AVAILABLE=0 IMAGE_FAILURE=0 CANDIDATE=$READER3
+if dsh_require_compatible_image fixture:reader-3; then
+  printf '%s\n' 'openbot_local_threads:empty' > "$TMP/canonical-state"
+  echo 'Old reader was allowed to start after the schema migration' >&2
+  exit 1
+fi
+[ "$(cat "$TMP/canonical-state")" = 'chisabot_local_threads:original-row' ]
+pass 'migration-completed/readiness-failed keeps reader 4 floor and blocks old startup without touching canonical rows'
+AVAILABLE=1
+rm "$COMPOSE_DIR/.dsh-reader.json"
 CURRENT=$PRIOR
 CANDIDATE='{"protocol":1,"runtimeVersion":"0.2.2-rc.1","historyReader":"different-native-reader","conversationReader":2}'
 reject dsh_require_compatible_image fixture:native-mismatch

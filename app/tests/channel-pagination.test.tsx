@@ -217,7 +217,6 @@ function channel(id: string): ChannelSummary {
 function preferences(emphasis: "agent" | "thread") {
   return {
     messageListEmphasis: emphasis,
-    selfHostBannerDismissed: false,
     mainBotId: null,
     brandAccent: "Chisa",
     brandRest: "Bot",

@@ -7,7 +7,7 @@ import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
 test("creates a typed database boundary without opening a query", () => {
   const database = createDatabase(
-    "postgres://openbot:openbot@localhost:5432/openbot",
+    "postgres://chisabot:chisabot@localhost:5432/chisabot",
     TEST_POOL,
   );
 

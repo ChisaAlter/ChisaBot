@@ -48,7 +48,7 @@ const summary: ChannelSummary = {
 };
 const user = { id: "user-1", email: "u@example.com", name: "U" };
 const agents = [{ id: AGENT, name: "千纱", hidden: false }];
-const preferences = { messageListEmphasis: "thread", mainBotId: AGENT, selfHostBannerDismissed: true };
+const preferences = { messageListEmphasis: "thread", mainBotId: AGENT };
 const requests: string[] = [];
 let originalFetch: typeof fetch;
 

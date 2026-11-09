@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { QueryClient } from "@tanstack/react-query";
 import { reusableEmptyChannelFor } from "../src/lib/channels/latest";
-import { botChatChannelId } from "../src/lib/channels/open-bot-chat";
+import { botChatChannelId } from "../src/lib/channels/bot-chat";
 import { type ChannelSummary, channelKeys } from "../src/lib/channels/queries";
 
 /**
@@ -123,7 +123,7 @@ describe("「和它聊天」入口先找最近的对话", () => {
     }
   });
 
-  test("接线：资料页 / 去聊天 / 和它聊天 / 旧 /bot 地址 / 删除后回主机器人 都走 useOpenBotChat", () => {
+  test("接线：资料页 / 去聊天 / 和它聊天 / 旧 /bot 地址 / 删除后回主机器人 都走 useBotChat", () => {
     const src = (p: string) =>
       readFileSync(join(import.meta.dir, "../src", p), "utf8");
     for (const file of [
@@ -133,13 +133,13 @@ describe("「和它聊天」入口先找最近的对话", () => {
       "routes/_authed/_app/bot.tsx",
       "components/agents/delete-bot-dialog.tsx",
     ]) {
-      expect(src(file)).toContain("useOpenBotChat()");
+      expect(src(file)).toContain("useBotChat()");
       expect(src(file)).not.toMatch(/to: "\/channel\/new"/);
     }
     expect(src("lib/channels/open-thread.ts")).toContain(
       "botChatChannelId(queryClient, agentId)",
     );
-    expect(src("lib/copilot/handoff-tool.tsx")).toContain(
+    expect(src("lib/conversations/handoff-tool.tsx")).toContain(
       "latestChannelFor(matchedBot.id",
     );
   });

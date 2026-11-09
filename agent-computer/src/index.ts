@@ -1,4 +1,5 @@
 import "../../shared/env-compat";
+import { readCompatibleHeader } from "../../shared/legacy-headers";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serve } from "bun";
@@ -249,8 +250,7 @@ function actionLeaseMs(pathname: string): number {
  */
 function botIdOf(request: Request, fallback?: string | null): string {
   return (
-    request.headers.get("x-chisabot-bot-id")?.trim() ||
-    request.headers.get("x-openbot-bot-id")?.trim() || // pre-0.1.75 name
+    readCompatibleHeader(request.headers, "x-chisabot-bot-id")?.trim() ||
     fallback?.trim() ||
     DEFAULT_BOT_ID
   );
@@ -1594,9 +1594,7 @@ serve<StreamData>({
           typeof body.botId === "string" && body.botId.trim()
             ? body.botId.trim()
             : url.searchParams.get("botId")?.trim() ||
-              request.headers.get("x-chisabot-bot-id")?.trim() ||
-              request.headers.get("x-openbot-bot-id")?.trim() ||
-              undefined;
+              readCompatibleHeader(request.headers, "x-chisabot-bot-id")?.trim() || undefined;
         try {
           return json(
             await shell.run({

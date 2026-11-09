@@ -23,7 +23,6 @@ export function GlassShell({
   sidebar,
   right,
   rightHidden = false,
-  banner,
   children,
 }: {
   scope: ShellScope;
@@ -31,7 +30,6 @@ export function GlassShell({
   right?: ReactNode;
   /** 右栏留着但不显示（设置 / 管理里），回到聊天时不重新挂载（DESIGN.md §98）。 */
   rightHidden?: boolean;
-  banner?: ReactNode;
   children: ReactNode;
 }) {
   // 鼠标设备上根元素 overflow:hidden（styles.css §41 ②）；以前是 `html:has(> body .glass-shell)`。
@@ -47,7 +45,6 @@ export function GlassShell({
         {sidebar}
         <div className="glass-body relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-scope={scope}>
           <main className="glass-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            {banner}
             <ShellBoundary>{children}</ShellBoundary>
           </main>
           {right ? (

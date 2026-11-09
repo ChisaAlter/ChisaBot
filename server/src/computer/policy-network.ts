@@ -1,3 +1,4 @@
+import { computerHeaders } from "../../../shared/legacy-headers";
 /**
  * Getting a Bot's computer its network policy.
  *
@@ -109,8 +110,7 @@ export async function pushEgressPolicy(
       method: "PUT",
       headers: {
         "content-type": "application/json",
-        "x-chisabot-bot-id": botId, "x-openbot-bot-id": botId,
-        ...(options.token ? { "x-chisabot-computer-token": options.token , "x-openbot-computer-token": options.token } : {}),
+        ...computerHeaders(botId, options.token),
       },
       body: JSON.stringify({
         policy: { mode: policy.mode, rules: policy.rules },

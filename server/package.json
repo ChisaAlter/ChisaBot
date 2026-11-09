@@ -43,8 +43,6 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
-    "@copilotkit/aimock": "1.46.0",
-    "@copilotkit/core": "1.80.0",
     "drizzle-kit": "^0.31.11"
   }
 }

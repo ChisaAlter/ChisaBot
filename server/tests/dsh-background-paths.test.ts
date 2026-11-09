@@ -129,13 +129,13 @@ class ProtocolSocket implements WsLike {
     await center.ensure(); cleanups.push(() => center.stop());
     const task = await center.createTask(owner, { title: "容量任务中心", description: "CAPACITY_CENTER 保存验收产物", level: 2, risk: "read", agentId: bot, completion: { criteria: "返回产物回执", required: [] } });
     await center.controlTask(owner, task.id, "start"); await center.sweep();
-    const queuedTask = await until(async () => (await database.$client.unsafe<any[]>("SELECT r.* FROM openbot_local_runs r WHERE r.status='capacity_wait' AND r.thread_id LIKE $1", [`task-center:${task.id}:%`]))[0]);
+    const queuedTask = await until(async () => (await database.$client.unsafe<any[]>("SELECT r.* FROM chisabot_local_runs r WHERE r.status='capacity_wait' AND r.thread_id LIKE $1", [`task-center:${task.id}:%`]))[0]);
     expect((await center.getTask(owner, task.id))?.attempts).toBe(1);
     expect(JSON.stringify(modelRequests)).not.toContain("CAPACITY_CENTER");
     const queuedThread = `${owner}-queued-and-foreground`;
     const cancelled = new AbortController();
     const queuedDone = runTurn({ ownerUserId: owner, agentId: bot, threadId: queuedThread, routineId: "capacity-cancel", runId: "capacity-cancel", instruction: "CAPACITY_CANCEL", signal: cancelled.signal }).catch(error => error);
-    await until(async () => (await database.$client.unsafe<any[]>("SELECT 1 FROM openbot_local_runs WHERE thread_id=$1 AND status='capacity_wait'", [queuedThread]))[0]);
+    await until(async () => (await database.$client.unsafe<any[]>("SELECT 1 FROM chisabot_local_runs WHERE thread_id=$1 AND status='capacity_wait'", [queuedThread]))[0]);
     holdMarkers.add("CAPACITY_FOREGROUND");
     const foreground = runTurn({ ownerUserId: owner, agentId: bot, threadId: queuedThread, routineId: "foreground", instruction: "CAPACITY_FOREGROUND", initiator: { kind: "person" } });
     await until(async () => held.has("CAPACITY_FOREGROUND"));
@@ -145,7 +145,7 @@ class ProtocolSocket implements WsLike {
     expect(JSON.stringify(modelRequests)).not.toContain("CAPACITY_CANCEL");
     held.get("CAPACITY_FOREGROUND")!(); await foreground;
     const short = shortTurn({ ownerUserId: owner, agentId: bot, threadId: `${owner}-short-queue`, routineId: "short", instruction: "CAPACITY_SHORT" });
-    await until(async () => (await database.$client.unsafe<any[]>("SELECT 1 FROM openbot_local_runs WHERE thread_id=$1 AND status='capacity_wait'", [`${owner}-short-queue`]))[0]);
+    await until(async () => (await database.$client.unsafe<any[]>("SELECT 1 FROM chisabot_local_runs WHERE thread_id=$1 AND status='capacity_wait'", [`${owner}-short-queue`]))[0]);
     await Bun.sleep(1000); // Beyond this turn's execution budget; no model has been called.
     expect(JSON.stringify(modelRequests)).not.toContain("CAPACITY_SHORT");
     expect(await backgroundCount(database.$client, owner)).toBe(2);
@@ -154,7 +154,7 @@ class ProtocolSocket implements WsLike {
     await until(async () => (await center.getTask(owner, task.id))?.status === "succeeded");
     expect((await center.getTask(owner, task.id))?.attempts).toBe(1);
     await until(async () => (await workers.get(worker.id))?.status === "done");
-    expect((await database.$client.unsafe<any[]>("SELECT status FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2", [queuedTask.thread_id, queuedTask.run_id]))[0]?.status).toBe("finished");
+    expect((await database.$client.unsafe<any[]>("SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2", [queuedTask.thread_id, queuedTask.run_id]))[0]?.status).toBe("finished");
     await until(async () => !(backend.control.isActive(parentThreadId)));
     expect(await backgroundCount(database.$client, owner)).toBe(0);
   }, 45_000);

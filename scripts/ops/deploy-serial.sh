@@ -15,7 +15,13 @@ flock -w 2400 9 || { echo "DEPLOY-LOCK TIMEOUT"; exit 3; }
 echo "[$(date -u +%T)] lock held by $WHO for $WANT"
 st() { python3 -c "import json;j=(json.load(open('$U/spool/state/state.json')).get('job') or {});print(j.get('status') or '')" 2>/dev/null; }
 busy() { s=$(st); [ "$s" = running ] || [ "$s" = queued ] || ls $U/spool/requests/*.json >/dev/null 2>&1; }
-locks() { echo "select count(*) from openbot_local_threads where lock_expires_at > now()" | docker exec -i "$APP" sh -c 'export PGPASSWORD=$(cat /var/lib/postgresql/pgpassword); psql -h 127.0.0.1 -U openbot openbot -At'; }
+SCHEMA_ADAPTER=$U/legacy-schema.sh
+if [ ! -f "$SCHEMA_ADAPTER" ]; then
+  SCHEMA_ADAPTER=$(CDPATH= cd -- "$(dirname "$0")/../../deploy/updater" && pwd)/legacy-schema.sh
+fi
+[ -f "$SCHEMA_ADAPTER" ] || { echo "Missing conversation schema adapter" >&2; exit 4; }
+. "$SCHEMA_ADAPTER"
+locks() { CONTAINER=$APP conversation_busy_threads; }
 for i in $(seq 1 240); do busy || break; sleep 10; done
 for i in $(seq 1 120); do [ "$(locks)" = 0 ] && break; sleep 10; done
 [ "$(locks)" = 0 ] || { echo "THREAD LOCKS STILL >0, giving up"; exit 4; }

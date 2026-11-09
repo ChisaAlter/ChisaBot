@@ -27,7 +27,7 @@ test("DSH plan transport preserves the owned harness and returns tool arguments 
     expect(events.flatMap(event => event.choices[0].delta.tool_calls ?? []).map(call => call.function.arguments).join("")).toBe('{"value":"one"}');
     expect(events.at(-1).choices[0].finish_reason).toBe("tool_calls");
     expect(requests).toHaveLength(1);
-    expect(requests[0].forwardedProps.openbotModelOnly).toBe(true);
+    expect(requests[0].forwardedProps.chisabotModelOnly).toBe(true);
     expect(requests[0].context).toContainEqual({ description: "Built-in Bot instructions", value: "Keep the user's instructions." });
     await expect(proxy({ ...body, tools: [{ type: "function", function: { name: "not_granted" } }] }, new AbortController().signal)).rejects.toThrow("ungranted");
     expect(requests).toHaveLength(1);

@@ -17,7 +17,7 @@ const workspaceHome = "/workspace/sales";
 
 const secrets = {
   KEY_ENCRYPTION_KEY: "deployment-key",
-  DATABASE_URL: "postgres://openbot:openbot@127.0.0.1/openbot",
+  DATABASE_URL: "postgres://chisabot:chisabot@127.0.0.1/chisabot",
   OPENAI_API_KEY: "sk-secret",
   COMPUTER_TOKEN: "computer-token",
   INTELLIGENCE_API_KEY: "cpk-secret",

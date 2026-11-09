@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { JUMP_TO_ACTIVITY } from "@/components/computer/activity-jump";
-import { onComputerActivity } from "@/lib/copilot/computer-activity";
+import { onComputerActivity } from "@/lib/conversations/computer-activity";
 import { overlayHistoryActive, overlayHistoryMode } from "@/lib/overlay-back";
 import {
   openPanelSheet,

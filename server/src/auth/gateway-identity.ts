@@ -1,3 +1,4 @@
+import { authenticationRequired } from "../legacy/protocol";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { MiddlewareHandler } from "hono";
@@ -130,7 +131,7 @@ export class GatewayReplayCache {
 /**
  * serve 入口调用：这个 HTTP 请求带的身份头是不是重放。只管「验签通过且带 j」的头；
  * 无效的头交给后面的 resolveGatewayRequest 照旧 401，旧格式（无 j）照旧放行。
- * 同一个请求在应用内部会被多处 resolve（守卫、CopilotKit 两次、WebSocket），所以消费只在入口做一次。
+ * 同一个请求在应用内部会被多处 resolve（守卫、conversation runtime 两次、WebSocket），所以消费只在入口做一次。
  */
 export function isReplayedGatewayIdentity(
   secret: string,
@@ -233,7 +234,7 @@ export type ProvisionUser = (actor: AuthenticatedActor) => Promise<void>;
 
 /**
  * 网关身份模式的 requireUser：认出是谁，第一次见到的朋友账号自动在 users / user_roles 建行（provision）。
- * 401 带 openbotAuthRequired，网页里的 workspace.js 会据此跳回登录页。
+ * 401 带 chisabotAuthRequired，网页里的 workspace.js 会据此跳回登录页。
  */
 export function createGatewayRequireUser(
   secret: string,
@@ -242,7 +243,7 @@ export function createGatewayRequireUser(
   return async (context, next) => {
     const resolved = resolveGatewayRequest(secret, context.req.raw.headers);
     if (resolved.kind === "refuse") {
-      return context.json({ ok: false, error: "请先登录。", openbotAuthRequired: true }, 401);
+      return context.json({ ok: false, error: "请先登录。", ...authenticationRequired() }, 401);
     }
     await provision(resolved.actor);
     context.set("actor", resolved.actor);

@@ -5,7 +5,7 @@ import type { AuditInitiator } from "../audit";
  * 确认卡片要知道「这是哪段对话里的哪个工具调用」，卡片才能画在那条工具调用下面。
  *
  * - 回合：local-conversations.ts 在跑机器人时包一层（对话 id、这一轮是不是被用户停了）。
- * - 工具调用：copilot.ts 执行内置机器人的工具时包一层（AI SDK 给的 toolCallId）。
+ * - 工具调用：conversation-runtime.ts 执行内置机器人的工具时包一层（AI SDK 给的 toolCallId）。
  */
 export type ConfirmTurn = { threadId: string; runId: string; stopped: () => boolean };
 const turns = new AsyncLocalStorage<ConfirmTurn>();
@@ -32,7 +32,7 @@ export const currentConfirmActor = () => computerActors.getStore();
 
 /**
  * 这一轮工具执行的取消信号（FIX-04）：用户按「停止」时 abort，web_search / 浏览器长操作应立刻停。
- * local-conversations 在跑回合时挂上；copilot 执工具前检查。
+ * local-conversations 在跑回合时挂上；conversation runtime 执工具前检查。
  */
 const toolAborts = new AsyncLocalStorage<AbortSignal>();
 export const withToolAbort = <T>(signal: AbortSignal, run: () => T): T => toolAborts.run(signal, run);

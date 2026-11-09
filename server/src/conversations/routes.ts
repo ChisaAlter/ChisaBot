@@ -1,8 +1,9 @@
+import { mountPreviousConversationRoutes, normalizeRunInput } from "../legacy/protocol";
 import { Hono } from "hono";
 import { RunAgentInputSchema } from "@ag-ui/core/schemas";
 import type { BaseEvent } from "@ag-ui/client";
 import { Observable, type Subscription } from "rxjs";
-import type { IdentifyActor } from "../copilot";
+import type { IdentifyActor } from "../conversation-runtime";
 import type { ActorAgentResolver } from "../agents/agent-resolver";
 import type { LocalConversationBackend } from "../local-conversations";
 import { HeadlessToolsMiddleware, type HeadlessTool } from "../computer/headless-tools";
@@ -35,8 +36,10 @@ function eventStream(source: Observable<BaseEvent>) {
 /** AG-UI is retained at the wire boundary for Android and registered external agents. */
 export function createConversationRoutes(options: { backend: LocalConversationBackend; resolver: ActorAgentResolver; identifyActor: IdentifyActor; prepareAgent?: (actorId: string, agent: import("@ag-ui/client").AbstractAgent) => Promise<void>; toolsFor?: (actorId: string, botId: string, input: import("@ag-ui/client").RunAgentInput) => Promise<readonly HeadlessTool[]> }) {
   const routes = new Hono();
+  mountPreviousConversationRoutes(routes);
   const { backend, resolver, identifyActor } = options;
   async function admit(request: Request, agentId: string, input: import("@ag-ui/client").RunAgentInput) {
+    input = normalizeRunInput(input);
     await assertConversationAdmissionOpen();
     const actor = await identifyActor(request);
     const agent = await resolver.resolveAgentForActor(actor, agentId, { initiator: { kind: "person" } });
@@ -87,12 +90,12 @@ export function createConversationRoutes(options: { backend: LocalConversationBa
     const status = "status" in error && typeof error.status === "number" ? error.status : 500;
     return context.json({ error: error.message }, status as 400);
   });
-  routes.get("/api/copilotkit/info", async context => {
+  routes.get("/api/conversations/info", async context => {
     const actor = await identifyActor(context.req.raw);
     const agents = await resolver.resolveAgentsForActor(actor);
     return context.json({ version: "chisabot-1", mode: "sse", telemetryDisabled: true, agents: Object.fromEntries(Object.entries(agents).map(([id, agent]) => [id, { name: id, description: agent.description }])) });
   });
-  routes.post("/api/copilotkit/agent/:agentId/run", async context => {
+  routes.post("/api/conversations/agent/:agentId/run", async context => {
     const input = RunAgentInputSchema.parse(await context.req.json());
     const agentId = context.req.param("agentId");
     const receipt = await admit(context.req.raw, agentId, input);
@@ -108,7 +111,7 @@ export function createConversationRoutes(options: { backend: LocalConversationBa
       return () => subscription.unsubscribe();
     }));
   });
-  routes.post("/api/copilotkit/agent/:agentId/connect", async context => {
+  routes.post("/api/conversations/agent/:agentId/connect", async context => {
     const actor = await identifyActor(context.req.raw);
     const { threadId } = await context.req.json();
     if (typeof threadId !== "string" || !threadId || threadId.length > 512) return context.json({ error: "Thread is required." }, 400);
@@ -116,7 +119,7 @@ export function createConversationRoutes(options: { backend: LocalConversationBa
     await backend.client.getOrCreateThread({ threadId, userId: actor.id, agentId });
     return eventStream(backend.runner.connect({ threadId, agentId }));
   });
-  routes.post("/api/copilotkit/agent/:agentId/stop/:threadId", async context => {
+  routes.post("/api/conversations/agent/:agentId/stop/:threadId", async context => {
     const actor = await identifyActor(context.req.raw);
     const threadId = context.req.param("threadId");
     const thread = await backend.client.getThread({ threadId, userId: actor.id });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { friendlyError } from "../src/lib/chat/friendly-error";
-import { friendlyStopReason } from "../src/lib/copilot/stopped-turn";
+import { friendlyStopReason } from "../src/lib/conversations/stopped-turn";
 
 // CB-100：服务器在流开始前连不上智能体运行时，发来的 RUN_ERROR 要显示成「智能体运行时无法连接」并能重试，
 // 而不是被 ConnectionRefused 里的字样认成浏览器这边的「网络连接中断」。

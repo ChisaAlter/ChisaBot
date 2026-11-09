@@ -3,8 +3,8 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import type { ThreadActivity } from "@/lib/copilot/bot-thread";
-import { useConversationSync } from "@/lib/copilot/use-conversation-sync";
+import type { ThreadActivity } from "@/lib/conversations/bot-thread";
+import { useConversationSync } from "@/lib/conversations/use-conversation-sync";
 
 /*
  * 断线重连后补齐（DESIGN.md §42 / §64）：本机一轮刚结束（或刚接完）时 sync 会把「下一次」变化戳只记成基线，

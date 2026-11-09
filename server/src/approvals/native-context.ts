@@ -23,7 +23,7 @@ type NativeRun = {
 const nativeRuns = new AsyncLocalStorage<NativeRun>();
 
 /** Where a suspended run's waiting details ride on its AG-UI interrupt. */
-export const CHISABOT_WAITING_METADATA = "openbotWaiting";
+export const CHISABOT_WAITING_METADATA = "chisabotWaiting";
 
 export async function executeNativeApprovalTool<T>(
   name: string,
@@ -114,7 +114,7 @@ class NativeApprovalMiddleware extends Middleware {
         suspend(error) {
           subscriber.next({
             type: EventType.CUSTOM,
-            name: "openbot.headless.waiting",
+            name: "chisabot.headless.waiting",
             value: { ...error.waiting, message: error.message },
           });
           subscriber.next({

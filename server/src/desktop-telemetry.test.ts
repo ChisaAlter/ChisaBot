@@ -24,12 +24,12 @@ describe("desktop runtime metadata", () => {
         CHISABOT_BASE_URL: "https://private.example",
       }),
     ).toEqual({
-      openbot_distribution: "desktop",
-      openbot_version: "0.0.9",
-      openbot_platform: "macos",
-      openbot_arch: "aarch64",
-      openbot_os_version: "15.6.1",
-      openbot_engine: "podman",
+      chisabot_distribution: "desktop",
+      chisabot_version: "0.0.9",
+      chisabot_platform: "macos",
+      chisabot_arch: "aarch64",
+      chisabot_os_version: "15.6.1",
+      chisabot_engine: "podman",
     });
   });
 
@@ -51,6 +51,6 @@ describe("desktop runtime metadata", () => {
         CHISABOT_ARCH: value,
         CHISABOT_ENGINE: value,
       }),
-    ).toEqual({ openbot_distribution: "desktop" });
+    ).toEqual({ chisabot_distribution: "desktop" });
   });
 });

@@ -50,7 +50,7 @@ describe.skipIf(!url)("shared background capacity device lifecycle (PostgreSQL)"
     return async () => { await backend.capacity.releaseReservation(threadId, runId); await backend.capacity.stop(threadId, runId); };
   }
   beforeAll(async () => { backend = await createLocalConversations(database); await service.ensure(); });
-  afterAll(async () => { await sql.unsafe("DELETE FROM chisabot_local_agent_tasks WHERE owner_user_id=$1", [owner]); await sql.unsafe("DELETE FROM chisabot_device_agent_settings WHERE owner_user_id=$1", [owner]); await sql.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id=$1", [owner]); await sql.close(); });
+  afterAll(async () => { await sql.unsafe("DELETE FROM chisabot_local_agent_tasks WHERE owner_user_id=$1", [owner]); await sql.unsafe("DELETE FROM chisabot_device_agent_settings WHERE owner_user_id=$1", [owner]); await sql.unsafe("DELETE FROM chisabot_local_threads WHERE owner_user_id=$1", [owner]); await sql.close(); });
 
   test("initial human wait is free, and Stop cannot be undone by a late approval", async () => {
     const task = await start("initial-approval", "workspace");

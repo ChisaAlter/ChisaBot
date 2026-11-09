@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { effectiveStatus } from "../src/lib/copilot/approval-tools";
+import { effectiveStatus } from "../src/lib/conversations/approval-tools";
 
 // §102：长动作的结果流式写出时，原来的状态码在正文的 `status` 里。
 describe("effectiveStatus", () => {

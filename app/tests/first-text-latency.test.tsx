@@ -94,7 +94,7 @@ describe("第一条消息前面不再串行等待", () => {
       source.indexOf("const freshThread = useRef(seed !== null);"),
     );
     const skip = join.indexOf("if (freshThread.current) {");
-    const connect = join.indexOf("copilotkit.connectAgent(");
+    const connect = join.indexOf("conversationClient.connectAgent(");
     expect(skip).toBeGreaterThan(0);
     expect(connect).toBeGreaterThan(skip);
     expect(join.slice(skip, connect)).toContain("openJoinGate.current();");

@@ -184,7 +184,7 @@ export function createApprovalStore(database: Database): ApprovalStore {
           })
           .onConflictDoNothing();
         await tx.execute(
-          sql`select pg_notify('openbot_work_offered', 'approval.resume')`,
+          sql`select pg_notify('chisabot_work_offered', 'approval.resume')`,
         );
         return updated;
       });
@@ -491,7 +491,7 @@ function createPolicyStore(database: Database): ApprovalPolicyStore {
             })
             .onConflictDoNothing();
           await tx.execute(
-            sql`select pg_notify('openbot_work_offered', 'approval.resume')`,
+            sql`select pg_notify('chisabot_work_offered', 'approval.resume')`,
           );
           return true;
         });

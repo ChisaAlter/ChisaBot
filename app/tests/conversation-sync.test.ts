@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readServerThread, writeServerThread } from "../src/lib/copilot/bot-thread";
-import { queuedFor, restoreQueue, takeQueued } from "../src/lib/copilot/thread-inbox";
-import { mergeSnapshot, userOrderDiffers } from "../src/lib/copilot/use-conversation-sync";
+import { readServerThread, writeServerThread } from "../src/lib/conversations/bot-thread";
+import { queuedFor, restoreQueue, takeQueued } from "../src/lib/conversations/thread-inbox";
+import { mergeSnapshot, userOrderDiffers } from "../src/lib/conversations/use-conversation-sync";
 
 /**
  * 全端同步（DESIGN.md §42）客户端的两件不需要浏览器的事：旧服务器（没有 /api/bot-threads）要被认出来、

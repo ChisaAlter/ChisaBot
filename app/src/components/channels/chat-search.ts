@@ -3,7 +3,7 @@ import { normalizeMessageSearchParam } from "@/lib/channels/focus-message";
 
 /*
  * 聊天地址的参数和路由 id，单独放一个轻文件（DESIGN.md §41.5）：路由文件（`/channel/$channelId`）和外壳只要这两样，
- * 以前从 `channel-page.tsx` 拿，等于把整个聊天（CopilotKit 对话、Markdown、工具卡片……）静态拖进了入口包。
+ * 以前从 `channel-page.tsx` 拿，等于把整个聊天（会话客户端 对话、Markdown、工具卡片……）静态拖进了入口包。
  */
 export const chatSearchSchema = z.object({
   settings: z.boolean().optional(),

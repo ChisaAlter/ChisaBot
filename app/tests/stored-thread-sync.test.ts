@@ -3,8 +3,8 @@ import {
   readStoredRows,
   readThreadMessages,
   resetStoredSyncs,
-} from "@/lib/copilot/thread-messages";
-import { applyStoredAnswer } from "@/lib/copilot/thread-sync";
+} from "@/lib/conversations/thread-messages";
+import { applyStoredAnswer } from "@/lib/conversations/thread-sync";
 
 /*
  * 恢复历史（readThreadMessages，channel-chat 各处读存储都走它）和对话顺序核对（use-conversation-sync）
@@ -152,7 +152,7 @@ test("the order check reads through the caller's request, without agentId, and k
   const first = await readStoredRows("thread", undefined, request);
   const second = await readStoredRows("thread", undefined, request);
   expect(second).toBe(first);
-  expect(paths[0]).toBe("/api/copilotkit/threads/thread/messages?since=");
+  expect(paths[0]).toBe("/api/conversations/threads/thread/messages?since=");
   expect(query(1)).toEqual({ agentId: null, since: "v1", cursor: "c1" });
 });
 

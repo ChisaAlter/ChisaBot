@@ -6,7 +6,7 @@ import { SCHEDULE_RUNS_STALE_MS, scheduleRunsQueryOptions } from "@/lib/schedule
 /*
  * 用 fetch 打桩，而不是 mock.module("@/lib/client")。Bun 的 mock.module 是进程级的，而且换不回来：
  * 以前这里把 client 整个换成「永远返回这个日程」，test:app 共享进程里排在后面、走 client 的文件全都
- * 拿到它。例如 self-host-banner 点关闭后，偏好被这个返回值覆盖，横幅又冒出来。
+ * 拿到它，导致偏好等无关接口的响应也被日程fixture替换。
  */
 let calls = 0;
 const originalFetch = globalThis.fetch;

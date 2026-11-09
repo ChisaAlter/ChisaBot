@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { HttpAgent, type RunAgentInput } from "@ag-ui/client";
 import { of } from "rxjs";
 import { spyOn } from "bun:test";
-import { buildAgents, setAgentKernel } from "../src/copilot";
+import { buildAgents, setAgentKernel } from "../src/conversation-runtime";
 
 function kernel() {
   setAgentKernel({ kind: "hermes", url: "http://bridge/ag-ui", binding: { toolGatewayUrl: "http://host/api/internal/runtime-tools", readRun: () => ({ actorId: "owner", botId: "star", threadId: "thread", runId: "run" }) } });

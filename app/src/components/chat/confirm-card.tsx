@@ -12,7 +12,7 @@ import {
 } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { isChatRunning } from "@/lib/copilot/computer-activity";
+import { isChatRunning } from "@/lib/conversations/computer-activity";
 import {
   CONFIRM_CATEGORY_INFO,
   CONFIRM_RESUME_MARKER,

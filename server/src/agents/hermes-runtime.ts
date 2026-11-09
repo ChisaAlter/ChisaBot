@@ -1,3 +1,4 @@
+import { runAssertionValue } from "../legacy/protocol";
 import {
   AbstractAgent,
   type BaseEvent,
@@ -36,7 +37,7 @@ export type HermesRunConfiguration = {
   toolsFor: (input: RunAgentInput, signal: AbortSignal) => Promise<readonly GrantedTool[]>;
   prepare: (input: RunAgentInput, tools: readonly GrantedTool[]) => Promise<RunAgentInput>;
   /**
-   * 这一轮的备用模型（同一个连接，按优先级）和输出上限（模型目录，见 copilot.ts resolveOutputLimit）。
+   * 这一轮的备用模型（同一个连接，按优先级）和输出上限（模型目录，见 conversation-runtime.ts resolveOutputLimit）。
    * 每一轮都问一次（管理员改了设置下一轮就生效）；没有就只发模型 id，Hermes 用它自己的默认。
    */
   modelControls?: (modelId: string) => Promise<HermesModelControls>;
@@ -209,7 +210,7 @@ export class HermesRuntimeAgent extends AbstractAgent {
       if (hostAbort?.aborted) stop();
       const work = async () => {
         controller.signal.throwIfAborted();
-        const assertion = this.configuration.signRun(input.runId, input.threadId, input.forwardedProps?.openbotRun);
+        const assertion = this.configuration.signRun(input.runId, input.threadId, runAssertionValue(input.forwardedProps));
         const scope = this.configuration.binding.readRun(assertion);
         if (!scope || scope.botId !== this.configuration.botId || scope.runId !== input.runId || scope.threadId !== input.threadId)
           throw new Error("The Hermes run could not be bound to its authenticated actor, Bot and conversation.");
@@ -237,9 +238,9 @@ export class HermesRuntimeAgent extends AbstractAgent {
         const { chisabotHermes: _untrustedHermes, ...hostProps } = prepared.forwardedProps ?? {};
         prepared.forwardedProps = {
           ...hostProps,
-          openbotRun: assertion,
-          openbotBotId: scope.botId,
-          openbotDeploymentTools: assembled.map((tool) => tool.name),
+          chisabotRun: assertion,
+          chisabotBotId: scope.botId,
+          chisabotDeploymentTools: assembled.map((tool) => tool.name),
         };
         runTools = hermesRuntimeTools.register({
           input: prepared,

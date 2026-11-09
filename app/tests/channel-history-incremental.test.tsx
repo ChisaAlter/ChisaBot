@@ -12,7 +12,7 @@ import {
   channelKeys,
 } from "@/lib/channels/queries";
 import { applyChannelEvent } from "@/lib/channels/use-channel-events";
-import { resetStoredSyncs } from "@/lib/copilot/thread-messages";
+import { resetStoredSyncs } from "@/lib/conversations/thread-messages";
 import { queryClient } from "@/query-client";
 import { settleReactWork } from "./settle-react-work";
 

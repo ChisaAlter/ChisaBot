@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { type ComputerStatus, currentComputerStatus, isChatRunning, onComputerStatus } from "@/lib/copilot/computer-activity";
+import { type ComputerStatus, currentComputerStatus, isChatRunning, onComputerStatus } from "@/lib/conversations/computer-activity";
 
 /**
  * 这个机器人计算机的当前状态行。

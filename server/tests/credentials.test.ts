@@ -717,7 +717,7 @@ describe("admin credential API", () => {
     );
 
     const response = await app.request(
-      "http://openbot.local/api/admin/credentials",
+      "http://chisabot.local/api/admin/credentials",
     );
 
     expect(response.status).toBe(200);
@@ -766,7 +766,7 @@ describe("admin credential API", () => {
     );
 
     const response = await app.request(
-      "http://openbot.local/api/admin/credentials",
+      "http://chisabot.local/api/admin/credentials",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -841,7 +841,7 @@ describe("admin credential API", () => {
     );
 
     const rotate = await app.request(
-      "http://openbot.local/api/admin/credentials/credential-old/rotate",
+      "http://chisabot.local/api/admin/credentials/credential-old/rotate",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -855,7 +855,7 @@ describe("admin credential API", () => {
       },
     );
     const revoke = await app.request(
-      "http://openbot.local/api/admin/credentials/credential-new/revoke",
+      "http://chisabot.local/api/admin/credentials/credential-new/revoke",
       { method: "POST" },
     );
 

@@ -106,16 +106,10 @@ test("does not manually chunk lazy content or dependencies", () => {
       "/repo/node_modules/.bun/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/dev/lib/html.js",
     ),
   ).toBeUndefined();
-  // CopilotKit 自己按需 import 的调试面板不跟着 vendor-copilot 上首屏。
-  expect(
-    selectChisaBotManualChunk(
-      "/repo/node_modules/.bun/@copilotkit+web-inspector@1.70.1/node_modules/@copilotkit/web-inspector/dist/index.js",
-    ),
-  ).toBeUndefined();
   // 样式不进 JS 块（不然入口为了一份 CSS 把整个块拉上来）。
   expect(
     selectChisaBotManualChunk(
-      "/repo/node_modules/.bun/@copilotkit+react-core@1.70.1/node_modules/@copilotkit/react-core/dist/styles.css",
+      "/repo/app/src/styles.css",
     ),
   ).toBeUndefined();
   // streamdown 的代码块文件静态带着 shiki，留给 Rollup 按需拆。
@@ -175,7 +169,7 @@ test("keeps the authed layout out of the chat chunk", () => {
   expect(selectChisaBotManualChunk("/repo/app/src/routes/_authed/_app.tsx?tsr-split=component")).toBe("route-shell");
 });
 
-test("keeps the component gallery (CopilotKit) out of the admin chunk", () => {
+test("keeps the component gallery (conversation client) out of the admin chunk", () => {
   expect(selectChisaBotManualChunk("/repo/app/src/routes/_authed/admin/index.tsx?tsr-split=component")).toBe("route-admin");
   expect(
     selectChisaBotManualChunk("/repo/app/src/routes/_authed/admin/components/index.tsx?tsr-split=component"),

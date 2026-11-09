@@ -1,7 +1,7 @@
 import { useConversationScope } from "@/lib/chat/conversation-scope";
 import { IconClockHour4, IconPaperclip, IconRefresh, IconX } from "@tabler/icons-react";
 import { useState } from "react";
-import { queueMessage, sendPausedMessage, useQueuedMessages, withdrawMessage } from "@/lib/copilot/thread-inbox";
+import { queueMessage, sendPausedMessage, useQueuedMessages, withdrawMessage } from "@/lib/conversations/thread-inbox";
 import { toVisibleChatItems } from "@/components/channels/chat-messages";
 
 /**

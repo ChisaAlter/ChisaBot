@@ -75,8 +75,8 @@ class FinishedAgent extends AbstractAgent {
     await backend.client.getOrCreateThread({ threadId, userId: owner, agentId: bot });
     const accepted = await backend.commands.accept(owner, bot, inputFor(threadId));
     await backend.commands.status(threadId, accepted.record.run_id, "dispatched");
-    await database.$client.unsafe("INSERT INTO openbot_local_runs(thread_id,run_id,status,finished_at) VALUES($1,$2,'finished',now())", [threadId, accepted.record.run_id]);
-    await database.$client.unsafe("INSERT INTO openbot_local_events(thread_id,run_id,event) VALUES($1,$2,$3::text::jsonb)", [threadId, accepted.record.run_id, JSON.stringify({ type: "RUN_FINISHED", threadId, runId: accepted.record.run_id })]);
+    await database.$client.unsafe("INSERT INTO chisabot_local_runs(thread_id,run_id,status,finished_at) VALUES($1,$2,'finished',now())", [threadId, accepted.record.run_id]);
+    await database.$client.unsafe("INSERT INTO chisabot_local_events(thread_id,run_id,event) VALUES($1,$2,$3::text::jsonb)", [threadId, accepted.record.run_id, JSON.stringify({ type: "RUN_FINISHED", threadId, runId: accepted.record.run_id })]);
     let builds = 0;
     await recoverConversations({ backend, journal: createDshRunJournal(database), buildAgentFor: async () => { builds++; return new FinishedAgent({ agentId: bot }); } });
     expect(builds).toBe(0);
@@ -184,8 +184,8 @@ class FinishedAgent extends AbstractAgent {
     const attack = { headers: { "x-actor": "another-account", "content-type": "application/json" } };
     expect((await routes.request(`/api/conversations/${threadId}/commands/${command.record.command_id}`, attack)).status).toBe(404);
     expect((await routes.request(`/api/conversations/${threadId}/events`, { ...attack, method: "POST", body: JSON.stringify({ commandId: command.record.command_id }) })).status).toBe(404);
-    expect((await routes.request(`/api/copilotkit/agent/${bot}/connect`, { ...attack, method: "POST", body: JSON.stringify({ threadId }) })).status).toBe(404);
-    expect((await routes.request(`/api/copilotkit/agent/${bot}/stop/${threadId}`, { ...attack, method: "POST", body: "{}" })).status).toBe(404);
+    expect((await routes.request(`/api/conversations/agent/${bot}/connect`, { ...attack, method: "POST", body: JSON.stringify({ threadId }) })).status).toBe(404);
+    expect((await routes.request(`/api/conversations/agent/${bot}/stop/${threadId}`, { ...attack, method: "POST", body: "{}" })).status).toBe(404);
     expect((await routes.request(`/api/conversations/${threadId}/commands`, { ...attack, method: "POST", body: JSON.stringify({ agentId: bot, input }) })).status).toBe(404);
 
     const bindings = createConversationBindings(database), journal = createDshRunJournal(database);

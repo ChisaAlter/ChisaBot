@@ -1,7 +1,7 @@
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
-import { botChatChannelId } from "./open-bot-chat";
+import { botChatChannelId } from "./bot-chat";
 import { type AgentChannel, channelKeys } from "./queries";
 
 /**

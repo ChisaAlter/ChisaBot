@@ -39,7 +39,7 @@ import {
   botResetPlanQueryOptions,
   type ResetPlan,
 } from "@/lib/bot-lifecycle/queries";
-import { useOpenBotChat } from "@/lib/channels/open-bot-chat";
+import { useBotChat } from "@/lib/channels/bot-chat";
 import { agentModelQueryOptions, modelCatalogQueryOptions } from "@/lib/model-selection/queries";
 import { useMainBot } from "@/lib/settings/message-list";
 import { queryClient as sharedQueryClient } from "@/query-client";
@@ -368,7 +368,7 @@ function TasksSection({ agentId }: { agentId: string }) {
 
 /** 机器人资料页。 */
 export function BotProfilePage({ agent }: { agent: AgentProfile }) {
-  const openBotChat = useOpenBotChat();
+  const openChat = useBotChat();
   const { mainBotId } = useMainBot();
   const isMain = mainBotId === agent.id;
   const [editing, setEditing] = useState(false);
@@ -391,7 +391,7 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
     <PageShell
       action={
         <div className="bp-actions">
-          <Button onClick={() => void openBotChat(agent.id)} size="sm">
+          <Button onClick={() => void openChat(agent.id)} size="sm">
             <IconMessage />
             {"开始聊天"}
           </Button>

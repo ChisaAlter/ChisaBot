@@ -28,7 +28,7 @@ test("startup reporting requires the existing session and same-origin request", 
   try {
     const anonymous = await service.fetch(request("/auth/startup-report", report));
     expect(anonymous.status).toBe(401);
-    expect((await anonymous.json()).openbotAuthRequired).toBeUndefined();
+    expect((await anonymous.json()).chisabotAuthRequired).toBeUndefined();
     const cookie = await login(service);
     expect((await service.fetch(request("/auth/startup-report", report, cookie, { Origin: "https://foreign.invalid" }))).status).toBe(403);
     expect((await service.fetch(request("/auth/startup-report", report, cookie, { Origin: "" }))).status).toBe(403);

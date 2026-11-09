@@ -53,7 +53,6 @@ test("preferences default to thread and persist separately for each authenticate
     preferences: {
       ...DEFAULT_USER_PREFERENCES,
       messageListEmphasis: "thread",
-      selfHostBannerDismissed: false,
     },
   });
   const saved = await alice.request(
@@ -65,14 +64,12 @@ test("preferences default to thread and persist separately for each authenticate
     preferences: {
       ...DEFAULT_USER_PREFERENCES,
       messageListEmphasis: "agent",
-      selfHostBannerDismissed: false,
     },
   });
   expect(await (await appFor("bob").request(path)).json()).toEqual({
     preferences: {
       ...DEFAULT_USER_PREFERENCES,
       messageListEmphasis: "thread",
-      selfHostBannerDismissed: false,
     },
   });
 });
@@ -80,7 +77,7 @@ test("preferences default to thread and persist separately for each authenticate
 test.each([
   {},
   null,
-  { selfHostBannerDismissed: "yes" },
+  { retiredPreference: true },
   { messageListEmphasis: "invalid" },
   { messageListEmphasis: "agent", userId: "bob" },
 ])("rejects invalid or extra preference fields: %j", async (body) => {
@@ -104,27 +101,27 @@ test("refuses malformed JSON, unauthenticated callers, and unavailable storage",
   expect(state.size).toBe(0);
 });
 
-test("saves the self-host banner dismissal without touching message list emphasis", async () => {
+test("saves the brand without touching message list emphasis", async () => {
   const { appFor } = fixture();
   const alice = appFor("alice");
   await alice.request(path, patch({ messageListEmphasis: "agent" }));
   const saved = await alice.request(
     path,
-    patch({ selfHostBannerDismissed: true }),
+    patch({ brandAccent: "Chisa", brandRest: "Assistant" }),
   );
   expect(saved.status).toBe(200);
   expect(await (await appFor("alice").request(path)).json()).toEqual({
     preferences: {
       ...DEFAULT_USER_PREFERENCES,
       messageListEmphasis: "agent",
-      selfHostBannerDismissed: true,
+      brandAccent: "Chisa",
+      brandRest: "Assistant",
     },
   });
   expect(await (await appFor("bob").request(path)).json()).toEqual({
     preferences: {
       ...DEFAULT_USER_PREFERENCES,
       messageListEmphasis: "thread",
-      selfHostBannerDismissed: false,
     },
   });
 });

@@ -1,3 +1,4 @@
+import { readCompatibleHeader } from "../../../shared/legacy-headers";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import {
@@ -20,7 +21,7 @@ export function createDictationRoutes(
     "/transcriptions",
     async (context, next) => {
       // A cross-origin HTML form cannot set this header; this route grants no CORS access.
-      if ((context.req.header("x-chisabot-dictation") ?? context.req.header("x-openbot-dictation")) !== "1") {
+      if (readCompatibleHeader(context.req.raw.headers, "x-chisabot-dictation") !== "1") {
         return context.json({ error: "Invalid dictation request." }, 403);
       }
       if (!provider)

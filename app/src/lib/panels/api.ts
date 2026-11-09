@@ -292,7 +292,7 @@ export function asksForPanel(text: string): boolean {
  * forwardedProps for a run on `botId`: the open authoring session, if any, so the server hands the
  * Bot the propose/revise draft tools for exactly that session.
  *
- * `botId` 必须是机器人自己的 id（runtimeAgentId），不是对话里 CopilotKit 的 agentId
+ * `botId` 必须是机器人自己的 id（runtimeAgentId），不是对话里 会话客户端 的 agentId
  * （`channel:channel_…`）。以前传的是后者，查不到会话，于是机器人拿不到面板工具，只能用 render_ui
  * 在对话里画一张卡，面板栏里什么也没有。
  *

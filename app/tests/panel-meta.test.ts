@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildStepText, groupSources, panelEditPrompt } from "../src/components/panels/panel-meta";
-import { splitDotted } from "../src/lib/copilot/json-render/rich-utils";
+import { splitDotted } from "../src/lib/conversations/json-render/rich-utils";
 import { currentWorkStep } from "../src/lib/chat/work-steps";
 
 describe("panel sources row (DESIGN.md §77.2)", () => {

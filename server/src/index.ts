@@ -1,3 +1,6 @@
+import { authenticationRequired } from "./legacy/protocol";
+import { runAssertionValue } from "./legacy/protocol";
+import { isConversationPath, PREVIOUS_WAITING_EVENT } from "./legacy/protocol";
 import "../../shared/env-compat";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { conversationAdmissionClosed } from "./conversations/maintenance";
@@ -181,7 +184,7 @@ import { loadConfig } from "./config";
 import {
   type IdentifyActor,
   type IdentifyUser,
-  mountCopilotRuntime,
+  mountConversationRuntime,
   normalizeModelBaseUrls,
   runtimeModelForEnvironment,
   setAgentKernel,
@@ -194,7 +197,7 @@ import {
   setModelFallbackCatalog,
   setModelFallbackList,
   type ToolSelection,
-} from "./copilot";
+} from "./conversation-runtime";
 import {
   createCredentialAdminService,
   createCredentialStore,
@@ -332,7 +335,6 @@ import { createModelFallbackService, createModelFallbackStore } from "./agents/m
 import { createPgHistorySummaryStore, lastMeasuredUsage } from "./agents/history-budget";
 import { historyRecoverTools } from "./agents/history-recover";
 import { createHistorySummaryModelService, createHistorySummaryModelStore } from "./agents/history-summary-settings";
-import { createSelfHostBanner } from "./self-host-banner";
 import { createTeamBots } from "./team-bots/team-bots";
 import {
   createPackageStatusReader,
@@ -357,7 +359,7 @@ import {
 } from "./work/queue";
 
 /**
- * Who is asking, for a CopilotKit request.
+ * Who is asking, for a conversation runtime request.
  *
  * One resolver, because a run has two questions to answer about the same person: whose threads and
  * memory these are, and which coworkers they may run. Answering them from different places is how
@@ -371,7 +373,7 @@ async function resolveRequestActor(request: Request): Promise<{
   if (config.singleUser) {
     if (gatewaySecret) {
       const resolved = resolveGatewayRequest(gatewaySecret, request.headers);
-      if (resolved.kind === "refuse") throw new Error("A CopilotKit run requires a signed-in user.");
+      if (resolved.kind === "refuse") throw new Error("A conversation runtime run requires a signed-in user.");
       await provisionGatewayUser(resolved.actor);
       const actor = resolved.actor;
       return { id: actor.id, name: actor.id === DEV_ACTOR.id ? DEV_ACTOR.email : (actor.name ?? actor.id), role: actor.role };
@@ -381,13 +383,13 @@ async function resolveRequestActor(request: Request): Promise<{
   const session = await auth?.api.getSession({ headers: request.headers });
   const user = session?.user;
   if (!user) {
-    throw new Error("A CopilotKit run requires a signed-in user.");
+    throw new Error("A conversation runtime run requires a signed-in user.");
   }
   const roles = user.role
     ? [user.role]
     : await roleRepository.rolesForUser(user.id);
   if (!roles.includes("admin") && !roles.includes("user")) {
-    throw new Error("A CopilotKit run requires an authorized user.");
+    throw new Error("A conversation runtime run requires an authorized user.");
   }
   return {
     id: user.id,
@@ -628,8 +630,8 @@ const approvalService = createApprovalService(
         const signed =
           forwarded &&
           typeof forwarded === "object" &&
-          "openbotRun" in forwarded
-            ? readRunAssertion(forwarded.openbotRun, config.keyEncryptionKey)
+          runAssertionValue(forwarded) !== undefined
+            ? readRunAssertion(runAssertionValue(forwarded), config.keyEncryptionKey)
             : null;
         const run =
           signed &&
@@ -1713,7 +1715,7 @@ const loadInstructionsForActor = (actorId: string) => () =>
  * row is fetched here and the bytes go up inline, so the Bot sees the file the person attached
  * instead of a link it cannot follow.
  *
- * Built per actor and passed to both turn paths — the request path through `mountCopilotRuntime` and
+ * Built per actor and passed to both turn paths — the request path through `mountConversationRuntime` and
  * a routine's turn through `buildAgentFor` — so a routine firing at three in the morning inlines
  * exactly as a person's chat turn does, on exactly the same footing.
  *
@@ -1741,7 +1743,7 @@ const loadAttachmentForActor = turnAttachmentLoader(chatFiles, (actorId, threadI
  *
  * Bound per actor and handed to the same two turn paths as the reader above, so a routine's send at
  * three in the morning is recorded exactly as a person's chat turn is. `inlineAttachments`
- * (copilot.ts) calls it with the ids on the message being asked about and no others: history is
+ * (conversation-runtime.ts) calls it with the ids on the message being asked about and no others: history is
  * replayed on every turn and by whoever is running it, so nothing behind that message is evidence
  * of a send.
  *
@@ -2162,7 +2164,7 @@ const coordinationForActor =
   ) =>
   async (botId: string, input: import("@ag-ui/client").RunAgentInput) => {
     const assertion = readRunAssertion(
-      input.forwardedProps?.openbotRun,
+      runAssertionValue(input.forwardedProps),
       config.keyEncryptionKey,
     );
     if (
@@ -2339,7 +2341,7 @@ if (localBackend) {
     runTurn: workerTurnRunner,
     deliverTurn: governedTurnRunner,
     agentOfThread: async (threadId) => {
-      const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM openbot_local_threads WHERE id = $1", [threadId]);
+      const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM chisabot_local_threads WHERE id = $1", [threadId]);
       return rows[0]?.agent_id ?? null;
     },
   });
@@ -2372,7 +2374,7 @@ confirmations.setResume(async ({ ownerUserId, agentId, threadId, requestId, text
     if (localBackend.control.isActive(threadId)) return;
     await localBackend.inbox.withdraw(threadId, message.id);
   }
-  const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM openbot_local_threads WHERE id = $1", [threadId]);
+  const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM chisabot_local_threads WHERE id = $1", [threadId]);
   const resolvedAgentId = rows[0]?.agent_id ?? agentId;
   const result = await governedTurnRunner({
     ownerUserId,
@@ -2439,7 +2441,7 @@ try {
     ...(localBackend ? { inbox: localBackend.inbox, control: localBackend.control } : {}),
     deliverTurn: governedTurnRunner,
     agentOfThread: async (threadId) => {
-      const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM openbot_local_threads WHERE id = $1", [threadId]);
+      const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM chisabot_local_threads WHERE id = $1", [threadId]);
       return rows[0]?.agent_id ?? null;
     },
     resolveConnectionForAgent: resolveRuntimeConnectionForAgent,
@@ -2747,14 +2749,14 @@ const panelTaskService = createNormalPanelTaskService({
     }
     if (localBackend && threadId && task.runId) {
       const runs = await database.$client.unsafe<{ status: string }[]>(
-        "SELECT status FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2",
+        "SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2",
         [threadId, task.runId],
       );
       transportStatus = runs[0]?.status;
       const events = await database.$client.unsafe<{ waiting: boolean }[]>(
-        `SELECT EXISTS(SELECT 1 FROM openbot_local_events WHERE thread_id=$1 AND run_id=$2
-          AND event->>'type'='CUSTOM' AND event->>'name'='openbot.headless.waiting') AS waiting`,
-        [threadId, task.runId],
+        `SELECT EXISTS(SELECT 1 FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2
+          AND event->>'type'='CUSTOM' AND event->>'name' IN ('chisabot.headless.waiting', $3::text)) AS waiting`,
+        [threadId, task.runId, PREVIOUS_WAITING_EVENT],
       );
       waiting ||= events[0]?.waiting === true;
     }
@@ -3074,7 +3076,7 @@ const actorAgentResolver = createActorAgentResolver({
   loadPersonalMemoryForActor,
 });
 
-const copilotRuntime = mountCopilotRuntime(
+const conversationRuntime = mountConversationRuntime(
   config,
   actorAgentResolver,
   identifyUser,
@@ -3802,15 +3804,15 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
             "who this is for could not be confirmed, so the Bot was not run",
           );
         }
-        return copilotRuntime.agentFor({
+        return conversationRuntime.agentFor({
           actor,
           botId,
           initiator: initiator ?? { kind: "handoff", id: fromBotId },
           depth,
         });
       },
-      history: copilotRuntime.history,
-      lock: copilotRuntime.threadLock,
+      history: conversationRuntime.history,
+      lock: conversationRuntime.threadLock,
       /*
        * A scratch thread of the addressed Bot's own, one per hop.
        *
@@ -3852,7 +3854,7 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
       // The same address and the same token the runtime uses. Assembling either from configuration
       // produced a runner every join was refused for, because the thread's active run is a lock the
       // platform issues rather than something an API key can claim.
-      runner: copilotRuntime.runner as never,
+      runner: conversationRuntime.runner as never,
     }),
   });
 
@@ -3996,13 +3998,6 @@ startEgressPolicyPush({
   ...(config.computer?.token ? { token: config.computer.token } : {}),
 });
 
-// Asked only whether this deployment pays for Intelligence, for the self-host banner. Its own client
-// rather than the runtime's, the same as the thread reader: the constructor opens nothing.
-const selfHostBannerIntelligence =
-  config.runtime.mode === "intelligence"
-    ? createIntelligenceClient(config.runtime.intelligence)
-    : undefined;
-
 const app = createApp(
   config,
   auth,
@@ -4016,7 +4011,7 @@ const app = createApp(
   createPackageStatusReader(database),
   // The runtime call: the model, per-actor agent loading, and the two identity
   // functions are how a run is attributed to a person.
-  copilotRuntime.handler,
+  conversationRuntime.handler,
   // The only path to an acting call.
   computerGateway,
   policyStore,
@@ -4187,12 +4182,6 @@ const app = createApp(
       auditStore: bootAuditStore,
     },
   },
-  selfHostBannerIntelligence
-    ? createSelfHostBanner({
-        enabled: config.selfHostBanner,
-        entitlements: () => selfHostBannerIntelligence.getRuntimeEntitlements(),
-      })
-    : { shown: async () => config.selfHostBanner },
   localBackend,
   modelSettings,
   agentModels,
@@ -4412,7 +4401,7 @@ serve<SocketData>({
   hostname: process.env.CHISABOT_BIND_HOST?.trim() || "0.0.0.0",
   async fetch(request, server) {
     if (gatewaySecret && isReplayedGatewayIdentity(gatewaySecret, request.headers, gatewayReplayCache)) {
-      return Response.json({ ok: false, error: "请先登录。", openbotAuthRequired: true }, { status: 401 });
+      return Response.json({ ok: false, error: "请先登录。", ...authenticationRequired() }, { status: 401 });
     }
     const url = new URL(request.url);
     if (url.pathname === "/api/audio/transcriptions") {
@@ -4431,9 +4420,8 @@ serve<SocketData>({
     // 10 秒没有字节就切断连接，用户看到的就是「network error」、回合半途而废（2026-10-13 实测）。
     // 流式接口不设空闲超时，由运行本身的超时 / 停止兜底。
     const isKnownStreamPath =
-      url.pathname.startsWith("/api/copilotkit/") ||
+      isConversationPath(url.pathname) ||
       url.pathname.startsWith("/api/channels/") ||
-      url.pathname.startsWith("/api/conversations/") ||
       url.pathname.startsWith("/api/approvals/");
     const hasSessionOrToken = Boolean(
       request.headers.get("cookie") ||
@@ -4441,7 +4429,7 @@ serve<SocketData>({
         request.headers.get("x-chisabot-gateway-sig"),
     );
     if (
-      url.pathname.startsWith("/api/copilotkit/") ||
+      isConversationPath(url.pathname) ||
       ((isKnownStreamPath || hasSessionOrToken) &&
         request.headers.get("accept")?.includes("text/event-stream"))
     )

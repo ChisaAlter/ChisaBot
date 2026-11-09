@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { knownForMerge } from "../src/lib/copilot/use-conversation-sync";
-import { withStoredTail } from "../src/lib/copilot/thread-activity";
+import { knownForMerge } from "../src/lib/conversations/use-conversation-sync";
+import { withStoredTail } from "../src/lib/conversations/thread-activity";
 
 describe("频道聊天接着看正在写的回答（§63）", () => {
   const msgs = [

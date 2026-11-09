@@ -5,7 +5,7 @@ import { configuredAuthProviders, loadConfig } from "../src/config";
 // The runtime is explicit: legacy credentials may coexist until operator inventory is complete.
 const baseEnvironment = {
   CHISABOT_RUNTIME_MODE: "local",
-  DATABASE_URL: "postgres://openbot:openbot@localhost:5432/openbot",
+  DATABASE_URL: "postgres://chisabot:chisabot@localhost:5432/chisabot",
   KEY_ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   GOOGLE_OAUTH_CLIENT_ID: "google-client-id",
   GOOGLE_OAUTH_CLIENT_SECRET: "google-client-secret",
@@ -15,7 +15,6 @@ const baseEnvironment = {
   INTELLIGENCE_API_URL: "http://localhost:7100",
   INTELLIGENCE_GATEWAY_WS_URL: "ws://localhost:7103",
   INTELLIGENCE_API_KEY: "tenant-api-key",
-  COPILOTKIT_LICENSE_TOKEN: "license-token",
   MANAGED_AGENT_AG_UI_URL: " http://localhost:4200/ag-ui ",
   MANAGED_AGENT_TOKEN: "managed-agent-token",
 };
@@ -91,7 +90,7 @@ describe("deployment configuration", () => {
   });
 
   test("local mode has no licence prerequisite", () => {
-    expect(loadConfig({ ...baseEnvironment, COPILOTKIT_LICENSE_TOKEN: undefined }).runtime.mode).toBe("local");
+    expect(loadConfig(baseEnvironment).runtime.mode).toBe("local");
   });
   test("rejects incomplete OAuth client configuration", () => {
     expect(() =>
@@ -495,7 +494,7 @@ describe("deployment configuration", () => {
     ["a 172.16/12 address", { CHISABOT_PUBLIC_URL: "http://172.20.1.4:3001" }],
     ["a Tailscale address", { CHISABOT_PUBLIC_URL: "http://100.101.102.103" }],
     ["a unique-local IPv6 address", { CHISABOT_PUBLIC_URL: "http://[fd00::1]" }],
-    ["an mDNS name", { TRUSTED_ORIGINS: "http://openbot.local:3010" }],
+    ["an mDNS name", { TRUSTED_ORIGINS: "http://chisabot.local:3010" }],
     ["a single-label LAN name", { TRUSTED_ORIGINS: "http://nas:3010" }],
   ])("still runs with no sign-in on %s", (_label, reachable) => {
     expect(() =>
@@ -915,32 +914,6 @@ describe("generated interfaces", () => {
       }).generativeUi,
     ).toBe(true);
   });
-});
-
-describe("the self-host banner", () => {
-  test("is on when nothing is set", () => {
-    expect(loadConfig(baseEnvironment).selfHostBanner).toBe(true);
-  });
-
-  test.each(["false", "0"])(
-    "is off for CHISABOT_SELF_HOST_BANNER=%p",
-    (value) => {
-      expect(
-        loadConfig({ ...baseEnvironment, CHISABOT_SELF_HOST_BANNER: value })
-          .selfHostBanner,
-      ).toBe(false);
-    },
-  );
-
-  test.each(["true", "1", "", "no"])(
-    "stays on for CHISABOT_SELF_HOST_BANNER=%p",
-    (value) => {
-      expect(
-        loadConfig({ ...baseEnvironment, CHISABOT_SELF_HOST_BANNER: value })
-          .selfHostBanner,
-      ).toBe(true);
-    },
-  );
 });
 
 /**

@@ -470,6 +470,13 @@
       "when": 1794172800000,
       "tag": "0066_background_capacity",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1794182400000,
+      "tag": "0067_conversation_namespace",
+      "breakpoints": true
     }
   ]
 }

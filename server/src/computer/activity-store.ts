@@ -250,7 +250,7 @@ export function createActivityStore(
     let prompt: string | null = null;
     try {
       const rows = (await database.execute(sql`
-        select m.value as message from openbot_local_threads t,
+        select m.value as message from chisabot_local_threads t,
           jsonb_array_elements(t.messages) with ordinality as m(value, ord)
         where t.id = ${threadId} and m.value->>'role' = 'user'
         order by m.ord desc limit 1
@@ -490,7 +490,7 @@ export function createActivityStore(
     async threadOf(threadId, actorUserId, computerId) {
       try {
         const rows = (await database.execute(
-          sql`select 1 as ok from openbot_local_threads where id = ${threadId} and owner_user_id = ${actorUserId} and agent_id = ${computerId} limit 1`,
+          sql`select 1 as ok from chisabot_local_threads where id = ${threadId} and owner_user_id = ${actorUserId} and agent_id = ${computerId} limit 1`,
         )) as unknown as { ok: number }[];
         return rows.length > 0;
       } catch {
@@ -586,7 +586,7 @@ export function createActivityStore(
     const threads = [...new Set(pairs.map((row) => row.threadId as string))];
     try {
       const found = (await database.execute(sql`
-        select thread_id, run_id, status from openbot_local_runs
+        select thread_id, run_id, status from chisabot_local_runs
         where thread_id in (${sql.join(
           threads.map((thread) => sql`${thread}`),
           sql`, `,
@@ -595,7 +595,7 @@ export function createActivityStore(
       for (const row of found)
         out.set(`${row.thread_id}\u0000${row.run_id}`, row.status);
     } catch {
-      // openbot_local_runs 不在（没开本地对话）：组头状态由步骤自己推出来。
+      // chisabot_local_runs 不在（没开本地对话）：组头状态由步骤自己推出来。
     }
     return out;
   }

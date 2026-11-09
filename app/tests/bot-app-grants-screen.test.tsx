@@ -94,7 +94,6 @@ function failingQueryClient() {
   // settings, exactly as a deployment with CHISABOT_EXTRAS containing `plugins` would answer.
   queryClient.setQueryData(deploymentKeys.capabilities(), {
     generativeUi: false,
-    selfHostBanner: false,
     extras: ["plugins"],
   });
   return queryClient;

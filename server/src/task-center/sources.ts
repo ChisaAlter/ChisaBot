@@ -461,7 +461,7 @@ export function createTaskSourceCollectors(options: TaskSourceOptions) {
       const rows = await sql.unsafe<
         { id: string; name: string | null; messages: unknown }[]
       >(
-        `SELECT id,name,messages FROM openbot_local_threads WHERE owner_user_id=$1 AND archived=false
+        `SELECT id,name,messages FROM chisabot_local_threads WHERE owner_user_id=$1 AND archived=false
          AND updated_at>=now()-($2*interval '1 day') AND ($3::text IS NULL OR id=ANY(string_to_array($3, chr(31))))
          ORDER BY updated_at DESC LIMIT 100`,
         [owner, config.days, config.threadIds?.join("\x1f") ?? null],

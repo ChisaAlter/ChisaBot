@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { joinWithin } from "../src/lib/copilot/join-thread";
+import { joinWithin } from "../src/lib/conversations/join-thread";
 
 /** Joining must be FINISHED when it resolves, not merely given up on. */
 

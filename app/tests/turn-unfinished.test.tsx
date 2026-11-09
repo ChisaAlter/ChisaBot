@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { neverThrow } from "@/lib/copilot/approval-tools";
-import { unfinishedTurnReason, isAbortFailure } from "@/lib/copilot/stopped-turn";
+import { neverThrow } from "@/lib/conversations/approval-tools";
+import { unfinishedTurnReason, isAbortFailure } from "@/lib/conversations/stopped-turn";
 
 // Execution errors are covered at the server gateway; these assertions retain the visible failure contract.
 describe("neverThrow", () => {

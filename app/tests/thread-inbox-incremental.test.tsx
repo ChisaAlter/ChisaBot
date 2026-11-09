@@ -10,8 +10,8 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render } from "@testing-library/react";
 import { type Observable, of } from "rxjs";
-import { useThreadInbox } from "../src/lib/copilot/use-thread-inbox";
-import { ACTIVE_WORKER, workerKeys } from "../src/lib/copilot/workers";
+import { useThreadInbox } from "../src/lib/conversations/use-thread-inbox";
+import { ACTIVE_WORKER, workerKeys } from "../src/lib/conversations/workers";
 import { settleReactWork } from "./settle-react-work";
 
 const originalFetch = globalThis.fetch;

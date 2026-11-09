@@ -6,7 +6,7 @@ import {
   PROVENANCE_GUIDANCE,
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
-import { builtInAgentConfiguration } from "../src/copilot";
+import { builtInAgentConfiguration } from "../src/conversation-runtime";
 import { executeRenderUi } from "../src/generative-ui/render-ui";
 import { UNTRUSTED_GUIDANCE } from "../src/untrusted-content";
 import { webTools } from "../src/web/tools";

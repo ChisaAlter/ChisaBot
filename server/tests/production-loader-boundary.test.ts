@@ -17,7 +17,7 @@ async function runProductionEntry() {
   await writeFile(
     envPath,
     [
-      "DATABASE_URL=postgres://openbot:openbot@127.0.0.1:1/openbot",
+      "DATABASE_URL=postgres://chisabot:chisabot@127.0.0.1:1/chisabot",
       "KEY_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       "CHISABOT_SINGLE_USER=true",
       "CHISABOT_RUNTIME_MODE=local",

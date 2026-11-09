@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { RuntimeModelConnection } from "../src/copilot";
+import type { RuntimeModelConnection } from "../src/conversation-runtime";
 import { createChannelTitler } from "../src/channels/titler";
 
 test.each(["title"] as const)(

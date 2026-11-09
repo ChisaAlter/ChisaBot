@@ -1,3 +1,4 @@
+import { withoutRunAssertion } from "../legacy/protocol";
 import { checkNavigationTarget } from "../computer/target";
 
 /**
@@ -199,7 +200,7 @@ function strippedBody(body: BodyInit | null | undefined): { body?: BodyInit } {
   if (!run.forwardedProps || typeof run.forwardedProps !== "object") {
     return { body };
   }
-  const { openbotRun: _dropped, ...rest } = run.forwardedProps;
+  const rest = withoutRunAssertion(run.forwardedProps);
   return { body: JSON.stringify({ ...run, forwardedProps: rest }) };
 }
 

@@ -31,7 +31,7 @@ function setup(role: "admin" | "user" | null = "user", fail = false) {
     },
   } as never;
   args[2] = { rolesForUser: async () => [role] } as never;
-  args[38] = {
+  args[37] = {
     get: async (actor: unknown, id: string) => {
       calls.push({ actor, id });
       if (fail) throw new Error("key=private-secret");
@@ -47,7 +47,7 @@ function setup(role: "admin" | "user" | null = "user", fail = false) {
       };
     },
   } as never;
-  args[39] = {
+  args[38] = {
     list: async (input: unknown) => {
       calls.push(input);
       if (fail) throw new Error("upstream-key=private-secret");

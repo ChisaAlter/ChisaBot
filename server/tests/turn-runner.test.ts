@@ -13,7 +13,7 @@ import {
  * A headless turn, asserted without a gateway, without a database and without a model.
  *
  * This file exists because `run-turn.ts` RESTATES BY HAND five `ɵ`-prefixed request shapes that
- * `@copilotkit/runtime` does not export. Nothing else in the repository can catch a lock that is
+ * `the original runtime` does not export. Nothing else in the repository can catch a lock that is
  * acquired and never released, a renew that keeps a different lock alive than the one the cleanup
  * releases, or a `persistedInputMessages` that quietly re-persists a whole transcript — and every one
  * of those is felt by a person rather than by a test: a leaked lock refuses their next browser message

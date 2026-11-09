@@ -33,7 +33,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",
-    "@copilotkit/aimock": "1.46.0",
     "@types/bun": "^1.4.4",
     "@types/css-tree": "^3.2.0",
     "roughjs": "^4.6.6",

@@ -3,7 +3,7 @@
  * not part of the conversation it names, so there is no runtime work and no thread to hold.
  */
 import { PlanModel } from "../agents/plan-model";
-import type { RuntimeModel, RuntimeModelResolver } from "../copilot";
+import type { RuntimeModel, RuntimeModelResolver } from "../conversation-runtime";
 import { runtimeModelEndpoint } from "../routing/model";
 
 /** Rules, not an example: a model copies an example's subject as readily as its shape. */

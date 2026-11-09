@@ -600,7 +600,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     if (!web.length) return;
     const present = await sql
       .unsafe<{ id: string }[]>(
-        "SELECT id FROM openbot_local_threads WHERE owner_user_id = $1 AND id IN (SELECT jsonb_array_elements_text($2::text::jsonb))",
+        "SELECT id FROM chisabot_local_threads WHERE owner_user_id = $1 AND id IN (SELECT jsonb_array_elements_text($2::text::jsonb))",
         [owner, JSON.stringify([...new Set(web.map((r) => r.thread_id))])],
       )
       .catch(() => null);
@@ -1083,7 +1083,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     messageId: string,
   ): Promise<boolean> {
     const rows = await sql.unsafe<{ id: string }[]>(
-      `UPDATE openbot_local_threads t
+      `UPDATE chisabot_local_threads t
           SET messages = (
             SELECT coalesce(jsonb_agg(e.m ORDER BY e.i), '[]'::jsonb)
               FROM jsonb_array_elements(t.messages) WITH ORDINALITY AS e(m, i)
@@ -1119,7 +1119,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     if (row.im_connection_id) return row.thread_id;
     const exists = await sql
       .unsafe(
-        "SELECT 1 FROM openbot_local_threads WHERE id = $1 AND owner_user_id = $2",
+        "SELECT 1 FROM chisabot_local_threads WHERE id = $1 AND owner_user_id = $2",
         [row.thread_id, row.owner_user_id],
       )
       .catch(() => [1]);

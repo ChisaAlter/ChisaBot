@@ -49,13 +49,13 @@ export async function lockBackgroundAccount(tx: Sql, owner: string) {
 export async function backgroundCount(tx: Sql, owner: string): Promise<number> {
   const [optional] = await tx.unsafe<{ devices: boolean; threads: boolean; dsh: boolean }[]>(`SELECT
     to_regclass('public.chisabot_local_agent_tasks') IS NOT NULL AS devices,
-    to_regclass('public.openbot_local_runs') IS NOT NULL AS threads,
+    to_regclass('public.chisabot_local_runs') IS NOT NULL AS threads,
     to_regclass('public.chisabot_dsh_runs') IS NOT NULL AS dsh`);
   const parts: string[] = [];
-  if (optional?.threads) parts.push(`SELECT r.thread_id,r.run_id FROM openbot_local_runs r JOIN openbot_local_threads t ON t.id=r.thread_id
+  if (optional?.threads) parts.push(`SELECT r.thread_id,r.run_id FROM chisabot_local_runs r JOIN chisabot_local_threads t ON t.id=r.thread_id
       WHERE t.owner_user_id=$1 AND r.execution->>'kind'='background'
       AND t.run_id=r.run_id AND t.lock_expires_at>now()`);
-  if (optional?.dsh && optional.threads) parts.push(`SELECT d.thread_id,d.run_id FROM chisabot_dsh_runs d LEFT JOIN openbot_local_runs r ON r.thread_id=d.thread_id AND r.run_id=d.run_id
+  if (optional?.dsh && optional.threads) parts.push(`SELECT d.thread_id,d.run_id FROM chisabot_dsh_runs d LEFT JOIN chisabot_local_runs r ON r.thread_id=d.thread_id AND r.run_id=d.run_id
       WHERE d.owner_user_id=$1 AND d.status IN ('admitting','observing','projecting')
       AND (r.execution->>'kind'='background' OR (r.execution IS NULL AND d.initiator->>'kind'<>'person'
         AND NOT(d.initiator->>'kind'='routine' AND coalesce(d.initiator->>'id','') LIKE 'im:%')))`);
@@ -70,38 +70,38 @@ export function createExecutionCapacity(database: Database) {
   return {
     async queued() {
       return sql.unsafe<{ thread_id: string; run_id: string; owner_user_id: string; bot_id: string; execution: QueuedExecution }[]>(`SELECT r.thread_id,r.run_id,t.owner_user_id,t.agent_id AS bot_id,r.execution
-        FROM openbot_local_runs r JOIN openbot_local_threads t ON t.id=r.thread_id WHERE r.status='capacity_wait' ORDER BY r.created_at`);
+        FROM chisabot_local_runs r JOIN chisabot_local_threads t ON t.id=r.thread_id WHERE r.status='capacity_wait' ORDER BY r.created_at`);
     },
     async enqueue(threadId: string, runId: string, execution: QueuedExecution) {
-      const [row] = await sql.unsafe<{ status: string }[]>(`INSERT INTO openbot_local_runs(thread_id,run_id,status,execution)
-        VALUES($1,$2,'capacity_wait',$3::text::jsonb) ON CONFLICT(thread_id,run_id) DO UPDATE SET execution=openbot_local_runs.execution
-        WHERE openbot_local_runs.status='capacity_wait' AND openbot_local_runs.execution=$3::text::jsonb RETURNING status`, [threadId, runId, JSON.stringify(execution)]);
+      const [row] = await sql.unsafe<{ status: string }[]>(`INSERT INTO chisabot_local_runs(thread_id,run_id,status,execution)
+        VALUES($1,$2,'capacity_wait',$3::text::jsonb) ON CONFLICT(thread_id,run_id) DO UPDATE SET execution=chisabot_local_runs.execution
+        WHERE chisabot_local_runs.status='capacity_wait' AND chisabot_local_runs.execution=$3::text::jsonb RETURNING status`, [threadId, runId, JSON.stringify(execution)]);
       if (!row) throw new Error("This execution was already admitted or stopped; it cannot be queued again.");
     },
     async claim(owner: string, threadId: string, runId: string, threadBusy = false): Promise<"claimed" | "waiting" | "stopped"> {
       return sql.begin(async tx => {
         await lockBackgroundAccount(tx, owner);
-        const [run] = await tx.unsafe<{ status: string }[]>("SELECT status FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2 FOR UPDATE", [threadId, runId]);
+        const [run] = await tx.unsafe<{ status: string }[]>("SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2 FOR UPDATE", [threadId, runId]);
         if (run?.status !== "capacity_wait") return "stopped";
         if (threadBusy) return "waiting";
         if (await backgroundCount(tx, owner) >= BACKGROUND_CAPACITY) return "waiting";
-        const claimed = await tx.unsafe(`UPDATE openbot_local_threads SET run_id=$2,lock_expires_at=now()+interval '120 seconds',updated_at=now()
+        const claimed = await tx.unsafe(`UPDATE chisabot_local_threads SET run_id=$2,lock_expires_at=now()+interval '120 seconds',updated_at=now()
           WHERE id=$1 AND owner_user_id=$3 AND (run_id IS NULL OR lock_expires_at<=now())
           AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=$1 AND d.status IN ('admitting','observing','projecting')) RETURNING id`, [threadId, runId, owner]);
         if (!claimed.length) return "waiting";
-        await tx.unsafe("UPDATE openbot_local_runs SET status='reserved' WHERE thread_id=$1 AND run_id=$2", [threadId, runId]);
+        await tx.unsafe("UPDATE chisabot_local_runs SET status='reserved' WHERE thread_id=$1 AND run_id=$2", [threadId, runId]);
         return "claimed";
       });
     },
     async releaseReservation(threadId: string, runId: string) {
       await sql.begin(async tx => {
-        const rows = await tx.unsafe(`UPDATE openbot_local_runs SET status='capacity_wait' WHERE thread_id=$1 AND run_id=$2 AND status='reserved'
+        const rows = await tx.unsafe(`UPDATE chisabot_local_runs SET status='capacity_wait' WHERE thread_id=$1 AND run_id=$2 AND status='reserved'
           AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=$1 AND d.run_id=$2) RETURNING run_id`, [threadId, runId]);
-        if (rows.length) await tx.unsafe("UPDATE openbot_local_threads SET run_id=NULL,lock_expires_at=NULL WHERE id=$1 AND run_id=$2", [threadId, runId]);
+        if (rows.length) await tx.unsafe("UPDATE chisabot_local_threads SET run_id=NULL,lock_expires_at=NULL WHERE id=$1 AND run_id=$2", [threadId, runId]);
       });
     },
     async stop(threadId: string, runId?: string) {
-      const rows = await sql.unsafe<{ run_id: string }[]>("UPDATE openbot_local_runs SET status='stopped',finished_at=now() WHERE thread_id=$1 AND ($2::text IS NULL OR run_id=$2) AND status='capacity_wait' RETURNING run_id", [threadId, runId ?? null]);
+      const rows = await sql.unsafe<{ run_id: string }[]>("UPDATE chisabot_local_runs SET status='stopped',finished_at=now() WHERE thread_id=$1 AND ($2::text IS NULL OR run_id=$2) AND status='capacity_wait' RETURNING run_id", [threadId, runId ?? null]);
       return rows.length > 0;
     },
   };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { withStepBudgetNote } from "../src/copilot";
+import { withStepBudgetNote } from "../src/conversation-runtime";
 
 describe("step budget note (§101)", () => {
   test("adds a wrap-up note to the last three tool results of a run only", () => {

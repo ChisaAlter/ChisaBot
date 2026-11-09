@@ -64,19 +64,12 @@
       html[data-phone] .boot-cols { top: calc(76px + env(safe-area-inset-top)); left: calc(16px + env(safe-area-inset-left)); right: calc(16px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); }
       @media (prefers-reduced-motion: reduce) { .boot .sh, .boot-spin { animation: none; } .boot-loading { animation: none; opacity: 1; } }
     </style>
+    <script src="/compat/legacy-browser.js"></script>
     <!-- Sets the theme before the first paint. Must stay inline and classic: `defer` or `type="module"` runs too late. -->
     <script>
       // localStorage throws in some privacy modes; a theme is not worth taking the app down for.
       try {
-        // 0.1.75 renamed every `openbot…` storage key to `chisabot…`. Copy the old values once so
-        // theme, language, layout and drafts survive the update; the old keys stay for older clients.
-        const store = window.localStorage;
-        for (let i = 0; i < store.length; i++) {
-          const key = store.key(i);
-          if (!key || key.indexOf("openbot") === -1) continue;
-          const renamed = key.split("openbot").join("chisabot");
-          if (store.getItem(renamed) === null) store.setItem(renamed, store.getItem(key));
-        }
+        window.ChisaLegacyBrowser.migrateStorage(window.localStorage);
       } catch {}
       try {
         const dark = window.localStorage.getItem("chisabot-theme") === "dark";
@@ -114,9 +107,8 @@
          app draws its own account control (sign-out lives in the avatar menu), so it adds no
          floating "退出登录" button of its own. -->
     <div id="chisabot-account-control" hidden></div>
-    <!-- CB-100c：公网网关（deploy/public）不随应用镜像更新。v0.1.75 之前的 workspace.js 只认这个旧 id，
-         少了它就会在右下角浮出一个「退出 OpenBot 登录」按钮，盖住右侧抽屉。两个标记都要留。 -->
-    <div id="openbot-account-control" hidden></div>
+    <!-- Older gateway scripts must also see the app-owned account control before mounting. -->
+    <script>window.ChisaLegacyBrowser.mountAccountMarker(document);</script>
     <div id="root">
       <div id="chisabot-startup" class="boot" role="status" aria-label="正在加载 ChisaBot">
         <div class="boot-top">

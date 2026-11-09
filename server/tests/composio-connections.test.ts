@@ -432,7 +432,7 @@ const foreignToolkit = `foreign-${suite}`;
  * its actions go out with the server rows in {@link clean}.
  */
 const probeAppId = `probe-${suite}`;
-const admin = "admin@openbot.local";
+const admin = "admin@chisabot.local";
 /**
  * THE SECRET A PERSON TYPES, which the test below looks for everywhere it must not be.
  *
@@ -511,7 +511,7 @@ const credentialsStub: CredentialSecretReader & CredentialStore = {
  * touches is swept on the way out; `audit_events` is not, and the omission is the database's rule
  * rather than an oversight here. The trail is append-only, enforced by a trigger rather than by the
  * application (`0007_audit_retention_window.sql`): a plain `delete` raises "Audit events are
- * append-only", and the one exemption — a session that sets `openbot.audit_retention_days` to a
+ * append-only", and the one exemption — a session that sets `chisabot.audit_retention_days` to a
  * positive whole number — still refuses any row younger than that many days. The rows this file
  * writes are seconds old at the moment it would sweep them, so NO setting makes them deletable;
  * `3650` is refused for the same reason `1` is. A cleanup here would be a statement that always

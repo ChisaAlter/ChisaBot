@@ -6,9 +6,9 @@ const base = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replac
 const model = process.env.BOT_MODEL ?? "your-model-id";
 if (!key) throw new Error("OPENAI_API_KEY is required.");
 const instruction =
-  "You MUST call openbot_check with message set to OK. Do not describe a tool call.";
+  "You MUST call chisabot_check with message set to OK. Do not describe a tool call.";
 const tool = {
-  name: "openbot_check",
+  name: "chisabot_check",
   description: "A text-only test with no external action.",
   parameters: {
     type: "object",
@@ -70,7 +70,7 @@ for (const endpoint of endpoints) {
       (item) => item.type === "function_call",
     );
     const call = chatCall ?? responseCall;
-    if (call?.name === "openbot_check" && call.arguments) {
+    if (call?.name === "chisabot_check" && call.arguments) {
       JSON.parse(call.arguments);
       verified = endpoint.path;
       break;

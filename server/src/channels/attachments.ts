@@ -146,7 +146,7 @@ function inTheTurnsChannel(database: Database, threadId: string) {
  *
  * The send writes the column instead. It goes out through AG-UI rather than through either router
  * in this file, so the write is made where the send is actually known to have happened — in
- * `inlineAttachments` (copilot.ts), which is the one place that can tell the message being asked
+ * `inlineAttachments` (conversation-runtime.ts), which is the one place that can tell the message being asked
  * about from the history behind it — through {@link markAttachmentsSent}.
  *
  * IT DOES READ `attachedAt`, THOUGH, WHICH IS NEW. A staged row is a file nobody has shared with
@@ -342,7 +342,7 @@ export async function recordAttachmentsSent(
  * here said that a turn is a person waiting for an answer, and that bookkeeping which could not be
  * written is not worth failing that answer over. The first half is true. The second rested on a
  * premise that is false: that by the time this runs, the answer has been earned. It has not.
- * `inlineAttachments` (copilot.ts) calls this BEFORE it hands the history back, and that history is
+ * `inlineAttachments` (conversation-runtime.ts) calls this BEFORE it hands the history back, and that history is
  * what `super.run` / `next.run` is given afterwards — so at this moment no model has been called, no
  * token has been spent, and the person's message is still in front of them. Raising here costs a
  * retry of something that never started.
@@ -1436,7 +1436,7 @@ function couldNotReadAttachment(context: AttachmentContext) {
  * throws mid-inline — where the message is persisted anyway and the row stays staged for ever.
  * Their attachments now read "unavailable" to everybody but the sender rather than being served out
  * of a draft nobody sent. That is the more honest answer of the two, and the underlying leak — a
- * persisted message whose rows were never stamped — is a copilot.ts fault worth fixing on its own.
+ * persisted message whose rows were never stamped — is a conversation-runtime.ts fault worth fixing on its own.
  *
  * A CONDITION RATHER THAN A WHOLE QUERY, WHICH IS WHAT LETS THE THREE READS DIFFER IN NOTHING BUT
  * THEIR COLUMNS. The fetch wants the bytes, the probe wants the size, and a revalidation wants

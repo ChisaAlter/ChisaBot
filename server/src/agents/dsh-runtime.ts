@@ -1,3 +1,4 @@
+import { normalizeRunInput } from "../legacy/protocol";
 import { readFile } from "node:fs/promises";
 import { AbstractAgent, EventType, type BaseEvent, type RunAgentInput, type Message } from "@ag-ui/client";
 import { Observable } from "rxjs";
@@ -134,7 +135,7 @@ export class DshRuntimeAgent extends AbstractAgent {
   }
 
   async resumeConfirmation(input: { ownerUserId: string; requestId: string; approved: boolean; snapshot: ApprovalContinuation; signal: AbortSignal }) {
-    const saved: RunAgentInput = { ...input.snapshot, forwardedProps: input.snapshot.forwardedProps ?? {}, tools: [] };
+    const saved: RunAgentInput = normalizeRunInput({ ...input.snapshot, forwardedProps: input.snapshot.forwardedProps ?? {}, tools: [] });
     const scope = this.configuration.binding.readRun(this.configuration.signRun(saved));
     if (scope?.actorId !== input.ownerUserId) throw new Error("This confirmation belongs to another account.");
     const tools = await this.toolsForRun(saved, input.signal);
@@ -371,7 +372,7 @@ export class DshRuntimeAgent extends AbstractAgent {
         const waiting = status.sessions.find(x => x.sessionId === binding.sessionId)?.waiting;
         await this.configuration.binding.journal?.status(input.threadId, input.runId, waiting ? "waiting" : "projecting");
         if (waiting) {
-          emit({ type: EventType.CUSTOM, name: "openbot.headless.waiting", value: waiting } as BaseEvent);
+          emit({ type: EventType.CUSTOM, name: "chisabot.headless.waiting", value: waiting } as BaseEvent);
           const continuation = waiting.continuation as { toolCallId?: string } | undefined;
           emit({ type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId,
             outcome: { type: "interrupt", interrupts: [{ id: continuation?.toolCallId ?? String(waiting.requestId ?? "approval"), reason: "human_input",

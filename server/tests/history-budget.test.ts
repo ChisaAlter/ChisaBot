@@ -179,7 +179,7 @@ describe("Hermes history budget", () => {
     expect(first.summary).toBeNull();
     expect(first.compaction).toMatchObject({ mode: "trim" });
     expect(first.refresh).not.toBeNull();
-    // 回复结束后（copilot.ts 在 RUN_FINISHED 时）后台写摘要：主模型或摘要模型，覆盖最近 4 轮之前。
+    // 回复结束后（conversation-runtime.ts 在 RUN_FINISHED 时）后台写摘要：主模型或摘要模型，覆盖最近 4 轮之前。
     await first.refresh?.();
     expect(calls).toEqual([
       { previousSummary: null, ids: idsBefore(history, "u9") },
@@ -539,7 +539,7 @@ describe("Hermes history budget", () => {
       "CREATE TABLE IF NOT EXISTS chisabot_history_summaries",
     );
     expect(statements[0]).toContain(
-      "thread_id text NOT NULL REFERENCES openbot_local_threads(id) ON DELETE CASCADE",
+      "thread_id text NOT NULL REFERENCES chisabot_local_threads(id) ON DELETE CASCADE",
     );
     expect(statements[0]).toContain("extensions integer NOT NULL DEFAULT 0");
     expect(

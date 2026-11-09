@@ -15,7 +15,7 @@ import { type FallbackUse, withFallbackListener } from "./agents/model-fallback"
  *   的计量器里（AsyncLocalStorage，运行之间互不串）；
  * - `meterRun` 让一次运行在计量器里跑，并在 RUN_FINISHED 上补一个 `metadata.contextUsage`。
  *
- * 事件照常写进本地会话表，所以刷新页面以后也读得到（`GET /api/copilotkit/threads/:id/context`）。
+ * 事件照常写进本地会话表，所以刷新页面以后也读得到（`GET /api/conversations/threads/:id/context`）。
  * 提供方没有给用量时什么也不补，读数退回到「约」的估算，绝不编数字。
  */
 export type ContextUsage = {

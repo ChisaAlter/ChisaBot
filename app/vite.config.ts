@@ -116,6 +116,17 @@ function skyBoot(): Plugin {
   };
 }
 
+/** Keep the pre-paint storage upgrade synchronous without adding a blocking network request. */
+function legacyBrowserBoot(): Plugin {
+  const source = readFileSync(path.resolve(__dirname, "public/compat/legacy-browser.js"), "utf8");
+  return {
+    name: "chisabot-legacy-browser-boot",
+    transformIndexHtml(html) {
+      return html.replace('<script src="/compat/legacy-browser.js"></script>', () => `<script>${source}</script>`);
+    },
+  };
+}
+
 type RouteSplitGroupings = Array<
   Array<
     "component" | "pendingComponent" | "errorComponent" | "notFoundComponent"
@@ -160,8 +171,8 @@ function routeComponentSplitPath(id: string): string | undefined {
 
 /*
  * 两组大依赖各自单独成块（DESIGN.md §41.5）。不分的话 Rollup 会把很多小模块（lib/approvals.ts、ui/skeleton.tsx、
- * lib/schedule-fired.ts……）和 CopilotKit、Markdown 渲染放进同一个共享块：设置页的左栏只为了一个 20 行的小文件，
- * 就把 ~270KB gzip 的 CopilotKit 和 ~160KB 的 Markdown 一起下载执行了。分出来以后这两块只在真用到时（聊天、
+ * lib/schedule-fired.ts……）和 会话客户端、Markdown 渲染放进同一个共享块：设置页的左栏只为了一个 20 行的小文件，
+ * 就把 ~270KB gzip 的 会话客户端 和 ~160KB 的 Markdown 一起下载执行了。分出来以后这两块只在真用到时（聊天、
  * 带 Markdown 的页面）下载。`onlyExplicitManualChunks` 下只移动名单里的包本身，它们的依赖照常由 Rollup 分。
  */
 const VENDOR_CHUNKS: Array<[RegExp, string]> = [
@@ -196,7 +207,7 @@ const VENDOR_CHUNKS: Array<[RegExp, string]> = [
 /*
  * 外壳块 shell（DESIGN.md §41.5）：AuthedShell 按需加载的左栏 / 设置栏 / 管理栏 / 右侧面板栏，连同它们静态 import
  * 的全部模块（入口已经有的除外、上面的大依赖除外）放进同一块。不这么做，Rollup 按「被哪些入口用到」切块，这些栏用到的
- * 小模块会和聊天页的代码混在 skill-commands、avatar、pages 等共享块里，而那些块又静态依赖 CopilotKit / Markdown，
+ * 小模块会和聊天页的代码混在 skill-commands、avatar、pages 等共享块里，而那些块又静态依赖 会话客户端 / Markdown，
  * 结果打开设置页也得下载执行它们。
  */
 const SHELL_ROOTS = [
@@ -249,7 +260,7 @@ export function shellModuleIds(meta: ManualChunkMeta): Set<string> {
 
 export function selectChisaBotManualChunk(id: string, meta?: ManualChunkMeta): string | undefined {
   const normalizedId = normalizedModuleId(id);
-  // 样式表不跟着走：main.tsx 静态引入了 CopilotKit 的 CSS，把它分进 vendor-copilot 会让入口反过来静态依赖整块 JS。
+  // 样式不归入 JS vendor 块，避免入口为了 CSS 静态下载整块代码。
   if (isVendorChunked(id)) return VENDOR_CHUNKS.find(([pattern]) => pattern.test(normalizedId))?.[1];
   // CommonJS 互操作的公共小工具（React 是 CJS，要用它）跟 React 同块，否则 vendor-react 又得依赖别的共享块。
   if (id.startsWith("\0commonjsHelpers")) return "vendor-react";
@@ -262,14 +273,14 @@ export function selectChisaBotManualChunk(id: string, meta?: ManualChunkMeta): s
     return "route-sign";
   }
   // 外壳路由（_authed / _app 的组件）单独一块：和聊天路由同块的话，进设置页也要先把聊天页的静态依赖
-  // （CopilotKit、Markdown）一起下完才画得出外壳（DESIGN.md §41.5）。
+  // （会话客户端、Markdown）一起下完才画得出外壳（DESIGN.md §41.5）。
   if (routePath === "_authed.tsx" || routePath === "_authed/_app.tsx") {
     return "route-shell";
   }
   if (routePath.startsWith("_authed/_app/channel/")) {
     return "route-chat-core";
   }
-  // 组件库两页要 CopilotKit（预览里的工具卡片），不和其它管理页同块，免得打开 /admin 也带上它。
+  // 组件库两页要 会话客户端（预览里的工具卡片），不和其它管理页同块，免得打开 /admin 也带上它。
   if (routePath.startsWith("_authed/admin/components/")) {
     return undefined;
   }
@@ -295,7 +306,6 @@ export const routeBuildRollupOutputOptions = {
 
 export const BUNDLE_STUBS = [
   { find: /^@ag-ui\/proto$/, replacement: path.resolve(__dirname, "./src/lib/bundle-stubs/ag-ui-proto.ts") },
-  { find: /^rehype-katex$/, replacement: path.resolve(__dirname, "./src/lib/bundle-stubs/rehype-katex.ts") },
 ];
 
 /**
@@ -346,6 +356,7 @@ const appViteConfig = {
   envDir: path.resolve(__dirname, ".."),
   plugins: [
     announceServerPort(apiPort.port),
+    legacyBrowserBoot(),
     skyBoot(),
     tanstackRouter({
       autoCodeSplitting: true,

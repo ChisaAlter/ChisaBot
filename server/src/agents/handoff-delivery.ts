@@ -384,7 +384,7 @@ export function createHandoffDelivery(options: {
               tools: [],
               context: [],
               state: {},
-              forwardedProps: { openbotRun: assertion },
+              forwardedProps: { chisabotRun: assertion },
             },
           });
           await settled(

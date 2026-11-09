@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { MCPMock, type MCPToolDefinition } from "@copilotkit/aimock/mcp";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import { McpTestServer, type McpFixtureTool } from "./support/mcp-server";
 import { catalogueEntry, classifyTool } from "../src/plugins/catalogue";
 import { listTools } from "../src/plugins/mcp";
 
@@ -24,19 +23,11 @@ import { listTools } from "../src/plugins/mcp";
  * and what the call path reads back out of it.
  */
 
-const mock = new MCPMock();
+const mock = new McpTestServer();
 let url = "";
 
-/**
- * A tool definition including the annotations the mock's own type does not declare.
- *
- * `MCPToolDefinition` names only `name`, `description` and `inputSchema`, but the mock stores the
- * definition it is handed and serves it back verbatim, so annotations really do cross the wire.
- * Widening the type here rather than casting keeps the fixture honest: `ToolAnnotations` is the
- * SDK's own declaration, so a hint renamed upstream fails this file at compile time instead of
- * silently ceasing to be served.
- */
-type AnnotatedTool = MCPToolDefinition & { annotations?: ToolAnnotations };
+/** The official SDK Tool shape carries annotations unchanged over the wire. */
+type AnnotatedTool = McpFixtureTool;
 
 /** Every tool needs one: the SDK rejects an entire listing that omits a single `inputSchema`. */
 const NO_ARGUMENTS = { type: "object", properties: {} } as const;

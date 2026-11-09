@@ -81,7 +81,7 @@ const deferred = () => { let resolve!: () => void; const promise = new Promise<v
     return new Promise<BaseEvent[]>((resolve, reject) => { const events: BaseEvent[] = []; backend.runner.run({ threadId, agent: makeAgent(), input }).subscribe({ next: event => events.push(event), error: reject, complete: () => resolve(events) }); });
   };
   const post = async (threadId: string, body: unknown, actor = owner) => {
-    const response = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${threadId}/inbox`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), actor);
+    const response = await backend.handle(new Request(`http://localhost/api/conversations/threads/${threadId}/inbox`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), actor);
     return { status: response!.status, body: await response!.json() };
   };
   const ref = (url: string) => ({ type: "document", source: { type: "url", value: url }, filename: "input.txt" });
@@ -117,7 +117,7 @@ const deferred = () => { let resolve!: () => void; const promise = new Promise<v
   expect((await post(thread, { id: randomUUID(), text: "foreign actor" }, foreign)).status).toBe(404);
   await backend.runner.stop({ threadId: thread }); await running;
   backend = await createLocalConversations(database);
-  const reloaded = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${thread}/inbox`), owner);
+  const reloaded = await backend.handle(new Request(`http://localhost/api/conversations/threads/${thread}/inbox`), owner);
   const items = (await reloaded!.json()).items;
   expect(items.filter((item: any) => item.status === "paused").map((item: any) => item.id).sort()).toEqual([selectedId, otherId].sort());
   expect(items.find((item: any) => item.id === selectedId).message).toEqual(accepted.body.message);

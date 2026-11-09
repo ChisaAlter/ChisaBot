@@ -4,8 +4,8 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { of, type Observable } from "rxjs";
-import { applyInboxState, inboxState, queueMessage, queuedFor, restoreQueue, sendPausedMessage, takeQueued, withdrawMessage, type InboxState } from "../src/lib/copilot/thread-inbox";
-import { useThreadInbox } from "../src/lib/copilot/use-thread-inbox";
+import { applyInboxState, inboxState, queueMessage, queuedFor, restoreQueue, sendPausedMessage, takeQueued, withdrawMessage, type InboxState } from "../src/lib/conversations/thread-inbox";
+import { useThreadInbox } from "../src/lib/conversations/use-thread-inbox";
 import { settleReactWork } from "./settle-react-work";
 
 const originalFetch = globalThis.fetch;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { RegisteredAgent } from "../src/copilot";
+import type { RegisteredAgent } from "../src/conversation-runtime";
 import type { Database } from "../src/db/client";
 import {
   type FleetAuditData,

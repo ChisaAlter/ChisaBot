@@ -137,8 +137,8 @@ import {
 } from "@/lib/chat/work-steps";
 import { approvalInboxOptions } from "@/lib/approvals";
 import { useThreadConfirmations } from "@/lib/confirmations";
-import { isEditableUserText } from "@/lib/copilot/regenerate";
-import { useReadMark } from "@/lib/copilot/thread-inbox";
+import { isEditableUserText } from "@/lib/conversations/regenerate";
+import { useReadMark } from "@/lib/conversations/thread-inbox";
 import {
   type CardChecks,
   isLineOnlyRender,
@@ -148,8 +148,8 @@ import {
   unfinishedToolText,
   useActivityRenderers,
   useToolRenderers,
-} from "@/lib/copilot/tool-renderers";
-import { WORKER_RESULT_MARKER } from "@/lib/copilot/workers";
+} from "@/lib/conversations/tool-renderers";
+import { WORKER_RESULT_MARKER } from "@/lib/conversations/workers";
 import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { readToolName } from "@/lib/plugins/tool-name";
@@ -176,7 +176,7 @@ import { splitChatOrigin } from "./chat-origin";
 import type { QueuedMessage } from "./composer";
 import { ToolRenderBoundary } from "./tool-boundary";
 import { ToolLine } from "./tool-line";
-import { useRenderUiPreload } from "@/lib/copilot/render-ui-preload";
+import { useRenderUiPreload } from "@/lib/conversations/render-ui-preload";
 
 type ChatTranscriptProps = {
   busy?: boolean;
@@ -1930,7 +1930,7 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
               <div className="flex items-center justify-between pt-2">
                 {/*
                  * 用路由内跳转，并先关掉弹窗（CB-106）。原来是 <a href>：在打开的模态弹窗里整页重载，
-                 * 整个应用（对话、CopilotKit 连接、几千条记忆）从头再来一遍，s2 里这一下把标签页拖崩过。
+                 * 整个应用（对话、会话客户端 连接、几千条记忆）从头再来一遍，s2 里这一下把标签页拖崩过。
                  */}
                 <Link
                   className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
@@ -2601,7 +2601,7 @@ function SentAttachmentTile({ attachment }: { attachment: SentAttachment }) {
    *
    * `toVisibleChatItems` passes on whatever a `url` source carried, and nothing between here and
    * the wire narrows it. A sent message only ever carries the relative form — `shared/attachments.ts`
-   * says the url "is never fetched by a provider", and `copilot.ts` swaps the source for the bytes
+   * says the url "is never fetched by a provider", and 服务端的附件解析器 swaps the source for the bytes
    * as the run is built — so an absolute url arriving here did not come from this app's composer,
    * and putting it in `src` would have the reader's browser fetch a third party the instant the
    * transcript drew, announcing to whoever owns it that this person opened this channel.
@@ -4175,7 +4175,7 @@ export function lastAnswerId(
 }
 
 /**
- * 一轮收成「开场一句 → 结果」（频道聊天版，规则与 lib/copilot/turn-compaction.ts 相同，2026-10-13 第四轮）。
+ * 一轮收成「开场一句 → 结果」（频道聊天版，规则与 lib/conversations/turn-compaction.ts 相同，2026-10-13 第四轮）。
  *
  *  - 每轮第一段助手文字 = 开场一句（气泡，没有复制）；
  *  - 结果 = 最后一段文字，且它后面没有再调工具 / 开网页；这一轮还在跑或被用户停掉时没有结果；

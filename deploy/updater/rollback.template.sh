@@ -43,6 +43,7 @@ else
   grep -q "image: @PREV@" @COMPOSE_FILE@
 fi
 RELEASE_ALLOWED=0
+bash -c 'U="$1"; . "$U/dsh-release.sh"; CONTAINER="$2"; COMPOSE_DIR="$PWD"; dsh_prepare_candidate_reader "$3"' -- @UPDATER_HOME@ @CONTAINER@ @PREV@
 docker compose -p @PROJECT@ -f @COMPOSE_FILE@ up -d --no-deps --pull never --wait --wait-timeout 180 @SERVICE@
 bash -c 'U="$1"; . "$U/config.env"; . "$U/dsh-release.sh"; CONTAINER="$2"; COMPOSE_DIR="$PWD"; enabled=$(dsh_enabled) || exit 1; [ "$enabled" != 1 ] || dsh_accounts_replace "$3"' -- @UPDATER_HOME@ @CONTAINER@ @PREV@
 docker inspect -f '{{.State.Health.Status}} restarts={{.RestartCount}} image={{.Config.Image}}' @CONTAINER@

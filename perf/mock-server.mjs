@@ -94,7 +94,7 @@ export async function startMockServer({
 }) {
   const fxPath = fixtures || new URL("./fixtures/api.json", import.meta.url);
   const fx = JSON.parse(fs.readFileSync(fxPath, "utf8"));
-  fx["^/api/copilotkit/threads/tc1/messages$"] = { messages: longThread() };
+  fx["^/api/conversations/threads/tc1/messages$"] = { messages: longThread() };
   const agents = Object.fromEntries(
     ["a1", "a2", "a3"].map((id) => [
       id,
@@ -134,7 +134,7 @@ export async function startMockServer({
               return signedOut
                 ? json(401, { error: "unauthorized" })
                 : json(200, { user });
-            if (p === "/api/copilotkit/info")
+            if (p === "/api/conversations/info")
               return json(200, {
                 version: "1.77.0",
                 agents,
@@ -142,10 +142,10 @@ export async function startMockServer({
               });
             if (
               req.method === "POST" &&
-              /\/api\/copilotkit\/agent\/[^/]+\/run$/.test(p)
+              /\/api\/conversations\/agent\/[^/]+\/run$/.test(p)
             )
               return streamRun(res, body);
-            if (/\/api\/copilotkit\/agent\/[^/]+\/connect$/.test(p)) {
+            if (/\/api\/conversations\/agent\/[^/]+\/connect$/.test(p)) {
               res.writeHead(200, { "content-type": "text/event-stream" });
               return res.end();
             }

@@ -121,7 +121,7 @@
   "^/api/schedules/events$": {
     "events": []
   },
-  "^/api/copilotkit/info$": {
+  "^/api/conversations/info$": {
     "agents": {},
     "version": "1"
   },
@@ -135,7 +135,7 @@
       "lastMessageAt": "2026-10-28T10:00:00.000Z"
     }
   },
-  "^/api/copilotkit/threads/tc1/messages$": {
+  "^/api/conversations/threads/tc1/messages$": {
     "messages": [
       {
         "id": "m1",
@@ -175,7 +175,7 @@
       "lastMessageAt": "2026-10-28T10:00:00.000Z"
     }
   },
-  "^/api/copilotkit/threads/tc2/messages$": {
+  "^/api/conversations/threads/tc2/messages$": {
     "messages": [
       {
         "id": "n1",

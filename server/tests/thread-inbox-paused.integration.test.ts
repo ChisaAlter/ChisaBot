@@ -37,7 +37,7 @@ suite("durably paused thread inbox", () => {
     for (const threadId of threads) {
       await database.$client.unsafe("DELETE FROM chisabot_thread_inbox WHERE thread_id = $1", [threadId]);
       await database.$client.unsafe("DELETE FROM chisabot_thread_inbox_control WHERE thread_id = $1", [threadId]);
-      await database.$client.unsafe("DELETE FROM openbot_local_threads WHERE id = $1", [threadId]);
+      await database.$client.unsafe("DELETE FROM chisabot_local_threads WHERE id = $1", [threadId]);
     }
     await database.$client.close();
   });
@@ -52,7 +52,7 @@ suite("durably paused thread inbox", () => {
     await backend.inbox.enqueue({ threadId, ownerUserId: owner, message: message(id) });
   }
   async function state(threadId: string, actor = owner) {
-    const response = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${threadId}/inbox`), actor);
+    const response = await backend.handle(new Request(`http://localhost/api/conversations/threads/${threadId}/inbox`), actor);
     expect(response?.status).toBe(200);
     return response!.json() as Promise<{ paused: boolean; running: boolean; items: { id: string; status: string }[] }>;
   }
@@ -98,14 +98,14 @@ suite("durably paused thread inbox", () => {
     const threadId = await thread();
     await backend.inbox.pause(threadId);
     const send = async (id: string) => {
-      const response = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${threadId}/inbox`, {
+      const response = await backend.handle(new Request(`http://localhost/api/conversations/threads/${threadId}/inbox`, {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, text: "Must never execute after withdrawal" }),
       }), owner);
       expect(response?.status).toBe(200);
       return response!.json();
     };
     const withdraw = async (id: string) => {
-      const response = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${threadId}/inbox?id=${id}`, { method: "DELETE" }), owner);
+      const response = await backend.handle(new Request(`http://localhost/api/conversations/threads/${threadId}/inbox?id=${id}`, { method: "DELETE" }), owner);
       expect(response?.status).toBe(200);
       expect(await response!.json()).toEqual({ withdrawn: true });
     };
@@ -124,7 +124,7 @@ suite("durably paused thread inbox", () => {
     expect((await backend.inbox.get(threadId, "late-post"))?.status).toBe("withdrawn");
     await enqueue(threadId, "already-read");
     await backend.inbox.claim(threadId, "in-flight");
-    const consumed = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${threadId}/inbox?id=already-read`, { method: "DELETE" }), owner);
+    const consumed = await backend.handle(new Request(`http://localhost/api/conversations/threads/${threadId}/inbox?id=already-read`, { method: "DELETE" }), owner);
     expect(await consumed!.json()).toEqual({ withdrawn: false });
   });
 
@@ -167,7 +167,7 @@ suite("durably paused thread inbox", () => {
     await backend.inbox.enqueue({ threadId, ownerUserId: owner, kind: "worker_result", message: message("worker-result", "⟦chisabot:worker-result:w:done⟧\n后台任务「调查」已完成。\n\n结果") });
     expect((await state(threadId)).items.find((item) => item.id === "worker-result")?.status).toBe("paused");
     expect((await backend.inbox.resumeOne(threadId, "worker-result", "worker-resume"))?.content).toContain("后台任务");
-    const response = await backend.handle(new Request(`http://localhost/api/copilotkit/threads/${threadId}`, { method: "DELETE" }), owner);
+    const response = await backend.handle(new Request(`http://localhost/api/conversations/threads/${threadId}`, { method: "DELETE" }), owner);
     expect(response?.status).toBe(204);
     expect(await database.$client.unsafe("SELECT thread_id FROM chisabot_thread_inbox_control WHERE thread_id = $1", [threadId])).toHaveLength(0);
     expect(await database.$client.unsafe("SELECT id FROM chisabot_thread_inbox WHERE thread_id = $1", [threadId])).toHaveLength(0);
@@ -180,7 +180,7 @@ suite("durably paused thread inbox", () => {
     let modelRuns = 0;
     class MustNotRun extends AbstractAgent { run(): Observable<BaseEvent> { modelRuns++; throw new Error("model must not start"); } }
     interceptUnsafe = async (...args: Parameters<typeof unsafe>) => {
-      if (!injected && String(args[0]).includes("UPDATE openbot_local_threads SET messages") && args[1]?.[0] === threadId) {
+      if (!injected && String(args[0]).includes("UPDATE chisabot_local_threads SET messages") && args[1]?.[0] === threadId) {
         injected = true;
         throw new Error("forced snapshot failure");
       }
@@ -210,7 +210,7 @@ suite("durably paused thread inbox", () => {
       { id: "prior-result", role: "tool", toolCallId: "done-call", content: "Completed once" } as Message,
       held,
     ];
-    await database.$client.unsafe("UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1", [threadId, JSON.stringify(canonical)]);
+    await database.$client.unsafe("UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1", [threadId, JSON.stringify(canonical)]);
     await backend.inbox.settle(threadId, "failed-old-turn", "owed");
     const inputs: Message[][] = [];
     class CaptureReadPause extends AbstractAgent {

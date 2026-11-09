@@ -129,7 +129,7 @@ async function until<T>(read: () => Promise<T | undefined | false>, detail: stri
   const start = (threadId: string) => {
     const api = routes();
     const input = { threadId, runId: randomUUID(), messages: [{ id: randomUUID(), role: "user", content: "Perform the approved counter once." }] as Message[], state: {}, tools: [], context: [] };
-    const browser = new HttpAgent({ agentId: botId, threadId, initialMessages: input.messages, url: `http://localhost/api/copilotkit/agent/${botId}/run`, fetch: (url, init) => api.request(url, init) });
+    const browser = new HttpAgent({ agentId: botId, threadId, initialMessages: input.messages, url: `http://localhost/api/conversations/agent/${botId}/run`, fetch: (url, init) => api.request(url, init) });
     const events: BaseEvent[] = [];
     const done = browser.runAgent({ runId: input.runId }, { onEvent: ({ event }) => { events.push(event); } });
     return { input, browser, events, done };
@@ -183,7 +183,7 @@ async function until<T>(read: () => Promise<T | undefined | false>, detail: stri
     expect(await backend.inbox.isPaused(crashed.input.threadId)).toBe(true);
     expect((await backend.inbox.list(crashed.input.threadId)).find(item => item.id === supplement.id)?.status).toBe("paused");
     const historyBeforeRefusal = await backend.client.getThreadMessages({ userId: actorId, threadId: crashed.input.threadId });
-    const forged = await routes().request(`/api/copilotkit/agent/${botId}/run`, { method: "POST", headers: { "content-type": "application/json" },
+    const forged = await routes().request(`/api/conversations/agent/${botId}/run`, { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...crashed.input, runId: randomUUID(), messages: [supplement],
         resume: [{ interruptId: "forged", status: "resolved", payload: "not a durable decision" }],
         persistedInputMessages: [], continuationRunId: gap.body.binding.runId,
@@ -191,7 +191,7 @@ async function until<T>(read: () => Promise<T | undefined | false>, detail: stri
     });
     expect(await forged.text()).toContain("保留的消息已暂停");
     const stoppedSource = `stopped:${randomUUID()}`;
-    await sql.unsafe("INSERT INTO openbot_local_runs(thread_id,run_id,status) VALUES($1,$2,'stopped')", [crashed.input.threadId, stoppedSource]);
+    await sql.unsafe("INSERT INTO chisabot_local_runs(thread_id,run_id,status) VALUES($1,$2,'stopped')", [crashed.input.threadId, stoppedSource]);
     const late = await lastValueFrom(backend.runner.run({ threadId: crashed.input.threadId, agent: agent(), join: false,
       input: { ...crashed.input, runId: randomUUID(), resume: [{ interruptId: "late", status: "resolved", payload: "late server receipt" }] },
       persistedInputMessages: [], continuationRunId: stoppedSource,

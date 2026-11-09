@@ -53,7 +53,7 @@ suite("thread truncation on a dedicated PostgreSQL database", () => {
   };
   const stored = async () => (await backend.client.getThreadMessages({ threadId: thread, userId: owner })).messages.map((message) => message.id);
   const truncate = (body: unknown, actor = owner) =>
-    backend.handle(new Request(`http://localhost/api/copilotkit/threads/${thread}/truncate`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }), actor);
+    backend.handle(new Request(`http://localhost/api/conversations/threads/${thread}/truncate`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }), actor);
 
   beforeAll(async () => {
     database = createDatabase(testDatabaseUrl(), TEST_POOL);
@@ -62,7 +62,7 @@ suite("thread truncation on a dedicated PostgreSQL database", () => {
   });
 
   afterAll(async () => {
-    await database.$client.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [owner]);
+    await database.$client.unsafe("DELETE FROM chisabot_local_threads WHERE owner_user_id = $1", [owner]);
     await database.$client.close();
   });
 
@@ -86,7 +86,7 @@ suite("thread truncation on a dedicated PostgreSQL database", () => {
     const replay = await collect(backend.runner.connect({ threadId: thread, agentId: bot }));
     expect(replay.filter((event) => event.type === EventType.RUN_STARTED)).toHaveLength(1);
     expect(JSON.stringify(replay)).not.toContain("answer-r2");
-    const runs = await database.$client.unsafe<{ run_id: string }[]>("SELECT run_id FROM openbot_local_runs WHERE thread_id = $1 ORDER BY run_id", [thread]);
+    const runs = await database.$client.unsafe<{ run_id: string }[]>("SELECT run_id FROM chisabot_local_runs WHERE thread_id = $1 ORDER BY run_id", [thread]);
     expect(runs.map((row) => row.run_id)).toEqual(["r1"]);
   });
 

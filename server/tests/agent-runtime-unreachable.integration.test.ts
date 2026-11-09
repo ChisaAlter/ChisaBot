@@ -1,6 +1,6 @@
 /**
  * CB-100b：智能体运行时（Hermes）连不上（ConnectionRefused）时，在真实 PostgreSQL 上验证：
- * 这一轮在库里记为失败（openbot_local_runs.status = 'error'），对话锁被释放，下一条消息能正常开跑。
+ * 这一轮在库里记为失败（chisabot_local_runs.status = 'error'），对话锁被释放，下一条消息能正常开跑。
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -64,7 +64,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (!process.env.TEST_DATABASE_URL) return;
-  await database.$client.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [owner]);
+  await database.$client.unsafe("DELETE FROM chisabot_local_threads WHERE owner_user_id = $1", [owner]);
   await database.$client.close();
 });
 
@@ -96,13 +96,13 @@ it("ConnectionRefused: turn is failed in the DB, lock released, next message run
   expect(runError?.message).toContain("智能体运行时无法连接");
 
   const [run] = await database.$client.unsafe<{ status: string; finished_at: Date | null }[]>(
-    "SELECT status, finished_at FROM openbot_local_runs WHERE thread_id = $1 AND run_id = $2",
+    "SELECT status, finished_at FROM chisabot_local_runs WHERE thread_id = $1 AND run_id = $2",
     [thread, firstRun],
   );
   expect(run?.status).toBe("error");
   expect(run?.finished_at).not.toBeNull();
   const [row] = await database.$client.unsafe<{ run_id: string | null }[]>(
-    "SELECT run_id FROM openbot_local_threads WHERE id = $1",
+    "SELECT run_id FROM chisabot_local_threads WHERE id = $1",
     [thread],
   );
   expect(row?.run_id).toBeNull();
@@ -121,7 +121,7 @@ it("ConnectionRefused: turn is failed in the DB, lock released, next message run
   expect(next.error).toBeUndefined();
   expect(next.events.some((event) => event.type === EventType.RUN_FINISHED)).toBe(true);
   const [secondRow] = await database.$client.unsafe<{ status: string }[]>(
-    "SELECT status FROM openbot_local_runs WHERE thread_id = $1 AND run_id = $2",
+    "SELECT status FROM chisabot_local_runs WHERE thread_id = $1 AND run_id = $2",
     [thread, secondRun],
   );
   expect(secondRow?.status).toBe("finished");

@@ -30,7 +30,7 @@ import {
   ManagedBotsCard,
   managedBotsFrom,
   UpdateBotCard,
-} from "@/lib/copilot/bot-factory-tool";
+} from "@/lib/conversations/bot-factory-tool";
 import { Route as BotsRoute } from "@/routes/_authed/_app/bots.index";
 import { settleReactWork } from "./settle-react-work";
 

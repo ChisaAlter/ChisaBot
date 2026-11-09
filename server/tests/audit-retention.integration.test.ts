@@ -52,7 +52,7 @@ async function remaining(): Promise<number> {
 afterEach(async () => {
   await database.transaction(async (tx) => {
     await tx.execute(
-      sql`select set_config('openbot.audit_retention_days', '1', true)`,
+      sql`select set_config('chisabot.audit_retention_days', '1', true)`,
     );
     await tx.delete(auditEvents).where(eq(auditEvents.targetType, MARKER));
   });
@@ -130,7 +130,7 @@ describe("keeping the audit trail to a retention policy", () => {
         await refusedAsAppendOnly(() =>
           database.transaction(async (tx) => {
             await tx.execute(
-              sql`select set_config('openbot.audit_retention_days', ${window}, true)`,
+              sql`select set_config('chisabot.audit_retention_days', ${window}, true)`,
             );
             await tx
               .delete(auditEvents)
@@ -192,7 +192,7 @@ describe("keeping the audit trail to a retention policy", () => {
       await refusedAsAppendOnly(() =>
         database.transaction(async (tx) => {
           await tx.execute(
-            sql`select set_config('openbot.audit_retention_days', '3650', true)`,
+            sql`select set_config('chisabot.audit_retention_days', '3650', true)`,
           );
           await tx
             .delete(auditEvents)
@@ -213,7 +213,7 @@ describe("keeping the audit trail to a retention policy", () => {
       await refusedAsAppendOnly(() =>
         database.transaction(async (tx) => {
           await tx.execute(
-            sql`select set_config('openbot.audit_retention_days', '1', true)`,
+            sql`select set_config('chisabot.audit_retention_days', '1', true)`,
           );
           await tx
             .update(auditEvents)
@@ -287,7 +287,7 @@ describe("keeping the audit trail to a retention policy", () => {
       await refusedAsAppendOnly(() =>
         database.transaction(async (tx) => {
           await tx.execute(
-            sql`select set_config('openbot.audit_retention_days', '30', true)`,
+            sql`select set_config('chisabot.audit_retention_days', '30', true)`,
           );
           await tx.execute(sql`truncate table audit_events`);
           throw new Error(ROLLED_BACK);

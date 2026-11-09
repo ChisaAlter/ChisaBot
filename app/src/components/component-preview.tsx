@@ -1,7 +1,7 @@
 import { SandboxSurface } from "@/lib/chat/sandbox-surface";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { galleryComponent } from "@/lib/copilot/gallery-registry";
+import { galleryComponent } from "@/lib/conversations/gallery-registry";
 import {
   type SandboxedRecord,
   sandboxedListQueryOptions,

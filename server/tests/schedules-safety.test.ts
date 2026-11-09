@@ -48,7 +48,7 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
   };
   const addThread = (id: string, messages: unknown[] = []) =>
     sql.unsafe(
-      "INSERT INTO openbot_local_threads (id, owner_user_id, agent_id, messages) VALUES ($1, $2, 'bot1', $3::text::jsonb)",
+      "INSERT INTO chisabot_local_threads (id, owner_user_id, agent_id, messages) VALUES ($1, $2, 'bot1', $3::text::jsonb)",
       [id, owner, JSON.stringify(messages)],
     );
   const daily = (thread: string, title: string) =>
@@ -58,7 +58,7 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
     releaseSweepLock = await holdScheduleSweepLock(url!);
     await s.ensure();
     // 本地对话表平时由 local-conversations 建；单独跑这个文件时自己建（同一份最小结构）。
-    await sql.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_threads (
+    await sql.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_threads (
       id text PRIMARY KEY, owner_user_id text NOT NULL, agent_id text NOT NULL,
       name text, archived boolean NOT NULL DEFAULT false,
       messages jsonb NOT NULL DEFAULT '[]'::jsonb, state jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -68,7 +68,7 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
     for (const t of ["m1", "m1-tool", "m2-a", "m2-b", "m2-other", "m3", "m3-gone", "s6-a", "s6-b"]) await addThread(tid(t));
   }, 120_000);
   afterAll(async () => {
-    await sql.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [owner]).catch(() => {});
+    await sql.unsafe("DELETE FROM chisabot_local_threads WHERE owner_user_id = $1", [owner]).catch(() => {});
     await sql.unsafe("DELETE FROM chisabot_schedule_runs WHERE owner_user_id LIKE $1", [`${owner}%`]);
     await sql.unsafe("DELETE FROM chisabot_schedules WHERE owner_user_id LIKE $1", [`${owner}%`]);
     await releaseSweepLock?.();
@@ -107,7 +107,7 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
     const sc = await daily("silent-failure", "巡检失败");
     reply = async ({ threadId, runId }) => {
       await sql.unsafe(
-        "UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
+        "UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
         [threadId, JSON.stringify([
           { id: `schedule-${runId}`, role: "user", content: "巡检" },
           { id: `reply-${runId}`, role: "assistant", content: SCHEDULE_SILENT_MARKER },
@@ -122,7 +122,7 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
       expect(after.recentRuns!.every((r) => r.result === "巡检未完成：本次有工具执行失败。")).toBe(true);
       expect(after.status).toBe("paused");
       const [thread] = await sql.unsafe<{ messages: unknown[] }[]>(
-        "SELECT messages FROM openbot_local_threads WHERE id = $1",
+        "SELECT messages FROM chisabot_local_threads WHERE id = $1",
         [threadId],
       );
       expect(thread!.messages).toHaveLength(2);
@@ -172,8 +172,8 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
   test("M2: original thread deleted → nothing is sent anywhere, task is cancelled and marked 原对话已删除", async () => {
     const sc = await daily("m2-a", "喝水");
     // 同一个机器人另有一个最近活跃的对话：以前会回退到这里。
-    await sql.unsafe("UPDATE openbot_local_threads SET updated_at = now() WHERE id = $1", [tid("m2-other")]).catch(() => {});
-    await sql.unsafe("DELETE FROM openbot_local_threads WHERE id = $1", [tid("m2-a")]);
+    await sql.unsafe("UPDATE chisabot_local_threads SET updated_at = now() WHERE id = $1", [tid("m2-other")]).catch(() => {});
+    await sql.unsafe("DELETE FROM chisabot_local_threads WHERE id = $1", [tid("m2-a")]);
     const listed = (await s.list(owner)).find((x) => x.id === sc.id)!;
     expect(listed.threadDeleted).toBe(true);
     turns.length = 0;
@@ -189,7 +189,7 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
   test("M2: deleting a thread cancels the web routines attached to it, not others", async () => {
     const onIt = await daily("m2-b", "挂在 b 上");
     const other = await daily("m2-other", "挂在别处");
-    await sql.unsafe("DELETE FROM openbot_local_threads WHERE id = $1", [tid("m2-b")]);
+    await sql.unsafe("DELETE FROM chisabot_local_threads WHERE id = $1", [tid("m2-b")]);
     expect(await cancelSchedulesForDeletedThreads(sql, owner, [tid("m2-b")])).toBe(1);
     expect((await s.get(owner, onIt.id)).status).toBe("cancelled");
     expect((await s.get(owner, other.id)).status).toBe("active");
@@ -238,26 +238,26 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
     // a：触发消息后只有机器人的静默回复 → 收起，之前的消息保留。
     const a = await daily("s6-a", "巡检 a");
     reply = async ({ threadId, runId }) => {
-      await sql.unsafe("UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1", [
+      await sql.unsafe("UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1", [
         threadId,
         JSON.stringify([old, { id: `schedule-${runId}`, role: "user", content: "⟦…⟧" }, { id: "r1", role: "assistant", content: SILENT }]),
       ]);
       return { replyText: SILENT };
     };
     await fireDue(a.id);
-    const [ta] = await sql.unsafe<{ messages: { id: string }[] }[]>("SELECT messages FROM openbot_local_threads WHERE id = $1", [tid("s6-a")]);
+    const [ta] = await sql.unsafe<{ messages: { id: string }[] }[]>("SELECT messages FROM chisabot_local_threads WHERE id = $1", [tid("s6-a")]);
     expect(ta!.messages.map((m) => m.id)).toEqual(["m-old"]);
     // b：静默回复后用户已经又发了一条 → 什么都不删。
     const b = await daily("s6-b", "巡检 b");
     reply = async ({ threadId, runId }) => {
-      await sql.unsafe("UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1", [
+      await sql.unsafe("UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1", [
         threadId,
         JSON.stringify([old, { id: `schedule-${runId}`, role: "user", content: "⟦…⟧" }, { id: "r1", role: "assistant", content: SILENT }, { id: "u2", role: "user", content: "在吗" }]),
       ]);
       return { replyText: SILENT };
     };
     await fireDue(b.id);
-    const [tb] = await sql.unsafe<{ messages: { id: string }[] }[]>("SELECT messages FROM openbot_local_threads WHERE id = $1", [tid("s6-b")]);
+    const [tb] = await sql.unsafe<{ messages: { id: string }[] }[]>("SELECT messages FROM chisabot_local_threads WHERE id = $1", [tid("s6-b")]);
     expect(tb!.messages).toHaveLength(4);
     expect((await s.get(owner, b.id)).lastStatus).toBe("ok");
     reply = async () => ({ replyText: "⏰ 该喝水了" });

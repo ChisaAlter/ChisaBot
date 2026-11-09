@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { friendlyError } from "../src/lib/chat/friendly-error";
-import { friendlyStopReason } from "../src/lib/copilot/stopped-turn";
+import { friendlyStopReason } from "../src/lib/conversations/stopped-turn";
 
 test("DSH备用模型错误优先保留真实归属", () => {
   const raw = '备用模型「backup」请求失败：HTTP 404 model not found';

@@ -26,7 +26,7 @@ import type { Vault } from "../vault/service";
  * 机器人工具（只在连上之后给）：
  * - 读：github_list_repos / github_list_issues / github_list_pulls / github_get_issue / github_read_file，直接执行。
  * - 写：github_create_issue / github_comment / github_create_pr。先在 chisabot_github_actions 记一条待确认，
- *   聊天里出确认卡片（lib/copilot/github-tool.tsx），用户点「允许」时服务器才真正发请求；工具在服务器上等结果。
+ *   聊天里出确认卡片（lib/chat/github-tool.tsx），用户点「允许」时服务器才真正发请求；工具在服务器上等结果。
  *   网页不在场的回合（IM、长期任务、后台任务）不能确认，直接拒绝。
  *
  * 管理员可以用 CHISABOT_GITHUB_API_BASE 指向 GitHub Enterprise 或测试替身；默认 https://api.github.com。

@@ -101,7 +101,7 @@ run("DSH adapter resumes approval after a Host restart and preserves operation i
   const routes = createConversationRoutes({ backend, identifyActor: async () => ({ id: actorId, role: "user" }), resolver: {
     resolveAgentForActor: async () => agent.clone(), resolveAgentsForActor: async () => ({ [botId]: agent.clone() }),
   } });
-  const browser = new HttpAgent({ agentId: botId, threadId, initialMessages: input.messages, url: `http://localhost/api/copilotkit/agent/${botId}/run`, fetch: (url, init) => routes.request(url, init) });
+  const browser = new HttpAgent({ agentId: botId, threadId, initialMessages: input.messages, url: `http://localhost/api/conversations/agent/${botId}/run`, fetch: (url, init) => routes.request(url, init) });
   const events: BaseEvent[] = [];
   const done = browser.runAgent({}, { onEvent: ({ event }) => { events.push(event); } });
   for (let i = 0; i < 1800 && !card && !events.some(x => x.type === "RUN_ERROR" || x.type === "RUN_FINISHED"); i++) await Bun.sleep(50);
@@ -148,7 +148,7 @@ run("DSH adapter resumes approval after a Host restart and preserves operation i
   expect(events.filter((x: any) => x.type === "TOOL_CALL_RESULT").length).toBe(0);
   const stored = await backend.client.getThreadMessages({ threadId, userId: actorId });
   expect(stored.messages.some(message => message.role === "assistant" && message.content === "The approved operation completed.")).toBe(true);
-  const repeat = await routes.request(`http://localhost/api/copilotkit/agent/${botId}/run`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+  const repeat = await routes.request(`http://localhost/api/conversations/agent/${botId}/run`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
   await repeat.text();
   expect(executed).toBe(1);
   expect(requests).toEqual(["unavailable", "available", "unavailable", "available"]);

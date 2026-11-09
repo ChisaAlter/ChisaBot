@@ -468,7 +468,7 @@ export function createChannelStore(
           }
           // 没有频道的旧 `/bot` 对话：库里必须是本人、这个机器人的（还没有行 = 没有可打开的内容）。
           const rows = await transaction.execute<{ owner_user_id: string; agent_id: string }>(
-            sql`select owner_user_id, agent_id from openbot_local_threads where id = ${threadId}`,
+            sql`select owner_user_id, agent_id from chisabot_local_threads where id = ${threadId}`,
           ).catch(() => null);
           const list = (rows && (Array.isArray(rows) ? rows : (rows as { rows?: unknown[] }).rows)) as
             | { owner_user_id: string; agent_id: string }[]

@@ -13,7 +13,7 @@ import { QueuedMessages } from "../src/components/chat/queued-messages";
 import {
   hideHeldSupplements,
   shouldStopOnEscape,
-} from "../src/lib/copilot/held-supplements";
+} from "../src/lib/conversations/held-supplements";
 import {
   applyInboxState,
   markRead,
@@ -21,7 +21,7 @@ import {
   queueMessage,
   takeQueued,
   useReadMark,
-} from "../src/lib/copilot/thread-inbox";
+} from "../src/lib/conversations/thread-inbox";
 import { settleReactWork } from "./settle-react-work";
 
 // CB-104: Stop and queued follow-ups.
@@ -275,7 +275,7 @@ test("Esc does not stop while the IME is processing the key (keyCode 229)", () =
 });
 
 test("a failed stop request says 「停止失败，重试」 at once; retry sends it again", async () => {
-  const { useStopRequest } = await import("../src/lib/copilot/held-supplements");
+  const { useStopRequest } = await import("../src/lib/conversations/held-supplements");
   const { StopFailedButton } = await import(
     "../src/components/channels/composer/composer"
   );
@@ -307,7 +307,7 @@ test("a failed stop request says 「停止失败，重试」 at once; retry send
   fireEvent.click(view.getByTestId("stop"));
   const failed = await view.findByTestId("composer-stop-failed");
   expect(failed.textContent).toBe("停止失败，重试");
-  expect(calls).toEqual(["/api/copilotkit/threads/thread-x/unlock"]);
+  expect(calls).toEqual(["/api/conversations/threads/thread-x/unlock"]);
   // 5xx on retry: still failing, still offered.
   fireEvent.click(failed);
   await waitFor(() => expect(calls.length).toBe(2));
@@ -329,7 +329,7 @@ const turnEnds: Array<{ name: string; turn: { running?: boolean; status?: string
 ];
 for (const { name, turn: endedTurn } of turnEnds) {
   test(`「停止失败，重试」 clears when the turn ends: ${name}`, async () => {
-    const { useStopRequest } = await import("../src/lib/copilot/held-supplements");
+    const { useStopRequest } = await import("../src/lib/conversations/held-supplements");
     const { Composer } = await import("../src/components/channels/composer/composer");
     const fake = (async () => new NativeResponse("{}", { status: 503 })) as unknown as typeof fetch;
     let setTurn: (t: { running?: boolean; status?: string }) => void = () => {};
@@ -361,7 +361,7 @@ for (const { name, turn: endedTurn } of turnEnds) {
 }
 
 test("a new turn does not inherit the previous turn's 「停止失败，重试」", async () => {
-  const { useStopRequest } = await import("../src/lib/copilot/held-supplements");
+  const { useStopRequest } = await import("../src/lib/conversations/held-supplements");
   const fake = (async () => new NativeResponse("{}", { status: 503 })) as unknown as typeof fetch;
   let api: { send: () => Promise<boolean> } | null = null;
   let setRunning: (r: boolean | undefined) => void = () => {};

@@ -7,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { type BotThreadSummary, readThreadHistory } from "@/lib/copilot/bot-thread";
+import { type BotThreadSummary, readThreadHistory } from "@/lib/conversations/bot-thread";
 import { cn } from "@/lib/utils";
 
 /** 「刚刚 / 3 分钟前 / 5 小时前 / 10月12日」（跨年带年份）。 */

@@ -4,11 +4,11 @@ import { latestChannelFor } from "./latest";
 import type { ChannelSummary } from "./queries";
 
 /*
- * transcript-cache 按需 import：它经 thread-messages 依赖 @ag-ui/core 的消息 schema（CopilotKit 那一大块），
- * 左栏一静态 import 它，打开设置页也要先下 CopilotKit（DESIGN.md §41.5）。预取本来就是空闲 / 悬停时才做的事。
+ * transcript-cache 按需 import：它经 thread-messages 依赖 @ag-ui/core 的消息 schema（会话客户端 那一大块），
+ * 左栏一静态 import 它，打开设置页也要先下 会话客户端（DESIGN.md §41.5）。预取本来就是空闲 / 悬停时才做的事。
  */
 async function prefetchTranscript(threadId: string, botId: string) {
-  const cache = await import("@/lib/copilot/transcript-cache");
+  const cache = await import("@/lib/conversations/transcript-cache");
   await cache.prefetchTranscript(threadId, botId);
 }
 

@@ -1,3 +1,4 @@
+import { runAssertionValue } from "../legacy/protocol";
 import { z } from "zod";
 import type { RunAssertion } from "../agents/callback-token";
 import type { AuditInitiator } from "../audit";
@@ -123,8 +124,8 @@ export function createApprovedActionExecutor(deps: ApprovedActionDependencies) {
     if (action.toolRef.startsWith("bot/")) {
       const forwarded = snapshot.forwardedProps;
       const signed =
-        forwarded && typeof forwarded === "object" && "openbotRun" in forwarded
-          ? (deps.readRun?.(forwarded.openbotRun) ?? null)
+        forwarded && typeof forwarded === "object" && runAssertionValue(forwarded) !== undefined
+          ? (deps.readRun?.(runAssertionValue(forwarded)) ?? null)
           : null;
       const run: RunAssertion =
         signed &&

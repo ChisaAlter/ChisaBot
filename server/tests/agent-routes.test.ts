@@ -605,7 +605,7 @@ describe("agent route composition", () => {
       },
       { rolesForUser: async () => ["user"] },
       /*
-       * Positions 4-9: auditReader, credentialService, packageStatusReader, copilotHandler,
+       * Positions 4-9: auditReader, credentialService, packageStatusReader, conversationHandler,
        * computerGateway, computerPolicy. `store` is position 10, agentProfileStore.
        *
        * Six placeholders, down from seven on both sides of the merge that produced this. Each side

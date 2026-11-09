@@ -14,7 +14,7 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import { toMessageContent } from "@/components/channels/channel-chat";
 import { ChatTranscript } from "@/components/channels/chat-transcript";
 import { attachmentThumbUrl, attachmentUrl } from "@/lib/channels/attachments";
-import { readThreadMessages } from "@/lib/copilot/thread-messages";
+import { readThreadMessages } from "@/lib/conversations/thread-messages";
 import { settleReactWork } from "./settle-react-work";
 
 /**

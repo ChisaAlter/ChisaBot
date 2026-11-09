@@ -3,7 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { z } from "zod";
-import { useComputerToolRenderer } from "@/lib/copilot/approval-tools";
+import { useComputerToolRenderer } from "@/lib/conversations/approval-tools";
 import { ToolRendererProvider, useRenderToolCall } from "@/lib/chat/renderers";
 import { settleReactWork } from "./settle-react-work";
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { stoppedReason, stoppedTurnSubscriber } from "../src/lib/copilot/stopped-turn";
+import { stoppedReason, stoppedTurnSubscriber } from "../src/lib/conversations/stopped-turn";
 
 /**
  * What a person is told when a turn ends and no answer came.

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { contentText, isEditableUserText, lastUserIndex, withEditedText } from "@/lib/copilot/regenerate";
-import { revisionNeedsRebuild } from "@/lib/copilot/use-conversation-sync";
+import { contentText, isEditableUserText, lastUserIndex, withEditedText } from "@/lib/conversations/regenerate";
+import { revisionNeedsRebuild } from "@/lib/conversations/use-conversation-sync";
 
 /** 重新生成 / 编辑后重发（DESIGN.md §67，CB-042）的纯函数。 */
 describe("regenerate helpers", () => {

@@ -3,7 +3,7 @@ import postgres from "postgres";
 // Read-only cutover inventory. Counts and state names only: no people, message bodies or credentials.
 const tables = [
   "users", "agents", "channels", "channel_agents", "intelligence_channel_mappings",
-  "openbot_local_threads", "openbot_local_runs", "openbot_local_events",
+  "chisabot_local_threads", "chisabot_local_runs", "chisabot_local_events",
   "attachments", "chisabot_chat_files", "chisabot_chat_shots", "skills", "personal_memories",
   "approval_requests", "chisabot_confirm_requests", "chisabot_thread_inbox",
   "chisabot_workers", "chisabot_local_agent_tasks", "chisabot_schedules", "chisabot_schedule_runs",
@@ -27,11 +27,11 @@ try {
       const states = status ? await sql`select status, count(*)::text as count from ${sql(table)} group by status order by status` : undefined;
       entries[table] = { count: total!.count, ...(states ? { states } : {}) };
     }
-    if ((entries.openbot_local_threads as { exists?: boolean }).exists !== false) {
+    if ((entries.chisabot_local_threads as { exists?: boolean }).exists !== false) {
       const [history] = await sql`select count(*) filter(where lock_expires_at > now())::text as active_leases,
         coalesce(sum(case when jsonb_typeof(messages)='array' then jsonb_array_length(messages) else 0 end),0)::text as messages,
         count(*) filter(where jsonb_typeof(messages) is distinct from 'array')::text as invalid_snapshots
-        from openbot_local_threads`;
+        from chisabot_local_threads`;
       entries.history = history;
     }
     return entries;

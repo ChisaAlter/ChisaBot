@@ -83,14 +83,14 @@ try {
     // 一轮里接力的第二个 run 失败（模拟上游 500）：以前 awaitingReply 在第一个 run 结束时就放下了，这种失败不报。
     if (!PARTS.includes("B")) await chisaBot(page, bot);
     let runs = 0;
-    await page.route("**/api/copilotkit/agent/*/run", async (route) => {
+    await page.route("**/api/conversations/agent/*/run", async (route) => {
       runs += 1;
       if (runs === 2) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "simulated upstream failure (e2e)" }) });
       return route.continue();
     });
     await send(page, "先调用 computer_read 读取当前页面，然后告诉我月份下拉框选的是什么。");
     await waitIdle(page, { max: 180000 });
-    await page.unroute("**/api/copilotkit/agent/*/run");
+    await page.unroute("**/api/conversations/agent/*/run");
     const card = page.locator('[data-testid=kept-page][data-visible=true] [data-testid="transcript-stopped"]');
     const visible = await card.isVisible().catch(() => false);
     const text = visible ? await card.innerText() : "";

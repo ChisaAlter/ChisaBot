@@ -49,9 +49,9 @@ import type { DeviceRecord } from "../src/devices/store";
 import {
   buildAgents,
   currentAgentKernel,
-  mountCopilotRuntime,
+  mountConversationRuntime,
   setAgentKernel,
-} from "../src/copilot";
+} from "../src/conversation-runtime";
 import { withRuntimeSurfaceTools } from "../src/agents/runtime-tool-context";
 import { loadConfig } from "../src/config";
 import { testEnvironment } from "./support/environment";
@@ -362,7 +362,7 @@ async function until<T>(
               threadId: value.threadId,
             };
             const previous = readRunAssertion(
-              value.forwardedProps?.openbotRun,
+              value.forwardedProps?.chisabotRun,
               key,
             );
             return previous?.handoff
@@ -395,7 +395,7 @@ async function until<T>(
                 });
                 if (!decision.ok) return decision.message;
                 const scope = readRunAssertion(
-                  currentApprovalContext()?.forwardedProps?.openbotRun,
+                  currentApprovalContext()?.forwardedProps?.chisabotRun,
                   key,
                 )!;
                 resumedCoordination = (
@@ -453,7 +453,7 @@ async function until<T>(
           ],
           toolsFor: async (value) => {
             const signed = readRunAssertion(
-              value.forwardedProps?.openbotRun,
+              value.forwardedProps?.chisabotRun,
               key,
             );
             const scope: RunAssertion = signed?.handoff
@@ -513,7 +513,7 @@ async function until<T>(
             depth: input.depth,
           }),
       });
-      const mounted = mountCopilotRuntime(
+      const mounted = mountConversationRuntime(
         loadConfig(testEnvironment({ CONVERSATION_BACKEND: "local" })),
         {
           resolveAgentsForActor: async () => ({}),
@@ -904,7 +904,7 @@ async function until<T>(
       const rows = await database.$client.unsafe<
         { owner_user_id: string; agent_id: string; messages: any[] }[]
       >(
-        "SELECT owner_user_id,agent_id,messages FROM openbot_local_threads WHERE id=$1",
+        "SELECT owner_user_id,agent_id,messages FROM chisabot_local_threads WHERE id=$1",
         [probes[0]!.threadId!],
       );
       expect(rows[0]).toMatchObject({ owner_user_id: actor, agent_id: target });
@@ -979,13 +979,13 @@ async function until<T>(
         [approval.id],
       );
       const oldScope = readRunAssertion(
-        savedApproval.continuation.forwardedProps.openbotRun,
+        savedApproval.continuation.forwardedProps.chisabotRun,
         key,
       )!;
       const expired = mintRunAssertion(oldScope, key, 0);
       expect(readRunAssertion(expired, key)).toBeNull();
       await database.$client.unsafe(
-        "UPDATE chisabot_confirm_requests SET continuation=jsonb_set(continuation,'{forwardedProps,openbotRun}',$2::text::jsonb) WHERE id=$1",
+        "UPDATE chisabot_confirm_requests SET continuation=jsonb_set(continuation,'{forwardedProps,chisabotRun}',$2::text::jsonb) WHERE id=$1",
         [approval.id, JSON.stringify(expired)],
       );
       await confirmations.decide(actor, approval.id, "approve");
