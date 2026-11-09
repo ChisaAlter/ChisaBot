@@ -58,6 +58,7 @@ jobs:
           server/tests/agent-profile-policy.test.ts
           server/tests/agent-resolver.test.ts
           server/tests/agent-routes.test.ts
+          server/tests/group-routes.test.ts
           server/tests/dynamic-model-runtime.test.ts
           server/tests/model-catalog.test.ts
           server/tests/model-connection-context.test.ts
