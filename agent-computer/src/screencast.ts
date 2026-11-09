@@ -13,6 +13,7 @@
  * Protocol.
  */
 import type { CDPSession, Page } from "playwright";
+import { classifyEgressTunnel, isPrivateEgressHost } from "./egress";
 import { whileNavigating } from "./start-page";
 
 /** What the surface sends us. */
@@ -322,10 +323,7 @@ export async function startScreencast(
           // 导航途中网址还是 about:blank，标记一下，别让起始页和这次导航抢文档。
           await whileNavigating(page, async () => {
             if (message.type === "navigate") {
-              await page.goto(message.url, {
-                waitUntil: "commit",
-                timeout: 20_000,
-              });
+              await page.goto(message.url, { waitUntil: "commit", timeout: 20_000 });
             } else if (message.action === "back") {
               await page.goBack({ waitUntil: "commit", timeout: 20_000 });
             } else if (message.action === "forward") {
@@ -337,13 +335,16 @@ export async function startScreencast(
           if (!stopped)
             onFrame({ type: "navigation", ok: true, url: pageUrl() ?? from });
         } catch (error) {
-          if (!stopped)
+          if (!stopped) {
+            const url = pageUrl() ?? from;
+            const target = message.type === "navigate" ? message.url : url;
             onFrame({
               type: "navigation",
               ok: false,
-              url: pageUrl() ?? from,
-              error: navigationProblem(error),
+              url,
+              error: await navigationProblem(error, target),
             });
+          }
         }
         return;
       }
@@ -359,18 +360,53 @@ export async function startScreencast(
 /**
  * 打不开网址时给人看的一句话（中文），不带 Playwright 的调用日志。
  *
- * `ERR_TUNNEL_CONNECTION_FAILED` / `ERR_PROXY_*` 既可能是出口过滤代理按策略回了 403，也可能是上游
- * 连不上回了 502，Chromium 分不出这两种。以前一律写成「网络策略不允许」，把普通连不上也说成策略
- * 拦截（例如 Haupt 上浏览器匿名走到包仓库白名单时打开 claude.com）。这里改成如实说连不上；真要
- * 拦内网 / SSRF 的是 egress 的 ALWAYS_DENIED，不会靠这句文案区分。
+ * Chromium 对代理 CONNECT 的 403（策略）和 502（上游连不上）都报 ERR_TUNNEL。这里用目标地址
+ * 和出口过滤代理的一次探测区分：内网 / SSRF 底线 → 安全提示；其它策略拒绝 → 策略提示；
+ * 连不上 → 如实说连不上。
  */
-export function navigationProblem(error: unknown): string {
+export async function navigationProblem(
+  error: unknown,
+  targetUrl?: string,
+): Promise<string> {
   const text = error instanceof Error ? error.message : String(error);
-  if (/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY|ERR_BLOCKED/i.test(text))
+  const tunnel = /ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY|ERR_BLOCKED/i.test(
+    text,
+  );
+  if (tunnel) {
+    const parsed = parseNavigationTarget(targetUrl);
+    if (parsed && isPrivateEgressHost(parsed.host))
+      return "出于安全原因不允许访问内网地址。";
+    if (parsed) {
+      const kind = await classifyEgressTunnel(parsed.host, parsed.port);
+      if (kind === "private") return "出于安全原因不允许访问内网地址。";
+      if (kind === "refused") return "网络策略不允许访问这个网址。";
+      if (kind === "unreachable" || kind === "unknown" || kind === "allowed")
+        return "连不上这个网址。";
+    }
     return "连不上这个网址。";
+  }
   if (/ERR_NAME_NOT_RESOLVED/i.test(text)) return "找不到这个网址。";
   if (/ERR_CONNECTION|ERR_ADDRESS|ERR_TIMED_OUT|Timeout/i.test(text))
     return "网站没有响应，请稍后再试。";
   if (/ERR_CERT|SSL/i.test(text)) return "网站的安全证书有问题。";
   return "这个网址打不开。";
+}
+
+function parseNavigationTarget(
+  raw: string | undefined,
+): { host: string; port: number } | null {
+  if (!raw?.trim()) return null;
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    if (!host) return null;
+    const port = Number(
+      url.port ||
+        (url.protocol === "https:" ? 443 : url.protocol === "http:" ? 80 : 0),
+    );
+    if (!Number.isInteger(port) || port < 1) return null;
+    return { host, port };
+  } catch {
+    return null;
+  }
 }

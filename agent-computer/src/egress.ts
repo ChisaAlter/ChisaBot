@@ -382,7 +382,10 @@ const ALWAYS_DENIED: readonly [string, number, "ipv4" | "ipv6"][] = [
   // Cloud metadata / link-local.
   ["169.254.0.0", 16, "ipv4"],
   ["100.100.100.200", 32, "ipv4"],
-  // IPv6: loopback, link-local, unique-local (ULA), plus cloud metadata aliases.
+  // IPv6: unspecified (:: reaches loopback on Linux, same as 0.0.0.0), loopback,
+  // link-local, unique-local (ULA), plus cloud metadata aliases. Aligned with
+  // server `checkNavigationTarget` / `isPrivateIpv6` (and shared/net/ssrf embedded forms).
+  ["::", 128, "ipv6"],
   ["::1", 128, "ipv6"],
   ["fe80::", 10, "ipv6"],
   ["fc00::", 7, "ipv6"],
@@ -393,42 +396,129 @@ const alwaysDenied = new BlockList();
 for (const [address, prefix, family] of ALWAYS_DENIED)
   alwaysDenied.addSubnet(address, prefix, family);
 
-/** The NAT64 well-known prefix. On a network with a NAT64 gateway it reaches the IPv4 address in its last 32 bits. */
-const nat64 = new BlockList();
-nat64.addSubnet("64:ff9b::", 96, "ipv6");
+/** Expand an IPv6 address into eight 16-bit groups, or null. */
+function expandIpv6Groups(address: string): number[] | null {
+  let hex = address.toLowerCase();
+  const zone = hex.indexOf("%");
+  if (zone >= 0) hex = hex.slice(0, zone);
+  // Trailing dotted IPv4 (`::ffff:1.2.3.4`) → two hex groups before splitting.
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(hex);
+  if (dotted) {
+    const parts = dotted[1]!.split(".").map(Number);
+    const hi = ((parts[0]! << 8) | parts[1]!).toString(16);
+    const lo = ((parts[2]! << 8) | parts[3]!).toString(16);
+    hex = hex.slice(0, dotted.index) + `${hi}:${lo}`;
+  }
+  const halves = hex.split("::");
+  if (halves.length > 2) return null;
+  const parse = (part: string) =>
+    part === "" ? [] : part.split(":").map((g) => Number.parseInt(g, 16));
+  const head = parse(halves[0] ?? "");
+  const tail = halves.length === 2 ? parse(halves[1] ?? "") : [];
+  if ([...head, ...tail].some((g) => Number.isNaN(g))) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0) return null;
+  return [...head, ...Array(missing).fill(0), ...tail];
+}
 
-/** The IPv4 address a NAT64 address carries, or null when it is not one. */
-function nat64Ipv4(address: string): string | null {
-  if (isIP(address) !== 6 || !nat64.check(address, "ipv6")) return null;
-  // Let URL spell it in hex groups (`64:ff9b::1.2.3.4` becomes `64:ff9b::102:304`), then expand `::`
-  // so the last two groups are the IPv4 address however the address was written.
-  const hex = new URL(`http://[${address}]/`).hostname.slice(1, -1);
-  const [head = "", tail] = hex.split("::");
-  const groups = (part: string) => (part ? part.split(":") : []);
-  const all =
-    tail === undefined
-      ? groups(head)
-      : [
-          ...groups(head),
-          ...Array(8 - groups(head).length - groups(tail).length).fill("0"),
-          ...groups(tail),
-        ];
-  const high = Number.parseInt(all[6] ?? "0", 16);
-  const low = Number.parseInt(all[7] ?? "0", 16);
-  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+/**
+ * The IPv4 address an IPv6 literal is carrying, if any.
+ *
+ * Same three prefixes as navigation (`checkNavigationTarget`): `::ffff:0:0/96` (mapped),
+ * `64:ff9b::/96` (NAT64), and the deprecated compatible `::/96` form. `::` and `::1` are left
+ * alone — their low bits look like 0.0.0.0 / 0.0.0.1 but they are the IPv6 unspecified / loopback
+ * addresses and are listed in ALWAYS_DENIED directly.
+ */
+function embeddedIpv4(address: string): string | null {
+  if (isIP(address) !== 6) return null;
+  const g = expandIpv6Groups(address);
+  if (!g || g.length !== 8) return null;
+  const zeros = (from: number, to: number) =>
+    g.slice(from, to).every((n) => n === 0);
+  const v4 = (high: number, low: number) =>
+    [high >> 8, high & 255, low >> 8, low & 255].join(".");
+  // ::ffff:a.b.c.d and ::ffff:XXXX:YYYY
+  if (zeros(0, 5) && g[5] === 0xffff) return v4(g[6]!, g[7]!);
+  // ::ffff:0:a.b.c.d (translated)
+  if (zeros(0, 4) && g[4] === 0xffff && g[5] === 0) return v4(g[6]!, g[7]!);
+  // 64:ff9b::/96 NAT64
+  if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6)) return v4(g[6]!, g[7]!);
+  // Deprecated compatible ::a.b.c.d — not :: / ::1 (those stay IPv6).
+  if (zeros(0, 6) && (g[6] !== 0 || (g[7] ?? 0) > 1))
+    return v4(g[6] ?? 0, g[7] ?? 0);
+  return null;
 }
 
 /**
  * True for a private, loopback, metadata or link-local address, including one written as
- * IPv4-mapped IPv6 or reached through the NAT64 prefix.
+ * IPv4-mapped / compatible IPv6 or reached through the NAT64 prefix.
  */
 export function isAlwaysDenied(addressInput: string): boolean {
   const address = normalizeHost(addressInput);
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address)?.[1];
-  const candidate = mapped ?? nat64Ipv4(address) ?? address;
+  const candidate = embeddedIpv4(address) ?? address;
   const version = isIP(candidate);
   if (version === 0) return false;
   return alwaysDenied.check(candidate, version === 4 ? "ipv4" : "ipv6");
+}
+
+/** Localhost names Chromium resolves to loopback without DNS (matches navigation). */
+export function isPrivateEgressHost(hostInput: string): boolean {
+  const host = normalizeHost(hostInput);
+  if (!host) return false;
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  return isAlwaysDenied(host);
+}
+
+export type EgressTunnelClass =
+  | "private"
+  | "refused"
+  | "unreachable"
+  | "allowed"
+  | "unknown";
+
+/**
+ * Ask the running filter what a CONNECT to host:port would get — used by the live screen to tell
+ * "内网被拦" apart from "策略拒绝" and "上游连不上". Chromium only reports ERR_TUNNEL for all three.
+ */
+export async function classifyEgressTunnel(
+  hostInput: string,
+  port: number,
+): Promise<EgressTunnelClass> {
+  const host = normalizeHost(hostInput);
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65535)
+    return "unknown";
+  if (isPrivateEgressHost(host)) return "private";
+  if (!filter) return "unknown";
+  const authority = isIP(host) === 6 ? `[${host}]` : host;
+  const head = await new Promise<string>((resolve) => {
+    const socket = connect(filter!.port, "127.0.0.1", () => {
+      socket.write(
+        `CONNECT ${authority}:${port} HTTP/1.1\r\nHost: ${authority}:${port}\r\n\r\n`,
+      );
+    });
+    let seen = "";
+    const done = () => {
+      socket.destroy();
+      resolve(seen);
+    };
+    socket.setTimeout(2_000, done);
+    socket.on("data", (chunk) => {
+      seen += chunk.toString();
+      if (seen.includes("\r\n\r\n")) done();
+    });
+    socket.on("error", done);
+    socket.on("close", () => resolve(seen));
+  });
+  const status = /^HTTP\/1\.[01] (\d{3})/.exec(head)?.[1];
+  if (status === "200") return "allowed";
+  if (status === "502") return "unreachable";
+  if (status === "403") {
+    if (/own network|cloud metadata|loopback|private/i.test(head))
+      return "private";
+    return "refused";
+  }
+  return "unknown";
 }
 
 /**

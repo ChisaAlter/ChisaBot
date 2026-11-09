@@ -7,10 +7,12 @@ import {
   ANONYMOUS_LOG_LIMIT,
   ANONYMOUS_LOG_WINDOW_MS,
   botProxyKey,
+  classifyEgressTunnel,
   egressDecision,
   egressFor,
   egressShellEnvironmentForBot,
   isAlwaysDenied,
+  isPrivateEgressHost,
   noteAnonymousEgress,
   proxyCallerFrom,
   setEgressLogger,
@@ -121,6 +123,31 @@ describe("addresses no Bot may reach", () => {
     }
   });
 
+  test("IPv6 unspecified, mapped and compatible forms match the navigation floor", () => {
+    for (const address of [
+      "::",
+      "[::]",
+      "::1",
+      "[::1]",
+      "::ffff:127.0.0.1",
+      "::ffff:7f00:1",
+      "0:0:0:0:0:ffff:7f00:1",
+      "::ffff:10.0.0.1",
+      "::ffff:a9fe:a9fe", // 169.254.169.254
+      "::7f00:1", // deprecated compatible [::127.0.0.1]
+      "64:ff9b::7f00:1",
+      "fd00::1",
+      "fe80::1",
+      "fd00:ec2::254",
+    ]) {
+      expect(isAlwaysDenied(address)).toBe(true);
+    }
+    expect(isPrivateEgressHost("localhost")).toBe(true);
+    expect(isPrivateEgressHost("app.localhost")).toBe(true);
+    expect(isAlwaysDenied("2001:db8::1")).toBe(false);
+    expect(isPrivateEgressHost("example.com")).toBe(false);
+  });
+
   test("allow_all and an allowlist cannot open them, by address or by name", () => {
     const allowAll = { mode: "allow_all" as const, rules: [] };
     const cidr = {
@@ -156,6 +183,25 @@ describe("addresses no Bot may reach", () => {
         );
         expect(answer.split("\r\n")[0]).toContain("403");
       }
+    } finally {
+      await stopEgressFilter();
+    }
+  });
+  test("unspecified IPv6 [::] is refused under allow_all (SSRF floor)", async () => {
+    const filter = await startEgressFilter({ env: {} });
+    try {
+      setEgressPolicy("a", { mode: "allow_all", rules: [] });
+      const key = egressFor("a", {})?.password ?? "";
+      for (const auth of [undefined, basic(`a:${key}`)]) {
+        const header = auth ? `Proxy-Authorization: ${auth}\r\n` : "";
+        const answer = await raw(
+          filter.port,
+          `CONNECT [::]:80 HTTP/1.1\r\nHost: [::]:80\r\n${header}\r\n`,
+        );
+        expect(answer.split("\r\n")[0]).toContain("403");
+      }
+      expect(await classifyEgressTunnel("::", 80)).toBe("private");
+      expect(await classifyEgressTunnel("192.168.1.1", 443)).toBe("private");
     } finally {
       await stopEgressFilter();
     }
