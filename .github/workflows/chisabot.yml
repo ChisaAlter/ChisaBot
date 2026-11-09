@@ -122,6 +122,7 @@ jobs:
           bun test server/tests/database-deadline.integration.test.ts server/tests/database-recovery.test.ts
           bun test server/tests/local-conversations-inbox.integration.test.ts server/tests/thread-inbox-paused.integration.test.ts server/tests/thread-inbox.test.ts
           bun test server/tests/stop-queue.integration.test.ts
+          bun test server/tests/conversation-redaction.test.ts
           bun test server/tests/computer-stop.test.ts
           bun test server/tests/agent-runtime-unreachable.integration.test.ts
           bun test server/tests/schedules-paused-next.integration.test.ts
