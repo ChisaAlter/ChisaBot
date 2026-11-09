@@ -4,8 +4,11 @@
 
 ## 当前状态
 
+- **2026-11-09 12:07（Asia/Shanghai），清理后的 reader 4 私人入口已上线**：`https://ayase.cn:55450` 使用 `37391289` 镜像，API3012/auth3023/DSH3097。当前候选的 426 条会话、764 条运行、283,030 条事件及 7 个登录会话保留；实际 Nginx、严格 TLS、认证边界、前端与兼容资源服务检查通过。旧 reader 3 数据库和服务保留，回退使用兼容两代 Cookie 的认证网关。未操作或刷新用户窗口，模型/设备调用继续暂停，正式生产未切换。完整接线与恢复入口：`work/upstream-image-entry.md`；安全结果：`work/upstream-reader4-entry-result.json`。
+
 - OpenBot 清理代码已冻结为 `373912898bee43422daa030e93e816fa4d379381`。前端 148 项定向测试、类型检查、正式构建及 1280/390 布局检查通过；推广横幅、销售外链和相关逻辑已删除。服务端类型检查、真实 0067 原表改名、DSH 重启恢复及 MCP 修复复验通过。升级审查发现的“迁移成功但 readiness 失败时旧 reader 回滚”窗口已修复：启动前持久提高 reader 门槛，后续旧快照不降级。
-- reader 4 完整镜像 `local/chisabot:assistant-37391289` 已从上述精确 Git archive 构建成功，实际 ID 为 `sha256:253e2361c12838da02c4114e22034870c1156fbec5b688b452214425b53abd8b`。无网络、只读、uid1002 镜像检查通过：实际未安装 CopilotKit，reader4/0067、关键运行时导入、兼容资产和前端身份正确；134 个前端构建文件无推广链接及 CopilotKit 导入。正在以独立数据副本验收冷启动并准备私人入口切换，生产仍未切换。证据索引：`work/upstream-release-assembly.md`、`work/upstream-image-entry.md`。
+- reader 4 完整镜像 `local/chisabot:assistant-37391289` 已从上述精确 Git archive 构建成功，实际 ID 为 `sha256:253e2361c12838da02c4114e22034870c1156fbec5b688b452214425b53abd8b`。无网络、只读、uid1002 镜像检查通过：实际未安装 CopilotKit，reader4/0067、关键运行时导入、兼容资产和前端身份正确；134 个前端构建文件无推广链接及 CopilotKit 导入。隔离升级和私人入口切换已完成，生产仍未切换。证据索引：`work/upstream-release-assembly.md`、`work/upstream-image-entry.md`。
+- 同一 reader 4 镜像的不可变恢复模板与当前 reader 3 候选副本均已完成真实迁移和 API/DSH 冷启动：426 条会话、764 条运行记录、283,030 条事件保留，原表对象与序列保持；模型出口关闭，原待决工作未执行。另在独立测试卷完成旧镜像初始化、保留卷备份、新镜像 `/init` 冷启动，原数据库身份、消息、状态和事件保持，journal 为 68。两代测试容器均正常停止保留，正式卷未使用。证据：`work/upstream-image-entry.md`、`work/upstream-embedded-pg.md`。
 
 - 2026-11-09 用户在真实桌面发现上游销售横幅，要求全面剔除 OpenBot 产品与代码残留。真实模型/设备验收已停止，出口未开放；用户已正常登录并看到原历史。当前工作转为去除推广与遗留依赖、统一 Conversation API/模块/事件、0067原表改名及reader4升级验证。2862762a 是清理前候选，不包含本轮改动；生产未切换。迁移与旧客户端/资源兼容规则见[命名清理升级说明](../ops/upstream-removal.md)。
 

@@ -1,6 +1,6 @@
 # 升级到自有 Conversation 命名
 
-本次清理删除聊天中的上游推广横幅、销售链接和相关配置，现役会话接口、模块、协议与新部署资源统一使用 ChisaBot 命名。实现与验收状态见[个人助理实施记录](../pipeline-runs/20261108-assistant-production.md)；当前仍在准备候选，未切换生产。
+本次清理删除聊天中的上游推广横幅、销售链接和相关配置，现役会话接口、模块、协议与新部署资源统一使用 ChisaBot 命名。实现与验收状态见[个人助理实施记录](../pipeline-runs/20261108-assistant-production.md)；清理后的 reader 4 候选已接入私人入口，未切换生产。
 
 ## 更新会话表时保留原数据
 
@@ -22,7 +22,7 @@
 
 新客户端主动请求 `/api/conversations`。旧 `/api/copilotkit` URL 只在服务端集中适配入口转换，仍经过相同的账号鉴权与权限检查。旧保存事件、签名续执行输入和未知效果记录只在读取边界转换，不改写原历史或重新产生效果。
 
-认证网关改用当前产品 Cookie 和 `chisabotAuthRequired`。旧 Cookie 的读取、续期和撤销集中在认证兼容模块；旧桌面收到的登录失效响应仍可正常跳转。旧浏览器主题、草稿和设置在首次读取前迁移，已有的新设置优先。
+认证网关改用当前产品 Cookie 和 `chisabotAuthRequired`。旧 Cookie 的读取、续期和撤销集中在认证兼容模块；旧桌面收到的登录失效响应仍可正常跳转。登录 Cookie 迁移后，回退核心服务时仍需使用支持两代 Cookie 的认证网关及当前会话库；直接恢复只识别旧 Cookie 的网关会让已迁移的客户端失去登录。旧浏览器主题、草稿和设置在首次读取前迁移，已有的新设置优先。
 
 已安装 Agent 的旧 header 和环境变量只在 `shared/legacy-headers.ts`、`shared/legacy-compat.ts` 读取。发送给旧 Agent 的必要双 header 也集中于该模块；业务代码使用当前名称。
 
