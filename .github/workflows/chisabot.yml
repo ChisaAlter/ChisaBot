@@ -140,7 +140,7 @@ jobs:
       - name: Trust-boundary network isolation red-line
         run: bun test shared/trust-boundary.test.ts server/tests/trust-boundary-redline.test.ts
       - name: Log-scrub red-line (PRD-P0-05)
-        run: bun test server/tests/log-scrub-redline.test.ts
+        run: bun test server/tests/log-scrub-redline.test.ts server/tests/conversation-public-error.test.ts
       - name: Nginx template sync check (apply-or-fail process)
         run: sh scripts/ops/sync-nginx.sh --check-repo
       - name: Schedule honesty / partition (non-tram re-verify)

@@ -3,17 +3,35 @@ import { RunAgentInputSchema } from "@ag-ui/core/schemas";
 import { Hono } from "hono";
 import { Observable, type Subscription } from "rxjs";
 import type { ActorAgentResolver } from "../agents/agent-resolver";
+import { redactText } from "../computer/activity-redact";
 import {
   type HeadlessTool,
   HeadlessToolsMiddleware,
 } from "../computer/headless-tools";
 import type { IdentifyActor } from "../conversation-runtime";
+import { reasonWithoutStatement } from "../db/query-failure";
 import {
   mountPreviousConversationRoutes,
   normalizeRunInput,
 } from "../legacy/protocol";
 import type { LocalConversationBackend } from "../local-conversations";
 import { assertConversationAdmissionOpen } from "./maintenance";
+
+const PUBLIC_ERROR_MAX = 300;
+
+/**
+ * What a failed conversation may tell the browser or the log: never a raw `error.message`.
+ * Query failures lose their statement and bound values, secret-shaped text and URL credentials
+ * are masked, and the result is capped. A non-Error throw gets a fixed sentence.
+ */
+export function publicConversationError(error: unknown): string {
+  if (!(error instanceof Error)) return "会话执行失败。";
+  const text = redactText(reasonWithoutStatement(error)).trim();
+  if (!text) return "会话执行失败。";
+  return text.length > PUBLIC_ERROR_MAX
+    ? `${text.slice(0, PUBLIC_ERROR_MAX)}…`
+    : text;
+}
 
 /** Subscription lifetime controls delivery only. The runner owns execution and persistence. */
 function eventStream(source: Observable<BaseEvent>) {
@@ -43,7 +61,7 @@ function eventStream(source: Observable<BaseEvent>) {
           if (!closed)
             controller.enqueue(
               encoder.encode(
-                `data: ${JSON.stringify({ type: "RUN_ERROR", code: "CONVERSATION_FAILED", message: error instanceof Error ? error.message : "会话执行失败。" })}\n\n`,
+                `data: ${JSON.stringify({ type: "RUN_ERROR", code: "CONVERSATION_FAILED", message: publicConversationError(error) })}\n\n`,
               ),
             );
           close();
@@ -118,7 +136,7 @@ export function createConversationRoutes(options: {
           JSON.stringify({
             type: "conversation-dispatch-error",
             runId: record.run_id,
-            message: error instanceof Error ? error.message : "unknown",
+            message: publicConversationError(error),
           }),
         );
       };
@@ -200,7 +218,10 @@ export function createConversationRoutes(options: {
       "status" in error && typeof error.status === "number"
         ? error.status
         : 500;
-    return context.json({ error: error.message }, status as 400);
+    return context.json(
+      { error: publicConversationError(error) },
+      status as 400,
+    );
   });
   routes.get("/api/conversations/info", async (context) => {
     const actor = await identifyActor(context.req.raw);
