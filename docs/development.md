@@ -1,34 +1,36 @@
 # Development
 
-> **ChisaBot 分支：** 先阅读 [快速开始](getting-started.md)。使用 `CHISABOT_RUNTIME_MODE=local` 时，无需下述 Intelligence 登录、项目密钥或学习容器配置；数据库、加密密钥和登录保护仍需按自己的环境配置。以下为保留的上游开发参考。
+Start with [Quick start](getting-started.md) for the current DSH, database, encryption and login setup. The maintained system layout is [Architecture](architecture.md); first installation uses the [self-hosting guide](../deploy/README.zh-CN.md), and existing deployments use [serial release and recovery](ops/deploy.md).
 
 ## Setup
 
-Install Docker, [Bun](https://bun.sh) 1.3+, `lsof`, `openssl`, and `curl`. The
-Intelligence provisioning below also needs `npx` (Node); `deploy/start.sh` 首次运行会生成所需密钥。
+Install Docker, [Bun](https://bun.sh) 1.3.14, Node.js 24.9 or later, `lsof`, `openssl`, and `curl`.
+Configure your own environment and encryption key as described in Quick start before starting services.
 
 ```sh
 cp .env.example .env
-bun install
+bun install --frozen-lockfile --omit=peer
 ```
 
-ChisaBot 默认 `CHISABOT_RUNTIME_MODE=local`，不需要 CopilotKit Intelligence；上游的 Intelligence / 自动学习开通脚本（`scripts/setup-learning.ts`）已在瘦身 P6-3 删除。填好 `.env` 里的模型（Magpie / OpenAI 兼容）即可。
+`CHISABOT_RUNTIME_MODE=local` keeps product conversations in PostgreSQL. DSH also needs its account Host, targets and tool gateway configured; a model connection alone does not start that runtime. Follow [DSH operations](ops/dsh-runtime.md) for that wiring.
 
 ## Running services
 
-> **ChisaBot 瘦身 P3（2026-10-15）：** 上游的笔记本全栈（`scripts/start.sh` / `stop.sh` + 根目录 `docker-compose.yml`，带 agent-bot、agent-langgraph、supervisor、SPIRE）已删除——ChisaBot 只发布一个镜像，自建部署走 `deploy/start.sh`（见 [快速开始](getting-started.md)）。本地只想跑前端和 API：`bun run dev`（app 3010、server 3001，数据库自己准备）。
+Run `bun run dev` for the frontend and API (app 3010, server 3001); prepare the database and DSH Host separately. For an installed deployment, `deploy/start.sh` builds the root Dockerfile's `chisabot` target; upgrades follow [the serial release path](ops/deploy.md).
+
+Historical note: the upstream laptop stack (`scripts/start.sh`, `stop.sh` and the root `docker-compose.yml`, including agent-bot, agent-langgraph, supervisor and SPIRE) was removed in slimming P3 on 2026-10-15. These are not current startup entrypoints.
 
 **Nothing here sweeps staged attachments.** A file dropped into the composer is stored before the
 message is sent, and the only thing that reclaims the ones never sent is
-`bun scripts/cull-staged-attachments.ts` from `server/`, which the Helm chart runs hourly and which
-neither `docker-compose.yml` nor `start.sh` starts. It needs only `DATABASE_URL`, and takes a
+`bun scripts/cull-staged-attachments.ts` from `server/`. The local `bun run dev` process does not schedule it.
+It needs only `DATABASE_URL`, and takes a
 retention window in hours as its one optional argument, defaulting to 24. On a laptop that is
 usually nothing, because the rows are small and the database is yours. It stops being nothing at
 thirty-two: one person may hold that many unsent files across every channel at once, the refusal on
 the next one promises they are cleared within a day, and where nothing sweeps they are not, so a
 long-lived local deployment can reach a state where attaching anything is refused. Removing a file
 in the composer deletes it outright, so it takes abandoned drafts rather than ordinary use.
-[deployment.md](deployment.md) says the same for a real deployment.
+For a persistent deployment, use the attachment timer described in the [self-hosting guide](../deploy/README.zh-CN.md#数据与兼容性) and the [operations guide](ops/deploy.md).
 
 ## Migrations
 
@@ -131,5 +133,5 @@ without `CHISABOT_LIVE_SCREEN=1` the files skip before importing anything, which
 - Keep changes focused.
 - Keep credentials, service-account JSON, customer data, and transcripts out of source control.
 - Put sensitive behavior on the server, not only in the browser.
-- Update [configuration](configuration.md), [architecture](chisabot-architecture.md), or the root [README](../README.md) when behavior changes.
+- Update [configuration](configuration.md), [architecture](architecture.md), or the root [README](../README.md) when behavior changes.
 - Run the quality checks above and include the results in the pull request.

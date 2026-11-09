@@ -3,7 +3,7 @@
 ChisaBot 采用**DSH 执行内核 + 自有会话服务 + 用户设备节点**。独立 DSH Host 管理模型循环与 Session；账号、机器人、工具权限、审批、任务成果和交付由 ChisaBot 管理。
 
 关键决定都记在 [ADR](adr/README.md) 里，界面规则在 [DESIGN.md](../DESIGN.md)。一页概览见 [overview.md](overview.md)，全部功能见
-[features.md](features.md)，全部数据表见 [data-model.md](data-model.md)。DSH 已上线；本页会话接口与表名按正在实施的 0067 / reader 4 说明，尚未发布。部署状态见[实施记录](pipeline-runs/20261108-assistant-production.md)，升级与旧客户端兼容见[迁移说明](ops/upstream-removal.md)。
+[features.md](features.md)，全部数据表见 [data-model.md](data-model.md)。本页描述 DSH 与 0067 / reader 4 的当前源码结构；部署版本及运行证据统一见 [实施记录](pipeline-runs/20261108-assistant-production.md)，升级与旧客户端兼容见 [迁移说明](ops/upstream-removal.md)。
 
 ## 1. 总览
 
@@ -60,9 +60,21 @@ React + TanStack Router + 自有会话客户端与呈现注册表（`app/src/lib
 
 ### 2.4 在线更新（`deploy/updater/`）
 
-宿主机上的 `chisabot-updater`（python3，systemd）读 spool 请求文件队列；应用容器拿不到 docker socket。它从公开 GitHub
-拉 main 到本机镜像仓库，按依赖指纹自动选「快速更新」（只换代码层，约 1–2 分钟）或「完整构建」（仓库根 Dockerfile），先
-`pg_dump` 备份，再切换、健康检查（含模型自检），失败自动回滚，每次切换留一个回滚脚本。详见 [online-update.md](online-update.md)。
+宿主机上的 `chisabot-updater`（python3，systemd）读 spool 请求文件队列；应用容器拿不到 docker socket。已有部署使用 [串行发布入口](ops/deploy.md)，更新器从配置的仓库获取版本，按依赖指纹选择代码层更新或根 `Dockerfile` 的完整构建。
+
+前端、核心服务和 DSH 依赖属于同一版本；独立 Host 使用对应运行配置。切换前排空并保留同批数据库、Session、工作文件和配置，先持久保存 reader 要求，随后迁移、启动和检查。失败只恢复到能读当前数据的版本；登录 Cookie 迁移后恢复也必须保留兼容网关。网关与登录服务不在应用镜像里，改动时按 [网关运维](ops/gateway.md) 纳入同次发布。更新器机制见 [在线更新](online-update.md)，备份与恢复见 [DSH 运维](ops/dsh-runtime.md)。
+
+### 2.4.1 会话与工具接口边界
+
+| 入口 | 责任 |
+|---|---|
+| `POST /api/conversations/:threadId/commands` | 接纳带幂等身份的会话命令 |
+| `GET /api/conversations/:threadId/commands/:commandId` | 查询已接纳命令的结果 |
+| `POST /api/conversations/:threadId/events` | 订阅对应命令的持久事件与实时输出 |
+| `server/src/agents/dsh-runtime.ts` → `runtime/dsh/` | 将会话执行连接到账号 DSH Host |
+| 核心服务的工具网关 | 校验账号、机器人、回合与权限，保存工具结果和交付记录 |
+
+当前前端发送新消息走 commands/events；AG-UI 兼容调用、停止与重新接入仍由同一会话边界处理。旧协议映射集中在 `server/src/legacy/protocol.ts`，不作为新增功能的第二套入口。
 
 ### 2.5 设备节点（`pc/`、`server/src/devices/`）
 
@@ -134,7 +146,7 @@ Kotlin 壳用全屏 WebView 加载桌面端同一套 React 前端，气泡、卡
 
 ## 4. 运行时开关（常用）
 
-都是环境变量，默认值就是生产用的值；完整列表见 [configuration.md](configuration.md) 和各功能文档。
+以下是环境变量的仓库默认值或可选开关；生产实际值取决于部署配置。完整列表见 [configuration.md](configuration.md) 和各功能文档。
 
 | 变量 | 作用 |
 |---|---|

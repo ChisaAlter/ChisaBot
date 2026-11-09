@@ -18,10 +18,18 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 | 改界面 | [DESIGN.md](../DESIGN.md)（顶部章节索引）· [设置的信息结构](settings-ia.md) |
 | 提交改动 | [CONTRIBUTING](../CONTRIBUTING.md) · [并行开发协议](dev/parallel-work.md) |
 | 自己部署、运维一套 ChisaBot | [运维手册 ops/](ops/README.md)（主机端口、容器、目录、部署回滚、网关、云端节点、发版、模型、测试环境、巡检、清理、故障复盘） |
-| 发版、上线、回滚 | [发布流程 release](release.md) · [部署、回滚与上线检查](ops/deploy.md) · [在线更新](online-update.md) · [DSH 运行时与回滚](ops/dsh-runtime.md) · [旧托管历史导入](intelligence-migration.md) |
-| 升级旧接口、会话表和部署资源 | [命名与依赖迁移](ops/upstream-removal.md)（0067 / reader 4，实施中） |
+| 发布 DSH、核心服务与共用网页 | [部署、回滚与上线检查](ops/deploy.md)（串行入口）· [DSH 运行时与恢复](ops/dsh-runtime.md) · [网关同步](ops/gateway.md) |
+| 升级旧接口、会话表和部署资源 | [命名与依赖迁移](ops/upstream-removal.md)（0067 / reader 4 与兼容边界） |
 | 测试 | [测试与验证 testing](testing.md) |
 | 看懂中文术语 | [术语表 glossary](glossary.md) |
+
+## 当前维护入口
+
+首次安装按 [快速开始](getting-started.md) → [自托管部署](../deploy/README.zh-CN.md) 配置应用、DSH 账号 Host 和认证网关。已有安装统一沿 [串行部署](ops/deploy.md) 更新：前端、核心服务和 DSH 依赖来自同一版本，独立 Host 使用匹配的运行配置；网关或登录服务有变化时纳入同次发布。PC / Android 外壳发包另见 [发布流程](release.md)，网页更新仍来自同一服务器。
+
+当前代码位置和接口以 [架构](architecture.md) 为准：客户端主动调用 `/api/conversations`，DSH 通过产品工具网关执行带账号、机器人和回合身份的操作。旧协议只经集中兼容入口读取；旧架构和研究资料不能代替当前部署说明。
+
+版本与验收只在 [个人助理实施记录](pipeline-runs/20261108-assistant-production.md) 维护：分别记录源码检查、实际镜像、迁移与恢复、私人入口、生产入口和客户端验收，并指向对应证据。以下文档说明能力或步骤，不重复声明某个候选已经上线。
 
 ## 项目管理
 
@@ -30,9 +38,9 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 | [ROADMAP.md](ROADMAP.md) | 里程碑、现在 / 接下来 / 以后、最近完成 |
 | [BACKLOG.md](BACKLOG.md) | CB-001 起的全部条目、验收标准、状态（GitHub Issues 未开启前它就是 issue 列表） |
 | [decisions.md](decisions.md) | 所有者的长期规则（发布流程、测试安全、版本号、界面原则），带日期 |
-| [CHANGELOG.md](CHANGELOG.md) | 0.1.0 → v0.1.15 及之后的 PR，按发版标签分组 |
+| [CHANGELOG.md](CHANGELOG.md) | 按发版标签分组的版本与 PR 记录 |
 | [adr/](adr/README.md) | 架构决策记录 0001–0014（0012 号空缺） |
-| [pipeline-runs/](pipeline-runs/) | 个别功能的流水线运行记录 |
+| [pipeline-runs/](pipeline-runs/) | 带日期的实施、验收与发布证据；当前交付入口见上文 |
 
 ## 架构
 
@@ -43,7 +51,6 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 - [数据模型](data-model.md)：会话与效果账本、当前业务表、网关 SQLite、浏览器本地存储。
 - [流式回复：从模型到屏幕](streaming.md)
 - [分支与能力边界](chisabot.md)：本地模式、第三方推理、数据兼容和客户端状态。
-- [ChisaBot 原始架构](chisabot-architecture.md)（上游参考；其中很多部分已瘦身掉，见 [slimming.md](slimming.md)）
 
 ## 功能文档（按范围）
 
@@ -70,12 +77,15 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 | 文档 | 适合解决的问题 |
 | --- | --- |
 | [快速开始](getting-started.md) | 第一次部署，配置完成后怎样开始聊天 |
+| [本地开发参考](development.md) | 本地数据库迁移、分开启动服务与质量检查；生产使用本表的部署入口 |
 | [自托管部署](../deploy/README.zh-CN.md) | 镜像、持久化、认证网关与 Magpie 部署模板 |
 | [**运维手册（总览）**](ops/README.md) | 自己部署后长期运维的全部章节入口与一页速查 |
 | [主机与端口规划](ops/hosts.md) | 机器配置、公网端口、只绑 loopback 的端口、防火墙 |
 | [容器与服务](ops/containers.md) | 每个容器、镜像、卷、systemd 单元的用途 |
 | [目录布局与凭据存放](ops/layout.md) | 宿主机目录、各类密钥应放在哪里与权限 |
 | [部署、回滚与上线检查](ops/deploy.md) | 合并后怎么上线、更新器怎么工作、怎么回滚、上线后检查什么 |
+| [DSH 运行时与恢复](ops/dsh-runtime.md) | 账号 Host、targets、Session、完整备份与兼容恢复 |
+| [命名与依赖迁移](ops/upstream-removal.md) | 0067 会话表迁移、reader 4、旧客户端登录和原卷保留 |
 | [网关与登录服务](ops/gateway.md) | nginx 规则、登录服务、多账号开关、签名身份密钥、证书 |
 | [客户端发布（运维）](ops/client-release.md) | 更新源目录、APK 签名、发版上传与临时文件安全删除 |
 | [模型配置运维](ops/model-config.md) | 默认 / 备用模型、生图识图、额度用完怎么办 |
@@ -99,14 +109,24 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 - [切换模型何时生效，运行中的回复使用哪个模型](models.md#目录缓存和运行快照)
 - [模型不可用，怎样定位网关、权限或上游问题](operations.md#模型问题排查)
 
-## 历史技术参考
+## 可选集成
 
-以下资料保留早期实现与可选集成的说明。当前运行结构以[架构](architecture.md)为准，代码来源与版权集中列于[第三方许可](THIRD_PARTY_NOTICES.md)。
+以下是按需接入的现有能力，是否可用取决于部署配置和实际授权。
 
-- [开发参考](development.md)：迁移、分开启动服务与质量检查。
 - [联网研究](parallel-research.md)：Parallel Search 连接器。
 - [Composio](plugins/composio.md)、[Google Drive](plugins/google-drive.md)、[Notion](plugins/notion.md)：外部连接器（插件与 MCP 默认隐藏，`CHISABOT_EXTRAS=plugins`）。
+
+<a id="上游技术参考"></a>
+<a id="历史技术参考"></a>
+
+## 历史与迁移参考
+
+以下资料用于追溯来源或迁入旧数据。当前运行结构以 [架构](architecture.md) 为准，生产发布沿上文维护入口；历史文档中的包名、端口、容器和命令不作为新安装默认值。
+
+- [原始架构](chisabot-architecture.md)：早期上游设计与已移除组件；演进见 [瘦身记录](slimming.md)。
+- [旧托管历史导入](intelligence-migration.md)：已有托管会话的迁移工具，独立于 DSH 日常执行和发布。
 - [上游容器参考](deployment.md)、[上游发布参考](releasing.md)、[Windows 签名](windows-signing.md)：继承的镜像、发布和签名流程（ChisaBot 的发版看 [release.md](release.md)）。
+- [研究资料](research/) 与 [架构决策](adr/README.md)：保留当时的假设、比较和决定；状态变化在实施记录中跟踪。
 - 已在瘦身中删除：Tauri 桌面端 `desktop/`、Expo `mobile/`、Helm chart `charts/`、自动学习、`worker/`（见 [slimming.md](slimming.md)）。
 
 默认中文租户包见 [examples/zh-CN](../examples/zh-CN/README.md)。当前环境变量使用 `CHISABOT_*`；旧设置、客户端和物理数据资源通过[集中兼容入口](ops/upstream-removal.md)迁移。

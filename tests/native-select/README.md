@@ -14,4 +14,4 @@ BASE=http://127.0.0.1:<端口> PARTS=A,B,C,D node tests/native-select/turn.mjs
 # 部署环境：再给一个临时会话令牌 TOK=<会话 cookie 值>（跑完删掉会话）
 ```
 
-需要 `playwright-core` 和 Chromium（应用镜像里的 `/ms-playwright`），截图写到 `/out`。B / C / D 都会发起模型回合；A 只调用计算机 API。C 针对保留的 AG-UI `/agent/*/run` 接力链路，不能作为 DSH `/threads/*/commands` 链路已验收的证据。
+需要 `playwright-core` 和 Chromium（应用镜像里的 `/ms-playwright`），截图写到 `/out`。B / C / D 都会发起模型回合；A 只调用计算机 API。C 针对保留的 AG-UI `/agent/*/run` 接力链路，不能作为 DSH `/api/conversations/:threadId/commands` 链路已验收的证据。

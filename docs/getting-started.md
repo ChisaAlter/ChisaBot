@@ -2,13 +2,13 @@
 
 [文档首页](README.md) · [模型配置](models.md) · [Magpie 集成](magpie.md) · [部署](../deploy/README.zh-CN.md)
 
-## 选择运行方式
+## 使用 DSH 与自有会话服务
 
 ChisaBot 的网页登录、API、PostgreSQL 和 DSH Host 部署在自己的服务器。`CHISABOT_RUNTIME_MODE=local` 保存产品会话，DSH 负责模型循环并保存独立 Session。
 
 模型可以使用自己的兼容服务，也可以连接第三方 API。需要统一多个供应商与模型时，先部署 Magpie，再让 ChisaBot 连接它。详见 [能力边界](chisabot.md)。
 
-## 自托管步骤
+## 首次自托管
 
 1. 按 [deploy/README.zh-CN.md](../deploy/README.zh-CN.md) 准备自己的域名、持久化数据库、加密密钥与网页登录。使用仓库模板，不要复制别人的真实部署凭据。
 2. 选择本地运行模式，按 [DSH 运维](ops/dsh-runtime.md) 配置账号 Host、targets 与工具网关；服务端和前端使用同一个中文租户包。
@@ -39,7 +39,13 @@ bun run typecheck
 
 `TENANT_PACKAGE_DIR=../examples/zh-CN` 按服务端工作目录解析。前端生成配置时应使用相同租户包。数据库迁移及分开启动服务的方法见 [开发参考](development.md)。
 
-仅运行 `bun run dev` 不会替你完成生产登录网关、DSH Host、数据库和工具服务的部署。已有安装升级时使用[命名与资源迁移](ops/upstream-removal.md)规定的入口，保留原卷与登录资料。0067 / reader 4 清理仍在实施，发布状态见[实施记录](pipeline-runs/20261108-assistant-production.md)。
+仅运行 `bun run dev` 不会替你完成生产登录网关、DSH Host、数据库和工具服务的部署。
+
+## 升级已有部署
+
+使用 [串行部署入口](ops/deploy.md) 和现有更新器，将同一版本的前端、核心服务、DSH 依赖与 Host 配置一起交付。登录服务或 nginx 有变化时，按 [网关运维](ops/gateway.md) 同步，保留当前会话。客户端外壳未变化时，通过刷新服务器网页取得更新。
+
+升级前按 [命名与资源迁移](ops/upstream-removal.md) 核对原卷、登录资料和 reader 兼容性；0067 生效后只使用 reader 4 兼容镜像恢复。当前部署版本、已验收范围与运行证据统一见 [实施记录](pipeline-runs/20261108-assistant-production.md)。
 
 ## 接入模型后的日常操作
 

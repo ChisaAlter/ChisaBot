@@ -18,7 +18,7 @@
 
    它会：
    - 拿 `flock /run/cb-deploy.lock`（最多等 40 分钟），同一时间只一个人部署，其他人排队；
-   - 等更新器空闲、没有排队请求，并**等所有对话的线程锁清零**（`openbot_local_threads.lock_expires_at > now()` 为 0，最多 20 分钟），
+   - 等更新器空闲、没有排队请求，并**等所有对话的线程锁清零**（`chisabot_local_threads.lock_expires_at > now()` 为 0，旧部署由 schema 适配器读取，最多 20 分钟），
      不打断正在回答的一轮；
    - `request.sh check` 匿名拉公开仓库的 main 到 `mirror.git`，确认 main 包含你的提交（别人后来又合并的会一起上线）；
    - `request.sh update` 并等完成，确认 `chisabot-zh` 的镜像标签含新提交。
@@ -46,7 +46,7 @@
   （内存 `FULL_BUILD_MEMORY`、并行 `FULL_BUILD_PARALLELISM`、层缓存上限 `BUILD_CACHE_MAX`），约 4–8 分钟；成功后写 `base.env`（新底座 + 依赖树）。
 - **每次更新**：`pg_dump` + compose + 所选内核的配套卷快照 → `backups/<时间>-<任务>/` → 切换 → 健康检查（含模型自检、
   `PUBLIC_HEALTH_URL`）→ **失败仅回滚到兼容镜像**。`KEEP_BACKUPS` 默认 5，线上值以宿主配置为准；普通轮换只处理自己创建且已完成的更新批次，手工、迁移、未完成及 `.keep` 批次保留。
-- **drain**：切换前等正在回答的对话结束（`DRAIN_SECONDS`，默认 900 秒，0 关闭）。
+- **drain**：切换前暂停新执行，并等正在回答的对话结束（`DRAIN_SECONDS`，默认 900 秒）。DSH 部署要求排空成功，配置 0 也不能越过忙碌检查。
 - **镜像保留**：`KEEP_IMAGES`=5（切流窗口，见 [traffic-cut-rollback.md](traffic-cut-rollback.md)）。
 - **自升级**：每次成功更新后，更新器用新版本的 `deploy/updater/` 升级自己。2026-10-13 之前的老部署跑一次
   `cd /opt/chisabot-src && git pull && sudo sh deploy/install-updater.sh`（`--check` 只看不做）。
@@ -63,16 +63,17 @@
 `local/chisabot:auto-<UTC 时间>-<提交前 7 位>`，文件名本身就说明回到哪一次提交。
 
 ```sh
-ls -t /opt/chisabot-zh/rollback-to-*.sh | head -3     # 最新的就是「回到上一版」
+ls -t /opt/chisabot-zh/rollback-to-*.sh | head -3     # 仅列出候选，仍须检查 reader 兼容性
 docker image inspect local/chisabot:auto-<时间>-<提交> >/dev/null && echo 镜像还在
+# 确认脚本包含当前 reader 检查且目标兼容后再执行。
 sh /opt/chisabot-zh/rollback-to-auto-<时间>-<提交>.sh
 ```
 
 - 网页上：设置 → 系统更新 →「回滚到上一版」，效果相同。
-- **只换镜像，保留当前数据库与 DSH Session**。回滚前必须同时检查运行时、协议、native history reader 和产品 conversation reader；旧镜像存在不代表它能读取当前数据。产品进入 reader 2 后不能回 reader 1；进入 reader 3 后不能回 reader 1/2。
-- 当前生产仍为 reader 1。首个个人助理候选 `9244b43a`（reader 2 / 0065）的构建与恢复证据保留，未发布。容量与 DB 兼容源码已冻结为 `2862762a`（reader 3 / 0066），原直连 API SIGKILL 混合恢复通过；新的完整镜像 `local/chisabot:assistant-2862762a` 已单次构建成功，并通过真实模板的 65→67 迁移、API/DSH 冷启动、实际 Bun 产品历史 consumer 抽样及待决不重放增量恢复。**仍待正式桌面、真实资源与生产放行，生产未切换**。不要因镜像恢复通过就修改线上 marker。最新验收以[实施记录](../pipeline-runs/20261108-assistant-production.md)为准；兼容检查与恢复入口见 [DSH 运维](dsh-runtime.md)。
+- **只换兼容镜像，保留当前数据库与 DSH Session**。回滚前检查运行时、协议、native history reader 和产品 conversation reader。当前代码的产品 reader 为 4，0067 将会话表原地改名；迁移后不能启动 reader 1–3。更新器在候选启动前持久保存最低 reader 要求，健康检查失败也不会降低它。
+- 线上版本和对应验收只维护在[实施记录](../pipeline-runs/20261108-assistant-production.md)，不从旧候选标签推断当前生产状态。原卷、旧数据库身份及登录 Cookie 的升级与回退要求见[命名清理升级说明](upstream-removal.md)，运行时恢复入口见 [DSH 运维](dsh-runtime.md)。Cookie 迁移后，认证网关必须继续识别两代 Cookie，并保留当前会话库。
 - 涉及 DROP 等不可逆迁移时，先制定独立数据恢复方案，见 [slimming.md](../slimming.md)。恢复旧数据库也不会撤销已发送邮件、已执行设备操作等外部效果；必须保留和核对当前操作/交付账本，不自动重做未知操作。
-- 回滚脚本会越积越多，但**只有镜像还在的才有效**（默认只留 5 个镜像，清理磁盘后可能更少）。运行前先确认镜像存在。
+- 回滚脚本会越积越多；只有目标镜像仍在、符合当前 reader 要求且脚本包含现役兼容检查时，才能使用。不要直接执行旧迁移前保留的回滚脚本。
 - 需要更早的版本：在 main 上合并一个 revert PR 走正常上线，或检出对应提交后 `request.sh update --full`。
 - 数据恢复：`/opt/chisabot-updater/backups/<时间>-<任务>/` 里的 `pg_dump`。恢复前先对当前库再做一次转储。
 
@@ -101,9 +102,8 @@ sh /opt/chisabot-zh/rollback-to-auto-<时间>-<提交>.sh
 1. `sh /opt/chisabot-updater/request.sh status` 显示刚才的任务成功；`curl -s 127.0.0.1:3001/api/version` 的提交号是你的。
 2. **部署后烟雾**（更新器已在 `health.sh` 里自动跑）：失败会回滚。人手复跑：`bash /opt/chisabot-updater/post-deploy-smoke.sh` 或 `request.sh smoke`（[production-checklist.md](../production-checklist.md)）。
 3. **管理员自检（模型）**：设置 → 系统更新 →「自检」，或 `sh /opt/chisabot-updater/smoke.sh`（[admin-smoke.md](../admin-smoke.md)）。默认不因模型红灯回滚。
-4. **快照对比**：上线前后各取一次——线程数、机器人数、设备数、用户数、关键设置的哈希（如 `enterprise_settings`、`media_models`）、
-   备用模型列表。除镜像 / 版本外应一致。
-5. **只读浏览器检查**（需要时）：临时签发会话 + 拦截所有非 GET 请求（[preview.md](preview.md) §4）。
+4. **快照对比**：上线前后核对会话、机器人、设备、用户、关键设置、备用模型列表和待决工作。只允许本次迁移明确规定的字段变化，原消息与操作结果应保持。
+5. **用户入口检查**：检查实际网关、TLS、登录与鉴权边界、前端版本及静态资源；需要界面验收时使用正常登录或隔离预览，不导出用户会话凭据。
 6. 改到聊天 / 同步 / 滚动的 PR：在预览里跑 `tests/chat-scroll/regression.sh`（[testing.md](../testing.md) §3）。
 8. 更新项目看板：ROADMAP「最近完成」、BACKLOG 状态、[CHANGELOG](../CHANGELOG.md)。
 
