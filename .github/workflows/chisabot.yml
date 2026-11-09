@@ -59,7 +59,6 @@ jobs:
           server/tests/agent-resolver.test.ts
           server/tests/agent-routes.test.ts
           server/tests/group-routes.test.ts
-          server/tests/dsh-loop-stop-projection.test.ts
           server/tests/dynamic-model-runtime.test.ts
           server/tests/model-catalog.test.ts
           server/tests/model-connection-context.test.ts
@@ -74,6 +73,11 @@ jobs:
           server/tests/compose-network-drift.test.ts
           server/tests/admin-smoke.test.ts
           server/tests/im-adapters.test.ts
+      # The DSH → AG-UI projection imports runtime/dsh (its own Node project), so install it first.
+      - name: DSH projection checks
+        run: |
+          npm ci --prefix runtime/dsh --no-audit --no-fund
+          bun test server/tests/dsh-loop-stop-projection.test.ts server/tests/dsh-reasoning-projection.test.ts
       # The chat regression set every ChisaBot PR runs on the server (the older model-chooser DOM tests
       # need a live API and never ran here while typecheck was failing; see docs/slimming.md P3).
       - name: Chat UI checks
