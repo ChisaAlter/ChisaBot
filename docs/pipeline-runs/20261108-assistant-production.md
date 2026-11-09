@@ -12,7 +12,7 @@
 - **生产已重新可达**：23:41 发布前检查中 SSH 与正式登录入口恢复，独立 API/auth/DSH/computer/public 健康通过，运行中执行为 0，原完整备份仍 ready。此前 22:54 正式 PC 显示 522、22:57 后 TCP 22/443/8443 超时；主机当前报告本次启动时间为 23:08:39，重启原因尚未确定。没有执行本轮镜像切换、生产迁移或数据恢复。旧故障保留为事件，不能算作候选的合格观察期。
 - 迁移和单账号整理的恢复批次已复制到更新器普通轮换之外的受限保护区，原批次仍保留。22:06–22:08 完成一次真实完整备份，既有每日备份 timer 已改用完整备份入口。**同批备份已用原生产镜像完成断网隔离恢复**：426 个历史会话、87 个原文件下载接口逐字节、7 条记忆、auth SQLite、1 个 binding 以及真实 DSH cursor30 均通过；暂停/待决/工具/IM 状态与 projection481839 读前后不变。首个 reader 2 候选随后从该模板完成0065迁移、生产模式API服务及auth冷启动、DSH reader2 readiness；reader 3 候选另在专用数据库完成65→67增量恢复，未迁移原模板或P4数据库。异机副本未配置。
 - 11 月 9 日续作时已启动正式安装的 Windows 客户端，既有会话正常恢复到正式入口，历史、输入框和任务栏可见，不再显示 522。此为旧生产版本的入口/历史只读观察，未发送消息、修改用户数据或冒充本轮候选与重新登录验收。
-- 已为同一安装版另开独立 PC 资料；SSH 隧道和候选服务端入口已接通，**PC 登录链路尚未接通**。入口复用正式 nginx/auth 和受信 TLS，内部 Docker 网络无默认路由、不开放公网；宿主与本机 curl 的证书校验通过，登录页 200、匿名接口保护有效。未导入旧 Cookie、设备令牌或伪造身份。桌面登录的 Node 网络栈不使用 Chromium 域名映射，源码同一 `auth.probe` 直连候选地址实际超时；仅加 `--host-resolver-rules` 或 curl 的 resolve 成功都不能证明 PC 能登录。专用 sing-box 代理启动与独立 Edge 启动均为 **blocked by policy，均未实际启动**；不换路绕过拒绝、不改全局代理/DNS或关闭 TLS。已撤回先前请用户在新 PC 窗口登录的步骤，待主代理在允许的执行条件具备后实际接通再继续。五个 P4 服务与根代理 SSH 隧道保留，维护标记、后台开关与外网封锁保持；模型/任务仍未验。
+- 11 月 9 日 08:21（Asia/Shanghai），最新 reader 3 候选已接入私人 HTTPS 入口 `https://ayase.cn:55450`，实际上游为 API3011/auth3022/DSH3096，源码为 `2862762a`。此前进程启动被策略拒绝；本轮经过正常权限审核后，专用 sing-box 代理获准启动，仅允许该候选地址经既有 SSH 隧道连接，其他目标拒绝。桌面原 `auth.probe` 经现有代理模块实际通过，TLS 校验开启；已安装客户端用独立资料打开正常登录表单，等待用户本人认证。系统代理、DNS和日常客户端未改，未导入 Cookie/token。模型与第三方出口、维护和后台限制保持，真实会话尚未验收。
 - 五个已无人消费的旧隔离 Host 已逐个确认空闲后停止；旧预览的容器、网络、卷、镜像与恢复定义已受限归档，原数据保留。操作后独立生产健康退出 0。Hermes 仍有生产中的旧 URL 探针引用，留待候选切换时处理，未直接停用。
 - 既有 R5/E01–E18 未受改动影响的证据继续复用。下述“源码/隔离通过”和“正式用户路径通过”分别记录。
 
@@ -20,16 +20,16 @@
 
 | 工作包 | 当前所有者 | 复用与边界 | 状态 |
 |---|---|---|---|
-| P0 发布基线、在线配置与集成 | 主代理负责候选与生产放行；`release_assembly` 同步文档 | Git、生产配置、`index.ts`、迁移与既有远端 builder | `2862762a` 已冻结提交，完整镜像及增量恢复通过；新 API/DSH 正常停止保留，原 P4 五服务运行，生产未切换 |
+| P0 发布基线、在线配置与集成 | 主代理负责候选与生产放行 | Git、生产配置、迁移与既有远端 builder | `2862762a` 完整镜像及增量恢复通过；最新候选已接私人入口并运行，生产未切换 |
 | P1 信息源 / 日历及 P2 安全交付 | `sources_final` 已交付，主代理已消费 | 既有 personal-sources、安全表单及 IM 发送状态机抽取 | 源码冻结，定向数据/故障/组件验证通过；真实接入待资源 |
 | P1 任务成果 | 原任务成果所有者已交付，主代理已消费 | 既有 payload、artifacts、事件、工具/交付记录；旧纯文本任务合同不变 | 源码冻结，真实 PG 与组件验证通过；正式桌面任务待验 |
 | P2 通知整合 | 主代理 | 既有恢复 sweep 收集已提交生产者结果，同 ID 进入持久交付 | PG 崩溃缺口、去重/unknown、迁移幂等验证通过 |
-| P3 更新与完整备份 | 原运维与恢复所有者已交付；主代理持生产写入权与留存副本接口 | 既有更新锁、排空、DSH snapshot、轮换与 timer | 原镜像完整恢复及候选 0065/API 服务冷启动通过；原恢复与旧 network-none 候选容器停止保留，P4 五服务继续运行；线上 reader 1 未改 |
+| P3 更新与完整备份 | 主代理 | 既有更新锁、排空、DSH snapshot、轮换与 timer | 原镜像完整恢复与 reader 3 增量恢复通过；最新候选用于私人桌面验收，旧 P4 gateway 停止保留，其余旧服务与共享PG运行；生产reader1 |
 | P3 综合健康 / 独立信号 | 主代理 / `assistant_monitoring` | 共用 DSH readiness；沿既有宿主检查和 systemd 接线 | 综合健康、实际 Host、独立检查与信号验证通过；宿主接线待部署 |
 | P3 后台容量 | 容量及恢复所有者已交付，主代理已消费 | 复用既有 PG 执行租约、admission 和任务队列 | 统一后台两槽、前台独立接纳已实现，0066/reader3；混合并发、审批/设备、DB 兼容与实际类型验证通过，原直连 SIGKILL 恢复 1 场景/24 断言通过；新完整镜像及增量恢复通过，真实代表负载待验 |
 | G09 A13 审批缺口 | 原审批所有者实现并验证；主代理已消费 | 同 call 重试恢复原待批；内部续执行保留 Stop/Edit 与暂停补充边界 | 真实 Host SIGKILL + API backend 重建通过，1 PASS / 32 断言；未创建第二张卡或重复效果 |
 | G09 A15 模型故障 | 主代理，接手受 429 限流的模型所有者 | 原 fallback 预算/Host；仅修缺失分类和实际主备归属 | 最终实际 Host 8 个故障场景、前端错误解析通过 |
-| P4/P5 桌面、真实连接与发布 | 主代理；恢复所有者已交付私人入口 | 正式安装 PC、独立资料、真实服务器与实际设备；密钥使用安全入口 | 严格 TLS 服务端入口与本机 SSH 隧道可用并保留；PC Node 路由未通。专用 sing-box 与独立 Edge 启动均被策略拒绝、均未启动；候选未发布、未真实登录 |
+| P4/P5 桌面、真实连接与发布 | 主代理；`candidate_entry` 已交付入口 | 正式安装 PC、独立资料、真实服务器与实际设备；密钥使用安全入口 | reader3私人入口、严格TLS及桌面原auth.probe通过；独立客户端登录表单已观察，等待用户正常认证，生产未发布 |
 
 ## 已确认的集成决定
 
@@ -47,7 +47,7 @@
 |---|---|---|
 | 信息源与日历 | 新鲜/缓存/失败/未连接贯通；RRULE、TZID/DST、例外、改期、取消、全天与浮动时区由固定版本 node-ical 处理；生产默认关闭 demo | 当前 12 个定向场景均有有效通过依据；最终受影响 4 场景 36 断言晚于 DB 时钟修复。真实来源未提供 |
 | SMTP 与 Webhook | Nodemailer 替代手写 SMTP；平台接纳与 unknown 分开；未知发送不自动重试；仅无人值守 Webhook 明确 429 拒绝有限重试 | 真实 PG、受控 SMTP/HTTP、并发去重、重连取消与已提取 IM dispatcher 验证；无真实收件结论 |
-| 安全连接与界面 | 连接工具跳转安全设置；密码与私密 URL 不再是普通模型工具参数；已有设置显示来源/发送状态 | 最终 app/server 类型通过；实际 React 桌面、时区弹窗和 390px 手机组件截图已检查，无横向溢出；不代替正式登录。旧历史凭据风险清点尚未完成 |
+| 安全连接与界面 | 连接工具跳转安全设置；密码与私密 URL 不再是普通模型工具参数；已有设置显示来源/发送状态 | app/server类型和既有桌面/390px组件视觉证据有效。恢复快照凭据清点完成：426会话、283030事件、17回退历史、操作/确认/审批/审计/队列及1个DSH日志，目标工具实际秘密参数与可识别密码/平台密钥URL均0；不覆盖备份后新增生产数据或任意无标签秘密。安全计数见 `work/assistant-credential-inventory.md` |
 | 任务成果 | 文件检查实际存储字节，外发检查同 owner/run 接纳记录，设备检查原回执；结果复核保留原执行，普通 Retry 新版本；Stop 后迟到结果不翻转 | 27 个定向测试 / 99 断言；真实 PG 5 个场景（原 4 个 30 断言，加最终模型失败后效果不重做 8 断言），含真实文件 GET；真实模型报告语义仍待验 |
 | 通知恢复与 0065 | 收集生产者 commit→通知 intent 的崩溃窗口；稳定 ID、过期/取消/静默/历史过滤；迁移包含 attempts/next_attempt_at 与日历时区 | 本机独立 PG 3 PASS / 13 断言；fresh migration→运行时 ensure→重复 migration 通过，Drizzle generate 无 schema 差异 |
 | DSH 综合健康 | selected DSH 失败使 aggregate 503；未选 Hermes 不拖低当前内核健康；产品与部署共用身份/版本/持久读取探针 | ops-health 17 PASS / 68 断言，真实 Host readiness 通过；不调用模型 |
@@ -61,7 +61,7 @@
 | reader 3 完整候选 | 冻结提交 `2862762a` 的 Git archive 27,868,907 bytes，原根 Dockerfile / `chisabot-builder` 单次完整 buildx exit0；不是 dirty 打包或 9244 覆盖源码 | version `0.1.137` / build `assistant-2862762a` / builtAt `2026-11-08T18:26:34Z`；linux/amd64，6,562,196,617 bytes。原 builder 10 GiB 硬限、60/8 GiB 磁盘/可用内存阈值不变，实际最低磁盘109.352 GiB、MemAvailable17.735 GiB。日志与实际镜像身份在 `work/assistant-release-remote-2862762a/` |
 | reader 3 镜像增量恢复 | 真实 `assistant-2862762a` 从原模板迁移专用数据库 journal65→67，实际补齐0065/0066；`execution`为jsonb/nullable/default null，`capacity_active`为boolean/NOT NULL/default false，旧764条run的execution均为空、6条终态设备capacity均为false；以production模式启动新API3011与DSH3096 | **通过**。`/health`200，`/api/me`与`/api/admin/health`401，version精确匹配`2862762a`；reader3 readiness为1runtime/1session/running0，原session水位30不变。36条work逐行及commands/DSH/tool/inbox/binding/projection/capacity业务值不变，未重放；唯一control时间戳变化见下段。API/DSH已正常exit0停止保留，原P4五服务运行，模板journal65/P4journal66不变 |
 | reader 3 实际产品历史读取 | 镜像内实际 `createDatabase`→生产历史consumer，读取2个既有会话；使用真实Bun JSON与只读事务 | **通过**：12条消息、2个toolCalls、2条事件，事务前中后类型稳定。这是内部真实产品consumer路径，不是已鉴权HTTP历史、真实桌面或模型验收；完整交接及证据索引见 `work/assistant-restore-acceptance.md` |
-| reader 2 P4 服务端登录入口 | 正式 nginx→auth/API，既有证书、HTTPS publicOrigin 与 Secure Cookie 合同不变；SSH 隧道直达该组内部 443，保留独立 PC 资料 | 登录页/素材 200，匿名导航 302，保护 API/资源 401，内部入口 404，错误 Origin 403；宿主与本机 curl TLS 校验均为 0。Docker internal 网络忽略端口发布。Chromium 域名映射不作用于 PC Node 登录请求，`auth.probe` 超时；专用 sing-box 与独立 Edge 均被策略拒绝且未启动。仅服务端入口通过，无客户端登录/模型结论 |
+| reader 3 私人登录入口与桌面网络 | 复用原 nginx/auth/TLS，实际5处应用上游为3011，auth3022；新客户端仅使用独立资料与进程代理 | 2026-11-09 08:21接线完成：登录页200、匿名导航302、保护接口401、内部入口404、TLS校验0、auth未登录；实际API版本2862762a、DSH reader3。切换后桌面原auth.probe再次通过，独立安装版登录表单已观察；未完成真实登录。安全结果 `work/assistant-reader3-entry-result.json` |
 | 账号后台两槽源码 | 统一runner、worker、schedule、task-center、handoff、确认续执行和设备Agent共享PG事务锁；原run行保存容量等待，不持thread lease、不耗执行预算，前台独立接纳 | 真实PG+DSH混合容量12断言、审批/Stop/Edit50断言、PG设备协议4场景26断言、原turn-runner34场景92断言通过；0066空库迁移、reader1/2→3及3→2拒绝通过。设备协议peer不替代真实Windows验收 |
 | SQL 兼容与直连恢复 | `createDatabase` 显式采用 `prepare:false`；保留原生 Query 错误退池，不重放失败操作 | DB recovery 16 场景/81 断言、原 URL/TLS/超时/rollback/锁等待 30 场景/40 断言通过。原两后台+持久队列+前台的真实 API SIGKILL、重接不重放、队列续跑及槽位归零 **1 场景/24 断言通过**，无透明 proxy 或 trace wrapper；日志 `work/assistant-capacity-recovery-unnamed.log` |
 | unnamed 绑定与实际调用方 | JSON 复用标准 Drizzle serializer/read mapper；实际裸 Date 绑定点使用 ISO，正常 schema Date mapper 不变 | 实际 PG 类型 2 场景/15 断言、JSON shape/audit 3 场景/5 断言、设备 expiry/记忆撤销/auth stamp 4 场景/23 断言通过；schedule 4 个场景有有效逐项结果，最终 pause/resume/skip/runNow/update/delete 组合 1 场景/10 断言通过。完整交接与日志索引见 `work/assistant-capacity-contract.md` |
@@ -79,7 +79,7 @@ reader 3 启动前后比较的唯一变化是1条既有 `paused=true` control行
 | 项目 | 当前状态 | 下一负责动作 |
 |---|---|---|
 | G01 可追溯源码/镜像/更新 | `2862762a` 的 reader 3 源码、实际完整镜像及增量迁移/恢复通过，身份明确；生产未切换 | 主代理基于该镜像继续正式桌面、真实资源及生产放行；不沿用 reader 2 镜像身份或以 CI 填验收缺口 |
-| G02 正式桌面对话 | 旧 R5 证据保留；已安装 PC 恢复正式既有会话和历史。候选服务端 TLS 入口通过，独立 PC 的 Node 路由未通；专用 sing-box 与独立 Edge 启动均 blocked by policy、均未启动，未登录 | 主代理保留现有服务和隧道；允许的执行条件具备后，实际接通客户端再请用户正常登录，不换路绕过拒绝。模型出口仍关闭，发布后另验正式路径 |
+| G02 正式桌面对话 | 旧 R5 证据保留；最新reader3候选的私人TLS入口与PC原auth.probe通过，独立客户端表单已打开，旧网络策略阻塞已解决 | 用户在独立窗口正常登录后，主代理继续会话、任务和设备验收；模型出口仍关闭，发布后另验正式路径 |
 | G03 真实来源/晨报 | 隔离语义与组件通过；无真实日历/邮箱 | 用户有资源时在既有安全表单接入；主代理完成实际读源，密钥不发聊天 |
 | G04 定时→本人收件 | 持久通知接线通过；本人 Webhook 无目标 | 用户在安全设置中配置本人目标并明确验收内容后，主代理完成实际提醒；IM 保持暂缓 |
 | G05 批准→邮件发送 | 受控 SMTP/账本证据通过；无邮箱/授权收件目标 | 取得真实邮箱和具体收件授权后验收 |
@@ -87,7 +87,7 @@ reader 3 启动前后比较的唯一变化是1条既有 `paused=true` control行
 | G07 记忆 | 原能力/七条笔记保留；本轮跨会话更正/遗忘待验 | 主代理在正式桌面使用新增专用测试事实，保留用户既有记忆 |
 | G08 真 Windows 设备 | 原设备能力保留；本轮真实 device_* 文件/停止/离线未验 | 主代理经正常客户端在指定验收目录验证；不以 Android 或协议 peer 代替 |
 | G09 恢复/模型故障 | 9244 的 A13/A15 与新交付/任务恢复证据有效；reader 3 的 DB 兼容、实际 PG 类型、原直连 SIGKILL 混合恢复及完整镜像增量恢复通过 | 主代理继续正式模型路径验收；内部历史consumer通过不代替真实桌面、模型或外发，不用 CI 或部署试错 |
-| G10 备份/回滚 | 完整备份、原镜像真实隔离恢复、reader2候选冷启动、reader3完整镜像增量恢复与兼容保护通过；异机副本未完成 | 主代理保留已验收模板/候选接口；新API/DSH已停止保留，原恢复、network-none候选及P4的三套PG共享cluster仍须互斥启动；实际用户登录/模型回合另验，异机位置由用户提供 |
+| G10 备份/回滚 | 完整备份、原镜像真实隔离恢复、reader2候选冷启动、reader3完整镜像增量恢复与兼容保护通过；异机副本未完成 | 新API/DSH现为私人桌面入口运行；旧gateway停止保留，原恢复/network-none/P4三套PG共cluster仍须互斥启动；异机位置待用户资源 |
 | G11 监控/告警 | 综合健康、独立宿主检查、连续失败/unknown 有界信号均通过；无真实宿主接线或本人告警收件 | 主代理在发布变更窗口装配既有账号 timer 的只读 hook，核对活动证书/journal；异机探测和外发仍待实际资源与目标 |
 | G12 七天日用 | **未开始** | 必要正式路径和恢复合格后开始；此前522故障时段不能计入合格观察期 |
 
@@ -99,7 +99,7 @@ VPS 可达性前置条件已在 23:41 恢复：主代理先检查当前镜像/�
 
 旧预览收尾已完成：逐一复核旧 API exited、五个隔离 Host 的真实 SDK sessions0/running0、3086 无连接及无现役消费者后，仅停止这五个 Host；旧预览共12容器、7网络、17卷、5镜像的定义/清单受限归档，容器与数据均未删除。当前真实恢复与新候选不在清理集合内，最后独立生产健康退出0。仍需在候选切换中处理旧 Hermes 探针配置，确认无活动/恢复消费者后再归档 unit，以及取得前台聊天加后台任务的代表性资源峰值。只读核查确认9244中任务中心每用户2、全局4，workers独立默认5/10，不同定时任务可并发，三者不共享名额；只调worker配置不能实现全局上限。后续源码沿既有PG租约/admission补了统一接线，DB兼容修复、原直连SIGKILL及新reader3完整镜像增量恢复均已通过；9244镜像和正式服务仍不含此保护，高峰余量也未测得。未测得代表负载之前不调整其他项目资源。
 
-当前 reader 2 P4 的 PG、DSH、API、auth、gateway 五个专用服务及根代理的本机 SSH 隧道均保留；17:57 UTC 只读快照再次确认五服务运行、隧道 `127.0.0.1:55450` 仍监听，reader 3 增量验收结束时五服务仍运行。新增 reader 3 API3011/DSH3096已正常exit0停止保留，未替换原P4组或操作其共享PG；原模板journal65、P4journal66不变。原恢复 PG 和旧 network-none 候选 PG 停止。三套 PG 共用同一恢复 cluster，必须互斥启动。模型/第三方出口仍封锁，不在用户登录前自动解除维护或恢复旧任务。独立安装 PC 的 Node 路由未通，且认证窗口无法由工具可靠观察或代填；专用 sing-box 代理与独立 Edge 启动均被执行策略拒绝，均未实际启动，不通过另一工具或路径绕过。下一动作由主代理在允许的执行条件具备后解决客户端连通，再请用户正常认证；此时不让用户重复尝试未连通的窗口。后续任务、记忆与设备验证仍由主代理负责。真实模型连接已核对为 saved Anthropic，经 API capability 代理至既有 Magpie；维护标记不拦摘要命名循环，因此开放模型前还须按当时状态确认旧自动工作不会认领，并限定出口和时窗，不能只靠 marker。
+当前私人入口使用 reader3 API3011/DSH3096/auth3022/gateway443；旧reader2 gateway停止保留，旧API/auth/DSH和共享PG继续运行。只停新gateway、启动保留旧gateway即可恢复旧私人入口，不改数据库。原恢复PG与network-none候选PG仍停止，共cluster不得同时启动。主机配置与完整回退定义在受限 `assistant-candidate-2862762a/entry/` 中，安全交接见 `work/assistant-reader3-entry.md`。本机独立候选PID23336、专用代理PID40004、SSH隧道PID24372为本轮实际记录；后续操作仍需核对进程身份。日常PC保持运行。用户认证完成前模型出口不开放，maintenance和后台关闭开关保持；后续真实模型经既有API capability代理至Magpie，开放前须确认当时旧自动工作不可认领并限定时窗。
 
 设备容量保留一个明确恢复限制：首次claim提交到首次agent_run发出之间API崩溃，旧协议无法分辨未发送和已发送，也不对未知任务Stop回终态。源码保守保留未知占位，不自动重发或超时腾位；需真实设备终态或维护者核实设备已无执行后处理原记录。完整无损自动恢复需要后续设备幂等回执协议，本轮不能将该边界标通过。
 
